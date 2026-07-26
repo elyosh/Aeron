@@ -1,0 +1,336 @@
+schema: 1
+
+effect:
+  name: fsr3upscaler
+  version: 3.1.4
+
+common_defines:
+  FFX_GPU: 1
+  FFX_HLSL: 1
+  FFX_HLSL_SM: 62
+  FFX_FSR3UPSCALER_OPTION_HDR_COLOR_INPUT: 1
+  FFX_FSR3UPSCALER_OPTION_LOW_RESOLUTION_MOTION_VECTORS: 1
+  FFX_FSR3UPSCALER_OPTION_JITTERED_MOTION_VECTORS: 0
+  FFX_FSR3UPSCALER_OPTION_INVERTED_DEPTH: 1
+  FFX_FSR3UPSCALER_OPTION_UPSAMPLE_SAMPLERS_USE_DATA_HALF: 0
+  FFX_FSR3UPSCALER_OPTION_ACCUMULATE_SAMPLERS_USE_DATA_HALF: 0
+  FFX_FSR3UPSCALER_OPTION_REPROJECT_SAMPLERS_USE_DATA_HALF: 1
+  FFX_FSR3UPSCALER_OPTION_POSTPROCESSLOCKSTATUS_SAMPLERS_USE_DATA_HALF: 0
+
+profiles:
+  - id: fp16_wave_lut
+    enabled: true
+    precision: fp16
+    spd: wave
+    reprojection: lanczos_lut
+    atomic_layout: structured_buffer
+
+  - id: fp32_wave_lut
+    enabled: true
+    precision: fp32
+    spd: wave
+    reprojection: lanczos_lut
+    atomic_layout: structured_buffer
+
+  - id: fp16_scalar_lut
+    enabled: true
+    precision: fp16
+    spd: scalar
+    reprojection: lanczos_lut
+    atomic_layout: structured_buffer
+
+  - id: fp32_scalar_lut
+    enabled: true
+    precision: fp32
+    spd: scalar
+    reprojection: lanczos_lut
+    atomic_layout: structured_buffer
+
+passes:
+  - id: prepare_inputs
+    ffx_pass: FFX_FSR3UPSCALER_PASS_PREPARE_INPUTS
+    threads: [8, 8, 1]
+    dimensions: []
+    defines:
+      FFX_FSR3UPSCALER_OPTION_APPLY_SHARPENING: 0
+    bindings:
+      - {class: storage_texture, macro: FSR3UPSCALER_BIND_SRV_INPUT_MOTION_VECTORS, name: r_input_motion_vectors}
+      - {class: storage_texture, macro: FSR3UPSCALER_BIND_SRV_INPUT_DEPTH, name: r_input_depth}
+      - {class: storage_texture, macro: FSR3UPSCALER_BIND_SRV_INPUT_COLOR, name: r_input_color_jittered}
+      - {class: rw_texture, macro: FSR3UPSCALER_BIND_UAV_DILATED_MOTION_VECTORS, name: rw_dilated_motion_vectors}
+      - {class: rw_texture, macro: FSR3UPSCALER_BIND_UAV_DILATED_DEPTH, name: rw_dilated_depth}
+      - {class: rw_texture, macro: FSR3UPSCALER_BIND_UAV_FARTHEST_DEPTH, name: rw_farthest_depth}
+      - {class: rw_texture, macro: FSR3UPSCALER_BIND_UAV_CURRENT_LUMA, name: rw_current_luma}
+      - {class: rw_buffer, macro: FSR3UPSCALER_BIND_UAV_RECONSTRUCTED_PREV_NEAREST_DEPTH, name: rw_reconstructed_previous_nearest_depth}
+      - {class: constant, macro: FSR3UPSCALER_BIND_CB_FSR3UPSCALER, name: cbFSR3Upscaler}
+    includes:
+      - fsr3upscaler/ffx_fsr3upscaler_callbacks_hlsl.h
+      - fsr3upscaler/ffx_fsr3upscaler_common.h
+      - fsr3upscaler/ffx_fsr3upscaler_prepare_inputs.h
+    signature: "int2 iDispatchThreadId : SV_DispatchThreadID"
+    body: "PrepareInputs(iDispatchThreadId);"
+
+  - id: luma_pyramid
+    ffx_pass: FFX_FSR3UPSCALER_PASS_LUMA_PYRAMID
+    threads: [256, 1, 1]
+    dimensions: [spd]
+    defines:
+      FFX_FSR3UPSCALER_OPTION_APPLY_SHARPENING: 0
+    bindings:
+      - {class: storage_texture, macro: FSR3UPSCALER_BIND_SRV_CURRENT_LUMA, name: r_current_luma}
+      - {class: storage_texture, macro: FSR3UPSCALER_BIND_SRV_FARTHEST_DEPTH, name: r_farthest_depth}
+      - {class: rw_texture, macro: FSR3UPSCALER_BIND_UAV_FRAME_INFO, name: rw_frame_info}
+      - {class: rw_texture, macro: FSR3UPSCALER_BIND_UAV_SPD_MIPS_LEVEL_5, name: rw_spd_mip5}
+      - {class: rw_texture, macro: FSR3UPSCALER_BIND_UAV_FARTHEST_DEPTH_MIP1, name: rw_farthest_depth_mip1}
+      - {class: rw_buffer, macro: FSR3UPSCALER_BIND_UAV_SPD_GLOBAL_ATOMIC, name: rw_spd_global_atomic}
+      - {class: constant, macro: FSR3UPSCALER_BIND_CB_FSR3UPSCALER, name: cbFSR3Upscaler}
+      - {class: constant, macro: FSR3UPSCALER_BIND_CB_SPD, name: cbSPD}
+    includes:
+      - fsr3upscaler/ffx_fsr3upscaler_callbacks_hlsl.h
+      - fsr3upscaler/ffx_fsr3upscaler_common.h
+      - fsr3upscaler/ffx_fsr3upscaler_luma_pyramid.h
+    root_signature: cb2
+    signature: "uint3 WorkGroupId : SV_GroupID, uint LocalThreadIndex : SV_GroupIndex"
+    body: "ComputeAutoExposure(WorkGroupId, LocalThreadIndex);"
+
+  - id: shading_change_pyramid
+    ffx_pass: FFX_FSR3UPSCALER_PASS_SHADING_CHANGE_PYRAMID
+    threads: [256, 1, 1]
+    dimensions: [spd]
+    defines:
+      FFX_FSR3UPSCALER_OPTION_APPLY_SHARPENING: 0
+    bindings:
+      - {class: storage_texture, macro: FSR3UPSCALER_BIND_SRV_CURRENT_LUMA, name: r_current_luma}
+      - {class: storage_texture, macro: FSR3UPSCALER_BIND_SRV_PREVIOUS_LUMA, name: r_previous_luma}
+      - {class: storage_texture, macro: FSR3UPSCALER_BIND_SRV_DILATED_MOTION_VECTORS, name: r_dilated_motion_vectors}
+      - {class: storage_texture, macro: FSR3UPSCALER_BIND_SRV_INPUT_EXPOSURE, name: r_input_exposure}
+      - {class: rw_texture, macro: FSR3UPSCALER_BIND_UAV_SPD_MIPS_LEVEL_0, name: rw_spd_mip0}
+      - {class: rw_texture, macro: FSR3UPSCALER_BIND_UAV_SPD_MIPS_LEVEL_1, name: rw_spd_mip1}
+      - {class: rw_texture, macro: FSR3UPSCALER_BIND_UAV_SPD_MIPS_LEVEL_2, name: rw_spd_mip2}
+      - {class: rw_texture, macro: FSR3UPSCALER_BIND_UAV_SPD_MIPS_LEVEL_3, name: rw_spd_mip3}
+      - {class: rw_texture, macro: FSR3UPSCALER_BIND_UAV_SPD_MIPS_LEVEL_4, name: rw_spd_mip4}
+      - {class: rw_texture, macro: FSR3UPSCALER_BIND_UAV_SPD_MIPS_LEVEL_5, name: rw_spd_mip5}
+      - {class: rw_buffer, macro: FSR3UPSCALER_BIND_UAV_SPD_GLOBAL_ATOMIC, name: rw_spd_global_atomic}
+      - {class: constant, macro: FSR3UPSCALER_BIND_CB_FSR3UPSCALER, name: cbFSR3Upscaler}
+      - {class: constant, macro: FSR3UPSCALER_BIND_CB_SPD, name: cbSPD}
+    includes:
+      - fsr3upscaler/ffx_fsr3upscaler_callbacks_hlsl.h
+      - fsr3upscaler/ffx_fsr3upscaler_common.h
+      - fsr3upscaler/ffx_fsr3upscaler_shading_change_pyramid.h
+    root_signature: cb2
+    signature: "uint3 WorkGroupId : SV_GroupID, uint LocalThreadIndex : SV_GroupIndex"
+    body: "ComputeShadingChangePyramid(WorkGroupId, LocalThreadIndex);"
+
+  - id: shading_change
+    ffx_pass: FFX_FSR3UPSCALER_PASS_SHADING_CHANGE
+    threads: [8, 8, 1]
+    dimensions: [precision]
+    defines:
+      FFX_FSR3UPSCALER_OPTION_APPLY_SHARPENING: 0
+    bindings:
+      - {class: sampled_texture, macro: FSR3UPSCALER_BIND_SRV_SPD_MIPS, name: r_spd_mips, sampler: linear_clamp}
+      - {class: rw_texture, macro: FSR3UPSCALER_BIND_UAV_SHADING_CHANGE, name: rw_shading_change}
+      - {class: constant, macro: FSR3UPSCALER_BIND_CB_FSR3UPSCALER, name: cbFSR3Upscaler}
+    includes:
+      - fsr3upscaler/ffx_fsr3upscaler_callbacks_hlsl.h
+      - fsr3upscaler/ffx_fsr3upscaler_common.h
+      - fsr3upscaler/ffx_fsr3upscaler_shading_change.h
+    signature: "int2 iDispatchThreadId : SV_DispatchThreadID"
+    body: "ShadingChange(iDispatchThreadId);"
+
+  - id: prepare_reactivity
+    ffx_pass: FFX_FSR3UPSCALER_PASS_PREPARE_REACTIVITY
+    threads: [8, 8, 1]
+    dimensions: [precision]
+    defines:
+      FFX_FSR3UPSCALER_OPTION_APPLY_SHARPENING: 0
+    bindings:
+      - {class: sampled_texture, macro: FSR3UPSCALER_BIND_SRV_REACTIVE_MASK, name: r_reactive_mask, sampler: linear_clamp}
+      - {class: storage_texture, macro: FSR3UPSCALER_BIND_SRV_DILATED_MOTION_VECTORS, name: r_dilated_motion_vectors}
+      - {class: storage_texture, macro: FSR3UPSCALER_BIND_SRV_DILATED_DEPTH, name: r_dilated_depth}
+      - {class: storage_texture, macro: FSR3UPSCALER_BIND_SRV_TRANSPARENCY_AND_COMPOSITION_MASK, name: r_transparency_and_composition_mask}
+      - {class: storage_texture, macro: FSR3UPSCALER_BIND_SRV_ACCUMULATION, name: r_accumulation}
+      - {class: storage_texture, macro: FSR3UPSCALER_BIND_SRV_SHADING_CHANGE, name: r_shading_change}
+      - {class: storage_texture, macro: FSR3UPSCALER_BIND_SRV_CURRENT_LUMA, name: r_current_luma}
+      - {class: storage_texture, macro: FSR3UPSCALER_BIND_SRV_INPUT_EXPOSURE, name: r_input_exposure}
+      - {class: storage_buffer, macro: FSR3UPSCALER_BIND_SRV_RECONSTRUCTED_PREV_NEAREST_DEPTH, name: r_reconstructed_previous_nearest_depth}
+      - {class: rw_texture, macro: FSR3UPSCALER_BIND_UAV_DILATED_REACTIVE_MASKS, name: rw_dilated_reactive_masks}
+      - {class: rw_texture, macro: FSR3UPSCALER_BIND_UAV_NEW_LOCKS, name: rw_new_locks}
+      - {class: rw_texture, macro: FSR3UPSCALER_BIND_UAV_ACCUMULATION, name: rw_accumulation}
+      - {class: constant, macro: FSR3UPSCALER_BIND_CB_FSR3UPSCALER, name: cbFSR3Upscaler}
+    includes:
+      - fsr3upscaler/ffx_fsr3upscaler_callbacks_hlsl.h
+      - fsr3upscaler/ffx_fsr3upscaler_common.h
+      - fsr3upscaler/ffx_fsr3upscaler_prepare_reactivity.h
+    signature: "int2 iDispatchThreadId : SV_DispatchThreadID"
+    body: "PrepareReactivity(iDispatchThreadId);"
+
+  - id: luma_instability
+    ffx_pass: FFX_FSR3UPSCALER_PASS_LUMA_INSTABILITY
+    threads: [8, 8, 1]
+    dimensions: []
+    defines:
+      FFX_FSR3UPSCALER_OPTION_APPLY_SHARPENING: 0
+    bindings:
+      - {class: sampled_texture, macro: FSR3UPSCALER_BIND_SRV_LUMA_HISTORY, name: r_luma_history, sampler: linear_clamp}
+      - {class: storage_texture, macro: FSR3UPSCALER_BIND_SRV_INPUT_EXPOSURE, name: r_input_exposure}
+      - {class: storage_texture, macro: FSR3UPSCALER_BIND_SRV_DILATED_REACTIVE_MASKS, name: r_dilated_reactive_masks}
+      - {class: storage_texture, macro: FSR3UPSCALER_BIND_SRV_DILATED_MOTION_VECTORS, name: r_dilated_motion_vectors}
+      - {class: storage_texture, macro: FSR3UPSCALER_BIND_SRV_CURRENT_LUMA, name: r_current_luma}
+      # AMD 3.1.4 passes this value to a helper that does not consume it. Keep
+      # the declaration so the unmodified algorithm compiles; reflection must
+      # prove that it is removed from the runtime layout.
+      - {class: declaration_texture, macro: FSR3UPSCALER_BIND_SRV_FARTHEST_DEPTH_MIP1, name: r_farthest_depth_mip1}
+      - {class: rw_texture, macro: FSR3UPSCALER_BIND_UAV_LUMA_HISTORY, name: rw_luma_history}
+      - {class: rw_texture, macro: FSR3UPSCALER_BIND_UAV_LUMA_INSTABILITY, name: rw_luma_instability}
+      - {class: rw_buffer, macro: FSR3UPSCALER_BIND_UAV_RECONSTRUCTED_PREV_NEAREST_DEPTH, name: rw_reconstructed_previous_nearest_depth}
+      - {class: constant, macro: FSR3UPSCALER_BIND_CB_FSR3UPSCALER, name: cbFSR3Upscaler}
+    includes:
+      - fsr3upscaler/ffx_fsr3upscaler_callbacks_hlsl.h
+      - fsr3upscaler/ffx_fsr3upscaler_common.h
+      - fsr3upscaler/ffx_fsr3upscaler_luma_instability.h
+    signature: "int2 iDispatchThreadId : SV_DispatchThreadID"
+    body: |
+      LumaInstability(iDispatchThreadId);
+      if (IsOnScreen(iDispatchThreadId, RenderSize())) {
+          SetReconstructedDepth(iDispatchThreadId, 0u);
+      }
+
+  - id: accumulate
+    ffx_pass: FFX_FSR3UPSCALER_PASS_ACCUMULATE
+    direct_history_variant: true
+    threads: [8, 8, 1]
+    dimensions: [precision, reprojection]
+    defines:
+      FFX_FSR3UPSCALER_OPTION_APPLY_SHARPENING: 0
+    bindings:
+      - {class: sampled_texture, macro: FSR3UPSCALER_BIND_SRV_INPUT_COLOR, name: r_input_color_jittered, sampler: linear_clamp}
+      - {class: sampled_texture, macro: FSR3UPSCALER_BIND_SRV_LANCZOS_LUT, name: r_lanczos_lut, sampler: linear_clamp, when: reprojection_lut}
+      - {class: storage_texture, macro: FSR3UPSCALER_BIND_SRV_INPUT_EXPOSURE, name: r_input_exposure}
+      - {class: storage_texture, macro: FSR3UPSCALER_BIND_SRV_DILATED_REACTIVE_MASKS, name: r_dilated_reactive_masks}
+      - {class: storage_texture, macro: FSR3UPSCALER_BIND_SRV_DILATED_MOTION_VECTORS, name: r_dilated_motion_vectors}
+      - {class: storage_texture, macro: FSR3UPSCALER_BIND_SRV_INTERNAL_UPSCALED, name: r_internal_upscaled_color}
+      - {class: storage_texture, macro: FSR3UPSCALER_BIND_SRV_FARTHEST_DEPTH_MIP1, name: r_farthest_depth_mip1}
+      - {class: storage_texture, macro: FSR3UPSCALER_BIND_SRV_LUMA_INSTABILITY, name: r_luma_instability}
+      - {class: rw_texture, macro: FSR3UPSCALER_BIND_UAV_INTERNAL_UPSCALED, name: rw_internal_upscaled_color}
+      - {class: rw_texture, macro: FSR3UPSCALER_BIND_UAV_UPSCALED_OUTPUT, name: rw_upscaled_output, when: output_external}
+      - {class: rw_texture, macro: FSR3UPSCALER_BIND_UAV_NEW_LOCKS, name: rw_new_locks}
+      - {class: constant, macro: FSR3UPSCALER_BIND_CB_FSR3UPSCALER, name: cbFSR3Upscaler}
+    includes:
+      - fsr3upscaler/ffx_fsr3upscaler_callbacks_hlsl.h
+      - fsr3upscaler/ffx_fsr3upscaler_common.h
+      - fsr3upscaler/ffx_fsr3upscaler_sample.h
+      - fsr3upscaler/ffx_fsr3upscaler_upsample.h
+      - fsr3upscaler/ffx_fsr3upscaler_reproject.h
+      - fsr3upscaler/ffx_fsr3upscaler_accumulate.h
+    signature: "int2 iDispatchThreadId : SV_DispatchThreadID"
+    body: "Accumulate(iDispatchThreadId);"
+
+  - id: accumulate_sharpen
+    ffx_pass: FFX_FSR3UPSCALER_PASS_ACCUMULATE_SHARPEN
+    threads: [8, 8, 1]
+    dimensions: [precision, reprojection]
+    defines:
+      FFX_FSR3UPSCALER_OPTION_APPLY_SHARPENING: 1
+    bindings:
+      - {class: sampled_texture, macro: FSR3UPSCALER_BIND_SRV_INPUT_COLOR, name: r_input_color_jittered, sampler: linear_clamp}
+      - {class: sampled_texture, macro: FSR3UPSCALER_BIND_SRV_LANCZOS_LUT, name: r_lanczos_lut, sampler: linear_clamp, when: reprojection_lut}
+      - {class: storage_texture, macro: FSR3UPSCALER_BIND_SRV_INPUT_EXPOSURE, name: r_input_exposure}
+      - {class: storage_texture, macro: FSR3UPSCALER_BIND_SRV_DILATED_REACTIVE_MASKS, name: r_dilated_reactive_masks}
+      - {class: storage_texture, macro: FSR3UPSCALER_BIND_SRV_DILATED_MOTION_VECTORS, name: r_dilated_motion_vectors}
+      - {class: storage_texture, macro: FSR3UPSCALER_BIND_SRV_INTERNAL_UPSCALED, name: r_internal_upscaled_color}
+      - {class: storage_texture, macro: FSR3UPSCALER_BIND_SRV_FARTHEST_DEPTH_MIP1, name: r_farthest_depth_mip1}
+      - {class: storage_texture, macro: FSR3UPSCALER_BIND_SRV_LUMA_INSTABILITY, name: r_luma_instability}
+      - {class: rw_texture, macro: FSR3UPSCALER_BIND_UAV_INTERNAL_UPSCALED, name: rw_internal_upscaled_color}
+      - {class: rw_texture, macro: FSR3UPSCALER_BIND_UAV_NEW_LOCKS, name: rw_new_locks}
+      - {class: constant, macro: FSR3UPSCALER_BIND_CB_FSR3UPSCALER, name: cbFSR3Upscaler}
+    includes:
+      - fsr3upscaler/ffx_fsr3upscaler_callbacks_hlsl.h
+      - fsr3upscaler/ffx_fsr3upscaler_common.h
+      - fsr3upscaler/ffx_fsr3upscaler_sample.h
+      - fsr3upscaler/ffx_fsr3upscaler_upsample.h
+      - fsr3upscaler/ffx_fsr3upscaler_reproject.h
+      - fsr3upscaler/ffx_fsr3upscaler_accumulate.h
+    signature: "int2 iDispatchThreadId : SV_DispatchThreadID"
+    body: "Accumulate(iDispatchThreadId);"
+
+  - id: rcas
+    ffx_pass: FFX_FSR3UPSCALER_PASS_RCAS
+    threads: [64, 1, 1]
+    dimensions: []
+    defines:
+      FFX_FSR3UPSCALER_OPTION_APPLY_SHARPENING: 0
+      # AMD's shared common header parses FSR constants even though RCAS does
+      # not retain that buffer after dead-code elimination. The upstream pass
+      # aliases both declarations to b0.
+      FSR3UPSCALER_BIND_CB_FSR3UPSCALER: 0
+    bindings:
+      - {class: storage_texture, macro: FSR3UPSCALER_BIND_SRV_INPUT_EXPOSURE, name: r_input_exposure}
+      - {class: storage_texture, macro: FSR3UPSCALER_BIND_SRV_RCAS_INPUT, name: r_rcas_input}
+      - {class: rw_texture, macro: FSR3UPSCALER_BIND_UAV_UPSCALED_OUTPUT, name: rw_upscaled_output}
+      - {class: constant, macro: FSR3UPSCALER_BIND_CB_RCAS, name: cbRCAS}
+    includes:
+      - fsr3upscaler/ffx_fsr3upscaler_callbacks_hlsl.h
+      - fsr3upscaler/ffx_fsr3upscaler_common.h
+      - fsr3upscaler/ffx_fsr3upscaler_rcas.h
+    root_signature: cb2
+    signature: "uint3 LocalThreadId : SV_GroupThreadID, uint3 WorkGroupId : SV_GroupID, uint3 Dtid : SV_DispatchThreadID"
+    body: "RCAS(LocalThreadId, WorkGroupId, Dtid);"
+
+  - id: debug_view
+    ffx_pass: FFX_FSR3UPSCALER_PASS_DEBUG_VIEW
+    threads: [8, 8, 1]
+    dimensions: []
+    defines:
+      FFX_FSR3UPSCALER_OPTION_APPLY_SHARPENING: 0
+    bindings:
+      - {class: sampled_texture, macro: FSR3UPSCALER_BIND_SRV_INTERNAL_UPSCALED, name: r_internal_upscaled_color, sampler: linear_clamp}
+      - {class: storage_texture, macro: FSR3UPSCALER_BIND_SRV_DILATED_REACTIVE_MASKS, name: r_dilated_reactive_masks}
+      - {class: storage_texture, macro: FSR3UPSCALER_BIND_SRV_DILATED_MOTION_VECTORS, name: r_dilated_motion_vectors}
+      - {class: storage_texture, macro: FSR3UPSCALER_BIND_SRV_DILATED_DEPTH, name: r_dilated_depth}
+      - {class: rw_texture, macro: FSR3UPSCALER_BIND_UAV_UPSCALED_OUTPUT, name: rw_upscaled_output}
+      - {class: constant, macro: FSR3UPSCALER_BIND_CB_FSR3UPSCALER, name: cbFSR3Upscaler}
+    includes:
+      - fsr3upscaler/ffx_fsr3upscaler_callbacks_hlsl.h
+      - fsr3upscaler/ffx_fsr3upscaler_common.h
+      - fsr3upscaler/ffx_fsr3upscaler_debug_view.h
+    signature: "FfxInt32x2 iPxPos : SV_DispatchThreadID"
+    body: "DebugView(iPxPos);"
+
+  - id: generate_reactive
+    ffx_pass: FFX_FSR3UPSCALER_PASS_GENERATE_REACTIVE
+    threads: [8, 8, 1]
+    dimensions: [precision]
+    defines:
+      FFX_FSR3UPSCALER_OPTION_APPLY_SHARPENING: 0
+      # The upstream auto-reactive pass uses the same b0 alias as RCAS.
+      FSR3UPSCALER_BIND_CB_FSR3UPSCALER: 0
+      # AMD guards both auto-mask declarations together, although this pass
+      # writes only the reactive output and reflection removes composition.
+      FSR3UPSCALER_BIND_UAV_AUTOCOMPOSITION: 1
+    bindings:
+      - {class: storage_texture, macro: FSR3UPSCALER_BIND_SRV_INPUT_OPAQUE_ONLY, name: r_input_opaque_only}
+      - {class: storage_texture, macro: FSR3UPSCALER_BIND_SRV_INPUT_COLOR, name: r_input_color_jittered}
+      - {class: rw_texture, macro: FSR3UPSCALER_BIND_UAV_AUTOREACTIVE, name: rw_output_autoreactive}
+      - {class: constant, macro: FSR3UPSCALER_BIND_CB_REACTIVE, name: cbGenerateReactive}
+    includes:
+      - fsr3upscaler/ffx_fsr3upscaler_callbacks_hlsl.h
+      - fsr3upscaler/ffx_fsr3upscaler_common.h
+    signature: "uint2 uGroupId : SV_GroupID, uint2 uGroupThreadId : SV_GroupThreadID"
+    body: |
+      uint2 uDispatchThreadId = uGroupId * uint2(FFX_FSR3UPSCALER_THREAD_GROUP_WIDTH, FFX_FSR3UPSCALER_THREAD_GROUP_HEIGHT) + uGroupThreadId;
+      float3 ColorPreAlpha = LoadOpaqueOnly(FFX_MIN16_I2(uDispatchThreadId)).rgb;
+      float3 ColorPostAlpha = LoadInputColor(uDispatchThreadId).rgb;
+      if (GenReactiveFlags() & FFX_FSR3UPSCALER_AUTOREACTIVEFLAGS_APPLY_TONEMAP) {
+          ColorPreAlpha = Tonemap(ColorPreAlpha);
+          ColorPostAlpha = Tonemap(ColorPostAlpha);
+      }
+      if (GenReactiveFlags() & FFX_FSR3UPSCALER_AUTOREACTIVEFLAGS_APPLY_INVERSETONEMAP) {
+          ColorPreAlpha = InverseTonemap(ColorPreAlpha);
+          ColorPostAlpha = InverseTonemap(ColorPostAlpha);
+      }
+      float3 delta = abs(ColorPostAlpha - ColorPreAlpha);
+      float out_reactive_value = (GenReactiveFlags() & FFX_FSR3UPSCALER_AUTOREACTIVEFLAGS_USE_COMPONENTS_MAX) ? max(delta.x, max(delta.y, delta.z)) : length(delta);
+      out_reactive_value *= GenReactiveScale();
+      out_reactive_value = (GenReactiveFlags() & FFX_FSR3UPSCALER_AUTOREACTIVEFLAGS_APPLY_THRESHOLD) ? (out_reactive_value < GenReactiveThreshold() ? 0 : GenReactiveBinaryValue()) : out_reactive_value;
+      rw_output_autoreactive[uDispatchThreadId] = out_reactive_value;
