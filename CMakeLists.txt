@@ -74,11 +74,14 @@ find_package(zstd REQUIRED CONFIG)
 # not acquire a Vulkan SDK dependency.
 find_path(AERON_VULKAN_INCLUDE_DIR NAMES vulkan/vulkan.h)
 
-set(AERON_SHADERCROSS_EXECUTABLE "" CACHE FILEPATH
-    "Path to the host-native SDL_shadercross command line compiler")
-if(NOT AERON_SHADERCROSS_EXECUTABLE)
-    find_program(AERON_SHADERCROSS_EXECUTABLE NAMES shadercross)
+# find_program skips its search whenever the cache entry already holds a value,
+# so the entry must never be seeded ahead of it. An empty user-supplied value
+# carries no path, so drop it and let the PATH lookup run.
+if(DEFINED AERON_SHADERCROSS_EXECUTABLE AND AERON_SHADERCROSS_EXECUTABLE STREQUAL "")
+    unset(AERON_SHADERCROSS_EXECUTABLE CACHE)
 endif()
+find_program(AERON_SHADERCROSS_EXECUTABLE NAMES shadercross
+    DOC "Path to the host-native SDL_shadercross command line compiler")
 
 if(NOT EXISTS "${AERON_SHADERCROSS_EXECUTABLE}")
     message(FATAL_ERROR
