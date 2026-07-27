@@ -1110,6 +1110,7 @@ AeronFsr3Backend* AeronFsr3Backend_Create(uint32_t profileIndex, bool directHist
 	samplerDesc.address_u  = AERON_ADDRESS_CLAMP_TO_EDGE;
 	samplerDesc.address_v  = AERON_ADDRESS_CLAMP_TO_EDGE;
 	samplerDesc.address_w  = AERON_ADDRESS_CLAMP_TO_EDGE;
+	samplerDesc.max_lod    = 1000.0f;
 	backend->linearSampler = Aeron_CreateSampler(&samplerDesc);
 	samplerDesc.min_filter = AERON_FILTER_NEAREST;
 	samplerDesc.mag_filter = AERON_FILTER_NEAREST;
