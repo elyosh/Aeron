@@ -1,6 +1,7 @@
 #ifndef AERON_H
 #define AERON_H
 
+#include <stddef.h>
 #include <stdint.h>
 
 #include "aeron/audio.h"
@@ -39,6 +40,12 @@ typedef struct AeronConfig {
 	/* Compiled-shader directory, relative to the application executable. */
 	const char* shader_path;
 	const char* window_title;
+	/* Optional window/taskbar icon as an in-memory BMP passed to
+	 * SDL_SetWindowIcon on Windows and Linux. Not applied on macOS, where
+	 * the bundle icon is authoritative and SDL would instead replace the
+	 * Dock icon with this lower-resolution image. */
+	const void* window_icon_bmp;
+	size_t      window_icon_bmp_size;
 	/* Window size in logical points. <= 0 auto-sizes to ~90% of the
 	 * primary display's usable area, locked to the logical aspect. */
 	int                   window_width;

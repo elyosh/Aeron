@@ -54,6 +54,25 @@ int Aeron_WindowInit(const AeronConfig* config) {
 		return 0;
 	}
 
+	/* Application-supplied window/taskbar icon on Windows and Linux. Not
+	 * applied on macOS: SDL implements it as [NSApp setApplicationIconImage:],
+	 * which would replace the bundle icon in the Dock and app switcher with
+	 * this much lower-resolution image. */
+#ifndef SDL_PLATFORM_MACOS
+	if (config && config->window_icon_bmp && config->window_icon_bmp_size > 0) {
+		SDL_Surface* icon = SDL_LoadBMP_IO(
+			SDL_IOFromConstMem(config->window_icon_bmp, config->window_icon_bmp_size), true);
+		if (icon) {
+			if (!SDL_SetWindowIcon(g_aeron.window, icon)) {
+				Aeron_Log("aeron", "SDL_SetWindowIcon failed: %s", SDL_GetError());
+			}
+			SDL_DestroySurface(icon);
+		} else {
+			Aeron_Log("aeron", "window icon decode failed: %s", SDL_GetError());
+		}
+	}
+#endif
+
 	{
 		int pixel_w = 0;
 		int pixel_h = 0;
