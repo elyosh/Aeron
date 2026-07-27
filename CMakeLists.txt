@@ -308,6 +308,7 @@ set(AERON_SOURCES
     src/paths.c
     src/render_backend.c
     src/surface.c
+    src/sync.c
     src/time.c
     src/vfs.c
     src/window.c

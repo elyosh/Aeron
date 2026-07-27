@@ -613,20 +613,42 @@ void Aeron_AudioShutdown(void) {
 	SDL_DestroyAudioStream(g_audio.device);
 	g_audio.device = NULL;
 
+	/* Every public entry point tests g_audio.initialized and then takes the lock,
+	 * so clearing the flag and the slot table under the lock leaves a late
+	 * producer either bailed at the flag or finished before the frees below.
+	 * Owners are still expected to stop their producers before calling this. */
+	SDL_LockMutex(g_audio.lock);
+	g_audio.initialized = 0;
+	void* clip_pcm[AERON_AUDIO_MAX_CLIPS];
+	void* ring_pcm[AERON_AUDIO_MAX_RINGS];
+	void* stream_pcm[AERON_AUDIO_MAX_STREAMS];
 	for (int c = 0; c < AERON_AUDIO_MAX_CLIPS; ++c) {
-		if (g_audio.clips[c].in_use) {
-			SDL_free(g_audio.clips[c].pcm);
-		}
+		clip_pcm[c]             = g_audio.clips[c].in_use ? g_audio.clips[c].pcm : NULL;
+		g_audio.clips[c].in_use = 0;
+		g_audio.clips[c].pcm    = NULL;
 	}
 	for (int r = 0; r < AERON_AUDIO_MAX_RINGS; ++r) {
-		if (g_audio.rings[r].in_use) {
-			SDL_free(g_audio.rings[r].ring);
-		}
+		ring_pcm[r]              = g_audio.rings[r].in_use ? g_audio.rings[r].ring : NULL;
+		g_audio.rings[r].in_use  = 0;
+		g_audio.rings[r].playing = 0;
+		g_audio.rings[r].ring    = NULL;
 	}
 	for (int s = 0; s < AERON_AUDIO_MAX_STREAMS; ++s) {
-		if (g_audio.streams[s].in_use) {
-			SDL_free(g_audio.streams[s].pcm);
-		}
+		stream_pcm[s]               = g_audio.streams[s].in_use ? g_audio.streams[s].pcm : NULL;
+		g_audio.streams[s].in_use   = 0;
+		g_audio.streams[s].playing  = 0;
+		g_audio.streams[s].pcm      = NULL;
+	}
+	SDL_UnlockMutex(g_audio.lock);
+
+	for (int c = 0; c < AERON_AUDIO_MAX_CLIPS; ++c) {
+		SDL_free(clip_pcm[c]);
+	}
+	for (int r = 0; r < AERON_AUDIO_MAX_RINGS; ++r) {
+		SDL_free(ring_pcm[r]);
+	}
+	for (int s = 0; s < AERON_AUDIO_MAX_STREAMS; ++s) {
+		SDL_free(stream_pcm[s]);
 	}
 
 	SDL_BroadcastCondition(g_audio.stream_space_available);

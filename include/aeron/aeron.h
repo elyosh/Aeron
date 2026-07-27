@@ -12,6 +12,7 @@
 #include "aeron/paths.h"
 #include "aeron/render.h"
 #include "aeron/surface.h"
+#include "aeron/sync.h"
 #include "aeron/temporal.h"
 #include "aeron/time.h"
 #include "aeron/vfs.h"
