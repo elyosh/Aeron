@@ -1,3 +1,5 @@
+#include "srgb.hlsli"
+
 Texture2D<float4> g_frameTexture : register(t0, space2);
 SamplerState      g_frameSampler : register(s0, space2);
 
@@ -45,10 +47,7 @@ float4 main(float4 position : SV_Position, float2 texcoord : TEXCOORD0) : SV_Tar
 		 * piecewise sRGB curve, so it is the precise inverse of the sRGB swapchain's
 		 * hardware encode. A pow(x, 2.2) approximation crushes shadows (its inverse
 		 * differs from the sRGB encode in the low range), raising contrast. */
-		float3 c  = saturate(color.rgb);
-		float3 lo = c / 12.92;
-		float3 hi = pow((c + 0.055) / 1.055, 2.4);
-		color.rgb = lerp(hi, lo, step(c, 0.04045));
+		color.rgb = AeronSrgbToLinear(saturate(color.rgb));
 	}
 
 	float4 outputColor = color * tint + float4(bias.rgb * color.a, 0.0);

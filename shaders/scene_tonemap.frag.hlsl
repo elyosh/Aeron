@@ -24,18 +24,7 @@
  * strip convention.
  */
 
-/* ===== Output dither (8-bit LDR quantization breakup) =============
- *
- * Adds ±0.5/255 of spatial noise to the final tonemapped RGB before
- * the _SRGB store quantizes to 8 bits. Breaks up Mach-band stripes
- * across continuous gradients (mesh-shading lambert→LUT→palette
- * chain, skybox cube gradients, bloom falloffs) without changing
- * mean colour. Doesn't touch cockpit elements — those are drawn
- * after this pass and are already discrete palette colours by
- * authoring.
- *
- * Set TONEMAP_DITHER to 0 to A/B the gradient quality. */
-#define TONEMAP_DITHER  1
+#include "srgb.hlsli"
 
 /* Interleaved Gradient Noise (Bart Wronski / Jorge Jimenez). Single
  * frac() formula, no LUT, perceptually-better-than-white-noise
@@ -256,17 +245,11 @@ float4 main(VSOut input) : SV_Target
     else
         rgb = tonemap_agx_parametric(rgb);
 
-#if TONEMAP_DITHER
-    /* ±0.5/255 triangular dither (single IGN tap centred on 0). The
-     * scalar offset is added to all three channels — they share the
-     * same noise sample, which is the standard ordered-dither
-     * approach (independent per-channel noise produces visible chroma
-     * speckle on saturated gradients). Apply BEFORE the implicit
-     * sRGB encode on the swapchain store; sub-LSB linear nudges map
-     * to sub-LSB sRGB nudges within rounding. */
+    /* Perturb the encoded value by half an 8-bit code, then decode so the
+     * hardware sRGB store reconstructs that value. One scalar noise sample
+     * avoids chroma speckle. */
     float dither = (ign_dither(input.position.xy) - 0.5f) * (1.0f / 255.0f);
-    rgb += dither;
-#endif
+    rgb = AeronSrgbToLinear(saturate(AeronLinearToSrgb(saturate(rgb)) + dither));
 
     /* PMA-encode: rgb pre-multiplied by alpha so the hardware PMA-
      * over blend (src + dst*(1-src.a)) cross-fades the tonemapped

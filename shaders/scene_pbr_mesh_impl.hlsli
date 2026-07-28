@@ -39,6 +39,7 @@
 #include "scene_pbr_lighting.hlsli"
 #include "scene_pbr_atlas_sample.hlsli"
 #include "scene_pbr_vsout.hlsli"
+#include "srgb.hlsli"
 
 /* Per-material entry. Layout mirrors host GltfMaterialEntry (128 B).
  * Sub-rect zw == 0 means "channel absent for this material" → factor
@@ -60,25 +61,6 @@ StructuredBuffer<GltfMaterial> g_materials : register(t7, space2);
 StructuredBuffer<uint4> g_prim_to_material : register(t8, space2);
 
 static const uint GLTF_NO_MATERIAL = 0xFFFFFFFFu;
-
-/* Legacy fixed-function renderers filtered texture RGB in their stored
- * (display/gamma-encoded) space. Modern sRGB textures are decoded before
- * filtering, which makes the low-coverage fringe around a bright texel much
- * brighter and therefore visibly larger. */
-float3 srgb_to_linear(float3 c)
-{
-    float3 lo = c / 12.92f;
-    float3 hi = pow((c + 0.055f) / 1.055f, 2.4f);
-    return lerp(lo, hi, step(0.04045f, c));
-}
-
-float3 linear_to_srgb(float3 c)
-{
-    c = max(c, 0.0f);
-    float3 lo = c * 12.92f;
-    float3 hi = 1.055f * pow(c, 1.0f / 2.4f) - 0.055f;
-    return lerp(lo, hi, step(0.0031308f, c));
-}
 
 Texture2D    g_base_color   : register(t0, space2);
 SamplerState g_base_sampler : register(s0, space2);
@@ -386,9 +368,9 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
                  * linear HDR space. */
                 if (emissive_coverage > 1.0e-5f) {
                     float3 glow_linear = saturate(emissive_rgb / emissive_coverage);
-                    float3 glow_srgb = linear_to_srgb(glow_linear);
+                    float3 glow_srgb = AeronLinearToSrgb(glow_linear);
                     float coverage = saturate(emissive_coverage);
-                    emissive_rgb = srgb_to_linear(glow_srgb * coverage * coverage);
+                    emissive_rgb = AeronSrgbToLinear(glow_srgb * coverage * coverage);
                 } else {
                     emissive_rgb = 0.0f;
                 }
