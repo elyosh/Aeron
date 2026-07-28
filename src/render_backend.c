@@ -358,6 +358,27 @@ float Aeron_OutputSdrWhiteLevel(void) {
 	return g_aeron.hdr_sdr_white_level;
 }
 
+void Aeron_SetOutputSdrContentGamma(float gamma) {
+	if (gamma <= 0.0f) {
+		g_aeron.hdr_sdr_content_gamma = 0.0f;
+		return;
+	}
+	g_aeron.hdr_sdr_content_gamma = SDL_clamp(gamma, 1.0f, 3.0f);
+}
+
+float Aeron_OutputSdrContentGamma(void) { return g_aeron.hdr_sdr_content_gamma; }
+
+/* Effective decode gamma for display-referred layers in the current
+ * composition. Only the HDR swapchain sees the decoded linear light directly;
+ * SDR compositions round-trip through the sRGB hardware encode and must keep
+ * the exact piecewise inverse. */
+static float Aeron_OutputSdrDecodeGamma(void) {
+	if (g_aeron.swapchain_composition != SDL_GPU_SWAPCHAINCOMPOSITION_HDR_EXTENDED_LINEAR) {
+		return 0.0f;
+	}
+	return g_aeron.hdr_sdr_content_gamma;
+}
+
 float Aeron_RenderPassOutputRgbScale(const AeronRenderPass* pass) {
 	return pass && pass->output_rgb_scale > 0.0f ? pass->output_rgb_scale : 1.0f;
 }
@@ -1251,7 +1272,8 @@ static int Aeron_DrawTexture(SDL_GPUCommandBuffer* command_buffer, SDL_GPURender
 							 SDL_GPUTexture* texture, SDL_GPUSampler* sampler,
 							 SDL_GPUTextureFormat target_format, int target_w, int target_h,
 							 int texture_is_srgb, AeronColorSpace color_space, int sharp_bilinear,
-							 float output_rgb_scale, const SDL_Rect* dst_rect, AeronLayerBlendMode blend_mode,
+							 float output_rgb_scale, float decode_gamma, const SDL_Rect* dst_rect,
+							 AeronLayerBlendMode blend_mode,
 							 const float tint_rgba[4], const float bias_rgba[4],
 							 const SDL_Rect* scissor_rect) {
 	SDL_GPUViewport              viewport;
@@ -1268,10 +1290,20 @@ static int Aeron_DrawTexture(SDL_GPUCommandBuffer* command_buffer, SDL_GPURender
 
 	binding.texture      = texture;
 	binding.sampler      = sampler;
-	fragment_uniform[0]  = color_space == AERON_COLOR_SPACE_SRGB && !texture_is_srgb ? 1.0f : 0.0f;
+	/* params.x decode mode: 1 = shader-decode an sRGB-encoded source; 2 =
+	 * display-gamma remap of display-referred content that reaches the shader
+	 * already linear (through a hardware-decoding _SRGB view). Mode 2 only
+	 * acts under a positive decode gamma, so SDR compositions keep their
+	 * exact piecewise round trip without a special case here. */
+	fragment_uniform[0] = 0.0f;
+	if (color_space == AERON_COLOR_SPACE_SRGB) {
+		fragment_uniform[0] = texture_is_srgb ? 2.0f : 1.0f;
+	} else if (color_space == AERON_COLOR_SPACE_LINEAR_DISPLAY) {
+		fragment_uniform[0] = 2.0f;
+	}
 	fragment_uniform[1]  = sharp_bilinear ? 1.0f : 0.0f;
 	fragment_uniform[2]  = output_rgb_scale > 0.0f ? output_rgb_scale : 1.0f;
-	fragment_uniform[3]  = 0.0f;
+	fragment_uniform[3]  = decode_gamma > 0.0f ? decode_gamma : 0.0f;
 	fragment_uniform[4]  = tint_rgba ? tint_rgba[0] : 1.0f;
 	fragment_uniform[5]  = tint_rgba ? tint_rgba[1] : 1.0f;
 	fragment_uniform[6]  = tint_rgba ? tint_rgba[2] : 1.0f;
@@ -1363,6 +1395,16 @@ static SDL_GPUDevice* Aeron_CreateGPUDeviceWithOptionalFp16(SDL_GPUShaderFormat 
 
 int Aeron_RenderBackendInit(void) {
 	const SDL_GPUShaderFormat shader_formats = Aeron_CompiledShaderFormats();
+
+	/* Classic/frontend art targets ~2.2-power SDR displays, so decoding it
+	 * with the piecewise sRGB curve for HDR composition lifts its darks.
+	 * Apple's compositor presents SDR content with the piecewise curve
+	 * itself, so matching it there keeps SDR and HDR output identical. */
+#if defined(SDL_PLATFORM_APPLE)
+	g_aeron.hdr_sdr_content_gamma = 0.0f;
+#else
+	g_aeron.hdr_sdr_content_gamma = 2.2f;
+#endif
 
 	g_aeron.gpu_device = Aeron_CreateGPUDeviceWithOptionalFp16(shader_formats);
 	if (!g_aeron.gpu_device) {
@@ -1538,6 +1580,7 @@ int Aeron_Present(void) {
 		AeronRenderPass    borrowed_render_pass;
 		AeronRenderTarget  borrowed_render_target;
 		const float        output_rgb_scale = Aeron_OutputSdrWhiteLevel();
+		const float        sdr_decode_gamma = Aeron_OutputSdrDecodeGamma();
 
 		Aeron_ComputePresentationRect((int)swapchain_width, (int)swapchain_height, &content_rect);
 
@@ -1603,7 +1646,7 @@ int Aeron_Present(void) {
 						layer->u.pixel.preserve_encoded_values ? AERON_COLOR_SPACE_LINEAR_SRGB
 															   : layer->u.pixel.frame.color_space,
 						layer->u.pixel.sampling == AERON_PIXEL_SAMPLING_SHARP_BILINEAR, output_rgb_scale,
-						&dst_rect, layer->u.pixel.blend_mode,
+						sdr_decode_gamma, &dst_rect, layer->u.pixel.blend_mode,
 						layer->u.pixel.tint_enabled ? layer->u.pixel.tint_rgba : NULL, NULL, scissor)) {
 					Aeron_SetRenderError("Failed to record pixel layer %d for presentation", i);
 					present_ok = 0;
@@ -1621,7 +1664,7 @@ int Aeron_Present(void) {
 						command_buffer, render_pass, layer->u.texture.texture->texture,
 						g_aeron.pixel_frame_sampler, g_aeron.swapchain_format, (int)swapchain_width,
 						(int)swapchain_height, Aeron_IsSrgbTextureFormat(layer->u.texture.texture->format),
-						layer->u.texture.color_space, 1, output_rgb_scale, &dst_rect,
+						layer->u.texture.color_space, 1, output_rgb_scale, sdr_decode_gamma, &dst_rect,
 						layer->u.texture.blend_mode,
 						layer->u.texture.tint_enabled ? layer->u.texture.tint_rgba : NULL,
 						layer->u.texture.tint_enabled ? layer->u.texture.bias_rgba : NULL, scissor)) {
@@ -1874,7 +1917,9 @@ int Aeron_ComposePixelLayerToRenderTarget(AeronRenderTarget* target, const Aeron
 			Aeron_PixelSampler(desc->sampling), target_format, target->color.width, target->color.height,
 			Aeron_IsSrgbSdlTextureFormat(g_aeron.composition_pixel_upload.texture_format),
 			desc->preserve_encoded_values ? AERON_COLOR_SPACE_LINEAR_SRGB : desc->frame.color_space,
-			desc->sampling == AERON_PIXEL_SAMPLING_SHARP_BILINEAR, 1.0f, &dst_rect, desc->blend_mode,
+			/* Offscreen target: the piecewise round trip must stay exact, so no
+			 * display-gamma decode here — it applies once, at presentation. */
+			desc->sampling == AERON_PIXEL_SAMPLING_SHARP_BILINEAR, 1.0f, 0.0f, &dst_rect, desc->blend_mode,
 			desc->tint_enabled ? desc->tint_rgba : NULL, NULL, NULL)) {
 		Aeron_SetRenderError("Pixel-layer draw setup failed during render-target composition");
 		SDL_EndGPURenderPass(render_pass);

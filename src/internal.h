@@ -204,6 +204,10 @@ typedef struct AeronRuntime {
 	int                         hdr_reapply_pending;
 	float                       hdr_headroom;
 	float                       hdr_sdr_white_level;
+	/* Decode gamma for display-referred sRGB layers composited into the HDR
+	 * swapchain: 0 = piecewise sRGB curve, >0 = pow(rgb, gamma). SDR
+	 * compositions always use the piecewise curve (exact encode inverse). */
+	float                       hdr_sdr_content_gamma;
 	AeronRenderLayer            render_layers[AERON_MAX_RENDER_LAYERS];
 	uint16_t                    render_submission_generation;
 	AeronPixelLayerUpload       pixel_layer_uploads[AERON_MAX_PIXEL_LAYER_UPLOADS];

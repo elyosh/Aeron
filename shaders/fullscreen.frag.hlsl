@@ -4,7 +4,8 @@ Texture2D<float4> g_frameTexture : register(t0, space2);
 SamplerState      g_frameSampler : register(s0, space2);
 
 cbuffer FragmentUniform : register(b0, space3) {
-	float4 params; /* x: decode sRGB source to linear; y: sharp sampling; z: output RGB scale */
+	float4 params; /* x: decode sRGB source to linear; y: sharp sampling; z: output RGB scale;
+					  w: decode gamma (0 = piecewise sRGB curve, >0 = pow(rgb, w)) */
 	float4 tint;   /* RGBA multiplier applied after decode (1,1,1,1 = untinted) */
 	float4 bias;   /* additive RGB weighted by sample alpha (fade-to-color) */
 };
@@ -42,12 +43,22 @@ float4 main(float4 position : SV_Position, float2 texcoord : TEXCOORD0) : SV_Tar
 	float2 sampleTexcoord = params.y != 0.0 ? AeronSharpBilinearTexcoord(texcoord) : texcoord;
 	float4 color          = g_frameTexture.Sample(g_frameSampler, sampleTexcoord);
 
-	if (params.x != 0.0) {
-		/* Decode the sRGB-encoded (display-space) source to linear using the exact
-		 * piecewise sRGB curve, so it is the precise inverse of the sRGB swapchain's
-		 * hardware encode. A pow(x, 2.2) approximation crushes shadows (its inverse
-		 * differs from the sRGB encode in the low range), raising contrast. */
-		color.rgb = AeronSrgbToLinear(saturate(color.rgb));
+	if (params.x == 1.0) {
+		/* Decode the sRGB-encoded (display-space) source to linear. params.w = 0
+		 * selects the exact piecewise sRGB curve — the precise inverse of the sRGB
+		 * swapchain's hardware encode, keeping SDR compositions byte-exact through
+		 * the round trip. A positive params.w selects a pow(rgb, w) decode for the
+		 * HDR extended-linear composition: the compositor displays linear light
+		 * faithfully there, and display-referred art authored for ~2.2-power SDR
+		 * monitors renders with lifted darks if decoded with the piecewise toe. */
+		color.rgb = params.w > 0.0 ? pow(saturate(color.rgb), params.w)
+								   : AeronSrgbToLinear(saturate(color.rgb));
+	} else if (params.x == 2.0 && params.w > 0.0) {
+		/* Display-referred source that arrives linear (hardware _SRGB decode).
+		 * Undo the piecewise decode and reapply the display gamma so the net
+		 * transform matches the mode-1 pow decode. With params.w = 0 the
+		 * piecewise decode already is the intended result — nothing to do. */
+		color.rgb = pow(AeronLinearToSrgb(saturate(color.rgb)), params.w);
 	}
 
 	float4 outputColor = color * tint + float4(bias.rgb * color.a, 0.0);

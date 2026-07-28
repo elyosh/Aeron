@@ -52,8 +52,17 @@ typedef enum AeronPixelFormat {
 	AERON_PIXEL_FORMAT_BGRA8888
 } AeronPixelFormat;
 
-/* Describes whether incoming color values are already linear or sRGB encoded. */
-typedef enum AeronColorSpace { AERON_COLOR_SPACE_SRGB, AERON_COLOR_SPACE_LINEAR_SRGB } AeronColorSpace;
+/* Describes whether incoming color values are already linear or sRGB encoded.
+ * LINEAR_DISPLAY marks linear values that are the decoded form of
+ * display-referred SDR content (sRGB art composed through hardware _SRGB
+ * views): presentation may remap their display gamma for HDR output — see
+ * Aeron_SetOutputSdrContentGamma — which LINEAR_SRGB (scene-referred light)
+ * must never receive. */
+typedef enum AeronColorSpace {
+	AERON_COLOR_SPACE_SRGB,
+	AERON_COLOR_SPACE_LINEAR_SRGB,
+	AERON_COLOR_SPACE_LINEAR_DISPLAY
+} AeronColorSpace;
 
 /* GPU texture formats used by Aeron-owned textures and render targets.
  * Availability of the non-8-bit and block-compressed formats depends on the
@@ -846,6 +855,16 @@ float Aeron_OutputHdrHeadroom(void);
 
 /* SDR reference white in the active extended-linear swapchain encoding. */
 float Aeron_OutputSdrWhiteLevel(void);
+
+/* Decode gamma applied to display-referred (sRGB) layers when compositing
+ * into the HDR extended-linear swapchain: 0 selects the exact piecewise sRGB
+ * curve, a positive value a pow(rgb, gamma) decode (clamped to [1, 3]).
+ * Platform default is 2.2 on Windows/Linux — that art targets ~2.2-power SDR
+ * displays and the piecewise toe lifts its darks under HDR — and piecewise on
+ * Apple, whose compositor presents SDR content with the piecewise curve. SDR
+ * compositions always use the piecewise curve regardless of this setting. */
+void  Aeron_SetOutputSdrContentGamma(float gamma);
+float Aeron_OutputSdrContentGamma(void);
 
 /* RGB scale required when writing SDR-relative linear colors into this pass.
  * Offscreen and SDR passes return 1.0. */
