@@ -74,6 +74,7 @@ extern "C" void Aeron_DebugUiInitInternal(void) {
 	ImGui::CreateContext();
 
 	ImGuiIO& io = ImGui::GetIO();
+	io.ConfigFlags |= ImGuiConfigFlags_NoMouseCursorChange;
 	/* Games use arrow keys for cockpit / menu navigation; ImGui's
 	 * keyboard nav would steal them. Mouse-driven UI only. */
 	io.ConfigFlags &= ~ImGuiConfigFlags_NavEnableKeyboard;
