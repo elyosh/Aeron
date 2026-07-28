@@ -73,7 +73,7 @@ void AeronVideo_SetError(AeronVideoPlayer* player, const char* fmt, ...) {
 	player->state         = AERON_VIDEO_ERROR;
 	SDL_BroadcastCondition(player->condition);
 	SDL_UnlockMutex(player->lock);
-	Aeron_Log("aeron.video", "%s: %s", player->path, message);
+	Aeron_LogError("aeron.video", "%s: %s", player->path, message);
 }
 
 void AeronVideo_ClearFrameQueueLocked(AeronVideoPlayer* player) {
@@ -145,7 +145,7 @@ AeronVideoPlayer* Aeron_VideoOpen(const AeronVideoOpenDesc* desc) {
 
 	player->worker = SDL_CreateThread(AeronVideo_WorkerMain, "aeron-video-decode", player);
 	if (!player->worker) {
-		Aeron_Log("aeron.video", "%s: SDL_CreateThread failed: %s", player->path, SDL_GetError());
+		Aeron_LogError("aeron.video", "%s: SDL_CreateThread failed: %s", player->path, SDL_GetError());
 		SDL_DestroyCondition(player->condition);
 		SDL_DestroyMutex(player->lock);
 		AeronVfs_Close(player->file);

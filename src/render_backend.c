@@ -34,7 +34,7 @@ static void Aeron_SetRenderError(const char* fmt, ...) {
 	va_start(args, fmt);
 	SDL_vsnprintf(g_aeron.render_error, sizeof(g_aeron.render_error), fmt, args);
 	va_end(args);
-	Aeron_Log("aeron", "%s", g_aeron.render_error);
+	Aeron_LogError("aeron", "%s", g_aeron.render_error);
 }
 
 const char* Aeron_RenderLastError(void) {
@@ -161,11 +161,11 @@ static int Aeron_LoadBuiltinShaders(void) {
 
 	format_info = Aeron_SelectShaderFormat();
 	if (!format_info) {
-		Aeron_Log("aeron", "GPU backend does not support Aeron compiled shader formats");
+		Aeron_LogError("aeron", "GPU backend does not support Aeron compiled shader formats");
 		return 0;
 	}
 
-	Aeron_Log("aeron", "Loading %s shaders for SDL GPU driver '%s'", format_info->name,
+	Aeron_LogInfo("aeron", "Loading %s shaders for SDL GPU driver '%s'", format_info->name,
 			  SDL_GetGPUDeviceDriver(g_aeron.gpu_device));
 
 	g_aeron.fullscreen_vertex_shader =
@@ -287,7 +287,7 @@ static int Aeron_ApplyOutputHdr(void) {
 		if (!Aeron_ConfigureSwapchain(wanted)) {
 			return 0;
 		}
-		Aeron_Log("aeron", "HDR output %s (%s, headroom %.2f)", wanted ? "enabled" : "disabled",
+		Aeron_LogInfo("aeron", "HDR output %s (%s, headroom %.2f)", wanted ? "enabled" : "disabled",
 				  Aeron_OutputHdrStatusName(Aeron_OutputHdrStatus()), (double)g_aeron.hdr_headroom);
 	}
 	return 1;
@@ -379,14 +379,14 @@ static int Aeron_CreatePixelFrameSampler(void) {
 
 	g_aeron.pixel_frame_sampler = SDL_CreateGPUSampler(g_aeron.gpu_device, &sampler_info);
 	if (!g_aeron.pixel_frame_sampler) {
-		Aeron_Log("aeron", "SDL_CreateGPUSampler failed: %s", SDL_GetError());
+		Aeron_LogError("aeron", "SDL_CreateGPUSampler failed: %s", SDL_GetError());
 		return 0;
 	}
 	sampler_info.min_filter             = SDL_GPU_FILTER_NEAREST;
 	sampler_info.mag_filter             = SDL_GPU_FILTER_NEAREST;
 	g_aeron.pixel_frame_nearest_sampler = SDL_CreateGPUSampler(g_aeron.gpu_device, &sampler_info);
 	if (!g_aeron.pixel_frame_nearest_sampler) {
-		Aeron_Log("aeron", "SDL_CreateGPUSampler failed: %s", SDL_GetError());
+		Aeron_LogError("aeron", "SDL_CreateGPUSampler failed: %s", SDL_GetError());
 		SDL_ReleaseGPUSampler(g_aeron.gpu_device, g_aeron.pixel_frame_sampler);
 		g_aeron.pixel_frame_sampler = NULL;
 		return 0;
@@ -1350,7 +1350,7 @@ static SDL_GPUDevice* Aeron_CreateGPUDeviceWithOptionalFp16(SDL_GPUShaderFormat 
 	if (device) {
 		return device;
 	}
-	Aeron_Log("aeron", "GPU creation with optional Vulkan FP16 failed: %s; retrying baseline device",
+	Aeron_LogWarn("aeron", "GPU creation with optional Vulkan FP16 failed: %s; retrying baseline device",
 			  SDL_GetError());
 #endif
 	return SDL_CreateGPUDevice(shader_formats, false, NULL);
@@ -1361,7 +1361,7 @@ int Aeron_RenderBackendInit(void) {
 
 	g_aeron.gpu_device = Aeron_CreateGPUDeviceWithOptionalFp16(shader_formats);
 	if (!g_aeron.gpu_device) {
-		Aeron_Log("aeron", "SDL_CreateGPUDevice failed: %s", SDL_GetError());
+		Aeron_LogError("aeron", "SDL_CreateGPUDevice failed: %s", SDL_GetError());
 		return 0;
 	}
 
@@ -1369,14 +1369,14 @@ int Aeron_RenderBackendInit(void) {
 	 * Aeron samples input before rendering, so a deeper queue directly adds
 	 * input-to-display latency. */
 	if (!SDL_SetGPUAllowedFramesInFlight(g_aeron.gpu_device, 1)) {
-		Aeron_Log("aeron", "SDL_SetGPUAllowedFramesInFlight failed: %s", SDL_GetError());
+		Aeron_LogError("aeron", "SDL_SetGPUAllowedFramesInFlight failed: %s", SDL_GetError());
 		SDL_DestroyGPUDevice(g_aeron.gpu_device);
 		g_aeron.gpu_device = NULL;
 		return 0;
 	}
 
 	if (!SDL_ClaimWindowForGPUDevice(g_aeron.gpu_device, g_aeron.window)) {
-		Aeron_Log("aeron", "SDL_ClaimWindowForGPUDevice failed: %s", SDL_GetError());
+		Aeron_LogError("aeron", "SDL_ClaimWindowForGPUDevice failed: %s", SDL_GetError());
 		SDL_DestroyGPUDevice(g_aeron.gpu_device);
 		g_aeron.gpu_device = NULL;
 		return 0;
@@ -1635,7 +1635,7 @@ int Aeron_Present(void) {
 				}
 				if (!full_target || direct->required_width != (int)swapchain_width ||
 					direct->required_height != (int)swapchain_height) {
-					Aeron_Log("aeron", "skipping direct swapchain layer: required %dx%d, acquired %ux%u",
+					Aeron_LogWarn("aeron", "skipping direct swapchain layer: required %dx%d, acquired %ux%u",
 							  direct->required_width, direct->required_height, swapchain_width,
 							  swapchain_height);
 					continue;
@@ -2014,7 +2014,7 @@ static int Aeron_CommandBufferResolveCycle(AeronCommandBuffer* command_buffer, c
 			continue;
 		}
 		if (requested && !state->cycled) {
-			Aeron_Log("aeron", "Upload destination was cycled after an earlier non-cycling write");
+			Aeron_LogError("aeron", "Upload destination was cycled after an earlier non-cycling write");
 			Aeron_CommandBufferMarkFailed(command_buffer);
 			return 0;
 		}
@@ -2104,7 +2104,7 @@ static AeronUploadChunk* Aeron_CommandBufferAddUploadChunk(AeronCommandBuffer* c
 	}
 	capacity = Aeron_NextUploadChunkCapacity(command_buffer, required);
 	if (capacity == 0) {
-		Aeron_Log("aeron", "GPU upload chunk size overflow for %u bytes", required);
+		Aeron_LogError("aeron", "GPU upload chunk size overflow for %u bytes", required);
 		Aeron_CommandBufferMarkFailed(command_buffer);
 		return NULL;
 	}
@@ -2112,14 +2112,14 @@ static AeronUploadChunk* Aeron_CommandBufferAddUploadChunk(AeronCommandBuffer* c
 		new_capacity = command_buffer->upload_chunk_capacity ? command_buffer->upload_chunk_capacity * 2u : 4u;
 		if (new_capacity < command_buffer->upload_chunk_capacity ||
 			new_capacity > UINT32_MAX / (uint32_t)sizeof(*chunks)) {
-			Aeron_Log("aeron", "GPU upload chunk registry overflow");
+			Aeron_LogError("aeron", "GPU upload chunk registry overflow");
 			Aeron_CommandBufferMarkFailed(command_buffer);
 			return NULL;
 		}
 		chunks = (AeronUploadChunk*)SDL_realloc(
 			command_buffer->upload_chunks, (size_t)new_capacity * sizeof(*chunks));
 		if (!chunks) {
-			Aeron_Log("aeron", "GPU upload chunk registry allocation failed");
+			Aeron_LogError("aeron", "GPU upload chunk registry allocation failed");
 			Aeron_CommandBufferMarkFailed(command_buffer);
 			return NULL;
 		}
@@ -2218,7 +2218,7 @@ int Aeron_SubmitCommandBuffer(AeronCommandBuffer* command_buffer) {
 
 	ok = command_buffer->failed == 0;
 	if (command_buffer->compute_pass_active) {
-		Aeron_Log("aeron", "Cannot submit a command buffer with an active compute pass");
+		Aeron_LogError("aeron", "Cannot submit a command buffer with an active compute pass");
 		Aeron_EndComputePass(&command_buffer->active_compute_pass);
 		ok = 0;
 	}
@@ -2292,7 +2292,7 @@ AeronBuffer* Aeron_CreateBuffer(const AeronBufferDesc* desc) {
 
 	usage = Aeron_ToSdlBufferUsage(desc->usage);
 	if (usage == 0) {
-		Aeron_Log("aeron", "Unsupported Aeron buffer usage 0x%08x", desc->usage);
+		Aeron_LogError("aeron", "Unsupported Aeron buffer usage 0x%08x", desc->usage);
 		return NULL;
 	}
 
@@ -2483,7 +2483,7 @@ AeronTexture* Aeron_CreateTexture(const AeronTextureDesc* desc) {
 	format = Aeron_ToSdlTextureFormat(desc->format);
 	usage  = Aeron_ToSdlTextureUsage(desc->usage);
 	if (format == SDL_GPU_TEXTUREFORMAT_INVALID || usage == 0) {
-		Aeron_Log("aeron", "Unsupported Aeron texture %dx%d format %d usage 0x%08x", desc->width,
+		Aeron_LogError("aeron", "Unsupported Aeron texture %dx%d format %d usage 0x%08x", desc->width,
 				  desc->height, desc->format, desc->usage);
 		return NULL;
 	}
@@ -3623,7 +3623,7 @@ AeronComputePass* Aeron_BeginComputePass(const AeronComputePassDesc* desc) {
 	}
 	command_buffer = desc->command_buffer;
 	if (command_buffer->compute_pass_active) {
-		Aeron_Log("aeron", "Nested compute passes are not supported on one command buffer");
+		Aeron_LogError("aeron", "Nested compute passes are not supported on one command buffer");
 		return NULL;
 	}
 
@@ -3659,7 +3659,7 @@ AeronComputePass* Aeron_BeginComputePass(const AeronComputePassDesc* desc) {
 		pass->command_buffer, desc->write_texture_count ? textures : NULL, desc->write_texture_count,
 		desc->write_buffer_count ? buffers : NULL, desc->write_buffer_count);
 	if (!pass->compute_pass) {
-		Aeron_Log("aeron", "SDL_BeginGPUComputePass failed: %s", SDL_GetError());
+		Aeron_LogError("aeron", "SDL_BeginGPUComputePass failed: %s", SDL_GetError());
 		if (pass->debug_group_open) {
 			AeronGpuDebug_Pop(pass->command_buffer);
 		}
@@ -3781,7 +3781,7 @@ int Aeron_CopyTextureCmd(AeronCommandBuffer* command_buffer, const AeronTextureC
 
 	copy_pass = SDL_BeginGPUCopyPass(command_buffer->command_buffer);
 	if (!copy_pass) {
-		Aeron_Log("aeron", "SDL_BeginGPUCopyPass failed for texture copy: %s", SDL_GetError());
+		Aeron_LogError("aeron", "SDL_BeginGPUCopyPass failed for texture copy: %s", SDL_GetError());
 		Aeron_CommandBufferMarkFailed(command_buffer);
 		return 0;
 	}

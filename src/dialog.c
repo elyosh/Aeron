@@ -56,7 +56,7 @@ int Aeron_ShowMessageBox(const AeronMessageBoxOptions* options, int* selected_bu
 	data.numbuttons = (int)options->button_count;
 	data.buttons = buttons;
 	if (!SDL_ShowMessageBox(&data, &result)) {
-		Aeron_Log("aeron.dialog", "could not show message box: %s", SDL_GetError());
+		Aeron_LogError("aeron.dialog", "could not show message box: %s", SDL_GetError());
 		return 0;
 	}
 	if (selected_button) {

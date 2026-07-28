@@ -16,7 +16,8 @@
 
 #include "aeron/scene/image_cache.h"
 
-#include <stdio.h>
+#include "aeron/log.h"
+
 #include <stdlib.h>
 #include <string.h>
 
@@ -161,16 +162,16 @@ AeronTexture *Aeron_ImageUploadKtx2(AeronCommandBuffer *cmd, const Ktx2 *ktx, co
 		.debug_name = debug_name,
     });
     if (!tex) {
-        fprintf(stderr, "[Aeron_ImageUploadKtx2] texture create failed (%s)\n",
-                debug_name ? debug_name : "<unnamed>");
+        Aeron_LogError("aeron.scene", "KTX2 texture creation failed (%s)",
+                       debug_name ? debug_name : "<unnamed>");
         return NULL;
     }
 
     const uint64_t upload_count64 = (uint64_t)nl * (uint64_t)faces;
     if (upload_count64 == 0 || upload_count64 > UINT32_MAX ||
         upload_count64 > SIZE_MAX / sizeof(AeronTextureUploadDesc)) {
-        fprintf(stderr, "[Aeron_ImageUploadKtx2] invalid mip/face count (%s)\n",
-                debug_name ? debug_name : "<unnamed>");
+        Aeron_LogError("aeron.scene", "invalid KTX2 mip/face count (%s)",
+                       debug_name ? debug_name : "<unnamed>");
         Aeron_DestroyTexture(tex);
         return NULL;
     }
@@ -187,8 +188,8 @@ AeronTexture *Aeron_ImageUploadKtx2(AeronCommandBuffer *cmd, const Ktx2 *ktx, co
         for (int f = 0; f < faces; f++) {
             Ktx2Level lv = ktx2_level_face(ktx, i, f);
             if (!lv.data || lv.size == 0 || lv.size > UINT32_MAX) {
-                fprintf(stderr, "[Aeron_ImageUploadKtx2] invalid level %d face %d (%s)\n",
-                        i, f, debug_name ? debug_name : "<unnamed>");
+                Aeron_LogError("aeron.scene", "invalid KTX2 level %d face %d (%s)", i, f,
+                               debug_name ? debug_name : "<unnamed>");
                 free(uploads);
                 Aeron_DestroyTexture(tex);
                 return NULL;
@@ -205,8 +206,8 @@ AeronTexture *Aeron_ImageUploadKtx2(AeronCommandBuffer *cmd, const Ktx2 *ktx, co
         }
     }
     if (!Aeron_UploadTextureBatchCmd(cmd, uploads, upload_count)) {
-        fprintf(stderr, "[Aeron_ImageUploadKtx2] mip/face batch upload failed (%s)\n",
-                debug_name ? debug_name : "<unnamed>");
+        Aeron_LogError("aeron.scene", "KTX2 mip/face batch upload failed (%s)",
+                       debug_name ? debug_name : "<unnamed>");
         free(uploads);
         Aeron_DestroyTexture(tex);
         return NULL;
@@ -223,8 +224,7 @@ AeronTexture *Aeron_ImageLoadCubemapKtx2(AeronCommandBuffer *cmd, const char *pa
     if (!k) return NULL;
     AeronTexture *tex = NULL;
     if (ktx2_face_count(k) != 6) {
-        fprintf(stderr, "[Aeron_ImageLoadCubemapKtx2] %s: expected cube map (faces=%d)\n",
-                path, ktx2_face_count(k));
+        Aeron_LogError("aeron.scene", "%s: expected KTX2 cube map (faces=%d)", path, ktx2_face_count(k));
     } else {
         tex = Aeron_ImageUploadKtx2(cmd, k, path);
     }

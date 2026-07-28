@@ -5,6 +5,7 @@
 
 #include "aeron/scene/mesh.h"
 
+#include "aeron/log.h"
 #include "aeron/scene/image_cache.h"
 #include "aeron/scene/ktx2_reader.h"
 
@@ -203,7 +204,7 @@ AeronSceneMesh* AeronScene_MeshCreate(AeronCommandBuffer* cmd, const AeronGltfMo
 		const AeronGltfChannelKtx2* blob = &model->channels[c];
 		if (!blob->data || blob->size == 0) {
 			if (have_any_channel) {
-				fprintf(stderr, "[aeron_scene] %s: missing %s atlas\n", name, channel_name(c));
+				Aeron_LogError("aeron.scene", "%s: missing %s atlas", name, channel_name(c));
 				if (status) {
 					*status = AERON_SCENE_MESH_CREATE_INVALID_SOURCE;
 				}
@@ -256,7 +257,7 @@ AeronSceneMesh* AeronScene_MeshCreate(AeronCommandBuffer* cmd, const AeronGltfMo
 				Aeron_GpuDebugNameBuffer(s->ibo, buffer_name);
 			}
 		if (!s->vbo || !s->ibo) {
-			fprintf(stderr, "[aeron_scene] %s: geometry buffer creation failed\n", name);
+			Aeron_LogError("aeron.scene", "%s: geometry buffer creation failed", name);
 			close_channel_payloads(channel_payloads);
 			AeronScene_MeshDestroy(s);
 			return NULL;
@@ -270,7 +271,7 @@ AeronSceneMesh* AeronScene_MeshCreate(AeronCommandBuffer* cmd, const AeronGltfMo
 		s->cpu_indices =
 			(uint16_t*)malloc((size_t)model->index_count * sizeof *s->cpu_indices);
 		if (!s->cpu_vertices || !s->cpu_indices) {
-			fprintf(stderr, "[aeron_scene] %s: retained geometry allocation failed\n", name);
+			Aeron_LogError("aeron.scene", "%s: retained geometry allocation failed", name);
 			close_channel_payloads(channel_payloads);
 			AeronScene_MeshDestroy(s);
 			return NULL;
@@ -291,7 +292,7 @@ AeronSceneMesh* AeronScene_MeshCreate(AeronCommandBuffer* cmd, const AeronGltfMo
 		s->engine_glows = (AeronGltfEngineGlow*)malloc(model->engine_glow_count *
 													   sizeof *s->engine_glows);
 		if (!s->engine_glows) {
-			fprintf(stderr, "[aeron_scene] %s: engine-glow allocation failed\n", name);
+			Aeron_LogError("aeron.scene", "%s: engine-glow allocation failed", name);
 			close_channel_payloads(channel_payloads);
 			AeronScene_MeshDestroy(s);
 			return NULL;
@@ -314,7 +315,7 @@ AeronSceneMesh* AeronScene_MeshCreate(AeronCommandBuffer* cmd, const AeronGltfMo
 		ktx2_close(channel_payloads[c]);
 		channel_payloads[c] = NULL;
 		if (!s->atlas[c]) {
-			fprintf(stderr, "[aeron_scene] %s: %s atlas upload failed\n", name, channel_name(c));
+			Aeron_LogError("aeron.scene", "%s: %s atlas upload failed", name, channel_name(c));
 			close_channel_payloads(channel_payloads);
 			AeronScene_MeshDestroy(s);
 			return NULL;
@@ -333,7 +334,7 @@ AeronSceneMesh* AeronScene_MeshCreate(AeronCommandBuffer* cmd, const AeronGltfMo
 		!build_variant_storage(s, model, variant_name, &variant_values, &variant_bytes)) {
 		free(material_entries);
 		free(variant_values);
-		fprintf(stderr, "[aeron_scene] %s: material storage build failed\n", name);
+		Aeron_LogError("aeron.scene", "%s: material storage build failed", name);
 		AeronScene_MeshDestroy(s);
 		return NULL;
 	}
@@ -353,7 +354,7 @@ AeronSceneMesh* AeronScene_MeshCreate(AeronCommandBuffer* cmd, const AeronGltfMo
 	free(material_entries);
 	free(variant_values);
 	if (!buffers_uploaded) {
-		fprintf(stderr, "[aeron_scene] %s: geometry/material batch upload failed\n", name);
+		Aeron_LogError("aeron.scene", "%s: geometry/material batch upload failed", name);
 		AeronScene_MeshDestroy(s);
 		return NULL;
 	}

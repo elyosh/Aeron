@@ -10,7 +10,6 @@
 
 #include "internal.h"
 
-#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -42,7 +41,7 @@ void AeronScene_AddBillboard(AeronScene3D* s, const AeronSceneBillboardDesc* d) 
 	}
 	if (s->bb_count >= AERON_SCENE_MAX_BILLBOARDS) {
 		if (!s->bb_dropped) {
-			fprintf(stderr, "[aeron_scene] billboard cap (%d) hit; dropping\n", AERON_SCENE_MAX_BILLBOARDS);
+			Aeron_LogWarn("aeron.scene", "billboard cap (%d) hit; dropping", AERON_SCENE_MAX_BILLBOARDS);
 		}
 		s->bb_dropped++;
 		return;
@@ -254,7 +253,7 @@ static int bb3d_lens_ensure(struct AeronScene3D* s) {
 		.address_w  = AERON_ADDRESS_CLAMP_TO_EDGE,
 	});
 	if (!s->bb_lens_vs || !s->bb_lens_fs || !s->bb_depth_sampler) {
-		fprintf(stderr, "[aeron_scene] billboard3d lens shader/sampler create failed\n");
+		Aeron_LogError("aeron.scene", "billboard3d lens shader/sampler creation failed");
 		return 0;
 	}
 	s->bb_lens_pipes[AERON_SCENE_BILLBOARD_BLEND_ALPHA] =
@@ -264,7 +263,7 @@ static int bb3d_lens_ensure(struct AeronScene3D* s) {
 	s->bb_lens_pipes[AERON_SCENE_BILLBOARD_BLEND_PMA] =
 		bb3d_lens_pipeline(s, AERON_SCENE_BILLBOARD_BLEND_PMA);
 	if (!s->bb_lens_pipes[0] || !s->bb_lens_pipes[1] || !s->bb_lens_pipes[2]) {
-		fprintf(stderr, "[aeron_scene] billboard3d lens pipeline create failed\n");
+		Aeron_LogError("aeron.scene", "billboard3d lens pipeline creation failed");
 	}
 	return s->bb_lens_pipes[0] != NULL;
 }
@@ -291,7 +290,7 @@ static int bb3d_ensure(struct AeronScene3D* s) {
 		.max_lod    = 1000.0f,
 	});
 	if (!s->bb_vs || !s->bb_fs || !s->bb_sampler) {
-		fprintf(stderr, "[aeron_scene] billboard3d shader/sampler create failed\n");
+		Aeron_LogError("aeron.scene", "billboard3d shader/sampler creation failed");
 		return 0;
 	}
 	s->bb_pipes[AERON_SCENE_BILLBOARD_BLEND_ALPHA] =
@@ -305,7 +304,7 @@ static int bb3d_ensure(struct AeronScene3D* s) {
 		s->bb_temporal_vel_pipe = bb3d_pipeline(s, s->bb_vel_vs, s->bb_vel_fs, 3, 0);
 	}
 	if (!s->bb_pipes[0] || !s->bb_pipes[1] || !s->bb_pipes[2]) {
-		fprintf(stderr, "[aeron_scene] billboard3d pipeline create failed\n");
+		Aeron_LogError("aeron.scene", "billboard3d pipeline creation failed");
 	}
 	return s->bb_pipes[0] != NULL;
 }

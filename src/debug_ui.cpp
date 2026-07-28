@@ -47,7 +47,7 @@ extern "C" void Aeron_DebugRegisterTool(const char* menu_label, AeronDebugToolFn
 		return;
 	}
 	if (g_debug.tool_count >= AERON_DEBUG_MAX_TOOLS) {
-		Aeron_Log("aeron", "debug UI: tool registry full; '%s' dropped", menu_label);
+		Aeron_LogWarn("aeron", "debug UI: tool registry full; '%s' dropped", menu_label);
 		return;
 	}
 	AeronDebugTool* tool = &g_debug.tools[g_debug.tool_count++];
@@ -95,7 +95,7 @@ extern "C" void Aeron_DebugUiInitInternal(void) {
 	ImGui_ImplSDLGPU3_Init(&info);
 
 	g_debug.initialized = true;
-	Aeron_Log("aeron", "debug UI initialized");
+	Aeron_LogInfo("aeron", "debug UI initialized");
 }
 
 extern "C" void Aeron_DebugUiShutdownInternal(void) {

@@ -536,12 +536,12 @@ int Aeron_AudioInit(void) {
 
 	g_audio.lock = SDL_CreateMutex();
 	if (!g_audio.lock) {
-		Aeron_Log("aeron.audio", "SDL_CreateMutex failed: %s", SDL_GetError());
+		Aeron_LogError("aeron.audio", "SDL_CreateMutex failed: %s", SDL_GetError());
 		return 0;
 	}
 	g_audio.stream_space_available = SDL_CreateCondition();
 	if (!g_audio.stream_space_available) {
-		Aeron_Log("aeron.audio", "SDL_CreateCondition failed: %s", SDL_GetError());
+		Aeron_LogError("aeron.audio", "SDL_CreateCondition failed: %s", SDL_GetError());
 		SDL_DestroyMutex(g_audio.lock);
 		g_audio.lock = NULL;
 		return 0;
@@ -555,7 +555,7 @@ int Aeron_AudioInit(void) {
 	g_audio.device =
 		SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, Aeron_AudioCallback, NULL);
 	if (!g_audio.device) {
-		Aeron_Log("aeron.audio", "SDL_OpenAudioDeviceStream failed: %s", SDL_GetError());
+		Aeron_LogError("aeron.audio", "SDL_OpenAudioDeviceStream failed: %s", SDL_GetError());
 		SDL_DestroyCondition(g_audio.stream_space_available);
 		g_audio.stream_space_available = NULL;
 		SDL_DestroyMutex(g_audio.lock);
@@ -574,11 +574,11 @@ int Aeron_AudioInit(void) {
 	}
 
 	if (!SDL_ResumeAudioStreamDevice(g_audio.device)) {
-		Aeron_Log("aeron.audio", "SDL_ResumeAudioStreamDevice failed: %s", SDL_GetError());
+		Aeron_LogError("aeron.audio", "SDL_ResumeAudioStreamDevice failed: %s", SDL_GetError());
 	}
 
 	g_audio.initialized = 1;
-	Aeron_Log("aeron.audio", "audio device opened: %d Hz, %d ch, S16 buffer=%d frames",
+	Aeron_LogInfo("aeron.audio", "audio device opened: %d Hz, %d ch, S16 buffer=%d frames",
 			  AERON_AUDIO_DEVICE_RATE, AERON_AUDIO_DEVICE_CHANNELS, g_audio.device_buffer_input_frames);
 	return 1;
 }
@@ -594,11 +594,11 @@ void Aeron_AudioSetPaused(int paused) {
 	 * Aeron_AudioRingPlayCursorBytes resume without a skip. */
 	if (paused) {
 		if (!SDL_PauseAudioStreamDevice(g_audio.device)) {
-			Aeron_Log("aeron.audio", "SDL_PauseAudioStreamDevice failed: %s", SDL_GetError());
+			Aeron_LogError("aeron.audio", "SDL_PauseAudioStreamDevice failed: %s", SDL_GetError());
 		}
 	} else {
 		if (!SDL_ResumeAudioStreamDevice(g_audio.device)) {
-			Aeron_Log("aeron.audio", "SDL_ResumeAudioStreamDevice failed: %s", SDL_GetError());
+			Aeron_LogError("aeron.audio", "SDL_ResumeAudioStreamDevice failed: %s", SDL_GetError());
 		}
 	}
 }

@@ -831,7 +831,7 @@ static bool ExecuteClear(AeronFsr3Backend* backend, AeronCommandBuffer* commandB
 		uint32_t       height   = target->description.height;
 		const uint32_t mipCount = static_cast<uint32_t>(Aeron_TextureGetMipCount(target->texture));
 		if (!target->clearPlanLogged) {
-			Aeron_Log("fsr3", "clear plan resource %u (%s): %ux%u, %u mips, %llu bytes%s", target->resourceId,
+			Aeron_LogVerbose("fsr3", "clear plan resource %u (%s): %ux%u, %u mips, %llu bytes%s", target->resourceId,
 					  target->name[0] ? target->name : "unnamed", width, height, mipCount,
 					  static_cast<unsigned long long>(target->bytes),
 					  IsSpdMipsResource(*target) ? (backend->waveSpd ? ", wave SPD clears mips 0-5"
@@ -873,7 +873,7 @@ static bool ExecuteClear(AeronFsr3Backend* backend, AeronCommandBuffer* commandB
 	}
 
 	if (!target->clearPlanLogged && (!target->dynamic || !backend->externalClearPlanLogged)) {
-		Aeron_Log("fsr3", "clear plan resource %u (%s): %u-byte buffer", target->resourceId,
+		Aeron_LogVerbose("fsr3", "clear plan resource %u (%s): %u-byte buffer", target->resourceId,
 				  target->name[0] ? target->name : "unnamed", target->description.size);
 		if (target->dynamic) {
 			backend->externalClearPlanLogged = true;
@@ -1023,7 +1023,7 @@ static FfxErrorCode ExecuteJobs(FfxInterface* interfacePtr, FfxCommandList comma
 			case FFX_GPU_JOB_CLEAR_FLOAT: {
 				if (ClearIsSuperseded(*backend, index)) {
 					if (!backend->redundantClearLogged) {
-						Aeron_Log("fsr3", "suppressed reset clear superseded before the first FSR dispatch");
+						Aeron_LogDebug("fsr3", "suppressed reset clear superseded before the first FSR dispatch");
 						backend->redundantClearLogged = true;
 					}
 					break;
@@ -1037,7 +1037,7 @@ static FfxErrorCode ExecuteJobs(FfxInterface* interfacePtr, FfxCommandList comma
 				}
 				if (spdClearState && *spdClearState == PersistentClearState::Ready) {
 					if (target && IsSpdMipsResource(*target) && !backend->spdClearSuppressionLogged) {
-						Aeron_Log("fsr3", "suppressed steady-state SPD atomic and mip clears");
+						Aeron_LogDebug("fsr3", "suppressed steady-state SPD atomic and mip clears");
 						backend->spdClearSuppressionLogged = true;
 					}
 					break;
@@ -1100,9 +1100,9 @@ AeronFsr3Backend* AeronFsr3Backend_Create(uint32_t profileIndex, bool directHist
 		std::snprintf(backend->fallbackReason + used, sizeof(backend->fallbackReason) - used, "%s%s: %s",
 					  used ? "; " : "", unavailable.profile, unavailable.reason);
 	}
-	Aeron_Log("fsr3", "shader profile %s%s (manifest %s)%s%s", backend->profileName,
-			  backend->directHistory ? " with direct history output" : "", kFsr3ManifestHash,
-			  backend->fallbackReason[0] ? "; unavailable profiles: " : "", backend->fallbackReason);
+	Aeron_LogInfo("fsr3", "shader profile %s%s (manifest %s)%s%s", backend->profileName,
+				  backend->directHistory ? " with direct history output" : "", kFsr3ManifestHash,
+				  backend->fallbackReason[0] ? "; unavailable profiles: " : "", backend->fallbackReason);
 	AeronSamplerDesc samplerDesc {};
 	samplerDesc.min_filter = AERON_FILTER_LINEAR;
 	samplerDesc.mag_filter = AERON_FILTER_LINEAR;

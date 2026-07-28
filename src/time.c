@@ -34,7 +34,7 @@ void Aeron_RefreshPresentationTiming(void) {
 	}
 	if (refresh_hz < 1.0 || refresh_hz > 1000.0) {
 		refresh_hz = 60.0;
-		Aeron_Log("aeron", "display refresh unavailable; using 60 Hz for presentation pacing");
+		Aeron_LogWarn("aeron", "display refresh unavailable; using 60 Hz for presentation pacing");
 	}
 	g_aeron.presentation_display_id = display_id;
 	g_aeron.display_refresh_hz = refresh_hz;

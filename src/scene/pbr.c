@@ -18,7 +18,6 @@
 
 #include "internal.h"
 
-#include <stdio.h>
 #include <string.h>
 
 /* Per-instance VS cbuffer (b0 space1) — mirrors `cbuffer
@@ -50,7 +49,7 @@ static AeronShader* pbr_shader(const char* name, AeronShaderStage stage, uint32_
 		.name = name, .stage = stage, .sampler_count = samplers,
 		.uniform_buffer_count = ubs, .storage_buffer_count = sbs });
 	if (!sh) {
-		fprintf(stderr, "[aeron_scene] pbr shader load failed: %s\n", name);
+		Aeron_LogError("aeron.scene", "PBR shader load failed: %s", name);
 	}
 	return sh;
 }
@@ -205,7 +204,8 @@ AeronGraphicsPipeline* AeronScenePbr_Pipeline(struct AeronScene3D* s, int kind, 
 	if (!s->pbr_pipes[kind][cull]) {
 		s->pbr_pipes[kind][cull] = pbr_pipeline_create(s, kind, cull, s->pbr_fs);
 		if (!s->pbr_pipes[kind][cull] && cull != AERON_CULL_NONE) {
-			fprintf(stderr, "[aeron_scene] pbr pipeline (kind %d, cull %d) create failed\n", kind, (int)cull);
+			Aeron_LogWarn("aeron.scene", "PBR pipeline creation failed (kind %d, cull %d); using no-cull variant",
+						  kind, (int)cull);
 			return s->pbr_pipes[kind][AERON_CULL_NONE];
 		}
 	}
@@ -280,7 +280,7 @@ int AeronScenePbr_Ensure(struct AeronScene3D* s) {
 		s->pbr_pipes[kind][AERON_CULL_NONE] = pbr_pipeline_create(s, kind, AERON_CULL_NONE, s->pbr_fs);
 	}
 	if (!s->pbr_pipes[AERON_PBR_PIPE_MESH][AERON_CULL_NONE]) {
-		fprintf(stderr, "[aeron_scene] pbr pipeline create failed\n");
+		Aeron_LogError("aeron.scene", "PBR pipeline creation failed");
 	}
 	return s->pbr_pipes[AERON_PBR_PIPE_MESH][AERON_CULL_NONE] != NULL;
 }

@@ -50,7 +50,7 @@ AeronTimer Aeron_TimerCreate(unsigned int interval_ms, void (*callback)(void* us
 		if (!slot->guard) {
 			slot->guard = SDL_CreateMutex();
 			if (!slot->guard) {
-				Aeron_Log("aeron.sync", "SDL_CreateMutex failed: %s", SDL_GetError());
+				Aeron_LogError("aeron.sync", "SDL_CreateMutex failed: %s", SDL_GetError());
 				return 0;
 			}
 		}
@@ -67,7 +67,7 @@ AeronTimer Aeron_TimerCreate(unsigned int interval_ms, void (*callback)(void* us
 
 		SDL_TimerID id = SDL_AddTimer(interval_ms, Aeron_TimerTrampoline, slot);
 		if (!id) {
-			Aeron_Log("aeron.sync", "SDL_AddTimer failed: %s", SDL_GetError());
+			Aeron_LogError("aeron.sync", "SDL_AddTimer failed: %s", SDL_GetError());
 			slot->callback = NULL;
 			slot->user     = NULL;
 			slot->in_use   = 0;
@@ -79,7 +79,7 @@ AeronTimer Aeron_TimerCreate(unsigned int interval_ms, void (*callback)(void* us
 		return (AeronTimer)(i + 1);
 	}
 
-	Aeron_Log("aeron.sync", "no free timer slot (max %d)", AERON_MAX_TIMERS);
+	Aeron_LogWarn("aeron.sync", "no free timer slot (max %d)", AERON_MAX_TIMERS);
 	return 0;
 }
 
@@ -108,7 +108,7 @@ void Aeron_TimerDestroy(AeronTimer timer) {
 AeronMutex* Aeron_MutexCreate(void) {
 	SDL_Mutex* mutex = SDL_CreateMutex();
 	if (!mutex) {
-		Aeron_Log("aeron.sync", "SDL_CreateMutex failed: %s", SDL_GetError());
+		Aeron_LogError("aeron.sync", "SDL_CreateMutex failed: %s", SDL_GetError());
 	}
 	return (AeronMutex*)mutex;
 }

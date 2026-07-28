@@ -3,7 +3,6 @@
 #include "internal.h"
 
 #include <stddef.h>
-#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -29,7 +28,7 @@ void AeronScene_AddMeshOverlay(AeronScene3D* scene, const AeronSceneMeshOverlayD
 	if (scene->overlay_count >= AERON_SCENE_MAX_MESH_OVERLAYS ||
 		overlay->vertex_count > AERON_SCENE_MAX_OVERLAY_VERTS - scene->overlay_vertex_count) {
 		if (!scene->overlays_dropped) {
-			fprintf(stderr, "[aeron_scene] mesh-overlay cap hit; dropping\n");
+			Aeron_LogWarn("aeron.scene", "mesh-overlay cap hit; dropping");
 		}
 		scene->overlays_dropped++;
 		return;

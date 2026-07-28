@@ -6,8 +6,6 @@
 
 #include "aeron/aeron.h"
 
-#include <stdio.h>
-
 AeronShader* AeronSceneInternal_CompileShader(const char* name, AeronShaderStage stage,
 											  uint32_t samplers, uint32_t ubs, uint32_t sbs) {
 	AeronShader* sh = Aeron_CreateShader(&(AeronShaderDesc){ .name                 = name,
@@ -16,7 +14,7 @@ AeronShader* AeronSceneInternal_CompileShader(const char* name, AeronShaderStage
 															 .uniform_buffer_count = ubs,
 															 .storage_buffer_count = sbs });
 	if (!sh) {
-		fprintf(stderr, "[aeron_scene] shader load failed: %s\n", name);
+		Aeron_LogError("aeron.scene", "shader load failed: %s", name);
 	}
 	return sh;
 }

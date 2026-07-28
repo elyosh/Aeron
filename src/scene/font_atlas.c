@@ -5,6 +5,8 @@
 
 #include "aeron/scene/font_atlas.h"
 
+#include "aeron/log.h"
+
 #define STB_IMAGE_IMPLEMENTATION
 #define STBI_ONLY_PNG
 #include "stb_image.h"
@@ -63,17 +65,17 @@ int AeronFontAtlas_Load(AeronFontAtlas* out, AeronCommandBuffer* cmd, const char
 	snprintf(path, sizeof path, "%s.fnt", basename);
 	uint8_t* fnt = read_file(path, &fnt_size);
 	if (!fnt) {
-		fprintf(stderr, "[aeron_scene] font: open '%s' failed\n", path);
+		Aeron_LogError("aeron.scene", "font: open '%s' failed", path);
 		return 0;
 	}
 	if (fnt_size < 24 || rd_u32le(fnt) != AERON_FNT_MAGIC) {
-		fprintf(stderr, "[aeron_scene] font: '%s' bad magic / truncated\n", path);
+		Aeron_LogError("aeron.scene", "font: '%s' bad magic / truncated", path);
 		free(fnt);
 		return 0;
 	}
 	const uint16_t version = rd_u16le(fnt + 4);
 	if (version != 2) {
-		fprintf(stderr, "[aeron_scene] font: '%s' unsupported version %u\n", path, version);
+		Aeron_LogError("aeron.scene", "font: '%s' unsupported version %u", path, version);
 		free(fnt);
 		return 0;
 	}
@@ -85,7 +87,7 @@ int AeronFontAtlas_Load(AeronFontAtlas* out, AeronCommandBuffer* cmd, const char
 	const uint16_t cell_h   = rd_u16le(fnt + 16);
 	const uint16_t baseline = rd_u16le(fnt + 18);
 	if (!count || fnt_size < (size_t)24 + (size_t)count * 10) {
-		fprintf(stderr, "[aeron_scene] font: '%s' truncated records\n", path);
+		Aeron_LogError("aeron.scene", "font: '%s' truncated records", path);
 		free(fnt);
 		return 0;
 	}
@@ -109,14 +111,13 @@ int AeronFontAtlas_Load(AeronFontAtlas* out, AeronCommandBuffer* cmd, const char
 	int      png_w = 0, png_h = 0, png_n = 0;
 	uint8_t* pixels = stbi_load(path, &png_w, &png_h, &png_n, 4);
 	if (!pixels) {
-		fprintf(stderr, "[aeron_scene] font: stbi_load '%s' failed: %s\n", path,
-				stbi_failure_reason());
+		Aeron_LogError("aeron.scene", "font: stbi_load '%s' failed: %s", path, stbi_failure_reason());
 		free(glyphs);
 		return 0;
 	}
 	if (png_w != (int)atlas_w || png_h != (int)atlas_h) {
-		fprintf(stderr, "[aeron_scene] font: '%s' dims %dx%d don't match .fnt %ux%u\n", path,
-				png_w, png_h, atlas_w, atlas_h);
+		Aeron_LogError("aeron.scene", "font: '%s' dims %dx%d don't match .fnt %ux%u", path, png_w, png_h,
+					   atlas_w, atlas_h);
 		stbi_image_free(pixels);
 		free(glyphs);
 		return 0;
@@ -144,7 +145,7 @@ int AeronFontAtlas_Load(AeronFontAtlas* out, AeronCommandBuffer* cmd, const char
 	}
 	stbi_image_free(pixels);
 	if (!tex) {
-		fprintf(stderr, "[aeron_scene] font: atlas GPU upload failed (%s)\n", path);
+		Aeron_LogError("aeron.scene", "font: atlas GPU upload failed (%s)", path);
 		free(glyphs);
 		return 0;
 	}

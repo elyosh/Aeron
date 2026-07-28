@@ -50,7 +50,7 @@ int Aeron_WindowInit(const AeronConfig* config) {
 	g_aeron.window =
 		SDL_CreateWindow(title, width, height, SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY);
 	if (!g_aeron.window) {
-		Aeron_Log("aeron", "SDL_CreateWindow failed: %s", SDL_GetError());
+		Aeron_LogError("aeron", "SDL_CreateWindow failed: %s", SDL_GetError());
 		return 0;
 	}
 
@@ -64,11 +64,11 @@ int Aeron_WindowInit(const AeronConfig* config) {
 			SDL_IOFromConstMem(config->window_icon_bmp, config->window_icon_bmp_size), true);
 		if (icon) {
 			if (!SDL_SetWindowIcon(g_aeron.window, icon)) {
-				Aeron_Log("aeron", "SDL_SetWindowIcon failed: %s", SDL_GetError());
+				Aeron_LogWarn("aeron", "SDL_SetWindowIcon failed: %s", SDL_GetError());
 			}
 			SDL_DestroySurface(icon);
 		} else {
-			Aeron_Log("aeron", "window icon decode failed: %s", SDL_GetError());
+			Aeron_LogWarn("aeron", "window icon decode failed: %s", SDL_GetError());
 		}
 	}
 #endif
@@ -78,14 +78,14 @@ int Aeron_WindowInit(const AeronConfig* config) {
 		int pixel_h = 0;
 		SDL_GetWindowSizeInPixels(g_aeron.window, &pixel_w, &pixel_h);
 		Aeron_UpdatePresentationPixelSize();
-		Aeron_Log("aeron", "window %dx%d pt, %dx%d px (logical %dx%d)", width, height, pixel_w, pixel_h,
+		Aeron_LogInfo("aeron", "window %dx%d pt, %dx%d px (logical %dx%d)", width, height, pixel_w, pixel_h,
 				  g_aeron.logical_width, g_aeron.logical_height);
 	}
 
 	if (g_aeron.presentation_mode == AERON_PRESENTATION_ASPECT_FIT) {
 		const float aspect = (float)g_aeron.logical_width / (float)g_aeron.logical_height;
 		if (!SDL_SetWindowAspectRatio(g_aeron.window, aspect, aspect)) {
-			Aeron_Log("aeron", "SDL_SetWindowAspectRatio failed: %s", SDL_GetError());
+			Aeron_LogWarn("aeron", "SDL_SetWindowAspectRatio failed: %s", SDL_GetError());
 		}
 	}
 
@@ -122,7 +122,7 @@ int Aeron_SetFullscreen(int fullscreen) {
 		return 1;
 	}
 	if (!SDL_SetWindowFullscreen(g_aeron.window, fullscreen)) {
-		Aeron_Log("aeron", "SDL_SetWindowFullscreen failed: %s", SDL_GetError());
+		Aeron_LogWarn("aeron", "SDL_SetWindowFullscreen failed: %s", SDL_GetError());
 		return 0;
 	}
 
@@ -209,7 +209,7 @@ int Aeron_SetRelativeMouseMode(int enabled) {
 	}
 
 	if (!SDL_SetWindowRelativeMouseMode(g_aeron.window, enabled)) {
-		Aeron_Log("aeron", "SDL_SetWindowRelativeMouseMode failed: %s", SDL_GetError());
+		Aeron_LogWarn("aeron", "SDL_SetWindowRelativeMouseMode failed: %s", SDL_GetError());
 		return 0;
 	}
 

@@ -9,6 +9,8 @@
 
 #include "aeron/scene/ktx2_reader.h"
 
+#include "aeron/log.h"
+
 #include <stdarg.h>
 #include <stdbool.h>
 
@@ -67,9 +69,8 @@ static void ktx2_log(const char *fmt, ...)
 {
     va_list args;
     va_start(args, fmt);
-    vfprintf(stderr, fmt, args);
+    Aeron_LogMessageV(AERON_LOG_ERROR, "aeron.scene", fmt, args);
     va_end(args);
-    fputc('\n', stderr);
 }
 
 static uint32_t rd_u32_le(const uint8_t *p)

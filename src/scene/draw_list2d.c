@@ -6,9 +6,10 @@
 
 #include "aeron/scene/draw_list2d.h"
 
+#include "aeron/log.h"
+
 #include <SDL3/SDL.h>
 
-#include <stdio.h>
 #include <math.h>
 #include <string.h>
 
@@ -65,7 +66,7 @@ static int blit2d_ensure(void) {
 		.uniform_buffer_count = 1,
 	});
 	if (!G.vs || !G.fs || !G.vs4) {
-		fprintf(stderr, "[aeron_scene] blit shader load failed\n");
+		Aeron_LogError("aeron.scene", "blit shader load failed");
 		G.failed = 1;
 		return 0;
 	}
@@ -89,7 +90,7 @@ static int blit2d_ensure(void) {
 	s.mip_filter      = AERON_FILTER_LINEAR;
 	G.sampler_linear  = Aeron_CreateSampler(&s);
 	if (!G.sampler_nearest || !G.sampler_linear) {
-		fprintf(stderr, "[aeron_scene] blit sampler create failed\n");
+		Aeron_LogError("aeron.scene", "blit sampler creation failed");
 		G.failed = 1;
 		return 0;
 	}
@@ -149,7 +150,7 @@ static AeronGraphicsPipeline* cache_lookup(Blit2DPipelineEntry* entries, int* co
 		}
 	}
 	if (*count >= AERON_BLIT2D_PIPELINE_CACHE_CAP) {
-		fprintf(stderr, "[aeron_scene] %s cache full\n", what);
+		Aeron_LogWarn("aeron.scene", "%s cache full", what);
 		return NULL;
 	}
 	/* No depth read or write — blits run in passes that may or may not
@@ -166,8 +167,8 @@ static AeronGraphicsPipeline* cache_lookup(Blit2DPipelineEntry* entries, int* co
 		.blend           = blit_blend_state(blend),
 	});
 	if (!p) {
-		fprintf(stderr, "[aeron_scene] %s create failed (fmt=%d blend=%d depth=%d)\n", what,
-				(int)color_format, (int)blend, (int)depth_format);
+		Aeron_LogError("aeron.scene", "%s creation failed (fmt=%d blend=%d depth=%d)", what,
+					   (int)color_format, (int)blend, (int)depth_format);
 		return NULL;
 	}
 	entries[(*count)++] = (Blit2DPipelineEntry){
@@ -340,7 +341,7 @@ static Dl2dRecord* dl2d_alloc(AeronDrawList2D* l) {
 	}
 	if (l->count >= l->cap) {
 		if (!l->dropped) {
-			fprintf(stderr, "[aeron_scene] drawlist2d record cap (%d) hit; dropping\n", l->cap);
+			Aeron_LogWarn("aeron.scene", "drawlist2d record cap (%d) hit; dropping", l->cap);
 		}
 		l->dropped++;
 		return NULL;
@@ -565,9 +566,8 @@ int AeronDrawList_Prepare(AeronDrawList2D* l, AeronCommandBuffer* cmd) {
 		if (!replacement) {
 			l->prepared = 0;
 			if (!l->storage_error_logged) {
-				fprintf(stderr,
-						"[aeron_scene] drawlist2d storage allocation failed (%u bytes): %s\n",
-						capacity, SDL_GetError());
+				Aeron_LogError("aeron.scene", "drawlist2d storage allocation failed (%u bytes): %s", capacity,
+							   SDL_GetError());
 				l->storage_error_logged = 1;
 			}
 			Aeron_CommandBufferSetFailure(cmd, "2D draw-list storage allocation failed");
@@ -580,8 +580,8 @@ int AeronDrawList_Prepare(AeronDrawList2D* l, AeronCommandBuffer* cmd) {
 	if (!Aeron_UploadBufferDataCmd(cmd, l->instance_buffer, 0, l->instances, required)) {
 		l->prepared = 0;
 		if (!l->storage_error_logged) {
-			fprintf(stderr, "[aeron_scene] drawlist2d storage upload failed (%u bytes): %s\n",
-					required, SDL_GetError());
+			Aeron_LogError("aeron.scene", "drawlist2d storage upload failed (%u bytes): %s", required,
+						   SDL_GetError());
 			l->storage_error_logged = 1;
 		}
 		return 0;

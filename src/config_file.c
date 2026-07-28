@@ -317,7 +317,7 @@ static AeronConfigNode* AeronConfig_ConvertMapping(yaml_document_t* document, co
 
 		key_node = yaml_document_get_node(document, pair->key);
 		if (!key_node || key_node->type != YAML_SCALAR_NODE) {
-			Aeron_Log("aeron.config", "YAML config map keys must be scalar values");
+			Aeron_LogError("aeron.config", "YAML config map keys must be scalar values");
 			AeronConfigNode_Destroy(node);
 			return NULL;
 		}
@@ -343,7 +343,7 @@ static AeronConfigNode* AeronConfig_ConvertYamlNode(yaml_document_t* document, i
 	yaml_node_t* yaml_node;
 
 	if (depth > AERON_CONFIG_MAX_DEPTH) {
-		Aeron_Log("aeron.config", "YAML config nesting exceeds %d levels", AERON_CONFIG_MAX_DEPTH);
+		Aeron_LogError("aeron.config", "YAML config nesting exceeds %d levels", AERON_CONFIG_MAX_DEPTH);
 		return NULL;
 	}
 
@@ -406,7 +406,7 @@ static void AeronConfig_LogYamlError(const char* path, const yaml_parser_t* pars
 	const char* problem;
 
 	problem = parser->problem ? parser->problem : "parse error";
-	Aeron_Log("aeron.config", "%s:%zu:%zu: %s", path ? path : "<yaml>", parser->problem_mark.line + 1,
+	Aeron_LogError("aeron.config", "%s:%zu:%zu: %s", path ? path : "<yaml>", parser->problem_mark.line + 1,
 			  parser->problem_mark.column + 1, problem);
 }
 
@@ -470,7 +470,7 @@ int AeronConfigFile_LoadYaml(AeronVfs* vfs, AeronVfsRoot root, const char* path,
 	}
 
 	if (yaml_document_get_root_node(&extra_document)) {
-		Aeron_Log("aeron.config", "%s: YAML config files must contain a single document",
+		Aeron_LogError("aeron.config", "%s: YAML config files must contain a single document",
 				  path ? path : "<yaml>");
 		AeronConfigFile_Destroy(config);
 		goto done;

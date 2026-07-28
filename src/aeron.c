@@ -20,11 +20,11 @@ void Aeron_CopyString(char* dst, size_t dst_size, const char* src) {
 static int Aeron_ResolveApplicationRoot(char* out, size_t capacity, const char* relative_path,
 										const char* description) {
 	if (!relative_path || !relative_path[0]) {
-		Aeron_Log("aeron", "application-relative %s path is not configured", description);
+		Aeron_LogError("aeron", "application-relative %s path is not configured", description);
 		return 0;
 	}
 	if (!Aeron_ApplicationPath(relative_path, out, capacity)) {
-		Aeron_Log("aeron", "could not resolve application-relative %s path: %s", description, SDL_GetError());
+		Aeron_LogError("aeron", "could not resolve application-relative %s path: %s", description, SDL_GetError());
 		return 0;
 	}
 	return 1;
@@ -57,7 +57,7 @@ int Aeron_Init(const AeronConfig* config) {
 	SDL_SetAppMetadata(g_aeron.app_name, NULL, NULL);
 
 	if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_GAMEPAD)) {
-		Aeron_Log("aeron", "SDL_Init failed: %s", SDL_GetError());
+		Aeron_LogError("aeron", "SDL_Init failed: %s", SDL_GetError());
 		return 0;
 	}
 	if (!Aeron_ResolveShaderRoot(config)) {
@@ -91,7 +91,7 @@ int Aeron_Init(const AeronConfig* config) {
 
 	if (!Aeron_AudioInit()) {
 		/* Audio is non-fatal: continue without sound rather than failing init. */
-		Aeron_Log("aeron", "audio subsystem unavailable; continuing without sound");
+		Aeron_LogWarn("aeron", "audio subsystem unavailable; continuing without sound");
 	}
 
 	Aeron_GamepadsInit();

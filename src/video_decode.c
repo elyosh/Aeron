@@ -721,7 +721,7 @@ static int AeronVideo_InitDecoder(AeronVideoDecodeContext* decode) {
 	SDL_BroadcastCondition(player->condition);
 	SDL_UnlockMutex(player->lock);
 
-	Aeron_Log("aeron.video", "%s: %s, video=%s %dx%d, audio=%s %d Hz/%d ch", player->path,
+	Aeron_LogInfo("aeron.video", "%s: %s, video=%s %dx%d, audio=%s %d Hz/%d ch", player->path,
 			  player->info.container, player->info.has_video ? player->info.video_codec : "none",
 			  player->info.width, player->info.height,
 			  player->info.has_audio ? player->info.audio_codec : "none", player->info.audio_sample_rate,
@@ -909,7 +909,7 @@ int AeronVideo_WorkerMain(void* userdata) {
 				const uint64_t trimmed = player->audio_frames_trimmed;
 				SDL_UnlockMutex(player->lock);
 				if (trimmed > decode.reported_audio_frames_trimmed) {
-					Aeron_Log("aeron.video", "%s: trimmed %llu audio frames beyond the media duration",
+					Aeron_LogWarn("aeron.video", "%s: trimmed %llu audio frames beyond the media duration",
 							  player->path,
 							  (unsigned long long)(trimmed - decode.reported_audio_frames_trimmed));
 					decode.reported_audio_frames_trimmed = trimmed;

@@ -119,7 +119,7 @@ static void Aeron_MarkAmbiguousCaseEntries(AeronVfsCaseDirectory* directory) {
 			for (i = first; i < end; ++i) {
 				directory->entries[i].ambiguous = 1;
 			}
-			Aeron_Log("aeron.vfs", "ambiguous case-insensitive names in '%s': '%s' and '%s'",
+			Aeron_LogWarn("aeron.vfs", "ambiguous case-insensitive names in '%s': '%s' and '%s'",
 					  directory->host_path, directory->entries[first].name,
 					  directory->entries[first + 1].name);
 		}

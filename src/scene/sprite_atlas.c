@@ -101,7 +101,7 @@ bool Aeron_SpriteAtlasLoad(AeronSpriteAtlas *out, const char *yaml_path) {
 
     FILE *fp = fopen(yaml_path, "rb");
     if (!fp) {
-        Aeron_Log("aeron.scene", "[atlas] cannot open %s", yaml_path);
+        Aeron_LogError("aeron.scene", "[atlas] cannot open %s", yaml_path);
         return false;
     }
 
@@ -114,7 +114,7 @@ bool Aeron_SpriteAtlasLoad(AeronSpriteAtlas *out, const char *yaml_path) {
     yaml_parser_set_input_file(&parser, fp);
 
     if (!yaml_parser_load(&parser, &doc)) {
-        Aeron_Log("aeron.scene", "[atlas] %s: parse error at line %lu col %lu: %s",
+        Aeron_LogError("aeron.scene", "[atlas] %s: parse error at line %lu col %lu: %s",
                 yaml_path,
                 (unsigned long)parser.problem_mark.line + 1,
                 (unsigned long)parser.problem_mark.column + 1,
@@ -126,7 +126,7 @@ bool Aeron_SpriteAtlasLoad(AeronSpriteAtlas *out, const char *yaml_path) {
 
     yaml_node_t *root = yaml_document_get_root_node(&doc);
     if (!root || root->type != YAML_MAPPING_NODE) {
-        Aeron_Log("aeron.scene", "[atlas] %s: top-level node is not a mapping", yaml_path);
+        Aeron_LogError("aeron.scene", "[atlas] %s: top-level node is not a mapping", yaml_path);
         goto fail;
     }
 
@@ -157,7 +157,7 @@ bool Aeron_SpriteAtlasLoad(AeronSpriteAtlas *out, const char *yaml_path) {
             out->classic_h = (int16_t *)calloc((size_t)n, sizeof(int16_t));
             if (!out->frames || !out->origin_x || !out->origin_y ||
                 !out->ids || !out->pages || !out->classic_w || !out->classic_h) {
-                Aeron_Log("aeron.scene", "[atlas] %s: out of memory (%d frames)",
+                Aeron_LogError("aeron.scene", "[atlas] %s: out of memory (%d frames)",
                         yaml_path, n);
                 goto fail;
             }
@@ -213,7 +213,7 @@ bool Aeron_SpriteAtlasLoad(AeronSpriteAtlas *out, const char *yaml_path) {
     fclose(fp);
 
     if (out->frame_count == 0) {
-        Aeron_Log("aeron.scene", "[atlas] %s: no `frames:` sequence found",
+        Aeron_LogError("aeron.scene", "[atlas] %s: no `frames:` sequence found",
                 yaml_path);
         Aeron_SpriteAtlasFree(out);
         return false;

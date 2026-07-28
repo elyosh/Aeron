@@ -31,12 +31,12 @@ void AeronScenePresent_SetTonemapOp(int op) {
 		return;
 	}
 	s_tonemap_op = op;
-	Aeron_Log("aeron.scene", "tonemap operator: %s", tonemap_op_name(s_tonemap_op));
+	Aeron_LogInfo("aeron.scene", "tonemap operator: %s", tonemap_op_name(s_tonemap_op));
 }
 
 void AeronScenePresent_ToggleTonemapOp(void) {
 	s_tonemap_op = (s_tonemap_op + 1) % AERON_SCENE_TONEMAP_COUNT;
-	Aeron_Log("aeron.scene", "tonemap operator: %s", tonemap_op_name(s_tonemap_op));
+	Aeron_LogInfo("aeron.scene", "tonemap operator: %s", tonemap_op_name(s_tonemap_op));
 }
 
 static int s_bloom_kernel = AERON_SCENE_BLOOM_KERNEL_4_TAP;
@@ -48,7 +48,7 @@ void AeronScenePresent_SetBloomKernel(int mode) {
 		return;
 	}
 	s_bloom_kernel = mode;
-	Aeron_Log("aeron.scene", "bloom kernel: %s",
+	Aeron_LogInfo("aeron.scene", "bloom kernel: %s",
 			  mode == AERON_SCENE_BLOOM_KERNEL_1_TAP ? "1 tap" : "4 tap");
 }
 

@@ -258,18 +258,17 @@ static int scene_prepare_mode(AeronScene3D* s) {
 	AeronTemporalMode requested =
 		scene_temporal_mode_valid(s->temporal.mode) ? s->temporal.mode : AERON_TEMPORAL_OFF;
 	if (requested != s->temporal_active_mode && !scene_reconfigure(s, requested)) {
-		fprintf(stderr, "[aeron_scene] failed to configure temporal mode %s\n",
-				AeronTemporal_ModeName(requested));
+		Aeron_LogError("aeron.scene", "failed to configure temporal mode %s", AeronTemporal_ModeName(requested));
 		return 0;
 	}
 	if (requested != AERON_TEMPORAL_OFF && !AeronSceneTemporal_Ensure(s)) {
-		fprintf(stderr, "[aeron_scene] temporal upscaling initialization failed\n");
+		Aeron_LogError("aeron.scene", "temporal upscaling initialization failed");
 		return 0;
 	}
 	if (requested != AERON_TEMPORAL_OFF &&
 		(!s->normal_rt || !AeronScenePbr_Ensure(s) ||
 		 !AeronScenePbr_Pipeline(s, AERON_PBR_PIPE_PREPASS_TEMPORAL, AERON_CULL_NONE))) {
-		fprintf(stderr, "[aeron_scene] temporal velocity rendering is unavailable\n");
+		Aeron_LogError("aeron.scene", "temporal velocity rendering is unavailable");
 		return 0;
 	}
 	return s->color_rt && s->depth_rt;
@@ -300,8 +299,8 @@ AeronScene3D* AeronScene_Create(const AeronScene3DDesc* desc) {
 		desc && desc->sample_count ? desc->sample_count : AERON_SAMPLE_COUNT_1;
 	s->sample_count = scene_supported_sample_count(s->color_format, requested_samples);
 	if (s->sample_count != requested_samples) {
-		fprintf(stderr, "[aeron_scene] requested %dx MSAA unsupported for scene color/depth; using %dx\n",
-				(int)requested_samples, (int)s->sample_count);
+		Aeron_LogWarn("aeron.scene", "requested %dx MSAA unsupported for scene color/depth; using %dx",
+					  (int)requested_samples, (int)s->sample_count);
 	}
 	/* MSAA keeps a single-sample prepass for post effects and lens occlusion. */
 	s->with_normal_rt       = (desc && desc->with_normal_rt) || s->sample_count != AERON_SAMPLE_COUNT_1;
@@ -309,7 +308,7 @@ AeronScene3D* AeronScene_Create(const AeronScene3DDesc* desc) {
 	s->temporal.mode =
 		desc && scene_temporal_mode_valid(desc->temporal_mode) ? desc->temporal_mode : AERON_TEMPORAL_OFF;
 	if (s->sample_count != AERON_SAMPLE_COUNT_1 && s->temporal.mode != AERON_TEMPORAL_OFF) {
-		fprintf(stderr, "[aeron_scene] temporal upscaling disabled while MSAA is active\n");
+		Aeron_LogWarn("aeron.scene", "temporal upscaling disabled while MSAA is active");
 		s->temporal.mode = AERON_TEMPORAL_OFF;
 	}
 	s->temporal.sharpness = desc ? desc->temporal_sharpness : 0.0f;
@@ -435,7 +434,7 @@ void AeronScene_AddMeshInstance(AeronScene3D* s, const AeronSceneMeshInstance* i
 	}
 	if (s->instance_count >= AERON_SCENE_MAX_INSTANCES) {
 		if (!s->instances_dropped) {
-			fprintf(stderr, "[aeron_scene] instance cap (%d) hit; dropping\n", AERON_SCENE_MAX_INSTANCES);
+			Aeron_LogWarn("aeron.scene", "instance cap (%d) hit; dropping", AERON_SCENE_MAX_INSTANCES);
 		}
 		s->instances_dropped++;
 		return;
@@ -470,8 +469,8 @@ void AeronScene_AddShadowCaster(AeronScene3D* s, const AeronSceneMeshInstance* i
 	}
 	if (s->shadow_only_count >= AERON_SCENE_MAX_SHADOW_ONLY) {
 		if (!s->shadow_only_dropped) {
-			fprintf(stderr, "[aeron_scene] shadow-only caster cap (%d) hit; dropping\n",
-					AERON_SCENE_MAX_SHADOW_ONLY);
+			Aeron_LogWarn("aeron.scene", "shadow-only caster cap (%d) hit; dropping",
+						  AERON_SCENE_MAX_SHADOW_ONLY);
 		}
 		s->shadow_only_dropped++;
 		return;
@@ -707,7 +706,7 @@ int AeronScene_SetMeshSampler(AeronScene3D* s, AeronSampler* sampler) {
 		replacements[mode] = Aeron_CreateSampler(&desc);
 		if (!replacements[mode]) {
 			scene_release_sampler_set(replacements);
-			fprintf(stderr, "[aeron_scene] failed to create temporal mesh sampler variants\n");
+			Aeron_LogError("aeron.scene", "failed to create temporal mesh sampler variants");
 			return 0;
 		}
 	}
@@ -733,14 +732,14 @@ void AeronScene_SetFrameUniformData(AeronScene3D* s, AeronShaderStage stage, uin
 									uint32_t size) {
 	if (!s || !data || size == 0 || size > AERON_SCENE_FRAME_UNIFORM_CAP) {
 		if (s && size > AERON_SCENE_FRAME_UNIFORM_CAP) {
-			fprintf(stderr, "[aeron_scene] frame uniform blob too large (%u > %u)\n", size,
-					(unsigned)AERON_SCENE_FRAME_UNIFORM_CAP);
+			Aeron_LogError("aeron.scene", "frame uniform blob too large (%u > %u)", size,
+						   (unsigned)AERON_SCENE_FRAME_UNIFORM_CAP);
 		}
 		return;
 	}
 	if (s->frame_uniform_count >= AERON_SCENE_MAX_FRAME_UNIFORMS) {
-		fprintf(stderr, "[aeron_scene] frame uniform cap (%d) hit; dropping\n",
-				AERON_SCENE_MAX_FRAME_UNIFORMS);
+		Aeron_LogWarn("aeron.scene", "frame uniform cap (%d) hit; dropping",
+					  AERON_SCENE_MAX_FRAME_UNIFORMS);
 		return;
 	}
 	AeronSceneFrameUniform* u = &s->frame_uniforms[s->frame_uniform_count++];
@@ -888,8 +887,7 @@ static int scene_storage_ensure_buffer(AeronBuffer** buffer, uint32_t* capacity,
 
 static void scene_storage_report_failure(AeronScene3D* s, const char* resource, uint32_t bytes) {
 	if (!s->storage_error_logged) {
-		fprintf(stderr, "[aeron_scene] %s preparation failed (%u bytes): %s\n",
-				resource, bytes, SDL_GetError());
+		Aeron_LogError("aeron.scene", "%s preparation failed (%u bytes): %s", resource, bytes, SDL_GetError());
 		s->storage_error_logged = 1;
 	}
 }

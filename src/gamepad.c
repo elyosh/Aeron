@@ -138,20 +138,20 @@ static void Aeron_OpenGamepad(SDL_JoystickID instance_id) {
 
 	slot = Aeron_FindFreeGamepadSlot();
 	if (slot < 0) {
-		Aeron_Log("aeron.input", "Ignoring gamepad %u: no free Aeron gamepad slot",
+		Aeron_LogWarn("aeron.input", "Ignoring gamepad %u: no free Aeron gamepad slot",
 				  (unsigned int)instance_id);
 		return;
 	}
 
 	gamepad = SDL_OpenGamepad(instance_id);
 	if (!gamepad) {
-		Aeron_Log("aeron.input", "SDL_OpenGamepad(%u) failed: %s", (unsigned int)instance_id, SDL_GetError());
+		Aeron_LogWarn("aeron.input", "SDL_OpenGamepad(%u) failed: %s", (unsigned int)instance_id, SDL_GetError());
 		return;
 	}
 
 	g_aeron.gamepads[slot].gamepad     = gamepad;
 	g_aeron.gamepads[slot].instance_id = instance_id;
-	Aeron_Log("aeron.input", "Opened gamepad slot %d id=%u name='%s'", slot, (unsigned int)instance_id,
+	Aeron_LogInfo("aeron.input", "Opened gamepad slot %d id=%u name='%s'", slot, (unsigned int)instance_id,
 			  SDL_GetGamepadName(gamepad));
 }
 
@@ -209,7 +209,7 @@ void Aeron_HandleGamepadEvent(const SDL_Event* event) {
 		case SDL_EVENT_GAMEPAD_REMAPPED:
 			slot = Aeron_FindGamepadSlot(event->gdevice.which);
 			if (slot >= 0) {
-				Aeron_Log("aeron.input", "Gamepad slot %d remapped", slot);
+				Aeron_LogInfo("aeron.input", "Gamepad slot %d remapped", slot);
 			}
 			break;
 		default:

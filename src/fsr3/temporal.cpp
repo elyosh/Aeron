@@ -40,7 +40,7 @@ static void SetError(AeronTemporalUpscaler* upscaler, const char* format, ...) {
 	va_start(args, format);
 	std::vsnprintf(upscaler->lastError, sizeof(upscaler->lastError), format, args);
 	va_end(args);
-	Aeron_Log("fsr3", "%s", upscaler->lastError);
+	Aeron_LogError("fsr3", "%s", upscaler->lastError);
 }
 
 static void FsrMessage(FfxMsgType type, const wchar_t* message) {
@@ -48,7 +48,7 @@ static void FsrMessage(FfxMsgType type, const wchar_t* message) {
 	if (message) {
 		std::wcstombs(text, message, sizeof(text) - 1);
 	}
-	Aeron_Log("fsr3", "%s: %s", type == FFX_MESSAGE_TYPE_ERROR ? "error" : "warning", text);
+	Aeron_LogMessage(type == FFX_MESSAGE_TYPE_ERROR ? AERON_LOG_ERROR : AERON_LOG_WARN, "fsr3", "%s", text);
 }
 
 static FfxFsr3UpscalerQualityMode ToFfxQuality(AeronTemporalMode mode) {
@@ -226,7 +226,7 @@ static bool TryCreateContext(AeronTemporalUpscaler* upscaler, const AeronTempora
 			std::snprintf(failedProfiles + used, failedProfilesSize - used, "%s%s", used ? "; " : "",
 						  failedAttempt);
 		}
-		Aeron_Log("fsr3", "%s; trying the next complete profile", failedAttempt);
+		Aeron_LogWarn("fsr3", "%s; trying the next complete profile", failedAttempt);
 		AeronFsr3Backend_Destroy(upscaler->backend);
 		upscaler->backend = nullptr;
 		std::memset(&upscaler->context, 0, sizeof(upscaler->context));

@@ -4,6 +4,7 @@
 /* Shared internals of the aeron_scene translation units. NOT a public
  * API — games use the aeron_scene public headers only. */
 
+#include "aeron/log.h"
 #include "aeron/scene/scene3d.h"
 #include "aeron/scene/billboard.h"
 #include "aeron/scene/mesh_overlay.h"

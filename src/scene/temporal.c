@@ -1,6 +1,5 @@
 #include "internal.h"
 
-#include <stdio.h>
 #include <string.h>
 
 static AeronGraphicsPipeline* temporal_sky_velocity_pipeline(AeronScene3D* s) {
@@ -54,7 +53,7 @@ static int temporal_ensure_output_target(AeronScene3D* s) {
 	});
 	if (!s->temporal_output_rt) {
 		s->temporal_output_allocation_failed = 1;
-		fprintf(stderr, "[aeron_scene] failed to allocate the FSR external output target\n");
+		Aeron_LogError("aeron.scene", "failed to allocate the FSR external output target");
 		return 0;
 	}
 	return 1;
@@ -130,8 +129,8 @@ int AeronSceneTemporal_Ensure(AeronScene3D* s) {
 		(!AeronTemporalUpscaler_UsesDirectHistory(s->temporal_upscaler) && !s->temporal_output_rt) ||
 		!s->temporal_sky_velocity_pipeline || !s->temporal_copy_pipeline ||
 		!s->temporal_copy_sampler) {
-		fprintf(stderr, "[aeron_scene] FSR 3.1.4 %s initialization failed\n",
-				AeronTemporal_ModeName(s->temporal_active_mode));
+		Aeron_LogError("aeron.scene", "FSR 3.1.4 %s initialization failed",
+					   AeronTemporal_ModeName(s->temporal_active_mode));
 		return 0;
 	}
 	return 1;
@@ -206,8 +205,8 @@ int AeronSceneTemporal_Dispatch(AeronScene3D* s, AeronCommandBuffer* cmd,
 		.update_retained_motion_vectors = update_retained_motion_vectors,
 	};
 	if (!AeronTemporalUpscaler_Dispatch(s->temporal_upscaler, &dispatch)) {
-		fprintf(stderr, "[aeron_scene] FSR dispatch failed: %s\n",
-				AeronTemporalUpscaler_LastError(s->temporal_upscaler));
+		Aeron_LogError("aeron.scene", "FSR dispatch failed: %s",
+					   AeronTemporalUpscaler_LastError(s->temporal_upscaler));
 		return 0;
 	}
 	AeronRenderTarget* borrowed = AeronTemporalUpscaler_OutputTarget(s->temporal_upscaler);

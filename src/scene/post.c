@@ -9,7 +9,6 @@
 #include "aeron/aeron.h"
 
 #include <math.h>
-#include <stdio.h>
 #include <string.h>
 
 /* TileMax/NeighborMax tile size — bounds the maximum blur length. */
@@ -266,7 +265,7 @@ int AeronScenePost_EnsureSsao(struct AeronScene3D* s) {
 													 "scene.visibility_blur");
 
 	if (!s->ssao_pipeline || !s->ao_rt || !s->ao_blur_rt) {
-		fprintf(stderr, "[aeron_scene] SSAO initialization failed\n");
+		Aeron_LogError("aeron.scene", "SSAO initialization failed");
 		return 0;
 	}
 	return 1;
@@ -288,7 +287,7 @@ static int ensure_ssao_debug_pipeline(struct AeronScene3D* s) {
 		s->ssao_debug_pipeline = post_pipeline(s->fullscreen_vs, s->ssao_debug_ps, &color, 1, 0);
 	}
 	if (!s->ssao_debug_pipeline) {
-		fprintf(stderr, "[aeron_scene] SSAO debug visualization init failed\n");
+		Aeron_LogError("aeron.scene", "SSAO debug visualization initialization failed");
 	}
 	return s->ssao_debug_pipeline != NULL;
 }
@@ -412,7 +411,7 @@ int AeronScenePost_EnsureMb(struct AeronScene3D* s) {
 		 (s->temporal_active_mode == AERON_TEMPORAL_OFF ||
 		  (s->mb_temporal_tilemax_pipeline && s->mb_fsr_tilemax_pipeline)));
 	if (!s->mb_reconstruct_pipeline || !s->velocity_rt || !s->mb_rt || !temporal_ok || !high_ok) {
-		fprintf(stderr, "[aeron_scene] motion-blur initialization failed\n");
+		Aeron_LogError("aeron.scene", "motion-blur initialization failed");
 		return 0;
 	}
 	return 1;

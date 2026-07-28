@@ -164,7 +164,7 @@ AeronSceneBloom *AeronSceneBloom_Create(int rt_w, int rt_h)
     b->upsample_ps   = AeronSceneInternal_CompileShader("scene_bloom_upsample.frag",
                                       AERON_SHADER_STAGE_FRAGMENT, 1, 1, 0);
     if (!b->vs || !b->brightpass_ps || !b->downsample_ps || !b->upsample_ps) {
-        fprintf(stderr, "[flight_bloom] shader compile failed\n");
+        Aeron_LogError("aeron.scene", "bloom shader compilation failed");
         AeronSceneBloom_Destroy(b);
         return NULL;
     }
@@ -177,7 +177,7 @@ AeronSceneBloom *AeronSceneBloom_Create(int rt_w, int rt_h)
                                              BLOOM_CHAIN_FORMAT, /*additive=*/true);
     if (!b->brightpass_pipeline || !b->downsample_pipeline ||
         !b->upsample_pipeline) {
-        fprintf(stderr, "[flight_bloom] pipeline create failed\n");
+        Aeron_LogError("aeron.scene", "bloom pipeline creation failed");
         AeronSceneBloom_Destroy(b);
         return NULL;
     }
@@ -196,7 +196,7 @@ AeronSceneBloom *AeronSceneBloom_Create(int rt_w, int rt_h)
         .max_lod    = 0.0f,
     });
     if (!b->sampler) {
-        fprintf(stderr, "[flight_bloom] sampler create failed\n");
+        Aeron_LogError("aeron.scene", "bloom sampler creation failed");
         AeronSceneBloom_Destroy(b);
         return NULL;
     }
@@ -213,8 +213,7 @@ AeronSceneBloom *AeronSceneBloom_Create(int rt_w, int rt_h)
         snprintf(name, sizeof name, "bloom.level%d", i);
         b->levels[i].tex = AeronSceneInternal_CreateColorRt(BLOOM_CHAIN_FORMAT, lw, lh, name);
         if (!b->levels[i].tex) {
-            fprintf(stderr, "[flight_bloom] mip %d (%dx%d) create failed\n",
-                    i, lw, lh);
+            Aeron_LogError("aeron.scene", "bloom mip %d (%dx%d) creation failed", i, lw, lh);
             AeronSceneBloom_Destroy(b);
             return NULL;
         }
