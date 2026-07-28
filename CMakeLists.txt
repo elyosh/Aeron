@@ -624,6 +624,7 @@ set(AERON_FORMAT_FILES
     include/aeron/dialog.h
     include/aeron/input.h
     include/aeron/log.h
+    include/aeron/main.h
     include/aeron/paths.h
     include/aeron/render.h
     include/aeron/surface.h
