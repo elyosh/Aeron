@@ -133,6 +133,13 @@ typedef struct {
     int32_t        texture_count;
     int32_t        texture_capacity;
 
+    /* Texture index bound by the most recent top-level Texture root node,
+     * -1 if none. The engine walks all roots with one shared draw state
+     * (RenderScene_DrawObjectModel @ 0x481AD0), so a root-level Texture is
+     * the default binding for every following mesh; some ships (e.g.
+     * SYSTEMPATROLCRAFT) leave each mesh's first FaceData relying on it. */
+    int32_t        root_texture;
+
     opt_error_t   *err;
     int            failed;
 } opt_ctx_t;
@@ -620,9 +627,14 @@ static void on_lod_child(opt_ctx_t *c, const opt_node_t *child, void *user) {
 static void parse_lod_node(opt_ctx_t *c, const opt_node_t *lod_group_node,
                            float distance, opt_lod_t *out) {
     opt_lod_builder_t lb = { 0 };
-    lb.current_texture     = -1;
+    /* Inherit the top-level Texture root binding (see ctx.root_texture). */
+    lb.current_texture     = c->root_texture;
     lb.current_state_count = 0;
     lb.pending_binding     = 0;
+    if (c->root_texture >= 0) {
+        lb.current_state_count = 1;
+        lb.current_states[0]   = c->root_texture;
+    }
     for_each_child(c, lod_group_node, on_lod_child, &lb);
     /* Trailing-orphan texture binding: when a LOD ends with a Texture /
      * NodeReference / NodeSwitch that wasn't consumed by a following
@@ -772,10 +784,11 @@ static opt_file_t *parse_from_buffer(const uint8_t *data, size_t size,
     int32_t global_base   = base_raw - (int32_t)hdr_bytes;
 
     opt_ctx_t c = { 0 };
-    c.buf         = data;
-    c.size        = size;
-    c.global_base = global_base;
-    c.err         = err;
+    c.buf          = data;
+    c.size         = size;
+    c.global_base  = global_base;
+    c.err          = err;
+    c.root_texture = -1;
 
     if (root_count <= 0 || root_table_p == 0) {
         opt_file_t *f = (opt_file_t *)calloc(1, sizeof *f);
@@ -799,10 +812,12 @@ static opt_file_t *parse_from_buffer(const uint8_t *data, size_t size,
         if (!read_node(&c, ptr_to_off(&c, cptr), &top)) continue;
         if (top.type != OPT_NODE_GROUP && top.type != OPT_NODE_TEXTURE) continue;
         if (top.type == OPT_NODE_TEXTURE) {
-            /* Some ships put a shared Texture at top level. */
+            /* Shared Texture at top level: carries pixel data and becomes
+             * the default binding for every mesh root after it. */
             const char *name = cstring(&c, ptr_to_off(&c, top.name_ptr));
             int32_t idx = texture_lookup_or_add(&c, name);
             parse_texture_data(&c, &top, idx);
+            if (idx >= 0) c.root_texture = idx;
             continue;
         }
         parse_mesh(&c, &top, &meshes[mesh_count++]);
