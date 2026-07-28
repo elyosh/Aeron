@@ -135,6 +135,12 @@ int Aeron_Fullscreen(void) {
 	return g_aeron.window && (SDL_GetWindowFlags(g_aeron.window) & SDL_WINDOW_FULLSCREEN) != 0;
 }
 
+void Aeron_RaiseWindow(void) {
+	if (g_aeron.window && !SDL_RaiseWindow(g_aeron.window)) {
+		Aeron_LogWarn("aeron", "SDL_RaiseWindow failed: %s", SDL_GetError());
+	}
+}
+
 void Aeron_UpdatePresentationPixelSize(void) {
 	SDL_Rect content_rect = { 0 };
 	int      pixel_width  = 0;

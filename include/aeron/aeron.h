@@ -85,6 +85,10 @@ int Aeron_SetLogicalSize(int width, int height);
 int Aeron_SetFullscreen(int fullscreen);
 /* Returns nonzero while the host window is fullscreen. */
 int Aeron_Fullscreen(void);
+/* Asks the OS to raise the host window and give it input focus, e.g. after a
+ * native dialog held focus. The request is asynchronous and the platform may
+ * deny it under its focus-stealing policy. */
+void Aeron_RaiseWindow(void);
 
 /* Physical pixel dimensions of the aspect-fitted presentation area for the
  * current host frame. This is distinct from logical coordinates and window
