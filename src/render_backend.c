@@ -349,14 +349,39 @@ const char* Aeron_OutputHdrStatusName(AeronHdrOutputStatus status) {
 	return "unknown";
 }
 
-float Aeron_OutputHdrHeadroom(void) { return g_aeron.hdr_headroom; }
+float Aeron_OutputHdrHeadroom(void) {
+	float headroom;
+
+	if (g_aeron.swapchain_composition != SDL_GPU_SWAPCHAINCOMPOSITION_HDR_EXTENDED_LINEAR ||
+		g_aeron.hdr_paper_white_nits <= 0.0f) {
+		return g_aeron.hdr_headroom;
+	}
+	/* SDL's headroom is relative to the OS SDR white. A paper-white override
+	 * moves the game's reference white while the display peak stays fixed,
+	 * so re-express that peak relative to the game's white. */
+	headroom = g_aeron.hdr_headroom * g_aeron.hdr_sdr_white_level * 80.0f / g_aeron.hdr_paper_white_nits;
+	return headroom < 1.0f ? 1.0f : headroom;
+}
 
 float Aeron_OutputSdrWhiteLevel(void) {
 	if (g_aeron.swapchain_composition != SDL_GPU_SWAPCHAINCOMPOSITION_HDR_EXTENDED_LINEAR) {
 		return 1.0f;
 	}
+	if (g_aeron.hdr_paper_white_nits > 0.0f) {
+		return g_aeron.hdr_paper_white_nits / 80.0f;
+	}
 	return g_aeron.hdr_sdr_white_level;
 }
+
+void Aeron_SetOutputPaperWhiteNits(float nits) {
+	if (nits <= 0.0f) {
+		g_aeron.hdr_paper_white_nits = 0.0f;
+		return;
+	}
+	g_aeron.hdr_paper_white_nits = SDL_clamp(nits, 80.0f, 1000.0f);
+}
+
+float Aeron_OutputPaperWhiteNits(void) { return g_aeron.hdr_paper_white_nits; }
 
 void Aeron_SetOutputSdrContentGamma(float gamma) {
 	if (gamma <= 0.0f) {

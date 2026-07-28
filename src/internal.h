@@ -208,6 +208,9 @@ typedef struct AeronRuntime {
 	 * swapchain: 0 = piecewise sRGB curve, >0 = pow(rgb, gamma). SDR
 	 * compositions always use the piecewise curve (exact encode inverse). */
 	float                       hdr_sdr_content_gamma;
+	/* Paper white override in nits (scRGB: 80 nits == 1.0); 0 follows the
+	 * OS SDR white level. */
+	float                       hdr_paper_white_nits;
 	AeronRenderLayer            render_layers[AERON_MAX_RENDER_LAYERS];
 	uint16_t                    render_submission_generation;
 	AeronPixelLayerUpload       pixel_layer_uploads[AERON_MAX_PIXEL_LAYER_UPLOADS];

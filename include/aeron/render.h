@@ -866,6 +866,14 @@ float Aeron_OutputSdrWhiteLevel(void);
 void  Aeron_SetOutputSdrContentGamma(float gamma);
 float Aeron_OutputSdrContentGamma(void);
 
+/* Paper white override for HDR output, in nits (scRGB: 80 nits == 1.0).
+ * 0 (the default) follows the OS SDR white level; positive values clamp to
+ * [80, 1000]. While the HDR composition is active, Aeron_OutputSdrWhiteLevel
+ * returns the override's encoding and Aeron_OutputHdrHeadroom re-expresses
+ * the display peak relative to it, so all consumers stay consistent. */
+void  Aeron_SetOutputPaperWhiteNits(float nits);
+float Aeron_OutputPaperWhiteNits(void);
+
 /* RGB scale required when writing SDR-relative linear colors into this pass.
  * Offscreen and SDR passes return 1.0. */
 float Aeron_RenderPassOutputRgbScale(const AeronRenderPass* pass);
