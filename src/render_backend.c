@@ -1316,6 +1316,9 @@ static int Aeron_DrawTexture(SDL_GPUCommandBuffer* command_buffer, SDL_GPURender
 	return 1;
 }
 
+/* Debug builds request SDL_GPU debug mode: backends only honor
+ * SDL_SetGPUTexture/BufferName under it, and it enables backend validation.
+ * Keyed to the same gate as the AeronGpuDebug_* label helpers. */
 static SDL_GPUDevice* Aeron_CreateGPUDeviceWithOptionalFp16(SDL_GPUShaderFormat shader_formats) {
 #if defined(AERON_HAS_VULKAN_FP16_DEVICE_OPTIONS)
 	VkPhysicalDeviceShaderFloat16Int8Features float16_features;
@@ -1336,6 +1339,8 @@ static SDL_GPUDevice* Aeron_CreateGPUDeviceWithOptionalFp16(SDL_GPUShaderFormat 
 	vulkan_options.device_extension_names = device_extensions;
 
 	if (properties) {
+		SDL_SetBooleanProperty(properties, SDL_PROP_GPU_DEVICE_CREATE_DEBUGMODE_BOOLEAN,
+							   AERON_GPU_DEBUG_LABELS != 0);
 		SDL_SetBooleanProperty(properties, SDL_PROP_GPU_DEVICE_CREATE_SHADERS_MSL_BOOLEAN,
 							   (shader_formats & SDL_GPU_SHADERFORMAT_MSL) != 0);
 		SDL_SetBooleanProperty(properties, SDL_PROP_GPU_DEVICE_CREATE_SHADERS_SPIRV_BOOLEAN,
@@ -1353,7 +1358,7 @@ static SDL_GPUDevice* Aeron_CreateGPUDeviceWithOptionalFp16(SDL_GPUShaderFormat 
 	Aeron_LogWarn("aeron", "GPU creation with optional Vulkan FP16 failed: %s; retrying baseline device",
 			  SDL_GetError());
 #endif
-	return SDL_CreateGPUDevice(shader_formats, false, NULL);
+	return SDL_CreateGPUDevice(shader_formats, AERON_GPU_DEBUG_LABELS != 0, NULL);
 }
 
 int Aeron_RenderBackendInit(void) {
@@ -1534,7 +1539,6 @@ int Aeron_Present(void) {
 		AeronRenderTarget  borrowed_render_target;
 		const float        output_rgb_scale = Aeron_OutputSdrWhiteLevel();
 
-		AeronGpuDebug_NameTexture(g_aeron.gpu_device, swapchain_texture, "aeron.swapchain");
 		Aeron_ComputePresentationRect((int)swapchain_width, (int)swapchain_height, &content_rect);
 
 		SDL_zero(color_target);
