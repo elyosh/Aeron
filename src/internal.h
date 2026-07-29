@@ -176,10 +176,16 @@ typedef struct AeronRenderLayer {
 	} u;
 } AeronRenderLayer;
 
-typedef struct AeronGamepadDevice {
+typedef struct AeronControllerDevice {
 	SDL_Gamepad*   gamepad;
+	SDL_Joystick*  joystick;
 	SDL_JoystickID instance_id;
-} AeronGamepadDevice;
+	int            owns_joystick;
+	int            raw_axis_count;
+	int            raw_button_count;
+	int            raw_hat_count;
+	int            has_rumble;
+} AeronControllerDevice;
 
 typedef struct AeronRuntime {
 	int                         initialized;
@@ -229,7 +235,7 @@ typedef struct AeronRuntime {
 	uint64_t                    presentation_next_frame_us;
 	float                       clear_color_rgba[4];
 	AeronInputSnapshot          input;
-	AeronGamepadDevice          gamepads[AERON_GAMEPAD_MAX];
+	AeronControllerDevice       controllers[AERON_CONTROLLER_MAX];
 	uint64_t                    last_frame_us;
 	AeronVfs                    vfs;
 	char                        app_name[128];
@@ -267,10 +273,10 @@ void Aeron_AudioShutdown(void);
 
 void Aeron_BeginInputFrame(AeronInputSnapshot* input);
 void Aeron_HandleEvent(const SDL_Event* event);
-void Aeron_GamepadsInit(void);
-void Aeron_GamepadsShutdown(void);
-void Aeron_HandleGamepadEvent(const SDL_Event* event);
-void Aeron_UpdateGamepads(AeronInputSnapshot* input);
+void Aeron_ControllersInit(void);
+void Aeron_ControllersShutdown(void);
+void Aeron_HandleControllerEvent(const SDL_Event* event);
+void Aeron_UpdateControllers(AeronInputSnapshot* input);
 
 void Aeron_InitVfs(const AeronConfig* config);
 void Aeron_ClearRenderSubmissions(void);

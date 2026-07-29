@@ -56,7 +56,7 @@ int Aeron_Init(const AeronConfig* config) {
 					 config && config->app_name ? config->app_name : "aeron");
 	SDL_SetAppMetadata(g_aeron.app_name, NULL, NULL);
 
-	if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_GAMEPAD)) {
+	if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_JOYSTICK | SDL_INIT_GAMEPAD)) {
 		Aeron_LogError("aeron", "SDL_Init failed: %s", SDL_GetError());
 		return 0;
 	}
@@ -94,7 +94,7 @@ int Aeron_Init(const AeronConfig* config) {
 		Aeron_LogWarn("aeron", "audio subsystem unavailable; continuing without sound");
 	}
 
-	Aeron_GamepadsInit();
+	Aeron_ControllersInit();
 	SDL_StartTextInput(g_aeron.window);
 	Aeron_InitVfs(config);
 	Aeron_DebugUiInitInternal();
@@ -114,7 +114,7 @@ void Aeron_Shutdown(void) {
 	Aeron_DebugUiShutdownInternal();
 	Aeron_AudioShutdown();
 	SDL_StopTextInput(g_aeron.window);
-	Aeron_GamepadsShutdown();
+	Aeron_ControllersShutdown();
 	Aeron_RenderBackendShutdown();
 	Aeron_WindowShutdown();
 	AeronVfs_DeinitInternal(&g_aeron.vfs);

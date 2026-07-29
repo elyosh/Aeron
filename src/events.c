@@ -119,7 +119,7 @@ int32_t Aeron_BeginFrame(void) {
 	/* Flip the swapchain composition here, between the event pump and any
 	 * frame work, so it never runs while a pass or the overlay is recording. */
 	Aeron_ApplyPendingOutputHdr();
-	Aeron_UpdateGamepads(&g_aeron.input);
+	Aeron_UpdateControllers(&g_aeron.input);
 	Aeron_UpdatePresentationPixelSize();
 	SDL_GetWindowSize(g_aeron.window, &g_aeron.input.window_width, &g_aeron.input.window_height);
 	Aeron_ComputePresentationRect(g_aeron.input.window_width, g_aeron.input.window_height, &content_rect);

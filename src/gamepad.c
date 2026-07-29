@@ -98,11 +98,12 @@ const char* Aeron_GamepadButtonName(AeronGamepadButton button) {
 	return g_aeronGamepadButtonNames[button];
 }
 
-static int Aeron_FindGamepadSlot(SDL_JoystickID instance_id) {
+static int Aeron_FindControllerSlot(SDL_JoystickID instance_id) {
 	int slot;
 
-	for (slot = 0; slot < AERON_GAMEPAD_MAX; ++slot) {
-		if (g_aeron.gamepads[slot].gamepad != NULL && g_aeron.gamepads[slot].instance_id == instance_id) {
+	for (slot = 0; slot < AERON_CONTROLLER_MAX; ++slot) {
+		if (g_aeron.controllers[slot].joystick != NULL &&
+			g_aeron.controllers[slot].instance_id == instance_id) {
 			return slot;
 		}
 	}
@@ -110,11 +111,11 @@ static int Aeron_FindGamepadSlot(SDL_JoystickID instance_id) {
 	return -1;
 }
 
-static int Aeron_FindFreeGamepadSlot(void) {
+static int Aeron_FindFreeControllerSlot(void) {
 	int slot;
 
-	for (slot = 0; slot < AERON_GAMEPAD_MAX; ++slot) {
-		if (g_aeron.gamepads[slot].gamepad == NULL) {
+	for (slot = 0; slot < AERON_CONTROLLER_MAX; ++slot) {
+		if (g_aeron.controllers[slot].joystick == NULL) {
 			return slot;
 		}
 	}
@@ -122,76 +123,186 @@ static int Aeron_FindFreeGamepadSlot(void) {
 	return -1;
 }
 
-static void Aeron_ClearGamepadSnapshot(int slot) {
-	if (slot >= 0 && slot < AERON_GAMEPAD_MAX) {
-		memset(&g_aeron.input.gamepads[slot], 0, sizeof(g_aeron.input.gamepads[slot]));
+static void Aeron_ClearControllerSnapshot(int slot) {
+	if (slot >= 0 && slot < AERON_CONTROLLER_MAX) {
+		memset(&g_aeron.input.controllers[slot], 0, sizeof(g_aeron.input.controllers[slot]));
 	}
 }
 
-static void Aeron_OpenGamepad(SDL_JoystickID instance_id) {
-	int          slot;
-	SDL_Gamepad* gamepad;
+static int Aeron_ControllerCount(int count, int maximum) {
+	if (count < 0) {
+		return 0;
+	}
+	return count < maximum ? count : maximum;
+}
 
-	if (Aeron_FindGamepadSlot(instance_id) >= 0) {
+static int Aeron_ControllerHasRumbleHandle(SDL_Joystick* joystick) {
+	SDL_PropertiesID props;
+
+	if (!joystick) {
+		return 0;
+	}
+	props = SDL_GetJoystickProperties(joystick);
+	return props && SDL_GetBooleanProperty(props, SDL_PROP_JOYSTICK_CAP_RUMBLE_BOOLEAN, false) ? 1 : 0;
+}
+
+static void Aeron_PopulateControllerIdentity(int slot) {
+	AeronControllerDevice*   device;
+	AeronControllerSnapshot* snapshot;
+	SDL_GUID                 guid;
+	const char*              name;
+	const char*              path;
+	int                      button;
+
+	device   = &g_aeron.controllers[slot];
+	snapshot = &g_aeron.input.controllers[slot];
+	memset(snapshot, 0, sizeof(*snapshot));
+	snapshot->connected   = 1;
+	snapshot->kind        = device->gamepad ? AERON_CONTROLLER_KIND_GAMEPAD : AERON_CONTROLLER_KIND_JOYSTICK;
+	snapshot->has_rumble  = device->has_rumble;
+	snapshot->instance_id = device->instance_id;
+	snapshot->axis_count  = (uint8_t)Aeron_ControllerCount(device->raw_axis_count, AERON_CONTROLLER_AXIS_MAX);
+	snapshot->button_count =
+		(uint8_t)Aeron_ControllerCount(device->raw_button_count, AERON_CONTROLLER_BUTTON_MAX);
+	snapshot->hat_count = (uint8_t)Aeron_ControllerCount(device->raw_hat_count, AERON_CONTROLLER_HAT_MAX);
+	snapshot->controls_truncated = device->raw_axis_count > AERON_CONTROLLER_AXIS_MAX ||
+								   device->raw_button_count > AERON_CONTROLLER_BUTTON_MAX ||
+								   device->raw_hat_count > AERON_CONTROLLER_HAT_MAX;
+	for (button = 0; device->gamepad && button < AERON_GAMEPAD_BUTTON_COUNT; ++button) {
+		if (SDL_GamepadHasButton(device->gamepad, (SDL_GamepadButton)button)) {
+			snapshot->gamepad_available_buttons |= 1u << button;
+		}
+	}
+	name                         = SDL_GetJoystickName(device->joystick);
+	path                         = SDL_GetJoystickPath(device->joystick);
+	Aeron_CopyString(snapshot->name, sizeof(snapshot->name), name ? name : "");
+	Aeron_CopyString(snapshot->path, sizeof(snapshot->path), path ? path : "");
+	guid = SDL_GetJoystickGUID(device->joystick);
+	SDL_GUIDToString(guid, snapshot->guid, sizeof(snapshot->guid));
+}
+
+static int Aeron_OpenControllerInSlot(int slot, SDL_JoystickID instance_id) {
+	AeronControllerDevice* device;
+	SDL_Gamepad*           gamepad       = NULL;
+	SDL_Joystick*          joystick      = NULL;
+	int                    owns_joystick = 0;
+
+	if (slot < 0 || slot >= AERON_CONTROLLER_MAX) {
+		return 0;
+	}
+
+	if (SDL_IsGamepad(instance_id)) {
+		gamepad = SDL_OpenGamepad(instance_id);
+		if (gamepad) {
+			joystick = SDL_GetGamepadJoystick(gamepad);
+			if (!joystick) {
+				Aeron_LogWarn("aeron.input", "SDL_GetGamepadJoystick(%u) failed: %s; trying raw joystick",
+							  (unsigned int)instance_id, SDL_GetError());
+				SDL_CloseGamepad(gamepad);
+				gamepad = NULL;
+			}
+		} else {
+			Aeron_LogWarn("aeron.input", "SDL_OpenGamepad(%u) failed: %s; trying raw joystick",
+						  (unsigned int)instance_id, SDL_GetError());
+		}
+	}
+	if (!joystick) {
+		joystick      = SDL_OpenJoystick(instance_id);
+		owns_joystick = joystick != NULL;
+	}
+	if (!joystick) {
+		Aeron_LogWarn("aeron.input", "SDL_OpenJoystick(%u) failed: %s", (unsigned int)instance_id,
+					  SDL_GetError());
+		return 0;
+	}
+
+	device = &g_aeron.controllers[slot];
+	memset(device, 0, sizeof(*device));
+	device->gamepad          = gamepad;
+	device->joystick         = joystick;
+	device->instance_id      = instance_id;
+	device->owns_joystick    = owns_joystick;
+	device->raw_axis_count   = SDL_GetNumJoystickAxes(joystick);
+	device->raw_button_count = SDL_GetNumJoystickButtons(joystick);
+	device->raw_hat_count    = SDL_GetNumJoystickHats(joystick);
+	device->has_rumble       = Aeron_ControllerHasRumbleHandle(joystick);
+	Aeron_PopulateControllerIdentity(slot);
+	Aeron_LogInfo("aeron.input",
+				  "Opened controller slot %d id=%u kind=%s name='%s' axes=%d buttons=%d hats=%d rumble=%s",
+				  slot, (unsigned int)instance_id, gamepad ? "gamepad" : "joystick",
+				  g_aeron.input.controllers[slot].name, device->raw_axis_count, device->raw_button_count,
+				  device->raw_hat_count, device->has_rumble ? "yes" : "no");
+	if (g_aeron.input.controllers[slot].controls_truncated) {
+		Aeron_LogWarn("aeron.input",
+					  "Controller id=%u controls truncated to %d axes, %d buttons, and %d hats",
+					  (unsigned int)instance_id, AERON_CONTROLLER_AXIS_MAX, AERON_CONTROLLER_BUTTON_MAX,
+					  AERON_CONTROLLER_HAT_MAX);
+	}
+	return 1;
+}
+
+static void Aeron_OpenController(SDL_JoystickID instance_id) {
+	int slot;
+
+	if (Aeron_FindControllerSlot(instance_id) >= 0) {
 		return;
 	}
-
-	slot = Aeron_FindFreeGamepadSlot();
+	slot = Aeron_FindFreeControllerSlot();
 	if (slot < 0) {
-		Aeron_LogWarn("aeron.input", "Ignoring gamepad %u: no free Aeron gamepad slot",
-				  (unsigned int)instance_id);
+		Aeron_LogWarn("aeron.input", "Ignoring controller %u: no free Aeron controller slot",
+					  (unsigned int)instance_id);
 		return;
 	}
-
-	gamepad = SDL_OpenGamepad(instance_id);
-	if (!gamepad) {
-		Aeron_LogWarn("aeron.input", "SDL_OpenGamepad(%u) failed: %s", (unsigned int)instance_id, SDL_GetError());
-		return;
-	}
-
-	g_aeron.gamepads[slot].gamepad     = gamepad;
-	g_aeron.gamepads[slot].instance_id = instance_id;
-	Aeron_LogInfo("aeron.input", "Opened gamepad slot %d id=%u name='%s'", slot, (unsigned int)instance_id,
-			  SDL_GetGamepadName(gamepad));
+	Aeron_OpenControllerInSlot(slot, instance_id);
 }
 
-static void Aeron_CloseGamepadSlot(int slot) {
-	if (slot < 0 || slot >= AERON_GAMEPAD_MAX || g_aeron.gamepads[slot].gamepad == NULL) {
+static void Aeron_CloseControllerSlot(int slot) {
+	AeronControllerDevice* device;
+
+	if (slot < 0 || slot >= AERON_CONTROLLER_MAX) {
 		return;
 	}
-
-	SDL_CloseGamepad(g_aeron.gamepads[slot].gamepad);
-	g_aeron.gamepads[slot].gamepad     = NULL;
-	g_aeron.gamepads[slot].instance_id = 0;
-	Aeron_ClearGamepadSnapshot(slot);
+	device = &g_aeron.controllers[slot];
+	if (!device->joystick) {
+		return;
+	}
+	SDL_RumbleJoystick(device->joystick, 0, 0, 0);
+	Aeron_LogInfo("aeron.input", "Closed controller slot %d id=%u", slot, (unsigned int)device->instance_id);
+	if (device->gamepad) {
+		SDL_CloseGamepad(device->gamepad);
+	} else if (device->owns_joystick) {
+		SDL_CloseJoystick(device->joystick);
+	}
+	memset(device, 0, sizeof(*device));
+	Aeron_ClearControllerSnapshot(slot);
 }
 
-void Aeron_GamepadsInit(void) {
-	SDL_JoystickID* gamepads;
+void Aeron_ControllersInit(void) {
+	SDL_JoystickID* controllers;
 	int             count;
 	int             i;
 
-	gamepads = SDL_GetGamepads(&count);
-	if (!gamepads) {
+	controllers = SDL_GetJoysticks(&count);
+	if (!controllers) {
 		return;
 	}
 
 	for (i = 0; i < count; ++i) {
-		Aeron_OpenGamepad(gamepads[i]);
+		Aeron_OpenController(controllers[i]);
 	}
 
-	SDL_free(gamepads);
+	SDL_free(controllers);
 }
 
-void Aeron_GamepadsShutdown(void) {
+void Aeron_ControllersShutdown(void) {
 	int slot;
 
-	for (slot = 0; slot < AERON_GAMEPAD_MAX; ++slot) {
-		Aeron_CloseGamepadSlot(slot);
+	for (slot = 0; slot < AERON_CONTROLLER_MAX; ++slot) {
+		Aeron_CloseControllerSlot(slot);
 	}
 }
 
-void Aeron_HandleGamepadEvent(const SDL_Event* event) {
+void Aeron_HandleControllerEvent(const SDL_Event* event) {
 	int slot;
 
 	if (!event) {
@@ -199,109 +310,113 @@ void Aeron_HandleGamepadEvent(const SDL_Event* event) {
 	}
 
 	switch (event->type) {
-		case SDL_EVENT_GAMEPAD_ADDED:
-			Aeron_OpenGamepad(event->gdevice.which);
+		case SDL_EVENT_JOYSTICK_ADDED:
+			Aeron_OpenController(event->jdevice.which);
 			break;
-		case SDL_EVENT_GAMEPAD_REMOVED:
-			slot = Aeron_FindGamepadSlot(event->gdevice.which);
-			Aeron_CloseGamepadSlot(slot);
-			break;
-		case SDL_EVENT_GAMEPAD_REMAPPED:
-			slot = Aeron_FindGamepadSlot(event->gdevice.which);
-			if (slot >= 0) {
-				Aeron_LogInfo("aeron.input", "Gamepad slot %d remapped", slot);
-			}
+		case SDL_EVENT_JOYSTICK_REMOVED:
+			slot = Aeron_FindControllerSlot(event->jdevice.which);
+			Aeron_CloseControllerSlot(slot);
 			break;
 		default:
 			break;
 	}
 }
 
-static void Aeron_UpdateGamepadSnapshot(int slot, AeronGamepadSnapshot* snapshot) {
-	SDL_Gamepad*   gamepad;
-	SDL_JoystickID instance_id;
-	SDL_GUID       guid;
-	const char*    name;
-	const char*    path;
-	uint32_t       previous_buttons;
-	uint32_t       buttons;
-	int            i;
+static void Aeron_UpdateControllerSnapshot(int slot, AeronControllerSnapshot* snapshot) {
+	AeronControllerDevice* device;
+	uint64_t               previous_raw_buttons;
+	uint64_t               raw_buttons;
+	uint32_t               previous_gamepad_buttons;
+	uint32_t               gamepad_buttons;
+	int                    i;
 
-	gamepad = g_aeron.gamepads[slot].gamepad;
-	if (!gamepad) {
-		Aeron_ClearGamepadSnapshot(slot);
+	device = &g_aeron.controllers[slot];
+	if (!device->joystick) {
+		Aeron_ClearControllerSnapshot(slot);
 		return;
 	}
 
-	instance_id      = g_aeron.gamepads[slot].instance_id;
-	previous_buttons = snapshot->buttons;
-	buttons          = 0;
-	memset(snapshot, 0, sizeof(*snapshot));
-	snapshot->connected   = 1;
-	snapshot->instance_id = instance_id;
-
-	name = SDL_GetGamepadName(gamepad);
-	path = SDL_GetGamepadPath(gamepad);
-	Aeron_CopyString(snapshot->name, sizeof(snapshot->name), name ? name : "");
-	Aeron_CopyString(snapshot->path, sizeof(snapshot->path), path ? path : "");
-	guid = SDL_GetGamepadGUIDForID(instance_id);
-	SDL_GUIDToString(guid, snapshot->guid, sizeof(snapshot->guid));
-
-	for (i = 0; i < AERON_GAMEPAD_AXIS_COUNT; ++i) {
-		snapshot->axes[i] = SDL_GetGamepadAxis(gamepad, (SDL_GamepadAxis)i);
+	previous_raw_buttons = snapshot->raw_buttons;
+	raw_buttons          = 0;
+	for (i = 0; i < snapshot->axis_count; ++i) {
+		snapshot->raw_axes[i] = SDL_GetJoystickAxis(device->joystick, i);
 	}
-
-	for (i = 0; i < AERON_GAMEPAD_BUTTON_COUNT; ++i) {
-		if (SDL_GetGamepadButton(gamepad, (SDL_GamepadButton)i)) {
-			buttons |= 1u << i;
+	for (i = 0; i < snapshot->button_count; ++i) {
+		if (SDL_GetJoystickButton(device->joystick, i)) {
+			raw_buttons |= (uint64_t)1u << i;
 		}
 	}
+	for (i = 0; i < snapshot->hat_count; ++i) {
+		snapshot->raw_hats[i] = SDL_GetJoystickHat(device->joystick, i);
+	}
+	snapshot->raw_buttons          = raw_buttons;
+	snapshot->raw_pressed_buttons  = raw_buttons & ~previous_raw_buttons;
+	snapshot->raw_released_buttons = previous_raw_buttons & ~raw_buttons;
 
-	snapshot->buttons          = buttons;
-	snapshot->pressed_buttons  = buttons & ~previous_buttons;
-	snapshot->released_buttons = previous_buttons & ~buttons;
+	previous_gamepad_buttons = snapshot->gamepad_buttons;
+	gamepad_buttons          = 0;
+	if (device->gamepad) {
+		for (i = 0; i < AERON_GAMEPAD_AXIS_COUNT; ++i) {
+			snapshot->gamepad_axes[i] = SDL_GetGamepadAxis(device->gamepad, (SDL_GamepadAxis)i);
+		}
+		for (i = 0; i < AERON_GAMEPAD_BUTTON_COUNT; ++i) {
+			if (SDL_GetGamepadButton(device->gamepad, (SDL_GamepadButton)i)) {
+				gamepad_buttons |= 1u << i;
+			}
+		}
+	} else {
+		memset(snapshot->gamepad_axes, 0, sizeof(snapshot->gamepad_axes));
+	}
+	snapshot->gamepad_buttons          = gamepad_buttons;
+	snapshot->gamepad_pressed_buttons  = gamepad_buttons & ~previous_gamepad_buttons;
+	snapshot->gamepad_released_buttons = previous_gamepad_buttons & ~gamepad_buttons;
 }
 
-void Aeron_UpdateGamepads(AeronInputSnapshot* input) {
+void Aeron_UpdateControllers(AeronInputSnapshot* input) {
 	int slot;
 
 	if (!input) {
 		return;
 	}
 
-	for (slot = 0; slot < AERON_GAMEPAD_MAX; ++slot) {
-		Aeron_UpdateGamepadSnapshot(slot, &input->gamepads[slot]);
+	for (slot = 0; slot < AERON_CONTROLLER_MAX; ++slot) {
+		Aeron_UpdateControllerSnapshot(slot, &input->controllers[slot]);
 	}
 }
 
-int Aeron_GamepadHasRumble(int slot) {
-	SDL_Gamepad*     gamepad;
-	SDL_PropertiesID props;
-
-	if (slot < 0 || slot >= AERON_GAMEPAD_MAX) {
-		return 0;
-	}
-	gamepad = g_aeron.gamepads[slot].gamepad;
-	if (!gamepad) {
-		return 0;
-	}
-	props = SDL_GetGamepadProperties(gamepad);
-	if (props == 0) {
-		return 0;
-	}
-	return SDL_GetBooleanProperty(props, SDL_PROP_GAMEPAD_CAP_RUMBLE_BOOLEAN, false) ? 1 : 0;
+int Aeron_ControllerHasRumble(uint32_t instance_id) {
+	int slot = Aeron_FindControllerSlot((SDL_JoystickID)instance_id);
+	return slot >= 0 ? g_aeron.controllers[slot].has_rumble : 0;
 }
 
-int Aeron_RumbleGamepad(int slot, uint16_t low_frequency_rumble, uint16_t high_frequency_rumble,
-						uint32_t duration_ms) {
-	SDL_Gamepad* gamepad;
+int Aeron_RumbleController(uint32_t instance_id, uint16_t low_frequency_rumble,
+						   uint16_t high_frequency_rumble, uint32_t duration_ms) {
+	int                    slot = Aeron_FindControllerSlot((SDL_JoystickID)instance_id);
+	AeronControllerDevice* device;
+	const int stopping = (low_frequency_rumble == 0 && high_frequency_rumble == 0) || duration_ms == 0;
 
-	if (slot < 0 || slot >= AERON_GAMEPAD_MAX) {
+	if (slot < 0) {
+		if (!stopping) {
+			Aeron_LogWarn("aeron.input", "Rumble requested for disconnected controller id=%u",
+						  (unsigned int)instance_id);
+		}
 		return 0;
 	}
-	gamepad = g_aeron.gamepads[slot].gamepad;
-	if (!gamepad) {
+	device = &g_aeron.controllers[slot];
+	if (!device->joystick || !device->has_rumble) {
+		if (!stopping) {
+			Aeron_LogWarn("aeron.input", "Rumble requested for unsupported controller id=%u",
+						  (unsigned int)instance_id);
+		}
 		return 0;
 	}
-	return SDL_RumbleGamepad(gamepad, low_frequency_rumble, high_frequency_rumble, duration_ms) ? 1 : 0;
+	if (!SDL_RumbleJoystick(device->joystick, low_frequency_rumble, high_frequency_rumble,
+							stopping ? 0 : duration_ms)) {
+		if (!stopping) {
+			Aeron_LogWarn("aeron.input", "Rumble failed for controller id=%u: %s", (unsigned int)instance_id,
+						  SDL_GetError());
+		}
+		return 0;
+	}
+	return 1;
 }

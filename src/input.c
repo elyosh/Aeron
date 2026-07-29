@@ -158,10 +158,9 @@ void Aeron_HandleEvent(const SDL_Event* event) {
 			g_aeron.input.mouse.wheel_x += event->wheel.integer_x;
 			g_aeron.input.mouse.wheel_y += event->wheel.integer_y;
 			break;
-		case SDL_EVENT_GAMEPAD_ADDED:
-		case SDL_EVENT_GAMEPAD_REMOVED:
-		case SDL_EVENT_GAMEPAD_REMAPPED:
-			Aeron_HandleGamepadEvent(event);
+		case SDL_EVENT_JOYSTICK_ADDED:
+		case SDL_EVENT_JOYSTICK_REMOVED:
+			Aeron_HandleControllerEvent(event);
 			break;
 		default:
 			break;

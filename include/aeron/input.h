@@ -9,9 +9,12 @@ extern "C" {
 
 #define AERON_KEY_COUNT 512
 #define AERON_TEXT_INPUT_CAPACITY 1024
-#define AERON_GAMEPAD_MAX 4
-#define AERON_GAMEPAD_NAME_CAPACITY 128
-#define AERON_GAMEPAD_PATH_CAPACITY 256
+#define AERON_CONTROLLER_MAX 4
+#define AERON_CONTROLLER_AXIS_MAX 16
+#define AERON_CONTROLLER_BUTTON_MAX 64
+#define AERON_CONTROLLER_HAT_MAX 4
+#define AERON_CONTROLLER_NAME_CAPACITY 128
+#define AERON_CONTROLLER_PATH_CAPACITY 256
 
 /* SDL scancode-compatible key identifiers exposed by Aeron. */
 typedef enum AeronKey {
@@ -153,23 +156,52 @@ typedef struct AeronMouseSnapshot {
 	uint32_t double_clicked_buttons;
 } AeronMouseSnapshot;
 
-/*
- * Standard gamepad state for one connected controller. Axis values use SDL's
- * native Sint16 range; trigger axes are 0..32767, stick axes are -32768..32767.
- */
-typedef struct AeronGamepadSnapshot {
-	int      connected;
-	uint32_t instance_id;
-	char     name[AERON_GAMEPAD_NAME_CAPACITY];
-	char     path[AERON_GAMEPAD_PATH_CAPACITY];
-	char     guid[33];
-	int16_t  axes[AERON_GAMEPAD_AXIS_COUNT];
-	uint32_t buttons;
-	uint32_t pressed_buttons;
-	uint32_t released_buttons;
-} AeronGamepadSnapshot;
+typedef enum AeronControllerKind {
+	AERON_CONTROLLER_KIND_NONE = 0,
+	AERON_CONTROLLER_KIND_JOYSTICK,
+	AERON_CONTROLLER_KIND_GAMEPAD,
+} AeronControllerKind;
 
-/* Complete keyboard, text, mouse, gamepad, focus, and window-size state captured by Aeron_BeginFrame. */
+/* SDL-compatible joystick hat bits. Diagonals are bitwise combinations. */
+typedef enum AeronControllerHat {
+	AERON_CONTROLLER_HAT_CENTERED = 0,
+	AERON_CONTROLLER_HAT_UP       = 1u << 0,
+	AERON_CONTROLLER_HAT_RIGHT    = 1u << 1,
+	AERON_CONTROLLER_HAT_DOWN     = 1u << 2,
+	AERON_CONTROLLER_HAT_LEFT     = 1u << 3,
+} AeronControllerHat;
+
+/*
+ * State for one connected SDL controller. Raw axis values use SDL's signed
+ * 16-bit joystick range. When kind is GAMEPAD, gamepad_axes/buttons also
+ * expose SDL's standardized layout; trigger axes are 0..32767.
+ */
+typedef struct AeronControllerSnapshot {
+	int                 connected;
+	AeronControllerKind kind;
+	int                 has_rumble;
+	uint32_t            instance_id;
+	char                name[AERON_CONTROLLER_NAME_CAPACITY];
+	char                path[AERON_CONTROLLER_PATH_CAPACITY];
+	char                guid[33];
+	uint8_t             axis_count;
+	uint8_t             button_count;
+	uint8_t             hat_count;
+	uint8_t             controls_truncated;
+	int16_t             raw_axes[AERON_CONTROLLER_AXIS_MAX];
+	uint64_t            raw_buttons;
+	uint64_t            raw_pressed_buttons;
+	uint64_t            raw_released_buttons;
+	uint8_t             raw_hats[AERON_CONTROLLER_HAT_MAX];
+	int16_t             gamepad_axes[AERON_GAMEPAD_AXIS_COUNT];
+	/* Standardized buttons physically exposed by this gamepad. */
+	uint32_t            gamepad_available_buttons;
+	uint32_t            gamepad_buttons;
+	uint32_t            gamepad_pressed_buttons;
+	uint32_t            gamepad_released_buttons;
+} AeronControllerSnapshot;
+
+/* Complete keyboard, text, mouse, controller, focus, and window-size state captured by Aeron_BeginFrame. */
 typedef struct AeronInputSnapshot {
 	uint64_t             frame_id;
 	uint8_t              key_down[AERON_KEY_COUNT];
@@ -178,14 +210,14 @@ typedef struct AeronInputSnapshot {
 	/* Key-down event count this frame INCLUDING OS typematic repeats —
 	 * key_pressed reports only the initial edge. Consumers emulating DOS
 	 * BIOS-style keyboard queues count repeats through this. */
-	uint8_t              key_typed[AERON_KEY_COUNT];
-	AeronMouseSnapshot   mouse;
-	AeronGamepadSnapshot gamepads[AERON_GAMEPAD_MAX];
-	char                 text[AERON_TEXT_INPUT_CAPACITY];
-	uint32_t             text_length;
-	int                  window_width;
-	int                  window_height;
-	int                  has_focus;
+	uint8_t                 key_typed[AERON_KEY_COUNT];
+	AeronMouseSnapshot      mouse;
+	AeronControllerSnapshot controllers[AERON_CONTROLLER_MAX];
+	char                    text[AERON_TEXT_INPUT_CAPACITY];
+	uint32_t                text_length;
+	int                     window_width;
+	int                     window_height;
+	int                     has_focus;
 } AeronInputSnapshot;
 
 /* Parses a standard SDL gamepad axis name such as "leftx" or "righttrigger". */
@@ -195,14 +227,15 @@ AeronGamepadButton Aeron_GamepadButtonFromName(const char* name);
 const char*        Aeron_GamepadAxisName(AeronGamepadAxis axis);
 const char*        Aeron_GamepadButtonName(AeronGamepadButton button);
 
-/* Two-motor rumble output for the gamepad in slot [0, AERON_GAMEPAD_MAX).
+/* Two-motor rumble output for the connected controller with this runtime SDL
+ * instance ID. Instance IDs are transient and must not be persisted.
  * low_frequency_rumble / high_frequency_rumble are 0..0xFFFF motor magnitudes;
  * duration_ms bounds the effect (SDL stops it automatically, 0 = stop now).
- * Returns non-zero on success, 0 if the slot has no connected/rumble-capable gamepad. */
-int Aeron_RumbleGamepad(int slot, uint16_t low_frequency_rumble, uint16_t high_frequency_rumble,
-						uint32_t duration_ms);
-/* Non-zero if the gamepad in slot is connected and reports rumble capability. */
-int Aeron_GamepadHasRumble(int slot);
+ * Returns non-zero on success, 0 if the controller is absent or unsupported. */
+int Aeron_RumbleController(uint32_t instance_id, uint16_t low_frequency_rumble,
+						   uint16_t high_frequency_rumble, uint32_t duration_ms);
+/* Non-zero if the connected controller reports rumble capability. */
+int Aeron_ControllerHasRumble(uint32_t instance_id);
 
 #ifdef __cplusplus
 }
