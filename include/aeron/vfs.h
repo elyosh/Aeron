@@ -35,10 +35,14 @@ typedef enum AeronVfsRoot {
 	AERON_VFS_ROOT_COUNT
 } AeronVfsRoot;
 
-/* Optional behavior configured independently for each logical root. */
+/* Optional behavior configured independently for each logical root.
+ * CASE_INSENSITIVE_LOOKUP resolves the on-disk case of existing path
+ * components when an exact-case access fails: reads, stat, and glob require
+ * the full path to exist; open-for-write, remove, and rename resolve the
+ * existing portion and let a new final component keep its requested case. */
 typedef enum AeronVfsRootOptions {
-	AERON_VFS_ROOT_OPTION_NONE                         = 0,
-	AERON_VFS_ROOT_OPTION_CASE_INSENSITIVE_READ_LOOKUP = 1u << 0
+	AERON_VFS_ROOT_OPTION_NONE                    = 0,
+	AERON_VFS_ROOT_OPTION_CASE_INSENSITIVE_LOOKUP = 1u << 0
 } AeronVfsRootOptions;
 
 /* File open modes mapped to binary SDL_IOStream modes. */
