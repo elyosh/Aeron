@@ -82,13 +82,6 @@ int Aeron_WindowInit(const AeronConfig* config) {
 				  g_aeron.logical_width, g_aeron.logical_height);
 	}
 
-	if (g_aeron.presentation_mode == AERON_PRESENTATION_ASPECT_FIT) {
-		const float aspect = (float)g_aeron.logical_width / (float)g_aeron.logical_height;
-		if (!SDL_SetWindowAspectRatio(g_aeron.window, aspect, aspect)) {
-			Aeron_LogWarn("aeron", "SDL_SetWindowAspectRatio failed: %s", SDL_GetError());
-		}
-	}
-
 	return 1;
 }
 
@@ -249,6 +242,17 @@ void Aeron_ComputePresentationRect(int container_width, int container_height, SD
 			content_width = (content_height * g_aeron.logical_width) / g_aeron.logical_height;
 		} else {
 			content_height = (content_width * g_aeron.logical_height) / g_aeron.logical_width;
+		}
+		/* An application-logical size quantizes the container aspect, so a
+		 * matching-aspect container can still fit a pixel or two short and
+		 * produce hairline bars — and lose exact coverage, which direct
+		 * swapchain rendering requires. Snap sub-1/256 shortfalls to full
+		 * coverage */
+		if ((container_width - content_width) * 256 <= container_width) {
+			content_width = container_width;
+		}
+		if ((container_height - content_height) * 256 <= container_height) {
+			content_height = container_height;
 		}
 	}
 
