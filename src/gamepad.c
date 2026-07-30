@@ -152,6 +152,7 @@ static void Aeron_PopulateControllerIdentity(int slot) {
 	SDL_GUID                 guid;
 	const char*              name;
 	const char*              path;
+	int                      axis;
 	int                      button;
 
 	device   = &g_aeron.controllers[slot];
@@ -168,6 +169,11 @@ static void Aeron_PopulateControllerIdentity(int slot) {
 	snapshot->controls_truncated = device->raw_axis_count > AERON_CONTROLLER_AXIS_MAX ||
 								   device->raw_button_count > AERON_CONTROLLER_BUTTON_MAX ||
 								   device->raw_hat_count > AERON_CONTROLLER_HAT_MAX;
+	for (axis = 0; device->gamepad && axis < AERON_GAMEPAD_AXIS_COUNT; ++axis) {
+		if (SDL_GamepadHasAxis(device->gamepad, (SDL_GamepadAxis)axis)) {
+			snapshot->gamepad_available_axes |= 1u << axis;
+		}
+	}
 	for (button = 0; device->gamepad && button < AERON_GAMEPAD_BUTTON_COUNT; ++button) {
 		if (SDL_GamepadHasButton(device->gamepad, (SDL_GamepadButton)button)) {
 			snapshot->gamepad_available_buttons |= 1u << button;

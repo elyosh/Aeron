@@ -195,6 +195,8 @@ typedef struct AeronControllerSnapshot {
 	uint64_t            raw_released_buttons;
 	uint8_t             raw_hats[AERON_CONTROLLER_HAT_MAX];
 	int16_t             gamepad_axes[AERON_GAMEPAD_AXIS_COUNT];
+	/* Standardized axes physically exposed by this gamepad. */
+	uint32_t            gamepad_available_axes;
 	/* Standardized buttons physically exposed by this gamepad. */
 	uint32_t            gamepad_available_buttons;
 	uint32_t            gamepad_buttons;
