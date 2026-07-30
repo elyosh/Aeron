@@ -14,7 +14,8 @@
 #include <stdlib.h>
 #include <string.h>
 
-typedef char AeronSceneMeshTableSizeCheck[sizeof(AeronSceneMeshTable) == 2560 ? 1 : -1];
+typedef char AeronSceneMeshTableSizeCheck[
+	sizeof(AeronSceneMeshTable) == AERON_MESH_TABLE_STRIDE_VEC4 * 16 ? 1 : -1];
 typedef char AeronSceneLightGPUSizeCheck[sizeof(AeronSceneLightGPU) == 32 ? 1 : -1];
 typedef char AeronScenePointLightGPUSizeCheck[sizeof(AeronScenePointLightGPU) == 32 ? 1 : -1];
 

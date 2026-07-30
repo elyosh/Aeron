@@ -27,15 +27,17 @@ extern "C" {
 
 typedef struct AeronScene3D AeronScene3D;
 
-/* 40-slot per-mesh-slot payload packed into the scene's per-frame storage
+/* Per-mesh-slot payload packed into the scene's per-frame storage
  * buffer: per-slot 3x4 affine + packed visibility / highlight / markings /
- * emissive lanes. Instances without one get the identity default. */
+ * emissive lanes. Instances without one get the identity default.
+ * Field order and sizes are the GPU layout — shaders address this
+ * record with the float4 offsets in mesh_table_layout.hlsli. */
 typedef struct AeronSceneMeshTable {
 	float rows[AERON_MAX_MESH_SLOTS][3][4];
-	float visibility_packed[10][4];
-	float highlight_packed[10][4];
-	float markings_packed[10][4];
-	float emissive_packed[10][4];
+	float visibility_packed[AERON_MESH_PACKED_LANES][4];
+	float highlight_packed[AERON_MESH_PACKED_LANES][4];
+	float markings_packed[AERON_MESH_PACKED_LANES][4];
+	float emissive_packed[AERON_MESH_PACKED_LANES][4];
 } AeronSceneMeshTable;
 
 /* One point light for this frame (world position, radius in world

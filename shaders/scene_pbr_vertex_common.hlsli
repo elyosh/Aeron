@@ -36,13 +36,13 @@ cbuffer GltfMeshVSUniforms : register(b0, space1) {
 	row_major float4x4 prev_craft_to_world;
 };
 
-/* Flat stream of 160 float4 records per unique submitted mesh table:
- * 120 articulation rows, then 10 lanes each for visibility, highlight,
- * markings, and emissive. */
+/* One AERON_MESH_TABLE_STRIDE_VEC4-float4 record per unique submitted
+ * mesh table; layout shared with AeronSceneMeshTable. */
+#include "mesh_table_layout.hlsli"
 StructuredBuffer<float4> mesh_tables : register(t0, space0);
-static const uint MESH_TABLE_STRIDE = 160u;
-static const uint MESH_VISIBILITY_OFFSET = 120u;
-static const uint MESH_EMISSIVE_OFFSET = 150u;
+static const uint MESH_TABLE_STRIDE = AERON_MESH_TABLE_STRIDE_VEC4;
+static const uint MESH_VISIBILITY_OFFSET = AERON_MESH_VISIBILITY_OFFSET;
+static const uint MESH_EMISSIVE_OFFSET = AERON_MESH_EMISSIVE_OFFSET;
 
 float4 mesh_table_load(uint table_index, uint offset)
 {
@@ -51,7 +51,8 @@ float4 mesh_table_load(uint table_index, uint offset)
 
 struct VSIn {
 	/* AeronGltfVertex: position/normal/tangent are mesh-local; mesh_index
-	 * selects one of the instance's 40 articulated mesh slots. */
+	 * selects one of the instance's AERON_MAX_MESH_SLOTS articulated
+	 * mesh slots. */
 	float3 position : POSITION;
 	float3 normal : NORMAL;
 	float4 tangent : TANGENT;
@@ -84,7 +85,8 @@ float3 pbr_safe_normalize(float3 value, float3 fallback)
  */
 bool pbr_build_current_vertex(VSIn input, out PbrCurrentVertex current)
 {
-	uint mesh_index = (uint)clamp((int)round(input.mesh_index), 0, 39);
+	uint mesh_index = (uint)clamp((int)round(input.mesh_index), 0,
+								  AERON_MAX_MESH_SLOTS - 1);
 	float visibility =
 		mesh_table_load(current_table_index,
 						MESH_VISIBILITY_OFFSET + (mesh_index >> 2u))[mesh_index & 3u];

@@ -3,19 +3,17 @@
 
 /*
  * Shared mesh-pipeline constants and POD used by both the OPT and
- * glTF mesh paths.
- *
- * Engine cap on per-ship mesh slots — derived from the original
- * ShipModelMesh.mesh_rotation[40]. Mesh pipelines share the same 40-slot
- * scene storage record, indexed by opt_mesh_index. */
+ * glTF mesh paths. AERON_MAX_MESH_SLOTS comes from
+ * mesh_table_layout.hlsli, shared with the shaders. Mesh pipelines
+ * share the same scene storage record, indexed by opt_mesh_index. */
 
 #include <stdint.h>
+
+#include "../../../shaders/mesh_table_layout.hlsli"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
-
-#define AERON_MAX_MESH_SLOTS 40
 
 /* Per-mesh-slot articulation source. Indexed by opt_mesh_index
  * (0..AERON_MAX_MESH_SLOTS-1). The game-side table builder reads
