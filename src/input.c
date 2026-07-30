@@ -79,6 +79,20 @@ static uint32_t Aeron_MouseButtonStateMask(uint32_t sdl_state) {
 	return state;
 }
 
+static void Aeron_ReleaseAllKeys(AeronInputSnapshot* input) {
+	int key;
+
+	/* SDL queues its synthetic key-up events after the focus-lost event.
+	 * Preserve the release edges before clearing level state so downstream
+	 * buffered-input consumers cannot retain a held modifier. */
+	for (key = 0; key < AERON_KEY_COUNT; ++key) {
+		if (input->key_down[key]) {
+			input->key_released[key] = 1;
+		}
+	}
+	memset(input->key_down, 0, sizeof(input->key_down));
+}
+
 void Aeron_HandleEvent(const SDL_Event* event) {
 	uint32_t mask;
 
@@ -91,7 +105,7 @@ void Aeron_HandleEvent(const SDL_Event* event) {
 			break;
 		case SDL_EVENT_WINDOW_FOCUS_LOST:
 			g_aeron.input.has_focus = 0;
-			memset(g_aeron.input.key_down, 0, sizeof(g_aeron.input.key_down));
+			Aeron_ReleaseAllKeys(&g_aeron.input);
 			g_aeron.input.mouse.buttons = 0;
 			break;
 		case SDL_EVENT_WINDOW_DISPLAY_CHANGED:
