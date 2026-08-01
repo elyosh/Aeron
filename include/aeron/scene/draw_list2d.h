@@ -75,17 +75,19 @@ typedef struct AeronDrawList2DSprite {
 } AeronDrawList2DSprite;
 
 /* Free-corner projective quad. corners[0..3] = TL, TR, BL, BR in
- * TARGET PIXELS; q per corner (1.0 for parallelograms — 0 is promoted
- * to 1.0 so zero-init works). Same tint/bias/scissor rules as
- * sprites. */
+ * TARGET PIXELS; q is clip W per corner (1.0 for parallelograms — 0 is
+ * promoted to 1.0 so zero-init works). ndc_depth is used only when
+ * depth_test is set. Same tint/bias/scissor rules as sprites. */
 typedef struct AeronDrawList2DQuad4 {
 	AeronTexture*     texture;
 	float             corners[4][4]; /* [TL,TR,BL,BR]{pos.x_px, pos.y_px, u, v} */
 	float             q[4];
+	float             ndc_depth[4];
 	float             tint[4];
 	float             bias[4];
 	AeronBlit2DBlend  blend;
 	AeronBlit2DFilter filter;
+	int               depth_test;
 	AeronRectI        scissor;
 } AeronDrawList2DQuad4;
 
@@ -114,6 +116,14 @@ void AeronDrawList_AddQuad4(AeronDrawList2D* list, const AeronDrawList2DQuad4* q
 void AeronDrawList_AddLine(AeronDrawList2D* list, float x0, float y0, float x1, float y1,
 						   float thickness_px, const float rgba[4], AeronBlit2DBlend blend,
 						   const AeronRectI* scissor);
+
+/* Projected reversed-Z line. Endpoint clip_w values preserve perspective
+ * interpolation; clip_z is normally the camera near distance. The line reads
+ * scene depth with GREATER_EQUAL and never writes it. */
+void AeronDrawList_AddProjectedLine(AeronDrawList2D* list, float x0, float y0, float clip_w0,
+									float x1, float y1, float clip_w1, float clip_z,
+									float thickness_px, const float rgba[4], AeronBlit2DBlend blend,
+									const AeronRectI* scissor);
 
 /* Solid prims — drawn via the shared 1x1 white texture + tint.
  * AddFrame expands into four fills of `thickness_px`. `rgba` is the

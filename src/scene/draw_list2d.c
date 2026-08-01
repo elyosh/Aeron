@@ -13,7 +13,7 @@
 #include <math.h>
 #include <string.h>
 
-/* Keyed by (color_format, blend, depth_format). A handful of combos
+/* Keyed by (color_format, blend, depth_format, sample_count, depth_test). A handful of combos
  * exist in practice (HDR scene formats, swapchain formats, cockpit
  * chrome); 24 leaves comfortable headroom. */
 #define AERON_BLIT2D_PIPELINE_CACHE_CAP 24
@@ -22,6 +22,8 @@ typedef struct Blit2DPipelineEntry {
 	AeronTextureFormat     format;
 	AeronBlit2DBlend       blend;
 	AeronTextureFormat     depth_format; /* UNKNOWN = no depth */
+	AeronSampleCount       sample_count;
+	int                    depth_test;
 	AeronGraphicsPipeline* pipe;
 } Blit2DPipelineEntry;
 
@@ -141,11 +143,12 @@ static AeronBlendStateDesc blit_blend_state(AeronBlit2DBlend blend) {
 
 static AeronGraphicsPipeline* cache_lookup(Blit2DPipelineEntry* entries, int* count,
 										   AeronShader* vs, AeronTextureFormat color_format,
-										   AeronBlit2DBlend blend,
-										   AeronTextureFormat depth_format, const char* what) {
+										   AeronBlit2DBlend blend, AeronTextureFormat depth_format,
+										   AeronSampleCount sample_count, int depth_test, const char* what) {
 	for (int i = 0; i < *count; i++) {
 		Blit2DPipelineEntry* e = &entries[i];
-		if (e->format == color_format && e->blend == blend && e->depth_format == depth_format) {
+		if (e->format == color_format && e->blend == blend && e->depth_format == depth_format &&
+			e->sample_count == sample_count && e->depth_test == depth_test) {
 			return e->pipe;
 		}
 	}
@@ -153,9 +156,9 @@ static AeronGraphicsPipeline* cache_lookup(Blit2DPipelineEntry* entries, int* co
 		Aeron_LogWarn("aeron.scene", "%s cache full", what);
 		return NULL;
 	}
-	/* No depth read or write — blits run in passes that may or may not
-	 * have a depth attachment; `depth_format` only makes target_info
-	 * declare it so backend validation accepts the bind. */
+	if (depth_test && depth_format == AERON_TEXTURE_FORMAT_UNKNOWN) {
+		return NULL;
+	}
 	AeronGraphicsPipeline* p = Aeron_CreateGraphicsPipeline(&(AeronGraphicsPipelineDesc){
 		.vertex_shader   = vs,
 		.fragment_shader = G.fs,
@@ -163,8 +166,12 @@ static AeronGraphicsPipeline* cache_lookup(Blit2DPipelineEntry* entries, int* co
 		.cull_mode       = AERON_CULL_NONE,
 		.color_format    = color_format,
 		.depth_format    = depth_format,
-		.depth           = (AeronDepthStateDesc){ 0 },
+		.depth           = depth_test ? (AeronDepthStateDesc){ .depth_test = 1,
+															   .depth_write = 0,
+															   .compare = AERON_COMPARE_GREATER_EQUAL }
+									 : (AeronDepthStateDesc){ 0 },
 		.blend           = blit_blend_state(blend),
+		.sample_count    = sample_count,
 	});
 	if (!p) {
 		Aeron_LogError("aeron.scene", "%s creation failed (fmt=%d blend=%d depth=%d)", what,
@@ -175,6 +182,8 @@ static AeronGraphicsPipeline* cache_lookup(Blit2DPipelineEntry* entries, int* co
 		.format       = color_format,
 		.blend        = blend,
 		.depth_format = depth_format,
+		.sample_count = sample_count,
+		.depth_test   = depth_test,
 		.pipe         = p,
 	};
 	return p;
@@ -182,22 +191,24 @@ static AeronGraphicsPipeline* cache_lookup(Blit2DPipelineEntry* entries, int* co
 
 static AeronGraphicsPipeline* blit2d_pipeline(AeronTextureFormat color_format,
 											  AeronBlit2DBlend blend,
-											  AeronTextureFormat depth_format) {
+											  AeronTextureFormat depth_format,
+											  AeronSampleCount sample_count) {
 	if (!blit2d_ensure()) {
 		return NULL;
 	}
 	return cache_lookup(G.pipelines, &G.pipeline_count, G.vs, color_format, blend, depth_format,
-						"blit pipeline");
+						sample_count, 0, "blit pipeline");
 }
 
 static AeronGraphicsPipeline* blit2d_pipeline4(AeronTextureFormat color_format,
 											   AeronBlit2DBlend blend,
-											   AeronTextureFormat depth_format) {
+											   AeronTextureFormat depth_format,
+											   AeronSampleCount sample_count, int depth_test) {
 	if (!blit2d_ensure()) {
 		return NULL;
 	}
 	return cache_lookup(G.pipelines4, &G.pipeline4_count, G.vs4, color_format, blend,
-						depth_format, "blit4 pipeline");
+						depth_format, sample_count, depth_test, "blit4 pipeline");
 }
 
 typedef struct Blit2DInstance {
@@ -211,6 +222,7 @@ typedef struct Blit2DInstance {
 typedef struct Blit2DQuad4Uniform {
 	float corners[4][4];
 	float q[4];
+	float ndc_depth[4];
 	float tint_r, tint_g, tint_b, tint_a;
 	float bias_r, bias_g, bias_b, bias_a;
 } Blit2DQuad4Uniform;
@@ -222,7 +234,7 @@ typedef struct Blit2DRunUniform {
 } Blit2DRunUniform;
 
 typedef char Blit2DInstanceSizeCheck[sizeof(Blit2DInstance) == 80 ? 1 : -1];
-typedef char Blit2DQuad4UniformSizeCheck[sizeof(Blit2DQuad4Uniform) == 112 ? 1 : -1];
+typedef char Blit2DQuad4UniformSizeCheck[sizeof(Blit2DQuad4Uniform) == 128 ? 1 : -1];
 typedef char Blit2DRunUniformSizeCheck[sizeof(Blit2DRunUniform) == 16 ? 1 : -1];
 
 static void blit2d_draw_quad4(AeronRenderPass* pass, AeronGraphicsPipeline* pipe,
@@ -254,6 +266,7 @@ typedef enum {
 
 typedef struct Dl2dRecord {
 	uint8_t           kind;
+	uint8_t           depth_test;
 	AeronBlit2DBlend  blend;
 	AeronBlit2DFilter filter;
 	AeronTexture*     texture;
@@ -414,6 +427,7 @@ void AeronDrawList_AddQuad4(AeronDrawList2D* l, const AeronDrawList2DQuad4* in) 
 	r->filter  = in->filter;
 	r->texture = in->texture;
 	r->scissor = in->scissor;
+	r->depth_test = in->depth_test != 0;
 
 	Blit2DQuad4Uniform* q = &r->u.quad4;
 	/* Header order TL,TR,BL,BR happens to BE the strip zig-zag order
@@ -421,6 +435,7 @@ void AeronDrawList_AddQuad4(AeronDrawList2D* l, const AeronDrawList2DQuad4* in) 
 	memcpy(q->corners, in->corners, sizeof q->corners);
 	for (int i = 0; i < 4; i++) {
 		q->q[i] = in->q[i] != 0.0f ? in->q[i] : 1.0f;
+		q->ndc_depth[i] = in->ndc_depth[i];
 	}
 	float tint[4];
 	dl2d_tint(tint, in->tint);
@@ -434,12 +449,10 @@ void AeronDrawList_AddQuad4(AeronDrawList2D* l, const AeronDrawList2DQuad4* in) 
 	q->bias_a = in->bias[3];
 }
 
-void AeronDrawList_AddLine(AeronDrawList2D* l, float x0, float y0, float x1, float y1,
-						   float thickness_px, const float rgba[4], AeronBlit2DBlend blend,
-						   const AeronRectI* scissor) {
-	if (!rgba || thickness_px <= 0.0f) {
-		return;
-	}
+static void dl2d_add_line(AeronDrawList2D* l, float x0, float y0, float x1, float y1,
+						  float thickness_px, const float rgba[4], AeronBlit2DBlend blend,
+						  const AeronRectI* scissor, float clip_w0, float clip_w1, float clip_z,
+						  int depth_test) {
 	AeronTexture* white = AeronSceneInternal_WhiteTexture();
 	if (!white) {
 		return;
@@ -467,16 +480,42 @@ void AeronDrawList_AddLine(AeronDrawList2D* l, float x0, float y0, float x1, flo
 	AeronDrawList2DQuad4 q = { 0 };
 	q.texture              = white;
 	q.blend                = blend;
+	q.depth_test           = depth_test;
 	/* Strip order TL, TR, BL, BR; white-texel center UVs. */
 	q.corners[0][0] = ax + nx; q.corners[0][1] = ay + ny; q.corners[0][2] = 0.5f; q.corners[0][3] = 0.5f;
 	q.corners[1][0] = bx + nx; q.corners[1][1] = by + ny; q.corners[1][2] = 0.5f; q.corners[1][3] = 0.5f;
 	q.corners[2][0] = ax - nx; q.corners[2][1] = ay - ny; q.corners[2][2] = 0.5f; q.corners[2][3] = 0.5f;
 	q.corners[3][0] = bx - nx; q.corners[3][1] = by - ny; q.corners[3][2] = 0.5f; q.corners[3][3] = 0.5f;
+	if (depth_test) {
+		q.q[0] = q.q[2] = clip_w0;
+		q.q[1] = q.q[3] = clip_w1;
+		q.ndc_depth[0] = q.ndc_depth[2] = clip_z / clip_w0;
+		q.ndc_depth[1] = q.ndc_depth[3] = clip_z / clip_w1;
+	}
 	memcpy(q.tint, rgba, sizeof q.tint);
 	if (scissor) {
 		q.scissor = *scissor;
 	}
 	AeronDrawList_AddQuad4(l, &q);
+}
+
+void AeronDrawList_AddLine(AeronDrawList2D* l, float x0, float y0, float x1, float y1,
+						   float thickness_px, const float rgba[4], AeronBlit2DBlend blend,
+						   const AeronRectI* scissor) {
+	if (!rgba || thickness_px <= 0.0f) {
+		return;
+	}
+	dl2d_add_line(l, x0, y0, x1, y1, thickness_px, rgba, blend, scissor, 1.0f, 1.0f, 0.0f, 0);
+}
+
+void AeronDrawList_AddProjectedLine(AeronDrawList2D* l, float x0, float y0, float clip_w0,
+									float x1, float y1, float clip_w1, float clip_z,
+									float thickness_px, const float rgba[4], AeronBlit2DBlend blend,
+									const AeronRectI* scissor) {
+	if (!rgba || thickness_px <= 0.0f || clip_w0 <= 0.0f || clip_w1 <= 0.0f || clip_z < 0.0f) {
+		return;
+	}
+	dl2d_add_line(l, x0, y0, x1, y1, thickness_px, rgba, blend, scissor, clip_w0, clip_w1, clip_z, 1);
 }
 
 void AeronDrawList_AddFill(AeronDrawList2D* l, float x, float y, float w, float h,
@@ -612,6 +651,8 @@ static void dl2d_set_scissor(AeronDrawList2D* l, AeronRenderPass* pass, const Ae
 static int draw_list_encode(AeronDrawList2D* l, AeronRenderPass* pass,
 							AeronRenderTarget* target) {
 	const AeronTextureFormat fmt = Aeron_TextureGetFormat(Aeron_RenderTargetGetTexture(target));
+	const AeronTextureFormat depth_format = Aeron_RenderPassGetDepthFormat(pass);
+	const AeronSampleCount sample_count = Aeron_RenderPassGetSampleCount(pass);
 	const float output_rgb_scale = Aeron_RenderPassOutputRgbScale(pass);
 	const Blit2DRunUniform run_base = {
 		.ndc_scale       = { 2.0f / (float)l->target_w, 2.0f / (float)l->target_h },
@@ -631,7 +672,7 @@ static int draw_list_encode(AeronDrawList2D* l, AeronRenderPass* pass,
 				++end;
 			}
 			AeronGraphicsPipeline* pipe =
-				blit2d_pipeline(fmt, r->blend, AERON_TEXTURE_FORMAT_UNKNOWN);
+				blit2d_pipeline(fmt, r->blend, depth_format, sample_count);
 			AeronSampler* sampler = blit2d_sampler(r->filter);
 			if (!pipe || !sampler || !l->instance_buffer) {
 				return 0;
@@ -648,7 +689,7 @@ static int draw_list_encode(AeronDrawList2D* l, AeronRenderPass* pass,
 		}
 
 		AeronGraphicsPipeline* pipe =
-			blit2d_pipeline4(fmt, r->blend, AERON_TEXTURE_FORMAT_UNKNOWN);
+			blit2d_pipeline4(fmt, r->blend, depth_format, sample_count, r->depth_test);
 		AeronSampler* sampler = blit2d_sampler(r->filter);
 		if (!pipe || !sampler) {
 			return 0;

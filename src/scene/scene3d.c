@@ -421,6 +421,8 @@ int AeronScene_Begin(AeronScene3D* s, const AeronSceneCamera* camera) {
 	s->overlay_vertex_count = 0;
 	s->overlay_frame_ready  = 0;
 	s->storage_ready        = 0;
+	s->after_meshes_fn      = NULL;
+	s->after_meshes_user    = NULL;
 	/* Default motion context: prev = current (zero camera velocity). */
 	memcpy(s->mb_prev_view_proj, s->unjittered_view_proj, sizeof s->mb_prev_view_proj);
 	s->mb_velocity_regen     = 0;
@@ -768,6 +770,14 @@ void AeronScene_SetPassHook(AeronScene3D* s, AeronScenePassSlot slot, AeronScene
 	s->hook_user[slot] = user;
 }
 
+void AeronScene_SetAfterMeshes(AeronScene3D* s, AeronSceneAfterMeshesFn fn, void* user) {
+	if (!s) {
+		return;
+	}
+	s->after_meshes_fn   = fn;
+	s->after_meshes_user = user;
+}
+
 static void run_hook(AeronScene3D* s, AeronScenePassSlot slot, AeronCommandBuffer* cmd,
 					 AeronRenderPass* pass) {
 	if (s->hook_fn[slot]) {
@@ -785,6 +795,17 @@ static void run_hook(AeronScene3D* s, AeronScenePassSlot slot, AeronCommandBuffe
 		s->hook_fn[slot](cmd, pass, output_space ? s->output_w : s->render_w,
 						 output_space ? s->output_h : s->render_h, s->hook_user[slot]);
 	}
+}
+
+static void scene_run_after_meshes(AeronScene3D* s, AeronCommandBuffer* cmd,
+								   AeronRenderPass* pass, AeronRenderTarget* color_target) {
+	if (!s->after_meshes_fn) {
+		return;
+	}
+	s->after_meshes_fn(cmd, pass, color_target, s->after_meshes_user);
+	/* A callback may leave a 2D viewport/scissor active. */
+	Aeron_SetViewport(pass, &s->camera.viewport);
+	Aeron_SetScissor(pass, &s->camera.viewport);
 }
 
 /* Temporal reconstruction needs every representable camera rotation: even
@@ -1387,6 +1408,7 @@ int AeronScene_Render(AeronScene3D* s, AeronCommandBuffer* cmd) {
 			Aeron_EndRenderPass(pass);
 			return scene_render_failure(s, cmd, "Scene PBR transparent recording failed");
 		}
+		scene_run_after_meshes(s, cmd, pass, msaa_active ? s->msaa_color_rt : s->color_rt);
 		Aeron_GpuDebugMarker(cmd, "Overlay billboards");
 		AeronSceneBb3d_DrawStage(s, pass, AERON_SCENE_BILLBOARD_STAGE_OVERLAY);
 
@@ -1473,6 +1495,7 @@ int AeronScene_Render(AeronScene3D* s, AeronCommandBuffer* cmd) {
 				return scene_render_failure(s, cmd, "Scene PBR transparent recording failed");
 			}
 		}
+		scene_run_after_meshes(s, cmd, pass, s->color_rt);
 		Aeron_GpuDebugMarker(cmd, "Overlay billboards");
 		AeronSceneBb3d_DrawStage(s, pass, AERON_SCENE_BILLBOARD_STAGE_OVERLAY);
 	}

@@ -136,6 +136,7 @@ struct AeronRenderPass {
 	AeronCommandBuffer*   owner;
 	float               output_rgb_scale;
 	AeronSampleCount    sample_count;
+	AeronTextureFormat  depth_format;
 	int                 debug_group_open;
 };
 

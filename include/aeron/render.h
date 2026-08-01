@@ -893,6 +893,8 @@ AeronRenderPass* Aeron_BeginRenderPass(const AeronRenderPassDesc* desc);
 void Aeron_EndRenderPass(AeronRenderPass* pass);
 /* Returns the raster sample count of an active render pass. */
 AeronSampleCount Aeron_RenderPassGetSampleCount(const AeronRenderPass* pass);
+/* Returns the active pass depth format, or UNKNOWN when no depth target is bound. */
+AeronTextureFormat Aeron_RenderPassGetDepthFormat(const AeronRenderPass* pass);
 
 /* Starts a compute pass without allocating. Dependent dispatches must use
  * separate passes; nested passes on one command buffer are rejected. */

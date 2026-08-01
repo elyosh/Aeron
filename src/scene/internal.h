@@ -9,7 +9,7 @@
 #include "aeron/scene/billboard.h"
 #include "aeron/scene/mesh_overlay.h"
 
-#define AERON_SCENE_MAX_INSTANCES 512
+#define AERON_SCENE_MAX_INSTANCES 2048
 #define AERON_SCENE_MAX_LIGHTS 128
 #define AERON_SCENE_MAX_BILLBOARDS 2304
 #define AERON_SCENE_MAX_FRAME_UNIFORMS 4
@@ -151,6 +151,8 @@ struct AeronScene3D {
 
 	AeronScenePassHookFn hook_fn[AERON_SCENE_HOOK_COUNT];
 	void*                hook_user[AERON_SCENE_HOOK_COUNT];
+	AeronSceneAfterMeshesFn after_meshes_fn;
+	void*                   after_meshes_user;
 
 	AeronSceneMeshInstance instances[AERON_SCENE_MAX_INSTANCES];
 	AeronScenePreparedInstance prepared_instances[AERON_SCENE_MAX_INSTANCES];

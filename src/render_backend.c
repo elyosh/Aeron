@@ -3568,6 +3568,7 @@ AeronRenderPass* Aeron_BeginRenderPass(const AeronRenderPassDesc* desc) {
 	}
 	pass->output_rgb_scale = 1.0f;
 	pass->sample_count     = pass_sample_count;
+	pass->depth_format     = has_depth ? desc->depth_target->depth.format : AERON_TEXTURE_FORMAT_UNKNOWN;
 
 	if (!desc->command_buffer->command_buffer || desc->command_buffer->failed ||
 		desc->command_buffer->compute_pass_active || desc->command_buffer->render_pass_active) {
@@ -3678,6 +3679,10 @@ void Aeron_EndRenderPass(AeronRenderPass* pass) {
 
 AeronSampleCount Aeron_RenderPassGetSampleCount(const AeronRenderPass* pass) {
 	return pass && Aeron_IsValidSampleCount(pass->sample_count) ? pass->sample_count : AERON_SAMPLE_COUNT_1;
+}
+
+AeronTextureFormat Aeron_RenderPassGetDepthFormat(const AeronRenderPass* pass) {
+	return pass ? pass->depth_format : AERON_TEXTURE_FORMAT_UNKNOWN;
 }
 
 AeronComputePass* Aeron_BeginComputePass(const AeronComputePassDesc* desc) {

@@ -23,6 +23,7 @@ struct Blit4Uniforms
     float4 c2;     /* BL (strip order — corner index 3 in CW) */
     float4 c3;     /* BR (strip order — corner index 2 in CW) */
     float4 q;      /* per-corner projective w; xyzw = strip order */
+    float4 depth;  /* per-corner NDC depth; zero for ordinary 2D */
     float4 tint;
     float4 bias;
 };
@@ -44,16 +45,17 @@ VSOut main(uint vid : SV_VertexID)
 {
     float4 cv;
     float  qv;
-    if      (vid == 0u) { cv = u.c0; qv = u.q.x; }
-    else if (vid == 1u) { cv = u.c1; qv = u.q.y; }
-    else if (vid == 2u) { cv = u.c2; qv = u.q.z; }
-    else                { cv = u.c3; qv = u.q.w; }
+    float  depth;
+    if      (vid == 0u) { cv = u.c0; qv = u.q.x; depth = u.depth.x; }
+    else if (vid == 1u) { cv = u.c1; qv = u.q.y; depth = u.depth.y; }
+    else if (vid == 2u) { cv = u.c2; qv = u.q.z; depth = u.depth.z; }
+    else                { cv = u.c3; qv = u.q.w; depth = u.depth.w; }
 
     /* Multiply pos by q and set w = q. Metal's perspective-correct
      * varying interpolation then produces hyperbolic UV across the
      * quad — no diagonal seam between the two strip triangles. */
     VSOut o;
-    o.position = float4(cv.x * qv, cv.y * qv, 0.0f, qv);
+    o.position = float4(cv.x * qv, cv.y * qv, depth * qv, qv);
     o.uv       = float2(cv.z, cv.w);
     o.tint     = u.tint;
     o.bias     = u.bias;

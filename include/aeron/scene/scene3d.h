@@ -118,6 +118,9 @@ typedef struct AeronSceneMeshInstance {
 	uint8_t shadow_flags;
 } AeronSceneMeshInstance;
 
+typedef void (*AeronSceneAfterMeshesFn)(AeronCommandBuffer* cmd, AeronRenderPass* pass,
+									   AeronRenderTarget* color_target, void* user);
+
 #define AERON_SCENE_SHADOW_MAX_CASCADES 4
 
 typedef enum AeronSceneShadowFitMode {
@@ -288,6 +291,10 @@ void AeronScene_SetSkyCube(AeronScene3D* scene, AeronTexture* cube, const float 
 
 void AeronScene_SetPassHook(AeronScene3D* scene, AeronScenePassSlot slot, AeronScenePassHookFn fn,
 							void* user);
+
+/* Optional in-pass callback after opaque, transparent, and articulated mesh
+ * geometry, but before scene billboards. Begin clears it. */
+void AeronScene_SetAfterMeshes(AeronScene3D* scene, AeronSceneAfterMeshesFn fn, void* user);
 
 /* Sampler used for the pbr channel-atlas binds. NULL restores the scene's
  * default (linear, clamp). Games swap in their own to carry anisotropy settings
