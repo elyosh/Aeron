@@ -55,11 +55,11 @@ typedef enum {
 	AERON_DRAWLIST2D_LOAD  = 1, /* keep contents (incremental redraw) */
 } AeronDrawList2DClearMode;
 
-/* One textured sprite. `tint` all-zero (the C zero-init default) is
- * treated as opaque white; `bias` adds alpha-weighted RGB (color-fade
- * effects). The trapezoid fields are top-edge horizontal insets in
- * PIXELS plus projective w; all-zero means a plain rect. `scissor` in
- * target pixels; zero width/height = none. */
+/* One textured sprite. `tint` is a literal RGBA multiplier; use opaque
+ * white for an untinted sprite. `bias` adds alpha-weighted RGB
+ * (color-fade effects). The trapezoid fields are top-edge horizontal
+ * insets in PIXELS plus projective w; all-zero means a plain rect.
+ * `scissor` in target pixels; zero width/height = none. */
 typedef struct AeronDrawList2DSprite {
 	AeronTexture*     texture;
 	float             src_u0, src_v0, src_u1, src_v1; /* UV, v=0 top */

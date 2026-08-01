@@ -64,10 +64,6 @@ void AeronScene_AddMeshOverlay(AeronScene3D* scene, const AeronSceneMeshOverlayD
 	memcpy(entry->uv_xform, overlay->uv_xform, sizeof entry->uv_xform);
 	memcpy(entry->uv_rect, overlay->uv_rect, sizeof entry->uv_rect);
 	memcpy(entry->color, overlay->color, sizeof entry->color);
-	if (entry->color[0] == 0.0f && entry->color[1] == 0.0f && entry->color[2] == 0.0f &&
-		entry->color[3] == 0.0f) {
-		entry->color[0] = entry->color[1] = entry->color[2] = entry->color[3] = 1.0f;
-	}
 	memcpy(&scene->overlay_vertices[scene->overlay_vertex_count], overlay->vertices,
 		   (size_t)overlay->vertex_count * sizeof *overlay->vertices);
 	scene->overlay_vertex_count = required_vertex_count;

@@ -34,7 +34,7 @@ typedef struct AeronSceneMeshOverlayDesc {
 	/* atlas_uv = uv * zw + xy. uv_rect is minU,minV,maxU,maxV. */
 	float   uv_xform[4];
 	float   uv_rect[4];
-	float   color[4]; /* linear straight RGBA; all-zero means white */
+	float   color[4]; /* literal linear straight RGBA */
 	float   depth_bias_view;
 	uint8_t blend;
 	uint8_t cull_mode;

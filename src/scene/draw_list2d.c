@@ -365,15 +365,6 @@ static Dl2dRecord* dl2d_alloc(AeronDrawList2D* l) {
 	return r;
 }
 
-/* All-zero tint (C zero-init) reads as opaque white. */
-static void dl2d_tint(float out[4], const float tint[4]) {
-	if (tint[0] == 0.0f && tint[1] == 0.0f && tint[2] == 0.0f && tint[3] == 0.0f) {
-		out[0] = out[1] = out[2] = out[3] = 1.0f;
-	} else {
-		memcpy(out, tint, sizeof(float) * 4);
-	}
-}
-
 void AeronDrawList_AddSprite(AeronDrawList2D* l, const AeronDrawList2DSprite* s) {
 	if (!s || !s->texture) {
 		return;
@@ -397,12 +388,10 @@ void AeronDrawList_AddSprite(AeronDrawList2D* l, const AeronDrawList2DSprite* s)
 	q->src_v0          = s->src_v0;
 	q->src_u1          = s->src_u1;
 	q->src_v1          = s->src_v1;
-	float tint[4];
-	dl2d_tint(tint, s->tint);
-	q->tint_r = tint[0];
-	q->tint_g = tint[1];
-	q->tint_b = tint[2];
-	q->tint_a = tint[3];
+	q->tint_r = s->tint[0];
+	q->tint_g = s->tint[1];
+	q->tint_b = s->tint[2];
+	q->tint_a = s->tint[3];
 	q->bias_r = s->bias[0];
 	q->bias_g = s->bias[1];
 	q->bias_b = s->bias[2];
@@ -437,12 +426,10 @@ void AeronDrawList_AddQuad4(AeronDrawList2D* l, const AeronDrawList2DQuad4* in) 
 		q->q[i] = in->q[i] != 0.0f ? in->q[i] : 1.0f;
 		q->ndc_depth[i] = in->ndc_depth[i];
 	}
-	float tint[4];
-	dl2d_tint(tint, in->tint);
-	q->tint_r = tint[0];
-	q->tint_g = tint[1];
-	q->tint_b = tint[2];
-	q->tint_a = tint[3];
+	q->tint_r = in->tint[0];
+	q->tint_g = in->tint[1];
+	q->tint_b = in->tint[2];
+	q->tint_a = in->tint[3];
 	q->bias_r = in->bias[0];
 	q->bias_g = in->bias[1];
 	q->bias_b = in->bias[2];
@@ -537,12 +524,6 @@ void AeronDrawList_AddFill(AeronDrawList2D* l, float x, float y, float w, float 
 	s.dst_w                 = w;
 	s.dst_h                 = h;
 	memcpy(s.tint, rgba, sizeof s.tint);
-	/* A genuinely transparent fill would decay to "white" through the
-	 * zero-tint rule — but it also draws nothing observable in either
-	 * blend mode with a = 0, so drop it instead. */
-	if (rgba[0] == 0.0f && rgba[1] == 0.0f && rgba[2] == 0.0f && rgba[3] == 0.0f) {
-		return;
-	}
 	s.blend  = blend;
 	s.filter = AERON_BLIT2D_FILTER_NEAREST;
 	if (scissor) {
