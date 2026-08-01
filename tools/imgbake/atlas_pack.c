@@ -62,8 +62,8 @@ bool atlas_pack_compute(const AnimImage *anim, AtlasPack *out) {
 		const Image8 *img = &anim->frames[i];
 		if (!img->pixels) continue;
 		if (img->width > max_w) max_w = img->width;
-		total_area += (long)(img->width + ATLAS_PAD) *
-		              (long)(img->height + ATLAS_PAD);
+		total_area += (long)(img->width + 2 * ATLAS_PAD) *
+		              (long)(img->height + 2 * ATLAS_PAD);
 		valid++;
 	}
 	if (valid == 0 || max_w <= 0)

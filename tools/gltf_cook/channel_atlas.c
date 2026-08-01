@@ -134,15 +134,13 @@ bool channel_atlas_pack(ChannelAtlas* ca, int max_atlas_size, int pad) {
 		try_w = 4;
 	for (; try_w <= max_atlas_size; try_w *= 2) {
 		for (int i = 0; i < ca->rect_count; i++) {
-			/* Pack the complete padded footprint with no shared gutter.
-			 * Each sub-rect then owns every texel its wrap bleed writes. */
-			trial[i].w   = ca->rects[i].src_w + 2 * pad;
-			trial[i].h   = ca->rects[i].src_h + 2 * pad;
+			trial[i].w   = ca->rects[i].src_w;
+			trial[i].h   = ca->rects[i].src_h;
 			trial[i].x   = 0;
 			trial[i].y   = 0;
 			trial[i].key = (uint32_t)i;
 		}
-		int h = Aeron_AtlasPackRects(trial, ca->rect_count, try_w, 0);
+		int h = Aeron_AtlasPackRects(trial, ca->rect_count, try_w, pad);
 		if (h < 0)
 			continue;
 		/* Round atlas height up to next power of 2 (BC7 + mip
@@ -156,7 +154,9 @@ bool channel_atlas_pack(ChannelAtlas* ca, int max_atlas_size, int pad) {
 		 * silently; we'd rather catch that here. */
 		bool fits = true;
 		for (int i = 0; i < ca->rect_count; i++) {
-			if (trial[i].x + trial[i].w > try_w || trial[i].y + trial[i].h > try_h) {
+			if (trial[i].x < pad || trial[i].y < pad ||
+				trial[i].x + trial[i].w + pad > try_w ||
+				trial[i].y + trial[i].h + pad > try_h) {
 				fits = false;
 				break;
 			}
@@ -188,8 +188,8 @@ bool channel_atlas_pack(ChannelAtlas* ca, int max_atlas_size, int pad) {
 	/* Scatter positions back into the original (sorted) rect order. */
 	for (int i = 0; i < ca->rect_count; i++) {
 		int idx          = (int)best[i].key;
-		ca->rects[idx].x = best[i].x + pad;
-		ca->rects[idx].y = best[i].y + pad;
+		ca->rects[idx].x = best[i].x;
+		ca->rects[idx].y = best[i].y;
 	}
 	ca->width     = best_w;
 	ca->height    = best_h;
@@ -199,30 +199,6 @@ bool channel_atlas_pack(ChannelAtlas* ca, int max_atlas_size, int pad) {
 	free(trial);
 	free(best);
 	return true;
-}
-
-static int wrap_index(int index, int size) {
-	int wrapped = index % size;
-	return wrapped < 0 ? wrapped + size : wrapped;
-}
-
-/* Periodically extend a sub-rect into its private gutter. OPT UVs use
- * REPEAT, so opposite edges must meet under bilinear filtering. */
-static void materialize_rect(uint8_t* atlas, int aw, int pad, const ChannelRect* r) {
-	for (int y = -pad; y < r->src_h + pad; y++) {
-		const int      sy      = wrap_index(y, r->src_h);
-		const uint8_t* src_row = r->src_rgba + (size_t)sy * (size_t)r->src_w * 4u;
-		uint8_t*       dst_row = atlas + ((size_t)(r->y + y) * (size_t)aw + (size_t)(r->x - pad)) * 4u;
-
-		for (int x = -pad; x < 0; x++) {
-			memcpy(dst_row + (size_t)(x + pad) * 4u, src_row + (size_t)wrap_index(x, r->src_w) * 4u, 4u);
-		}
-		memcpy(dst_row + (size_t)pad * 4u, src_row, (size_t)r->src_w * 4u);
-		for (int x = 0; x < pad; x++) {
-			memcpy(dst_row + (size_t)(pad + r->src_w + x) * 4u,
-				   src_row + (size_t)wrap_index(x, r->src_w) * 4u, 4u);
-		}
-	}
 }
 
 bool channel_atlas_materialize(ChannelAtlas* ca) {
@@ -235,7 +211,12 @@ bool channel_atlas_materialize(ChannelAtlas* ca) {
 
 	for (int i = 0; i < ca->rect_count; i++) {
 		const ChannelRect* r = &ca->rects[i];
-		materialize_rect(ca->rgba, ca->width, ca->pad, r);
+		if (!Aeron_AtlasBlitRgba8(ca->rgba, ca->width, ca->height, r->src_rgba, r->src_w,
+								  r->src_h, r->x, r->y, ca->pad, AERON_ATLAS_ADDRESS_REPEAT)) {
+			free(ca->rgba);
+			ca->rgba = NULL;
+			return false;
+		}
 	}
 	return true;
 }

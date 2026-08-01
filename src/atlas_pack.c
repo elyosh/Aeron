@@ -13,11 +13,16 @@ int Aeron_AtlasPackRects(AeronAtlasRect* rects, int count, int atlas_width, int 
 	int* heights = (int*)calloc((size_t)atlas_width, sizeof *heights);
 	if (!heights)
 		return -1;
-	int atlas_height = gutter;
+	int atlas_height = 0;
 	for (int i = 0; i < count; i++) {
 		AeronAtlasRect* rect = &rects[i];
-		const int footprint_width = rect->w + gutter;
-		const int footprint_height = rect->h + gutter;
+		if (rect->w <= 0 || rect->h <= 0 || gutter > (INT_MAX - rect->w) / 2 ||
+			gutter > (INT_MAX - rect->h) / 2) {
+			free(heights);
+			return -1;
+		}
+		const int footprint_width = rect->w + 2 * gutter;
+		const int footprint_height = rect->h + 2 * gutter;
 		const int last_x = atlas_width - footprint_width;
 		if (last_x < 0) {
 			free(heights);
@@ -41,11 +46,57 @@ int Aeron_AtlasPackRects(AeronAtlasRect* rects, int count, int atlas_width, int 
 		const int top = best_y + footprint_height;
 		for (int column = 0; column < footprint_width; column++)
 			heights[best_x + column] = top;
-		if (top + gutter > atlas_height)
-			atlas_height = top + gutter;
+		if (top > atlas_height)
+			atlas_height = top;
 	}
 	free(heights);
 	return atlas_height;
+}
+
+static int atlas_address_index(int index, int size, AeronAtlasAddressMode address_mode) {
+	if (address_mode == AERON_ATLAS_ADDRESS_CLAMP) {
+		if (index < 0)
+			return 0;
+		return index < size ? index : size - 1;
+	}
+	const int wrapped = index % size;
+	return wrapped < 0 ? wrapped + size : wrapped;
+}
+
+int Aeron_AtlasBlitRgba8(uint8_t* atlas, int atlas_width, int atlas_height,
+						 const uint8_t* source, int source_width, int source_height,
+						 int x, int y, int gutter, AeronAtlasAddressMode address_mode) {
+	if (!atlas || !source || atlas_width <= 0 || atlas_height <= 0 || source_width <= 0 ||
+		source_height <= 0 || gutter < 0 ||
+		(address_mode != AERON_ATLAS_ADDRESS_CLAMP && address_mode != AERON_ATLAS_ADDRESS_REPEAT) ||
+		(size_t)atlas_width > SIZE_MAX / (size_t)atlas_height / 4u ||
+		(size_t)source_width > SIZE_MAX / (size_t)source_height / 4u)
+		return 0;
+	if (gutter > atlas_width || gutter > atlas_height || source_width > atlas_width - gutter ||
+		source_height > atlas_height - gutter)
+		return 0;
+	if (x < gutter || y < gutter || x > atlas_width - source_width - gutter ||
+		y > atlas_height - source_height - gutter)
+		return 0;
+
+	for (int row = -gutter; row < source_height + gutter; row++) {
+		const int source_y = atlas_address_index(row, source_height, address_mode);
+		const uint8_t* source_row = source + (size_t)source_y * source_width * 4u;
+		uint8_t* destination = atlas +
+			((size_t)(y + row) * atlas_width + (size_t)(x - gutter)) * 4u;
+		for (int column = -gutter; column < 0; column++) {
+			const int source_x = atlas_address_index(column, source_width, address_mode);
+			memcpy(destination + (size_t)(column + gutter) * 4u,
+				   source_row + (size_t)source_x * 4u, 4u);
+		}
+		memcpy(destination + (size_t)gutter * 4u, source_row, (size_t)source_width * 4u);
+		for (int column = 0; column < gutter; column++) {
+			const int source_x = atlas_address_index(column + source_width, source_width, address_mode);
+			memcpy(destination + (size_t)(gutter + source_width + column) * 4u,
+				   source_row + (size_t)source_x * 4u, 4u);
+		}
+	}
+	return 1;
 }
 
 static int atlas_next_power_of_two(int value, int limit) {
@@ -135,7 +186,7 @@ static int atlas_plan_page(const AeronAtlasImage* images, const int* order, int 
 }
 
 static uint8_t* atlas_compose_page(const AeronAtlasImage* images, const AeronAtlasRect* rects,
-							   int count, int width, int height) {
+							   int count, int width, int height, int gutter) {
 	if ((size_t)width > SIZE_MAX / (size_t)height / 4u)
 		return NULL;
 	uint8_t* rgba = (uint8_t*)calloc((size_t)width * height, 4u);
@@ -143,9 +194,10 @@ static uint8_t* atlas_compose_page(const AeronAtlasImage* images, const AeronAtl
 		return NULL;
 	for (int i = 0; i < count; i++) {
 		const AeronAtlasImage* image = &images[rects[i].key];
-		for (int y = 0; y < image->height; y++) {
-			memcpy(rgba + ((size_t)(rects[i].y + y) * width + rects[i].x) * 4u,
-				   image->rgba + (size_t)y * image->width * 4u, (size_t)image->width * 4u);
+		if (!Aeron_AtlasBlitRgba8(rgba, width, height, image->rgba, image->width, image->height,
+								  rects[i].x, rects[i].y, gutter, AERON_ATLAS_ADDRESS_CLAMP)) {
+			free(rgba);
+			return NULL;
 		}
 	}
 	return rgba;
@@ -199,7 +251,7 @@ int Aeron_AtlasBuildRgba8(AeronAtlasImage* images, int count,
 			if (!page_images)
 				goto failed;
 		}
-		uint8_t* rgba = atlas_compose_page(images, rects, page_images, width, height);
+		uint8_t* rgba = atlas_compose_page(images, rects, page_images, width, height, options->gutter);
 		if (!rgba) {
 			free(rects);
 			goto failed;
