@@ -305,6 +305,7 @@ set(AERON_SOURCES
     src/image.c
     src/input.c
     src/log.c
+    src/numeric.c
     src/paths.c
     src/render_backend.c
     src/surface.c
@@ -625,6 +626,7 @@ set(AERON_FORMAT_FILES
     include/aeron/input.h
     include/aeron/log.h
     include/aeron/main.h
+    include/aeron/numeric.h
     include/aeron/paths.h
     include/aeron/render.h
     include/aeron/surface.h

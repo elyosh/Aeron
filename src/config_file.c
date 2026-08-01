@@ -112,25 +112,7 @@ static int AeronConfig_ParseInt(const char* value, size_t length, int64_t* out_v
 }
 
 static int AeronConfig_ParseFloat(const char* value, size_t length, double* out_value) {
-	char*  copy;
-	char*  end;
-	double parsed;
-
-	copy = AeronConfig_DuplicateBytes((const unsigned char*)value, length);
-	if (!copy) {
-		return 0;
-	}
-
-	errno  = 0;
-	parsed = strtod(copy, &end);
-	if (errno != 0 || end == copy || *end != '\0') {
-		SDL_free(copy);
-		return 0;
-	}
-
-	SDL_free(copy);
-	*out_value = parsed;
-	return 1;
+	return Aeron_ParseAsciiDouble(value, length, out_value);
 }
 
 static int AeronConfig_TextLooksFloat(const char* value, size_t length) {

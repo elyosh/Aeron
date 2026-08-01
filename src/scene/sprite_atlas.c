@@ -9,6 +9,7 @@
 #include "aeron/scene/sprite_atlas.h"
 
 #include "aeron/log.h"
+#include "aeron/numeric.h"
 
 #include <SDL3/SDL_error.h>
 #include <SDL3/SDL_filesystem.h>
@@ -34,7 +35,8 @@ static int node_int(const yaml_document_t *doc, int node_id) {
 
 static float node_float(const yaml_document_t *doc, int node_id) {
     const char *s = node_scalar(doc, node_id);
-    return s ? (float)atof(s) : 0.0f;
+    double value;
+    return s && Aeron_ParseAsciiDouble(s, strlen(s), &value) ? (float)value : 0.0f;
 }
 
 /* Walk an `atlas:` mapping, populating out->atlas_w / out->atlas_h.
