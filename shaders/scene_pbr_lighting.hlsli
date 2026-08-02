@@ -65,8 +65,6 @@ cbuffer PbrLightFS : register(AERON_PBR_LIGHT_UNIFORM_REGISTER, space3)
     /* Point-light evaluation knobs: minimum distance, specular weight,
      * diffuse wrap, and per-light contribution cap. */
     float4 fs_point_params;
-    uint fs_point_count;
-    uint3 _pad_point_count;
 };
 
 struct PbrPointLight
@@ -75,6 +73,7 @@ struct PbrPointLight
     float4 color;
 };
 StructuredBuffer<PbrPointLight> fs_point_lights : register(t9, space2);
+#include "scene_clustered_lights.hlsli"
 #endif
 
 #ifndef AERON_DIRECTIONAL_SHADOW_UNIFORM_REGISTER
@@ -559,7 +558,7 @@ float3 cook_torrance_spec(float3 N, float3 V, float3 L,
     return (D * G) * F / max(4.0f * ndotv, 1e-4f);
 }
 
-/* Frame-global punctual-light accumulator. Returns the summed diffuse
+/* Clustered punctual-light accumulator. Returns the summed diffuse
  * RADIANCE (caller multiplies by albedo x (1-metallic)) and adds the
  * per-light Cook-Torrance specular into `spec_out` (already scaled by
  * spec_intensity x spec_mul x fs_point_params.y).
@@ -576,16 +575,26 @@ float3 cook_torrance_spec(float3 N, float3 V, float3 L,
  * mirrors the classic lit-color saturation (hue-preserving) — engine
  * glow sources saturate by design in the original law. */
 float3 accumulate_point_lights(float3 N, float3 N_spec, float3 V, float3 world_pos,
+                               float2 screen_position,
                                PbrMaterialParams mp, float spec_mul,
                                inout float3 spec_out)
 {
-    float3 diff  = float3(0.0f, 0.0f, 0.0f);
-    uint   count = fs_point_count;
+    float3 diff = float3(0.0f, 0.0f, 0.0f);
+    uint cluster_index = 0u;
+    uint count = fs_cluster_point_count;
+    if (fs_cluster_enabled != 0u) {
+        uint2 header = clustered_light_fragment_header(screen_position, world_pos,
+                                                        cluster_index);
+        count = min(header.x, AERON_CLUSTER_MAX_LIGHTS);
+    }
     float  min_d = max(fs_point_params.x, 1.0f);
     float  wrap  = fs_point_params.z;
     float  cap   = fs_point_params.w;
     for (uint pi = 0u; pi < count; ++pi) {
-        PbrPointLight point_light = fs_point_lights[pi];
+        uint light_index = fs_cluster_enabled != 0u
+                         ? fs_cluster_indices[cluster_index * AERON_CLUSTER_MAX_LIGHTS + pi]
+                         : pi;
+        PbrPointLight point_light = fs_point_lights[light_index];
         float3 dv = point_light.position_range.xyz - world_pos;
         float  r  = point_light.position_range.w;
         float  d2 = dot(dv, dv);

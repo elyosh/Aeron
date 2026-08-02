@@ -184,6 +184,7 @@ set(AERON_SHADER_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_pbr_prepass.frag.hlsl
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_pbr_prepass_stamp.vert.hlsl
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_pbr_prepass_stamp.frag.hlsl
+    ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_clustered_lights.comp.hlsl
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_directional_shadow.vert.hlsl
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_directional_shadow.frag.hlsl
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_directional_shadow_debug.frag.hlsl
@@ -545,6 +546,7 @@ add_library(aeron_scene STATIC
     src/scene/blend_ramp.c
     src/scene/gltf_mesh.c
     src/scene/scene3d.c
+    src/scene/clustered_lights.c
     src/scene/billboards3d.c
     src/scene/mesh.c
     src/scene/mesh_overlay.c

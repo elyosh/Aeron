@@ -18,6 +18,9 @@ typedef char AeronSceneMeshTableSizeCheck[
 	sizeof(AeronSceneMeshTable) == AERON_MESH_TABLE_STRIDE_VEC4 * 16 ? 1 : -1];
 typedef char AeronSceneLightGPUSizeCheck[sizeof(AeronSceneLightGPU) == 32 ? 1 : -1];
 typedef char AeronScenePointLightGPUSizeCheck[sizeof(AeronScenePointLightGPU) == 32 ? 1 : -1];
+typedef char AeronSceneClusterLightGPUSizeCheck[sizeof(AeronSceneClusterLightGPU) == 32 ? 1 : -1];
+typedef char AeronSceneClusterHeaderGPUSizeCheck[sizeof(AeronSceneClusterHeaderGPU) == 8 ? 1 : -1];
+typedef char AeronSceneClusterUniformGPUSizeCheck[sizeof(AeronSceneClusterUniformGPU) == 96 ? 1 : -1];
 
 /* struct AeronScene3D lives in internal.h (shared with
  * the material-class translation units). */
@@ -327,6 +330,10 @@ AeronScene3D* AeronScene_Create(const AeronScene3DDesc* desc) {
 	s->clear_rgba[1] = 0.015f;
 	s->clear_rgba[2] = 0.03f;
 	s->clear_rgba[3] = 1.0f;
+	s->cluster_desc.enabled      = 1;
+	s->cluster_desc.tile_size    = AERON_SCENE_CLUSTER_DEFAULT_TILE_SIZE;
+	s->cluster_desc.depth_slices = AERON_SCENE_CLUSTER_DEFAULT_DEPTH_SLICES;
+	s->cluster_desc.min_distance = 1.0f;
 
 	if (!scene_create_targets(s)) {
 		AeronScene_Destroy(s);
@@ -349,6 +356,7 @@ void AeronScene_Destroy(AeronScene3D* s) {
 	AeronSceneBb3d_Release(s);
 	AeronSceneMeshOverlay_Release(s);
 	AeronSceneDirectionalShadow_Release(s);
+	AeronSceneClusteredLights_Release(s);
 	AeronSceneStorage_Release(s);
 	AeronScenePbr_Release(s);
 	AeronSceneTemporal_Release(s);
@@ -404,6 +412,8 @@ int AeronScene_Begin(AeronScene3D* s, const AeronSceneCamera* camera) {
 	s->instance_count      = 0;
 	s->instances_dropped   = 0;
 	s->light_count         = 0;
+	s->lights_dropped      = 0;
+	s->cluster_ready       = 0;
 	s->frame_uniform_count = 0;
 	s->pbr_debug_views     = 0;
 	memset(&s->directional_shadow, 0, sizeof s->directional_shadow);
@@ -445,11 +455,49 @@ void AeronScene_AddMeshInstance(AeronScene3D* s, const AeronSceneMeshInstance* i
 	s->instances[s->instance_count++] = *instance;
 }
 
-void AeronScene_AddLight(AeronScene3D* s, const AeronSceneLight* light) {
-	if (!s || !light || s->light_count >= AERON_SCENE_MAX_LIGHTS) {
-		return;
+int AeronScene_AddLight(AeronScene3D* s, const AeronSceneLight* light) {
+	if (!s || !light) {
+		return 0;
+	}
+	if (s->light_count >= AERON_SCENE_MAX_LIGHTS) {
+		if (!s->lights_dropped) {
+			Aeron_LogWarn("aeron.scene", "point-light cap (%d) hit; dropping", AERON_SCENE_MAX_LIGHTS);
+		}
+		s->lights_dropped++;
+		return 0;
 	}
 	s->lights[s->light_count++] = *light;
+	return 1;
+}
+
+int AeronScene_SetClusteredLights(AeronScene3D* s, const AeronSceneClusteredLightDesc* desc) {
+	if (!s || !desc || desc->tile_size < 8u || desc->tile_size > 128u || desc->depth_slices < 4u ||
+		desc->depth_slices > 64u || !isfinite(desc->min_distance) || desc->min_distance < 0.0f ||
+		!isfinite(desc->contribution_cap) || desc->contribution_cap < 0.0f) {
+		return 0;
+	}
+	s->cluster_desc            = *desc;
+	s->cluster_desc.enabled    = desc->enabled != 0;
+	s->cluster_desc.debug_view = desc->debug_view != 0;
+	return 1;
+}
+
+void AeronScene_GetClusteredLightStats(const AeronScene3D* s, AeronSceneClusteredLightStats* out) {
+	if (!out) {
+		return;
+	}
+	memset(out, 0, sizeof *out);
+	if (!s) {
+		return;
+	}
+	out->submitted_light_count = s->light_count > 0 ? (uint32_t)s->light_count : 0u;
+	out->dropped_light_count   = s->lights_dropped > 0 ? (uint32_t)s->lights_dropped : 0u;
+	out->grid_x                = s->cluster_uniform.grid_x;
+	out->grid_y                = s->cluster_uniform.grid_y;
+	out->grid_z                = s->cluster_uniform.grid_z;
+	out->cluster_count         = s->cluster_count;
+	out->allocated_buffer_bytes = (uint64_t)s->cluster_light_buffer_cap + s->cluster_header_buffer_cap +
+								  s->cluster_index_buffer_cap + s->cluster_stats_buffer_cap;
 }
 
 void AeronScene_SetDirectionalShadow(AeronScene3D* s, const AeronSceneDirectionalShadowDesc* shadow) {
@@ -879,8 +927,8 @@ static uint32_t scene_register_mesh_table(AeronScene3D* s, const AeronSceneMeshT
 	return UINT32_MAX;
 }
 
-static int scene_storage_ensure_buffer(AeronBuffer** buffer, uint32_t* capacity,
-									   uint32_t required, const char* name) {
+static int scene_storage_ensure_buffer_usage(AeronBuffer** buffer, uint32_t* capacity,
+										 uint32_t required, uint32_t usage, const char* name) {
 	if (*buffer && *capacity >= required) {
 		return 1;
 	}
@@ -894,7 +942,7 @@ static int scene_storage_ensure_buffer(AeronBuffer** buffer, uint32_t* capacity,
 	}
 	AeronBuffer* replacement = Aeron_CreateBuffer(&(AeronBufferDesc){
 		.size         = new_capacity,
-		.usage        = AERON_BUFFER_USAGE_STORAGE,
+		.usage        = usage,
 		.memory_usage = AERON_MEMORY_USAGE_DYNAMIC,
 		.debug_name   = name,
 	});
@@ -905,6 +953,11 @@ static int scene_storage_ensure_buffer(AeronBuffer** buffer, uint32_t* capacity,
 	*buffer   = replacement;
 	*capacity = new_capacity;
 	return 1;
+}
+
+static int scene_storage_ensure_buffer(AeronBuffer** buffer, uint32_t* capacity,
+									   uint32_t required, const char* name) {
+	return scene_storage_ensure_buffer_usage(buffer, capacity, required, AERON_BUFFER_USAGE_STORAGE, name);
 }
 
 static void scene_storage_report_failure(AeronScene3D* s, const char* resource, uint32_t bytes) {
@@ -1001,9 +1054,21 @@ int AeronSceneStorage_Prepare(AeronScene3D* s, AeronCommandBuffer* cmd) {
 			point_count * (uint32_t)sizeof(AeronScenePointLightGPU));
 		return 0;
 	}
+	if (point_count > 0 &&
+		!scene_storage_reserve((void**)&s->cluster_light_staging,
+								 &s->cluster_light_staging_cap, point_count,
+								 sizeof *s->cluster_light_staging)) {
+		scene_storage_report_failure(
+			s, "scene.cluster_lights.cpu",
+			point_count * (uint32_t)sizeof(AeronSceneClusterLightGPU));
+		return 0;
+	}
+	float view_rotation[9];
+	AeronSceneInternal_QuatToMat3(s->camera.ori, view_rotation);
 	for (uint32_t i = 0; i < point_count; ++i) {
 		const AeronSceneLight* source = &s->lights[i];
 		AeronScenePointLightGPU* destination = &s->point_light_staging[i];
+		AeronSceneClusterLightGPU* cluster = &s->cluster_light_staging[i];
 		destination->position_range[0] = source->pos[0];
 		destination->position_range[1] = source->pos[1];
 		destination->position_range[2] = source->pos[2];
@@ -1012,6 +1077,18 @@ int AeronSceneStorage_Prepare(AeronScene3D* s, AeronCommandBuffer* cmd) {
 		destination->color[1] = source->color[1];
 		destination->color[2] = source->color[2];
 		destination->color[3] = 0.0f;
+		const float dx = source->pos[0] - s->camera.pos[0];
+		const float dy = source->pos[1] - s->camera.pos[1];
+		const float dz = source->pos[2] - s->camera.pos[2];
+		for (int row = 0; row < 3; ++row) {
+			cluster->view_position_range[row] = view_rotation[row * 3 + 0] * dx +
+											 view_rotation[row * 3 + 1] * dy +
+											 view_rotation[row * 3 + 2] * dz;
+			cluster->color_luminance[row] = source->color[row];
+		}
+		cluster->view_position_range[3] = source->radius;
+		cluster->color_luminance[3] = 0.2126f * source->color[0] + 0.7152f * source->color[1] +
+									  0.0722f * source->color[2];
 	}
 	s->point_light_count = point_count;
 
@@ -1044,6 +1121,8 @@ int AeronSceneStorage_Prepare(AeronScene3D* s, AeronCommandBuffer* cmd) {
 	const uint32_t point_bytes =
 		(s->point_light_count ? s->point_light_count : 1u) *
 		(uint32_t)sizeof *s->point_light_staging;
+	const uint32_t cluster_light_bytes =
+		s->point_light_count * (uint32_t)sizeof *s->cluster_light_staging;
 	if (!scene_storage_ensure_buffer(&s->mesh_table_buffer, &s->mesh_table_buffer_cap,
 									table_bytes, "scene.mesh_tables")) {
 		scene_storage_report_failure(s, "scene.mesh_tables", table_bytes);
@@ -1059,12 +1138,25 @@ int AeronSceneStorage_Prepare(AeronScene3D* s, AeronCommandBuffer* cmd) {
 		scene_storage_report_failure(s, "scene.point_lights", point_bytes);
 		return 0;
 	}
-	const AeronBufferUploadDesc uploads[3] = {
+	if (cluster_light_bytes > 0 &&
+		!scene_storage_ensure_buffer_usage(&s->cluster_light_buffer, &s->cluster_light_buffer_cap,
+										   cluster_light_bytes, AERON_BUFFER_USAGE_COMPUTE_STORAGE_READ,
+										   "scene.cluster_lights")) {
+		scene_storage_report_failure(s, "scene.cluster_lights", cluster_light_bytes);
+		return 0;
+	}
+	AeronBufferUploadDesc uploads[4] = {
 		{ s->mesh_table_buffer, 0, s->mesh_table_staging, table_bytes },
 		{ s->local_light_buffer, 0, s->local_light_staging, local_bytes },
 		{ s->point_light_buffer, 0, s->point_light_staging, point_bytes },
 	};
-	s->storage_ready = Aeron_UploadBufferBatchCmd(cmd, uploads, 3);
+	uint32_t upload_count = 3;
+	if (cluster_light_bytes > 0) {
+		uploads[upload_count++] = (AeronBufferUploadDesc) {
+			s->cluster_light_buffer, 0, s->cluster_light_staging, cluster_light_bytes
+		};
+	}
+	s->storage_ready = Aeron_UploadBufferBatchCmd(cmd, uploads, upload_count);
 	if (!s->storage_ready) {
 		scene_storage_report_failure(s, "scene.dynamic_storage",
 									table_bytes + local_bytes + point_bytes);
@@ -1096,15 +1188,19 @@ void AeronSceneStorage_Release(AeronScene3D* s) {
 	Aeron_DestroyBuffer(s->mesh_table_buffer);
 	Aeron_DestroyBuffer(s->local_light_buffer);
 	Aeron_DestroyBuffer(s->point_light_buffer);
+	Aeron_DestroyBuffer(s->cluster_light_buffer);
 	free(s->mesh_table_staging);
 	free(s->local_light_staging);
 	free(s->point_light_staging);
+	free(s->cluster_light_staging);
 	s->mesh_table_buffer = NULL;
 	s->local_light_buffer = NULL;
 	s->point_light_buffer = NULL;
+	s->cluster_light_buffer = NULL;
 	s->mesh_table_staging = NULL;
 	s->local_light_staging = NULL;
 	s->point_light_staging = NULL;
+	s->cluster_light_staging = NULL;
 }
 
 static int scene_render_failure(AeronScene3D* s, AeronCommandBuffer* cmd, const char* message) {
@@ -1251,6 +1347,9 @@ int AeronScene_Render(AeronScene3D* s, AeronCommandBuffer* cmd) {
 	const int pbr_ok = !pbr_required || AeronScenePbr_Ensure(s);
 	if (!pbr_ok) {
 		return scene_render_failure(s, cmd, "Scene PBR resource preparation failed");
+	}
+	if (pbr_required && !AeronSceneClusteredLights_Build(s, cmd)) {
+		return scene_render_failure(s, cmd, "Scene clustered-light preparation failed");
 	}
 	s->temporal_active = temporal_requested;
 	if (temporal_requested &&

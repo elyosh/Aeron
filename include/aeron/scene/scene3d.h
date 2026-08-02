@@ -18,14 +18,19 @@
 #include <stdint.h>
 
 #include "aeron/render.h"
-#include "aeron/temporal.h"
 #include "aeron/scene/mesh.h"
+#include "aeron/temporal.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 typedef struct AeronScene3D AeronScene3D;
+
+enum {
+	AERON_SCENE_POINT_LIGHT_CAPACITY   = 256,
+	AERON_SCENE_CLUSTER_LIGHT_CAPACITY = 32,
+};
 
 /* Per-mesh-slot payload packed into the scene's per-frame storage
  * buffer: per-slot 3x4 affine + packed visibility / highlight / markings /
@@ -47,6 +52,25 @@ typedef struct AeronSceneLight {
 	float radius;
 	float color[3];
 } AeronSceneLight;
+
+typedef struct AeronSceneClusteredLightDesc {
+	int      enabled;
+	uint32_t tile_size;
+	uint32_t depth_slices;
+	float    min_distance;
+	float    contribution_cap;
+	int      debug_view;
+} AeronSceneClusteredLightDesc;
+
+typedef struct AeronSceneClusteredLightStats {
+	uint32_t submitted_light_count;
+	uint32_t dropped_light_count;
+	uint32_t grid_x;
+	uint32_t grid_y;
+	uint32_t grid_z;
+	uint32_t cluster_count;
+	uint64_t allocated_buffer_bytes;
+} AeronSceneClusteredLightStats;
 
 /* CPU submission record for one per-instance culled light. The scene packs
  * active records into its per-frame local-light storage buffer. */
@@ -119,7 +143,7 @@ typedef struct AeronSceneMeshInstance {
 } AeronSceneMeshInstance;
 
 typedef void (*AeronSceneAfterMeshesFn)(AeronCommandBuffer* cmd, AeronRenderPass* pass,
-									   AeronRenderTarget* color_target, void* user);
+										AeronRenderTarget* color_target, void* user);
 
 #define AERON_SCENE_SHADOW_MAX_CASCADES 4
 
@@ -265,7 +289,13 @@ int AeronScene_Begin(AeronScene3D* scene, const AeronSceneCamera* camera);
  * Render() completes. Over-capacity submissions are dropped with a
  * once-per-frame log. */
 void AeronScene_AddMeshInstance(AeronScene3D* scene, const AeronSceneMeshInstance* instance);
-void AeronScene_AddLight(AeronScene3D* scene, const AeronSceneLight* light);
+/* Returns one when accepted. Capacity failures are counted and logged once
+ * per frame rather than silently dropping a light. */
+int AeronScene_AddLight(AeronScene3D* scene, const AeronSceneLight* light);
+
+/* Persistent clustered-forward point-light configuration. */
+int  AeronScene_SetClusteredLights(AeronScene3D* scene, const AeronSceneClusteredLightDesc* desc);
+void AeronScene_GetClusteredLightStats(const AeronScene3D* scene, AeronSceneClusteredLightStats* out);
 
 /* Configure the key directional shadow for this frame. Visible ordinary
  * instances cast automatically. AddShadowCaster queues hidden ordinary

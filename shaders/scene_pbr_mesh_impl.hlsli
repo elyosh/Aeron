@@ -19,10 +19,13 @@
  *
  * Fragment resource map:
  *   b0 space3 — DirectionalShadowFS (scene-owned)
- *   b1 space3 — PbrLightFS          (shared lighting, tuning, point count)
+ *   b1 space3 — PbrLightFS          (shared lighting and tuning)
+ *   b2 space3 — ClusteredLightUniform
  *   t7 space2 — material storage (after seven sampled textures)
  *   t8 space2 — packed variant-map storage
  *   t9 space2 — scene point-light storage
+ *   t10 space2 — cluster headers
+ *   t11 space2 — cluster light indices
  *
  * Texture / sampler slots:
  *   t0/s0 — base_color atlas    (sRGB)
@@ -261,16 +264,22 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
                      * (sun_color * mp.spec_intensity * global_spec_mul)
                      * shadow_visibility;
 
-    /* Frame-global punctual lights (laser bolts, explosions, engine
+    /* Clustered punctual lights (laser bolts, explosions, engine
      * glows): windowed classic 1/d attenuation, Lambert diffuse + per-light
      * spec. Untouched by AO like the per-instance local lights. */
-    if (fs_point_count > 0u) {
-        float3 point_diff = accumulate_point_lights(N, N_spec, V, i.world_pos, mp,
+    if (fs_cluster_point_count > 0u) {
+        float3 point_diff = accumulate_point_lights(N, N_spec, V, i.world_pos,
+                                                    i.position.xy, mp,
                                                     global_spec_mul, spec_rgb);
         base_rgb += albedo * (1.0f - metallic) * point_diff;
     }
 
     float3 lit = base_rgb + spec_rgb;
+
+    if (fs_cluster_debug_view != 0u && fs_cluster_enabled != 0u) {
+        _out.color = float4(clustered_light_debug_color(i.position.xy, i.world_pos), 1.0f);
+        return _out;
+    }
 
     /* ===== XvT flat-shading override ============================
      * Replace the full PBR composition with a diffuse-only flat

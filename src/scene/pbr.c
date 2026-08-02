@@ -11,8 +11,11 @@
  *   FS storage 0: per-mesh material entries
  *   FS storage 1: per-mesh packed variant map
  *   FS storage 2: frame point lights
+ *   FS storage 3: clustered-light headers
+ *   FS storage 4: clustered-light indices
  *   FS b0 space3: AeronSceneDirectionalShadowUniform
- *   FS b1 space3: fixed PBR environment, tuning, and point-light count
+ *   FS b1 space3: fixed PBR environment and tuning
+ *   FS b2 space3: clustered-light grid and camera data
  *   FS t0..t3: channel atlases, t4: AO, t5/t6: compared/raw directional shadow depth
  */
 
@@ -229,7 +232,7 @@ static AeronGraphicsPipeline* pbr_debug_pipeline(struct AeronScene3D* s, int kin
 	if (!s->pbr_debug_tried) {
 		s->pbr_debug_tried = 1;
 		s->pbr_debug_fs =
-			pbr_shader("scene_pbr_mesh_debug.frag", AERON_SHADER_STAGE_FRAGMENT, 7, 2, 3);
+			pbr_shader("scene_pbr_mesh_debug.frag", AERON_SHADER_STAGE_FRAGMENT, 7, 3, 5);
 	}
 	if (!s->pbr_debug_fs) {
 		return NULL;
@@ -265,7 +268,7 @@ int AeronScenePbr_Ensure(struct AeronScene3D* s) {
 		pbr_shader("scene_pbr_prepass.vert", AERON_SHADER_STAGE_VERTEX, 0, 1, 1);
 	s->pbr_prepass_stamp_vs =
 		pbr_shader("scene_pbr_prepass_stamp.vert", AERON_SHADER_STAGE_VERTEX, 0, 1, 1);
-	s->pbr_fs         = pbr_shader("scene_pbr_mesh.frag", AERON_SHADER_STAGE_FRAGMENT, 7, 2, 3);
+	s->pbr_fs         = pbr_shader("scene_pbr_mesh.frag", AERON_SHADER_STAGE_FRAGMENT, 7, 3, 5);
 	s->pbr_prepass_fs = pbr_shader("scene_pbr_prepass.frag", AERON_SHADER_STAGE_FRAGMENT, 0, 0, 0);
 	/* Velocity stamping reads the same mesh-owned material resources. */
 	s->pbr_prepass_stamp_fs =
@@ -395,6 +398,7 @@ static void pbr_bind_ao(struct AeronScene3D* s, AeronRenderPass* pass, AeronText
 	}
 	Aeron_BindStorageBuffer(pass, AERON_SHADER_STAGE_FRAGMENT, 2,
 							s->point_light_buffer);
+	AeronSceneClusteredLights_Bind(s, pass);
 }
 
 int AeronScenePbr_DrawInstances(struct AeronScene3D* s, AeronCommandBuffer* cmd, AeronRenderPass* pass,

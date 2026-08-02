@@ -10,7 +10,11 @@
 #include "aeron/scene/mesh_overlay.h"
 
 #define AERON_SCENE_MAX_INSTANCES 2048
-#define AERON_SCENE_MAX_LIGHTS 128
+#define AERON_SCENE_MAX_LIGHTS AERON_SCENE_POINT_LIGHT_CAPACITY
+#define AERON_SCENE_CLUSTER_MAX_LIGHTS AERON_SCENE_CLUSTER_LIGHT_CAPACITY
+#define AERON_SCENE_CLUSTER_DEFAULT_TILE_SIZE 32u
+#define AERON_SCENE_CLUSTER_DEFAULT_DEPTH_SLICES 24u
+#define AERON_SCENE_CLUSTER_THREADS 64u
 #define AERON_SCENE_MAX_BILLBOARDS 2304
 #define AERON_SCENE_MAX_FRAME_UNIFORMS 4
 #define AERON_SCENE_FRAME_UNIFORM_CAP AERON_MAX_UNIFORM_DATA_SIZE
@@ -91,6 +95,44 @@ typedef struct AeronScenePointLightGPU {
 	float color[4];
 } AeronScenePointLightGPU;
 
+typedef struct AeronSceneClusterLightGPU {
+	float view_position_range[4];
+	float color_luminance[4];
+} AeronSceneClusterLightGPU;
+
+typedef struct AeronSceneClusterHeaderGPU {
+	uint32_t count;
+	uint32_t candidate_count;
+} AeronSceneClusterHeaderGPU;
+
+typedef struct AeronSceneClusterUniformGPU {
+	float    camera_position[3];
+	float    near_z;
+	float    camera_forward[3];
+	float    slice_scale;
+	float    tan_h_half;
+	float    tan_v_half;
+	float    proj_x_offset;
+	float    proj_y_offset;
+	uint32_t viewport_x;
+	uint32_t viewport_y;
+	uint32_t viewport_width;
+	uint32_t viewport_height;
+	uint32_t grid_x;
+	uint32_t grid_y;
+	uint32_t grid_z;
+	uint32_t point_light_count;
+	float    point_min_distance;
+	float    point_contribution_cap;
+	uint32_t tile_size;
+	uint32_t flags;
+} AeronSceneClusterUniformGPU;
+
+enum {
+	AERON_SCENE_CLUSTER_ENABLED    = 1u << 0,
+	AERON_SCENE_CLUSTER_DEBUG_VIEW = 1u << 1,
+};
+
 /* FS b1, shared by the scene shadow module and the PBR draw path. */
 typedef struct AeronSceneDirectionalShadowUniform {
 	float view_proj[AERON_SCENE_SHADOW_MAX_CASCADES][16];
@@ -160,6 +202,7 @@ struct AeronScene3D {
 	int                    instances_dropped;
 	AeronSceneLight        lights[AERON_SCENE_MAX_LIGHTS];
 	int                    light_count;
+	int                    lights_dropped;
 	AeronSceneFrameUniform frame_uniforms[AERON_SCENE_MAX_FRAME_UNIFORMS];
 	int                    frame_uniform_count;
 
@@ -207,14 +250,36 @@ struct AeronScene3D {
 	AeronScenePointLightGPU*   point_light_staging;
 	uint32_t                   point_light_count;
 	uint32_t                   point_light_staging_cap;
+	AeronSceneClusterLightGPU* cluster_light_staging;
+	uint32_t                   cluster_light_staging_cap;
 	AeronBuffer*               mesh_table_buffer;
 	uint32_t                   mesh_table_buffer_cap;
 	AeronBuffer*               local_light_buffer;
 	uint32_t                   local_light_buffer_cap;
 	AeronBuffer*               point_light_buffer;
 	uint32_t                   point_light_buffer_cap;
+	AeronBuffer*               cluster_light_buffer;
+	uint32_t                   cluster_light_buffer_cap;
 	int                        storage_ready;
 	int                        storage_error_logged;
+
+	/* Clustered-forward point-light allocation. */
+	AeronSceneClusteredLightDesc cluster_desc;
+	AeronSceneClusterUniformGPU  cluster_uniform;
+	AeronBuffer*                 cluster_header_buffer;
+	uint32_t                     cluster_header_buffer_cap;
+	AeronBuffer*                 cluster_index_buffer;
+	uint32_t                     cluster_index_buffer_cap;
+	AeronBuffer*                 cluster_stats_buffer;
+	uint32_t                     cluster_stats_buffer_cap;
+	AeronComputePipeline*        cluster_build_pipeline;
+	AeronComputePipeline*        cluster_clear_pipeline;
+	float                        cluster_far_z;
+	float                        cluster_near_z;
+	uint32_t                     cluster_far_shrink_frames;
+	uint32_t                     cluster_count;
+	int                          cluster_tried;
+	int                          cluster_ready;
 
 	/* Compact receiver-local mesh overlays (decals, highlights, etc.). */
 	AeronSceneMeshOverlayEntry   overlays[AERON_SCENE_MAX_MESH_OVERLAYS];
@@ -386,6 +451,12 @@ int                        AeronSceneStorage_Prepare(struct AeronScene3D* s,
 void                       AeronSceneStorage_Release(struct AeronScene3D* s);
 uint32_t                   AeronSceneStorage_ShadowTableIndex(
 						  const struct AeronScene3D* s, uint16_t encoded_caster);
+
+/* clustered_lights.c */
+int  AeronSceneClusteredLights_Ensure(struct AeronScene3D* s);
+int  AeronSceneClusteredLights_Build(struct AeronScene3D* s, AeronCommandBuffer* cmd);
+void AeronSceneClusteredLights_Bind(struct AeronScene3D* s, AeronRenderPass* pass);
+void AeronSceneClusteredLights_Release(struct AeronScene3D* s);
 
 /* pbr.c */
 int  AeronScenePbr_Ensure(struct AeronScene3D* s);
