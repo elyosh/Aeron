@@ -498,7 +498,7 @@ void AeronScene_GetClusteredLightStats(const AeronScene3D* s, AeronSceneClustere
 	out->cluster_count         = s->cluster_count;
 	out->global_light_count    = s->cluster_global_count;
 	out->allocated_buffer_bytes = (uint64_t)s->cluster_light_buffer_cap + s->cluster_header_buffer_cap +
-								  s->cluster_index_buffer_cap + s->cluster_stats_buffer_cap;
+								  s->cluster_index_buffer_cap;
 }
 
 void AeronScene_SetDirectionalShadow(AeronScene3D* s, const AeronSceneDirectionalShadowDesc* shadow) {

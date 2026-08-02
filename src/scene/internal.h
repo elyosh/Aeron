@@ -274,10 +274,7 @@ struct AeronScene3D {
 	uint32_t                     cluster_header_buffer_cap;
 	AeronBuffer*                 cluster_index_buffer;
 	uint32_t                     cluster_index_buffer_cap;
-	AeronBuffer*                 cluster_stats_buffer;
-	uint32_t                     cluster_stats_buffer_cap;
 	AeronComputePipeline*        cluster_build_pipeline;
-	AeronComputePipeline*        cluster_clear_pipeline;
 	float                        cluster_far_z;
 	float                        cluster_near_z;
 	uint32_t                     cluster_far_shrink_frames;

@@ -2,22 +2,14 @@
 
 #include "internal.h"
 
-#include <float.h>
 #include <math.h>
 #include <stdint.h>
 #include <string.h>
 
-#define AERON_CLUSTER_STATS_WORDS 4u
 #define AERON_CLUSTER_FAR_SHRINK_FRAMES 120u
 #define AERON_CLUSTER_GLOBAL_SCREEN_COVERAGE 0.25f
 #define AERON_CLUSTER_GLOBAL_COUNT_SHIFT 8u
 #define AERON_CLUSTER_LOCAL_COUNT_SHIFT 16u
-
-typedef struct ClusterFillUniform {
-	uint32_t fill_value;
-	uint32_t element_count;
-	uint32_t _pad[2];
-} ClusterFillUniform;
 
 static int cluster_ensure_buffer(AeronBuffer** buffer, uint32_t* capacity, uint32_t required, uint32_t usage,
 								 const char* name) {
@@ -186,32 +178,21 @@ int AeronSceneClusteredLights_Ensure(AeronScene3D* s) {
 		s->cluster_build_pipeline = Aeron_CreateComputePipeline(&(AeronComputePipelineDesc) {
 			.name                           = "scene_clustered_lights.comp",
 			.readonly_storage_buffer_count  = 1,
-			.readwrite_storage_buffer_count = 3,
+			.readwrite_storage_buffer_count = 2,
 			.uniform_buffer_count           = 1,
 			.thread_count_x                 = AERON_SCENE_CLUSTER_THREADS,
 			.thread_count_y                 = 1,
 			.thread_count_z                 = 1,
 		});
-		s->cluster_clear_pipeline = Aeron_CreateComputePipeline(&(AeronComputePipelineDesc) {
-			.name                           = "compute_fill_buffer.comp",
-			.readwrite_storage_buffer_count = 1,
-			.uniform_buffer_count           = 1,
-			.thread_count_x                 = 64,
-			.thread_count_y                 = 1,
-			.thread_count_z                 = 1,
-		});
 	}
 	const uint32_t output_usage = AERON_BUFFER_USAGE_STORAGE | AERON_BUFFER_USAGE_COMPUTE_STORAGE_WRITE;
-	return s->cluster_build_pipeline && s->cluster_clear_pipeline &&
+	return s->cluster_build_pipeline &&
 		   cluster_ensure_buffer(&s->cluster_header_buffer, &s->cluster_header_buffer_cap,
 								 (uint32_t)sizeof(AeronSceneClusterHeaderGPU), output_usage,
 								 "scene.cluster_headers") &&
 		   cluster_ensure_buffer(&s->cluster_index_buffer, &s->cluster_index_buffer_cap,
 								 AERON_SCENE_CLUSTER_MAX_LIGHTS * (uint32_t)sizeof(uint32_t), output_usage,
-								 "scene.cluster_indices") &&
-		   cluster_ensure_buffer(&s->cluster_stats_buffer, &s->cluster_stats_buffer_cap,
-								 AERON_CLUSTER_STATS_WORDS * (uint32_t)sizeof(uint32_t),
-								 AERON_BUFFER_USAGE_COMPUTE_STORAGE_WRITE, "scene.cluster_stats");
+								 "scene.cluster_indices");
 }
 
 int AeronSceneClusteredLights_Build(AeronScene3D* s, AeronCommandBuffer* cmd) {
@@ -245,31 +226,14 @@ int AeronSceneClusteredLights_Build(AeronScene3D* s, AeronCommandBuffer* cmd) {
 		return 0;
 	}
 
-	AeronComputeBufferBinding clear_output = { s->cluster_stats_buffer, 1 };
-	AeronComputePass*         clear        = Aeron_BeginComputePass(&(AeronComputePassDesc) {
-		.command_buffer     = cmd,
-		.write_buffers      = &clear_output,
-		.write_buffer_count = 1,
-		.debug_label        = "Clustered lights stats clear",
-	});
-	if (!clear) {
-		return 0;
-	}
-	const ClusterFillUniform clear_uniform = { 0, AERON_CLUSTER_STATS_WORDS, { 0, 0 } };
-	Aeron_BindComputePipeline(clear, s->cluster_clear_pipeline);
-	Aeron_BindComputeUniformData(clear, 0, &clear_uniform, sizeof clear_uniform);
-	Aeron_DispatchCompute(clear, 1, 1, 1);
-	Aeron_EndComputePass(clear);
-
-	AeronComputeBufferBinding outputs[3] = {
+	AeronComputeBufferBinding outputs[2] = {
 		{ s->cluster_header_buffer, 1 },
 		{ s->cluster_index_buffer, 1 },
-		{ s->cluster_stats_buffer, 0 },
 	};
 	AeronComputePass* build = Aeron_BeginComputePass(&(AeronComputePassDesc) {
 		.command_buffer     = cmd,
 		.write_buffers      = outputs,
-		.write_buffer_count = 3,
+		.write_buffer_count = 2,
 		.debug_label        = "Clustered lights build",
 	});
 	if (!build) {
@@ -299,15 +263,11 @@ void AeronSceneClusteredLights_Release(AeronScene3D* s) {
 		return;
 	}
 	Aeron_DestroyComputePipeline(s->cluster_build_pipeline);
-	Aeron_DestroyComputePipeline(s->cluster_clear_pipeline);
 	Aeron_DestroyBuffer(s->cluster_header_buffer);
 	Aeron_DestroyBuffer(s->cluster_index_buffer);
-	Aeron_DestroyBuffer(s->cluster_stats_buffer);
 	s->cluster_build_pipeline = NULL;
-	s->cluster_clear_pipeline = NULL;
 	s->cluster_header_buffer  = NULL;
 	s->cluster_index_buffer   = NULL;
-	s->cluster_stats_buffer   = NULL;
 	s->cluster_global_count  = 0;
 	s->cluster_light_count   = 0;
 	s->cluster_tried          = 0;

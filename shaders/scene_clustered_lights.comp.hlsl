@@ -15,19 +15,21 @@ struct ClusterLight {
 StructuredBuffer<ClusterLight> g_lights : register(t0, space0);
 RWStructuredBuffer<uint2>      g_headers : register(u0, space1);
 RWStructuredBuffer<uint>       g_indices : register(u1, space1);
-RWStructuredBuffer<uint>       g_stats : register(u2, space1);
 
-groupshared uint  s_candidate_count;
-groupshared uint  s_candidate_indices[AERON_CLUSTER_MAX_SCENE_LIGHTS];
-groupshared float s_candidate_scores[AERON_CLUSTER_MAX_SCENE_LIGHTS];
-groupshared uint  s_selected[AERON_CLUSTER_MAX_LIGHTS];
+groupshared uint   s_candidate_count;
+groupshared uint   s_candidate_lights[AERON_CLUSTER_MAX_SCENE_LIGHTS];
+groupshared float  s_candidate_values[AERON_CLUSTER_MAX_SCENE_LIGHTS];
+groupshared uint   s_selected[AERON_CLUSTER_MAX_LIGHTS];
+groupshared float4 s_cluster_slopes;
+groupshared float4 s_cluster_plane_lengths;
+groupshared float4 s_cluster_bounds_min;
+groupshared float4 s_cluster_bounds_max;
 
 float cluster_slice_depth(uint boundary) {
 	return fs_cluster_near_z * exp2((float)boundary / fs_cluster_slice_scale);
 }
 
-bool sphere_intersects_cluster(ClusterLight light, uint3 cluster, out float nearest_distance) {
-	nearest_distance   = 0.0f;
+void prepare_cluster_geometry(uint3 cluster) {
 	float width        = (float)fs_cluster_viewport_width;
 	float height       = (float)fs_cluster_viewport_height;
 	float tile_size    = (float)fs_cluster_tile_size;
@@ -40,38 +42,49 @@ bool sphere_intersects_cluster(ClusterLight light, uint3 cluster, out float near
 	float ndc_right    = pixel_right * (2.0f / width) - 1.0f;
 	float ndc_top      = 1.0f - pixel_top * (2.0f / height);
 	float ndc_bottom   = 1.0f - pixel_bottom * (2.0f / height);
-	float slope_left   = (ndc_left - fs_cluster_proj_x_offset) * fs_cluster_tan_h_half;
-	float slope_right  = (ndc_right - fs_cluster_proj_x_offset) * fs_cluster_tan_h_half;
-	float slope_top    = (fs_cluster_proj_y_offset - ndc_top) * fs_cluster_tan_v_half;
-	float slope_bottom = (fs_cluster_proj_y_offset - ndc_bottom) * fs_cluster_tan_v_half;
+	float4 slopes = float4((ndc_left - fs_cluster_proj_x_offset) * fs_cluster_tan_h_half,
+						  (ndc_right - fs_cluster_proj_x_offset) * fs_cluster_tan_h_half,
+						  (fs_cluster_proj_y_offset - ndc_top) * fs_cluster_tan_v_half,
+						  (fs_cluster_proj_y_offset - ndc_bottom) * fs_cluster_tan_v_half);
 
 	float  z_near = cluster_slice_depth(cluster.z);
 	float  z_far  = cluster_slice_depth(min(cluster.z + 1u, fs_cluster_grid_z - 1u));
-	float3 p      = light.view_position_range.xyz;
-	float  r      = light.view_position_range.w;
-	if (p.z + r < z_near || p.z - r > z_far)
+	float  x0     = slopes.x * z_near;
+	float  x1     = slopes.x * z_far;
+	float  x2     = slopes.y * z_near;
+	float  x3     = slopes.y * z_far;
+	float  y0     = slopes.z * z_near;
+	float  y1     = slopes.z * z_far;
+	float  y2     = slopes.w * z_near;
+	float  y3     = slopes.w * z_far;
+
+	s_cluster_slopes        = slopes;
+	s_cluster_plane_lengths = sqrt(1.0f + slopes * slopes);
+	s_cluster_bounds_min    = float4(min(min(x0, x1), min(x2, x3)),
+									 min(min(y0, y1), min(y2, y3)), z_near, 0.0f);
+	s_cluster_bounds_max    = float4(max(max(x0, x1), max(x2, x3)),
+									 max(max(y0, y1), max(y2, y3)), z_far, 0.0f);
+}
+
+bool sphere_intersects_cluster(ClusterLight light, out float nearest_distance_sq) {
+	nearest_distance_sq = 0.0f;
+	float4 slopes        = s_cluster_slopes;
+	float4 plane_lengths = s_cluster_plane_lengths;
+	float3 p             = light.view_position_range.xyz;
+	float  r             = light.view_position_range.w;
+	if (p.z + r < s_cluster_bounds_min.z || p.z - r > s_cluster_bounds_max.z)
 		return false;
-	if (p.x - slope_left * p.z < -r * length(float2(1.0f, slope_left)))
+	if (p.x - slopes.x * p.z < -r * plane_lengths.x)
 		return false;
-	if (slope_right * p.z - p.x < -r * length(float2(1.0f, slope_right)))
+	if (slopes.y * p.z - p.x < -r * plane_lengths.y)
 		return false;
-	if (p.y - slope_top * p.z < -r * length(float2(1.0f, slope_top)))
+	if (p.y - slopes.z * p.z < -r * plane_lengths.z)
 		return false;
-	if (slope_bottom * p.z - p.y < -r * length(float2(1.0f, slope_bottom)))
+	if (slopes.w * p.z - p.y < -r * plane_lengths.w)
 		return false;
 
-	float  x0         = slope_left * z_near;
-	float  x1         = slope_left * z_far;
-	float  x2         = slope_right * z_near;
-	float  x3         = slope_right * z_far;
-	float  y0         = slope_top * z_near;
-	float  y1         = slope_top * z_far;
-	float  y2         = slope_bottom * z_near;
-	float  y3         = slope_bottom * z_far;
-	float3 bounds_min = float3(min(min(x0, x1), min(x2, x3)), min(min(y0, y1), min(y2, y3)), z_near);
-	float3 bounds_max = float3(max(max(x0, x1), max(x2, x3)), max(max(y0, y1), max(y2, y3)), z_far);
-	float3 outside    = max(max(bounds_min - p, p - bounds_max), 0.0f.xxx);
-	nearest_distance  = length(outside);
+	float3 outside = max(max(s_cluster_bounds_min.xyz - p, p - s_cluster_bounds_max.xyz), 0.0f.xxx);
+	nearest_distance_sq = dot(outside, outside);
 	return true;
 }
 
@@ -80,25 +93,23 @@ bool candidate_better(float score, uint index, float best_score, uint best_index
 }
 
 [numthreads(AERON_CLUSTER_THREADS, 1, 1)] void main(uint3 group_id : SV_GroupID,
-													uint  group_index : SV_GroupIndex) {
-	if (group_index == 0u)
+											uint  group_index : SV_GroupIndex) {
+	if (group_index == 0u) {
 		s_candidate_count = 0u;
+		prepare_cluster_geometry(group_id);
+	}
 	GroupMemoryBarrierWithGroupSync();
 
 	for (uint light_index = group_index; light_index < fs_cluster_local_count;
 		 light_index += AERON_CLUSTER_THREADS) {
 		ClusterLight light = g_lights[light_index];
-		float        nearest_distance;
-		if (sphere_intersects_cluster(light, group_id, nearest_distance)) {
+		float        nearest_distance_sq;
+		if (sphere_intersects_cluster(light, nearest_distance_sq)) {
 			uint candidate_slot;
 			InterlockedAdd(s_candidate_count, 1u, candidate_slot);
 			if (candidate_slot < AERON_CLUSTER_MAX_SCENE_LIGHTS) {
-				float score = light.luminance * 0.5f /
-							  max(nearest_distance, max(fs_cluster_point_min_distance, 1.0f));
-				if (fs_cluster_point_contribution_cap > 0.0f)
-					score = min(score, fs_cluster_point_contribution_cap);
-				s_candidate_indices[candidate_slot] = light.point_light_index;
-				s_candidate_scores[candidate_slot]  = score;
+				s_candidate_lights[candidate_slot] = light_index;
+				s_candidate_values[candidate_slot] = nearest_distance_sq;
 			}
 		}
 	}
@@ -109,24 +120,34 @@ bool candidate_better(float score, uint index, float best_score, uint best_index
 	uint candidate_count = min(s_candidate_count, AERON_CLUSTER_MAX_SCENE_LIGHTS);
 	uint retained_count  = min(candidate_count, AERON_CLUSTER_MAX_LIGHTS);
 	if (candidate_count <= AERON_CLUSTER_MAX_LIGHTS) {
-		for (uint i = 0u; i < retained_count; ++i)
-			s_selected[i] = s_candidate_indices[i];
+		for (uint i = 0u; i < retained_count; ++i) {
+			s_selected[i] = g_lights[s_candidate_lights[i]].point_light_index;
+		}
 	} else {
+		for (uint i = 0u; i < candidate_count; ++i) {
+			ClusterLight light            = g_lights[s_candidate_lights[i]];
+			float nearest_distance = sqrt(s_candidate_values[i]);
+			float score            = light.luminance * 0.5f /
+								 max(nearest_distance, max(fs_cluster_point_min_distance, 1.0f));
+			if (fs_cluster_point_contribution_cap > 0.0f)
+				score = min(score, fs_cluster_point_contribution_cap);
+			s_candidate_values[i] = score;
+			s_candidate_lights[i] = light.point_light_index;
+		}
 		for (uint output = 0u; output < retained_count; ++output) {
 			uint  best_slot  = 0xffffffffu;
 			uint  best_index = 0xffffffffu;
 			float best_score = -1.0f;
 			for (uint i = 0u; i < candidate_count; ++i) {
-				uint index = s_candidate_indices[i];
-				if (index != 0xffffffffu &&
-					candidate_better(s_candidate_scores[i], index, best_score, best_index)) {
+				uint index = s_candidate_lights[i];
+				if (index != 0xffffffffu && candidate_better(s_candidate_values[i], index, best_score, best_index)) {
 					best_slot  = i;
 					best_index = index;
-					best_score = s_candidate_scores[i];
+					best_score = s_candidate_values[i];
 				}
 			}
-			s_selected[output]             = best_index;
-			s_candidate_indices[best_slot] = 0xffffffffu;
+			s_selected[output]            = best_index;
+			s_candidate_lights[best_slot] = 0xffffffffu;
 		}
 	}
 
@@ -145,12 +166,4 @@ bool candidate_better(float score, uint index, float best_score, uint best_index
 	uint base                = cluster_index * AERON_CLUSTER_MAX_LIGHTS;
 	for (uint i = 0u; i < retained_count; ++i)
 		g_indices[base + i] = s_selected[i];
-
-	InterlockedMax(g_stats[0], candidate_count);
-	if (candidate_count > 0u)
-		InterlockedAdd(g_stats[1], 1u);
-	if (candidate_count > AERON_CLUSTER_MAX_LIGHTS) {
-		InterlockedAdd(g_stats[2], 1u);
-		InterlockedAdd(g_stats[3], candidate_count - AERON_CLUSTER_MAX_LIGHTS);
-	}
 }
