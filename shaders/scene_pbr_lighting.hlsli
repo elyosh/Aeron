@@ -574,52 +574,68 @@ float3 cook_torrance_spec(float3 N, float3 V, float3 L,
  * under a passing bolt stay lit like the original. The per-light cap
  * mirrors the classic lit-color saturation (hue-preserving) — engine
  * glow sources saturate by design in the original law. */
+void accumulate_point_light(uint light_index, float3 N, float3 N_spec, float3 V,
+                            float3 world_pos, PbrMaterialParams mp, float spec_mul,
+                            inout float3 diff, inout float3 spec_out)
+{
+    float  min_d = max(fs_point_params.x, 1.0f);
+    float  wrap  = fs_point_params.z;
+    float  cap   = fs_point_params.w;
+    PbrPointLight point_light = fs_point_lights[light_index];
+    float3 dv = point_light.position_range.xyz - world_pos;
+    float  r  = point_light.position_range.w;
+    float  d2 = dot(dv, dv);
+    if (d2 >= r * r) {
+        return;
+    }
+    float  d   = sqrt(d2);
+    float3 L   = dv / max(d, 1e-3f);
+    float  q2  = d2 / (r * r);
+    float  win = 1.0f - q2 * q2;
+    win        = win * win;
+    float3 radiance = point_light.color.rgb * (win * 0.5f / max(d, min_d));
+    if (cap > 0.0f) {
+        float m = max(radiance.r, max(radiance.g, radiance.b));
+        if (m > cap) {
+            radiance *= cap / m;
+        }
+    }
+    float ndotl = dot(N, L);
+    float shape = lerp(saturate(ndotl), saturate(ndotl * 0.5f + 0.5f), wrap);
+    diff += radiance * shape;
+    if (fs_point_params.y > 0.0f) {
+        float g_unused;
+        spec_out += cook_torrance_spec(N_spec, V, L, mp, g_unused) * radiance *
+                    (mp.spec_intensity * spec_mul * fs_point_params.y);
+    }
+}
+
 float3 accumulate_point_lights(float3 N, float3 N_spec, float3 V, float3 world_pos,
                                float2 screen_position,
                                PbrMaterialParams mp, float spec_mul,
                                inout float3 spec_out)
 {
     float3 diff = float3(0.0f, 0.0f, 0.0f);
-    uint cluster_index = 0u;
-    uint count = fs_cluster_point_count;
     if (fs_cluster_enabled != 0u) {
+        uint global_count = min(fs_cluster_global_count, AERON_CLUSTER_MAX_GLOBAL_LIGHTS);
+        for (uint gi = 0u; gi < global_count; ++gi) {
+            accumulate_point_light(fs_cluster_global_indices[gi], N, N_spec, V, world_pos,
+                                   mp, spec_mul, diff, spec_out);
+        }
+        uint cluster_index;
         uint2 header = clustered_light_fragment_header(screen_position, world_pos,
                                                         cluster_index);
-        count = min(header.x, AERON_CLUSTER_MAX_LIGHTS);
-    }
-    float  min_d = max(fs_point_params.x, 1.0f);
-    float  wrap  = fs_point_params.z;
-    float  cap   = fs_point_params.w;
-    for (uint pi = 0u; pi < count; ++pi) {
-        uint light_index = fs_cluster_enabled != 0u
-                         ? fs_cluster_indices[cluster_index * AERON_CLUSTER_MAX_LIGHTS + pi]
-                         : pi;
-        PbrPointLight point_light = fs_point_lights[light_index];
-        float3 dv = point_light.position_range.xyz - world_pos;
-        float  r  = point_light.position_range.w;
-        float  d2 = dot(dv, dv);
-        if (d2 >= r * r) {
-            continue;
+        uint count = min(header.x, AERON_CLUSTER_MAX_LIGHTS);
+        for (uint pi = 0u; pi < count; ++pi) {
+            uint light_index = fs_cluster_indices[
+                cluster_index * AERON_CLUSTER_MAX_LIGHTS + pi];
+            accumulate_point_light(light_index, N, N_spec, V, world_pos,
+                                   mp, spec_mul, diff, spec_out);
         }
-        float  d   = sqrt(d2);
-        float3 L   = dv / max(d, 1e-3f);
-        float  q2  = d2 / (r * r);
-        float  win = 1.0f - q2 * q2;
-        win        = win * win;
-        float3 radiance = point_light.color.rgb * (win * 0.5f / max(d, min_d));
-        if (cap > 0.0f) {
-            float m = max(radiance.r, max(radiance.g, radiance.b));
-            if (m > cap) {
-                radiance *= cap / m;
-            }
-        }
-        float ndotl = dot(N, L);
-        float shape = lerp(saturate(ndotl), saturate(ndotl * 0.5f + 0.5f), wrap);
-        diff += radiance * shape;
-        if (fs_point_params.y > 0.0f) {
-            float g_unused;
-            spec_out += cook_torrance_spec(N_spec, V, L, mp, g_unused) * radiance *
-                        (mp.spec_intensity * spec_mul * fs_point_params.y);
+    } else {
+        for (uint light_index = 0u; light_index < fs_cluster_point_count; ++light_index) {
+            accumulate_point_light(light_index, N, N_spec, V, world_pos,
+                                   mp, spec_mul, diff, spec_out);
         }
     }
     return diff;

@@ -7,7 +7,9 @@
 
 struct ClusterLight {
 	float4 view_position_range;
-	float4 color_luminance;
+	uint   point_light_index;
+	float  luminance;
+	float2 _pad;
 };
 
 StructuredBuffer<ClusterLight> g_lights : register(t0, space0);
@@ -83,7 +85,7 @@ bool candidate_better(float score, uint index, float best_score, uint best_index
 		s_candidate_count = 0u;
 	GroupMemoryBarrierWithGroupSync();
 
-	for (uint light_index = group_index; light_index < fs_cluster_point_count;
+	for (uint light_index = group_index; light_index < fs_cluster_local_count;
 		 light_index += AERON_CLUSTER_THREADS) {
 		ClusterLight light = g_lights[light_index];
 		float        nearest_distance;
@@ -91,11 +93,11 @@ bool candidate_better(float score, uint index, float best_score, uint best_index
 			uint candidate_slot;
 			InterlockedAdd(s_candidate_count, 1u, candidate_slot);
 			if (candidate_slot < AERON_CLUSTER_MAX_SCENE_LIGHTS) {
-				float score = light.color_luminance.w * 0.5f /
+				float score = light.luminance * 0.5f /
 							  max(nearest_distance, max(fs_cluster_point_min_distance, 1.0f));
 				if (fs_cluster_point_contribution_cap > 0.0f)
 					score = min(score, fs_cluster_point_contribution_cap);
-				s_candidate_indices[candidate_slot] = light_index;
+				s_candidate_indices[candidate_slot] = light.point_light_index;
 				s_candidate_scores[candidate_slot]  = score;
 			}
 		}

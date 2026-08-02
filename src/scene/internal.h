@@ -12,6 +12,7 @@
 #define AERON_SCENE_MAX_INSTANCES 2048
 #define AERON_SCENE_MAX_LIGHTS AERON_SCENE_POINT_LIGHT_CAPACITY
 #define AERON_SCENE_CLUSTER_MAX_LIGHTS AERON_SCENE_CLUSTER_LIGHT_CAPACITY
+#define AERON_SCENE_CLUSTER_MAX_GLOBAL_LIGHTS 4u
 #define AERON_SCENE_CLUSTER_DEFAULT_TILE_SIZE 32u
 #define AERON_SCENE_CLUSTER_DEFAULT_DEPTH_SLICES 24u
 #define AERON_SCENE_CLUSTER_THREADS 64u
@@ -97,7 +98,9 @@ typedef struct AeronScenePointLightGPU {
 
 typedef struct AeronSceneClusterLightGPU {
 	float view_position_range[4];
-	float color_luminance[4];
+	uint32_t point_light_index;
+	float    luminance;
+	float    _pad[2];
 } AeronSceneClusterLightGPU;
 
 typedef struct AeronSceneClusterHeaderGPU {
@@ -126,6 +129,7 @@ typedef struct AeronSceneClusterUniformGPU {
 	float    point_contribution_cap;
 	uint32_t tile_size;
 	uint32_t flags;
+	uint32_t global_light_indices[AERON_SCENE_CLUSTER_MAX_GLOBAL_LIGHTS];
 } AeronSceneClusterUniformGPU;
 
 enum {
@@ -278,6 +282,9 @@ struct AeronScene3D {
 	float                        cluster_near_z;
 	uint32_t                     cluster_far_shrink_frames;
 	uint32_t                     cluster_count;
+	uint32_t                     cluster_global_count;
+	uint32_t                     cluster_global_indices[AERON_SCENE_CLUSTER_MAX_GLOBAL_LIGHTS];
+	uint32_t                     cluster_light_count;
 	int                          cluster_tried;
 	int                          cluster_ready;
 
@@ -453,6 +460,7 @@ uint32_t                   AeronSceneStorage_ShadowTableIndex(
 						  const struct AeronScene3D* s, uint16_t encoded_caster);
 
 /* clustered_lights.c */
+void AeronSceneClusteredLights_Classify(struct AeronScene3D* s);
 int  AeronSceneClusteredLights_Ensure(struct AeronScene3D* s);
 int  AeronSceneClusteredLights_Build(struct AeronScene3D* s, AeronCommandBuffer* cmd);
 void AeronSceneClusteredLights_Bind(struct AeronScene3D* s, AeronRenderPass* pass);

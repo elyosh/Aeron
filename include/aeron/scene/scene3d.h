@@ -69,6 +69,7 @@ typedef struct AeronSceneClusteredLightStats {
 	uint32_t grid_y;
 	uint32_t grid_z;
 	uint32_t cluster_count;
+	uint32_t global_light_count;
 	uint64_t allocated_buffer_bytes;
 } AeronSceneClusteredLightStats;
 

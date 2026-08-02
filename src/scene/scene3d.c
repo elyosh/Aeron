@@ -20,7 +20,7 @@ typedef char AeronSceneLightGPUSizeCheck[sizeof(AeronSceneLightGPU) == 32 ? 1 : 
 typedef char AeronScenePointLightGPUSizeCheck[sizeof(AeronScenePointLightGPU) == 32 ? 1 : -1];
 typedef char AeronSceneClusterLightGPUSizeCheck[sizeof(AeronSceneClusterLightGPU) == 32 ? 1 : -1];
 typedef char AeronSceneClusterHeaderGPUSizeCheck[sizeof(AeronSceneClusterHeaderGPU) == 8 ? 1 : -1];
-typedef char AeronSceneClusterUniformGPUSizeCheck[sizeof(AeronSceneClusterUniformGPU) == 96 ? 1 : -1];
+typedef char AeronSceneClusterUniformGPUSizeCheck[sizeof(AeronSceneClusterUniformGPU) == 112 ? 1 : -1];
 
 /* struct AeronScene3D lives in internal.h (shared with
  * the material-class translation units). */
@@ -496,6 +496,7 @@ void AeronScene_GetClusteredLightStats(const AeronScene3D* s, AeronSceneClustere
 	out->grid_y                = s->cluster_uniform.grid_y;
 	out->grid_z                = s->cluster_uniform.grid_z;
 	out->cluster_count         = s->cluster_count;
+	out->global_light_count    = s->cluster_global_count;
 	out->allocated_buffer_bytes = (uint64_t)s->cluster_light_buffer_cap + s->cluster_header_buffer_cap +
 								  s->cluster_index_buffer_cap + s->cluster_stats_buffer_cap;
 }
@@ -1084,13 +1085,15 @@ int AeronSceneStorage_Prepare(AeronScene3D* s, AeronCommandBuffer* cmd) {
 			cluster->view_position_range[row] = view_rotation[row * 3 + 0] * dx +
 											 view_rotation[row * 3 + 1] * dy +
 											 view_rotation[row * 3 + 2] * dz;
-			cluster->color_luminance[row] = source->color[row];
 		}
 		cluster->view_position_range[3] = source->radius;
-		cluster->color_luminance[3] = 0.2126f * source->color[0] + 0.7152f * source->color[1] +
-									  0.0722f * source->color[2];
+		cluster->point_light_index = i;
+		cluster->luminance = 0.2126f * source->color[0] + 0.7152f * source->color[1] +
+							 0.0722f * source->color[2];
+		cluster->_pad[0] = cluster->_pad[1] = 0.0f;
 	}
 	s->point_light_count = point_count;
+	AeronSceneClusteredLights_Classify(s);
 
 	if (s->local_light_count == 0) {
 		if (!scene_storage_reserve((void**)&s->local_light_staging,
@@ -1122,7 +1125,8 @@ int AeronSceneStorage_Prepare(AeronScene3D* s, AeronCommandBuffer* cmd) {
 		(s->point_light_count ? s->point_light_count : 1u) *
 		(uint32_t)sizeof *s->point_light_staging;
 	const uint32_t cluster_light_bytes =
-		s->point_light_count * (uint32_t)sizeof *s->cluster_light_staging;
+		(s->cluster_light_count ? s->cluster_light_count : (s->point_light_count ? 1u : 0u)) *
+		(uint32_t)sizeof *s->cluster_light_staging;
 	if (!scene_storage_ensure_buffer(&s->mesh_table_buffer, &s->mesh_table_buffer_cap,
 									table_bytes, "scene.mesh_tables")) {
 		scene_storage_report_failure(s, "scene.mesh_tables", table_bytes);

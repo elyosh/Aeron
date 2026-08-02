@@ -2,6 +2,7 @@
 #define AERON_SCENE_CLUSTERED_LIGHTS_INCLUDED
 
 #define AERON_CLUSTER_MAX_LIGHTS 32u
+#define AERON_CLUSTER_MAX_GLOBAL_LIGHTS 4u
 
 #ifndef AERON_CLUSTER_UNIFORM_BINDING
 #define AERON_CLUSTER_UNIFORM_BINDING register(b2, space3)
@@ -28,10 +29,13 @@ cbuffer ClusteredLightUniform : AERON_CLUSTER_UNIFORM_BINDING {
 	float  fs_cluster_point_contribution_cap;
 	uint   fs_cluster_tile_size;
 	uint   fs_cluster_flags;
+	uint4  fs_cluster_global_indices;
 };
 
 #define fs_cluster_enabled (fs_cluster_flags & 1u)
 #define fs_cluster_debug_view ((fs_cluster_flags >> 1u) & 1u)
+#define fs_cluster_global_count ((fs_cluster_flags >> 8u) & 0xffu)
+#define fs_cluster_local_count ((fs_cluster_flags >> 16u) & 0xffffu)
 
 #ifndef AERON_CLUSTER_NO_FRAGMENT_BUFFERS
 StructuredBuffer<uint2> fs_cluster_headers : register(t10, space2);
