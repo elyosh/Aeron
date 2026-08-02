@@ -48,10 +48,10 @@ void Aeron_RequestFatalRendererError(const char* operation) {
 				 "An unexpected rendering error occurred during %s.\n\n"
 				 "GPU backend: %s\n"
 				 "Error: %s\n\n"
-				 "OpenXWA cannot continue safely. See the log for additional context.",
+				 "The application cannot continue safely. See the log for additional context.",
 				 operation && operation[0] ? operation : "GPU work", Aeron_RenderDriverName(),
 				 Aeron_RenderLastError());
-	Aeron_RequestFatalError("OpenXWA Renderer Error", message);
+	Aeron_RequestFatalError("Renderer Error", message);
 }
 
 static void Aeron_RecordUniformPush(uint32_t size) {
