@@ -14,6 +14,10 @@
 #define AERON_SCENE_CLUSTER_MAX_LIGHTS AERON_SCENE_CLUSTER_LIGHT_CAPACITY
 #define AERON_SCENE_CLUSTER_MAX_GLOBAL_LIGHTS 4u
 #define AERON_SCENE_CLUSTER_DEFAULT_TILE_SIZE 32u
+#define AERON_SCENE_CLUSTER_MAX_TILE_SIZE 64u
+#define AERON_SCENE_CLUSTER_TILE_ALIGNMENT 8u
+#define AERON_SCENE_CLUSTER_REFERENCE_HEIGHT 1080u
+#define AERON_SCENE_CLUSTER_BRUTE_FORCE_MAX_LIGHTS 16u
 #define AERON_SCENE_CLUSTER_DEFAULT_DEPTH_SLICES 24u
 #define AERON_SCENE_CLUSTER_THREADS 64u
 #define AERON_SCENE_MAX_BILLBOARDS 2304
@@ -282,6 +286,7 @@ struct AeronScene3D {
 	uint32_t                     cluster_global_count;
 	uint32_t                     cluster_global_indices[AERON_SCENE_CLUSTER_MAX_GLOBAL_LIGHTS];
 	uint32_t                     cluster_light_count;
+	int                          cluster_active;
 	int                          cluster_tried;
 	int                          cluster_ready;
 

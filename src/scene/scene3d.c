@@ -331,7 +331,6 @@ AeronScene3D* AeronScene_Create(const AeronScene3DDesc* desc) {
 	s->clear_rgba[2] = 0.03f;
 	s->clear_rgba[3] = 1.0f;
 	s->cluster_desc.enabled      = 1;
-	s->cluster_desc.tile_size    = AERON_SCENE_CLUSTER_DEFAULT_TILE_SIZE;
 	s->cluster_desc.depth_slices = AERON_SCENE_CLUSTER_DEFAULT_DEPTH_SLICES;
 	s->cluster_desc.min_distance = 1.0f;
 
@@ -413,6 +412,7 @@ int AeronScene_Begin(AeronScene3D* s, const AeronSceneCamera* camera) {
 	s->instances_dropped   = 0;
 	s->light_count         = 0;
 	s->lights_dropped      = 0;
+	s->cluster_active      = 0;
 	s->cluster_ready       = 0;
 	s->frame_uniform_count = 0;
 	s->pbr_debug_views     = 0;
@@ -471,8 +471,8 @@ int AeronScene_AddLight(AeronScene3D* s, const AeronSceneLight* light) {
 }
 
 int AeronScene_SetClusteredLights(AeronScene3D* s, const AeronSceneClusteredLightDesc* desc) {
-	if (!s || !desc || desc->tile_size < 8u || desc->tile_size > 128u || desc->depth_slices < 4u ||
-		desc->depth_slices > 64u || !isfinite(desc->min_distance) || desc->min_distance < 0.0f ||
+	if (!s || !desc || desc->depth_slices < 4u || desc->depth_slices > 64u ||
+		!isfinite(desc->min_distance) || desc->min_distance < 0.0f ||
 		!isfinite(desc->contribution_cap) || desc->contribution_cap < 0.0f) {
 		return 0;
 	}
@@ -495,8 +495,10 @@ void AeronScene_GetClusteredLightStats(const AeronScene3D* s, AeronSceneClustere
 	out->grid_x                = s->cluster_uniform.grid_x;
 	out->grid_y                = s->cluster_uniform.grid_y;
 	out->grid_z                = s->cluster_uniform.grid_z;
+	out->effective_tile_size   = s->cluster_uniform.tile_size;
 	out->cluster_count         = s->cluster_count;
 	out->global_light_count    = s->cluster_global_count;
+	out->clustered_active      = (uint32_t)(s->cluster_active != 0);
 	out->allocated_buffer_bytes = (uint64_t)s->cluster_light_buffer_cap + s->cluster_header_buffer_cap +
 								  s->cluster_index_buffer_cap;
 }

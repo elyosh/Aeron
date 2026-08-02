@@ -55,7 +55,6 @@ typedef struct AeronSceneLight {
 
 typedef struct AeronSceneClusteredLightDesc {
 	int      enabled;
-	uint32_t tile_size;
 	uint32_t depth_slices;
 	float    min_distance;
 	float    contribution_cap;
@@ -68,8 +67,10 @@ typedef struct AeronSceneClusteredLightStats {
 	uint32_t grid_x;
 	uint32_t grid_y;
 	uint32_t grid_z;
+	uint32_t effective_tile_size;
 	uint32_t cluster_count;
 	uint32_t global_light_count;
+	uint32_t clustered_active;
 	uint64_t allocated_buffer_bytes;
 } AeronSceneClusteredLightStats;
 
@@ -294,7 +295,8 @@ void AeronScene_AddMeshInstance(AeronScene3D* scene, const AeronSceneMeshInstanc
  * per frame rather than silently dropping a light. */
 int AeronScene_AddLight(AeronScene3D* scene, const AeronSceneLight* light);
 
-/* Persistent clustered-forward point-light configuration. */
+/* Persistent clustered-forward point-light configuration. Tile size and the
+ * low-light brute-force fallback are selected automatically per frame. */
 int  AeronScene_SetClusteredLights(AeronScene3D* scene, const AeronSceneClusteredLightDesc* desc);
 void AeronScene_GetClusteredLightStats(const AeronScene3D* scene, AeronSceneClusteredLightStats* out);
 
