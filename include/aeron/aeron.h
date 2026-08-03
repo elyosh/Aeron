@@ -82,6 +82,9 @@ int  Aeron_FatalErrorRequested(void);
 
 /* Changes the application logical render size without touching the host window. */
 int Aeron_SetLogicalSize(int width, int height);
+/* Returns the application logical render size configured at init or by
+ * Aeron_SetLogicalSize. Returns nonzero when a logical size is set. */
+int Aeron_GetLogicalSize(int* width, int* height);
 /* Switches the host window between windowed and fullscreen modes. */
 int Aeron_SetFullscreen(int fullscreen);
 /* Returns nonzero while the host window is fullscreen. */

@@ -1712,6 +1712,19 @@ int Aeron_Present(void) {
 							  swapchain_height);
 					continue;
 				}
+				/* The layer contract promises native-pixel recording, but
+				 * earlier texture layers leave their projected dst rect as
+				 * the pass viewport/scissor (a pillarboxed or cursor-sized
+				 * sub-rect). Hand the callback a clean full-drawable pass. */
+				{
+					const SDL_GPUViewport full_viewport = {
+						0.0f, 0.0f, (float)swapchain_width, (float)swapchain_height, 0.0f, 1.0f
+					};
+					const SDL_Rect full_scissor = { 0, 0, (int)swapchain_width,
+													(int)swapchain_height };
+					SDL_SetGPUViewport(render_pass, &full_viewport);
+					SDL_SetGPUScissor(render_pass, &full_scissor);
+				}
 				if (direct->debug_label) {
 					AeronGpuDebug_Push(command_buffer, direct->debug_label);
 				}
@@ -1873,6 +1886,26 @@ int Aeron_CanRenderDirectToSwapchain(int target_width, int target_height) {
 	return content_rect.x == 0 && content_rect.y == 0 && content_rect.w == drawable_width &&
 		   content_rect.h == drawable_height && target_width == drawable_width &&
 		   target_height == drawable_height;
+}
+
+int Aeron_GetContentPixelRect(AeronRectI* out) {
+	SDL_Rect content_rect;
+	int      drawable_width;
+	int      drawable_height;
+
+	if (!out) {
+		return 0;
+	}
+	memset(out, 0, sizeof *out);
+	if (!g_aeron.window || !SDL_GetWindowSizeInPixels(g_aeron.window, &drawable_width, &drawable_height)) {
+		return 0;
+	}
+	Aeron_ComputePresentationRect(drawable_width, drawable_height, &content_rect);
+	out->x      = content_rect.x;
+	out->y      = content_rect.y;
+	out->width  = content_rect.w;
+	out->height = content_rect.h;
+	return out->width > 0 && out->height > 0;
 }
 
 int Aeron_ComposePixelLayerToRenderTarget(AeronRenderTarget* target, const AeronPixelLayerDesc* desc,
