@@ -678,6 +678,13 @@ int Aeron_SubmitSwapchainRenderLayer(const AeronSwapchainRenderLayerDesc* desc);
  * coordinate projection. Aeron revalidates this when acquiring the drawable. */
 int Aeron_CanRenderDirectToSwapchain(int target_width, int target_height);
 
+/* Returns the presentation content rect in DRAWABLE PIXELS — the region of
+ * the swapchain the logical space maps onto (equal to the full drawable
+ * unless aspect-fit letterboxing is active). Native-resolution overlays
+ * size render targets and map logical mouse coordinates through this rect.
+ * Returns nonzero on success; zeroes `out` when no drawable exists. */
+int Aeron_GetContentPixelRect(AeronRectI* out);
+
 /* Clears all queued render submissions for the current host frame. */
 void Aeron_ClearRenderSubmissions(void);
 

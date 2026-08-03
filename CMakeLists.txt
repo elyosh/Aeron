@@ -171,6 +171,26 @@ function(aeron_compile_hlsl out_files_var output_dir)
     set(${out_files_var} ${generated} PARENT_SCOPE)
 endfunction()
 
+# Bakes a TTF into the <basename>.fnt + <basename>.png atlas pair consumed by
+# AeronFontAtlas_Load, using the fontbake tool at build time. Sets the
+# parent-scope variable named by out_files_var to the two generated paths so
+# consumers can hang a custom target off them. Requires AERON_BUILD_TOOLS.
+function(aeron_bake_font out_files_var output_dir ttf basename cell_h)
+    set(outputs
+        ${output_dir}/${basename}.fnt
+        ${output_dir}/${basename}.png)
+    add_custom_command(
+        OUTPUT ${outputs}
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${output_dir}
+        COMMAND $<TARGET_FILE:fontbake> ${ttf} ${output_dir}/${basename}
+            --cell-h ${cell_h}
+        DEPENDS fontbake ${ttf}
+        VERBATIM
+        COMMENT "fontbake TTF: ${basename}"
+    )
+    set(${out_files_var} ${outputs} PARENT_SCOPE)
+endfunction()
+
 set(AERON_SHADER_OUTPUT_DIR ${CMAKE_BINARY_DIR}/shaders)
 
 set(AERON_SHADER_SOURCES
@@ -226,6 +246,10 @@ set(AERON_SHADER_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_billboard3d_lens.vert.hlsl
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_billboard3d_lens.frag.hlsl
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_blit4.vert.hlsl
+    # aeron_scene UI layer — analytic rounded-rect surfaces (fills,
+    # gradients, borders, bevels, focus outlines, drop shadows).
+    ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_ui_rect.vert.hlsl
+    ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_ui_rect.frag.hlsl
     # Compute HAL validation and fallback storage clear building block.
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/compute_fill.comp.hlsl
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/compute_fill_buffer.comp.hlsl
@@ -557,6 +581,17 @@ add_library(aeron_scene STATIC
     src/scene/temporal.c
     src/scene/draw_list2d.c
     src/scene/font_atlas.c
+    src/scene/text2d.c
+    src/scene/ui/containers.c
+    src/scene/ui/context.c
+    src/scene/ui/draw.c
+    src/scene/ui/focus.c
+    src/scene/ui/layout.c
+    src/scene/ui/rebind.c
+    src/scene/ui/submit.c
+    src/scene/ui/theme.c
+    src/scene/ui/widgets.c
+    src/scene/ui/window.c
 )
 
 set_target_properties(aeron_scene PROPERTIES
@@ -598,6 +633,7 @@ endif()
 option(AERON_BUILD_TOOLS "Build Aeron asset tools" ${PROJECT_IS_TOP_LEVEL})
 add_subdirectory(tools/imgbake)
 add_subdirectory(tools/gltf_cook)
+add_subdirectory(tools/fontbake)
 
 if(AERON_BUILD_TOOLS)
     add_executable(opt2gltf
@@ -609,6 +645,12 @@ if(AERON_BUILD_TOOLS)
     target_link_libraries(opt2gltf PRIVATE opt2gltf_lib)
     set_target_properties(opt2gltf PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
+endif()
+
+# Example apps — small windowed programs demonstrating engine subsystems.
+option(AERON_BUILD_EXAMPLES "Build Aeron example apps" OFF)
+if(AERON_BUILD_EXAMPLES)
+    add_subdirectory(examples/ui_demo)
 endif()
 
 # Formatting helpers (standalone use; game repos have their own format targets).

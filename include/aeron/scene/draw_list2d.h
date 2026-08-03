@@ -91,6 +91,27 @@ typedef struct AeronDrawList2DQuad4 {
 	AeronRectI        scissor;
 } AeronDrawList2DQuad4;
 
+/* Analytic rounded-rect (scene_ui_rect shader pair) — the themed-surface
+ * primitive UI menus build from: flat fills, vertical gradients, border
+ * rings, bevel bands, focus outlines (zero-alpha fill + border), and
+ * soft drop shadows (large `soft_px`), all antialiased, no textures.
+ * Colors are PREMULTIPLIED-alpha; the record always draws with PMA-over
+ * blending. All params in target pixels. `soft_px` <= 1 renders a crisp
+ * 1 px antialiased edge. */
+typedef struct AeronDrawList2DRRect {
+	float      dst_x, dst_y, dst_w, dst_h;
+	float      radius_px;      /* corner radius, 0 = square */
+	float      border_px;      /* border ring width, 0 = none */
+	float      bevel_px;       /* bevel band height, 0 = flat */
+	float      soft_px;        /* edge falloff; 1 = crisp, large = shadow */
+	float      fill_top[4];    /* PMA; equal fills = flat color */
+	float      fill_bottom[4]; /* PMA */
+	float      border[4];      /* PMA */
+	float      bevel_hi[4];    /* PMA, band inside the top edge */
+	float      bevel_lo[4];    /* PMA, band inside the bottom edge */
+	AeronRectI scissor;        /* target px; zero w/h = none */
+} AeronDrawList2DRRect;
+
 typedef struct AeronDrawList2D AeronDrawList2D;
 
 /* record_cap 0 = default (4096). Over-capacity submissions are
@@ -108,6 +129,7 @@ void AeronDrawList_Begin(AeronDrawList2D* list, AeronRenderTarget* target, int t
 
 void AeronDrawList_AddSprite(AeronDrawList2D* list, const AeronDrawList2DSprite* sprite);
 void AeronDrawList_AddQuad4(AeronDrawList2D* list, const AeronDrawList2DQuad4* quad);
+void AeronDrawList_AddRRect(AeronDrawList2D* list, const AeronDrawList2DRRect* rrect);
 
 /* Arbitrary line segment as ONE record (a rotated quad on the shared
  * white texture) — wireframe-heavy consumers (holograms, map grids)

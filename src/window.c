@@ -103,6 +103,16 @@ int Aeron_SetLogicalSize(int width, int height) {
 	return 1;
 }
 
+int Aeron_GetLogicalSize(int* width, int* height) {
+	if (width) {
+		*width = g_aeron.logical_width;
+	}
+	if (height) {
+		*height = g_aeron.logical_height;
+	}
+	return g_aeron.logical_width > 0 && g_aeron.logical_height > 0;
+}
+
 int Aeron_SetFullscreen(int fullscreen) {
 	int current;
 
