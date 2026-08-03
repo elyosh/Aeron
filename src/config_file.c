@@ -872,7 +872,15 @@ int AeronConfigFile_SetValue(AeronConfigFile* config, const char* path, const Ae
 int AeronConfigFile_SetNull(AeronConfigFile* c, const char* p, AeronConfigError* e) { AeronConfigValue v = { .type = AERON_CONFIG_NULL }; return AeronConfigFile_SetValue(c, p, &v, e); }
 int AeronConfigFile_SetBool(AeronConfigFile* c, const char* p, int x, AeronConfigError* e) { AeronConfigValue v = { .type = AERON_CONFIG_BOOL }; v.value.bool_value = x; return AeronConfigFile_SetValue(c, p, &v, e); }
 int AeronConfigFile_SetInt(AeronConfigFile* c, const char* p, int64_t x, AeronConfigError* e) { AeronConfigValue v = { .type = AERON_CONFIG_INT }; v.value.int_value = x; return AeronConfigFile_SetValue(c, p, &v, e); }
-int AeronConfigFile_SetFloat(AeronConfigFile* c, const char* p, double x, AeronConfigError* e) { AeronConfigValue v = { .type = AERON_CONFIG_FLOAT }; v.value.float_value = x; return AeronConfigFile_SetValue(c, p, &v, e); }
+int AeronConfigFile_SetFloat(AeronConfigFile* c, const char* p, double x, AeronConfigError* e) {
+	AeronConfigValue v = { .type = AERON_CONFIG_FLOAT };
+	if (!isfinite(x))
+		return AeronConfig_Fail(e, AERON_CONFIG_ERROR_INVALID_ARGUMENT,
+								c ? c->root_kind : AERON_VFS_ROOT_RESOURCE,
+								c ? c->path : NULL, 0, 0, "configuration float must be finite");
+	v.value.float_value = x;
+	return AeronConfigFile_SetValue(c, p, &v, e);
+}
 int AeronConfigFile_SetString(AeronConfigFile* c, const char* p, const char* x, AeronConfigError* e) { AeronConfigValue v = { .type = AERON_CONFIG_STRING }; v.value.string_value = x; return AeronConfigFile_SetValue(c, p, &v, e); }
 
 static int AeronConfigNode_Remove(AeronConfigNode* map, const char* path, int* empty, AeronConfigError* error) {
@@ -1074,21 +1082,42 @@ static int AeronConfig_EmitNode(AeronConfigBuffer* buffer, const AeronConfigNode
 		   AeronConfigBuffer_Text(buffer, "\n");
 }
 
-int AeronConfigFile_SaveYaml(AeronVfs* vfs, const AeronConfigFile* config, AeronConfigError* error) {
+int AeronConfigFile_SerializeYaml(const AeronConfigFile* config, char** out_data,
+								  size_t* out_size, AeronConfigError* error) {
 	AeronConfigBuffer buffer = { 0 };
+	if (!config || !config->root || !out_data || !out_size)
+		return AeronConfig_Fail(error, AERON_CONFIG_ERROR_INVALID_ARGUMENT,
+								config ? config->root_kind : AERON_VFS_ROOT_RESOURCE,
+								config ? config->path : NULL, 0, 0,
+								"invalid configuration serialization arguments");
+	AeronConfig_ClearError(error, config->root_kind, config->path);
+	*out_data = NULL;
+	*out_size = 0;
+	if (!AeronConfig_EmitNode(&buffer, config->root, 0)) {
+		SDL_free(buffer.data);
+		return AeronConfig_Fail(error, AERON_CONFIG_ERROR_OUT_OF_MEMORY, config->root_kind,
+								config->path, 0, 0, "could not serialize configuration document");
+	}
+	*out_data = buffer.data;
+	*out_size = buffer.size;
+	return 1;
+}
+
+void AeronConfigFile_FreeSerialized(char* data) {
+	SDL_free(data);
+}
+
+int AeronConfigFile_SaveYaml(AeronVfs* vfs, const AeronConfigFile* config, AeronConfigError* error) {
+	char* data = NULL;
+	size_t size = 0;
 	int result;
 	if (!vfs || !config || !config->root || config->root_kind == AERON_VFS_ROOT_RESOURCE)
 		return AeronConfig_Fail(error, AERON_CONFIG_ERROR_INVALID_ARGUMENT,
 								config ? config->root_kind : AERON_VFS_ROOT_RESOURCE,
 								config ? config->path : NULL, 0, 0, "invalid configuration save arguments");
-	AeronConfig_ClearError(error, config->root_kind, config->path);
-	if (!AeronConfig_EmitNode(&buffer, config->root, 0)) {
-		SDL_free(buffer.data);
-		return AeronConfig_Fail(error, AERON_CONFIG_ERROR_OUT_OF_MEMORY, config->root_kind, config->path, 0,
-								0, "could not serialize configuration document");
-	}
-	result = AeronVfs_WriteAllAtomic(vfs, config->root_kind, config->path, buffer.data, buffer.size);
-	SDL_free(buffer.data);
+	if (!AeronConfigFile_SerializeYaml(config, &data, &size, error)) return 0;
+	result = AeronVfs_WriteAllAtomic(vfs, config->root_kind, config->path, data, size);
+	AeronConfigFile_FreeSerialized(data);
 	if (!result)
 		return AeronConfig_Fail(error, AERON_CONFIG_ERROR_IO, config->root_kind, config->path, 0, 0,
 								"could not atomically save configuration document");

@@ -87,6 +87,9 @@ int AeronConfigFile_Clone(const AeronConfigFile* source, AeronConfigFile** out_c
 int AeronConfigFile_Overlay(const AeronConfigFile* base, const AeronConfigFile* overrides,
 							AeronConfigFile** out_config, AeronConfigError* error);
 int AeronConfigFile_SaveYaml(AeronVfs* vfs, const AeronConfigFile* config, AeronConfigError* error);
+int AeronConfigFile_SerializeYaml(const AeronConfigFile* config, char** out_data,
+								  size_t* out_size, AeronConfigError* error);
+void AeronConfigFile_FreeSerialized(char* data);
 /* Destroys a parsed configuration document and all child nodes. */
 void AeronConfigFile_Destroy(AeronConfigFile* config);
 
