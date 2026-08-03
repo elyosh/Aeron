@@ -10,7 +10,11 @@ struct VSOut {
 	float2 uv : TEXCOORD0;
 };
 float4 main(VSOut input) : SV_Target {
-	float2 atlas_uv = clamp(input.uv * uv_xform.zw + uv_xform.xy, uv_rect.xy, uv_rect.zw);
+	float2 atlas_uv = input.uv * uv_xform.zw + uv_xform.xy;
+	if (any(atlas_uv < uv_rect.xy) || any(atlas_uv > uv_rect.zw)) {
+		discard;
+	}
+	atlas_uv             = clamp(atlas_uv, uv_rect.xy, uv_rect.zw);
 	float4 sampled_color = g_texture.Sample(s_texture, atlas_uv) * color;
 	if (sampled_color.a < 0.01f) {
 		discard;
