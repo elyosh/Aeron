@@ -98,6 +98,100 @@ const char* Aeron_GamepadButtonName(AeronGamepadButton button) {
 	return g_aeronGamepadButtonNames[button];
 }
 
+const AeronControllerSnapshot* Aeron_SelectController(const AeronInputSnapshot* input,
+													  const AeronControllerSelector* selector) {
+	int match_ordinal;
+	int slot;
+
+	if (!input || !selector || selector->ordinal < 0) {
+		return NULL;
+	}
+	match_ordinal = 0;
+	for (slot = 0; slot < AERON_CONTROLLER_MAX; ++slot) {
+		const AeronControllerSnapshot* controller = &input->controllers[slot];
+		if (!controller->connected || (selector->guid[0] && strcmp(selector->guid, controller->guid) != 0) ||
+			(selector->path[0] && strcmp(selector->path, controller->path) != 0)) {
+			continue;
+		}
+		if (match_ordinal++ == selector->ordinal) {
+			return controller;
+		}
+	}
+	return NULL;
+}
+
+static int Aeron_ControllerAxisDigitalDown(int16_t value, const AeronControllerDigitalSource* source,
+										 int was_down) {
+	float threshold;
+	float normalized;
+
+	if (!(source->threshold > 0.0f && source->threshold <= 1.0f)) {
+		return 0;
+	}
+	threshold = was_down ? source->threshold - 0.1f : source->threshold;
+	if (threshold < 0.0f) {
+		threshold = 0.0f;
+	}
+	if (source->kind == AERON_CONTROLLER_DIGITAL_AXIS_POSITIVE) {
+		normalized = value > 0 ? (float)value / 32767.0f : 0.0f;
+	} else {
+		normalized = value < 0 ? (float)(-(int32_t)value) / 32768.0f : 0.0f;
+	}
+	return normalized >= threshold;
+}
+
+int Aeron_ControllerDigitalSourceDown(const AeronControllerSnapshot* controller,
+									  const AeronControllerDigitalSource* source, int was_down) {
+	if (!controller || !controller->connected || !source) {
+		return 0;
+	}
+	switch (source->kind) {
+		case AERON_CONTROLLER_DIGITAL_BUTTON:
+			if (controller->kind == AERON_CONTROLLER_KIND_GAMEPAD) {
+				uint32_t bit;
+				if (source->index >= AERON_GAMEPAD_BUTTON_COUNT) {
+					return 0;
+				}
+				bit = 1u << source->index;
+				return (controller->gamepad_available_buttons & bit) != 0 &&
+					   (controller->gamepad_buttons & bit) != 0;
+			}
+			if (controller->kind == AERON_CONTROLLER_KIND_JOYSTICK &&
+				source->index < controller->button_count && source->index < AERON_CONTROLLER_BUTTON_MAX) {
+				return (controller->raw_buttons & (UINT64_C(1) << source->index)) != 0;
+			}
+			return 0;
+		case AERON_CONTROLLER_DIGITAL_AXIS_POSITIVE:
+		case AERON_CONTROLLER_DIGITAL_AXIS_NEGATIVE:
+			if (controller->kind == AERON_CONTROLLER_KIND_GAMEPAD) {
+				if (source->index >= AERON_GAMEPAD_AXIS_COUNT ||
+					!(controller->gamepad_available_axes & (1u << source->index))) {
+					return 0;
+				}
+				return Aeron_ControllerAxisDigitalDown(controller->gamepad_axes[source->index], source,
+											   was_down);
+			}
+			if (controller->kind == AERON_CONTROLLER_KIND_JOYSTICK &&
+				source->index < controller->axis_count && source->index < AERON_CONTROLLER_AXIS_MAX) {
+				return Aeron_ControllerAxisDigitalDown(controller->raw_axes[source->index], source, was_down);
+			}
+			return 0;
+		case AERON_CONTROLLER_DIGITAL_HAT:
+			if (controller->kind != AERON_CONTROLLER_KIND_JOYSTICK ||
+				source->index >= controller->hat_count || source->index >= AERON_CONTROLLER_HAT_MAX ||
+				(source->hat_direction != AERON_CONTROLLER_HAT_UP &&
+				 source->hat_direction != AERON_CONTROLLER_HAT_RIGHT &&
+				 source->hat_direction != AERON_CONTROLLER_HAT_DOWN &&
+				 source->hat_direction != AERON_CONTROLLER_HAT_LEFT)) {
+				return 0;
+			}
+			return (controller->raw_hats[source->index] & source->hat_direction) != 0;
+		case AERON_CONTROLLER_DIGITAL_NONE:
+		default:
+			return 0;
+	}
+}
+
 static int Aeron_FindControllerSlot(SDL_JoystickID instance_id) {
 	int slot;
 

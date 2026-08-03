@@ -104,6 +104,9 @@ int AeronVfs_ReadAll(AeronVfs* vfs, AeronVfsRoot root, const char* path, size_t 
 					 uint8_t** out_data, size_t* out_size);
 /* Writes exactly size bytes unless an error occurs; out_written receives the actual byte count. */
 int AeronVfs_Write(AeronFile* file, const void* src, size_t size, size_t* out_written);
+/* Atomically replaces a writable-root file through a flushed sibling temporary file. */
+int AeronVfs_WriteAllAtomic(AeronVfs* vfs, AeronVfsRoot root, const char* path, const void* data,
+							size_t size);
 /* Seeks using origin 0=start, 1=current, or 2=end; returns nonzero on success. */
 int AeronVfs_Seek(AeronFile* file, int64_t offset, int origin);
 /* Returns the current file offset, or -1 on failure. */

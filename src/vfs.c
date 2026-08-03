@@ -644,6 +644,48 @@ int AeronVfs_Write(AeronFile* file, const void* src, size_t size, size_t* out_wr
 	return count == size;
 }
 
+int AeronVfs_WriteAllAtomic(AeronVfs* vfs, AeronVfsRoot root, const char* path, const void* data,
+							size_t size) {
+	AeronFile* file = NULL;
+	char*      temporary;
+	size_t     path_length;
+	size_t     written = 0;
+	int        success = 0;
+
+	if (!vfs || !path || !path[0] || (size != 0 && !data) || root == AERON_VFS_ROOT_RESOURCE) {
+		return 0;
+	}
+	path_length = strlen(path);
+	if (path_length > SIZE_MAX - 5u) {
+		return 0;
+	}
+	temporary = (char*)SDL_malloc(path_length + 5u);
+	if (!temporary) {
+		return 0;
+	}
+	memcpy(temporary, path, path_length);
+	memcpy(temporary + path_length, ".tmp", 5u);
+
+	/* WRITE truncates any stale temporary left by an interrupted process. */
+	if (AeronVfs_Open(vfs, root, temporary, AERON_VFS_WRITE, &file)) {
+		int write_ok = size == 0 || (AeronVfs_Write(file, data, size, &written) && written == size);
+		int flush_ok = write_ok && AeronVfs_Flush(file);
+		int close_ok = AeronVfs_Close(file);
+		file = NULL;
+		if (write_ok && flush_ok && close_ok) {
+			success = AeronVfs_Rename(vfs, root, temporary, path);
+		}
+	}
+	if (file) {
+		AeronVfs_Close(file);
+	}
+	if (!success) {
+		AeronVfs_Remove(vfs, root, temporary);
+	}
+	SDL_free(temporary);
+	return success;
+}
+
 int AeronVfs_Seek(AeronFile* file, int64_t offset, int origin) {
 	SDL_IOWhence whence;
 

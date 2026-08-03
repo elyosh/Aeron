@@ -223,6 +223,32 @@ typedef struct AeronInputSnapshot {
 	int                     has_focus;
 } AeronInputSnapshot;
 
+typedef struct AeronControllerSelector {
+	char guid[33];
+	char path[AERON_CONTROLLER_PATH_CAPACITY];
+	int  ordinal;
+} AeronControllerSelector;
+
+typedef enum AeronControllerDigitalSourceKind {
+	AERON_CONTROLLER_DIGITAL_NONE = 0,
+	AERON_CONTROLLER_DIGITAL_BUTTON,
+	AERON_CONTROLLER_DIGITAL_AXIS_POSITIVE,
+	AERON_CONTROLLER_DIGITAL_AXIS_NEGATIVE,
+	AERON_CONTROLLER_DIGITAL_HAT,
+} AeronControllerDigitalSourceKind;
+
+typedef struct AeronControllerDigitalSource {
+	AeronControllerDigitalSourceKind kind;
+	uint8_t                          index;
+	uint8_t                          hat_direction;
+	float                            threshold;
+} AeronControllerDigitalSource;
+
+const AeronControllerSnapshot* Aeron_SelectController(const AeronInputSnapshot* input,
+													  const AeronControllerSelector* selector);
+int Aeron_ControllerDigitalSourceDown(const AeronControllerSnapshot* controller,
+									  const AeronControllerDigitalSource* source, int was_down);
+
 /* Parses a standard SDL gamepad axis name such as "leftx" or "righttrigger". */
 AeronGamepadAxis Aeron_GamepadAxisFromName(const char* name);
 /* Parses a standard SDL gamepad button name such as "south" or "dpaddown". */

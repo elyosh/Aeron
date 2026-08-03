@@ -15,6 +15,29 @@ typedef struct AeronConfigFile AeronConfigFile;
 /* Opaque node inside a parsed configuration document. */
 typedef struct AeronConfigNode AeronConfigNode;
 
+#define AERON_CONFIG_ERROR_PATH_CAPACITY 512
+#define AERON_CONFIG_ERROR_MESSAGE_CAPACITY 512
+
+typedef enum AeronConfigErrorCode {
+	AERON_CONFIG_ERROR_NONE = 0,
+	AERON_CONFIG_ERROR_NOT_FOUND,
+	AERON_CONFIG_ERROR_IO,
+	AERON_CONFIG_ERROR_YAML_SYNTAX,
+	AERON_CONFIG_ERROR_MULTIPLE_DOCUMENTS,
+	AERON_CONFIG_ERROR_INVALID_ARGUMENT,
+	AERON_CONFIG_ERROR_PATH_TYPE_CONFLICT,
+	AERON_CONFIG_ERROR_OUT_OF_MEMORY
+} AeronConfigErrorCode;
+
+typedef struct AeronConfigError {
+	AeronConfigErrorCode code;
+	AeronVfsRoot        root;
+	char                path[AERON_CONFIG_ERROR_PATH_CAPACITY];
+	int                 line;
+	int                 column;
+	char                message[AERON_CONFIG_ERROR_MESSAGE_CAPACITY];
+} AeronConfigError;
+
 /* Runtime type assigned to a converted YAML node. */
 typedef enum AeronConfigNodeType {
 	AERON_CONFIG_NULL,
@@ -26,11 +49,59 @@ typedef enum AeronConfigNodeType {
 	AERON_CONFIG_SEQUENCE
 } AeronConfigNodeType;
 
+typedef struct AeronConfigValue AeronConfigValue;
+
+typedef struct AeronConfigMapValue {
+	const char*             key;
+	const AeronConfigValue* value;
+} AeronConfigMapValue;
+
+/* Caller-owned recursive value descriptor used by SetValue. */
+struct AeronConfigValue {
+	AeronConfigNodeType type;
+	union {
+		int     bool_value;
+		int64_t int_value;
+		double  float_value;
+		const char* string_value;
+		struct {
+			const AeronConfigMapValue* entries;
+			size_t                    count;
+		} map;
+		struct {
+			const AeronConfigValue* values;
+			size_t                  count;
+		} sequence;
+	} value;
+};
+
 /* Loads a single-document YAML file from the VFS and converts it to Aeron nodes. */
 int AeronConfigFile_LoadYaml(AeronVfs* vfs, AeronVfsRoot root, const char* path,
 							 AeronConfigFile** out_config);
+int AeronConfigFile_LoadYamlEx(AeronVfs* vfs, AeronVfsRoot root, const char* path,
+							   AeronConfigFile** out_config, AeronConfigError* error);
+int AeronConfigFile_CreateMap(AeronVfsRoot root, const char* path, AeronConfigFile** out_config,
+							  AeronConfigError* error);
+int AeronConfigFile_Clone(const AeronConfigFile* source, AeronConfigFile** out_config,
+						  AeronConfigError* error);
+int AeronConfigFile_Overlay(const AeronConfigFile* base, const AeronConfigFile* overrides,
+							AeronConfigFile** out_config, AeronConfigError* error);
+int AeronConfigFile_SaveYaml(AeronVfs* vfs, const AeronConfigFile* config, AeronConfigError* error);
 /* Destroys a parsed configuration document and all child nodes. */
 void AeronConfigFile_Destroy(AeronConfigFile* config);
+
+int AeronConfigFile_SetNull(AeronConfigFile* config, const char* path, AeronConfigError* error);
+int AeronConfigFile_SetBool(AeronConfigFile* config, const char* path, int value,
+							AeronConfigError* error);
+int AeronConfigFile_SetInt(AeronConfigFile* config, const char* path, int64_t value,
+						   AeronConfigError* error);
+int AeronConfigFile_SetFloat(AeronConfigFile* config, const char* path, double value,
+							 AeronConfigError* error);
+int AeronConfigFile_SetString(AeronConfigFile* config, const char* path, const char* value,
+							  AeronConfigError* error);
+int AeronConfigFile_SetValue(AeronConfigFile* config, const char* path, const AeronConfigValue* value,
+							 AeronConfigError* error);
+int AeronConfigFile_Remove(AeronConfigFile* config, const char* path, AeronConfigError* error);
 
 /* Returns the root node of a parsed document, or NULL for a NULL config. */
 const AeronConfigNode* AeronConfigFile_Root(const AeronConfigFile* config);
@@ -54,6 +125,9 @@ AeronConfigNodeType AeronConfigNode_Type(const AeronConfigNode* node);
 int AeronConfigNode_Line(const AeronConfigNode* node);
 /* Returns the one-based YAML column number for a node, or zero when unavailable. */
 int AeronConfigNode_Column(const AeronConfigNode* node);
+/* Returns the source VFS root and path retained by a loaded or cloned node. */
+AeronVfsRoot AeronConfigNode_SourceRoot(const AeronConfigNode* node);
+const char*  AeronConfigNode_SourcePath(const AeronConfigNode* node);
 
 /* Returns a string node value, or fallback when node is NULL or not a string. */
 const char* AeronConfigNode_String(const AeronConfigNode* node, const char* fallback);
