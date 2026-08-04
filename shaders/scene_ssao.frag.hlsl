@@ -194,17 +194,29 @@ float3 world_pos_from_view(float3 view_pos)
 
 float2 main(VSOut i) : SV_Target0
 {
-    float depth = g_depth.SampleLevel(g_sampler, i.uv, 0.0f).r;
+    /* A half-resolution pixel centre lies between full-resolution G-buffer
+     * pixel centres. Select one concrete pixel from its 2x2 footprint and
+     * reconstruct through that pixel's centre; combining a nearest depth
+     * with the half-resolution UV creates a receiver that is not on the
+     * sampled surface and can alias against the shadow-map texel lattice. */
+    uint depth_w, depth_h;
+    g_depth.GetDimensions(depth_w, depth_h);
+    uint2 depth_size = uint2(depth_w, depth_h);
+    uint2 visibility_pixel = uint2(i.position.xy);
+    uint2 source_pixel = min(visibility_pixel * 2u + 1u, depth_size - 1u);
+    float2 receiver_uv = (float2(source_pixel) + 0.5f) / float2(depth_size);
+
+    float depth = g_depth.Load(int3(source_pixel, 0)).r;
     if (depth <= 0.0f) return float2(1.0f, 1.0f); /* sky never occludes */
 
-    float3 view_pos = view_pos_from(i.uv, depth);
+    float3 view_pos = view_pos_from(receiver_uv, depth);
 
     /* Geometric world normal from the G-buffer (written by the prepass at
      * full res — the true face normal, free of the Gouraud tilt and of the
      * grid that per-pixel half-res reconstruction here produced). Decode
      * the octahedral encoding, then rotate world→view for the hemisphere.
      * The R16G16_SNORM samples in [-1, 1], the octahedral output range. */
-    float2 enc = g_normal.SampleLevel(g_sampler, i.uv, 0.0f).rg;
+    float2 enc = g_normal.Load(int3(source_pixel, 0)).rg;
     float3 world_normal = oct_decode(enc);
     float3 view_normal;
     view_normal.x = dot(view_rot[0].xyz, world_normal);
@@ -310,6 +322,6 @@ float2 main(VSOut i) : SV_Target0
     float shadow_coverage;
     float shadow = directional_shadow_visibility(
         world_pos, world_normal, 1.0f, bias_ndotl, ddx(world_pos), ddy(world_pos),
-        i.position.xy, cascade, cascade_blend, shadow_coverage);
+        float2(source_pixel) + 0.5f, cascade, cascade_blend, shadow_coverage);
     return saturate(float2(ao, shadow));
 }

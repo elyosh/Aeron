@@ -44,12 +44,21 @@ struct VSOut
 
 float2 main(VSOut i) : SV_Target0
 {
+    uint visibility_w, visibility_h;
+    uint depth_w, depth_h;
+    g_visibility.GetDimensions(visibility_w, visibility_h);
+    g_depth.GetDimensions(depth_w, depth_h);
+    uint2 visibility_size = uint2(visibility_w, visibility_h);
+    uint2 depth_size = uint2(depth_w, depth_h);
+    uint2 center_pixel = min(uint2(i.position.xy), visibility_size - 1u);
+    uint2 center_source = min(center_pixel * 2u + 1u, depth_size - 1u);
+
     /* Sky pixels keep AO=1.0 directly. Sampling neighbours would
      * pull ship silhouettes into the sky-side output, producing
      * visible haloes after the apply pass modulates the scene RT. */
-    float center_depth = g_depth.SampleLevel(g_sampler, i.uv, 0.0f).r;
+    float center_depth = g_depth.Load(int3(center_source, 0)).r;
     if (center_depth <= 0.0f) {
-        return g_visibility.SampleLevel(g_sampler, i.uv, 0.0f);
+        return g_visibility.Load(int3(center_pixel, 0));
     }
     float center_z = near_z / center_depth;
     bool horizontal = abs(direction_uv.x) > 0.0f;
@@ -64,11 +73,14 @@ float2 main(VSOut i) : SV_Target0
     bool  okk[9];
     [unroll] for (int g = 0; g < 9; g++) {
         int    k  = g - 4;
-        float2 uv = i.uv + direction_uv * (float)k;
-        float  d  = g_depth.SampleLevel(g_sampler, uv, 0.0f).r;
+        int2 tap_pixel = int2(center_pixel) +
+            (horizontal ? int2(k, 0) : int2(0, k));
+        tap_pixel = clamp(tap_pixel, int2(0, 0), int2(visibility_size) - 1);
+        uint2 tap_source = min(uint2(tap_pixel) * 2u + 1u, depth_size - 1u);
+        float  d  = g_depth.Load(int3(tap_source, 0)).r;
         okk[g]    = (d > 0.0f);
         zk [g]    = okk[g] ? near_z / d : 0.0f;
-        visibility[g] = g_visibility.SampleLevel(g_sampler, uv, 0.0f);
+        visibility[g] = g_visibility.Load(int3(tap_pixel, 0));
     }
 
     /* Gradient-corrected bilateral: estimate the view-space depth slope

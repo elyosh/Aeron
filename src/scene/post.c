@@ -256,7 +256,7 @@ int AeronScenePost_EnsureSsao(struct AeronScene3D* s) {
 		s->ssao_blur_lq_pipeline = post_pipeline(s->fullscreen_vs, s->ssao_blur_lq_ps, &ao, 1, 0);
 	}
 
-	/* Half-res AO/directional-shadow visibility + ping-pong blur target. */
+	/* Half-resolution AO/directional-shadow visibility + ping-pong blur target. */
 	s->ao_rt_w    = (s->render_w + 1) / 2;
 	s->ao_rt_h    = (s->render_h + 1) / 2;
 	s->ao_rt      = AeronSceneInternal_CreateColorRt(AERON_TEXTURE_FORMAT_R8G8_UNORM, s->ao_rt_w, s->ao_rt_h,
