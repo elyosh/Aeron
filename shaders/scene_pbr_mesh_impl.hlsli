@@ -172,8 +172,6 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
     uint shadow_cascade = 4u;
     float shadow_cascade_blend = 0.0f;
     float shadow_coverage = 0.0f;
-    float3 shadow_bias_normal = shadow_camera_pos.w != 0.0f ? N_face : N_geom;
-    float shadow_bias_ndotl = saturate(dot(N_face, L));
     /* SSAO — occludes indirect (ambient) light only. Sampled in screen
      * space at this fragment; pow() applies the contrast knob, then the
      * intensity lerp blends toward unoccluded. intensity 0 → ao 1 (and
@@ -195,7 +193,7 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
             shadow_visibility = screen_shadow_visibility;
         } else {
             shadow_visibility = directional_shadow_visibility(
-                i.world_pos, shadow_bias_normal, ndotl, shadow_bias_ndotl,
+                i.world_pos, N_geom, ndotl,
                 world_pos_dx, world_pos_dy, i.position.xy, shadow_cascade,
                 shadow_cascade_blend, shadow_coverage);
         }

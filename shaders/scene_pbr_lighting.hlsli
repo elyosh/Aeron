@@ -88,10 +88,10 @@ cbuffer DirectionalShadowFS : register(AERON_DIRECTIONAL_SHADOW_UNIFORM_REGISTER
     float4 shadow_split_data[4];
     float4 shadow_texel_data[4]; /* world units/texel XY, normalized depth/texel XY */
     float4 shadow_params;         /* enabled, count, filter quality, debug */
-    float4 shadow_camera_pos;    /* xyz position; w selects face-normal bias */
+    float4 shadow_camera_pos;    /* xyz position; w reserved */
     float4 shadow_camera_forward;
-    float4 shadow_bias;           /* normal/filter-radius multiplier, depth texels, slope, max distance */
-    float4 shadow_fade;           /* start, end, inverse atlas size, receiver plane */
+    float4 shadow_bias;           /* normal texels, depth texels, reserved, max distance */
+    float4 shadow_fade;           /* start, end, inverse atlas size, reserved */
     float4 shadow_pcss;           /* enabled, tan angular radius, max radius, minimum radius */
     float4 shadow_pcss_temporal;  /* enabled, FSR temporal phase, reserved, reserved */
     float4 shadow_light_dir;      /* xyz = normalized surface-to-light direction */
@@ -368,27 +368,31 @@ float sample_shadow_tent7(uint cascade, float2 local_uv, float receiver_depth,
 }
 
 float sample_shadow_cascade(uint cascade, float3 world_pos, float3 geometric_normal,
-                            float bias_ndotl, float3 world_pos_dx, float3 world_pos_dy,
+                            float3 world_pos_dx, float3 world_pos_dy,
                             float2 screen_position)
 {
     float4x4 view_proj = shadow_view_proj[cascade];
     float4 physical_clip = mul(view_proj, float4(world_pos, 1.0f));
-    /* Move the receiver laterally in light space. Scaling the offset by the
-     * cascade texel size and filter footprint keeps the separation consistent
-     * across cascade fits and shadow resolutions. */
+    /* Move the receiver laterally in light space. Expressing the offset in
+     * cascade texels keeps the separation consistent across fits and shadow
+     * resolutions without coupling it to the filter width. */
     float3 light_dir = shadow_light_dir.xyz;
     float3 lateral_normal = geometric_normal -
                             light_dir * dot(light_dir, geometric_normal);
     float grazing = 1.0f - saturate(dot(geometric_normal, light_dir));
-    float bias_filter_radius = shadow_params.z < 0.5f
-        ? 1.0f
-        : (shadow_pcss.x != 0.0f
-            ? max(shadow_pcss.z, 1.0f)
-            : max(shadow_camera_forward.w, 1.0f));
-    float world_per_texel = max(shadow_texel_data[cascade].x,
-                                shadow_texel_data[cascade].y);
+    float grazing2 = grazing * grazing;
+    grazing = grazing2 * grazing2;
+    float usable_texels = shadow_atlas_scale_bias[cascade].x /
+                          max(shadow_fade.z, 1.0e-9f);
+    float2 lateral_texel_vector = float2(
+        dot(view_proj[0].xyz, lateral_normal),
+        dot(view_proj[1].xyz, lateral_normal)) * (0.5f * usable_texels);
+    float lateral_length_sq = dot(lateral_normal, lateral_normal);
+    float projected_length_sq = dot(lateral_texel_vector, lateral_texel_vector);
+    float directional_world_per_texel = sqrt(
+        lateral_length_sq / max(projected_length_sq, 1.0e-12f));
     float3 normal_offset = lateral_normal *
-                           (grazing * shadow_bias.x * bias_filter_radius * world_per_texel);
+                           (grazing * shadow_bias.x * directional_world_per_texel);
     float3 biased_world = world_pos + normal_offset;
     float4 clip = mul(view_proj, float4(biased_world, 1.0f));
     float3 ndc = clip.xyz / max(abs(clip.w), 1.0e-6f);
@@ -396,15 +400,14 @@ float sample_shadow_cascade(uint cascade, float3 world_pos, float3 geometric_nor
         return 1.0f;
     }
     float2 local_uv = float2(ndc.x * 0.5f + 0.5f, -ndc.y * 0.5f + 0.5f);
-    float slope = 1.0f + shadow_bias.z * (1.0f - saturate(bias_ndotl));
     float receiver_depth = saturate(ndc.z + shadow_bias.y *
-                                    shadow_split_data[cascade].w * slope);
+                                    shadow_split_data[cascade].w);
     int quality = clamp((int)round(shadow_params.z), 0, 3);
     float physical_receiver_depth =
         saturate(physical_clip.z / max(abs(physical_clip.w), 1.0e-6f));
     float2 physical_depth_per_texel = float2(0.0f, 0.0f);
     float2 receiver_depth_per_texel = float2(0.0f, 0.0f);
-    if (quality > 0 && (shadow_fade.w > 0.0f || shadow_pcss.x != 0.0f)) {
+    if (quality > 0) {
         float2 local_uv_dx = float2(
             dot(view_proj[0].xyz, world_pos_dx) * 0.5f,
             -dot(view_proj[1].xyz, world_pos_dx) * 0.5f);
@@ -428,7 +431,7 @@ float sample_shadow_cascade(uint cascade, float3 world_pos, float3 geometric_nor
             float gradient_limit = max(shadow_split_data[cascade].w * 8.0f, 1.0e-7f);
             physical_depth_per_texel = clamp(
                 physical_depth_per_texel, -gradient_limit.xx, gradient_limit.xx);
-            receiver_depth_per_texel = physical_depth_per_texel * shadow_fade.w;
+            receiver_depth_per_texel = physical_depth_per_texel;
             receiver_depth_per_texel = clamp(
                 receiver_depth_per_texel, -gradient_limit.xx, gradient_limit.xx);
         }
@@ -460,7 +463,7 @@ float sample_shadow_cascade(uint cascade, float3 world_pos, float3 geometric_nor
 }
 
 float directional_shadow_visibility(float3 world_pos, float3 geometric_normal,
-                                    float ndotl, float bias_ndotl, float3 world_pos_dx,
+                                    float ndotl, float3 world_pos_dx,
                                     float3 world_pos_dy, float2 screen_position,
                                     out uint cascade_index,
                                     out float cascade_blend, out float shadow_coverage)
@@ -505,12 +508,12 @@ float directional_shadow_visibility(float3 world_pos, float3 geometric_normal,
         return 1.0f;
     }
     float visibility = sample_shadow_cascade(cascade_index, world_pos,
-                                              geometric_normal, bias_ndotl,
+                                              geometric_normal,
                                               world_pos_dx, world_pos_dy,
                                               screen_position);
     if (cascade_blend > 0.0f) {
         float next_visibility = sample_shadow_cascade(
-            cascade_index + 1u, world_pos, geometric_normal, bias_ndotl,
+            cascade_index + 1u, world_pos, geometric_normal,
             world_pos_dx, world_pos_dy, screen_position);
         visibility = lerp(visibility, next_visibility, cascade_blend);
     }

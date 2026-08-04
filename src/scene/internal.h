@@ -152,13 +152,13 @@ typedef struct AeronSceneDirectionalShadowUniform {
 	float texel_data[AERON_SCENE_SHADOW_MAX_CASCADES][4];
 	/* enabled, cascade count, filter quality, cascade debug. */
 	float params[4];
-	/* xyz = position; w = use triangle face normal for normal bias. */
+	/* xyz = position; w reserved. */
 	float camera_pos[4];
 	/* xyz = camera forward; w = quality-2 filter radius in atlas texels. */
 	float camera_forward[4];
-	/* normal/filter-radius multiplier, depth bias texels, slope bias, max distance. */
+	/* normal bias texels, depth bias texels, reserved, max distance. */
 	float bias[4];
-	/* distance fade start/end, inverse atlas size, receiver-plane multiplier. */
+	/* distance fade start/end, inverse atlas size, reserved. */
 	float fade[4];
 	/* enabled, tan(light angular radius), max/min radius in atlas texels. */
 	float pcss[4];
@@ -238,8 +238,6 @@ struct AeronScene3D {
 	AeronShader*                       shadow_vs;
 	AeronShader*                       shadow_fs;
 	AeronGraphicsPipeline*             shadow_pipes[3];
-	float                              shadow_pipeline_constant_bias;
-	float                              shadow_pipeline_slope_bias;
 	int                                shadow_debug_tried;
 	AeronShader*                       shadow_debug_vs;
 	AeronShader*                       shadow_debug_fs;

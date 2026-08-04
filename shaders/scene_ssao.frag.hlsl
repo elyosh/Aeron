@@ -316,12 +316,11 @@ float2 main(VSOut i) : SV_Target0
      * AO's bilateral passes. Use the geometric G-buffer normal for bias;
      * direct-light orientation is applied later by the material shader. */
     float3 world_pos = world_pos_from_view(view_pos);
-    float bias_ndotl = saturate(dot(world_normal, shadow_light_dir.xyz));
     uint  cascade;
     float cascade_blend;
     float shadow_coverage;
     float shadow = directional_shadow_visibility(
-        world_pos, world_normal, 1.0f, bias_ndotl, ddx(world_pos), ddy(world_pos),
+        world_pos, world_normal, 1.0f, ddx(world_pos), ddy(world_pos),
         float2(source_pixel) + 0.5f, cascade, cascade_blend, shadow_coverage);
     return saturate(float2(ao, shadow));
 }
