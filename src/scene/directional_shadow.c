@@ -518,6 +518,13 @@ static uint32_t shadow_sanitize_atlas(uint32_t atlas_size) {
 	return power;
 }
 
+static float shadow_receiver_bias_filter_radius(const AeronSceneDirectionalShadowDesc* desc) {
+	if (desc->filter_quality == 0) {
+		return 1.0f;
+	}
+	return fmaxf(desc->contact_hardening ? desc->max_filter_radius : desc->filter_radius, 1.0f);
+}
+
 static void shadow_prepare_receiver_local(struct AeronScene3D*                   scene,
 										  const AeronSceneDirectionalShadowDesc* desc,
 										  const float light_dir[3], const float x_axis[3],
@@ -567,7 +574,9 @@ static void shadow_prepare_receiver_local(struct AeronScene3D*                  
 	extent       = fmaxf(extent, 1.0f);
 	/* Keep the entire receiver inside the unclamped filter footprint. */
 	const float initial_world_per_texel = (2.0f * extent) / (float)usable_size;
-	extent += desc->normal_bias + (desc->max_filter_radius + 2.0f) * initial_world_per_texel;
+	const float filter_radius = shadow_receiver_bias_filter_radius(desc);
+	extent += (desc->normal_bias * filter_radius + filter_radius + 2.0f) *
+			  initial_world_per_texel;
 	const float world_per_texel = (2.0f * extent) / (float)usable_size;
 
 	const double origin_x          = shadow_dot_origin(desc->world_origin, x_axis);
@@ -615,7 +624,7 @@ static void shadow_prepare_receiver_local(struct AeronScene3D*                  
 		return;
 	}
 
-	const float  depth_margin       = fmaxf(world_per_texel * 8.0f, desc->normal_bias + 1.0f);
+	const float  depth_margin       = fmaxf(world_per_texel * 8.0f, 1.0f);
 	const float  depth_quantum      = fmaxf(world_per_texel * 16.0f, 1.0f);
 	const double origin_z           = shadow_dot_origin(desc->world_origin, light_dir);
 	const double raw_absolute_z_min = origin_z + (double)receiver_z_min - (double)depth_margin;
@@ -660,6 +669,7 @@ static void shadow_prepare_receiver_local(struct AeronScene3D*                  
 	uniform->fade[3] = desc->receiver_plane_bias;
 	memcpy(uniform->pcss, scene->shadow_uniform.pcss, sizeof uniform->pcss);
 	memcpy(uniform->pcss_temporal, scene->shadow_uniform.pcss_temporal, sizeof uniform->pcss_temporal);
+	memcpy(uniform->light_dir, scene->shadow_uniform.light_dir, sizeof uniform->light_dir);
 
 	scene->shadow_stats.receiver_local_active       = 1;
 	scene->shadow_stats.receiver_local_size         = atlas_size;
@@ -765,9 +775,14 @@ static void shadow_prepare_cascade(struct AeronScene3D* scene, const AeronSceneD
 			2.0f * ceilf(fmaxf(0.5f * (fit_bounds.max[1] - fit_bounds.min[1]), 1.0f) / extent_bucket) *
 				extent_bucket / (float)usable_size,
 		};
-		const float filter_radius = desc->contact_hardening ? desc->max_filter_radius : desc->filter_radius;
+		const float filter_radius = shadow_receiver_bias_filter_radius(desc);
+		const float max_initial_world_per_texel =
+			fmaxf(initial_world_per_texel[0], initial_world_per_texel[1]);
+		const float normal_bias_world =
+			desc->normal_bias * filter_radius * max_initial_world_per_texel;
 		for (int axis = 0; axis < 2; axis++) {
-			const float padding = desc->normal_bias + (filter_radius + 2.0f) * initial_world_per_texel[axis];
+			const float padding =
+				normal_bias_world + (filter_radius + 2.0f) * initial_world_per_texel[axis];
 			fit_bounds.min[axis] -= padding;
 			fit_bounds.max[axis] += padding;
 		}

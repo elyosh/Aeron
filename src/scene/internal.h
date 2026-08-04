@@ -156,7 +156,7 @@ typedef struct AeronSceneDirectionalShadowUniform {
 	float camera_pos[4];
 	/* xyz = camera forward; w = quality-2 filter radius in atlas texels. */
 	float camera_forward[4];
-	/* normal bias, depth bias texels, slope bias, max distance. */
+	/* normal/filter-radius multiplier, depth bias texels, slope bias, max distance. */
 	float bias[4];
 	/* distance fade start/end, inverse atlas size, receiver-plane multiplier. */
 	float fade[4];

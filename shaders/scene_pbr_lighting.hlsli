@@ -90,7 +90,7 @@ cbuffer DirectionalShadowFS : register(AERON_DIRECTIONAL_SHADOW_UNIFORM_REGISTER
     float4 shadow_params;         /* enabled, count, filter quality, debug */
     float4 shadow_camera_pos;    /* xyz position; w selects face-normal bias */
     float4 shadow_camera_forward;
-    float4 shadow_bias;           /* normal, depth texels, slope, max distance */
+    float4 shadow_bias;           /* normal/filter-radius multiplier, depth texels, slope, max distance */
     float4 shadow_fade;           /* start, end, inverse atlas size, receiver plane */
     float4 shadow_pcss;           /* enabled, tan angular radius, max radius, minimum radius */
     float4 shadow_pcss_temporal;  /* enabled, FSR temporal phase, reserved, reserved */
@@ -373,7 +373,23 @@ float sample_shadow_cascade(uint cascade, float3 world_pos, float3 geometric_nor
 {
     float4x4 view_proj = shadow_view_proj[cascade];
     float4 physical_clip = mul(view_proj, float4(world_pos, 1.0f));
-    float3 biased_world = world_pos + geometric_normal * shadow_bias.x;
+    /* Move the receiver laterally in light space. Scaling the offset by the
+     * cascade texel size and filter footprint keeps the separation consistent
+     * across cascade fits and shadow resolutions. */
+    float3 light_dir = shadow_light_dir.xyz;
+    float3 lateral_normal = geometric_normal -
+                            light_dir * dot(light_dir, geometric_normal);
+    float grazing = 1.0f - saturate(dot(geometric_normal, light_dir));
+    float bias_filter_radius = shadow_params.z < 0.5f
+        ? 1.0f
+        : (shadow_pcss.x != 0.0f
+            ? max(shadow_pcss.z, 1.0f)
+            : max(shadow_camera_forward.w, 1.0f));
+    float world_per_texel = max(shadow_texel_data[cascade].x,
+                                shadow_texel_data[cascade].y);
+    float3 normal_offset = lateral_normal *
+                           (grazing * shadow_bias.x * bias_filter_radius * world_per_texel);
+    float3 biased_world = world_pos + normal_offset;
     float4 clip = mul(view_proj, float4(biased_world, 1.0f));
     float3 ndc = clip.xyz / max(abs(clip.w), 1.0e-6f);
     if (any(abs(ndc.xy) > 1.0f.xx) || ndc.z < 0.0f || ndc.z > 1.0f) {

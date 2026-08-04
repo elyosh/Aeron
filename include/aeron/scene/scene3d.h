@@ -180,6 +180,7 @@ typedef struct AeronSceneDirectionalShadowDesc {
 	float    light_angular_radius_degrees; /* source half-angle */
 	float    max_filter_radius;            /* atlas texels */
 	float    pcss_min_filter_radius;       /* atlas texels */
+	/* Receiver normal offset as a multiplier of the filtered shadow footprint. */
 	float    normal_bias;
 	int      normal_bias_face_normal;
 	float    depth_bias_texels;
