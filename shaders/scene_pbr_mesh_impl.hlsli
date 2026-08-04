@@ -138,7 +138,8 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
     float3 world_pos_dy = ddy(i.world_pos);
     float3 N_face = N_geom;
 #if AERON_PBR_DEBUG_VIEWS
-    if (shadow_camera_pos.w != 0.0f || spec_geom_adapt != 0.0f) {
+    if ((i.receive_shadow != 0u && i.screen_shadow == 0u) ||
+        spec_geom_adapt != 0.0f) {
 #endif
         float3 face_cross = cross(world_pos_dx, world_pos_dy);
         float face_length_sq = dot(face_cross, face_cross);
@@ -193,7 +194,7 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
             shadow_visibility = screen_shadow_visibility;
         } else {
             shadow_visibility = directional_shadow_visibility(
-                i.world_pos, N_geom, ndotl,
+                i.world_pos, N_face, 1.0f,
                 world_pos_dx, world_pos_dy, i.position.xy, shadow_cascade,
                 shadow_cascade_blend, shadow_coverage);
         }

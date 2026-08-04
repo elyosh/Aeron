@@ -424,11 +424,20 @@ float sample_shadow_cascade(uint cascade, float3 world_pos, float3 geometric_nor
             float2 depth_gradient = float2(
                 uv_dy.y * depth_dx - uv_dx.y * depth_dy,
                 uv_dx.x * depth_dy - uv_dy.x * depth_dx) * inverse_determinant;
-            physical_depth_per_texel = depth_gradient * shadow_fade.z;
             /* Near a light-grazing projection the mathematical gradient
-             * becomes unbounded. Cap it to eight light-space texels so
-             * the correction cannot erase an entire local shadow. */
-            float gradient_limit = max(shadow_split_data[cascade].w * 8.0f, 1.0e-7f);
+             * becomes unbounded and can flip sign under tiny raster or
+             * cascade changes. Fade it out using the geometric incidence;
+             * smoothstep's quadratic approach to zero suppresses the 1/N.L
+             * divergence. The endpoint matches the existing eight-texel
+             * maximum useful receiver-plane slope. */
+            const float max_receiver_plane_slope = 8.0f;
+            float receiver_plane_incidence = abs(dot(geometric_normal, light_dir));
+            float receiver_plane_weight = smoothstep(
+                0.0f, rcp(max_receiver_plane_slope), receiver_plane_incidence);
+            physical_depth_per_texel =
+                depth_gradient * shadow_fade.z * receiver_plane_weight;
+            float gradient_limit = max(
+                shadow_split_data[cascade].w * max_receiver_plane_slope, 1.0e-7f);
             physical_depth_per_texel = clamp(
                 physical_depth_per_texel, -gradient_limit.xx, gradient_limit.xx);
             receiver_depth_per_texel = physical_depth_per_texel;
