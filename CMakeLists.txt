@@ -333,6 +333,7 @@ set(AERON_SOURCES
     src/image.c
     src/input.c
     src/log.c
+    src/mesh_normals.c
     src/numeric.c
     src/paths.c
     src/render_backend.c
@@ -560,7 +561,7 @@ target_include_directories(opt2gltf_lib
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/third_party/stb
 )
-target_link_libraries(opt2gltf_lib PUBLIC lucas_opt aeron_cgltf)
+target_link_libraries(opt2gltf_lib PUBLIC lucas_opt aeron_cgltf aeron)
 if(NOT MSVC)
     target_link_libraries(opt2gltf_lib PUBLIC m)
 endif()
@@ -586,6 +587,8 @@ add_library(aeron_scene STATIC
     src/scene/temporal.c
     src/scene/draw_list2d.c
     src/scene/font_atlas.c
+    src/scene/rgba_upload.c
+    src/scene/runtime_atlas.c
     src/scene/text2d.c
     src/scene/ui/containers.c
     src/scene/ui/context.c
@@ -633,12 +636,33 @@ endif()
 # preserving the engine-specific data the scene renderer reads
 # (mesh_type, rotation axes/pivots, hardpoints, paint-scheme variants
 # via KHR_materials_variants). Moved from the TIE repo (plan E1) so
-# both game asset pipelines share one converter. Host tool: no aeron
-# runtime dependency; own copy of the OPT parser.
+# both game asset pipelines share one converter. The host tool uses Aeron's
+# CPU-only normal builder and owns its copy of the OPT parser.
 option(AERON_BUILD_TOOLS "Build Aeron asset tools" ${PROJECT_IS_TOP_LEVEL})
 add_subdirectory(tools/imgbake)
 add_subdirectory(tools/gltf_cook)
 add_subdirectory(tools/fontbake)
+
+add_library(aeron_asset STATIC
+    src/asset/opt_model.c
+)
+target_include_directories(aeron_asset
+    PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+    PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/tools/opt2gltf
+        ${CMAKE_CURRENT_SOURCE_DIR}/tools/gltf_cook
+        ${CMAKE_CURRENT_SOURCE_DIR}/third_party/cgltf
+)
+target_link_libraries(aeron_asset
+    PUBLIC aeron_scene
+    PRIVATE opt2gltf_lib aeron_gltf_cook_lib
+)
+set_target_properties(aeron_asset PROPERTIES
+    C_STANDARD 11
+    C_STANDARD_REQUIRED ON
+    C_EXTENSIONS OFF
+)
 
 if(AERON_BUILD_TOOLS)
     add_executable(opt2gltf

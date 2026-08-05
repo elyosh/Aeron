@@ -19,9 +19,11 @@
 #include "aeron/log.h"
 
 #include <stdlib.h>
+#include <stdio.h>
 #include <string.h>
 
 #include "aeron/scene/ktx2_reader.h"
+#include "rgba_upload.h"
 
 /* ---------- resident store ---------- */
 
@@ -142,6 +144,27 @@ const AeronImageCacheEntry *Aeron_ImageCacheLoad(AeronImageCache *a,
     return load_via_ktx2(a, cmd, path);
 }
 
+const AeronImageCacheEntry *Aeron_ImageCacheLoadVfs(
+        AeronImageCache *cache, AeronCommandBuffer *cmd, AeronVfs *vfs,
+        AeronVfsRoot root, const char *path, size_t max_size) {
+    if (!cache || !cmd || !vfs || !path || !path[0]) return NULL;
+    char key[576];
+    int length = snprintf(key, sizeof key, "%d:%s", (int)root, path);
+    if (length < 0 || (size_t)length >= sizeof key) return NULL;
+    CacheEntryGpu *hit = cache_find(cache, key);
+    if (hit) return &hit->pub;
+    uint8_t *bytes = NULL;
+    size_t size = 0;
+    if (!AeronVfs_ReadAll(vfs, root, path, max_size, &bytes, &size)) return NULL;
+    Ktx2 *ktx = ktx2_open_mem(bytes, size, path);
+    if (!ktx) { free(bytes); return NULL; }
+    const int width = ktx2_width(ktx), height = ktx2_height(ktx);
+    AeronTexture *texture = Aeron_ImageUploadKtx2(cmd, ktx, path);
+    ktx2_close(ktx);
+    free(bytes);
+    return texture ? cache_insert(cache, key, texture, width, height) : NULL;
+}
+
 
 AeronTexture *Aeron_ImageUploadKtx2(AeronCommandBuffer *cmd, const Ktx2 *ktx, const char *debug_name)
 {
@@ -217,6 +240,15 @@ AeronTexture *Aeron_ImageUploadKtx2(AeronCommandBuffer *cmd, const Ktx2 *ktx, co
     return tex;
 }
 
+AeronTexture *Aeron_ImageUploadRgba8(
+		AeronCommandBuffer *cmd, const uint8_t *rgba, int width, int height,
+		size_t pitch, AeronTextureFormat format, AeronColorSpace color_space,
+		AeronImageAlphaMode alpha_mode, bool generate_mips,
+		const char *debug_name) {
+	return aeron_scene_upload_rgba8(cmd, rgba, width, height, pitch, format,
+			color_space, alpha_mode, generate_mips, debug_name);
+}
+
 AeronTexture *Aeron_ImageLoadCubemapKtx2(AeronCommandBuffer *cmd, const char *path)
 {
     if (!cmd || !path || !path[0]) return NULL;
@@ -230,4 +262,22 @@ AeronTexture *Aeron_ImageLoadCubemapKtx2(AeronCommandBuffer *cmd, const char *pa
     }
     ktx2_close(k);
     return tex;
+}
+
+AeronTexture *Aeron_ImageLoadCubemapKtx2Vfs(
+        AeronCommandBuffer *cmd, AeronVfs *vfs, AeronVfsRoot root,
+        const char *path, size_t max_size) {
+    if (!cmd || !vfs || !path || !path[0]) return NULL;
+    uint8_t *bytes = NULL;
+    size_t size = 0;
+    if (!AeronVfs_ReadAll(vfs, root, path, max_size, &bytes, &size)) return NULL;
+    Ktx2 *ktx = ktx2_open_mem(bytes, size, path);
+    AeronTexture *texture = NULL;
+    if (ktx && ktx2_face_count(ktx) == 6)
+        texture = Aeron_ImageUploadKtx2(cmd, ktx, path);
+    else
+        Aeron_LogError("aeron.scene", "%s: expected a KTX2 cube map", path);
+    if (ktx) ktx2_close(ktx);
+    free(bytes);
+    return texture;
 }

@@ -34,6 +34,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "aeron/vfs.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -85,6 +87,8 @@ typedef struct AeronSpriteAtlas {
  * failure leaves *out zeroed, logs a one-line warning via Aeron_Log,
  * and returns false (callers treat false as "skip this sprite"). */
 bool Aeron_SpriteAtlasLoad(AeronSpriteAtlas *out, const char *yaml_path);
+bool Aeron_SpriteAtlasLoadVfs(AeronSpriteAtlas *out, AeronVfs *vfs,
+							  AeronVfsRoot root, const char *yaml_path);
 
 /* Write `a` back to `yaml_path` in the same `atlas: { w, h, classic_w?,
  * classic_h? } / frames: [ {...} ]` shape the extractor emits. Atomic:

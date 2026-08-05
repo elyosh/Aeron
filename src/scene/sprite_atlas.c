@@ -10,15 +10,106 @@
 
 #include "aeron/log.h"
 #include "aeron/numeric.h"
+#include "aeron/config_file.h"
 
 #include <SDL3/SDL_error.h>
 #include <SDL3/SDL_filesystem.h>
 #include <yaml.h>
 
 #include <errno.h>
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+static int config_int(const AeronConfigNode *map, const char *key, int fallback) {
+    const AeronConfigNode *value = AeronConfigNode_MapGet(map, key);
+    if (AeronConfigNode_Type(value) != AERON_CONFIG_INT) return fallback;
+    int64_t parsed = AeronConfigNode_Int(value, fallback);
+    return parsed < INT_MIN || parsed > INT_MAX ? fallback : (int)parsed;
+}
+
+bool Aeron_SpriteAtlasLoadVfs(AeronSpriteAtlas *out, AeronVfs *vfs,
+                              AeronVfsRoot root, const char *yaml_path) {
+    if (!out || !vfs || !yaml_path || !yaml_path[0]) return false;
+    memset(out, 0, sizeof *out);
+    AeronConfigFile *document = NULL;
+    AeronConfigError error = {0};
+    if (!AeronConfigFile_LoadYamlEx(vfs, root, yaml_path, &document, &error)) {
+        Aeron_LogError("aeron.scene", "[atlas] %s:%d: %s", yaml_path,
+                       error.line, error.message);
+        return false;
+    }
+    const AeronConfigNode *document_root = AeronConfigFile_Root(document);
+    const AeronConfigNode *atlas = AeronConfigNode_MapGet(document_root, "atlas");
+    const AeronConfigNode *frames = AeronConfigNode_MapGet(document_root, "frames");
+    const size_t frame_count = AeronConfigNode_SequenceCount(frames);
+    out->atlas_w = config_int(atlas, "w", 0);
+    out->atlas_h = config_int(atlas, "h", 0);
+    out->classic_atlas_w = config_int(atlas, "classic_w", 0);
+    out->classic_atlas_h = config_int(atlas, "classic_h", 0);
+    if (AeronConfigNode_Type(document_root) != AERON_CONFIG_MAP ||
+        AeronConfigNode_Type(atlas) != AERON_CONFIG_MAP ||
+        AeronConfigNode_Type(frames) != AERON_CONFIG_SEQUENCE ||
+        frame_count == 0 || frame_count > INT_MAX ||
+        out->atlas_w <= 0 || out->atlas_h <= 0) {
+        Aeron_LogError("aeron.scene", "[atlas] %s: invalid atlas document",
+                       yaml_path);
+        AeronConfigFile_Destroy(document);
+        return false;
+    }
+    out->frames = calloc(frame_count, sizeof *out->frames);
+    out->origin_x = calloc(frame_count, sizeof *out->origin_x);
+    out->origin_y = calloc(frame_count, sizeof *out->origin_y);
+    out->ids = calloc(frame_count, sizeof *out->ids);
+    out->pages = calloc(frame_count, sizeof *out->pages);
+    out->classic_w = calloc(frame_count, sizeof *out->classic_w);
+    out->classic_h = calloc(frame_count, sizeof *out->classic_h);
+    if (!out->frames || !out->origin_x || !out->origin_y || !out->ids ||
+        !out->pages || !out->classic_w || !out->classic_h) {
+        AeronConfigFile_Destroy(document);
+        Aeron_SpriteAtlasFree(out);
+        return false;
+    }
+    bool have_ids = false, have_pages = false, have_classic = false;
+    int max_page = 0;
+    for (size_t index = 0; index < frame_count; ++index) {
+        const AeronConfigNode *frame = AeronConfigNode_SequenceGet(frames, index);
+        int x = config_int(frame, "x", -1), y = config_int(frame, "y", -1);
+        int w = config_int(frame, "w", -1), h = config_int(frame, "h", -1);
+        int page = config_int(frame, "page", 0);
+        if (AeronConfigNode_Type(frame) != AERON_CONFIG_MAP || x < 0 || y < 0 ||
+            w <= 0 || h <= 0 || page < 0 || page > INT16_MAX ||
+            x > out->atlas_w - w || y > out->atlas_h - h) {
+            Aeron_LogError("aeron.scene", "[atlas] %s: invalid frame %zu",
+                           yaml_path, index);
+            AeronConfigFile_Destroy(document);
+            Aeron_SpriteAtlasFree(out);
+            return false;
+        }
+        out->frames[index] = (AeronSpriteRect){x, y, w, h};
+        out->origin_x[index] = (int16_t)config_int(frame, "origin_x", 0);
+        out->origin_y[index] = (int16_t)config_int(frame, "origin_y", 0);
+        out->ids[index] = config_int(frame, "id", -1);
+        out->pages[index] = (int16_t)page;
+        out->classic_w[index] = (int16_t)config_int(frame, "classic_w", 0);
+        out->classic_h[index] = (int16_t)config_int(frame, "classic_h", 0);
+        have_ids |= out->ids[index] >= 0;
+        have_pages |= page > 0;
+        have_classic |= out->classic_w[index] > 0;
+        if (page > max_page) max_page = page;
+    }
+    out->frame_count = (int)frame_count;
+    out->page_count = max_page + 1;
+    if (!have_ids) { free(out->ids); out->ids = NULL; }
+    if (!have_pages) { free(out->pages); out->pages = NULL; }
+    if (!have_classic) {
+        free(out->classic_w); out->classic_w = NULL;
+        free(out->classic_h); out->classic_h = NULL;
+    }
+    AeronConfigFile_Destroy(document);
+    return true;
+}
 
 /* Pull a scalar node's string content; NULL when not a scalar. */
 static const char *node_scalar(const yaml_document_t *doc, int node_id) {

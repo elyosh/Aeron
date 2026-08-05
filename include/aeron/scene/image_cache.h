@@ -17,6 +17,9 @@
  */
 
 #include "aeron/render.h"
+#include "aeron/image.h"
+#include <stdbool.h>
+#include "aeron/vfs.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -39,6 +42,9 @@ void             Aeron_ImageCacheDestroy(AeronImageCache* cache);
  * destroyed. */
 const AeronImageCacheEntry* Aeron_ImageCacheLoad(AeronImageCache* cache, AeronCommandBuffer* cmd,
 												 const char* path);
+const AeronImageCacheEntry* Aeron_ImageCacheLoadVfs(
+		AeronImageCache* cache, AeronCommandBuffer* cmd, AeronVfs* vfs,
+		AeronVfsRoot root, const char* path, size_t max_size);
 
 /* Destroy the resident entry for `path`, forcing the next load to read and
  * upload it again. */
@@ -52,12 +58,23 @@ struct Ktx2;
 AeronTexture* Aeron_ImageUploadKtx2(AeronCommandBuffer* cmd, const struct Ktx2* ktx,
 									const char* debug_name);
 
+/* Upload an RGBA8 image from memory with the same alpha, color-space and mip
+ * handling used by runtime atlases and fonts. The caller owns the texture. */
+AeronTexture* Aeron_ImageUploadRgba8(
+		AeronCommandBuffer* cmd, const uint8_t* rgba, int width, int height,
+		size_t pitch, AeronTextureFormat format, AeronColorSpace color_space,
+		AeronImageAlphaMode alpha_mode, bool generate_mips,
+		const char* debug_name);
+
 /* One-shot cube-map load: open `path`, require faceCount == 6, upload
  * every mip x face through `cmd` (which must have no open pass), close.
  * The caller owns the returned texture; NULL on any error (missing
  * file, not a cube, upload failure) with a diagnostic on stderr.
  * Feeds AeronScene_SetSkyCube. */
 AeronTexture* Aeron_ImageLoadCubemapKtx2(AeronCommandBuffer* cmd, const char* path);
+AeronTexture* Aeron_ImageLoadCubemapKtx2Vfs(
+		AeronCommandBuffer* cmd, AeronVfs* vfs, AeronVfsRoot root,
+		const char* path, size_t max_size);
 
 #ifdef __cplusplus
 }

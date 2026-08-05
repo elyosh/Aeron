@@ -20,6 +20,7 @@
 
 #include "opt2gltf.h"
 #include "opt.h"
+#include "aeron/mesh_normals.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -34,6 +35,7 @@
 
 #include "cgltf_write.h"
 
+#define STB_IMAGE_WRITE_STATIC
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "stb_image_write.h"
 
@@ -427,300 +429,62 @@ static void built_mesh_emit_index(BuiltMesh *bm, uint16_t v)
  * diagonal of a two-triangle panel no longer gives one side extra weight.
  * It also avoids making a dense patch of small triangles dominate a
  * neighbouring coarse patch. */
-static opt_vec3_t opt_normalize(opt_vec3_t v)
+static float *built_mesh_build_corner_normals(const opt_mesh_t *mesh,
+                                               const opt_lod_t *lod,
+                                               float smooth_angle_degrees)
 {
-    float l = sqrtf(v.x * v.x + v.y * v.y + v.z * v.z);
-    if (l > 1e-9f) { v.x /= l; v.y /= l; v.z /= l; }
-    return v;
-}
-
-typedef struct {
-    int32_t verts[3];
-    opt_vec3_t normal;
-    float corner_angle[3];
-} SmoothFace;
-
-typedef struct {
-    int32_t face_index;
-    int32_t corner;
-} SmoothIncident;
-
-typedef struct {
-    const opt_mesh_t *mesh;
-    SmoothFace *faces;
-    int32_t face_count;
-    uint32_t *incident_offsets;
-    SmoothIncident *incidents;
-    uint32_t *visit_marks;
-    int32_t *stack;
-    uint32_t visit_token;
-} SmoothContext;
-
-static opt_vec3_t smooth_geometric_face_normal(const opt_mesh_t *m,
-                                                const int32_t verts[3])
-{
-    int32_t ai = verts[0], bi = verts[1], ci = verts[2];
-    if (ai < 0 || ai >= m->vertex_count ||
-        bi < 0 || bi >= m->vertex_count ||
-        ci < 0 || ci >= m->vertex_count) {
-        return (opt_vec3_t){0.0f, 0.0f, 0.0f};
+    uint32_t triangle_count = 0;
+    for (int32_t group = 0; group < lod->group_count; ++group) {
+        const opt_face_group_t *face_group = &lod->groups[group];
+        for (int32_t face = 0; face < face_group->face_count; ++face)
+            triangle_count += face_group->faces[face].verts[3] >= 0 ? 2u : 1u;
     }
-    const opt_vec3_t *a = &m->vertices[ai];
-    const opt_vec3_t *b = &m->vertices[bi];
-    const opt_vec3_t *c = &m->vertices[ci];
-    double ux = b->x - a->x, uy = b->y - a->y, uz = b->z - a->z;
-    double vx = c->x - a->x, vy = c->y - a->y, vz = c->z - a->z;
-    /* OPT polygons are clockwise when viewed from outside. The Y/Z
-     * reflection then turns this outward normal and the winding into
-     * glTF's conventional counter-clockwise orientation together. */
-    return opt_normalize((opt_vec3_t){
-        (float)-(uy * vz - uz * vy),
-        (float)-(uz * vx - ux * vz),
-        (float)-(ux * vy - uy * vx)
-    });
-}
+    if (!triangle_count || mesh->vertex_count <= 0) return NULL;
 
-static float smooth_corner_angle(const opt_mesh_t *m,
-                                 const int32_t verts[3], int corner)
-{
-    int32_t ci = verts[corner];
-    int32_t pi = verts[(corner + 2) % 3];
-    int32_t ni = verts[(corner + 1) % 3];
-    if (ci < 0 || ci >= m->vertex_count ||
-        pi < 0 || pi >= m->vertex_count ||
-        ni < 0 || ni >= m->vertex_count) {
-        return 0.0f;
+    uint32_t *indices = malloc((size_t)triangle_count * 3 * sizeof *indices);
+    float *normals = malloc((size_t)triangle_count * 9 * sizeof *normals);
+    if (!indices || !normals) {
+        free(indices);
+        free(normals);
+        return NULL;
     }
-
-    const opt_vec3_t *c = &m->vertices[ci];
-    const opt_vec3_t *p = &m->vertices[pi];
-    const opt_vec3_t *n = &m->vertices[ni];
-    double px = p->x - c->x, py = p->y - c->y, pz = p->z - c->z;
-    double nx = n->x - c->x, ny = n->y - c->y, nz = n->z - c->z;
-    double pl = sqrt(px * px + py * py + pz * pz);
-    double nl = sqrt(nx * nx + ny * ny + nz * nz);
-    if (pl <= 1e-12 || nl <= 1e-12) return 0.0f;
-    double d = (px * nx + py * ny + pz * nz) / (pl * nl);
-    if (d < -1.0) d = -1.0;
-    if (d > 1.0) d = 1.0;
-    return (float)acos(d);
-}
-
-static void smooth_context_free(SmoothContext *ctx)
-{
-    free(ctx->faces);
-    free(ctx->incident_offsets);
-    free(ctx->incidents);
-    free(ctx->visit_marks);
-    free(ctx->stack);
-    memset(ctx, 0, sizeof *ctx);
-}
-
-static bool smooth_context_init(SmoothContext *ctx, const opt_mesh_t *m,
-                                const opt_lod_t *lod)
-{
-    memset(ctx, 0, sizeof *ctx);
-    ctx->mesh = m;
-    for (int32_t g = 0; g < lod->group_count; ++g) {
-        const opt_face_group_t *grp = &lod->groups[g];
-        for (int32_t fi = 0; fi < grp->face_count; ++fi)
-            ctx->face_count += grp->faces[fi].verts[3] >= 0 ? 2 : 1;
-    }
-    if (ctx->face_count <= 0 || m->vertex_count <= 0) return false;
-
-    ctx->faces = (SmoothFace *)calloc((size_t)ctx->face_count,
-                                      sizeof *ctx->faces);
-    ctx->incident_offsets = (uint32_t *)calloc((size_t)m->vertex_count + 1,
-                                               sizeof *ctx->incident_offsets);
-    ctx->visit_marks = (uint32_t *)calloc((size_t)ctx->face_count,
-                                          sizeof *ctx->visit_marks);
-    ctx->stack = (int32_t *)malloc((size_t)ctx->face_count * sizeof *ctx->stack);
-    if (!ctx->faces || !ctx->incident_offsets ||
-        !ctx->visit_marks || !ctx->stack) {
-        smooth_context_free(ctx);
-        return false;
-    }
-
-    int32_t face_index = 0;
-    for (int32_t g = 0; g < lod->group_count; ++g) {
-        const opt_face_group_t *grp = &lod->groups[g];
-        for (int32_t fi = 0; fi < grp->face_count; ++fi) {
-            const opt_face_t *f = &grp->faces[fi];
-            int source_corner[2][3] = {{0, 1, 2}, {0, 2, 3}};
-            int triangle_count = (f->verts[3] >= 0) ? 2 : 1;
-            for (int t = 0; t < triangle_count; ++t, ++face_index) {
-                SmoothFace *sf = &ctx->faces[face_index];
-                for (int k = 0; k < 3; ++k)
-                    sf->verts[k] = f->verts[source_corner[t][k]];
-                sf->normal = smooth_geometric_face_normal(m, sf->verts);
-                for (int k = 0; k < 3; ++k) {
-                    int32_t vi = sf->verts[k];
-                    sf->corner_angle[k] = smooth_corner_angle(m, sf->verts, k);
-                    if (vi < 0 || vi >= m->vertex_count) continue;
-                    /* A malformed triangle may repeat a position. Keep one
-                     * incident entry so graph traversal remains unambiguous. */
-                    int duplicate = 0;
-                    for (int j = 0; j < k; ++j)
-                        if (sf->verts[j] == vi) { duplicate = 1; break; }
-                    if (!duplicate) ctx->incident_offsets[vi + 1]++;
+    uint32_t triangle = 0;
+    for (int32_t group = 0; group < lod->group_count; ++group) {
+        const opt_face_group_t *face_group = &lod->groups[group];
+        for (int32_t face = 0; face < face_group->face_count; ++face) {
+            const opt_face_t *source = &face_group->faces[face];
+            const int source_corner[2][3] = {{0, 2, 1}, {0, 3, 2}};
+            const int count = source->verts[3] >= 0 ? 2 : 1;
+            for (int item = 0; item < count; ++item, ++triangle) {
+                for (int corner = 0; corner < 3; ++corner) {
+                    const int32_t vertex = source->verts[source_corner[item][corner]];
+                    if (vertex < 0 || vertex >= mesh->vertex_count) {
+                        free(indices);
+                        free(normals);
+                        return NULL;
+                    }
+                    indices[(size_t)triangle * 3 + corner] = (uint32_t)vertex;
                 }
             }
         }
     }
-
-    for (int32_t vi = 0; vi < m->vertex_count; ++vi)
-        ctx->incident_offsets[vi + 1] += ctx->incident_offsets[vi];
-    uint32_t incident_count = ctx->incident_offsets[m->vertex_count];
-    ctx->incidents = (SmoothIncident *)calloc(incident_count ? incident_count : 1,
-                                               sizeof *ctx->incidents);
-    uint32_t *cursor = (uint32_t *)malloc((size_t)m->vertex_count * sizeof *cursor);
-    if (!ctx->incidents || !cursor) {
-        free(cursor);
-        smooth_context_free(ctx);
-        return false;
+    AeronMeshNormalsError error = {0};
+    const AeronMeshNormalsInput input = {
+        .positions = &mesh->vertices[0].x,
+        .position_stride = sizeof mesh->vertices[0],
+        .position_count = (uint32_t)mesh->vertex_count,
+        .triangle_position_indices = indices,
+        .triangle_count = triangle_count,
+        .smooth_angle_degrees = smooth_angle_degrees,
+    };
+    const bool built = Aeron_MeshNormalsBuildCorners(&input, normals, &error);
+    free(indices);
+    if (!built) {
+        fprintf(stderr, "opt2gltf: normal build failed: %s\n", error.message);
+        free(normals);
+        return NULL;
     }
-    memcpy(cursor, ctx->incident_offsets,
-           (size_t)m->vertex_count * sizeof *cursor);
-    for (int32_t fi = 0; fi < ctx->face_count; ++fi) {
-        const SmoothFace *sf = &ctx->faces[fi];
-        for (int k = 0; k < 3; ++k) {
-            int32_t vi = sf->verts[k];
-            if (vi < 0 || vi >= m->vertex_count) continue;
-            int duplicate = 0;
-            for (int j = 0; j < k; ++j)
-                if (sf->verts[j] == vi) { duplicate = 1; break; }
-            if (duplicate) continue;
-            uint32_t at = cursor[vi]++;
-            ctx->incidents[at].face_index = fi;
-            ctx->incidents[at].corner = k;
-        }
-    }
-    free(cursor);
-    return true;
-}
-
-static int smooth_faces_share_vertex_edge(const SmoothFace *a, int ac,
-                                           const SmoothFace *b, int bc)
-{
-    int32_t a_prev = a->verts[(ac + 2) % 3];
-    int32_t a_next = a->verts[(ac + 1) % 3];
-    int32_t b_prev = b->verts[(bc + 2) % 3];
-    int32_t b_next = b->verts[(bc + 1) % 3];
-    return a_prev == b_prev || a_prev == b_next ||
-           a_next == b_prev || a_next == b_next;
-}
-
-static int smooth_face_corner_for_vertex(const SmoothFace *sf, int32_t vi)
-{
-    for (int k = 0; k < 3; ++k)
-        if (sf->verts[k] == vi) return k;
-    return -1;
-}
-
-static opt_vec3_t regen_corner_normal(SmoothContext *ctx,
-                                      int32_t ref_face_index, int32_t vi,
-                                      float smooth_cos)
-{
-    const SmoothFace *ref = &ctx->faces[ref_face_index];
-    if (vi < 0 || vi >= ctx->mesh->vertex_count)
-        return ref->normal;
-
-    if (++ctx->visit_token == 0) {
-        memset(ctx->visit_marks, 0,
-               (size_t)ctx->face_count * sizeof *ctx->visit_marks);
-        ctx->visit_token = 1;
-    }
-    uint32_t begin = ctx->incident_offsets[vi];
-    uint32_t end = ctx->incident_offsets[vi + 1];
-    int32_t stack_count = 0;
-    ctx->visit_marks[ref_face_index] = ctx->visit_token;
-    ctx->stack[stack_count++] = ref_face_index;
-
-    while (stack_count > 0) {
-        int32_t current_index = ctx->stack[--stack_count];
-        const SmoothFace *current = &ctx->faces[current_index];
-        int current_corner = smooth_face_corner_for_vertex(current, vi);
-        if (current_corner < 0) continue;
-        if (current->normal.x == 0.0f && current->normal.y == 0.0f &&
-            current->normal.z == 0.0f)
-            continue;
-        for (uint32_t i = begin; i < end; ++i) {
-            const SmoothIncident *incident = &ctx->incidents[i];
-            int32_t candidate_index = incident->face_index;
-            if (ctx->visit_marks[candidate_index] == ctx->visit_token)
-                continue;
-            const SmoothFace *candidate = &ctx->faces[candidate_index];
-            if (candidate->normal.x == 0.0f &&
-                candidate->normal.y == 0.0f &&
-                candidate->normal.z == 0.0f)
-                continue;
-            if (!smooth_faces_share_vertex_edge(current, current_corner,
-                                                 candidate, incident->corner))
-                continue;
-            float d = current->normal.x * candidate->normal.x +
-                      current->normal.y * candidate->normal.y +
-                      current->normal.z * candidate->normal.z;
-            if (d + 1e-6f < smooth_cos) continue;
-            ctx->visit_marks[candidate_index] = ctx->visit_token;
-            ctx->stack[stack_count++] = candidate_index;
-        }
-    }
-
-    /* Sum in stable file order, independent of the BFS root. Corners in
-     * the same connected fan therefore receive bit-identical normals and
-     * can be deduplicated into one glTF vertex (apart from UV seams). */
-    double ax = 0.0, ay = 0.0, az = 0.0;
-    for (uint32_t i = begin; i < end; ++i) {
-        const SmoothIncident *incident = &ctx->incidents[i];
-        if (ctx->visit_marks[incident->face_index] != ctx->visit_token)
-            continue;
-        const SmoothFace *sf = &ctx->faces[incident->face_index];
-        double w = sf->corner_angle[incident->corner];
-        ax += (double)sf->normal.x * w;
-        ay += (double)sf->normal.y * w;
-        az += (double)sf->normal.z * w;
-    }
-    opt_vec3_t out = opt_normalize((opt_vec3_t){(float)ax, (float)ay, (float)az});
-    if (out.x == 0.0f && out.y == 0.0f && out.z == 0.0f)
-        out = ref->normal;
-
-    /* A connected fan can wrap more than 180 degrees around a
-     * non-manifold vertex even though every individual edge meets the
-     * threshold. Its common average may then point behind one of its
-     * triangles, which produces the characteristic black/inverted
-     * lighting glitch in Blender and in a PBR renderer. Only for such an
-     * unsafe corner, recompute from the part of the fan that remains in
-     * the reference triangle's geometric hemisphere. This preserves one
-     * shared normal for ordinary curved fans and introduces a split only
-     * where no common fan average is physically valid. */
-    float ref_dot = out.x * ref->normal.x +
-                    out.y * ref->normal.y +
-                    out.z * ref->normal.z;
-    if (ref_dot <= 1e-4f) {
-        double bx = 0.0, by = 0.0, bz = 0.0;
-        float local_cos = smooth_cos > 0.0f ? smooth_cos : 0.0f;
-        for (uint32_t i = begin; i < end; ++i) {
-            const SmoothIncident *incident = &ctx->incidents[i];
-            if (ctx->visit_marks[incident->face_index] != ctx->visit_token)
-                continue;
-            const SmoothFace *sf = &ctx->faces[incident->face_index];
-            float d = sf->normal.x * ref->normal.x +
-                      sf->normal.y * ref->normal.y +
-                      sf->normal.z * ref->normal.z;
-            if (d + 1e-6f < local_cos) continue;
-            double w = sf->corner_angle[incident->corner];
-            bx += (double)sf->normal.x * w;
-            by += (double)sf->normal.y * w;
-            bz += (double)sf->normal.z * w;
-        }
-        opt_vec3_t local = opt_normalize(
-            (opt_vec3_t){(float)bx, (float)by, (float)bz});
-        float local_dot = local.x * ref->normal.x +
-                          local.y * ref->normal.y +
-                          local.z * ref->normal.z;
-        out = local_dot > 1e-4f ? local : ref->normal;
-    }
-    return out;
+    return normals;
 }
 
 static uint16_t built_mesh_emit_corner(BuiltMesh *bm, const opt_mesh_t *m,
@@ -757,11 +521,11 @@ static uint16_t built_mesh_emit_corner(BuiltMesh *bm, const opt_mesh_t *m,
 
 /* Walk LOD 0 of an OPT mesh and emit deduplicated vertices + indices
  * grouped by face group. Skips degenerate faces and empty groups.
- * `regen` enables angle-based normal regeneration (`smooth_cos` =
- * cos(threshold)); when false the stored OPT normals are used. */
+ * `regen` enables angle-based normal regeneration; when false the stored
+ * OPT normals are used. */
 static bool built_mesh_from_opt(BuiltMesh *bm, const opt_mesh_t *m,
                                 float vertex_scale,
-                                bool regen, float smooth_cos,
+                                bool regen, float smooth_angle_degrees,
                                 bool repair_normals)
 {
     memset(bm, 0, sizeof *bm);
@@ -775,8 +539,10 @@ static bool built_mesh_from_opt(BuiltMesh *bm, const opt_mesh_t *m,
                                                 sizeof(uint32_t));
     if (!bm->fg_index_start || !bm->fg_index_count_arr) return false;
 
-    SmoothContext smooth = {0};
-    if (regen && !smooth_context_init(&smooth, m, lod)) {
+    float *corner_normals = regen
+        ? built_mesh_build_corner_normals(m, lod, smooth_angle_degrees)
+        : NULL;
+    if (regen && !corner_normals) {
         built_mesh_free(bm);
         return false;
     }
@@ -805,6 +571,7 @@ static bool built_mesh_from_opt(BuiltMesh *bm, const opt_mesh_t *m,
         if (!classic_normals || !classic_normal_set) {
             free(classic_normals);
             free(classic_normal_set);
+            free(corner_normals);
             return false;
         }
     }
@@ -835,8 +602,10 @@ static bool built_mesh_from_opt(BuiltMesh *bm, const opt_mesh_t *m,
                             ok = 0;
                             break;
                         }
-                        opt_vec3_t n = regen_corner_normal(
-                            &smooth, smooth_face_index, vi, smooth_cos);
+                        static const int normal_corner[3] = {0, 2, 1};
+                        const float *normal = &corner_normals[
+                            ((size_t)smooth_face_index * 3 + normal_corner[q]) * 3];
+                        opt_vec3_t n = {normal[0], normal[1], normal[2]};
                         v[q] = built_mesh_emit_corner(
                             bm, m, vi, f->uvs[k], &n, vertex_scale);
                     }
@@ -904,7 +673,7 @@ static bool built_mesh_from_opt(BuiltMesh *bm, const opt_mesh_t *m,
         bm->fg_index_count_arr[g] = bm->index_count - start;
         if (bm->fg_index_count_arr[g] > 0) bm->fg_count++;
     }
-    smooth_context_free(&smooth);
+    free(corner_normals);
     free(classic_normals);
     free(classic_normal_set);
     return bm->index_count > 0;
@@ -939,10 +708,6 @@ bool OptGltf_BuildMemory(const opt_file_t *opt,
     /* Negative angle → keep the original OPT normals; otherwise
      * regenerate with an angle-based smoothing threshold. */
     const bool  regen      = (smooth_angle_deg >= 0.0f);
-    const float smooth_cos = regen
-        ? cosf(smooth_angle_deg * 3.14159265358979f / 180.0f)
-        : 1.0f;
-
     build->buffer.size = 0;       /* filled at end */
     build->buffer.uri  = xprintf_dup("%s.bin", basename);
     gb_keep_string(build, build->buffer.uri);
@@ -1089,7 +854,7 @@ bool OptGltf_BuildMemory(const opt_file_t *opt,
     for (int32_t mi = 0; mi < opt->mesh_count; ++mi) {
         const opt_mesh_t *m = &opt->meshes[mi];
         if (!built_mesh_from_opt(&built[mi], m, vertex_scale,
-                                 regen, smooth_cos, repair_normals)) continue;
+                                 regen, smooth_angle_deg, repair_normals)) continue;
         total_meshes++;
         fixed_zero += built[mi].fixed_zero_normals;
         fixed_flip += built[mi].fixed_flipped_normals;

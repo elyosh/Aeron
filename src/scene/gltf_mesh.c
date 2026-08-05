@@ -747,6 +747,34 @@ bool Aeron_GltfMeshBuild(const char *glb_path, AeronGltfModel *out)
     return succeeded;
 }
 
+bool Aeron_GltfMeshBuildMemory(const void *bytes, size_t size,
+                               const char *source_label,
+                               AeronGltfModel *out)
+{
+    if (!bytes || size == 0 || !source_label || !source_label[0] || !out)
+        return false;
+    memset(out, 0, sizeof *out);
+    cgltf_options options = {0};
+    cgltf_data *data = NULL;
+    cgltf_result result = cgltf_parse(&options, bytes, size, &data);
+    if (result != cgltf_result_success) {
+        SDL_Log("[flight_gltf] parse memory '%s' failed: %d",
+                source_label, (int)result);
+        return false;
+    }
+    for (cgltf_size index = 0; index < data->buffers_count; ++index) {
+        if (!data->buffers[index].data) {
+            SDL_Log("[flight_gltf] '%s' contains an external buffer",
+                    source_label);
+            cgltf_free(data);
+            return false;
+        }
+    }
+    const bool succeeded = Aeron_GltfMeshBuildData(data, source_label, out);
+    cgltf_free(data);
+    return succeeded;
+}
+
 void Aeron_GltfMeshFree(AeronGltfModel *m)
 {
     if (!m) return;

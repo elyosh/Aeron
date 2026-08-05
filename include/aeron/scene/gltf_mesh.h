@@ -237,6 +237,13 @@ typedef struct AeronGltfModel {
 bool Aeron_GltfMeshBuild(const char *glb_path,
                             AeronGltfModel *out);
 
+/* Build a cooked GLB from caller-owned bytes. The input is borrowed only for
+ * this call; the returned model owns all retained data. External buffers are
+ * rejected because runtime packages must be self-contained. */
+bool Aeron_GltfMeshBuildMemory(const void *bytes, size_t size,
+                               const char *source_label,
+                               AeronGltfModel *out);
+
 /* Build from an already-loaded cooked cgltf graph. The graph is borrowed for
  * the duration of the call; the returned AeronGltfModel owns all of its data. */
 bool Aeron_GltfMeshBuildData(const struct cgltf_data *data,
