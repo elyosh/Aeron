@@ -1,5 +1,20 @@
 #include "internal.h"
 
+#include <limits.h>
+
+static int Aeron_CalculateAspectWidth(int height, int aspect_width, int aspect_height, int* out_width) {
+	int64_t width;
+	if (!out_width || height <= 0 || aspect_width <= 0 || aspect_height <= 0) {
+		return 0;
+	}
+	width = ((int64_t)height * aspect_width + aspect_height / 2) / aspect_height;
+	if (width <= 0 || width > INT_MAX) {
+		return 0;
+	}
+	*out_width = (int)width;
+	return 1;
+}
+
 int Aeron_WindowInit(const AeronConfig* config) {
 	const char* title;
 	int         width;
@@ -60,8 +75,8 @@ int Aeron_WindowInit(const AeronConfig* config) {
 	 * this much lower-resolution image. */
 #ifndef SDL_PLATFORM_MACOS
 	if (config && config->window_icon_bmp && config->window_icon_bmp_size > 0) {
-		SDL_Surface* icon = SDL_LoadBMP_IO(
-			SDL_IOFromConstMem(config->window_icon_bmp, config->window_icon_bmp_size), true);
+		SDL_Surface* icon =
+			SDL_LoadBMP_IO(SDL_IOFromConstMem(config->window_icon_bmp, config->window_icon_bmp_size), true);
 		if (icon) {
 			if (!SDL_SetWindowIcon(g_aeron.window, icon)) {
 				Aeron_LogWarn("aeron", "SDL_SetWindowIcon failed: %s", SDL_GetError());
@@ -79,7 +94,7 @@ int Aeron_WindowInit(const AeronConfig* config) {
 		SDL_GetWindowSizeInPixels(g_aeron.window, &pixel_w, &pixel_h);
 		Aeron_UpdatePresentationPixelSize();
 		Aeron_LogInfo("aeron", "window %dx%d pt, %dx%d px (logical %dx%d)", width, height, pixel_w, pixel_h,
-				  g_aeron.logical_width, g_aeron.logical_height);
+					  g_aeron.logical_width, g_aeron.logical_height);
 	}
 
 	return 1;
@@ -111,6 +126,91 @@ int Aeron_GetLogicalSize(int* width, int* height) {
 		*height = g_aeron.logical_height;
 	}
 	return g_aeron.logical_width > 0 && g_aeron.logical_height > 0;
+}
+
+int Aeron_GetWindowSize(int* width, int* height) {
+	int window_width  = 0;
+	int window_height = 0;
+
+	if (!g_aeron.window || !SDL_GetWindowSize(g_aeron.window, &window_width, &window_height)) {
+		return 0;
+	}
+	if (width) {
+		*width = window_width;
+	}
+	if (height) {
+		*height = window_height;
+	}
+	return window_width > 0 && window_height > 0;
+}
+
+int Aeron_SetWindowAspectRatio(int aspect_width, int aspect_height) {
+	float ratio;
+
+	if (!g_aeron.window || aspect_width <= 0 || aspect_height <= 0) {
+		return 0;
+	}
+	ratio = (float)aspect_width / (float)aspect_height;
+	if (!SDL_SetWindowAspectRatio(g_aeron.window, ratio, ratio)) {
+		Aeron_LogWarn("aeron", "SDL_SetWindowAspectRatio failed: %s", SDL_GetError());
+		return 0;
+	}
+	return 1;
+}
+
+int Aeron_ResizeWindowToAspect(int aspect_width, int aspect_height) {
+	SDL_Rect      bounds;
+	SDL_DisplayID display;
+	Uint64        flags;
+	int           current_width;
+	int           current_height;
+	int           target_width;
+	int           target_height;
+
+	if (!g_aeron.window || aspect_width <= 0 || aspect_height <= 0) {
+		return 0;
+	}
+	flags = SDL_GetWindowFlags(g_aeron.window);
+	if (flags & (SDL_WINDOW_FULLSCREEN | SDL_WINDOW_MAXIMIZED)) {
+		return 1;
+	}
+	if (!SDL_GetWindowSize(g_aeron.window, &current_width, &current_height) || current_width <= 0 ||
+		current_height <= 0) {
+		Aeron_LogWarn("aeron", "SDL_GetWindowSize failed while applying window aspect: %s", SDL_GetError());
+		return 0;
+	}
+
+	target_height = current_height;
+	if (!Aeron_CalculateAspectWidth(target_height, aspect_width, aspect_height, &target_width)) {
+		return 0;
+	}
+	display       = SDL_GetDisplayForWindow(g_aeron.window);
+	if (display != 0 && SDL_GetDisplayUsableBounds(display, &bounds) && bounds.w > 0 && bounds.h > 0 &&
+		(target_width > bounds.w || target_height > bounds.h)) {
+		target_height = bounds.h;
+		if (!Aeron_CalculateAspectWidth(target_height, aspect_width, aspect_height, &target_width)) {
+			return 0;
+		}
+		if (target_width > bounds.w) {
+			target_width  = bounds.w;
+			target_height = (int)(((int64_t)target_width * aspect_height + aspect_width / 2) / aspect_width);
+		}
+	}
+	if (target_width <= 0 || target_height <= 0) {
+		return 0;
+	}
+	if ((target_width != current_width || target_height != current_height) &&
+		!SDL_SetWindowSize(g_aeron.window, target_width, target_height)) {
+		Aeron_LogWarn("aeron", "SDL_SetWindowSize failed while applying window aspect: %s", SDL_GetError());
+		return 0;
+	}
+	if (!SDL_SyncWindow(g_aeron.window)) {
+		Aeron_LogWarn("aeron", "SDL_SyncWindow failed while applying window aspect: %s", SDL_GetError());
+		return 0;
+	}
+	SDL_GetWindowSize(g_aeron.window, &g_aeron.input.window_width, &g_aeron.input.window_height);
+	Aeron_UpdatePresentationPixelSize();
+	return 1;
 }
 
 int Aeron_SetFullscreen(int fullscreen) {
