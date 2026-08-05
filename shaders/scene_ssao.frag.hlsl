@@ -203,7 +203,8 @@ float2 main(VSOut i) : SV_Target0
     uint depth_w, depth_h;
     g_depth.GetDimensions(depth_w, depth_h);
     uint2 depth_size = uint2(depth_w, depth_h);
-    uint2 visibility_pixel = uint2(i.position.xy);
+    uint2 visibility_size = (depth_size + 1u) / 2u;
+    uint2 visibility_pixel = min(uint2(i.uv * float2(visibility_size)), visibility_size - 1u);
     uint2 source_pixel = min(visibility_pixel * 2u + 1u, depth_size - 1u);
     float2 receiver_uv = (float2(source_pixel) + 0.5f) / float2(depth_size);
 

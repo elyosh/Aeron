@@ -51,7 +51,7 @@ float2 main(VSOut i) : SV_Target0
     g_depth.GetDimensions(depth_w, depth_h);
     uint2 visibility_size = uint2(visibility_w, visibility_h);
     uint2 depth_size = uint2(depth_w, depth_h);
-    uint2 center_pixel = min(uint2(i.position.xy), visibility_size - 1u);
+    uint2 center_pixel = min(uint2(i.uv * float2(visibility_size)), visibility_size - 1u);
     uint2 center_source = min(center_pixel * 2u + 1u, depth_size - 1u);
     float2 center_visibility_uv = (float2(center_pixel) + 0.5f) / float2(visibility_size);
     float2 center_depth_uv = (float2(center_source) + 0.5f) / float2(depth_size);
