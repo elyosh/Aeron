@@ -123,6 +123,9 @@ int AeronVfs_Close(AeronFile* file);
 int AeronVfs_Stat(AeronVfs* vfs, AeronVfsRoot root, const char* path, AeronFileInfo* out_info);
 /* Returns nonzero when a path exists relative to the selected root. */
 int AeronVfs_Exists(AeronVfs* vfs, AeronVfsRoot root, const char* path);
+/* Creates a directory and any missing parents relative to a writable root.
+ * Succeeds when the path already names a directory. */
+int AeronVfs_CreateDirectory(AeronVfs* vfs, AeronVfsRoot root, const char* path);
 /* Removes a file or empty directory relative to the selected root. */
 int AeronVfs_Remove(AeronVfs* vfs, AeronVfsRoot root, const char* path);
 /* Renames a file or directory within the selected root. */

@@ -78,6 +78,10 @@ typedef enum AeronKey {
 	AERON_KEY_RGUI         = 231
 } AeronKey;
 
+/* Converts a human-readable physical-key name to an Aeron key.
+ * Writes out_key only on success. This operation is not thread-safe. */
+int AeronKey_FromName(const char* name, AeronKey* out_key);
+
 /* Bit flags used for mouse button state and button-edge snapshots. */
 typedef enum AeronMouseButton {
 	AERON_MOUSE_BUTTON_LEFT   = 1u << 0,

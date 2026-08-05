@@ -2,6 +2,20 @@
 
 #include <string.h>
 
+int AeronKey_FromName(const char* name, AeronKey* out_key) {
+	SDL_Scancode scancode;
+
+	if (!name || !name[0] || !out_key) {
+		return 0;
+	}
+	scancode = SDL_GetScancodeFromName(name);
+	if (scancode <= SDL_SCANCODE_UNKNOWN || scancode >= AERON_KEY_COUNT) {
+		return 0;
+	}
+	*out_key = (AeronKey)scancode;
+	return 1;
+}
+
 void Aeron_BeginInputFrame(AeronInputSnapshot* input) {
 	memset(input->key_pressed, 0, sizeof(input->key_pressed));
 	memset(input->key_released, 0, sizeof(input->key_released));
