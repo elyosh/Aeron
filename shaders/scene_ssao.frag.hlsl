@@ -80,7 +80,8 @@ Texture2D    g_depth   : register(t0, space2);
 /* Geometric world normal G-buffer (R16G16_SNORM, octahedral). Written by
  * the prepass from world-position derivatives — the true face normal. */
 Texture2D    g_normal  : register(t1, space2);
-SamplerState g_sampler : register(s0, space2);
+SamplerState g_depth_sampler  : register(s0, space2);
+SamplerState g_normal_sampler : register(s1, space2);
 
 struct VSOut
 {
@@ -169,7 +170,7 @@ float evaluate_kernel_sample(float3 view_pos, float3 tangent, float3 bitangent,
     if (any(sample_uv < 0.0f) || any(sample_uv > 1.0f))
         return 0.0f;
 
-    float actual = g_depth.SampleLevel(g_sampler, sample_uv, 0.0f).r;
+    float actual = g_depth.SampleLevel(g_depth_sampler, sample_uv, 0.0f).r;
     if (actual <= 0.0f)
         return 0.0f;
 
@@ -206,7 +207,7 @@ float2 main(VSOut i) : SV_Target0
     uint2 source_pixel = min(visibility_pixel * 2u + 1u, depth_size - 1u);
     float2 receiver_uv = (float2(source_pixel) + 0.5f) / float2(depth_size);
 
-    float depth = g_depth.Load(int3(source_pixel, 0)).r;
+    float depth = g_depth.SampleLevel(g_depth_sampler, receiver_uv, 0.0f).r;
     if (depth <= 0.0f) return float2(1.0f, 1.0f); /* sky never occludes */
 
     float3 view_pos = view_pos_from(receiver_uv, depth);
@@ -216,7 +217,7 @@ float2 main(VSOut i) : SV_Target0
      * grid that per-pixel half-res reconstruction here produced). Decode
      * the octahedral encoding, then rotate world→view for the hemisphere.
      * The R16G16_SNORM samples in [-1, 1], the octahedral output range. */
-    float2 enc = g_normal.Load(int3(source_pixel, 0)).rg;
+    float2 enc = g_normal.SampleLevel(g_normal_sampler, receiver_uv, 0.0f).rg;
     float3 world_normal = oct_decode(enc);
     float3 view_normal;
     view_normal.x = dot(view_rot[0].xyz, world_normal);

@@ -34,7 +34,8 @@ cbuffer SSAOBlurUniforms : register(b0, space3)
 
 Texture2D<float2> g_visibility : register(t0, space2);
 Texture2D    g_depth   : register(t1, space2);
-SamplerState g_sampler : register(s0, space2);
+SamplerState g_visibility_sampler : register(s0, space2);
+SamplerState g_depth_sampler      : register(s1, space2);
 
 struct VSOut
 {
@@ -52,13 +53,15 @@ float2 main(VSOut i) : SV_Target0
     uint2 depth_size = uint2(depth_w, depth_h);
     uint2 center_pixel = min(uint2(i.position.xy), visibility_size - 1u);
     uint2 center_source = min(center_pixel * 2u + 1u, depth_size - 1u);
+    float2 center_visibility_uv = (float2(center_pixel) + 0.5f) / float2(visibility_size);
+    float2 center_depth_uv = (float2(center_source) + 0.5f) / float2(depth_size);
 
     /* Sky pixels keep AO=1.0 directly. Sampling neighbours would
      * pull ship silhouettes into the sky-side output, producing
      * visible haloes after the apply pass modulates the scene RT. */
-    float center_depth = g_depth.Load(int3(center_source, 0)).r;
+    float center_depth = g_depth.SampleLevel(g_depth_sampler, center_depth_uv, 0.0f).r;
     if (center_depth <= 0.0f) {
-        return g_visibility.Load(int3(center_pixel, 0));
+        return g_visibility.SampleLevel(g_visibility_sampler, center_visibility_uv, 0.0f);
     }
     float center_z = near_z / center_depth;
     bool horizontal = abs(direction_uv.x) > 0.0f;
@@ -77,10 +80,12 @@ float2 main(VSOut i) : SV_Target0
             (horizontal ? int2(k, 0) : int2(0, k));
         tap_pixel = clamp(tap_pixel, int2(0, 0), int2(visibility_size) - 1);
         uint2 tap_source = min(uint2(tap_pixel) * 2u + 1u, depth_size - 1u);
-        float  d  = g_depth.Load(int3(tap_source, 0)).r;
+        float2 tap_visibility_uv = (float2(tap_pixel) + 0.5f) / float2(visibility_size);
+        float2 tap_depth_uv = (float2(tap_source) + 0.5f) / float2(depth_size);
+        float  d  = g_depth.SampleLevel(g_depth_sampler, tap_depth_uv, 0.0f).r;
         okk[g]    = (d > 0.0f);
         zk [g]    = okk[g] ? near_z / d : 0.0f;
-        visibility[g] = g_visibility.Load(int3(tap_pixel, 0));
+        visibility[g] = g_visibility.SampleLevel(g_visibility_sampler, tap_visibility_uv, 0.0f);
     }
 
     /* Gradient-corrected bilateral: estimate the view-space depth slope
