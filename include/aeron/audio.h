@@ -123,9 +123,9 @@ void     Aeron_AudioStreamClose(AeronAudioStream stream);
 
 void Aeron_AudioSetMasterGain(float gain);
 
-/* Pauses / resumes the output device. Ring play cursors freeze in place
- * (the mixer callback stops), so cursor-paced producers resume without a
- * skip. Used for host pause states (user pause, backgrounded window). */
+/* Pauses / resumes the output device. The mixer callback stops, freezing
+ * voices, ring play cursors, queued-stream consumption, and queued-stream
+ * audible clocks. Buffered PCM is preserved for a continuous resume. */
 void Aeron_AudioSetPaused(int paused);
 
 #ifdef __cplusplus

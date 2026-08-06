@@ -7,6 +7,20 @@
 extern "C" {
 #endif
 
+/* Joinable background thread. The callback runs once and returns the value
+   reported by Aeron_ThreadJoin. */
+typedef struct AeronThread AeronThread;
+typedef int (*AeronThreadFunc)(void* user);
+
+/* Creates a named thread. The name must be non-empty and function must be
+   non-NULL. Allocation and platform failures are logged. */
+AeronThread* Aeron_ThreadCreate(const char* name, AeronThreadFunc function, void* user);
+
+/* Waits for the callback to finish, releases the thread handle, and returns
+   the callback result. Must be called exactly once and not from the thread
+   being joined. */
+int Aeron_ThreadJoin(AeronThread* thread);
+
 /* Periodic callback on a background thread. Aeron owns the thread; callers only
    supply the callback. */
 typedef uint32_t AeronTimer;

@@ -90,6 +90,8 @@ typedef struct AeronAudioSystem {
 	SDL_AudioStream*  device; /* output device stream */
 	SDL_AudioDeviceID device_id;
 	int               device_buffer_input_frames;
+	int               device_paused;
+	uint64_t          device_paused_ns;
 	SDL_Mutex*        lock;
 	SDL_Condition*    stream_space_available;
 
@@ -378,7 +380,8 @@ static void Aeron_AudioStreamUpdateAudibleLocked(AeronAudioStreamSlot* stream, u
 	double elapsed_frames;
 	double available_frames;
 
-	if (!stream->playing || stream->audible_updated_ns == 0 || now_ns <= stream->audible_updated_ns) {
+	if (g_audio.device_paused || !stream->playing || stream->audible_updated_ns == 0 ||
+		now_ns <= stream->audible_updated_ns) {
 		return;
 	}
 	elapsed_frames   = (double)(now_ns - stream->audible_updated_ns) * (double)stream->rate / 1000000000.0;
@@ -579,27 +582,66 @@ int Aeron_AudioInit(void) {
 
 	g_audio.initialized = 1;
 	Aeron_LogInfo("aeron.audio", "audio device opened: %d Hz, %d ch, S16 buffer=%d frames",
-			  AERON_AUDIO_DEVICE_RATE, AERON_AUDIO_DEVICE_CHANNELS, g_audio.device_buffer_input_frames);
+				  AERON_AUDIO_DEVICE_RATE, AERON_AUDIO_DEVICE_CHANNELS, g_audio.device_buffer_input_frames);
 	return 1;
 }
 
 void Aeron_AudioSetPaused(int paused) {
+	uint64_t now_ns;
+
 	if (!g_audio.initialized || !g_audio.device) {
 		return;
 	}
 
-	/* Pauses the OUTPUT DEVICE, not individual voices/rings: the mixer
-	 * callback stops running, so ring play cursors freeze exactly where
-	 * they were — producers that pace themselves against
-	 * Aeron_AudioRingPlayCursorBytes resume without a skip. */
 	if (paused) {
+		SDL_LockMutex(g_audio.lock);
+		if (g_audio.device_paused) {
+			SDL_UnlockMutex(g_audio.lock);
+			return;
+		}
+		SDL_UnlockMutex(g_audio.lock);
+
 		if (!SDL_PauseAudioStreamDevice(g_audio.device)) {
 			Aeron_LogError("aeron.audio", "SDL_PauseAudioStreamDevice failed: %s", SDL_GetError());
+			return;
 		}
-	} else {
-		if (!SDL_ResumeAudioStreamDevice(g_audio.device)) {
-			Aeron_LogError("aeron.audio", "SDL_ResumeAudioStreamDevice failed: %s", SDL_GetError());
+
+		SDL_LockMutex(g_audio.lock);
+		now_ns = SDL_GetTicksNS();
+		for (int i = 0; i < AERON_AUDIO_MAX_STREAMS; ++i) {
+			AeronAudioStreamSlot* stream = &g_audio.streams[i];
+			if (stream->in_use && stream->playing) {
+				Aeron_AudioStreamUpdateAudibleLocked(stream, now_ns);
+			}
 		}
+		g_audio.device_paused    = 1;
+		g_audio.device_paused_ns = now_ns;
+		SDL_UnlockMutex(g_audio.lock);
+		return;
+	}
+
+	SDL_LockMutex(g_audio.lock);
+	if (!g_audio.device_paused) {
+		SDL_UnlockMutex(g_audio.lock);
+		return;
+	}
+	now_ns = SDL_GetTicksNS();
+	for (int i = 0; i < AERON_AUDIO_MAX_STREAMS; ++i) {
+		AeronAudioStreamSlot* stream = &g_audio.streams[i];
+		if (stream->in_use && stream->playing && stream->audible_updated_ns != 0) {
+			stream->audible_updated_ns += now_ns - g_audio.device_paused_ns;
+		}
+	}
+	g_audio.device_paused    = 0;
+	g_audio.device_paused_ns = 0;
+	SDL_UnlockMutex(g_audio.lock);
+
+	if (!SDL_ResumeAudioStreamDevice(g_audio.device)) {
+		Aeron_LogError("aeron.audio", "SDL_ResumeAudioStreamDevice failed: %s", SDL_GetError());
+		SDL_LockMutex(g_audio.lock);
+		g_audio.device_paused    = 1;
+		g_audio.device_paused_ns = now_ns;
+		SDL_UnlockMutex(g_audio.lock);
 	}
 }
 
@@ -634,10 +676,10 @@ void Aeron_AudioShutdown(void) {
 		g_audio.rings[r].ring    = NULL;
 	}
 	for (int s = 0; s < AERON_AUDIO_MAX_STREAMS; ++s) {
-		stream_pcm[s]               = g_audio.streams[s].in_use ? g_audio.streams[s].pcm : NULL;
-		g_audio.streams[s].in_use   = 0;
-		g_audio.streams[s].playing  = 0;
-		g_audio.streams[s].pcm      = NULL;
+		stream_pcm[s]              = g_audio.streams[s].in_use ? g_audio.streams[s].pcm : NULL;
+		g_audio.streams[s].in_use  = 0;
+		g_audio.streams[s].playing = 0;
+		g_audio.streams[s].pcm     = NULL;
 	}
 	SDL_UnlockMutex(g_audio.lock);
 
@@ -1346,8 +1388,9 @@ void Aeron_AudioStreamPlay(AeronAudioStream stream) {
 		if (!slot->playing) {
 			const uint64_t latency_ns =
 				(uint64_t)g_audio.device_buffer_input_frames * 1000000000u / AERON_AUDIO_DEVICE_RATE;
-			slot->playing            = 1;
-			slot->audible_updated_ns = SDL_GetTicksNS() + latency_ns;
+			const uint64_t baseline_ns = g_audio.device_paused ? g_audio.device_paused_ns : SDL_GetTicksNS();
+			slot->playing              = 1;
+			slot->audible_updated_ns   = baseline_ns + latency_ns;
 		}
 	}
 	SDL_UnlockMutex(g_audio.lock);

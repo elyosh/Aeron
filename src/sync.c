@@ -2,6 +2,52 @@
 
 #define AERON_MAX_TIMERS 4
 
+struct AeronThread {
+	SDL_Thread*     handle;
+	AeronThreadFunc function;
+	void*           user;
+};
+
+static int SDLCALL Aeron_ThreadTrampoline(void* userdata) {
+	AeronThread* thread = (AeronThread*)userdata;
+	return thread->function(thread->user);
+}
+
+AeronThread* Aeron_ThreadCreate(const char* name, AeronThreadFunc function, void* user) {
+	AeronThread* thread;
+
+	if (!name || !name[0] || !function) {
+		return NULL;
+	}
+
+	thread = (AeronThread*)SDL_malloc(sizeof(*thread));
+	if (!thread) {
+		Aeron_LogError("aeron.sync", "could not allocate thread '%s'", name);
+		return NULL;
+	}
+	thread->handle   = NULL;
+	thread->function = function;
+	thread->user     = user;
+	thread->handle   = SDL_CreateThread(Aeron_ThreadTrampoline, name, thread);
+	if (!thread->handle) {
+		Aeron_LogError("aeron.sync", "SDL_CreateThread '%s' failed: %s", name, SDL_GetError());
+		SDL_free(thread);
+		return NULL;
+	}
+	return thread;
+}
+
+int Aeron_ThreadJoin(AeronThread* thread) {
+	int result = 0;
+
+	if (!thread) {
+		return 0;
+	}
+	SDL_WaitThread(thread->handle, &result);
+	SDL_free(thread);
+	return result;
+}
+
 /* One registration slot per live timer. `guard` is created on first use and
    never destroyed: SDL_RemoveTimer does not wait for an in-flight callback, so
    the trampoline must always find a valid mutex. A callback whose SDL_TimerID no
