@@ -1,6 +1,6 @@
 /*
  * Shared TTF→atlas rasterizer. See font_atlas.h for the API contract;
- * font_ttf.c (CLI) and font_tune.cpp (GUI) both call into this.
+ * fontbake.c (CLI) and font_tune.cpp (GUI) both call into this.
  *
  * Algorithm:
  *   1. Pick a scale (cap-height-driven if requested, else
@@ -335,15 +335,11 @@ bool font_atlas_build(const uint8_t *ttf_data, size_t ttf_size,
         }
 
         /* Always emit a metric record so consumers can index by codepoint.
-         *
-         * Advance is the natural TTF advance MINUS the runtime's
-         * inter-glyph spacer, PLUS the caller's tracking offset (which
-         * may be negative for tighter letter-spacing). Result is clamped
-         * at zero. The runtime adds the spacer back unconditionally;
-         * tracking flows through unchanged, so the on-screen stride
-         * shifts by exactly `tracking_atlas` per glyph. */
+         * Compensate only for tracking that the target renderer is known
+         * to add externally. Generic consumers leave that value at zero,
+         * retaining the TTF's natural advance. */
         int advance_natural = (int)(gi[g].adv_fu * gi[g].scale_x + 0.5f);
-        int advance_baked = advance_natural - FONT_ATLAS_SPACE_BETWEEN_PX
+        int advance_baked = advance_natural - p->external_tracking_atlas
                             + p->tracking_atlas;
         if (advance_baked < 0) advance_baked = 0;
         if (advance_baked > 0xFFFF) advance_baked = 0xFFFF;
@@ -509,16 +505,11 @@ bool font_atlas_build(const uint8_t *ttf_data, size_t ttf_size,
     free(scratch2);
     free(gi);
 
-    /* Optional: override the space glyph's baked advance to hit a
-     * caller-supplied runtime stride. The runtime always adds
-     * FONT_ATLAS_SPACE_BETWEEN_PX between glyphs on top of the baked
-     * advance, so to land at stride S we bake (S - 9). The bitmap
-     * font's space stride is much wider than typical TTF — this is
-     * how a TTF replacement matches it. */
+    /* Optional: override the space glyph's final visible stride. */
     if (p->space_advance_atlas > 0) {
         int space_idx = ' ' - first_char;
         if (space_idx >= 0 && space_idx < num_chars) {
-            int adv = p->space_advance_atlas - FONT_ATLAS_SPACE_BETWEEN_PX;
+            int adv = p->space_advance_atlas - p->external_tracking_atlas;
             if (adv < 0) adv = 0;
             if (adv > 0xFFFF) adv = 0xFFFF;
             glyphs[space_idx].advance = (uint16_t)adv;
@@ -526,8 +517,7 @@ bool font_atlas_build(const uint8_t *ttf_data, size_t ttf_size,
     }
 
     /* Per-glyph runtime-stride override. Same convention as
-     * space_advance_atlas above (bake = override - 9 to land at the
-     * given visible stride after the runtime spacer). Lets tools fix
+     * space_advance_atlas above. Lets tools fix
      * spacing on a glyph-by-glyph basis without touching its
      * compression — used by ink-aware auto-match to trim bearings on
      * thin glyphs while leaving their stem at no-compress. */
@@ -536,7 +526,7 @@ bool font_atlas_build(const uint8_t *ttf_data, size_t ttf_size,
         if (target <= 0) continue;
         int g = cp - first_char;
         if (g < 0 || g >= num_chars) continue;
-        int adv = target - FONT_ATLAS_SPACE_BETWEEN_PX;
+        int adv = target - p->external_tracking_atlas;
         if (adv < 0) adv = 0;
         if (adv > 0xFFFF) adv = 0xFFFF;
         glyphs[g].advance = (uint16_t)adv;

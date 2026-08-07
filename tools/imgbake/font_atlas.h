@@ -3,7 +3,7 @@
  * format consumed by shells/sdl3/cutscene_subtitle_gpu.c.
  *
  * Two callers:
- *   font_ttf.c   (CLI)   — argv → params → build → write
+ *   fontbake.c    (CLI)   — argv → params → build → write
  *   font_tune.cpp (GUI)  — sliders → params → build → render-to-texture
  *
  * font_atlas_load.[ch] populates the same FontAtlasResult from an
@@ -52,13 +52,19 @@ typedef struct {
                                * 0 = no adjustment. The space character's
                                * override (below) is applied AFTER tracking,
                                * so an explicit space stride wins. */
+    int external_tracking_atlas; /* Extra atlas-px advance added by the
+                                  * target renderer after each glyph. The
+                                  * builder subtracts this from stored
+                                  * advances so the final visible stride
+                                  * remains natural. Generic renderers use
+                                  * 0; TIE's classic text path uses 9. */
     int space_advance_atlas;  /* 0 = use the TTF's natural ' ' advance.
                                * >0 = target runtime stride for the
                                * space glyph in atlas px (i.e. what
                                * actually shows on screen as the gap
                                * between adjacent words). The builder
-                               * subtracts FONT_ATLAS_SPACE_BETWEEN_PX
-                               * before baking, so the runtime spacer
+                               * subtracts external_tracking_atlas before
+                               * baking, so the renderer's extra tracking
                                * brings the visible stride back to this
                                * value. Useful because bitmap font8's
                                * space stride is ~54 atlas-px (= 6
@@ -110,7 +116,7 @@ typedef struct {
      * interpreted as override-to-0, NOT as "no override". Callers
      * MUST explicitly fill this array with -1 if they want natural
      * LSBs. font_tune does this in add_ttf_from_path and the YAML
-     * loader; the font_ttf CLI does it via a memset.
+     * loader; the fontbake CLI does it via an explicit fill loop.
      *
      * Why it matters: when only advance is overridden (above), the ink
      * still sits at the rasterizer's natural LSB, which for TTF tends
@@ -165,19 +171,10 @@ typedef struct {
     uint16_t advance;
 } FontAtlasGlyph;
 
-/* The runtime (shells/common/remaster/compose_text.c) hardcodes a
- * 1 classic-px = 9 atlas-px gap BETWEEN every pair of glyphs, on top
- * of each glyph's `advance`. This mirrors the bitmap font convention
- * where `widthArray[ch]` is the ink width and `spaceBetween=1` is
- * appended per glyph (landru/font.c).
- *
- * For TTF atlases, advances already include both side bearings — the
- * builder pre-subtracts FONT_ATLAS_SPACE_BETWEEN_PX from each baked
- * advance so the runtime's +9 cancels out and the visible inter-glyph
- * stride matches what a standard TTF renderer would produce.
- *
- * Same constant used by font_tune's preview composer so what you see
- * in the GUI matches what the in-game shell renders. */
+/* TIE's classic renderer adds one classic pixel between glyphs. Its 9x
+ * horizontal atlas scale turns that into 9 atlas pixels. font_tune uses
+ * this compatibility value for external_tracking_atlas and in its preview;
+ * generic fontbake output leaves external tracking at zero. */
 #define FONT_ATLAS_SPACE_BETWEEN_PX 9
 
 /* Build result. `rgba` and `glyphs` are owned — release with
