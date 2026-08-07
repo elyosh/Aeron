@@ -3,11 +3,10 @@
  *
  * bc7enc.h itself has no include guard and uses C++ types in its
  * params struct, so we keep it confined to a single C++ TU
- * (bc7_codec.cpp) and expose a flat C API to the rest of the film
- * tooling (filmextract, ktx2_writer, the standalone bc7enc CLI).
+ * (bc7_codec.cpp) and expose a flat C API to asset tools.
  */
-#ifndef FILM_BC7_CODEC_H
-#define FILM_BC7_CODEC_H
+#ifndef IMGBAKE_BC7_CODEC_H
+#define IMGBAKE_BC7_CODEC_H
 
 #ifdef __cplusplus
 extern "C" {

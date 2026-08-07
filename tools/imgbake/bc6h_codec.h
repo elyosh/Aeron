@@ -11,8 +11,8 @@
  * is accepted for API parity with bc7_codec but currently ignored —
  * the encoder has no exposed quality knob.
  */
-#ifndef FILM_BC6H_CODEC_H
-#define FILM_BC6H_CODEC_H
+#ifndef IMGBAKE_BC6H_CODEC_H
+#define IMGBAKE_BC6H_CODEC_H
 
 #ifdef __cplusplus
 extern "C" {

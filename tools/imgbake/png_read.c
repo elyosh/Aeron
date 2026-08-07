@@ -1,8 +1,7 @@
 #include "png_read.h"
 
-/* STB_IMAGE_STATIC keeps the implementation symbols TU-local so they
- * don't collide with the copy already living in tie_cutscene
- * (cutscene_subtitle_gpu.c) when filmview links both static libs. */
+/* Keep stb_image implementation symbols translation-unit-local so
+ * tools can link other private stb_image copies without collisions. */
 #define STB_IMAGE_IMPLEMENTATION
 #define STB_IMAGE_STATIC
 #define STBI_ONLY_PNG

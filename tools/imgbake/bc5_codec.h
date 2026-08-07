@@ -19,8 +19,8 @@
  * Reads RGBA8 sources (matching the channel_atlas RGBA layout) and picks
  * R + G; B + A are ignored.
  */
-#ifndef FILM_BC5_CODEC_H
-#define FILM_BC5_CODEC_H
+#ifndef IMGBAKE_BC5_CODEC_H
+#define IMGBAKE_BC5_CODEC_H
 
 #ifdef __cplusplus
 extern "C" {

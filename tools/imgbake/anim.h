@@ -6,8 +6,8 @@
  *   for each frame: u32 length, then `length` bytes of DELT data.
  *   length == 0 means an empty frame (compositor preserves prior state).
  */
-#ifndef FILM_ANIM_H
-#define FILM_ANIM_H
+#ifndef IMGBAKE_ANIM_H
+#define IMGBAKE_ANIM_H
 
 #ifdef __cplusplus
 extern "C" {

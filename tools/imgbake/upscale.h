@@ -22,8 +22,8 @@
  * Output is un-PMA'd before return so the buffer stays straight-alpha
  * (PNG-compatible).
  */
-#ifndef FILM_UPSCALE_H
-#define FILM_UPSCALE_H
+#ifndef IMGBAKE_UPSCALE_H
+#define IMGBAKE_UPSCALE_H
 
 #ifdef __cplusplus
 extern "C" {

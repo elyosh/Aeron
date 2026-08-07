@@ -1,7 +1,6 @@
 /*
  * font_atlas_load — read an existing .png + .fnt v2 pair into a
- * FontAtlasResult so the GUI can render sample text from the bitmap
- * atlas using the same code path it uses for live TTF rasterization.
+ * FontAtlasResult compatible with live TTF rasterization results.
  *
  * The loaded result populates the same fields as font_atlas_build
  * except diagnostic counters (missing_glyphs, oversize_*, ascender_clip_px,

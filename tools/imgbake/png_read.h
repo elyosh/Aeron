@@ -1,18 +1,15 @@
 /*
  * png_read — minimal RGBA8 PNG loader.
  *
- * Wraps stb_image with a fixed force_channels=4 + a NUL-terminated
- * reason string on failure. Used by filmview's atlas-bake mode to
- * load both the user's 3840×2160 reference PNG and the existing
- * atlas PNG (the human-editable sibling of the BC7 KTX2 the runtime
- * actually samples).
+ * Wraps stb_image with a fixed force_channels=4 and a NUL-terminated
+ * reason string on failure.
  *
  * On success `*out_rgba` is heap-allocated by stb (caller frees with
  * free()), `*out_w` / `*out_h` hold pixel dimensions, and the row
  * stride is `*out_w * 4` with no padding.
  */
-#ifndef FILM_PNG_READ_H
-#define FILM_PNG_READ_H
+#ifndef IMGBAKE_PNG_READ_H
+#define IMGBAKE_PNG_READ_H
 
 #include <stddef.h>
 #include <stdint.h>

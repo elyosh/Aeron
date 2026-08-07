@@ -1,10 +1,7 @@
-# imgbake — shared remaster-asset ENCODER backend (format-agnostic).
+# imgbake — shared remaster-asset encoder backend.
 #
-# Extracted from the TIE film toolchain (src/tools/film + src/tools):
-# HD upscaling, atlas packing, KTX2 (BC7/BC6H/BC5 + zstd) encoding, PNG
-# I/O, palette helpers, and TTF/glyph font-atlas baking. None of it is
-# TIE-specific — both games' asset bakers (TIE filmextract, XWA CBM/FNT
-# bakers) link this one library so the encoder is single-source.
+# Provides HD upscaling, atlas packing, KTX2 (BC7/BC6H/BC5 + zstd)
+# encoding, PNG I/O, palette helpers, and TTF/glyph font-atlas baking.
 #
 # Image containers (Image8/AnimImage) come from delt.h/anim.h as TYPES
 # only; the DELT/ANIM decoders stay game-side (each baker fills the

@@ -13,8 +13,8 @@
  * (x, y) are absolute coords relative to the actor origin, which equals
  * the bbox top-left.
  */
-#ifndef FILM_DELT_H
-#define FILM_DELT_H
+#ifndef IMGBAKE_DELT_H
+#define IMGBAKE_DELT_H
 
 #ifdef __cplusplus
 extern "C" {

@@ -1,24 +1,20 @@
 /*
- * ktx2_writer — minimal KTX2 writer for filmextract.
+ * ktx2_writer — minimal KTX2 asset writer.
  *
- * Writes uncompressed RGBA8 KTX2 files with a pre-built mip chain.
- * The reader (shells/sdl3/external/ktx2_reader.c) consumes them
- * directly into SDL_GPUTexture mip levels at runtime.
+ * Writes RGBA8 and block-compressed KTX2 files with pre-built mip
+ * chains.
  *
  * Subset emitted (matches what the runtime reader accepts):
  *   - 2D (faceCount=1) or cubemap (faceCount=6), single layer.
  *   - supercompressionScheme=0 (raw) or 2 (zstd).
  *   - vkFormat in { 37 R8G8B8A8_UNORM, 145 BC7_UNORM_BLOCK,
  *                  146 BC7_SRGB_BLOCK }. The SRGB variant is used
- *     by the cubemap path so the GPU does sRGB decode at sample
- *     time; existing 2D writers stay UNORM-only to preserve the
- *     cutscene compositor's bit-for-bit expectations.
- *   - DFD/KVD/SGD blocks: empty (offset=0, length=0). The runtime
- *     reader doesn't parse them; some external validators will warn,
- *     which we accept for the in-tree pipeline.
+ *     when requested so the GPU can decode sRGB at sample time.
+ *   - DFD/KVD/SGD blocks: empty (offset=0, length=0). Some external
+ *     validators warn about these omitted optional metadata blocks.
  */
-#ifndef FILM_KTX2_WRITER_H
-#define FILM_KTX2_WRITER_H
+#ifndef IMGBAKE_KTX2_WRITER_H
+#define IMGBAKE_KTX2_WRITER_H
 
 #ifdef __cplusplus
 extern "C" {
@@ -42,11 +38,8 @@ typedef struct {
 /* Optional zstd supercompression. When `zstd` is true the per-level
  * payload bytes are compressed with libzstd and the KTX2 header's
  * supercompressionScheme is set to 2 (the spec-assigned value for
- * zstd). The runtime reader (shells/sdl3/external/ktx2_reader.c)
- * detects that and decompresses on load. Worth it for the BC7 path
- * because TIE Fighter's upscaled VGA content has large uniform
- * regions BC7 encodes to repeating block patterns — zstd ratio of
- * ~0.43 measured on the EMPEROR corpus.
+ * zstd). This is effective for upscaled indexed-color content, where
+ * large uniform regions produce repeating BC7 block patterns.
  *
  * Disable for debug or when a downstream tool can't handle
  * supercompressed KTX2 (e.g. quick visual inspection in a generic

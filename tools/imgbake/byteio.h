@@ -1,5 +1,5 @@
-#ifndef FILM_BYTEIO_H
-#define FILM_BYTEIO_H
+#ifndef IMGBAKE_BYTEIO_H
+#define IMGBAKE_BYTEIO_H
 
 #ifdef __cplusplus
 extern "C" {

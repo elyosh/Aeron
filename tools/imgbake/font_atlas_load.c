@@ -1,13 +1,8 @@
 /*
- * .png + .fnt v2 loader. Mirrors the parsing in
- * shells/sdl3/cutscene_subtitle_gpu.c::load_font_atlas so the GUI's
- * loaded view of the bitmap reference is identical to what the
- * runtime will display.
+ * .png + .fnt v2 loader.
  *
- * PNG decoding goes through filmlib's read_png_rgba (which already
- * vendors stb_image with STB_IMAGE_STATIC) — that keeps stb_image's
- * implementation strictly TU-local in png_read.c and avoids symbol
- * clashes when this file links into a tool that also pulls filmlib.
+ * PNG decoding goes through read_png_rgba, whose stb_image
+ * implementation remains translation-unit-local in png_read.c.
  */
 
 #include "font_atlas_load.h"

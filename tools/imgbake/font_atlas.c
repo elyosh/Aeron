@@ -1,6 +1,5 @@
 /*
- * Shared TTF→atlas rasterizer. See font_atlas.h for the API contract;
- * fontbake.c (CLI) and font_tune.cpp (GUI) both call into this.
+ * Shared TTF→atlas rasterizer. See font_atlas.h for the API contract.
  *
  * Algorithm:
  *   1. Pick a scale (cap-height-driven if requested, else
@@ -15,13 +14,11 @@
  *
  * Errors are reported via the err buffer; the function returns false.
  * Diagnostics that aren't fatal (clipping, missing glyphs) land in the
- * result struct so the GUI can display them.
+ * result struct for callers to inspect.
  */
 
 #include "font_atlas.h"
 #include "png_write.h"
-#include "upscale.h"   /* scale_y_4k */
-
 #define STB_TRUETYPE_IMPLEMENTATION
 #include "stb_truetype.h"
 
@@ -122,7 +119,6 @@ bool font_atlas_build(const uint8_t *ttf_data, size_t ttf_size,
 
     int first_char  = p->first_char  > 0 ? p->first_char  : 32;
     int num_chars   = p->num_chars   > 0 ? p->num_chars   : 96;
-    int classic_h   = p->classic_h   > 0 ? p->classic_h   : 16;
     int font_index  = p->font_index  > 0 ? p->font_index  : 0;
 
     if (num_chars > 0xFFFF) {
@@ -134,7 +130,7 @@ bool font_atlas_build(const uint8_t *ttf_data, size_t ttf_size,
         return false;
     }
 
-    int cell_h = p->cell_h > 0 ? p->cell_h : scale_y_4k(classic_h);
+    int cell_h = p->cell_h;
     if (cell_h <= 0 || cell_h > 0xFFFF) {
         set_err(err, err_size, "cell_h out of range: %d", cell_h);
         return false;
@@ -334,13 +330,9 @@ bool font_atlas_build(const uint8_t *ttf_data, size_t ttf_size,
             ink_lsbs[g] = 0;
         }
 
-        /* Always emit a metric record so consumers can index by codepoint.
-         * Compensate only for tracking that the target renderer is known
-         * to add externally. Generic consumers leave that value at zero,
-         * retaining the TTF's natural advance. */
+        /* Always emit a metric record so consumers can index by codepoint. */
         int advance_natural = (int)(gi[g].adv_fu * gi[g].scale_x + 0.5f);
-        int advance_baked = advance_natural - p->external_tracking_atlas
-                            + p->tracking_atlas;
+        int advance_baked = advance_natural + p->tracking_atlas;
         if (advance_baked < 0) advance_baked = 0;
         if (advance_baked > 0xFFFF) advance_baked = 0xFFFF;
         glyphs[g].atlas_x = (uint16_t)((g % cols) * cell_w);
@@ -366,30 +358,14 @@ bool font_atlas_build(const uint8_t *ttf_data, size_t ttf_size,
          * column inside the cell instead of the rasterizer's natural
          * LSB. >= 0 = override (0 means flush to cell's left edge),
          * < 0 = use natural LSB. The override is interpreted as the
-         * leftmost column of the FINAL bitmap (so it already accounts
-         * for any dilation) — auto-match copies the reference's
-         * measured leftmost-ink column straight in. */
+         * leftmost column of the FINAL bitmap, so it already accounts
+         * for any dilation. */
         if (cp >= 0 && cp < 256
             && p->compression_glyph_lsb_atlas[cp] >= 0)
             dst_x = cell_x + p->compression_glyph_lsb_atlas[cp];
 
-        /* Descender-lift: shift codepoints with descenders UP within
-         * the cell so the below-baseline part fits a tighter cell
-         * budget. Bitmap font8's 'g'/'q' only descend ~10 atlas-px;
-         * TTFs naturally do 18-22, which clips when cell_h is the
-         * bitmap's. The shift makes lifted glyphs' bowls sit higher
-         * than their unlifted neighbours — the trade-off the bitmap
-         * font designer made too. */
-        if (p->descender_lift_atlas > 0) {
-            if (cp == 'g' || cp == 'j' || cp == 'p' || cp == 'q' ||
-                cp == 'y' || cp == ',' || cp == ';')
-                dst_y -= p->descender_lift_atlas;
-        }
-
-        /* Per-glyph vertical offset, applied after descender-lift.
-         * Positive shifts up; useful for glyphs that sit far below
-         * the cell's allotted descender area (like a font with a
-         * very low underscore). Default 0 = no shift. */
+        /* Per-glyph vertical offset. Positive shifts up; negative
+         * shifts down. Default 0 = no shift. */
         if (cp >= 0 && cp < 256)
             dst_y -= p->compression_glyph_y_offset_atlas[cp];
 
@@ -505,28 +481,26 @@ bool font_atlas_build(const uint8_t *ttf_data, size_t ttf_size,
     free(scratch2);
     free(gi);
 
-    /* Optional: override the space glyph's final visible stride. */
+    /* Optional: override the space glyph's stored advance. */
     if (p->space_advance_atlas > 0) {
         int space_idx = ' ' - first_char;
         if (space_idx >= 0 && space_idx < num_chars) {
-            int adv = p->space_advance_atlas - p->external_tracking_atlas;
+            int adv = p->space_advance_atlas;
             if (adv < 0) adv = 0;
             if (adv > 0xFFFF) adv = 0xFFFF;
             glyphs[space_idx].advance = (uint16_t)adv;
         }
     }
 
-    /* Per-glyph runtime-stride override. Same convention as
-     * space_advance_atlas above. Lets tools fix
-     * spacing on a glyph-by-glyph basis without touching its
-     * compression — used by ink-aware auto-match to trim bearings on
-     * thin glyphs while leaving their stem at no-compress. */
+    /* Per-glyph stored-advance override. Same convention as
+     * space_advance_atlas above. This changes spacing independently
+     * of glyph compression. */
     for (int cp = 0; cp < 256; cp++) {
         int target = p->compression_glyph_advance_atlas[cp];
         if (target <= 0) continue;
         int g = cp - first_char;
         if (g < 0 || g >= num_chars) continue;
-        int adv = target - p->external_tracking_atlas;
+        int adv = target;
         if (adv < 0) adv = 0;
         if (adv > 0xFFFF) adv = 0xFFFF;
         glyphs[g].advance = (uint16_t)adv;

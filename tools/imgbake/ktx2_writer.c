@@ -30,10 +30,8 @@ static uint8_t* encode_level(const uint8_t* src, size_t src_size, bool enabled, 
 	uint8_t* buf   = (uint8_t*)malloc(bound);
 	if (!buf)
 		return NULL;
-	/* Level 19 — max practical CLI zstd compression. Encode runs at
-	 * build time (filmextract / bc7enc CLI), so the few-hundred-ms
-	 * per asset is paid once. Decompression speed is independent of
-	 * compression level — the runtime reader doesn't care. */
+	/* Level 19 favors compact build-time assets. Decompression speed is
+	 * independent of the compression level. */
 	size_t got = ZSTD_compress(buf, bound, src, src_size, 19);
 	if (ZSTD_isError(got)) {
 		fprintf(stderr, "[ktx2-write] zstd compress failed: %s\n", ZSTD_getErrorName(got));
@@ -95,8 +93,8 @@ static size_t level_bytes(uint32_t vk, int w, int h) {
 }
 
 /* Premultiply RGB by alpha into a fresh malloc'd buffer. Caller frees.
- * The runtime cutscene compositor blends with premultiplied-alpha
- * "over" (`src + (1-src.a)*dst`), so KTX2 levels MUST contain PMA
+ * KTX2 levels use premultiplied-alpha "over" blending
+ * (`src + (1-src.a)*dst`), so they MUST contain PMA
  * pixels. PNG inputs are always straight (unassociated) alpha; doing
  * the conversion here — once, before mip generation and BC7 encoding —
  * keeps the artist-facing PNG corpus standard while guaranteeing every

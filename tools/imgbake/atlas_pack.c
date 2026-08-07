@@ -1,12 +1,9 @@
 /*
  * atlas_pack — implementation.
  *
- * The skyline packer + width-trial loop here MUST stay in lockstep
- * with the original filmextract code so the two consumers (filmextract's
- * PNG/KTX2 path and filmview's YAML-regenerate button) produce
- * identical positions. If the packer changes, the on-disk PNGs the
- * art team has already shipped become out of step with regenerated
- * YAMLs — diff against a fresh `filmextract --atlas` to verify.
+ * The skyline packer and width-trial loop are deterministic so every
+ * caller derives identical coordinates for identical frame sequences.
+ * Changes must preserve agreement between atlas pixels and emitted YAML.
  */
 
 #include "atlas_pack.h"
@@ -166,8 +163,7 @@ void atlas_pack_post_dims(const AtlasPack *pack,
 			h = scale_y_4k(h);
 		}
 	}
-	/* BC7 4×4 block alignment: round up to mult of 4 in both axes,
-	 * matching filmextract's `padded_w = (out_atlas_w + 3) & ~3`. */
+	/* BC formats require dimensions rounded to complete 4×4 blocks. */
 	w = (w + 3) & ~3;
 	h = (h + 3) & ~3;
 	*out_w = w;

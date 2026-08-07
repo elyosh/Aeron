@@ -12,8 +12,8 @@
  *   u8 end_slot     (inclusive)
  *   u8[3] rgb       per slot
  */
-#ifndef FILM_PALETTE_H
-#define FILM_PALETTE_H
+#ifndef IMGBAKE_PALETTE_H
+#define IMGBAKE_PALETTE_H
 
 #ifdef __cplusplus
 extern "C" {

@@ -4,8 +4,8 @@
  * Uses zlib's stored-block format (no compression) so we don't need to
  * link against libz. Output is valid PNG, ~0% compressed.
  */
-#ifndef FILM_PNG_WRITE_H
-#define FILM_PNG_WRITE_H
+#ifndef IMGBAKE_PNG_WRITE_H
+#define IMGBAKE_PNG_WRITE_H
 
 #ifdef __cplusplus
 extern "C" {
