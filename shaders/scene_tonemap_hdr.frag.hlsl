@@ -29,6 +29,8 @@
  * branches.
  */
 
+#include "scene_tonemap_agx.hlsli"
+
 cbuffer TonemapPS : register(b0, space3)
 {
     /* Bloom inputs (identical to SDR variant):
@@ -40,7 +42,7 @@ cbuffer TonemapPS : register(b0, space3)
     float4 bloom_params;
     /* Tonemap controls:
      *   x = scene_exposure   (linear pre-tonemap scale)
-     *   y = operator id      (0 = AGX, 1 = ACES)
+     *   y = operator id      (0 = ACES, 1 = AGX)
      *   z = hdr_peak_scale   (peak_nits / sdr_diffuse_nits, ≥ 1.0)
      *   w = sdr_to_scrgb     (1.0 on macOS EDR; sdr_diffuse/80 on
      *                         Windows scRGB) */
@@ -59,6 +61,12 @@ cbuffer TonemapPS : register(b0, space3)
      *       present), 1 = coverage from the scene texel's alpha (PiP
      *       targets with a transparent background). */
     float4 present_misc;
+    /* AgX controls (identical to SDR variant):
+     *   x = look (0 = base, 1 = punchy)
+     *   y = punchy power
+     *   z = punchy saturation
+     *   w = reserved. */
+    float4 agx_params;
 };
 
 Texture2D<float4> g_flight  : register(t0, space2);
@@ -72,99 +80,14 @@ struct VSOut
     float2 uv       : TEXCOORD0;
 };
 
-/* ===== Parametric AgX (HDR-target) ==================================
- *
- * Canonical Troy Sobotka / EaryChow AgX, inlined. Steps:
- *   1. Rec.709 → AgX inset basis (compresses pure-primary colours
- *      toward white so the sigmoid behaves on saturated input).
- *   2. log2 of (max(c, 1e-10)) — operate in stops.
- *   3. Normalise [min_ev .. max_ev] → [0, 1]. The max_ev is the input
- *      stops level that should map to peak output:
- *        SDR: log2(16.5)         ≈ 4.04
- *        HDR: log2(16.5 * peak)  ≈ 4.04 + log2(peak)
- *      where peak = hdr_peak_scale (peak_nits / sdr_diffuse_nits).
- *   4. 6th-order polynomial sigmoid (matches the canonical AgX
- *      Filmic Hejl-Hill-style fit).
- *   5. pow(c, 2.2) — AgX's view-transform EOTF^-1 in display space.
- *   6. AgX outset matrix (inverse of inset; restores saturation
- *      that step 1 compressed away).
- *   7. Multiply by hdr_peak_scale so the sigmoid's [0,1] output is
- *      rescaled to the actual peak the display can show. Without
- *      this rescale every HDR image clips at SDR diffuse — the
- *      headroom would be unused.
- */
-
-static const float3x3 AGX_INSET = {
-    0.8424790620f, 0.0784114570f, 0.0791031990f,
-    0.0423283037f, 0.8787730269f, 0.0789046050f,
-    0.0423826624f, 0.0784617400f, 0.8791556090f
-};
-
-/* Pre-computed inverse of AGX_INSET — `(I - 0.117 J)^-1` style. */
-static const float3x3 AGX_OUTSET = {
-     1.1968790000f, -0.0980209000f, -0.0990297000f,
-    -0.0528968000f,  1.1519460000f, -0.0989638000f,
-    -0.0529716000f, -0.0980434000f,  1.1510910000f
-};
-
-float3 agx_sigmoid(float3 x)
-{
-    /* 6th-order poly fit of AgX sigmoid in [0,1]. From EaryChow's
-     * canonical implementation. */
-    float3 x2 = x  * x;
-    float3 x4 = x2 * x2;
-    return + 15.5f     * x4 * x2
-           - 40.14f    * x4 * x
-           + 31.96f    * x4
-           -  6.868f   * x2 * x
-           +  0.4298f  * x2
-           +  0.1191f  * x
-           -  0.00232f;
-}
-
 float3 tonemap_agx_hdr(float3 col, float peak_scale)
 {
-    /* Canonical AgX log domain — Sobotka's config.ocio "AgX Log
-     * (Kraken)" allocates [-12.47393, 4.026069], i.e. 10 stops below
-     * mid-grey (log2(0.18) - 10 = -12.47393) to 6.5 stops above
-     * (log2(0.18) + 6.5 = 4.026). Anchored on mid-grey, NOT on unit.
-     * Previously this constant was -10.0f (10 stops below unit),
-     * which pulled mid-grey down to 0.536 in normalised sigmoid input
-     * instead of the canonical 0.606 — making the polynomial sigmoid
-     * sample the toe of the curve at mid-grey and producing visibly
-     * over-contrasted output. */
-    const float min_ev = -12.47393f;
-    const float max_ev =   4.026069f + log2(max(peak_scale, 1.0f));
-
-    /* Inset. */
-    float3 c = mul(AGX_INSET, max(col, 0.0f));
-
-    /* log2 + normalise into [0,1]. */
-    c = log2(max(c, 1e-10f));
-    c = saturate((c - min_ev) / (max_ev - min_ev));
-
-    /* Sigmoid + EOTF^-1. Exponent is host-controllable via
-     * present_misc.y (default 2.2 — Mikamiko/Three.js/Bevy inline-AgX
-     * convention). The HDR & Display inspector exposes a slider. */
-    c = agx_sigmoid(c);
-    c = pow(c, present_misc.y);
-
-    /* Outset. AGX_OUTSET has negative off-diagonal coefficients
-     * (it's the inverse of AGX_INSET — the inset compresses
-     * saturated primaries toward white, so the outset must
-     * expand them back via a matrix that can take values
-     * out-of-gamut on pure-primary inputs). For strongly
-     * saturated channels (e.g. red HUD bolts in the cockpit)
-     * the matrix produces negative values in the other channels.
-     * Negative scRGB values are undefined: the swapchain accepts
-     * them, but the OS HDR compositor + debug-UI alpha-blends
-     * over them turn into black splotches downstream. Clamp to
-     * non-negative — matches canonical AgX reference
-     * implementations and is harmless for in-gamut colours. */
-    c = max(mul(AGX_OUTSET, c), 0.0f);
-
-    /* Rescale the [0,1] sigmoid output to the actual display peak. */
-    return c * peak_scale;
+    /* Aeron's HDR adaptation extends the canonical AgX upper log bound by
+     * the available display headroom, then scales normalized output to that
+     * peak. peak_scale == 1 follows the SDR AgX transform exactly. */
+    const float max_ev = AERON_AGX_MAX_EV + log2(max(peak_scale, 1.0f));
+    return AeronAgxToneMap(col, max_ev, present_misc.y, agx_params.x, agx_params.y,
+                           agx_params.z) * peak_scale;
 }
 
 /* ===== ACES (HDR-target) ============================================

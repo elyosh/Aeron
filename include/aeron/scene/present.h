@@ -3,8 +3,8 @@
 
 /*
  * aeron_scene tonemap/present controls. Process-wide runtime state for
- * the final tonemap pass: operator selection, the parametric AgX EOTF
- * exponent, ACES pre-exposure, and the bloom present kernel.
+ * the final tonemap pass: operator and AgX-look selection, the parametric
+ * AgX EOTF exponent, ACES pre-exposure, and the bloom present kernel.
  */
 
 #include "aeron/render.h"
@@ -20,6 +20,12 @@ enum {
 };
 
 enum {
+	AERON_SCENE_AGX_LOOK_BASE   = 0,
+	AERON_SCENE_AGX_LOOK_PUNCHY = 1,
+	AERON_SCENE_AGX_LOOK_COUNT
+};
+
+enum {
 	AERON_SCENE_BLOOM_KERNEL_1_TAP = 0,
 	AERON_SCENE_BLOOM_KERNEL_4_TAP = 1,
 	AERON_SCENE_BLOOM_KERNEL_COUNT
@@ -28,6 +34,16 @@ enum {
 int  AeronScenePresent_TonemapOp(void);
 void AeronScenePresent_SetTonemapOp(int op);
 void AeronScenePresent_ToggleTonemapOp(void);
+
+int  AeronScenePresent_AgxLook(void);
+void AeronScenePresent_SetAgxLook(int look);
+
+/* Punchy-look ASC-CDL controls. Power defaults to 1.35 and is clamped to
+ * [0.5, 2.0]; saturation defaults to 1.4 and is clamped to [0.0, 2.0]. */
+float AeronScenePresent_AgxPunchyPower(void);
+void  AeronScenePresent_SetAgxPunchyPower(float v);
+float AeronScenePresent_AgxPunchySaturation(void);
+void  AeronScenePresent_SetAgxPunchySaturation(float v);
 
 /* Parametric AgX tail exponent, clamped to [1.8, 2.6]; default 2.2. */
 float AeronScenePresent_EotfExponent(void);
@@ -45,12 +61,14 @@ void AeronScenePresent_SetBloomKernel(int mode);
  * frame into). Draw picks the variant from Aeron_OutputHdrEnabled()
  * and derives the HDR peak scale from the display headroom.
  *
- * The 16-float cbuffer layout matches scene_tonemap(.hdr).frag:
+ * The 20-float cbuffer layout matches scene_tonemap(.hdr).frag:
  *   [ 0..3] bloom_params   = (intensity, 2/rt_w, 2/rt_h, bar_y_uv)
  *   [ 4..7] tonemap_params = (exposure, op, hdr_peak, sdr_to_scrgb)
  *   [ 8..11] tint          = (r, g, b, PMA coverage alpha)
  *   [12..15] misc          = (bloom_kernel, eotf_exp, aces_exp,
- *                             src_coverage) */
+ *                             src_coverage)
+ *   [16..19] agx_params     = (look, punchy_power, punchy_saturation,
+ *                              reserved) */
 typedef struct AeronScenePresentChain AeronScenePresentChain;
 
 AeronScenePresentChain* AeronScenePresentChain_Create(AeronTextureFormat target_format);

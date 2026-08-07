@@ -25,6 +25,7 @@
  */
 
 #include "srgb.hlsli"
+#include "scene_tonemap_agx.hlsli"
 
 /* Interleaved Gradient Noise (Bart Wronski / Jorge Jimenez). Single
  * frac() formula, no LUT, perceptually-better-than-white-noise
@@ -49,7 +50,7 @@ cbuffer TonemapPS : register(b0, space3)
     float4 bloom_params;
     /* Tonemap controls:
      *   x = scene_exposure (linear pre-tonemap scale)
-     *   y = operator id  (0 = AGX, 1 = ACES Fitted)
+     *   y = operator id  (0 = ACES Fitted, 1 = AGX)
      *   z, w = reserved. */
     float4 tonemap_params;
     /* Fade tint applied AFTER tonemap. rgb is the linear multiplier;
@@ -67,6 +68,12 @@ cbuffer TonemapPS : register(b0, space3)
      *       present), 1 = coverage from the scene texel's alpha (PiP
      *       targets with a transparent background). */
     float4 present_misc;
+    /* AgX controls:
+     *   x = look (0 = base, 1 = punchy)
+     *   y = punchy power
+     *   z = punchy saturation
+     *   w = reserved. */
+    float4 agx_params;
 };
 
 Texture2D<float4> g_flight  : register(t0, space2);
@@ -123,83 +130,6 @@ float3 tonemap_aces_fitted(float3 color)
     return saturate(color);
 }
 
-/* ===== AGX parametric (inline polynomial sigmoid) ==================
- *
- * Pure-ALU AgX. The 7-coefficient polynomial below is the community-
- * standard fit of the AgX "default contrast" sigmoid (Mikamiko / Hugh
- * Manuel; same form used by Blender, Godot, Bevy when they ship inline
- * AgX). Max error vs the analytic sigmoid is ~0.005 on the normalised
- * [0,1] log-domain.
- *
- * Constants from EaryChow/AgX (public domain CC0). Log domain is the
- * AgX default (-12.47 EV to +4.026 EV around 0.18 mid-grey).
- *
- * The published reference numbers are stated in GLSL `mat3()` column-
- * major order; HLSL's `float3x3(a, b, c, d, e, f, g, h, i)` initialiser
- * is row-major, so we transpose at the source. After transposition
- * every row sums to 1.0 — i.e. mul(M, (1,1,1)) == (1,1,1) and grey
- * stays grey through INSET → sigmoid → OUTSET. An earlier version of
- * this file copied the GLSL numbers verbatim and produced a ~9% red
- * boost on neutral pixels through broken white-preservation. */
-static const float3x3 AGX_INSET_MATRIX = float3x3(
-    0.842479062253094f,  0.0784335999999992f, 0.0792237451477643f,
-    0.0423282422610123f, 0.878468636469772f,  0.0784336f,
-    0.0423756549057051f, 0.0784336f,           0.879142973793104f
-);
-
-static const float3x3 AGX_OUTSET_MATRIX = float3x3(
-     1.19687900512017f,   -0.0980208811401368f, -0.0990297440797205f,
-    -0.0528968517574562f,  1.15190312990417f,   -0.0989611768448433f,
-    -0.0529716355144438f, -0.0980434501171241f,  1.15107367264116f
-);
-
-static const float AGX_PARAM_MIN_EV = -12.47393f;
-static const float AGX_PARAM_MAX_EV =   4.026069f;
-
-float3 agx_default_contrast_approx(float3 x)
-{
-    float3 x2 = x * x;
-    float3 x4 = x2 * x2;
-    return + 15.5f    * x4 * x2
-           - 40.14f   * x4 * x
-           + 31.96f   * x4
-           -  6.868f  * x2 * x
-           +  0.4298f * x2
-           +  0.1191f * x
-           -  0.00232f;
-}
-
-float3 tonemap_agx_parametric(float3 color)
-{
-    /* Clamp negatives; the sigmoid expects non-negative inputs. */
-    color = max(color, 0.0f);
-
-    /* Linear sRGB → AGX inset gamut (the working space the polynomial
-     * sigmoid was fit in). */
-    color = mul(AGX_INSET_MATRIX, color);
-
-    /* Log2 encode + clamp to the sigmoid's input domain, then
-     * normalise to [0, 1]. */
-    color = max(color, 1e-10f);
-    color = clamp(log2(color), AGX_PARAM_MIN_EV, AGX_PARAM_MAX_EV);
-    color = (color - AGX_PARAM_MIN_EV)
-          / (AGX_PARAM_MAX_EV - AGX_PARAM_MIN_EV);
-
-    /* Default-contrast sigmoid. Output is in pow(1/2.2)-style
-     * perceptual space. */
-    color = saturate(agx_default_contrast_approx(color));
-
-    /* Back to linear sRGB primaries. */
-    color = mul(AGX_OUTSET_MATRIX, color);
-
-    /* EOTF — host-controllable via present_misc.y, default 2.2
-     * (Mikamiko / Three.js / Bevy inline-AgX convention; also matches
-     * the HDR variant). 2.4 aligns with the sRGB spec's upper-segment.
-     * The HDR & Display inspector exposes a slider for live A/B. */
-    const float gamma = present_misc.y;
-    return pow(max(color, 0.0f), float3(gamma, gamma, gamma));
-}
-
 float4 main(VSOut input) : SV_Target
 {
     float4 scene_texel = g_flight.Sample(s_flight, input.uv);
@@ -243,7 +173,8 @@ float4 main(VSOut input) : SV_Target
     if (tonemap_params.y < 0.5f)
         rgb = tonemap_aces_fitted(rgb * present_misc.z);
     else
-        rgb = tonemap_agx_parametric(rgb);
+        rgb = AeronAgxToneMap(rgb, AERON_AGX_MAX_EV, present_misc.y, agx_params.x,
+                             agx_params.y, agx_params.z);
 
     /* Perturb the encoded value by half an 8-bit code, then decode so the
      * hardware sRGB store reconstructs that value. One scalar noise sample

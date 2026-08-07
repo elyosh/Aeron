@@ -39,6 +39,47 @@ void AeronScenePresent_ToggleTonemapOp(void) {
 	Aeron_LogInfo("aeron.scene", "tonemap operator: %s", tonemap_op_name(s_tonemap_op));
 }
 
+static int s_agx_look = AERON_SCENE_AGX_LOOK_BASE;
+
+int AeronScenePresent_AgxLook(void) { return s_agx_look; }
+
+void AeronScenePresent_SetAgxLook(int look) {
+	if (look < 0 || look >= AERON_SCENE_AGX_LOOK_COUNT || look == s_agx_look) {
+		return;
+	}
+	s_agx_look = look;
+	Aeron_LogInfo("aeron.scene", "AgX look: %s",
+				  look == AERON_SCENE_AGX_LOOK_PUNCHY ? "punchy" : "base");
+}
+
+static float s_agx_punchy_power = 1.35f;
+
+float AeronScenePresent_AgxPunchyPower(void) { return s_agx_punchy_power; }
+
+void AeronScenePresent_SetAgxPunchyPower(float v) {
+	if (v < 0.5f) {
+		v = 0.5f;
+	}
+	if (v > 2.0f) {
+		v = 2.0f;
+	}
+	s_agx_punchy_power = v;
+}
+
+static float s_agx_punchy_saturation = 1.4f;
+
+float AeronScenePresent_AgxPunchySaturation(void) { return s_agx_punchy_saturation; }
+
+void AeronScenePresent_SetAgxPunchySaturation(float v) {
+	if (v < 0.0f) {
+		v = 0.0f;
+	}
+	if (v > 2.0f) {
+		v = 2.0f;
+	}
+	s_agx_punchy_saturation = v;
+}
+
 static int s_bloom_kernel = AERON_SCENE_BLOOM_KERNEL_4_TAP;
 
 int AeronScenePresent_BloomKernel(void) { return s_bloom_kernel; }
@@ -182,7 +223,7 @@ void AeronScenePresentChain_Draw(AeronScenePresentChain* c, AeronRenderPass* pas
 			hdr_peak_scale = 1.0f;
 		}
 	}
-	float u[16] = {
+	float u[20] = {
 		bloom_tex ? bloom_intensity : 0.0f,
 		rt_w > 0 ? 2.0f / (float)rt_w : 0.0f,
 		rt_h > 0 ? 2.0f / (float)rt_h : 0.0f,
@@ -199,6 +240,10 @@ void AeronScenePresentChain_Draw(AeronScenePresentChain* c, AeronRenderPass* pas
 		AeronScenePresent_EotfExponent(),
 		AeronScenePresent_AcesExposure(),
 		src_coverage ? 1.0f : 0.0f,
+		(float)AeronScenePresent_AgxLook(),
+		AeronScenePresent_AgxPunchyPower(),
+		AeronScenePresent_AgxPunchySaturation(),
+		0.0f,
 	};
 	Aeron_BindUniformData(pass, AERON_SHADER_STAGE_FRAGMENT, 0, u, sizeof u);
 	Aeron_Draw(pass, 4, 0);
