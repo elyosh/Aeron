@@ -33,24 +33,32 @@ static size_t list_find_enabled(const AeronUiListItem* items, size_t count, size
 	return SIZE_MAX;
 }
 
-static size_t list_move(const AeronUiListItem* items, size_t count, size_t selected, int delta) {
+static size_t list_move_count(const AeronUiListItem* items, size_t count, size_t selected, int delta,
+							  int* consumed) {
+	if (consumed)
+		*consumed = 0;
 	if (!items || count == 0 || delta == 0)
 		return selected;
-	if (selected == SIZE_MAX || selected >= count || (items[selected].flags & AERON_UI_LIST_ITEM_DISABLED)) {
-		return delta > 0 ? list_find_enabled(items, count, 0, 1)
-						 : list_find_enabled(items, count, count - 1, -1);
-	}
 	size_t    result    = selected;
 	const int step      = delta > 0 ? 1 : -1;
 	int       remaining = delta > 0 ? delta : -delta;
 	while (remaining-- > 0) {
-		const size_t next_start = step > 0 ? result + 1 : (result == 0 ? SIZE_MAX : result - 1);
+		const bool   valid      = result < count && !(items[result].flags & AERON_UI_LIST_ITEM_DISABLED);
+		const size_t next_start = !valid     ? (step > 0 ? 0 : count - 1)
+								  : step > 0 ? result + 1
+											 : (result == 0 ? SIZE_MAX : result - 1);
 		const size_t next       = list_find_enabled(items, count, next_start, step);
 		if (next == SIZE_MAX)
 			break;
 		result = next;
+		if (consumed)
+			++*consumed;
 	}
 	return result;
+}
+
+static size_t list_move(const AeronUiListItem* items, size_t count, size_t selected, int delta) {
+	return list_move_count(items, count, selected, delta, NULL);
 }
 
 static AeronRectI list_clip(const UiRect* rect, const AeronRectI* parent) {
@@ -95,8 +103,12 @@ uint32_t AeronUi_ListBox(AeronUiContext* ctx, const char* label, const AeronUiLi
 	if (ui_is_focused(ctx, id)) {
 		const int moves = ctx->nav[UI_DIR_DOWN] - ctx->nav[UI_DIR_UP];
 		if (moves) {
-			*selected           = list_move(items, item_count, *selected, moves);
+			int consumed        = 0;
+			*selected           = list_move_count(items, item_count, *selected, moves, &consumed);
 			ctx->nav[UI_DIR_UP] = ctx->nav[UI_DIR_DOWN] = 0;
+			const int remaining                         = (moves < 0 ? -moves : moves) - consumed;
+			if (remaining > 0)
+				ctx->nav[moves > 0 ? UI_DIR_DOWN : UI_DIR_UP] = remaining;
 		}
 		const int visible = (int)fmaxf(1.0f, floorf(rect.h / row_h));
 		if (ctx->input->key_pressed[AERON_KEY_PAGEUP])

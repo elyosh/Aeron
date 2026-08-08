@@ -215,9 +215,9 @@ void AeronUi_BeginColumns(AeronUiContext* ctx, int count, const float* weights);
 void AeronUi_NextColumn(AeronUiContext* ctx);
 void AeronUi_EndColumns(AeronUiContext* ctx);
 
-/* Tab strip + page: `*active` is the game-owned page index. Body
- * declared between Begin/End belongs to the active page. Q/E and
- * shoulder buttons cycle. Returns nonzero (always draws). */
+/* Focusable tab strip + page: `*active` is the game-owned page index.
+ * Left/Right changes the focused strip; Q/E and shoulder buttons are global
+ * shortcuts. Body declared between Begin/End belongs to the active page. */
 int  AeronUi_BeginTabBar(AeronUiContext* ctx, const char* id, const char* const* titles, int count,
 						 int* active);
 void AeronUi_EndTabBar(AeronUiContext* ctx);
@@ -261,6 +261,10 @@ int AeronUi_SliderFloat(AeronUiContext* ctx, const char* label, float* value, fl
 						float step, const char* fmt /* NULL = "%.2f" */);
 int AeronUi_Selector(AeronUiContext* ctx, const char* label, int* index, const char* const* options,
 					 int count);
+/* Always-visible single-row choice. The widget is one focus stop; Left/Right
+ * changes the selected segment and mouse clicks select a segment directly. */
+int AeronUi_SegmentedSelector(AeronUiContext* ctx, const char* id, int* index, const char* const* options,
+							  int count);
 
 typedef enum AeronUiInputTextFlags {
 	AERON_UI_INPUT_TEXT_NONE      = 0,
@@ -289,7 +293,8 @@ typedef enum AeronUiListResult {
 	AERON_UI_LIST_ACTIVATED = 1u << 1,
 } AeronUiListResult;
 
-/* Virtualized list. `SIZE_MAX` means no selection. */
+/* Virtualized list. `SIZE_MAX` means no selection. Up/Down moves focus out
+ * when the selection cannot move past the first/last enabled item. */
 uint32_t AeronUi_ListBox(AeronUiContext* ctx, const char* label, const AeronUiListItem* items,
 						 size_t item_count, size_t* selected, float height_ref);
 

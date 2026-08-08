@@ -103,6 +103,16 @@ void ui_collect_input(AeronUiContext* ctx) {
 	ui_stick_latch(stick_x, &ctx->stick_latch_x);
 	ui_stick_latch(stick_y, &ctx->stick_latch_y);
 
+	/* Capture reads the raw snapshot directly. Keep directional state in
+	 * sync, but do not expose the same input as UI navigation. */
+	if (ctx->controller_capture.id) {
+		for (int dir = 0; dir < UI_DIR_COUNT; dir++) {
+			ctx->held_prev[dir] = ui_pad_dir_held(ctx, dir);
+			ctx->repeat_t[dir]  = 0.0f;
+		}
+		return;
+	}
+
 	/* Keyboard: typed counts carry OS typematic repeats. */
 	ctx->nav[UI_DIR_UP] += in->key_typed[AERON_KEY_UP];
 	ctx->nav[UI_DIR_DOWN] += in->key_typed[AERON_KEY_DOWN];

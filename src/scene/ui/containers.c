@@ -13,41 +13,52 @@ int AeronUi_BeginTabBar(AeronUiContext* ctx, const char* id, const char* const* 
 		!ui_layout_row(ctx, ui_ref(ctx, ctx->theme.row_height), &row)) {
 		return 0;
 	}
-	(void)id;
-	const AeronRectI* clip = NULL;
+	const AeronUiId   tab_id = ui_make_id(ctx, id);
+	const AeronRectI* clip   = NULL;
 	{
 		const UiLayout* top = ui_layout_top(ctx);
 		clip                = (top && top->clip.width > 0) ? &top->clip : NULL;
 	}
 
-	int page = *active < 0 ? 0 : (*active >= count ? count - 1 : *active);
+	const int initial   = *active < 0 ? 0 : (*active >= count ? count - 1 : *active);
+	int       page      = initial;
+	const int activated = ui_widget_behavior(ctx, tab_id, &row, 1);
 
 	/* Q/E and shoulder buttons cycle pages with wrap; the first tab bar
 	 * of the frame consumes the intent. */
-	const int cycle   = ctx->nav_tab_next - ctx->nav_tab_prev;
-	ctx->nav_tab_next = 0;
-	ctx->nav_tab_prev = 0;
-	if (cycle != 0) {
-		page = (page + cycle) % count;
+	const int shortcut = ctx->nav_tab_next - ctx->nav_tab_prev;
+	ctx->nav_tab_next  = 0;
+	ctx->nav_tab_prev  = 0;
+	if (shortcut != 0) {
+		page = (page + shortcut) % count;
 		if (page < 0) {
 			page += count;
 		}
-		ui_play_sound(ctx, AERON_UI_SOUND_FOCUS);
 	}
+	const int adjust = ui_consume_adjust(ctx, tab_id);
+	if (adjust < 0)
+		page = page > 0 ? page - 1 : 0;
+	else if (adjust > 0)
+		page = page + 1 < count ? page + 1 : count - 1;
 
-	const int   interactive = ctx->scope_depth >= ctx->top_scope_prev;
-	const float tab_w       = row.w / (float)count;
-	const float text_px     = ui_ref(ctx, ctx->theme.text_px);
+	const float tab_w   = row.w / (float)count;
+	const float text_px = ui_ref(ctx, ctx->theme.text_px);
+	if (activated) {
+		if (ctx->mouse_present && ctx->hot_id == tab_id) {
+			page = (int)((ctx->mouse_x - row.x) / tab_w);
+			page = page < 0 ? 0 : (page >= count ? count - 1 : page);
+		} else {
+			page = (page + 1) % count;
+		}
+	}
+	if (ui_is_focused(ctx, tab_id))
+		ui_draw_row_focus_bg(ctx, &row, clip);
 
 	for (int i = 0; i < count; i++) {
-		const UiRect tab     = { ui_snap(row.x + tab_w * (float)i), row.y, ui_snap(tab_w), row.h };
-		const int    hovered = interactive && ui_mouse_in(ctx, &tab, clip);
-		if (hovered && (ctx->input->mouse.pressed_buttons & AERON_MOUSE_BUTTON_LEFT) && page != i) {
-			page = i;
-			ui_play_sound(ctx, AERON_UI_SOUND_FOCUS);
-		}
-		const int selected = page == i;
-		ui_draw_surface(ctx, &tab, selected ? ctx->theme.widget_bg_hot : ctx->theme.widget_bg,
+		const UiRect tab      = { ui_snap(row.x + tab_w * (float)i), row.y, ui_snap(tab_w), row.h };
+		const int    hovered  = ctx->hot_id == tab_id && ui_mouse_in(ctx, &tab, clip);
+		const int    selected = page == i;
+		ui_draw_surface(ctx, &tab, selected || hovered ? ctx->theme.widget_bg_hot : ctx->theme.widget_bg,
 						ctx->theme.widget_bg_low, ctx->theme.widget_gradient && !selected,
 						ctx->theme.widget_border, ctx->theme.widget_border_px, selected, clip);
 		if (selected) {
@@ -59,6 +70,10 @@ int AeronUi_BeginTabBar(AeronUiContext* ctx, const char* id, const char* const* 
 					 AERON_TEXT_CENTER, text_px, selected ? ctx->theme.text : ctx->theme.text_dim,
 					 ui_label_text(titles[i]), ui_label_text_len(titles[i]), clip);
 	}
+	if (ui_is_focused(ctx, tab_id))
+		ui_draw_row_focus_ring(ctx, &row, clip);
+	if (page != initial)
+		ui_play_sound(ctx, AERON_UI_SOUND_FOCUS);
 
 	*active = page;
 	return 1;

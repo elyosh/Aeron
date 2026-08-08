@@ -315,6 +315,66 @@ int AeronUi_Selector(AeronUiContext* ctx, const char* label, int* index, const c
 	return 0;
 }
 
+int AeronUi_SegmentedSelector(AeronUiContext* ctx, const char* id_label, int* index,
+							  const char* const* options, int count) {
+	UiRect row;
+	if (!ctx || !ctx->frame_active || !index || !options || count <= 0 ||
+		!ui_layout_row(ctx, ui_ref(ctx, ctx->theme.row_height), &row)) {
+		return 0;
+	}
+	const AeronUiId   id        = ui_make_id(ctx, id_label);
+	const AeronRectI* clip      = ui_current_clip(ctx);
+	const int         initial   = *index < 0 ? 0 : (*index >= count ? count - 1 : *index);
+	int               result    = initial;
+	const int         activated = ui_widget_behavior(ctx, id, &row, 1);
+	const int         adjust    = ui_consume_adjust(ctx, id);
+
+	if (adjust < 0)
+		result = initial > 0 ? initial - 1 : 0;
+	else if (adjust > 0)
+		result = initial + 1 < count ? initial + 1 : count - 1;
+	if (activated) {
+		if (ctx->mouse_present && ctx->hot_id == id) {
+			const float segment_w = row.w / (float)count;
+			result                = (int)((ctx->mouse_x - row.x) / segment_w);
+			result                = result < 0 ? 0 : (result >= count ? count - 1 : result);
+		} else {
+			result = (initial + 1) % count;
+		}
+	}
+
+	if (ui_is_focused(ctx, id))
+		ui_draw_row_focus_bg(ctx, &row, clip);
+	const float segment_w = row.w / (float)count;
+	const float text_px   = ui_ref(ctx, ctx->theme.text_px);
+	for (int option = 0; option < count; ++option) {
+		const UiRect segment  = { ui_snap(row.x + segment_w * (float)option), row.y, ui_snap(segment_w),
+								  row.h };
+		const int    selected = option == result;
+		const int    hovered  = ctx->hot_id == id && ui_mouse_in(ctx, &segment, clip);
+		ui_draw_surface(ctx, &segment, selected || hovered ? ctx->theme.widget_bg_hot : ctx->theme.widget_bg,
+						ctx->theme.widget_bg_low, ctx->theme.widget_gradient && !selected,
+						ctx->theme.widget_border, ctx->theme.widget_border_px, selected, clip);
+		if (selected) {
+			const UiRect accent = { segment.x, segment.y + segment.h - ui_ref(ctx, 3.0f), segment.w,
+									ui_ref(ctx, 3.0f) };
+			ui_draw_fill(ctx, &accent, ctx->theme.accent, clip);
+		}
+		ui_draw_text(ctx, ui_font_regular(ctx), segment.x + segment.w * 0.5f,
+					 segment.y + (segment.h - text_px) * 0.5f, AERON_TEXT_CENTER, text_px,
+					 selected ? ctx->theme.text : ctx->theme.text_dim, ui_label_text(options[option]),
+					 ui_label_text_len(options[option]), clip);
+	}
+	if (ui_is_focused(ctx, id))
+		ui_draw_row_focus_ring(ctx, &row, clip);
+	if (result != initial) {
+		*index = result;
+		ui_play_sound(ctx, AERON_UI_SOUND_ADJUST);
+		return 1;
+	}
+	return 0;
+}
+
 void AeronUi_ControllerAxisMeter(AeronUiContext* ctx, const char* label, float value, float deadzone) {
 	UiRect row;
 	if (!ctx || !ctx->frame_active || !ui_layout_row(ctx, ui_ref(ctx, ctx->theme.row_height), &row))
