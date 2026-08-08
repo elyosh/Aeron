@@ -226,6 +226,9 @@ typedef struct AeronRuntime {
 	int                         pixel_layer_upload_count;
 	int                         logical_width;
 	int                         logical_height;
+	int                         window_aspect_width;
+	int                         window_aspect_height;
+	int                         window_aspect_pending;
 	int                         presentation_pixel_width;
 	int                         presentation_pixel_height;
 	int                         relative_mouse_enabled;
@@ -254,6 +257,7 @@ void Aeron_RefreshPresentationTiming(void);
 
 int  Aeron_WindowInit(const AeronConfig* config);
 void Aeron_WindowShutdown(void);
+void Aeron_ApplyPendingWindowAspectRatio(void);
 void Aeron_UpdatePresentationPixelSize(void);
 void Aeron_ComputePresentationRect(int container_width, int container_height, SDL_Rect* rect);
 

@@ -144,18 +144,42 @@ int Aeron_GetWindowSize(int* width, int* height) {
 	return window_width > 0 && window_height > 0;
 }
 
-int Aeron_SetWindowAspectRatio(int aspect_width, int aspect_height) {
-	float ratio;
+static int Aeron_ApplyWindowAspectRatio(void) {
+	Uint64 flags;
+	float  ratio;
 
-	if (!g_aeron.window || aspect_width <= 0 || aspect_height <= 0) {
+	if (!g_aeron.window || g_aeron.window_aspect_width <= 0 || g_aeron.window_aspect_height <= 0) {
 		return 0;
 	}
-	ratio = (float)aspect_width / (float)aspect_height;
+	flags = SDL_GetWindowFlags(g_aeron.window);
+	if (flags & (SDL_WINDOW_FULLSCREEN | SDL_WINDOW_MAXIMIZED)) {
+		g_aeron.window_aspect_pending = 1;
+		return 1;
+	}
+
+	ratio = (float)g_aeron.window_aspect_width / (float)g_aeron.window_aspect_height;
+	g_aeron.window_aspect_pending = 0;
 	if (!SDL_SetWindowAspectRatio(g_aeron.window, ratio, ratio)) {
 		Aeron_LogWarn("aeron", "SDL_SetWindowAspectRatio failed: %s", SDL_GetError());
 		return 0;
 	}
 	return 1;
+}
+
+int Aeron_SetWindowAspectRatio(int aspect_width, int aspect_height) {
+	if (!g_aeron.window || aspect_width <= 0 || aspect_height <= 0) {
+		return 0;
+	}
+	g_aeron.window_aspect_width   = aspect_width;
+	g_aeron.window_aspect_height  = aspect_height;
+	g_aeron.window_aspect_pending = 1;
+	return Aeron_ApplyWindowAspectRatio();
+}
+
+void Aeron_ApplyPendingWindowAspectRatio(void) {
+	if (g_aeron.window_aspect_pending) {
+		Aeron_ApplyWindowAspectRatio();
+	}
 }
 
 int Aeron_ResizeWindowToAspect(int aspect_width, int aspect_height) {

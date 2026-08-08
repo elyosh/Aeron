@@ -130,6 +130,10 @@ void Aeron_HandleEvent(const SDL_Event* event) {
 		case SDL_EVENT_WINDOW_HDR_STATE_CHANGED:
 			Aeron_OnOutputHdrStateChanged();
 			break;
+		case SDL_EVENT_WINDOW_LEAVE_FULLSCREEN:
+		case SDL_EVENT_WINDOW_RESTORED:
+			Aeron_ApplyPendingWindowAspectRatio();
+			break;
 		case SDL_EVENT_DISPLAY_CURRENT_MODE_CHANGED:
 		case SDL_EVENT_DISPLAY_DESKTOP_MODE_CHANGED:
 			if (event->display.displayID == g_aeron.presentation_display_id) {
