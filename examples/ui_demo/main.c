@@ -16,6 +16,7 @@
 #include "aeron/aeron.h"
 #include "aeron/scene/font_atlas.h"
 #include "aeron/scene/ui.h"
+#include "aeron/scene/ui_file_picker.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -24,13 +25,16 @@
 #define UI_DEMO_LOGICAL_H 1080
 
 typedef struct DemoState {
-	int   modal_open;
-	int   vsync;
-	int   volume; /* percent */
-	float gamma;
-	int   quality;    /* selector index */
-	int   tab;        /* active tab page */
-	int   last_click; /* last activated list row, -1 = none */
+	int                modal_open;
+	int                vsync;
+	int                volume; /* percent */
+	float              gamma;
+	int                quality;    /* selector index */
+	int                tab;        /* active tab page */
+	int                last_click; /* last activated list row, -1 = none */
+	AeronUiFilePicker* picker;
+	char               selected_path[4096];
+	char               picker_error[512];
 } DemoState;
 
 static void demo_page_settings(AeronUiContext* ui, DemoState* state) {
@@ -62,6 +66,43 @@ static void demo_page_list(AeronUiContext* ui, DemoState* state) {
 	}
 }
 
+static void demo_open_picker(DemoState* state, AeronUiFilePickerMode mode) {
+	static const char*             image_extensions[] = { "png", "jpg", "jpeg" };
+	static const AeronUiFileFilter filters[]          = {
+		{ "Images", image_extensions, 3 },
+	};
+	const AeronUiFilePickerDesc desc = {
+		.mode         = mode,
+		.title        = mode == AERON_UI_FILE_PICKER_OPEN_FILE ? "OPEN IMAGE" : "SELECT DIRECTORY",
+		.instructions = mode == AERON_UI_FILE_PICKER_OPEN_FILE
+							? "Choose an image file to exercise file filtering and selection."
+							: "Choose a directory. The current directory can be accepted directly.",
+		.accept_label = mode == AERON_UI_FILE_PICKER_OPEN_FILE ? "Open File" : "Select Folder",
+		.filters      = mode == AERON_UI_FILE_PICKER_OPEN_FILE ? filters : NULL,
+		.filter_count = mode == AERON_UI_FILE_PICKER_OPEN_FILE ? 1 : 0,
+	};
+	state->picker_error[0] = '\0';
+	if (!AeronUiFilePicker_Open(state->picker, &desc, state->picker_error, sizeof state->picker_error)) {
+		Aeron_LogError("ui_demo", "%s", state->picker_error);
+	}
+}
+
+static void demo_page_picker(AeronUiContext* ui, DemoState* state) {
+	AeronUi_Help(ui, "The same asynchronous AeronUi component supports file and directory selection.");
+	AeronUi_BeginColumns(ui, 2, NULL);
+	if (AeronUi_Button(ui, "Open Image..."))
+		demo_open_picker(state, AERON_UI_FILE_PICKER_OPEN_FILE);
+	AeronUi_NextColumn(ui);
+	if (AeronUi_Button(ui, "Select Directory..."))
+		demo_open_picker(state, AERON_UI_FILE_PICKER_SELECT_DIRECTORY);
+	AeronUi_EndColumns(ui);
+	if (state->selected_path[0]) {
+		char label[sizeof state->selected_path + 16];
+		snprintf(label, sizeof label, "Selected: %s", state->selected_path);
+		AeronUi_Label(ui, label);
+	}
+}
+
 static void demo_modal(AeronUiContext* ui, DemoState* state) {
 	if (!AeronUi_BeginModal(ui, "ABOUT", &state->modal_open, NULL))
 		return;
@@ -75,7 +116,7 @@ static void demo_modal(AeronUiContext* ui, DemoState* state) {
 }
 
 static void demo_window(AeronUiContext* ui, DemoState* state) {
-	static const char* tab_titles[] = { "SETTINGS", "LIST" };
+	static const char* tab_titles[] = { "SETTINGS", "LIST", "PICKER" };
 
 	AeronUiWindowDesc desc = { 0 };
 	desc.width_ref         = 860.0f;
@@ -90,11 +131,13 @@ static void demo_window(AeronUiContext* ui, DemoState* state) {
 					 "scrolls lists. Esc at this level quits the demo.");
 	AeronUi_Separator(ui);
 
-	if (AeronUi_BeginTabBar(ui, "demo_tabs", tab_titles, 2, &state->tab)) {
+	if (AeronUi_BeginTabBar(ui, "demo_tabs", tab_titles, 3, &state->tab)) {
 		if (state->tab == 0)
 			demo_page_settings(ui, state);
-		else
+		else if (state->tab == 1)
 			demo_page_list(ui, state);
+		else
+			demo_page_picker(ui, state);
 		AeronUi_EndTabBar(ui);
 	}
 
@@ -109,6 +152,12 @@ static void demo_window(AeronUiContext* ui, DemoState* state) {
 
 	demo_modal(ui, state);
 	AeronUi_EndWindow(ui);
+
+	AeronUiFilePickerResult picker_result =
+		AeronUiFilePicker_Draw(state->picker, ui, state->selected_path, sizeof state->selected_path,
+							   state->picker_error, sizeof state->picker_error);
+	if (picker_result == AERON_UI_FILE_PICKER_ERROR)
+		Aeron_LogError("ui_demo", "%s", state->picker_error);
 }
 
 /* Startup upload: the atlas texture reaches the GPU through one acquired
@@ -176,6 +225,14 @@ int main(int argc, char* argv[]) {
 		.gamma      = 2.2f,
 		.last_click = -1,
 	};
+	state.picker = AeronUiFilePicker_Create();
+	if (!state.picker) {
+		fprintf(stderr, "ui_demo: file picker creation failed\n");
+		AeronUi_Destroy(ui);
+		AeronFontAtlas_Release(&atlas);
+		Aeron_Shutdown();
+		return 1;
+	}
 
 	while (!Aeron_QuitRequested() && !Aeron_FatalErrorRequested()) {
 		int32_t delta_us = Aeron_BeginFrame();
@@ -199,6 +256,7 @@ int main(int argc, char* argv[]) {
 	}
 
 	const int exit_status = Aeron_FatalErrorRequested() ? 1 : 0;
+	AeronUiFilePicker_Destroy(state.picker);
 	AeronUi_Destroy(ui);
 	AeronFontAtlas_Release(&atlas);
 	Aeron_Shutdown();

@@ -188,32 +188,39 @@ void AeronUi_Spacer(AeronUiContext* ctx, float height_ref) {
 	ui_layout_row(ctx, ui_ref(ctx, height_ref), &rect);
 }
 
-int AeronUi_Button(AeronUiContext* ctx, const char* label) {
+int AeronUi_ButtonEnabled(AeronUiContext* ctx, const char* label, int enabled) {
 	UiRect rect;
 	if (!ctx || !ctx->frame_active || !ui_layout_row(ctx, ui_ref(ctx, ctx->theme.row_height), &rect)) {
 		return 0;
 	}
 	const AeronUiId id        = ui_make_id(ctx, label);
-	const int       activated = ui_widget_behavior(ctx, id, &rect, 1);
+	const int       activated = enabled && ui_widget_behavior(ctx, id, &rect, 1);
+	if (!enabled) {
+		ui_record_widget(ctx, id, &rect, 0);
+	}
 	if (activated) {
 		ui_play_sound(ctx, AERON_UI_SOUND_ACCEPT);
 	}
 	const UiLayout*   top  = ui_layout_top(ctx);
 	const AeronRectI* clip = (top && top->clip.width > 0) ? &top->clip : NULL;
 
-	const int    hot     = ui_is_focused(ctx, id) || ctx->hot_id == id;
-	const int    pressed = ctx->active_id == id && ctx->hot_id == id;
-	const float* bg =
-		pressed ? ctx->theme.widget_bg_low : (hot ? ctx->theme.widget_bg_hot : ctx->theme.widget_bg);
-	ui_draw_surface(ctx, &rect, bg, ctx->theme.widget_bg_low, ctx->theme.widget_gradient && !pressed,
-					ctx->theme.widget_border, ctx->theme.widget_border_px, !pressed, clip);
-	if (ui_is_focused(ctx, id)) {
+	const int    hot     = enabled && (ui_is_focused(ctx, id) || ctx->hot_id == id);
+	const int    pressed = enabled && ctx->active_id == id && ctx->hot_id == id;
+	const float* bg      = !enabled  ? ctx->theme.widget_bg_low
+						   : pressed ? ctx->theme.widget_bg_low
+									 : (hot ? ctx->theme.widget_bg_hot : ctx->theme.widget_bg);
+	ui_draw_surface(ctx, &rect, bg, ctx->theme.widget_bg_low,
+					enabled && ctx->theme.widget_gradient && !pressed, ctx->theme.widget_border,
+					ctx->theme.widget_border_px, !pressed, clip);
+	if (enabled && ui_is_focused(ctx, id)) {
 		ui_draw_focus_outline(ctx, &rect, clip);
 	}
 
 	const float text_px = ui_ref(ctx, ctx->theme.text_px);
 	ui_draw_text(ctx, ui_font_regular(ctx), rect.x + rect.w * 0.5f, rect.y + (rect.h - text_px) * 0.5f,
-				 AERON_TEXT_CENTER, text_px, ctx->theme.text, ui_label_text(label), ui_label_text_len(label),
-				 clip);
+				 AERON_TEXT_CENTER, text_px, enabled ? ctx->theme.text : ctx->theme.text_dim,
+				 ui_label_text(label), ui_label_text_len(label), clip);
 	return activated;
 }
+
+int AeronUi_Button(AeronUiContext* ctx, const char* label) { return AeronUi_ButtonEnabled(ctx, label, 1); }

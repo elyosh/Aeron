@@ -38,6 +38,9 @@
 #include "aeron/scene/font_atlas.h"
 #include "aeron/vfs.h"
 
+#include <stddef.h>
+#include <stdint.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -71,9 +74,9 @@ typedef struct AeronUiTheme {
 	AeronUiColor scrollbar_thumb;
 	AeronUiColor separator;
 	AeronUiColor row_highlight; /* focused form-row background bar */
-	AeronUiColor scrim;    /* modal backdrop / menu backdrop dim */
-	AeronUiColor bevel_hi; /* bevel band inside top edges */
-	AeronUiColor bevel_lo; /* bevel band inside bottom edges */
+	AeronUiColor scrim;         /* modal backdrop / menu backdrop dim */
+	AeronUiColor bevel_hi;      /* bevel band inside top edges */
+	AeronUiColor bevel_lo;      /* bevel band inside bottom edges */
 
 	/* Metrics (reference px @1080p). */
 	float window_pad;
@@ -241,6 +244,8 @@ void AeronUi_Separator(AeronUiContext* ctx);
 void AeronUi_Spacer(AeronUiContext* ctx, float height_ref);
 
 int AeronUi_Button(AeronUiContext* ctx, const char* label);
+/* Disabled buttons remain visible but do not participate in focus or input. */
+int AeronUi_ButtonEnabled(AeronUiContext* ctx, const char* label, int enabled);
 int AeronUi_Toggle(AeronUiContext* ctx, const char* label, int* value);
 int AeronUi_SliderInt(AeronUiContext* ctx, const char* label, int* value, int min, int max, int step,
 					  const char* fmt /* e.g. "%d%%"; NULL = "%d" */);
@@ -248,6 +253,37 @@ int AeronUi_SliderFloat(AeronUiContext* ctx, const char* label, float* value, fl
 						float step, const char* fmt /* NULL = "%.2f" */);
 int AeronUi_Selector(AeronUiContext* ctx, const char* label, int* index, const char* const* options,
 					 int count);
+
+typedef enum AeronUiInputTextFlags {
+	AERON_UI_INPUT_TEXT_NONE      = 0,
+	AERON_UI_INPUT_TEXT_READ_ONLY = 1u << 0,
+} AeronUiInputTextFlags;
+
+/* Edits caller-owned NUL-terminated UTF-8. Returns nonzero on change. */
+int AeronUi_InputText(AeronUiContext* ctx, const char* label, char* value, size_t capacity, uint32_t flags);
+
+typedef enum AeronUiListItemFlags {
+	AERON_UI_LIST_ITEM_NONE      = 0,
+	AERON_UI_LIST_ITEM_DISABLED  = 1u << 0,
+	AERON_UI_LIST_ITEM_DIRECTORY = 1u << 1,
+} AeronUiListItemFlags;
+
+typedef struct AeronUiListItem {
+	uint64_t    id;
+	const char* label;
+	const char* detail;
+	uint32_t    flags;
+} AeronUiListItem;
+
+typedef enum AeronUiListResult {
+	AERON_UI_LIST_NONE      = 0,
+	AERON_UI_LIST_CHANGED   = 1u << 0,
+	AERON_UI_LIST_ACTIVATED = 1u << 1,
+} AeronUiListResult;
+
+/* Virtualized list. `SIZE_MAX` means no selection. */
+uint32_t AeronUi_ListBox(AeronUiContext* ctx, const char* label, const AeronUiListItem* items,
+						 size_t item_count, size_t* selected, float height_ref);
 
 /* Rebind capture widget. Shows `display` (the game-formatted current
  * binding); activation enters capture mode — the toolkit then reports

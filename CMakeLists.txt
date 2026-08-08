@@ -599,12 +599,16 @@ add_library(aeron_scene STATIC
     src/scene/ui/containers.c
     src/scene/ui/context.c
     src/scene/ui/draw.c
+    src/scene/ui/file_picker.c
+    src/scene/ui/file_picker_fs.c
     src/scene/ui/focus.c
     src/scene/ui/layout.c
     src/scene/ui/rebind.c
     src/scene/ui/submit.c
     src/scene/ui/theme.c
     src/scene/ui/widgets.c
+    src/scene/ui/widgets_list.c
+    src/scene/ui/widgets_text.c
     src/scene/ui/window.c
 )
 

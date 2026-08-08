@@ -170,6 +170,12 @@ struct AeronUiContext {
 	AeronUiId rebind_id;        /* widget in capture mode, 0 = none */
 	int       rebind_capturing; /* latched for EndFrame's capture_all */
 
+	/* One active UTF-8 editor; only one widget can consume composed text. */
+	AeronUiId text_edit_id;
+	size_t    text_cursor;
+	size_t    text_anchor;
+	float     text_scroll;
+
 	/* Scroll regions declared this frame. */
 	UiScrollRec scrolls[AERON_UI_MAX_SCROLLS];
 	int         scroll_count;

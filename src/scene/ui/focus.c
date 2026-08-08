@@ -312,6 +312,7 @@ void ui_resolve_navigation(AeronUiContext* ctx) {
 		ctx->focus_id         = 0;
 		ctx->rebind_id        = 0;
 		ctx->rebind_capturing = 0;
+		ctx->text_edit_id     = 0;
 		return;
 	}
 
@@ -320,6 +321,9 @@ void ui_resolve_navigation(AeronUiContext* ctx) {
 	if (ctx->rebind_id && ui_find_widget(ctx, ctx->rebind_id) < 0) {
 		ctx->rebind_id        = 0;
 		ctx->rebind_capturing = 0;
+	}
+	if (ctx->text_edit_id && ui_find_widget(ctx, ctx->text_edit_id) < 0) {
+		ctx->text_edit_id = 0;
 	}
 
 	/* Focus validity: the focused widget must exist, be focusable, and
@@ -361,6 +365,9 @@ void ui_resolve_navigation(AeronUiContext* ctx) {
 	}
 
 	ctx->focus_id = ctx->widgets[focus_index].id;
+	if (ctx->text_edit_id && ctx->text_edit_id != ctx->focus_id) {
+		ctx->text_edit_id = 0;
+	}
 	ui_scroll_focus_into_view(ctx, &ctx->widgets[focus_index]);
 
 	if (ctx->focus_id != ctx->focus_at_frame_start) {
