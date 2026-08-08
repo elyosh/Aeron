@@ -38,8 +38,14 @@ cbuffer ClusteredLightUniform : AERON_CLUSTER_UNIFORM_BINDING {
 #define fs_cluster_local_count ((fs_cluster_flags >> 16u) & 0xffffu)
 
 #ifndef AERON_CLUSTER_NO_FRAGMENT_BUFFERS
-StructuredBuffer<uint2> fs_cluster_headers : register(t10, space2);
-StructuredBuffer<uint>  fs_cluster_indices : register(t11, space2);
+#ifndef AERON_CLUSTER_HEADER_REGISTER
+#define AERON_CLUSTER_HEADER_REGISTER t10
+#endif
+#ifndef AERON_CLUSTER_INDEX_REGISTER
+#define AERON_CLUSTER_INDEX_REGISTER t11
+#endif
+StructuredBuffer<uint2> fs_cluster_headers : register(AERON_CLUSTER_HEADER_REGISTER, space2);
+StructuredBuffer<uint>  fs_cluster_indices : register(AERON_CLUSTER_INDEX_REGISTER, space2);
 
 uint clustered_light_depth_slice(float view_depth) {
 	float depth       = max(view_depth, fs_cluster_near_z);

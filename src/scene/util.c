@@ -68,3 +68,35 @@ AeronTexture* AeronSceneInternal_WhiteTexture(void) {
 	}
 	return tex;
 }
+
+/* Process-shared cube placeholder for optional PBR environment bindings. */
+AeronTexture* AeronSceneInternal_WhiteCubeTexture(void) {
+	static AeronTexture* tex;
+	if (tex) {
+		return tex;
+	}
+	tex = Aeron_CreateTexture(&(AeronTextureDesc){
+		.width  = 1,
+		.height = 1,
+		.format = AERON_TEXTURE_FORMAT_RGBA8_UNORM,
+		.usage  = AERON_TEXTURE_USAGE_SAMPLED | AERON_TEXTURE_USAGE_TRANSFER_DST,
+		.cube = 1,
+		.debug_name = "scene.white_cube_1x1",
+	});
+	if (!tex) {
+		Aeron_RequestFatalRendererError("shared scene cube texture creation");
+		return NULL;
+	}
+	static const uint8_t white[4] = { 0xFF, 0xFF, 0xFF, 0xFF };
+	for (int face = 0; face < 6; face++) {
+		if (!Aeron_UploadTextureData(&(AeronTextureUploadDesc){
+				.texture = tex, .width = 1, .height = 1, .raw_data = white,
+				.raw_size = sizeof white, .layer = face })) {
+			Aeron_DestroyTexture(tex);
+			tex = NULL;
+			Aeron_RequestFatalRendererError("shared scene cube texture upload");
+			break;
+		}
+	}
+	return tex;
+}

@@ -338,6 +338,11 @@ int AeronScene_SetMeshSampler(AeronScene3D* scene, AeronSampler* sampler);
  * does not need a build-mode conditional. */
 void AeronScene_SetPbrDebugViews(AeronScene3D* scene, int enabled);
 
+/* Selects a caller-owned diffuse environment cubemap for the current frame.
+ * Begin clears the binding. Both resources must remain alive through Render. */
+void AeronScene_SetPbrEnvironmentMap(AeronScene3D* scene, AeronTexture* texture,
+									 AeronSampler* sampler);
+
 /* Queue a per-frame uniform blob (copied; reset by Begin) that the
  * scene binds to (stage, slot) in the color pass AFTER the
  * BEFORE_OPAQUE hook and before the sky billboards / instance walk —

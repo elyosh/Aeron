@@ -8,11 +8,12 @@
  *   VS b0 space1: AeronScenePbrVsBlock (transforms + storage selection)
  *   VS storage 0: packed current/previous articulation tables
  *   VS storage 1: packed per-instance local lights
- *   FS storage 0: per-mesh material entries
- *   FS storage 1: per-mesh packed variant map
- *   FS storage 2: frame point lights
- *   FS storage 3: clustered-light headers
- *   FS storage 4: clustered-light indices
+ *   FS sampler 7: optional diffuse environment cubemap
+ *   FS storage 0: per-mesh material entries (t8)
+ *   FS storage 1: per-mesh packed variant map (t9)
+ *   FS storage 2: frame point lights (t10)
+ *   FS storage 3: clustered-light headers (t11)
+ *   FS storage 4: clustered-light indices (t12)
  *   FS b0 space3: AeronSceneDirectionalShadowUniform
  *   FS b1 space3: fixed PBR environment and tuning
  *   FS b2 space3: clustered-light grid and camera data
@@ -276,9 +277,9 @@ static AeronGraphicsPipeline* pbr_debug_pipeline(struct AeronScene3D* s, int kin
 	if (!s->pbr_debug_tried) {
 		s->pbr_debug_tried = 1;
 		s->pbr_debug_fs =
-			pbr_shader("scene_pbr_mesh_debug.frag", AERON_SHADER_STAGE_FRAGMENT, 7, 3, 5);
+			pbr_shader("scene_pbr_mesh_debug.frag", AERON_SHADER_STAGE_FRAGMENT, 8, 3, 5);
 		s->pbr_mask_debug_fs =
-			pbr_shader("scene_pbr_mesh_mask_debug.frag", AERON_SHADER_STAGE_FRAGMENT, 7, 3, 5);
+			pbr_shader("scene_pbr_mesh_mask_debug.frag", AERON_SHADER_STAGE_FRAGMENT, 8, 3, 5);
 	}
 	if (!s->pbr_debug_fs || !s->pbr_mask_debug_fs) {
 		return NULL;
@@ -333,16 +334,16 @@ int AeronScenePbr_Ensure(struct AeronScene3D* s) {
 		pbr_shader("scene_pbr_prepass_mask.vert", AERON_SHADER_STAGE_VERTEX, 0, 1, 1);
 	s->pbr_prepass_stamp_vs =
 		pbr_shader("scene_pbr_prepass_stamp.vert", AERON_SHADER_STAGE_VERTEX, 0, 1, 1);
-	s->pbr_fs         = pbr_shader("scene_pbr_mesh.frag", AERON_SHADER_STAGE_FRAGMENT, 7, 3, 5);
+	s->pbr_fs         = pbr_shader("scene_pbr_mesh.frag", AERON_SHADER_STAGE_FRAGMENT, 8, 3, 5);
 	s->pbr_mask_fs =
-		pbr_shader("scene_pbr_mesh_mask.frag", AERON_SHADER_STAGE_FRAGMENT, 7, 3, 5);
+		pbr_shader("scene_pbr_mesh_mask.frag", AERON_SHADER_STAGE_FRAGMENT, 8, 3, 5);
 	s->pbr_prepass_fs = pbr_shader("scene_pbr_prepass.frag", AERON_SHADER_STAGE_FRAGMENT, 0, 0, 0);
 	s->pbr_prepass_mask_fs =
 		pbr_shader("scene_pbr_prepass_mask.frag", AERON_SHADER_STAGE_FRAGMENT, 1, 0, 2);
 	/* Velocity stamping reads the same mesh-owned material resources. */
 	s->pbr_prepass_stamp_fs =
 		pbr_shader("scene_pbr_prepass_stamp.frag", AERON_SHADER_STAGE_FRAGMENT, 1, 0, 2);
-	if (!s->pbr_vs || !s->pbr_fs || !s->pbr_mask_fs ||
+	if (!s->pbr_vs || !s->pbr_fs || !s->pbr_mask_fs || !AeronSceneInternal_WhiteCubeTexture() ||
 		!s->pbr_prepass_mask_vs || !s->pbr_prepass_mask_fs) {
 		return 0;
 	}
@@ -493,6 +494,10 @@ static void pbr_bind_ao(struct AeronScene3D* s, AeronRenderPass* pass, AeronText
 		Aeron_BindTextureSampler(pass, AERON_SHADER_STAGE_FRAGMENT, 4, ao,
 								 ao_tex ? s->post_linear_sampler : s->pbr_sampler);
 	}
+	Aeron_BindTextureSampler(pass, AERON_SHADER_STAGE_FRAGMENT, 7,
+							 s->pbr_environment_map ? s->pbr_environment_map
+												: AeronSceneInternal_WhiteCubeTexture(),
+							 s->pbr_environment_sampler ? s->pbr_environment_sampler : s->pbr_sampler);
 	Aeron_BindStorageBuffer(pass, AERON_SHADER_STAGE_FRAGMENT, 2,
 							s->point_light_buffer);
 	AeronSceneClusteredLights_Bind(s, pass);

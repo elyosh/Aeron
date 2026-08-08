@@ -415,6 +415,8 @@ int AeronScene_Begin(AeronScene3D* s, const AeronSceneCamera* camera) {
 	s->cluster_active      = 0;
 	s->cluster_ready       = 0;
 	s->frame_uniform_count = 0;
+	s->pbr_environment_map = NULL;
+	s->pbr_environment_sampler = NULL;
 	s->pbr_debug_views     = 0;
 	memset(&s->directional_shadow, 0, sizeof s->directional_shadow);
 	memset(&s->shadow_uniform, 0, sizeof s->shadow_uniform);
@@ -780,6 +782,15 @@ void AeronScene_SetPbrDebugViews(AeronScene3D* s, int enabled) {
 	(void)s;
 	(void)enabled;
 #endif
+}
+
+void AeronScene_SetPbrEnvironmentMap(AeronScene3D* s, AeronTexture* texture,
+									 AeronSampler* sampler) {
+	if (!s) {
+		return;
+	}
+	s->pbr_environment_map = texture && sampler ? texture : NULL;
+	s->pbr_environment_sampler = texture && sampler ? sampler : NULL;
 }
 
 void AeronScene_SetFrameUniformData(AeronScene3D* s, AeronShaderStage stage, uint32_t slot, const void* data,

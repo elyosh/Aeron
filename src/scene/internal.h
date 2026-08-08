@@ -218,6 +218,8 @@ struct AeronScene3D {
 	int                    lights_dropped;
 	AeronSceneFrameUniform frame_uniforms[AERON_SCENE_MAX_FRAME_UNIFORMS];
 	int                    frame_uniform_count;
+	AeronTexture*          pbr_environment_map;     /* borrowed for this frame */
+	AeronSampler*          pbr_environment_sampler; /* borrowed for this frame */
 
 	/* Stabilized cascaded shadow map for the key directional light. */
 	AeronSceneDirectionalShadowDesc    directional_shadow;
@@ -464,6 +466,7 @@ AeronRenderTarget*         AeronSceneInternal_CreateColorRt(AeronTextureFormat f
 															const char* debug_name);
 AeronBlendStateDesc        AeronSceneInternal_BlendOpaque(void);
 AeronTexture*              AeronSceneInternal_WhiteTexture(void);
+AeronTexture*              AeronSceneInternal_WhiteCubeTexture(void);
 const AeronSceneMeshTable* AeronScenePbr_IdentityTable(void);
 int                        AeronSceneStorage_Prepare(struct AeronScene3D* s,
 													AeronCommandBuffer* cmd);

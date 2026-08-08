@@ -64,7 +64,13 @@ cbuffer PbrLightFS : register(AERON_PBR_LIGHT_UNIFORM_REGISTER, space3)
     float4 fs_extra_col[3];
     /* Point-light evaluation knobs: minimum distance, specular weight,
      * diffuse wrap, and per-light contribution cap. */
-    float4 fs_point_params;
+	float4 fs_point_params;
+	/* Optional detailed diffuse environment in a caller-defined local basis.
+	 * environment_params.x is its linear intensity; zero disables sampling. */
+	float4 environment_params;
+	float4 environment_right;
+	float4 environment_up;
+	float4 environment_forward;
 };
 
 struct PbrPointLight
@@ -72,7 +78,10 @@ struct PbrPointLight
     float4 position_range;
     float4 color;
 };
-StructuredBuffer<PbrPointLight> fs_point_lights : register(t9, space2);
+#ifndef AERON_PBR_POINT_LIGHT_REGISTER
+#define AERON_PBR_POINT_LIGHT_REGISTER t9
+#endif
+StructuredBuffer<PbrPointLight> fs_point_lights : register(AERON_PBR_POINT_LIGHT_REGISTER, space2);
 #include "scene_clustered_lights.hlsli"
 #endif
 

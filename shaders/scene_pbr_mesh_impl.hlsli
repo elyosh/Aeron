@@ -21,11 +21,11 @@
  *   b0 space3 — DirectionalShadowFS (scene-owned)
  *   b1 space3 — PbrLightFS          (shared lighting and tuning)
  *   b2 space3 — ClusteredLightUniform
- *   t7 space2 — material storage (after seven sampled textures)
- *   t8 space2 — packed variant-map storage
- *   t9 space2 — scene point-light storage
- *   t10 space2 — cluster headers
- *   t11 space2 — cluster light indices
+ *   t8 space2 — material storage (after eight sampled textures)
+ *   t9 space2 — packed variant-map storage
+ *   t10 space2 — scene point-light storage
+ *   t11 space2 — cluster headers
+ *   t12 space2 — cluster light indices
  *
  * Texture / sampler slots:
  *   t0/s0 — base_color atlas    (sRGB)
@@ -35,10 +35,16 @@
  *   t4/s4 — SSAO
  *   t5/s5 — comparison shadow depth
  *   t6/s6 — raw shadow depth for PCSS blocker search
+ *   t7/s7 — optional detailed diffuse environment cubemap
  */
 
 #define AERON_DIRECTIONAL_SHADOW_UNIFORM_REGISTER b0
 #define AERON_PBR_LIGHT_UNIFORM_REGISTER b1
+#define AERON_PBR_MATERIAL_REGISTER t8
+#define AERON_PBR_VARIANT_REGISTER t9
+#define AERON_PBR_POINT_LIGHT_REGISTER t10
+#define AERON_CLUSTER_HEADER_REGISTER t11
+#define AERON_CLUSTER_INDEX_REGISTER t12
 #include "scene_pbr_lighting.hlsli"
 #include "scene_pbr_atlas_sample.hlsli"
 #include "scene_pbr_vsout.hlsli"
@@ -56,6 +62,18 @@ SamplerState g_em_sampler   : register(s3, space2);
  * joint visibility pass is unavailable. */
 Texture2D<float2> g_ao      : register(t4, space2);
 SamplerState g_ao_sampler   : register(s4, space2);
+TextureCube<float4> g_environment : register(t7, space2);
+SamplerState g_environment_sampler : register(s7, space2);
+
+float3 detailed_environment(float3 world_direction)
+{
+	if (environment_params.x <= 0.0f) return 0.0f;
+	float3 local_direction = float3(dot(world_direction, environment_right.xyz),
+									dot(world_direction, environment_up.xyz),
+									dot(world_direction, environment_forward.xyz));
+	return max(g_environment.SampleLevel(g_environment_sampler, normalize(local_direction), 0.0f).rgb,
+			   0.0f) * environment_params.x;
+}
 
 
 struct FSOut
@@ -118,7 +136,7 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
     float wrap_n = saturate((ndotl + light_wrap) / (1.0f + light_wrap));
     wrap_n = lerp(wrap_n, wrap_n * wrap_n, light_wrap);
     float  lambert_term = saturate(wrap_n * light_intensity);
-    float3 ambient_rgb  = world_ambient(N);
+    float3 ambient_rgb  = world_ambient(N) + detailed_environment(N);
     uint shadow_cascade = 4u;
     float shadow_cascade_blend = 0.0f;
     float shadow_coverage = 0.0f;
