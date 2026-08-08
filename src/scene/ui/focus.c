@@ -309,18 +309,18 @@ void ui_resolve_navigation(AeronUiContext* ctx) {
 	ctx->top_scope_prev = ctx->modal_open_id ? top_scope : 0;
 
 	if (!ctx->any_window || ctx->widget_count == 0) {
-		ctx->focus_id         = 0;
-		ctx->rebind_id        = 0;
-		ctx->rebind_capturing = 0;
-		ctx->text_edit_id     = 0;
+		ctx->focus_id = 0;
+		memset(&ctx->controller_capture, 0, sizeof ctx->controller_capture);
+		ctx->controller_capture_frame = 0;
+		ctx->text_edit_id             = 0;
 		return;
 	}
 
 	/* A capture whose widget vanished (screen change) must not keep
 	 * capture_all latched. */
-	if (ctx->rebind_id && ui_find_widget(ctx, ctx->rebind_id) < 0) {
-		ctx->rebind_id        = 0;
-		ctx->rebind_capturing = 0;
+	if (ctx->controller_capture.id && ui_find_widget(ctx, ctx->controller_capture.id) < 0) {
+		memset(&ctx->controller_capture, 0, sizeof ctx->controller_capture);
+		ctx->controller_capture_frame = 0;
 	}
 	if (ctx->text_edit_id && ui_find_widget(ctx, ctx->text_edit_id) < 0) {
 		ctx->text_edit_id = 0;

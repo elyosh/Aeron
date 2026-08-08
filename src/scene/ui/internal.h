@@ -93,6 +93,16 @@ typedef struct UiScrollRec {
 	float     content_h;
 } UiScrollRec;
 
+typedef struct UiControllerCaptureState {
+	AeronUiId                    id;
+	uint32_t                     instance_id;
+	AeronControllerKind          controller_kind;
+	AeronUiControllerCaptureMode mode;
+	float                        elapsed;
+	int16_t                      axis_baseline[AERON_CONTROLLER_AXIS_MAX];
+	uint8_t                      hat_armed[AERON_CONTROLLER_HAT_MAX];
+} UiControllerCaptureState;
+
 /* Navigation directions (repeat accumulator index). */
 enum { UI_DIR_UP = 0, UI_DIR_DOWN = 1, UI_DIR_LEFT = 2, UI_DIR_RIGHT = 3, UI_DIR_COUNT = 4 };
 
@@ -168,9 +178,9 @@ struct AeronUiContext {
 	int cancel_consumed;
 	int value_changed; /* an ADJUST sound was already played */
 
-	/* Rebind capture (rebind.c). */
-	AeronUiId rebind_id;        /* widget in capture mode, 0 = none */
-	int       rebind_capturing; /* latched for EndFrame's capture_all */
+	/* Selected-controller capture (rebind.c). */
+	UiControllerCaptureState controller_capture;
+	int                      controller_capture_frame;
 
 	/* One active UTF-8 editor; only one widget can consume composed text. */
 	AeronUiId text_edit_id;

@@ -171,7 +171,7 @@ typedef struct AeronUiOutput {
 	int wants_keyboard;
 	int wants_mouse;
 	int wants_gamepad;
-	int capture_all;    /* rebind capture active: suppress everything */
+	int capture_all;    /* controller capture active: suppress everything */
 	int cancel_pressed; /* unconsumed cancel — pop the game screen */
 } AeronUiOutput;
 
@@ -293,34 +293,42 @@ typedef enum AeronUiListResult {
 uint32_t AeronUi_ListBox(AeronUiContext* ctx, const char* label, const AeronUiListItem* items,
 						 size_t item_count, size_t* selected, float height_ref);
 
-/* Rebind capture widget. Shows `display` (the game-formatted current
- * binding); activation enters capture mode — the toolkit then reports
- * capture_all so the game suppresses everything — and the next key,
- * mouse button, gamepad button, or gamepad axis push past 50% is
- * returned in `out`. Esc or a 5 s timeout cancels. The toolkit only
- * reports the raw input; mapping it to a binding model and persisting
- * stay game-side. */
-typedef enum AeronUiRebindResult {
-	AERON_UI_REBIND_NONE      = 0,
-	AERON_UI_REBIND_STARTED   = 1,
-	AERON_UI_REBIND_CAPTURED  = 2,
-	AERON_UI_REBIND_CANCELLED = 3,
-} AeronUiRebindResult;
+typedef enum AeronUiControllerCaptureMode {
+	AERON_UI_CONTROLLER_CAPTURE_ANALOG_AXIS = 0,
+	AERON_UI_CONTROLLER_CAPTURE_DIGITAL,
+} AeronUiControllerCaptureMode;
 
-typedef struct AeronUiCapturedInput {
-	enum {
-		AERON_UI_CAPTURE_KEY          = 0,
-		AERON_UI_CAPTURE_MOUSE_BUTTON = 1,
-		AERON_UI_CAPTURE_PAD_BUTTON   = 2,
-		AERON_UI_CAPTURE_PAD_AXIS     = 3,
-	} kind;
-	int code;           /* AeronKey / mouse-button bit index /
-						   AeronGamepadButton / AeronGamepadAxis */
-	int controller;     /* pad captures: controller slot */
-	int axis_direction; /* -1 / +1 for axis captures */
-} AeronUiCapturedInput;
+typedef struct AeronUiControllerCaptureDesc {
+	uint32_t                     instance_id;
+	AeronUiControllerCaptureMode mode;
+} AeronUiControllerCaptureDesc;
 
-int AeronUi_Rebind(AeronUiContext* ctx, const char* label, const char* display, AeronUiCapturedInput* out);
+typedef struct AeronUiControllerInput {
+	AeronControllerKind controller_kind;
+	union {
+		int                          axis;
+		AeronControllerDigitalSource digital;
+	} value;
+} AeronUiControllerInput;
+
+typedef enum AeronUiControllerCaptureResult {
+	AERON_UI_CONTROLLER_CAPTURE_NONE = 0,
+	AERON_UI_CONTROLLER_CAPTURE_STARTED,
+	AERON_UI_CONTROLLER_CAPTURE_CAPTURED,
+	AERON_UI_CONTROLLER_CAPTURE_CANCELLED,
+} AeronUiControllerCaptureResult;
+
+/* Captures one source from a specific connected controller instance. An
+ * instance id of zero renders a disabled row. */
+AeronUiControllerCaptureResult AeronUi_ControllerCapture(AeronUiContext* ctx, const char* label,
+														 const char*                         display,
+														 const AeronUiControllerCaptureDesc* desc,
+														 AeronUiControllerInput*             out);
+void                           AeronUi_CancelControllerCapture(AeronUiContext* ctx);
+
+/* Read-only signed axis visualization with center, deadzone, live marker,
+ * and numeric value. */
+void AeronUi_ControllerAxisMeter(AeronUiContext* ctx, const char* label, float value, float deadzone);
 
 #ifdef __cplusplus
 }

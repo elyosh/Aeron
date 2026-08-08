@@ -226,7 +226,7 @@ int AeronUi_BeginModal(AeronUiContext* ctx, const char* title, int* open, const 
 		return 0;
 	}
 	/* An active text editor consumes cancel inside its widget first. */
-	if (ctx->nav_cancel > 0 && ctx->text_edit_id == 0) {
+	if (ctx->nav_cancel > 0 && ctx->text_edit_id == 0 && ctx->controller_capture.id == 0) {
 		ctx->nav_cancel--;
 		ctx->cancel_consumed = 1;
 		*open                = 0;

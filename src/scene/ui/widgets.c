@@ -15,16 +15,15 @@ UiRect ui_form_row_split(AeronUiContext* ctx, const char* label, const UiRect* r
 	 * labels and controls. Constant — layout never shifts with focus. */
 	const float  pad_x   = ui_snap(ui_ref(ctx, 8.0f));
 	const float  pad_y   = ui_snap(ui_ref(ctx, 3.0f));
-	const UiRect content = { row->x + pad_x, row->y + pad_y, row->w - 2.0f * pad_x,
-							 row->h - 2.0f * pad_y };
+	const UiRect content = { row->x + pad_x, row->y + pad_y, row->w - 2.0f * pad_x, row->h - 2.0f * pad_y };
 
 	const float fraction = fminf(fmaxf(ctx->theme.label_fraction, 0.1f), 0.9f);
 	const float label_w  = ui_snap(content.w * fraction);
 	const float text_px  = ui_ref(ctx, ctx->theme.text_px);
 
 	ui_draw_text(ctx, ui_font_regular(ctx), content.x, content.y + (content.h - text_px) * 0.5f,
-				 AERON_TEXT_LEFT, text_px, ctx->theme.text, ui_label_text(label),
-				 ui_label_text_len(label), clip);
+				 AERON_TEXT_LEFT, text_px, ctx->theme.text, ui_label_text(label), ui_label_text_len(label),
+				 clip);
 
 	UiRect control = { content.x + label_w, content.y, content.w - label_w, content.h };
 	return control;
@@ -314,4 +313,37 @@ int AeronUi_Selector(AeronUiContext* ctx, const char* label, int* index, const c
 		return 1;
 	}
 	return 0;
+}
+
+void AeronUi_ControllerAxisMeter(AeronUiContext* ctx, const char* label, float value, float deadzone) {
+	UiRect row;
+	if (!ctx || !ctx->frame_active || !ui_layout_row(ctx, ui_ref(ctx, ctx->theme.row_height), &row))
+		return;
+	if (!isfinite(value))
+		value = 0.0f;
+	if (!isfinite(deadzone))
+		deadzone = 0.0f;
+	value                     = fminf(fmaxf(value, -1.0f), 1.0f);
+	deadzone                  = fminf(fmaxf(deadzone, 0.0f), 1.0f);
+	const AeronRectI* clip    = ui_current_clip(ctx);
+	const UiRect      control = ui_form_row_split(ctx, label, &row, clip);
+	const float       value_w = ui_snap(fminf(control.w * 0.28f, ui_ref(ctx, 90.0f)));
+	const UiRect      zone    = { control.x, control.y, control.w - value_w - ui_ref(ctx, 10.0f), control.h };
+	const float       track_h = ui_snap(fminf(zone.h * 0.5f, ui_ref(ctx, 14.0f)));
+	const UiRect      track   = { zone.x, zone.y + (zone.h - track_h) * 0.5f, zone.w, track_h };
+	ui_draw_fill(ctx, &track, ctx->theme.slider_track, clip);
+	const float  center = track.x + track.w * 0.5f;
+	const UiRect dead   = { center - track.w * 0.5f * deadzone, track.y, track.w * deadzone, track.h };
+	ui_draw_fill(ctx, &dead, ctx->theme.widget_bg_hot, clip);
+	const UiRect center_line = { ui_snap(center), track.y, fmaxf(1.0f, ui_ref(ctx, 1.0f)), track.h };
+	ui_draw_fill(ctx, &center_line, ctx->theme.separator, clip);
+	const float  marker_x = center + value * track.w * 0.5f;
+	const UiRect marker   = { ui_snap(marker_x - ui_ref(ctx, 2.0f)), track.y - ui_ref(ctx, 3.0f),
+							  fmaxf(3.0f, ui_ref(ctx, 4.0f)), track.h + ui_ref(ctx, 6.0f) };
+	ui_draw_fill(ctx, &marker, ctx->theme.accent, clip);
+	char text[32];
+	snprintf(text, sizeof text, "%+.2f", (double)value);
+	const float text_px = ui_ref(ctx, ctx->theme.text_px);
+	ui_draw_text(ctx, ui_font_regular(ctx), control.x + control.w, row.y + (row.h - text_px) * 0.5f,
+				 AERON_TEXT_RIGHT, text_px, ctx->theme.accent, text, -1, clip);
 }

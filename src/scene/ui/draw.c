@@ -81,7 +81,7 @@ void ui_draw_focus_outline(AeronUiContext* ctx, const UiRect* rect, const AeronR
  * content so it cleanly surrounds full-height controls instead of
  * disappearing behind them. The rect matches the row bounds exactly —
  * every control right-aligns to the row edge, so the ring meets the
- * selector/rebind body edge with no gap. */
+ * selector/capture body edge with no gap. */
 static AeronDrawList2DRRect ui_row_focus_rect(AeronUiContext* ctx, const UiRect* row,
 											  const AeronRectI* clip) {
 	AeronDrawList2DRRect r = { 0 };
@@ -149,10 +149,10 @@ static AeronTextStyle ui_text_style(const AeronUiContext* ctx, const AeronFontAt
 	style.scale       = size_px / (float)font->cell_h;
 	style.tracking_px = ui_font_tracking_atlas(ctx, font) * style.scale;
 	style.filter      = AERON_BLIT2D_FILTER_LINEAR;
-	style.tint[0] = color[0];
-	style.tint[1] = color[1];
-	style.tint[2] = color[2];
-	style.tint[3] = color[3] * ctx->fade;
+	style.tint[0]     = color[0];
+	style.tint[1]     = color[1];
+	style.tint[2]     = color[2];
+	style.tint[3]     = color[3] * ctx->fade;
 	return style;
 }
 
