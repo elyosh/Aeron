@@ -243,7 +243,7 @@ static const cgltf_texture_view *material_channel_view(
     }
 }
 
-static void read_material(const cgltf_material *m, AeronGltfMaterial *out)
+static bool read_material(const cgltf_material *m, AeronGltfMaterial *out)
 {
     /* Factor defaults per glTF spec. */
     out->base_color_factor[0] = 1.0f;
@@ -257,16 +257,32 @@ static void read_material(const cgltf_material *m, AeronGltfMaterial *out)
     out->metallic_factor      = 0.0f;
     out->roughness_factor     = 1.0f;
     out->double_sided         = 0u;
-    out->alpha_blend          = 0u;
+    out->alpha_mode           = AERON_GLTF_ALPHA_OPAQUE;
+    out->alpha_cutoff         = 0.5f;
     out->emissive_mode        = AERON_GLTF_EMISSIVE_ADDITIVE;
     /* uv_xform sentinel zero = "channel not authored" — FS falls back
      * to factor. Overwritten below for channels that do bind. */
     memset(out->uv_xform, 0, sizeof out->uv_xform);
 
-    if (!m) return;
+    if (!m) return true;
 
     out->double_sided = m->double_sided ? 1u : 0u;
-    out->alpha_blend  = m->alpha_mode == cgltf_alpha_mode_blend ? 1u : 0u;
+    switch (m->alpha_mode) {
+    case cgltf_alpha_mode_opaque:
+        out->alpha_mode = AERON_GLTF_ALPHA_OPAQUE;
+        break;
+    case cgltf_alpha_mode_mask:
+        if (!isfinite(m->alpha_cutoff) || m->alpha_cutoff < 0.0f ||
+            m->alpha_cutoff > 1.0f) return false;
+        out->alpha_mode = AERON_GLTF_ALPHA_MASK;
+        out->alpha_cutoff = m->alpha_cutoff;
+        break;
+    case cgltf_alpha_mode_blend:
+        out->alpha_mode = AERON_GLTF_ALPHA_BLEND;
+        break;
+    default:
+        return false;
+    }
     if (json_string_equals(m->extras.data, "aeronEmissiveMode",
                            "legacy_srgb_srcalpha")) {
         out->emissive_mode = AERON_GLTF_EMISSIVE_LEGACY_SRGB_SRCALPHA;
@@ -293,6 +309,16 @@ static void read_material(const cgltf_material *m, AeronGltfMaterial *out)
         out->uv_xform[c][2] = tv->transform.scale [0];
         out->uv_xform[c][3] = tv->transform.scale [1];
     }
+    return true;
+}
+
+static AeronGltfAlphaMode material_alpha_mode(const AeronGltfModel *model,
+                                               uint32_t material)
+{
+    if (material == AERON_GLTF_NO_MATERIAL) return AERON_GLTF_ALPHA_OPAQUE;
+    if (!model || material >= model->material_count)
+        return (AeronGltfAlphaMode)-1;
+    return model->materials[material].alpha_mode;
 }
 
 /* ===== Vertex append ===============================================
@@ -555,8 +581,13 @@ bool Aeron_GltfMeshBuildData(const cgltf_data *data,
             data->materials_count, sizeof *out->materials);
         if (!out->materials) goto cleanup;
         out->material_count = (uint32_t)data->materials_count;
-        for (uint32_t i = 0; i < out->material_count; i++)
-            read_material(&data->materials[i], &out->materials[i]);
+        for (uint32_t i = 0; i < out->material_count; i++) {
+            if (!read_material(&data->materials[i], &out->materials[i])) {
+                SDL_Log("[flight_gltf] '%s' material %u has invalid alpha state",
+                        source_label, i);
+                goto cleanup;
+            }
+        }
     }
 
     /* ---- Pass 1: count merged vertex / index / primitive totals, and
@@ -667,30 +698,73 @@ bool Aeron_GltfMeshBuildData(const cgltf_data *data,
     out->hardpoint_count   = hp_count;
     out->engine_glow_count = eg_count;
 
-    /* ---- Partition indices: opaque prims first, alpha-BLEND prims
-     * last (stable within each group). Classified per triangle via the
-     * owning prim's default-variant (column 0) material. ------------- */
-    out->opaque_index_count = out->index_count;
-    if (out->index_count > 0 && out->material_count > 0) {
+    /* A fixed index partition requires every runtime material variant of a
+     * primitive to remain in the same render class. */
+    for (uint32_t pid = 0; pid < out->total_prim_count; ++pid) {
+        const uint32_t default_material = out->prim_variant_material[
+            (size_t)pid * out->variant_slots];
+        const AeronGltfAlphaMode default_mode =
+            material_alpha_mode(out, default_material);
+        if ((int)default_mode < 0) {
+            SDL_Log("[flight_gltf] '%s' primitive %u references invalid material %u",
+                    source_label, pid, default_material);
+            goto cleanup;
+        }
+        for (uint32_t variant = 1; variant < out->variant_slots; ++variant) {
+            const uint32_t material = out->prim_variant_material[
+                (size_t)pid * out->variant_slots + variant];
+            const AeronGltfAlphaMode mode = material_alpha_mode(out, material);
+            if ((int)mode < 0 || mode != default_mode) {
+                SDL_Log("[flight_gltf] '%s' primitive %u variant %u changes alpha class "
+                        "(material %u mode %d -> material %u mode %d)",
+                        source_label, pid, variant, default_material,
+                        (int)default_mode, material, (int)mode);
+                goto cleanup;
+            }
+        }
+    }
+
+    /* ---- Partition indices: OPAQUE, MASK, BLEND, stable within each
+     * class. Primitive alpha class is invariant across variants above. ---- */
+    out->opaque_index_count = 0;
+    out->mask_index_offset = 0;
+    out->mask_index_count = 0;
+    out->blend_index_offset = 0;
+    out->blend_index_count = 0;
+    if (out->index_count > 0) {
         uint16_t *sorted = (uint16_t *)malloc(
             (size_t)out->index_count * sizeof *sorted);
         if (!sorted) goto cleanup;
         uint32_t w = 0;
-        for (int want_blend = 0; want_blend < 2; want_blend++) {
+        for (int wanted_mode = AERON_GLTF_ALPHA_OPAQUE;
+             wanted_mode <= AERON_GLTF_ALPHA_BLEND; ++wanted_mode) {
+            const uint32_t range_start = w;
             for (uint32_t t = 0; t + 2 < out->index_count; t += 3) {
                 const uint32_t pid = out->vertices[out->indices[t]].prim_id;
                 const uint32_t mat = out->prim_variant_material[
                     (size_t)pid * out->variant_slots];
-                const int blend = mat != AERON_GLTF_NO_MATERIAL &&
-                                  out->materials[mat].alpha_blend != 0;
-                if (blend != want_blend) continue;
+                const AeronGltfAlphaMode mode = material_alpha_mode(out, mat);
+                if ((int)mode != wanted_mode) continue;
                 sorted[w + 0] = out->indices[t + 0];
                 sorted[w + 1] = out->indices[t + 1];
                 sorted[w + 2] = out->indices[t + 2];
                 w += 3;
-                if (!want_blend) out->opaque_index_count = w;
             }
-            if (!want_blend && w == 0) out->opaque_index_count = 0;
+            if (wanted_mode == AERON_GLTF_ALPHA_OPAQUE) {
+                out->opaque_index_count = w - range_start;
+            } else if (wanted_mode == AERON_GLTF_ALPHA_MASK) {
+                out->mask_index_offset = range_start;
+                out->mask_index_count = w - range_start;
+            } else {
+                out->blend_index_offset = range_start;
+                out->blend_index_count = w - range_start;
+            }
+        }
+        if (w != out->index_count) {
+            free(sorted);
+            SDL_Log("[flight_gltf] '%s' index partition retained %u of %u indices",
+                    source_label, w, out->index_count);
+            goto cleanup;
         }
         memcpy(out->indices, sorted, (size_t)out->index_count * sizeof *sorted);
         free(sorted);
@@ -707,12 +781,14 @@ bool Aeron_GltfMeshBuildData(const cgltf_data *data,
                             * (1.0f / 65536.0f);
     }
 
-    SDL_Log("[flight_gltf] %s: %u verts, %u indices (%u blend), %u prims, "
+    SDL_Log("[flight_gltf] %s: %u verts, %u indices (%u opaque, %u mask, "
+            "%u blend), %u prims, "
             "%u materials, %u variants, atlases base=%zu nrm=%zu mr=%zu "
             "emis=%zu, radius=%g",
             source_label,
             out->vertex_count, out->index_count,
-            out->index_count - out->opaque_index_count, out->total_prim_count,
+            out->opaque_index_count, out->mask_index_count,
+            out->blend_index_count, out->total_prim_count,
             out->material_count, out->variant_count,
             out->channels[0].size, out->channels[1].size,
             out->channels[2].size, out->channels[3].size,

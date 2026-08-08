@@ -15,7 +15,15 @@ typedef struct AeronOptModelBuildOptions {
 	float smooth_angle_degrees;
 	float emissive_strength;
 	bool emissive;
+	const struct AeronOptAlphaOverride* alpha_overrides;
+	size_t alpha_override_count;
 } AeronOptModelBuildOptions;
+
+typedef struct AeronOptAlphaOverride {
+	const char* texture_name;
+	AeronGltfAlphaMode alpha_mode;
+	float alpha_cutoff;
+} AeronOptAlphaOverride;
 
 typedef struct AeronOptModelError {
 	int code;

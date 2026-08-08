@@ -33,10 +33,11 @@ typedef struct AeronPbrMaterialEntry {
 	float    emissive_rect[4];     /* atlas emissive sub-rect */
 	float    base_color_factor[4]; /* RGBA factor */
 	float    emissive_factor[4];   /* (RGB, emissive_strength) packed */
-	float    metal_rough[4];       /* (metallic, roughness, _, _) */
+	float    metal_rough[4];       /* (metallic, roughness, alpha_cutoff, _) */
 	uint32_t flags;                /* bit 0=has_normal, 1=has_MR, 2=has_emissive,
 									* 3=alpha_blend (FS alpha = tex.a * factor.a),
-									* 4=legacy sRGB/SRCALPHA emissive mode */
+									* 4=legacy sRGB/SRCALPHA emissive mode,
+									* 5=alpha_mask */
 	uint32_t _pad[3];
 } AeronPbrMaterialEntry; /* 128 B */
 
@@ -54,10 +55,12 @@ typedef struct AeronSceneMesh {
 	AeronBuffer* ibo; /* uint16 indices */
 	uint32_t     vertex_count;
 	uint32_t     index_count;
-	/* Indices [0, opaque_index_count) are opaque prims; the tail is
-	 * alpha-BLEND prims (canopy glass), drawn by the renderer as a
-	 * late alpha-blended no-depth-write range (see AeronGltfModel). */
+	/* Stable opaque, alpha-mask, and alpha-blend ranges. */
 	uint32_t     opaque_index_count;
+	uint32_t     mask_index_offset;
+	uint32_t     mask_index_count;
+	uint32_t     blend_index_offset;
+	uint32_t     blend_index_count;
 	AeronSceneMeshCpuVertex* cpu_vertices;
 	uint16_t*                 cpu_indices;
 

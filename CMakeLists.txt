@@ -200,13 +200,18 @@ set(AERON_SHADER_SOURCES
     # alpha-tested velocity-stamp variants for cooked glTF meshes.
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_pbr_mesh.vert.hlsl
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_pbr_mesh.frag.hlsl
+    ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_pbr_mesh_mask.frag.hlsl
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_pbr_prepass.vert.hlsl
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_pbr_prepass.frag.hlsl
+    ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_pbr_prepass_mask.vert.hlsl
+    ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_pbr_prepass_mask.frag.hlsl
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_pbr_prepass_stamp.vert.hlsl
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_pbr_prepass_stamp.frag.hlsl
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_clustered_lights.comp.hlsl
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_directional_shadow.vert.hlsl
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_directional_shadow.frag.hlsl
+    ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_directional_shadow_mask.vert.hlsl
+    ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_directional_shadow_mask.frag.hlsl
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_directional_shadow_debug.frag.hlsl
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_mesh_overlay.vert.hlsl
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_mesh_overlay.frag.hlsl
@@ -259,6 +264,7 @@ set(AERON_SHADER_SOURCES
 if(AERON_DEBUG_UI)
     list(APPEND AERON_SHADER_SOURCES
         ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_pbr_mesh_debug.frag.hlsl
+        ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_pbr_mesh_mask_debug.frag.hlsl
         ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_ssao_debug.frag.hlsl
     )
 endif()

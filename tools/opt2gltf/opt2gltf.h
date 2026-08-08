@@ -74,6 +74,7 @@
  */
 
 #include <stdbool.h>
+#include <stddef.h>
 
 #include "cgltf.h"
 #include "opt.h"
@@ -83,7 +84,26 @@ typedef struct OptGltfBuildOptions {
     float smooth_angle_degrees;
     bool repair_normals;
     bool emissive;
+    const struct OptGltfAlphaOverride *alpha_overrides;
+    size_t alpha_override_count;
 } OptGltfBuildOptions;
+
+typedef enum OptGltfAlphaMode {
+    OPT_GLTF_ALPHA_OPAQUE = 0,
+    OPT_GLTF_ALPHA_MASK   = 1,
+    OPT_GLTF_ALPHA_BLEND  = 2,
+} OptGltfAlphaMode;
+
+typedef struct OptGltfAlphaOverride {
+    const char *texture_name;
+    OptGltfAlphaMode alpha_mode;
+    float alpha_cutoff;
+} OptGltfAlphaOverride;
+
+/* Classify a legacy OPT base-level alpha plane. OPT stores samples but no
+ * material semantic, so coverage is inferred conservatively from endpoint
+ * prevalence. */
+OptGltfAlphaMode OptGltf_ClassifyAlpha(const uint8_t *alpha, size_t sample_count);
 
 typedef struct OptGltfImageView {
     const uint8_t *rgba;

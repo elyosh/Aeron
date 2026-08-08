@@ -78,6 +78,7 @@ static uint32_t populate_material_entries(AeronPbrMaterialEntry* entries,
 		e->emissive_factor[3] = m->emissive_strength;
 		e->metal_rough[0]     = m->metallic_factor;
 		e->metal_rough[1]     = m->roughness_factor;
+		e->metal_rough[2]     = m->alpha_cutoff;
 
 		/* flags mirror UV-xform scale presence (scale.xy > 0), matching
 		 * the FS sentinel: scale==0 means channel absent. */
@@ -91,11 +92,14 @@ static uint32_t populate_material_entries(AeronPbrMaterialEntry* entries,
 		if (e->emissive_rect[2] > 0.0f || e->emissive_rect[3] > 0.0f) {
 			flags |= 0x4u;
 		}
-		if (m->alpha_blend) {
+		if (m->alpha_mode == AERON_GLTF_ALPHA_BLEND) {
 			flags |= 0x8u; /* FS: alpha = tex.a * factor.a (blend prims) */
 		}
 		if (m->emissive_mode == AERON_GLTF_EMISSIVE_LEGACY_SRGB_SRCALPHA) {
 			flags |= 0x10u; /* FS: legacy sRGB filtering + SRCALPHA composition */
+		}
+		if (m->alpha_mode == AERON_GLTF_ALPHA_MASK) {
+			flags |= 0x20u; /* FS: discard base alpha below metal_rough.z */
 		}
 		e->flags = flags;
 	}
@@ -193,6 +197,21 @@ AeronSceneMesh* AeronScene_MeshCreate(AeronCommandBuffer* cmd, const AeronGltfMo
 		return NULL;
 	}
 	const char*     name = debug_name ? debug_name : "<mesh>";
+	if (model->mask_index_offset != model->opaque_index_count ||
+		model->mask_index_offset > model->index_count ||
+		model->mask_index_count > model->index_count - model->mask_index_offset ||
+		model->blend_index_offset != model->mask_index_offset + model->mask_index_count ||
+		model->blend_index_offset > model->index_count ||
+		model->blend_index_count != model->index_count - model->blend_index_offset ||
+		model->opaque_index_count % 3u != 0u || model->mask_index_offset % 3u != 0u ||
+		model->mask_index_count % 3u != 0u || model->blend_index_offset % 3u != 0u ||
+		model->blend_index_count % 3u != 0u) {
+		Aeron_LogError("aeron.scene", "%s: invalid opaque/mask/blend index ranges", name);
+		if (status) {
+			*status = AERON_SCENE_MESH_CREATE_INVALID_SOURCE;
+		}
+		return NULL;
+	}
 	Ktx2* channel_payloads[AERON_GLTF_CHANNEL_COUNT] = { 0 };
 	int have_any_channel = 0;
 	for (int c = 0; c < AERON_GLTF_CHANNEL_COUNT; ++c) {
@@ -265,6 +284,10 @@ AeronSceneMesh* AeronScene_MeshCreate(AeronCommandBuffer* cmd, const AeronGltfMo
 		s->vertex_count       = model->vertex_count;
 		s->index_count        = model->index_count;
 		s->opaque_index_count = model->opaque_index_count;
+		s->mask_index_offset  = model->mask_index_offset;
+		s->mask_index_count   = model->mask_index_count;
+		s->blend_index_offset = model->blend_index_offset;
+		s->blend_index_count  = model->blend_index_count;
 
 		s->cpu_vertices =
 			(AeronSceneMeshCpuVertex*)malloc((size_t)model->vertex_count * sizeof *s->cpu_vertices);

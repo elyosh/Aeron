@@ -56,6 +56,13 @@ typedef enum {
 	KTX2_TF_SRGB   = 1,
 } Ktx2TransferFn;
 
+/* Stored RGB/alpha association. Most legacy image users use PMA; glTF
+ * base-color textures follow the specification's straight-alpha contract. */
+typedef enum {
+	KTX2_ALPHA_PREMULTIPLIED = 0,
+	KTX2_ALPHA_STRAIGHT      = 1,
+} Ktx2AlphaEncoding;
+
 /* Write an uncompressed RGBA8 KTX2 with the given mip chain. */
 bool write_ktx2_rgba_mips(const char* path, const Ktx2WriteLevel* levels, int level_count, Ktx2TransferFn tf,
 						  bool zstd);
@@ -95,6 +102,12 @@ bool write_ktx2_bc7_with_generated_mips_to_buffer_limited(int base_w, int base_h
 														  bool zstd, int max_levels, uint8_t** out_buf,
 														  size_t* out_size);
 
+/* Explicit-alpha sibling used by glTF PBR cooking. */
+bool write_ktx2_bc7_with_generated_mips_to_buffer_limited_alpha(
+	int base_w, int base_h, const uint8_t* base_rgba, Ktx2Bc7Quality quality,
+	Ktx2TransferFn tf, bool zstd, int max_levels, Ktx2AlphaEncoding alpha_encoding,
+	uint8_t** out_buf, size_t* out_size);
+
 /* Convenience: build a power-of-two-halving mip chain from an RGBA8
  * base image via 2×2 box downsample, write the result as RGBA8 KTX2.
  * Stops at the smallest dim becoming 1. The base image is included
@@ -112,6 +125,12 @@ bool write_ktx2_rgba_with_generated_mips_to_buffer(int base_w, int base_h, const
 bool write_ktx2_rgba_with_generated_mips_to_buffer_limited(int base_w, int base_h, const uint8_t* base_rgba,
 														   Ktx2TransferFn tf, bool zstd, int max_levels,
 														   uint8_t** out_buf, size_t* out_size);
+
+/* Explicit-alpha sibling used by glTF PBR cooking. */
+bool write_ktx2_rgba_with_generated_mips_to_buffer_limited_alpha(
+	int base_w, int base_h, const uint8_t* base_rgba, Ktx2TransferFn tf,
+	bool zstd, int max_levels, Ktx2AlphaEncoding alpha_encoding,
+	uint8_t** out_buf, size_t* out_size);
 
 /* Convenience: encode an RGBA8 base image's R+G channels with bc5_codec,
  * generate a mip chain via 2× box downsample, write the result as a

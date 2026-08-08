@@ -36,6 +36,18 @@ struct PbrPrepassVSOut {
 	float4 clip_prev : TEXCOORD3;
 };
 
+struct PbrMaskPrepassVSOut {
+	float4 position : SV_Position;
+	float3 world_pos : TEXCOORD0;
+	float3 world_normal : TEXCOORD1;
+	float4 clip_curr : TEXCOORD2;
+	float4 clip_prev : TEXCOORD3;
+	float2 uv : TEXCOORD4;
+	/* x=prim_id, y=variant_row_base, z=variant_group_count,
+	 * w=material_count. */
+	nointerpolation uint4 material_lookup : TEXCOORD5;
+};
+
 struct PbrStampVSOut {
 	float4 position : SV_Position;
 	float2 uv : TEXCOORD0;

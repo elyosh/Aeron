@@ -5,6 +5,7 @@
 
 #include <math.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 typedef struct OptModelCookContext {
@@ -53,26 +54,55 @@ bool Aeron_OptModelBuildMemory(const void *bytes, size_t size,
 		options->smooth_angle_degrees < 0.0f ||
 		options->smooth_angle_degrees > 180.0f ||
 		!isfinite(options->emissive_strength) ||
-		options->emissive_strength < 0.0f)
+		options->emissive_strength < 0.0f ||
+		(options->alpha_override_count != 0 && !options->alpha_overrides))
 		return opt_model_error(error, 1, "invalid OPT build arguments");
+
+	OptGltfAlphaOverride* alpha_overrides = NULL;
+	if (options->alpha_override_count != 0) {
+		alpha_overrides = (OptGltfAlphaOverride*)calloc(
+			options->alpha_override_count, sizeof *alpha_overrides);
+		if (!alpha_overrides)
+			return opt_model_error(error, 1, "out of memory for OPT alpha overrides");
+		for (size_t index = 0; index < options->alpha_override_count; ++index) {
+			const AeronOptAlphaOverride* source = &options->alpha_overrides[index];
+			if (!source->texture_name || !source->texture_name[0] ||
+				source->alpha_mode < AERON_GLTF_ALPHA_OPAQUE ||
+				source->alpha_mode > AERON_GLTF_ALPHA_BLEND ||
+				!isfinite(source->alpha_cutoff) || source->alpha_cutoff < 0.0f ||
+				source->alpha_cutoff > 1.0f) {
+				free(alpha_overrides);
+				return opt_model_error(error, 1, "invalid OPT alpha override");
+			}
+			alpha_overrides[index].texture_name = source->texture_name;
+			alpha_overrides[index].alpha_mode = (OptGltfAlphaMode)source->alpha_mode;
+			alpha_overrides[index].alpha_cutoff = source->alpha_cutoff;
+		}
+	}
 
 	opt_error_t parser_error = {{0}};
 	opt_file_t *opt = opt_load_memory(bytes, size, &parser_error);
-	if (!opt)
+	if (!opt) {
+		free(alpha_overrides);
 		return opt_model_error(error, 2, parser_error.msg);
+	}
 	const OptGltfBuildOptions build_options = {
 			.vertex_scale = options->vertex_scale,
 			.smooth_angle_degrees = options->smooth_angle_degrees,
 			.repair_normals = true,
 			.emissive = options->emissive,
+			.alpha_overrides = alpha_overrides,
+			.alpha_override_count = options->alpha_override_count,
 	};
 	OptGltfDocument *document = NULL;
 	if (!OptGltf_BuildMemory(opt, label, &build_options, &document,
 							  &parser_error)) {
 		opt_free(opt);
+		free(alpha_overrides);
 		return opt_model_error(error, 3, parser_error.msg);
 	}
 	opt_free(opt);
+	free(alpha_overrides);
 
 	AeronGltfCookOptions cook_options;
 	aeron_gltf_cook_default_options(&cook_options);

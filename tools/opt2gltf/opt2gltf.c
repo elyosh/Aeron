@@ -20,6 +20,7 @@
 
 #include "opt2gltf.h"
 #include "opt.h"
+#include "aeron/log.h"
 #include "aeron/mesh_normals.h"
 
 #include <stdio.h>
@@ -681,6 +682,137 @@ static bool built_mesh_from_opt(BuiltMesh *bm, const opt_mesh_t *m,
 
 /* ===== Conversion ==================================================== */
 
+typedef struct AlphaHistogram {
+    uint64_t zero_count;
+    uint64_t full_count;
+    uint64_t intermediate_count;
+} AlphaHistogram;
+
+static OptGltfAlphaMode classify_alpha(const uint8_t *alpha,
+                                       size_t sample_count,
+                                       AlphaHistogram *histogram)
+{
+    AlphaHistogram result = {0, 0, 0};
+    if (!alpha || sample_count == 0) {
+        if (histogram) *histogram = result;
+        return OPT_GLTF_ALPHA_OPAQUE;
+    }
+
+    for (size_t i = 0; i < sample_count; ++i) {
+        result.zero_count += alpha[i] == 0u;
+        result.full_count += alpha[i] == 255u;
+    }
+    result.intermediate_count = (uint64_t)sample_count -
+                                result.zero_count - result.full_count;
+    if (histogram) *histogram = result;
+    if (result.full_count == sample_count) return OPT_GLTF_ALPHA_OPAQUE;
+
+    const uint64_t endpoint_count = result.zero_count + result.full_count;
+    if (result.zero_count != 0 && result.full_count != 0 &&
+        result.intermediate_count <= endpoint_count / 9u) {
+        return OPT_GLTF_ALPHA_MASK;
+    }
+    return OPT_GLTF_ALPHA_BLEND;
+}
+
+OptGltfAlphaMode OptGltf_ClassifyAlpha(const uint8_t *alpha,
+                                       size_t sample_count)
+{
+    return classify_alpha(alpha, sample_count, NULL);
+}
+
+static int alpha_name_equal(const char *a, const char *b)
+{
+    if (!a || !b) return 0;
+    while (*a && *b) {
+        unsigned char ca = (unsigned char)*a++;
+        unsigned char cb = (unsigned char)*b++;
+        if (ca >= 'a' && ca <= 'z') ca = (unsigned char)(ca - ('a' - 'A'));
+        if (cb >= 'a' && cb <= 'z') cb = (unsigned char)(cb - ('a' - 'A'));
+        if (ca != cb) return 0;
+    }
+    return *a == *b;
+}
+
+static const OptGltfAlphaOverride *find_alpha_override(
+    const OptGltfBuildOptions *options, const opt_texture_t *texture,
+    int32_t texture_index)
+{
+    if (!options || !options->alpha_overrides ||
+        options->alpha_override_count == 0) return NULL;
+    char generated_name[32];
+    snprintf(generated_name, sizeof generated_name, "Tex%02d",
+             (int)texture_index);
+    for (size_t i = 0; i < options->alpha_override_count; ++i) {
+        const OptGltfAlphaOverride *override = &options->alpha_overrides[i];
+        if (alpha_name_equal(override->texture_name, texture->name) ||
+            alpha_name_equal(override->texture_name, generated_name)) {
+            return override;
+        }
+    }
+    return NULL;
+}
+
+static size_t alpha_override_match_count(const OptGltfBuildOptions *options,
+                                         const opt_texture_t *texture,
+                                         int32_t texture_index)
+{
+    if (!options || !options->alpha_overrides) return 0;
+    char generated_name[32];
+    snprintf(generated_name, sizeof generated_name, "Tex%02d",
+             (int)texture_index);
+    size_t count = 0;
+    for (size_t i = 0; i < options->alpha_override_count; ++i) {
+        const char *name = options->alpha_overrides[i].texture_name;
+        count += alpha_name_equal(name, texture->name) ||
+                 alpha_name_equal(name, generated_name);
+    }
+    return count;
+}
+
+static const char *alpha_mode_name(OptGltfAlphaMode mode)
+{
+    switch (mode) {
+    case OPT_GLTF_ALPHA_OPAQUE: return "opaque";
+    case OPT_GLTF_ALPHA_MASK: return "mask";
+    case OPT_GLTF_ALPHA_BLEND: return "blend";
+    default: return "invalid";
+    }
+}
+
+static bool validate_alpha_overrides(const OptGltfBuildOptions *options,
+                                     opt_error_t *error)
+{
+    if (!options || options->alpha_override_count == 0) return true;
+    if (!options->alpha_overrides) {
+        if (error) snprintf(error->msg, sizeof error->msg,
+                            "alpha override count has no records");
+        return false;
+    }
+    for (size_t i = 0; i < options->alpha_override_count; ++i) {
+        const OptGltfAlphaOverride *item = &options->alpha_overrides[i];
+        if (!item->texture_name || !item->texture_name[0] ||
+            item->alpha_mode < OPT_GLTF_ALPHA_OPAQUE ||
+            item->alpha_mode > OPT_GLTF_ALPHA_BLEND ||
+            !isfinite(item->alpha_cutoff) || item->alpha_cutoff < 0.0f ||
+            item->alpha_cutoff > 1.0f) {
+            if (error) snprintf(error->msg, sizeof error->msg,
+                                "invalid alpha override %zu", i);
+            return false;
+        }
+        for (size_t previous = 0; previous < i; ++previous) {
+            if (alpha_name_equal(item->texture_name,
+                                 options->alpha_overrides[previous].texture_name)) {
+                if (error) snprintf(error->msg, sizeof error->msg,
+                                    "duplicate alpha override '%s'",
+                                    item->texture_name);
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
 bool OptGltf_BuildMemory(const opt_file_t *opt,
                          const char *basename,
                          const OptGltfBuildOptions *options,
@@ -690,6 +822,7 @@ bool OptGltf_BuildMemory(const opt_file_t *opt,
     if (out_document) *out_document = NULL;
     if (error) error->msg[0] = '\0';
     if (!opt || !basename || !out_document) return false;
+    if (!validate_alpha_overrides(options, error)) return false;
     const float smooth_angle_deg = options ? options->smooth_angle_degrees : -1.0f;
     const bool repair_normals = options ? options->repair_normals : true;
     const bool emissive = options ? options->emissive : false;
@@ -788,8 +921,57 @@ bool OptGltf_BuildMemory(const opt_file_t *opt,
         mat->pbr_metallic_roughness.roughness_factor = 1.0f;
         mat->pbr_metallic_roughness.base_color_texture.texture = &build->textures[i];
         mat->double_sided = 1;
-        /* XWA textures may carry a per-pixel alpha map; blend when present. */
-        if (t->alpha) mat->alpha_mode = cgltf_alpha_mode_blend;
+        AlphaHistogram alpha_histogram = {0, 0, 0};
+        OptGltfAlphaMode alpha_mode = classify_alpha(
+            t->alpha, (size_t)t->width * (size_t)t->height,
+            &alpha_histogram);
+        float alpha_cutoff = 0.5f;
+        const OptGltfAlphaOverride *alpha_override =
+            find_alpha_override(options, t, i);
+        if (alpha_override_match_count(options, t, i) > 1) {
+            if (error) {
+                snprintf(error->msg, sizeof error->msg,
+                         "multiple alpha overrides resolve to texture '%s'",
+                         t->name);
+            }
+            goto fail;
+        }
+        if (alpha_override) {
+            if (alpha_override->alpha_mode < OPT_GLTF_ALPHA_OPAQUE ||
+                alpha_override->alpha_mode > OPT_GLTF_ALPHA_BLEND ||
+                !isfinite(alpha_override->alpha_cutoff) ||
+                alpha_override->alpha_cutoff < 0.0f ||
+                alpha_override->alpha_cutoff > 1.0f ||
+                (alpha_override->alpha_mode != OPT_GLTF_ALPHA_OPAQUE &&
+                 !t->alpha)) {
+                if (error) {
+                    snprintf(error->msg, sizeof error->msg,
+                             "invalid alpha override for texture '%s'",
+                             t->name);
+                }
+                goto fail;
+            }
+            alpha_mode = alpha_override->alpha_mode;
+            alpha_cutoff = alpha_override->alpha_cutoff;
+        }
+        if (t->alpha) {
+            Aeron_LogDebug(
+                "aeron.opt",
+                "[opt_alpha] %s %s: mode=%s source=%s zero=%llu full=%llu "
+                "intermediate=%llu cutoff=%.3g",
+                basename, t->name[0] ? t->name : build->images[i].name,
+                alpha_mode_name(alpha_mode), alpha_override ? "override" : "heuristic",
+                (unsigned long long)alpha_histogram.zero_count,
+                (unsigned long long)alpha_histogram.full_count,
+                (unsigned long long)alpha_histogram.intermediate_count,
+                (double)alpha_cutoff);
+        }
+        if (alpha_mode == OPT_GLTF_ALPHA_MASK) {
+            mat->alpha_mode = cgltf_alpha_mode_mask;
+            mat->alpha_cutoff = alpha_cutoff;
+        } else if (alpha_mode == OPT_GLTF_ALPHA_BLEND) {
+            mat->alpha_mode = cgltf_alpha_mode_blend;
+        }
 
         /* Emissive: self-illuminated texels (e.g. lit windows) get a second
          * texture holding their base color on black, wired as emissiveTexture
@@ -820,6 +1002,33 @@ bool OptGltf_BuildMemory(const opt_file_t *opt,
                 mat->extras.data = gb_keep_string(build,
                     xstrdup("{\"aeronEmissiveMode\":\"legacy_srgb_srcalpha\"}"));
                 emi++;
+            }
+        }
+    }
+    if (options && options->alpha_overrides) {
+        for (size_t override_index = 0;
+             override_index < options->alpha_override_count; ++override_index) {
+            bool matched = false;
+            for (int32_t texture_index = 0;
+                 texture_index < opt->texture_count; ++texture_index) {
+                const opt_texture_t *texture = &opt->textures[texture_index];
+                char generated_name[32];
+                snprintf(generated_name, sizeof generated_name, "Tex%02d",
+                         (int)texture_index);
+                if (alpha_name_equal(
+                        options->alpha_overrides[override_index].texture_name,
+                        texture->name) ||
+                    alpha_name_equal(
+                        options->alpha_overrides[override_index].texture_name,
+                        generated_name)) {
+                    matched = true;
+                    break;
+                }
+            }
+            if (!matched) {
+                Aeron_LogWarn("aeron.opt", "%s: unused alpha override '%s'",
+                              basename,
+                              options->alpha_overrides[override_index].texture_name);
             }
         }
     }
@@ -1417,6 +1626,8 @@ bool opt2gltf_convert(const opt_file_t *opt,
         .smooth_angle_degrees = smooth_angle_deg,
         .repair_normals = repair_normals,
         .emissive = emissive,
+        .alpha_overrides = NULL,
+        .alpha_override_count = 0,
     };
     OptGltfDocument *document = NULL;
     opt_error_t error = {{0}};

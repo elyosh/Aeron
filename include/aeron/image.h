@@ -21,6 +21,10 @@ uint8_t* Aeron_ImageUpscaleNearestRgba8(const uint8_t* source, int width, int he
  * `max(1, input / 2)`. */
 uint8_t* Aeron_ImageDownsampleRgba8(const uint8_t* source, int width, int height, int* out_width,
 									int* out_height);
+/* Returns a malloc-owned 2x box-filtered straight-alpha image. RGB is
+ * filtered in associated-alpha space and stored unassociated. */
+uint8_t* Aeron_ImageDownsampleStraightAlphaRgba8(const uint8_t* source, int width, int height,
+												 int* out_width, int* out_height);
 
 #ifdef __cplusplus
 }

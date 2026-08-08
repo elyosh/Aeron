@@ -41,10 +41,15 @@ enum {
 	AERON_PBR_PIPE_FORWARD,          /* color, depth-EQUAL/no-write */
 	AERON_PBR_PIPE_PREPASS,          /* normal only */
 	AERON_PBR_PIPE_PREPASS_VEL,      /* normal + velocity */
+	AERON_PBR_PIPE_MESH_MASK,        /* alpha mask, monolithic color */
+	AERON_PBR_PIPE_FORWARD_MASK,     /* alpha mask, deferred color */
+	AERON_PBR_PIPE_PREPASS_MASK,     /* alpha mask normal only */
+	AERON_PBR_PIPE_PREPASS_MASK_VEL, /* alpha mask normal + velocity */
 	AERON_PBR_PIPE_MESH_BLEND,       /* blend range of MESH */
 	AERON_PBR_PIPE_FORWARD_BLEND,    /* blend range of FORWARD (test GE) */
 	AERON_PBR_PIPE_PREPASS_STAMP,    /* normal masked + velocity written */
 	AERON_PBR_PIPE_PREPASS_TEMPORAL, /* normal + velocity + R32 depth export */
+	AERON_PBR_PIPE_PREPASS_MASK_TEMPORAL, /* alpha mask normal + velocity + depth */
 	AERON_PBR_PIPE_KIND_COUNT
 };
 
@@ -238,6 +243,9 @@ struct AeronScene3D {
 	AeronShader*                       shadow_vs;
 	AeronShader*                       shadow_fs;
 	AeronGraphicsPipeline*             shadow_pipes[3];
+	AeronShader*                       shadow_mask_vs;
+	AeronShader*                       shadow_mask_fs;
+	AeronGraphicsPipeline*             shadow_mask_pipes[3];
 	int                                shadow_debug_tried;
 	AeronShader*                       shadow_debug_vs;
 	AeronShader*                       shadow_debug_fs;
@@ -428,13 +436,17 @@ struct AeronScene3D {
 	AeronSampler* mesh_sampler;
 	AeronShader*  pbr_vs;
 	AeronShader*  pbr_prepass_vs;
+	AeronShader*  pbr_prepass_mask_vs;
 	AeronShader*  pbr_prepass_stamp_vs;
 	AeronShader*  pbr_fs;
+	AeronShader*  pbr_mask_fs;
 #ifdef AERON_DEBUG_UI
 	int          pbr_debug_tried;
 	AeronShader* pbr_debug_fs;
+	AeronShader* pbr_mask_debug_fs;
 #endif
 	AeronShader* pbr_prepass_fs;
+	AeronShader* pbr_prepass_mask_fs;
 	/* Pipeline matrix: kind x cull mode. Cull-NONE variants are created
 	 * by Ensure (the long-standing behavior); other cull modes are
 	 * created lazily on first use (per-instance cull_mode). */

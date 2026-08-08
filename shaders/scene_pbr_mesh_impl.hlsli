@@ -43,30 +43,8 @@
 #include "scene_pbr_atlas_sample.hlsli"
 #include "scene_pbr_vsout.hlsli"
 #include "srgb.hlsli"
+#include "scene_pbr_material_alpha.hlsli"
 
-/* Per-material entry. Layout mirrors host GltfMaterialEntry (128 B).
- * Sub-rect zw == 0 means "channel absent for this material" → factor
- * fallback. */
-struct GltfMaterial
-{
-    float4 base_rect;
-    float4 normal_rect;
-    float4 mr_rect;
-    float4 emissive_rect;
-    float4 base_color_factor;
-    float4 emissive_packed;    /* .rgb = factor, .a = emissive_strength */
-    float4 metal_rough;        /* .x = metallic, .y = roughness */
-    uint   flags;              /* mirrors sub-rect presence for fast gate */
-    uint3  _pad;
-};
-
-StructuredBuffer<GltfMaterial> g_materials : register(t7, space2);
-StructuredBuffer<uint4> g_prim_to_material : register(t8, space2);
-
-static const uint GLTF_NO_MATERIAL = 0xFFFFFFFFu;
-
-Texture2D    g_base_color   : register(t0, space2);
-SamplerState g_base_sampler : register(s0, space2);
 Texture2D    g_normal       : register(t1, space2);
 SamplerState g_normal_sampler : register(s1, space2);
 Texture2D    g_mr           : register(t2, space2);
@@ -90,45 +68,16 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
     FSOut _out;
 
     /* ===== Material resolution =================================== */
-    uint mat_idx;
-    {
-        uint slot = i.prim_id >> 2u;
-        uint comp = i.prim_id & 3u;
-        uint4 packed = slot < i.variant_group_count
-            ? g_prim_to_material[i.variant_row_base + slot]
-            : uint4(GLTF_NO_MATERIAL, GLTF_NO_MATERIAL, GLTF_NO_MATERIAL, GLTF_NO_MATERIAL);
-        mat_idx =
-              (comp == 0u) ? packed.x
-            : (comp == 1u) ? packed.y
-            : (comp == 2u) ? packed.z
-            :                packed.w;
-    }
-    bool has_mat = (mat_idx != GLTF_NO_MATERIAL) && (mat_idx < i.material_count);
-
-    GltfMaterial m;
-    if (has_mat) {
-        m = g_materials[mat_idx];
-    } else {
-        /* Fully-default material — base_color (1,1,1,1), no texture
-         * channels. The whole fragment falls back to factor-only. */
-        m.base_rect          = float4(0,0,0,0);
-        m.normal_rect        = float4(0,0,0,0);
-        m.mr_rect            = float4(0,0,0,0);
-        m.emissive_rect      = float4(0,0,0,0);
-        m.base_color_factor  = float4(1,1,1,1);
-        m.emissive_packed    = float4(0,0,0,1);
-        m.metal_rough        = float4(0,1,0,0);
-        m.flags              = 0u;
-    }
+    GltfMaterial m = pbr_resolve_material(
+        i.prim_id, i.variant_row_base, i.variant_group_count,
+        i.material_count);
 
     /* ===== Base color ============================================ */
-    float4 albedo_tex;
-    if (m.base_rect.z > 0.0f && m.base_rect.w > 0.0f) {
-        albedo_tex = atlas_sample(g_base_color, g_base_sampler,
-                                  i.uv, m.base_rect);
-    } else {
-        albedo_tex = float4(1, 1, 1, 1);
-    }
+    float4 albedo_tex = pbr_sample_base_color(m, i.uv);
+#if AERON_PBR_ALPHA_MASK
+    pbr_apply_alpha_mask(albedo_tex.a * m.base_color_factor.a,
+                         m.metal_rough.z);
+#endif
     float3 albedo = albedo_tex.rgb * m.base_color_factor.rgb;
 
     /* ===== Normal vector ========================================= */
@@ -151,7 +100,7 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
     }
 #endif
     float3 N = N_geom;
-    if ((m.flags & 0x1u) != 0u) {
+    if ((m.flags & GLTF_MATERIAL_HAS_NORMAL) != 0u) {
         float3 ntex = atlas_sample(g_normal, g_normal_sampler,
                                    i.uv, m.normal_rect).rgb * 2.0f - 1.0f;
         float  nz   = sqrt(saturate(1.0f - dot(ntex.xy, ntex.xy)));
@@ -222,7 +171,7 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
     mp.F0             = float3(0.04f, 0.04f, 0.04f);
     mp.albedo         = albedo;
     float metallic = m.metal_rough.x;
-    if ((m.flags & 0x2u) != 0u) {
+    if ((m.flags & GLTF_MATERIAL_HAS_METALLIC_ROUGHNESS) != 0u) {
         float3 mr = atlas_sample(g_mr, g_mr_sampler, i.uv, m.mr_rect).rgb;
         mp.roughness = mr.g * m.metal_rough.y;
         metallic     = mr.b * m.metal_rough.x;
@@ -361,13 +310,13 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
     } else if (xvt_flat == 0.0f) {
         float3 emissive = m.emissive_packed.rgb;
         float emissive_coverage = 0.0f;
-        if ((m.flags & 0x4u) != 0u) {
+        if ((m.flags & GLTF_MATERIAL_HAS_EMISSIVE) != 0u) {
             float4 emissive_tex = atlas_sample(g_emissive, g_em_sampler,
                                                i.uv, m.emissive_rect);
             emissive_coverage = emissive_tex.a;
 
             float3 emissive_rgb = emissive_tex.rgb;
-            if ((m.flags & 0x10u) != 0u) {
+            if ((m.flags & GLTF_MATERIAL_LEGACY_EMISSIVE) != 0u) {
                 /* Against transparent black, the sRGB hardware sample is
                  * approximately coverage * linear(glow_rgb). Recover the
                  * glow colour and reproduce both classic operations in
@@ -387,7 +336,7 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
         }
         float emissive_mul = i.emissive_mul;
         emissive *= m.emissive_packed.a * emissive_mul;
-        if ((m.flags & 0x10u) != 0u) {
+        if ((m.flags & GLTF_MATERIAL_LEGACY_EMISSIVE) != 0u) {
             lit = emissive + lit * (1.0f - saturate(emissive_coverage * emissive_mul));
         } else {
             lit += emissive;
@@ -397,7 +346,7 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
     /* Alpha-BLEND materials (flag bit 3 — canopy glass, drawn by the
      * blend pipelines) carry texture x factor alpha; every opaque
      * material writes 1 so the scene RT keeps full coverage. */
-    float alpha = ((m.flags & 0x8u) != 0u)
+    float alpha = ((m.flags & GLTF_MATERIAL_ALPHA_BLEND) != 0u)
                       ? saturate(albedo_tex.a * m.base_color_factor.a)
                       : 1.0f;
     _out.color = float4(lit, alpha);

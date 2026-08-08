@@ -92,16 +92,9 @@ static size_t level_bytes(uint32_t vk, int w, int h) {
 	return (size_t)blocks_x * (size_t)blocks_y * (size_t)bb;
 }
 
-/* Premultiply RGB by alpha into a fresh malloc'd buffer. Caller frees.
- * KTX2 levels use premultiplied-alpha "over" blending
- * (`src + (1-src.a)*dst`), so they MUST contain PMA
- * pixels. PNG inputs are always straight (unassociated) alpha; doing
- * the conversion here — once, before mip generation and BC7 encoding —
- * keeps the artist-facing PNG corpus standard while guaranteeing every
- * `.ktx2` we emit blends correctly. Bonus: encoding RGB=0 in fully-
- * transparent texels gives BC7 a much easier-to-compress block (the
- * artist's "hidden" RGB fill in alpha=0 areas is irrelevant to the
- * final picture and would only steal bit budget from visible regions). */
+/* Premultiply RGB by alpha into a fresh malloc'd buffer. Legacy callers use
+ * premultiplied-alpha blending; glTF base color selects straight storage via
+ * the explicit encoding parameter below. */
 static uint8_t* make_premultiplied_copy(const uint8_t* rgba, int w, int h) {
 	size_t   n   = (size_t)w * (size_t)h;
 	uint8_t* out = (uint8_t*)malloc(n * 4u);
@@ -110,6 +103,29 @@ static uint8_t* make_premultiplied_copy(const uint8_t* rgba, int w, int h) {
 	memcpy(out, rgba, n * 4u);
 	Aeron_ImagePremultiplyRgba8(out, n);
 	return out;
+}
+
+static uint8_t* make_alpha_encoded_copy(const uint8_t* rgba, int w, int h,
+										 Ktx2AlphaEncoding encoding) {
+	if (encoding == KTX2_ALPHA_PREMULTIPLIED)
+		return make_premultiplied_copy(rgba, w, h);
+	if (encoding != KTX2_ALPHA_STRAIGHT)
+		return NULL;
+	const size_t bytes = (size_t)w * (size_t)h * 4u;
+	uint8_t* copy = (uint8_t*)malloc(bytes);
+	if (copy)
+		memcpy(copy, rgba, bytes);
+	return copy;
+}
+
+static uint8_t* downsample_alpha_encoded_rgba8(const uint8_t* source, int width, int height,
+												int* out_width, int* out_height,
+												Ktx2AlphaEncoding encoding) {
+	if (encoding == KTX2_ALPHA_STRAIGHT)
+		return Aeron_ImageDownsampleStraightAlphaRgba8(source, width, height, out_width, out_height);
+	return encoding == KTX2_ALPHA_PREMULTIPLIED
+		? Aeron_ImageDownsampleRgba8(source, width, height, out_width, out_height)
+		: NULL;
 }
 
 /* Build the complete KTX2 file image into a fresh malloc'd buffer.
@@ -349,6 +365,7 @@ static Bc7Quality bc7_quality_map(Ktx2Bc7Quality q) {
  * stay in lockstep. */
 static bool bc7_with_generated_mips_core(int base_w, int base_h, const uint8_t* base_rgba,
 										 Ktx2Bc7Quality quality, Ktx2TransferFn tf, bool zstd, int max_levels,
+										 Ktx2AlphaEncoding alpha_encoding,
 										 const char* path, uint8_t** out_buf, size_t* out_size) {
 	if (!base_rgba || base_w < 1 || base_h < 1)
 		return false;
@@ -362,12 +379,9 @@ static bool bc7_with_generated_mips_core(int base_w, int base_h, const uint8_t* 
 	bc7_codec_init();
 	Bc7Quality bcq = bc7_quality_map(quality);
 
-	/* Premultiply the base level. Mip-gen and BC7 encoding both run
-	 * on PMA pixels — see make_premultiplied_copy for the reasoning
-	 * (matches runtime blend, correct mipmap colors at edges, smaller
-	 * BC7 error budget in transparent regions). */
-	uint8_t* pma_base = make_premultiplied_copy(base_rgba, base_w, base_h);
-	if (!pma_base)
+	/* Copy into the requested representation before mip generation. */
+	uint8_t* alpha_base = make_alpha_encoded_copy(base_rgba, base_w, base_h, alpha_encoding);
+	if (!alpha_base)
 		return false;
 
 	/* Generate the mip chain in RGBA, then encode every level to BC7
@@ -382,14 +396,14 @@ static bool bc7_with_generated_mips_core(int base_w, int base_h, const uint8_t* 
 
 	widths[n]  = base_w;
 	heights[n] = base_h;
-	/* Level 0 RGBA — owned PMA copy. */
-	rgba_owned[n] = pma_base;
+	/* Level 0 RGBA — owned copy in the requested representation. */
+	rgba_owned[n] = alpha_base;
 	n++;
 	int            w = base_w, h = base_h;
-	const uint8_t* src = pma_base;
+	const uint8_t* src = alpha_base;
 	while (w > 1 && h > 1 && n < KTX2_MAX_LEVELS && (max_levels == 0 || n < max_levels)) {
 		int      dw = 0, dh = 0;
-		uint8_t* down = Aeron_ImageDownsampleRgba8(src, w, h, &dw, &dh);
+		uint8_t* down = downsample_alpha_encoded_rgba8(src, w, h, &dw, &dh, alpha_encoding);
 		if (!down)
 			break;
 		rgba_owned[n] = down;
@@ -401,7 +415,7 @@ static bool bc7_with_generated_mips_core(int base_w, int base_h, const uint8_t* 
 		n++;
 	}
 
-	/* Encode each level from its PMA buffer. */
+	/* Encode each level from its alpha-encoded buffer. */
 	Ktx2WriteLevel levels[KTX2_MAX_LEVELS] = { 0 };
 	bool           ok                      = true;
 	for (int i = 0; i < n; ++i) {
@@ -444,7 +458,8 @@ bool write_ktx2_bc7_with_generated_mips(const char* path, int base_w, int base_h
 										Ktx2Bc7Quality quality, Ktx2TransferFn tf, bool zstd) {
 	if (!path)
 		return false;
-	return bc7_with_generated_mips_core(base_w, base_h, base_rgba, quality, tf, zstd, 0, path, NULL, NULL);
+	return bc7_with_generated_mips_core(base_w, base_h, base_rgba, quality, tf, zstd, 0,
+										  KTX2_ALPHA_PREMULTIPLIED, path, NULL, NULL);
 }
 
 bool write_ktx2_bc7_with_generated_mips_to_buffer(int base_w, int base_h, const uint8_t* base_rgba,
@@ -458,12 +473,21 @@ bool write_ktx2_bc7_with_generated_mips_to_buffer_limited(int base_w, int base_h
 														  Ktx2Bc7Quality quality, Ktx2TransferFn tf,
 														  bool zstd, int max_levels, uint8_t** out_buf,
 														  size_t* out_size) {
+	return write_ktx2_bc7_with_generated_mips_to_buffer_limited_alpha(
+		base_w, base_h, base_rgba, quality, tf, zstd, max_levels,
+		KTX2_ALPHA_PREMULTIPLIED, out_buf, out_size);
+}
+
+bool write_ktx2_bc7_with_generated_mips_to_buffer_limited_alpha(
+	int base_w, int base_h, const uint8_t* base_rgba, Ktx2Bc7Quality quality,
+	Ktx2TransferFn tf, bool zstd, int max_levels, Ktx2AlphaEncoding alpha_encoding,
+	uint8_t** out_buf, size_t* out_size) {
 	if (!out_buf || !out_size)
 		return false;
 	*out_buf  = NULL;
 	*out_size = 0;
-	return bc7_with_generated_mips_core(base_w, base_h, base_rgba, quality, tf, zstd, max_levels, NULL,
-										out_buf, out_size);
+	return bc7_with_generated_mips_core(base_w, base_h, base_rgba, quality, tf, zstd, max_levels,
+										  alpha_encoding, NULL, out_buf, out_size);
 }
 
 /* BC5 buffer entry point. Mirrors the BC7 version but skips the PMA
@@ -662,7 +686,7 @@ bool write_ktx2_bc7_cubemap_with_generated_mips(const char* path, int face_size,
 
 static bool rgba_with_generated_mips_core(const char* path, int base_w, int base_h, const uint8_t* base_rgba,
 										  Ktx2TransferFn tf, bool zstd, int max_levels, uint8_t** out_buf,
-										  size_t* out_size) {
+										  size_t* out_size, Ktx2AlphaEncoding alpha_encoding) {
 	if ((!path && (!out_buf || !out_size)) || (path && (out_buf || out_size)) || !base_rgba || base_w < 1 ||
 		base_h < 1 || max_levels < 0)
 		return false;
@@ -672,31 +696,29 @@ static bool rgba_with_generated_mips_core(const char* path, int base_w, int base
 		*out_size = 0;
 	}
 
-	/* Premultiply once; mip-gen runs on the PMA buffer so transparent
-	 * texels contribute zero to the box average (no edge halos), and
-	 * the runtime PMA blend reads correct values everywhere. */
-	uint8_t* pma_base = make_premultiplied_copy(base_rgba, base_w, base_h);
-	if (!pma_base)
+	/* Copy once into the requested representation before mip generation. */
+	uint8_t* alpha_base = make_alpha_encoded_copy(base_rgba, base_w, base_h, alpha_encoding);
+	if (!alpha_base)
 		return false;
 
 	Ktx2WriteLevel levels[KTX2_MAX_LEVELS] = { 0 };
 	uint8_t*       owned[KTX2_MAX_LEVELS]  = { 0 };
 	int            n                       = 0;
 
-	/* Level 0 — owned PMA copy of the base image. */
-	owned[n]         = pma_base;
+	/* Level 0 — owned copy of the base image. */
+	owned[n]         = alpha_base;
 	levels[n].width  = base_w;
 	levels[n].height = base_h;
-	levels[n].data   = pma_base;
+	levels[n].data   = alpha_base;
 	levels[n].size   = (size_t)base_w * (size_t)base_h * 4u;
 	n++;
 
 	/* Generate levels 1..N until 1×1. */
 	int            w = base_w, h = base_h;
-	const uint8_t* src = pma_base;
+	const uint8_t* src = alpha_base;
 	while (w > 1 && h > 1 && n < KTX2_MAX_LEVELS && (max_levels == 0 || n < max_levels)) {
 		int      dw = 0, dh = 0;
-		uint8_t* down = Aeron_ImageDownsampleRgba8(src, w, h, &dw, &dh);
+		uint8_t* down = downsample_alpha_encoded_rgba8(src, w, h, &dw, &dh, alpha_encoding);
 		if (!down)
 			break;
 		owned[n]         = down; /* freed at end */
@@ -726,7 +748,8 @@ static bool rgba_with_generated_mips_core(const char* path, int base_w, int base
 
 bool write_ktx2_rgba_with_generated_mips(const char* path, int base_w, int base_h, const uint8_t* base_rgba,
 										 Ktx2TransferFn tf, bool zstd) {
-	return rgba_with_generated_mips_core(path, base_w, base_h, base_rgba, tf, zstd, 0, NULL, NULL);
+	return rgba_with_generated_mips_core(path, base_w, base_h, base_rgba, tf, zstd, 0, NULL, NULL,
+										   KTX2_ALPHA_PREMULTIPLIED);
 }
 
 bool write_ktx2_rgba_with_generated_mips_to_buffer(int base_w, int base_h, const uint8_t* base_rgba,
@@ -739,8 +762,17 @@ bool write_ktx2_rgba_with_generated_mips_to_buffer(int base_w, int base_h, const
 bool write_ktx2_rgba_with_generated_mips_to_buffer_limited(int base_w, int base_h, const uint8_t* base_rgba,
 														   Ktx2TransferFn tf, bool zstd, int max_levels,
 														   uint8_t** out_buf, size_t* out_size) {
+	return write_ktx2_rgba_with_generated_mips_to_buffer_limited_alpha(
+		base_w, base_h, base_rgba, tf, zstd, max_levels,
+		KTX2_ALPHA_PREMULTIPLIED, out_buf, out_size);
+}
+
+bool write_ktx2_rgba_with_generated_mips_to_buffer_limited_alpha(
+	int base_w, int base_h, const uint8_t* base_rgba, Ktx2TransferFn tf,
+	bool zstd, int max_levels, Ktx2AlphaEncoding alpha_encoding,
+	uint8_t** out_buf, size_t* out_size) {
 	return rgba_with_generated_mips_core(NULL, base_w, base_h, base_rgba, tf, zstd, max_levels, out_buf,
-										 out_size);
+										 out_size, alpha_encoding);
 }
 
 /* HDR sibling of write_ktx2_bc7_cubemap_with_generated_mips: linear

@@ -141,6 +141,12 @@ typedef enum AeronGltfEmissiveMode {
     AERON_GLTF_EMISSIVE_LEGACY_SRGB_SRCALPHA = 1,
 } AeronGltfEmissiveMode;
 
+typedef enum AeronGltfAlphaMode {
+    AERON_GLTF_ALPHA_OPAQUE = 0,
+    AERON_GLTF_ALPHA_MASK   = 1,
+    AERON_GLTF_ALPHA_BLEND  = 2,
+} AeronGltfAlphaMode;
+
 /* ===== Per-material entry ===========================================
  *
  * CPU source data copied into the mesh-owned material storage buffer.
@@ -159,11 +165,8 @@ typedef struct AeronGltfMaterial {
     float    metallic_factor;        /* default 0 */
     float    roughness_factor;       /* default 1 */
     uint32_t double_sided;           /* bool */
-    /* glTF alphaMode BLEND (transparent OPT faces — canopy glass).
-     * Blend prims are partitioned to the tail of the index buffer and
-     * drawn by the renderer's alpha-blend pipeline variant. MASK is
-     * treated as opaque. */
-    uint32_t alpha_blend;            /* bool */
+    AeronGltfAlphaMode alpha_mode;
+    float alpha_cutoff;               /* glTF MASK cutoff; default 0.5 */
     /* Material extras `aeronEmissiveMode`; AeronGltfEmissiveMode. */
     uint32_t emissive_mode;
     float    uv_xform[AERON_GLTF_CHANNEL_COUNT][4];
@@ -184,17 +187,15 @@ typedef struct AeronGltfMaterial {
  * only fallback). Mesh creation transposes this source table into
  * variant-major packed storage; each draw selects a row by index. */
 typedef struct AeronGltfModel {
-    /* Merged geometry — one buffer per ship. The index buffer is
-     * partitioned: indices [0, opaque_index_count) belong to opaque
-     * primitives, [opaque_index_count, index_count) to alpha-BLEND
-     * primitives (classified by the prim's default-variant material),
-     * each group in source order. Renderers draw the opaque range in
-     * the normal passes and the blend range in a late alpha-blended
-     * no-depth-write draw (classic transparent OPT faces render after
-     * the opaque hull in node order). */
+    /* Merged geometry — one buffer per ship. The index buffer contains
+     * stable opaque, alpha-mask, and alpha-blend ranges in that order. */
     AeronGltfVertex *vertices;     uint32_t vertex_count;
     uint16_t         *indices;      uint32_t index_count;
     uint32_t          opaque_index_count;
+    uint32_t          mask_index_offset;
+    uint32_t          mask_index_count;
+    uint32_t          blend_index_offset;
+    uint32_t          blend_index_count;
 
     /* Per-channel cooked KTX2 atlases (4): BC5/BC7 or RGBA8. */
     AeronGltfChannelKtx2 channels[AERON_GLTF_CHANNEL_COUNT];
