@@ -204,6 +204,10 @@ typedef struct AeronUiWindowDesc {
 int  AeronUi_BeginWindow(AeronUiContext* ctx, const char* title, const AeronUiWindowDesc* desc);
 void AeronUi_EndWindow(AeronUiContext* ctx);
 
+/* Remaining body height from the next row to the bottom padding, in
+ * reference pixels. Returns zero for auto-sized windows or outside a window. */
+float AeronUi_AvailableHeight(AeronUiContext* ctx);
+
 /* Splits the content width. weights NULL = equal columns. A NEGATIVE
  * weight is a fixed width in reference px (e.g. -220 = 220 ref px);
  * positive weights share the remainder proportionally. */
@@ -239,9 +243,13 @@ void AeronUi_PopId(AeronUiContext* ctx);
 
 void AeronUi_Label(AeronUiContext* ctx, const char* text);
 void AeronUi_Header(AeronUiContext* ctx, const char* text);
-void AeronUi_Help(AeronUiContext* ctx, const char* text); /* dim, word-wrapped */
-void AeronUi_Separator(AeronUiContext* ctx);
-void AeronUi_Spacer(AeronUiContext* ctx, float height_ref);
+void AeronUi_Help(AeronUiContext* ctx, const char* text);  /* dim, word-wrapped */
+void AeronUi_Error(AeronUiContext* ctx, const char* text); /* accent, word-wrapped */
+/* Measures AeronUi_Help without advancing layout. `width_ref` is reference
+ * pixels; zero uses the active column/window width. */
+float AeronUi_MeasureHelpHeight(AeronUiContext* ctx, const char* text, float width_ref);
+void  AeronUi_Separator(AeronUiContext* ctx);
+void  AeronUi_Spacer(AeronUiContext* ctx, float height_ref);
 
 int AeronUi_Button(AeronUiContext* ctx, const char* label);
 /* Disabled buttons remain visible but do not participate in focus or input. */

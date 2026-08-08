@@ -68,7 +68,9 @@ typedef struct UiLayout {
 	UiLayoutKind kind;
 	float        x, w;     /* content region, px */
 	float        cursor_y; /* next row top, px */
-	AeronRectI   clip;     /* zero w/h = none */
+	float        limit_y;  /* fixed window body bottom, px */
+	int          bounded;
+	AeronRectI   clip; /* zero w/h = none */
 	/* Columns state (columns == 0 when inactive). */
 	int     columns;
 	int     col_index;

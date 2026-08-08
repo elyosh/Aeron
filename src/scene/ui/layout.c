@@ -27,6 +27,14 @@ void ui_layout_pop(AeronUiContext* ctx) {
 	}
 }
 
+float AeronUi_AvailableHeight(AeronUiContext* ctx) {
+	const UiLayout* layout = ctx && ctx->frame_active ? ui_layout_top(ctx) : NULL;
+	if (!layout || !layout->bounded || ctx->scale <= 0.0f) {
+		return 0.0f;
+	}
+	return fmaxf(0.0f, (layout->limit_y - layout->cursor_y) / ctx->scale);
+}
+
 int ui_layout_row(AeronUiContext* ctx, float height, UiRect* out) {
 	UiLayout* top = ui_layout_top(ctx);
 	if (!top) {

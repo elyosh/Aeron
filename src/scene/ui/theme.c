@@ -50,7 +50,7 @@ static const AeronUiTheme k_default_theme = {
 	.label_fraction   = 0.45f,
 	.text_px          = 20.0f,
 	.title_px         = 22.0f,
-	.help_px          = 16.0f,
+	.help_px          = 20.0f,
 	.bevel_px         = 2.0f,
 
 	.widget_gradient = 1,

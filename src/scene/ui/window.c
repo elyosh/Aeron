@@ -62,6 +62,8 @@ int ui_begin_window_common(AeronUiContext* ctx, const char* title, const AeronUi
 	layout.x        = rect.x + pad;
 	layout.w        = rect.w - pad * 2.0f;
 	layout.cursor_y = rect.y + title_h + pad;
+	layout.limit_y  = rect.y + rect.h - pad;
+	layout.bounded  = desc->height_ref > 0.0f;
 	layout.owner_id = id;
 	layout.view_y   = layout.cursor_y;
 	ui_layout_push(ctx, &layout);
@@ -134,7 +136,40 @@ void AeronUi_Header(AeronUiContext* ctx, const char* text) {
 	ui_draw_fill(ctx, &line, ctx->theme.separator, clip);
 }
 
-void AeronUi_Help(AeronUiContext* ctx, const char* text) {
+static float ui_help_height_px(const AeronUiContext* ctx, const char* text, float width) {
+	const AeronFontAtlas* font = ctx ? ui_font_regular(ctx) : NULL;
+	if (!font || font->cell_h == 0 || width <= 0.0f) {
+		return 0.0f;
+	}
+	const float    help_px = ui_ref(ctx, ctx->theme.help_px);
+	AeronTextStyle style   = {
+		.font        = font,
+		.scale       = help_px / (float)font->cell_h,
+		.tracking_px = ui_font_tracking_atlas(ctx, font) * help_px / (float)font->cell_h,
+	};
+	AeronTextLine lines[16];
+	const int     count = AeronText_Wrap(&style, ui_label_text(text), ui_label_text_len(text), width, lines,
+										 (int)(sizeof lines / sizeof lines[0]));
+	return AeronText_LineHeight(&style) * (float)count;
+}
+
+float AeronUi_MeasureHelpHeight(AeronUiContext* ctx, const char* text, float width_ref) {
+	if (!ctx || !ctx->frame_active || ctx->scale <= 0.0f) {
+		return 0.0f;
+	}
+	float width;
+	if (width_ref > 0.0f) {
+		width = ui_ref(ctx, width_ref);
+	} else {
+		const UiLayout* layout = ui_layout_top(ctx);
+		if (!layout)
+			return 0.0f;
+		width = layout->columns > 0 ? layout->col_w[layout->col_index] : layout->w;
+	}
+	return ui_help_height_px(ctx, text, width) / ctx->scale;
+}
+
+static void ui_help_colored(AeronUiContext* ctx, const char* text, const AeronUiColor color) {
 	if (!ctx || !ctx->frame_active) {
 		return;
 	}
@@ -164,9 +199,17 @@ void AeronUi_Help(AeronUiContext* ctx, const char* text) {
 	}
 	const AeronRectI* clip = (top->clip.width > 0) ? &top->clip : NULL;
 	for (int i = 0; i < count; i++) {
-		ui_draw_text(ctx, style.font, rect.x, rect.y + line_h * (float)i, AERON_TEXT_LEFT, help_px,
-					 ctx->theme.text_dim, ui_label_text(text) + lines[i].start, lines[i].length, clip);
+		ui_draw_text(ctx, style.font, rect.x, rect.y + line_h * (float)i, AERON_TEXT_LEFT, help_px, color,
+					 ui_label_text(text) + lines[i].start, lines[i].length, clip);
 	}
+}
+
+void AeronUi_Help(AeronUiContext* ctx, const char* text) {
+	ui_help_colored(ctx, text, ctx ? ctx->theme.text_dim : NULL);
+}
+
+void AeronUi_Error(AeronUiContext* ctx, const char* text) {
+	ui_help_colored(ctx, text, ctx ? ctx->theme.accent : NULL);
 }
 
 void AeronUi_Separator(AeronUiContext* ctx) {

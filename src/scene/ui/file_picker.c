@@ -9,6 +9,76 @@
 #include <windows.h>
 #endif
 
+#define PICKER_MAX_WIDTH_REF 1120.0f
+#define PICKER_SIDEBAR_WIDTH_REF 230.0f
+#define PICKER_DESIRED_VISIBLE_ROWS 16.0f
+
+static float picker_help_advance(AeronUiContext* ui, const char* text, float width) {
+	const float height = text && text[0] ? AeronUi_MeasureHelpHeight(ui, text, width) : 0.0f;
+	return height > 0.0f ? height + ui->theme.item_spacing : 0.0f;
+}
+
+static float picker_trailing_height(const AeronUiFilePicker* picker, AeronUiContext* ui, float width) {
+	const float row    = ui->theme.row_height;
+	const float gap    = ui->theme.item_spacing;
+	float       height = 0.0f;
+	if (picker->filter_count > 1)
+		height += row + gap;
+	height += row + gap; /* hidden-files toggle */
+	if (picker->loading) {
+		height += picker_help_advance(ui, "Loading folder contents...", width);
+	} else if (picker->current && picker->visible_count == 0) {
+		height += picker_help_advance(ui, "This folder is empty.", width);
+	}
+	height += row + gap; /* selected path */
+	height += picker_help_advance(ui, picker->inline_error, width);
+	height += 9.0f + gap;
+	height += row;
+	return height;
+}
+
+static AeronUiWindowDesc picker_window_desc(AeronUiFilePicker* picker, AeronUiContext* ui) {
+	/* Loading and validation messages change the list height, not the modal
+	 * frame. Recompute the frame only when the output viewport changes. */
+	if (picker->layout_output_width == ui->out_w && picker->layout_output_height == ui->out_h &&
+		picker->window.width_ref > 0.0f && picker->window.height_ref > 0.0f) {
+		return picker->window;
+	}
+	const float scale               = ui->scale > 0.0f ? ui->scale : 1.0f;
+	const float viewport_width_ref  = (float)ui->out_w / scale;
+	const float viewport_height_ref = (float)ui->out_h / scale;
+	const float horizontal_margin =
+		fminf(PICKER_VIEWPORT_MARGIN_REF, fmaxf(0.0f, (viewport_width_ref - 1.0f) * 0.5f));
+	const float vertical_margin =
+		fminf(PICKER_VIEWPORT_MARGIN_REF, fmaxf(0.0f, (viewport_height_ref - 1.0f) * 0.5f));
+	const float width_ref      = fminf(PICKER_MAX_WIDTH_REF, viewport_width_ref - horizontal_margin * 2.0f);
+	const float content_width  = fmaxf(1.0f, width_ref - ui->theme.window_pad * 2.0f);
+	const float row            = ui->theme.row_height;
+	const float gap            = ui->theme.item_spacing;
+	const float content_height = picker_help_advance(ui, picker->instructions, content_width) +
+								 (row + gap) * 2.0f + row * PICKER_DESIRED_VISIBLE_ROWS + gap +
+								 picker_trailing_height(picker, ui, content_width);
+	const float desired_height_ref = ui->theme.title_height + ui->theme.window_pad * 2.0f + content_height;
+	picker->window                 = (AeronUiWindowDesc) {
+		.width_ref  = width_ref,
+		.height_ref = fminf(desired_height_ref, viewport_height_ref - vertical_margin * 2.0f),
+		.centered   = 1,
+	};
+	picker->layout_output_width  = ui->out_w;
+	picker->layout_output_height = ui->out_h;
+	return picker->window;
+}
+
+static float picker_list_height_ref(const AeronUiFilePicker* picker, AeronUiContext* ui) {
+	const UiLayout* layout = ui_layout_top(ui);
+	if (!layout)
+		return 1.0f;
+	const float width_ref = ui->scale > 0.0f ? layout->w / ui->scale : layout->w;
+	const float height =
+		AeronUi_AvailableHeight(ui) - picker_trailing_height(picker, ui, width_ref) - ui->theme.item_spacing;
+	return fmaxf(height, 1.0f);
+}
+
 static void picker_copy_error(char* destination, size_t capacity, const char* message) {
 	if (destination && capacity)
 		SDL_snprintf(destination, capacity, "%s", message ? message : "");
@@ -387,9 +457,12 @@ int AeronUiFilePicker_Open(AeronUiFilePicker* picker, const AeronUiFilePickerDes
 		picker_copy_error(error, error_capacity, "Invalid file picker options.");
 		return 0;
 	}
-	picker->open     = 0;
-	picker->loading  = 0;
-	picker->terminal = AERON_UI_FILE_PICKER_NONE;
+	picker->open                 = 0;
+	picker->loading              = 0;
+	picker->terminal             = AERON_UI_FILE_PICKER_NONE;
+	picker->layout_output_width  = 0;
+	picker->layout_output_height = 0;
+	picker->window               = (AeronUiWindowDesc) { 0 };
 	SDL_LockMutex(picker->mutex);
 	SDL_free(picker->requested_path);
 	picker->requested_path = NULL;
@@ -533,7 +606,7 @@ AeronUiFilePickerResult AeronUiFilePicker_Draw(AeronUiFilePicker* picker, AeronU
 	picker_take_completed(picker);
 
 	int                     modal_open = picker->open;
-	const AeronUiWindowDesc window     = { .width_ref = 1120.0f, .height_ref = 820.0f, .centered = 1 };
+	const AeronUiWindowDesc window     = picker_window_desc(picker, ui);
 	if (!AeronUi_BeginModal(ui, picker->title, &modal_open, &window)) {
 		if (picker->open && !modal_open) {
 			picker->open = 0;
@@ -578,9 +651,16 @@ AeronUiFilePickerResult AeronUiFilePicker_Draw(AeronUiFilePicker* picker, AeronU
 		picker_history_push(picker, picker->location_text);
 	AeronUi_EndColumns(ui);
 
-	AeronUi_BeginColumns(ui, 2, (const float[]) { -230.0f, 1.0f });
-	uint32_t location_result = AeronUi_ListBox(ui, "Locations##picker", picker->location_items,
-											   picker->location_count, &picker->selected_location, 470.0f);
+	const UiLayout* picker_layout = ui_layout_top(ui);
+	const float     sidebar_width_ref =
+		picker_layout && ui->scale > 0.0f
+			? fminf(PICKER_SIDEBAR_WIDTH_REF, fmaxf(0.0f, picker_layout->w / ui->scale * 0.4f))
+			: PICKER_SIDEBAR_WIDTH_REF;
+	const float list_height_ref = picker_list_height_ref(picker, ui);
+	AeronUi_BeginColumns(ui, 2, (const float[]) { -sidebar_width_ref, 1.0f });
+	uint32_t location_result =
+		AeronUi_ListBox(ui, "Locations##picker", picker->location_items, picker->location_count,
+						&picker->selected_location, list_height_ref);
 	if ((location_result & AERON_UI_LIST_ACTIVATED) && picker->selected_location < picker->location_count)
 		picker_history_push(picker, picker->locations[picker->selected_location].path);
 	AeronUi_NextColumn(ui);
@@ -588,7 +668,7 @@ AeronUiFilePickerResult AeronUiFilePicker_Draw(AeronUiFilePicker* picker, AeronU
 	uint32_t list_result =
 		AeronUi_ListBox(ui, "Entries##picker", picker->loading ? NULL : picker->visible,
 						picker->loading ? 0 : picker->visible_count,
-						picker->loading ? &loading_selection : &picker->selected_visible, 470.0f);
+						picker->loading ? &loading_selection : &picker->selected_visible, list_height_ref);
 	if (list_result & AERON_UI_LIST_CHANGED)
 		picker->inline_error[0] = '\0';
 	if ((list_result & AERON_UI_LIST_ACTIVATED) && picker->selected_visible < picker->visible_count) {
@@ -618,7 +698,7 @@ AeronUiFilePickerResult AeronUiFilePicker_Draw(AeronUiFilePicker* picker, AeronU
 	SDL_snprintf(selected_label, sizeof selected_label, "Selected: %s", candidate ? candidate : "None");
 	AeronUi_Label(ui, selected_label);
 	if (picker->inline_error[0])
-		AeronUi_Help(ui, picker->inline_error);
+		AeronUi_Error(ui, picker->inline_error);
 
 	AeronUi_Separator(ui);
 	AeronUi_BeginColumns(ui, 2, NULL);

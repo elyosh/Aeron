@@ -8,6 +8,7 @@
 #define PICKER_PATH_CAPACITY 4096
 #define PICKER_ERROR_CAPACITY 1024
 #define PICKER_HISTORY_CAPACITY 32
+#define PICKER_VIEWPORT_MARGIN_REF 32.0f
 
 typedef struct PickerFsEntry {
 	uint64_t id;
@@ -79,6 +80,9 @@ struct AeronUiFilePicker {
 	size_t                  history_index;
 	int                     loading;
 	AeronUiFilePickerResult terminal;
+	int                     layout_output_width;
+	int                     layout_output_height;
+	AeronUiWindowDesc       window;
 };
 
 char*           picker_path_normalize(const char* path, const char* base);
