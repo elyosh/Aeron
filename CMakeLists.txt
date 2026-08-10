@@ -697,6 +697,7 @@ set(AERON_FORMAT_FILES
     ${AERON_SOURCES}
     src/gpu_debug.h
     src/internal.h
+    src/time_internal.h
     src/video.c
     src/video_decode.c
     src/video_internal.h

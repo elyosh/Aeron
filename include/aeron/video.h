@@ -97,14 +97,15 @@ int  Aeron_VideoSeek(AeronVideoPlayer* player, int64_t position_us);
 void Aeron_VideoSetGain(AeronVideoPlayer* player, float gain);
 
 /* Advances state and promotes all due decoded frames without blocking. */
-void Aeron_VideoUpdate(AeronVideoPlayer* player, uint64_t now_us);
+void Aeron_VideoUpdate(AeronVideoPlayer* player);
 /* Queues the current frame as an Aeron layer. Returns zero when no frame is ready. */
 int Aeron_VideoSubmit(AeronVideoPlayer* player, const AeronVideoPresentDesc* desc);
 
 AeronVideoState Aeron_VideoGetState(const AeronVideoPlayer* player);
 int64_t         Aeron_VideoGetPositionUs(const AeronVideoPlayer* player);
 uint64_t        Aeron_VideoGetPresentedFrameIndex(const AeronVideoPlayer* player);
-uint64_t        Aeron_VideoNextWakeDeadlineUs(const AeronVideoPlayer* player);
+/* Returns whether a wake is scheduled and writes its delay from the current frame start. */
+int             Aeron_VideoGetNextWakeDelayUs(const AeronVideoPlayer* player, uint64_t* out_delay_us);
 int             Aeron_VideoGetInfo(const AeronVideoPlayer* player, AeronVideoInfo* out_info);
 int             Aeron_VideoGetStats(const AeronVideoPlayer* player, AeronVideoStats* out_stats);
 const char*     Aeron_VideoGetError(const AeronVideoPlayer* player);

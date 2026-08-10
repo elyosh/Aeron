@@ -381,9 +381,10 @@ static void AeronVideo_PromoteDueFramesLocked(AeronVideoPlayer* player, int64_t 
 	}
 }
 
-void Aeron_VideoUpdate(AeronVideoPlayer* player, uint64_t now_us) {
+void Aeron_VideoUpdate(AeronVideoPlayer* player) {
 	size_t           queued_audio = 0;
 	uint64_t         underruns    = 0;
+	uint64_t         now_us;
 	AeronAudioStream audio_stream;
 	int              start_audio = 0;
 	int              pause_audio = 0;
@@ -391,6 +392,7 @@ void Aeron_VideoUpdate(AeronVideoPlayer* player, uint64_t now_us) {
 	if (!player) {
 		return;
 	}
+	now_us = Aeron_NowUs();
 	audio_stream = AeronVideo_GetAudioStream(player);
 	if (audio_stream) {
 		queued_audio = Aeron_AudioStreamQueuedFrames(audio_stream);
@@ -597,15 +599,21 @@ uint64_t Aeron_VideoGetPresentedFrameIndex(const AeronVideoPlayer* player) {
 	return index;
 }
 
-uint64_t Aeron_VideoNextWakeDeadlineUs(const AeronVideoPlayer* player) {
+int Aeron_VideoGetNextWakeDelayUs(const AeronVideoPlayer* player, uint64_t* out_delay_us) {
 	uint64_t deadline;
-	if (!player) {
+	uint64_t frame_start_us;
+	if (!player || !out_delay_us) {
 		return 0;
 	}
 	SDL_LockMutex(player->lock);
 	deadline = player->next_wake_us;
 	SDL_UnlockMutex(player->lock);
-	return deadline;
+	if (!deadline) {
+		return 0;
+	}
+	frame_start_us = Aeron_TimeFrameStartUs();
+	*out_delay_us = deadline > frame_start_us ? deadline - frame_start_us : 0;
+	return 1;
 }
 
 int Aeron_VideoGetInfo(const AeronVideoPlayer* player, AeronVideoInfo* out_info) {

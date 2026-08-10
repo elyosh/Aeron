@@ -15,10 +15,8 @@ int Aeron_PresentationVsyncDivisor(void);
 /* Current display refresh and configured presentation rate in Hz. */
 double Aeron_DisplayRefreshRate(void);
 double Aeron_PresentationRate(void);
-/* Sleeps until an absolute monotonic deadline. Zero or past deadlines return immediately. */
-void Aeron_Wait(uint64_t app_deadline_us);
-/* Sleeps until both the application and configured presentation deadlines are satisfied. */
-void Aeron_WaitForNextFrame(uint64_t app_deadline_us);
+/* Sleeps until the delay from the current frame start and configured presentation pacing are satisfied. */
+void Aeron_WaitForNextFrame(uint64_t app_wake_delay_us);
 
 #ifdef __cplusplus
 }

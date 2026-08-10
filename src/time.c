@@ -1,6 +1,9 @@
 #include "internal.h"
+#include "time_internal.h"
 
 uint64_t Aeron_NowUs(void) { return SDL_GetTicksNS() / 1000u; }
+
+uint64_t Aeron_TimeFrameStartUs(void) { return g_aeron.last_frame_us; }
 
 static double Aeron_DisplayModeRefreshRate(const SDL_DisplayMode* mode) {
 	if (!mode) {
@@ -66,29 +69,19 @@ double Aeron_PresentationRate(void) {
 	return Aeron_DisplayRefreshRate() / (double)Aeron_PresentationVsyncDivisor();
 }
 
-void Aeron_Wait(uint64_t app_deadline_us) {
-	uint64_t now_us;
-
-	if (!g_aeron.initialized || !app_deadline_us) {
-		return;
-	}
-	now_us = Aeron_NowUs();
-	if (app_deadline_us > now_us) {
-		SDL_DelayNS((app_deadline_us - now_us) * 1000u);
-	}
-}
-
-void Aeron_WaitForNextFrame(uint64_t app_deadline_us) {
+void Aeron_WaitForNextFrame(uint64_t app_wake_delay_us) {
 	uint64_t deadline_us;
 	uint64_t now_us;
 
 	if (!g_aeron.initialized) {
 		return;
 	}
-	now_us = Aeron_NowUs();
-	deadline_us = app_deadline_us;
+	deadline_us = app_wake_delay_us > UINT64_MAX - g_aeron.last_frame_us
+					  ? UINT64_MAX
+					  : g_aeron.last_frame_us + app_wake_delay_us;
 	if (Aeron_PresentationVsyncDivisor() == 2) {
 		const uint64_t frame_interval_us = Aeron_PresentationIntervalUs();
+		now_us = Aeron_NowUs();
 		if (!g_aeron.presentation_next_frame_us) {
 			g_aeron.presentation_next_frame_us = now_us + frame_interval_us;
 		} else if (g_aeron.presentation_next_frame_us <= now_us) {
@@ -100,8 +93,8 @@ void Aeron_WaitForNextFrame(uint64_t app_deadline_us) {
 			deadline_us = g_aeron.presentation_next_frame_us;
 		}
 	}
-	if (!deadline_us) {
-		return;
+	now_us = Aeron_NowUs();
+	if (deadline_us > now_us) {
+		SDL_DelayNS((deadline_us - now_us) * 1000u);
 	}
-	Aeron_Wait(deadline_us);
 }

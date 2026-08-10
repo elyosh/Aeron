@@ -5,6 +5,7 @@
 #include "aeron/log.h"
 #include "aeron/time.h"
 #include "aeron/video.h"
+#include "time_internal.h"
 
 #include <SDL3/SDL.h>
 
