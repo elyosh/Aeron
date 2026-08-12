@@ -550,6 +550,18 @@ set_target_properties(aeron_cgltf PROPERTIES
     C_EXTENSIONS OFF
 )
 
+add_library(aeron_cjson STATIC
+    third_party/cjson/cJSON.c
+)
+target_include_directories(aeron_cjson PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/cjson
+)
+set_target_properties(aeron_cjson PROPERTIES
+    C_STANDARD 99
+    C_STANDARD_REQUIRED ON
+    C_EXTENSIONS OFF
+)
+
 add_library(lucas_opt STATIC
     tools/opt2gltf/opt.c
 )
@@ -574,6 +586,7 @@ endif()
 set_target_properties(opt2gltf_lib PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED ON)
 
 add_library(aeron_scene STATIC
+    src/asset/flight_model.c
     src/scene/ktx2_reader.c
     src/scene/image_cache.c
     src/scene/sprite_atlas.c
@@ -631,6 +644,7 @@ target_link_libraries(aeron_scene
         aeron
     PRIVATE
         aeron_cgltf
+        aeron_cjson
         aeron_yaml
         aeron_fsr3
         zstd::libzstd

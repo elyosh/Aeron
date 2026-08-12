@@ -75,9 +75,8 @@
 /* RotationScale data block: 4 vec3 (pivot + 3 axes) */
 #define OPT_ROTATION_SCALE_BYTES       (4 * OPT_VEC3_BYTES)
 
-/* Q15 axis encoding: the on-disk axes are floats in Q15 fixed-point, with
- * 32767.0 representing 1.0. We normalise to true unit vectors at parse time. */
-#define OPT_Q15_UNIT                   32767.0f
+/* Q15 axes remain in their on-disk scale. Consumers choose the conversion
+ * required by their runtime representation. */
 
 /* Texture data block (precedes pixels) */
 #define OPT_TEX_OFF_PALETTE_PTR         0
@@ -316,17 +315,6 @@ static void parse_rotation_scale(opt_ctx_t *c, const opt_node_t *n, opt_mesh_t *
     rvec3(c->buf, off + 2 * OPT_VEC3_BYTES, &m->rotation_scale.direction_axis);
     rvec3(c->buf, off + 3 * OPT_VEC3_BYTES, &m->rotation_scale.up_axis);
 
-    /* Q15 -> unit vector. Magnitudes in the wild are ~32767 within rounding. */
-    opt_vec3_t *axes[3] = {
-        &m->rotation_scale.rotation_axis,
-        &m->rotation_scale.direction_axis,
-        &m->rotation_scale.up_axis,
-    };
-    for (int i = 0; i < 3; i++) {
-        axes[i]->x /= OPT_Q15_UNIT;
-        axes[i]->y /= OPT_Q15_UNIT;
-        axes[i]->z /= OPT_Q15_UNIT;
-    }
     m->has_rotation_scale = 1;
 }
 
@@ -1023,10 +1011,10 @@ int opt_rotation_scale_is_identity(const opt_rotation_scale_t *rs) {
     static const opt_vec3_t za_pos = { 0, 0,  1 }, za_neg = { 0, 0, -1 };
     static const opt_vec3_t ya     = { 0, 1,  0 };
     static const opt_vec3_t xa_pos = { 1, 0,  0 }, xa_neg = {-1, 0,  0 };
-    const float tol = 2e-3f;
-    #define NEAR(a, b) (fabsf((a).x - (b).x) < tol && \
-                        fabsf((a).y - (b).y) < tol && \
-                        fabsf((a).z - (b).z) < tol)
+    const float tol = 64.0f;
+    #define NEAR(a, b) (fabsf((a).x - (b).x * OPT_Q15_UNIT) < tol && \
+                        fabsf((a).y - (b).y * OPT_Q15_UNIT) < tol && \
+                        fabsf((a).z - (b).z * OPT_Q15_UNIT) < tol)
     int pos = NEAR(rs->rotation_axis, za_pos) && NEAR(rs->direction_axis, ya)
               && NEAR(rs->up_axis, xa_pos);
     int neg = NEAR(rs->rotation_axis, za_neg) && NEAR(rs->direction_axis, ya)

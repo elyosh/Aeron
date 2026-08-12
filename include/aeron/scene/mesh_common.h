@@ -2,10 +2,9 @@
 #define AERON_SCENE_MESH_COMMON_H
 
 /*
- * Shared mesh-pipeline constants and POD used by both the OPT and
- * glTF mesh paths. AERON_MAX_MESH_SLOTS comes from
+ * Shared scene-mesh constants and articulation POD. AERON_MAX_MESH_SLOTS comes from
  * mesh_table_layout.hlsli, shared with the shaders. Mesh pipelines
- * share the same scene storage record, indexed by opt_mesh_index. */
+ * share the same scene storage record, indexed by component ordinal. */
 
 #include <stdint.h>
 
@@ -15,7 +14,7 @@
 extern "C" {
 #endif
 
-/* Per-mesh-slot articulation source. Indexed by opt_mesh_index
+/* Per-component articulation source. Indexed by model-local component ordinal
  * (0..AERON_MAX_MESH_SLOTS-1). The game-side table builder reads
  * axis/pivot/has_rotation here and composes the per-mesh affine.
  *

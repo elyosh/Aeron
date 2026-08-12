@@ -4,7 +4,7 @@
 /*
  * AeronSceneMesh — GPU-resident model for AeronScene3D.
  *
- * Uploads an AeronGltfModel (cooked-glb loader output) into scene-side
+ * Uploads an AeronFlightModel render payload into scene-side
  * GPU resources: one merged VBO/IBO in the fixed AeronGltfVertex
  * layout, the four BC7 channel atlases, the per-material storage
  * payload the "pbr" material class consumes, the per-primitive variant
@@ -14,8 +14,8 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#include "aeron/asset/flight_model.h"
 #include "aeron/render.h"
-#include "aeron/scene/gltf_mesh.h"
 #include "aeron/scene/mesh_common.h"
 
 #ifdef __cplusplus
@@ -65,8 +65,7 @@ typedef struct AeronSceneMesh {
 	uint16_t*                 cpu_indices;
 
 	/* Channel atlases (base_color / normal / metallic_rough / emissive).
-	 * All four are required by the loader contract; consumers still bind
-	 * a placeholder when a slot is NULL after a partial teardown. */
+	 * Factor-only models have no atlases; textured models carry all four. */
 	AeronTexture* atlas[AERON_GLTF_CHANNEL_COUNT];
 
 	AeronBuffer* material_buffer;
@@ -84,8 +83,8 @@ typedef struct AeronSceneMesh {
 	float bound_min[3];
 	float bound_max[3];
 	float bound_radius;
-	/* Engine glows copied from the source model (XWA OPTs; owned). */
-	AeronGltfEngineGlow* engine_glows;
+	/* Engine glows copied from the source flight model (owned). */
+	AeronFlightEngineGlow* engine_glows;
 	uint32_t             engine_glow_count;
 } AeronSceneMesh;
 
@@ -102,7 +101,7 @@ typedef enum AeronSceneMeshCreateStatus {
 /* Upload `model` through `cmd` (no pass may be open). Returns NULL on any
  * failure and classifies it through `status`; everything allocated so far is
  * released. `debug_name` labels diagnostics. The caller owns `model`. */
-AeronSceneMesh* AeronScene_MeshCreate(AeronCommandBuffer* cmd, const AeronGltfModel* model,
+AeronSceneMesh* AeronScene_MeshCreate(AeronCommandBuffer* cmd, const AeronFlightModel* model,
 									  const char* debug_name,
 									  AeronSceneMeshCreateStatus* status);
 

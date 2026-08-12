@@ -2,20 +2,9 @@
  * opt2gltf — OPT → glTF 2.0 conversion. See opt2gltf.h for the
  * data-preservation contract.
  *
- * Coordinate convention conversion:
- *   OPT:  +X right, +Z up, -Y forward (right-handed)
- *   glTF: +X right, +Y up, -Z forward (right-handed)
- * Mapping:
- *   glTF.x = OPT.x
- *   glTF.y = OPT.z
- *   glTF.z = OPT.y
- * Applied to positions, normals, axes, pivots, and bounding boxes.
- * NOTE: a two-axis swap is a REFLECTION (det -1) — it flips handedness
- * and triangle winding (OPT's CW-with-outward-normal becomes CCW in
- * the glTF). Consumers must apply the same involution to EVERYTHING
- * (the aeron glb loader swaps Y/Z back on positions AND axes/pivots,
- * restoring the OPT frame consistently); mixing converted and
- * unconverted quantities silently negates rotations.
+ * OPT (+X right, -Y forward, +Z up) maps to standard meter-space glTF:
+ * glTF = (-OPT.x, OPT.z, -OPT.y). The reflection converts OPT clockwise
+ * face order to glTF counterclockwise order without changing indices.
  */
 
 #include "opt2gltf.h"
@@ -44,10 +33,13 @@
 
 static void swap_axis_v3(const opt_vec3_t *in, float out[3])
 {
-    out[0] = in->x;
+    out[0] = -in->x;
     out[1] = in->z;
-    out[2] = in->y;
+    out[2] = -in->y;
 }
+
+#define OPT_METERS_PER_UNIT (1600.0f / 65536.0f)
+#define OPT_Q15_TO_UNIT 32768.0f
 
 static char *xstrdup(const char *s)
 {
@@ -55,6 +47,58 @@ static char *xstrdup(const char *s)
     char *r = (char *)malloc(n + 1);
     if (r) memcpy(r, s, n + 1);
     return r;
+}
+
+static void normalize3(float vector[3])
+{
+    const float length = sqrtf(vector[0] * vector[0] +
+                               vector[1] * vector[1] +
+                               vector[2] * vector[2]);
+    if (length > 1.0e-9f) {
+        vector[0] /= length;
+        vector[1] /= length;
+        vector[2] /= length;
+    }
+}
+
+static void quaternion_from_axes(float right[3], float up[3],
+                                 float look[3], float out[4])
+{
+    normalize3(right);
+    normalize3(up);
+    normalize3(look);
+    const float trace = right[0] + up[1] + look[2];
+    if (trace > 0.0f) {
+        const float s = sqrtf(trace + 1.0f) * 2.0f;
+        out[3] = 0.25f * s;
+        out[0] = (up[2] - look[1]) / s;
+        out[1] = (look[0] - right[2]) / s;
+        out[2] = (right[1] - up[0]) / s;
+    } else if (right[0] > up[1] && right[0] > look[2]) {
+        const float s = sqrtf(1.0f + right[0] - up[1] - look[2]) * 2.0f;
+        out[3] = (up[2] - look[1]) / s;
+        out[0] = 0.25f * s;
+        out[1] = (up[0] + right[1]) / s;
+        out[2] = (look[0] + right[2]) / s;
+    } else if (up[1] > look[2]) {
+        const float s = sqrtf(1.0f + up[1] - right[0] - look[2]) * 2.0f;
+        out[3] = (look[0] - right[2]) / s;
+        out[0] = (up[0] + right[1]) / s;
+        out[1] = 0.25f * s;
+        out[2] = (look[1] + up[2]) / s;
+    } else {
+        const float s = sqrtf(1.0f + look[2] - right[0] - up[1]) * 2.0f;
+        out[3] = (right[1] - up[0]) / s;
+        out[0] = (look[0] + right[2]) / s;
+        out[1] = (look[1] + up[2]) / s;
+        out[2] = 0.25f * s;
+    }
+    const float length = sqrtf(out[0] * out[0] + out[1] * out[1] +
+                               out[2] * out[2] + out[3] * out[3]);
+    if (length > 1.0e-9f) {
+        for (int index = 0; index < 4; ++index)
+            out[index] /= length;
+    }
 }
 
 static char *xprintf_dup(const char *fmt, ...)
@@ -274,6 +318,24 @@ static char *gb_keep_string(GltfBuild *gb, char *s)
     return s;
 }
 
+static bool set_flight_extension(GltfBuild *build, cgltf_node *node,
+                                 const char *json)
+{
+    cgltf_extension *extension =
+        (cgltf_extension *)calloc(1, sizeof *extension);
+    char *data = xstrdup(json);
+    if (!extension || !data) {
+        free(extension);
+        free(data);
+        return false;
+    }
+    extension->name = (char *)"AERON_flight_model";
+    extension->data = gb_keep_string(build, data);
+    node->extensions = extension;
+    node->extensions_count = 1;
+    return true;
+}
+
 /* Append bytes to the .bin buffer with 4-byte alignment as required by
  * the glTF accessor spec for component bounds. Returns the byte offset
  * where the data starts. */
@@ -491,16 +553,16 @@ static float *built_mesh_build_corner_normals(const opt_mesh_t *mesh,
 static uint16_t built_mesh_emit_corner(BuiltMesh *bm, const opt_mesh_t *m,
                                        int32_t vi, int32_t ui,
                                        const opt_vec3_t *normal,
-                                       float vertex_scale)
+                                       float meters_per_opt_unit)
 {
     const opt_vec3_t *p = &m->vertices[vi];
     const opt_vec2_t *uv =
         (ui >= 0 && ui < m->uv_count) ? &m->uvs[ui] : NULL;
     GltfVertex gv = {0};
     swap_axis_v3(p, gv.pos);
-    gv.pos[0] *= vertex_scale;
-    gv.pos[1] *= vertex_scale;
-    gv.pos[2] *= vertex_scale;
+    gv.pos[0] *= meters_per_opt_unit;
+    gv.pos[1] *= meters_per_opt_unit;
+    gv.pos[2] *= meters_per_opt_unit;
     swap_axis_v3(normal, gv.nrm);
     /* Stored OPT normals are decoded from Q15 and may be slightly off
      * unit length; regenerated normals are already unit length, but use
@@ -525,7 +587,7 @@ static uint16_t built_mesh_emit_corner(BuiltMesh *bm, const opt_mesh_t *m,
  * `regen` enables angle-based normal regeneration; when false the stored
  * OPT normals are used. */
 static bool built_mesh_from_opt(BuiltMesh *bm, const opt_mesh_t *m,
-                                float vertex_scale,
+                                float meters_per_opt_unit,
                                 bool regen, float smooth_angle_degrees,
                                 bool repair_normals)
 {
@@ -608,7 +670,7 @@ static bool built_mesh_from_opt(BuiltMesh *bm, const opt_mesh_t *m,
                             ((size_t)smooth_face_index * 3 + normal_corner[q]) * 3];
                         opt_vec3_t n = {normal[0], normal[1], normal[2]};
                         v[q] = built_mesh_emit_corner(
-                            bm, m, vi, f->uvs[k], &n, vertex_scale);
+                            bm, m, vi, f->uvs[k], &n, meters_per_opt_unit);
                     }
                     if (!ok) continue;
                     built_mesh_emit_index(bm, v[0]);
@@ -658,7 +720,7 @@ static bool built_mesh_from_opt(BuiltMesh *bm, const opt_mesh_t *m,
                     n = &classic_normals[vi];
                 }
                 v[k] = built_mesh_emit_corner(
-                    bm, m, vi, f->uvs[k], n, vertex_scale);
+                    bm, m, vi, f->uvs[k], n, meters_per_opt_unit);
             }
             if (!ok) continue;
             built_mesh_emit_index(bm, v[0]);
@@ -826,8 +888,7 @@ bool OptGltf_BuildMemory(const opt_file_t *opt,
     const float smooth_angle_deg = options ? options->smooth_angle_degrees : -1.0f;
     const bool repair_normals = options ? options->repair_normals : true;
     const bool emissive = options ? options->emissive : false;
-    float vertex_scale = options ? options->vertex_scale : 1.0f;
-    if (!(vertex_scale > 0.0f)) vertex_scale = 1.0f;
+    const float meters_per_opt_unit = OPT_METERS_PER_UNIT;
 
     OptGltfDocument *document = (OptGltfDocument *)calloc(1, sizeof *document);
     if (!document) {
@@ -1062,7 +1123,7 @@ bool OptGltf_BuildMemory(const opt_file_t *opt,
     uint32_t fixed_zero = 0, fixed_flip = 0;
     for (int32_t mi = 0; mi < opt->mesh_count; ++mi) {
         const opt_mesh_t *m = &opt->meshes[mi];
-        if (!built_mesh_from_opt(&built[mi], m, vertex_scale,
+        if (!built_mesh_from_opt(&built[mi], m, meters_per_opt_unit,
                                  regen, smooth_angle_deg, repair_normals)) continue;
         total_meshes++;
         fixed_zero += built[mi].fixed_zero_normals;
@@ -1273,6 +1334,13 @@ bool OptGltf_BuildMemory(const opt_file_t *opt,
     build->nodes = (cgltf_node *)calloc(total_nodes, sizeof *build->nodes);
     if (!build->nodes) { fprintf(stderr, "opt2gltf: oom\n"); goto fail; }
     build->nodes_count = total_nodes;
+    /* cgltf transform helpers read the implicit glTF defaults from these arrays. */
+    for (size_t i = 0; i < total_nodes; ++i) {
+        build->nodes[i].rotation[3] = 1.0f;
+        build->nodes[i].scale[0] = 1.0f;
+        build->nodes[i].scale[1] = 1.0f;
+        build->nodes[i].scale[2] = 1.0f;
+    }
 
     /* Layout in build->nodes[]:
      *   [0]                   = scene root
@@ -1282,24 +1350,8 @@ bool OptGltf_BuildMemory(const opt_file_t *opt,
     cgltf_node *root_node = &build->nodes[0];
     root_node->name = gb_keep_string(build,
         xprintf_dup("OPT_%s", basename));
-    /* Blender-friendly display scale on the root node — display only.
-     * OPT files carry vertex coords in the engine's Q16.16 raw units
-     * (TIE Fighter ±146, CRUSA ±3000+); without this scale Blender shows
-     * the asset hundreds of metres wide. 0.02 (= 1/50) puts a TIE
-     * Fighter at ~5.8 m and an X-wing at ~6.5 m — small but
-     * inspectable, with capital ships still fitting in a single
-     * viewport.
-     *
-     * The renderer-side loader IGNORES this node scale: it reads vertex
-     * positions straight from the accessors (raw OPT units) and never
-     * composes the node TRS, then applies 1/65536 in craft_to_world at
-     * draw time — the same factor the classic OPT pipeline uses. The two
-     * are independent: changing 0.02 only affects the Blender view, not
-     * the in-engine size. */
-    root_node->has_scale = 1;
-    root_node->scale[0] = 0.02f;
-    root_node->scale[1] = 0.02f;
-    root_node->scale[2] = 0.02f;
+    if (!set_flight_extension(build, root_node, "{\"role\":\"model\"}"))
+        goto fail;
 
     cgltf_node **root_children = (cgltf_node **)calloc(total_meshes,
                                                        sizeof *root_children);
@@ -1322,42 +1374,45 @@ bool OptGltf_BuildMemory(const opt_file_t *opt,
          * owned_strings or the cleanup loop will double-free. */
         node->name = build->meshes[mesh_out].name;
 
-        /* Per-mesh extras: meshType + symbolic name + (optional)
-         * rotation block. Hardpoints are emitted as child nodes for
-         * better tool interop (Blender renders them as empties). */
-        const char *type_name = opt_mesh_type_name(m->descriptor.mesh_type);
-        char extras[1024];
+        char extension[2048];
         size_t off = 0;
-        /* tieMeshIndex = the original OPT mesh array index. This is the
-         * stable identity used by the bundle's mesh_map (engine_mesh_idx
-         * → opt_mesh_idx) and by anything else that needs to address a
-         * specific mesh in the original file. Glb-tool reordering of
-         * scene nodes is allowed — the renderer keys off this extras
-         * field, not the node ordering. */
-        off += snprintf(extras + off, sizeof extras - off,
-            "{\"tieMeshIndex\":%d,\"tieMeshType\":%d,\"tieMeshTypeName\":\"%s\"",
-            (int)mi, (int)m->descriptor.mesh_type, type_name);
+        off += snprintf(extension + off, sizeof extension - off,
+            "{\"role\":\"component\",\"meshType\":%d,"
+            "\"explosionFlags\":%u,\"targetId\":%d",
+            (int)m->descriptor.mesh_type,
+            (unsigned)m->descriptor.explosion_type,
+            (int)m->descriptor.target_id);
+        if (m->descriptor.target_id != 0) {
+            float target[3];
+            swap_axis_v3(&m->descriptor.target, target);
+            off += snprintf(extension + off, sizeof extension - off,
+                ",\"target\":[%g,%g,%g]",
+                target[0] * meters_per_opt_unit,
+                target[1] * meters_per_opt_unit,
+                target[2] * meters_per_opt_unit);
+        }
 
-        /* Emit for EVERY mesh carrying the node — the default axis
+        /* Emit for every mesh carrying the node — the default axis
          * frame is NOT "static": XWA rotates default-frame meshes
          * about their pivot whenever their runtime angle is nonzero
-         * (hangar droid antennas spin about the default vertical
-         * axis). The identity check only classified axes, dropping
-         * exactly those. */
+         * (hangar droid antennas spin about the default vertical axis). */
         if (m->has_rotation_scale) {
             float pivot[3], rax[3], dax[3], uax[3];
             swap_axis_v3(&m->rotation_scale.pivot,          pivot);
             /* pivot is a position — scale it; axes are directions — don't. */
-            pivot[0] *= vertex_scale; pivot[1] *= vertex_scale; pivot[2] *= vertex_scale;
+            pivot[0] *= meters_per_opt_unit;
+            pivot[1] *= meters_per_opt_unit;
+            pivot[2] *= meters_per_opt_unit;
             swap_axis_v3(&m->rotation_scale.rotation_axis,  rax);
             swap_axis_v3(&m->rotation_scale.direction_axis, dax);
             swap_axis_v3(&m->rotation_scale.up_axis,        uax);
-            /* No "animated" flag: whether a mesh rotates is RUNTIME
-             * state (XWA gates on its per-mesh angle and rotates plain
-             * MainHull meshes); rotary classification is derivable
-             * from tieMeshType. */
-            off += snprintf(extras + off, sizeof extras - off,
-                ",\"tieRotation\":{"
+            for (int axis = 0; axis < 3; ++axis) {
+                rax[axis] /= OPT_Q15_TO_UNIT;
+                dax[axis] /= OPT_Q15_TO_UNIT;
+                uax[axis] /= OPT_Q15_TO_UNIT;
+            }
+            off += snprintf(extension + off, sizeof extension - off,
+                ",\"rotation\":{"
                 "\"pivot\":[%g,%g,%g],"
                 "\"rotationAxis\":[%g,%g,%g],"
                 "\"directionAxis\":[%g,%g,%g],"
@@ -1367,8 +1422,9 @@ bool OptGltf_BuildMemory(const opt_file_t *opt,
                 dax[0],   dax[1],   dax[2],
                 uax[0],   uax[1],   uax[2]);
         }
-        snprintf(extras + off, sizeof extras - off, "}");
-        node->extras.data = gb_keep_string(build, xstrdup(extras));
+        snprintf(extension + off, sizeof extension - off, "}");
+        if (!set_flight_extension(build, node, extension))
+            goto fail;
 
         /* Child nodes: hardpoints first, then engine glows (both emitted
          * as empties so Blender and other tools surface them). */
@@ -1382,20 +1438,19 @@ bool OptGltf_BuildMemory(const opt_file_t *opt,
                 const opt_hardpoint_t *hp = &m->hardpoints[h];
                 cgltf_node *hpn = next_child_node++;
                 hpn->parent = node;
-                const char *hp_name = opt_hardpoint_type_name(hp->type);
                 hpn->name = gb_keep_string(build,
-                    xprintf_dup("hp_%s", hp_name));
+                    xprintf_dup("hardpoint_%d", (int)hp->type));
                 float pos[3];
                 swap_axis_v3(&hp->pos, pos);
                 hpn->has_translation = 1;
-                hpn->translation[0] = pos[0] * vertex_scale;
-                hpn->translation[1] = pos[1] * vertex_scale;
-                hpn->translation[2] = pos[2] * vertex_scale;
-                char hpe[512];
-                snprintf(hpe, sizeof hpe,
-                    "{\"tieHardpoint\":{\"type\":%d,\"typeName\":\"%s\"}}",
-                    (int)hp->type, hp_name);
-                hpn->extras.data = gb_keep_string(build, xstrdup(hpe));
+                hpn->translation[0] = pos[0] * meters_per_opt_unit;
+                hpn->translation[1] = pos[1] * meters_per_opt_unit;
+                hpn->translation[2] = pos[2] * meters_per_opt_unit;
+                char hardpoint_extension[96];
+                snprintf(hardpoint_extension, sizeof hardpoint_extension,
+                    "{\"role\":\"hardpoint\",\"type\":%d}", (int)hp->type);
+                if (!set_flight_extension(build, hpn, hardpoint_extension))
+                    goto fail;
                 children[ci++] = hpn;
             }
             for (int e = 0; e < m->engine_glow_count; ++e) {
@@ -1403,29 +1458,40 @@ bool OptGltf_BuildMemory(const opt_file_t *opt,
                 cgltf_node *egn = next_child_node++;
                 egn->parent = node;
                 egn->name = gb_keep_string(build, xprintf_dup("engine_glow_%d", e));
-                float pos[3], look[3], up[3], right[3];
+                float pos[3], look[3], up[3], right[3], rotation[4];
                 swap_axis_v3(&eg->position,   pos);
                 swap_axis_v3(&eg->look_axis,  look);
                 swap_axis_v3(&eg->up_axis,    up);
                 swap_axis_v3(&eg->right_axis, right);
                 egn->has_translation = 1;
-                egn->translation[0] = pos[0] * vertex_scale;
-                egn->translation[1] = pos[1] * vertex_scale;
-                egn->translation[2] = pos[2] * vertex_scale;
-                char ege[768];
-                snprintf(ege, sizeof ege,
-                    "{\"tieEngineGlow\":{\"disabled\":%s,"
-                    "\"coreColor\":\"#%08X\",\"outerColor\":\"#%08X\","
-                    "\"dimensions\":[%g,%g,%g],"
-                    "\"lookAxis\":[%g,%g,%g],\"upAxis\":[%g,%g,%g],"
-                    "\"rightAxis\":[%g,%g,%g]}}",
-                    eg->is_disabled ? "true" : "false",
-                    eg->core_color, eg->outer_color,
-                    eg->dimensions.x, eg->dimensions.y, eg->dimensions.z,
-                    look[0], look[1], look[2],
-                    up[0], up[1], up[2],
-                    right[0], right[1], right[2]);
-                egn->extras.data = gb_keep_string(build, xstrdup(ege));
+                egn->translation[0] = pos[0] * meters_per_opt_unit;
+                egn->translation[1] = pos[1] * meters_per_opt_unit;
+                egn->translation[2] = pos[2] * meters_per_opt_unit;
+                quaternion_from_axes(right, up, look, rotation);
+                egn->has_rotation = 1;
+                memcpy(egn->rotation, rotation, sizeof rotation);
+                egn->has_scale = 1;
+                egn->scale[0] = eg->dimensions.x * meters_per_opt_unit;
+                egn->scale[1] = eg->dimensions.y * meters_per_opt_unit;
+                egn->scale[2] = eg->dimensions.z * meters_per_opt_unit;
+                const uint32_t colors[2] = {eg->core_color, eg->outer_color};
+                float rgba[2][4];
+                for (int color = 0; color < 2; ++color) {
+                    rgba[color][0] = (float)((colors[color] >> 16) & 0xff) / 255.0f;
+                    rgba[color][1] = (float)((colors[color] >> 8) & 0xff) / 255.0f;
+                    rgba[color][2] = (float)(colors[color] & 0xff) / 255.0f;
+                    rgba[color][3] = (float)((colors[color] >> 24) & 0xff) / 255.0f;
+                }
+                char glow_extension[512];
+                snprintf(glow_extension, sizeof glow_extension,
+                    "{\"role\":\"engineGlow\",\"enabled\":%s,"
+                    "\"coreColor\":[%g,%g,%g,%g],"
+                    "\"outerColor\":[%g,%g,%g,%g]}",
+                    eg->is_disabled ? "false" : "true",
+                    rgba[0][0], rgba[0][1], rgba[0][2], rgba[0][3],
+                    rgba[1][0], rgba[1][1], rgba[1][2], rgba[1][3]);
+                if (!set_flight_extension(build, egn, glow_extension))
+                    goto fail;
                 children[ci++] = egn;
             }
             node->children = children;
@@ -1477,15 +1543,17 @@ bool OptGltf_BuildMemory(const opt_file_t *opt,
     document->data.variants             = build->variants;
     document->data.variants_count       = build->variants_count;
 
-    /* Declare KHR_materials_variants in extensionsUsed if used. */
+    /* Declare the flight contract and optional material variants. */
+    const char *ext_flight = "AERON_flight_model";
     const char *ext_variants = "KHR_materials_variants";
-    if (build->variants_count > 0) {
-        document->data.extensions_used = (char **)calloc(1, sizeof(char *));
-        if (document->data.extensions_used) {
-            document->data.extensions_used[0] = (char *)ext_variants;
-            document->data.extensions_used_count = 1;
-        }
-    }
+    const size_t extension_count = build->variants_count > 0 ? 2u : 1u;
+    document->data.extensions_used =
+        (char **)calloc(extension_count, sizeof(char *));
+    if (!document->data.extensions_used) goto fail;
+    document->data.extensions_used[0] = (char *)ext_flight;
+    if (build->variants_count > 0)
+        document->data.extensions_used[1] = (char *)ext_variants;
+    document->data.extensions_used_count = extension_count;
 
     /* The geometry build is temporary; the cgltf accessors now reference
      * copies in build->bin. */
@@ -1541,6 +1609,7 @@ void OptGltf_Free(OptGltfDocument *document)
      * a double-free. */
     for (size_t i = 0; i < gb->nodes_count; ++i) {
         free(gb->nodes[i].children);
+        free(gb->nodes[i].extensions);
     }
     free(document->scene_roots);
     for (size_t i = 0; i < document->image_pixels_count; ++i)
@@ -1616,13 +1685,11 @@ bool OptGltf_WriteFiles(const OptGltfDocument *document,
 bool opt2gltf_convert(const opt_file_t *opt,
                       const char *out_dir,
                       const char *basename,
-                      float vertex_scale,
                       float smooth_angle_deg,
                       bool repair_normals,
                       bool emissive)
 {
     const OptGltfBuildOptions options = {
-        .vertex_scale = vertex_scale,
         .smooth_angle_degrees = smooth_angle_deg,
         .repair_normals = repair_normals,
         .emissive = emissive,

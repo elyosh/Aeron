@@ -14,8 +14,8 @@
  *   - decodes per-primitive vertex / index / variant tables into one
  *     merged ship-level buffer the renderer issues a single indexed
  *     draw against
- *   - flattens hardpoint child nodes (`hp_*` with tieHardpoint extras)
- *     into a per-ship list for the AI / weapon-spawn paths
+ *   - identifies component nodes from the AERON_flight_model hierarchy
+ *     and assigns their model-local ordinal to render vertices
  *
  * PNG decoding, atlas packing, and mip generation happen offline in
  * aeron_gltf_cook.
@@ -35,110 +35,83 @@
 #include <stdbool.h>
 
 #include "cgltf.h"
+#include "cJSON.h"
 
 /* Host-provided log (SDL3 via SDL_Log; standalone tools stub it). */
 extern void SDL_Log(const char *fmt, ...);
 
-/* ===== Coordinate-frame swap =======================================
- *
- * aeron_gltf_cook preserves opt2gltf's coord swap. opt2gltf emits OPT (+Z up,
- * -Y forward) in glTF convention (+Y up, -Z forward) by swapping Y/Z;
- * we undo that swap so vertices land in the renderer's native frame.
- * Y<->Z is an involution. */
-static inline void swap_yz3(const float in[3], float out[3])
+/* glTF +Y up / +Z front to Aeron +X right / -Y forward / +Z up. */
+static inline void gltf_to_aeron3(const float in[3], float out[3])
 {
-    out[0] = in[0];
-    out[1] = in[2];
+    out[0] = -in[0];
+    out[1] = -in[2];
     out[2] = in[1];
 }
 
-/* Same swap for the 4-component tangent: xyz swap, sign-of-bitangent
- * (w) passes through unchanged. */
-static inline void swap_yz4_tangent(const float in[4], float out[4])
+/* The handedness-changing frame conversion also reverses tangent.w. */
+static inline void gltf_to_aeron_tangent(const float in[4], float out[4])
 {
-    out[0] = in[0];
-    out[1] = in[2];
+    out[0] = -in[0];
+    out[1] = -in[2];
     out[2] = in[1];
-    out[3] = in[3];
+    out[3] = -in[3];
 }
 
-/* ===== Tiny JSON extras parser =====================================
- *
- * cgltf gives us `extras.data` as a raw JSON string; we parse the
- * specific shape opt2gltf emits without pulling in a full JSON lib.
- * Caller passes a key (e.g. "tieMeshIndex") and a typed extractor.
- * No nesting recovery — we walk the string char-by-char looking for
- * "key":<value> and parse the value type assumed by the caller.
- *
- * Safe against well-formed input from our own tool. Defends against
- * the obvious failure modes (missing key, truncated value) but won't
- * cope with adversarial JSON. */
-
-static const char *json_find_key(const char *json, const char *key)
+static const char *node_flight_extension(const cgltf_node *node)
 {
-    if (!json || !key) return NULL;
-    const size_t klen = strlen(key);
-    for (const char *p = json; *p; p++) {
-        if (*p != '"') continue;
-        const char *kstart = p + 1;
-        if (strncmp(kstart, key, klen) != 0) continue;
-        if (kstart[klen] != '"') continue;
-        const char *q = kstart + klen + 1;
-        while (*q == ' ' || *q == '\t') q++;
-        if (*q != ':') continue;
-        q++;
-        while (*q == ' ' || *q == '\t') q++;
-        return q;
+    if (!node) return NULL;
+    for (cgltf_size index = 0; index < node->extensions_count; ++index) {
+        const cgltf_extension *extension = &node->extensions[index];
+        if (extension->name && extension->data &&
+            strcmp(extension->name, "AERON_flight_model") == 0)
+            return extension->data;
     }
     return NULL;
 }
 
-static bool json_get_int(const char *json, const char *key, int *out)
+static bool json_object_string_equals(const char *json, const char *key,
+                                      const char *expected)
 {
-    const char *v = json_find_key(json, key);
-    if (!v) return false;
-    char *end = NULL;
-    long n = strtol(v, &end, 10);
-    if (end == v) return false;
-    *out = (int)n;
-    return true;
+    if (!json || !key || !expected) return false;
+    cJSON *object = cJSON_ParseWithOpts(json, NULL, true);
+    const cJSON *value = cJSON_IsObject(object)
+        ? cJSON_GetObjectItemCaseSensitive(object, key) : NULL;
+    const bool matches = cJSON_IsString(value) && value->valuestring &&
+                         strcmp(value->valuestring, expected) == 0;
+    cJSON_Delete(object);
+    return matches;
 }
 
-static bool json_get_bool(const char *json, const char *key, bool *out)
+static bool node_has_flight_role(const cgltf_node *node, const char *expected)
 {
-    const char *v = json_find_key(json, key);
-    if (!v) return false;
-    if (strncmp(v, "true", 4) == 0)  { *out = true;  return true; }
-    if (strncmp(v, "false", 5) == 0) { *out = false; return true; }
-    return false;
+    return json_object_string_equals(node_flight_extension(node),
+                                     "role", expected);
 }
 
-static bool json_string_equals(const char *json, const char *key,
-                               const char *expected)
+static void transform_point(const float matrix[16], const float in[3],
+                            float out[3])
 {
-    const char *v = json_find_key(json, key);
-    if (!v || *v != '"' || !expected) return false;
-    const char *end = strchr(v + 1, '"');
-    if (!end) return false;
-    const size_t len = strlen(expected);
-    return (size_t)(end - (v + 1)) == len && memcmp(v + 1, expected, len) == 0;
+    out[0] = matrix[0] * in[0] + matrix[4] * in[1] +
+             matrix[8] * in[2] + matrix[12];
+    out[1] = matrix[1] * in[0] + matrix[5] * in[1] +
+             matrix[9] * in[2] + matrix[13];
+    out[2] = matrix[2] * in[0] + matrix[6] * in[1] +
+             matrix[10] * in[2] + matrix[14];
 }
 
-/* Parse a fixed-length float array of the form [a, b, c, ...] */
-static bool json_get_vec(const char *json, const char *key,
-                         int len, float *out)
+static void transform_direction(const float matrix[16], const float in[3],
+                                float out[3])
 {
-    const char *v = json_find_key(json, key);
-    if (!v || *v != '[') return false;
-    v++;
-    for (int i = 0; i < len; i++) {
-        while (*v == ' ' || *v == '\t' || *v == ',') v++;
-        char *end = NULL;
-        out[i] = strtof(v, &end);
-        if (end == v) return false;
-        v = end;
+    out[0] = matrix[0] * in[0] + matrix[4] * in[1] + matrix[8] * in[2];
+    out[1] = matrix[1] * in[0] + matrix[5] * in[1] + matrix[9] * in[2];
+    out[2] = matrix[2] * in[0] + matrix[6] * in[1] + matrix[10] * in[2];
+    const float length = sqrtf(out[0] * out[0] + out[1] * out[1] +
+                               out[2] * out[2]);
+    if (length > 1.0e-9f) {
+        out[0] /= length;
+        out[1] /= length;
+        out[2] /= length;
     }
-    return true;
 }
 
 /* ===== cgltf accessor decoders ===================================== */
@@ -283,8 +256,8 @@ static bool read_material(const cgltf_material *m, AeronGltfMaterial *out)
     default:
         return false;
     }
-    if (json_string_equals(m->extras.data, "aeronEmissiveMode",
-                           "legacy_srgb_srcalpha")) {
+    if (json_object_string_equals(m->extras.data, "aeronEmissiveMode",
+                                  "legacy_srgb_srcalpha")) {
         out->emissive_mode = AERON_GLTF_EMISSIVE_LEGACY_SRGB_SRCALPHA;
     }
 
@@ -328,12 +301,11 @@ static AeronGltfAlphaMode material_alpha_mode(const AeronGltfModel *model,
  * primitive's range relative to its global vertex_offset so the
  * renderer issues a single indexed draw across all primitives.
  *
- * Also bakes per-vertex `mesh_index` (= node's opt_mesh_index) and
+ * Also bakes per-vertex `mesh_index` (= component ordinal) and
  * `prim_id` (= global prim slot). */
 static bool append_primitive_vertices(
-    const cgltf_primitive *p,
-    uint16_t opt_mesh_index,
-    uint32_t prim_id,
+    const cgltf_primitive *p, const cgltf_node *node,
+    uint16_t component_index, uint32_t prim_id,
     AeronGltfVertex *verts, uint16_t *indices,
     uint32_t *voff_io, uint32_t *ioff_io)
 {
@@ -342,10 +314,10 @@ static bool append_primitive_vertices(
     const cgltf_accessor *uv  = prim_attr(p, cgltf_attribute_type_texcoord);
     const cgltf_accessor *tan = prim_attr(p, cgltf_attribute_type_tangent);
     const cgltf_accessor *idx = p->indices;
-    if (!pos || !idx) return true;            /* skipped; not fatal */
+    if (!pos || p->type != cgltf_primitive_type_triangles) return false;
 
     uint32_t vcount = (uint32_t)pos->count;
-    uint32_t icount = (uint32_t)idx->count;
+    uint32_t icount = idx ? (uint32_t)idx->count : vcount;
     uint32_t voff   = *voff_io;
     uint32_t ioff   = *ioff_io;
 
@@ -364,18 +336,24 @@ static bool append_primitive_vertices(
     if (tan) decode_vec4(tan, tangents, vcount);
     else     for (uint32_t i = 0; i < vcount; i++) tangents[i*4+3] = 1.0f;
 
-    /* Interleave into AeronGltfVertex with coord swap. Positions stay
-     * in raw OPT units — the runtime scales them via craft_to_world's
-     * 1/65536 factor, matching the OPT pipeline. */
+    float matrix[16];
+    cgltf_node_transform_world(node, matrix);
     for (uint32_t i = 0; i < vcount; i++) {
         AeronGltfVertex *v = &verts[voff + i];
-        swap_yz3(&positions[i*3], v->pos);
-        swap_yz3(&normals[i*3],   v->normal);
-        swap_yz4_tangent(&tangents[i*4], v->tangent);
-        v->uv[0]       = uvs[i*2 + 0];
-        v->uv[1]       = uvs[i*2 + 1];
-        v->mesh_index  = (float)opt_mesh_index;
-        v->prim_id     = prim_id;
+        float transformed[3];
+        transform_point(matrix, &positions[i*3], transformed);
+        gltf_to_aeron3(transformed, v->pos);
+        transform_direction(matrix, &normals[i*3], transformed);
+        gltf_to_aeron3(transformed, v->normal);
+        transform_direction(matrix, &tangents[i*4], transformed);
+        const float tangent[4] = {
+            transformed[0], transformed[1], transformed[2], tangents[i*4+3]
+        };
+        gltf_to_aeron_tangent(tangent, v->tangent);
+        v->uv[0]      = uvs[i*2 + 0];
+        v->uv[1]      = uvs[i*2 + 1];
+        v->mesh_index = (float)component_index;
+        v->prim_id    = prim_id;
     }
     free(positions); free(normals); free(uvs); free(tangents);
 
@@ -383,7 +361,7 @@ static bool append_primitive_vertices(
      * merged buffer. */
     uint16_t *dst_idx = indices + ioff;
     for (uint32_t i = 0; i < icount; i++) {
-        cgltf_size raw = cgltf_accessor_read_index(idx, i);
+        cgltf_size raw = idx ? cgltf_accessor_read_index(idx, i) : i;
         uint32_t   adj = (uint32_t)raw + voff;
         dst_idx[i] = (adj < 0xFFFFu) ? (uint16_t)adj : 0xFFFFu;
     }
@@ -391,145 +369,6 @@ static bool append_primitive_vertices(
     *voff_io = voff + vcount;
     *ioff_io = ioff + icount;
     return true;
-}
-
-/* ===== Hardpoint collection ========================================= */
-
-static bool collect_hardpoints(const cgltf_node *mesh_node,
-                               AeronGltfHardpoint **list,
-                               uint32_t *count, uint32_t *cap)
-{
-    for (cgltf_size i = 0; i < mesh_node->children_count; i++) {
-        const cgltf_node *ch = mesh_node->children[i];
-        if (ch->mesh || !ch->extras.data ||
-            !strstr(ch->extras.data, "tieHardpoint"))
-            continue;
-        if (*count == *cap) {
-            uint32_t new_cap = *cap ? *cap * 2u : 8u;
-            AeronGltfHardpoint *grown = (AeronGltfHardpoint *)
-                realloc(*list, new_cap * sizeof(AeronGltfHardpoint));
-            if (!grown) return false;
-            *list = grown;
-            *cap  = new_cap;
-        }
-        AeronGltfHardpoint *hp = &(*list)[(*count)++];
-        memset(hp, 0, sizeof *hp);
-        float pos_gltf[3] = {0, 0, 0};
-        if (ch->has_translation) {
-            pos_gltf[0] = ch->translation[0];
-            pos_gltf[1] = ch->translation[1];
-            pos_gltf[2] = ch->translation[2];
-        }
-        swap_yz3(pos_gltf, hp->position);
-        int t;
-        if (json_get_int(ch->extras.data, "type", &t))
-            hp->type = (uint8_t)t;
-    }
-    return true;
-}
-
-/* ===== Engine glow collection ======================================= */
-
-/* "#AARRGGBB" -> linear-ish 0..1 RGBA floats. */
-static bool json_get_hex_color(const char *json, const char *key, float out[4])
-{
-    const char *v = json_find_key(json, key);
-    if (!v || *v != '"' || v[1] != '#') return false;
-    uint32_t word = (uint32_t)strtoul(v + 2, NULL, 16);
-    out[0] = (float)((word >> 16) & 0xFF) / 255.0f;
-    out[1] = (float)((word >> 8) & 0xFF) / 255.0f;
-    out[2] = (float)(word & 0xFF) / 255.0f;
-    out[3] = (float)((word >> 24) & 0xFF) / 255.0f;
-    return true;
-}
-
-static bool collect_engine_glows(const cgltf_node *mesh_node, uint16_t mesh_slot,
-                                 AeronGltfEngineGlow **list,
-                                 uint32_t *count, uint32_t *cap)
-{
-    for (cgltf_size i = 0; i < mesh_node->children_count; i++) {
-        const cgltf_node *ch = mesh_node->children[i];
-        if (ch->mesh || !ch->extras.data ||
-            !strstr(ch->extras.data, "tieEngineGlow"))
-            continue;
-        if (*count == *cap) {
-            uint32_t new_cap = *cap ? *cap * 2u : 8u;
-            AeronGltfEngineGlow *grown = (AeronGltfEngineGlow *)
-                realloc(*list, new_cap * sizeof(AeronGltfEngineGlow));
-            if (!grown) return false;
-            *list = grown;
-            *cap  = new_cap;
-        }
-        AeronGltfEngineGlow *eg = &(*list)[(*count)++];
-        memset(eg, 0, sizeof *eg);
-        float pos_gltf[3] = {0, 0, 0};
-        if (ch->has_translation) {
-            pos_gltf[0] = ch->translation[0];
-            pos_gltf[1] = ch->translation[1];
-            pos_gltf[2] = ch->translation[2];
-        }
-        swap_yz3(pos_gltf, eg->position);
-        const char *ex = ch->extras.data;
-        float v3[3];
-        if (json_get_vec(ex, "lookAxis", 3, v3))  swap_yz3(v3, eg->look);
-        if (json_get_vec(ex, "upAxis", 3, v3))    swap_yz3(v3, eg->up);
-        if (json_get_vec(ex, "rightAxis", 3, v3)) swap_yz3(v3, eg->right);
-        /* Dimensions are the OPT's raw half extents (not axis-swapped
-         * by opt2gltf — they pair with the axis vectors above). */
-        json_get_vec(ex, "dimensions", 3, eg->dimensions);
-        json_get_hex_color(ex, "coreColor", eg->core_rgba);
-        json_get_hex_color(ex, "outerColor", eg->outer_rgba);
-        bool disabled = false;
-        json_get_bool(ex, "disabled", &disabled);
-        eg->disabled  = disabled ? 1 : 0;
-        eg->mesh_slot = (uint8_t)(mesh_slot < 0xFFu ? mesh_slot : 0xFFu);
-    }
-    return true;
-}
-
-/* Parse mesh-node extras into the ship-level mesh_rot slot. Returns
- * false on missing identity (tieMeshIndex), which the caller treats
- * as a soft skip of that node. */
-static bool parse_node_extras(const cgltf_node *node,
-                              uint16_t *opt_mesh_index_out,
-                              AeronMeshRot *slot)
-{
-    const char *ex = node->extras.data;
-    int v;
-    if (!json_get_int(ex, "tieMeshIndex", &v)) return false;
-    *opt_mesh_index_out = (uint16_t)v;
-    memset(slot, 0, sizeof *slot);
-    if (json_get_int(ex, "tieMeshType", &v))
-        slot->mesh_type = (uint8_t)v;
-    float pivot[3] = {0}, axis[3] = {0};
-    if (json_get_vec(ex, "pivot",        3, pivot) &&
-        json_get_vec(ex, "rotationAxis", 3, axis)) {
-        float tmp[3];
-        swap_yz3(pivot, tmp); memcpy(slot->pivot, tmp, sizeof tmp);
-        swap_yz3(axis,  tmp); memcpy(slot->axis,  tmp, sizeof tmp);
-        /* has_rotation = the mesh HAS a rotation axis. Whether it
-         * currently rotates is runtime state — the game gates on its
-         * per-mesh angle (XWA rotates plain MainHull meshes like the
-         * hangar crane, so the cook's rotary-type `animated` heuristic
-         * must not gate the data). Rotary classification stays
-         * available via mesh_type. */
-        slot->has_rotation = 1u;
-    }
-    return true;
-}
-
-/* ===== Bound box ==================================================== */
-
-static void accumulate_bbox(AeronGltfModel *out,
-                            const AeronGltfVertex *verts, uint32_t n)
-{
-    for (uint32_t i = 0; i < n; i++) {
-        const float *p = verts[i].pos;
-        for (int k = 0; k < 3; k++) {
-            if (p[k] < out->bound_min[k]) out->bound_min[k] = p[k];
-            if (p[k] > out->bound_max[k]) out->bound_max[k] = p[k];
-        }
-    }
 }
 
 /* ===== Public API =================================================== */
@@ -548,8 +387,6 @@ bool Aeron_GltfMeshBuildData(const cgltf_data *data,
     if (!data || !out) return false;
     if (!source_label) source_label = "<memory glTF>";
     memset(out, 0, sizeof *out);
-    out->bound_min[0] = out->bound_min[1] = out->bound_min[2] = +INFINITY;
-    out->bound_max[0] = out->bound_max[1] = out->bound_max[2] = -INFINITY;
 
     bool succeeded = false;
 
@@ -590,46 +427,35 @@ bool Aeron_GltfMeshBuildData(const cgltf_data *data,
         }
     }
 
-    /* ---- Pass 1: count merged vertex / index / primitive totals, and
-     * record per-node identities (opt_mesh_index, rotation slot).
-     * Hardpoint child nodes are collected after Pass 2 has visited
-     * their parents. */
+    /* ---- Pass 1: count merged vertex / index / primitive totals and
+     * record component ordinals. */
     uint32_t total_v = 0, total_i = 0, total_prims = 0;
-    uint32_t hp_cap = 0, hp_count = 0;
-    uint32_t eg_cap = 0, eg_count = 0;
-
-    plans = (NodePlan *)calloc(data->nodes_count, sizeof *plans);
+    if (!data->scene || data->scene->nodes_count != 1) goto cleanup;
+    const cgltf_node *root = data->scene->nodes[0];
+    if (!node_has_flight_role(root, "model")) goto cleanup;
+    plans = (NodePlan *)calloc(root->children_count, sizeof *plans);
     if (!plans) goto cleanup;
     uint32_t plan_count = 0;
 
-    for (cgltf_size i = 0; i < data->nodes_count; i++) {
-        const cgltf_node *n = &data->nodes[i];
-        if (!n->mesh) continue;
-        uint16_t opt_mi = 0;
-        AeronMeshRot mr_slot;
-        if (!parse_node_extras(n, &opt_mi, &mr_slot)) {
-            SDL_Log("[flight_gltf] node %zu has no tieMeshIndex; skipped",
-                    i);
-            continue;
-        }
-        if (opt_mi >= AERON_MAX_MESH_SLOTS) {
-            SDL_Log("[flight_gltf] node %zu opt_mesh_index=%u over cap; skipped",
-                    i, (unsigned)opt_mi);
-            continue;
-        }
-        out->mesh_rot[opt_mi] = mr_slot;
+    for (cgltf_size i = 0; i < root->children_count; i++) {
+        const cgltf_node *n = root->children[i];
+        const uint16_t component_index = (uint16_t)i;
+        if (!n->mesh || i >= AERON_MAX_MESH_SLOTS) goto cleanup;
+        if (!node_has_flight_role(n, "component")) goto cleanup;
 
         NodePlan *plan = &plans[plan_count++];
         plan->node   = n;
-        plan->opt_mi = opt_mi;
+        plan->opt_mi = component_index;
 
         for (cgltf_size pi = 0; pi < n->mesh->primitives_count; pi++) {
             const cgltf_primitive *p = &n->mesh->primitives[pi];
-            const cgltf_accessor *pos = prim_attr(p, cgltf_attribute_type_position);
+            const cgltf_accessor *pos =
+                prim_attr(p, cgltf_attribute_type_position);
             const cgltf_accessor *idx = p->indices;
-            if (!pos || !idx) continue;
+            if (!pos || p->type != cgltf_primitive_type_triangles)
+                goto cleanup;
             total_v     += (uint32_t)pos->count;
-            total_i     += (uint32_t)idx->count;
+            total_i     += idx ? (uint32_t)idx->count : (uint32_t)pos->count;
             total_prims += 1u;
         }
     }
@@ -663,11 +489,12 @@ bool Aeron_GltfMeshBuildData(const cgltf_data *data,
         const cgltf_mesh *mesh = plan->node->mesh;
         for (cgltf_size si = 0; si < mesh->primitives_count; si++) {
             const cgltf_primitive *p = &mesh->primitives[si];
-            const cgltf_accessor *pos = prim_attr(p, cgltf_attribute_type_position);
-            if (!pos || !p->indices) continue;
-            if (!append_primitive_vertices(p, plan->opt_mi, prim_id,
-                                           out->vertices, out->indices,
-                                           &voff, &ioff))
+            const cgltf_accessor *pos =
+                prim_attr(p, cgltf_attribute_type_position);
+            if (!pos) goto cleanup;
+            if (!append_primitive_vertices(p, plan->node, plan->opt_mi,
+                                           prim_id, out->vertices,
+                                           out->indices, &voff, &ioff))
                 goto cleanup;
             uint32_t default_mat = p->material
                 ? (uint32_t)cgltf_material_index(data, p->material)
@@ -688,15 +515,7 @@ bool Aeron_GltfMeshBuildData(const cgltf_data *data,
             }
             prim_id++;
         }
-        if (!collect_hardpoints(plan->node,
-                                &out->hardpoints, &hp_count, &hp_cap))
-            goto cleanup;
-        if (!collect_engine_glows(plan->node, plan->opt_mi,
-                                  &out->engine_glows, &eg_count, &eg_cap))
-            goto cleanup;
     }
-    out->hardpoint_count   = hp_count;
-    out->engine_glow_count = eg_count;
 
     /* A fixed index partition requires every runtime material variant of a
      * primitive to remain in the same render class. */
@@ -770,84 +589,23 @@ bool Aeron_GltfMeshBuildData(const cgltf_data *data,
         free(sorted);
     }
 
-    /* ---- Bounding sphere (snapshot world units) ------------------- */
-    if (out->vertex_count > 0)
-        accumulate_bbox(out, out->vertices, out->vertex_count);
-    if (isfinite(out->bound_min[0])) {
-        float ex = fmaxf(fabsf(out->bound_min[0]), fabsf(out->bound_max[0]));
-        float ey = fmaxf(fabsf(out->bound_min[1]), fabsf(out->bound_max[1]));
-        float ez = fmaxf(fabsf(out->bound_min[2]), fabsf(out->bound_max[2]));
-        out->bound_radius = sqrtf(ex * ex + ey * ey + ez * ez)
-                            * (1.0f / 65536.0f);
-    }
-
     SDL_Log("[flight_gltf] %s: %u verts, %u indices (%u opaque, %u mask, "
             "%u blend), %u prims, "
             "%u materials, %u variants, atlases base=%zu nrm=%zu mr=%zu "
-            "emis=%zu, radius=%g",
+            "emis=%zu",
             source_label,
             out->vertex_count, out->index_count,
             out->opaque_index_count, out->mask_index_count,
             out->blend_index_count, out->total_prim_count,
             out->material_count, out->variant_count,
             out->channels[0].size, out->channels[1].size,
-            out->channels[2].size, out->channels[3].size,
-            (double)out->bound_radius);
+            out->channels[2].size, out->channels[3].size);
 
     succeeded = true;
 
 cleanup:
     free(plans);
     if (!succeeded) Aeron_GltfMeshFree(out);
-    return succeeded;
-}
-
-bool Aeron_GltfMeshBuild(const char *glb_path, AeronGltfModel *out)
-{
-    if (!glb_path || !out) return false;
-    cgltf_options opts = {0};
-    cgltf_data *data = NULL;
-    cgltf_result r = cgltf_parse_file(&opts, glb_path, &data);
-    if (r != cgltf_result_success) {
-        SDL_Log("[flight_gltf] parse '%s' failed: %d", glb_path, (int)r);
-        return false;
-    }
-    r = cgltf_load_buffers(&opts, data, glb_path);
-    if (r != cgltf_result_success) {
-        SDL_Log("[flight_gltf] load_buffers '%s' failed: %d", glb_path, (int)r);
-        cgltf_free(data);
-        return false;
-    }
-    const bool succeeded = Aeron_GltfMeshBuildData(data, glb_path, out);
-    cgltf_free(data);
-    return succeeded;
-}
-
-bool Aeron_GltfMeshBuildMemory(const void *bytes, size_t size,
-                               const char *source_label,
-                               AeronGltfModel *out)
-{
-    if (!bytes || size == 0 || !source_label || !source_label[0] || !out)
-        return false;
-    memset(out, 0, sizeof *out);
-    cgltf_options options = {0};
-    cgltf_data *data = NULL;
-    cgltf_result result = cgltf_parse(&options, bytes, size, &data);
-    if (result != cgltf_result_success) {
-        SDL_Log("[flight_gltf] parse memory '%s' failed: %d",
-                source_label, (int)result);
-        return false;
-    }
-    for (cgltf_size index = 0; index < data->buffers_count; ++index) {
-        if (!data->buffers[index].data) {
-            SDL_Log("[flight_gltf] '%s' contains an external buffer",
-                    source_label);
-            cgltf_free(data);
-            return false;
-        }
-    }
-    const bool succeeded = Aeron_GltfMeshBuildData(data, source_label, out);
-    cgltf_free(data);
     return succeeded;
 }
 
@@ -858,8 +616,6 @@ void Aeron_GltfMeshFree(AeronGltfModel *m)
     free(m->indices);
     free(m->materials);
     free(m->prim_variant_material);
-    free(m->hardpoints);
-    free(m->engine_glows);
     for (int c = 0; c < AERON_GLTF_CHANNEL_COUNT; c++)
         free(m->channels[c].data);
     memset(m, 0, sizeof *m);

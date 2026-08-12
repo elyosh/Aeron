@@ -22,6 +22,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#define OPT_Q15_UNIT 32767.0f
+
 #ifdef __cplusplus
 extern "C" {
 #endif

@@ -14,6 +14,7 @@ bl_info = {
 }
 
 import os
+import json
 import shutil
 import subprocess
 import tempfile
@@ -22,13 +23,127 @@ import bpy
 from bpy.props import (
     BoolProperty,
     EnumProperty,
+    FloatVectorProperty,
     IntProperty,
+    PointerProperty,
     StringProperty,
 )
-from bpy.types import AddonPreferences, Operator
+from bpy.types import AddonPreferences, Operator, Panel, PropertyGroup
 from bpy_extras.io_utils import ExportHelper
 
 ADDON_ID = __name__
+EXTENSION_NAME = "AERON_flight_model"
+
+MESH_TYPE_NAMES = (
+    "Default", "Main hull", "Wing", "Fuselage", "Gun turret", "Small gun",
+    "Engine", "Bridge", "Shield generator", "Energy generator", "Launcher",
+    "Communication system", "Beam system", "Command beam", "Docking platform",
+    "Landing platform", "Hangar", "Cargo pod", "Miscellaneous hull", "Antenna",
+    "Rotary wing", "Rotary gun turret", "Rotary launcher",
+    "Rotary communication system", "Rotary beam system", "Rotary command beam",
+    "Hatch", "Custom", "Weapon system 1", "Weapon system 2", "Power regenerator",
+    "Reactor",
+)
+
+HARDPOINT_TYPE_NAMES = (
+    "None", "Laser cannon / Rebel laser", "Ion cannon / Turbo rebel laser",
+    "Turbo laser / Empire laser", "Ion turbo laser / Turbo empire laser",
+    "Cluster missile / Ion cannon", "Torpedo mag pulse / Turbo ion cannon",
+    "Concussion missile / Torpedo", "Proton torpedo / Missile",
+    "Advanced concussion / Super rebel laser",
+    "Advanced proton torpedo / Super empire laser",
+    "Advanced torpedo mag pulse / Super ion cannon", "Bomb / Super torpedo",
+    "Beam weapon / Super missile", "Dumb bomb", "Fire rocket / Fired bomb",
+    "Mag pulse", "Turbo mag pulse", "Warhead / Super mag pulse", "Gunner",
+    "Cockpit sparks", "Docking point", "Towing", "Acceleration start",
+    "Acceleration end", "Cockpit / inside hangar", "Engine / outside hangar",
+    "Passive heavy dock / dock from big", "Passive light dock / dock from small",
+    "Active heavy dock / dock to big", "Active light dock / dock to small",
+    "Primary sweep / cockpit",
+    "Engine glow", "Custom 1", "Custom 2", "Custom 3", "Custom 4", "Custom 5",
+    "Custom 6", "Jamming point",
+)
+
+
+def _enum_items(names):
+    return [(str(index), "{}: {}".format(index, name), name)
+            for index, name in enumerate(names)]
+
+
+def _blender_to_gltf(vector):
+    return [float(vector[0]), float(vector[2]), -float(vector[1])]
+
+
+class AeronFlightProperties(PropertyGroup):
+    role: EnumProperty(
+        name="Flight role",
+        items=[
+            ('none', "None", "Not part of a flight-model hierarchy"),
+            ('model', "Model", "Root of one flight model"),
+            ('component', "Component", "Ordered polygon component"),
+            ('hardpoint', "Hardpoint", "Ordered weapon or attachment point"),
+            ('engineGlow', "Engine glow", "Ordered component-owned engine glow"),
+        ],
+        default='none',
+    )
+    order: IntProperty(name="Order", default=0, min=0)
+    mesh_type: EnumProperty(name="Mesh type", items=_enum_items(MESH_TYPE_NAMES), default='0')
+    explosion_flags: IntProperty(name="Explosion flags", default=0, min=0)
+    target_id: IntProperty(name="Target ID", default=0)
+    target: FloatVectorProperty(name="Target", size=3, subtype='XYZ')
+    has_rotation: BoolProperty(name="Articulated", default=False)
+    pivot: FloatVectorProperty(name="Pivot", size=3, subtype='XYZ')
+    rotation_axis: FloatVectorProperty(
+        name="Rotation axis", size=3, subtype='XYZ', default=(0.0, 1.0, 0.0))
+    direction_axis: FloatVectorProperty(
+        name="Direction axis", size=3, subtype='XYZ', default=(0.0, 0.0, 1.0))
+    up_axis: FloatVectorProperty(
+        name="Up axis", size=3, subtype='XYZ', default=(1.0, 0.0, 0.0))
+    hardpoint_type: EnumProperty(
+        name="Hardpoint type", items=_enum_items(HARDPOINT_TYPE_NAMES), default='0')
+    glow_enabled: BoolProperty(name="Enabled", default=True)
+    core_color: FloatVectorProperty(
+        name="Core color", size=4, subtype='COLOR', min=0.0, max=1.0,
+        default=(1.0, 0.8, 0.3, 1.0))
+    outer_color: FloatVectorProperty(
+        name="Outer color", size=4, subtype='COLOR', min=0.0, max=1.0,
+        default=(1.0, 0.2, 0.0, 0.0))
+
+
+class OBJECT_PT_aeron_flight_model(Panel):
+    bl_label = "Aeron Flight Model"
+    bl_idname = "OBJECT_PT_aeron_flight_model"
+    bl_space_type = 'PROPERTIES'
+    bl_region_type = 'WINDOW'
+    bl_context = 'object'
+
+    def draw(self, context):
+        obj = context.object
+        if not obj:
+            return
+        props = obj.aeron_flight
+        layout = self.layout
+        layout.prop(props, "role")
+        if props.role in {'component', 'hardpoint', 'engineGlow'}:
+            layout.prop(props, "order")
+        if props.role == 'component':
+            layout.prop(props, "mesh_type")
+            layout.prop(props, "explosion_flags")
+            layout.prop(props, "target_id")
+            if props.target_id:
+                layout.prop(props, "target")
+            layout.prop(props, "has_rotation")
+            if props.has_rotation:
+                layout.prop(props, "pivot")
+                layout.prop(props, "rotation_axis")
+                layout.prop(props, "direction_axis")
+                layout.prop(props, "up_axis")
+        elif props.role == 'hardpoint':
+            layout.prop(props, "hardpoint_type")
+        elif props.role == 'engineGlow':
+            layout.prop(props, "glow_enabled")
+            layout.prop(props, "core_color")
+            layout.prop(props, "outer_color")
 
 
 def _default_cooker_path():
@@ -44,6 +159,150 @@ def _tail(text, n=20):
         return ""
     lines = text.rstrip().splitlines()
     return "\n".join(lines[-n:])
+
+
+def _export_objects(context, selection_only):
+    objects = list(context.selected_objects) if selection_only else list(context.scene.objects)
+    return [obj for obj in objects if obj.aeron_flight.role != 'none']
+
+
+def _uniform_positive_scale(obj):
+    scale = obj.scale
+    return (scale.x > 0.0 and abs(scale.x - scale.y) <= 1.0e-6 and
+            abs(scale.x - scale.z) <= 1.0e-6)
+
+
+def _identity_rotation(obj):
+    quat = obj.matrix_basis.decompose()[1]
+    return abs(quat.x) <= 1.0e-6 and abs(quat.y) <= 1.0e-6 and abs(quat.z) <= 1.0e-6
+
+
+def _validate_flight_hierarchy(objects):
+    roots = [obj for obj in objects if obj.aeron_flight.role == 'model']
+    if len(roots) != 1:
+        return None, "export requires exactly one Aeron model root"
+    root = roots[0]
+    if root.type != 'EMPTY' or root.parent is not None or not _uniform_positive_scale(root):
+        return None, "model root must be a top-level Empty with positive uniform scale"
+    if root.animation_data:
+        return None, "flight-model nodes cannot use animation"
+    components = [obj for obj in objects if obj.aeron_flight.role == 'component']
+    if not components:
+        return None, "model root has no components"
+    seen_orders = set()
+    for component in components:
+        if component.parent != root or component.type != 'MESH' or not _uniform_positive_scale(component):
+            return None, "every component must be a direct mesh child with positive uniform scale"
+        if component.aeron_flight.order in seen_orders:
+            return None, "component order values must be unique"
+        seen_orders.add(component.aeron_flight.order)
+        if component.data.shape_keys or component.animation_data or component.find_armature():
+            return None, "flight components cannot use shape keys, armatures or animation"
+        child_orders = set()
+        for child in component.children:
+            role = child.aeron_flight.role
+            if role not in {'hardpoint', 'engineGlow'}:
+                return None, "component children must be hardpoints or engine glows"
+            if child.type != 'EMPTY' or child.children:
+                return None, "hardpoints and engine glows must be childless Empties"
+            if child.animation_data:
+                return None, "flight-model nodes cannot use animation"
+            if child.aeron_flight.order in child_orders:
+                return None, "child order values must be unique within a component"
+            child_orders.add(child.aeron_flight.order)
+            if role == 'hardpoint' and (not _identity_rotation(child) or
+                                        any(abs(value - 1.0) > 1.0e-6 for value in child.scale)):
+                return None, "hardpoints may use translation only"
+            if role == 'engineGlow' and (child.scale.x <= 0.0 or child.scale.y <= 0.0 or
+                                         child.scale.z == 0.0):
+                return None, "engine-glow X/Y scale must be positive and Z scale nonzero"
+    roles = {obj for obj in objects}
+    for obj in objects:
+        role = obj.aeron_flight.role
+        if role in {'hardpoint', 'engineGlow'} and (not obj.parent or obj.parent not in roles or
+                                                     obj.parent.aeron_flight.role != 'component'):
+            return None, "hardpoints and engine glows must belong to an exported component"
+    return root, None
+
+
+def _extension_for_object(obj):
+    props = obj.aeron_flight
+    extension = {"role": props.role}
+    if props.role == 'component':
+        extension["meshType"] = int(props.mesh_type)
+        if props.explosion_flags:
+            extension["explosionFlags"] = props.explosion_flags
+        if props.target_id:
+            extension["targetId"] = props.target_id
+            extension["target"] = _blender_to_gltf(props.target)
+        if props.has_rotation:
+            extension["rotation"] = {
+                "pivot": _blender_to_gltf(props.pivot),
+                "rotationAxis": _blender_to_gltf(props.rotation_axis),
+                "directionAxis": _blender_to_gltf(props.direction_axis),
+                "upAxis": _blender_to_gltf(props.up_axis),
+            }
+    elif props.role == 'hardpoint':
+        extension["type"] = int(props.hardpoint_type)
+    elif props.role == 'engineGlow':
+        extension["enabled"] = props.glow_enabled
+        extension["coreColor"] = list(props.core_color)
+        extension["outerColor"] = list(props.outer_color)
+    return extension
+
+
+def _inject_flight_extension(gltf_path, objects, root):
+    with open(gltf_path, "r", encoding="utf-8") as stream:
+        document = json.load(stream)
+    nodes = document.get("nodes", [])
+    by_name = {node.get("name"): index for index, node in enumerate(nodes) if node.get("name")}
+    for obj in objects:
+        if obj.name not in by_name:
+            raise ValueError("exported glTF has no node for {!r}".format(obj.name))
+        node = nodes[by_name[obj.name]]
+        node.setdefault("extensions", {})[EXTENSION_NAME] = _extension_for_object(obj)
+    ordered_components = sorted(
+        (obj for obj in objects if obj.aeron_flight.role == 'component'),
+        key=lambda obj: (obj.aeron_flight.order, obj.name))
+    nodes[by_name[root.name]]["children"] = [by_name[obj.name] for obj in ordered_components]
+    for component in ordered_components:
+        children = sorted(
+            (child for child in component.children
+             if child.aeron_flight.role in {'hardpoint', 'engineGlow'}),
+            key=lambda obj: (obj.aeron_flight.order, obj.name))
+        node = nodes[by_name[component.name]]
+        if children:
+            node["children"] = [by_name[child.name] for child in children]
+        else:
+            node.pop("children", None)
+    used = document.setdefault("extensionsUsed", [])
+    if EXTENSION_NAME not in used:
+        used.append(EXTENSION_NAME)
+    with open(gltf_path, "w", encoding="utf-8") as stream:
+        json.dump(document, stream, separators=(",", ":"))
+
+
+def _export_flight_objects(context, objects, filepath, export_apply):
+    selected = list(context.selected_objects)
+    active = context.view_layer.objects.active
+    try:
+        bpy.ops.object.select_all(action='DESELECT')
+        for obj in objects:
+            obj.select_set(True)
+        context.view_layer.objects.active = objects[0]
+        return bpy.ops.export_scene.gltf(
+            filepath=filepath,
+            export_format='GLTF_SEPARATE',
+            export_image_format='AUTO',
+            export_extras=True,
+            use_selection=True,
+            export_apply=export_apply,
+        )
+    finally:
+        bpy.ops.object.select_all(action='DESELECT')
+        for obj in selected:
+            obj.select_set(True)
+        context.view_layer.objects.active = active
 
 
 class AeronExportPreferences(AddonPreferences):
@@ -144,6 +403,12 @@ class EXPORT_OT_aeron_glb(Operator, ExportHelper):
             )
             return {'CANCELLED'}
 
+        flight_objects = _export_objects(context, self.use_selection)
+        model_root, hierarchy_error = _validate_flight_hierarchy(flight_objects)
+        if hierarchy_error:
+            self.report({'ERROR'}, hierarchy_error)
+            return {'CANCELLED'}
+
         out_glb = bpy.path.abspath(self.filepath)
         if not out_glb.lower().endswith(".glb"):
             out_glb += ".glb"
@@ -156,14 +421,8 @@ class EXPORT_OT_aeron_glb(Operator, ExportHelper):
         scratch_gltf = os.path.join(scratch, "scene.gltf")
 
         try:
-            res = bpy.ops.export_scene.gltf(
-                filepath=scratch_gltf,
-                export_format='GLTF_SEPARATE',
-                export_image_format='AUTO',
-                export_extras=True,
-                use_selection=self.use_selection,
-                export_apply=self.export_apply,
-            )
+            res = _export_flight_objects(
+                context, flight_objects, scratch_gltf, self.export_apply)
         except Exception as e:
             self.report({'ERROR'}, "Blender glTF export raised: {}".format(e))
             return {'CANCELLED'}
@@ -174,6 +433,12 @@ class EXPORT_OT_aeron_glb(Operator, ExportHelper):
                     res, scratch
                 ),
             )
+            return {'CANCELLED'}
+
+        try:
+            _inject_flight_extension(scratch_gltf, flight_objects, model_root)
+        except (OSError, ValueError, KeyError, json.JSONDecodeError) as error:
+            self.report({'ERROR'}, "flight metadata export failed: {}".format(error))
             return {'CANCELLED'}
 
         argv = [
@@ -220,17 +485,24 @@ def _menu_func(self, context):
     self.layout.operator(EXPORT_OT_aeron_glb.bl_idname, text="Aeron GLB (.glb)")
 
 
-_classes = (AeronExportPreferences, EXPORT_OT_aeron_glb)
+_classes = (
+    AeronFlightProperties,
+    AeronExportPreferences,
+    OBJECT_PT_aeron_flight_model,
+    EXPORT_OT_aeron_glb,
+)
 
 
 def register():
     for c in _classes:
         bpy.utils.register_class(c)
+    bpy.types.Object.aeron_flight = PointerProperty(type=AeronFlightProperties)
     bpy.types.TOPBAR_MT_file_export.append(_menu_func)
 
 
 def unregister():
     bpy.types.TOPBAR_MT_file_export.remove(_menu_func)
+    del bpy.types.Object.aeron_flight
     for c in reversed(_classes):
         bpy.utils.unregister_class(c)
 

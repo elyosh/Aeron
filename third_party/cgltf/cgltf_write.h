@@ -238,6 +238,16 @@ static void cgltf_write_strprop(cgltf_write_context* context, const char* label,
 	}
 }
 
+static void cgltf_write_rawprop(cgltf_write_context* context, const char* label, const char* val)
+{
+	if (val)
+	{
+		cgltf_write_indent(context);
+		CGLTF_SPRINTF("\"%s\": %s", label, val);
+		context->needs_comma = 1;
+	}
+}
+
 static void cgltf_write_extras(cgltf_write_context* context, const cgltf_extras* extras)
 {
 	if (extras->data)
@@ -1026,7 +1036,18 @@ static void cgltf_write_node(cgltf_write_context* context, const cgltf_node* nod
 		CGLTF_WRITE_IDXPROP("skin", node->skin, context->data->skins);
 	}
 
-	bool has_extension = node->light || (node->has_mesh_gpu_instancing && node->mesh_gpu_instancing.attributes_count > 0);
+	const cgltf_extension* aeron_flight_model = NULL;
+	for (cgltf_size i = 0; i < node->extensions_count; ++i)
+	{
+		if (node->extensions[i].name && node->extensions[i].data &&
+			strcmp(node->extensions[i].name, "AERON_flight_model") == 0)
+		{
+			aeron_flight_model = &node->extensions[i];
+			break;
+		}
+	}
+	bool has_extension = node->light || aeron_flight_model ||
+		(node->has_mesh_gpu_instancing && node->mesh_gpu_instancing.attributes_count > 0);
 	if(has_extension)
 		cgltf_write_line(context, "\"extensions\": {");
 
@@ -1056,6 +1077,11 @@ static void cgltf_write_node(cgltf_write_context* context, const cgltf_node* nod
 			cgltf_write_line(context, "}");
 		}
 		cgltf_write_line(context, "}");
+	}
+
+	if (aeron_flight_model)
+	{
+		cgltf_write_rawprop(context, "AERON_flight_model", aeron_flight_model->data);
 	}
 
 	if (has_extension)
@@ -1516,10 +1542,23 @@ cgltf_size cgltf_write(const cgltf_options* options, char* buffer, cgltf_size si
 		cgltf_write_line(context, "}");
 	}
 
-	if (context->extension_flags != 0)
+	bool uses_aeron_flight_model = false;
+	for (cgltf_size i = 0; i < data->extensions_used_count; ++i)
+	{
+		if (data->extensions_used[i] && strcmp(data->extensions_used[i], "AERON_flight_model") == 0)
+		{
+			uses_aeron_flight_model = true;
+			break;
+		}
+	}
+	if (context->extension_flags != 0 || uses_aeron_flight_model)
 	{
 		cgltf_write_line(context, "\"extensionsUsed\": [");
 		cgltf_write_extensions(context, context->extension_flags);
+		if (uses_aeron_flight_model)
+		{
+			cgltf_write_stritem(context, "AERON_flight_model");
+		}
 		cgltf_write_line(context, "]");
 	}
 

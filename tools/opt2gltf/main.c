@@ -3,18 +3,12 @@
  * glTF 2.0 + .bin + .png assets.
  *
  * Usage:
- *   opt2gltf [--scale F] [--smooth-angle DEG] [--emissive]
+ *   opt2gltf [--smooth-angle DEG] [--emissive]
  *            <input.opt|input_dir> <output_dir>
  *
  * If the input is a directory, every *.OPT inside (case-insensitive)
  * is converted and emitted under <output_dir>/<basename>/. If a single
  * OPT file, the output goes directly into <output_dir>/.
- *
- * --scale F multiplies every vertex position (default 1.0). It exists to
- * reconcile OPTs authored at the full 1995 LFD coordinate scale, which
- * render 2x too large (the runtime scales OPT coords by 1/65536 vs the
- * classic FLIGHT_VERT_SCALE = 1/131072, so a correct OPT is half-scale).
- * Pass --scale 0.5 for such ships (e.g. FRTC, TUG).
  *
  * --smooth-angle F regenerates vertex normals from geometry with an
  * F-degree smoothing threshold. Stored vertex and face normals are ignored.
@@ -69,8 +63,7 @@ static void strip_ext(char *dst, size_t cap, const char *fname)
 }
 
 static int convert_one(const char *opt_path, const char *out_dir,
-                       const char *basename, float vertex_scale,
-                       float smooth_angle_deg, bool repair_normals,
+                       const char *basename, float smooth_angle_deg, bool repair_normals,
                        bool emissive)
 {
     opt_error_t err;
@@ -79,7 +72,7 @@ static int convert_one(const char *opt_path, const char *out_dir,
         fprintf(stderr, "opt2gltf: %s: %s\n", opt_path, err.msg);
         return 0;
     }
-    int ok = opt2gltf_convert(opt, out_dir, basename, vertex_scale,
+    int ok = opt2gltf_convert(opt, out_dir, basename,
                               smooth_angle_deg, repair_normals,
                               emissive) ? 1 : 0;
     opt_free(opt);
@@ -88,7 +81,6 @@ static int convert_one(const char *opt_path, const char *out_dir,
 
 int main(int argc, char **argv)
 {
-    float vertex_scale     = 1.0f;
     /* Default: keep the original 1998 OPT normals (full-Gouraud rounded
      * look). Pass --smooth-angle DEG to regenerate with a threshold. */
     float smooth_angle_deg = -1.0f;
@@ -99,21 +91,9 @@ int main(int argc, char **argv)
     /* Self-illumination export is opt-in. */
     bool  emissive         = false;
     int ai = 1;
-    /* Optional --scale / --smooth-angle flags, any order, before the
-     * positional args. */
+    /* Optional conversion flags, in any order before the positional args. */
     while (ai < argc && argv[ai][0] == '-') {
-        if (strcmp(argv[ai], "--scale") == 0) {
-            if (ai + 1 >= argc) {
-                fprintf(stderr, "opt2gltf: --scale needs a value\n");
-                return 2;
-            }
-            vertex_scale = strtof(argv[ai + 1], NULL);
-            if (!(vertex_scale > 0.0f)) {
-                fprintf(stderr, "opt2gltf: --scale must be > 0\n");
-                return 2;
-            }
-            ai += 2;
-        } else if (strcmp(argv[ai], "--smooth-angle") == 0) {
+        if (strcmp(argv[ai], "--smooth-angle") == 0) {
             if (ai + 1 >= argc) {
                 fprintf(stderr, "opt2gltf: --smooth-angle needs a value\n");
                 return 2;
@@ -133,7 +113,7 @@ int main(int argc, char **argv)
     }
     if (argc - ai != 2) {
         fprintf(stderr,
-            "usage: %s [--scale F] [--smooth-angle DEG] [--no-normal-repair] "
+            "usage: %s [--smooth-angle DEG] [--no-normal-repair] "
             "[--emissive] "
             "<input.OPT|input_dir> <output_dir>\n",
             argv[0]);
@@ -165,7 +145,7 @@ int main(int argc, char **argv)
             strip_ext(base, sizeof base, de->d_name);
             char out_sub[1024];
             snprintf(out_sub, sizeof out_sub, "%s/%s", outd, base);
-            if (convert_one(src, out_sub, base, vertex_scale,
+            if (convert_one(src, out_sub, base,
                             smooth_angle_deg, repair_normals,
                             emissive)) ++ok_count;
             else                                                       ++fail_count;
@@ -180,7 +160,7 @@ int main(int argc, char **argv)
     const char *fname = slash ? slash + 1 : in;
     char base[256];
     strip_ext(base, sizeof base, fname);
-    return convert_one(in, outd, base, vertex_scale,
+    return convert_one(in, outd, base,
                        smooth_angle_deg, repair_normals,
                        emissive) ? 0 : 1;
 }

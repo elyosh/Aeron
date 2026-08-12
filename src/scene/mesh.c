@@ -9,6 +9,7 @@
 #include "aeron/scene/image_cache.h"
 #include "aeron/scene/ktx2_reader.h"
 
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -187,15 +188,16 @@ static int build_variant_storage(AeronSceneMesh* s, const AeronGltfModel* model,
 	return 1;
 }
 
-AeronSceneMesh* AeronScene_MeshCreate(AeronCommandBuffer* cmd, const AeronGltfModel* model,
+AeronSceneMesh* AeronScene_MeshCreate(AeronCommandBuffer* cmd, const AeronFlightModel* flight_model,
 									  const char* debug_name,
 									  AeronSceneMeshCreateStatus* status) {
 	if (status) {
 		*status = AERON_SCENE_MESH_CREATE_RESOURCE_FAILURE;
 	}
-	if (!cmd || !model) {
+	if (!cmd || !flight_model) {
 		return NULL;
 	}
+	const AeronGltfModel* model = &flight_model->render;
 	const char*     name = debug_name ? debug_name : "<mesh>";
 	if (model->mask_index_offset != model->opaque_index_count ||
 		model->mask_index_offset > model->index_count ||
@@ -311,8 +313,8 @@ AeronSceneMesh* AeronScene_MeshCreate(AeronCommandBuffer* cmd, const AeronGltfMo
 	}
 
 	/* ---- Engine glows (owned copy; XWA OPTs) ---- */
-	if (model->engine_glow_count > 0 && model->engine_glows) {
-		s->engine_glows = (AeronGltfEngineGlow*)malloc(model->engine_glow_count *
+	if (flight_model->engine_glow_count > 0 && flight_model->engine_glows) {
+		s->engine_glows = (AeronFlightEngineGlow*)malloc(flight_model->engine_glow_count *
 													   sizeof *s->engine_glows);
 		if (!s->engine_glows) {
 			Aeron_LogError("aeron.scene", "%s: engine-glow allocation failed", name);
@@ -320,9 +322,9 @@ AeronSceneMesh* AeronScene_MeshCreate(AeronCommandBuffer* cmd, const AeronGltfMo
 			AeronScene_MeshDestroy(s);
 			return NULL;
 		}
-		memcpy(s->engine_glows, model->engine_glows,
-			   model->engine_glow_count * sizeof *s->engine_glows);
-		s->engine_glow_count = model->engine_glow_count;
+		memcpy(s->engine_glows, flight_model->engine_glows,
+			   flight_model->engine_glow_count * sizeof *s->engine_glows);
+		s->engine_glow_count = flight_model->engine_glow_count;
 	}
 
 	/* ---- Channel atlases (4 BC7 KTX2 blobs from the GLB BIN chunk) ----
@@ -383,16 +385,36 @@ AeronSceneMesh* AeronScene_MeshCreate(AeronCommandBuffer* cmd, const AeronGltfMo
 	}
 
 	/* ---- Articulation + bounds ---- */
-	memcpy(s->mesh_rot, model->mesh_rot, sizeof s->mesh_rot);
+	for (uint32_t i = 0; i < flight_model->component_count && i < AERON_MAX_MESH_SLOTS; ++i) {
+		const AeronFlightComponent* component = &flight_model->components[i];
+		AeronMeshRot*               rotation  = &s->mesh_rot[i];
+		rotation->mesh_type                   = (uint8_t)component->mesh_type;
+		if (component->has_rotation) {
+			rotation->has_rotation = 1;
+			rotation->pivot[0]     = component->rotation.pivot.x;
+			rotation->pivot[1]     = component->rotation.pivot.y;
+			rotation->pivot[2]     = component->rotation.pivot.z;
+			rotation->axis[0]      = component->rotation.rotation_axis.x;
+			rotation->axis[1]      = component->rotation.rotation_axis.y;
+			rotation->axis[2]      = component->rotation.rotation_axis.z;
+		}
+	}
 	for (uint32_t i = 0; i < AERON_MAX_MESH_SLOTS; i++) {
 		if (s->mesh_rot[i].has_rotation) {
 			s->has_any_rotation = true;
 			break;
 		}
 	}
-	memcpy(s->bound_min, model->bound_min, sizeof s->bound_min);
-	memcpy(s->bound_max, model->bound_max, sizeof s->bound_max);
-	s->bound_radius = model->bound_radius;
+	s->bound_min[0] = flight_model->bounds.min.x;
+	s->bound_min[1] = flight_model->bounds.min.y;
+	s->bound_min[2] = flight_model->bounds.min.z;
+	s->bound_max[0] = flight_model->bounds.max.x;
+	s->bound_max[1] = flight_model->bounds.max.y;
+	s->bound_max[2] = flight_model->bounds.max.z;
+	const float ex  = fmaxf(fabsf(s->bound_min[0]), fabsf(s->bound_max[0]));
+	const float ey  = fmaxf(fabsf(s->bound_min[1]), fabsf(s->bound_max[1]));
+	const float ez  = fmaxf(fabsf(s->bound_min[2]), fabsf(s->bound_max[2]));
+	s->bound_radius = sqrtf(ex * ex + ey * ey + ez * ez);
 	if (status) {
 		*status = AERON_SCENE_MESH_CREATE_SUCCESS;
 	}

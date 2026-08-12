@@ -4,14 +4,13 @@
 #include <stdbool.h>
 #include <stddef.h>
 
-#include "aeron/scene/gltf_mesh.h"
+#include "aeron/asset/flight_model.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 typedef struct AeronOptModelBuildOptions {
-	float vertex_scale;
 	float smooth_angle_degrees;
 	float emissive_strength;
 	bool emissive;
@@ -35,7 +34,7 @@ bool Aeron_OptModelBuildMemory(
 		size_t size,
 		const char *label,
 		const AeronOptModelBuildOptions *options,
-		AeronGltfModel *out,
+		AeronFlightModel *out,
 		AeronOptModelError *error);
 
 #ifdef __cplusplus

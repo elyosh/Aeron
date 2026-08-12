@@ -16,7 +16,7 @@
  * remaps material-local UVs into the material's sub-rect of the
  * atlas.
  *
- * Aeron_GltfMeshBuild then reads only the cooked .glb — no PNG decode,
+ * Aeron_FlightModelBuild then reads only the cooked .glb — no PNG decode,
  * software atlas packing, or runtime mip generation.
  */
 #ifndef AERON_GLTF_COOK_H

@@ -1,0 +1,74 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AERON_flight_model node extension",
+  "oneOf": [
+    { "$ref": "#/$defs/model" },
+    { "$ref": "#/$defs/component" },
+    { "$ref": "#/$defs/hardpoint" },
+    { "$ref": "#/$defs/engineGlow" }
+  ],
+  "$defs": {
+    "vec3": {
+      "type": "array",
+      "items": { "type": "number" },
+      "minItems": 3,
+      "maxItems": 3
+    },
+    "color": {
+      "type": "array",
+      "items": { "type": "number", "minimum": 0, "maximum": 1 },
+      "minItems": 4,
+      "maxItems": 4
+    },
+    "model": {
+      "type": "object",
+      "required": ["role"],
+      "properties": { "role": { "const": "model" } }
+    },
+    "rotation": {
+      "type": "object",
+      "required": ["pivot", "rotationAxis", "directionAxis", "upAxis"],
+      "properties": {
+        "pivot": { "$ref": "#/$defs/vec3" },
+        "rotationAxis": { "$ref": "#/$defs/vec3" },
+        "directionAxis": { "$ref": "#/$defs/vec3" },
+        "upAxis": { "$ref": "#/$defs/vec3" }
+      }
+    },
+    "component": {
+      "type": "object",
+      "required": ["role", "meshType"],
+      "properties": {
+        "role": { "const": "component" },
+        "meshType": { "type": "integer", "minimum": 0, "maximum": 31 },
+        "explosionFlags": { "type": "integer", "minimum": 0, "maximum": 4294967295 },
+        "targetId": { "type": "integer", "minimum": -2147483648, "maximum": 2147483647 },
+        "target": { "$ref": "#/$defs/vec3" },
+        "rotation": { "$ref": "#/$defs/rotation" }
+      },
+      "if": {
+        "required": ["targetId"],
+        "properties": { "targetId": { "not": { "const": 0 } } }
+      },
+      "then": { "required": ["target"] }
+    },
+    "hardpoint": {
+      "type": "object",
+      "required": ["role", "type"],
+      "properties": {
+        "role": { "const": "hardpoint" },
+        "type": { "type": "integer", "minimum": 0, "maximum": 39 }
+      }
+    },
+    "engineGlow": {
+      "type": "object",
+      "required": ["role", "coreColor", "outerColor"],
+      "properties": {
+        "role": { "const": "engineGlow" },
+        "enabled": { "type": "boolean", "default": true },
+        "coreColor": { "$ref": "#/$defs/color" },
+        "outerColor": { "$ref": "#/$defs/color" }
+      }
+    }
+  }
+}

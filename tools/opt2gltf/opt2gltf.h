@@ -9,21 +9,14 @@
  *
  *   - Geometry: one glTF node per OPT mesh, parented to a single root
  *     scene node. Each mesh node carries the mesh's MeshDescriptor.
- *     meshType in `extras.tieMeshType` (and the symbolic name in
- *     `tieMeshTypeName`). Coordinates are emitted in glTF convention
- *     (+Y up, -Z forward) — derived from the OPT convention (+Z up,
- *     -Y forward) by swapping Y/Z. The renderer applies the inverse
- *     when consuming the glTF, the same way it applies the swap when
- *     consuming OPT vertices directly.
+ *     meshType in the `AERON_flight_model` node extension. Coordinates
+ *     use standard glTF axes and meters.
  *
- *   - Rotation pivots: rotating-component meshes (OPT mesh types
- *     OPT_MT_ROTARY_*) carry `extras.tieRotation = {axis, pivot,
- *     animated:true}`. Static meshes omit `tieRotation`.
+ *   - Rotation pivots and axes are preserved in the component role.
  *
  *   - Hardpoints: each OPT mesh's hardpoints become child empty
  *     nodes (no mesh, just translation) named "hp_<type>". Each
- *     carries `extras.tieHardpoint = {type, typeName, link,
- *     component}`.
+ *     carries an `AERON_flight_model` hardpoint role and raw type.
  *
  *   - Paint-scheme variants: OPT NodeSwitch's per-face-group
  *     state_textures[] become a KHR_materials_variants extension at
@@ -38,15 +31,6 @@
  *     them via baseColorTexture. The shaded-15 base mip is what gets
  *     written (the OPT format stores per-shade mip chains; we keep
  *     only the base — generators can re-derive mips on import).
- *
- * `vertex_scale` multiplies every emitted vertex position (plus
- * hardpoint translations and rotation pivots; NOT normals or axes,
- * which are directions). Use 1.0 for the normal case. It exists to
- * reconcile OPTs authored at the full 1995 LFD coordinate scale: the
- * runtime scales OPT coords by 1/65536 while the classic path uses
- * FLIGHT_VERT_SCALE = 1/131072, so a correctly-authored OPT is at half
- * the LFD scale. A handful of ships (e.g. FRTC, TUG) ship at the full
- * LFD scale and render 2x too large — pass 0.5 for those.
  *
  * `emissive` enables self-illumination export (off by default). When set,
  * textures whose palette marks self-lit texels (the flat-ramp trick used by
@@ -80,7 +64,6 @@
 #include "opt.h"
 
 typedef struct OptGltfBuildOptions {
-    float vertex_scale;
     float smooth_angle_degrees;
     bool repair_normals;
     bool emissive;
@@ -137,7 +120,6 @@ bool OptGltf_WriteFiles(const OptGltfDocument *document,
 bool opt2gltf_convert(const opt_file_t *opt,
                       const char *out_dir,
                       const char *basename,
-                      float vertex_scale,
                       float smooth_angle_deg,
                       bool repair_normals,
                       bool emissive);

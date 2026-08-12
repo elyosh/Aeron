@@ -2,8 +2,7 @@
 #define AERON_SCENE_GLTF_MESH_H
 
 /*
- * Runtime-loaded cooked-ship asset — consumer side of the
- * OPT → opt2gltf → (artist edit) → aeron_gltf_cook pipeline.
+ * Render payload for a cooked Aeron flight model.
  *
  * Input format: a `.glb` produced by `aeron_gltf_cook` (tools/gltf_cook/).
  * The cooker bakes every material's PBR textures into four KTX2 atlases
@@ -16,15 +15,9 @@
  * the KTX2 blobs out of the BIN chunk and reads the per-binding UV
  * transform off cgltf.
  *
- * The loader expects the aeron_gltf_cook output dialect:
- *   - Standard mesh / node tree from opt2gltf, with per-mesh-node
- *     `extras.tieMeshIndex` (stable OPT mesh-slot identity, drives
- *     the scene mesh-table storage lookup), `extras.tieMeshType` (OPT mesh_type enum),
- *     and optional `extras.tieRotation` (pivot + axes; the renderer
- *     uses pivot + rotationAxis).
- *   - Hardpoint child nodes named `hp_<Type>` with
- *     `extras.tieHardpoint = { type, typeName }` and a node
- *     translation. No mesh attached.
+ * Component identity comes from direct-child order under the
+ * `AERON_flight_model` model root. Flight semantics are owned by
+ * AeronFlightModel rather than this GPU-oriented subobject.
  *   - `KHR_materials_variants` declares the asset-level variant list
  *     and per-primitive (variant_idx, material_idx) mappings. The
  *     variant selector at runtime is FlightObjectState.decal_color.
@@ -35,9 +28,8 @@
  *       [2] metallic_roughness (BC7 UNORM)
  *       [3] emissive     (BC7 sRGB)
  *
- * Coordinate convention: glTF +Y up / -Z forward (right-handed).
- * aeron_gltf_cook preserves opt2gltf's axis swap; this loader undoes it so
- * vertices land in the renderer's native frame (+Z up, -Y forward).
+ * Flight files use glTF +Y up / +Z front. The loader converts them to
+ * Aeron's +X right / -Y forward / +Z up frame.
  */
 
 #include <stdbool.h>
@@ -65,44 +57,13 @@ typedef struct AeronGltfVertex {
     float    normal[3];    /* unit, renderer-frame */
     float    tangent[4];   /* xyz unit + handedness sign in w */
     float    uv[2];        /* TEXCOORD_0 (material-local) */
-    /* OPT mesh-slot identity (== node.opt_mesh_index). The scene mesh-table
-     * storage record is indexed by this value. */
+    /* Model-local component ordinal used by the scene mesh table. */
     float    mesh_index;
     /* Stable global identifier (0..total_prim_count-1) for the source
      * primitive this vertex belongs to. The shader resolves it through
      * the mesh-owned, variant-major material-index storage table. */
     uint32_t prim_id;
 } AeronGltfVertex;     /* 56 bytes */
-
-/* ===== Engine glow ==================================================
- *
- * XWA OPT EngineGlow billboards, carried through opt2gltf/aeron_gltf_cook as
- * `engine_glow_*` child nodes with `tieEngineGlow` extras. All vectors
- * are in the renderer-native model frame (+Z up, -Y forward); colors
- * are linear-ish 0..1 RGBA decoded from the OPT's 0xAARRGGBB words. */
-typedef struct AeronGltfEngineGlow {
-    float   position[3];
-    float   look[3];       /* glow plane normal (exhaust direction) */
-    float   up[3];
-    float   right[3];
-    float   dimensions[3]; /* OPT half extents: right, up, depth */
-    float   core_rgba[4];
-    float   outer_rgba[4];
-    uint8_t disabled;
-    /* OPT mesh slot the glow node belongs to — rotary-mesh glows follow
-     * their mesh's articulation, and damage knockout masks index the
-     * per-model emitter order (list order = OPT node order). */
-    uint8_t mesh_slot;
-} AeronGltfEngineGlow;
-
-/* ===== Hardpoint ====================================================
- *
- * Position-only marker. Consumed by AI / weapon spawn, not by the
- * per-frame render path. */
-typedef struct AeronGltfHardpoint {
-    float    position[3];   /* mesh-local, renderer-frame */
-    uint8_t  type;          /* opt_hardpoint_type_t enum value */
-} AeronGltfHardpoint;
 
 /* ===== Channel slots ================================================
  *
@@ -211,42 +172,9 @@ typedef struct AeronGltfModel {
     uint32_t  total_prim_count;
     uint32_t *prim_variant_material;
 
-    /* Per-mesh-slot rotation indexed by opt_mesh_index. Unused slots
-     * stay zero / has_rotation == 0. */
-    AeronMeshRot mesh_rot[AERON_MAX_MESH_SLOTS];
-
-    /* Hardpoints (AI / weapon spawn). */
-    AeronGltfHardpoint *hardpoints;  uint32_t hardpoint_count;
-
-    /* Engine glows (XWA OPTs; empty for TIE ships). */
-    AeronGltfEngineGlow *engine_glows; uint32_t engine_glow_count;
-
-    /* Bounding box in raw OPT units. Bounding-sphere radius is
-     * already in snapshot world units (raw_radius / 65536). */
-    float bound_min[3];
-    float bound_max[3];
-    float bound_radius;
 } AeronGltfModel;
 
-/* ===== Public API ===================================================
- *
- * Build from an absolute .glb path (cooked output of aeron_gltf_cook).
- * Returns true on success and populates *out; ownership transfers to
- * caller (free with Aeron_GltfMeshFree). On failure, *out is
- * zeroed and false is returned (errors emit SDL_Log lines via the
- * host's logging). */
-bool Aeron_GltfMeshBuild(const char *glb_path,
-                            AeronGltfModel *out);
-
-/* Build a cooked GLB from caller-owned bytes. The input is borrowed only for
- * this call; the returned model owns all retained data. External buffers are
- * rejected because runtime packages must be self-contained. */
-bool Aeron_GltfMeshBuildMemory(const void *bytes, size_t size,
-                               const char *source_label,
-                               AeronGltfModel *out);
-
-/* Build from an already-loaded cooked cgltf graph. The graph is borrowed for
- * the duration of the call; the returned AeronGltfModel owns all of its data. */
+/* Internal render builder used by the common flight-model construction. */
 bool Aeron_GltfMeshBuildData(const struct cgltf_data *data,
                              const char *source_label,
                              AeronGltfModel *out);
