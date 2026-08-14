@@ -768,6 +768,12 @@ AeronDepthTarget* Aeron_CreateDepthTarget(const AeronDepthTargetDesc* desc);
 /* Releases a depth target created by Aeron_CreateDepthTarget. */
 void Aeron_DestroyDepthTarget(AeronDepthTarget* target);
 
+/* Stages tightly packed D16_UNORM pixels into a depth-target subregion. No
+ * render or compute pass may be open on the command buffer. */
+int Aeron_UploadDepthTargetD16RegionCmd(AeronCommandBuffer* command_buffer, AeronDepthTarget* target,
+										int x, int y, int width, int height, const uint16_t* pixels,
+										uint32_t size);
+
 /* Returns the sampleable texture view of a depth target created with
  * `sampled` set; NULL otherwise. Owned by the depth target. */
 AeronTexture* Aeron_DepthTargetGetTexture(AeronDepthTarget* target);

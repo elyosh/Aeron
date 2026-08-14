@@ -8,6 +8,7 @@ project(aeron C CXX)
 
 option(AERON_DEBUG_UI "Build the Dear ImGui debug overlay into aeron" OFF)
 option(AERON_HOST_TOOLS_ONLY "Build only tools that must run on the build host" OFF)
+option(AERON_ENABLE_DX5_COMPAT "Build the DirectDraw/Direct3D 1 compatibility target" OFF)
 
 find_package(SDL3 3.4 REQUIRED CONFIG COMPONENTS SDL3-shared)
 
@@ -261,6 +262,13 @@ set(AERON_SHADER_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/compute_fill_buffer.comp.hlsl
 )
 
+if(AERON_ENABLE_DX5_COMPAT)
+    list(APPEND AERON_SHADER_SOURCES
+        ${CMAKE_CURRENT_SOURCE_DIR}/shaders/dx5/aeron_dx5_projected_triangle.vert.hlsl
+        ${CMAKE_CURRENT_SOURCE_DIR}/shaders/dx5/aeron_dx5_projected_triangle.frag.hlsl
+    )
+endif()
+
 if(AERON_DEBUG_UI)
     list(APPEND AERON_SHADER_SOURCES
         ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_pbr_mesh_debug.frag.hlsl
@@ -394,6 +402,30 @@ target_link_libraries(aeron
 )
 
 add_dependencies(aeron aeron_shaders)
+
+if(AERON_ENABLE_DX5_COMPAT)
+    add_library(aeron_dx5 STATIC
+        src/dx5/config.c
+        src/dx5/ddraw.c
+        src/dx5/d3d.c
+        src/dx5/guids.c
+    )
+    set_target_properties(aeron_dx5 PROPERTIES
+        C_STANDARD 99
+        C_STANDARD_REQUIRED ON
+        C_EXTENSIONS OFF
+    )
+    target_include_directories(aeron_dx5
+        PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include
+    )
+    target_link_libraries(aeron_dx5 PUBLIC aeron)
+    add_dependencies(aeron_dx5 aeron_shaders)
+    if(MSVC)
+        target_compile_options(aeron_dx5 PRIVATE /W4)
+    else()
+        target_compile_options(aeron_dx5 PRIVATE -Wall -Wextra -Wpedantic -Wno-deprecated-declarations)
+    endif()
+endif()
 
 option(AERON_ENABLE_VIDEO "Build the FFmpeg-backed Aeron video player" ON)
 if(AERON_ENABLE_VIDEO)

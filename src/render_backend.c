@@ -3511,14 +3511,40 @@ AeronDepthTarget* Aeron_CreateDepthTarget(const AeronDepthTargetDesc* desc) {
 	}
 	AeronGpuDebug_NameTexture(g_aeron.gpu_device, target->depth.texture, desc->debug_name);
 
-	target->depth.width     = desc->width;
-	target->depth.height    = desc->height;
-	target->depth.mip_count = 1;
-	target->depth.format    = desc->format;
+	target->depth.width       = desc->width;
+	target->depth.height      = desc->height;
+	target->depth.mip_count   = 1;
+	target->depth.layer_count = 1;
+	target->depth.format      = desc->format;
 	target->depth.usage =
-		AERON_TEXTURE_USAGE_DEPTH_TARGET | (desc->sampled ? AERON_TEXTURE_USAGE_SAMPLED : 0u);
+		AERON_TEXTURE_USAGE_DEPTH_TARGET | AERON_TEXTURE_USAGE_TRANSFER_DST |
+		(desc->sampled ? AERON_TEXTURE_USAGE_SAMPLED : 0u);
 	target->depth.sample_count = sample_count;
 	return target;
+}
+
+int Aeron_UploadDepthTargetD16RegionCmd(AeronCommandBuffer* command_buffer, AeronDepthTarget* target,
+										int x, int y, int width, int height, const uint16_t* pixels,
+										uint32_t size) {
+	uint64_t expected_size;
+
+	if (!target || target->depth.format != AERON_TEXTURE_FORMAT_D16_UNORM ||
+		target->depth.sample_count != AERON_SAMPLE_COUNT_1 || width <= 0 || height <= 0) {
+		return 0;
+	}
+	expected_size = (uint64_t)(uint32_t)width * (uint64_t)(uint32_t)height * sizeof(*pixels);
+	if (expected_size > UINT32_MAX || size != (uint32_t)expected_size) {
+		return 0;
+	}
+	return Aeron_UploadTextureDataCmd(command_buffer, &(AeronTextureUploadDesc) {
+		.texture = &target->depth,
+		.x = x,
+		.y = y,
+		.width = width,
+		.height = height,
+		.raw_data = pixels,
+		.raw_size = size,
+	});
 }
 
 void Aeron_DestroyDepthTarget(AeronDepthTarget* target) {
