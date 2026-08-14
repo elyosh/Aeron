@@ -312,6 +312,14 @@ typedef struct AeronPixelLayerDesc {
 	/* Optional raw source pixel value that should become transparent during upload. */
 	int      color_key_enabled;
 	uint32_t color_key;
+	/* Optional per-pixel coverage plane in frame dimensions, one byte per pixel:
+	 * uploaded alpha is scaled by coverage/255 (0 = transparent, 255 = keep).
+	 * NULL keeps the color-key/opaque behavior. coverage_pitch of 0 means
+	 * tightly packed rows (frame.width bytes). The plane is read on every
+	 * submission (its contents are never cached), so callers may rewrite the
+	 * same allocation between calls. */
+	const uint8_t* coverage;
+	int            coverage_pitch;
 	/* Optional RGBA multiplier applied at composition time (crossfades, dims).
 	 * Ignored when tint_enabled is zero, so zero-initialized descs keep the
 	 * untinted behavior. */

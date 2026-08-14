@@ -119,7 +119,6 @@ IDirect3DTexture* D3DCompat_CreateTexture(DDrawSurfaceShim* surface);
 
 AeronRectI AeronDx5_PresentationRect(int surface_width, int surface_height);
 void AeronDx5_NotifyPresent(int surface_width, int surface_height);
-void AeronDx5_ResetPresentationState(void);
 void D3DCompat_Shutdown(void);
 
 #endif

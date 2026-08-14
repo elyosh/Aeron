@@ -149,6 +149,7 @@ typedef struct AeronPixelLayerUpload {
 	int                    uploaded_preserve_encoded_values;
 	int                    uploaded_color_key_enabled;
 	uint32_t               uploaded_color_key;
+	const uint8_t*         uploaded_coverage;
 	uint32_t               transfer_size;
 	int                    width;
 	int                    height;

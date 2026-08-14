@@ -453,6 +453,45 @@ void DDShim_WritebackRenderTarget(DDrawSurfaceShim* s) {
 	s->gpu_dirty = 1;
 }
 
+int AeronDx5_ComposeSurfaceOverRenderTarget(IDirectDrawSurface* dst, int dst_x, int dst_y,
+											 IDirectDrawSurface* src, const uint8_t* coverage,
+											 int coverage_pitch) {
+	DDrawSurfaceShim*   d = (DDrawSurfaceShim*)dst;
+	DDrawSurfaceShim*   s = (DDrawSurfaceShim*)src;
+	AeronPixelLayerDesc layer;
+	AeronPixelFrameView view;
+
+	if (!d || !s || !coverage || d->kind != DDSHIM_RENDER_TARGET || !d->rt || !s->cpu) {
+		return 0;
+	}
+	/* Order the composition after any deferred Direct3D scene work on the target. */
+	if (!D3DCompat_FlushRenderTargetPass(d)) {
+		return 0;
+	}
+	if (!AeronSurface_GetFrameView(s->cpu, &view)) {
+		return 0;
+	}
+
+	memset(&layer, 0, sizeof(layer));
+	layer.frame               = view;
+	layer.logical_rect.x      = dst_x;
+	layer.logical_rect.y      = dst_y;
+	layer.logical_rect.width  = view.width;
+	layer.logical_rect.height = view.height;
+	layer.sampling            = AERON_PIXEL_SAMPLING_SHARP_BILINEAR;
+	/* Same display-space (already-encoded) convention as DDShim_ComposeOntoRenderTarget. */
+	layer.preserve_encoded_values = 1;
+	layer.blend_mode              = AERON_LAYER_BLEND_ALPHA;
+	layer.coverage                = coverage;
+	layer.coverage_pitch          = coverage_pitch;
+	if (!Aeron_ComposePixelLayerToRenderTarget(d->rt, &layer, 0, NULL)) {
+		Aeron_RequestFatalRendererError("DirectDraw coverage composition");
+		return 0;
+	}
+	d->gpu_dirty = 1;
+	return 1;
+}
+
 /* Lazily creates the 16bpp CPU staging surface a render target uses for known
  * clears and readback/writeback when a software overlay locks it (Model B).
  * Render targets that are neither cleared nor CPU-locked pay nothing. */

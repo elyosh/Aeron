@@ -1041,6 +1041,29 @@ static void Aeron_ApplyPixelLayerColorKey(uint8_t* dst, const AeronPixelLayerDes
 	}
 }
 
+static void Aeron_ApplyPixelLayerCoverage(uint8_t* dst, const AeronPixelLayerDesc* desc) {
+	const AeronPixelFrameView* view;
+	int                        pitch;
+	int                        y;
+
+	if (!dst || !desc || !desc->coverage) {
+		return;
+	}
+
+	view  = &desc->frame;
+	pitch = desc->coverage_pitch > 0 ? desc->coverage_pitch : view->width;
+	for (y = 0; y < view->height; ++y) {
+		const uint8_t* coverage_row = desc->coverage + (size_t)y * (size_t)pitch;
+		uint8_t*       dst_row      = dst + (size_t)y * (size_t)view->width * 4u;
+		int            x;
+
+		for (x = 0; x < view->width; ++x) {
+			uint8_t* alpha = &dst_row[(size_t)x * 4u + 3u];
+			*alpha         = (uint8_t)(((unsigned)*alpha * (unsigned)coverage_row[x] + 127u) / 255u);
+		}
+	}
+}
+
 static int Aeron_ConvertPixelLayerToRgba8(uint8_t* dst, const AeronPixelLayerDesc* desc) {
 	const AeronPixelFrameView* view;
 	SDL_PixelFormat            src_format;
@@ -1057,7 +1080,11 @@ static int Aeron_ConvertPixelLayerToRgba8(uint8_t* dst, const AeronPixelLayerDes
 	}
 
 	if (view->format == AERON_PIXEL_FORMAT_INDEX8) {
-		return Aeron_ConvertIndexed8PixelFrameToRgba8(dst, desc);
+		if (!Aeron_ConvertIndexed8PixelFrameToRgba8(dst, desc)) {
+			return 0;
+		}
+		Aeron_ApplyPixelLayerCoverage(dst, desc);
+		return 1;
 	}
 
 	if (view->format == AERON_PIXEL_FORMAT_RGBA8888 && !desc->color_key_enabled) {
@@ -1066,6 +1093,7 @@ static int Aeron_ConvertPixelLayerToRgba8(uint8_t* dst, const AeronPixelLayerDes
 			memcpy(dst + (size_t)y * row_bytes,
 				   (const uint8_t*)view->pixels + (size_t)y * (size_t)view->pitch, row_bytes);
 		}
+		Aeron_ApplyPixelLayerCoverage(dst, desc);
 		return 1;
 	}
 
@@ -1081,6 +1109,7 @@ static int Aeron_ConvertPixelLayerToRgba8(uint8_t* dst, const AeronPixelLayerDes
 											dst, view->width * 4);
 	if (result) {
 		Aeron_ApplyPixelLayerColorKey(dst, desc);
+		Aeron_ApplyPixelLayerCoverage(dst, desc);
 	}
 	return result;
 }
@@ -1178,10 +1207,13 @@ static int Aeron_UploadPixelLayer(SDL_GPUCommandBuffer* command_buffer, AeronPix
 		return 0;
 	}
 
+	/* A coverage plane may be rewritten in place; its address does not
+	 * identify its contents. */
 	if (upload->uploaded_generation == view->generation && upload->uploaded_pixels == view->pixels &&
 		upload->uploaded_preserve_encoded_values == desc->preserve_encoded_values &&
 		upload->uploaded_color_key_enabled == desc->color_key_enabled &&
-		upload->uploaded_color_key == desc->color_key) {
+		upload->uploaded_color_key == desc->color_key && desc->coverage == NULL &&
+		upload->uploaded_coverage == NULL) {
 		return 1;
 	}
 
@@ -1228,6 +1260,7 @@ static int Aeron_UploadPixelLayer(SDL_GPUCommandBuffer* command_buffer, AeronPix
 	upload->uploaded_preserve_encoded_values = desc->preserve_encoded_values;
 	upload->uploaded_color_key_enabled       = desc->color_key_enabled;
 	upload->uploaded_color_key               = desc->color_key;
+	upload->uploaded_coverage                = desc->coverage;
 	return 1;
 }
 
