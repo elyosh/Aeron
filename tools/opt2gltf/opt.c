@@ -87,6 +87,14 @@
 #define OPT_TEX_OFF_HEIGHT             20
 #define OPT_TEX_DATA_HEADER_BYTES      24
 
+#define OPT_MAX_NODE_SWITCH_STATES     16  /* observed max is 4 across all IVFILES */
+
+typedef struct {
+    int32_t texture;  /* state 0 binding, -1 if none */
+    int32_t state_count;
+    int32_t states[OPT_MAX_NODE_SWITCH_STATES];
+} opt_texture_binding_t;
+
 /* --- Read helpers --------------------------------------------------------- */
 /*
  * Direct pointer arithmetic on the file buffer would work on little-endian
@@ -133,12 +141,11 @@ typedef struct {
     int32_t        texture_count;
     int32_t        texture_capacity;
 
-    /* Texture index bound by the most recent top-level Texture root node,
-     * -1 if none. The engine walks all roots with one shared draw state
-     * (RenderScene_DrawObjectModel @ 0x481AD0), so a root-level Texture is
-     * the default binding for every following mesh; some ships (e.g.
-     * SYSTEMPATROLCRAFT) leave each mesh's first FaceData relying on it. */
-    int32_t        root_texture;
+    /* Texture state after the most recently parsed LOD-0 mesh root. The
+     * engine walks every root with one shared draw state, so FaceData may
+     * inherit either a top-level Texture root (SYSTEMPATROLCRAFT) or the
+     * final binding from the preceding mesh (VSD). */
+    opt_texture_binding_t active_texture;
 
     opt_error_t   *err;
     int            failed;
@@ -458,8 +465,6 @@ static void parse_texture_data(opt_ctx_t *c, const opt_node_t *n, int32_t tex_in
  * A NodeSwitch carries N alternate textures (e.g. damage states). Both the
  * primary texture and the full state list get attached to the next FaceData.
  */
-#define OPT_MAX_NODE_SWITCH_STATES  16   /* observed max is 4 across all IVFILES */
-
 typedef struct {
     opt_face_group_t *groups;
     int32_t           group_count;
@@ -626,16 +631,15 @@ static void on_lod_child(opt_ctx_t *c, const opt_node_t *child, void *user) {
 }
 
 static void parse_lod_node(opt_ctx_t *c, const opt_node_t *lod_group_node,
-                           float distance, opt_lod_t *out) {
+                           float distance, const opt_texture_binding_t *entry_binding,
+                           opt_texture_binding_t *exit_binding, opt_lod_t *out) {
     opt_lod_builder_t lb = { 0 };
-    /* Inherit the top-level Texture root binding (see ctx.root_texture). */
-    lb.current_texture     = c->root_texture;
-    lb.current_state_count = 0;
+    lb.current_texture     = entry_binding->texture;
+    lb.current_state_count = entry_binding->state_count;
     lb.pending_binding     = 0;
-    if (c->root_texture >= 0) {
-        lb.current_state_count = 1;
-        lb.current_states[0]   = c->root_texture;
-    }
+    if (lb.current_state_count > 0)
+        memcpy(lb.current_states, entry_binding->states,
+               (size_t)lb.current_state_count * sizeof lb.current_states[0]);
     for_each_child(c, lod_group_node, on_lod_child, &lb);
     /* Trailing-orphan texture binding: when a LOD ends with a Texture /
      * NodeReference / NodeSwitch that wasn't consumed by a following
@@ -663,6 +667,11 @@ static void parse_lod_node(opt_ctx_t *c, const opt_node_t *lod_group_node,
     out->distance_threshold = distance;
     out->group_count = lb.group_count;
     out->groups      = lb.groups;
+    exit_binding->texture     = lb.current_texture;
+    exit_binding->state_count = lb.current_state_count;
+    if (lb.current_state_count > 0)
+        memcpy(exit_binding->states, lb.current_states,
+               (size_t)lb.current_state_count * sizeof lb.current_states[0]);
 }
 
 /* --- Mesh-level walking --------------------------------------------------
@@ -696,6 +705,9 @@ static void parse_face_grouping(opt_ctx_t *c, const opt_node_t *fg,
     /* Read distances, then iterate the FaceGrouping's children (each is one
      * LOD NodeGroup). */
     size_t table = ptr_to_off(c, fg->child_table_ptr);
+    const opt_texture_binding_t entry_binding = c->active_texture;
+    opt_texture_binding_t lod0_exit_binding = entry_binding;
+    int have_lod0_exit_binding = 0;
     for (int32_t i = 0; i < lod_count; i++) {
         float dist = rf32(c->buf, dist_off + (size_t)i * sizeof(float));
         if (i < fg->child_count && range_ok(c, table + (size_t)i * 4, 4)) {
@@ -703,13 +715,24 @@ static void parse_face_grouping(opt_ctx_t *c, const opt_node_t *fg,
             if (cptr != 0) {
                 opt_node_t lod_node;
                 if (read_node(c, ptr_to_off(c, cptr), &lod_node)) {
-                    parse_lod_node(c, &lod_node, dist, &mesh->lods[i]);
+                    opt_texture_binding_t exit_binding = entry_binding;
+                    parse_lod_node(c, &lod_node, dist, &entry_binding,
+                                   &exit_binding, &mesh->lods[i]);
+                    if (i == 0) {
+                        lod0_exit_binding = exit_binding;
+                        have_lod0_exit_binding = 1;
+                    }
                     continue;
                 }
             }
         }
         mesh->lods[i].distance_threshold = dist;
     }
+    /* The static glTF path emits LOD 0. Advance the shared draw state by
+     * that same traversal so the next mesh receives the texture the classic
+     * renderer would have active for the exported geometry. */
+    if (have_lod0_exit_binding)
+        c->active_texture = lod0_exit_binding;
 }
 
 static void on_mesh_descendant(opt_ctx_t *c, const opt_node_t *n, void *user) {
@@ -790,7 +813,7 @@ static opt_file_t *parse_from_buffer(const uint8_t *data, size_t size,
     c.global_base  = global_base;
     c.version      = version;
     c.err          = err;
-    c.root_texture = -1;
+    c.active_texture.texture = -1;
 
     if (root_count <= 0 || root_table_p == 0) {
         opt_file_t *f = (opt_file_t *)calloc(1, sizeof *f);
@@ -814,12 +837,16 @@ static opt_file_t *parse_from_buffer(const uint8_t *data, size_t size,
         if (!read_node(&c, ptr_to_off(&c, cptr), &top)) continue;
         if (top.type != OPT_NODE_GROUP && top.type != OPT_NODE_TEXTURE) continue;
         if (top.type == OPT_NODE_TEXTURE) {
-            /* Shared Texture at top level: carries pixel data and becomes
-             * the default binding for every mesh root after it. */
+            /* A top-level Texture participates in the same shared state as
+             * bindings nested inside mesh roots. */
             const char *name = cstring(&c, ptr_to_off(&c, top.name_ptr));
             int32_t idx = texture_lookup_or_add(&c, name);
             parse_texture_data(&c, &top, idx);
-            if (idx >= 0) c.root_texture = idx;
+            if (idx >= 0) {
+                c.active_texture.texture = idx;
+                c.active_texture.state_count = 1;
+                c.active_texture.states[0] = idx;
+            }
             continue;
         }
         parse_mesh(&c, &top, &meshes[mesh_count++]);
