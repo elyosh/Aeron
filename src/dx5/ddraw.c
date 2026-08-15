@@ -236,9 +236,9 @@ static void DDShim_SubmitLastPresented(DDrawSurfaceShim* frame) {
 	}
 }
 
-void AeronDx5_SubmitLastPresented(void) { DDShim_SubmitLastPresented(g_ddLastPresented); }
+void AeronDx5_ForceSubmitRetainedFrame(void) { DDShim_SubmitLastPresented(g_ddLastPresented); }
 
-void AeronDx5_ResubmitIfIdle(void) {
+void AeronDx5_EndFrame(void) {
 	if (!g_ddClassicFlightRenderingSuppressed)
 		DDShim_SubmitLastPresented(g_ddLastPresented);
 }

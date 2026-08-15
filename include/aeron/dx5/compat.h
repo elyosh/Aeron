@@ -28,9 +28,10 @@ void AeronDx5_Configure(const AeronDx5Config* config);
  * DirectDrawCreate symbol. */
 HRESULT DirectDrawCreate_Compat(const DxGuid* driver, IDirectDraw** out, void* outer);
 
-/* Submits the coalesced classic frame once per host frame when normal classic
- * presentation is enabled. The historical name is retained for consumers. */
-void AeronDx5_ResubmitIfIdle(void);
+/* Completes one host frame by submitting the final retained classic image when
+ * normal classic presentation is enabled. Call exactly once after the recovered
+ * game tick and before submitting modern overlay layers. */
+void AeronDx5_EndFrame(void);
 void AeronDx5_ResetPresentationState(void);
 
 /* Modern flight presentation policy. Suppression applies only to render-target
@@ -40,7 +41,7 @@ int AeronDx5_IsClassicFlightRenderingSuppressed(void);
 
 /* Forces submission of the final retained classic frame, including while normal
  * classic presentation is suppressed. Does not advance the flip chain. */
-void AeronDx5_SubmitLastPresented(void);
+void AeronDx5_ForceSubmitRetainedFrame(void);
 
 /* Monotonic count of completed, non-suppressed classic presentations. */
 uint64_t AeronDx5_GetClassicFlightFrameSerial(void);
