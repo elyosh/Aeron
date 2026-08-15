@@ -9,6 +9,7 @@ project(aeron C CXX)
 option(AERON_DEBUG_UI "Build the Dear ImGui debug overlay into aeron" OFF)
 option(AERON_HOST_TOOLS_ONLY "Build only tools that must run on the build host" OFF)
 option(AERON_ENABLE_DX5_COMPAT "Build the DirectDraw/Direct3D 1 compatibility target" OFF)
+option(AERON_ENABLE_WINMM_CD_AUDIO "Build the WinMM CD-audio compatibility target" OFF)
 
 find_package(SDL3 3.4 REQUIRED CONFIG COMPONENTS SDL3-shared)
 
@@ -427,16 +428,77 @@ if(AERON_ENABLE_DX5_COMPAT)
     endif()
 endif()
 
+option(AERON_ENABLE_AUDIO_DECODE "Build the FFmpeg-backed Aeron audio decoder" OFF)
 option(AERON_ENABLE_VIDEO "Build the FFmpeg-backed Aeron video player" ON)
-if(AERON_ENABLE_VIDEO)
+
+if(AERON_ENABLE_AUDIO_DECODE OR AERON_ENABLE_VIDEO)
     find_package(PkgConfig REQUIRED)
-    pkg_check_modules(FFMPEG REQUIRED IMPORTED_TARGET
+    pkg_check_modules(FFMPEG_MEDIA REQUIRED IMPORTED_TARGET
         libavformat
         libavcodec
         libavutil
-        libswscale
         libswresample
     )
+
+    add_library(aeron_ffmpeg_vfs STATIC src/ffmpeg_vfs_io.c)
+    set_target_properties(aeron_ffmpeg_vfs PROPERTIES
+        C_STANDARD 99
+        C_STANDARD_REQUIRED ON
+        C_EXTENSIONS OFF
+    )
+    target_include_directories(aeron_ffmpeg_vfs
+        PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src
+        PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include
+    )
+    target_link_libraries(aeron_ffmpeg_vfs
+        PUBLIC aeron
+        PRIVATE PkgConfig::FFMPEG_MEDIA
+    )
+endif()
+
+if(AERON_ENABLE_AUDIO_DECODE)
+    add_library(aeron_audio_decode STATIC src/audio_decode.c)
+    set_target_properties(aeron_audio_decode PROPERTIES
+        C_STANDARD 99
+        C_STANDARD_REQUIRED ON
+        C_EXTENSIONS OFF
+    )
+    target_include_directories(aeron_audio_decode
+        PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include
+        PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src
+    )
+    target_link_libraries(aeron_audio_decode
+        PUBLIC aeron
+        PRIVATE aeron_ffmpeg_vfs PkgConfig::FFMPEG_MEDIA
+    )
+    if(MSVC)
+        target_compile_options(aeron_audio_decode PRIVATE /W4)
+    else()
+        target_compile_options(aeron_audio_decode PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+endif()
+
+if(AERON_ENABLE_WINMM_CD_AUDIO)
+    if(NOT AERON_ENABLE_AUDIO_DECODE)
+        message(FATAL_ERROR "AERON_ENABLE_WINMM_CD_AUDIO requires AERON_ENABLE_AUDIO_DECODE")
+    endif()
+    add_library(aeron_winmm STATIC src/winmm_mci.c)
+    set_target_properties(aeron_winmm PROPERTIES
+        C_STANDARD 99
+        C_STANDARD_REQUIRED ON
+        C_EXTENSIONS OFF
+    )
+    target_include_directories(aeron_winmm PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    target_link_libraries(aeron_winmm PUBLIC aeron PRIVATE aeron_audio_decode SDL3::SDL3)
+    if(MSVC)
+        target_compile_options(aeron_winmm PRIVATE /W4)
+    else()
+        target_compile_options(aeron_winmm PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+endif()
+
+if(AERON_ENABLE_VIDEO)
+    pkg_check_modules(FFMPEG_VIDEO REQUIRED IMPORTED_TARGET libswscale)
 
     add_library(aeron_video
         src/video.c
@@ -457,7 +519,9 @@ if(AERON_ENABLE_VIDEO)
         PUBLIC
             aeron
         PRIVATE
-            PkgConfig::FFMPEG
+            aeron_ffmpeg_vfs
+            PkgConfig::FFMPEG_MEDIA
+            PkgConfig::FFMPEG_VIDEO
             SDL3::SDL3
     )
     if(MSVC)
@@ -750,6 +814,7 @@ set(AERON_FORMAT_FILES
     src/video_internal.h
     include/aeron/aeron.h
     include/aeron/audio.h
+    include/aeron/audio_decode.h
     include/aeron/config_file.h
     include/aeron/dialog.h
     include/aeron/input.h
@@ -762,6 +827,8 @@ set(AERON_FORMAT_FILES
     include/aeron/time.h
     include/aeron/video.h
     include/aeron/vfs.h
+    include/aeron/winmm/compat.h
+    include/aeron/winmm/mmsystem.h
     shaders/fullscreen.frag.hlsl
     shaders/compute_fill.comp.hlsl
     shaders/compute_fill_buffer.comp.hlsl

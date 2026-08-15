@@ -1065,6 +1065,27 @@ size_t Aeron_AudioRingPlayCursorBytes(AeronRing ring) {
 	return cursor;
 }
 
+int Aeron_AudioRingSetPlayCursorBytes(AeronRing ring, size_t cursor_bytes) {
+	int pending_output_frames;
+	int result = 0;
+
+	if (!g_audio.initialized)
+		return 0;
+	pending_output_frames = Aeron_AudioPendingOutputFrames();
+	SDL_LockMutex(g_audio.lock);
+	AeronRingSlot* slot = Aeron_AudioResolveRing(ring);
+	if (slot && cursor_bytes < slot->ring_bytes && cursor_bytes % (size_t)slot->block_align == 0) {
+		const double frame = (double)(cursor_bytes / (size_t)slot->block_align);
+		const double pending_source_frames =
+			(double)pending_output_frames * (double)slot->rate / (double)AERON_AUDIO_DEVICE_RATE;
+		slot->play_frames      = frame;
+		slot->submitted_frames = frame + pending_source_frames;
+		result                 = 1;
+	}
+	SDL_UnlockMutex(g_audio.lock);
+	return result;
+}
+
 void Aeron_AudioRingPlay(AeronRing ring, int looping) {
 	if (!g_audio.initialized) {
 		return;

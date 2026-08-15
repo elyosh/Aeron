@@ -83,6 +83,7 @@ AeronRing Aeron_AudioRingOpen(int rate, int channels, int bits, size_t ring_byte
 void*     Aeron_AudioRingBase(AeronRing ring); /* engine-owned ring storage to write into */
 int       Aeron_AudioRingWrite(AeronRing ring, size_t offset, const void* src, size_t bytes);
 size_t    Aeron_AudioRingPlayCursorBytes(AeronRing ring);
+int       Aeron_AudioRingSetPlayCursorBytes(AeronRing ring, size_t cursor_bytes);
 void      Aeron_AudioRingPlay(AeronRing ring, int looping);
 void      Aeron_AudioRingStop(AeronRing ring);
 int       Aeron_AudioRingIsPlaying(AeronRing ring);
@@ -102,10 +103,10 @@ AeronAudioStream Aeron_AudioStreamOpen(int rate, int channels, AeronPcmFormat fo
 size_t Aeron_AudioStreamWrite(AeronAudioStream stream, const void* pcm, size_t frame_count);
 /* Event-based producer wait. Returns zero when the stream is paused, closed,
  * or cannot ever hold required_frames. */
-int      Aeron_AudioStreamWaitWritable(AeronAudioStream stream, size_t required_frames);
-size_t   Aeron_AudioStreamWritableFrames(AeronAudioStream stream);
-size_t   Aeron_AudioStreamQueuedFrames(AeronAudioStream stream);
-size_t   Aeron_AudioStreamCapacityFrames(AeronAudioStream stream);
+int    Aeron_AudioStreamWaitWritable(AeronAudioStream stream, size_t required_frames);
+size_t Aeron_AudioStreamWritableFrames(AeronAudioStream stream);
+size_t Aeron_AudioStreamQueuedFrames(AeronAudioStream stream);
+size_t Aeron_AudioStreamCapacityFrames(AeronAudioStream stream);
 /* Grows a paused, never-consumed stream while preserving queued samples.
  * Intended for bounded decoder prebuffering before playback starts. */
 int      Aeron_AudioStreamEnsureCapacity(AeronAudioStream stream, size_t minimum_capacity_frames);

@@ -1,3 +1,4 @@
+#include "ffmpeg_vfs_io.h"
 #include "video_internal.h"
 
 #include <libavcodec/avcodec.h>
@@ -59,48 +60,6 @@ static int AeronVideo_ShouldInterrupt(void* opaque) {
 	interrupted = player->stop_requested;
 	SDL_UnlockMutex(player->lock);
 	return interrupted;
-}
-
-static int AeronVideo_AvioRead(void* opaque, uint8_t* buffer, int buffer_size) {
-	AeronFile* file      = (AeronFile*)opaque;
-	size_t     read_size = 0;
-	int        read_ok;
-	if (buffer_size <= 0) {
-		return 0;
-	}
-	read_ok = AeronVfs_Read(file, buffer, (size_t)buffer_size, &read_size);
-	if (read_size > 0) {
-		return (int)read_size;
-	}
-	if (!read_ok && AeronVfs_Tell(file) < AeronVfs_GetSize(file)) {
-		return AVERROR(EIO);
-	}
-	return AVERROR_EOF;
-}
-
-static int64_t AeronVideo_AvioSeek(void* opaque, int64_t offset, int whence) {
-	AeronFile* file = (AeronFile*)opaque;
-	int        origin;
-	if (whence == AVSEEK_SIZE) {
-		return AeronVfs_GetSize(file);
-	}
-	switch (whence & ~AVSEEK_FORCE) {
-		case SEEK_SET:
-			origin = 0;
-			break;
-		case SEEK_CUR:
-			origin = 1;
-			break;
-		case SEEK_END:
-			origin = 2;
-			break;
-		default:
-			return AVERROR(EINVAL);
-	}
-	if (!AeronVfs_Seek(file, offset, origin)) {
-		return AVERROR(EIO);
-	}
-	return AeronVfs_Tell(file);
 }
 
 static AVCodecContext* AeronVideo_OpenCodec(AVFormatContext* format, int stream_index) {
@@ -674,19 +633,11 @@ static int AeronVideo_InitStreams(AeronVideoDecodeContext* decode) {
 
 static int AeronVideo_InitDecoder(AeronVideoDecodeContext* decode) {
 	AeronVideoPlayer* player = decode->player;
-	uint8_t*          avio_buffer;
 	int               result;
 
-	avio_buffer = (uint8_t*)av_malloc(32768);
-	if (!avio_buffer) {
+	decode->avio = AeronFfmpegVfs_CreateIo(player->file);
+	if (!decode->avio)
 		return AVERROR(ENOMEM);
-	}
-	decode->avio = avio_alloc_context(avio_buffer, 32768, 0, player->file, AeronVideo_AvioRead, NULL,
-									  AeronVideo_AvioSeek);
-	if (!decode->avio) {
-		av_free(avio_buffer);
-		return AVERROR(ENOMEM);
-	}
 	decode->format = avformat_alloc_context();
 	if (!decode->format) {
 		return AVERROR(ENOMEM);
@@ -722,10 +673,10 @@ static int AeronVideo_InitDecoder(AeronVideoDecodeContext* decode) {
 	SDL_UnlockMutex(player->lock);
 
 	Aeron_LogInfo("aeron.video", "%s: %s, video=%s %dx%d, audio=%s %d Hz/%d ch", player->path,
-			  player->info.container, player->info.has_video ? player->info.video_codec : "none",
-			  player->info.width, player->info.height,
-			  player->info.has_audio ? player->info.audio_codec : "none", player->info.audio_sample_rate,
-			  player->info.audio_channels);
+				  player->info.container, player->info.has_video ? player->info.video_codec : "none",
+				  player->info.width, player->info.height,
+				  player->info.has_audio ? player->info.audio_codec : "none", player->info.audio_sample_rate,
+				  player->info.audio_channels);
 	return 0;
 }
 
@@ -845,10 +796,7 @@ static void AeronVideo_CleanupDecoder(AeronVideoDecodeContext* decode) {
 	avcodec_free_context(&decode->video_codec);
 	avcodec_free_context(&decode->audio_codec);
 	avformat_close_input(&decode->format);
-	if (decode->avio) {
-		av_freep(&decode->avio->buffer);
-		avio_context_free(&decode->avio);
-	}
+	AeronFfmpegVfs_DestroyIo(&decode->avio);
 	av_free(decode->rgba_temp);
 	av_free(decode->audio_temp);
 	if (player->file) {
@@ -910,8 +858,8 @@ int AeronVideo_WorkerMain(void* userdata) {
 				SDL_UnlockMutex(player->lock);
 				if (trimmed > decode.reported_audio_frames_trimmed) {
 					Aeron_LogWarn("aeron.video", "%s: trimmed %llu audio frames beyond the media duration",
-							  player->path,
-							  (unsigned long long)(trimmed - decode.reported_audio_frames_trimmed));
+								  player->path,
+								  (unsigned long long)(trimmed - decode.reported_audio_frames_trimmed));
 					decode.reported_audio_frames_trimmed = trimmed;
 				}
 			}
