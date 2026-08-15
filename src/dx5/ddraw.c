@@ -459,8 +459,13 @@ int AeronDx5_ComposeSurfaceOverRenderTarget(IDirectDrawSurface* dst, int dst_x, 
 	if (!d || !s || !coverage || d->kind != DDSHIM_RENDER_TARGET || !d->rt || !s->cpu) {
 		return 0;
 	}
-	/* Order the composition after any deferred Direct3D scene work on the target. */
+	/* Order the composition after every earlier target writer. CPU overlays can
+	 * remain pending when no Direct3D scene follows their surface unlock. */
 	if (!D3DCompat_FlushRenderTargetPass(d)) {
+		return 0;
+	}
+	DDShim_WritebackRenderTarget(d);
+	if (d->cpu_dirty) {
 		return 0;
 	}
 	if (!AeronSurface_GetFrameView(s->cpu, &view)) {
