@@ -271,8 +271,17 @@ typedef enum AeronUiInputTextFlags {
 	AERON_UI_INPUT_TEXT_READ_ONLY = 1u << 0,
 } AeronUiInputTextFlags;
 
+typedef enum AeronUiInputTextResult {
+	AERON_UI_INPUT_TEXT_UNCHANGED        = 0,
+	AERON_UI_INPUT_TEXT_CHANGED          = 1u << 0,
+	AERON_UI_INPUT_TEXT_ACTION_ACTIVATED = 1u << 1,
+} AeronUiInputTextResult;
+
 /* Edits caller-owned NUL-terminated UTF-8. Returns nonzero on change. */
 int AeronUi_InputText(AeronUiContext* ctx, const char* label, char* value, size_t capacity, uint32_t flags);
+/* Text editor with a font-sized trailing action button in the same form row. */
+uint32_t AeronUi_InputTextWithAction(AeronUiContext* ctx, const char* label, char* value, size_t capacity,
+									 uint32_t flags, const char* action_label);
 
 typedef enum AeronUiListItemFlags {
 	AERON_UI_LIST_ITEM_NONE      = 0,

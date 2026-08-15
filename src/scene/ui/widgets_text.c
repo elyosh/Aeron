@@ -161,7 +161,8 @@ static int text_platform_shortcut(const AeronInputSnapshot* input) {
 #endif
 }
 
-int AeronUi_InputText(AeronUiContext* ctx, const char* label, char* value, size_t capacity, uint32_t flags) {
+static uint32_t input_text(AeronUiContext* ctx, const char* label, char* value, size_t capacity,
+						   uint32_t flags, const char* action_label) {
 	UiRect row;
 	if (!ctx || !ctx->frame_active || !value || capacity == 0 ||
 		!ui_layout_row(ctx, ui_ref(ctx, ctx->theme.row_height), &row)) {
@@ -174,8 +175,26 @@ int AeronUi_InputText(AeronUiContext* ctx, const char* label, char* value, size_
 	size_t            length      = length_checked;
 	const AeronUiId   id          = ui_make_id(ctx, label);
 	const AeronRectI* parent_clip = text_current_clip(ctx);
-	const int         read_only   = (flags & AERON_UI_INPUT_TEXT_READ_ONLY) != 0;
-	const int         was_editing = ctx->text_edit_id == id;
+	UiRect            control     = ui_form_row_split(ctx, label, &row, parent_clip);
+	UiRect            input_row   = row;
+	UiRect            action      = { 0 };
+	const float       text_px     = ui_ref(ctx, ctx->theme.text_px);
+	const int         has_action  = action_label && ui_label_text_len(action_label) > 0;
+	if (has_action) {
+		const float gap         = ui_ref(ctx, ctx->theme.item_spacing);
+		const float label_width = ui_text_width(ctx, ui_font_regular(ctx), text_px,
+												ui_label_text(action_label), ui_label_text_len(action_label));
+		const float desired_width   = fmaxf(control.h, ui_snap(label_width + 2.0f * ui_ref(ctx, 12.0f)));
+		const float available_width = fmaxf(0.0f, control.w - gap);
+		action.w                    = fminf(desired_width, available_width);
+		action.h                    = control.h;
+		action.x                    = control.x + control.w - action.w;
+		action.y                    = control.y;
+		control.w                   = fmaxf(0.0f, action.x - gap - control.x);
+		input_row.w                 = fmaxf(0.0f, control.x + control.w - row.x);
+	}
+	const int read_only   = (flags & AERON_UI_INPUT_TEXT_READ_ONLY) != 0;
+	const int was_editing = ctx->text_edit_id == id;
 	if (was_editing) {
 		if (ctx->text_cursor > length)
 			ctx->text_cursor = length;
@@ -194,12 +213,10 @@ int AeronUi_InputText(AeronUiContext* ctx, const char* label, char* value, size_
 	if (was_editing && ctx->input->key_pressed[AERON_KEY_SPACE] && ctx->nav_accept > 0) {
 		ctx->nav_accept--;
 	}
-	const int    activated = ui_widget_behavior(ctx, id, &row, 1);
-	const UiRect control   = ui_form_row_split(ctx, label, &row, parent_clip);
+	const int    activated = ui_widget_behavior(ctx, id, &input_row, 1);
 	const float  inset     = ui_ref(ctx, 8.0f);
 	const UiRect text_rect = { control.x + inset, control.y, fmaxf(0.0f, control.w - inset * 2.0f),
 							   control.h };
-	const float  text_px   = ui_ref(ctx, ctx->theme.text_px);
 	int          started   = 0;
 	int          changed   = 0;
 
@@ -330,7 +347,7 @@ int AeronUi_InputText(AeronUiContext* ctx, const char* label, char* value, size_
 	}
 
 	if (ui_is_focused(ctx, id))
-		ui_draw_row_focus_bg(ctx, &row, parent_clip);
+		ui_draw_row_focus_bg(ctx, &input_row, parent_clip);
 	ui_draw_surface(ctx, &control, ctx->hot_id == id ? ctx->theme.widget_bg_hot : ctx->theme.widget_bg,
 					ctx->theme.widget_bg_low, ctx->theme.widget_gradient, ctx->theme.widget_border,
 					ctx->theme.widget_border_px, 1, parent_clip);
@@ -362,8 +379,20 @@ int AeronUi_InputText(AeronUiContext* ctx, const char* label, char* value, size_
 		ui_draw_fill(ctx, &caret, ctx->theme.focus_outline, &field_clip);
 	}
 	if (ui_is_focused(ctx, id))
-		ui_draw_row_focus_ring(ctx, &row, parent_clip);
+		ui_draw_row_focus_ring(ctx, &input_row, parent_clip);
+	const int action_activated = has_action && ui_button_at(ctx, ui_make_child_id(id, action_label),
+															action_label, &action, 1, parent_clip);
 	if (changed)
 		ui_play_sound(ctx, AERON_UI_SOUND_ADJUST);
-	return changed;
+	return (changed ? AERON_UI_INPUT_TEXT_CHANGED : 0u) |
+		   (action_activated ? AERON_UI_INPUT_TEXT_ACTION_ACTIVATED : 0u);
+}
+
+int AeronUi_InputText(AeronUiContext* ctx, const char* label, char* value, size_t capacity, uint32_t flags) {
+	return (input_text(ctx, label, value, capacity, flags, NULL) & AERON_UI_INPUT_TEXT_CHANGED) != 0;
+}
+
+uint32_t AeronUi_InputTextWithAction(AeronUiContext* ctx, const char* label, char* value, size_t capacity,
+									 uint32_t flags, const char* action_label) {
+	return input_text(ctx, label, value, capacity, flags, action_label);
 }

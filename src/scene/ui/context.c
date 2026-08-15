@@ -28,6 +28,14 @@ AeronUiId ui_make_id(AeronUiContext* ctx, const char* label) {
 	return id ? id : 1u; /* 0 is the empty-slot sentinel */
 }
 
+AeronUiId ui_make_child_id(AeronUiId parent, const char* label) {
+	if (!label) {
+		label = "";
+	}
+	AeronUiId id = ui_fnv1a(parent, label, strlen(label));
+	return id ? id : 1u;
+}
+
 const char* ui_label_text(const char* label) { return label ? label : ""; }
 
 int ui_label_text_len(const char* label) {

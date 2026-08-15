@@ -238,6 +238,13 @@ void ui_record_widget(AeronUiContext* ctx, AeronUiId id, const UiRect* rect, int
  * draws the label; returns the control region. */
 UiRect ui_form_row_split(AeronUiContext* ctx, const char* label, const UiRect* row, const AeronRectI* clip);
 
+/* ---- window.c ---- */
+int ui_button_at(AeronUiContext* ctx, AeronUiId id, const char* label, const UiRect* rect, int enabled,
+				 const AeronRectI* clip);
+
+/* ---- context.c ---- */
+AeronUiId ui_make_child_id(AeronUiId parent, const char* label);
+
 /* ---- submit.c ---- */
 AeronRenderTarget* ui_submit_ensure_fallback_rt(AeronUiContext* ctx);
 void               ui_submit_release_fallback_rt(AeronUiContext* ctx);
