@@ -126,6 +126,7 @@ typedef struct {
     const uint8_t *buf;
     size_t         size;
     int32_t        global_base;
+    int32_t        version;
 
     /* Texture table being assembled during the parse. */
     opt_texture_t *textures;
@@ -412,6 +413,18 @@ static void parse_texture_data(opt_ctx_t *c, const opt_node_t *n, int32_t tex_in
                      : pixels_off + (size_t)chain_bytes;
     if (pal_off != 0 && range_ok(c, pal_off, OPT_PALETTE_BYTES)) {
         memcpy(t->palette, c->buf + pal_off, OPT_PALETTE_BYTES);
+    }
+    if (c->version == 1 && pal_off != 0 &&
+        range_ok(c, pal_off, OPT_NATIVE_SHADE_TABLE_BYTES)) {
+        if (!t->native_shade_table) {
+            t->native_shade_table = (uint8_t *)malloc(OPT_NATIVE_SHADE_TABLE_BYTES);
+            if (!t->native_shade_table) {
+                set_err(c, "out of memory (native shade table)");
+                return;
+            }
+        }
+        memcpy(t->native_shade_table, c->buf + pal_off,
+               OPT_NATIVE_SHADE_TABLE_BYTES);
     }
 
     /* Optional alpha: an XWA Texture node may carry a TextureAlpha child
@@ -775,6 +788,7 @@ static opt_file_t *parse_from_buffer(const uint8_t *data, size_t size,
     c.buf          = data;
     c.size         = size;
     c.global_base  = global_base;
+    c.version      = version;
     c.err          = err;
     c.root_texture = -1;
 
@@ -897,6 +911,7 @@ static void opt_free_contents(opt_file_t *opt) {
     for (int32_t i = 0; i < opt->texture_count; i++) {
         free(opt->textures[i].pixels);
         free(opt->textures[i].alpha);
+        free(opt->textures[i].native_shade_table);
     }
     free(opt->textures);
 }

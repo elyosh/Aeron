@@ -596,6 +596,7 @@ set_target_properties(aeron_cjson PROPERTIES
 
 add_library(lucas_opt STATIC
     tools/opt2gltf/opt.c
+    tools/opt2gltf/opt_upgrade.c
 )
 target_include_directories(lucas_opt PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/tools/opt2gltf

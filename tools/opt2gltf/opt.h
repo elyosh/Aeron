@@ -215,6 +215,7 @@ typedef struct {
 #define OPT_PALETTE_COLORS       256
 #define OPT_PALETTE_BPP            2   /* bytes per stored RGB565 entry */
 #define OPT_PALETTE_BYTES        (OPT_PALETTE_SHADES * OPT_PALETTE_COLORS * OPT_PALETTE_BPP)
+#define OPT_NATIVE_SHADE_TABLE_BYTES (4096 + OPT_PALETTE_BYTES)
 /*
  * Which of the 16 shade rows holds the texture's unlit base color depends
  * on the game that authored the file:
@@ -272,6 +273,8 @@ typedef struct {
      */
     uint8_t *alpha;
     uint8_t  palette[OPT_PALETTE_BYTES];
+    /* Original indexed + RGB565 data retained for v1 runtime conversion. */
+    uint8_t *native_shade_table;
 } opt_texture_t;
 
 /* --- Mesh ----------------------------------------------------------------- */
@@ -318,6 +321,11 @@ typedef struct {
 opt_file_t *opt_load_file  (const char *path, opt_error_t *err);
 opt_file_t *opt_load_memory(const void *data, size_t size, opt_error_t *err);
 void        opt_free       (opt_file_t *opt);
+
+/* Rebuild a version-1 TIE98 OPT as a self-contained version-2 image. */
+int opt_upgrade_v1_memory(const void *source, size_t source_size,
+                          uint8_t **output, size_t *output_size,
+                          opt_error_t *err);
 
 /* Lookups returning literal strings; never NULL, "?" on unknown value. */
 const char *opt_node_type_name      (opt_node_type_t      t);
