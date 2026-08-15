@@ -28,8 +28,8 @@ void AeronDx5_Configure(const AeronDx5Config* config);
  * DirectDrawCreate symbol. */
 HRESULT DirectDrawCreate_Compat(const DxGuid* driver, IDirectDraw** out, void* outer);
 
-/* Re-submits the retained classic frame when the recovered game did not reach
- * a DirectDraw presentation boundary during the current host frame. */
+/* Submits the coalesced classic frame once per host frame when normal classic
+ * presentation is enabled. The historical name is retained for consumers. */
 void AeronDx5_ResubmitIfIdle(void);
 void AeronDx5_ResetPresentationState(void);
 
@@ -38,8 +38,8 @@ void AeronDx5_ResetPresentationState(void);
 void AeronDx5_SetClassicFlightRenderingSuppressed(int suppressed);
 int AeronDx5_IsClassicFlightRenderingSuppressed(void);
 
-/* Submits the last complete classic frame without creating a recovered present
- * event or advancing the DirectDraw flip chain. */
+/* Forces submission of the final retained classic frame, including while normal
+ * classic presentation is suppressed. Does not advance the flip chain. */
 void AeronDx5_SubmitLastPresented(void);
 
 /* Monotonic count of completed, non-suppressed classic presentations. */

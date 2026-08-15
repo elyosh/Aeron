@@ -69,17 +69,15 @@ static void DDShim_FillSurfaceDesc(DDrawSurfaceShim* s, DDSURFACEDESC* d) {
 
 /* --- present ------------------------------------------------------------- */
 
-/* Submits a surface's pixels as the frame for the shell's next Aeron_Present.
- * The recovered present path reaches this through Flip / BltFast-to-primary. A
- * render surface (one carrying a render target) is the composition buffer: its
- * background and 2D layers are composited into the render target and the 3D is
- * drawn into it, so present its render-target texture. Plain CPU surfaces present
- * their pixels directly. */
-/* The classic game presents only on ticks its schedulers actually ran.
- * AeronDx5_ResubmitIfIdle repeats a required classic frame on idle ticks;
- * opaque HD flight frames suppress both generation and layer submission. */
+/* The recovered present path reaches this through Flip / BltFast-to-primary. A
+ * render surface is the composition buffer for its background, 2D layers, and
+ * 3D output; plain CPU surfaces carry their completed pixels directly. */
+/* Recovered presents can occur many times inside one host frame, especially
+ * while loading mission species. Retain the final completed image here and
+ * submit it once after the game tick; opaque HD flight frames suppress the
+ * render-target submission without disturbing the flip chain. */
 static DDrawSurfaceShim* g_ddLastPresented;
-static int g_ddPresentedThisTick;
+static AeronSurface* g_ddRetainedCpuPresentation;
 static int g_ddClassicFlightRenderingSuppressed;
 static uint64_t g_ddClassicFlightFrameSerial;
 static uint64_t g_ddPaletteRevision;
@@ -116,16 +114,41 @@ static AeronRectI DDShim_ClassicPresentationRect(const DDrawSurfaceShim* frame) 
 	return AeronDx5_PresentationRect(frame ? frame->width : 0, frame ? frame->height : 0);
 }
 
-static void DDShim_Present(DDrawSurfaceShim* frame) {
+static int DDShim_RetainCpuPresentation(DDrawSurfaceShim* frame) {
 	AeronPixelFrameView view;
-	AeronPixelLayerDesc layer;
+	AeronSurface* replacement;
 
+	if (!frame || !frame->cpu)
+		return 0;
+	DDShim_ApplyPrimaryPalette(frame);
+	if (!AeronSurface_GetFrameView(frame->cpu, &view))
+		return 0;
+
+	if (!g_ddRetainedCpuPresentation ||
+		AeronSurface_GetWidth(g_ddRetainedCpuPresentation) != view.width ||
+		AeronSurface_GetHeight(g_ddRetainedCpuPresentation) != view.height ||
+		AeronSurface_GetFormat(g_ddRetainedCpuPresentation) != view.format) {
+		replacement = NULL;
+		if (!AeronSurface_Create(view.width, view.height, view.format,
+							 AERON_SURFACE_CPU_LOCKABLE | AERON_SURFACE_PRESENTABLE, &replacement))
+			return 0;
+		AeronSurface_Destroy(g_ddRetainedCpuPresentation);
+		g_ddRetainedCpuPresentation = replacement;
+	}
+
+	if (view.format == AERON_PIXEL_FORMAT_INDEX8 &&
+		(!view.palette || !AeronSurface_SetPalette(g_ddRetainedCpuPresentation, view.palette, 256)))
+		return 0;
+	return AeronSurface_Blit(g_ddRetainedCpuPresentation, 0, 0, frame->cpu, NULL,
+							 AERON_SURFACE_BLIT_NONE);
+}
+
+static void DDShim_Present(DDrawSurfaceShim* frame) {
 	if (!frame) {
 		return;
 	}
 
 	if (frame->rt) {
-		AeronTextureLayerDesc tex;
 		if (g_ddClassicFlightRenderingSuppressed) {
 			/* Preserve the recovered present boundary and scheduler bookkeeping, but
 			 * keep the last complete classic texture and flip-chain position intact.
@@ -133,7 +156,6 @@ static void DDShim_Present(DDrawSurfaceShim* frame) {
 			 * enabled frame starts with the game's normal color clear. */
 			AeronDx5_NotifyPresent(frame->width, frame->height);
 			g_ddLastPresented = frame;
-			g_ddPresentedThisTick = 1;
 			return;
 		}
 		if (!D3DCompat_FlushRenderTargetPass(frame)) {
@@ -142,32 +164,18 @@ static void DDShim_Present(DDrawSurfaceShim* frame) {
 		/* If a software overlay was the last writer (cpu_dirty), fold its staging
 		 * back into the color target first so the presented texture includes it. */
 		DDShim_WritebackRenderTarget(frame);
-		memset(&tex, 0, sizeof(tex));
-		tex.texture = Aeron_RenderTargetGetTexture(frame->rt);
-		tex.logical_rect = DDShim_ClassicPresentationRect(frame);
-		tex.blend_mode = AERON_LAYER_BLEND_OPAQUE;
-		/* The render target holds display-space (sRGB-encoded) values for both the 2D
-		 * layers and the std3D 3D output, matching the original DirectDraw surface.
-		 * Present as SRGB so the values are decoded once and re-encoded by the
-		 * swapchain -- a single round trip, matching the flight render path. */
-		tex.color_space = AERON_COLOR_SPACE_SRGB;
-		if (tex.texture) {
-			if (!Aeron_SubmitTextureLayer(&tex)) {
-				Aeron_RequestFatalRendererError("classic render-target presentation");
-				return;
-			}
-			++g_ddClassicFlightFrameSerial;
-			/* Remaster: frame-boundary marker (post-present restores
-			 * belong to the next frame). No pixel capture — the HD
-			 * render is record-driven, not a framebuffer scrape. */
-			AeronDx5_NotifyPresent(frame->width, frame->height);
-			g_ddLastPresented = frame;
-			g_ddPresentedThisTick = 1;
-		}
-		/* Flip the chain: the submitted texture keeps referencing the just-composed
-		 * buffer while subsequent blits into this surface (the background restore at
-		 * the tail of PresentFrame, then next frame's 3D) target the other buffer,
-		 * so the deferred Aeron_Present is not clobbered. */
+		if (!Aeron_RenderTargetGetTexture(frame->rt))
+			return;
+		++g_ddClassicFlightFrameSerial;
+		/* Remaster: frame-boundary marker (post-present restores
+		 * belong to the next frame). No pixel capture — the HD
+		 * render is record-driven, not a framebuffer scrape. */
+		AeronDx5_NotifyPresent(frame->width, frame->height);
+		g_ddLastPresented = frame;
+		/* Flip the chain so the completed texture remains untouched while subsequent
+		 * blits into this surface (the background restore at the tail of PresentFrame,
+		 * then next frame's 3D) target the other buffer.
+		 * The final completed buffer is submitted once after the game tick. */
 		if (frame->rt_back) {
 			AeronRenderTarget* swap = frame->rt;
 			frame->rt = frame->rt_back;
@@ -179,24 +187,14 @@ static void DDShim_Present(DDrawSurfaceShim* frame) {
 	if (!frame->cpu) {
 		return;
 	}
-	DDShim_ApplyPrimaryPalette(frame);
-	if (!AeronSurface_GetFrameView(frame->cpu, &view)) {
-		return;
-	}
-	memset(&layer, 0, sizeof(layer));
-	layer.frame = view;
-	layer.logical_rect = DDShim_ClassicPresentationRect(frame);
-	layer.blend_mode = AERON_LAYER_BLEND_OPAQUE;
-	layer.sampling = AERON_PIXEL_SAMPLING_SHARP_BILINEAR;
-	if (!Aeron_SubmitPixelLayer(&layer)) {
-		Aeron_RequestFatalRendererError("classic software-surface presentation");
+	if (!DDShim_RetainCpuPresentation(frame)) {
+		Aeron_RequestFatalRendererError("retaining classic software-surface presentation");
 		return;
 	}
 	++g_ddClassicFlightFrameSerial;
 	/* Remaster: frame-boundary marker (see above). */
 	AeronDx5_NotifyPresent(frame->width, frame->height);
 	g_ddLastPresented = frame;
-	g_ddPresentedThisTick = 1;
 }
 
 static void DDShim_SubmitLastPresented(DDrawSurfaceShim* frame) {
@@ -221,11 +219,10 @@ static void DDShim_SubmitLastPresented(DDrawSurfaceShim* frame) {
 		}
 		return;
 	}
-	if (frame->cpu) {
+	if (g_ddRetainedCpuPresentation) {
 		AeronPixelFrameView view;
 		AeronPixelLayerDesc layer;
-		DDShim_ApplyPrimaryPalette(frame);
-		if (!AeronSurface_GetFrameView(frame->cpu, &view)) {
+		if (!AeronSurface_GetFrameView(g_ddRetainedCpuPresentation, &view)) {
 			return;
 		}
 		memset(&layer, 0, sizeof(layer));
@@ -241,24 +238,22 @@ static void DDShim_SubmitLastPresented(DDrawSurfaceShim* frame) {
 
 void AeronDx5_SubmitLastPresented(void) { DDShim_SubmitLastPresented(g_ddLastPresented); }
 
+void AeronDx5_ResubmitIfIdle(void) {
+	if (!g_ddClassicFlightRenderingSuppressed)
+		DDShim_SubmitLastPresented(g_ddLastPresented);
+}
+
 uint64_t AeronDx5_GetClassicFlightFrameSerial(void) { return g_ddClassicFlightFrameSerial; }
 
 void AeronDx5_ResetPresentationState(void) {
 	g_ddLastPresented = NULL;
-	g_ddPresentedThisTick = 0;
 	g_ddClassicFlightRenderingSuppressed = 0;
 	g_ddClassicFlightFrameSerial = 0;
 }
 
-void AeronDx5_ResubmitIfIdle(void) {
-	if (g_ddPresentedThisTick) {
-		g_ddPresentedThisTick = 0;
-		return;
-	}
-	if (g_ddClassicFlightRenderingSuppressed) {
-		return;
-	}
-	DDShim_SubmitLastPresented(g_ddLastPresented);
+void DDShim_ReleasePresentationResources(void) {
+	AeronSurface_Destroy(g_ddRetainedCpuPresentation);
+	g_ddRetainedCpuPresentation = NULL;
 }
 
 /* Composite a source CPU surface onto a render surface's render target. The render

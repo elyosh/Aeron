@@ -30,5 +30,6 @@ void AeronDx5_NotifyPresent(int surface_width, int surface_height) {
 void AeronDx5_Shutdown(void) {
 	D3DCompat_Shutdown();
 	AeronDx5_ResetPresentationState();
+	DDShim_ReleasePresentationResources();
 	memset(&g_dx5Config, 0, sizeof(g_dx5Config));
 }

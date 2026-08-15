@@ -62,9 +62,8 @@ typedef struct DDrawSurfaceShim {
 	 *
 	 * `rt` is the current work buffer (rendered into and composited into this
 	 * frame); `rt_back` is the other half of a DirectDraw flip chain. Present
-	 * submits `rt` then swaps the two, so the just-composed frame is drawn while
-	 * the next frame's background restore / rendering targets the other buffer --
-	 * matching the original primary<->front page flip. */
+	 * swaps the two, preserving the completed frame in `rt_back` while the next
+	 * frame targets `rt`; the host submits `rt_back` after the game tick. */
 	AeronRenderTarget* rt;
 	AeronRenderTarget* rt_back;
 	AeronDepthTarget* depth;
@@ -120,5 +119,6 @@ IDirect3DTexture* D3DCompat_CreateTexture(DDrawSurfaceShim* surface);
 AeronRectI AeronDx5_PresentationRect(int surface_width, int surface_height);
 void AeronDx5_NotifyPresent(int surface_width, int surface_height);
 void D3DCompat_Shutdown(void);
+void DDShim_ReleasePresentationResources(void);
 
 #endif
