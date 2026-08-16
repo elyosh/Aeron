@@ -52,6 +52,8 @@ void Aeron_AudioClipDestroy(AeronClip clip);
 
 /* Voices ------------------------------------------------------------------ */
 
+/* pan is an amplitude-preserving stereo balance in [-1, 1]: at zero both
+ * channels play at full gain; either extreme silences the opposite channel. */
 AeronVoice Aeron_AudioVoicePlay(AeronClip clip, float gain, float pan, float pitch, int loop);
 AeronVoice Aeron_AudioVoicePlay3D(AeronClip clip, float gain, float pitch, int loop, const float pos[3],
 								  float min_dist, float max_dist);

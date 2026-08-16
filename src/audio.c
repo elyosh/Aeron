@@ -178,11 +178,29 @@ static float Aeron_AudioNormalize(float v[3]) {
 	return len;
 }
 
-/* Equal-power stereo gains for a base gain and a pan in [-1..1]. */
-static void Aeron_AudioPanGains(float gain, float pan, float* out_l, float* out_r) {
+/* Equal-power panning for positional audio. */
+static void Aeron_AudioEqualPowerPanGains(float gain, float pan, float* out_l, float* out_r) {
 	float angle = (pan + 1.0f) * 0.25f * 3.14159265358979323846f;
 	*out_l      = cosf(angle) * gain;
 	*out_r      = sinf(angle) * gain;
+}
+
+/* Amplitude-preserving balance for non-positional audio. At the centre both
+ * channels remain at the requested gain; moving away only attenuates the
+ * opposite channel. */
+static void Aeron_AudioBalanceGains(float gain, float balance, float* out_l, float* out_r) {
+	if (balance < -1.0f) {
+		balance = -1.0f;
+	} else if (balance > 1.0f) {
+		balance = 1.0f;
+	}
+	if (balance <= 0.0f) {
+		*out_l = gain;
+		*out_r = gain * (1.0f + balance);
+	} else {
+		*out_l = gain * (1.0f - balance);
+		*out_r = gain;
+	}
 }
 
 /* Computes per-voice left/right gains and the doppler-adjusted step. */
@@ -190,8 +208,13 @@ static void Aeron_AudioComputeVoiceMix(const AeronVoiceSlot* voice, const AeronC
 									   float* out_r, double* out_step) {
 	float base_step = ((float)clip->rate / (float)AERON_AUDIO_DEVICE_RATE) * voice->pitch;
 
-	if (!voice->is3d || !g_audio.has_listener) {
-		Aeron_AudioPanGains(voice->gain, voice->is3d ? 0.0f : voice->pan, out_l, out_r);
+	if (!voice->is3d) {
+		Aeron_AudioBalanceGains(voice->gain, voice->pan, out_l, out_r);
+		*out_step = base_step;
+		return;
+	}
+	if (!g_audio.has_listener) {
+		Aeron_AudioEqualPowerPanGains(voice->gain, 0.0f, out_l, out_r);
 		*out_step = base_step;
 		return;
 	}
@@ -226,7 +249,7 @@ static void Aeron_AudioComputeVoiceMix(const AeronVoiceSlot* voice, const AeronC
 	if (pan > 1.0f) {
 		pan = 1.0f;
 	}
-	Aeron_AudioPanGains(voice->gain * atten, pan, out_l, out_r);
+	Aeron_AudioEqualPowerPanGains(voice->gain * atten, pan, out_l, out_r);
 
 	/* Doppler: shift along the source->listener line. */
 	double step = base_step;
@@ -327,18 +350,14 @@ static void Aeron_AudioMixRing(AeronRingSlot* r, int frames) {
 		return;
 	}
 	double step = (double)r->rate / (double)AERON_AUDIO_DEVICE_RATE;
-	float  gl, gr;
-	Aeron_AudioPanGains(r->gain, 0.0f, &gl, &gr);
-
 	for (int i = 0; i < frames; ++i) {
 		float left, right;
 		if (r->channels >= 2) {
-			left  = Aeron_AudioSampleRing(r, r->play_frames, 0, ring_frames) * gl;
-			right = Aeron_AudioSampleRing(r, r->play_frames, 1, ring_frames) * gr;
+			left  = Aeron_AudioSampleRing(r, r->play_frames, 0, ring_frames) * r->gain;
+			right = Aeron_AudioSampleRing(r, r->play_frames, 1, ring_frames) * r->gain;
 		} else {
 			float mono = Aeron_AudioSampleRing(r, r->play_frames, 0, ring_frames);
-			left       = mono * gl;
-			right      = mono * gr;
+			left = right = mono * r->gain;
 		}
 		g_audio.mix[i * 2] += left;
 		g_audio.mix[i * 2 + 1] += right;
@@ -409,12 +428,9 @@ static float Aeron_AudioSampleStream(const AeronAudioStreamSlot* stream, uint64_
 static void Aeron_AudioMixStream(AeronAudioStreamSlot* stream, int frames) {
 	const double old_position = stream->read_position;
 	const double step         = (double)stream->rate / (double)AERON_AUDIO_DEVICE_RATE;
-	float        gl;
-	float        gr;
-	int          mixed = 0;
+	int          mixed        = 0;
 
 	Aeron_AudioStreamUpdateAudibleLocked(stream, SDL_GetTicksNS());
-	Aeron_AudioPanGains(stream->gain, 0.0f, &gl, &gr);
 	for (int i = 0; i < frames; ++i) {
 		uint64_t i0;
 		uint64_t i1;
@@ -444,8 +460,8 @@ static void Aeron_AudioMixStream(AeronAudioStreamSlot* stream, int frames) {
 			const float s1 = Aeron_AudioSampleStream(stream, i1, 0);
 			left = right = s0 + (s1 - s0) * fraction;
 		}
-		g_audio.mix[i * 2] += left * gl;
-		g_audio.mix[i * 2 + 1] += right * gr;
+		g_audio.mix[i * 2] += left * stream->gain;
+		g_audio.mix[i * 2 + 1] += right * stream->gain;
 		stream->read_position += step;
 		if (stream->read_position > (double)stream->write_frame) {
 			stream->read_position = (double)stream->write_frame;
