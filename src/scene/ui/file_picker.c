@@ -497,9 +497,10 @@ int AeronUiFilePicker_Open(AeronUiFilePicker* picker, const AeronUiFilePickerDes
 			return 0;
 		}
 	}
-	const char* initial =
-		desc->initial_path && desc->initial_path[0] ? desc->initial_path : SDL_GetUserFolder(SDL_FOLDER_HOME);
-	char* normalized = picker_path_normalize(initial ? initial : ".", NULL);
+	const char* initial    = desc->initial_path && desc->initial_path[0] ? desc->initial_path
+							 : picker->last_parent_path[0]               ? picker->last_parent_path
+																		 : SDL_GetUserFolder(SDL_FOLDER_HOME);
+	char*       normalized = picker_path_normalize(initial ? initial : ".", NULL);
 	if (!normalized || strlen(normalized) >= sizeof picker->location_text) {
 		SDL_free(normalized);
 		picker_copy_error(error, error_capacity, "The initial file picker path is invalid or too long.");
@@ -583,6 +584,12 @@ static AeronUiFilePickerResult picker_accept(AeronUiFilePicker* picker, const ch
 		picker_copy_error(picker->inline_error, sizeof picker->inline_error,
 						  callback_error[0] ? callback_error : "The selected location was rejected.");
 		return AERON_UI_FILE_PICKER_NONE;
+	}
+	char* parent = picker_path_parent(path);
+	if (parent) {
+		if (strlen(parent) < sizeof picker->last_parent_path)
+			SDL_snprintf(picker->last_parent_path, sizeof picker->last_parent_path, "%s", parent);
+		SDL_free(parent);
 	}
 	SDL_snprintf(selected, selected_capacity, "%s", path);
 	picker->open = 0;

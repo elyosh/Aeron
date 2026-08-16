@@ -69,6 +69,7 @@ struct AeronUiFilePicker {
 	size_t           selected_visible;
 	char             location_text[PICKER_PATH_CAPACITY];
 	char             parent_path[PICKER_PATH_CAPACITY];
+	char             last_parent_path[PICKER_PATH_CAPACITY];
 	char             inline_error[PICKER_ERROR_CAPACITY];
 
 	PickerLocation*         locations;
