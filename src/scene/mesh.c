@@ -351,6 +351,13 @@ AeronSceneMesh* AeronScene_MeshCreate(AeronCommandBuffer* cmd, const AeronFlight
 	s->variant_count    = model->variant_count;
 	s->variant_slots    = model->variant_slots;
 	s->total_prim_count = model->total_prim_count;
+	s->all_materials_single_sided = true;
+	for (uint32_t index = 0; index < model->material_count; ++index) {
+		if (model->materials[index].double_sided) {
+			s->all_materials_single_sided = false;
+			break;
+		}
+	}
 	char material_name[512];
 	char variant_name[512];
 	snprintf(material_name, sizeof material_name, "%s.materials", name);

@@ -981,7 +981,6 @@ bool OptGltf_BuildMemory(const opt_file_t *opt,
         mat->pbr_metallic_roughness.metallic_factor  = 0.0f;
         mat->pbr_metallic_roughness.roughness_factor = 1.0f;
         mat->pbr_metallic_roughness.base_color_texture.texture = &build->textures[i];
-        mat->double_sided = 1;
         AlphaHistogram alpha_histogram = {0, 0, 0};
         OptGltfAlphaMode alpha_mode = classify_alpha(
             t->alpha, (size_t)t->width * (size_t)t->height,
@@ -1103,7 +1102,6 @@ bool OptGltf_BuildMemory(const opt_file_t *opt,
     untex->pbr_metallic_roughness.base_color_factor[3] = 1.0f;
     untex->pbr_metallic_roughness.metallic_factor  = 0.0f;
     untex->pbr_metallic_roughness.roughness_factor = 1.0f;
-    untex->double_sided = 1;
     build->materials_count = (size_t)opt->texture_count + 1;
     const size_t untex_idx = (size_t)opt->texture_count;
 

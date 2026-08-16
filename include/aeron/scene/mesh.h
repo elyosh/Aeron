@@ -75,6 +75,7 @@ typedef struct AeronSceneMesh {
 	uint32_t     variant_slots;
 	uint32_t     variant_count;
 	uint32_t     variant_groups_per_row;
+	bool         all_materials_single_sided;
 
 	/* Per-mesh-slot articulation (indexed by the per-vertex mesh index). */
 	AeronMeshRot mesh_rot[AERON_MAX_MESH_SLOTS];
