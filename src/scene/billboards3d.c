@@ -405,7 +405,14 @@ static void bb3d_draw(struct AeronScene3D* s, AeronRenderPass* pass, int stage, 
 		u.params[1] = u.params[2] = u.params[3] = 0.0f;
 		Aeron_BindUniformData(pass, AERON_SHADER_STAGE_VERTEX, 0, &u, sizeof u);
 	} else {
-		Aeron_BindUniformData(pass, AERON_SHADER_STAGE_VERTEX, 0, s->jittered_view_proj, 16 * sizeof(float));
+		struct {
+			float view_proj[16];
+			float params[4];
+		} u;
+		memcpy(u.view_proj, s->jittered_view_proj, sizeof u.view_proj);
+		u.params[0] = stage == AERON_SCENE_BILLBOARD_STAGE_SKY ? 1.0f : 0.0f;
+		u.params[1] = u.params[2] = u.params[3] = 0.0f;
+		Aeron_BindUniformData(pass, AERON_SHADER_STAGE_VERTEX, 0, &u, sizeof u);
 	}
 
 	AeronTexture*          run_tex   = NULL;

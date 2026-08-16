@@ -10,6 +10,10 @@
 extern "C" {
 #endif
 
+/* Native LucasArts OPT coordinates use 65536 units for 1600 metres. */
+#define AERON_OPT_METERS_PER_UNIT (1600.0f / 65536.0f)
+#define AERON_OPT_UNITS_PER_METER (65536.0f / 1600.0f)
+
 typedef struct AeronOptModelBuildOptions {
 	float smooth_angle_degrees;
 	float emissive_strength;

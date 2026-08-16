@@ -33,9 +33,10 @@ typedef enum AeronSceneBillboardBlend {
 } AeronSceneBillboardBlend;
 
 /* Pass stage the batched billboard draws in:
- *   SKY     — start of the color pass, under all mesh instances
- *             (skyboxes/backdrops; place at large distance for far
- *             reversed-Z depth). Never velocity-stamped.
+ *   SKY     — start of the color pass, under all mesh instances. The
+ *             pipeline forces reversed-Z far depth, so callers choose a
+ *             finite distance only for directional projection. Never
+ *             velocity-stamped.
  *   OVERLAY — after the opaque mesh walk (glows, explosions, sprites);
  *             depth-tested against the scene, no write; participates
  *             in the velocity prepass when prev corners are given.

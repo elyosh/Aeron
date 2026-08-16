@@ -8,7 +8,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define OPT_METERS_PER_UNIT (1600.0f / 65536.0f)
 #define AERON_OPT_Q15_SCALE 32768.0f
 
 typedef struct OptModelCookContext {
@@ -71,9 +70,9 @@ static bool opt_model_arguments_valid(const char* label, const AeronOptModelBuil
 
 static AeronFlightVec3 opt_position(const opt_vec3_t* source) {
 	return (AeronFlightVec3) {
-		source->x * OPT_METERS_PER_UNIT,
-		source->y * OPT_METERS_PER_UNIT,
-		source->z * OPT_METERS_PER_UNIT,
+		source->x * AERON_OPT_METERS_PER_UNIT,
+		source->y * AERON_OPT_METERS_PER_UNIT,
+		source->z * AERON_OPT_METERS_PER_UNIT,
 	};
 }
 
@@ -218,9 +217,9 @@ static void append_opt_glows(const opt_mesh_t* source, uint32_t component_index,
 		glow->up                             = opt_unit_vector(&source_glow->up_axis);
 		glow->right                          = opt_unit_vector(&source_glow->right_axis);
 		glow->dimensions                     = (AeronFlightVec3) {
-			source_glow->dimensions.x * OPT_METERS_PER_UNIT,
-			source_glow->dimensions.y * OPT_METERS_PER_UNIT,
-			source_glow->dimensions.z * OPT_METERS_PER_UNIT,
+			source_glow->dimensions.x * AERON_OPT_METERS_PER_UNIT,
+			source_glow->dimensions.y * AERON_OPT_METERS_PER_UNIT,
+			source_glow->dimensions.z * AERON_OPT_METERS_PER_UNIT,
 		};
 		unpack_color(source_glow->core_color, glow->core_rgba);
 		unpack_color(source_glow->outer_color, glow->outer_rgba);

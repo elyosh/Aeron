@@ -21,6 +21,7 @@
 cbuffer Billboard3DVS : register(b0, space1)
 {
     row_major float4x4 view_proj;
+    float4             params; /* x = force reversed-Z far depth */
 };
 
 struct VSIn
@@ -54,7 +55,9 @@ VSOut main(VSIn i)
      * partially on screen — corner pieces of close planets vanished.
      * Camera-facing sprites share one eye_z across their corners, so
      * the branch is uniform per sprite. */
-    if (cc.w - i.bias > 0.001f)
+    if (params.x != 0.0f)
+        o.pos.z = 0.0f;
+    else if (cc.w - i.bias > 0.001f)
         o.pos.z = cc.z * cc.w / (cc.w - i.bias);
     o.uv    = i.uv;
     o.color = i.color;

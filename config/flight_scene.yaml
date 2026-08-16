@@ -1,0 +1,34 @@
+ssao:
+  quality: 2
+  intensity: 1.0
+  power: 3.0
+  radius_view: 2048.0
+  bias_view: 0.0
+  direct: 1.0
+  debug_viz: false
+  min_screen_frac: 0.0
+  max_screen_frac: 0.1
+  sample_jitter: 0.2
+
+shadows:
+  mode: pcf
+  atlas_size: 4096
+  cascade_count: 4
+  fit_mode: scene_dependent
+  max_distance: 262144.0
+  split_lambda: 0.8
+  explicit_splits: true
+  split_1: 0.005
+  split_2: 0.035
+  split_3: 0.180
+  filter_quality: 2
+  filter_radius: 2.0
+  contact_hardening: true
+  light_angular_radius_degrees: 0.6
+  max_filter_radius: 8.0
+  pcss_min_filter_radius: 0.75
+  normal_bias_texels: 2.0
+  depth_bias_texels: 1.0
+  transition_fraction: 0.10
+  distance_fade_fraction: 0.10
+  debug_cascades: false
