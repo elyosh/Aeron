@@ -79,6 +79,7 @@ static void DDShim_FillSurfaceDesc(DDrawSurfaceShim* s, DDSURFACEDESC* d) {
 static DDrawSurfaceShim* g_ddLastPresented;
 static AeronSurface* g_ddRetainedCpuPresentation;
 static int g_ddClassicFlightRenderingSuppressed;
+static int g_ddSuppressedPresentPending;
 static uint64_t g_ddClassicFlightFrameSerial;
 static uint64_t g_ddPaletteRevision;
 
@@ -143,6 +144,28 @@ static int DDShim_RetainCpuPresentation(DDrawSurfaceShim* frame) {
 							 AERON_SURFACE_BLIT_NONE);
 }
 
+static int DDShim_CommitRenderTargetPresent(DDrawSurfaceShim* frame, int notify) {
+	if (!D3DCompat_FlushRenderTargetPass(frame))
+		return 0;
+	/* If a software overlay was the last writer (cpu_dirty), fold its staging
+	 * back into the color target first so the presented texture includes it. */
+	DDShim_WritebackRenderTarget(frame);
+	if (!Aeron_RenderTargetGetTexture(frame->rt))
+		return 0;
+	++g_ddClassicFlightFrameSerial;
+	if (notify)
+		AeronDx5_NotifyPresent(frame->width, frame->height);
+	g_ddLastPresented = frame;
+	/* Keep the completed texture untouched while subsequent recovered draws
+	 * target the other half of the flip chain. */
+	if (frame->rt_back) {
+		AeronRenderTarget* swap = frame->rt;
+		frame->rt = frame->rt_back;
+		frame->rt_back = swap;
+	}
+	return 1;
+}
+
 static void DDShim_Present(DDrawSurfaceShim* frame) {
 	if (!frame) {
 		return;
@@ -152,38 +175,20 @@ static void DDShim_Present(DDrawSurfaceShim* frame) {
 		if (g_ddClassicFlightRenderingSuppressed) {
 			/* Preserve the recovered present boundary and scheduler bookkeeping, but
 			 * keep the last complete classic texture and flip-chain position intact.
-			 * The CPU staging may continue receiving software HUD draws; the next
-			 * enabled frame starts with the game's normal color clear. */
+			 * The CPU staging may continue receiving software draws. Retain this
+			 * boundary so EndFrame can commit it if suppression is lifted after the
+			 * recovered tick that produced it. */
 			AeronDx5_NotifyPresent(frame->width, frame->height);
 			g_ddLastPresented = frame;
+			g_ddSuppressedPresentPending = 1;
 			return;
 		}
-		if (!D3DCompat_FlushRenderTargetPass(frame)) {
-			return;
-		}
-		/* If a software overlay was the last writer (cpu_dirty), fold its staging
-		 * back into the color target first so the presented texture includes it. */
-		DDShim_WritebackRenderTarget(frame);
-		if (!Aeron_RenderTargetGetTexture(frame->rt))
-			return;
-		++g_ddClassicFlightFrameSerial;
-		/* Remaster: frame-boundary marker (post-present restores
-		 * belong to the next frame). No pixel capture — the HD
-		 * render is record-driven, not a framebuffer scrape. */
-		AeronDx5_NotifyPresent(frame->width, frame->height);
-		g_ddLastPresented = frame;
-		/* Flip the chain so the completed texture remains untouched while subsequent
-		 * blits into this surface (the background restore at the tail of PresentFrame,
-		 * then next frame's 3D) target the other buffer.
-		 * The final completed buffer is submitted once after the game tick. */
-		if (frame->rt_back) {
-			AeronRenderTarget* swap = frame->rt;
-			frame->rt = frame->rt_back;
-			frame->rt_back = swap;
-		}
+		g_ddSuppressedPresentPending = 0;
+		(void)DDShim_CommitRenderTargetPresent(frame, 1);
 		return;
 	}
 
+	g_ddSuppressedPresentPending = 0;
 	if (!frame->cpu) {
 		return;
 	}
@@ -239,8 +244,17 @@ static void DDShim_SubmitLastPresented(DDrawSurfaceShim* frame) {
 void AeronDx5_ForceSubmitRetainedFrame(void) { DDShim_SubmitLastPresented(g_ddLastPresented); }
 
 void AeronDx5_EndFrame(void) {
-	if (!g_ddClassicFlightRenderingSuppressed)
-		DDShim_SubmitLastPresented(g_ddLastPresented);
+	if (g_ddClassicFlightRenderingSuppressed)
+		return;
+	/* TIE can enter a classic in-flight room inside the engine tick. The new
+	 * snapshot lifts suppression only after that tick, so complete the retained
+	 * recovered present before submitting the host frame. */
+	if (g_ddSuppressedPresentPending) {
+		g_ddSuppressedPresentPending = 0;
+		/* The recovered boundary already notified its consumer while suppressed. */
+		(void)DDShim_CommitRenderTargetPresent(g_ddLastPresented, 0);
+	}
+	DDShim_SubmitLastPresented(g_ddLastPresented);
 }
 
 uint64_t AeronDx5_GetClassicFlightFrameSerial(void) { return g_ddClassicFlightFrameSerial; }
@@ -248,6 +262,7 @@ uint64_t AeronDx5_GetClassicFlightFrameSerial(void) { return g_ddClassicFlightFr
 void AeronDx5_ResetPresentationState(void) {
 	g_ddLastPresented = NULL;
 	g_ddClassicFlightRenderingSuppressed = 0;
+	g_ddSuppressedPresentPending = 0;
 	g_ddClassicFlightFrameSerial = 0;
 }
 
