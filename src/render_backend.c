@@ -1058,8 +1058,13 @@ static void Aeron_ApplyPixelLayerCoverage(uint8_t* dst, const AeronPixelLayerDes
 		int            x;
 
 		for (x = 0; x < view->width; ++x) {
-			uint8_t* alpha = &dst_row[(size_t)x * 4u + 3u];
-			*alpha         = (uint8_t)(((unsigned)*alpha * (unsigned)coverage_row[x] + 127u) / 255u);
+			const uint8_t coverage = coverage_row[x];
+			uint8_t*      alpha    = &dst_row[(size_t)x * 4u + 3u];
+			if (coverage == 0) {
+				*alpha = 0;
+			} else if (coverage != 255) {
+				*alpha = (uint8_t)(((unsigned)*alpha * (unsigned)coverage + 127u) / 255u);
+			}
 		}
 	}
 }
