@@ -82,19 +82,26 @@ int Aeron_Init(const AeronConfig* config) {
 		SDL_Quit();
 		return 0;
 	}
+	/* Keep the native window responsive while the remaining synchronous
+	 * backends initialize. Events stay queued until the runtime is ready to
+	 * process them through Aeron_PumpEvents. */
+	SDL_PumpEvents();
 
 	if (!Aeron_RenderBackendInit()) {
 		Aeron_WindowShutdown();
 		SDL_Quit();
 		return 0;
 	}
+	SDL_PumpEvents();
 
 	if (!Aeron_AudioInit()) {
 		/* Audio is non-fatal: continue without sound rather than failing init. */
 		Aeron_LogWarn("aeron", "audio subsystem unavailable; continuing without sound");
 	}
+	SDL_PumpEvents();
 
 	Aeron_ControllersInit();
+	SDL_PumpEvents();
 	SDL_StartTextInput(g_aeron.window);
 	Aeron_InitVfs(config);
 	Aeron_DebugUiInitInternal();

@@ -67,6 +67,11 @@ void Aeron_Shutdown(void);
 
 /* Starts a new frame, pumps platform events, updates input, and returns capped elapsed microseconds. */
 int32_t Aeron_BeginFrame(void);
+/* Services queued platform events without starting a frame. Intended for
+ * synchronous startup or other work performed outside the normal frame loop.
+ * Persistent input state and lifecycle requests are updated immediately;
+ * transient input edges are cleared by the next Aeron_BeginFrame. */
+void Aeron_PumpEvents(void);
 /* Presents all render submissions queued for the current frame. Returns zero
  * after an unexpected renderer failure. A successful no-op frame returns one. */
 int Aeron_Present(void);

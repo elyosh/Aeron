@@ -87,8 +87,22 @@ static void Aeron_UpdateLogicalMouse(AeronInputSnapshot* input, const SDL_Rect* 
 	 * modes; consumers wanting logical-space deltas diff x/y instead. */
 }
 
-int32_t Aeron_BeginFrame(void) {
+void Aeron_PumpEvents(void) {
 	SDL_Event event;
+
+	if (!g_aeron.initialized) {
+		return;
+	}
+
+	while (SDL_PollEvent(&event)) {
+		if (Aeron_DebugUiHandleEvent(&event)) {
+			continue;
+		}
+		Aeron_HandleEvent(&event);
+	}
+}
+
+int32_t Aeron_BeginFrame(void) {
 	SDL_Rect  content_rect;
 	uint64_t  window_flags;
 	int       has_platform_position;
@@ -110,12 +124,7 @@ int32_t Aeron_BeginFrame(void) {
 	Aeron_ClearRenderSubmissions();
 	SDL_zero(g_aeron.render_data_stats);
 	Aeron_BeginInputFrame(&g_aeron.input);
-	while (SDL_PollEvent(&event)) {
-		if (Aeron_DebugUiHandleEvent(&event)) {
-			continue;
-		}
-		Aeron_HandleEvent(&event);
-	}
+	Aeron_PumpEvents();
 	/* Flip the swapchain composition here, between the event pump and any
 	 * frame work, so it never runs while a pass or the overlay is recording. */
 	Aeron_ApplyPendingOutputHdr();
