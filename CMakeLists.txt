@@ -356,6 +356,7 @@ set(AERON_SOURCES
     src/sync.c
     src/time.c
     src/vfs.c
+    src/vfs_iso9660.c
     src/window.c
 )
 

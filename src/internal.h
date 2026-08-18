@@ -18,6 +18,7 @@
 #define AERON_UPLOAD_CHUNK_TARGET_BYTES (16u * 1024u * 1024u)
 
 typedef struct AeronVfsCaseDirectory AeronVfsCaseDirectory;
+struct AeronIso9660;
 
 struct AeronVfs {
 	char asset_root[AERON_MAX_PATH];
@@ -26,6 +27,7 @@ struct AeronVfs {
 	char temp_root[AERON_MAX_PATH];
 	uint32_t root_options[AERON_VFS_ROOT_COUNT];
 	AeronVfsCaseDirectory* case_directories[AERON_VFS_ROOT_COUNT];
+	struct AeronIso9660* iso_roots[AERON_VFS_ROOT_COUNT];
 };
 
 struct AeronFile {

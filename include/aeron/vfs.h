@@ -86,6 +86,10 @@ void AeronVfs_Init(AeronVfs* vfs, const AeronVfsConfig* config);
 /* Replaces an initialized asset or resource root. User/temp roots are fixed
  * for the VFS lifetime. The path is copied and normalized. */
 int AeronVfs_SetRoot(AeronVfs* vfs, AeronVfsRoot root, const char* path);
+/* Replaces an asset or resource root with a read-only ISO9660 disc image.
+ * Supports direct MODE1/2048 and MODE1/2352 images, plus single-track
+ * CUE-compatible descriptors using either layout. */
+int AeronVfs_SetDiscRoot(AeronVfs* vfs, AeronVfsRoot root, const char* path);
 /* Sets optional lookup behavior for one root. Options and roots must be
  * configured before normal use; AeronVfs instances are owner-thread confined. */
 int AeronVfs_SetRootOptions(AeronVfs* vfs, AeronVfsRoot root, uint32_t options);
