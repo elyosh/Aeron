@@ -34,15 +34,6 @@ static const AeronRectI* ui_current_clip(AeronUiContext* ctx) {
 	return (top && top->clip.width > 0) ? &top->clip : NULL;
 }
 
-/* Wheel steps while the mouse hovers the row (natural wheel direction:
- * up = increase). */
-static int ui_wheel_steps(AeronUiContext* ctx, const UiRect* rect, const AeronRectI* clip) {
-	if (!ui_mouse_in(ctx, rect, clip) || ctx->scope_depth < ctx->top_scope_prev) {
-		return 0;
-	}
-	return ctx->input->mouse.wheel_y;
-}
-
 int AeronUi_Toggle(AeronUiContext* ctx, const char* label, int* value) {
 	UiRect row;
 	if (!ctx || !ctx->frame_active || !value ||
@@ -125,7 +116,7 @@ int AeronUi_Toggle(AeronUiContext* ctx, const char* label, int* value) {
 }
 
 /* Shared slider core over a normalized 0..1 position. Returns the new
- * position after keyboard steps / drag / wheel, and renders. */
+ * position after keyboard steps or dragging, and renders. */
 static float ui_slider_core(AeronUiContext* ctx, AeronUiId id, const char* label, const UiRect* row,
 							const AeronRectI* clip, float t, float step_t, const char* value_text) {
 	ui_widget_behavior(ctx, id, row, 1);
@@ -148,7 +139,6 @@ static float ui_slider_core(AeronUiContext* ctx, AeronUiId id, const char* label
 			t = 1.0f;
 		}
 	}
-	t += (float)ui_wheel_steps(ctx, row, clip) * step_t;
 	if (ctx->active_id == id && ctx->mouse_present && zone.w > 4.0f) {
 		t = (ctx->mouse_x - zone.x) / zone.w;
 	}
@@ -277,8 +267,6 @@ int AeronUi_SelectorEnabled(AeronUiContext* ctx, const char* label, int* index, 
 	const float  arrow_w = ui_snap(fminf(control.w * 0.15f, row.h));
 
 	int steps = enabled ? ui_consume_adjust(ctx, id) : 0;
-	if (enabled)
-		steps -= ui_wheel_steps(ctx, &row, clip); /* wheel down = next */
 	if (activated) {
 		/* Click: the left arrow zone cycles back, anywhere else forward.
 		 * Keyboard accept cycles forward. */

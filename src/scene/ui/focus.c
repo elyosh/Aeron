@@ -281,7 +281,7 @@ static int ui_column_hop(const AeronUiContext* ctx, int from, int direction, int
 	return best;
 }
 
-/* Scrolls the focused widget's region so the widget lands in view. */
+/* Scrolls the focused widget and one row of surrounding context into view. */
 static void ui_scroll_focus_into_view(AeronUiContext* ctx, const UiWidgetRec* focused) {
 	if (!focused->scroll_id) {
 		return;
@@ -299,11 +299,16 @@ static void ui_scroll_focus_into_view(AeronUiContext* ctx, const UiWidgetRec* fo
 	}
 	const float view_top    = scroll->view_y;
 	const float view_bottom = scroll->view_y + scroll->view_h;
+	const float margin =
+		fminf(ui_ref(ctx, ctx->theme.row_height + ctx->theme.item_spacing),
+			  fmaxf(0.0f, (scroll->view_h - focused->rect.h) * 0.5f));
+	const float focus_top    = focused->rect.y - margin;
+	const float focus_bottom = focused->rect.y + focused->rect.h + margin;
 	float       offset      = slot->v0;
-	if (focused->rect.y < view_top) {
-		offset -= view_top - focused->rect.y;
-	} else if (focused->rect.y + focused->rect.h > view_bottom) {
-		offset += (focused->rect.y + focused->rect.h) - view_bottom;
+	if (focus_top < view_top) {
+		offset -= view_top - focus_top;
+	} else if (focus_bottom > view_bottom) {
+		offset += focus_bottom - view_bottom;
 	}
 	const float max_offset = fmaxf(0.0f, scroll->content_h - scroll->view_h);
 	slot->v0               = fminf(fmaxf(offset, 0.0f), max_offset);
