@@ -253,8 +253,8 @@ int AeronUi_SliderFloat(AeronUiContext* ctx, const char* label, float* value, fl
 	return 0;
 }
 
-int AeronUi_Selector(AeronUiContext* ctx, const char* label, int* index, const char* const* options,
-					 int count) {
+int AeronUi_SelectorEnabled(AeronUiContext* ctx, const char* label, int* index, const char* const* options,
+							int count, int enabled) {
 	UiRect row;
 	if (!ctx || !ctx->frame_active || !index || !options || count <= 0 ||
 		!ui_layout_row(ctx, ui_ref(ctx, ctx->theme.row_height), &row)) {
@@ -265,16 +265,20 @@ int AeronUi_Selector(AeronUiContext* ctx, const char* label, int* index, const c
 	const int         initial = *index < 0 ? 0 : (*index >= count ? count - 1 : *index);
 	int               result  = initial;
 
-	const int activated = ui_widget_behavior(ctx, id, &row, 1);
+	const int activated = enabled && ui_widget_behavior(ctx, id, &row, 1);
+	if (!enabled) {
+		ui_record_widget(ctx, id, &row, 0);
+	}
 
-	if (ui_is_focused(ctx, id)) {
+	if (enabled && ui_is_focused(ctx, id)) {
 		ui_draw_row_focus_bg(ctx, &row, clip);
 	}
 	const UiRect control = ui_form_row_split(ctx, label, &row, clip);
 	const float  arrow_w = ui_snap(fminf(control.w * 0.15f, row.h));
 
-	int steps = ui_consume_adjust(ctx, id);
-	steps -= ui_wheel_steps(ctx, &row, clip); /* wheel down = next */
+	int steps = enabled ? ui_consume_adjust(ctx, id) : 0;
+	if (enabled)
+		steps -= ui_wheel_steps(ctx, &row, clip); /* wheel down = next */
 	if (activated) {
 		/* Click: the left arrow zone cycles back, anywhere else forward.
 		 * Keyboard accept cycles forward. */
@@ -290,21 +294,24 @@ int AeronUi_Selector(AeronUiContext* ctx, const char* label, int* index, const c
 
 	/* Body + arrows + centered value. The row-focus bar carries the
 	 * focused look; the body only brightens on mouse hover. */
-	const int hot = ctx->hot_id == id;
-	ui_draw_surface(ctx, &control, hot ? ctx->theme.widget_bg_hot : ctx->theme.widget_bg,
-					ctx->theme.widget_bg_low, ctx->theme.widget_gradient, ctx->theme.widget_border,
+	const int hot = enabled && ctx->hot_id == id;
+	ui_draw_surface(ctx, &control,
+					enabled ? (hot ? ctx->theme.widget_bg_hot : ctx->theme.widget_bg)
+							: ctx->theme.widget_bg_low,
+					ctx->theme.widget_bg_low, enabled && ctx->theme.widget_gradient, ctx->theme.widget_border,
 					ctx->theme.widget_border_px, 1, clip);
 
-	const float text_px = ui_ref(ctx, ctx->theme.text_px);
-	const float text_y  = row.y + (row.h - text_px) * 0.5f;
+	const float  text_px    = ui_ref(ctx, ctx->theme.text_px);
+	const float  text_y     = row.y + (row.h - text_px) * 0.5f;
+	const float* text_color = enabled ? ctx->theme.text : ctx->theme.text_dim;
 	ui_draw_text(ctx, ui_font_regular(ctx), control.x + arrow_w * 0.5f, text_y, AERON_TEXT_CENTER, text_px,
 				 ctx->theme.text_dim, "<", -1, clip);
 	ui_draw_text(ctx, ui_font_regular(ctx), control.x + control.w - arrow_w * 0.5f, text_y, AERON_TEXT_CENTER,
 				 text_px, ctx->theme.text_dim, ">", -1, clip);
 	ui_draw_text(ctx, ui_font_regular(ctx), control.x + control.w * 0.5f, text_y, AERON_TEXT_CENTER, text_px,
-				 ctx->theme.text, options[result], -1, clip);
+				 text_color, options[result], -1, clip);
 
-	if (ui_is_focused(ctx, id)) {
+	if (enabled && ui_is_focused(ctx, id)) {
 		ui_draw_row_focus_ring(ctx, &row, clip);
 	}
 	if (result != initial) {
@@ -313,6 +320,11 @@ int AeronUi_Selector(AeronUiContext* ctx, const char* label, int* index, const c
 		return 1;
 	}
 	return 0;
+}
+
+int AeronUi_Selector(AeronUiContext* ctx, const char* label, int* index, const char* const* options,
+					 int count) {
+	return AeronUi_SelectorEnabled(ctx, label, index, options, count, 1);
 }
 
 int AeronUi_SegmentedSelector(AeronUiContext* ctx, const char* id_label, int* index,

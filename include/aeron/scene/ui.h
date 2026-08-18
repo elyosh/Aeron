@@ -259,6 +259,9 @@ int AeronUi_SliderInt(AeronUiContext* ctx, const char* label, int* value, int mi
 					  const char* fmt /* e.g. "%d%%"; NULL = "%d" */);
 int AeronUi_SliderFloat(AeronUiContext* ctx, const char* label, float* value, float min, float max,
 						float step, const char* fmt /* NULL = "%.2f" */);
+/* Disabled selectors remain visible but do not participate in focus or input. */
+int AeronUi_SelectorEnabled(AeronUiContext* ctx, const char* label, int* index, const char* const* options,
+							int count, int enabled);
 int AeronUi_Selector(AeronUiContext* ctx, const char* label, int* index, const char* const* options,
 					 int count);
 /* Always-visible single-row choice. The widget is one focus stop; Left/Right
