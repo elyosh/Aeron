@@ -39,6 +39,7 @@ typedef enum AeronKey {
 	AERON_KEY_CAPSLOCK     = 57,
 	AERON_KEY_F1           = 58,
 	AERON_KEY_F11          = 68,
+	AERON_KEY_F12          = 69,
 	AERON_KEY_PRINTSCREEN  = 70,
 	AERON_KEY_SCROLLLOCK   = 71,
 	AERON_KEY_PAUSE        = 72,
