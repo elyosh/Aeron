@@ -31,6 +31,15 @@ enum {
 	AERON_SCENE_BLOOM_KERNEL_COUNT
 };
 
+typedef struct AeronSceneTonemapSettings {
+	int tonemap_operator;
+	int agx_look;
+	float agx_eotf_exponent;
+	float agx_punchy_power;
+	float agx_punchy_saturation;
+	float aces_pre_exposure;
+} AeronSceneTonemapSettings;
+
 int  AeronScenePresent_TonemapOp(void);
 void AeronScenePresent_SetTonemapOp(int op);
 void AeronScenePresent_ToggleTonemapOp(void);
@@ -38,8 +47,8 @@ void AeronScenePresent_ToggleTonemapOp(void);
 int  AeronScenePresent_AgxLook(void);
 void AeronScenePresent_SetAgxLook(int look);
 
-/* Punchy-look ASC-CDL controls. Power defaults to 1.35 and is clamped to
- * [0.5, 2.0]; saturation defaults to 1.4 and is clamped to [0.0, 2.0]. */
+/* Punchy-look ASC-CDL controls. Power defaults to 1.1 and is clamped to
+ * [0.5, 2.0]; saturation defaults to 1.3 and is clamped to [0.0, 2.0]. */
 float AeronScenePresent_AgxPunchyPower(void);
 void  AeronScenePresent_SetAgxPunchyPower(float v);
 float AeronScenePresent_AgxPunchySaturation(void);
@@ -52,6 +61,10 @@ void  AeronScenePresent_SetEotfExponent(float v);
 /* ACES pre-exposure, clamped to [1.0, 3.0]; default 1.6. */
 float AeronScenePresent_AcesExposure(void);
 void  AeronScenePresent_SetAcesExposure(float v);
+
+/* Apply a complete validated renderer configuration. Individual setters
+ * remain available for interactive debug tools. */
+void AeronScenePresent_ApplySettings(const AeronSceneTonemapSettings* settings);
 
 int  AeronScenePresent_BloomKernel(void);
 void AeronScenePresent_SetBloomKernel(int mode);

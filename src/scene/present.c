@@ -39,7 +39,7 @@ void AeronScenePresent_ToggleTonemapOp(void) {
 	Aeron_LogInfo("aeron.scene", "tonemap operator: %s", tonemap_op_name(s_tonemap_op));
 }
 
-static int s_agx_look = AERON_SCENE_AGX_LOOK_BASE;
+static int s_agx_look = AERON_SCENE_AGX_LOOK_PUNCHY;
 
 int AeronScenePresent_AgxLook(void) { return s_agx_look; }
 
@@ -52,7 +52,7 @@ void AeronScenePresent_SetAgxLook(int look) {
 				  look == AERON_SCENE_AGX_LOOK_PUNCHY ? "punchy" : "base");
 }
 
-static float s_agx_punchy_power = 1.35f;
+static float s_agx_punchy_power = 1.1f;
 
 float AeronScenePresent_AgxPunchyPower(void) { return s_agx_punchy_power; }
 
@@ -66,7 +66,7 @@ void AeronScenePresent_SetAgxPunchyPower(float v) {
 	s_agx_punchy_power = v;
 }
 
-static float s_agx_punchy_saturation = 1.4f;
+static float s_agx_punchy_saturation = 1.3f;
 
 float AeronScenePresent_AgxPunchySaturation(void) { return s_agx_punchy_saturation; }
 
@@ -119,6 +119,18 @@ void AeronScenePresent_SetAcesExposure(float v) {
 		v = 3.0f;
 	}
 	s_aces_exposure = v;
+}
+
+void AeronScenePresent_ApplySettings(const AeronSceneTonemapSettings* settings) {
+	if (!settings) {
+		return;
+	}
+	AeronScenePresent_SetTonemapOp(settings->tonemap_operator);
+	AeronScenePresent_SetAgxLook(settings->agx_look);
+	AeronScenePresent_SetEotfExponent(settings->agx_eotf_exponent);
+	AeronScenePresent_SetAgxPunchyPower(settings->agx_punchy_power);
+	AeronScenePresent_SetAgxPunchySaturation(settings->agx_punchy_saturation);
+	AeronScenePresent_SetAcesExposure(settings->aces_pre_exposure);
 }
 
 

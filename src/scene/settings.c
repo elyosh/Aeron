@@ -127,6 +127,17 @@ static int shadows_valid(const AeronSceneShadowSettings* value) {
 		   value->distance_fade_fraction >= 0.0f && value->distance_fade_fraction <= 0.5f;
 }
 
+static int tonemap_valid(const AeronSceneTonemapSettings* value) {
+	return value->tonemap_operator >= 0 && value->tonemap_operator < AERON_SCENE_TONEMAP_COUNT &&
+		   value->agx_look >= 0 && value->agx_look < AERON_SCENE_AGX_LOOK_COUNT &&
+		   isfinite(value->agx_eotf_exponent) && value->agx_eotf_exponent >= 1.8f &&
+		   value->agx_eotf_exponent <= 2.6f && isfinite(value->agx_punchy_power) &&
+		   value->agx_punchy_power >= 0.5f && value->agx_punchy_power <= 2.0f &&
+		   isfinite(value->agx_punchy_saturation) && value->agx_punchy_saturation >= 0.0f &&
+		   value->agx_punchy_saturation <= 2.0f && isfinite(value->aces_pre_exposure) &&
+		   value->aces_pre_exposure >= 1.0f && value->aces_pre_exposure <= 3.0f;
+}
+
 static int parse_ssao(const AeronConfigNode* map, int required, AeronSceneSsaoSettings* value,
 					  AeronConfigError* error) {
 	static const char* const keys[] = { "quality", "intensity", "power", "radius_view", "bias_view",
@@ -230,30 +241,78 @@ static int parse_shadows(const AeronConfigNode* map, int required, AeronSceneSha
 	return shadows_valid(value) ? 1 : settings_error(error, map, "invalid directional-shadow settings");
 }
 
+static int parse_tonemap(const AeronConfigNode* map, int required, AeronSceneTonemapSettings* value,
+						 AeronConfigError* error) {
+	static const char* const keys[] = { "operator", "agx_look", "agx_eotf_exponent", "agx_punchy_power",
+									  "agx_punchy_saturation", "aces_pre_exposure" };
+	if (!check_map(map, "tonemap", keys, sizeof keys / sizeof keys[0], required, error))
+		return 0;
+	if (!map)
+		return 1;
+
+	const char* operator_name = NULL;
+	const char* look_name = NULL;
+	if (!read_string(map, "tonemap", "operator", required, &operator_name, error) ||
+		!read_string(map, "tonemap", "agx_look", required, &look_name, error) ||
+		!read_number(map, "tonemap", "agx_eotf_exponent", required, &value->agx_eotf_exponent, error) ||
+		!read_number(map, "tonemap", "agx_punchy_power", required, &value->agx_punchy_power, error) ||
+		!read_number(map, "tonemap", "agx_punchy_saturation", required, &value->agx_punchy_saturation,
+					 error) ||
+		!read_number(map, "tonemap", "aces_pre_exposure", required, &value->aces_pre_exposure, error))
+		return 0;
+
+	if (operator_name) {
+		if (strcmp(operator_name, "agx") == 0)
+			value->tonemap_operator = AERON_SCENE_TONEMAP_AGX_PARAMETRIC;
+		else if (strcmp(operator_name, "aces") == 0)
+			value->tonemap_operator = AERON_SCENE_TONEMAP_ACES;
+		else
+			return settings_error(error, AeronConfigNode_MapGet(map, "operator"),
+							  "tonemap.operator must be 'agx' or 'aces'");
+	}
+	if (look_name) {
+		if (strcmp(look_name, "base") == 0)
+			value->agx_look = AERON_SCENE_AGX_LOOK_BASE;
+		else if (strcmp(look_name, "punchy") == 0)
+			value->agx_look = AERON_SCENE_AGX_LOOK_PUNCHY;
+		else
+			return settings_error(error, AeronConfigNode_MapGet(map, "agx_look"),
+							  "tonemap.agx_look must be 'base' or 'punchy'");
+	}
+	return tonemap_valid(value) ? 1 : settings_error(error, map, "invalid tone-map settings");
+}
+
 static int parse_settings(const AeronConfigNode* root, int required, AeronSceneSsaoSettings* ssao,
-						  AeronSceneShadowSettings* shadows, AeronConfigError* error) {
-	if (!root || AeronConfigNode_Type(root) != AERON_CONFIG_MAP || !ssao || !shadows)
+						  AeronSceneShadowSettings* shadows, AeronSceneTonemapSettings* tonemap,
+						  AeronConfigError* error) {
+	if (!root || AeronConfigNode_Type(root) != AERON_CONFIG_MAP || !ssao || !shadows || !tonemap)
 		return settings_error(error, root, "invalid scene settings root or output");
 	AeronSceneSsaoSettings next_ssao = *ssao;
 	AeronSceneShadowSettings next_shadows = *shadows;
+	AeronSceneTonemapSettings next_tonemap = *tonemap;
 	if (!parse_ssao(AeronConfigNode_MapGet(root, "ssao"), required, &next_ssao, error) ||
-		!parse_shadows(AeronConfigNode_MapGet(root, "shadows"), required, &next_shadows, error))
+		!parse_shadows(AeronConfigNode_MapGet(root, "shadows"), required, &next_shadows, error) ||
+		!parse_tonemap(AeronConfigNode_MapGet(root, "tonemap"), required, &next_tonemap, error))
 		return 0;
 	*ssao = next_ssao;
 	*shadows = next_shadows;
+	*tonemap = next_tonemap;
 	return 1;
 }
 
 int AeronSceneSettings_Load(const AeronConfigNode* root, AeronSceneSsaoSettings* ssao,
-								AeronSceneShadowSettings* shadows, AeronConfigError* error) {
-	if (!ssao || !shadows)
+								AeronSceneShadowSettings* shadows, AeronSceneTonemapSettings* tonemap,
+								AeronConfigError* error) {
+	if (!ssao || !shadows || !tonemap)
 		return settings_error(error, root, "missing scene settings output");
 	memset(ssao, 0, sizeof *ssao);
 	memset(shadows, 0, sizeof *shadows);
-	return parse_settings(root, 1, ssao, shadows, error);
+	memset(tonemap, 0, sizeof *tonemap);
+	return parse_settings(root, 1, ssao, shadows, tonemap, error);
 }
 
 int AeronSceneSettings_Overlay(const AeronConfigNode* root, AeronSceneSsaoSettings* ssao,
-								   AeronSceneShadowSettings* shadows, AeronConfigError* error) {
-	return parse_settings(root, 0, ssao, shadows, error);
+								   AeronSceneShadowSettings* shadows, AeronSceneTonemapSettings* tonemap,
+								   AeronConfigError* error) {
+	return parse_settings(root, 0, ssao, shadows, tonemap, error);
 }

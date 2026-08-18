@@ -2,6 +2,7 @@
 #define AERON_SCENE_SETTINGS_H
 
 #include "aeron/config_file.h"
+#include "aeron/scene/present.h"
 #include "aeron/scene/scene3d.h"
 
 #ifdef __cplusplus
@@ -43,12 +44,14 @@ typedef struct AeronSceneShadowSettings {
 	int debug_cascades;
 } AeronSceneShadowSettings;
 
-/* `root` contains `ssao` and `shadows` maps. Load requires the complete
- * schema; Overlay accepts partial maps and validates the resulting values. */
+/* `root` contains `ssao`, `shadows`, and `tonemap` maps. Load requires the
+ * complete schema; Overlay accepts partial maps and validates the result. */
 int AeronSceneSettings_Load(const AeronConfigNode* root, AeronSceneSsaoSettings* ssao,
-								AeronSceneShadowSettings* shadows, AeronConfigError* error);
+								AeronSceneShadowSettings* shadows, AeronSceneTonemapSettings* tonemap,
+								AeronConfigError* error);
 int AeronSceneSettings_Overlay(const AeronConfigNode* root, AeronSceneSsaoSettings* ssao,
-								   AeronSceneShadowSettings* shadows, AeronConfigError* error);
+								   AeronSceneShadowSettings* shadows, AeronSceneTonemapSettings* tonemap,
+								   AeronConfigError* error);
 
 #ifdef __cplusplus
 }
