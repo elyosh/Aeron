@@ -239,6 +239,13 @@ extern "C" void Aeron_DebugUiBuildFrame(void) {
 	 * machine stays consistent; empty DrawData makes the render-side
 	 * steps no-ops. */
 	ImGui::Render();
+
+	/* Aeron keeps SDL text input active for game character input. ImGui's
+	 * SDL backend stops it when its own text editor closes, so restore the
+	 * application-wide subscription after ImGui updates its IME state. */
+	if (!SDL_TextInputActive(g_aeron.window)) {
+		SDL_StartTextInput(g_aeron.window);
+	}
 }
 
 extern "C" void Aeron_DebugUiPrepareRender(SDL_GPUCommandBuffer* command_buffer) {
