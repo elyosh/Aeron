@@ -34,6 +34,8 @@ typedef struct AeronDebugTool {
 static struct {
 	bool           initialized = false;
 	bool           visible     = false;
+	AeronDebugApplicationFn application_draw = nullptr;
+	void* application_user = nullptr;
 	AeronDebugTool tools[AERON_DEBUG_MAX_TOOLS];
 	int            tool_count = 0;
 } g_debug;
@@ -41,6 +43,18 @@ static struct {
 /* ===== Public API ==================================================== */
 
 extern "C" int Aeron_DebugUiAvailable(void) { return g_debug.initialized ? 1 : 0; }
+
+extern "C" void Aeron_DebugSetApplication(AeronDebugApplicationFn draw, void* user) {
+	g_debug.application_draw = draw;
+	g_debug.application_user = user;
+}
+
+extern "C" void Aeron_DebugImage(AeronTexture* texture, float width, float height) {
+	if (!texture || !texture->texture || width <= 0.0f || height <= 0.0f) {
+		return;
+	}
+	ImGui::Image((ImTextureID)(uintptr_t)texture->texture, ImVec2(width, height));
+}
 
 extern "C" void Aeron_DebugRegisterTool(const char* menu_label, AeronDebugToolFn draw, void* user) {
 	if (!menu_label || !draw) {
@@ -227,10 +241,14 @@ extern "C" void Aeron_DebugUiBuildFrame(void) {
 	ImGui::NewFrame();
 
 	if (g_debug.visible) {
-		Aeron_DebugUiDrawMenuBar();
-		for (int i = 0; i < g_debug.tool_count; ++i) {
-			if (g_debug.tools[i].open && g_debug.tools[i].draw) {
-				g_debug.tools[i].draw(&g_debug.tools[i].open, g_debug.tools[i].user);
+		if (g_debug.application_draw) {
+			g_debug.application_draw(g_debug.application_user);
+		} else {
+			Aeron_DebugUiDrawMenuBar();
+			for (int i = 0; i < g_debug.tool_count; ++i) {
+				if (g_debug.tools[i].open && g_debug.tools[i].draw) {
+					g_debug.tools[i].draw(&g_debug.tools[i].open, g_debug.tools[i].user);
+				}
 			}
 		}
 	}

@@ -30,12 +30,15 @@
 extern "C" {
 #endif
 
+struct AeronTexture;
+
 /* Tool window callback: emit the window's ImGui widgets. `open` is the
  * menu-bar visibility flag for this tool — pass it to ImGui::Begin so
  * the window's close button clears it. `user` is the registration
  * userdata. Called every frame while the tool is toggled on and the
  * overlay is visible. */
 typedef void (*AeronDebugToolFn)(int* open, void* user);
+typedef void (*AeronDebugApplicationFn)(void* user);
 
 #ifdef AERON_DEBUG_UI
 
@@ -47,6 +50,15 @@ int Aeron_DebugUiAvailable(void);
  * practice). Tools start hidden; the user toggles them from the menu.
  * Safe to call before or after Aeron_Init. */
 void Aeron_DebugRegisterTool(const char* menu_label, AeronDebugToolFn draw, void* user);
+
+/* Installs one always-active Dear ImGui application callback. This is intended
+ * for standalone developer tools that use Aeron for their window and renderer;
+ * unlike registered debug tools it does not add Aeron's Tools menu bar. */
+void Aeron_DebugSetApplication(AeronDebugApplicationFn draw, void* user);
+
+/* Emits an ImGui image backed by an Aeron texture. The call must be made from
+ * an Aeron-hosted debug/application UI callback. */
+void Aeron_DebugImage(struct AeronTexture* texture, float width, float height);
 
 /* Overlay visibility. The game binds its own toggle key (the snapshot
  * keeps delivering it — see the capture rules above). */
@@ -61,6 +73,15 @@ static inline void Aeron_DebugRegisterTool(const char* menu_label, AeronDebugToo
 	(void)menu_label;
 	(void)draw;
 	(void)user;
+}
+static inline void Aeron_DebugSetApplication(AeronDebugApplicationFn draw, void* user) {
+	(void)draw;
+	(void)user;
+}
+static inline void Aeron_DebugImage(struct AeronTexture* texture, float width, float height) {
+	(void)texture;
+	(void)width;
+	(void)height;
 }
 static inline void Aeron_DebugUiToggle(void) {}
 static inline void Aeron_DebugUiSetVisible(int visible) { (void)visible; }

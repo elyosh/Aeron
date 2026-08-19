@@ -32,6 +32,7 @@ typedef struct CacheEntryGpu {
     /* Embedded so the borrowed public pointer stays stable for the
      * entry's lifetime. */
     AeronImageCacheEntry pub;
+    int owned;
     struct CacheEntryGpu *next;
 } CacheEntryGpu;
 
@@ -48,7 +49,7 @@ void Aeron_ImageCacheDestroy(AeronImageCache *a) {
     CacheEntryGpu *e = a->entries;
     while (e) {
         CacheEntryGpu *next = e->next;
-        if (e->pub.tex)
+        if (e->owned && e->pub.tex)
             Aeron_DestroyTexture(e->pub.tex);
         free(e);
         e = next;
@@ -63,7 +64,7 @@ void Aeron_ImageCacheInvalidate(AeronImageCache *a, const char *path) {
         CacheEntryGpu *cur = *link;
         if (strcmp(cur->path, path) == 0) {
             *link = cur->next;
-            if (cur->pub.tex)
+            if (cur->owned && cur->pub.tex)
                 Aeron_DestroyTexture(cur->pub.tex);
             free(cur);
             return;
@@ -83,11 +84,13 @@ static CacheEntryGpu *cache_find(const AeronImageCache *a, const char *path) {
 static const AeronImageCacheEntry *cache_insert(AeronImageCache *a,
                                               const char *path,
                                               AeronTexture *tex,
-                                              int w, int h)
+                                              int w, int h,
+                                              int owned)
 {
     CacheEntryGpu *ne = (CacheEntryGpu *)calloc(1, sizeof *ne);
     if (!ne) {
-        Aeron_DestroyTexture(tex);
+        if (owned)
+            Aeron_DestroyTexture(tex);
         return NULL;
     }
     size_t n = strlen(path);
@@ -96,6 +99,7 @@ static const AeronImageCacheEntry *cache_insert(AeronImageCache *a,
     ne->pub.tex = tex;
     ne->pub.w   = w;
     ne->pub.h   = h;
+    ne->owned   = owned;
     ne->next = a->entries;
     a->entries = ne;
     return &ne->pub;
@@ -122,7 +126,7 @@ static const AeronImageCacheEntry *load_via_ktx2(AeronImageCache *a,
     }
 
     ktx2_close(k);
-    return cache_insert(a, path, tex, w, h);
+    return cache_insert(a, path, tex, w, h, 1);
 }
 
 const AeronImageCacheEntry *Aeron_ImageCacheLoad(AeronImageCache *a,
@@ -162,7 +166,42 @@ const AeronImageCacheEntry *Aeron_ImageCacheLoadVfs(
     AeronTexture *texture = Aeron_ImageUploadKtx2(cmd, ktx, path);
     ktx2_close(ktx);
     free(bytes);
-    return texture ? cache_insert(cache, key, texture, width, height) : NULL;
+    return texture ? cache_insert(cache, key, texture, width, height, 1) : NULL;
+}
+
+void Aeron_ImageCacheSetOverride(AeronImageCache *cache, const char *path,
+                                 AeronTexture *texture, int width, int height) {
+    if (!cache || !path || !path[0] || !texture || width <= 0 || height <= 0) return;
+    Aeron_ImageCacheInvalidate(cache, path);
+    (void)cache_insert(cache, path, texture, width, height, 0);
+}
+
+void Aeron_ImageCacheClearOverride(AeronImageCache *cache, const char *path) {
+    if (!cache || !path) return;
+    CacheEntryGpu **link = &cache->entries;
+    while (*link) {
+        CacheEntryGpu *entry = *link;
+        if (strcmp(entry->path, path) == 0 && !entry->owned) {
+            *link = entry->next;
+            free(entry);
+            return;
+        }
+        link = &entry->next;
+    }
+}
+
+void Aeron_ImageCacheClearOverrides(AeronImageCache *cache) {
+    if (!cache) return;
+    CacheEntryGpu **link = &cache->entries;
+    while (*link) {
+        CacheEntryGpu *entry = *link;
+        if (!entry->owned) {
+            *link = entry->next;
+            free(entry);
+            continue;
+        }
+        link = &entry->next;
+    }
 }
 
 

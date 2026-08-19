@@ -50,6 +50,14 @@ const AeronImageCacheEntry* Aeron_ImageCacheLoadVfs(
  * upload it again. */
 void Aeron_ImageCacheInvalidate(AeronImageCache* cache, const char* path);
 
+/* Installs a borrowed texture for one cache path. Editor previews use this to
+ * display unsaved in-memory assets through the same renderer as disk-backed
+ * content. The caller must clear the override before destroying the texture. */
+void Aeron_ImageCacheSetOverride(AeronImageCache* cache, const char* path,
+								 AeronTexture* texture, int width, int height);
+void Aeron_ImageCacheClearOverride(AeronImageCache* cache, const char* path);
+void Aeron_ImageCacheClearOverrides(AeronImageCache* cache);
+
 /* One-shot KTX2 → mip-chain AeronTexture upload through `cmd` (no
  * caching; the caller owns the returned texture). `debug_name` labels
  * failure logs. Shared by the cache's load path and by consumers with
