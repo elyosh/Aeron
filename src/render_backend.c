@@ -1411,9 +1411,49 @@ static int Aeron_DrawTexture(SDL_GPUCommandBuffer* command_buffer, SDL_GPURender
 	return 1;
 }
 
-/* Debug builds request SDL_GPU debug mode: backends only honor
- * SDL_SetGPUTexture/BufferName under it, and it enables backend validation.
- * Keyed to the same gate as the AeronGpuDebug_* label helpers. */
+/* Creates a device with the common feature contract used by both the optional
+ * Vulkan FP16 attempt and the baseline retry. */
+static SDL_GPUDevice* Aeron_CreateGPUDeviceWithOptions(SDL_GPUShaderFormat   shader_formats,
+													   SDL_GPUVulkanOptions* vulkan_options) {
+	SDL_PropertiesID properties = SDL_CreateProperties();
+	SDL_GPUDevice*   device;
+	bool             properties_set;
+
+	if (!properties) {
+		return NULL;
+	}
+
+	/* Debug builds enable backend validation and resource naming. Aeron always
+	 * clips depth, does not use shader clip distances, and keeps indirect
+	 * first_instance at zero, so avoid requiring those Vulkan features. */
+	properties_set =
+		SDL_SetBooleanProperty(properties, SDL_PROP_GPU_DEVICE_CREATE_DEBUGMODE_BOOLEAN,
+							   AERON_GPU_DEBUG_LABELS != 0) &&
+		SDL_SetBooleanProperty(properties, SDL_PROP_GPU_DEVICE_CREATE_SHADERS_MSL_BOOLEAN,
+							   (shader_formats & SDL_GPU_SHADERFORMAT_MSL) != 0) &&
+		SDL_SetBooleanProperty(properties, SDL_PROP_GPU_DEVICE_CREATE_SHADERS_SPIRV_BOOLEAN,
+							   (shader_formats & SDL_GPU_SHADERFORMAT_SPIRV) != 0) &&
+		SDL_SetBooleanProperty(properties, SDL_PROP_GPU_DEVICE_CREATE_SHADERS_DXIL_BOOLEAN,
+							   (shader_formats & SDL_GPU_SHADERFORMAT_DXIL) != 0) &&
+		SDL_SetBooleanProperty(properties, SDL_PROP_GPU_DEVICE_CREATE_FEATURE_CLIP_DISTANCE_BOOLEAN, false) &&
+		SDL_SetBooleanProperty(properties, SDL_PROP_GPU_DEVICE_CREATE_FEATURE_DEPTH_CLAMPING_BOOLEAN,
+							   false) &&
+		SDL_SetBooleanProperty(
+			properties, SDL_PROP_GPU_DEVICE_CREATE_FEATURE_INDIRECT_DRAW_FIRST_INSTANCE_BOOLEAN, false);
+	if (properties_set && vulkan_options) {
+		properties_set = SDL_SetPointerProperty(properties, SDL_PROP_GPU_DEVICE_CREATE_VULKAN_OPTIONS_POINTER,
+												vulkan_options);
+	}
+	if (!properties_set) {
+		SDL_DestroyProperties(properties);
+		return NULL;
+	}
+
+	device = SDL_CreateGPUDeviceWithProperties(properties);
+	SDL_DestroyProperties(properties);
+	return device;
+}
+
 static SDL_GPUDevice* Aeron_CreateGPUDeviceWithOptionalFp16(SDL_GPUShaderFormat shader_formats) {
 #if defined(AERON_HAS_VULKAN_FP16_DEVICE_OPTIONS)
 	VkPhysicalDeviceShaderFloat16Int8Features float16_features;
@@ -1421,8 +1461,7 @@ static SDL_GPUDevice* Aeron_CreateGPUDeviceWithOptionalFp16(SDL_GPUShaderFormat 
 	const char*                               device_extensions[] = {
 		VK_KHR_SHADER_FLOAT16_INT8_EXTENSION_NAME,
 	};
-	SDL_PropertiesID properties = SDL_CreateProperties();
-	SDL_GPUDevice*   device     = NULL;
+	SDL_GPUDevice* device;
 
 	memset(&float16_features, 0, sizeof(float16_features));
 	float16_features.sType         = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_FLOAT16_INT8_FEATURES;
@@ -1433,27 +1472,14 @@ static SDL_GPUDevice* Aeron_CreateGPUDeviceWithOptionalFp16(SDL_GPUShaderFormat 
 	vulkan_options.device_extension_count = SDL_arraysize(device_extensions);
 	vulkan_options.device_extension_names = device_extensions;
 
-	if (properties) {
-		SDL_SetBooleanProperty(properties, SDL_PROP_GPU_DEVICE_CREATE_DEBUGMODE_BOOLEAN,
-							   AERON_GPU_DEBUG_LABELS != 0);
-		SDL_SetBooleanProperty(properties, SDL_PROP_GPU_DEVICE_CREATE_SHADERS_MSL_BOOLEAN,
-							   (shader_formats & SDL_GPU_SHADERFORMAT_MSL) != 0);
-		SDL_SetBooleanProperty(properties, SDL_PROP_GPU_DEVICE_CREATE_SHADERS_SPIRV_BOOLEAN,
-							   (shader_formats & SDL_GPU_SHADERFORMAT_SPIRV) != 0);
-		SDL_SetBooleanProperty(properties, SDL_PROP_GPU_DEVICE_CREATE_SHADERS_DXIL_BOOLEAN,
-							   (shader_formats & SDL_GPU_SHADERFORMAT_DXIL) != 0);
-		SDL_SetPointerProperty(properties, SDL_PROP_GPU_DEVICE_CREATE_VULKAN_OPTIONS_POINTER,
-							   &vulkan_options);
-		device = SDL_CreateGPUDeviceWithProperties(properties);
-		SDL_DestroyProperties(properties);
-	}
+	device = Aeron_CreateGPUDeviceWithOptions(shader_formats, &vulkan_options);
 	if (device) {
 		return device;
 	}
 	Aeron_LogWarn("aeron", "GPU creation with optional Vulkan FP16 failed: %s; retrying baseline device",
-			  SDL_GetError());
+				  SDL_GetError());
 #endif
-	return SDL_CreateGPUDevice(shader_formats, AERON_GPU_DEBUG_LABELS != 0, NULL);
+	return Aeron_CreateGPUDeviceWithOptions(shader_formats, NULL);
 }
 
 int Aeron_RenderBackendInit(void) {

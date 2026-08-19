@@ -529,7 +529,7 @@ static void ImGui_ImplSDLGPU3_CreateGraphicsPipeline()
     rasterizer_state.cull_mode = SDL_GPU_CULLMODE_NONE;
     rasterizer_state.front_face = SDL_GPU_FRONTFACE_COUNTER_CLOCKWISE;
     rasterizer_state.enable_depth_bias = false;
-    rasterizer_state.enable_depth_clip = false;
+    rasterizer_state.enable_depth_clip = true;
 
     SDL_GPUMultisampleState multisample_state = {};
     multisample_state.sample_count = v->MSAASamples;
