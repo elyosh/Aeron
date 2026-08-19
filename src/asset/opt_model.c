@@ -178,6 +178,13 @@ static bool build_opt_component(const opt_mesh_t* source, AeronFlightComponent* 
 	component->explosion_flags = (uint32_t)source->descriptor.explosion_type;
 	component->target_id       = source->descriptor.target_id;
 	component->target          = opt_position(&source->descriptor.target);
+	component->has_descriptor    = source->has_descriptor != 0;
+	component->descriptor_span   = opt_position(&source->descriptor.span);
+	component->descriptor_center = opt_position(&source->descriptor.center);
+	component->descriptor_bounds = (AeronFlightBounds) {
+		.min = opt_position(&source->descriptor.bbox_min),
+		.max = opt_position(&source->descriptor.bbox_max),
+	};
 	if (source->has_rotation_scale) {
 		component->has_rotation            = true;
 		component->rotation.pivot          = opt_position(&source->rotation_scale.pivot);

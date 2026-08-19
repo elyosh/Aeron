@@ -8,9 +8,9 @@
  * Output is faithful to every OPT datum the engine reads:
  *
  *   - Geometry: one glTF node per OPT mesh, parented to a single root
- *     scene node. Each mesh node carries the mesh's MeshDescriptor.
- *     meshType in the `AERON_flight_model` node extension. Coordinates
- *     use standard glTF axes and meters.
+ *     scene node. Each mesh node carries the complete authored MeshDescriptor
+ *     in the `AERON_flight_model` node extension. Coordinates use standard
+ *     glTF axes and meters.
  *
  *   - Rotation pivots and axes are preserved in the component role.
  *

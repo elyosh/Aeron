@@ -21,7 +21,7 @@ sizes and Z is signed depth.
 
 - `model`: `{ "role": "model" }`
 - `component`: requires `meshType` in `0..31`; optionally carries
-  `explosionFlags`, `targetId`, `target`, and `rotation`
+  `explosionFlags`, `targetId`, `target`, descriptor geometry, and `rotation`
 - `hardpoint`: requires raw hardpoint `type` in `0..39`
 - `engineGlow`: requires `coreColor` and `outerColor`; `enabled` defaults to
   true
@@ -29,6 +29,12 @@ sizes and Z is signed depth.
 Component `rotation` requires `pivot`, `rotationAxis`, `directionAxis`, and
 `upAxis`. These vectors are retained independently and are not normalized or
 orthogonalized. `target` is required when `targetId` is nonzero.
+
+Descriptor geometry consists of `span`, `center`, `boundsMin`, and `boundsMax`.
+The four fields must be present together. They preserve authored simulation
+metadata independently from bounds calculated from rendered vertices. Assets
+that omit them remain valid and use calculated geometry as a compatibility
+fallback.
 
 Unknown fields are ignored. Unknown roles are invalid. Runtime semantics are
 not read from node `extras`.

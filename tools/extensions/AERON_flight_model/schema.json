@@ -14,6 +14,12 @@
       "minItems": 3,
       "maxItems": 3
     },
+    "extent3": {
+      "type": "array",
+      "items": { "type": "number", "minimum": 0 },
+      "minItems": 3,
+      "maxItems": 3
+    },
     "color": {
       "type": "array",
       "items": { "type": "number", "minimum": 0, "maximum": 1 },
@@ -44,13 +50,32 @@
         "explosionFlags": { "type": "integer", "minimum": 0, "maximum": 4294967295 },
         "targetId": { "type": "integer", "minimum": -2147483648, "maximum": 2147483647 },
         "target": { "$ref": "#/$defs/vec3" },
+        "span": { "$ref": "#/$defs/extent3" },
+        "center": { "$ref": "#/$defs/vec3" },
+        "boundsMin": { "$ref": "#/$defs/vec3" },
+        "boundsMax": { "$ref": "#/$defs/vec3" },
         "rotation": { "$ref": "#/$defs/rotation" }
       },
-      "if": {
-        "required": ["targetId"],
-        "properties": { "targetId": { "not": { "const": 0 } } }
-      },
-      "then": { "required": ["target"] }
+      "allOf": [
+        {
+          "if": {
+            "required": ["targetId"],
+            "properties": { "targetId": { "not": { "const": 0 } } }
+          },
+          "then": { "required": ["target"] }
+        },
+        {
+          "if": {
+            "anyOf": [
+              { "required": ["span"] },
+              { "required": ["center"] },
+              { "required": ["boundsMin"] },
+              { "required": ["boundsMax"] }
+            ]
+          },
+          "then": { "required": ["span", "center", "boundsMin", "boundsMax"] }
+        }
+      ]
     },
     "hardpoint": {
       "type": "object",

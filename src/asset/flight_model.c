@@ -189,6 +189,49 @@ static void bounds_include(AeronFlightBounds* bounds, const AeronFlightVec3* poi
 		bounds->max.z = point->z;
 }
 
+static bool transform_descriptor_geometry(const float matrix[16], const float span[3], const float center[3],
+										  const float bounds_min[3], const float bounds_max[3],
+										  AeronFlightComponent* component) {
+	for (int axis = 0; axis < 3; ++axis)
+		if (span[axis] < 0.0f || bounds_min[axis] > bounds_max[axis])
+			return false;
+
+	float transformed_center[3];
+	transform_point(matrix, center, transformed_center);
+	gltf_to_aeron(transformed_center, &component->descriptor_center);
+
+	/* Span is an axis-aligned size, so rotation contributes through absolute matrix coefficients. */
+	const float transformed_span[3] = {
+		fabsf(matrix[0]) * span[0] + fabsf(matrix[4]) * span[1] + fabsf(matrix[8]) * span[2],
+		fabsf(matrix[1]) * span[0] + fabsf(matrix[5]) * span[1] + fabsf(matrix[9]) * span[2],
+		fabsf(matrix[2]) * span[0] + fabsf(matrix[6]) * span[1] + fabsf(matrix[10]) * span[2],
+	};
+	component->descriptor_span = (AeronFlightVec3) {
+		.x = transformed_span[0],
+		.y = transformed_span[2],
+		.z = transformed_span[1],
+	};
+
+	bool have_bounds = false;
+	for (int corner = 0; corner < 8; ++corner) {
+		const float point[3] = {
+			(corner & 1) ? bounds_max[0] : bounds_min[0],
+			(corner & 2) ? bounds_max[1] : bounds_min[1],
+			(corner & 4) ? bounds_max[2] : bounds_min[2],
+		};
+		float transformed[3];
+		transform_point(matrix, point, transformed);
+		if (!isfinite(transformed[0]) || !isfinite(transformed[1]) || !isfinite(transformed[2]))
+			return false;
+		AeronFlightVec3 aeron_point;
+		gltf_to_aeron(transformed, &aeron_point);
+		bounds_include(&component->descriptor_bounds, &aeron_point, &have_bounds);
+	}
+	return isfinite(component->descriptor_center.x) && isfinite(component->descriptor_center.y) &&
+		   isfinite(component->descriptor_center.z) && isfinite(component->descriptor_span.x) &&
+		   isfinite(component->descriptor_span.y) && isfinite(component->descriptor_span.z) && have_bounds;
+}
+
 static bool build_component_topology(const cgltf_node* node, AeronFlightComponent* component) {
 	uint32_t position_count = 0;
 	uint32_t face_count     = 0;
@@ -325,6 +368,23 @@ static bool build_component_semantics(const cgltf_node* node, AeronFlightCompone
 		cJSON_Delete(extension);
 		return false;
 	}
+	float        descriptor_span[3], descriptor_center[3], descriptor_bounds_min[3], descriptor_bounds_max[3];
+	const cJSON* descriptor_span_value       = cJSON_GetObjectItemCaseSensitive(extension, "span");
+	const cJSON* descriptor_center_value     = cJSON_GetObjectItemCaseSensitive(extension, "center");
+	const cJSON* descriptor_bounds_min_value = cJSON_GetObjectItemCaseSensitive(extension, "boundsMin");
+	const cJSON* descriptor_bounds_max_value = cJSON_GetObjectItemCaseSensitive(extension, "boundsMax");
+	const int    descriptor_geometry_count =
+		(descriptor_span_value != NULL) + (descriptor_center_value != NULL) +
+		(descriptor_bounds_min_value != NULL) + (descriptor_bounds_max_value != NULL);
+	const bool has_descriptor_geometry = descriptor_geometry_count == 4;
+	if ((descriptor_geometry_count != 0 && !has_descriptor_geometry) ||
+		(has_descriptor_geometry && (!json_vector(descriptor_span_value, descriptor_span, 3) ||
+									 !json_vector(descriptor_center_value, descriptor_center, 3) ||
+									 !json_vector(descriptor_bounds_min_value, descriptor_bounds_min, 3) ||
+									 !json_vector(descriptor_bounds_max_value, descriptor_bounds_max, 3)))) {
+		cJSON_Delete(extension);
+		return false;
+	}
 	float        pivot[3], rotation_axis[3], direction_axis[3], up_axis[3];
 	const cJSON* rotation     = cJSON_GetObjectItemCaseSensitive(extension, "rotation");
 	const bool   has_rotation = rotation != NULL;
@@ -341,6 +401,11 @@ static bool build_component_semantics(const cgltf_node* node, AeronFlightCompone
 
 	float matrix[16];
 	cgltf_node_transform_world(node, matrix);
+	component->has_descriptor = true;
+	if (has_descriptor_geometry &&
+		!transform_descriptor_geometry(matrix, descriptor_span, descriptor_center, descriptor_bounds_min,
+									   descriptor_bounds_max, component))
+		return false;
 	if (component->target_id != 0) {
 		float transformed[3];
 		transform_point(matrix, target, transformed);
@@ -355,7 +420,14 @@ static bool build_component_semantics(const cgltf_node* node, AeronFlightCompone
 		transform_direction(matrix, up_axis, &component->rotation.up_axis);
 		component->has_rotation = true;
 	}
-	return build_component_topology(node, component);
+	if (!build_component_topology(node, component))
+		return false;
+	if (!has_descriptor_geometry) {
+		component->descriptor_span   = component->span;
+		component->descriptor_center = component->center;
+		component->descriptor_bounds = component->bounds;
+	}
+	return true;
 }
 
 static bool build_hardpoints(const cgltf_node* node, AeronFlightComponent* component) {

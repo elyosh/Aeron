@@ -65,9 +65,14 @@ typedef struct AeronFlightComponent {
 	uint32_t              explosion_flags;
 	int32_t               target_id;
 	AeronFlightVec3       target;
+	bool                  has_descriptor;
+	AeronFlightVec3       descriptor_span;
+	AeronFlightVec3       descriptor_center;
+	AeronFlightBounds     descriptor_bounds;
 	bool                  has_rotation;
 	AeronFlightRotation   rotation;
 	AeronFlightTopology   topology;
+	/* Geometry-derived values remain independent from the authored descriptor. */
 	AeronFlightBounds     bounds;
 	AeronFlightVec3       span;
 	AeronFlightVec3       center;

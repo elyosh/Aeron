@@ -74,6 +74,17 @@ def _blender_to_gltf(vector):
     return [float(vector[0]), float(vector[2]), -float(vector[1])]
 
 
+def _blender_extent_to_gltf(vector):
+    return [float(vector[0]), float(vector[2]), float(vector[1])]
+
+
+def _blender_bounds_to_gltf(bounds_min, bounds_max):
+    return (
+        [float(bounds_min[0]), float(bounds_min[2]), -float(bounds_max[1])],
+        [float(bounds_max[0]), float(bounds_max[2]), -float(bounds_min[1])],
+    )
+
+
 class AeronFlightProperties(PropertyGroup):
     role: EnumProperty(
         name="Flight role",
@@ -91,6 +102,11 @@ class AeronFlightProperties(PropertyGroup):
     explosion_flags: IntProperty(name="Explosion flags", default=0, min=0)
     target_id: IntProperty(name="Target ID", default=0)
     target: FloatVectorProperty(name="Target", size=3, subtype='XYZ')
+    has_descriptor_geometry: BoolProperty(name="Authored descriptor geometry", default=False)
+    descriptor_span: FloatVectorProperty(name="Span", size=3, subtype='XYZ', min=0.0)
+    descriptor_center: FloatVectorProperty(name="Center", size=3, subtype='XYZ')
+    descriptor_bounds_min: FloatVectorProperty(name="Bounds min", size=3, subtype='XYZ')
+    descriptor_bounds_max: FloatVectorProperty(name="Bounds max", size=3, subtype='XYZ')
     has_rotation: BoolProperty(name="Articulated", default=False)
     pivot: FloatVectorProperty(name="Pivot", size=3, subtype='XYZ')
     rotation_axis: FloatVectorProperty(
@@ -132,6 +148,12 @@ class OBJECT_PT_aeron_flight_model(Panel):
             layout.prop(props, "target_id")
             if props.target_id:
                 layout.prop(props, "target")
+            layout.prop(props, "has_descriptor_geometry")
+            if props.has_descriptor_geometry:
+                layout.prop(props, "descriptor_span")
+                layout.prop(props, "descriptor_center")
+                layout.prop(props, "descriptor_bounds_min")
+                layout.prop(props, "descriptor_bounds_max")
             layout.prop(props, "has_rotation")
             if props.has_rotation:
                 layout.prop(props, "pivot")
@@ -198,6 +220,11 @@ def _validate_flight_hierarchy(objects):
         seen_orders.add(component.aeron_flight.order)
         if component.data.shape_keys or component.animation_data or component.find_armature():
             return None, "flight components cannot use shape keys, armatures or animation"
+        props = component.aeron_flight
+        if props.has_descriptor_geometry and any(
+                props.descriptor_bounds_min[axis] > props.descriptor_bounds_max[axis]
+                for axis in range(3)):
+            return None, "component descriptor minimum bounds must not exceed maximum bounds"
         child_orders = set()
         for child in component.children:
             role = child.aeron_flight.role
@@ -235,6 +262,13 @@ def _extension_for_object(obj):
         if props.target_id:
             extension["targetId"] = props.target_id
             extension["target"] = _blender_to_gltf(props.target)
+        if props.has_descriptor_geometry:
+            bounds_min, bounds_max = _blender_bounds_to_gltf(
+                props.descriptor_bounds_min, props.descriptor_bounds_max)
+            extension["span"] = _blender_extent_to_gltf(props.descriptor_span)
+            extension["center"] = _blender_to_gltf(props.descriptor_center)
+            extension["boundsMin"] = bounds_min
+            extension["boundsMax"] = bounds_max
         if props.has_rotation:
             extension["rotation"] = {
                 "pivot": _blender_to_gltf(props.pivot),

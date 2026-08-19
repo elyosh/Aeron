@@ -1380,11 +1380,47 @@ bool OptGltf_BuildMemory(const opt_file_t *opt,
             (int)m->descriptor.mesh_type,
             (unsigned)m->descriptor.explosion_type,
             (int)m->descriptor.target_id);
+        if (m->has_descriptor) {
+            float center[3];
+            swap_axis_v3(&m->descriptor.center, center);
+            const float span[3] = {
+                m->descriptor.span.x,
+                m->descriptor.span.z,
+                m->descriptor.span.y,
+            };
+            const float bounds_min[3] = {
+                -m->descriptor.bbox_max.x,
+                m->descriptor.bbox_min.z,
+                -m->descriptor.bbox_max.y,
+            };
+            const float bounds_max[3] = {
+                -m->descriptor.bbox_min.x,
+                m->descriptor.bbox_max.z,
+                -m->descriptor.bbox_min.y,
+            };
+            off += snprintf(extension + off, sizeof extension - off,
+                ",\"span\":[%.9g,%.9g,%.9g],"
+                "\"center\":[%.9g,%.9g,%.9g],"
+                "\"boundsMin\":[%.9g,%.9g,%.9g],"
+                "\"boundsMax\":[%.9g,%.9g,%.9g]",
+                span[0] * meters_per_opt_unit,
+                span[1] * meters_per_opt_unit,
+                span[2] * meters_per_opt_unit,
+                center[0] * meters_per_opt_unit,
+                center[1] * meters_per_opt_unit,
+                center[2] * meters_per_opt_unit,
+                bounds_min[0] * meters_per_opt_unit,
+                bounds_min[1] * meters_per_opt_unit,
+                bounds_min[2] * meters_per_opt_unit,
+                bounds_max[0] * meters_per_opt_unit,
+                bounds_max[1] * meters_per_opt_unit,
+                bounds_max[2] * meters_per_opt_unit);
+        }
         if (m->descriptor.target_id != 0) {
             float target[3];
             swap_axis_v3(&m->descriptor.target, target);
             off += snprintf(extension + off, sizeof extension - off,
-                ",\"target\":[%g,%g,%g]",
+                ",\"target\":[%.9g,%.9g,%.9g]",
                 target[0] * meters_per_opt_unit,
                 target[1] * meters_per_opt_unit,
                 target[2] * meters_per_opt_unit);
