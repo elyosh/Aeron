@@ -19,8 +19,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define ATLAS_PAD 5
-
 /* ===== ANIM-frame adapter =========================================== */
 
 /* Adapter shim: drive the generic packer from an AnimImage + caller-
@@ -38,7 +36,7 @@ static int skyline_pack_anim(const AnimImage *anim, const int *order, int n,
 		rects[k].h   = img->height;
 		rects[k].key = (uint32_t)order[k];
 	}
-	int atlas_h = Aeron_AtlasPackRects(rects, n, atlas_w, ATLAS_PAD);
+	int atlas_h = Aeron_AtlasPackRects(rects, n, atlas_w, IMGBAKE_ATLAS_GUTTER);
 	if (atlas_h < 0) { free(rects); return atlas_h; }
 	for (int k = 0; k < n; k++) {
 		int i = (int)rects[k].key;
@@ -59,8 +57,8 @@ bool atlas_pack_compute(const AnimImage *anim, AtlasPack *out) {
 		const Image8 *img = &anim->frames[i];
 		if (!img->pixels) continue;
 		if (img->width > max_w) max_w = img->width;
-		total_area += (long)(img->width + 2 * ATLAS_PAD) *
-		              (long)(img->height + 2 * ATLAS_PAD);
+		total_area += (long)(img->width + 2 * IMGBAKE_ATLAS_GUTTER) *
+		              (long)(img->height + 2 * IMGBAKE_ATLAS_GUTTER);
 		valid++;
 	}
 	if (valid == 0 || max_w <= 0)
@@ -103,12 +101,12 @@ bool atlas_pack_compute(const AnimImage *anim, AtlasPack *out) {
 		order[j + 1] = key;
 	}
 
-	int min_w = max_w + 2 * ATLAS_PAD;
+	int min_w = max_w + 2 * IMGBAKE_ATLAS_GUTTER;
 	int sqrt_area = (int)ceil(sqrt((double)total_area));
 	int upper_w = sqrt_area * 2;
 	if (upper_w < min_w * 2) upper_w = min_w * 2;
 	int atlas_w = min_w;
-	int atlas_h = ATLAS_PAD;
+	int atlas_h = IMGBAKE_ATLAS_GUTTER;
 	double best_score = HUGE_VAL;
 	const int n_widths = 8;
 	for (int wi = 0; wi < n_widths; wi++) {

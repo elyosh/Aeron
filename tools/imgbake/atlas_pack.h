@@ -29,6 +29,8 @@ extern "C" {
 #include <stdbool.h>
 #endif
 
+#define IMGBAKE_ATLAS_GUTTER 5
+
 /* ===== ANIM-frame adapter =========================================== */
 
 typedef struct {

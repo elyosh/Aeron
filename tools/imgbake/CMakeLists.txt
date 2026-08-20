@@ -32,6 +32,7 @@ add_library(imgbake STATIC
 target_include_directories(imgbake
     PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR}/..
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/../..    # third_party/{bc7enc,dxtex}/...
         ${IMGBAKE_TP}/bc7enc                 # rgbcx.h, bc7enc.h

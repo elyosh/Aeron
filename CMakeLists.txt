@@ -7,6 +7,7 @@ project(aeron C CXX)
 # standalone or via add_subdirectory() from a game repository.
 
 option(AERON_DEBUG_UI "Build the Dear ImGui debug overlay into aeron" OFF)
+option(AERON_BUILD_TOOLS "Build Aeron asset tools" ${PROJECT_IS_TOP_LEVEL})
 option(AERON_HOST_TOOLS_ONLY "Build only tools that must run on the build host" OFF)
 option(AERON_ENABLE_DX5_COMPAT "Build the DirectDraw/Direct3D 1 compatibility target" OFF)
 option(AERON_ENABLE_WINMM_CD_AUDIO "Build the WinMM CD-audio compatibility target" OFF)
@@ -584,18 +585,11 @@ else()
     target_compile_options(aeron PRIVATE -Wall -Wextra -Wpedantic -Wno-deprecated-declarations -fno-common)
 endif()
 
-# ---------- Debug UI (optional Dear ImGui overlay) ----------
-#
-# Compiles the ImGui context host + SDL3/SDL_GPU backends into the aeron
-# library and defines AERON_DEBUG_UI on its PUBLIC interface (the
-# aeron/debug.h stubs vs. real API switch on it, so consumers must
-# see the same definition state). Games register tool windows through
-# Aeron_DebugRegisterTool; tool code includes <imgui.h>, exported below.
-if(AERON_DEBUG_UI)
+# ---------- Dear ImGui and debug UI ----------
+if(AERON_DEBUG_UI OR AERON_BUILD_TOOLS)
     enable_language(CXX)
 
-    target_sources(aeron PRIVATE
-        src/debug_ui.cpp
+    add_library(aeron_imgui STATIC
         third_party/imgui/imgui.cpp
         third_party/imgui/imgui_draw.cpp
         third_party/imgui/imgui_tables.cpp
@@ -604,28 +598,25 @@ if(AERON_DEBUG_UI)
         third_party/imgui/backends/imgui_impl_sdlgpu3.cpp
     )
 
-    # PUBLIC imgui root so game-side tool code resolves <imgui.h> (and
-    # ImGui backends stay an aeron implementation detail under backends/).
-    target_include_directories(aeron
-        PUBLIC  ${CMAKE_CURRENT_SOURCE_DIR}/third_party/imgui
-        PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/third_party/imgui/backends
-    )
+    target_include_directories(aeron_imgui PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/third_party/imgui)
+    target_link_libraries(aeron_imgui PUBLIC SDL3::SDL3)
+    target_compile_features(aeron_imgui PUBLIC cxx_std_17)
+    set_property(TARGET aeron_imgui PROPERTY POSITION_INDEPENDENT_CODE ON)
 
+    if(NOT MSVC)
+        target_compile_options(aeron_imgui PRIVATE
+            -Wno-pedantic -Wno-unused-but-set-variable -Wno-unused-result)
+    endif()
+endif()
+
+# The debug host remains part of aeron, while the shared ImGui context and
+# SDL backends live in aeron_imgui for reuse by standalone asset tools.
+if(AERON_DEBUG_UI)
+    target_sources(aeron PRIVATE src/debug_ui.cpp)
+    target_link_libraries(aeron PUBLIC aeron_imgui)
     target_compile_definitions(aeron PUBLIC AERON_DEBUG_UI=1)
     target_compile_features(aeron PUBLIC cxx_std_17)
-
-    # ImGui doesn't compile clean under the strict warning set; relax the
-    # noisiest categories for the C++ TUs only.
-    set_source_files_properties(
-        third_party/imgui/imgui.cpp
-        third_party/imgui/imgui_draw.cpp
-        third_party/imgui/imgui_tables.cpp
-        third_party/imgui/imgui_widgets.cpp
-        third_party/imgui/backends/imgui_impl_sdl3.cpp
-        third_party/imgui/backends/imgui_impl_sdlgpu3.cpp
-        PROPERTIES COMPILE_OPTIONS
-        "-Wno-pedantic;-Wno-unused-but-set-variable;-Wno-unused-result"
-    )
 endif()
 
 # ---------- aeron_scene — shared mid-level scene / asset layer ----------
@@ -762,7 +753,6 @@ endif()
 # via KHR_materials_variants). Moved from the TIE repo (plan E1) so
 # both game asset pipelines share one converter. The host tool uses Aeron's
 # CPU-only normal builder and owns its copy of the OPT parser.
-option(AERON_BUILD_TOOLS "Build Aeron asset tools" ${PROJECT_IS_TOP_LEVEL})
 add_subdirectory(tools/imgbake)
 add_subdirectory(tools/gltf_cook)
 add_subdirectory(tools/fontbake)
