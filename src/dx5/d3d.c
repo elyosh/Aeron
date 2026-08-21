@@ -1818,17 +1818,18 @@ IDirect3DDevice* D3DCompat_CreateDeviceForSurface(DDrawSurfaceShim* surface) {
 			.width = surface->width,
 			.height = surface->height,
 			.format = AERON_TEXTURE_FORMAT_RGBA8_UNORM,
+			.usage = AERON_TEXTURE_USAGE_TRANSFER_SRC | AERON_TEXTURE_USAGE_TRANSFER_DST,
 		});
 		if (!surface->rt) {
 			return NULL;
 		}
-		/* Second half of the flip chain: present swaps rt<->rt_back so the composed
-		 * frame stays intact while the next frame's background restore / 3D targets
-		 * the other buffer. */
+		/* Visible half of the flip chain: Flip swaps it with rt, while a primary
+		 * Blt copies rt into it without changing the current render target. */
 		surface->rt_back = Aeron_CreateRenderTarget(&(AeronRenderTargetDesc) {
 			.width = surface->width,
 			.height = surface->height,
 			.format = AERON_TEXTURE_FORMAT_RGBA8_UNORM,
+			.usage = AERON_TEXTURE_USAGE_TRANSFER_SRC | AERON_TEXTURE_USAGE_TRANSFER_DST,
 		});
 		if (!surface->rt_back) {
 			Aeron_DestroyRenderTarget(surface->rt);

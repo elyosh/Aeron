@@ -69,17 +69,23 @@ static void DDShim_FillSurfaceDesc(DDrawSurfaceShim* s, DDSURFACEDESC* d) {
 
 /* --- present ------------------------------------------------------------- */
 
-/* The recovered present path reaches this through Flip / BltFast-to-primary. A
+/* The recovered present path reaches this through Flip / Blt-to-primary. A
  * render surface is the composition buffer for its background, 2D layers, and
  * 3D output; plain CPU surfaces carry their completed pixels directly. */
 /* Recovered presents can occur many times inside one host frame, especially
  * while loading mission species. Retain the final completed image here and
  * submit it once after the game tick; opaque HD flight frames suppress the
  * render-target submission without disturbing the flip chain. */
+typedef enum DDShimPresentKind {
+	DDSHIM_PRESENT_BLT = 0,
+	DDSHIM_PRESENT_FLIP,
+} DDShimPresentKind;
+
 static DDrawSurfaceShim* g_ddLastPresented;
 static AeronSurface* g_ddRetainedCpuPresentation;
 static int g_ddClassicFlightRenderingSuppressed;
 static int g_ddSuppressedPresentPending;
+static DDShimPresentKind g_ddSuppressedPresentKind;
 static uint64_t g_ddClassicFlightFrameSerial;
 static uint64_t g_ddPaletteRevision;
 
@@ -144,7 +150,42 @@ static int DDShim_RetainCpuPresentation(DDrawSurfaceShim* frame) {
 							 AERON_SURFACE_BLIT_NONE);
 }
 
-static int DDShim_CommitRenderTargetPresent(DDrawSurfaceShim* frame, int notify) {
+static int DDShim_CopyRenderTargetToFront(DDrawSurfaceShim* frame) {
+	AeronCommandBuffer* command_buffer;
+	AeronTexture* source;
+	AeronTexture* destination;
+
+	if (!frame->rt_back)
+		return 1;
+	source = Aeron_RenderTargetGetTexture(frame->rt);
+	destination = Aeron_RenderTargetGetTexture(frame->rt_back);
+	if (!source || !destination)
+		return 0;
+
+	command_buffer = Aeron_AcquireCommandBuffer();
+	if (!command_buffer) {
+		Aeron_RequestFatalRendererError("DirectDraw primary blit command-buffer acquisition");
+		return 0;
+	}
+	if (!Aeron_CopyTextureCmd(command_buffer, &(AeronTextureCopyDesc) {
+			.source = source,
+			.destination = destination,
+			.width = (uint32_t)frame->width,
+			.height = (uint32_t)frame->height,
+			.cycle = 1,
+		})) {
+		Aeron_CancelCommandBuffer(command_buffer);
+		Aeron_RequestFatalRendererError("DirectDraw primary blit copy");
+		return 0;
+	}
+	if (!Aeron_SubmitCommandBuffer(command_buffer)) {
+		Aeron_RequestFatalRendererError("DirectDraw primary blit submission");
+		return 0;
+	}
+	return 1;
+}
+
+static int DDShim_CommitRenderTargetPresent(DDrawSurfaceShim* frame, int notify, DDShimPresentKind kind) {
 	if (!D3DCompat_FlushRenderTargetPass(frame))
 		return 0;
 	/* If a software overlay was the last writer (cpu_dirty), fold its staging
@@ -152,21 +193,25 @@ static int DDShim_CommitRenderTargetPresent(DDrawSurfaceShim* frame, int notify)
 	DDShim_WritebackRenderTarget(frame);
 	if (!Aeron_RenderTargetGetTexture(frame->rt))
 		return 0;
+	if (kind == DDSHIM_PRESENT_BLT && !DDShim_CopyRenderTargetToFront(frame))
+		return 0;
 	++g_ddClassicFlightFrameSerial;
 	if (notify)
 		AeronDx5_NotifyPresent(frame->width, frame->height);
 	g_ddLastPresented = frame;
-	/* Keep the completed texture untouched while subsequent recovered draws
-	 * target the other half of the flip chain. */
-	if (frame->rt_back) {
+	/* Flip rotates the completed target into the visible half. Blt copied into
+	 * that half without changing the render surface's current storage. */
+	if (kind == DDSHIM_PRESENT_FLIP && frame->rt_back) {
 		AeronRenderTarget* swap = frame->rt;
 		frame->rt = frame->rt_back;
 		frame->rt_back = swap;
+		/* CPU staging still describes the target that was current before the swap. */
+		frame->gpu_dirty = 1;
 	}
 	return 1;
 }
 
-static void DDShim_Present(DDrawSurfaceShim* frame) {
+static void DDShim_Present(DDrawSurfaceShim* frame, DDShimPresentKind kind) {
 	if (!frame) {
 		return;
 	}
@@ -181,10 +226,11 @@ static void DDShim_Present(DDrawSurfaceShim* frame) {
 			AeronDx5_NotifyPresent(frame->width, frame->height);
 			g_ddLastPresented = frame;
 			g_ddSuppressedPresentPending = 1;
+			g_ddSuppressedPresentKind = kind;
 			return;
 		}
 		g_ddSuppressedPresentPending = 0;
-		(void)DDShim_CommitRenderTargetPresent(frame, 1);
+		(void)DDShim_CommitRenderTargetPresent(frame, 1, kind);
 		return;
 	}
 
@@ -252,7 +298,7 @@ void AeronDx5_EndFrame(void) {
 	if (g_ddSuppressedPresentPending) {
 		g_ddSuppressedPresentPending = 0;
 		/* The recovered boundary already notified its consumer while suppressed. */
-		(void)DDShim_CommitRenderTargetPresent(g_ddLastPresented, 0);
+		(void)DDShim_CommitRenderTargetPresent(g_ddLastPresented, 0, g_ddSuppressedPresentKind);
 	}
 	DDShim_SubmitLastPresented(g_ddLastPresented);
 }
@@ -263,6 +309,7 @@ void AeronDx5_ResetPresentationState(void) {
 	g_ddLastPresented = NULL;
 	g_ddClassicFlightRenderingSuppressed = 0;
 	g_ddSuppressedPresentPending = 0;
+	g_ddSuppressedPresentKind = DDSHIM_PRESENT_BLT;
 	g_ddClassicFlightFrameSerial = 0;
 }
 
@@ -772,7 +819,7 @@ static HRESULT AERON_DXAPI DDSurface_Blt(IDirectDrawSurface* self, void* dstRect
 		int have_sr = DDShim_RectToSurfaceRect(srcRect, &sr);
 		DDShimRect* dr = (DDShimRect*)dstRect;
 		if (d->kind == DDSHIM_PRIMARY) {
-			DDShim_Present(s);
+			DDShim_Present(s, DDSHIM_PRESENT_BLT);
 			return DX_DD_OK;
 		}
 		if (d->kind == DDSHIM_RENDER_TARGET && !D3DCompat_FlushRenderTargetPass(d)) {
@@ -806,7 +853,7 @@ static HRESULT AERON_DXAPI DDSurface_BltFast(IDirectDrawSurface* self, uint32_t 
 	int have_sr = DDShim_RectToSurfaceRect(srcRect, &sr);
 
 	if (d->kind == DDSHIM_PRIMARY) {
-		DDShim_Present(s);
+		DDShim_Present(s, DDSHIM_PRESENT_BLT);
 		return DX_DD_OK;
 	}
 	if (d->kind == DDSHIM_RENDER_TARGET && !D3DCompat_FlushRenderTargetPass(d)) {
@@ -836,7 +883,7 @@ static HRESULT AERON_DXAPI DDSurface_Flip(IDirectDrawSurface* self, IDirectDrawS
 	DDrawSurfaceShim* s = (DDrawSurfaceShim*)self;
 	(void)flags;
 	/* Flip makes `override` (or the attached back buffer) the visible frame. */
-	DDShim_Present(override ? (DDrawSurfaceShim*) override : s->attached);
+	DDShim_Present(override ? (DDrawSurfaceShim*) override : s->attached, DDSHIM_PRESENT_FLIP);
 	return DX_DD_OK;
 }
 

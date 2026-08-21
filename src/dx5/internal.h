@@ -61,9 +61,9 @@ typedef struct DDrawSurfaceShim {
 	 * authoritative pixels.
 	 *
 	 * `rt` is the current work buffer (rendered into and composited into this
-	 * frame); `rt_back` is the other half of a DirectDraw flip chain. Present
-	 * swaps the two, preserving the completed frame in `rt_back` while the next
-	 * frame targets `rt`; the host submits `rt_back` after the game tick. */
+	 * frame); `rt_back` is the visible half of a DirectDraw flip chain. Flip
+	 * swaps the two, while a primary Blt copies `rt` into `rt_back`; the host
+	 * submits `rt_back` after the game tick. */
 	AeronRenderTarget* rt;
 	AeronRenderTarget* rt_back;
 	AeronDepthTarget* depth;
