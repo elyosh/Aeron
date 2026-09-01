@@ -55,15 +55,12 @@ typedef enum AeronSceneBillboardStage {
 	AERON_SCENE_BILLBOARD_STAGE_LENS,
 } AeronSceneBillboardStage;
 
-/* One batched scene billboard: a fan (center + 4 rim corners)
+/* One batched scene billboard: a fan (derived center + 4 rim corners)
  * of WORLD-space positions. Build the corners on the camera right/up
  * axes so all four share one view depth — the quad then projects as an
  * exact screen-aligned rectangle (classic flat-sprite semantics).
  *
  * colors are linear RGBA, HDR values allowed (emissive boost).
- * center_position optionally overrides the corner-average fan center;
- * NULL derives it from the corners. This preserves asymmetric fans whose
- * center is not the centroid of their rim.
  * center_color optionally overrides the fan-center color (XWA glow
  * core); NULL = corner average. depth_bias_view pushes the TEST depth
  * toward the camera in view units without moving the sprite (classic
@@ -79,7 +76,6 @@ typedef struct AeronSceneBillboardDesc {
 	float                    corners[4][3];
 	float                    uv[4][2];
 	float                    colors[4][4];
-	const float*             center_position;  /* XYZ or NULL */
 	const float*             center_color;      /* RGBA or NULL */
 	float                    depth_bias_view;
 	const float (*prev_corners)[3];             /* [4][3] or NULL */

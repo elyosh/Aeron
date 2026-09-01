@@ -74,7 +74,6 @@ typedef struct AeronSceneBb3dEntry {
 	float         prev_corners[4][3];
 	float         uv[4][2];
 	float         colors[4][4];
-	float         center_position[3];
 	float         center_color[4];
 	float         anchor[3]; /* LENS: flare source, world space */
 } AeronSceneBb3dEntry;
