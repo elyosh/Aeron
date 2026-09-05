@@ -122,7 +122,7 @@ typedef struct AUXCAPSA {
 typedef char AeronWinmmAuxCapsSizeCheck[(sizeof(AUXCAPSA) == 48) ? 1 : -1];
 
 AERON_WINMMIMPORT MMRESULT AERON_WINMMAPI mciSendCommandA(MCIDEVICEID device_id, uint32_t message,
-														  MciDwordPtr flags, MciDwordPtr params);
+														  MciDwordPtr flags, void* params);
 AERON_WINMMIMPORT uint32_t AERON_WINMMAPI auxGetNumDevs(void);
 AERON_WINMMIMPORT MMRESULT AERON_WINMMAPI auxGetDevCapsA(uintptr_t device_id, AUXCAPSA* caps, uint32_t size);
 AERON_WINMMIMPORT MMRESULT AERON_WINMMAPI auxGetVolume(uintptr_t device_id, uint32_t* volume);

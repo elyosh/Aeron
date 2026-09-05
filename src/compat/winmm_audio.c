@@ -360,8 +360,7 @@ static MMRESULT AeronWinmm_Play(MCIDEVICEID device_id, MciDwordPtr flags, MCI_PL
 }
 
 MMRESULT AERON_WINMMAPI mciSendCommandA(MCIDEVICEID device_id, uint32_t message, MciDwordPtr flags,
-												   MciDwordPtr params_value) {
-	void* params = (void*)(uintptr_t)params_value;
+												   void* params) {
 	switch (message) {
 		case MCI_OPEN:
 			return AeronWinmm_Open(flags, (MCI_OPEN_PARMSA*)params);
