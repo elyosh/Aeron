@@ -104,8 +104,8 @@ int AeronVfs_Open(AeronVfs* vfs, AeronVfsRoot root, const char* path, AeronVfsOp
 int AeronVfs_Read(AeronFile* file, void* dst, size_t size, size_t* out_read);
 /* Reads a complete non-empty file into malloc-owned memory. `max_size == 0`
  * applies no caller limit. The caller releases `out_data` with free(). */
-int AeronVfs_ReadAll(AeronVfs* vfs, AeronVfsRoot root, const char* path, size_t max_size,
-					 uint8_t** out_data, size_t* out_size);
+int AeronVfs_ReadAll(AeronVfs* vfs, AeronVfsRoot root, const char* path, size_t max_size, uint8_t** out_data,
+					 size_t* out_size);
 /* Writes exactly size bytes unless an error occurs; out_written receives the actual byte count. */
 int AeronVfs_Write(AeronFile* file, const void* src, size_t size, size_t* out_written);
 /* Atomically replaces a writable-root file through a flushed sibling temporary file. */
@@ -121,6 +121,11 @@ int64_t AeronVfs_GetSize(AeronFile* file);
 int AeronVfs_ReadLine(AeronFile* file, char* dst, size_t dst_size);
 /* Flushes pending writes for a file handle. */
 int AeronVfs_Flush(AeronFile* file);
+/* Sticky stream status, independent of later successful operations. Seek clears
+ * EOF only; ClearError resets both indicators before an explicit retry. */
+int  AeronVfs_Eof(AeronFile* file);
+int  AeronVfs_HasError(AeronFile* file);
+void AeronVfs_ClearError(AeronFile* file);
 /* Closes and frees a file handle. */
 int AeronVfs_Close(AeronFile* file);
 /* Retrieves path metadata relative to the selected root. */

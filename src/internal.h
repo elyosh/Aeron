@@ -32,6 +32,8 @@ struct AeronVfs {
 
 struct AeronFile {
 	SDL_IOStream* stream;
+	int eof;
+	int error;
 };
 
 struct AeronTexture {

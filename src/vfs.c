@@ -64,7 +64,7 @@ void AeronVfs_DeinitInternal(AeronVfs* vfs) {
 	for (root = AERON_VFS_ROOT_ASSET; root < AERON_VFS_ROOT_COUNT; root = (AeronVfsRoot)(root + 1)) {
 		Aeron_InvalidateCaseCache(vfs, root);
 		AeronIso9660_Destroy(vfs->iso_roots[root]);
-		vfs->iso_roots[root] = NULL;
+		vfs->iso_roots[root]    = NULL;
 		vfs->root_options[root] = AERON_VFS_ROOT_OPTION_NONE;
 	}
 }
@@ -123,8 +123,8 @@ static void Aeron_MarkAmbiguousCaseEntries(AeronVfsCaseDirectory* directory) {
 				directory->entries[i].ambiguous = 1;
 			}
 			Aeron_LogWarn("aeron.vfs", "ambiguous case-insensitive names in '%s': '%s' and '%s'",
-					  directory->host_path, directory->entries[first].name,
-					  directory->entries[first + 1].name);
+						  directory->host_path, directory->entries[first].name,
+						  directory->entries[first + 1].name);
 		}
 		first = end;
 	}
@@ -352,8 +352,8 @@ int AeronVfs_SetRoot(AeronVfs* vfs, AeronVfsRoot root, const char* path) {
 }
 
 int AeronVfs_SetDiscRoot(AeronVfs* vfs, AeronVfsRoot root, const char* path) {
-	char* destination;
-	size_t capacity;
+	char*         destination;
+	size_t        capacity;
 	AeronIso9660* iso;
 	if (!vfs || !path || !path[0]) {
 		return 0;
@@ -361,11 +361,11 @@ int AeronVfs_SetDiscRoot(AeronVfs* vfs, AeronVfsRoot root, const char* path) {
 	switch (root) {
 		case AERON_VFS_ROOT_ASSET:
 			destination = vfs->asset_root;
-			capacity = sizeof vfs->asset_root;
+			capacity    = sizeof vfs->asset_root;
 			break;
 		case AERON_VFS_ROOT_RESOURCE:
 			destination = vfs->resource_root;
-			capacity = sizeof vfs->resource_root;
+			capacity    = sizeof vfs->resource_root;
 			break;
 		default:
 			return 0;
@@ -466,11 +466,7 @@ static int Aeron_BuildPath(AeronVfs* vfs, AeronVfsRoot root, const char* path, c
 	return 1;
 }
 
-enum {
-	AERON_RESOLVE_EXISTING,
-	AERON_RESOLVE_MISSING_LAST,
-	AERON_RESOLVE_MISSING_TAIL
-};
+enum { AERON_RESOLVE_EXISTING, AERON_RESOLVE_MISSING_LAST, AERON_RESOLVE_MISSING_TAIL };
 
 /* Resolves the on-disk case for each existing component of `path`.
  * MISSING_LAST permits a new final file name. MISSING_TAIL preserves the
@@ -537,9 +533,8 @@ static int Aeron_ResolveCasePath(AeronVfs* vfs, AeronVfsRoot root, const char* p
 					!SDL_GetPathInfo(candidate, &info)) {
 					return 0;
 				}
-			} else if (!ambiguous &&
-					   ((is_last && missing_policy == AERON_RESOLVE_MISSING_LAST) ||
-						missing_policy == AERON_RESOLVE_MISSING_TAIL)) {
+			} else if (!ambiguous && ((is_last && missing_policy == AERON_RESOLVE_MISSING_LAST) ||
+									  missing_policy == AERON_RESOLVE_MISSING_TAIL)) {
 				/* New components keep their requested spelling. Ambiguous matches
 				   remain failures so writes cannot add another case variant. */
 				if (!is_last) {
@@ -603,8 +598,8 @@ int AeronVfs_Open(AeronVfs* vfs, AeronVfsRoot root, const char* path, AeronVfsOp
 		if (!file) {
 			return 0;
 		}
-		file->stream = AeronIso9660_OpenFile(vfs->iso_roots[root], path,
-			Aeron_RootUsesCaseInsensitiveLookup(vfs, root));
+		file->stream =
+			AeronIso9660_OpenFile(vfs->iso_roots[root], path, Aeron_RootUsesCaseInsensitiveLookup(vfs, root));
 		if (!file->stream) {
 			SDL_free(file);
 			return 0;
@@ -616,6 +611,13 @@ int AeronVfs_Open(AeronVfs* vfs, AeronVfsRoot root, const char* path, AeronVfsOp
 		!Aeron_BuildPath(vfs, root, path, host_path, sizeof(host_path))) {
 		return 0;
 	}
+
+	/* Creating an exact-case path can succeed even when a differently-cased
+	 * file exists. Resolve before a write can create or truncate anything. */
+	if ((mode == AERON_VFS_WRITE || mode == AERON_VFS_WRITE_READ || mode == AERON_VFS_APPEND) &&
+		Aeron_RootUsesCaseInsensitiveLookup(vfs, root) &&
+		!Aeron_ResolveCasePath(vfs, root, path, host_path, sizeof(host_path), AERON_RESOLVE_MISSING_LAST))
+		return 0;
 
 	file = (AeronFile*)SDL_calloc(1, sizeof(*file));
 	if (!file) {
@@ -632,7 +634,7 @@ int AeronVfs_Open(AeronVfs* vfs, AeronVfsRoot root, const char* path, AeronVfsOp
 		Aeron_CopyString(exact_error, sizeof(exact_error), SDL_GetError());
 		if (!SDL_GetPathInfo(host_path, &exact_info) &&
 			Aeron_ResolveCasePath(vfs, root, path, host_path, sizeof(host_path),
-				creates_file ? AERON_RESOLVE_MISSING_LAST : AERON_RESOLVE_EXISTING)) {
+								  creates_file ? AERON_RESOLVE_MISSING_LAST : AERON_RESOLVE_EXISTING)) {
 			retried      = 1;
 			file->stream = SDL_IOFromFile(host_path, Aeron_OpenModeString(mode));
 		}
@@ -657,11 +659,21 @@ int AeronVfs_Open(AeronVfs* vfs, AeronVfsRoot root, const char* path, AeronVfsOp
 int AeronVfs_Read(AeronFile* file, void* dst, size_t size, size_t* out_read) {
 	size_t count;
 
-	if (!file || !file->stream || !dst) {
+	if (out_read)
+		*out_read = 0;
+	if (!file || !file->stream || (!dst && size)) {
+		if (file)
+			file->error = 1;
 		return 0;
 	}
+	if (!size)
+		return 1;
 
 	count = SDL_ReadIO(file->stream, dst, size);
+	if (SDL_GetIOStatus(file->stream) == SDL_IO_STATUS_EOF)
+		file->eof = 1;
+	else if (SDL_GetIOStatus(file->stream) != SDL_IO_STATUS_READY || count < size)
+		file->error = 1;
 	if (out_read) {
 		*out_read = count;
 	}
@@ -669,8 +681,8 @@ int AeronVfs_Read(AeronFile* file, void* dst, size_t size, size_t* out_read) {
 	return count == size;
 }
 
-int AeronVfs_ReadAll(AeronVfs* vfs, AeronVfsRoot root, const char* path, size_t max_size,
-					 uint8_t** out_data, size_t* out_size) {
+int AeronVfs_ReadAll(AeronVfs* vfs, AeronVfsRoot root, const char* path, size_t max_size, uint8_t** out_data,
+					 size_t* out_size) {
 	AeronFile* file = NULL;
 	if (!out_data || !out_size)
 		return 0;
@@ -679,8 +691,7 @@ int AeronVfs_ReadAll(AeronVfs* vfs, AeronVfsRoot root, const char* path, size_t 
 	if (!AeronVfs_Open(vfs, root, path, AERON_VFS_READ, &file))
 		return 0;
 	const int64_t file_size = AeronVfs_GetSize(file);
-	if (file_size <= 0 || (uint64_t)file_size > SIZE_MAX ||
-		(max_size && (uint64_t)file_size > max_size)) {
+	if (file_size <= 0 || (uint64_t)file_size > SIZE_MAX || (max_size && (uint64_t)file_size > max_size)) {
 		AeronVfs_Close(file);
 		return 0;
 	}
@@ -689,9 +700,9 @@ int AeronVfs_ReadAll(AeronVfs* vfs, AeronVfsRoot root, const char* path, size_t 
 		AeronVfs_Close(file);
 		return 0;
 	}
-	size_t read_size = 0;
-	const int read_ok = AeronVfs_Read(file, data, (size_t)file_size, &read_size);
-	const int close_ok = AeronVfs_Close(file);
+	size_t    read_size = 0;
+	const int read_ok   = AeronVfs_Read(file, data, (size_t)file_size, &read_size);
+	const int close_ok  = AeronVfs_Close(file);
 	if (!read_ok || !close_ok || read_size != (size_t)file_size) {
 		free(data);
 		return 0;
@@ -704,11 +715,19 @@ int AeronVfs_ReadAll(AeronVfs* vfs, AeronVfsRoot root, const char* path, size_t 
 int AeronVfs_Write(AeronFile* file, const void* src, size_t size, size_t* out_written) {
 	size_t count;
 
-	if (!file || !file->stream || !src) {
+	if (out_written)
+		*out_written = 0;
+	if (!file || !file->stream || (!src && size)) {
+		if (file)
+			file->error = 1;
 		return 0;
 	}
+	if (!size)
+		return 1;
 
 	count = SDL_WriteIO(file->stream, src, size);
+	if (count < size)
+		file->error = 1;
 	if (out_written) {
 		*out_written = count;
 	}
@@ -743,7 +762,7 @@ int AeronVfs_WriteAllAtomic(AeronVfs* vfs, AeronVfsRoot root, const char* path, 
 		int write_ok = size == 0 || (AeronVfs_Write(file, data, size, &written) && written == size);
 		int flush_ok = write_ok && AeronVfs_Flush(file);
 		int close_ok = AeronVfs_Close(file);
-		file = NULL;
+		file         = NULL;
 		if (write_ok && flush_ok && close_ok) {
 			success = AeronVfs_Rename(vfs, root, temporary, path);
 		}
@@ -776,10 +795,16 @@ int AeronVfs_Seek(AeronFile* file, int64_t offset, int origin) {
 			whence = SDL_IO_SEEK_END;
 			break;
 		default:
+			file->error = 1;
 			return 0;
 	}
 
-	return SDL_SeekIO(file->stream, (Sint64)offset, whence) >= 0;
+	if (SDL_SeekIO(file->stream, (Sint64)offset, whence) < 0) {
+		file->error = 1;
+		return 0;
+	}
+	file->eof = 0;
+	return 1;
 }
 
 int64_t AeronVfs_Tell(AeronFile* file) {
@@ -787,7 +812,10 @@ int64_t AeronVfs_Tell(AeronFile* file) {
 		return -1;
 	}
 
-	return (int64_t)SDL_TellIO(file->stream);
+	int64_t position = (int64_t)SDL_TellIO(file->stream);
+	if (position < 0)
+		file->error = 1;
+	return position;
 }
 
 int64_t AeronVfs_GetSize(AeronFile* file) {
@@ -813,7 +841,8 @@ int64_t AeronVfs_GetSize(AeronFile* file) {
 	}
 
 	size = AeronVfs_Tell(file);
-	AeronVfs_Seek(file, current, 0);
+	if (!AeronVfs_Seek(file, current, 0))
+		return -1;
 	return size;
 }
 
@@ -829,7 +858,8 @@ int AeronVfs_ReadLine(AeronFile* file, char* dst, size_t dst_size) {
 		char   ch;
 		size_t bytes_read;
 
-		bytes_read = SDL_ReadIO(file->stream, &ch, 1);
+		bytes_read = 0;
+		AeronVfs_Read(file, &ch, 1, &bytes_read);
 		if (bytes_read != 1) {
 			break;
 		}
@@ -854,7 +884,22 @@ int AeronVfs_Flush(AeronFile* file) {
 		return 0;
 	}
 
-	return SDL_FlushIO(file->stream);
+	if (!SDL_FlushIO(file->stream)) {
+		file->error = 1;
+		return 0;
+	}
+	return 1;
+}
+
+int AeronVfs_Eof(AeronFile* file) { return file && file->eof; }
+
+int AeronVfs_HasError(AeronFile* file) { return !file || file->error; }
+
+void AeronVfs_ClearError(AeronFile* file) {
+	if (file) {
+		file->eof   = 0;
+		file->error = 0;
+	}
 }
 
 int AeronVfs_Close(AeronFile* file) {
@@ -877,8 +922,8 @@ int AeronVfs_Stat(AeronVfs* vfs, AeronVfsRoot root, const char* path, AeronFileI
 		return 0;
 	}
 	if (vfs && Aeron_VfsRootValid(root) && vfs->iso_roots[root]) {
-		return AeronIso9660_Stat(vfs->iso_roots[root], path,
-			Aeron_RootUsesCaseInsensitiveLookup(vfs, root), out_info);
+		return AeronIso9660_Stat(vfs->iso_roots[root], path, Aeron_RootUsesCaseInsensitiveLookup(vfs, root),
+								 out_info);
 	}
 	if (!Aeron_BuildPath(vfs, root, path, host_path, sizeof(host_path))) {
 		return 0;
@@ -886,8 +931,7 @@ int AeronVfs_Stat(AeronVfs* vfs, AeronVfsRoot root, const char* path, AeronFileI
 
 	memset(out_info, 0, sizeof(*out_info));
 	if (!SDL_GetPathInfo(host_path, &info)) {
-		if (!Aeron_ResolveCasePath(vfs, root, path, host_path, sizeof(host_path),
-				AERON_RESOLVE_EXISTING) ||
+		if (!Aeron_ResolveCasePath(vfs, root, path, host_path, sizeof(host_path), AERON_RESOLVE_EXISTING) ||
 			!SDL_GetPathInfo(host_path, &info)) {
 			return 0;
 		}
@@ -909,13 +953,11 @@ int AeronVfs_CreateDirectory(AeronVfs* vfs, AeronVfsRoot root, const char* path)
 	char host_path[AERON_MAX_PATH];
 
 	if (root == AERON_VFS_ROOT_RESOURCE || (vfs && Aeron_VfsRootValid(root) && vfs->iso_roots[root]) ||
-		!path || !path[0] ||
-		!Aeron_BuildPath(vfs, root, path, host_path, sizeof(host_path))) {
+		!path || !path[0] || !Aeron_BuildPath(vfs, root, path, host_path, sizeof(host_path))) {
 		return 0;
 	}
 	if (Aeron_RootUsesCaseInsensitiveLookup(vfs, root) &&
-		!Aeron_ResolveCasePath(vfs, root, path, host_path, sizeof(host_path),
-				AERON_RESOLVE_MISSING_TAIL)) {
+		!Aeron_ResolveCasePath(vfs, root, path, host_path, sizeof(host_path), AERON_RESOLVE_MISSING_TAIL)) {
 		return 0;
 	}
 	if (!SDL_CreateDirectory(host_path)) {
@@ -937,8 +979,7 @@ int AeronVfs_Remove(AeronVfs* vfs, AeronVfsRoot root, const char* path) {
 	/* SDL_RemovePath reports success for a missing path, so resolve case up
 	   front or a differently-cased file would silently survive. */
 	if (!SDL_GetPathInfo(host_path, &info)) {
-		Aeron_ResolveCasePath(vfs, root, path, host_path, sizeof(host_path),
-				AERON_RESOLVE_EXISTING);
+		Aeron_ResolveCasePath(vfs, root, path, host_path, sizeof(host_path), AERON_RESOLVE_EXISTING);
 	}
 	if (!SDL_RemovePath(host_path)) {
 		return 0;
@@ -957,18 +998,25 @@ int AeronVfs_Rename(AeronVfs* vfs, AeronVfsRoot root, const char* old_path, cons
 		return 0;
 	}
 
+	if (Aeron_RootUsesCaseInsensitiveLookup(vfs, root) &&
+		(!Aeron_ResolveCasePath(vfs, root, old_path, old_host_path, sizeof(old_host_path),
+								AERON_RESOLVE_EXISTING) ||
+		 !Aeron_ResolveCasePath(vfs, root, new_path, new_host_path, sizeof(new_host_path),
+								AERON_RESOLVE_MISSING_LAST)))
+		return 0;
+
 	if (!SDL_RenamePath(old_host_path, new_host_path)) {
 		SDL_PathInfo info;
 		int          resolved = 0;
 
 		if (!SDL_GetPathInfo(old_host_path, &info) &&
-			Aeron_ResolveCasePath(vfs, root, old_path, old_host_path,
-				sizeof(old_host_path), AERON_RESOLVE_EXISTING)) {
+			Aeron_ResolveCasePath(vfs, root, old_path, old_host_path, sizeof(old_host_path),
+								  AERON_RESOLVE_EXISTING)) {
 			resolved = 1;
 		}
 		if (!SDL_GetPathInfo(new_host_path, &info) &&
-			Aeron_ResolveCasePath(vfs, root, new_path, new_host_path,
-				sizeof(new_host_path), AERON_RESOLVE_MISSING_LAST)) {
+			Aeron_ResolveCasePath(vfs, root, new_path, new_host_path, sizeof(new_host_path),
+								  AERON_RESOLVE_MISSING_LAST)) {
 			resolved = 1;
 		}
 		if (!resolved || !SDL_RenamePath(old_host_path, new_host_path)) {
@@ -995,7 +1043,7 @@ int AeronVfs_Glob(AeronVfs* vfs, AeronVfsRoot root, const char* directory, const
 	}
 	if (vfs && Aeron_VfsRootValid(root) && vfs->iso_roots[root]) {
 		return AeronIso9660_Glob(vfs->iso_roots[root], directory, pattern, flags,
-			Aeron_RootUsesCaseInsensitiveLookup(vfs, root), callback, userdata);
+								 Aeron_RootUsesCaseInsensitiveLookup(vfs, root), callback, userdata);
 	}
 
 	if (directory == NULL || directory[0] == '\0') {
@@ -1025,7 +1073,7 @@ int AeronVfs_Glob(AeronVfs* vfs, AeronVfsRoot root, const char* directory, const
 		Aeron_CopyString(exact_error, sizeof(exact_error), SDL_GetError());
 		if (!SDL_GetPathInfo(host_path, &exact_info) &&
 			Aeron_ResolveCasePath(vfs, root, directory, host_path, sizeof(host_path),
-				AERON_RESOLVE_EXISTING)) {
+								  AERON_RESOLVE_EXISTING)) {
 			retried = 1;
 			matches = SDL_GlobDirectory(host_path, pattern, glob_flags, &count);
 		}
@@ -1058,7 +1106,8 @@ int AeronVfs_Glob(AeronVfs* vfs, AeronVfsRoot root, const char* directory, const
 		}
 
 		if (!SDL_GetPathInfo(entry_path, &info)) {
-			continue;
+			result = 0;
+			break;
 		}
 
 		if ((info.type == SDL_PATHTYPE_FILE && !want_files) ||
