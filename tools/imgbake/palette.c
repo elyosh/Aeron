@@ -2,10 +2,10 @@
 
 #include <string.h>
 
-void palette_black(Palette *pal) {
+void palette_black(Palette* pal) {
 	memset(pal, 0, sizeof(*pal));
 	pal->start = 0;
-	pal->len = 256;
+	pal->len   = 256;
 	for (int i = 0; i < 256; i++) {
 		pal->rgba[i][0] = 0;
 		pal->rgba[i][1] = 0;
@@ -14,18 +14,18 @@ void palette_black(Palette *pal) {
 	}
 }
 
-bool palette_overlay(Palette *pal, const uint8_t *data, uint32_t size) {
+bool palette_overlay(Palette* pal, const uint8_t* data, uint32_t size) {
 	if (size < 2)
 		return false;
 	uint8_t pal_start = data[0];
-	uint8_t pal_end = data[1];
+	uint8_t pal_end   = data[1];
 	if (pal_end < pal_start)
 		return false;
 	int n = pal_end - pal_start + 1;
 	if ((uint32_t)(2 + n * 3) > size)
 		return false;
 
-	const uint8_t *p = data + 2;
+	const uint8_t* p = data + 2;
 	for (int i = 0; i < n; i++) {
 		int slot = pal_start + i;
 		/* PLTT stores 8-bit RGB. The engine downshifts (`>> 2`) to feed a

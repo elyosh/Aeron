@@ -33,7 +33,7 @@ typedef enum { CH_FMT_BC7 = 0, CH_FMT_BC5 = 1 } ChannelFormat;
 
 static char* cook_strdup(const char* source) {
 	const size_t size = strlen(source) + 1;
-	char* copy = (char*)malloc(size);
+	char*        copy = (char*)malloc(size);
 	if (copy) {
 		memcpy(copy, source, size);
 	}
@@ -60,22 +60,19 @@ void aeron_gltf_cook_default_options(AeronGltfCookOptions* out) {
  * uniformly over channels. */
 
 typedef struct ChannelBinding {
-	int            channel;  /* AeronGltfCookChannel */
-	const char*    name;     /* for diagnostics */
-	Ktx2TransferFn transfer; /* KTX2_TF_SRGB | LINEAR (BC7 only) */
-	ChannelFormat  format;   /* BC7 | BC5 */
+	int               channel;  /* AeronGltfCookChannel */
+	const char*       name;     /* for diagnostics */
+	Ktx2TransferFn    transfer; /* KTX2_TF_SRGB | LINEAR (BC7 only) */
+	ChannelFormat     format;   /* BC7 | BC5 */
 	Ktx2AlphaEncoding alpha_encoding;
 } ChannelBinding;
 
 static const ChannelBinding kChannels[AERON_GLTF_COOK_CHANNEL_COUNT] = {
-	{ AERON_GLTF_COOK_CHANNEL_BASE_COLOR, "base_color", KTX2_TF_SRGB, CH_FMT_BC7,
-	  KTX2_ALPHA_STRAIGHT },
-	{ AERON_GLTF_COOK_CHANNEL_NORMAL, "normal", KTX2_TF_LINEAR, CH_FMT_BC5,
-	  KTX2_ALPHA_PREMULTIPLIED },
+	{ AERON_GLTF_COOK_CHANNEL_BASE_COLOR, "base_color", KTX2_TF_SRGB, CH_FMT_BC7, KTX2_ALPHA_STRAIGHT },
+	{ AERON_GLTF_COOK_CHANNEL_NORMAL, "normal", KTX2_TF_LINEAR, CH_FMT_BC5, KTX2_ALPHA_PREMULTIPLIED },
 	{ AERON_GLTF_COOK_CHANNEL_METALLIC_ROUGHNESS, "metallic_roughness", KTX2_TF_LINEAR, CH_FMT_BC7,
 	  KTX2_ALPHA_PREMULTIPLIED },
-	{ AERON_GLTF_COOK_CHANNEL_EMISSIVE, "emissive", KTX2_TF_SRGB, CH_FMT_BC7,
-	  KTX2_ALPHA_PREMULTIPLIED },
+	{ AERON_GLTF_COOK_CHANNEL_EMISSIVE, "emissive", KTX2_TF_SRGB, CH_FMT_BC7, KTX2_ALPHA_PREMULTIPLIED },
 };
 
 /* Per-channel KTX2 encode dispatch. Same in-buffer output shape for
@@ -86,16 +83,14 @@ static bool encode_channel_ktx2(const ChannelBinding* cb, int w, int h, const ui
 								int max_levels, uint8_t** out_buf, size_t* out_size) {
 	if (encoding == AERON_GLTF_COOK_ENCODING_RGBA8) {
 		return write_ktx2_rgba_with_generated_mips_to_buffer_limited_alpha(
-			w, h, rgba, cb->transfer, zstd, max_levels, cb->alpha_encoding,
-			out_buf, out_size);
+			w, h, rgba, cb->transfer, zstd, max_levels, cb->alpha_encoding, out_buf, out_size);
 	}
 	if (cb->format == CH_FMT_BC5) {
 		return write_ktx2_bc5_with_generated_mips_to_buffer_limited(w, h, rgba, zstd, max_levels, out_buf,
 																	out_size);
 	}
 	return write_ktx2_bc7_with_generated_mips_to_buffer_limited_alpha(
-		w, h, rgba, bc7_q, cb->transfer, zstd, max_levels,
-		cb->alpha_encoding, out_buf, out_size);
+		w, h, rgba, bc7_q, cb->transfer, zstd, max_levels, cb->alpha_encoding, out_buf, out_size);
 }
 
 /* Return the texture_view for (material, channel), or NULL if not

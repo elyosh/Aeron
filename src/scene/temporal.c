@@ -66,8 +66,7 @@ int AeronSceneTemporal_Ensure(AeronScene3D* s) {
 	if (s->temporal_tried) {
 		return s->temporal_upscaler && s->temporal_depth_rt && s->velocity_rt &&
 			   (AeronTemporalUpscaler_UsesDirectHistory(s->temporal_upscaler) || s->temporal_output_rt) &&
-			   s->temporal_sky_velocity_pipeline && s->temporal_copy_pipeline &&
-			   s->temporal_copy_sampler;
+			   s->temporal_sky_velocity_pipeline && s->temporal_copy_pipeline && s->temporal_copy_sampler;
 	}
 	s->temporal_tried    = 1;
 	s->temporal_upscaler = AeronTemporalUpscaler_Create(&(AeronTemporalUpscalerDesc) {
@@ -109,8 +108,8 @@ int AeronSceneTemporal_Ensure(AeronScene3D* s) {
 	}
 	s->temporal_sky_velocity_ps =
 		AeronSceneInternal_CompileShader("scene_mb_camera_fill.frag", AERON_SHADER_STAGE_FRAGMENT, 0, 1, 0);
-	s->temporal_copy_ps = AeronSceneInternal_CompileShader("scene_temporal_copy.frag",
-														   AERON_SHADER_STAGE_FRAGMENT, 1, 0, 0);
+	s->temporal_copy_ps =
+		AeronSceneInternal_CompileShader("scene_temporal_copy.frag", AERON_SHADER_STAGE_FRAGMENT, 1, 0, 0);
 	if (s->fullscreen_vs && s->temporal_sky_velocity_ps) {
 		s->temporal_sky_velocity_pipeline = temporal_sky_velocity_pipeline(s);
 	}
@@ -127,8 +126,7 @@ int AeronSceneTemporal_Ensure(AeronScene3D* s) {
 	});
 	if (!s->temporal_upscaler || !s->temporal_depth_rt || !s->velocity_rt ||
 		(!AeronTemporalUpscaler_UsesDirectHistory(s->temporal_upscaler) && !s->temporal_output_rt) ||
-		!s->temporal_sky_velocity_pipeline || !s->temporal_copy_pipeline ||
-		!s->temporal_copy_sampler) {
+		!s->temporal_sky_velocity_pipeline || !s->temporal_copy_pipeline || !s->temporal_copy_sampler) {
 		Aeron_LogError("aeron.scene", "FSR 3.1.4 %s initialization failed",
 					   AeronTemporal_ModeName(s->temporal_active_mode));
 		return 0;
@@ -230,8 +228,7 @@ int AeronSceneTemporal_EnsureMutableOutput(AeronScene3D* s, AeronCommandBuffer* 
 	if (!s->scene_rt_out_borrowed) {
 		return 1;
 	}
-	if (!temporal_ensure_output_target(s) || !s->temporal_copy_pipeline ||
-		!s->temporal_copy_sampler) {
+	if (!temporal_ensure_output_target(s) || !s->temporal_copy_pipeline || !s->temporal_copy_sampler) {
 		return 0;
 	}
 	AeronTexture* source = Aeron_RenderTargetGetTexture(s->scene_rt_out);

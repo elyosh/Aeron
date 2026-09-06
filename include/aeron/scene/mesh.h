@@ -56,13 +56,13 @@ typedef struct AeronSceneMesh {
 	uint32_t     vertex_count;
 	uint32_t     index_count;
 	/* Stable opaque, alpha-mask, and alpha-blend ranges. */
-	uint32_t     opaque_index_count;
-	uint32_t     mask_index_offset;
-	uint32_t     mask_index_count;
-	uint32_t     blend_index_offset;
-	uint32_t     blend_index_count;
+	uint32_t                 opaque_index_count;
+	uint32_t                 mask_index_offset;
+	uint32_t                 mask_index_count;
+	uint32_t                 blend_index_offset;
+	uint32_t                 blend_index_count;
 	AeronSceneMeshCpuVertex* cpu_vertices;
-	uint16_t*                 cpu_indices;
+	uint16_t*                cpu_indices;
 
 	/* Channel atlases (base_color / normal / metallic_rough / emissive).
 	 * Factor-only models have no atlases; textured models carry all four. */
@@ -86,7 +86,7 @@ typedef struct AeronSceneMesh {
 	float bound_radius;
 	/* Engine glows copied from the source flight model (owned). */
 	AeronFlightEngineGlow* engine_glows;
-	uint32_t             engine_glow_count;
+	uint32_t               engine_glow_count;
 } AeronSceneMesh;
 
 typedef enum AeronSceneMeshCreateStatus {
@@ -103,8 +103,7 @@ typedef enum AeronSceneMeshCreateStatus {
  * failure and classifies it through `status`; everything allocated so far is
  * released. `debug_name` labels diagnostics. The caller owns `model`. */
 AeronSceneMesh* AeronScene_MeshCreate(AeronCommandBuffer* cmd, const AeronFlightModel* model,
-									  const char* debug_name,
-									  AeronSceneMeshCreateStatus* status);
+									  const char* debug_name, AeronSceneMeshCreateStatus* status);
 
 void AeronScene_MeshDestroy(AeronSceneMesh* mesh);
 

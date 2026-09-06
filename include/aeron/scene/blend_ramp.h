@@ -27,19 +27,19 @@ extern "C" {
 #endif
 
 typedef struct AeronBlendRamp {
-    float alpha;          /* current displayed mix, 0..1 */
-    float target;         /* user intent (0 or 1), set by toggle */
-    float tau_seconds;    /* exponential ease time constant */
+	float alpha;       /* current displayed mix, 0..1 */
+	float target;      /* user intent (0 or 1), set by toggle */
+	float tau_seconds; /* exponential ease time constant */
 } AeronBlendRamp;
 
-void  Aeron_BlendRampInit    (AeronBlendRamp *s);
-void  Aeron_BlendRampToggle  (AeronBlendRamp *s);
-void  Aeron_BlendRampAdvance (AeronBlendRamp *s, int32_t delta_us, float effective_target);
+void Aeron_BlendRampInit(AeronBlendRamp* s);
+void Aeron_BlendRampToggle(AeronBlendRamp* s);
+void Aeron_BlendRampAdvance(AeronBlendRamp* s, int32_t delta_us, float effective_target);
 
 /* True when alpha is within the snap epsilon of 0 or 1 — no fade
  * animation in progress. The main loop skips the offscreen RT path
  * entirely in this case and renders straight to the backbuffer. */
-bool  Aeron_BlendRampIsSolid(const AeronBlendRamp *s);
+bool Aeron_BlendRampIsSolid(const AeronBlendRamp* s);
 
 #ifdef __cplusplus
 }

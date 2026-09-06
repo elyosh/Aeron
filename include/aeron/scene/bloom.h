@@ -39,9 +39,9 @@ typedef struct AeronSceneBloom AeronSceneBloom;
  * a format — the chain's format is independent of the flight RT.
  *
  * Returns NULL on shader compile / pipeline / texture create failure. */
-AeronSceneBloom *AeronSceneBloom_Create(int rt_w, int rt_h);
+AeronSceneBloom* AeronSceneBloom_Create(int rt_w, int rt_h);
 
-void         AeronSceneBloom_Destroy(AeronSceneBloom *b);
+void AeronSceneBloom_Destroy(AeronSceneBloom* b);
 
 /* Run the bloom chain — bright pass + N down + N up. Leaves the
  * accumulated bloom in mip0 (queryable via AeronSceneBloom_ColorRt) so
@@ -58,22 +58,19 @@ void         AeronSceneBloom_Destroy(AeronSceneBloom *b);
  *
  * `cmd` must NOT have an active render or copy pass on entry. Returns zero
  * when the chain could not be recorded completely. */
-int          AeronSceneBloom_Apply(AeronSceneBloom *b,
-                                struct AeronCommandBuffer *cmd,
-                                AeronTexture *flight_color_rt,
-                                int rt_w, int rt_h,
-                                int scissor_max_y);
+int AeronSceneBloom_Apply(AeronSceneBloom* b, struct AeronCommandBuffer* cmd, AeronTexture* flight_color_rt,
+						  int rt_w, int rt_h, int scissor_max_y);
 
 /* Borrow the bloom mip0 texture — sampled by the final present pass
  * (flight_tonemap.frag) at fragment slot t1. */
-AeronRenderTarget *AeronSceneBloom_ColorRt(const AeronSceneBloom *b);
+AeronRenderTarget* AeronSceneBloom_ColorRt(const AeronSceneBloom* b);
 
 /* Intensity uniform passed to the present pass. Process-wide runtime
  * knob (default 0.5); 0 disables the bloom contribution entirely —
  * hosts may also skip AeronSceneBloom_Apply when it reads 0 to save
  * the chain's GPU cost. */
-float         AeronSceneBloom_Intensity(void);
-void          AeronSceneBloom_SetIntensity(float v);
+float AeronSceneBloom_Intensity(void);
+void  AeronSceneBloom_SetIntensity(float v);
 
 #ifdef __cplusplus
 }

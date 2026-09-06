@@ -21,19 +21,19 @@ typedef struct AeronVfsCaseDirectory AeronVfsCaseDirectory;
 struct AeronIso9660;
 
 struct AeronVfs {
-	char asset_root[AERON_MAX_PATH];
-	char resource_root[AERON_MAX_PATH];
-	char user_root[AERON_MAX_PATH];
-	char temp_root[AERON_MAX_PATH];
-	uint32_t root_options[AERON_VFS_ROOT_COUNT];
+	char                   asset_root[AERON_MAX_PATH];
+	char                   resource_root[AERON_MAX_PATH];
+	char                   user_root[AERON_MAX_PATH];
+	char                   temp_root[AERON_MAX_PATH];
+	uint32_t               root_options[AERON_VFS_ROOT_COUNT];
 	AeronVfsCaseDirectory* case_directories[AERON_VFS_ROOT_COUNT];
-	struct AeronIso9660* iso_roots[AERON_VFS_ROOT_COUNT];
+	struct AeronIso9660*   iso_roots[AERON_VFS_ROOT_COUNT];
 };
 
 struct AeronFile {
 	SDL_IOStream* stream;
-	int eof;
-	int error;
+	int           eof;
+	int           error;
 };
 
 struct AeronTexture {
@@ -56,7 +56,7 @@ struct AeronBuffer {
 };
 
 struct AeronSampler {
-	SDL_GPUSampler* sampler;
+	SDL_GPUSampler*  sampler;
 	AeronSamplerDesc desc;
 };
 
@@ -110,38 +110,38 @@ typedef struct AeronUploadCycleState {
  * one transfer allocation per region. Compute-pass state is embedded so pass
  * encoding does not allocate in steady state. */
 struct AeronCommandBuffer {
-	SDL_GPUCommandBuffer* command_buffer;
-	AeronUploadChunk*     upload_chunks;
-	uint32_t              upload_chunk_count;
-	uint32_t              upload_chunk_capacity;
-	uint64_t              upload_staged_bytes;
-	uint64_t              upload_reserved_bytes;
-	uint32_t              upload_copy_count;
-	uint32_t              upload_buffer_copy_count;
-	uint32_t              upload_texture_copy_count;
-	uint32_t              upload_copy_pass_count;
-	uint32_t              largest_upload_bytes;
-	uint32_t              next_upload_chunk_size;
+	SDL_GPUCommandBuffer*  command_buffer;
+	AeronUploadChunk*      upload_chunks;
+	uint32_t               upload_chunk_count;
+	uint32_t               upload_chunk_capacity;
+	uint64_t               upload_staged_bytes;
+	uint64_t               upload_reserved_bytes;
+	uint32_t               upload_copy_count;
+	uint32_t               upload_buffer_copy_count;
+	uint32_t               upload_texture_copy_count;
+	uint32_t               upload_copy_pass_count;
+	uint32_t               largest_upload_bytes;
+	uint32_t               next_upload_chunk_size;
 	AeronUploadCycleState* upload_cycle_states;
 	uint32_t               upload_cycle_state_count;
 	uint32_t               upload_cycle_state_capacity;
-	AeronComputePass      active_compute_pass;
-	int                   compute_pass_active;
-	int                   render_pass_active;
-	int                   owns_wrapper;
-	int                   immediate_upload;
-	int                   failed;
-	char                  failure_message[512];
+	AeronComputePass       active_compute_pass;
+	int                    compute_pass_active;
+	int                    render_pass_active;
+	int                    owns_wrapper;
+	int                    immediate_upload;
+	int                    failed;
+	char                   failure_message[512];
 };
 
 struct AeronRenderPass {
 	SDL_GPUCommandBuffer* command_buffer;
 	SDL_GPURenderPass*    render_pass;
 	AeronCommandBuffer*   owner;
-	float               output_rgb_scale;
-	AeronSampleCount    sample_count;
-	AeronTextureFormat  depth_format;
-	int                 debug_group_open;
+	float                 output_rgb_scale;
+	AeronSampleCount      sample_count;
+	AeronTextureFormat    depth_format;
+	int                   debug_group_open;
 };
 
 typedef struct AeronPixelLayerUpload {
@@ -175,6 +175,7 @@ typedef enum AeronRenderLayerKind {
 typedef struct AeronRenderLayer {
 	AeronRenderLayerKind kind;
 	int                  pixel_upload_index;
+
 	union {
 		AeronPixelLayerDesc           pixel;
 		AeronTextureLayerDesc         texture;
@@ -211,46 +212,46 @@ typedef struct AeronRuntime {
 	 * the display properties cached from the last HDR-state event. The desired
 	 * flag is kept so the composition can be re-applied when a display becomes
 	 * HDR-capable (or stops being one) while the app runs. */
-	int                         hdr_output_desired;
-	int                         hdr_output_enabled;
-	int                         hdr_reapply_pending;
-	float                       hdr_headroom;
-	float                       hdr_sdr_white_level;
+	int   hdr_output_desired;
+	int   hdr_output_enabled;
+	int   hdr_reapply_pending;
+	float hdr_headroom;
+	float hdr_sdr_white_level;
 	/* Decode gamma for display-referred sRGB layers composited into the HDR
 	 * swapchain: 0 = piecewise sRGB curve, >0 = pow(rgb, gamma). SDR
 	 * compositions always use the piecewise curve (exact encode inverse). */
-	float                       hdr_sdr_content_gamma;
+	float hdr_sdr_content_gamma;
 	/* Paper white override in nits (scRGB: 80 nits == 1.0); 0 follows the
 	 * OS SDR white level. */
-	float                       hdr_paper_white_nits;
-	AeronRenderLayer            render_layers[AERON_MAX_RENDER_LAYERS];
-	uint16_t                    render_submission_generation;
-	AeronPixelLayerUpload       pixel_layer_uploads[AERON_MAX_PIXEL_LAYER_UPLOADS];
-	AeronPixelLayerUpload       composition_pixel_upload;
-	int                         render_layer_count;
-	int                         pixel_layer_upload_count;
-	int                         logical_width;
-	int                         logical_height;
-	int                         window_aspect_width;
-	int                         window_aspect_height;
-	int                         window_aspect_pending;
-	int                         presentation_pixel_width;
-	int                         presentation_pixel_height;
-	int                         relative_mouse_enabled;
-	AeronPresentationMode       presentation_mode;
-	int                         presentation_vsync_divisor;
-	SDL_DisplayID               presentation_display_id;
-	double                      display_refresh_hz;
-	uint64_t                    presentation_next_frame_us;
-	float                       clear_color_rgba[4];
-	AeronInputSnapshot          input;
-	AeronControllerDevice       controllers[AERON_CONTROLLER_MAX];
-	uint64_t                    last_frame_us;
-	AeronVfs                    vfs;
-	char                        app_name[128];
-	char                        shader_root[AERON_MAX_PATH];
-	char                        render_error[512];
-	AeronRenderDataStats        render_data_stats;
+	float                 hdr_paper_white_nits;
+	AeronRenderLayer      render_layers[AERON_MAX_RENDER_LAYERS];
+	uint16_t              render_submission_generation;
+	AeronPixelLayerUpload pixel_layer_uploads[AERON_MAX_PIXEL_LAYER_UPLOADS];
+	AeronPixelLayerUpload composition_pixel_upload;
+	int                   render_layer_count;
+	int                   pixel_layer_upload_count;
+	int                   logical_width;
+	int                   logical_height;
+	int                   window_aspect_width;
+	int                   window_aspect_height;
+	int                   window_aspect_pending;
+	int                   presentation_pixel_width;
+	int                   presentation_pixel_height;
+	int                   relative_mouse_enabled;
+	AeronPresentationMode presentation_mode;
+	int                   presentation_vsync_divisor;
+	SDL_DisplayID         presentation_display_id;
+	double                display_refresh_hz;
+	uint64_t              presentation_next_frame_us;
+	float                 clear_color_rgba[4];
+	AeronInputSnapshot    input;
+	AeronControllerDevice controllers[AERON_CONTROLLER_MAX];
+	uint64_t              last_frame_us;
+	AeronVfs              vfs;
+	char                  app_name[128];
+	char                  shader_root[AERON_MAX_PATH];
+	char                  render_error[512];
+	AeronRenderDataStats  render_data_stats;
 } AeronRuntime;
 
 extern AeronRuntime g_aeron;

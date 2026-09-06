@@ -23,6 +23,7 @@ extern "C" {
 /* WAVEFORMATEX-compatible PCM format descriptor (matches the on-disk WAV
  * `fmt ` chunk layout). */
 #pragma pack(push, 1)
+
 typedef struct DSWaveFormat {
 	uint16_t wFormatTag;
 	uint16_t nChannels;
@@ -36,10 +37,10 @@ typedef struct DSWaveFormat {
 /* DSBUFFERDESC-compatible. Mirrors imsound.c's ImDSBufferDescCompat field for
  * field, so both consumers can share the shim's CreateSoundBuffer. */
 typedef struct DSBufferDesc {
-	uint32_t dwSize;
-	uint32_t dwFlags;
-	uint32_t dwBufferBytes;
-	uint32_t dwReserved;
+	uint32_t      dwSize;
+	uint32_t      dwFlags;
+	uint32_t      dwBufferBytes;
+	uint32_t      dwReserved;
 	DSWaveFormat* lpwfxFormat;
 } DSBufferDesc;
 
@@ -79,22 +80,23 @@ typedef struct DSoundDeviceCaps {
 	uint32_t dwReserved1;
 	uint32_t dwReserved2;
 } DSoundDeviceCaps;
+
 #pragma pack(pop)
 
 /* DirectSound buffer capability/playback flags actually used by recovered code. */
 enum {
-	DSBCAPS_PRIMARYBUFFER = 0x00000001,
-	DSBCAPS_STATIC = 0x00000002,
-	DSBCAPS_LOCHARDWARE = 0x00000004,
-	DSBCAPS_CTRL3D = 0x00000010,
-	DSBCAPS_CTRLFREQUENCY = 0x00000020,
-	DSBCAPS_CTRLPAN = 0x00000040,
-	DSBCAPS_CTRLVOLUME = 0x00000080,
+	DSBCAPS_PRIMARYBUFFER       = 0x00000001,
+	DSBCAPS_STATIC              = 0x00000002,
+	DSBCAPS_LOCHARDWARE         = 0x00000004,
+	DSBCAPS_CTRL3D              = 0x00000010,
+	DSBCAPS_CTRLFREQUENCY       = 0x00000020,
+	DSBCAPS_CTRLPAN             = 0x00000040,
+	DSBCAPS_CTRLVOLUME          = 0x00000080,
 	DSBCAPS_MUTE3DATMAXDISTANCE = 0x00020000,
-	DSBLOCK_ENTIREBUFFER = 0x00000002,
-	DSBPLAY_LOOPING = 0x00000001,
-	DSBSTATUS_PLAYING = 0x00000001,
-	DSBSTATUS_LOOPING = 0x00000004,
+	DSBLOCK_ENTIREBUFFER        = 0x00000002,
+	DSBPLAY_LOOPING             = 0x00000001,
+	DSBSTATUS_PLAYING           = 0x00000001,
+	DSBSTATUS_LOOPING           = 0x00000004,
 	/* DirectSound DSBCAPS_GETCURRENTPOSITION2: the buffer's owner polls the play
 	 * cursor, i.e. it is used as a streaming buffer. iMUSE already sets this on
 	 * its music buffer; the shim uses it to back a buffer with an Aeron ring
@@ -108,7 +110,7 @@ typedef struct DSCompatGuid {
 	uint32_t data1;
 	uint16_t data2;
 	uint16_t data3;
-	uint8_t data4[8];
+	uint8_t  data4[8];
 } DSCompatGuid;
 
 extern const DSCompatGuid IID_IDirectSound3DBuffer;

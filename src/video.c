@@ -331,8 +331,7 @@ static int64_t AeronVideo_MediaPosition(AeronVideoPlayer* player, uint64_t now_u
 			return INT64_MAX;
 		}
 		audio_position = player->audio_start_pts_us + elapsed_us;
-		if (!player->audio_clock_exhausted && player->worker_eof &&
-			audible >= player->total_audio_frames) {
+		if (!player->audio_clock_exhausted && player->worker_eof && audible >= player->total_audio_frames) {
 			/* Audio is the master clock while samples remain. Continue from the
 			 * same position on wall time once EOF audio is exhausted so a video
 			 * tail, including sub-sample timestamp rounding, can complete. */
@@ -392,7 +391,7 @@ void Aeron_VideoUpdate(AeronVideoPlayer* player) {
 	if (!player) {
 		return;
 	}
-	now_us = Aeron_NowUs();
+	now_us       = Aeron_NowUs();
 	audio_stream = AeronVideo_GetAudioStream(player);
 	if (audio_stream) {
 		queued_audio = Aeron_AudioStreamQueuedFrames(audio_stream);
@@ -612,7 +611,7 @@ int Aeron_VideoGetNextWakeDelayUs(const AeronVideoPlayer* player, uint64_t* out_
 		return 0;
 	}
 	frame_start_us = Aeron_TimeFrameStartUs();
-	*out_delay_us = deadline > frame_start_us ? deadline - frame_start_us : 0;
+	*out_delay_us  = deadline > frame_start_us ? deadline - frame_start_us : 0;
 	return 1;
 }
 

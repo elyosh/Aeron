@@ -51,8 +51,8 @@ float4 main(float4 position : SV_Position, float2 texcoord : TEXCOORD0) : SV_Tar
 		 * HDR extended-linear composition: the compositor displays linear light
 		 * faithfully there, and display-referred art authored for ~2.2-power SDR
 		 * monitors renders with lifted darks if decoded with the piecewise toe. */
-		color.rgb = params.w > 0.0 ? pow(saturate(color.rgb), params.w)
-								   : AeronSrgbToLinear(saturate(color.rgb));
+		color.rgb =
+			params.w > 0.0 ? pow(saturate(color.rgb), params.w) : AeronSrgbToLinear(saturate(color.rgb));
 	} else if (params.x == 2.0 && params.w > 0.0) {
 		/* Display-referred source that arrives linear (hardware _SRGB decode).
 		 * Undo the piecewise decode and reapply the display gamma so the net

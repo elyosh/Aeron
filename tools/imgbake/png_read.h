@@ -20,9 +20,7 @@ extern "C" {
 #include <stdbool.h>
 #endif
 
-bool read_png_rgba(const char *path, uint8_t **out_rgba,
-                   int *out_w, int *out_h,
-                   char *err, size_t errsz);
+bool read_png_rgba(const char* path, uint8_t** out_rgba, int* out_w, int* out_h, char* err, size_t errsz);
 
 #ifdef __cplusplus
 }

@@ -297,14 +297,13 @@ static void ui_scroll_focus_into_view(AeronUiContext* ctx, const UiWidgetRec* fo
 	if (!slot) {
 		return;
 	}
-	const float view_top    = scroll->view_y;
-	const float view_bottom = scroll->view_y + scroll->view_h;
-	const float margin =
-		fminf(ui_ref(ctx, ctx->theme.row_height + ctx->theme.item_spacing),
-			  fmaxf(0.0f, (scroll->view_h - focused->rect.h) * 0.5f));
+	const float view_top     = scroll->view_y;
+	const float view_bottom  = scroll->view_y + scroll->view_h;
+	const float margin       = fminf(ui_ref(ctx, ctx->theme.row_height + ctx->theme.item_spacing),
+									 fmaxf(0.0f, (scroll->view_h - focused->rect.h) * 0.5f));
 	const float focus_top    = focused->rect.y - margin;
 	const float focus_bottom = focused->rect.y + focused->rect.h + margin;
-	float       offset      = slot->v0;
+	float       offset       = slot->v0;
 	if (focus_top < view_top) {
 		offset -= view_top - focus_top;
 	} else if (focus_bottom > view_bottom) {

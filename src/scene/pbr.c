@@ -45,13 +45,16 @@ typedef struct AeronScenePbrVsBlock {
 	float    prev_view_proj[16];
 	float    prev_model_to_world[16];
 } AeronScenePbrVsBlock; /* 368 B */
+
 typedef char AeronScenePbrVsBlockSizeCheck[sizeof(AeronScenePbrVsBlock) == 368 ? 1 : -1];
 
-static AeronShader* pbr_shader(const char* name, AeronShaderStage stage, uint32_t samplers,
-							   uint32_t ubs, uint32_t sbs) {
-	AeronShader* sh = Aeron_CreateShader(&(AeronShaderDesc) {
-		.name = name, .stage = stage, .sampler_count = samplers,
-		.uniform_buffer_count = ubs, .storage_buffer_count = sbs });
+static AeronShader* pbr_shader(const char* name, AeronShaderStage stage, uint32_t samplers, uint32_t ubs,
+							   uint32_t sbs) {
+	AeronShader* sh = Aeron_CreateShader(&(AeronShaderDesc) { .name                 = name,
+															  .stage                = stage,
+															  .sampler_count        = samplers,
+															  .uniform_buffer_count = ubs,
+															  .storage_buffer_count = sbs });
 	if (!sh) {
 		Aeron_LogError("aeron.scene", "PBR shader load failed: %s", name);
 	}
@@ -157,15 +160,14 @@ static AeronGraphicsPipeline* pbr_pipeline_create(struct AeronScene3D* s, int ki
 			return pbr_pipeline(s->pbr_vs, color_fs, &color_rw, 1, 1, s->sample_count != AERON_SAMPLE_COUNT_1,
 								s->sample_count != AERON_SAMPLE_COUNT_1 ? AERON_COMPARE_GREATER_EQUAL
 																		: AERON_COMPARE_EQUAL,
-									cull, 0, s->sample_count);
+								cull, 0, s->sample_count);
 		case AERON_PBR_PIPE_MESH_MASK:
-			return pbr_pipeline(s->pbr_vs, color_fs, &color_rw, 1, 1, 1,
-								AERON_COMPARE_GREATER_EQUAL, cull, 0, s->sample_count);
+			return pbr_pipeline(s->pbr_vs, color_fs, &color_rw, 1, 1, 1, AERON_COMPARE_GREATER_EQUAL, cull, 0,
+								s->sample_count);
 		case AERON_PBR_PIPE_FORWARD_MASK:
-			return pbr_pipeline(s->pbr_vs, color_fs, &color_rw, 1, 1,
-								s->sample_count != AERON_SAMPLE_COUNT_1,
-								s->sample_count != AERON_SAMPLE_COUNT_1
-									? AERON_COMPARE_GREATER_EQUAL : AERON_COMPARE_EQUAL,
+			return pbr_pipeline(s->pbr_vs, color_fs, &color_rw, 1, 1, s->sample_count != AERON_SAMPLE_COUNT_1,
+								s->sample_count != AERON_SAMPLE_COUNT_1 ? AERON_COMPARE_GREATER_EQUAL
+																		: AERON_COMPARE_EQUAL,
 								cull, 0, s->sample_count);
 		case AERON_PBR_PIPE_PREPASS:
 			return s->pbr_prepass_vs && s->pbr_prepass_fs
@@ -176,18 +178,16 @@ static AeronGraphicsPipeline* pbr_pipeline_create(struct AeronScene3D* s, int ki
 			return s->pbr_prepass_vs && s->pbr_prepass_fs
 					   ? pbr_pipeline(s->pbr_prepass_vs, s->pbr_prepass_fs, pre2, 2, 1, 1,
 									  AERON_COMPARE_GREATER_EQUAL, cull, 0, AERON_SAMPLE_COUNT_1)
-						   : NULL;
+					   : NULL;
 		case AERON_PBR_PIPE_PREPASS_MASK:
 			return s->pbr_prepass_mask_vs && s->pbr_prepass_mask_fs
-					   ? pbr_pipeline(s->pbr_prepass_mask_vs, s->pbr_prepass_mask_fs,
-								  pre1, 1, 1, 1, AERON_COMPARE_GREATER_EQUAL,
-								  cull, 0, AERON_SAMPLE_COUNT_1)
+					   ? pbr_pipeline(s->pbr_prepass_mask_vs, s->pbr_prepass_mask_fs, pre1, 1, 1, 1,
+									  AERON_COMPARE_GREATER_EQUAL, cull, 0, AERON_SAMPLE_COUNT_1)
 					   : NULL;
 		case AERON_PBR_PIPE_PREPASS_MASK_VEL:
 			return s->pbr_prepass_mask_vs && s->pbr_prepass_mask_fs
-					   ? pbr_pipeline(s->pbr_prepass_mask_vs, s->pbr_prepass_mask_fs,
-								  pre2, 2, 1, 1, AERON_COMPARE_GREATER_EQUAL,
-								  cull, 0, AERON_SAMPLE_COUNT_1)
+					   ? pbr_pipeline(s->pbr_prepass_mask_vs, s->pbr_prepass_mask_fs, pre2, 2, 1, 1,
+									  AERON_COMPARE_GREATER_EQUAL, cull, 0, AERON_SAMPLE_COUNT_1)
 					   : NULL;
 		case AERON_PBR_PIPE_PREPASS_STAMP:
 			/* Velocity stamp of alpha-BLEND ranges (instance velocity_stamp
@@ -207,12 +207,11 @@ static AeronGraphicsPipeline* pbr_pipeline_create(struct AeronScene3D* s, int ki
 			return s->pbr_prepass_vs && s->pbr_prepass_fs
 					   ? pbr_pipeline(s->pbr_prepass_vs, s->pbr_prepass_fs, pre3, 3, 1, 1,
 									  AERON_COMPARE_GREATER_EQUAL, cull, 0, AERON_SAMPLE_COUNT_1)
-						   : NULL;
+					   : NULL;
 		case AERON_PBR_PIPE_PREPASS_MASK_TEMPORAL:
 			return s->pbr_prepass_mask_vs && s->pbr_prepass_mask_fs
-					   ? pbr_pipeline(s->pbr_prepass_mask_vs, s->pbr_prepass_mask_fs,
-								  pre3, 3, 1, 1, AERON_COMPARE_GREATER_EQUAL,
-								  cull, 0, AERON_SAMPLE_COUNT_1)
+					   ? pbr_pipeline(s->pbr_prepass_mask_vs, s->pbr_prepass_mask_fs, pre3, 3, 1, 1,
+									  AERON_COMPARE_GREATER_EQUAL, cull, 0, AERON_SAMPLE_COUNT_1)
 					   : NULL;
 		/* Blend ranges: depth test GE (also for the deferred FORWARD path —
 		 * glass is excluded from the depth prepass, so EQUAL cannot match),
@@ -248,11 +247,11 @@ AeronGraphicsPipeline* AeronScenePbr_Pipeline(struct AeronScene3D* s, int kind, 
 		return NULL;
 	}
 	if (!s->pbr_pipes[kind][cull]) {
-		s->pbr_pipes[kind][cull] =
-			pbr_pipeline_create(s, kind, cull, pbr_color_shader(s, kind, 0));
+		s->pbr_pipes[kind][cull] = pbr_pipeline_create(s, kind, cull, pbr_color_shader(s, kind, 0));
 		if (!s->pbr_pipes[kind][cull] && cull != AERON_CULL_NONE) {
-			Aeron_LogWarn("aeron.scene", "PBR pipeline creation failed (kind %d, cull %d); using no-cull variant",
-						  kind, (int)cull);
+			Aeron_LogWarn("aeron.scene",
+						  "PBR pipeline creation failed (kind %d, cull %d); using no-cull variant", kind,
+						  (int)cull);
 			return s->pbr_pipes[kind][AERON_CULL_NONE];
 		}
 	}
@@ -276,8 +275,7 @@ static AeronGraphicsPipeline* pbr_debug_pipeline(struct AeronScene3D* s, int kin
 	}
 	if (!s->pbr_debug_tried) {
 		s->pbr_debug_tried = 1;
-		s->pbr_debug_fs =
-			pbr_shader("scene_pbr_mesh_debug.frag", AERON_SHADER_STAGE_FRAGMENT, 8, 3, 5);
+		s->pbr_debug_fs    = pbr_shader("scene_pbr_mesh_debug.frag", AERON_SHADER_STAGE_FRAGMENT, 8, 3, 5);
 		s->pbr_mask_debug_fs =
 			pbr_shader("scene_pbr_mesh_mask_debug.frag", AERON_SHADER_STAGE_FRAGMENT, 8, 3, 5);
 	}
@@ -285,8 +283,7 @@ static AeronGraphicsPipeline* pbr_debug_pipeline(struct AeronScene3D* s, int kin
 		return NULL;
 	}
 	if (!s->pbr_debug_pipes[kind][cull]) {
-		s->pbr_debug_pipes[kind][cull] = pbr_pipeline_create(
-			s, kind, cull, pbr_color_shader(s, kind, 1));
+		s->pbr_debug_pipes[kind][cull] = pbr_pipeline_create(s, kind, cull, pbr_color_shader(s, kind, 1));
 		if (!s->pbr_debug_pipes[kind][cull] && cull != AERON_CULL_NONE) {
 			return pbr_debug_pipeline(s, kind, AERON_CULL_NONE);
 		}
@@ -307,12 +304,8 @@ static AeronGraphicsPipeline* pbr_draw_pipeline(struct AeronScene3D* s, int kind
 
 static int pbr_required_pipelines_ready(const struct AeronScene3D* s) {
 	static const int required[] = {
-		AERON_PBR_PIPE_MESH,
-		AERON_PBR_PIPE_MESH_MASK,
-		AERON_PBR_PIPE_FORWARD_MASK,
-		AERON_PBR_PIPE_PREPASS_MASK,
-		AERON_PBR_PIPE_PREPASS_MASK_VEL,
-		AERON_PBR_PIPE_PREPASS_MASK_TEMPORAL,
+		AERON_PBR_PIPE_MESH,         AERON_PBR_PIPE_MESH_MASK,        AERON_PBR_PIPE_FORWARD_MASK,
+		AERON_PBR_PIPE_PREPASS_MASK, AERON_PBR_PIPE_PREPASS_MASK_VEL, AERON_PBR_PIPE_PREPASS_MASK_TEMPORAL,
 	};
 	for (size_t index = 0; index < sizeof required / sizeof required[0]; ++index) {
 		if (!s->pbr_pipes[required[index]][AERON_CULL_NONE])
@@ -327,19 +320,14 @@ int AeronScenePbr_Ensure(struct AeronScene3D* s) {
 	}
 	s->pbr_tried = 1;
 
-	s->pbr_vs         = pbr_shader("scene_pbr_mesh.vert", AERON_SHADER_STAGE_VERTEX, 0, 1, 2);
-	s->pbr_prepass_vs =
-		pbr_shader("scene_pbr_prepass.vert", AERON_SHADER_STAGE_VERTEX, 0, 1, 1);
-	s->pbr_prepass_mask_vs =
-		pbr_shader("scene_pbr_prepass_mask.vert", AERON_SHADER_STAGE_VERTEX, 0, 1, 1);
-	s->pbr_prepass_stamp_vs =
-		pbr_shader("scene_pbr_prepass_stamp.vert", AERON_SHADER_STAGE_VERTEX, 0, 1, 1);
-	s->pbr_fs         = pbr_shader("scene_pbr_mesh.frag", AERON_SHADER_STAGE_FRAGMENT, 8, 3, 5);
-	s->pbr_mask_fs =
-		pbr_shader("scene_pbr_mesh_mask.frag", AERON_SHADER_STAGE_FRAGMENT, 8, 3, 5);
-	s->pbr_prepass_fs = pbr_shader("scene_pbr_prepass.frag", AERON_SHADER_STAGE_FRAGMENT, 0, 0, 0);
-	s->pbr_prepass_mask_fs =
-		pbr_shader("scene_pbr_prepass_mask.frag", AERON_SHADER_STAGE_FRAGMENT, 1, 0, 2);
+	s->pbr_vs               = pbr_shader("scene_pbr_mesh.vert", AERON_SHADER_STAGE_VERTEX, 0, 1, 2);
+	s->pbr_prepass_vs       = pbr_shader("scene_pbr_prepass.vert", AERON_SHADER_STAGE_VERTEX, 0, 1, 1);
+	s->pbr_prepass_mask_vs  = pbr_shader("scene_pbr_prepass_mask.vert", AERON_SHADER_STAGE_VERTEX, 0, 1, 1);
+	s->pbr_prepass_stamp_vs = pbr_shader("scene_pbr_prepass_stamp.vert", AERON_SHADER_STAGE_VERTEX, 0, 1, 1);
+	s->pbr_fs               = pbr_shader("scene_pbr_mesh.frag", AERON_SHADER_STAGE_FRAGMENT, 8, 3, 5);
+	s->pbr_mask_fs          = pbr_shader("scene_pbr_mesh_mask.frag", AERON_SHADER_STAGE_FRAGMENT, 8, 3, 5);
+	s->pbr_prepass_fs       = pbr_shader("scene_pbr_prepass.frag", AERON_SHADER_STAGE_FRAGMENT, 0, 0, 0);
+	s->pbr_prepass_mask_fs  = pbr_shader("scene_pbr_prepass_mask.frag", AERON_SHADER_STAGE_FRAGMENT, 1, 0, 2);
 	/* Velocity stamping reads the same mesh-owned material resources. */
 	s->pbr_prepass_stamp_fs =
 		pbr_shader("scene_pbr_prepass_stamp.frag", AERON_SHADER_STAGE_FRAGMENT, 1, 0, 2);
@@ -351,8 +339,8 @@ int AeronScenePbr_Ensure(struct AeronScene3D* s) {
 	/* Cull-NONE variants up front (long-standing default); other cull
 	 * modes are created lazily via AeronScenePbr_Pipeline. */
 	for (int kind = 0; kind < AERON_PBR_PIPE_KIND_COUNT; kind++) {
-		s->pbr_pipes[kind][AERON_CULL_NONE] = pbr_pipeline_create(
-			s, kind, AERON_CULL_NONE, pbr_color_shader(s, kind, 0));
+		s->pbr_pipes[kind][AERON_CULL_NONE] =
+			pbr_pipeline_create(s, kind, AERON_CULL_NONE, pbr_color_shader(s, kind, 0));
 	}
 	if (!pbr_required_pipelines_ready(s)) {
 		Aeron_LogError("aeron.scene", "PBR pipeline creation failed");
@@ -398,14 +386,15 @@ void AeronScenePbr_Release(struct AeronScene3D* s) {
 		Aeron_DestroyShader(s->pbr_debug_fs);
 	if (s->pbr_mask_debug_fs)
 		Aeron_DestroyShader(s->pbr_mask_debug_fs);
-	s->pbr_debug_fs    = NULL;
+	s->pbr_debug_fs      = NULL;
 	s->pbr_mask_debug_fs = NULL;
-	s->pbr_debug_tried = 0;
+	s->pbr_debug_tried   = 0;
 #endif
 }
 
 /* Identity mesh table pushed for instances without a custom one. */
 const AeronSceneMeshTable* AeronScenePbr_IdentityTable(void);
+
 const AeronSceneMeshTable* AeronScenePbr_IdentityTable(void) {
 	static AeronSceneMeshTable t;
 	static int                 built;
@@ -425,8 +414,8 @@ const AeronSceneMeshTable* AeronScenePbr_IdentityTable(void) {
 /* Per-instance uniform pushes shared by the opaque walk and blend sweep. */
 static void pbr_push_instance_uniforms(struct AeronScene3D* s, AeronRenderPass* pass,
 									   const AeronSceneMeshInstance* in, const AeronSceneMesh* m,
-									   const AeronScenePreparedInstance* prepared,
-									   int velocity, int depth_only, int screen_shadow) {
+									   const AeronScenePreparedInstance* prepared, int velocity,
+									   int depth_only, int screen_shadow) {
 	const int            vel = velocity && !in->zero_velocity;
 	AeronScenePbrVsBlock vsb;
 	memset(&vsb, 0, sizeof vsb);
@@ -449,8 +438,7 @@ static void pbr_push_instance_uniforms(struct AeronScene3D* s, AeronRenderPass* 
 	const int receiver_local = (in->shadow_flags & AERON_SCENE_INSTANCE_USE_RECEIVER_LOCAL_SHADOW) != 0;
 	vsb.screen_shadow        = screen_shadow && vsb.receive_shadow && !receiver_local ? 1u : 0u;
 	vsb.current_table_index  = prepared->current_table_index;
-	vsb.previous_table_index = vel ? prepared->previous_table_index
-									 : prepared->current_table_index;
+	vsb.previous_table_index = vel ? prepared->previous_table_index : prepared->current_table_index;
 	vsb.local_light_base     = prepared->local_light_base;
 	vsb.local_light_count    = prepared->local_light_count;
 	Aeron_BindUniformData(pass, AERON_SHADER_STAGE_VERTEX, 0, &vsb, sizeof vsb);
@@ -496,10 +484,9 @@ static void pbr_bind_ao(struct AeronScene3D* s, AeronRenderPass* pass, AeronText
 	}
 	Aeron_BindTextureSampler(pass, AERON_SHADER_STAGE_FRAGMENT, 7,
 							 s->pbr_environment_map ? s->pbr_environment_map
-												: AeronSceneInternal_WhiteCubeTexture(),
+													: AeronSceneInternal_WhiteCubeTexture(),
 							 s->pbr_environment_sampler ? s->pbr_environment_sampler : s->pbr_sampler);
-	Aeron_BindStorageBuffer(pass, AERON_SHADER_STAGE_FRAGMENT, 2,
-							s->point_light_buffer);
+	Aeron_BindStorageBuffer(pass, AERON_SHADER_STAGE_FRAGMENT, 2, s->point_light_buffer);
 	AeronSceneClusteredLights_Bind(s, pass);
 }
 
@@ -509,8 +496,7 @@ static void pbr_bind_material_resources(AeronRenderPass* pass, const AeronSceneM
 	for (uint32_t channel = 0; channel < channel_count; ++channel) {
 		Aeron_BindTextureSampler(
 			pass, AERON_SHADER_STAGE_FRAGMENT, channel,
-			mesh->atlas[channel] ? mesh->atlas[channel] : AeronSceneInternal_WhiteTexture(),
-			atlas_sampler);
+			mesh->atlas[channel] ? mesh->atlas[channel] : AeronSceneInternal_WhiteTexture(), atlas_sampler);
 	}
 	Aeron_BindStorageBuffer(pass, AERON_SHADER_STAGE_FRAGMENT, 0, mesh->material_buffer);
 	Aeron_BindStorageBuffer(pass, AERON_SHADER_STAGE_FRAGMENT, 1, mesh->variant_buffer);
@@ -591,8 +577,8 @@ int AeronScenePbr_DrawInstances(struct AeronScene3D* s, AeronCommandBuffer* cmd,
 		/* Velocity prepass projects through the previous camera; other
 		 * passes use prev = current (zero velocity, VS prev unused). A
 		 * zero_velocity instance stays prev = current even there. */
-		pbr_push_instance_uniforms(s, pass, in, m, &s->prepared_instances[i],
-								   velocity, depth_only, screen_shadow);
+		pbr_push_instance_uniforms(s, pass, in, m, &s->prepared_instances[i], velocity, depth_only,
+								   screen_shadow);
 
 		/* Opaque range only. Mask and blend ranges use their own sweeps. */
 		Aeron_DrawIndexed(pass, m->opaque_index_count, 0, 0);
@@ -602,8 +588,8 @@ int AeronScenePbr_DrawInstances(struct AeronScene3D* s, AeronCommandBuffer* cmd,
 	 * alpha and variant lookup in every depth/color pass. */
 	const int mask_kind = pbr_mask_kind(pipe_kind);
 	if (mask_kind >= 0) {
-		bound_mesh = NULL;
-		bound_cull = AERON_CULL_NONE;
+		bound_mesh                           = NULL;
+		bound_cull                           = AERON_CULL_NONE;
 		AeronGraphicsPipeline* mask_pipeline = NULL;
 		for (int i = 0; i < s->instance_count; ++i) {
 			const AeronSceneMeshInstance* in = &s->instances[i];
@@ -637,8 +623,8 @@ int AeronScenePbr_DrawInstances(struct AeronScene3D* s, AeronCommandBuffer* cmd,
 				Aeron_BindIndexBuffer(pass, m->ibo, AERON_INDEX_FORMAT_UINT16, 0);
 				pbr_bind_material_resources(pass, m, atlas_sampler, !depth_only);
 			}
-			pbr_push_instance_uniforms(s, pass, in, m, &s->prepared_instances[i],
-									   velocity, depth_only, screen_shadow);
+			pbr_push_instance_uniforms(s, pass, in, m, &s->prepared_instances[i], velocity, depth_only,
+									   screen_shadow);
 			Aeron_DrawIndexed(pass, m->mask_index_count, m->mask_index_offset, 0);
 		}
 	}

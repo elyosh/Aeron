@@ -1,5 +1,5 @@
-#include "internal.h"
 #include "aeron/compat/host.h"
+#include "internal.h"
 
 #include "aeron/aeron.h"
 #include "aeron/render.h"
@@ -34,11 +34,11 @@ static void DDShim_FillPixelFormat(DDPIXELFORMAT* pf, AeronPixelFormat fmt) {
 	memset(pf, 0, sizeof(*pf));
 	pf->dwSize = sizeof(DDPIXELFORMAT);
 	if (fmt == AERON_PIXEL_FORMAT_INDEX8) {
-		pf->dwFlags = DDPF_RGB | DDPF_PALETTEINDEXED8;
+		pf->dwFlags       = DDPF_RGB | DDPF_PALETTEINDEXED8;
 		pf->dwRGBBitCount = 8;
 		return;
 	}
-	pf->dwFlags = DDPF_RGB;
+	pf->dwFlags       = DDPF_RGB;
 	pf->dwRGBBitCount = 16;
 	if (fmt == AERON_PIXEL_FORMAT_RGB555) {
 		pf->dwRBitMask = 0x7C00;
@@ -56,9 +56,9 @@ static void DDShim_FillPixelFormat(DDPIXELFORMAT* pf, AeronPixelFormat fmt) {
 static void DDShim_FillSurfaceDesc(DDrawSurfaceShim* s, DDSURFACEDESC* d) {
 	int pitch = s->cpu ? AeronSurface_GetPitch(s->cpu) : (s->width * (s->bpp / 8));
 	d->dwFlags |= DDSD_WIDTH | DDSD_HEIGHT | DDSD_PITCH | DDSD_PIXELFORMAT | DDSD_CAPS;
-	d->dwWidth = (uint32_t)s->width;
-	d->dwHeight = (uint32_t)s->height;
-	d->lPitch = pitch;
+	d->dwWidth        = (uint32_t)s->width;
+	d->dwHeight       = (uint32_t)s->height;
+	d->lPitch         = pitch;
 	d->ddsCaps.dwCaps = s->caps;
 	if (s->has_pixel_format) {
 		d->ddpfPixelFormat = s->pixel_format;
@@ -82,12 +82,12 @@ typedef enum DDShimPresentKind {
 } DDShimPresentKind;
 
 static DDrawSurfaceShim* g_ddLastPresented;
-static AeronSurface* g_ddRetainedCpuPresentation;
-static int g_ddClassicFlightRenderingSuppressed;
-static int g_ddSuppressedPresentPending;
+static AeronSurface*     g_ddRetainedCpuPresentation;
+static int               g_ddClassicFlightRenderingSuppressed;
+static int               g_ddSuppressedPresentPending;
 static DDShimPresentKind g_ddSuppressedPresentKind;
-static uint64_t g_ddClassicFlightFrameSerial;
-static uint64_t g_ddPaletteRevision;
+static uint64_t          g_ddClassicFlightFrameSerial;
+static uint64_t          g_ddPaletteRevision;
 
 static int DDShim_EnsureRenderTargetStaging(DDrawSurfaceShim* s);
 
@@ -96,17 +96,16 @@ static int DDShim_EnsureRenderTargetStaging(DDrawSurfaceShim* s);
 static void DDShim_ApplyPrimaryPalette(DDrawSurfaceShim* surface) {
 	DDrawSurfaceShim* primary;
 	DDrawPaletteShim* palette;
-	if (!surface || surface->format != AERON_PIXEL_FORMAT_INDEX8 || !surface->cpu ||
-		!surface->owner || !(primary = surface->owner->primary) || !primary->palette) {
+	if (!surface || surface->format != AERON_PIXEL_FORMAT_INDEX8 || !surface->cpu || !surface->owner ||
+		!(primary = surface->owner->primary) || !primary->palette) {
 		return;
 	}
 	palette = primary->palette;
-	if (surface->applied_palette == palette &&
-		surface->applied_palette_revision == palette->revision) {
+	if (surface->applied_palette == palette && surface->applied_palette_revision == palette->revision) {
 		return;
 	}
 	if (AeronSurface_SetPalette(surface->cpu, palette->entries, 256)) {
-		surface->applied_palette = palette;
+		surface->applied_palette          = palette;
 		surface->applied_palette_revision = palette->revision;
 	}
 }
@@ -123,7 +122,7 @@ static AeronRectI DDShim_ClassicPresentationRect(const DDrawSurfaceShim* frame) 
 
 static int DDShim_RetainCpuPresentation(DDrawSurfaceShim* frame) {
 	AeronPixelFrameView view;
-	AeronSurface* replacement;
+	AeronSurface*       replacement;
 
 	if (!frame || !frame->cpu)
 		return 0;
@@ -131,13 +130,12 @@ static int DDShim_RetainCpuPresentation(DDrawSurfaceShim* frame) {
 	if (!AeronSurface_GetFrameView(frame->cpu, &view))
 		return 0;
 
-	if (!g_ddRetainedCpuPresentation ||
-		AeronSurface_GetWidth(g_ddRetainedCpuPresentation) != view.width ||
+	if (!g_ddRetainedCpuPresentation || AeronSurface_GetWidth(g_ddRetainedCpuPresentation) != view.width ||
 		AeronSurface_GetHeight(g_ddRetainedCpuPresentation) != view.height ||
 		AeronSurface_GetFormat(g_ddRetainedCpuPresentation) != view.format) {
 		replacement = NULL;
 		if (!AeronSurface_Create(view.width, view.height, view.format,
-							 AERON_SURFACE_CPU_LOCKABLE | AERON_SURFACE_PRESENTABLE, &replacement))
+								 AERON_SURFACE_CPU_LOCKABLE | AERON_SURFACE_PRESENTABLE, &replacement))
 			return 0;
 		AeronSurface_Destroy(g_ddRetainedCpuPresentation);
 		g_ddRetainedCpuPresentation = replacement;
@@ -146,18 +144,17 @@ static int DDShim_RetainCpuPresentation(DDrawSurfaceShim* frame) {
 	if (view.format == AERON_PIXEL_FORMAT_INDEX8 &&
 		(!view.palette || !AeronSurface_SetPalette(g_ddRetainedCpuPresentation, view.palette, 256)))
 		return 0;
-	return AeronSurface_Blit(g_ddRetainedCpuPresentation, 0, 0, frame->cpu, NULL,
-							 AERON_SURFACE_BLIT_NONE);
+	return AeronSurface_Blit(g_ddRetainedCpuPresentation, 0, 0, frame->cpu, NULL, AERON_SURFACE_BLIT_NONE);
 }
 
 static int DDShim_CopyRenderTargetToFront(DDrawSurfaceShim* frame) {
 	AeronCommandBuffer* command_buffer;
-	AeronTexture* source;
-	AeronTexture* destination;
+	AeronTexture*       source;
+	AeronTexture*       destination;
 
 	if (!frame->rt_back)
 		return 1;
-	source = Aeron_RenderTargetGetTexture(frame->rt);
+	source      = Aeron_RenderTargetGetTexture(frame->rt);
 	destination = Aeron_RenderTargetGetTexture(frame->rt_back);
 	if (!source || !destination)
 		return 0;
@@ -168,12 +165,12 @@ static int DDShim_CopyRenderTargetToFront(DDrawSurfaceShim* frame) {
 		return 0;
 	}
 	if (!Aeron_CopyTextureCmd(command_buffer, &(AeronTextureCopyDesc) {
-			.source = source,
-			.destination = destination,
-			.width = (uint32_t)frame->width,
-			.height = (uint32_t)frame->height,
-			.cycle = 1,
-		})) {
+												  .source      = source,
+												  .destination = destination,
+												  .width       = (uint32_t)frame->width,
+												  .height      = (uint32_t)frame->height,
+												  .cycle       = 1,
+											  })) {
 		Aeron_CancelCommandBuffer(command_buffer);
 		Aeron_RequestFatalRendererError("DirectDraw primary blit copy");
 		return 0;
@@ -203,8 +200,8 @@ static int DDShim_CommitRenderTargetPresent(DDrawSurfaceShim* frame, int notify,
 	 * that half without changing the render surface's current storage. */
 	if (kind == DDSHIM_PRESENT_FLIP && frame->rt_back) {
 		AeronRenderTarget* swap = frame->rt;
-		frame->rt = frame->rt_back;
-		frame->rt_back = swap;
+		frame->rt               = frame->rt_back;
+		frame->rt_back          = swap;
 		/* CPU staging still describes the target that was current before the swap. */
 		frame->gpu_dirty = 1;
 	}
@@ -224,9 +221,9 @@ static void DDShim_Present(DDrawSurfaceShim* frame, DDShimPresentKind kind) {
 			 * boundary so EndFrame can commit it if suppression is lifted after the
 			 * recovered tick that produced it. */
 			AeronDx5_NotifyPresent(frame->width, frame->height);
-			g_ddLastPresented = frame;
+			g_ddLastPresented            = frame;
 			g_ddSuppressedPresentPending = 1;
-			g_ddSuppressedPresentKind = kind;
+			g_ddSuppressedPresentKind    = kind;
 			return;
 		}
 		g_ddSuppressedPresentPending = 0;
@@ -256,13 +253,13 @@ static void DDShim_SubmitLastPresented(DDrawSurfaceShim* frame) {
 		/* Double-buffered render surface: after the present-time swap
 		 * the last COMPLETE frame lives in rt_back (rt receives the
 		 * next frame's writes); single-buffered falls back to rt. */
-		AeronRenderTarget* src = frame->rt_back ? frame->rt_back : frame->rt;
+		AeronRenderTarget*    src = frame->rt_back ? frame->rt_back : frame->rt;
 		AeronTextureLayerDesc tex;
 		memset(&tex, 0, sizeof(tex));
-		tex.texture = Aeron_RenderTargetGetTexture(src);
+		tex.texture      = Aeron_RenderTargetGetTexture(src);
 		tex.logical_rect = DDShim_ClassicPresentationRect(frame);
-		tex.blend_mode = AERON_LAYER_BLEND_OPAQUE;
-		tex.color_space = AERON_COLOR_SPACE_SRGB;
+		tex.blend_mode   = AERON_LAYER_BLEND_OPAQUE;
+		tex.color_space  = AERON_COLOR_SPACE_SRGB;
 		if (tex.texture) {
 			if (!Aeron_SubmitTextureLayer(&tex)) {
 				Aeron_RequestFatalRendererError("retained classic texture presentation");
@@ -277,10 +274,10 @@ static void DDShim_SubmitLastPresented(DDrawSurfaceShim* frame) {
 			return;
 		}
 		memset(&layer, 0, sizeof(layer));
-		layer.frame = view;
+		layer.frame        = view;
 		layer.logical_rect = DDShim_ClassicPresentationRect(frame);
-		layer.blend_mode = AERON_LAYER_BLEND_OPAQUE;
-		layer.sampling = AERON_PIXEL_SAMPLING_SHARP_BILINEAR;
+		layer.blend_mode   = AERON_LAYER_BLEND_OPAQUE;
+		layer.sampling     = AERON_PIXEL_SAMPLING_SHARP_BILINEAR;
 		if (!Aeron_SubmitPixelLayer(&layer)) {
 			Aeron_RequestFatalRendererError("retained classic software-surface presentation");
 		}
@@ -306,11 +303,11 @@ void AeronDx5_EndFrame(void) {
 uint64_t AeronDx5_GetClassicFlightFrameSerial(void) { return g_ddClassicFlightFrameSerial; }
 
 void AeronDx5_ResetPresentationState(void) {
-	g_ddLastPresented = NULL;
+	g_ddLastPresented                    = NULL;
 	g_ddClassicFlightRenderingSuppressed = 0;
-	g_ddSuppressedPresentPending = 0;
-	g_ddSuppressedPresentKind = DDSHIM_PRESENT_BLT;
-	g_ddClassicFlightFrameSerial = 0;
+	g_ddSuppressedPresentPending         = 0;
+	g_ddSuppressedPresentKind            = DDSHIM_PRESENT_BLT;
+	g_ddClassicFlightFrameSerial         = 0;
 }
 
 void DDShim_ReleasePresentationResources(void) {
@@ -328,7 +325,7 @@ static int DDShim_ComposeOntoRenderTarget(DDrawSurfaceShim* dst, DDrawSurfaceShi
 										  const AeronSurfaceRect* srcRect, int colorKey) {
 	AeronPixelFrameView view;
 	AeronPixelLayerDesc layer;
-	int bytesPerPixel;
+	int                 bytesPerPixel;
 
 	if (!dst->rt || !src || !src->cpu) {
 		return 0;
@@ -353,16 +350,16 @@ static int DDShim_ComposeOntoRenderTarget(DDrawSurfaceShim* dst, DDrawSurfaceShi
 		}
 		view.pixels = (const unsigned char*)view.pixels + (size_t)srcRect->y * (size_t)view.pitch +
 					  (size_t)srcRect->x * (size_t)bytesPerPixel;
-		view.width = srcRect->w;
+		view.width  = srcRect->w;
 		view.height = srcRect->h;
 	}
 	memset(&layer, 0, sizeof(layer));
-	layer.frame = view;
-	layer.logical_rect.x = dstX;
-	layer.logical_rect.y = dstY;
-	layer.logical_rect.width = view.width;
+	layer.frame               = view;
+	layer.logical_rect.x      = dstX;
+	layer.logical_rect.y      = dstY;
+	layer.logical_rect.width  = view.width;
 	layer.logical_rect.height = view.height;
-	layer.sampling = AERON_PIXEL_SAMPLING_SHARP_BILINEAR;
+	layer.sampling            = AERON_PIXEL_SAMPLING_SHARP_BILINEAR;
 	/* The render target holds display-space (already-encoded) values -- std3D draws
 	 * encoded output into it, matching the original DirectDraw surface. Preserve the
 	 * 2D pixels as-is instead of sRGB-decoding them, so 2D and 3D share one space and
@@ -372,9 +369,9 @@ static int DDShim_ComposeOntoRenderTarget(DDrawSurfaceShim* dst, DDrawSurfaceShi
 		/* Color-key blit: the upload marks keyed pixels alpha=0; alpha blending
 		 * then leaves the render target untouched there (revealing the background
 		 * and 3D underneath) and replaces it with the opaque foreground elsewhere. */
-		layer.blend_mode = AERON_LAYER_BLEND_ALPHA;
+		layer.blend_mode        = AERON_LAYER_BLEND_ALPHA;
 		layer.color_key_enabled = 1;
-		layer.color_key = src->colorkey;
+		layer.color_key         = src->colorkey;
 	} else {
 		/* Opaque blit (the background restore): full overwrite. */
 		layer.blend_mode = AERON_LAYER_BLEND_OPAQUE;
@@ -390,26 +387,26 @@ static int DDShim_ComposeOntoRenderTarget(DDrawSurfaceShim* dst, DDrawSurfaceShi
 
 static int DDShim_ClearGpuTargetColor(const DDrawSurfaceShim* s, AeronRenderTarget* target, uint32_t fill) {
 	AeronCommandBuffer* command_buffer;
-	AeronRenderPass* pass;
-	float rgba[4];
-	int r;
-	int g;
-	int b;
+	AeronRenderPass*    pass;
+	float               rgba[4];
+	int                 r;
+	int                 g;
+	int                 b;
 
 	if (!s || !target) {
 		return 0;
 	}
 	if (s->format == AERON_PIXEL_FORMAT_RGB555) {
-		r = (int)((fill >> 10) & 0x1F);
-		g = (int)((fill >> 5) & 0x1F);
-		b = (int)(fill & 0x1F);
+		r       = (int)((fill >> 10) & 0x1F);
+		g       = (int)((fill >> 5) & 0x1F);
+		b       = (int)(fill & 0x1F);
 		rgba[0] = (float)r / 31.0f;
 		rgba[1] = (float)g / 31.0f;
 		rgba[2] = (float)b / 31.0f;
 	} else { /* RGB565 */
-		r = (int)((fill >> 11) & 0x1F);
-		g = (int)((fill >> 5) & 0x3F);
-		b = (int)(fill & 0x1F);
+		r       = (int)((fill >> 11) & 0x1F);
+		g       = (int)((fill >> 5) & 0x3F);
+		b       = (int)(fill & 0x1F);
 		rgba[0] = (float)r / 31.0f;
 		rgba[1] = (float)g / 63.0f;
 		rgba[2] = (float)b / 31.0f;
@@ -422,13 +419,13 @@ static int DDShim_ClearGpuTargetColor(const DDrawSurfaceShim* s, AeronRenderTarg
 		return 0;
 	}
 	pass = Aeron_BeginRenderPass(&(AeronRenderPassDesc) {
-		.color_target = target,
-		.depth_target = NULL,
-		.viewport = { 0, 0, s->width, s->height },
-		.scissor = { 0, 0, s->width, s->height },
-		.clear_color = 1,
+		.color_target     = target,
+		.depth_target     = NULL,
+		.viewport         = { 0, 0, s->width, s->height },
+		.scissor          = { 0, 0, s->width, s->height },
+		.clear_color      = 1,
 		.clear_color_rgba = { rgba[0], rgba[1], rgba[2], rgba[3] },
-		.command_buffer = command_buffer,
+		.command_buffer   = command_buffer,
 	});
 	if (!pass) {
 		Aeron_CancelCommandBuffer(command_buffer);
@@ -511,8 +508,8 @@ void DDShim_WritebackRenderTarget(DDrawSurfaceShim* s) {
 }
 
 int AeronDx5_ComposeSurfaceOverRenderTarget(IDirectDrawSurface* dst, int dst_x, int dst_y,
-											 IDirectDrawSurface* src, const uint8_t* coverage,
-											 int coverage_pitch) {
+											IDirectDrawSurface* src, const uint8_t* coverage,
+											int coverage_pitch) {
 	DDrawSurfaceShim*   d = (DDrawSurfaceShim*)dst;
 	DDrawSurfaceShim*   s = (DDrawSurfaceShim*)src;
 	AeronPixelLayerDesc layer;
@@ -572,7 +569,7 @@ static int DDShim_EnsureRenderTargetStaging(DDrawSurfaceShim* s) {
 }
 
 static int DDShim_ReadbackRenderTarget(DDrawSurfaceShim* s) {
-	int pitch;
+	int   pitch;
 	void* pixels;
 	if (!s || s->kind != DDSHIM_RENDER_TARGET)
 		return 1;
@@ -620,7 +617,7 @@ static int DDShim_RectToSurfaceRect(const void* rc, AeronSurfaceRect* out) {
 
 static HRESULT AERON_DXAPI DDSurface_QueryInterface(IDirectDrawSurface* self, DxRefIid iid, void** out) {
 	DDrawSurfaceShim* s = (DDrawSurfaceShim*)self;
-	IDirect3DDevice* device;
+	IDirect3DDevice*  device;
 
 	if (!out) {
 		return DX_E_INVALIDARG;
@@ -692,18 +689,16 @@ static uint32_t AERON_DXAPI DDSurface_Release(IDirectDrawSurface* self) {
 }
 
 void AeronDx5_CommitDepthSurfaceRect(IDirectDrawSurface* surface, const AeronDx5Rect* rect) {
-	DDrawSurfaceShim* depth_surface = (DDrawSurfaceShim*)surface;
-	DDrawSurfaceShim* render_surface;
+	DDrawSurfaceShim*   depth_surface = (DDrawSurfaceShim*)surface;
+	DDrawSurfaceShim*   render_surface;
 	AeronPixelFrameView view;
-	uint8_t* upload_data;
-	uint32_t upload_size;
-	int y;
+	uint8_t*            upload_data;
+	uint32_t            upload_size;
+	int                 y;
 
-	if (!depth_surface || !rect || !(render_surface = depth_surface->attached_to) ||
-		!render_surface->depth || !depth_surface->cpu || rect->x < 0 || rect->y < 0 ||
-		rect->width <= 0 || rect->height <= 0 ||
-		rect->x > depth_surface->width - rect->width ||
-		rect->y > depth_surface->height - rect->height ||
+	if (!depth_surface || !rect || !(render_surface = depth_surface->attached_to) || !render_surface->depth ||
+		!depth_surface->cpu || rect->x < 0 || rect->y < 0 || rect->width <= 0 || rect->height <= 0 ||
+		rect->x > depth_surface->width - rect->width || rect->y > depth_surface->height - rect->height ||
 		(uint32_t)rect->width > UINT32_MAX / 2u / (uint32_t)rect->height ||
 		!AeronSurface_GetFrameView(depth_surface->cpu, &view) || view.bpp != 16) {
 		Aeron_RequestFatalRendererError("DirectDraw depth-surface rectangle commit");
@@ -720,37 +715,36 @@ void AeronDx5_CommitDepthSurfaceRect(IDirectDrawSurface* surface, const AeronDx5
 			Aeron_RequestFatalRendererError("DirectDraw depth-surface upload allocation");
 			return;
 		}
-		render_surface->pending_depth_upload_data = upload_data;
+		render_surface->pending_depth_upload_data     = upload_data;
 		render_surface->pending_depth_upload_capacity = upload_size;
 	}
 	for (y = 0; y < rect->height; ++y) {
-		const uint8_t* source = (const uint8_t*)view.pixels +
-			(size_t)(rect->y + y) * (size_t)view.pitch + (size_t)rect->x * 2u;
-		memcpy(render_surface->pending_depth_upload_data +
-				(size_t)y * (size_t)rect->width * 2u,
-			source, (size_t)rect->width * 2u);
+		const uint8_t* source =
+			(const uint8_t*)view.pixels + (size_t)(rect->y + y) * (size_t)view.pitch + (size_t)rect->x * 2u;
+		memcpy(render_surface->pending_depth_upload_data + (size_t)y * (size_t)rect->width * 2u, source,
+			   (size_t)rect->width * 2u);
 	}
-	render_surface->pending_depth_upload_rect =
-		(AeronRectI) { rect->x, rect->y, rect->width, rect->height };
-	render_surface->pending_depth_upload = 1;
+	render_surface->pending_depth_upload_rect = (AeronRectI) { rect->x, rect->y, rect->width, rect->height };
+	render_surface->pending_depth_upload      = 1;
 }
 
 /* Attach a z-buffer to a render surface. The render-target backing owns the real
  * depth target. The CPU attachment also stages explicit depth writes made by
  * recovered code; std3D releases it at teardown. */
-static HRESULT AERON_DXAPI DDSurface_AddAttachedSurface(IDirectDrawSurface* self, IDirectDrawSurface* attach) {
+static HRESULT AERON_DXAPI DDSurface_AddAttachedSurface(IDirectDrawSurface* self,
+														IDirectDrawSurface* attach) {
 	DDrawSurfaceShim* s = (DDrawSurfaceShim*)self;
 	if (!attach) {
 		return DX_E_INVALIDARG;
 	}
 	attach->lpVtbl->AddRef(attach);
-	s->zbuffer = (DDrawSurfaceShim*)attach;
+	s->zbuffer                               = (DDrawSurfaceShim*)attach;
 	((DDrawSurfaceShim*)attach)->attached_to = s;
 	return DX_DD_OK;
 }
 
 static HRESULT AERON_DXAPI DDSurface_DeleteAttachedSurface(IDirectDrawSurface* self, uint32_t flags,
-														 IDirectDrawSurface* attach) {
+														   IDirectDrawSurface* attach) {
 	DDrawSurfaceShim* s = (DDrawSurfaceShim*)self;
 	DDrawSurfaceShim* a = (DDrawSurfaceShim*)attach;
 	(void)flags;
@@ -771,13 +765,13 @@ static HRESULT AERON_DXAPI DDSurface_DeleteAttachedSurface(IDirectDrawSurface* s
 }
 
 static HRESULT AERON_DXAPI DDSurface_Blt(IDirectDrawSurface* self, void* dstRect, IDirectDrawSurface* src,
-									   void* srcRect, uint32_t flags, DDBLTFX* fx) {
+										 void* srcRect, uint32_t flags, DDBLTFX* fx) {
 	DDrawSurfaceShim* d = (DDrawSurfaceShim*)self;
 	if ((flags & DDBLT_ROP) && (!fx || fx->dwROP != DDROP_SRCCOPY))
 		return DX_E_FAIL;
 
 	if (flags & DDBLT_COLORFILL) {
-		uint32_t color = fx ? fx->dwFillColor : 0;
+		uint32_t         color = fx ? fx->dwFillColor : 0;
 		AeronSurfaceRect r;
 		if (d->kind == DDSHIM_PRIMARY) {
 			/* The presentation proxy can model a full visible-surface clear through
@@ -807,17 +801,17 @@ static HRESULT AERON_DXAPI DDSurface_Blt(IDirectDrawSurface* self, void* dstRect
 		 * value is 0 (near) or the format max (far). */
 		DDrawSurfaceShim* rt = d->attached_to ? d->attached_to : (d->kind == DDSHIM_RENDER_TARGET ? d : NULL);
 		if (rt) {
-			rt->pending_depth_upload = 0;
-			rt->pending_depth_clear = 1;
+			rt->pending_depth_upload      = 0;
+			rt->pending_depth_clear       = 1;
 			rt->pending_depth_clear_value = (fx && fx->dwFillDepth != 0) ? 1.0f : 0.0f;
 		}
 		return DX_DD_OK;
 	}
 	{
 		DDrawSurfaceShim* s = (DDrawSurfaceShim*)src;
-		AeronSurfaceRect sr;
-		int have_sr = DDShim_RectToSurfaceRect(srcRect, &sr);
-		DDShimRect* dr = (DDShimRect*)dstRect;
+		AeronSurfaceRect  sr;
+		int               have_sr = DDShim_RectToSurfaceRect(srcRect, &sr);
+		DDShimRect*       dr      = (DDShimRect*)dstRect;
 		if (d->kind == DDSHIM_PRIMARY) {
 			DDShim_Present(s, DDSHIM_PRESENT_BLT);
 			return DX_DD_OK;
@@ -846,11 +840,11 @@ static HRESULT AERON_DXAPI DDSurface_Blt(IDirectDrawSurface* self, void* dstRect
 }
 
 static HRESULT AERON_DXAPI DDSurface_BltFast(IDirectDrawSurface* self, uint32_t x, uint32_t y,
-										   IDirectDrawSurface* src, void* srcRect, uint32_t flags) {
+											 IDirectDrawSurface* src, void* srcRect, uint32_t flags) {
 	DDrawSurfaceShim* d = (DDrawSurfaceShim*)self;
 	DDrawSurfaceShim* s = (DDrawSurfaceShim*)src;
-	AeronSurfaceRect sr;
-	int have_sr = DDShim_RectToSurfaceRect(srcRect, &sr);
+	AeronSurfaceRect  sr;
+	int               have_sr = DDShim_RectToSurfaceRect(srcRect, &sr);
 
 	if (d->kind == DDSHIM_PRIMARY) {
 		DDShim_Present(s, DDSHIM_PRESENT_BLT);
@@ -879,7 +873,7 @@ static HRESULT AERON_DXAPI DDSurface_BltFast(IDirectDrawSurface* self, uint32_t 
 }
 
 static HRESULT AERON_DXAPI DDSurface_Flip(IDirectDrawSurface* self, IDirectDrawSurface* override,
-										uint32_t flags) {
+										  uint32_t flags) {
 	DDrawSurfaceShim* s = (DDrawSurfaceShim*)self;
 	(void)flags;
 	/* Flip makes `override` (or the attached back buffer) the visible frame. */
@@ -888,8 +882,8 @@ static HRESULT AERON_DXAPI DDSurface_Flip(IDirectDrawSurface* self, IDirectDrawS
 }
 
 static HRESULT AERON_DXAPI DDSurface_GetAttachedSurface(IDirectDrawSurface* self, DDSCAPS* caps,
-													  IDirectDrawSurface** out) {
-	DDrawSurfaceShim* s = (DDrawSurfaceShim*)self;
+														IDirectDrawSurface** out) {
+	DDrawSurfaceShim* s          = (DDrawSurfaceShim*)self;
 	DDrawSurfaceShim* attachment = NULL;
 	if (!caps || !out) {
 		return DX_E_INVALIDARG;
@@ -914,7 +908,7 @@ static HRESULT AERON_DXAPI DDSurface_GetColorKey(IDirectDrawSurface* self, uint3
 	if (!key) {
 		return DX_E_INVALIDARG;
 	}
-	key->dwColorSpaceLowValue = s->colorkey;
+	key->dwColorSpaceLowValue  = s->colorkey;
 	key->dwColorSpaceHighValue = s->colorkey;
 	return DX_DD_OK;
 }
@@ -940,10 +934,10 @@ static HRESULT AERON_DXAPI DDSurface_IsLost(IDirectDrawSurface* self) {
 }
 
 static HRESULT AERON_DXAPI DDSurface_Lock(IDirectDrawSurface* self, void* rect, DDSURFACEDESC* desc,
-										uint32_t flags, void* event) {
+										  uint32_t flags, void* event) {
 	DDrawSurfaceShim* s = (DDrawSurfaceShim*)self;
-	int pitch;
-	void* pixels;
+	int               pitch;
+	void*             pixels;
 	(void)rect;
 	(void)flags;
 	(void)event;
@@ -967,7 +961,7 @@ static HRESULT AERON_DXAPI DDSurface_Lock(IDirectDrawSurface* self, void* rect, 
 	}
 	DDShim_FillSurfaceDesc(s, desc);
 	desc->lpSurface = pixels;
-	desc->lPitch = pitch;
+	desc->lPitch    = pitch;
 	return DX_DD_OK;
 }
 
@@ -983,7 +977,7 @@ static HRESULT AERON_DXAPI DDSurface_SetColorKey(IDirectDrawSurface* self, uint3
 		return DX_E_INVALIDARG;
 	}
 	s->has_colorkey = 1;
-	s->colorkey = key->dwColorSpaceLowValue;
+	s->colorkey     = key->dwColorSpaceLowValue;
 	if (s->cpu) {
 		AeronSurface_SetColorKey(s->cpu, 1, s->colorkey);
 	}
@@ -1006,7 +1000,7 @@ static HRESULT AERON_DXAPI DDSurface_SetPalette(IDirectDrawSurface* self, IDirec
 	s->palette = p;
 	if (s->cpu && p && s->format == AERON_PIXEL_FORMAT_INDEX8) {
 		if (AeronSurface_SetPalette(s->cpu, p->entries, 256)) {
-			s->applied_palette = p;
+			s->applied_palette          = p;
 			s->applied_palette_revision = p->revision;
 		}
 	}
@@ -1028,24 +1022,24 @@ static HRESULT AERON_DXAPI DDSurface_Unlock(IDirectDrawSurface* self, void* p) {
 }
 
 const IDirectDrawSurfaceVtbl g_ddSurfaceVtbl = {
-	.QueryInterface = DDSurface_QueryInterface,
-	.AddRef = DDSurface_AddRef,
-	.Release = DDSurface_Release,
-	.Blt = DDSurface_Blt,
-	.BltFast = DDSurface_BltFast,
-	.Flip = DDSurface_Flip,
-	.AddAttachedSurface = DDSurface_AddAttachedSurface,
+	.QueryInterface        = DDSurface_QueryInterface,
+	.AddRef                = DDSurface_AddRef,
+	.Release               = DDSurface_Release,
+	.Blt                   = DDSurface_Blt,
+	.BltFast               = DDSurface_BltFast,
+	.Flip                  = DDSurface_Flip,
+	.AddAttachedSurface    = DDSurface_AddAttachedSurface,
 	.DeleteAttachedSurface = DDSurface_DeleteAttachedSurface,
-	.GetAttachedSurface = DDSurface_GetAttachedSurface,
-	.GetColorKey = DDSurface_GetColorKey,
-	.GetFlipStatus = DDSurface_GetFlipStatus,
-	.GetSurfaceDesc = DDSurface_GetSurfaceDesc,
-	.IsLost = DDSurface_IsLost,
-	.Lock = DDSurface_Lock,
-	.Restore = DDSurface_Restore,
-	.SetColorKey = DDSurface_SetColorKey,
-	.SetPalette = DDSurface_SetPalette,
-	.Unlock = DDSurface_Unlock,
+	.GetAttachedSurface    = DDSurface_GetAttachedSurface,
+	.GetColorKey           = DDSurface_GetColorKey,
+	.GetFlipStatus         = DDSurface_GetFlipStatus,
+	.GetSurfaceDesc        = DDSurface_GetSurfaceDesc,
+	.IsLost                = DDSurface_IsLost,
+	.Lock                  = DDSurface_Lock,
+	.Restore               = DDSurface_Restore,
+	.SetColorKey           = DDSurface_SetColorKey,
+	.SetPalette            = DDSurface_SetPalette,
+	.Unlock                = DDSurface_Unlock,
 };
 
 static DDrawSurfaceShim* DDShim_AllocSurface(DDrawShim* owner, DDShimKind kind, int w, int h,
@@ -1054,15 +1048,15 @@ static DDrawSurfaceShim* DDShim_AllocSurface(DDrawShim* owner, DDShimKind kind, 
 	if (!s) {
 		return NULL;
 	}
-	s->lpVtbl = &g_ddSurfaceVtbl;
+	s->lpVtbl   = &g_ddSurfaceVtbl;
 	s->refcount = 1;
-	s->kind = kind;
-	s->owner = owner;
-	s->width = w;
-	s->height = h;
-	s->format = fmt;
-	s->bpp = DDShim_BppForFormat(fmt);
-	s->caps = caps;
+	s->kind     = kind;
+	s->owner    = owner;
+	s->width    = w;
+	s->height   = h;
+	s->format   = fmt;
+	s->bpp      = DDShim_BppForFormat(fmt);
+	s->caps     = caps;
 	if (kind == DDSHIM_CPU) {
 		if (!AeronSurface_Create(w, h, fmt, AERON_SURFACE_CPU_LOCKABLE | AERON_SURFACE_PRESENTABLE,
 								 &s->cpu)) {
@@ -1108,15 +1102,14 @@ static HRESULT AERON_DXAPI DDPalette_QueryInterface(IDirectDrawPalette* self, Dx
 static void DDShim_StorePaletteEntries(DDrawPaletteShim* p, uint32_t start, uint32_t count,
 									   const DDShimPaletteEntry* src) {
 	uint32_t i;
-	int changed = 0;
+	int      changed = 0;
 	for (i = 0; i < count && start + i < 256; ++i) {
 		AeronPaletteEntry* dst = &p->entries[start + i];
-		if (dst->r != src[i].peRed || dst->g != src[i].peGreen ||
-			dst->b != src[i].peBlue || dst->a != 255) {
-			dst->r = src[i].peRed;
-			dst->g = src[i].peGreen;
-			dst->b = src[i].peBlue;
-			dst->a = 255;
+		if (dst->r != src[i].peRed || dst->g != src[i].peGreen || dst->b != src[i].peBlue || dst->a != 255) {
+			dst->r  = src[i].peRed;
+			dst->g  = src[i].peGreen;
+			dst->b  = src[i].peBlue;
+			dst->a  = 255;
 			changed = 1;
 		}
 	}
@@ -1125,7 +1118,7 @@ static void DDShim_StorePaletteEntries(DDrawPaletteShim* p, uint32_t start, uint
 }
 
 static HRESULT AERON_DXAPI DDPalette_SetEntries(IDirectDrawPalette* self, uint32_t flags, uint32_t start,
-												  uint32_t count, void* entries) {
+												uint32_t count, void* entries) {
 	(void)flags;
 	if (!entries) {
 		return DX_E_INVALIDARG;
@@ -1135,18 +1128,18 @@ static HRESULT AERON_DXAPI DDPalette_SetEntries(IDirectDrawPalette* self, uint32
 }
 
 static HRESULT AERON_DXAPI DDPalette_GetEntries(IDirectDrawPalette* self, uint32_t flags, uint32_t start,
-											  uint32_t count, void* entries) {
-	DDrawPaletteShim* p = (DDrawPaletteShim*)self;
+												uint32_t count, void* entries) {
+	DDrawPaletteShim*   p   = (DDrawPaletteShim*)self;
 	DDShimPaletteEntry* dst = (DDShimPaletteEntry*)entries;
-	uint32_t i;
+	uint32_t            i;
 	(void)flags;
 	if (!entries) {
 		return DX_E_INVALIDARG;
 	}
 	for (i = 0; i < count && start + i < 256; ++i) {
-		dst[i].peRed = p->entries[start + i].r;
+		dst[i].peRed   = p->entries[start + i].r;
 		dst[i].peGreen = p->entries[start + i].g;
-		dst[i].peBlue = p->entries[start + i].b;
+		dst[i].peBlue  = p->entries[start + i].b;
 		dst[i].peFlags = 0;
 	}
 	return DX_DD_OK;
@@ -1154,10 +1147,10 @@ static HRESULT AERON_DXAPI DDPalette_GetEntries(IDirectDrawPalette* self, uint32
 
 const IDirectDrawPaletteVtbl g_ddPaletteVtbl = {
 	.QueryInterface = DDPalette_QueryInterface,
-	.AddRef = DDPalette_AddRef,
-	.Release = DDPalette_Release,
-	.GetEntries = DDPalette_GetEntries,
-	.SetEntries = DDPalette_SetEntries,
+	.AddRef         = DDPalette_AddRef,
+	.Release        = DDPalette_Release,
+	.GetEntries     = DDPalette_GetEntries,
+	.SetEntries     = DDPalette_SetEntries,
 };
 
 /* --- IDirectDraw --------------------------------------------------------- */
@@ -1207,10 +1200,10 @@ static HRESULT AERON_DXAPI DDDevice_SetCooperativeLevel(IDirectDraw* self, void*
 }
 
 static HRESULT AERON_DXAPI DDDevice_SetDisplayMode(IDirectDraw* self, uint32_t w, uint32_t h, uint32_t bpp) {
-	DDrawShim* d = (DDrawShim*)self;
-	d->mode_w = (int)w;
-	d->mode_h = (int)h;
-	d->mode_bpp = (int)bpp;
+	DDrawShim* d   = (DDrawShim*)self;
+	d->mode_w      = (int)w;
+	d->mode_h      = (int)h;
+	d->mode_bpp    = (int)bpp;
 	d->mode_format = DDShim_FormatForBpp((int)bpp);
 	/* The DirectDraw mode describes classic surface allocation only. Aeron's
 	 * application-logical presentation size is owned by the presentation frame
@@ -1222,11 +1215,11 @@ static HRESULT AERON_DXAPI DDDevice_SetDisplayMode(IDirectDraw* self, uint32_t w
 }
 
 static HRESULT AERON_DXAPI DDDevice_CreateSurface(IDirectDraw* self, DDSURFACEDESC* desc,
-												IDirectDrawSurface** out, void* outer) {
+												  IDirectDrawSurface** out, void* outer) {
 	DDrawShim* d = (DDrawShim*)self;
-	uint32_t caps;
-	int w;
-	int h;
+	uint32_t   caps;
+	int        w;
+	int        h;
 	(void)outer;
 
 	if (!out || !desc) {
@@ -1234,8 +1227,8 @@ static HRESULT AERON_DXAPI DDDevice_CreateSurface(IDirectDraw* self, DDSURFACEDE
 	}
 	*out = NULL;
 	caps = desc->ddsCaps.dwCaps;
-	w = (desc->dwFlags & DDSD_WIDTH) ? (int)desc->dwWidth : d->mode_w;
-	h = (desc->dwFlags & DDSD_HEIGHT) ? (int)desc->dwHeight : d->mode_h;
+	w    = (desc->dwFlags & DDSD_WIDTH) ? (int)desc->dwWidth : d->mode_w;
+	h    = (desc->dwFlags & DDSD_HEIGHT) ? (int)desc->dwHeight : d->mode_h;
 
 	if (caps & DDSCAPS_PRIMARYSURFACE) {
 		DDrawSurfaceShim* primary =
@@ -1254,13 +1247,13 @@ static HRESULT AERON_DXAPI DDDevice_CreateSurface(IDirectDraw* self, DDSURFACEDE
 			}
 		}
 		d->primary = primary;
-		*out = (IDirectDrawSurface*)primary;
+		*out       = (IDirectDrawSurface*)primary;
 		return DX_DD_OK;
 	}
 
 	{
-		AeronPixelFormat fmt = d->mode_format;
-		int has_pf = (desc->dwFlags & DDSD_PIXELFORMAT) != 0;
+		AeronPixelFormat  fmt    = d->mode_format;
+		int               has_pf = (desc->dwFlags & DDSD_PIXELFORMAT) != 0;
 		DDrawSurfaceShim* s;
 
 		/* Texture surfaces carry an explicit pixel format (one of the formats the
@@ -1277,21 +1270,21 @@ static HRESULT AERON_DXAPI DDDevice_CreateSurface(IDirectDraw* self, DDSURFACEDE
 		}
 		if (has_pf) {
 			s->has_pixel_format = 1;
-			s->pixel_format = desc->ddpfPixelFormat;
+			s->pixel_format     = desc->ddpfPixelFormat;
 		}
 
 		/* A mip-chain surface carries its smaller levels as a chain of attached
 		 * surfaces (each half size, min 1), reachable via GetAttachedSurface. */
 		if ((desc->dwFlags & DDSD_MIPMAPCOUNT) && desc->dwMipMapCount > 1) {
 			DDrawSurfaceShim* level = s;
-			int lw = w;
-			int lh = h;
-			uint32_t i;
+			int               lw    = w;
+			int               lh    = h;
+			uint32_t          i;
 
 			for (i = 1; i < desc->dwMipMapCount; ++i) {
 				DDrawSurfaceShim* next;
-				lw = lw > 1 ? lw / 2 : 1;
-				lh = lh > 1 ? lh / 2 : 1;
+				lw   = lw > 1 ? lw / 2 : 1;
+				lh   = lh > 1 ? lh / 2 : 1;
 				next = DDShim_AllocSurface(d, DDSHIM_CPU, lw, lh, fmt, caps);
 				if (!next) {
 					(void)s->lpVtbl->Release((IDirectDrawSurface*)s);
@@ -1299,10 +1292,10 @@ static HRESULT AERON_DXAPI DDDevice_CreateSurface(IDirectDraw* self, DDSURFACEDE
 				}
 				if (has_pf) {
 					next->has_pixel_format = 1;
-					next->pixel_format = desc->ddpfPixelFormat;
+					next->pixel_format     = desc->ddpfPixelFormat;
 				}
 				level->attached = next;
-				level = next;
+				level           = next;
 			}
 		}
 		*out = (IDirectDrawSurface*)s;
@@ -1311,7 +1304,7 @@ static HRESULT AERON_DXAPI DDDevice_CreateSurface(IDirectDraw* self, DDSURFACEDE
 }
 
 static HRESULT AERON_DXAPI DDDevice_CreatePalette(IDirectDraw* self, uint32_t flags, void* entries,
-												IDirectDrawPalette** out, void* outer) {
+												  IDirectDrawPalette** out, void* outer) {
 	DDrawPaletteShim* p;
 	(void)self;
 	(void)flags;
@@ -1321,11 +1314,11 @@ static HRESULT AERON_DXAPI DDDevice_CreatePalette(IDirectDraw* self, uint32_t fl
 		return DX_E_INVALIDARG;
 	}
 	*out = NULL;
-	p = (DDrawPaletteShim*)calloc(1, sizeof(*p));
+	p    = (DDrawPaletteShim*)calloc(1, sizeof(*p));
 	if (!p) {
 		return DX_E_FAIL;
 	}
-	p->lpVtbl = &g_ddPaletteVtbl;
+	p->lpVtbl   = &g_ddPaletteVtbl;
 	p->refcount = 1;
 	if (entries) {
 		DDShim_StorePaletteEntries(p, 0, 256, (const DDShimPaletteEntry*)entries);
@@ -1374,7 +1367,7 @@ static HRESULT AERON_DXAPI DDDevice_GetCaps(IDirectDraw* self, void* hw, void* h
 }
 
 static HRESULT AERON_DXAPI DDDevice_GetAvailableVidMem(IDirectDraw* self, DDSCAPS* caps, uint32_t* total,
-													 uint32_t* freeMem) {
+													   uint32_t* freeMem) {
 	(void)self;
 	(void)caps;
 	if (total) {
@@ -1387,7 +1380,7 @@ static HRESULT AERON_DXAPI DDDevice_GetAvailableVidMem(IDirectDraw* self, DDSCAP
 }
 
 static HRESULT AERON_DXAPI DDDevice_DuplicateSurface(IDirectDraw* self, IDirectDrawSurface* src,
-												   IDirectDrawSurface** out) {
+													 IDirectDrawSurface** out) {
 	(void)self;
 	(void)src;
 	if (out) {
@@ -1408,21 +1401,21 @@ static HRESULT AERON_DXAPI DDDevice_RestoreDisplayMode(IDirectDraw* self) {
 }
 
 const IDirectDrawVtbl g_ddDeviceVtbl = {
-	.QueryInterface = DDDevice_QueryInterface,
-	.AddRef = DDDevice_AddRef,
-	.Release = DDDevice_Release,
-	.CreatePalette = DDDevice_CreatePalette,
-	.CreateSurface = DDDevice_CreateSurface,
-	.DuplicateSurface = DDDevice_DuplicateSurface,
-	.FlipToGDISurface = DDDevice_FlipToGDISurface,
-	.GetCaps = DDDevice_GetCaps,
-	.GetMonitorFrequency = DDDevice_GetMonitorFrequency,
-	.GetScanLine = DDDevice_GetScanLine,
+	.QueryInterface         = DDDevice_QueryInterface,
+	.AddRef                 = DDDevice_AddRef,
+	.Release                = DDDevice_Release,
+	.CreatePalette          = DDDevice_CreatePalette,
+	.CreateSurface          = DDDevice_CreateSurface,
+	.DuplicateSurface       = DDDevice_DuplicateSurface,
+	.FlipToGDISurface       = DDDevice_FlipToGDISurface,
+	.GetCaps                = DDDevice_GetCaps,
+	.GetMonitorFrequency    = DDDevice_GetMonitorFrequency,
+	.GetScanLine            = DDDevice_GetScanLine,
 	.GetVerticalBlankStatus = DDDevice_GetVerticalBlankStatus,
-	.RestoreDisplayMode = DDDevice_RestoreDisplayMode,
-	.SetCooperativeLevel = DDDevice_SetCooperativeLevel,
-	.SetDisplayMode = DDDevice_SetDisplayMode,
-	.GetAvailableVidMem = DDDevice_GetAvailableVidMem,
+	.RestoreDisplayMode     = DDDevice_RestoreDisplayMode,
+	.SetCooperativeLevel    = DDDevice_SetCooperativeLevel,
+	.SetDisplayMode         = DDDevice_SetDisplayMode,
+	.GetAvailableVidMem     = DDDevice_GetAvailableVidMem,
 };
 
 HRESULT AERON_DXAPI DirectDrawCreate(const DxGuid* driver, IDirectDraw** out, void* outer) {
@@ -1433,14 +1426,14 @@ HRESULT AERON_DXAPI DirectDrawCreate(const DxGuid* driver, IDirectDraw** out, vo
 	if (!out) {
 		return DX_E_INVALIDARG;
 	}
-	*out = NULL;
+	*out   = NULL;
 	device = (DDrawShim*)calloc(1, sizeof(*device));
 	if (!device) {
 		return DX_E_FAIL;
 	}
-	device->lpVtbl = &g_ddDeviceVtbl;
+	device->lpVtbl   = &g_ddDeviceVtbl;
 	device->refcount = 1;
-	*out = (IDirectDraw*)device;
+	*out             = (IDirectDraw*)device;
 	return DX_DD_OK;
 }
 

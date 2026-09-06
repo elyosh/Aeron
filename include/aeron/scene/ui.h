@@ -143,6 +143,7 @@ typedef enum AeronUiSound {
 	AERON_UI_SOUND_ADJUST = 2, /* slider/selector value changed */
 	AERON_UI_SOUND_CANCEL = 3,
 } AeronUiSound;
+
 typedef void (*AeronUiSoundFn)(AeronUiSound sound, void* user);
 
 typedef struct AeronUiDesc {
@@ -322,6 +323,7 @@ typedef struct AeronUiControllerCaptureDesc {
 
 typedef struct AeronUiControllerInput {
 	AeronControllerKind controller_kind;
+
 	union {
 		int                          axis;
 		AeronControllerDigitalSource digital;

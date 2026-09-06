@@ -38,7 +38,7 @@ void AeronDx5_ResetPresentationState(void);
 /* Modern flight presentation policy. Suppression applies only to render-target
  * surfaces; CPU DirectDraw surfaces used by frontends continue normally. */
 void AeronDx5_SetClassicFlightRenderingSuppressed(int suppressed);
-int AeronDx5_IsClassicFlightRenderingSuppressed(void);
+int  AeronDx5_IsClassicFlightRenderingSuppressed(void);
 
 /* Forces submission of the final retained classic frame, including while normal
  * classic presentation is suppressed. Does not advance the flip chain. */
@@ -58,8 +58,8 @@ void AeronDx5_CommitDepthSurfaceRect(IDirectDrawSurface* surface, const AeronDx5
  * GPU frame is never read back, so hosts can layer CPU overlays over
  * Direct3D output without the lock's readback stall and 16bpp rounding. */
 int AeronDx5_ComposeSurfaceOverRenderTarget(IDirectDrawSurface* dst, int dst_x, int dst_y,
-											 IDirectDrawSurface* src, const uint8_t* coverage,
-											 int coverage_pitch);
+											IDirectDrawSurface* src, const uint8_t* coverage,
+											int coverage_pitch);
 
 /* Releases compatibility-owned GPU caches after the recovered game has
  * released every DirectDraw and Direct3D interface. */
@@ -83,12 +83,12 @@ void AeronWinmm_Shutdown(void);
  * joyGet* shim consumes it. */
 
 typedef struct AeronWinmmJoystickState {
-	uint32_t    axes[4];       /* X, Y, Z, R positions in 0..65535. */
-	uint32_t    buttons;       /* Bit i = button i+1 down. */
+	uint32_t    axes[4]; /* X, Y, Z, R positions in 0..65535. */
+	uint32_t    buttons; /* Bit i = button i+1 down. */
 	uint32_t    button_count;
 	int         pov_direction; /* -1 centered, otherwise up/right/down/left = 0..3. */
 	int         has_pov;
-	const char* name;          /* Device name for JOYCAPSA.szPname; may be NULL. */
+	const char* name; /* Device name for JOYCAPSA.szPname; may be NULL. */
 } AeronWinmmJoystickState;
 
 /* Returns 0 when no controller is selected or connected. */

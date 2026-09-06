@@ -31,11 +31,11 @@ typedef enum AeronConfigErrorCode {
 
 typedef struct AeronConfigError {
 	AeronConfigErrorCode code;
-	AeronVfsRoot        root;
-	char                path[AERON_CONFIG_ERROR_PATH_CAPACITY];
-	int                 line;
-	int                 column;
-	char                message[AERON_CONFIG_ERROR_MESSAGE_CAPACITY];
+	AeronVfsRoot         root;
+	char                 path[AERON_CONFIG_ERROR_PATH_CAPACITY];
+	int                  line;
+	int                  column;
+	char                 message[AERON_CONFIG_ERROR_MESSAGE_CAPACITY];
 } AeronConfigError;
 
 /* Runtime type assigned to a converted YAML node. */
@@ -59,15 +59,18 @@ typedef struct AeronConfigMapValue {
 /* Caller-owned recursive value descriptor used by SetValue. */
 struct AeronConfigValue {
 	AeronConfigNodeType type;
+
 	union {
-		int     bool_value;
-		int64_t int_value;
-		double  float_value;
+		int         bool_value;
+		int64_t     int_value;
+		double      float_value;
 		const char* string_value;
+
 		struct {
 			const AeronConfigMapValue* entries;
-			size_t                    count;
+			size_t                     count;
 		} map;
+
 		struct {
 			const AeronConfigValue* values;
 			size_t                  count;
@@ -76,28 +79,26 @@ struct AeronConfigValue {
 };
 
 /* Loads a single-document YAML file from the VFS and converts it to Aeron nodes. */
-int AeronConfigFile_LoadYaml(AeronVfs* vfs, AeronVfsRoot root, const char* path,
-							 AeronConfigFile** out_config);
-int AeronConfigFile_LoadYamlEx(AeronVfs* vfs, AeronVfsRoot root, const char* path,
-							   AeronConfigFile** out_config, AeronConfigError* error);
-int AeronConfigFile_CreateMap(AeronVfsRoot root, const char* path, AeronConfigFile** out_config,
-							  AeronConfigError* error);
-int AeronConfigFile_Clone(const AeronConfigFile* source, AeronConfigFile** out_config,
-						  AeronConfigError* error);
-int AeronConfigFile_Overlay(const AeronConfigFile* base, const AeronConfigFile* overrides,
-							AeronConfigFile** out_config, AeronConfigError* error);
-int AeronConfigFile_SaveYaml(AeronVfs* vfs, const AeronConfigFile* config, AeronConfigError* error);
-int AeronConfigFile_SerializeYaml(const AeronConfigFile* config, char** out_data,
-								  size_t* out_size, AeronConfigError* error);
+int  AeronConfigFile_LoadYaml(AeronVfs* vfs, AeronVfsRoot root, const char* path,
+							  AeronConfigFile** out_config);
+int  AeronConfigFile_LoadYamlEx(AeronVfs* vfs, AeronVfsRoot root, const char* path,
+								AeronConfigFile** out_config, AeronConfigError* error);
+int  AeronConfigFile_CreateMap(AeronVfsRoot root, const char* path, AeronConfigFile** out_config,
+							   AeronConfigError* error);
+int  AeronConfigFile_Clone(const AeronConfigFile* source, AeronConfigFile** out_config,
+						   AeronConfigError* error);
+int  AeronConfigFile_Overlay(const AeronConfigFile* base, const AeronConfigFile* overrides,
+							 AeronConfigFile** out_config, AeronConfigError* error);
+int  AeronConfigFile_SaveYaml(AeronVfs* vfs, const AeronConfigFile* config, AeronConfigError* error);
+int  AeronConfigFile_SerializeYaml(const AeronConfigFile* config, char** out_data, size_t* out_size,
+								   AeronConfigError* error);
 void AeronConfigFile_FreeSerialized(char* data);
 /* Destroys a parsed configuration document and all child nodes. */
 void AeronConfigFile_Destroy(AeronConfigFile* config);
 
 int AeronConfigFile_SetNull(AeronConfigFile* config, const char* path, AeronConfigError* error);
-int AeronConfigFile_SetBool(AeronConfigFile* config, const char* path, int value,
-							AeronConfigError* error);
-int AeronConfigFile_SetInt(AeronConfigFile* config, const char* path, int64_t value,
-						   AeronConfigError* error);
+int AeronConfigFile_SetBool(AeronConfigFile* config, const char* path, int value, AeronConfigError* error);
+int AeronConfigFile_SetInt(AeronConfigFile* config, const char* path, int64_t value, AeronConfigError* error);
 int AeronConfigFile_SetFloat(AeronConfigFile* config, const char* path, double value,
 							 AeronConfigError* error);
 int AeronConfigFile_SetString(AeronConfigFile* config, const char* path, const char* value,

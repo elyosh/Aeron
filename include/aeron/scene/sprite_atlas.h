@@ -41,36 +41,38 @@ extern "C" {
 #endif
 
 /* Float pixel rect. Also aliased as the TIE shell's RemasterRect. */
-typedef struct AeronSpriteRect { float x, y, w, h; } AeronSpriteRect;
+typedef struct AeronSpriteRect {
+	float x, y, w, h;
+} AeronSpriteRect;
 
 typedef struct AeronSpriteAtlas {
-	AeronSpriteRect *frames; /* owned; one entry per frame index */
+	AeronSpriteRect* frames; /* owned; one entry per frame index */
 	/* Parallel arrays carrying the per-frame `origin_x`/`origin_y`
 	 * keys from the YAML. Allocated alongside `frames` and the same
 	 * length (`frame_count`). Defaulted to 0 when the YAML omits the
 	 * keys. Not consumed by draw paths; preserved purely so
 	 * Aeron_SpriteAtlasSave round-trips the on-disk file. */
-	int16_t *origin_x;
-	int16_t *origin_y;
+	int16_t* origin_x;
+	int16_t* origin_y;
 	/* Optional per-frame `id` keys: sparse game-side identities (XWA
 	 * DAT sprite ids are structured offsets like 4002, not dense
 	 * indices). NULL when the YAML carries no `id` keys — frames are
 	 * then addressed positionally, and Save emits no ids (round-trip
 	 * parity for id-less corpora). Look up with
 	 * Aeron_SpriteAtlasFindById. */
-	int32_t *ids;
+	int32_t* ids;
 	/* Optional per-frame `page` keys: multi-image atlases for content
 	 * that exceeds one texture (page 0 is the base image; the naming
 	 * convention for further pages belongs to the asset producer,
 	 * e.g. "<base>_p<N>.ktx2"). NULL when single-page (all frames on
 	 * page 0); Save then emits no `page` keys. */
-	int16_t *pages;
+	int16_t* pages;
 	/* Optional per-frame `classic_w`/`classic_h` keys: the frame's
 	 * original classic-resolution pixel dims, emitted by the producer
 	 * so consumers reproducing classic-geometry draws never derive a
 	 * scale factor. NULL when the YAML carries none. */
-	int16_t *classic_w;
-	int16_t *classic_h;
+	int16_t* classic_w;
+	int16_t* classic_h;
 	int      page_count; /* 1 when pages == NULL */
 	int      frame_count;
 	int      atlas_w; /* full-image dims (upscaled when extracted with --scale) */
@@ -86,9 +88,8 @@ typedef struct AeronSpriteAtlas {
 /* Parse `yaml_path`. On success populates *out and returns true; on
  * failure leaves *out zeroed, logs a one-line warning via Aeron_Log,
  * and returns false (callers treat false as "skip this sprite"). */
-bool Aeron_SpriteAtlasLoad(AeronSpriteAtlas *out, const char *yaml_path);
-bool Aeron_SpriteAtlasLoadVfs(AeronSpriteAtlas *out, AeronVfs *vfs,
-							  AeronVfsRoot root, const char *yaml_path);
+bool Aeron_SpriteAtlasLoad(AeronSpriteAtlas* out, const char* yaml_path);
+bool Aeron_SpriteAtlasLoadVfs(AeronSpriteAtlas* out, AeronVfs* vfs, AeronVfsRoot root, const char* yaml_path);
 
 /* Write `a` back to `yaml_path` in the same `atlas: { w, h, classic_w?,
  * classic_h? } / frames: [ {...} ]` shape the extractor emits. Atomic:
@@ -102,14 +103,13 @@ bool Aeron_SpriteAtlasLoadVfs(AeronSpriteAtlas *out, AeronVfs *vfs,
  *
  * On failure returns false and writes a NUL-terminated reason into
  * `err` (untouched on success). `err` may be NULL. */
-bool Aeron_SpriteAtlasSave(const AeronSpriteAtlas *a, const char *yaml_path,
-						   char *err, size_t errsz);
+bool Aeron_SpriteAtlasSave(const AeronSpriteAtlas* a, const char* yaml_path, char* err, size_t errsz);
 
-void Aeron_SpriteAtlasFree(AeronSpriteAtlas *a);
+void Aeron_SpriteAtlasFree(AeronSpriteAtlas* a);
 
 /* Frame index carrying per-frame id `id`, or -1 (also -1 when the
  * atlas has no `id` keys — positional atlases don't alias ids). */
-int Aeron_SpriteAtlasFindById(const AeronSpriteAtlas *a, int32_t id);
+int Aeron_SpriteAtlasFindById(const AeronSpriteAtlas* a, int32_t id);
 
 #ifdef __cplusplus
 }

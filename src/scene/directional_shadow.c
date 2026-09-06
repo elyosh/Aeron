@@ -9,13 +9,14 @@
 #include <string.h>
 
 typedef struct ShadowVsBlock {
-	float view_proj[16];
-	float model_to_world[16];
+	float    view_proj[16];
+	float    model_to_world[16];
 	uint32_t mesh_table_index;
 	uint32_t variant_row_base;
 	uint32_t variant_group_count;
 	uint32_t material_count;
 } ShadowVsBlock;
+
 typedef char ShadowVsBlockSizeCheck[sizeof(ShadowVsBlock) == 144 ? 1 : -1];
 
 typedef struct ShadowDebugUniforms {
@@ -338,8 +339,7 @@ static void shadow_stabilize_fit(struct AeronScene3D* scene, uint32_t cascade,
 	}
 }
 
-static AeronGraphicsPipeline* shadow_pipeline(struct AeronScene3D* scene, AeronCullMode cull,
-											  int masked) {
+static AeronGraphicsPipeline* shadow_pipeline(struct AeronScene3D* scene, AeronCullMode cull, int masked) {
 	AeronVertexAttributeDesc attributes[4] = {
 		{ .location    = 0,
 		  .buffer_slot = 0,
@@ -351,31 +351,35 @@ static AeronGraphicsPipeline* shadow_pipeline(struct AeronScene3D* scene, AeronC
 		  .offset      = (uint32_t)offsetof(AeronGltfVertex, mesh_index) },
 	};
 	if (masked) {
-		attributes[1] = (AeronVertexAttributeDesc) {
-			.location = 1, .buffer_slot = 0, .format = AERON_VERTEX_FORMAT_FLOAT2,
-			.offset = (uint32_t)offsetof(AeronGltfVertex, uv) };
-		attributes[2] = (AeronVertexAttributeDesc) {
-			.location = 2, .buffer_slot = 0, .format = AERON_VERTEX_FORMAT_FLOAT,
-			.offset = (uint32_t)offsetof(AeronGltfVertex, mesh_index) };
-		attributes[3] = (AeronVertexAttributeDesc) {
-			.location = 3, .buffer_slot = 0, .format = AERON_VERTEX_FORMAT_UINT,
-			.offset = (uint32_t)offsetof(AeronGltfVertex, prim_id) };
+		attributes[1] = (AeronVertexAttributeDesc) { .location    = 1,
+													 .buffer_slot = 0,
+													 .format      = AERON_VERTEX_FORMAT_FLOAT2,
+													 .offset      = (uint32_t)offsetof(AeronGltfVertex, uv) };
+		attributes[2] =
+			(AeronVertexAttributeDesc) { .location    = 2,
+										 .buffer_slot = 0,
+										 .format      = AERON_VERTEX_FORMAT_FLOAT,
+										 .offset      = (uint32_t)offsetof(AeronGltfVertex, mesh_index) };
+		attributes[3] = (AeronVertexAttributeDesc) { .location    = 3,
+													 .buffer_slot = 0,
+													 .format      = AERON_VERTEX_FORMAT_UINT,
+													 .offset = (uint32_t)offsetof(AeronGltfVertex, prim_id) };
 	}
 	const AeronVertexBufferLayoutDesc vertex_buffer = {
 		.slot   = 0,
 		.stride = (uint32_t)sizeof(AeronGltfVertex),
 	};
 	return Aeron_CreateGraphicsPipeline(&(AeronGraphicsPipelineDesc) {
-		.vertex_shader = masked ? scene->shadow_mask_vs : scene->shadow_vs,
-		.fragment_shader = masked ? scene->shadow_mask_fs : scene->shadow_fs,
-		.primitive_type = AERON_PRIMITIVE_TRIANGLES,
-		.cull_mode = cull,
-		.vertex_buffers = &vertex_buffer,
+		.vertex_shader       = masked ? scene->shadow_mask_vs : scene->shadow_vs,
+		.fragment_shader     = masked ? scene->shadow_mask_fs : scene->shadow_fs,
+		.primitive_type      = AERON_PRIMITIVE_TRIANGLES,
+		.cull_mode           = cull,
+		.vertex_buffers      = &vertex_buffer,
 		.vertex_buffer_count = 1,
-		.attributes = attributes,
-		.attribute_count = masked ? 4u : 2u,
-		.depth_format = AERON_TEXTURE_FORMAT_D32_FLOAT,
-		.depth = { .depth_test = 1, .depth_write = 1, .compare = AERON_COMPARE_GREATER_EQUAL },
+		.attributes          = attributes,
+		.attribute_count     = masked ? 4u : 2u,
+		.depth_format        = AERON_TEXTURE_FORMAT_D32_FLOAT,
+		.depth               = { .depth_test = 1, .depth_write = 1, .compare = AERON_COMPARE_GREATER_EQUAL },
 	});
 }
 
@@ -417,17 +421,16 @@ static int shadow_ensure_common(struct AeronScene3D* scene) {
 static int shadow_ensure_pipelines(struct AeronScene3D* scene) {
 	int complete = 1;
 	for (int cull = 0; cull < 3; cull++) {
-		complete = complete && scene->shadow_pipes[cull] != NULL &&
-				   scene->shadow_mask_pipes[cull] != NULL;
+		complete = complete && scene->shadow_pipes[cull] != NULL && scene->shadow_mask_pipes[cull] != NULL;
 	}
 	if (complete) {
 		return 1;
 	}
 
-	AeronGraphicsPipeline* replacement[3] = { NULL, NULL, NULL };
+	AeronGraphicsPipeline* replacement[3]      = { NULL, NULL, NULL };
 	AeronGraphicsPipeline* mask_replacement[3] = { NULL, NULL, NULL };
 	for (int cull = 0; cull < 3; cull++) {
-		replacement[cull] = shadow_pipeline(scene, (AeronCullMode)cull, 0);
+		replacement[cull]      = shadow_pipeline(scene, (AeronCullMode)cull, 0);
 		mask_replacement[cull] = shadow_pipeline(scene, (AeronCullMode)cull, 1);
 		if (!replacement[cull] || !mask_replacement[cull]) {
 			for (int created = 0; created < 3; created++) {
@@ -440,7 +443,7 @@ static int shadow_ensure_pipelines(struct AeronScene3D* scene) {
 	for (int cull = 0; cull < 3; cull++) {
 		Aeron_DestroyGraphicsPipeline(scene->shadow_pipes[cull]);
 		Aeron_DestroyGraphicsPipeline(scene->shadow_mask_pipes[cull]);
-		scene->shadow_pipes[cull] = replacement[cull];
+		scene->shadow_pipes[cull]      = replacement[cull];
 		scene->shadow_mask_pipes[cull] = mask_replacement[cull];
 	}
 	return 1;
@@ -473,18 +476,18 @@ static int shadow_ensure_resources(struct AeronScene3D* scene, uint32_t atlas_si
 		return 0;
 	}
 	if (!scene->shadow_tried) {
-		scene->shadow_tried = 1;
-		scene->shadow_vs    = AeronSceneInternal_CompileShader("scene_directional_shadow.vert",
-															   AERON_SHADER_STAGE_VERTEX, 0, 1, 1);
-		scene->shadow_fs = AeronSceneInternal_CompileShader("scene_directional_shadow.frag",
-															 AERON_SHADER_STAGE_FRAGMENT, 0, 0, 0);
-		scene->shadow_mask_vs = AeronSceneInternal_CompileShader(
-			"scene_directional_shadow_mask.vert", AERON_SHADER_STAGE_VERTEX, 0, 1, 1);
-		scene->shadow_mask_fs = AeronSceneInternal_CompileShader(
-			"scene_directional_shadow_mask.frag", AERON_SHADER_STAGE_FRAGMENT, 1, 0, 2);
+		scene->shadow_tried   = 1;
+		scene->shadow_vs      = AeronSceneInternal_CompileShader("scene_directional_shadow.vert",
+																 AERON_SHADER_STAGE_VERTEX, 0, 1, 1);
+		scene->shadow_fs      = AeronSceneInternal_CompileShader("scene_directional_shadow.frag",
+																 AERON_SHADER_STAGE_FRAGMENT, 0, 0, 0);
+		scene->shadow_mask_vs = AeronSceneInternal_CompileShader("scene_directional_shadow_mask.vert",
+																 AERON_SHADER_STAGE_VERTEX, 0, 1, 1);
+		scene->shadow_mask_fs = AeronSceneInternal_CompileShader("scene_directional_shadow_mask.frag",
+																 AERON_SHADER_STAGE_FRAGMENT, 1, 0, 2);
 	}
-	if (!scene->shadow_vs || !scene->shadow_fs || !scene->shadow_mask_vs ||
-		!scene->shadow_mask_fs || !shadow_ensure_pipelines(scene)) {
+	if (!scene->shadow_vs || !scene->shadow_fs || !scene->shadow_mask_vs || !scene->shadow_mask_fs ||
+		!shadow_ensure_pipelines(scene)) {
 		return 0;
 	}
 	if (!scene->shadow_atlas || scene->shadow_resource_atlas_size != atlas_size) {
@@ -586,9 +589,8 @@ static void shadow_prepare_receiver_local(struct AeronScene3D*                  
 	extent       = fmaxf(extent, 1.0f);
 	/* Keep the entire receiver inside the unclamped filter footprint. */
 	const float initial_world_per_texel = (2.0f * extent) / (float)usable_size;
-	const float filter_radius = shadow_filter_footprint_radius(desc);
-	extent += (desc->normal_bias_texels + filter_radius + 2.0f) *
-			  initial_world_per_texel;
+	const float filter_radius           = shadow_filter_footprint_radius(desc);
+	extent += (desc->normal_bias_texels + filter_radius + 2.0f) * initial_world_per_texel;
 	const float world_per_texel = (2.0f * extent) / (float)usable_size;
 
 	const double origin_x          = shadow_dot_origin(desc->world_origin, x_axis);
@@ -790,11 +792,9 @@ static void shadow_prepare_cascade(struct AeronScene3D* scene, const AeronSceneD
 		const float filter_radius = shadow_filter_footprint_radius(desc);
 		const float max_initial_world_per_texel =
 			fmaxf(initial_world_per_texel[0], initial_world_per_texel[1]);
-		const float normal_bias_world =
-			desc->normal_bias_texels * max_initial_world_per_texel;
+		const float normal_bias_world = desc->normal_bias_texels * max_initial_world_per_texel;
 		for (int axis = 0; axis < 2; axis++) {
-			const float padding =
-				normal_bias_world + (filter_radius + 2.0f) * initial_world_per_texel[axis];
+			const float padding = normal_bias_world + (filter_radius + 2.0f) * initial_world_per_texel[axis];
 			fit_bounds.min[axis] -= padding;
 			fit_bounds.max[axis] += padding;
 		}
@@ -1062,9 +1062,9 @@ int AeronSceneDirectionalShadow_Prepare(struct AeronScene3D* scene) {
 	return 1;
 }
 
-static void shadow_draw_class(struct AeronScene3D* scene, AeronRenderPass* pass,
-							  const float view_proj[16], const uint16_t* casters,
-							  uint16_t caster_count, int masked, uint32_t* triangle_count) {
+static void shadow_draw_class(struct AeronScene3D* scene, AeronRenderPass* pass, const float view_proj[16],
+							  const uint16_t* casters, uint16_t caster_count, int masked,
+							  uint32_t* triangle_count) {
 	const AeronSceneMesh*  bound_mesh     = NULL;
 	AeronGraphicsPipeline* bound_pipeline = NULL;
 	AeronSampler*          atlas_sampler  = scene->mesh_sampler ? scene->mesh_sampler : scene->pbr_sampler;
@@ -1080,11 +1080,10 @@ static void shadow_draw_class(struct AeronScene3D* scene, AeronRenderPass* pass,
 		}
 		AeronCullMode cull =
 			instance->cull_mode <= AERON_CULL_BACK ? (AeronCullMode)instance->cull_mode : AERON_CULL_NONE;
-		AeronGraphicsPipeline* pipeline =
-			masked ? scene->shadow_mask_pipes[cull] : scene->shadow_pipes[cull];
+		AeronGraphicsPipeline* pipeline = masked ? scene->shadow_mask_pipes[cull] : scene->shadow_pipes[cull];
 		if (!pipeline) {
-			pipeline = masked ? scene->shadow_mask_pipes[AERON_CULL_NONE]
-								  : scene->shadow_pipes[AERON_CULL_NONE];
+			pipeline =
+				masked ? scene->shadow_mask_pipes[AERON_CULL_NONE] : scene->shadow_pipes[AERON_CULL_NONE];
 		}
 		if (pipeline != bound_pipeline) {
 			bound_pipeline = pipeline;
@@ -1095,14 +1094,11 @@ static void shadow_draw_class(struct AeronScene3D* scene, AeronRenderPass* pass,
 			Aeron_BindVertexBuffer(pass, 0, mesh->vbo, 0);
 			Aeron_BindIndexBuffer(pass, mesh->ibo, AERON_INDEX_FORMAT_UINT16, 0);
 			if (masked) {
-				Aeron_BindTextureSampler(
-					pass, AERON_SHADER_STAGE_FRAGMENT, 0,
-					mesh->atlas[0] ? mesh->atlas[0] : AeronSceneInternal_WhiteTexture(),
-					atlas_sampler);
-				Aeron_BindStorageBuffer(pass, AERON_SHADER_STAGE_FRAGMENT, 0,
-										mesh->material_buffer);
-				Aeron_BindStorageBuffer(pass, AERON_SHADER_STAGE_FRAGMENT, 1,
-										mesh->variant_buffer);
+				Aeron_BindTextureSampler(pass, AERON_SHADER_STAGE_FRAGMENT, 0,
+										 mesh->atlas[0] ? mesh->atlas[0] : AeronSceneInternal_WhiteTexture(),
+										 atlas_sampler);
+				Aeron_BindStorageBuffer(pass, AERON_SHADER_STAGE_FRAGMENT, 0, mesh->material_buffer);
+				Aeron_BindStorageBuffer(pass, AERON_SHADER_STAGE_FRAGMENT, 1, mesh->variant_buffer);
 			}
 		}
 		ShadowVsBlock block;
@@ -1110,12 +1106,12 @@ static void shadow_draw_class(struct AeronScene3D* scene, AeronRenderPass* pass,
 		memcpy(block.view_proj, view_proj, sizeof block.view_proj);
 		memcpy(block.model_to_world, instance->transform, sizeof block.model_to_world);
 		block.mesh_table_index = AeronSceneStorage_ShadowTableIndex(scene, casters[item]);
-		uint32_t variant = instance->variant;
+		uint32_t variant       = instance->variant;
 		if (variant >= mesh->variant_slots)
 			variant = mesh->variant_slots ? mesh->variant_slots - 1u : 0u;
-		block.variant_row_base = variant * mesh->variant_groups_per_row;
+		block.variant_row_base    = variant * mesh->variant_groups_per_row;
 		block.variant_group_count = mesh->variant_groups_per_row;
-		block.material_count = mesh->material_count;
+		block.material_count      = mesh->material_count;
 		Aeron_BindUniformData(pass, AERON_SHADER_STAGE_VERTEX, 0, &block, sizeof block);
 		const uint32_t index_offset = masked ? mesh->mask_index_offset : 0u;
 		Aeron_DrawIndexed(pass, index_count, index_offset, 0);
@@ -1123,9 +1119,8 @@ static void shadow_draw_class(struct AeronScene3D* scene, AeronRenderPass* pass,
 	}
 }
 
-static void shadow_draw_list(struct AeronScene3D* scene, AeronRenderPass* pass,
-							 const float view_proj[16], const uint16_t* casters,
-							 uint16_t caster_count, uint32_t* triangle_count) {
+static void shadow_draw_list(struct AeronScene3D* scene, AeronRenderPass* pass, const float view_proj[16],
+							 const uint16_t* casters, uint16_t caster_count, uint32_t* triangle_count) {
 	Aeron_BindStorageBuffer(pass, AERON_SHADER_STAGE_VERTEX, 0, scene->mesh_table_buffer);
 	shadow_draw_class(scene, pass, view_proj, casters, caster_count, 0, triangle_count);
 	shadow_draw_class(scene, pass, view_proj, casters, caster_count, 1, triangle_count);
@@ -1218,8 +1213,7 @@ static void shadow_bind_map(struct AeronScene3D* scene, AeronRenderPass* render_
 		memset(&disabled, 0, sizeof disabled);
 		uniform = &disabled;
 	}
-	Aeron_BindUniformData(render_pass, AERON_SHADER_STAGE_FRAGMENT, uniform_slot, uniform,
-						  sizeof *uniform);
+	Aeron_BindUniformData(render_pass, AERON_SHADER_STAGE_FRAGMENT, uniform_slot, uniform, sizeof *uniform);
 	Aeron_BindTextureSampler(render_pass, AERON_SHADER_STAGE_FRAGMENT, comparison_slot,
 							 Aeron_DepthTargetGetTexture(active ? active_atlas : scene->shadow_fallback),
 							 scene->shadow_sampler);

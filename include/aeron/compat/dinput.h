@@ -18,7 +18,7 @@
 extern "C" {
 #endif
 
-typedef struct IDirectInputA IDirectInputA;
+typedef struct IDirectInputA       IDirectInputA;
 typedef struct IDirectInputDeviceA IDirectInputDeviceA;
 
 /* Buffered device event (keyboard): dwOfs is the DIK scancode, dwData bit 0x80 is
@@ -48,7 +48,7 @@ typedef struct DIPROPHEADER {
 
 typedef struct DIPROPDWORD {
 	DIPROPHEADER diph;
-	uint32_t dwData;
+	uint32_t     dwData;
 } DIPROPDWORD;
 
 /* Device data format. The shim keys device behavior off the CreateDevice GUID, so it
@@ -59,7 +59,7 @@ typedef struct DIDATAFORMAT {
 	uint32_t dwFlags;
 	uint32_t dwDataSize;
 	uint32_t dwNumObjs;
-	void* rgodf;
+	void*    rgodf;
 } DIDATAFORMAT;
 
 /* Cooperative-level flags (SetCooperativeLevel); the original uses FOREGROUND|NONEXCLUSIVE. */
@@ -91,7 +91,7 @@ typedef struct IDirectInputDeviceAVtbl {
 	HRESULT(AERON_DXAPI* Unacquire)(IDirectInputDeviceA*);
 	HRESULT(AERON_DXAPI* GetDeviceState)(IDirectInputDeviceA*, uint32_t, void*);
 	HRESULT(AERON_DXAPI* GetDeviceData)(IDirectInputDeviceA*, uint32_t, DIDEVICEOBJECTDATA*, uint32_t*,
-									  uint32_t);
+										uint32_t);
 	HRESULT(AERON_DXAPI* SetDataFormat)(IDirectInputDeviceA*, const DIDATAFORMAT*);
 	HRESULT(AERON_DXAPI* SetEventNotification)(IDirectInputDeviceA*, void*);
 	HRESULT(AERON_DXAPI* SetCooperativeLevel)(IDirectInputDeviceA*, void*, uint32_t);
@@ -146,7 +146,7 @@ HRESULT AERON_DXAPI DirectInputCreateA(void* hinst, uint32_t version, IDirectInp
  * have no gamepad analog and are accepted as no-ops. */
 
 typedef struct IDirectInputDevice2A IDirectInputDevice2A;
-typedef struct IDirectInputEffect IDirectInputEffect;
+typedef struct IDirectInputEffect   IDirectInputEffect;
 
 /* DIEFFECT.dwFlags */
 #define DIEFF_OBJECTOFFSETS 0x00000002u
@@ -212,56 +212,56 @@ typedef struct DICONSTANTFORCE {
 
 typedef struct DIPERIODIC {
 	uint32_t dwMagnitude;
-	int32_t lOffset;
+	int32_t  lOffset;
 	uint32_t dwPhase;
 	uint32_t dwPeriod;
 } DIPERIODIC;
 
 typedef struct DICONDITION {
-	int32_t lOffset;
-	int32_t lPositiveCoefficient;
-	int32_t lNegativeCoefficient;
+	int32_t  lOffset;
+	int32_t  lPositiveCoefficient;
+	int32_t  lNegativeCoefficient;
 	uint32_t dwPositiveSaturation;
 	uint32_t dwNegativeSaturation;
-	int32_t lDeadBand;
+	int32_t  lDeadBand;
 } DICONDITION;
 
 /* DirectInput 5 effect descriptor (original dwSize == 52 on 32-bit). */
 typedef struct DIEFFECT {
-	uint32_t dwSize;
-	uint32_t dwFlags;
-	uint32_t dwDuration;
-	uint32_t dwSamplePeriod;
-	uint32_t dwGain;
-	uint32_t dwTriggerButton;
-	uint32_t dwTriggerRepeatInterval;
-	uint32_t cAxes;
-	uint32_t* rgdwAxes;
-	int32_t* rglDirection;
+	uint32_t    dwSize;
+	uint32_t    dwFlags;
+	uint32_t    dwDuration;
+	uint32_t    dwSamplePeriod;
+	uint32_t    dwGain;
+	uint32_t    dwTriggerButton;
+	uint32_t    dwTriggerRepeatInterval;
+	uint32_t    cAxes;
+	uint32_t*   rgdwAxes;
+	int32_t*    rglDirection;
 	DIENVELOPE* lpEnvelope;
-	uint32_t cbTypeSpecificParams;
-	void* lpvTypeSpecificParams;
+	uint32_t    cbTypeSpecificParams;
+	void*       lpvTypeSpecificParams;
 } DIEFFECT;
 
 /* Effect capability record returned by GetEffectInfo. */
 typedef struct DIEFFECTINFOA {
 	uint32_t dwSize;
-	DxGuid guid;
+	DxGuid   guid;
 	uint32_t dwEffType;
 	uint32_t dwStaticParams;
 	uint32_t dwDynamicParams;
-	char tszName[260];
+	char     tszName[260];
 } DIEFFECTINFOA;
 
 /* Device instance record passed to the EnumDevices callback. */
 typedef struct DIDEVICEINSTANCEA {
 	uint32_t dwSize;
-	DxGuid guidInstance;
-	DxGuid guidProduct;
+	DxGuid   guidInstance;
+	DxGuid   guidProduct;
 	uint32_t dwDevType;
-	char tszInstanceName[260];
-	char tszProductName[260];
-	DxGuid guidFFDriver;
+	char     tszInstanceName[260];
+	char     tszProductName[260];
+	DxGuid   guidFFDriver;
 	uint16_t wUsagePage;
 	uint16_t wUsage;
 } DIDEVICEINSTANCEA;
@@ -304,7 +304,7 @@ typedef struct IDirectInputDevice2AVtbl {
 	HRESULT(AERON_DXAPI* Unacquire)(IDirectInputDevice2A*);
 	HRESULT(AERON_DXAPI* GetDeviceState)(IDirectInputDevice2A*, uint32_t, void*);
 	HRESULT(AERON_DXAPI* GetDeviceData)(IDirectInputDevice2A*, uint32_t, DIDEVICEOBJECTDATA*, uint32_t*,
-									  uint32_t);
+										uint32_t);
 	HRESULT(AERON_DXAPI* SetDataFormat)(IDirectInputDevice2A*, const DIDATAFORMAT*);
 	HRESULT(AERON_DXAPI* SetEventNotification)(IDirectInputDevice2A*, void*);
 	HRESULT(AERON_DXAPI* SetCooperativeLevel)(IDirectInputDevice2A*, void*, uint32_t);
@@ -313,7 +313,7 @@ typedef struct IDirectInputDevice2AVtbl {
 	HRESULT(AERON_DXAPI* RunControlPanel)(IDirectInputDevice2A*, void*, uint32_t);
 	HRESULT(AERON_DXAPI* Initialize)(IDirectInputDevice2A*, void*, uint32_t, DxRefIid);
 	HRESULT(AERON_DXAPI* CreateEffect)(IDirectInputDevice2A*, DxRefIid, const DIEFFECT*, IDirectInputEffect**,
-									 void*);
+									   void*);
 	HRESULT(AERON_DXAPI* EnumEffects)(IDirectInputDevice2A*, LPDIENUMEFFECTSCALLBACKA, void*, uint32_t);
 	HRESULT(AERON_DXAPI* GetEffectInfo)(IDirectInputDevice2A*, DIEFFECTINFOA*, DxRefIid);
 	HRESULT(AERON_DXAPI* GetForceFeedbackState)(IDirectInputDevice2A*, uint32_t*);

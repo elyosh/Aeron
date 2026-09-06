@@ -170,9 +170,7 @@ void Aeron_MutexDestroy(AeronMutex* mutex) { SDL_DestroyMutex((SDL_Mutex*)mutex)
 #if defined(_MSC_VER)
 #include <intrin.h>
 
-int Aeron_AtomicLoad(volatile int* value) {
-	return (int)_InterlockedOr((volatile long*)value, 0);
-}
+int Aeron_AtomicLoad(volatile int* value) { return (int)_InterlockedOr((volatile long*)value, 0); }
 
 void Aeron_AtomicStore(volatile int* value, int newValue) {
 	(void)_InterlockedExchange((volatile long*)value, (long)newValue);

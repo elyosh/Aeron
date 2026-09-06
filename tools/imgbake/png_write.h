@@ -14,17 +14,15 @@ extern "C" {
 #include <stdbool.h>
 #include <stdint.h>
 
-bool write_png_rgba(const char *path, int width, int height,
-                    const uint8_t *rgba);
+bool write_png_rgba(const char* path, int width, int height, const uint8_t* rgba);
 
 /* Atomic variant: writes to "<path>.tmp" and renames over `path` on
  * success so a crash mid-write can't truncate an existing file.
  * Reason on failure (open/write/close/rename) goes into `err` if
  * non-NULL. */
 #include <stddef.h>
-bool write_png_rgba_atomic(const char *path, int width, int height,
-                           const uint8_t *rgba,
-                           char *err, size_t errsz);
+bool write_png_rgba_atomic(const char* path, int width, int height, const uint8_t* rgba, char* err,
+						   size_t errsz);
 
 #ifdef __cplusplus
 }

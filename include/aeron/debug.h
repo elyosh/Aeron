@@ -68,24 +68,30 @@ int  Aeron_DebugUiVisible(void);
 
 #else /* !AERON_DEBUG_UI — inline no-op stubs */
 
-static inline int  Aeron_DebugUiAvailable(void) { return 0; }
+static inline int Aeron_DebugUiAvailable(void) { return 0; }
+
 static inline void Aeron_DebugRegisterTool(const char* menu_label, AeronDebugToolFn draw, void* user) {
 	(void)menu_label;
 	(void)draw;
 	(void)user;
 }
+
 static inline void Aeron_DebugSetApplication(AeronDebugApplicationFn draw, void* user) {
 	(void)draw;
 	(void)user;
 }
+
 static inline void Aeron_DebugImage(struct AeronTexture* texture, float width, float height) {
 	(void)texture;
 	(void)width;
 	(void)height;
 }
+
 static inline void Aeron_DebugUiToggle(void) {}
+
 static inline void Aeron_DebugUiSetVisible(int visible) { (void)visible; }
-static inline int  Aeron_DebugUiVisible(void) { return 0; }
+
+static inline int Aeron_DebugUiVisible(void) { return 0; }
 
 #endif /* AERON_DEBUG_UI */
 

@@ -5,9 +5,9 @@
  * API — games use the aeron_scene public headers only. */
 
 #include "aeron/log.h"
-#include "aeron/scene/scene3d.h"
 #include "aeron/scene/billboard.h"
 #include "aeron/scene/mesh_overlay.h"
+#include "aeron/scene/scene3d.h"
 
 #define AERON_SCENE_MAX_INSTANCES 2048
 #define AERON_SCENE_MAX_LIGHTS AERON_SCENE_POINT_LIGHT_CAPACITY
@@ -27,7 +27,7 @@
 #define AERON_SCENE_MAX_OVERLAY_VERTS (256u * 1024u)
 #define AERON_SCENE_MAX_SHADOW_ONLY AERON_SCENE_MAX_INSTANCES
 #define AERON_SCENE_MAX_SHADOW_CASTERS (AERON_SCENE_MAX_INSTANCES + AERON_SCENE_MAX_SHADOW_ONLY)
-#define AERON_SCENE_MAX_MESH_TABLES \
+#define AERON_SCENE_MAX_MESH_TABLES                                                                          \
 	(1 + AERON_SCENE_MAX_INSTANCES * 2 + AERON_SCENE_MAX_SHADOW_ONLY + AERON_SCENE_MAX_MESH_OVERLAYS)
 #define AERON_SCENE_MESH_TABLE_HASH_CAP 4096
 #define AERON_SCENE_SHADOW_GUARD_TEXELS 4
@@ -37,18 +37,18 @@
  * pipelines are single-target; the prepass variants own normal, velocity
  * and temporal-depth outputs. */
 enum {
-	AERON_PBR_PIPE_MESH = 0,         /* monolithic color, depth write */
-	AERON_PBR_PIPE_FORWARD,          /* color, depth-EQUAL/no-write */
-	AERON_PBR_PIPE_PREPASS,          /* normal only */
-	AERON_PBR_PIPE_PREPASS_VEL,      /* normal + velocity */
-	AERON_PBR_PIPE_MESH_MASK,        /* alpha mask, monolithic color */
-	AERON_PBR_PIPE_FORWARD_MASK,     /* alpha mask, deferred color */
-	AERON_PBR_PIPE_PREPASS_MASK,     /* alpha mask normal only */
-	AERON_PBR_PIPE_PREPASS_MASK_VEL, /* alpha mask normal + velocity */
-	AERON_PBR_PIPE_MESH_BLEND,       /* blend range of MESH */
-	AERON_PBR_PIPE_FORWARD_BLEND,    /* blend range of FORWARD (test GE) */
-	AERON_PBR_PIPE_PREPASS_STAMP,    /* normal masked + velocity written */
-	AERON_PBR_PIPE_PREPASS_TEMPORAL, /* normal + velocity + R32 depth export */
+	AERON_PBR_PIPE_MESH = 0,              /* monolithic color, depth write */
+	AERON_PBR_PIPE_FORWARD,               /* color, depth-EQUAL/no-write */
+	AERON_PBR_PIPE_PREPASS,               /* normal only */
+	AERON_PBR_PIPE_PREPASS_VEL,           /* normal + velocity */
+	AERON_PBR_PIPE_MESH_MASK,             /* alpha mask, monolithic color */
+	AERON_PBR_PIPE_FORWARD_MASK,          /* alpha mask, deferred color */
+	AERON_PBR_PIPE_PREPASS_MASK,          /* alpha mask normal only */
+	AERON_PBR_PIPE_PREPASS_MASK_VEL,      /* alpha mask normal + velocity */
+	AERON_PBR_PIPE_MESH_BLEND,            /* blend range of MESH */
+	AERON_PBR_PIPE_FORWARD_BLEND,         /* blend range of FORWARD (test GE) */
+	AERON_PBR_PIPE_PREPASS_STAMP,         /* normal masked + velocity written */
+	AERON_PBR_PIPE_PREPASS_TEMPORAL,      /* normal + velocity + R32 depth export */
 	AERON_PBR_PIPE_PREPASS_MASK_TEMPORAL, /* alpha mask normal + velocity + depth */
 	AERON_PBR_PIPE_KIND_COUNT
 };
@@ -106,7 +106,7 @@ typedef struct AeronScenePointLightGPU {
 } AeronScenePointLightGPU;
 
 typedef struct AeronSceneClusterLightGPU {
-	float view_position_range[4];
+	float    view_position_range[4];
 	uint32_t point_light_index;
 	float    luminance;
 	float    _pad[2];
@@ -172,8 +172,9 @@ typedef struct AeronSceneDirectionalShadowUniform {
 	/* xyz = normalized surface-to-light direction. */
 	float light_dir[4];
 } AeronSceneDirectionalShadowUniform;
-typedef char AeronSceneDirectionalShadowUniformSizeCheck
-	[sizeof(AeronSceneDirectionalShadowUniform) == 640 ? 1 : -1];
+
+typedef char
+	AeronSceneDirectionalShadowUniformSizeCheck[sizeof(AeronSceneDirectionalShadowUniform) == 640 ? 1 : -1];
 
 typedef struct AeronSceneShadowFitHistory {
 	int      valid;
@@ -204,22 +205,22 @@ struct AeronScene3D {
 	float            unjittered_view_proj[16];
 	float            clear_rgba[4];
 
-	AeronScenePassHookFn hook_fn[AERON_SCENE_HOOK_COUNT];
-	void*                hook_user[AERON_SCENE_HOOK_COUNT];
+	AeronScenePassHookFn    hook_fn[AERON_SCENE_HOOK_COUNT];
+	void*                   hook_user[AERON_SCENE_HOOK_COUNT];
 	AeronSceneAfterMeshesFn after_meshes_fn;
 	void*                   after_meshes_user;
 
-	AeronSceneMeshInstance instances[AERON_SCENE_MAX_INSTANCES];
+	AeronSceneMeshInstance     instances[AERON_SCENE_MAX_INSTANCES];
 	AeronScenePreparedInstance prepared_instances[AERON_SCENE_MAX_INSTANCES];
-	int                    instance_count;
-	int                    instances_dropped;
-	AeronSceneLight        lights[AERON_SCENE_MAX_LIGHTS];
-	int                    light_count;
-	int                    lights_dropped;
-	AeronSceneFrameUniform frame_uniforms[AERON_SCENE_MAX_FRAME_UNIFORMS];
-	int                    frame_uniform_count;
-	AeronTexture*          pbr_environment_map;     /* borrowed for this frame */
-	AeronSampler*          pbr_environment_sampler; /* borrowed for this frame */
+	int                        instance_count;
+	int                        instances_dropped;
+	AeronSceneLight            lights[AERON_SCENE_MAX_LIGHTS];
+	int                        light_count;
+	int                        lights_dropped;
+	AeronSceneFrameUniform     frame_uniforms[AERON_SCENE_MAX_FRAME_UNIFORMS];
+	int                        frame_uniform_count;
+	AeronTexture*              pbr_environment_map;     /* borrowed for this frame */
+	AeronSampler*              pbr_environment_sampler; /* borrowed for this frame */
 
 	/* Stabilized cascaded shadow map for the key directional light. */
 	AeronSceneDirectionalShadowDesc    directional_shadow;
@@ -468,11 +469,9 @@ AeronBlendStateDesc        AeronSceneInternal_BlendOpaque(void);
 AeronTexture*              AeronSceneInternal_WhiteTexture(void);
 AeronTexture*              AeronSceneInternal_WhiteCubeTexture(void);
 const AeronSceneMeshTable* AeronScenePbr_IdentityTable(void);
-int                        AeronSceneStorage_Prepare(struct AeronScene3D* s,
-													AeronCommandBuffer* cmd);
+int                        AeronSceneStorage_Prepare(struct AeronScene3D* s, AeronCommandBuffer* cmd);
 void                       AeronSceneStorage_Release(struct AeronScene3D* s);
-uint32_t                   AeronSceneStorage_ShadowTableIndex(
-										  const struct AeronScene3D* s, uint16_t encoded_caster);
+uint32_t AeronSceneStorage_ShadowTableIndex(const struct AeronScene3D* s, uint16_t encoded_caster);
 
 /* clustered_lights.c */
 void AeronSceneClusteredLights_Classify(struct AeronScene3D* s);
@@ -498,8 +497,8 @@ int AeronScenePbr_DrawTransparentInstances(struct AeronScene3D* s, AeronRenderPa
 										   AeronTexture* ao_tex);
 
 /* directional_shadow.c */
-int AeronSceneDirectionalShadow_Prepare(struct AeronScene3D* scene);
-int AeronSceneDirectionalShadow_Render(struct AeronScene3D* scene, AeronCommandBuffer* command_buffer);
+int  AeronSceneDirectionalShadow_Prepare(struct AeronScene3D* scene);
+int  AeronSceneDirectionalShadow_Render(struct AeronScene3D* scene, AeronCommandBuffer* command_buffer);
 void AeronSceneDirectionalShadow_Bind(struct AeronScene3D* scene, AeronRenderPass* render_pass);
 void AeronSceneDirectionalShadow_BindForInstance(struct AeronScene3D* scene, AeronRenderPass* render_pass,
 												 uint8_t shadow_flags);

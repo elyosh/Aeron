@@ -778,9 +778,8 @@ void Aeron_DestroyDepthTarget(AeronDepthTarget* target);
 
 /* Stages tightly packed D16_UNORM pixels into a depth-target subregion. No
  * render or compute pass may be open on the command buffer. */
-int Aeron_UploadDepthTargetD16RegionCmd(AeronCommandBuffer* command_buffer, AeronDepthTarget* target,
-										int x, int y, int width, int height, const uint16_t* pixels,
-										uint32_t size);
+int Aeron_UploadDepthTargetD16RegionCmd(AeronCommandBuffer* command_buffer, AeronDepthTarget* target, int x,
+										int y, int width, int height, const uint16_t* pixels, uint32_t size);
 
 /* Returns the sampleable texture view of a depth target created with
  * `sampled` set; NULL otherwise. Owned by the depth target. */
@@ -809,7 +808,7 @@ int Aeron_SubmitCommandBuffer(AeronCommandBuffer* command_buffer);
 void Aeron_CancelCommandBuffer(AeronCommandBuffer* command_buffer);
 
 /* Copies current staging usage into out. Returns zero for invalid arguments. */
-int Aeron_CommandBufferGetUploadUsage(const AeronCommandBuffer* command_buffer,
+int Aeron_CommandBufferGetUploadUsage(const AeronCommandBuffer*      command_buffer,
 									  AeronCommandBufferUploadUsage* out);
 /* Records a sticky high-level preparation failure. Submission then rejects the
  * command buffer and preserves `message` as the renderer diagnostic. */

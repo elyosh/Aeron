@@ -11,36 +11,34 @@
 #define AERON_OPT_Q15_SCALE 32768.0f
 
 typedef struct OptModelCookContext {
-	OptGltfDocument *document;
-	AeronFlightModel *model;
-	const char *label;
-	bool render_build_failed;
+	OptGltfDocument*  document;
+	AeronFlightModel* model;
+	const char*       label;
+	bool              render_build_failed;
 } OptModelCookContext;
 
-static bool opt_model_error(AeronOptModelError *error, int code,
-							const char *message) {
+static bool opt_model_error(AeronOptModelError* error, int code, const char* message) {
 	if (error) {
 		error->code = code;
-		snprintf(error->message, sizeof error->message, "%s",
-				 message ? message : "OPT conversion failed");
+		snprintf(error->message, sizeof error->message, "%s", message ? message : "OPT conversion failed");
 	}
 	return false;
 }
 
-static bool opt_model_image_provider(void *context, const cgltf_image *image,
-									 AeronGltfCookImageView *out_view) {
-	OptModelCookContext *cook = context;
-	OptGltfImageView image_view;
+static bool opt_model_image_provider(void* context, const cgltf_image* image,
+									 AeronGltfCookImageView* out_view) {
+	OptModelCookContext* cook = context;
+	OptGltfImageView     image_view;
 	if (!OptGltf_ImageView(cook->document, image, &image_view))
 		return false;
-	out_view->rgba = image_view.rgba;
-	out_view->width = (int)image_view.width;
+	out_view->rgba   = image_view.rgba;
+	out_view->width  = (int)image_view.width;
 	out_view->height = (int)image_view.height;
 	return true;
 }
 
-static bool opt_model_consumer(void *context, const cgltf_data *cooked_data) {
-	OptModelCookContext *cook = context;
+static bool opt_model_consumer(void* context, const cgltf_data* cooked_data) {
+	OptModelCookContext* cook = context;
 	if (!cooked_data->scene || cooked_data->scene->nodes_count != 1 ||
 		cooked_data->scene->nodes[0]->children_count != cook->model->component_count ||
 		!Aeron_GltfMeshBuildData(cooked_data, cook->label, &cook->model->render)) {
@@ -174,10 +172,10 @@ static bool build_opt_topology(const opt_mesh_t* source, AeronFlightComponent* c
 }
 
 static bool build_opt_component(const opt_mesh_t* source, AeronFlightComponent* component) {
-	component->mesh_type       = source->descriptor.mesh_type;
-	component->explosion_flags = (uint32_t)source->descriptor.explosion_type;
-	component->target_id       = source->descriptor.target_id;
-	component->target          = opt_position(&source->descriptor.target);
+	component->mesh_type         = source->descriptor.mesh_type;
+	component->explosion_flags   = (uint32_t)source->descriptor.explosion_type;
+	component->target_id         = source->descriptor.target_id;
+	component->target            = opt_position(&source->descriptor.target);
 	component->has_descriptor    = source->has_descriptor != 0;
 	component->descriptor_span   = opt_position(&source->descriptor.span);
 	component->descriptor_center = opt_position(&source->descriptor.center);

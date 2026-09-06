@@ -77,8 +77,11 @@ static bool format_is_bc_4x4_16b(uint32_t vk) {
 		   vk == VK_FORMAT_BC6H_SFLOAT_BLOCK || vk == VK_FORMAT_BC7_UNORM_BLOCK ||
 		   vk == VK_FORMAT_BC7_SRGB_BLOCK;
 }
+
 static int format_block_w(uint32_t vk) { return format_is_bc_4x4_16b(vk) ? 4 : 1; }
+
 static int format_block_h(uint32_t vk) { return format_is_bc_4x4_16b(vk) ? 4 : 1; }
+
 static int format_block_bytes(uint32_t vk) { return format_is_bc_4x4_16b(vk) ? 16 : 4; }
 
 /* Compute the bytes for a level at (w, h) for a given format. Block
@@ -105,27 +108,25 @@ static uint8_t* make_premultiplied_copy(const uint8_t* rgba, int w, int h) {
 	return out;
 }
 
-static uint8_t* make_alpha_encoded_copy(const uint8_t* rgba, int w, int h,
-										 Ktx2AlphaEncoding encoding) {
+static uint8_t* make_alpha_encoded_copy(const uint8_t* rgba, int w, int h, Ktx2AlphaEncoding encoding) {
 	if (encoding == KTX2_ALPHA_PREMULTIPLIED)
 		return make_premultiplied_copy(rgba, w, h);
 	if (encoding != KTX2_ALPHA_STRAIGHT)
 		return NULL;
 	const size_t bytes = (size_t)w * (size_t)h * 4u;
-	uint8_t* copy = (uint8_t*)malloc(bytes);
+	uint8_t*     copy  = (uint8_t*)malloc(bytes);
 	if (copy)
 		memcpy(copy, rgba, bytes);
 	return copy;
 }
 
-static uint8_t* downsample_alpha_encoded_rgba8(const uint8_t* source, int width, int height,
-												int* out_width, int* out_height,
-												Ktx2AlphaEncoding encoding) {
+static uint8_t* downsample_alpha_encoded_rgba8(const uint8_t* source, int width, int height, int* out_width,
+											   int* out_height, Ktx2AlphaEncoding encoding) {
 	if (encoding == KTX2_ALPHA_STRAIGHT)
 		return Aeron_ImageDownsampleStraightAlphaRgba8(source, width, height, out_width, out_height);
 	return encoding == KTX2_ALPHA_PREMULTIPLIED
-		? Aeron_ImageDownsampleRgba8(source, width, height, out_width, out_height)
-		: NULL;
+			   ? Aeron_ImageDownsampleRgba8(source, width, height, out_width, out_height)
+			   : NULL;
 }
 
 /* Build the complete KTX2 file image into a fresh malloc'd buffer.
@@ -365,8 +366,8 @@ static Bc7Quality bc7_quality_map(Ktx2Bc7Quality q) {
  * stay in lockstep. */
 static bool bc7_with_generated_mips_core(int base_w, int base_h, const uint8_t* base_rgba,
 										 Ktx2Bc7Quality quality, Ktx2TransferFn tf, bool zstd, int max_levels,
-										 Ktx2AlphaEncoding alpha_encoding,
-										 const char* path, uint8_t** out_buf, size_t* out_size) {
+										 Ktx2AlphaEncoding alpha_encoding, const char* path,
+										 uint8_t** out_buf, size_t* out_size) {
 	if (!base_rgba || base_w < 1 || base_h < 1)
 		return false;
 	if (max_levels < 0)
@@ -459,7 +460,7 @@ bool write_ktx2_bc7_with_generated_mips(const char* path, int base_w, int base_h
 	if (!path)
 		return false;
 	return bc7_with_generated_mips_core(base_w, base_h, base_rgba, quality, tf, zstd, 0,
-										  KTX2_ALPHA_PREMULTIPLIED, path, NULL, NULL);
+										KTX2_ALPHA_PREMULTIPLIED, path, NULL, NULL);
 }
 
 bool write_ktx2_bc7_with_generated_mips_to_buffer(int base_w, int base_h, const uint8_t* base_rgba,
@@ -474,20 +475,19 @@ bool write_ktx2_bc7_with_generated_mips_to_buffer_limited(int base_w, int base_h
 														  bool zstd, int max_levels, uint8_t** out_buf,
 														  size_t* out_size) {
 	return write_ktx2_bc7_with_generated_mips_to_buffer_limited_alpha(
-		base_w, base_h, base_rgba, quality, tf, zstd, max_levels,
-		KTX2_ALPHA_PREMULTIPLIED, out_buf, out_size);
+		base_w, base_h, base_rgba, quality, tf, zstd, max_levels, KTX2_ALPHA_PREMULTIPLIED, out_buf,
+		out_size);
 }
 
 bool write_ktx2_bc7_with_generated_mips_to_buffer_limited_alpha(
-	int base_w, int base_h, const uint8_t* base_rgba, Ktx2Bc7Quality quality,
-	Ktx2TransferFn tf, bool zstd, int max_levels, Ktx2AlphaEncoding alpha_encoding,
-	uint8_t** out_buf, size_t* out_size) {
+	int base_w, int base_h, const uint8_t* base_rgba, Ktx2Bc7Quality quality, Ktx2TransferFn tf, bool zstd,
+	int max_levels, Ktx2AlphaEncoding alpha_encoding, uint8_t** out_buf, size_t* out_size) {
 	if (!out_buf || !out_size)
 		return false;
 	*out_buf  = NULL;
 	*out_size = 0;
 	return bc7_with_generated_mips_core(base_w, base_h, base_rgba, quality, tf, zstd, max_levels,
-										  alpha_encoding, NULL, out_buf, out_size);
+										alpha_encoding, NULL, out_buf, out_size);
 }
 
 /* BC5 buffer entry point. Mirrors the BC7 version but skips the PMA
@@ -749,7 +749,7 @@ static bool rgba_with_generated_mips_core(const char* path, int base_w, int base
 bool write_ktx2_rgba_with_generated_mips(const char* path, int base_w, int base_h, const uint8_t* base_rgba,
 										 Ktx2TransferFn tf, bool zstd) {
 	return rgba_with_generated_mips_core(path, base_w, base_h, base_rgba, tf, zstd, 0, NULL, NULL,
-										   KTX2_ALPHA_PREMULTIPLIED);
+										 KTX2_ALPHA_PREMULTIPLIED);
 }
 
 bool write_ktx2_rgba_with_generated_mips_to_buffer(int base_w, int base_h, const uint8_t* base_rgba,
@@ -763,14 +763,14 @@ bool write_ktx2_rgba_with_generated_mips_to_buffer_limited(int base_w, int base_
 														   Ktx2TransferFn tf, bool zstd, int max_levels,
 														   uint8_t** out_buf, size_t* out_size) {
 	return write_ktx2_rgba_with_generated_mips_to_buffer_limited_alpha(
-		base_w, base_h, base_rgba, tf, zstd, max_levels,
-		KTX2_ALPHA_PREMULTIPLIED, out_buf, out_size);
+		base_w, base_h, base_rgba, tf, zstd, max_levels, KTX2_ALPHA_PREMULTIPLIED, out_buf, out_size);
 }
 
-bool write_ktx2_rgba_with_generated_mips_to_buffer_limited_alpha(
-	int base_w, int base_h, const uint8_t* base_rgba, Ktx2TransferFn tf,
-	bool zstd, int max_levels, Ktx2AlphaEncoding alpha_encoding,
-	uint8_t** out_buf, size_t* out_size) {
+bool write_ktx2_rgba_with_generated_mips_to_buffer_limited_alpha(int base_w, int base_h,
+																 const uint8_t* base_rgba, Ktx2TransferFn tf,
+																 bool zstd, int max_levels,
+																 Ktx2AlphaEncoding alpha_encoding,
+																 uint8_t** out_buf, size_t* out_size) {
 	return rgba_with_generated_mips_core(NULL, base_w, base_h, base_rgba, tf, zstd, max_levels, out_buf,
 										 out_size, alpha_encoding);
 }

@@ -14,8 +14,8 @@
 #include <stdlib.h>
 #include <string.h>
 
-typedef char AeronSceneMeshTableSizeCheck[
-	sizeof(AeronSceneMeshTable) == AERON_MESH_TABLE_STRIDE_VEC4 * 16 ? 1 : -1];
+typedef char
+	AeronSceneMeshTableSizeCheck[sizeof(AeronSceneMeshTable) == AERON_MESH_TABLE_STRIDE_VEC4 * 16 ? 1 : -1];
 typedef char AeronSceneLightGPUSizeCheck[sizeof(AeronSceneLightGPU) == 32 ? 1 : -1];
 typedef char AeronScenePointLightGPUSizeCheck[sizeof(AeronScenePointLightGPU) == 32 ? 1 : -1];
 typedef char AeronSceneClusterLightGPUSizeCheck[sizeof(AeronSceneClusterLightGPU) == 32 ? 1 : -1];
@@ -262,7 +262,8 @@ static int scene_prepare_mode(AeronScene3D* s) {
 	AeronTemporalMode requested =
 		scene_temporal_mode_valid(s->temporal.mode) ? s->temporal.mode : AERON_TEMPORAL_OFF;
 	if (requested != s->temporal_active_mode && !scene_reconfigure(s, requested)) {
-		Aeron_LogError("aeron.scene", "failed to configure temporal mode %s", AeronTemporal_ModeName(requested));
+		Aeron_LogError("aeron.scene", "failed to configure temporal mode %s",
+					   AeronTemporal_ModeName(requested));
 		return 0;
 	}
 	if (requested != AERON_TEMPORAL_OFF && !AeronSceneTemporal_Ensure(s)) {
@@ -326,10 +327,10 @@ AeronScene3D* AeronScene_Create(const AeronScene3DDesc* desc) {
 		free(s);
 		return NULL;
 	}
-	s->clear_rgba[0] = 0.01f; /* deep-space baseline */
-	s->clear_rgba[1] = 0.015f;
-	s->clear_rgba[2] = 0.03f;
-	s->clear_rgba[3] = 1.0f;
+	s->clear_rgba[0]             = 0.01f; /* deep-space baseline */
+	s->clear_rgba[1]             = 0.015f;
+	s->clear_rgba[2]             = 0.03f;
+	s->clear_rgba[3]             = 1.0f;
 	s->cluster_desc.enabled      = 1;
 	s->cluster_desc.depth_slices = AERON_SCENE_CLUSTER_DEFAULT_DEPTH_SLICES;
 	s->cluster_desc.min_distance = 1.0f;
@@ -408,16 +409,16 @@ int AeronScene_Begin(AeronScene3D* s, const AeronSceneCamera* camera) {
 		proj[6] -= 2.0f * s->temporal_jitter[1] / (float)s->camera.viewport.height;
 	}
 	scene_mat4_mul(s->jittered_view_proj, proj, view);
-	s->instance_count      = 0;
-	s->instances_dropped   = 0;
-	s->light_count         = 0;
-	s->lights_dropped      = 0;
-	s->cluster_active      = 0;
-	s->cluster_ready       = 0;
-	s->frame_uniform_count = 0;
-	s->pbr_environment_map = NULL;
+	s->instance_count          = 0;
+	s->instances_dropped       = 0;
+	s->light_count             = 0;
+	s->lights_dropped          = 0;
+	s->cluster_active          = 0;
+	s->cluster_ready           = 0;
+	s->frame_uniform_count     = 0;
+	s->pbr_environment_map     = NULL;
 	s->pbr_environment_sampler = NULL;
-	s->pbr_debug_views     = 0;
+	s->pbr_debug_views         = 0;
 	memset(&s->directional_shadow, 0, sizeof s->directional_shadow);
 	memset(&s->shadow_uniform, 0, sizeof s->shadow_uniform);
 	memset(&s->shadow_stats, 0, sizeof s->shadow_stats);
@@ -473,9 +474,8 @@ int AeronScene_AddLight(AeronScene3D* s, const AeronSceneLight* light) {
 }
 
 int AeronScene_SetClusteredLights(AeronScene3D* s, const AeronSceneClusteredLightDesc* desc) {
-	if (!s || !desc || desc->depth_slices < 4u || desc->depth_slices > 64u ||
-		!isfinite(desc->min_distance) || desc->min_distance < 0.0f ||
-		!isfinite(desc->contribution_cap) || desc->contribution_cap < 0.0f) {
+	if (!s || !desc || desc->depth_slices < 4u || desc->depth_slices > 64u || !isfinite(desc->min_distance) ||
+		desc->min_distance < 0.0f || !isfinite(desc->contribution_cap) || desc->contribution_cap < 0.0f) {
 		return 0;
 	}
 	s->cluster_desc            = *desc;
@@ -501,8 +501,8 @@ void AeronScene_GetClusteredLightStats(const AeronScene3D* s, AeronSceneClustere
 	out->cluster_count         = s->cluster_count;
 	out->global_light_count    = s->cluster_global_count;
 	out->clustered_active      = (uint32_t)(s->cluster_active != 0);
-	out->allocated_buffer_bytes = (uint64_t)s->cluster_light_buffer_cap + s->cluster_header_buffer_cap +
-								  s->cluster_index_buffer_cap;
+	out->allocated_buffer_bytes =
+		(uint64_t)s->cluster_light_buffer_cap + s->cluster_header_buffer_cap + s->cluster_index_buffer_cap;
 }
 
 void AeronScene_SetDirectionalShadow(AeronScene3D* s, const AeronSceneDirectionalShadowDesc* shadow) {
@@ -690,10 +690,12 @@ static int scene_sky_ensure(AeronScene3D* s) {
 static void scene_sky_bind_vs(AeronScene3D* s, AeronRenderPass* pass) {
 	float r3[9];
 	AeronSceneInternal_QuatToMat3(s->camera.ori, r3); /* world->eye */
+
 	struct {
 		float rot[3][4];
 		float unproj[4];
 	} vsu;
+
 	memset(&vsu, 0, sizeof vsu);
 	for (int r = 0; r < 3; ++r) {
 		for (int c = 0; c < 3; ++c) {
@@ -784,12 +786,11 @@ void AeronScene_SetPbrDebugViews(AeronScene3D* s, int enabled) {
 #endif
 }
 
-void AeronScene_SetPbrEnvironmentMap(AeronScene3D* s, AeronTexture* texture,
-									 AeronSampler* sampler) {
+void AeronScene_SetPbrEnvironmentMap(AeronScene3D* s, AeronTexture* texture, AeronSampler* sampler) {
 	if (!s) {
 		return;
 	}
-	s->pbr_environment_map = texture && sampler ? texture : NULL;
+	s->pbr_environment_map     = texture && sampler ? texture : NULL;
 	s->pbr_environment_sampler = texture && sampler ? sampler : NULL;
 }
 
@@ -803,8 +804,7 @@ void AeronScene_SetFrameUniformData(AeronScene3D* s, AeronShaderStage stage, uin
 		return;
 	}
 	if (s->frame_uniform_count >= AERON_SCENE_MAX_FRAME_UNIFORMS) {
-		Aeron_LogWarn("aeron.scene", "frame uniform cap (%d) hit; dropping",
-					  AERON_SCENE_MAX_FRAME_UNIFORMS);
+		Aeron_LogWarn("aeron.scene", "frame uniform cap (%d) hit; dropping", AERON_SCENE_MAX_FRAME_UNIFORMS);
 		return;
 	}
 	AeronSceneFrameUniform* u = &s->frame_uniforms[s->frame_uniform_count++];
@@ -859,8 +859,8 @@ static void run_hook(AeronScene3D* s, AeronScenePassSlot slot, AeronCommandBuffe
 	}
 }
 
-static void scene_run_after_meshes(AeronScene3D* s, AeronCommandBuffer* cmd,
-								   AeronRenderPass* pass, AeronRenderTarget* color_target) {
+static void scene_run_after_meshes(AeronScene3D* s, AeronCommandBuffer* cmd, AeronRenderPass* pass,
+								   AeronRenderTarget* color_target) {
 	if (!s->after_meshes_fn) {
 		return;
 	}
@@ -883,8 +883,7 @@ static int scene_camera_orientation_changed(const AeronScene3D* s) {
 	return !same && !negated;
 }
 
-static int scene_storage_reserve(void** data, uint32_t* capacity, uint32_t required,
-								 size_t element_size) {
+static int scene_storage_reserve(void** data, uint32_t* capacity, uint32_t required, size_t element_size) {
 	if (*capacity >= required) {
 		return 1;
 	}
@@ -921,15 +920,13 @@ static uint32_t scene_register_mesh_table(AeronScene3D* s, const AeronSceneMeshT
 	for (uint32_t probe = 0; probe < AERON_SCENE_MESH_TABLE_HASH_CAP; ++probe) {
 		if (!s->mesh_table_keys[slot]) {
 			if (s->mesh_table_count >= AERON_SCENE_MAX_MESH_TABLES ||
-				!scene_storage_reserve((void**)&s->mesh_table_staging,
-									 &s->mesh_table_staging_cap,
-									 s->mesh_table_count + 1u,
-									 sizeof *s->mesh_table_staging)) {
+				!scene_storage_reserve((void**)&s->mesh_table_staging, &s->mesh_table_staging_cap,
+									   s->mesh_table_count + 1u, sizeof *s->mesh_table_staging)) {
 				return UINT32_MAX;
 			}
-			const uint32_t index       = s->mesh_table_count++;
-			s->mesh_table_keys[slot]   = table;
-			s->mesh_table_values[slot] = index;
+			const uint32_t index         = s->mesh_table_count++;
+			s->mesh_table_keys[slot]     = table;
+			s->mesh_table_values[slot]   = index;
 			s->mesh_table_staging[index] = *table;
 			return index;
 		}
@@ -941,8 +938,8 @@ static uint32_t scene_register_mesh_table(AeronScene3D* s, const AeronSceneMeshT
 	return UINT32_MAX;
 }
 
-static int scene_storage_ensure_buffer_usage(AeronBuffer** buffer, uint32_t* capacity,
-										 uint32_t required, uint32_t usage, const char* name) {
+static int scene_storage_ensure_buffer_usage(AeronBuffer** buffer, uint32_t* capacity, uint32_t required,
+											 uint32_t usage, const char* name) {
 	if (*buffer && *capacity >= required) {
 		return 1;
 	}
@@ -954,7 +951,7 @@ static int scene_storage_ensure_buffer_usage(AeronBuffer** buffer, uint32_t* cap
 		}
 		new_capacity *= 2u;
 	}
-	AeronBuffer* replacement = Aeron_CreateBuffer(&(AeronBufferDesc){
+	AeronBuffer* replacement = Aeron_CreateBuffer(&(AeronBufferDesc) {
 		.size         = new_capacity,
 		.usage        = usage,
 		.memory_usage = AERON_MEMORY_USAGE_DYNAMIC,
@@ -969,14 +966,15 @@ static int scene_storage_ensure_buffer_usage(AeronBuffer** buffer, uint32_t* cap
 	return 1;
 }
 
-static int scene_storage_ensure_buffer(AeronBuffer** buffer, uint32_t* capacity,
-									   uint32_t required, const char* name) {
+static int scene_storage_ensure_buffer(AeronBuffer** buffer, uint32_t* capacity, uint32_t required,
+									   const char* name) {
 	return scene_storage_ensure_buffer_usage(buffer, capacity, required, AERON_BUFFER_USAGE_STORAGE, name);
 }
 
 static void scene_storage_report_failure(AeronScene3D* s, const char* resource, uint32_t bytes) {
 	if (!s->storage_error_logged) {
-		Aeron_LogError("aeron.scene", "%s preparation failed (%u bytes): %s", resource, bytes, SDL_GetError());
+		Aeron_LogError("aeron.scene", "%s preparation failed (%u bytes): %s", resource, bytes,
+					   SDL_GetError());
 		s->storage_error_logged = 1;
 	}
 }
@@ -992,8 +990,7 @@ int AeronSceneStorage_Prepare(AeronScene3D* s, AeronCommandBuffer* cmd) {
 	memset(s->mesh_table_keys, 0, sizeof s->mesh_table_keys);
 
 	if (scene_register_mesh_table(s, AeronScenePbr_IdentityTable()) != 0u) {
-		scene_storage_report_failure(s, "scene.mesh_tables.cpu",
-									(uint32_t)sizeof(AeronSceneMeshTable));
+		scene_storage_report_failure(s, "scene.mesh_tables.cpu", (uint32_t)sizeof(AeronSceneMeshTable));
 		return 0;
 	}
 	for (int i = 0; i < s->instance_count; ++i) {
@@ -1004,11 +1001,9 @@ int AeronSceneStorage_Prepare(AeronScene3D* s, AeronCommandBuffer* cmd) {
 		const AeronSceneMeshTable* previous =
 			instance->prev_mesh_table ? instance->prev_mesh_table : instance->mesh_table;
 		prepared->previous_table_index = scene_register_mesh_table(s, previous);
-		if (prepared->current_table_index == UINT32_MAX ||
-			prepared->previous_table_index == UINT32_MAX) {
-			scene_storage_report_failure(
-				s, "scene.mesh_tables.cpu",
-				(s->mesh_table_count + 1u) * (uint32_t)sizeof(AeronSceneMeshTable));
+		if (prepared->current_table_index == UINT32_MAX || prepared->previous_table_index == UINT32_MAX) {
+			scene_storage_report_failure(s, "scene.mesh_tables.cpu",
+										 (s->mesh_table_count + 1u) * (uint32_t)sizeof(AeronSceneMeshTable));
 			return 0;
 		}
 		if (!instance->no_local_lights && instance->lights) {
@@ -1017,16 +1012,14 @@ int AeronSceneStorage_Prepare(AeronScene3D* s, AeronCommandBuffer* cmd) {
 				count = 16u;
 			}
 			if (count > 0) {
-				if (!scene_storage_reserve((void**)&s->local_light_staging,
-										 &s->local_light_staging_cap,
-										 s->local_light_count + count,
-										 sizeof *s->local_light_staging)) {
-					scene_storage_report_failure(
-						s, "scene.local_lights.cpu",
-						(s->local_light_count + count) * (uint32_t)sizeof(AeronSceneLightGPU));
+				if (!scene_storage_reserve((void**)&s->local_light_staging, &s->local_light_staging_cap,
+										   s->local_light_count + count, sizeof *s->local_light_staging)) {
+					scene_storage_report_failure(s, "scene.local_lights.cpu",
+												 (s->local_light_count + count) *
+													 (uint32_t)sizeof(AeronSceneLightGPU));
 					return 0;
 				}
-				prepared->local_light_base   = s->local_light_count;
+				prepared->local_light_base  = s->local_light_count;
 				prepared->local_light_count = count;
 				memcpy(&s->local_light_staging[s->local_light_count], instance->lights->lights,
 					   (size_t)count * sizeof *s->local_light_staging);
@@ -1037,121 +1030,107 @@ int AeronSceneStorage_Prepare(AeronScene3D* s, AeronCommandBuffer* cmd) {
 	for (int i = 0; i < s->shadow_only_count; ++i) {
 		AeronScenePreparedInstance* prepared = &s->prepared_shadow_only[i];
 		memset(prepared, 0, sizeof *prepared);
-		prepared->current_table_index =
-			scene_register_mesh_table(s, s->shadow_only[i].mesh_table);
+		prepared->current_table_index = scene_register_mesh_table(s, s->shadow_only[i].mesh_table);
 		if (prepared->current_table_index == UINT32_MAX) {
-			scene_storage_report_failure(
-				s, "scene.mesh_tables.cpu",
-				(s->mesh_table_count + 1u) * (uint32_t)sizeof(AeronSceneMeshTable));
+			scene_storage_report_failure(s, "scene.mesh_tables.cpu",
+										 (s->mesh_table_count + 1u) * (uint32_t)sizeof(AeronSceneMeshTable));
 			return 0;
 		}
 		prepared->previous_table_index = prepared->current_table_index;
 	}
 	for (uint32_t i = 0; i < s->overlay_count; ++i) {
-		s->overlays[i].mesh_table_index =
-			scene_register_mesh_table(s, s->overlays[i].mesh_table);
+		s->overlays[i].mesh_table_index = scene_register_mesh_table(s, s->overlays[i].mesh_table);
 		if (s->overlays[i].mesh_table_index == UINT32_MAX) {
-			scene_storage_report_failure(
-				s, "scene.mesh_tables.cpu",
-				(s->mesh_table_count + 1u) * (uint32_t)sizeof(AeronSceneMeshTable));
+			scene_storage_report_failure(s, "scene.mesh_tables.cpu",
+										 (s->mesh_table_count + 1u) * (uint32_t)sizeof(AeronSceneMeshTable));
 			return 0;
 		}
 	}
 
 	const uint32_t point_count = s->light_count > 0 ? (uint32_t)s->light_count : 0u;
 	if (point_count > 0 &&
-		!scene_storage_reserve((void**)&s->point_light_staging,
-							 &s->point_light_staging_cap, point_count,
-							 sizeof *s->point_light_staging)) {
-		scene_storage_report_failure(
-			s, "scene.point_lights.cpu",
-			point_count * (uint32_t)sizeof(AeronScenePointLightGPU));
+		!scene_storage_reserve((void**)&s->point_light_staging, &s->point_light_staging_cap, point_count,
+							   sizeof *s->point_light_staging)) {
+		scene_storage_report_failure(s, "scene.point_lights.cpu",
+									 point_count * (uint32_t)sizeof(AeronScenePointLightGPU));
 		return 0;
 	}
 	if (point_count > 0 &&
-		!scene_storage_reserve((void**)&s->cluster_light_staging,
-								 &s->cluster_light_staging_cap, point_count,
-								 sizeof *s->cluster_light_staging)) {
-		scene_storage_report_failure(
-			s, "scene.cluster_lights.cpu",
-			point_count * (uint32_t)sizeof(AeronSceneClusterLightGPU));
+		!scene_storage_reserve((void**)&s->cluster_light_staging, &s->cluster_light_staging_cap, point_count,
+							   sizeof *s->cluster_light_staging)) {
+		scene_storage_report_failure(s, "scene.cluster_lights.cpu",
+									 point_count * (uint32_t)sizeof(AeronSceneClusterLightGPU));
 		return 0;
 	}
 	float view_rotation[9];
 	AeronSceneInternal_QuatToMat3(s->camera.ori, view_rotation);
 	for (uint32_t i = 0; i < point_count; ++i) {
-		const AeronSceneLight* source = &s->lights[i];
-		AeronScenePointLightGPU* destination = &s->point_light_staging[i];
-		AeronSceneClusterLightGPU* cluster = &s->cluster_light_staging[i];
-		destination->position_range[0] = source->pos[0];
-		destination->position_range[1] = source->pos[1];
-		destination->position_range[2] = source->pos[2];
-		destination->position_range[3] = source->radius;
-		destination->color[0] = source->color[0];
-		destination->color[1] = source->color[1];
-		destination->color[2] = source->color[2];
-		destination->color[3] = 0.0f;
-		const float dx = source->pos[0] - s->camera.pos[0];
-		const float dy = source->pos[1] - s->camera.pos[1];
-		const float dz = source->pos[2] - s->camera.pos[2];
+		const AeronSceneLight*     source      = &s->lights[i];
+		AeronScenePointLightGPU*   destination = &s->point_light_staging[i];
+		AeronSceneClusterLightGPU* cluster     = &s->cluster_light_staging[i];
+		destination->position_range[0]         = source->pos[0];
+		destination->position_range[1]         = source->pos[1];
+		destination->position_range[2]         = source->pos[2];
+		destination->position_range[3]         = source->radius;
+		destination->color[0]                  = source->color[0];
+		destination->color[1]                  = source->color[1];
+		destination->color[2]                  = source->color[2];
+		destination->color[3]                  = 0.0f;
+		const float dx                         = source->pos[0] - s->camera.pos[0];
+		const float dy                         = source->pos[1] - s->camera.pos[1];
+		const float dz                         = source->pos[2] - s->camera.pos[2];
 		for (int row = 0; row < 3; ++row) {
 			cluster->view_position_range[row] = view_rotation[row * 3 + 0] * dx +
-											 view_rotation[row * 3 + 1] * dy +
-											 view_rotation[row * 3 + 2] * dz;
+												view_rotation[row * 3 + 1] * dy +
+												view_rotation[row * 3 + 2] * dz;
 		}
 		cluster->view_position_range[3] = source->radius;
-		cluster->point_light_index = i;
-		cluster->luminance = 0.2126f * source->color[0] + 0.7152f * source->color[1] +
-							 0.0722f * source->color[2];
+		cluster->point_light_index      = i;
+		cluster->luminance =
+			0.2126f * source->color[0] + 0.7152f * source->color[1] + 0.0722f * source->color[2];
 		cluster->_pad[0] = cluster->_pad[1] = 0.0f;
 	}
 	s->point_light_count = point_count;
 	AeronSceneClusteredLights_Classify(s);
 
 	if (s->local_light_count == 0) {
-		if (!scene_storage_reserve((void**)&s->local_light_staging,
-								 &s->local_light_staging_cap, 1u,
-								 sizeof *s->local_light_staging)) {
-			scene_storage_report_failure(s, "scene.local_lights.cpu",
-										(uint32_t)sizeof(AeronSceneLightGPU));
+		if (!scene_storage_reserve((void**)&s->local_light_staging, &s->local_light_staging_cap, 1u,
+								   sizeof *s->local_light_staging)) {
+			scene_storage_report_failure(s, "scene.local_lights.cpu", (uint32_t)sizeof(AeronSceneLightGPU));
 			return 0;
 		}
 		memset(s->local_light_staging, 0, sizeof *s->local_light_staging);
 	}
 	if (s->point_light_count == 0) {
-		if (!scene_storage_reserve((void**)&s->point_light_staging,
-								 &s->point_light_staging_cap, 1u,
-								 sizeof *s->point_light_staging)) {
+		if (!scene_storage_reserve((void**)&s->point_light_staging, &s->point_light_staging_cap, 1u,
+								   sizeof *s->point_light_staging)) {
 			scene_storage_report_failure(s, "scene.point_lights.cpu",
-										(uint32_t)sizeof(AeronScenePointLightGPU));
+										 (uint32_t)sizeof(AeronScenePointLightGPU));
 			return 0;
 		}
 		memset(s->point_light_staging, 0, sizeof *s->point_light_staging);
 	}
 
-	const uint32_t table_bytes =
-		s->mesh_table_count * (uint32_t)sizeof *s->mesh_table_staging;
+	const uint32_t table_bytes = s->mesh_table_count * (uint32_t)sizeof *s->mesh_table_staging;
 	const uint32_t local_bytes =
-		(s->local_light_count ? s->local_light_count : 1u) *
-		(uint32_t)sizeof *s->local_light_staging;
+		(s->local_light_count ? s->local_light_count : 1u) * (uint32_t)sizeof *s->local_light_staging;
 	const uint32_t point_bytes =
-		(s->point_light_count ? s->point_light_count : 1u) *
-		(uint32_t)sizeof *s->point_light_staging;
+		(s->point_light_count ? s->point_light_count : 1u) * (uint32_t)sizeof *s->point_light_staging;
 	const uint32_t cluster_light_bytes =
 		(s->cluster_light_count ? s->cluster_light_count : (s->point_light_count ? 1u : 0u)) *
 		(uint32_t)sizeof *s->cluster_light_staging;
-	if (!scene_storage_ensure_buffer(&s->mesh_table_buffer, &s->mesh_table_buffer_cap,
-									table_bytes, "scene.mesh_tables")) {
+	if (!scene_storage_ensure_buffer(&s->mesh_table_buffer, &s->mesh_table_buffer_cap, table_bytes,
+									 "scene.mesh_tables")) {
 		scene_storage_report_failure(s, "scene.mesh_tables", table_bytes);
 		return 0;
 	}
-	if (!scene_storage_ensure_buffer(&s->local_light_buffer, &s->local_light_buffer_cap,
-									local_bytes, "scene.local_lights")) {
+	if (!scene_storage_ensure_buffer(&s->local_light_buffer, &s->local_light_buffer_cap, local_bytes,
+									 "scene.local_lights")) {
 		scene_storage_report_failure(s, "scene.local_lights", local_bytes);
 		return 0;
 	}
-	if (!scene_storage_ensure_buffer(&s->point_light_buffer, &s->point_light_buffer_cap,
-									point_bytes, "scene.point_lights")) {
+	if (!scene_storage_ensure_buffer(&s->point_light_buffer, &s->point_light_buffer_cap, point_bytes,
+									 "scene.point_lights")) {
 		scene_storage_report_failure(s, "scene.point_lights", point_bytes);
 		return 0;
 	}
@@ -1169,14 +1148,12 @@ int AeronSceneStorage_Prepare(AeronScene3D* s, AeronCommandBuffer* cmd) {
 	};
 	uint32_t upload_count = 3;
 	if (cluster_light_bytes > 0) {
-		uploads[upload_count++] = (AeronBufferUploadDesc) {
-			s->cluster_light_buffer, 0, s->cluster_light_staging, cluster_light_bytes
-		};
+		uploads[upload_count++] = (AeronBufferUploadDesc) { s->cluster_light_buffer, 0,
+															s->cluster_light_staging, cluster_light_bytes };
 	}
 	s->storage_ready = Aeron_UploadBufferBatchCmd(cmd, uploads, upload_count);
 	if (!s->storage_ready) {
-		scene_storage_report_failure(s, "scene.dynamic_storage",
-									table_bytes + local_bytes + point_bytes);
+		scene_storage_report_failure(s, "scene.dynamic_storage", table_bytes + local_bytes + point_bytes);
 	} else {
 		s->storage_error_logged = 0;
 	}
@@ -1193,9 +1170,7 @@ uint32_t AeronSceneStorage_ShadowTableIndex(const AeronScene3D* s, uint16_t enco
 				   : 0u;
 	}
 	const uint16_t index = (uint16_t)(encoded_caster - AERON_SCENE_MAX_INSTANCES);
-	return index < (uint16_t)s->shadow_only_count
-			   ? s->prepared_shadow_only[index].current_table_index
-			   : 0u;
+	return index < (uint16_t)s->shadow_only_count ? s->prepared_shadow_only[index].current_table_index : 0u;
 }
 
 void AeronSceneStorage_Release(AeronScene3D* s) {
@@ -1210,13 +1185,13 @@ void AeronSceneStorage_Release(AeronScene3D* s) {
 	free(s->local_light_staging);
 	free(s->point_light_staging);
 	free(s->cluster_light_staging);
-	s->mesh_table_buffer = NULL;
-	s->local_light_buffer = NULL;
-	s->point_light_buffer = NULL;
-	s->cluster_light_buffer = NULL;
-	s->mesh_table_staging = NULL;
-	s->local_light_staging = NULL;
-	s->point_light_staging = NULL;
+	s->mesh_table_buffer     = NULL;
+	s->local_light_buffer    = NULL;
+	s->point_light_buffer    = NULL;
+	s->cluster_light_buffer  = NULL;
+	s->mesh_table_staging    = NULL;
+	s->local_light_staging   = NULL;
+	s->point_light_staging   = NULL;
 	s->cluster_light_staging = NULL;
 }
 
@@ -1265,7 +1240,7 @@ static int scene_finalize_output(AeronScene3D* s, AeronCommandBuffer* cmd, int m
 			if (s->mb_temporal_motion_valid && temporal_motion &&
 				(!AeronSceneTemporal_EnsureMutableOutput(s, cmd) ||
 				 !AeronScenePost_MbVisualizeTemporal(s, cmd, temporal_motion,
-													  s->mb_temporal_motion_direct))) {
+													 s->mb_temporal_motion_direct))) {
 				Aeron_GpuDebugPop(cmd);
 				return scene_render_failure(s, cmd, "Temporal motion visualization failed");
 			}
@@ -1315,12 +1290,10 @@ static int scene_finalize_output(AeronScene3D* s, AeronCommandBuffer* cmd, int m
 		Aeron_EndRenderPass(overlay);
 	}
 
-	if (ssao_active && s->post.ssao_debug_viz &&
-		!AeronScenePost_DebugVisualizeSsao(s, cmd)) {
+	if (ssao_active && s->post.ssao_debug_viz && !AeronScenePost_DebugVisualizeSsao(s, cmd)) {
 		return scene_render_failure(s, cmd, "SSAO diagnostic visualization failed");
 	}
-	if (s->directional_shadow.debug_atlas &&
-		!AeronSceneDirectionalShadow_DebugVisualize(s, cmd)) {
+	if (s->directional_shadow.debug_atlas && !AeronSceneDirectionalShadow_DebugVisualize(s, cmd)) {
 		return scene_render_failure(s, cmd, "Directional-shadow diagnostic visualization failed");
 	}
 	if (s->hook_fn[AERON_SCENE_HOOK_BEFORE_POST]) {
@@ -1350,18 +1323,16 @@ int AeronScene_Render(AeronScene3D* s, AeronCommandBuffer* cmd) {
 	if (s->overlay_vertex_count > 0 && !AeronSceneMeshOverlay_Prepare(s, cmd)) {
 		return scene_render_failure(s, cmd, "Scene mesh-overlay preparation failed");
 	}
-	if (!AeronSceneDirectionalShadow_Prepare(s) ||
-		!AeronSceneDirectionalShadow_Render(s, cmd)) {
+	if (!AeronSceneDirectionalShadow_Prepare(s) || !AeronSceneDirectionalShadow_Render(s, cmd)) {
 		return scene_render_failure(s, cmd, "Scene directional-shadow preparation failed");
 	}
 
 	const int temporal_requested = s->temporal_active_mode != AERON_TEMPORAL_OFF;
 	const int ssao_requested     = s->post.ssao_quality > 0 && s->post.ssao_intensity > 0.0f;
 	const int mb_requested       = s->post.mb_quality > 0;
-	const int pbr_required =
-		s->instance_count > 0 || s->shadow_only_count > 0 || temporal_requested || ssao_requested ||
-		mb_requested;
-	const int pbr_ok = !pbr_required || AeronScenePbr_Ensure(s);
+	const int pbr_required       = s->instance_count > 0 || s->shadow_only_count > 0 || temporal_requested ||
+								   ssao_requested || mb_requested;
+	const int pbr_ok             = !pbr_required || AeronScenePbr_Ensure(s);
 	if (!pbr_ok) {
 		return scene_render_failure(s, cmd, "Scene PBR resource preparation failed");
 	}
@@ -1377,15 +1348,13 @@ int AeronScene_Render(AeronScene3D* s, AeronCommandBuffer* cmd) {
 	const int ssao_active = ssao_requested;
 	if (ssao_requested &&
 		(!s->normal_rt || !s->pbr_pipes[AERON_PBR_PIPE_PREPASS][AERON_CULL_NONE] ||
-		 !s->pbr_pipes[AERON_PBR_PIPE_FORWARD][AERON_CULL_NONE] ||
-		 !AeronScenePost_EnsureSsao(s))) {
+		 !s->pbr_pipes[AERON_PBR_PIPE_FORWARD][AERON_CULL_NONE] || !AeronScenePost_EnsureSsao(s))) {
 		return scene_render_failure(s, cmd, "Scene SSAO resource preparation failed");
 	}
 	const int mb_active = mb_requested;
-	if (mb_requested &&
-		(!s->normal_rt || !s->pbr_pipes[AERON_PBR_PIPE_PREPASS_VEL][AERON_CULL_NONE] ||
-		 !s->pbr_pipes[AERON_PBR_PIPE_FORWARD][AERON_CULL_NONE] ||
-		 !AeronScenePost_EnsureMb(s) || !s->mb_camera_fill_pipeline)) {
+	if (mb_requested && (!s->normal_rt || !s->pbr_pipes[AERON_PBR_PIPE_PREPASS_VEL][AERON_CULL_NONE] ||
+						 !s->pbr_pipes[AERON_PBR_PIPE_FORWARD][AERON_CULL_NONE] ||
+						 !AeronScenePost_EnsureMb(s) || !s->mb_camera_fill_pipeline)) {
 		return scene_render_failure(s, cmd, "Scene motion-blur resource preparation failed");
 	}
 	const int msaa_active    = s->sample_count != AERON_SAMPLE_COUNT_1;
@@ -1422,6 +1391,7 @@ int AeronScene_Render(AeronScene3D* s, AeronCommandBuffer* cmd) {
 		if (velocity_write && camera_fill && (s->temporal_active || s->post.mb_camera_blur) &&
 			scene_camera_orientation_changed(s)) {
 			Aeron_GpuDebugMarker(cmd, "Camera velocity fill");
+
 			/* Camera-rotational sky fill — first draw, no depth; seeds
 			 * velocity everywhere from the prev-frame view rotation. */
 			struct {
@@ -1432,6 +1402,7 @@ int AeronScene_Render(AeronScene3D* s, AeronCommandBuffer* cmd) {
 				float inv_view_rot[3][4];
 				float prev_view_proj[16];
 			} cfu;
+
 			memset(&cfu, 0, sizeof cfu);
 			cfu.tan_h_half    = tanf(s->camera.h_half_rad);
 			cfu.tan_v_half    = tanf(s->camera.v_half_rad);
@@ -1508,9 +1479,9 @@ int AeronScene_Render(AeronScene3D* s, AeronCommandBuffer* cmd) {
 		Aeron_GpuDebugMarker(cmd, "Sky billboards");
 		AeronSceneBb3d_DrawStage(s, pass, AERON_SCENE_BILLBOARD_STAGE_SKY);
 		Aeron_GpuDebugMarker(cmd, "PBR forward instances");
-		if (!AeronScenePbr_DrawInstances(
-				s, cmd, pass, AERON_PBR_PIPE_FORWARD, /*depth_only=*/0, /*velocity=*/0,
-				ssao_active ? Aeron_RenderTargetGetTexture(s->ao_rt) : NULL)) {
+		if (!AeronScenePbr_DrawInstances(s, cmd, pass, AERON_PBR_PIPE_FORWARD, /*depth_only=*/0,
+										 /*velocity=*/0,
+										 ssao_active ? Aeron_RenderTargetGetTexture(s->ao_rt) : NULL)) {
 			Aeron_EndRenderPass(pass);
 			return scene_render_failure(s, cmd, "Scene PBR forward recording failed");
 		}
@@ -1518,9 +1489,9 @@ int AeronScene_Render(AeronScene3D* s, AeronCommandBuffer* cmd) {
 		Aeron_GpuDebugMarker(cmd, "Mesh overlays");
 		AeronSceneMeshOverlay_Draw(s, pass);
 		Aeron_GpuDebugMarker(cmd, "PBR transparent instances");
-		if (!AeronScenePbr_DrawTransparentInstances(
-				s, pass, AERON_PBR_PIPE_FORWARD,
-				ssao_active ? Aeron_RenderTargetGetTexture(s->ao_rt) : NULL)) {
+		if (!AeronScenePbr_DrawTransparentInstances(s, pass, AERON_PBR_PIPE_FORWARD,
+													ssao_active ? Aeron_RenderTargetGetTexture(s->ao_rt)
+																: NULL)) {
 			Aeron_EndRenderPass(pass);
 			return scene_render_failure(s, cmd, "Scene PBR transparent recording failed");
 		}
@@ -1562,8 +1533,7 @@ int AeronScene_Render(AeronScene3D* s, AeronCommandBuffer* cmd) {
 					.debug_label    = "Scene sharp overlays after motion blur",
 				});
 				if (!pass) {
-					return scene_render_failure(s, cmd,
-												"Scene sharp-overlay pass creation failed");
+					return scene_render_failure(s, cmd, "Scene sharp-overlay pass creation failed");
 				}
 			}
 		}
@@ -1631,11 +1601,15 @@ int AeronScene_Render(AeronScene3D* s, AeronCommandBuffer* cmd) {
 AeronTexture* AeronScene_ColorTexture(AeronScene3D* s) {
 	return s ? Aeron_RenderTargetGetTexture(s->color_rt) : NULL;
 }
+
 AeronRenderTarget* AeronScene_ColorRt(AeronScene3D* s) { return s ? s->color_rt : NULL; }
-AeronDepthTarget*  AeronScene_DepthRt(AeronScene3D* s) { return s ? s->depth_rt : NULL; }
-AeronSampleCount   AeronScene_SampleCount(const AeronScene3D* s) {
+
+AeronDepthTarget* AeronScene_DepthRt(AeronScene3D* s) { return s ? s->depth_rt : NULL; }
+
+AeronSampleCount AeronScene_SampleCount(const AeronScene3D* s) {
 	return s ? s->sample_count : AERON_SAMPLE_COUNT_1;
 }
+
 AeronRenderTarget* AeronScene_NormalRt(AeronScene3D* s) { return s ? s->normal_rt : NULL; }
 
 void AeronScene_RtDims(const AeronScene3D* s, int* w, int* h) {

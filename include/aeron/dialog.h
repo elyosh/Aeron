@@ -18,18 +18,18 @@ typedef enum AeronMessageBoxKind {
 } AeronMessageBoxKind;
 
 typedef struct AeronMessageBoxButton {
-	int id;
+	int         id;
 	const char* label;
-	int is_default;
-	int is_cancel;
+	int         is_default;
+	int         is_cancel;
 } AeronMessageBoxButton;
 
 typedef struct AeronMessageBoxOptions {
-	AeronMessageBoxKind kind;
-	const char* title;
-	const char* message;
+	AeronMessageBoxKind          kind;
+	const char*                  title;
+	const char*                  message;
 	const AeronMessageBoxButton* buttons;
-	size_t button_count;
+	size_t                       button_count;
 } AeronMessageBoxOptions;
 
 typedef enum AeronFolderDialogStatus {

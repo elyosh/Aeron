@@ -123,9 +123,8 @@ void             AeronDrawList_Destroy(AeronDrawList2D* list);
  * `target_w/h` are the target's pixel dims (used for the px→NDC
  * conversion); `clear_rgba` NULL = transparent black. `target` may be
  * NULL when the list will only be rendered through RenderIntoPass(). */
-void AeronDrawList_Begin(AeronDrawList2D* list, AeronRenderTarget* target, int target_w,
-						 int target_h, AeronDrawList2DClearMode clear_mode,
-						 const float clear_rgba[4]);
+void AeronDrawList_Begin(AeronDrawList2D* list, AeronRenderTarget* target, int target_w, int target_h,
+						 AeronDrawList2DClearMode clear_mode, const float clear_rgba[4]);
 
 void AeronDrawList_AddSprite(AeronDrawList2D* list, const AeronDrawList2DSprite* sprite);
 void AeronDrawList_AddQuad4(AeronDrawList2D* list, const AeronDrawList2DQuad4* quad);
@@ -135,27 +134,23 @@ void AeronDrawList_AddRRect(AeronDrawList2D* list, const AeronDrawList2DRRect* r
  * white texture) — wireframe-heavy consumers (holograms, map grids)
  * must not expand diagonals into per-pixel fills. Endpoints in target
  * px; `thickness_px` is the full stroke width. */
-void AeronDrawList_AddLine(AeronDrawList2D* list, float x0, float y0, float x1, float y1,
-						   float thickness_px, const float rgba[4], AeronBlit2DBlend blend,
-						   const AeronRectI* scissor);
+void AeronDrawList_AddLine(AeronDrawList2D* list, float x0, float y0, float x1, float y1, float thickness_px,
+						   const float rgba[4], AeronBlit2DBlend blend, const AeronRectI* scissor);
 
 /* Projected reversed-Z line. Endpoint clip_w values preserve perspective
  * interpolation; clip_z is normally the camera near distance. The line reads
  * scene depth with GREATER_EQUAL and never writes it. */
-void AeronDrawList_AddProjectedLine(AeronDrawList2D* list, float x0, float y0, float clip_w0,
-									float x1, float y1, float clip_w1, float clip_z,
-									float thickness_px, const float rgba[4], AeronBlit2DBlend blend,
-									const AeronRectI* scissor);
+void AeronDrawList_AddProjectedLine(AeronDrawList2D* list, float x0, float y0, float clip_w0, float x1,
+									float y1, float clip_w1, float clip_z, float thickness_px,
+									const float rgba[4], AeronBlit2DBlend blend, const AeronRectI* scissor);
 
 /* Solid prims — drawn via the shared 1x1 white texture + tint.
  * AddFrame expands into four fills of `thickness_px`. `rgba` is the
  * PMA-space color when blend is PMA (rgb premultiplied by a). */
-void AeronDrawList_AddFill(AeronDrawList2D* list, float x, float y, float w, float h,
-						   const float rgba[4], AeronBlit2DBlend blend,
-						   const AeronRectI* scissor);
-void AeronDrawList_AddFrame(AeronDrawList2D* list, float x, float y, float w, float h,
-							float thickness_px, const float rgba[4], AeronBlit2DBlend blend,
-							const AeronRectI* scissor);
+void AeronDrawList_AddFill(AeronDrawList2D* list, float x, float y, float w, float h, const float rgba[4],
+						   AeronBlit2DBlend blend, const AeronRectI* scissor);
+void AeronDrawList_AddFrame(AeronDrawList2D* list, float x, float y, float w, float h, float thickness_px,
+							const float rgba[4], AeronBlit2DBlend blend, const AeronRectI* scissor);
 
 /* Compacts and uploads rect/sprite instances. `cmd` must have no active
  * render or compute pass. Adding records after this call invalidates the
@@ -170,8 +165,8 @@ void AeronDrawList_Render(AeronDrawList2D* list, AeronCommandBuffer* cmd);
  * caller owns the pass and supplies its actual target so pipeline format
  * selection remains correct for direct swapchain presentation. The
  * draw-list clear mode is ignored. */
-void AeronDrawList_RenderIntoPass(AeronDrawList2D* list, AeronCommandBuffer* cmd,
-								  AeronRenderPass* pass, AeronRenderTarget* target);
+void AeronDrawList_RenderIntoPass(AeronDrawList2D* list, AeronCommandBuffer* cmd, AeronRenderPass* pass,
+								  AeronRenderTarget* target);
 
 #ifdef __cplusplus
 }

@@ -19,13 +19,13 @@ extern "C" {
 #include <stdint.h>
 
 typedef struct {
-	int count;
-	Image8 *frames;      /* count entries; frames[i].pixels == NULL for empty */
+	int     count;
+	Image8* frames; /* count entries; frames[i].pixels == NULL for empty */
 } AnimImage;
 
-void anim_free(AnimImage *a);
+void anim_free(AnimImage* a);
 
-bool decode_anim(AnimImage *out, const uint8_t *data, uint32_t size);
+bool decode_anim(AnimImage* out, const uint8_t* data, uint32_t size);
 
 #ifdef __cplusplus
 }

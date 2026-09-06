@@ -24,7 +24,8 @@ static int Aeron_ResolveApplicationRoot(char* out, size_t capacity, const char* 
 		return 0;
 	}
 	if (!Aeron_ApplicationPath(relative_path, out, capacity)) {
-		Aeron_LogError("aeron", "could not resolve application-relative %s path: %s", description, SDL_GetError());
+		Aeron_LogError("aeron", "could not resolve application-relative %s path: %s", description,
+					   SDL_GetError());
 		return 0;
 	}
 	return 1;

@@ -786,45 +786,41 @@ if(AERON_BUILD_EXAMPLES)
     add_subdirectory(examples/ui_demo)
 endif()
 
-# Formatting helpers (standalone use; game repos have their own format targets).
-set(AERON_FORMAT_FILES
-    ${AERON_SOURCES}
-    src/gpu_debug.h
-    src/internal.h
-    src/time_internal.h
-    src/video.c
-    src/video_decode.c
-    src/video_internal.h
-    include/aeron/aeron.h
-    include/aeron/audio.h
-    include/aeron/audio_decode.h
-    include/aeron/config_file.h
-    include/aeron/dialog.h
-    include/aeron/input.h
-    include/aeron/log.h
-    include/aeron/main.h
-    include/aeron/numeric.h
-    include/aeron/paths.h
-    include/aeron/render.h
-    include/aeron/surface.h
-    include/aeron/time.h
-    include/aeron/video.h
-    include/aeron/vfs.h
-    include/aeron/compat/dinput.h
-    include/aeron/compat/dsound.h
-    include/aeron/compat/host.h
-    include/aeron/compat/mmsystem.h
-    shaders/fullscreen.frag.hlsl
-    shaders/compute_fill.comp.hlsl
-    shaders/compute_fill_buffer.comp.hlsl
-    shaders/fullscreen.vert.hlsl
+# Include optional modules, tools and examples even when they are not built.
+# Vendored third-party sources retain their upstream formatting.
+file(GLOB_RECURSE AERON_FORMAT_FILES CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/*.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/*.h"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/*.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/*.h"
+    "${CMAKE_CURRENT_SOURCE_DIR}/tools/*.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/tools/*.h"
+    "${CMAKE_CURRENT_SOURCE_DIR}/examples/*.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/examples/*.h"
+)
+list(APPEND AERON_FORMAT_FILES
+    "${CMAKE_CURRENT_SOURCE_DIR}/shaders/fullscreen.frag.hlsl"
+    "${CMAKE_CURRENT_SOURCE_DIR}/shaders/compute_fill.comp.hlsl"
+    "${CMAKE_CURRENT_SOURCE_DIR}/shaders/compute_fill_buffer.comp.hlsl"
+    "${CMAKE_CURRENT_SOURCE_DIR}/shaders/fullscreen.vert.hlsl"
 )
 
-find_program(CLANG_FORMAT clang-format)
-if(CLANG_FORMAT AND PROJECT_IS_TOP_LEVEL)
-    add_custom_target(format
-        COMMAND ${CLANG_FORMAT} --Wno-error=unknown -i ${AERON_FORMAT_FILES}
-        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+find_program(AERON_CLANG_FORMAT_EXECUTABLE NAMES clang-format)
+if(AERON_CLANG_FORMAT_EXECUTABLE)
+    add_custom_target(aeron-format
+        COMMAND "${AERON_CLANG_FORMAT_EXECUTABLE}" --style=file -i ${AERON_FORMAT_FILES}
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
         COMMENT "Formatting Aeron sources with clang-format"
+        VERBATIM
     )
+else()
+    add_custom_target(aeron-format
+        COMMAND "${CMAKE_COMMAND}" -E echo "clang-format was not found"
+        COMMAND "${CMAKE_COMMAND}" -E false
+        VERBATIM
+    )
+endif()
+
+if(PROJECT_IS_TOP_LEVEL)
+    add_custom_target(format DEPENDS aeron-format)
 endif()

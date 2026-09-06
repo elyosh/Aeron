@@ -612,8 +612,7 @@ int AeronScenePost_RunSsao(struct AeronScene3D* s, AeronCommandBuffer* cmd) {
 			bu.near_z                     = near_z;
 			bu.view_texel_scale[0]        = view_texel_scale[0];
 			bu.view_texel_scale[1]        = view_texel_scale[1];
-			if (!AeronScenePost_Fullscreen(cmd, s->ssao_blur_lq_pipeline, dst, texs, smps, 2, &bu,
-										   sizeof bu,
+			if (!AeronScenePost_Fullscreen(cmd, s->ssao_blur_lq_pipeline, dst, texs, smps, 2, &bu, sizeof bu,
 										   horizontal ? "SSAO low blur horizontal"
 													  : "SSAO low blur vertical")) {
 				return 0;

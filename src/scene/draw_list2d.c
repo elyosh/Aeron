@@ -56,20 +56,20 @@ static int blit2d_ensure(void) {
 	}
 	G.initialized = 1;
 
-	G.vs = Aeron_CreateShader(&(AeronShaderDesc){
+	G.vs  = Aeron_CreateShader(&(AeronShaderDesc) {
 		.name                 = "scene_blit.vert",
 		.stage                = AERON_SHADER_STAGE_VERTEX,
 		.sampler_count        = 0,
 		.uniform_buffer_count = 1,
 		.storage_buffer_count = 1,
 	});
-	G.fs = Aeron_CreateShader(&(AeronShaderDesc){
+	G.fs  = Aeron_CreateShader(&(AeronShaderDesc) {
 		.name                 = "scene_blit.frag",
 		.stage                = AERON_SHADER_STAGE_FRAGMENT,
 		.sampler_count        = 1,
 		.uniform_buffer_count = 0,
 	});
-	G.vs4 = Aeron_CreateShader(&(AeronShaderDesc){
+	G.vs4 = Aeron_CreateShader(&(AeronShaderDesc) {
 		.name                 = "scene_blit4.vert",
 		.stage                = AERON_SHADER_STAGE_VERTEX,
 		.sampler_count        = 0,
@@ -84,7 +84,7 @@ static int blit2d_ensure(void) {
 	/* CLAMP_TO_EDGE on all axes so quads sampling slightly past the
 	 * texture edge (sub-pixel rounding) reuse the edge texel instead of
 	 * black. */
-	AeronSamplerDesc s = (AeronSamplerDesc){
+	AeronSamplerDesc s = (AeronSamplerDesc) {
 		.min_filter = AERON_FILTER_NEAREST,
 		.mag_filter = AERON_FILTER_NEAREST,
 		.mip_filter = AERON_FILTER_NEAREST,
@@ -113,14 +113,14 @@ static int blit2d_rr_ensure(void) {
 	}
 	G.rr_initialized = 1;
 
-	G.vs_rr = Aeron_CreateShader(&(AeronShaderDesc){
+	G.vs_rr = Aeron_CreateShader(&(AeronShaderDesc) {
 		.name                 = "scene_ui_rect.vert",
 		.stage                = AERON_SHADER_STAGE_VERTEX,
 		.sampler_count        = 0,
 		.uniform_buffer_count = 1,
 		.storage_buffer_count = 1,
 	});
-	G.fs_rr = Aeron_CreateShader(&(AeronShaderDesc){
+	G.fs_rr = Aeron_CreateShader(&(AeronShaderDesc) {
 		.name                 = "scene_ui_rect.frag",
 		.stage                = AERON_SHADER_STAGE_FRAGMENT,
 		.sampler_count        = 0,
@@ -150,13 +150,20 @@ static void blit2d_shutdown(void) {
 			Aeron_DestroyGraphicsPipeline(G.pipelines_rr[i].pipe);
 		}
 	}
-	if (G.sampler_nearest) Aeron_DestroySampler(G.sampler_nearest);
-	if (G.sampler_linear) Aeron_DestroySampler(G.sampler_linear);
-	if (G.vs) Aeron_DestroyShader(G.vs);
-	if (G.fs) Aeron_DestroyShader(G.fs);
-	if (G.vs4) Aeron_DestroyShader(G.vs4);
-	if (G.vs_rr) Aeron_DestroyShader(G.vs_rr);
-	if (G.fs_rr) Aeron_DestroyShader(G.fs_rr);
+	if (G.sampler_nearest)
+		Aeron_DestroySampler(G.sampler_nearest);
+	if (G.sampler_linear)
+		Aeron_DestroySampler(G.sampler_linear);
+	if (G.vs)
+		Aeron_DestroyShader(G.vs);
+	if (G.fs)
+		Aeron_DestroyShader(G.fs);
+	if (G.vs4)
+		Aeron_DestroyShader(G.vs4);
+	if (G.vs_rr)
+		Aeron_DestroyShader(G.vs_rr);
+	if (G.fs_rr)
+		Aeron_DestroyShader(G.fs_rr);
 	memset(&G, 0, sizeof G);
 }
 
@@ -183,9 +190,8 @@ static AeronBlendStateDesc blit_blend_state(AeronBlit2DBlend blend) {
 	return bs;
 }
 
-static AeronGraphicsPipeline* cache_lookup(Blit2DPipelineEntry* entries, int* count,
-										   AeronShader* vs, AeronShader* fs,
-										   AeronTextureFormat color_format,
+static AeronGraphicsPipeline* cache_lookup(Blit2DPipelineEntry* entries, int* count, AeronShader* vs,
+										   AeronShader* fs, AeronTextureFormat color_format,
 										   AeronBlit2DBlend blend, AeronTextureFormat depth_format,
 										   AeronSampleCount sample_count, int depth_test, const char* what) {
 	for (int i = 0; i < *count; i++) {
@@ -202,17 +208,17 @@ static AeronGraphicsPipeline* cache_lookup(Blit2DPipelineEntry* entries, int* co
 	if (depth_test && depth_format == AERON_TEXTURE_FORMAT_UNKNOWN) {
 		return NULL;
 	}
-	AeronGraphicsPipeline* p = Aeron_CreateGraphicsPipeline(&(AeronGraphicsPipelineDesc){
+	AeronGraphicsPipeline* p = Aeron_CreateGraphicsPipeline(&(AeronGraphicsPipelineDesc) {
 		.vertex_shader   = vs,
 		.fragment_shader = fs,
 		.primitive_type  = AERON_PRIMITIVE_TRIANGLE_STRIP,
 		.cull_mode       = AERON_CULL_NONE,
 		.color_format    = color_format,
 		.depth_format    = depth_format,
-		.depth           = depth_test ? (AeronDepthStateDesc){ .depth_test = 1,
-															   .depth_write = 0,
-															   .compare = AERON_COMPARE_GREATER_EQUAL }
-									 : (AeronDepthStateDesc){ 0 },
+		.depth           = depth_test ? (AeronDepthStateDesc) { .depth_test  = 1,
+																.depth_write = 0,
+																.compare     = AERON_COMPARE_GREATER_EQUAL }
+									  : (AeronDepthStateDesc) { 0 },
 		.blend           = blit_blend_state(blend),
 		.sample_count    = sample_count,
 	});
@@ -221,7 +227,7 @@ static AeronGraphicsPipeline* cache_lookup(Blit2DPipelineEntry* entries, int* co
 					   (int)color_format, (int)blend, (int)depth_format);
 		return NULL;
 	}
-	entries[(*count)++] = (Blit2DPipelineEntry){
+	entries[(*count)++] = (Blit2DPipelineEntry) {
 		.format       = color_format,
 		.blend        = blend,
 		.depth_format = depth_format,
@@ -232,32 +238,30 @@ static AeronGraphicsPipeline* cache_lookup(Blit2DPipelineEntry* entries, int* co
 	return p;
 }
 
-static AeronGraphicsPipeline* blit2d_pipeline(AeronTextureFormat color_format,
-											  AeronBlit2DBlend blend,
+static AeronGraphicsPipeline* blit2d_pipeline(AeronTextureFormat color_format, AeronBlit2DBlend blend,
 											  AeronTextureFormat depth_format,
-											  AeronSampleCount sample_count) {
+											  AeronSampleCount   sample_count) {
 	if (!blit2d_ensure()) {
 		return NULL;
 	}
-	return cache_lookup(G.pipelines, &G.pipeline_count, G.vs, G.fs, color_format, blend,
-						depth_format, sample_count, 0, "blit pipeline");
+	return cache_lookup(G.pipelines, &G.pipeline_count, G.vs, G.fs, color_format, blend, depth_format,
+						sample_count, 0, "blit pipeline");
 }
 
-static AeronGraphicsPipeline* blit2d_pipeline4(AeronTextureFormat color_format,
-											   AeronBlit2DBlend blend,
-											   AeronTextureFormat depth_format,
-											   AeronSampleCount sample_count, int depth_test) {
+static AeronGraphicsPipeline* blit2d_pipeline4(AeronTextureFormat color_format, AeronBlit2DBlend blend,
+											   AeronTextureFormat depth_format, AeronSampleCount sample_count,
+											   int depth_test) {
 	if (!blit2d_ensure()) {
 		return NULL;
 	}
-	return cache_lookup(G.pipelines4, &G.pipeline4_count, G.vs4, G.fs, color_format, blend,
-						depth_format, sample_count, depth_test, "blit4 pipeline");
+	return cache_lookup(G.pipelines4, &G.pipeline4_count, G.vs4, G.fs, color_format, blend, depth_format,
+						sample_count, depth_test, "blit4 pipeline");
 }
 
 /* Rounded rects always blend PMA and never depth-test. */
 static AeronGraphicsPipeline* blit2d_pipeline_rr(AeronTextureFormat color_format,
 												 AeronTextureFormat depth_format,
-												 AeronSampleCount sample_count) {
+												 AeronSampleCount   sample_count) {
 	if (!blit2d_rr_ensure()) {
 		return NULL;
 	}
@@ -303,9 +307,8 @@ typedef char Blit2DQuad4UniformSizeCheck[sizeof(Blit2DQuad4Uniform) == 128 ? 1 :
 typedef char Blit2DRunUniformSizeCheck[sizeof(Blit2DRunUniform) == 16 ? 1 : -1];
 typedef char Blit2DRRectInstanceSizeCheck[sizeof(Blit2DRRectInstance) == 112 ? 1 : -1];
 
-static void blit2d_draw_quad4(AeronRenderPass* pass, AeronGraphicsPipeline* pipe,
-							 AeronTexture* tex, AeronSampler* sampler,
-							 const Blit2DQuad4Uniform* u) {
+static void blit2d_draw_quad4(AeronRenderPass* pass, AeronGraphicsPipeline* pipe, AeronTexture* tex,
+							  AeronSampler* sampler, const Blit2DQuad4Uniform* u) {
 	if (!pass || !pipe || !tex || !sampler || !u) {
 		return;
 	}
@@ -339,6 +342,7 @@ typedef struct Dl2dRecord {
 	AeronTexture*     texture;
 	AeronRectI        scissor; /* zero w/h = none */
 	uint32_t          instance_index;
+
 	union {
 		Blit2DInstance      quad;
 		Blit2DQuad4Uniform  quad4;
@@ -347,11 +351,11 @@ typedef struct Dl2dRecord {
 } Dl2dRecord;
 
 struct AeronDrawList2D {
-	Dl2dRecord*              records;
-	Blit2DInstance*          instances;
-	AeronBuffer*             instance_buffer;
-	uint32_t                 instance_buffer_capacity;
-	uint32_t                 instance_count;
+	Dl2dRecord*     records;
+	Blit2DInstance* instances;
+	AeronBuffer*    instance_buffer;
+	uint32_t        instance_buffer_capacity;
+	uint32_t        instance_count;
 	/* Rounded-rect instances — allocated lazily on the first AddRRect so
 	 * sprite-only consumers pay nothing. */
 	Blit2DRRectInstance*     rr_instances;
@@ -375,8 +379,8 @@ AeronDrawList2D* AeronDrawList_Create(int record_cap) {
 	if (!l) {
 		return NULL;
 	}
-	l->cap     = record_cap > 0 ? record_cap : AERON_DRAWLIST2D_DEFAULT_CAP;
-	l->records = (Dl2dRecord*)calloc((size_t)l->cap, sizeof *l->records);
+	l->cap       = record_cap > 0 ? record_cap : AERON_DRAWLIST2D_DEFAULT_CAP;
+	l->records   = (Dl2dRecord*)calloc((size_t)l->cap, sizeof *l->records);
 	l->instances = (Blit2DInstance*)calloc((size_t)l->cap, sizeof *l->instances);
 	if (!l->records || !l->instances) {
 		free(l->instances);
@@ -403,9 +407,8 @@ void AeronDrawList_Destroy(AeronDrawList2D* l) {
 	}
 }
 
-void AeronDrawList_Begin(AeronDrawList2D* l, AeronRenderTarget* target, int target_w,
-						 int target_h, AeronDrawList2DClearMode clear_mode,
-						 const float clear_rgba[4]) {
+void AeronDrawList_Begin(AeronDrawList2D* l, AeronRenderTarget* target, int target_w, int target_h,
+						 AeronDrawList2DClearMode clear_mode, const float clear_rgba[4]) {
 	if (!l) {
 		return;
 	}
@@ -418,9 +421,9 @@ void AeronDrawList_Begin(AeronDrawList2D* l, AeronRenderTarget* target, int targ
 	} else {
 		memset(l->clear_rgba, 0, sizeof l->clear_rgba);
 	}
-	l->count   = 0;
-	l->dropped = 0;
-	l->active  = 1;
+	l->count    = 0;
+	l->dropped  = 0;
+	l->active   = 1;
 	l->prepared = 0;
 }
 
@@ -456,22 +459,22 @@ void AeronDrawList_AddSprite(AeronDrawList2D* l, const AeronDrawList2DSprite* s)
 	r->scissor = s->scissor;
 
 	Blit2DInstance* q = &r->u.quad;
-	q->dst_x           = s->dst_x; /* px; converted to NDC at Render */
-	q->dst_y           = s->dst_y;
-	q->dst_w           = s->dst_w;
-	q->dst_h           = s->dst_h;
-	q->src_u0          = s->src_u0;
-	q->src_v0          = s->src_v0;
-	q->src_u1          = s->src_u1;
-	q->src_v1          = s->src_v1;
-	q->tint_r = s->tint[0];
-	q->tint_g = s->tint[1];
-	q->tint_b = s->tint[2];
-	q->tint_a = s->tint[3];
-	q->bias_r = s->bias[0];
-	q->bias_g = s->bias[1];
-	q->bias_b = s->bias[2];
-	q->bias_a = s->bias[3];
+	q->dst_x          = s->dst_x; /* px; converted to NDC at Render */
+	q->dst_y          = s->dst_y;
+	q->dst_w          = s->dst_w;
+	q->dst_h          = s->dst_h;
+	q->src_u0         = s->src_u0;
+	q->src_v0         = s->src_v0;
+	q->src_u1         = s->src_u1;
+	q->src_v1         = s->src_v1;
+	q->tint_r         = s->tint[0];
+	q->tint_g         = s->tint[1];
+	q->tint_b         = s->tint[2];
+	q->tint_a         = s->tint[3];
+	q->bias_r         = s->bias[0];
+	q->bias_g         = s->bias[1];
+	q->bias_b         = s->bias[2];
+	q->bias_a         = s->bias[3];
 	/* Pixel insets; converted to NDC deltas at Render. trap_top_w
 	 * passes through (0 → shader treats as 1.0). */
 	q->trap_top_dx_left  = s->trap_top_dx_left_px;
@@ -487,11 +490,11 @@ void AeronDrawList_AddQuad4(AeronDrawList2D* l, const AeronDrawList2DQuad4* in) 
 	if (!r) {
 		return;
 	}
-	r->kind    = DL2D_QUAD4;
-	r->blend   = in->blend;
-	r->filter  = in->filter;
-	r->texture = in->texture;
-	r->scissor = in->scissor;
+	r->kind       = DL2D_QUAD4;
+	r->blend      = in->blend;
+	r->filter     = in->filter;
+	r->texture    = in->texture;
+	r->scissor    = in->scissor;
 	r->depth_test = in->depth_test != 0;
 
 	Blit2DQuad4Uniform* q = &r->u.quad4;
@@ -499,7 +502,7 @@ void AeronDrawList_AddQuad4(AeronDrawList2D* l, const AeronDrawList2DQuad4* in) 
 	 * the shader expects — copy through. */
 	memcpy(q->corners, in->corners, sizeof q->corners);
 	for (int i = 0; i < 4; i++) {
-		q->q[i] = in->q[i] != 0.0f ? in->q[i] : 1.0f;
+		q->q[i]         = in->q[i] != 0.0f ? in->q[i] : 1.0f;
 		q->ndc_depth[i] = in->ndc_depth[i];
 	}
 	q->tint_r = in->tint[0];
@@ -532,14 +535,14 @@ void AeronDrawList_AddRRect(AeronDrawList2D* l, const AeronDrawList2DRRect* in) 
 	r->scissor = in->scissor;
 
 	Blit2DRRectInstance* q = &r->u.rrect;
-	q->dst_x  = in->dst_x;
-	q->dst_y  = in->dst_y;
-	q->dst_w  = in->dst_w;
-	q->dst_h  = in->dst_h;
-	q->radius = in->radius_px > 0.0f ? in->radius_px : 0.0f;
-	q->border = in->border_px > 0.0f ? in->border_px : 0.0f;
-	q->bevel  = in->bevel_px > 0.0f ? in->bevel_px : 0.0f;
-	q->soft   = in->soft_px > 1.0f ? in->soft_px : 1.0f;
+	q->dst_x               = in->dst_x;
+	q->dst_y               = in->dst_y;
+	q->dst_w               = in->dst_w;
+	q->dst_h               = in->dst_h;
+	q->radius              = in->radius_px > 0.0f ? in->radius_px : 0.0f;
+	q->border              = in->border_px > 0.0f ? in->border_px : 0.0f;
+	q->bevel               = in->bevel_px > 0.0f ? in->bevel_px : 0.0f;
+	q->soft                = in->soft_px > 1.0f ? in->soft_px : 1.0f;
 	memcpy(q->fill_top, in->fill_top, sizeof q->fill_top);
 	memcpy(q->fill_bottom, in->fill_bottom, sizeof q->fill_bottom);
 	memcpy(q->border_col, in->border, sizeof q->border_col);
@@ -547,10 +550,9 @@ void AeronDrawList_AddRRect(AeronDrawList2D* l, const AeronDrawList2DRRect* in) 
 	memcpy(q->bevel_lo, in->bevel_lo, sizeof q->bevel_lo);
 }
 
-static void dl2d_add_line(AeronDrawList2D* l, float x0, float y0, float x1, float y1,
-						  float thickness_px, const float rgba[4], AeronBlit2DBlend blend,
-						  const AeronRectI* scissor, float clip_w0, float clip_w1, float clip_z,
-						  int depth_test) {
+static void dl2d_add_line(AeronDrawList2D* l, float x0, float y0, float x1, float y1, float thickness_px,
+						  const float rgba[4], AeronBlit2DBlend blend, const AeronRectI* scissor,
+						  float clip_w0, float clip_w1, float clip_z, int depth_test) {
 	AeronTexture* white = AeronSceneInternal_WhiteTexture();
 	if (!white) {
 		return;
@@ -580,10 +582,22 @@ static void dl2d_add_line(AeronDrawList2D* l, float x0, float y0, float x1, floa
 	q.blend                = blend;
 	q.depth_test           = depth_test;
 	/* Strip order TL, TR, BL, BR; white-texel center UVs. */
-	q.corners[0][0] = ax + nx; q.corners[0][1] = ay + ny; q.corners[0][2] = 0.5f; q.corners[0][3] = 0.5f;
-	q.corners[1][0] = bx + nx; q.corners[1][1] = by + ny; q.corners[1][2] = 0.5f; q.corners[1][3] = 0.5f;
-	q.corners[2][0] = ax - nx; q.corners[2][1] = ay - ny; q.corners[2][2] = 0.5f; q.corners[2][3] = 0.5f;
-	q.corners[3][0] = bx - nx; q.corners[3][1] = by - ny; q.corners[3][2] = 0.5f; q.corners[3][3] = 0.5f;
+	q.corners[0][0] = ax + nx;
+	q.corners[0][1] = ay + ny;
+	q.corners[0][2] = 0.5f;
+	q.corners[0][3] = 0.5f;
+	q.corners[1][0] = bx + nx;
+	q.corners[1][1] = by + ny;
+	q.corners[1][2] = 0.5f;
+	q.corners[1][3] = 0.5f;
+	q.corners[2][0] = ax - nx;
+	q.corners[2][1] = ay - ny;
+	q.corners[2][2] = 0.5f;
+	q.corners[2][3] = 0.5f;
+	q.corners[3][0] = bx - nx;
+	q.corners[3][1] = by - ny;
+	q.corners[3][2] = 0.5f;
+	q.corners[3][3] = 0.5f;
 	if (depth_test) {
 		q.q[0] = q.q[2] = clip_w0;
 		q.q[1] = q.q[3] = clip_w1;
@@ -597,28 +611,25 @@ static void dl2d_add_line(AeronDrawList2D* l, float x0, float y0, float x1, floa
 	AeronDrawList_AddQuad4(l, &q);
 }
 
-void AeronDrawList_AddLine(AeronDrawList2D* l, float x0, float y0, float x1, float y1,
-						   float thickness_px, const float rgba[4], AeronBlit2DBlend blend,
-						   const AeronRectI* scissor) {
+void AeronDrawList_AddLine(AeronDrawList2D* l, float x0, float y0, float x1, float y1, float thickness_px,
+						   const float rgba[4], AeronBlit2DBlend blend, const AeronRectI* scissor) {
 	if (!rgba || thickness_px <= 0.0f) {
 		return;
 	}
 	dl2d_add_line(l, x0, y0, x1, y1, thickness_px, rgba, blend, scissor, 1.0f, 1.0f, 0.0f, 0);
 }
 
-void AeronDrawList_AddProjectedLine(AeronDrawList2D* l, float x0, float y0, float clip_w0,
-									float x1, float y1, float clip_w1, float clip_z,
-									float thickness_px, const float rgba[4], AeronBlit2DBlend blend,
-									const AeronRectI* scissor) {
+void AeronDrawList_AddProjectedLine(AeronDrawList2D* l, float x0, float y0, float clip_w0, float x1, float y1,
+									float clip_w1, float clip_z, float thickness_px, const float rgba[4],
+									AeronBlit2DBlend blend, const AeronRectI* scissor) {
 	if (!rgba || thickness_px <= 0.0f || clip_w0 <= 0.0f || clip_w1 <= 0.0f || clip_z < 0.0f) {
 		return;
 	}
 	dl2d_add_line(l, x0, y0, x1, y1, thickness_px, rgba, blend, scissor, clip_w0, clip_w1, clip_z, 1);
 }
 
-void AeronDrawList_AddFill(AeronDrawList2D* l, float x, float y, float w, float h,
-						   const float rgba[4], AeronBlit2DBlend blend,
-						   const AeronRectI* scissor) {
+void AeronDrawList_AddFill(AeronDrawList2D* l, float x, float y, float w, float h, const float rgba[4],
+						   AeronBlit2DBlend blend, const AeronRectI* scissor) {
 	if (!rgba || w <= 0.0f || h <= 0.0f) {
 		return;
 	}
@@ -643,20 +654,20 @@ void AeronDrawList_AddFill(AeronDrawList2D* l, float x, float y, float w, float 
 	AeronDrawList_AddSprite(l, &s);
 }
 
-void AeronDrawList_AddFrame(AeronDrawList2D* l, float x, float y, float w, float h,
-							float thickness_px, const float rgba[4], AeronBlit2DBlend blend,
-							const AeronRectI* scissor) {
+void AeronDrawList_AddFrame(AeronDrawList2D* l, float x, float y, float w, float h, float thickness_px,
+							const float rgba[4], AeronBlit2DBlend blend, const AeronRectI* scissor) {
 	if (thickness_px <= 0.0f || w <= 0.0f || h <= 0.0f) {
 		return;
 	}
 	float t = thickness_px;
-	if (t * 2.0f > w) t = w * 0.5f;
-	if (t * 2.0f > h) t = h * 0.5f;
-	AeronDrawList_AddFill(l, x, y, w, t, rgba, blend, scissor);                  /* top */
-	AeronDrawList_AddFill(l, x, y + h - t, w, t, rgba, blend, scissor);          /* bottom */
-	AeronDrawList_AddFill(l, x, y + t, t, h - 2.0f * t, rgba, blend, scissor);   /* left */
-	AeronDrawList_AddFill(l, x + w - t, y + t, t, h - 2.0f * t, rgba, blend,
-						  scissor);                                              /* right */
+	if (t * 2.0f > w)
+		t = w * 0.5f;
+	if (t * 2.0f > h)
+		t = h * 0.5f;
+	AeronDrawList_AddFill(l, x, y, w, t, rgba, blend, scissor);                        /* top */
+	AeronDrawList_AddFill(l, x, y + h - t, w, t, rgba, blend, scissor);                /* bottom */
+	AeronDrawList_AddFill(l, x, y + t, t, h - 2.0f * t, rgba, blend, scissor);         /* left */
+	AeronDrawList_AddFill(l, x + w - t, y + t, t, h - 2.0f * t, rgba, blend, scissor); /* right */
 }
 
 /* Grows (never shrinks) one storage buffer and uploads `required` bytes. */
@@ -672,7 +683,7 @@ static int dl2d_upload_storage(AeronDrawList2D* l, AeronCommandBuffer* cmd, Aero
 			}
 			capacity *= 2u;
 		}
-		AeronBuffer* replacement = Aeron_CreateBuffer(&(AeronBufferDesc){
+		AeronBuffer* replacement = Aeron_CreateBuffer(&(AeronBufferDesc) {
 			.size         = capacity,
 			.usage        = AERON_BUFFER_USAGE_STORAGE,
 			.memory_usage = AERON_MEMORY_USAGE_DYNAMIC,
@@ -720,14 +731,13 @@ int AeronDrawList_Prepare(AeronDrawList2D* l, AeronCommandBuffer* cmd) {
 	}
 	l->prepared = 0;
 	if (l->instance_count > 0 &&
-		!dl2d_upload_storage(l, cmd, &l->instance_buffer, &l->instance_buffer_capacity,
-							 l->instances, l->instance_count * (uint32_t)sizeof *l->instances,
+		!dl2d_upload_storage(l, cmd, &l->instance_buffer, &l->instance_buffer_capacity, l->instances,
+							 l->instance_count * (uint32_t)sizeof *l->instances,
 							 "scene.draw_list2d.instances")) {
 		return 0;
 	}
 	if (l->rr_instance_count > 0 &&
-		!dl2d_upload_storage(l, cmd, &l->rr_instance_buffer, &l->rr_instance_buffer_capacity,
-							 l->rr_instances,
+		!dl2d_upload_storage(l, cmd, &l->rr_instance_buffer, &l->rr_instance_buffer_capacity, l->rr_instances,
 							 l->rr_instance_count * (uint32_t)sizeof *l->rr_instances,
 							 "scene.draw_list2d.rrect_instances")) {
 		return 0;
@@ -759,16 +769,15 @@ static void dl2d_set_scissor(AeronDrawList2D* l, AeronRenderPass* pass, const Ae
 	}
 }
 
-static int draw_list_encode(AeronDrawList2D* l, AeronRenderPass* pass,
-							AeronRenderTarget* target) {
-	const AeronTextureFormat fmt = Aeron_TextureGetFormat(Aeron_RenderTargetGetTexture(target));
-	const AeronTextureFormat depth_format = Aeron_RenderPassGetDepthFormat(pass);
-	const AeronSampleCount sample_count = Aeron_RenderPassGetSampleCount(pass);
-	const float output_rgb_scale = Aeron_RenderPassOutputRgbScale(pass);
-	const Blit2DRunUniform run_base = {
-		.ndc_scale       = { 2.0f / (float)l->target_w, 2.0f / (float)l->target_h },
+static int draw_list_encode(AeronDrawList2D* l, AeronRenderPass* pass, AeronRenderTarget* target) {
+	const AeronTextureFormat fmt              = Aeron_TextureGetFormat(Aeron_RenderTargetGetTexture(target));
+	const AeronTextureFormat depth_format     = Aeron_RenderPassGetDepthFormat(pass);
+	const AeronSampleCount   sample_count     = Aeron_RenderPassGetSampleCount(pass);
+	const float              output_rgb_scale = Aeron_RenderPassOutputRgbScale(pass);
+	const Blit2DRunUniform   run_base         = {
+		.ndc_scale        = { 2.0f / (float)l->target_w, 2.0f / (float)l->target_h },
 		.output_rgb_scale = output_rgb_scale,
-		.base_instance   = 0,
+		.base_instance    = 0,
 	};
 
 	const AeronRectI full_scissor = { 0, 0, l->target_w, l->target_h };
@@ -782,14 +791,13 @@ static int draw_list_encode(AeronDrawList2D* l, AeronRenderPass* pass,
 			while (end < l->count && dl2d_same_sprite_state(r, &l->records[end])) {
 				++end;
 			}
-			AeronGraphicsPipeline* pipe =
-				blit2d_pipeline(fmt, r->blend, depth_format, sample_count);
-			AeronSampler* sampler = blit2d_sampler(r->filter);
+			AeronGraphicsPipeline* pipe    = blit2d_pipeline(fmt, r->blend, depth_format, sample_count);
+			AeronSampler*          sampler = blit2d_sampler(r->filter);
 			if (!pipe || !sampler || !l->instance_buffer) {
 				return 0;
 			}
 			Blit2DRunUniform run = run_base;
-			run.base_instance = r->instance_index;
+			run.base_instance    = r->instance_index;
 			Aeron_BindGraphicsPipeline(pass, pipe);
 			Aeron_BindTextureSampler(pass, AERON_SHADER_STAGE_FRAGMENT, 0, r->texture, sampler);
 			Aeron_BindStorageBuffer(pass, AERON_SHADER_STAGE_VERTEX, 0, l->instance_buffer);
@@ -808,7 +816,7 @@ static int draw_list_encode(AeronDrawList2D* l, AeronRenderPass* pass,
 				return 0;
 			}
 			Blit2DRunUniform run = run_base;
-			run.base_instance = r->instance_index;
+			run.base_instance    = r->instance_index;
 			Aeron_BindGraphicsPipeline(pass, pipe);
 			Aeron_BindStorageBuffer(pass, AERON_SHADER_STAGE_VERTEX, 0, l->rr_instance_buffer);
 			Aeron_BindUniformData(pass, AERON_SHADER_STAGE_VERTEX, 0, &run, sizeof run);
@@ -840,8 +848,8 @@ static int draw_list_encode(AeronDrawList2D* l, AeronRenderPass* pass,
 	return 1;
 }
 
-void AeronDrawList_RenderIntoPass(AeronDrawList2D* l, AeronCommandBuffer* cmd,
-								  AeronRenderPass* pass, AeronRenderTarget* target) {
+void AeronDrawList_RenderIntoPass(AeronDrawList2D* l, AeronCommandBuffer* cmd, AeronRenderPass* pass,
+								  AeronRenderTarget* target) {
 	if (!l || !cmd || !pass || !target || l->count == 0) {
 		return;
 	}
@@ -867,11 +875,10 @@ void AeronDrawList_Render(AeronDrawList2D* l, AeronCommandBuffer* cmd) {
 		}
 		return;
 	}
-	AeronRenderPass* pass = Aeron_BeginRenderPass(&(AeronRenderPassDesc){
+	AeronRenderPass* pass = Aeron_BeginRenderPass(&(AeronRenderPassDesc) {
 		.color_target     = l->target,
 		.clear_color      = l->clear_mode == AERON_DRAWLIST2D_CLEAR ? 1 : 0,
-		.clear_color_rgba = { l->clear_rgba[0], l->clear_rgba[1], l->clear_rgba[2],
-							  l->clear_rgba[3] },
+		.clear_color_rgba = { l->clear_rgba[0], l->clear_rgba[1], l->clear_rgba[2], l->clear_rgba[3] },
 		.command_buffer   = cmd,
 		.debug_label      = "2D draw list",
 	});

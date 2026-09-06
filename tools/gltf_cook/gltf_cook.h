@@ -34,14 +34,14 @@ struct cgltf_data;
 struct cgltf_image;
 
 typedef enum AeronGltfCookEncoding {
-	AERON_GLTF_COOK_ENCODING_BC = 0,
+	AERON_GLTF_COOK_ENCODING_BC    = 0,
 	AERON_GLTF_COOK_ENCODING_RGBA8 = 1,
 } AeronGltfCookEncoding;
 
 typedef struct AeronGltfCookImageView {
 	const uint8_t* rgba;
-	int width;
-	int height;
+	int            width;
+	int            height;
 } AeronGltfCookImageView;
 
 typedef bool (*AeronGltfCookImageProvider)(void* context, const struct cgltf_image* image,

@@ -36,12 +36,12 @@ extern "C" {
  * buffer (the old one is freed) and updates *inout_w / *inout_h to
  *   out_w = in_w * 9, out_h = round(in_h * 10.8).
  * Returns false on allocation failure; original buffer untouched. */
-bool atlas_vga_to_4k(uint8_t **inout_pixels, int *inout_w, int *inout_h);
+bool atlas_vga_to_4k(uint8_t** inout_pixels, int* inout_w, int* inout_h);
 
 /* SVGA → 4K. Same contract as atlas_vga_to_4k. Output dims:
  *   out_w = round(in_w * 4.5), out_h = round(in_h * 4.5).
  * For the canonical 640×480 source this lands at 2880×2160. */
-bool atlas_svga_to_4k(uint8_t **inout_pixels, int *inout_w, int *inout_h);
+bool atlas_svga_to_4k(uint8_t** inout_pixels, int* inout_w, int* inout_h);
 
 /* Y-axis scale for VGA (10.8×). Identity-stable: scale_y_4k(0) == 0,
  * scale_y_4k(in_h) matches the height atlas_vga_to_4k returns.

@@ -394,12 +394,14 @@ static void bb3d_draw(struct AeronScene3D* s, AeronRenderPass* pass, int stage, 
 			return;
 		}
 		Aeron_BindGraphicsPipeline(pass, velocity_pipe);
+
 		struct {
 			float view_proj[16];
 			float unjittered_view_proj[16];
 			float prev_view_proj[16];
 			float params[4];
 		} u;
+
 		memcpy(u.view_proj, s->jittered_view_proj, sizeof u.view_proj);
 		memcpy(u.unjittered_view_proj, s->unjittered_view_proj, sizeof u.unjittered_view_proj);
 		memcpy(u.prev_view_proj, s->mb_prev_view_proj, sizeof u.prev_view_proj);
@@ -411,6 +413,7 @@ static void bb3d_draw(struct AeronScene3D* s, AeronRenderPass* pass, int stage, 
 			float view_proj[16];
 			float params[4];
 		} u;
+
 		memcpy(u.view_proj, s->jittered_view_proj, sizeof u.view_proj);
 		u.params[0] = stage == AERON_SCENE_BILLBOARD_STAGE_SKY ? 1.0f : 0.0f;
 		u.params[1] = u.params[2] = u.params[3] = 0.0f;
@@ -481,6 +484,7 @@ void AeronSceneBb3d_DrawLens(struct AeronScene3D* s, AeronRenderPass* pass) {
 		float view_proj[16];
 		float anchor_world[4];
 	} vu;
+
 	memcpy(vu.view_proj, s->unjittered_view_proj, sizeof vu.view_proj);
 	float fu[4];
 	fu[0] = 2.0f; /* kernel radius, texels */

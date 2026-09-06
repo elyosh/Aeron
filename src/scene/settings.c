@@ -12,9 +12,9 @@ static int settings_error(AeronConfigError* error, const AeronConfigNode* node, 
 		error->code = AERON_CONFIG_ERROR_INVALID_ARGUMENT;
 		if (node) {
 			const char* source_path = AeronConfigNode_SourcePath(node);
-			error->root = AeronConfigNode_SourceRoot(node);
-			error->line = AeronConfigNode_Line(node);
-			error->column = AeronConfigNode_Column(node);
+			error->root             = AeronConfigNode_SourceRoot(node);
+			error->line             = AeronConfigNode_Line(node);
+			error->column           = AeronConfigNode_Column(node);
 			snprintf(error->path, sizeof error->path, "%s", source_path ? source_path : "<configuration>");
 		}
 		va_start(args, format);
@@ -40,8 +40,8 @@ static int check_map(const AeronConfigNode* map, const char* name, const char* c
 	for (size_t index = 0; index < AeronConfigNode_MapCount(map); ++index) {
 		const char* key = AeronConfigNode_MapKeyAt(map, index);
 		if (!key_allowed(key, allowed, allowed_count))
-			return settings_error(error, AeronConfigNode_MapValueAt(map, index), "unknown setting '%s.%s'", name,
-							  key);
+			return settings_error(error, AeronConfigNode_MapValueAt(map, index), "unknown setting '%s.%s'",
+								  name, key);
 	}
 	return 1;
 }
@@ -114,8 +114,8 @@ static int shadows_valid(const AeronSceneShadowSettings* value) {
 		   (value->atlas_size & (value->atlas_size - 1)) == 0 && value->cascade_count >= 1 &&
 		   value->cascade_count <= AERON_SCENE_SHADOW_MAX_CASCADES && value->filter_quality <= 3 &&
 		   isfinite(value->max_distance) && value->max_distance > 1.0f && isfinite(value->split_lambda) &&
-		   value->split_lambda >= 0.0f && value->split_lambda <= 1.0f &&
-		   value->split_positions[0] > 0.0f && value->split_positions[0] < value->split_positions[1] &&
+		   value->split_lambda >= 0.0f && value->split_lambda <= 1.0f && value->split_positions[0] > 0.0f &&
+		   value->split_positions[0] < value->split_positions[1] &&
 		   value->split_positions[1] < value->split_positions[2] && value->split_positions[2] < 1.0f &&
 		   value->filter_radius >= 0.5f && value->filter_radius <= 3.0f &&
 		   value->light_angular_radius_degrees >= 0.0f && value->light_angular_radius_degrees <= 5.0f &&
@@ -140,9 +140,9 @@ static int tonemap_valid(const AeronSceneTonemapSettings* value) {
 
 static int parse_ssao(const AeronConfigNode* map, int required, AeronSceneSsaoSettings* value,
 					  AeronConfigError* error) {
-	static const char* const keys[] = { "quality", "intensity", "power", "radius_view", "bias_view",
-									   "direct", "debug_viz", "min_screen_frac", "max_screen_frac",
-									   "sample_jitter" };
+	static const char* const keys[] = { "quality",         "intensity",    "power",     "radius_view",
+										"bias_view",       "direct",       "debug_viz", "min_screen_frac",
+										"max_screen_frac", "sample_jitter" };
 	if (!check_map(map, "ssao", keys, sizeof keys / sizeof keys[0], required, error))
 		return 0;
 	if (!map)
@@ -175,7 +175,7 @@ static int parse_shadow_enums(const AeronConfigNode* map, int required, AeronSce
 			value->enabled = 1;
 		else
 			return settings_error(error, AeronConfigNode_MapGet(map, "mode"),
-							  "shadows.mode must be 'off' or 'pcf'");
+								  "shadows.mode must be 'off' or 'pcf'");
 	}
 	const char* fit = NULL;
 	if (!read_string(map, "shadows", "fit_mode", required, &fit, error))
@@ -188,21 +188,34 @@ static int parse_shadow_enums(const AeronConfigNode* map, int required, AeronSce
 		else if (strcmp(fit, "scene_dependent") == 0)
 			value->fit_mode = AERON_SCENE_SHADOW_FIT_SCENE_DEPENDENT;
 		else
-			return settings_error(error, AeronConfigNode_MapGet(map, "fit_mode"),
-							  "invalid shadows.fit_mode");
+			return settings_error(error, AeronConfigNode_MapGet(map, "fit_mode"), "invalid shadows.fit_mode");
 	}
 	return 1;
 }
 
 static int parse_shadows(const AeronConfigNode* map, int required, AeronSceneShadowSettings* value,
 						 AeronConfigError* error) {
-	static const char* const keys[] = {
-		"mode", "atlas_size", "cascade_count", "fit_mode", "max_distance", "split_lambda",
-		"explicit_splits", "split_1", "split_2", "split_3", "filter_quality", "filter_radius",
-		"contact_hardening", "light_angular_radius_degrees", "max_filter_radius", "pcss_min_filter_radius",
-		"normal_bias_texels", "depth_bias_texels", "transition_fraction", "distance_fade_fraction",
-		"debug_cascades"
-	};
+	static const char* const keys[] = { "mode",
+										"atlas_size",
+										"cascade_count",
+										"fit_mode",
+										"max_distance",
+										"split_lambda",
+										"explicit_splits",
+										"split_1",
+										"split_2",
+										"split_3",
+										"filter_quality",
+										"filter_radius",
+										"contact_hardening",
+										"light_angular_radius_degrees",
+										"max_filter_radius",
+										"pcss_min_filter_radius",
+										"normal_bias_texels",
+										"depth_bias_texels",
+										"transition_fraction",
+										"distance_fade_fraction",
+										"debug_cascades" };
 	if (!check_map(map, "shadows", keys, sizeof keys / sizeof keys[0], required, error))
 		return 0;
 	if (!map)
@@ -235,23 +248,25 @@ static int parse_shadows(const AeronConfigNode* map, int required, AeronSceneSha
 		return 0;
 	if (atlas < 0 || cascades < 0 || quality < 0)
 		return settings_error(error, map, "invalid negative shadow integer setting");
-	value->atlas_size = (uint32_t)atlas;
-	value->cascade_count = (uint32_t)cascades;
+	value->atlas_size     = (uint32_t)atlas;
+	value->cascade_count  = (uint32_t)cascades;
 	value->filter_quality = (uint32_t)quality;
 	return shadows_valid(value) ? 1 : settings_error(error, map, "invalid directional-shadow settings");
 }
 
 static int parse_tonemap(const AeronConfigNode* map, int required, AeronSceneTonemapSettings* value,
 						 AeronConfigError* error) {
-	static const char* const keys[] = { "operator", "agx_look", "agx_eotf_exponent", "agx_punchy_power",
-									  "agx_punchy_saturation", "aces_pre_exposure" };
+	static const char* const keys[] = {
+		"operator",         "agx_look", "agx_eotf_exponent", "agx_punchy_power", "agx_punchy_saturation",
+		"aces_pre_exposure"
+	};
 	if (!check_map(map, "tonemap", keys, sizeof keys / sizeof keys[0], required, error))
 		return 0;
 	if (!map)
 		return 1;
 
 	const char* operator_name = NULL;
-	const char* look_name = NULL;
+	const char* look_name     = NULL;
 	if (!read_string(map, "tonemap", "operator", required, &operator_name, error) ||
 		!read_string(map, "tonemap", "agx_look", required, &look_name, error) ||
 		!read_number(map, "tonemap", "agx_eotf_exponent", required, &value->agx_eotf_exponent, error) ||
@@ -268,7 +283,7 @@ static int parse_tonemap(const AeronConfigNode* map, int required, AeronSceneTon
 			value->tonemap_operator = AERON_SCENE_TONEMAP_ACES;
 		else
 			return settings_error(error, AeronConfigNode_MapGet(map, "operator"),
-							  "tonemap.operator must be 'agx' or 'aces'");
+								  "tonemap.operator must be 'agx' or 'aces'");
 	}
 	if (look_name) {
 		if (strcmp(look_name, "base") == 0)
@@ -277,7 +292,7 @@ static int parse_tonemap(const AeronConfigNode* map, int required, AeronSceneTon
 			value->agx_look = AERON_SCENE_AGX_LOOK_PUNCHY;
 		else
 			return settings_error(error, AeronConfigNode_MapGet(map, "agx_look"),
-							  "tonemap.agx_look must be 'base' or 'punchy'");
+								  "tonemap.agx_look must be 'base' or 'punchy'");
 	}
 	return tonemap_valid(value) ? 1 : settings_error(error, map, "invalid tone-map settings");
 }
@@ -287,22 +302,22 @@ static int parse_settings(const AeronConfigNode* root, int required, AeronSceneS
 						  AeronConfigError* error) {
 	if (!root || AeronConfigNode_Type(root) != AERON_CONFIG_MAP || !ssao || !shadows || !tonemap)
 		return settings_error(error, root, "invalid scene settings root or output");
-	AeronSceneSsaoSettings next_ssao = *ssao;
-	AeronSceneShadowSettings next_shadows = *shadows;
+	AeronSceneSsaoSettings    next_ssao    = *ssao;
+	AeronSceneShadowSettings  next_shadows = *shadows;
 	AeronSceneTonemapSettings next_tonemap = *tonemap;
 	if (!parse_ssao(AeronConfigNode_MapGet(root, "ssao"), required, &next_ssao, error) ||
 		!parse_shadows(AeronConfigNode_MapGet(root, "shadows"), required, &next_shadows, error) ||
 		!parse_tonemap(AeronConfigNode_MapGet(root, "tonemap"), required, &next_tonemap, error))
 		return 0;
-	*ssao = next_ssao;
+	*ssao    = next_ssao;
 	*shadows = next_shadows;
 	*tonemap = next_tonemap;
 	return 1;
 }
 
 int AeronSceneSettings_Load(const AeronConfigNode* root, AeronSceneSsaoSettings* ssao,
-								AeronSceneShadowSettings* shadows, AeronSceneTonemapSettings* tonemap,
-								AeronConfigError* error) {
+							AeronSceneShadowSettings* shadows, AeronSceneTonemapSettings* tonemap,
+							AeronConfigError* error) {
 	if (!ssao || !shadows || !tonemap)
 		return settings_error(error, root, "missing scene settings output");
 	memset(ssao, 0, sizeof *ssao);
@@ -312,7 +327,7 @@ int AeronSceneSettings_Load(const AeronConfigNode* root, AeronSceneSsaoSettings*
 }
 
 int AeronSceneSettings_Overlay(const AeronConfigNode* root, AeronSceneSsaoSettings* ssao,
-								   AeronSceneShadowSettings* shadows, AeronSceneTonemapSettings* tonemap,
-								   AeronConfigError* error) {
+							   AeronSceneShadowSettings* shadows, AeronSceneTonemapSettings* tonemap,
+							   AeronConfigError* error) {
 	return parse_settings(root, 0, ssao, shadows, tonemap, error);
 }

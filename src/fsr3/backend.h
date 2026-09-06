@@ -9,9 +9,9 @@ struct AeronFsr3Backend;
 AeronFsr3Backend* AeronFsr3Backend_Create(uint32_t profile_index, bool direct_history);
 /* Submit all resource initialization recorded by the FFX context-creation
  * callbacks. Must succeed before the context is used. */
-bool              AeronFsr3Backend_FinishInitialization(AeronFsr3Backend* backend);
-void              AeronFsr3Backend_Destroy(AeronFsr3Backend* backend);
-FfxInterface      AeronFsr3Backend_GetInterface(AeronFsr3Backend* backend);
+bool         AeronFsr3Backend_FinishInitialization(AeronFsr3Backend* backend);
+void         AeronFsr3Backend_Destroy(AeronFsr3Backend* backend);
+FfxInterface AeronFsr3Backend_GetInterface(AeronFsr3Backend* backend);
 
 uint32_t    AeronFsr3Backend_ProfileCount(void);
 const char* AeronFsr3Backend_ProfileName(const AeronFsr3Backend* backend);

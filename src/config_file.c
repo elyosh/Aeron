@@ -22,15 +22,18 @@ struct AeronConfigNode {
 	char*               source_path;
 	int                 line;
 	int                 column;
+
 	union {
 		int     bool_value;
 		int64_t int_value;
 		double  float_value;
 		char*   string_value;
+
 		struct {
 			AeronConfigMapEntry* entries;
 			size_t               count;
 		} map;
+
 		struct {
 			AeronConfigNode** items;
 			size_t            count;
@@ -53,10 +56,12 @@ typedef struct AeronConfigBuffer {
 static char* AeronConfig_DuplicateBytes(const unsigned char* value, size_t length);
 
 static void AeronConfig_ClearError(AeronConfigError* error, AeronVfsRoot root, const char* path) {
-	if (!error) return;
+	if (!error)
+		return;
 	memset(error, 0, sizeof(*error));
 	error->root = root;
-	if (path) snprintf(error->path, sizeof(error->path), "%s", path);
+	if (path)
+		snprintf(error->path, sizeof(error->path), "%s", path);
 }
 
 static int AeronConfig_Fail(AeronConfigError* error, AeronConfigErrorCode code, AeronVfsRoot root,
@@ -64,8 +69,8 @@ static int AeronConfig_Fail(AeronConfigError* error, AeronConfigErrorCode code, 
 	if (error) {
 		va_list args;
 		AeronConfig_ClearError(error, root, path);
-		error->code = code;
-		error->line = line;
+		error->code   = code;
+		error->line   = line;
 		error->column = column;
 		va_start(args, format);
 		vsnprintf(error->message, sizeof(error->message), format, args);
@@ -275,16 +280,20 @@ static void AeronConfigNode_Destroy(AeronConfigNode* node) {
 
 static int AeronConfigNode_SetSource(AeronConfigNode* node, AeronVfsRoot root, const char* path) {
 	size_t index;
-	if (!node) return 0;
+	if (!node)
+		return 0;
 	node->source_root = root;
 	node->source_path = AeronConfig_DuplicateString(path ? path : "");
-	if (!node->source_path) return 0;
+	if (!node->source_path)
+		return 0;
 	if (node->type == AERON_CONFIG_MAP) {
 		for (index = 0; index < node->value.map.count; ++index)
-			if (!AeronConfigNode_SetSource(node->value.map.entries[index].value, root, path)) return 0;
+			if (!AeronConfigNode_SetSource(node->value.map.entries[index].value, root, path))
+				return 0;
 	} else if (node->type == AERON_CONFIG_SEQUENCE) {
 		for (index = 0; index < node->value.sequence.count; ++index)
-			if (!AeronConfigNode_SetSource(node->value.sequence.items[index], root, path)) return 0;
+			if (!AeronConfigNode_SetSource(node->value.sequence.items[index], root, path))
+				return 0;
 	}
 	return 1;
 }
@@ -484,8 +493,8 @@ int AeronConfigFile_LoadYamlEx(AeronVfs* vfs, AeronVfsRoot root, const char* pat
 	result = 0;
 	yaml_parser_set_input_string(&parser, data, data_size);
 	if (!yaml_parser_load(&parser, &document)) {
-		AeronConfig_Fail(error, AERON_CONFIG_ERROR_YAML_SYNTAX, root, path,
-						 (int)parser.problem_mark.line + 1, (int)parser.problem_mark.column + 1, "%s",
+		AeronConfig_Fail(error, AERON_CONFIG_ERROR_YAML_SYNTAX, root, path, (int)parser.problem_mark.line + 1,
+						 (int)parser.problem_mark.column + 1, "%s",
 						 parser.problem ? parser.problem : "YAML syntax error");
 		goto done;
 	}
@@ -497,7 +506,7 @@ int AeronConfigFile_LoadYamlEx(AeronVfs* vfs, AeronVfsRoot root, const char* pat
 		goto done;
 	}
 	config->root_kind = root;
-	config->path = AeronConfig_DuplicateString(path);
+	config->path      = AeronConfig_DuplicateString(path);
 	if (!config->path) {
 		AeronConfigFile_Destroy(config);
 		config = NULL;
@@ -525,8 +534,8 @@ int AeronConfigFile_LoadYamlEx(AeronVfs* vfs, AeronVfsRoot root, const char* pat
 	if (!yaml_parser_load(&parser, &extra_document)) {
 		AeronConfigFile_Destroy(config);
 		config = NULL;
-		AeronConfig_Fail(error, AERON_CONFIG_ERROR_YAML_SYNTAX, root, path,
-						 (int)parser.problem_mark.line + 1, (int)parser.problem_mark.column + 1, "%s",
+		AeronConfig_Fail(error, AERON_CONFIG_ERROR_YAML_SYNTAX, root, path, (int)parser.problem_mark.line + 1,
+						 (int)parser.problem_mark.column + 1, "%s",
 						 parser.problem ? parser.problem : "YAML syntax error");
 		goto done;
 	}
@@ -553,7 +562,7 @@ done:
 int AeronConfigFile_LoadYaml(AeronVfs* vfs, AeronVfsRoot root, const char* path,
 							 AeronConfigFile** out_config) {
 	AeronConfigError error;
-	int result = AeronConfigFile_LoadYamlEx(vfs, root, path, out_config, &error);
+	int              result = AeronConfigFile_LoadYamlEx(vfs, root, path, out_config, &error);
 	if (!result && error.code != AERON_CONFIG_ERROR_NOT_FOUND)
 		Aeron_LogError("aeron.config", "%s:%d:%d: %s", error.path, error.line, error.column, error.message);
 	return result;
@@ -571,9 +580,10 @@ void AeronConfigFile_Destroy(AeronConfigFile* config) {
 
 static AeronConfigFile* AeronConfigFile_Allocate(AeronVfsRoot root, const char* path) {
 	AeronConfigFile* config = (AeronConfigFile*)SDL_calloc(1, sizeof(*config));
-	if (!config) return NULL;
+	if (!config)
+		return NULL;
 	config->root_kind = root;
-	config->path = AeronConfig_DuplicateString(path ? path : "");
+	config->path      = AeronConfig_DuplicateString(path ? path : "");
 	if (!config->path) {
 		SDL_free(config);
 		return NULL;
@@ -589,7 +599,7 @@ int AeronConfigFile_CreateMap(AeronVfsRoot root, const char* path, AeronConfigFi
 		return AeronConfig_Fail(error, AERON_CONFIG_ERROR_INVALID_ARGUMENT, root, path, 0, 0,
 								"invalid configuration creation arguments");
 	*out_config = NULL;
-	config = AeronConfigFile_Allocate(root, path);
+	config      = AeronConfigFile_Allocate(root, path);
 	if (config) {
 		config->root = AeronConfig_CreateNode(AERON_CONFIG_MAP, NULL);
 		if (config->root && !AeronConfigNode_SetSource(config->root, root, path)) {
@@ -608,40 +618,50 @@ int AeronConfigFile_CreateMap(AeronVfsRoot root, const char* path, AeronConfigFi
 
 static AeronConfigNode* AeronConfigNode_Clone(const AeronConfigNode* source) {
 	AeronConfigNode* clone;
-	size_t index;
-	if (!source) return NULL;
+	size_t           index;
+	if (!source)
+		return NULL;
 	clone = AeronConfig_CreateNode(source->type, NULL);
-	if (!clone) return NULL;
+	if (!clone)
+		return NULL;
 	clone->source_root = source->source_root;
 	clone->source_path = AeronConfig_DuplicateString(source->source_path ? source->source_path : "");
-	clone->line = source->line;
-	clone->column = source->column;
-	if (!clone->source_path) goto failed;
+	clone->line        = source->line;
+	clone->column      = source->column;
+	if (!clone->source_path)
+		goto failed;
 	if (source->type == AERON_CONFIG_STRING) {
 		clone->value.string_value = AeronConfig_DuplicateString(source->value.string_value);
-		if (!clone->value.string_value) goto failed;
+		if (!clone->value.string_value)
+			goto failed;
 	} else if (source->type == AERON_CONFIG_MAP) {
 		clone->value.map.count = source->value.map.count;
 		if (clone->value.map.count) {
 			clone->value.map.entries =
 				(AeronConfigMapEntry*)SDL_calloc(clone->value.map.count, sizeof(*clone->value.map.entries));
-			if (!clone->value.map.entries) goto failed;
+			if (!clone->value.map.entries)
+				goto failed;
 		}
 		for (index = 0; index < clone->value.map.count; ++index) {
-			clone->value.map.entries[index].key = AeronConfig_DuplicateString(source->value.map.entries[index].key);
-			clone->value.map.entries[index].value = AeronConfigNode_Clone(source->value.map.entries[index].value);
-			if (!clone->value.map.entries[index].key || !clone->value.map.entries[index].value) goto failed;
+			clone->value.map.entries[index].key =
+				AeronConfig_DuplicateString(source->value.map.entries[index].key);
+			clone->value.map.entries[index].value =
+				AeronConfigNode_Clone(source->value.map.entries[index].value);
+			if (!clone->value.map.entries[index].key || !clone->value.map.entries[index].value)
+				goto failed;
 		}
 	} else if (source->type == AERON_CONFIG_SEQUENCE) {
 		clone->value.sequence.count = source->value.sequence.count;
 		if (clone->value.sequence.count) {
-			clone->value.sequence.items =
-				(AeronConfigNode**)SDL_calloc(clone->value.sequence.count, sizeof(*clone->value.sequence.items));
-			if (!clone->value.sequence.items) goto failed;
+			clone->value.sequence.items = (AeronConfigNode**)SDL_calloc(clone->value.sequence.count,
+																		sizeof(*clone->value.sequence.items));
+			if (!clone->value.sequence.items)
+				goto failed;
 		}
 		for (index = 0; index < clone->value.sequence.count; ++index) {
 			clone->value.sequence.items[index] = AeronConfigNode_Clone(source->value.sequence.items[index]);
-			if (!clone->value.sequence.items[index]) goto failed;
+			if (!clone->value.sequence.items[index])
+				goto failed;
 		}
 	} else {
 		clone->value = source->value;
@@ -656,12 +676,13 @@ int AeronConfigFile_Clone(const AeronConfigFile* source, AeronConfigFile** out_c
 						  AeronConfigError* error) {
 	AeronConfigFile* clone;
 	if (!source || !out_config)
-		return AeronConfig_Fail(error, AERON_CONFIG_ERROR_INVALID_ARGUMENT, AERON_VFS_ROOT_RESOURCE, NULL,
-								0, 0, "invalid configuration clone arguments");
+		return AeronConfig_Fail(error, AERON_CONFIG_ERROR_INVALID_ARGUMENT, AERON_VFS_ROOT_RESOURCE, NULL, 0,
+								0, "invalid configuration clone arguments");
 	AeronConfig_ClearError(error, source->root_kind, source->path);
 	*out_config = NULL;
-	clone = AeronConfigFile_Allocate(source->root_kind, source->path);
-	if (clone) clone->root = AeronConfigNode_Clone(source->root);
+	clone       = AeronConfigFile_Allocate(source->root_kind, source->path);
+	if (clone)
+		clone->root = AeronConfigNode_Clone(source->root);
 	if (!clone || !clone->root) {
 		AeronConfigFile_Destroy(clone);
 		return AeronConfig_Fail(error, AERON_CONFIG_ERROR_OUT_OF_MEMORY, source->root_kind, source->path, 0,
@@ -673,47 +694,52 @@ int AeronConfigFile_Clone(const AeronConfigFile* source, AeronConfigFile** out_c
 
 static size_t AeronConfigNode_MapFind(const AeronConfigNode* map, const char* key, size_t length) {
 	size_t index;
-	if (!map || map->type != AERON_CONFIG_MAP) return SIZE_MAX;
+	if (!map || map->type != AERON_CONFIG_MAP)
+		return SIZE_MAX;
 	for (index = 0; index < map->value.map.count; ++index) {
 		const char* current = map->value.map.entries[index].key;
-		if (strlen(current) == length && !memcmp(current, key, length)) return index;
+		if (strlen(current) == length && !memcmp(current, key, length))
+			return index;
 	}
 	return SIZE_MAX;
 }
 
 static int AeronConfigNode_MapAppend(AeronConfigNode* map, const char* key, size_t length,
-									AeronConfigNode* value) {
+									 AeronConfigNode* value) {
 	AeronConfigMapEntry* entries;
-	char* copy = AeronConfig_DuplicateBytes((const unsigned char*)key, length);
-	if (!copy) return 0;
+	char*                copy = AeronConfig_DuplicateBytes((const unsigned char*)key, length);
+	if (!copy)
+		return 0;
 	entries = (AeronConfigMapEntry*)SDL_realloc(map->value.map.entries,
-											   (map->value.map.count + 1u) * sizeof(*entries));
+												(map->value.map.count + 1u) * sizeof(*entries));
 	if (!entries) {
 		SDL_free(copy);
 		return 0;
 	}
-	map->value.map.entries = entries;
-	entries[map->value.map.count].key = copy;
+	map->value.map.entries              = entries;
+	entries[map->value.map.count].key   = copy;
 	entries[map->value.map.count].value = value;
 	map->value.map.count++;
 	return 1;
 }
 
 static AeronConfigNode* AeronConfigNode_Overlay(const AeronConfigNode* base,
-											   const AeronConfigNode* overrides) {
+												const AeronConfigNode* overrides) {
 	AeronConfigNode* result;
-	size_t index;
+	size_t           index;
 	if (base->type != AERON_CONFIG_MAP || overrides->type != AERON_CONFIG_MAP)
 		return AeronConfigNode_Clone(overrides);
 	result = AeronConfigNode_Clone(base);
-	if (!result) return NULL;
+	if (!result)
+		return NULL;
 	for (index = 0; index < overrides->value.map.count; ++index) {
-		const AeronConfigMapEntry* entry = &overrides->value.map.entries[index];
-		size_t target = AeronConfigNode_MapFind(result, entry->key, strlen(entry->key));
+		const AeronConfigMapEntry* entry  = &overrides->value.map.entries[index];
+		size_t                     target = AeronConfigNode_MapFind(result, entry->key, strlen(entry->key));
 		if (target != SIZE_MAX) {
-			AeronConfigNode* merged = AeronConfigNode_Overlay(result->value.map.entries[target].value,
-														entry->value);
-			if (!merged) goto failed;
+			AeronConfigNode* merged =
+				AeronConfigNode_Overlay(result->value.map.entries[target].value, entry->value);
+			if (!merged)
+				goto failed;
 			AeronConfigNode_Destroy(result->value.map.entries[target].value);
 			result->value.map.entries[target].value = merged;
 		} else {
@@ -734,12 +760,13 @@ int AeronConfigFile_Overlay(const AeronConfigFile* base, const AeronConfigFile* 
 							AeronConfigFile** out_config, AeronConfigError* error) {
 	AeronConfigFile* result;
 	if (!base || !overrides || !out_config)
-		return AeronConfig_Fail(error, AERON_CONFIG_ERROR_INVALID_ARGUMENT, AERON_VFS_ROOT_RESOURCE, NULL,
-								0, 0, "invalid configuration overlay arguments");
+		return AeronConfig_Fail(error, AERON_CONFIG_ERROR_INVALID_ARGUMENT, AERON_VFS_ROOT_RESOURCE, NULL, 0,
+								0, "invalid configuration overlay arguments");
 	AeronConfig_ClearError(error, base->root_kind, base->path);
 	*out_config = NULL;
-	result = AeronConfigFile_Allocate(base->root_kind, base->path);
-	if (result) result->root = AeronConfigNode_Overlay(base->root, overrides->root);
+	result      = AeronConfigFile_Allocate(base->root_kind, base->path);
+	if (result)
+		result->root = AeronConfigNode_Overlay(base->root, overrides->root);
 	if (!result || !result->root) {
 		AeronConfigFile_Destroy(result);
 		return AeronConfig_Fail(error, AERON_CONFIG_ERROR_OUT_OF_MEMORY, base->root_kind, base->path, 0, 0,
@@ -750,27 +777,35 @@ int AeronConfigFile_Overlay(const AeronConfigFile* base, const AeronConfigFile* 
 }
 
 static AeronConfigNode* AeronConfigNode_FromValue(const AeronConfigValue* value, AeronVfsRoot root,
-												 const char* path, int depth) {
+												  const char* path, int depth) {
 	AeronConfigNode* node;
-	size_t index;
+	size_t           index;
 	if (!value || depth > AERON_CONFIG_MAX_DEPTH || value->type < AERON_CONFIG_NULL ||
 		value->type > AERON_CONFIG_SEQUENCE ||
 		(value->type == AERON_CONFIG_FLOAT && !isfinite(value->value.float_value)) ||
-		(value->type == AERON_CONFIG_STRING && !value->value.string_value)) return NULL;
+		(value->type == AERON_CONFIG_STRING && !value->value.string_value))
+		return NULL;
 	node = AeronConfig_CreateNode(value->type, NULL);
-	if (!node || !AeronConfigNode_SetSource(node, root, path)) goto failed;
-	if (value->type == AERON_CONFIG_BOOL) node->value.bool_value = value->value.bool_value != 0;
-	else if (value->type == AERON_CONFIG_INT) node->value.int_value = value->value.int_value;
-	else if (value->type == AERON_CONFIG_FLOAT) node->value.float_value = value->value.float_value;
+	if (!node || !AeronConfigNode_SetSource(node, root, path))
+		goto failed;
+	if (value->type == AERON_CONFIG_BOOL)
+		node->value.bool_value = value->value.bool_value != 0;
+	else if (value->type == AERON_CONFIG_INT)
+		node->value.int_value = value->value.int_value;
+	else if (value->type == AERON_CONFIG_FLOAT)
+		node->value.float_value = value->value.float_value;
 	else if (value->type == AERON_CONFIG_STRING) {
 		node->value.string_value = AeronConfig_DuplicateString(value->value.string_value);
-		if (!node->value.string_value) goto failed;
+		if (!node->value.string_value)
+			goto failed;
 	} else if (value->type == AERON_CONFIG_MAP) {
-		if (value->value.map.count && !value->value.map.entries) goto failed;
+		if (value->value.map.count && !value->value.map.entries)
+			goto failed;
 		for (index = 0; index < value->value.map.count; ++index) {
 			const AeronConfigMapValue* entry = &value->value.map.entries[index];
-			AeronConfigNode* child = AeronConfigNode_FromValue(entry->value, root, path, depth + 1);
-			if (!entry->key || !child || !AeronConfigNode_MapAppend(node, entry->key, strlen(entry->key), child)) {
+			AeronConfigNode*           child = AeronConfigNode_FromValue(entry->value, root, path, depth + 1);
+			if (!entry->key || !child ||
+				!AeronConfigNode_MapAppend(node, entry->key, strlen(entry->key), child)) {
 				AeronConfigNode_Destroy(child);
 				goto failed;
 			}
@@ -778,15 +813,18 @@ static AeronConfigNode* AeronConfigNode_FromValue(const AeronConfigValue* value,
 	} else if (value->type == AERON_CONFIG_SEQUENCE) {
 		node->value.sequence.count = value->value.sequence.count;
 		if (node->value.sequence.count) {
-			if (!value->value.sequence.values) goto failed;
-			node->value.sequence.items =
-				(AeronConfigNode**)SDL_calloc(node->value.sequence.count, sizeof(*node->value.sequence.items));
-			if (!node->value.sequence.items) goto failed;
+			if (!value->value.sequence.values)
+				goto failed;
+			node->value.sequence.items = (AeronConfigNode**)SDL_calloc(node->value.sequence.count,
+																	   sizeof(*node->value.sequence.items));
+			if (!node->value.sequence.items)
+				goto failed;
 		}
 		for (index = 0; index < node->value.sequence.count; ++index) {
 			node->value.sequence.items[index] =
 				AeronConfigNode_FromValue(&value->value.sequence.values[index], root, path, depth + 1);
-			if (!node->value.sequence.items[index]) goto failed;
+			if (!node->value.sequence.items[index])
+				goto failed;
 		}
 	}
 	return node;
@@ -797,33 +835,36 @@ failed:
 
 static int AeronConfig_ValidMutationPath(const char* path) {
 	const char* cursor;
-	if (!path || !path[0] || path[0] == '.' || strchr(path, '[')) return 0;
+	if (!path || !path[0] || path[0] == '.' || strchr(path, '['))
+		return 0;
 	for (cursor = path; *cursor; ++cursor)
-		if (*cursor == '.' && (!cursor[1] || cursor[1] == '.')) return 0;
+		if (*cursor == '.' && (!cursor[1] || cursor[1] == '.'))
+			return 0;
 	return 1;
 }
 
-static int AeronConfigFile_SetCloned(AeronConfigFile* config, const char* path,
-									const AeronConfigValue* value, AeronConfigError* error) {
-	AeronConfigNode* map = config->root;
-	const char* segment = path;
+static int AeronConfigFile_SetCloned(AeronConfigFile* config, const char* path, const AeronConfigValue* value,
+									 AeronConfigError* error) {
+	AeronConfigNode* map     = config->root;
+	const char*      segment = path;
 	if (map->type != AERON_CONFIG_MAP)
-		return AeronConfig_Fail(error, AERON_CONFIG_ERROR_PATH_TYPE_CONFLICT, config->root_kind,
-								config->path, map->line, map->column, "configuration root is not a map");
+		return AeronConfig_Fail(error, AERON_CONFIG_ERROR_PATH_TYPE_CONFLICT, config->root_kind, config->path,
+								map->line, map->column, "configuration root is not a map");
 	for (;;) {
-		const char* dot = strchr(segment, '.');
-		size_t length = dot ? (size_t)(dot - segment) : strlen(segment);
-		size_t index = AeronConfigNode_MapFind(map, segment, length);
+		const char* dot    = strchr(segment, '.');
+		size_t      length = dot ? (size_t)(dot - segment) : strlen(segment);
+		size_t      index  = AeronConfigNode_MapFind(map, segment, length);
 		if (!dot) {
-			AeronConfigNode* replacement = AeronConfigNode_FromValue(value, config->root_kind, config->path, 0);
+			AeronConfigNode* replacement =
+				AeronConfigNode_FromValue(value, config->root_kind, config->path, 0);
 			if (!replacement)
 				return AeronConfig_Fail(error, AERON_CONFIG_ERROR_OUT_OF_MEMORY, config->root_kind,
-									config->path, 0, 0, "could not allocate configuration value");
+										config->path, 0, 0, "could not allocate configuration value");
 			if (index == SIZE_MAX) {
 				if (!AeronConfigNode_MapAppend(map, segment, length, replacement)) {
 					AeronConfigNode_Destroy(replacement);
 					return AeronConfig_Fail(error, AERON_CONFIG_ERROR_OUT_OF_MEMORY, config->root_kind,
-										config->path, 0, 0, "could not extend configuration map");
+											config->path, 0, 0, "could not extend configuration map");
 				}
 			} else {
 				AeronConfigNode_Destroy(map->value.map.entries[index].value);
@@ -837,15 +878,15 @@ static int AeronConfigFile_SetCloned(AeronConfigFile* config, const char* path,
 				!AeronConfigNode_MapAppend(map, segment, length, child)) {
 				AeronConfigNode_Destroy(child);
 				return AeronConfig_Fail(error, AERON_CONFIG_ERROR_OUT_OF_MEMORY, config->root_kind,
-									config->path, 0, 0, "could not create configuration path");
+										config->path, 0, 0, "could not create configuration path");
 			}
 			map = child;
 		} else {
 			map = map->value.map.entries[index].value;
 			if (map->type != AERON_CONFIG_MAP)
 				return AeronConfig_Fail(error, AERON_CONFIG_ERROR_PATH_TYPE_CONFLICT, config->root_kind,
-									config->path, map->line, map->column,
-									"configuration path crosses a non-map value");
+										config->path, map->line, map->column,
+										"configuration path crosses a non-map value");
 		}
 		segment = dot + 1;
 	}
@@ -855,48 +896,76 @@ int AeronConfigFile_SetValue(AeronConfigFile* config, const char* path, const Ae
 							 AeronConfigError* error) {
 	AeronConfigFile* clone = NULL;
 	if (!config || !value || !AeronConfig_ValidMutationPath(path))
-		return AeronConfig_Fail(error, AERON_CONFIG_ERROR_INVALID_ARGUMENT,
-								config ? config->root_kind : AERON_VFS_ROOT_RESOURCE,
-								config ? config->path : NULL, 0, 0, "invalid configuration mutation arguments");
-	if (!AeronConfigFile_Clone(config, &clone, error) || !AeronConfigFile_SetCloned(clone, path, value, error)) {
+		return AeronConfig_Fail(
+			error, AERON_CONFIG_ERROR_INVALID_ARGUMENT, config ? config->root_kind : AERON_VFS_ROOT_RESOURCE,
+			config ? config->path : NULL, 0, 0, "invalid configuration mutation arguments");
+	if (!AeronConfigFile_Clone(config, &clone, error) ||
+		!AeronConfigFile_SetCloned(clone, path, value, error)) {
 		AeronConfigFile_Destroy(clone);
 		return 0;
 	}
 	AeronConfigNode_Destroy(config->root);
 	config->root = clone->root;
-	clone->root = NULL;
+	clone->root  = NULL;
 	AeronConfigFile_Destroy(clone);
 	return 1;
 }
 
-int AeronConfigFile_SetNull(AeronConfigFile* c, const char* p, AeronConfigError* e) { AeronConfigValue v = { .type = AERON_CONFIG_NULL }; return AeronConfigFile_SetValue(c, p, &v, e); }
-int AeronConfigFile_SetBool(AeronConfigFile* c, const char* p, int x, AeronConfigError* e) { AeronConfigValue v = { .type = AERON_CONFIG_BOOL }; v.value.bool_value = x; return AeronConfigFile_SetValue(c, p, &v, e); }
-int AeronConfigFile_SetInt(AeronConfigFile* c, const char* p, int64_t x, AeronConfigError* e) { AeronConfigValue v = { .type = AERON_CONFIG_INT }; v.value.int_value = x; return AeronConfigFile_SetValue(c, p, &v, e); }
+int AeronConfigFile_SetNull(AeronConfigFile* c, const char* p, AeronConfigError* e) {
+	AeronConfigValue v = { .type = AERON_CONFIG_NULL };
+	return AeronConfigFile_SetValue(c, p, &v, e);
+}
+
+int AeronConfigFile_SetBool(AeronConfigFile* c, const char* p, int x, AeronConfigError* e) {
+	AeronConfigValue v = { .type = AERON_CONFIG_BOOL };
+	v.value.bool_value = x;
+	return AeronConfigFile_SetValue(c, p, &v, e);
+}
+
+int AeronConfigFile_SetInt(AeronConfigFile* c, const char* p, int64_t x, AeronConfigError* e) {
+	AeronConfigValue v = { .type = AERON_CONFIG_INT };
+	v.value.int_value  = x;
+	return AeronConfigFile_SetValue(c, p, &v, e);
+}
+
 int AeronConfigFile_SetFloat(AeronConfigFile* c, const char* p, double x, AeronConfigError* e) {
 	AeronConfigValue v = { .type = AERON_CONFIG_FLOAT };
 	if (!isfinite(x))
 		return AeronConfig_Fail(e, AERON_CONFIG_ERROR_INVALID_ARGUMENT,
-								c ? c->root_kind : AERON_VFS_ROOT_RESOURCE,
-								c ? c->path : NULL, 0, 0, "configuration float must be finite");
+								c ? c->root_kind : AERON_VFS_ROOT_RESOURCE, c ? c->path : NULL, 0, 0,
+								"configuration float must be finite");
 	v.value.float_value = x;
 	return AeronConfigFile_SetValue(c, p, &v, e);
 }
-int AeronConfigFile_SetString(AeronConfigFile* c, const char* p, const char* x, AeronConfigError* e) { AeronConfigValue v = { .type = AERON_CONFIG_STRING }; v.value.string_value = x; return AeronConfigFile_SetValue(c, p, &v, e); }
 
-static int AeronConfigNode_Remove(AeronConfigNode* map, const char* path, int* empty, AeronConfigError* error) {
-	const char* dot = strchr(path, '.');
-	size_t length = dot ? (size_t)(dot - path) : strlen(path);
-	size_t index = AeronConfigNode_MapFind(map, path, length);
-	if (index == SIZE_MAX) { *empty = map->value.map.count == 0; return 1; }
+int AeronConfigFile_SetString(AeronConfigFile* c, const char* p, const char* x, AeronConfigError* e) {
+	AeronConfigValue v   = { .type = AERON_CONFIG_STRING };
+	v.value.string_value = x;
+	return AeronConfigFile_SetValue(c, p, &v, e);
+}
+
+static int AeronConfigNode_Remove(AeronConfigNode* map, const char* path, int* empty,
+								  AeronConfigError* error) {
+	const char* dot    = strchr(path, '.');
+	size_t      length = dot ? (size_t)(dot - path) : strlen(path);
+	size_t      index  = AeronConfigNode_MapFind(map, path, length);
+	if (index == SIZE_MAX) {
+		*empty = map->value.map.count == 0;
+		return 1;
+	}
 	if (dot) {
-		AeronConfigNode* child = map->value.map.entries[index].value;
-		int child_empty = 0;
+		AeronConfigNode* child       = map->value.map.entries[index].value;
+		int              child_empty = 0;
 		if (child->type != AERON_CONFIG_MAP)
 			return AeronConfig_Fail(error, AERON_CONFIG_ERROR_PATH_TYPE_CONFLICT, child->source_root,
-								child->source_path, child->line, child->column,
-								"configuration path crosses a non-map value");
-		if (!AeronConfigNode_Remove(child, dot + 1, &child_empty, error)) return 0;
-		if (!child_empty) { *empty = 0; return 1; }
+									child->source_path, child->line, child->column,
+									"configuration path crosses a non-map value");
+		if (!AeronConfigNode_Remove(child, dot + 1, &child_empty, error))
+			return 0;
+		if (!child_empty) {
+			*empty = 0;
+			return 1;
+		}
 	}
 	SDL_free(map->value.map.entries[index].key);
 	AeronConfigNode_Destroy(map->value.map.entries[index].value);
@@ -909,18 +978,19 @@ static int AeronConfigNode_Remove(AeronConfigNode* map, const char* path, int* e
 
 int AeronConfigFile_Remove(AeronConfigFile* config, const char* path, AeronConfigError* error) {
 	AeronConfigFile* clone = NULL;
-	int empty;
+	int              empty;
 	if (!config || !AeronConfig_ValidMutationPath(path) || config->root->type != AERON_CONFIG_MAP)
-		return AeronConfig_Fail(error, AERON_CONFIG_ERROR_INVALID_ARGUMENT,
-								config ? config->root_kind : AERON_VFS_ROOT_RESOURCE,
-								config ? config->path : NULL, 0, 0, "invalid configuration removal arguments");
-	if (!AeronConfigFile_Clone(config, &clone, error) || !AeronConfigNode_Remove(clone->root, path, &empty, error)) {
+		return AeronConfig_Fail(
+			error, AERON_CONFIG_ERROR_INVALID_ARGUMENT, config ? config->root_kind : AERON_VFS_ROOT_RESOURCE,
+			config ? config->path : NULL, 0, 0, "invalid configuration removal arguments");
+	if (!AeronConfigFile_Clone(config, &clone, error) ||
+		!AeronConfigNode_Remove(clone->root, path, &empty, error)) {
 		AeronConfigFile_Destroy(clone);
 		return 0;
 	}
 	AeronConfigNode_Destroy(config->root);
 	config->root = clone->root;
-	clone->root = NULL;
+	clone->root  = NULL;
 	AeronConfigFile_Destroy(clone);
 	return 1;
 }
@@ -928,24 +998,31 @@ int AeronConfigFile_Remove(AeronConfigFile* config, const char* path, AeronConfi
 static int AeronConfigBuffer_Reserve(AeronConfigBuffer* buffer, size_t extra) {
 	size_t required;
 	size_t capacity;
-	char* grown;
-	if (extra > SIZE_MAX - buffer->size - 1u) return 0;
+	char*  grown;
+	if (extra > SIZE_MAX - buffer->size - 1u)
+		return 0;
 	required = buffer->size + extra + 1u;
-	if (required <= buffer->capacity) return 1;
+	if (required <= buffer->capacity)
+		return 1;
 	capacity = buffer->capacity ? buffer->capacity : 256u;
 	while (capacity < required) {
-		if (capacity > SIZE_MAX / 2u) { capacity = required; break; }
+		if (capacity > SIZE_MAX / 2u) {
+			capacity = required;
+			break;
+		}
 		capacity *= 2u;
 	}
 	grown = (char*)SDL_realloc(buffer->data, capacity);
-	if (!grown) return 0;
-	buffer->data = grown;
+	if (!grown)
+		return 0;
+	buffer->data     = grown;
 	buffer->capacity = capacity;
 	return 1;
 }
 
 static int AeronConfigBuffer_Append(AeronConfigBuffer* buffer, const char* text, size_t length) {
-	if (!AeronConfigBuffer_Reserve(buffer, length)) return 0;
+	if (!AeronConfigBuffer_Reserve(buffer, length))
+		return 0;
 	memcpy(buffer->data + buffer->size, text, length);
 	buffer->size += length;
 	buffer->data[buffer->size] = '\0';
@@ -958,27 +1035,37 @@ static int AeronConfigBuffer_Text(AeronConfigBuffer* buffer, const char* text) {
 
 static int AeronConfigBuffer_Indent(AeronConfigBuffer* buffer, int indent) {
 	while (indent-- > 0)
-		if (!AeronConfigBuffer_Text(buffer, " ")) return 0;
+		if (!AeronConfigBuffer_Text(buffer, " "))
+			return 0;
 	return 1;
 }
 
 static int AeronConfigBuffer_Quoted(AeronConfigBuffer* buffer, const char* text) {
 	const unsigned char* cursor = (const unsigned char*)text;
-	if (!AeronConfigBuffer_Text(buffer, "\"")) return 0;
+	if (!AeronConfigBuffer_Text(buffer, "\""))
+		return 0;
 	while (*cursor) {
 		const char* escaped = NULL;
-		char unicode[7];
-		if (*cursor == '\\') escaped = "\\\\";
-		else if (*cursor == '"') escaped = "\\\"";
-		else if (*cursor == '\n') escaped = "\\n";
-		else if (*cursor == '\r') escaped = "\\r";
-		else if (*cursor == '\t') escaped = "\\t";
+		char        unicode[7];
+		if (*cursor == '\\')
+			escaped = "\\\\";
+		else if (*cursor == '"')
+			escaped = "\\\"";
+		else if (*cursor == '\n')
+			escaped = "\\n";
+		else if (*cursor == '\r')
+			escaped = "\\r";
+		else if (*cursor == '\t')
+			escaped = "\\t";
 		if (escaped) {
-			if (!AeronConfigBuffer_Text(buffer, escaped)) return 0;
+			if (!AeronConfigBuffer_Text(buffer, escaped))
+				return 0;
 		} else if (*cursor < 0x20u || *cursor == 0x7fu) {
 			snprintf(unicode, sizeof(unicode), "\\u%04x", (unsigned)*cursor);
-			if (!AeronConfigBuffer_Text(buffer, unicode)) return 0;
-		} else if (!AeronConfigBuffer_Append(buffer, (const char*)cursor, 1u)) return 0;
+			if (!AeronConfigBuffer_Text(buffer, unicode))
+				return 0;
+		} else if (!AeronConfigBuffer_Append(buffer, (const char*)cursor, 1u))
+			return 0;
 		++cursor;
 	}
 	return AeronConfigBuffer_Text(buffer, "\"");
@@ -987,46 +1074,55 @@ static int AeronConfigBuffer_Quoted(AeronConfigBuffer* buffer, const char* text)
 static int AeronConfig_KeyIsPlain(const char* key) {
 	const unsigned char* cursor = (const unsigned char*)key;
 	if (!(cursor[0] == '_' || (cursor[0] >= 'A' && cursor[0] <= 'Z') ||
-		  (cursor[0] >= 'a' && cursor[0] <= 'z'))) return 0;
+		  (cursor[0] >= 'a' && cursor[0] <= 'z')))
+		return 0;
 	for (++cursor; *cursor; ++cursor)
 		if (!(*cursor == '_' || *cursor == '-' || (*cursor >= 'A' && *cursor <= 'Z') ||
-			  (*cursor >= 'a' && *cursor <= 'z') || (*cursor >= '0' && *cursor <= '9'))) return 0;
+			  (*cursor >= 'a' && *cursor <= 'z') || (*cursor >= '0' && *cursor <= '9')))
+			return 0;
 	return 1;
 }
 
 static int AeronConfig_FormatRoundTripFloat(char* text, size_t capacity, double value) {
 	char candidate[64];
-	int precision;
+	int  precision;
 	for (precision = 1; precision <= 17; ++precision) {
 		double parsed;
 		if (Aeron_FormatAsciiDouble(candidate, sizeof(candidate), value, precision) &&
 			Aeron_ParseAsciiDouble(candidate, strlen(candidate), &parsed) &&
-			memcmp(&parsed, &value, sizeof(value)) == 0) break;
+			memcmp(&parsed, &value, sizeof(value)) == 0)
+			break;
 	}
-	if (precision > 17) return 0;
+	if (precision > 17)
+		return 0;
 	if (!strchr(candidate, '.')) {
-		char* exponent = strchr(candidate, 'e');
+		char*  exponent = strchr(candidate, 'e');
 		size_t length;
 		size_t offset;
-		if (!exponent) exponent = strchr(candidate, 'E');
+		if (!exponent)
+			exponent = strchr(candidate, 'E');
 		length = strlen(candidate);
 		offset = exponent ? (size_t)(exponent - candidate) : length;
-		if (length + 2u >= sizeof(candidate)) return 0;
+		if (length + 2u >= sizeof(candidate))
+			return 0;
 		memmove(candidate + offset + 2u, candidate + offset, length - offset + 1u);
-		candidate[offset] = '.';
+		candidate[offset]      = '.';
 		candidate[offset + 1u] = '0';
 	}
-	if (strlen(candidate) >= capacity) return 0;
+	if (strlen(candidate) >= capacity)
+		return 0;
 	strcpy(text, candidate);
 	return 1;
 }
 
 static int AeronConfig_EmitScalar(AeronConfigBuffer* buffer, const AeronConfigNode* node) {
 	char text[64];
-	int length;
+	int  length;
 	switch (node->type) {
-		case AERON_CONFIG_NULL: return AeronConfigBuffer_Text(buffer, "null");
-		case AERON_CONFIG_BOOL: return AeronConfigBuffer_Text(buffer, node->value.bool_value ? "true" : "false");
+		case AERON_CONFIG_NULL:
+			return AeronConfigBuffer_Text(buffer, "null");
+		case AERON_CONFIG_BOOL:
+			return AeronConfigBuffer_Text(buffer, node->value.bool_value ? "true" : "false");
 		case AERON_CONFIG_INT:
 			length = snprintf(text, sizeof(text), "%lld", (long long)node->value.int_value);
 			return length > 0 && (size_t)length < sizeof(text) &&
@@ -1034,8 +1130,10 @@ static int AeronConfig_EmitScalar(AeronConfigBuffer* buffer, const AeronConfigNo
 		case AERON_CONFIG_FLOAT:
 			return AeronConfig_FormatRoundTripFloat(text, sizeof(text), node->value.float_value) &&
 				   AeronConfigBuffer_Text(buffer, text);
-		case AERON_CONFIG_STRING: return AeronConfigBuffer_Quoted(buffer, node->value.string_value);
-		default: return 0;
+		case AERON_CONFIG_STRING:
+			return AeronConfigBuffer_Quoted(buffer, node->value.string_value);
+		default:
+			return 0;
 	}
 }
 
@@ -1050,11 +1148,14 @@ static int AeronConfig_EmitMap(AeronConfigBuffer* buffer, const AeronConfigNode*
 		int compound = entry->value->type == AERON_CONFIG_MAP || entry->value->type == AERON_CONFIG_SEQUENCE;
 		if (!AeronConfigBuffer_Indent(buffer, indent) ||
 			!(AeronConfig_KeyIsPlain(entry->key) ? AeronConfigBuffer_Text(buffer, entry->key)
-											 : AeronConfigBuffer_Quoted(buffer, entry->key)) ||
-			!AeronConfigBuffer_Text(buffer, compound ? ":\n" : ": ")) return 0;
+												 : AeronConfigBuffer_Quoted(buffer, entry->key)) ||
+			!AeronConfigBuffer_Text(buffer, compound ? ":\n" : ": "))
+			return 0;
 		if (compound) {
-			if (!AeronConfig_EmitNode(buffer, entry->value, indent + 2)) return 0;
-		} else if (!AeronConfig_EmitScalar(buffer, entry->value) || !AeronConfigBuffer_Text(buffer, "\n")) return 0;
+			if (!AeronConfig_EmitNode(buffer, entry->value, indent + 2))
+				return 0;
+		} else if (!AeronConfig_EmitScalar(buffer, entry->value) || !AeronConfigBuffer_Text(buffer, "\n"))
+			return 0;
 	}
 	return 1;
 }
@@ -1065,57 +1166,60 @@ static int AeronConfig_EmitSequence(AeronConfigBuffer* buffer, const AeronConfig
 		return AeronConfigBuffer_Indent(buffer, indent) && AeronConfigBuffer_Text(buffer, "[]\n");
 	for (index = 0; index < node->value.sequence.count; ++index) {
 		const AeronConfigNode* item = node->value.sequence.items[index];
-		int compound = item->type == AERON_CONFIG_MAP || item->type == AERON_CONFIG_SEQUENCE;
+		int compound                = item->type == AERON_CONFIG_MAP || item->type == AERON_CONFIG_SEQUENCE;
 		if (!AeronConfigBuffer_Indent(buffer, indent) ||
-			!AeronConfigBuffer_Text(buffer, compound ? "-\n" : "- ")) return 0;
+			!AeronConfigBuffer_Text(buffer, compound ? "-\n" : "- "))
+			return 0;
 		if (compound) {
-			if (!AeronConfig_EmitNode(buffer, item, indent + 2)) return 0;
-		} else if (!AeronConfig_EmitScalar(buffer, item) || !AeronConfigBuffer_Text(buffer, "\n")) return 0;
+			if (!AeronConfig_EmitNode(buffer, item, indent + 2))
+				return 0;
+		} else if (!AeronConfig_EmitScalar(buffer, item) || !AeronConfigBuffer_Text(buffer, "\n"))
+			return 0;
 	}
 	return 1;
 }
 
 static int AeronConfig_EmitNode(AeronConfigBuffer* buffer, const AeronConfigNode* node, int indent) {
-	if (node->type == AERON_CONFIG_MAP) return AeronConfig_EmitMap(buffer, node, indent);
-	if (node->type == AERON_CONFIG_SEQUENCE) return AeronConfig_EmitSequence(buffer, node, indent);
+	if (node->type == AERON_CONFIG_MAP)
+		return AeronConfig_EmitMap(buffer, node, indent);
+	if (node->type == AERON_CONFIG_SEQUENCE)
+		return AeronConfig_EmitSequence(buffer, node, indent);
 	return AeronConfigBuffer_Indent(buffer, indent) && AeronConfig_EmitScalar(buffer, node) &&
 		   AeronConfigBuffer_Text(buffer, "\n");
 }
 
-int AeronConfigFile_SerializeYaml(const AeronConfigFile* config, char** out_data,
-								  size_t* out_size, AeronConfigError* error) {
+int AeronConfigFile_SerializeYaml(const AeronConfigFile* config, char** out_data, size_t* out_size,
+								  AeronConfigError* error) {
 	AeronConfigBuffer buffer = { 0 };
 	if (!config || !config->root || !out_data || !out_size)
-		return AeronConfig_Fail(error, AERON_CONFIG_ERROR_INVALID_ARGUMENT,
-								config ? config->root_kind : AERON_VFS_ROOT_RESOURCE,
-								config ? config->path : NULL, 0, 0,
-								"invalid configuration serialization arguments");
+		return AeronConfig_Fail(
+			error, AERON_CONFIG_ERROR_INVALID_ARGUMENT, config ? config->root_kind : AERON_VFS_ROOT_RESOURCE,
+			config ? config->path : NULL, 0, 0, "invalid configuration serialization arguments");
 	AeronConfig_ClearError(error, config->root_kind, config->path);
 	*out_data = NULL;
 	*out_size = 0;
 	if (!AeronConfig_EmitNode(&buffer, config->root, 0)) {
 		SDL_free(buffer.data);
-		return AeronConfig_Fail(error, AERON_CONFIG_ERROR_OUT_OF_MEMORY, config->root_kind,
-								config->path, 0, 0, "could not serialize configuration document");
+		return AeronConfig_Fail(error, AERON_CONFIG_ERROR_OUT_OF_MEMORY, config->root_kind, config->path, 0,
+								0, "could not serialize configuration document");
 	}
 	*out_data = buffer.data;
 	*out_size = buffer.size;
 	return 1;
 }
 
-void AeronConfigFile_FreeSerialized(char* data) {
-	SDL_free(data);
-}
+void AeronConfigFile_FreeSerialized(char* data) { SDL_free(data); }
 
 int AeronConfigFile_SaveYaml(AeronVfs* vfs, const AeronConfigFile* config, AeronConfigError* error) {
-	char* data = NULL;
+	char*  data = NULL;
 	size_t size = 0;
-	int result;
+	int    result;
 	if (!vfs || !config || !config->root || config->root_kind == AERON_VFS_ROOT_RESOURCE)
 		return AeronConfig_Fail(error, AERON_CONFIG_ERROR_INVALID_ARGUMENT,
 								config ? config->root_kind : AERON_VFS_ROOT_RESOURCE,
 								config ? config->path : NULL, 0, 0, "invalid configuration save arguments");
-	if (!AeronConfigFile_SerializeYaml(config, &data, &size, error)) return 0;
+	if (!AeronConfigFile_SerializeYaml(config, &data, &size, error))
+		return 0;
 	result = AeronVfs_WriteAllAtomic(vfs, config->root_kind, config->path, data, size);
 	AeronConfigFile_FreeSerialized(data);
 	if (!result)

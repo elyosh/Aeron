@@ -154,8 +154,7 @@ bool channel_atlas_pack(ChannelAtlas* ca, int max_atlas_size, int pad) {
 		 * silently; we'd rather catch that here. */
 		bool fits = true;
 		for (int i = 0; i < ca->rect_count; i++) {
-			if (trial[i].x < pad || trial[i].y < pad ||
-				trial[i].x + trial[i].w + pad > try_w ||
+			if (trial[i].x < pad || trial[i].y < pad || trial[i].x + trial[i].w + pad > try_w ||
 				trial[i].y + trial[i].h + pad > try_h) {
 				fits = false;
 				break;
@@ -211,8 +210,8 @@ bool channel_atlas_materialize(ChannelAtlas* ca) {
 
 	for (int i = 0; i < ca->rect_count; i++) {
 		const ChannelRect* r = &ca->rects[i];
-		if (!Aeron_AtlasBlitRgba8(ca->rgba, ca->width, ca->height, r->src_rgba, r->src_w,
-								  r->src_h, r->x, r->y, ca->pad, AERON_ATLAS_ADDRESS_REPEAT)) {
+		if (!Aeron_AtlasBlitRgba8(ca->rgba, ca->width, ca->height, r->src_rgba, r->src_w, r->src_h, r->x,
+								  r->y, ca->pad, AERON_ATLAS_ADDRESS_REPEAT)) {
 			free(ca->rgba);
 			ca->rgba = NULL;
 			return false;

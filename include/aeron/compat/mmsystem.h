@@ -166,7 +166,7 @@ AERON_WINMMIMPORT MMRESULT AERON_WINMMAPI auxSetVolume(uintptr_t device_id, uint
 typedef struct tagJOYCAPSA {
 	uint16_t wMid;
 	uint16_t wPid;
-	char szPname[32];
+	char     szPname[32];
 	uint32_t wXmin;
 	uint32_t wXmax;
 	uint32_t wYmin;
@@ -186,8 +186,8 @@ typedef struct tagJOYCAPSA {
 	uint32_t wMaxAxes;
 	uint32_t wNumAxes;
 	uint32_t wMaxButtons;
-	char szRegKey[32];
-	char szOEMVxD[260];
+	char     szRegKey[32];
+	char     szOEMVxD[260];
 } JOYCAPSA;
 
 /* joyGetPosEx extended position structure. */

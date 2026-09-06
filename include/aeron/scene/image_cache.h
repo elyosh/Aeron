@@ -16,10 +16,10 @@
  * asset paths.
  */
 
-#include "aeron/render.h"
 #include "aeron/image.h"
-#include <stdbool.h>
+#include "aeron/render.h"
 #include "aeron/vfs.h"
+#include <stdbool.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -42,9 +42,9 @@ void             Aeron_ImageCacheDestroy(AeronImageCache* cache);
  * destroyed. */
 const AeronImageCacheEntry* Aeron_ImageCacheLoad(AeronImageCache* cache, AeronCommandBuffer* cmd,
 												 const char* path);
-const AeronImageCacheEntry* Aeron_ImageCacheLoadVfs(
-		AeronImageCache* cache, AeronCommandBuffer* cmd, AeronVfs* vfs,
-		AeronVfsRoot root, const char* path, size_t max_size);
+const AeronImageCacheEntry* Aeron_ImageCacheLoadVfs(AeronImageCache* cache, AeronCommandBuffer* cmd,
+													AeronVfs* vfs, AeronVfsRoot root, const char* path,
+													size_t max_size);
 
 /* Destroy the resident entry for `path`, forcing the next load to read and
  * upload it again. */
@@ -53,8 +53,8 @@ void Aeron_ImageCacheInvalidate(AeronImageCache* cache, const char* path);
 /* Installs a borrowed texture for one cache path. Editor previews use this to
  * display unsaved in-memory assets through the same renderer as disk-backed
  * content. The caller must clear the override before destroying the texture. */
-void Aeron_ImageCacheSetOverride(AeronImageCache* cache, const char* path,
-								 AeronTexture* texture, int width, int height);
+void Aeron_ImageCacheSetOverride(AeronImageCache* cache, const char* path, AeronTexture* texture, int width,
+								 int height);
 void Aeron_ImageCacheClearOverride(AeronImageCache* cache, const char* path);
 void Aeron_ImageCacheClearOverrides(AeronImageCache* cache);
 
@@ -63,16 +63,14 @@ void Aeron_ImageCacheClearOverrides(AeronImageCache* cache);
  * failure logs. Shared by the cache's load path and by consumers with
  * their own keying (per-species atlas slots, cockpit assets). */
 struct Ktx2;
-AeronTexture* Aeron_ImageUploadKtx2(AeronCommandBuffer* cmd, const struct Ktx2* ktx,
-									const char* debug_name);
+AeronTexture* Aeron_ImageUploadKtx2(AeronCommandBuffer* cmd, const struct Ktx2* ktx, const char* debug_name);
 
 /* Upload an RGBA8 image from memory with the same alpha, color-space and mip
  * handling used by runtime atlases and fonts. The caller owns the texture. */
-AeronTexture* Aeron_ImageUploadRgba8(
-		AeronCommandBuffer* cmd, const uint8_t* rgba, int width, int height,
-		size_t pitch, AeronTextureFormat format, AeronColorSpace color_space,
-		AeronImageAlphaMode alpha_mode, bool generate_mips,
-		const char* debug_name);
+AeronTexture* Aeron_ImageUploadRgba8(AeronCommandBuffer* cmd, const uint8_t* rgba, int width, int height,
+									 size_t pitch, AeronTextureFormat format, AeronColorSpace color_space,
+									 AeronImageAlphaMode alpha_mode, bool generate_mips,
+									 const char* debug_name);
 
 /* One-shot cube-map load: open `path`, require faceCount == 6, upload
  * every mip x face through `cmd` (which must have no open pass), close.
@@ -80,9 +78,8 @@ AeronTexture* Aeron_ImageUploadRgba8(
  * file, not a cube, upload failure) with a diagnostic on stderr.
  * Feeds AeronScene_SetSkyCube. */
 AeronTexture* Aeron_ImageLoadCubemapKtx2(AeronCommandBuffer* cmd, const char* path);
-AeronTexture* Aeron_ImageLoadCubemapKtx2Vfs(
-		AeronCommandBuffer* cmd, AeronVfs* vfs, AeronVfsRoot root,
-		const char* path, size_t max_size);
+AeronTexture* Aeron_ImageLoadCubemapKtx2Vfs(AeronCommandBuffer* cmd, AeronVfs* vfs, AeronVfsRoot root,
+											const char* path, size_t max_size);
 
 #ifdef __cplusplus
 }

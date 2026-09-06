@@ -39,8 +39,7 @@ static inline void AeronGpuDebug_NameTexture(SDL_GPUDevice* device, SDL_GPUTextu
 	}
 }
 
-static inline void AeronGpuDebug_NameBuffer(SDL_GPUDevice* device, SDL_GPUBuffer* buffer,
-										  const char* name) {
+static inline void AeronGpuDebug_NameBuffer(SDL_GPUDevice* device, SDL_GPUBuffer* buffer, const char* name) {
 	if (device && buffer && name) {
 		SDL_SetGPUBufferName(device, buffer, name);
 	}
@@ -52,19 +51,22 @@ static inline void AeronGpuDebug_Push(SDL_GPUCommandBuffer* command_buffer, cons
 	(void)command_buffer;
 	(void)name;
 }
+
 static inline void AeronGpuDebug_Pop(SDL_GPUCommandBuffer* command_buffer) { (void)command_buffer; }
+
 static inline void AeronGpuDebug_Marker(SDL_GPUCommandBuffer* command_buffer, const char* name) {
 	(void)command_buffer;
 	(void)name;
 }
+
 static inline void AeronGpuDebug_NameTexture(SDL_GPUDevice* device, SDL_GPUTexture* texture,
 											 const char* name) {
 	(void)device;
 	(void)texture;
 	(void)name;
 }
-static inline void AeronGpuDebug_NameBuffer(SDL_GPUDevice* device, SDL_GPUBuffer* buffer,
-										  const char* name) {
+
+static inline void AeronGpuDebug_NameBuffer(SDL_GPUDevice* device, SDL_GPUBuffer* buffer, const char* name) {
 	(void)device;
 	(void)buffer;
 	(void)name;

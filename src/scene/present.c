@@ -48,8 +48,7 @@ void AeronScenePresent_SetAgxLook(int look) {
 		return;
 	}
 	s_agx_look = look;
-	Aeron_LogInfo("aeron.scene", "AgX look: %s",
-				  look == AERON_SCENE_AGX_LOOK_PUNCHY ? "punchy" : "base");
+	Aeron_LogInfo("aeron.scene", "AgX look: %s", look == AERON_SCENE_AGX_LOOK_PUNCHY ? "punchy" : "base");
 }
 
 static float s_agx_punchy_power = 1.1f;
@@ -90,7 +89,7 @@ void AeronScenePresent_SetBloomKernel(int mode) {
 	}
 	s_bloom_kernel = mode;
 	Aeron_LogInfo("aeron.scene", "bloom kernel: %s",
-			  mode == AERON_SCENE_BLOOM_KERNEL_1_TAP ? "1 tap" : "4 tap");
+				  mode == AERON_SCENE_BLOOM_KERNEL_1_TAP ? "1 tap" : "4 tap");
 }
 
 static float s_eotf_exponent = 2.2f;
@@ -133,7 +132,6 @@ void AeronScenePresent_ApplySettings(const AeronSceneTonemapSettings* settings) 
 	AeronScenePresent_SetAcesExposure(settings->aces_pre_exposure);
 }
 
-
 /* ===== Present chain ================================================ */
 
 struct AeronScenePresentChain {
@@ -145,8 +143,7 @@ struct AeronScenePresentChain {
 	AeronGraphicsPipeline* pipeline_hdr;
 };
 
-static AeronGraphicsPipeline* present_pipeline(AeronShader* vs, AeronShader* ps,
-											   AeronTextureFormat fmt) {
+static AeronGraphicsPipeline* present_pipeline(AeronShader* vs, AeronShader* ps, AeronTextureFormat fmt) {
 	AeronBlendStateDesc pma = { 0 };
 	pma.enabled             = 1;
 	pma.src_color           = AERON_BLEND_ONE;
@@ -155,7 +152,7 @@ static AeronGraphicsPipeline* present_pipeline(AeronShader* vs, AeronShader* ps,
 	pma.src_alpha           = AERON_BLEND_ONE;
 	pma.dst_alpha           = AERON_BLEND_ONE_MINUS_SRC_ALPHA;
 	pma.alpha_op            = AERON_BLEND_OP_ADD;
-	return Aeron_CreateGraphicsPipeline(&(AeronGraphicsPipelineDesc){
+	return Aeron_CreateGraphicsPipeline(&(AeronGraphicsPipelineDesc) {
 		.vertex_shader   = vs,
 		.fragment_shader = ps,
 		.primitive_type  = AERON_PRIMITIVE_TRIANGLE_STRIP,
@@ -171,12 +168,11 @@ AeronScenePresentChain* AeronScenePresentChain_Create(AeronTextureFormat target_
 		return NULL;
 	}
 	c->target_format = target_format;
-	c->vs = AeronSceneInternal_CompileShader("scene_fullscreen_quad.vert",
-											 AERON_SHADER_STAGE_VERTEX, 0, 0, 0);
-	c->ps_sdr = AeronSceneInternal_CompileShader("scene_tonemap.frag",
-												 AERON_SHADER_STAGE_FRAGMENT, 2, 1, 0);
-	c->ps_hdr = AeronSceneInternal_CompileShader("scene_tonemap_hdr.frag",
-												 AERON_SHADER_STAGE_FRAGMENT, 2, 1, 0);
+	c->vs =
+		AeronSceneInternal_CompileShader("scene_fullscreen_quad.vert", AERON_SHADER_STAGE_VERTEX, 0, 0, 0);
+	c->ps_sdr = AeronSceneInternal_CompileShader("scene_tonemap.frag", AERON_SHADER_STAGE_FRAGMENT, 2, 1, 0);
+	c->ps_hdr =
+		AeronSceneInternal_CompileShader("scene_tonemap_hdr.frag", AERON_SHADER_STAGE_FRAGMENT, 2, 1, 0);
 	if (c->vs && c->ps_sdr) {
 		c->pipeline_sdr = present_pipeline(c->vs, c->ps_sdr, target_format);
 	}
@@ -194,19 +190,22 @@ void AeronScenePresentChain_Destroy(AeronScenePresentChain* c) {
 	if (!c) {
 		return;
 	}
-	if (c->pipeline_sdr) Aeron_DestroyGraphicsPipeline(c->pipeline_sdr);
-	if (c->pipeline_hdr) Aeron_DestroyGraphicsPipeline(c->pipeline_hdr);
-	if (c->vs) Aeron_DestroyShader(c->vs);
-	if (c->ps_sdr) Aeron_DestroyShader(c->ps_sdr);
-	if (c->ps_hdr) Aeron_DestroyShader(c->ps_hdr);
+	if (c->pipeline_sdr)
+		Aeron_DestroyGraphicsPipeline(c->pipeline_sdr);
+	if (c->pipeline_hdr)
+		Aeron_DestroyGraphicsPipeline(c->pipeline_hdr);
+	if (c->vs)
+		Aeron_DestroyShader(c->vs);
+	if (c->ps_sdr)
+		Aeron_DestroyShader(c->ps_sdr);
+	if (c->ps_hdr)
+		Aeron_DestroyShader(c->ps_hdr);
 	free(c);
 }
 
-void AeronScenePresentChain_Draw(AeronScenePresentChain* c, AeronRenderPass* pass,
-								 AeronTexture* scene_tex, AeronSampler* sampler,
-								 AeronTexture* bloom_tex, float bloom_intensity, int rt_w,
-								 int rt_h, float bar_y_uv, const float tint[4],
-								 int src_coverage) {
+void AeronScenePresentChain_Draw(AeronScenePresentChain* c, AeronRenderPass* pass, AeronTexture* scene_tex,
+								 AeronSampler* sampler, AeronTexture* bloom_tex, float bloom_intensity,
+								 int rt_w, int rt_h, float bar_y_uv, const float tint[4], int src_coverage) {
 	if (!c || !pass || !scene_tex || !sampler) {
 		return;
 	}
@@ -223,8 +222,8 @@ void AeronScenePresentChain_Draw(AeronScenePresentChain* c, AeronRenderPass* pas
 	}
 	Aeron_BindGraphicsPipeline(pass, pp);
 	Aeron_BindTextureSampler(pass, AERON_SHADER_STAGE_FRAGMENT, 0, scene_tex, sampler);
-	Aeron_BindTextureSampler(pass, AERON_SHADER_STAGE_FRAGMENT, 1,
-							 bloom_tex ? bloom_tex : scene_tex, sampler);
+	Aeron_BindTextureSampler(pass, AERON_SHADER_STAGE_FRAGMENT, 1, bloom_tex ? bloom_tex : scene_tex,
+							 sampler);
 
 	/* HDR headroom is relative to SDR white. The render pass supplies the
 	 * platform encoding of that white when drawing directly to the swapchain. */

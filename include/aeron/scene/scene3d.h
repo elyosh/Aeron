@@ -180,8 +180,8 @@ typedef struct AeronSceneDirectionalShadowDesc {
 	float    light_angular_radius_degrees; /* source half-angle */
 	float    max_filter_radius;            /* atlas texels */
 	float    pcss_min_filter_radius;       /* atlas texels */
-	float    normal_bias_texels; /* lateral receiver offset at grazing incidence */
-	float    depth_bias_texels;  /* receiver comparison offset along the light */
+	float    normal_bias_texels;           /* lateral receiver offset at grazing incidence */
+	float    depth_bias_texels;            /* receiver comparison offset along the light */
 	float    transition_fraction;
 	float    distance_fade_fraction;
 	int      debug_cascades;
@@ -340,8 +340,7 @@ void AeronScene_SetPbrDebugViews(AeronScene3D* scene, int enabled);
 
 /* Selects a caller-owned diffuse environment cubemap for the current frame.
  * Begin clears the binding. Both resources must remain alive through Render. */
-void AeronScene_SetPbrEnvironmentMap(AeronScene3D* scene, AeronTexture* texture,
-									 AeronSampler* sampler);
+void AeronScene_SetPbrEnvironmentMap(AeronScene3D* scene, AeronTexture* texture, AeronSampler* sampler);
 
 /* Queue a per-frame uniform blob (copied; reset by Begin) that the
  * scene binds to (stage, slot) in the color pass AFTER the

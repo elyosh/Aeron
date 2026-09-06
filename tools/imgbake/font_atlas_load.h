@@ -19,8 +19,7 @@ extern "C" {
 /* Read <basename>.png + <basename>.fnt v2. Returns false + err on
  * failure. On success the result owns the decoded PNG buffer + glyph
  * records; release with font_atlas_free(). */
-bool font_atlas_load(const char *basename, FontAtlasResult *r,
-                     char *err, size_t err_size);
+bool font_atlas_load(const char* basename, FontAtlasResult* r, char* err, size_t err_size);
 
 #ifdef __cplusplus
 }

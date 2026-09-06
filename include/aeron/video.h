@@ -105,10 +105,10 @@ AeronVideoState Aeron_VideoGetState(const AeronVideoPlayer* player);
 int64_t         Aeron_VideoGetPositionUs(const AeronVideoPlayer* player);
 uint64_t        Aeron_VideoGetPresentedFrameIndex(const AeronVideoPlayer* player);
 /* Returns whether a wake is scheduled and writes its delay from the current frame start. */
-int             Aeron_VideoGetNextWakeDelayUs(const AeronVideoPlayer* player, uint64_t* out_delay_us);
-int             Aeron_VideoGetInfo(const AeronVideoPlayer* player, AeronVideoInfo* out_info);
-int             Aeron_VideoGetStats(const AeronVideoPlayer* player, AeronVideoStats* out_stats);
-const char*     Aeron_VideoGetError(const AeronVideoPlayer* player);
+int         Aeron_VideoGetNextWakeDelayUs(const AeronVideoPlayer* player, uint64_t* out_delay_us);
+int         Aeron_VideoGetInfo(const AeronVideoPlayer* player, AeronVideoInfo* out_info);
+int         Aeron_VideoGetStats(const AeronVideoPlayer* player, AeronVideoStats* out_stats);
+const char* Aeron_VideoGetError(const AeronVideoPlayer* player);
 
 #ifdef __cplusplus
 }

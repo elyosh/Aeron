@@ -13,17 +13,9 @@
 extern "C" {
 #endif
 
-enum {
-	AERON_SCENE_TONEMAP_ACES           = 0,
-	AERON_SCENE_TONEMAP_AGX_PARAMETRIC = 1,
-	AERON_SCENE_TONEMAP_COUNT
-};
+enum { AERON_SCENE_TONEMAP_ACES = 0, AERON_SCENE_TONEMAP_AGX_PARAMETRIC = 1, AERON_SCENE_TONEMAP_COUNT };
 
-enum {
-	AERON_SCENE_AGX_LOOK_BASE   = 0,
-	AERON_SCENE_AGX_LOOK_PUNCHY = 1,
-	AERON_SCENE_AGX_LOOK_COUNT
-};
+enum { AERON_SCENE_AGX_LOOK_BASE = 0, AERON_SCENE_AGX_LOOK_PUNCHY = 1, AERON_SCENE_AGX_LOOK_COUNT };
 
 enum {
 	AERON_SCENE_BLOOM_KERNEL_1_TAP = 0,
@@ -32,8 +24,8 @@ enum {
 };
 
 typedef struct AeronSceneTonemapSettings {
-	int tonemap_operator;
-	int agx_look;
+	int   tonemap_operator;
+	int   agx_look;
 	float agx_eotf_exponent;
 	float agx_punchy_power;
 	float agx_punchy_saturation;
@@ -94,10 +86,9 @@ void                    AeronScenePresentChain_Destroy(AeronScenePresentChain* c
  * own alpha — for PiP targets with a transparent background; pass 0
  * for a full-frame present. */
 void AeronScenePresentChain_Draw(AeronScenePresentChain* chain, AeronRenderPass* pass,
-								 AeronTexture* scene_tex, AeronSampler* sampler,
-								 AeronTexture* bloom_tex, float bloom_intensity, int rt_w,
-								 int rt_h, float bar_y_uv, const float tint[4],
-								 int src_coverage);
+								 AeronTexture* scene_tex, AeronSampler* sampler, AeronTexture* bloom_tex,
+								 float bloom_intensity, int rt_w, int rt_h, float bar_y_uv,
+								 const float tint[4], int src_coverage);
 
 #ifdef __cplusplus
 }

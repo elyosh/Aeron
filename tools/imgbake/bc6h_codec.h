@@ -22,9 +22,9 @@ extern "C" {
 #include <stdint.h>
 
 typedef enum {
-    BC6H_QUALITY_FAST = 0,
-    BC6H_QUALITY_MED  = 1,
-    BC6H_QUALITY_UBER = 2,
+	BC6H_QUALITY_FAST = 0,
+	BC6H_QUALITY_MED  = 1,
+	BC6H_QUALITY_UBER = 2,
 } Bc6hQuality;
 
 /* Idempotent initialization hook; safe to call multiple times. */
@@ -32,18 +32,15 @@ void bc6h_codec_init(void);
 
 /* Encode one 4×4 block of linear HDR RGB (48 floats = 16 pixels ×
  * R, G, B) into a 16-byte BC6H block. Both buffers are caller-owned. */
-void bc6h_codec_encode_block(uint8_t out_block[16],
-                             const float in_rgb_4x4[48],
-                             Bc6hQuality quality);
+void bc6h_codec_encode_block(uint8_t out_block[16], const float in_rgb_4x4[48], Bc6hQuality quality);
 
 /* Encode a whole RGB-f32 image (tightly packed, R first) into a flat
  * BC6H block stream. Output buffer must be ≥ ceil(w/4)*ceil(h/4)*16
  * bytes. Right/bottom edges that don't fill a full 4×4 block are
  * padded by clamping to the last row/col. Returns the number of bytes
  * written. */
-size_t bc6h_codec_encode_image(uint8_t *out_blocks, size_t out_cap,
-                               const float *rgb, int w, int h,
-                               Bc6hQuality quality);
+size_t bc6h_codec_encode_image(uint8_t* out_blocks, size_t out_cap, const float* rgb, int w, int h,
+							   Bc6hQuality quality);
 
 /* Convenience: byte length of the BC6H block stream for a (w, h)
  * image. Identical to bc7's because the block geometry matches. */

@@ -64,64 +64,53 @@
 #include "opt.h"
 
 typedef struct OptGltfBuildOptions {
-    float smooth_angle_degrees;
-    bool repair_normals;
-    bool emissive;
-    const struct OptGltfAlphaOverride *alpha_overrides;
-    size_t alpha_override_count;
+	float                              smooth_angle_degrees;
+	bool                               repair_normals;
+	bool                               emissive;
+	const struct OptGltfAlphaOverride* alpha_overrides;
+	size_t                             alpha_override_count;
 } OptGltfBuildOptions;
 
 typedef enum OptGltfAlphaMode {
-    OPT_GLTF_ALPHA_OPAQUE = 0,
-    OPT_GLTF_ALPHA_MASK   = 1,
-    OPT_GLTF_ALPHA_BLEND  = 2,
+	OPT_GLTF_ALPHA_OPAQUE = 0,
+	OPT_GLTF_ALPHA_MASK   = 1,
+	OPT_GLTF_ALPHA_BLEND  = 2,
 } OptGltfAlphaMode;
 
 typedef struct OptGltfAlphaOverride {
-    const char *texture_name;
-    OptGltfAlphaMode alpha_mode;
-    float alpha_cutoff;
+	const char*      texture_name;
+	OptGltfAlphaMode alpha_mode;
+	float            alpha_cutoff;
 } OptGltfAlphaOverride;
 
 /* Classify a legacy OPT base-level alpha plane. OPT stores samples but no
  * material semantic, so coverage is inferred conservatively from endpoint
  * prevalence. */
-OptGltfAlphaMode OptGltf_ClassifyAlpha(const uint8_t *alpha, size_t sample_count);
+OptGltfAlphaMode OptGltf_ClassifyAlpha(const uint8_t* alpha, size_t sample_count);
 
 typedef struct OptGltfImageView {
-    const uint8_t *rgba;
-    uint32_t width;
-    uint32_t height;
+	const uint8_t* rgba;
+	uint32_t       width;
+	uint32_t       height;
 } OptGltfImageView;
 
 typedef struct OptGltfDocument OptGltfDocument;
 
-bool OptGltf_BuildMemory(const opt_file_t *opt,
-                         const char *basename,
-                         const OptGltfBuildOptions *options,
-                         OptGltfDocument **out_document,
-                         opt_error_t *error);
+bool OptGltf_BuildMemory(const opt_file_t* opt, const char* basename, const OptGltfBuildOptions* options,
+						 OptGltfDocument** out_document, opt_error_t* error);
 
-cgltf_data *OptGltf_Data(OptGltfDocument *document);
-bool OptGltf_ImageView(const OptGltfDocument *document,
-                       const cgltf_image *image,
-                       OptGltfImageView *out_view);
-void OptGltf_Free(OptGltfDocument *document);
+cgltf_data* OptGltf_Data(OptGltfDocument* document);
+bool OptGltf_ImageView(const OptGltfDocument* document, const cgltf_image* image, OptGltfImageView* out_view);
+void OptGltf_Free(OptGltfDocument* document);
 
-bool OptGltf_WriteFiles(const OptGltfDocument *document,
-                        const char *out_dir,
-                        const char *basename);
+bool OptGltf_WriteFiles(const OptGltfDocument* document, const char* out_dir, const char* basename);
 
 /* repair_normals (stored-normals mode only): reproduce the classic
  * renderer's first-normal-per-position remap within each FaceData group,
  * then substitute the face normal for a zero-length canonical normal or
  * negate a canonical normal opposing its first face plane. Pass false to
  * emit the source per-corner data verbatim for diagnostics. */
-bool opt2gltf_convert(const opt_file_t *opt,
-                      const char *out_dir,
-                      const char *basename,
-                      float smooth_angle_deg,
-                      bool repair_normals,
-                      bool emissive);
+bool opt2gltf_convert(const opt_file_t* opt, const char* out_dir, const char* basename,
+					  float smooth_angle_deg, bool repair_normals, bool emissive);
 
 #endif /* TIE_OPT2GLTF_H */

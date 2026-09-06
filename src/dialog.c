@@ -9,13 +9,13 @@ struct AeronFolderDialog {
 
 int Aeron_ShowMessageBox(const AeronMessageBoxOptions* options, int* selected_button) {
 	SDL_MessageBoxButtonData buttons[AERON_MESSAGE_BOX_MAX_BUTTONS];
-	SDL_MessageBoxData data;
-	SDL_MessageBoxFlags flags;
-	int result = -1;
-	size_t i;
+	SDL_MessageBoxData       data;
+	SDL_MessageBoxFlags      flags;
+	int                      result = -1;
+	size_t                   i;
 
-	if (!options || !options->title || !options->message || !options->buttons ||
-		options->button_count == 0 || options->button_count > sizeof buttons / sizeof buttons[0]) {
+	if (!options || !options->title || !options->message || !options->buttons || options->button_count == 0 ||
+		options->button_count > sizeof buttons / sizeof buttons[0]) {
 		SDL_SetError("invalid Aeron message box options");
 		return 0;
 	}
@@ -46,15 +46,15 @@ int Aeron_ShowMessageBox(const AeronMessageBoxOptions* options, int* selected_bu
 			buttons[i].flags |= SDL_MESSAGEBOX_BUTTON_ESCAPEKEY_DEFAULT;
 		}
 		buttons[i].buttonID = options->buttons[i].id;
-		buttons[i].text = options->buttons[i].label;
+		buttons[i].text     = options->buttons[i].label;
 	}
 	memset(&data, 0, sizeof data);
-	data.flags = flags;
-	data.window = g_aeron.window;
-	data.title = options->title;
-	data.message = options->message;
+	data.flags      = flags;
+	data.window     = g_aeron.window;
+	data.title      = options->title;
+	data.message    = options->message;
 	data.numbuttons = (int)options->button_count;
-	data.buttons = buttons;
+	data.buttons    = buttons;
 	if (!SDL_ShowMessageBox(&data, &result)) {
 		Aeron_LogError("aeron.dialog", "could not show message box: %s", SDL_GetError());
 		return 0;

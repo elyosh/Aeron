@@ -24,14 +24,14 @@ extern "C" {
 #include <stdint.h>
 
 typedef struct {
-	int left, top;       /* origin in classic coords */
-	int width, height;
-	uint8_t *pixels;     /* width*height bytes (palette indices) */
+	int      left, top; /* origin in classic coords */
+	int      width, height;
+	uint8_t* pixels; /* width*height bytes (palette indices) */
 } Image8;
 
-void image_free(Image8 *img);
+void image_free(Image8* img);
 
-bool decode_delt(Image8 *out, const uint8_t *data, uint32_t size);
+bool decode_delt(Image8* out, const uint8_t* data, uint32_t size);
 
 #ifdef __cplusplus
 }

@@ -22,15 +22,15 @@ static uint64_t Aeron_PresentationIntervalUs(void) {
 }
 
 void Aeron_RefreshPresentationTiming(void) {
-	SDL_DisplayID         display_id;
+	SDL_DisplayID          display_id;
 	const SDL_DisplayMode* mode;
-	double                refresh_hz;
+	double                 refresh_hz;
 
 	if (!g_aeron.window) {
 		return;
 	}
 	display_id = SDL_GetDisplayForWindow(g_aeron.window);
-	mode = display_id ? SDL_GetCurrentDisplayMode(display_id) : NULL;
+	mode       = display_id ? SDL_GetCurrentDisplayMode(display_id) : NULL;
 	refresh_hz = Aeron_DisplayModeRefreshRate(mode);
 	if ((refresh_hz < 1.0 || refresh_hz > 1000.0) && display_id) {
 		refresh_hz = Aeron_DisplayModeRefreshRate(SDL_GetDesktopDisplayMode(display_id));
@@ -40,7 +40,7 @@ void Aeron_RefreshPresentationTiming(void) {
 		Aeron_LogWarn("aeron", "display refresh unavailable; using 60 Hz for presentation pacing");
 	}
 	g_aeron.presentation_display_id = display_id;
-	g_aeron.display_refresh_hz = refresh_hz;
+	g_aeron.display_refresh_hz      = refresh_hz;
 	g_aeron.presentation_next_frame_us =
 		Aeron_PresentationVsyncDivisor() == 2 ? Aeron_NowUs() + Aeron_PresentationIntervalUs() : 0;
 }
@@ -54,9 +54,7 @@ int Aeron_SetPresentationVsyncDivisor(int divisor) {
 	return 1;
 }
 
-int Aeron_PresentationVsyncDivisor(void) {
-	return g_aeron.presentation_vsync_divisor == 2 ? 2 : 1;
-}
+int Aeron_PresentationVsyncDivisor(void) { return g_aeron.presentation_vsync_divisor == 2 ? 2 : 1; }
 
 double Aeron_DisplayRefreshRate(void) {
 	if (g_aeron.display_refresh_hz <= 0.0) {
@@ -81,7 +79,7 @@ void Aeron_WaitForNextFrame(uint64_t app_wake_delay_us) {
 					  : g_aeron.last_frame_us + app_wake_delay_us;
 	if (Aeron_PresentationVsyncDivisor() == 2) {
 		const uint64_t frame_interval_us = Aeron_PresentationIntervalUs();
-		now_us = Aeron_NowUs();
+		now_us                           = Aeron_NowUs();
 		if (!g_aeron.presentation_next_frame_us) {
 			g_aeron.presentation_next_frame_us = now_us + frame_interval_us;
 		} else if (g_aeron.presentation_next_frame_us <= now_us) {

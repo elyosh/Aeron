@@ -24,12 +24,12 @@ extern "C" {
 
 typedef struct {
 	uint8_t rgba[256][4]; /* slot 0 has alpha 0 (transparent) */
-	int start;
-	int len;
+	int     start;
+	int     len;
 } Palette;
 
-void palette_black(Palette *pal);
-bool palette_overlay(Palette *pal, const uint8_t *data, uint32_t size);
+void palette_black(Palette* pal);
+bool palette_overlay(Palette* pal, const uint8_t* data, uint32_t size);
 
 #ifdef __cplusplus
 }

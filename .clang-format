@@ -6,6 +6,7 @@ TabWidth: 4
 AlignConsecutiveAssignments: true
 AlignConsecutiveDeclarations: true
 BreakBeforeBraces: Attach
+SeparateDefinitionBlocks: Always
 IndentCaseLabels: true
 ColumnLimit: 110
 AccessModifierOffset: -4

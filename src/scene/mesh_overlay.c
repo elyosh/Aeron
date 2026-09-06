@@ -13,6 +13,7 @@ typedef struct OverlayVertexUniforms {
 	uint32_t mesh_table_index;
 	uint32_t _pad[3];
 } OverlayVertexUniforms;
+
 typedef char OverlayVertexUniformsSizeCheck[sizeof(OverlayVertexUniforms) == 160 ? 1 : -1];
 
 typedef struct OverlayFragmentUniforms {
@@ -181,8 +182,8 @@ int AeronSceneMeshOverlay_Prepare(AeronScene3D* scene, AeronCommandBuffer* comma
 }
 
 void AeronSceneMeshOverlay_Draw(AeronScene3D* scene, AeronRenderPass* render_pass) {
-	if (!scene || !render_pass || !scene->storage_ready || !scene->overlay_frame_ready || !scene->overlay_vb ||
-		scene->overlay_count == 0) {
+	if (!scene || !render_pass || !scene->storage_ready || !scene->overlay_frame_ready ||
+		!scene->overlay_vb || scene->overlay_count == 0) {
 		return;
 	}
 	Aeron_BindVertexBuffer(render_pass, 0, scene->overlay_vb, 0);
@@ -198,7 +199,7 @@ void AeronSceneMeshOverlay_Draw(AeronScene3D* scene, AeronRenderPass* render_pas
 		memset(&vertex_uniforms, 0, sizeof vertex_uniforms);
 		memcpy(vertex_uniforms.view_proj, scene->jittered_view_proj, sizeof vertex_uniforms.view_proj);
 		memcpy(vertex_uniforms.transform, overlay->transform, sizeof vertex_uniforms.transform);
-		vertex_uniforms.params[0]         = overlay->depth_bias;
+		vertex_uniforms.params[0]        = overlay->depth_bias;
 		vertex_uniforms.mesh_table_index = overlay->mesh_table_index;
 		Aeron_BindUniformData(render_pass, AERON_SHADER_STAGE_VERTEX, 0, &vertex_uniforms,
 							  sizeof vertex_uniforms);

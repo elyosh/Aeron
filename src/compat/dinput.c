@@ -13,8 +13,8 @@
 #include "aeron/compat/dinput.h"
 
 #include "aeron/aeron.h"
-#include "aeron/input.h"
 #include "aeron/compat/host.h"
+#include "aeron/input.h"
 
 #include <math.h>
 #include <stdlib.h>
@@ -23,11 +23,11 @@
 /* Game-registered rumble provider (see aeron/compat/host.h). Without one, the
  * force-feedback surface reports no rumble-capable controller. */
 static AeronCompatRumbleProvider g_rumble_provider;
-static int g_rumble_provider_set;
+static int                       g_rumble_provider_set;
 
 void AeronCompat_SetRumbleProvider(const AeronCompatRumbleProvider* provider) {
 	if (provider) {
-		g_rumble_provider = *provider;
+		g_rumble_provider     = *provider;
 		g_rumble_provider_set = 1;
 	} else {
 		memset(&g_rumble_provider, 0, sizeof(g_rumble_provider));
@@ -65,7 +65,7 @@ const DxGuid GUID_SysMouse = {
 /* Content is unused by the shim (device type is fixed by the CreateDevice GUID); the
  * recovered code only needs a stable non-null pointer to hand to SetDataFormat. */
 const DIDATAFORMAT c_dfDIKeyboard = { (uint32_t)sizeof(DIDATAFORMAT), 8, 0x2, 256, 256, NULL };
-const DIDATAFORMAT c_dfDIMouse = { (uint32_t)sizeof(DIDATAFORMAT), 8, 0x2, 16, 7, NULL };
+const DIDATAFORMAT c_dfDIMouse    = { (uint32_t)sizeof(DIDATAFORMAT), 8, 0x2, 16, 7, NULL };
 /* Force-feedback joystick data format; the FF shim keys off the device, not this. */
 const DIDATAFORMAT c_dfDIJoystick = { (uint32_t)sizeof(DIDATAFORMAT), 16, 0x1, 80, 44, NULL };
 
@@ -203,17 +203,17 @@ typedef enum DInputDeviceKind { DINPUT_DEV_KEYBOARD, DINPUT_DEV_MOUSE } DInputDe
 
 typedef struct DInputDeviceShim {
 	const IDirectInputDeviceAVtbl* lpVtbl;
-	int refcount;
-	DInputDeviceKind kind;
-	int acquired;
-	uint64_t sampled_frame; /* frame_id of the last sample */
+	int                            refcount;
+	DInputDeviceKind               kind;
+	int                            acquired;
+	uint64_t                       sampled_frame; /* frame_id of the last sample */
 
 	/* keyboard */
-	uint8_t dik[256];                                  /* immediate DIK state (0x80 = down) */
+	uint8_t            dik[256];                       /* immediate DIK state (0x80 = down) */
 	DIDEVICEOBJECTDATA buffer[DINPUT_SHIM_BUFFER_CAP]; /* buffered make/break events */
-	uint32_t buf_head;
-	uint32_t buf_tail;
-	uint32_t sequence;
+	uint32_t           buf_head;
+	uint32_t           buf_tail;
+	uint32_t           sequence;
 
 	/* mouse (relative axes accumulate until read, buttons are level) */
 	DIMOUSESTATE mouse;
@@ -226,7 +226,7 @@ typedef struct DInputDeviceShim {
 
 typedef struct DInputShim {
 	const IDirectInputAVtbl* lpVtbl;
-	int refcount;
+	int                      refcount;
 } DInputShim;
 
 /* The single keyboard/mouse device instances, tracked so the host input pumps can
@@ -242,11 +242,11 @@ static void DInputShim_RingPush(DInputDeviceShim* d, uint32_t ofs, uint32_t data
 		/* Full: drop the oldest event (matches DI dropping on buffer overflow). */
 		d->buf_tail = (d->buf_tail + 1u) % DINPUT_SHIM_BUFFER_CAP;
 	}
-	d->buffer[d->buf_head].dwOfs = ofs;
-	d->buffer[d->buf_head].dwData = data;
+	d->buffer[d->buf_head].dwOfs       = ofs;
+	d->buffer[d->buf_head].dwData      = data;
 	d->buffer[d->buf_head].dwTimeStamp = 0;
-	d->buffer[d->buf_head].dwSequence = d->sequence++;
-	d->buf_head = next;
+	d->buffer[d->buf_head].dwSequence  = d->sequence++;
+	d->buf_head                        = next;
 }
 
 static uint32_t DInputShim_RingCount(const DInputDeviceShim* d) {
@@ -256,14 +256,14 @@ static uint32_t DInputShim_RingCount(const DInputDeviceShim* d) {
 /* Sample the current Aeron snapshot into this device once per frame. */
 static void DInputShim_Sample(DInputDeviceShim* d, int suppress_keyboard_presses) {
 	const AeronInputSnapshot* in = Aeron_InputSnapshot();
-	int k;
-	int focus;
+	int                       k;
+	int                       focus;
 
 	if (!in || in->frame_id == d->sampled_frame) {
 		return;
 	}
 	d->sampled_frame = in->frame_id;
-	focus = in->has_focus;
+	focus            = in->has_focus;
 
 	if (d->kind == DINPUT_DEV_KEYBOARD) {
 		memset(d->dik, 0, sizeof(d->dik));
@@ -304,7 +304,7 @@ static void DInputShim_Sample(DInputDeviceShim* d, int suppress_keyboard_presses
 		}
 		d->mouse.lZ += active ? in->mouse.wheel_y : 0;
 		{
-			uint32_t b = active ? in->mouse.buttons : 0u;
+			uint32_t b             = active ? in->mouse.buttons : 0u;
 			d->mouse.rgbButtons[0] = (b & AERON_MOUSE_BUTTON_LEFT) ? 0x80 : 0;
 			d->mouse.rgbButtons[1] = (b & AERON_MOUSE_BUTTON_RIGHT) ? 0x80 : 0;
 			d->mouse.rgbButtons[2] = (b & AERON_MOUSE_BUTTON_MIDDLE) ? 0x80 : 0;
@@ -342,7 +342,7 @@ static uint32_t AERON_DXAPI DInputDevice_Release(IDirectInputDeviceA* self) {
 }
 
 static HRESULT AERON_DXAPI DInputDevice_SetProperty(IDirectInputDeviceA* self, const DxGuid* prop,
-												  const DIPROPHEADER* header) {
+													const DIPROPHEADER* header) {
 	(void)self;
 	(void)prop;
 	(void)header;
@@ -356,7 +356,7 @@ static HRESULT AERON_DXAPI DInputDevice_Acquire(IDirectInputDeviceA* self) {
 	if (d->acquired) {
 		return DI_NOEFFECT; /* S_FALSE, matching DirectInput */
 	}
-	d->acquired = 1;
+	d->acquired      = 1;
 	d->sampled_frame = 0; /* force a fresh sample after (re)acquire */
 	return DI_OK;
 }
@@ -367,7 +367,7 @@ static HRESULT AERON_DXAPI DInputDevice_Unacquire(IDirectInputDeviceA* self) {
 }
 
 static HRESULT AERON_DXAPI DInputDevice_GetDeviceState(IDirectInputDeviceA* self, uint32_t cbData,
-													 void* lpvData) {
+													   void* lpvData) {
 	DInputDeviceShim* d = (DInputDeviceShim*)self;
 	if (!d->acquired) {
 		return DIERR_INPUTLOST;
@@ -393,11 +393,11 @@ static HRESULT AERON_DXAPI DInputDevice_GetDeviceState(IDirectInputDeviceA* self
 }
 
 static HRESULT AERON_DXAPI DInputDevice_GetDeviceData(IDirectInputDeviceA* self, uint32_t cbObjectData,
-													DIDEVICEOBJECTDATA* rgdod, uint32_t* pdwInOut,
-													uint32_t dwFlags) {
+													  DIDEVICEOBJECTDATA* rgdod, uint32_t* pdwInOut,
+													  uint32_t dwFlags) {
 	DInputDeviceShim* d = (DInputDeviceShim*)self;
-	uint32_t want;
-	uint32_t got = 0;
+	uint32_t          want;
+	uint32_t          got = 0;
 
 	if (!d->acquired) {
 		return DIERR_INPUTLOST;
@@ -411,8 +411,8 @@ static HRESULT AERON_DXAPI DInputDevice_GetDeviceData(IDirectInputDeviceA* self,
 		 * how many were removed. */
 		uint32_t avail = DInputShim_RingCount(d);
 		uint32_t flush = (*pdwInOut == 0xFFFFFFFFu || *pdwInOut > avail) ? avail : *pdwInOut;
-		d->buf_tail = (d->buf_tail + flush) % DINPUT_SHIM_BUFFER_CAP;
-		*pdwInOut = flush;
+		d->buf_tail    = (d->buf_tail + flush) % DINPUT_SHIM_BUFFER_CAP;
+		*pdwInOut      = flush;
 		return DI_OK;
 	}
 
@@ -435,7 +435,7 @@ static HRESULT AERON_DXAPI DInputDevice_SetDataFormat(IDirectInputDeviceA* self,
 }
 
 static HRESULT AERON_DXAPI DInputDevice_SetCooperativeLevel(IDirectInputDeviceA* self, void* hwnd,
-														  uint32_t flags) {
+															uint32_t flags) {
 	(void)self;
 	(void)hwnd;
 	(void)flags;
@@ -449,6 +449,7 @@ static HRESULT AERON_DXAPI DInputDevice_GetCapabilities(IDirectInputDeviceA* s, 
 	(void)a;
 	return DX_E_NOTIMPL;
 }
+
 static HRESULT AERON_DXAPI DInputDevice_EnumObjects(IDirectInputDeviceA* s, void* a, void* b, uint32_t c) {
 	(void)s;
 	(void)a;
@@ -456,35 +457,43 @@ static HRESULT AERON_DXAPI DInputDevice_EnumObjects(IDirectInputDeviceA* s, void
 	(void)c;
 	return DX_E_NOTIMPL;
 }
-static HRESULT AERON_DXAPI DInputDevice_GetProperty(IDirectInputDeviceA* s, const DxGuid* a, DIPROPHEADER* b) {
+
+static HRESULT AERON_DXAPI DInputDevice_GetProperty(IDirectInputDeviceA* s, const DxGuid* a,
+													DIPROPHEADER* b) {
 	(void)s;
 	(void)a;
 	(void)b;
 	return DX_E_NOTIMPL;
 }
+
 static HRESULT AERON_DXAPI DInputDevice_SetEventNotification(IDirectInputDeviceA* s, void* a) {
 	(void)s;
 	(void)a;
 	return DI_OK;
 }
-static HRESULT AERON_DXAPI DInputDevice_GetObjectInfo(IDirectInputDeviceA* s, void* a, uint32_t b, uint32_t c) {
+
+static HRESULT AERON_DXAPI DInputDevice_GetObjectInfo(IDirectInputDeviceA* s, void* a, uint32_t b,
+													  uint32_t c) {
 	(void)s;
 	(void)a;
 	(void)b;
 	(void)c;
 	return DX_E_NOTIMPL;
 }
+
 static HRESULT AERON_DXAPI DInputDevice_GetDeviceInfo(IDirectInputDeviceA* s, void* a) {
 	(void)s;
 	(void)a;
 	return DX_E_NOTIMPL;
 }
+
 static HRESULT AERON_DXAPI DInputDevice_RunControlPanel(IDirectInputDeviceA* s, void* a, uint32_t b) {
 	(void)s;
 	(void)a;
 	(void)b;
 	return DX_E_NOTIMPL;
 }
+
 static HRESULT AERON_DXAPI DInputDevice_Initialize(IDirectInputDeviceA* s, void* a, uint32_t b, DxRefIid c) {
 	(void)s;
 	(void)a;
@@ -494,24 +503,24 @@ static HRESULT AERON_DXAPI DInputDevice_Initialize(IDirectInputDeviceA* s, void*
 }
 
 static const IDirectInputDeviceAVtbl g_dinputDeviceVtbl = {
-	.QueryInterface = DInputDevice_QueryInterface,
-	.AddRef = DInputDevice_AddRef,
-	.Release = DInputDevice_Release,
-	.GetCapabilities = DInputDevice_GetCapabilities,
-	.EnumObjects = DInputDevice_EnumObjects,
-	.GetProperty = DInputDevice_GetProperty,
-	.SetProperty = DInputDevice_SetProperty,
-	.Acquire = DInputDevice_Acquire,
-	.Unacquire = DInputDevice_Unacquire,
-	.GetDeviceState = DInputDevice_GetDeviceState,
-	.GetDeviceData = DInputDevice_GetDeviceData,
-	.SetDataFormat = DInputDevice_SetDataFormat,
+	.QueryInterface       = DInputDevice_QueryInterface,
+	.AddRef               = DInputDevice_AddRef,
+	.Release              = DInputDevice_Release,
+	.GetCapabilities      = DInputDevice_GetCapabilities,
+	.EnumObjects          = DInputDevice_EnumObjects,
+	.GetProperty          = DInputDevice_GetProperty,
+	.SetProperty          = DInputDevice_SetProperty,
+	.Acquire              = DInputDevice_Acquire,
+	.Unacquire            = DInputDevice_Unacquire,
+	.GetDeviceState       = DInputDevice_GetDeviceState,
+	.GetDeviceData        = DInputDevice_GetDeviceData,
+	.SetDataFormat        = DInputDevice_SetDataFormat,
 	.SetEventNotification = DInputDevice_SetEventNotification,
-	.SetCooperativeLevel = DInputDevice_SetCooperativeLevel,
-	.GetObjectInfo = DInputDevice_GetObjectInfo,
-	.GetDeviceInfo = DInputDevice_GetDeviceInfo,
-	.RunControlPanel = DInputDevice_RunControlPanel,
-	.Initialize = DInputDevice_Initialize,
+	.SetCooperativeLevel  = DInputDevice_SetCooperativeLevel,
+	.GetObjectInfo        = DInputDevice_GetObjectInfo,
+	.GetDeviceInfo        = DInputDevice_GetDeviceInfo,
+	.RunControlPanel      = DInputDevice_RunControlPanel,
+	.Initialize           = DInputDevice_Initialize,
 };
 
 /* --- force feedback (IDirectInputDevice2 / IDirectInputEffect) ------------ *
@@ -527,7 +536,7 @@ static const IDirectInputDeviceAVtbl g_dinputDeviceVtbl = {
 const DxGuid GUID_ConstantForce = {
 	0x13541C20, 0x8E33, 0x11D0, { 0x9A, 0xD0, 0x00, 0xA0, 0xC9, 0xA0, 0x6E, 0x35 }
 };
-const DxGuid GUID_Sine = { 0x13541C23, 0x8E33, 0x11D0, { 0x9A, 0xD0, 0x00, 0xA0, 0xC9, 0xA0, 0x6E, 0x35 } };
+const DxGuid GUID_Sine   = { 0x13541C23, 0x8E33, 0x11D0, { 0x9A, 0xD0, 0x00, 0xA0, 0xC9, 0xA0, 0x6E, 0x35 } };
 const DxGuid GUID_Spring = { 0x13541C27, 0x8E33, 0x11D0, { 0x9A, 0xD0, 0x00, 0xA0, 0xC9, 0xA0, 0x6E, 0x35 } };
 /* {5944E683-C92E-11CF-BFC7-444553540000}: IID_IDirectInputDevice2A. */
 const DxGuid IID_IDirectInputDevice2A = {
@@ -550,21 +559,21 @@ typedef enum DInputEffectKind {
 
 typedef struct DInputFFDeviceShim {
 	const IDirectInputDevice2AVtbl* lpVtbl;
-	int refcount;
-	int acquired;
-	uint32_t controller_instance_id; /* Selected Aeron controller, or zero. */
-	uint32_t device_gain;            /* DIPROP_FFGAIN, 0..10000 */
-	struct DInputEffectShim* active; /* effect currently driving rumble */
+	int                             refcount;
+	int                             acquired;
+	uint32_t                        controller_instance_id; /* Selected Aeron controller, or zero. */
+	uint32_t                        device_gain;            /* DIPROP_FFGAIN, 0..10000 */
+	struct DInputEffectShim*        active;                 /* effect currently driving rumble */
 } DInputFFDeviceShim;
 
 typedef struct DInputEffectShim {
 	const IDirectInputEffectVtbl* lpVtbl;
-	int refcount;
-	DInputFFDeviceShim* device;
-	DInputEffectKind kind;
-	uint32_t magnitude; /* 0..10000 base magnitude */
-	uint32_t gain;      /* DIEFFECT.dwGain, 0..10000 */
-	uint32_t duration;  /* microseconds, or DI_INFINITE */
+	int                           refcount;
+	DInputFFDeviceShim*           device;
+	DInputEffectKind              kind;
+	uint32_t                      magnitude; /* 0..10000 base magnitude */
+	uint32_t                      gain;      /* DIEFFECT.dwGain, 0..10000 */
+	uint32_t                      duration;  /* microseconds, or DI_INFINITE */
 } DInputEffectShim;
 
 /* Extract the effect's base magnitude (0..10000) from its type-specific parameters. */
@@ -573,7 +582,7 @@ static void DInputEffect_ReadMagnitude(DInputEffectShim* fx, const DIEFFECT* eff
 		return;
 	}
 	if (fx->kind == DINPUT_FX_CONSTANT && eff->cbTypeSpecificParams >= sizeof(DICONSTANTFORCE)) {
-		int32_t m = ((const DICONSTANTFORCE*)eff->lpvTypeSpecificParams)->lMagnitude;
+		int32_t m     = ((const DICONSTANTFORCE*)eff->lpvTypeSpecificParams)->lMagnitude;
 		fx->magnitude = (uint32_t)(m < 0 ? -m : m);
 	} else if (fx->kind == DINPUT_FX_PERIODIC && eff->cbTypeSpecificParams >= sizeof(DIPERIODIC)) {
 		fx->magnitude = ((const DIPERIODIC*)eff->lpvTypeSpecificParams)->dwMagnitude;
@@ -584,13 +593,13 @@ static void DInputEffect_ReadMagnitude(DInputEffectShim* fx, const DIEFFECT* eff
 /* Start rumble for this effect, scaling magnitude by effect gain and device gain. */
 static void DInputEffect_Trigger(DInputEffectShim* fx) {
 	DInputFFDeviceShim* dev = fx->device;
-	uint32_t amplitude;
-	uint32_t motor;
-	uint32_t duration_ms;
+	uint32_t            amplitude;
+	uint32_t            motor;
+	uint32_t            duration_ms;
 
 	if (!dev || dev->controller_instance_id == 0 ||
-		dev->controller_instance_id != DInputShim_SelectedInstanceId() ||
-		!DInputShim_SelectedHasRumble() || fx->kind == DINPUT_FX_CONDITION) {
+		dev->controller_instance_id != DInputShim_SelectedInstanceId() || !DInputShim_SelectedHasRumble() ||
+		fx->kind == DINPUT_FX_CONDITION) {
 		return;
 	}
 	amplitude = fx->magnitude;
@@ -599,7 +608,7 @@ static void DInputEffect_Trigger(DInputEffectShim* fx) {
 	if (amplitude > 10000u) {
 		amplitude = 10000u;
 	}
-	motor = amplitude * 65535u / 10000u;
+	motor       = amplitude * 65535u / 10000u;
 	duration_ms = (fx->duration == DI_INFINITE) ? DI_INFINITE : fx->duration / 1000u;
 	if (duration_ms == 0) {
 		duration_ms = 1;
@@ -616,9 +625,11 @@ static HRESULT AERON_DXAPI DInputEffect_QueryInterface(IDirectInputEffect* self,
 	}
 	return DX_E_NOTIMPL;
 }
+
 static uint32_t AERON_DXAPI DInputEffect_AddRef(IDirectInputEffect* self) {
 	return (uint32_t)++((DInputEffectShim*)self)->refcount;
 }
+
 static uint32_t AERON_DXAPI DInputEffect_Release(IDirectInputEffect* self) {
 	DInputEffectShim* fx = (DInputEffectShim*)self;
 	if (--fx->refcount > 0) {
@@ -630,8 +641,9 @@ static uint32_t AERON_DXAPI DInputEffect_Release(IDirectInputEffect* self) {
 	free(fx);
 	return 0;
 }
+
 static HRESULT AERON_DXAPI DInputEffect_SetParameters(IDirectInputEffect* self, const DIEFFECT* eff,
-													uint32_t flags) {
+													  uint32_t flags) {
 	DInputEffectShim* fx = (DInputEffectShim*)self;
 	if (eff) {
 		if (flags & DIEP_GAIN) {
@@ -650,12 +662,14 @@ static HRESULT AERON_DXAPI DInputEffect_SetParameters(IDirectInputEffect* self, 
 	}
 	return DI_OK;
 }
+
 static HRESULT AERON_DXAPI DInputEffect_Start(IDirectInputEffect* self, uint32_t iterations, uint32_t flags) {
 	(void)iterations;
 	(void)flags;
 	DInputEffect_Trigger((DInputEffectShim*)self);
 	return DI_OK;
 }
+
 static HRESULT AERON_DXAPI DInputEffect_Stop(IDirectInputEffect* self) {
 	DInputEffectShim* fx = (DInputEffectShim*)self;
 	if (fx->device && fx->device->controller_instance_id != 0 && fx->device->active == fx) {
@@ -666,6 +680,7 @@ static HRESULT AERON_DXAPI DInputEffect_Stop(IDirectInputEffect* self) {
 	}
 	return DI_OK;
 }
+
 /* Effect methods the recovered code never calls (typed stubs, no NULL slots). */
 static HRESULT AERON_DXAPI DInputEffect_Initialize(IDirectInputEffect* s, void* a, uint32_t b, DxRefIid c) {
 	(void)s;
@@ -674,17 +689,20 @@ static HRESULT AERON_DXAPI DInputEffect_Initialize(IDirectInputEffect* s, void* 
 	(void)c;
 	return DI_OK;
 }
+
 static HRESULT AERON_DXAPI DInputEffect_GetEffectGuid(IDirectInputEffect* s, DxGuid* a) {
 	(void)s;
 	(void)a;
 	return DX_E_NOTIMPL;
 }
+
 static HRESULT AERON_DXAPI DInputEffect_GetParameters(IDirectInputEffect* s, DIEFFECT* a, uint32_t b) {
 	(void)s;
 	(void)a;
 	(void)b;
 	return DX_E_NOTIMPL;
 }
+
 static HRESULT AERON_DXAPI DInputEffect_GetEffectStatus(IDirectInputEffect* s, uint32_t* a) {
 	(void)s;
 	if (a) {
@@ -692,14 +710,17 @@ static HRESULT AERON_DXAPI DInputEffect_GetEffectStatus(IDirectInputEffect* s, u
 	}
 	return DI_OK;
 }
+
 static HRESULT AERON_DXAPI DInputEffect_Download(IDirectInputEffect* s) {
 	(void)s;
 	return DI_OK;
 }
+
 static HRESULT AERON_DXAPI DInputEffect_Unload(IDirectInputEffect* s) {
 	(void)s;
 	return DI_OK;
 }
+
 static HRESULT AERON_DXAPI DInputEffect_Escape(IDirectInputEffect* s, void* a) {
 	(void)s;
 	(void)a;
@@ -707,24 +728,25 @@ static HRESULT AERON_DXAPI DInputEffect_Escape(IDirectInputEffect* s, void* a) {
 }
 
 static const IDirectInputEffectVtbl g_dinputEffectVtbl = {
-	.QueryInterface = DInputEffect_QueryInterface,
-	.AddRef = DInputEffect_AddRef,
-	.Release = DInputEffect_Release,
-	.Initialize = DInputEffect_Initialize,
-	.GetEffectGuid = DInputEffect_GetEffectGuid,
-	.GetParameters = DInputEffect_GetParameters,
-	.SetParameters = DInputEffect_SetParameters,
-	.Start = DInputEffect_Start,
-	.Stop = DInputEffect_Stop,
+	.QueryInterface  = DInputEffect_QueryInterface,
+	.AddRef          = DInputEffect_AddRef,
+	.Release         = DInputEffect_Release,
+	.Initialize      = DInputEffect_Initialize,
+	.GetEffectGuid   = DInputEffect_GetEffectGuid,
+	.GetParameters   = DInputEffect_GetParameters,
+	.SetParameters   = DInputEffect_SetParameters,
+	.Start           = DInputEffect_Start,
+	.Stop            = DInputEffect_Stop,
 	.GetEffectStatus = DInputEffect_GetEffectStatus,
-	.Download = DInputEffect_Download,
-	.Unload = DInputEffect_Unload,
-	.Escape = DInputEffect_Escape,
+	.Download        = DInputEffect_Download,
+	.Unload          = DInputEffect_Unload,
+	.Escape          = DInputEffect_Escape,
 };
 
 /* --- IDirectInputDevice2 (force-feedback device) -------------------------- */
 
-static HRESULT AERON_DXAPI DInputFFDevice_QueryInterface(IDirectInputDevice2A* self, DxRefIid iid, void** out) {
+static HRESULT AERON_DXAPI DInputFFDevice_QueryInterface(IDirectInputDevice2A* self, DxRefIid iid,
+														 void** out) {
 	if (!out) {
 		return DX_E_INVALIDARG;
 	}
@@ -736,9 +758,11 @@ static HRESULT AERON_DXAPI DInputFFDevice_QueryInterface(IDirectInputDevice2A* s
 	}
 	return DX_E_NOTIMPL;
 }
+
 static uint32_t AERON_DXAPI DInputFFDevice_AddRef(IDirectInputDevice2A* self) {
 	return (uint32_t)++((DInputFFDeviceShim*)self)->refcount;
 }
+
 static uint32_t AERON_DXAPI DInputFFDevice_Release(IDirectInputDevice2A* self) {
 	DInputFFDeviceShim* dev = (DInputFFDeviceShim*)self;
 	if (--dev->refcount > 0) {
@@ -747,8 +771,9 @@ static uint32_t AERON_DXAPI DInputFFDevice_Release(IDirectInputDevice2A* self) {
 	free(dev);
 	return 0;
 }
+
 static HRESULT AERON_DXAPI DInputFFDevice_SetProperty(IDirectInputDevice2A* self, const DxGuid* prop,
-													const DIPROPHEADER* header) {
+													  const DIPROPHEADER* header) {
 	DInputFFDeviceShim* dev = (DInputFFDeviceShim*)self;
 	/* DIPROP_FFGAIN carries the device master gain; DIPROP_AUTOCENTER has no rumble
 	 * analog. Both arrive as a MAKEDIPROP pseudo-GUID pointer. */
@@ -757,46 +782,51 @@ static HRESULT AERON_DXAPI DInputFFDevice_SetProperty(IDirectInputDevice2A* self
 	}
 	return DI_OK;
 }
+
 static HRESULT AERON_DXAPI DInputFFDevice_Acquire(IDirectInputDevice2A* self) {
 	((DInputFFDeviceShim*)self)->acquired = 1;
 	return DI_OK;
 }
+
 static HRESULT AERON_DXAPI DInputFFDevice_Unacquire(IDirectInputDevice2A* self) {
 	((DInputFFDeviceShim*)self)->acquired = 0;
 	return DI_OK;
 }
+
 static HRESULT AERON_DXAPI DInputFFDevice_SetDataFormat(IDirectInputDevice2A* self, const DIDATAFORMAT* fmt) {
 	(void)self;
 	(void)fmt;
 	return DI_OK;
 }
+
 static HRESULT AERON_DXAPI DInputFFDevice_SetCooperativeLevel(IDirectInputDevice2A* self, void* hwnd,
-															uint32_t flags) {
+															  uint32_t flags) {
 	(void)self;
 	(void)hwnd;
 	(void)flags;
 	return DI_OK;
 }
+
 static HRESULT AERON_DXAPI DInputFFDevice_CreateEffect(IDirectInputDevice2A* self, DxRefIid guid,
-													 const DIEFFECT* eff, IDirectInputEffect** out,
-													 void* outer) {
+													   const DIEFFECT* eff, IDirectInputEffect** out,
+													   void* outer) {
 	DInputFFDeviceShim* dev = (DInputFFDeviceShim*)self;
-	DInputEffectShim* fx;
+	DInputEffectShim*   fx;
 	(void)outer;
 
 	if (!out) {
 		return DX_E_INVALIDARG;
 	}
 	*out = NULL;
-	fx = (DInputEffectShim*)calloc(1, sizeof(*fx));
+	fx   = (DInputEffectShim*)calloc(1, sizeof(*fx));
 	if (!fx) {
 		return DX_E_FAIL;
 	}
-	fx->lpVtbl = &g_dinputEffectVtbl;
+	fx->lpVtbl   = &g_dinputEffectVtbl;
 	fx->refcount = 1;
-	fx->device = dev;
-	fx->kind = DINPUT_FX_OTHER;
-	fx->gain = 10000;
+	fx->device   = dev;
+	fx->kind     = DINPUT_FX_OTHER;
+	fx->gain     = 10000;
 	fx->duration = DI_INFINITE;
 	if (guid) {
 		if (DxGuidEqual(guid, &GUID_ConstantForce)) {
@@ -808,15 +838,16 @@ static HRESULT AERON_DXAPI DInputFFDevice_CreateEffect(IDirectInputDevice2A* sel
 		}
 	}
 	if (eff) {
-		fx->gain = eff->dwGain;
+		fx->gain     = eff->dwGain;
 		fx->duration = eff->dwDuration;
 		DInputEffect_ReadMagnitude(fx, eff);
 	}
 	*out = (IDirectInputEffect*)fx;
 	return DI_OK;
 }
+
 static HRESULT AERON_DXAPI DInputFFDevice_EnumEffects(IDirectInputDevice2A* self, LPDIENUMEFFECTSCALLBACKA cb,
-													void* ctx, uint32_t flags) {
+													  void* ctx, uint32_t flags) {
 	(void)self;
 	(void)cb;
 	(void)ctx;
@@ -824,8 +855,9 @@ static HRESULT AERON_DXAPI DInputFFDevice_EnumEffects(IDirectInputDevice2A* self
 	/* The recovered code passes a no-op callback and ignores the result. */
 	return DI_OK;
 }
+
 static HRESULT AERON_DXAPI DInputFFDevice_GetEffectInfo(IDirectInputDevice2A* self, DIEFFECTINFOA* info,
-													  DxRefIid guid) {
+														DxRefIid guid) {
 	uint32_t size;
 	(void)self;
 
@@ -841,11 +873,12 @@ static HRESULT AERON_DXAPI DInputFFDevice_GetEffectInfo(IDirectInputDevice2A* se
 	/* Report gain/direction/duration/type-specific params as dynamically settable so the
 	 * recovered init treats gain changes as supported. */
 	info->dwDynamicParams = DIEP_DURATION | DIEP_GAIN | DIEP_DIRECTION | DIEP_TYPESPECIFICPARAMS;
-	info->dwStaticParams = info->dwDynamicParams;
+	info->dwStaticParams  = info->dwDynamicParams;
 	return DI_OK;
 }
+
 static HRESULT AERON_DXAPI DInputFFDevice_SendForceFeedbackCommand(IDirectInputDevice2A* self,
-																 uint32_t command) {
+																   uint32_t              command) {
 	DInputFFDeviceShim* dev = (DInputFFDeviceShim*)self;
 	/* Any command other than CONTINUE (reset/stop/pause/actuators-off) silences rumble. */
 	if (command != DISFFC_CONTINUE && dev->controller_instance_id != 0) {
@@ -856,12 +889,14 @@ static HRESULT AERON_DXAPI DInputFFDevice_SendForceFeedbackCommand(IDirectInputD
 	}
 	return DI_OK;
 }
+
 /* Device methods the recovered code never calls (typed stubs, no NULL slots). */
 static HRESULT AERON_DXAPI DInputFFDevice_GetCapabilities(IDirectInputDevice2A* s, void* a) {
 	(void)s;
 	(void)a;
 	return DX_E_NOTIMPL;
 }
+
 static HRESULT AERON_DXAPI DInputFFDevice_EnumObjects(IDirectInputDevice2A* s, void* a, void* b, uint32_t c) {
 	(void)s;
 	(void)a;
@@ -869,21 +904,24 @@ static HRESULT AERON_DXAPI DInputFFDevice_EnumObjects(IDirectInputDevice2A* s, v
 	(void)c;
 	return DX_E_NOTIMPL;
 }
+
 static HRESULT AERON_DXAPI DInputFFDevice_GetProperty(IDirectInputDevice2A* s, const DxGuid* a,
-													DIPROPHEADER* b) {
+													  DIPROPHEADER* b) {
 	(void)s;
 	(void)a;
 	(void)b;
 	return DX_E_NOTIMPL;
 }
+
 static HRESULT AERON_DXAPI DInputFFDevice_GetDeviceState(IDirectInputDevice2A* s, uint32_t a, void* b) {
 	(void)s;
 	(void)a;
 	(void)b;
 	return DX_E_NOTIMPL;
 }
+
 static HRESULT AERON_DXAPI DInputFFDevice_GetDeviceData(IDirectInputDevice2A* s, uint32_t a,
-													  DIDEVICEOBJECTDATA* b, uint32_t* c, uint32_t d) {
+														DIDEVICEOBJECTDATA* b, uint32_t* c, uint32_t d) {
 	(void)s;
 	(void)a;
 	(void)b;
@@ -891,37 +929,44 @@ static HRESULT AERON_DXAPI DInputFFDevice_GetDeviceData(IDirectInputDevice2A* s,
 	(void)d;
 	return DX_E_NOTIMPL;
 }
+
 static HRESULT AERON_DXAPI DInputFFDevice_SetEventNotification(IDirectInputDevice2A* s, void* a) {
 	(void)s;
 	(void)a;
 	return DI_OK;
 }
+
 static HRESULT AERON_DXAPI DInputFFDevice_GetObjectInfo(IDirectInputDevice2A* s, void* a, uint32_t b,
-													  uint32_t c) {
+														uint32_t c) {
 	(void)s;
 	(void)a;
 	(void)b;
 	(void)c;
 	return DX_E_NOTIMPL;
 }
+
 static HRESULT AERON_DXAPI DInputFFDevice_GetDeviceInfo(IDirectInputDevice2A* s, void* a) {
 	(void)s;
 	(void)a;
 	return DX_E_NOTIMPL;
 }
+
 static HRESULT AERON_DXAPI DInputFFDevice_RunControlPanel(IDirectInputDevice2A* s, void* a, uint32_t b) {
 	(void)s;
 	(void)a;
 	(void)b;
 	return DX_E_NOTIMPL;
 }
-static HRESULT AERON_DXAPI DInputFFDevice_Initialize(IDirectInputDevice2A* s, void* a, uint32_t b, DxRefIid c) {
+
+static HRESULT AERON_DXAPI DInputFFDevice_Initialize(IDirectInputDevice2A* s, void* a, uint32_t b,
+													 DxRefIid c) {
 	(void)s;
 	(void)a;
 	(void)b;
 	(void)c;
 	return DI_OK;
 }
+
 static HRESULT AERON_DXAPI DInputFFDevice_GetForceFeedbackState(IDirectInputDevice2A* s, uint32_t* a) {
 	(void)s;
 	if (a) {
@@ -929,25 +974,29 @@ static HRESULT AERON_DXAPI DInputFFDevice_GetForceFeedbackState(IDirectInputDevi
 	}
 	return DI_OK;
 }
+
 static HRESULT AERON_DXAPI DInputFFDevice_EnumCreatedEffectObjects(IDirectInputDevice2A* s, void* a, void* b,
-																 uint32_t c) {
+																   uint32_t c) {
 	(void)s;
 	(void)a;
 	(void)b;
 	(void)c;
 	return DX_E_NOTIMPL;
 }
+
 static HRESULT AERON_DXAPI DInputFFDevice_Escape(IDirectInputDevice2A* s, void* a) {
 	(void)s;
 	(void)a;
 	return DX_E_NOTIMPL;
 }
+
 static HRESULT AERON_DXAPI DInputFFDevice_Poll(IDirectInputDevice2A* s) {
 	(void)s;
 	return DI_OK;
 }
+
 static HRESULT AERON_DXAPI DInputFFDevice_SendDeviceData(IDirectInputDevice2A* s, uint32_t a, const void* b,
-													   uint32_t* c, uint32_t d) {
+														 uint32_t* c, uint32_t d) {
 	(void)s;
 	(void)a;
 	(void)b;
@@ -957,33 +1006,33 @@ static HRESULT AERON_DXAPI DInputFFDevice_SendDeviceData(IDirectInputDevice2A* s
 }
 
 static const IDirectInputDevice2AVtbl g_dinputFFDeviceVtbl = {
-	.QueryInterface = DInputFFDevice_QueryInterface,
-	.AddRef = DInputFFDevice_AddRef,
-	.Release = DInputFFDevice_Release,
-	.GetCapabilities = DInputFFDevice_GetCapabilities,
-	.EnumObjects = DInputFFDevice_EnumObjects,
-	.GetProperty = DInputFFDevice_GetProperty,
-	.SetProperty = DInputFFDevice_SetProperty,
-	.Acquire = DInputFFDevice_Acquire,
-	.Unacquire = DInputFFDevice_Unacquire,
-	.GetDeviceState = DInputFFDevice_GetDeviceState,
-	.GetDeviceData = DInputFFDevice_GetDeviceData,
-	.SetDataFormat = DInputFFDevice_SetDataFormat,
-	.SetEventNotification = DInputFFDevice_SetEventNotification,
-	.SetCooperativeLevel = DInputFFDevice_SetCooperativeLevel,
-	.GetObjectInfo = DInputFFDevice_GetObjectInfo,
-	.GetDeviceInfo = DInputFFDevice_GetDeviceInfo,
-	.RunControlPanel = DInputFFDevice_RunControlPanel,
-	.Initialize = DInputFFDevice_Initialize,
-	.CreateEffect = DInputFFDevice_CreateEffect,
-	.EnumEffects = DInputFFDevice_EnumEffects,
-	.GetEffectInfo = DInputFFDevice_GetEffectInfo,
-	.GetForceFeedbackState = DInputFFDevice_GetForceFeedbackState,
+	.QueryInterface           = DInputFFDevice_QueryInterface,
+	.AddRef                   = DInputFFDevice_AddRef,
+	.Release                  = DInputFFDevice_Release,
+	.GetCapabilities          = DInputFFDevice_GetCapabilities,
+	.EnumObjects              = DInputFFDevice_EnumObjects,
+	.GetProperty              = DInputFFDevice_GetProperty,
+	.SetProperty              = DInputFFDevice_SetProperty,
+	.Acquire                  = DInputFFDevice_Acquire,
+	.Unacquire                = DInputFFDevice_Unacquire,
+	.GetDeviceState           = DInputFFDevice_GetDeviceState,
+	.GetDeviceData            = DInputFFDevice_GetDeviceData,
+	.SetDataFormat            = DInputFFDevice_SetDataFormat,
+	.SetEventNotification     = DInputFFDevice_SetEventNotification,
+	.SetCooperativeLevel      = DInputFFDevice_SetCooperativeLevel,
+	.GetObjectInfo            = DInputFFDevice_GetObjectInfo,
+	.GetDeviceInfo            = DInputFFDevice_GetDeviceInfo,
+	.RunControlPanel          = DInputFFDevice_RunControlPanel,
+	.Initialize               = DInputFFDevice_Initialize,
+	.CreateEffect             = DInputFFDevice_CreateEffect,
+	.EnumEffects              = DInputFFDevice_EnumEffects,
+	.GetEffectInfo            = DInputFFDevice_GetEffectInfo,
+	.GetForceFeedbackState    = DInputFFDevice_GetForceFeedbackState,
 	.SendForceFeedbackCommand = DInputFFDevice_SendForceFeedbackCommand,
 	.EnumCreatedEffectObjects = DInputFFDevice_EnumCreatedEffectObjects,
-	.Escape = DInputFFDevice_Escape,
-	.Poll = DInputFFDevice_Poll,
-	.SendDeviceData = DInputFFDevice_SendDeviceData,
+	.Escape                   = DInputFFDevice_Escape,
+	.Poll                     = DInputFFDevice_Poll,
+	.SendDeviceData           = DInputFFDevice_SendDeviceData,
 };
 
 static HRESULT DInput_CreateFFDevice(IDirectInputDeviceA** out) {
@@ -991,10 +1040,10 @@ static HRESULT DInput_CreateFFDevice(IDirectInputDeviceA** out) {
 	if (!dev) {
 		return DX_E_FAIL;
 	}
-	dev->lpVtbl = &g_dinputFFDeviceVtbl;
-	dev->refcount = 1;
+	dev->lpVtbl                 = &g_dinputFFDeviceVtbl;
+	dev->refcount               = 1;
 	dev->controller_instance_id = DInputShim_SelectedInstanceId();
-	dev->device_gain = 10000;
+	dev->device_gain            = 10000;
 	/* IDirectInputDevice2A shares the IDirectInputDeviceA prefix; the recovered enum
 	 * callback QueryInterface's this to IID_IDirectInputDevice2A before use. */
 	*out = (IDirectInputDeviceA*)dev;
@@ -1026,9 +1075,9 @@ static uint32_t AERON_DXAPI DInput_Release(IDirectInputA* self) {
 }
 
 static HRESULT AERON_DXAPI DInput_CreateDevice(IDirectInputA* self, const DxGuid* guid,
-											 IDirectInputDeviceA** out, void* outer) {
+											   IDirectInputDeviceA** out, void* outer) {
 	DInputDeviceShim* d;
-	DInputDeviceKind kind;
+	DInputDeviceKind  kind;
 	(void)self;
 	(void)outer;
 
@@ -1051,9 +1100,9 @@ static HRESULT AERON_DXAPI DInput_CreateDevice(IDirectInputA* self, const DxGuid
 	if (!d) {
 		return DX_E_FAIL;
 	}
-	d->lpVtbl = &g_dinputDeviceVtbl;
+	d->lpVtbl   = &g_dinputDeviceVtbl;
 	d->refcount = 1;
-	d->kind = kind;
+	d->kind     = kind;
 	if (kind == DINPUT_DEV_KEYBOARD) {
 		g_shimKeyboardDevice = d;
 	} else {
@@ -1080,7 +1129,7 @@ void AeronCompat_Update(int input_suppressed) {
 }
 
 static HRESULT AERON_DXAPI DInput_EnumDevices(IDirectInputA* s, uint32_t devType,
-											LPDIENUMDEVICESCALLBACKA callback, void* ctx, uint32_t flags) {
+											  LPDIENUMDEVICESCALLBACKA callback, void* ctx, uint32_t flags) {
 	(void)s;
 	(void)devType;
 	/* Force-feedback enumeration: present the selected rumble-capable controller as a single
@@ -1089,26 +1138,29 @@ static HRESULT AERON_DXAPI DInput_EnumDevices(IDirectInputA* s, uint32_t devType
 		if (DInputShim_SelectedHasRumble()) {
 			DIDEVICEINSTANCEA inst;
 			memset(&inst, 0, sizeof(inst));
-			inst.dwSize = (uint32_t)sizeof(inst);
+			inst.dwSize       = (uint32_t)sizeof(inst);
 			inst.guidInstance = GUID_AeronFFGamepad;
-			inst.guidProduct = GUID_AeronFFGamepad;
-			inst.dwDevType = DIDEVTYPE_JOYSTICK;
+			inst.guidProduct  = GUID_AeronFFGamepad;
+			inst.dwDevType    = DIDEVTYPE_JOYSTICK;
 			callback(&inst, ctx);
 		}
 	}
 	return DI_OK;
 }
+
 static HRESULT AERON_DXAPI DInput_GetDeviceStatus(IDirectInputA* s, const DxGuid* a) {
 	(void)s;
 	(void)a;
 	return DX_E_NOTIMPL;
 }
+
 static HRESULT AERON_DXAPI DInput_RunControlPanel(IDirectInputA* s, void* a, uint32_t b) {
 	(void)s;
 	(void)a;
 	(void)b;
 	return DX_E_NOTIMPL;
 }
+
 static HRESULT AERON_DXAPI DInput_Initialize(IDirectInputA* s, void* a, uint32_t b) {
 	(void)s;
 	(void)a;
@@ -1117,14 +1169,14 @@ static HRESULT AERON_DXAPI DInput_Initialize(IDirectInputA* s, void* a, uint32_t
 }
 
 static const IDirectInputAVtbl g_dinputVtbl = {
-	.QueryInterface = DInput_QueryInterface,
-	.AddRef = DInput_AddRef,
-	.Release = DInput_Release,
-	.CreateDevice = DInput_CreateDevice,
-	.EnumDevices = DInput_EnumDevices,
+	.QueryInterface  = DInput_QueryInterface,
+	.AddRef          = DInput_AddRef,
+	.Release         = DInput_Release,
+	.CreateDevice    = DInput_CreateDevice,
+	.EnumDevices     = DInput_EnumDevices,
 	.GetDeviceStatus = DInput_GetDeviceStatus,
 	.RunControlPanel = DInput_RunControlPanel,
-	.Initialize = DInput_Initialize,
+	.Initialize      = DInput_Initialize,
 };
 
 HRESULT AERON_DXAPI DirectInputCreateA(void* hinst, uint32_t version, IDirectInputA** out, void* outer) {
@@ -1137,12 +1189,12 @@ HRESULT AERON_DXAPI DirectInputCreateA(void* hinst, uint32_t version, IDirectInp
 		return DX_E_INVALIDARG;
 	}
 	*out = NULL;
-	s = (DInputShim*)calloc(1, sizeof(*s));
+	s    = (DInputShim*)calloc(1, sizeof(*s));
 	if (!s) {
 		return DX_E_FAIL;
 	}
-	s->lpVtbl = &g_dinputVtbl;
+	s->lpVtbl   = &g_dinputVtbl;
 	s->refcount = 1;
-	*out = (IDirectInputA*)s;
+	*out        = (IDirectInputA*)s;
 	return DI_OK;
 }

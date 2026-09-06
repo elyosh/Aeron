@@ -21,11 +21,11 @@ extern "C" {
  * Unused slots stay zero (has_rotation == 0) — the slot still
  * contributes an identity affine to the storage record. */
 typedef struct AeronMeshRot {
-    float   axis[3];
-    float   pivot[3];
-    uint8_t has_rotation;
-    uint8_t mesh_type;     /* OPT mesh-type enum (MainHull=1, Wing=2, …) */
-    uint8_t _pad[2];       /* required to keep array stride at 32 B */
+	float   axis[3];
+	float   pivot[3];
+	uint8_t has_rotation;
+	uint8_t mesh_type; /* OPT mesh-type enum (MainHull=1, Wing=2, …) */
+	uint8_t _pad[2];   /* required to keep array stride at 32 B */
 } AeronMeshRot;
 
 #ifdef __cplusplus

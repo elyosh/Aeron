@@ -341,6 +341,7 @@ static int picker_build_locations(AeronUiFilePicker* picker) {
 					{ "Desktop", SDL_FOLDER_DESKTOP },
 					{ "Documents", SDL_FOLDER_DOCUMENTS },
 					{ "Downloads", SDL_FOLDER_DOWNLOADS } };
+
 	for (size_t i = 0; i < sizeof folders / sizeof folders[0]; i++) {
 		const char* path = SDL_GetUserFolder(folders[i].folder);
 		if (path && !picker_add_location(picker, folders[i].label, path, 1))

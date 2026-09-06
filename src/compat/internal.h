@@ -27,30 +27,30 @@ typedef enum DDShimKind {
 
 typedef struct DDrawPaletteShim {
 	const IDirectDrawPaletteVtbl* lpVtbl;
-	int refcount;
-	AeronPaletteEntry entries[256];
-	uint64_t revision;
+	int                           refcount;
+	AeronPaletteEntry             entries[256];
+	uint64_t                      revision;
 } DDrawPaletteShim;
 
 typedef struct DDrawSurfaceShim {
 	const IDirectDrawSurfaceVtbl* lpVtbl;
-	int refcount;
-	DDShimKind kind;
-	struct DDrawShim* owner;
+	int                           refcount;
+	DDShimKind                    kind;
+	struct DDrawShim*             owner;
 
-	int width;
-	int height;
-	int bpp;
+	int              width;
+	int              height;
+	int              bpp;
 	AeronPixelFormat format;
-	uint32_t caps; /* ddsCaps.dwCaps */
+	uint32_t         caps; /* ddsCaps.dwCaps */
 
 	/* Explicit DX pixel format for texture surfaces (DDSD_PIXELFORMAT). Used by
 	 * IDirect3DTexture::Load to unpack the source pixels to RGBA8. has_pixel_format
 	 * is 0 for plain surfaces whose format is derived from the display mode. */
-	int has_pixel_format;
+	int           has_pixel_format;
 	DDPIXELFORMAT pixel_format;
 
-	AeronSurface* cpu;                 /* CPU_LOCKABLE backing (NULL for PRIMARY) */
+	AeronSurface*            cpu;      /* CPU_LOCKABLE backing (NULL for PRIMARY) */
 	struct DDrawSurfaceShim* attached; /* PRIMARY -> flip-chain back buffer */
 	struct DDrawSurfaceShim* zbuffer;  /* render surface -> attached z-buffer surface */
 
@@ -64,41 +64,41 @@ typedef struct DDrawSurfaceShim {
 	 * frame); `rt_back` is the visible half of a DirectDraw flip chain. Flip
 	 * swaps the two, while a primary Blt copies `rt` into `rt_back`; the host
 	 * submits `rt_back` after the game tick. */
-	AeronRenderTarget* rt;
-	AeronRenderTarget* rt_back;
-	AeronDepthTarget* depth;
-	int cpu_dirty;
-	int gpu_dirty;
-	int pending_depth_clear;              /* DDBLT_DEPTHFILL -> next BeginScene */
-	float pending_depth_clear_value;      /* normalized depth clear value */
-	uint8_t* pending_depth_upload_data;   /* packed D16 CPU depth rectangle */
-	uint32_t pending_depth_upload_capacity;
-	AeronRectI pending_depth_upload_rect;
-	int pending_depth_upload;
+	AeronRenderTarget*       rt;
+	AeronRenderTarget*       rt_back;
+	AeronDepthTarget*        depth;
+	int                      cpu_dirty;
+	int                      gpu_dirty;
+	int                      pending_depth_clear;       /* DDBLT_DEPTHFILL -> next BeginScene */
+	float                    pending_depth_clear_value; /* normalized depth clear value */
+	uint8_t*                 pending_depth_upload_data; /* packed D16 CPU depth rectangle */
+	uint32_t                 pending_depth_upload_capacity;
+	AeronRectI               pending_depth_upload_rect;
+	int                      pending_depth_upload;
 	struct DDrawSurfaceShim* attached_to; /* z-buffer -> its render-target surface */
-	struct D3DDeviceShim* device;         /* device bound to this RT surface, if any */
+	struct D3DDeviceShim*    device;      /* device bound to this RT surface, if any */
 
-	int has_colorkey;
+	int      has_colorkey;
 	uint32_t colorkey;
 
 	DDrawPaletteShim* palette;
 	DDrawPaletteShim* applied_palette;
-	uint64_t applied_palette_revision;
+	uint64_t          applied_palette_revision;
 } DDrawSurfaceShim;
 
 typedef struct DDrawShim {
 	const IDirectDrawVtbl* lpVtbl;
-	int refcount;
-	int mode_w;
-	int mode_h;
-	int mode_bpp;
-	AeronPixelFormat mode_format;
-	DDrawSurfaceShim* primary;
+	int                    refcount;
+	int                    mode_w;
+	int                    mode_h;
+	int                    mode_bpp;
+	AeronPixelFormat       mode_format;
+	DDrawSurfaceShim*      primary;
 } DDrawShim;
 
 extern const IDirectDrawSurfaceVtbl g_ddSurfaceVtbl;
 extern const IDirectDrawPaletteVtbl g_ddPaletteVtbl;
-extern const IDirectDrawVtbl g_ddDeviceVtbl;
+extern const IDirectDrawVtbl        g_ddDeviceVtbl;
 
 /* Uploads a render surface's CPU staging back into its color target when the
  * staging is authoritative (cpu_dirty), so a subsequent GPU pass or present sees
@@ -112,13 +112,13 @@ void DDShim_WritebackRenderTarget(DDrawSurfaceShim* s);
 int D3DCompat_FlushRenderTargetPass(DDrawSurfaceShim* s);
 
 /* d3d.c entry points used by the DirectDraw QueryInterface hooks. */
-IDirect3D* D3DCompat_CreateD3D(DDrawShim* dd);
-IDirect3DDevice* D3DCompat_CreateDeviceForSurface(DDrawSurfaceShim* surface);
+IDirect3D*        D3DCompat_CreateD3D(DDrawShim* dd);
+IDirect3DDevice*  D3DCompat_CreateDeviceForSurface(DDrawSurfaceShim* surface);
 IDirect3DTexture* D3DCompat_CreateTexture(DDrawSurfaceShim* surface);
 
 AeronRectI AeronDx5_PresentationRect(int surface_width, int surface_height);
-void AeronDx5_NotifyPresent(int surface_width, int surface_height);
-void D3DCompat_Shutdown(void);
-void DDShim_ReleasePresentationResources(void);
+void       AeronDx5_NotifyPresent(int surface_width, int surface_height);
+void       D3DCompat_Shutdown(void);
+void       DDShim_ReleasePresentationResources(void);
 
 #endif

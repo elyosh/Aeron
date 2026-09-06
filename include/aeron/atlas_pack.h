@@ -8,8 +8,8 @@ extern "C" {
 #endif
 
 typedef struct AeronAtlasRect {
-	int w, h;
-	int x, y;
+	int      w, h;
+	int      x, y;
 	uint32_t key;
 } AeronAtlasRect;
 
@@ -20,7 +20,7 @@ typedef enum AeronAtlasAddressMode {
 
 typedef struct AeronAtlasImage {
 	const uint8_t* rgba;
-	int width, height;
+	int            width, height;
 	/* Filled by Aeron_AtlasBuildRgba8. */
 	int x, y, page;
 } AeronAtlasImage;
@@ -34,12 +34,12 @@ typedef struct AeronAtlasBuildOptions {
 
 typedef struct AeronAtlasPage {
 	uint8_t* rgba;
-	int width, height;
+	int      width, height;
 } AeronAtlasPage;
 
 typedef struct AeronCpuAtlas {
 	AeronAtlasPage* pages;
-	int page_count;
+	int             page_count;
 } AeronCpuAtlas;
 
 /* Deterministic skyline-bottom-left packing. The caller supplies rectangle
@@ -49,15 +49,15 @@ int Aeron_AtlasPackRects(AeronAtlasRect* rects, int count, int atlas_width, int 
 
 /* Copies a tightly packed RGBA8 image at inner position x/y and fills its
  * private gutter according to the requested address mode. */
-int Aeron_AtlasBlitRgba8(uint8_t* atlas, int atlas_width, int atlas_height,
-						 const uint8_t* source, int source_width, int source_height,
-						 int x, int y, int gutter, AeronAtlasAddressMode address_mode);
+int Aeron_AtlasBlitRgba8(uint8_t* atlas, int atlas_width, int atlas_height, const uint8_t* source,
+						 int source_width, int source_height, int x, int y, int gutter,
+						 AeronAtlasAddressMode address_mode);
 
 /* Builds tightly packed RGBA8 pages. Each frame owns an edge-extruded gutter
  * on all sides. Frames in the result retain input order; packing order is
  * internal and deterministic. */
-int Aeron_AtlasBuildRgba8(AeronAtlasImage* images, int count,
-						  const AeronAtlasBuildOptions* options, AeronCpuAtlas* out);
+int  Aeron_AtlasBuildRgba8(AeronAtlasImage* images, int count, const AeronAtlasBuildOptions* options,
+						   AeronCpuAtlas* out);
 void Aeron_AtlasBuildFree(AeronCpuAtlas* atlas);
 
 #ifdef __cplusplus

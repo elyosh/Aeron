@@ -76,14 +76,14 @@ typedef struct AeronSceneBillboardDesc {
 	float                    corners[4][3];
 	float                    uv[4][2];
 	float                    colors[4][4];
-	const float*             center_color;      /* RGBA or NULL */
+	const float*             center_color; /* RGBA or NULL */
 	float                    depth_bias_view;
-	const float (*prev_corners)[3];             /* [4][3] or NULL */
+	const float (*prev_corners)[3]; /* [4][3] or NULL */
 	/* LENS stage only: the flare SOURCE point (world space) whose
 	 * depth-buffer visibility scales the quad's color. All quads of
 	 * one flare train share the same anchor so the train fades as a
 	 * unit. Ignored by SKY/OVERLAY. */
-	float                    anchor_world[3];
+	float anchor_world[3];
 } AeronSceneBillboardDesc;
 
 /* Queue one billboard for this frame (reset by AeronScene_Begin).

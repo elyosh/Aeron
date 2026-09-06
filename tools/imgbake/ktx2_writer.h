@@ -104,9 +104,8 @@ bool write_ktx2_bc7_with_generated_mips_to_buffer_limited(int base_w, int base_h
 
 /* Explicit-alpha sibling used by glTF PBR cooking. */
 bool write_ktx2_bc7_with_generated_mips_to_buffer_limited_alpha(
-	int base_w, int base_h, const uint8_t* base_rgba, Ktx2Bc7Quality quality,
-	Ktx2TransferFn tf, bool zstd, int max_levels, Ktx2AlphaEncoding alpha_encoding,
-	uint8_t** out_buf, size_t* out_size);
+	int base_w, int base_h, const uint8_t* base_rgba, Ktx2Bc7Quality quality, Ktx2TransferFn tf, bool zstd,
+	int max_levels, Ktx2AlphaEncoding alpha_encoding, uint8_t** out_buf, size_t* out_size);
 
 /* Convenience: build a power-of-two-halving mip chain from an RGBA8
  * base image via 2×2 box downsample, write the result as RGBA8 KTX2.
@@ -127,10 +126,11 @@ bool write_ktx2_rgba_with_generated_mips_to_buffer_limited(int base_w, int base_
 														   uint8_t** out_buf, size_t* out_size);
 
 /* Explicit-alpha sibling used by glTF PBR cooking. */
-bool write_ktx2_rgba_with_generated_mips_to_buffer_limited_alpha(
-	int base_w, int base_h, const uint8_t* base_rgba, Ktx2TransferFn tf,
-	bool zstd, int max_levels, Ktx2AlphaEncoding alpha_encoding,
-	uint8_t** out_buf, size_t* out_size);
+bool write_ktx2_rgba_with_generated_mips_to_buffer_limited_alpha(int base_w, int base_h,
+																 const uint8_t* base_rgba, Ktx2TransferFn tf,
+																 bool zstd, int max_levels,
+																 Ktx2AlphaEncoding alpha_encoding,
+																 uint8_t** out_buf, size_t* out_size);
 
 /* Convenience: encode an RGBA8 base image's R+G channels with bc5_codec,
  * generate a mip chain via 2× box downsample, write the result as a

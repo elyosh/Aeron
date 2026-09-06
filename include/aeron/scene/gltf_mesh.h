@@ -53,34 +53,34 @@ struct cgltf_data;
  * 56 bytes per vertex. The renderer's pipeline declaration must
  * mirror this layout exactly. */
 typedef struct AeronGltfVertex {
-    float    pos[3];       /* renderer-frame: +Z up, -Y forward */
-    float    normal[3];    /* unit, renderer-frame */
-    float    tangent[4];   /* xyz unit + handedness sign in w */
-    float    uv[2];        /* TEXCOORD_0 (material-local) */
-    /* Model-local component ordinal used by the scene mesh table. */
-    float    mesh_index;
-    /* Stable global identifier (0..total_prim_count-1) for the source
-     * primitive this vertex belongs to. The shader resolves it through
-     * the mesh-owned, variant-major material-index storage table. */
-    uint32_t prim_id;
-} AeronGltfVertex;     /* 56 bytes */
+	float pos[3];     /* renderer-frame: +Z up, -Y forward */
+	float normal[3];  /* unit, renderer-frame */
+	float tangent[4]; /* xyz unit + handedness sign in w */
+	float uv[2];      /* TEXCOORD_0 (material-local) */
+	/* Model-local component ordinal used by the scene mesh table. */
+	float mesh_index;
+	/* Stable global identifier (0..total_prim_count-1) for the source
+	 * primitive this vertex belongs to. The shader resolves it through
+	 * the mesh-owned, variant-major material-index storage table. */
+	uint32_t prim_id;
+} AeronGltfVertex; /* 56 bytes */
 
 /* ===== Channel slots ================================================
  *
  * Channel ordering — keep in sync with the cooker, the SDL_GPU
  * pipeline's texture register slots, and the FS sampling order. */
-#define AERON_GLTF_CHANNEL_BASE_COLOR         0
-#define AERON_GLTF_CHANNEL_NORMAL             1
+#define AERON_GLTF_CHANNEL_BASE_COLOR 0
+#define AERON_GLTF_CHANNEL_NORMAL 1
 #define AERON_GLTF_CHANNEL_METALLIC_ROUGHNESS 2
-#define AERON_GLTF_CHANNEL_EMISSIVE           3
-#define AERON_GLTF_CHANNEL_COUNT              4
+#define AERON_GLTF_CHANNEL_EMISSIVE 3
+#define AERON_GLTF_CHANNEL_COUNT 4
 
 /* Per-model material cap used to validate and bound cooked assets. It is not
  * an original-engine value: the classic renderers walk per-face textures.
  * The measured XWA corpus peaks at 104 materials. GPU storage is allocated
  * to the actual retained count rather than this maximum. */
 #define AERON_GLTF_MAX_MATERIALS 128
-#define AERON_GLTF_NO_MATERIAL   0xFFFFFFFFu
+#define AERON_GLTF_NO_MATERIAL 0xFFFFFFFFu
 
 /* ===== Channel KTX2 payload =========================================
  *
@@ -90,22 +90,22 @@ typedef struct AeronGltfVertex {
  * creates the corresponding GPU texture, and uploads every mip. Bytes
  * live for the lifetime of the AeronGltfModel. */
 typedef struct AeronGltfChannelKtx2 {
-    uint8_t *data;
-    size_t   size;
+	uint8_t* data;
+	size_t   size;
 } AeronGltfChannelKtx2;
 
 typedef enum AeronGltfEmissiveMode {
-    /* Standard glTF behavior: emissive RGB is added to the lit material. */
-    AERON_GLTF_EMISSIVE_ADDITIVE = 0,
-    /* Emissive alpha is coverage. Reconstruct legacy fixed-function sRGB
-     * filtering and SRCALPHA composition in the linear-HDR shader. */
-    AERON_GLTF_EMISSIVE_LEGACY_SRGB_SRCALPHA = 1,
+	/* Standard glTF behavior: emissive RGB is added to the lit material. */
+	AERON_GLTF_EMISSIVE_ADDITIVE = 0,
+	/* Emissive alpha is coverage. Reconstruct legacy fixed-function sRGB
+	 * filtering and SRCALPHA composition in the linear-HDR shader. */
+	AERON_GLTF_EMISSIVE_LEGACY_SRGB_SRCALPHA = 1,
 } AeronGltfEmissiveMode;
 
 typedef enum AeronGltfAlphaMode {
-    AERON_GLTF_ALPHA_OPAQUE = 0,
-    AERON_GLTF_ALPHA_MASK   = 1,
-    AERON_GLTF_ALPHA_BLEND  = 2,
+	AERON_GLTF_ALPHA_OPAQUE = 0,
+	AERON_GLTF_ALPHA_MASK   = 1,
+	AERON_GLTF_ALPHA_BLEND  = 2,
 } AeronGltfAlphaMode;
 
 /* ===== Per-material entry ===========================================
@@ -120,17 +120,17 @@ typedef enum AeronGltfAlphaMode {
  * scale_v == 0) means "material doesn't author this channel" — FS
  * falls back to the per-material factor. */
 typedef struct AeronGltfMaterial {
-    float    base_color_factor[4];   /* RGBA, default (1,1,1,1) */
-    float    emissive_factor[3];     /* default (0,0,0) */
-    float    emissive_strength;      /* KHR default 1 */
-    float    metallic_factor;        /* default 0 */
-    float    roughness_factor;       /* default 1 */
-    uint32_t double_sided;           /* bool */
-    AeronGltfAlphaMode alpha_mode;
-    float alpha_cutoff;               /* glTF MASK cutoff; default 0.5 */
-    /* Material extras `aeronEmissiveMode`; AeronGltfEmissiveMode. */
-    uint32_t emissive_mode;
-    float    uv_xform[AERON_GLTF_CHANNEL_COUNT][4];
+	float              base_color_factor[4]; /* RGBA, default (1,1,1,1) */
+	float              emissive_factor[3];   /* default (0,0,0) */
+	float              emissive_strength;    /* KHR default 1 */
+	float              metallic_factor;      /* default 0 */
+	float              roughness_factor;     /* default 1 */
+	uint32_t           double_sided;         /* bool */
+	AeronGltfAlphaMode alpha_mode;
+	float              alpha_cutoff; /* glTF MASK cutoff; default 0.5 */
+	/* Material extras `aeronEmissiveMode`; AeronGltfEmissiveMode. */
+	uint32_t emissive_mode;
+	float    uv_xform[AERON_GLTF_CHANNEL_COUNT][4];
 } AeronGltfMaterial;
 
 /* ===== Ship asset ===================================================
@@ -148,38 +148,38 @@ typedef struct AeronGltfMaterial {
  * only fallback). Mesh creation transposes this source table into
  * variant-major packed storage; each draw selects a row by index. */
 typedef struct AeronGltfModel {
-    /* Merged geometry — one buffer per ship. The index buffer contains
-     * stable opaque, alpha-mask, and alpha-blend ranges in that order. */
-    AeronGltfVertex *vertices;     uint32_t vertex_count;
-    uint16_t         *indices;      uint32_t index_count;
-    uint32_t          opaque_index_count;
-    uint32_t          mask_index_offset;
-    uint32_t          mask_index_count;
-    uint32_t          blend_index_offset;
-    uint32_t          blend_index_count;
+	/* Merged geometry — one buffer per ship. The index buffer contains
+	 * stable opaque, alpha-mask, and alpha-blend ranges in that order. */
+	AeronGltfVertex* vertices;
+	uint32_t         vertex_count;
+	uint16_t*        indices;
+	uint32_t         index_count;
+	uint32_t         opaque_index_count;
+	uint32_t         mask_index_offset;
+	uint32_t         mask_index_count;
+	uint32_t         blend_index_offset;
+	uint32_t         blend_index_count;
 
-    /* Per-channel cooked KTX2 atlases (4): BC5/BC7 or RGBA8. */
-    AeronGltfChannelKtx2 channels[AERON_GLTF_CHANNEL_COUNT];
+	/* Per-channel cooked KTX2 atlases (4): BC5/BC7 or RGBA8. */
+	AeronGltfChannelKtx2 channels[AERON_GLTF_CHANNEL_COUNT];
 
-    /* Per-material entries (factors + per-channel UV transform). */
-    uint32_t            material_count;
-    AeronGltfMaterial *materials;   /* sized [material_count] */
+	/* Per-material entries (factors + per-channel UV transform). */
+	uint32_t           material_count;
+	AeronGltfMaterial* materials; /* sized [material_count] */
 
-    /* Variant table — flat [total_prim_count * variant_slots] row-
-     * major, indexed (prim_id * variant_slots + variant_idx). */
-    uint32_t  variant_count;     /* asset-level KHR count, 0 = none */
-    uint32_t  variant_slots;     /* max(variant_count, 1) */
-    uint32_t  total_prim_count;
-    uint32_t *prim_variant_material;
+	/* Variant table — flat [total_prim_count * variant_slots] row-
+	 * major, indexed (prim_id * variant_slots + variant_idx). */
+	uint32_t  variant_count; /* asset-level KHR count, 0 = none */
+	uint32_t  variant_slots; /* max(variant_count, 1) */
+	uint32_t  total_prim_count;
+	uint32_t* prim_variant_material;
 
 } AeronGltfModel;
 
 /* Internal render builder used by the common flight-model construction. */
-bool Aeron_GltfMeshBuildData(const struct cgltf_data *data,
-                             const char *source_label,
-                             AeronGltfModel *out);
+bool Aeron_GltfMeshBuildData(const struct cgltf_data* data, const char* source_label, AeronGltfModel* out);
 
-void Aeron_GltfMeshFree(AeronGltfModel *m);
+void Aeron_GltfMeshFree(AeronGltfModel* m);
 
 #ifdef __cplusplus
 }

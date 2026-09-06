@@ -98,7 +98,7 @@ const char* Aeron_GamepadButtonName(AeronGamepadButton button) {
 	return g_aeronGamepadButtonNames[button];
 }
 
-const AeronControllerSnapshot* Aeron_SelectController(const AeronInputSnapshot* input,
+const AeronControllerSnapshot* Aeron_SelectController(const AeronInputSnapshot*      input,
 													  const AeronControllerSelector* selector) {
 	int match_ordinal;
 	int slot;
@@ -121,7 +121,7 @@ const AeronControllerSnapshot* Aeron_SelectController(const AeronInputSnapshot* 
 }
 
 static int Aeron_ControllerAxisDigitalDown(int16_t value, const AeronControllerDigitalSource* source,
-										 int was_down) {
+										   int was_down) {
 	float threshold;
 	float normalized;
 
@@ -140,7 +140,7 @@ static int Aeron_ControllerAxisDigitalDown(int16_t value, const AeronControllerD
 	return normalized >= threshold;
 }
 
-int Aeron_ControllerDigitalSourceDown(const AeronControllerSnapshot* controller,
+int Aeron_ControllerDigitalSourceDown(const AeronControllerSnapshot*      controller,
 									  const AeronControllerDigitalSource* source, int was_down) {
 	if (!controller || !controller->connected || !source) {
 		return 0;
@@ -169,7 +169,7 @@ int Aeron_ControllerDigitalSourceDown(const AeronControllerSnapshot* controller,
 					return 0;
 				}
 				return Aeron_ControllerAxisDigitalDown(controller->gamepad_axes[source->index], source,
-											   was_down);
+													   was_down);
 			}
 			if (controller->kind == AERON_CONTROLLER_KIND_JOYSTICK &&
 				source->index < controller->axis_count && source->index < AERON_CONTROLLER_AXIS_MAX) {
@@ -273,8 +273,8 @@ static void Aeron_PopulateControllerIdentity(int slot) {
 			snapshot->gamepad_available_buttons |= 1u << button;
 		}
 	}
-	name                         = SDL_GetJoystickName(device->joystick);
-	path                         = SDL_GetJoystickPath(device->joystick);
+	name = SDL_GetJoystickName(device->joystick);
+	path = SDL_GetJoystickPath(device->joystick);
 	Aeron_CopyString(snapshot->name, sizeof(snapshot->name), name ? name : "");
 	Aeron_CopyString(snapshot->path, sizeof(snapshot->path), path ? path : "");
 	guid = SDL_GetJoystickGUID(device->joystick);

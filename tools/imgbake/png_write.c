@@ -18,9 +18,7 @@
 #include <stdio.h>
 #include <string.h>
 
-bool write_png_rgba(const char *path, int width, int height,
-                    const uint8_t *rgba)
-{
+bool write_png_rgba(const char* path, int width, int height, const uint8_t* rgba) {
 	if (!path || !rgba || width <= 0 || height <= 0)
 		return false;
 	/* stb's deflate "quality" caps the hash bucket depth used during
@@ -35,31 +33,29 @@ bool write_png_rgba(const char *path, int width, int height,
 	return rc != 0;
 }
 
-bool write_png_rgba_atomic(const char *path, int width, int height,
-                           const uint8_t *rgba,
-                           char *err, size_t errsz)
-{
+bool write_png_rgba_atomic(const char* path, int width, int height, const uint8_t* rgba, char* err,
+						   size_t errsz) {
 	if (!path || !rgba || width <= 0 || height <= 0) {
-		if (err && errsz) snprintf(err, errsz, "invalid args");
+		if (err && errsz)
+			snprintf(err, errsz, "invalid args");
 		return false;
 	}
 	char tmp[1100];
-	int n = snprintf(tmp, sizeof tmp, "%s.tmp", path);
+	int  n = snprintf(tmp, sizeof tmp, "%s.tmp", path);
 	if (n < 0 || n >= (int)sizeof tmp) {
-		if (err && errsz) snprintf(err, errsz, "path too long");
+		if (err && errsz)
+			snprintf(err, errsz, "path too long");
 		return false;
 	}
 	if (!write_png_rgba(tmp, width, height, rgba)) {
-		if (err && errsz) snprintf(err, errsz,
-		                           "write %s failed (errno=%d: %s)",
-		                           tmp, errno, strerror(errno));
+		if (err && errsz)
+			snprintf(err, errsz, "write %s failed (errno=%d: %s)", tmp, errno, strerror(errno));
 		SDL_RemovePath(tmp);
 		return false;
 	}
 	if (!SDL_RenamePath(tmp, path)) {
-		if (err && errsz) snprintf(err, errsz,
-		                           "rename %s -> %s: %s",
-		                           tmp, path, SDL_GetError());
+		if (err && errsz)
+			snprintf(err, errsz, "rename %s -> %s: %s", tmp, path, SDL_GetError());
 		SDL_RemovePath(tmp);
 		return false;
 	}

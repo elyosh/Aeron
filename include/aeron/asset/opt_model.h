@@ -15,31 +15,27 @@ extern "C" {
 #define AERON_OPT_UNITS_PER_METER (65536.0f / 1600.0f)
 
 typedef struct AeronOptModelBuildOptions {
-	float smooth_angle_degrees;
-	float emissive_strength;
-	bool emissive;
+	float                               smooth_angle_degrees;
+	float                               emissive_strength;
+	bool                                emissive;
 	const struct AeronOptAlphaOverride* alpha_overrides;
-	size_t alpha_override_count;
+	size_t                              alpha_override_count;
 } AeronOptModelBuildOptions;
 
 typedef struct AeronOptAlphaOverride {
-	const char* texture_name;
+	const char*        texture_name;
 	AeronGltfAlphaMode alpha_mode;
-	float alpha_cutoff;
+	float              alpha_cutoff;
 } AeronOptAlphaOverride;
 
 typedef struct AeronOptModelError {
-	int code;
+	int  code;
 	char message[256];
 } AeronOptModelError;
 
-bool Aeron_OptModelBuildMemory(
-		const void *bytes,
-		size_t size,
-		const char *label,
-		const AeronOptModelBuildOptions *options,
-		AeronFlightModel *out,
-		AeronOptModelError *error);
+bool Aeron_OptModelBuildMemory(const void* bytes, size_t size, const char* label,
+							   const AeronOptModelBuildOptions* options, AeronFlightModel* out,
+							   AeronOptModelError* error);
 
 #ifdef __cplusplus
 }

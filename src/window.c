@@ -157,7 +157,7 @@ static int Aeron_ApplyWindowAspectRatio(void) {
 		return 1;
 	}
 
-	ratio = (float)g_aeron.window_aspect_width / (float)g_aeron.window_aspect_height;
+	ratio                         = (float)g_aeron.window_aspect_width / (float)g_aeron.window_aspect_height;
 	g_aeron.window_aspect_pending = 0;
 	if (!SDL_SetWindowAspectRatio(g_aeron.window, ratio, ratio)) {
 		Aeron_LogWarn("aeron", "SDL_SetWindowAspectRatio failed: %s", SDL_GetError());
@@ -208,7 +208,7 @@ int Aeron_ResizeWindowToAspect(int aspect_width, int aspect_height) {
 	if (!Aeron_CalculateAspectWidth(target_height, aspect_width, aspect_height, &target_width)) {
 		return 0;
 	}
-	display       = SDL_GetDisplayForWindow(g_aeron.window);
+	display = SDL_GetDisplayForWindow(g_aeron.window);
 	if (display != 0 && SDL_GetDisplayUsableBounds(display, &bounds) && bounds.w > 0 && bounds.h > 0 &&
 		(target_width > bounds.w || target_height > bounds.h)) {
 		target_height = bounds.h;

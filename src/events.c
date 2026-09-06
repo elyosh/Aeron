@@ -103,12 +103,12 @@ void Aeron_PumpEvents(void) {
 }
 
 int32_t Aeron_BeginFrame(void) {
-	SDL_Rect  content_rect;
-	uint64_t  window_flags;
-	int       has_platform_position;
-	int       has_mouse_position;
-	uint64_t  now_us;
-	uint64_t  delta_us;
+	SDL_Rect content_rect;
+	uint64_t window_flags;
+	int      has_platform_position;
+	int      has_mouse_position;
+	uint64_t now_us;
+	uint64_t delta_us;
 
 	if (!g_aeron.initialized) {
 		return 0;

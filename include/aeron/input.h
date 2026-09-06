@@ -140,10 +140,10 @@ typedef enum AeronGamepadButton {
  * reports whether x/y were refreshed this frame.
  */
 typedef struct AeronMouseSnapshot {
-	int      x;
-	int      y;
-	int      raw_x;
-	int      raw_y;
+	int x;
+	int y;
+	int raw_x;
+	int raw_y;
 	/* Raw pointer deltas this frame in window points, event-accumulated
 	 * at float precision (HiDPI mice / trackpads emit fractional
 	 * per-event deltas that vanish under int truncation). Always the
@@ -201,24 +201,24 @@ typedef struct AeronControllerSnapshot {
 	uint8_t             raw_hats[AERON_CONTROLLER_HAT_MAX];
 	int16_t             gamepad_axes[AERON_GAMEPAD_AXIS_COUNT];
 	/* Standardized axes physically exposed by this gamepad. */
-	uint32_t            gamepad_available_axes;
+	uint32_t gamepad_available_axes;
 	/* Standardized buttons physically exposed by this gamepad. */
-	uint32_t            gamepad_available_buttons;
-	uint32_t            gamepad_buttons;
-	uint32_t            gamepad_pressed_buttons;
-	uint32_t            gamepad_released_buttons;
+	uint32_t gamepad_available_buttons;
+	uint32_t gamepad_buttons;
+	uint32_t gamepad_pressed_buttons;
+	uint32_t gamepad_released_buttons;
 } AeronControllerSnapshot;
 
 /* Complete keyboard, text, mouse, controller, focus, and window-size state captured by Aeron_BeginFrame. */
 typedef struct AeronInputSnapshot {
-	uint64_t             frame_id;
-	uint8_t              key_down[AERON_KEY_COUNT];
-	uint8_t              key_pressed[AERON_KEY_COUNT];
-	uint8_t              key_released[AERON_KEY_COUNT];
+	uint64_t frame_id;
+	uint8_t  key_down[AERON_KEY_COUNT];
+	uint8_t  key_pressed[AERON_KEY_COUNT];
+	uint8_t  key_released[AERON_KEY_COUNT];
 	/* Key-down event count this frame INCLUDING OS typematic repeats —
 	 * key_pressed reports only the initial edge. Consumers emulating DOS
 	 * BIOS-style keyboard queues count repeats through this. */
-	uint8_t                 key_typed[AERON_KEY_COUNT];
+	uint8_t key_typed[AERON_KEY_COUNT];
 	/* Subset of key_typed whose key event carried the Alt modifier. */
 	uint8_t                 key_alt_typed[AERON_KEY_COUNT];
 	AeronMouseSnapshot      mouse;
@@ -251,9 +251,9 @@ typedef struct AeronControllerDigitalSource {
 	float                            threshold;
 } AeronControllerDigitalSource;
 
-const AeronControllerSnapshot* Aeron_SelectController(const AeronInputSnapshot* input,
+const AeronControllerSnapshot* Aeron_SelectController(const AeronInputSnapshot*      input,
 													  const AeronControllerSelector* selector);
-int Aeron_ControllerDigitalSourceDown(const AeronControllerSnapshot* controller,
+int Aeron_ControllerDigitalSourceDown(const AeronControllerSnapshot*      controller,
 									  const AeronControllerDigitalSource* source, int was_down);
 
 /* Parses a standard SDL gamepad axis name such as "leftx" or "righttrigger". */

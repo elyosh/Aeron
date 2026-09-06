@@ -31,16 +31,15 @@ extern "C" {
 
 /* Encode one 4×4 block. `in_rgba_4x4` is 64 bytes (R first); only R and
  * G are read. `out_block` is 16 bytes (two 8-byte BC4 sub-blocks: R, G). */
-void bc5_codec_encode_block_from_rgba(uint8_t out_block[16],
-                                      const uint8_t in_rgba_4x4[64]);
+void bc5_codec_encode_block_from_rgba(uint8_t out_block[16], const uint8_t in_rgba_4x4[64]);
 
 /* Encode a whole RGBA8 image (tightly packed, R first) into a flat BC5
  * block stream. Out buffer must be ≥ ceil(w/4)*ceil(h/4)*16 bytes.
  * Pixels at the right/bottom edges that don't fill a full 4×4 block
  * are padded with the last row/col before encode. Returns the number of
  * bytes written (or 0 on overflow). */
-size_t bc5_codec_encode_image_from_rgba(uint8_t *out_blocks, size_t out_cap,
-                                        const uint8_t *rgba, int w, int h);
+size_t bc5_codec_encode_image_from_rgba(uint8_t* out_blocks, size_t out_cap, const uint8_t* rgba, int w,
+										int h);
 
 /* Convenience: byte length of the BC5 block stream for a (w, h) image. */
 size_t bc5_codec_image_size(int w, int h);

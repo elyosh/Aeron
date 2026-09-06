@@ -78,8 +78,8 @@ uint8_t* Aeron_ImageDownsampleRgba8(const uint8_t* source, int width, int height
 	return result;
 }
 
-uint8_t* Aeron_ImageDownsampleStraightAlphaRgba8(const uint8_t* source, int width, int height,
-												 int* out_width, int* out_height) {
+uint8_t* Aeron_ImageDownsampleStraightAlphaRgba8(const uint8_t* source, int width, int height, int* out_width,
+												 int* out_height) {
 	if (!source || width <= 0 || height <= 0 || !out_width || !out_height)
 		return NULL;
 	const int next_width  = width > 1 ? width / 2 : 1;
@@ -89,7 +89,7 @@ uint8_t* Aeron_ImageDownsampleStraightAlphaRgba8(const uint8_t* source, int widt
 		return NULL;
 	for (int y = 0; y < next_height; y++) {
 		for (int x = 0; x < next_width; x++) {
-			unsigned alpha_sum      = 0;
+			unsigned alpha_sum       = 0;
 			unsigned weighted_rgb[3] = { 0, 0, 0 };
 			unsigned samples         = 0;
 			for (int dy = 0; dy < 2; dy++) {
@@ -109,9 +109,8 @@ uint8_t* Aeron_ImageDownsampleStraightAlphaRgba8(const uint8_t* source, int widt
 			}
 			uint8_t* output = result + ((size_t)y * next_width + x) * 4u;
 			for (int channel = 0; channel < 3; channel++) {
-				output[channel] = alpha_sum
-					? (uint8_t)((weighted_rgb[channel] + alpha_sum / 2u) / alpha_sum)
-					: 0;
+				output[channel] =
+					alpha_sum ? (uint8_t)((weighted_rgb[channel] + alpha_sum / 2u) / alpha_sum) : 0;
 			}
 			output[3] = (uint8_t)((alpha_sum + samples / 2u) / samples);
 		}
