@@ -100,3 +100,13 @@ with CMake's `add_subdirectory()`.
 Building requires CMake 3.20 or later, a C99/C++17 toolchain, SDL3 3.4, zstd,
 and SDL_shadercross. FFmpeg and pkg-config are also required when video support
 is enabled.
+
+`AERON_ENABLE_COMPAT=ON` builds the graphics, input, sound and WinMM shims.
+Games using DirectPlay also set `AERON_ENABLE_DPLAY=ON` before adding Aeron;
+this option defaults to `OFF` and requires `AERON_ENABLE_COMPAT`.
+DirectPlay requires libcurl 7.68+ with HTTPS and asynchronous DNS, and libjuice
+1.7+, installed with its `LibJuice` CMake package. Point `CMAKE_PREFIX_PATH` at
+their installation prefixes when needed. DirectPlay reuses Aeron's vendored
+cJSON library. The directory interface is declared in
+`aeron/compat/dplay_directory.h`; its bounded snapshots and operations are owned
+by the application thread.

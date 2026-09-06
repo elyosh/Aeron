@@ -10,6 +10,7 @@ option(AERON_DEBUG_UI "Build the Dear ImGui debug overlay into aeron" OFF)
 option(AERON_BUILD_TOOLS "Build Aeron asset tools" ${PROJECT_IS_TOP_LEVEL})
 option(AERON_HOST_TOOLS_ONLY "Build only tools that must run on the build host" OFF)
 option(AERON_ENABLE_COMPAT "Build the Win32/DirectX-era API compatibility target" OFF)
+option(AERON_ENABLE_DPLAY "Build DirectPlay support in aeron_compat" OFF)
 
 find_package(SDL3 3.4 REQUIRED CONFIG COMPONENTS SDL3-shared)
 
@@ -351,6 +352,7 @@ set(AERON_SOURCES
     src/mesh_normals.c
     src/numeric.c
     src/paths.c
+    src/random.c
     src/render_backend.c
     src/surface.c
     src/sync.c
@@ -405,6 +407,14 @@ target_link_libraries(aeron
 
 add_dependencies(aeron aeron_shaders)
 
+if(WIN32)
+    target_link_libraries(aeron PRIVATE bcrypt)
+endif()
+
+if(AERON_ENABLE_DPLAY AND NOT AERON_ENABLE_COMPAT)
+    message(FATAL_ERROR "AERON_ENABLE_DPLAY requires AERON_ENABLE_COMPAT")
+endif()
+
 if(AERON_ENABLE_COMPAT)
     set(AERON_COMPAT_SOURCES
         src/compat/config.c
@@ -415,6 +425,21 @@ if(AERON_ENABLE_COMPAT)
         src/compat/guids.c
         src/compat/winmm_joystick.c
     )
+    if(AERON_ENABLE_DPLAY)
+        # The directory worker uses curl_multi_poll/wakeup; ICE uses libjuice's shared worker.
+        find_package(CURL 7.68 REQUIRED COMPONENTS HTTPS AsynchDNS)
+        find_package(LibJuice 1.7 REQUIRED CONFIG)
+        list(APPEND AERON_COMPAT_SOURCES
+            src/compat/dplay.c
+            src/compat/dplay_directory.c
+            src/compat/dplay_directory_json.c
+            src/compat/dplay_http.c
+            src/compat/dplay_ice.c
+            src/compat/dplay_roster.c
+            src/compat/dplay_session.c
+            src/compat/dplay_transport.c
+        )
+    endif()
     if(AERON_ENABLE_AUDIO_DECODE)
         list(APPEND AERON_COMPAT_SOURCES src/compat/winmm_audio.c)
     endif()
@@ -428,6 +453,23 @@ if(AERON_ENABLE_COMPAT)
         PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include
     )
     target_link_libraries(aeron_compat PUBLIC aeron)
+    if(AERON_ENABLE_DPLAY)
+        target_link_libraries(aeron_compat PRIVATE CURL::libcurl LibJuice::LibJuice aeron_cjson)
+        if(WIN32)
+            target_link_libraries(aeron_compat PRIVATE ws2_32)
+        elseif(UNIX AND NOT APPLE)
+            target_link_libraries(aeron_compat PRIVATE m)
+        endif()
+        add_executable(aeron-netprobe EXCLUDE_FROM_ALL tools/netprobe/netprobe.c)
+        target_link_libraries(aeron-netprobe PRIVATE aeron_compat)
+        set_target_properties(aeron-netprobe PROPERTIES
+            C_STANDARD 99 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
+        if(MSVC)
+            target_compile_options(aeron-netprobe PRIVATE /W4)
+        else()
+            target_compile_options(aeron-netprobe PRIVATE -Wall -Wextra -Wpedantic)
+        endif()
+    endif()
     if(AERON_ENABLE_AUDIO_DECODE)
         target_link_libraries(aeron_compat PRIVATE aeron_audio_decode SDL3::SDL3)
     endif()
