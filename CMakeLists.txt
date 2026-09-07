@@ -791,6 +791,13 @@ add_subdirectory(tools/fontbake)
 
 add_library(aeron_asset STATIC
     src/asset/opt_model.c
+    src/asset/decode_types.c
+    src/asset/bmp.c
+    src/asset/abp_font.c
+    src/asset/lfd.c
+    src/asset/pnl.c
+    src/asset/act.c
+    src/asset/bitmap_font.c
 )
 target_include_directories(aeron_asset
     PUBLIC
@@ -804,6 +811,9 @@ target_link_libraries(aeron_asset
     PUBLIC aeron_scene
     PRIVATE opt2gltf_lib aeron_gltf_cook_lib
 )
+if(NOT MSVC)
+    target_link_libraries(aeron_asset PRIVATE m)
+endif()
 set_target_properties(aeron_asset PROPERTIES
     C_STANDARD 11
     C_STANDARD_REQUIRED ON
