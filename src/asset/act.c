@@ -61,12 +61,13 @@ static bool AeronAct_DecodeFrame(const uint8_t* blob, size_t size, uint32_t sub_
 	const uint8_t mask   = AeronAct_RunMask[split & 15];
 	const uint8_t shift  = AeronAct_RunShift[split & 15];
 	size_t        cursor = (size_t)rle_offset + 16;
+	/* 0xFB remains active across row terminators, until another base update. */
+	uint16_t base = 0;
 	for (uint32_t y = 0; y < height; ++y) {
 		if (cursor >= size)
 			goto truncated;
 		if (blob[cursor] == 0xff)
 			return true;
-		uint16_t base       = 0;
 		uint32_t x          = 0;
 		bool     terminated = false;
 		while (cursor < size) {
