@@ -86,7 +86,8 @@ static void AeronPnl_WritePixel(AeronPnlBitmap* bitmap, int x, int y, uint8_t co
 	bitmap->coverage[pixel] = 255;
 }
 
-static bool pnl_rasterize(const void* data, size_t size, AeronPnlBitmap* bitmap, AeronDecodeError* error) {
+static bool pnl_rasterize(const void* data, size_t size, int ignore_base, int key, AeronPnlBitmap* bitmap,
+						  AeronDecodeError* error) {
 	const uint8_t *p = data, *end = p + size;
 	int            x = 0, y = 0;
 	uint8_t        base = 0;
@@ -95,13 +96,15 @@ static bool pnl_rasterize(const void* data, size_t size, AeronPnlBitmap* bitmap,
 		if (op <= 0xfa) {
 			const uint8_t color = (uint8_t)((op >> 2) + base);
 			for (int count = (op & 3) + 1; count--; ++x)
-				AeronPnl_WritePixel(bitmap, x, y, color);
+				if (color != key)
+					AeronPnl_WritePixel(bitmap, x, y, color);
 			continue;
 		}
 		if (op == 0xfb) {
 			if (p == end)
 				return decode_error(error, 45, "truncated PNL bitmap 0xFB");
-			base = *p++;
+			base = ignore_base ? 0 : *p;
+			++p;
 			continue;
 		}
 		if (op == 0xfc) {
@@ -124,8 +127,11 @@ static bool pnl_rasterize(const void* data, size_t size, AeronPnlBitmap* bitmap,
 				return decode_error(error, 47, "truncated PNL bitmap 0xFD");
 			int           count = *p++ + 1;
 			const uint8_t color = *p++;
-			while (count--)
-				AeronPnl_WritePixel(bitmap, x++, y, color);
+			while (count--) {
+				if (color != key)
+					AeronPnl_WritePixel(bitmap, x, y, color);
+				++x;
+			}
 			continue;
 		}
 		if (op == 0xff)
@@ -143,6 +149,11 @@ bool AeronPnl_Measure(const void* bytes, size_t size, int* width, int* height, s
 }
 
 bool AeronPnl_Decode(const void* bytes, size_t size, AeronPnlBitmap* out, AeronDecodeError* error) {
+	return AeronPnl_DecodeIndexed(bytes, size, 0, -1, out, error);
+}
+
+bool AeronPnl_DecodeIndexed(const void* bytes, size_t size, int ignore_base, int key, AeronPnlBitmap* out,
+							AeronDecodeError* error) {
 	if (!out)
 		return decode_error(error, 44, "invalid PNL bitmap output");
 	memset(out, 0, sizeof *out);
@@ -157,7 +168,7 @@ bool AeronPnl_Decode(const void* bytes, size_t size, AeronPnlBitmap* out, AeronD
 	}
 	out->width  = (uint16_t)width;
 	out->height = (uint16_t)height;
-	if (!pnl_rasterize(bytes, size, out, error)) {
+	if (!pnl_rasterize(bytes, size, ignore_base, key, out, error)) {
 		AeronIndexedFrame_Free(out);
 		return false;
 	}

@@ -20,6 +20,10 @@ bool AeronPnl_Measure(const void* bytes, size_t size, int* width, int* height, s
 					  AeronDecodeError* error);
 /* Palette and color-key policy are supplied by the game. No embedded palette. */
 bool AeronPnl_Decode(const void* bytes, size_t size, AeronPnlBitmap* out, AeronDecodeError* error);
+/* Decode with explicit coverage for the caller's key. Alternating-color runs
+ * remain opaque. Ignoring base updates exposes the unshifted indices for recoloring. */
+bool AeronPnl_DecodeIndexed(const void* bytes, size_t size, int ignore_palette_base, int transparent_index,
+							AeronPnlBitmap* out, AeronDecodeError* error);
 #ifdef __cplusplus
 }
 #endif
