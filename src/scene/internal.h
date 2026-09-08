@@ -515,6 +515,7 @@ void AeronSceneDirectionalShadow_Release(struct AeronScene3D* scene);
  * OVERLAY entries carrying prev corners into the 2-RT velocity
  * prepass. All are cheap no-ops with zero entries. */
 int  AeronSceneBb3d_Prepare(struct AeronScene3D* s, AeronCommandBuffer* cmd);
+int  AeronSceneBb3d_Ensure(struct AeronScene3D* s);
 void AeronSceneBb3d_DrawStage(struct AeronScene3D* s, AeronRenderPass* pass, AeronSceneBillboardStage stage);
 void AeronSceneBb3d_DrawVelocity(struct AeronScene3D* s, AeronRenderPass* pass);
 /* Draw the LENS-stage entries (per-entry draws — the anchor rides a

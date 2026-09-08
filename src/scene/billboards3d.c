@@ -268,7 +268,7 @@ static int bb3d_lens_ensure(struct AeronScene3D* s) {
 	return s->bb_lens_pipes[0] != NULL;
 }
 
-static int bb3d_ensure(struct AeronScene3D* s) {
+int AeronSceneBb3d_Ensure(struct AeronScene3D* s) {
 	if (s->bb_tried) {
 		return s->bb_pipes[0] != NULL;
 	}
@@ -341,7 +341,7 @@ int AeronSceneBb3d_Prepare(struct AeronScene3D* s, AeronCommandBuffer* cmd) {
 	if (!s || s->bb_count == 0) {
 		return 0;
 	}
-	if (!bb3d_ensure(s) || !s->bb_verts) {
+	if (!AeronSceneBb3d_Ensure(s) || !s->bb_verts) {
 		return 0;
 	}
 	Bb3dVert* verts      = (Bb3dVert*)s->bb_verts;

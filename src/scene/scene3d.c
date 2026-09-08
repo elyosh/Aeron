@@ -376,6 +376,22 @@ void AeronScene_Destroy(AeronScene3D* s) {
 	free(s);
 }
 
+int AeronScene_PrepareResources(AeronScene3D* s, AeronCullMode mesh_cull) {
+	if (!s || (unsigned)mesh_cull > AERON_CULL_BACK || !AeronScenePbr_Ensure(s) ||
+		!AeronSceneBb3d_Ensure(s) || !AeronSceneClusteredLights_Ensure(s))
+		return 0;
+	for (int kind = 0; kind < AERON_PBR_PIPE_KIND_COUNT; ++kind)
+		if (!AeronScenePbr_Pipeline(s, kind, mesh_cull))
+			return 0;
+	if (s->post.ssao_quality > 0 && s->post.ssao_intensity > 0 && !AeronScenePost_EnsureSsao(s))
+		return 0;
+	if (s->post.mb_quality > 0 && !AeronScenePost_EnsureMb(s))
+		return 0;
+	if (s->temporal_active_mode != AERON_TEMPORAL_OFF && !AeronSceneTemporal_Ensure(s))
+		return 0;
+	return 1;
+}
+
 /* ---- per-frame ---- */
 
 int AeronScene_Begin(AeronScene3D* s, const AeronSceneCamera* camera) {

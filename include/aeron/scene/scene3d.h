@@ -280,6 +280,9 @@ AeronSampleCount AeronScene_SampleCount(const AeronScene3D* scene);
 /* Frame start: latch the camera and reset per-frame submissions. Returns zero
  * when a pending render-mode change cannot prepare its required resources. */
 int AeronScene_Begin(AeronScene3D* scene, const AeronSceneCamera* camera);
+/* Precreate mesh/billboard pipelines and enabled post resources after Begin,
+ * outside render passes. Intended for loading screens; draws no geometry. */
+int AeronScene_PrepareResources(AeronScene3D* scene, AeronCullMode mesh_cull);
 
 /* Per-frame submissions (reset by AeronScene_Begin). Instances and
  * lights are copied; referenced meshes/tables are borrowed until
