@@ -207,6 +207,7 @@ typedef struct DInputDeviceShim {
 	DInputDeviceKind               kind;
 	int                            acquired;
 	uint64_t                       sampled_frame; /* frame_id of the last sample */
+	struct DInputDeviceShim*       next_keyboard;
 
 	/* keyboard */
 	uint8_t            dik[256];                       /* immediate DIK state (0x80 = down) */
@@ -229,12 +230,37 @@ typedef struct DInputShim {
 	int                      refcount;
 } DInputShim;
 
-/* The single keyboard/mouse device instances, tracked so the host input pumps can
+/* Live keyboard devices and the mouse instance, tracked so the host input pumps can
  * capture input edges every host frame -- the recovered flight loop polls at a fixed
  * step slower than the host frame rate, so on-read sampling alone would miss the
  * one-frame key_pressed/key_released edges on frames the game does not poll. */
 static DInputDeviceShim* g_shimKeyboardDevice;
 static DInputDeviceShim* g_shimMouseDevice;
+static uint8_t           g_suppressedKeys[AERON_KEY_COUNT];
+
+int AeronCompat_IsKeySuppressed(int key) { return (unsigned)key < AERON_KEY_COUNT && g_suppressedKeys[key]; }
+
+void AeronCompat_SetKeySuppressed(int key, int suppressed) {
+	if ((unsigned)key >= AERON_KEY_COUNT)
+		return;
+	g_suppressedKeys[key] = suppressed != 0;
+	if (!suppressed)
+		return;
+	unsigned dik = DInputShim_AeronKeyToDik(key);
+	if (!dik)
+		return;
+	for (DInputDeviceShim* d = g_shimKeyboardDevice; d; d = d->next_keyboard) {
+		d->dik[dik]    = 0;
+		uint32_t write = d->buf_tail;
+		for (uint32_t read = d->buf_tail; read != d->buf_head; read = (read + 1u) % DINPUT_SHIM_BUFFER_CAP) {
+			if (d->buffer[read].dwOfs == dik)
+				continue;
+			d->buffer[write] = d->buffer[read];
+			write            = (write + 1u) % DINPUT_SHIM_BUFFER_CAP;
+		}
+		d->buf_head = write;
+	}
+}
 
 static void DInputShim_RingPush(DInputDeviceShim* d, uint32_t ofs, uint32_t data) {
 	uint32_t next = (d->buf_head + 1u) % DINPUT_SHIM_BUFFER_CAP;
@@ -269,7 +295,7 @@ static void DInputShim_Sample(DInputDeviceShim* d, int suppress_keyboard_presses
 		memset(d->dik, 0, sizeof(d->dik));
 		for (k = 0; k < AERON_KEY_COUNT; ++k) {
 			unsigned int dik = DInputShim_AeronKeyToDik(k);
-			if (dik == 0) {
+			if (dik == 0 || g_suppressedKeys[k]) {
 				continue;
 			}
 			if (focus && in->key_down[k]) {
@@ -331,9 +357,11 @@ static uint32_t AERON_DXAPI DInputDevice_Release(IDirectInputDeviceA* self) {
 	if (--d->refcount > 0) {
 		return (uint32_t)d->refcount;
 	}
-	if (g_shimKeyboardDevice == d) {
-		g_shimKeyboardDevice = NULL;
-	}
+	for (DInputDeviceShim** link = &g_shimKeyboardDevice; *link; link = &(*link)->next_keyboard)
+		if (*link == d) {
+			*link = d->next_keyboard;
+			break;
+		}
 	if (g_shimMouseDevice == d) {
 		g_shimMouseDevice = NULL;
 	}
@@ -1104,6 +1132,7 @@ static HRESULT AERON_DXAPI DInput_CreateDevice(IDirectInputA* self, const DxGuid
 	d->refcount = 1;
 	d->kind     = kind;
 	if (kind == DINPUT_DEV_KEYBOARD) {
+		d->next_keyboard     = g_shimKeyboardDevice;
 		g_shimKeyboardDevice = d;
 	} else {
 		g_shimMouseDevice = d;
@@ -1120,9 +1149,8 @@ static HRESULT AERON_DXAPI DInput_CreateDevice(IDirectInputA* self, const DxGuid
  * per host frame so buffered key edges accumulate regardless of the game's polling
  * cadence; the per-frame frame_id guard makes it idempotent with on-read sampling. */
 void AeronCompat_Update(int input_suppressed) {
-	if (g_shimKeyboardDevice) {
-		DInputShim_Sample(g_shimKeyboardDevice, input_suppressed);
-	}
+	for (DInputDeviceShim* d = g_shimKeyboardDevice; d; d = d->next_keyboard)
+		DInputShim_Sample(d, input_suppressed);
 	if (!input_suppressed && g_shimMouseDevice) {
 		DInputShim_Sample(g_shimMouseDevice, 0);
 	}

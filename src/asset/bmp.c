@@ -3,44 +3,53 @@
 
 static int bmp_decode_rle8(const uint8_t* data, size_t size, uint8_t* indices, int width, int height,
 						   int top_down) {
-	const uint8_t* p         = data;
-	const uint8_t* end       = data + size;
-	int            x         = 0;
-	int            y         = top_down ? 0 : height - 1;
-	const int      direction = top_down ? 1 : -1;
-	while (p < end && y >= 0 && y < height) {
+	const uint8_t* p           = data;
+	const uint8_t* end         = data + size;
+	const int64_t  pixels      = (int64_t)width * height;
+	const int64_t  row_step    = top_down ? width : -width;
+	int64_t        row_start   = top_down ? 0 : pixels - width;
+	int64_t        destination = row_start;
+	/* Original XvT assets use deltas and runs beyond the nominal row width.
+	 * Keep the row anchor independent of the linear write cursor: only EOL
+	 * resets the column, and every write must stay within the image allocation. */
+	while (p < end) {
 		if ((size_t)(end - p) < 2)
 			return 0;
 		const int count = *p++;
 		const int value = *p++;
 		if (count) {
-			if (x + count > width)
+			if (destination < 0 || destination > pixels || count > pixels - destination)
 				return 0;
-			memset(indices + (size_t)y * width + x, value, (size_t)count);
-			x += count;
+			memset(indices + (size_t)destination, value, (size_t)count);
+			destination += count;
 		} else if (value == 0) {
-			x = 0;
-			y += direction;
+			row_start += row_step;
+			destination = row_start;
+			if (row_start < 0 || row_start >= pixels)
+				return 1;
 		} else if (value == 1) {
 			return 1;
 		} else if (value == 2) {
 			if ((size_t)(end - p) < 2)
 				return 0;
-			x += *p++;
-			y += direction * *p++;
-			if (x > width || y < 0 || y >= height)
+			const int dx = *p++;
+			const int dy = *p++;
+			row_start += row_step * dy;
+			destination += dx + row_step * dy;
+			if (destination < 0 || destination > pixels)
 				return 0;
 		} else {
 			const size_t literal = (size_t)value;
 			const size_t encoded = literal + (literal & 1u);
-			if (encoded > (size_t)(end - p) || x + value > width)
+			if (encoded > (size_t)(end - p) || destination < 0 || destination > pixels ||
+				value > pixels - destination)
 				return 0;
-			memcpy(indices + (size_t)y * width + x, p, literal);
+			memcpy(indices + (size_t)destination, p, literal);
 			p += encoded;
-			x += value;
+			destination += value;
 		}
 	}
-	return y < 0 || y >= height;
+	return 0;
 }
 
 bool AeronBmp_Decode(const void* data, size_t size, AeronIndexedFrame* out, AeronDecodeError* error) {

@@ -126,6 +126,10 @@ void AeronCompat_SetRumbleProvider(const AeronCompatRumbleProvider* provider);
  * suppressed frame captures keyboard state without forwarding key presses
  * and leaves the mouse untouched. No-op until DirectInput devices exist. */
 void AeronCompat_Update(int input_suppressed);
+/* Host-thread per-key filter, using AeronKey values. Enabling also removes
+ * queued events for this key from every live keyboard device. */
+void AeronCompat_SetKeySuppressed(int key, int suppressed);
+int  AeronCompat_IsKeySuppressed(int key);
 
 #ifdef __cplusplus
 }
