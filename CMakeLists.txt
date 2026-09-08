@@ -796,6 +796,7 @@ add_library(aeron_asset STATIC
     src/asset/abp_font.c
     src/asset/lfd.c
     src/asset/pnl.c
+    src/asset/image_coverage.c
     src/asset/act.c
     src/asset/bitmap_font.c
 )

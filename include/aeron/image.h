@@ -1,6 +1,7 @@
 #ifndef AERON_IMAGE_H
 #define AERON_IMAGE_H
 
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -12,6 +13,22 @@ typedef enum AeronImageAlphaMode {
 	AERON_IMAGE_ALPHA_STRAIGHT,
 	AERON_IMAGE_ALPHA_PREMULTIPLIED,
 } AeronImageAlphaMode;
+
+typedef struct AeronImageCoverageRect {
+	int32_t x, y, width, height;
+} AeronImageCoverageRect;
+
+typedef struct AeronImageCoverage {
+	AeronImageCoverageRect* rects;
+	uint32_t                count;
+	int                     width, height;
+} AeronImageCoverage;
+
+/* Groups occupied 4x4 alpha cells into disjoint rectangles. Geometry skips empty
+ * image regions; the sampled texture still supplies exact pixel coverage.
+ * Output must be empty. On failure it remains empty. */
+bool Aeron_ImageBuildCoverageRgba8(const uint8_t* rgba, int width, int height, AeronImageCoverage* out);
+void Aeron_ImageFreeCoverage(AeronImageCoverage* coverage);
 
 void Aeron_ImagePremultiplyRgba8(uint8_t* rgba, size_t pixel_count);
 /* Returns a malloc-owned nearest-neighbor enlargement of an RGBA8 image. */
