@@ -50,27 +50,22 @@ uint8_t* Aeron_ImageDownsampleRgba8(const uint8_t* source, int width, int height
 	uint8_t*  result      = (uint8_t*)malloc((size_t)next_width * next_height * 4u);
 	if (!result)
 		return NULL;
-	for (int y = 0; y < next_height; y++) {
-		for (int x = 0; x < next_width; x++) {
-			unsigned sum[4]  = { 0, 0, 0, 0 };
-			unsigned samples = 0;
-			for (int dy = 0; dy < 2; dy++) {
-				const int source_y = y * 2 + dy;
-				if (source_y >= height)
-					continue;
-				for (int dx = 0; dx < 2; dx++) {
-					const int source_x = x * 2 + dx;
-					if (source_x >= width)
-						continue;
-					const uint8_t* pixel = source + ((size_t)source_y * width + source_x) * 4u;
-					for (int channel = 0; channel < 4; channel++)
-						sum[channel] += pixel[channel];
-					samples++;
-				}
-			}
-			uint8_t* output = result + ((size_t)y * next_width + x) * 4u;
-			for (int channel = 0; channel < 4; channel++)
-				output[channel] = (uint8_t)((sum[channel] + samples / 2u) / samples);
+	const size_t row_bytes = (size_t)width * 4u;
+	/* Repeating a singleton dimension preserves the two-pixel or one-pixel average. */
+	const size_t right_offset  = width > 1 ? 4u : 0u;
+	const size_t bottom_offset = height > 1 ? row_bytes : 0u;
+	for (int y = 0; y < next_height; ++y) {
+		const uint8_t* top    = source + (size_t)y * 2u * row_bytes;
+		const uint8_t* bottom = top + bottom_offset;
+		uint8_t*       output = result + (size_t)y * next_width * 4u;
+		for (int x = 0; x < next_width; ++x) {
+			for (int channel = 0; channel < 4; ++channel)
+				output[channel] = (uint8_t)(((unsigned)top[channel] + top[right_offset + channel] +
+											 bottom[channel] + bottom[right_offset + channel] + 2u) >>
+											2);
+			top += 2u * right_offset;
+			bottom += 2u * right_offset;
+			output += 4;
 		}
 	}
 	*out_width  = next_width;

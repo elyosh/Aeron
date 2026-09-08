@@ -35,11 +35,15 @@ AeronTexture* aeron_scene_upload_rgba8(AeronCommandBuffer* cmd, const uint8_t* p
 	const size_t base_pitch = (size_t)width * 4;
 	if ((size_t)height > SIZE_MAX / base_pitch)
 		goto failed;
-	levels[0] = malloc(base_pitch * (size_t)height);
-	if (!levels[0])
-		goto failed;
-	for (int row = 0; row < height; ++row)
-		memcpy(levels[0] + (size_t)row * base_pitch, pixels + (size_t)row * pitch, base_pitch);
+	const uint8_t* base_pixels = pixels;
+	if (alpha_mode == AERON_IMAGE_ALPHA_STRAIGHT || pitch != base_pitch) {
+		levels[0] = malloc(base_pitch * (size_t)height);
+		if (!levels[0])
+			goto failed;
+		for (int row = 0; row < height; ++row)
+			memcpy(levels[0] + (size_t)row * base_pitch, pixels + (size_t)row * pitch, base_pitch);
+		base_pixels = levels[0];
+	}
 	if (alpha_mode == AERON_IMAGE_ALPHA_STRAIGHT)
 		Aeron_ImagePremultiplyRgba8(levels[0], (size_t)width * height);
 
@@ -51,14 +55,14 @@ AeronTexture* aeron_scene_upload_rgba8(AeronCommandBuffer* cmd, const uint8_t* p
 			.mip_level    = mip,
 			.width        = level_width,
 			.height       = level_height,
-			.pixels       = levels[mip],
+			.pixels       = mip ? levels[mip] : base_pixels,
 			.pitch        = level_width * 4,
 			.pixel_format = AERON_PIXEL_FORMAT_RGBA8888,
 			.color_space  = color_space,
 		};
 		if (mip + 1 < mip_count) {
-			levels[mip + 1] = Aeron_ImageDownsampleRgba8(levels[mip], level_width, level_height, &level_width,
-														 &level_height);
+			levels[mip + 1] = Aeron_ImageDownsampleRgba8(uploads[mip].pixels, level_width, level_height,
+														 &level_width, &level_height);
 			if (!levels[mip + 1])
 				goto failed;
 		}
@@ -75,6 +79,7 @@ AeronTexture* aeron_scene_upload_rgba8(AeronCommandBuffer* cmd, const uint8_t* p
 		goto failed;
 	for (int mip = 0; mip < mip_count; ++mip)
 		uploads[mip].texture = texture;
+	/* Upload staging copies borrowed base pixels before returning. */
 	if (!Aeron_UploadTextureBatchCmd(cmd, uploads, (uint32_t)mip_count)) {
 		Aeron_DestroyTexture(texture);
 		texture = NULL;
