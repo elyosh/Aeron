@@ -428,7 +428,53 @@ if(AERON_ENABLE_COMPAT)
     if(AERON_ENABLE_DPLAY)
         # The directory worker uses curl_multi_poll/wakeup; ICE uses libjuice's shared worker.
         find_package(CURL 7.68 REQUIRED COMPONENTS HTTPS AsynchDNS)
-        find_package(LibJuice 1.7 REQUIRED CONFIG)
+        find_package(Threads REQUIRED)
+        set(AERON_LIBJUICE_SOURCES
+            third_party/libjuice/src/addr.c
+            third_party/libjuice/src/agent.c
+            third_party/libjuice/src/base64.c
+            third_party/libjuice/src/conn.c
+            third_party/libjuice/src/conn_mux.c
+            third_party/libjuice/src/conn_poll.c
+            third_party/libjuice/src/conn_thread.c
+            third_party/libjuice/src/const_time.c
+            third_party/libjuice/src/crc32.c
+            third_party/libjuice/src/hash.c
+            third_party/libjuice/src/hmac.c
+            third_party/libjuice/src/ice.c
+            third_party/libjuice/src/juice.c
+            third_party/libjuice/src/log.c
+            third_party/libjuice/src/random.c
+            third_party/libjuice/src/server.c
+            third_party/libjuice/src/stun.c
+            third_party/libjuice/src/tcp.c
+            third_party/libjuice/src/timestamp.c
+            third_party/libjuice/src/turn.c
+            third_party/libjuice/src/udp.c
+        )
+        add_library(aeron_juice STATIC ${AERON_LIBJUICE_SOURCES})
+        target_include_directories(aeron_juice
+            PUBLIC third_party/libjuice/include
+            PRIVATE
+                third_party/libjuice/include/juice
+                third_party/libjuice/src)
+        target_compile_definitions(aeron_juice
+            PUBLIC JUICE_STATIC
+            PRIVATE NO_SERVER USE_NETTLE=0 $<$<CONFIG:Release>:RELEASE=1>)
+        target_link_libraries(aeron_juice PRIVATE Threads::Threads)
+        set_target_properties(aeron_juice PROPERTIES
+            C_STANDARD 11
+            C_STANDARD_REQUIRED ON
+            C_EXTENSIONS ON
+            POSITION_INDEPENDENT_CODE ON)
+        if(WIN32)
+            target_compile_definitions(aeron_juice PRIVATE WIN32_LEAN_AND_MEAN)
+            if(MSVC)
+                target_compile_definitions(aeron_juice PRIVATE
+                    NOMINMAX _CRT_SECURE_NO_WARNINGS)
+            endif()
+            target_link_libraries(aeron_juice PRIVATE ws2_32 bcrypt)
+        endif()
         list(APPEND AERON_COMPAT_SOURCES
             src/compat/dplay.c
             src/compat/dplay_directory.c
@@ -454,7 +500,7 @@ if(AERON_ENABLE_COMPAT)
     )
     target_link_libraries(aeron_compat PUBLIC aeron)
     if(AERON_ENABLE_DPLAY)
-        target_link_libraries(aeron_compat PRIVATE CURL::libcurl LibJuice::LibJuice aeron_cjson)
+        target_link_libraries(aeron_compat PRIVATE CURL::libcurl aeron_juice aeron_cjson)
         if(WIN32)
             target_link_libraries(aeron_compat PRIVATE ws2_32)
         elseif(UNIX AND NOT APPLE)

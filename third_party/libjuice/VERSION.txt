@@ -1,0 +1,6 @@
+libjuice 1.7.3
+https://github.com/paullouisageneau/libjuice/releases/tag/v1.7.3
+
+The client library is built statically with server support and Nettle disabled.
+Its Windows clock calls use GetTickCount64 so they cannot bind to a game-provided
+legacy GetTickCount shim.

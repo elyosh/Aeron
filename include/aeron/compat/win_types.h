@@ -12,19 +12,25 @@ extern "C" {
  * The codebase uses stdint types with DirectX field names (see
  * assets/model_texture.h), so the curated ddraw.h / d3d.h do the same rather than
  * introducing DWORD/WORD/etc. Only HRESULT, the GUID layout, and the COM calling
- * convention need dedicated definitions. Recovered game code never includes <windows.h>,
- * so there is no collision. */
+ * convention need dedicated definitions. The guards match the Windows SDK so
+ * host dependencies can include its headers after this one. */
 
 /* COM method result. Original success tests are `hr >= 0`. */
+#ifndef _HRESULT_DEFINED
+#define _HRESULT_DEFINED
 typedef int32_t HRESULT;
+#endif
 
 /* Legacy spelling used by DirectPlay callers. */
-typedef struct GUID {
+#ifndef GUID_DEFINED
+#define GUID_DEFINED
+typedef struct _GUID {
 	uint32_t Data1;
 	uint16_t Data2;
 	uint16_t Data3;
 	uint8_t  Data4[8];
 } GUID;
+#endif
 
 /* COM interface id (GUID layout); same shape as the audio shim's DSCompatGuid. */
 typedef struct DxGuid {

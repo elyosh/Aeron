@@ -104,9 +104,8 @@ is enabled.
 `AERON_ENABLE_COMPAT=ON` builds the graphics, input, sound and WinMM shims.
 Games using DirectPlay also set `AERON_ENABLE_DPLAY=ON` before adding Aeron;
 this option defaults to `OFF` and requires `AERON_ENABLE_COMPAT`.
-DirectPlay requires libcurl 7.68+ with HTTPS and asynchronous DNS, and libjuice
-1.7+, installed with its `LibJuice` CMake package. Point `CMAKE_PREFIX_PATH` at
-their installation prefixes when needed. DirectPlay reuses Aeron's vendored
-cJSON library. The directory interface is declared in
+DirectPlay requires libcurl 7.68+ with HTTPS and asynchronous DNS. Aeron vendors
+and statically links libjuice 1.7.3 for ICE, with its server disabled. DirectPlay
+also reuses Aeron's vendored cJSON library. The directory interface is declared in
 `aeron/compat/dplay_directory.h`; its bounded snapshots and operations are owned
 by the application thread.
