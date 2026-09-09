@@ -67,8 +67,9 @@ void channel_atlas_free(ChannelAtlas* ca);
 bool channel_atlas_add_rect(ChannelAtlas* ca, uint32_t mat_idx, int src_w, int src_h,
 							const uint8_t* src_rgba);
 
-/* Plan: pick atlas width (power-of-2 square up to `max_atlas_size`),
- * compute per-rect positions via skyline pack, set ca.width/.height.
+/* Plan: place rectangles using power-of-two trial widths, then set
+ * ca.width/.height to the occupied bounds, aligned for BC blocks and
+ * exact halving through the generated mip levels, up to `max_atlas_size`.
  * `pad` is the gutter around every sub-rect (caller sets, typically
  * derived from desired mip depth). Returns false if any rect is too
  * large to fit max_atlas_size or on OOM. */

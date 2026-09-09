@@ -169,8 +169,16 @@ static int atlas_plan_page(const AeronAtlasImage* images, const int* order, int 
 		const int height =
 			used_height >= 0 && used_height <= options->max_dimension ? (used_height + 3) & ~3 : 0;
 		if (height) {
+			/* The trial width controls placement, not allocation. Keep every private
+			 * gutter and align the occupied bounds before composing the page. */
+			int used_width = 0;
+			for (int i = 0; i < count; i++) {
+				const int right = rects[i].x + rects[i].w + options->gutter;
+				if (right > used_width)
+					used_width = right;
+			}
 			*out_rects  = rects;
-			*out_width  = width;
+			*out_width  = (used_width + 3) & ~3;
 			*out_height = height;
 			return 1;
 		}

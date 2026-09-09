@@ -43,11 +43,11 @@ bool channel_atlas_add_rect(ChannelAtlas* ca, uint32_t mat_idx, int src_w, int s
 }
 
 /* Round up to the next power of 2 (positive ints). */
-static int next_pow2(int v) {
+static int next_pow2(int v, int limit) {
 	int p = 1;
-	while (p < v)
+	while (p < v && p <= limit / 2)
 		p <<= 1;
-	return p;
+	return p >= v && p <= limit ? p : 0;
 }
 
 static int mip_count_for_pad(int pad) {
@@ -82,7 +82,7 @@ static void sort_rects_largest_first(ChannelRect* r, int n) {
 }
 
 bool channel_atlas_pack(ChannelAtlas* ca, int max_atlas_size, int pad) {
-	if (!ca || max_atlas_size <= 0 || pad < 0)
+	if (!ca || max_atlas_size < 4 || pad < 0)
 		return false;
 	if (ca->rect_count == 0) {
 		/* Empty channel — still allocate a 1×1 placeholder atlas so the
@@ -104,14 +104,15 @@ bool channel_atlas_pack(ChannelAtlas* ca, int max_atlas_size, int pad) {
 		if (ca->rects[i].src_h > max_h)
 			max_h = ca->rects[i].src_h;
 	}
-	int min_dim = (max_w > max_h ? max_w : max_h) + 2 * pad;
-	if (min_dim > max_atlas_size) {
+	int min_dim = max_w > max_h ? max_w : max_h;
+	if (min_dim > max_atlas_size || pad > (max_atlas_size - min_dim) / 2) {
 		fprintf(stderr,
 				"[aeron_gltf_cook] channel %d: source rect %dx%d larger than "
 				"max atlas %d (+%d pad)\n",
 				ca->channel, max_w, max_h, max_atlas_size, pad);
 		return false;
 	}
+	min_dim += 2 * pad;
 
 	/* Sort once; the skyline packer is destructive to position order,
 	 * so we work on a temp copy per width trial. */
@@ -129,10 +130,14 @@ bool channel_atlas_pack(ChannelAtlas* ca, int max_atlas_size, int pad) {
 		return false;
 	}
 
-	int try_w = next_pow2(min_dim);
-	if (try_w < 4)
+	/* Exact halving through the generated levels keeps normalized UVs aligned
+	 * with the downsampled texels. Retain base-level BC block alignment too. */
+	const int mip_count = mip_count_for_pad(pad);
+	const int alignment = mip_count > 3 ? 1 << (mip_count - 1) : 4;
+	int       try_w     = next_pow2(min_dim, max_atlas_size);
+	if (try_w && try_w < 4)
 		try_w = 4;
-	for (; try_w <= max_atlas_size; try_w *= 2) {
+	for (; try_w; try_w = try_w <= max_atlas_size / 2 ? try_w * 2 : 0) {
 		for (int i = 0; i < ca->rect_count; i++) {
 			trial[i].w   = ca->rects[i].src_w;
 			trial[i].h   = ca->rects[i].src_h;
@@ -143,33 +148,35 @@ bool channel_atlas_pack(ChannelAtlas* ca, int max_atlas_size, int pad) {
 		int h = Aeron_AtlasPackRects(trial, ca->rect_count, try_w, pad);
 		if (h < 0)
 			continue;
-		/* Round atlas height up to next power of 2 (BC7 + mip
-		 * generation are happiest on power-of-2 dims). Skip if the
-		 * rounded height would exceed max. */
-		int try_h = next_pow2(h);
-		if (try_h > max_atlas_size)
+		const int64_t aligned_height = ((int64_t)h + alignment - 1) & -(int64_t)alignment;
+		if (aligned_height > max_atlas_size)
 			continue;
-		/* Sanity: every rect must have a valid position (x+w within
-		 * try_w, y+h within try_h). Skyline skips oversize rects
-		 * silently; we'd rather catch that here. */
-		bool fits = true;
+		const int try_h = (int)aligned_height;
+		/* Validate placement and measure the rightmost private gutter. */
+		bool fits       = true;
+		int  used_width = 0;
 		for (int i = 0; i < ca->rect_count; i++) {
 			if (trial[i].x < pad || trial[i].y < pad || trial[i].x + trial[i].w + pad > try_w ||
 				trial[i].y + trial[i].h + pad > try_h) {
 				fits = false;
 				break;
 			}
+			const int right = trial[i].x + trial[i].w + pad;
+			if (right > used_width)
+				used_width = right;
 		}
 		if (!fits)
 			continue;
-		long area = (long)try_w * (long)try_h;
+		const int64_t aligned_width = ((int64_t)used_width + alignment - 1) & -(int64_t)alignment;
+		if (aligned_width > max_atlas_size)
+			continue;
+		long area = (long)aligned_width * (long)try_h;
 		if (best_area == 0 || area < best_area) {
 			best_area = area;
-			best_w    = try_w;
+			best_w    = (int)aligned_width;
 			best_h    = try_h;
 			memcpy(best, trial, (size_t)ca->rect_count * sizeof *trial);
-			/* Square atlases are usually optimal for BC7 + power-of-2
-			 * mip chains; once we've found one that fits, stop. */
+			/* Keep the first fitting layout, with only its occupied bounds allocated. */
 			break;
 		}
 	}
@@ -192,7 +199,7 @@ bool channel_atlas_pack(ChannelAtlas* ca, int max_atlas_size, int pad) {
 	}
 	ca->width     = best_w;
 	ca->height    = best_h;
-	ca->mip_count = mip_count_for_pad(pad);
+	ca->mip_count = mip_count;
 	ca->pad       = pad;
 
 	free(trial);

@@ -54,8 +54,8 @@ int Aeron_AtlasBlitRgba8(uint8_t* atlas, int atlas_width, int atlas_height, cons
 						 AeronAtlasAddressMode address_mode);
 
 /* Builds tightly packed RGBA8 pages. Each frame owns an edge-extruded gutter
- * on all sides. Frames in the result retain input order; packing order is
- * internal and deterministic. */
+ * on all sides. Page dimensions are occupied bounds rounded up to four texels.
+ * Frames in the result retain input order; packing order is internal and deterministic. */
 int  Aeron_AtlasBuildRgba8(AeronAtlasImage* images, int count, const AeronAtlasBuildOptions* options,
 						   AeronCpuAtlas* out);
 void Aeron_AtlasBuildFree(AeronCpuAtlas* atlas);
