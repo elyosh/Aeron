@@ -1224,7 +1224,7 @@ int AeronConfigFile_SaveYaml(AeronVfs* vfs, const AeronConfigFile* config, Aeron
 	AeronConfigFile_FreeSerialized(data);
 	if (!result)
 		return AeronConfig_Fail(error, AERON_CONFIG_ERROR_IO, config->root_kind, config->path, 0, 0,
-								"could not atomically save configuration document");
+								"Could not save your settings. Try again.");
 	return 1;
 }
 

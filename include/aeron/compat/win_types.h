@@ -24,6 +24,7 @@ typedef int32_t HRESULT;
 /* Legacy spelling used by DirectPlay callers. */
 #ifndef GUID_DEFINED
 #define GUID_DEFINED
+
 typedef struct _GUID {
 	uint32_t Data1;
 	uint16_t Data2;

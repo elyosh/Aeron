@@ -504,7 +504,7 @@ int AeronUiFilePicker_Open(AeronUiFilePicker* picker, const AeronUiFilePickerDes
 	char*       normalized = picker_path_normalize(initial ? initial : ".", NULL);
 	if (!normalized || strlen(normalized) >= sizeof picker->location_text) {
 		SDL_free(normalized);
-		picker_copy_error(error, error_capacity, "The initial file picker path is invalid or too long.");
+		picker_copy_error(error, error_capacity, "Could not open this folder. Choose another location.");
 		return 0;
 	}
 	picker->history[0]    = SDL_strdup(normalized);
@@ -674,7 +674,7 @@ AeronUiFilePickerResult AeronUiFilePicker_Draw(AeronUiFilePicker* picker, AeronU
 	AeronUi_NextColumn(ui);
 	size_t   loading_selection = SIZE_MAX;
 	uint32_t list_result =
-		AeronUi_ListBox(ui, "Entries##picker", picker->loading ? NULL : picker->visible,
+		AeronUi_ListBox(ui, "Files and folders##picker", picker->loading ? NULL : picker->visible,
 						picker->loading ? 0 : picker->visible_count,
 						picker->loading ? &loading_selection : &picker->selected_visible, list_height_ref);
 	if (list_result & AERON_UI_LIST_CHANGED)
