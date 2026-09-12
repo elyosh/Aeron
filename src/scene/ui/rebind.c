@@ -19,36 +19,36 @@ static const AeronControllerSnapshot* capture_find_controller(const AeronUiConte
 	return NULL;
 }
 
-static int capture_axis_count(const AeronControllerSnapshot* controller, AeronControllerKind kind) {
-	return kind == AERON_CONTROLLER_KIND_GAMEPAD ? AERON_GAMEPAD_AXIS_COUNT : controller->axis_count;
+static int capture_axis_count(const AeronControllerSnapshot* controller) {
+	return controller->kind == AERON_CONTROLLER_KIND_GAMEPAD    ? AERON_GAMEPAD_AXIS_COUNT
+		   : controller->axis_count < AERON_CONTROLLER_AXIS_MAX ? controller->axis_count
+																: AERON_CONTROLLER_AXIS_MAX;
 }
 
-static int capture_axis_available(const AeronControllerSnapshot* controller, AeronControllerKind kind,
-								  int axis) {
-	return Aeron_ControllerAxisAvailable(controller, kind, axis);
+static int capture_axis_available(const AeronControllerSnapshot* controller, int axis) {
+	return controller->kind != AERON_CONTROLLER_KIND_GAMEPAD ||
+		   (controller->gamepad_available_axes & (1u << axis)) != 0;
 }
 
-static int16_t capture_axis_value(const AeronControllerSnapshot* controller, AeronControllerKind kind,
-								  int axis) {
-	return Aeron_ControllerAxisValue(controller, kind, axis);
+static int16_t capture_axis_value(const AeronControllerSnapshot* controller, int axis) {
+	return controller->kind == AERON_CONTROLLER_KIND_GAMEPAD ? controller->gamepad_axes[axis]
+															 : controller->raw_axes[axis];
 }
 
 static int capture_start(AeronUiContext* ctx, AeronUiId id, const AeronUiControllerCaptureDesc* desc) {
 	const AeronControllerSnapshot* controller = capture_find_controller(ctx, desc->instance_id);
-	const AeronControllerKind      kind =
-		desc->input_kind ? desc->input_kind : (controller ? controller->kind : AERON_CONTROLLER_KIND_NONE);
-	if (!Aeron_ControllerSupportsKind(controller, kind))
+	if (!controller || controller->kind == AERON_CONTROLLER_KIND_NONE)
 		return 0;
 	UiControllerCaptureState* state = &ctx->controller_capture;
 	memset(state, 0, sizeof *state);
 	state->id              = id;
 	state->instance_id     = controller->instance_id;
-	state->controller_kind = kind;
+	state->controller_kind = controller->kind;
 	state->mode            = desc->mode;
-	const int axis_count   = capture_axis_count(controller, kind);
+	const int axis_count   = capture_axis_count(controller);
 	for (int axis = 0; axis < axis_count; ++axis)
-		state->axis_baseline[axis] = capture_axis_value(controller, kind, axis);
-	if (kind == AERON_CONTROLLER_KIND_JOYSTICK) {
+		state->axis_baseline[axis] = capture_axis_value(controller, axis);
+	if (controller->kind == AERON_CONTROLLER_KIND_JOYSTICK) {
 		const int hat_count = controller->hat_count < AERON_CONTROLLER_HAT_MAX ? controller->hat_count
 																			   : AERON_CONTROLLER_HAT_MAX;
 		for (int hat = 0; hat < hat_count; ++hat)
@@ -59,15 +59,13 @@ static int capture_start(AeronUiContext* ctx, AeronUiId id, const AeronUiControl
 
 static int capture_analog_axis(const AeronControllerSnapshot*  controller,
 							   const UiControllerCaptureState* state, AeronUiControllerInput* out) {
-	const AeronControllerKind kind       = state->controller_kind;
-	int                       best_axis  = -1;
-	int                       best_delta = 0;
-	const int                 axis_count = capture_axis_count(controller, kind);
+	int       best_axis  = -1;
+	int       best_delta = 0;
+	const int axis_count = capture_axis_count(controller);
 	for (int axis = 0; axis < axis_count; ++axis) {
-		if (!capture_axis_available(controller, kind, axis))
+		if (!capture_axis_available(controller, axis))
 			continue;
-		const int delta =
-			abs((int)capture_axis_value(controller, kind, axis) - (int)state->axis_baseline[axis]);
+		const int delta = abs((int)capture_axis_value(controller, axis) - (int)state->axis_baseline[axis]);
 		if (delta > best_delta) {
 			best_delta = delta;
 			best_axis  = axis;
@@ -75,19 +73,18 @@ static int capture_analog_axis(const AeronControllerSnapshot*  controller,
 	}
 	if (best_axis < 0 || best_delta < UI_CONTROLLER_CAPTURE_AXIS_DELTA)
 		return 0;
-	out->controller_kind = kind;
+	out->controller_kind = controller->kind;
 	out->value.axis      = best_axis;
 	return 1;
 }
 
-static int capture_button(const AeronControllerSnapshot* controller, AeronControllerKind kind,
-						  AeronUiControllerInput* out) {
-	if (kind == AERON_CONTROLLER_KIND_GAMEPAD) {
+static int capture_button(const AeronControllerSnapshot* controller, AeronUiControllerInput* out) {
+	if (controller->kind == AERON_CONTROLLER_KIND_GAMEPAD) {
 		const uint32_t pressed = controller->gamepad_pressed_buttons & controller->gamepad_available_buttons;
 		for (int button = 0; button < AERON_GAMEPAD_BUTTON_COUNT; ++button) {
 			if (!(pressed & (1u << button)))
 				continue;
-			out->controller_kind = kind;
+			out->controller_kind = controller->kind;
 			out->value.digital =
 				(AeronControllerDigitalSource) { AERON_CONTROLLER_DIGITAL_BUTTON, (uint8_t)button, 0, 0.5f };
 			return 1;
@@ -99,7 +96,7 @@ static int capture_button(const AeronControllerSnapshot* controller, AeronContro
 		for (int button = 0; button < count; ++button) {
 			if (!(controller->raw_pressed_buttons & (UINT64_C(1) << button)))
 				continue;
-			out->controller_kind = kind;
+			out->controller_kind = controller->kind;
 			out->value.digital =
 				(AeronControllerDigitalSource) { AERON_CONTROLLER_DIGITAL_BUTTON, (uint8_t)button, 0, 0.5f };
 			return 1;
@@ -110,15 +107,14 @@ static int capture_button(const AeronControllerSnapshot* controller, AeronContro
 
 static int capture_digital_axis(const AeronControllerSnapshot*  controller,
 								const UiControllerCaptureState* state, AeronUiControllerInput* out) {
-	const AeronControllerKind kind       = state->controller_kind;
-	int                       best_axis  = -1;
-	int                       best_delta = 0;
-	int                       best_value = 0;
-	const int                 axis_count = capture_axis_count(controller, kind);
+	int       best_axis  = -1;
+	int       best_delta = 0;
+	int       best_value = 0;
+	const int axis_count = capture_axis_count(controller);
 	for (int axis = 0; axis < axis_count; ++axis) {
-		if (!capture_axis_available(controller, kind, axis))
+		if (!capture_axis_available(controller, axis))
 			continue;
-		const int value = capture_axis_value(controller, kind, axis);
+		const int value = capture_axis_value(controller, axis);
 		const int delta = abs(value - (int)state->axis_baseline[axis]);
 		if (abs(value) >= UI_CONTROLLER_CAPTURE_AXIS_HALF && delta > best_delta) {
 			best_axis  = axis;
@@ -128,7 +124,7 @@ static int capture_digital_axis(const AeronControllerSnapshot*  controller,
 	}
 	if (best_axis < 0 || best_delta < UI_CONTROLLER_CAPTURE_AXIS_DELTA)
 		return 0;
-	out->controller_kind = kind;
+	out->controller_kind = controller->kind;
 	out->value.digital =
 		(AeronControllerDigitalSource) { best_value < 0 ? AERON_CONTROLLER_DIGITAL_AXIS_NEGATIVE
 														: AERON_CONTROLLER_DIGITAL_AXIS_POSITIVE,
@@ -138,8 +134,7 @@ static int capture_digital_axis(const AeronControllerSnapshot*  controller,
 
 static int capture_hat(const AeronControllerSnapshot* controller, UiControllerCaptureState* state,
 					   AeronUiControllerInput* out) {
-	const AeronControllerKind kind = state->controller_kind;
-	if (kind != AERON_CONTROLLER_KIND_JOYSTICK)
+	if (controller->kind != AERON_CONTROLLER_KIND_JOYSTICK)
 		return 0;
 	static const uint8_t directions[] = { AERON_CONTROLLER_HAT_UP, AERON_CONTROLLER_HAT_RIGHT,
 										  AERON_CONTROLLER_HAT_DOWN, AERON_CONTROLLER_HAT_LEFT };
@@ -156,7 +151,7 @@ static int capture_hat(const AeronControllerSnapshot* controller, UiControllerCa
 		for (size_t direction = 0; direction < sizeof directions / sizeof directions[0]; ++direction) {
 			if (!(value & directions[direction]))
 				continue;
-			out->controller_kind = kind;
+			out->controller_kind = controller->kind;
 			out->value.digital = (AeronControllerDigitalSource) { AERON_CONTROLLER_DIGITAL_HAT, (uint8_t)hat,
 																  directions[direction], 0.5f };
 			return 1;
@@ -191,16 +186,15 @@ AeronUiControllerCaptureResult AeronUi_ControllerCapture(AeronUiContext* ctx, co
 		const AeronControllerSnapshot* controller = capture_find_controller(ctx, state->instance_id);
 		state->elapsed += ctx->dt;
 		if (desc->instance_id != state->instance_id || desc->mode != state->mode || !controller ||
-			(desc->input_kind ? desc->input_kind : controller->kind) != state->controller_kind ||
-			!Aeron_ControllerSupportsKind(controller, state->controller_kind) ||
-			ctx->input->key_pressed[AERON_KEY_ESCAPE] || state->elapsed >= UI_CONTROLLER_CAPTURE_TIMEOUT_S) {
+			controller->kind != state->controller_kind || ctx->input->key_pressed[AERON_KEY_ESCAPE] ||
+			state->elapsed >= UI_CONTROLLER_CAPTURE_TIMEOUT_S) {
 			AeronUi_CancelControllerCapture(ctx);
 			result = AERON_UI_CONTROLLER_CAPTURE_CANCELLED;
 			ui_play_sound(ctx, AERON_UI_SOUND_CANCEL);
 		} else {
 			const int captured = state->mode == AERON_UI_CONTROLLER_CAPTURE_ANALOG_AXIS
 									 ? capture_analog_axis(controller, state, out)
-									 : capture_button(controller, state->controller_kind, out) ||
+									 : capture_button(controller, out) ||
 										   capture_digital_axis(controller, state, out) ||
 										   capture_hat(controller, state, out);
 			if (captured) {

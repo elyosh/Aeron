@@ -319,7 +319,6 @@ typedef enum AeronUiControllerCaptureMode {
 typedef struct AeronUiControllerCaptureDesc {
 	uint32_t                     instance_id;
 	AeronUiControllerCaptureMode mode;
-	AeronControllerKind          input_kind; /* NONE uses the snapshot classification. */
 } AeronUiControllerCaptureDesc;
 
 typedef struct AeronUiControllerInput {

@@ -256,15 +256,9 @@ const AeronControllerSnapshot* Aeron_SelectController(const AeronInputSnapshot* 
 int Aeron_ControllerDigitalSourceDown(const AeronControllerSnapshot*      controller,
 									  const AeronControllerDigitalSource* source, int was_down);
 
-/* Explicit interpretation permits raw access to SDL-recognized gamepads. */
-int     Aeron_ControllerSupportsKind(const AeronControllerSnapshot* controller, AeronControllerKind kind);
-int     Aeron_ControllerAxisAvailable(const AeronControllerSnapshot* controller, AeronControllerKind kind,
-									  int axis);
-int16_t Aeron_ControllerAxisValue(const AeronControllerSnapshot* controller, AeronControllerKind kind,
-								  int axis);
-int     Aeron_ControllerDigitalSourceDownForKind(const AeronControllerSnapshot*      controller,
-												 AeronControllerKind                 kind,
-												 const AeronControllerDigitalSource* source, int was_down);
+/* Read axes using the snapshot's standardized gamepad or raw joystick classification. */
+int     Aeron_ControllerAxisAvailable(const AeronControllerSnapshot* controller, int axis);
+int16_t Aeron_ControllerAxisValue(const AeronControllerSnapshot* controller, int axis);
 
 /* Parses a standard SDL gamepad axis name such as "leftx" or "righttrigger". */
 AeronGamepadAxis Aeron_GamepadAxisFromName(const char* name);
