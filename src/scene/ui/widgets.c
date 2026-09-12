@@ -403,7 +403,13 @@ void AeronUi_ControllerAxisMeter(AeronUiContext* ctx, const char* label, float v
 	ui_draw_fill(ctx, &track, ctx->theme.slider_track, clip);
 	const float  center = track.x + track.w * 0.5f;
 	const UiRect dead   = { center - track.w * 0.5f * deadzone, track.y, track.w * deadzone, track.h };
-	ui_draw_fill(ctx, &dead, ctx->theme.widget_bg_hot, clip);
+	/* A muted accent distinguishes the deadzone while leaving the live marker prominent. */
+	AeronUiColor deadzone_color;
+	for (int channel = 0; channel < 3; ++channel)
+		deadzone_color[channel] =
+			ctx->theme.slider_track[channel] * 0.75f + ctx->theme.accent[channel] * 0.25f;
+	deadzone_color[3] = ctx->theme.slider_track[3];
+	ui_draw_fill(ctx, &dead, deadzone_color, clip);
 	const UiRect center_line = { ui_snap(center), track.y, fmaxf(1.0f, ui_ref(ctx, 1.0f)), track.h };
 	ui_draw_fill(ctx, &center_line, ctx->theme.separator, clip);
 	const float  marker_x = center + value * track.w * 0.5f;
