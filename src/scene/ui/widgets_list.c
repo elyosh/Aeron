@@ -100,7 +100,7 @@ uint32_t AeronUi_ListBox(AeronUiContext* ctx, const char* label, const AeronUiLi
 	ui_widget_behavior(ctx, id, &rect, 1);
 	uint32_t result = AERON_UI_LIST_NONE;
 
-	if (ui_is_focused(ctx, id)) {
+	if (ui_is_focused(ctx, id) && !ui_capture_active(ctx)) {
 		const int moves = ctx->nav[UI_DIR_DOWN] - ctx->nav[UI_DIR_UP];
 		if (moves) {
 			int consumed        = 0;

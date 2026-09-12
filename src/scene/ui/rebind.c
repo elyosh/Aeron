@@ -209,7 +209,7 @@ AeronUiControllerCaptureResult AeronUi_ControllerCapture(AeronUiContext* ctx, co
 		ctx->nav_cancel      = 0;
 		ctx->cancel_consumed = 1;
 		ui_record_widget(ctx, id, &row, 1);
-	} else if (enabled && ui_widget_behavior(ctx, id, &row, 1)) {
+	} else if (enabled && !ui_capture_active(ctx) && ui_widget_behavior(ctx, id, &row, 1)) {
 		if (capture_start(ctx, id, desc)) {
 			result                        = AERON_UI_CONTROLLER_CAPTURE_STARTED;
 			ctx->controller_capture_frame = 1;

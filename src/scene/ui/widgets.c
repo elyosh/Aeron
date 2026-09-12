@@ -133,10 +133,10 @@ static float ui_slider_core(AeronUiContext* ctx, AeronUiId id, const char* label
 	const int adjust = ui_consume_adjust(ctx, id);
 	t += (float)adjust * step_t;
 	if (ui_is_focused(ctx, id)) {
-		if (ctx->input->key_pressed[AERON_KEY_HOME]) {
+		if (!ui_capture_active(ctx) && ctx->input->key_pressed[AERON_KEY_HOME]) {
 			t = 0.0f;
 		}
-		if (ctx->input->key_pressed[AERON_KEY_END]) {
+		if (!ui_capture_active(ctx) && ctx->input->key_pressed[AERON_KEY_END]) {
 			t = 1.0f;
 		}
 	}

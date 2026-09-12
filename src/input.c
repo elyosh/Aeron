@@ -2,6 +2,35 @@
 
 #include <string.h>
 
+const char* AeronKey_Name(AeronKey key) {
+	return key > 0 && key < AERON_KEY_COUNT ? SDL_GetScancodeName((SDL_Scancode)key) : "";
+}
+
+uint8_t AeronKey_Modifier(AeronKey key) {
+	switch (key) {
+		case AERON_KEY_LSHIFT:
+		case AERON_KEY_RSHIFT:
+			return AERON_KEY_MOD_SHIFT;
+		case AERON_KEY_LCTRL:
+		case AERON_KEY_RCTRL:
+			return AERON_KEY_MOD_CTRL;
+		case AERON_KEY_LALT:
+		case AERON_KEY_RALT:
+			return AERON_KEY_MOD_ALT;
+		case AERON_KEY_LGUI:
+		case AERON_KEY_RGUI:
+			return AERON_KEY_MOD_GUI;
+		default:
+			return 0;
+	}
+}
+
+static uint8_t Aeron_KeyModifiers(SDL_Keymod mod) {
+	return ((mod & SDL_KMOD_SHIFT) ? AERON_KEY_MOD_SHIFT : 0) |
+		   ((mod & SDL_KMOD_CTRL) ? AERON_KEY_MOD_CTRL : 0) | ((mod & SDL_KMOD_ALT) ? AERON_KEY_MOD_ALT : 0) |
+		   ((mod & SDL_KMOD_GUI) ? AERON_KEY_MOD_GUI : 0);
+}
+
 int AeronKey_FromName(const char* name, AeronKey* out_key) {
 	SDL_Scancode scancode;
 
@@ -17,6 +46,8 @@ int AeronKey_FromName(const char* name, AeronKey* out_key) {
 }
 
 void Aeron_BeginInputFrame(AeronInputSnapshot* input) {
+	input->key_event_count     = 0;
+	input->key_events_overflow = 0;
 	memset(input->key_pressed, 0, sizeof(input->key_pressed));
 	memset(input->key_released, 0, sizeof(input->key_released));
 	memset(input->key_typed, 0, sizeof(input->key_typed));
@@ -145,6 +176,15 @@ void Aeron_HandleEvent(const SDL_Event* event) {
 		case SDL_EVENT_KEY_UP:
 			if (event->key.scancode >= 0 && event->key.scancode < AERON_KEY_COUNT) {
 				const int scancode = event->key.scancode;
+				if (g_aeron.input.key_event_count < AERON_KEY_EVENT_CAPACITY) {
+					g_aeron.input.key_events[g_aeron.input.key_event_count++] = (AeronKeyEvent) {
+						.chord  = { (uint16_t)scancode, Aeron_KeyModifiers(event->key.mod) },
+						.down   = event->key.down,
+						.repeat = event->key.repeat,
+					};
+				} else {
+					g_aeron.input.key_events_overflow = 1;
+				}
 				if (event->key.down) {
 					if (!g_aeron.input.key_down[scancode] && !event->key.repeat) {
 						g_aeron.input.key_pressed[scancode] = 1;

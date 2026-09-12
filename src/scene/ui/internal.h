@@ -103,6 +103,15 @@ typedef struct UiControllerCaptureState {
 	uint8_t                      hat_armed[AERON_CONTROLLER_HAT_MAX];
 } UiControllerCaptureState;
 
+typedef struct UiKeyboardCaptureState {
+	AeronUiId id;
+	uint64_t  activation_frame;
+	float     elapsed;
+	uint16_t  candidate;
+	int       armed;
+	int       multiple_modifiers;
+} UiKeyboardCaptureState;
+
 /* Navigation directions (repeat accumulator index). */
 enum { UI_DIR_UP = 0, UI_DIR_DOWN = 1, UI_DIR_LEFT = 2, UI_DIR_RIGHT = 3, UI_DIR_COUNT = 4 };
 
@@ -179,6 +188,8 @@ struct AeronUiContext {
 	int value_changed; /* an ADJUST sound was already played */
 
 	/* Selected-controller capture (rebind.c). */
+	UiKeyboardCaptureState   keyboard_capture;
+	int                      keyboard_capture_frame;
 	UiControllerCaptureState controller_capture;
 	int                      controller_capture_frame;
 
@@ -202,6 +213,11 @@ struct AeronUiContext {
 	AeronRenderTarget* fallback_rt;
 	int                fallback_w, fallback_h;
 };
+
+static inline int ui_capture_active(const AeronUiContext* ctx) {
+	return ctx->controller_capture.id || ctx->keyboard_capture.id || ctx->controller_capture_frame ||
+		   ctx->keyboard_capture_frame;
+}
 
 /* ---- context.c ---- */
 AeronUiId    ui_make_id(AeronUiContext* ctx, const char* label);

@@ -217,7 +217,8 @@ void AeronUi_BeginFrame(AeronUiContext* ctx, const AeronUiFrameDesc* frame) {
 	ctx->cancel_consumed          = 0;
 	ctx->value_changed            = 0;
 	ctx->scroll_count             = 0;
-	ctx->controller_capture_frame = 0;
+	ctx->controller_capture_frame = ctx->controller_capture.id != 0;
+	ctx->keyboard_capture_frame   = ctx->keyboard_capture.id != 0;
 
 	/* Open fade: restart when the UI was absent last frame. */
 	if (ctx->theme.open_fade_s > 0.0f) {
@@ -262,7 +263,7 @@ AeronUiOutput AeronUi_EndFrame(AeronUiContext* ctx) {
 	out.wants_keyboard = ctx->any_window;
 	out.wants_mouse    = ctx->any_window;
 	out.wants_gamepad  = ctx->any_window;
-	out.capture_all    = ctx->controller_capture_frame;
+	out.capture_all    = ctx->controller_capture_frame || ctx->keyboard_capture_frame;
 	if (ctx->any_window && ctx->nav_cancel > 0 && !ctx->cancel_consumed) {
 		out.cancel_pressed = 1;
 		ui_play_sound(ctx, AERON_UI_SOUND_CANCEL);

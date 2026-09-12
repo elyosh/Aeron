@@ -786,6 +786,7 @@ add_library(aeron_scene STATIC
     src/scene/ui/focus.c
     src/scene/ui/layout.c
     src/scene/ui/rebind.c
+    src/scene/ui/rebind_keyboard.c
     src/scene/ui/submit.c
     src/scene/ui/theme.c
     src/scene/ui/widgets.c

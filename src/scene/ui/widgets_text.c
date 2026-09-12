@@ -208,9 +208,10 @@ static uint32_t input_text(AeronUiContext* ctx, const char* label, char* value, 
 			ctx->text_anchor--;
 	}
 	const int submit_before =
-		was_editing && ui_is_focused(ctx, id) &&
+		was_editing && !ui_capture_active(ctx) && ui_is_focused(ctx, id) &&
 		(ctx->input->key_pressed[AERON_KEY_RETURN] || ctx->input->key_pressed[AERON_KEY_KP_ENTER]);
-	if (was_editing && ctx->input->key_pressed[AERON_KEY_SPACE] && ctx->nav_accept > 0) {
+	if (was_editing && !ui_capture_active(ctx) && ctx->input->key_pressed[AERON_KEY_SPACE] &&
+		ctx->nav_accept > 0) {
 		ctx->nav_accept--;
 	}
 	const int    activated = ui_widget_behavior(ctx, id, &input_row, 1);
@@ -246,7 +247,7 @@ static uint32_t input_text(AeronUiContext* ctx, const char* label, char* value, 
 		ctx->text_cursor  = text_hit_offset(ctx, value, length, text_px, local);
 	}
 
-	if (ctx->text_edit_id == id && !started) {
+	if (ctx->text_edit_id == id && !started && !ui_capture_active(ctx)) {
 		const int shift    = ctx->input->key_down[AERON_KEY_LSHIFT] || ctx->input->key_down[AERON_KEY_RSHIFT];
 		const int shortcut = text_platform_shortcut(ctx->input);
 		size_t    begin, end;

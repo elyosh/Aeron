@@ -172,7 +172,7 @@ typedef struct AeronUiOutput {
 	int wants_keyboard;
 	int wants_mouse;
 	int wants_gamepad;
-	int capture_all;    /* controller capture active: suppress everything */
+	int capture_all;    /* keyboard/controller capture owns this frame: suppress everything */
 	int cancel_pressed; /* unconsumed cancel — pop the game screen */
 } AeronUiOutput;
 
@@ -345,6 +345,20 @@ AeronUiControllerCaptureResult AeronUi_ControllerCapture(AeronUiContext* ctx, co
 														 const AeronUiControllerCaptureDesc* desc,
 														 AeronUiControllerInput*             out);
 void                           AeronUi_CancelControllerCapture(AeronUiContext* ctx);
+
+typedef enum AeronUiKeyboardCaptureResult {
+	AERON_UI_KEYBOARD_CAPTURE_NONE = 0,
+	AERON_UI_KEYBOARD_CAPTURE_STARTED,
+	AERON_UI_KEYBOARD_CAPTURE_CAPTURED,
+	AERON_UI_KEYBOARD_CAPTURE_CANCELLED,
+} AeronUiKeyboardCaptureResult;
+
+/* Escape cancels. Modifier keys alone are captured on release. */
+AeronUiKeyboardCaptureResult AeronUi_KeyboardCapture(AeronUiContext* ctx, const char* label,
+													 const char* display, AeronKeyChord* out);
+void                         AeronUi_CancelKeyboardCapture(AeronUiContext* ctx);
+/* Includes ownership of the completion/cancellation frame. */
+int AeronUi_KeyboardCaptureActive(const AeronUiContext* ctx);
 
 /* Read-only signed axis visualization with center, deadzone, live marker,
  * and numeric value. */

@@ -83,6 +83,31 @@ typedef enum AeronKey {
  * Writes out_key only on success. This operation is not thread-safe. */
 int AeronKey_FromName(const char* name, AeronKey* out_key);
 
+/* Physical-key names are borrowed from SDL and remain valid until shutdown. */
+const char* AeronKey_Name(AeronKey key);
+
+typedef enum AeronKeyModifiers {
+	AERON_KEY_MOD_SHIFT = 1,
+	AERON_KEY_MOD_CTRL  = 2,
+	AERON_KEY_MOD_ALT   = 4,
+	AERON_KEY_MOD_GUI   = 8,
+} AeronKeyModifiers;
+
+typedef struct AeronKeyChord {
+	uint16_t key;
+	uint8_t  modifiers;
+} AeronKeyChord;
+
+typedef struct AeronKeyEvent {
+	AeronKeyChord chord;
+	uint8_t       down;
+	uint8_t       repeat;
+} AeronKeyEvent;
+
+#define AERON_KEY_EVENT_CAPACITY 256
+/* Modifier group contributed by this physical key, or zero. */
+uint8_t AeronKey_Modifier(AeronKey key);
+
 /* Bit flags used for mouse button state and button-edge snapshots. */
 typedef enum AeronMouseButton {
 	AERON_MOUSE_BUTTON_LEFT   = 1u << 0,
@@ -228,6 +253,10 @@ typedef struct AeronInputSnapshot {
 	int                     window_width;
 	int                     window_height;
 	int                     has_focus;
+	/* Ordered events supplement the legacy arrays; overflow leaves those arrays intact. */
+	AeronKeyEvent key_events[AERON_KEY_EVENT_CAPACITY];
+	uint16_t      key_event_count;
+	uint8_t       key_events_overflow;
 } AeronInputSnapshot;
 
 typedef struct AeronControllerSelector {

@@ -105,7 +105,7 @@ void ui_collect_input(AeronUiContext* ctx) {
 
 	/* Capture reads the raw snapshot directly. Keep directional state in
 	 * sync, but do not expose the same input as UI navigation. */
-	if (ctx->controller_capture.id) {
+	if (ui_capture_active(ctx)) {
 		for (int dir = 0; dir < UI_DIR_COUNT; dir++) {
 			ctx->held_prev[dir] = ui_pad_dir_held(ctx, dir);
 			ctx->repeat_t[dir]  = 0.0f;
@@ -325,7 +325,9 @@ void ui_resolve_navigation(AeronUiContext* ctx) {
 	if (!ctx->any_window || ctx->widget_count == 0) {
 		ctx->focus_id = 0;
 		memset(&ctx->controller_capture, 0, sizeof ctx->controller_capture);
+		AeronUi_CancelKeyboardCapture(ctx);
 		ctx->controller_capture_frame = 0;
+		ctx->keyboard_capture_frame   = 0;
 		ctx->text_edit_id             = 0;
 		return;
 	}
@@ -336,6 +338,8 @@ void ui_resolve_navigation(AeronUiContext* ctx) {
 		memset(&ctx->controller_capture, 0, sizeof ctx->controller_capture);
 		ctx->controller_capture_frame = 0;
 	}
+	if (ctx->keyboard_capture.id && ui_find_widget(ctx, ctx->keyboard_capture.id) < 0)
+		AeronUi_CancelKeyboardCapture(ctx);
 	if (ctx->text_edit_id && ui_find_widget(ctx, ctx->text_edit_id) < 0) {
 		ctx->text_edit_id = 0;
 	}
