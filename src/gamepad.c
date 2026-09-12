@@ -140,14 +140,44 @@ static int Aeron_ControllerAxisDigitalDown(int16_t value, const AeronControllerD
 	return normalized >= threshold;
 }
 
+int Aeron_ControllerSupportsKind(const AeronControllerSnapshot* controller, AeronControllerKind kind) {
+	return controller && controller->connected &&
+		   (kind == AERON_CONTROLLER_KIND_JOYSTICK ||
+			(kind == AERON_CONTROLLER_KIND_GAMEPAD && controller->kind == AERON_CONTROLLER_KIND_GAMEPAD));
+}
+
+int Aeron_ControllerAxisAvailable(const AeronControllerSnapshot* controller, AeronControllerKind kind,
+								  int axis) {
+	if (!Aeron_ControllerSupportsKind(controller, kind) || axis < 0)
+		return 0;
+	return kind == AERON_CONTROLLER_KIND_GAMEPAD
+			   ? axis < AERON_GAMEPAD_AXIS_COUNT && (controller->gamepad_available_axes & (1u << axis))
+			   : axis < controller->axis_count && axis < AERON_CONTROLLER_AXIS_MAX;
+}
+
+int16_t Aeron_ControllerAxisValue(const AeronControllerSnapshot* controller, AeronControllerKind kind,
+								  int axis) {
+	if (!Aeron_ControllerAxisAvailable(controller, kind, axis))
+		return 0;
+	return kind == AERON_CONTROLLER_KIND_GAMEPAD ? controller->gamepad_axes[axis]
+												 : controller->raw_axes[axis];
+}
+
 int Aeron_ControllerDigitalSourceDown(const AeronControllerSnapshot*      controller,
 									  const AeronControllerDigitalSource* source, int was_down) {
-	if (!controller || !controller->connected || !source) {
+	return Aeron_ControllerDigitalSourceDownForKind(
+		controller, controller ? controller->kind : AERON_CONTROLLER_KIND_NONE, source, was_down);
+}
+
+int Aeron_ControllerDigitalSourceDownForKind(const AeronControllerSnapshot*      controller,
+											 AeronControllerKind                 kind,
+											 const AeronControllerDigitalSource* source, int was_down) {
+	if (!Aeron_ControllerSupportsKind(controller, kind) || !source) {
 		return 0;
 	}
 	switch (source->kind) {
 		case AERON_CONTROLLER_DIGITAL_BUTTON:
-			if (controller->kind == AERON_CONTROLLER_KIND_GAMEPAD) {
+			if (kind == AERON_CONTROLLER_KIND_GAMEPAD) {
 				uint32_t bit;
 				if (source->index >= AERON_GAMEPAD_BUTTON_COUNT) {
 					return 0;
@@ -156,14 +186,14 @@ int Aeron_ControllerDigitalSourceDown(const AeronControllerSnapshot*      contro
 				return (controller->gamepad_available_buttons & bit) != 0 &&
 					   (controller->gamepad_buttons & bit) != 0;
 			}
-			if (controller->kind == AERON_CONTROLLER_KIND_JOYSTICK &&
-				source->index < controller->button_count && source->index < AERON_CONTROLLER_BUTTON_MAX) {
+			if (kind == AERON_CONTROLLER_KIND_JOYSTICK && source->index < controller->button_count &&
+				source->index < AERON_CONTROLLER_BUTTON_MAX) {
 				return (controller->raw_buttons & (UINT64_C(1) << source->index)) != 0;
 			}
 			return 0;
 		case AERON_CONTROLLER_DIGITAL_AXIS_POSITIVE:
 		case AERON_CONTROLLER_DIGITAL_AXIS_NEGATIVE:
-			if (controller->kind == AERON_CONTROLLER_KIND_GAMEPAD) {
+			if (kind == AERON_CONTROLLER_KIND_GAMEPAD) {
 				if (source->index >= AERON_GAMEPAD_AXIS_COUNT ||
 					!(controller->gamepad_available_axes & (1u << source->index))) {
 					return 0;
@@ -171,14 +201,14 @@ int Aeron_ControllerDigitalSourceDown(const AeronControllerSnapshot*      contro
 				return Aeron_ControllerAxisDigitalDown(controller->gamepad_axes[source->index], source,
 													   was_down);
 			}
-			if (controller->kind == AERON_CONTROLLER_KIND_JOYSTICK &&
-				source->index < controller->axis_count && source->index < AERON_CONTROLLER_AXIS_MAX) {
+			if (kind == AERON_CONTROLLER_KIND_JOYSTICK && source->index < controller->axis_count &&
+				source->index < AERON_CONTROLLER_AXIS_MAX) {
 				return Aeron_ControllerAxisDigitalDown(controller->raw_axes[source->index], source, was_down);
 			}
 			return 0;
 		case AERON_CONTROLLER_DIGITAL_HAT:
-			if (controller->kind != AERON_CONTROLLER_KIND_JOYSTICK ||
-				source->index >= controller->hat_count || source->index >= AERON_CONTROLLER_HAT_MAX ||
+			if (kind != AERON_CONTROLLER_KIND_JOYSTICK || source->index >= controller->hat_count ||
+				source->index >= AERON_CONTROLLER_HAT_MAX ||
 				(source->hat_direction != AERON_CONTROLLER_HAT_UP &&
 				 source->hat_direction != AERON_CONTROLLER_HAT_RIGHT &&
 				 source->hat_direction != AERON_CONTROLLER_HAT_DOWN &&

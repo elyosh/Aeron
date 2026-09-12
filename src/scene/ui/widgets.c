@@ -18,8 +18,9 @@ UiRect ui_form_row_split(AeronUiContext* ctx, const char* label, const UiRect* r
 	const UiRect content = { row->x + pad_x, row->y + pad_y, row->w - 2.0f * pad_x, row->h - 2.0f * pad_y };
 
 	const float fraction = fminf(fmaxf(ctx->theme.label_fraction, 0.1f), 0.9f);
-	const float label_w  = ui_snap(content.w * fraction);
-	const float text_px  = ui_ref(ctx, ctx->theme.text_px);
+	/* A hidden label leaves the whole row available to the control. */
+	const float label_w = ui_label_text_len(label) ? ui_snap(content.w * fraction) : 0.0f;
+	const float text_px = ui_ref(ctx, ctx->theme.text_px);
 
 	ui_draw_text(ctx, ui_font_regular(ctx), content.x, content.y + (content.h - text_px) * 0.5f,
 				 AERON_TEXT_LEFT, text_px, ctx->theme.text, ui_label_text(label), ui_label_text_len(label),
@@ -296,8 +297,16 @@ int AeronUi_SelectorEnabled(AeronUiContext* ctx, const char* label, int* index, 
 				 ctx->theme.text_dim, "<", -1, clip);
 	ui_draw_text(ctx, ui_font_regular(ctx), control.x + control.w - arrow_w * 0.5f, text_y, AERON_TEXT_CENTER,
 				 text_px, ctx->theme.text_dim, ">", -1, clip);
-	ui_draw_text(ctx, ui_font_regular(ctx), control.x + control.w * 0.5f, text_y, AERON_TEXT_CENTER, text_px,
-				 text_color, options[result], -1, clip);
+	/* Keep long values inside the arrow zones without changing navigation geometry. */
+	const float value_width     = ui_text_width(ctx, ui_font_regular(ctx), text_px, options[result], -1);
+	const float available_width = fmaxf(0.0f, control.w - 2.0f * arrow_w - ui_ref(ctx, 12.0f));
+	const float value_px        = value_width > available_width && value_width > 0.0f
+									  ? text_px * available_width / value_width
+									  : text_px;
+	if (value_px > 0.0f)
+		ui_draw_text(ctx, ui_font_regular(ctx), control.x + control.w * 0.5f,
+					 row.y + (row.h - value_px) * 0.5f, AERON_TEXT_CENTER, value_px, text_color,
+					 options[result], -1, clip);
 
 	if (enabled && ui_is_focused(ctx, id)) {
 		ui_draw_row_focus_ring(ctx, &row, clip);
@@ -404,6 +413,27 @@ void AeronUi_ControllerAxisMeter(AeronUiContext* ctx, const char* label, float v
 	char text[32];
 	snprintf(text, sizeof text, "%+.2f", (double)value);
 	const float text_px = ui_ref(ctx, ctx->theme.text_px);
+	ui_draw_text(ctx, ui_font_regular(ctx), control.x + control.w, row.y + (row.h - text_px) * 0.5f,
+				 AERON_TEXT_RIGHT, text_px, ctx->theme.accent, text, -1, clip);
+}
+
+void AeronUi_PercentageMeter(AeronUiContext* ctx, const char* label, float value) {
+	UiRect row;
+	if (!ctx || !ctx->frame_active || !ui_layout_row(ctx, ui_ref(ctx, ctx->theme.row_height), &row))
+		return;
+	value                     = isfinite(value) ? fminf(fmaxf(value, 0.0f), 1.0f) : 0.0f;
+	const AeronRectI* clip    = ui_current_clip(ctx);
+	const UiRect      control = ui_form_row_split(ctx, label, &row, clip);
+	char              text[32];
+	snprintf(text, sizeof text, "%.1f%%", (double)value * 100.0);
+	const float  text_px = ui_ref(ctx, ctx->theme.text_px);
+	const float  value_w = ui_text_width(ctx, ui_font_regular(ctx), text_px, "100.0%", -1);
+	const float  track_h = ui_snap(fminf(control.h * 0.5f, ui_ref(ctx, 14.0f)));
+	const UiRect track   = { control.x, control.y + (control.h - track_h) * 0.5f,
+							 fmaxf(0.0f, control.w - value_w - ui_ref(ctx, 10.0f)), track_h };
+	ui_draw_fill(ctx, &track, ctx->theme.slider_track, clip);
+	const UiRect fill = { track.x, track.y, track.w * value, track.h };
+	ui_draw_fill(ctx, &fill, ctx->theme.accent, clip);
 	ui_draw_text(ctx, ui_font_regular(ctx), control.x + control.w, row.y + (row.h - text_px) * 0.5f,
 				 AERON_TEXT_RIGHT, text_px, ctx->theme.accent, text, -1, clip);
 }

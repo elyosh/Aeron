@@ -319,9 +319,11 @@ typedef enum AeronUiControllerCaptureMode {
 typedef struct AeronUiControllerCaptureDesc {
 	uint32_t                     instance_id;
 	AeronUiControllerCaptureMode mode;
+	AeronControllerKind          input_kind; /* NONE uses the snapshot classification. */
 } AeronUiControllerCaptureDesc;
 
 typedef struct AeronUiControllerInput {
+	uint32_t            instance_id;
 	AeronControllerKind controller_kind;
 
 	union {
@@ -348,6 +350,8 @@ void                           AeronUi_CancelControllerCapture(AeronUiContext* c
 /* Read-only signed axis visualization with center, deadzone, live marker,
  * and numeric value. */
 void AeronUi_ControllerAxisMeter(AeronUiContext* ctx, const char* label, float value, float deadzone);
+/* Read-only 0..1 bar with a single percentage readout. */
+void AeronUi_PercentageMeter(AeronUiContext* ctx, const char* label, float value);
 
 #ifdef __cplusplus
 }
