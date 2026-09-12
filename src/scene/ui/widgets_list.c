@@ -96,11 +96,14 @@ uint32_t AeronUi_ListBox(AeronUiContext* ctx, const char* label, const AeronUiLi
 		*selected = SIZE_MAX;
 	}
 
-	const int accept_before = ui_is_focused(ctx, id) && ctx->nav_accept > 0;
+	/* Custom list interactions must honor the same modal scope as widget behavior. */
+	const int interactive = ctx->scope_depth >= ctx->top_scope_prev;
+	const int accept_before =
+		interactive && !ui_capture_active(ctx) && ui_is_focused(ctx, id) && ctx->nav_accept > 0;
 	ui_widget_behavior(ctx, id, &rect, 1);
 	uint32_t result = AERON_UI_LIST_NONE;
 
-	if (ui_is_focused(ctx, id) && !ui_capture_active(ctx)) {
+	if (interactive && ui_is_focused(ctx, id) && !ui_capture_active(ctx)) {
 		const int moves = ctx->nav[UI_DIR_DOWN] - ctx->nav[UI_DIR_UP];
 		if (moves) {
 			int consumed        = 0;
@@ -121,12 +124,13 @@ uint32_t AeronUi_ListBox(AeronUiContext* ctx, const char* label, const AeronUiLi
 			*selected = list_find_enabled(items, item_count, item_count - 1, -1);
 	}
 
-	if (ui_mouse_in(ctx, &rect, parent_clip) && ctx->input->mouse.wheel_y) {
+	if (interactive && ui_mouse_in(ctx, &rect, parent_clip) && ctx->input->mouse.wheel_y) {
 		scroll -= (float)ctx->input->mouse.wheel_y * row_h * 3.0f;
 	}
 	scroll = fminf(fmaxf(scroll, 0.0f), max_scroll);
 
-	if (ctx->mouse_present && ctx->mouse_x < rect.x + content_w && ui_mouse_in(ctx, &rect, parent_clip) &&
+	if (interactive && ctx->mouse_present && ctx->mouse_x < rect.x + content_w &&
+		ui_mouse_in(ctx, &rect, parent_clip) &&
 		(ctx->input->mouse.pressed_buttons & AERON_MOUSE_BUTTON_LEFT)) {
 		const size_t hit = (size_t)fmaxf(0.0f, floorf((ctx->mouse_y - rect.y + scroll) / row_h));
 		if (hit < item_count && !(items[hit].flags & AERON_UI_LIST_ITEM_DISABLED)) {
@@ -191,11 +195,11 @@ uint32_t AeronUi_ListBox(AeronUiContext* ctx, const char* label, const AeronUiLi
 		const UiRect thumb   = { track.x, track.y + (max_scroll > 0.0f ? scroll / max_scroll * travel : 0.0f),
 								 track.w, thumb_h };
 		const AeronUiId thumb_id = id ^ 0x9e3779b9u;
-		if (ui_mouse_in(ctx, &track, parent_clip) &&
+		if (interactive && ui_mouse_in(ctx, &track, parent_clip) &&
 			(ctx->input->mouse.pressed_buttons & AERON_MOUSE_BUTTON_LEFT))
 			ctx->active_id = thumb_id;
 		if (ctx->active_id == thumb_id) {
-			if (ctx->input->mouse.released_buttons & AERON_MOUSE_BUTTON_LEFT) {
+			if (!interactive || (ctx->input->mouse.released_buttons & AERON_MOUSE_BUTTON_LEFT)) {
 				ctx->active_id = 0;
 			} else if (travel > 0.0f) {
 				scroll =
