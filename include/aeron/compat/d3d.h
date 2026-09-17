@@ -192,6 +192,19 @@ typedef enum D3DRENDERSTATETYPE {
 	D3DRENDERSTATE_FOGTABLEEND        = 37
 } D3DRENDERSTATETYPE;
 
+/* Direct3D transform and lighting capabilities. */
+typedef struct D3DTRANSFORMCAPS {
+	uint32_t dwSize;
+	uint32_t dwCaps;
+} D3DTRANSFORMCAPS;
+
+typedef struct D3DLIGHTINGCAPS {
+	uint32_t dwSize;
+	uint32_t dwCaps;
+	uint32_t dwLightingModel;
+	uint32_t dwNumLights;
+} D3DLIGHTINGCAPS;
+
 /* Device capability descriptor enumerated via IDirect3D::EnumDevices and read by
  * std3D_EnumDevicesCallback @0x5991CC. Exact DX5 layout (D3DDEVICEDESC = 252
  * bytes, D3DPRIMCAPS = 56); the caps sub-structs the recovered code does not read

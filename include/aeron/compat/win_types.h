@@ -11,8 +11,8 @@ extern "C" {
  *
  * The codebase uses stdint types with DirectX field names (see
  * assets/model_texture.h), so the curated ddraw.h / d3d.h do the same rather than
- * introducing DWORD/WORD/etc. Only HRESULT, the GUID layout, and the COM calling
- * convention need dedicated definitions. The guards match the Windows SDK so
+ * introducing DWORD/WORD/etc. Only HRESULT, RGBQUAD, the GUID layout, and the COM
+ * calling convention need dedicated definitions. The guards match the Windows SDK so
  * host dependencies can include its headers after this one. */
 
 /* COM method result. Original success tests are `hr >= 0`. */
@@ -32,6 +32,14 @@ typedef struct _GUID {
 	uint8_t  Data4[8];
 } GUID;
 #endif
+
+/* Four-byte BGR/reserved palette entry used by BMP/DIB records. */
+typedef struct RGBQUAD {
+	uint8_t rgbBlue;
+	uint8_t rgbGreen;
+	uint8_t rgbRed;
+	uint8_t rgbReserved;
+} RGBQUAD;
 
 /* COM interface id (GUID layout); same shape as the audio shim's DSCompatGuid. */
 typedef struct DxGuid {
