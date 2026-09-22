@@ -1,6 +1,8 @@
 #ifndef AERON_COMPAT_DSOUND_H
 #define AERON_COMPAT_DSOUND_H
 
+#include "aeron/compat/win_types.h"
+
 #include <stdint.h>
 
 #ifdef __cplusplus
@@ -19,6 +21,8 @@ extern "C" {
  *
  * HRESULT convention: methods return 0 (DS_OK) on success and a negative value
  * on failure, matching the original `result >= 0` success tests. */
+
+enum { DSSCL_PRIORITY = 2 };
 
 /* WAVEFORMATEX-compatible PCM format descriptor (matches the on-disk WAV
  * `fmt ` chunk layout). */
@@ -88,6 +92,7 @@ enum {
 	DSBCAPS_PRIMARYBUFFER       = 0x00000001,
 	DSBCAPS_STATIC              = 0x00000002,
 	DSBCAPS_LOCHARDWARE         = 0x00000004,
+	DSBCAPS_LOCSOFTWARE         = 0x00000008,
 	DSBCAPS_CTRL3D              = 0x00000010,
 	DSBCAPS_CTRLFREQUENCY       = 0x00000020,
 	DSBCAPS_CTRLPAN             = 0x00000040,
@@ -116,13 +121,63 @@ typedef struct DSCompatGuid {
 extern const DSCompatGuid IID_IDirectSound3DBuffer;
 extern const DSCompatGuid IID_IDirectSound3DListener;
 
+/* DirectSound device ABI. The shim and recovered callers share these slots. */
+typedef struct IDirectSoundVtbl {
+	int(AERON_DXAPI* QueryInterface)(void* self, const void* iid, void** out);
+	int(AERON_DXAPI* AddRef)(void* self);
+	int(AERON_DXAPI* Release)(void* self);
+	int(AERON_DXAPI* CreateSoundBuffer)(void* self, const DSBufferDesc* desc, void** buffer, void* outer);
+	int(AERON_DXAPI* GetCaps)(void* self, void* caps);
+	int(AERON_DXAPI* DuplicateSoundBuffer)(void* self, void* source, void** duplicate);
+	int(AERON_DXAPI* SetCooperativeLevel)(void* self, void* hwnd, uint32_t level);
+	int(AERON_DXAPI* Compact)(void* self);
+	int(AERON_DXAPI* GetSpeakerConfig)(void* self, uint32_t* config);
+	int(AERON_DXAPI* SetSpeakerConfig)(void* self, uint32_t config);
+	int(AERON_DXAPI* Initialize)(void* self, const void* guid);
+} IDirectSoundVtbl;
+
+typedef struct IDirectSound {
+	const IDirectSoundVtbl* lpVtbl;
+} IDirectSound;
+
+/* Shared buffer ABI. Keep all 21 original slots, including Stop at slot 18.
+ * The opaque self arguments also accept the shim's private buffer objects. */
+typedef struct IDirectSoundBufferVtbl {
+	int(AERON_DXAPI* QueryInterface)(void* self, const void* iid, void** out);            /* 0 */
+	int(AERON_DXAPI* AddRef)(void* self);                                                 /* 1 */
+	int(AERON_DXAPI* Release)(void* self);                                                /* 2 */
+	int(AERON_DXAPI* GetCaps)(void* self, void* caps);                                    /* 3 */
+	int(AERON_DXAPI* GetCurrentPosition)(void* self, uint32_t* play, uint32_t* write);    /* 4 */
+	int(AERON_DXAPI* GetFormat)(void* self, void* fmt, uint32_t size, uint32_t* written); /* 5 */
+	int(AERON_DXAPI* GetVolume)(void* self, int32_t* volume);                             /* 6 */
+	int(AERON_DXAPI* GetPan)(void* self, int32_t* pan);                                   /* 7 */
+	int(AERON_DXAPI* GetFrequency)(void* self, uint32_t* frequency);                      /* 8 */
+	int(AERON_DXAPI* GetStatus)(void* self, uint32_t* status);                            /* 9 */
+	int(AERON_DXAPI* Initialize)(void* self, void* device, const void* desc);             /* 10 */
+	int(AERON_DXAPI* Lock)(void* self, uint32_t offset, uint32_t bytes, void** p1, uint32_t* b1, void** p2,
+						   uint32_t* b2, uint32_t flags);                                      /* 11 */
+	int(AERON_DXAPI* Play)(void* self, uint32_t reserved1, uint32_t priority, uint32_t flags); /* 12 */
+	int(AERON_DXAPI* SetCurrentPosition)(void* self, uint32_t position);                       /* 13 */
+	int(AERON_DXAPI* SetFormat)(void* self, const void* fmt);                                  /* 14 */
+	int(AERON_DXAPI* SetVolume)(void* self, int32_t volume);                                   /* 15 */
+	int(AERON_DXAPI* SetPan)(void* self, int32_t pan);                                         /* 16 */
+	int(AERON_DXAPI* SetFrequency)(void* self, uint32_t frequency);                            /* 17 */
+	int(AERON_DXAPI* Stop)(void* self);                                                        /* 18 */
+	int(AERON_DXAPI* Unlock)(void* self, void* p1, uint32_t b1, void* p2, uint32_t b2);        /* 19 */
+	int(AERON_DXAPI* Restore)(void* self);                                                     /* 20 */
+} IDirectSoundBufferVtbl;
+
+typedef struct IDirectSoundBuffer {
+	const IDirectSoundBufferVtbl* lpVtbl;
+} IDirectSoundBuffer;
+
 /* Creates the IDirectSound shim device backed by the Aeron mixer, replacing
  * dsound.dll's DirectSoundCreate / A3D_CreateDirectSound with the original
  * entry-point signature. The device GUID and aggregation pointer are accepted
  * and ignored. Returns >= 0 on success and stores the opaque device pointer
  * (callable through its vtable, e.g. lpVtbl->CreateSoundBuffer) in
  * *outDevice. */
-int DirectSoundCreate(const DSCompatGuid* device_guid, void** outDevice, void* outerUnknown);
+int AERON_DXAPI DirectSoundCreate(const DSCompatGuid* device_guid, void** outDevice, void* outerUnknown);
 
 #ifdef __cplusplus
 }

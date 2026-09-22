@@ -23,49 +23,8 @@
 
 enum { DS_DSBPLAY_LOOPING = DSBPLAY_LOOPING };
 
-/* Full DirectSound vtable layouts (port calling convention is the platform
- * default; the original ABI was __stdcall). */
-typedef struct DSBufferVtbl {
-	int (*QueryInterface)(void* self, const void* iid, void** out);            /* 0 */
-	int (*AddRef)(void* self);                                                 /* 1 */
-	int (*Release)(void* self);                                                /* 2 */
-	int (*GetCaps)(void* self, void* caps);                                    /* 3 */
-	int (*GetCurrentPosition)(void* self, uint32_t* play, uint32_t* write);    /* 4 */
-	int (*GetFormat)(void* self, void* fmt, uint32_t size, uint32_t* written); /* 5 */
-	int (*GetVolume)(void* self, int32_t* volume);                             /* 6 */
-	int (*GetPan)(void* self, int32_t* pan);                                   /* 7 */
-	int (*GetFrequency)(void* self, uint32_t* frequency);                      /* 8 */
-	int (*GetStatus)(void* self, uint32_t* status);                            /* 9 */
-	int (*Initialize)(void* self, void* device, const void* desc);             /* 10 */
-	int (*Lock)(void* self, uint32_t offset, uint32_t bytes, void** p1, uint32_t* b1, void** p2, uint32_t* b2,
-				uint32_t flags);                                                    /* 11 */
-	int (*Play)(void* self, uint32_t reserved1, uint32_t priority, uint32_t flags); /* 12 */
-	int (*SetCurrentPosition)(void* self, uint32_t position);                       /* 13 */
-	int (*SetFormat)(void* self, const void* fmt);                                  /* 14 */
-	int (*SetVolume)(void* self, int32_t volume);                                   /* 15 */
-	int (*SetPan)(void* self, int32_t pan);                                         /* 16 */
-	int (*SetFrequency)(void* self, uint32_t frequency);                            /* 17 */
-	int (*Stop)(void* self);                                                        /* 18 */
-	int (*Unlock)(void* self, void* p1, uint32_t b1, void* p2, uint32_t b2);        /* 19 */
-	int (*Restore)(void* self);                                                     /* 20 */
-} DSBufferVtbl;
-
-typedef struct DSDeviceVtbl {
-	int (*QueryInterface)(void* self, const void* iid, void** out);                             /* 0 */
-	int (*AddRef)(void* self);                                                                  /* 1 */
-	int (*Release)(void* self);                                                                 /* 2 */
-	int (*CreateSoundBuffer)(void* self, const DSBufferDesc* desc, void** buffer, void* outer); /* 3 */
-	int (*GetCaps)(void* self, void* caps);                                                     /* 4 */
-	int (*DuplicateSoundBuffer)(void* self, void* source, void** duplicate);                    /* 5 */
-	int (*SetCooperativeLevel)(void* self, void* hwnd, uint32_t level);                         /* 6 */
-	int (*Compact)(void* self);                                                                 /* 7 */
-	int (*GetSpeakerConfig)(void* self, uint32_t* config);                                      /* 8 */
-	int (*SetSpeakerConfig)(void* self, uint32_t config);                                       /* 9 */
-	int (*Initialize)(void* self, const void* guid);                                            /* 10 */
-} DSDeviceVtbl;
-
 typedef struct DSBuffer {
-	const DSBufferVtbl* lpVtbl;
+	const IDirectSoundBufferVtbl* lpVtbl;
 	int                 refcount;
 
 	int      rate;
@@ -99,7 +58,7 @@ typedef struct DSBuffer {
 } DSBuffer;
 
 typedef struct DSDevice {
-	const DSDeviceVtbl* lpVtbl;
+	const IDirectSoundVtbl* lpVtbl;
 	int                 refcount;
 } DSDevice;
 
@@ -400,7 +359,7 @@ static int DSoundCompat_QueryInterface3DListener(void** out) {
 
 /* --- buffer methods ------------------------------------------------------ */
 
-static int DSoundBuffer_QueryInterface(void* self, const void* iid, void** out) {
+static int AERON_DXAPI DSoundBuffer_QueryInterface(void* self, const void* iid, void** out) {
 	if (!out) {
 		return DS_FAIL;
 	}
@@ -415,12 +374,12 @@ static int DSoundBuffer_QueryInterface(void* self, const void* iid, void** out) 
 	return DS_FAIL;
 }
 
-static int DSoundBuffer_AddRef(void* self) {
+static int AERON_DXAPI DSoundBuffer_AddRef(void* self) {
 	DSBuffer* b = (DSBuffer*)self;
 	return ++b->refcount;
 }
 
-static int DSoundBuffer_Release(void* self) {
+static int AERON_DXAPI DSoundBuffer_Release(void* self) {
 	DSBuffer* b = (DSBuffer*)self;
 	if (--b->refcount > 0) {
 		return b->refcount;
@@ -439,13 +398,13 @@ static int DSoundBuffer_Release(void* self) {
 	return 0;
 }
 
-static int DSoundBuffer_GetCaps(void* self, void* caps) {
+static int AERON_DXAPI DSoundBuffer_GetCaps(void* self, void* caps) {
 	(void)self;
 	(void)caps;
 	return DS_OK;
 }
 
-static int DSoundBuffer_GetCurrentPosition(void* self, uint32_t* play, uint32_t* write) {
+static int AERON_DXAPI DSoundBuffer_GetCurrentPosition(void* self, uint32_t* play, uint32_t* write) {
 	DSBuffer* b      = (DSBuffer*)self;
 	uint32_t  cursor = 0;
 	if (b->is_streaming) {
@@ -467,7 +426,7 @@ static int DSoundBuffer_GetCurrentPosition(void* self, uint32_t* play, uint32_t*
 	return DS_OK;
 }
 
-static int DSoundBuffer_GetFormat(void* self, void* fmt, uint32_t size, uint32_t* written) {
+static int AERON_DXAPI DSoundBuffer_GetFormat(void* self, void* fmt, uint32_t size, uint32_t* written) {
 	DSBuffer*    b = (DSBuffer*)self;
 	DSWaveFormat wf;
 
@@ -487,7 +446,7 @@ static int DSoundBuffer_GetFormat(void* self, void* fmt, uint32_t size, uint32_t
 	return DS_OK;
 }
 
-static int DSoundBuffer_GetVolume(void* self, int32_t* volume) {
+static int AERON_DXAPI DSoundBuffer_GetVolume(void* self, int32_t* volume) {
 	DSBuffer* b = (DSBuffer*)self;
 	if (volume) {
 		*volume = b->volume_mb;
@@ -495,7 +454,7 @@ static int DSoundBuffer_GetVolume(void* self, int32_t* volume) {
 	return DS_OK;
 }
 
-static int DSoundBuffer_GetPan(void* self, int32_t* pan) {
+static int AERON_DXAPI DSoundBuffer_GetPan(void* self, int32_t* pan) {
 	DSBuffer* b = (DSBuffer*)self;
 	if (pan) {
 		*pan = b->pan_mb;
@@ -503,7 +462,7 @@ static int DSoundBuffer_GetPan(void* self, int32_t* pan) {
 	return DS_OK;
 }
 
-static int DSoundBuffer_GetFrequency(void* self, uint32_t* frequency) {
+static int AERON_DXAPI DSoundBuffer_GetFrequency(void* self, uint32_t* frequency) {
 	DSBuffer* b = (DSBuffer*)self;
 	if (frequency) {
 		*frequency = b->frequency ? b->frequency : (uint32_t)b->rate;
@@ -511,7 +470,7 @@ static int DSoundBuffer_GetFrequency(void* self, uint32_t* frequency) {
 	return DS_OK;
 }
 
-static int DSoundBuffer_GetStatus(void* self, uint32_t* status) {
+static int AERON_DXAPI DSoundBuffer_GetStatus(void* self, uint32_t* status) {
 	DSBuffer* b       = (DSBuffer*)self;
 	uint32_t  s       = 0;
 	int       playing = b->is_streaming ? Aeron_AudioRingIsPlaying(b->ring)
@@ -525,15 +484,15 @@ static int DSoundBuffer_GetStatus(void* self, uint32_t* status) {
 	return DS_OK;
 }
 
-static int DSoundBuffer_Initialize(void* self, void* device, const void* desc) {
+static int AERON_DXAPI DSoundBuffer_Initialize(void* self, void* device, const void* desc) {
 	(void)self;
 	(void)device;
 	(void)desc;
 	return DS_OK;
 }
 
-static int DSoundBuffer_Lock(void* self, uint32_t offset, uint32_t bytes, void** p1, uint32_t* b1, void** p2,
-							 uint32_t* b2, uint32_t flags) {
+static int AERON_DXAPI DSoundBuffer_Lock(void* self, uint32_t offset, uint32_t bytes, void** p1, uint32_t* b1,
+										 void** p2, uint32_t* b2, uint32_t flags) {
 	(void)flags;
 	DSBuffer* b = (DSBuffer*)self;
 	if (b->is_primary) {
@@ -622,7 +581,7 @@ static void DSoundBuffer_RebuildClip(DSBuffer* b) {
 	b->owns_clip = 1;
 }
 
-static int DSoundBuffer_Unlock(void* self, void* p1, uint32_t b1, void* p2, uint32_t b2) {
+static int AERON_DXAPI DSoundBuffer_Unlock(void* self, void* p1, uint32_t b1, void* p2, uint32_t b2) {
 	DSBuffer* b = (DSBuffer*)self;
 	if (b->is_streaming) {
 		if (p1 && b1) {
@@ -649,7 +608,7 @@ static int DSoundBuffer_Unlock(void* self, void* p1, uint32_t b1, void* p2, uint
 	return DS_OK;
 }
 
-static int DSoundBuffer_Play(void* self, uint32_t reserved1, uint32_t priority, uint32_t flags) {
+static int AERON_DXAPI DSoundBuffer_Play(void* self, uint32_t reserved1, uint32_t priority, uint32_t flags) {
 	(void)reserved1;
 	(void)priority;
 	DSBuffer* b = (DSBuffer*)self;
@@ -680,21 +639,21 @@ static int DSoundBuffer_Play(void* self, uint32_t reserved1, uint32_t priority, 
 	return DS_OK;
 }
 
-static int DSoundBuffer_SetCurrentPosition(void* self, uint32_t position) {
+static int AERON_DXAPI DSoundBuffer_SetCurrentPosition(void* self, uint32_t position) {
 	(void)self;
 	(void)position;
 	/* New voices always start at the clip head, matching SetCurrentPosition(0). */
 	return DS_OK;
 }
 
-static int DSoundBuffer_SetFormat(void* self, const void* fmt) {
+static int AERON_DXAPI DSoundBuffer_SetFormat(void* self, const void* fmt) {
 	(void)self;
 	(void)fmt;
 	/* Primary-buffer format is fixed by the Aeron device. */
 	return DS_OK;
 }
 
-static int DSoundBuffer_SetVolume(void* self, int32_t volume) {
+static int AERON_DXAPI DSoundBuffer_SetVolume(void* self, int32_t volume) {
 	DSBuffer* b  = (DSBuffer*)self;
 	b->volume_mb = volume;
 	if (b->is_streaming) {
@@ -705,7 +664,7 @@ static int DSoundBuffer_SetVolume(void* self, int32_t volume) {
 	return DS_OK;
 }
 
-static int DSoundBuffer_SetPan(void* self, int32_t pan) {
+static int AERON_DXAPI DSoundBuffer_SetPan(void* self, int32_t pan) {
 	DSBuffer* b = (DSBuffer*)self;
 	b->pan_mb   = pan;
 	if (b->voice) {
@@ -714,7 +673,7 @@ static int DSoundBuffer_SetPan(void* self, int32_t pan) {
 	return DS_OK;
 }
 
-static int DSoundBuffer_SetFrequency(void* self, uint32_t frequency) {
+static int AERON_DXAPI DSoundBuffer_SetFrequency(void* self, uint32_t frequency) {
 	DSBuffer* b  = (DSBuffer*)self;
 	b->frequency = frequency;
 	if (b->voice) {
@@ -723,7 +682,7 @@ static int DSoundBuffer_SetFrequency(void* self, uint32_t frequency) {
 	return DS_OK;
 }
 
-static int DSoundBuffer_Stop(void* self) {
+static int AERON_DXAPI DSoundBuffer_Stop(void* self) {
 	DSBuffer* b = (DSBuffer*)self;
 	if (b->is_streaming) {
 		Aeron_AudioRingStop(b->ring);
@@ -736,12 +695,12 @@ static int DSoundBuffer_Stop(void* self) {
 	return DS_OK;
 }
 
-static int DSoundBuffer_Restore(void* self) {
+static int AERON_DXAPI DSoundBuffer_Restore(void* self) {
 	(void)self;
 	return DS_OK;
 }
 
-static const DSBufferVtbl g_ds_buffer_vtbl = {
+static const IDirectSoundBufferVtbl g_ds_buffer_vtbl = {
 	DSoundBuffer_QueryInterface,
 	DSoundBuffer_AddRef,
 	DSoundBuffer_Release,
@@ -776,7 +735,7 @@ static DSBuffer* DSoundCompat_AllocBuffer(void) {
 
 /* --- device methods ------------------------------------------------------ */
 
-static int DSoundDevice_QueryInterface(void* self, const void* iid, void** out) {
+static int AERON_DXAPI DSoundDevice_QueryInterface(void* self, const void* iid, void** out) {
 	(void)self;
 	(void)iid;
 	/* TODO(flight 3D): return an IDirectSound3DListener shim. */
@@ -786,12 +745,12 @@ static int DSoundDevice_QueryInterface(void* self, const void* iid, void** out) 
 	return DS_FAIL;
 }
 
-static int DSoundDevice_AddRef(void* self) {
+static int AERON_DXAPI DSoundDevice_AddRef(void* self) {
 	DSDevice* d = (DSDevice*)self;
 	return ++d->refcount;
 }
 
-static int DSoundDevice_Release(void* self) {
+static int AERON_DXAPI DSoundDevice_Release(void* self) {
 	DSDevice* d = (DSDevice*)self;
 	if (--d->refcount > 0) {
 		return d->refcount;
@@ -800,7 +759,8 @@ static int DSoundDevice_Release(void* self) {
 	return 0;
 }
 
-static int DSoundDevice_CreateSoundBuffer(void* self, const DSBufferDesc* desc, void** buffer, void* outer) {
+static int AERON_DXAPI DSoundDevice_CreateSoundBuffer(void* self, const DSBufferDesc* desc, void** buffer,
+													  void* outer) {
 	(void)self;
 	(void)outer;
 	if (!buffer || !desc) {
@@ -837,7 +797,7 @@ static int DSoundDevice_CreateSoundBuffer(void* self, const DSBufferDesc* desc, 
 	return DS_OK;
 }
 
-static int DSoundDevice_GetCaps(void* self, void* caps) {
+static int AERON_DXAPI DSoundDevice_GetCaps(void* self, void* caps) {
 	(void)self;
 	(void)caps;
 	/* Caller pre-zeroes the DSCAPS struct; leaving it lets the recovered code
@@ -845,7 +805,7 @@ static int DSoundDevice_GetCaps(void* self, void* caps) {
 	return DS_OK;
 }
 
-static int DSoundDevice_DuplicateSoundBuffer(void* self, void* source, void** duplicate) {
+static int AERON_DXAPI DSoundDevice_DuplicateSoundBuffer(void* self, void* source, void** duplicate) {
 	(void)self;
 	if (!duplicate || !source) {
 		return DS_FAIL;
@@ -874,19 +834,19 @@ static int DSoundDevice_DuplicateSoundBuffer(void* self, void* source, void** du
 	return DS_OK;
 }
 
-static int DSoundDevice_SetCooperativeLevel(void* self, void* hwnd, uint32_t level) {
+static int AERON_DXAPI DSoundDevice_SetCooperativeLevel(void* self, void* hwnd, uint32_t level) {
 	(void)self;
 	(void)hwnd;
 	(void)level;
 	return DS_OK;
 }
 
-static int DSoundDevice_Compact(void* self) {
+static int AERON_DXAPI DSoundDevice_Compact(void* self) {
 	(void)self;
 	return DS_OK;
 }
 
-static int DSoundDevice_GetSpeakerConfig(void* self, uint32_t* config) {
+static int AERON_DXAPI DSoundDevice_GetSpeakerConfig(void* self, uint32_t* config) {
 	(void)self;
 	if (config) {
 		*config = 0;
@@ -894,26 +854,26 @@ static int DSoundDevice_GetSpeakerConfig(void* self, uint32_t* config) {
 	return DS_OK;
 }
 
-static int DSoundDevice_SetSpeakerConfig(void* self, uint32_t config) {
+static int AERON_DXAPI DSoundDevice_SetSpeakerConfig(void* self, uint32_t config) {
 	(void)self;
 	(void)config;
 	return DS_OK;
 }
 
-static int DSoundDevice_Initialize(void* self, const void* guid) {
+static int AERON_DXAPI DSoundDevice_Initialize(void* self, const void* guid) {
 	(void)self;
 	(void)guid;
 	return DS_OK;
 }
 
-static const DSDeviceVtbl g_ds_device_vtbl = {
+static const IDirectSoundVtbl g_ds_device_vtbl = {
 	DSoundDevice_QueryInterface,      DSoundDevice_AddRef,     DSoundDevice_Release,
 	DSoundDevice_CreateSoundBuffer,   DSoundDevice_GetCaps,    DSoundDevice_DuplicateSoundBuffer,
 	DSoundDevice_SetCooperativeLevel, DSoundDevice_Compact,    DSoundDevice_GetSpeakerConfig,
 	DSoundDevice_SetSpeakerConfig,    DSoundDevice_Initialize,
 };
 
-int DirectSoundCreate(const DSCompatGuid* device_guid, void** outDevice, void* outerUnknown) {
+int AERON_DXAPI DirectSoundCreate(const DSCompatGuid* device_guid, void** outDevice, void* outerUnknown) {
 	(void)device_guid;
 	(void)outerUnknown;
 	if (!outDevice) {

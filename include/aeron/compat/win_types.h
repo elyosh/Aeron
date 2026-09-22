@@ -82,6 +82,7 @@ static inline int DxGuidEqual(DxRefIid a, const DxGuid* b) {
 
 /* HRESULT values the recovered retry loops actually test. */
 #define DX_S_OK ((HRESULT)0)
+#define DX_DSERR_BUFFERLOST ((HRESULT)0x88780096u)
 #define DX_DD_OK ((HRESULT)0)
 #define DX_D3D_OK ((HRESULT)0)
 #define DX_E_NOTIMPL ((HRESULT)0x80004001)
