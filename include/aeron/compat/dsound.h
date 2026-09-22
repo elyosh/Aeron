@@ -121,14 +121,18 @@ typedef struct DSCompatGuid {
 extern const DSCompatGuid IID_IDirectSound3DBuffer;
 extern const DSCompatGuid IID_IDirectSound3DListener;
 
+typedef struct IDirectSoundBuffer IDirectSoundBuffer;
+
 /* DirectSound device ABI. The shim and recovered callers share these slots. */
 typedef struct IDirectSoundVtbl {
 	int(AERON_DXAPI* QueryInterface)(void* self, const void* iid, void** out);
 	int(AERON_DXAPI* AddRef)(void* self);
 	int(AERON_DXAPI* Release)(void* self);
-	int(AERON_DXAPI* CreateSoundBuffer)(void* self, const DSBufferDesc* desc, void** buffer, void* outer);
+	int(AERON_DXAPI* CreateSoundBuffer)(void* self, const DSBufferDesc* desc, IDirectSoundBuffer** buffer,
+										void* outer);
 	int(AERON_DXAPI* GetCaps)(void* self, void* caps);
-	int(AERON_DXAPI* DuplicateSoundBuffer)(void* self, void* source, void** duplicate);
+	int(AERON_DXAPI* DuplicateSoundBuffer)(void* self, IDirectSoundBuffer* source,
+										   IDirectSoundBuffer** duplicate);
 	int(AERON_DXAPI* SetCooperativeLevel)(void* self, void* hwnd, uint32_t level);
 	int(AERON_DXAPI* Compact)(void* self);
 	int(AERON_DXAPI* GetSpeakerConfig)(void* self, uint32_t* config);
@@ -167,9 +171,9 @@ typedef struct IDirectSoundBufferVtbl {
 	int(AERON_DXAPI* Restore)(void* self);                                                     /* 20 */
 } IDirectSoundBufferVtbl;
 
-typedef struct IDirectSoundBuffer {
+struct IDirectSoundBuffer {
 	const IDirectSoundBufferVtbl* lpVtbl;
-} IDirectSoundBuffer;
+};
 
 /* Creates the IDirectSound shim device backed by the Aeron mixer, replacing
  * dsound.dll's DirectSoundCreate / A3D_CreateDirectSound with the original

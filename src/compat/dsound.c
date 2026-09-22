@@ -24,7 +24,7 @@
 enum { DS_DSBPLAY_LOOPING = DSBPLAY_LOOPING };
 
 typedef struct DSBuffer {
-	const IDirectSoundBufferVtbl* lpVtbl;
+	IDirectSoundBuffer  iface;
 	int                 refcount;
 
 	int      rate;
@@ -727,7 +727,7 @@ static const IDirectSoundBufferVtbl g_ds_buffer_vtbl = {
 static DSBuffer* DSoundCompat_AllocBuffer(void) {
 	DSBuffer* b = (DSBuffer*)calloc(1, sizeof(DSBuffer));
 	if (b) {
-		b->lpVtbl   = &g_ds_buffer_vtbl;
+		b->iface.lpVtbl = &g_ds_buffer_vtbl;
 		b->refcount = 1;
 	}
 	return b;
@@ -759,8 +759,8 @@ static int AERON_DXAPI DSoundDevice_Release(void* self) {
 	return 0;
 }
 
-static int AERON_DXAPI DSoundDevice_CreateSoundBuffer(void* self, const DSBufferDesc* desc, void** buffer,
-													  void* outer) {
+static int AERON_DXAPI DSoundDevice_CreateSoundBuffer(void* self, const DSBufferDesc* desc,
+													  IDirectSoundBuffer** buffer, void* outer) {
 	(void)self;
 	(void)outer;
 	if (!buffer || !desc) {
@@ -793,7 +793,7 @@ static int AERON_DXAPI DSoundDevice_CreateSoundBuffer(void* self, const DSBuffer
 		}
 	}
 
-	*buffer = b;
+	*buffer = &b->iface;
 	return DS_OK;
 }
 
@@ -805,7 +805,8 @@ static int AERON_DXAPI DSoundDevice_GetCaps(void* self, void* caps) {
 	return DS_OK;
 }
 
-static int AERON_DXAPI DSoundDevice_DuplicateSoundBuffer(void* self, void* source, void** duplicate) {
+static int AERON_DXAPI DSoundDevice_DuplicateSoundBuffer(void* self, IDirectSoundBuffer* source,
+														 IDirectSoundBuffer** duplicate) {
 	(void)self;
 	if (!duplicate || !source) {
 		return DS_FAIL;
@@ -830,7 +831,7 @@ static int AERON_DXAPI DSoundDevice_DuplicateSoundBuffer(void* self, void* sourc
 	dup->min_dist  = src->min_dist; /* DirectSound copies 3D params into the duplicate */
 	dup->max_dist  = src->max_dist;
 
-	*duplicate = dup;
+	*duplicate = &dup->iface;
 	return DS_OK;
 }
 
