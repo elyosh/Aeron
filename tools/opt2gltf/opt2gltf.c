@@ -1143,7 +1143,7 @@ bool OptGltf_BuildMemory(const opt_file_t* opt, const char* basename, const OptG
 			total_accs += 1;  /* index accessor */
 			int sc = lod->groups[g].state_count;
 			if (sc > 1)
-				total_maps += (sc > 4 ? 4 : sc);
+				total_maps += max_state_count;
 		}
 	}
 	build->views      = (cgltf_buffer_view*)calloc(total_views ? total_views : 1, sizeof *build->views);
@@ -1265,10 +1265,12 @@ bool OptGltf_BuildMemory(const opt_file_t* opt, const char* basename, const OptG
 			if (sc > 1 && grp->state_textures) {
 				if (sc > 4)
 					sc = 4;
-				cgltf_material_mapping* maps = (cgltf_material_mapping*)push_array(
-					(void**)&build->mappings, &build->mappings_count, &build->mappings_cap, sizeof *maps, sc);
-				for (int v = 0; v < sc; ++v) {
-					int             ti    = grp->state_textures[v];
+				cgltf_material_mapping* maps =
+					(cgltf_material_mapping*)push_array((void**)&build->mappings, &build->mappings_count,
+														&build->mappings_cap, sizeof *maps, max_state_count);
+				/* The original OPT walker clamps each switch to its last child. */
+				for (int v = 0; v < max_state_count; ++v) {
+					int             ti    = grp->state_textures[v < sc ? v : sc - 1];
 					cgltf_material* m_ref = (ti >= 0 && ti < opt->texture_count)
 												? &build->materials[ti]
 												: &build->materials[untex_idx];
@@ -1276,7 +1278,7 @@ bool OptGltf_BuildMemory(const opt_file_t* opt, const char* basename, const OptG
 					maps[v].material      = m_ref;
 				}
 				prim->mappings       = maps;
-				prim->mappings_count = (cgltf_size)sc;
+				prim->mappings_count = (cgltf_size)max_state_count;
 			}
 			mesh_prim_count++;
 		}
