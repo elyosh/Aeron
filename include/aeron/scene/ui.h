@@ -156,8 +156,9 @@ typedef struct AeronUiDesc {
 AeronUiContext* AeronUi_Create(const AeronUiDesc* desc); /* NULL on failure */
 void            AeronUi_Destroy(AeronUiContext* ctx);
 
-void AeronUi_SetTheme(AeronUiContext* ctx, const AeronUiTheme* theme); /* copied */
-void AeronUi_SetFonts(AeronUiContext* ctx, const AeronUiFontSet* fonts);
+void                AeronUi_SetTheme(AeronUiContext* ctx, const AeronUiTheme* theme); /* copied */
+const AeronUiTheme* AeronUi_GetTheme(const AeronUiContext* ctx); /* context-owned; NULL for NULL ctx */
+void                AeronUi_SetFonts(AeronUiContext* ctx, const AeronUiFontSet* fonts);
 
 typedef struct AeronUiFrameDesc {
 	const AeronInputSnapshot* input; /* required */

@@ -138,6 +138,8 @@ void AeronUi_SetTheme(AeronUiContext* ctx, const AeronUiTheme* theme) {
 	}
 }
 
+const AeronUiTheme* AeronUi_GetTheme(const AeronUiContext* ctx) { return ctx ? &ctx->theme : NULL; }
+
 void AeronUi_SetFonts(AeronUiContext* ctx, const AeronUiFontSet* fonts) {
 	if (ctx && fonts) {
 		ctx->fonts = *fonts;

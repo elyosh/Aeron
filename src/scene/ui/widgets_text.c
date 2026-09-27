@@ -353,6 +353,8 @@ static uint32_t input_text(AeronUiContext* ctx, const char* label, char* value, 
 					ctx->theme.widget_bg_low, ctx->theme.widget_gradient, ctx->theme.widget_border,
 					ctx->theme.widget_border_px, 1, parent_clip);
 	const AeronRectI field_clip = text_clip_rect(&text_rect, parent_clip);
+	/* A zero-sized draw-list scissor disables clipping, so cull empty intersections here. */
+	const int field_visible = field_clip.width > 0 && field_clip.height > 0;
 	if (ctx->text_edit_id == id) {
 		const float cursor_x = text_prefix_width(ctx, value, ctx->text_cursor, text_px);
 		if (cursor_x - ctx->text_scroll > text_rect.w - 2.0f) {
@@ -362,7 +364,7 @@ static uint32_t input_text(AeronUiContext* ctx, const char* label, char* value, 
 		}
 		size_t begin, end;
 		text_selection(ctx, &begin, &end);
-		if (begin < end) {
+		if (field_visible && begin < end) {
 			const float  x0        = text_prefix_width(ctx, value, begin, text_px) - ctx->text_scroll;
 			const float  x1        = text_prefix_width(ctx, value, end, text_px) - ctx->text_scroll;
 			const UiRect selection = { text_rect.x + x0, text_rect.y + 2.0f, x1 - x0,
@@ -370,10 +372,11 @@ static uint32_t input_text(AeronUiContext* ctx, const char* label, char* value, 
 			ui_draw_fill(ctx, &selection, ctx->theme.row_highlight, &field_clip);
 		}
 	}
-	ui_draw_text(ctx, ui_font_regular(ctx), text_rect.x - ctx->text_scroll,
-				 text_rect.y + (text_rect.h - text_px) * 0.5f, AERON_TEXT_LEFT, text_px,
-				 read_only ? ctx->theme.text_dim : ctx->theme.text, value, (int)length, &field_clip);
-	if (ctx->text_edit_id == id) {
+	if (field_visible)
+		ui_draw_text(ctx, ui_font_regular(ctx), text_rect.x - ctx->text_scroll,
+					 text_rect.y + (text_rect.h - text_px) * 0.5f, AERON_TEXT_LEFT, text_px,
+					 read_only ? ctx->theme.text_dim : ctx->theme.text, value, (int)length, &field_clip);
+	if (field_visible && ctx->text_edit_id == id) {
 		const float  cursor_x = text_prefix_width(ctx, value, ctx->text_cursor, text_px);
 		const UiRect caret    = { text_rect.x + cursor_x - ctx->text_scroll,
 								  text_rect.y + (text_rect.h - text_px) * 0.5f, 1.0f, text_px };
