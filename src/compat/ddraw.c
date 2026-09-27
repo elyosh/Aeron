@@ -91,22 +91,25 @@ static uint64_t          g_ddPaletteRevision;
 
 static int DDShim_EnsureRenderTargetStaging(DDrawSurfaceShim* s);
 
-/* An indexed DirectDraw display uses the palette attached to the primary
- * surface when an attached or offscreen surface is presented. */
-static void DDShim_ApplyPrimaryPalette(DDrawSurfaceShim* surface) {
-	DDrawSurfaceShim* primary;
-	DDrawPaletteShim* palette;
-	if (!surface || surface->format != AERON_PIXEL_FORMAT_INDEX8 || !surface->cpu || !surface->owner ||
-		!(primary = surface->owner->primary) || !primary->palette) {
+/* SetEntries updates the shared object; SDL surfaces cache separate copies. */
+static void DDShim_ApplyPalette(DDrawSurfaceShim* surface, DDrawPaletteShim* palette) {
+	if (!surface || surface->format != AERON_PIXEL_FORMAT_INDEX8 || !surface->cpu || !palette) {
 		return;
 	}
-	palette = primary->palette;
 	if (surface->applied_palette == palette && surface->applied_palette_revision == palette->revision) {
 		return;
 	}
 	if (AeronSurface_SetPalette(surface->cpu, palette->entries, 256)) {
 		surface->applied_palette          = palette;
 		surface->applied_palette_revision = palette->revision;
+	}
+}
+
+/* An indexed DirectDraw display uses the palette attached to the primary
+ * surface when an attached or offscreen surface is presented. */
+static void DDShim_ApplyPrimaryPalette(DDrawSurfaceShim* surface) {
+	if (surface && surface->owner && surface->owner->primary) {
+		DDShim_ApplyPalette(surface, surface->owner->primary->palette);
 	}
 }
 
@@ -816,6 +819,8 @@ static HRESULT AERON_DXAPI DDSurface_Blt(IDirectDrawSurface* self, void* dstRect
 			DDShim_Present(s, DDSHIM_PRESENT_BLT);
 			return DX_DD_OK;
 		}
+		DDShim_ApplyPalette(s, s ? s->palette : NULL);
+		DDShim_ApplyPalette(d, d->palette);
 		if (d->kind == DDSHIM_RENDER_TARGET && !D3DCompat_FlushRenderTargetPass(d)) {
 			return DX_E_FAIL;
 		}
@@ -850,6 +855,8 @@ static HRESULT AERON_DXAPI DDSurface_BltFast(IDirectDrawSurface* self, uint32_t 
 		DDShim_Present(s, DDSHIM_PRESENT_BLT);
 		return DX_DD_OK;
 	}
+	DDShim_ApplyPalette(s, s ? s->palette : NULL);
+	DDShim_ApplyPalette(d, d->palette);
 	if (d->kind == DDSHIM_RENDER_TARGET && !D3DCompat_FlushRenderTargetPass(d)) {
 		return DX_E_FAIL;
 	}
