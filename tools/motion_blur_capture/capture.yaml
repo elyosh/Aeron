@@ -1,0 +1,12 @@
+width: 1920
+height: 1080
+frames: 1
+fps: 60
+pan_degrees_per_second: 120
+pan_direction_degrees: 45
+# Matches OpenXvT: exposure = shutter * 32 ms, independent of fps.
+shutter: 0.5
+quality: 2
+# Set to 0 to capture only sharp and blurred images.
+reference_samples: 64
+output_dir: captures/motion-blur-baseline

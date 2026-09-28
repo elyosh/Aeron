@@ -3379,6 +3379,82 @@ AeronTexture* Aeron_RenderTargetGetTexture(AeronRenderTarget* target) {
 	return &target->color;
 }
 
+int Aeron_ReadRenderTargetRawPixels(AeronRenderTarget* target, void* dst, size_t capacity, size_t pitch) {
+	if (!g_aeron.gpu_device || !target || !target->color.texture || !dst ||
+		target->color.sample_count != AERON_SAMPLE_COUNT_1) {
+		Aeron_SetRenderError("Invalid raw render-target readback");
+		return 0;
+	}
+	uint32_t bytes_per_pixel;
+	switch (target->color.format) {
+		case AERON_TEXTURE_FORMAT_RGBA8_UNORM:
+		case AERON_TEXTURE_FORMAT_RGBA8_SRGB:
+		case AERON_TEXTURE_FORMAT_BGRA8_UNORM:
+		case AERON_TEXTURE_FORMAT_BGRA8_SRGB:
+			bytes_per_pixel = 4;
+			break;
+		case AERON_TEXTURE_FORMAT_RGBA16_FLOAT:
+			bytes_per_pixel = 8;
+			break;
+		default:
+			Aeron_SetRenderError("Unsupported raw readback format");
+			return 0;
+	}
+	const int      width = target->color.width, height = target->color.height;
+	const uint64_t row_bytes   = (uint64_t)width * bytes_per_pixel;
+	const uint64_t total_bytes = row_bytes * (uint64_t)height;
+	if (width <= 0 || height <= 0 || total_bytes > UINT32_MAX || pitch < row_bytes || capacity < row_bytes ||
+		(size_t)(height - 1) > (capacity - (size_t)row_bytes) / pitch) {
+		Aeron_SetRenderError("Invalid raw readback capacity or pitch");
+		return 0;
+	}
+	SDL_GPUTransferBuffer* transfer = SDL_CreateGPUTransferBuffer(
+		g_aeron.gpu_device,
+		&(SDL_GPUTransferBufferCreateInfo) { .usage = SDL_GPU_TRANSFERBUFFERUSAGE_DOWNLOAD,
+											 .size  = (uint32_t)total_bytes });
+	if (!transfer) {
+		Aeron_SetRenderError("Raw readback allocation failed: %s", SDL_GetError());
+		return 0;
+	}
+	SDL_GPUCommandBuffer* cmd  = SDL_AcquireGPUCommandBuffer(g_aeron.gpu_device);
+	SDL_GPUCopyPass*      copy = cmd ? SDL_BeginGPUCopyPass(cmd) : NULL;
+	if (!copy) {
+		Aeron_SetRenderError("Raw readback recording failed: %s", SDL_GetError());
+		if (cmd)
+			SDL_CancelGPUCommandBuffer(cmd);
+		SDL_ReleaseGPUTransferBuffer(g_aeron.gpu_device, transfer);
+		return 0;
+	}
+	SDL_GPUTextureRegion source = {
+		.texture = target->color.texture, .w = (uint32_t)width, .h = (uint32_t)height, .d = 1
+	};
+	SDL_GPUTextureTransferInfo destination = { .transfer_buffer = transfer,
+											   .pixels_per_row  = (uint32_t)width,
+											   .rows_per_layer  = (uint32_t)height };
+	SDL_DownloadFromGPUTexture(copy, &source, &destination);
+	SDL_EndGPUCopyPass(copy);
+	SDL_GPUFence* fence = SDL_SubmitGPUCommandBufferAndAcquireFence(cmd);
+	int           ok    = fence && SDL_WaitForGPUFences(g_aeron.gpu_device, true, &fence, 1);
+	if (fence)
+		SDL_ReleaseGPUFence(g_aeron.gpu_device, fence);
+	if (!ok) {
+		Aeron_SetRenderError("Raw readback submission/wait failed: %s", SDL_GetError());
+		SDL_ReleaseGPUTransferBuffer(g_aeron.gpu_device, transfer);
+		return 0;
+	}
+	const uint8_t* mapped = SDL_MapGPUTransferBuffer(g_aeron.gpu_device, transfer, false);
+	if (!mapped) {
+		Aeron_SetRenderError("Raw readback mapping failed: %s", SDL_GetError());
+		SDL_ReleaseGPUTransferBuffer(g_aeron.gpu_device, transfer);
+		return 0;
+	}
+	for (int y = 0; y < height; ++y)
+		memcpy((uint8_t*)dst + (size_t)y * pitch, mapped + (size_t)y * (size_t)row_bytes, (size_t)row_bytes);
+	SDL_UnmapGPUTransferBuffer(g_aeron.gpu_device, transfer);
+	SDL_ReleaseGPUTransferBuffer(g_aeron.gpu_device, transfer);
+	return 1;
+}
+
 int Aeron_ReadRenderTargetPixels(AeronRenderTarget* target, void* dst, int pitch, AeronPixelFormat format) {
 	SDL_GPUTransferBufferCreateInfo transfer_info;
 	SDL_GPUTransferBuffer*          transfer;

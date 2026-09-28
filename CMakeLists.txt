@@ -7,7 +7,8 @@ project(aeron C CXX)
 # standalone or via add_subdirectory() from a game repository.
 
 option(AERON_DEBUG_UI "Build the Dear ImGui debug overlay into aeron" OFF)
-option(AERON_BUILD_TOOLS "Build Aeron asset tools" ${PROJECT_IS_TOP_LEVEL})
+option(AERON_BUILD_TOOLS "Build Aeron asset and diagnostic tools" ${PROJECT_IS_TOP_LEVEL})
+option(AERON_BUILD_MOTION_BLUR_CAPTURE "Build motion blur capture independently of other tools" OFF)
 option(AERON_HOST_TOOLS_ONLY "Build only tools that must run on the build host" OFF)
 option(AERON_ENABLE_COMPAT "Build the Win32/DirectX-era API compatibility target" OFF)
 option(AERON_ENABLE_DPLAY "Build DirectPlay support in aeron_compat" OFF)
@@ -878,6 +879,10 @@ if(AERON_BUILD_TOOLS)
     target_link_libraries(opt2gltf PRIVATE opt2gltf_lib)
     set_target_properties(opt2gltf PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
+endif()
+
+if(AERON_BUILD_TOOLS OR AERON_BUILD_MOTION_BLUR_CAPTURE)
+    add_subdirectory(tools/motion_blur_capture)
 endif()
 
 # Example apps — small windowed programs demonstrating engine subsystems.

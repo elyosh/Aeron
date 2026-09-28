@@ -67,6 +67,10 @@ assets:
 
 ### Diagnostics
 
+The [motion-blur capture tool](tools/motion_blur_capture/README.md) renders a
+deterministic synthetic scene and saves linear images, PNG previews, temporal
+references, and comparison metrics for renderer development.
+
 Optional Dear ImGui tools can be registered by a game for live diagnostics.
 Aeron also names GPU resources and annotates render and compute work so frames
 are easier to inspect in tools such as RenderDoc and Xcode's Metal debugger.

@@ -1,6 +1,7 @@
 #ifndef AERON_RENDER_H
 #define AERON_RENDER_H
 
+#include <stddef.h>
 #include <stdint.h>
 
 #ifdef __cplusplus
@@ -769,6 +770,12 @@ AeronTexture* Aeron_RenderTargetGetTexture(AeronRenderTarget* target);
  * so it is meant for the render-target Lock path (Model B overlays), not per-frame
  * use. Returns nonzero on success. */
 int Aeron_ReadRenderTargetPixels(AeronRenderTarget* target, void* dst, int pitch, AeronPixelFormat format);
+
+/* Diagnostic readback of RGBA8/BGRA8 or RGBA16_FLOAT targets, preserving the
+ * source bytes without color conversion. Rows are top-to-bottom, with caller
+ * supplied pitch and capacity in bytes. Submit all writes first. Blocks on a
+ * GPU fence; intended for captures, not the ordinary presentation loop. */
+int Aeron_ReadRenderTargetRawPixels(AeronRenderTarget* target, void* dst, size_t capacity, size_t pitch);
 
 /* Creates an Aeron-owned depth target for GPU render passes. */
 AeronDepthTarget* Aeron_CreateDepthTarget(const AeronDepthTargetDesc* desc);
