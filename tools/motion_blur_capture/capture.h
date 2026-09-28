@@ -4,16 +4,26 @@
 #include "aeron/aeron.h"
 #include "aeron/scene/scene3d.h"
 
+#define CAPTURE_MAX_MODELS 8
+
 typedef struct CaptureConfig {
 	int    width, height, frames, reference_samples, quality;
 	double fps, pan_speed, pan_direction, shutter;
 	char   output_dir[1024];
+	char   asset_root[1024];
+	char   models[CAPTURE_MAX_MODELS][1024];
+	int    model_count;
 } CaptureConfig;
 
-typedef struct Fixture {
-	AeronScene3D *  scene, *reference_scene;
+typedef struct CaptureMesh {
 	AeronSceneMesh* mesh;
-	CaptureConfig   config;
+	float           center[3], extent;
+} CaptureMesh;
+
+typedef struct Fixture {
+	AeronScene3D *scene, *reference_scene;
+	CaptureMesh   meshes[CAPTURE_MAX_MODELS];
+	CaptureConfig config;
 } Fixture;
 
 int                CaptureConfig_Load(const char* path, CaptureConfig* config);

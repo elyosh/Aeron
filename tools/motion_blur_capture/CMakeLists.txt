@@ -1,5 +1,5 @@
 add_executable(motion_blur_capture main.c config.c fixture.c capture.c)
-target_link_libraries(motion_blur_capture PRIVATE aeron_scene)
+target_link_libraries(motion_blur_capture PRIVATE aeron_asset)
 target_include_directories(motion_blur_capture PRIVATE ${PROJECT_SOURCE_DIR}/third_party/stb)
 set_target_properties(motion_blur_capture PROPERTIES
     C_STANDARD 99 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF

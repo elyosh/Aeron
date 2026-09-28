@@ -29,6 +29,49 @@ static int integer(const AeronConfigFile* yaml, const char* key, int min, int ma
 	return 1;
 }
 
+static int copy_path(char* out, size_t capacity, const char* value) {
+	if (!value || !value[0] || strlen(value) >= capacity)
+		return 0;
+	for (const unsigned char* p = (const unsigned char*)value; *p; ++p)
+		if (*p < 32 || *p == 127)
+			return 0;
+	memcpy(out, value, strlen(value) + 1);
+	return 1;
+}
+
+static int load_models(const AeronConfigFile* yaml, CaptureConfig* config) {
+	const AeronConfigNode* root       = AeronConfigFile_GetNode(yaml, "asset_root");
+	const char*            asset_root = root ? AeronConfigNode_String(root, NULL) : ".";
+	if (!copy_path(config->asset_root, sizeof config->asset_root, asset_root)) {
+		fprintf(stderr, "Invalid asset_root\n");
+		return 0;
+	}
+	config->model_count           = 0;
+	const AeronConfigNode* models = AeronConfigFile_GetNode(yaml, "models");
+	if (!models)
+		return 1;
+	size_t count = AeronConfigNode_SequenceCount(models);
+	if (AeronConfigNode_Type(models) != AERON_CONFIG_SEQUENCE || count == 0 || count > CAPTURE_MAX_MODELS) {
+		fprintf(stderr, "models must list 1-%d OPT paths relative to asset_root\n", CAPTURE_MAX_MODELS);
+		return 0;
+	}
+	for (size_t i = 0; i < count; ++i) {
+		const char* value = AeronConfigNode_String(AeronConfigNode_SequenceGet(models, i), NULL);
+		if (!copy_path(config->models[i], sizeof config->models[i], value)) {
+			fprintf(stderr, "Invalid model path at index %zu\n", i);
+			return 0;
+		}
+		for (size_t j = 0; j < i; ++j) {
+			if (strcmp(config->models[i], config->models[j]) == 0) {
+				fprintf(stderr, "Duplicate model path: %s\n", value);
+				return 0;
+			}
+		}
+	}
+	config->model_count = (int)count;
+	return 1;
+}
+
 int CaptureConfig_Load(const char* path, CaptureConfig* config) {
 	AeronVfs* vfs = AeronVfs_Create(
 		&(AeronVfsConfig) { .asset_root = ".", .resource_root = ".", .user_root = ".", .temp_root = "." });
@@ -48,7 +91,9 @@ int CaptureConfig_Load(const char* path, CaptureConfig* config) {
 									  "pan_degrees_per_second",
 									  "pan_direction_degrees",
 									  "shutter",
-									  "output_dir" };
+									  "output_dir",
+									  "asset_root",
+									  "models" };
 	const AeronConfigNode* root   = AeronConfigFile_Root(yaml);
 	int                    ok     = AeronConfigNode_Type(root) == AERON_CONFIG_MAP;
 	for (size_t i = 0; ok && i < AeronConfigNode_MapCount(root); ++i) {
@@ -71,13 +116,12 @@ int CaptureConfig_Load(const char* path, CaptureConfig* config) {
 		 number(yaml, "pan_direction_degrees", -360, 360, &config->pan_direction) &&
 		 number(yaml, "shutter", 0, 1, &config->shutter);
 	const char* output = AeronConfigFile_GetString(yaml, "output_dir", "");
-	if (!output[0] || strlen(output) >= sizeof config->output_dir || strchr(output, '\n') ||
-		strchr(output, '\r')) {
+	if (!copy_path(config->output_dir, sizeof config->output_dir, output)) {
 		fprintf(stderr, "Invalid output_dir\n");
 		ok = 0;
 	}
 	if (ok)
-		memcpy(config->output_dir, output, strlen(output) + 1);
+		ok = load_models(yaml, config);
 	AeronConfigFile_Destroy(yaml);
 	AeronVfs_Destroy(vfs);
 	return ok;

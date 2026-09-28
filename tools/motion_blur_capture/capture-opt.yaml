@@ -1,0 +1,17 @@
+width: 1920
+height: 1080
+frames: 1
+fps: 60
+pan_degrees_per_second: 120
+pan_direction_degrees: 45
+shutter: 0.5
+quality: 2
+reference_samples: 64
+output_dir: captures/motion-blur-opt
+# Set this to the game-data directory containing ivfiles.
+# Relative paths are resolved from the working directory.
+asset_root: .
+models:
+  - ivfiles/XWING.OPT
+  - ivfiles/TIEFTR.OPT
+  - ivfiles/YWING.OPT

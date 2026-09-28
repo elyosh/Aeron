@@ -1,8 +1,11 @@
 # Deterministic motion-blur capture
 
-This standalone diagnostic tool renders twelve untextured, emissive cuboids through
+This standalone diagnostic tool renders twelve targets through
 `AeronScene3D`, including its normal mesh prepass, camera/object velocity path,
-TileMax/NeighborMax and motion-blur reconstruction. It needs no game assets.
+TileMax/NeighborMax and motion-blur reconstruction. The default cube fixture
+needs no game assets; the OPT fixture loads textured models from a local game installation.
+
+The cube fixture uses untextured, emissive cuboids.
 A broad face, narrower rotated objects and a thin rod expose different artifact
 scales against a dark background. Eight scattered small cuboids provide additional
 thin-feature targets at varied depths, orientations and brightnesses. Their fixed
@@ -48,7 +51,7 @@ independent of desktop scaling. Closing the window cancels the capture.
 
 ## Configuration
 
-All keys in `capture.yaml` are required and unknown keys are rejected:
+The keys in `capture.yaml` are required and unknown keys are rejected:
 
 - `width`, `height`: output dimensions (64–8192 each).
 - `frames`: number of successive frames starting at time zero (1–120).
@@ -60,11 +63,44 @@ All keys in `capture.yaml` are required and unknown keys are rejected:
 - `reference_samples`: 0 disables the reference; otherwise 1–256 subframes.
 - `output_dir`: destination for captures and reports.
 
-MSAA is 1x. FSR, SSAO, shadows, bloom, tonemapping and output dithering are off.
+Two optional keys select the textured OPT fixture:
+
+- `asset_root`: directory containing the model files, absolute or relative to the
+  working directory; defaults to `.`.
+- `models`: list of 1–8 distinct OPT paths relative to `asset_root`. Omit this
+  key to use cubes. Files are loaded once and reused across the twelve targets,
+  cycling through the list in order.
+
+Copy `capture-opt.yaml`, set `asset_root` to your game-data directory and run it
+with the same command as the cube configuration. Models are centered using their
+bounds and scaled uniformly to the longest dimension of each original target.
+The eight scattered small targets are enlarged threefold to retain visible hull detail.
+The OPT scene uses a pure black background.
+Fixed pitch variations expose textured hulls and thin silhouettes. Meshes retain
+their textures and emissive materials, with 90-degree normal smoothing. A fixed
+white directional light and small neutral ambient fill illuminate the scene;
+specular lighting is disabled. Both blurred and reference renders use identical
+materials and lighting. This is fixture version 6, with model paths and lighting
+recorded in the capture manifest.
+
+The tool uses Aeron's OPT loader directly. It does not require a preprocessing
+command, the game runtime, model animations, or game-specific material overrides.
+Models and textures are not copied into the source tree.
+
+Both the blurred scene and reference renders use 2x MSAA. FSR, SSAO, shadows,
+bloom, tonemapping and output dithering are off.
 The fixture uses the current motion-blur shader unchanged. When comparing shader
 revisions, preserve the configuration and record the Aeron commit/diff alongside
 the captures. For resolution comparisons change width and height together to
 preserve aspect ratio and field of view.
+
+Motion blur scales its length limit and sample budget from a 2160p reference:
+Low uses up to 16 samples over 32 pixels, High up to 32 over 96 pixels. At 1080p
+those limits are 8 samples over 16 pixels and 24 samples over 48 pixels. High's
+maximum-sample budget has a floor of 24 at lower resolutions; Low scales linearly.
+Actual counts adapt to streak length and round up, with a four-sample minimum,
+keeping spacing at most roughly 2 pixels for Low and 3 for High. Reconstruction
+uses the original noise texture and has no spatial cleanup filter.
 
 ## Outputs
 

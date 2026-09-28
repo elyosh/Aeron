@@ -110,21 +110,57 @@ static int write_text(const char* path, const char* text) {
 	return ok;
 }
 
+static int write_yaml_path(SDL_IOStream* stream, const char* prefix, const char* value) {
+	char line[2080];
+	int  n = snprintf(line, sizeof line, "%s'", prefix);
+	if (n < 0 || (size_t)n >= sizeof line)
+		return 0;
+	for (; *value; ++value) {
+		if ((size_t)n + 5 >= sizeof line)
+			return 0;
+		line[n++] = *value;
+		if (*value == '\'')
+			line[n++] = '\'';
+	}
+	line[n++] = '\'';
+	line[n++] = '\n';
+	return SDL_WriteIO(stream, line, (size_t)n) == (size_t)n;
+}
+
 int Capture_SaveConfig(const CaptureConfig* c) {
 	char path[1200], text[2048];
 	int  n = snprintf(path, sizeof path, "%s/capture.yaml", c->output_dir);
 	if (n < 0 || (size_t)n >= sizeof path)
 		return 0;
 	snprintf(text, sizeof text,
-			 "fixture_version: 2\nbackend: %s\nwidth: %d\nheight: %d\nframes: %d\n"
+			 "fixture_version: %d\nbackend: %s\nwidth: %d\nheight: %d\nframes: %d\n"
 			 "fps: %.9g\npan_degrees_per_second: %.9g\npan_direction_degrees: %.9g\n"
 			 "quality: %d\nshutter: %.9g\nexposure_seconds: %.9g\nreference_samples: %d\n"
 			 "reference_kernel: centered_box\nimage_data: linear_RGB_float32_PFM\n"
-			 "preview: sRGB_PNG_clamped_0_to_1\nmsaa_samples: 1\ntemporal_upscaling: off\n"
+			 "preview: sRGB_PNG_clamped_0_to_1\nmsaa_samples: 2\ntemporal_upscaling: off\n"
 			 "ssao: off\nshadows: off\nbloom: off\n",
-			 Aeron_RenderDriverName(), c->width, c->height, c->frames, c->fps, c->pan_speed, c->pan_direction,
-			 c->quality, c->shutter, c->shutter * .032, c->reference_samples);
-	return write_text(path, text);
+			 c->model_count ? 6 : 2, Aeron_RenderDriverName(), c->width, c->height, c->frames, c->fps,
+			 c->pan_speed, c->pan_direction, c->quality, c->shutter, c->shutter * .032, c->reference_samples);
+	SDL_IOStream* stream = SDL_IOFromFile(path, "wb");
+	if (!stream)
+		return 0;
+	int ok = SDL_WriteIO(stream, text, strlen(text)) == strlen(text);
+	if (ok && c->model_count) {
+		const char* lighting = "clear_color: [0, 0, 0, 1]\nlighting: directional_ambient\n"
+							   "light_direction: [0.32444284, 0.48666426, 0.81110711]\n"
+							   "light_color: [0.9, 0.9, 0.9]\nambient: [0.08, 0.08, 0.08]\n"
+							   "smooth_angle_degrees: 90\nemissive_strength: 1\n";
+		ok                   = SDL_WriteIO(stream, lighting, strlen(lighting)) == strlen(lighting) &&
+							   write_yaml_path(stream, "asset_root: ", c->asset_root) &&
+							   SDL_WriteIO(stream, "models:\n", 8) == 8;
+		for (int i = 0; ok && i < c->model_count; ++i) {
+			/* Sequence entries use YAML's quoted scalar form, including paths with apostrophes. */
+			ok = write_yaml_path(stream, "  - ", c->models[i]);
+		}
+	}
+	if (!SDL_CloseIO(stream))
+		ok = 0;
+	return ok;
 }
 
 int Capture_Report(const CaptureConfig* c, int frame, const float* actual, const float* reference) {
