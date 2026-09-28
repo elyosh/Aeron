@@ -2,7 +2,7 @@
  * Motion-blur reconstruct — velocity-weighted gather (McGuire-style),
  * shared by both tiers.
  *
- * For each pixel we gather `tap_count` samples of color_rt along a
+ * For each pixel we adaptively gather samples of color_rt along a
  * "gather" velocity and weight each tap by a cone of the TAP's own
  * velocity magnitude: a tap only contributes if its object moves enough
  * to have swept over this pixel. The crucial consequence is that
@@ -94,10 +94,9 @@ float4 main(VSOut i) : SV_Target0
     float jitter = g_noise.Sample(g_noise_s, frac(i.position.xy * 0.25f)).r
                  * 0.5f + 0.5f;
 
-    /* The host scales the length limit from a 2160p reference, so the
-     * same screen-space motion gets the same budget at every resolution. */
-    int N = (int)(tap_count * (vglen / max_length_pixels) + 0.5f);
-    N = clamp(N, 4, (int)tap_count);
+    /* The host supplies resolution-scaled limits and High's budget floor.
+     * Adapt to streak length and round up, retaining at least four samples. */
+    int N = max(4, (int)ceil(tap_count * (vglen / max_length_pixels)));
 
     /* Gather the MOVING contribution: each tap is weighted by whether its
      * OWN motion reaches this pixel (background taps ≈ 0). `cov` is the

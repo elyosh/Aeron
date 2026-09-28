@@ -11,7 +11,7 @@
 #include <math.h>
 #include <string.h>
 
-/* Blur lengths and tile coverage are authored at this reference height. */
+/* Blur lengths, sample budgets and tile coverage use this reference height. */
 #define AERON_SCENE_MB_REFERENCE_HEIGHT 2160
 #define AERON_SCENE_MB_TILE_SIZE 32
 
@@ -860,9 +860,9 @@ int AeronScenePost_MbResolve(struct AeronScene3D* s, AeronCommandBuffer* cmd, Ae
 		return 0;
 	}
 	const int high = (s->post.mb_quality == 2);
-	/* Scale the full blur length with image height. The adaptive tap ratio
-	 * then matches 2160p for the same screen-space motion at any resolution.
-	 * Use the unrounded scale here; only the velocity tiles need whole pixels. */
+	/* Scale blur length and sample budget from 2160p. High keeps at least a
+	 * 24-sample budget at lower resolutions to limit visible sampling patterns.
+	 * Short streaks still use fewer samples; reconstruction rounds up. */
 	const float resolution_scale = (float)s->output_h / (float)AERON_SCENE_MB_REFERENCE_HEIGHT;
 	const float max_length_pixels =
 		(float)(high ? 3 * AERON_SCENE_MB_TILE_SIZE : AERON_SCENE_MB_TILE_SIZE) * resolution_scale;
@@ -902,7 +902,7 @@ int AeronScenePost_MbResolve(struct AeronScene3D* s, AeronCommandBuffer* cmd, Ae
 								s->post_point_sampler };
 	MbReconstructUniforms u = {
 		.shutter_scale     = s->post.mb_shutter,
-		.tap_count         = high ? 16.0f : 8.0f,
+		.tap_count         = high ? fmaxf(24.0f, 32.0f * resolution_scale) : 16.0f * resolution_scale,
 		.max_length_pixels = max_length_pixels,
 		.output_size       = { (float)s->output_w, (float)s->output_h },
 		.velocity_size     = { (uint32_t)Aeron_TextureGetWidth(velocity),
