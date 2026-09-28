@@ -572,7 +572,8 @@ void AeronScene_SetPost(AeronScene3D* s, const AeronScenePostDesc* post) {
 		s->temporal.reset_history    = 1;
 		s->mb_temporal_motion_valid  = 0;
 		s->mb_temporal_motion_direct = 0;
-		s->mb_temporal_tile_valid    = 0;
+		s->mb_tile_valid             = 0;
+		s->mb_neighbor_valid         = 0;
 	}
 }
 
@@ -601,14 +602,16 @@ void AeronScene_SetTemporal(AeronScene3D* s, const AeronSceneTemporalDesc* tempo
 		if (s->temporal.reset_history) {
 			s->mb_temporal_motion_valid  = 0;
 			s->mb_temporal_motion_direct = 0;
-			s->mb_temporal_tile_valid    = 0;
+			s->mb_tile_valid             = 0;
+			s->mb_neighbor_valid         = 0;
 		}
 	} else {
 		memset(&s->temporal, 0, sizeof s->temporal);
 		s->temporal_phase            = 0;
 		s->mb_temporal_motion_valid  = 0;
 		s->mb_temporal_motion_direct = 0;
-		s->mb_temporal_tile_valid    = 0;
+		s->mb_tile_valid             = 0;
+		s->mb_neighbor_valid         = 0;
 	}
 }
 
@@ -631,7 +634,8 @@ void AeronScene_SetMotionContext(AeronScene3D* s, const float prev_view_proj[16]
 		s->mb_velocity_valid         = 0;
 		s->mb_temporal_motion_valid  = 0;
 		s->mb_temporal_motion_direct = 0;
-		s->mb_temporal_tile_valid    = 0;
+		s->mb_tile_valid             = 0;
+		s->mb_neighbor_valid         = 0;
 		AeronTemporalUpscaler_InvalidateRetainedMotionVectors(s->temporal_upscaler);
 	}
 	s->mb_velocity_regen = velocity_regen ? 1 : 0;
@@ -1215,6 +1219,8 @@ static int scene_render_failure(AeronScene3D* s, AeronCommandBuffer* cmd, const 
 	if (s) {
 		s->scene_rt_out          = NULL;
 		s->scene_rt_out_borrowed = 0;
+		s->mb_tile_valid         = 0;
+		s->mb_neighbor_valid     = 0;
 	}
 	Aeron_CommandBufferSetFailure(cmd, message);
 	return 0;
@@ -1377,8 +1383,12 @@ int AeronScene_Render(AeronScene3D* s, AeronCommandBuffer* cmd) {
 	const int prepass_active = ssao_active || mb_active || s->temporal_active || msaa_active;
 	const int mb_regen       = mb_active && s->mb_velocity_regen;
 	const int velocity_write = mb_regen || s->temporal_active;
-	const int mb_resolve     = !s->temporal_active && mb_active && !s->post.mb_velocity_viz &&
-							   s->post.mb_shutter > 0.0f && s->mb_velocity_valid;
+	if (mb_regen) {
+		s->mb_tile_valid     = 0;
+		s->mb_neighbor_valid = 0;
+	}
+	const int mb_resolve = !s->temporal_active && mb_active && !s->post.mb_velocity_viz &&
+						   s->post.mb_shutter > 0.0f && s->mb_velocity_valid;
 
 	AeronRenderPass* pass = NULL;
 	if (prepass_active) {

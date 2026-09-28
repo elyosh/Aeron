@@ -42,8 +42,7 @@ void main(uint3 group_id : SV_GroupID,
         [loop] for (uint x = group_thread_id.x; x < tile_size; x += MB_GROUP_SIZE) {
             uint2 pixel = tile_base + uint2(x, y);
             if (all(pixel < output_size)) {
-                float2 uv = (float2(pixel) + 0.5f) / float2(output_size);
-                float2 velocity = g_velocity.SampleLevel(g_velocity_s, uv, 0.0f).rg;
+                float2 velocity = g_velocity.Load(int3(pixel, 0));
                 float2 pixel_velocity = velocity * float2(output_size);
                 float length_sq = dot(pixel_velocity, pixel_velocity);
                 uint pixel_index = y * tile_size + x;
