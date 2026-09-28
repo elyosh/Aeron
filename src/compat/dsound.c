@@ -23,9 +23,14 @@
 
 enum { DS_DSBPLAY_LOOPING = DSBPLAY_LOOPING };
 
+typedef struct DSDevice DSDevice;
+
 typedef struct DSBuffer {
-	IDirectSoundBuffer  iface;
-	int                 refcount;
+	IDirectSoundBuffer iface;
+	int                refcount;
+	DSDevice*          device;
+	struct DSBuffer*   prev;
+	struct DSBuffer*   next;
 
 	int      rate;
 	int      channels;
@@ -57,10 +62,11 @@ typedef struct DSBuffer {
 	uint8_t*  ring_base;
 } DSBuffer;
 
-typedef struct DSDevice {
+struct DSDevice {
 	const IDirectSoundVtbl* lpVtbl;
-	int                 refcount;
-} DSDevice;
+	int                     refcount;
+	DSBuffer*               buffers;
+};
 
 /* --- unit conversions ---------------------------------------------------- */
 
@@ -379,10 +385,14 @@ static int AERON_DXAPI DSoundBuffer_AddRef(void* self) {
 	return ++b->refcount;
 }
 
-static int AERON_DXAPI DSoundBuffer_Release(void* self) {
-	DSBuffer* b = (DSBuffer*)self;
-	if (--b->refcount > 0) {
-		return b->refcount;
+static void DSoundBuffer_Destroy(DSBuffer* b) {
+	if (b->prev) {
+		b->prev->next = b->next;
+	} else {
+		b->device->buffers = b->next;
+	}
+	if (b->next) {
+		b->next->prev = b->prev;
 	}
 	if (b->voice) {
 		Aeron_AudioVoiceStop(b->voice);
@@ -395,6 +405,14 @@ static int AERON_DXAPI DSoundBuffer_Release(void* self) {
 	}
 	free(b->staging);
 	free(b);
+}
+
+static int AERON_DXAPI DSoundBuffer_Release(void* self) {
+	DSBuffer* b = (DSBuffer*)self;
+	if (--b->refcount > 0) {
+		return b->refcount;
+	}
+	DSoundBuffer_Destroy(b);
 	return 0;
 }
 
@@ -724,11 +742,17 @@ static const IDirectSoundBufferVtbl g_ds_buffer_vtbl = {
 	DSoundBuffer_Restore,
 };
 
-static DSBuffer* DSoundCompat_AllocBuffer(void) {
+static DSBuffer* DSoundCompat_AllocBuffer(DSDevice* device) {
 	DSBuffer* b = (DSBuffer*)calloc(1, sizeof(DSBuffer));
 	if (b) {
 		b->iface.lpVtbl = &g_ds_buffer_vtbl;
-		b->refcount = 1;
+		b->refcount     = 1;
+		b->device       = device;
+		b->next         = device->buffers;
+		if (b->next) {
+			b->next->prev = b;
+		}
+		device->buffers = b;
 	}
 	return b;
 }
@@ -755,20 +779,23 @@ static int AERON_DXAPI DSoundDevice_Release(void* self) {
 	if (--d->refcount > 0) {
 		return d->refcount;
 	}
+	/* Native DirectSound invalidates every child buffer with its device. */
+	while (d->buffers) {
+		DSoundBuffer_Destroy(d->buffers);
+	}
 	free(d);
 	return 0;
 }
 
 static int AERON_DXAPI DSoundDevice_CreateSoundBuffer(void* self, const DSBufferDesc* desc,
 													  IDirectSoundBuffer** buffer, void* outer) {
-	(void)self;
 	(void)outer;
 	if (!buffer || !desc) {
 		return DS_FAIL;
 	}
 	*buffer = NULL;
 
-	DSBuffer* b = DSoundCompat_AllocBuffer();
+	DSBuffer* b = DSoundCompat_AllocBuffer((DSDevice*)self);
 	if (!b) {
 		return DS_FAIL;
 	}
@@ -788,7 +815,7 @@ static int AERON_DXAPI DSoundDevice_CreateSoundBuffer(void* self, const DSBuffer
 		b->ring         = Aeron_AudioRingOpen(b->rate, b->channels, b->bits, b->capacity, 1.0f);
 		b->ring_base    = (uint8_t*)Aeron_AudioRingBase(b->ring);
 		if (!b->ring || !b->ring_base) {
-			free(b);
+			DSoundBuffer_Destroy(b);
 			return DS_FAIL;
 		}
 	}
@@ -807,14 +834,13 @@ static int AERON_DXAPI DSoundDevice_GetCaps(void* self, void* caps) {
 
 static int AERON_DXAPI DSoundDevice_DuplicateSoundBuffer(void* self, IDirectSoundBuffer* source,
 														 IDirectSoundBuffer** duplicate) {
-	(void)self;
 	if (!duplicate || !source) {
 		return DS_FAIL;
 	}
 	*duplicate = NULL;
 
 	DSBuffer* src = (DSBuffer*)source;
-	DSBuffer* dup = DSoundCompat_AllocBuffer();
+	DSBuffer* dup = DSoundCompat_AllocBuffer((DSDevice*)self);
 	if (!dup) {
 		return DS_FAIL;
 	}

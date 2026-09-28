@@ -21,13 +21,14 @@ extern "C" {
  * pan [-1..1], pitch ratios and a standard inverse-distance positional model.
  * No DirectSound, millibel, or game-specific concepts cross this boundary.
  *
- * Handles are generation-tagged 32-bit ids; the value 0 is always invalid.
+ * Handles are generation-tagged ids; voices use 64 bits, other handles 32 bits.
+ * The value 0 is always invalid.
  * Operations on a stale handle (whose slot has since been reused) are safe
  * no-ops. All entry points are safe to call from the engine main thread while
  * the SDL audio callback mixes on its own thread. */
 
 typedef uint32_t AeronClip;  /* 0 == invalid */
-typedef uint32_t AeronVoice; /* 0 == invalid */
+typedef uint64_t AeronVoice; /* 0 == invalid */
 
 typedef enum AeronPcmFormat { AERON_PCM_U8 = 0, AERON_PCM_S16 = 1 } AeronPcmFormat;
 

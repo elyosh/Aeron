@@ -36,7 +36,7 @@ typedef struct AeronClipData {
 
 typedef struct AeronVoiceSlot {
 	int       in_use;
-	uint16_t  gen;
+	uint64_t  gen;
 	AeronClip clip;
 	double    pos; /* fractional frame position within the clip */
 	float     gain;
@@ -124,6 +124,12 @@ static uint16_t Aeron_AudioHandleGen(uint32_t handle) { return (uint16_t)(handle
 
 static uint16_t Aeron_AudioNextGen(uint16_t gen) {
 	uint16_t next = (uint16_t)(gen + 1u);
+	return next == 0u ? 1u : next;
+}
+
+/* Voice buffers can retain finished handles across many thousands of plays. */
+static uint64_t Aeron_AudioNextVoiceGen(uint64_t gen) {
+	uint64_t next = (gen + 1u) & (UINT64_MAX >> 16);
 	return next == 0u ? 1u : next;
 }
 
@@ -494,7 +500,7 @@ static void Aeron_AudioMixChunk(int frames) {
 			if (clip) {
 				Aeron_AudioClipRelease(clip);
 			}
-			uint16_t gen = Aeron_AudioNextGen(voice->gen);
+			uint64_t gen = Aeron_AudioNextVoiceGen(voice->gen);
 			memset(voice, 0, sizeof(*voice));
 			voice->gen = gen;
 		}
@@ -817,7 +823,7 @@ static AeronVoice Aeron_AudioStartVoice(AeronClip clip, float gain, float pan, f
 					voice->gen = 1;
 				}
 				Aeron_AudioClipAddRef(data);
-				result = Aeron_AudioPackHandle((uint16_t)i, voice->gen);
+				result = (voice->gen << 16) | (uint16_t)i;
 				break;
 			}
 		}
@@ -836,12 +842,12 @@ AeronVoice Aeron_AudioVoicePlay3D(AeronClip clip, float gain, float pitch, int l
 }
 
 static AeronVoiceSlot* Aeron_AudioResolveVoice(AeronVoice voice) {
-	uint16_t index = Aeron_AudioHandleIndex(voice);
+	uint16_t index = (uint16_t)voice;
 	if (voice == 0 || index >= AERON_AUDIO_MAX_VOICES) {
 		return NULL;
 	}
 	AeronVoiceSlot* slot = &g_audio.voices[index];
-	if (!slot->in_use || slot->gen != Aeron_AudioHandleGen(voice)) {
+	if (!slot->in_use || slot->gen != (voice >> 16)) {
 		return NULL;
 	}
 	return slot;
@@ -922,7 +928,7 @@ void Aeron_AudioVoiceStop(AeronVoice voice) {
 		if (clip) {
 			Aeron_AudioClipRelease(clip);
 		}
-		uint16_t gen = Aeron_AudioNextGen(slot->gen);
+		uint64_t gen = Aeron_AudioNextVoiceGen(slot->gen);
 		memset(slot, 0, sizeof(*slot));
 		slot->gen = gen;
 	}
