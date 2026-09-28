@@ -383,6 +383,7 @@ struct AeronScene3D {
 	AeronRenderTarget*     mb_tile_rt;
 	AeronRenderTarget*     mb_neighbor_rt;
 	int                    mb_tile_w, mb_tile_h;
+	int                    mb_tile_size;
 
 	/* Batched billboards (billboards3d.c). Entry array +
 	 * CPU vertex scratch are lazily allocated on first AddBillboard;

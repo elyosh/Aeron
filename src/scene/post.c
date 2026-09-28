@@ -11,7 +11,8 @@
 #include <math.h>
 #include <string.h>
 
-/* TileMax/NeighborMax tile size — bounds the maximum blur length. */
+/* Blur lengths and tile coverage are authored at this reference height. */
+#define AERON_SCENE_MB_REFERENCE_HEIGHT 2160
 #define AERON_SCENE_MB_TILE_SIZE 32
 
 /* ---- cbuffer mirrors (hard-coded by the scene_ssao/scene_mb shaders) ---- */
@@ -49,8 +50,10 @@ typedef struct SsaoDebugUniforms {
 typedef struct MbReconstructUniforms {
 	float    shutter_scale;
 	float    tap_count;
-	float    max_radius;
+	float    max_length_pixels;
 	float    _pad0;
+	float    output_size[2];
+	float    _pad1[2];
 	uint32_t velocity_size[2];
 	uint32_t direct_velocity;
 	uint32_t direct_gather;
@@ -72,22 +75,26 @@ typedef struct MbTemporalTileMaxUniforms {
 	float    source_texel[2];
 	uint32_t output_size[2];
 	uint32_t native_resolution;
-	uint32_t _pad[3];
+	uint32_t tile_size;
+	uint32_t _pad[2];
 } MbTemporalTileMaxUniforms;
 
 typedef struct MbTileMaxComputeUniforms {
 	uint32_t output_size[2];
-	uint32_t _pad[2];
+	uint32_t tile_size;
+	uint32_t _pad;
 } MbTileMaxComputeUniforms;
 
 typedef struct MbFsrTileMaxUniforms {
 	uint32_t render_size[2];
 	uint32_t output_size[2];
+	uint32_t tile_size;
+	uint32_t _pad[3];
 } MbFsrTileMaxUniforms;
 
 typedef struct MbTileUniforms {
 	float src_texel[2];
-	float base_scale[2];
+	float output_size[2];
 	float step_dir[2];
 	float _pad[2];
 } MbTileUniforms;
@@ -390,8 +397,11 @@ int AeronScenePost_EnsureMb(struct AeronScene3D* s) {
 	}
 	s->mb_rt =
 		AeronSceneInternal_CreateColorRt(s->color_format, s->output_w, s->output_h, "scene.motion_blur");
-	s->mb_tile_w      = (s->output_w + AERON_SCENE_MB_TILE_SIZE - 1) / AERON_SCENE_MB_TILE_SIZE;
-	s->mb_tile_h      = (s->output_h + AERON_SCENE_MB_TILE_SIZE - 1) / AERON_SCENE_MB_TILE_SIZE;
+	/* Round up so NeighborMax always covers the scaled gather radius. */
+	s->mb_tile_size   = (s->output_h * AERON_SCENE_MB_TILE_SIZE + AERON_SCENE_MB_REFERENCE_HEIGHT - 1) /
+						AERON_SCENE_MB_REFERENCE_HEIGHT;
+	s->mb_tile_w      = (s->output_w + s->mb_tile_size - 1) / s->mb_tile_size;
+	s->mb_tile_h      = (s->output_h + s->mb_tile_size - 1) / s->mb_tile_size;
 	s->mb_tile_rt     = Aeron_CreateRenderTarget(&(AeronRenderTargetDesc) {
 		.width      = s->mb_tile_w,
 		.height     = s->mb_tile_h,
@@ -528,6 +538,7 @@ void AeronScenePost_Release(struct AeronScene3D* s) {
 	s->mb_neighbor_rt                  = NULL;
 	s->mb_tile_w                       = 0;
 	s->mb_tile_h                       = 0;
+	s->mb_tile_size                    = 0;
 	s->mb_velocity_valid               = 0;
 	s->mb_temporal_motion_valid        = 0;
 	s->mb_temporal_motion_direct       = 0;
@@ -712,6 +723,7 @@ static int mb_prepare_temporal_velocity_tilemax(struct AeronScene3D* s, AeronCom
 		.source_texel      = { 1.0f / (float)s->render_w, 1.0f / (float)s->render_h },
 		.output_size       = { (uint32_t)s->output_w, (uint32_t)s->output_h },
 		.native_resolution = s->render_w == s->output_w && s->render_h == s->output_h ? 1u : 0u,
+		.tile_size         = (uint32_t)s->mb_tile_size,
 	};
 	Aeron_BindComputePipeline(pass, s->mb_temporal_tilemax_pipeline);
 	Aeron_BindComputeTextureSampler(pass, 0, depth, s->post_point_sampler);
@@ -740,6 +752,7 @@ static int mb_prepare_tilemax(struct AeronScene3D* s, AeronCommandBuffer* cmd, A
 	}
 	const MbTileMaxComputeUniforms uniforms = {
 		.output_size = { (uint32_t)s->output_w, (uint32_t)s->output_h },
+		.tile_size   = (uint32_t)s->mb_tile_size,
 	};
 	Aeron_BindComputePipeline(pass, s->mb_tilemax_compute_pipeline);
 	Aeron_BindComputeTextureSampler(pass, 0, velocity, s->post_point_sampler);
@@ -768,6 +781,7 @@ static int mb_prepare_fsr_tilemax(struct AeronScene3D* s, AeronCommandBuffer* cm
 	const MbFsrTileMaxUniforms uniforms = {
 		.render_size = { (uint32_t)s->render_w, (uint32_t)s->render_h },
 		.output_size = { (uint32_t)s->output_w, (uint32_t)s->output_h },
+		.tile_size   = (uint32_t)s->mb_tile_size,
 	};
 	Aeron_BindComputePipeline(pass, s->mb_fsr_tilemax_pipeline);
 	Aeron_BindComputeStorageTexture(pass, 0, motion);
@@ -846,10 +860,12 @@ int AeronScenePost_MbResolve(struct AeronScene3D* s, AeronCommandBuffer* cmd, Ae
 		return 0;
 	}
 	const int high = (s->post.mb_quality == 2);
-	/* Blur-length clamp (UV, height-referenced): High may reach ~3 tiles
-	 * (NeighborMax dilates ~1.5), Low stays at one tile. */
-	const float max_radius =
-		(float)(high ? 3 * AERON_SCENE_MB_TILE_SIZE : AERON_SCENE_MB_TILE_SIZE) / (float)s->output_h;
+	/* Scale the full blur length with image height. The adaptive tap ratio
+	 * then matches 2160p for the same screen-space motion at any resolution.
+	 * Use the unrounded scale here; only the velocity tiles need whole pixels. */
+	const float resolution_scale = (float)s->output_h / (float)AERON_SCENE_MB_REFERENCE_HEIGHT;
+	const float max_length_pixels =
+		(float)(high ? 3 * AERON_SCENE_MB_TILE_SIZE : AERON_SCENE_MB_TILE_SIZE) * resolution_scale;
 
 	AeronTexture* gather = velocity; /* Low: own velocity */
 	if (high && s->mb_neighbormax_pipeline && s->mb_tile_rt && s->mb_neighbor_rt) {
@@ -870,7 +886,8 @@ int AeronScenePost_MbResolve(struct AeronScene3D* s, AeronCommandBuffer* cmd, Ae
 		}
 		if (tile_ready) {
 			MbTileUniforms tn = {
-				.src_texel = { 1.0f / (float)s->mb_tile_w, 1.0f / (float)s->mb_tile_h },
+				.src_texel   = { 1.0f / (float)s->mb_tile_w, 1.0f / (float)s->mb_tile_h },
+				.output_size = { (float)s->output_w, (float)s->output_h },
 			};
 			if (!mb_tile_pass(s, cmd, s->mb_neighbormax_pipeline, s->mb_neighbor_rt, s->mb_tile_rt, &tn,
 							  "Motion blur NeighborMax")) {
@@ -884,13 +901,14 @@ int AeronScenePost_MbResolve(struct AeronScene3D* s, AeronCommandBuffer* cmd, Ae
 	AeronSampler* smps[4]   = { s->post_linear_sampler, s->post_linear_sampler, s->post_linear_sampler,
 								s->post_point_sampler };
 	MbReconstructUniforms u = {
-		.shutter_scale   = s->post.mb_shutter,
-		.tap_count       = high ? 16.0f : 8.0f,
-		.max_radius      = max_radius,
-		.velocity_size   = { (uint32_t)Aeron_TextureGetWidth(velocity),
-							 (uint32_t)Aeron_TextureGetHeight(velocity) },
-		.direct_velocity = direct_fsr_motion ? 1u : 0u,
-		.direct_gather   = direct_fsr_motion && !high ? 1u : 0u,
+		.shutter_scale     = s->post.mb_shutter,
+		.tap_count         = high ? 16.0f : 8.0f,
+		.max_length_pixels = max_length_pixels,
+		.output_size       = { (float)s->output_w, (float)s->output_h },
+		.velocity_size     = { (uint32_t)Aeron_TextureGetWidth(velocity),
+							   (uint32_t)Aeron_TextureGetHeight(velocity) },
+		.direct_velocity   = direct_fsr_motion ? 1u : 0u,
+		.direct_gather     = direct_fsr_motion && !high ? 1u : 0u,
 	};
 	return AeronScenePost_Fullscreen(cmd, s->mb_reconstruct_pipeline, s->mb_rt, texs, smps, 4, &u, sizeof u,
 									 "Motion blur reconstruct");

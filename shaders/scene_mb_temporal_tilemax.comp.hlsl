@@ -1,10 +1,9 @@
-/* Reconstruct FSR motion at display resolution and reduce each 32x32 output
+/* Reconstruct FSR motion at display resolution and reduce each resolution-scaled
  * tile to its maximum-magnitude velocity in the same dispatch. The display
  * velocity remains available to the final motion-blur reconstruction, while
  * the group reduction replaces the separate horizontal and vertical TileMax
  * fragment passes. */
 
-#define MB_TILE_SIZE 32u
 #define MB_GROUP_SIZE 8u
 #define MB_GROUP_THREADS (MB_GROUP_SIZE * MB_GROUP_SIZE)
 
@@ -21,7 +20,8 @@ cbuffer MbTemporalTileMaxUniforms : register(b0, space2)
     float2 source_texel;
     uint2  output_size;
     uint   native_resolution;
-    uint3  _pad;
+    uint   tile_size;
+    uint2  _pad;
 };
 
 groupshared float2 s_velocity[MB_GROUP_THREADS];
@@ -79,24 +79,23 @@ void main(uint3 group_id : SV_GroupID,
           uint3 group_thread_id : SV_GroupThreadID,
           uint group_index : SV_GroupIndex)
 {
-    uint2 tile_base = group_id.xy * MB_TILE_SIZE;
+    uint2 tile_base = group_id.xy * tile_size;
     float2 best_velocity = 0.0f.xx;
     float best_length_sq = -1.0f;
     uint best_pixel_index = 0xffffffffu;
 
-    /* Each of the 64 threads handles a 4x4 stratum of the 32x32 tile. */
-    [unroll] for (uint yi = 0u; yi < 4u; yi++) {
-        uint y = group_thread_id.y + yi * MB_GROUP_SIZE;
-        [unroll] for (uint xi = 0u; xi < 4u; xi++) {
-            uint x = group_thread_id.x + xi * MB_GROUP_SIZE;
+    /* Stride over the tile so all output pixels have exactly one writer. */
+    [loop] for (uint y = group_thread_id.y; y < tile_size; y += MB_GROUP_SIZE) {
+        [loop] for (uint x = group_thread_id.x; x < tile_size; x += MB_GROUP_SIZE) {
             uint2 pixel = tile_base + uint2(x, y);
             if (all(pixel < output_size)) {
                 float2 velocity = reconstruct_velocity(pixel);
                 g_velocity_out[pixel] = velocity;
 
                 float2 reduced_velocity = quantize_velocity(velocity);
-                float length_sq = dot(reduced_velocity, reduced_velocity);
-                uint pixel_index = y * MB_TILE_SIZE + x;
+                float2 pixel_velocity = reduced_velocity * float2(output_size);
+                float length_sq = dot(pixel_velocity, pixel_velocity);
+                uint pixel_index = y * tile_size + x;
                 if (velocity_is_better(length_sq, pixel_index, best_length_sq, best_pixel_index)) {
                     best_velocity = reduced_velocity;
                     best_length_sq = length_sq;

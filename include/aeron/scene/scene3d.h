@@ -380,6 +380,8 @@ typedef struct AeronScenePostDesc {
 	 * blur-smoothable noise so a large footprint does not resolve into
 	 * separate offset occlusions on near surfaces. 0 = off. */
 	float ssao_sample_jitter;
+	/* Blur limits and velocity tile coverage scale with output height from
+	 * a 2160p reference. Sample ceilings are 8 (low) and 16 (high). */
 	int   mb_quality; /* 0=off, 1=low (own velocity), 2=high (TileMax/NeighborMax dilation) */
 	float mb_shutter;
 	int   mb_camera_blur;

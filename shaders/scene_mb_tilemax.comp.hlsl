@@ -1,8 +1,7 @@
-/* Reduce each 32x32 velocity tile to its maximum-magnitude vector. This path
+/* Reduce each resolution-scaled velocity tile to its maximum-magnitude vector. This path
  * handles non-temporal high-quality blur and retained temporal velocities that
  * do not have a tile result from the fused reconstruction dispatch. */
 
-#define MB_TILE_SIZE 32u
 #define MB_GROUP_SIZE 8u
 #define MB_GROUP_THREADS (MB_GROUP_SIZE * MB_GROUP_SIZE)
 
@@ -14,7 +13,8 @@ RWTexture2D<float2> g_tile_out : register(u0, space1);
 cbuffer MbTileMaxUniforms : register(b0, space2)
 {
     uint2 output_size;
-    uint2 _pad;
+    uint tile_size;
+    uint _pad;
 };
 
 groupshared float2 s_velocity[MB_GROUP_THREADS];
@@ -33,21 +33,20 @@ void main(uint3 group_id : SV_GroupID,
           uint3 group_thread_id : SV_GroupThreadID,
           uint group_index : SV_GroupIndex)
 {
-    uint2 tile_base = group_id.xy * MB_TILE_SIZE;
+    uint2 tile_base = group_id.xy * tile_size;
     float2 best_velocity = 0.0f.xx;
     float best_length_sq = -1.0f;
     uint best_pixel_index = 0xffffffffu;
 
-    [unroll] for (uint yi = 0u; yi < 4u; yi++) {
-        uint y = group_thread_id.y + yi * MB_GROUP_SIZE;
-        [unroll] for (uint xi = 0u; xi < 4u; xi++) {
-            uint x = group_thread_id.x + xi * MB_GROUP_SIZE;
+    [loop] for (uint y = group_thread_id.y; y < tile_size; y += MB_GROUP_SIZE) {
+        [loop] for (uint x = group_thread_id.x; x < tile_size; x += MB_GROUP_SIZE) {
             uint2 pixel = tile_base + uint2(x, y);
             if (all(pixel < output_size)) {
                 float2 uv = (float2(pixel) + 0.5f) / float2(output_size);
                 float2 velocity = g_velocity.SampleLevel(g_velocity_s, uv, 0.0f).rg;
-                float length_sq = dot(velocity, velocity);
-                uint pixel_index = y * MB_TILE_SIZE + x;
+                float2 pixel_velocity = velocity * float2(output_size);
+                float length_sq = dot(pixel_velocity, pixel_velocity);
+                uint pixel_index = y * tile_size + x;
                 if (velocity_is_better(length_sq, pixel_index, best_length_sq, best_pixel_index)) {
                     best_velocity = velocity;
                     best_length_sq = length_sq;

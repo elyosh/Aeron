@@ -16,7 +16,7 @@
 cbuffer MbTileUniforms : register(b0, space3)
 {
     float2 tile_texel;   /* 1/tile_w, 1/tile_h (= src_texel) */
-    float2 _base_scale;  /* unused by NeighborMax */
+    float2 output_size; /* UV displacement to output pixels */
     float2 _step_dir;    /* unused by NeighborMax */
     float2 _pad;
 };
@@ -38,7 +38,8 @@ float2 main(VSOut i) : SV_Target0
         [unroll] for (int dx = -MB_NEIGHBOR_RADIUS; dx <= MB_NEIGHBOR_RADIUS; dx++) {
             float2 uv = i.uv + float2(dx, dy) * tile_texel;
             float2 v  = g_tile.SampleLevel(g_sampler, uv, 0.0f).rg;
-            float  l  = dot(v, v);
+            float2 pixel_velocity = v * output_size;
+            float  l  = dot(pixel_velocity, pixel_velocity);
             if (l > best_len) { best_len = l; best = v; }
         }
     }

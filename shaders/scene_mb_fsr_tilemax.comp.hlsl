@@ -1,8 +1,7 @@
 /* Reduce FSR's retained render-resolution motion directly into one maximum
- * vector per 32x32 output tile. Output-to-render mapping is monotonic, so each
+ * vector per resolution-scaled output tile. Output-to-render mapping is monotonic, so each
  * distinct source texel only needs to be visited once within a tile. */
 
-#define MB_TILE_SIZE 32u
 #define MB_GROUP_SIZE 8u
 #define MB_GROUP_THREADS (MB_GROUP_SIZE * MB_GROUP_SIZE)
 
@@ -13,6 +12,8 @@ cbuffer MbFsrTileMaxUniforms : register(b0, space2)
 {
     uint2 render_size;
     uint2 output_size;
+    uint tile_size;
+    uint3 _pad;
 };
 
 groupshared float2 s_velocity[MB_GROUP_THREADS];
@@ -35,8 +36,8 @@ uint2 output_to_render(uint2 output_pixel)
 [numthreads(MB_GROUP_SIZE, MB_GROUP_SIZE, 1)]
 void main(uint3 group_id : SV_GroupID, uint group_index : SV_GroupIndex)
 {
-    uint2 output_first = group_id.xy * MB_TILE_SIZE;
-    uint2 output_last = min(output_first + MB_TILE_SIZE, output_size) - 1u;
+    uint2 output_first = group_id.xy * tile_size;
+    uint2 output_last = min(output_first + tile_size, output_size) - 1u;
     uint2 source_first = output_to_render(output_first);
     uint2 source_last = output_to_render(output_last);
     uint source_width = source_last.x - source_first.x + 1u;
@@ -49,7 +50,8 @@ void main(uint3 group_id : SV_GroupID, uint group_index : SV_GroupIndex)
     for (uint index = group_index; index < source_count; index += MB_GROUP_THREADS) {
         uint2 source = source_first + uint2(index % source_width, index / source_width);
         float2 velocity = -g_motion.Load(int3(source, 0));
-        float length_sq = dot(velocity, velocity);
+        float2 pixel_velocity = velocity * float2(output_size);
+        float length_sq = dot(pixel_velocity, pixel_velocity);
         uint source_index = source.y * render_size.x + source.x;
         if (velocity_is_better(length_sq, source_index, best_length_sq, best_source_index)) {
             best_velocity = velocity;

@@ -21,15 +21,17 @@
  *
  * Inputs:
  *   t0 color_rt, t1 velocity_rt (per-tap), t2 gather velocity, t3 noise.
- * Uniform: shutter_scale, tap_count, max_radius (UV clamp = tile size).
+ * Velocity textures store UV displacement; lengths use output pixels.
  */
 
 cbuffer MbReconstructUniforms : register(b0, space3)
 {
     float shutter_scale;
     float tap_count;
-    float max_radius;
+    float max_length_pixels;
     float _pad0;
+    float2 output_size;
+    float2 _pad1;
     uint2 velocity_size;
     uint direct_velocity;
     uint direct_gather;
@@ -51,7 +53,7 @@ struct VSOut
 };
 
 /* How much a sample at `dist` is covered by motion of length `vlen`
- * (both in UV). 1 at the centre, ramping to 0 at the motion's reach. */
+ * (both in pixels). 1 at the centre, ramping to 0 at the motion's reach. */
 static float cone(float dist, float vlen)
 {
     return saturate(1.0f - dist / max(vlen, 1e-5f));
@@ -81,21 +83,20 @@ float4 main(VSOut i) : SV_Target0
     float3 center = g_color.Sample(g_color_s, i.uv).rgb;
 
     float2 vg    = load_gather(i.uv) * shutter_scale;
-    float  vglen = length(vg);
-    if (vglen > max_radius) { vg *= max_radius / vglen; vglen = max_radius; }
-    if (vglen < 1e-5f)
+    float  vglen = length(vg * output_size);
+    if (vglen > max_length_pixels) {
+        vg *= max_length_pixels / vglen;
+        vglen = max_length_pixels;
+    }
+    if (vglen < 1e-3f)
         return float4(center, 1.0f);            /* no motion here */
 
     float jitter = g_noise.Sample(g_noise_s, frac(i.position.xy * 0.25f)).r
                  * 0.5f + 0.5f;
 
-    /* Adaptive tap count: scale with the blur length so the sample
-     * SPACING stays constant (= max_radius / tap_count) regardless of how
-     * far this pixel blurs. Short/moderate motion then costs only a few
-     * taps — most of the win when the whole frame blurs under camera
-     * motion — while a full-length smear still gets the full count, so
-     * there's no added banding. */
-    int N = (int)(tap_count * (vglen / max_radius) + 0.5f);
+    /* The host scales the length limit from a 2160p reference, so the
+     * same screen-space motion gets the same budget at every resolution. */
+    int N = (int)(tap_count * (vglen / max_length_pixels) + 0.5f);
     N = clamp(N, 4, (int)tap_count);
 
     /* Gather the MOVING contribution: each tap is weighted by whether its
@@ -110,7 +111,7 @@ float4 main(VSOut i) : SV_Target0
         float  t   = ((float)k + jitter) / (float)N - 0.5f;
         float2 suv = i.uv + vg * t;
         float2 vt  = load_velocity(suv) * shutter_scale;
-        float  vtlen = min(length(vt), max_radius);
+        float  vtlen = min(length(vt * output_size), max_length_pixels);
         float  dist  = abs(t) * vglen;
         float  w     = cone(dist, vtlen);        /* tap's motion reaches here */
         mov  += g_color.Sample(g_color_s, suv).rgb * w;
