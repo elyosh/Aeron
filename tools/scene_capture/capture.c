@@ -23,15 +23,18 @@ static float half_to_float(uint16_t half) {
 	return result;
 }
 
-int Capture_Read(AeronRenderTarget* target, const CaptureConfig* c, uint16_t* staging, float* rgb) {
-	size_t pixels = (size_t)c->width * (size_t)c->height;
-	if (!target || !Aeron_ReadRenderTargetRawPixels(target, staging, pixels * 8, (size_t)c->width * 8))
+int Capture_Read(AeronRenderTarget* target, int width, int height, uint16_t* staging, float* rgb) {
+	AeronTexture* texture = Aeron_RenderTargetGetTexture(target);
+	size_t        pixels  = (size_t)width * (size_t)height;
+	if (!texture || Aeron_TextureGetWidth(texture) != width || Aeron_TextureGetHeight(texture) != height ||
+		Aeron_TextureGetFormat(texture) != AERON_TEXTURE_FORMAT_RGBA16_FLOAT ||
+		!Aeron_ReadRenderTargetRawPixels(target, staging, pixels * 8, (size_t)width * 8))
 		return 0;
 	for (size_t i = 0; i < pixels; ++i) {
 		for (int channel = 0; channel < 3; ++channel) {
 			float value = half_to_float(staging[i * 4 + channel]);
 			if (!isfinite(value)) {
-				Aeron_LogError("motion_blur_capture", "Nonfinite pixel at %zu", i);
+				Aeron_LogError("scene_capture", "Nonfinite pixel at %zu", i);
 				return 0;
 			}
 			rgb[i * 3 + channel] = value;
@@ -93,10 +96,15 @@ static int write_pfm(const char* path, int width, int height, const float* rgb) 
 }
 
 int Capture_Write(const CaptureConfig* c, int frame, const char* name, const float* rgb) {
+	return Capture_WriteImage(c, frame, name, c->width, c->height, rgb);
+}
+
+int Capture_WriteImage(const CaptureConfig* c, int frame, const char* name, int width, int height,
+					   const float* rgb) {
 	char path[1200];
-	if (!output_path(c, frame, name, "pfm", path, sizeof path) || !write_pfm(path, c->width, c->height, rgb))
+	if (!output_path(c, frame, name, "pfm", path, sizeof path) || !write_pfm(path, width, height, rgb))
 		return 0;
-	return output_path(c, frame, name, "png", path, sizeof path) && write_png(path, c->width, c->height, rgb);
+	return output_path(c, frame, name, "png", path, sizeof path) && write_png(path, width, height, rgb);
 }
 
 static int write_text(const char* path, const char* text) {
@@ -137,19 +145,47 @@ int Capture_SaveConfig(const CaptureConfig* c) {
 			 "fps: %.9g\npan_degrees_per_second: %.9g\npan_direction_degrees: %.9g\n"
 			 "quality: %d\nshutter: %.9g\nexposure_seconds: %.9g\nreference_samples: %d\n"
 			 "reference_kernel: centered_box\nimage_data: linear_RGB_float32_PFM\n"
-			 "preview: sRGB_PNG_clamped_0_to_1\nmsaa_samples: 2\ntemporal_upscaling: off\n"
-			 "ssao: off\nshadows: off\nbloom: off\n",
-			 c->model_count ? 6 : 2, Aeron_RenderDriverName(), c->width, c->height, c->frames, c->fps,
-			 c->pan_speed, c->pan_direction, c->quality, c->shutter, c->shutter * .032, c->reference_samples);
+			 "preview: sRGB_PNG_clamped_0_to_1\nmsaa_samples: %d\ntemporal_upscaling: off\n"
+			 "ssao: off\nshadows: off\nfixture: %s\nemissive_scale: %.9g\nbloom_enabled: %s\n",
+			 c->bloom_chart ? 1 : (c->model_count ? 6 : 2), Aeron_RenderDriverName(), c->width, c->height,
+			 c->frames, c->fps, c->pan_speed, c->pan_direction, c->quality, c->shutter, c->shutter * .032,
+			 c->reference_samples, c->msaa_samples,
+			 c->bloom_chart ? "bloom_chart" : (c->model_count ? "models" : "shapes"), c->emissive_scale,
+			 c->bloom_enabled ? "true" : "false");
 	SDL_IOStream* stream = SDL_IOFromFile(path, "wb");
 	if (!stream)
 		return 0;
 	int ok = SDL_WriteIO(stream, text, strlen(text)) == strlen(text);
+	if (ok && (c->bloom_enabled || c->benchmark_mode)) {
+		snprintf(text, sizeof text,
+				 "bloom:\n  intensity: %.9g\n  kernel: %d\n"
+				 "bloom_capture: native_size_unweighted_linear_RGB\n"
+				 "present_capture: production_SDR_tonemap_with_dithering\n"
+				 "tonemap: %s\nagx_look: punchy\nagx_eotf_exponent: %.9g\n"
+				 "agx_punchy_power: %.9g\nagx_punchy_saturation: %.9g\naces_pre_exposure: %.9g\n",
+				 c->bloom_intensity, c->bloom_kernel == AERON_SCENE_BLOOM_KERNEL_1_TAP ? 1 : 4,
+				 c->tonemap == AERON_SCENE_TONEMAP_ACES ? "aces" : "agx", AeronScenePresent_EotfExponent(),
+				 AeronScenePresent_AgxPunchyPower(), AeronScenePresent_AgxPunchySaturation(),
+				 AeronScenePresent_AcesExposure());
+		ok = SDL_WriteIO(stream, text, strlen(text)) == strlen(text);
+	}
+	if (ok) {
+		snprintf(text, sizeof text, "run_mode: %s\n", c->benchmark_mode ? "benchmark" : "capture");
+		ok = SDL_WriteIO(stream, text, strlen(text)) == strlen(text);
+	}
+	if (ok && c->benchmark_mode) {
+		snprintf(text, sizeof text,
+				 "benchmark:\n  warmup_seconds: %.9g\n  sample_seconds: %.9g\n  samples: %d\n"
+				 "  min_frames: %d\n  frames_in_flight: %d\n",
+				 c->benchmark.warmup_seconds, c->benchmark.sample_seconds, c->benchmark.samples,
+				 c->benchmark.min_frames, c->benchmark.frames_in_flight);
+		ok = SDL_WriteIO(stream, text, strlen(text)) == strlen(text);
+	}
 	if (ok && c->model_count) {
 		const char* lighting = "clear_color: [0, 0, 0, 1]\nlighting: directional_ambient\n"
 							   "light_direction: [0.32444284, 0.48666426, 0.81110711]\n"
 							   "light_color: [0.9, 0.9, 0.9]\nambient: [0.08, 0.08, 0.08]\n"
-							   "smooth_angle_degrees: 90\nemissive_strength: 1\n";
+							   "smooth_angle_degrees: 90\n";
 		ok                   = SDL_WriteIO(stream, lighting, strlen(lighting)) == strlen(lighting) &&
 							   write_yaml_path(stream, "asset_root: ", c->asset_root) &&
 							   SDL_WriteIO(stream, "models:\n", 8) == 8;

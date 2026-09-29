@@ -1,0 +1,24 @@
+fixture: shapes
+width: 1920
+height: 1080
+# Repeat the same half-second camera sequence in every measurement window.
+frames: 30
+fps: 60
+pan_degrees_per_second: 15
+pan_direction_degrees: 45
+shutter: 0.5
+quality: 2
+reference_samples: 0
+msaa_samples: 2
+emissive_scale: 8
+bloom:
+  intensity: 0.5
+  kernel: 4
+tonemap: agx
+benchmark:
+  warmup_seconds: 2
+  sample_seconds: 1
+  samples: 7
+  min_frames: 120
+  frames_in_flight: 2
+output_dir: captures/benchmark-1080p

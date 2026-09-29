@@ -1,0 +1,18 @@
+width: 1920
+height: 1080
+frames: 1
+fps: 60
+pan_degrees_per_second: 120
+pan_direction_degrees: 45
+# Matches OpenXvT: exposure = shutter * 32 ms, independent of fps.
+shutter: 0.5
+quality: 2
+# Set to 0 to capture only sharp and blurred images.
+reference_samples: 16
+output_dir: captures/bloom-motion
+# Raise the legacy shapes above the bloom threshold without changing their geometry.
+emissive_scale: 8
+bloom:
+  intensity: 0.5
+  kernel: 4
+tonemap: agx

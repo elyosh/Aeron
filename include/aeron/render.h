@@ -267,6 +267,7 @@ typedef struct AeronComputePass AeronComputePass;
 /* Opaque explicit GPU command buffer. Lets a caller record several render and
  * copy passes (plus texture/buffer uploads) into one submission. */
 typedef struct AeronCommandBuffer AeronCommandBuffer;
+typedef struct AeronGpuFence      AeronGpuFence;
 
 /* Most recent unexpected renderer failure. The returned string is owned by
  * Aeron and remains valid until shutdown or a later renderer failure. */
@@ -811,6 +812,16 @@ AeronCommandBuffer* Aeron_AcquireCommandBuffer(void);
  * success. The pointer is invalid afterwards either way. */
 int Aeron_SubmitCommandBuffer(AeronCommandBuffer* command_buffer);
 
+/* Submit and consume the command buffer, returning a completion fence or NULL
+ * on failure. Wait/release the fence before device shutdown. These functions
+ * expose completion only, not GPU timestamps. Submission must stay on the
+ * acquiring thread, as with Aeron_SubmitCommandBuffer. */
+AeronGpuFence* Aeron_SubmitCommandBufferAndAcquireFence(AeronCommandBuffer* command_buffer);
+int            Aeron_WaitForGpuFence(AeronGpuFence* fence);
+void           Aeron_ReleaseGpuFence(AeronGpuFence* fence);
+/* Blocks until all submitted device work completes; intended for diagnostics. */
+int Aeron_WaitForGpuIdle(void);
+
 /* Discards an explicit command buffer without executing its commands. */
 void Aeron_CancelCommandBuffer(AeronCommandBuffer* command_buffer);
 
@@ -910,6 +921,15 @@ AeronTextureFormat Aeron_SwapchainFormat(void);
 
 /* Stable SDL_GPU driver identifier (for example metal, vulkan, or direct3d12). */
 const char* Aeron_RenderDriverName(void);
+
+/* Borrowed device identification strings, valid until renderer shutdown. */
+typedef struct AeronGpuDeviceInfo {
+	const char* name;
+	const char* driver_version;
+	int         validation_enabled;
+} AeronGpuDeviceInfo;
+
+AeronGpuDeviceInfo Aeron_RenderGpuDeviceInfo(void);
 /* Copies the current frame's uniform/storage transfer counters. */
 void Aeron_GetRenderDataStats(AeronRenderDataStats* out_stats);
 

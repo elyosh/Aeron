@@ -1,0 +1,17 @@
+fixture: bloom_chart
+width: 1920
+height: 1080
+frames: 1
+fps: 60
+# Calibration chart is static. Use the shapes/models presets for motion.
+pan_degrees_per_second: 0
+pan_direction_degrees: 0
+shutter: 0
+quality: 0
+reference_samples: 0
+msaa_samples: 1
+bloom:
+  intensity: 0.5
+  kernel: 4
+tonemap: agx
+output_dir: captures/bloom-1080p

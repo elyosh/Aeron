@@ -67,9 +67,11 @@ assets:
 
 ### Diagnostics
 
-The [motion-blur capture tool](tools/motion_blur_capture/README.md) renders a
-deterministic synthetic scene and saves linear images, PNG previews, temporal
-references, and comparison metrics for renderer development.
+The [scene capture tool](tools/scene_capture/README.md) renders deterministic
+synthetic scenes or OPT models and saves linear images, tonemapped bloom previews,
+motion-blur references, and bloom spread/energy comparisons across resolutions.
+Its separate benchmark mode measures completed-frame throughput after warm-up,
+with bounded GPU queuing and no image readback or file output in the timed loop.
 
 Optional Dear ImGui tools can be registered by a game for live diagnostics.
 Aeron also names GPU resources and annotates render and compute work so frames

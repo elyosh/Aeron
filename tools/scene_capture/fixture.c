@@ -55,23 +55,22 @@ static int load_models(Fixture* f, AeronCommandBuffer* cmd) {
 		uint8_t*    bytes = NULL;
 		size_t      size  = 0;
 		if (!AeronVfs_ReadAll(vfs, AERON_VFS_ROOT_ASSET, path, 64u * 1024u * 1024u, &bytes, &size)) {
-			Aeron_LogError("motion_blur_capture", "Cannot read OPT '%s' under '%s'", path,
-						   f->config.asset_root);
+			Aeron_LogError("scene_capture", "Cannot read OPT '%s' under '%s'", path, f->config.asset_root);
 			ok = 0;
 			break;
 		}
 		AeronFlightModel   model = { 0 };
 		AeronOptModelError error = { 0 };
-		ok = Aeron_OptModelBuildMemory(bytes, size, path,
-									   &(AeronOptModelBuildOptions) { .smooth_angle_degrees = 90,
-																	  .emissive             = true,
-																	  .emissive_strength    = 1 },
-									   &model, &error);
+		ok                       = Aeron_OptModelBuildMemory(
+			bytes, size, path,
+			&(AeronOptModelBuildOptions) {
+				.smooth_angle_degrees = 90, .emissive = true, .emissive_strength = f->config.emissive_scale },
+			&model, &error);
 		free(bytes);
 		if (!ok) {
-			Aeron_LogError("motion_blur_capture", "Cannot build OPT '%s': %s", path, error.message);
+			Aeron_LogError("scene_capture", "Cannot build OPT '%s': %s", path, error.message);
 		} else if (!isfinite(model.max_extent) || model.max_extent <= 1e-6f) {
-			Aeron_LogError("motion_blur_capture", "OPT '%s' has invalid bounds", path);
+			Aeron_LogError("scene_capture", "OPT '%s' has invalid bounds", path);
 			ok = 0;
 		} else {
 			CaptureMesh* mesh = &f->meshes[i];
@@ -90,17 +89,19 @@ static int load_models(Fixture* f, AeronCommandBuffer* cmd) {
 
 int Fixture_Create(Fixture* f, const CaptureConfig* config) {
 	memset(f, 0, sizeof *f);
-	f->config               = *config;
+	f->config = *config;
+	if (config->bloom_chart)
+		return BloomChart_Create(f);
 	AeronScene3DDesc desc   = { .rt_width             = config->width,
 								.rt_height            = config->height,
 								.color_format         = AERON_TEXTURE_FORMAT_RGBA16_FLOAT,
 								.with_normal_rt       = 1,
-								.sample_count         = AERON_SAMPLE_COUNT_2,
+								.sample_count         = (AeronSampleCount)config->msaa_samples,
 								.view_space_to_meters = 1 };
 	f->scene                = AeronScene_Create(&desc);
-	f->reference_scene      = AeronScene_Create(&desc);
+	f->reference_scene      = config->benchmark_mode ? NULL : AeronScene_Create(&desc);
 	AeronCommandBuffer* cmd = Aeron_AcquireCommandBuffer();
-	if (!f->scene || !f->reference_scene || !cmd) {
+	if (!f->scene || (!config->benchmark_mode && !f->reference_scene) || !cmd) {
 		if (cmd)
 			Aeron_CancelCommandBuffer(cmd);
 		Fixture_Destroy(f);
@@ -130,6 +131,8 @@ int Fixture_Create(Fixture* f, const CaptureConfig* config) {
 }
 
 void Fixture_Destroy(Fixture* f) {
+	AeronDrawList_Destroy(f->chart_draws);
+	Aeron_DestroyRenderTarget(f->chart_rt);
 	AeronScene_Destroy(f->scene);
 	AeronScene_Destroy(f->reference_scene);
 	for (int i = 0; i < CAPTURE_MAX_MODELS; ++i)
@@ -193,7 +196,7 @@ static void add_objects(AeronScene3D* scene, const Fixture* f) {
 		float                  cs = cosf(o[6]), sn = sinf(o[6]);
 		AeronSceneMeshInstance instance = {
 			.mesh                         = mesh->mesh,
-			.base_color_emissive_strength = f->config.model_count ? 0 : o[7],
+			.base_color_emissive_strength = f->config.model_count ? 0 : o[7] * f->config.emissive_scale,
 			.no_local_lights              = 1,
 			.shadow_flags = AERON_SCENE_INSTANCE_NO_CAST_SHADOW | AERON_SCENE_INSTANCE_NO_RECEIVE_SHADOW,
 			.transform = { cs * o[0], -sn * o[1], 0, o[3], sn * o[0], cs * o[1], 0, o[4], 0, 0, o[2], o[5], 0,
@@ -222,10 +225,9 @@ static void set_lighting(AeronScene3D* scene, const CaptureConfig* config) {
 	AeronScene_SetFrameUniformData(scene, AERON_SHADER_STAGE_FRAGMENT, 1, light, sizeof light);
 }
 
-AeronRenderTarget* Fixture_Render(Fixture* f, double time, int blur) {
-	Aeron_PumpEvents();
-	if (Aeron_QuitRequested() || Aeron_FatalErrorRequested())
-		return NULL;
+AeronRenderTarget* Fixture_Record(Fixture* f, double time, int blur, AeronCommandBuffer* cmd) {
+	if (f->config.bloom_chart)
+		return BloomChart_Record(f, cmd);
 	AeronScene3D*    scene    = blur ? f->scene : f->reference_scene;
 	AeronSceneCamera current  = camera_at(&f->config, time);
 	AeronSceneCamera previous = camera_at(&f->config, time - 1.0 / f->config.fps);
@@ -241,14 +243,22 @@ AeronRenderTarget* Fixture_Render(Fixture* f, double time, int blur) {
 	if (f->config.model_count)
 		set_lighting(scene, &f->config);
 	add_objects(scene, f);
+	if (!AeronScene_Render(scene, cmd))
+		return NULL;
+	return AeronScene_SceneRt(scene);
+}
+
+AeronRenderTarget* Fixture_Render(Fixture* f, double time, int blur) {
+	Aeron_PumpEvents();
+	if (Aeron_QuitRequested() || Aeron_FatalErrorRequested())
+		return NULL;
 	AeronCommandBuffer* cmd = Aeron_AcquireCommandBuffer();
 	if (!cmd)
 		return NULL;
-	if (!AeronScene_Render(scene, cmd)) {
+	AeronRenderTarget* target = Fixture_Record(f, time, blur, cmd);
+	if (!target) {
 		Aeron_CancelCommandBuffer(cmd);
 		return NULL;
 	}
-	if (!Aeron_SubmitCommandBuffer(cmd))
-		return NULL;
-	return AeronScene_SceneRt(scene);
+	return Aeron_SubmitCommandBuffer(cmd) ? target : NULL;
 }

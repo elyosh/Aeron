@@ -2094,6 +2094,18 @@ const char* Aeron_RenderDriverName(void) {
 	return driver ? driver : "unavailable";
 }
 
+AeronGpuDeviceInfo Aeron_RenderGpuDeviceInfo(void) {
+	SDL_PropertiesID props = g_aeron.gpu_device ? SDL_GetGPUDeviceProperties(g_aeron.gpu_device) : 0;
+	return (AeronGpuDeviceInfo) {
+		.name =
+			props ? SDL_GetStringProperty(props, SDL_PROP_GPU_DEVICE_NAME_STRING, "unknown") : "unavailable",
+		.driver_version =
+			props ? SDL_GetStringProperty(props, SDL_PROP_GPU_DEVICE_DRIVER_VERSION_STRING, "unknown")
+				  : "unavailable",
+		.validation_enabled = AERON_GPU_DEBUG_LABELS != 0,
+	};
+}
+
 void Aeron_GpuDebugPush(AeronCommandBuffer* command_buffer, const char* name) {
 	AeronGpuDebug_Push(command_buffer ? command_buffer->command_buffer : NULL, name);
 }
@@ -2381,7 +2393,7 @@ static void Aeron_CommandBufferEndUploadSlice(AeronCommandBuffer* command_buffer
 	slice->mapped = NULL;
 }
 
-int Aeron_SubmitCommandBuffer(AeronCommandBuffer* command_buffer) {
+static int Aeron_SubmitCommandBufferInternal(AeronCommandBuffer* command_buffer, SDL_GPUFence** fence) {
 	int ok;
 
 	if (!command_buffer) {
@@ -2404,7 +2416,14 @@ int Aeron_SubmitCommandBuffer(AeronCommandBuffer* command_buffer) {
 		}
 	} else if (command_buffer->command_buffer) {
 		SDL_ClearError();
-		if (!SDL_SubmitGPUCommandBuffer(command_buffer->command_buffer)) {
+		int submitted;
+		if (fence) {
+			*fence    = SDL_SubmitGPUCommandBufferAndAcquireFence(command_buffer->command_buffer);
+			submitted = *fence != NULL;
+		} else {
+			submitted = SDL_SubmitGPUCommandBuffer(command_buffer->command_buffer);
+		}
+		if (!submitted) {
 			const char* error = SDL_GetError();
 			Aeron_CommandBufferFail(command_buffer, "SDL_SubmitGPUCommandBuffer failed: %s",
 									error && error[0] ? error : "<no SDL error provided>");
@@ -2420,6 +2439,58 @@ int Aeron_SubmitCommandBuffer(AeronCommandBuffer* command_buffer) {
 	Aeron_ReleaseUploadChunks(command_buffer);
 	SDL_free(command_buffer);
 	return ok;
+}
+
+int Aeron_SubmitCommandBuffer(AeronCommandBuffer* command_buffer) {
+	return Aeron_SubmitCommandBufferInternal(command_buffer, NULL);
+}
+
+struct AeronGpuFence {
+	SDL_GPUFence* fence;
+};
+
+AeronGpuFence* Aeron_SubmitCommandBufferAndAcquireFence(AeronCommandBuffer* command_buffer) {
+	if (!command_buffer)
+		return NULL;
+	AeronGpuFence* fence = SDL_calloc(1, sizeof *fence);
+	if (!fence) {
+		Aeron_SetRenderError("Could not allocate GPU fence wrapper");
+		Aeron_CancelCommandBuffer(command_buffer);
+		return NULL;
+	}
+	if (!Aeron_SubmitCommandBufferInternal(command_buffer, &fence->fence) || !fence->fence) {
+		Aeron_ReleaseGpuFence(fence);
+		return NULL;
+	}
+	return fence;
+}
+
+int Aeron_WaitForGpuFence(AeronGpuFence* fence) {
+	if (!g_aeron.gpu_device || !fence || !fence->fence) {
+		Aeron_SetRenderError("Invalid GPU fence wait");
+		return 0;
+	}
+	if (!SDL_WaitForGPUFences(g_aeron.gpu_device, true, &fence->fence, 1)) {
+		Aeron_SetRenderError("GPU fence wait failed: %s", SDL_GetError());
+		return 0;
+	}
+	return 1;
+}
+
+void Aeron_ReleaseGpuFence(AeronGpuFence* fence) {
+	if (!fence)
+		return;
+	if (g_aeron.gpu_device && fence->fence)
+		SDL_ReleaseGPUFence(g_aeron.gpu_device, fence->fence);
+	SDL_free(fence);
+}
+
+int Aeron_WaitForGpuIdle(void) {
+	if (!g_aeron.gpu_device || !SDL_WaitForGPUIdle(g_aeron.gpu_device)) {
+		Aeron_SetRenderError("GPU idle wait failed: %s", SDL_GetError());
+		return 0;
+	}
+	return 1;
 }
 
 void Aeron_CancelCommandBuffer(AeronCommandBuffer* command_buffer) {
