@@ -5,40 +5,43 @@
 
 /* Generic SDL3 software mixer. See include/aeron/audio.h for the model.
  *
- * Concurrency: a single mutex guards the clip/voice/ring tables, the master
- * gain, the listener and the distance-model factors. The SDL audio callback
- * takes the same mutex while it mixes one small chunk, then releases it before
- * converting and submitting that chunk. The critical section is bounded by the
- * mix-chunk size (a few hundred frames), so main-thread audio commands block
- * for at most that mix's duration. This trades a hand-rolled lock-free ring for
- * an obviously-correct design; the per-chunk lock keeps the audio thread from
- * ever touching a freed clip or a reused voice slot. */
+ * The mixer mutex guards samples, voices, queued streams and controls. Cursor
+ * snapshots and playback transitions take the SDL stream lock first, then the
+ * mixer mutex, matching the SDL callback's lock order. The SDL stream lock
+ * covers mixing and submission so a snapshot observes complete output chunks.
+ * Device initialization/shutdown run on the control thread with producers stopped.
+ */
 
 #define AERON_AUDIO_DEVICE_RATE 48000
 #define AERON_AUDIO_DEVICE_CHANNELS 2
 #define AERON_AUDIO_MAX_CLIPS 2048
 #define AERON_AUDIO_MAX_VOICES 96
-#define AERON_AUDIO_MAX_RINGS 4
 #define AERON_AUDIO_MAX_STREAMS 8
 #define AERON_AUDIO_MIX_CHUNK 1024
 #define AERON_AUDIO_SOUND_SPEED 343.0f /* metres/second, for doppler */
 
 typedef struct AeronClipData {
-	int16_t* pcm; /* interleaved S16, channels = channels */
-	size_t   frames;
-	int      rate;
-	int      channels;
-	int      refcount;        /* voices currently referencing the clip */
-	int      pending_destroy; /* destroy requested while still referenced */
-	int      in_use;
-	uint16_t gen;
+	int16_t*       pcm; /* interleaved S16, channels = channels */
+	size_t         frames;
+	int            rate;
+	int            channels;
+	int            refcount;        /* voices currently referencing the clip */
+	int            pending_destroy; /* destroy requested while still referenced */
+	int            mutable_pcm;
+	AeronPcmFormat format;
+	int            in_use;
+	uint16_t       gen;
 } AeronClipData;
 
 typedef struct AeronVoiceSlot {
 	int       in_use;
 	uint64_t  gen;
 	AeronClip clip;
-	double    pos; /* fractional frame position within the clip */
+	double    pos;      /* fractional frame position within the clip */
+	double    advanced; /* source frames mixed since the last seek */
+	size_t    start_frame;
+	uint64_t  mixed_until; /* output frame immediately after this voice's last sample */
+	int       draining;
 	float     gain;
 	float     pan;   /* 2D pan [-1..1], used when !is3d */
 	float     pitch; /* playback-rate ratio */
@@ -49,22 +52,6 @@ typedef struct AeronVoiceSlot {
 	float     min_dist;
 	float     max_dist;
 } AeronVoiceSlot;
-
-typedef struct AeronRingSlot {
-	int      in_use;
-	uint16_t gen;
-	uint8_t* ring; /* raw PCM, U8 or S16 at `channels` */
-	size_t   ring_bytes;
-	int      rate;
-	int      channels;
-	int      bits;
-	int      block_align;
-	float    gain;
-	int      playing;
-	int      looping;
-	double   play_frames; /* mixer source position, modulo the ring */
-	double   submitted_frames;
-} AeronRingSlot;
 
 typedef struct AeronAudioStreamSlot {
 	int      in_use;
@@ -94,10 +81,10 @@ typedef struct AeronAudioSystem {
 	uint64_t          device_paused_ns;
 	SDL_Mutex*        lock;
 	SDL_Condition*    stream_space_available;
+	uint64_t          submitted_frames; /* includes silence mixed after a voice ends */
 
 	AeronClipData        clips[AERON_AUDIO_MAX_CLIPS];
 	AeronVoiceSlot       voices[AERON_AUDIO_MAX_VOICES];
-	AeronRingSlot        rings[AERON_AUDIO_MAX_RINGS];
 	AeronAudioStreamSlot streams[AERON_AUDIO_MAX_STREAMS];
 
 	float              master_gain;
@@ -112,6 +99,29 @@ typedef struct AeronAudioSystem {
 } AeronAudioSystem;
 
 static AeronAudioSystem g_audio;
+
+/* Both locks are required for output-clock snapshots. */
+static int Aeron_AudioLockOutput(void) {
+	if (!g_audio.initialized || !SDL_LockAudioStream(g_audio.device)) {
+		return 0;
+	}
+	SDL_LockMutex(g_audio.lock);
+	return 1;
+}
+
+static void Aeron_AudioUnlockOutput(void) {
+	SDL_UnlockMutex(g_audio.lock);
+	SDL_UnlockAudioStream(g_audio.device);
+}
+
+static uint64_t Aeron_AudioPlayedOutputFramesLocked(void) {
+	int      queued  = SDL_GetAudioStreamQueued(g_audio.device);
+	uint64_t pending = (uint64_t)g_audio.device_buffer_input_frames;
+	if (queued > 0) {
+		pending += (unsigned int)queued / (AERON_AUDIO_DEVICE_CHANNELS * sizeof(int16_t));
+	}
+	return g_audio.submitted_frames > pending ? g_audio.submitted_frames - pending : 0;
+}
 
 /* Handle packing: gen in the high 16 bits (never 0), index in the low 16. */
 static uint32_t Aeron_AudioPackHandle(uint16_t index, uint16_t gen) {
@@ -160,6 +170,20 @@ static void Aeron_AudioClipRelease(AeronClipData* data) {
 	if (--data->refcount <= 0 && data->pending_destroy) {
 		Aeron_AudioFreeClipData(data);
 	}
+}
+
+static void Aeron_AudioFreeVoiceLocked(AeronVoiceSlot* voice) {
+	AeronClipData* clip = Aeron_AudioResolveClip(voice->clip);
+	if (clip) {
+		Aeron_AudioClipRelease(clip);
+	}
+	uint64_t gen = Aeron_AudioNextVoiceGen(voice->gen);
+	memset(voice, 0, sizeof(*voice));
+	voice->gen = gen;
+}
+
+static int Aeron_AudioVoiceFinished(const AeronVoiceSlot* voice, uint64_t played) {
+	return voice->draining && played >= voice->mixed_until;
 }
 
 /* --- vector helpers ------------------------------------------------------ */
@@ -280,12 +304,12 @@ static void Aeron_AudioComputeVoiceMix(const AeronVoiceSlot* voice, const AeronC
 }
 
 /* Linear-interpolated sample fetch from a clip channel. */
-static float Aeron_AudioSampleClip(const AeronClipData* clip, double pos, int channel) {
+static float Aeron_AudioSampleClip(const AeronClipData* clip, double pos, int channel, int loop) {
 	size_t i0   = (size_t)pos;
 	size_t i1   = i0 + 1;
 	float  frac = (float)(pos - (double)i0);
 	if (i1 >= clip->frames) {
-		i1 = clip->frames - 1;
+		i1 = loop ? 0 : clip->frames - 1;
 	}
 	const int16_t* p  = clip->pcm;
 	int            c  = clip->channels;
@@ -294,91 +318,42 @@ static float Aeron_AudioSampleClip(const AeronClipData* clip, double pos, int ch
 	return s0 + (s1 - s0) * frac;
 }
 
-/* Mixes one active voice into g_audio.mix; returns 1 if the voice finished. */
-static int Aeron_AudioMixVoice(AeronVoiceSlot* voice, int frames) {
+/* The SDL callback holds its stream lock while this voice is mixed. */
+static void Aeron_AudioMixVoice(AeronVoiceSlot* voice, int frames) {
 	AeronClipData* clip = Aeron_AudioResolveClip(voice->clip);
-	if (!clip || clip->frames == 0) {
-		return 1;
+	if (!clip || !clip->frames) {
+		Aeron_AudioFreeVoiceLocked(voice);
+		return;
 	}
-
 	float  gl, gr;
 	double step;
 	Aeron_AudioComputeVoiceMix(voice, clip, &gl, &gr, &step);
 
-	int finished = 0;
-	for (int i = 0; i < frames; ++i) {
+	int mixed = 0;
+	for (; mixed < frames; ++mixed) {
 		if (voice->pos >= (double)clip->frames) {
 			if (voice->loop) {
-				voice->pos -= (double)clip->frames;
+				voice->pos = fmod(voice->pos, (double)clip->frames);
 			} else {
-				finished = 1;
 				break;
 			}
 		}
 		float left, right;
 		if (clip->channels >= 2) {
-			left  = Aeron_AudioSampleClip(clip, voice->pos, 0) * gl;
-			right = Aeron_AudioSampleClip(clip, voice->pos, 1) * gr;
+			left  = Aeron_AudioSampleClip(clip, voice->pos, 0, voice->loop) * gl;
+			right = Aeron_AudioSampleClip(clip, voice->pos, 1, voice->loop) * gr;
 		} else {
-			float mono = Aeron_AudioSampleClip(clip, voice->pos, 0);
+			float mono = Aeron_AudioSampleClip(clip, voice->pos, 0, voice->loop);
 			left       = mono * gl;
 			right      = mono * gr;
 		}
-		g_audio.mix[i * 2] += left;
-		g_audio.mix[i * 2 + 1] += right;
+		g_audio.mix[mixed * 2] += left;
+		g_audio.mix[mixed * 2 + 1] += right;
 		voice->pos += step;
+		voice->advanced += step;
 	}
-	return finished;
-}
-
-/* Linear-interpolated sample fetch from a ring source channel (looping). */
-static float Aeron_AudioSampleRing(const AeronRingSlot* r, double pos, int channel, size_t ring_frames) {
-	size_t i0   = (size_t)pos % ring_frames;
-	size_t i1   = (i0 + 1) % ring_frames;
-	float  frac = (float)(pos - floor(pos));
-	float  s0, s1;
-	if (r->bits == 8) {
-		const uint8_t* p = r->ring;
-		s0               = (float)(((int)p[i0 * r->channels + channel] - 128) << 8);
-		s1               = (float)(((int)p[i1 * r->channels + channel] - 128) << 8);
-	} else {
-		const int16_t* p = (const int16_t*)r->ring;
-		s0               = (float)p[i0 * r->channels + channel];
-		s1               = (float)p[i1 * r->channels + channel];
-	}
-	return s0 + (s1 - s0) * frac;
-}
-
-/* Mixes one active ring source into g_audio.mix. */
-static void Aeron_AudioMixRing(AeronRingSlot* r, int frames) {
-	size_t ring_frames = r->ring_bytes / (size_t)r->block_align;
-	if (ring_frames == 0) {
-		return;
-	}
-	double step = (double)r->rate / (double)AERON_AUDIO_DEVICE_RATE;
-	for (int i = 0; i < frames; ++i) {
-		float left, right;
-		if (r->channels >= 2) {
-			left  = Aeron_AudioSampleRing(r, r->play_frames, 0, ring_frames) * r->gain;
-			right = Aeron_AudioSampleRing(r, r->play_frames, 1, ring_frames) * r->gain;
-		} else {
-			float mono = Aeron_AudioSampleRing(r, r->play_frames, 0, ring_frames);
-			left = right = mono * r->gain;
-		}
-		g_audio.mix[i * 2] += left;
-		g_audio.mix[i * 2 + 1] += right;
-		r->play_frames += step;
-		r->submitted_frames += step;
-		if (r->play_frames >= (double)ring_frames) {
-			if (r->looping) {
-				r->play_frames -= (double)ring_frames;
-			} else {
-				r->play_frames = (double)ring_frames;
-				r->playing     = 0;
-				break;
-			}
-		}
-	}
+	voice->mixed_until = g_audio.submitted_frames + (uint64_t)mixed;
+	voice->draining    = !voice->loop && voice->pos >= (double)clip->frames;
 }
 
 static AeronAudioStreamSlot* Aeron_AudioResolveStream(AeronAudioStream stream) {
@@ -426,7 +401,7 @@ static void Aeron_AudioStreamUpdateAudibleLocked(AeronAudioStreamSlot* stream, u
 static float Aeron_AudioSampleStream(const AeronAudioStreamSlot* stream, uint64_t frame, int channel) {
 	const size_t index = (size_t)(frame % stream->capacity_frames);
 	if (stream->bits == 8) {
-		return (float)(((int)stream->pcm[index * (size_t)stream->channels + (size_t)channel] - 128) << 8);
+		return (float)(((int)stream->pcm[index * (size_t)stream->channels + (size_t)channel] - 128) * 256);
 	}
 	return (float)((const int16_t*)stream->pcm)[index * (size_t)stream->channels + (size_t)channel];
 }
@@ -490,26 +465,16 @@ static void Aeron_AudioMixChunk(int frames) {
 
 	memset(g_audio.mix, 0, (size_t)frames * 2 * sizeof(float));
 
+	uint64_t played = Aeron_AudioPlayedOutputFramesLocked();
 	for (int v = 0; v < AERON_AUDIO_MAX_VOICES; ++v) {
 		AeronVoiceSlot* voice = &g_audio.voices[v];
 		if (!voice->in_use) {
 			continue;
 		}
-		if (Aeron_AudioMixVoice(voice, frames)) {
-			AeronClipData* clip = Aeron_AudioResolveClip(voice->clip);
-			if (clip) {
-				Aeron_AudioClipRelease(clip);
-			}
-			uint64_t gen = Aeron_AudioNextVoiceGen(voice->gen);
-			memset(voice, 0, sizeof(*voice));
-			voice->gen = gen;
-		}
-	}
-
-	for (int r = 0; r < AERON_AUDIO_MAX_RINGS; ++r) {
-		AeronRingSlot* ring = &g_audio.rings[r];
-		if (ring->in_use && ring->playing) {
-			Aeron_AudioMixRing(ring, frames);
+		if (Aeron_AudioVoiceFinished(voice, played)) {
+			Aeron_AudioFreeVoiceLocked(voice);
+		} else if (!voice->draining) {
+			Aeron_AudioMixVoice(voice, frames);
 		}
 	}
 
@@ -546,6 +511,9 @@ static void SDLCALL Aeron_AudioCallback(void* userdata, SDL_AudioStream* stream,
 		Aeron_AudioMixChunk(chunk);
 		SDL_PutAudioStreamData(stream, g_audio.stage,
 							   chunk * AERON_AUDIO_DEVICE_CHANNELS * (int)sizeof(int16_t));
+		SDL_LockMutex(g_audio.lock);
+		g_audio.submitted_frames += (uint64_t)chunk;
+		SDL_UnlockMutex(g_audio.lock);
 		frames_remaining -= chunk;
 	}
 }
@@ -677,25 +645,15 @@ void Aeron_AudioShutdown(void) {
 	SDL_DestroyAudioStream(g_audio.device);
 	g_audio.device = NULL;
 
-	/* Every public entry point tests g_audio.initialized and then takes the lock,
-	 * so clearing the flag and the slot table under the lock leaves a late
-	 * producer either bailed at the flag or finished before the frees below.
-	 * Owners are still expected to stop their producers before calling this. */
+	/* Producers have joined before the device and sample storage are released. */
 	SDL_LockMutex(g_audio.lock);
 	g_audio.initialized = 0;
 	void* clip_pcm[AERON_AUDIO_MAX_CLIPS];
-	void* ring_pcm[AERON_AUDIO_MAX_RINGS];
 	void* stream_pcm[AERON_AUDIO_MAX_STREAMS];
 	for (int c = 0; c < AERON_AUDIO_MAX_CLIPS; ++c) {
 		clip_pcm[c]             = g_audio.clips[c].in_use ? g_audio.clips[c].pcm : NULL;
 		g_audio.clips[c].in_use = 0;
 		g_audio.clips[c].pcm    = NULL;
-	}
-	for (int r = 0; r < AERON_AUDIO_MAX_RINGS; ++r) {
-		ring_pcm[r]              = g_audio.rings[r].in_use ? g_audio.rings[r].ring : NULL;
-		g_audio.rings[r].in_use  = 0;
-		g_audio.rings[r].playing = 0;
-		g_audio.rings[r].ring    = NULL;
 	}
 	for (int s = 0; s < AERON_AUDIO_MAX_STREAMS; ++s) {
 		stream_pcm[s]              = g_audio.streams[s].in_use ? g_audio.streams[s].pcm : NULL;
@@ -707,9 +665,6 @@ void Aeron_AudioShutdown(void) {
 
 	for (int c = 0; c < AERON_AUDIO_MAX_CLIPS; ++c) {
 		SDL_free(clip_pcm[c]);
-	}
-	for (int r = 0; r < AERON_AUDIO_MAX_RINGS; ++r) {
-		SDL_free(ring_pcm[r]);
 	}
 	for (int s = 0; s < AERON_AUDIO_MAX_STREAMS; ++s) {
 		SDL_free(stream_pcm[s]);
@@ -725,10 +680,12 @@ void Aeron_AudioShutdown(void) {
 
 /* --- clips --------------------------------------------------------------- */
 
-AeronClip Aeron_AudioClipCreate(const void* pcm, size_t frame_count, int sample_rate, int channels,
-								AeronPcmFormat fmt) {
-	if (!g_audio.initialized || !pcm || frame_count == 0 || (channels != 1 && channels != 2) ||
-		sample_rate <= 0) {
+static AeronClip Aeron_AudioCreateClip(const void* pcm, size_t frame_count, int sample_rate, int channels,
+									   AeronPcmFormat fmt, int mutable_pcm) {
+	if (!g_audio.initialized || (!pcm && !mutable_pcm) || frame_count == 0 ||
+		(channels != 1 && channels != 2) || sample_rate <= 0 ||
+		(fmt != AERON_PCM_U8 && fmt != AERON_PCM_S16) ||
+		frame_count > SIZE_MAX / (size_t)channels / sizeof(int16_t)) {
 		return 0;
 	}
 
@@ -737,12 +694,14 @@ AeronClip Aeron_AudioClipCreate(const void* pcm, size_t frame_count, int sample_
 	if (!converted) {
 		return 0;
 	}
-	if (fmt == AERON_PCM_S16) {
+	if (!pcm) {
+		memset(converted, 0, sample_count * sizeof(int16_t));
+	} else if (fmt == AERON_PCM_S16) {
 		memcpy(converted, pcm, sample_count * sizeof(int16_t));
 	} else {
 		const uint8_t* src = (const uint8_t*)pcm;
 		for (size_t i = 0; i < sample_count; ++i) {
-			converted[i] = (int16_t)(((int)src[i] - 128) << 8);
+			converted[i] = (int16_t)(((int)src[i] - 128) * 256);
 		}
 	}
 
@@ -757,6 +716,8 @@ AeronClip Aeron_AudioClipCreate(const void* pcm, size_t frame_count, int sample_
 			data->channels        = channels;
 			data->refcount        = 0;
 			data->pending_destroy = 0;
+			data->mutable_pcm     = mutable_pcm;
+			data->format          = fmt;
 			data->in_use          = 1;
 			if (data->gen == 0) {
 				data->gen = 1;
@@ -771,6 +732,52 @@ AeronClip Aeron_AudioClipCreate(const void* pcm, size_t frame_count, int sample_
 		SDL_free(converted);
 	}
 	return result;
+}
+
+AeronClip Aeron_AudioClipCreate(const void* pcm, size_t frame_count, int sample_rate, int channels,
+								AeronPcmFormat fmt) {
+	return Aeron_AudioCreateClip(pcm, frame_count, sample_rate, channels, fmt, 0);
+}
+
+AeronClip Aeron_AudioClipCreateMutable(size_t frame_count, int sample_rate, int channels,
+									   AeronPcmFormat fmt) {
+	return Aeron_AudioCreateClip(NULL, frame_count, sample_rate, channels, fmt, 1);
+}
+
+int Aeron_AudioClipWrite(AeronClip clip, const AeronPcmWrite* writes, size_t count) {
+	if (!g_audio.initialized || (!writes && count)) {
+		return 0;
+	}
+	SDL_LockMutex(g_audio.lock);
+	AeronClipData* data = Aeron_AudioResolveClip(clip);
+	if (!data || !data->mutable_pcm || data->pending_destroy) {
+		SDL_UnlockMutex(g_audio.lock);
+		return 0;
+	}
+	size_t capacity = data->frames * (size_t)data->channels * (data->format == AERON_PCM_U8 ? 1u : 2u);
+	for (size_t i = 0; i < count; ++i) {
+		if ((!writes[i].pcm && writes[i].bytes) || writes[i].offset > capacity ||
+			writes[i].bytes > capacity - writes[i].offset) {
+			SDL_UnlockMutex(g_audio.lock);
+			return 0;
+		}
+	}
+	for (size_t i = 0; i < count; ++i) {
+		if (!writes[i].bytes) {
+			continue;
+		}
+		if (data->format == AERON_PCM_S16) {
+			memcpy((uint8_t*)data->pcm + writes[i].offset, writes[i].pcm, writes[i].bytes);
+		} else {
+			const uint8_t* src = (const uint8_t*)writes[i].pcm;
+			int16_t*       dst = data->pcm + writes[i].offset;
+			for (size_t j = 0; j < writes[i].bytes; ++j) {
+				dst[j] = (int16_t)(((int)src[j] - 128) * 256);
+			}
+		}
+	}
+	SDL_UnlockMutex(g_audio.lock);
+	return 1;
 }
 
 void Aeron_AudioClipDestroy(AeronClip clip) {
@@ -792,28 +799,36 @@ void Aeron_AudioClipDestroy(AeronClip clip) {
 /* --- voices -------------------------------------------------------------- */
 
 static AeronVoice Aeron_AudioStartVoice(AeronClip clip, float gain, float pan, float pitch, int loop,
-										int is3d, const float pos[3], float min_dist, float max_dist) {
-	if (!g_audio.initialized || clip == 0) {
+										int is3d, const float pos[3], float min_dist, float max_dist,
+										size_t frame) {
+	if (clip == 0 || !Aeron_AudioLockOutput()) {
 		return 0;
 	}
 
-	SDL_LockMutex(g_audio.lock);
+	uint64_t       played = Aeron_AudioPlayedOutputFramesLocked();
 	AeronVoice     result = 0;
 	AeronClipData* data   = Aeron_AudioResolveClip(clip);
-	if (data) {
+	if (data && !data->pending_destroy && frame < data->frames) {
 		for (int i = 0; i < AERON_AUDIO_MAX_VOICES; ++i) {
 			AeronVoiceSlot* voice = &g_audio.voices[i];
+			if (voice->in_use && Aeron_AudioVoiceFinished(voice, played)) {
+				Aeron_AudioFreeVoiceLocked(voice);
+			}
 			if (!voice->in_use) {
-				voice->in_use   = 1;
-				voice->clip     = clip;
-				voice->pos      = 0.0;
-				voice->gain     = gain;
-				voice->pan      = pan;
-				voice->pitch    = pitch > 0.0f ? pitch : 1.0f;
-				voice->loop     = loop;
-				voice->is3d     = is3d;
-				voice->min_dist = min_dist;
-				voice->max_dist = max_dist;
+				voice->in_use      = 1;
+				voice->clip        = clip;
+				voice->pos         = (double)frame;
+				voice->start_frame = frame;
+				voice->advanced    = 0.0;
+				voice->mixed_until = g_audio.submitted_frames;
+				voice->draining    = 0;
+				voice->gain        = gain;
+				voice->pan         = pan;
+				voice->pitch       = pitch > 0.0f ? pitch : 1.0f;
+				voice->loop        = loop;
+				voice->is3d        = is3d;
+				voice->min_dist    = min_dist;
+				voice->max_dist    = max_dist;
 				if (is3d && pos) {
 					voice->pos3[0] = pos[0];
 					voice->pos3[1] = pos[1];
@@ -828,17 +843,27 @@ static AeronVoice Aeron_AudioStartVoice(AeronClip clip, float gain, float pan, f
 			}
 		}
 	}
-	SDL_UnlockMutex(g_audio.lock);
+	Aeron_AudioUnlockOutput();
 	return result;
 }
 
 AeronVoice Aeron_AudioVoicePlay(AeronClip clip, float gain, float pan, float pitch, int loop) {
-	return Aeron_AudioStartVoice(clip, gain, pan, pitch, loop, 0, NULL, 0.0f, 0.0f);
+	return Aeron_AudioStartVoice(clip, gain, pan, pitch, loop, 0, NULL, 0.0f, 0.0f, 0);
 }
 
 AeronVoice Aeron_AudioVoicePlay3D(AeronClip clip, float gain, float pitch, int loop, const float pos[3],
 								  float min_dist, float max_dist) {
-	return Aeron_AudioStartVoice(clip, gain, 0.0f, pitch, loop, 1, pos, min_dist, max_dist);
+	return Aeron_AudioStartVoice(clip, gain, 0.0f, pitch, loop, 1, pos, min_dist, max_dist, 0);
+}
+
+AeronVoice Aeron_AudioVoicePlayFrom(AeronClip clip, float gain, float pan, float pitch, int loop,
+									size_t frame) {
+	return Aeron_AudioStartVoice(clip, gain, pan, pitch, loop, 0, NULL, 0.0f, 0.0f, frame);
+}
+
+AeronVoice Aeron_AudioVoicePlay3DFrom(AeronClip clip, float gain, float pitch, int loop, const float pos[3],
+									  float min_dist, float max_dist, size_t frame) {
+	return Aeron_AudioStartVoice(clip, gain, 0.0f, pitch, loop, 1, pos, min_dist, max_dist, frame);
 }
 
 static AeronVoiceSlot* Aeron_AudioResolveVoice(AeronVoice voice) {
@@ -851,6 +876,84 @@ static AeronVoiceSlot* Aeron_AudioResolveVoice(AeronVoice voice) {
 		return NULL;
 	}
 	return slot;
+}
+
+/* The output snapshot keeps completed voices valid until their tail has played. */
+static AeronVoiceSlot* Aeron_AudioResolvePlayingVoiceLocked(AeronVoice voice, uint64_t played) {
+	AeronVoiceSlot* slot = Aeron_AudioResolveVoice(voice);
+	if (slot && Aeron_AudioVoiceFinished(slot, played)) {
+		Aeron_AudioFreeVoiceLocked(slot);
+		slot = NULL;
+	}
+	return slot;
+}
+
+static size_t Aeron_AudioVoiceCursorLocked(const AeronVoiceSlot* voice, const AeronClipData* clip,
+										   uint64_t played) {
+	float  left, right;
+	double step;
+	Aeron_AudioComputeVoiceMix(voice, clip, &left, &right, &step);
+	uint64_t pending = voice->mixed_until > played ? voice->mixed_until - played : 0;
+	double   heard   = voice->advanced - (double)pending * step;
+	double   frame   = (double)voice->start_frame + (heard > 0.0 ? heard : 0.0);
+	if (voice->loop) {
+		return (size_t)fmod(frame, (double)clip->frames);
+	}
+	return frame < (double)clip->frames ? (size_t)frame : clip->frames - 1;
+}
+
+int Aeron_AudioVoiceGetCursors(AeronVoice voice, size_t* play, size_t* write) {
+	if (play)
+		*play = 0;
+	if (write)
+		*write = 0;
+	if (!Aeron_AudioLockOutput()) {
+		return 0;
+	}
+	uint64_t        played = Aeron_AudioPlayedOutputFramesLocked();
+	AeronVoiceSlot* slot   = Aeron_AudioResolvePlayingVoiceLocked(voice, played);
+	AeronClipData*  clip   = slot ? Aeron_AudioResolveClip(slot->clip) : NULL;
+	if (clip) {
+		if (play)
+			*play = Aeron_AudioVoiceCursorLocked(slot, clip, played);
+		if (write)
+			*write = (size_t)fmod(slot->pos, (double)clip->frames);
+	}
+	Aeron_AudioUnlockOutput();
+	return clip != NULL;
+}
+
+int Aeron_AudioVoiceSetPosition(AeronVoice voice, size_t frame) {
+	if (!Aeron_AudioLockOutput()) {
+		return 0;
+	}
+	AeronVoiceSlot* slot = Aeron_AudioResolvePlayingVoiceLocked(voice, Aeron_AudioPlayedOutputFramesLocked());
+	AeronClipData*  clip = slot ? Aeron_AudioResolveClip(slot->clip) : NULL;
+	int             valid = clip && frame < clip->frames;
+	if (valid) {
+		slot->pos         = (double)frame;
+		slot->start_frame = frame;
+		slot->advanced    = 0.0;
+		slot->mixed_until = g_audio.submitted_frames;
+		slot->draining    = 0;
+	}
+	Aeron_AudioUnlockOutput();
+	return valid;
+}
+
+int Aeron_AudioVoiceSetLooping(AeronVoice voice, int loop) {
+	if (!Aeron_AudioLockOutput()) {
+		return 0;
+	}
+	AeronVoiceSlot* slot = Aeron_AudioResolvePlayingVoiceLocked(voice, Aeron_AudioPlayedOutputFramesLocked());
+	if (slot) {
+		slot->loop = loop != 0;
+		if (slot->loop)
+			slot->draining = 0;
+	}
+	int valid = slot != NULL;
+	Aeron_AudioUnlockOutput();
+	return valid;
 }
 
 void Aeron_AudioVoiceSetGain(AeronVoice voice, float gain) {
@@ -917,31 +1020,31 @@ void Aeron_AudioVoiceSet3DVelocity(AeronVoice voice, const float vel[3]) {
 	SDL_UnlockMutex(g_audio.lock);
 }
 
-void Aeron_AudioVoiceStop(AeronVoice voice) {
-	if (!g_audio.initialized) {
-		return;
+size_t Aeron_AudioVoiceStopAndGetPosition(AeronVoice voice) {
+	size_t cursor = 0;
+	if (!Aeron_AudioLockOutput()) {
+		return 0;
 	}
-	SDL_LockMutex(g_audio.lock);
 	AeronVoiceSlot* slot = Aeron_AudioResolveVoice(voice);
 	if (slot) {
 		AeronClipData* clip = Aeron_AudioResolveClip(slot->clip);
-		if (clip) {
-			Aeron_AudioClipRelease(clip);
+		if (clip && !slot->draining) {
+			cursor = (size_t)fmod(slot->pos, (double)clip->frames);
 		}
-		uint64_t gen = Aeron_AudioNextVoiceGen(slot->gen);
-		memset(slot, 0, sizeof(*slot));
-		slot->gen = gen;
+		Aeron_AudioFreeVoiceLocked(slot);
 	}
-	SDL_UnlockMutex(g_audio.lock);
+	Aeron_AudioUnlockOutput();
+	return cursor;
 }
 
+void Aeron_AudioVoiceStop(AeronVoice voice) { (void)Aeron_AudioVoiceStopAndGetPosition(voice); }
+
 int Aeron_AudioVoiceIsPlaying(AeronVoice voice) {
-	if (!g_audio.initialized) {
+	if (!Aeron_AudioLockOutput()) {
 		return 0;
 	}
-	SDL_LockMutex(g_audio.lock);
-	int playing = Aeron_AudioResolveVoice(voice) != NULL;
-	SDL_UnlockMutex(g_audio.lock);
+	int playing = Aeron_AudioResolvePlayingVoiceLocked(voice, Aeron_AudioPlayedOutputFramesLocked()) != NULL;
+	Aeron_AudioUnlockOutput();
 	return playing;
 }
 
@@ -964,213 +1067,6 @@ void Aeron_AudioSetDistanceModel(float distance_factor, float rolloff_factor, fl
 	g_audio.rolloff_factor  = rolloff_factor >= 0.0f ? rolloff_factor : 1.0f;
 	g_audio.doppler_factor  = doppler_factor >= 0.0f ? doppler_factor : 0.0f;
 	SDL_UnlockMutex(g_audio.lock);
-}
-
-/* --- ring sources -------------------------------------------------------- */
-
-static AeronRingSlot* Aeron_AudioResolveRing(AeronRing ring) {
-	uint16_t index = Aeron_AudioHandleIndex(ring);
-	if (ring == 0 || index >= AERON_AUDIO_MAX_RINGS) {
-		return NULL;
-	}
-	AeronRingSlot* slot = &g_audio.rings[index];
-	if (!slot->in_use || slot->gen != Aeron_AudioHandleGen(ring)) {
-		return NULL;
-	}
-	return slot;
-}
-
-AeronRing Aeron_AudioRingOpen(int rate, int channels, int bits, size_t ring_bytes, float gain) {
-	if (!g_audio.initialized || rate <= 0 || (channels != 1 && channels != 2) || (bits != 8 && bits != 16) ||
-		ring_bytes == 0) {
-		return 0;
-	}
-
-	uint8_t* storage = (uint8_t*)SDL_calloc(1, ring_bytes);
-	if (!storage) {
-		return 0;
-	}
-
-	SDL_LockMutex(g_audio.lock);
-	AeronRing result = 0;
-	for (int i = 0; i < AERON_AUDIO_MAX_RINGS; ++i) {
-		AeronRingSlot* slot = &g_audio.rings[i];
-		if (!slot->in_use) {
-			slot->in_use           = 1;
-			slot->ring             = storage;
-			slot->ring_bytes       = ring_bytes;
-			slot->rate             = rate;
-			slot->channels         = channels;
-			slot->bits             = bits;
-			slot->block_align      = channels * (bits / 8);
-			slot->gain             = gain;
-			slot->playing          = 0;
-			slot->looping          = 0;
-			slot->play_frames      = 0.0;
-			slot->submitted_frames = 0.0;
-			if (slot->gen == 0) {
-				slot->gen = 1;
-			}
-			result = Aeron_AudioPackHandle((uint16_t)i, slot->gen);
-			break;
-		}
-	}
-	SDL_UnlockMutex(g_audio.lock);
-
-	if (result == 0) {
-		SDL_free(storage);
-	}
-	return result;
-}
-
-void* Aeron_AudioRingBase(AeronRing ring) {
-	if (!g_audio.initialized) {
-		return NULL;
-	}
-	SDL_LockMutex(g_audio.lock);
-	AeronRingSlot* slot = Aeron_AudioResolveRing(ring);
-	void*          base = slot ? slot->ring : NULL;
-	SDL_UnlockMutex(g_audio.lock);
-	return base;
-}
-
-int Aeron_AudioRingWrite(AeronRing ring, size_t offset, const void* src, size_t bytes) {
-	if (!g_audio.initialized || !src) {
-		return 0;
-	}
-	SDL_LockMutex(g_audio.lock);
-	AeronRingSlot* slot = Aeron_AudioResolveRing(ring);
-	int            ok   = 0;
-	if (slot && offset <= slot->ring_bytes && bytes <= slot->ring_bytes - offset) {
-		memcpy(slot->ring + offset, src, bytes);
-		ok = 1;
-	}
-	SDL_UnlockMutex(g_audio.lock);
-	return ok;
-}
-
-static int Aeron_AudioPendingOutputFrames(void) {
-	int pending = g_audio.device_buffer_input_frames;
-	if (g_audio.device) {
-		int queued = SDL_GetAudioStreamQueued(g_audio.device);
-		if (queued > 0) {
-			pending += queued / (AERON_AUDIO_DEVICE_CHANNELS * (int)sizeof(int16_t));
-		}
-	}
-	return pending;
-}
-
-size_t Aeron_AudioRingPlayCursorBytes(AeronRing ring) {
-	if (!g_audio.initialized) {
-		return 0;
-	}
-	int pending_output_frames = Aeron_AudioPendingOutputFrames();
-	SDL_LockMutex(g_audio.lock);
-	AeronRingSlot* slot   = Aeron_AudioResolveRing(ring);
-	size_t         cursor = 0;
-	if (slot) {
-		size_t ring_frames = slot->ring_bytes / (size_t)slot->block_align;
-		if (ring_frames) {
-			double pending_source_frames =
-				(double)pending_output_frames * (double)slot->rate / (double)AERON_AUDIO_DEVICE_RATE;
-			double heard_frames = slot->submitted_frames - pending_source_frames;
-			size_t frame;
-			if (heard_frames <= 0.0) {
-				frame = 0;
-			} else {
-				frame = (size_t)fmod(heard_frames, (double)ring_frames);
-			}
-			cursor = frame * (size_t)slot->block_align;
-		}
-	}
-	SDL_UnlockMutex(g_audio.lock);
-	return cursor;
-}
-
-int Aeron_AudioRingSetPlayCursorBytes(AeronRing ring, size_t cursor_bytes) {
-	int pending_output_frames;
-	int result = 0;
-
-	if (!g_audio.initialized)
-		return 0;
-	pending_output_frames = Aeron_AudioPendingOutputFrames();
-	SDL_LockMutex(g_audio.lock);
-	AeronRingSlot* slot = Aeron_AudioResolveRing(ring);
-	if (slot && cursor_bytes < slot->ring_bytes && cursor_bytes % (size_t)slot->block_align == 0) {
-		const double frame = (double)(cursor_bytes / (size_t)slot->block_align);
-		const double pending_source_frames =
-			(double)pending_output_frames * (double)slot->rate / (double)AERON_AUDIO_DEVICE_RATE;
-		slot->play_frames      = frame;
-		slot->submitted_frames = frame + pending_source_frames;
-		result                 = 1;
-	}
-	SDL_UnlockMutex(g_audio.lock);
-	return result;
-}
-
-void Aeron_AudioRingPlay(AeronRing ring, int looping) {
-	if (!g_audio.initialized) {
-		return;
-	}
-	SDL_LockMutex(g_audio.lock);
-	AeronRingSlot* slot = Aeron_AudioResolveRing(ring);
-	if (slot) {
-		slot->looping = looping;
-		slot->playing = 1;
-	}
-	SDL_UnlockMutex(g_audio.lock);
-}
-
-void Aeron_AudioRingStop(AeronRing ring) {
-	if (!g_audio.initialized) {
-		return;
-	}
-	SDL_LockMutex(g_audio.lock);
-	AeronRingSlot* slot = Aeron_AudioResolveRing(ring);
-	if (slot) {
-		slot->playing = 0;
-	}
-	SDL_UnlockMutex(g_audio.lock);
-}
-
-int Aeron_AudioRingIsPlaying(AeronRing ring) {
-	if (!g_audio.initialized) {
-		return 0;
-	}
-	SDL_LockMutex(g_audio.lock);
-	AeronRingSlot* slot    = Aeron_AudioResolveRing(ring);
-	int            playing = slot && slot->playing;
-	SDL_UnlockMutex(g_audio.lock);
-	return playing;
-}
-
-void Aeron_AudioRingSetGain(AeronRing ring, float gain) {
-	if (!g_audio.initialized) {
-		return;
-	}
-	SDL_LockMutex(g_audio.lock);
-	AeronRingSlot* slot = Aeron_AudioResolveRing(ring);
-	if (slot) {
-		slot->gain = gain;
-	}
-	SDL_UnlockMutex(g_audio.lock);
-}
-
-void Aeron_AudioRingClose(AeronRing ring) {
-	if (!g_audio.initialized) {
-		return;
-	}
-	SDL_LockMutex(g_audio.lock);
-	AeronRingSlot* slot    = Aeron_AudioResolveRing(ring);
-	uint8_t*       storage = NULL;
-	if (slot) {
-		storage      = slot->ring;
-		uint16_t gen = Aeron_AudioNextGen(slot->gen);
-		memset(slot, 0, sizeof(*slot));
-		slot->gen = gen;
-	}
-	SDL_UnlockMutex(g_audio.lock);
-	SDL_free(storage);
 }
 
 /* --- queued streams ------------------------------------------------------ */

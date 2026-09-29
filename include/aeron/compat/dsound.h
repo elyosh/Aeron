@@ -19,6 +19,11 @@ extern "C" {
  * same vtable calls, and this layer translates them into Aeron clips, voices
  * and streams.
  *
+ * Device creation/destruction and buffer creation/duplication/final release
+ * run on the game thread. Buffer playback controls and Lock/Unlock are
+ * synchronized for audio-producer threads. Stop and join producers before
+ * releasing their buffers or device.
+ *
  * HRESULT convention: methods return 0 (DS_OK) on success and a negative value
  * on failure, matching the original `result >= 0` success tests. */
 
@@ -98,14 +103,12 @@ enum {
 	DSBCAPS_CTRLPAN             = 0x00000040,
 	DSBCAPS_CTRLVOLUME          = 0x00000080,
 	DSBCAPS_MUTE3DATMAXDISTANCE = 0x00020000,
+	DSBLOCK_FROMWRITECURSOR     = 0x00000001,
 	DSBLOCK_ENTIREBUFFER        = 0x00000002,
 	DSBPLAY_LOOPING             = 0x00000001,
 	DSBSTATUS_PLAYING           = 0x00000001,
 	DSBSTATUS_LOOPING           = 0x00000004,
-	/* DirectSound DSBCAPS_GETCURRENTPOSITION2: the buffer's owner polls the play
-	 * cursor, i.e. it is used as a streaming buffer. iMUSE already sets this on
-	 * its music buffer; the shim uses it to back a buffer with an Aeron ring
-	 * instead of a static clip. */
+	/* Requests improved play-cursor reporting. */
 	DSBCAPS_GETCURRENTPOSITION2 = 0x00010000
 };
 

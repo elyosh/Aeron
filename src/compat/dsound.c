@@ -1,7 +1,7 @@
 #include "aeron/compat/dsound.h"
 
 #include "aeron/audio.h"
-#include "aeron/log.h"
+#include "aeron/sync.h"
 
 #include <math.h>
 #include <stdlib.h>
@@ -13,10 +13,8 @@
  * through the real DirectSound ABI indices (both the typed vtbls in sound.h /
  * frontend_sound.c and the numeric-index calls in imsound.c resolve here).
  *
- * Scope: device + static secondary buffers are fully implemented (frontend UI
- * and flight 2D SFX). 3D buffers/listener (flight positional) and streaming
- * buffers (iMUSE music) are wired in their own phases; the extension points are
- * marked with TODO below. */
+ * Secondary buffers share mutable PCM storage, with one independent voice per
+ * buffer. Staging writes are committed on Unlock under the mixer lock. */
 
 #define DS_OK 0
 #define DS_FAIL (-1)
@@ -24,6 +22,18 @@
 enum { DS_DSBPLAY_LOOPING = DSBPLAY_LOOPING };
 
 typedef struct DSDevice DSDevice;
+
+/* Serializes buffer state shared by game and audio-producer threads. */
+typedef struct DSBufferStorage {
+	AeronMutex*      guard;
+	int              refcount;
+	AeronClip        clip;
+	struct DSBuffer* locked_by;
+	uint32_t         lock_offset;
+	uint32_t         lock_first;
+	uint32_t         lock_second;
+	uint8_t          staging[];
+} DSBufferStorage;
 
 typedef struct DSBuffer {
 	IDirectSoundBuffer iface;
@@ -39,10 +49,7 @@ typedef struct DSBuffer {
 	uint32_t flags;
 	int      is_primary;
 
-	uint8_t* staging; /* lazily allocated capacity bytes for static PCM */
-
-	AeronClip clip;
-	int       owns_clip;
+	DSBufferStorage* storage;
 
 	int      volume_mb; /* 0 == full volume */
 	int      pan_mb;    /* 0 == centered */
@@ -50,16 +57,13 @@ typedef struct DSBuffer {
 
 	AeronVoice voice;
 	int        looping;
+	uint32_t   cursor; /* saved byte position while stopped */
 
 	int   is3d; /* play positionally (DirectSound3D, mode != DISABLE) */
 	float pos3[3];
 	float vel3[3];
 	float min_dist;
 	float max_dist;
-
-	int       is_streaming; /* backed by an Aeron ring source instead of a clip */
-	AeronRing ring;
-	uint8_t*  ring_base;
 } DSBuffer;
 
 struct DSDevice {
@@ -67,6 +71,18 @@ struct DSDevice {
 	int                     refcount;
 	DSBuffer*               buffers;
 };
+
+static void DSoundBuffer_LockState(DSBuffer* buffer) {
+	if (buffer->storage && buffer->storage->guard) {
+		Aeron_MutexLock(buffer->storage->guard);
+	}
+}
+
+static void DSoundBuffer_UnlockState(DSBuffer* buffer) {
+	if (buffer->storage && buffer->storage->guard) {
+		Aeron_MutexUnlock(buffer->storage->guard);
+	}
+}
 
 /* --- unit conversions ---------------------------------------------------- */
 
@@ -169,46 +185,59 @@ static int DS3DBuffer_Release(void* self) {
 
 static int DS3DBuffer_SetMaxDistance(void* self, float dist, uint32_t apply) {
 	(void)apply;
-	((DS3DBuffer*)self)->owner->max_dist = dist;
+	DSBuffer* owner = ((DS3DBuffer*)self)->owner;
+	DSoundBuffer_LockState(owner);
+	owner->max_dist = dist;
+	DSoundBuffer_UnlockState(owner);
 	return DS_OK;
 }
 
 static int DS3DBuffer_SetMinDistance(void* self, float dist, uint32_t apply) {
 	(void)apply;
-	((DS3DBuffer*)self)->owner->min_dist = dist;
+	DSBuffer* owner = ((DS3DBuffer*)self)->owner;
+	DSoundBuffer_LockState(owner);
+	owner->min_dist = dist;
+	DSoundBuffer_UnlockState(owner);
 	return DS_OK;
 }
 
 static int DS3DBuffer_SetMode(void* self, uint32_t mode, uint32_t apply) {
 	(void)apply;
-	((DS3DBuffer*)self)->owner->is3d = (mode != DS3DMODE_DISABLE);
+	DSBuffer* owner = ((DS3DBuffer*)self)->owner;
+	DSoundBuffer_LockState(owner);
+	owner->is3d = (mode != DS3DMODE_DISABLE);
+	DSoundBuffer_UnlockState(owner);
 	return DS_OK;
 }
 
 static int DS3DBuffer_SetPosition(void* self, float x, float y, float z, uint32_t apply) {
 	(void)apply;
 	DSBuffer* owner = ((DS3DBuffer*)self)->owner;
-	owner->pos3[0]  = x;
-	owner->pos3[1]  = y;
-	owner->pos3[2]  = z;
-	owner->is3d     = 1;
+	DSoundBuffer_LockState(owner);
+	owner->pos3[0] = x;
+	owner->pos3[1] = y;
+	owner->pos3[2] = z;
+	owner->is3d    = 1;
 	if (owner->voice) {
 		float pos[3] = { x, y, z };
 		Aeron_AudioVoiceSet3DPosition(owner->voice, pos);
 	}
+	DSoundBuffer_UnlockState(owner);
 	return DS_OK;
 }
 
 static int DS3DBuffer_SetVelocity(void* self, float x, float y, float z, uint32_t apply) {
 	(void)apply;
 	DSBuffer* owner = ((DS3DBuffer*)self)->owner;
-	owner->vel3[0]  = x;
-	owner->vel3[1]  = y;
-	owner->vel3[2]  = z;
+	DSoundBuffer_LockState(owner);
+	owner->vel3[0] = x;
+	owner->vel3[1] = y;
+	owner->vel3[2] = z;
 	if (owner->voice) {
 		float vel[3] = { x, y, z };
 		Aeron_AudioVoiceSet3DVelocity(owner->voice, vel);
 	}
+	DSoundBuffer_UnlockState(owner);
 	return DS_OK;
 }
 
@@ -382,7 +411,7 @@ static int AERON_DXAPI DSoundBuffer_QueryInterface(void* self, const void* iid, 
 
 static int AERON_DXAPI DSoundBuffer_AddRef(void* self) {
 	DSBuffer* b = (DSBuffer*)self;
-	return ++b->refcount;
+	return Aeron_AtomicAdd(&b->refcount, 1) + 1;
 }
 
 static void DSoundBuffer_Destroy(DSBuffer* b) {
@@ -394,23 +423,33 @@ static void DSoundBuffer_Destroy(DSBuffer* b) {
 	if (b->next) {
 		b->next->prev = b->prev;
 	}
+	DSBufferStorage* storage = b->storage;
+	DSoundBuffer_LockState(b);
 	if (b->voice) {
 		Aeron_AudioVoiceStop(b->voice);
 	}
-	if (b->is_streaming && b->ring) {
-		Aeron_AudioRingClose(b->ring);
+	int last_owner = 0;
+	if (storage) {
+		if (storage->locked_by == b)
+			storage->locked_by = NULL;
+		last_owner = --storage->refcount == 0;
+		if (last_owner)
+			Aeron_AudioClipDestroy(storage->clip);
 	}
-	if (b->owns_clip && b->clip) {
-		Aeron_AudioClipDestroy(b->clip);
+	DSoundBuffer_UnlockState(b);
+	if (last_owner) {
+		if (storage->guard)
+			Aeron_MutexDestroy(storage->guard);
+		free(storage);
 	}
-	free(b->staging);
 	free(b);
 }
 
 static int AERON_DXAPI DSoundBuffer_Release(void* self) {
-	DSBuffer* b = (DSBuffer*)self;
-	if (--b->refcount > 0) {
-		return b->refcount;
+	DSBuffer* b          = (DSBuffer*)self;
+	int       references = Aeron_AtomicAdd(&b->refcount, -1) - 1;
+	if (references > 0) {
+		return references;
 	}
 	DSoundBuffer_Destroy(b);
 	return 0;
@@ -423,24 +462,26 @@ static int AERON_DXAPI DSoundBuffer_GetCaps(void* self, void* caps) {
 }
 
 static int AERON_DXAPI DSoundBuffer_GetCurrentPosition(void* self, uint32_t* play, uint32_t* write) {
-	DSBuffer* b      = (DSBuffer*)self;
-	uint32_t  cursor = 0;
-	if (b->is_streaming) {
-		cursor = (uint32_t)Aeron_AudioRingPlayCursorBytes(b->ring);
-		{
-			static int n;
-			if (++n % 200 == 0) {
-				Aeron_LogVerbose("xwa.audio", "shim ring playCursor=%u playing=%d", cursor,
-								 Aeron_AudioRingIsPlaying(b->ring));
-			}
+	DSBuffer* b = (DSBuffer*)self;
+	DSoundBuffer_LockState(b);
+	uint32_t play_cursor  = b->cursor;
+	uint32_t write_cursor = b->cursor;
+	if (b->voice) {
+		size_t played, mixed;
+		if (Aeron_AudioVoiceGetCursors(b->voice, &played, &mixed)) {
+			uint32_t align = (uint32_t)(b->channels * (b->bits / 8));
+			play_cursor    = (uint32_t)played * align;
+			write_cursor   = (uint32_t)mixed * align;
+		} else {
+			b->voice  = 0;
+			b->cursor = play_cursor = write_cursor = 0;
 		}
 	}
-	if (play) {
-		*play = cursor;
-	}
-	if (write) {
-		*write = cursor;
-	}
+	if (play)
+		*play = play_cursor;
+	if (write)
+		*write = write_cursor;
+	DSoundBuffer_UnlockState(b);
 	return DS_OK;
 }
 
@@ -466,39 +507,46 @@ static int AERON_DXAPI DSoundBuffer_GetFormat(void* self, void* fmt, uint32_t si
 
 static int AERON_DXAPI DSoundBuffer_GetVolume(void* self, int32_t* volume) {
 	DSBuffer* b = (DSBuffer*)self;
+	DSoundBuffer_LockState(b);
 	if (volume) {
 		*volume = b->volume_mb;
 	}
+	DSoundBuffer_UnlockState(b);
 	return DS_OK;
 }
 
 static int AERON_DXAPI DSoundBuffer_GetPan(void* self, int32_t* pan) {
 	DSBuffer* b = (DSBuffer*)self;
+	DSoundBuffer_LockState(b);
 	if (pan) {
 		*pan = b->pan_mb;
 	}
+	DSoundBuffer_UnlockState(b);
 	return DS_OK;
 }
 
 static int AERON_DXAPI DSoundBuffer_GetFrequency(void* self, uint32_t* frequency) {
 	DSBuffer* b = (DSBuffer*)self;
+	DSoundBuffer_LockState(b);
 	if (frequency) {
 		*frequency = b->frequency ? b->frequency : (uint32_t)b->rate;
 	}
+	DSoundBuffer_UnlockState(b);
 	return DS_OK;
 }
 
 static int AERON_DXAPI DSoundBuffer_GetStatus(void* self, uint32_t* status) {
-	DSBuffer* b       = (DSBuffer*)self;
-	uint32_t  s       = 0;
-	int       playing = b->is_streaming ? Aeron_AudioRingIsPlaying(b->ring)
-										: (b->voice && Aeron_AudioVoiceIsPlaying(b->voice));
+	DSBuffer* b = (DSBuffer*)self;
+	DSoundBuffer_LockState(b);
+	uint32_t s       = 0;
+	int      playing = b->voice && Aeron_AudioVoiceIsPlaying(b->voice);
 	if (playing) {
 		s = DSBSTATUS_PLAYING | (b->looping ? DSBSTATUS_LOOPING : 0u);
 	}
 	if (status) {
 		*status = s;
 	}
+	DSoundBuffer_UnlockState(b);
 	return DS_OK;
 }
 
@@ -511,156 +559,117 @@ static int AERON_DXAPI DSoundBuffer_Initialize(void* self, void* device, const v
 
 static int AERON_DXAPI DSoundBuffer_Lock(void* self, uint32_t offset, uint32_t bytes, void** p1, uint32_t* b1,
 										 void** p2, uint32_t* b2, uint32_t flags) {
-	(void)flags;
 	DSBuffer* b = (DSBuffer*)self;
-	if (b->is_primary) {
+	DSoundBuffer_LockState(b);
+	DSBufferStorage* storage = b->storage;
+	if (!storage || storage->locked_by || !p1 || !b1 ||
+		(flags & ~(DSBLOCK_ENTIREBUFFER | DSBLOCK_FROMWRITECURSOR))) {
+		DSoundBuffer_UnlockState(b);
 		return DS_FAIL;
 	}
-	if (b->is_streaming) {
-		if (offset > b->capacity) {
-			return DS_FAIL;
-		}
-		if (!b->staging) {
-			b->staging = (uint8_t*)calloc(1, b->capacity ? b->capacity : 1);
-			if (!b->staging) {
-				return DS_FAIL;
-			}
-		}
-		uint32_t avail = b->capacity - offset;
-		uint32_t first = bytes <= avail ? bytes : avail;
-		if (p1) {
-			*p1 = b->staging + offset;
-		}
-		if (b1) {
-			*b1 = first;
-		}
-		if (bytes > first) { /* wrap to the ring start */
-			if (p2) {
-				*p2 = b->staging;
-			}
-			if (b2) {
-				*b2 = bytes - first;
-			}
-		} else {
-			if (p2) {
-				*p2 = NULL;
-			}
-			if (b2) {
-				*b2 = 0;
-			}
-		}
-		return DS_OK;
+	if (flags & DSBLOCK_FROMWRITECURSOR) {
+		DSoundBuffer_GetCurrentPosition(self, NULL, &offset);
 	}
-	if (!b->staging) {
-		b->staging = (uint8_t*)calloc(1, b->capacity ? b->capacity : 1);
-		if (!b->staging) {
-			return DS_FAIL;
-		}
+	if (flags & DSBLOCK_ENTIREBUFFER) {
+		bytes = b->capacity;
 	}
-	if (offset > b->capacity) {
+	if (offset >= b->capacity || !bytes || bytes > b->capacity) {
+		DSoundBuffer_UnlockState(b);
 		return DS_FAIL;
 	}
-	uint32_t avail = b->capacity - offset;
-	if (bytes > avail) {
-		bytes = avail;
+	uint32_t first = b->capacity - offset;
+	if (first > bytes)
+		first = bytes;
+	uint32_t second = bytes - first;
+	if (second && (!p2 || !b2)) {
+		DSoundBuffer_UnlockState(b);
+		return DS_FAIL;
 	}
-	if (p1) {
-		*p1 = b->staging + offset;
-	}
-	if (b1) {
-		*b1 = bytes;
-	}
-	/* Static buffers never wrap. */
-	if (p2) {
-		*p2 = NULL;
-	}
-	if (b2) {
-		*b2 = 0;
-	}
+
+	*p1 = storage->staging + offset;
+	*b1 = first;
+	if (p2)
+		*p2 = second ? storage->staging : NULL;
+	if (b2)
+		*b2 = second;
+	storage->locked_by   = b;
+	storage->lock_offset = offset;
+	storage->lock_first  = first;
+	storage->lock_second = second;
+	DSoundBuffer_UnlockState(b);
 	return DS_OK;
-}
-
-/* (Re)builds the Aeron clip from the staged PCM after a write. */
-static void DSoundBuffer_RebuildClip(DSBuffer* b) {
-	if (!b->staging || b->capacity == 0 || b->channels <= 0 || b->bits <= 0) {
-		return;
-	}
-	int block_align = b->channels * (b->bits / 8);
-	if (block_align <= 0) {
-		return;
-	}
-	size_t         frames = b->capacity / (uint32_t)block_align;
-	AeronPcmFormat fmt    = b->bits == 8 ? AERON_PCM_U8 : AERON_PCM_S16;
-
-	if (b->owns_clip && b->clip) {
-		Aeron_AudioClipDestroy(b->clip);
-	}
-	b->clip      = Aeron_AudioClipCreate(b->staging, frames, b->rate, b->channels, fmt);
-	b->owns_clip = 1;
 }
 
 static int AERON_DXAPI DSoundBuffer_Unlock(void* self, void* p1, uint32_t b1, void* p2, uint32_t b2) {
 	DSBuffer* b = (DSBuffer*)self;
-	if (b->is_streaming) {
-		if (p1 && b1) {
-			uint8_t* ptr = (uint8_t*)p1;
-			if (!b->staging || ptr < b->staging || ptr > b->staging + b->capacity) {
-				return DS_FAIL;
-			}
-			if (!Aeron_AudioRingWrite(b->ring, (size_t)(ptr - b->staging), p1, b1)) {
-				return DS_FAIL;
-			}
-		}
-		if (p2 && b2) {
-			uint8_t* ptr = (uint8_t*)p2;
-			if (!b->staging || ptr < b->staging || ptr > b->staging + b->capacity) {
-				return DS_FAIL;
-			}
-			if (!Aeron_AudioRingWrite(b->ring, (size_t)(ptr - b->staging), p2, b2)) {
-				return DS_FAIL;
-			}
-		}
-	} else if (!b->is_primary) {
-		DSoundBuffer_RebuildClip(b);
+	DSoundBuffer_LockState(b);
+	DSBufferStorage* storage = b->storage;
+	if (!storage || storage->locked_by != b || p1 != storage->staging + storage->lock_offset ||
+		b1 > storage->lock_first || b2 > storage->lock_second ||
+		p2 != (storage->lock_second ? storage->staging : NULL)) {
+		DSoundBuffer_UnlockState(b);
+		return DS_FAIL;
 	}
-	return DS_OK;
+	AeronPcmWrite writes[2] = { { storage->lock_offset, p1, b1 }, { 0, p2, b2 } };
+	int           ok        = Aeron_AudioClipWrite(storage->clip, writes, 2);
+	storage->locked_by      = NULL;
+	DSoundBuffer_UnlockState(b);
+	return ok ? DS_OK : DS_FAIL;
 }
 
 static int AERON_DXAPI DSoundBuffer_Play(void* self, uint32_t reserved1, uint32_t priority, uint32_t flags) {
 	(void)reserved1;
 	(void)priority;
 	DSBuffer* b = (DSBuffer*)self;
-	if (b->is_streaming) {
-		b->looping = (flags & DS_DSBPLAY_LOOPING) != 0;
-		Aeron_AudioRingPlay(b->ring, b->looping);
-		Aeron_LogVerbose("xwa.audio", "shim ring play looping=%d cap=%u rate=%d", b->looping, b->capacity,
-						 b->rate);
+	DSoundBuffer_LockState(b);
+	if (b->is_primary) {
+		DSoundBuffer_UnlockState(b);
 		return DS_OK;
 	}
-	if (b->is_primary || !b->clip) {
-		return DS_OK;
+	if (!b->storage) {
+		DSoundBuffer_UnlockState(b);
+		return DS_FAIL;
 	}
+
+	b->looping = (flags & DS_DSBPLAY_LOOPING) != 0;
 	if (b->voice) {
-		Aeron_AudioVoiceStop(b->voice);
-		b->voice = 0;
+		if (Aeron_AudioVoiceSetLooping(b->voice, b->looping)) {
+			DSoundBuffer_UnlockState(b);
+			return DS_OK;
+		}
+		b->voice  = 0;
+		b->cursor = 0;
 	}
-	b->looping  = (flags & DS_DSBPLAY_LOOPING) != 0;
-	float gain  = DSoundCompat_GainFromMillibels(b->volume_mb);
-	float pitch = DSoundCompat_Pitch(b);
+	float  gain  = DSoundCompat_GainFromMillibels(b->volume_mb);
+	float  pitch = DSoundCompat_Pitch(b);
+	size_t frame = b->cursor / (uint32_t)(b->channels * (b->bits / 8));
 	if (b->is3d) {
-		b->voice =
-			Aeron_AudioVoicePlay3D(b->clip, gain, pitch, b->looping, b->pos3, b->min_dist, b->max_dist);
+		b->voice = Aeron_AudioVoicePlay3DFrom(b->storage->clip, gain, pitch, b->looping, b->pos3, b->min_dist,
+											  b->max_dist, frame);
+		Aeron_AudioVoiceSet3DVelocity(b->voice, b->vel3);
 	} else {
-		b->voice = Aeron_AudioVoicePlay(b->clip, gain, DSoundCompat_BalanceFromMillibels(b->pan_mb), pitch,
-										b->looping);
+		b->voice = Aeron_AudioVoicePlayFrom(
+			b->storage->clip, gain, DSoundCompat_BalanceFromMillibels(b->pan_mb), pitch, b->looping, frame);
 	}
-	return DS_OK;
+	int result = b->voice ? DS_OK : DS_FAIL;
+	DSoundBuffer_UnlockState(b);
+	return result;
 }
 
 static int AERON_DXAPI DSoundBuffer_SetCurrentPosition(void* self, uint32_t position) {
-	(void)self;
-	(void)position;
-	/* New voices always start at the clip head, matching SetCurrentPosition(0). */
+	DSBuffer* b = (DSBuffer*)self;
+	DSoundBuffer_LockState(b);
+	if (!b->storage || position >= b->capacity) {
+		DSoundBuffer_UnlockState(b);
+		return DS_FAIL;
+	}
+	uint32_t align = (uint32_t)(b->channels * (b->bits / 8));
+	position -= position % align;
+	if (b->voice && !Aeron_AudioVoiceSetPosition(b->voice, position / align)) {
+		b->voice = 0;
+	}
+	b->cursor = position;
+	DSoundBuffer_UnlockState(b);
 	return DS_OK;
 }
 
@@ -672,44 +681,47 @@ static int AERON_DXAPI DSoundBuffer_SetFormat(void* self, const void* fmt) {
 }
 
 static int AERON_DXAPI DSoundBuffer_SetVolume(void* self, int32_t volume) {
-	DSBuffer* b  = (DSBuffer*)self;
+	DSBuffer* b = (DSBuffer*)self;
+	DSoundBuffer_LockState(b);
 	b->volume_mb = volume;
-	if (b->is_streaming) {
-		Aeron_AudioRingSetGain(b->ring, DSoundCompat_GainFromMillibels(volume));
-	} else if (b->voice) {
+	if (b->voice) {
 		Aeron_AudioVoiceSetGain(b->voice, DSoundCompat_GainFromMillibels(volume));
 	}
+	DSoundBuffer_UnlockState(b);
 	return DS_OK;
 }
 
 static int AERON_DXAPI DSoundBuffer_SetPan(void* self, int32_t pan) {
 	DSBuffer* b = (DSBuffer*)self;
-	b->pan_mb   = pan;
+	DSoundBuffer_LockState(b);
+	b->pan_mb = pan;
 	if (b->voice) {
 		Aeron_AudioVoiceSetPan(b->voice, DSoundCompat_BalanceFromMillibels(pan));
 	}
+	DSoundBuffer_UnlockState(b);
 	return DS_OK;
 }
 
 static int AERON_DXAPI DSoundBuffer_SetFrequency(void* self, uint32_t frequency) {
-	DSBuffer* b  = (DSBuffer*)self;
+	DSBuffer* b = (DSBuffer*)self;
+	DSoundBuffer_LockState(b);
 	b->frequency = frequency;
 	if (b->voice) {
 		Aeron_AudioVoiceSetPitch(b->voice, DSoundCompat_Pitch(b));
 	}
+	DSoundBuffer_UnlockState(b);
 	return DS_OK;
 }
 
 static int AERON_DXAPI DSoundBuffer_Stop(void* self) {
 	DSBuffer* b = (DSBuffer*)self;
-	if (b->is_streaming) {
-		Aeron_AudioRingStop(b->ring);
-		return DS_OK;
-	}
+	DSoundBuffer_LockState(b);
 	if (b->voice) {
-		Aeron_AudioVoiceStop(b->voice);
+		b->cursor =
+			(uint32_t)Aeron_AudioVoiceStopAndGetPosition(b->voice) * (uint32_t)(b->channels * (b->bits / 8));
 		b->voice = 0;
 	}
+	DSoundBuffer_UnlockState(b);
 	return DS_OK;
 }
 
@@ -810,14 +822,39 @@ static int AERON_DXAPI DSoundDevice_CreateSoundBuffer(void* self, const DSBuffer
 		b->bits     = desc->lpwfxFormat->wBitsPerSample;
 	}
 
-	if (!b->is_primary && (desc->dwFlags & DSBCAPS_GETCURRENTPOSITION2) && b->channels > 0 && b->bits > 0) {
-		b->is_streaming = 1;
-		b->ring         = Aeron_AudioRingOpen(b->rate, b->channels, b->bits, b->capacity, 1.0f);
-		b->ring_base    = (uint8_t*)Aeron_AudioRingBase(b->ring);
-		if (!b->ring || !b->ring_base) {
+	if (!b->is_primary) {
+		if (!desc->lpwfxFormat || desc->lpwfxFormat->wFormatTag != 1 || b->rate <= 0 ||
+			(b->channels != 1 && b->channels != 2) || (b->bits != 8 && b->bits != 16)) {
 			DSoundBuffer_Destroy(b);
 			return DS_FAIL;
 		}
+		uint32_t align = (uint32_t)(b->channels * (b->bits / 8));
+		if (!b->capacity || b->capacity % align || desc->lpwfxFormat->nBlockAlign != align ||
+			(size_t)b->capacity > SIZE_MAX - sizeof(DSBufferStorage)) {
+			DSoundBuffer_Destroy(b);
+			return DS_FAIL;
+		}
+		b->storage = (DSBufferStorage*)calloc(1, sizeof(DSBufferStorage) + (size_t)b->capacity);
+		if (!b->storage) {
+			DSoundBuffer_Destroy(b);
+			return DS_FAIL;
+		}
+		b->storage->refcount = 1;
+		b->storage->guard    = Aeron_MutexCreate();
+		if (!b->storage->guard) {
+			DSoundBuffer_Destroy(b);
+			return DS_FAIL;
+		}
+		memset(b->storage->staging, b->bits == 8 ? 128 : 0, b->capacity);
+		b->storage->clip = Aeron_AudioClipCreateMutable(b->capacity / align, b->rate, b->channels,
+														b->bits == 8 ? AERON_PCM_U8 : AERON_PCM_S16);
+		if (!b->storage->clip) {
+			DSoundBuffer_Destroy(b);
+			return DS_FAIL;
+		}
+		b->is3d     = (desc->dwFlags & DSBCAPS_CTRL3D) != 0;
+		b->min_dist = 1.0f;
+		b->max_dist = 1000000000.0f;
 	}
 
 	*buffer = &b->iface;
@@ -840,10 +877,13 @@ static int AERON_DXAPI DSoundDevice_DuplicateSoundBuffer(void* self, IDirectSoun
 	*duplicate = NULL;
 
 	DSBuffer* src = (DSBuffer*)source;
+	if (!src->storage || src->device != (DSDevice*)self)
+		return DS_FAIL;
 	DSBuffer* dup = DSoundCompat_AllocBuffer((DSDevice*)self);
 	if (!dup) {
 		return DS_FAIL;
 	}
+	DSoundBuffer_LockState(src);
 	dup->rate      = src->rate;
 	dup->channels  = src->channels;
 	dup->bits      = src->bits;
@@ -852,11 +892,15 @@ static int AERON_DXAPI DSoundDevice_DuplicateSoundBuffer(void* self, IDirectSoun
 	dup->volume_mb = src->volume_mb;
 	dup->pan_mb    = src->pan_mb;
 	dup->frequency = src->frequency;
-	dup->clip      = src->clip; /* shared; the template owns the clip lifetime */
-	dup->owns_clip = 0;
-	dup->min_dist  = src->min_dist; /* DirectSound copies 3D params into the duplicate */
-	dup->max_dist  = src->max_dist;
+	dup->storage   = src->storage;
+	++dup->storage->refcount;
+	dup->is3d = src->is3d;
+	memcpy(dup->pos3, src->pos3, sizeof dup->pos3);
+	memcpy(dup->vel3, src->vel3, sizeof dup->vel3);
+	dup->min_dist = src->min_dist; /* DirectSound copies 3D params into the duplicate */
+	dup->max_dist = src->max_dist;
 
+	DSoundBuffer_UnlockState(src);
 	*duplicate = &dup->iface;
 	return DS_OK;
 }
