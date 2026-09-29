@@ -234,10 +234,12 @@ void AeronScenePresentChain_Draw(AeronScenePresentChain* c, AeronRenderPass* pas
 			hdr_peak_scale = 1.0f;
 		}
 	}
-	float u[20] = {
+	/* Match the reference bloom's final filter in image-height units. */
+	float bloom_scale = rt_h > 0 ? (float)rt_h / AERON_SCENE_BLOOM_REFERENCE_HEIGHT : 0.0f;
+	float u[20]       = {
 		bloom_tex ? bloom_intensity : 0.0f,
-		rt_w > 0 ? 2.0f / (float)rt_w : 0.0f,
-		rt_h > 0 ? 2.0f / (float)rt_h : 0.0f,
+		rt_w > 0 ? 2.0f * bloom_scale / (float)rt_w : 0.0f,
+		rt_h > 0 ? 2.0f / AERON_SCENE_BLOOM_REFERENCE_HEIGHT : 0.0f,
 		bar_y_uv,
 		1.0f, /* scene exposure */
 		(float)AeronScenePresent_TonemapOp(),

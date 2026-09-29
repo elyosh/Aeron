@@ -14,7 +14,7 @@
 cbuffer DownsamplePS : register(b0, space3)
 {
     /* xy = 1.0 / source_size (texel size in UV).
-     * zw = unused. */
+     * z = input normalization, w = unused. */
     float4 src_texel;
 };
 
@@ -34,5 +34,5 @@ float4 main(VSOut input) : SV_Target
     float3 b = g_src.Sample(s_src, input.uv + t * float2( 1.0f, -1.0f)).rgb;
     float3 c = g_src.Sample(s_src, input.uv + t * float2(-1.0f,  1.0f)).rgb;
     float3 d = g_src.Sample(s_src, input.uv + t * float2( 1.0f,  1.0f)).rgb;
-    return float4((a + b + c + d) * 0.25f, 1.0f);
+    return float4((a + b + c + d) * (0.25f * src_texel.z), 1.0f);
 }

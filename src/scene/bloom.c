@@ -1,29 +1,6 @@
-/*
- * HD bloom post-process — see flight_bloom.h for the public design.
- *
- * Algorithm: dual-filter Kawase chain (½, ¼, ⅛, ...) of the flight RT.
- * Each downsample is a 4-tap bilinear box, each upsample a 4-tap
- * bilinear tent. Bandwidth-friendly for PS4 GCN at 4K base.
- *
- * Pass sequence per call (with N = BLOOM_LEVEL_COUNT):
- *   1.      bright-pass    flight_rt   → mip0   (clear, scissored to y < bar)
- *   2..N.   downsample     mip[i-1]    → mip[i] (clear)
- *   N+1..2N-1. upsample    mip[i]      → mip[i-1] (additive into prev)
- *
- * NO dedicated final-composite pass — mip0's accumulated bloom is
- * sampled directly by the final present shader (flight_tonemap.frag),
- * which folds the additive bloom into the HDR-scene tonemap before
- * PMA-emitting to the swapchain. That saves a full-resolution render
- * pass on the flight RT (~70 MB BW + ~150 µs GPU at 4K) at the cost
- * of one extra sampler binding and 4 extra texture taps in the
- * present quad.
- *
- * Bright-pass scissor: the masked rows arrive at mip0 as cleared
- * zeros, so bloom can't ORIGINATE from the message bar. The chain
- * spreads bloom slightly across the boundary so mip0 below the bar
- * is not exactly zero; the present shader suppresses the bloom
- * contribution below `bar_y_uv` to prevent any bleed onto the bar.
- */
+/* Resolution-scaled dual-filter bloom. The four equally weighted bands at
+ * 2160p define the reference look; other heights redistribute their weights
+ * over the native half-resolution pyramid. Presentation composites mip0. */
 
 #include "aeron/scene/bloom.h"
 #include <stdio.h>
@@ -36,54 +13,24 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* ===== Tuned constants (v1: hardcoded) ============================== */
-
-/* Bright-pass threshold. The flight RT is R11G11B10_UFLOAT and
- * emissive pixel shaders (laser bolts, explosion cores) write
- * values >1.0; everything else (lit ship hulls, cockpit chrome,
- * skybox tonemap-input, HUD widgets) stays ≤ 1.0 by construction.
- * A hard 1.0 threshold cleanly separates the two. */
 #define BLOOM_THRESHOLD 1.0f
-
-/* Soft-knee width above the threshold. The bright-pass smoothstep
- * ramps from 0 at br=thr to 1 at br=thr+knee. 0.15 gives a gentle
- * ramp into the emissive band so pixels skimming just above 1.0
- * (e.g. from bilinear interpolation between an emissive face and a
- * non-emissive neighbour) don't pop in/out frame-to-frame. */
 #define BLOOM_KNEE 0.3f
-
-/* Post-chain multiplier the swapchain composite applies to the
- * sampled bloom contribution. Emissive sources carry their own HDR
- * magnitude into the chain; this controls "how much halo" only.
- * The composite shader's ACES tonemap folds the (scene + bloom) HDR
- * result into the [0, 1] swapchain range. Lower than pre-tonemap
- * values: when the tonemap was just a soft-shoulder clamp, bloom
- * needed to punch through it; with a real tonemap doing the
- * compression, the bloom contribution composes additively in linear
- * HDR and the curve handles the rest. */
 #define BLOOM_INTENSITY 0.5f
-
-/* Chain depth. Smallest mip = rt_dim / (1 << BLOOM_LEVEL_COUNT).
- * Each added level halves the smallest mip's spatial extent and roughly
- * doubles the bloom radius. */
-#define BLOOM_LEVEL_COUNT 4
-
-/* Chain mip format. R11G11B10_UFLOAT — 4 B/pixel, float range so
- * the additive upsample can accumulate >1.0 per channel without
- * clipping. No alpha channel; chain shaders only read `.rgb` and
- * the upsample's `a=0` write is discarded. Supported on Metal,
- * Vulkan, D3D12. */
+#define BLOOM_REFERENCE_LEVEL_COUNT 4
+#define BLOOM_MAX_LEVEL_COUNT 8
 #define BLOOM_CHAIN_FORMAT AERON_TEXTURE_FORMAT_R11G11B10_UFLOAT
 
 typedef struct AeronSceneBloomLevel {
 	AeronRenderTarget* tex;
 	int                w;
 	int                h;
+	float              weight;
 } AeronSceneBloomLevel;
 
 struct AeronSceneBloom {
 	int rt_w;
 	int rt_h;
+	int level_count;
 
 	/* Fullscreen-quad vertex shader — reused from the existing
 	 * two-RT compositor (same SV_VertexID 0..3 TRIANGLESTRIP convention,
@@ -95,33 +42,28 @@ struct AeronSceneBloom {
 
 	AeronGraphicsPipeline* brightpass_pipeline;
 	AeronGraphicsPipeline* downsample_pipeline;
-	AeronGraphicsPipeline* upsample_pipeline; /* additive blend */
+	AeronGraphicsPipeline* upsample_pipeline; /* weighted additive blend */
 
 	/* Linear+clamp sampler for every chain tap. */
 	AeronSampler* sampler;
 
-	AeronSceneBloomLevel levels[BLOOM_LEVEL_COUNT];
+	AeronSceneBloomLevel levels[BLOOM_MAX_LEVEL_COUNT];
 
 	bool ready;
 };
 
 /* ===== Pipeline creation ============================================ */
 
-/* Two blend-state flavours: OPAQUE (bright-pass, downsample) and
- * ADDITIVE (upsample, final composite). All three target a single
- * BLOOM_CHAIN_FORMAT (R11G11B10_UFLOAT) mip — the flight RT format
- * is not used here. No depth attachment. */
+/* Upsampling adds the coarser contribution and weights the destination's
+ * existing band using fragment alpha. The chain format stores RGB only. */
 static AeronGraphicsPipeline* create_pipeline(AeronShader* vs, AeronShader* ps, AeronTextureFormat fmt,
 											  bool additive) {
 	AeronBlendStateDesc bs;
 	if (additive) {
-		/* Additive (src + dst). Alpha additive too, but the upsample
-		 * shader emits a=0 so the destination alpha (used by the
-		 * swapchain PMA-over composite) is preserved untouched. */
 		bs = (AeronBlendStateDesc) {
 			.enabled   = 1,
 			.src_color = AERON_BLEND_ONE,
-			.dst_color = AERON_BLEND_ONE,
+			.dst_color = AERON_BLEND_SRC_ALPHA,
 			.color_op  = AERON_BLEND_OP_ADD,
 			.src_alpha = AERON_BLEND_ONE,
 			.dst_alpha = AERON_BLEND_ONE,
@@ -140,6 +82,32 @@ static AeronGraphicsPipeline* create_pipeline(AeronShader* vs, AeronShader* ps, 
 	});
 }
 
+/* Squared filter radius grows by four per pyramid level. Interpolate in
+ * that space so fractional resolutions change continuously. Clamping bands
+ * finer than mip0 preserves their energy at the available spatial detail. */
+static void configure_levels(AeronSceneBloom* b) {
+	float scale          = (float)b->rt_h / AERON_SCENE_BLOOM_REFERENCE_HEIGHT;
+	float radius_squared = scale * scale;
+	b->level_count       = 1;
+	for (int band = 0; band < BLOOM_REFERENCE_LEVEL_COUNT; ++band, radius_squared *= 4.0f) {
+		int   level = 0;
+		float lower = 1.0f;
+		while (level < BLOOM_MAX_LEVEL_COUNT - 1 && radius_squared >= lower * 4.0f) {
+			++level;
+			lower *= 4.0f;
+		}
+		float fraction = radius_squared > lower ? (radius_squared - lower) / (3.0f * lower) : 0.0f;
+		if (level == BLOOM_MAX_LEVEL_COUNT - 1)
+			fraction = 0.0f;
+		b->levels[level].weight += 1.0f - fraction;
+		if (fraction > 0.0f) {
+			b->levels[++level].weight += fraction;
+		}
+		if (b->level_count < level + 1)
+			b->level_count = level + 1;
+	}
+}
+
 /* ===== Lifecycle =================================================== */
 
 AeronSceneBloom* AeronSceneBloom_Create(int rt_w, int rt_h) {
@@ -150,6 +118,7 @@ AeronSceneBloom* AeronSceneBloom_Create(int rt_w, int rt_h) {
 		return NULL;
 	b->rt_w = rt_w;
 	b->rt_h = rt_h;
+	configure_levels(b);
 
 	/* Shaders. Shared full-screen VS reused from composite_two_rt.vert.
 	 * Each FS binds (1 sampler + 1 uniform buffer). */
@@ -195,9 +164,8 @@ AeronSceneBloom* AeronSceneBloom_Create(int rt_w, int rt_h) {
 		return NULL;
 	}
 
-	/* Chain mips at 1/2, 1/4, 1/8 of the flight RT. Clamp to 1×1 so
-	 * very narrow RT shapes don't produce zero-sized textures. */
-	for (int i = 0; i < BLOOM_LEVEL_COUNT; ++i) {
+	/* Allocate through the last contributing level. Clamp narrow targets to 1x1. */
+	for (int i = 0; i < b->level_count; ++i) {
 		int divisor = 1 << (i + 1);
 		int lw      = rt_w / divisor;
 		if (lw < 1)
@@ -224,7 +192,7 @@ AeronSceneBloom* AeronSceneBloom_Create(int rt_w, int rt_h) {
 void AeronSceneBloom_Destroy(AeronSceneBloom* b) {
 	if (!b)
 		return;
-	for (int i = 0; i < BLOOM_LEVEL_COUNT; ++i) {
+	for (int i = 0; i < b->level_count; ++i) {
 		if (b->levels[i].tex)
 			Aeron_DestroyRenderTarget(b->levels[i].tex);
 	}
@@ -281,7 +249,7 @@ int AeronSceneBloom_Apply(AeronSceneBloom* b, AeronCommandBuffer* cmd, AeronText
 						  int rt_w, int rt_h, int scissor_max_y) {
 	if (!b || !b->ready || !cmd || !flight_color_rt)
 		return 0;
-	if (rt_w <= 0 || rt_h <= 0)
+	if (rt_w != b->rt_w || rt_h != b->rt_h)
 		return 0;
 
 	Aeron_GpuDebugPush(cmd, "Bloom");
@@ -302,11 +270,18 @@ int AeronSceneBloom_Apply(AeronSceneBloom* b, AeronCommandBuffer* cmd, AeronText
 		bright_scissor.height = max_y_mip0;
 	}
 
-	/* --- 1. Bright pass: flight RT → mip0 ----------------------- */
+	/* Collapsed finer bands can give mip0 weight >1. Apply that
+	 * weight after extraction, then undo it in the first downsample so the
+	 * remaining bands stay independent. All blend factors stay in [0,1]. */
+	float first_weight = b->levels[0].weight > 1.0f ? b->levels[0].weight : 1.0f;
+
+	/* Bright pass: flight RT -> mip0. */
 	{
 		struct {
 			float params[4]; /* xy=threshold/knee, zw=source texel size */
-		} u = { { BLOOM_THRESHOLD, BLOOM_KNEE, 1.0f / (float)rt_w, 1.0f / (float)rt_h } };
+			float weight[4];
+		} u = { { BLOOM_THRESHOLD, BLOOM_KNEE, 1.0f / (float)rt_w, 1.0f / (float)rt_h },
+				{ first_weight, 0, 0, 0 } };
 
 		if (!bloom_pass(cmd, b->levels[0].tex, b->levels[0].w, b->levels[0].h, b->brightpass_pipeline,
 						flight_color_rt, b->sampler, &u, sizeof u,
@@ -316,14 +291,14 @@ int AeronSceneBloom_Apply(AeronSceneBloom* b, AeronCommandBuffer* cmd, AeronText
 		}
 	}
 
-	/* --- 2..3. Downsample chain --------------------------------- */
-	for (int i = 1; i < BLOOM_LEVEL_COUNT; ++i) {
+	/* Downsample unweighted bands. */
+	for (int i = 1; i < b->level_count; ++i) {
 		const AeronSceneBloomLevel* src = &b->levels[i - 1];
 		const AeronSceneBloomLevel* dst = &b->levels[i];
 
 		struct {
-			float src_texel[4]; /* xy = 1/src_size */
-		} u = { { 1.0f / (float)src->w, 1.0f / (float)src->h, 0.0f, 0.0f } };
+			float src_texel[4]; /* xy = 1/src_size, z = input normalization */
+		} u = { { 1.0f / (float)src->w, 1.0f / (float)src->h, i == 1 ? 1.0f / first_weight : 1.0f, 0.0f } };
 
 		char label[32];
 		snprintf(label, sizeof label, "Bloom down %d->%d", i - 1, i);
@@ -335,14 +310,15 @@ int AeronSceneBloom_Apply(AeronSceneBloom* b, AeronCommandBuffer* cmd, AeronText
 		}
 	}
 
-	/* --- 4..5. Upsample chain (additive into next-larger mip) --- */
-	for (int i = BLOOM_LEVEL_COUNT - 1; i > 0; --i) {
+	/* Accumulate each band with its own weight, preserving total gain 4. */
+	for (int i = b->level_count - 1; i > 0; --i) {
 		const AeronSceneBloomLevel* src = &b->levels[i];
 		const AeronSceneBloomLevel* dst = &b->levels[i - 1];
 
 		struct {
-			float dst_texel[4]; /* xy = 1/dst_size, z = intensity */
-		} u = { { 1.0f / (float)dst->w, 1.0f / (float)dst->h, 1.0f /*chain-internal intensity*/, 0.0f } };
+			float dst_texel[4]; /* xy = 1/dst_size, zw = source/destination weights */
+		} u = { { 1.0f / (float)dst->w, 1.0f / (float)dst->h, i == b->level_count - 1 ? src->weight : 1.0f,
+				  i == 1 ? dst->weight / first_weight : dst->weight } };
 
 		char label[32];
 		snprintf(label, sizeof label, "Bloom up %d->%d", i, i - 1);

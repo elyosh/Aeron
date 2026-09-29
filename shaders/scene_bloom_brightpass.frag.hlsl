@@ -18,6 +18,8 @@ cbuffer BrightPS : register(b0, space3)
     /* x, y = threshold and knee width
      * z, w = inverse source dimensions */
     float4 params;
+    /* x = finest-band weight, applied after thresholding. */
+    float4 band_weight;
 };
 
 Texture2D<float4> g_src : register(t0, space2);
@@ -60,5 +62,5 @@ float4 main(VSOut input) : SV_Target
                       threshold, knee) +
         extract_bloom(g_src.Sample(s_src, input.uv + offset * float2( 1.0f,  1.0f)).rgb,
                       threshold, knee);
-    return float4(bloom * 0.25f, 1.0f);
+    return float4(bloom * (0.25f * band_weight.x), 1.0f);
 }

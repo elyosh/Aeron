@@ -43,8 +43,8 @@ cbuffer TonemapPS : register(b0, space3)
 {
     /* Bloom inputs:
      *   x = intensity multiplier
-     *   y = 1.0 / flight_rt_width
-     *   z = 1.0 / flight_rt_height
+     *   y = horizontal bloom filter offset in UV
+     *   z = vertical bloom filter offset in UV
      *   w = bar_y_uv (UV.y at the message-bar top; bloom gated to 0
      *       below this line so the bar doesn't pick up a halo). */
     float4 bloom_params;
@@ -137,7 +137,7 @@ float4 main(VSOut input) : SV_Target
 
     /* Bloom kernel — selectable at runtime via present_misc.x:
      *   < 0.5 → 1-tap   (single bilinear sample at uv; cheapest)
-     *   else  → 4-tap   (±1-mip0-texel diagonal box, adds soft blur)
+     *   else  → 4-tap   (diagonal box with a fixed image-height footprint)
      * The branch is uniform across the fullscreen quad — no divergence.
      * bloom_mip0 is at half scene-RT resolution (final upsample/filter
      * output of the bloom chain), so 1-tap is already softer than a

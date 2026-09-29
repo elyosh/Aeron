@@ -147,7 +147,7 @@ int Capture_SaveConfig(const CaptureConfig* c) {
 			 "reference_kernel: centered_box\nimage_data: linear_RGB_float32_PFM\n"
 			 "preview: sRGB_PNG_clamped_0_to_1\nmsaa_samples: %d\ntemporal_upscaling: off\n"
 			 "ssao: off\nshadows: off\nfixture: %s\nemissive_scale: %.9g\nbloom_enabled: %s\n",
-			 c->bloom_chart ? 1 : (c->model_count ? 6 : 2), Aeron_RenderDriverName(), c->width, c->height,
+			 c->bloom_chart ? 1 : (c->model_count ? 6 : 3), Aeron_RenderDriverName(), c->width, c->height,
 			 c->frames, c->fps, c->pan_speed, c->pan_direction, c->quality, c->shutter, c->shutter * .032,
 			 c->reference_samples, c->msaa_samples,
 			 c->bloom_chart ? "bloom_chart" : (c->model_count ? "models" : "shapes"), c->emissive_scale,
@@ -159,7 +159,7 @@ int Capture_SaveConfig(const CaptureConfig* c) {
 	if (ok && (c->bloom_enabled || c->benchmark_mode)) {
 		snprintf(text, sizeof text,
 				 "bloom:\n  intensity: %.9g\n  kernel: %d\n"
-				 "bloom_capture: native_size_unweighted_linear_RGB\n"
+				 "bloom_capture: native_size_linear_RGB_before_present\n"
 				 "present_capture: production_SDR_tonemap_with_dithering\n"
 				 "tonemap: %s\nagx_look: punchy\nagx_eotf_exponent: %.9g\n"
 				 "agx_punchy_power: %.9g\nagx_punchy_saturation: %.9g\naces_pre_exposure: %.9g\n",

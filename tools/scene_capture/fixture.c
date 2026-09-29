@@ -240,8 +240,8 @@ AeronRenderTarget* Fixture_Record(Fixture* f, double time, int blur, AeronComman
 									   .mb_shutter     = (float)(f->config.shutter * .032 * f->config.fps),
 									   .mb_camera_blur = 1 });
 	AeronScene_SetMotionContext(scene, previous_matrix, 1);
-	if (f->config.model_count)
-		set_lighting(scene, &f->config);
+	/* Emissive shapes also read the PBR lighting/mode uniforms. */
+	set_lighting(scene, &f->config);
 	add_objects(scene, f);
 	if (!AeronScene_Render(scene, cmd))
 		return NULL;

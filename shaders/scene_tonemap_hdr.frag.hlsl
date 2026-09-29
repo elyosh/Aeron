@@ -35,8 +35,8 @@ cbuffer TonemapPS : register(b0, space3)
 {
     /* Bloom inputs (identical to SDR variant):
      *   x = intensity multiplier
-     *   y = 1.0 / flight_rt_width
-     *   z = 1.0 / flight_rt_height
+     *   y = horizontal bloom filter offset in UV
+     *   z = vertical bloom filter offset in UV
      *   w = bar_y_uv (UV.y at the message-bar top; bloom gated to 0
      *       below this line so the bar doesn't pick up a halo). */
     float4 bloom_params;

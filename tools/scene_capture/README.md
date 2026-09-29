@@ -164,10 +164,6 @@ are excluded. Tonemapping always runs; zero bloom intensity skips the bloom chai
 | `sample_variation_within_5_percent` | Repeatability check. Noisy runs warn; increase warm-up/window duration and rerun under steady load. |
 | `gpu_execution_ms` | `null`: SDL's public GPU API does not expose GPU timestamps. Use a backend profiler for GPU-only timings. |
 
-Compare matching builds, queue depths and workloads. One frame in flight
-serializes CPU/GPU work; two allows overlap. Reports include device, compiler,
-backend and validation state; Debug validation warns. All samples and queue
-overhead are retained in the statistics.
-
-Use benchmark report schema version 2. Version-1 measurements were inflated by
-a fence-retirement problem and should be discarded.
+Compare matching builds, fixture versions, queue depths and workloads. One frame
+in flight serializes CPU/GPU work; two allows overlap. Reports record the device,
+backend and validation state.

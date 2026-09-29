@@ -1,24 +1,11 @@
 #ifndef AERON_SCENE_BLOOM_H
 #define AERON_SCENE_BLOOM_H
 
-/*
- * HD bloom post-process for the flight RT.
- *
- * Dual-filter Kawase chain: bright-pass → N down/up levels → additive
- * composite back into the source RT. Targets PS4-class GCN — fewer
- * mip levels (3) and 4-tap kernels keep per-pass bandwidth low.
- *
- * Scope is "flight RT only" — the entrypoint is invoked from the SDL3
- * shell exclusively when the active scene is TIE_SCENE_FLIGHT, so
- * the frontend (cutscene RT) and landru scenes never see bloom. The
- * cockpit message bar at the bottom of the cockpit area is excluded
- * via a Y-scissor on the bright-pass extract and the final composite
- * (chain-internal passes do not need scissoring — the bright pass
- * already zeros the masked rows, and downsampling propagates that
- * forward).
- *
- * Threshold, knee, and intensity are fixed in the implementation.
- */
+/* HDR bloom with an approximately resolution-independent screen-space radius.
+ * The reference is four equally weighted dual-filter bands at 2160p. At other
+ * heights their weights move between native pyramid levels, keeping gain 4.
+ * Threshold/knee are fixed; presentation applies the runtime intensity.
+ * Small and near-threshold emitters remain sensitive to source coverage. */
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -32,18 +19,14 @@ extern "C" {
 
 typedef struct AeronSceneBloom AeronSceneBloom;
 
-/* Create the bloom resources sized to (rt_w, rt_h) — chain mips at
- * 1/2, 1/4, 1/8 of those dimensions. The chain uses an HDR-capable
- * format internally (R11G11B10_UFLOAT) so additive accumulation in
- * the upsample chain doesn't clip per channel; the host doesn't pass
- * a format — the chain's format is independent of the flight RT.
- *
- * Returns NULL on shader compile / pipeline / texture create failure. */
+/* Create the half-resolution pyramid for (rt_w, rt_h). Depth depends on
+ * height; unused coarse levels are omitted. Targets use R11G11B10_UFLOAT.
+ * Recreate when the source dimensions change. Returns NULL on failure. */
 AeronSceneBloom* AeronSceneBloom_Create(int rt_w, int rt_h);
 
 void AeronSceneBloom_Destroy(AeronSceneBloom* b);
 
-/* Run the bloom chain — bright pass + N down + N up. Leaves the
+/* Run the bright pass and weighted down/up chain. Leaves the
  * accumulated bloom in mip0 (queryable via AeronSceneBloom_ColorRt) so
  * the swapchain composite shader can sample it and fold the additive
  * contribution into its own pass — eliminating a dedicated full-res
@@ -57,12 +40,12 @@ void AeronSceneBloom_Destroy(AeronSceneBloom* b);
  * RT).
  *
  * `cmd` must NOT have an active render or copy pass on entry. Returns zero
- * when the chain could not be recorded completely. */
+ * when dimensions differ from creation or recording fails. */
 int AeronSceneBloom_Apply(AeronSceneBloom* b, struct AeronCommandBuffer* cmd, AeronTexture* flight_color_rt,
 						  int rt_w, int rt_h, int scissor_max_y);
 
 /* Borrow the bloom mip0 texture — sampled by the final present pass
- * (flight_tonemap.frag) at fragment slot t1. */
+ * (scene_tonemap.frag) at fragment slot t1. */
 AeronRenderTarget* AeronSceneBloom_ColorRt(const AeronSceneBloom* b);
 
 /* Intensity uniform passed to the present pass. Process-wide runtime

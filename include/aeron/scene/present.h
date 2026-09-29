@@ -67,7 +67,7 @@ void AeronScenePresent_SetBloomKernel(int mode);
  * and derives the HDR peak scale from the display headroom.
  *
  * The 20-float cbuffer layout matches scene_tonemap(.hdr).frag:
- *   [ 0..3] bloom_params   = (intensity, 2/rt_w, 2/rt_h, bar_y_uv)
+ *   [ 0..3] bloom_params   = (intensity, filter_uv_x, filter_uv_y, bar_y_uv)
  *   [ 4..7] tonemap_params = (exposure, op, hdr_peak, sdr_to_scrgb)
  *   [ 8..11] tint          = (r, g, b, PMA coverage alpha)
  *   [12..15] misc          = (bloom_kernel, eotf_exp, aces_exp,
@@ -82,6 +82,8 @@ void                    AeronScenePresentChain_Destroy(AeronScenePresentChain* c
 /* Record the fullscreen tonemap draw into `pass` (opened on a target of
  * the chain's format). `bloom_tex` NULL => zero bloom contribution
  * (scene is bound in its place to satisfy the sampler slot).
+ * The four-tap bloom filter uses the 2160p reference footprint, scaled by
+ * image height; (rt_w, rt_h) are the source dimensions.
  * `src_coverage` != 0 weights the PMA coverage by the scene texel's
  * own alpha — for PiP targets with a transparent background; pass 0
  * for a full-frame present. */
