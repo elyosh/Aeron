@@ -305,7 +305,8 @@ void AeronDplay_Update(void) {
 			if (!peer->id || peer->id == g_dp.local_id || (!g_dp.host && peer->id != g_dp.host_id))
 				continue;
 			DpSend(peer->link, DP_KEEPALIVE, 0, g_dp.local_id, peer->id, NULL, 0);
-			if (now - peer->last_seen >= DP_PEER_TIMEOUT_MS) {
+			/* Packets pumped above can stamp last_seen after now was sampled. */
+			if (now >= peer->last_seen + DP_PEER_TIMEOUT_MS) {
 				if (!g_dp.host)
 					DpLoseSession();
 				else
