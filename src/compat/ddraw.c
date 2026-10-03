@@ -298,7 +298,9 @@ void AeronDx5_EndFrame(void) {
 	if (g_ddSuppressedPresentPending) {
 		g_ddSuppressedPresentPending = 0;
 		/* The recovered boundary already notified its consumer while suppressed. */
-		(void)DDShim_CommitRenderTargetPresent(g_ddLastPresented, 0, g_ddSuppressedPresentKind);
+		if (g_ddLastPresented) {
+			(void)DDShim_CommitRenderTargetPresent(g_ddLastPresented, 0, g_ddSuppressedPresentKind);
+		}
 	}
 	DDShim_SubmitLastPresented(g_ddLastPresented);
 }
@@ -661,7 +663,10 @@ static uint32_t AERON_DXAPI DDSurface_Release(IDirectDrawSurface* self) {
 		return (uint32_t)s->refcount;
 	}
 	if (s == g_ddLastPresented) {
-		g_ddLastPresented = NULL; /* idle re-present must not touch a freed surface */
+		/* Idle re-present must not touch a freed surface, and a present retained
+		 * while classic rendering was suppressed can no longer be committed. */
+		g_ddLastPresented            = NULL;
+		g_ddSuppressedPresentPending = 0;
 	}
 	if (s->attached) {
 		(void)s->attached->lpVtbl->Release((IDirectDrawSurface*)s->attached);
