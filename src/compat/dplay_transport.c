@@ -1,6 +1,8 @@
 #include "dplay_directory_internal.h"
 #include "dplay_internal.h"
 
+#include <stdarg.h>
+
 DpCore g_dp;
 
 static void (*g_wake_callback)(void*);
@@ -120,20 +122,25 @@ int DpQueueNameEvent(DPID id, const char* short_name, const char* long_name) {
 	return 1;
 }
 
-void DpLoseSession(void) {
+void DpLoseSession(const char* reason, ...) {
+	char    text[256];
+	va_list args;
 	if (g_dp.failed)
 		return;
 	g_dp.failed           = 1;
 	g_dp.operation.result = DPERR_SESSIONLOST;
 	/* Preserve queued departure ordering; reserve the final slot for host loss. */
 	DpQueueEvent(DPSYS_DESTROYPLAYERORGROUP, g_dp.host_id);
-	Aeron_LogError("compat.dplay", "session lost");
+	va_start(args, reason);
+	vsnprintf(text, sizeof(text), reason, args);
+	va_end(args);
+	Aeron_LogError("compat.dplay", "session lost: %s", text);
 }
 
-int DpLinkLost(DpLink link) {
+int DpLinkLost(DpLink link, const char* reason) {
 	if (!g_dp.host && link == g_dp.host_link) {
 		if (!g_dp.closing && (g_dp.open || g_dp.operation.kind))
-			DpLoseSession();
+			DpLoseSession("host link lost (%s)", reason);
 		return 1;
 	}
 	if (g_dp.host) {
@@ -142,7 +149,11 @@ int DpLinkLost(DpLink link) {
 				continue;
 			for (unsigned j = 0; j < g_dp.transaction_count; ++j)
 				g_dp.transactions[(g_dp.transaction_read + j) % DP_CONTROL_QUEUE].pending &= ~(1u << i);
-			return DpLocalControl(DP_DESTROY_PLAYER, g_dp.peers[i].id, 0, NULL, NULL) != DPERR_BUSY;
+			DPID id = g_dp.peers[i].id;
+			if (DpLocalControl(DP_DESTROY_PLAYER, id, 0, NULL, NULL) == DPERR_BUSY)
+				return 0;
+			Aeron_LogError("compat.dplay", "player %u removed: link lost (%s)", (unsigned)id, reason);
+			return 1;
 		}
 	}
 	return 1;
@@ -307,10 +318,13 @@ void AeronDplay_Update(void) {
 			DpSend(peer->link, DP_KEEPALIVE, 0, g_dp.local_id, peer->id, NULL, 0);
 			/* Packets pumped above can stamp last_seen after now was sampled. */
 			if (now >= peer->last_seen + DP_PEER_TIMEOUT_MS) {
+				unsigned long long silent = (unsigned long long)(now - peer->last_seen);
+				DPID               id     = peer->id;
 				if (!g_dp.host)
-					DpLoseSession();
-				else
-					DpLocalControl(DP_DESTROY_PLAYER, peer->id, 0, NULL, NULL);
+					DpLoseSession("no packet from host for %llu ms", silent);
+				else if (DpLocalControl(DP_DESTROY_PLAYER, id, 0, NULL, NULL) != DPERR_BUSY)
+					Aeron_LogError("compat.dplay", "player %u removed: no packet for %llu ms", (unsigned)id,
+								   silent);
 			}
 		}
 		g_dp.keepalive = now + DP_KEEPALIVE_INTERVAL_MS;

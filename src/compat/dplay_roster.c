@@ -319,7 +319,7 @@ void DpHandleControl(DpLink link, unsigned kind, uint32_t request, DPID from, DP
 				return;
 			DpSend(link, DP_RESULT, request, g_dp.local_id, from, &reply, sizeof(reply));
 		} else if (from == g_dp.host_id)
-			DpLoseSession();
+			DpLoseSession("host left the session");
 	} else if (kind == DP_OPEN || kind == DP_ACCEPT) {
 		DpHandleOpen(link, kind, request, from, to, data, size);
 	}
@@ -343,7 +343,7 @@ void DpServiceControl(void) {
 				Aeron_LogError("compat.dplay", "roster acknowledgement timed out for player %u",
 							   g_dp.peers[peer].id);
 				if (DpLocalControl(DP_DESTROY_PLAYER, g_dp.peers[peer].id, 0, NULL, NULL) == DPERR_BUSY)
-					DpLoseSession();
+					DpLoseSession("could not remove an unresponsive player");
 				continue;
 			}
 			if (now < tx->next_send[peer])
@@ -381,7 +381,8 @@ void DpServiceControl(void) {
 	DpOperation* op = &g_dp.operation;
 	if (DpOperationWaiting()) {
 		if (now - op->start >= DP_OPERATION_TIMEOUT_MS) {
-			DpLoseSession();
+			DpLoseSession("host did not answer the %s request within %u ms",
+						  op->kind == DP_OPEN ? "join" : "player update", (unsigned)DP_OPERATION_TIMEOUT_MS);
 		} else if (op->result == DPERR_PENDING && now >= op->next_send) {
 			DpSend(g_dp.host_link, op->kind == DP_OPEN ? DP_OPEN : DP_CONTROL, op->request, g_dp.local_id,
 				   g_dp.host_id, op->bytes, op->size);

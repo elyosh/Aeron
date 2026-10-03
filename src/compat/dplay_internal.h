@@ -113,8 +113,8 @@ void    DpHandleControl(DpLink link, unsigned kind, uint32_t request, DPID from,
 						unsigned size);
 void    DpHandleOpen(DpLink link, unsigned kind, uint32_t request, DPID from, DPID to, const uint8_t* data,
 					 unsigned size);
-void    DpLoseSession(void);
-int     DpLinkLost(DpLink link);
+void    DpLoseSession(const char* reason, ...);
+int     DpLinkLost(DpLink link, const char* reason);
 HRESULT DpBeginOperation(unsigned kind, const void* data, unsigned size, DPID* id);
 int     DpOperationWaiting(void);
 HRESULT DpLocalControl(unsigned kind, DPID id, DPID group, const DPNAME* name, DPID* created);

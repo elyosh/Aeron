@@ -26,13 +26,20 @@ typedef struct IceLink {
 	/* Remaining state belongs exclusively to the application thread. */
 	int host, seen, remote, published, gathered, relay_ready, connected, failed, reported, retiring, owned,
 		admitted;
-	char local[DP_DIRECTORY_SDP];
+	const char* fail_reason;
+	char        local[DP_DIRECTORY_SDP];
 } IceLink;
 
 static IceLink*               g_links[ICE_LINKS];
 static uint64_t               g_next_link;
 static unsigned               g_receive_cursor;
 static DpDirectoryHostSignals g_host_signals;
+
+static void IceFail(IceLink* link, const char* reason) {
+	if (!link->failed)
+		link->fail_reason = reason;
+	link->failed = 1;
+}
 
 static IceLink* IceFind(DpLink id) {
 	for (unsigned i = 0; id && i < ICE_LINKS; ++i)
@@ -143,21 +150,31 @@ static IceLink* IceCreate(const DpDirectorySignal* signal, int host) {
 	link->agent   = juice_create(&config);
 	g_links[slot] = link;
 	if (!link->agent) {
-		link->failed = 1;
+		IceFail(link, "agent creation failed");
 		return link;
 	}
 	/* Installing the offer first makes this agent the controlled ICE side. */
 	if (host) {
 		if (juice_set_remote_description(link->agent, signal->offer) ||
 			juice_set_remote_gathering_done(link->agent)) {
-			link->failed = 1;
+			IceFail(link, "remote offer rejected");
 			return link;
 		}
 		link->remote = 1;
 	}
 	if (juice_gather_candidates(link->agent))
-		link->failed = 1;
+		IceFail(link, "candidate gathering failed");
 	return link;
+}
+
+/* Summarizes an SDP candidate as "<type> IPv4|IPv6" without its address. */
+static const char* IcePath(const char* candidate, char* out, size_t size) {
+	char        address[JUICE_MAX_ADDRESS_STRING_LEN] = "", type[16] = "";
+	const char* typ = strstr(candidate, " typ ");
+	if (!typ || sscanf(candidate, "%*s %*s %*s %*s %63s", address) != 1 || sscanf(typ + 5, "%15s", type) != 1)
+		return "unknown";
+	snprintf(out, size, "%s %s", type, strchr(address, ':') ? "IPv6" : "IPv4");
+	return out;
 }
 
 static void IceApplyEvents(IceLink* link) {
@@ -165,7 +182,7 @@ static void IceApplyEvents(IceLink* link) {
 	unsigned count;
 	Aeron_MutexLock(link->mutex);
 	if (link->overflow)
-		link->failed = 1;
+		IceFail(link, "event queue overflow");
 	count = link->event_count;
 	for (unsigned i = 0; i < count; ++i)
 		events[i] = link->events[(link->event_read + i) % ICE_EVENTS];
@@ -177,11 +194,21 @@ static void IceApplyEvents(IceLink* link) {
 			link->gathered = 1;
 		else if (events[i] == ICE_RELAY_READY)
 			link->relay_ready = 1;
-		else if (events[i] == JUICE_STATE_CONNECTED || events[i] == JUICE_STATE_COMPLETED)
+		else if (events[i] == JUICE_STATE_CONNECTED || events[i] == JUICE_STATE_COMPLETED) {
+			if (!link->connected) {
+				char local[JUICE_MAX_CANDIDATE_SDP_STRING_LEN]  = "",
+					 remote[JUICE_MAX_CANDIDATE_SDP_STRING_LEN] = "";
+				char local_path[32], remote_path[32];
+				juice_get_selected_candidates(link->agent, local, sizeof(local), remote, sizeof(remote));
+				Aeron_LogInfo("compat.dplay.ice", "%s link connected: local %s, remote %s",
+							  link->host ? "host" : "client", IcePath(local, local_path, sizeof(local_path)),
+							  IcePath(remote, remote_path, sizeof(remote_path)));
+			}
 			link->connected = 1;
-		else if (events[i] == JUICE_STATE_FAILED ||
-				 (events[i] == JUICE_STATE_DISCONNECTED && link->connected))
-			link->failed = 1;
+		} else if (events[i] == JUICE_STATE_FAILED)
+			IceFail(link, "connectivity checks failed");
+		else if (events[i] == JUICE_STATE_DISCONNECTED && link->connected)
+			IceFail(link, "peer stopped answering connectivity checks");
 	}
 }
 
@@ -214,13 +241,14 @@ static void IceAdvance(IceLink* link, const DpDirectorySignal* signal) {
 	if (link->failed || link->retiring || link->admitted)
 		return;
 	if (signal->rejection || signal->publication.state == AERON_DPLAY_DIRECTORY_FAILED) {
-		link->failed = 1;
+		IceFail(link,
+				signal->rejection ? "directory rejected the connection" : "directory publication failed");
 		return;
 	}
 	if (!link->host && !link->remote && signal->answer[0]) {
 		if (juice_set_remote_description(link->agent, signal->answer) ||
 			juice_set_remote_gathering_done(link->agent)) {
-			link->failed = 1;
+			IceFail(link, "remote answer rejected");
 			return;
 		}
 		link->remote = 1;
@@ -230,13 +258,13 @@ static void IceAdvance(IceLink* link, const DpDirectorySignal* signal) {
 	if (!link->published && (link->gathered || link->relay_ready || (link->host && link->connected) ||
 							 Aeron_NowUs() >= link->gather_until)) {
 		if (!link->local[0] && juice_get_local_description(link->agent, link->local, sizeof(link->local))) {
-			link->failed = 1;
+			IceFail(link, "local description unavailable");
 			return;
 		}
 		AeronDplayDirectoryError error =
 			DpDirectory_SetDescription(&link->identity, link->generation, link->local, 0);
 		if (error) {
-			link->failed = 1;
+			IceFail(link, "publishing the local description failed");
 			return;
 		}
 		link->published    = 1;
@@ -283,7 +311,7 @@ void DpIce_Update(void) {
 		if (!link)
 			continue;
 		if (!link->admitted && Aeron_NowUs() >= link->deadline)
-			link->failed = 1;
+			IceFail(link, "connection setup timed out");
 		/* SDP exchange is sufficient to outlive signaling; admission preserves
 		 * the link beyond its setup deadline. Cancellation is explicit. */
 		if (!link->seen && !link->owned && !(link->host && link->published && link->remote))
@@ -295,10 +323,10 @@ void DpIce_Update(void) {
 			else if (!link->published)
 				DpDirectory_SetDescription(&link->identity, link->generation, "",
 										   AERON_DPLAY_DIRECTORY_ERROR_CONNECTION_FAILED);
-			Aeron_LogWarn("compat.dplay.ice", "ICE link failed");
+			Aeron_LogWarn("compat.dplay.ice", "ICE link failed: %s", link->fail_reason);
 		}
 		if (link->retiring || link->failed) {
-			if (!DpLinkLost(link->id))
+			if (!DpLinkLost(link->id, link->failed ? link->fail_reason : "connection retired"))
 				continue;
 			/* Retain the terminal generation until signaling forgets it, so a
 			 * stale offer cannot recreate a failed or departed player's agent. */
@@ -347,7 +375,7 @@ int DpIce_Send(DpLink id, const void* data, unsigned size) {
 		return 1;
 	if (result == JUICE_ERR_AGAIN)
 		return 0;
-	link->failed = 1;
+	IceFail(link, "send failed");
 	return -1;
 }
 
