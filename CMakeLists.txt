@@ -789,6 +789,7 @@ endif()
 # aeron_scene. Diagnostics use the host-provided SDL_Log symbol.
 add_library(aeron_flight_model STATIC
     src/asset/flight_model.c
+    src/asset/opt_sim_model.c
     src/scene/gltf_mesh.c
 )
 

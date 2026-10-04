@@ -93,6 +93,12 @@ typedef struct AeronFlightComponent {
 	uint32_t              engine_glow_count;
 	uint32_t              tag_count;
 	AeronFlightTag*       tags;
+	/* Cooked simulation data (`simulationData`): an owned copy of its buffer
+	 * view, verified against the topology by its consumer. */
+	bool                  has_simulation_data;
+	uint8_t*              simulation_data;
+	size_t                simulation_data_size;
+	uint64_t              simulation_topology_hash;
 } AeronFlightComponent;
 
 typedef struct AeronFlightModel {

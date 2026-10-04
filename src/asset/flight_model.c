@@ -414,6 +414,52 @@ static bool build_component_tags(const cJSON* extension, AeronFlightComponent* c
 	return true;
 }
 
+/* Parses a 16-digit lower-case hexadecimal hash. */
+static bool parse_hash(const cJSON* value, uint64_t* out) {
+	if (!cJSON_IsString(value) || !value->valuestring || strlen(value->valuestring) != 16)
+		return false;
+	uint64_t hash = 0;
+	for (const char* c = value->valuestring; *c; ++c) {
+		uint64_t digit;
+		if (*c >= '0' && *c <= '9')
+			digit = (uint64_t)(*c - '0');
+		else if (*c >= 'a' && *c <= 'f')
+			digit = (uint64_t)(*c - 'a' + 10);
+		else
+			return false;
+		hash = hash << 4 | digit;
+	}
+	*out = hash;
+	return true;
+}
+
+/* Parses the optional component `simulationData` object and copies its buffer
+ * view. Its contents are verified later, against the topology. */
+static bool build_component_simulation_data(const cgltf_data* data, const cJSON* extension,
+											AeronFlightComponent* component) {
+	const cJSON* simulation = cJSON_GetObjectItemCaseSensitive(extension, "simulationData");
+	if (!simulation)
+		return true;
+	int32_t  version     = 0;
+	uint32_t buffer_view = 0;
+	if (!cJSON_IsObject(simulation) || !json_int(cJSON_GetObjectItemCaseSensitive(simulation, "version"), &version) ||
+		version != 1 || !json_uint(cJSON_GetObjectItemCaseSensitive(simulation, "bufferView"), &buffer_view) ||
+		buffer_view >= data->buffer_views_count ||
+		!parse_hash(cJSON_GetObjectItemCaseSensitive(simulation, "topologyHash"), &component->simulation_topology_hash))
+		return false;
+	const cgltf_buffer_view* view = &data->buffer_views[buffer_view];
+	if (!view->buffer || !view->buffer->data || view->size == 0 || view->offset > view->buffer->size ||
+		view->size > view->buffer->size - view->offset)
+		return false;
+	component->simulation_data = malloc(view->size);
+	if (!component->simulation_data)
+		return false;
+	memcpy(component->simulation_data, (const uint8_t*)view->buffer->data + view->offset, view->size);
+	component->simulation_data_size = view->size;
+	component->has_simulation_data  = true;
+	return true;
+}
+
 static bool has_morph_targets(const cgltf_mesh* mesh) {
 	if (mesh->weights_count)
 		return true;
@@ -439,7 +485,8 @@ static bool find_collision_child(const cgltf_node* node, const cgltf_node** out)
 	return true;
 }
 
-static bool build_component_semantics(const cgltf_node* node, AeronFlightComponent* component) {
+static bool build_component_semantics(const cgltf_data* data, const cgltf_node* node,
+									  AeronFlightComponent* component) {
 	if (!node->mesh || node->skin || !uniform_positive_transform(node))
 		return false;
 	cJSON* extension = parse_flight_extension(node);
@@ -500,7 +547,8 @@ static bool build_component_semantics(const cgltf_node* node, AeronFlightCompone
 		cJSON_Delete(extension);
 		return false;
 	}
-	if (!build_component_tags(extension, component)) {
+	if (!build_component_tags(extension, component) ||
+		!build_component_simulation_data(data, extension, component)) {
 		cJSON_Delete(extension);
 		return false;
 	}
@@ -681,7 +729,7 @@ static bool build_semantics(const cgltf_data* data, AeronFlightModel* model) {
 			if (role != FLIGHT_ROLE_HARDPOINT && role != FLIGHT_ROLE_ENGINE_GLOW && role != FLIGHT_ROLE_COLLISION)
 				return false;
 		}
-		if (!build_component_semantics(node, component) || !build_hardpoints(node, component) ||
+		if (!build_component_semantics(data, node, component) || !build_hardpoints(node, component) ||
 			!append_engine_glows(node, index, component, model))
 			return false;
 		if (component->mesh_type == 7 && model->bridge_component < 0)
@@ -810,6 +858,7 @@ void Aeron_FlightModelFreeSemantics(AeronFlightModel* model) {
 		free(component->topology.faces);
 		free(component->hardpoints);
 		free(component->tags);
+		free(component->simulation_data);
 	}
 	free(model->components);
 	free(model->engine_glows);
