@@ -753,13 +753,46 @@ if(NOT MSVC)
 endif()
 set_target_properties(opt2gltf_lib PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED ON)
 
-add_library(aeron_scene STATIC
+# ---------- aeron_flight_model — CPU-only flight model layer ----------
+#
+# AERON_flight_model parsing and the merged CPU-side render arrays. No GPU
+# dependency, so game simulation cores and the asset cooker link it without
+# aeron_scene. Diagnostics use the host-provided SDL_Log symbol.
+add_library(aeron_flight_model STATIC
     src/asset/flight_model.c
+    src/scene/gltf_mesh.c
+)
+
+set_target_properties(aeron_flight_model PROPERTIES
+    C_STANDARD 99
+    C_STANDARD_REQUIRED ON
+    C_EXTENSIONS OFF
+)
+
+target_include_directories(aeron_flight_model
+    PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+
+target_link_libraries(aeron_flight_model
+    PRIVATE
+        aeron_cgltf
+        aeron_cjson
+)
+
+# Simulation data derived here must be bit-identical across compilers and
+# architectures: no floating-point contraction.
+if(MSVC)
+    target_compile_options(aeron_flight_model PRIVATE /W4 /fp:precise)
+else()
+    target_compile_options(aeron_flight_model PRIVATE -Wall -Wextra -Wpedantic -Wno-deprecated-declarations -fno-common -ffp-contract=off)
+endif()
+
+add_library(aeron_scene STATIC
     src/scene/ktx2_reader.c
     src/scene/image_cache.c
     src/scene/sprite_atlas.c
     src/scene/blend_ramp.c
-    src/scene/gltf_mesh.c
     src/scene/scene3d.c
     src/scene/clustered_lights.c
     src/scene/world.c
@@ -813,6 +846,7 @@ target_include_directories(aeron_scene
 target_link_libraries(aeron_scene
     PUBLIC
         aeron
+        aeron_flight_model
     PRIVATE
         aeron_cgltf
         aeron_cjson

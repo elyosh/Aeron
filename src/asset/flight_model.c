@@ -601,22 +601,46 @@ bool Aeron_FlightModelBuildData(const cgltf_data* data, const char* source_label
 	return true;
 }
 
+static cgltf_data* parse_glb_memory(const void* bytes, size_t size) {
+	cgltf_options options = { 0 };
+	cgltf_data*   data    = NULL;
+	if (cgltf_parse(&options, bytes, size, &data) != cgltf_result_success)
+		return NULL;
+	for (cgltf_size index = 0; index < data->buffers_count; ++index) {
+		if (!data->buffers[index].data) {
+			cgltf_free(data);
+			return NULL;
+		}
+	}
+	return data;
+}
+
 bool Aeron_FlightModelBuildMemory(const void* bytes, size_t size, const char* source_label,
 								  AeronFlightModel* out) {
 	if (!bytes || !size || !source_label || !source_label[0] || !out)
 		return false;
-	cgltf_options options = { 0 };
-	cgltf_data*   data    = NULL;
-	if (cgltf_parse(&options, bytes, size, &data) != cgltf_result_success)
+	cgltf_data* data = parse_glb_memory(bytes, size);
+	if (!data)
 		return false;
-	for (cgltf_size index = 0; index < data->buffers_count; ++index) {
-		if (!data->buffers[index].data) {
-			cgltf_free(data);
-			return false;
-		}
-	}
 	const bool built = Aeron_FlightModelBuildData(data, source_label, out);
 	cgltf_free(data);
+	return built;
+}
+
+bool Aeron_FlightModelBuildSemanticsMemory(const void* bytes, size_t size, const char* source_label,
+										   AeronFlightModel* out) {
+	if (!bytes || !size || !source_label || !source_label[0] || !out)
+		return false;
+	memset(out, 0, sizeof *out);
+	cgltf_data* data = parse_glb_memory(bytes, size);
+	if (!data)
+		return false;
+	const bool built = cgltf_validate(data) == cgltf_result_success && build_semantics(data, out);
+	cgltf_free(data);
+	if (!built) {
+		SDL_Log("[flight_model] '%s' has an invalid %s contract", source_label, AERON_FLIGHT_MODEL_EXTENSION);
+		Aeron_FlightModelFreeSemantics(out);
+	}
 	return built;
 }
 
@@ -645,6 +669,12 @@ void Aeron_FlightModelFree(AeronFlightModel* model) {
 	if (!model)
 		return;
 	Aeron_GltfMeshFree(&model->render);
+	Aeron_FlightModelFreeSemantics(model);
+}
+
+void Aeron_FlightModelFreeSemantics(AeronFlightModel* model) {
+	if (!model)
+		return;
 	for (uint32_t index = 0; index < model->component_count; ++index) {
 		AeronFlightComponent* component = &model->components[index];
 		free(component->topology.positions);
@@ -653,5 +683,8 @@ void Aeron_FlightModelFree(AeronFlightModel* model) {
 	}
 	free(model->components);
 	free(model->engine_glows);
+	/* Render data has its own release path; leave it untouched. */
+	const AeronGltfModel render = model->render;
 	memset(model, 0, sizeof *model);
+	model->render = render;
 }

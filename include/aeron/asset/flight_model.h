@@ -101,8 +101,16 @@ bool Aeron_FlightModelBuildMemory(const void* bytes, size_t size, const char* so
 
 bool Aeron_FlightModelBuild(const char* glb_path, AeronFlightModel* out);
 
+/* Builds only the simulation-facing data (components, topology, hardpoints,
+ * engine glows, bounds); `render` stays zeroed. Free with
+ * Aeron_FlightModelFreeSemantics. */
+bool Aeron_FlightModelBuildSemanticsMemory(const void* bytes, size_t size, const char* source_label,
+										   AeronFlightModel* out);
+
 void Aeron_FlightModelReleaseRenderData(AeronFlightModel* model);
 void Aeron_FlightModelFree(AeronFlightModel* model);
+/* Frees the simulation-facing data only; `render` is left untouched. */
+void Aeron_FlightModelFreeSemantics(AeronFlightModel* model);
 
 #ifdef __cplusplus
 }
