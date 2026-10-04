@@ -15,6 +15,7 @@ bl_info = {
 
 import os
 import json
+import re
 import shutil
 import subprocess
 import tempfile
@@ -33,6 +34,7 @@ from bpy_extras.io_utils import ExportHelper
 
 ADDON_ID = __name__
 EXTENSION_NAME = "AERON_flight_model"
+TAG_PATTERN = re.compile(r"^[a-z0-9._]{1,63}$")
 
 MESH_TYPE_NAMES = (
     "Default", "Main hull", "Wing", "Fuselage", "Gun turret", "Small gun",
@@ -70,6 +72,14 @@ def _enum_items(names):
             for index, name in enumerate(names)]
 
 
+def _parse_tags(text):
+    tags = []
+    for tag in (part.strip() for part in text.split(",")):
+        if tag and tag not in tags:
+            tags.append(tag)
+    return tags
+
+
 def _blender_to_gltf(vector):
     return [float(vector[0]), float(vector[2]), -float(vector[1])]
 
@@ -94,12 +104,21 @@ class AeronFlightProperties(PropertyGroup):
             ('component', "Component", "Ordered polygon component"),
             ('hardpoint', "Hardpoint", "Ordered weapon or attachment point"),
             ('engineGlow', "Engine glow", "Ordered component-owned engine glow"),
+            ('collision', "Collision", "Simulation collision mesh of its parent component"),
         ],
         default='none',
     )
     order: IntProperty(name="Order", default=0, min=0)
     mesh_type: EnumProperty(name="Mesh type", items=_enum_items(MESH_TYPE_NAMES), default='0')
     explosion_flags: IntProperty(name="Explosion flags", default=0, min=0)
+    tags: StringProperty(
+        name="Tags",
+        description=(
+            "Comma-separated game-defined tags (lower-case letters, digits, "
+            "'.' and '_'), e.g. crew.side"
+        ),
+        default="",
+    )
     target_id: IntProperty(name="Target ID", default=0)
     target: FloatVectorProperty(name="Target", size=3, subtype='XYZ')
     has_descriptor_geometry: BoolProperty(name="Authored descriptor geometry", default=False)
@@ -145,6 +164,7 @@ class OBJECT_PT_aeron_flight_model(Panel):
         if props.role == 'component':
             layout.prop(props, "mesh_type")
             layout.prop(props, "explosion_flags")
+            layout.prop(props, "tags")
             layout.prop(props, "target_id")
             if props.target_id:
                 layout.prop(props, "target")
@@ -225,15 +245,31 @@ def _validate_flight_hierarchy(objects):
                 props.descriptor_bounds_min[axis] > props.descriptor_bounds_max[axis]
                 for axis in range(3)):
             return None, "component descriptor minimum bounds must not exceed maximum bounds"
+        if any(not TAG_PATTERN.match(tag) for tag in _parse_tags(props.tags)):
+            return None, ("component tags must be 1-63 lower-case letters, digits, "
+                          "'.' or '_'")
         child_orders = set()
+        collision_children = 0
         for child in component.children:
             role = child.aeron_flight.role
-            if role not in {'hardpoint', 'engineGlow'}:
-                return None, "component children must be hardpoints or engine glows"
-            if child.type != 'EMPTY' or child.children:
-                return None, "hardpoints and engine glows must be childless Empties"
+            if role not in {'hardpoint', 'engineGlow', 'collision'}:
+                return None, "component children must be hardpoints, engine glows or a collision mesh"
             if child.animation_data:
                 return None, "flight-model nodes cannot use animation"
+            if role == 'collision':
+                collision_children += 1
+                if collision_children > 1:
+                    return None, "a component can have at most one collision mesh"
+                if child.type != 'MESH' or child.children or not _uniform_positive_scale(child):
+                    return None, ("collision meshes must be childless meshes with "
+                                  "positive uniform scale")
+                if child.data.shape_keys or child.find_armature():
+                    return None, "collision meshes cannot use shape keys or armatures"
+                if child.data.users > 1:
+                    return None, "collision meshes must not share mesh data with other objects"
+                continue
+            if child.type != 'EMPTY' or child.children:
+                return None, "hardpoints and engine glows must be childless Empties"
             if child.aeron_flight.order in child_orders:
                 return None, "child order values must be unique within a component"
             child_orders.add(child.aeron_flight.order)
@@ -246,9 +282,11 @@ def _validate_flight_hierarchy(objects):
     roles = {obj for obj in objects}
     for obj in objects:
         role = obj.aeron_flight.role
-        if role in {'hardpoint', 'engineGlow'} and (not obj.parent or obj.parent not in roles or
-                                                     obj.parent.aeron_flight.role != 'component'):
-            return None, "hardpoints and engine glows must belong to an exported component"
+        if role in {'hardpoint', 'engineGlow', 'collision'} and (
+                not obj.parent or obj.parent not in roles or
+                obj.parent.aeron_flight.role != 'component'):
+            return None, ("hardpoints, engine glows and collision meshes must belong to an "
+                          "exported component")
     return root, None
 
 
@@ -259,6 +297,9 @@ def _extension_for_object(obj):
         extension["meshType"] = int(props.mesh_type)
         if props.explosion_flags:
             extension["explosionFlags"] = props.explosion_flags
+        tags = _parse_tags(props.tags)
+        if tags:
+            extension["tags"] = tags
         if props.target_id:
             extension["targetId"] = props.target_id
             extension["target"] = _blender_to_gltf(props.target)
@@ -304,11 +345,25 @@ def _inject_flight_extension(gltf_path, objects, root):
             (child for child in component.children
              if child.aeron_flight.role in {'hardpoint', 'engineGlow'}),
             key=lambda obj: (obj.aeron_flight.order, obj.name))
+        # The collision mesh takes no ordinal; it follows the ordered children.
+        children += [child for child in component.children
+                     if child.aeron_flight.role == 'collision']
         node = nodes[by_name[component.name]]
         if children:
             node["children"] = [by_name[child.name] for child in children]
         else:
             node.pop("children", None)
+    # Collision meshes are never rendered; drop their materials so the cooker
+    # does not atlas textures for them.
+    meshes = document.get("meshes", [])
+    for obj in objects:
+        if obj.aeron_flight.role != 'collision':
+            continue
+        mesh_index = nodes[by_name[obj.name]].get("mesh")
+        if mesh_index is None:
+            raise ValueError("collision object {!r} exported without a mesh".format(obj.name))
+        for primitive in meshes[mesh_index].get("primitives", []):
+            primitive.pop("material", None)
     used = document.setdefault("extensionsUsed", [])
     if EXTENSION_NAME not in used:
         used.append(EXTENSION_NAME)

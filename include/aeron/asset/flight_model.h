@@ -60,6 +60,13 @@ typedef struct AeronFlightEngineGlow {
 	bool            enabled;
 } AeronFlightEngineGlow;
 
+/* Game-defined component tag: lower-case ASCII letters, digits, '.' and '_'. */
+#define AERON_FLIGHT_TAG_MAX 64
+
+typedef struct AeronFlightTag {
+	char name[AERON_FLIGHT_TAG_MAX];
+} AeronFlightTag;
+
 typedef struct AeronFlightComponent {
 	int32_t             mesh_type;
 	uint32_t            explosion_flags;
@@ -71,8 +78,12 @@ typedef struct AeronFlightComponent {
 	AeronFlightBounds   descriptor_bounds;
 	bool                has_rotation;
 	AeronFlightRotation rotation;
+	/* Simulation topology: the collision child's mesh when has_collision is
+	 * set, otherwise the component's render mesh. */
+	bool                has_collision;
 	AeronFlightTopology topology;
-	/* Geometry-derived values remain independent from the authored descriptor. */
+	/* Render-mesh bounds, used for render culling. They remain independent
+	 * from the authored descriptor and from a collision child. */
 	AeronFlightBounds     bounds;
 	AeronFlightVec3       span;
 	AeronFlightVec3       center;
@@ -80,6 +91,8 @@ typedef struct AeronFlightComponent {
 	AeronFlightHardpoint* hardpoints;
 	uint32_t              first_engine_glow;
 	uint32_t              engine_glow_count;
+	uint32_t              tag_count;
+	AeronFlightTag*       tags;
 } AeronFlightComponent;
 
 typedef struct AeronFlightModel {
@@ -111,6 +124,9 @@ void Aeron_FlightModelReleaseRenderData(AeronFlightModel* model);
 void Aeron_FlightModelFree(AeronFlightModel* model);
 /* Frees the simulation-facing data only; `render` is left untouched. */
 void Aeron_FlightModelFreeSemantics(AeronFlightModel* model);
+
+/* Returns the index of the first component carrying `tag`, or -1. */
+int32_t Aeron_FlightModelFindComponentByTag(const AeronFlightModel* model, const char* tag);
 
 #ifdef __cplusplus
 }

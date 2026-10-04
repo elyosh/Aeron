@@ -5,7 +5,8 @@
     { "$ref": "#/$defs/model" },
     { "$ref": "#/$defs/component" },
     { "$ref": "#/$defs/hardpoint" },
-    { "$ref": "#/$defs/engineGlow" }
+    { "$ref": "#/$defs/engineGlow" },
+    { "$ref": "#/$defs/collision" }
   ],
   "$defs": {
     "vec3": {
@@ -25,6 +26,10 @@
       "items": { "type": "number", "minimum": 0, "maximum": 1 },
       "minItems": 4,
       "maxItems": 4
+    },
+    "tag": {
+      "type": "string",
+      "pattern": "^[a-z0-9._]{1,63}$"
     },
     "model": {
       "type": "object",
@@ -54,7 +59,8 @@
         "center": { "$ref": "#/$defs/vec3" },
         "boundsMin": { "$ref": "#/$defs/vec3" },
         "boundsMax": { "$ref": "#/$defs/vec3" },
-        "rotation": { "$ref": "#/$defs/rotation" }
+        "rotation": { "$ref": "#/$defs/rotation" },
+        "tags": { "type": "array", "items": { "$ref": "#/$defs/tag" } }
       },
       "allOf": [
         {
@@ -84,6 +90,11 @@
         "role": { "const": "hardpoint" },
         "type": { "type": "integer", "minimum": 0, "maximum": 39 }
       }
+    },
+    "collision": {
+      "type": "object",
+      "required": ["role"],
+      "properties": { "role": { "const": "collision" } }
     },
     "engineGlow": {
       "type": "object",

@@ -17,6 +17,7 @@ typedef enum FlightNodeRole {
 	FLIGHT_ROLE_COMPONENT,
 	FLIGHT_ROLE_HARDPOINT,
 	FLIGHT_ROLE_ENGINE_GLOW,
+	FLIGHT_ROLE_COLLISION,
 	FLIGHT_ROLE_INVALID,
 } FlightNodeRole;
 
@@ -55,6 +56,8 @@ static FlightNodeRole json_role(const cJSON* object) {
 		return FLIGHT_ROLE_HARDPOINT;
 	if (strcmp(role->valuestring, "engineGlow") == 0)
 		return FLIGHT_ROLE_ENGINE_GLOW;
+	if (strcmp(role->valuestring, "collision") == 0)
+		return FLIGHT_ROLE_COLLISION;
 	return FLIGHT_ROLE_INVALID;
 }
 
@@ -232,7 +235,52 @@ static bool transform_descriptor_geometry(const float matrix[16], const float sp
 		   isfinite(component->descriptor_span.y) && isfinite(component->descriptor_span.z) && have_bounds;
 }
 
-static bool build_component_topology(const cgltf_node* node, AeronFlightComponent* component) {
+static bool mesh_world_bounds(const cgltf_node* node, AeronFlightBounds* bounds) {
+	float matrix[16];
+	cgltf_node_transform_world(node, matrix);
+	bool have_bounds = false;
+	for (cgltf_size primitive_index = 0; primitive_index < node->mesh->primitives_count; ++primitive_index) {
+		const cgltf_accessor* positions = primitive_position(&node->mesh->primitives[primitive_index]);
+		if (!positions)
+			return false;
+		for (cgltf_size index = 0; index < positions->count; ++index) {
+			float local[3];
+			float transformed[3];
+			if (!cgltf_accessor_read_float(positions, index, local, 3) || !isfinite(local[0]) ||
+				!isfinite(local[1]) || !isfinite(local[2]))
+				return false;
+			transform_point(matrix, local, transformed);
+			if (!isfinite(transformed[0]) || !isfinite(transformed[1]) || !isfinite(transformed[2]))
+				return false;
+			AeronFlightVec3 position;
+			gltf_to_aeron(transformed, &position);
+			bounds_include(bounds, &position, &have_bounds);
+		}
+	}
+	return have_bounds;
+}
+
+static AeronFlightVec3 bounds_span(const AeronFlightBounds* bounds) {
+	return (AeronFlightVec3) {
+		bounds->max.x - bounds->min.x,
+		bounds->max.y - bounds->min.y,
+		bounds->max.z - bounds->min.z,
+	};
+}
+
+static AeronFlightVec3 bounds_center(const AeronFlightBounds* bounds) {
+	return (AeronFlightVec3) {
+		(bounds->min.x + bounds->max.x) * 0.5f,
+		(bounds->min.y + bounds->max.y) * 0.5f,
+		(bounds->min.z + bounds->max.z) * 0.5f,
+	};
+}
+
+/* Builds the simulation topology from `node`'s mesh: the component itself or
+ * its collision child. Degenerate triangles are dropped; an empty result is
+ * invalid. `topology_bounds` receives the bounds of all mesh positions. */
+static bool build_component_topology(const cgltf_node* node, AeronFlightComponent* component,
+									 AeronFlightBounds* topology_bounds) {
 	uint32_t position_count = 0;
 	uint32_t face_count     = 0;
 	for (cgltf_size index = 0; index < node->mesh->primitives_count; ++index) {
@@ -276,7 +324,7 @@ static bool build_component_topology(const cgltf_node* node, AeronFlightComponen
 				return false;
 			AeronFlightVec3* position = &component->topology.positions[position_offset + (uint32_t)index];
 			gltf_to_aeron(transformed, position);
-			bounds_include(&component->bounds, position, &have_bounds);
+			bounds_include(topology_bounds, position, &have_bounds);
 		}
 		const uint32_t index_count =
 			primitive->indices ? (uint32_t)primitive->indices->count : (uint32_t)positions->count;
@@ -323,16 +371,71 @@ static bool build_component_topology(const cgltf_node* node, AeronFlightComponen
 		position_offset += (uint32_t)positions->count;
 	}
 	component->topology.face_count = face_offset;
-	component->span                = (AeronFlightVec3) {
-		component->bounds.max.x - component->bounds.min.x,
-		component->bounds.max.y - component->bounds.min.y,
-		component->bounds.max.z - component->bounds.min.z,
-	};
-	component->center = (AeronFlightVec3) {
-		(component->bounds.min.x + component->bounds.max.x) * 0.5f,
-		(component->bounds.min.y + component->bounds.max.y) * 0.5f,
-		(component->bounds.min.z + component->bounds.max.z) * 0.5f,
-	};
+	return face_offset != 0;
+}
+
+static bool valid_tag(const char* tag) {
+	const size_t length = strlen(tag);
+	if (length == 0 || length >= AERON_FLIGHT_TAG_MAX)
+		return false;
+	for (size_t index = 0; index < length; ++index) {
+		const char c = tag[index];
+		if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '.' || c == '_'))
+			return false;
+	}
+	return true;
+}
+
+/* Parses the optional component `tags` array. Malformed tags are invalid;
+ * duplicates within one component are dropped. */
+static bool build_component_tags(const cJSON* extension, AeronFlightComponent* component) {
+	const cJSON* tags = cJSON_GetObjectItemCaseSensitive(extension, "tags");
+	if (!tags)
+		return true;
+	if (!cJSON_IsArray(tags))
+		return false;
+	const int count = cJSON_GetArraySize(tags);
+	if (count == 0)
+		return true;
+	component->tags = calloc((size_t)count, sizeof *component->tags);
+	if (!component->tags)
+		return false;
+	for (int index = 0; index < count; ++index) {
+		const cJSON* tag = cJSON_GetArrayItem(tags, index);
+		if (!cJSON_IsString(tag) || !tag->valuestring || !valid_tag(tag->valuestring))
+			return false;
+		bool duplicate = false;
+		for (uint32_t existing = 0; existing < component->tag_count; ++existing)
+			if (strcmp(component->tags[existing].name, tag->valuestring) == 0)
+				duplicate = true;
+		if (!duplicate)
+			strcpy(component->tags[component->tag_count++].name, tag->valuestring);
+	}
+	return true;
+}
+
+static bool has_morph_targets(const cgltf_mesh* mesh) {
+	if (mesh->weights_count)
+		return true;
+	for (cgltf_size index = 0; index < mesh->primitives_count; ++index)
+		if (mesh->primitives[index].targets_count)
+			return true;
+	return false;
+}
+
+/* Returns the component's collision child through `out`; NULL when it has
+ * none. Fails when there is more than one or the child is malformed. */
+static bool find_collision_child(const cgltf_node* node, const cgltf_node** out) {
+	*out = NULL;
+	for (cgltf_size index = 0; index < node->children_count; ++index) {
+		const cgltf_node* child = node->children[index];
+		if (node_role(child) != FLIGHT_ROLE_COLLISION)
+			continue;
+		if (*out || !child->mesh || child->children_count || child->skin || has_morph_targets(child->mesh) ||
+			!uniform_positive_transform(child))
+			return false;
+		*out = child;
+	}
 	return true;
 }
 
@@ -397,6 +500,10 @@ static bool build_component_semantics(const cgltf_node* node, AeronFlightCompone
 		cJSON_Delete(extension);
 		return false;
 	}
+	if (!build_component_tags(extension, component)) {
+		cJSON_Delete(extension);
+		return false;
+	}
 	cJSON_Delete(extension);
 
 	float matrix[16];
@@ -420,12 +527,27 @@ static bool build_component_semantics(const cgltf_node* node, AeronFlightCompone
 		transform_direction(matrix, up_axis, &component->rotation.up_axis);
 		component->has_rotation = true;
 	}
-	if (!build_component_topology(node, component))
+	const cgltf_node* collision = NULL;
+	if (!find_collision_child(node, &collision))
 		return false;
+	component->has_collision = collision != NULL;
+	AeronFlightBounds topology_bounds;
+	memset(&topology_bounds, 0, sizeof topology_bounds);
+	if (!build_component_topology(collision ? collision : node, component, &topology_bounds))
+		return false;
+	if (collision) {
+		if (!mesh_world_bounds(node, &component->bounds))
+			return false;
+	} else {
+		component->bounds = topology_bounds;
+	}
+	component->span   = bounds_span(&component->bounds);
+	component->center = bounds_center(&component->bounds);
 	if (!has_descriptor_geometry) {
-		component->descriptor_span   = component->span;
-		component->descriptor_center = component->center;
-		component->descriptor_bounds = component->bounds;
+		/* The fallback descriptor describes the simulation geometry. */
+		component->descriptor_span   = bounds_span(&topology_bounds);
+		component->descriptor_center = bounds_center(&topology_bounds);
+		component->descriptor_bounds = topology_bounds;
 	}
 	return true;
 }
@@ -556,7 +678,7 @@ static bool build_semantics(const cgltf_data* data, AeronFlightModel* model) {
 			return false;
 		for (cgltf_size child = 0; child < node->children_count; ++child) {
 			const FlightNodeRole role = node_role(node->children[child]);
-			if (role != FLIGHT_ROLE_HARDPOINT && role != FLIGHT_ROLE_ENGINE_GLOW)
+			if (role != FLIGHT_ROLE_HARDPOINT && role != FLIGHT_ROLE_ENGINE_GLOW && role != FLIGHT_ROLE_COLLISION)
 				return false;
 		}
 		if (!build_component_semantics(node, component) || !build_hardpoints(node, component) ||
@@ -579,7 +701,7 @@ static bool build_semantics(const cgltf_data* data, AeronFlightModel* model) {
 		const FlightNodeRole role = node_role(node);
 		if (role == FLIGHT_ROLE_INVALID || (role == FLIGHT_ROLE_MODEL && node != root) ||
 			(role == FLIGHT_ROLE_COMPONENT && node->parent != root) ||
-			((role == FLIGHT_ROLE_HARDPOINT || role == FLIGHT_ROLE_ENGINE_GLOW) &&
+			((role == FLIGHT_ROLE_HARDPOINT || role == FLIGHT_ROLE_ENGINE_GLOW || role == FLIGHT_ROLE_COLLISION) &&
 			 (!node->parent || node_role(node->parent) != FLIGHT_ROLE_COMPONENT ||
 			  node->parent->parent != root)))
 			return false;
@@ -606,6 +728,13 @@ static cgltf_data* parse_glb_memory(const void* bytes, size_t size) {
 	cgltf_data*   data    = NULL;
 	if (cgltf_parse(&options, bytes, size, &data) != cgltf_result_success)
 		return NULL;
+	/* Attaches the GLB binary chunk (and decodes data: URIs). Without a base
+	 * path, buffers referencing external files fail to load, as they should
+	 * for an in-memory GLB. */
+	if (cgltf_load_buffers(&options, data, NULL) != cgltf_result_success) {
+		cgltf_free(data);
+		return NULL;
+	}
 	for (cgltf_size index = 0; index < data->buffers_count; ++index) {
 		if (!data->buffers[index].data) {
 			cgltf_free(data);
@@ -680,6 +809,7 @@ void Aeron_FlightModelFreeSemantics(AeronFlightModel* model) {
 		free(component->topology.positions);
 		free(component->topology.faces);
 		free(component->hardpoints);
+		free(component->tags);
 	}
 	free(model->components);
 	free(model->engine_glows);
@@ -687,4 +817,16 @@ void Aeron_FlightModelFreeSemantics(AeronFlightModel* model) {
 	const AeronGltfModel render = model->render;
 	memset(model, 0, sizeof *model);
 	model->render = render;
+}
+
+int32_t Aeron_FlightModelFindComponentByTag(const AeronFlightModel* model, const char* tag) {
+	if (!model || !tag)
+		return -1;
+	for (uint32_t index = 0; index < model->component_count; ++index) {
+		const AeronFlightComponent* component = &model->components[index];
+		for (uint32_t tag_index = 0; tag_index < component->tag_count; ++tag_index)
+			if (strcmp(component->tags[tag_index].name, tag) == 0)
+				return (int32_t)index;
+	}
+	return -1;
 }
