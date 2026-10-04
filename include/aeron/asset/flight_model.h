@@ -5,6 +5,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "aeron/collision/face_bvh.h"
 #include "aeron/scene/gltf_mesh.h"
 
 #ifdef __cplusplus
@@ -110,6 +111,17 @@ typedef struct AeronFlightModel {
 	AeronFlightBounds      bounds;
 	float                  max_extent;
 	int32_t                bridge_component;
+	/* Cooked render data (`renderData` on the model root): an owned copy of
+	 * its buffer view, verified against the merged render arrays. */
+	bool                   has_render_data;
+	uint8_t*               render_data;
+	size_t                 render_data_size;
+	uint64_t               render_mesh_hash;
+	/* Box-only BVH over the merged render triangles (renderer frame, metres),
+	 * filled by the render-including builds: cooked when renderData is
+	 * present, otherwise built at load. NULL for semantic-only builds. Freed
+	 * with the render data. */
+	AeronFaceBvh*          render_bvh;
 } AeronFlightModel;
 
 bool Aeron_FlightModelBuildData(const struct cgltf_data* data, const char* source_label,

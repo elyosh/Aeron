@@ -63,6 +63,9 @@ typedef struct AeronSceneMesh {
 	uint32_t                 blend_index_count;
 	AeronSceneMeshCpuVertex* cpu_vertices;
 	uint32_t*                cpu_indices;
+	/* Box-only BVH over cpu_vertices/cpu_indices triangles, copied from the
+	 * flight model; NULL for meshes built from stock OPTs. */
+	AeronFaceBvh*            render_bvh;
 
 	/* Channel atlases (base_color / normal / metallic_rough / emissive).
 	 * Factor-only models have no atlases; textured models carry all four. */

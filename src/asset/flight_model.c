@@ -435,29 +435,50 @@ static bool parse_hash(const cJSON* value, uint64_t* out) {
 
 /* Parses the optional component `simulationData` object and copies its buffer
  * view. Its contents are verified later, against the topology. */
-static bool build_component_simulation_data(const cgltf_data* data, const cJSON* extension,
-											AeronFlightComponent* component) {
-	const cJSON* simulation = cJSON_GetObjectItemCaseSensitive(extension, "simulationData");
-	if (!simulation)
+/* Parses an optional cooked-data reference ({ version, bufferView, <hash> })
+ * and copies its buffer view. Its contents are verified later, against the
+ * geometry they describe. */
+static bool parse_cooked_reference(const cgltf_data* data, const cJSON* extension, const char* field,
+								   const char* hash_field, bool* present, uint8_t** bytes, size_t* size,
+								   uint64_t* hash) {
+	const cJSON* reference = cJSON_GetObjectItemCaseSensitive(extension, field);
+	if (!reference)
 		return true;
 	int32_t  version     = 0;
 	uint32_t buffer_view = 0;
-	if (!cJSON_IsObject(simulation) || !json_int(cJSON_GetObjectItemCaseSensitive(simulation, "version"), &version) ||
-		version != 1 || !json_uint(cJSON_GetObjectItemCaseSensitive(simulation, "bufferView"), &buffer_view) ||
+	if (!cJSON_IsObject(reference) || !json_int(cJSON_GetObjectItemCaseSensitive(reference, "version"), &version) ||
+		version != 1 || !json_uint(cJSON_GetObjectItemCaseSensitive(reference, "bufferView"), &buffer_view) ||
 		buffer_view >= data->buffer_views_count ||
-		!parse_hash(cJSON_GetObjectItemCaseSensitive(simulation, "topologyHash"), &component->simulation_topology_hash))
+		!parse_hash(cJSON_GetObjectItemCaseSensitive(reference, hash_field), hash))
 		return false;
 	const cgltf_buffer_view* view = &data->buffer_views[buffer_view];
 	if (!view->buffer || !view->buffer->data || view->size == 0 || view->offset > view->buffer->size ||
 		view->size > view->buffer->size - view->offset)
 		return false;
-	component->simulation_data = malloc(view->size);
-	if (!component->simulation_data)
+	*bytes = malloc(view->size);
+	if (!*bytes)
 		return false;
-	memcpy(component->simulation_data, (const uint8_t*)view->buffer->data + view->offset, view->size);
-	component->simulation_data_size = view->size;
-	component->has_simulation_data  = true;
+	memcpy(*bytes, (const uint8_t*)view->buffer->data + view->offset, view->size);
+	*size    = view->size;
+	*present = true;
 	return true;
+}
+
+static bool build_component_simulation_data(const cgltf_data* data, const cJSON* extension,
+											AeronFlightComponent* component) {
+	return parse_cooked_reference(data, extension, "simulationData", "topologyHash",
+								  &component->has_simulation_data, &component->simulation_data,
+								  &component->simulation_data_size, &component->simulation_topology_hash);
+}
+
+static bool build_model_render_data(const cgltf_data* data, const cgltf_node* root, AeronFlightModel* model) {
+	cJSON* extension = parse_flight_extension(root);
+	if (!extension)
+		return false;
+	const bool ok = parse_cooked_reference(data, extension, "renderData", "meshHash", &model->has_render_data,
+										   &model->render_data, &model->render_data_size, &model->render_mesh_hash);
+	cJSON_Delete(extension);
+	return ok;
 }
 
 static bool has_morph_targets(const cgltf_mesh* mesh) {
@@ -709,7 +730,8 @@ static bool build_semantics(const cgltf_data* data, AeronFlightModel* model) {
 	if (!data->scene || data->scene->nodes_count != 1 || data->animations_count || data->skins_count)
 		return false;
 	const cgltf_node* root = data->scene->nodes[0];
-	if (node_role(root) != FLIGHT_ROLE_MODEL || root->mesh || root->skin || !uniform_positive_transform(root))
+	if (node_role(root) != FLIGHT_ROLE_MODEL || root->mesh || root->skin || !uniform_positive_transform(root) ||
+		!build_model_render_data(data, root, model))
 		return false;
 	model->component_count = (uint32_t)root->children_count;
 	if (!model->component_count)
@@ -757,6 +779,32 @@ static bool build_semantics(const cgltf_data* data, AeronFlightModel* model) {
 	return true;
 }
 
+/* Loads the cooked render BVH, or builds one for an uncooked model. */
+static bool build_render_bvh(AeronFlightModel* model, const char* source_label) {
+	const AeronGltfModel* render = &model->render;
+	if (!render->vertex_count || render->index_count < 3)
+		return !model->has_render_data;
+	const AeronFaceBvhGeometry geometry = {
+		.positions       = render->vertices[0].pos,
+		.position_stride = sizeof *render->vertices,
+		.position_count  = render->vertex_count,
+		.triangles       = render->indices,
+		.triangle_stride = 3 * sizeof *render->indices,
+		.triangle_count  = render->index_count / 3,
+	};
+	if (model->has_render_data) {
+		char detail[160] = { 0 };
+		if (AeronFaceBvh_LoadCookedBoxes(model->render_data, model->render_data_size, model->render_mesh_hash,
+										 &geometry, &model->render_bvh, detail, sizeof detail))
+			return true;
+		SDL_Log("[flight_model] '%s' has invalid cooked render data: %s", source_label, detail);
+		return false;
+	}
+	SDL_Log("[flight_model] '%s' has no cooked render data; building its render BVH at load", source_label);
+	model->render_bvh = AeronFaceBvh_BuildBoxes(&geometry);
+	return model->render_bvh != NULL;
+}
+
 bool Aeron_FlightModelBuildData(const cgltf_data* data, const char* source_label, AeronFlightModel* out) {
 	if (!data || !out)
 		return false;
@@ -765,6 +813,10 @@ bool Aeron_FlightModelBuildData(const cgltf_data* data, const char* source_label
 		!Aeron_GltfMeshBuildData(data, source_label, &out->render)) {
 		SDL_Log("[flight_model] '%s' has an invalid %s contract",
 				source_label ? source_label : "<memory glTF>", AERON_FLIGHT_MODEL_EXTENSION);
+		Aeron_FlightModelFree(out);
+		return false;
+	}
+	if (!build_render_bvh(out, source_label ? source_label : "<memory glTF>")) {
 		Aeron_FlightModelFree(out);
 		return false;
 	}
@@ -838,14 +890,17 @@ bool Aeron_FlightModelBuild(const char* glb_path, AeronFlightModel* out) {
 }
 
 void Aeron_FlightModelReleaseRenderData(AeronFlightModel* model) {
-	if (model)
-		Aeron_GltfMeshFree(&model->render);
+	if (!model)
+		return;
+	Aeron_GltfMeshFree(&model->render);
+	AeronFaceBvh_Free(model->render_bvh);
+	model->render_bvh = NULL;
 }
 
 void Aeron_FlightModelFree(AeronFlightModel* model) {
 	if (!model)
 		return;
-	Aeron_GltfMeshFree(&model->render);
+	Aeron_FlightModelReleaseRenderData(model);
 	Aeron_FlightModelFreeSemantics(model);
 }
 
@@ -862,10 +917,13 @@ void Aeron_FlightModelFreeSemantics(AeronFlightModel* model) {
 	}
 	free(model->components);
 	free(model->engine_glows);
+	free(model->render_data);
 	/* Render data has its own release path; leave it untouched. */
-	const AeronGltfModel render = model->render;
+	const AeronGltfModel render     = model->render;
+	AeronFaceBvh* const  render_bvh = model->render_bvh;
 	memset(model, 0, sizeof *model);
-	model->render = render;
+	model->render     = render;
+	model->render_bvh = render_bvh;
 }
 
 int32_t Aeron_FlightModelFindComponentByTag(const AeronFlightModel* model, const char* tag) {

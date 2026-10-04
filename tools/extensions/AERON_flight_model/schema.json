@@ -27,6 +27,28 @@
       "minItems": 4,
       "maxItems": 4
     },
+    "hash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{16}$"
+    },
+    "simulationData": {
+      "type": "object",
+      "required": ["version", "bufferView", "topologyHash"],
+      "properties": {
+        "version": { "const": 1 },
+        "bufferView": { "type": "integer", "minimum": 0 },
+        "topologyHash": { "$ref": "#/$defs/hash" }
+      }
+    },
+    "renderData": {
+      "type": "object",
+      "required": ["version", "bufferView", "meshHash"],
+      "properties": {
+        "version": { "const": 1 },
+        "bufferView": { "type": "integer", "minimum": 0 },
+        "meshHash": { "$ref": "#/$defs/hash" }
+      }
+    },
     "tag": {
       "type": "string",
       "pattern": "^[a-z0-9._]{1,63}$"
@@ -34,7 +56,10 @@
     "model": {
       "type": "object",
       "required": ["role"],
-      "properties": { "role": { "const": "model" } }
+      "properties": {
+        "role": { "const": "model" },
+        "renderData": { "$ref": "#/$defs/renderData" }
+      }
     },
     "rotation": {
       "type": "object",
@@ -60,7 +85,8 @@
         "boundsMin": { "$ref": "#/$defs/vec3" },
         "boundsMax": { "$ref": "#/$defs/vec3" },
         "rotation": { "$ref": "#/$defs/rotation" },
-        "tags": { "type": "array", "items": { "$ref": "#/$defs/tag" } }
+        "tags": { "type": "array", "items": { "$ref": "#/$defs/tag" } },
+        "simulationData": { "$ref": "#/$defs/simulationData" }
       },
       "allOf": [
         {

@@ -57,6 +57,52 @@ ordinal, for example `crew.side`. Aeron stores tags without interpreting them;
 each game documents the tags it reads and which must be unique in a model.
 Games ignore tags they do not read.
 
+## Cooked data
+
+`aeron_gltf_cook` adds precomputed acceleration data. Loaders verify it in
+linear time and build it themselves, with a warning, when it is absent.
+Malformed or stale data fails the load.
+
+- Component `simulationData`: `{ "version": 1, "bufferView": N,
+  "topologyHash": "<16 lower-case hex digits>" }`. It covers the
+  component's simulation topology (the collision child's mesh, otherwise the
+  render mesh) as the loader builds it: positions in metres in the Aeron
+  frame, degenerate triangles dropped, triangle order preserved.
+- Model-root `renderData`: `{ "version": 1, "bufferView": N, "meshHash":
+  "<16 lower-case hex digits>" }`. It covers the merged render triangles in
+  final index order (opaque, mask, blend).
+
+`topologyHash` is XXH64 (seed 0) of these little-endian values:
+`position_count` (u32), every position (3 x f32), `triangle_count` (u32),
+then every triangle's three position indices (3 x u32). `meshHash` hashes
+the render vertex positions the same way, with the index count (u32) in place
+of the triangle count.
+
+The buffer view holds, little-endian and exactly this size:
+
+```text
+u32 version = 1, u32 face_count, u32 unique_vertex_count, u32 node_count, u32 sample_count
+node[node_count]: f32 min[3], f32 max[3], f32 max_inv_dominant, u32 first_or_child, u32 count
+u32 face_order[face_count]
+u32 sample[sample_count]
+```
+
+Nodes form a bounding volume hierarchy over the triangles. Node 0 is the
+root. An internal node (`count == 0`) has its children at `first_or_child`
+and `first_or_child + 1`, both after it. A leaf lists `count` triangles of
+`face_order` starting at `first_or_child`. Bounds are the raw triangle
+bounds. `max_inv_dominant` is the largest `1 / max(|nx|, |ny|, |nz|)` of the
+node's triangles: games expand nodes by their own plane tolerance times this
+value. Render data stores 0 there, `sample_count = 0`, and the render vertex
+count as `unique_vertex_count`.
+
+For simulation data, unique vertices are the topology positions
+deduplicated by bitwise equality, first occurrence kept. The sample is up to
+256 unique-vertex indices in farthest-point order: the seed is the
+lexicographically smallest position, and each step takes the largest minimum
+squared distance, lowest index on ties. A game needing fewer samples takes a
+prefix.
+
 Unknown fields are ignored. Unknown roles are invalid. Runtime semantics are
 not read from node `extras`.
 

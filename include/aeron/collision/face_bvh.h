@@ -83,6 +83,8 @@ AeronFaceBvh* AeronFaceBvh_Build(const AeronFaceBvhGeometry* geometry);
  * included, degenerate ones too. */
 AeronFaceBvh* AeronFaceBvh_BuildBoxes(const AeronFaceBvhGeometry* geometry);
 void          AeronFaceBvh_Free(AeronFaceBvh* bvh);
+/* Deep copy; NULL for NULL or on allocation failure. */
+AeronFaceBvh* AeronFaceBvh_Clone(const AeronFaceBvh* bvh);
 
 /* XXH64 (seed 0) of: position_count (u32), positions (3 x f32), then
  * triangle_count (u32) and triangle indices (3 x u32), all little-endian. */

@@ -268,6 +268,25 @@ void AeronFaceBvh_Free(AeronFaceBvh* bvh) {
 	free(bvh);
 }
 
+AeronFaceBvh* AeronFaceBvh_Clone(const AeronFaceBvh* bvh) {
+	if (!bvh)
+		return NULL;
+	AeronFaceBvh* copy = calloc(1, sizeof *copy);
+	if (!copy)
+		return NULL;
+	copy->node_count = bvh->node_count;
+	copy->face_count = bvh->face_count;
+	copy->nodes      = malloc((size_t)bvh->node_count * sizeof *copy->nodes);
+	copy->face_order = malloc((size_t)bvh->face_count * sizeof *copy->face_order);
+	if (!copy->nodes || !copy->face_order) {
+		AeronFaceBvh_Free(copy);
+		return NULL;
+	}
+	memcpy(copy->nodes, bvh->nodes, (size_t)bvh->node_count * sizeof *copy->nodes);
+	memcpy(copy->face_order, bvh->face_order, (size_t)bvh->face_count * sizeof *copy->face_order);
+	return copy;
+}
+
 /* ===== Hashing ======================================================= */
 
 static void put_u32(uint8_t* out, uint32_t value) {

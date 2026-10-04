@@ -51,6 +51,7 @@ void AeronScene_MeshDestroy(AeronSceneMesh* m) {
 	free(m->engine_glows);
 	free(m->cpu_vertices);
 	free(m->cpu_indices);
+	AeronFaceBvh_Free(m->render_bvh);
 	free(m);
 }
 
@@ -311,6 +312,15 @@ AeronSceneMesh* AeronScene_MeshCreate(AeronCommandBuffer* cmd, const AeronFlight
 			retained_vertex->mesh_index = source_vertex->mesh_index;
 		}
 		memcpy(s->cpu_indices, model->indices, (size_t)model->index_count * sizeof *s->cpu_indices);
+		if (flight_model->render_bvh) {
+			s->render_bvh = AeronFaceBvh_Clone(flight_model->render_bvh);
+			if (!s->render_bvh) {
+				Aeron_LogError("aeron.scene", "%s: render BVH copy failed", name);
+				close_channel_payloads(channel_payloads);
+				AeronScene_MeshDestroy(s);
+				return NULL;
+			}
+		}
 	}
 
 	/* ---- Engine glows (owned copy; XWA OPTs) ---- */
