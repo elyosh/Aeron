@@ -769,6 +769,7 @@ set_target_properties(opt2gltf_lib PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED 
 # compilers and architectures: no floating-point contraction.
 add_library(aeron_collision STATIC
     src/collision/face_bvh.c
+    src/collision/hash.c
 )
 
 set_target_properties(aeron_collision PROPERTIES
