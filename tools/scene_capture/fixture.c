@@ -13,7 +13,7 @@ static AeronSceneMesh* create_cube(AeronCommandBuffer* cmd) {
 	static const float normals[6][3] = { { 0, 0, -1 }, { 0, 0, 1 },  { -1, 0, 0 },
 										 { 1, 0, 0 },  { 0, -1, 0 }, { 0, 1, 0 } };
 	AeronGltfVertex    vertices[24]  = { 0 };
-	uint16_t           indices[36];
+	uint32_t           indices[36];
 	for (int f = 0; f < 6; ++f) {
 		for (int v = 0; v < 4; ++v) {
 			memcpy(vertices[f * 4 + v].pos, corners[faces[f][v]], sizeof vertices[0].pos);
@@ -22,7 +22,7 @@ static AeronSceneMesh* create_cube(AeronCommandBuffer* cmd) {
 		}
 		const int triangle[6] = { 0, 1, 2, 0, 2, 3 };
 		for (int i = 0; i < 6; ++i)
-			indices[f * 6 + i] = (uint16_t)(f * 4 + triangle[i]);
+			indices[f * 6 + i] = (uint32_t)(f * 4 + triangle[i]);
 	}
 	AeronGltfMaterial material = { .base_color_factor = { .8f, .8f, .8f, 1 },
 								   .roughness_factor  = 1,

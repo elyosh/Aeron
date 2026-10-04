@@ -568,7 +568,7 @@ int AeronScenePbr_DrawInstances(struct AeronScene3D* s, AeronCommandBuffer* cmd,
 		if (m != bound_mesh) {
 			bound_mesh = m;
 			Aeron_BindVertexBuffer(pass, 0, m->vbo, 0);
-			Aeron_BindIndexBuffer(pass, m->ibo, AERON_INDEX_FORMAT_UINT16, 0);
+			Aeron_BindIndexBuffer(pass, m->ibo, AERON_INDEX_FORMAT_UINT32, 0);
 			if (!depth_only) {
 				pbr_bind_material_resources(pass, m, atlas_sampler, 1);
 			}
@@ -620,7 +620,7 @@ int AeronScenePbr_DrawInstances(struct AeronScene3D* s, AeronCommandBuffer* cmd,
 			if (m != bound_mesh) {
 				bound_mesh = m;
 				Aeron_BindVertexBuffer(pass, 0, m->vbo, 0);
-				Aeron_BindIndexBuffer(pass, m->ibo, AERON_INDEX_FORMAT_UINT16, 0);
+				Aeron_BindIndexBuffer(pass, m->ibo, AERON_INDEX_FORMAT_UINT32, 0);
 				pbr_bind_material_resources(pass, m, atlas_sampler, !depth_only);
 			}
 			pbr_push_instance_uniforms(s, pass, in, m, &s->prepared_instances[i], velocity, depth_only,
@@ -659,7 +659,7 @@ int AeronScenePbr_DrawInstances(struct AeronScene3D* s, AeronCommandBuffer* cmd,
 			if (m != bound_mesh) {
 				bound_mesh = m;
 				Aeron_BindVertexBuffer(pass, 0, m->vbo, 0);
-				Aeron_BindIndexBuffer(pass, m->ibo, AERON_INDEX_FORMAT_UINT16, 0);
+				Aeron_BindIndexBuffer(pass, m->ibo, AERON_INDEX_FORMAT_UINT32, 0);
 				Aeron_BindTextureSampler(pass, AERON_SHADER_STAGE_FRAGMENT, 0,
 										 m->atlas[0] ? m->atlas[0] : AeronSceneInternal_WhiteTexture(),
 										 atlas_sampler);
@@ -723,7 +723,7 @@ int AeronScenePbr_DrawTransparentInstances(struct AeronScene3D* s, AeronRenderPa
 		if (m != bound_mesh) {
 			bound_mesh = m;
 			Aeron_BindVertexBuffer(pass, 0, m->vbo, 0);
-			Aeron_BindIndexBuffer(pass, m->ibo, AERON_INDEX_FORMAT_UINT16, 0);
+			Aeron_BindIndexBuffer(pass, m->ibo, AERON_INDEX_FORMAT_UINT32, 0);
 			pbr_bind_material_resources(pass, m, atlas_sampler, 1);
 		}
 		pbr_push_instance_uniforms(s, pass, in, m, &s->prepared_instances[i],

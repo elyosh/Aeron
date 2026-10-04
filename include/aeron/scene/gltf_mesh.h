@@ -152,7 +152,7 @@ typedef struct AeronGltfModel {
 	 * stable opaque, alpha-mask, and alpha-blend ranges in that order. */
 	AeronGltfVertex* vertices;
 	uint32_t         vertex_count;
-	uint16_t*        indices;
+	uint32_t*        indices;
 	uint32_t         index_count;
 	uint32_t         opaque_index_count;
 	uint32_t         mask_index_offset;

@@ -52,7 +52,7 @@ typedef struct AeronSceneMeshCpuVertex {
 
 typedef struct AeronSceneMesh {
 	AeronBuffer* vbo; /* merged AeronGltfVertex stream */
-	AeronBuffer* ibo; /* uint16 indices */
+	AeronBuffer* ibo; /* uint32 indices */
 	uint32_t     vertex_count;
 	uint32_t     index_count;
 	/* Stable opaque, alpha-mask, and alpha-blend ranges. */
@@ -62,7 +62,7 @@ typedef struct AeronSceneMesh {
 	uint32_t                 blend_index_offset;
 	uint32_t                 blend_index_count;
 	AeronSceneMeshCpuVertex* cpu_vertices;
-	uint16_t*                cpu_indices;
+	uint32_t*                cpu_indices;
 
 	/* Channel atlases (base_color / normal / metallic_rough / emissive).
 	 * Factor-only models have no atlases; textured models carry all four. */

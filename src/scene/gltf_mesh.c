@@ -279,7 +279,7 @@ static AeronGltfAlphaMode material_alpha_mode(const AeronGltfModel* model, uint3
  * `prim_id` (= global prim slot). */
 static bool append_primitive_vertices(const cgltf_primitive* p, const cgltf_node* node,
 									  uint16_t component_index, uint32_t prim_id, AeronGltfVertex* verts,
-									  uint16_t* indices, uint32_t* voff_io, uint32_t* ioff_io) {
+									  uint32_t* indices, uint32_t* voff_io, uint32_t* ioff_io) {
 	const cgltf_accessor* pos = prim_attr(p, cgltf_attribute_type_position);
 	const cgltf_accessor* nrm = prim_attr(p, cgltf_attribute_type_normal);
 	const cgltf_accessor* uv  = prim_attr(p, cgltf_attribute_type_texcoord);
@@ -342,11 +342,10 @@ static bool append_primitive_vertices(const cgltf_primitive* p, const cgltf_node
 
 	/* Indices — biased to the primitive's range inside the ship's
 	 * merged buffer. */
-	uint16_t* dst_idx = indices + ioff;
+	uint32_t* dst_idx = indices + ioff;
 	for (uint32_t i = 0; i < icount; i++) {
 		cgltf_size raw = idx ? cgltf_accessor_read_index(idx, i) : i;
-		uint32_t   adj = (uint32_t)raw + voff;
-		dst_idx[i]     = (adj < 0xFFFFu) ? (uint16_t)adj : 0xFFFFu;
+		dst_idx[i]     = (uint32_t)raw + voff;
 	}
 
 	*voff_io = voff + vcount;
@@ -439,19 +438,20 @@ bool Aeron_GltfMeshBuildData(const cgltf_data* data, const char* source_label, A
 			const cgltf_accessor*  idx = p->indices;
 			if (!pos || p->type != cgltf_primitive_type_triangles)
 				goto cleanup;
+			const cgltf_size prim_i = idx ? idx->count : pos->count;
+			if (pos->count > UINT32_MAX - total_v || prim_i > UINT32_MAX - total_i) {
+				SDL_Log("[flight_gltf] '%s' merged geometry exceeds 32-bit counts", source_label);
+				goto cleanup;
+			}
 			total_v += (uint32_t)pos->count;
-			total_i += idx ? (uint32_t)idx->count : (uint32_t)pos->count;
+			total_i += (uint32_t)prim_i;
 			total_prims += 1u;
 		}
 	}
 
-	if (total_v > 0xFFFFu) {
-		SDL_Log("[flight_gltf] '%s' merged vertex count %u over uint16 cap", source_label, total_v);
-		goto cleanup;
-	}
 	if (total_v > 0 && total_i > 0) {
 		out->vertices = (AeronGltfVertex*)calloc(total_v, sizeof *out->vertices);
-		out->indices  = (uint16_t*)calloc(total_i, sizeof *out->indices);
+		out->indices  = (uint32_t*)calloc(total_i, sizeof *out->indices);
 		if (!out->vertices || !out->indices)
 			goto cleanup;
 		out->vertex_count = total_v;
@@ -526,7 +526,7 @@ bool Aeron_GltfMeshBuildData(const cgltf_data* data, const char* source_label, A
 	out->blend_index_offset = 0;
 	out->blend_index_count  = 0;
 	if (out->index_count > 0) {
-		uint16_t* sorted = (uint16_t*)malloc((size_t)out->index_count * sizeof *sorted);
+		uint32_t* sorted = (uint32_t*)malloc((size_t)out->index_count * sizeof *sorted);
 		if (!sorted)
 			goto cleanup;
 		uint32_t w = 0;

@@ -1092,7 +1092,7 @@ static void shadow_draw_class(struct AeronScene3D* scene, AeronRenderPass* pass,
 		if (mesh != bound_mesh) {
 			bound_mesh = mesh;
 			Aeron_BindVertexBuffer(pass, 0, mesh->vbo, 0);
-			Aeron_BindIndexBuffer(pass, mesh->ibo, AERON_INDEX_FORMAT_UINT16, 0);
+			Aeron_BindIndexBuffer(pass, mesh->ibo, AERON_INDEX_FORMAT_UINT32, 0);
 			if (masked) {
 				Aeron_BindTextureSampler(pass, AERON_SHADER_STAGE_FRAGMENT, 0,
 										 mesh->atlas[0] ? mesh->atlas[0] : AeronSceneInternal_WhiteTexture(),
