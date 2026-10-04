@@ -70,6 +70,33 @@ uint32_t Aeron_FlightTopologySample(const AeronFlightTopology* topology, const u
 
 bool Aeron_OptSimModelBuild(const AeronFlightModel* model, const AeronOptSimOptions* options,
 							AeronOptSimModel* out, char* error, size_t error_size);
+
+typedef enum AeronOptImageProfile {
+	AERON_OPT_IMAGE_PROFILE_V5, /* XWA: version 5, engine glows */
+	AERON_OPT_IMAGE_PROFILE_V2, /* XvT, X-Wing 98, TIE98: version 2, no engine glows */
+} AeronOptImageProfile;
+
+typedef struct AeronOptImageOptions {
+	AeronOptImageProfile profile;
+	/* One 8x8 neutral texture in mesh 0, NodeRefs to it in the others. */
+	bool placeholder_texture;
+} AeronOptImageOptions;
+
+#define AERON_OPT_PLACEHOLDER_TEXTURE_NAME "AeronPlaceholder"
+#define AERON_OPT_PLACEHOLDER_TEXTURE_ID   0x0A3E5E01u
+
+/* Writes the standard replacement OPT payload (the bytes after the file's
+ * -version/size header): one root per mesh, in mesh order, each holding
+ * MESHVERTS, TEXCOORDS, VERTNORMALS, MESHDESC, HARDPOINTs, ENGINEGLOWs (V5
+ * only), ROTSCALE and Group[NULL, NULL, NULL, FaceGrouping[LOD 0 Group]]. The
+ * LOD group holds the optional placeholder texture and a stub FaceData with
+ * no faces: faces stay in the simulation model. `stub_face_data_offsets`
+ * (mesh_count entries) receives each stub's payload offset. Call before
+ * Aeron_OptSimModelTrimToFaces. The caller frees *payload with free(). */
+bool Aeron_OptSimModelWriteImage(const AeronOptSimModel* model, const AeronOptImageOptions* options,
+								 uint8_t** payload, int* payload_size, uint32_t* stub_face_data_offsets,
+								 char* error, size_t error_size);
+
 /* Frees everything except each mesh's faces and BVH. */
 void Aeron_OptSimModelTrimToFaces(AeronOptSimModel* model);
 void Aeron_OptSimModelFree(AeronOptSimModel* model);

@@ -729,14 +729,23 @@ set_target_properties(aeron_cjson PROPERTIES
     C_EXTENSIONS OFF
 )
 
-add_library(lucas_opt STATIC
+add_library(aeron_opt STATIC
     tools/opt2gltf/opt.c
     tools/opt2gltf/opt_upgrade.c
+    tools/opt2gltf/opt_write.c
 )
-target_include_directories(lucas_opt PUBLIC
+target_include_directories(aeron_opt PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/tools/opt2gltf
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
-set_target_properties(lucas_opt PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED ON)
+set_target_properties(aeron_opt PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED ON)
+# The OPT image writer's output feeds game simulation data: no floating-point
+# contraction.
+if(MSVC)
+    set_source_files_properties(tools/opt2gltf/opt_write.c PROPERTIES COMPILE_OPTIONS "/fp:precise")
+else()
+    set_source_files_properties(tools/opt2gltf/opt_write.c PROPERTIES COMPILE_OPTIONS "-ffp-contract=off")
+endif()
 
 add_library(opt2gltf_lib STATIC
     tools/opt2gltf/opt2gltf.c
@@ -747,7 +756,7 @@ target_include_directories(opt2gltf_lib
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/third_party/stb
 )
-target_link_libraries(opt2gltf_lib PUBLIC lucas_opt aeron_cgltf aeron)
+target_link_libraries(opt2gltf_lib PUBLIC aeron_opt aeron_cgltf aeron)
 if(NOT MSVC)
     target_link_libraries(opt2gltf_lib PUBLIC m)
 endif()
@@ -790,6 +799,7 @@ endif()
 add_library(aeron_flight_model STATIC
     src/asset/flight_model.c
     src/asset/opt_sim_model.c
+    src/asset/opt_sim_image.c
     src/scene/gltf_mesh.c
 )
 
@@ -808,6 +818,7 @@ target_link_libraries(aeron_flight_model
     PUBLIC
         aeron_collision
     PRIVATE
+        aeron_opt
         aeron_cgltf
         aeron_cjson
 )
