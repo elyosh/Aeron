@@ -753,6 +753,35 @@ if(NOT MSVC)
 endif()
 set_target_properties(opt2gltf_lib PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED ON)
 
+# ---------- aeron_collision — triangle BVH for collision queries ----------
+#
+# Deterministic face BVH, its cooked AERON_flight_model serialization and
+# verification, and candidate queries. Results must be bit-identical across
+# compilers and architectures: no floating-point contraction.
+add_library(aeron_collision STATIC
+    src/collision/face_bvh.c
+)
+
+set_target_properties(aeron_collision PROPERTIES
+    C_STANDARD 99
+    C_STANDARD_REQUIRED ON
+    C_EXTENSIONS OFF
+)
+
+target_include_directories(aeron_collision
+    PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+    PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/third_party/xxhash
+)
+
+if(MSVC)
+    target_compile_options(aeron_collision PRIVATE /W4 /fp:precise)
+else()
+    target_compile_options(aeron_collision PRIVATE -Wall -Wextra -Wpedantic -fno-common -ffp-contract=off)
+    target_link_libraries(aeron_collision PRIVATE m)
+endif()
+
 # ---------- aeron_flight_model — CPU-only flight model layer ----------
 #
 # AERON_flight_model parsing and the merged CPU-side render arrays. No GPU
@@ -775,6 +804,8 @@ target_include_directories(aeron_flight_model
 )
 
 target_link_libraries(aeron_flight_model
+    PUBLIC
+        aeron_collision
     PRIVATE
         aeron_cgltf
         aeron_cjson
