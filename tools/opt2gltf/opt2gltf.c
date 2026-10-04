@@ -410,7 +410,7 @@ typedef struct {
 
 typedef struct {
 	GltfVertex* vertices;
-	uint16_t*   indices; /* per face group, contiguous */
+	uint32_t*   indices; /* per face group, contiguous */
 	uint32_t    vertex_count;
 	uint32_t    vertex_cap;
 	uint32_t    index_count;
@@ -432,14 +432,14 @@ static void built_mesh_free(BuiltMesh* bm) {
 	memset(bm, 0, sizeof *bm);
 }
 
-static uint16_t built_mesh_intern_vertex(BuiltMesh* bm, const GltfVertex* v) {
+static uint32_t built_mesh_intern_vertex(BuiltMesh* bm, const GltfVertex* v) {
 	/* Linear dedup. fine for OPT mesh sizes. */
 	for (uint32_t i = 0; i < bm->vertex_count; ++i) {
 		const GltfVertex* e = &bm->vertices[i];
 		if (e->pos[0] == v->pos[0] && e->pos[1] == v->pos[1] && e->pos[2] == v->pos[2] &&
 			e->nrm[0] == v->nrm[0] && e->nrm[1] == v->nrm[1] && e->nrm[2] == v->nrm[2] &&
 			e->uv[0] == v->uv[0] && e->uv[1] == v->uv[1])
-			return (uint16_t)i;
+			return i;
 	}
 	if (bm->vertex_count >= bm->vertex_cap) {
 		uint32_t    ncap  = bm->vertex_cap ? bm->vertex_cap * 2 : 64;
@@ -452,13 +452,13 @@ static uint16_t built_mesh_intern_vertex(BuiltMesh* bm, const GltfVertex* v) {
 		bm->vertex_cap = ncap;
 	}
 	bm->vertices[bm->vertex_count] = *v;
-	return (uint16_t)bm->vertex_count++;
+	return bm->vertex_count++;
 }
 
-static void built_mesh_emit_index(BuiltMesh* bm, uint16_t v) {
+static void built_mesh_emit_index(BuiltMesh* bm, uint32_t v) {
 	if (bm->index_count >= bm->index_cap) {
 		uint32_t  ncap  = bm->index_cap ? bm->index_cap * 2 : 128;
-		uint16_t* grown = (uint16_t*)realloc(bm->indices, ncap * sizeof *grown);
+		uint32_t* grown = (uint32_t*)realloc(bm->indices, ncap * sizeof *grown);
 		if (!grown) {
 			fprintf(stderr, "opt2gltf: oom\n");
 			abort();
@@ -545,7 +545,7 @@ static float* built_mesh_build_corner_normals(const opt_mesh_t* mesh, const opt_
 	return normals;
 }
 
-static uint16_t built_mesh_emit_corner(BuiltMesh* bm, const opt_mesh_t* m, int32_t vi, int32_t ui,
+static uint32_t built_mesh_emit_corner(BuiltMesh* bm, const opt_mesh_t* m, int32_t vi, int32_t ui,
 									   const opt_vec3_t* normal, float meters_per_opt_unit) {
 	const opt_vec3_t* p  = &m->vertices[vi];
 	const opt_vec2_t* uv = (ui >= 0 && ui < m->uv_count) ? &m->uvs[ui] : NULL;
@@ -639,7 +639,7 @@ static bool built_mesh_from_opt(BuiltMesh* bm, const opt_mesh_t* m, float meters
 				int source_corner[2][3] = { { 0, 1, 2 }, { 0, 2, 3 } };
 				int triangle_count      = (corners == 4) ? 2 : 1;
 				for (int t = 0; t < triangle_count; ++t, ++smooth_face_index) {
-					uint16_t v[3] = { 0 };
+					uint32_t v[3] = { 0 };
 					int      ok   = 1;
 					for (int q = 0; q < 3; ++q) {
 						int     k  = source_corner[t][q];
@@ -663,7 +663,7 @@ static bool built_mesh_from_opt(BuiltMesh* bm, const opt_mesh_t* m, float meters
 				continue;
 			}
 
-			uint16_t v[4] = { 0 };
+			uint32_t v[4] = { 0 };
 			int      ok   = 1;
 			for (int k = 0; k < corners; ++k) {
 				int32_t vi = f->verts[k];
@@ -720,6 +720,118 @@ static bool built_mesh_from_opt(BuiltMesh* bm, const opt_mesh_t* m, float meters
 	free(classic_normals);
 	free(classic_normal_set);
 	return bm->index_count > 0;
+}
+
+/* ===== Development subdivision ======================================
+ *
+ * Splits every triangle into four by its edge midpoints. A midpoint is
+ * shared between the triangles of an edge through a table keyed by the
+ * sorted vertex pair. Vertices split by a UV or normal seam produce separate
+ * midpoints, but those are computed in double from the same positions, so
+ * they are bitwise equal and the mesh stays watertight. Children keep the
+ * parent's winding; face groups stay contiguous and keep their order. */
+
+typedef struct EdgeSlot {
+	uint64_t key; /* UINT64_MAX = empty */
+	uint32_t vertex;
+} EdgeSlot;
+
+static void midpoint_vertex(const GltfVertex* a, const GltfVertex* b, GltfVertex* out) {
+	for (int k = 0; k < 3; ++k)
+		out->pos[k] = (float)(((double)a->pos[k] + (double)b->pos[k]) * 0.5);
+	for (int k = 0; k < 2; ++k)
+		out->uv[k] = (float)(((double)a->uv[k] + (double)b->uv[k]) * 0.5);
+	double normal[3];
+	for (int k = 0; k < 3; ++k)
+		normal[k] = (double)a->nrm[k] + (double)b->nrm[k];
+	const double length = sqrt(normal[0] * normal[0] + normal[1] * normal[1] + normal[2] * normal[2]);
+	for (int k = 0; k < 3; ++k)
+		out->nrm[k] = length > 1.0e-12 ? (float)(normal[k] / length) : a->nrm[k];
+}
+
+static uint32_t edge_midpoint(BuiltMesh* bm, EdgeSlot* slots, uint64_t mask, uint32_t a, uint32_t b) {
+	if (a == b)
+		return a;
+	const uint64_t key = a < b ? ((uint64_t)a << 32) | b : ((uint64_t)b << 32) | a;
+	uint64_t       at  = (key * 0x9E3779B97F4A7C15ull) >> 32;
+	for (;; ++at) {
+		EdgeSlot* slot = &slots[at & mask];
+		if (slot->key == key)
+			return slot->vertex;
+		if (slot->key == UINT64_MAX) {
+			slot->key    = key;
+			slot->vertex = bm->vertex_count;
+			midpoint_vertex(&bm->vertices[a], &bm->vertices[b], &bm->vertices[bm->vertex_count]);
+			return bm->vertex_count++;
+		}
+	}
+}
+
+static bool built_mesh_subdivide_once(BuiltMesh* bm) {
+	/* Each triangle adds at most three midpoints; the index count grows by 4. */
+	if (bm->index_count > UINT32_MAX / 4u || bm->index_count > UINT32_MAX - bm->vertex_count)
+		return false;
+	const uint32_t vertex_cap = bm->vertex_count + bm->index_count;
+	uint64_t       slot_count = 16;
+	while (slot_count < (uint64_t)bm->index_count * 2u)
+		slot_count *= 2u;
+	GltfVertex* vertices = (GltfVertex*)realloc(bm->vertices, (size_t)vertex_cap * sizeof *vertices);
+	if (!vertices)
+		return false;
+	bm->vertices      = vertices;
+	bm->vertex_cap    = vertex_cap;
+	uint32_t* indices = (uint32_t*)malloc((size_t)bm->index_count * 4u * sizeof *indices);
+	EdgeSlot* slots   = (EdgeSlot*)malloc((size_t)slot_count * sizeof *slots);
+	if (!indices || !slots) {
+		free(indices);
+		free(slots);
+		return false;
+	}
+	for (uint64_t i = 0; i < slot_count; ++i)
+		slots[i].key = UINT64_MAX;
+
+	uint32_t out = 0;
+	for (uint32_t i = 0; i + 2 < bm->index_count; i += 3) {
+		const uint32_t a            = bm->indices[i + 0];
+		const uint32_t b            = bm->indices[i + 1];
+		const uint32_t c            = bm->indices[i + 2];
+		const uint32_t ab           = edge_midpoint(bm, slots, slot_count - 1, a, b);
+		const uint32_t bc           = edge_midpoint(bm, slots, slot_count - 1, b, c);
+		const uint32_t ca           = edge_midpoint(bm, slots, slot_count - 1, c, a);
+		const uint32_t children[12] = { a, ab, ca, ab, b, bc, ca, bc, c, ab, bc, ca };
+		memcpy(indices + out, children, sizeof children);
+		out += 12;
+	}
+	free(slots);
+	free(bm->indices);
+	bm->indices     = indices;
+	bm->index_count = out;
+	bm->index_cap   = out;
+	return true;
+}
+
+static bool built_mesh_subdivide(BuiltMesh* bm, int32_t group_count, uint32_t levels) {
+	for (uint32_t level = 0; level < levels; ++level) {
+		if (!built_mesh_subdivide_once(bm))
+			return false;
+		for (int32_t g = 0; g < group_count; ++g) {
+			bm->fg_index_start[g] *= 4u;
+			bm->fg_index_count_arr[g] *= 4u;
+		}
+	}
+	return true;
+}
+
+static bool valid_component_tag(const char* tag) {
+	const size_t length = tag ? strlen(tag) : 0;
+	if (length == 0 || length > 63)
+		return false;
+	for (size_t i = 0; i < length; ++i) {
+		const char c = tag[i];
+		if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '.' || c == '_'))
+			return false;
+	}
+	return true;
 }
 
 /* ===== Conversion ==================================================== */
@@ -858,6 +970,23 @@ bool OptGltf_BuildMemory(const opt_file_t* opt, const char* basename, const OptG
 		return false;
 	if (!validate_alpha_overrides(options, error))
 		return false;
+	const uint32_t subdivide_levels = options ? options->subdivide_levels : 0;
+	if (subdivide_levels > OPT_GLTF_MAX_SUBDIVIDE) {
+		if (error)
+			snprintf(error->msg, sizeof error->msg, "subdivision level %u exceeds %u", subdivide_levels,
+					 OPT_GLTF_MAX_SUBDIVIDE);
+		return false;
+	}
+	const size_t tag_count = options ? options->component_tag_count : 0;
+	for (size_t i = 0; i < tag_count; ++i) {
+		const OptGltfComponentTag* tag = &options->component_tags[i];
+		if (!valid_component_tag(tag->tag) || tag->mesh_index >= (uint32_t)opt->mesh_count) {
+			if (error)
+				snprintf(error->msg, sizeof error->msg, "invalid tag %u=%s (%d meshes)", tag->mesh_index,
+						 tag->tag ? tag->tag : "", (int)opt->mesh_count);
+			return false;
+		}
+	}
 	const float smooth_angle_deg    = options ? options->smooth_angle_degrees : -1.0f;
 	const bool  repair_normals      = options ? options->repair_normals : true;
 	const bool  emissive            = options ? options->emissive : false;
@@ -1078,8 +1207,21 @@ bool OptGltf_BuildMemory(const opt_file_t* opt, const char* basename, const OptG
 	uint32_t fixed_zero = 0, fixed_flip = 0;
 	for (int32_t mi = 0; mi < opt->mesh_count; ++mi) {
 		const opt_mesh_t* m = &opt->meshes[mi];
-		if (!built_mesh_from_opt(&built[mi], m, meters_per_opt_unit, regen, smooth_angle_deg, repair_normals))
+		if (!built_mesh_from_opt(&built[mi], m, meters_per_opt_unit, regen, smooth_angle_deg,
+								 repair_normals)) {
+			if (options && options->require_all_meshes) {
+				if (error)
+					snprintf(error->msg, sizeof error->msg, "mesh %d has no LOD 0 triangles", (int)mi);
+				goto fail;
+			}
 			continue;
+		}
+		if (!built_mesh_subdivide(&built[mi], m->lods[0].group_count, subdivide_levels)) {
+			if (error)
+				snprintf(error->msg, sizeof error->msg, "mesh %d is too large to subdivide %u times", (int)mi,
+						 subdivide_levels);
+			goto fail;
+		}
 		total_meshes++;
 		fixed_zero += built[mi].fixed_zero_normals;
 		fixed_flip += built[mi].fixed_flipped_normals;
@@ -1222,12 +1364,28 @@ bool OptGltf_BuildMemory(const opt_file_t* opt, const char* basename, const OptG
 				continue;
 			const opt_face_group_t* grp = &lod->groups[g];
 
-			/* Indices for this face group. */
-			size_t idx_off = bin_append(build, bm->indices + bm->fg_index_start[g], ic * sizeof(uint16_t));
+			/* Indices for this face group: 16-bit while every vertex fits. */
+			const uint32_t*      group_indices = bm->indices + bm->fg_index_start[g];
+			size_t               idx_off, idx_bytes;
+			cgltf_component_type idx_type;
+			if (bm->vertex_count <= 65536u) {
+				uint16_t* narrow = (uint16_t*)malloc((size_t)ic * sizeof *narrow);
+				if (!narrow)
+					goto fail;
+				for (uint32_t i = 0; i < ic; ++i)
+					narrow[i] = (uint16_t)group_indices[i];
+				idx_bytes = (size_t)ic * sizeof *narrow;
+				idx_off   = bin_append(build, narrow, idx_bytes);
+				idx_type  = cgltf_component_type_r_16u;
+				free(narrow);
+			} else {
+				idx_bytes = (size_t)ic * sizeof *group_indices;
+				idx_off   = bin_append(build, group_indices, idx_bytes);
+				idx_type  = cgltf_component_type_r_32u;
+			}
 			cgltf_buffer_view* idx_view =
-				gb_new_view(build, idx_off, ic * sizeof(uint16_t), cgltf_buffer_view_type_indices);
-			cgltf_accessor* idx_acc =
-				gb_new_accessor(build, idx_view, ic, cgltf_type_scalar, cgltf_component_type_r_16u);
+				gb_new_view(build, idx_off, idx_bytes, cgltf_buffer_view_type_indices);
+			cgltf_accessor* idx_acc = gb_new_accessor(build, idx_view, ic, cgltf_type_scalar, idx_type);
 
 			/* Build the primitive. */
 			cgltf_primitive* prim =
@@ -1346,9 +1504,13 @@ bool OptGltf_BuildMemory(const opt_file_t* opt, const char* basename, const OptG
 		 * owned_strings or the cleanup loop will double-free. */
 		node->name = build->meshes[mesh_out].name;
 
-		char   extension[2048];
+		/* Fixed fields fit in 2048 bytes; each tag needs at most 66. */
+		const size_t extension_size = 2048 + tag_count * 66;
+		char*        extension      = (char*)malloc(extension_size);
+		if (!extension)
+			goto fail;
 		size_t off = 0;
-		off += snprintf(extension + off, sizeof extension - off,
+		off += snprintf(extension + off, extension_size - off,
 						"{\"role\":\"component\",\"meshType\":%d,"
 						"\"explosionFlags\":%u,\"targetId\":%d",
 						(int)m->descriptor.mesh_type, (unsigned)m->descriptor.explosion_type,
@@ -1371,7 +1533,7 @@ bool OptGltf_BuildMemory(const opt_file_t* opt, const char* basename, const OptG
 				m->descriptor.bbox_max.z,
 				-m->descriptor.bbox_min.y,
 			};
-			off += snprintf(extension + off, sizeof extension - off,
+			off += snprintf(extension + off, extension_size - off,
 							",\"span\":[%.9g,%.9g,%.9g],"
 							"\"center\":[%.9g,%.9g,%.9g],"
 							"\"boundsMin\":[%.9g,%.9g,%.9g],"
@@ -1386,7 +1548,7 @@ bool OptGltf_BuildMemory(const opt_file_t* opt, const char* basename, const OptG
 		if (m->descriptor.target_id != 0) {
 			float target[3];
 			swap_axis_v3(&m->descriptor.target, target);
-			off += snprintf(extension + off, sizeof extension - off, ",\"target\":[%.9g,%.9g,%.9g]",
+			off += snprintf(extension + off, extension_size - off, ",\"target\":[%.9g,%.9g,%.9g]",
 							target[0] * meters_per_opt_unit, target[1] * meters_per_opt_unit,
 							target[2] * meters_per_opt_unit);
 		}
@@ -1410,17 +1572,35 @@ bool OptGltf_BuildMemory(const opt_file_t* opt, const char* basename, const OptG
 				dax[axis] /= OPT_Q15_TO_UNIT;
 				uax[axis] /= OPT_Q15_TO_UNIT;
 			}
-			off += snprintf(extension + off, sizeof extension - off,
+			off += snprintf(extension + off, extension_size - off,
 							",\"rotation\":{"
-							"\"pivot\":[%g,%g,%g],"
-							"\"rotationAxis\":[%g,%g,%g],"
-							"\"directionAxis\":[%g,%g,%g],"
-							"\"upAxis\":[%g,%g,%g]}",
+							"\"pivot\":[%.9g,%.9g,%.9g],"
+							"\"rotationAxis\":[%.9g,%.9g,%.9g],"
+							"\"directionAxis\":[%.9g,%.9g,%.9g],"
+							"\"upAxis\":[%.9g,%.9g,%.9g]}",
 							pivot[0], pivot[1], pivot[2], rax[0], rax[1], rax[2], dax[0], dax[1], dax[2],
 							uax[0], uax[1], uax[2]);
 		}
-		snprintf(extension + off, sizeof extension - off, "}");
-		if (!set_flight_extension(build, node, extension))
+		/* Tags in option order, duplicates dropped. */
+		bool tags_open = false;
+		for (size_t t = 0; t < tag_count; ++t) {
+			const OptGltfComponentTag* tag = &options->component_tags[t];
+			if (tag->mesh_index != (uint32_t)mi)
+				continue;
+			bool duplicate = false;
+			for (size_t previous = 0; previous < t && !duplicate; ++previous)
+				duplicate = options->component_tags[previous].mesh_index == (uint32_t)mi &&
+							strcmp(options->component_tags[previous].tag, tag->tag) == 0;
+			if (duplicate)
+				continue;
+			off += snprintf(extension + off, extension_size - off, "%s\"%s\"",
+							tags_open ? "," : ",\"tags\":[", tag->tag);
+			tags_open = true;
+		}
+		snprintf(extension + off, extension_size - off, tags_open ? "]}" : "}");
+		const bool extension_set = set_flight_extension(build, node, extension);
+		free(extension);
+		if (!extension_set)
 			goto fail;
 
 		/* Child nodes: hardpoints first, then engine glows (both emitted
@@ -1483,8 +1663,8 @@ bool OptGltf_BuildMemory(const opt_file_t* opt, const char* basename, const OptG
 				char glow_extension[512];
 				snprintf(glow_extension, sizeof glow_extension,
 						 "{\"role\":\"engineGlow\",\"enabled\":%s,"
-						 "\"coreColor\":[%g,%g,%g,%g],"
-						 "\"outerColor\":[%g,%g,%g,%g]}",
+						 "\"coreColor\":[%.9g,%.9g,%.9g,%.9g],"
+						 "\"outerColor\":[%.9g,%.9g,%.9g,%.9g]}",
 						 eg->is_disabled ? "false" : "true", rgba[0][0], rgba[0][1], rgba[0][2], rgba[0][3],
 						 rgba[1][0], rgba[1][1], rgba[1][2], rgba[1][3]);
 				if (!set_flight_extension(build, egn, glow_extension))
@@ -1681,22 +1861,17 @@ bool OptGltf_WriteFiles(const OptGltfDocument* document, const char* out_dir, co
 }
 
 bool opt2gltf_convert(const opt_file_t* opt, const char* out_dir, const char* basename,
-					  float smooth_angle_deg, bool repair_normals, bool emissive) {
-	const OptGltfBuildOptions options = {
-		.smooth_angle_degrees = smooth_angle_deg,
-		.repair_normals       = repair_normals,
-		.emissive             = emissive,
-		.alpha_overrides      = NULL,
-		.alpha_override_count = 0,
-	};
+					  const OptGltfBuildOptions* options, const char* label) {
 	OptGltfDocument* document = NULL;
 	opt_error_t      error    = { { 0 } };
-	if (!OptGltf_BuildMemory(opt, basename, &options, &document, &error)) {
+	if (!OptGltf_BuildMemory(opt, basename, options, &document, &error)) {
 		if (error.msg[0])
-			fprintf(stderr, "opt2gltf: %s\n", error.msg);
+			fprintf(stderr, "opt2gltf: %s: %s\n", label, error.msg);
 		return false;
 	}
 	const bool succeeded = OptGltf_WriteFiles(document, out_dir, basename);
+	if (!succeeded)
+		fprintf(stderr, "opt2gltf: %s: could not write %s\n", label, out_dir);
 	OptGltf_Free(document);
 	return succeeded;
 }

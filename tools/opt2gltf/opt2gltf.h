@@ -59,9 +59,17 @@
 
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdint.h>
 
 #include "cgltf.h"
 #include "opt.h"
+
+/* Adds `tag` to the component built from OPT mesh `mesh_index`. Tags match
+ * [a-z0-9._]{1,63}; duplicates on one component are dropped. */
+typedef struct OptGltfComponentTag {
+	uint32_t    mesh_index;
+	const char* tag;
+} OptGltfComponentTag;
 
 typedef struct OptGltfBuildOptions {
 	float                              smooth_angle_degrees;
@@ -69,7 +77,17 @@ typedef struct OptGltfBuildOptions {
 	bool                               emissive;
 	const struct OptGltfAlphaOverride* alpha_overrides;
 	size_t                             alpha_override_count;
+	/* Fail on a mesh without LOD 0 triangles instead of skipping it, so
+	 * components stay one-to-one with the OPT meshes. */
+	bool                       require_all_meshes;
+	const OptGltfComponentTag* component_tags;
+	size_t                     component_tag_count;
+	/* Development only: split every triangle into four by its edge midpoints
+	 * this many times (at most OPT_GLTF_MAX_SUBDIVIDE). */
+	uint32_t subdivide_levels;
 } OptGltfBuildOptions;
+
+#define OPT_GLTF_MAX_SUBDIVIDE 8u
 
 typedef enum OptGltfAlphaMode {
 	OPT_GLTF_ALPHA_OPAQUE = 0,
@@ -109,8 +127,9 @@ bool OptGltf_WriteFiles(const OptGltfDocument* document, const char* out_dir, co
  * renderer's first-normal-per-position remap within each FaceData group,
  * then substitute the face normal for a zero-length canonical normal or
  * negate a canonical normal opposing its first face plane. Pass false to
- * emit the source per-corner data verbatim for diagnostics. */
+ * emit the source per-corner data verbatim for diagnostics. Errors are
+ * reported to stderr prefixed with `label`. */
 bool opt2gltf_convert(const opt_file_t* opt, const char* out_dir, const char* basename,
-					  float smooth_angle_deg, bool repair_normals, bool emissive);
+					  const OptGltfBuildOptions* options, const char* label);
 
 #endif /* TIE_OPT2GLTF_H */
