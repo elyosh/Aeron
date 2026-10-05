@@ -389,20 +389,6 @@ static bool load_lights(const char* path, AeronEnvironmentLightDefinition lights
 	return ok;
 }
 
-static void yaml_string(FILE* f, const char* text) {
-	fputc('"', f);
-	for (const char* p = text; *p; ++p) {
-		if (*p == '"' || *p == '\\')
-			fputc('\\', f);
-		fputc(*p, f);
-	}
-	fputc('"', f);
-}
-
-static void yaml_vec3(FILE* f, const float v[3]) {
-	fprintf(f, "[%.9g, %.9g, %.9g]", (double)v[0], (double)v[1], (double)v[2]);
-}
-
 /* Output path as written in the package: relative to the manifest root,
  * with forward slashes. */
 static bool package_path(const char* path, const char* root, char* out, size_t size) {
@@ -436,48 +422,36 @@ static bool package_path(const char* path, const char* root, char* out, size_t s
 	return true;
 }
 
-static void write_package_entry(FILE* f, const BakeOptions* o, const char* radiance, const char* diffuse,
+/* Writes the baked package as a `packages:` document. Strengths, floor and
+ * rotation are starting values to calibrate per package. */
+static bool write_package_entry(FILE* f, const BakeOptions* o, const char* radiance, const char* diffuse,
 								const char* specular, const AeronEnvironmentLightDefinition* lights,
-								uint32_t light_count) {
-	fprintf(f, "packages:\n  %s:\n    kind: full\n", o->name);
-	fprintf(f, "    radiance: ");
-	yaml_string(f, radiance);
-	fprintf(f, "\n    diffuse: ");
-	yaml_string(f, diffuse);
-	fprintf(f, "\n    specular: ");
-	yaml_string(f, specular);
-	/* Starting values; calibrate per package. */
-	fprintf(f, "\n    sky_exposure: 1.0\n    diffuse_strength: 1.0\n    specular_strength: 1.0\n"
-			   "    ambient_floor_scale: 0.5\n    rotation_degrees: [0.0, 0.0, 0.0]\n");
-	if (light_count == 0) {
-		fprintf(f, "    directional_lights: []\n");
-		return;
+								uint32_t light_count, int32_t primary) {
+	AeronEnvironmentDefinition* d = (AeronEnvironmentDefinition*)calloc(1, sizeof *d);
+	if (!d)
+		return false;
+	snprintf(d->name, sizeof d->name, "%s", o->name);
+	d->kind = AERON_ENV_KIND_FULL;
+	snprintf(d->radiance_path, sizeof d->radiance_path, "%s", radiance);
+	snprintf(d->diffuse_path, sizeof d->diffuse_path, "%s", diffuse);
+	snprintf(d->specular_path, sizeof d->specular_path, "%s", specular);
+	d->sky_exposure        = 1.0f;
+	d->diffuse_strength    = 1.0f;
+	d->specular_strength   = 1.0f;
+	d->ambient_floor_scale = 0.5f;
+	memcpy(d->lights, lights, sizeof d->lights);
+	d->light_count         = light_count;
+	d->primary_light_index = primary;
+	const size_t length    = AeronEnvironment_FormatPackageYaml(d, NULL, 0);
+	char*        text      = (char*)malloc(length + 1);
+	bool         ok        = text != NULL;
+	if (ok) {
+		AeronEnvironment_FormatPackageYaml(d, text, length + 1);
+		ok = fwrite(text, 1, length, f) == length;
 	}
-	fprintf(f, "    directional_lights:\n");
-	for (uint32_t i = 0; i < light_count; ++i) {
-		const AeronEnvironmentLightDefinition* l = &lights[i];
-		fprintf(f, "      - name: %s\n        direction_cube: ", l->name);
-		yaml_vec3(f, l->direction_cube);
-		fprintf(f, "\n        color_linear: ");
-		yaml_vec3(f, l->color_linear);
-		fprintf(f,
-				"\n        intensity: %.9g\n        primary: %s\n        casts_shadows: %s\n"
-				"        angular_radius_degrees: %.9g\n        lens_flare: %s\n        visual:\n",
-				(double)l->intensity, l->primary ? "true" : "false", l->casts_shadows ? "true" : "false",
-				(double)l->angular_radius_degrees, l->lens_flare ? "true" : "false");
-		if (l->visual == AERON_ENV_SUN_DISC) {
-			fprintf(
-				f,
-				"          kind: disc\n          radiance_scale: %.9g\n          glow_radius_degrees: %.9g\n"
-				"          glow_strength: %.9g\n",
-				(double)l->radiance_scale, (double)l->glow_radius_degrees, (double)l->glow_strength);
-		} else {
-			fprintf(f, "          kind: sprite\n          sprite: ");
-			yaml_string(f, l->sprite_path);
-			fprintf(f, "\n          angular_size_degrees: %.9g\n          sprite_strength: %.9g\n",
-					(double)l->angular_size_degrees, (double)l->sprite_strength);
-		}
-	}
+	free(text);
+	free(d);
+	return ok;
 }
 
 /* Re-parses a written package file with the runtime parser. */
@@ -683,9 +657,14 @@ static int run_bake(const BakeOptions* o) {
 		fprintf(stderr, "environment_bake: cannot write %s\n", o->package_out);
 		return 1;
 	}
-	write_package_entry(f, o, radiance_path, diffuse_path, specular_path, lights, light_count);
+	const bool written =
+		write_package_entry(f, o, radiance_path, diffuse_path, specular_path, lights, light_count, primary);
 	if (o->package_out) {
 		fclose(f);
+		if (!written) {
+			fprintf(stderr, "environment_bake: cannot write %s\n", o->package_out);
+			return 1;
+		}
 		if (!validate_package_file(o->package_out))
 			return 1;
 		printf("package %s: %s\n", o->name, o->package_out);

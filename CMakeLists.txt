@@ -842,6 +842,7 @@ add_library(aeron_scene STATIC
     src/scene/world.c
     src/scene/settings.c
     src/scene/environment.c
+    src/scene/environment_library.c
     src/scene/billboards3d.c
     src/scene/mesh.c
     src/scene/mesh_overlay.c
@@ -897,6 +898,10 @@ target_link_libraries(aeron_scene
         zstd::libzstd
 )
 
+# The Environment debug tool exists only with the ImGui overlay.
+if(AERON_DEBUG_UI)
+    target_sources(aeron_scene PRIVATE src/scene/environment_debug.cpp)
+endif()
 if(MSVC)
     target_compile_options(aeron_scene PRIVATE /W4)
 else()

@@ -431,3 +431,93 @@ const AeronEnvironmentDefinition* AeronEnvironmentDefinitionSet_Find(const Aeron
 			return &set->definitions[i];
 	return NULL;
 }
+
+/* ---- YAML output ------------------------------------------------------ */
+
+typedef struct YamlOut {
+	char*  out;
+	size_t size;
+	size_t length;
+} YamlOut;
+
+static void yaml_printf(YamlOut* y, const char* format, ...) {
+	va_list args;
+	va_start(args, format);
+	const size_t remaining = y->length < y->size ? y->size - y->length : 0;
+	const int    written   = vsnprintf(remaining ? y->out + y->length : NULL, remaining, format, args);
+	va_end(args);
+	if (written > 0)
+		y->length += (size_t)written;
+}
+
+static void yaml_string(YamlOut* y, const char* text) {
+	yaml_printf(y, "\"");
+	for (const char* p = text; *p; ++p)
+		yaml_printf(y, (*p == '"' || *p == '\\') ? "\\%c" : "%c", *p);
+	yaml_printf(y, "\"");
+}
+
+static void yaml_vec3(YamlOut* y, const float v[3]) {
+	yaml_printf(y, "[%.9g, %.9g, %.9g]", (double)v[0], (double)v[1], (double)v[2]);
+}
+
+size_t AeronEnvironment_FormatPackageYaml(const AeronEnvironmentDefinition* d, char* out, size_t size) {
+	YamlOut y = { out, out ? size : 0, 0 };
+	if (out && size)
+		out[0] = '\0';
+	if (!d)
+		return 0;
+	yaml_printf(&y, "packages:\n  %s:\n    kind: %s\n", d->name,
+				d->kind == AERON_ENV_KIND_FULL ? "full" : "lighting");
+	if (d->kind == AERON_ENV_KIND_FULL) {
+		yaml_printf(&y, "    radiance: ");
+		yaml_string(&y, d->radiance_path);
+		yaml_printf(&y, "\n");
+	}
+	yaml_printf(&y, "    diffuse: ");
+	yaml_string(&y, d->diffuse_path);
+	yaml_printf(&y, "\n");
+	if (d->kind == AERON_ENV_KIND_FULL) {
+		yaml_printf(&y, "    specular: ");
+		yaml_string(&y, d->specular_path);
+		yaml_printf(&y, "\n    sky_exposure: %.9g\n", (double)d->sky_exposure);
+	}
+	yaml_printf(&y, "    diffuse_strength: %.9g\n", (double)d->diffuse_strength);
+	if (d->kind == AERON_ENV_KIND_FULL)
+		yaml_printf(&y, "    specular_strength: %.9g\n", (double)d->specular_strength);
+	yaml_printf(&y, "    ambient_floor_scale: %.9g\n    rotation_degrees: ", (double)d->ambient_floor_scale);
+	yaml_vec3(&y, d->rotation_degrees);
+	yaml_printf(&y, "\n");
+	if (d->kind != AERON_ENV_KIND_FULL)
+		return y.length;
+	if (d->light_count == 0) {
+		yaml_printf(&y, "    directional_lights: []\n");
+		return y.length;
+	}
+	yaml_printf(&y, "    directional_lights:\n");
+	for (uint32_t i = 0; i < d->light_count; ++i) {
+		const AeronEnvironmentLightDefinition* l = &d->lights[i];
+		yaml_printf(&y, "      - name: %s\n        direction_cube: ", l->name);
+		yaml_vec3(&y, l->direction_cube);
+		yaml_printf(&y, "\n        color_linear: ");
+		yaml_vec3(&y, l->color_linear);
+		yaml_printf(&y,
+					"\n        intensity: %.9g\n        primary: %s\n        casts_shadows: %s\n"
+					"        angular_radius_degrees: %.9g\n        lens_flare: %s\n        visual:\n",
+					(double)l->intensity, l->primary ? "true" : "false", l->casts_shadows ? "true" : "false",
+					(double)l->angular_radius_degrees, l->lens_flare ? "true" : "false");
+		if (l->visual == AERON_ENV_SUN_DISC) {
+			yaml_printf(
+				&y,
+				"          kind: disc\n          radiance_scale: %.9g\n          glow_radius_degrees: %.9g\n"
+				"          glow_strength: %.9g\n",
+				(double)l->radiance_scale, (double)l->glow_radius_degrees, (double)l->glow_strength);
+		} else {
+			yaml_printf(&y, "          kind: sprite\n          sprite: ");
+			yaml_string(&y, l->sprite_path);
+			yaml_printf(&y, "\n          angular_size_degrees: %.9g\n          sprite_strength: %.9g\n",
+						(double)l->angular_size_degrees, (double)l->sprite_strength);
+		}
+	}
+	return y.length;
+}
