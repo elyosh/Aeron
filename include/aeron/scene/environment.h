@@ -80,7 +80,7 @@ typedef struct AeronEnvironmentDefinition {
 	char                            radiance_path[AERON_ENV_PATH_MAX]; /* empty for lighting packages */
 	char                            diffuse_path[AERON_ENV_PATH_MAX];
 	char                            specular_path[AERON_ENV_PATH_MAX]; /* empty for lighting packages */
-	float                           sky_exposure;                      /* 0 for lighting packages */
+	float                           intensity; /* scales the sky, diffuse and specular together */
 	float                           diffuse_strength;
 	float                           specular_strength; /* 0 for lighting packages */
 	float                           ambient_fill[3];   /* linear radiance from every direction */

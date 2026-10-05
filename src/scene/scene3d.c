@@ -774,8 +774,8 @@ static void sky_sun_basis(const AeronScene3D* s, const float dir[3], float t0[3]
 
 static float sky_sun_max3(const float v[3]) { return fmaxf(v[0], fmaxf(v[1], v[2])); }
 
-void AeronScene_AddSkySun(AeronScene3D* s, const AeronEnvironmentLight* light, float exposure) {
-	if (!s || !light || !isfinite(exposure) || !(exposure > 0.0f))
+void AeronScene_AddSkySun(AeronScene3D* s, const AeronEnvironmentLight* light) {
+	if (!s || !light)
 		return;
 	float       dir[3] = { light->direction_world[0], light->direction_world[1], light->direction_world[2] };
 	const float length = sqrtf(dir[0] * dir[0] + dir[1] * dir[1] + dir[2] * dir[2]);
@@ -795,7 +795,7 @@ void AeronScene_AddSkySun(AeronScene3D* s, const AeronEnvironmentLight* light, f
 		if (!light->sprite || !(light->angular_size_degrees > 0.0f))
 			return;
 		const float             half  = tanf(0.5f * light->angular_size_degrees * deg);
-		const float             scale = light->sprite_strength * exposure;
+		const float             scale = light->sprite_strength;
 		AeronSceneBillboardDesc desc;
 		memset(&desc, 0, sizeof desc);
 		desc.texture                   = light->sprite;
@@ -824,7 +824,7 @@ void AeronScene_AddSkySun(AeronScene3D* s, const AeronEnvironmentLight* light, f
 	 * carries the light it casts; the centre is brighter by the limb law. */
 	const float angle  = light->angular_radius_degrees * deg;
 	const float omega  = (float)(2.0 * SKY_SUN_PI) * (1.0f - cosf(angle));
-	const float factor = light->radiance_scale * exposure;
+	const float factor = light->radiance_scale;
 	float       irradiance[3], center[3];
 	for (int i = 0; i < 3; ++i) {
 		irradiance[i] = light->color_linear[i] * factor;
@@ -1084,8 +1084,10 @@ void AeronScene_SetPbrEnvironmentPackage(AeronScene3D* s, const AeronEnvironment
 	environment.specular           = package->specular;
 	environment.sampler            = package->sampler;
 	environment.specular_mip_count = package->specular_mip_count;
-	environment.diffuse_strength   = package->settings.diffuse_strength;
-	environment.specular_strength  = package->settings.specular_strength;
+	/* The package intensity scales everything derived from the sky image;
+	 * the strengths are relative adjustments on top. */
+	environment.diffuse_strength  = package->settings.intensity * package->settings.diffuse_strength;
+	environment.specular_strength = package->settings.intensity * package->settings.specular_strength;
 	memcpy(environment.world_to_local, package->world_to_cube, sizeof environment.world_to_local);
 	AeronScene_SetPbrEnvironment(s, &environment);
 }

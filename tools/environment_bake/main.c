@@ -435,7 +435,7 @@ static bool write_package_entry(FILE* f, const BakeOptions* o, const char* radia
 	snprintf(d->radiance_path, sizeof d->radiance_path, "%s", radiance);
 	snprintf(d->diffuse_path, sizeof d->diffuse_path, "%s", diffuse);
 	snprintf(d->specular_path, sizeof d->specular_path, "%s", specular);
-	d->sky_exposure        = 1.0f;
+	d->intensity           = 1.0f;
 	d->diffuse_strength    = 1.0f;
 	d->specular_strength   = 1.0f;
 	d->ambient_fill[0] = d->ambient_fill[1] = d->ambient_fill[2] = 0.02f;

@@ -317,7 +317,7 @@ static bool parse_package(const char* name, const AeronConfigNode* map, AeronEnv
 		"radiance",
 		"diffuse",
 		"specular",
-		"sky_exposure",
+		"intensity",
 		"diffuse_strength",
 		"specular_strength",
 		"ambient_fill",
@@ -325,7 +325,7 @@ static bool parse_package(const char* name, const AeronConfigNode* map, AeronEnv
 		"directional_lights",
 	};
 	static const char* const lighting_fields[] = {
-		"kind", "diffuse", "diffuse_strength", "ambient_fill", "rotation_degrees",
+		"kind", "intensity", "diffuse", "diffuse_strength", "ambient_fill", "rotation_degrees",
 	};
 
 	char what[160];
@@ -353,7 +353,8 @@ static bool parse_package(const char* name, const AeronConfigNode* map, AeronEnv
 		return env_error(error, kind, "%s: 'kind' must be 'full' or 'lighting'", what);
 	}
 
-	if (!read_path(map, what, "diffuse", def->diffuse_path, sizeof def->diffuse_path, error) ||
+	if (!read_number(map, what, "intensity", true, 0.0, 16.0, &def->intensity, error) ||
+		!read_path(map, what, "diffuse", def->diffuse_path, sizeof def->diffuse_path, error) ||
 		!read_number(map, what, "diffuse_strength", true, 0.0, 4.0, &def->diffuse_strength, error) ||
 		!read_ambient_fill(map, what, def->ambient_fill, error) ||
 		!read_vec3(map, what, "rotation_degrees", def->rotation_degrees, NULL, error))
@@ -365,7 +366,6 @@ static bool parse_package(const char* name, const AeronConfigNode* map, AeronEnv
 		return true;
 	return read_path(map, what, "radiance", def->radiance_path, sizeof def->radiance_path, error) &&
 		   read_path(map, what, "specular", def->specular_path, sizeof def->specular_path, error) &&
-		   read_number(map, what, "sky_exposure", true, 0.0, 16.0, &def->sky_exposure, error) &&
 		   read_number(map, what, "specular_strength", true, 0.0, 4.0, &def->specular_strength, error) &&
 		   parse_lights(map, def, error);
 }
@@ -479,8 +479,8 @@ size_t AeronEnvironment_FormatPackageYaml(const AeronEnvironmentDefinition* d, c
 		out[0] = '\0';
 	if (!d)
 		return 0;
-	yaml_printf(&y, "packages:\n  %s:\n    kind: %s\n", d->name,
-				d->kind == AERON_ENV_KIND_FULL ? "full" : "lighting");
+	yaml_printf(&y, "packages:\n  %s:\n    kind: %s\n    intensity: %.9g\n", d->name,
+				d->kind == AERON_ENV_KIND_FULL ? "full" : "lighting", (double)d->intensity);
 	if (d->kind == AERON_ENV_KIND_FULL) {
 		yaml_printf(&y, "    radiance: ");
 		yaml_string(&y, d->radiance_path);
@@ -492,7 +492,7 @@ size_t AeronEnvironment_FormatPackageYaml(const AeronEnvironmentDefinition* d, c
 	if (d->kind == AERON_ENV_KIND_FULL) {
 		yaml_printf(&y, "    specular: ");
 		yaml_string(&y, d->specular_path);
-		yaml_printf(&y, "\n    sky_exposure: %.9g\n", (double)d->sky_exposure);
+		yaml_printf(&y, "\n");
 	}
 	yaml_printf(&y, "    diffuse_strength: %.9g\n", (double)d->diffuse_strength);
 	if (d->kind == AERON_ENV_KIND_FULL)

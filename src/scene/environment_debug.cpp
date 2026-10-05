@@ -1,6 +1,6 @@
 /*
  * Environment debug tool: the library's prepared set, the active package,
- * and live overrides of exposure, strengths, ambient floor, rotation and
+ * and live overrides of intensity, strengths, ambient fill, rotation and
  * lights. Built only with AERON_DEBUG_UI. The overlay is built in
  * Aeron_Present, after the game recorded its frame, so edits apply between
  * frames.
@@ -113,12 +113,17 @@ bool light_editor(EnvSlot* slot, uint32_t index) {
 void slot_editor(AeronEnvironmentLibrary* library, EnvSlot* slot) {
 	AeronEnvironmentDefinition* s       = &slot->package.settings;
 	bool                        changed = false;
+	/* One scale for everything derived from the sky image; the strengths
+	 * are relative adjustments, 1 = physically consistent. */
+	changed |= ImGui::SliderFloat("Intensity", &s->intensity, 0.0f, 16.0f, "%.3f");
 	if (s->kind == AERON_ENV_KIND_FULL) {
-		changed |= ImGui::SliderFloat("Sky exposure", &s->sky_exposure, 0.0f, 16.0f, "%.3f");
-		changed |= ImGui::SliderFloat("Diffuse strength", &s->diffuse_strength, 0.0f, 4.0f, "%.3f");
-		changed |= ImGui::SliderFloat("Specular strength", &s->specular_strength, 0.0f, 4.0f, "%.3f");
+		changed |=
+			ImGui::SliderFloat("Diffuse strength (relative)", &s->diffuse_strength, 0.0f, 4.0f, "%.3f");
+		changed |=
+			ImGui::SliderFloat("Specular strength (relative)", &s->specular_strength, 0.0f, 4.0f, "%.3f");
 	} else {
-		changed |= ImGui::SliderFloat("Diffuse strength", &s->diffuse_strength, 0.0f, 4.0f, "%.3f");
+		changed |=
+			ImGui::SliderFloat("Diffuse strength (relative)", &s->diffuse_strength, 0.0f, 4.0f, "%.3f");
 	}
 	if (ImGui::ColorEdit3("Ambient fill (linear)", s->ambient_fill,
 						  ImGuiColorEditFlags_Float | ImGuiColorEditFlags_HDR)) {
