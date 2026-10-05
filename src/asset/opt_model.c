@@ -110,6 +110,20 @@ static void include_point(AeronFlightBounds* bounds, const AeronFlightVec3* poin
 		bounds->max.z = point->z;
 }
 
+static bool triangle_degenerate(const AeronFlightVec3* positions, const uint32_t indices[3]) {
+	const AeronFlightVec3* a        = &positions[indices[0]];
+	const AeronFlightVec3* b        = &positions[indices[1]];
+	const AeronFlightVec3* c        = &positions[indices[2]];
+	const float            ab[3]    = { b->x - a->x, b->y - a->y, b->z - a->z };
+	const float            ac[3]    = { c->x - a->x, c->y - a->y, c->z - a->z };
+	const float            cross[3] = {
+		ab[1] * ac[2] - ab[2] * ac[1],
+		ab[2] * ac[0] - ab[0] * ac[2],
+		ab[0] * ac[1] - ab[1] * ac[0],
+	};
+	return cross[0] * cross[0] + cross[1] * cross[1] + cross[2] * cross[2] == 0.0f;
+}
+
 static uint32_t mesh_face_count(const opt_mesh_t* mesh) {
 	if (!mesh || mesh->lod_count <= 0)
 		return 0;
@@ -122,6 +136,9 @@ static uint32_t mesh_face_count(const opt_mesh_t* mesh) {
 	return count;
 }
 
+/* Same rules as the glTF topology in flight_model.c: degenerate triangles
+ * are dropped, and when all are, the component has no collision faces. Face
+ * normals stay the OPT's. */
 static bool build_opt_topology(const opt_mesh_t* source, AeronFlightComponent* component) {
 	const uint32_t position_count = source->vertex_count > 0 ? (uint32_t)source->vertex_count : 0;
 	const uint32_t face_count     = mesh_face_count(source);
@@ -132,7 +149,6 @@ static bool build_opt_topology(const opt_mesh_t* source, AeronFlightComponent* c
 	if (!component->topology.positions || !component->topology.faces)
 		return false;
 	component->topology.position_count = position_count;
-	component->topology.face_count     = face_count;
 	bool have_bounds                   = false;
 	for (uint32_t index = 0; index < position_count; ++index) {
 		component->topology.positions[index] = opt_position(&source->vertices[index]);
@@ -147,27 +163,21 @@ static bool build_opt_topology(const opt_mesh_t* source, AeronFlightComponent* c
 			const uint32_t    triangles     = source_face->verts[3] >= 0 ? 2u : 1u;
 			const int         corners[2][3] = { { 0, 1, 2 }, { 0, 2, 3 } };
 			for (uint32_t triangle = 0; triangle < triangles; ++triangle) {
-				AeronFlightFace* face = &component->topology.faces[write++];
+				AeronFlightFace* face = &component->topology.faces[write];
 				for (uint32_t corner = 0; corner < 3; ++corner) {
 					const int32_t vertex = source_face->verts[corners[triangle][corner]];
 					if (vertex < 0 || (uint32_t)vertex >= position_count)
 						return false;
 					face->indices[corner] = (uint32_t)vertex;
 				}
+				if (triangle_degenerate(component->topology.positions, face->indices))
+					continue;
 				face->normal = opt_unit_vector(&source_face->face_normal);
+				write++;
 			}
 		}
 	}
-	component->span = (AeronFlightVec3) {
-		component->bounds.max.x - component->bounds.min.x,
-		component->bounds.max.y - component->bounds.min.y,
-		component->bounds.max.z - component->bounds.min.z,
-	};
-	component->center = (AeronFlightVec3) {
-		(component->bounds.min.x + component->bounds.max.x) * 0.5f,
-		(component->bounds.min.y + component->bounds.max.y) * 0.5f,
-		(component->bounds.min.z + component->bounds.max.z) * 0.5f,
-	};
+	component->topology.face_count = write;
 	return true;
 }
 
