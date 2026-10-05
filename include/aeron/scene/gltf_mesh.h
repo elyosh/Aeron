@@ -176,7 +176,10 @@ typedef struct AeronGltfModel {
 
 } AeronGltfModel;
 
-/* Internal render builder used by the common flight-model construction. */
+/* Internal render builder used by the common flight-model construction.
+ * `data` must already satisfy the AERON_flight_model hierarchy (its
+ * semantics were built from it, or opt2gltf generated it): roles are not
+ * checked again here. */
 bool Aeron_GltfMeshBuildData(const struct cgltf_data* data, const char* source_label, AeronGltfModel* out);
 
 void Aeron_GltfMeshFree(AeronGltfModel* m);

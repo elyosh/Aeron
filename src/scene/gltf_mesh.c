@@ -55,17 +55,6 @@ static inline void gltf_to_aeron_tangent(const float in[4], float out[4]) {
 	out[3] = -in[3];
 }
 
-static const char* node_flight_extension(const cgltf_node* node) {
-	if (!node)
-		return NULL;
-	for (cgltf_size index = 0; index < node->extensions_count; ++index) {
-		const cgltf_extension* extension = &node->extensions[index];
-		if (extension->name && extension->data && strcmp(extension->name, "AERON_flight_model") == 0)
-			return extension->data;
-	}
-	return NULL;
-}
-
 static bool json_object_string_equals(const char* json, const char* key, const char* expected) {
 	if (!json || !key || !expected)
 		return false;
@@ -75,10 +64,6 @@ static bool json_object_string_equals(const char* json, const char* key, const c
 		cJSON_IsString(value) && value->valuestring && strcmp(value->valuestring, expected) == 0;
 	cJSON_Delete(object);
 	return matches;
-}
-
-static bool node_has_flight_role(const cgltf_node* node, const char* expected) {
-	return json_object_string_equals(node_flight_extension(node), "role", expected);
 }
 
 static void transform_point(const float matrix[16], const float in[3], float out[3]) {
@@ -413,8 +398,6 @@ bool Aeron_GltfMeshBuildData(const cgltf_data* data, const char* source_label, A
 	if (!data->scene || data->scene->nodes_count != 1)
 		goto cleanup;
 	const cgltf_node* root = data->scene->nodes[0];
-	if (!node_has_flight_role(root, "model"))
-		goto cleanup;
 	plans = (NodePlan*)calloc(root->children_count, sizeof *plans);
 	if (!plans)
 		goto cleanup;
@@ -424,8 +407,6 @@ bool Aeron_GltfMeshBuildData(const cgltf_data* data, const char* source_label, A
 		const cgltf_node* n               = root->children[i];
 		const uint16_t    component_index = (uint16_t)i;
 		if (!n->mesh || i >= AERON_MAX_MESH_SLOTS)
-			goto cleanup;
-		if (!node_has_flight_role(n, "component"))
 			goto cleanup;
 
 		NodePlan* plan = &plans[plan_count++];

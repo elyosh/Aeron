@@ -5,7 +5,7 @@ flight asset. It is a node extension listed in `extensionsUsed` and is not
 listed in `extensionsRequired`.
 
 The default scene contains one model-role root. Its ordered direct children
-are component-role mesh nodes. A component's ordered children are hardpoint-
+are 1 to 50 component-role mesh nodes. A component's ordered children are hardpoint-
 or engine-glow-role empty nodes, plus at most one collision-role mesh node.
 Child order defines component, hardpoint and flattened engine-glow ordinals;
 collision nodes do not take part in any ordinal.
