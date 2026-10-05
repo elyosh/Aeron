@@ -4,7 +4,9 @@
  * Usage: aeron_gltf_cook <in.gltf> --out <out.glb> [options]
  *
  * Cooks an artist-authored .gltf into a runtime-ready .glb with
- * KHR_texture_basisu / KHR_texture_transform per-channel atlases.
+ * KHR_texture_basisu / KHR_texture_transform per-channel atlases. An
+ * AERON_flight_model asset also gets cooked simulation and render data, and
+ * the result is loaded back the way a game loads it before it is written.
  */
 
 #include "flight_data.h"
@@ -18,11 +20,15 @@ static void usage(void) {
 	fprintf(stderr, "Usage: aeron_gltf_cook <in.gltf> --out <out.glb> [options]\n"
 					"\n"
 					"Cooks an artist-authored .gltf (PNG textures, optional\n"
-					"KHR_materials_variants, arbitrary extras) into one .glb file with\n"
-					"four compressed KTX2 atlases (base_color / normal / metallic_roughness /\n"
-					"emissive) referenced via KHR_texture_basisu. Each material's\n"
-					"texture bindings carry a KHR_texture_transform mapping its UVs\n"
-					"into the appropriate sub-rect of each atlas.\n"
+					"KHR_materials_variants) into one .glb file with four compressed\n"
+					"KTX2 atlases (base_color / normal / metallic_roughness / emissive)\n"
+					"referenced via KHR_texture_basisu. Each material's texture\n"
+					"bindings carry a KHR_texture_transform mapping its UVs into the\n"
+					"appropriate sub-rect of each atlas.\n"
+					"\n"
+					"For an AERON_flight_model asset it also adds cooked simulation data\n"
+					"(per-component collision BVH) and render data (render BVH), then\n"
+					"loads the result as a game would and fails if it does not load.\n"
 					"\n"
 					"Options:\n"
 					"  --out <path>          Output .glb path (required).\n"

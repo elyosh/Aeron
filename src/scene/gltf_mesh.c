@@ -1,11 +1,12 @@
 /*
- * flight_gltf_mesh — cooked-.glb loader for OPT-derived ship assets.
+ * gltf_mesh — the render half of an AeronFlightModel.
  *
- * Consumes the output of `aeron_gltf_cook` (tools/gltf_cook/) which packs
- * artist-authored .gltf assets into a single .glb with four BC7/BC5 KTX2
- * channel atlases (KHR_texture_basisu) and per-material UV transforms
- * (KHR_texture_transform). At runtime the loader walks the cgltf
- * graph and:
+ * Consumes cooked glTF data from `aeron_gltf_cook` (tools/gltf_cook/): a
+ * shipped .glb with BC7/BC5 KTX2 channel atlases, or the RGBA8 atlases of the
+ * in-memory cook that converts an OPT at runtime. Both carry the atlases
+ * through KHR_texture_basisu and per-material UV transforms through
+ * KHR_texture_transform. Its caller has already validated the
+ * AERON_flight_model hierarchy. The loader walks the cgltf graph and:
  *   - lifts each atlas KTX2 blob out of the GLB BIN chunk and copies
  *     it into a AeronGltfChannelKtx2-owned buffer the SDL_GPU side
  *     decodes via ktx2_open_mem at upload time
@@ -14,8 +15,8 @@
  *   - decodes per-primitive vertex / index / variant tables into one
  *     merged ship-level buffer the renderer issues a single indexed
  *     draw against
- *   - identifies component nodes from the AERON_flight_model hierarchy
- *     and assigns their model-local ordinal to render vertices
+ *   - assigns each component node's model-local ordinal (its order under
+ *     the model root) to its render vertices
  *
  * PNG decoding, atlas packing, and mip generation happen offline in
  * aeron_gltf_cook.

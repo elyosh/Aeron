@@ -1,5 +1,5 @@
-#ifndef TIE_OPT2GLTF_H
-#define TIE_OPT2GLTF_H
+#ifndef AERON_OPT2GLTF_H
+#define AERON_OPT2GLTF_H
 
 /*
  * opt2gltf — convert one OPT file to glTF 2.0 (one .gltf JSON + one
@@ -15,8 +15,12 @@
  *   - Rotation pivots and axes are preserved in the component role.
  *
  *   - Hardpoints: each OPT mesh's hardpoints become child empty
- *     nodes (no mesh, just translation) named "hp_<type>". Each
+ *     nodes (no mesh, just translation) named "hardpoint_<type>". Each
  *     carries an `AERON_flight_model` hardpoint role and raw type.
+ *
+ *   - Every OPT mesh becomes exactly one component; a mesh without LOD 0
+ *     triangles fails the conversion, so component ordinals match the
+ *     OPT's mesh numbers.
  *
  *   - Paint-scheme variants: OPT NodeSwitch's per-face-group
  *     state_textures[] become a KHR_materials_variants extension at
@@ -72,20 +76,17 @@ typedef struct OptGltfComponentTag {
 } OptGltfComponentTag;
 
 typedef struct OptGltfBuildOptions {
-	float                              smooth_angle_degrees;
-	bool                               repair_normals;
-	bool                               emissive;
+	float smooth_angle_degrees;
+	bool  repair_normals;
+	bool  emissive;
 	/* When positive, every material is fully self-lit: black base color
 	 * (alpha kept), the base texture as emissiveTexture, and this
 	 * KHR_materials_emissive_strength. Supersedes `emissive`. */
 	float                              fullbright_strength;
 	const struct OptGltfAlphaOverride* alpha_overrides;
 	size_t                             alpha_override_count;
-	/* Fail on a mesh without LOD 0 triangles instead of skipping it, so
-	 * components stay one-to-one with the OPT meshes. */
-	bool                       require_all_meshes;
-	const OptGltfComponentTag* component_tags;
-	size_t                     component_tag_count;
+	const OptGltfComponentTag*         component_tags;
+	size_t                             component_tag_count;
 	/* Development only: split every triangle into four by its edge midpoints
 	 * this many times (at most OPT_GLTF_MAX_SUBDIVIDE). */
 	uint32_t subdivide_levels;
@@ -136,4 +137,4 @@ bool OptGltf_WriteFiles(const OptGltfDocument* document, const char* out_dir, co
 bool opt2gltf_convert(const opt_file_t* opt, const char* out_dir, const char* basename,
 					  const OptGltfBuildOptions* options, const char* label);
 
-#endif /* TIE_OPT2GLTF_H */
+#endif /* AERON_OPT2GLTF_H */

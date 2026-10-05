@@ -1227,19 +1227,17 @@ bool OptGltf_BuildMemory(const opt_file_t* opt, const char* basename, const OptG
 		fprintf(stderr, "opt2gltf: oom (meshes)\n");
 		goto fail;
 	}
-	size_t   total_meshes    = 0; /* meshes with geometry */
+	size_t   total_meshes    = 0;
 	int      max_state_count = 1; /* drives KHR_materials_variants */
 	uint32_t fixed_zero = 0, fixed_flip = 0;
 	for (int32_t mi = 0; mi < opt->mesh_count; ++mi) {
 		const opt_mesh_t* m = &opt->meshes[mi];
 		if (!built_mesh_from_opt(&built[mi], m, meters_per_opt_unit, regen, smooth_angle_deg,
 								 repair_normals)) {
-			if (options && options->require_all_meshes) {
-				if (error)
-					snprintf(error->msg, sizeof error->msg, "mesh %d has no LOD 0 triangles", (int)mi);
-				goto fail;
-			}
-			continue;
+			/* Components stay one-to-one with the OPT meshes. */
+			if (error)
+				snprintf(error->msg, sizeof error->msg, "mesh %d has no LOD 0 triangles", (int)mi);
+			goto fail;
 		}
 		if (!built_mesh_subdivide(&built[mi], m->lods[0].group_count, subdivide_levels)) {
 			if (error)
@@ -1294,8 +1292,6 @@ bool OptGltf_BuildMemory(const opt_file_t* opt, const char* basename, const OptG
 	size_t total_prims = 0, total_attrs = 0, total_maps = 0;
 	size_t total_views = 0, total_accs = 0;
 	for (int32_t mi = 0; mi < opt->mesh_count; ++mi) {
-		if (built[mi].vertex_count == 0)
-			continue;
 		const opt_mesh_t* m   = &opt->meshes[mi];
 		const opt_lod_t*  lod = &m->lods[0];
 		/* 3 vertex-attribute streams (pos/nrm/uv): 3 views + 3 accessors. */
@@ -1330,8 +1326,6 @@ bool OptGltf_BuildMemory(const opt_file_t* opt, const char* basename, const OptG
 
 	size_t mesh_out = 0;
 	for (int32_t mi = 0; mi < opt->mesh_count; ++mi) {
-		if (built[mi].vertex_count == 0)
-			continue;
 		BuiltMesh*        bm   = &built[mi];
 		const opt_mesh_t* m    = &opt->meshes[mi];
 		const opt_lod_t*  lod  = &m->lods[0];
@@ -1475,8 +1469,6 @@ bool OptGltf_BuildMemory(const opt_file_t* opt, const char* basename, const OptG
 	size_t total_hardpoints = 0;
 	size_t total_glows      = 0;
 	for (int32_t mi = 0; mi < opt->mesh_count; ++mi) {
-		if (built[mi].vertex_count == 0)
-			continue;
 		total_hardpoints += opt->meshes[mi].hardpoint_count;
 		total_glows += opt->meshes[mi].engine_glow_count;
 	}
@@ -1518,8 +1510,6 @@ bool OptGltf_BuildMemory(const opt_file_t* opt, const char* basename, const OptG
 
 	mesh_out = 0;
 	for (int32_t mi = 0; mi < opt->mesh_count; ++mi) {
-		if (built[mi].vertex_count == 0)
-			continue;
 		const opt_mesh_t* m     = &opt->meshes[mi];
 		cgltf_node*       node  = next_mesh_node++;
 		root_children[mesh_out] = node;

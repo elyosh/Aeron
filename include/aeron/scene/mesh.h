@@ -6,7 +6,7 @@
  *
  * Uploads an AeronFlightModel render payload into scene-side
  * GPU resources: one merged VBO/IBO in the fixed AeronGltfVertex
- * layout, the four BC7 channel atlases, the per-material storage
+ * layout, the four channel atlases, the per-material storage
  * payload the "pbr" material class consumes, the per-primitive variant
  * table, per-mesh-slot articulation, and bounds.
  */
@@ -94,11 +94,10 @@ typedef struct AeronSceneMesh {
 
 typedef enum AeronSceneMeshCreateStatus {
 	AERON_SCENE_MESH_CREATE_SUCCESS = 0,
-	/* The authored model payload is malformed and a caller may select another
-	 * content source before recording more GPU work. */
+	/* The model payload is malformed: invalid index ranges, a missing atlas
+	 * or an atlas that does not decode. */
 	AERON_SCENE_MESH_CREATE_INVALID_SOURCE,
-	/* CPU/GPU resource creation or command recording failed. Retrying with a
-	 * different content source is not valid. */
+	/* CPU/GPU resource creation or command recording failed. */
 	AERON_SCENE_MESH_CREATE_RESOURCE_FAILURE,
 } AeronSceneMeshCreateStatus;
 

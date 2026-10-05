@@ -4,10 +4,11 @@
 /*
  * Render payload for a cooked Aeron flight model.
  *
- * Input format: a `.glb` produced by `aeron_gltf_cook` (tools/gltf_cook/).
+ * Input format: glTF data produced by `aeron_gltf_cook` (tools/gltf_cook/),
+ * either a shipped `.glb` or the in-memory cook of a runtime OPT conversion.
  * The cooker bakes every material's PBR textures into four KTX2 atlases
- * (BC7 for base_color / metallic_roughness / emissive, BC5 for normal),
- * embedded in the GLB BIN chunk via
+ * (BC7 for base_color / metallic_roughness / emissive and BC5 for normal, or
+ * uncompressed RGBA8 for the runtime cook), embedded in the BIN chunk via
  * `KHR_texture_basisu`. Each material's texture bindings carry a
  * `KHR_texture_transform` that remaps material-local UVs into the
  * material's sub-rect inside its channel atlas. No PNG decoding or
@@ -19,14 +20,11 @@
  * `AERON_flight_model` model root. Flight semantics are owned by
  * AeronFlightModel rather than this GPU-oriented subobject.
  *   - `KHR_materials_variants` declares the asset-level variant list
- *     and per-primitive (variant_idx, material_idx) mappings. The
- *     variant selector at runtime is FlightObjectState.decal_color.
- *   - Exactly 4 textures, all `KHR_texture_basisu` referencing 4
- *     KTX2-payload images (one per channel), in this order:
- *       [0] base_color   (BC7 sRGB)
- *       [1] normal       (BC7 UNORM)
- *       [2] metallic_roughness (BC7 UNORM)
- *       [3] emissive     (BC7 sRGB)
+ *     and per-primitive (variant_idx, material_idx) mappings. The game
+ *     selects the variant per instance (AeronSceneMeshInstance.variant).
+ *   - Four KTX2-payload atlas images, one per channel, named
+ *     `atlas_base_color`, `atlas_normal`, `atlas_metallic_roughness` and
+ *     `atlas_emissive`.
  *
  * Flight files use glTF +Y up / +Z front. The loader converts them to
  * Aeron's +X right / -Y forward / +Z up frame.

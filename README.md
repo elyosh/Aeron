@@ -58,10 +58,13 @@ same layer compositor as the rest of the application.
 Aeron includes shared tools and libraries for preparing original and remastered
 assets:
 
-- `opt2gltf` converts LucasArts OPT models to glTF while preserving engine
-  metadata such as articulated parts, hardpoints, and material variants;
+- `opt2gltf` converts LucasArts OPT models to glTF flight models
+  (`AERON_flight_model`) that can fully replace the OPT: descriptors,
+  articulated parts, hardpoints, engine glows, collision geometry, component
+  tags and material variants;
 - `aeron_gltf_cook` converts artist-authored glTF assets into the runtime GLB
-  representation and builds material channel atlases;
+  representation, builds material channel atlases and, for flight models,
+  adds cooked collision and render BVHs;
 - `imgbake` handles image scaling, texture and font atlases, and compressed
   KTX2 texture generation.
 

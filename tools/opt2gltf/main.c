@@ -205,7 +205,6 @@ int main(int argc, char** argv) {
 		.repair_normals       = repair_normals,
 		.emissive             = emissive,
 		.fullbright_strength  = fullbright_strength,
-		.require_all_meshes   = true,
 		.component_tags       = tags,
 		.component_tag_count  = tag_count,
 		.subdivide_levels     = (uint32_t)subdivide_levels,
