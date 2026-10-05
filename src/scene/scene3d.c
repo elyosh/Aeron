@@ -363,6 +363,15 @@ void AeronScene_Destroy(AeronScene3D* s) {
 	AeronScenePbr_Release(s);
 	AeronSceneTemporal_Release(s);
 	AeronScenePost_Release(s);
+	if (s->sky_sun_pipe) {
+		Aeron_DestroyGraphicsPipeline(s->sky_sun_pipe);
+	}
+	if (s->sky_sun_vs) {
+		Aeron_DestroyShader(s->sky_sun_vs);
+	}
+	if (s->sky_sun_fs) {
+		Aeron_DestroyShader(s->sky_sun_fs);
+	}
 	if (s->sky_pipe) {
 		Aeron_DestroyGraphicsPipeline(s->sky_pipe);
 	}
@@ -443,6 +452,7 @@ int AeronScene_Begin(AeronScene3D* s, const AeronSceneCamera* camera) {
 	s->shadow_only_count    = 0;
 	s->shadow_only_dropped  = 0;
 	s->sky_cube             = NULL;
+	s->sky_sun_count        = 0;
 	s->bb_count             = 0;
 	s->bb_dropped           = 0;
 	s->bb_frame_verts       = 0;
@@ -732,7 +742,227 @@ static void scene_sky_bind_vs(AeronScene3D* s, AeronRenderPass* pass) {
 	Aeron_BindUniformData(pass, AERON_SHADER_STAGE_VERTEX, 0, &vsu, sizeof vsu);
 }
 
-static int scene_draw_sky(AeronScene3D* s, AeronRenderPass* pass) {
+/* ---- sky suns (AeronScene_AddSkySun) ----
+ *
+ * Disc suns use their own additive pipeline, drawn right after the sky
+ * cube with the same far-plane depth rule; sprite suns become additive
+ * SKY billboards. */
+
+#define SKY_SUN_PI 3.14159265358979323846
+/* Limb-darkening coefficient of the linear law I(mu) = 1 - u (1 - mu). */
+#define SKY_SUN_LIMB_DARKENING 0.6f
+/* Largest radiance written, kept inside the half-float scene target. */
+#define SKY_SUN_MAX_RADIANCE 60000.0f
+
+static void sky_sun_basis(const AeronScene3D* s, const float dir[3], float t0[3], float t1[3]) {
+	float m[9];
+	AeronSceneInternal_QuatToMat3(s->camera.ori, m); /* world->eye rows */
+	const float* ref = &m[3];
+	if (fabsf(ref[0] * dir[0] + ref[1] * dir[1] + ref[2] * dir[2]) > 0.99f)
+		ref = &m[0];
+	t0[0]             = ref[1] * dir[2] - ref[2] * dir[1];
+	t0[1]             = ref[2] * dir[0] - ref[0] * dir[2];
+	t0[2]             = ref[0] * dir[1] - ref[1] * dir[0];
+	const float t0len = sqrtf(t0[0] * t0[0] + t0[1] * t0[1] + t0[2] * t0[2]);
+	for (int i = 0; i < 3; ++i)
+		t0[i] /= t0len;
+	t1[0] = dir[1] * t0[2] - dir[2] * t0[1];
+	t1[1] = dir[2] * t0[0] - dir[0] * t0[2];
+	t1[2] = dir[0] * t0[1] - dir[1] * t0[0];
+}
+
+static float sky_sun_max3(const float v[3]) { return fmaxf(v[0], fmaxf(v[1], v[2])); }
+
+void AeronScene_AddSkySun(AeronScene3D* s, const AeronEnvironmentLight* light, float exposure) {
+	if (!s || !light || !isfinite(exposure) || !(exposure > 0.0f))
+		return;
+	float       dir[3] = { light->direction_world[0], light->direction_world[1], light->direction_world[2] };
+	const float length = sqrtf(dir[0] * dir[0] + dir[1] * dir[1] + dir[2] * dir[2]);
+	if (!(length > 1e-6f))
+		return;
+	for (int i = 0; i < 3; ++i)
+		dir[i] /= length;
+	float t0[3], t1[3];
+	sky_sun_basis(s, dir, t0, t1);
+	const float deg = (float)(SKY_SUN_PI / 180.0);
+	/* One output pixel, as a tangent at the view centre. */
+	const float pixel = s->camera.viewport.height > 0
+							? 2.0f * tanf(s->camera.v_half_rad) / (float)s->camera.viewport.height
+							: 1e-3f;
+
+	if (light->visual == AERON_ENV_SUN_SPRITE) {
+		if (!light->sprite || !(light->angular_size_degrees > 0.0f))
+			return;
+		const float             half  = tanf(0.5f * light->angular_size_degrees * deg);
+		const float             scale = light->sprite_strength * exposure;
+		AeronSceneBillboardDesc desc;
+		memset(&desc, 0, sizeof desc);
+		desc.texture                   = light->sprite;
+		desc.blend                     = AERON_SCENE_BILLBOARD_BLEND_ADDITIVE;
+		desc.stage                     = AERON_SCENE_BILLBOARD_STAGE_SKY;
+		static const float signs[4][2] = {
+			{ -1.0f, 1.0f }, { 1.0f, 1.0f }, { 1.0f, -1.0f }, { -1.0f, -1.0f }
+		};
+		static const float uvs[4][2] = { { 0.0f, 0.0f }, { 1.0f, 0.0f }, { 1.0f, 1.0f }, { 0.0f, 1.0f } };
+		for (int c = 0; c < 4; ++c) {
+			for (int i = 0; i < 3; ++i)
+				desc.corners[c][i] =
+					s->camera.pos[i] + dir[i] + (t0[i] * signs[c][0] + t1[i] * signs[c][1]) * half;
+			desc.uv[c][0]     = uvs[c][0];
+			desc.uv[c][1]     = uvs[c][1];
+			desc.colors[c][0] = desc.colors[c][1] = desc.colors[c][2] = scale;
+			desc.colors[c][3]                                         = 1.0f;
+		}
+		AeronScene_AddBillboard(s, &desc);
+		return;
+	}
+
+	if (s->sky_sun_count >= AERON_SCENE_MAX_SKY_SUNS || !(light->angular_radius_degrees > 0.0f))
+		return;
+	/* Mean disc radiance = irradiance / solid angle, so the visible disc
+	 * carries the light it casts; the centre is brighter by the limb law. */
+	const float angle  = light->angular_radius_degrees * deg;
+	const float omega  = (float)(2.0 * SKY_SUN_PI) * (1.0f - cosf(angle));
+	const float factor = light->radiance_scale * exposure;
+	float       irradiance[3], center[3];
+	for (int i = 0; i < 3; ++i) {
+		irradiance[i] = light->color_linear[i] * factor;
+		center[i]     = irradiance[i] / omega / (1.0f - SKY_SUN_LIMB_DARKENING / 3.0f);
+	}
+	if (!(sky_sun_max3(irradiance) > 0.0f) || !isfinite(sky_sun_max3(center)))
+		return;
+	/* Keep the flux when the disc is below a pixel or brighter than the
+	 * target can hold: widen it and lower its radiance by the area ratio. */
+	float radius = tanf(angle);
+	if (radius < 0.75f * pixel) {
+		const float ratio = radius / (0.75f * pixel);
+		for (int i = 0; i < 3; ++i)
+			center[i] *= ratio * ratio;
+		radius = 0.75f * pixel;
+	}
+	/* Display cap: the disc keeps its size and is drawn no brighter than
+	 * the cap; only its appearance changes, not the light it casts. */
+	if (light->display_max_radiance > 0.0f && sky_sun_max3(center) > light->display_max_radiance) {
+		const float ratio = light->display_max_radiance / sky_sun_max3(center);
+		for (int i = 0; i < 3; ++i)
+			center[i] *= ratio;
+	}
+	const float peak = sky_sun_max3(center);
+	if (peak > SKY_SUN_MAX_RADIANCE) {
+		const float ratio = peak / SKY_SUN_MAX_RADIANCE;
+		for (int i = 0; i < 3; ++i)
+			center[i] /= ratio;
+		radius *= sqrtf(ratio);
+	}
+
+	AeronSceneSkySun* sun = &s->sky_suns[s->sky_sun_count++];
+	memset(sun, 0, sizeof *sun);
+	memcpy(sun->direction, dir, sizeof sun->direction);
+	memcpy(sun->tangent0, t0, sizeof sun->tangent0);
+	memcpy(sun->tangent1, t1, sizeof sun->tangent1);
+	memcpy(sun->disc, center, sizeof center);
+	sun->disc[3]            = SKY_SUN_LIMB_DARKENING;
+	sun->radius             = radius;
+	sun->glow_radius        = 0.0f;
+	const float glow_radius = tanf(light->glow_radius_degrees * deg);
+	if (light->glow_strength > 0.0f && glow_radius > radius) {
+		/* The glow (1 - t)^2 from R to G integrates to glow_strength times
+		 * the disc's irradiance: its area integral is 2 pi w (R/3 + w/12). */
+		const float w        = glow_radius - radius;
+		const float integral = (float)(2.0 * SKY_SUN_PI) * w * (radius / 3.0f + w / 12.0f);
+		for (int i = 0; i < 3; ++i)
+			sun->glow[i] = fminf(light->glow_strength * irradiance[i] / integral, SKY_SUN_MAX_RADIANCE);
+		sun->glow_radius = glow_radius;
+	}
+	sun->half_extent = fmaxf(sun->radius, sun->glow_radius) * 1.05f + 2.0f * pixel;
+}
+
+static int scene_draw_sky_suns(AeronScene3D* s, AeronRenderPass* pass) {
+	if (s->sky_sun_count == 0)
+		return 1;
+	if (!s->sky_sun_tried) {
+		s->sky_sun_tried = 1;
+		s->sky_sun_vs =
+			AeronSceneInternal_CompileShader("scene_sky_sun.vert", AERON_SHADER_STAGE_VERTEX, 0, 1, 0);
+		s->sky_sun_fs =
+			AeronSceneInternal_CompileShader("scene_sky_sun.frag", AERON_SHADER_STAGE_FRAGMENT, 0, 1, 0);
+		if (s->sky_sun_vs && s->sky_sun_fs) {
+			AeronColorTargetStateDesc cts[1] = { 0 };
+			cts[0].format                    = s->color_format;
+			cts[0].blend                     = (AeronBlendStateDesc) { .enabled   = 1,
+																	   .src_color = AERON_BLEND_ONE,
+																	   .dst_color = AERON_BLEND_ONE,
+																	   .color_op  = AERON_BLEND_OP_ADD,
+																	   .src_alpha = AERON_BLEND_ZERO,
+																	   .dst_alpha = AERON_BLEND_ONE,
+																	   .alpha_op  = AERON_BLEND_OP_ADD };
+			s->sky_sun_pipe                  = Aeron_CreateGraphicsPipeline(&(AeronGraphicsPipelineDesc) {
+				.vertex_shader   = s->sky_sun_vs,
+				.fragment_shader = s->sky_sun_fs,
+				.primitive_type  = AERON_PRIMITIVE_TRIANGLES,
+				.cull_mode       = AERON_CULL_NONE,
+				.depth_format    = AERON_TEXTURE_FORMAT_D32_FLOAT,
+				.depth = { .depth_test = 1, .depth_write = 0, .compare = AERON_COMPARE_GREATER_EQUAL },
+				.color_target_count = 1,
+				.color_targets      = cts,
+				.sample_count       = s->sample_count,
+			});
+		}
+	}
+	if (!s->sky_sun_pipe)
+		return 0;
+	Aeron_BindGraphicsPipeline(pass, s->sky_sun_pipe);
+	for (int i = 0; i < s->sky_sun_count; ++i) {
+		const AeronSceneSkySun* sun = &s->sky_suns[i];
+
+		struct {
+			float view_proj[16];
+			float center[4];
+			float tangent0[4];
+			float tangent1[4];
+		} vsu;
+
+		memset(&vsu, 0, sizeof vsu);
+		memcpy(vsu.view_proj, s->jittered_view_proj, sizeof vsu.view_proj);
+		for (int c = 0; c < 3; ++c) {
+			vsu.center[c]   = s->camera.pos[c] + sun->direction[c];
+			vsu.tangent0[c] = sun->tangent0[c];
+			vsu.tangent1[c] = sun->tangent1[c];
+		}
+		vsu.tangent0[3] = sun->half_extent;
+		Aeron_BindUniformData(pass, AERON_SHADER_STAGE_VERTEX, 0, &vsu, sizeof vsu);
+		float fsu[12] = { sun->disc[0], sun->disc[1],     sun->disc[2], sun->disc[3],
+						  sun->glow[0], sun->glow[1],     sun->glow[2], 0.0f,
+						  sun->radius,  sun->glow_radius, 0.0f,         0.0f };
+		Aeron_BindUniformData(pass, AERON_SHADER_STAGE_FRAGMENT, 0, fsu, sizeof fsu);
+		Aeron_Draw(pass, 6, 0);
+	}
+	return 1;
+}
+
+static int scene_draw_sky_cube(AeronScene3D* s, AeronRenderPass* pass);
+
+/* Each part is its own debug group, balanced inside the pass, so frame
+ * captures and profilers time the sky cube and the sun discs apart. */
+static int scene_draw_sky(AeronScene3D* s, AeronCommandBuffer* cmd, AeronRenderPass* pass) {
+	if (s->sky_cube) {
+		Aeron_GpuDebugPush(cmd, "Sky cube");
+		const int ok = scene_draw_sky_cube(s, pass);
+		Aeron_GpuDebugPop(cmd);
+		if (!ok)
+			return 0;
+	}
+	if (s->sky_sun_count > 0) {
+		Aeron_GpuDebugPush(cmd, "Sky suns");
+		const int ok = scene_draw_sky_suns(s, pass);
+		Aeron_GpuDebugPop(cmd);
+		if (!ok)
+			return 0;
+	}
+	return 1;
+}
+
+static int scene_draw_sky_cube(AeronScene3D* s, AeronRenderPass* pass) {
 	if (!s->sky_cube) {
 		return 1;
 	}
@@ -1517,8 +1747,7 @@ int AeronScene_Render(AeronScene3D* s, AeronCommandBuffer* cmd) {
 		if (!pass) {
 			return scene_render_failure(s, cmd, "Scene forward pass creation failed");
 		}
-		Aeron_GpuDebugMarker(cmd, "Sky cube");
-		if (!scene_draw_sky(s, pass)) {
+		if (!scene_draw_sky(s, cmd, pass)) {
 			Aeron_EndRenderPass(pass);
 			return scene_render_failure(s, cmd, "Scene sky recording failed");
 		}
@@ -1602,8 +1831,7 @@ int AeronScene_Render(AeronScene3D* s, AeronCommandBuffer* cmd) {
 		if (!pass) {
 			return scene_render_failure(s, cmd, "Scene main pass creation failed");
 		}
-		Aeron_GpuDebugMarker(cmd, "Sky cube");
-		if (!scene_draw_sky(s, pass)) {
+		if (!scene_draw_sky(s, cmd, pass)) {
 			Aeron_EndRenderPass(pass);
 			return scene_render_failure(s, cmd, "Scene sky recording failed");
 		}

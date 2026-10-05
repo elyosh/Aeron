@@ -55,6 +55,21 @@ enum {
 	AERON_PBR_PIPE_KIND_COUNT
 };
 
+#define AERON_SCENE_MAX_SKY_SUNS 4
+
+/* One prepared sky-sun disc: quad placement (gnomonic tangent plane) and
+ * fragment radiances, all in tangent-of-angle units. */
+typedef struct AeronSceneSkySun {
+	float direction[3];
+	float tangent0[3];
+	float tangent1[3];
+	float half_extent;
+	float disc[4]; /* centre radiance rgb, limb-darkening coefficient */
+	float glow[3]; /* peak glow radiance */
+	float radius;
+	float glow_radius;
+} AeronSceneSkySun;
+
 /* One AeronScene_SetFrameUniformData blob (copied at submit). */
 typedef struct AeronSceneFrameUniform {
 	uint8_t  stage; /* AeronShaderStage */
@@ -152,8 +167,10 @@ typedef struct AeronSceneLightingUniformGPU {
 	float                       environment_basis[3][4]; /* world-to-local rows */
 } AeronSceneLightingUniformGPU;
 
-_Static_assert(sizeof(AeronSceneClusterUniformGPU) == 112, "ClusteredLightUniform layout");
-_Static_assert(sizeof(AeronSceneLightingUniformGPU) == 176, "scene lighting block layout");
+/* Layout checks against the HLSL blocks (ClusteredLightUniform, 112 bytes;
+ * with the environment, 176 bytes). */
+typedef char AeronSceneClusterUniformSizeCheck[sizeof(AeronSceneClusterUniformGPU) == 112 ? 1 : -1];
+typedef char AeronSceneLightingUniformSizeCheck[sizeof(AeronSceneLightingUniformGPU) == 176 ? 1 : -1];
 
 enum {
 	AERON_SCENE_CLUSTER_ENABLED    = 1u << 0,
@@ -443,6 +460,15 @@ struct AeronScene3D {
 	AeronShader*           sky_vs;
 	AeronShader*           sky_fs;
 	AeronGraphicsPipeline* sky_pipe;
+
+	/* Sky-sun discs (AeronScene_AddSkySun); reset by Begin. Sprite suns
+	 * go through the SKY billboards instead. */
+	AeronSceneSkySun       sky_suns[AERON_SCENE_MAX_SKY_SUNS];
+	int                    sky_sun_count;
+	int                    sky_sun_tried;
+	AeronShader*           sky_sun_vs;
+	AeronShader*           sky_sun_fs;
+	AeronGraphicsPipeline* sky_sun_pipe;
 
 	/* PBR material class (pbr.c), lazily initialized on the first frame that
 	 * requires mesh or geometry-backed post-processing. */

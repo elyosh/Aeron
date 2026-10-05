@@ -195,6 +195,7 @@ void env_library_apply(AeronEnvironmentLibrary* library, EnvSlot* slot) {
 		l->radiance_scale         = d->radiance_scale;
 		l->glow_radius_degrees    = d->glow_radius_degrees;
 		l->glow_strength          = d->glow_strength;
+		l->display_max_radiance   = library->sun_max_radiance;
 		l->angular_size_degrees   = d->angular_size_degrees;
 		l->sprite_strength        = d->sprite_strength;
 		if (d->visual == AERON_ENV_SUN_SPRITE) {
@@ -279,10 +280,22 @@ static bool build_slot(AeronEnvironmentLibrary* library, AeronCommandBuffer* cmd
 	return true;
 }
 
+static bool prepare_set(AeronEnvironmentLibrary* library, AeronCommandBuffer* cmd,
+						const AeronEnvironmentReference* references, uint32_t count, bool reload);
+
 static bool prepare(AeronEnvironmentLibrary* library, AeronCommandBuffer* cmd,
 					const AeronEnvironmentReference* references, uint32_t count, bool reload) {
 	if (!library || !cmd || (count > 0 && !references))
 		return false;
+	/* Texture uploads for the whole set, as one group in GPU captures. */
+	Aeron_GpuDebugPush(cmd, reload ? "Environment package reload" : "Environment package preparation");
+	const bool built = prepare_set(library, cmd, references, count, reload);
+	Aeron_GpuDebugPop(cmd);
+	return built;
+}
+
+static bool prepare_set(AeronEnvironmentLibrary* library, AeronCommandBuffer* cmd,
+						const AeronEnvironmentReference* references, uint32_t count, bool reload) {
 	TextureList list          = { NULL, 0, 0 };
 	EnvSlot*    slots         = count ? (EnvSlot*)calloc(count, sizeof *slots) : NULL;
 	bool        out_of_memory = count > 0 && !slots;
@@ -376,6 +389,8 @@ AeronEnvironmentLibrary* AeronEnvironmentLibrary_Create(const AeronEnvironmentLi
 	snprintf(library->path_prefix, sizeof library->path_prefix, "%s",
 			 desc->path_prefix ? desc->path_prefix : "");
 	memcpy(library->base, desc->base_world_to_cube, sizeof library->base);
+	library->sun_max_radiance =
+		desc->sun_max_radiance > 0.0f ? desc->sun_max_radiance : AERON_ENV_DEFAULT_SUN_MAX_RADIANCE;
 	library->active  = -1;
 	library->sampler = Aeron_CreateSampler(&(AeronSamplerDesc) {
 		.min_filter = AERON_FILTER_LINEAR,

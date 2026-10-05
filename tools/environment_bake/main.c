@@ -842,6 +842,30 @@ static int run_sprite(const BakeOptions* o) {
 		/* No faint square around the sun: zero the outer texels before
 		 * compression, and the outermost ring of every mip. */
 		const int margin = n / 64 > 2 ? n / 64 : 2;
+		/* Sprites add to the sky, so any background level shows as a
+		 * square: warn when the band inside the margin is not black. */
+		const int band = n / 16 > 2 ? n / 16 : 2;
+		double    peak = 0.0, edge = 0.0;
+		int       edges = 0;
+		for (int y = 0; y < n; ++y) {
+			for (int x = 0; x < n; ++x) {
+				const double l = luminance(images[0] + ((size_t)y * n + x) * 3u);
+				peak           = l > peak ? l : peak;
+				const int d    = x < y ? x : y;
+				const int e    = (n - 1 - x) < (n - 1 - y) ? (n - 1 - x) : (n - 1 - y);
+				const int dist = d < e ? d : e;
+				if (dist >= margin && dist < margin + band) {
+					edge += l;
+					++edges;
+				}
+			}
+		}
+		edge = edges ? edge / edges : 0.0;
+		if (peak > 0.0 && edge > 1e-4 * peak)
+			fprintf(stderr,
+					"environment_bake: warning: sprite background is not black (edge mean %.4g, peak %.4g); "
+					"it adds a visible square to the sky\n",
+					edge, peak);
 		zero_border(images[0], n, margin);
 		for (int level = 1; level < levels; ++level) {
 			const int sn = sizes[level - 1], dn = sizes[level];

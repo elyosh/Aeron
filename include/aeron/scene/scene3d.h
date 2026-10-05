@@ -320,6 +320,24 @@ void AeronScene_SetClearColor(AeronScene3D* scene, const float rgba[4]);
 void AeronScene_SetSkyCube(AeronScene3D* scene, AeronTexture* cube, const float world_to_cube[9],
 						   float exposure);
 
+struct AeronEnvironmentLight;
+
+/* Queue one visible sun for this frame (reset by Begin), drawn on the sky
+ * at infinity along the light's world direction, after the sky cube and
+ * behind all geometry, additively:
+ *   - disc: a limb-darkened disc of the light's angular radius whose mean
+ *     radiance is its linear colour over the disc's solid angle, times
+ *     radiance_scale and `exposure`, plus the optional glow (which carries
+ *     glow_strength times the disc's irradiance out to its radius). A disc
+ *     below a pixel is widened with its flux kept; then the light's
+ *     display_max_radiance caps the drawn radiance (keeping the size), and
+ *     anything still beyond a half-float target is widened with its flux
+ *     kept. At most four discs per frame.
+ *   - sprite: the light's sprite, angular_size_degrees wide, times
+ *     sprite_strength and `exposure`, as an additive SKY billboard.
+ * The sprite texture is borrowed through Render. */
+void AeronScene_AddSkySun(AeronScene3D* scene, const struct AeronEnvironmentLight* light, float exposure);
+
 void AeronScene_SetPassHook(AeronScene3D* scene, AeronScenePassSlot slot, AeronScenePassHookFn fn,
 							void* user);
 

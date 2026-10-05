@@ -169,6 +169,14 @@ void draw_tool(int* open, void* user) {
 		bytes += library->textures[i].texture ? library->textures[i].bytes : 0;
 	ImGui::Text("Prepared: %u references, %u textures, %.1f MiB", library->slot_count, library->texture_count,
 				(double)bytes / (1024.0 * 1024.0));
+	if (ImGui::SliderFloat("Sun disc max radiance", &library->sun_max_radiance, 1.0f, 60000.0f, "%.1f",
+						   ImGuiSliderFlags_Logarithmic)) {
+		if (!(library->sun_max_radiance >= 1.0f))
+			library->sun_max_radiance = 1.0f;
+		for (uint32_t i = 0; i < library->slot_count; ++i)
+			if (library->slots[i].available)
+				env_library_apply(library, &library->slots[i]);
+	}
 	ImGui::BeginDisabled(library->reload_requested);
 	if (ImGui::Button(library->reload_requested ? "Reload pending" : "Reload"))
 		AeronEnvironmentLibrary_RequestReload(library);

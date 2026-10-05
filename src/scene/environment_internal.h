@@ -36,6 +36,7 @@ struct AeronEnvironmentLibrary {
 	AeronVfsRoot                         root;
 	char                                 path_prefix[AERON_ENV_PATH_MAX];
 	float                                base[9];
+	float                                sun_max_radiance;
 	AeronSampler*                        sampler;
 	EnvTexture*                          textures;
 	uint32_t                             texture_count;

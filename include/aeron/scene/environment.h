@@ -151,6 +151,7 @@ typedef struct AeronEnvironmentLight {
 	float                     radiance_scale;       /* disc */
 	float                     glow_radius_degrees;  /* disc */
 	float                     glow_strength;        /* disc */
+	float                     display_max_radiance; /* disc: largest drawn radiance; 0 = no cap */
 	AeronTexture*             sprite;               /* sprite; borrowed from the library */
 	float                     angular_size_degrees; /* sprite */
 	float                     sprite_strength;      /* sprite */
@@ -185,7 +186,15 @@ typedef struct AeronEnvironmentLibraryDesc {
 	const char*  path_prefix; /* may be NULL */
 	/* Row-major world-to-cube matrix B for a zero package rotation. */
 	float base_world_to_cube[9];
+	/* Largest radiance a sun disc is drawn with (its lighting is not
+	 * capped); 0 selects AERON_ENV_DEFAULT_SUN_MAX_RADIANCE. A physical
+	 * disc is tens of thousands of times brighter than the sky, which
+	 * screen-space bloom cannot resolve cleanly; the halo comes from the
+	 * authored glow instead. */
+	float sun_max_radiance;
 } AeronEnvironmentLibraryDesc;
+
+#define AERON_ENV_DEFAULT_SUN_MAX_RADIANCE 100.0f
 
 AeronEnvironmentLibrary* AeronEnvironmentLibrary_Create(const AeronEnvironmentLibraryDesc* desc);
 /* Destroys the library and every texture it holds. */
