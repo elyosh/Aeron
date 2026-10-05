@@ -47,8 +47,9 @@ that omit them remain valid and use calculated geometry as a compatibility
 fallback. That fallback is computed from the simulation topology: the
 collision child's mesh when present, otherwise the render mesh.
 
-Simulation topology must keep at least one non-degenerate triangle per
-component.
+A component whose simulation triangles are all degenerate has no collision
+faces: nothing collides with it, and its positions still give its bounds.
+Such a component carries no `simulationData`.
 
 ## Component tags
 

@@ -315,7 +315,7 @@ static bool verify(const uint8_t* bytes, size_t size, bool expect_render_data, c
 	if (!ok)
 		cook_error(error, error_size, detail);
 	for (uint32_t index = 0; ok && index < sim.mesh_count; ++index)
-		if (!sim.meshes[index].bvh_cooked)
+		if (sim.meshes[index].face_count && !sim.meshes[index].bvh_cooked)
 			ok = cook_error(error, error_size, "a component still loads without cooked simulation data");
 	if (ok && expect_render_data && (!model.has_render_data || !model.render_bvh))
 		ok = cook_error(error, error_size, "the model still loads without cooked render data");
@@ -364,6 +364,9 @@ bool aeron_gltf_cook_flight_data(const uint8_t* in, size_t in_size, uint8_t** ou
 		size_t   size  = 0;
 		uint64_t hash  = 0;
 		uint32_t view  = 0;
+		/* A component without collision faces has no BVH to cook. */
+		if (!model.components[index].topology.face_count)
+			continue;
 		const bool added = cook_component(&model.components[index], &bytes, &size, &hash) &&
 						   glb_append_view(&glb, bytes, size, &view) &&
 						   add_reference(node_flight_extension(glb.json, components[index]), "simulationData",

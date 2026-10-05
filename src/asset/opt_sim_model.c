@@ -189,27 +189,37 @@ static AeronFaceBvhGeometry topology_geometry(const AeronFlightTopology* topolog
 	};
 }
 
-/* Loads the cooked BVH and sample, or builds them for an uncooked component. */
+/* Loads the cooked BVH and sample, or builds them for an uncooked component.
+ * A component without faces has no BVH. */
 static bool mesh_bvh_and_sample(const AeronFlightComponent* component, uint32_t component_index,
 								uint32_t unique_count, const uint32_t* unique, uint32_t sample_count,
 								AeronOptSimMesh* mesh, uint32_t** sample, char* error, size_t error_size) {
-	const AeronFaceBvhGeometry geometry = topology_geometry(&component->topology);
-	*sample                             = NULL;
-	if (component->has_simulation_data) {
-		char     detail[160] = { 0 };
-		uint32_t cooked_count = 0;
+	*sample = NULL;
+	if (!component->topology.face_count) {
+		/* No collision faces, so no BVH; cooked data has nothing to cover. */
+		if (component->has_simulation_data)
+			return component_error(error, error_size, component_index,
+								   "cooked simulation data on a component without faces", NULL);
+	} else if (component->has_simulation_data) {
+		const AeronFaceBvhGeometry geometry     = topology_geometry(&component->topology);
+		char                       detail[160]  = { 0 };
+		uint32_t                   cooked_count = 0;
 		if (!AeronFaceBvh_LoadCooked(component->simulation_data, component->simulation_data_size,
-									 component->simulation_topology_hash, &geometry, unique_count, &mesh->bvh, sample,
-									 &cooked_count, detail, sizeof detail))
-			return component_error(error, error_size, component_index, "invalid cooked simulation data", detail);
+									 component->simulation_topology_hash, &geometry, unique_count, &mesh->bvh,
+									 sample, &cooked_count, detail, sizeof detail))
+			return component_error(error, error_size, component_index, "invalid cooked simulation data",
+								   detail);
 		mesh->bvh_cooked = true;
 		return cooked_count >= sample_count ||
 			   component_error(error, error_size, component_index, "cooked vertex sample is too short", NULL);
+	} else {
+		const AeronFaceBvhGeometry geometry = topology_geometry(&component->topology);
+		SDL_Log("[opt_sim] component %u has no cooked simulation data; building its BVH at load",
+				component_index);
+		mesh->bvh = AeronFaceBvh_Build(&geometry);
+		if (!mesh->bvh)
+			return component_error(error, error_size, component_index, "BVH build failed", NULL);
 	}
-	SDL_Log("[opt_sim] component %u has no cooked simulation data; building its BVH at load", component_index);
-	mesh->bvh = AeronFaceBvh_Build(&geometry);
-	if (!mesh->bvh)
-		return component_error(error, error_size, component_index, "BVH build failed", NULL);
 	if (!sample_count)
 		return true;
 	*sample = malloc((size_t)sample_count * sizeof **sample);
@@ -230,8 +240,8 @@ static bool build_mesh(const AeronFlightModel* model, uint32_t component_index, 
 	uint32_t*                   sample    = NULL;
 	uint32_t*                   first_face = NULL;
 	double*                     normal_sum = NULL;
-	if (!remap || !unique || !topology->face_count) {
-		component_error(error, error_size, component_index, "empty topology or out of memory", NULL);
+	if (!remap || !unique) {
+		component_error(error, error_size, component_index, "out of memory", NULL);
 		goto done;
 	}
 	const uint32_t unique_count = Aeron_FlightTopologyDeduplicate(topology, remap, unique);
@@ -263,10 +273,10 @@ static bool build_mesh(const AeronFlightModel* model, uint32_t component_index, 
 	mesh->vertices     = malloc(((size_t)unique_count + 2) * sizeof *mesh->vertices);
 	mesh->normals      = malloc((size_t)unique_count * sizeof *mesh->normals);
 	mesh->face_count   = topology->face_count;
-	mesh->faces        = malloc((size_t)topology->face_count * sizeof *mesh->faces);
-	normal_sum         = calloc((size_t)unique_count * 3, sizeof *normal_sum);
-	first_face         = malloc((size_t)unique_count * sizeof *first_face);
-	if (!mesh->vertices || !mesh->normals || !mesh->faces || !normal_sum || !first_face)
+	mesh->faces = topology->face_count ? malloc((size_t)topology->face_count * sizeof *mesh->faces) : NULL;
+	normal_sum  = calloc((size_t)unique_count * 3, sizeof *normal_sum);
+	first_face  = malloc((size_t)unique_count * sizeof *first_face);
+	if (!mesh->vertices || !mesh->normals || (topology->face_count && !mesh->faces) || !normal_sum || !first_face)
 		goto oom;
 	memset(first_face, 0xff, (size_t)unique_count * sizeof *first_face);
 	for (uint32_t index = 0; index < unique_count; ++index)

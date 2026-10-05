@@ -279,8 +279,9 @@ static AeronFlightVec3 bounds_center(const AeronFlightBounds* bounds) {
 }
 
 /* Builds the simulation topology from `node`'s mesh: the component itself or
- * its collision child. Degenerate triangles are dropped; an empty result is
- * invalid. `topology_bounds` receives the bounds of all mesh positions. */
+ * its collision child. Degenerate triangles are dropped; when all are, the
+ * component has no collision faces. `topology_bounds` receives the bounds of
+ * all mesh positions. */
 static bool build_component_topology(const cgltf_node* node, AeronFlightComponent* component,
 									 AeronFlightBounds* topology_bounds) {
 	uint32_t position_count = 0;
@@ -373,7 +374,7 @@ static bool build_component_topology(const cgltf_node* node, AeronFlightComponen
 		position_offset += (uint32_t)positions->count;
 	}
 	component->topology.face_count = face_offset;
-	return face_offset != 0;
+	return true;
 }
 
 static bool valid_tag(const char* tag) {

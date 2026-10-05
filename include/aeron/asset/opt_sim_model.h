@@ -42,7 +42,7 @@ typedef struct AeronOptSimMesh {
 	AeronOptHardpoint*     hardpoints;
 	uint32_t               glow_count;
 	AeronOptEngineGlow*    glows;
-	AeronFaceBvh*          bvh; /* OPT units; cooked or built at load */
+	AeronFaceBvh*          bvh; /* OPT units; cooked or built at load; NULL without faces */
 	bool                   bvh_cooked;
 } AeronOptSimMesh;
 
