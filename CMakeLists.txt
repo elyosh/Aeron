@@ -883,7 +883,6 @@ target_include_directories(aeron_scene
     PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/include
     PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/third_party/cgltf
         ${CMAKE_CURRENT_SOURCE_DIR}/third_party/stb
 )
 
@@ -892,8 +891,6 @@ target_link_libraries(aeron_scene
         aeron
         aeron_flight_model
     PRIVATE
-        aeron_cgltf
-        aeron_cjson
         aeron_yaml
         aeron_fsr3
         zstd::libzstd

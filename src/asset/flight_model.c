@@ -613,8 +613,6 @@ static bool build_component_semantics(const cgltf_data* data, const cgltf_node* 
 	} else {
 		component->bounds = topology_bounds;
 	}
-	component->span   = bounds_span(&component->bounds);
-	component->center = bounds_center(&component->bounds);
 	if (!has_descriptor_geometry) {
 		/* The fallback descriptor describes the simulation geometry. */
 		component->descriptor_span   = bounds_span(&topology_bounds);
@@ -876,22 +874,6 @@ bool Aeron_FlightModelBuildSemanticsMemory(const void* bytes, size_t size, const
 	return built;
 }
 
-bool Aeron_FlightModelBuild(const char* glb_path, AeronFlightModel* out) {
-	if (!glb_path || !out)
-		return false;
-	cgltf_options options = { 0 };
-	cgltf_data*   data    = NULL;
-	if (cgltf_parse_file(&options, glb_path, &data) != cgltf_result_success)
-		return false;
-	if (cgltf_load_buffers(&options, data, glb_path) != cgltf_result_success) {
-		cgltf_free(data);
-		return false;
-	}
-	const bool built = Aeron_FlightModelBuildData(data, glb_path, out);
-	cgltf_free(data);
-	return built;
-}
-
 void Aeron_FlightModelReleaseRenderData(AeronFlightModel* model) {
 	if (!model)
 		return;
@@ -929,14 +911,17 @@ void Aeron_FlightModelFreeSemantics(AeronFlightModel* model) {
 	model->render_bvh = render_bvh;
 }
 
-int32_t Aeron_FlightModelFindComponentByTag(const AeronFlightModel* model, const char* tag) {
+uint32_t Aeron_FlightModelCountTag(const AeronFlightModel* model, const char* tag) {
+	uint32_t count = 0;
 	if (!model || !tag)
-		return -1;
+		return 0;
+	/* Duplicates within one component are dropped at load, so each match is
+	 * a distinct component. */
 	for (uint32_t index = 0; index < model->component_count; ++index) {
 		const AeronFlightComponent* component = &model->components[index];
 		for (uint32_t tag_index = 0; tag_index < component->tag_count; ++tag_index)
 			if (strcmp(component->tags[tag_index].name, tag) == 0)
-				return (int32_t)index;
+				++count;
 	}
-	return -1;
+	return count;
 }

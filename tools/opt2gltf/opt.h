@@ -28,9 +28,6 @@
 extern "C" {
 #endif
 
-/* World units to meters. 1 unit = 1600 / 65536 m, about 2.44 cm. */
-#define OPT_UNIT_TO_METERS (1600.0f / 65536.0f)
-
 /*
  * Model-space axes (empirical, consistent across the IVFILES set):
  *   +Z = up                 (top/bottom turrets sit at opposite Z signs)

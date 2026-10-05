@@ -83,11 +83,9 @@ typedef struct AeronFlightComponent {
 	 * set, otherwise the component's render mesh. */
 	bool                has_collision;
 	AeronFlightTopology topology;
-	/* Render-mesh bounds, used for render culling. They remain independent
-	 * from the authored descriptor and from a collision child. */
+	/* Render-mesh bounds; the model bounds are their union. They remain
+	 * independent from the authored descriptor and from a collision child. */
 	AeronFlightBounds     bounds;
-	AeronFlightVec3       span;
-	AeronFlightVec3       center;
 	uint32_t              hardpoint_count;
 	AeronFlightHardpoint* hardpoints;
 	uint32_t              first_engine_glow;
@@ -130,8 +128,6 @@ bool Aeron_FlightModelBuildData(const struct cgltf_data* data, const char* sourc
 bool Aeron_FlightModelBuildMemory(const void* bytes, size_t size, const char* source_label,
 								  AeronFlightModel* out);
 
-bool Aeron_FlightModelBuild(const char* glb_path, AeronFlightModel* out);
-
 /* Builds only the simulation-facing data (components, topology, hardpoints,
  * engine glows, bounds); `render` stays zeroed. Free with
  * Aeron_FlightModelFreeSemantics. */
@@ -143,8 +139,9 @@ void Aeron_FlightModelFree(AeronFlightModel* model);
 /* Frees the simulation-facing data only; `render` is left untouched. */
 void Aeron_FlightModelFreeSemantics(AeronFlightModel* model);
 
-/* Returns the index of the first component carrying `tag`, or -1. */
-int32_t Aeron_FlightModelFindComponentByTag(const AeronFlightModel* model, const char* tag);
+/* Returns how many components carry `tag`. Games that bind a tag to one
+ * component check for exactly one. */
+uint32_t Aeron_FlightModelCountTag(const AeronFlightModel* model, const char* tag);
 
 #ifdef __cplusplus
 }
