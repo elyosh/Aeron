@@ -883,6 +883,31 @@ void Aeron_FlightModelReleaseRenderData(AeronFlightModel* model) {
 	model->render_bvh = NULL;
 }
 
+void Aeron_FlightModelReleaseSimulationData(AeronFlightModel* model) {
+	if (!model)
+		return;
+	for (uint32_t index = 0; index < model->component_count; ++index) {
+		AeronFlightComponent* component = &model->components[index];
+		free(component->topology.positions);
+		free(component->topology.faces);
+		free(component->hardpoints);
+		free(component->tags);
+		free(component->simulation_data);
+		memset(&component->topology, 0, sizeof component->topology);
+		component->hardpoint_count      = 0;
+		component->hardpoints           = NULL;
+		component->tag_count            = 0;
+		component->tags                 = NULL;
+		component->has_simulation_data  = false;
+		component->simulation_data      = NULL;
+		component->simulation_data_size = 0;
+	}
+	free(model->render_data);
+	model->has_render_data  = false;
+	model->render_data      = NULL;
+	model->render_data_size = 0;
+}
+
 void Aeron_FlightModelFree(AeronFlightModel* model) {
 	if (!model)
 		return;

@@ -135,6 +135,13 @@ bool Aeron_FlightModelBuildSemanticsMemory(const void* bytes, size_t size, const
 										   AeronFlightModel* out);
 
 void Aeron_FlightModelReleaseRenderData(AeronFlightModel* model);
+/* Frees the data only simulation consumers read: each component's topology,
+ * hardpoints, tags and cooked simulation data, and the cooked render data.
+ * What AeronScene_MeshCreate reads stays: render data, render BVH,
+ * component mesh types, rotations and bounds, engine glows and model bounds.
+ * For a game that builds its simulation data first and then hands the
+ * model to its renderer. */
+void Aeron_FlightModelReleaseSimulationData(AeronFlightModel* model);
 void Aeron_FlightModelFree(AeronFlightModel* model);
 /* Frees the simulation-facing data only; `render` is left untouched. */
 void Aeron_FlightModelFreeSemantics(AeronFlightModel* model);
