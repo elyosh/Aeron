@@ -359,6 +359,13 @@ int AeronScene_SetMeshSampler(AeronScene3D* scene, AeronSampler* sampler);
  * does not need a build-mode conditional. */
 void AeronScene_SetPbrDebugViews(AeronScene3D* scene, int enabled);
 
+/* Debug material override for this frame (Begin resets it): every PBR
+ * material is shaded with the given metallic and perceptual roughness, for
+ * checking lighting and reflections without authored PBR assets. Enabling
+ * it selects the diagnostic shader variant; a no-op in builds without the
+ * debug UI. */
+void AeronScene_SetPbrDebugMaterial(AeronScene3D* scene, int enabled, float metallic, float roughness);
+
 /* Image-based lighting environment for the PBR shader, for the current
  * frame. `diffuse` is a Lambert irradiance / pi cube; its sample along the
  * shading normal, times `diffuse_strength`, adds to the diffuse ambient.

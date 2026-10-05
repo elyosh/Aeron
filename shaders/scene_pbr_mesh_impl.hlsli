@@ -21,11 +21,11 @@
  *   b0 space3 — DirectionalShadowFS (scene-owned)
  *   b1 space3 — PbrLightFS          (shared lighting and tuning)
  *   b2 space3 — scene lighting block (clustered lights + environment)
- *   t8 space2 — material storage (after eight sampled textures)
- *   t9 space2 — packed variant-map storage
- *   t10 space2 — scene point-light storage
- *   t11 space2 — cluster headers
- *   t12 space2 — cluster light indices
+ *   t10 space2 — material storage (after ten sampled textures)
+ *   t11 space2 — packed variant-map storage
+ *   t12 space2 — scene point-light storage
+ *   t13 space2 — cluster headers
+ *   t14 space2 — cluster light indices
  *
  * Texture / sampler slots:
  *   t0/s0 — base_color atlas    (sRGB)
@@ -36,15 +36,17 @@
  *   t5/s5 — comparison shadow depth
  *   t6/s6 — raw shadow depth for PCSS blocker search
  *   t7/s7 — diffuse environment cube (Lambert irradiance / pi)
+ *   t8/s8 — specular environment cube (GGX roughness mips)
+ *   t9/s9 — split-sum BRDF table (N.V, perceptual roughness) -> (A, B)
  */
 
 #define AERON_DIRECTIONAL_SHADOW_UNIFORM_REGISTER b0
 #define AERON_PBR_LIGHT_UNIFORM_REGISTER b1
-#define AERON_PBR_MATERIAL_REGISTER t8
-#define AERON_PBR_VARIANT_REGISTER t9
-#define AERON_PBR_POINT_LIGHT_REGISTER t10
-#define AERON_CLUSTER_HEADER_REGISTER t11
-#define AERON_CLUSTER_INDEX_REGISTER t12
+#define AERON_PBR_MATERIAL_REGISTER t10
+#define AERON_PBR_VARIANT_REGISTER t11
+#define AERON_PBR_POINT_LIGHT_REGISTER t12
+#define AERON_CLUSTER_HEADER_REGISTER t13
+#define AERON_CLUSTER_INDEX_REGISTER t14
 #include "scene_pbr_lighting.hlsli"
 #include "scene_pbr_atlas_sample.hlsli"
 #include "scene_pbr_vsout.hlsli"
@@ -64,14 +66,23 @@ Texture2D<float2> g_ao      : register(t4, space2);
 SamplerState g_ao_sampler   : register(s4, space2);
 TextureCube<float4> g_environment : register(t7, space2);
 SamplerState g_environment_sampler : register(s7, space2);
+TextureCube<float4> g_specular_environment : register(t8, space2);
+SamplerState g_specular_environment_sampler : register(s8, space2);
+Texture2D<float2> g_brdf_lut : register(t9, space2);
+SamplerState g_brdf_lut_sampler : register(s9, space2);
+
+float3 environment_local(float3 world_direction)
+{
+	return float3(dot(world_direction, fs_environment_basis[0].xyz),
+				  dot(world_direction, fs_environment_basis[1].xyz),
+				  dot(world_direction, fs_environment_basis[2].xyz));
+}
 
 float3 detailed_environment(float3 world_direction)
 {
 	if (fs_environment_params.x <= 0.0f) return 0.0f;
-	float3 local_direction = float3(dot(world_direction, fs_environment_basis[0].xyz),
-									dot(world_direction, fs_environment_basis[1].xyz),
-									dot(world_direction, fs_environment_basis[2].xyz));
-	return max(g_environment.SampleLevel(g_environment_sampler, normalize(local_direction), 0.0f).rgb,
+	return max(g_environment.SampleLevel(g_environment_sampler, normalize(environment_local(world_direction)),
+										 0.0f).rgb,
 			   0.0f) * fs_environment_params.x;
 }
 
@@ -136,7 +147,10 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
     float wrap_n = saturate((ndotl + light_wrap) / (1.0f + light_wrap));
     wrap_n = lerp(wrap_n, wrap_n * wrap_n, light_wrap);
     float  lambert_term = saturate(wrap_n * light_intensity);
-    float3 ambient_rgb  = world_ambient(N) + detailed_environment(N);
+    float3 ambient_rgb  = world_ambient(N);
+    /* Kept apart from the ambient so specular image-based lighting can
+     * take its Fresnel share (1 - F_ss) below. */
+    float3 environment_diffuse_rgb = detailed_environment(N);
     uint shadow_cascade = 4u;
     float shadow_cascade_blend = 0.0f;
     float shadow_coverage = 0.0f;
@@ -194,6 +208,12 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
         mp.roughness = mr.g * m.metal_rough.y;
         metallic     = mr.b * m.metal_rough.x;
     }
+#if AERON_PBR_DEBUG_VIEWS
+    if (fs_debug_material.x != 0.0f) {
+        metallic     = fs_debug_material.y;
+        mp.roughness = fs_debug_material.z;
+    }
+#endif
     mp.roughness = max(mp.roughness, 0.045f);
     mp.F0 = lerp(float3(0.04f, 0.04f, 0.04f), albedo, metallic);
     base_rgb *= (1.0f - metallic);
@@ -224,6 +244,32 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
     /* No explicit N·L gate: cook_torrance_spec's Smith G_L term already
      * drives specular to zero as N·L→0, so the dark side is handled
      * without a redundant smoothstep on the terminator. */
+    /* ===== Image-based lighting ================================
+     * Split-sum specular from the GGX-prefiltered cube (mip = roughness
+     * x (mips - 1)) and the BRDF table, occluded by SSAO with Lagarde's
+     * N.V-dependent approximation so creases do not reflect the open sky.
+     * The diffuse environment keeps the energy specular does not take.
+     * Not shadowed: the directional shadow covers the analytic light only.
+     * Without a specular cube both terms are as before. */
+    float3 spec_ibl_rgb = float3(0.0f, 0.0f, 0.0f);
+    float3 environment_diffuse_weight = float3(1.0f, 1.0f, 1.0f);
+    if (fs_environment_params.y > 0.0f && fs_environment_params.z >= 1.0f) {
+        float  ndotv_ibl = saturate(dot(N_spec, V));
+        float3 R = reflect(-V, N_spec);
+        float3 prefiltered = g_specular_environment.SampleLevel(
+            g_specular_environment_sampler, normalize(environment_local(R)),
+            mp.roughness * (fs_environment_params.z - 1.0f)).rgb;
+        float2 split = g_brdf_lut.SampleLevel(g_brdf_lut_sampler, float2(ndotv_ibl, mp.roughness), 0.0f);
+        float3 F_ss = mp.F0 * split.x + split.y;
+        float  specular_occlusion =
+            saturate(pow(ndotv_ibl + ao, exp2(-16.0f * mp.roughness - 1.0f)) - 1.0f + ao);
+        spec_ibl_rgb = max(prefiltered, 0.0f) * F_ss * fs_environment_params.y * specular_occlusion;
+        environment_diffuse_weight = 1.0f - F_ss;
+    }
+    float3 environment_diffuse_term =
+        albedo * (1.0f - metallic) * environment_diffuse_rgb * environment_diffuse_weight * ao;
+    base_rgb += environment_diffuse_term;
+
     float  G_term;
     float3 spec_brdf = cook_torrance_spec(N_spec, V, L, mp, G_term);
     float3 spec_rgb  = spec_brdf
@@ -240,7 +286,7 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
         base_rgb += albedo * (1.0f - metallic) * point_diff;
     }
 
-    float3 lit = base_rgb + spec_rgb;
+    float3 lit = base_rgb + spec_rgb + spec_ibl_rgb;
 
     if (fs_cluster_debug_view != 0u && fs_cluster_enabled != 0u) {
         _out.color = float4(clustered_light_debug_color(i.position.xy, i.world_pos), 1.0f);
@@ -310,6 +356,8 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
     else if (isolate == 7) lit = V * 0.5f + 0.5f;
     else if (isolate == 8) lit = (dot(N, V) * 0.5f + 0.5f).xxx;
     else if (isolate == 9) lit = i.local_rgb;
+    else if (isolate == 10) lit = environment_diffuse_term;
+    else if (isolate == 11) lit = spec_ibl_rgb;
     if (isolate >= 4) { _out.color = float4(lit, 1.0f); return _out; }
 #endif
 

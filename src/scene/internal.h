@@ -165,12 +165,13 @@ typedef struct AeronSceneLightingUniformGPU {
 	AeronSceneClusterUniformGPU cluster;
 	float                       environment_params[4];   /* diffuse, specular strength, specular mips, 0 */
 	float                       environment_basis[3][4]; /* world-to-local rows */
+	float                       debug_material[4];       /* enabled, metallic, roughness, 0 */
 } AeronSceneLightingUniformGPU;
 
 /* Layout checks against the HLSL blocks (ClusteredLightUniform, 112 bytes;
- * with the environment, 176 bytes). */
+ * with the environment and the debug material, 192 bytes). */
 typedef char AeronSceneClusterUniformSizeCheck[sizeof(AeronSceneClusterUniformGPU) == 112 ? 1 : -1];
-typedef char AeronSceneLightingUniformSizeCheck[sizeof(AeronSceneLightingUniformGPU) == 176 ? 1 : -1];
+typedef char AeronSceneLightingUniformSizeCheck[sizeof(AeronSceneLightingUniformGPU) == 192 ? 1 : -1];
 
 enum {
 	AERON_SCENE_CLUSTER_ENABLED    = 1u << 0,
@@ -474,6 +475,9 @@ struct AeronScene3D {
 	 * requires mesh or geometry-backed post-processing. */
 	int pbr_tried;
 	int pbr_debug_views;
+	/* Debug material override (AeronScene_SetPbrDebugMaterial): enabled,
+	 * metallic, roughness, 0. Reset by Begin. */
+	float pbr_debug_material[4];
 	/* Immutable world samplers for OFF/Native AA/Quality/Balanced/Performance.
 	 * pbr_sampler and mesh_sampler select the active entries. */
 	AeronSampler* pbr_samplers[AERON_TEMPORAL_PERFORMANCE + 1];
@@ -512,6 +516,9 @@ AeronRenderTarget*         AeronSceneInternal_CreateColorRt(AeronTextureFormat f
 AeronBlendStateDesc        AeronSceneInternal_BlendOpaque(void);
 AeronTexture*              AeronSceneInternal_WhiteTexture(void);
 AeronTexture*              AeronSceneInternal_WhiteCubeTexture(void);
+/* Process-shared split-sum BRDF table: 64x64 RG16F, u = N.V, v = perceptual
+ * roughness, (A, B) with F = F0 * A + B. Generated once on the CPU. */
+AeronTexture*              AeronSceneInternal_BrdfLutTexture(void);
 const AeronSceneMeshTable* AeronScenePbr_IdentityTable(void);
 int                        AeronSceneStorage_Prepare(struct AeronScene3D* s, AeronCommandBuffer* cmd);
 void                       AeronSceneStorage_Release(struct AeronScene3D* s);

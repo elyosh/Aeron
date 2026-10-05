@@ -37,6 +37,9 @@ cbuffer ClusteredLightUniform : AERON_CLUSTER_UNIFORM_BINDING {
 	 * directions into the cubes' local frame. */
 	float4 fs_environment_params;
 	float4 fs_environment_basis[3];
+	/* Debug material override: x = enabled, y = metallic, z = perceptual
+	 * roughness. Read only by the diagnostic shader variant. */
+	float4 fs_debug_material;
 #endif
 };
 

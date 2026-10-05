@@ -446,6 +446,7 @@ int AeronScene_Begin(AeronScene3D* s, const AeronSceneCamera* camera) {
 	memset(&s->pbr_environment, 0, sizeof s->pbr_environment);
 	s->pbr_environment_set = 0;
 	s->pbr_debug_views     = 0;
+	memset(s->pbr_debug_material, 0, sizeof s->pbr_debug_material);
 	memset(&s->directional_shadow, 0, sizeof s->directional_shadow);
 	memset(&s->shadow_uniform, 0, sizeof s->shadow_uniform);
 	memset(&s->shadow_stats, 0, sizeof s->shadow_stats);
@@ -1027,6 +1028,26 @@ int AeronScene_SetMeshSampler(AeronScene3D* s, AeronSampler* sampler) {
 	return 1;
 }
 
+void AeronScene_SetPbrDebugMaterial(AeronScene3D* s, int enabled, float metallic, float roughness) {
+#ifdef AERON_DEBUG_UI
+	if (!s) {
+		return;
+	}
+	memset(s->pbr_debug_material, 0, sizeof s->pbr_debug_material);
+	if (enabled && isfinite(metallic) && isfinite(roughness)) {
+		s->pbr_debug_material[0] = 1.0f;
+		s->pbr_debug_material[1] = fminf(fmaxf(metallic, 0.0f), 1.0f);
+		s->pbr_debug_material[2] = fminf(fmaxf(roughness, 0.0f), 1.0f);
+		s->pbr_debug_views       = 1;
+	}
+#else
+	(void)s;
+	(void)enabled;
+	(void)metallic;
+	(void)roughness;
+#endif
+}
+
 void AeronScene_SetPbrDebugViews(AeronScene3D* s, int enabled) {
 #ifdef AERON_DEBUG_UI
 	if (s) {
@@ -1059,9 +1080,12 @@ void AeronScene_SetPbrEnvironmentPackage(AeronScene3D* s, const AeronEnvironment
 	}
 	AeronScenePbrEnvironment environment;
 	memset(&environment, 0, sizeof environment);
-	environment.diffuse          = package->diffuse;
-	environment.sampler          = package->sampler;
-	environment.diffuse_strength = package->settings.diffuse_strength;
+	environment.diffuse            = package->diffuse;
+	environment.specular           = package->specular;
+	environment.sampler            = package->sampler;
+	environment.specular_mip_count = package->specular_mip_count;
+	environment.diffuse_strength   = package->settings.diffuse_strength;
+	environment.specular_strength  = package->settings.specular_strength;
 	memcpy(environment.world_to_local, package->world_to_cube, sizeof environment.world_to_local);
 	AeronScene_SetPbrEnvironment(s, &environment);
 }
