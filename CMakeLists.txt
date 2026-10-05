@@ -841,6 +841,7 @@ add_library(aeron_scene STATIC
     src/scene/clustered_lights.c
     src/scene/world.c
     src/scene/settings.c
+    src/scene/environment.c
     src/scene/billboards3d.c
     src/scene/mesh.c
     src/scene/mesh_overlay.c
