@@ -957,6 +957,10 @@ if(AERON_BUILD_TOOLS)
         RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
 endif()
 
+if(AERON_BUILD_TOOLS)
+    add_subdirectory(tools/environment_bake)
+endif()
+
 if(AERON_BUILD_TOOLS OR AERON_BUILD_SCENE_CAPTURE)
     add_subdirectory(tools/scene_capture)
 endif()

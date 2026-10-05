@@ -201,14 +201,14 @@ static bool parse_visual(const AeronConfigNode* light_map, const char* what,
 	return env_error(error, kind, "%s: 'kind' must be 'disc' or 'sprite'", visual_what);
 }
 
-static bool parse_light(const AeronConfigNode* map, const char* package_name, size_t index,
+static bool parse_light(const AeronConfigNode* map, const char* owner, size_t index,
 						AeronEnvironmentLightDefinition* light, AeronConfigError* error) {
 	static const char* const fields[] = {
 		"name",          "direction_cube",         "color_linear", "intensity", "primary",
 		"casts_shadows", "angular_radius_degrees", "lens_flare",   "visual",
 	};
 	char what[160];
-	snprintf(what, sizeof what, "package '%s' light %zu", package_name, index);
+	snprintf(what, sizeof what, "%s light %zu", owner, index);
 	if (AeronConfigNode_Type(map) != AERON_CONFIG_MAP)
 		return env_error(error, map, "%s must be a map", what);
 	if (!check_fields(map, what, fields, sizeof fields / sizeof fields[0], error))
@@ -222,7 +222,7 @@ static bool parse_light(const AeronConfigNode* map, const char* package_name, si
 						 "%s: 'name' must be 1 to 63 characters of lower-case letters, digits, '.' and '_'",
 						 what);
 	snprintf(light->name, sizeof light->name, "%s", AeronConfigNode_String(name, ""));
-	snprintf(what, sizeof what, "package '%s' light '%s'", package_name, light->name);
+	snprintf(what, sizeof what, "%s light '%s'", owner, light->name);
 
 	const AeronConfigNode* direction_node = NULL;
 	if (!read_vec3(map, what, "direction_cube", light->direction_cube, &direction_node, error))
@@ -251,39 +251,51 @@ static bool parse_light(const AeronConfigNode* map, const char* package_name, si
 		   parse_visual(map, what, light, error);
 }
 
+bool AeronEnvironment_ParseLights(const AeronConfigNode* lights, const char* owner,
+								  AeronEnvironmentLightDefinition out[AERON_ENV_MAX_LIGHTS],
+								  uint32_t* out_count, int32_t* out_primary, AeronConfigError* error) {
+	if (!owner)
+		owner = "environment";
+	if (!lights || !out || !out_count || !out_primary)
+		return env_error(error, lights, "%s: missing 'directional_lights'", owner);
+	if (AeronConfigNode_Type(lights) != AERON_CONFIG_SEQUENCE)
+		return env_error(error, lights, "%s: 'directional_lights' must be a sequence", owner);
+	const size_t count = AeronConfigNode_SequenceCount(lights);
+	if (count > AERON_ENV_MAX_LIGHTS)
+		return env_error(error, lights, "%s: at most %d directional lights are allowed", owner,
+						 AERON_ENV_MAX_LIGHTS);
+
+	memset(out, 0, sizeof(AeronEnvironmentLightDefinition) * AERON_ENV_MAX_LIGHTS);
+	*out_count   = 0;
+	*out_primary = -1;
+	for (size_t i = 0; i < count; ++i) {
+		const AeronConfigNode*           node  = AeronConfigNode_SequenceGet(lights, i);
+		AeronEnvironmentLightDefinition* light = &out[i];
+		if (!parse_light(node, owner, i, light, error))
+			return false;
+		for (size_t j = 0; j < i; ++j)
+			if (strcmp(out[j].name, light->name) == 0)
+				return env_error(error, node, "%s: duplicate light name '%s'", owner, light->name);
+		if (light->casts_shadows && !light->primary)
+			return env_error(error, node, "%s light '%s': 'casts_shadows' requires 'primary'", owner,
+							 light->name);
+		if (light->primary) {
+			if (*out_primary >= 0)
+				return env_error(error, node, "%s: more than one light sets 'primary'", owner);
+			*out_primary = (int32_t)i;
+		}
+	}
+	*out_count = (uint32_t)count;
+	return true;
+}
+
 static bool parse_lights(const AeronConfigNode* package_map, AeronEnvironmentDefinition* def,
 						 AeronConfigError* error) {
 	char what[160];
 	snprintf(what, sizeof what, "package '%s'", def->name);
 	const AeronConfigNode* lights = require_field(package_map, what, "directional_lights", error);
-	if (!lights)
-		return false;
-	if (AeronConfigNode_Type(lights) != AERON_CONFIG_SEQUENCE)
-		return env_error(error, lights, "%s: 'directional_lights' must be a sequence", what);
-	const size_t count = AeronConfigNode_SequenceCount(lights);
-	if (count > AERON_ENV_MAX_LIGHTS)
-		return env_error(error, lights, "%s: at most %d directional lights are allowed", what,
-						 AERON_ENV_MAX_LIGHTS);
-
-	for (size_t i = 0; i < count; ++i) {
-		const AeronConfigNode*           node  = AeronConfigNode_SequenceGet(lights, i);
-		AeronEnvironmentLightDefinition* light = &def->lights[i];
-		if (!parse_light(node, def->name, i, light, error))
-			return false;
-		for (size_t j = 0; j < i; ++j)
-			if (strcmp(def->lights[j].name, light->name) == 0)
-				return env_error(error, node, "%s: duplicate light name '%s'", what, light->name);
-		if (light->casts_shadows && !light->primary)
-			return env_error(error, node, "%s light '%s': 'casts_shadows' requires 'primary'", what,
-							 light->name);
-		if (light->primary) {
-			if (def->primary_light_index >= 0)
-				return env_error(error, node, "%s: more than one light sets 'primary'", what);
-			def->primary_light_index = (int32_t)i;
-		}
-	}
-	def->light_count = (uint32_t)count;
-	return true;
+	return lights && AeronEnvironment_ParseLights(lights, what, def->lights, &def->light_count,
+												  &def->primary_light_index, error);
 }
 
 static bool parse_package(const char* name, const AeronConfigNode* map, AeronEnvironmentDefinition* def,

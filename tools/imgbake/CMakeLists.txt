@@ -1,7 +1,8 @@
 # imgbake — shared remaster-asset encoder backend.
 #
-# Provides HD upscaling, atlas packing, KTX2 (BC7/BC6H/BC5 + zstd)
-# encoding, PNG I/O, palette helpers, and TTF/glyph font-atlas baking.
+# Provides HD upscaling, atlas packing, KTX2 (BC7/BC6H/BC5/RGBA16F + zstd)
+# encoding, PNG and Radiance HDR I/O, environment-cube filtering, palette
+# helpers, and TTF/glyph font-atlas baking.
 #
 # Image containers (Image8/AnimImage) come from delt.h/anim.h as TYPES
 # only; the DELT/ANIM decoders stay game-side (each baker fills the
@@ -18,6 +19,8 @@ add_library(imgbake STATIC
     ktx2_writer.c
     png_write.c
     png_read.c
+    hdr_read.c
+    envmap.c
     palette.c
     font_atlas.c
     font_atlas_load.c
@@ -56,3 +59,9 @@ set_source_files_properties(
     ${IMGBAKE_TP}/bc7enc/rgbcx.cpp
     ${IMGBAKE_TP}/dxtex/BC6HBC7.cpp
     PROPERTIES COMPILE_FLAGS "-w -O3")
+
+# Environment filtering integrates millions of samples per cube; keep it
+# optimized in debug builds too (host tooling).
+if(NOT MSVC)
+    set_source_files_properties(envmap.c PROPERTIES COMPILE_OPTIONS "-O3")
+endif()

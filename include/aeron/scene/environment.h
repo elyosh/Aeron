@@ -96,6 +96,13 @@ const AeronEnvironmentDefinition* AeronEnvironmentDefinitionSet_Get(const AeronE
 const AeronEnvironmentDefinition* AeronEnvironmentDefinitionSet_Find(const AeronEnvironmentDefinitionSet* set,
 																	 const char* name);
 
+/* Parses a `directional_lights` sequence with the package light schema
+ * (also used by tools that take a light list on its own). `owner` names
+ * the list in error messages. */
+bool AeronEnvironment_ParseLights(const AeronConfigNode* lights, const char* owner,
+								  AeronEnvironmentLightDefinition out[AERON_ENV_MAX_LIGHTS],
+								  uint32_t* out_count, int32_t* out_primary, AeronConfigError* error);
+
 /* Package and light names: 1 to 63 characters of lower-case ASCII letters,
  * digits, '.' and '_'. */
 bool AeronEnvironment_IsValidName(const char* name);

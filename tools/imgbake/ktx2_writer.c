@@ -48,6 +48,7 @@ static const uint8_t kKtx2Magic[12] = {
 
 #define VK_FORMAT_R8G8B8A8_UNORM 37
 #define VK_FORMAT_R8G8B8A8_SRGB 43
+#define VK_FORMAT_R16G16B16A16_SFLOAT 97
 #define VK_FORMAT_BC5_UNORM_BLOCK 141
 #define VK_FORMAT_BC6H_UFLOAT_BLOCK 143
 #define VK_FORMAT_BC6H_SFLOAT_BLOCK 144
@@ -82,7 +83,11 @@ static int format_block_w(uint32_t vk) { return format_is_bc_4x4_16b(vk) ? 4 : 1
 
 static int format_block_h(uint32_t vk) { return format_is_bc_4x4_16b(vk) ? 4 : 1; }
 
-static int format_block_bytes(uint32_t vk) { return format_is_bc_4x4_16b(vk) ? 16 : 4; }
+static int format_block_bytes(uint32_t vk) {
+	if (format_is_bc_4x4_16b(vk))
+		return 16;
+	return vk == VK_FORMAT_R16G16B16A16_SFLOAT ? 8 : 4;
+}
 
 /* Compute the bytes for a level at (w, h) for a given format. Block
  * formats round up to block dim. */
@@ -295,6 +300,16 @@ bool write_ktx2_rgba_mips(const char* path, const Ktx2WriteLevel* levels, int le
 						  bool zstd) {
 	uint32_t vk = (tf == KTX2_TF_SRGB) ? VK_FORMAT_R8G8B8A8_SRGB : VK_FORMAT_R8G8B8A8_UNORM;
 	return write_ktx2_levels(path, vk, 1, levels, level_count, zstd);
+}
+
+bool write_ktx2_bc6h_levels(const char* path, int face_count, const Ktx2WriteLevel* levels, int level_count,
+							bool zstd) {
+	return write_ktx2_levels(path, VK_FORMAT_BC6H_UFLOAT_BLOCK, face_count, levels, level_count, zstd);
+}
+
+bool write_ktx2_rgba16f_levels(const char* path, int face_count, const Ktx2WriteLevel* levels, int level_count,
+							   bool zstd) {
+	return write_ktx2_levels(path, VK_FORMAT_R16G16B16A16_SFLOAT, face_count, levels, level_count, zstd);
 }
 
 bool write_ktx2_bc7_mips(const char* path, const Ktx2WriteLevel* levels, int level_count, Ktx2TransferFn tf,

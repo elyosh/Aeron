@@ -7,8 +7,10 @@
  * Subset emitted (matches what the runtime reader accepts):
  *   - 2D (faceCount=1) or cubemap (faceCount=6), single layer.
  *   - supercompressionScheme=0 (raw) or 2 (zstd).
- *   - vkFormat in { 37 R8G8B8A8_UNORM, 145 BC7_UNORM_BLOCK,
- *                  146 BC7_SRGB_BLOCK }. The SRGB variant is used
+ *   - vkFormat in { 37 R8G8B8A8_UNORM, 43 R8G8B8A8_SRGB,
+ *                  97 R16G16B16A16_SFLOAT, 141 BC5_UNORM_BLOCK,
+ *                  143 BC6H_UFLOAT_BLOCK, 145 BC7_UNORM_BLOCK,
+ *                  146 BC7_SRGB_BLOCK }. The SRGB variants are used
  *     when requested so the GPU can decode sRGB at sample time.
  *   - DFD/KVD/SGD blocks: empty (offset=0, length=0). Some external
  *     validators warn about these omitted optional metadata blocks.
@@ -66,6 +68,17 @@ typedef enum {
 /* Write an uncompressed RGBA8 KTX2 with the given mip chain. */
 bool write_ktx2_rgba_mips(const char* path, const Ktx2WriteLevel* levels, int level_count, Ktx2TransferFn tf,
 						  bool zstd);
+
+/* Write explicit levels, for content whose mips are not a box chain
+ * (prefiltered environment cubes). `face_count` is 1 or 6; each level's
+ * `data` holds its faces back to back in KTX2 face order.
+ *   - bc6h: BC6H unsigned-float blocks (16 bytes per 4×4), from
+ *     bc6h_codec_encode_image.
+ *   - rgba16f: IEEE half-float RGBA, 8 bytes per pixel. */
+bool write_ktx2_bc6h_levels(const char* path, int face_count, const Ktx2WriteLevel* levels, int level_count,
+							bool zstd);
+bool write_ktx2_rgba16f_levels(const char* path, int face_count, const Ktx2WriteLevel* levels, int level_count,
+							   bool zstd);
 
 /* Write a BC7-compressed KTX2. Each level's `data` must already be
  * a packed BC7 block stream (16 bytes per 4×4 block, ceil(w/4) ×

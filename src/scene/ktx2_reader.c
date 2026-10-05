@@ -31,6 +31,7 @@ static const uint8_t kKtx2Magic[12] = {
  * mandates these are the canonical Vulkan numeric IDs. */
 #define VK_FORMAT_R8G8B8A8_UNORM 37
 #define VK_FORMAT_R8G8B8A8_SRGB 43
+#define VK_FORMAT_R16G16B16A16_SFLOAT 97
 #define VK_FORMAT_BC1_RGBA_UNORM_BLK 133
 #define VK_FORMAT_BC1_RGBA_SRGB_BLK 134
 #define VK_FORMAT_BC3_UNORM_BLK 137
@@ -93,6 +94,11 @@ static bool map_format(uint32_t vk, AeronTextureFormat* out_fmt, bool* out_block
 			return true;
 		case VK_FORMAT_R8G8B8A8_SRGB:
 			*out_fmt   = AERON_TEXTURE_FORMAT_RGBA8_SRGB;
+			*out_block = false;
+			*out_bpb   = 0;
+			return true;
+		case VK_FORMAT_R16G16B16A16_SFLOAT:
+			*out_fmt   = AERON_TEXTURE_FORMAT_RGBA16_FLOAT;
 			*out_block = false;
 			*out_bpb   = 0;
 			return true;

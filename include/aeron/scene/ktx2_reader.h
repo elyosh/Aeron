@@ -14,10 +14,12 @@
  *     branch + ktx2_level_face() to lift one face's bytes.
  *   - supercompressionScheme ∈ { 0 (raw), 2 (zstd) }
  *   - vkFormat ∈ { R8G8B8A8_UNORM, R8G8B8A8_SRGB,
+ *                  R16G16B16A16_SFLOAT (linear HDR),
  *                  BC1_RGBA_UNORM, BC1_RGBA_SRGB,
  *                  BC3_RGBA_UNORM, BC3_RGBA_SRGB,
  *                  BC4_R_UNORM,
  *                  BC5_RG_UNORM,
+ *                  BC6H_UFLOAT, BC6H_SFLOAT (linear HDR),
  *                  BC7_RGBA_UNORM, BC7_RGBA_SRGB }
  *   - levelCount >= 1 (zero-mip "generate at runtime" is rejected)
  *
