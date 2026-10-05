@@ -5,6 +5,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "aeron/vfs.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -42,6 +44,12 @@ uint8_t* Aeron_ImageDownsampleRgba8(const uint8_t* source, int width, int height
  * filtered in associated-alpha space and stored unassociated. */
 uint8_t* Aeron_ImageDownsampleStraightAlphaRgba8(const uint8_t* source, int width, int height, int* out_width,
 												 int* out_height);
+
+/* Writes linear RGB floats (`width * height * 3`, top row first) as a
+ * Radiance .hdr (RGBE, about 1% precision) through AeronVfs_WriteAllAtomic.
+ * The root must be writable. */
+bool Aeron_ImageWriteHdr(AeronVfs* vfs, AeronVfsRoot root, const char* path, int width, int height,
+						 const float* rgb);
 
 #ifdef __cplusplus
 }

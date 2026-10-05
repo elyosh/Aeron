@@ -5,7 +5,10 @@
  * optional light list become three BC6H KTX2 cubes (radiance with box
  * mips, Lambert irradiance / pi, GGX roughness mips) and a `packages:`
  * entry. Diagnostic mode writes a labelled cube for checking orientation.
- * Sprite mode converts an HDR image to a KTX2 sun sprite.
+ * Sprite mode converts an HDR image to a KTX2 sun sprite. Capture mode
+ * bakes a capture directory written by the game (six cube faces, sun
+ * images, capture.yaml) into a package under the remaster bake root, with
+ * the `packages:` and `xwa:` snippets to merge into the manifest.
  *
  * See envmap.h for the cube face and panorama conventions. Output is
  * deterministic for identical inputs and does not depend on --jobs.
@@ -40,6 +43,8 @@ typedef struct BakeOptions {
 	const char* sprite_input;
 	const char* sprite_out;
 	const char* sprite_format;
+	const char* capture_dir;
+	const char* bake_root;
 	int         radiance_size;
 	int         diffuse_size;
 	int         specular_size;
@@ -59,11 +64,15 @@ static void usage(void) {
 		"  environment_bake --diagnostic-faces out.ktx2 [--radiance-size 2048] [--jobs 8]\n"
 		"  environment_bake --sprite in.hdr --sprite-out out.ktx2 [--sprite-size 256]\n"
 		"                   [--sprite-format bc6h|rgba16f] [--jobs 8]\n"
+		"  environment_bake --capture DIR --bake-root DIR [--radiance-size 2048] [--diffuse-size 32]\n"
+		"                   [--specular-size 512] [--specular-samples 1024] [--sprite-size 256] [--jobs 8]\n"
 		"\n"
 		"The sky is an equirectangular panorama (2:1) without suns, in the authored\n"
 		"frame: +X right, +Y up, -Z forward at the image centre. The light list is a\n"
 		"YAML map with a `directional_lights` sequence in the package light schema.\n"
-		"Package entry paths are written relative to --manifest-root when given.\n");
+		"Package entry paths are written relative to --manifest-root when given.\n"
+		"A capture is baked into <bake root>/flight/environments/captured/<mission>/region_<n>/;\n"
+		"its package.yaml and mapping.yaml are merged into the manifest by hand.\n");
 }
 
 static bool is_power_of_two(int v) { return v > 0 && (v & (v - 1)) == 0; }
@@ -115,6 +124,10 @@ static bool parse_args(int argc, char** argv, BakeOptions* o) {
 			text = &o->sprite_out;
 		else if (strcmp(arg, "--sprite-format") == 0)
 			text = &o->sprite_format;
+		else if (strcmp(arg, "--capture") == 0)
+			text = &o->capture_dir;
+		else if (strcmp(arg, "--bake-root") == 0)
+			text = &o->bake_root;
 		else if (strcmp(arg, "--radiance-size") == 0)
 			number = &o->radiance_size;
 		else if (strcmp(arg, "--diffuse-size") == 0)
@@ -424,20 +437,20 @@ static bool package_path(const char* path, const char* root, char* out, size_t s
 
 /* Writes the baked package as a `packages:` document. Strengths, floor and
  * rotation are starting values to calibrate per package. */
-static bool write_package_entry(FILE* f, const BakeOptions* o, const char* radiance, const char* diffuse,
+static bool write_package_entry(FILE* f, const char* name, const char* radiance, const char* diffuse,
 								const char* specular, const AeronEnvironmentLightDefinition* lights,
 								uint32_t light_count, int32_t primary) {
 	AeronEnvironmentDefinition* d = (AeronEnvironmentDefinition*)calloc(1, sizeof *d);
 	if (!d)
 		return false;
-	snprintf(d->name, sizeof d->name, "%s", o->name);
+	snprintf(d->name, sizeof d->name, "%s", name);
 	d->kind = AERON_ENV_KIND_FULL;
 	snprintf(d->radiance_path, sizeof d->radiance_path, "%s", radiance);
 	snprintf(d->diffuse_path, sizeof d->diffuse_path, "%s", diffuse);
 	snprintf(d->specular_path, sizeof d->specular_path, "%s", specular);
-	d->intensity           = 1.0f;
-	d->diffuse_strength    = 1.0f;
-	d->specular_strength   = 1.0f;
+	d->intensity         = 1.0f;
+	d->diffuse_strength  = 1.0f;
+	d->specular_strength = 1.0f;
 	d->ambient_fill[0] = d->ambient_fill[1] = d->ambient_fill[2] = 0.02f;
 	memcpy(d->lights, lights, sizeof d->lights);
 	d->light_count         = light_count;
@@ -543,6 +556,70 @@ static bool check_size(const char* what, int value, int min, int max) {
 	return true;
 }
 
+/* Filters a radiance cube whose level 0 is filled into the diffuse and
+ * specular cubes, reports the sky and lights, and writes the three cubes.
+ * Frees `radiance`. */
+static bool bake_cubes(const BakeOptions* o, EnvCube* radiance, int specular_size,
+					   const AeronEnvironmentLightDefinition* lights, uint32_t light_count,
+					   const char* radiance_out, const char* diffuse_out, const char* specular_out) {
+	EnvCube diffuse, specular;
+	memset(&diffuse, 0, sizeof diffuse);
+	memset(&specular, 0, sizeof specular);
+	if (!envmap_cube_alloc(&diffuse, o->diffuse_size, envmap_mip_count(o->diffuse_size)) ||
+		!envmap_cube_alloc(&specular, specular_size, envmap_mip_count(specular_size))) {
+		fprintf(stderr, "environment_bake: out of memory\n");
+		envmap_cube_free(radiance);
+		envmap_cube_free(&diffuse);
+		envmap_cube_free(&specular);
+		return false;
+	}
+	envmap_build_box_mips(radiance);
+	envmap_irradiance(&diffuse, radiance, o->jobs);
+	envmap_build_box_mips(&diffuse);
+	envmap_ggx_prefilter(&specular, radiance, o->specular_samples, o->jobs);
+
+	const CubeStats stats = cube_stats(radiance);
+	printf("sky luminance: peak %.6g, mean %.6g\n", stats.peak, stats.mean);
+	for (uint32_t i = 0; i < light_count; ++i) {
+		const double radius   = fmax(2.0 * lights[i].angular_radius_degrees, 1.0);
+		const double fraction = light_energy_fraction(radiance, &lights[i], radius);
+		printf("light %s: sky within %.2g deg holds %.3g%% of its irradiance\n", lights[i].name, radius,
+			   fraction * 100.0);
+		if (fraction > 0.1)
+			fprintf(stderr,
+					"environment_bake: warning: light '%s': the sky is bright around its direction; "
+					"a sun may have been left in the image\n",
+					lights[i].name);
+	}
+
+	const bool ok = write_cube(radiance_out, radiance, o->jobs) &&
+					write_cube(diffuse_out, &diffuse, o->jobs) &&
+					write_cube(specular_out, &specular, o->jobs);
+	if (ok) {
+		printf("radiance %s: %d px, %d levels, %.2f MiB\n", radiance_out, radiance->size,
+			   radiance->level_count, file_size_mib(radiance_out));
+		printf("diffuse  %s: %d px, %d levels, exact irradiance over %d px faces, %.2f MiB\n", diffuse_out,
+			   diffuse.size, diffuse.level_count, envmap_level_size(radiance, stats_level(radiance, 64)),
+			   file_size_mib(diffuse_out));
+		printf("specular %s: %d px, %d roughness levels, %d samples, %.2f MiB\n", specular_out, specular.size,
+			   specular.level_count, o->specular_samples, file_size_mib(specular_out));
+	}
+	envmap_cube_free(radiance);
+	envmap_cube_free(&diffuse);
+	envmap_cube_free(&specular);
+	return ok;
+}
+
+static bool check_pixels(const char* path, const float* rgb, size_t pixel_count) {
+	for (size_t i = 0; i < pixel_count * 3u; ++i) {
+		if (!isfinite(rgb[i]) || rgb[i] < 0.0f) {
+			fprintf(stderr, "environment_bake: %s has a non-finite or negative pixel at %zu\n", path, i / 3u);
+			return false;
+		}
+	}
+	return true;
+}
+
 static int run_bake(const BakeOptions* o) {
 	if (!o->name || !o->radiance_out || !o->diffuse_out || !o->specular_out) {
 		usage();
@@ -590,23 +667,17 @@ static int run_bake(const BakeOptions* o) {
 		free(pano);
 		return 1;
 	}
-	for (size_t i = 0; i < (size_t)w * h * 3u; ++i) {
-		if (!isfinite(pano[i]) || pano[i] < 0.0f) {
-			fprintf(stderr, "environment_bake: %s has a non-finite or negative pixel at %zu\n", o->input,
-					i / 3u);
-			free(pano);
-			return 1;
-		}
+	if (!check_pixels(o->input, pano, (size_t)w * h)) {
+		free(pano);
+		return 1;
 	}
 	if ((double)w < BAKE_PI * (double)o->radiance_size)
 		fprintf(stderr,
 				"environment_bake: warning: %dx%d panorama is below pi x %d wide; the sky will be soft\n", w,
 				h, o->radiance_size);
 
-	EnvCube radiance, diffuse, specular;
-	if (!envmap_cube_alloc(&radiance, o->radiance_size, envmap_mip_count(o->radiance_size)) ||
-		!envmap_cube_alloc(&diffuse, o->diffuse_size, envmap_mip_count(o->diffuse_size)) ||
-		!envmap_cube_alloc(&specular, o->specular_size, envmap_mip_count(o->specular_size))) {
+	EnvCube radiance;
+	if (!envmap_cube_alloc(&radiance, o->radiance_size, envmap_mip_count(o->radiance_size))) {
 		fprintf(stderr, "environment_bake: out of memory\n");
 		free(pano);
 		return 1;
@@ -614,51 +685,17 @@ static int run_bake(const BakeOptions* o) {
 	printf("input %s: %dx%d\n", o->input, w, h);
 	envmap_from_equirect(&radiance, pano, w, h, o->jobs);
 	free(pano);
-	envmap_build_box_mips(&radiance);
-	envmap_irradiance(&diffuse, &radiance, o->jobs);
-	envmap_build_box_mips(&diffuse);
-	envmap_ggx_prefilter(&specular, &radiance, o->specular_samples, o->jobs);
-
-	const CubeStats stats = cube_stats(&radiance);
-	printf("sky luminance: peak %.6g, mean %.6g\n", stats.peak, stats.mean);
-	for (uint32_t i = 0; i < light_count; ++i) {
-		const double radius   = fmax(2.0 * lights[i].angular_radius_degrees, 1.0);
-		const double fraction = light_energy_fraction(&radiance, &lights[i], radius);
-		printf("light %s: sky within %.2g deg holds %.3g%% of its irradiance\n", lights[i].name, radius,
-			   fraction * 100.0);
-		if (fraction > 0.1)
-			fprintf(stderr,
-					"environment_bake: warning: light '%s': the sky is bright around its direction; "
-					"a sun may have been left in the image\n",
-					lights[i].name);
-	}
-
-	int status = 0;
-	if (!write_cube(o->radiance_out, &radiance, o->jobs) || !write_cube(o->diffuse_out, &diffuse, o->jobs) ||
-		!write_cube(o->specular_out, &specular, o->jobs))
-		status = 1;
-	if (status == 0) {
-		printf("radiance %s: %d px, %d levels, %.2f MiB\n", o->radiance_out, radiance.size,
-			   radiance.level_count, file_size_mib(o->radiance_out));
-		printf("diffuse  %s: %d px, %d levels, exact irradiance over %d px faces, %.2f MiB\n", o->diffuse_out,
-			   diffuse.size, diffuse.level_count, envmap_level_size(&radiance, stats_level(&radiance, 64)),
-			   file_size_mib(o->diffuse_out));
-		printf("specular %s: %d px, %d roughness levels, %d samples, %.2f MiB\n", o->specular_out,
-			   specular.size, specular.level_count, o->specular_samples, file_size_mib(o->specular_out));
-	}
-	envmap_cube_free(&radiance);
-	envmap_cube_free(&diffuse);
-	envmap_cube_free(&specular);
-	if (status != 0)
-		return status;
+	if (!bake_cubes(o, &radiance, o->specular_size, lights, light_count, o->radiance_out, o->diffuse_out,
+					o->specular_out))
+		return 1;
 
 	FILE* f = o->package_out ? fopen(o->package_out, "wb") : stdout;
 	if (!f) {
 		fprintf(stderr, "environment_bake: cannot write %s\n", o->package_out);
 		return 1;
 	}
-	const bool written =
-		write_package_entry(f, o, radiance_path, diffuse_path, specular_path, lights, light_count, primary);
+	const bool written = write_package_entry(f, o->name, radiance_path, diffuse_path, specular_path, lights,
+											 light_count, primary);
 	if (o->package_out) {
 		fclose(f);
 		if (!written) {
@@ -769,43 +806,31 @@ static void zero_border(float* rgb, int n, int margin) {
 				memset(rgb + ((size_t)y * n + x) * 3u, 0, 3u * sizeof(float));
 }
 
-static int run_sprite(const BakeOptions* o) {
-	if (!o->sprite_out) {
-		usage();
-		return 2;
-	}
-	if (!check_size("--sprite-size", o->sprite_size, 16, 1024))
-		return 2;
-	if (strcmp(o->sprite_format, "bc6h") != 0 && strcmp(o->sprite_format, "rgba16f") != 0) {
-		fprintf(stderr, "environment_bake: --sprite-format must be bc6h or rgba16f\n");
-		return 2;
-	}
+/* Converts a square HDR image to a KTX2 sprite of `size` pixels. */
+static bool bake_sprite(const char* input, const char* output, int size, const char* format, int jobs) {
 	float* src = NULL;
 	int    w = 0, h = 0;
 	char   err[512];
-	if (!read_hdr_rgb(o->sprite_input, &src, &w, &h, err, sizeof err)) {
+	if (!read_hdr_rgb(input, &src, &w, &h, err, sizeof err)) {
 		fprintf(stderr, "environment_bake: %s\n", err);
-		return 1;
+		return false;
 	}
 	if (w != h) {
-		fprintf(stderr, "environment_bake: sprite %s is %dx%d; sprites are square\n", o->sprite_input, w, h);
+		fprintf(stderr, "environment_bake: sprite %s is %dx%d; sprites are square\n", input, w, h);
 		free(src);
-		return 1;
+		return false;
 	}
-	for (size_t i = 0; i < (size_t)w * h * 3u; ++i) {
-		if (!isfinite(src[i]) || src[i] < 0.0f) {
-			fprintf(stderr, "environment_bake: %s has a non-finite or negative pixel\n", o->sprite_input);
-			free(src);
-			return 1;
-		}
+	if (!check_pixels(input, src, (size_t)w * h)) {
+		free(src);
+		return false;
 	}
 
-	const int levels                    = envmap_mip_count(o->sprite_size);
+	const int levels                    = envmap_mip_count(size);
 	float*    images[ENVMAP_MAX_LEVELS] = { 0 };
 	int       sizes[ENVMAP_MAX_LEVELS];
 	bool      ok = true;
 	for (int level = 0; level < levels; ++level) {
-		sizes[level]  = o->sprite_size >> level > 0 ? o->sprite_size >> level : 1;
+		sizes[level]  = size >> level > 0 ? size >> level : 1;
 		images[level] = (float*)calloc((size_t)sizes[level] * sizes[level] * 3u, sizeof(float));
 		if (!images[level])
 			ok = false;
@@ -882,17 +907,409 @@ static int run_sprite(const BakeOptions* o) {
 			if (dn >= 4)
 				zero_border(images[level], dn, 1);
 		}
-		ok = write_levels(o->sprite_out, o->sprite_format, (const float* const*)images, sizes, 1, levels,
-						  o->jobs);
+		ok = write_levels(output, format, (const float* const*)images, sizes, 1, levels, jobs);
 	}
 	for (int level = 0; level < levels; ++level)
 		free(images[level]);
 	free(src);
+	if (ok)
+		printf("sprite %s: %d px, %d levels, %s, %.2f MiB\n", output, size, levels, format,
+			   file_size_mib(output));
+	return ok;
+}
+
+static int run_sprite(const BakeOptions* o) {
+	if (!o->sprite_out) {
+		usage();
+		return 2;
+	}
+	if (!check_size("--sprite-size", o->sprite_size, 16, 1024))
+		return 2;
+	if (strcmp(o->sprite_format, "bc6h") != 0 && strcmp(o->sprite_format, "rgba16f") != 0) {
+		fprintf(stderr, "environment_bake: --sprite-format must be bc6h or rgba16f\n");
+		return 2;
+	}
+	return bake_sprite(o->sprite_input, o->sprite_out, o->sprite_size, o->sprite_format, o->jobs) ? 0 : 1;
+}
+
+/* ---- capture ------------------------------------------------------------------ */
+
+/* Face file suffixes in KTX2 face order. */
+static const char* const k_capture_faces[6] = { "px", "nx", "py", "ny", "pz", "nz" };
+
+/* A file name inside the capture directory: no separators, no leading dot. */
+static bool is_plain_file_name(const char* name) {
+	if (!name[0] || name[0] == '.')
+		return false;
+	for (const char* p = name; *p; ++p)
+		if (*p == '/' || *p == '\\' || *p == ':' || (unsigned char)*p < 0x20)
+			return false;
+	return true;
+}
+
+/* A normalized mission key: lower-case, '/'-separated, no empty, '.' or
+ * '..' components. */
+static bool is_mission_key(const char* key) {
+	if (!key[0] || strlen(key) >= 128)
+		return false;
+	const char* component = key;
+	for (const char* p = key;; ++p) {
+		if (*p == '/' || *p == '\0') {
+			const size_t length = (size_t)(p - component);
+			if (length == 0 || (length == 1 && component[0] == '.') ||
+				(length == 2 && component[0] == '.' && component[1] == '.'))
+				return false;
+			if (*p == '\0')
+				return true;
+			component = p + 1;
+		} else if (*p == '\\' || *p == '"' || (*p >= 'A' && *p <= 'Z') || (unsigned char)*p < 0x20) {
+			return false;
+		}
+	}
+}
+
+static bool join_path(char* out, size_t size, const char* dir, const char* name) {
+	const size_t length = strlen(dir);
+	const bool   slash  = length > 0 && (dir[length - 1] == '/' || dir[length - 1] == '\\');
+	const int    n      = snprintf(out, size, "%s%s%s", dir, slash ? "" : "/", name);
+	if (n < 0 || (size_t)n >= size) {
+		fprintf(stderr, "environment_bake: path %s/%s is too long\n", dir, name);
+		return false;
+	}
+	return true;
+}
+
+typedef struct CaptureDescription {
+	char                            package[AERON_ENV_NAME_MAX];
+	char                            mission[128];
+	int                             region;
+	int                             face_size;
+	char                            sky_faces[64];
+	AeronEnvironmentLightDefinition lights[AERON_ENV_MAX_LIGHTS];
+	uint32_t                        light_count;
+	int32_t                         primary;
+} CaptureDescription;
+
+static bool capture_error(const char* path, const AeronConfigNode* node, const char* message) {
+	fprintf(stderr, "environment_bake: %s:%d: %s\n", path, node ? AeronConfigNode_Line(node) : 0, message);
+	return false;
+}
+
+static bool capture_string(const char* path, const AeronConfigNode* root, const char* key, char* out,
+						   size_t size) {
+	const AeronConfigNode* node = AeronConfigNode_MapGet(root, key);
+	char                   message[160];
+	if (!node || AeronConfigNode_Type(node) != AERON_CONFIG_STRING) {
+		snprintf(message, sizeof message, "'%s' must be a string", key);
+		return capture_error(path, node ? node : root, message);
+	}
+	const char* value = AeronConfigNode_String(node, "");
+	if (strlen(value) >= size) {
+		snprintf(message, sizeof message, "'%s' must be shorter than %zu bytes", key, size);
+		return capture_error(path, node, message);
+	}
+	snprintf(out, size, "%s", value);
+	return true;
+}
+
+static bool capture_int(const char* path, const AeronConfigNode* root, const char* key, int64_t min,
+						int64_t max, int* out) {
+	const AeronConfigNode* node = AeronConfigNode_MapGet(root, key);
+	const int64_t          value =
+		node && AeronConfigNode_Type(node) == AERON_CONFIG_INT ? AeronConfigNode_Int(node, min - 1) : min - 1;
+	if (value < min || value > max) {
+		char message[160];
+		snprintf(message, sizeof message, "'%s' must be an integer from %lld to %lld", key, (long long)min,
+				 (long long)max);
+		return capture_error(path, node ? node : root, message);
+	}
+	*out = (int)value;
+	return true;
+}
+
+static bool load_capture(const char* path, CaptureDescription* c) {
+	AeronVfs*        vfs    = NULL;
+	AeronConfigFile* config = load_yaml(path, &vfs);
+	if (!config)
+		return false;
+	static const char* const fields[] = {
+		"version",         "package", "mission", "region", "face_size", "sky_faces", "directional_lights",
+		"capture_settings"
+	};
+	const AeronConfigNode* root = AeronConfigFile_Root(config);
+	bool                   ok   = AeronConfigNode_Type(root) == AERON_CONFIG_MAP;
 	if (!ok)
+		capture_error(path, root, "the capture description must be a map");
+	for (size_t i = 0; ok && i < AeronConfigNode_MapCount(root); ++i) {
+		const char* key   = AeronConfigNode_MapKeyAt(root, i);
+		bool        known = false;
+		for (size_t k = 0; k < sizeof fields / sizeof fields[0]; ++k)
+			known = known || strcmp(key, fields[k]) == 0;
+		if (!known) {
+			char message[160];
+			snprintf(message, sizeof message, "unknown field '%s'", key);
+			ok = capture_error(path, AeronConfigNode_MapValueAt(root, i), message);
+		}
+	}
+	int version = 0;
+	ok          = ok && capture_int(path, root, "version", 1, 1, &version) &&
+				  capture_string(path, root, "package", c->package, sizeof c->package) &&
+				  capture_string(path, root, "mission", c->mission, sizeof c->mission) &&
+				  capture_int(path, root, "region", 0, 3, &c->region) &&
+				  capture_int(path, root, "face_size", 16, 8192, &c->face_size) &&
+				  capture_string(path, root, "sky_faces", c->sky_faces, sizeof c->sky_faces);
+	if (ok && !AeronEnvironment_IsValidName(c->package))
+		ok = capture_error(path, AeronConfigNode_MapGet(root, "package"),
+						   "'package' must be 1 to 63 lower-case letters, digits, '.' and '_'");
+	if (ok && !is_mission_key(c->mission))
+		ok = capture_error(path, AeronConfigNode_MapGet(root, "mission"),
+						   "'mission' must be a normalized mission key");
+	if (ok && !is_power_of_two(c->face_size))
+		ok = capture_error(path, AeronConfigNode_MapGet(root, "face_size"),
+						   "'face_size' must be a power of two");
+	if (ok && !is_plain_file_name(c->sky_faces))
+		ok =
+			capture_error(path, AeronConfigNode_MapGet(root, "sky_faces"), "'sky_faces' must be a file name");
+	if (ok) {
+		AeronConfigError error;
+		memset(&error, 0, sizeof error);
+		if (!AeronEnvironment_ParseLights(AeronConfigNode_MapGet(root, "directional_lights"), "capture",
+										  c->lights, &c->light_count, &c->primary, &error)) {
+			fprintf(stderr, "environment_bake: %s:%d: %s\n", path, error.line, error.message);
+			ok = false;
+		}
+	}
+	for (uint32_t i = 0; ok && i < c->light_count; ++i) {
+		if (c->lights[i].visual == AERON_ENV_SUN_SPRITE && !is_plain_file_name(c->lights[i].sprite_path)) {
+			fprintf(stderr,
+					"environment_bake: %s: light '%s': the sprite must be a file in the capture directory\n",
+					path, c->lights[i].name);
+			ok = false;
+		}
+	}
+	AeronConfigFile_Destroy(config);
+	AeronVfs_Destroy(vfs);
+	return ok;
+}
+
+/* Reads one capture face and box-reduces it into a radiance face of
+ * `size` pixels. */
+static bool read_capture_face(const char* path, int face_size, float* out, int size) {
+	float* rgb = NULL;
+	int    w = 0, h = 0;
+	char   err[512];
+	if (!read_hdr_rgb(path, &rgb, &w, &h, err, sizeof err)) {
+		fprintf(stderr, "environment_bake: %s\n", err);
+		return false;
+	}
+	if (w != face_size || h != face_size) {
+		fprintf(stderr, "environment_bake: %s is %dx%d; the capture's face_size is %d\n", path, w, h,
+				face_size);
+		free(rgb);
+		return false;
+	}
+	if (!check_pixels(path, rgb, (size_t)w * h)) {
+		free(rgb);
+		return false;
+	}
+	const int    k     = face_size / size;
+	const double scale = 1.0 / ((double)k * k);
+	for (int y = 0; y < size; ++y) {
+		for (int x = 0; x < size; ++x) {
+			double sum[3] = { 0.0, 0.0, 0.0 };
+			for (int sy = 0; sy < k; ++sy)
+				for (int sx = 0; sx < k; ++sx)
+					for (int c = 0; c < 3; ++c)
+						sum[c] += rgb[(((size_t)y * k + sy) * face_size + (size_t)x * k + sx) * 3u + c];
+			for (int c = 0; c < 3; ++c)
+				out[((size_t)y * size + x) * 3u + c] = (float)(sum[c] * scale);
+		}
+	}
+	free(rgb);
+	return true;
+}
+
+/* Writes the xwa: mapping entry. Mission keys contain no quote or
+ * backslash, so they are written quoted as they are. */
+static bool write_mapping(const char* path, const CaptureDescription* c) {
+	FILE* f = fopen(path, "wb");
+	if (!f) {
+		fprintf(stderr, "environment_bake: cannot write %s\n", path);
+		return false;
+	}
+	const bool ok = fprintf(f,
+							"# Mapping for the captured region: merge under the manifest's xwa.missions.\n"
+							"xwa:\n"
+							"  missions:\n"
+							"    \"%s\":\n"
+							"      regions:\n"
+							"        \"%d\": %s\n",
+							c->mission, c->region, c->package) > 0;
+	if (fclose(f) != 0 || !ok) {
+		fprintf(stderr, "environment_bake: cannot write %s\n", path);
+		return false;
+	}
+	/* Syntax check only: the xwa: schema belongs to the game. */
+	AeronVfs*        vfs    = NULL;
+	AeronConfigFile* config = load_yaml(path, &vfs);
+	if (!config)
+		return false;
+	AeronConfigFile_Destroy(config);
+	AeronVfs_Destroy(vfs);
+	return true;
+}
+
+static int run_capture(const BakeOptions* o) {
+	if (!o->bake_root) {
+		usage();
+		return 2;
+	}
+	if (!check_size("--radiance-size", o->radiance_size, 16, 4096) ||
+		!check_size("--diffuse-size", o->diffuse_size, 4, 256) ||
+		!check_size("--specular-size", o->specular_size, 16, 2048) ||
+		!check_size("--sprite-size", o->sprite_size, 16, 1024))
+		return 2;
+	if (o->specular_samples < 16 || o->specular_samples > 65536) {
+		fprintf(stderr, "environment_bake: --specular-samples must be 16 to 65536\n");
+		return 2;
+	}
+	char description_path[1024];
+	if (!join_path(description_path, sizeof description_path, o->capture_dir, "capture.yaml"))
+		return 2;
+	CaptureDescription* c = (CaptureDescription*)calloc(1, sizeof *c);
+	if (!c) {
+		fprintf(stderr, "environment_bake: out of memory\n");
 		return 1;
-	printf("sprite %s: %d px, %d levels, %s, %.2f MiB\n", o->sprite_out, o->sprite_size, levels,
-		   o->sprite_format, file_size_mib(o->sprite_out));
-	return 0;
+	}
+	int status = 0;
+	if (!load_capture(description_path, c)) {
+		free(c);
+		return 1;
+	}
+
+	/* Every input must exist before anything is written. */
+	for (uint32_t i = 0; i < 6u + c->light_count; ++i) {
+		char name[AERON_ENV_PATH_MAX], input[1024];
+		if (i < 6u)
+			snprintf(name, sizeof name, "%s_%s.hdr", c->sky_faces, k_capture_faces[i]);
+		else if (c->lights[i - 6u].visual == AERON_ENV_SUN_SPRITE)
+			snprintf(name, sizeof name, "%s", c->lights[i - 6u].sprite_path);
+		else
+			continue;
+		FILE* f = join_path(input, sizeof input, o->capture_dir, name) ? fopen(input, "rb") : NULL;
+		if (!f) {
+			fprintf(stderr, "environment_bake: cannot open %s/%s\n", o->capture_dir, name);
+			free(c);
+			return 1;
+		}
+		fclose(f);
+	}
+
+	/* The capture is never upsampled: product sizes are capped by the face. */
+	const int radiance_size = o->radiance_size < c->face_size ? o->radiance_size : c->face_size;
+	const int specular_size = o->specular_size < radiance_size ? o->specular_size : radiance_size;
+	if (radiance_size < o->radiance_size)
+		fprintf(stderr, "environment_bake: warning: %d px capture faces limit the sky to %d px\n",
+				c->face_size, radiance_size);
+
+	/* Output directory, relative to the bake root as package paths are. */
+	char mission_dir[128];
+	snprintf(mission_dir, sizeof mission_dir, "%s", c->mission);
+	for (char* p = mission_dir; *p; ++p)
+		if (*p == '/')
+			*p = '_';
+	char relative_dir[AERON_ENV_PATH_MAX];
+	if (snprintf(relative_dir, sizeof relative_dir, "flight/environments/captured/%s/region_%d", mission_dir,
+				 c->region) >= (int)sizeof relative_dir - 32) {
+		fprintf(stderr, "environment_bake: mission key %s is too long\n", c->mission);
+		free(c);
+		return 1;
+	}
+	/* The bake root is opened as a writable user root. */
+	AeronVfsConfig vfs_config;
+	memset(&vfs_config, 0, sizeof vfs_config);
+	vfs_config.user_root = o->bake_root;
+	AeronVfs* vfs        = AeronVfs_Create(&vfs_config);
+	if (!vfs || !AeronVfs_CreateDirectory(vfs, AERON_VFS_ROOT_USER, relative_dir)) {
+		fprintf(stderr, "environment_bake: cannot create %s under %s\n", relative_dir, o->bake_root);
+		AeronVfs_Destroy(vfs);
+		free(c);
+		return 1;
+	}
+	AeronVfs_Destroy(vfs);
+	char output_dir[1024];
+	if (!join_path(output_dir, sizeof output_dir, o->bake_root, relative_dir)) {
+		free(c);
+		return 1;
+	}
+	printf("capture %s: %s region %d, %d px faces, %u lights -> %s\n", o->capture_dir, c->mission, c->region,
+		   c->face_size, c->light_count, output_dir);
+
+	/* Sun sprites first: a missing image fails before the long filtering. */
+	for (uint32_t i = 0; status == 0 && i < c->light_count; ++i) {
+		AeronEnvironmentLightDefinition* light = &c->lights[i];
+		if (light->visual != AERON_ENV_SUN_SPRITE)
+			continue;
+		char input[1024], name[AERON_ENV_NAME_MAX + 8], output[1024];
+		snprintf(name, sizeof name, "%s.ktx2", light->name);
+		if (!join_path(input, sizeof input, o->capture_dir, light->sprite_path) ||
+			!join_path(output, sizeof output, output_dir, name) ||
+			!bake_sprite(input, output, o->sprite_size, "bc6h", o->jobs)) {
+			status = 1;
+			break;
+		}
+		snprintf(light->sprite_path, sizeof light->sprite_path, "%s/%s", relative_dir, name);
+	}
+
+	EnvCube radiance;
+	memset(&radiance, 0, sizeof radiance);
+	if (status == 0 && !envmap_cube_alloc(&radiance, radiance_size, envmap_mip_count(radiance_size))) {
+		fprintf(stderr, "environment_bake: out of memory\n");
+		status = 1;
+	}
+	for (int face = 0; status == 0 && face < 6; ++face) {
+		char name[96], input[1024];
+		snprintf(name, sizeof name, "%s_%s.hdr", c->sky_faces, k_capture_faces[face]);
+		if (!join_path(input, sizeof input, o->capture_dir, name) ||
+			!read_capture_face(input, c->face_size, radiance.faces[0][face], radiance_size))
+			status = 1;
+	}
+	char sky_path[AERON_ENV_PATH_MAX], diffuse_path[AERON_ENV_PATH_MAX], specular_path[AERON_ENV_PATH_MAX];
+	snprintf(sky_path, sizeof sky_path, "%s/sky.ktx2", relative_dir);
+	snprintf(diffuse_path, sizeof diffuse_path, "%s/diffuse.ktx2", relative_dir);
+	snprintf(specular_path, sizeof specular_path, "%s/specular.ktx2", relative_dir);
+	char sky_out[1024], diffuse_out[1024], specular_out[1024], package_out[1024], mapping_out[1024];
+	if (status == 0 && (!join_path(sky_out, sizeof sky_out, output_dir, "sky.ktx2") ||
+						!join_path(diffuse_out, sizeof diffuse_out, output_dir, "diffuse.ktx2") ||
+						!join_path(specular_out, sizeof specular_out, output_dir, "specular.ktx2") ||
+						!join_path(package_out, sizeof package_out, output_dir, "package.yaml") ||
+						!join_path(mapping_out, sizeof mapping_out, output_dir, "mapping.yaml")))
+		status = 1;
+	if (status == 0) {
+		/* bake_cubes frees the radiance cube. */
+		if (!bake_cubes(o, &radiance, specular_size, c->lights, c->light_count, sky_out, diffuse_out,
+						specular_out))
+			status = 1;
+	} else {
+		envmap_cube_free(&radiance);
+	}
+
+	if (status == 0) {
+		FILE* f = fopen(package_out, "wb");
+		if (!f || !write_package_entry(f, c->package, sky_path, diffuse_path, specular_path, c->lights,
+									   c->light_count, c->primary)) {
+			fprintf(stderr, "environment_bake: cannot write %s\n", package_out);
+			status = 1;
+		}
+		if (f && fclose(f) != 0)
+			status = 1;
+	}
+	if (status == 0 && (!validate_package_file(package_out) || !write_mapping(mapping_out, c)))
+		status = 1;
+	if (status == 0)
+		printf("package %s: %s\nmapping: %s\n", c->package, package_out, mapping_out);
+	free(c);
+	return status;
 }
 
 int main(int argc, char** argv) {
@@ -901,9 +1318,11 @@ int main(int argc, char** argv) {
 		usage();
 		return 2;
 	}
-	const int modes = (o.input != NULL) + (o.diagnostic_out != NULL) + (o.sprite_input != NULL);
+	const int modes =
+		(o.input != NULL) + (o.diagnostic_out != NULL) + (o.sprite_input != NULL) + (o.capture_dir != NULL);
 	if (modes != 1) {
-		fprintf(stderr, "environment_bake: give exactly one of --input, --diagnostic-faces or --sprite\n");
+		fprintf(stderr,
+				"environment_bake: give exactly one of --input, --diagnostic-faces, --sprite or --capture\n");
 		usage();
 		return 2;
 	}
@@ -911,5 +1330,7 @@ int main(int argc, char** argv) {
 		return run_diagnostic(&o);
 	if (o.sprite_input)
 		return run_sprite(&o);
+	if (o.capture_dir)
+		return run_capture(&o);
 	return run_bake(&o);
 }
