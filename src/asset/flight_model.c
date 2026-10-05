@@ -195,8 +195,10 @@ static void bounds_include(AeronFlightBounds* bounds, const AeronFlightVec3* poi
 static bool transform_descriptor_geometry(const float matrix[16], const float span[3], const float center[3],
 										  const float bounds_min[3], const float bounds_max[3],
 										  AeronFlightComponent* component) {
+	/* Span is kept signed as authored: stock OPT descriptors include negative
+	 * span components, and the games read them as stored. */
 	for (int axis = 0; axis < 3; ++axis)
-		if (span[axis] < 0.0f || bounds_min[axis] > bounds_max[axis])
+		if (!isfinite(span[axis]) || bounds_min[axis] > bounds_max[axis])
 			return false;
 
 	float transformed_center[3];

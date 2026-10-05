@@ -38,7 +38,10 @@ Component `rotation` requires `pivot`, `rotationAxis`, `directionAxis`, and
 orthogonalized. `target` is required when `targetId` is nonzero.
 
 Descriptor geometry consists of `span`, `center`, `boundsMin`, and `boundsMax`.
-The four fields must be present together. They preserve authored simulation
+The four fields must be present together. `span` is kept signed as authored,
+because stock OPT descriptors include negative span components that the games
+read as stored; under a rotated node transform its components combine through
+the absolute rotation coefficients. They preserve authored simulation
 metadata independently from bounds calculated from rendered vertices. Assets
 that omit them remain valid and use calculated geometry as a compatibility
 fallback. That fallback is computed from the simulation topology: the
