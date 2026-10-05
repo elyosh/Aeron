@@ -30,6 +30,14 @@ cbuffer ClusteredLightUniform : AERON_CLUSTER_UNIFORM_BINDING {
 	uint   fs_cluster_tile_size;
 	uint   fs_cluster_flags;
 	uint4  fs_cluster_global_indices;
+#ifdef AERON_SCENE_LIGHTING_ENVIRONMENT
+	/* Image-based lighting environment (AeronScenePbrEnvironment):
+	 * x = diffuse strength (0 = no diffuse cube), y = specular strength,
+	 * z = specular mip count, w = reserved. The basis rows map world
+	 * directions into the cubes' local frame. */
+	float4 fs_environment_params;
+	float4 fs_environment_basis[3];
+#endif
 };
 
 #define fs_cluster_enabled (fs_cluster_flags & 1u)

@@ -438,7 +438,7 @@ static bool write_package_entry(FILE* f, const BakeOptions* o, const char* radia
 	d->sky_exposure        = 1.0f;
 	d->diffuse_strength    = 1.0f;
 	d->specular_strength   = 1.0f;
-	d->ambient_floor_scale = 0.5f;
+	d->ambient_fill[0] = d->ambient_fill[1] = d->ambient_fill[2] = 0.02f;
 	memcpy(d->lights, lights, sizeof d->lights);
 	d->light_count         = light_count;
 	d->primary_light_index = primary;

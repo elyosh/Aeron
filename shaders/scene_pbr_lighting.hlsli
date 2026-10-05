@@ -65,12 +65,9 @@ cbuffer PbrLightFS : register(AERON_PBR_LIGHT_UNIFORM_REGISTER, space3)
     /* Point-light evaluation knobs: minimum distance, specular weight,
      * diffuse wrap, and per-light contribution cap. */
 	float4 fs_point_params;
-	/* Optional detailed diffuse environment in a caller-defined local basis.
-	 * environment_params.x is its linear intensity; zero disables sampling. */
-	float4 environment_params;
-	float4 environment_right;
-	float4 environment_up;
-	float4 environment_forward;
+	/* Reserved: formerly the diffuse environment, now in the scene
+	 * lighting block (b2). Keeps the 368-byte layout games mirror. */
+	float4 fs_reserved_environment[4];
 };
 
 struct PbrPointLight
@@ -82,6 +79,9 @@ struct PbrPointLight
 #define AERON_PBR_POINT_LIGHT_REGISTER t9
 #endif
 StructuredBuffer<PbrPointLight> fs_point_lights : register(AERON_PBR_POINT_LIGHT_REGISTER, space2);
+/* The fragment-side b2 block is the scene lighting block: clustered-light
+ * parameters followed by the image-based lighting environment. */
+#define AERON_SCENE_LIGHTING_ENVIRONMENT 1
 #include "scene_clustered_lights.hlsli"
 #endif
 

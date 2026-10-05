@@ -272,8 +272,21 @@ void AeronSceneClusteredLights_Bind(AeronScene3D* s, AeronRenderPass* pass) {
 	}
 	Aeron_BindStorageBuffer(pass, AERON_SHADER_STAGE_FRAGMENT, 3, s->cluster_header_buffer);
 	Aeron_BindStorageBuffer(pass, AERON_SHADER_STAGE_FRAGMENT, 4, s->cluster_index_buffer);
-	Aeron_BindUniformData(pass, AERON_SHADER_STAGE_FRAGMENT, 2, &s->cluster_uniform,
-						  sizeof s->cluster_uniform);
+	/* The fragment b2 block is the scene lighting block: the cluster
+	 * parameters followed by the image-based lighting environment. */
+	AeronSceneLightingUniformGPU lighting;
+	memset(&lighting, 0, sizeof lighting);
+	lighting.cluster = s->cluster_uniform;
+	if (s->pbr_environment_set) {
+		const AeronScenePbrEnvironment* e = &s->pbr_environment;
+		lighting.environment_params[0]    = e->diffuse_strength;
+		lighting.environment_params[1]    = e->specular ? e->specular_strength : 0.0f;
+		lighting.environment_params[2]    = e->specular ? (float)e->specular_mip_count : 0.0f;
+		for (int row = 0; row < 3; ++row)
+			for (int col = 0; col < 3; ++col)
+				lighting.environment_basis[row][col] = e->world_to_local[row * 3 + col];
+	}
+	Aeron_BindUniformData(pass, AERON_SHADER_STAGE_FRAGMENT, 2, &lighting, sizeof lighting);
 }
 
 void AeronSceneClusteredLights_Release(AeronScene3D* s) {

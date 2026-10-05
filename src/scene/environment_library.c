@@ -270,6 +270,7 @@ static bool build_slot(AeronEnvironmentLibrary* library, AeronCommandBuffer* cmd
 	if (!available)
 		return false;
 	slot->package.diffuse = list->items[indices[0]].texture;
+	slot->package.sampler = library->sampler;
 	if (def->kind == AERON_ENV_KIND_FULL) {
 		slot->package.radiance           = list->items[indices[1]].texture;
 		slot->package.specular           = list->items[indices[2]].texture;

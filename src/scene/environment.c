@@ -143,6 +143,18 @@ static bool read_vec3(const AeronConfigNode* map, const char* what, const char* 
 	return true;
 }
 
+/* Linear RGB radiance added uniformly to the diffuse ambient. */
+static bool read_ambient_fill(const AeronConfigNode* map, const char* what, float out[3],
+							  AeronConfigError* error) {
+	const AeronConfigNode* node = NULL;
+	if (!read_vec3(map, what, "ambient_fill", out, &node, error))
+		return false;
+	for (int i = 0; i < 3; ++i)
+		if (out[i] < 0.0f || out[i] > 4.0f)
+			return env_error(error, node, "%s: 'ambient_fill' values must be between 0 and 4", what);
+	return true;
+}
+
 float AeronEnvironment_NormalizeDegrees(float degrees) {
 	float value = fmodf(degrees, 360.0f);
 	if (value < 0.0f)
@@ -308,12 +320,12 @@ static bool parse_package(const char* name, const AeronConfigNode* map, AeronEnv
 		"sky_exposure",
 		"diffuse_strength",
 		"specular_strength",
-		"ambient_floor_scale",
+		"ambient_fill",
 		"rotation_degrees",
 		"directional_lights",
 	};
 	static const char* const lighting_fields[] = {
-		"kind", "diffuse", "diffuse_strength", "ambient_floor_scale", "rotation_degrees",
+		"kind", "diffuse", "diffuse_strength", "ambient_fill", "rotation_degrees",
 	};
 
 	char what[160];
@@ -343,7 +355,7 @@ static bool parse_package(const char* name, const AeronConfigNode* map, AeronEnv
 
 	if (!read_path(map, what, "diffuse", def->diffuse_path, sizeof def->diffuse_path, error) ||
 		!read_number(map, what, "diffuse_strength", true, 0.0, 4.0, &def->diffuse_strength, error) ||
-		!read_number(map, what, "ambient_floor_scale", true, 0.0, 1.0, &def->ambient_floor_scale, error) ||
+		!read_ambient_fill(map, what, def->ambient_fill, error) ||
 		!read_vec3(map, what, "rotation_degrees", def->rotation_degrees, NULL, error))
 		return false;
 	for (int i = 0; i < 3; ++i)
@@ -485,7 +497,9 @@ size_t AeronEnvironment_FormatPackageYaml(const AeronEnvironmentDefinition* d, c
 	yaml_printf(&y, "    diffuse_strength: %.9g\n", (double)d->diffuse_strength);
 	if (d->kind == AERON_ENV_KIND_FULL)
 		yaml_printf(&y, "    specular_strength: %.9g\n", (double)d->specular_strength);
-	yaml_printf(&y, "    ambient_floor_scale: %.9g\n    rotation_degrees: ", (double)d->ambient_floor_scale);
+	yaml_printf(&y, "    ambient_fill: ");
+	yaml_vec3(&y, d->ambient_fill);
+	yaml_printf(&y, "\n    rotation_degrees: ");
 	yaml_vec3(&y, d->rotation_degrees);
 	yaml_printf(&y, "\n");
 	if (d->kind != AERON_ENV_KIND_FULL)

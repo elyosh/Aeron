@@ -120,7 +120,13 @@ void slot_editor(AeronEnvironmentLibrary* library, EnvSlot* slot) {
 	} else {
 		changed |= ImGui::SliderFloat("Diffuse strength", &s->diffuse_strength, 0.0f, 4.0f, "%.3f");
 	}
-	changed |= ImGui::SliderFloat("Ambient floor scale", &s->ambient_floor_scale, 0.0f, 1.0f, "%.3f");
+	if (ImGui::ColorEdit3("Ambient fill (linear)", s->ambient_fill,
+						  ImGuiColorEditFlags_Float | ImGuiColorEditFlags_HDR)) {
+		for (int c = 0; c < 3; ++c)
+			s->ambient_fill[c] =
+				s->ambient_fill[c] < 0.0f ? 0.0f : (s->ambient_fill[c] > 4.0f ? 4.0f : s->ambient_fill[c]);
+		changed = true;
+	}
 	changed |= ImGui::SliderFloat("Yaw", &s->rotation_degrees[0], 0.0f, 360.0f, "%.1f deg");
 	changed |= ImGui::SliderFloat("Pitch", &s->rotation_degrees[1], 0.0f, 360.0f, "%.1f deg");
 	changed |= ImGui::SliderFloat("Roll", &s->rotation_degrees[2], 0.0f, 360.0f, "%.1f deg");

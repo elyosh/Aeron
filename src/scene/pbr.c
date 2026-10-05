@@ -483,9 +483,9 @@ static void pbr_bind_ao(struct AeronScene3D* s, AeronRenderPass* pass, AeronText
 								 ao_tex ? s->post_linear_sampler : s->pbr_sampler);
 	}
 	Aeron_BindTextureSampler(pass, AERON_SHADER_STAGE_FRAGMENT, 7,
-							 s->pbr_environment_map ? s->pbr_environment_map
+							 s->pbr_environment_set ? s->pbr_environment.diffuse
 													: AeronSceneInternal_WhiteCubeTexture(),
-							 s->pbr_environment_sampler ? s->pbr_environment_sampler : s->pbr_sampler);
+							 s->pbr_environment_set ? s->pbr_environment.sampler : s->pbr_sampler);
 	Aeron_BindStorageBuffer(pass, AERON_SHADER_STAGE_FRAGMENT, 2, s->point_light_buffer);
 	AeronSceneClusteredLights_Bind(s, pass);
 }

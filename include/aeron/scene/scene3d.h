@@ -341,15 +341,40 @@ int AeronScene_SetMeshSampler(AeronScene3D* scene, AeronSampler* sampler);
  * does not need a build-mode conditional. */
 void AeronScene_SetPbrDebugViews(AeronScene3D* scene, int enabled);
 
-/* Selects a caller-owned diffuse environment cubemap for the current frame.
- * Begin clears the binding. Both resources must remain alive through Render. */
-void AeronScene_SetPbrEnvironmentMap(AeronScene3D* scene, AeronTexture* texture, AeronSampler* sampler);
+/* Image-based lighting environment for the PBR shader, for the current
+ * frame. `diffuse` is a Lambert irradiance / pi cube; its sample along the
+ * shading normal, times `diffuse_strength`, adds to the diffuse ambient.
+ * `specular` (GGX roughness mips) and its strength and mip count are
+ * carried for specular image-based lighting. `world_to_local` (row-major)
+ * maps world directions into the cubes' frame for both lookups. */
+typedef struct AeronScenePbrEnvironment {
+	AeronTexture* diffuse;  /* NULL = none */
+	AeronTexture* specular; /* NULL = none */
+	AeronSampler* sampler;
+	uint32_t      specular_mip_count;
+	float         diffuse_strength;
+	float         specular_strength;
+	float         world_to_local[9];
+} AeronScenePbrEnvironment;
+
+struct AeronEnvironmentPackage;
+
+/* Selects the environment for the current frame (copied; textures borrowed
+ * through Render). NULL, a missing diffuse cube or sampler, or a zero
+ * diffuse strength clears it. Begin clears the selection. The raw form
+ * serves producers that are not packages, such as a procedural tunnel. */
+void AeronScene_SetPbrEnvironment(AeronScene3D* scene, const AeronScenePbrEnvironment* environment);
+/* Selects a prepared package's diffuse cube, diffuse strength and
+ * world-to-cube matrix. NULL clears the selection. */
+void AeronScene_SetPbrEnvironmentPackage(AeronScene3D* scene, const struct AeronEnvironmentPackage* package);
 
 /* Queue a per-frame uniform blob (copied; reset by Begin) that the
  * scene binds to (stage, slot) in the color pass AFTER the
  * BEFORE_OPAQUE hook and before the sky billboards / instance walk —
  * the declarative form of the games' pass-level shading environment.
- * The PBR b1 block is scene-owned shadow data; game lighting uses b3.
+ * PBR fragment slots: b0 is scene-owned directional shadow data, b1 the
+ * game's lighting block (PbrLightFS), b2 the scene lighting block
+ * (clustered lights and environment); b3 is free.
  * Binding after the hook means hook-side
  * pushes to the same slots (e.g. an unlit env for hook-drawn
  * geometry) cannot leak into the instance walk. */

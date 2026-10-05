@@ -7,6 +7,8 @@
 
 #include "internal.h"
 
+#include "aeron/scene/environment.h"
+
 #include <SDL3/SDL.h>
 
 #include <math.h>
@@ -425,16 +427,16 @@ int AeronScene_Begin(AeronScene3D* s, const AeronSceneCamera* camera) {
 		proj[6] -= 2.0f * s->temporal_jitter[1] / (float)s->camera.viewport.height;
 	}
 	scene_mat4_mul(s->jittered_view_proj, proj, view);
-	s->instance_count          = 0;
-	s->instances_dropped       = 0;
-	s->light_count             = 0;
-	s->lights_dropped          = 0;
-	s->cluster_active          = 0;
-	s->cluster_ready           = 0;
-	s->frame_uniform_count     = 0;
-	s->pbr_environment_map     = NULL;
-	s->pbr_environment_sampler = NULL;
-	s->pbr_debug_views         = 0;
+	s->instance_count      = 0;
+	s->instances_dropped   = 0;
+	s->light_count         = 0;
+	s->lights_dropped      = 0;
+	s->cluster_active      = 0;
+	s->cluster_ready       = 0;
+	s->frame_uniform_count = 0;
+	memset(&s->pbr_environment, 0, sizeof s->pbr_environment);
+	s->pbr_environment_set = 0;
+	s->pbr_debug_views     = 0;
 	memset(&s->directional_shadow, 0, sizeof s->directional_shadow);
 	memset(&s->shadow_uniform, 0, sizeof s->shadow_uniform);
 	memset(&s->shadow_stats, 0, sizeof s->shadow_stats);
@@ -806,12 +808,32 @@ void AeronScene_SetPbrDebugViews(AeronScene3D* s, int enabled) {
 #endif
 }
 
-void AeronScene_SetPbrEnvironmentMap(AeronScene3D* s, AeronTexture* texture, AeronSampler* sampler) {
+void AeronScene_SetPbrEnvironment(AeronScene3D* s, const AeronScenePbrEnvironment* environment) {
 	if (!s) {
 		return;
 	}
-	s->pbr_environment_map     = texture && sampler ? texture : NULL;
-	s->pbr_environment_sampler = texture && sampler ? sampler : NULL;
+	memset(&s->pbr_environment, 0, sizeof s->pbr_environment);
+	s->pbr_environment_set = 0;
+	if (!environment || !environment->sampler || !environment->diffuse ||
+		!(environment->diffuse_strength > 0.0f) || !isfinite(environment->diffuse_strength)) {
+		return;
+	}
+	s->pbr_environment     = *environment;
+	s->pbr_environment_set = 1;
+}
+
+void AeronScene_SetPbrEnvironmentPackage(AeronScene3D* s, const AeronEnvironmentPackage* package) {
+	if (!package) {
+		AeronScene_SetPbrEnvironment(s, NULL);
+		return;
+	}
+	AeronScenePbrEnvironment environment;
+	memset(&environment, 0, sizeof environment);
+	environment.diffuse          = package->diffuse;
+	environment.sampler          = package->sampler;
+	environment.diffuse_strength = package->settings.diffuse_strength;
+	memcpy(environment.world_to_local, package->world_to_cube, sizeof environment.world_to_local);
+	AeronScene_SetPbrEnvironment(s, &environment);
 }
 
 void AeronScene_SetFrameUniformData(AeronScene3D* s, AeronShaderStage stage, uint32_t slot, const void* data,

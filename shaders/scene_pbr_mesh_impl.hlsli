@@ -20,7 +20,7 @@
  * Fragment resource map:
  *   b0 space3 — DirectionalShadowFS (scene-owned)
  *   b1 space3 — PbrLightFS          (shared lighting and tuning)
- *   b2 space3 — ClusteredLightUniform
+ *   b2 space3 — scene lighting block (clustered lights + environment)
  *   t8 space2 — material storage (after eight sampled textures)
  *   t9 space2 — packed variant-map storage
  *   t10 space2 — scene point-light storage
@@ -35,7 +35,7 @@
  *   t4/s4 — SSAO
  *   t5/s5 — comparison shadow depth
  *   t6/s6 — raw shadow depth for PCSS blocker search
- *   t7/s7 — optional detailed diffuse environment cubemap
+ *   t7/s7 — diffuse environment cube (Lambert irradiance / pi)
  */
 
 #define AERON_DIRECTIONAL_SHADOW_UNIFORM_REGISTER b0
@@ -67,12 +67,12 @@ SamplerState g_environment_sampler : register(s7, space2);
 
 float3 detailed_environment(float3 world_direction)
 {
-	if (environment_params.x <= 0.0f) return 0.0f;
-	float3 local_direction = float3(dot(world_direction, environment_right.xyz),
-									dot(world_direction, environment_up.xyz),
-									dot(world_direction, environment_forward.xyz));
+	if (fs_environment_params.x <= 0.0f) return 0.0f;
+	float3 local_direction = float3(dot(world_direction, fs_environment_basis[0].xyz),
+									dot(world_direction, fs_environment_basis[1].xyz),
+									dot(world_direction, fs_environment_basis[2].xyz));
 	return max(g_environment.SampleLevel(g_environment_sampler, normalize(local_direction), 0.0f).rgb,
-			   0.0f) * environment_params.x;
+			   0.0f) * fs_environment_params.x;
 }
 
 

@@ -83,7 +83,7 @@ typedef struct AeronEnvironmentDefinition {
 	float                           sky_exposure;                      /* 0 for lighting packages */
 	float                           diffuse_strength;
 	float                           specular_strength; /* 0 for lighting packages */
-	float                           ambient_floor_scale;
+	float                           ambient_fill[3];   /* linear radiance from every direction */
 	float                           rotation_degrees[3]; /* yaw, pitch, roll; each in [0, 360) */
 	AeronEnvironmentLightDefinition lights[AERON_ENV_MAX_LIGHTS];
 	uint32_t                        light_count;
@@ -167,6 +167,7 @@ typedef struct AeronEnvironmentPackage {
 	AeronTexture*              diffuse;
 	AeronTexture*              specular; /* NULL for lighting packages */
 	uint32_t                   specular_mip_count;
+	AeronSampler*              sampler;          /* the library's environment sampler */
 	float                      world_to_cube[9]; /* row-major: Q^T * B */
 	AeronEnvironmentLight      lights[AERON_ENV_MAX_LIGHTS];
 	uint32_t                   light_count;

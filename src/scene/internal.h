@@ -143,6 +143,18 @@ typedef struct AeronSceneClusterUniformGPU {
 	uint32_t global_light_indices[AERON_SCENE_CLUSTER_MAX_GLOBAL_LIGHTS];
 } AeronSceneClusterUniformGPU;
 
+/* Fragment b2: the scene lighting block. Mirrors ClusteredLightUniform
+ * with AERON_SCENE_LIGHTING_ENVIRONMENT; the cluster build compute pass
+ * binds only the cluster part. */
+typedef struct AeronSceneLightingUniformGPU {
+	AeronSceneClusterUniformGPU cluster;
+	float                       environment_params[4];   /* diffuse, specular strength, specular mips, 0 */
+	float                       environment_basis[3][4]; /* world-to-local rows */
+} AeronSceneLightingUniformGPU;
+
+_Static_assert(sizeof(AeronSceneClusterUniformGPU) == 112, "ClusteredLightUniform layout");
+_Static_assert(sizeof(AeronSceneLightingUniformGPU) == 176, "scene lighting block layout");
+
 enum {
 	AERON_SCENE_CLUSTER_ENABLED    = 1u << 0,
 	AERON_SCENE_CLUSTER_DEBUG_VIEW = 1u << 1,
@@ -221,8 +233,9 @@ struct AeronScene3D {
 	int                        lights_dropped;
 	AeronSceneFrameUniform     frame_uniforms[AERON_SCENE_MAX_FRAME_UNIFORMS];
 	int                        frame_uniform_count;
-	AeronTexture*              pbr_environment_map;     /* borrowed for this frame */
-	AeronSampler*              pbr_environment_sampler; /* borrowed for this frame */
+	/* Image-based lighting environment for this frame; textures borrowed. */
+	AeronScenePbrEnvironment pbr_environment;
+	int                      pbr_environment_set;
 
 	/* Stabilized cascaded shadow map for the key directional light. */
 	AeronSceneDirectionalShadowDesc    directional_shadow;
