@@ -2,8 +2,11 @@
 #define AERON_SCENE_BLOOM_H
 
 /* HDR bloom with an approximately resolution-independent screen-space radius.
- * The reference is four equally weighted dual-filter bands at 2160p. At other
+ * The reference is four equally weighted pyramid bands at 2160p. At other
  * heights their weights move between native pyramid levels, keeping gain 4.
+ * The pyramid is a 2x2 bright pass, 13-tap downsamples and 3x3 tent
+ * upsamples, so compact bright sources stay round and do not snap to the
+ * coarse levels' texel grid as they move.
  * Threshold/knee are fixed; presentation applies the runtime intensity.
  * Small and near-threshold emitters remain sensitive to source coverage. */
 

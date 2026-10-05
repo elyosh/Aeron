@@ -1,11 +1,12 @@
 /*
- * Bloom upsample (dual-filter, 4-tap tent).
+ * Bloom upsample (3x3 tent).
  *
- * Samples the smaller mip at four diagonal offsets one DESTINATION
- * texel away from the centre — same kernel as the downsample, but
- * driven by destination-texel size so the filter half-width matches
- * a single destination pixel. Bilinear filtering on the source
- * makes this an effective 9-pixel tent in source-texel space.
+ * Nine bilinear taps one SOURCE texel apart, weighted 1-2-1 per axis
+ * (Jimenez, "Next Generation Post Processing in Call of Duty: Advanced
+ * Warfare", 2014). Taps a single coarse texel's neighbourhood smoothly, so a
+ * compact bright source does not show the coarse level's texel grid or snap
+ * to it as it moves; four taps half a source texel apart reduce to a plain
+ * bilinear fetch of the coarse level and do.
  *
  * The RGB output weights the source contribution. Fragment alpha weights
  * the existing destination band through ONE / SRC_ALPHA additive blending.
@@ -15,6 +16,8 @@ cbuffer UpsamplePS : register(b0, space3)
 {
     /* xy = 1.0 / destination_size, zw = source/destination weights. */
     float4 dst_texel;
+    /* xy = 1.0 / source_size. */
+    float4 src_texel;
 };
 
 Texture2D<float4> g_src : register(t0, space2);
@@ -28,11 +31,15 @@ struct VSOut
 
 float4 main(VSOut input) : SV_Target
 {
-    float2 t = dst_texel.xy;
-    float3 a = g_src.Sample(s_src, input.uv + t * float2(-1.0f, -1.0f)).rgb;
-    float3 b = g_src.Sample(s_src, input.uv + t * float2( 1.0f, -1.0f)).rgb;
-    float3 c = g_src.Sample(s_src, input.uv + t * float2(-1.0f,  1.0f)).rgb;
-    float3 d = g_src.Sample(s_src, input.uv + t * float2( 1.0f,  1.0f)).rgb;
-    float3 sum = (a + b + c + d) * 0.25f * dst_texel.z;
-    return float4(sum, dst_texel.w);
+    float2 t = src_texel.xy;
+    float3 sum = g_src.Sample(s_src, input.uv).rgb * 4.0f;
+    sum += (g_src.Sample(s_src, input.uv + float2(-t.x, 0.0f)).rgb +
+            g_src.Sample(s_src, input.uv + float2( t.x, 0.0f)).rgb +
+            g_src.Sample(s_src, input.uv + float2(0.0f, -t.y)).rgb +
+            g_src.Sample(s_src, input.uv + float2(0.0f,  t.y)).rgb) * 2.0f;
+    sum += g_src.Sample(s_src, input.uv + float2(-t.x, -t.y)).rgb +
+           g_src.Sample(s_src, input.uv + float2( t.x, -t.y)).rgb +
+           g_src.Sample(s_src, input.uv + float2(-t.x,  t.y)).rgb +
+           g_src.Sample(s_src, input.uv + float2( t.x,  t.y)).rgb;
+    return float4(sum * (dst_texel.z / 16.0f), dst_texel.w);
 }

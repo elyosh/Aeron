@@ -317,8 +317,10 @@ int AeronSceneBloom_Apply(AeronSceneBloom* b, AeronCommandBuffer* cmd, AeronText
 
 		struct {
 			float dst_texel[4]; /* xy = 1/dst_size, zw = source/destination weights */
+			float src_texel[4]; /* xy = 1/src_size */
 		} u = { { 1.0f / (float)dst->w, 1.0f / (float)dst->h, i == b->level_count - 1 ? src->weight : 1.0f,
-				  i == 1 ? dst->weight / first_weight : dst->weight } };
+				  i == 1 ? dst->weight / first_weight : dst->weight },
+				{ 1.0f / (float)src->w, 1.0f / (float)src->h, 0.0f, 0.0f } };
 
 		char label[32];
 		snprintf(label, sizeof label, "Bloom up %d->%d", i, i - 1);
