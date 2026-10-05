@@ -75,6 +75,10 @@ typedef struct OptGltfBuildOptions {
 	float                              smooth_angle_degrees;
 	bool                               repair_normals;
 	bool                               emissive;
+	/* When positive, every material is fully self-lit: black base color
+	 * (alpha kept), the base texture as emissiveTexture, and this
+	 * KHR_materials_emissive_strength. Supersedes `emissive`. */
+	float                              fullbright_strength;
 	const struct OptGltfAlphaOverride* alpha_overrides;
 	size_t                             alpha_override_count;
 	/* Fail on a mesh without LOD 0 triangles instead of skipping it, so

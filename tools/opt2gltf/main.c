@@ -3,8 +3,8 @@
  * glTF 2.0 + .bin + .png assets.
  *
  * Usage:
- *   opt2gltf [--smooth-angle DEG] [--emissive] [--tag N=TAG]...
- *            [--subdivide N] <input.opt|input_dir> <output_dir>
+ *   opt2gltf [--smooth-angle DEG] [--emissive] [--fullbright STRENGTH]
+ *            [--tag N=TAG]... [--subdivide N] <input.opt|input_dir> <output_dir>
  *
  * If the input is a directory, every *.OPT inside (case-insensitive)
  * is converted and emitted under <output_dir>/<basename>/. If a single
@@ -66,11 +66,18 @@
  * 5-bit magnitude >= 32, green LSB dropped) and rows 1..6 stay within
  * squared distance 16 of row 0; glow color from palette row 10; textures
  * named "_*" and palettes where none/all 256 entries classify are skipped.
+ *
+ * --fullbright STRENGTH (> 0) makes every material fully self-lit, as the
+ * classic renderer draws projectiles: black base color with the texture's
+ * alpha kept, the base texture as emissiveTexture, and STRENGTH as
+ * KHR_materials_emissive_strength. Scene lighting then adds only a faint
+ * specular. It supersedes --emissive.
  */
 
 #include <ctype.h>
 #include <dirent.h>
 #include <errno.h>
+#include <math.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -119,6 +126,8 @@ int main(int argc, char** argv) {
 	bool repair_normals = true;
 	/* Self-illumination export is opt-in. */
 	bool emissive = false;
+	/* Fullbright export is opt-in; 0 leaves materials lit. */
+	float fullbright_strength = 0.0f;
 	/* Tags point into argv. */
 	OptGltfComponentTag* tags             = NULL;
 	size_t               tag_count        = 0;
@@ -139,6 +148,16 @@ int main(int argc, char** argv) {
 		} else if (strcmp(argv[ai], "--emissive") == 0) {
 			emissive = true;
 			ai += 1;
+		} else if (strcmp(argv[ai], "--fullbright") == 0) {
+			char* end           = NULL;
+			fullbright_strength = ai + 1 < argc ? strtof(argv[ai + 1], &end) : 0.0f;
+			if (ai + 1 >= argc || end == argv[ai + 1] || *end || !isfinite(fullbright_strength) ||
+				fullbright_strength <= 0.0f) {
+				fprintf(stderr, "opt2gltf: --fullbright needs a positive strength\n");
+				free(tags);
+				return 2;
+			}
+			ai += 2;
 		} else if (strcmp(argv[ai], "--tag") == 0) {
 			char*         equals = ai + 1 < argc ? strchr(argv[ai + 1], '=') : NULL;
 			char*         end    = NULL;
@@ -175,7 +194,7 @@ int main(int argc, char** argv) {
 	if (argc - ai != 2) {
 		fprintf(stderr,
 				"usage: %s [--smooth-angle DEG] [--no-normal-repair] "
-				"[--emissive] [--tag N=TAG]... [--subdivide N] "
+				"[--emissive] [--fullbright STRENGTH] [--tag N=TAG]... [--subdivide N] "
 				"<input.OPT|input_dir> <output_dir>\n",
 				argv[0]);
 		free(tags);
@@ -185,6 +204,7 @@ int main(int argc, char** argv) {
 		.smooth_angle_degrees = smooth_angle_deg,
 		.repair_normals       = repair_normals,
 		.emissive             = emissive,
+		.fullbright_strength  = fullbright_strength,
 		.require_all_meshes   = true,
 		.component_tags       = tags,
 		.component_tag_count  = tag_count,

@@ -989,7 +989,9 @@ bool OptGltf_BuildMemory(const opt_file_t* opt, const char* basename, const OptG
 	}
 	const float smooth_angle_deg    = options ? options->smooth_angle_degrees : -1.0f;
 	const bool  repair_normals      = options ? options->repair_normals : true;
-	const bool  emissive            = options ? options->emissive : false;
+	const float fullbright_strength = options ? options->fullbright_strength : 0.0f;
+	const bool  fullbright          = fullbright_strength > 0.0f;
+	const bool  emissive            = options && options->emissive && !fullbright;
 	const float meters_per_opt_unit = OPT_METERS_PER_UNIT;
 
 	OptGltfDocument* document = (OptGltfDocument*)calloc(1, sizeof *document);
@@ -1130,6 +1132,21 @@ bool OptGltf_BuildMemory(const opt_file_t* opt, const char* basename, const OptG
 			mat->alpha_mode = cgltf_alpha_mode_blend;
 		}
 
+		/* Fullbright: the texture lights itself and the scene adds nothing
+		 * diffuse, as the classic renderer draws projectiles. Alpha still
+		 * comes from the base texture. */
+		if (fullbright) {
+			mat->pbr_metallic_roughness.base_color_factor[0] = 0.0f;
+			mat->pbr_metallic_roughness.base_color_factor[1] = 0.0f;
+			mat->pbr_metallic_roughness.base_color_factor[2] = 0.0f;
+			mat->emissive_texture.texture                    = &build->textures[i];
+			mat->emissive_factor[0]                          = 1.0f;
+			mat->emissive_factor[1]                          = 1.0f;
+			mat->emissive_factor[2]                          = 1.0f;
+			mat->has_emissive_strength                       = 1;
+			mat->emissive_strength.emissive_strength         = fullbright_strength;
+		}
+
 		/* Emissive: self-illuminated texels (e.g. lit windows) get a second
 		 * texture holding their base color on black, wired as emissiveTexture
 		 * with a unit emissiveFactor. */
@@ -1188,6 +1205,14 @@ bool OptGltf_BuildMemory(const opt_file_t* opt, const char* basename, const OptG
 	untex->pbr_metallic_roughness.base_color_factor[3] = 1.0f;
 	untex->pbr_metallic_roughness.metallic_factor      = 0.0f;
 	untex->pbr_metallic_roughness.roughness_factor     = 1.0f;
+	if (fullbright) {
+		for (int channel = 0; channel < 3; ++channel) {
+			untex->emissive_factor[channel] = untex->pbr_metallic_roughness.base_color_factor[channel];
+			untex->pbr_metallic_roughness.base_color_factor[channel] = 0.0f;
+		}
+		untex->has_emissive_strength               = 1;
+		untex->emissive_strength.emissive_strength = fullbright_strength;
+	}
 	build->materials_count                             = (size_t)opt->texture_count + 1;
 	const size_t untex_idx                             = (size_t)opt->texture_count;
 
