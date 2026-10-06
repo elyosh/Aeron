@@ -11,13 +11,15 @@
 typedef struct ShadowVsBlock {
 	float    view_proj[16];
 	float    model_to_world[16];
-	uint32_t mesh_table_index;
+	uint32_t mesh_table_base;
 	uint32_t variant_row_base;
 	uint32_t variant_group_count;
 	uint32_t material_count;
+	uint32_t table_slot_count;
+	uint32_t _pad[3];
 } ShadowVsBlock;
 
-typedef char ShadowVsBlockSizeCheck[sizeof(ShadowVsBlock) == 144 ? 1 : -1];
+typedef char ShadowVsBlockSizeCheck[sizeof(ShadowVsBlock) == 160 ? 1 : -1];
 
 typedef struct ShadowDebugUniforms {
 	float output_size[2];
@@ -129,7 +131,11 @@ static int shadow_instance_bound(const AeronSceneMeshInstance* instance, ShadowB
 	const float local_radius         = sqrtf(shadow_dot3(local_extent, local_extent));
 	float       articulation_padding = 0.0f;
 	if (instance->mesh_table) {
-		for (int mesh_index = 0; mesh_index < AERON_MAX_MESH_SLOTS; mesh_index++) {
+		const int slots =
+			instance->mesh_table->slot_count && instance->mesh_table->slot_count < AERON_MAX_MESH_SLOTS
+				? (int)instance->mesh_table->slot_count
+				: AERON_MAX_MESH_SLOTS;
+		for (int mesh_index = 0; mesh_index < slots; mesh_index++) {
 			if (instance->mesh_table->visibility_packed[mesh_index >> 2][mesh_index & 3] < 0.5f) {
 				continue;
 			}
@@ -1094,9 +1100,9 @@ static void shadow_draw_class(struct AeronScene3D* scene, AeronRenderPass* pass,
 			Aeron_BindVertexBuffer(pass, 0, mesh->vbo, 0);
 			Aeron_BindIndexBuffer(pass, mesh->ibo, AERON_INDEX_FORMAT_UINT32, 0);
 			if (masked) {
-				Aeron_BindTextureSampler(pass, AERON_SHADER_STAGE_FRAGMENT, 0,
-										 mesh->atlas[0] ? mesh->atlas[0] : AeronSceneInternal_WhiteTexture(),
-										 atlas_sampler);
+				Aeron_BindTextureSampler(
+					pass, AERON_SHADER_STAGE_FRAGMENT, 0,
+					mesh->atlas[0] ? mesh->atlas[0] : AeronSceneInternal_WhiteArrayTexture(), atlas_sampler);
 				Aeron_BindStorageBuffer(pass, AERON_SHADER_STAGE_FRAGMENT, 0, mesh->material_buffer);
 				Aeron_BindStorageBuffer(pass, AERON_SHADER_STAGE_FRAGMENT, 1, mesh->variant_buffer);
 			}
@@ -1105,7 +1111,8 @@ static void shadow_draw_class(struct AeronScene3D* scene, AeronRenderPass* pass,
 		memset(&block, 0, sizeof block);
 		memcpy(block.view_proj, view_proj, sizeof block.view_proj);
 		memcpy(block.model_to_world, instance->transform, sizeof block.model_to_world);
-		block.mesh_table_index = AeronSceneStorage_ShadowTableIndex(scene, casters[item]);
+		block.mesh_table_base =
+			AeronSceneStorage_ShadowTableBase(scene, casters[item], &block.table_slot_count);
 		uint32_t variant       = instance->variant;
 		if (variant >= mesh->variant_slots)
 			variant = mesh->variant_slots ? mesh->variant_slots - 1u : 0u;

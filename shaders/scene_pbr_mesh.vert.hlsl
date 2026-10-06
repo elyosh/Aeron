@@ -70,9 +70,7 @@ PbrForwardVSOut main(VSIn input)
 	output.world_tangent = world_tangent;
 	output.tangent_sign = input.tangent.w;
 	output.uv = input.uv;
-	output.emissive_mul =
-		mesh_table_load(current_table_index,
-						MESH_EMISSIVE_OFFSET + (mesh_index >> 2u))[mesh_index & 3u];
+	output.emissive_mul = mesh_table_lane(AERON_MESH_LANE_EMISSIVE, mesh_index);
 	output.local_rgb = local_rgb;
 	output.prim_id = input.prim_id;
 	output.base_color_emissive_strength = base_color_emissive_strength;

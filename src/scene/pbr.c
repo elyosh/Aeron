@@ -37,11 +37,11 @@ typedef struct AeronScenePbrVsBlock {
 	float    base_color_emissive_strength;
 	uint32_t receive_shadow;
 	uint32_t screen_shadow;
-	uint32_t current_table_index;
-	uint32_t previous_table_index;
+	uint32_t current_table_base;
+	uint32_t previous_table_base;
 	uint32_t local_light_base;
 	uint32_t local_light_count;
-	uint32_t _pad_storage;
+	uint32_t table_slot_count;
 	float    prev_view_proj[16];
 	float    prev_model_to_world[16];
 } AeronScenePbrVsBlock; /* 368 B */
@@ -399,6 +399,7 @@ const AeronSceneMeshTable* AeronScenePbr_IdentityTable(void) {
 	static AeronSceneMeshTable t;
 	static int                 built;
 	if (!built) {
+		t.slot_count = AERON_MAX_MESH_SLOTS;
 		for (int mi = 0; mi < AERON_MAX_MESH_SLOTS; ++mi) {
 			t.rows[mi][0][0]                     = 1.0f;
 			t.rows[mi][1][1]                     = 1.0f;
@@ -437,8 +438,9 @@ static void pbr_push_instance_uniforms(struct AeronScene3D* s, AeronRenderPass* 
 	vsb.receive_shadow       = (in->shadow_flags & AERON_SCENE_INSTANCE_NO_RECEIVE_SHADOW) == 0 ? 1u : 0u;
 	const int receiver_local = (in->shadow_flags & AERON_SCENE_INSTANCE_USE_RECEIVER_LOCAL_SHADOW) != 0;
 	vsb.screen_shadow        = screen_shadow && vsb.receive_shadow && !receiver_local ? 1u : 0u;
-	vsb.current_table_index  = prepared->current_table_index;
-	vsb.previous_table_index = vel ? prepared->previous_table_index : prepared->current_table_index;
+	vsb.current_table_base           = prepared->current_table_base;
+	vsb.previous_table_base          = vel ? prepared->previous_table_base : prepared->current_table_base;
+	vsb.table_slot_count             = prepared->table_slot_count;
 	vsb.local_light_base     = prepared->local_light_base;
 	vsb.local_light_count    = prepared->local_light_count;
 	Aeron_BindUniformData(pass, AERON_SHADER_STAGE_VERTEX, 0, &vsb, sizeof vsb);
@@ -503,9 +505,10 @@ static void pbr_bind_material_resources(AeronRenderPass* pass, const AeronSceneM
 										AeronSampler* atlas_sampler, int all_channels) {
 	const uint32_t channel_count = all_channels ? AERON_GLTF_CHANNEL_COUNT : 1u;
 	for (uint32_t channel = 0; channel < channel_count; ++channel) {
-		Aeron_BindTextureSampler(
-			pass, AERON_SHADER_STAGE_FRAGMENT, channel,
-			mesh->atlas[channel] ? mesh->atlas[channel] : AeronSceneInternal_WhiteTexture(), atlas_sampler);
+		Aeron_BindTextureSampler(pass, AERON_SHADER_STAGE_FRAGMENT, channel,
+								 mesh->atlas[channel] ? mesh->atlas[channel]
+													  : AeronSceneInternal_WhiteArrayTexture(),
+								 atlas_sampler);
 	}
 	Aeron_BindStorageBuffer(pass, AERON_SHADER_STAGE_FRAGMENT, 0, mesh->material_buffer);
 	Aeron_BindStorageBuffer(pass, AERON_SHADER_STAGE_FRAGMENT, 1, mesh->variant_buffer);
@@ -670,7 +673,7 @@ int AeronScenePbr_DrawInstances(struct AeronScene3D* s, AeronCommandBuffer* cmd,
 				Aeron_BindVertexBuffer(pass, 0, m->vbo, 0);
 				Aeron_BindIndexBuffer(pass, m->ibo, AERON_INDEX_FORMAT_UINT32, 0);
 				Aeron_BindTextureSampler(pass, AERON_SHADER_STAGE_FRAGMENT, 0,
-										 m->atlas[0] ? m->atlas[0] : AeronSceneInternal_WhiteTexture(),
+										 m->atlas[0] ? m->atlas[0] : AeronSceneInternal_WhiteArrayTexture(),
 										 atlas_sampler);
 				Aeron_BindStorageBuffer(pass, AERON_SHADER_STAGE_FRAGMENT, 0, m->material_buffer);
 				Aeron_BindStorageBuffer(pass, AERON_SHADER_STAGE_FRAGMENT, 1, m->variant_buffer);

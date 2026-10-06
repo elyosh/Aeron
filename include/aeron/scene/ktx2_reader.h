@@ -7,8 +7,12 @@
  * Spec: https://registry.khronos.org/KTX/specs/2.0/ktxspec.v2.html
  *
  * Supported subset:
- *   - 2D textures (faceCount == 1, layerCount in {0,1}, pixelDepth in {0,1})
+ *   - 2D textures (faceCount == 1, layerCount == 0, pixelDepth in {0,1})
+ *   - 2D arrays (faceCount == 1, layerCount >= 1). Layers in each KTX2
+ *     level are stored back-to-back; ktx2_level_face() lifts one layer.
  *   - Cube maps (faceCount == 6, layerCount in {0,1}, pixelDepth in {0,1}).
+ *   - Every level's (uncompressed) size must equal the block math for its
+ *     dimensions, faces and layers.
  *     Cube faces in each KTX2 level are stored back-to-back in the
  *     standard order (+X, -X, +Y, -Y, +Z, -Z). Use ktx2_face_count() to
  *     branch + ktx2_level_face() to lift one face's bytes.
@@ -86,13 +90,18 @@ int ktx2_level_count(const Ktx2* k);
 /* Cube faces per level. 1 for plain 2D textures; 6 for cube maps. */
 int ktx2_face_count(const Ktx2* k);
 
+/* Header layerCount: 0 for a non-array texture, otherwise the number of
+ * 2D-array layers. */
+int ktx2_layer_count(const Ktx2* k);
+
 /* Returns the level's data view. For cube maps, this is the full
  * level — all faces concatenated; use ktx2_level_face when you need
  * one face's bytes. Level 0 is the base (largest) level; subsequent
  * indices are progressively smaller mips. */
 Ktx2Level ktx2_level(const Ktx2* k, int level);
 
-/* Returns one cube face of `level`. `face` ∈ [0, ktx2_face_count()).
+/* Returns one cube face of `level`, or one layer of a 2D array.
+ * `face` ∈ [0, ktx2_face_count()), or [0, ktx2_layer_count()) for arrays.
  * The returned `data` points into the same blob ktx2_level returns;
  * face data is stored contiguously level-by-level, so face 0..5 of
  * level 0 land back-to-back, then face 0..5 of level 1, etc.

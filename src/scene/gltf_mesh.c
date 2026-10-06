@@ -178,6 +178,34 @@ static const cgltf_texture_view* material_channel_view(const cgltf_material* m, 
 	}
 }
 
+/* The cooker names atlas textures `tex_<channel>_p<page>_l<max_lod>`. A name
+ * without that suffix keeps page 0 and no LOD limit; a malformed or
+ * out-of-range suffix rejects the material. */
+static bool parse_atlas_texture_name(const char* name, uint32_t* page, uint32_t* max_lod) {
+	const char* lod = name ? strrchr(name, '_') : NULL;
+	if (!lod || lod[1] != 'l' || lod == name)
+		return true;
+	const char* p = lod - 1;
+	while (p > name && *p != '_')
+		p--;
+	if (*p != '_' || p[1] != 'p')
+		return true;
+	char*               end         = NULL;
+	const unsigned long parsed_page = strtoul(p + 2, &end, 10);
+	if (end == p + 2 || end != lod)
+		return true;
+	const unsigned long parsed_lod = strtoul(lod + 2, &end, 10);
+	if (end == lod + 2 || *end != '\0')
+		return true;
+	if (parsed_page > AERON_GLTF_ATLAS_MAX_PAGE || parsed_lod > AERON_GLTF_ATLAS_UNCLAMPED_LOD) {
+		SDL_Log("[flight_gltf] atlas texture '%s' is out of range", name);
+		return false;
+	}
+	*page    = (uint32_t)parsed_page;
+	*max_lod = (uint32_t)parsed_lod;
+	return true;
+}
+
 static bool read_material(const cgltf_material* m, AeronGltfMaterial* out) {
 	/* Factor defaults per glTF spec. */
 	out->base_color_factor[0] = 1.0f;
@@ -197,6 +225,14 @@ static bool read_material(const cgltf_material* m, AeronGltfMaterial* out) {
 	/* uv_xform sentinel zero = "channel not authored" — FS falls back
 	 * to factor. Overwritten below for channels that do bind. */
 	memset(out->uv_xform, 0, sizeof out->uv_xform);
+	for (int c = 0; c < AERON_GLTF_CHANNEL_COUNT; c++) {
+		out->atlas_page[c]    = 0;
+		out->atlas_max_lod[c] = AERON_GLTF_ATLAS_UNCLAMPED_LOD;
+	}
+	out->specular_factor          = 1.0f;
+	out->specular_color_factor[0] = 1.0f;
+	out->specular_color_factor[1] = 1.0f;
+	out->specular_color_factor[2] = 1.0f;
 
 	if (!m)
 		return true;
@@ -233,6 +269,16 @@ static bool read_material(const cgltf_material* m, AeronGltfMaterial* out) {
 	out->emissive_factor[2] = m->emissive_factor[2];
 	if (m->has_emissive_strength)
 		out->emissive_strength = m->emissive_strength.emissive_strength;
+	if (m->has_specular) {
+		out->specular_factor = m->specular.specular_factor;
+		memcpy(out->specular_color_factor, m->specular.specular_color_factor,
+			   sizeof out->specular_color_factor);
+		if (!isfinite(out->specular_factor) || out->specular_factor < 0.0f || out->specular_factor > 1.0f)
+			return false;
+		for (int i = 0; i < 3; i++)
+			if (!isfinite(out->specular_color_factor[i]) || out->specular_color_factor[i] < 0.0f)
+				return false;
+	}
 
 	for (int c = 0; c < AERON_GLTF_CHANNEL_COUNT; c++) {
 		const cgltf_texture_view* tv = material_channel_view(m, c);
@@ -242,6 +288,8 @@ static bool read_material(const cgltf_material* m, AeronGltfMaterial* out) {
 		out->uv_xform[c][1] = tv->transform.offset[1];
 		out->uv_xform[c][2] = tv->transform.scale[0];
 		out->uv_xform[c][3] = tv->transform.scale[1];
+		if (!parse_atlas_texture_name(tv->texture->name, &out->atlas_page[c], &out->atlas_max_lod[c]))
+			return false;
 	}
 	return true;
 }

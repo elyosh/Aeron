@@ -2748,12 +2748,15 @@ AeronTexture* Aeron_CreateTexture(const AeronTextureDesc* desc) {
 	}
 
 	SDL_zero(texture_info);
-	texture_info.type                 = desc->cube ? SDL_GPU_TEXTURETYPE_CUBE : SDL_GPU_TEXTURETYPE_2D;
+	const int layer_count             = desc->cube ? 6 : (desc->layer_count > 0 ? desc->layer_count : 1);
+	texture_info.type                 = desc->cube              ? SDL_GPU_TEXTURETYPE_CUBE
+										: desc->layer_count > 0 ? SDL_GPU_TEXTURETYPE_2D_ARRAY
+																: SDL_GPU_TEXTURETYPE_2D;
 	texture_info.format               = format;
 	texture_info.usage                = usage;
 	texture_info.width                = (uint32_t)desc->width;
 	texture_info.height               = (uint32_t)desc->height;
-	texture_info.layer_count_or_depth = desc->cube ? 6 : 1;
+	texture_info.layer_count_or_depth = (uint32_t)layer_count;
 	texture_info.num_levels           = (uint32_t)mip_count;
 	texture_info.sample_count         = SDL_GPU_SAMPLECOUNT_1;
 
@@ -2772,7 +2775,7 @@ AeronTexture* Aeron_CreateTexture(const AeronTextureDesc* desc) {
 	texture->width        = desc->width;
 	texture->height       = desc->height;
 	texture->mip_count    = mip_count;
-	texture->layer_count  = desc->cube ? 6 : 1;
+	texture->layer_count  = layer_count;
 	texture->format       = desc->format;
 	texture->usage        = desc->usage;
 	texture->sample_count = AERON_SAMPLE_COUNT_1;

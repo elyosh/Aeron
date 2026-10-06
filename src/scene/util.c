@@ -79,6 +79,36 @@ AeronTexture* AeronSceneInternal_WhiteTexture(void) {
 	return tex;
 }
 
+/* Process-shared 1-layer array placeholder for the model atlas slots, which
+ * the shaders declare as Texture2DArray: binding a 2D texture there is
+ * undefined on Vulkan and Metal. */
+AeronTexture* AeronSceneInternal_WhiteArrayTexture(void) {
+	static AeronTexture* tex;
+	if (tex) {
+		return tex;
+	}
+	tex = Aeron_CreateTexture(&(AeronTextureDesc) {
+		.width       = 1,
+		.height      = 1,
+		.format      = AERON_TEXTURE_FORMAT_RGBA8_UNORM,
+		.usage       = AERON_TEXTURE_USAGE_SAMPLED | AERON_TEXTURE_USAGE_TRANSFER_DST,
+		.layer_count = 1,
+		.debug_name  = "scene.white_array_1x1",
+	});
+	if (!tex) {
+		Aeron_RequestFatalRendererError("shared scene texture creation");
+		return NULL;
+	}
+	static const uint8_t white[4] = { 0xFF, 0xFF, 0xFF, 0xFF };
+	if (!Aeron_UploadTextureData(&(AeronTextureUploadDesc) {
+			.texture = tex, .width = 1, .height = 1, .raw_data = white, .raw_size = sizeof white })) {
+		Aeron_DestroyTexture(tex);
+		tex = NULL;
+		Aeron_RequestFatalRendererError("shared scene texture upload");
+	}
+	return tex;
+}
+
 /* Process-shared cube placeholder for optional PBR environment bindings. */
 AeronTexture* AeronSceneInternal_WhiteCubeTexture(void) {
 	static AeronTexture* tex;

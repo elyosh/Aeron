@@ -52,7 +52,8 @@ static int load_models(const AeronConfigFile* yaml, CaptureConfig* config) {
 		return 1;
 	size_t count = AeronConfigNode_SequenceCount(models);
 	if (AeronConfigNode_Type(models) != AERON_CONFIG_SEQUENCE || count == 0 || count > CAPTURE_MAX_MODELS) {
-		fprintf(stderr, "models must list 1-%d OPT paths relative to asset_root\n", CAPTURE_MAX_MODELS);
+		fprintf(stderr, "models must list 1-%d OPT or cooked GLB paths relative to asset_root\n",
+				CAPTURE_MAX_MODELS);
 		return 0;
 	}
 	for (size_t i = 0; i < count; ++i) {

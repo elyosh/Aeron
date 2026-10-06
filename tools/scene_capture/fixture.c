@@ -1,5 +1,8 @@
+#include "aeron/asset/flight_model.h"
 #include "aeron/asset/opt_model.h"
 #include "capture.h"
+
+#include <SDL3/SDL.h>
 
 #include <math.h>
 #include <stdlib.h>
@@ -24,9 +27,11 @@ static AeronSceneMesh* create_cube(AeronCommandBuffer* cmd) {
 		for (int i = 0; i < 6; ++i)
 			indices[f * 6 + i] = (uint32_t)(f * 4 + triangle[i]);
 	}
-	AeronGltfMaterial material = { .base_color_factor = { .8f, .8f, .8f, 1 },
-								   .roughness_factor  = 1,
-								   .double_sided      = 1 };
+	AeronGltfMaterial material = { .base_color_factor     = { .8f, .8f, .8f, 1 },
+								   .roughness_factor      = 1,
+								   .double_sided          = 1,
+								   .specular_factor       = 1,
+								   .specular_color_factor = { 1, 1, 1 } };
 	uint32_t          variant  = 0;
 	AeronFlightModel  model    = { .render     = { .vertices              = vertices,
 												   .vertex_count          = 24,
@@ -55,20 +60,26 @@ static int load_models(Fixture* f, AeronCommandBuffer* cmd) {
 		uint8_t*    bytes = NULL;
 		size_t      size  = 0;
 		if (!AeronVfs_ReadAll(vfs, AERON_VFS_ROOT_ASSET, path, 64u * 1024u * 1024u, &bytes, &size)) {
-			Aeron_LogError("scene_capture", "Cannot read OPT '%s' under '%s'", path, f->config.asset_root);
+			Aeron_LogError("scene_capture", "Cannot read model '%s' under '%s'", path, f->config.asset_root);
 			ok = 0;
 			break;
 		}
-		AeronFlightModel   model = { 0 };
-		AeronOptModelError error = { 0 };
-		ok                       = Aeron_OptModelBuildMemory(
-			bytes, size, path,
-			&(AeronOptModelBuildOptions) {
-				.smooth_angle_degrees = 90, .emissive = true, .emissive_strength = f->config.emissive_scale },
-			&model, &error);
+		/* A cooked .glb loads as a game loads it; anything else is an OPT. */
+		const size_t       length = strlen(path);
+		const bool         glb    = length > 4 && SDL_strcasecmp(path + length - 4, ".glb") == 0;
+		AeronFlightModel   model  = { 0 };
+		AeronOptModelError error  = { 0 };
+		ok = glb ? Aeron_FlightModelBuildMemory(bytes, size, path, &model)
+				 : Aeron_OptModelBuildMemory(
+					   bytes, size, path,
+					   &(AeronOptModelBuildOptions) { .smooth_angle_degrees = 90,
+													  .emissive             = true,
+													  .emissive_strength    = f->config.emissive_scale },
+					   &model, &error);
 		free(bytes);
 		if (!ok) {
-			Aeron_LogError("scene_capture", "Cannot build OPT '%s': %s", path, error.message);
+			Aeron_LogError("scene_capture", "Cannot build model '%s': %s", path,
+						   glb ? "invalid cooked GLB" : error.message);
 		} else if (!isfinite(model.max_extent) || model.max_extent <= 1e-6f) {
 			Aeron_LogError("scene_capture", "OPT '%s' has invalid bounds", path);
 			ok = 0;

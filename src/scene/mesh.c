@@ -14,7 +14,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-typedef char AeronPbrMaterialEntrySizeCheck[sizeof(AeronPbrMaterialEntry) == 128 ? 1 : -1];
+typedef char AeronPbrMaterialEntrySizeCheck[sizeof(AeronPbrMaterialEntry) == 160 ? 1 : -1];
 
 static const char* channel_name(int c) {
 	static const char* names[AERON_GLTF_CHANNEL_COUNT] = { "base_color", "normal", "metallic_rough",
@@ -55,7 +55,7 @@ void AeronScene_MeshDestroy(AeronSceneMesh* m) {
 	free(m);
 }
 
-/* Copy factors and atlas transforms into the shader's 128-byte storage
+/* Copy factors and atlas transforms into the shader's 160-byte storage
  * record. The temporary array is released immediately after upload. */
 static uint32_t populate_material_entries(AeronPbrMaterialEntry* entries, const AeronGltfModel* src) {
 	uint32_t n = src->material_count;
@@ -80,6 +80,13 @@ static uint32_t populate_material_entries(AeronPbrMaterialEntry* entries, const 
 		e->metal_rough[0]     = m->metallic_factor;
 		e->metal_rough[1]     = m->roughness_factor;
 		e->metal_rough[2]     = m->alpha_cutoff;
+		e->specular[0]        = m->specular_color_factor[0];
+		e->specular[1]        = m->specular_color_factor[1];
+		e->specular[2]        = m->specular_color_factor[2];
+		e->specular[3]        = m->specular_factor;
+		for (int c = 0; c < AERON_GLTF_CHANNEL_COUNT; c++) {
+			e->atlas[c] = (m->atlas_page[c] & 0xFFFu) | (m->atlas_max_lod[c] & 0xFu) << 12;
+		}
 
 		/* flags mirror UV-xform scale presence (scale.xy > 0), matching
 		 * the FS sentinel: scale==0 means channel absent. */
@@ -142,15 +149,12 @@ static int build_material_storage(AeronSceneMesh* s, const AeronGltfModel* model
 
 static int build_variant_storage(AeronSceneMesh* s, const AeronGltfModel* model, const char* name,
 								 uint32_t** out_values, uint32_t* out_bytes) {
-	uint32_t primitive_count = model->total_prim_count;
+	const uint32_t primitive_count = model->total_prim_count;
 	if (!out_values || !out_bytes) {
 		return 0;
 	}
 	*out_values = NULL;
-	*out_bytes  = 0;
-	if (primitive_count > 256u) {
-		primitive_count = 256u;
-	}
+	*out_bytes                 = 0;
 	const uint32_t groups      = primitive_count > 0 ? (primitive_count + 3u) / 4u : 1u;
 	const uint32_t rows        = model->variant_slots > 0 ? model->variant_slots : 1u;
 	const size_t   value_count = (size_t)groups * rows * 4u;
@@ -244,6 +248,20 @@ AeronSceneMesh* AeronScene_MeshCreate(AeronCommandBuffer* cmd, const AeronFlight
 			}
 			close_channel_payloads(channel_payloads);
 			return NULL;
+		}
+		/* Every binding must name an existing layer of its atlas. */
+		const uint32_t layers =
+			ktx2_layer_count(channel_payloads[c]) > 0 ? (uint32_t)ktx2_layer_count(channel_payloads[c]) : 1u;
+		for (uint32_t index = 0; index < model->material_count; ++index) {
+			if (model->materials[index].atlas_page[c] >= layers) {
+				Aeron_LogError("aeron.scene", "%s: material %u samples %s atlas page %u of %u", name, index,
+							   channel_name(c), model->materials[index].atlas_page[c], layers);
+				if (status) {
+					*status = AERON_SCENE_MESH_CREATE_INVALID_SOURCE;
+				}
+				close_channel_payloads(channel_payloads);
+				return NULL;
+			}
 		}
 	}
 
@@ -347,7 +365,7 @@ AeronSceneMesh* AeronScene_MeshCreate(AeronCommandBuffer* cmd, const AeronFlight
 		}
 		char label[96];
 		snprintf(label, sizeof label, "%s.%s", name, channel_name(c));
-		s->atlas[c] = Aeron_ImageUploadKtx2(cmd, channel_payloads[c], label);
+		s->atlas[c] = Aeron_ImageUploadKtx2Array(cmd, channel_payloads[c], label);
 		ktx2_close(channel_payloads[c]);
 		channel_payloads[c] = NULL;
 		if (!s->atlas[c]) {
@@ -405,7 +423,12 @@ AeronSceneMesh* AeronScene_MeshCreate(AeronCommandBuffer* cmd, const AeronFlight
 	}
 
 	/* ---- Articulation + bounds ---- */
-	for (uint32_t i = 0; i < flight_model->component_count && i < AERON_MAX_MESH_SLOTS; ++i) {
+	s->slot_count = flight_model->component_count < AERON_MAX_MESH_SLOTS ? flight_model->component_count
+																		 : AERON_MAX_MESH_SLOTS;
+	if (s->slot_count == 0) {
+		s->slot_count = 1;
+	}
+	for (uint32_t i = 0; i < s->slot_count; ++i) {
 		const AeronFlightComponent* component = &flight_model->components[i];
 		AeronMeshRot*               rotation  = &s->mesh_rot[i];
 		rotation->mesh_type                   = (uint8_t)component->mesh_type;
@@ -419,7 +442,7 @@ AeronSceneMesh* AeronScene_MeshCreate(AeronCommandBuffer* cmd, const AeronFlight
 			rotation->axis[2]      = component->rotation.rotation_axis.z;
 		}
 	}
-	for (uint32_t i = 0; i < AERON_MAX_MESH_SLOTS; i++) {
+	for (uint32_t i = 0; i < s->slot_count; i++) {
 		if (s->mesh_rot[i].has_rotation) {
 			s->has_any_rotation = true;
 			break;

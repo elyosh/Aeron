@@ -21,6 +21,9 @@ struct PbrMaterialParams
     float  spec_intensity;
     float  roughness;
     float3 F0;
+    /* Fresnel at grazing incidence: 1 except for KHR_materials_specular
+     * dielectrics, where it is specularFactor. */
+    float  F90;
     float3 albedo;
 };
 
@@ -589,7 +592,7 @@ float3 cook_torrance_spec(float3 N, float3 V, float3 L,
     float G_V = ndotv / (ndotv * (1.0f - k) + k);
     float G   = G_L * G_V;
 
-    float3 F = mp.F0 + (1.0f - mp.F0) * pow(1.0f - vdoth, 5.0f);
+    float3 F = mp.F0 + (mp.F90 - mp.F0) * pow(1.0f - vdoth, 5.0f);
 
     out_G = G;
     return (D * G) * F / max(4.0f * ndotv, 1e-4f);

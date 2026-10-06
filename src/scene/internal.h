@@ -31,7 +31,9 @@
 #define AERON_SCENE_MAX_SHADOW_CASTERS (AERON_SCENE_MAX_INSTANCES + AERON_SCENE_MAX_SHADOW_ONLY)
 #define AERON_SCENE_MAX_MESH_TABLES                                                                          \
 	(1 + AERON_SCENE_MAX_INSTANCES * 2 + AERON_SCENE_MAX_SHADOW_ONLY + AERON_SCENE_MAX_MESH_OVERLAYS)
-#define AERON_SCENE_MESH_TABLE_HASH_CAP 4096
+/* Open addressing over at most AERON_SCENE_MAX_MESH_TABLES keys: the power
+ * of two above it. */
+#define AERON_SCENE_MESH_TABLE_HASH_CAP 8192
 #define AERON_SCENE_SHADOW_GUARD_TEXELS 4
 #define AERON_SCENE_RECEIVER_LOCAL_SHADOW_SIZE 1024
 
@@ -100,7 +102,8 @@ typedef struct AeronSceneMeshOverlayEntry {
 	const AeronSceneMeshTable* mesh_table;
 	uint32_t                   first_vertex;
 	uint32_t                   vertex_count;
-	uint32_t                   mesh_table_index;
+	uint32_t                   mesh_table_base;
+	uint32_t                   table_slot_count;
 	float                      transform[16];
 	float                      uv_xform[4];
 	float                      uv_rect[4];
@@ -111,8 +114,11 @@ typedef struct AeronSceneMeshOverlayEntry {
 } AeronSceneMeshOverlayEntry;
 
 typedef struct AeronScenePreparedInstance {
-	uint32_t current_table_index;
-	uint32_t previous_table_index;
+	/* float4 bases of the current and previous mesh tables in the frame's
+	 * storage; both hold at least table_slot_count slots. */
+	uint32_t current_table_base;
+	uint32_t previous_table_base;
+	uint32_t table_slot_count;
 	uint32_t local_light_base;
 	uint32_t local_light_count;
 } AeronScenePreparedInstance;
@@ -290,9 +296,11 @@ struct AeronScene3D {
 	/* One pre-pass upload shared by PBR, shadows, and overlays. Mesh tables
 	 * are deduplicated by borrowed pointer; local and point lights are packed. */
 	const AeronSceneMeshTable* mesh_table_keys[AERON_SCENE_MESH_TABLE_HASH_CAP];
-	uint32_t                   mesh_table_values[AERON_SCENE_MESH_TABLE_HASH_CAP];
-	AeronSceneMeshTable*       mesh_table_staging;
+	uint32_t                   mesh_table_values[AERON_SCENE_MESH_TABLE_HASH_CAP]; /* float4 base */
+	uint32_t                   mesh_table_slots[AERON_SCENE_MESH_TABLE_HASH_CAP];  /* packed slots */
+	float (*mesh_table_staging)[4]; /* variable-length tables, float4 units */
 	uint32_t                   mesh_table_count;
+	uint32_t                   mesh_table_vec4_count;
 	uint32_t                   mesh_table_staging_cap;
 	AeronSceneLightGPU*        local_light_staging;
 	uint32_t                   local_light_count;
@@ -479,7 +487,9 @@ struct AeronScene3D {
 	 * metallic, roughness, 0. Reset by Begin. */
 	float pbr_debug_material[4];
 	/* Immutable world samplers for OFF/Native AA/Quality/Balanced/Performance.
-	 * pbr_sampler and mesh_sampler select the active entries. */
+	 * pbr_sampler and mesh_sampler select the active entries. The mesh
+	 * (model atlas) samplers always exist: the game's mesh sampler, or the
+	 * world sampler, with REPEAT addressing. */
 	AeronSampler* pbr_samplers[AERON_TEMPORAL_PERFORMANCE + 1];
 	AeronSampler* pbr_sampler;
 	AeronSampler* mesh_sampler_source; /* borrowed identity; caller retains ownership */
@@ -516,13 +526,16 @@ AeronRenderTarget*         AeronSceneInternal_CreateColorRt(AeronTextureFormat f
 AeronBlendStateDesc        AeronSceneInternal_BlendOpaque(void);
 AeronTexture*              AeronSceneInternal_WhiteTexture(void);
 AeronTexture*              AeronSceneInternal_WhiteCubeTexture(void);
+AeronTexture*              AeronSceneInternal_WhiteArrayTexture(void);
 /* Process-shared split-sum BRDF table: 64x64 RG16F, u = N.V, v = perceptual
  * roughness, (A, B) with F = F0 * A + B. Generated once on the CPU. */
 AeronTexture*              AeronSceneInternal_BrdfLutTexture(void);
 const AeronSceneMeshTable* AeronScenePbr_IdentityTable(void);
 int                        AeronSceneStorage_Prepare(struct AeronScene3D* s, AeronCommandBuffer* cmd);
 void                       AeronSceneStorage_Release(struct AeronScene3D* s);
-uint32_t AeronSceneStorage_ShadowTableIndex(const struct AeronScene3D* s, uint16_t encoded_caster);
+/* float4 base of a shadow caster's mesh table, and its packed slot count. */
+uint32_t AeronSceneStorage_ShadowTableBase(const struct AeronScene3D* s, uint16_t encoded_caster,
+										   uint32_t* slot_count);
 
 /* clustered_lights.c */
 void AeronSceneClusteredLights_Classify(struct AeronScene3D* s);

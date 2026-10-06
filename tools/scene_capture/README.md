@@ -52,7 +52,7 @@ Start from a preset; unknown keys are rejected. The main settings are:
 | `shutter` | Exposure is `shutter * 32 ms`, independent of `fps`; range 0–1. |
 | `reference_samples` | Temporal reference samples; 0 disables it, maximum 256. |
 | `fixture` | `shapes` (default) or `bloom_chart`. |
-| `models`, `asset_root` | Optional OPT paths and their VFS root; replaces the cuboids. |
+| `models`, `asset_root` | Optional OPT or cooked `.glb` paths and their VFS root; replaces the cuboids. |
 | `msaa_samples` | 1, 2, 4 or 8; default 2. |
 | `emissive_scale` | Shape/material emission multiplier; default 1. Use 8 to raise the cuboids above the bloom threshold. |
 | `bloom` | Optional mapping requiring `intensity` and `kernel` (1 or 4 taps). Omit to disable bloom captures. |

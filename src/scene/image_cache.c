@@ -210,24 +210,33 @@ void Aeron_ImageCacheClearOverrides(AeronImageCache* cache) {
 	}
 }
 
-AeronTexture* Aeron_ImageUploadKtx2(AeronCommandBuffer* cmd, const Ktx2* ktx, const char* debug_name) {
+/* `as_array` creates a 2D array texture, of one layer when the KTX2 is not
+ * an array. Otherwise a KTX2 array is rejected. */
+static AeronTexture* upload_ktx2(AeronCommandBuffer* cmd, const Ktx2* ktx, bool as_array,
+								 const char* debug_name) {
 	if (!cmd || !ktx)
 		return NULL;
-	int w     = ktx2_width(ktx);
-	int h     = ktx2_height(ktx);
-	int nl    = ktx2_level_count(ktx);
-	int faces = ktx2_face_count(ktx);
-	if (w <= 0 || h <= 0 || nl <= 0)
+	int w      = ktx2_width(ktx);
+	int h      = ktx2_height(ktx);
+	int nl     = ktx2_level_count(ktx);
+	int faces  = ktx2_face_count(ktx);
+	int layers = ktx2_layer_count(ktx);
+	if (w <= 0 || h <= 0 || nl <= 0 || (layers > 0 && !as_array) || (as_array && faces != 1))
 		return NULL;
+	if (as_array) {
+		layers = layers > 0 ? layers : 1;
+		faces  = layers; /* the uploads below walk layers like faces */
+	}
 
 	AeronTexture* tex = Aeron_CreateTexture(&(AeronTextureDesc) {
-		.width      = w,
-		.height     = h,
-		.mip_count  = nl,
-		.format     = ktx2_format(ktx),
-		.usage      = AERON_TEXTURE_USAGE_SAMPLED | AERON_TEXTURE_USAGE_TRANSFER_DST,
-		.cube       = faces == 6,
-		.debug_name = debug_name,
+		.width       = w,
+		.height      = h,
+		.mip_count   = nl,
+		.format      = ktx2_format(ktx),
+		.usage       = AERON_TEXTURE_USAGE_SAMPLED | AERON_TEXTURE_USAGE_TRANSFER_DST,
+		.cube        = !as_array && faces == 6,
+		.layer_count = as_array ? layers : 0,
+		.debug_name  = debug_name,
 	});
 	if (!tex) {
 		Aeron_LogError("aeron.scene", "KTX2 texture creation failed (%s)",
@@ -282,6 +291,14 @@ AeronTexture* Aeron_ImageUploadKtx2(AeronCommandBuffer* cmd, const Ktx2* ktx, co
 	free(uploads);
 
 	return tex;
+}
+
+AeronTexture* Aeron_ImageUploadKtx2(AeronCommandBuffer* cmd, const Ktx2* ktx, const char* debug_name) {
+	return upload_ktx2(cmd, ktx, false, debug_name);
+}
+
+AeronTexture* Aeron_ImageUploadKtx2Array(AeronCommandBuffer* cmd, const Ktx2* ktx, const char* debug_name) {
+	return upload_ktx2(cmd, ktx, true, debug_name);
 }
 
 AeronTexture* Aeron_ImageUploadRgba8(AeronCommandBuffer* cmd, const uint8_t* rgba, int width, int height,

@@ -2,13 +2,12 @@ cbuffer OverlayVS : register(b0, space1) {
 	row_major float4x4 view_proj;
 	row_major float4x4 model_to_world;
 	float4             params; /* x = view-space depth bias */
-	uint               mesh_table_index;
-	uint3              _pad;
+	uint               mesh_table_base;
+	uint               table_slot_count;
+	uint2              _pad;
 };
 #include "mesh_table_layout.hlsli"
 StructuredBuffer<float4> mesh_tables : register(t0, space0);
-static const uint MESH_TABLE_STRIDE = AERON_MESH_TABLE_STRIDE_VEC4;
-static const uint MESH_VISIBILITY_OFFSET = AERON_MESH_VISIBILITY_OFFSET;
 struct VSIn {
 	float3 pos : POSITION;
 	float2 uv : TEXCOORD0;
@@ -21,9 +20,10 @@ struct VSOut {
 VSOut main(VSIn input) {
 	VSOut output;
 	int   mesh_index = clamp((int)round(input.mesh_index), 0,
-							 AERON_MAX_MESH_SLOTS - 1);
-	uint table_base = mesh_table_index * MESH_TABLE_STRIDE;
-	if (mesh_tables[table_base + MESH_VISIBILITY_OFFSET +
+							 (int)table_slot_count - 1);
+	uint table_base = mesh_table_base;
+	if (mesh_tables[table_base + 3u * table_slot_count +
+					AERON_MESH_LANE_VISIBILITY * AERON_MESH_LANE_VEC4(table_slot_count) +
 					((uint)mesh_index >> 2u)][(uint)mesh_index & 3u] < 0.5f) {
 		output.pos = float4(0, 0, 0, -1);
 		output.uv  = input.uv;

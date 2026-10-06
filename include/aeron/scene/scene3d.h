@@ -35,10 +35,14 @@ enum {
 /* Per-mesh-slot payload packed into the scene's per-frame storage
  * buffer: per-slot 3x4 affine + packed visibility / highlight / markings /
  * emissive lanes. Instances without one get the identity default.
- * Field order and sizes are the GPU layout — shaders address this
- * record with the float4 offsets in mesh_table_layout.hlsli. */
+ *
+ * Capacity is AERON_MAX_MESH_SLOTS, but only slots 0..slot_count-1 are
+ * read: writers fill those (normally the model's AeronSceneMesh.slot_count)
+ * and leave the rest untouched, and the scene uploads the table packed at
+ * slot_count (mesh_table_layout.hlsli). Zero means the full capacity. */
 typedef struct AeronSceneMeshTable {
-	float rows[AERON_MAX_MESH_SLOTS][3][4];
+	uint32_t slot_count;
+	float    rows[AERON_MAX_MESH_SLOTS][3][4];
 	float visibility_packed[AERON_MESH_PACKED_LANES][4];
 	float highlight_packed[AERON_MESH_PACKED_LANES][4];
 	float markings_packed[AERON_MESH_PACKED_LANES][4];
@@ -347,9 +351,10 @@ void AeronScene_SetPassHook(AeronScene3D* scene, AeronScenePassSlot slot, AeronS
 void AeronScene_SetAfterMeshes(AeronScene3D* scene, AeronSceneAfterMeshesFn fn, void* user);
 
 /* Sampler used for the pbr channel-atlas binds. NULL restores the scene's
- * default (linear, clamp). Games swap in their own to carry anisotropy settings
+ * default (linear). Games swap in their own to carry anisotropy settings
  * or a point-sampled retro style (TIE: XvT). Aeron copies the immutable state
- * into mode-specific variants with AMD's recommended temporal mip bias. The
+ * into mode-specific variants with AMD's recommended temporal mip bias and
+ * REPEAT addressing, which dedicated atlas layers require. The
  * source sampler remains owned by the caller and must stay alive while selected. */
 /* Selects a caller-owned base sampler and creates mode-specific variants.
  * Returns zero without changing the current sampler set on failure. */

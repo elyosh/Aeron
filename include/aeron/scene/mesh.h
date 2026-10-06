@@ -34,12 +34,15 @@ typedef struct AeronPbrMaterialEntry {
 	float    base_color_factor[4]; /* RGBA factor */
 	float    emissive_factor[4];   /* (RGB, emissive_strength) packed */
 	float    metal_rough[4];       /* (metallic, roughness, alpha_cutoff, _) */
+	float    specular[4];          /* KHR_materials_specular (color.rgb, factor) */
+	uint32_t atlas[4];             /* per channel (base, normal, MR, emissive):
+									* bits 0-11 atlas page, 12-15 max mip level */
 	uint32_t flags;                /* bit 0=has_normal, 1=has_MR, 2=has_emissive,
 									* 3=alpha_blend (FS alpha = tex.a * factor.a),
 									* 4=legacy sRGB/SRCALPHA emissive mode,
 									* 5=alpha_mask */
 	uint32_t _pad[3];
-} AeronPbrMaterialEntry; /* 128 B */
+} AeronPbrMaterialEntry; /* 160 B */
 
 /* Compact retained geometry for receiver-local effects such as decals.
  * It deliberately omits material data and tangents: projection only needs
@@ -80,8 +83,11 @@ typedef struct AeronSceneMesh {
 	uint32_t     variant_groups_per_row;
 	bool         all_materials_single_sided;
 
-	/* Per-mesh-slot articulation (indexed by the per-vertex mesh index). */
+	/* Per-mesh-slot articulation (indexed by the per-vertex mesh index);
+	 * slot_count = the model's component count, the slots its mesh tables
+	 * must fill. */
 	AeronMeshRot mesh_rot[AERON_MAX_MESH_SLOTS];
+	uint32_t     slot_count;
 	bool         has_any_rotation;
 
 	float bound_min[3];

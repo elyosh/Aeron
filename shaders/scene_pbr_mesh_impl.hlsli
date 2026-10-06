@@ -53,11 +53,11 @@
 #include "srgb.hlsli"
 #include "scene_pbr_material_alpha.hlsli"
 
-Texture2D    g_normal       : register(t1, space2);
+Texture2DArray g_normal     : register(t1, space2);
 SamplerState g_normal_sampler : register(s1, space2);
-Texture2D    g_mr           : register(t2, space2);
+Texture2DArray g_mr         : register(t2, space2);
 SamplerState g_mr_sampler   : register(s2, space2);
-Texture2D    g_emissive     : register(t3, space2);
+Texture2DArray g_emissive   : register(t3, space2);
 SamplerState g_em_sampler   : register(s3, space2);
 /* Half-res RG8 visibility: R = SSAO, G = denoised main directional
  * shadow. A 1×1 white placeholder keeps both effects unoccluded when the
@@ -130,13 +130,18 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
 #endif
     float3 N = N_geom;
     if ((m.flags & GLTF_MATERIAL_HAS_NORMAL) != 0u) {
-        float3 ntex = atlas_sample(g_normal, g_normal_sampler,
-                                   i.uv, m.normal_rect).rgb * 2.0f - 1.0f;
+        float3 ntex = pbr_sample_channel(g_normal, g_normal_sampler, m,
+                                         GLTF_ATLAS_NORMAL, m.normal_rect,
+                                         i.uv).rgb * 2.0f - 1.0f;
         float  nz   = sqrt(saturate(1.0f - dot(ntex.xy, ntex.xy)));
         float3 nt   = float3(ntex.xy, max(ntex.z, nz));
+        /* Perturb in the authored front-face frame, then flip the result
+         * with the face: seen from behind, the surface normal is the
+         * front normal reversed, tangential part included. */
+        float3 N_front = N_geom * side_sign;
         float3 T    = normalize(i.world_tangent);
-        float3 B    = normalize(cross(N_geom, T)) * i.tangent_sign;
-        N = normalize(T * nt.x + B * nt.y + N_geom * nt.z);
+        float3 B    = normalize(cross(N_front, T)) * i.tangent_sign;
+        N = normalize(T * nt.x + B * nt.y + N_front * nt.z) * side_sign;
     }
 
     /* ===== View + light ========================================== */
@@ -201,10 +206,13 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
     mp.spec_intensity = 1.0f;
     mp.roughness      = m.metal_rough.y;
     mp.F0             = float3(0.04f, 0.04f, 0.04f);
+    mp.F90            = 1.0f;
     mp.albedo         = albedo;
     float metallic = m.metal_rough.x;
     if ((m.flags & GLTF_MATERIAL_HAS_METALLIC_ROUGHNESS) != 0u) {
-        float3 mr = atlas_sample(g_mr, g_mr_sampler, i.uv, m.mr_rect).rgb;
+        float3 mr = pbr_sample_channel(g_mr, g_mr_sampler, m,
+                                       GLTF_ATLAS_METALLIC_ROUGHNESS,
+                                       m.mr_rect, i.uv).rgb;
         mp.roughness = mr.g * m.metal_rough.y;
         metallic     = mr.b * m.metal_rough.x;
     }
@@ -215,7 +223,12 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
     }
 #endif
     mp.roughness = max(mp.roughness, 0.045f);
-    mp.F0 = lerp(float3(0.04f, 0.04f, 0.04f), albedo, metallic);
+    /* KHR_materials_specular: the dielectric F0 is scaled by the colour
+     * factor and both dielectric Fresnel ends by specularFactor; the
+     * defaults (1, 1) give the plain metallic-roughness model. */
+    float3 f0_dielectric = min(0.04f * m.specular.rgb, 1.0f) * m.specular.a;
+    mp.F0  = lerp(f0_dielectric, albedo, metallic);
+    mp.F90 = lerp(m.specular.a, 1.0f, metallic);
     base_rgb *= (1.0f - metallic);
 
     /* ===== Cook-Torrance specular ================================
@@ -260,7 +273,7 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
             g_specular_environment_sampler, normalize(environment_local(R)),
             mp.roughness * (fs_environment_params.z - 1.0f)).rgb;
         float2 split = g_brdf_lut.SampleLevel(g_brdf_lut_sampler, float2(ndotv_ibl, mp.roughness), 0.0f);
-        float3 F_ss = mp.F0 * split.x + split.y;
+        float3 F_ss = mp.F0 * split.x + mp.F90 * split.y;
         float  specular_occlusion =
             saturate(pow(ndotv_ibl + ao, exp2(-16.0f * mp.roughness - 1.0f)) - 1.0f + ao);
         spec_ibl_rgb = max(prefiltered, 0.0f) * F_ss * fs_environment_params.y * specular_occlusion;
@@ -377,8 +390,9 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
         float3 emissive = m.emissive_packed.rgb;
         float emissive_coverage = 0.0f;
         if ((m.flags & GLTF_MATERIAL_HAS_EMISSIVE) != 0u) {
-            float4 emissive_tex = atlas_sample(g_emissive, g_em_sampler,
-                                               i.uv, m.emissive_rect);
+            float4 emissive_tex = pbr_sample_channel(g_emissive, g_em_sampler, m,
+                                                     GLTF_ATLAS_EMISSIVE,
+                                                     m.emissive_rect, i.uv);
             emissive_coverage = emissive_tex.a;
 
             float3 emissive_rgb = emissive_tex.rgb;

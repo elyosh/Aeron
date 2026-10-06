@@ -65,6 +65,11 @@ void Aeron_ImageCacheClearOverrides(AeronImageCache* cache);
 struct Ktx2;
 AeronTexture* Aeron_ImageUploadKtx2(AeronCommandBuffer* cmd, const struct Ktx2* ktx, const char* debug_name);
 
+/* Same, always creating a 2D array texture: every layer of a KTX2 array, or
+ * one layer for a plain 2D KTX2. Used for the model channel atlases. */
+AeronTexture* Aeron_ImageUploadKtx2Array(AeronCommandBuffer* cmd, const struct Ktx2* ktx,
+										 const char* debug_name);
+
 /* Upload an RGBA8 image from memory with the same alpha, color-space and mip
  * handling used by runtime atlases and fonts. The caller owns the texture. */
 AeronTexture* Aeron_ImageUploadRgba8(AeronCommandBuffer* cmd, const uint8_t* rgba, int width, int height,

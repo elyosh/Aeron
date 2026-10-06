@@ -24,6 +24,11 @@ static const uint GLTF_MATERIAL_ALPHA_BLEND = 0x8u;
 static const uint GLTF_MATERIAL_LEGACY_EMISSIVE = 0x10u;
 static const uint GLTF_MATERIAL_ALPHA_MASK = 0x20u;
 
+static const uint GLTF_ATLAS_BASE = 0u;
+static const uint GLTF_ATLAS_NORMAL = 1u;
+static const uint GLTF_ATLAS_METALLIC_ROUGHNESS = 2u;
+static const uint GLTF_ATLAS_EMISSIVE = 3u;
+
 struct GltfMaterial
 {
     float4 base_rect;
@@ -33,6 +38,8 @@ struct GltfMaterial
     float4 base_color_factor;
     float4 emissive_packed;
     float4 metal_rough; /* x=metallic, y=roughness, z=alpha cutoff */
+    float4 specular;    /* KHR_materials_specular: rgb=color factor, a=factor */
+    uint4  atlas;       /* per channel: bits 0-11 page, 12-15 max mip level */
     uint   flags;
     uint3  _pad;
 };
@@ -41,7 +48,7 @@ StructuredBuffer<GltfMaterial> g_materials
     : register(AERON_PBR_MATERIAL_REGISTER, space2);
 StructuredBuffer<uint4> g_prim_to_material
     : register(AERON_PBR_VARIANT_REGISTER, space2);
-Texture2D g_base_color
+Texture2DArray g_base_color
     : register(AERON_PBR_BASE_TEXTURE_REGISTER, space2);
 SamplerState g_base_sampler
     : register(AERON_PBR_BASE_SAMPLER_REGISTER, space2);
@@ -71,6 +78,8 @@ GltfMaterial pbr_default_material()
     material.base_color_factor = float4(1, 1, 1, 1);
     material.emissive_packed = float4(0, 0, 0, 1);
     material.metal_rough = float4(0, 1, 0.5f, 0);
+    material.specular = float4(1, 1, 1, 1);
+    material.atlas = uint4(15u << 12, 15u << 12, 15u << 12, 15u << 12);
     material.flags = 0u;
     material._pad = uint3(0, 0, 0);
     return material;
@@ -89,10 +98,20 @@ GltfMaterial pbr_resolve_material(uint prim_id, uint variant_row_base,
     return pbr_default_material();
 }
 
+/* Samples one channel of the material through its atlas page and LOD
+ * limit. */
+float4 pbr_sample_channel(Texture2DArray tex, SamplerState s, GltfMaterial material,
+                          uint channel, float4 rect, float2 uv)
+{
+    uint atlas = material.atlas[channel];
+    return atlas_sample(tex, s, uv, rect, atlas & 0xFFFu, atlas >> 12);
+}
+
 float4 pbr_sample_base_color(GltfMaterial material, float2 uv)
 {
     return material.base_rect.z > 0.0f && material.base_rect.w > 0.0f
-        ? atlas_sample(g_base_color, g_base_sampler, uv, material.base_rect)
+        ? pbr_sample_channel(g_base_color, g_base_sampler, material,
+                             GLTF_ATLAS_BASE, material.base_rect, uv)
         : float4(1, 1, 1, 1);
 }
 

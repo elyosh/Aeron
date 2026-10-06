@@ -8,22 +8,29 @@
  * shaders/ because shadercross accepts a single -I directory; the C
  * side includes it by relative path.
  *
- * AERON_MAX_MESH_SLOTS matches the original engine's per-craft
- * componentState / meshRotation array size (XWA_SNAP_MAX_MESH_SLOTS).
+ * AERON_MAX_MESH_SLOTS is the per-model component capacity: the 255
+ * meshes the XWAU hooks configure, against the original engine's 50
+ * (XWA_SNAP_MAX_MESH_SLOTS).
  *
- * Offsets are in float4 units: per-slot 3x4 affine rows, then packed
- * visibility / highlight / markings / emissive lanes holding 4 slots
- * per float4 (lane[slot >> 2][slot & 3]).
+ * A table holds `n` slots (its model's component count) and is packed at
+ * that count, in float4 units from the table's base:
+ *   - rows:  3 per slot, the slot's 3x4 affine, at base + 3 * slot;
+ *   - lanes: visibility, highlight, markings, emissive, each
+ *     AERON_MESH_LANE_VEC4(n) float4 holding 4 slots per float4, at
+ *     base + 3 * n + lane * AERON_MESH_LANE_VEC4(n) + (slot >> 2),
+ *     component (slot & 3).
  */
 
-#define AERON_MAX_MESH_SLOTS         50
+#define AERON_MAX_MESH_SLOTS         255
 #define AERON_MESH_PACKED_LANES      ((AERON_MAX_MESH_SLOTS + 3) / 4)
 
-#define AERON_MESH_TABLE_ROWS_VEC4   (AERON_MAX_MESH_SLOTS * 3)
-#define AERON_MESH_VISIBILITY_OFFSET (AERON_MESH_TABLE_ROWS_VEC4)
-#define AERON_MESH_HIGHLIGHT_OFFSET  (AERON_MESH_VISIBILITY_OFFSET + AERON_MESH_PACKED_LANES)
-#define AERON_MESH_MARKINGS_OFFSET   (AERON_MESH_HIGHLIGHT_OFFSET + AERON_MESH_PACKED_LANES)
-#define AERON_MESH_EMISSIVE_OFFSET   (AERON_MESH_MARKINGS_OFFSET + AERON_MESH_PACKED_LANES)
-#define AERON_MESH_TABLE_STRIDE_VEC4 (AERON_MESH_EMISSIVE_OFFSET + AERON_MESH_PACKED_LANES)
+#define AERON_MESH_LANE_VISIBILITY   0
+#define AERON_MESH_LANE_HIGHLIGHT    1
+#define AERON_MESH_LANE_MARKINGS     2
+#define AERON_MESH_LANE_EMISSIVE     3
+#define AERON_MESH_LANE_COUNT        4
+
+#define AERON_MESH_LANE_VEC4(n)      (((n) + 3) / 4)
+#define AERON_MESH_TABLE_VEC4(n)     (3 * (n) + AERON_MESH_LANE_COUNT * AERON_MESH_LANE_VEC4(n))
 
 #endif /* AERON_SCENE_MESH_TABLE_LAYOUT_H */

@@ -7,25 +7,26 @@ cbuffer DirectionalShadowVS : register(b0, space1)
 {
     row_major float4x4 shadow_view_proj;
     row_major float4x4 model_to_world;
-    uint mesh_table_index;
+    uint mesh_table_base;
     uint variant_row_base;
     uint variant_group_count;
     uint material_count;
+    uint table_slot_count;
+    uint3 _pad;
 };
 
 #include "mesh_table_layout.hlsli"
 
 StructuredBuffer<float4> mesh_tables : register(t0, space0);
-static const uint MESH_TABLE_STRIDE = AERON_MESH_TABLE_STRIDE_VEC4;
-static const uint MESH_VISIBILITY_OFFSET = AERON_MESH_VISIBILITY_OFFSET;
 
 bool directional_shadow_project_vertex(float3 position, float mesh_index_value,
                                        out float4 projected_position)
 {
     int mesh_index = clamp((int)round(mesh_index_value), 0,
-                           AERON_MAX_MESH_SLOTS - 1);
-    uint table_base = mesh_table_index * MESH_TABLE_STRIDE;
-    if (mesh_tables[table_base + MESH_VISIBILITY_OFFSET +
+                           (int)table_slot_count - 1);
+    uint table_base = mesh_table_base;
+    if (mesh_tables[table_base + 3u * table_slot_count +
+                    AERON_MESH_LANE_VISIBILITY * AERON_MESH_LANE_VEC4(table_slot_count) +
                     ((uint)mesh_index >> 2u)][(uint)mesh_index & 3u] < 0.5f) {
         projected_position = float4(0.0f, 0.0f, 0.0f, -1.0f);
         return false;

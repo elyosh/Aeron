@@ -408,6 +408,10 @@ typedef struct AeronTextureDesc {
 	/* Nonzero creates a cube texture (6 layers); uploads select the face via
 	 * AeronTextureUploadDesc.layer. */
 	int cube;
+	/* Nonzero creates a 2D array texture with this many layers (1 is a valid
+	 * array); uploads select the layer via AeronTextureUploadDesc.layer.
+	 * Ignored for cube textures. */
+	int layer_count;
 	/* Optional name shown by GPU capture and debugging tools. */
 	const char* debug_name;
 } AeronTextureDesc;

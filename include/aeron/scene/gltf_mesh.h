@@ -75,14 +75,22 @@ typedef struct AeronGltfVertex {
 
 /* Per-model material cap used to validate and bound cooked assets. It is not
  * an original-engine value: the classic renderers walk per-face textures.
- * The measured XWA corpus peaks at 104 materials. GPU storage is allocated
- * to the actual retained count rather than this maximum. */
-#define AERON_GLTF_MAX_MATERIALS 128
+ * The measured XWA corpus peaks at 104 materials and the XWAU corpus at 156.
+ * GPU storage is allocated to the actual retained count rather than this
+ * maximum, so no static array depends on it. */
+#define AERON_GLTF_MAX_MATERIALS 4096
 #define AERON_GLTF_NO_MATERIAL 0xFFFFFFFFu
+
+/* Deepest mip level a channel binding may sample: the cooker names each
+ * atlas texture `tex_<channel>_p<page>_l<max_lod>`; a binding whose texture
+ * name carries no such suffix samples page 0 without a LOD limit. */
+#define AERON_GLTF_ATLAS_UNCLAMPED_LOD 15u
+#define AERON_GLTF_ATLAS_MAX_PAGE 4095u
 
 /* ===== Channel KTX2 payload =========================================
  *
- * One KTX2 image per channel, copied out of the cooked graph's BIN data.
+ * One KTX2 2D-array image per channel, copied out of the cooked graph's BIN
+ * data.
  * Shipped GLBs normally use BC5/BC7; runtime OPT conversion uses RGBA8.
  * The SDL_GPU side feeds these bytes to ktx2_open_mem at upload time,
  * creates the corresponding GPU texture, and uploads every mip. Bytes
@@ -129,6 +137,12 @@ typedef struct AeronGltfMaterial {
 	/* Material extras `aeronEmissiveMode`; AeronGltfEmissiveMode. */
 	uint32_t emissive_mode;
 	float    uv_xform[AERON_GLTF_CHANNEL_COUNT][4];
+	/* Atlas layer and deepest sampled mip level of each channel binding. */
+	uint32_t atlas_page[AERON_GLTF_CHANNEL_COUNT];
+	uint32_t atlas_max_lod[AERON_GLTF_CHANNEL_COUNT];
+	/* KHR_materials_specular factors; defaults (1, (1,1,1)). */
+	float specular_factor;
+	float specular_color_factor[3];
 } AeronGltfMaterial;
 
 /* ===== Ship asset ===================================================

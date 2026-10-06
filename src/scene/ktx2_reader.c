@@ -50,7 +50,8 @@ struct Ktx2 {
 	int                width;
 	int                height;
 	int                level_count;
-	int                face_count; /* 1 for 2D, 6 for cubemap */
+	int                face_count;  /* 1 for 2D, 6 for cubemap */
+	int                layer_count; /* header layerCount: 0 = not an array */
 	bool               block_compressed;
 	int                bytes_per_block;
 	/* Per-level views. For supercompressionScheme=0 these point into
@@ -231,8 +232,10 @@ static Ktx2* ktx2_parse_bytes(const uint8_t* bytes, size_t blob_size, const char
 			free(blob);
 		return NULL;
 	}
-	if ((faceCount != 1 && faceCount != 6) || (layerCount > 1) || (pixelDepth > 1)) {
-		ktx2_log("[ktx2] %s: only 2D or cubemap textures supported "
+	/* 2D arrays are supported; cube arrays and 3D textures are not. */
+	if ((faceCount != 1 && faceCount != 6) || (faceCount == 6 && layerCount > 1) || layerCount > 2048 ||
+		(pixelDepth > 1)) {
+		ktx2_log("[ktx2] %s: only 2D, 2D-array or cubemap textures supported "
 				 "(faces=%u layers=%u depth=%u)",
 				 path, faceCount, layerCount, pixelDepth);
 		if (own_bytes)
@@ -308,6 +311,23 @@ static Ktx2* ktx2_parse_bytes(const uint8_t* bytes, size_t blob_size, const char
 		int lh = (int)(pixelHeight >> i);
 		if (lh < 1)
 			lh = 1;
+		/* Every face and layer of a level holds the full block-math size. */
+		const uint64_t texel_bytes = block_compressed ? (uint64_t)bytes_per_block
+													  : (fmt == AERON_TEXTURE_FORMAT_RGBA16_FLOAT ? 8u : 4u);
+		const uint64_t level_size  = (block_compressed ? (uint64_t)((lw + 3) / 4) * (uint64_t)((lh + 3) / 4)
+													   : (uint64_t)lw * (uint64_t)lh) *
+									 texel_bytes * faceCount * (layerCount ? layerCount : 1u);
+		if ((zstd_supercompressed ? ulen : len) != level_size) {
+			ktx2_log("[ktx2] %s: level %u holds %llu bytes, expected %llu", path, i,
+					 (unsigned long long)(zstd_supercompressed ? ulen : len), (unsigned long long)level_size);
+			for (uint32_t j = 0; j < i; j++)
+				free(level_owned[j]);
+			free(level_owned);
+			free(levels);
+			if (own_bytes)
+				free(blob);
+			return NULL;
+		}
 		if (zstd_supercompressed) {
 			/* Allocate a buffer sized to the recorded uncompressed
 			 * length and decompress into it. We trust ulen — the
@@ -374,6 +394,7 @@ static Ktx2* ktx2_parse_bytes(const uint8_t* bytes, size_t blob_size, const char
 	k->height           = (int)pixelHeight;
 	k->level_count      = (int)levelCount;
 	k->face_count       = (int)faceCount;
+	k->layer_count      = (int)layerCount;
 	k->block_compressed = block_compressed;
 	k->bytes_per_block  = bytes_per_block;
 	k->levels           = levels;
@@ -426,6 +447,8 @@ int ktx2_level_count(const Ktx2* k) { return k ? k->level_count : 0; }
 
 int ktx2_face_count(const Ktx2* k) { return k ? k->face_count : 0; }
 
+int ktx2_layer_count(const Ktx2* k) { return k ? k->layer_count : 0; }
+
 bool ktx2_is_block_compressed(const Ktx2* k) { return k && k->block_compressed; }
 
 Ktx2Level ktx2_level(const Ktx2* k, int level) {
@@ -436,12 +459,14 @@ Ktx2Level ktx2_level(const Ktx2* k, int level) {
 
 Ktx2Level ktx2_level_face(const Ktx2* k, int level, int face) {
 	Ktx2Level lvl = ktx2_level(k, level);
-	if (!lvl.data || k->face_count <= 0 || face < 0 || face >= k->face_count)
+	/* Faces, or the layers of a 2D array, are the level's equal slices. */
+	const int slices = k && k->layer_count > 0 ? k->layer_count : (k ? k->face_count : 0);
+	if (!lvl.data || slices <= 0 || face < 0 || face >= slices)
 		return (Ktx2Level) { .data = NULL, .size = 0, .width = 0, .height = 0 };
-	/* KTX2 stores face data contiguously within a level; the spec
-	 * guarantees equal face_size across all faces of a given level,
-	 * so face_size = level.size / face_count. */
-	size_t face_size = lvl.size / (size_t)k->face_count;
+	/* KTX2 stores face (or layer) data contiguously within a level; the
+	 * spec guarantees equal sizes across the slices of a given level, so
+	 * face_size = level.size / slices. */
+	size_t face_size = lvl.size / (size_t)slices;
 	return (Ktx2Level) {
 		.data   = lvl.data + (size_t)face * face_size,
 		.size   = face_size,
