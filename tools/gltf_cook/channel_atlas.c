@@ -2,6 +2,7 @@
 
 #include "aeron/atlas_pack.h"
 
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -16,212 +17,347 @@ void channel_atlas_init(ChannelAtlas* ca, int channel) {
 void channel_atlas_free(ChannelAtlas* ca) {
 	if (!ca)
 		return;
+	for (int i = 0; i < ca->rect_count; i++)
+		free(ca->rects[i].owned);
 	free(ca->rects);
 	free(ca->rgba);
 	memset(ca, 0, sizeof *ca);
 }
 
-bool channel_atlas_add_rect(ChannelAtlas* ca, uint32_t mat_idx, int src_w, int src_h,
-							const uint8_t* src_rgba) {
+/* Taps of output sample `i` when resampling `s` samples to `d` with REPEAT
+ * addressing: the covered source area when shrinking, linear interpolation
+ * otherwise. `index` and `weight` hold at least s / d + 2 entries. */
+static int resample_taps(int s, int d, int i, int* index, float* weight) {
+	const double ratio = (double)s / (double)d;
+	if (d < s) {
+		const double a = i * ratio, b = (i + 1) * ratio;
+		int          n = 0;
+		for (int k = (int)a; k < s && k < b; k++) {
+			const double w = (b < k + 1 ? b : k + 1) - (a > k ? a : k);
+			if (w > 0.0) {
+				index[n]    = k;
+				weight[n++] = (float)(w / ratio);
+			}
+		}
+		return n;
+	}
+	const double c = (i + 0.5) * ratio - 0.5;
+	const double f = floor(c);
+	index[0]       = ((int)f % s + s) % s;
+	index[1]       = (index[0] + 1) % s;
+	weight[1]      = (float)(c - f);
+	weight[0]      = 1.0f - weight[1];
+	return 2;
+}
+
+/* Separable RGBA8 resample with REPEAT addressing, so a resampled texture
+ * still tiles. Returns a fresh buffer, or NULL on OOM. */
+static uint8_t* resample_rgba8(const uint8_t* src, int sw, int sh, int dw, int dh) {
+	const int x_taps = sw / dw + 2, y_taps = sh / dh + 2;
+	int*      x_count  = (int*)malloc((size_t)dw * sizeof *x_count);
+	int*      x_index  = (int*)malloc((size_t)dw * (size_t)x_taps * sizeof *x_index);
+	float*    x_weight = (float*)malloc((size_t)dw * (size_t)x_taps * sizeof *x_weight);
+	int*      y_index  = (int*)malloc((size_t)y_taps * sizeof *y_index);
+	float*    y_weight = (float*)malloc((size_t)y_taps * sizeof *y_weight);
+	float*    row      = (float*)malloc((size_t)dw * 4u * sizeof *row);
+	uint8_t*  out      = (uint8_t*)malloc((size_t)dw * (size_t)dh * 4u);
+	if (!x_count || !x_index || !x_weight || !y_index || !y_weight || !row || !out) {
+		free(out);
+		out = NULL;
+		goto done;
+	}
+	for (int x = 0; x < dw; x++)
+		x_count[x] = resample_taps(sw, dw, x, x_index + (size_t)x * x_taps, x_weight + (size_t)x * x_taps);
+	for (int y = 0; y < dh; y++) {
+		memset(row, 0, (size_t)dw * 4u * sizeof *row);
+		const int y_count = resample_taps(sh, dh, y, y_index, y_weight);
+		for (int t = 0; t < y_count; t++) {
+			const uint8_t* line = src + (size_t)y_index[t] * (size_t)sw * 4u;
+			for (int x = 0; x < dw; x++) {
+				const int*   index  = x_index + (size_t)x * x_taps;
+				const float* weight = x_weight + (size_t)x * x_taps;
+				for (int k = 0; k < x_count[x]; k++) {
+					const float    w = y_weight[t] * weight[k];
+					const uint8_t* p = line + (size_t)index[k] * 4u;
+					for (int c = 0; c < 4; c++)
+						row[x * 4 + c] += w * p[c];
+				}
+			}
+		}
+		uint8_t* dst = out + (size_t)y * (size_t)dw * 4u;
+		for (int i = 0; i < dw * 4; i++) {
+			const float v = row[i] + 0.5f;
+			dst[i]        = (uint8_t)(v < 0.0f ? 0.0f : v > 255.0f ? 255.0f : v);
+		}
+	}
+done:
+	free(x_count);
+	free(x_index);
+	free(x_weight);
+	free(y_index);
+	free(y_weight);
+	free(row);
+	return out;
+}
+
+int channel_atlas_add_rect(ChannelAtlas* ca, const void* key, int src_w, int src_h, const uint8_t* src_rgba,
+						   int max_texture) {
 	if (!ca || src_w <= 0 || src_h <= 0 || !src_rgba)
-		return false;
+		return -1;
 	if (ca->rect_count == ca->rect_capacity) {
 		int          cap   = ca->rect_capacity ? ca->rect_capacity * 2 : 8;
 		ChannelRect* grown = (ChannelRect*)realloc(ca->rects, (size_t)cap * sizeof *grown);
 		if (!grown)
-			return false;
+			return -1;
 		ca->rects         = grown;
 		ca->rect_capacity = cap;
 	}
-	ChannelRect* r = &ca->rects[ca->rect_count++];
-	r->mat_idx     = mat_idx;
-	r->src_w       = src_w;
-	r->src_h       = src_h;
-	r->src_rgba    = src_rgba;
-	r->x = r->y = 0;
-	return true;
-}
-
-/* Round up to the next power of 2 (positive ints). */
-static int next_pow2(int v, int limit) {
-	int p = 1;
-	while (p < v && p <= limit / 2)
-		p <<= 1;
-	return p >= v && p <= limit ? p : 0;
-}
-
-static int mip_count_for_pad(int pad) {
-	int count = 1;
-	while (pad > 1) {
-		pad /= 2;
-		count++;
+	uint8_t* owned = NULL;
+	if (max_texture > 0 && (src_w > max_texture || src_h > max_texture)) {
+		const double scale = (double)max_texture / (double)(src_w > src_h ? src_w : src_h);
+		const int    w = (int)(src_w * scale + 0.5), h = (int)(src_h * scale + 0.5);
+		owned = resample_rgba8(src_rgba, src_w, src_h, w > 0 ? w : 1, h > 0 ? h : 1);
+		if (!owned)
+			return -1;
+		src_w    = w > 0 ? w : 1;
+		src_h    = h > 0 ? h : 1;
+		src_rgba = owned;
 	}
-	return count;
+	ChannelRect* r = &ca->rects[ca->rect_count];
+	memset(r, 0, sizeof *r);
+	r->key      = key;
+	r->src_w    = src_w;
+	r->src_h    = src_h;
+	r->src_rgba = src_rgba;
+	r->owned    = owned;
+	return ca->rect_count++;
 }
 
-/* Sort rects by max(w,h) desc, tiebreak by area desc — matches the
+static bool is_pow2(int v) { return v > 0 && (v & (v - 1)) == 0; }
+
+static int floor_log2(int v) {
+	int l = 0;
+	while (v > 1) {
+		v >>= 1;
+		l++;
+	}
+	return l;
+}
+
+/* Footprint of a source extent, in gutter-sized cells: the extent plus a
+ * gutter on both sides, rounded up to the gutter. */
+static int footprint_cells(int extent, int gutter) { return (extent + 3 * gutter - 1) / gutter; }
+
+/* Sort rect indices by max(w,h) desc, tiebreak by area desc — matches the
  * AnimImage adapter's pre-sort. The skyline packer is sensitive to
  * input order; this gives a deterministic, tight pack. */
-static void sort_rects_largest_first(ChannelRect* r, int n) {
+static void sort_rects_largest_first(const ChannelRect* rects, int* order, int n) {
 	for (int i = 1; i < n; i++) {
-		ChannelRect key   = r[i];
-		int         kmax  = key.src_w > key.src_h ? key.src_w : key.src_h;
-		long        karea = (long)key.src_w * (long)key.src_h;
-		int         j     = i - 1;
+		const int          key_index = order[i];
+		const ChannelRect* key       = &rects[key_index];
+		int                kmax      = key->src_w > key->src_h ? key->src_w : key->src_h;
+		long               karea     = (long)key->src_w * (long)key->src_h;
+		int                j         = i - 1;
 		while (j >= 0) {
-			int  jmax       = r[j].src_w > r[j].src_h ? r[j].src_w : r[j].src_h;
-			long jarea      = (long)r[j].src_w * (long)r[j].src_h;
-			bool key_bigger = (kmax > jmax) || (kmax == jmax && karea > jarea);
+			const ChannelRect* r          = &rects[order[j]];
+			int                jmax       = r->src_w > r->src_h ? r->src_w : r->src_h;
+			long               jarea      = (long)r->src_w * (long)r->src_h;
+			bool               key_bigger = (kmax > jmax) || (kmax == jmax && karea > jarea);
 			if (!key_bigger)
 				break;
-			r[j + 1] = r[j];
+			order[j + 1] = order[j];
 			j--;
 		}
-		r[j + 1] = key;
+		order[j + 1] = key_index;
 	}
 }
 
-bool channel_atlas_pack(ChannelAtlas* ca, int max_atlas_size, int pad) {
-	if (!ca || max_atlas_size < 4 || pad < 0)
+/* Skyline-pack `count` rects of `order` on the gutter-aligned grid, at a
+ * width of `grid_width` cells. Returns the height in cells, or -1. */
+static int pack_cells(const ChannelAtlas* ca, const int* order, int count, AeronAtlasRect* cells,
+					  int grid_width) {
+	for (int i = 0; i < count; i++) {
+		const ChannelRect* r = &ca->rects[order[i]];
+		cells[i].w           = footprint_cells(r->src_w, ca->gutter);
+		cells[i].h           = footprint_cells(r->src_h, ca->gutter);
+		cells[i].x = cells[i].y = 0;
+		cells[i].key            = (uint32_t)order[i];
+	}
+	return Aeron_AtlasPackRects(cells, count, grid_width, 0);
+}
+
+static void place_rect(ChannelAtlas* ca, const AeronAtlasRect* cell, int page) {
+	ChannelRect* r = &ca->rects[cell->key];
+	r->page        = page;
+	r->x           = cell->x * ca->gutter + ca->gutter;
+	r->y           = cell->y * ca->gutter + ca->gutter;
+}
+
+bool channel_atlas_pack(ChannelAtlas* ca, int page_size, int gutter) {
+	if (!ca || !is_pow2(page_size) || page_size < 128 || !is_pow2(gutter) || gutter < 4 || gutter > 32 ||
+		page_size < 8 * gutter)
 		return false;
+	ca->gutter = gutter;
 	if (ca->rect_count == 0) {
-		/* Empty channel — still allocate a 1×1 placeholder atlas so the
+		/* Empty channel — still allocate a 4×4 placeholder page so the
 		 * texture binding has somewhere to point. */
-		ca->width     = 4; /* BC7 4×4 block minimum */
-		ca->height    = 4;
-		ca->mip_count = mip_count_for_pad(pad);
-		ca->pad       = pad;
+		ca->width      = 4; /* BC7 4×4 block minimum */
+		ca->height     = 4;
+		ca->page_count = 1;
+		ca->mip_count  = 0;
 		return true;
 	}
 
-	/* Find the largest source rect; the atlas must fit it (plus pad).
-	 * If even that exceeds max_atlas_size, fail loud — there's no
-	 * point degrading silently. */
-	int max_w = 0, max_h = 0;
+	int largest = 0;
 	for (int i = 0; i < ca->rect_count; i++) {
-		if (ca->rects[i].src_w > max_w)
-			max_w = ca->rects[i].src_w;
-		if (ca->rects[i].src_h > max_h)
-			max_h = ca->rects[i].src_h;
+		const ChannelRect* r = &ca->rects[i];
+		if (r->src_w > largest)
+			largest = r->src_w;
+		if (r->src_h > largest)
+			largest = r->src_h;
 	}
-	int min_dim = max_w > max_h ? max_w : max_h;
-	if (min_dim > max_atlas_size || pad > (max_atlas_size - min_dim) / 2) {
-		fprintf(stderr,
-				"[aeron_gltf_cook] channel %d: source rect %dx%d larger than "
-				"max atlas %d (+%d pad)\n",
-				ca->channel, max_w, max_h, max_atlas_size, pad);
-		return false;
-	}
-	min_dim += 2 * pad;
+	int page = page_size;
+	while (page < largest)
+		page *= 2;
 
-	/* Sort once; the skyline packer is destructive to position order,
-	 * so we work on a temp copy per width trial. */
-	sort_rects_largest_first(ca->rects, ca->rect_count);
-
-	AeronAtlasRect* trial = (AeronAtlasRect*)calloc((size_t)ca->rect_count, sizeof *trial);
-	if (!trial)
-		return false;
-
-	int             best_w = 0, best_h = 0;
-	long            best_area = 0;
-	AeronAtlasRect* best      = (AeronAtlasRect*)calloc((size_t)ca->rect_count, sizeof *best);
-	if (!best) {
-		free(trial);
+	int*            order = (int*)malloc((size_t)ca->rect_count * sizeof *order);
+	AeronAtlasRect* cells = (AeronAtlasRect*)calloc((size_t)ca->rect_count, sizeof *cells);
+	if (!order || !cells) {
+		free(order);
+		free(cells);
 		return false;
 	}
 
-	/* Exact halving through the generated levels keeps normalized UVs aligned
-	 * with the downsampled texels. Retain base-level BC block alignment too. */
-	const int mip_count = mip_count_for_pad(pad);
-	const int alignment = mip_count > 3 ? 1 << (mip_count - 1) : 4;
-	int       try_w     = next_pow2(min_dim, max_atlas_size);
-	if (try_w && try_w < 4)
-		try_w = 4;
-	for (; try_w; try_w = try_w <= max_atlas_size / 2 ? try_w * 2 : 0) {
-		for (int i = 0; i < ca->rect_count; i++) {
-			trial[i].w   = ca->rects[i].src_w;
-			trial[i].h   = ca->rects[i].src_h;
-			trial[i].x   = 0;
-			trial[i].y   = 0;
-			trial[i].key = (uint32_t)i;
+	/* Sources over half a page get a dedicated layer each, ahead of the
+	 * shared pages. A shared source samples at most log2(gutter) levels:
+	 * its footprint is gutter-aligned, so no texel of those levels mixes
+	 * two footprints. */
+	const int lod_limit = floor_log2(gutter);
+	int       packed = 0, dedicated = 0, deepest = 0;
+	for (int i = 0; i < ca->rect_count; i++) {
+		ChannelRect* r    = &ca->rects[i];
+		const int    side = r->src_w > r->src_h ? r->src_w : r->src_h;
+		if (side > page / 2) {
+			r->dedicated = true;
+			r->page      = dedicated++;
+			r->x = r->y = 0;
+			r->max_lod  = CHANNEL_ATLAS_UNCLAMPED_LOD;
+			deepest     = floor_log2(page);
+		} else {
+			const int short_side = r->src_w < r->src_h ? r->src_w : r->src_h;
+			r->max_lod           = floor_log2(short_side) < lod_limit ? floor_log2(short_side) : lod_limit;
+			if (r->max_lod > deepest)
+				deepest = r->max_lod;
+			order[packed++] = i;
 		}
-		int h = Aeron_AtlasPackRects(trial, ca->rect_count, try_w, pad);
-		if (h < 0)
-			continue;
-		const int64_t aligned_height = ((int64_t)h + alignment - 1) & -(int64_t)alignment;
-		if (aligned_height > max_atlas_size)
-			continue;
-		const int try_h = (int)aligned_height;
-		/* Validate placement and measure the rightmost private gutter. */
-		bool fits       = true;
-		int  used_width = 0;
-		for (int i = 0; i < ca->rect_count; i++) {
-			if (trial[i].x < pad || trial[i].y < pad || trial[i].x + trial[i].w + pad > try_w ||
-				trial[i].y + trial[i].h + pad > try_h) {
-				fits = false;
-				break;
+	}
+	sort_rects_largest_first(ca->rects, order, packed);
+
+	const int grid      = page / gutter;
+	int       width     = page;
+	int       height    = page;
+	int       pages     = dedicated;
+	int       remaining = packed;
+	if (packed && !dedicated) {
+		/* A single shared page: the first power-of-two trial width that
+		 * fits, trimmed to its occupied bounds. */
+		int widest = 0;
+		for (int i = 0; i < packed; i++) {
+			const int w = footprint_cells(ca->rects[order[i]].src_w, gutter);
+			if (w > widest)
+				widest = w;
+		}
+		int trial = 1;
+		while (trial < widest)
+			trial *= 2;
+		for (; trial <= grid && remaining; trial *= 2) {
+			const int used_height = pack_cells(ca, order, packed, cells, trial);
+			if (used_height < 0 || used_height > grid)
+				continue;
+			int used_width = 0;
+			for (int i = 0; i < packed; i++) {
+				place_rect(ca, &cells[i], 0);
+				if (cells[i].x + cells[i].w > used_width)
+					used_width = cells[i].x + cells[i].w;
 			}
-			const int right = trial[i].x + trial[i].w + pad;
-			if (right > used_width)
-				used_width = right;
-		}
-		if (!fits)
-			continue;
-		const int64_t aligned_width = ((int64_t)used_width + alignment - 1) & -(int64_t)alignment;
-		if (aligned_width > max_atlas_size)
-			continue;
-		long area = (long)aligned_width * (long)try_h;
-		if (best_area == 0 || area < best_area) {
-			best_area = area;
-			best_w    = (int)aligned_width;
-			best_h    = try_h;
-			memcpy(best, trial, (size_t)ca->rect_count * sizeof *trial);
-			/* Keep the first fitting layout, with only its occupied bounds allocated. */
-			break;
+			width     = used_width * gutter;
+			height    = used_height * gutter;
+			pages     = 1;
+			remaining = 0;
 		}
 	}
-
-	if (best_area == 0) {
-		free(trial);
-		free(best);
-		fprintf(stderr,
-				"[aeron_gltf_cook] channel %d: cannot fit %d sub-rects "
-				"into %d×%d atlas\n",
-				ca->channel, ca->rect_count, max_atlas_size, max_atlas_size);
+	/* First-fit pages: pack what remains at the full page width and move
+	 * the rects that do not fit to the next page. The first rect always
+	 * lands at the bottom of an empty page. */
+	while (remaining) {
+		if (pack_cells(ca, order, remaining, cells, grid) < 0)
+			break;
+		int kept = 0;
+		for (int i = 0; i < remaining; i++) {
+			if (cells[i].y + cells[i].h <= grid)
+				place_rect(ca, &cells[i], pages);
+			else
+				order[kept++] = (int)cells[i].key;
+		}
+		if (kept == remaining)
+			break;
+		remaining = kept;
+		pages++;
+	}
+	free(order);
+	free(cells);
+	if (remaining) {
+		fprintf(stderr, "[aeron_gltf_cook] channel %d: cannot pack %d sub-rects into %d×%d pages\n",
+				ca->channel, remaining, page, page);
 		return false;
 	}
-
-	/* Scatter positions back into the original (sorted) rect order. */
-	for (int i = 0; i < ca->rect_count; i++) {
-		int idx          = (int)best[i].key;
-		ca->rects[idx].x = best[i].x;
-		ca->rects[idx].y = best[i].y;
-	}
-	ca->width     = best_w;
-	ca->height    = best_h;
-	ca->mip_count = mip_count;
-	ca->pad       = pad;
-
-	free(trial);
-	free(best);
+	ca->width      = width;
+	ca->height     = height;
+	ca->page_count = pages;
+	ca->mip_count  = deepest + 1;
 	return true;
 }
 
+/* Fill a rect's whole footprint by REPEAT around the source. */
+static void fill_footprint(uint8_t* page, int page_width, const ChannelRect* r, int gutter) {
+	const int fw = footprint_cells(r->src_w, gutter) * gutter;
+	const int fh = footprint_cells(r->src_h, gutter) * gutter;
+	for (int fy = 0; fy < fh; fy++) {
+		const int      sy  = ((fy - gutter) % r->src_h + r->src_h) % r->src_h;
+		const uint8_t* src = r->src_rgba + (size_t)sy * (size_t)r->src_w * 4u;
+		uint8_t*       dst =
+			page + ((size_t)(r->y - gutter + fy) * (size_t)page_width + (size_t)(r->x - gutter)) * 4u;
+		for (int fx = 0; fx < fw; fx++) {
+			const int sx = ((fx - gutter) % r->src_w + r->src_w) % r->src_w;
+			memcpy(dst + (size_t)fx * 4u, src + (size_t)sx * 4u, 4u);
+		}
+	}
+}
+
 bool channel_atlas_materialize(ChannelAtlas* ca) {
-	if (!ca || ca->width <= 0 || ca->height <= 0)
+	if (!ca || ca->width <= 0 || ca->height <= 0 || ca->page_count <= 0)
 		return false;
-	size_t n_bytes = (size_t)ca->width * (size_t)ca->height * 4u;
-	ca->rgba       = (uint8_t*)calloc(1, n_bytes);
+	const size_t page_bytes = (size_t)ca->width * (size_t)ca->height * 4u;
+	ca->rgba                = (uint8_t*)calloc((size_t)ca->page_count, page_bytes);
 	if (!ca->rgba)
 		return false;
 
 	for (int i = 0; i < ca->rect_count; i++) {
-		const ChannelRect* r = &ca->rects[i];
-		if (!Aeron_AtlasBlitRgba8(ca->rgba, ca->width, ca->height, r->src_rgba, r->src_w, r->src_h, r->x,
-								  r->y, ca->pad, AERON_ATLAS_ADDRESS_REPEAT)) {
-			free(ca->rgba);
-			ca->rgba = NULL;
-			return false;
+		const ChannelRect* r    = &ca->rects[i];
+		uint8_t*           page = ca->rgba + (size_t)r->page * page_bytes;
+		if (!r->dedicated) {
+			fill_footprint(page, ca->width, r, ca->gutter);
+		} else if (r->src_w == ca->width && r->src_h == ca->height) {
+			memcpy(page, r->src_rgba, page_bytes);
+		} else {
+			uint8_t* scaled = resample_rgba8(r->src_rgba, r->src_w, r->src_h, ca->width, ca->height);
+			if (!scaled) {
+				free(ca->rgba);
+				ca->rgba = NULL;
+				return false;
+			}
+			memcpy(page, scaled, page_bytes);
+			free(scaled);
 		}
 	}
 	return true;
@@ -239,11 +375,11 @@ void channel_atlas_rect_uv_transform(const ChannelAtlas* ca, const ChannelRect* 
 	float aw = (float)ca->width;
 	float ah = (float)ca->height;
 	if (out_offset) {
-		out_offset[0] = (float)r->x / aw;
-		out_offset[1] = (float)r->y / ah;
+		out_offset[0] = r->dedicated ? 0.0f : (float)r->x / aw;
+		out_offset[1] = r->dedicated ? 0.0f : (float)r->y / ah;
 	}
 	if (out_scale) {
-		out_scale[0] = (float)r->src_w / aw;
-		out_scale[1] = (float)r->src_h / ah;
+		out_scale[0] = r->dedicated ? 1.0f : (float)r->src_w / aw;
+		out_scale[1] = r->dedicated ? 1.0f : (float)r->src_h / ah;
 	}
 }

@@ -21,7 +21,7 @@ static void usage(void) {
 					"\n"
 					"Cooks an artist-authored .gltf (PNG textures, optional\n"
 					"KHR_materials_variants) into one .glb file with four compressed\n"
-					"KTX2 atlases (base_color / normal / metallic_roughness / emissive)\n"
+					"KTX2 atlas arrays (base_color / normal / metallic_roughness / emissive)\n"
 					"referenced via KHR_texture_basisu. Each material's texture\n"
 					"bindings carry a KHR_texture_transform mapping its UVs into the\n"
 					"appropriate sub-rect of each atlas.\n"
@@ -32,10 +32,14 @@ static void usage(void) {
 					"\n"
 					"Options:\n"
 					"  --out <path>          Output .glb path (required).\n"
-					"  --max-atlas <N>       Max atlas dimension per axis "
-					"(default 2048).\n"
-					"  --mip-min-subrect <N> Gutter texels around each sub-rect; also\n"
-					"                        caps mip depth (default 4).\n"
+					"  --atlas-page <N>      Atlas page size per axis, a power of 2 >= 128\n"
+					"                        (default 2048). Raised to fit the largest\n"
+					"                        source; sources over half a page get their\n"
+					"                        own page.\n"
+					"  --max-texture <N>     Downscale larger sources to N (default 4096).\n"
+					"  --mip-min-subrect <N> Gutter texels around each sub-rect, a power\n"
+					"                        of 2 in [4, 32]; also caps mip depth\n"
+					"                        (default 16).\n"
 					"  --quality {fast|med|uber}\n"
 					"                        BC7 encoder preset (default med).\n"
 					"  --no-zstd             Skip zstd supercompression on KTX2 payloads.\n"
@@ -102,8 +106,10 @@ int main(int argc, char** argv) {
 		const char* a = argv[i];
 		if (strcmp(a, "--out") == 0 && i + 1 < argc) {
 			out_path = argv[++i];
-		} else if (strcmp(a, "--max-atlas") == 0 && i + 1 < argc) {
-			opts.max_atlas_size = atoi(argv[++i]);
+		} else if (strcmp(a, "--atlas-page") == 0 && i + 1 < argc) {
+			opts.atlas_page_size = atoi(argv[++i]);
+		} else if (strcmp(a, "--max-texture") == 0 && i + 1 < argc) {
+			opts.max_texture_size = atoi(argv[++i]);
 		} else if (strcmp(a, "--mip-min-subrect") == 0 && i + 1 < argc) {
 			opts.mip_min_subrect = atoi(argv[++i]);
 		} else if (strcmp(a, "--quality") == 0 && i + 1 < argc) {
@@ -134,13 +140,22 @@ int main(int argc, char** argv) {
 		fprintf(stderr, "[aeron_gltf_cook] --out is required\n");
 		usage();
 	}
-	if (opts.max_atlas_size < 4 || (opts.max_atlas_size & (opts.max_atlas_size - 1))) {
-		fprintf(stderr, "[aeron_gltf_cook] --max-atlas must be a power of 2 ≥ 4 (got %d)\n",
-				opts.max_atlas_size);
+	if (opts.atlas_page_size < 128 || (opts.atlas_page_size & (opts.atlas_page_size - 1))) {
+		fprintf(stderr, "[aeron_gltf_cook] --atlas-page must be a power of 2 ≥ 128 (got %d)\n",
+				opts.atlas_page_size);
 		return 2;
 	}
-	if (opts.mip_min_subrect < 1) {
-		fprintf(stderr, "[aeron_gltf_cook] --mip-min-subrect must be ≥ 1\n");
+	if (opts.max_texture_size < 1) {
+		fprintf(stderr, "[aeron_gltf_cook] --max-texture must be ≥ 1\n");
+		return 2;
+	}
+	if (opts.mip_min_subrect < 4 || opts.mip_min_subrect > 32 ||
+		(opts.mip_min_subrect & (opts.mip_min_subrect - 1))) {
+		fprintf(stderr, "[aeron_gltf_cook] --mip-min-subrect must be a power of 2 in [4, 32]\n");
+		return 2;
+	}
+	if (opts.atlas_page_size < 8 * opts.mip_min_subrect) {
+		fprintf(stderr, "[aeron_gltf_cook] --atlas-page must be at least 8 × --mip-min-subrect\n");
 		return 2;
 	}
 

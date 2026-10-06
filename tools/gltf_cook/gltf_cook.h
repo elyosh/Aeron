@@ -9,12 +9,14 @@
  *
  * Output: a single .glb file that consolidates every material's
  * textures into 4 per-channel atlases (base_color /
- * normal / metallic_roughness / emissive), each shipped as a KTX2 payload
+ * normal / metallic_roughness / emissive), each a KTX2 texture array
  * embedded in the GLB BIN chunk and referenced via
  * KHR_texture_basisu. Each material's texture bindings then point at
- * the corresponding atlas and carry a KHR_texture_transform that
- * remaps material-local UVs into the material's sub-rect of the
- * atlas.
+ * a texture `tex_<channel>_p<page>_l<max_lod>` of the corresponding
+ * atlas, naming the array layer and the deepest mip level to sample,
+ * and carry a KHR_texture_transform that remaps material-local UVs
+ * into the material's sub-rect of that layer. Materials binding the
+ * same image share one sub-rect.
  *
  * Games then load the cooked .glb with Aeron_FlightModelBuildMemory — no PNG
  * decode, software atlas packing, or runtime mip generation.
@@ -51,14 +53,19 @@ typedef bool (*AeronGltfCookConsumer)(void* context, const struct cgltf_data* co
 /* Cooker tunables. Pass NULL for all-defaults; partial structs are not
  * supported — caller fills every field. */
 typedef struct AeronGltfCookOptions {
-	/* Max atlas dimension (per axis, in texels). The packer picks the
-	 * smallest power-of-2 square that fits; values above this fail the
-	 * cook with a clear error. Default: 2048. */
-	int max_atlas_size;
+	/* Atlas page size (per axis, in texels, power of two ≥ 128), raised
+	 * to the next power of two of a channel's largest source. A channel
+	 * that fits one shared page is trimmed to its occupied bounds; any
+	 * other channel is an array of square pages. Default: 2048. */
+	int atlas_page_size;
 
-	/* Smallest sub-rect dimension at the finest mip. Used to cap the
-	 * generated mip count so cross-sub-rect bleed at distant LODs
-	 * stays bounded. Default: 4 (matches BC7 4×4 block). */
+	/* Largest source dimension. Larger sources are box-downscaled, aspect
+	 * ratio kept, before packing. Default: 4096. */
+	int max_texture_size;
+
+	/* Gutter texels around each packed sub-rect, a power of two in
+	 * [4, 32]. Footprints align to it, so a sub-rect samples mip levels up
+	 * to log2 of it without bleeding. Default: 16. */
 	int mip_min_subrect;
 	/* BC5/BC7 for shipped GLBs, or uncompressed RGBA8 for latency-sensitive
 	 * in-memory conversion. Both modes generate mip chains. */

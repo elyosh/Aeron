@@ -143,21 +143,26 @@ static uint8_t* downsample_alpha_encoded_rgba8(const uint8_t* source, int width,
  * (raw) and 2 (zstd) accordingly. For cubemaps (face_count=6) the caller
  * pre-concatenates the 6 face slabs into each level's `.data`; we just
  * see one bigger blob per level and tag faceCount=6 in the header. */
-static uint8_t* build_ktx2_buf(uint32_t vkFormat, int face_count, const Ktx2WriteLevel* levels,
-							   int level_count, bool zstd, size_t* out_size) {
+static uint8_t* build_ktx2_buf(uint32_t vkFormat, int face_count, int layer_count,
+							   const Ktx2WriteLevel* levels, int level_count, bool zstd, size_t* out_size) {
 	if (!levels || level_count <= 0 || !out_size)
 		return NULL;
 	if (face_count != 1 && face_count != 6)
 		return NULL;
+	/* Zero is a non-array texture; arrays of cubes are not supported. */
+	if (layer_count < 0 || (layer_count > 0 && face_count != 1))
+		return NULL;
 
-	/* Validate per-level uncompressed size: face_count × per-face bytes. */
+	/* Validate per-level uncompressed size: layers × faces × per-face bytes. */
+	const size_t slices = (size_t)face_count * (size_t)(layer_count ? layer_count : 1);
 	for (int i = 0; i < level_count; i++) {
-		size_t expect = level_bytes(vkFormat, levels[i].width, levels[i].height) * (size_t)face_count;
+		size_t expect = level_bytes(vkFormat, levels[i].width, levels[i].height) * slices;
 		if (levels[i].size != expect || !levels[i].data) {
 			fprintf(stderr,
 					"[ktx2-write] level %d size %zu != expected %zu "
-					"(w=%d h=%d fmt=%u faces=%d)\n",
-					i, levels[i].size, expect, levels[i].width, levels[i].height, vkFormat, face_count);
+					"(w=%d h=%d fmt=%u faces=%d layers=%d)\n",
+					i, levels[i].size, expect, levels[i].width, levels[i].height, vkFormat, face_count,
+					layer_count);
 			return NULL;
 		}
 	}
@@ -234,7 +239,7 @@ static uint8_t* build_ktx2_buf(uint32_t vkFormat, int face_count, const Ktx2Writ
 	wr_u32(h + 8, (uint32_t)levels[0].width);   /* pixelWidth */
 	wr_u32(h + 12, (uint32_t)levels[0].height); /* pixelHeight */
 	wr_u32(h + 16, 0);                          /* pixelDepth (2D / cube) */
-	wr_u32(h + 20, 0);                          /* layerCount */
+	wr_u32(h + 20, (uint32_t)layer_count);      /* layerCount */
 	wr_u32(h + 24, (uint32_t)face_count);       /* faceCount (1 or 6) */
 	wr_u32(h + 28, (uint32_t)level_count);      /* levelCount */
 	wr_u32(h + 32, zstd ? 2u : 0u);             /* supercompressionScheme */
@@ -274,7 +279,7 @@ static bool write_ktx2_levels(const char* path, uint32_t vkFormat, int face_coun
 	if (!path)
 		return false;
 	size_t   total_size = 0;
-	uint8_t* buf        = build_ktx2_buf(vkFormat, face_count, levels, level_count, zstd, &total_size);
+	uint8_t* buf        = build_ktx2_buf(vkFormat, face_count, 0, levels, level_count, zstd, &total_size);
 	if (!buf)
 		return false;
 	FILE* f = fopen(path, "wb");
@@ -373,23 +378,13 @@ static Bc7Quality bc7_quality_map(Ktx2Bc7Quality q) {
 	}
 }
 
-/* Internal core for both BC7 with-generated-mips entry points
- * (path-based and buffer-based). Exactly one of `path` / `out_buf` is
- * non-NULL — the path branch fwrites to disk, the buffer branch hands
- * the caller a fresh malloc'd KTX2 image (caller frees). Everything up
- * to and including BC7 encoding is shared so the two entry points
- * stay in lockstep. */
+/* Core of the path-based BC7 with-generated-mips writer. */
 static bool bc7_with_generated_mips_core(int base_w, int base_h, const uint8_t* base_rgba,
 										 Ktx2Bc7Quality quality, Ktx2TransferFn tf, bool zstd, int max_levels,
-										 Ktx2AlphaEncoding alpha_encoding, const char* path,
-										 uint8_t** out_buf, size_t* out_size) {
-	if (!base_rgba || base_w < 1 || base_h < 1)
+										 Ktx2AlphaEncoding alpha_encoding, const char* path) {
+	if (!base_rgba || base_w < 1 || base_h < 1 || !path)
 		return false;
 	if (max_levels < 0)
-		return false;
-	if ((path == NULL) == (out_buf == NULL))
-		return false; /* exactly one */
-	if (out_buf && !out_size)
 		return false;
 
 	bc7_codec_init();
@@ -453,15 +448,8 @@ static bool bc7_with_generated_mips_core(int base_w, int base_h, const uint8_t* 
 		levels[i].size   = bc_bytes;
 	}
 
-	if (ok) {
-		if (path) {
-			ok = write_ktx2_bc7_mips(path, levels, n, tf, zstd);
-		} else {
-			uint32_t vk = (tf == KTX2_TF_SRGB) ? VK_FORMAT_BC7_SRGB_BLOCK : VK_FORMAT_BC7_UNORM_BLOCK;
-			*out_buf    = build_ktx2_buf(vk, 1, levels, n, zstd, out_size);
-			ok          = (*out_buf != NULL);
-		}
-	}
+	if (ok)
+		ok = write_ktx2_bc7_mips(path, levels, n, tf, zstd);
 
 	for (int i = 0; i < n; ++i) {
 		free(rgba_owned[i]);
@@ -475,7 +463,103 @@ bool write_ktx2_bc7_with_generated_mips(const char* path, int base_w, int base_h
 	if (!path)
 		return false;
 	return bc7_with_generated_mips_core(base_w, base_h, base_rgba, quality, tf, zstd, 0,
-										KTX2_ALPHA_PREMULTIPLIED, path, NULL, NULL);
+										KTX2_ALPHA_PREMULTIPLIED, path);
+}
+
+typedef enum {
+	KTX2_PAYLOAD_RGBA8 = 0,
+	KTX2_PAYLOAD_BC7,
+	KTX2_PAYLOAD_BC5,
+} Ktx2Payload;
+
+/* Core of the buffer-mode writers: `layer_count` base images of
+ * base_w × base_h RGBA8 back to back. Each level is generated per layer by
+ * 2×2 box downsample and stores its layers consecutively, as KTX2 orders
+ * array slices. The chain continues until both dimensions reach 1, or
+ * stops at `max_levels` when that is non-zero. `encode_base_alpha` false
+ * keeps the base bytes as given (BC5 normals) while the downsample still
+ * follows `alpha_encoding`. A `layer_count` of zero writes one non-array
+ * image. */
+static bool buffer_with_generated_mips(Ktx2Payload payload, uint32_t vk, int base_w, int base_h,
+									   int layer_count, const uint8_t* base_rgba, Bc7Quality bc7_quality,
+									   bool zstd, int max_levels, Ktx2AlphaEncoding alpha_encoding,
+									   bool encode_base_alpha, uint8_t** out_buf, size_t* out_size) {
+	if (!out_buf || !out_size)
+		return false;
+	*out_buf  = NULL;
+	*out_size = 0;
+	if (!base_rgba || base_w < 1 || base_h < 1 || layer_count < 0 || max_levels < 0)
+		return false;
+	const int layers = layer_count ? layer_count : 1;
+	if (payload == KTX2_PAYLOAD_BC7)
+		bc7_codec_init();
+
+	int widths[KTX2_MAX_LEVELS]  = { base_w };
+	int heights[KTX2_MAX_LEVELS] = { base_h };
+	int n                        = 1;
+	while ((widths[n - 1] > 1 || heights[n - 1] > 1) && n < KTX2_MAX_LEVELS &&
+		   (max_levels == 0 || n < max_levels)) {
+		widths[n]  = widths[n - 1] > 1 ? widths[n - 1] / 2 : 1;
+		heights[n] = heights[n - 1] > 1 ? heights[n - 1] / 2 : 1;
+		n++;
+	}
+
+	Ktx2WriteLevel levels[KTX2_MAX_LEVELS] = { 0 };
+	uint8_t*       blobs[KTX2_MAX_LEVELS]  = { 0 };
+	bool           ok                      = true;
+	for (int i = 0; i < n && ok; ++i) {
+		levels[i].width  = widths[i];
+		levels[i].height = heights[i];
+		levels[i].size   = level_bytes(vk, widths[i], heights[i]) * (size_t)layers;
+		blobs[i]         = (uint8_t*)malloc(levels[i].size);
+		levels[i].data   = blobs[i];
+		ok               = blobs[i] != NULL;
+	}
+
+	const size_t base_bytes = (size_t)base_w * (size_t)base_h * 4u;
+	for (int layer = 0; layer < layers && ok; ++layer) {
+		const uint8_t* layer_rgba = base_rgba + (size_t)layer * base_bytes;
+		uint8_t* rgba = make_alpha_encoded_copy(layer_rgba, base_w, base_h,
+												encode_base_alpha ? alpha_encoding : KTX2_ALPHA_STRAIGHT);
+		for (int i = 0; i < n && rgba && ok; ++i) {
+			if (i > 0) {
+				int      dw = 0, dh = 0;
+				uint8_t* down = downsample_alpha_encoded_rgba8(rgba, widths[i - 1], heights[i - 1], &dw, &dh,
+															   alpha_encoding);
+				free(rgba);
+				rgba = down;
+				if (!rgba || dw != widths[i] || dh != heights[i]) {
+					ok = false;
+					break;
+				}
+			}
+			const size_t slice = levels[i].size / (size_t)layers;
+			uint8_t*     dst   = blobs[i] + (size_t)layer * slice;
+			switch (payload) {
+				case KTX2_PAYLOAD_RGBA8:
+					memcpy(dst, rgba, slice);
+					break;
+				case KTX2_PAYLOAD_BC7:
+					ok =
+						bc7_codec_encode_image(dst, slice, rgba, widths[i], heights[i], bc7_quality) == slice;
+					break;
+				case KTX2_PAYLOAD_BC5:
+					ok = bc5_codec_encode_image_from_rgba(dst, slice, rgba, widths[i], heights[i]) == slice;
+					break;
+			}
+		}
+		if (!rgba)
+			ok = false;
+		free(rgba);
+	}
+
+	if (ok) {
+		*out_buf = build_ktx2_buf(vk, 1, layer_count, levels, n, zstd, out_size);
+		ok       = *out_buf != NULL;
+	}
+	for (int i = 0; i < n; ++i)
+		free(blobs[i]);
+	return ok;
 }
 
 bool write_ktx2_bc7_with_generated_mips_to_buffer(int base_w, int base_h, const uint8_t* base_rgba,
@@ -490,19 +574,20 @@ bool write_ktx2_bc7_with_generated_mips_to_buffer_limited(int base_w, int base_h
 														  bool zstd, int max_levels, uint8_t** out_buf,
 														  size_t* out_size) {
 	return write_ktx2_bc7_with_generated_mips_to_buffer_limited_alpha(
-		base_w, base_h, base_rgba, quality, tf, zstd, max_levels, KTX2_ALPHA_PREMULTIPLIED, out_buf,
+		base_w, base_h, 0, base_rgba, quality, tf, zstd, max_levels, KTX2_ALPHA_PREMULTIPLIED, out_buf,
 		out_size);
 }
 
-bool write_ktx2_bc7_with_generated_mips_to_buffer_limited_alpha(
-	int base_w, int base_h, const uint8_t* base_rgba, Ktx2Bc7Quality quality, Ktx2TransferFn tf, bool zstd,
-	int max_levels, Ktx2AlphaEncoding alpha_encoding, uint8_t** out_buf, size_t* out_size) {
-	if (!out_buf || !out_size)
-		return false;
-	*out_buf  = NULL;
-	*out_size = 0;
-	return bc7_with_generated_mips_core(base_w, base_h, base_rgba, quality, tf, zstd, max_levels,
-										alpha_encoding, NULL, out_buf, out_size);
+bool write_ktx2_bc7_with_generated_mips_to_buffer_limited_alpha(int base_w, int base_h, int layer_count,
+																const uint8_t* base_rgba,
+																Ktx2Bc7Quality quality, Ktx2TransferFn tf,
+																bool zstd, int max_levels,
+																Ktx2AlphaEncoding alpha_encoding,
+																uint8_t** out_buf, size_t* out_size) {
+	const uint32_t vk = (tf == KTX2_TF_SRGB) ? VK_FORMAT_BC7_SRGB_BLOCK : VK_FORMAT_BC7_UNORM_BLOCK;
+	return buffer_with_generated_mips(KTX2_PAYLOAD_BC7, vk, base_w, base_h, layer_count, base_rgba,
+									  bc7_quality_map(quality), zstd, max_levels, alpha_encoding, true,
+									  out_buf, out_size);
 }
 
 /* BC5 buffer entry point. Mirrors the BC7 version but skips the PMA
@@ -513,89 +598,16 @@ bool write_ktx2_bc7_with_generated_mips_to_buffer_limited_alpha(
  * bc5_codec.cpp (vendored rgbcx). */
 bool write_ktx2_bc5_with_generated_mips_to_buffer(int base_w, int base_h, const uint8_t* base_rgba, bool zstd,
 												  uint8_t** out_buf, size_t* out_size) {
-	return write_ktx2_bc5_with_generated_mips_to_buffer_limited(base_w, base_h, base_rgba, zstd, 0, out_buf,
-																out_size);
+	return write_ktx2_bc5_with_generated_mips_to_buffer_limited(base_w, base_h, 0, base_rgba, zstd, 0,
+																out_buf, out_size);
 }
 
-bool write_ktx2_bc5_with_generated_mips_to_buffer_limited(int base_w, int base_h, const uint8_t* base_rgba,
-														  bool zstd, int max_levels, uint8_t** out_buf,
-														  size_t* out_size) {
-	if (!out_buf || !out_size)
-		return false;
-	*out_buf  = NULL;
-	*out_size = 0;
-	if (max_levels < 0)
-		return false;
-	if (!base_rgba || base_w < 1 || base_h < 1)
-		return false;
-
-	/* Generate RGBA mip chain (R+G are what BC5 cares about; B/A are
-	 * still box-averaged into the buffers but the encoder ignores
-	 * them). Level 0 is an owned copy so the loop's free-pass is
-	 * uniform across levels. */
-	int      widths[KTX2_MAX_LEVELS]     = { 0 };
-	int      heights[KTX2_MAX_LEVELS]    = { 0 };
-	uint8_t* rgba_owned[KTX2_MAX_LEVELS] = { 0 };
-	uint8_t* bc5_owned[KTX2_MAX_LEVELS]  = { 0 };
-	int      n                           = 0;
-
-	size_t   base_bytes = (size_t)base_w * (size_t)base_h * 4u;
-	uint8_t* base_copy  = (uint8_t*)malloc(base_bytes);
-	if (!base_copy)
-		return false;
-	memcpy(base_copy, base_rgba, base_bytes);
-
-	widths[n]     = base_w;
-	heights[n]    = base_h;
-	rgba_owned[n] = base_copy;
-	n++;
-	int            w = base_w, h = base_h;
-	const uint8_t* src = base_copy;
-	while (w > 1 && h > 1 && n < KTX2_MAX_LEVELS && (max_levels == 0 || n < max_levels)) {
-		int      dw = 0, dh = 0;
-		uint8_t* down = Aeron_ImageDownsampleRgba8(src, w, h, &dw, &dh);
-		if (!down)
-			break;
-		rgba_owned[n] = down;
-		widths[n]     = dw;
-		heights[n]    = dh;
-		src           = down;
-		w             = dw;
-		h             = dh;
-		n++;
-	}
-
-	Ktx2WriteLevel levels[KTX2_MAX_LEVELS] = { 0 };
-	bool           ok                      = true;
-	for (int i = 0; i < n; ++i) {
-		size_t bc_bytes = bc5_codec_image_size(widths[i], heights[i]);
-		bc5_owned[i]    = (uint8_t*)malloc(bc_bytes);
-		if (!bc5_owned[i]) {
-			ok = false;
-			break;
-		}
-		size_t got =
-			bc5_codec_encode_image_from_rgba(bc5_owned[i], bc_bytes, rgba_owned[i], widths[i], heights[i]);
-		if (got != bc_bytes) {
-			ok = false;
-			break;
-		}
-		levels[i].width  = widths[i];
-		levels[i].height = heights[i];
-		levels[i].data   = bc5_owned[i];
-		levels[i].size   = bc_bytes;
-	}
-
-	if (ok) {
-		*out_buf = build_ktx2_buf(VK_FORMAT_BC5_UNORM_BLOCK, 1, levels, n, zstd, out_size);
-		ok       = (*out_buf != NULL);
-	}
-
-	for (int i = 0; i < n; ++i) {
-		free(rgba_owned[i]);
-		free(bc5_owned[i]);
-	}
-	return ok;
+bool write_ktx2_bc5_with_generated_mips_to_buffer_limited(int base_w, int base_h, int layer_count,
+														  const uint8_t* base_rgba, bool zstd, int max_levels,
+														  uint8_t** out_buf, size_t* out_size) {
+	return buffer_with_generated_mips(KTX2_PAYLOAD_BC5, VK_FORMAT_BC5_UNORM_BLOCK, base_w, base_h,
+									  layer_count, base_rgba, BC7_QUALITY_FAST, zstd, max_levels,
+									  KTX2_ALPHA_PREMULTIPLIED, false, out_buf, out_size);
 }
 
 /* Cubemap variant — encodes 6 faces independently into a BC7 mip
@@ -700,16 +712,10 @@ bool write_ktx2_bc7_cubemap_with_generated_mips(const char* path, int face_size,
 }
 
 static bool rgba_with_generated_mips_core(const char* path, int base_w, int base_h, const uint8_t* base_rgba,
-										  Ktx2TransferFn tf, bool zstd, int max_levels, uint8_t** out_buf,
-										  size_t* out_size, Ktx2AlphaEncoding alpha_encoding) {
-	if ((!path && (!out_buf || !out_size)) || (path && (out_buf || out_size)) || !base_rgba || base_w < 1 ||
-		base_h < 1 || max_levels < 0)
+										  Ktx2TransferFn tf, bool zstd, int max_levels,
+										  Ktx2AlphaEncoding alpha_encoding) {
+	if (!path || !base_rgba || base_w < 1 || base_h < 1 || max_levels < 0)
 		return false;
-
-	if (out_buf) {
-		*out_buf  = NULL;
-		*out_size = 0;
-	}
 
 	/* Copy once into the requested representation before mip generation. */
 	uint8_t* alpha_base = make_alpha_encoded_copy(base_rgba, base_w, base_h, alpha_encoding);
@@ -747,14 +753,7 @@ static bool rgba_with_generated_mips_core(const char* path, int base_w, int base
 		n++;
 	}
 
-	bool ok;
-	if (path) {
-		ok = write_ktx2_rgba_mips(path, levels, n, tf, zstd);
-	} else {
-		const uint32_t vk = tf == KTX2_TF_SRGB ? VK_FORMAT_R8G8B8A8_SRGB : VK_FORMAT_R8G8B8A8_UNORM;
-		*out_buf          = build_ktx2_buf(vk, 1, levels, n, zstd, out_size);
-		ok                = *out_buf != NULL;
-	}
+	const bool ok = write_ktx2_rgba_mips(path, levels, n, tf, zstd);
 
 	for (int i = 0; i < n; i++)
 		free(owned[i]);
@@ -763,7 +762,7 @@ static bool rgba_with_generated_mips_core(const char* path, int base_w, int base
 
 bool write_ktx2_rgba_with_generated_mips(const char* path, int base_w, int base_h, const uint8_t* base_rgba,
 										 Ktx2TransferFn tf, bool zstd) {
-	return rgba_with_generated_mips_core(path, base_w, base_h, base_rgba, tf, zstd, 0, NULL, NULL,
+	return rgba_with_generated_mips_core(path, base_w, base_h, base_rgba, tf, zstd, 0,
 										 KTX2_ALPHA_PREMULTIPLIED);
 }
 
@@ -778,16 +777,18 @@ bool write_ktx2_rgba_with_generated_mips_to_buffer_limited(int base_w, int base_
 														   Ktx2TransferFn tf, bool zstd, int max_levels,
 														   uint8_t** out_buf, size_t* out_size) {
 	return write_ktx2_rgba_with_generated_mips_to_buffer_limited_alpha(
-		base_w, base_h, base_rgba, tf, zstd, max_levels, KTX2_ALPHA_PREMULTIPLIED, out_buf, out_size);
+		base_w, base_h, 0, base_rgba, tf, zstd, max_levels, KTX2_ALPHA_PREMULTIPLIED, out_buf, out_size);
 }
 
-bool write_ktx2_rgba_with_generated_mips_to_buffer_limited_alpha(int base_w, int base_h,
+bool write_ktx2_rgba_with_generated_mips_to_buffer_limited_alpha(int base_w, int base_h, int layer_count,
 																 const uint8_t* base_rgba, Ktx2TransferFn tf,
 																 bool zstd, int max_levels,
 																 Ktx2AlphaEncoding alpha_encoding,
 																 uint8_t** out_buf, size_t* out_size) {
-	return rgba_with_generated_mips_core(NULL, base_w, base_h, base_rgba, tf, zstd, max_levels, out_buf,
-										 out_size, alpha_encoding);
+	const uint32_t vk = tf == KTX2_TF_SRGB ? VK_FORMAT_R8G8B8A8_SRGB : VK_FORMAT_R8G8B8A8_UNORM;
+	return buffer_with_generated_mips(KTX2_PAYLOAD_RGBA8, vk, base_w, base_h, layer_count, base_rgba,
+									  BC7_QUALITY_FAST, zstd, max_levels, alpha_encoding, true, out_buf,
+									  out_size);
 }
 
 /* HDR sibling of write_ktx2_bc7_cubemap_with_generated_mips: linear

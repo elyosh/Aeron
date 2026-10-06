@@ -5,7 +5,8 @@
  * chains.
  *
  * Subset emitted (matches what the runtime reader accepts):
- *   - 2D (faceCount=1) or cubemap (faceCount=6), single layer.
+ *   - 2D (faceCount=1) or cubemap (faceCount=6), single layer; the
+ *     cooker's buffer writers also emit 2D arrays (layerCount ≥ 1).
  *   - supercompressionScheme=0 (raw) or 2 (zstd).
  *   - vkFormat in { 37 R8G8B8A8_UNORM, 43 R8G8B8A8_SRGB,
  *                  97 R16G16B16A16_SFLOAT, 141 BC5_UNORM_BLOCK,
@@ -115,10 +116,16 @@ bool write_ktx2_bc7_with_generated_mips_to_buffer_limited(int base_w, int base_h
 														  bool zstd, int max_levels, uint8_t** out_buf,
 														  size_t* out_size);
 
-/* Explicit-alpha sibling used by glTF PBR cooking. */
-bool write_ktx2_bc7_with_generated_mips_to_buffer_limited_alpha(
-	int base_w, int base_h, const uint8_t* base_rgba, Ktx2Bc7Quality quality, Ktx2TransferFn tf, bool zstd,
-	int max_levels, Ktx2AlphaEncoding alpha_encoding, uint8_t** out_buf, size_t* out_size);
+/* Explicit-alpha, texture-array sibling used by glTF PBR cooking.
+ * `base_rgba` holds `layer_count` images of base_w × base_h back to back;
+ * a `layer_count` of zero writes one non-array image. Every buffer-mode
+ * writer continues the mip chain until both dimensions reach 1. */
+bool write_ktx2_bc7_with_generated_mips_to_buffer_limited_alpha(int base_w, int base_h, int layer_count,
+																const uint8_t* base_rgba,
+																Ktx2Bc7Quality quality, Ktx2TransferFn tf,
+																bool zstd, int max_levels,
+																Ktx2AlphaEncoding alpha_encoding,
+																uint8_t** out_buf, size_t* out_size);
 
 /* Convenience: build a power-of-two-halving mip chain from an RGBA8
  * base image via 2×2 box downsample, write the result as RGBA8 KTX2.
@@ -138,8 +145,9 @@ bool write_ktx2_rgba_with_generated_mips_to_buffer_limited(int base_w, int base_
 														   Ktx2TransferFn tf, bool zstd, int max_levels,
 														   uint8_t** out_buf, size_t* out_size);
 
-/* Explicit-alpha sibling used by glTF PBR cooking. */
-bool write_ktx2_rgba_with_generated_mips_to_buffer_limited_alpha(int base_w, int base_h,
+/* Explicit-alpha, texture-array sibling used by glTF PBR cooking; layers as
+ * for the BC7 sibling. */
+bool write_ktx2_rgba_with_generated_mips_to_buffer_limited_alpha(int base_w, int base_h, int layer_count,
 																 const uint8_t* base_rgba, Ktx2TransferFn tf,
 																 bool zstd, int max_levels,
 																 Ktx2AlphaEncoding alpha_encoding,
@@ -155,10 +163,10 @@ bool write_ktx2_bc5_with_generated_mips_to_buffer(int base_w, int base_h, const 
 												  uint8_t** out_buf, size_t* out_size);
 
 /* Buffer-mode variant that emits at most `max_levels` levels. A value
- * of zero retains the complete mip chain. */
-bool write_ktx2_bc5_with_generated_mips_to_buffer_limited(int base_w, int base_h, const uint8_t* base_rgba,
-														  bool zstd, int max_levels, uint8_t** out_buf,
-														  size_t* out_size);
+ * of zero retains the complete mip chain. Layers as for the BC7 sibling. */
+bool write_ktx2_bc5_with_generated_mips_to_buffer_limited(int base_w, int base_h, int layer_count,
+														  const uint8_t* base_rgba, bool zstd, int max_levels,
+														  uint8_t** out_buf, size_t* out_size);
 
 /* Write a BC7 KTX2 cubemap (faceCount=6) with a generated mip chain.
  *
