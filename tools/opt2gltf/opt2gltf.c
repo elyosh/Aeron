@@ -616,6 +616,42 @@ static cgltf_accessor* gb_new_accessor(GltfBuild* gb, cgltf_buffer_view* view, c
 	return a;
 }
 
+/* ===== Switch-state alpha classes =================================== */
+
+/* The renderer partitions a model's indices once into OPAQUE, MASK and BLEND
+ * ranges, so every material variant of a primitive must share one alpha
+ * class. A switched face group whose state textures differ (an opaque
+ * texture beside one with translucent texels) uses, for every state, a copy
+ * of its material promoted to the most transparent class among them; an
+ * opaque texture draws the same under MASK (alpha 1 passes any cutoff) or
+ * BLEND. Copies are shared per (base material, class). */
+
+static int alpha_class_rank(const cgltf_material* m) {
+	return m->alpha_mode == cgltf_alpha_mode_blend ? 2 : m->alpha_mode == cgltf_alpha_mode_mask ? 1 : 0;
+}
+
+static cgltf_material* promoted_variant_material(GltfBuild* build, cgltf_material* base, int rank,
+												 size_t base_count, cgltf_material** cache) {
+	const size_t index = (size_t)(base - build->materials);
+	if (index >= base_count || alpha_class_rank(base) >= rank)
+		return base;
+	cgltf_material** slot = &cache[index * 2 + (size_t)(rank - 1)];
+	if (*slot)
+		return *slot;
+	cgltf_material* copy = &build->materials[build->materials_count++];
+	*copy                = *base;
+	copy->name =
+		gb_keep_string(build, xprintf_dup("%s_%s", base->name ? base->name : "Mat", rank == 2 ? "Blend" : "Mask"));
+	if (rank == 2) {
+		copy->alpha_mode = cgltf_alpha_mode_blend;
+	} else {
+		copy->alpha_mode   = cgltf_alpha_mode_mask;
+		copy->alpha_cutoff = 0.5f;
+	}
+	*slot = copy;
+	return copy;
+}
+
 /* ===== Per-OPT-mesh emit ============================================ */
 
 /* OPT face data is per-corner-indexed (separate verts/uvs/normals
@@ -1361,6 +1397,9 @@ bool OptGltf_BuildMemory(const opt_file_t* opt, const char* basename, const OptG
 	GltfBuild* build        = &document->gb;
 	int*       tex_emissive = NULL;
 	BuiltMesh* built        = NULL;
+	/* promoted_variant_material's copies: [base material * 2 + rank - 1]. */
+	cgltf_material** promoted_materials  = NULL;
+	size_t           base_material_count = 0;
 	/* XWAU mode: per-texture bake results, and per texture the first
 	 * texture sharing its baked normal map (same source and NMIntensity)
 	 * plus the image slot of that map once emitted. */
@@ -1445,7 +1484,11 @@ bool OptGltf_BuildMemory(const opt_file_t* opt, const char* basename, const OptG
 	const size_t image_total = (size_t)opt->texture_count + n_emissive + n_xwau_images;
 	build->images            = (cgltf_image*)calloc(image_total ? image_total : 1, sizeof *build->images);
 	build->textures          = (cgltf_texture*)calloc(image_total ? image_total : 1, sizeof *build->textures);
-	build->materials         = (cgltf_material*)calloc(opt->texture_count + 1, sizeof *build->materials);
+	/* Room for the base materials (one per texture plus the untextured one)
+	 * and, after them, up to two alpha-promoted copies of each (see
+	 * promoted_variant_material). Primitives point into this array, so it
+	 * is never reallocated. */
+	build->materials = (cgltf_material*)calloc((size_t)(opt->texture_count + 1) * 3, sizeof *build->materials);
 	document->image_pixels =
 		(OptGltfOwnedImage*)calloc(image_total ? image_total : 1, sizeof *document->image_pixels);
 	document->image_pixels_count = image_total;
@@ -1821,6 +1864,13 @@ bool OptGltf_BuildMemory(const opt_file_t* opt, const char* basename, const OptG
 		goto fail;
 	}
 
+	base_material_count = build->materials_count;
+	promoted_materials  = (cgltf_material**)calloc(base_material_count * 2, sizeof *promoted_materials);
+	if (!promoted_materials) {
+		fprintf(stderr, "opt2gltf: oom (promoted materials)\n");
+		goto fail;
+	}
+
 	size_t mesh_out = 0;
 	for (int32_t mi = 0; mi < opt->mesh_count; ++mi) {
 		BuiltMesh*        bm   = &built[mi];
@@ -1962,6 +2012,7 @@ bool OptGltf_BuildMemory(const opt_file_t* opt, const char* basename, const OptG
 					(cgltf_material_mapping*)push_array((void**)&build->mappings, &build->mappings_count,
 														&build->mappings_cap, sizeof *maps, max_state_count);
 				/* The original OPT walker clamps each switch to its last child. */
+				int rank = alpha_class_rank(prim->material);
 				for (int v = 0; v < max_state_count; ++v) {
 					int             ti    = grp->state_textures[v < sc ? v : sc - 1];
 					cgltf_material* m_ref = (ti >= 0 && ti < opt->texture_count)
@@ -1969,6 +2020,20 @@ bool OptGltf_BuildMemory(const opt_file_t* opt, const char* basename, const OptG
 												: &build->materials[untex_idx];
 					maps[v].variant       = (cgltf_size)v;
 					maps[v].material      = m_ref;
+					if (alpha_class_rank(m_ref) > rank)
+						rank = alpha_class_rank(m_ref);
+				}
+				int mixed = alpha_class_rank(prim->material) != rank;
+				for (int v = 0; v < max_state_count; ++v)
+					mixed |= alpha_class_rank(maps[v].material) != rank;
+				if (mixed) {
+					prim->material = promoted_variant_material(build, prim->material, rank, base_material_count,
+															   promoted_materials);
+					for (int v = 0; v < max_state_count; ++v)
+						maps[v].material = promoted_variant_material(build, maps[v].material, rank,
+																	 base_material_count, promoted_materials);
+					fprintf(stderr, "opt2gltf: %s: mesh %d face group %d switch states mix alpha classes; all use %s\n",
+							basename, (int)mi, (int)g, rank == 2 ? "BLEND" : "MASK");
 				}
 				prim->mappings       = maps;
 				prim->mappings_count = (cgltf_size)max_state_count;
@@ -2264,6 +2329,9 @@ bool OptGltf_BuildMemory(const opt_file_t* opt, const char* basename, const OptG
 		document->data.extensions_used[1] = (char*)ext_variants;
 	document->data.extensions_used_count = extension_count;
 
+	free(promoted_materials);
+	promoted_materials = NULL;
+
 	/* The geometry build is temporary; the cgltf accessors now reference
 	 * copies in build->bin. */
 	for (int32_t mi = 0; mi < opt->mesh_count; ++mi)
@@ -2276,6 +2344,7 @@ bool OptGltf_BuildMemory(const opt_file_t* opt, const char* basename, const OptG
 	return true;
 
 fail:
+	free(promoted_materials);
 	free(tex_emissive);
 	xwau_state_free(xwau_baked, opt->texture_count, xwau_normal_owner, xwau_normal_image);
 	if (built) {

@@ -22,6 +22,11 @@
  *     triangles fails the conversion, so component ordinals match the
  *     OPT's mesh numbers.
  *
+ *   - A switched face group whose state textures fall in different alpha
+ *     classes (opaque, mask, blend) uses, for every state, a copy of its
+ *     material promoted to the most transparent class among them: the
+ *     renderer keeps each primitive in one alpha class across variants.
+ *
  *   - Paint-scheme variants: OPT NodeSwitch's per-face-group
  *     state_textures[] become a KHR_materials_variants extension at
  *     asset level. The variant count equals the largest state_count
