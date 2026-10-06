@@ -12,6 +12,8 @@
 #include "aeron/mesh_normals.h"
 #include "opt.h"
 
+#include "mikktspace.h"
+
 #include <math.h>
 #include <stdarg.h>
 #include <stdint.h>
@@ -228,6 +230,217 @@ static uint8_t* decode_texture_emissive_rgba8(const opt_file_t* opt, const opt_t
 	return out; /* NULL when no texel qualified */
 }
 
+/* ===== XWAU material bake ============================================
+ *
+ * Reproduces, per texel, how the X-Wing Alliance Upgrade "effects" renderer
+ * (xwa_ddraw_d3d11, PBR deferred path) shades an OPT texture, and stores the
+ * result in standard glTF inputs (xwau_model_import.md, "Per-material
+ * output"). The math runs on gamma-encoded values, as that renderer does.
+ *   - illumination: 8bpp texels whose palette row 4 equals row 8 and are not
+ *     near-black (XwaD3dRendererHook.cpp D3dOptCreateTextureColorLight), or
+ *     the 32bpp illumination plane; XwaD3dPixelShader.hlsl's illum branch
+ *     makes them unlit at 1.25x their color;
+ *   - Shadeless/Ambient: output = lerp(lit, color, s), stored as base color
+ *     color * (1 - s) plus emissive color * s;
+ *   - glass (transparent, not shadeless, no illumination): below alpha 0.95
+ *     a texel gets alpha a^2, gloss 0.93, metallic 0 and shadeless 0.8;
+ *   - dark-texel reflectance fade (PBRAddCommon.h "blackish"): approximated
+ *     by raising roughness to 1;
+ *   - Metallic, Glossiness: metallic and roughness = 1 - min(0.93, G)^2.
+ * Colors are authored ones (palette row 8, raw 32bpp): XWA's brightness
+ * setting is a display option, not material color. */
+
+#define XWAU_GLASS_GLOSS 0.93f
+#define XWAU_GLASS_SHADELESS 0.8f
+#define XWAU_ILLUM_GAIN 1.25f
+
+typedef struct XwauBaked {
+	uint8_t* base;           /* RGBA */
+	uint8_t* emissive;       /* RGBA / XWAU_ILLUM_GAIN; NULL when no texel emits */
+	uint8_t* metal_rough;    /* RGBA, G roughness, B metallic; NULL when uniform */
+	float    metallic;       /* factors when metal_rough is NULL */
+	float    roughness;      /* factors when metal_rough is NULL */
+	float    specular_color; /* KHR_materials_specular specularColorFactor */
+	bool     transparent;
+} XwauBaked;
+
+static float clamp01f(float x) { return x < 0.0f ? 0.0f : (x > 1.0f ? 1.0f : x); }
+
+static float lerpf(float a, float b, float t) { return a + (b - a) * t; }
+
+/* HLSL smoothstep, also valid with edge0 > edge1. */
+static float smoothstepf(float edge0, float edge1, float x) {
+	const float t = clamp01f((x - edge0) / (edge1 - edge0));
+	return t * t * (3.0f - 2.0f * t);
+}
+
+static uint8_t unorm8(float x) { return (uint8_t)(clamp01f(x) * 255.0f + 0.5f); }
+
+/* Metallic as the renderer decodes it: stored as Metallic * 0.5 in an 8-bit
+ * channel, read back as metallic unless the stored value reaches METAL_HI
+ * (0.55), which reads as 0.25. */
+static float xwau_metallic(float metallic) {
+	const float stored = clamp01f(metallic * 0.5f);
+	return stored < 0.55f ? clamp01f(stored / 0.5f) : 0.25f;
+}
+
+/* Glossiness: stored in 8 bits, capped at 0.93; roughness = 1 - g^2. */
+static float xwau_roughness(float glossiness) {
+	const float g = fminf(XWAU_GLASS_GLOSS, clamp01f(glossiness));
+	return 1.0f - g * g;
+}
+
+/* F0 = 0.16 * intensity^2 = 0.04 * specularColorFactor (specularFactor 1
+ * keeps F90 = 1, as the renderer's Schlick term). */
+static float xwau_specular_color(float intensity) { return 4.0f * intensity * intensity; }
+
+/* 8bpp illumination: row 4 (dim) equals row 8 (base) and is not near-black. */
+static bool xwau_palette_lit(const uint8_t* palette, uint8_t index) {
+	const uint8_t* dim = palette + ((size_t)4 * OPT_PALETTE_COLORS + index) * OPT_PALETTE_BPP;
+	const uint8_t* base =
+		palette + ((size_t)OPT_XWA_BASE_SHADE * OPT_PALETTE_COLORS + index) * OPT_PALETTE_BPP;
+	const uint16_t c4 = (uint16_t)(dim[0] | (dim[1] << 8));
+	const uint16_t c8 = (uint16_t)(base[0] | (base[1] << 8));
+	if (((c4 >> 11) & 0x1F) <= 8 && ((c4 >> 5) & 0x3F) <= 16 && (c4 & 0x1F) <= 8)
+		return false;
+	return c4 == c8;
+}
+
+static void xwau_baked_free(XwauBaked* baked) {
+	free(baked->base);
+	free(baked->emissive);
+	free(baked->metal_rough);
+	memset(baked, 0, sizeof *baked);
+}
+
+static void xwau_state_free(XwauBaked* baked, int32_t count, int32_t* normal_owner, int32_t* normal_image) {
+	if (baked) {
+		for (int32_t i = 0; i < count; ++i)
+			xwau_baked_free(&baked[i]);
+		free(baked);
+	}
+	free(normal_owner);
+	free(normal_image);
+}
+
+static bool xwau_bake_texture(const opt_texture_t* t, int base_shade, const OptGltfXwauMaterial* xm,
+							  XwauBaked* out) {
+	memset(out, 0, sizeof *out);
+	out->base = decode_texture_rgba8(t, base_shade);
+	if (!out->base)
+		return true; /* no pixels: the caller emits the missing-image material */
+	const size_t n           = (size_t)t->width * (size_t)t->height;
+	const bool   bpp32       = t->bytes_per_texel == 4;
+	const bool   transparent = t->alpha != NULL;
+	bool         has_illum   = bpp32 && t->flag_illum;
+	if (!bpp32) {
+		/* The renderer creates the light texture when any stored texel,
+		 * mips included, is lit. */
+		for (int32_t k = 0; k < t->mip_chain_bytes && !has_illum; ++k)
+			has_illum = xwau_palette_lit(t->palette, t->pixels[k]);
+	}
+	const bool glass =
+		transparent && !xm->shadeless && !xm->alpha_isnt_glass && !xm->alpha_to_bloom && !has_illum;
+	const float metallic    = xwau_metallic(xm->metallic);
+	const float roughness   = xwau_roughness(xm->glossiness);
+	const float glass_rough = 1.0f - XWAU_GLASS_GLOSS * XWAU_GLASS_GLOSS;
+	const float shadeless   = (xm->shadeless || xm->alpha_to_bloom) ? 1.0f : clamp01f(xm->ambient);
+
+	out->transparent = transparent;
+	out->emissive    = (uint8_t*)malloc(n * 4);
+	out->metal_rough = (uint8_t*)malloc(n * 4);
+	if (!out->emissive || !out->metal_rough) {
+		xwau_baked_free(out);
+		return false;
+	}
+	bool  any_emissive = false, any_glass = false, uniform = true;
+	float first_rough = 0.0f, first_metal = 0.0f;
+	for (size_t i = 0; i < n; ++i) {
+		uint8_t*    px   = &out->base[i * 4];
+		const float c[3] = { px[0] / 255.0f, px[1] / 255.0f, px[2] / 255.0f };
+		const float a    = px[3] / 255.0f;
+
+		uint8_t illum = 0;
+		if (has_illum)
+			illum = bpp32 ? (t->illum ? t->illum[i] : 0)
+						  : (xwau_palette_lit(t->palette, t->pixels[i]) ? 0x7F : 0);
+		const float v  = fmaxf(c[0], fmaxf(c[1], c[2]));
+		const float w  = illum ? (transparent ? 1.0f : smoothstepf(0.75f, 0.85f, v)) *
+									 smoothstepf(0.2f, 0.9f, 5.0f * illum / 255.0f)
+							   : 0.0f;
+		const float gl = glass ? 1.0f - smoothstepf(0.95f, 1.0f, a) : 0.0f;
+		const float s  = lerpf(lerpf(shadeless, XWAU_GLASS_SHADELESS, gl), 1.0f, w);
+
+		const float luma =
+			0.299f * c[0] * c[0] + 0.587f * c[1] * c[1] + 0.114f * c[2] * c[2]; /* on the decoded color */
+		const float blackish = smoothstepf(0.1f, 0.0f, fmaxf(luma, xm->specular_val));
+		const float rough    = lerpf(lerpf(roughness, 1.0f, blackish), glass_rough, gl);
+		const float metal    = metallic * (1.0f - fmaxf(gl, w));
+
+		uint8_t* e = &out->emissive[i * 4];
+		for (int k = 0; k < 3; ++k) {
+			e[k]  = unorm8(c[k] * (1.0f + (XWAU_ILLUM_GAIN - 1.0f) * w) * s / XWAU_ILLUM_GAIN);
+			px[k] = unorm8(c[k] * (1.0f - s));
+		}
+		e[3]  = 255;
+		px[3] = transparent ? unorm8(glass ? lerpf(a * a, a, 1.0f - gl) : a) : 255;
+		any_emissive |= s > 0.0f;
+		any_glass |= gl > 0.0f;
+
+		uint8_t* mr = &out->metal_rough[i * 4];
+		mr[0]       = 255;
+		mr[1]       = unorm8(rough);
+		mr[2]       = unorm8(metal);
+		mr[3]       = 255;
+		if (i == 0) {
+			first_rough = rough;
+			first_metal = metal;
+		} else if (uniform && (mr[1] != out->metal_rough[1] || mr[2] != out->metal_rough[2])) {
+			uniform = false;
+		}
+	}
+	if (!any_emissive) {
+		free(out->emissive);
+		out->emissive = NULL;
+	}
+	out->metallic  = first_metal;
+	out->roughness = first_rough;
+	if (uniform) {
+		free(out->metal_rough);
+		out->metal_rough = NULL;
+	}
+	out->specular_color = (glass && any_glass) ? 4.0f : xwau_specular_color(xm->intensity);
+	return true;
+}
+
+/* Normal map with NMIntensity baked in: XWAU blends N = lerp(N_vertex,
+ * N_mapped, k) in tangent space, i.e. n' = normalize(lerp((0,0,1), n, k)).
+ * Output is 0..1-encoded RGB with A = 255. */
+static uint8_t* xwau_bake_normal(const OptGltfImageView* map, float k) {
+	const size_t n   = (size_t)map->width * (size_t)map->height;
+	uint8_t*     out = (uint8_t*)malloc(n * 4);
+	if (!out)
+		return NULL;
+	for (size_t i = 0; i < n; ++i) {
+		const uint8_t* s     = &map->rgba[i * 4];
+		double         v[3]  = { s[0] / 127.5 - 1.0, s[1] / 127.5 - 1.0, s[2] / 127.5 - 1.0 };
+		double         len   = sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
+		double         nv[3] = { 0.0, 0.0, 1.0 };
+		if (len > 1e-6) {
+			const double b[3] = { k * v[0] / len, k * v[1] / len, (1.0 - k) + k * v[2] / len };
+			const double bl   = sqrt(b[0] * b[0] + b[1] * b[1] + b[2] * b[2]);
+			if (bl > 1e-6) {
+				for (int c = 0; c < 3; ++c)
+					nv[c] = b[c] / bl;
+			}
+		}
+		for (int c = 0; c < 3; ++c)
+			out[i * 4 + c] = unorm8((float)(nv[c] * 0.5 + 0.5));
+		out[i * 4 + 3] = 255;
+	}
+	return out;
+}
+
 static int ensure_dir(const char* path) {
 	/* mkdir -p semantics for one level; assumes the parent exists. */
 	struct stat st;
@@ -421,6 +634,7 @@ typedef struct {
 	float pos[3];
 	float nrm[3];
 	float uv[2];
+	float tan[4]; /* glTF TANGENT (xyz, w); zero until tangents are generated */
 } GltfVertex;
 
 typedef struct {
@@ -437,6 +651,7 @@ typedef struct {
 	 * classic-remap block in built_mesh_from_opt). */
 	uint32_t fixed_zero_normals;
 	uint32_t fixed_flipped_normals;
+	bool     has_tangents; /* vertices carry TANGENT (built_mesh_generate_tangents) */
 } BuiltMesh;
 
 static void built_mesh_free(BuiltMesh* bm) {
@@ -453,7 +668,8 @@ static uint32_t built_mesh_intern_vertex(BuiltMesh* bm, const GltfVertex* v) {
 		const GltfVertex* e = &bm->vertices[i];
 		if (e->pos[0] == v->pos[0] && e->pos[1] == v->pos[1] && e->pos[2] == v->pos[2] &&
 			e->nrm[0] == v->nrm[0] && e->nrm[1] == v->nrm[1] && e->nrm[2] == v->nrm[2] &&
-			e->uv[0] == v->uv[0] && e->uv[1] == v->uv[1])
+			e->uv[0] == v->uv[0] && e->uv[1] == v->uv[1] && e->tan[0] == v->tan[0] &&
+			e->tan[1] == v->tan[1] && e->tan[2] == v->tan[2] && e->tan[3] == v->tan[3])
 			return i;
 	}
 	if (bm->vertex_count >= bm->vertex_cap) {
@@ -762,6 +978,8 @@ static void midpoint_vertex(const GltfVertex* a, const GltfVertex* b, GltfVertex
 	const double length = sqrt(normal[0] * normal[0] + normal[1] * normal[1] + normal[2] * normal[2]);
 	for (int k = 0; k < 3; ++k)
 		out->nrm[k] = length > 1.0e-12 ? (float)(normal[k] / length) : a->nrm[k];
+	for (int k = 0; k < 4; ++k)
+		out->tan[k] = 0.0f;
 }
 
 static uint32_t edge_midpoint(BuiltMesh* bm, EdgeSlot* slots, uint64_t mask, uint32_t a, uint32_t b) {
@@ -834,6 +1052,95 @@ static bool built_mesh_subdivide(BuiltMesh* bm, int32_t group_count, uint32_t le
 			bm->fg_index_count_arr[g] *= 4u;
 		}
 	}
+	return true;
+}
+
+/* ===== Tangents ======================================================
+ *
+ * MikkTSpace over the mesh's final triangle list, in the glTF frame. glTF
+ * puts the texture's first row at v = 0 and wants the bitangent
+ * cross(normal, tangent) * w to point toward that row (+Y of a normal map is
+ * "up" in the image), so MikkTSpace sees (u, 1 - v): its bitangent then
+ * follows decreasing v and its sign is the glTF w. Vertices are re-interned
+ * with their tangent, splitting where corner frames differ. */
+
+typedef struct TangentBuild {
+	const BuiltMesh* bm;
+	float*           corner_tangents; /* index_count * 4 */
+} TangentBuild;
+
+static const GltfVertex* tangent_corner(const SMikkTSpaceContext* ctx, int face, int vert) {
+	const TangentBuild* tb = (const TangentBuild*)ctx->m_pUserData;
+	return &tb->bm->vertices[tb->bm->indices[(size_t)face * 3 + (size_t)vert]];
+}
+
+static int tangent_face_count(const SMikkTSpaceContext* ctx) {
+	return (int)(((const TangentBuild*)ctx->m_pUserData)->bm->index_count / 3);
+}
+
+static int tangent_face_vertices(const SMikkTSpaceContext* ctx, const int face) {
+	(void)ctx;
+	(void)face;
+	return 3;
+}
+
+static void tangent_position(const SMikkTSpaceContext* ctx, float out[], const int face, const int vert) {
+	memcpy(out, tangent_corner(ctx, face, vert)->pos, 3 * sizeof(float));
+}
+
+static void tangent_normal(const SMikkTSpaceContext* ctx, float out[], const int face, const int vert) {
+	memcpy(out, tangent_corner(ctx, face, vert)->nrm, 3 * sizeof(float));
+}
+
+static void tangent_texcoord(const SMikkTSpaceContext* ctx, float out[], const int face, const int vert) {
+	const GltfVertex* v = tangent_corner(ctx, face, vert);
+	out[0]              = v->uv[0];
+	out[1]              = 1.0f - v->uv[1];
+}
+
+static void tangent_store(const SMikkTSpaceContext* ctx, const float tangent[], const float sign,
+						  const int face, const int vert) {
+	float* out = &((TangentBuild*)ctx->m_pUserData)->corner_tangents[((size_t)face * 3 + (size_t)vert) * 4];
+	if (isfinite(tangent[0]) && isfinite(tangent[1]) && isfinite(tangent[2])) {
+		memcpy(out, tangent, 3 * sizeof(float));
+	} else {
+		out[0] = 1.0f;
+		out[1] = out[2] = 0.0f;
+	}
+	out[3] = sign < 0.0f ? -1.0f : 1.0f;
+}
+
+static bool built_mesh_generate_tangents(BuiltMesh* bm) {
+	if (bm->index_count == 0)
+		return true;
+	TangentBuild tb = { bm, (float*)calloc((size_t)bm->index_count * 4, sizeof(float)) };
+	if (!tb.corner_tangents)
+		return false;
+	SMikkTSpaceInterface iface = {
+		.m_getNumFaces          = tangent_face_count,
+		.m_getNumVerticesOfFace = tangent_face_vertices,
+		.m_getPosition          = tangent_position,
+		.m_getNormal            = tangent_normal,
+		.m_getTexCoord          = tangent_texcoord,
+		.m_setTSpaceBasic       = tangent_store,
+	};
+	SMikkTSpaceContext ctx = { &iface, &tb };
+	if (!genTangSpaceDefault(&ctx)) {
+		free(tb.corner_tangents);
+		return false;
+	}
+	BuiltMesh rebuilt = { 0 };
+	for (uint32_t k = 0; k < bm->index_count; ++k) {
+		GltfVertex v = bm->vertices[bm->indices[k]];
+		memcpy(v.tan, &tb.corner_tangents[(size_t)k * 4], sizeof v.tan);
+		bm->indices[k] = built_mesh_intern_vertex(&rebuilt, &v);
+	}
+	free(tb.corner_tangents);
+	free(bm->vertices);
+	bm->vertices     = rebuilt.vertices;
+	bm->vertex_count = rebuilt.vertex_count;
+	bm->vertex_cap   = rebuilt.vertex_cap;
+	bm->has_tangents = true;
 	return true;
 }
 
@@ -975,6 +1282,33 @@ static bool validate_alpha_overrides(const OptGltfBuildOptions* options, opt_err
 	return true;
 }
 
+/* Register an owned RGBA image as image and texture `slot`, written to
+ * textures/<file>. Takes ownership of `rgba`, `name` and `file`. */
+static cgltf_texture* document_set_image(OptGltfDocument* document, size_t slot, uint8_t* rgba,
+										 uint32_t width, uint32_t height, char* name, char* file) {
+	GltfBuild* build                    = &document->gb;
+	document->image_pixels[slot].rgba   = rgba;
+	document->image_pixels[slot].width  = width;
+	document->image_pixels[slot].height = height;
+	build->images[slot].name            = gb_keep_string(build, name);
+	build->images[slot].uri             = gb_keep_string(build, xprintf_dup("textures/%s", file));
+	free(file);
+	build->images[slot].mime_type = "image/png";
+	build->textures[slot].image   = &build->images[slot];
+	build->textures[slot].sampler = &build->sampler;
+	build->textures[slot].name    = build->images[slot].name;
+	return &build->textures[slot];
+}
+
+/* KHR_materials_specular for an XWAU dielectric F0 = 0.04 * color. */
+static void xwau_set_specular(cgltf_material* mat, float specular_color) {
+	mat->has_specular                      = 1;
+	mat->specular.specular_factor          = 1.0f;
+	mat->specular.specular_color_factor[0] = specular_color;
+	mat->specular.specular_color_factor[1] = specular_color;
+	mat->specular.specular_color_factor[2] = specular_color;
+}
+
 bool OptGltf_BuildMemory(const opt_file_t* opt, const char* basename, const OptGltfBuildOptions* options,
 						 OptGltfDocument** out_document, opt_error_t* error) {
 	if (out_document)
@@ -1002,8 +1336,17 @@ bool OptGltf_BuildMemory(const opt_file_t* opt, const char* basename, const OptG
 			return false;
 		}
 	}
-	const float smooth_angle_deg    = options ? options->smooth_angle_degrees : -1.0f;
-	const bool  repair_normals      = options ? options->repair_normals : true;
+	const float                smooth_angle_deg = options ? options->smooth_angle_degrees : -1.0f;
+	const OptGltfXwauMaterial* xwau             = options ? options->xwau_materials : NULL;
+	if (xwau && (smooth_angle_deg >= 0.0f || options->emissive || options->fullbright_strength > 0.0f ||
+				 !options->xwau_untextured)) {
+		if (error)
+			snprintf(error->msg, sizeof error->msg,
+					 "XWAU materials exclude --smooth-angle, --emissive and --fullbright");
+		return false;
+	}
+	/* XWAU's renderer uses each corner's stored normal: no remap, no repair. */
+	const bool  repair_normals      = xwau ? false : (options ? options->repair_normals : true);
 	const float fullbright_strength = options ? options->fullbright_strength : 0.0f;
 	const bool  fullbright          = fullbright_strength > 0.0f;
 	const bool  emissive            = options && options->emissive && !fullbright;
@@ -1018,6 +1361,12 @@ bool OptGltf_BuildMemory(const opt_file_t* opt, const char* basename, const OptG
 	GltfBuild* build        = &document->gb;
 	int*       tex_emissive = NULL;
 	BuiltMesh* built        = NULL;
+	/* XWAU mode: per-texture bake results, and per texture the first
+	 * texture sharing its baked normal map (same source and NMIntensity)
+	 * plus the image slot of that map once emitted. */
+	XwauBaked* xwau_baked        = NULL;
+	int32_t*   xwau_normal_owner = NULL;
+	int32_t*   xwau_normal_image = NULL;
 
 	/* Negative angle → keep the original OPT normals; otherwise
 	 * regenerate with an angle-based smoothing threshold. */
@@ -1060,7 +1409,40 @@ bool OptGltf_BuildMemory(const opt_file_t* opt, const char* basename, const OptG
 		}
 	}
 
-	const size_t image_total = (size_t)opt->texture_count + n_emissive;
+	size_t n_xwau_images = 0;
+	if (xwau) {
+		const size_t count = opt->texture_count ? (size_t)opt->texture_count : 1;
+		xwau_baked         = (XwauBaked*)calloc(count, sizeof *xwau_baked);
+		xwau_normal_owner  = (int32_t*)malloc(count * sizeof *xwau_normal_owner);
+		xwau_normal_image  = (int32_t*)malloc(count * sizeof *xwau_normal_image);
+		if (!xwau_baked || !xwau_normal_owner || !xwau_normal_image) {
+			fprintf(stderr, "opt2gltf: oom (xwau)\n");
+			goto fail;
+		}
+		for (int32_t i = 0; i < opt->texture_count; ++i) {
+			xwau_normal_owner[i] = -1;
+			xwau_normal_image[i] = -1;
+			if (!xwau_bake_texture(&opt->textures[i], base_shade, &xwau[i], &xwau_baked[i])) {
+				fprintf(stderr, "opt2gltf: oom (xwau bake)\n");
+				goto fail;
+			}
+			n_xwau_images += (xwau_baked[i].emissive ? 1u : 0u) + (xwau_baked[i].metal_rough ? 1u : 0u);
+			if (!xwau[i].normal_map.rgba || !xwau_baked[i].base)
+				continue;
+			xwau_normal_owner[i] = i;
+			for (int32_t j = 0; j < i; ++j) {
+				if (xwau_normal_owner[j] == j && xwau[j].normal_map.rgba == xwau[i].normal_map.rgba &&
+					xwau[j].nm_intensity == xwau[i].nm_intensity) {
+					xwau_normal_owner[i] = j;
+					break;
+				}
+			}
+			if (xwau_normal_owner[i] == i)
+				n_xwau_images++;
+		}
+	}
+
+	const size_t image_total = (size_t)opt->texture_count + n_emissive + n_xwau_images;
 	build->images            = (cgltf_image*)calloc(image_total ? image_total : 1, sizeof *build->images);
 	build->textures          = (cgltf_texture*)calloc(image_total ? image_total : 1, sizeof *build->textures);
 	build->materials         = (cgltf_material*)calloc(opt->texture_count + 1, sizeof *build->materials);
@@ -1074,7 +1456,9 @@ bool OptGltf_BuildMemory(const opt_file_t* opt, const char* basename, const OptG
 	size_t emi = (size_t)opt->texture_count; /* next emissive image/texture slot */
 	for (int32_t i = 0; i < opt->texture_count; ++i) {
 		const opt_texture_t* t    = &opt->textures[i];
-		uint8_t*             rgba = decode_texture_rgba8(t, base_shade);
+		uint8_t*             rgba = xwau ? xwau_baked[i].base : decode_texture_rgba8(t, base_shade);
+		if (xwau)
+			xwau_baked[i].base = NULL; /* owned by the document from here */
 		if (rgba) {
 			char png_rel[256];
 			snprintf(png_rel, sizeof png_rel, "textures/%s_Tex%02d.png", basename, (int)i);
@@ -1103,9 +1487,22 @@ bool OptGltf_BuildMemory(const opt_file_t* opt, const char* basename, const OptG
 		mat->pbr_metallic_roughness.metallic_factor            = 0.0f;
 		mat->pbr_metallic_roughness.roughness_factor           = 1.0f;
 		mat->pbr_metallic_roughness.base_color_texture.texture = &build->textures[i];
-		AlphaHistogram   alpha_histogram                       = { 0, 0, 0 };
-		OptGltfAlphaMode alpha_mode =
-			classify_alpha(t->alpha, (size_t)t->width * (size_t)t->height, &alpha_histogram);
+		AlphaHistogram alpha_histogram                         = { 0, 0, 0 };
+		/* XWAU mode classifies the baked alpha (glass remaps it). */
+		uint8_t* xwau_alpha = NULL;
+		if (xwau && rgba && xwau_baked[i].transparent) {
+			const size_t n = (size_t)t->width * (size_t)t->height;
+			xwau_alpha     = (uint8_t*)malloc(n);
+			if (!xwau_alpha) {
+				fprintf(stderr, "opt2gltf: oom (xwau alpha)\n");
+				goto fail;
+			}
+			for (size_t k = 0; k < n; ++k)
+				xwau_alpha[k] = rgba[k * 4 + 3];
+		}
+		OptGltfAlphaMode alpha_mode = classify_alpha(xwau ? xwau_alpha : t->alpha,
+													 (size_t)t->width * (size_t)t->height, &alpha_histogram);
+		free(xwau_alpha);
 		float                       alpha_cutoff   = 0.5f;
 		const OptGltfAlphaOverride* alpha_override = find_alpha_override(options, t, i);
 		if (alpha_override_match_count(options, t, i) > 1) {
@@ -1190,6 +1587,56 @@ bool OptGltf_BuildMemory(const opt_file_t* opt, const char* basename, const OptG
 				emi++;
 			}
 		}
+
+		/* XWAU: baked emissive, metallic-roughness and normal maps, plus
+		 * the specular F0. */
+		if (xwau && rgba) {
+			XwauBaked* baked = &xwau_baked[i];
+			/* XWAU materials are keyed by texture name: keep it. */
+			if (t->name[0])
+				mat->name = gb_keep_string(build, xstrdup(t->name));
+			if (baked->emissive) {
+				mat->emissive_texture.texture =
+					document_set_image(document, emi, baked->emissive, (uint32_t)t->width,
+									   (uint32_t)t->height, xprintf_dup("Tex%02d_emissive", (int)i),
+									   xprintf_dup("%s_Tex%02d_emissive.png", basename, (int)i));
+				baked->emissive         = NULL;
+				mat->emissive_factor[0] = mat->emissive_factor[1] = mat->emissive_factor[2] = 1.0f;
+				mat->has_emissive_strength                                                  = 1;
+				mat->emissive_strength.emissive_strength                                    = XWAU_ILLUM_GAIN;
+				emi++;
+			}
+			if (baked->metal_rough) {
+				mat->pbr_metallic_roughness.metallic_roughness_texture.texture = document_set_image(
+					document, emi, baked->metal_rough, (uint32_t)t->width, (uint32_t)t->height,
+					xprintf_dup("Tex%02d_mr", (int)i), xprintf_dup("%s_Tex%02d_mr.png", basename, (int)i));
+				baked->metal_rough                           = NULL;
+				mat->pbr_metallic_roughness.metallic_factor  = 1.0f;
+				mat->pbr_metallic_roughness.roughness_factor = 1.0f;
+				emi++;
+			} else {
+				mat->pbr_metallic_roughness.metallic_factor  = baked->metallic;
+				mat->pbr_metallic_roughness.roughness_factor = baked->roughness;
+			}
+			const int32_t owner = xwau_normal_owner[i];
+			if (owner == i) {
+				uint8_t* normal = xwau_bake_normal(&xwau[i].normal_map, xwau[i].nm_intensity);
+				if (!normal) {
+					fprintf(stderr, "opt2gltf: oom (xwau normal)\n");
+					goto fail;
+				}
+				document_set_image(document, emi, normal, xwau[i].normal_map.width, xwau[i].normal_map.height,
+								   xprintf_dup("Tex%02d_normal", (int)i),
+								   xprintf_dup("%s_nm_%s_k%d.png", basename,
+											   xwau[i].normal_map_name ? xwau[i].normal_map_name : "map",
+											   (int)lroundf(xwau[i].nm_intensity * 1000.0f)));
+				xwau_normal_image[i] = (int32_t)emi++;
+			}
+			if (owner >= 0)
+				mat->normal_texture.texture = &build->textures[xwau_normal_image[owner]];
+			mat->normal_texture.scale = 1.0f;
+			xwau_set_specular(mat, baked->specular_color);
+		}
 	}
 	if (options && options->alpha_overrides) {
 		for (size_t override_index = 0; override_index < options->alpha_override_count; ++override_index) {
@@ -1228,6 +1675,22 @@ bool OptGltf_BuildMemory(const opt_file_t* opt, const char* basename, const OptG
 		untex->has_emissive_strength               = 1;
 		untex->emissive_strength.emissive_strength = fullbright_strength;
 	}
+	if (xwau) {
+		const OptGltfXwauMaterial* um = options->xwau_untextured;
+		const float                s  = (um->shadeless || um->alpha_to_bloom) ? 1.0f : clamp01f(um->ambient);
+		for (int channel = 0; channel < 3; ++channel) {
+			const float grey = untex->pbr_metallic_roughness.base_color_factor[channel];
+			untex->pbr_metallic_roughness.base_color_factor[channel] = grey * (1.0f - s);
+			untex->emissive_factor[channel]                          = grey * s / XWAU_ILLUM_GAIN;
+		}
+		if (s > 0.0f) {
+			untex->has_emissive_strength               = 1;
+			untex->emissive_strength.emissive_strength = XWAU_ILLUM_GAIN;
+		}
+		untex->pbr_metallic_roughness.metallic_factor  = xwau_metallic(um->metallic);
+		untex->pbr_metallic_roughness.roughness_factor = xwau_roughness(um->glossiness);
+		xwau_set_specular(untex, xwau_specular_color(um->intensity));
+	}
 	build->materials_count                             = (size_t)opt->texture_count + 1;
 	const size_t untex_idx                             = (size_t)opt->texture_count;
 
@@ -1258,6 +1721,23 @@ bool OptGltf_BuildMemory(const opt_file_t* opt, const char* basename, const OptG
 			if (error)
 				snprintf(error->msg, sizeof error->msg, "mesh %d is too large to subdivide %u times", (int)mi,
 						 subdivide_levels);
+			goto fail;
+		}
+		/* XWAU: tangents for meshes drawing any normal-mapped material,
+		 * in any switch state. */
+		bool needs_tangents = false;
+		for (int32_t g = 0; xwau && !needs_tangents && g < m->lods[0].group_count; ++g) {
+			const opt_face_group_t* grp = &m->lods[0].groups[g];
+			if (built[mi].fg_index_count_arr[g] == 0)
+				continue;
+			const int states = (grp->state_count > 1 && grp->state_textures) ? grp->state_count : 1;
+			for (int st = 0; st < states && !needs_tangents; ++st) {
+				const int32_t ti = st == 0 ? grp->texture_index : grp->state_textures[st];
+				needs_tangents   = ti >= 0 && ti < opt->texture_count && xwau_normal_owner[ti] >= 0;
+			}
+		}
+		if (needs_tangents && !built_mesh_generate_tangents(&built[mi])) {
+			fprintf(stderr, "opt2gltf: oom (tangents)\n");
 			goto fail;
 		}
 		total_meshes++;
@@ -1309,14 +1789,16 @@ bool OptGltf_BuildMemory(const opt_file_t* opt, const char* basename, const OptG
 	for (int32_t mi = 0; mi < opt->mesh_count; ++mi) {
 		const opt_mesh_t* m   = &opt->meshes[mi];
 		const opt_lod_t*  lod = &m->lods[0];
-		/* 3 vertex-attribute streams (pos/nrm/uv): 3 views + 3 accessors. */
-		total_views += 3;
-		total_accs += 3;
+		/* 3 vertex-attribute streams (pos/nrm/uv), plus TANGENT when
+		 * generated: one view + one accessor each. */
+		const size_t streams = built[mi].has_tangents ? 4u : 3u;
+		total_views += streams;
+		total_accs += streams;
 		for (int32_t g = 0; g < lod->group_count; ++g) {
 			if (built[mi].fg_index_count_arr[g] == 0)
 				continue;
 			total_prims++;
-			total_attrs += 3; /* POSITION, NORMAL, TEXCOORD_0 */
+			total_attrs += streams; /* POSITION, NORMAL, TEXCOORD_0 [, TANGENT] */
 			total_views += 1; /* index buffer view */
 			total_accs += 1;  /* index accessor */
 			int sc = lod->groups[g].state_count;
@@ -1389,6 +1871,18 @@ bool OptGltf_BuildMemory(const opt_file_t* opt, const char* basename, const OptG
 		cgltf_accessor*    uv_acc =
 			gb_new_accessor(build, uv_view, bm->vertex_count, cgltf_type_vec2, cgltf_component_type_r_32f);
 
+		cgltf_accessor* tan_acc = NULL;
+		if (bm->has_tangents) {
+			size_t tan_off = bin_append(build, NULL, 0);
+			for (uint32_t i = 0; i < bm->vertex_count; ++i)
+				bin_append(build, bm->vertices[i].tan, sizeof bm->vertices[i].tan);
+			size_t             tan_bytes = bm->vertex_count * sizeof bm->vertices[0].tan;
+			cgltf_buffer_view* tan_view =
+				gb_new_view(build, tan_off, tan_bytes, cgltf_buffer_view_type_vertices);
+			tan_acc = gb_new_accessor(build, tan_view, bm->vertex_count, cgltf_type_vec4,
+									  cgltf_component_type_r_32f);
+		}
+
 		/* One primitive per face group with indices. */
 		size_t           mesh_prim_count  = 0;
 		cgltf_primitive* mesh_prims_start = build->primitives + build->primitives_count;
@@ -1428,10 +1922,11 @@ bool OptGltf_BuildMemory(const opt_file_t* opt, const char* basename, const OptG
 			prim->type    = cgltf_primitive_type_triangles;
 			prim->indices = idx_acc;
 
-			/* Attributes: POSITION, NORMAL, TEXCOORD_0. */
+			/* Attributes: POSITION, NORMAL, TEXCOORD_0 [, TANGENT]. */
+			const size_t     attr_count = tan_acc ? 4u : 3u;
 			cgltf_attribute* attrs =
 				(cgltf_attribute*)push_array((void**)&build->attributes, &build->attributes_count,
-											 &build->attributes_cap, sizeof *attrs, 3);
+											 &build->attributes_cap, sizeof *attrs, attr_count);
 			attrs[0].name          = gb_keep_string(build, xstrdup("POSITION"));
 			attrs[0].type          = cgltf_attribute_type_position;
 			attrs[0].index         = 0;
@@ -1444,8 +1939,14 @@ bool OptGltf_BuildMemory(const opt_file_t* opt, const char* basename, const OptG
 			attrs[2].type          = cgltf_attribute_type_texcoord;
 			attrs[2].index         = 0;
 			attrs[2].data          = uv_acc;
+			if (tan_acc) {
+				attrs[3].name  = gb_keep_string(build, xstrdup("TANGENT"));
+				attrs[3].type  = cgltf_attribute_type_tangent;
+				attrs[3].index = 0;
+				attrs[3].data  = tan_acc;
+			}
 			prim->attributes       = attrs;
-			prim->attributes_count = 3;
+			prim->attributes_count = attr_count;
 
 			/* Default material = state 0 (or untextured fallback). */
 			int t0 = grp->texture_index;
@@ -1769,12 +2270,14 @@ bool OptGltf_BuildMemory(const opt_file_t* opt, const char* basename, const OptG
 		built_mesh_free(&built[mi]);
 	free(built);
 	built = NULL;
+	xwau_state_free(xwau_baked, opt->texture_count, xwau_normal_owner, xwau_normal_image);
 
 	*out_document = document;
 	return true;
 
 fail:
 	free(tex_emissive);
+	xwau_state_free(xwau_baked, opt->texture_count, xwau_normal_owner, xwau_normal_image);
 	if (built) {
 		for (int32_t mi = 0; mi < opt->mesh_count; ++mi)
 			built_mesh_free(&built[mi]);

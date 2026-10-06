@@ -1,0 +1,6 @@
+LZMA decoder from the LZMA SDK, as shipped in 7-Zip 26.04
+(https://github.com/ip7z/7zip, directory C/, commit 9128b80):
+LzmaDec.c, LzmaDec.h, Precomp.h, Compiler.h, 7zTypes.h.
+
+LZMA SDK is written and placed in the public domain by Igor Pavlov.
+Each file states its public domain status in its header.

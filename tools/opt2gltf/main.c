@@ -4,7 +4,8 @@
  *
  * Usage:
  *   opt2gltf [--smooth-angle DEG] [--emissive] [--fullbright STRENGTH]
- *            [--tag N=TAG]... [--subdivide N] <input.opt|input_dir> <output_dir>
+ *            [--tag N=TAG]... [--subdivide N] [--xwau-root DIR]...
+ *            <input.opt|input_dir> <output_dir>
  *
  * If the input is a directory, every *.OPT inside (case-insensitive)
  * is converted and emitted under <output_dir>/<basename>/. If a single
@@ -72,6 +73,19 @@
  * alpha kept, the base texture as emissiveTexture, and STRENGTH as
  * KHR_materials_emissive_strength. Scene lighting then adds only a faint
  * specular. It supersedes --emissive.
+ *
+ * --xwau-root DIR (repeatable) converts X-Wing Alliance Upgrade models with
+ * their materials (docs: xwau_model_import.md). The roots are layered game
+ * directories, searched in order with case-insensitive paths: list the
+ * update before the full release, e.g. UPD .../Group_2_Materials/OverwriteOn,
+ * UPD .../Group_2_Effects/OverwriteOn, then the same for Full. For each OPT,
+ * Materials/<basename>.mat (on top of Materials/DefaultGlobalMaterial.mat)
+ * gives each texture's material and normal map, read from the DAT image it
+ * names. The converter then reproduces that renderer's shading in standard
+ * glTF inputs: authored colors, illumination, shadeless and glass texels,
+ * metallic-roughness, KHR_materials_specular, normal maps with NMIntensity
+ * baked in and MikkTSpace tangents. Stored normals are used per corner.
+ * Excludes --smooth-angle, --emissive, --fullbright and --no-normal-repair.
  */
 
 #include <ctype.h>
@@ -88,6 +102,8 @@
 
 #include "opt.h"
 #include "opt2gltf.h"
+#include "xwa_dat.h"
+#include "xwa_mat.h"
 
 static int ends_with_icase(const char* s, const char* suffix) {
 	size_t ls = strlen(s), lf = strlen(suffix);
@@ -103,15 +119,204 @@ static void strip_ext(char* dst, size_t cap, const char* fname) {
 		*dot = '\0';
 }
 
+/* ===== XWAU materials (--xwau-root) =================================== */
+
+#define XWAU_MAX_ROOTS 16
+
+typedef struct XwauContext {
+	const char*  roots[XWAU_MAX_ROOTS]; /* first root holding a file wins */
+	int          root_count;
+	XwaMatParams global; /* Materials/DefaultGlobalMaterial.mat, else code defaults */
+} XwauContext;
+
+/* Resolve a game-relative path (backslashes or slashes) under the first root
+ * that has it, matching every component case-insensitively. */
+static int xwau_find(const XwauContext* x, const char* rel, char* out, size_t cap) {
+	for (int r = 0; r < x->root_count; ++r) {
+		char path[1024], parts[512];
+		snprintf(path, sizeof path, "%s", x->roots[r]);
+		snprintf(parts, sizeof parts, "%s", rel);
+		for (char* c = parts; *c; ++c)
+			if (*c == '\\')
+				*c = '/';
+		int   found = 1;
+		char* save  = NULL;
+		for (char* part = strtok_r(parts, "/", &save); part && found; part = strtok_r(NULL, "/", &save)) {
+			DIR* d = opendir(path);
+			found  = 0;
+			if (!d)
+				break;
+			struct dirent* de;
+			while ((de = readdir(d))) {
+				if (strcasecmp(de->d_name, part) == 0) {
+					size_t len = strlen(path);
+					snprintf(path + len, sizeof path - len, "/%s", de->d_name);
+					found = 1;
+					break;
+				}
+			}
+			closedir(d);
+		}
+		struct stat st;
+		if (found && stat(path, &st) == 0 && S_ISREG(st.st_mode)) {
+			snprintf(out, cap, "%s", path);
+			return 1;
+		}
+	}
+	return 0;
+}
+
+typedef struct XwauNormalMap {
+	char        key[1100]; /* resolved path + group + image */
+	char        name[160]; /* file-name label: <datbase>_<group>_<image> */
+	XwaDatImage image;
+	int         ok;
+} XwauNormalMap;
+
+/* Load (once per OPT) the image a NormalMap value names: "<path>.dat-G-I".
+ * Entries are allocated individually: materials keep pointers into them. */
+static const XwauNormalMap* xwau_normal_map(const XwauContext* x, const char* value, XwauNormalMap*** cache,
+											size_t* count, const char* label) {
+	char spec[XWA_MAT_PATH_MAX];
+	snprintf(spec, sizeof spec, "%s", value);
+	char* image_sep = strrchr(spec, '-');
+	char* group_sep = NULL;
+	if (image_sep) {
+		*image_sep = 0;
+		group_sep  = strrchr(spec, '-');
+	}
+	if (!group_sep) {
+		fprintf(stderr, "opt2gltf: %s: unreadable NormalMap '%s'\n", label, value);
+		return NULL;
+	}
+	*group_sep      = 0;
+	const int group = atoi(group_sep + 1), image = atoi(image_sep + 1);
+	if (!ends_with_icase(spec, ".dat")) {
+		fprintf(stderr, "opt2gltf: %s: NormalMap '%s' is not a DAT image; skipped\n", label, value);
+		return NULL;
+	}
+	char path[1024];
+	if (!xwau_find(x, spec, path, sizeof path)) {
+		fprintf(stderr, "opt2gltf: %s: NormalMap file '%s' not found; skipped\n", label, spec);
+		return NULL;
+	}
+	char key[1100];
+	snprintf(key, sizeof key, "%s|%d|%d", path, group, image);
+	for (size_t i = 0; i < *count; ++i)
+		if (strcmp((*cache)[i]->key, key) == 0)
+			return (*cache)[i]->ok ? (*cache)[i] : NULL;
+	XwauNormalMap** grown = (XwauNormalMap**)realloc(*cache, (*count + 1) * sizeof *grown);
+	XwauNormalMap*  nm    = (XwauNormalMap*)calloc(1, sizeof *nm);
+	if (grown)
+		*cache = grown;
+	if (!grown || !nm) {
+		free(nm);
+		return NULL;
+	}
+	grown[(*count)++] = nm;
+	snprintf(nm->key, sizeof nm->key, "%s", key);
+	const char* base = strrchr(path, '/');
+	char        stem[128];
+	snprintf(stem, sizeof stem, "%s", base ? base + 1 : path);
+	char* dot = strrchr(stem, '.');
+	if (dot)
+		*dot = 0;
+	snprintf(nm->name, sizeof nm->name, "%s_%d_%d", stem, group, image);
+	char err[512];
+	nm->ok = XwaDat_LoadImage(path, group, image, &nm->image, err, sizeof err);
+	if (!nm->ok) {
+		fprintf(stderr, "opt2gltf: %s: NormalMap %s; skipped\n", label, err);
+		return NULL;
+	}
+	if (nm->image.encoding == XWA_DAT_ENCODING_BC5) {
+		/* BC5 stores X and Y only: rebuild Z (XWAU's DATReader rebuilds it
+		 * from 0..1 values, a bug not reproduced here). */
+		const size_t n = (size_t)nm->image.width * nm->image.height;
+		for (size_t i = 0; i < n; ++i) {
+			uint8_t*     px = &nm->image.rgba[i * 4];
+			const double nx = px[0] / 127.5 - 1.0, ny = px[1] / 127.5 - 1.0;
+			const double z2 = 1.0 - nx * nx - ny * ny;
+			px[2]           = (uint8_t)lround((sqrt(z2 > 0.0 ? z2 : 0.0) * 0.5 + 0.5) * 255.0);
+		}
+	}
+	return nm;
+}
+
+static void xwau_fill(OptGltfXwauMaterial* out, const XwaMatParams* p) {
+	memset(out, 0, sizeof *out);
+	out->metallic         = p->metallic;
+	out->intensity        = p->intensity;
+	out->glossiness       = p->glossiness;
+	out->nm_intensity     = p->nm_intensity;
+	out->specular_val     = p->specular_val;
+	out->ambient          = p->ambient;
+	out->shadeless        = p->shadeless;
+	out->alpha_isnt_glass = p->alpha_isnt_glass;
+	/* NoColorAlpha only acts with AlphaToBloom, which already maps to a
+	 * glow-only texel. */
+	out->alpha_to_bloom = p->alpha_to_bloom;
+}
+
+static int convert_xwau(opt_file_t* opt, const char* out_dir, const char* basename,
+						const OptGltfBuildOptions* base, const XwauContext* x, const char* label) {
+	char rel[512], path[1024];
+	snprintf(rel, sizeof rel, "Materials/%s.mat", basename);
+	XwaMatFile* mat = xwau_find(x, rel, path, sizeof path) ? XwaMat_Load(path, &x->global) : NULL;
+
+	const size_t         count     = opt->texture_count ? (size_t)opt->texture_count : 1;
+	OptGltfXwauMaterial* materials = (OptGltfXwauMaterial*)calloc(count, sizeof *materials);
+	XwauNormalMap**      maps      = NULL;
+	size_t               map_count = 0;
+	if (!materials) {
+		XwaMat_Free(mat);
+		return 0;
+	}
+	size_t normal_textures = 0;
+	for (int32_t i = 0; i < opt->texture_count; ++i) {
+		const XwaMatParams* p = mat ? XwaMat_Find(mat, opt->textures[i].name) : &x->global;
+		xwau_fill(&materials[i], p);
+		if (p->normal_map[0]) {
+			const XwauNormalMap* nm = xwau_normal_map(x, p->normal_map, &maps, &map_count, label);
+			if (nm) {
+				materials[i].normal_map.rgba   = nm->image.rgba;
+				materials[i].normal_map.width  = nm->image.width;
+				materials[i].normal_map.height = nm->image.height;
+				materials[i].normal_map_name   = nm->name;
+				normal_textures++;
+			}
+		}
+	}
+	/* Untextured faces: the material lookup of an empty name is slot 0. */
+	OptGltfXwauMaterial untextured;
+	xwau_fill(&untextured, mat ? XwaMat_Find(mat, "") : &x->global);
+
+	OptGltfBuildOptions options = *base;
+	options.xwau_materials      = materials;
+	options.xwau_untextured     = &untextured;
+	fprintf(stderr, "opt2gltf: %s: xwau materials %s, %zu of %d textures normal-mapped (%zu maps)\n", label,
+			mat ? path : "(default)", normal_textures, (int)opt->texture_count, map_count);
+	int ok = opt2gltf_convert(opt, out_dir, basename, &options, label) ? 1 : 0;
+
+	for (size_t i = 0; i < map_count; ++i) {
+		XwaDat_FreeImage(&maps[i]->image);
+		free(maps[i]);
+	}
+	free(maps);
+	free(materials);
+	XwaMat_Free(mat);
+	return ok;
+}
+
 static int convert_one(const char* opt_path, const char* out_dir, const char* basename,
-					   const OptGltfBuildOptions* options) {
+					   const OptGltfBuildOptions* options, const XwauContext* xwau) {
 	opt_error_t err;
 	opt_file_t* opt = opt_load_file(opt_path, &err);
 	if (!opt) {
 		fprintf(stderr, "opt2gltf: %s: %s\n", opt_path, err.msg);
 		return 0;
 	}
-	int ok = opt2gltf_convert(opt, out_dir, basename, options, opt_path) ? 1 : 0;
+	int ok = xwau ? convert_xwau(opt, out_dir, basename, options, xwau, opt_path)
+				  : (opt2gltf_convert(opt, out_dir, basename, options, opt_path) ? 1 : 0);
 	opt_free(opt);
 	return ok;
 }
@@ -132,6 +337,7 @@ int main(int argc, char** argv) {
 	OptGltfComponentTag* tags             = NULL;
 	size_t               tag_count        = 0;
 	unsigned long        subdivide_levels = 0;
+	XwauContext          xwau             = { 0 };
 	int                  ai               = 1;
 	/* Optional conversion flags, in any order before the positional args. */
 	while (ai < argc && argv[ai][0] == '-') {
@@ -176,6 +382,14 @@ int main(int argc, char** argv) {
 			tags[tag_count].mesh_index = (uint32_t)mesh;
 			tags[tag_count++].tag      = equals + 1;
 			ai += 2;
+		} else if (strcmp(argv[ai], "--xwau-root") == 0) {
+			if (ai + 1 >= argc || xwau.root_count == XWAU_MAX_ROOTS) {
+				fprintf(stderr, "opt2gltf: --xwau-root needs a directory (at most %d)\n", XWAU_MAX_ROOTS);
+				free(tags);
+				return 2;
+			}
+			xwau.roots[xwau.root_count++] = argv[ai + 1];
+			ai += 2;
 		} else if (strcmp(argv[ai], "--subdivide") == 0) {
 			char* end        = NULL;
 			subdivide_levels = ai + 1 < argc ? strtoul(argv[ai + 1], &end, 10) : 0;
@@ -195,12 +409,27 @@ int main(int argc, char** argv) {
 		fprintf(stderr,
 				"usage: %s [--smooth-angle DEG] [--no-normal-repair] "
 				"[--emissive] [--fullbright STRENGTH] [--tag N=TAG]... [--subdivide N] "
-				"<input.OPT|input_dir> <output_dir>\n",
+				"[--xwau-root DIR]... <input.OPT|input_dir> <output_dir>\n",
 				argv[0]);
 		free(tags);
 		return 2;
 	}
-	const OptGltfBuildOptions options = {
+	if (xwau.root_count) {
+		if (smooth_angle_deg >= 0.0f || emissive || fullbright_strength > 0.0f || !repair_normals) {
+			fprintf(stderr, "opt2gltf: --xwau-root excludes --smooth-angle, --emissive, --fullbright and "
+							"--no-normal-repair\n");
+			free(tags);
+			return 2;
+		}
+		XwaMat_CodeDefaults(&xwau.global);
+		char global_path[1024];
+		if (xwau_find(&xwau, "Materials/DefaultGlobalMaterial.mat", global_path, sizeof global_path))
+			XwaMat_ReadGlobalDefault(global_path, &xwau.global);
+		else
+			fprintf(stderr, "opt2gltf: no Materials/DefaultGlobalMaterial.mat; using built-in defaults\n");
+	}
+	const XwauContext*        xwau_ctx = xwau.root_count ? &xwau : NULL;
+	const OptGltfBuildOptions options  = {
 		.smooth_angle_degrees = smooth_angle_deg,
 		.repair_normals       = repair_normals,
 		.emissive             = emissive,
@@ -240,7 +469,7 @@ int main(int argc, char** argv) {
 			strip_ext(base, sizeof base, de->d_name);
 			char out_sub[1024];
 			snprintf(out_sub, sizeof out_sub, "%s/%s", outd, base);
-			if (convert_one(src, out_sub, base, &options))
+			if (convert_one(src, out_sub, base, &options, xwau_ctx))
 				++ok_count;
 			else
 				++fail_count;
@@ -254,7 +483,7 @@ int main(int argc, char** argv) {
 		const char* fname = slash ? slash + 1 : in;
 		char        base[256];
 		strip_ext(base, sizeof base, fname);
-		status = convert_one(in, outd, base, &options) ? 0 : 1;
+		status = convert_one(in, outd, base, &options, xwau_ctx) ? 0 : 1;
 	}
 	free(tags);
 	return status;

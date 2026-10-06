@@ -755,12 +755,14 @@ endif()
 
 add_library(opt2gltf_lib STATIC
     tools/opt2gltf/opt2gltf.c
+    third_party/mikktspace/mikktspace.c
 )
 target_include_directories(opt2gltf_lib
     PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/tools/opt2gltf
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/third_party/stb
+        ${CMAKE_CURRENT_SOURCE_DIR}/third_party/mikktspace
 )
 target_link_libraries(opt2gltf_lib PUBLIC aeron_opt aeron_cgltf aeron)
 if(NOT MSVC)
@@ -957,12 +959,19 @@ set_target_properties(aeron_asset PROPERTIES
 )
 
 if(AERON_BUILD_TOOLS)
+    # The XWAU material and DAT readers are CLI-only: they read the X-Wing
+    # Alliance Upgrade files and hand resolved materials to opt2gltf_lib.
     add_executable(opt2gltf
-        tools/opt2gltf/main.c)
+        tools/opt2gltf/main.c
+        tools/opt2gltf/xwa_mat.c
+        tools/opt2gltf/xwa_dat.c
+        third_party/lzma/LzmaDec.c)
     target_include_directories(opt2gltf PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/tools/opt2gltf
         ${CMAKE_CURRENT_SOURCE_DIR}/third_party/cgltf
-        ${CMAKE_CURRENT_SOURCE_DIR}/third_party/stb)
+        ${CMAKE_CURRENT_SOURCE_DIR}/third_party/stb
+        ${CMAKE_CURRENT_SOURCE_DIR}/third_party/lzma
+        ${CMAKE_CURRENT_SOURCE_DIR}/third_party/bcdec)
     target_link_libraries(opt2gltf PRIVATE opt2gltf_lib)
     set_target_properties(opt2gltf PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})

@@ -75,6 +75,41 @@ typedef struct OptGltfComponentTag {
 	const char* tag;
 } OptGltfComponentTag;
 
+typedef struct OptGltfImageView {
+	const uint8_t* rgba;
+	uint32_t       width;
+	uint32_t       height;
+} OptGltfImageView;
+
+/*
+ * Material of one OPT texture as the X-Wing Alliance Upgrade "effects"
+ * renderer (xwa_ddraw_d3d11) shades it, resolved by the caller from the XWAU
+ * material files (see xwa_mat.h). With these, the converter reproduces that
+ * renderer's per-texel logic in standard glTF inputs (docs:
+ * xwau_model_import.md, "Per-material output"): authored colors, palette or
+ * 32bpp illumination, Shadeless/Ambient, glass, the dark-texel reflectance
+ * fade (approximated through roughness), Metallic/Glossiness, Intensity as
+ * KHR_materials_specular, and the normal map with NMIntensity baked in. Stored
+ * normals are used per corner, as that renderer does (no remap or repair).
+ */
+typedef struct OptGltfXwauMaterial {
+	float metallic;     /* Metallic */
+	float intensity;    /* Intensity: dielectric F0 = 0.16 * intensity^2 */
+	float glossiness;   /* Glossiness */
+	float nm_intensity; /* NMIntensity */
+	float specular_val; /* SpecularVal: luma floor of the dark-texel fade */
+	float ambient;      /* Ambient: partial shadeless weight */
+	bool  shadeless;
+	bool  alpha_isnt_glass;
+	bool  alpha_to_bloom;
+	/* Tangent-space normal map: R, G, B = X, Y, Z encoded 0..1 (+Y toward
+	 * the first row), rows in UV order, alpha ignored; rgba NULL when the
+	 * texture has none. normal_map_name labels its baked image file and must
+	 * be unique per distinct map. */
+	OptGltfImageView normal_map;
+	const char*      normal_map_name;
+} OptGltfXwauMaterial;
+
 typedef struct OptGltfBuildOptions {
 	float smooth_angle_degrees;
 	bool  repair_normals;
@@ -90,6 +125,11 @@ typedef struct OptGltfBuildOptions {
 	/* Development only: split every triangle into four by its edge midpoints
 	 * this many times (at most OPT_GLTF_MAX_SUBDIVIDE). */
 	uint32_t subdivide_levels;
+	/* XWAU mode when set: one entry per OPT texture (opt->texture_count),
+	 * plus the material of untextured faces. Excludes smooth_angle_degrees
+	 * >= 0, emissive and fullbright_strength. */
+	const OptGltfXwauMaterial* xwau_materials;
+	const OptGltfXwauMaterial* xwau_untextured;
 } OptGltfBuildOptions;
 
 #define OPT_GLTF_MAX_SUBDIVIDE 8u
@@ -110,12 +150,6 @@ typedef struct OptGltfAlphaOverride {
  * material semantic, so coverage is inferred conservatively from endpoint
  * prevalence. */
 OptGltfAlphaMode OptGltf_ClassifyAlpha(const uint8_t* alpha, size_t sample_count);
-
-typedef struct OptGltfImageView {
-	const uint8_t* rgba;
-	uint32_t       width;
-	uint32_t       height;
-} OptGltfImageView;
 
 typedef struct OptGltfDocument OptGltfDocument;
 
