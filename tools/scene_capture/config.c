@@ -95,6 +95,20 @@ static int load_effects(const AeronConfigFile* yaml, CaptureConfig* config) {
 		fprintf(stderr, "msaa_samples must be 1, 2, 4 or 8\n");
 		return 0;
 	}
+	const AeronConfigNode* cull_node = AeronConfigFile_GetNode(yaml, "cull");
+	const char*            cull      = cull_node ? AeronConfigNode_String(cull_node, NULL) : "none";
+	if (!cull || (strcmp(cull, "none") && strcmp(cull, "front") && strcmp(cull, "back"))) {
+		fprintf(stderr, "cull must be none, front or back\n");
+		return 0;
+	}
+	config->cull_mode = !strcmp(cull, "back") ? AERON_CULL_BACK : !strcmp(cull, "front") ? AERON_CULL_FRONT : AERON_CULL_NONE;
+	const AeronConfigNode* fill_node = AeronConfigFile_GetNode(yaml, "backface_fill");
+	if (fill_node && AeronConfigNode_Type(fill_node) != AERON_CONFIG_BOOL) {
+		fprintf(stderr, "backface_fill must be true or false\n");
+		return 0;
+	}
+	config->backface_fill = fill_node ? AeronConfigNode_Bool(fill_node, 1) : 1;
+
 	const AeronConfigNode* tonemap_node = AeronConfigFile_GetNode(yaml, "tonemap");
 	const char*            tonemap      = tonemap_node ? AeronConfigNode_String(tonemap_node, NULL) : "agx";
 	if (!tonemap || (strcmp(tonemap, "agx") && strcmp(tonemap, "aces"))) {
@@ -197,6 +211,8 @@ int CaptureConfig_Load(const char* path, CaptureConfig* config) {
 									  "fixture",
 									  "msaa_samples",
 									  "tonemap",
+									  "cull",
+									  "backface_fill",
 									  "bloom",
 									  "emissive_scale",
 									  "benchmark" };

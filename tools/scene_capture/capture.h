@@ -24,6 +24,7 @@ typedef struct CaptureConfig {
 	char                   models[CAPTURE_MAX_MODELS][1024];
 	int                    model_count;
 	int                    bloom_chart, bloom_enabled, bloom_kernel, msaa_samples, tonemap;
+	int                    cull_mode, backface_fill;
 	float                  bloom_intensity, emissive_scale;
 	CaptureBenchmarkConfig benchmark;
 	int                    benchmark_mode;

@@ -209,6 +209,7 @@ static void add_objects(AeronScene3D* scene, const Fixture* f) {
 			.mesh                         = mesh->mesh,
 			.base_color_emissive_strength = f->config.model_count ? 0 : o[7] * f->config.emissive_scale,
 			.no_local_lights              = 1,
+			.cull_mode                    = (AeronCullMode)f->config.cull_mode,
 			.shadow_flags = AERON_SCENE_INSTANCE_NO_CAST_SHADOW | AERON_SCENE_INSTANCE_NO_RECEIVE_SHADOW,
 			.transform = { cs * o[0], -sn * o[1], 0, o[3], sn * o[0], cs * o[1], 0, o[4], 0, 0, o[2], o[5], 0,
 						   0, 0, 1 }
@@ -251,6 +252,7 @@ AeronRenderTarget* Fixture_Record(Fixture* f, double time, int blur, AeronComman
 									   .mb_shutter     = (float)(f->config.shutter * .032 * f->config.fps),
 									   .mb_camera_blur = 1 });
 	AeronScene_SetMotionContext(scene, previous_matrix, 1);
+	AeronScene_SetBackfaceFill(scene, f->config.backface_fill);
 	/* Emissive shapes also read the PBR lighting/mode uniforms. */
 	set_lighting(scene, &f->config);
 	add_objects(scene, f);

@@ -146,12 +146,14 @@ int Capture_SaveConfig(const CaptureConfig* c) {
 			 "quality: %d\nshutter: %.9g\nexposure_seconds: %.9g\nreference_samples: %d\n"
 			 "reference_kernel: centered_box\nimage_data: linear_RGB_float32_PFM\n"
 			 "preview: sRGB_PNG_clamped_0_to_1\nmsaa_samples: %d\ntemporal_upscaling: off\n"
-			 "ssao: off\nshadows: off\nfixture: %s\nemissive_scale: %.9g\nbloom_enabled: %s\n",
+			 "ssao: off\nshadows: off\nfixture: %s\nemissive_scale: %.9g\nbloom_enabled: %s\n"
+			 "cull: %s\nbackface_fill: %s\n",
 			 c->bloom_chart ? 1 : (c->model_count ? 6 : 3), Aeron_RenderDriverName(), c->width, c->height,
 			 c->frames, c->fps, c->pan_speed, c->pan_direction, c->quality, c->shutter, c->shutter * .032,
 			 c->reference_samples, c->msaa_samples,
 			 c->bloom_chart ? "bloom_chart" : (c->model_count ? "models" : "shapes"), c->emissive_scale,
-			 c->bloom_enabled ? "true" : "false");
+			 c->bloom_enabled ? "true" : "false", c->cull_mode == AERON_CULL_BACK ? "back" : c->cull_mode == AERON_CULL_FRONT ? "front" : "none",
+			 c->backface_fill ? "true" : "false");
 	SDL_IOStream* stream = SDL_IOFromFile(path, "wb");
 	if (!stream)
 		return 0;

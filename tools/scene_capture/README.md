@@ -54,6 +54,8 @@ Start from a preset; unknown keys are rejected. The main settings are:
 | `fixture` | `shapes` (default) or `bloom_chart`. |
 | `models`, `asset_root` | Optional OPT or cooked `.glb` paths and their VFS root; replaces the cuboids. |
 | `msaa_samples` | 1, 2, 4 or 8; default 2. |
+| `cull` | `none` (default, two-sided), `front` or `back`: the instances' cull mode. `front` culls what the game's `back` culls, as this camera's handedness is the opposite. |
+| `backface_fill` | `true` (default) or `false`: the dark fill behind cracks in single-sided instances (`AeronScene_SetBackfaceFill`). |
 | `emissive_scale` | Shape/material emission multiplier; default 1. Use 8 to raise the cuboids above the bloom threshold. |
 | `bloom` | Optional mapping requiring `intensity` and `kernel` (1 or 4 taps). Omit to disable bloom captures. |
 | `tonemap` | `agx` (default) or `aces`. |
