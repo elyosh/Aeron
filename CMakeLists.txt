@@ -963,8 +963,8 @@ if(AERON_BUILD_TOOLS)
     # Alliance Upgrade files and hand resolved materials to opt2gltf_lib.
     add_executable(opt2gltf
         tools/opt2gltf/main.c
-        tools/opt2gltf/xwa_mat.c
-        tools/opt2gltf/xwa_dat.c
+        tools/opt2gltf/xwau_mat.c
+        tools/opt2gltf/xwau_dat.c
         third_party/lzma/LzmaDec.c)
     target_include_directories(opt2gltf PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/tools/opt2gltf

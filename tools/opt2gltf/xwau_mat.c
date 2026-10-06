@@ -1,4 +1,4 @@
-#include "xwa_mat.h"
+#include "xwau_mat.h"
 
 #include <ctype.h>
 #include <stdio.h>
@@ -6,21 +6,21 @@
 #include <string.h>
 
 /* fgets buffer of LoadIndividualMATParams. */
-#define XWA_MAT_LINE_MAX 3000
+#define XWAU_MAT_LINE_MAX 3000
 
-typedef struct XwaMatEntry {
-	char         name[XWA_MAT_NAME_MAX];
-	XwaMatParams params;
-} XwaMatEntry;
+typedef struct XwauMatEntry {
+	char          name[XWAU_MAT_NAME_MAX];
+	XwauMatParams params;
+} XwauMatEntry;
 
-struct XwaMatFile {
-	XwaMatParams slot0;
-	XwaMatEntry* entries;
-	size_t       count;
-	size_t       cap;
+struct XwauMatFile {
+	XwauMatParams slot0;
+	XwauMatEntry* entries;
+	size_t        count;
+	size_t        cap;
 };
 
-void XwaMat_CodeDefaults(XwaMatParams* out) {
+void XwauMat_CodeDefaults(XwauMatParams* out) {
 	memset(out, 0, sizeof *out);
 	out->metallic     = 0.30f; /* DEFAULT_METALLIC */
 	out->intensity    = 0.25f; /* DEFAULT_SPEC_INT */
@@ -73,8 +73,8 @@ static int scan_key_line(const char* line, char* param, size_t param_cap, char* 
 }
 
 /* ReadMaterialLine for the shading keys; every other key is ignored. */
-static void read_material_line(const char* line, XwaMatParams* m) {
-	char param[256], value[XWA_MAT_LINE_MAX];
+static void read_material_line(const char* line, XwauMatParams* m) {
+	char param[256], value[XWAU_MAT_LINE_MAX];
 	if (line[0] == ';' || line[0] == '#')
 		return;
 	if (scan_key_line(line, param, sizeof param, value, sizeof value) <= 0)
@@ -104,27 +104,27 @@ static void read_material_line(const char* line, XwaMatParams* m) {
 		snprintf(m->normal_map, sizeof m->normal_map, "%s", value);
 }
 
-bool XwaMat_ReadGlobalDefault(const char* path, XwaMatParams* io) {
+bool XwauMat_ReadGlobalDefault(const char* path, XwauMatParams* io) {
 	FILE* f = fopen(path, "rt");
 	if (!f)
 		return false;
-	char line[XWA_MAT_LINE_MAX];
+	char line[XWAU_MAT_LINE_MAX];
 	while (fgets(line, sizeof line, f))
 		read_material_line(line, io);
 	fclose(f);
 	return true;
 }
 
-static bool push_entry(XwaMatFile* file, const char* name, const XwaMatParams* params) {
+static bool push_entry(XwauMatFile* file, const char* name, const XwauMatParams* params) {
 	if (file->count == file->cap) {
-		size_t       cap   = file->cap ? file->cap * 2 : 32;
-		XwaMatEntry* grown = (XwaMatEntry*)realloc(file->entries, cap * sizeof *grown);
+		size_t        cap   = file->cap ? file->cap * 2 : 32;
+		XwauMatEntry* grown = (XwauMatEntry*)realloc(file->entries, cap * sizeof *grown);
 		if (!grown)
 			return false;
 		file->entries = grown;
 		file->cap     = cap;
 	}
-	XwaMatEntry* e = &file->entries[file->count++];
+	XwauMatEntry* e = &file->entries[file->count++];
 	snprintf(e->name, sizeof e->name, "%s", name);
 	e->params = *params;
 	return true;
@@ -132,8 +132,8 @@ static bool push_entry(XwaMatFile* file, const char* name, const XwaMatParams* p
 
 /* Close a section: every listed name receives the section's material;
  * "Default" replaces slot 0 instead. */
-static bool save_section(XwaMatFile* file, char (*names)[XWA_MAT_NAME_MAX], size_t name_count,
-						 const XwaMatParams* cur) {
+static bool save_section(XwauMatFile* file, char (*names)[XWAU_MAT_NAME_MAX], size_t name_count,
+						 const XwauMatParams* cur) {
 	for (size_t i = 0; i < name_count; ++i) {
 		if (ascii_casecmp(names[i], "default") == 0)
 			file->slot0 = *cur;
@@ -145,7 +145,7 @@ static bool save_section(XwaMatFile* file, char (*names)[XWA_MAT_NAME_MAX], size
 
 /* "[A,B,...]" -> names. A token counts only when ',' or ']' ends it; no
  * trimming, as the renderer does. */
-static size_t parse_section_names(const char* line, char (*names)[XWA_MAT_NAME_MAX], size_t cap) {
+static size_t parse_section_names(const char* line, char (*names)[XWAU_MAT_NAME_MAX], size_t cap) {
 	size_t      count = 0;
 	const char* start = line + 1;
 	while (*start && *start != ']') {
@@ -156,8 +156,8 @@ static size_t parse_section_names(const char* line, char (*names)[XWA_MAT_NAME_M
 			break;
 		if (count < cap) {
 			size_t len = (size_t)(end - start);
-			if (len >= XWA_MAT_NAME_MAX)
-				len = XWA_MAT_NAME_MAX - 1;
+			if (len >= XWAU_MAT_NAME_MAX)
+				len = XWAU_MAT_NAME_MAX - 1;
 			memcpy(names[count], start, len);
 			names[count][len] = 0;
 			count++;
@@ -167,11 +167,11 @@ static size_t parse_section_names(const char* line, char (*names)[XWA_MAT_NAME_M
 	return count;
 }
 
-XwaMatFile* XwaMat_Load(const char* path, const XwaMatParams* global) {
+XwauMatFile* XwauMat_Load(const char* path, const XwauMatParams* global) {
 	FILE* f = fopen(path, "rt");
 	if (!f)
 		return NULL;
-	XwaMatFile* file = (XwaMatFile*)calloc(1, sizeof *file);
+	XwauMatFile* file = (XwauMatFile*)calloc(1, sizeof *file);
 	if (!file) {
 		fclose(f);
 		return NULL;
@@ -180,16 +180,16 @@ XwaMatFile* XwaMat_Load(const char* path, const XwaMatParams* global) {
 
 	enum { MAX_SECTION_NAMES = 256 };
 
-	char         names[MAX_SECTION_NAMES][XWA_MAT_NAME_MAX];
-	size_t       name_count = 0;
-	bool         saved      = true; /* lines before the first section are dropped */
-	XwaMatParams cur        = file->slot0;
-	char         line[XWA_MAT_LINE_MAX];
-	bool         ok = true;
+	char          names[MAX_SECTION_NAMES][XWAU_MAT_NAME_MAX];
+	size_t        name_count = 0;
+	bool          saved      = true; /* lines before the first section are dropped */
+	XwauMatParams cur        = file->slot0;
+	char          line[XWAU_MAT_LINE_MAX];
+	bool          ok = true;
 	while (ok && fgets(line, sizeof line, f)) {
 		if (line[0] == ';' || line[0] == '#')
 			continue;
-		char param[256], value[XWA_MAT_LINE_MAX];
+		char param[256], value[XWAU_MAT_LINE_MAX];
 		if (scan_key_line(line, param, sizeof param, value, sizeof value) <= 0)
 			continue;
 		if (line[0] == '[') {
@@ -206,7 +206,7 @@ XwaMatFile* XwaMat_Load(const char* path, const XwaMatParams* global) {
 		ok = save_section(file, names, name_count, &cur);
 	fclose(f);
 	if (!ok) {
-		XwaMat_Free(file);
+		XwauMat_Free(file);
 		return NULL;
 	}
 	return file;
@@ -222,8 +222,8 @@ static const char* find_skin_suffix(const char* s) {
 	return NULL;
 }
 
-const XwaMatParams* XwaMat_Find(const XwaMatFile* file, const char* texture_name) {
-	char        name[XWA_MAT_NAME_MAX];
+const XwauMatParams* XwauMat_Find(const XwauMatFile* file, const char* texture_name) {
+	char        name[XWAU_MAT_NAME_MAX];
 	const char* skin = find_skin_suffix(texture_name);
 	size_t      len  = skin ? (size_t)(skin - texture_name) : strlen(texture_name);
 	if (len >= sizeof name)
@@ -239,7 +239,7 @@ const XwaMatParams* XwaMat_Find(const XwaMatFile* file, const char* texture_name
 	return &file->slot0;
 }
 
-void XwaMat_Free(XwaMatFile* file) {
+void XwauMat_Free(XwauMatFile* file) {
 	if (!file)
 		return;
 	free(file->entries);

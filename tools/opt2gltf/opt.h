@@ -260,9 +260,9 @@ typedef struct {
  * level 1 is (W/2)*(H/2) texels, etc., until 1x1. mip_count is 1 if the file
  * stored no mips. Use opt_texture_mip_offset() to find a level's sub-buffer.
  *
- * Texels are 1-byte palette indices, except in 32bpp textures (XWA only, as
- * written by JeremyAnsel.Xwa.Opt and the XWAU tools), whose texels are 4
- * bytes in B,G,R,A order. The format is not stored: it follows from the
+ * Texels are 1-byte palette indices, except in 32bpp textures, an XWAU
+ * extension of version-5 OPTs (written by JeremyAnsel.Xwa.Opt), whose texels
+ * are 4 bytes in B,G,R,A order. The format is not stored: it follows from the
  * base-level byte count (JeremyAnsel.Xwa.Opt Texture.cs BitsPerPixel). A
  * 32bpp texture has no palette; the 8192-byte block after its pixels is
  * zero except two flag bytes, [2] (has alpha) and [4] (has illumination).

@@ -1,10 +1,10 @@
-#ifndef AERON_XWA_MAT_H
-#define AERON_XWA_MAT_H
+#ifndef AERON_XWAU_MAT_H
+#define AERON_XWAU_MAT_H
 
 /*
- * XWA "effects" renderer material files (Materials/<OptName>.mat and
- * Materials/DefaultGlobalMaterial.mat, X-Wing Alliance Upgrade), parsed the
- * way xwa_ddraw_d3d11 parses them (Materials.cpp LoadIndividualMATParams /
+ * Material files of the XWAU (X-Wing Alliance Upgrade) "effects" renderer
+ * (Materials/<OptName>.mat and Materials/DefaultGlobalMaterial.mat), parsed
+ * the way that renderer (xwa_ddraw_d3d11) parses them (Materials.cpp LoadIndividualMATParams /
  * ReadMaterialLine / FindMaterial), restricted to the keys that drive
  * surface shading. Shipped files rely on the parser's quirks, which are
  * reproduced:
@@ -25,10 +25,10 @@
 #include <stdbool.h>
 #include <stddef.h>
 
-#define XWA_MAT_NAME_MAX 64
-#define XWA_MAT_PATH_MAX 256
+#define XWAU_MAT_NAME_MAX 64
+#define XWAU_MAT_PATH_MAX 256
 
-typedef struct XwaMatParams {
+typedef struct XwauMatParams {
 	float metallic;     /* Metallic */
 	float intensity;    /* Intensity */
 	float glossiness;   /* Glossiness */
@@ -39,27 +39,27 @@ typedef struct XwaMatParams {
 	bool  alpha_isnt_glass;
 	bool  alpha_to_bloom;
 	bool  no_color_alpha;
-	char  normal_map[XWA_MAT_PATH_MAX]; /* NormalMap value, "" when unset */
-} XwaMatParams;
+	char  normal_map[XWAU_MAT_PATH_MAX]; /* NormalMap value, "" when unset */
+} XwauMatParams;
 
-typedef struct XwaMatFile XwaMatFile;
+typedef struct XwauMatFile XwauMatFile;
 
 /* The renderer's built-in defaults (Materials.h Material(), material_defs.h),
  * used when DefaultGlobalMaterial.mat is absent. */
-void XwaMat_CodeDefaults(XwaMatParams* out);
+void XwauMat_CodeDefaults(XwauMatParams* out);
 
 /* Apply every key line of DefaultGlobalMaterial.mat to `io` (the file has no
  * sections). Returns false when the file cannot be read. */
-bool XwaMat_ReadGlobalDefault(const char* path, XwaMatParams* io);
+bool XwauMat_ReadGlobalDefault(const char* path, XwauMatParams* io);
 
 /* Parse an OPT's material file on top of `global`. Returns NULL when the file
  * cannot be read; callers then use `global` for every texture, as the
  * renderer does for an OPT without a material file. */
-XwaMatFile* XwaMat_Load(const char* path, const XwaMatParams* global);
+XwauMatFile* XwauMat_Load(const char* path, const XwauMatParams* global);
 
 /* Material for an OPT texture name (slot 0 when unmatched). */
-const XwaMatParams* XwaMat_Find(const XwaMatFile* file, const char* texture_name);
+const XwauMatParams* XwauMat_Find(const XwauMatFile* file, const char* texture_name);
 
-void XwaMat_Free(XwaMatFile* file);
+void XwauMat_Free(XwauMatFile* file);
 
-#endif /* AERON_XWA_MAT_H */
+#endif /* AERON_XWAU_MAT_H */

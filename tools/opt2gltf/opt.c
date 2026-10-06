@@ -428,7 +428,7 @@ static int find_texture_alpha_child(opt_ctx_t* c, const opt_node_t* n, opt_node_
 
 /* Alpha and illumination planes of a 32bpp texture (flags already read).
  * Alpha is the texel A byte over the whole chain, kept only when the alpha
- * flag is set: without it XWA draws the texture opaque. Illumination is the
+ * flag is set: without it XWAU's renderer draws the texture opaque. Illumination is the
  * TextureAlpha child, used only when the illumination flag is set, base
  * level only: its p1 can be 4x the chain length (zero padding), so only the
  * first W*H bytes are meaningful. */

@@ -102,8 +102,8 @@
 
 #include "opt.h"
 #include "opt2gltf.h"
-#include "xwa_dat.h"
-#include "xwa_mat.h"
+#include "xwau_dat.h"
+#include "xwau_mat.h"
 
 static int ends_with_icase(const char* s, const char* suffix) {
 	size_t ls = strlen(s), lf = strlen(suffix);
@@ -126,7 +126,7 @@ static void strip_ext(char* dst, size_t cap, const char* fname) {
 typedef struct XwauContext {
 	const char*  roots[XWAU_MAX_ROOTS]; /* first root holding a file wins */
 	int          root_count;
-	XwaMatParams global; /* Materials/DefaultGlobalMaterial.mat, else code defaults */
+	XwauMatParams global; /* Materials/DefaultGlobalMaterial.mat, else code defaults */
 } XwauContext;
 
 /* Resolve a game-relative path (backslashes or slashes) under the first root
@@ -169,7 +169,7 @@ static int xwau_find(const XwauContext* x, const char* rel, char* out, size_t ca
 typedef struct XwauNormalMap {
 	char        key[1100]; /* resolved path + group + image */
 	char        name[160]; /* file-name label: <datbase>_<group>_<image> */
-	XwaDatImage image;
+	XwauDatImage image;
 	int         ok;
 } XwauNormalMap;
 
@@ -177,7 +177,7 @@ typedef struct XwauNormalMap {
  * Entries are allocated individually: materials keep pointers into them. */
 static const XwauNormalMap* xwau_normal_map(const XwauContext* x, const char* value, XwauNormalMap*** cache,
 											size_t* count, const char* label) {
-	char spec[XWA_MAT_PATH_MAX];
+	char spec[XWAU_MAT_PATH_MAX];
 	snprintf(spec, sizeof spec, "%s", value);
 	char* image_sep = strrchr(spec, '-');
 	char* group_sep = NULL;
@@ -223,12 +223,12 @@ static const XwauNormalMap* xwau_normal_map(const XwauContext* x, const char* va
 		*dot = 0;
 	snprintf(nm->name, sizeof nm->name, "%s_%d_%d", stem, group, image);
 	char err[512];
-	nm->ok = XwaDat_LoadImage(path, group, image, &nm->image, err, sizeof err);
+	nm->ok = XwauDat_LoadImage(path, group, image, &nm->image, err, sizeof err);
 	if (!nm->ok) {
 		fprintf(stderr, "opt2gltf: %s: NormalMap %s; skipped\n", label, err);
 		return NULL;
 	}
-	if (nm->image.encoding == XWA_DAT_ENCODING_BC5) {
+	if (nm->image.encoding == XWAU_DAT_ENCODING_BC5) {
 		/* BC5 stores X and Y only: rebuild Z (XWAU's DATReader rebuilds it
 		 * from 0..1 values, a bug not reproduced here). */
 		const size_t n = (size_t)nm->image.width * nm->image.height;
@@ -242,7 +242,7 @@ static const XwauNormalMap* xwau_normal_map(const XwauContext* x, const char* va
 	return nm;
 }
 
-static void xwau_fill(OptGltfXwauMaterial* out, const XwaMatParams* p) {
+static void xwau_fill(OptGltfXwauMaterial* out, const XwauMatParams* p) {
 	memset(out, 0, sizeof *out);
 	out->metallic         = p->metallic;
 	out->intensity        = p->intensity;
@@ -261,19 +261,19 @@ static int convert_xwau(opt_file_t* opt, const char* out_dir, const char* basena
 						const OptGltfBuildOptions* base, const XwauContext* x, const char* label) {
 	char rel[512], path[1024];
 	snprintf(rel, sizeof rel, "Materials/%s.mat", basename);
-	XwaMatFile* mat = xwau_find(x, rel, path, sizeof path) ? XwaMat_Load(path, &x->global) : NULL;
+	XwauMatFile* mat = xwau_find(x, rel, path, sizeof path) ? XwauMat_Load(path, &x->global) : NULL;
 
 	const size_t         count     = opt->texture_count ? (size_t)opt->texture_count : 1;
 	OptGltfXwauMaterial* materials = (OptGltfXwauMaterial*)calloc(count, sizeof *materials);
 	XwauNormalMap**      maps      = NULL;
 	size_t               map_count = 0;
 	if (!materials) {
-		XwaMat_Free(mat);
+		XwauMat_Free(mat);
 		return 0;
 	}
 	size_t normal_textures = 0;
 	for (int32_t i = 0; i < opt->texture_count; ++i) {
-		const XwaMatParams* p = mat ? XwaMat_Find(mat, opt->textures[i].name) : &x->global;
+		const XwauMatParams* p = mat ? XwauMat_Find(mat, opt->textures[i].name) : &x->global;
 		xwau_fill(&materials[i], p);
 		if (p->normal_map[0]) {
 			const XwauNormalMap* nm = xwau_normal_map(x, p->normal_map, &maps, &map_count, label);
@@ -288,7 +288,7 @@ static int convert_xwau(opt_file_t* opt, const char* out_dir, const char* basena
 	}
 	/* Untextured faces: the material lookup of an empty name is slot 0. */
 	OptGltfXwauMaterial untextured;
-	xwau_fill(&untextured, mat ? XwaMat_Find(mat, "") : &x->global);
+	xwau_fill(&untextured, mat ? XwauMat_Find(mat, "") : &x->global);
 
 	OptGltfBuildOptions options = *base;
 	options.xwau_materials      = materials;
@@ -298,12 +298,12 @@ static int convert_xwau(opt_file_t* opt, const char* out_dir, const char* basena
 	int ok = opt2gltf_convert(opt, out_dir, basename, &options, label) ? 1 : 0;
 
 	for (size_t i = 0; i < map_count; ++i) {
-		XwaDat_FreeImage(&maps[i]->image);
+		XwauDat_FreeImage(&maps[i]->image);
 		free(maps[i]);
 	}
 	free(maps);
 	free(materials);
-	XwaMat_Free(mat);
+	XwauMat_Free(mat);
 	return ok;
 }
 
@@ -421,10 +421,10 @@ int main(int argc, char** argv) {
 			free(tags);
 			return 2;
 		}
-		XwaMat_CodeDefaults(&xwau.global);
+		XwauMat_CodeDefaults(&xwau.global);
 		char global_path[1024];
 		if (xwau_find(&xwau, "Materials/DefaultGlobalMaterial.mat", global_path, sizeof global_path))
-			XwaMat_ReadGlobalDefault(global_path, &xwau.global);
+			XwauMat_ReadGlobalDefault(global_path, &xwau.global);
 		else
 			fprintf(stderr, "opt2gltf: no Materials/DefaultGlobalMaterial.mat; using built-in defaults\n");
 	}

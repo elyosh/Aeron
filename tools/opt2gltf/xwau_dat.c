@@ -1,4 +1,4 @@
-#include "xwa_dat.h"
+#include "xwau_dat.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -10,10 +10,10 @@
 #define BCDEC_STATIC
 #include "bcdec.h"
 
-#define XWA_DAT_SIGNATURE 0x5602235657062357ull
-#define XWA_DAT_FORMAT_32BPP 25
-#define XWA_DAT_IMAGE_HEADER_BYTES 0x2C
-#define XWA_DAT_IMAGE_COLORS_OFFSET 0x28
+#define XWAU_DAT_SIGNATURE 0x5602235657062357ull
+#define XWAU_DAT_FORMAT_32BPP 25
+#define XWAU_DAT_IMAGE_HEADER_BYTES 0x2C
+#define XWAU_DAT_IMAGE_COLORS_OFFSET 0x28
 
 static void set_error(char* error, size_t error_size, const char* path, const char* message) {
 	if (error && error_size)
@@ -66,12 +66,12 @@ static void bgra_to_rgba(uint8_t* px, size_t count) {
 
 /* Decode a block-compressed image into width*height RGBA, cropping the
  * 4x4-padded block grid. */
-static bool decode_blocks(XwaDatEncoding encoding, const uint8_t* data, size_t size, uint32_t w, uint32_t h,
+static bool decode_blocks(XwauDatEncoding encoding, const uint8_t* data, size_t size, uint32_t w, uint32_t h,
 						  uint8_t* rgba) {
 	const uint32_t bw = (w + 3) / 4, bh = (h + 3) / 4;
-	const size_t   block_bytes = encoding == XWA_DAT_ENCODING_BC3   ? BCDEC_BC3_BLOCK_SIZE
-								 : encoding == XWA_DAT_ENCODING_BC5 ? BCDEC_BC5_BLOCK_SIZE
-																	: BCDEC_BC7_BLOCK_SIZE;
+	const size_t   block_bytes = encoding == XWAU_DAT_ENCODING_BC3   ? BCDEC_BC3_BLOCK_SIZE
+								 : encoding == XWAU_DAT_ENCODING_BC5 ? BCDEC_BC5_BLOCK_SIZE
+																	 : BCDEC_BC7_BLOCK_SIZE;
 	if (size < (size_t)bw * bh * block_bytes)
 		return false;
 	uint8_t tile[4 * 4 * 4];
@@ -79,11 +79,11 @@ static bool decode_blocks(XwaDatEncoding encoding, const uint8_t* data, size_t s
 		for (uint32_t bx = 0; bx < bw; ++bx) {
 			const uint8_t* block = data + ((size_t)by * bw + bx) * block_bytes;
 			int            texel_bytes;
-			if (encoding == XWA_DAT_ENCODING_BC5) {
+			if (encoding == XWAU_DAT_ENCODING_BC5) {
 				bcdec_bc5(block, tile, 4 * 2);
 				texel_bytes = 2;
 			} else {
-				if (encoding == XWA_DAT_ENCODING_BC3)
+				if (encoding == XWAU_DAT_ENCODING_BC3)
 					bcdec_bc3(block, tile, 4 * 4);
 				else
 					bcdec_bc7(block, tile, 4 * 4);
@@ -113,8 +113,9 @@ static bool decode_blocks(XwaDatEncoding encoding, const uint8_t* data, size_t s
 }
 
 static bool decode_image(const char* path, uint16_t format, uint32_t w, uint32_t h, int32_t colors,
-						 const uint8_t* data, size_t size, XwaDatImage* out, char* error, size_t error_size) {
-	if (format != XWA_DAT_FORMAT_32BPP) {
+						 const uint8_t* data, size_t size, XwauDatImage* out, char* error,
+						 size_t error_size) {
+	if (format != XWAU_DAT_FORMAT_32BPP) {
 		char msg[64];
 		snprintf(msg, sizeof msg, "unsupported DAT image format %u", (unsigned)format);
 		set_error(error, error_size, path, msg);
@@ -123,16 +124,16 @@ static bool decode_image(const char* path, uint16_t format, uint32_t w, uint32_t
 	const size_t texels = (size_t)w * h;
 	switch (colors) {
 		case 0:
-			out->encoding = size < texels * 4 ? XWA_DAT_ENCODING_BC7 : XWA_DAT_ENCODING_BGRA;
+			out->encoding = size < texels * 4 ? XWAU_DAT_ENCODING_BC7 : XWAU_DAT_ENCODING_BGRA;
 			break;
 		case 1:
-			out->encoding = XWA_DAT_ENCODING_LZMA;
+			out->encoding = XWAU_DAT_ENCODING_LZMA;
 			break;
 		case 2:
-			out->encoding = XWA_DAT_ENCODING_BC3;
+			out->encoding = XWAU_DAT_ENCODING_BC3;
 			break;
 		case 3:
-			out->encoding = XWA_DAT_ENCODING_BC5;
+			out->encoding = XWAU_DAT_ENCODING_BC5;
 			break;
 		default:
 			set_error(error, error_size, path, "unknown format-25 encoding");
@@ -147,11 +148,11 @@ static bool decode_image(const char* path, uint16_t format, uint32_t w, uint32_t
 	}
 	bool ok = true;
 	switch (out->encoding) {
-		case XWA_DAT_ENCODING_BGRA:
+		case XWAU_DAT_ENCODING_BGRA:
 			memcpy(out->rgba, data, texels * 4);
 			bgra_to_rgba(out->rgba, texels);
 			break;
-		case XWA_DAT_ENCODING_LZMA: {
+		case XWAU_DAT_ENCODING_LZMA: {
 			const ISzAlloc alloc  = { lzma_alloc, lzma_free };
 			SizeT          outLen = texels * 4;
 			SizeT          inLen  = size > LZMA_PROPS_SIZE ? size - LZMA_PROPS_SIZE : 0;
@@ -170,13 +171,13 @@ static bool decode_image(const char* path, uint16_t format, uint32_t w, uint32_t
 	}
 	if (!ok) {
 		set_error(error, error_size, path, "corrupt image data");
-		XwaDat_FreeImage(out);
+		XwauDat_FreeImage(out);
 	}
 	return ok;
 }
 
-bool XwaDat_LoadImage(const char* path, int group, int image, XwaDatImage* out, char* error,
-					  size_t error_size) {
+bool XwauDat_LoadImage(const char* path, int group, int image, XwauDatImage* out, char* error,
+					   size_t error_size) {
 	memset(out, 0, sizeof *out);
 	size_t   size = 0;
 	uint8_t* file = read_file(path, &size);
@@ -187,7 +188,7 @@ bool XwaDat_LoadImage(const char* path, int group, int image, XwaDatImage* out, 
 	bool found = false, ok = false;
 	/* File header: signature, group format, group count, image count,
 	 * length, then 12 bytes more when the group format is non-zero, then 4. */
-	if (size < 18 || (rd32(file) | ((uint64_t)rd32(file + 4) << 32)) != XWA_DAT_SIGNATURE) {
+	if (size < 18 || (rd32(file) | ((uint64_t)rd32(file + 4) << 32)) != XWAU_DAT_SIGNATURE) {
 		set_error(error, error_size, path, "not a DAT file");
 		goto done;
 	}
@@ -215,13 +216,13 @@ bool XwaDat_LoadImage(const char* path, int group, int image, XwaDatImage* out, 
 		const int16_t  img_id     = (int16_t)rd16(h + 12);
 		const uint32_t data_bytes = rd32(h + 14);
 		pos += 18;
-		if (data_bytes < XWA_DAT_IMAGE_HEADER_BYTES || pos + data_bytes > size)
+		if (data_bytes < XWAU_DAT_IMAGE_HEADER_BYTES || pos + data_bytes > size)
 			goto truncated;
 		if (img_group == group && img_id == image) {
-			const int32_t colors = (int32_t)rd32(file + pos + XWA_DAT_IMAGE_COLORS_OFFSET);
+			const int32_t colors = (int32_t)rd32(file + pos + XWAU_DAT_IMAGE_COLORS_OFFSET);
 			found                = true;
-			ok = decode_image(path, format, width, height, colors, file + pos + XWA_DAT_IMAGE_HEADER_BYTES,
-							  data_bytes - XWA_DAT_IMAGE_HEADER_BYTES, out, error, error_size);
+			ok = decode_image(path, format, width, height, colors, file + pos + XWAU_DAT_IMAGE_HEADER_BYTES,
+							  data_bytes - XWAU_DAT_IMAGE_HEADER_BYTES, out, error, error_size);
 			break;
 		}
 		pos += data_bytes;
@@ -239,7 +240,7 @@ done:
 	return ok;
 }
 
-void XwaDat_FreeImage(XwaDatImage* image) {
+void XwauDat_FreeImage(XwauDatImage* image) {
 	if (!image)
 		return;
 	free(image->rgba);

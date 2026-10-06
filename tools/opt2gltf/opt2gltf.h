@@ -84,7 +84,7 @@ typedef struct OptGltfImageView {
 /*
  * Material of one OPT texture as the X-Wing Alliance Upgrade "effects"
  * renderer (xwa_ddraw_d3d11) shades it, resolved by the caller from the XWAU
- * material files (see xwa_mat.h). With these, the converter reproduces that
+ * material files (see xwau_mat.h). With these, the converter reproduces that
  * renderer's per-texel logic in standard glTF inputs (docs:
  * xwau_model_import.md, "Per-material output"): authored colors, palette or
  * 32bpp illumination, Shadeless/Ambient, glass, the dark-texel reflectance
