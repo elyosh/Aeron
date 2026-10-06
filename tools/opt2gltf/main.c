@@ -4,7 +4,8 @@
  *
  * Usage:
  *   opt2gltf [--smooth-angle DEG] [--emissive] [--fullbright STRENGTH]
- *            [--tag N=TAG]... [--subdivide N] [--xwau-root DIR]...
+ *            [--tag N=TAG]... [--subdivide N] [--cockpit-eye X,Y,Z]
+ *            [--xwau-root DIR]...
  *            <input.opt|input_dir> <output_dir>
  *
  * If the input is a directory, every *.OPT inside (case-insensitive)
@@ -35,6 +36,12 @@
  *
  * --tag N=TAG (repeatable) adds TAG ([a-z0-9._]{1,63}) to the component
  * built from OPT mesh N, e.g. --tag 6=crew.side --tag 9=crew.forward.
+ *
+ * --cockpit-eye X,Y,Z (single OPT only) sets the pilot eye in craft-table
+ * units, as XWAU's CockpitPovX/Y/Z: the OPT's Cockpit (type 31) hardpoints
+ * are replaced by one at (X, -Y, Z) on the first MainHull mesh (mesh 0
+ * without one). The game reads the eye from the craft model's Cockpit
+ * hardpoint; OpenXWA applies all three axes for GLB replacements.
  *
  * --subdivide N (development only, N <= 8) splits every triangle into four
  * by its edge midpoints N times, multiplying the face count by 4^N, to
@@ -307,12 +314,51 @@ static int convert_xwau(opt_file_t* opt, const char* out_dir, const char* basena
 	return ok;
 }
 
+/* Replaces the OPT's Cockpit (type 31) hardpoints with one at the pilot eye
+ * given in craft-table units (CockpitPovX/Y/Z): ModelMesh_GetHardpoint
+ * returns (x, -y, z), so the eye's Y is the hardpoint's -y. It goes on the
+ * first MainHull mesh, or mesh 0. */
+static int apply_cockpit_eye(opt_file_t* opt, const int eye[3]) {
+	opt_mesh_t* owner = NULL;
+	for (int32_t mi = 0; mi < opt->mesh_count; ++mi) {
+		opt_mesh_t* m = &opt->meshes[mi];
+		int32_t     kept = 0;
+		for (int32_t hi = 0; hi < m->hardpoint_count; ++hi) {
+			if ((int)m->hardpoints[hi].type != OPT_GLTF_COCKPIT_HARDPOINT)
+				m->hardpoints[kept++] = m->hardpoints[hi];
+		}
+		m->hardpoint_count = kept;
+		if (!owner && m->has_descriptor && m->descriptor.mesh_type == OPT_MT_MAIN_HULL)
+			owner = m;
+	}
+	if (!owner && opt->mesh_count > 0)
+		owner = &opt->meshes[0];
+	if (!owner)
+		return 0;
+	opt_hardpoint_t* grown =
+		(opt_hardpoint_t*)realloc(owner->hardpoints, (size_t)(owner->hardpoint_count + 1) * sizeof *grown);
+	if (!grown)
+		return 0;
+	owner->hardpoints                         = grown;
+	owner->hardpoints[owner->hardpoint_count] = (opt_hardpoint_t) {
+		.type = (opt_hardpoint_type_t)OPT_GLTF_COCKPIT_HARDPOINT,
+		.pos  = { (float)eye[0], (float)-eye[1], (float)eye[2] },
+	};
+	owner->hardpoint_count++;
+	return 1;
+}
+
 static int convert_one(const char* opt_path, const char* out_dir, const char* basename,
-					   const OptGltfBuildOptions* options, const XwauContext* xwau) {
+					   const OptGltfBuildOptions* options, const XwauContext* xwau, const int* cockpit_eye) {
 	opt_error_t err;
 	opt_file_t* opt = opt_load_file(opt_path, &err);
 	if (!opt) {
 		fprintf(stderr, "opt2gltf: %s: %s\n", opt_path, err.msg);
+		return 0;
+	}
+	if (cockpit_eye && !apply_cockpit_eye(opt, cockpit_eye)) {
+		fprintf(stderr, "opt2gltf: %s: cannot add the cockpit eye hardpoint\n", opt_path);
+		opt_free(opt);
 		return 0;
 	}
 	int ok = xwau ? convert_xwau(opt, out_dir, basename, options, xwau, opt_path)
@@ -337,6 +383,8 @@ int main(int argc, char** argv) {
 	OptGltfComponentTag* tags             = NULL;
 	size_t               tag_count        = 0;
 	unsigned long        subdivide_levels = 0;
+	int                  cockpit_eye[3];
+	bool                 has_cockpit_eye = false;
 	XwauContext          xwau             = { 0 };
 	int                  ai               = 1;
 	/* Optional conversion flags, in any order before the positional args. */
@@ -390,6 +438,23 @@ int main(int argc, char** argv) {
 			}
 			xwau.roots[xwau.root_count++] = argv[ai + 1];
 			ai += 2;
+		} else if (strcmp(argv[ai], "--cockpit-eye") == 0) {
+			char end = 0;
+			if (ai + 1 >= argc || sscanf(argv[ai + 1], "%d,%d,%d%c", &cockpit_eye[0], &cockpit_eye[1],
+										 &cockpit_eye[2], &end) != 3) {
+				fprintf(stderr, "opt2gltf: --cockpit-eye needs X,Y,Z (craft-table units)\n");
+				free(tags);
+				return 2;
+			}
+			for (int k = 0; k < 3; ++k) {
+				if (cockpit_eye[k] < -32768 || cockpit_eye[k] > 32767) {
+					fprintf(stderr, "opt2gltf: --cockpit-eye values must fit in 16 bits\n");
+					free(tags);
+					return 2;
+				}
+			}
+			has_cockpit_eye = true;
+			ai += 2;
 		} else if (strcmp(argv[ai], "--subdivide") == 0) {
 			char* end        = NULL;
 			subdivide_levels = ai + 1 < argc ? strtoul(argv[ai + 1], &end, 10) : 0;
@@ -409,7 +474,7 @@ int main(int argc, char** argv) {
 		fprintf(stderr,
 				"usage: %s [--smooth-angle DEG] [--no-normal-repair] "
 				"[--emissive] [--fullbright STRENGTH] [--tag N=TAG]... [--subdivide N] "
-				"[--xwau-root DIR]... <input.OPT|input_dir> <output_dir>\n",
+				"[--cockpit-eye X,Y,Z] [--xwau-root DIR]... <input.OPT|input_dir> <output_dir>\n",
 				argv[0]);
 		free(tags);
 		return 2;
@@ -449,6 +514,12 @@ int main(int argc, char** argv) {
 		return 1;
 	}
 
+	if (S_ISDIR(st.st_mode) && has_cockpit_eye) {
+		fprintf(stderr, "opt2gltf: --cockpit-eye applies to a single OPT, not a directory\n");
+		free(tags);
+		return 2;
+	}
+	const int* cockpit_eye_arg = has_cockpit_eye ? cockpit_eye : NULL;
 	if (S_ISDIR(st.st_mode)) {
 		DIR* d = opendir(in);
 		if (!d) {
@@ -469,7 +540,7 @@ int main(int argc, char** argv) {
 			strip_ext(base, sizeof base, de->d_name);
 			char out_sub[1024];
 			snprintf(out_sub, sizeof out_sub, "%s/%s", outd, base);
-			if (convert_one(src, out_sub, base, &options, xwau_ctx))
+			if (convert_one(src, out_sub, base, &options, xwau_ctx, cockpit_eye_arg))
 				++ok_count;
 			else
 				++fail_count;
@@ -483,7 +554,7 @@ int main(int argc, char** argv) {
 		const char* fname = slash ? slash + 1 : in;
 		char        base[256];
 		strip_ext(base, sizeof base, fname);
-		status = convert_one(in, outd, base, &options, xwau_ctx) ? 0 : 1;
+		status = convert_one(in, outd, base, &options, xwau_ctx, cockpit_eye_arg) ? 0 : 1;
 	}
 	free(tags);
 	return status;

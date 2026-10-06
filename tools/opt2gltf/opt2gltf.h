@@ -133,6 +133,8 @@ typedef struct OptGltfBuildOptions {
 } OptGltfBuildOptions;
 
 #define OPT_GLTF_MAX_SUBDIVIDE 8u
+/* OPT hardpoint type whose Y and Z the game reads as the pilot eye (31). */
+#define OPT_GLTF_COCKPIT_HARDPOINT 31
 
 typedef enum OptGltfAlphaMode {
 	OPT_GLTF_ALPHA_OPAQUE = 0,
