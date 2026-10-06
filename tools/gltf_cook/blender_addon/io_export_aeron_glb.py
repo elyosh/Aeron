@@ -47,6 +47,9 @@ MESH_TYPE_NAMES = (
     "Reactor",
 )
 
+# The hardpoint XWA reads as the pilot eye (index in HARDPOINT_TYPE_NAMES).
+COCKPIT_HARDPOINT_TYPE = 31
+
 HARDPOINT_TYPE_NAMES = (
     "None", "Laser cannon / Rebel laser", "Ion cannon / Turbo rebel laser",
     "Turbo laser / Empire laser", "Ion turbo laser / Turbo empire laser",
@@ -61,7 +64,7 @@ HARDPOINT_TYPE_NAMES = (
     "Acceleration end", "Cockpit / inside hangar", "Engine / outside hangar",
     "Passive heavy dock / dock from big", "Passive light dock / dock from small",
     "Active heavy dock / dock to big", "Active light dock / dock to small",
-    "Primary sweep / cockpit",
+    "Primary sweep / cockpit (XWA pilot eye)",
     "Engine glow", "Custom 1", "Custom 2", "Custom 3", "Custom 4", "Custom 5",
     "Custom 6", "Jamming point",
 )
@@ -287,6 +290,11 @@ def _validate_flight_hierarchy(objects):
                 obj.parent.aeron_flight.role != 'component'):
             return None, ("hardpoints, engine glows and collision meshes must belong to an "
                           "exported component")
+    # XWA reads the pilot eye from the craft model's one Cockpit hardpoint.
+    if sum(1 for obj in objects if obj.aeron_flight.role == 'hardpoint' and
+           int(obj.aeron_flight.hardpoint_type) == COCKPIT_HARDPOINT_TYPE) > 1:
+        return None, "a model can have at most one cockpit (type {}) hardpoint".format(
+            COCKPIT_HARDPOINT_TYPE)
     return root, None
 
 
