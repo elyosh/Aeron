@@ -256,24 +256,49 @@ typedef struct {
 #define OPT_TEXTURE_NAME_MAX 64 /* names in the wild are <= 8, plenty */
 
 /*
- * Texture pixels are stored as a halving mip chain: level 0 is W*H bytes,
- * level 1 is (W/2)*(H/2) bytes, etc., until 1x1. mip_count is 1 if the file
+ * Texture pixels are stored as a halving mip chain: level 0 is W*H texels,
+ * level 1 is (W/2)*(H/2) texels, etc., until 1x1. mip_count is 1 if the file
  * stored no mips. Use opt_texture_mip_offset() to find a level's sub-buffer.
+ *
+ * Texels are 1-byte palette indices, except in 32bpp textures (XWA only, as
+ * written by JeremyAnsel.Xwa.Opt and the XWAU tools), whose texels are 4
+ * bytes in B,G,R,A order. The format is not stored: it follows from the
+ * base-level byte count (JeremyAnsel.Xwa.Opt Texture.cs BitsPerPixel). A
+ * 32bpp texture has no palette; the 8192-byte block after its pixels is
+ * zero except two flag bytes, [2] (has alpha) and [4] (has illumination).
  */
+#define OPT_TEXTURE_32BPP_FLAG_ALPHA 2
+#define OPT_TEXTURE_32BPP_FLAG_ILLUM 4
+
 typedef struct {
 	char     name[OPT_TEXTURE_NAME_MAX];
 	int32_t  width;
 	int32_t  height;
+	int32_t  bytes_per_texel; /* 1 (palette index) or 4 (B,G,R,A) */
 	int32_t  mip_count;
 	int32_t  mip_chain_bytes; /* total bytes in pixels[] across all levels */
 	uint8_t* pixels;          /* full mip chain, base level first */
 	/*
-	 * Per-pixel alpha (0 = transparent, 255 = opaque), from an XWA
-	 * TextureAlpha child node. NULL when the file carries none (all 1998
-	 * textures, most XWA ones). Same mip-chain layout/length as pixels[]
-	 * (1 byte/pixel), so the base level is the first width*height bytes.
+	 * Per-pixel alpha (0 = transparent, 255 = opaque). NULL when the texture
+	 * has none, which makes it opaque. 1 byte/pixel with the same mip-chain
+	 * texel layout as pixels[], so the base level is the first width*height
+	 * bytes. Sources:
+	 *   - 8bpp: the XWA TextureAlpha child node (absent from all 1998
+	 *     textures and most XWA ones);
+	 *   - 32bpp: the A byte of each texel, only when the texture's alpha
+	 *     flag is set. Without the flag the texture is drawn opaque.
 	 */
 	uint8_t* alpha;
+	/*
+	 * 32bpp only: per-pixel illumination (0 = unlit .. 255), the first
+	 * width*height bytes of the TextureAlpha child node, present only when
+	 * the illumination flag is set. Base level only: the child's byte count
+	 * is not reliable (some files store 4x the chain length, zero-padded).
+	 * NULL otherwise; 8bpp illumination is derived from the palette.
+	 */
+	uint8_t* illum;
+	uint8_t  flag_alpha; /* 32bpp flag byte [2] != 0 */
+	uint8_t  flag_illum; /* 32bpp flag byte [4] != 0 */
 	uint8_t  palette[OPT_PALETTE_BYTES];
 	/* Original indexed + RGB565 data retained for v1 runtime conversion. */
 	uint8_t* native_shade_table;
@@ -370,7 +395,8 @@ int opt_palette_index_emissive(const opt_file_t* opt, const uint8_t palette[OPT_
 							   int tol);
 
 /*
- * Return the byte offset of mip `level` inside texture->pixels, and write
+ * Return the byte offset of mip `level` inside texture->pixels (texel offset
+ * times bytes_per_texel; divide by it to index alpha[]), and write
  * the level's dimensions into *w / *h. level 0 is the base mip. Returns 0
  * (and W/H = base) for any out-of-range level.
  */

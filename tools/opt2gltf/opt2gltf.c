@@ -121,7 +121,9 @@ static inline void rgb565_to_rgb8(uint16_t w, uint8_t* r, uint8_t* g, uint8_t* b
 
 /* Decode the base mip of an OPT texture into RGBA8 at the given palette
  * shade row (the file's base-color row; see opt_palette_base_shade).
- * Caller owns the returned buffer. Returns NULL on bad inputs. */
+ * 32bpp textures ignore the shade and keep their authored B,G,R,A color;
+ * their alpha is t->alpha (set only with the texture's alpha flag), else
+ * opaque. Caller owns the returned buffer. Returns NULL on bad inputs. */
 static uint8_t* decode_texture_rgba8(const opt_texture_t* t, int shade) {
 	if (!t || !t->pixels || t->width <= 0 || t->height <= 0)
 		return NULL;
@@ -129,6 +131,15 @@ static uint8_t* decode_texture_rgba8(const opt_texture_t* t, int shade) {
 	uint8_t*     out        = (uint8_t*)malloc(base_bytes * 4);
 	if (!out)
 		return NULL;
+	if (t->bytes_per_texel == 4) {
+		for (size_t i = 0; i < base_bytes; ++i) {
+			out[i * 4 + 0] = t->pixels[i * 4 + 2];
+			out[i * 4 + 1] = t->pixels[i * 4 + 1];
+			out[i * 4 + 2] = t->pixels[i * 4 + 0];
+			out[i * 4 + 3] = t->alpha ? t->alpha[i] : 255;
+		}
+		return out;
+	}
 	const uint8_t* src = t->pixels;
 	const uint8_t* pal = t->palette + ((size_t)shade * OPT_PALETTE_COLORS * OPT_PALETTE_BPP);
 	for (size_t i = 0; i < base_bytes; ++i) {
@@ -162,6 +173,10 @@ static uint8_t* decode_texture_rgba8(const opt_texture_t* t, int shade) {
 static uint8_t* decode_texture_emissive_rgba8(const opt_file_t* opt, const opt_texture_t* t, int shade,
 											  int tol) {
 	if (!t || !t->pixels || t->width <= 0 || t->height <= 0)
+		return NULL;
+	/* The classifiers read the palette; a 32bpp texture has none (its
+	 * illumination is a separate plane, t->illum). */
+	if (t->bytes_per_texel == 4)
 		return NULL;
 	const int xwa = opt && opt->version >= 5;
 	if (xwa && t->name[0] == '_') {

@@ -385,18 +385,18 @@ static int32_t texture_lookup_or_add(opt_ctx_t* c, const char* name) {
 	return c->texture_count++;
 }
 
-/* Count mip levels consistent with a given chain size. Mips halve each axis
- * (min 1) until both dimensions are 1; the file may store fewer levels than
- * the theoretical max if data_size stops earlier. */
-static int32_t count_mip_levels(int32_t width, int32_t height, int32_t chain_bytes) {
+/* Count mip levels consistent with a given chain size in texels. Mips halve
+ * each axis (min 1) until both dimensions are 1; the file may store fewer
+ * levels than the theoretical max if data_size stops earlier. */
+static int32_t count_mip_levels(int32_t width, int32_t height, int32_t chain_texels) {
 	int32_t levels      = 0;
 	int32_t accumulated = 0;
 	int32_t w = width, h = height;
-	while (accumulated < chain_bytes) {
-		int32_t level_bytes = w * h;
-		if (accumulated + level_bytes > chain_bytes)
+	while (accumulated < chain_texels) {
+		int32_t level_texels = w * h;
+		if (accumulated + level_texels > chain_texels)
 			break;
-		accumulated += level_bytes;
+		accumulated += level_texels;
 		levels++;
 		if (w == 1 && h == 1)
 			break;
@@ -404,6 +404,61 @@ static int32_t count_mip_levels(int32_t width, int32_t height, int32_t chain_byt
 		h = (h > 1) ? h / 2 : 1;
 	}
 	return levels < 1 ? 1 : levels;
+}
+
+/* First TextureAlpha (node type 26) child of a Texture node: p1 = byte count,
+ * p2 = data pointer. Returns 0 when there is none. */
+static int find_texture_alpha_child(opt_ctx_t* c, const opt_node_t* n, opt_node_t* out) {
+	if (n->child_count <= 0 || n->child_table_ptr == 0)
+		return 0;
+	size_t table = ptr_to_off(c, n->child_table_ptr);
+	for (int32_t i = 0; i < n->child_count; i++) {
+		if (!range_ok(c, table + (size_t)i * 4, 4))
+			return 0;
+		int32_t cptr = ru32(c->buf, table + (size_t)i * 4);
+		if (cptr == 0)
+			continue;
+		if (!read_node(c, ptr_to_off(c, cptr), out))
+			continue;
+		if (out->type == OPT_NODE_TEXTURE_ALPHA)
+			return 1;
+	}
+	return 0;
+}
+
+/* Alpha and illumination planes of a 32bpp texture (flags already read).
+ * Alpha is the texel A byte over the whole chain, kept only when the alpha
+ * flag is set: without it XWA draws the texture opaque. Illumination is the
+ * TextureAlpha child, used only when the illumination flag is set, base
+ * level only: its p1 can be 4x the chain length (zero padding), so only the
+ * first W*H bytes are meaningful. */
+static void parse_texture_32bpp_planes(opt_ctx_t* c, const opt_node_t* n, opt_texture_t* t) {
+	if (!t->pixels || t->bytes_per_texel != 4)
+		return;
+	if (t->flag_alpha && !t->alpha) {
+		const int32_t chain_texels = t->mip_chain_bytes / 4;
+		t->alpha                   = (uint8_t*)malloc((size_t)chain_texels);
+		if (!t->alpha) {
+			set_err(c, "out of memory (texture alpha)");
+			return;
+		}
+		for (int32_t i = 0; i < chain_texels; i++)
+			t->alpha[i] = t->pixels[(size_t)i * 4 + 3];
+	}
+	opt_node_t child;
+	if (t->flag_illum && !t->illum && find_texture_alpha_child(c, n, &child)) {
+		const size_t base_texels = (size_t)t->width * (size_t)t->height;
+		size_t       illum_off   = ptr_to_off(c, child.p2);
+		if (child.p1 < 0 || (size_t)child.p1 < base_texels || illum_off == 0 ||
+			!range_ok(c, illum_off, base_texels))
+			return;
+		t->illum = (uint8_t*)malloc(base_texels);
+		if (!t->illum) {
+			set_err(c, "out of memory (texture illumination)");
+			return;
+		}
+		memcpy(t->illum, c->buf + illum_off, base_texels);
+	}
 }
 
 static void parse_texture_data(opt_ctx_t* c, const opt_node_t* n, int32_t tex_index) {
@@ -428,6 +483,15 @@ static void parse_texture_data(opt_ctx_t* c, const opt_node_t* n, int32_t tex_in
 	 * Otherwise data_size covers the full halving mip chain starting at base. */
 	size_t  pixels_off  = data_off + OPT_TEX_DATA_HEADER_BYTES;
 	int32_t chain_bytes = (texture_size == 0) ? (int32_t)((size_t)width * (size_t)height) : data_size;
+
+	/* Texel size from the chain length (JeremyAnsel.Xwa.Opt Texture.cs
+	 * BitsPerPixel): [4*W*H, 8*W*H) bytes is 32bpp B,G,R,A, as written by the
+	 * XWAU tools. Every other length keeps the 1-byte palette-index reading.
+	 * A base-only 32bpp texture stores texture_size = W*H with
+	 * data_size = 4*W*H, so it lands in the data_size branch above. */
+	const int64_t texels      = (int64_t)width * (int64_t)height;
+	const int32_t texel_bytes = (texels > 0 && chain_bytes >= 4 * texels && chain_bytes < 8 * texels) ? 4 : 1;
+	const int32_t chain_texels = chain_bytes / texel_bytes;
 	if (t->pixels == NULL && chain_bytes > 0 && range_ok(c, pixels_off, (size_t)chain_bytes)) {
 		t->pixels = (uint8_t*)malloc((size_t)chain_bytes);
 		if (!t->pixels) {
@@ -435,8 +499,9 @@ static void parse_texture_data(opt_ctx_t* c, const opt_node_t* n, int32_t tex_in
 			return;
 		}
 		memcpy(t->pixels, c->buf + pixels_off, (size_t)chain_bytes);
+		t->bytes_per_texel = texel_bytes;
 		t->mip_chain_bytes = chain_bytes;
-		t->mip_count       = (texture_size == 0) ? 1 : count_mip_levels(width, height, chain_bytes);
+		t->mip_count       = (texture_size == 0) ? 1 : count_mip_levels(width, height, chain_texels);
 	}
 
 	/* Palette: always 16 * 256 * 2 bytes. Two storage modes:
@@ -451,7 +516,14 @@ static void parse_texture_data(opt_ctx_t* c, const opt_node_t* n, int32_t tex_in
 	 *                       handling: discriminate on palette_type and
 	 *                       pick the right source. */
 	size_t pal_off = (palette_type == 0) ? ptr_to_off(c, palette_ptr) : pixels_off + (size_t)chain_bytes;
-	if (pal_off != 0 && range_ok(c, pal_off, OPT_PALETTE_BYTES)) {
+	if (texel_bytes == 4) {
+		/* A 32bpp texture has no palette: the block holds only its alpha and
+		 * illumination flags. t->palette stays zero. */
+		if (pal_off != 0 && range_ok(c, pal_off, OPT_TEXTURE_32BPP_FLAG_ILLUM + 1)) {
+			t->flag_alpha = c->buf[pal_off + OPT_TEXTURE_32BPP_FLAG_ALPHA] != 0;
+			t->flag_illum = c->buf[pal_off + OPT_TEXTURE_32BPP_FLAG_ILLUM] != 0;
+		}
+	} else if (pal_off != 0 && range_ok(c, pal_off, OPT_PALETTE_BYTES)) {
 		memcpy(t->palette, c->buf + pal_off, OPT_PALETTE_BYTES);
 	}
 	if (c->version == 1 && pal_off != 0 && range_ok(c, pal_off, OPT_NATIVE_SHADE_TABLE_BYTES)) {
@@ -465,35 +537,27 @@ static void parse_texture_data(opt_ctx_t* c, const opt_node_t* n, int32_t tex_in
 		memcpy(t->native_shade_table, c->buf + pal_off, OPT_NATIVE_SHADE_TABLE_BYTES);
 	}
 
+	if (texel_bytes == 4) {
+		parse_texture_32bpp_planes(c, n, t);
+		return;
+	}
+
 	/* Optional alpha: an XWA Texture node may carry a TextureAlpha child
 	 * (node type 26) whose data block is a 1-byte-per-pixel alpha map with
 	 * the same mip-chain length as the pixel data. p1 = byte count,
 	 * p2 = data pointer. Stored verbatim; opaque (no alpha) when absent. */
-	if (t->alpha == NULL && n->child_count > 0 && n->child_table_ptr != 0) {
-		size_t table = ptr_to_off(c, n->child_table_ptr);
-		for (int32_t i = 0; i < n->child_count; i++) {
-			if (!range_ok(c, table + (size_t)i * 4, 4))
-				break;
-			int32_t cptr = ru32(c->buf, table + (size_t)i * 4);
-			if (cptr == 0)
-				continue;
-			opt_node_t child;
-			if (!read_node(c, ptr_to_off(c, cptr), &child))
-				continue;
-			if (child.type != OPT_NODE_TEXTURE_ALPHA)
-				continue;
-			int32_t alpha_bytes = child.p1;
-			size_t  alpha_off   = ptr_to_off(c, child.p2);
-			if (alpha_bytes <= 0 || alpha_off == 0 || !range_ok(c, alpha_off, (size_t)alpha_bytes))
-				break;
-			t->alpha = (uint8_t*)malloc((size_t)alpha_bytes);
-			if (!t->alpha) {
-				set_err(c, "out of memory (texture alpha)");
-				return;
-			}
-			memcpy(t->alpha, c->buf + alpha_off, (size_t)alpha_bytes);
-			break;
+	opt_node_t child;
+	if (t->alpha == NULL && find_texture_alpha_child(c, n, &child)) {
+		int32_t alpha_bytes = child.p1;
+		size_t  alpha_off   = ptr_to_off(c, child.p2);
+		if (alpha_bytes <= 0 || alpha_off == 0 || !range_ok(c, alpha_off, (size_t)alpha_bytes))
+			return;
+		t->alpha = (uint8_t*)malloc((size_t)alpha_bytes);
+		if (!t->alpha) {
+			set_err(c, "out of memory (texture alpha)");
+			return;
 		}
+		memcpy(t->alpha, c->buf + alpha_off, (size_t)alpha_bytes);
 	}
 }
 
@@ -1021,6 +1085,7 @@ static void opt_free_contents(opt_file_t* opt) {
 	for (int32_t i = 0; i < opt->texture_count; i++) {
 		free(opt->textures[i].pixels);
 		free(opt->textures[i].alpha);
+		free(opt->textures[i].illum);
 		free(opt->textures[i].native_shade_table);
 	}
 	free(opt->textures);
@@ -1229,7 +1294,7 @@ size_t opt_texture_mip_offset(const opt_texture_t* t, int level, int32_t* w, int
 		*w = ww;
 	if (h)
 		*h = hh;
-	return off;
+	return off * (size_t)(t->bytes_per_texel > 1 ? t->bytes_per_texel : 1);
 }
 
 int32_t opt_face_group_texture(const opt_face_group_t* g, int state) {
