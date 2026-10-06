@@ -21,11 +21,13 @@
  *   b0 space3 — DirectionalShadowFS (scene-owned)
  *   b1 space3 — PbrLightFS          (shared lighting and tuning)
  *   b2 space3 — scene lighting block (clustered lights + environment)
- *   t10 space2 — material storage (after ten sampled textures)
- *   t11 space2 — packed variant-map storage
- *   t12 space2 — scene point-light storage
- *   t13 space2 — cluster headers
- *   t14 space2 — cluster light indices
+ *   t12 space2 — material storage (after twelve sampled textures)
+ *   t13 space2 — packed variant-map storage
+ *   t14 space2 — scene point-light storage
+ *   t15 space2 — cluster headers
+ *   t16 space2 — cluster light indices
+ *   t17 space2 — mesh screen rectangles (scene_pbr_screen.hlsli)
+ *   t18 space2 — scene screen frame
  *
  * Texture / sampler slots:
  *   t0/s0 — base_color atlas    (sRGB)
@@ -38,20 +40,25 @@
  *   t7/s7 — diffuse environment cube (Lambert irradiance / pi)
  *   t8/s8 — specular environment cube (GGX roughness mips)
  *   t9/s9 — split-sum BRDF table (N.V, perceptual roughness) -> (A, B)
+ *   t10/s10 — screen capture, graphics (premultiplied, sRGB)
+ *   t11/s11 — screen capture, text (premultiplied, sRGB)
  */
 
 #define AERON_DIRECTIONAL_SHADOW_UNIFORM_REGISTER b0
 #define AERON_PBR_LIGHT_UNIFORM_REGISTER b1
-#define AERON_PBR_MATERIAL_REGISTER t10
-#define AERON_PBR_VARIANT_REGISTER t11
-#define AERON_PBR_POINT_LIGHT_REGISTER t12
-#define AERON_CLUSTER_HEADER_REGISTER t13
-#define AERON_CLUSTER_INDEX_REGISTER t14
+#define AERON_PBR_MATERIAL_REGISTER t12
+#define AERON_PBR_VARIANT_REGISTER t13
+#define AERON_PBR_POINT_LIGHT_REGISTER t14
+#define AERON_CLUSTER_HEADER_REGISTER t15
+#define AERON_CLUSTER_INDEX_REGISTER t16
+#define AERON_PBR_SCREEN_RECT_REGISTER t17
+#define AERON_PBR_SCREEN_FRAME_REGISTER t18
 #include "scene_pbr_lighting.hlsli"
 #include "scene_pbr_atlas_sample.hlsli"
 #include "scene_pbr_vsout.hlsli"
 #include "srgb.hlsli"
 #include "scene_pbr_material_alpha.hlsli"
+#include "scene_pbr_screen.hlsli"
 
 Texture2DArray g_normal     : register(t1, space2);
 SamplerState g_normal_sampler : register(s1, space2);
@@ -101,6 +108,15 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
         i.prim_id, i.variant_row_base, i.variant_group_count,
         i.material_count);
 
+    /* ===== Hologram screens (unlit, straight alpha) =============== */
+    if ((m.screen_flags & SCREEN_HOLOGRAM) != 0u) {
+        ScreenFrame holo_frame = screen_load_frame();
+        if (holo_frame.holo_fade <= 0.01f)
+            discard;
+        _out.color = screen_hologram(m, i.uv, holo_frame);
+        return _out;
+    }
+
     /* ===== Base color ============================================ */
     float4 albedo_tex = pbr_sample_base_color(m, i.uv);
 #if AERON_PBR_ALPHA_MASK
@@ -108,6 +124,30 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
                          m.metal_rough.z);
 #endif
     float3 albedo = albedo_tex.rgb * m.base_color_factor.rgb;
+
+    /* ===== Transparent screens ===================================
+     * Unlit like XWAU's (no normal or shading): the cover, when present,
+     * over the screen, with alpha from the display luminance. */
+    if ((m.screen_flags & SCREEN_TRANSPARENT) != 0u) {
+        ScreenFrame screen_frame = screen_load_frame();
+        if ((screen_frame.flags & SCREEN_FRAME_HIDE_TRANSPARENT) != 0u &&
+            (m.screen_flags & SCREEN_ALWAYS_VISIBLE) == 0u)
+            discard;
+        float3 screen = screen_evaluate(m, i.uv, screen_frame);
+        float3 color = screen;
+        if ((m.screen_flags & SCREEN_COVER) != 0u) {
+            float3 cover_glow = float3(0.0f, 0.0f, 0.0f);
+            if ((m.flags & GLTF_MATERIAL_HAS_EMISSIVE) != 0u) {
+                cover_glow = pbr_sample_channel(g_emissive, g_em_sampler, m, GLTF_ATLAS_EMISSIVE,
+                                                m.emissive_rect, i.uv).rgb *
+                             m.emissive_packed.rgb * m.emissive_packed.a;
+            }
+            color = albedo + cover_glow + screen * (1.0f - albedo_tex.a);
+        }
+        float luma = dot(AeronLinearToSrgb(saturate(color)), float3(0.333f, 0.333f, 0.333f));
+        _out.color = float4(color, saturate(4.0f * luma));
+        return _out;
+    }
 
     /* ===== Normal vector ========================================= */
     float  side_sign = is_front ? 1.0f : -1.0f;
@@ -421,6 +461,14 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
         } else {
             lit += emissive;
         }
+    }
+
+    /* ===== Opaque screens =========================================
+     * Unlit screen radiance, shown where the cover is transparent (all of
+     * the surface without a cover). */
+    if (m.screen_count != 0u && xvt_flat == 0.0f && isolate == 0) {
+        float3 screen = screen_evaluate(m, i.uv, screen_load_frame());
+        lit += screen * ((m.screen_flags & SCREEN_COVER) != 0u ? 1.0f - albedo_tex.a : 1.0f);
     }
 
     /* Alpha-BLEND materials (flag bit 3 — canopy glass, drawn by the

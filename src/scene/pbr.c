@@ -301,9 +301,9 @@ static AeronGraphicsPipeline* pbr_debug_pipeline(struct AeronScene3D* s, int kin
 	}
 	if (!s->pbr_debug_tried) {
 		s->pbr_debug_tried = 1;
-		s->pbr_debug_fs    = pbr_shader("scene_pbr_mesh_debug.frag", AERON_SHADER_STAGE_FRAGMENT, 10, 3, 5);
+		s->pbr_debug_fs    = pbr_shader("scene_pbr_mesh_debug.frag", AERON_SHADER_STAGE_FRAGMENT, 12, 3, 7);
 		s->pbr_mask_debug_fs =
-			pbr_shader("scene_pbr_mesh_mask_debug.frag", AERON_SHADER_STAGE_FRAGMENT, 10, 3, 5);
+			pbr_shader("scene_pbr_mesh_mask_debug.frag", AERON_SHADER_STAGE_FRAGMENT, 12, 3, 7);
 	}
 	if (!s->pbr_debug_fs || !s->pbr_mask_debug_fs) {
 		return NULL;
@@ -350,8 +350,8 @@ int AeronScenePbr_Ensure(struct AeronScene3D* s) {
 	s->pbr_prepass_vs       = pbr_shader("scene_pbr_prepass.vert", AERON_SHADER_STAGE_VERTEX, 0, 1, 1);
 	s->pbr_prepass_mask_vs  = pbr_shader("scene_pbr_prepass_mask.vert", AERON_SHADER_STAGE_VERTEX, 0, 1, 1);
 	s->pbr_prepass_stamp_vs = pbr_shader("scene_pbr_prepass_stamp.vert", AERON_SHADER_STAGE_VERTEX, 0, 1, 1);
-	s->pbr_fs               = pbr_shader("scene_pbr_mesh.frag", AERON_SHADER_STAGE_FRAGMENT, 10, 3, 5);
-	s->pbr_mask_fs          = pbr_shader("scene_pbr_mesh_mask.frag", AERON_SHADER_STAGE_FRAGMENT, 10, 3, 5);
+	s->pbr_fs               = pbr_shader("scene_pbr_mesh.frag", AERON_SHADER_STAGE_FRAGMENT, 12, 3, 7);
+	s->pbr_mask_fs          = pbr_shader("scene_pbr_mesh_mask.frag", AERON_SHADER_STAGE_FRAGMENT, 12, 3, 7);
 	s->pbr_prepass_fs       = pbr_shader("scene_pbr_prepass.frag", AERON_SHADER_STAGE_FRAGMENT, 0, 0, 0);
 	s->pbr_prepass_mask_fs  = pbr_shader("scene_pbr_prepass_mask.frag", AERON_SHADER_STAGE_FRAGMENT, 1, 0, 2);
 	s->pbr_backface_vs      = pbr_shader("scene_pbr_backface.vert", AERON_SHADER_STAGE_VERTEX, 0, 1, 1);
@@ -534,10 +534,22 @@ static void pbr_bind_ao(struct AeronScene3D* s, AeronRenderPass* pass, AeronText
 							 s->pbr_sampler);
 	Aeron_BindStorageBuffer(pass, AERON_SHADER_STAGE_FRAGMENT, 2, s->point_light_buffer);
 	AeronSceneClusteredLights_Bind(s, pass);
+	/* Screen surfaces: the captured graphics and text (t10, t11) and the
+	 * frame's sources (storage 6). Without a capture the placeholder is
+	 * never sampled: the frame marks every source invalid. */
+	AeronSampler* screen_sampler = s->post_linear_sampler ? s->post_linear_sampler : s->pbr_sampler;
+	Aeron_BindTextureSampler(pass, AERON_SHADER_STAGE_FRAGMENT, 10,
+							 s->screen_graphics ? s->screen_graphics : AeronSceneInternal_WhiteTexture(),
+							 screen_sampler);
+	Aeron_BindTextureSampler(pass, AERON_SHADER_STAGE_FRAGMENT, 11,
+							 s->screen_text ? s->screen_text : AeronSceneInternal_WhiteTexture(),
+							 screen_sampler);
+	Aeron_BindStorageBuffer(pass, AERON_SHADER_STAGE_FRAGMENT, 6, s->screen_frame_buffer);
 }
 
-static void pbr_bind_material_resources(AeronRenderPass* pass, const AeronSceneMesh* mesh,
-										AeronSampler* atlas_sampler, int all_channels) {
+static void pbr_bind_material_resources(const struct AeronScene3D* s, AeronRenderPass* pass,
+										const AeronSceneMesh* mesh, AeronSampler* atlas_sampler,
+										int all_channels) {
 	const uint32_t channel_count = all_channels ? AERON_GLTF_CHANNEL_COUNT : 1u;
 	for (uint32_t channel = 0; channel < channel_count; ++channel) {
 		Aeron_BindTextureSampler(pass, AERON_SHADER_STAGE_FRAGMENT, channel,
@@ -547,6 +559,12 @@ static void pbr_bind_material_resources(AeronRenderPass* pass, const AeronSceneM
 	}
 	Aeron_BindStorageBuffer(pass, AERON_SHADER_STAGE_FRAGMENT, 0, mesh->material_buffer);
 	Aeron_BindStorageBuffer(pass, AERON_SHADER_STAGE_FRAGMENT, 1, mesh->variant_buffer);
+	/* Colour shaders read the screen rectangles (storage 5); a mesh without
+	 * any binds the frame buffer in their place, which it never reads. */
+	if (all_channels) {
+		Aeron_BindStorageBuffer(pass, AERON_SHADER_STAGE_FRAGMENT, 5,
+								mesh->screen_rect_buffer ? mesh->screen_rect_buffer : s->screen_frame_buffer);
+	}
 }
 
 int AeronScenePbr_DrawInstances(struct AeronScene3D* s, AeronCommandBuffer* cmd, AeronRenderPass* pass,
@@ -617,7 +635,7 @@ int AeronScenePbr_DrawInstances(struct AeronScene3D* s, AeronCommandBuffer* cmd,
 			Aeron_BindVertexBuffer(pass, 0, m->vbo, 0);
 			Aeron_BindIndexBuffer(pass, m->ibo, AERON_INDEX_FORMAT_UINT32, 0);
 			if (!depth_only) {
-				pbr_bind_material_resources(pass, m, atlas_sampler, 1);
+				pbr_bind_material_resources(s, pass, m, atlas_sampler, 1);
 			}
 		}
 
@@ -668,7 +686,7 @@ int AeronScenePbr_DrawInstances(struct AeronScene3D* s, AeronCommandBuffer* cmd,
 				bound_mesh = m;
 				Aeron_BindVertexBuffer(pass, 0, m->vbo, 0);
 				Aeron_BindIndexBuffer(pass, m->ibo, AERON_INDEX_FORMAT_UINT32, 0);
-				pbr_bind_material_resources(pass, m, atlas_sampler, !depth_only);
+				pbr_bind_material_resources(s, pass, m, atlas_sampler, !depth_only);
 			}
 			pbr_push_instance_uniforms(s, pass, in, m, &s->prepared_instances[i], velocity, depth_only,
 									   screen_shadow);
@@ -771,7 +789,7 @@ int AeronScenePbr_DrawTransparentInstances(struct AeronScene3D* s, AeronRenderPa
 			bound_mesh = m;
 			Aeron_BindVertexBuffer(pass, 0, m->vbo, 0);
 			Aeron_BindIndexBuffer(pass, m->ibo, AERON_INDEX_FORMAT_UINT32, 0);
-			pbr_bind_material_resources(pass, m, atlas_sampler, 1);
+			pbr_bind_material_resources(s, pass, m, atlas_sampler, 1);
 		}
 		pbr_push_instance_uniforms(s, pass, in, m, &s->prepared_instances[i],
 								   /*velocity=*/0, /*depth_only=*/0,

@@ -26,6 +26,10 @@ typedef struct CaptureConfig {
 	int                    bloom_chart, bloom_enabled, bloom_kernel, msaa_samples, tonemap;
 	int                    cull_mode, backface_fill;
 	float                  bloom_intensity, emissive_scale;
+	/* screen_test: the first model alone, seen from `screen_eye` (model
+	 * metres) at yaw/pitch degrees, with test screen inputs. */
+	int                    screen_test;
+	float                  screen_eye[3], screen_yaw, screen_pitch;
 	CaptureBenchmarkConfig benchmark;
 	int                    benchmark_mode;
 } CaptureConfig;
@@ -41,6 +45,7 @@ typedef struct Fixture {
 	CaptureConfig      config;
 	AeronRenderTarget* chart_rt;
 	AeronDrawList2D*   chart_draws;
+	AeronTexture *     screen_graphics, *screen_text;
 } Fixture;
 
 typedef struct CaptureBloom {

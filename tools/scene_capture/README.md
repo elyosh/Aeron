@@ -56,6 +56,7 @@ Start from a preset; unknown keys are rejected. The main settings are:
 | `msaa_samples` | 1, 2, 4 or 8; default 2. |
 | `cull` | `none` (default, two-sided), `front` or `back`: the instances' cull mode. `front` culls what the game's `back` culls, as this camera's handedness is the opposite. |
 | `backface_fill` | `true` (default) or `false`: the dark fill behind cracks in single-sided instances (`AeronScene_SetBackfaceFill`). |
+| `screen_test` | Optional mapping: `eye: [x, y, z]` (model metres), `yaw_degrees`, `pitch_degrees` (positive looks down). Renders the first model alone from that point, unscaled, with test screen inputs: a gradient checker as graphics and a white "F" with a 32-pixel grid as text, every source covering the whole texture. Checks screen surfaces (cockpit displays, holograms) for placement, orientation and mirroring. |
 | `emissive_scale` | Shape/material emission multiplier; default 1. Use 8 to raise the cuboids above the bloom threshold. |
 | `bloom` | Optional mapping requiring `intensity` and `kernel` (1 or 4 taps). Omit to disable bloom captures. |
 | `tonemap` | `agx` (default) or `aces`. |

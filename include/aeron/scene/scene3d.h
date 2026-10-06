@@ -382,6 +382,31 @@ void AeronScene_SetPbrDebugMaterial(AeronScene3D* scene, int enabled, float meta
  * depth test. */
 void AeronScene_SetBackfaceFill(AeronScene3D* scene, int enabled);
 
+/* Screen surfaces (gltf_mesh.h, "Screen surfaces"): the per-frame inputs of
+ * every screen material. 16-byte rows only, so the C layout matches the
+ * shader's structured buffer on every backend. */
+#define AERON_SCENE_SCREEN_HIDE_TRANSPARENT 0x1u /* drop transparent, not always-visible */
+#define AERON_SCENE_SCREEN_BAR_VISIBLE 0x2u      /* draw fill bars */
+
+typedef struct AeronSceneScreenFrame {
+	uint32_t valid[2];                                 /* row 0: bit per source with a rectangle below */
+	uint32_t color_state;                              /*        background: 0 bg, 1 highlight, 2 lock */
+	uint32_t flags;                                    /*        AERON_SCENE_SCREEN_* */
+	float    display_strength;                         /* row 1: emissive multiplier of screens */
+	float    bar_level;                                /*        fill-bar level, 0..1 */
+	float    holo_time;                                /*        hologram animation time, seconds */
+	float    holo_fade;                                /*        hologram visibility, 0..1 */
+	float    holo_color[4];                            /* row 2: linear hologram RGB, emissive multiplier */
+	float    source[AERON_GLTF_SCREEN_MAX_SOURCES][4]; /* texture UV x0, y0, x1, y1 */
+} AeronSceneScreenFrame;
+
+/* Sets the screen inputs for the current frame: the captured `graphics`
+ * and `text` textures (premultiplied, sampled bilinearly without mips) and
+ * `frame`. NULL textures or frame turn screens off: every source is
+ * invalid and holograms are hidden. Reset by Begin. */
+void AeronScene_SetScreenSources(AeronScene3D* scene, AeronTexture* graphics, AeronTexture* text,
+								 const AeronSceneScreenFrame* frame);
+
 /* Image-based lighting environment for the PBR shader, for the current
  * frame. `diffuse` is a Lambert irradiance / pi cube; its sample along the
  * shading normal, times `diffuse_strength`, adds to the diffuse ambient.

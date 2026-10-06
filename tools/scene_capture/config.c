@@ -109,6 +109,23 @@ static int load_effects(const AeronConfigFile* yaml, CaptureConfig* config) {
 	}
 	config->backface_fill = fill_node ? AeronConfigNode_Bool(fill_node, 1) : 1;
 
+	const AeronConfigNode* screen = AeronConfigFile_GetNode(yaml, "screen_test");
+	if (screen) {
+		const AeronConfigNode* eye = AeronConfigNode_MapGet(screen, "eye");
+		if (AeronConfigNode_Type(screen) != AERON_CONFIG_MAP || AeronConfigNode_SequenceCount(eye) != 3 ||
+			!config->model_count) {
+			fprintf(stderr, "screen_test needs models and eye: [x, y, z]\n");
+			return 0;
+		}
+		for (int k = 0; k < 3; ++k)
+			config->screen_eye[k] =
+				(float)AeronConfigNode_Float(AeronConfigNode_SequenceGet(eye, (size_t)k), 0);
+		config->screen_yaw = (float)AeronConfigNode_Float(AeronConfigNode_MapGet(screen, "yaw_degrees"), 0);
+		config->screen_pitch =
+			(float)AeronConfigNode_Float(AeronConfigNode_MapGet(screen, "pitch_degrees"), 0);
+		config->screen_test = 1;
+	}
+
 	const AeronConfigNode* tonemap_node = AeronConfigFile_GetNode(yaml, "tonemap");
 	const char*            tonemap      = tonemap_node ? AeronConfigNode_String(tonemap_node, NULL) : "agx";
 	if (!tonemap || (strcmp(tonemap, "agx") && strcmp(tonemap, "aces"))) {
@@ -213,6 +230,7 @@ int CaptureConfig_Load(const char* path, CaptureConfig* config) {
 									  "tonemap",
 									  "cull",
 									  "backface_fill",
+									  "screen_test",
 									  "bloom",
 									  "emissive_scale",
 									  "benchmark" };

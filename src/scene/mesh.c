@@ -15,6 +15,7 @@
 #include <string.h>
 
 typedef char AeronPbrMaterialEntrySizeCheck[sizeof(AeronPbrMaterialEntry) == 160 ? 1 : -1];
+typedef char AeronPbrScreenRectSizeCheck[sizeof(AeronPbrScreenRect) == 96 ? 1 : -1];
 
 static const char* channel_name(int c) {
 	static const char* names[AERON_GLTF_CHANNEL_COUNT] = { "base_color", "normal", "metallic_rough",
@@ -43,6 +44,7 @@ void AeronScene_MeshDestroy(AeronSceneMesh* m) {
 	}
 	Aeron_DestroyBuffer(m->material_buffer);
 	Aeron_DestroyBuffer(m->variant_buffer);
+	Aeron_DestroyBuffer(m->screen_rect_buffer);
 	for (int c = 0; c < AERON_GLTF_CHANNEL_COUNT; c++) {
 		if (m->atlas[c]) {
 			Aeron_DestroyTexture(m->atlas[c]);
@@ -109,7 +111,10 @@ static uint32_t populate_material_entries(AeronPbrMaterialEntry* entries, const 
 		if (m->alpha_mode == AERON_GLTF_ALPHA_MASK) {
 			flags |= 0x20u; /* FS: discard base alpha below metal_rough.z */
 		}
-		e->flags = flags;
+		e->flags        = flags;
+		e->screen_first = m->screen_first;
+		e->screen_count = m->screen_count;
+		e->screen_flags = m->screen_flags;
 	}
 	return n;
 }
@@ -144,6 +149,47 @@ static int build_material_storage(AeronSceneMesh* s, const AeronGltfModel* model
 	}
 	*out_entries = entries;
 	*out_bytes   = bytes;
+	return 1;
+}
+
+/* Screen rectangles in their shader record; NULL storage without any. */
+static int build_screen_storage(AeronSceneMesh* s, const AeronGltfModel* model, const char* name,
+								AeronPbrScreenRect** out_rects, uint32_t* out_bytes) {
+	*out_rects          = NULL;
+	*out_bytes          = 0;
+	s->screen_hide_mask = model->screen_hide_mask;
+	if (model->screen_rect_count == 0) {
+		return 1;
+	}
+	AeronPbrScreenRect* rects = (AeronPbrScreenRect*)calloc(model->screen_rect_count, sizeof *rects);
+	if (!rects) {
+		return 0;
+	}
+	for (uint32_t i = 0; i < model->screen_rect_count; ++i) {
+		const AeronGltfScreenRect* src = &model->screen_rects[i];
+		AeronPbrScreenRect*        dst = &rects[i];
+		memcpy(dst->dst, src->dst, sizeof dst->dst);
+		memcpy(dst->bg_gain, src->bg, sizeof src->bg);
+		dst->bg_gain[3] = src->gain;
+		memcpy(dst->highlight, src->highlight, sizeof src->highlight);
+		memcpy(dst->lock, src->lock, sizeof src->lock);
+		memcpy(dst->bar, src->bar, sizeof src->bar);
+		dst->info[0] = src->layers;
+		dst->info[1] = src->source;
+	}
+	const uint32_t bytes  = model->screen_rect_count * (uint32_t)sizeof *rects;
+	s->screen_rect_buffer = Aeron_CreateBuffer(&(AeronBufferDesc) {
+		.size       = bytes,
+		.usage      = AERON_BUFFER_USAGE_STORAGE,
+		.debug_name = name,
+	});
+	if (!s->screen_rect_buffer) {
+		free(rects);
+		return 0;
+	}
+	s->screen_rect_count = model->screen_rect_count;
+	*out_rects           = rects;
+	*out_bytes           = bytes;
 	return 1;
 }
 
@@ -387,19 +433,25 @@ AeronSceneMesh* AeronScene_MeshCreate(AeronCommandBuffer* cmd, const AeronFlight
 			break;
 		}
 	}
-	char material_name[512];
-	char variant_name[512];
+	char                material_name[512];
+	char                variant_name[512];
+	char                screen_name[512];
+	AeronPbrScreenRect* screen_rects = NULL;
+	uint32_t            screen_bytes = 0;
 	snprintf(material_name, sizeof material_name, "%s.materials", name);
 	snprintf(variant_name, sizeof variant_name, "%s.material_variants", name);
+	snprintf(screen_name, sizeof screen_name, "%s.screen_rects", name);
 	if (!build_material_storage(s, model, material_name, &material_entries, &material_bytes) ||
-		!build_variant_storage(s, model, variant_name, &variant_values, &variant_bytes)) {
+		!build_variant_storage(s, model, variant_name, &variant_values, &variant_bytes) ||
+		!build_screen_storage(s, model, screen_name, &screen_rects, &screen_bytes)) {
 		free(material_entries);
 		free(variant_values);
+		free(screen_rects);
 		Aeron_LogError("aeron.scene", "%s: material storage build failed", name);
 		AeronScene_MeshDestroy(s);
 		return NULL;
 	}
-	AeronBufferUploadDesc buffer_uploads[4];
+	AeronBufferUploadDesc buffer_uploads[5];
 	uint32_t              buffer_upload_count = 0;
 	if (s->vbo) {
 		buffer_uploads[buffer_upload_count++] =
@@ -413,9 +465,15 @@ AeronSceneMesh* AeronScene_MeshCreate(AeronCommandBuffer* cmd, const AeronFlight
 	buffer_uploads[buffer_upload_count++] = (AeronBufferUploadDesc) { .buffer = s->variant_buffer,
 																	  .data   = variant_values,
 																	  .size   = variant_bytes };
+	if (s->screen_rect_buffer) {
+		buffer_uploads[buffer_upload_count++] = (AeronBufferUploadDesc) { .buffer = s->screen_rect_buffer,
+																		  .data   = screen_rects,
+																		  .size   = screen_bytes };
+	}
 	const int buffers_uploaded = Aeron_UploadBufferBatchCmd(cmd, buffer_uploads, buffer_upload_count);
 	free(material_entries);
 	free(variant_values);
+	free(screen_rects);
 	if (!buffers_uploaded) {
 		Aeron_LogError("aeron.scene", "%s: geometry/material batch upload failed", name);
 		AeronScene_MeshDestroy(s);

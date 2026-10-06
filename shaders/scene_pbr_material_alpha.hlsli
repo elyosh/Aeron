@@ -41,7 +41,9 @@ struct GltfMaterial
     float4 specular;    /* KHR_materials_specular: rgb=color factor, a=factor */
     uint4  atlas;       /* per channel: bits 0-11 page, 12-15 max mip level */
     uint   flags;
-    uint3  _pad;
+    uint   screen_first; /* screen rectangles (scene_pbr_screen.hlsli) */
+    uint   screen_count;
+    uint   screen_flags;
 };
 
 StructuredBuffer<GltfMaterial> g_materials
@@ -81,7 +83,9 @@ GltfMaterial pbr_default_material()
     material.specular = float4(1, 1, 1, 1);
     material.atlas = uint4(15u << 12, 15u << 12, 15u << 12, 15u << 12);
     material.flags = 0u;
-    material._pad = uint3(0, 0, 0);
+    material.screen_first = 0u;
+    material.screen_count = 0u;
+    material.screen_flags = 0u;
     return material;
 }
 

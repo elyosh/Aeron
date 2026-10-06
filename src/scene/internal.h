@@ -486,6 +486,14 @@ struct AeronScene3D {
 	int pbr_debug_views;
 	/* AeronScene_SetBackfaceFill; on by default. */
 	int backface_fill;
+	/* AeronScene_SetScreenSources; reset by Begin. The frame is uploaded
+	 * with the per-frame storage and its buffer stands in for meshes
+	 * without screen rectangles. */
+	AeronTexture*         screen_graphics;
+	AeronTexture*         screen_text;
+	AeronSceneScreenFrame screen_frame;
+	AeronBuffer*          screen_frame_buffer;
+	uint32_t              screen_frame_buffer_cap;
 	/* Debug material override (AeronScene_SetPbrDebugMaterial): enabled,
 	 * metallic, roughness, 0. Reset by Begin. */
 	float pbr_debug_material[4];

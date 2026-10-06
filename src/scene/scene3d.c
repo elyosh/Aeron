@@ -471,6 +471,7 @@ int AeronScene_Begin(AeronScene3D* s, const AeronSceneCamera* camera) {
 	s->pbr_environment_set = 0;
 	s->pbr_debug_views     = 0;
 	memset(s->pbr_debug_material, 0, sizeof s->pbr_debug_material);
+	AeronScene_SetScreenSources(s, NULL, NULL, NULL);
 	memset(&s->directional_shadow, 0, sizeof s->directional_shadow);
 	memset(&s->shadow_uniform, 0, sizeof s->shadow_uniform);
 	memset(&s->shadow_stats, 0, sizeof s->shadow_stats);
@@ -1076,6 +1077,24 @@ void AeronScene_SetBackfaceFill(AeronScene3D* s, int enabled) {
 	}
 }
 
+typedef char AeronSceneScreenFrameSizeCheck[sizeof(AeronSceneScreenFrame) == 1072 ? 1 : -1];
+
+void AeronScene_SetScreenSources(AeronScene3D* s, AeronTexture* graphics, AeronTexture* text,
+								 const AeronSceneScreenFrame* frame) {
+	if (!s) {
+		return;
+	}
+	if (!graphics || !text || !frame) {
+		s->screen_graphics = NULL;
+		s->screen_text     = NULL;
+		memset(&s->screen_frame, 0, sizeof s->screen_frame);
+		return;
+	}
+	s->screen_graphics = graphics;
+	s->screen_text     = text;
+	s->screen_frame    = *frame;
+}
+
 void AeronScene_SetPbrEnvironment(AeronScene3D* s, const AeronScenePbrEnvironment* environment) {
 	if (!s) {
 		return;
@@ -1483,12 +1502,19 @@ int AeronSceneStorage_Prepare(AeronScene3D* s, AeronCommandBuffer* cmd) {
 		scene_storage_report_failure(s, "scene.cluster_lights", cluster_light_bytes);
 		return 0;
 	}
-	AeronBufferUploadDesc uploads[4] = {
+	const uint32_t screen_bytes = (uint32_t)sizeof s->screen_frame;
+	if (!scene_storage_ensure_buffer(&s->screen_frame_buffer, &s->screen_frame_buffer_cap, screen_bytes,
+									 "scene.screen_frame")) {
+		scene_storage_report_failure(s, "scene.screen_frame", screen_bytes);
+		return 0;
+	}
+	AeronBufferUploadDesc uploads[5] = {
 		{ s->mesh_table_buffer, 0, s->mesh_table_staging, table_bytes },
 		{ s->local_light_buffer, 0, s->local_light_staging, local_bytes },
 		{ s->point_light_buffer, 0, s->point_light_staging, point_bytes },
+		{ s->screen_frame_buffer, 0, &s->screen_frame, screen_bytes },
 	};
-	uint32_t upload_count = 3;
+	uint32_t upload_count = 4;
 	if (cluster_light_bytes > 0) {
 		uploads[upload_count++] = (AeronBufferUploadDesc) { s->cluster_light_buffer, 0,
 															s->cluster_light_staging, cluster_light_bytes };
@@ -1530,6 +1556,9 @@ void AeronSceneStorage_Release(AeronScene3D* s) {
 	Aeron_DestroyBuffer(s->local_light_buffer);
 	Aeron_DestroyBuffer(s->point_light_buffer);
 	Aeron_DestroyBuffer(s->cluster_light_buffer);
+	Aeron_DestroyBuffer(s->screen_frame_buffer);
+	s->screen_frame_buffer     = NULL;
+	s->screen_frame_buffer_cap = 0;
 	free(s->mesh_table_staging);
 	free(s->local_light_staging);
 	free(s->point_light_staging);

@@ -294,6 +294,108 @@ static bool read_material(const cgltf_material* m, AeronGltfMaterial* out) {
 	return true;
 }
 
+/* ===== Screen surfaces ============================================== */
+
+static bool json_floats(const cJSON* array, float* out, int count) {
+	if (!cJSON_IsArray(array) || cJSON_GetArraySize(array) != count)
+		return false;
+	for (int i = 0; i < count; i++) {
+		const cJSON* item = cJSON_GetArrayItem(array, i);
+		if (!cJSON_IsNumber(item) || !isfinite(item->valuedouble))
+			return false;
+		out[i] = (float)item->valuedouble;
+	}
+	return true;
+}
+
+static bool json_bool(const cJSON* object, const char* key) {
+	return cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(object, key));
+}
+
+static bool json_uint(const cJSON* object, const char* key, uint32_t limit, uint32_t* out) {
+	const cJSON* item = cJSON_GetObjectItemCaseSensitive(object, key);
+	if (!cJSON_IsNumber(item) || !(item->valuedouble >= 0.0) || item->valuedouble > (double)limit ||
+		item->valuedouble != floor(item->valuedouble))
+		return false;
+	*out = (uint32_t)item->valuedouble;
+	return true;
+}
+
+static bool read_screen_rect(const cJSON* json, AeronGltfScreenRect* r) {
+	memset(r, 0, sizeof *r);
+	const cJSON* gain = cJSON_GetObjectItemCaseSensitive(json, "gain");
+	if (!json_uint(json, "source", AERON_GLTF_SCREEN_MAX_SOURCES - 1u, &r->source) ||
+		!json_uint(json, "layers", 0x7u, &r->layers) ||
+		!json_floats(cJSON_GetObjectItemCaseSensitive(json, "dst"), r->dst, 4) ||
+		!json_floats(cJSON_GetObjectItemCaseSensitive(json, "bg"), r->bg, 3) ||
+		!json_floats(cJSON_GetObjectItemCaseSensitive(json, "highlight"), r->highlight, 3) ||
+		!json_floats(cJSON_GetObjectItemCaseSensitive(json, "lock"), r->lock, 3) || !cJSON_IsNumber(gain) ||
+		!isfinite(gain->valuedouble) || gain->valuedouble < 0.0)
+		return false;
+	r->gain = (float)gain->valuedouble;
+	if ((r->layers & AERON_GLTF_SCREEN_LAYER_BAR) &&
+		!json_floats(cJSON_GetObjectItemCaseSensitive(json, "bar"), r->bar, 3))
+		return false;
+	return true;
+}
+
+/* Reads a material's `aeronScreen` extras into `out` and the model's
+ * rectangle array. A malformed screen is reported and dropped: the material
+ * stays an ordinary one. Returns false only when memory runs out. */
+static bool read_screen(const cgltf_material* m, AeronGltfModel* model, uint32_t* rect_capacity,
+						AeronGltfMaterial* out, const char* source_label, uint32_t material_index) {
+	out->screen_first = out->screen_count = out->screen_flags = 0;
+	if (!m || !m->extras.data || !strstr(m->extras.data, "aeronScreen"))
+		return true;
+	cJSON*       root   = cJSON_ParseWithOpts(m->extras.data, NULL, true);
+	const cJSON* screen = cJSON_IsObject(root) ? cJSON_GetObjectItemCaseSensitive(root, "aeronScreen") : NULL;
+	const cJSON* rects  = screen ? cJSON_GetObjectItemCaseSensitive(screen, "rects") : NULL;
+	uint32_t     hide   = 0;
+	const int    count  = cJSON_IsArray(rects) ? cJSON_GetArraySize(rects) : -1;
+	if (!cJSON_IsObject(screen) || !json_uint(screen, "hide", UINT32_MAX, &hide) || count < 0 ||
+		count > (int)AERON_GLTF_SCREEN_MAX_RECTS_PER_MATERIAL) {
+		SDL_Log("[flight_gltf] '%s' material %u: malformed aeronScreen ignored", source_label,
+				material_index);
+		cJSON_Delete(root);
+		return true;
+	}
+	if (model->screen_rect_count + (uint32_t)count > *rect_capacity) {
+		uint32_t capacity = *rect_capacity ? *rect_capacity * 2u : 32u;
+		while (capacity < model->screen_rect_count + (uint32_t)count)
+			capacity *= 2u;
+		AeronGltfScreenRect* grown =
+			(AeronGltfScreenRect*)realloc(model->screen_rects, capacity * sizeof *model->screen_rects);
+		if (!grown) {
+			cJSON_Delete(root);
+			return false;
+		}
+		model->screen_rects = grown;
+		*rect_capacity      = capacity;
+	}
+	const uint32_t first = model->screen_rect_count;
+	for (int i = 0; i < count; i++) {
+		if (!read_screen_rect(cJSON_GetArrayItem(rects, i), &model->screen_rects[first + (uint32_t)i])) {
+			SDL_Log("[flight_gltf] '%s' material %u: malformed aeronScreen rectangle %d ignored",
+					source_label, material_index, i);
+			cJSON_Delete(root);
+			return true;
+		}
+	}
+	model->screen_hide_mask |= hide;
+	if (count > 0) {
+		model->screen_rect_count += (uint32_t)count;
+		out->screen_first = first;
+		out->screen_count = (uint32_t)count;
+		out->screen_flags = (json_bool(screen, "cover") ? AERON_GLTF_SCREEN_COVER : 0u) |
+							(json_bool(screen, "transparent") ? AERON_GLTF_SCREEN_TRANSPARENT : 0u) |
+							(json_bool(screen, "alwaysVisible") ? AERON_GLTF_SCREEN_ALWAYS_VISIBLE : 0u) |
+							(json_bool(screen, "hologram") ? AERON_GLTF_SCREEN_HOLOGRAM : 0u) |
+							(json_bool(screen, "noisy") ? AERON_GLTF_SCREEN_NOISY : 0u);
+	}
+	cJSON_Delete(root);
+	return true;
+}
+
 static AeronGltfAlphaMode material_alpha_mode(const AeronGltfModel* model, uint32_t material) {
 	if (material == AERON_GLTF_NO_MATERIAL)
 		return AERON_GLTF_ALPHA_OPAQUE;
@@ -433,11 +535,15 @@ bool Aeron_GltfMeshBuildData(const cgltf_data* data, const char* source_label, A
 		if (!out->materials)
 			goto cleanup;
 		out->material_count = (uint32_t)data->materials_count;
+		uint32_t screen_rect_capacity = 0;
 		for (uint32_t i = 0; i < out->material_count; i++) {
 			if (!read_material(&data->materials[i], &out->materials[i])) {
 				SDL_Log("[flight_gltf] '%s' material %u has invalid alpha state", source_label, i);
 				goto cleanup;
 			}
+			if (!read_screen(&data->materials[i], out, &screen_rect_capacity, &out->materials[i],
+							 source_label, i))
+				goto cleanup;
 		}
 	}
 
@@ -601,6 +707,9 @@ bool Aeron_GltfMeshBuildData(const cgltf_data* data, const char* source_label, A
 			source_label, out->vertex_count, out->index_count, out->opaque_index_count, out->mask_index_count,
 			out->blend_index_count, out->total_prim_count, out->material_count, out->variant_count,
 			out->channels[0].size, out->channels[1].size, out->channels[2].size, out->channels[3].size);
+	if (out->screen_rect_count > 0 || out->screen_hide_mask != 0)
+		SDL_Log("[flight_gltf] %s: %u screen rectangles, hide mask 0x%x", source_label,
+				out->screen_rect_count, out->screen_hide_mask);
 
 	succeeded = true;
 
@@ -618,6 +727,7 @@ void Aeron_GltfMeshFree(AeronGltfModel* m) {
 	free(m->indices);
 	free(m->materials);
 	free(m->prim_variant_material);
+	free(m->screen_rects);
 	for (int c = 0; c < AERON_GLTF_CHANNEL_COUNT; c++)
 		free(m->channels[c].data);
 	memset(m, 0, sizeof *m);

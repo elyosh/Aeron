@@ -1,5 +1,6 @@
 #include "aeron/asset/flight_model.h"
 #include "aeron/asset/opt_model.h"
+#include "aeron/scene/image_cache.h"
 #include "capture.h"
 
 #include <SDL3/SDL.h>
@@ -49,6 +50,8 @@ static AeronSceneMesh* create_cube(AeronCommandBuffer* cmd) {
 								   .max_extent = 2 };
 	return AeronScene_MeshCreate(cmd, &model, "capture.cube", NULL);
 }
+
+static int create_screen_textures(Fixture* f, AeronCommandBuffer* cmd);
 
 static int load_models(Fixture* f, AeronCommandBuffer* cmd) {
 	AeronVfs* vfs = AeronVfs_Create(&(AeronVfsConfig) { .asset_root = f->config.asset_root });
@@ -125,6 +128,8 @@ int Fixture_Create(Fixture* f, const CaptureConfig* config) {
 		f->meshes[0].mesh = create_cube(cmd);
 		loaded            = f->meshes[0].mesh != NULL;
 	}
+	if (loaded && config->screen_test)
+		loaded = create_screen_textures(f, cmd);
 	if (!loaded) {
 		Aeron_CancelCommandBuffer(cmd);
 		Fixture_Destroy(f);
@@ -141,7 +146,97 @@ int Fixture_Create(Fixture* f, const CaptureConfig* config) {
 	return 1;
 }
 
+/* Screen test inputs: a colour gradient with a checker as graphics, and a
+ * white "F" with a 32-pixel grid as text, to read orientation and mirroring
+ * on every screen rectangle. */
+static int create_screen_textures(Fixture* f, AeronCommandBuffer* cmd) {
+	enum { SIZE = 256 };
+
+	uint8_t* graphics = (uint8_t*)malloc(SIZE * SIZE * 4);
+	uint8_t* text     = (uint8_t*)calloc(SIZE * SIZE * 4, 1);
+	if (!graphics || !text) {
+		free(graphics);
+		free(text);
+		return 0;
+	}
+	for (int y = 0; y < SIZE; ++y) {
+		for (int x = 0; x < SIZE; ++x) {
+			uint8_t*  g     = &graphics[(y * SIZE + x) * 4];
+			const int dark  = ((x / 32) + (y / 32)) & 1;
+			g[0]            = (uint8_t)(x * (dark ? 128 : 255) / SIZE);
+			g[1]            = (uint8_t)(y * (dark ? 128 : 255) / SIZE);
+			g[2]            = dark ? 60 : 150;
+			g[3]            = 255;
+			const int grid  = x % 32 == 0 || y % 32 == 0;
+			const int glyph = (x >= 40 && x < 60 && y >= 40 && y < 200) ||
+							  (y >= 40 && y < 60 && x >= 40 && x < 160) ||
+							  (y >= 110 && y < 130 && x >= 40 && x < 130);
+			if (grid || glyph)
+				memset(&text[(y * SIZE + x) * 4], 255, 4);
+		}
+	}
+	f->screen_graphics = Aeron_ImageUploadRgba8(
+		cmd, graphics, SIZE, SIZE, SIZE * 4, AERON_TEXTURE_FORMAT_RGBA8_SRGB, AERON_COLOR_SPACE_SRGB,
+		AERON_IMAGE_ALPHA_PREMULTIPLIED, false, "screen_test.graphics");
+	f->screen_text = Aeron_ImageUploadRgba8(cmd, text, SIZE, SIZE, SIZE * 4, AERON_TEXTURE_FORMAT_RGBA8_SRGB,
+											AERON_COLOR_SPACE_SRGB, AERON_IMAGE_ALPHA_PREMULTIPLIED, false,
+											"screen_test.text");
+	free(graphics);
+	free(text);
+	return f->screen_graphics && f->screen_text;
+}
+
+static void set_screen_sources(AeronScene3D* scene, const Fixture* f, double time) {
+	AeronSceneScreenFrame frame = { .valid            = { 0xFFFFFFFFu, 0xFFFFFFFFu },
+									.flags            = AERON_SCENE_SCREEN_BAR_VISIBLE,
+									.display_strength = 1.0f,
+									.bar_level        = .6f,
+									.holo_time        = (float)time,
+									.holo_fade        = 1.0f,
+									.holo_color       = { .01f, .35f, .01f, 1.5f } };
+	for (unsigned source = 0; source < AERON_GLTF_SCREEN_MAX_SOURCES; ++source) {
+		frame.source[source][2] = 1.0f;
+		frame.source[source][3] = 1.0f;
+	}
+	AeronScene_SetScreenSources(scene, f->screen_graphics, f->screen_text, &frame);
+}
+
+/* The model unscaled with `screen_eye` at the camera: model right/forward/
+ * up (+X, -Y, +Z) on camera +X, +Z, -Y, then pitch and yaw. */
+static void place_screen_test_model(float transform[16], const CaptureConfig* c) {
+	const float rad = 3.14159265f / 180.0f;
+	const float cy = cosf(c->screen_yaw * rad), sy = sinf(c->screen_yaw * rad);
+	const float cp = cosf(c->screen_pitch * rad), sp = sinf(c->screen_pitch * rad);
+	const float base[3][3]  = { { 1, 0, 0 }, { 0, 0, -1 }, { 0, -1, 0 } };
+	const float yaw[3][3]   = { { cy, 0, -sy }, { 0, 1, 0 }, { sy, 0, cy } };
+	const float pitch[3][3] = { { 1, 0, 0 }, { 0, cp, -sp }, { 0, sp, cp } };
+	float       tmp[3][3], rot[3][3];
+	for (int r = 0; r < 3; ++r)
+		for (int k = 0; k < 3; ++k) {
+			tmp[r][k] = 0;
+			for (int j = 0; j < 3; ++j)
+				tmp[r][k] += yaw[r][j] * base[j][k];
+		}
+	for (int r = 0; r < 3; ++r)
+		for (int k = 0; k < 3; ++k) {
+			rot[r][k] = 0;
+			for (int j = 0; j < 3; ++j)
+				rot[r][k] += pitch[r][j] * tmp[j][k];
+		}
+	memset(transform, 0, 16 * sizeof *transform);
+	transform[15] = 1;
+	for (int r = 0; r < 3; ++r) {
+		transform[r * 4 + 3] = 0;
+		for (int k = 0; k < 3; ++k) {
+			transform[r * 4 + k] = rot[r][k];
+			transform[r * 4 + 3] -= rot[r][k] * c->screen_eye[k];
+		}
+	}
+}
+
 void Fixture_Destroy(Fixture* f) {
+	Aeron_DestroyTexture(f->screen_graphics);
+	Aeron_DestroyTexture(f->screen_text);
 	AeronDrawList_Destroy(f->chart_draws);
 	Aeron_DestroyRenderTarget(f->chart_rt);
 	AeronScene_Destroy(f->scene);
@@ -214,7 +309,11 @@ static void add_objects(AeronScene3D* scene, const Fixture* f) {
 			.transform = { cs * o[0], -sn * o[1], 0, o[3], sn * o[0], cs * o[1], 0, o[4], 0, 0, o[2], o[5], 0,
 						   0, 0, 1 }
 		};
-		if (f->config.model_count)
+		if (f->config.screen_test && i > 0)
+			break;
+		if (f->config.screen_test)
+			place_screen_test_model(instance.transform, &f->config);
+		else if (f->config.model_count)
 			place_model(instance.transform, mesh, o, i);
 		memcpy(instance.prev_transform, instance.transform, sizeof instance.transform);
 		AeronScene_AddMeshInstance(scene, &instance);
@@ -255,6 +354,8 @@ AeronRenderTarget* Fixture_Record(Fixture* f, double time, int blur, AeronComman
 	AeronScene_SetBackfaceFill(scene, f->config.backface_fill);
 	/* Emissive shapes also read the PBR lighting/mode uniforms. */
 	set_lighting(scene, &f->config);
+	if (f->config.screen_test)
+		set_screen_sources(scene, f, time);
 	add_objects(scene, f);
 	if (!AeronScene_Render(scene, cmd))
 		return NULL;

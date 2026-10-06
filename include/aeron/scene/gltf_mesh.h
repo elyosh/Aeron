@@ -143,7 +143,53 @@ typedef struct AeronGltfMaterial {
 	/* KHR_materials_specular factors; defaults (1, (1,1,1)). */
 	float specular_factor;
 	float specular_color_factor[3];
+	/* Screen surface (material extras `aeronScreen`): rectangles
+	 * [screen_first, screen_first + screen_count) of the model's
+	 * screen_rects and AERON_GLTF_SCREEN_* flags. All zero otherwise. */
+	uint32_t screen_first;
+	uint32_t screen_count;
+	uint32_t screen_flags;
 } AeronGltfMaterial;
+
+/* ===== Screen surfaces ==============================================
+ *
+ * A screen material shows a game-provided texture pair (graphics, text)
+ * through rectangles of its TEXCOORD_0 space, sampled at per-frame source
+ * rectangles (AeronScene_SetScreenSources). The converter writes them as
+ * material extras:
+ *
+ *   "aeronScreen": { "cover", "transparent", "alwaysVisible", "hologram",
+ *                    "noisy": bool, "hide": uint,
+ *                    "rects": [ { "source": uint, "dst": [u0, v0, u1, v1],
+ *                                 "bg", "highlight", "lock": linear RGB,
+ *                                 "gain": float, "layers": uint,
+ *                                 "bar": linear RGB (fill bars) } ] }
+ *
+ * `hide` is a game-defined bitmask (HUD regions the game stops drawing in
+ * 2D while the material is on screen); the model ORs it over its materials. */
+#define AERON_GLTF_SCREEN_MAX_SOURCES 64u
+#define AERON_GLTF_SCREEN_MAX_RECTS_PER_MATERIAL 16u
+
+#define AERON_GLTF_SCREEN_COVER 0x1u          /* base alpha < 1 shows the screen */
+#define AERON_GLTF_SCREEN_TRANSPARENT 0x2u    /* unlit, alpha from luminance */
+#define AERON_GLTF_SCREEN_ALWAYS_VISIBLE 0x4u /* transparent, kept with the 2D HUD */
+#define AERON_GLTF_SCREEN_HOLOGRAM 0x8u
+#define AERON_GLTF_SCREEN_NOISY 0x10u /* hologram scanlines */
+
+#define AERON_GLTF_SCREEN_LAYER_GRAPHICS 0x1u
+#define AERON_GLTF_SCREEN_LAYER_TEXT 0x2u
+#define AERON_GLTF_SCREEN_LAYER_BAR 0x4u /* filled from the bottom; no texture */
+
+typedef struct AeronGltfScreenRect {
+	float    dst[4]; /* u0, v0, u1, v1; swapped corners mirror */
+	float    bg[3];
+	float    highlight[3];
+	float    lock[3];
+	float    bar[3];
+	float    gain;
+	uint32_t layers;
+	uint32_t source; /* < AERON_GLTF_SCREEN_MAX_SOURCES */
+} AeronGltfScreenRect;
 
 /* ===== Ship asset ===================================================
  *
@@ -186,6 +232,11 @@ typedef struct AeronGltfModel {
 	uint32_t  total_prim_count;
 	uint32_t* prim_variant_material;
 
+	/* Screen rectangles of every screen material, and the OR of their
+	 * `hide` masks. */
+	uint32_t             screen_rect_count;
+	AeronGltfScreenRect* screen_rects;
+	uint32_t             screen_hide_mask;
 } AeronGltfModel;
 
 /* Internal render builder used by the common flight-model construction.

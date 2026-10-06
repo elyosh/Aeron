@@ -41,8 +41,21 @@ typedef struct AeronPbrMaterialEntry {
 									* 3=alpha_blend (FS alpha = tex.a * factor.a),
 									* 4=legacy sRGB/SRCALPHA emissive mode,
 									* 5=alpha_mask */
-	uint32_t _pad[3];
+	uint32_t screen_first;         /* screen rectangles (AeronPbrScreenRect) */
+	uint32_t screen_count;
+	uint32_t screen_flags; /* AERON_GLTF_SCREEN_* */
 } AeronPbrMaterialEntry; /* 160 B */
+
+/* Shader record of one screen rectangle (AeronGltfScreenRect): float4 and
+ * uint4 members only, so the layout is the same on every backend. */
+typedef struct AeronPbrScreenRect {
+	float    dst[4];       /* u0, v0, u1, v1 */
+	float    bg_gain[4];   /* background RGB, content gain */
+	float    highlight[4]; /* background RGB while the reticle is highlighted */
+	float    lock[4];      /* background RGB while a warhead lock is solid */
+	float    bar[4];       /* fill-bar RGB */
+	uint32_t info[4];      /* layers, source, _, _ */
+} AeronPbrScreenRect;      /* 96 B */
 
 /* Compact retained geometry for receiver-local effects such as decals.
  * It deliberately omits material data and tangents: projection only needs
@@ -82,6 +95,12 @@ typedef struct AeronSceneMesh {
 	uint32_t     variant_count;
 	uint32_t     variant_groups_per_row;
 	bool         all_materials_single_sided;
+	/* Screen rectangles (AeronPbrScreenRect), NULL without screen
+	 * materials, and the OR of the screen materials' game-defined `hide`
+	 * masks (AeronGltfModel). */
+	AeronBuffer* screen_rect_buffer;
+	uint32_t     screen_rect_count;
+	uint32_t     screen_hide_mask;
 
 	/* Per-mesh-slot articulation (indexed by the per-vertex mesh index);
 	 * slot_count = the model's component count, the slots its mesh tables
