@@ -137,16 +137,17 @@ static uint32_t mesh_face_count(const opt_mesh_t* mesh) {
 }
 
 /* Same rules as the glTF topology in flight_model.c: degenerate triangles
- * are dropped, and when all are, the component has no collision faces. Face
- * normals stay the OPT's. */
+ * are dropped, and when all are, the component has no collision faces. A
+ * mesh with vertices but no LOD 0 faces (Interdictor2Hangar's meshes 2 and 3)
+ * is such a component too. Face normals stay the OPT's. */
 static bool build_opt_topology(const opt_mesh_t* source, AeronFlightComponent* component) {
 	const uint32_t position_count = source->vertex_count > 0 ? (uint32_t)source->vertex_count : 0;
 	const uint32_t face_count     = mesh_face_count(source);
-	if (!position_count || !face_count)
+	if (!position_count)
 		return false;
 	component->topology.positions = calloc(position_count, sizeof *component->topology.positions);
-	component->topology.faces     = calloc(face_count, sizeof *component->topology.faces);
-	if (!component->topology.positions || !component->topology.faces)
+	component->topology.faces     = face_count ? calloc(face_count, sizeof *component->topology.faces) : NULL;
+	if (!component->topology.positions || (face_count && !component->topology.faces))
 		return false;
 	component->topology.position_count = position_count;
 	bool have_bounds                   = false;
@@ -155,8 +156,8 @@ static bool build_opt_topology(const opt_mesh_t* source, AeronFlightComponent* c
 		include_point(&component->bounds, &component->topology.positions[index], &have_bounds);
 	}
 	uint32_t         write = 0;
-	const opt_lod_t* lod   = &source->lods[0];
-	for (int32_t group = 0; group < lod->group_count; ++group) {
+	const opt_lod_t* lod   = face_count ? &source->lods[0] : NULL;
+	for (int32_t group = 0; lod && group < lod->group_count; ++group) {
 		const opt_face_group_t* face_group = &lod->groups[group];
 		for (int32_t face_index = 0; face_index < face_group->face_count; ++face_index) {
 			const opt_face_t* source_face   = &face_group->faces[face_index];

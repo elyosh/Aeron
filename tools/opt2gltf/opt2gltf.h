@@ -18,9 +18,11 @@
  *     nodes (no mesh, just translation) named "hardpoint_<type>". Each
  *     carries an `AERON_flight_model` hardpoint role and raw type.
  *
- *   - Every OPT mesh becomes exactly one component; a mesh without LOD 0
- *     triangles fails the conversion, so component ordinals match the
- *     OPT's mesh numbers.
+ *   - Every OPT mesh becomes exactly one component, so component ordinals
+ *     match the OPT's mesh numbers. A mesh with vertices but no LOD 0 faces
+ *     becomes one untextured degenerate triangle over its vertices, which
+ *     the flight-model topology keeps as positions without faces; a mesh
+ *     without vertices or LOD 0 triangles fails the conversion.
  *
  *   - A switched face group whose state textures fall in different alpha
  *     classes (opaque, mask, blend) uses, for every state, a copy of its

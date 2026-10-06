@@ -22,9 +22,11 @@
  * simulation and render data, and replaces the OPT whose lower-cased
  * basename it has. Conversion keeps the component order and every mesh's
  * type, explosion flags, descriptor, target, rotation frame, hardpoints and
- * engine glows, the LOD 0 geometry and the textures. A mesh without LOD 0
- * triangles is an error naming the file and mesh, so components stay
- * one-to-one with the OPT meshes. Expected differences from the stock OPT:
+ * engine glows, the LOD 0 geometry and the textures. Components stay
+ * one-to-one with the OPT meshes: a mesh with vertices but no LOD 0 faces
+ * keeps its vertices as one degenerate triangle (no faces once cooked), and
+ * a mesh without LOD 0 triangles otherwise is an error naming the file and
+ * mesh. Expected differences from the stock OPT:
  *   - quads become two triangles sharing corner 0 and the face normal;
  *   - only LOD 0 is kept;
  *   - positions round-trip through metres and differ at the ulp level;

@@ -1345,7 +1345,112 @@ static void xwau_set_specular(cgltf_material* mat, float specular_color) {
 	mat->specular.specular_color_factor[2] = specular_color;
 }
 
+/* ===== Faceless meshes ============================================== */
+
+static int32_t opt_mesh_lod0_face_count(const opt_mesh_t* m) {
+	int32_t faces = 0;
+	if (m->lod_count > 0) {
+		for (int32_t g = 0; g < m->lods[0].group_count; ++g)
+			faces += m->lods[0].groups[g].face_count;
+	}
+	return faces;
+}
+
+/* Some shipped OPTs carry meshes with vertices but no LOD 0 faces
+ * (Interdictor2Hangar's meshes 2 and 3: two vertices, no LOD), which the
+ * game loads as components without geometry. Each GLB component needs a
+ * mesh, and the flight-model topology keeps the positions of a component
+ * whose triangles are all degenerate while dropping the triangles, so such
+ * a mesh is converted as one untextured degenerate triangle over its own
+ * vertices: the same positions and no faces, and nothing drawn. */
+typedef struct FacelessPatch {
+	opt_file_t        file;
+	opt_mesh_t*       meshes;
+	opt_lod_t*        lods;
+	opt_face_group_t* groups;
+	opt_face_t*       faces;
+} FacelessPatch;
+
+static void faceless_patch_free(FacelessPatch* patch) {
+	free(patch->meshes);
+	free(patch->lods);
+	free(patch->groups);
+	free(patch->faces);
+}
+
+/* Returns `opt` when nothing needs patching, the patched copy otherwise, or
+ * NULL when out of memory. */
+static const opt_file_t* faceless_patch_apply(const opt_file_t* opt, FacelessPatch* patch) {
+	memset(patch, 0, sizeof *patch);
+	int32_t count = 0;
+	for (int32_t mi = 0; mi < opt->mesh_count; ++mi)
+		count += opt->meshes[mi].vertex_count > 0 && opt_mesh_lod0_face_count(&opt->meshes[mi]) == 0;
+	if (count == 0)
+		return opt;
+	patch->file   = *opt;
+	patch->meshes = (opt_mesh_t*)malloc((size_t)opt->mesh_count * sizeof *patch->meshes);
+	patch->lods   = (opt_lod_t*)calloc((size_t)count, sizeof *patch->lods);
+	patch->groups = (opt_face_group_t*)calloc((size_t)count, sizeof *patch->groups);
+	patch->faces  = (opt_face_t*)calloc((size_t)count, sizeof *patch->faces);
+	if (!patch->meshes || !patch->lods || !patch->groups || !patch->faces) {
+		faceless_patch_free(patch);
+		return NULL;
+	}
+	memcpy(patch->meshes, opt->meshes, (size_t)opt->mesh_count * sizeof *patch->meshes);
+	int32_t next = 0;
+	for (int32_t mi = 0; mi < opt->mesh_count; ++mi) {
+		opt_mesh_t* m = &patch->meshes[mi];
+		if (m->vertex_count <= 0 || opt_mesh_lod0_face_count(m) != 0)
+			continue;
+		const int32_t     last  = m->vertex_count > 1 ? 1 : 0;
+		opt_face_t*       face  = &patch->faces[next];
+		opt_face_group_t* group = &patch->groups[next];
+		opt_lod_t*        lod   = &patch->lods[next];
+		for (int k = 0; k < 4; ++k) {
+			face->verts[k]   = k == 0 ? 0 : k < 3 ? last : -1;
+			face->edges[k]   = -1;
+			face->uvs[k]     = -1;
+			face->normals[k] = -1;
+		}
+		face->face_normal    = (opt_vec3_t) { 0.0f, 0.0f, 1.0f };
+		group->texture_index = -1;
+		group->state_count   = 1;
+		group->face_count    = 1;
+		group->faces         = face;
+		lod->group_count     = 1;
+		lod->groups          = group;
+		m->lod_count         = 1;
+		m->lods              = lod;
+		fprintf(stderr, "opt2gltf: mesh %d has %d vertices and no LOD 0 faces; converted without faces\n",
+				(int)mi, (int)m->vertex_count);
+		++next;
+	}
+	patch->file.meshes = patch->meshes;
+	return &patch->file;
+}
+
+static bool build_memory(const opt_file_t* opt, const char* basename, const OptGltfBuildOptions* options,
+						 OptGltfDocument** out_document, opt_error_t* error);
+
 bool OptGltf_BuildMemory(const opt_file_t* opt, const char* basename, const OptGltfBuildOptions* options,
+						 OptGltfDocument** out_document, opt_error_t* error) {
+	if (!opt)
+		return build_memory(opt, basename, options, out_document, error);
+	FacelessPatch     patch;
+	const opt_file_t* source = faceless_patch_apply(opt, &patch);
+	if (!source) {
+		if (out_document)
+			*out_document = NULL;
+		if (error)
+			snprintf(error->msg, sizeof error->msg, "out of memory");
+		return false;
+	}
+	const bool ok = build_memory(source, basename, options, out_document, error);
+	faceless_patch_free(&patch);
+	return ok;
+}
+
+static bool build_memory(const opt_file_t* opt, const char* basename, const OptGltfBuildOptions* options,
 						 OptGltfDocument** out_document, opt_error_t* error) {
 	if (out_document)
 		*out_document = NULL;
