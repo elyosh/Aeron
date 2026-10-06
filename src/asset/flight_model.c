@@ -735,12 +735,13 @@ static bool build_semantics(const cgltf_data* data, AeronFlightModel* model) {
 		!build_model_render_data(data, root, model))
 		return false;
 	/* The renderer's per-component tables hold AERON_MAX_MESH_SLOTS entries. */
-	model->component_count = (uint32_t)root->children_count;
-	if (!model->component_count || model->component_count > AERON_MAX_MESH_SLOTS)
+	if (!root->children_count || root->children_count > AERON_MAX_MESH_SLOTS)
 		return false;
-	model->components = calloc(model->component_count, sizeof *model->components);
+	/* Set the count only with its array: the failure path frees per component. */
+	model->components = calloc(root->children_count, sizeof *model->components);
 	if (!model->components)
 		return false;
+	model->component_count  = (uint32_t)root->children_count;
 	model->bridge_component = -1;
 	bool have_model_bounds  = false;
 	for (uint32_t index = 0; index < model->component_count; ++index) {
