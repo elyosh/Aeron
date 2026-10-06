@@ -187,8 +187,8 @@ bool write_ktx2_bc7_cubemap_with_generated_mips(const char* path, int face_size,
  * geometry to BC7), and packages as KTX2 with
  * VK_FORMAT_BC6H_UFLOAT_BLOCK.
  *
- * `quality` is accepted for API parity; the vendored DirectXTex
- * BC6H encoder is single-pass and ignores it. */
+ * `quality` is accepted for API parity; every value uses the BC6H
+ * encoder's highest-quality profile (see bc6h_codec.h). */
 typedef enum {
 	KTX2_BC6H_QUALITY_FAST = 0,
 	KTX2_BC6H_QUALITY_MED  = 1,

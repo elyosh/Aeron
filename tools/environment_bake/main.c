@@ -215,35 +215,11 @@ static void encode_bc6h_task(void* context, int index) {
 	const int         n      = t->sizes[level];
 	const float*      src    = t->images[level * t->face_count + face];
 	const int         blocks = (n + 3) / 4;
+	const int         rows   = n - by * 4 < 4 ? n - by * 4 : 4;
 	uint8_t*          out = t->blobs[level] + (size_t)face * t->face_bytes[level] + (size_t)by * blocks * 16u;
-	/* A run of identical constant blocks (black space, flat backgrounds)
-	 * reuses the previous encoding: same input, same output. */
-	float last_constant[3];
-	bool  have_constant = false;
-	for (int bx = 0; bx < blocks; ++bx) {
-		float block[48];
-		for (int py = 0; py < 4; ++py) {
-			const int y = by * 4 + py < n ? by * 4 + py : n - 1;
-			for (int px = 0; px < 4; ++px) {
-				const int x = bx * 4 + px < n ? bx * 4 + px : n - 1;
-				for (int c = 0; c < 3; ++c) {
-					float v                      = src[((size_t)y * n + x) * 3u + c];
-					block[(py * 4 + px) * 3 + c] = v > 0.0f ? (v < 65504.0f ? v : 65504.0f) : 0.0f;
-				}
-			}
-		}
-		bool constant = true;
-		for (int i = 3; i < 48 && constant; ++i)
-			constant = block[i] == block[i % 3];
-		if (constant && have_constant && memcmp(block, last_constant, sizeof last_constant) == 0) {
-			memcpy(out + (size_t)bx * 16u, out + (size_t)(bx - 1) * 16u, 16u);
-			continue;
-		}
-		bc6h_codec_encode_block(out + (size_t)bx * 16u, block, BC6H_QUALITY_UBER);
-		have_constant = constant;
-		if (constant)
-			memcpy(last_constant, block, sizeof last_constant);
-	}
+	/* One block row per task: the encoder batches neighbouring blocks. */
+	bc6h_codec_encode_image_serial(out, (size_t)blocks * 16u, src + (size_t)by * 4u * n * 3u, n, rows,
+								   BC6H_QUALITY_UBER);
 }
 
 /* Writes square RGB float images as BC6H (format "bc6h") or RGBA16F KTX2. */
