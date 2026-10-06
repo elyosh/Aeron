@@ -1345,6 +1345,114 @@ static void xwau_set_specular(cgltf_material* mat, float specular_color) {
 	mat->specular.specular_color_factor[2] = specular_color;
 }
 
+/* ===== Screen surfaces ============================================== */
+
+/* Appends formatted text to the string *out (length *len, capacity *cap);
+ * on allocation failure *out becomes NULL and later calls do nothing. */
+static void json_append(char** out, size_t* len, size_t* cap, const char* fmt, ...) {
+	if (!*out)
+		return;
+	va_list args;
+	va_start(args, fmt);
+	const int n = vsnprintf(NULL, 0, fmt, args);
+	va_end(args);
+	if (n < 0) {
+		free(*out);
+		*out = NULL;
+		return;
+	}
+	if (*len + (size_t)n + 1 > *cap) {
+		size_t ncap = *cap * 2;
+		while (ncap < *len + (size_t)n + 1)
+			ncap *= 2;
+		char* grown = (char*)realloc(*out, ncap);
+		if (!grown) {
+			free(*out);
+			*out = NULL;
+			return;
+		}
+		*out = grown;
+		*cap = ncap;
+	}
+	va_start(args, fmt);
+	vsnprintf(*out + *len, *cap - *len, fmt, args);
+	va_end(args);
+	*len += (size_t)n;
+}
+
+static void json_append_vec3(char** out, size_t* len, size_t* cap, const char* key, const float v[3]) {
+	json_append(out, len, cap, ",\"%s\":[%.9g,%.9g,%.9g]", key, (double)v[0], (double)v[1], (double)v[2]);
+}
+
+/* The material's extras with `aeronScreen` added: a new object, or the
+ * existing one with the member appended. */
+static char* screen_extras_json(const OptGltfScreen* s, const char* existing) {
+	size_t len = 0, cap = 1024;
+	char*  out = (char*)malloc(cap);
+	if (!out)
+		return NULL;
+	out[0]            = 0;
+	const char* close = existing ? strrchr(existing, '}') : NULL;
+	if (close) {
+		json_append(&out, &len, &cap, "%.*s", (int)(close - existing), existing);
+		/* An empty object needs no separator. */
+		const char* p = close;
+		while (p > existing && (p[-1] == ' ' || p[-1] == '\n' || p[-1] == '\t'))
+			--p;
+		json_append(&out, &len, &cap, p > existing && p[-1] == '{' ? "" : ",");
+	} else {
+		json_append(&out, &len, &cap, "{");
+	}
+	json_append(&out, &len, &cap,
+				"\"aeronScreen\":{\"cover\":%s,\"transparent\":%s,\"alwaysVisible\":%s,\"hologram\":%s,"
+				"\"noisy\":%s,\"hide\":%u,\"rects\":[",
+				s->cover_base.rgba && !s->hologram ? "true" : "false", s->transparent ? "true" : "false",
+				s->always_visible ? "true" : "false", s->hologram ? "true" : "false", s->noisy ? "true" : "false",
+				s->hide);
+	for (uint32_t i = 0; i < s->rect_count; ++i) {
+		const OptGltfScreenRect* r = &s->rects[i];
+		json_append(&out, &len, &cap, "%s{\"source\":%u,\"dst\":[%.9g,%.9g,%.9g,%.9g]", i ? "," : "", r->source,
+					(double)r->dst[0], (double)r->dst[1], (double)r->dst[2], (double)r->dst[3]);
+		json_append_vec3(&out, &len, &cap, "bg", r->bg);
+		json_append_vec3(&out, &len, &cap, "highlight", r->highlight);
+		json_append_vec3(&out, &len, &cap, "lock", r->lock);
+		json_append(&out, &len, &cap, ",\"gain\":%.9g,\"layers\":%u", (double)r->gain, r->layers);
+		if (r->layers & OPT_GLTF_SCREEN_LAYER_BAR)
+			json_append_vec3(&out, &len, &cap, "bar", r->bar);
+		json_append(&out, &len, &cap, "}");
+	}
+	json_append(&out, &len, &cap, "]}}");
+	return out;
+}
+
+/* Rewrite the material of a screen texture (opt2gltf.h, "Screen surfaces").
+ * `cover_base` and `cover_emissive` are the cover's textures, or NULL. */
+static bool screen_apply(GltfBuild* build, cgltf_material* mat, const OptGltfScreen* s, cgltf_texture* cover_base,
+						 cgltf_texture* cover_emissive) {
+	char* extras = screen_extras_json(s, mat->extras.data);
+	if (!extras)
+		return false;
+	mat->extras.data = gb_keep_string(build, extras);
+
+	mat->normal_texture.texture                                    = NULL;
+	mat->pbr_metallic_roughness.metallic_roughness_texture.texture = NULL;
+	mat->pbr_metallic_roughness.metallic_factor                    = 0.0f;
+	mat->pbr_metallic_roughness.roughness_factor                   = 1.0f;
+	const bool cover = cover_base && !s->hologram;
+	for (int channel = 0; channel < 3; ++channel) {
+		mat->pbr_metallic_roughness.base_color_factor[channel] = cover ? 1.0f : 0.0f;
+		mat->emissive_factor[channel]                          = cover && cover_emissive ? 1.0f : 0.0f;
+	}
+	mat->pbr_metallic_roughness.base_color_factor[3]       = 1.0f;
+	mat->pbr_metallic_roughness.base_color_texture.texture = cover ? cover_base : NULL;
+	mat->emissive_texture.texture                          = cover ? cover_emissive : NULL;
+	mat->has_emissive_strength                             = cover && cover_emissive;
+	mat->emissive_strength.emissive_strength               = cover && cover_emissive ? XWAU_ILLUM_GAIN : 1.0f;
+	mat->alpha_mode   = s->transparent || s->hologram ? cgltf_alpha_mode_blend : cgltf_alpha_mode_opaque;
+	mat->alpha_cutoff = 0.5f;
+	return true;
+}
+
 /* ===== Faceless meshes ============================================== */
 
 static int32_t opt_mesh_lod0_face_count(const opt_mesh_t* m) {
@@ -1511,6 +1619,11 @@ static bool build_memory(const opt_file_t* opt, const char* basename, const OptG
 	XwauBaked* xwau_baked        = NULL;
 	int32_t*   xwau_normal_owner = NULL;
 	int32_t*   xwau_normal_image = NULL;
+	/* Screen surfaces: per texture, the image slot of its cover's base image
+	 * (the emissive image follows it), or -1. Textures sharing a cover share
+	 * its images. */
+	const OptGltfScreen* screens            = options ? options->screens : NULL;
+	int32_t*             screen_cover_image = NULL;
 
 	/* Negative angle → keep the original OPT normals; otherwise
 	 * regenerate with an angle-based smoothing threshold. */
@@ -1586,7 +1699,29 @@ static bool build_memory(const opt_file_t* opt, const char* basename, const OptG
 		}
 	}
 
-	const size_t image_total = (size_t)opt->texture_count + n_emissive + n_xwau_images;
+	size_t n_screen_images = 0;
+	if (screens) {
+		screen_cover_image = (int32_t*)malloc((opt->texture_count ? (size_t)opt->texture_count : 1) *
+											  sizeof *screen_cover_image);
+		if (!screen_cover_image) {
+			fprintf(stderr, "opt2gltf: oom (screens)\n");
+			goto fail;
+		}
+		for (int32_t i = 0; i < opt->texture_count; ++i) {
+			screen_cover_image[i] = -1;
+			const OptGltfScreen* s = &screens[i];
+			if (!s->present || s->hologram || !s->cover_base.rgba)
+				continue;
+			bool shared = false;
+			for (int32_t j = 0; j < i && !shared; ++j)
+				shared = screens[j].present && !screens[j].hologram &&
+						 screens[j].cover_base.rgba == s->cover_base.rgba;
+			if (!shared)
+				n_screen_images += s->cover_emissive.rgba ? 2u : 1u;
+		}
+	}
+
+	const size_t image_total = (size_t)opt->texture_count + n_emissive + n_xwau_images + n_screen_images;
 	build->images            = (cgltf_image*)calloc(image_total ? image_total : 1, sizeof *build->images);
 	build->textures          = (cgltf_texture*)calloc(image_total ? image_total : 1, sizeof *build->textures);
 	/* Room for the base materials (one per texture plus the untextured one)
@@ -1784,6 +1919,48 @@ static bool build_memory(const opt_file_t* opt, const char* basename, const OptG
 				mat->normal_texture.texture = &build->textures[xwau_normal_image[owner]];
 			mat->normal_texture.scale = 1.0f;
 			xwau_set_specular(mat, baked->specular_color);
+		}
+
+		/* Screen surface: replaces the material's textures (opt2gltf.h). */
+		if (screens && screens[i].present) {
+			const OptGltfScreen* s       = &screens[i];
+			cgltf_texture*       base    = NULL;
+			cgltf_texture*       glow    = NULL;
+			int32_t              sharing = -1;
+			for (int32_t j = 0; j < i && sharing < 0 && s->cover_base.rgba && !s->hologram; ++j)
+				if (screen_cover_image[j] >= 0 && screens[j].cover_base.rgba == s->cover_base.rgba)
+					sharing = j;
+			if (sharing >= 0) {
+				screen_cover_image[i] = screen_cover_image[sharing];
+			} else if (s->cover_base.rgba && !s->hologram) {
+				const OptGltfImageView* views[2] = { &s->cover_base, &s->cover_emissive };
+				const char*             kinds[2] = { "base", "emissive" };
+				screen_cover_image[i]            = (int32_t)emi;
+				for (int k = 0; k < 2; ++k) {
+					if (!views[k]->rgba)
+						continue;
+					const size_t bytes = (size_t)views[k]->width * views[k]->height * 4u;
+					uint8_t*     copy  = (uint8_t*)malloc(bytes);
+					if (!copy) {
+						fprintf(stderr, "opt2gltf: oom (screen cover)\n");
+						goto fail;
+					}
+					memcpy(copy, views[k]->rgba, bytes);
+					document_set_image(document, emi, copy, views[k]->width, views[k]->height,
+									   xprintf_dup("Cover_%s_%s", s->cover_name ? s->cover_name : "cover", kinds[k]),
+									   xprintf_dup("%s_cover_%s_%s.png", basename,
+												   s->cover_name ? s->cover_name : "cover", kinds[k]));
+					emi++;
+				}
+			}
+			if (screen_cover_image[i] >= 0) {
+				base = &build->textures[screen_cover_image[i]];
+				glow = s->cover_emissive.rgba ? &build->textures[screen_cover_image[i] + 1] : NULL;
+			}
+			if (!screen_apply(build, mat, s, base, glow)) {
+				fprintf(stderr, "opt2gltf: oom (screen extras)\n");
+				goto fail;
+			}
 		}
 	}
 	if (options && options->alpha_overrides) {
@@ -2444,6 +2621,7 @@ static bool build_memory(const opt_file_t* opt, const char* basename, const OptG
 	free(built);
 	built = NULL;
 	xwau_state_free(xwau_baked, opt->texture_count, xwau_normal_owner, xwau_normal_image);
+	free(screen_cover_image);
 
 	*out_document = document;
 	return true;
@@ -2451,6 +2629,7 @@ static bool build_memory(const opt_file_t* opt, const char* basename, const OptG
 fail:
 	free(promoted_materials);
 	free(tex_emissive);
+	free(screen_cover_image);
 	xwau_state_free(xwau_baked, opt->texture_count, xwau_normal_owner, xwau_normal_image);
 	if (built) {
 		for (int32_t mi = 0; mi < opt->mesh_count; ++mi)

@@ -117,6 +117,57 @@ typedef struct OptGltfXwauMaterial {
 	const char*      normal_map_name;
 } OptGltfXwauMaterial;
 
+/*
+ * Screen surfaces: OPT textures that show a game-provided texture pair (a
+ * captured HUD) through rectangles, as the XWAU Dynamic Cockpit does. The
+ * caller resolves them (dynamic_cockpit.h); the converter rewrites the
+ * texture's material and records the rectangles in its `extras` as
+ * `aeronScreen` (docs: dynamic_cockpit.md, 2.4):
+ *
+ *   - with a cover image: base color = the cover premultiplied by its alpha,
+ *     base alpha = the cover alpha (the screen shows where it is below 1),
+ *     emissive = the cover's lit texels;
+ *   - without a cover, or for a hologram: no base color (black) and no
+ *     emissive texture, so the surface shows only the screen;
+ *   - normal and metallic-roughness textures are dropped (they follow the
+ *     OPT texture's layout, not the cover's);
+ *   - transparent and hologram surfaces are BLEND, others OPAQUE.
+ */
+#define OPT_GLTF_SCREEN_MAX_RECTS 12
+
+/* `layers` bits. */
+#define OPT_GLTF_SCREEN_LAYER_GRAPHICS 1u
+#define OPT_GLTF_SCREEN_LAYER_TEXT 2u
+#define OPT_GLTF_SCREEN_LAYER_BAR 4u /* filled from the bottom; no texture */
+
+typedef struct OptGltfScreenRect {
+	uint32_t source; /* source index (XWAU table order) */
+	float    dst[4]; /* u0, v0, u1, v1 in TEXCOORD_0; swapped corners mirror */
+	float    bg[3];  /* linear background colours */
+	float    highlight[3];
+	float    lock[3];
+	float    gain;   /* emissive multiplier of the rectangle's content */
+	uint32_t layers; /* OPT_GLTF_SCREEN_LAYER_* */
+	float    bar[3]; /* linear fill colour, with OPT_GLTF_SCREEN_LAYER_BAR */
+} OptGltfScreenRect;
+
+typedef struct OptGltfScreen {
+	bool              present;
+	bool              transparent;
+	bool              always_visible;
+	bool              hologram;
+	bool              noisy;
+	uint32_t          hide; /* bit per HUD region the 2D overlay drops */
+	uint32_t          rect_count;
+	OptGltfScreenRect rects[OPT_GLTF_SCREEN_MAX_RECTS];
+	/* Cover images, rows in UV order; rgba NULL without a cover. The two
+	 * views of one cover share cover_name, which labels the image files and
+	 * must be unique per distinct cover. */
+	OptGltfImageView cover_base;
+	OptGltfImageView cover_emissive;
+	const char*      cover_name;
+} OptGltfScreen;
+
 typedef struct OptGltfBuildOptions {
 	float smooth_angle_degrees;
 	bool  repair_normals;
@@ -137,6 +188,9 @@ typedef struct OptGltfBuildOptions {
 	 * >= 0, emissive and fullbright_strength. */
 	const OptGltfXwauMaterial* xwau_materials;
 	const OptGltfXwauMaterial* xwau_untextured;
+	/* Screen surfaces when set: one entry per OPT texture
+	 * (opt->texture_count); entries with `present` false are ordinary. */
+	const OptGltfScreen* screens;
 } OptGltfBuildOptions;
 
 #define OPT_GLTF_MAX_SUBDIVIDE 8u

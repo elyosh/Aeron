@@ -5,7 +5,7 @@
  * Usage:
  *   opt2gltf [--smooth-angle DEG] [--emissive] [--fullbright STRENGTH]
  *            [--tag N=TAG]... [--subdivide N] [--cockpit-eye X,Y,Z]
- *            [--xwau-root DIR]...
+ *            [--xwau-root DIR]... [--dynamic-cockpit FILE.dc]
  *            <input.opt|input_dir> <output_dir>
  *
  * If the input is a directory, every *.OPT inside (case-insensitive)
@@ -95,6 +95,12 @@
  * metallic-roughness, KHR_materials_specular, normal maps with NMIntensity
  * baked in and MikkTSpace tangents. Stored normals are used per corner.
  * Excludes --smooth-angle, --emissive, --fullbright and --no-normal-repair.
+ *
+ * --dynamic-cockpit FILE.dc (single OPT, with --xwau-root) applies an XWAU
+ * Dynamic Cockpit file (docs: dynamic_cockpit.md): the cockpit textures it
+ * names become screen surfaces showing the captured HUD, with their cover
+ * images from the Effects DATs, and hologram faces move by the craft INI's
+ * [CockpitHoloOffsets]. See dynamic_cockpit.h for the parsing rules.
  */
 
 #include <ctype.h>
@@ -110,6 +116,7 @@
 #include <sys/types.h>
 
 #include "opt.h"
+#include "dynamic_cockpit.h"
 #include "opt2gltf.h"
 #include "xwau_dat.h"
 #include "xwau_mat.h"
@@ -266,8 +273,13 @@ static void xwau_fill(OptGltfXwauMaterial* out, const XwauMatParams* p) {
 	out->alpha_to_bloom = p->alpha_to_bloom;
 }
 
+static int xwau_find_file(void* context, const char* rel, char* out, size_t cap) {
+	return xwau_find((const XwauContext*)context, rel, out, cap);
+}
+
 static int convert_xwau(opt_file_t* opt, const char* out_dir, const char* basename,
-						const OptGltfBuildOptions* base, const XwauContext* x, const char* label) {
+						const OptGltfBuildOptions* base, const XwauContext* x, const OptGltfScreen* screens,
+						const char* label) {
 	char rel[512], path[1024];
 	snprintf(rel, sizeof rel, "Materials/%s.mat", basename);
 	XwauMatFile* mat = xwau_find(x, rel, path, sizeof path) ? XwauMat_Load(path, &x->global) : NULL;
@@ -302,6 +314,7 @@ static int convert_xwau(opt_file_t* opt, const char* out_dir, const char* basena
 	OptGltfBuildOptions options = *base;
 	options.xwau_materials      = materials;
 	options.xwau_untextured     = &untextured;
+	options.screens             = screens;
 	fprintf(stderr, "opt2gltf: %s: xwau materials %s, %zu of %d textures normal-mapped (%zu maps)\n", label,
 			mat ? path : "(default)", normal_textures, (int)opt->texture_count, map_count);
 	int ok = opt2gltf_convert(opt, out_dir, basename, &options, label) ? 1 : 0;
@@ -351,7 +364,8 @@ static int apply_cockpit_eye(opt_file_t* opt, const int eye[3]) {
 }
 
 static int convert_one(const char* opt_path, const char* out_dir, const char* basename,
-					   const OptGltfBuildOptions* options, const XwauContext* xwau, const int* cockpit_eye) {
+					   const OptGltfBuildOptions* options, const XwauContext* xwau, const int* cockpit_eye,
+					   const char* dynamic_cockpit) {
 	opt_error_t err;
 	opt_file_t* opt = opt_load_file(opt_path, &err);
 	if (!opt) {
@@ -363,8 +377,19 @@ static int convert_one(const char* opt_path, const char* out_dir, const char* ba
 		opt_free(opt);
 		return 0;
 	}
-	int ok = xwau ? convert_xwau(opt, out_dir, basename, options, xwau, opt_path)
+	DynamicCockpit dc = { 0 };
+	if (dynamic_cockpit) {
+		if (!DynamicCockpit_Load(dynamic_cockpit, opt, basename, xwau_find_file, (void*)xwau, &dc, opt_path) ||
+			!DynamicCockpit_ApplyHologramOffset(opt, &dc)) {
+			fprintf(stderr, "opt2gltf: %s: cannot apply %s\n", opt_path, dynamic_cockpit);
+			DynamicCockpit_Free(&dc);
+			opt_free(opt);
+			return 0;
+		}
+	}
+	int ok = xwau ? convert_xwau(opt, out_dir, basename, options, xwau, dc.screens, opt_path)
 				  : (opt2gltf_convert(opt, out_dir, basename, options, opt_path) ? 1 : 0);
+	DynamicCockpit_Free(&dc);
 	opt_free(opt);
 	return ok;
 }
@@ -387,6 +412,7 @@ int main(int argc, char** argv) {
 	unsigned long        subdivide_levels = 0;
 	int                  cockpit_eye[3];
 	bool                 has_cockpit_eye = false;
+	const char*          dynamic_cockpit = NULL;
 	XwauContext          xwau             = { 0 };
 	int                  ai               = 1;
 	/* Optional conversion flags, in any order before the positional args. */
@@ -457,6 +483,14 @@ int main(int argc, char** argv) {
 			}
 			has_cockpit_eye = true;
 			ai += 2;
+		} else if (strcmp(argv[ai], "--dynamic-cockpit") == 0) {
+			if (ai + 1 >= argc) {
+				fprintf(stderr, "opt2gltf: --dynamic-cockpit needs a .dc file\n");
+				free(tags);
+				return 2;
+			}
+			dynamic_cockpit = argv[ai + 1];
+			ai += 2;
 		} else if (strcmp(argv[ai], "--subdivide") == 0) {
 			char* end        = NULL;
 			subdivide_levels = ai + 1 < argc ? strtoul(argv[ai + 1], &end, 10) : 0;
@@ -476,7 +510,8 @@ int main(int argc, char** argv) {
 		fprintf(stderr,
 				"usage: %s [--smooth-angle DEG] [--no-normal-repair] "
 				"[--emissive] [--fullbright STRENGTH] [--tag N=TAG]... [--subdivide N] "
-				"[--cockpit-eye X,Y,Z] [--xwau-root DIR]... <input.OPT|input_dir> <output_dir>\n",
+				"[--cockpit-eye X,Y,Z] [--xwau-root DIR]... [--dynamic-cockpit FILE.dc] "
+				"<input.OPT|input_dir> <output_dir>\n",
 				argv[0]);
 		free(tags);
 		return 2;
@@ -516,8 +551,13 @@ int main(int argc, char** argv) {
 		return 1;
 	}
 
-	if (S_ISDIR(st.st_mode) && has_cockpit_eye) {
-		fprintf(stderr, "opt2gltf: --cockpit-eye applies to a single OPT, not a directory\n");
+	if (S_ISDIR(st.st_mode) && (has_cockpit_eye || dynamic_cockpit)) {
+		fprintf(stderr, "opt2gltf: --cockpit-eye and --dynamic-cockpit apply to a single OPT, not a directory\n");
+		free(tags);
+		return 2;
+	}
+	if (dynamic_cockpit && !xwau_ctx) {
+		fprintf(stderr, "opt2gltf: --dynamic-cockpit needs --xwau-root (covers and hologram offsets)\n");
 		free(tags);
 		return 2;
 	}
@@ -542,7 +582,7 @@ int main(int argc, char** argv) {
 			strip_ext(base, sizeof base, de->d_name);
 			char out_sub[1024];
 			snprintf(out_sub, sizeof out_sub, "%s/%s", outd, base);
-			if (convert_one(src, out_sub, base, &options, xwau_ctx, cockpit_eye_arg))
+			if (convert_one(src, out_sub, base, &options, xwau_ctx, cockpit_eye_arg, NULL))
 				++ok_count;
 			else
 				++fail_count;
@@ -556,7 +596,7 @@ int main(int argc, char** argv) {
 		const char* fname = slash ? slash + 1 : in;
 		char        base[256];
 		strip_ext(base, sizeof base, fname);
-		status = convert_one(in, outd, base, &options, xwau_ctx, cockpit_eye_arg) ? 0 : 1;
+		status = convert_one(in, outd, base, &options, xwau_ctx, cockpit_eye_arg, dynamic_cockpit) ? 0 : 1;
 	}
 	free(tags);
 	return status;
