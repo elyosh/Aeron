@@ -94,10 +94,11 @@ typedef struct PbrTargetDesc {
 	uint8_t            write_mask; /* 0 = declared-but-masked */
 } PbrTargetDesc;
 
-static AeronGraphicsPipeline* pbr_pipeline(AeronShader* vs, AeronShader* ps, const PbrTargetDesc* targets,
-										   uint32_t num_targets, int depth_test, int depth_write,
-										   AeronCompareOp compare, AeronCullMode cull, int blend,
-										   AeronSampleCount sample_count) {
+static AeronGraphicsPipeline* pbr_pipeline_rasterized(AeronShader* vs, AeronShader* ps,
+													   const PbrTargetDesc* targets, uint32_t num_targets,
+													   int depth_test, int depth_write, AeronCompareOp compare,
+													   AeronCullMode cull, int blend, AeronSampleCount sample_count,
+													   const AeronRasterizerStateDesc* rasterizer) {
 	AeronVertexAttributeDesc    attrs[6];
 	AeronVertexBufferLayoutDesc vbd;
 	pbr_vertex_input(attrs, &vbd);
@@ -127,6 +128,7 @@ static AeronGraphicsPipeline* pbr_pipeline(AeronShader* vs, AeronShader* ps, con
 		.fragment_shader     = ps,
 		.primitive_type      = AERON_PRIMITIVE_TRIANGLES,
 		.cull_mode           = cull,
+		.rasterizer          = *rasterizer,
 		.vertex_buffers      = &vbd,
 		.vertex_buffer_count = 1,
 		.attributes          = attrs,
@@ -137,6 +139,15 @@ static AeronGraphicsPipeline* pbr_pipeline(AeronShader* vs, AeronShader* ps, con
 		.color_targets       = cts,
 		.sample_count        = sample_count,
 	});
+}
+
+static AeronGraphicsPipeline* pbr_pipeline(AeronShader* vs, AeronShader* ps, const PbrTargetDesc* targets,
+										   uint32_t num_targets, int depth_test, int depth_write,
+										   AeronCompareOp compare, AeronCullMode cull, int blend,
+										   AeronSampleCount sample_count) {
+	const AeronRasterizerStateDesc rasterizer = { 0 };
+	return pbr_pipeline_rasterized(vs, ps, targets, num_targets, depth_test, depth_write, compare, cull, blend,
+								   sample_count, &rasterizer);
 }
 
 /* Create the (kind, cull) variant. Kind fixes shaders, targets and
@@ -213,6 +224,21 @@ static AeronGraphicsPipeline* pbr_pipeline_create(struct AeronScene3D* s, int ki
 					   ? pbr_pipeline(s->pbr_prepass_mask_vs, s->pbr_prepass_mask_fs, pre3, 3, 1, 1,
 									  AERON_COMPARE_GREATER_EQUAL, cull, 0, AERON_SAMPLE_COUNT_1)
 					   : NULL;
+		/* Back-face fill: strict GREATER (reversed-Z: nearer) with the back
+		 * faces biased farther, so a front face at the same depth always
+		 * wins, e.g. the twin of a two-sided sheet built from two coincident
+		 * opposite triangles. Writes depth, so the filled interior also
+		 * hides what is drawn later behind the model (engine glows,
+		 * billboards, transparent meshes). */
+		case AERON_PBR_PIPE_BACKFACE_FILL: {
+			const AeronRasterizerStateDesc bias = { .depth_bias                 = 1,
+													.depth_bias_constant_factor = -16.0f,
+													.depth_bias_slope_factor    = -2.0f };
+			return s->pbr_backface_vs && s->pbr_backface_fs
+					   ? pbr_pipeline_rasterized(s->pbr_backface_vs, s->pbr_backface_fs, &color_rw, 1, 1, 1,
+												 AERON_COMPARE_GREATER, cull, 0, s->sample_count, &bias)
+					   : NULL;
+		}
 		/* Blend ranges: depth test GE (also for the deferred FORWARD path —
 		 * glass is excluded from the depth prepass, so EQUAL cannot match),
 		 * no depth write, alpha blending on. */
@@ -328,6 +354,8 @@ int AeronScenePbr_Ensure(struct AeronScene3D* s) {
 	s->pbr_mask_fs          = pbr_shader("scene_pbr_mesh_mask.frag", AERON_SHADER_STAGE_FRAGMENT, 10, 3, 5);
 	s->pbr_prepass_fs       = pbr_shader("scene_pbr_prepass.frag", AERON_SHADER_STAGE_FRAGMENT, 0, 0, 0);
 	s->pbr_prepass_mask_fs  = pbr_shader("scene_pbr_prepass_mask.frag", AERON_SHADER_STAGE_FRAGMENT, 1, 0, 2);
+	s->pbr_backface_vs      = pbr_shader("scene_pbr_backface.vert", AERON_SHADER_STAGE_VERTEX, 0, 1, 1);
+	s->pbr_backface_fs      = pbr_shader("scene_pbr_backface.frag", AERON_SHADER_STAGE_FRAGMENT, 0, 0, 0);
 	/* Velocity stamping reads the same mesh-owned material resources. */
 	s->pbr_prepass_stamp_fs =
 		pbr_shader("scene_pbr_prepass_stamp.frag", AERON_SHADER_STAGE_FRAGMENT, 1, 0, 2);
@@ -339,6 +367,9 @@ int AeronScenePbr_Ensure(struct AeronScene3D* s) {
 	/* Cull-NONE variants up front (long-standing default); other cull
 	 * modes are created lazily via AeronScenePbr_Pipeline. */
 	for (int kind = 0; kind < AERON_PBR_PIPE_KIND_COUNT; kind++) {
+		/* The back-face fill only culls front faces. */
+		if (kind == AERON_PBR_PIPE_BACKFACE_FILL)
+			continue;
 		s->pbr_pipes[kind][AERON_CULL_NONE] =
 			pbr_pipeline_create(s, kind, AERON_CULL_NONE, pbr_color_shader(s, kind, 0));
 	}
@@ -381,6 +412,10 @@ void AeronScenePbr_Release(struct AeronScene3D* s) {
 		Aeron_DestroyShader(s->pbr_prepass_mask_fs);
 	if (s->pbr_prepass_stamp_fs)
 		Aeron_DestroyShader(s->pbr_prepass_stamp_fs);
+	if (s->pbr_backface_vs)
+		Aeron_DestroyShader(s->pbr_backface_vs);
+	if (s->pbr_backface_fs)
+		Aeron_DestroyShader(s->pbr_backface_fs);
 #ifdef AERON_DEBUG_UI
 	if (s->pbr_debug_fs)
 		Aeron_DestroyShader(s->pbr_debug_fs);
@@ -744,5 +779,49 @@ int AeronScenePbr_DrawTransparentInstances(struct AeronScene3D* s, AeronRenderPa
 		Aeron_DrawIndexed(pass, m->blend_index_count, m->blend_index_offset, 0);
 	}
 	(void)ao_tex;
+	return 1;
+}
+
+int AeronScenePbr_DrawBackfaceFill(struct AeronScene3D* s, AeronRenderPass* pass) {
+	if (!s || !pass || !s->storage_ready) {
+		return 0;
+	}
+	if (!s->backface_fill || s->instance_count == 0) {
+		return 1;
+	}
+	Aeron_BindStorageBuffer(pass, AERON_SHADER_STAGE_VERTEX, 0, s->mesh_table_buffer);
+	const AeronSceneMesh* bound_mesh = NULL;
+	AeronCullMode         bound_cull = AERON_CULL_NONE;
+	for (int i = 0; i < s->instance_count; ++i) {
+		const AeronSceneMeshInstance* in = &s->instances[i];
+		const AeronSceneMesh*         m  = in->mesh;
+		/* Two-sided instances already draw their back faces. */
+		if (!m || !m->vbo || !m->ibo || m->opaque_index_count == 0 || in->cull_mode == AERON_CULL_NONE) {
+			continue;
+		}
+		/* The faces the instance culls are its back faces under the
+		 * caller's winding convention, so cull the opposite ones. */
+		const AeronCullMode cull = in->cull_mode == AERON_CULL_BACK ? AERON_CULL_FRONT : AERON_CULL_BACK;
+		if (cull != bound_cull) {
+			AeronGraphicsPipeline* pipeline = AeronScenePbr_Pipeline(s, AERON_PBR_PIPE_BACKFACE_FILL, cull);
+			if (!pipeline) {
+				/* Cosmetic: keep the frame and stop retrying. */
+				Aeron_LogWarn("aeron.scene",
+							  "PBR back-face fill pipeline creation failed; back-face fill disabled");
+				s->backface_fill = 0;
+				return 1;
+			}
+			Aeron_BindGraphicsPipeline(pass, pipeline);
+			bound_cull = cull;
+		}
+		if (m != bound_mesh) {
+			bound_mesh = m;
+			Aeron_BindVertexBuffer(pass, 0, m->vbo, 0);
+			Aeron_BindIndexBuffer(pass, m->ibo, AERON_INDEX_FORMAT_UINT32, 0);
+		}
+		pbr_push_instance_uniforms(s, pass, in, m, &s->prepared_instances[i], /*velocity=*/0,
+								   /*depth_only=*/1, /*screen_shadow=*/0);
+		Aeron_DrawIndexed(pass, m->opaque_index_count, 0, 0);
+	}
 	return 1;
 }

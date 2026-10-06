@@ -372,6 +372,16 @@ void AeronScene_SetPbrDebugViews(AeronScene3D* scene, int enabled);
  * debug UI. */
 void AeronScene_SetPbrDebugMaterial(AeronScene3D* scene, int enabled, float metallic, float roughness);
 
+/* Back-face fill (on by default; persists across frames): after the opaque
+ * meshes, the faces that back- or front-face-culled instances cull are
+ * drawn in a dark color, writing depth, wherever no front face covers them.
+ * Hairline cracks between authored surfaces, and openings into shells, then
+ * show a dark interior instead of the background, and later draws behind
+ * the model (engine glows, billboards, transparent meshes) stay hidden. Costs one extra
+ * position-only draw per such instance; almost every fragment fails the
+ * depth test. */
+void AeronScene_SetBackfaceFill(AeronScene3D* scene, int enabled);
+
 /* Image-based lighting environment for the PBR shader, for the current
  * frame. `diffuse` is a Lambert irradiance / pi cube; its sample along the
  * shading normal, times `diffuse_strength`, adds to the diffuse ambient.

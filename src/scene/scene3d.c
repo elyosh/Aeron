@@ -334,6 +334,7 @@ AeronScene3D* AeronScene_Create(const AeronScene3DDesc* desc) {
 	/* MSAA keeps a single-sample prepass for post effects and lens occlusion. */
 	s->with_normal_rt       = (desc && desc->with_normal_rt) || s->sample_count != AERON_SAMPLE_COUNT_1;
 	s->view_space_to_meters = desc && desc->view_space_to_meters > 0.0f ? desc->view_space_to_meters : 1.0f;
+	s->backface_fill        = 1;
 	s->temporal.mode =
 		desc && scene_temporal_mode_valid(desc->temporal_mode) ? desc->temporal_mode : AERON_TEMPORAL_OFF;
 	if (s->sample_count != AERON_SAMPLE_COUNT_1 && s->temporal.mode != AERON_TEMPORAL_OFF) {
@@ -1067,6 +1068,12 @@ void AeronScene_SetPbrDebugViews(AeronScene3D* s, int enabled) {
 	(void)s;
 	(void)enabled;
 #endif
+}
+
+void AeronScene_SetBackfaceFill(AeronScene3D* s, int enabled) {
+	if (s) {
+		s->backface_fill = enabled != 0;
+	}
 }
 
 void AeronScene_SetPbrEnvironment(AeronScene3D* s, const AeronScenePbrEnvironment* environment) {
@@ -1832,6 +1839,11 @@ int AeronScene_Render(AeronScene3D* s, AeronCommandBuffer* cmd) {
 			Aeron_EndRenderPass(pass);
 			return scene_render_failure(s, cmd, "Scene PBR forward recording failed");
 		}
+		Aeron_GpuDebugMarker(cmd, "PBR back-face fill");
+		if (!AeronScenePbr_DrawBackfaceFill(s, pass)) {
+			Aeron_EndRenderPass(pass);
+			return scene_render_failure(s, cmd, "Scene PBR back-face fill recording failed");
+		}
 		run_hook(s, AERON_SCENE_HOOK_AFTER_OPAQUE, cmd, pass);
 		Aeron_GpuDebugMarker(cmd, "Mesh overlays");
 		AeronSceneMeshOverlay_Draw(s, pass);
@@ -1915,6 +1927,11 @@ int AeronScene_Render(AeronScene3D* s, AeronCommandBuffer* cmd) {
 											 /*depth_only=*/0, /*velocity=*/0, NULL)) {
 				Aeron_EndRenderPass(pass);
 				return scene_render_failure(s, cmd, "Scene PBR mesh recording failed");
+			}
+			Aeron_GpuDebugMarker(cmd, "PBR back-face fill");
+			if (!AeronScenePbr_DrawBackfaceFill(s, pass)) {
+				Aeron_EndRenderPass(pass);
+				return scene_render_failure(s, cmd, "Scene PBR back-face fill recording failed");
 			}
 		}
 		run_hook(s, AERON_SCENE_HOOK_AFTER_OPAQUE, cmd, pass);

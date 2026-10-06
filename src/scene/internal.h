@@ -54,6 +54,7 @@ enum {
 	AERON_PBR_PIPE_PREPASS_STAMP,         /* normal masked + velocity written */
 	AERON_PBR_PIPE_PREPASS_TEMPORAL,      /* normal + velocity + R32 depth export */
 	AERON_PBR_PIPE_PREPASS_MASK_TEMPORAL, /* alpha mask normal + velocity + depth */
+	AERON_PBR_PIPE_BACKFACE_FILL,         /* back faces, dark color, strict biased test */
 	AERON_PBR_PIPE_KIND_COUNT
 };
 
@@ -483,6 +484,8 @@ struct AeronScene3D {
 	 * requires mesh or geometry-backed post-processing. */
 	int pbr_tried;
 	int pbr_debug_views;
+	/* AeronScene_SetBackfaceFill; on by default. */
+	int backface_fill;
 	/* Debug material override (AeronScene_SetPbrDebugMaterial): enabled,
 	 * metallic, roughness, 0. Reset by Begin. */
 	float pbr_debug_material[4];
@@ -508,6 +511,8 @@ struct AeronScene3D {
 #endif
 	AeronShader* pbr_prepass_fs;
 	AeronShader* pbr_prepass_mask_fs;
+	AeronShader* pbr_backface_vs;
+	AeronShader* pbr_backface_fs;
 	/* Pipeline matrix: kind x cull mode. Cull-NONE variants are created
 	 * by Ensure (the long-standing behavior); other cull modes are
 	 * created lazily on first use (per-instance cull_mode). */
@@ -559,6 +564,10 @@ int AeronScenePbr_DrawInstances(struct AeronScene3D* s, AeronCommandBuffer* cmd,
 								int pipe_kind, int depth_only, int velocity, AeronTexture* ao_tex);
 int AeronScenePbr_DrawTransparentInstances(struct AeronScene3D* s, AeronRenderPass* pass, int pipe_kind,
 										   AeronTexture* ao_tex);
+/* Draws the culled faces of every single-sided instance's opaque range in
+ * a dark color where no front face covers them (AeronScene_SetBackfaceFill).
+ * Call after the opaque draws, in the same pass. */
+int AeronScenePbr_DrawBackfaceFill(struct AeronScene3D* s, AeronRenderPass* pass);
 
 /* directional_shadow.c */
 int  AeronSceneDirectionalShadow_Prepare(struct AeronScene3D* scene);
