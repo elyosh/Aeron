@@ -115,7 +115,9 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
     FSOut _out;
 
     /* ===== Material resolution =================================== */
-    GltfMaterial m = pbr_resolve_material(
+    /* Fields are read where used (g_materials[mat]): keeping the whole
+     * record live cost registers and spills across the shader. */
+    const uint mat = pbr_material_slot(
         i.prim_id, i.variant_row_base, i.variant_group_count,
         i.material_count);
 
@@ -126,44 +128,44 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
      * it leaves the target unchanged, and a discard anywhere in this shader
      * would cost every opaque draw its early depth and hidden-surface
      * removal. */
-    if ((m.screen_flags & SCREEN_HOLOGRAM) != 0u) {
+    if ((g_materials[mat].screen_flags & SCREEN_HOLOGRAM) != 0u) {
         ScreenFrame holo_frame = screen_load_frame();
         if (holo_frame.holo_fade <= 0.01f) {
             _out.color = float4(0.0f, 0.0f, 0.0f, 0.0f);
             return _out;
         }
-        _out.color = screen_hologram(m, i.uv, holo_frame);
+        _out.color = screen_hologram(g_materials[mat], i.uv, holo_frame);
         return _out;
     }
 #endif
 
     /* ===== Base color ============================================ */
-    float4 albedo_tex = pbr_sample_base_color(m, i.uv);
+    float4 albedo_tex = pbr_sample_base_color(g_materials[mat], i.uv);
 #if AERON_PBR_ALPHA_MASK
-    pbr_apply_alpha_mask(albedo_tex.a * m.base_color_factor.a,
-                         m.metal_rough.z);
+    pbr_apply_alpha_mask(albedo_tex.a * g_materials[mat].base_color_factor.a,
+                         g_materials[mat].metal_rough.z);
 #endif
-    float3 albedo = albedo_tex.rgb * m.base_color_factor.rgb;
+    float3 albedo = albedo_tex.rgb * g_materials[mat].base_color_factor.rgb;
 
 #if AERON_PBR_SCREENS
     /* ===== Transparent screens ===================================
      * Unlit like XWAU's (no normal or shading): the cover, when present,
      * over the screen, with alpha from the display luminance. */
-    if ((m.screen_flags & SCREEN_TRANSPARENT) != 0u) {
+    if ((g_materials[mat].screen_flags & SCREEN_TRANSPARENT) != 0u) {
         ScreenFrame screen_frame = screen_load_frame();
         if ((screen_frame.flags & SCREEN_FRAME_HIDE_TRANSPARENT) != 0u &&
-            (m.screen_flags & SCREEN_ALWAYS_VISIBLE) == 0u) {
+            (g_materials[mat].screen_flags & SCREEN_ALWAYS_VISIBLE) == 0u) {
             _out.color = float4(0.0f, 0.0f, 0.0f, 0.0f);
             return _out;
         }
-        float3 screen = screen_evaluate(m, i.uv, screen_frame);
+        float3 screen = screen_evaluate(g_materials[mat], i.uv, screen_frame);
         float3 color = screen;
-        if ((m.screen_flags & SCREEN_COVER) != 0u) {
+        if ((g_materials[mat].screen_flags & SCREEN_COVER) != 0u) {
             float3 cover_glow = float3(0.0f, 0.0f, 0.0f);
-            if ((m.flags & GLTF_MATERIAL_HAS_EMISSIVE) != 0u) {
-                cover_glow = pbr_sample_channel(g_emissive, g_em_sampler, m, GLTF_ATLAS_EMISSIVE,
-                                                m.emissive_rect, i.uv).rgb *
-                             m.emissive_packed.rgb * m.emissive_packed.a;
+            if ((g_materials[mat].flags & GLTF_MATERIAL_HAS_EMISSIVE) != 0u) {
+                cover_glow = pbr_sample_channel(g_emissive, g_em_sampler, g_materials[mat], GLTF_ATLAS_EMISSIVE,
+                                                g_materials[mat].emissive_rect, i.uv).rgb *
+                             g_materials[mat].emissive_packed.rgb * g_materials[mat].emissive_packed.a;
             }
             color = albedo + cover_glow + screen * (1.0f - albedo_tex.a);
         }
@@ -193,9 +195,9 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
     }
 #endif
     float3 N = N_geom;
-    if ((m.flags & GLTF_MATERIAL_HAS_NORMAL) != 0u) {
-        float3 ntex = pbr_sample_channel(g_normal, g_normal_sampler, m,
-                                         GLTF_ATLAS_NORMAL, m.normal_rect,
+    if ((g_materials[mat].flags & GLTF_MATERIAL_HAS_NORMAL) != 0u) {
+        float3 ntex = pbr_sample_channel(g_normal, g_normal_sampler, g_materials[mat],
+                                         GLTF_ATLAS_NORMAL, g_materials[mat].normal_rect,
                                          i.uv).rgb * 2.0f - 1.0f;
         float  nz   = sqrt(saturate(1.0f - dot(ntex.xy, ntex.xy)));
         float3 nt   = float3(ntex.xy, max(ntex.z, nz));
@@ -252,7 +254,7 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
             /* Blended materials (canopy glass) take one comparison: a
              * soft penumbra is not discernible through them. */
             bool shadow_single_tap =
-                AERON_PBR_ALPHA_BLEND || (m.flags & GLTF_MATERIAL_ALPHA_BLEND) != 0u;
+                AERON_PBR_ALPHA_BLEND || (g_materials[mat].flags & GLTF_MATERIAL_ALPHA_BLEND) != 0u;
             shadow_visibility = directional_shadow_visibility(
                 i.world_pos, N_face, shadow_ndotl,
                 world_pos_dx, world_pos_dy, i.position.xy, shadow_single_tap,
@@ -278,17 +280,17 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
     /* ===== Metallic-roughness ==================================== */
     PbrMaterialParams mp;
     mp.spec_intensity = 1.0f;
-    mp.roughness      = m.metal_rough.y;
+    mp.roughness      = g_materials[mat].metal_rough.y;
     mp.F0             = float3(0.04f, 0.04f, 0.04f);
     mp.F90            = 1.0f;
     mp.albedo         = albedo;
-    float metallic = m.metal_rough.x;
-    if ((m.flags & GLTF_MATERIAL_HAS_METALLIC_ROUGHNESS) != 0u) {
-        float3 mr = pbr_sample_channel(g_mr, g_mr_sampler, m,
+    float metallic = g_materials[mat].metal_rough.x;
+    if ((g_materials[mat].flags & GLTF_MATERIAL_HAS_METALLIC_ROUGHNESS) != 0u) {
+        float3 mr = pbr_sample_channel(g_mr, g_mr_sampler, g_materials[mat],
                                        GLTF_ATLAS_METALLIC_ROUGHNESS,
-                                       m.mr_rect, i.uv).rgb;
-        mp.roughness = mr.g * m.metal_rough.y;
-        metallic     = mr.b * m.metal_rough.x;
+                                       g_materials[mat].mr_rect, i.uv).rgb;
+        mp.roughness = mr.g * g_materials[mat].metal_rough.y;
+        metallic     = mr.b * g_materials[mat].metal_rough.x;
     }
 #if AERON_PBR_DEBUG_VIEWS
     if (fs_debug_material.x != 0.0f) {
@@ -300,9 +302,9 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
     /* KHR_materials_specular: the dielectric F0 is scaled by the colour
      * factor and both dielectric Fresnel ends by specularFactor; the
      * defaults (1, 1) give the plain metallic-roughness model. */
-    float3 f0_dielectric = min(0.04f * m.specular.rgb, 1.0f) * m.specular.a;
+    float3 f0_dielectric = min(0.04f * g_materials[mat].specular.rgb, 1.0f) * g_materials[mat].specular.a;
     mp.F0  = lerp(f0_dielectric, albedo, metallic);
-    mp.F90 = lerp(m.specular.a, 1.0f, metallic);
+    mp.F90 = lerp(g_materials[mat].specular.a, 1.0f, metallic);
     base_rgb *= (1.0f - metallic);
 
     /* ===== Cook-Torrance specular ================================
@@ -461,16 +463,16 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
         i.base_color_emissive_strength > 0.0f) {
         lit = albedo * i.base_color_emissive_strength;
     } else if (xvt_flat == 0.0f) {
-        float3 emissive = m.emissive_packed.rgb;
+        float3 emissive = g_materials[mat].emissive_packed.rgb;
         float emissive_coverage = 0.0f;
-        if ((m.flags & GLTF_MATERIAL_HAS_EMISSIVE) != 0u) {
-            float4 emissive_tex = pbr_sample_channel(g_emissive, g_em_sampler, m,
+        if ((g_materials[mat].flags & GLTF_MATERIAL_HAS_EMISSIVE) != 0u) {
+            float4 emissive_tex = pbr_sample_channel(g_emissive, g_em_sampler, g_materials[mat],
                                                      GLTF_ATLAS_EMISSIVE,
-                                                     m.emissive_rect, i.uv);
+                                                     g_materials[mat].emissive_rect, i.uv);
             emissive_coverage = emissive_tex.a;
 
             float3 emissive_rgb = emissive_tex.rgb;
-            if ((m.flags & GLTF_MATERIAL_LEGACY_EMISSIVE) != 0u) {
+            if ((g_materials[mat].flags & GLTF_MATERIAL_LEGACY_EMISSIVE) != 0u) {
                 /* Against transparent black, the sRGB hardware sample is
                  * approximately coverage * linear(glow_rgb). Recover the
                  * glow colour and reproduce both classic operations in
@@ -489,8 +491,8 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
             emissive *= emissive_rgb;
         }
         float emissive_mul = i.emissive_mul;
-        emissive *= m.emissive_packed.a * emissive_mul;
-        if ((m.flags & GLTF_MATERIAL_LEGACY_EMISSIVE) != 0u) {
+        emissive *= g_materials[mat].emissive_packed.a * emissive_mul;
+        if ((g_materials[mat].flags & GLTF_MATERIAL_LEGACY_EMISSIVE) != 0u) {
             lit = emissive + lit * (1.0f - saturate(emissive_coverage * emissive_mul));
         } else {
             lit += emissive;
@@ -501,17 +503,17 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
     /* ===== Opaque screens =========================================
      * Unlit screen radiance, shown where the cover is transparent (all of
      * the surface without a cover). */
-    if (m.screen_count != 0u && xvt_flat == 0.0f && isolate == 0) {
-        float3 screen = screen_evaluate(m, i.uv, screen_load_frame());
-        lit += screen * ((m.screen_flags & SCREEN_COVER) != 0u ? 1.0f - albedo_tex.a : 1.0f);
+    if (g_materials[mat].screen_count != 0u && xvt_flat == 0.0f && isolate == 0) {
+        float3 screen = screen_evaluate(g_materials[mat], i.uv, screen_load_frame());
+        lit += screen * ((g_materials[mat].screen_flags & SCREEN_COVER) != 0u ? 1.0f - albedo_tex.a : 1.0f);
     }
 #endif
 
     /* Alpha-BLEND materials (flag bit 3 — canopy glass, drawn by the
      * blend pipelines) carry texture x factor alpha; every opaque
      * material writes 1 so the scene RT keeps full coverage. */
-    float alpha = ((m.flags & GLTF_MATERIAL_ALPHA_BLEND) != 0u)
-                      ? saturate(albedo_tex.a * m.base_color_factor.a)
+    float alpha = ((g_materials[mat].flags & GLTF_MATERIAL_ALPHA_BLEND) != 0u)
+                      ? saturate(albedo_tex.a * g_materials[mat].base_color_factor.a)
                       : 1.0f;
     _out.color = float4(lit, alpha);
     return _out;

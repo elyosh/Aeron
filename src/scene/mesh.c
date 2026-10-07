@@ -59,12 +59,31 @@ void AeronScene_MeshDestroy(AeronSceneMesh* m) {
 
 /* Copy factors and atlas transforms into the shader's 160-byte storage
  * record. The temporary array is released immediately after upload. */
+/* The material primitives without one use (pbr_default_material's values):
+ * white base colour factor, no emission, metallic 0, roughness 1, no
+ * channel textures. */
+static void populate_default_material_entry(AeronPbrMaterialEntry* e) {
+	memset(e, 0, sizeof *e);
+	for (int c = 0; c < 4; c++) {
+		e->base_color_factor[c] = 1.0f;
+		e->specular[c]          = 1.0f;
+		e->atlas[c]             = 15u << 12;
+	}
+	e->emissive_factor[3] = 1.0f;
+	e->metal_rough[1]     = 1.0f;
+	e->metal_rough[2]     = 0.5f;
+}
+
+/* Fills the mesh's materials, then the default one after them (index
+ * material_count), so shaders read any primitive's material from the
+ * buffer. Returns the material count. */
 static uint32_t populate_material_entries(AeronPbrMaterialEntry* entries, const AeronGltfModel* src) {
 	uint32_t n = src->material_count;
 	if (n > AERON_GLTF_MAX_MATERIALS) {
 		n = AERON_GLTF_MAX_MATERIALS;
 	}
-	memset(entries, 0, (size_t)(n ? n : 1u) * sizeof *entries);
+	memset(entries, 0, (size_t)n * sizeof *entries);
+	populate_default_material_entry(&entries[n]);
 	for (uint32_t i = 0; i < n; i++) {
 		const AeronGltfMaterial* m = &src->materials[i];
 		AeronPbrMaterialEntry*   e = &entries[i];
@@ -121,11 +140,10 @@ static uint32_t populate_material_entries(AeronPbrMaterialEntry* entries, const 
 
 static int build_material_storage(AeronSceneMesh* s, const AeronGltfModel* model, const char* name,
 								  AeronPbrMaterialEntry** out_entries, uint32_t* out_bytes) {
+	/* The mesh's materials, then the default one. */
 	const uint32_t allocation_count =
-		model->material_count > 0
-			? (model->material_count > AERON_GLTF_MAX_MATERIALS ? AERON_GLTF_MAX_MATERIALS
-																: model->material_count)
-			: 1u;
+		(model->material_count > AERON_GLTF_MAX_MATERIALS ? AERON_GLTF_MAX_MATERIALS : model->material_count) +
+		1u;
 	if (!out_entries || !out_bytes) {
 		return 0;
 	}

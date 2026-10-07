@@ -70,36 +70,24 @@ uint pbr_resolve_material_index(uint prim_id, uint variant_row_base,
                       : packed.w;
 }
 
-GltfMaterial pbr_default_material()
+/* Slot of a primitive's material in g_materials. Meshes store a default
+ * material after their own (slot material_count) for primitives without
+ * one, so the forward shader reads the fields where it uses them instead of
+ * keeping the whole record in registers. */
+uint pbr_material_slot(uint prim_id, uint variant_row_base,
+                       uint variant_group_count, uint material_count)
 {
-    GltfMaterial material;
-    material.base_rect = float4(0, 0, 0, 0);
-    material.normal_rect = float4(0, 0, 0, 0);
-    material.mr_rect = float4(0, 0, 0, 0);
-    material.emissive_rect = float4(0, 0, 0, 0);
-    material.base_color_factor = float4(1, 1, 1, 1);
-    material.emissive_packed = float4(0, 0, 0, 1);
-    material.metal_rough = float4(0, 1, 0.5f, 0);
-    material.specular = float4(1, 1, 1, 1);
-    material.atlas = uint4(15u << 12, 15u << 12, 15u << 12, 15u << 12);
-    material.flags = 0u;
-    material.screen_first = 0u;
-    material.screen_count = 0u;
-    material.screen_flags = 0u;
-    return material;
+    uint material_index = pbr_resolve_material_index(
+        prim_id, variant_row_base, variant_group_count);
+    return material_index < material_count ? material_index : material_count;
 }
 
 GltfMaterial pbr_resolve_material(uint prim_id, uint variant_row_base,
                                   uint variant_group_count,
                                   uint material_count)
 {
-    uint material_index = pbr_resolve_material_index(
-        prim_id, variant_row_base, variant_group_count);
-    if (material_index != GLTF_NO_MATERIAL &&
-        material_index < material_count) {
-        return g_materials[material_index];
-    }
-    return pbr_default_material();
+    return g_materials[pbr_material_slot(prim_id, variant_row_base,
+                                         variant_group_count, material_count)];
 }
 
 /* Samples one channel of the material through its atlas page and LOD
