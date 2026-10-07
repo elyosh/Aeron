@@ -108,11 +108,18 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
         i.prim_id, i.variant_row_base, i.variant_group_count,
         i.material_count);
 
-    /* ===== Hologram screens (unlit, straight alpha) =============== */
+    /* ===== Hologram screens (unlit, straight alpha) ===============
+     * Hidden screens return transparent black instead of discarding: they
+     * are always blended (the loader keeps them in the blend range), where
+     * it leaves the target unchanged, and a discard anywhere in this shader
+     * would cost every opaque draw its early depth and hidden-surface
+     * removal. */
     if ((m.screen_flags & SCREEN_HOLOGRAM) != 0u) {
         ScreenFrame holo_frame = screen_load_frame();
-        if (holo_frame.holo_fade <= 0.01f)
-            discard;
+        if (holo_frame.holo_fade <= 0.01f) {
+            _out.color = float4(0.0f, 0.0f, 0.0f, 0.0f);
+            return _out;
+        }
         _out.color = screen_hologram(m, i.uv, holo_frame);
         return _out;
     }
@@ -131,8 +138,10 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
     if ((m.screen_flags & SCREEN_TRANSPARENT) != 0u) {
         ScreenFrame screen_frame = screen_load_frame();
         if ((screen_frame.flags & SCREEN_FRAME_HIDE_TRANSPARENT) != 0u &&
-            (m.screen_flags & SCREEN_ALWAYS_VISIBLE) == 0u)
-            discard;
+            (m.screen_flags & SCREEN_ALWAYS_VISIBLE) == 0u) {
+            _out.color = float4(0.0f, 0.0f, 0.0f, 0.0f);
+            return _out;
+        }
         float3 screen = screen_evaluate(m, i.uv, screen_frame);
         float3 color = screen;
         if ((m.screen_flags & SCREEN_COVER) != 0u) {

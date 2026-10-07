@@ -544,6 +544,16 @@ bool Aeron_GltfMeshBuildData(const cgltf_data* data, const char* source_label, A
 			if (!read_screen(&data->materials[i], out, &screen_rect_capacity, &out->materials[i],
 							 source_label, i))
 				goto cleanup;
+			/* Holograms and transparent screens blend over the scene, and
+			 * the PBR shader leaves them transparent when hidden: only the
+			 * blend range can draw them. */
+			AeronGltfMaterial* material = &out->materials[i];
+			if ((material->screen_flags & (AERON_GLTF_SCREEN_HOLOGRAM | AERON_GLTF_SCREEN_TRANSPARENT)) != 0 &&
+				material->alpha_mode != AERON_GLTF_ALPHA_BLEND) {
+				SDL_Log("[flight_gltf] '%s' material %u: hologram or transparent screen drawn as BLEND",
+						source_label, i);
+				material->alpha_mode = AERON_GLTF_ALPHA_BLEND;
+			}
 		}
 	}
 
