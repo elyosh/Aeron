@@ -261,6 +261,11 @@ struct AeronScene3D {
 	AeronSceneMeshInstance     instances[AERON_SCENE_MAX_INSTANCES];
 	AeronScenePreparedInstance prepared_instances[AERON_SCENE_MAX_INSTANCES];
 	int                        instance_count;
+	/* Camera-visible instances, nearest first (AeronSceneStorage_Prepare):
+	 * opaque passes draw in this order so depth testing rejects what the
+	 * nearer instances hide, and blending walks it backwards. */
+	uint16_t camera_order[AERON_SCENE_MAX_INSTANCES];
+	int      camera_order_count;
 	int                        instances_dropped;
 	AeronSceneLight            lights[AERON_SCENE_MAX_LIGHTS];
 	int                        light_count;

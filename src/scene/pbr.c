@@ -668,10 +668,11 @@ int AeronScenePbr_DrawInstances(struct AeronScene3D* s, AeronCommandBuffer* cmd,
 
 	const AeronSceneMesh* bound_mesh                  = NULL;
 	int                   bound_receiver_local_shadow = 0;
-	for (int i = 0; i < s->instance_count; ++i) {
+	for (int k = 0; k < s->camera_order_count; ++k) {
+		const int                     i  = s->camera_order[k];
 		const AeronSceneMeshInstance* in = &s->instances[i];
 		const AeronSceneMesh*         m  = in->mesh;
-		if (!m || !m->vbo || !m->ibo || m->index_count == 0 || !s->prepared_instances[i].camera_visible) {
+		if (!m || !m->vbo || !m->ibo || m->index_count == 0) {
 			continue;
 		}
 		if (!depth_only) {
@@ -724,11 +725,11 @@ int AeronScenePbr_DrawInstances(struct AeronScene3D* s, AeronCommandBuffer* cmd,
 	const int mask_kind = pbr_mask_kind(pipe_kind);
 	if (mask_kind >= 0) {
 		bound_mesh = NULL;
-		for (int i = 0; i < s->instance_count; ++i) {
+		for (int k = 0; k < s->camera_order_count; ++k) {
+			const int                     i  = s->camera_order[k];
 			const AeronSceneMeshInstance* in = &s->instances[i];
 			const AeronSceneMesh*         m  = in->mesh;
-			if (!m || !m->vbo || !m->ibo || m->mask_index_count == 0 ||
-				!s->prepared_instances[i].camera_visible) {
+			if (!m || !m->vbo || !m->ibo || m->mask_index_count == 0) {
 				continue;
 			}
 			if (!depth_only) {
@@ -761,11 +762,11 @@ int AeronScenePbr_DrawInstances(struct AeronScene3D* s, AeronCommandBuffer* cmd,
 	 * and normal stay untouched. */
 	if (depth_only && velocity) {
 		bound_mesh = NULL;
-		for (int i = 0; i < s->instance_count; ++i) {
+		for (int k = 0; k < s->camera_order_count; ++k) {
+			const int                     i  = s->camera_order[k];
 			const AeronSceneMeshInstance* in = &s->instances[i];
 			const AeronSceneMesh*         m  = in->mesh;
-			if (!in->velocity_stamp || !m || !m->vbo || !m->ibo || m->blend_index_count == 0 ||
-				!s->prepared_instances[i].camera_visible) {
+			if (!in->velocity_stamp || !m || !m->vbo || !m->ibo || m->blend_index_count == 0) {
 				continue;
 			}
 			if (!pbr_bind_pipeline(s, pass, AERON_PBR_PIPE_PREPASS_STAMP, (AeronCullMode)in->cull_mode, &bound)) {
@@ -810,10 +811,12 @@ int AeronScenePbr_DrawTransparentInstances(struct AeronScene3D* s, AeronRenderPa
 	const AeronSceneMesh*  bound_mesh                  = NULL;
 	AeronGraphicsPipeline* bound                       = NULL;
 	int                    bound_receiver_local_shadow = 0;
-	for (int i = 0; i < s->instance_count; ++i) {
+	/* Far to near, so overlapping transparent instances blend in order. */
+	for (int k = s->camera_order_count - 1; k >= 0; --k) {
+		const int                     i  = s->camera_order[k];
 		const AeronSceneMeshInstance* in = &s->instances[i];
 		const AeronSceneMesh*         m  = in->mesh;
-		if (!m || !m->vbo || !m->ibo || m->blend_index_count == 0 || !s->prepared_instances[i].camera_visible) {
+		if (!m || !m->vbo || !m->ibo || m->blend_index_count == 0) {
 			continue;
 		}
 		const int receiver_local_shadow =
@@ -861,12 +864,12 @@ int AeronScenePbr_DrawBackfaceFill(struct AeronScene3D* s, AeronRenderPass* pass
 	Aeron_BindStorageBuffer(pass, AERON_SHADER_STAGE_VERTEX, 0, s->mesh_table_buffer);
 	const AeronSceneMesh* bound_mesh = NULL;
 	AeronCullMode         bound_cull = AERON_CULL_NONE;
-	for (int i = 0; i < s->instance_count; ++i) {
+	for (int k = 0; k < s->camera_order_count; ++k) {
+		const int                     i  = s->camera_order[k];
 		const AeronSceneMeshInstance* in = &s->instances[i];
 		const AeronSceneMesh*         m  = in->mesh;
 		/* Two-sided instances already draw their back faces. */
-		if (!m || !m->vbo || !m->ibo || m->opaque_index_count == 0 || in->cull_mode == AERON_CULL_NONE ||
-			!s->prepared_instances[i].camera_visible) {
+		if (!m || !m->vbo || !m->ibo || m->opaque_index_count == 0 || in->cull_mode == AERON_CULL_NONE) {
 			continue;
 		}
 		/* The faces the instance culls are its back faces under the

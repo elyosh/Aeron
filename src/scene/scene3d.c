@@ -11,6 +11,7 @@
 
 #include <SDL3/SDL.h>
 
+#include <float.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -1364,10 +1365,32 @@ static void scene_camera_frustum(const AeronScene3D* s, float planes[5][4]) {
 	}
 }
 
-/* An instance without a usable bound stays visible. */
-static int scene_instance_in_frustum(const AeronSceneMeshInstance* instance, const float planes[5][4]) {
+/* Draw-order key of a camera-visible instance: the distance from the camera
+ * to its bound, 0 when the bound contains the camera, then the distance to
+ * the bound's centre, so the cockpit sorts before an enclosing hangar. */
+typedef struct SceneOrderKey {
+	float    surface;
+	float    center;
+	uint16_t index;
+} SceneOrderKey;
+
+static int scene_order_key_compare(const void* a, const void* b) {
+	const SceneOrderKey* x = a;
+	const SceneOrderKey* y = b;
+	if (x->surface != y->surface)
+		return x->surface < y->surface ? -1 : 1;
+	if (x->center != y->center)
+		return x->center < y->center ? -1 : 1;
+	return (int)x->index - (int)y->index;
+}
+
+/* An instance without a usable bound stays visible, and sorts last. */
+static int scene_instance_in_frustum(const AeronScene3D* s, const AeronSceneMeshInstance* instance,
+									 const float planes[5][4], SceneOrderKey* key) {
 	float center[3];
 	float radius;
+	key->surface = FLT_MAX;
+	key->center  = FLT_MAX;
 	if (!AeronSceneInternal_InstanceBound(instance, center, &radius)) {
 		return 1;
 	}
@@ -1378,6 +1401,11 @@ static int scene_instance_in_frustum(const AeronSceneMeshInstance* instance, con
 			return 0;
 		}
 	}
+	const float dx = center[0] - s->camera.pos[0];
+	const float dy = center[1] - s->camera.pos[1];
+	const float dz = center[2] - s->camera.pos[2];
+	key->center    = sqrtf(dx * dx + dy * dy + dz * dz);
+	key->surface   = fmaxf(key->center - radius, 0.0f);
 	return 1;
 }
 
@@ -1399,11 +1427,18 @@ int AeronSceneStorage_Prepare(AeronScene3D* s, AeronCommandBuffer* cmd) {
 	}
 	float frustum[5][4];
 	scene_camera_frustum(s, frustum);
+	static SceneOrderKey order_keys[AERON_SCENE_MAX_INSTANCES];
+	s->camera_order_count = 0;
 	for (int i = 0; i < s->instance_count; ++i) {
 		const AeronSceneMeshInstance* instance = &s->instances[i];
 		AeronScenePreparedInstance*   prepared = &s->prepared_instances[i];
 		memset(prepared, 0, sizeof *prepared);
-		prepared->camera_visible = (uint32_t)scene_instance_in_frustum(instance, frustum);
+		SceneOrderKey key;
+		prepared->camera_visible = (uint32_t)scene_instance_in_frustum(s, instance, frustum, &key);
+		if (prepared->camera_visible) {
+			key.index                          = (uint16_t)i;
+			order_keys[s->camera_order_count++] = key;
+		}
 		prepared->current_table_base =
 			scene_register_mesh_table(s, instance->mesh_table, &prepared->table_slot_count);
 		uint32_t previous_slots = 0;
@@ -1441,6 +1476,10 @@ int AeronSceneStorage_Prepare(AeronScene3D* s, AeronCommandBuffer* cmd) {
 				s->local_light_count += count;
 			}
 		}
+	}
+	qsort(order_keys, (size_t)s->camera_order_count, sizeof *order_keys, scene_order_key_compare);
+	for (int k = 0; k < s->camera_order_count; ++k) {
+		s->camera_order[k] = order_keys[k].index;
 	}
 	for (int i = 0; i < s->shadow_only_count; ++i) {
 		AeronScenePreparedInstance* prepared = &s->prepared_shadow_only[i];
