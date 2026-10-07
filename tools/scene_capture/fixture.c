@@ -392,7 +392,27 @@ static void place_ship(float transform[16], const CaptureInstance* in) {
 	}
 }
 
-static void add_game_instances(AeronScene3D* scene, const Fixture* f) {
+/* Rotates a camera-space placement into the world by the camera's
+ * orientation (unit quaternion w, x, y, z; the camera sits at the origin),
+ * as the game carries its cockpit with the view. */
+static void attach_to_camera(float transform[16], const AeronSceneCamera* camera) {
+	/* The conjugate: `ori` maps world directions into the camera. */
+	const float w = camera->ori[0], x = -camera->ori[1], y = -camera->ori[2], z = -camera->ori[3];
+	const float rotation[3][3] = {
+		{ 1 - 2 * (y * y + z * z), 2 * (x * y - w * z), 2 * (x * z + w * y) },
+		{ 2 * (x * y + w * z), 1 - 2 * (x * x + z * z), 2 * (y * z - w * x) },
+		{ 2 * (x * z - w * y), 2 * (y * z + w * x), 1 - 2 * (x * x + y * y) },
+	};
+	float local[16];
+	memcpy(local, transform, sizeof local);
+	for (int r = 0; r < 3; ++r)
+		for (int c = 0; c < 4; ++c)
+			transform[r * 4 + c] = rotation[r][0] * local[0 * 4 + c] + rotation[r][1] * local[1 * 4 + c] +
+								   rotation[r][2] * local[2 * 4 + c];
+}
+
+static void add_game_instances(AeronScene3D* scene, const Fixture* f, const AeronSceneCamera* camera,
+							   const AeronSceneCamera* previous_camera) {
 	for (int i = 0; i < f->config.game.instance_count; ++i) {
 		const CaptureInstance* in       = &f->config.game.instances[i];
 		AeronSceneMeshInstance instance = {
@@ -406,6 +426,12 @@ static void add_game_instances(AeronScene3D* scene, const Fixture* f) {
 			place_screen_test_model(instance.transform, &f->config);
 		scale_transform(instance.transform, GAME_UNITS_PER_METER);
 		memcpy(instance.prev_transform, instance.transform, sizeof instance.transform);
+		/* When the craft turns, the cockpit and the hidden exterior turn
+		 * with the view; when the pilot looks around, they stay put. */
+		if (in->role != CAPTURE_ROLE_SHIP && f->config.game.cockpit_follows_camera) {
+			attach_to_camera(instance.transform, camera);
+			attach_to_camera(instance.prev_transform, previous_camera);
+		}
 		/* As flight.c submits the cockpit view's cockpit and hidden exterior. */
 		if (in->role == CAPTURE_ROLE_EXTERIOR) {
 			instance.shadow_flags = AERON_SCENE_INSTANCE_EXCLUDE_FROM_RECEIVER_LOCAL_SHADOW;
@@ -415,6 +441,7 @@ static void add_game_instances(AeronScene3D* scene, const Fixture* f) {
 		if (in->role == CAPTURE_ROLE_COCKPIT) {
 			instance.shadow_flags =
 				AERON_SCENE_INSTANCE_NO_CAST_SHADOW | AERON_SCENE_INSTANCE_USE_RECEIVER_LOCAL_SHADOW;
+			instance.velocity_stamp_screens = 1;
 		}
 		AeronScene_AddMeshInstance(scene, &instance);
 	}
@@ -508,7 +535,7 @@ AeronRenderTarget* Fixture_Record(Fixture* f, double time, int blur, AeronComman
 		set_game_lighting(scene, &f->config);
 		if (f->config.screen_test)
 			set_screen_sources(scene, f, time);
-		add_game_instances(scene, f);
+		add_game_instances(scene, f, &current, &previous);
 		return AeronScene_Render(scene, cmd) ? AeronScene_SceneRt(scene) : NULL;
 	}
 	AeronScene_SetPost(

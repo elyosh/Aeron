@@ -40,6 +40,9 @@ typedef struct CaptureGameScene {
 	AeronSceneSsaoSettings   ssao;
 	AeronSceneShadowSettings shadows;
 	float                    sun_direction[3], sun_color[3], ambient;
+	/* The cockpit and exterior turn with the panning camera (the craft
+	 * turns) instead of staying put (the pilot looks around). */
+	int                      cockpit_follows_camera;
 	CaptureInstance          instances[CAPTURE_MAX_INSTANCES];
 	int                      instance_count;
 	CaptureLight             lights[CAPTURE_MAX_LIGHTS];
