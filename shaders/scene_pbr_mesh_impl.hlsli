@@ -219,10 +219,17 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
         if (i.screen_shadow != 0u) {
             shadow_visibility = screen_shadow_visibility;
         } else {
+            /* The shadow scales only the sun's diffuse and specular terms.
+             * Without wrap both are zero when N and N_face (and so N_spec,
+             * their blend) face away from the light: skip the lookup. */
+            float shadow_ndotl = light_wrap > 0.0f ? 1.0f : max(dot(N, L), dot(N_face, L));
+            /* Blended materials (canopy glass) take one comparison: a
+             * soft penumbra is not discernible through them. */
+            bool shadow_single_tap = (m.flags & GLTF_MATERIAL_ALPHA_BLEND) != 0u;
             shadow_visibility = directional_shadow_visibility(
-                i.world_pos, N_face, 1.0f,
-                world_pos_dx, world_pos_dy, i.position.xy, shadow_cascade,
-                shadow_cascade_blend, shadow_coverage);
+                i.world_pos, N_face, shadow_ndotl,
+                world_pos_dx, world_pos_dy, i.position.xy, shadow_single_tap,
+                shadow_cascade, shadow_cascade_blend, shadow_coverage);
         }
     }
 

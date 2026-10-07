@@ -233,11 +233,15 @@ static const float2 pcss_filter_offsets[24] = {
     float2( 0.1522f,  0.2657f)
 };
 
+/* `lit` is set when the search finds no blocker and covers the minimum
+ * filter footprint: the filter would then compare against unoccluded
+ * texels only, so the caller skips it. */
 float2 pcss_filter_radius(uint cascade, float2 local_uv,
                           float physical_receiver_depth, float comparison_receiver_depth,
                           float2 physical_depth_per_texel,
-                          float2 comparison_depth_per_texel)
+                          float2 comparison_depth_per_texel, out bool lit)
 {
+    lit = false;
     float2 normalized_depth_per_texel =
         max(shadow_texel_data[cascade].zw, 1.0e-9f.xx);
     /* A directional source can only be occluded between the receiver and
@@ -263,6 +267,7 @@ float2 pcss_filter_radius(uint cascade, float2 local_uv,
         }
     }
     if (blocker_count == 0.0f) {
+        lit = all(search_radius >= shadow_pcss.w + 1.0f);
         return shadow_pcss.w.xx;
     }
 
@@ -379,9 +384,11 @@ float sample_shadow_tent7(uint cascade, float2 local_uv, float receiver_depth,
     return visibility * (1.0f / 256.0f);
 }
 
+/* `single_tap` takes one hardware-filtered comparison whatever the
+ * configured filter quality. */
 float sample_shadow_cascade(uint cascade, float3 world_pos, float3 geometric_normal,
                             float3 world_pos_dx, float3 world_pos_dy,
-                            float2 screen_position)
+                            float2 screen_position, bool single_tap)
 {
     float4x4 view_proj = shadow_view_proj[cascade];
     float4 physical_clip = mul(view_proj, float4(world_pos, 1.0f));
@@ -414,7 +421,7 @@ float sample_shadow_cascade(uint cascade, float3 world_pos, float3 geometric_nor
     float2 local_uv = float2(ndc.x * 0.5f + 0.5f, -ndc.y * 0.5f + 0.5f);
     float receiver_depth = saturate(ndc.z + shadow_bias.y *
                                     shadow_split_data[cascade].w);
-    int quality = clamp((int)round(shadow_params.z), 0, 3);
+    int quality = single_tap ? 0 : clamp((int)round(shadow_params.z), 0, 3);
     float physical_receiver_depth =
         saturate(physical_clip.z / max(abs(physical_clip.w), 1.0e-6f));
     float2 physical_depth_per_texel = float2(0.0f, 0.0f);
@@ -462,9 +469,13 @@ float sample_shadow_cascade(uint cascade, float3 world_pos, float3 geometric_nor
                                  receiver_depth_per_texel, float2(0.0f, 0.0f));
     }
     if (shadow_pcss.x != 0.0f && shadow_pcss.y > 0.0f) {
+        bool lit;
         float2 filter_radius = pcss_filter_radius(
             cascade, local_uv, physical_receiver_depth, receiver_depth,
-            physical_depth_per_texel, receiver_depth_per_texel);
+            physical_depth_per_texel, receiver_depth_per_texel, lit);
+        if (lit) {
+            return 1.0f;
+        }
         float2 filter_rotation = shadow_pcss_filter_rotation(screen_position);
         return sample_shadow_pcss_disk(
             cascade, local_uv, receiver_depth, receiver_depth_per_texel,
@@ -486,7 +497,7 @@ float sample_shadow_cascade(uint cascade, float3 world_pos, float3 geometric_nor
 float directional_shadow_visibility(float3 world_pos, float3 geometric_normal,
                                     float ndotl, float3 world_pos_dx,
                                     float3 world_pos_dy, float2 screen_position,
-                                    out uint cascade_index,
+                                    bool single_tap, out uint cascade_index,
                                     out float cascade_blend, out float shadow_coverage)
 {
     cascade_index = 4u;
@@ -531,11 +542,11 @@ float directional_shadow_visibility(float3 world_pos, float3 geometric_normal,
     float visibility = sample_shadow_cascade(cascade_index, world_pos,
                                               geometric_normal,
                                               world_pos_dx, world_pos_dy,
-                                              screen_position);
+                                              screen_position, single_tap);
     if (cascade_blend > 0.0f) {
         float next_visibility = sample_shadow_cascade(
             cascade_index + 1u, world_pos, geometric_normal,
-            world_pos_dx, world_pos_dy, screen_position);
+            world_pos_dx, world_pos_dy, screen_position, single_tap);
         visibility = lerp(visibility, next_visibility, cascade_blend);
     }
     return lerp(1.0f, visibility, shadow_coverage);

@@ -323,6 +323,6 @@ float2 main(VSOut i) : SV_Target0
     float shadow_coverage;
     float shadow = directional_shadow_visibility(
         world_pos, world_normal, 1.0f, ddx(world_pos), ddy(world_pos),
-        float2(source_pixel) + 0.5f, cascade, cascade_blend, shadow_coverage);
+        float2(source_pixel) + 0.5f, false, cascade, cascade_blend, shadow_coverage);
     return saturate(float2(ao, shadow));
 }
