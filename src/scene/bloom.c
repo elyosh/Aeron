@@ -20,6 +20,9 @@
 #define BLOOM_MAX_LEVEL_COUNT 8
 #define BLOOM_CHAIN_FORMAT AERON_TEXTURE_FORMAT_R11G11B10_UFLOAT
 
+static float s_bloom_threshold = BLOOM_THRESHOLD;
+static float s_bloom_knee      = BLOOM_KNEE;
+
 typedef struct AeronSceneBloomLevel {
 	AeronRenderTarget* tex;
 	int                w;
@@ -280,7 +283,7 @@ int AeronSceneBloom_Apply(AeronSceneBloom* b, AeronCommandBuffer* cmd, AeronText
 		struct {
 			float params[4]; /* xy=threshold/knee, zw=source texel size */
 			float weight[4];
-		} u = { { BLOOM_THRESHOLD, BLOOM_KNEE, 1.0f / (float)rt_w, 1.0f / (float)rt_h },
+		} u = { { s_bloom_threshold, s_bloom_knee, 1.0f / (float)rt_w, 1.0f / (float)rt_h },
 				{ first_weight, 0, 0, 0 } };
 
 		if (!bloom_pass(cmd, b->levels[0].tex, b->levels[0].w, b->levels[0].h, b->brightpass_pipeline,
@@ -357,4 +360,20 @@ void AeronSceneBloom_SetIntensity(float v) {
 	if (v < 0.0f)
 		v = 0.0f;
 	s_bloom_intensity = v;
+}
+
+float AeronSceneBloom_Threshold(void) { return s_bloom_threshold; }
+
+void AeronSceneBloom_SetThreshold(float v) {
+	if (!(v >= 0.0f))
+		v = 0.0f;
+	s_bloom_threshold = v;
+}
+
+float AeronSceneBloom_Knee(void) { return s_bloom_knee; }
+
+void AeronSceneBloom_SetKnee(float v) {
+	if (!(v >= AERON_SCENE_BLOOM_MIN_KNEE))
+		v = AERON_SCENE_BLOOM_MIN_KNEE;
+	s_bloom_knee = v;
 }

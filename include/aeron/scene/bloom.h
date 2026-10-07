@@ -58,6 +58,16 @@ AeronRenderTarget* AeronSceneBloom_ColorRt(const AeronSceneBloom* b);
 float AeronSceneBloom_Intensity(void);
 void  AeronSceneBloom_SetIntensity(float v);
 
+/* Bright-pass gate, process-wide like the intensity: a pixel contributes
+ * colour x smoothstep(threshold, threshold + knee, max channel), in linear
+ * HDR. Defaults 1.0 and 0.3. A wider knee makes bloom fade in proportion
+ * when a source dims (glass, haze, motion blur) instead of cutting out. */
+#define AERON_SCENE_BLOOM_MIN_KNEE 0.001f
+float AeronSceneBloom_Threshold(void);
+void  AeronSceneBloom_SetThreshold(float v); /* clamped to >= 0 */
+float AeronSceneBloom_Knee(void);
+void  AeronSceneBloom_SetKnee(float v); /* clamped to >= AERON_SCENE_BLOOM_MIN_KNEE */
+
 #ifdef __cplusplus
 }
 #endif
