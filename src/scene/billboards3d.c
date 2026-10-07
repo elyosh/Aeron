@@ -62,6 +62,17 @@ void AeronScene_AddBillboard(AeronScene3D* s, const AeronSceneBillboardDesc* d) 
 				0.25f * (d->colors[0][c] + d->colors[1][c] + d->colors[2][c] + d->colors[3][c]);
 		}
 	}
+	/* Additive and premultiplied sprites emit light (glows, explosions,
+	 * flares); straight-alpha sprites and the sky stay as given. */
+	if (d->stage != AERON_SCENE_BILLBOARD_STAGE_SKY && d->blend != AERON_SCENE_BILLBOARD_BLEND_ALPHA) {
+		const float scale = AeronScene_EmissiveScale();
+		for (int c = 0; c < 3; c++) {
+			for (int v = 0; v < 4; v++) {
+				e->colors[v][c] *= scale;
+			}
+			e->center_color[c] *= scale;
+		}
+	}
 	e->has_prev = d->prev_corners != NULL;
 	if (e->has_prev) {
 		memcpy(e->prev_corners, d->prev_corners, sizeof e->prev_corners);

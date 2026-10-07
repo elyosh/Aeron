@@ -1041,6 +1041,12 @@ int AeronScene_SetMeshSampler(AeronScene3D* s, AeronSampler* sampler) {
 	return 1;
 }
 
+static float s_emissive_scale = 1.0f;
+
+float AeronScene_EmissiveScale(void) { return s_emissive_scale; }
+
+void AeronScene_SetEmissiveScale(float scale) { s_emissive_scale = scale >= 0.0f ? scale : 0.0f; }
+
 void AeronScene_SetPbrDebugMaterial(AeronScene3D* s, int enabled, float metallic, float roughness) {
 #ifdef AERON_DEBUG_UI
 	if (!s) {

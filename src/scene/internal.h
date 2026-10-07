@@ -183,12 +183,13 @@ typedef struct AeronSceneLightingUniformGPU {
 	float                       environment_params[4];   /* diffuse, specular strength, specular mips, 0 */
 	float                       environment_basis[3][4]; /* world-to-local rows */
 	float                       debug_material[4];       /* enabled, metallic, roughness, 0 */
+	float                       emission[4];             /* emissive scale, 0, 0, 0 */
 } AeronSceneLightingUniformGPU;
 
 /* Layout checks against the HLSL blocks (ClusteredLightUniform, 112 bytes;
- * with the environment and the debug material, 192 bytes). */
+ * with the environment, the debug material and the emission, 208 bytes). */
 typedef char AeronSceneClusterUniformSizeCheck[sizeof(AeronSceneClusterUniformGPU) == 112 ? 1 : -1];
-typedef char AeronSceneLightingUniformSizeCheck[sizeof(AeronSceneLightingUniformGPU) == 192 ? 1 : -1];
+typedef char AeronSceneLightingUniformSizeCheck[sizeof(AeronSceneLightingUniformGPU) == 208 ? 1 : -1];
 
 enum {
 	AERON_SCENE_CLUSTER_ENABLED    = 1u << 0,

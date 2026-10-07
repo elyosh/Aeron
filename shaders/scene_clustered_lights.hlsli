@@ -40,6 +40,8 @@ cbuffer ClusteredLightUniform : AERON_CLUSTER_UNIFORM_BINDING {
 	/* Debug material override: x = enabled, y = metallic, z = perceptual
 	 * roughness. Read only by the diagnostic shader variant. */
 	float4 fs_debug_material;
+	/* x = emissive scale (AeronScene_SetEmissiveScale). */
+	float4 fs_emission;
 #endif
 };
 

@@ -287,6 +287,7 @@ void AeronSceneClusteredLights_Bind(AeronScene3D* s, AeronRenderPass* pass) {
 				lighting.environment_basis[row][col] = e->world_to_local[row * 3 + col];
 	}
 	memcpy(lighting.debug_material, s->pbr_debug_material, sizeof lighting.debug_material);
+	lighting.emission[0] = AeronScene_EmissiveScale();
 	Aeron_BindUniformData(pass, AERON_SHADER_STAGE_FRAGMENT, 2, &lighting, sizeof lighting);
 }
 

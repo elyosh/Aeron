@@ -377,6 +377,14 @@ void AeronScene_SetPbrDebugViews(AeronScene3D* scene, int enabled);
  * debug UI. */
 void AeronScene_SetPbrDebugMaterial(AeronScene3D* scene, int enabled, float metallic, float roughness);
 
+/* Process-wide scale of emitted light (default 1): material emission, base
+ * colour emission, screens and holograms in the PBR shader, and additive
+ * and premultiplied billboards (glows, explosions, lens flares). With a low
+ * bloom threshold, emitters much brighter than lit surfaces glow through
+ * bloom as a lens scatters light. Clamped to >= 0. */
+float AeronScene_EmissiveScale(void);
+void  AeronScene_SetEmissiveScale(float scale);
+
 /* Back-face fill (on by default; persists across frames): after the opaque
  * meshes, the faces that back- or front-face-culled instances cull are
  * drawn in a dark color, writing depth, wherever no front face covers them.

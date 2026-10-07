@@ -135,6 +135,7 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
             return _out;
         }
         _out.color = screen_hologram(g_materials[mat], i.uv, holo_frame);
+        _out.color.rgb *= fs_emission.x;
         return _out;
     }
 #endif
@@ -169,8 +170,10 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
             }
             color = albedo + cover_glow + screen * (1.0f - albedo_tex.a);
         }
+        /* Alpha from the unscaled display, so the scale changes brightness
+         * only. */
         float luma = dot(AeronLinearToSrgb(saturate(color)), float3(0.333f, 0.333f, 0.333f));
-        _out.color = float4(color, saturate(4.0f * luma));
+        _out.color = float4(color * fs_emission.x, saturate(4.0f * luma));
         return _out;
     }
 #endif
@@ -461,7 +464,7 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
      * additive emissive composition. XvT mode skips both paths. */
     if (xvt_flat == 0.0f && isolate == 0 &&
         i.base_color_emissive_strength > 0.0f) {
-        lit = albedo * i.base_color_emissive_strength;
+        lit = albedo * (i.base_color_emissive_strength * fs_emission.x);
     } else if (xvt_flat == 0.0f) {
         float3 emissive = g_materials[mat].emissive_packed.rgb;
         float emissive_coverage = 0.0f;
@@ -491,7 +494,7 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
             emissive *= emissive_rgb;
         }
         float emissive_mul = i.emissive_mul;
-        emissive *= g_materials[mat].emissive_packed.a * emissive_mul;
+        emissive *= g_materials[mat].emissive_packed.a * emissive_mul * fs_emission.x;
         if ((g_materials[mat].flags & GLTF_MATERIAL_LEGACY_EMISSIVE) != 0u) {
             lit = emissive + lit * (1.0f - saturate(emissive_coverage * emissive_mul));
         } else {
@@ -505,7 +508,8 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
      * the surface without a cover). */
     if (g_materials[mat].screen_count != 0u && xvt_flat == 0.0f && isolate == 0) {
         float3 screen = screen_evaluate(g_materials[mat], i.uv, screen_load_frame());
-        lit += screen * ((g_materials[mat].screen_flags & SCREEN_COVER) != 0u ? 1.0f - albedo_tex.a : 1.0f);
+        lit += screen * fs_emission.x *
+               ((g_materials[mat].screen_flags & SCREEN_COVER) != 0u ? 1.0f - albedo_tex.a : 1.0f);
     }
 #endif
 
