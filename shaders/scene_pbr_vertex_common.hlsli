@@ -87,9 +87,28 @@ float3 pbr_safe_normalize(float3 value, float3 fallback)
 }
 
 /*
- * Computes the current articulated world and raster positions. Forward and
- * prepass vertex shaders call this exact function; precise keeps the
- * depth-producing operation chain from being reassociated between variants.
+ * dot(a, b) as a fixed chain of fused multiply-adds. Every term is an
+ * explicit mad, so no backend can contract or reorder it differently
+ * between shaders. `precise` would also do that, but SPIRV-Cross emits it as
+ * unoptimizable [[clang::optnone]] helpers that tripled the vertex cost on
+ * Metal.
+ */
+float pbr_dot4_fma(float4 a, float4 b)
+{
+	return mad(a.w, b.w, mad(a.z, b.z, mad(a.y, b.y, mad(a.x, b.x, 0.0f))));
+}
+
+/* mul(m, v) for a row-major matrix, through pbr_dot4_fma. */
+float4 pbr_mul_fma(float4x4 m, float4 v)
+{
+	return float4(pbr_dot4_fma(m[0], v), pbr_dot4_fma(m[1], v),
+				  pbr_dot4_fma(m[2], v), pbr_dot4_fma(m[3], v));
+}
+
+/*
+ * Computes the current articulated world and raster positions. Forward,
+ * prepass and back-face vertex shaders call this exact function; its
+ * explicit mad chains give them bit-identical depth.
  */
 bool pbr_build_current_vertex(VSIn input, out PbrCurrentVertex current)
 {
@@ -112,13 +131,13 @@ bool pbr_build_current_vertex(VSIn input, out PbrCurrentVertex current)
 	current.row1 = mesh_table_row(current_table_base, mesh_index, 1u);
 	current.row2 = mesh_table_row(current_table_base, mesh_index, 2u);
 
-	current.rotated_local.x = dot(current.row0.xyz, input.position) + current.row0.w;
-	current.rotated_local.y = dot(current.row1.xyz, input.position) + current.row1.w;
-	current.rotated_local.z = dot(current.row2.xyz, input.position) + current.row2.w;
-
-	precise float4 world_position =
-		mul(craft_to_world, float4(current.rotated_local, 1.0f));
-	precise float4 raster_position = mul(view_proj, world_position);
+	float4 local_position = float4(input.position, 1.0f);
+	precise float3 rotated_local = float3(pbr_dot4_fma(current.row0, local_position),
+										  pbr_dot4_fma(current.row1, local_position),
+										  pbr_dot4_fma(current.row2, local_position));
+	precise float4 world_position = pbr_mul_fma(craft_to_world, float4(rotated_local, 1.0f));
+	precise float4 raster_position = pbr_mul_fma(view_proj, world_position);
+	current.rotated_local = rotated_local;
 	current.world_position = world_position;
 	current.raster_position = raster_position;
 	return true;
