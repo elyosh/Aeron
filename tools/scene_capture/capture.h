@@ -6,8 +6,11 @@
 #include "aeron/scene/draw_list2d.h"
 #include "aeron/scene/present.h"
 #include "aeron/scene/scene3d.h"
+#include "aeron/scene/settings.h"
 
 #define CAPTURE_MAX_MODELS 8
+#define CAPTURE_MAX_INSTANCES 16
+#define CAPTURE_MAX_LIGHTS 32
 
 int Capture_Compare(const char* baseline, const char* candidate);
 
@@ -15,6 +18,33 @@ typedef struct CaptureBenchmarkConfig {
 	double warmup_seconds, sample_seconds;
 	int    samples, min_frames, frames_in_flight;
 } CaptureBenchmarkConfig;
+
+/* game_scene instance roles: a lit ship, the cockpit at the screen_test eye
+ * (its own receiver-local shadow, casts none), or the craft's exterior at
+ * the same place, hidden and casting only (as in the game's cockpit view). */
+enum { CAPTURE_ROLE_SHIP, CAPTURE_ROLE_COCKPIT, CAPTURE_ROLE_EXTERIOR };
+
+typedef struct CaptureInstance {
+	int   model, role;
+	float position[3], rotation[3]; /* metres, camera axes; yaw/pitch/roll degrees */
+} CaptureInstance;
+
+typedef struct CaptureLight {
+	float position[3], radius, color[3];
+} CaptureLight;
+
+/* game_scene: the game's Scene3D features (Scene3D defaults file), lighting
+ * and instance roles, in game world units (OPT units). */
+typedef struct CaptureGameScene {
+	int                      enabled;
+	AeronSceneSsaoSettings   ssao;
+	AeronSceneShadowSettings shadows;
+	float                    sun_direction[3], sun_color[3], ambient;
+	CaptureInstance          instances[CAPTURE_MAX_INSTANCES];
+	int                      instance_count;
+	CaptureLight             lights[CAPTURE_MAX_LIGHTS];
+	int                      light_count;
+} CaptureGameScene;
 
 typedef struct CaptureConfig {
 	int                    width, height, frames, reference_samples, quality;
@@ -32,6 +62,7 @@ typedef struct CaptureConfig {
 	float                  screen_eye[3], screen_yaw, screen_pitch;
 	CaptureBenchmarkConfig benchmark;
 	int                    benchmark_mode;
+	CaptureGameScene       game;
 } CaptureConfig;
 
 typedef struct CaptureMesh {

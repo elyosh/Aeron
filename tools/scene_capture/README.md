@@ -40,6 +40,7 @@ closing that window cancels the run.
 | [bloom.yaml](presets/bloom.yaml) | Static HDR chart for bloom threshold, color and spread measurements. |
 | [bloom-motion.yaml](presets/bloom-motion.yaml) | Bright cuboids with both effects and a 16-sample motion-blur reference. |
 | [benchmark.yaml](presets/benchmark.yaml) | Repeating 30-frame scene with both effects and timing settings. |
+| [flight-benchmark.yaml](presets/flight-benchmark.yaml) | A game-like flight scene (`game_scene`): cockpit view with SSAO, shadows, point lights and converted XWAU models; configure `asset_root` first. |
 
 Start from a preset; unknown keys are rejected. The main settings are:
 
@@ -61,6 +62,7 @@ Start from a preset; unknown keys are rejected. The main settings are:
 | `bloom` | Optional mapping requiring `intensity` and `kernel` (1 or 4 taps). Omit to disable bloom captures. |
 | `tonemap` | `agx` (default) or `aces`. |
 | `output_dir` | Directory for images and reports. |
+| `game_scene` | Optional mapping: renders with the game's Scene3D features instead of the plain fixture (see below). |
 
 The bloom chart requires motion blur, camera speed and reference samples to be
 zero, `msaa_samples: 1`, `emissive_scale: 1`, and no models. Its emitters use
@@ -75,6 +77,27 @@ pixel-area coverage and sizes proportional to image height. In row order:
 The line is one pixel wide at 1080p. Use landscape captures at 720p or above;
 broad halos can cross region boundaries, so inspect images alongside the metrics.
 FSR, SSAO and shadows are disabled; presentation previews use SDR tonemapping.
+
+### Game scene
+
+`game_scene` renders the models as the game does, so benchmarks include the
+features it always enables. The scene is in game world units (OPT units,
+`view_space_to_meters` and a one-unit near plane as the game sets them); preset
+positions stay in metres.
+
+| Setting | Meaning |
+|---|---|
+| `defaults` | Required: the Scene3D defaults file the game loads (`aeron/config/scene3d_defaults.yaml` from the OpenXWA root). Its SSAO and directional shadows apply; the capture keeps its own tonemap. |
+| `ssao`, `shadows` | `true` (default) or `false`, to turn either off. |
+| `sun_direction`, `sun_color` | Surface-to-sun direction in camera axes (+X right, +Y down, +Z forward) and linear colour. The light block otherwise mirrors the game's `lighting` defaults. |
+| `ambient` | Linear ambient fill, default 0.08. |
+| `point_lights` | Up to 32 `{ position, radius, color }` lights in metres, drawn through clustered lighting as in the game. |
+| `instances` | Required, up to 16 `{ model, role, position, rotation_degrees }` entries; `model` is one of `models`. `role: ship` (default) places it at `position` with `[yaw, pitch, roll]`. `cockpit` places it at `screen_test`'s eye with the game cockpit's flags (its own shadow map, no casting). `exterior` places it there too but only casts shadows, like the player's hidden exterior in cockpit view. |
+
+Models are placed mirrored from their left-handed OPT frames, as the game places
+them, so `cull: back` matches the game's culling (the default fixture's `front`
+does not apply). Captures stay deterministic: with temporal upscaling off, SSAO
+and shadow sampling patterns do not vary between runs.
 
 ## Capture outputs
 
@@ -166,6 +189,11 @@ are excluded. Tonemapping always runs; zero bloom intensity skips the bloom chai
 | `sample_mean_frame_ms` | Median, min, max and coefficient of variation of window averages; not individual-frame percentiles. |
 | `sample_variation_within_5_percent` | Repeatability check. Noisy runs warn; increase warm-up/window duration and rerun under steady load. |
 | `gpu_execution_ms` | `null`: SDL's public GPU API does not expose GPU timestamps. Use a backend profiler for GPU-only timings. |
+
+Light scenes do not saturate the GPU. On Apple GPUs especially, clock scaling then
+skews wall-clock results: removing work can make frames slower and noisier, so
+differences of about 0.1 ms between light configurations are not reliable. Use
+a heavier scene or a backend profiler for those.
 
 Compare matching builds, fixture versions, queue depths and workloads. One frame
 in flight serializes CPU/GPU work; two allows overlap. Reports record the device,

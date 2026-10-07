@@ -172,6 +172,190 @@ static int load_effects(const AeronConfigFile* yaml, CaptureConfig* config) {
 	return 1;
 }
 
+static int vec3(const AeronConfigNode* node, float out[3]) {
+	if (AeronConfigNode_Type(node) != AERON_CONFIG_SEQUENCE || AeronConfigNode_SequenceCount(node) != 3)
+		return 0;
+	for (size_t k = 0; k < 3; ++k) {
+		const AeronConfigNode* item = AeronConfigNode_SequenceGet(node, k);
+		const double           v    = AeronConfigNode_Float(item, NAN);
+		if ((AeronConfigNode_Type(item) != AERON_CONFIG_INT && AeronConfigNode_Type(item) != AERON_CONFIG_FLOAT) ||
+			!isfinite(v))
+			return 0;
+		out[k] = (float)v;
+	}
+	return 1;
+}
+
+static int only_keys(const AeronConfigNode* map, const char* what, const char* const* keys, size_t count) {
+	if (AeronConfigNode_Type(map) != AERON_CONFIG_MAP) {
+		fprintf(stderr, "%s must be a mapping\n", what);
+		return 0;
+	}
+	for (size_t i = 0; i < AeronConfigNode_MapCount(map); ++i) {
+		const char* key = AeronConfigNode_MapKeyAt(map, i);
+		size_t      k;
+		for (k = 0; k < count && strcmp(key, keys[k]); ++k) {
+		}
+		if (k == count) {
+			fprintf(stderr, "Unknown %s setting: %s\n", what, key);
+			return 0;
+		}
+	}
+	return 1;
+}
+
+static int game_bool(const AeronConfigNode* map, const char* key, int fallback, int* out) {
+	const AeronConfigNode* node = AeronConfigNode_MapGet(map, key);
+	if (node && AeronConfigNode_Type(node) != AERON_CONFIG_BOOL) {
+		fprintf(stderr, "game_scene.%s must be true or false\n", key);
+		return 0;
+	}
+	*out = node ? AeronConfigNode_Bool(node, fallback) : fallback;
+	return 1;
+}
+
+static int load_game_instances(const AeronConfigNode* list, CaptureConfig* config) {
+	CaptureGameScene* game  = &config->game;
+	const size_t      count = AeronConfigNode_SequenceCount(list);
+	if (AeronConfigNode_Type(list) != AERON_CONFIG_SEQUENCE || count == 0 || count > CAPTURE_MAX_INSTANCES) {
+		fprintf(stderr, "game_scene.instances must list 1-%d instances\n", CAPTURE_MAX_INSTANCES);
+		return 0;
+	}
+	static const char* const keys[] = { "model", "role", "position", "rotation_degrees" };
+	for (size_t i = 0; i < count; ++i) {
+		const AeronConfigNode* item = AeronConfigNode_SequenceGet(list, i);
+		CaptureInstance*       out  = &game->instances[i];
+		if (!only_keys(item, "game_scene.instances item", keys, sizeof keys / sizeof keys[0]))
+			return 0;
+		const char* model = AeronConfigNode_String(AeronConfigNode_MapGet(item, "model"), NULL);
+		out->model        = -1;
+		for (int m = 0; model && m < config->model_count; ++m)
+			if (!strcmp(model, config->models[m]))
+				out->model = m;
+		if (out->model < 0) {
+			fprintf(stderr, "game_scene.instances[%zu].model must be one of models\n", i);
+			return 0;
+		}
+		const AeronConfigNode* role_node = AeronConfigNode_MapGet(item, "role");
+		const char*            role      = role_node ? AeronConfigNode_String(role_node, NULL) : "ship";
+		if (!role || (strcmp(role, "ship") && strcmp(role, "cockpit") && strcmp(role, "exterior"))) {
+			fprintf(stderr, "game_scene.instances[%zu].role must be ship, cockpit or exterior\n", i);
+			return 0;
+		}
+		out->role = !strcmp(role, "cockpit")	 ? CAPTURE_ROLE_COCKPIT
+					: !strcmp(role, "exterior") ? CAPTURE_ROLE_EXTERIOR
+												: CAPTURE_ROLE_SHIP;
+		if (out->role != CAPTURE_ROLE_SHIP && !config->screen_test) {
+			fprintf(stderr, "game_scene cockpit and exterior instances need screen_test's eye\n");
+			return 0;
+		}
+		const AeronConfigNode* position = AeronConfigNode_MapGet(item, "position");
+		const AeronConfigNode* rotation = AeronConfigNode_MapGet(item, "rotation_degrees");
+		if ((out->role == CAPTURE_ROLE_SHIP && !vec3(position, out->position)) ||
+			(rotation && !vec3(rotation, out->rotation))) {
+			fprintf(stderr, "game_scene.instances[%zu]: a ship needs position: [x, y, z]; "
+							"rotation_degrees is [yaw, pitch, roll]\n", i);
+			return 0;
+		}
+	}
+	game->instance_count = (int)count;
+	return 1;
+}
+
+static int load_game_lights(const AeronConfigNode* list, CaptureGameScene* game) {
+	const size_t count = AeronConfigNode_SequenceCount(list);
+	if (AeronConfigNode_Type(list) != AERON_CONFIG_SEQUENCE || count > CAPTURE_MAX_LIGHTS) {
+		fprintf(stderr, "game_scene.point_lights must list at most %d lights\n", CAPTURE_MAX_LIGHTS);
+		return 0;
+	}
+	static const char* const keys[] = { "position", "radius", "color" };
+	for (size_t i = 0; i < count; ++i) {
+		const AeronConfigNode* item   = AeronConfigNode_SequenceGet(list, i);
+		CaptureLight*          out    = &game->lights[i];
+		const double           radius = AeronConfigNode_Float(AeronConfigNode_MapGet(item, "radius"), NAN);
+		if (!only_keys(item, "game_scene.point_lights item", keys, sizeof keys / sizeof keys[0]) ||
+			!vec3(AeronConfigNode_MapGet(item, "position"), out->position) ||
+			!vec3(AeronConfigNode_MapGet(item, "color"), out->color) || !isfinite(radius) || radius <= 0) {
+			fprintf(stderr, "game_scene.point_lights[%zu] needs position, radius > 0 and color\n", i);
+			return 0;
+		}
+		out->radius = (float)radius;
+	}
+	game->light_count = (int)count;
+	return 1;
+}
+
+static int load_game_scene(AeronVfs* vfs, const AeronConfigFile* yaml, CaptureConfig* config) {
+	const AeronConfigNode* node = AeronConfigFile_GetNode(yaml, "game_scene");
+	if (!node)
+		return 1;
+	static const char* const keys[] = { "defaults", "ssao", "shadows", "sun_direction", "sun_color",
+										"ambient", "point_lights", "instances" };
+	CaptureGameScene*        game   = &config->game;
+	if (!only_keys(node, "game_scene", keys, sizeof keys / sizeof keys[0]))
+		return 0;
+	if (!config->model_count || config->bloom_chart) {
+		fprintf(stderr, "game_scene needs models and the shapes fixture\n");
+		return 0;
+	}
+
+	/* The game's Scene3D defaults: SSAO, shadows (tonemap stays the capture's). */
+	const char*               path  = AeronConfigNode_String(AeronConfigNode_MapGet(node, "defaults"), NULL);
+	AeronConfigFile*          file  = NULL;
+	AeronConfigError          error = { 0 };
+	AeronSceneTonemapSettings tonemap;
+	if (!path || !AeronConfigFile_LoadYamlEx(vfs, AERON_VFS_ROOT_ASSET, path, &file, &error) ||
+		!AeronSceneSettings_Load(AeronConfigFile_Root(file), &game->ssao, &game->shadows, &tonemap, &error)) {
+		fprintf(stderr, "game_scene.defaults: cannot load Scene3D defaults '%s': %s\n", path ? path : "",
+				error.message);
+		AeronConfigFile_Destroy(file);
+		return 0;
+	}
+	AeronConfigFile_Destroy(file);
+	int ssao, shadows;
+	if (!game_bool(node, "ssao", 1, &ssao) || !game_bool(node, "shadows", 1, &shadows))
+		return 0;
+	if (!ssao)
+		game->ssao.ssao_quality = 0;
+	game->shadows.enabled = game->shadows.enabled && shadows;
+
+	/* Lighting as resources/remaster/config.yaml's `lighting` defaults. */
+	const float default_direction[3] = { -.5f, -.6f, .62f };
+	memcpy(game->sun_direction, default_direction, sizeof default_direction);
+	game->sun_color[0] = game->sun_color[1] = game->sun_color[2] = 1;
+	game->ambient                                            = .08f;
+	const AeronConfigNode* direction = AeronConfigNode_MapGet(node, "sun_direction");
+	const AeronConfigNode* color     = AeronConfigNode_MapGet(node, "sun_color");
+	const AeronConfigNode* ambient   = AeronConfigNode_MapGet(node, "ambient");
+	if ((direction && !vec3(direction, game->sun_direction)) || (color && !vec3(color, game->sun_color))) {
+		fprintf(stderr, "game_scene.sun_direction and sun_color must be [x, y, z]\n");
+		return 0;
+	}
+	const float norm = sqrtf(game->sun_direction[0] * game->sun_direction[0] +
+							 game->sun_direction[1] * game->sun_direction[1] +
+							 game->sun_direction[2] * game->sun_direction[2]);
+	if (!(norm > 1e-6f)) {
+		fprintf(stderr, "game_scene.sun_direction must be non-zero\n");
+		return 0;
+	}
+	for (int k = 0; k < 3; ++k)
+		game->sun_direction[k] /= norm;
+	if (ambient) {
+		const double value = AeronConfigNode_Float(ambient, NAN);
+		if (!isfinite(value) || value < 0 || value > 4) {
+			fprintf(stderr, "game_scene.ambient must be 0..4\n");
+			return 0;
+		}
+		game->ambient = (float)value;
+	}
+	const AeronConfigNode* lights = AeronConfigNode_MapGet(node, "point_lights");
+	if ((lights && !load_game_lights(lights, game)) ||
+		!load_game_instances(AeronConfigNode_MapGet(node, "instances"), config))
+		return 0;
+	game->enabled = 1;
+	return 1;
+}
+
 static int load_benchmark(const AeronConfigFile* yaml, CaptureBenchmarkConfig* config) {
 	*config = (CaptureBenchmarkConfig) {
 		.warmup_seconds = 1, .sample_seconds = 1, .samples = 7, .min_frames = 120, .frames_in_flight = 2
@@ -233,7 +417,8 @@ int CaptureConfig_Load(const char* path, CaptureConfig* config) {
 									  "screen_test",
 									  "bloom",
 									  "emissive_scale",
-									  "benchmark" };
+									  "benchmark",
+									  "game_scene" };
 	const AeronConfigNode* root   = AeronConfigFile_Root(yaml);
 	int                    ok     = AeronConfigNode_Type(root) == AERON_CONFIG_MAP;
 	for (size_t i = 0; ok && i < AeronConfigNode_MapCount(root); ++i) {
@@ -262,7 +447,7 @@ int CaptureConfig_Load(const char* path, CaptureConfig* config) {
 	}
 	if (ok)
 		ok = load_models(yaml, config) && load_effects(yaml, config) &&
-			 load_benchmark(yaml, &config->benchmark);
+			 load_benchmark(yaml, &config->benchmark) && load_game_scene(vfs, yaml, config);
 	AeronConfigFile_Destroy(yaml);
 	AeronVfs_Destroy(vfs);
 	return ok;

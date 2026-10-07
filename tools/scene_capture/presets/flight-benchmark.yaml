@@ -1,0 +1,62 @@
+# A flight scene with the game's Scene3D features: the A-wing cockpit from
+# the pilot's eye, its hidden exterior casting shadows, ships near and far,
+# point lights, SSAO, directional shadows, motion blur and bloom.
+width: 2560
+height: 1440
+frames: 30
+fps: 60
+pan_degrees_per_second: 0
+pan_direction_degrees: 0
+shutter: 0.5
+quality: 2
+reference_samples: 0
+msaa_samples: 2
+# The game's back-face culling: game_scene places the models (left-handed
+# OPT frames) mirrored, as the game does.
+cull: back
+bloom:
+  intensity: 0.5
+  kernel: 4
+tonemap: agx
+output_dir: captures/flight-benchmark
+# Set this to the game-data directory containing remaster/models (converted
+# XWAU models). Relative paths are resolved from the working directory.
+asset_root: .
+models:
+  - remaster/models/awingcockpit.glb
+  - remaster/models/awing.glb
+  - remaster/models/imperialstardestroyer.glb
+  - remaster/models/corelliantransport2.glb
+  - remaster/models/tiefighter.glb
+  - remaster/models/xwing.glb
+# The pilot eye in the cockpit model (metres) and the view direction.
+screen_test:
+  eye: [0, -0.049, 0.757]
+  yaw_degrees: 0
+  pitch_degrees: 5
+game_scene:
+  # The Scene3D defaults the game loads (aeron/config/scene3d_defaults.yaml);
+  # from a standalone Aeron checkout, config/scene3d_defaults.yaml.
+  defaults: aeron/config/scene3d_defaults.yaml
+  # Surface to sun, camera axes (+X right, +Y down, +Z forward).
+  sun_direction: [-0.4, -0.7, -0.6]
+  sun_color: [1, 1, 1]
+  ambient: 0.08
+  point_lights:
+    - { position: [-10, 3, 30], radius: 40, color: [4, 0.4, 0.3] }
+    - { position: [20, 0, 80], radius: 60, color: [0.3, 3, 0.4] }
+    - { position: [0, 1, 6], radius: 15, color: [3, 0.2, 0.2] }
+  # Ships: position in metres, camera axes; rotation_degrees [yaw, pitch, roll].
+  instances:
+    - { model: remaster/models/awingcockpit.glb, role: cockpit }
+    - { model: remaster/models/awing.glb, role: exterior }
+    - { model: remaster/models/imperialstardestroyer.glb, position: [-250, -120, 1500], rotation_degrees: [30, 0, 0] }
+    - { model: remaster/models/corelliantransport2.glb, position: [60, 15, 160], rotation_degrees: [-40, 10, 0] }
+    - { model: remaster/models/tiefighter.glb, position: [-12, 4, 35], rotation_degrees: [150, 0, 0] }
+    - { model: remaster/models/xwing.glb, position: [5, 0, -60] }
+benchmark:
+  warmup_seconds: 2
+  sample_seconds: 1
+  samples: 7
+  min_frames: 120
+  frames_in_flight: 2

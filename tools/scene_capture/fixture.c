@@ -111,7 +111,7 @@ int Fixture_Create(Fixture* f, const CaptureConfig* config) {
 								.color_format         = AERON_TEXTURE_FORMAT_RGBA16_FLOAT,
 								.with_normal_rt       = 1,
 								.sample_count         = (AeronSampleCount)config->msaa_samples,
-								.view_space_to_meters = 1 };
+								.view_space_to_meters = config->game.enabled ? AERON_OPT_METERS_PER_UNIT : 1 };
 	f->scene                = AeronScene_Create(&desc);
 	f->reference_scene      = config->benchmark_mode ? NULL : AeronScene_Create(&desc);
 	AeronCommandBuffer* cmd = Aeron_AcquireCommandBuffer();
@@ -143,6 +143,17 @@ int Fixture_Create(Fixture* f, const CaptureConfig* config) {
 	const float clear[4]   = { background, background, background, 1 };
 	AeronScene_SetClearColor(f->scene, clear);
 	AeronScene_SetClearColor(f->reference_scene, clear);
+	if (config->game.enabled && config->game.light_count) {
+		/* resources/remaster/config.yaml's point_lights defaults. */
+		const AeronSceneClusteredLightDesc lights = {
+			.enabled = 1, .depth_slices = 24, .min_distance = 64, .contribution_cap = 1
+		};
+		if (!AeronScene_SetClusteredLights(f->scene, &lights) ||
+			(f->reference_scene && !AeronScene_SetClusteredLights(f->reference_scene, &lights))) {
+			Fixture_Destroy(f);
+			return 0;
+		}
+	}
 	return 1;
 }
 
@@ -253,7 +264,8 @@ static AeronSceneCamera camera_at(const CaptureConfig* c, double time) {
 	AeronSceneCamera camera = { .ori = { (float)cos(half_angle), (float)(-sin(direction) * sin(half_angle)),
 										 (float)(cos(direction) * sin(half_angle)), 0 },
 								.v_half_rad = .523598776f,
-								.near_z     = .1f,
+								/* The game's near plane is one OPT unit. */
+								.near_z     = c->game.enabled ? 1.0f : .1f,
 								.viewport   = { 0, 0, c->width, c->height } };
 	camera.h_half_rad       = atanf(tanf(camera.v_half_rad) * (float)c->width / (float)c->height);
 	return camera;
@@ -336,6 +348,149 @@ static void set_lighting(AeronScene3D* scene, const CaptureConfig* config) {
 	AeronScene_SetFrameUniformData(scene, AERON_SHADER_STAGE_FRAGMENT, 1, light, sizeof light);
 }
 
+/* ===== game_scene ===================================================== */
+
+/* Metres to game world units (OPT units). */
+#define GAME_UNITS_PER_METER (1.0f / AERON_OPT_METERS_PER_UNIT)
+
+static void scale_transform(float transform[16], float scale) {
+	for (int i = 0; i < 12; ++i)
+		transform[i] *= scale;
+}
+
+/* Model axes (right +X, forward -Y, up +Z) onto camera axes (+X right, +Y
+ * down, +Z forward), then roll about forward, pitch about right and yaw
+ * about down, placed at `position` metres. */
+static void place_ship(float transform[16], const CaptureInstance* in) {
+	const float rad = 3.14159265f / 180.0f;
+	const float cy = cosf(in->rotation[0] * rad), sy = sinf(in->rotation[0] * rad);
+	const float cp = cosf(in->rotation[1] * rad), sp = sinf(in->rotation[1] * rad);
+	const float cr = cosf(in->rotation[2] * rad), sr = sinf(in->rotation[2] * rad);
+	const float base[3][3]  = { { 1, 0, 0 }, { 0, 0, -1 }, { 0, -1, 0 } };
+	const float roll[3][3]  = { { cr, -sr, 0 }, { sr, cr, 0 }, { 0, 0, 1 } };
+	const float pitch[3][3] = { { 1, 0, 0 }, { 0, cp, -sp }, { 0, sp, cp } };
+	const float yaw[3][3]   = { { cy, 0, sy }, { 0, 1, 0 }, { -sy, 0, cy } };
+	const float(*chain[3])[3] = { roll, pitch, yaw };
+	float rot[3][3];
+	memcpy(rot, base, sizeof rot);
+	for (int c = 0; c < 3; ++c) {
+		float next[3][3];
+		for (int r = 0; r < 3; ++r)
+			for (int k = 0; k < 3; ++k) {
+				next[r][k] = 0;
+				for (int j = 0; j < 3; ++j)
+					next[r][k] += chain[c][r][j] * rot[j][k];
+			}
+		memcpy(rot, next, sizeof rot);
+	}
+	memset(transform, 0, 16 * sizeof *transform);
+	transform[15] = 1;
+	for (int r = 0; r < 3; ++r) {
+		for (int k = 0; k < 3; ++k)
+			transform[r * 4 + k] = rot[r][k];
+		transform[r * 4 + 3] = in->position[r];
+	}
+}
+
+static void add_game_instances(AeronScene3D* scene, const Fixture* f) {
+	for (int i = 0; i < f->config.game.instance_count; ++i) {
+		const CaptureInstance* in       = &f->config.game.instances[i];
+		AeronSceneMeshInstance instance = {
+			.mesh            = f->meshes[in->model].mesh,
+			.no_local_lights = 1,
+			.cull_mode       = (AeronCullMode)f->config.cull_mode,
+		};
+		if (in->role == CAPTURE_ROLE_SHIP)
+			place_ship(instance.transform, in);
+		else
+			place_screen_test_model(instance.transform, &f->config);
+		scale_transform(instance.transform, GAME_UNITS_PER_METER);
+		memcpy(instance.prev_transform, instance.transform, sizeof instance.transform);
+		/* As flight.c submits the cockpit view's cockpit and hidden exterior. */
+		if (in->role == CAPTURE_ROLE_EXTERIOR) {
+			instance.shadow_flags = AERON_SCENE_INSTANCE_EXCLUDE_FROM_RECEIVER_LOCAL_SHADOW;
+			AeronScene_AddShadowCaster(scene, &instance);
+			continue;
+		}
+		if (in->role == CAPTURE_ROLE_COCKPIT) {
+			instance.shadow_flags =
+				AERON_SCENE_INSTANCE_NO_CAST_SHADOW | AERON_SCENE_INSTANCE_USE_RECEIVER_LOCAL_SHADOW;
+		}
+		AeronScene_AddMeshInstance(scene, &instance);
+	}
+	for (int i = 0; i < f->config.game.light_count; ++i) {
+		const CaptureLight* l     = &f->config.game.lights[i];
+		AeronSceneLight     light = { .radius = l->radius * GAME_UNITS_PER_METER };
+		for (int k = 0; k < 3; ++k) {
+			light.pos[k]   = l->position[k] * GAME_UNITS_PER_METER;
+			light.color[k] = l->color[k];
+		}
+		AeronScene_AddLight(scene, &light);
+	}
+}
+
+/* The PbrLightFS block as XwaRemasterShip_SetPbrEnv fills it with
+ * resources/remaster/config.yaml's `lighting` and `point_lights` defaults. */
+static void set_game_lighting(AeronScene3D* scene, const CaptureConfig* config) {
+	const CaptureGameScene* game = &config->game;
+	float                   light[23][4] = {
+		[0]  = { .8f, 1, 0, 0 }, /* intensity, specular, debug term, wrap */
+		[1]  = { 0, game->ssao.ssao_intensity, game->ssao.ssao_power, (float)config->width },
+		[2]  = { (float)config->height, game->ssao.ssao_direct, 1, 0 }, /* spec_geom_adapt */
+		[18] = { 64, 1, 1, 1 },                                         /* point min distance, spec, wrap, cap */
+	};
+	for (int k = 0; k < 3; ++k) {
+		light[4][k] = game->sun_direction[k];
+		light[5][k] = game->sun_color[k];
+		for (int row = 6; row < 12; ++row)
+			light[row][k] = game->ambient;
+	}
+	AeronScene_SetFrameUniformData(scene, AERON_SHADER_STAGE_FRAGMENT, 1, light, sizeof light);
+}
+
+static void set_game_effects(AeronScene3D* scene, const CaptureConfig* config, int blur) {
+	const AeronSceneSsaoSettings* ssao = &config->game.ssao;
+	AeronScene_SetPost(scene, &(AeronScenePostDesc) {
+								  .ssao_quality         = ssao->ssao_quality,
+								  .ssao_intensity       = ssao->ssao_intensity,
+								  .ssao_power           = ssao->ssao_power,
+								  .ssao_radius_view     = ssao->ssao_radius_view,
+								  .ssao_bias_view       = ssao->ssao_bias_view,
+								  .ssao_direct          = ssao->ssao_direct,
+								  .ssao_min_screen_frac = ssao->ssao_min_screen_frac,
+								  .ssao_max_screen_frac = ssao->ssao_max_screen_frac,
+								  .ssao_sample_jitter   = ssao->ssao_sample_jitter,
+								  .mb_quality           = blur ? config->quality : 0,
+								  .mb_shutter           = (float)(config->shutter * .032 * config->fps),
+								  .mb_camera_blur       = 1,
+							  });
+	const AeronSceneShadowSettings* shadows = &config->game.shadows;
+	if (!shadows->enabled)
+		return;
+	AeronSceneDirectionalShadowDesc desc = {
+		.enabled                      = 1,
+		.atlas_size                   = shadows->atlas_size,
+		.cascade_count                = shadows->cascade_count,
+		.fit_mode                     = shadows->fit_mode,
+		.max_distance                 = shadows->max_distance,
+		.split_lambda                 = shadows->split_lambda,
+		.explicit_splits              = shadows->explicit_splits,
+		.filter_quality               = shadows->filter_quality,
+		.filter_radius                = shadows->filter_radius,
+		.contact_hardening            = shadows->contact_hardening,
+		.light_angular_radius_degrees = shadows->light_angular_radius_degrees,
+		.max_filter_radius            = shadows->max_filter_radius,
+		.pcss_min_filter_radius       = shadows->pcss_min_filter_radius,
+		.normal_bias_texels           = shadows->normal_bias_texels,
+		.depth_bias_texels            = shadows->depth_bias_texels,
+		.transition_fraction          = shadows->transition_fraction,
+		.distance_fade_fraction       = shadows->distance_fade_fraction,
+	};
+	memcpy(desc.split_positions, shadows->split_positions, sizeof desc.split_positions);
+	memcpy(desc.light_dir, config->game.sun_direction, sizeof desc.light_dir);
+	AeronScene_SetDirectionalShadow(scene, &desc);
+}
+
 AeronRenderTarget* Fixture_Record(Fixture* f, double time, int blur, AeronCommandBuffer* cmd) {
 	if (f->config.bloom_chart)
 		return BloomChart_Record(f, cmd);
@@ -346,6 +501,16 @@ AeronRenderTarget* Fixture_Record(Fixture* f, double time, int blur, AeronComman
 	AeronScene_ComputeViewProj(&previous, previous_matrix);
 	if (!AeronScene_Begin(scene, &current))
 		return NULL;
+	if (f->config.game.enabled) {
+		set_game_effects(scene, &f->config, blur);
+		AeronScene_SetMotionContext(scene, previous_matrix, 1);
+		AeronScene_SetBackfaceFill(scene, f->config.backface_fill);
+		set_game_lighting(scene, &f->config);
+		if (f->config.screen_test)
+			set_screen_sources(scene, f, time);
+		add_game_instances(scene, f);
+		return AeronScene_Render(scene, cmd) ? AeronScene_SceneRt(scene) : NULL;
+	}
 	AeronScene_SetPost(
 		scene, &(AeronScenePostDesc) { .mb_quality     = blur ? f->config.quality : 0,
 									   .mb_shutter     = (float)(f->config.shutter * .032 * f->config.fps),
