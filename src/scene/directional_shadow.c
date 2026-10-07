@@ -507,6 +507,8 @@ static void shadow_prepare_receiver_local(struct AeronScene3D*                  
 										  const float y_axis[3]) {
 	memset(&scene->receiver_local_shadow_uniform, 0, sizeof scene->receiver_local_shadow_uniform);
 	scene->receiver_local_shadow_caster_count         = 0;
+	scene->receiver_local_owned                       = 0;
+	scene->receiver_local_empty                       = 0;
 	scene->shadow_stats.receiver_local_active         = 0;
 	scene->shadow_stats.receiver_local_size           = 0;
 	scene->shadow_stats.receiver_local_caster_count   = 0;
@@ -595,7 +597,19 @@ static void shadow_prepare_receiver_local(struct AeronScene3D*                  
 			caster_z_max = fmaxf(caster_z_max, bz + bound.radius);
 		}
 	}
-	if (!excluded_caster || !shadow_ensure_receiver_local_atlas(scene)) {
+	if (!excluded_caster) {
+		scene->receiver_local_shadow_caster_count = 0;
+		return;
+	}
+	/* Nothing casts onto the receivers once the excluded casters are left
+	 * out: an empty map would compare fully lit everywhere, so skip both
+	 * the pass and the receivers' lookups. */
+	if (scene->receiver_local_shadow_caster_count == 0) {
+		scene->receiver_local_owned = 1;
+		scene->receiver_local_empty = 1;
+		return;
+	}
+	if (!shadow_ensure_receiver_local_atlas(scene)) {
 		scene->receiver_local_shadow_caster_count = 0;
 		return;
 	}
@@ -646,6 +660,7 @@ static void shadow_prepare_receiver_local(struct AeronScene3D*                  
 	memcpy(uniform->pcss_temporal, scene->shadow_uniform.pcss_temporal, sizeof uniform->pcss_temporal);
 	memcpy(uniform->light_dir, scene->shadow_uniform.light_dir, sizeof uniform->light_dir);
 
+	scene->receiver_local_owned                     = 1;
 	scene->shadow_stats.receiver_local_active       = 1;
 	scene->shadow_stats.receiver_local_size         = atlas_size;
 	scene->shadow_stats.receiver_local_caster_count = scene->receiver_local_shadow_caster_count;
@@ -681,8 +696,12 @@ static void shadow_prepare_cascade(struct AeronScene3D* scene, const AeronSceneD
 		 * independent of camera visibility so shadows can enter the view. */
 		for (int candidate = 0; candidate < scene->instance_count; candidate++) {
 			const AeronSceneMeshInstance* instance = &scene->instances[candidate];
+			/* Instances served by the receiver-local map never sample the
+			 * cascades. */
 			if (!bound_valid[candidate] ||
 				(instance->shadow_flags & AERON_SCENE_INSTANCE_NO_RECEIVE_SHADOW) != 0 ||
+				(scene->receiver_local_owned &&
+				 (instance->shadow_flags & AERON_SCENE_INSTANCE_USE_RECEIVER_LOCAL_SHADOW) != 0) ||
 				!shadow_bound_intersects_split(scene, &frustum, &object_bounds[candidate], fit_near,
 											   fit_far)) {
 				continue;
@@ -775,8 +794,13 @@ static void shadow_prepare_cascade(struct AeronScene3D* scene, const AeronSceneD
 		receiver_z_max = receiver_bounds.max[2];
 	}
 
+	/* Scene-dependent fits know their receivers: without any, no fragment
+	 * samples this cascade (receivers include the transition band from the
+	 * previous cascade), so it draws no casters. */
+	const int no_receivers =
+		desc->fit_mode == AERON_SCENE_SHADOW_FIT_SCENE_DEPENDENT && !shadow_bounds_valid(&receiver_bounds);
 	float caster_z_max = receiver_z_max;
-	for (int candidate = 0; candidate < combined_count; candidate++) {
+	for (int candidate = 0; candidate < combined_count && !no_receivers; candidate++) {
 		if (!caster_valid[candidate]) {
 			continue;
 		}
@@ -868,6 +892,9 @@ int AeronSceneDirectionalShadow_Prepare(struct AeronScene3D* scene) {
 	memset(&scene->shadow_stats, 0, sizeof scene->shadow_stats);
 	memset(scene->shadow_caster_count, 0, sizeof scene->shadow_caster_count);
 	scene->receiver_local_shadow_caster_count = 0;
+	scene->receiver_local_owned               = 0;
+	scene->receiver_local_empty               = 0;
+	scene->shadow_atlas_empty                 = 0;
 	if (!shadow_ensure_common(scene)) {
 		return 0;
 	}
@@ -1009,11 +1036,17 @@ int AeronSceneDirectionalShadow_Prepare(struct AeronScene3D* scene) {
 		}
 	}
 
+	/* Before the cascades: they leave out the receivers this map serves. */
+	shadow_prepare_receiver_local(scene, &desc, light_dir, x_axis, y_axis);
+	uint32_t cascade_casters = 0;
 	for (uint32_t cascade = 0; cascade < desc.cascade_count; cascade++) {
 		shadow_prepare_cascade(scene, &desc, light_dir, x_axis, y_axis, split_edges, cascade, usable_size,
 							   object_bounds, object_indices, bound_valid, caster_valid, combined_count);
+		cascade_casters += scene->shadow_caster_count[cascade];
 	}
-	shadow_prepare_receiver_local(scene, &desc, light_dir, x_axis, y_axis);
+	/* The debug views read the atlas and the cascade metadata. */
+	scene->shadow_atlas_empty =
+		cascade_casters == 0 && !desc.debug_cascades && !desc.debug_atlas ? 1u : 0u;
 	scene->shadow_stats.active              = 1;
 	scene->shadow_stats.atlas_size          = desc.atlas_size;
 	scene->shadow_stats.cascade_count       = desc.cascade_count;
@@ -1088,16 +1121,7 @@ static void shadow_draw_list(struct AeronScene3D* scene, AeronRenderPass* pass, 
 	shadow_draw_class(scene, pass, view_proj, casters, caster_count, 1, triangle_count);
 }
 
-int AeronSceneDirectionalShadow_Render(struct AeronScene3D* scene, AeronCommandBuffer* command_buffer) {
-	if (!scene || !command_buffer || !scene->storage_ready) {
-		return 0;
-	}
-	if (!scene->shadow_stats.active) {
-		return 1;
-	}
-	if (!scene->shadow_atlas) {
-		return 0;
-	}
+static int shadow_render_atlas(struct AeronScene3D* scene, AeronCommandBuffer* command_buffer) {
 	AeronRenderPass* pass = Aeron_BeginRenderPass(&(AeronRenderPassDesc) {
 		.depth_target = scene->shadow_atlas,
 		.viewport = { 0, 0, (int)scene->shadow_resource_atlas_size, (int)scene->shadow_resource_atlas_size },
@@ -1133,6 +1157,23 @@ int AeronSceneDirectionalShadow_Render(struct AeronScene3D* scene, AeronCommandB
 		Aeron_GpuDebugPop(command_buffer);
 	}
 	Aeron_EndRenderPass(pass);
+	return 1;
+}
+
+int AeronSceneDirectionalShadow_Render(struct AeronScene3D* scene, AeronCommandBuffer* command_buffer) {
+	if (!scene || !command_buffer || !scene->storage_ready) {
+		return 0;
+	}
+	if (!scene->shadow_stats.active) {
+		return 1;
+	}
+	if (!scene->shadow_atlas) {
+		return 0;
+	}
+	/* An empty atlas is never sampled (the binds disable it). */
+	if (!scene->shadow_atlas_empty && !shadow_render_atlas(scene, command_buffer)) {
+		return 0;
+	}
 
 	if (!scene->shadow_stats.receiver_local_active || !scene->receiver_local_shadow_atlas) {
 		return 1;
@@ -1188,7 +1229,7 @@ void AeronSceneDirectionalShadow_Bind(struct AeronScene3D* scene, AeronRenderPas
 	if (!scene || !render_pass || !shadow_ensure_common(scene)) {
 		return;
 	}
-	const int active = scene->shadow_stats.active && scene->shadow_atlas;
+	const int active = scene->shadow_stats.active && scene->shadow_atlas && !scene->shadow_atlas_empty;
 	shadow_bind_map(scene, render_pass, &scene->shadow_uniform, scene->shadow_atlas, active, 5, 6, 0);
 }
 
@@ -1200,13 +1241,32 @@ void AeronSceneDirectionalShadow_BindForInstance(struct AeronScene3D* scene, Aer
 	const int use_receiver_local = (shadow_flags & AERON_SCENE_INSTANCE_USE_RECEIVER_LOCAL_SHADOW) != 0 &&
 								   scene->shadow_stats.active && scene->shadow_stats.receiver_local_active &&
 								   scene->receiver_local_shadow_atlas;
-	if (use_receiver_local) {
+	const int receiver_local_empty = (shadow_flags & AERON_SCENE_INSTANCE_USE_RECEIVER_LOCAL_SHADOW) != 0 &&
+									 scene->receiver_local_owned && scene->receiver_local_empty;
+	if (use_receiver_local || receiver_local_empty) {
 		shadow_bind_map(scene, render_pass, &scene->receiver_local_shadow_uniform,
-						scene->receiver_local_shadow_atlas, 1, 5, 6, 0);
+						scene->receiver_local_shadow_atlas, !receiver_local_empty, 5, 6, 0);
 	} else {
-		const int active = scene->shadow_stats.active && scene->shadow_atlas;
+		const int active = scene->shadow_stats.active && scene->shadow_atlas && !scene->shadow_atlas_empty;
 		shadow_bind_map(scene, render_pass, &scene->shadow_uniform, scene->shadow_atlas, active, 5, 6, 0);
 	}
+}
+
+/* A camera-visible opaque or masked instance takes its shadow from the
+ * half-resolution screen pass (pbr.c's screen_shadow rule); otherwise the
+ * pass's shadow term is never read. */
+static int shadow_screen_receivers(const struct AeronScene3D* scene) {
+	for (int i = 0; i < scene->instance_count; ++i) {
+		const AeronSceneMeshInstance* instance = &scene->instances[i];
+		const AeronSceneMesh*         mesh     = instance->mesh;
+		if (mesh && scene->prepared_instances[i].camera_visible &&
+			(mesh->opaque_index_count + mesh->mask_index_count) != 0 &&
+			(instance->shadow_flags &
+			 (AERON_SCENE_INSTANCE_NO_RECEIVE_SHADOW | AERON_SCENE_INSTANCE_USE_RECEIVER_LOCAL_SHADOW)) == 0) {
+			return 1;
+		}
+	}
+	return 0;
 }
 
 void AeronSceneDirectionalShadow_BindScreen(struct AeronScene3D* scene, AeronRenderPass* render_pass) {
@@ -1215,8 +1275,9 @@ void AeronSceneDirectionalShadow_BindScreen(struct AeronScene3D* scene, AeronRen
 	}
 	/* Debug views either need per-fragment cascade metadata from the inline
 	 * path or replace the output with AO; do not evaluate an unused mask. */
-	const int active = scene->shadow_stats.active && scene->shadow_atlas &&
-					   !scene->directional_shadow.debug_cascades && !scene->post.ssao_debug_viz;
+	const int active = scene->shadow_stats.active && scene->shadow_atlas && !scene->shadow_atlas_empty &&
+					   !scene->directional_shadow.debug_cascades && !scene->post.ssao_debug_viz &&
+					   shadow_screen_receivers(scene);
 	shadow_bind_map(scene, render_pass, &scene->shadow_uniform, scene->shadow_atlas, active, 2, 3, 1);
 }
 

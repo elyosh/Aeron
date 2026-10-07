@@ -280,6 +280,14 @@ struct AeronScene3D {
 	uint16_t                           receiver_local_shadow_casters[AERON_SCENE_MAX_SHADOW_CASTERS];
 	uint16_t                           receiver_local_shadow_caster_count;
 	AeronDepthTarget*                  receiver_local_shadow_atlas;
+	/* The receiver-local map serves the USE_RECEIVER_LOCAL instances this
+	 * frame (they leave the cascades' receivers); when it has no casters it
+	 * is not rendered and they sample no shadow. */
+	uint8_t                            receiver_local_owned;
+	uint8_t                            receiver_local_empty;
+	/* No cascade has a caster: the atlas is not rendered and sampling it
+	 * binds the disabled uniform (an empty map is fully lit). */
+	uint8_t                            shadow_atlas_empty;
 	int                                shadow_tried;
 	uint32_t                           shadow_resource_atlas_size;
 	AeronDepthTarget*                  shadow_atlas;
