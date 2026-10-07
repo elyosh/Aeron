@@ -215,6 +215,7 @@ set(AERON_SHADER_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_pbr_prepass_mask.frag.hlsl
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_pbr_prepass_stamp.vert.hlsl
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_pbr_prepass_stamp.frag.hlsl
+    ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_pbr_prepass_stamp_screen.frag.hlsl
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_clustered_lights.comp.hlsl
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_directional_shadow.vert.hlsl
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_directional_shadow.frag.hlsl

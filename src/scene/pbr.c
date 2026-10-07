@@ -240,6 +240,15 @@ static AeronGraphicsPipeline* pbr_pipeline_create(struct AeronScene3D* s, int ki
 					   ? pbr_pipeline(s->pbr_prepass_mask_vs, s->pbr_prepass_mask_fs, pre2, 2, 1, 1,
 									  AERON_COMPARE_GREATER_EQUAL, cull, 0, AERON_SAMPLE_COUNT_1)
 					   : NULL;
+		case AERON_PBR_PIPE_PREPASS_STAMP_SCREEN:
+			if (!s->pbr_prepass_stamp_vs || !s->pbr_prepass_stamp_screen_fs) {
+				return NULL;
+			}
+			{
+				const PbrTargetDesc stamp2[2] = { normal_wm, vel_rw };
+				return pbr_pipeline(s->pbr_prepass_stamp_vs, s->pbr_prepass_stamp_screen_fs, stamp2, 2, 1, 0,
+									AERON_COMPARE_GREATER_EQUAL, cull, 0, AERON_SAMPLE_COUNT_1);
+			}
 		case AERON_PBR_PIPE_PREPASS_STAMP:
 			/* Velocity stamp of alpha-BLEND ranges (instance velocity_stamp
 			 * flag): 2-RT velocity-prepass layout with the normal target
@@ -408,6 +417,8 @@ int AeronScenePbr_Ensure(struct AeronScene3D* s) {
 	/* Velocity stamping reads the same mesh-owned material resources. */
 	s->pbr_prepass_stamp_fs =
 		pbr_shader("scene_pbr_prepass_stamp.frag", AERON_SHADER_STAGE_FRAGMENT, 1, 0, 2);
+	s->pbr_prepass_stamp_screen_fs =
+		pbr_shader("scene_pbr_prepass_stamp_screen.frag", AERON_SHADER_STAGE_FRAGMENT, 3, 0, 4);
 	if (!s->pbr_vs || !s->pbr_fs || !s->pbr_mask_fs || !s->pbr_blend_fs || !s->pbr_screen_fs || !AeronSceneInternal_WhiteCubeTexture() ||
 		!AeronSceneInternal_BrdfLutTexture() || !s->pbr_prepass_mask_vs || !s->pbr_prepass_mask_fs) {
 		return 0;
@@ -465,6 +476,8 @@ void AeronScenePbr_Release(struct AeronScene3D* s) {
 		Aeron_DestroyShader(s->pbr_prepass_mask_fs);
 	if (s->pbr_prepass_stamp_fs)
 		Aeron_DestroyShader(s->pbr_prepass_stamp_fs);
+	if (s->pbr_prepass_stamp_screen_fs)
+		Aeron_DestroyShader(s->pbr_prepass_stamp_screen_fs);
 	if (s->pbr_backface_vs)
 		Aeron_DestroyShader(s->pbr_backface_vs);
 	if (s->pbr_backface_fs)
@@ -766,7 +779,42 @@ int AeronScenePbr_DrawInstances(struct AeronScene3D* s, AeronCommandBuffer* cmd,
 			const int                     i  = s->camera_order[k];
 			const AeronSceneMeshInstance* in = &s->instances[i];
 			const AeronSceneMesh*         m  = in->mesh;
-			if (!in->velocity_stamp || !m || !m->vbo || !m->ibo || m->blend_index_count == 0) {
+			if (!m || !m->vbo || !m->ibo || m->blend_index_count == 0) {
+				continue;
+			}
+			if (in->velocity_stamp_screens && !in->velocity_stamp && m->blend_screen_index_count != 0) {
+				/* The screens only: visibility from their content, which
+				 * needs the screen textures and storage. */
+				if (!pbr_bind_pipeline(s, pass, AERON_PBR_PIPE_PREPASS_STAMP_SCREEN,
+									   (AeronCullMode)in->cull_mode, &bound)) {
+					return 0;
+				}
+				bound_mesh = NULL;
+				Aeron_BindVertexBuffer(pass, 0, m->vbo, 0);
+				Aeron_BindIndexBuffer(pass, m->ibo, AERON_INDEX_FORMAT_UINT32, 0);
+				Aeron_BindTextureSampler(pass, AERON_SHADER_STAGE_FRAGMENT, 0,
+										 m->atlas[0] ? m->atlas[0] : AeronSceneInternal_WhiteArrayTexture(),
+										 atlas_sampler);
+				AeronSampler* screen_sampler = s->post_linear_sampler ? s->post_linear_sampler : s->pbr_sampler;
+				Aeron_BindTextureSampler(pass, AERON_SHADER_STAGE_FRAGMENT, 1,
+										 s->screen_graphics ? s->screen_graphics : AeronSceneInternal_WhiteTexture(),
+										 screen_sampler);
+				Aeron_BindTextureSampler(pass, AERON_SHADER_STAGE_FRAGMENT, 2,
+										 s->screen_text ? s->screen_text : AeronSceneInternal_WhiteTexture(),
+										 screen_sampler);
+				Aeron_BindStorageBuffer(pass, AERON_SHADER_STAGE_FRAGMENT, 0, m->material_buffer);
+				Aeron_BindStorageBuffer(pass, AERON_SHADER_STAGE_FRAGMENT, 1, m->variant_buffer);
+				Aeron_BindStorageBuffer(pass, AERON_SHADER_STAGE_FRAGMENT, 2,
+										m->screen_rect_buffer ? m->screen_rect_buffer : s->screen_frame_buffer);
+				Aeron_BindStorageBuffer(pass, AERON_SHADER_STAGE_FRAGMENT, 3, s->screen_frame_buffer);
+				pbr_push_instance_uniforms(s, pass, in, m, &s->prepared_instances[i],
+										   /*velocity=*/1, /*depth_only=*/1,
+										   /*screen_shadow=*/0);
+				Aeron_DrawIndexed(pass, m->blend_screen_index_count,
+								  m->blend_index_offset + m->blend_index_count - m->blend_screen_index_count, 0);
+				continue;
+			}
+			if (!in->velocity_stamp) {
 				continue;
 			}
 			if (!pbr_bind_pipeline(s, pass, AERON_PBR_PIPE_PREPASS_STAMP, (AeronCullMode)in->cull_mode, &bound)) {

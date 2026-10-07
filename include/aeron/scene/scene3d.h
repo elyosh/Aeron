@@ -142,6 +142,11 @@ typedef struct AeronSceneMeshInstance {
 	 * geometry that never enters the depth prepass (XWA: soft-alpha
 	 * projectile ribbons) and would otherwise stay blur-sharp. */
 	uint8_t velocity_stamp;
+	/* Stamp the screen primitives of the alpha-BLEND range (holograms,
+	 * transparent screens) into the velocity buffer where their content is
+	 * visible, so motion blur treats them as part of this instance (a
+	 * cockpit) instead of blurring them with what lies behind. */
+	uint8_t velocity_stamp_screens;
 	/* Ordinary mesh instances cast and receive directional shadows by
 	 * default. A receiver-local shadow map can preserve environment
 	 * shadows while excluding selected casters from selected receivers. */

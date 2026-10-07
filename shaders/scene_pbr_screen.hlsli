@@ -38,10 +38,16 @@ struct ScreenRect
 StructuredBuffer<ScreenRect> g_screen_rects : register(AERON_PBR_SCREEN_RECT_REGISTER, space2);
 /* AeronSceneScreenFrame: rows 0-2 header, then one row per source. */
 StructuredBuffer<float4> g_screen_frame : register(AERON_PBR_SCREEN_FRAME_REGISTER, space2);
-Texture2D<float4> g_screen_graphics : register(t10, space2);
-SamplerState g_screen_graphics_sampler : register(s10, space2);
-Texture2D<float4> g_screen_text : register(t11, space2);
-SamplerState g_screen_text_sampler : register(s11, space2);
+#ifndef AERON_PBR_SCREEN_GRAPHICS_TEXTURE_REGISTER
+#define AERON_PBR_SCREEN_GRAPHICS_TEXTURE_REGISTER t10
+#define AERON_PBR_SCREEN_GRAPHICS_SAMPLER_REGISTER s10
+#define AERON_PBR_SCREEN_TEXT_TEXTURE_REGISTER t11
+#define AERON_PBR_SCREEN_TEXT_SAMPLER_REGISTER s11
+#endif
+Texture2D<float4> g_screen_graphics : register(AERON_PBR_SCREEN_GRAPHICS_TEXTURE_REGISTER, space2);
+SamplerState g_screen_graphics_sampler : register(AERON_PBR_SCREEN_GRAPHICS_SAMPLER_REGISTER, space2);
+Texture2D<float4> g_screen_text : register(AERON_PBR_SCREEN_TEXT_TEXTURE_REGISTER, space2);
+SamplerState g_screen_text_sampler : register(AERON_PBR_SCREEN_TEXT_SAMPLER_REGISTER, space2);
 
 struct ScreenFrame
 {

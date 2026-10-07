@@ -61,6 +61,7 @@ enum {
 	AERON_PBR_PIPE_FORWARD_SCREEN,
 	AERON_PBR_PIPE_MESH_BLEND_SCREEN,
 	AERON_PBR_PIPE_FORWARD_BLEND_SCREEN,
+	AERON_PBR_PIPE_PREPASS_STAMP_SCREEN, /* velocity stamp of a blend range's screens */
 	AERON_PBR_PIPE_KIND_COUNT
 };
 
@@ -549,6 +550,7 @@ struct AeronScene3D {
 	 * by Ensure (the long-standing behavior); other cull modes are
 	 * created lazily on first use (per-instance cull_mode). */
 	AeronShader*           pbr_prepass_stamp_fs;
+	AeronShader*           pbr_prepass_stamp_screen_fs;
 	AeronGraphicsPipeline* pbr_pipes[AERON_PBR_PIPE_KIND_COUNT][3];
 #ifdef AERON_DEBUG_UI
 	AeronGraphicsPipeline* pbr_debug_pipes[AERON_PBR_PIPE_KIND_COUNT][3];
