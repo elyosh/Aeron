@@ -150,8 +150,6 @@ static AeronGraphicsPipeline* pbr_pipeline(AeronShader* vs, AeronShader* ps, con
 								   sample_count, &rasterizer);
 }
 
-/* Create the (kind, cull) variant. Kind fixes shaders, targets and
- * depth state; cull is free per variant. */
 /* Colour kind of a screen kind: the same pipeline state. */
 static int pbr_screen_base_kind(int kind) {
 	switch (kind) {
@@ -192,6 +190,8 @@ static int pbr_screen_kind(int kind) {
 	}
 }
 
+/* Create the (kind, cull) variant. Kind fixes shaders, targets and
+ * depth state; cull is free per variant. */
 static AeronGraphicsPipeline* pbr_pipeline_create(struct AeronScene3D* s, int kind, AeronCullMode cull,
 												  AeronShader* color_fs) {
 	const PbrTargetDesc normal_rw = { AERON_TEXTURE_FORMAT_R16G16_SNORM, 0xF };
