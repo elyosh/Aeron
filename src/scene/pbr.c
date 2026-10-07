@@ -603,7 +603,7 @@ int AeronScenePbr_DrawInstances(struct AeronScene3D* s, AeronCommandBuffer* cmd,
 	for (int i = 0; i < s->instance_count; ++i) {
 		const AeronSceneMeshInstance* in = &s->instances[i];
 		const AeronSceneMesh*         m  = in->mesh;
-		if (!m || !m->vbo || !m->ibo || m->index_count == 0) {
+		if (!m || !m->vbo || !m->ibo || m->index_count == 0 || !s->prepared_instances[i].camera_visible) {
 			continue;
 		}
 		if (!depth_only) {
@@ -659,7 +659,8 @@ int AeronScenePbr_DrawInstances(struct AeronScene3D* s, AeronCommandBuffer* cmd,
 		for (int i = 0; i < s->instance_count; ++i) {
 			const AeronSceneMeshInstance* in = &s->instances[i];
 			const AeronSceneMesh*         m  = in->mesh;
-			if (!m || !m->vbo || !m->ibo || m->mask_index_count == 0) {
+			if (!m || !m->vbo || !m->ibo || m->mask_index_count == 0 ||
+				!s->prepared_instances[i].camera_visible) {
 				continue;
 			}
 			if (!depth_only) {
@@ -706,7 +707,8 @@ int AeronScenePbr_DrawInstances(struct AeronScene3D* s, AeronCommandBuffer* cmd,
 		for (int i = 0; i < s->instance_count; ++i) {
 			const AeronSceneMeshInstance* in = &s->instances[i];
 			const AeronSceneMesh*         m  = in->mesh;
-			if (!in->velocity_stamp || !m || !m->vbo || !m->ibo || m->blend_index_count == 0) {
+			if (!in->velocity_stamp || !m || !m->vbo || !m->ibo || m->blend_index_count == 0 ||
+				!s->prepared_instances[i].camera_visible) {
 				continue;
 			}
 			const AeronCullMode cull = (AeronCullMode)in->cull_mode;
@@ -764,7 +766,7 @@ int AeronScenePbr_DrawTransparentInstances(struct AeronScene3D* s, AeronRenderPa
 	for (int i = 0; i < s->instance_count; ++i) {
 		const AeronSceneMeshInstance* in = &s->instances[i];
 		const AeronSceneMesh*         m  = in->mesh;
-		if (!m || !m->vbo || !m->ibo || m->blend_index_count == 0) {
+		if (!m || !m->vbo || !m->ibo || m->blend_index_count == 0 || !s->prepared_instances[i].camera_visible) {
 			continue;
 		}
 		const int receiver_local_shadow =
@@ -814,7 +816,8 @@ int AeronScenePbr_DrawBackfaceFill(struct AeronScene3D* s, AeronRenderPass* pass
 		const AeronSceneMeshInstance* in = &s->instances[i];
 		const AeronSceneMesh*         m  = in->mesh;
 		/* Two-sided instances already draw their back faces. */
-		if (!m || !m->vbo || !m->ibo || m->opaque_index_count == 0 || in->cull_mode == AERON_CULL_NONE) {
+		if (!m || !m->vbo || !m->ibo || m->opaque_index_count == 0 || in->cull_mode == AERON_CULL_NONE ||
+			!s->prepared_instances[i].camera_visible) {
 			continue;
 		}
 		/* The faces the instance culls are its back faces under the

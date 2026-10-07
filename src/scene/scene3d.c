@@ -1332,6 +1332,55 @@ static void scene_storage_report_failure(AeronScene3D* s, const char* resource, 
 	}
 }
 
+/* Side and near planes of the camera frustum, from the unjittered
+ * view-projection (row-major, clip = M * p; reversed-Z with an infinite far
+ * plane, so there is no far plane). The side planes are widened by
+ * SCENE_CULL_MARGIN_PX render pixels so temporal jitter cannot reveal a
+ * culled edge. Each plane is normalised: dot(xyz, p) + w is the signed
+ * distance, positive inside. */
+#define SCENE_CULL_MARGIN_PX 2.0f
+
+static void scene_camera_frustum(const AeronScene3D* s, float planes[5][4]) {
+	const float* m        = s->unjittered_view_proj;
+	const float  width    = s->camera.viewport.width > 0 ? (float)s->camera.viewport.width : 1.0f;
+	const float  height   = s->camera.viewport.height > 0 ? (float)s->camera.viewport.height : 1.0f;
+	const float  widen_x  = 1.0f + 2.0f * SCENE_CULL_MARGIN_PX / width;
+	const float  widen_y  = 1.0f + 2.0f * SCENE_CULL_MARGIN_PX / height;
+	for (int k = 0; k < 4; k++) {
+		const float w = m[12 + k];
+		planes[0][k]  = w * widen_x + m[0 + k]; /* left: x >= -w */
+		planes[1][k]  = w * widen_x - m[0 + k]; /* right: x <= w */
+		planes[2][k]  = w * widen_y + m[4 + k]; /* y >= -w */
+		planes[3][k]  = w * widen_y - m[4 + k]; /* y <= w */
+		planes[4][k]  = w - m[8 + k];           /* near: z <= w (eye depth >= near) */
+	}
+	for (int p = 0; p < 5; p++) {
+		const float length =
+			sqrtf(planes[p][0] * planes[p][0] + planes[p][1] * planes[p][1] + planes[p][2] * planes[p][2]);
+		const float inverse = length > 0.0f ? 1.0f / length : 0.0f;
+		for (int k = 0; k < 4; k++) {
+			planes[p][k] *= inverse;
+		}
+	}
+}
+
+/* An instance without a usable bound stays visible. */
+static int scene_instance_in_frustum(const AeronSceneMeshInstance* instance, const float planes[5][4]) {
+	float center[3];
+	float radius;
+	if (!AeronSceneInternal_InstanceBound(instance, center, &radius)) {
+		return 1;
+	}
+	for (int p = 0; p < 5; p++) {
+		const float distance =
+			planes[p][0] * center[0] + planes[p][1] * center[1] + planes[p][2] * center[2] + planes[p][3];
+		if (distance < -radius) {
+			return 0;
+		}
+	}
+	return 1;
+}
+
 int AeronSceneStorage_Prepare(AeronScene3D* s, AeronCommandBuffer* cmd) {
 	if (!s || !cmd) {
 		return 0;
@@ -1348,10 +1397,13 @@ int AeronSceneStorage_Prepare(AeronScene3D* s, AeronCommandBuffer* cmd) {
 		scene_storage_report_failure(s, "scene.mesh_tables.cpu", (uint32_t)sizeof(AeronSceneMeshTable));
 		return 0;
 	}
+	float frustum[5][4];
+	scene_camera_frustum(s, frustum);
 	for (int i = 0; i < s->instance_count; ++i) {
 		const AeronSceneMeshInstance* instance = &s->instances[i];
 		AeronScenePreparedInstance*   prepared = &s->prepared_instances[i];
 		memset(prepared, 0, sizeof *prepared);
+		prepared->camera_visible = (uint32_t)scene_instance_in_frustum(instance, frustum);
 		prepared->current_table_base =
 			scene_register_mesh_table(s, instance->mesh_table, &prepared->table_slot_count);
 		uint32_t previous_slots = 0;
@@ -1367,7 +1419,9 @@ int AeronSceneStorage_Prepare(AeronScene3D* s, AeronCommandBuffer* cmd) {
 		if (instance->prev_mesh_table && previous_slots < prepared->table_slot_count) {
 			prepared->previous_table_base = prepared->current_table_base;
 		}
-		if (!instance->no_local_lights && instance->lights) {
+		/* Mesh tables stay registered for every instance: shadow casters
+		 * outside the camera frustum still draw into the shadow maps. */
+		if (prepared->camera_visible && !instance->no_local_lights && instance->lights) {
 			uint32_t count = instance->lights->light_count;
 			if (count > 16u) {
 				count = 16u;

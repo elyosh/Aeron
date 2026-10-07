@@ -246,3 +246,53 @@ AeronTexture* AeronSceneInternal_BrdfLutTexture(void) {
 	}
 	return tex;
 }
+
+int AeronSceneInternal_InstanceBound(const AeronSceneMeshInstance* instance, float center[3], float* radius) {
+	const AeronSceneMesh* mesh = instance ? instance->mesh : NULL;
+	if (!mesh || !center || !radius) {
+		return 0;
+	}
+	for (int row = 0; row < 3; row++) {
+		center[row] = instance->transform[row * 4 + 3];
+	}
+	float scale = 0.0f;
+	for (int row = 0; row < 3; row++) {
+		const float row_scale = sqrtf(instance->transform[row * 4 + 0] * instance->transform[row * 4 + 0] +
+									  instance->transform[row * 4 + 1] * instance->transform[row * 4 + 1] +
+									  instance->transform[row * 4 + 2] * instance->transform[row * 4 + 2]);
+		if (row_scale > scale) {
+			scale = row_scale;
+		}
+	}
+	const float local_extent[3] = {
+		fmaxf(fabsf(mesh->bound_min[0]), fabsf(mesh->bound_max[0])),
+		fmaxf(fabsf(mesh->bound_min[1]), fabsf(mesh->bound_max[1])),
+		fmaxf(fabsf(mesh->bound_min[2]), fabsf(mesh->bound_max[2])),
+	};
+	const float local_radius = sqrtf(local_extent[0] * local_extent[0] + local_extent[1] * local_extent[1] +
+									 local_extent[2] * local_extent[2]);
+	float articulation_padding = 0.0f;
+	if (instance->mesh_table) {
+		const int slots =
+			instance->mesh_table->slot_count && instance->mesh_table->slot_count < AERON_MAX_MESH_SLOTS
+				? (int)instance->mesh_table->slot_count
+				: AERON_MAX_MESH_SLOTS;
+		for (int mesh_index = 0; mesh_index < slots; mesh_index++) {
+			if (instance->mesh_table->visibility_packed[mesh_index >> 2][mesh_index & 3] < 0.5f) {
+				continue;
+			}
+			const float tx          = instance->mesh_table->rows[mesh_index][0][3];
+			const float ty          = instance->mesh_table->rows[mesh_index][1][3];
+			const float tz          = instance->mesh_table->rows[mesh_index][2][3];
+			const float translation = sqrtf(tx * tx + ty * ty + tz * tz);
+			if (translation > articulation_padding) {
+				articulation_padding = translation;
+			}
+		}
+	}
+	/* Bounds and articulation translations share the GPU vertex's raw local
+	 * units. An origin-centered sphere remains valid under mesh rotations;
+	 * pivot translations and the instance transform are applied exactly once. */
+	*radius = scale * (local_radius + articulation_padding);
+	return isfinite(*radius) && *radius > 0.0f;
+}

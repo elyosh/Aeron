@@ -122,6 +122,9 @@ typedef struct AeronScenePreparedInstance {
 	uint32_t table_slot_count;
 	uint32_t local_light_base;
 	uint32_t local_light_count;
+	/* The bound intersects the camera frustum; camera passes skip the
+	 * instance otherwise (shadow passes cull per cascade). */
+	uint32_t camera_visible;
 } AeronScenePreparedInstance;
 
 typedef struct AeronScenePointLightGPU {
@@ -634,5 +637,9 @@ int AeronScenePost_Fullscreen(AeronCommandBuffer* cmd, AeronGraphicsPipeline* pi
 							  const char* debug_label);
 /* util */
 void AeronSceneInternal_QuatToMat3(const float q[4], float m[9]);
+/* World bounding sphere of an instance: conservative for any mesh rotation,
+ * padded by its visible articulated slots' pivot translations. 0 when the
+ * instance has no usable bound. */
+int  AeronSceneInternal_InstanceBound(const AeronSceneMeshInstance* instance, float center[3], float* radius);
 
 #endif /* AERON_SCENE_INTERNAL_H */
