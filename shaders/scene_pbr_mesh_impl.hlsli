@@ -44,6 +44,17 @@
  *   t11/s11 — screen capture, text (premultiplied, sRGB)
  */
 
+/* Variants: AERON_PBR_SCREENS 0 drops the screen code, which the renderer
+ * draws with its own pipeline (a mesh's screen primitives). AERON_PBR_ALPHA_BLEND
+ * 1 is the variant for blended materials. Both keep this shader's register
+ * count for ordinary materials down. */
+#ifndef AERON_PBR_SCREENS
+#define AERON_PBR_SCREENS 1
+#endif
+#ifndef AERON_PBR_ALPHA_BLEND
+#define AERON_PBR_ALPHA_BLEND 0
+#endif
+
 #define AERON_DIRECTIONAL_SHADOW_UNIFORM_REGISTER b0
 #define AERON_PBR_LIGHT_UNIFORM_REGISTER b1
 #define AERON_PBR_MATERIAL_REGISTER t12
@@ -108,6 +119,7 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
         i.prim_id, i.variant_row_base, i.variant_group_count,
         i.material_count);
 
+#if AERON_PBR_SCREENS
     /* ===== Hologram screens (unlit, straight alpha) ===============
      * Hidden screens return transparent black instead of discarding: they
      * are always blended (the loader keeps them in the blend range), where
@@ -123,6 +135,7 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
         _out.color = screen_hologram(m, i.uv, holo_frame);
         return _out;
     }
+#endif
 
     /* ===== Base color ============================================ */
     float4 albedo_tex = pbr_sample_base_color(m, i.uv);
@@ -132,6 +145,7 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
 #endif
     float3 albedo = albedo_tex.rgb * m.base_color_factor.rgb;
 
+#if AERON_PBR_SCREENS
     /* ===== Transparent screens ===================================
      * Unlit like XWAU's (no normal or shading): the cover, when present,
      * over the screen, with alpha from the display luminance. */
@@ -157,6 +171,7 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
         _out.color = float4(color, saturate(4.0f * luma));
         return _out;
     }
+#endif
 
     /* ===== Normal vector ========================================= */
     float  side_sign = is_front ? 1.0f : -1.0f;
@@ -214,7 +229,9 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
      * the sample is skipped). */
     float ao = 1.0f;
     float screen_shadow_visibility = 1.0f;
-    if (ssao_intensity > 0.0f) {
+    /* Blended surfaces lie over the depth layer SSAO describes (the
+     * renderer binds white AO for them): no lookup. */
+    if (!AERON_PBR_ALPHA_BLEND && ssao_intensity > 0.0f) {
         float2 ao_uv = i.position.xy / float2(ssao_rt_w, ssao_rt_h);
         float2 visibility = g_ao.Sample(g_ao_sampler, ao_uv);
         float  ao_s  = visibility.x;
@@ -225,7 +242,7 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
 
     float shadow_visibility = 1.0f;
     if (i.receive_shadow != 0u) {
-        if (i.screen_shadow != 0u) {
+        if (!AERON_PBR_ALPHA_BLEND && i.screen_shadow != 0u) {
             shadow_visibility = screen_shadow_visibility;
         } else {
             /* The shadow scales only the sun's diffuse and specular terms.
@@ -234,7 +251,8 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
             float shadow_ndotl = light_wrap > 0.0f ? 1.0f : max(dot(N, L), dot(N_face, L));
             /* Blended materials (canopy glass) take one comparison: a
              * soft penumbra is not discernible through them. */
-            bool shadow_single_tap = (m.flags & GLTF_MATERIAL_ALPHA_BLEND) != 0u;
+            bool shadow_single_tap =
+                AERON_PBR_ALPHA_BLEND || (m.flags & GLTF_MATERIAL_ALPHA_BLEND) != 0u;
             shadow_visibility = directional_shadow_visibility(
                 i.world_pos, N_face, shadow_ndotl,
                 world_pos_dx, world_pos_dy, i.position.xy, shadow_single_tap,
@@ -479,6 +497,7 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
         }
     }
 
+#if AERON_PBR_SCREENS
     /* ===== Opaque screens =========================================
      * Unlit screen radiance, shown where the cover is transparent (all of
      * the surface without a cover). */
@@ -486,6 +505,7 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
         float3 screen = screen_evaluate(m, i.uv, screen_load_frame());
         lit += screen * ((m.screen_flags & SCREEN_COVER) != 0u ? 1.0f - albedo_tex.a : 1.0f);
     }
+#endif
 
     /* Alpha-BLEND materials (flag bit 3 — canopy glass, drawn by the
      * blend pipelines) carry texture x factor alpha; every opaque

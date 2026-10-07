@@ -207,7 +207,10 @@ typedef struct AeronGltfScreenRect {
  * variant-major packed storage; each draw selects a row by index. */
 typedef struct AeronGltfModel {
 	/* Merged geometry — one buffer per ship. The index buffer contains
-	 * stable opaque, alpha-mask, and alpha-blend ranges in that order. */
+	 * stable opaque, alpha-mask, and alpha-blend ranges in that order. The
+	 * opaque and blend ranges each end with the primitives that have a
+	 * screen material in any variant: colour passes draw those with the
+	 * screen shader, so the others run a shader without screen code. */
 	AeronGltfVertex* vertices;
 	uint32_t         vertex_count;
 	uint32_t*        indices;
@@ -217,6 +220,8 @@ typedef struct AeronGltfModel {
 	uint32_t         mask_index_count;
 	uint32_t         blend_index_offset;
 	uint32_t         blend_index_count;
+	uint32_t         opaque_screen_index_count;
+	uint32_t         blend_screen_index_count;
 
 	/* Per-channel cooked KTX2 atlases (4): BC5/BC7 or RGBA8. */
 	AeronGltfChannelKtx2 channels[AERON_GLTF_CHANNEL_COUNT];

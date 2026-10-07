@@ -71,12 +71,15 @@ typedef struct AeronSceneMesh {
 	AeronBuffer* ibo; /* uint32 indices */
 	uint32_t     vertex_count;
 	uint32_t     index_count;
-	/* Stable opaque, alpha-mask, and alpha-blend ranges. */
+	/* Stable opaque, alpha-mask, and alpha-blend ranges; the opaque and
+	 * blend ranges end with their screen primitives (AeronGltfModel). */
 	uint32_t                 opaque_index_count;
 	uint32_t                 mask_index_offset;
 	uint32_t                 mask_index_count;
 	uint32_t                 blend_index_offset;
 	uint32_t                 blend_index_count;
+	uint32_t                 opaque_screen_index_count;
+	uint32_t                 blend_screen_index_count;
 	AeronSceneMeshCpuVertex* cpu_vertices;
 	uint32_t*                cpu_indices;
 	/* Box-only BVH over cpu_vertices/cpu_indices triangles, copied from the

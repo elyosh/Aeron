@@ -404,6 +404,22 @@ static AeronGltfAlphaMode material_alpha_mode(const AeronGltfModel* model, uint3
 	return model->materials[material].alpha_mode;
 }
 
+static bool material_is_screen(const AeronGltfModel* model, uint32_t material) {
+	return material < model->material_count &&
+		   (model->materials[material].screen_count != 0 || model->materials[material].screen_flags != 0);
+}
+
+/* A primitive goes to the screen tail of its range when any variant
+ * gives it a screen material. */
+static bool primitive_is_screen(const AeronGltfModel* model, uint32_t prim_id) {
+	for (uint32_t variant = 0; variant < model->variant_slots; ++variant) {
+		if (material_is_screen(model,
+							   model->prim_variant_material[(size_t)prim_id * model->variant_slots + variant]))
+			return true;
+	}
+	return false;
+}
+
 /* ===== Vertex append ===============================================
  *
  * Append decoded vertices + indices for one glTF primitive into the
@@ -664,42 +680,61 @@ bool Aeron_GltfMeshBuildData(const cgltf_data* data, const char* source_label, A
 		}
 	}
 
-	/* ---- Partition indices: OPAQUE, MASK, BLEND, stable within each
-	 * class. Primitive alpha class is invariant across variants above. ---- */
-	out->opaque_index_count = 0;
-	out->mask_index_offset  = 0;
-	out->mask_index_count   = 0;
-	out->blend_index_offset = 0;
-	out->blend_index_count  = 0;
+	/* ---- Partition indices: OPAQUE (screens last), MASK, BLEND (screens
+	 * last), stable within each class. Primitive alpha class is invariant
+	 * across variants above. ---- */
+	out->opaque_index_count        = 0;
+	out->mask_index_offset         = 0;
+	out->mask_index_count          = 0;
+	out->blend_index_offset        = 0;
+	out->blend_index_count         = 0;
+	out->opaque_screen_index_count = 0;
+	out->blend_screen_index_count  = 0;
 	if (out->index_count > 0) {
 		uint32_t* sorted = (uint32_t*)malloc((size_t)out->index_count * sizeof *sorted);
-		if (!sorted)
+		uint8_t*  prim_screen =
+			(uint8_t*)malloc(out->total_prim_count ? out->total_prim_count : 1u);
+		if (!sorted || !prim_screen) {
+			free(sorted);
+			free(prim_screen);
 			goto cleanup;
+		}
+		for (uint32_t pid = 0; pid < out->total_prim_count; ++pid)
+			prim_screen[pid] = primitive_is_screen(out, pid);
+		/* screen: 0 = no screen material, 1 = screen, 2 = either. */
+		static const struct {
+			AeronGltfAlphaMode mode;
+			int                screen;
+		} classes[] = {
+			{ AERON_GLTF_ALPHA_OPAQUE, 0 }, { AERON_GLTF_ALPHA_OPAQUE, 1 }, { AERON_GLTF_ALPHA_MASK, 2 },
+			{ AERON_GLTF_ALPHA_BLEND, 0 },  { AERON_GLTF_ALPHA_BLEND, 1 },
+		};
+		enum { CLASS_COUNT = sizeof classes / sizeof classes[0] };
 		uint32_t w = 0;
-		for (int wanted_mode = AERON_GLTF_ALPHA_OPAQUE; wanted_mode <= AERON_GLTF_ALPHA_BLEND;
-			 ++wanted_mode) {
-			const uint32_t range_start = w;
+		uint32_t starts[CLASS_COUNT + 1];
+		for (int c = 0; c < CLASS_COUNT; ++c) {
+			starts[c] = w;
 			for (uint32_t t = 0; t + 2 < out->index_count; t += 3) {
-				const uint32_t           pid  = out->vertices[out->indices[t]].prim_id;
-				const uint32_t           mat  = out->prim_variant_material[(size_t)pid * out->variant_slots];
-				const AeronGltfAlphaMode mode = material_alpha_mode(out, mat);
-				if ((int)mode != wanted_mode)
+				const uint32_t pid = out->vertices[out->indices[t]].prim_id;
+				const uint32_t mat = out->prim_variant_material[(size_t)pid * out->variant_slots];
+				if (material_alpha_mode(out, mat) != classes[c].mode ||
+					(classes[c].screen != 2 && prim_screen[pid] != classes[c].screen))
 					continue;
 				sorted[w + 0] = out->indices[t + 0];
 				sorted[w + 1] = out->indices[t + 1];
 				sorted[w + 2] = out->indices[t + 2];
 				w += 3;
 			}
-			if (wanted_mode == AERON_GLTF_ALPHA_OPAQUE) {
-				out->opaque_index_count = w - range_start;
-			} else if (wanted_mode == AERON_GLTF_ALPHA_MASK) {
-				out->mask_index_offset = range_start;
-				out->mask_index_count  = w - range_start;
-			} else {
-				out->blend_index_offset = range_start;
-				out->blend_index_count  = w - range_start;
-			}
 		}
+		free(prim_screen);
+		starts[CLASS_COUNT]            = w;
+		out->opaque_index_count        = starts[2];
+		out->opaque_screen_index_count = starts[2] - starts[1];
+		out->mask_index_offset         = starts[2];
+		out->mask_index_count          = starts[3] - starts[2];
+		out->blend_index_offset        = starts[3];
+		out->blend_index_count         = starts[5] - starts[3];
+		out->blend_screen_index_count  = starts[5] - starts[4];
 		if (w != out->index_count) {
 			free(sorted);
 			SDL_Log("[flight_gltf] '%s' index partition retained %u of %u indices", source_label, w,
@@ -711,11 +746,12 @@ bool Aeron_GltfMeshBuildData(const cgltf_data* data, const char* source_label, A
 	}
 
 	SDL_Log("[flight_gltf] %s: %u verts, %u indices (%u opaque, %u mask, "
-			"%u blend), %u prims, "
+			"%u blend; %u + %u screen), %u prims, "
 			"%u materials, %u variants, atlases base=%zu nrm=%zu mr=%zu "
 			"emis=%zu",
 			source_label, out->vertex_count, out->index_count, out->opaque_index_count, out->mask_index_count,
-			out->blend_index_count, out->total_prim_count, out->material_count, out->variant_count,
+			out->blend_index_count, out->opaque_screen_index_count, out->blend_screen_index_count,
+			out->total_prim_count, out->material_count, out->variant_count,
 			out->channels[0].size, out->channels[1].size, out->channels[2].size, out->channels[3].size);
 	if (out->screen_rect_count > 0 || out->screen_hide_mask != 0)
 		SDL_Log("[flight_gltf] %s: %u screen rectangles, hide mask 0x%x", source_label,

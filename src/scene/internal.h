@@ -55,6 +55,12 @@ enum {
 	AERON_PBR_PIPE_PREPASS_TEMPORAL,      /* normal + velocity + R32 depth export */
 	AERON_PBR_PIPE_PREPASS_MASK_TEMPORAL, /* alpha mask normal + velocity + depth */
 	AERON_PBR_PIPE_BACKFACE_FILL,         /* back faces, dark color, strict biased test */
+	/* A mesh's screen primitives in each colour kind: the shader with the
+	 * screen code, which the others leave out. */
+	AERON_PBR_PIPE_MESH_SCREEN,
+	AERON_PBR_PIPE_FORWARD_SCREEN,
+	AERON_PBR_PIPE_MESH_BLEND_SCREEN,
+	AERON_PBR_PIPE_FORWARD_BLEND_SCREEN,
 	AERON_PBR_PIPE_KIND_COUNT
 };
 
@@ -523,6 +529,8 @@ struct AeronScene3D {
 	AeronShader*  pbr_prepass_stamp_vs;
 	AeronShader*  pbr_fs;
 	AeronShader*  pbr_mask_fs;
+	AeronShader*  pbr_blend_fs;
+	AeronShader*  pbr_screen_fs;
 #ifdef AERON_DEBUG_UI
 	int          pbr_debug_tried;
 	AeronShader* pbr_debug_fs;

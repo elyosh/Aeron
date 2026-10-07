@@ -205,6 +205,8 @@ set(AERON_SHADER_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_pbr_mesh.vert.hlsl
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_pbr_mesh.frag.hlsl
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_pbr_mesh_mask.frag.hlsl
+    ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_pbr_mesh_blend.frag.hlsl
+    ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_pbr_mesh_screen.frag.hlsl
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_pbr_prepass.vert.hlsl
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_pbr_prepass.frag.hlsl
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_pbr_backface.vert.hlsl
