@@ -157,7 +157,8 @@ static int build_screen_storage(AeronSceneMesh* s, const AeronGltfModel* model, 
 								AeronPbrScreenRect** out_rects, uint32_t* out_bytes) {
 	*out_rects          = NULL;
 	*out_bytes          = 0;
-	s->screen_hide_mask = model->screen_hide_mask;
+	s->screen_hide_mask   = model->screen_hide_mask;
+	s->screen_source_mask = 0;
 	if (model->screen_rect_count == 0) {
 		return 1;
 	}
@@ -176,6 +177,8 @@ static int build_screen_storage(AeronSceneMesh* s, const AeronGltfModel* model, 
 		memcpy(dst->bar, src->bar, sizeof src->bar);
 		dst->info[0] = src->layers;
 		dst->info[1] = src->source;
+		if ((src->layers & AERON_GLTF_SCREEN_LAYER_BAR) == 0 && src->source < AERON_GLTF_SCREEN_MAX_SOURCES)
+			s->screen_source_mask |= (uint64_t)1 << src->source;
 	}
 	const uint32_t bytes  = model->screen_rect_count * (uint32_t)sizeof *rects;
 	s->screen_rect_buffer = Aeron_CreateBuffer(&(AeronBufferDesc) {

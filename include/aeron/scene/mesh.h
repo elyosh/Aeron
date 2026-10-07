@@ -96,11 +96,13 @@ typedef struct AeronSceneMesh {
 	uint32_t     variant_groups_per_row;
 	bool         all_materials_single_sided;
 	/* Screen rectangles (AeronPbrScreenRect), NULL without screen
-	 * materials, and the OR of the screen materials' game-defined `hide`
-	 * masks (AeronGltfModel). */
+	 * materials, the OR of the screen materials' game-defined `hide`
+	 * masks (AeronGltfModel), and the sources the rectangles sample
+	 * (bit per source; fill bars sample none). */
 	AeronBuffer* screen_rect_buffer;
 	uint32_t     screen_rect_count;
 	uint32_t     screen_hide_mask;
+	uint64_t     screen_source_mask;
 
 	/* Per-mesh-slot articulation (indexed by the per-vertex mesh index);
 	 * slot_count = the model's component count, the slots its mesh tables
