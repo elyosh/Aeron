@@ -362,7 +362,7 @@ int AeronScenePost_EnsureMb(struct AeronScene3D* s) {
 		.thread_count_z                  = 1,
 	});
 	s->mb_reconstruct_ps =
-		AeronSceneInternal_CompileShader("scene_mb_reconstruct.frag", AERON_SHADER_STAGE_FRAGMENT, 4, 1, 0);
+		AeronSceneInternal_CompileShader("scene_mb_reconstruct.frag", AERON_SHADER_STAGE_FRAGMENT, 5, 1, 0);
 	s->mb_neighbormax_ps =
 		AeronSceneInternal_CompileShader("scene_mb_neighbormax.frag", AERON_SHADER_STAGE_FRAGMENT, 1, 1, 0);
 
@@ -938,9 +938,11 @@ int AeronScenePost_MbResolve(struct AeronScene3D* s, AeronCommandBuffer* cmd, Ae
 		gather = Aeron_RenderTargetGetTexture(s->mb_neighbor_rt); /* High: dominant motion */
 	}
 
-	AeronTexture* texs[4]   = { Aeron_RenderTargetGetTexture(color), velocity, gather, s->ssao_noise_tex };
-	AeronSampler* smps[4]   = { s->post_linear_sampler, s->post_linear_sampler, s->post_linear_sampler,
-								s->post_point_sampler };
+	/* The scene depth classifies taps in front of or behind each pixel. */
+	AeronTexture* texs[5]   = { Aeron_RenderTargetGetTexture(color), velocity, gather, s->ssao_noise_tex,
+								Aeron_DepthTargetGetTexture(s->depth_rt) };
+	AeronSampler* smps[5]   = { s->post_linear_sampler, s->post_linear_sampler, s->post_linear_sampler,
+								s->post_point_sampler, s->post_point_sampler };
 	MbReconstructUniforms u = {
 		.shutter_scale     = s->post.mb_shutter,
 		.tap_count         = high ? fmaxf(24.0f, 32.0f * resolution_scale) : 16.0f * resolution_scale,
@@ -952,6 +954,6 @@ int AeronScenePost_MbResolve(struct AeronScene3D* s, AeronCommandBuffer* cmd, Ae
 		.direct_velocity   = direct_fsr_motion ? 1u : 0u,
 		.direct_gather     = direct_fsr_motion && !high ? 1u : 0u,
 	};
-	return AeronScenePost_Fullscreen(cmd, s->mb_reconstruct_pipeline, s->mb_rt, texs, smps, 4, &u, sizeof u,
+	return AeronScenePost_Fullscreen(cmd, s->mb_reconstruct_pipeline, s->mb_rt, texs, smps, 5, &u, sizeof u,
 									 "Motion blur reconstruct");
 }

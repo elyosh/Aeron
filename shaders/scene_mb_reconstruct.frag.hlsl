@@ -19,8 +19,17 @@
  *          gathers along that object's motion and the object streaks
  *          onto the background.
  *
+ * Where this pixel moves much less than the gathered motion (a still
+ * cockpit strut beside a passing bolt), taps are also classified by depth
+ * against it (McGuire 2012): a tap in front streaks over it by its own
+ * motion, but one behind contributes only by this pixel's own motion, so
+ * the strut does not take the streak of what passes behind it. Pixels
+ * moving with their surroundings (and Low, which gathers along each
+ * pixel's own motion) keep the plain weighting and skip the depth reads.
+ *
  * Inputs:
- *   t0 color_rt, t1 velocity_rt (per-tap), t2 gather velocity, t3 noise.
+ *   t0 color_rt, t1 velocity_rt (per-tap), t2 gather velocity, t3 noise,
+ *   t4 scene depth (reverse-Z, render resolution; sampled by UV).
  * Velocity textures store UV displacement; lengths use output pixels.
  * All inputs have one mip level; explicit LOD retains the sampler filtering
  * without requesting implicit derivatives inside the adaptive gather loops.
@@ -47,6 +56,8 @@ Texture2D    g_gather  : register(t2, space2);
 SamplerState g_gath_s  : register(s2, space2);
 Texture2D    g_noise   : register(t3, space2);
 SamplerState g_noise_s : register(s3, space2);
+Texture2D    g_depth   : register(t4, space2);
+SamplerState g_depth_s : register(s4, space2);
 
 struct VSOut
 {
@@ -80,34 +91,57 @@ static float2 load_gather(float2 uv)
     return g_gather.SampleLevel(g_gath_s, uv, 0.0f).rg;
 }
 
-/* Keep the sampling and weighting identical for full groups and the tail. */
-static void accumulate_tap(float2 uv, float2 vg, float vglen, float t,
-                          inout float3 mov, inout float wsum)
+/* Relative depth band over which a tap goes from in front of the pixel to
+ * behind it, so surfaces at nearly the same depth do not flicker. */
+#define MB_SOFT_DEPTH 0.05f
+
+/* How far behind the pixel a tap lies, 0 (in front or level) to 1. Depth is
+ * reverse-Z with view depth near/depth, so the depth ratio is the inverse
+ * view-depth ratio; the sky (depth 0) lies behind everything. */
+static float behind(float pixel_depth, float tap_depth)
+{
+    if (tap_depth <= 0.0f)
+        return pixel_depth > 0.0f ? 1.0f : 0.0f;
+    return saturate((pixel_depth / tap_depth - 1.0f) / MB_SOFT_DEPTH);
+}
+
+/* Keep the sampling and weighting identical for full groups and the tail.
+ * `depth_aware` is a literal at every call, so each gather loop compiles
+ * without a per-tap branch. */
+static void accumulate_tap(float2 uv, float2 vg, float vglen, float t, bool depth_aware, float pixel_depth,
+                          float pixel_vlen, inout float3 mov, inout float wsum)
 {
     float2 suv = uv + vg * t;
     float2 vt = load_velocity(suv) * shutter_scale;
     float vtlen = min(length(vt * output_size), max_length_pixels);
-    float w = cone(abs(t) * vglen, vtlen);
+    float dist = abs(t) * vglen;
+    float w = cone(dist, vtlen);
+    if (depth_aware) {
+        float back = behind(pixel_depth, g_depth.SampleLevel(g_depth_s, suv, 0.0f).r);
+        w = lerp(w, cone(dist, pixel_vlen), back);
+    }
     mov += g_color.SampleLevel(g_color_s, suv, 0.0f).rgb * w;
     wsum += w;
 }
 
-/* Call with a constant group size so both quality paths unroll at compile time.
- * Complete groups expose independent fetches; the tail keeps every adaptive tap. */
+/* Call with a constant group size and depth_aware so each path unrolls at
+ * compile time. Complete groups expose independent fetches; the tail keeps
+ * every adaptive tap. */
 static void gather_samples(float2 uv, float2 vg, float vglen, float jitter, int N,
-                           int group_size, inout float3 mov, inout float wsum)
+                           int group_size, bool depth_aware, float pixel_depth, float pixel_vlen,
+                           inout float3 mov, inout float wsum)
 {
     int full_taps = N - N % group_size;
     [loop] for (int base = 0; base < full_taps; base += group_size) {
         [unroll] for (int tap = 0; tap < group_size; ++tap) {
             int k = base + tap;
             float  t   = ((float)k + jitter) / (float)N - 0.5f;
-            accumulate_tap(uv, vg, vglen, t, mov, wsum);
+            accumulate_tap(uv, vg, vglen, t, depth_aware, pixel_depth, pixel_vlen, mov, wsum);
         }
     }
     [loop] for (int k = full_taps; k < N; ++k) {
         float  t   = ((float)k + jitter) / (float)N - 0.5f;
-        accumulate_tap(uv, vg, vglen, t, mov, wsum);
+        accumulate_tap(uv, vg, vglen, t, depth_aware, pixel_depth, pixel_vlen, mov, wsum);
     }
 }
 
@@ -126,6 +160,9 @@ float4 main(VSOut i) : SV_Target0
 
     float jitter = g_noise.SampleLevel(g_noise_s, frac(i.position.xy * 0.25f), 0.0f).r
                  * 0.5f + 0.5f;
+    float pixel_vlen  = min(length(load_velocity(i.uv) * shutter_scale * output_size), max_length_pixels);
+    bool  depth_aware = pixel_vlen < 0.5f * vglen;
+    float pixel_depth = depth_aware ? g_depth.SampleLevel(g_depth_s, i.uv, 0.0f).r : 0.0f;
 
     /* The host supplies resolution-scaled limits and High's budget floor.
      * Adapt to streak length and round up, retaining at least four samples. */
@@ -141,9 +178,11 @@ float4 main(VSOut i) : SV_Target0
     /* Use pairs for High's longer gathers and four-tap groups for Low's
      * smaller sample budgets. This changes scheduling, not the tap count. */
     if (low_quality != 0u)
-        gather_samples(i.uv, vg, vglen, jitter, N, 4, mov, wsum);
+        gather_samples(i.uv, vg, vglen, jitter, N, 4, false, 0.0f, 0.0f, mov, wsum);
+    else if (depth_aware)
+        gather_samples(i.uv, vg, vglen, jitter, N, 2, true, pixel_depth, pixel_vlen, mov, wsum);
     else
-        gather_samples(i.uv, vg, vglen, jitter, N, 2, mov, wsum);
+        gather_samples(i.uv, vg, vglen, jitter, N, 2, false, 0.0f, 0.0f, mov, wsum);
     if (wsum < 1e-4f)
         return float4(center, 1.0f);             /* nothing moving reached here */
 
