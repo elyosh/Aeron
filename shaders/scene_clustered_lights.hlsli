@@ -25,16 +25,13 @@ cbuffer ClusteredLightUniform : AERON_CLUSTER_UNIFORM_BINDING {
 	uint   fs_cluster_grid_y;
 	uint   fs_cluster_grid_z;
 	uint   fs_cluster_point_count;
-	float  fs_cluster_point_min_distance;
-	float  fs_cluster_point_contribution_cap;
-	uint   fs_cluster_tile_size;
-	uint   fs_cluster_flags;
-	uint4  fs_cluster_global_indices;
 	/* The point lights from this index on are tubes, after the spheres;
 	 * the first global_sphere_count global lights are spheres. */
 	uint   fs_cluster_tube_start;
 	uint   fs_cluster_global_sphere_count;
-	uint2  fs_cluster_reserved;
+	uint   fs_cluster_tile_size;
+	uint   fs_cluster_flags;
+	uint4  fs_cluster_global_indices;
 #ifdef AERON_SCENE_LIGHTING_ENVIRONMENT
 	/* Image-based lighting environment (AeronScenePbrEnvironment):
 	 * x = diffuse strength (0 = no diffuse cube), y = specular strength,

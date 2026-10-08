@@ -49,39 +49,25 @@ typedef struct AeronSceneMeshTable {
 	float emissive_packed[AERON_MESH_PACKED_LANES][4];
 } AeronSceneMeshTable;
 
-/* Point-light falloff. CLASSIC is XWA's law, color * 0.5 / max(d, the
- * clustered-light min distance), with the configured diffuse wrap and
- * contribution cap. INVERSE_SQUARE is physical: a sphere of radius
- * `min_distance` giving color / max(d, min_distance)^2 with Lambert diffuse
- * and no cap, so `color` is the intensity (the illuminance at one world
- * unit); its specular highlight widens with the sphere's apparent size.
- * Both fade to zero at `radius`. */
-typedef enum AeronSceneLightFalloff {
-	AERON_SCENE_LIGHT_FALLOFF_CLASSIC = 0,
-	AERON_SCENE_LIGHT_FALLOFF_INVERSE_SQUARE,
-} AeronSceneLightFalloff;
-
-/* One point light for this frame (world position, radius in world
- * units, linear-HDR color premultiplied by intensity). `min_distance`
- * (world units, > 0) is the sphere radius of INVERSE_SQUARE lights.
- * A non-zero `half_axis` (world units) makes an INVERSE_SQUARE light a
- * tube: the segment pos +- half_axis, `min_distance` thick, emitting the
- * same total intensity (a point light of `color` from afar); `radius` is
- * then measured from the segment. CLASSIC lights ignore it. */
+/* One physical point light for this frame: a sphere of `source_radius`
+ * (world units, > 0) at `pos`, giving color / max(d, source_radius)^2 with
+ * Lambert diffuse, so `color` is the linear-HDR intensity (the illuminance
+ * at one world unit); its specular highlight widens with the sphere's
+ * apparent size. It fades to zero at `radius` (world units). A non-zero
+ * `half_axis` (world units) makes it a tube: the segment pos +- half_axis,
+ * `source_radius` thick, emitting the same total intensity (a point light
+ * of `color` from afar), with `radius` measured from the segment. */
 typedef struct AeronSceneLight {
-	float                  pos[3];
-	float                  radius;
-	float                  color[3];
-	AeronSceneLightFalloff falloff;
-	float                  min_distance;
-	float                  half_axis[3];
+	float pos[3];
+	float radius;
+	float color[3];
+	float source_radius;
+	float half_axis[3];
 } AeronSceneLight;
 
 typedef struct AeronSceneClusteredLightDesc {
 	int      enabled;
 	uint32_t depth_slices;
-	float    min_distance;
-	float    contribution_cap;
 	int      debug_view;
 } AeronSceneClusteredLightDesc;
 

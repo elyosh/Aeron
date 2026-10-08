@@ -173,8 +173,6 @@ static void cluster_prepare_uniform(AeronScene3D* s) {
 	u->grid_y                 = (u->viewport_height + u->tile_size - 1u) / u->tile_size;
 	u->grid_z                 = s->cluster_desc.depth_slices;
 	u->point_light_count      = s->point_light_count;
-	u->point_min_distance     = s->cluster_desc.min_distance;
-	u->point_contribution_cap = s->cluster_desc.contribution_cap;
 	u->flags                  = s->cluster_active ? AERON_SCENE_CLUSTER_ENABLED : 0u;
 	u->flags |= s->cluster_desc.debug_view ? AERON_SCENE_CLUSTER_DEBUG_VIEW : 0u;
 	u->flags |= s->cluster_global_count << AERON_CLUSTER_GLOBAL_COUNT_SHIFT;

@@ -145,7 +145,7 @@ typedef struct AeronSceneClusterLightGPU {
 	float    view_position_range[4];
 	uint32_t point_light_index;
 	float    luminance;
-	float    inverse_square_min_distance; /* 0 = classic law */
+	float    source_radius;
 	float    _pad;
 } AeronSceneClusterLightGPU;
 
@@ -171,16 +171,13 @@ typedef struct AeronSceneClusterUniformGPU {
 	uint32_t grid_y;
 	uint32_t grid_z;
 	uint32_t point_light_count;
-	float    point_min_distance;
-	float    point_contribution_cap;
-	uint32_t tile_size;
-	uint32_t flags;
-	uint32_t global_light_indices[AERON_SCENE_CLUSTER_MAX_GLOBAL_LIGHTS];
 	/* Point lights from tube_start on are tubes; the first
 	 * global_sphere_count global lights are spheres. */
 	uint32_t tube_start;
 	uint32_t global_sphere_count;
-	uint32_t _reserved[2];
+	uint32_t tile_size;
+	uint32_t flags;
+	uint32_t global_light_indices[AERON_SCENE_CLUSTER_MAX_GLOBAL_LIGHTS];
 } AeronSceneClusterUniformGPU;
 
 /* Fragment b2: the scene lighting block. Mirrors ClusteredLightUniform
@@ -194,10 +191,10 @@ typedef struct AeronSceneLightingUniformGPU {
 	float                       emission[4];             /* emissive scale, 0, 0, 0 */
 } AeronSceneLightingUniformGPU;
 
-/* Layout checks against the HLSL blocks (ClusteredLightUniform, 128 bytes;
- * with the environment, the debug material and the emission, 224 bytes). */
-typedef char AeronSceneClusterUniformSizeCheck[sizeof(AeronSceneClusterUniformGPU) == 128 ? 1 : -1];
-typedef char AeronSceneLightingUniformSizeCheck[sizeof(AeronSceneLightingUniformGPU) == 224 ? 1 : -1];
+/* Layout checks against the HLSL blocks (ClusteredLightUniform, 112 bytes;
+ * with the environment, the debug material and the emission, 208 bytes). */
+typedef char AeronSceneClusterUniformSizeCheck[sizeof(AeronSceneClusterUniformGPU) == 112 ? 1 : -1];
+typedef char AeronSceneLightingUniformSizeCheck[sizeof(AeronSceneLightingUniformGPU) == 208 ? 1 : -1];
 
 enum {
 	AERON_SCENE_CLUSTER_ENABLED    = 1u << 0,

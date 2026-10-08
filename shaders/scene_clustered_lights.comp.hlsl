@@ -9,7 +9,7 @@ struct ClusterLight {
 	float4 view_position_range;
 	uint   point_light_index;
 	float  luminance;
-	float  inverse_square_min_distance; /* 0 = classic law */
+	float  source_radius;
 	float  _pad;
 };
 
@@ -126,19 +126,9 @@ bool candidate_better(float score, uint index, float best_score, uint best_index
 		}
 	} else {
 		for (uint i = 0u; i < candidate_count; ++i) {
-			ClusterLight light            = g_lights[s_candidate_lights[i]];
-			float nearest_distance = sqrt(s_candidate_values[i]);
-			float score;
-			if (light.inverse_square_min_distance > 0.0f) {
-				float d = max(nearest_distance, light.inverse_square_min_distance);
-				score   = light.luminance / (d * d);
-			} else {
-				score = light.luminance * 0.5f /
-						max(nearest_distance, max(fs_cluster_point_min_distance, 1.0f));
-				if (fs_cluster_point_contribution_cap > 0.0f)
-					score = min(score, fs_cluster_point_contribution_cap);
-			}
-			s_candidate_values[i] = score;
+			ClusterLight light    = g_lights[s_candidate_lights[i]];
+			float        d        = max(sqrt(s_candidate_values[i]), light.source_radius);
+			s_candidate_values[i] = light.luminance / (d * d);
 			s_candidate_lights[i] = light.point_light_index;
 		}
 		for (uint output = 0u; output < retained_count; ++output) {

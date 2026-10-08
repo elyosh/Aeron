@@ -65,8 +65,8 @@ cbuffer PbrLightFS : register(AERON_PBR_LIGHT_UNIFORM_REGISTER, space3)
      * have zero color. dir = surface -> light. */
     float4 fs_extra_dir[3];
     float4 fs_extra_col[3];
-    /* Point-light evaluation knobs: minimum distance, specular weight,
-     * diffuse wrap, and per-light contribution cap. */
+    /* Point-light evaluation: y = specular weight; x, z and w reserved
+     * (formerly the classic law's knobs). */
 	float4 fs_point_params;
 	/* Reserved: formerly the diffuse environment, now in the scene
 	 * lighting block (b2). Keeps the 368-byte layout games mirror. */
@@ -615,34 +615,21 @@ float3 cook_torrance_spec(float3 N, float3 V, float3 L,
  * per-light Cook-Torrance specular into `spec_out` (already scaled by
  * spec_intensity x spec_mul x fs_point_params.y).
  *
- * Attenuation is the CLASSIC XWA curve, not inverse-square: the
- * original contributes intensity * 0.5 / d in lit-color units with a
- * very long visible tail (its cull radius is a selection heuristic,
- * not a shading range), and the light-pool size is art direction. So:
- * atten = win(d/r) * 0.5 / max(d, min_d), where the (1-(d/r)^4)^2
- * window only trims the sub-1% tail (hosts derive r from the source
- * intensity). Diffuse keeps directional shaping the classic lacked,
- * softened toward half-Lambert by the wrap knob so grazing hulls
- * under a passing bolt stay lit like the original. The per-light cap
- * mirrors the classic lit-color saturation (hue-preserving) — engine
- * glow sources saturate by design in the original law.
+ * Lights are physical spheres of radius color.w giving
+ * win * color / max(d, color.w)^2 with Lambert diffuse, where the
+ * (1-(d/r)^4)^2 window ends them at their range r. Their GGX alpha widens
+ * by half the sphere's angular radius (alpha + r / 2d), so a light passing
+ * close to a glossy surface leaves a highlight of its size rather than a
+ * pinpoint; the normalized GGX keeps the energy.
  *
- * Lights with color.w > 0 (AERON_SCENE_LIGHT_FALLOFF_INVERSE_SQUARE, such
- * as lights authored in models) are physical instead: spheres of radius
- * color.w giving win * color / max(d, color.w)^2, Lambert diffuse, no
- * cap. Their GGX alpha widens by half the sphere's angular radius
- * (alpha + r / 2d), so a light passing close to a glossy surface leaves a
- * highlight of its size rather than a pinpoint; the normalized GGX keeps
- * the energy.
- *
- * A physical light with a half axis is a tube (a laser streak), shaded
- * by accumulate_tube_light: the scene orders tubes after the spheres and
+ * A light with a half axis is a tube (a laser streak), shaded by
+ * accumulate_tube_light: the scene orders tubes after the spheres and
  * each loop below takes them separately, so spheres pay nothing for them.
- * A tube is the segment centre +- half_axis, color.w thick, with the same total
- * intensity. The window measures from the segment. Diffuse is the closed
- * form of Lambert from a line, 2 / (|L0||L1| + L0.L1) times the mean of
- * N.L at its ends, which becomes N.L / d^2 for a short or distant tube.
- * Specular evaluates the BRDF toward the segment point nearest the
+ * A tube is the segment centre +- half_axis, color.w thick, with the same
+ * total intensity. The window measures from the segment. Diffuse is the
+ * closed form of Lambert from a line, 2 / (|L0||L1| + L0.L1) times the
+ * mean of N.L at its ends, which becomes N.L / d^2 for a short or distant
+ * tube. Specular evaluates the BRDF toward the segment point nearest the
  * reflection ray (the representative point), widened by the thickness
  * as a sphere, and scales it by alpha / (alpha + half the tube's angular
  * length): the stretched highlight reflects about the energy of the
@@ -651,9 +638,6 @@ void accumulate_point_light(uint light_index, float3 N, float3 N_spec, float3 V,
                             float3 world_pos, PbrMaterialParams mp, float spec_mul,
                             inout float3 diff, inout float3 spec_out)
 {
-    float  min_d = max(fs_point_params.x, 1.0f);
-    float  wrap  = fs_point_params.z;
-    float  cap   = fs_point_params.w;
     PbrPointLight point_light = fs_point_lights[light_index];
     float3 dv = point_light.position_range.xyz - world_pos;
     float  r  = point_light.position_range.w;
@@ -661,32 +645,18 @@ void accumulate_point_light(uint light_index, float3 N, float3 N_spec, float3 V,
     if (d2 >= r * r) {
         return;
     }
-    float  d   = sqrt(d2);
-    float3 L   = dv / max(d, 1e-3f);
-    float  q2  = d2 / (r * r);
-    float  win = 1.0f - q2 * q2;
-    win        = win * win;
-    float3 radiance;
-    PbrMaterialParams spec_mp = mp;
-    if (point_light.color.w > 0.0f) {
-        float near_d = max(d, point_light.color.w);
-        radiance     = point_light.color.rgb * (win / (near_d * near_d));
-        wrap         = 0.0f;
-        float alpha  = saturate(mp.roughness * mp.roughness + point_light.color.w / (2.0f * near_d));
-        spec_mp.roughness = sqrt(alpha);
-    } else {
-        radiance = point_light.color.rgb * (win * 0.5f / max(d, min_d));
-        if (cap > 0.0f) {
-            float m = max(radiance.r, max(radiance.g, radiance.b));
-            if (m > cap) {
-                radiance *= cap / m;
-            }
-        }
-    }
-    float ndotl = dot(N, L);
-    float shape = lerp(saturate(ndotl), saturate(ndotl * 0.5f + 0.5f), wrap);
-    diff += radiance * shape;
+    float  d      = sqrt(d2);
+    float3 L      = dv / max(d, 1e-3f);
+    float  q2     = d2 / (r * r);
+    float  win    = 1.0f - q2 * q2;
+    win           = win * win;
+    float  near_d = max(d, point_light.color.w);
+    float3 radiance = point_light.color.rgb * (win / (near_d * near_d));
+    diff += radiance * saturate(dot(N, L));
     if (fs_point_params.y > 0.0f) {
+        PbrMaterialParams spec_mp = mp;
+        float alpha = saturate(mp.roughness * mp.roughness + point_light.color.w / (2.0f * near_d));
+        spec_mp.roughness = sqrt(alpha);
         float g_unused;
         spec_out += cook_torrance_spec(N_spec, V, L, spec_mp, g_unused) * radiance *
                     (mp.spec_intensity * spec_mul * fs_point_params.y);

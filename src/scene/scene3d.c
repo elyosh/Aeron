@@ -21,7 +21,7 @@ typedef char AeronSceneLightGPUSizeCheck[sizeof(AeronSceneLightGPU) == 32 ? 1 : 
 typedef char AeronScenePointLightGPUSizeCheck[sizeof(AeronScenePointLightGPU) == 48 ? 1 : -1];
 typedef char AeronSceneClusterLightGPUSizeCheck[sizeof(AeronSceneClusterLightGPU) == 32 ? 1 : -1];
 typedef char AeronSceneClusterHeaderGPUSizeCheck[sizeof(AeronSceneClusterHeaderGPU) == 8 ? 1 : -1];
-typedef char AeronSceneClusterUniformGPUSizeCheck[sizeof(AeronSceneClusterUniformGPU) == 128 ? 1 : -1];
+typedef char AeronSceneClusterUniformGPUSizeCheck[sizeof(AeronSceneClusterUniformGPU) == 112 ? 1 : -1];
 
 /* struct AeronScene3D lives in internal.h (shared with
  * the material-class translation units). */
@@ -359,7 +359,6 @@ AeronScene3D* AeronScene_Create(const AeronScene3DDesc* desc) {
 	s->clear_rgba[3]             = 1.0f;
 	s->cluster_desc.enabled      = 1;
 	s->cluster_desc.depth_slices = AERON_SCENE_CLUSTER_DEFAULT_DEPTH_SLICES;
-	s->cluster_desc.min_distance = 1.0f;
 
 	if (!scene_create_targets(s)) {
 		AeronScene_Destroy(s);
@@ -513,11 +512,8 @@ void AeronScene_AddMeshInstance(AeronScene3D* s, const AeronSceneMeshInstance* i
 	s->instances[s->instance_count++] = *instance;
 }
 
-/* An INVERSE_SQUARE light with a finite, non-zero half axis. */
+/* A light with a finite, non-zero half axis. */
 static int scene_light_is_tube(const AeronSceneLight* light) {
-	if (light->falloff != AERON_SCENE_LIGHT_FALLOFF_INVERSE_SQUARE) {
-		return 0;
-	}
 	const float length_sq = light->half_axis[0] * light->half_axis[0] + light->half_axis[1] * light->half_axis[1] +
 							light->half_axis[2] * light->half_axis[2];
 	return length_sq > 0.0f && isfinite(length_sq);
@@ -540,8 +536,8 @@ int AeronScene_AddLight(AeronScene3D* s, const AeronSceneLight* light) {
 
 /* Model lights cut off below this illuminance when they have no range. */
 #define SCENE_MESH_LIGHT_CUTOFF 0.001f
-/* Near clamp of model lights, in metres. */
-#define SCENE_MESH_LIGHT_MIN_DISTANCE 0.1f
+/* Sphere radius of model lights, in metres. */
+#define SCENE_MESH_LIGHT_RADIUS 0.1f
 
 int AeronScene_MeshLight(const AeronSceneMesh* mesh, uint32_t index, const float transform[16],
 						 float units_per_meter, const AeronSceneMeshTable* table, float intensity_scale,
@@ -579,14 +575,12 @@ int AeronScene_MeshLight(const AeronSceneMesh* mesh, uint32_t index, const float
 	}
 	const float range_m = light->range > 0.0f ? light->range : sqrtf(peak / SCENE_MESH_LIGHT_CUTOFF);
 	out->radius         = range_m * units_per_meter;
-	out->falloff        = AERON_SCENE_LIGHT_FALLOFF_INVERSE_SQUARE;
-	out->min_distance   = SCENE_MESH_LIGHT_MIN_DISTANCE * units_per_meter;
+	out->source_radius  = SCENE_MESH_LIGHT_RADIUS * units_per_meter;
 	return 1;
 }
 
 int AeronScene_SetClusteredLights(AeronScene3D* s, const AeronSceneClusteredLightDesc* desc) {
-	if (!s || !desc || desc->depth_slices < 4u || desc->depth_slices > 64u || !isfinite(desc->min_distance) ||
-		desc->min_distance < 0.0f || !isfinite(desc->contribution_cap) || desc->contribution_cap < 0.0f) {
+	if (!s || !desc || desc->depth_slices < 4u || desc->depth_slices > 64u) {
 		return 0;
 	}
 	s->cluster_desc            = *desc;
@@ -1598,10 +1592,8 @@ int AeronSceneStorage_Prepare(AeronScene3D* s, AeronCommandBuffer* cmd) {
 		destination->color[0]                  = source->color[0];
 		destination->color[1]                  = source->color[1];
 		destination->color[2]                  = source->color[2];
-		/* w: the INVERSE_SQUARE near clamp, 0 for the classic law. */
-		destination->color[3] = source->falloff == AERON_SCENE_LIGHT_FALLOFF_INVERSE_SQUARE
-									? (source->min_distance > 1e-3f ? source->min_distance : 1e-3f)
-									: 0.0f;
+		/* w: the sphere radius. */
+		destination->color[3] = source->source_radius > 1e-3f ? source->source_radius : 1e-3f;
 		/* A tube's segment; clusters bound it with a sphere around its
 		 * centre. */
 		const int is_tube     = scene_light_is_tube(source);
@@ -1624,7 +1616,7 @@ int AeronSceneStorage_Prepare(AeronScene3D* s, AeronCommandBuffer* cmd) {
 		cluster->point_light_index      = i;
 		cluster->luminance =
 			0.2126f * source->color[0] + 0.7152f * source->color[1] + 0.0722f * source->color[2];
-		cluster->inverse_square_min_distance = destination->color[3];
+		cluster->source_radius               = destination->color[3];
 		cluster->_pad                        = 0.0f;
 	}
 	s->point_light_count = point_count;

@@ -456,8 +456,7 @@ static void add_game_instances(AeronScene3D* scene, const Fixture* f, const Aero
 	for (int i = 0; i < f->config.game.light_count; ++i) {
 		const CaptureLight* l     = &f->config.game.lights[i];
 		AeronSceneLight     light = {
-				.falloff      = AERON_SCENE_LIGHT_FALLOFF_INVERSE_SQUARE,
-				.min_distance = 0.25f * GAME_UNITS_PER_METER,
+				.source_radius = 0.25f * GAME_UNITS_PER_METER,
 		};
 		float peak = 0;
 		for (int k = 0; k < 3; ++k) {
@@ -479,7 +478,7 @@ static void set_game_lighting(AeronScene3D* scene, const CaptureConfig* config) 
 		[0]  = { .8f, 1, 0, 0 }, /* intensity, specular, debug term, wrap */
 		[1]  = { 0, game->ssao.ssao_intensity, game->ssao.ssao_power, (float)config->width },
 		[2]  = { (float)config->height, game->ssao.ssao_direct, 1, 0 }, /* spec_geom_adapt */
-		[18] = { 0, 1, 0, 0 },                                          /* classic min distance (unused), spec, classic wrap, cap (unused) */
+		[18] = { 0, 1, 0, 0 },                                          /* reserved, point-light spec, reserved, reserved */
 	};
 	for (int k = 0; k < 3; ++k) {
 		light[4][k] = game->sun_direction[k];
