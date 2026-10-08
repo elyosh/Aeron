@@ -39,10 +39,13 @@ int main(int argc, char** argv) {
 							.window_title      = "Aeron scene capture",
 							.window_width      = 800,
 							.window_height     = 450,
+							.window_hidden     = 1,
 							.logical_width     = c.width,
 							.logical_height    = c.height,
 							.shader_path       = SCENE_CAPTURE_SHADER_DIR,
 							.presentation_mode = AERON_PRESENTATION_ASPECT_FIT };
+	/* Runs offscreen: no Dock icon or focus change on macOS. */
+	SDL_SetHint(SDL_HINT_MAC_BACKGROUND_APP, "1");
 	if (!Aeron_Init(&startup))
 		return 1;
 	/* Captures use a fixed SDR presentation transform, independent of the desktop. */

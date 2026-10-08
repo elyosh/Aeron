@@ -62,8 +62,11 @@ int Aeron_WindowInit(const AeronConfig* config) {
 	 * is point-sized and the OS upscales — visibly soft output. All
 	 * Aeron mouse/window math stays in points; only Aeron_Present's
 	 * swapchain-measured presentation rect sees pixels. */
-	g_aeron.window =
-		SDL_CreateWindow(title, width, height, SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY);
+	SDL_WindowFlags window_flags = SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY;
+	if (config && config->window_hidden) {
+		window_flags |= SDL_WINDOW_HIDDEN;
+	}
+	g_aeron.window = SDL_CreateWindow(title, width, height, window_flags);
 	if (!g_aeron.window) {
 		Aeron_LogError("aeron", "SDL_CreateWindow failed: %s", SDL_GetError());
 		return 0;

@@ -28,8 +28,9 @@ cmake --build build --target scene_capture
 Copy a preset and choose a fresh `output_dir`: existing capture manifests are
 never overwritten. Input YAML paths must be relative to the working directory.
 Relative `asset_root` and `output_dir` paths also use the working directory,
-not the YAML file's folder. Capture resolution is independent of the host window;
-closing that window cancels the run.
+not the YAML file's folder. The tool renders offscreen: its window stays hidden
+and, on macOS, it takes no Dock icon or focus. Interrupt it (Ctrl+C) to cancel a
+run.
 
 ## Presets and settings
 
