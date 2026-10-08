@@ -450,7 +450,7 @@ static void add_game_instances(AeronScene3D* scene, const Fixture* f, const Aero
 		AeronScene_AddMeshInstance(scene, &instance);
 	}
 	/* As XwaRemasterShip_ScenePointLight: 0.25 m spheres ending under
-	 * 1/1000 of a unit of illuminance. */
+	 * 1/250 of a unit of illuminance. */
 	for (int i = 0; i < f->config.game.light_count; ++i) {
 		const CaptureLight* l     = &f->config.game.lights[i];
 		AeronSceneLight     light = {
@@ -463,7 +463,7 @@ static void add_game_instances(AeronScene3D* scene, const Fixture* f, const Aero
 			light.color[k]     = l->intensity[k] * GAME_UNITS_PER_METER * GAME_UNITS_PER_METER;
 			peak           = fmaxf(peak, l->intensity[k]);
 		}
-		light.radius = sqrtf(peak / 0.001f) * GAME_UNITS_PER_METER;
+		light.radius = sqrtf(peak / 0.004f) * GAME_UNITS_PER_METER;
 		AeronScene_AddLight(scene, &light);
 	}
 }
