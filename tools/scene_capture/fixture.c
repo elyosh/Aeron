@@ -313,7 +313,6 @@ static void add_objects(AeronScene3D* scene, const Fixture* f) {
 		AeronSceneMeshInstance instance = {
 			.mesh                         = mesh->mesh,
 			.base_color_emissive_strength = f->config.model_count ? 0 : o[7] * f->config.emissive_scale,
-			.no_local_lights              = 1,
 			.cull_mode                    = (AeronCullMode)f->config.cull_mode,
 			.shadow_flags = AERON_SCENE_INSTANCE_NO_CAST_SHADOW | AERON_SCENE_INSTANCE_NO_RECEIVE_SHADOW,
 			.transform = { cs * o[0], -sn * o[1], 0, o[3], sn * o[0], cs * o[1], 0, o[4], 0, 0, o[2], o[5], 0,
@@ -415,7 +414,6 @@ static void add_game_instances(AeronScene3D* scene, const Fixture* f, const Aero
 		const CaptureInstance* in       = &f->config.game.instances[i];
 		AeronSceneMeshInstance instance = {
 			.mesh            = f->meshes[in->model].mesh,
-			.no_local_lights = 1,
 			.cull_mode       = (AeronCullMode)f->config.cull_mode,
 		};
 		if (in->role == CAPTURE_ROLE_SHIP)

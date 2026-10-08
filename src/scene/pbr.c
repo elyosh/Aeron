@@ -39,8 +39,7 @@ typedef struct AeronScenePbrVsBlock {
 	uint32_t screen_shadow;
 	uint32_t current_table_base;
 	uint32_t previous_table_base;
-	uint32_t local_light_base;
-	uint32_t local_light_count;
+	uint32_t _reserved[2];
 	uint32_t table_slot_count;
 	float    prev_view_proj[16];
 	float    prev_model_to_world[16];
@@ -402,7 +401,7 @@ int AeronScenePbr_Ensure(struct AeronScene3D* s) {
 	}
 	s->pbr_tried = 1;
 
-	s->pbr_vs               = pbr_shader("scene_pbr_mesh.vert", AERON_SHADER_STAGE_VERTEX, 0, 1, 2);
+	s->pbr_vs               = pbr_shader("scene_pbr_mesh.vert", AERON_SHADER_STAGE_VERTEX, 0, 1, 1);
 	s->pbr_prepass_vs       = pbr_shader("scene_pbr_prepass.vert", AERON_SHADER_STAGE_VERTEX, 0, 1, 1);
 	s->pbr_prepass_mask_vs  = pbr_shader("scene_pbr_prepass_mask.vert", AERON_SHADER_STAGE_VERTEX, 0, 1, 1);
 	s->pbr_prepass_stamp_vs = pbr_shader("scene_pbr_prepass_stamp.vert", AERON_SHADER_STAGE_VERTEX, 0, 1, 1);
@@ -542,8 +541,6 @@ static void pbr_push_instance_uniforms(struct AeronScene3D* s, AeronRenderPass* 
 	vsb.current_table_base           = prepared->current_table_base;
 	vsb.previous_table_base          = vel ? prepared->previous_table_base : prepared->current_table_base;
 	vsb.table_slot_count             = prepared->table_slot_count;
-	vsb.local_light_base     = prepared->local_light_base;
-	vsb.local_light_count    = prepared->local_light_count;
 	Aeron_BindUniformData(pass, AERON_SHADER_STAGE_VERTEX, 0, &vsb, sizeof vsb);
 
 	(void)depth_only;
@@ -663,9 +660,6 @@ int AeronScenePbr_DrawInstances(struct AeronScene3D* s, AeronCommandBuffer* cmd,
 		return 0;
 	}
 	Aeron_BindStorageBuffer(pass, AERON_SHADER_STAGE_VERTEX, 0, s->mesh_table_buffer);
-	if (!depth_only) {
-		Aeron_BindStorageBuffer(pass, AERON_SHADER_STAGE_VERTEX, 1, s->local_light_buffer);
-	}
 	/* AO input at t4 (pbr FS declares it unconditionally); a white 1x1
 	 * placeholder keeps AO reading as 1 when SSAO is off. Prepass FS
 	 * samples nothing. */
@@ -849,7 +843,6 @@ int AeronScenePbr_DrawTransparentInstances(struct AeronScene3D* s, AeronRenderPa
 		return 1;
 	}
 	Aeron_BindStorageBuffer(pass, AERON_SHADER_STAGE_VERTEX, 0, s->mesh_table_buffer);
-	Aeron_BindStorageBuffer(pass, AERON_SHADER_STAGE_VERTEX, 1, s->local_light_buffer);
 	/* Screen-space AO belongs to the nearest opaque/masked depth layer, not
 	 * this later transparent layer. Bind white while preserving the already
 	 * shaded background's AO. */

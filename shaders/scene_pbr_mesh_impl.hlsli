@@ -277,8 +277,7 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
         extra_rgb += saturate(dot(N, fs_extra_dir[ed].xyz)) * fs_extra_col[ed].rgb;
     }
     float3 base_rgb = albedo *
-        ((sun_color * lambert_term * shadow_visibility + extra_rgb) * ao_direct + ambient_rgb * ao +
-         i.local_rgb);
+        ((sun_color * lambert_term * shadow_visibility + extra_rgb) * ao_direct + ambient_rgb * ao);
 
     /* ===== Metallic-roughness ==================================== */
     PbrMaterialParams mp;
@@ -405,7 +404,7 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
         float ndotl = saturate(dot(N, L)) * light_intensity * shadow_visibility;
         float shade = xvt_ambient + (1.0f - xvt_ambient) * ndotl;
         shade = round(shade * 15.0f) / 15.0f;   /* 16 discrete shades */
-        lit = albedo * (sun_color * shade + i.local_rgb);
+        lit = albedo * sun_color * shade;
     }
 
 #if AERON_PBR_DEBUG_VIEWS
@@ -447,9 +446,8 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
     else if (isolate == 6) lit = N * 0.5f + 0.5f;
     else if (isolate == 7) lit = V * 0.5f + 0.5f;
     else if (isolate == 8) lit = (dot(N, V) * 0.5f + 0.5f).xxx;
-    else if (isolate == 9) lit = i.local_rgb;
-    else if (isolate == 10) lit = environment_diffuse_term;
-    else if (isolate == 11) lit = spec_ibl_rgb;
+    else if (isolate == 9) lit = environment_diffuse_term;
+    else if (isolate == 10) lit = spec_ibl_rgb;
     if (isolate >= 4) { _out.color = float4(lit, 1.0f); return _out; }
 #endif
 

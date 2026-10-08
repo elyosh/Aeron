@@ -13,10 +13,6 @@ struct PbrForwardVSOut {
 	float  tangent_sign : TEXCOORD2;
 	float2 uv : TEXCOORD0;
 	float  emissive_mul : COLOR0;
-	/* Per-vertex coloured local-light accumulation from
-	 * accumulate_local_lights(). FS folds `base_color × local_rgb`
-	 * into the diffuse composition. */
-	float3 local_rgb : COLOR1;
 	/* Flat-interpolated material identity for the FS atlas-sample
 	 * resolution. */
 	nointerpolation uint  prim_id : COLOR2;

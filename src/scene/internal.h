@@ -126,8 +126,6 @@ typedef struct AeronScenePreparedInstance {
 	uint32_t current_table_base;
 	uint32_t previous_table_base;
 	uint32_t table_slot_count;
-	uint32_t local_light_base;
-	uint32_t local_light_count;
 	/* The bound intersects the camera frustum; camera passes skip the
 	 * instance otherwise (shadow passes cull per cascade). */
 	uint32_t camera_visible;
@@ -335,9 +333,6 @@ struct AeronScene3D {
 	uint32_t                   mesh_table_count;
 	uint32_t                   mesh_table_vec4_count;
 	uint32_t                   mesh_table_staging_cap;
-	AeronSceneLightGPU*        local_light_staging;
-	uint32_t                   local_light_count;
-	uint32_t                   local_light_staging_cap;
 	AeronScenePointLightGPU*   point_light_staging;
 	uint32_t                   point_light_count;
 	/* Spheres are packed first; point lights from here on are tubes. */
@@ -347,8 +342,6 @@ struct AeronScene3D {
 	uint32_t                   cluster_light_staging_cap;
 	AeronBuffer*               mesh_table_buffer;
 	uint32_t                   mesh_table_buffer_cap;
-	AeronBuffer*               local_light_buffer;
-	uint32_t                   local_light_buffer_cap;
 	AeronBuffer*               point_light_buffer;
 	uint32_t                   point_light_buffer_cap;
 	AeronBuffer*               cluster_light_buffer;

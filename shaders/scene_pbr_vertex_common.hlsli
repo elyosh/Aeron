@@ -26,12 +26,10 @@ cbuffer GltfMeshVSUniforms : register(b0, space1) {
 	uint  receive_shadow;
 	uint  screen_shadow;
 	/* Current/previous articulation tables (float4 bases into mesh_tables,
-	 * both holding at least table_slot_count slots) and the forward
-	 * local-light slice. */
+	 * both holding at least table_slot_count slots). */
 	uint current_table_base;
 	uint previous_table_base;
-	uint local_light_base;
-	uint local_light_count;
+	uint2 reserved;
 	uint table_slot_count;
 	/* Previous transforms used by the velocity-producing vertex variants. */
 	row_major float4x4 prev_view_proj;

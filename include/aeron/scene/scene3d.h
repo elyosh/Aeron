@@ -84,21 +84,6 @@ typedef struct AeronSceneClusteredLightStats {
 	uint64_t allocated_buffer_bytes;
 } AeronSceneClusteredLightStats;
 
-/* CPU submission record for one per-instance culled light. The scene packs
- * active records into its per-frame local-light storage buffer. */
-typedef struct AeronSceneLightGPU {
-	float pos[3];
-	float range;
-	float color[3];
-	float falloff_sq;
-} AeronSceneLightGPU;
-
-typedef struct AeronSceneLightBlock {
-	uint32_t           light_count;
-	uint32_t           _pad[3];
-	AeronSceneLightGPU lights[16];
-} AeronSceneLightBlock;
-
 /* Directional-shadow flags (AeronSceneMeshInstance.shadow_flags).
  * USE_RECEIVER_LOCAL_SHADOW receivers sample a dedicated map fitted around
  * them, half the cascade atlas size (1024..4096); its texel grid turns and
@@ -135,12 +120,6 @@ typedef struct AeronSceneMeshInstance {
 	/* Optional previous-frame articulation used only for velocity. NULL
 	 * reuses mesh_table, which is correct for rigid or unchanged meshes. */
 	const AeronSceneMeshTable* prev_mesh_table;
-	/* Per-instance culled light block, borrowed for the frame (NULL = unlit).
-	 * The scene copies active entries into its packed per-frame storage. */
-	const AeronSceneLightBlock* lights;
-	/* Skip receive-side local lighting (TIE: projectile bolts, which
-	 * are themselves light sources). */
-	int no_local_lights;
 	/* Force zero velocity in the motion-vector prepass: project prev
 	 * through the CURRENT camera with the current transform (TIE:
 	 * spawn-frame objects with no matched previous pose — camera-
