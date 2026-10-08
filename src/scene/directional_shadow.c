@@ -44,6 +44,12 @@ typedef struct ShadowSplitFrustum {
 	float radius;
 } ShadowSplitFrustum;
 
+/* One receiver-local tile: light-space centre and half extent, texel size,
+ * and the camera distance it serves up to. */
+typedef struct ShadowLocalTile {
+	float center_x, center_y, extent, world_per_texel, split_far;
+} ShadowLocalTile;
+
 #define SHADOW_FIT_EXTENT_BUCKETS 32.0f
 #define SHADOW_FIT_SHRINK_FRAMES 30u
 
@@ -474,20 +480,23 @@ static uint32_t shadow_receiver_local_size(const AeronSceneDirectionalShadowDesc
 	return size < 1024u ? 1024u : (size > 4096u ? 4096u : size);
 }
 
-static int shadow_ensure_receiver_local_atlas(struct AeronScene3D* scene, uint32_t size) {
-	if (scene->receiver_local_shadow_atlas && scene->receiver_local_shadow_size != size) {
+/* One row of `tiles` square tiles of `size` texels. */
+static int shadow_ensure_receiver_local_atlas(struct AeronScene3D* scene, uint32_t size, uint32_t tiles) {
+	if (scene->receiver_local_shadow_atlas &&
+		(scene->receiver_local_shadow_size != size || scene->receiver_local_shadow_tiles != tiles)) {
 		Aeron_DestroyDepthTarget(scene->receiver_local_shadow_atlas);
 		scene->receiver_local_shadow_atlas = NULL;
 	}
 	if (!scene->receiver_local_shadow_atlas) {
 		scene->receiver_local_shadow_atlas = Aeron_CreateDepthTarget(&(AeronDepthTargetDesc) {
-			.width      = (int)size,
+			.width      = (int)(size * tiles),
 			.height     = (int)size,
 			.format     = AERON_TEXTURE_FORMAT_D32_FLOAT,
 			.sampled    = 1,
 			.debug_name = "scene.receiver_local_shadow",
 		});
-		scene->receiver_local_shadow_size = scene->receiver_local_shadow_atlas ? size : 0;
+		scene->receiver_local_shadow_size  = scene->receiver_local_shadow_atlas ? size : 0;
+		scene->receiver_local_shadow_tiles = scene->receiver_local_shadow_atlas ? tiles : 0;
 	}
 	return scene->receiver_local_shadow_atlas != NULL;
 }
@@ -511,6 +520,12 @@ static float shadow_filter_footprint_radius(const AeronSceneDirectionalShadowDes
 		return 1.0f;
 	}
 	return fmaxf(desc->contact_hardening ? desc->max_filter_radius : desc->filter_radius, 1.0f);
+}
+
+/* Snaps a light-space centre to the texel grid whose origin is `origin`. */
+static float shadow_snap(float center, double origin, float world_per_texel) {
+	const double absolute = origin + (double)center;
+	return (float)(floor(absolute / (double)world_per_texel + 0.5) * (double)world_per_texel - origin);
 }
 
 /* Light-space axes that turn with `instance` (row-major model->world), built
@@ -598,18 +613,9 @@ static void shadow_prepare_receiver_local(struct AeronScene3D*                  
 		return;
 	}
 
-	const uint32_t atlas_size  = shadow_receiver_local_size(desc);
-	const uint32_t usable_size = atlas_size - 2u * AERON_SCENE_SHADOW_GUARD_TEXELS;
-	float          center_x    = 0.5f * (receiver_x_min + receiver_x_max);
-	float          center_y    = 0.5f * (receiver_y_min + receiver_y_max);
-	float extent = fmaxf(0.5f * (receiver_x_max - receiver_x_min), 0.5f * (receiver_y_max - receiver_y_min));
-	extent       = fmaxf(extent, 1.0f);
-	/* Keep the entire receiver inside the unclamped filter footprint. */
-	const float initial_world_per_texel = (2.0f * extent) / (float)usable_size;
-	const float filter_radius           = shadow_filter_footprint_radius(desc);
-	extent += (desc->normal_bias_texels + filter_radius + 2.0f) * initial_world_per_texel;
-	const float world_per_texel = (2.0f * extent) / (float)usable_size;
-
+	const uint32_t atlas_size    = shadow_receiver_local_size(desc);
+	const uint32_t usable_size   = atlas_size - 2u * AERON_SCENE_SHADOW_GUARD_TEXELS;
+	const float    filter_radius = shadow_filter_footprint_radius(desc);
 	/* Snap relative to the anchor's origin (else the world origin). */
 	double origin_x = shadow_dot_origin(desc->world_origin, x_axis);
 	double origin_y = shadow_dot_origin(desc->world_origin, y_axis);
@@ -618,12 +624,46 @@ static void shadow_prepare_receiver_local(struct AeronScene3D*                  
 		origin_x                     = -(double)shadow_dot3(anchor_origin, x_axis);
 		origin_y                     = -(double)shadow_dot3(anchor_origin, y_axis);
 	}
-	const double absolute_center_x = origin_x + (double)center_x;
-	const double absolute_center_y = origin_y + (double)center_y;
-	center_x = (float)(floor(absolute_center_x / (double)world_per_texel + 0.5) * (double)world_per_texel -
-					   origin_x);
-	center_y = (float)(floor(absolute_center_y / (double)world_per_texel + 0.5) * (double)world_per_texel -
-					   origin_y);
+
+	/* Tiles, nearest first as the shader selects them: an optional near
+	 * tile around the camera's first `receiver_local_near_distance`, where
+	 * texels are largest on screen, then the whole receivers. Each keeps its
+	 * size (the near one from the eye-space slice, which head look does not
+	 * change) and snaps to whole texels. */
+	ShadowLocalTile tiles[2];
+	uint32_t        tile_count = 0;
+	float           extent     = fmaxf(
+		fmaxf(0.5f * (receiver_x_max - receiver_x_min), 0.5f * (receiver_y_max - receiver_y_min)), 1.0f);
+	const float far_extent =
+		extent + (desc->normal_bias_texels + filter_radius + 2.0f) * ((2.0f * extent) / (float)usable_size);
+	if (desc->receiver_local_near_distance > 0.0f) {
+		const float        camera_near = fmaxf(scene->camera.near_z, 0.001f);
+		ShadowSplitFrustum slice;
+		shadow_build_split_frustum(scene, camera_near,
+								   fmaxf(desc->receiver_local_near_distance, camera_near * 2.0f), &slice);
+		const float near_extent = slice.radius + (desc->normal_bias_texels + filter_radius + 2.0f) *
+													 ((2.0f * slice.radius) / (float)usable_size);
+		/* Only worth a tile when markedly finer than the whole fit. */
+		if (near_extent < 0.75f * far_extent) {
+			ShadowLocalTile* tile = &tiles[tile_count++];
+			tile->extent          = near_extent;
+			tile->world_per_texel = (2.0f * near_extent) / (float)usable_size;
+			tile->center_x  = shadow_snap(shadow_dot3(slice.center, x_axis), origin_x, tile->world_per_texel);
+			tile->center_y  = shadow_snap(shadow_dot3(slice.center, y_axis), origin_y, tile->world_per_texel);
+			tile->split_far = desc->receiver_local_near_distance;
+		}
+	}
+	ShadowLocalTile* whole = &tiles[tile_count++];
+	whole->extent          = far_extent;
+	whole->world_per_texel = (2.0f * far_extent) / (float)usable_size;
+	whole->center_x = shadow_snap(0.5f * (receiver_x_min + receiver_x_max), origin_x, whole->world_per_texel);
+	whole->center_y = shadow_snap(0.5f * (receiver_y_min + receiver_y_max), origin_y, whole->world_per_texel);
+	whole->split_far = desc->max_distance;
+	/* Casters are gathered against the whole fit, which holds the near one. */
+	const float center_x        = whole->center_x;
+	const float center_y        = whole->center_y;
+	const float world_per_texel = whole->world_per_texel;
+	extent                      = whole->extent;
 
 	float     caster_z_max    = receiver_z_max;
 	int       excluded_caster = 0;
@@ -675,7 +715,7 @@ static void shadow_prepare_receiver_local(struct AeronScene3D*                  
 		scene->receiver_local_empty = 1;
 		return;
 	}
-	if (!shadow_ensure_receiver_local_atlas(scene, atlas_size)) {
+	if (!shadow_ensure_receiver_local_atlas(scene, atlas_size, tile_count)) {
 		scene->receiver_local_shadow_caster_count = 0;
 		return;
 	}
@@ -691,37 +731,49 @@ static void shadow_prepare_receiver_local(struct AeronScene3D*                  
 	const float depth_span          = ceilf(required_depth_span / depth_quantum) * depth_quantum;
 	const float z_max               = z_min + depth_span;
 
-	AeronSceneDirectionalShadowUniform* uniform = &scene->receiver_local_shadow_uniform;
-	shadow_build_matrix(uniform->view_proj[0], x_axis, y_axis, light_dir, center_x, center_y, extent, extent,
-						z_min, z_max);
-	const float atlas_scale         = (float)usable_size / (float)atlas_size;
-	uniform->atlas_scale_bias[0][0] = atlas_scale;
-	uniform->atlas_scale_bias[0][1] = atlas_scale;
-	uniform->atlas_scale_bias[0][2] = (float)AERON_SCENE_SHADOW_GUARD_TEXELS / (float)atlas_size;
-	uniform->atlas_scale_bias[0][3] = (float)AERON_SCENE_SHADOW_GUARD_TEXELS / (float)atlas_size;
-	const float half_texel          = 0.5f / (float)atlas_size;
-	uniform->atlas_clamp[0][0]      = uniform->atlas_scale_bias[0][2] + half_texel;
-	uniform->atlas_clamp[0][1]      = uniform->atlas_scale_bias[0][3] + half_texel;
-	uniform->atlas_clamp[0][2]      = uniform->atlas_scale_bias[0][2] + atlas_scale - half_texel;
-	uniform->atlas_clamp[0][3]      = uniform->atlas_scale_bias[0][3] + atlas_scale - half_texel;
-	uniform->split_data[0][0]       = 0.0f;
-	uniform->split_data[0][1]       = desc->max_distance;
-	uniform->split_data[0][2]       = desc->max_distance;
-	uniform->split_data[0][3]       = world_per_texel / depth_span;
-	uniform->texel_data[0][0]       = world_per_texel;
-	uniform->texel_data[0][1]       = world_per_texel;
-	uniform->texel_data[0][2]       = world_per_texel / depth_span;
-	uniform->texel_data[0][3]       = world_per_texel / depth_span;
-	uniform->params[0]              = 1.0f;
-	uniform->params[1]              = 1.0f;
-	uniform->params[2]              = (float)desc->filter_quality;
+	AeronSceneDirectionalShadowUniform* uniform     = &scene->receiver_local_shadow_uniform;
+	const float                         atlas_width = (float)(atlas_size * tile_count);
+	const float                         atlas_scale = (float)usable_size / (float)atlas_size;
+	for (uint32_t index = 0; index < tile_count; index++) {
+		const ShadowLocalTile* tile = &tiles[index];
+		shadow_build_matrix(uniform->view_proj[index], x_axis, y_axis, light_dir, tile->center_x,
+							tile->center_y, tile->extent, tile->extent, z_min, z_max);
+		uniform->atlas_scale_bias[index][0] = (float)usable_size / atlas_width;
+		uniform->atlas_scale_bias[index][1] = atlas_scale;
+		uniform->atlas_scale_bias[index][2] =
+			(float)(index * atlas_size + AERON_SCENE_SHADOW_GUARD_TEXELS) / atlas_width;
+		uniform->atlas_scale_bias[index][3] = (float)AERON_SCENE_SHADOW_GUARD_TEXELS / (float)atlas_size;
+		uniform->atlas_clamp[index][0]      = uniform->atlas_scale_bias[index][2] + 0.5f / atlas_width;
+		uniform->atlas_clamp[index][1]      = uniform->atlas_scale_bias[index][3] + 0.5f / (float)atlas_size;
+		uniform->atlas_clamp[index][2] =
+			uniform->atlas_scale_bias[index][2] + uniform->atlas_scale_bias[index][0] - 0.5f / atlas_width;
+		uniform->atlas_clamp[index][3] =
+			uniform->atlas_scale_bias[index][3] + atlas_scale - 0.5f / (float)atlas_size;
+		/* Blend into the next tile over the last transition_fraction. */
+		const float split_near        = index > 0 ? tiles[index - 1].split_far : 0.0f;
+		uniform->split_data[index][0] = split_near;
+		uniform->split_data[index][1] = tile->split_far;
+		uniform->split_data[index][2] =
+			index + 1 < tile_count
+				? tile->split_far - (tile->split_far - split_near) * desc->transition_fraction
+				: tile->split_far;
+		uniform->split_data[index][3] = tile->world_per_texel / depth_span;
+		uniform->texel_data[index][0] = tile->world_per_texel;
+		uniform->texel_data[index][1] = tile->world_per_texel;
+		uniform->texel_data[index][2] = tile->world_per_texel / depth_span;
+		uniform->texel_data[index][3] = tile->world_per_texel / depth_span;
+	}
+	uniform->params[0] = 1.0f;
+	uniform->params[1] = (float)tile_count;
+	uniform->params[2] = (float)desc->filter_quality;
 	memcpy(uniform->camera_pos, scene->shadow_uniform.camera_pos, sizeof uniform->camera_pos);
 	memcpy(uniform->camera_forward, scene->shadow_uniform.camera_forward, sizeof uniform->camera_forward);
 	memcpy(uniform->bias, scene->shadow_uniform.bias, sizeof uniform->bias);
 	uniform->bias[3] = desc->max_distance;
 	uniform->fade[0] = desc->max_distance;
 	uniform->fade[1] = desc->max_distance;
-	uniform->fade[2] = 1.0f / (float)atlas_size;
+	uniform->fade[2] = 1.0f / atlas_width;
+	uniform->fade[3] = 1.0f / (float)atlas_size;
 	memcpy(uniform->pcss, scene->shadow_uniform.pcss, sizeof uniform->pcss);
 	memcpy(uniform->pcss_temporal, scene->shadow_uniform.pcss_temporal, sizeof uniform->pcss_temporal);
 	memcpy(uniform->light_dir, scene->shadow_uniform.light_dir, sizeof uniform->light_dir);
@@ -1003,6 +1055,8 @@ int AeronSceneDirectionalShadow_Prepare(struct AeronScene3D* scene) {
 	}
 	desc.transition_fraction    = fminf(fmaxf(desc.transition_fraction, 0.0f), 0.5f);
 	desc.distance_fade_fraction = fminf(fmaxf(desc.distance_fade_fraction, 0.0f), 0.5f);
+	desc.receiver_local_near_distance =
+		isfinite(desc.receiver_local_near_distance) ? fmaxf(desc.receiver_local_near_distance, 0.0f) : 0.0f;
 	desc.debug_atlas            = desc.debug_atlas ? 1 : 0;
 	desc.debug_atlas_cascade =
 		desc.debug_atlas_cascade < -1
@@ -1061,6 +1115,7 @@ int AeronSceneDirectionalShadow_Prepare(struct AeronScene3D* scene) {
 	scene->shadow_uniform.fade[0]           = desc.max_distance * (1.0f - desc.distance_fade_fraction);
 	scene->shadow_uniform.fade[1]           = desc.max_distance;
 	scene->shadow_uniform.fade[2]           = 1.0f / (float)desc.atlas_size;
+	scene->shadow_uniform.fade[3]           = 1.0f / (float)desc.atlas_size;
 	scene->shadow_uniform.pcss[0] =
 		desc.contact_hardening && desc.filter_quality > 0 && desc.light_angular_radius_degrees > 0.0f ? 1.0f
 																									  : 0.0f;
@@ -1247,11 +1302,12 @@ int AeronSceneDirectionalShadow_Render(struct AeronScene3D* scene, AeronCommandB
 	if (!scene->shadow_stats.receiver_local_active || !scene->receiver_local_shadow_atlas) {
 		return 1;
 	}
-	const int        receiver_size = (int)scene->receiver_local_shadow_size;
-	AeronRenderPass* receiver_pass = Aeron_BeginRenderPass(&(AeronRenderPassDesc) {
+	const int        receiver_size  = (int)scene->receiver_local_shadow_size;
+	const int        receiver_tiles = (int)scene->receiver_local_shadow_tiles;
+	AeronRenderPass* receiver_pass  = Aeron_BeginRenderPass(&(AeronRenderPassDesc) {
 		.depth_target      = scene->receiver_local_shadow_atlas,
-		.viewport          = { 0, 0, receiver_size, receiver_size },
-		.scissor           = { 0, 0, receiver_size, receiver_size },
+		.viewport          = { 0, 0, receiver_size * receiver_tiles, receiver_size },
+		.scissor           = { 0, 0, receiver_size * receiver_tiles, receiver_size },
 		.clear_depth       = 1,
 		.clear_depth_value = 0.0f,
 		.command_buffer    = command_buffer,
@@ -1260,17 +1316,22 @@ int AeronSceneDirectionalShadow_Render(struct AeronScene3D* scene, AeronCommandB
 	if (!receiver_pass) {
 		return 0;
 	}
-	const AeronRectI receiver_viewport = {
-		AERON_SCENE_SHADOW_GUARD_TEXELS,
-		AERON_SCENE_SHADOW_GUARD_TEXELS,
-		receiver_size - 2 * AERON_SCENE_SHADOW_GUARD_TEXELS,
-		receiver_size - 2 * AERON_SCENE_SHADOW_GUARD_TEXELS,
-	};
-	Aeron_SetViewport(receiver_pass, &receiver_viewport);
-	Aeron_SetScissor(receiver_pass, &receiver_viewport);
-	shadow_draw_list(scene, receiver_pass, scene->receiver_local_shadow_uniform.view_proj[0],
-					 scene->receiver_local_shadow_casters, scene->receiver_local_shadow_caster_count,
-					 &scene->shadow_stats.receiver_local_triangle_count);
+	scene->shadow_stats.receiver_local_triangle_count = 0;
+	for (int tile = 0; tile < receiver_tiles; tile++) {
+		const AeronRectI receiver_viewport = {
+			tile * receiver_size + AERON_SCENE_SHADOW_GUARD_TEXELS,
+			AERON_SCENE_SHADOW_GUARD_TEXELS,
+			receiver_size - 2 * AERON_SCENE_SHADOW_GUARD_TEXELS,
+			receiver_size - 2 * AERON_SCENE_SHADOW_GUARD_TEXELS,
+		};
+		uint32_t triangles = 0;
+		Aeron_SetViewport(receiver_pass, &receiver_viewport);
+		Aeron_SetScissor(receiver_pass, &receiver_viewport);
+		shadow_draw_list(scene, receiver_pass, scene->receiver_local_shadow_uniform.view_proj[tile],
+						 scene->receiver_local_shadow_casters, scene->receiver_local_shadow_caster_count,
+						 &triangles);
+		scene->shadow_stats.receiver_local_triangle_count += triangles;
+	}
 	Aeron_EndRenderPass(receiver_pass);
 	return 1;
 }

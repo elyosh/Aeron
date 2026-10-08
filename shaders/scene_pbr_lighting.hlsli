@@ -103,7 +103,7 @@ cbuffer DirectionalShadowFS : register(AERON_DIRECTIONAL_SHADOW_UNIFORM_REGISTER
     float4 shadow_camera_pos;    /* xyz position; w reserved */
     float4 shadow_camera_forward;
     float4 shadow_bias;           /* normal texels, depth texels, reserved, max distance */
-    float4 shadow_fade;           /* start, end, inverse atlas size, reserved */
+    float4 shadow_fade;           /* start, end, inverse atlas width and height */
     float4 shadow_pcss;           /* enabled, tan angular radius, max radius, minimum radius */
     float4 shadow_pcss_temporal;  /* enabled, FSR temporal phase, reserved, reserved */
     float4 shadow_light_dir;      /* xyz = normalized surface-to-light direction */
@@ -130,7 +130,7 @@ float sample_shadow_tap(uint cascade, float2 local_uv, float receiver_depth,
 {
     float4 scale_bias = shadow_atlas_scale_bias[cascade];
     float2 atlas_uv = local_uv * scale_bias.xy + scale_bias.zw;
-    atlas_uv = clamp(atlas_uv + offset * shadow_fade.z,
+    atlas_uv = clamp(atlas_uv + offset * shadow_fade.zw,
                      shadow_atlas_clamp[cascade].xy,
                      shadow_atlas_clamp[cascade].zw);
     float tap_receiver_depth =
@@ -143,14 +143,14 @@ float2 shadow_filter_phase(uint cascade, float2 local_uv)
 {
     float4 scale_bias = shadow_atlas_scale_bias[cascade];
     float2 atlas_uv = local_uv * scale_bias.xy + scale_bias.zw;
-    return frac(atlas_uv * rcp(max(shadow_fade.z, 1.0e-9f)) - 0.5f);
+    return frac(atlas_uv * rcp(max(shadow_fade.zw, 1.0e-9f.xx)) - 0.5f);
 }
 
 float sample_shadow_raw_depth(uint cascade, float2 local_uv, float2 offset)
 {
     float4 scale_bias = shadow_atlas_scale_bias[cascade];
     float2 atlas_uv = local_uv * scale_bias.xy + scale_bias.zw;
-    atlas_uv = clamp(atlas_uv + offset * shadow_fade.z,
+    atlas_uv = clamp(atlas_uv + offset * shadow_fade.zw,
                      shadow_atlas_clamp[cascade].xy,
                      shadow_atlas_clamp[cascade].zw);
     return g_directional_shadow_depth.SampleLevel(
@@ -454,7 +454,7 @@ float sample_shadow_cascade(uint cascade, float3 world_pos, float3 geometric_nor
             float receiver_plane_weight = smoothstep(
                 0.0f, rcp(max_receiver_plane_slope), receiver_plane_incidence);
             physical_depth_per_texel =
-                depth_gradient * shadow_fade.z * receiver_plane_weight;
+                depth_gradient * shadow_fade.zw * receiver_plane_weight;
             float gradient_limit = max(
                 shadow_split_data[cascade].w * max_receiver_plane_slope, 1.0e-7f);
             physical_depth_per_texel = clamp(

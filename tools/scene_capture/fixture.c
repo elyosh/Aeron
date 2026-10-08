@@ -520,6 +520,7 @@ static void set_game_effects(AeronScene3D* scene, const CaptureConfig* config, i
 		.depth_bias_texels            = shadows->depth_bias_texels,
 		.transition_fraction          = shadows->transition_fraction,
 		.distance_fade_fraction       = shadows->distance_fade_fraction,
+		.receiver_local_near_distance = shadows->receiver_local_near_distance_m * GAME_UNITS_PER_METER,
 	};
 	memcpy(desc.split_positions, shadows->split_positions, sizeof desc.split_positions);
 	memcpy(desc.light_dir, config->game.sun_direction, sizeof desc.light_dir);

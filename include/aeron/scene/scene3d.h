@@ -218,6 +218,10 @@ typedef struct AeronSceneDirectionalShadowDesc {
 	float    transition_fraction;
 	float    distance_fade_fraction;
 	int      debug_cascades;
+	/* Camera distance (world units) that the receiver-local map serves with
+	 * an extra, finer tile, where its texels are largest on screen; 0 = one
+	 * tile for the whole receivers. */
+	float receiver_local_near_distance;
 	/* Fullscreen atlas diagnostic, drawn after temporal reconstruction.
 	 * cascade -1 displays the complete atlas; 0..3 isolates one tile. */
 	int debug_atlas;

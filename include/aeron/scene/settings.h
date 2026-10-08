@@ -42,6 +42,8 @@ typedef struct AeronSceneShadowSettings {
 	float    transition_fraction;
 	float    distance_fade_fraction;
 	int      debug_cascades;
+	/* Metres; hosts convert it to the descriptor's world units. */
+	float receiver_local_near_distance_m;
 } AeronSceneShadowSettings;
 
 /* `root` contains `ssao`, `shadows`, and `tonemap` maps. Load requires the

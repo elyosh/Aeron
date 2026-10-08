@@ -213,7 +213,8 @@ typedef struct AeronSceneDirectionalShadowUniform {
 	float camera_forward[4];
 	/* normal bias texels, depth bias texels, reserved, max distance. */
 	float bias[4];
-	/* distance fade start/end, inverse atlas size, reserved. */
+	/* distance fade start/end, inverse atlas width and height (tiles are
+	 * square; the receiver-local atlas is one row of them). */
 	float fade[4];
 	/* enabled, tan(light angular radius), max/min radius in atlas texels. */
 	float pcss[4];
@@ -293,7 +294,8 @@ struct AeronScene3D {
 	uint16_t                           receiver_local_shadow_casters[AERON_SCENE_MAX_SHADOW_CASTERS];
 	uint16_t                           receiver_local_shadow_caster_count;
 	AeronDepthTarget*                  receiver_local_shadow_atlas;
-	uint32_t                           receiver_local_shadow_size;
+	uint32_t                           receiver_local_shadow_size;  /* tile size */
+	uint32_t                           receiver_local_shadow_tiles; /* in one row */
 	/* The receiver-local map serves the USE_RECEIVER_LOCAL instances this
 	 * frame (they leave the cascades' receivers); when it has no casters it
 	 * is not rendered and they sample no shadow. */

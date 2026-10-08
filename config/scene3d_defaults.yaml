@@ -32,6 +32,9 @@ shadows:
   transition_fraction: 0.10
   distance_fade_fraction: 0.10
   debug_cascades: false
+  # Camera distance, in metres, served by a finer tile of the receiver-local
+  # map (the cockpit's own shadows near the eye); 0 = a single tile.
+  receiver_local_near_distance_m: 1.5
 
 tonemap:
   operator: agx

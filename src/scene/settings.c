@@ -124,7 +124,9 @@ static int shadows_valid(const AeronSceneShadowSettings* value) {
 		   value->normal_bias_texels >= 0.0f && value->normal_bias_texels <= 4.0f &&
 		   value->depth_bias_texels >= 0.0f && value->depth_bias_texels <= 4.0f &&
 		   value->transition_fraction >= 0.0f && value->transition_fraction <= 0.5f &&
-		   value->distance_fade_fraction >= 0.0f && value->distance_fade_fraction <= 0.5f;
+		   value->distance_fade_fraction >= 0.0f && value->distance_fade_fraction <= 0.5f &&
+		   isfinite(value->receiver_local_near_distance_m) && value->receiver_local_near_distance_m >= 0.0f &&
+		   value->receiver_local_near_distance_m <= 10.0f;
 }
 
 static int tonemap_valid(const AeronSceneTonemapSettings* value) {
@@ -215,7 +217,8 @@ static int parse_shadows(const AeronConfigNode* map, int required, AeronSceneSha
 										"depth_bias_texels",
 										"transition_fraction",
 										"distance_fade_fraction",
-										"debug_cascades" };
+										"debug_cascades",
+										"receiver_local_near_distance_m" };
 	if (!check_map(map, "shadows", keys, sizeof keys / sizeof keys[0], required, error))
 		return 0;
 	if (!map)
@@ -244,7 +247,9 @@ static int parse_shadows(const AeronConfigNode* map, int required, AeronSceneSha
 		!read_number(map, "shadows", "transition_fraction", required, &value->transition_fraction, error) ||
 		!read_number(map, "shadows", "distance_fade_fraction", required, &value->distance_fade_fraction,
 					 error) ||
-		!read_bool(map, "shadows", "debug_cascades", required, &value->debug_cascades, error))
+		!read_bool(map, "shadows", "debug_cascades", required, &value->debug_cascades, error) ||
+		!read_number(map, "shadows", "receiver_local_near_distance_m", required,
+					 &value->receiver_local_near_distance_m, error))
 		return 0;
 	if (atlas < 0 || cascades < 0 || quality < 0)
 		return settings_error(error, map, "invalid negative shadow integer setting");
