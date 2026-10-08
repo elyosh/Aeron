@@ -208,18 +208,18 @@ typedef struct AeronSceneDirectionalShadowUniform {
 	float split_data[AERON_SCENE_SHADOW_MAX_CASCADES][4];
 	/* world units/texel XY, normalized depth/texel XY. */
 	float texel_data[AERON_SCENE_SHADOW_MAX_CASCADES][4];
-	/* enabled, cascade count, filter quality, cascade debug. */
+	/* enabled, cascade count, reserved, cascade debug. */
 	float params[4];
 	/* xyz = position; w reserved. */
 	float camera_pos[4];
-	/* xyz = camera forward; w = quality-2 filter radius in atlas texels. */
+	/* xyz = camera forward; w reserved. */
 	float camera_forward[4];
 	/* normal bias texels, depth bias texels, reserved, max distance. */
 	float bias[4];
 	/* distance fade start/end, inverse atlas width and height (tiles are
 	 * square; the receiver-local atlas is one row of them). */
 	float fade[4];
-	/* enabled, tan(light angular radius), max/min radius in atlas texels. */
+	/* reserved, tan(light angular radius), max/min radius in atlas texels. */
 	float pcss[4];
 	/* enabled, FSR temporal phase, reserved, reserved. */
 	float pcss_temporal[4];
@@ -541,6 +541,12 @@ struct AeronScene3D {
 	AeronShader*  pbr_mask_fs;
 	AeronShader*  pbr_blend_fs;
 	AeronShader*  pbr_screen_fs;
+	/* The colour shaders with image-based lighting, used while an
+	 * environment is selected (pbr_environment_set). */
+	AeronShader*  pbr_ibl_fs;
+	AeronShader*  pbr_mask_ibl_fs;
+	AeronShader*  pbr_blend_ibl_fs;
+	AeronShader*  pbr_screen_ibl_fs;
 #ifdef AERON_DEBUG_UI
 	int          pbr_debug_tried;
 	AeronShader* pbr_debug_fs;
@@ -556,6 +562,8 @@ struct AeronScene3D {
 	AeronShader*           pbr_prepass_stamp_fs;
 	AeronShader*           pbr_prepass_stamp_screen_fs;
 	AeronGraphicsPipeline* pbr_pipes[AERON_PBR_PIPE_KIND_COUNT][3];
+	/* Colour kinds with image-based lighting, created on first use. */
+	AeronGraphicsPipeline* pbr_ibl_pipes[AERON_PBR_PIPE_KIND_COUNT][3];
 #ifdef AERON_DEBUG_UI
 	AeronGraphicsPipeline* pbr_debug_pipes[AERON_PBR_PIPE_KIND_COUNT][3];
 #endif

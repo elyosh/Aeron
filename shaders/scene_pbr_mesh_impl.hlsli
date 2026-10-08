@@ -46,10 +46,15 @@
 
 /* Variants: AERON_PBR_SCREENS 0 drops the screen code, which the renderer
  * draws with its own pipeline (a mesh's screen primitives). AERON_PBR_ALPHA_BLEND
- * 1 is the variant for blended materials. Both keep this shader's register
- * count for ordinary materials down. */
+ * 1 is the variant for blended materials. AERON_PBR_ENVIRONMENT 0 drops the
+ * image-based lighting, for scenes without an environment. All keep this
+ * shader's cost for ordinary materials down: code chosen by a uniform costs
+ * time even where it does not run. */
 #ifndef AERON_PBR_SCREENS
 #define AERON_PBR_SCREENS 1
+#endif
+#ifndef AERON_PBR_ENVIRONMENT
+#define AERON_PBR_ENVIRONMENT 1
 #endif
 #ifndef AERON_PBR_ALPHA_BLEND
 #define AERON_PBR_ALPHA_BLEND 0
@@ -224,7 +229,11 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
     float3 ambient_rgb  = world_ambient(N);
     /* Kept apart from the ambient so specular image-based lighting can
      * take its Fresnel share (1 - F_ss) below. */
+#if AERON_PBR_ENVIRONMENT
     float3 environment_diffuse_rgb = detailed_environment(N);
+#else
+    float3 environment_diffuse_rgb = float3(0.0f, 0.0f, 0.0f);
+#endif
     uint shadow_cascade = 4u;
     float shadow_cascade_blend = 0.0f;
     float shadow_coverage = 0.0f;
@@ -344,7 +353,7 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
      * Without a specular cube both terms are as before. */
     float3 spec_ibl_rgb = float3(0.0f, 0.0f, 0.0f);
     float3 environment_diffuse_weight = float3(1.0f, 1.0f, 1.0f);
-    if (fs_environment_params.y > 0.0f && fs_environment_params.z >= 1.0f) {
+    if (AERON_PBR_ENVIRONMENT && fs_environment_params.y > 0.0f && fs_environment_params.z >= 1.0f) {
         float  ndotv_ibl = saturate(dot(N_spec, V));
         float3 R = reflect(-V, N_spec);
         float3 prefiltered = g_specular_environment.SampleLevel(
@@ -379,35 +388,11 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
 
     float3 lit = base_rgb + spec_rgb + spec_ibl_rgb;
 
+#if AERON_PBR_DEBUG_VIEWS
     if (fs_cluster_debug_view != 0u && fs_cluster_enabled != 0u) {
         _out.color = float4(clustered_light_debug_color(i.position.xy, i.world_pos), 1.0f);
         return _out;
     }
-
-    /* ===== XvT flat-shading override ============================
-     * Replace the full PBR composition with a diffuse-only flat
-     * model: hard Lambert (no wrap) + hemisphere ambient, no
-     * specular and no metallic darkening — the look of the
-     * X-Wing vs TIE Fighter era. Emissive is skipped below too. */
-    if (xvt_flat != 0.0f) {
-        /* Period look (late-90s Gouraud-shaded space sim): a flat global
-         * ambient floor lifts the shadowed side to a visible shade —
-         * never black — with a straight clamped-Lambert directional term
-         * on top, then quantised into a 16-level material ramp (the TIE/
-         * XvT materialcolors[16*color - lightval] look). No HD directional
-         * ambient cube, no wrap, no specular.
-         *
-         * The floor is a LINEAR multiplier: 0.08 linear ≈ 0.30 displayed
-         * after gamma/tonemap, so the shadow side reads as ~30% rather
-         * than a >50% wash. */
-        const float xvt_ambient = 0.08f;   /* shadow floor (linear) */
-        float ndotl = saturate(dot(N, L)) * light_intensity * shadow_visibility;
-        float shade = xvt_ambient + (1.0f - xvt_ambient) * ndotl;
-        shade = round(shade * 15.0f) / 15.0f;   /* 16 discrete shades */
-        lit = albedo * sun_color * shade;
-    }
-
-#if AERON_PBR_DEBUG_VIEWS
     if (shadow_params.w != 0.0f && i.receive_shadow != 0u) {
         const float3 cascade_colors[4] = {
             float3(1.0f, 0.35f, 0.35f),
@@ -459,11 +444,10 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
      *
      * Otherwise, materials using the legacy sRGB/SRCALPHA mode carry
      * glow coverage in alpha. Untagged glTF materials retain standard
-     * additive emissive composition. XvT mode skips both paths. */
-    if (xvt_flat == 0.0f && isolate == 0 &&
-        i.base_color_emissive_strength > 0.0f) {
+     * additive emissive composition. */
+    if (isolate == 0 && i.base_color_emissive_strength > 0.0f) {
         lit = albedo * (i.base_color_emissive_strength * fs_emission.x);
-    } else if (xvt_flat == 0.0f) {
+    } else {
         float3 emissive = g_materials[mat].emissive_packed.rgb;
         float emissive_coverage = 0.0f;
         if ((g_materials[mat].flags & GLTF_MATERIAL_HAS_EMISSIVE) != 0u) {
@@ -504,7 +488,7 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
     /* ===== Opaque screens =========================================
      * Unlit screen radiance, shown where the cover is transparent (all of
      * the surface without a cover). */
-    if (g_materials[mat].screen_count != 0u && xvt_flat == 0.0f && isolate == 0) {
+    if (g_materials[mat].screen_count != 0u && isolate == 0) {
         float3 screen = screen_evaluate(g_materials[mat], i.uv, screen_load_frame());
         lit += screen * fs_emission.x *
                ((g_materials[mat].screen_flags & SCREEN_COVER) != 0u ? 1.0f - albedo_tex.a : 1.0f);

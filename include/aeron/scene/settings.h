@@ -31,9 +31,6 @@ typedef struct AeronSceneShadowSettings {
 	float    split_lambda;
 	int      explicit_splits;
 	float    split_positions[AERON_SCENE_SHADOW_MAX_CASCADES - 1];
-	uint32_t filter_quality;
-	float    filter_radius;
-	int      contact_hardening;
 	float    light_angular_radius_degrees;
 	float    max_filter_radius;
 	float    pcss_min_filter_radius;

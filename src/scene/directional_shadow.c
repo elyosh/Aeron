@@ -516,10 +516,7 @@ static uint32_t shadow_sanitize_atlas(uint32_t atlas_size) {
 }
 
 static float shadow_filter_footprint_radius(const AeronSceneDirectionalShadowDesc* desc) {
-	if (desc->filter_quality == 0) {
-		return 1.0f;
-	}
-	return fmaxf(desc->contact_hardening ? desc->max_filter_radius : desc->filter_radius, 1.0f);
+	return fmaxf(desc->max_filter_radius, 1.0f);
 }
 
 /* Snaps a light-space centre to the texel grid whose origin is `origin`. */
@@ -765,7 +762,6 @@ static void shadow_prepare_receiver_local(struct AeronScene3D*                  
 	}
 	uniform->params[0] = 1.0f;
 	uniform->params[1] = (float)tile_count;
-	uniform->params[2] = (float)desc->filter_quality;
 	memcpy(uniform->camera_pos, scene->shadow_uniform.camera_pos, sizeof uniform->camera_pos);
 	memcpy(uniform->camera_forward, scene->shadow_uniform.camera_forward, sizeof uniform->camera_forward);
 	memcpy(uniform->bias, scene->shadow_uniform.bias, sizeof uniform->bias);
@@ -1040,12 +1036,9 @@ int AeronSceneDirectionalShadow_Prepare(struct AeronScene3D* scene) {
 		fminf(fmaxf(desc.split_positions[1], desc.split_positions[0] + split_gap), 1.0f - 2.0f * split_gap);
 	desc.split_positions[2] =
 		fminf(fmaxf(desc.split_positions[2], desc.split_positions[1] + split_gap), 1.0f - split_gap);
-	desc.filter_quality               = desc.filter_quality > 3 ? 3 : desc.filter_quality;
-	desc.filter_radius                = fminf(fmaxf(desc.filter_radius, 0.5f), 3.0f);
-	desc.contact_hardening            = desc.contact_hardening ? 1 : 0;
 	desc.light_angular_radius_degrees = fminf(fmaxf(desc.light_angular_radius_degrees, 0.0f), 5.0f);
-	desc.max_filter_radius            = fminf(fmaxf(desc.max_filter_radius, desc.filter_radius), 16.0f);
-	desc.pcss_min_filter_radius       = fminf(fmaxf(desc.pcss_min_filter_radius, 0.5f), desc.filter_radius);
+	desc.max_filter_radius            = fminf(fmaxf(desc.max_filter_radius, 1.0f), 16.0f);
+	desc.pcss_min_filter_radius       = fminf(fmaxf(desc.pcss_min_filter_radius, 0.5f), desc.max_filter_radius);
 	desc.normal_bias_texels           = fminf(fmaxf(desc.normal_bias_texels, 0.0f), 4.0f);
 	desc.depth_bias_texels            = fminf(fmaxf(desc.depth_bias_texels, 0.0f), 4.0f);
 	for (int axis = 0; axis < 3; axis++) {
@@ -1104,10 +1097,8 @@ int AeronSceneDirectionalShadow_Prepare(struct AeronScene3D* scene) {
 		scene->shadow_uniform.camera_pos[axis]     = scene->camera.pos[axis];
 		scene->shadow_uniform.camera_forward[axis] = camera_rotation[2 * 3 + axis];
 	}
-	scene->shadow_uniform.camera_forward[3] = desc.filter_radius;
 	scene->shadow_uniform.params[0]         = 1.0f;
 	scene->shadow_uniform.params[1]         = (float)desc.cascade_count;
-	scene->shadow_uniform.params[2]         = (float)desc.filter_quality;
 	scene->shadow_uniform.params[3]         = desc.debug_cascades ? 1.0f : 0.0f;
 	scene->shadow_uniform.bias[0]           = desc.normal_bias_texels;
 	scene->shadow_uniform.bias[1]           = desc.depth_bias_texels;
@@ -1116,9 +1107,6 @@ int AeronSceneDirectionalShadow_Prepare(struct AeronScene3D* scene) {
 	scene->shadow_uniform.fade[1]           = desc.max_distance;
 	scene->shadow_uniform.fade[2]           = 1.0f / (float)desc.atlas_size;
 	scene->shadow_uniform.fade[3]           = 1.0f / (float)desc.atlas_size;
-	scene->shadow_uniform.pcss[0] =
-		desc.contact_hardening && desc.filter_quality > 0 && desc.light_angular_radius_degrees > 0.0f ? 1.0f
-																									  : 0.0f;
 	scene->shadow_uniform.pcss[1] =
 		tanf(desc.light_angular_radius_degrees * (3.14159265358979323846f / 180.0f));
 	scene->shadow_uniform.pcss[2] = desc.max_filter_radius;

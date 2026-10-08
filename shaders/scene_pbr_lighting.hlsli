@@ -39,7 +39,7 @@ cbuffer PbrLightFS : register(AERON_PBR_LIGHT_UNIFORM_REGISTER, space3)
     float global_spec_mul;
     float debug_isolate_term;
     float light_wrap;
-    float xvt_flat;
+    float reserved_xvt; /* formerly the XvT flat-shading switch */
     float ssao_intensity;
     float ssao_power;
     float ssao_rt_w;
@@ -100,12 +100,12 @@ cbuffer DirectionalShadowFS : register(AERON_DIRECTIONAL_SHADOW_UNIFORM_REGISTER
     float4 shadow_atlas_clamp[4];
     float4 shadow_split_data[4];
     float4 shadow_texel_data[4]; /* world units/texel XY, normalized depth/texel XY */
-    float4 shadow_params;         /* enabled, count, filter quality, debug */
+    float4 shadow_params;         /* enabled, count, reserved, debug */
     float4 shadow_camera_pos;    /* xyz position; w reserved */
-    float4 shadow_camera_forward;
+    float4 shadow_camera_forward; /* xyz forward; w reserved */
     float4 shadow_bias;           /* normal texels, depth texels, reserved, max distance */
     float4 shadow_fade;           /* start, end, inverse atlas width and height */
-    float4 shadow_pcss;           /* enabled, tan angular radius, max radius, minimum radius */
+    float4 shadow_pcss;           /* reserved, tan angular radius, max radius, minimum radius */
     float4 shadow_pcss_temporal;  /* enabled, FSR temporal phase, reserved, reserved */
     float4 shadow_light_dir;      /* xyz = normalized surface-to-light direction */
 };
@@ -138,13 +138,6 @@ float sample_shadow_tap(uint cascade, float2 local_uv, float receiver_depth,
         saturate(receiver_depth + dot(receiver_depth_per_texel, offset));
     return g_directional_shadow.SampleCmpLevelZero(
         g_directional_shadow_sampler, atlas_uv, tap_receiver_depth);
-}
-
-float2 shadow_filter_phase(uint cascade, float2 local_uv)
-{
-    float4 scale_bias = shadow_atlas_scale_bias[cascade];
-    float2 atlas_uv = local_uv * scale_bias.xy + scale_bias.zw;
-    return frac(atlas_uv * rcp(max(shadow_fade.zw, 1.0e-9f.xx)) - 0.5f);
 }
 
 float sample_shadow_raw_depth(uint cascade, float2 local_uv, float2 offset)
@@ -204,10 +197,8 @@ static const float2 pcss_blocker_offsets[16] = {
     float2(-0.1285f, -0.9917f)
 };
 
-/* Progressive low-discrepancy disk: the first 8, 16, and 24 entries each
- * cover the complete disk, so quality changes sample count without changing
- * the requested physical radius. */
-static const float2 pcss_filter_offsets[24] = {
+/* Low-discrepancy disk of the 16 filter taps. */
+static const float2 pcss_filter_offsets[16] = {
     float2(-0.5214f,  0.4776f),
     float2( 0.0437f, -0.4981f),
     float2( 0.5269f,  0.6873f),
@@ -223,15 +214,7 @@ static const float2 pcss_filter_offsets[24] = {
     float2( 0.8098f, -0.1780f),
     float2(-0.3804f,  0.5411f),
     float2(-0.1244f, -0.9602f),
-    float2( 0.1352f,  0.1139f),
-    float2(-0.7282f,  0.0301f),
-    float2( 0.3759f, -0.3741f),
-    float2(-0.0408f,  0.8829f),
-    float2(-0.2533f, -0.3035f),
-    float2( 0.8029f,  0.1080f),
-    float2(-0.5232f,  0.3640f),
-    float2( 0.2089f, -0.9288f),
-    float2( 0.1522f,  0.2657f)
+    float2( 0.1352f,  0.1139f)
 };
 
 /* `lit` is set when the search finds no blocker and covers the minimum
@@ -281,112 +264,20 @@ float2 pcss_filter_radius(uint cascade, float2 local_uv,
 
 float sample_shadow_pcss_disk(uint cascade, float2 local_uv, float receiver_depth,
                               float2 receiver_depth_per_texel, float2 filter_radius,
-                              int quality, float2 rotation)
+                              float2 rotation)
 {
-    int tap_count = quality == 1 ? 8 : (quality == 2 ? 16 : 24);
     float visibility = 0.0f;
-    [unroll] for (int tap = 0; tap < 24; tap++) {
-        if (tap < tap_count) {
-            float2 offset = rotate_shadow_disk_offset(
-                pcss_filter_offsets[tap], rotation) * filter_radius;
-            visibility += sample_shadow_tap(
-                cascade, local_uv, receiver_depth, receiver_depth_per_texel, offset);
-        }
-    }
-    return visibility / (float)tap_count;
-}
-
-/* Pair adjacent weighted texels into one bilinear comparison. This evaluates
- * separable tent kernels with 4/9/16 comparisons instead of 9/25/49. */
-float sample_shadow_tent3(uint cascade, float2 local_uv, float receiver_depth,
-                          float2 receiver_depth_per_texel, float filter_radius)
-{
-    float2 phase = shadow_filter_phase(cascade, local_uv);
-    float filter_scale = clamp(filter_radius, 0.5f, 16.0f) * 0.5f;
-    float2 weights_x = float2(3.0f - 2.0f * phase.x, 1.0f + 2.0f * phase.x);
-    float2 weights_y = float2(3.0f - 2.0f * phase.y, 1.0f + 2.0f * phase.y);
-    float2 offsets_x = float2(
-        -1.0f + (2.0f - phase.x) / weights_x.x - phase.x,
-         1.0f + phase.x / weights_x.y - phase.x) * filter_scale;
-    float2 offsets_y = float2(
-        -1.0f + (2.0f - phase.y) / weights_y.x - phase.y,
-         1.0f + phase.y / weights_y.y - phase.y) * filter_scale;
-
-    float visibility = 0.0f;
-    [unroll] for (int y = 0; y < 2; y++) {
-        [unroll] for (int x = 0; x < 2; x++) {
-            visibility += sample_shadow_tap(
-                cascade, local_uv, receiver_depth, receiver_depth_per_texel,
-                float2(offsets_x[x], offsets_y[y])) * weights_x[x] * weights_y[y];
-        }
+    [unroll] for (int tap = 0; tap < 16; tap++) {
+        float2 offset = rotate_shadow_disk_offset(
+            pcss_filter_offsets[tap], rotation) * filter_radius;
+        visibility += sample_shadow_tap(
+            cascade, local_uv, receiver_depth, receiver_depth_per_texel, offset);
     }
     return visibility * (1.0f / 16.0f);
 }
 
-float sample_shadow_tent5(uint cascade, float2 local_uv, float receiver_depth,
-                          float2 receiver_depth_per_texel, float filter_radius)
-{
-    float2 phase = shadow_filter_phase(cascade, local_uv);
-    float filter_scale = clamp(filter_radius, 0.5f, 16.0f) * 0.5f;
-    float3 weights_x = float3(
-        3.0f - 2.0f * phase.x, 5.0f, 1.0f + 2.0f * phase.x);
-    float3 weights_y = float3(
-        3.0f - 2.0f * phase.y, 5.0f, 1.0f + 2.0f * phase.y);
-    float3 offsets_x = float3(
-        -2.0f + (2.0f - phase.x) / weights_x.x - phase.x,
-                 (2.0f + phase.x) / weights_x.y - phase.x,
-         2.0f + phase.x / weights_x.z - phase.x) * filter_scale;
-    float3 offsets_y = float3(
-        -2.0f + (2.0f - phase.y) / weights_y.x - phase.y,
-                 (2.0f + phase.y) / weights_y.y - phase.y,
-         2.0f + phase.y / weights_y.z - phase.y) * filter_scale;
-
-    float visibility = 0.0f;
-    [unroll] for (int y = 0; y < 3; y++) {
-        [unroll] for (int x = 0; x < 3; x++) {
-            visibility += sample_shadow_tap(
-                cascade, local_uv, receiver_depth, receiver_depth_per_texel,
-                float2(offsets_x[x], offsets_y[y])) * weights_x[x] * weights_y[y];
-        }
-    }
-    return visibility * (1.0f / 81.0f);
-}
-
-float sample_shadow_tent7(uint cascade, float2 local_uv, float receiver_depth,
-                          float2 receiver_depth_per_texel, float filter_radius)
-{
-    float2 phase = shadow_filter_phase(cascade, local_uv);
-    float filter_scale = clamp(filter_radius, 0.5f, 16.0f) * 0.5f;
-    float4 weights_x = float4(
-        3.0f - 2.0f * phase.x, 7.0f - 2.0f * phase.x,
-        5.0f + 2.0f * phase.x, 1.0f + 2.0f * phase.x);
-    float4 weights_y = float4(
-        3.0f - 2.0f * phase.y, 7.0f - 2.0f * phase.y,
-        5.0f + 2.0f * phase.y, 1.0f + 2.0f * phase.y);
-    float4 offsets_x = float4(
-        -3.0f + (2.0f - phase.x) / weights_x.x - phase.x,
-        -1.0f + (4.0f - phase.x) / weights_x.y - phase.x,
-         1.0f + (2.0f + phase.x) / weights_x.z - phase.x,
-         3.0f + phase.x / weights_x.w - phase.x) * filter_scale;
-    float4 offsets_y = float4(
-        -3.0f + (2.0f - phase.y) / weights_y.x - phase.y,
-        -1.0f + (4.0f - phase.y) / weights_y.y - phase.y,
-         1.0f + (2.0f + phase.y) / weights_y.z - phase.y,
-         3.0f + phase.y / weights_y.w - phase.y) * filter_scale;
-
-    float visibility = 0.0f;
-    [unroll] for (int y = 0; y < 4; y++) {
-        [unroll] for (int x = 0; x < 4; x++) {
-            visibility += sample_shadow_tap(
-                cascade, local_uv, receiver_depth, receiver_depth_per_texel,
-                float2(offsets_x[x], offsets_y[y])) * weights_x[x] * weights_y[y];
-        }
-    }
-    return visibility * (1.0f / 256.0f);
-}
-
-/* `single_tap` takes one hardware-filtered comparison whatever the
- * configured filter quality. */
+/* Contact-hardening PCSS, or with `single_tap` one hardware-filtered
+ * comparison. */
 float sample_shadow_cascade(uint cascade, float3 world_pos, float3 geometric_normal,
                             float3 world_pos_dx, float3 world_pos_dy,
                             float2 screen_position, bool single_tap)
@@ -422,12 +313,11 @@ float sample_shadow_cascade(uint cascade, float3 world_pos, float3 geometric_nor
     float2 local_uv = float2(ndc.x * 0.5f + 0.5f, -ndc.y * 0.5f + 0.5f);
     float receiver_depth = saturate(ndc.z + shadow_bias.y *
                                     shadow_split_data[cascade].w);
-    int quality = single_tap ? 0 : clamp((int)round(shadow_params.z), 0, 3);
     float physical_receiver_depth =
         saturate(physical_clip.z / max(abs(physical_clip.w), 1.0e-6f));
     float2 physical_depth_per_texel = float2(0.0f, 0.0f);
     float2 receiver_depth_per_texel = float2(0.0f, 0.0f);
-    if (quality > 0) {
+    if (!single_tap) {
         float2 local_uv_dx = float2(
             dot(view_proj[0].xyz, world_pos_dx) * 0.5f,
             -dot(view_proj[1].xyz, world_pos_dx) * 0.5f);
@@ -465,34 +355,20 @@ float sample_shadow_cascade(uint cascade, float3 world_pos, float3 geometric_nor
                 receiver_depth_per_texel, -gradient_limit.xx, gradient_limit.xx);
         }
     }
-    if (quality == 0) {
+    if (single_tap) {
         return sample_shadow_tap(cascade, local_uv, receiver_depth,
                                  receiver_depth_per_texel, float2(0.0f, 0.0f));
     }
-    if (shadow_pcss.x != 0.0f && shadow_pcss.y > 0.0f) {
-        bool lit;
-        float2 filter_radius = pcss_filter_radius(
-            cascade, local_uv, physical_receiver_depth, receiver_depth,
-            physical_depth_per_texel, receiver_depth_per_texel, lit);
-        if (lit) {
-            return 1.0f;
-        }
-        float2 filter_rotation = shadow_pcss_filter_rotation(screen_position);
-        return sample_shadow_pcss_disk(
-            cascade, local_uv, receiver_depth, receiver_depth_per_texel,
-            filter_radius, quality, filter_rotation);
+    bool lit;
+    float2 filter_radius = pcss_filter_radius(
+        cascade, local_uv, physical_receiver_depth, receiver_depth,
+        physical_depth_per_texel, receiver_depth_per_texel, lit);
+    if (lit) {
+        return 1.0f;
     }
-    float filter_radius = clamp(shadow_camera_forward.w, 0.5f, 3.0f);
-    if (quality == 1) {
-        return sample_shadow_tent3(
-            cascade, local_uv, receiver_depth, receiver_depth_per_texel, filter_radius);
-    }
-    if (quality == 2) {
-        return sample_shadow_tent5(
-            cascade, local_uv, receiver_depth, receiver_depth_per_texel, filter_radius);
-    }
-    return sample_shadow_tent7(
-        cascade, local_uv, receiver_depth, receiver_depth_per_texel, filter_radius);
+    return sample_shadow_pcss_disk(
+        cascade, local_uv, receiver_depth, receiver_depth_per_texel,
+        filter_radius, shadow_pcss_filter_rotation(screen_position));
 }
 
 float directional_shadow_visibility(float3 world_pos, float3 geometric_normal,

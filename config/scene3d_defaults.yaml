@@ -21,9 +21,6 @@ shadows:
   split_1: 0.005
   split_2: 0.035
   split_3: 0.180
-  filter_quality: 2
-  filter_radius: 2.0
-  contact_hardening: true
   light_angular_radius_degrees: 0.6
   max_filter_radius: 8.0
   pcss_min_filter_radius: 0.75

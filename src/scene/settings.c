@@ -112,15 +112,14 @@ static int ssao_valid(const AeronSceneSsaoSettings* value) {
 static int shadows_valid(const AeronSceneShadowSettings* value) {
 	return value->atlas_size >= 1024 && value->atlas_size <= 8192 && value->fit_mode <= 2 &&
 		   (value->atlas_size & (value->atlas_size - 1)) == 0 && value->cascade_count >= 1 &&
-		   value->cascade_count <= AERON_SCENE_SHADOW_MAX_CASCADES && value->filter_quality <= 3 &&
+		   value->cascade_count <= AERON_SCENE_SHADOW_MAX_CASCADES &&
 		   isfinite(value->max_distance) && value->max_distance > 1.0f && isfinite(value->split_lambda) &&
 		   value->split_lambda >= 0.0f && value->split_lambda <= 1.0f && value->split_positions[0] > 0.0f &&
 		   value->split_positions[0] < value->split_positions[1] &&
 		   value->split_positions[1] < value->split_positions[2] && value->split_positions[2] < 1.0f &&
-		   value->filter_radius >= 0.5f && value->filter_radius <= 3.0f &&
 		   value->light_angular_radius_degrees >= 0.0f && value->light_angular_radius_degrees <= 5.0f &&
-		   value->max_filter_radius >= value->filter_radius && value->max_filter_radius <= 16.0f &&
-		   value->pcss_min_filter_radius >= 0.5f && value->pcss_min_filter_radius <= value->filter_radius &&
+		   value->pcss_min_filter_radius >= 0.5f && value->max_filter_radius >= value->pcss_min_filter_radius &&
+		   value->max_filter_radius <= 16.0f &&
 		   value->normal_bias_texels >= 0.0f && value->normal_bias_texels <= 4.0f &&
 		   value->depth_bias_texels >= 0.0f && value->depth_bias_texels <= 4.0f &&
 		   value->transition_fraction >= 0.0f && value->transition_fraction <= 0.5f &&
@@ -207,9 +206,6 @@ static int parse_shadows(const AeronConfigNode* map, int required, AeronSceneSha
 										"split_1",
 										"split_2",
 										"split_3",
-										"filter_quality",
-										"filter_radius",
-										"contact_hardening",
 										"light_angular_radius_degrees",
 										"max_filter_radius",
 										"pcss_min_filter_radius",
@@ -224,7 +220,6 @@ static int parse_shadows(const AeronConfigNode* map, int required, AeronSceneSha
 	if (!map)
 		return 1;
 	int atlas = (int)value->atlas_size, cascades = (int)value->cascade_count;
-	int quality = (int)value->filter_quality;
 	if (!parse_shadow_enums(map, required, value, error) ||
 		!read_integer(map, "shadows", "atlas_size", required, &atlas, error) ||
 		!read_integer(map, "shadows", "cascade_count", required, &cascades, error) ||
@@ -234,9 +229,6 @@ static int parse_shadows(const AeronConfigNode* map, int required, AeronSceneSha
 		!read_number(map, "shadows", "split_1", required, &value->split_positions[0], error) ||
 		!read_number(map, "shadows", "split_2", required, &value->split_positions[1], error) ||
 		!read_number(map, "shadows", "split_3", required, &value->split_positions[2], error) ||
-		!read_integer(map, "shadows", "filter_quality", required, &quality, error) ||
-		!read_number(map, "shadows", "filter_radius", required, &value->filter_radius, error) ||
-		!read_bool(map, "shadows", "contact_hardening", required, &value->contact_hardening, error) ||
 		!read_number(map, "shadows", "light_angular_radius_degrees", required,
 					 &value->light_angular_radius_degrees, error) ||
 		!read_number(map, "shadows", "max_filter_radius", required, &value->max_filter_radius, error) ||
@@ -251,11 +243,10 @@ static int parse_shadows(const AeronConfigNode* map, int required, AeronSceneSha
 		!read_number(map, "shadows", "receiver_local_near_distance_m", required,
 					 &value->receiver_local_near_distance_m, error))
 		return 0;
-	if (atlas < 0 || cascades < 0 || quality < 0)
+	if (atlas < 0 || cascades < 0)
 		return settings_error(error, map, "invalid negative shadow integer setting");
 	value->atlas_size     = (uint32_t)atlas;
 	value->cascade_count  = (uint32_t)cascades;
-	value->filter_quality = (uint32_t)quality;
 	return shadows_valid(value) ? 1 : settings_error(error, map, "invalid directional-shadow settings");
 }
 

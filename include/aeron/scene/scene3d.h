@@ -68,6 +68,8 @@ typedef struct AeronSceneLight {
 typedef struct AeronSceneClusteredLightDesc {
 	int      enabled;
 	uint32_t depth_slices;
+	/* Cluster occupancy view, drawn by the debug shader variant
+	 * (AERON_DEBUG_UI builds only). */
 	int      debug_view;
 } AeronSceneClusteredLightDesc;
 
@@ -177,11 +179,9 @@ typedef struct AeronSceneDirectionalShadowDesc {
 	int      explicit_splits;
 	/* Normalized over [camera near, max_distance]; first cascade_count - 1 are active. */
 	float split_positions[AERON_SCENE_SHADOW_MAX_CASCADES - 1];
-	/* 0=hard. Fixed PCF uses 3x3/5x5/7x7 optimized tents; PCSS uses
-	 * 8/16/24 comparison taps after its blocker search. */
-	uint32_t filter_quality;
-	float    filter_radius;
-	int      contact_hardening;
+	/* Shadows are filtered with contact-hardening PCSS: a 16-tap blocker
+	 * search, then 16 comparison taps over a penumbra sized by the light's
+	 * angular radius, between the minimum and maximum radius. */
 	float    light_angular_radius_degrees; /* source half-angle */
 	float    max_filter_radius;            /* atlas texels */
 	float    pcss_min_filter_radius;       /* atlas texels */
