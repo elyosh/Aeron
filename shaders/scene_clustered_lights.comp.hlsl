@@ -21,6 +21,8 @@ groupshared uint   s_candidate_count;
 groupshared uint   s_candidate_lights[AERON_CLUSTER_MAX_SCENE_LIGHTS];
 groupshared float  s_candidate_values[AERON_CLUSTER_MAX_SCENE_LIGHTS];
 groupshared uint   s_selected[AERON_CLUSTER_MAX_LIGHTS];
+groupshared uint   s_kept[AERON_CLUSTER_MAX_SCENE_LIGHTS];
+groupshared uint   s_tube_count;
 groupshared float4 s_cluster_slopes;
 groupshared float4 s_cluster_plane_lengths;
 groupshared float4 s_cluster_bounds_min;
@@ -116,56 +118,60 @@ bool candidate_better(float score, uint index, float best_score, uint best_index
 	}
 	GroupMemoryBarrierWithGroupSync();
 
-	if (group_index != 0u)
-		return;
+	/* The whole group selects in parallel: a cluster can collect up to
+	 * AERON_CLUSTER_MAX_SCENE_LIGHTS candidates, and one thread scanning
+	 * them all for each retained slot dominated dense scenes. */
 	uint candidate_count = min(s_candidate_count, AERON_CLUSTER_MAX_SCENE_LIGHTS);
 	uint retained_count  = min(candidate_count, AERON_CLUSTER_MAX_LIGHTS);
-	if (candidate_count <= AERON_CLUSTER_MAX_LIGHTS) {
-		for (uint i = 0u; i < retained_count; ++i) {
-			s_selected[i] = g_lights[s_candidate_lights[i]].point_light_index;
-		}
-	} else {
-		for (uint i = 0u; i < candidate_count; ++i) {
-			ClusterLight light    = g_lights[s_candidate_lights[i]];
-			float        d        = max(sqrt(s_candidate_values[i]), light.source_radius);
-			s_candidate_values[i] = light.luminance / (d * d);
-			s_candidate_lights[i] = light.point_light_index;
-		}
-		for (uint output = 0u; output < retained_count; ++output) {
-			uint  best_slot  = 0xffffffffu;
-			uint  best_index = 0xffffffffu;
-			float best_score = -1.0f;
-			for (uint i = 0u; i < candidate_count; ++i) {
-				uint index = s_candidate_lights[i];
-				if (index != 0xffffffffu && candidate_better(s_candidate_values[i], index, best_score, best_index)) {
-					best_slot  = i;
-					best_index = index;
-					best_score = s_candidate_values[i];
-				}
+	bool overflow        = candidate_count > AERON_CLUSTER_MAX_LIGHTS;
+	for (uint i = group_index; i < candidate_count; i += AERON_CLUSTER_THREADS) {
+		ClusterLight light = g_lights[s_candidate_lights[i]];
+		float        d     = max(sqrt(s_candidate_values[i]), light.source_radius);
+		s_candidate_values[i] = light.luminance / (d * d);
+		s_candidate_lights[i] = light.point_light_index;
+	}
+	GroupMemoryBarrierWithGroupSync();
+
+	/* Keep the best AERON_CLUSTER_MAX_LIGHTS by score (ties to the lower
+	 * index): a candidate's rank is the number that beat it. */
+	for (uint i = group_index; i < candidate_count; i += AERON_CLUSTER_THREADS) {
+		uint rank = 0u;
+		if (overflow) {
+			float score = s_candidate_values[i];
+			uint  index = s_candidate_lights[i];
+			for (uint j = 0u; j < candidate_count; ++j) {
+				rank += candidate_better(s_candidate_values[j], s_candidate_lights[j], score, index) ? 1u : 0u;
 			}
-			s_selected[output]            = best_index;
-			s_candidate_lights[best_slot] = 0xffffffffu;
 		}
+		s_kept[i] = rank < AERON_CLUSTER_MAX_LIGHTS ? 1u : 0u;
 	}
+	GroupMemoryBarrierWithGroupSync();
 
-	for (uint i = 1u; i < retained_count; ++i) {
-		uint value    = s_selected[i];
-		uint position = i;
-		while (position > 0u && value < s_selected[position - 1u]) {
-			s_selected[position] = s_selected[position - 1u];
-			--position;
+	/* Store the kept indices ascending: the tubes come last in the light
+	 * buffer, so they are the tail. */
+	if (group_index == 0u)
+		s_tube_count = 0u;
+	GroupMemoryBarrierWithGroupSync();
+	for (uint i = group_index; i < candidate_count; i += AERON_CLUSTER_THREADS) {
+		if (s_kept[i] == 0u)
+			continue;
+		uint index    = s_candidate_lights[i];
+		uint position = 0u;
+		for (uint j = 0u; j < candidate_count; ++j) {
+			position += s_kept[j] != 0u && s_candidate_lights[j] < index ? 1u : 0u;
 		}
-		s_selected[position] = value;
+		s_selected[position] = index;
+		if (index >= fs_cluster_tube_start)
+			InterlockedAdd(s_tube_count, 1u);
 	}
+	GroupMemoryBarrierWithGroupSync();
 
-	uint cluster_index       = (group_id.z * fs_cluster_grid_y + group_id.y) * fs_cluster_grid_x + group_id.x;
-	/* The indices are ascending and the tubes come last, so they are the
-	 * tail; the header's high half counts them. */
-	uint tube_count = 0u;
-	for (uint t = 0u; t < retained_count; ++t)
-		tube_count += s_selected[t] >= fs_cluster_tube_start ? 1u : 0u;
-	g_headers[cluster_index] = uint2(retained_count | (tube_count << 16u), candidate_count);
-	uint base                = cluster_index * AERON_CLUSTER_MAX_LIGHTS;
-	for (uint i = 0u; i < retained_count; ++i)
+	uint cluster_index = (group_id.z * fs_cluster_grid_y + group_id.y) * fs_cluster_grid_x + group_id.x;
+	if (group_index == 0u) {
+		/* The header's high half counts the tubes. */
+		g_headers[cluster_index] = uint2(retained_count | (s_tube_count << 16u), candidate_count);
+	}
+	uint base = cluster_index * AERON_CLUSTER_MAX_LIGHTS;
+	for (uint i = group_index; i < retained_count; i += AERON_CLUSTER_THREADS)
 		g_indices[base + i] = s_selected[i];
 }
