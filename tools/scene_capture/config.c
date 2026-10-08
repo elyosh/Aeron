@@ -268,7 +268,7 @@ static int load_game_lights(const AeronConfigNode* list, CaptureGameScene* game)
 		fprintf(stderr, "game_scene.point_lights must list at most %d lights\n", CAPTURE_MAX_LIGHTS);
 		return 0;
 	}
-	static const char* const keys[] = { "position", "intensity" };
+	static const char* const keys[] = { "position", "intensity", "half_axis" };
 	for (size_t i = 0; i < count; ++i) {
 		const AeronConfigNode* item = AeronConfigNode_SequenceGet(list, i);
 		CaptureLight*          out  = &game->lights[i];
@@ -278,6 +278,11 @@ static int load_game_lights(const AeronConfigNode* list, CaptureGameScene* game)
 			!(fmaxf(out->intensity[0], fmaxf(out->intensity[1], out->intensity[2])) > 0) ||
 			fminf(out->intensity[0], fminf(out->intensity[1], out->intensity[2])) < 0) {
 			fprintf(stderr, "game_scene.point_lights[%zu] needs position and a positive intensity\n", i);
+			return 0;
+		}
+		const AeronConfigNode* half_axis = AeronConfigNode_MapGet(item, "half_axis");
+		if (half_axis && !vec3(half_axis, out->half_axis)) {
+			fprintf(stderr, "game_scene.point_lights[%zu].half_axis must be [x, y, z]\n", i);
 			return 0;
 		}
 	}

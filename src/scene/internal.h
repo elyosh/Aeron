@@ -136,9 +136,12 @@ typedef struct AeronScenePreparedInstance {
 typedef struct AeronScenePointLightGPU {
 	float position_range[4];
 	float color[4];
+	/* xyz: a tube's half axis (zero for a sphere); w unused. */
+	float half_axis[4];
 } AeronScenePointLightGPU;
 
 typedef struct AeronSceneClusterLightGPU {
+	/* w bounds the whole light: its range plus a tube's half length. */
 	float    view_position_range[4];
 	uint32_t point_light_index;
 	float    luminance;

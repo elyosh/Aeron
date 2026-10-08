@@ -77,6 +77,7 @@ struct PbrPointLight
 {
     float4 position_range;
     float4 color;
+    float4 half_axis; /* xyz: a tube's half axis, zero for a sphere */
 };
 #ifndef AERON_PBR_POINT_LIGHT_REGISTER
 #define AERON_PBR_POINT_LIGHT_REGISTER t9
@@ -632,7 +633,18 @@ float3 cook_torrance_spec(float3 N, float3 V, float3 L,
  * cap. Their GGX alpha widens by half the sphere's angular radius
  * (alpha + r / 2d), so a light passing close to a glossy surface leaves a
  * highlight of its size rather than a pinpoint; the normalized GGX keeps
- * the energy. */
+ * the energy.
+ *
+ * A physical light with a half axis is a tube (a laser streak): the
+ * segment centre +- half_axis, color.w thick, with the same total
+ * intensity. The window measures from the segment. Diffuse is the closed
+ * form of Lambert from a line, 2 / (|L0||L1| + L0.L1) times the mean of
+ * N.L at its ends, which becomes N.L / d^2 for a short or distant tube.
+ * Specular evaluates the BRDF toward the segment point nearest the
+ * reflection ray (the representative point), widened by the thickness
+ * as a sphere, and scales it by alpha / (alpha + half the tube's angular
+ * length): the stretched highlight reflects about the energy of the
+ * unstretched one. */
 void accumulate_point_light(uint light_index, float3 N, float3 N_spec, float3 V,
                             float3 world_pos, PbrMaterialParams mp, float spec_mul,
                             inout float3 diff, inout float3 spec_out)
@@ -641,7 +653,12 @@ void accumulate_point_light(uint light_index, float3 N, float3 N_spec, float3 V,
     float  wrap  = fs_point_params.z;
     float  cap   = fs_point_params.w;
     PbrPointLight point_light = fs_point_lights[light_index];
-    float3 dv = point_light.position_range.xyz - world_pos;
+    float3 to_center = point_light.position_range.xyz - world_pos;
+    float3 half_axis = point_light.half_axis.xyz;
+    float  half_len2 = dot(half_axis, half_axis);
+    /* Nearest point of the light: its centre, or on a tube's segment. */
+    float  t  = half_len2 > 0.0f ? clamp(-dot(to_center, half_axis) / half_len2, -1.0f, 1.0f) : 0.0f;
+    float3 dv = to_center + half_axis * t;
     float  r  = point_light.position_range.w;
     float  d2 = dot(dv, dv);
     if (d2 >= r * r) {
@@ -653,11 +670,35 @@ void accumulate_point_light(uint light_index, float3 N, float3 N_spec, float3 V,
     float  win = 1.0f - q2 * q2;
     win        = win * win;
     float3 radiance;
+    float  shape;
+    float  spec_scale = 1.0f;
     PbrMaterialParams spec_mp = mp;
-    if (point_light.color.w > 0.0f) {
+    [branch] if (half_len2 > 0.0f) {
+        float  source_r = point_light.color.w;
+        float3 L0       = to_center - half_axis;
+        float3 L1       = to_center + half_axis;
+        float  l0       = max(length(L0), 1e-3f);
+        float  l1       = max(length(L1), 1e-3f);
+        radiance        = point_light.color.rgb *
+                          (win * 2.0f / (l0 * l1 + dot(L0, L1) + 2.0f * source_r * source_r));
+        float3 n0       = L0 / l0;
+        float3 n1       = L1 / l1;
+        shape           = saturate(0.5f * dot(N, n0 + n1));
+        float  spread   = length(n0 - n1);
+        float3 R        = reflect(-V, N_spec);
+        float  r_a      = dot(R, half_axis);
+        float  ts       = saturate((dot(R, L0) * r_a - dot(L0, half_axis)) /
+                                   max(2.0f * (half_len2 - r_a * r_a), 1e-6f));
+        float3 Ls       = L0 + half_axis * (2.0f * ts);
+        float  ls       = max(length(Ls), 1e-3f);
+        L               = Ls / ls;
+        float alpha     = saturate(mp.roughness * mp.roughness + source_r / (2.0f * max(ls, source_r)));
+        spec_mp.roughness = sqrt(alpha);
+        spec_scale      = alpha / saturate(alpha + 0.5f * spread);
+    } else if (point_light.color.w > 0.0f) {
         float near_d = max(d, point_light.color.w);
         radiance     = point_light.color.rgb * (win / (near_d * near_d));
-        wrap         = 0.0f;
+        shape        = saturate(dot(N, L));
         float alpha  = saturate(mp.roughness * mp.roughness + point_light.color.w / (2.0f * near_d));
         spec_mp.roughness = sqrt(alpha);
     } else {
@@ -668,14 +709,14 @@ void accumulate_point_light(uint light_index, float3 N, float3 N_spec, float3 V,
                 radiance *= cap / m;
             }
         }
+        float ndotl = dot(N, L);
+        shape       = lerp(saturate(ndotl), saturate(ndotl * 0.5f + 0.5f), wrap);
     }
-    float ndotl = dot(N, L);
-    float shape = lerp(saturate(ndotl), saturate(ndotl * 0.5f + 0.5f), wrap);
     diff += radiance * shape;
     if (fs_point_params.y > 0.0f) {
         float g_unused;
         spec_out += cook_torrance_spec(N_spec, V, L, spec_mp, g_unused) * radiance *
-                    (mp.spec_intensity * spec_mul * fs_point_params.y);
+                    (spec_scale * mp.spec_intensity * spec_mul * fs_point_params.y);
     }
 }
 
@@ -684,28 +725,27 @@ float3 accumulate_point_lights(float3 N, float3 N_spec, float3 V, float3 world_p
                                PbrMaterialParams mp, float spec_mul,
                                inout float3 spec_out)
 {
-    float3 diff = float3(0.0f, 0.0f, 0.0f);
-    if (fs_cluster_enabled != 0u) {
-        uint global_count = min(fs_cluster_global_count, AERON_CLUSTER_MAX_GLOBAL_LIGHTS);
-        for (uint gi = 0u; gi < global_count; ++gi) {
-            accumulate_point_light(fs_cluster_global_indices[gi], N, N_spec, V, world_pos,
-                                   mp, spec_mul, diff, spec_out);
-        }
+    /* One loop over the screen-wide lights, then the cluster's (or every
+     * light without clustering), so the light body is emitted once. */
+    float3 diff         = float3(0.0f, 0.0f, 0.0f);
+    bool   clustered    = fs_cluster_enabled != 0u;
+    uint   global_count = 0u;
+    uint   count        = fs_cluster_point_count;
+    uint   cluster_base = 0u;
+    if (clustered) {
+        global_count = min(fs_cluster_global_count, AERON_CLUSTER_MAX_GLOBAL_LIGHTS);
         uint cluster_index;
         uint2 header = clustered_light_fragment_header(screen_position, world_pos,
                                                         cluster_index);
-        uint count = min(header.x, AERON_CLUSTER_MAX_LIGHTS);
-        for (uint pi = 0u; pi < count; ++pi) {
-            uint light_index = fs_cluster_indices[
-                cluster_index * AERON_CLUSTER_MAX_LIGHTS + pi];
-            accumulate_point_light(light_index, N, N_spec, V, world_pos,
-                                   mp, spec_mul, diff, spec_out);
-        }
-    } else {
-        for (uint light_index = 0u; light_index < fs_cluster_point_count; ++light_index) {
-            accumulate_point_light(light_index, N, N_spec, V, world_pos,
-                                   mp, spec_mul, diff, spec_out);
-        }
+        cluster_base = cluster_index * AERON_CLUSTER_MAX_LIGHTS;
+        count        = global_count + min(header.x, AERON_CLUSTER_MAX_LIGHTS);
+    }
+    for (uint li = 0u; li < count; ++li) {
+        uint light_index = !clustered ? li
+                         : li < global_count ? fs_cluster_global_indices[li]
+                                             : fs_cluster_indices[cluster_base + li - global_count];
+        accumulate_point_light(light_index, N, N_spec, V, world_pos,
+                               mp, spec_mul, diff, spec_out);
     }
     return diff;
 }

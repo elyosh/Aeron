@@ -461,8 +461,9 @@ static void add_game_instances(AeronScene3D* scene, const Fixture* f, const Aero
 		};
 		float peak = 0;
 		for (int k = 0; k < 3; ++k) {
-			light.pos[k]   = l->position[k] * GAME_UNITS_PER_METER;
-			light.color[k] = l->intensity[k] * GAME_UNITS_PER_METER * GAME_UNITS_PER_METER;
+			light.pos[k]       = l->position[k] * GAME_UNITS_PER_METER;
+			light.half_axis[k] = l->half_axis[k] * GAME_UNITS_PER_METER;
+			light.color[k]     = l->intensity[k] * GAME_UNITS_PER_METER * GAME_UNITS_PER_METER;
 			peak           = fmaxf(peak, l->intensity[k]);
 		}
 		light.radius = sqrtf(peak / 0.001f) * GAME_UNITS_PER_METER;

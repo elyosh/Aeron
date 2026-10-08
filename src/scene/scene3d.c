@@ -18,7 +18,7 @@
 #include <string.h>
 
 typedef char AeronSceneLightGPUSizeCheck[sizeof(AeronSceneLightGPU) == 32 ? 1 : -1];
-typedef char AeronScenePointLightGPUSizeCheck[sizeof(AeronScenePointLightGPU) == 32 ? 1 : -1];
+typedef char AeronScenePointLightGPUSizeCheck[sizeof(AeronScenePointLightGPU) == 48 ? 1 : -1];
 typedef char AeronSceneClusterLightGPUSizeCheck[sizeof(AeronSceneClusterLightGPU) == 32 ? 1 : -1];
 typedef char AeronSceneClusterHeaderGPUSizeCheck[sizeof(AeronSceneClusterHeaderGPU) == 8 ? 1 : -1];
 typedef char AeronSceneClusterUniformGPUSizeCheck[sizeof(AeronSceneClusterUniformGPU) == 112 ? 1 : -1];
@@ -1585,6 +1585,18 @@ int AeronSceneStorage_Prepare(AeronScene3D* s, AeronCommandBuffer* cmd) {
 		destination->color[3] = source->falloff == AERON_SCENE_LIGHT_FALLOFF_INVERSE_SQUARE
 									? (source->min_distance > 1e-3f ? source->min_distance : 1e-3f)
 									: 0.0f;
+		/* A tube's segment, for INVERSE_SQUARE lights only; clusters
+		 * bound it with a sphere around its centre. */
+		float half_length = 0.0f;
+		for (int axis = 0; axis < 3; ++axis) {
+			destination->half_axis[axis] =
+				source->falloff == AERON_SCENE_LIGHT_FALLOFF_INVERSE_SQUARE && isfinite(source->half_axis[axis])
+					? source->half_axis[axis]
+					: 0.0f;
+			half_length += destination->half_axis[axis] * destination->half_axis[axis];
+		}
+		destination->half_axis[3] = 0.0f;
+		half_length               = sqrtf(half_length);
 		const float dx                         = source->pos[0] - s->camera.pos[0];
 		const float dy                         = source->pos[1] - s->camera.pos[1];
 		const float dz                         = source->pos[2] - s->camera.pos[2];
@@ -1593,7 +1605,7 @@ int AeronSceneStorage_Prepare(AeronScene3D* s, AeronCommandBuffer* cmd) {
 												view_rotation[row * 3 + 1] * dy +
 												view_rotation[row * 3 + 2] * dz;
 		}
-		cluster->view_position_range[3] = source->radius;
+		cluster->view_position_range[3] = source->radius + half_length;
 		cluster->point_light_index      = i;
 		cluster->luminance =
 			0.2126f * source->color[0] + 0.7152f * source->color[1] + 0.0722f * source->color[2];

@@ -63,13 +63,18 @@ typedef enum AeronSceneLightFalloff {
 
 /* One point light for this frame (world position, radius in world
  * units, linear-HDR color premultiplied by intensity). `min_distance`
- * (world units, > 0) is the sphere radius of INVERSE_SQUARE lights. */
+ * (world units, > 0) is the sphere radius of INVERSE_SQUARE lights.
+ * A non-zero `half_axis` (world units) makes an INVERSE_SQUARE light a
+ * tube: the segment pos +- half_axis, `min_distance` thick, emitting the
+ * same total intensity (a point light of `color` from afar); `radius` is
+ * then measured from the segment. CLASSIC lights ignore it. */
 typedef struct AeronSceneLight {
 	float                  pos[3];
 	float                  radius;
 	float                  color[3];
 	AeronSceneLightFalloff falloff;
 	float                  min_distance;
+	float                  half_axis[3];
 } AeronSceneLight;
 
 typedef struct AeronSceneClusteredLightDesc {
