@@ -94,7 +94,7 @@ positions stay in metres.
 | `sun_direction`, `sun_color` | Surface-to-sun direction in camera axes (+X right, +Y down, +Z forward) and linear colour. The light block otherwise mirrors the game's `lighting` defaults. |
 | `ambient` | Linear ambient fill, default 0.08. |
 | `point_lights` | Up to 32 `{ position, radius, color }` lights in metres, drawn through clustered lighting as in the game. |
-| `instances` | Required, up to 16 `{ model, role, position, rotation_degrees }` entries; `model` is one of `models`. `role: ship` (default) places it at `position` with `[yaw, pitch, roll]`. `cockpit` places it at `screen_test`'s eye with the game cockpit's flags (its own shadow map, no casting). `exterior` places it there too but only casts shadows, like the player's hidden exterior in cockpit view. |
+| `instances` | Required, up to 16 `{ model, role, position, rotation_degrees }` entries; `model` is one of `models`. `role: ship` (default) places it at `position` with `[yaw, pitch, roll]`. `cockpit` places it at `screen_test`'s eye with the game cockpit's flags (its own shadow map, which it casts into with both faces). `exterior` places it there too but only casts shadows, like the player's hidden exterior in cockpit view. |
 
 Models are placed mirrored from their left-handed OPT frames, as the game places
 them, so `cull: back` matches the game's culling (the default fixture's `front`

@@ -106,11 +106,22 @@ typedef struct AeronSceneLightBlock {
 	AeronSceneLightGPU lights[16];
 } AeronSceneLightBlock;
 
+/* Directional-shadow flags (AeronSceneMeshInstance.shadow_flags).
+ * USE_RECEIVER_LOCAL_SHADOW receivers sample a dedicated map fitted around
+ * them, half the cascade atlas size (1024..4096); its texel grid turns and
+ * moves with the first such receiver. CAST_RECEIVER_LOCAL_ONLY casts into
+ * that map only, not the cascades: an instance shadowing itself without
+ * repeating what another caster already casts on the rest of the scene.
+ * SHADOW_DOUBLE_SIDED casts with both faces whatever the instance's cull
+ * mode, so single-sided geometry (inward-facing walls) still blocks light
+ * reaching it from behind. */
 enum {
 	AERON_SCENE_INSTANCE_NO_CAST_SHADOW                     = 1u << 0,
 	AERON_SCENE_INSTANCE_NO_RECEIVE_SHADOW                  = 1u << 1,
 	AERON_SCENE_INSTANCE_EXCLUDE_FROM_RECEIVER_LOCAL_SHADOW = 1u << 2,
 	AERON_SCENE_INSTANCE_USE_RECEIVER_LOCAL_SHADOW          = 1u << 3,
+	AERON_SCENE_INSTANCE_CAST_RECEIVER_LOCAL_ONLY           = 1u << 4,
+	AERON_SCENE_INSTANCE_SHADOW_DOUBLE_SIDED                = 1u << 5,
 };
 
 /* One mesh instance for this frame. `transform`/`prev_transform` are

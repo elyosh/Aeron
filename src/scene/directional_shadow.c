@@ -467,15 +467,27 @@ static int shadow_ensure_resources(struct AeronScene3D* scene, uint32_t atlas_si
 	return scene->shadow_atlas != NULL;
 }
 
-static int shadow_ensure_receiver_local_atlas(struct AeronScene3D* scene) {
+/* The receiver-local map matches one cascade tile of a four-cascade atlas
+ * (half its size), within 1024..4096: shadow quality scales both. */
+static uint32_t shadow_receiver_local_size(const AeronSceneDirectionalShadowDesc* desc) {
+	const uint32_t size = desc->atlas_size / 2u;
+	return size < 1024u ? 1024u : (size > 4096u ? 4096u : size);
+}
+
+static int shadow_ensure_receiver_local_atlas(struct AeronScene3D* scene, uint32_t size) {
+	if (scene->receiver_local_shadow_atlas && scene->receiver_local_shadow_size != size) {
+		Aeron_DestroyDepthTarget(scene->receiver_local_shadow_atlas);
+		scene->receiver_local_shadow_atlas = NULL;
+	}
 	if (!scene->receiver_local_shadow_atlas) {
 		scene->receiver_local_shadow_atlas = Aeron_CreateDepthTarget(&(AeronDepthTargetDesc) {
-			.width      = AERON_SCENE_RECEIVER_LOCAL_SHADOW_SIZE,
-			.height     = AERON_SCENE_RECEIVER_LOCAL_SHADOW_SIZE,
+			.width      = (int)size,
+			.height     = (int)size,
 			.format     = AERON_TEXTURE_FORMAT_D32_FLOAT,
 			.sampled    = 1,
 			.debug_name = "scene.receiver_local_shadow",
 		});
+		scene->receiver_local_shadow_size = scene->receiver_local_shadow_atlas ? size : 0;
 	}
 	return scene->receiver_local_shadow_atlas != NULL;
 }
@@ -501,10 +513,34 @@ static float shadow_filter_footprint_radius(const AeronSceneDirectionalShadowDes
 	return fmaxf(desc->contact_hardening ? desc->max_filter_radius : desc->filter_radius, 1.0f);
 }
 
+/* Light-space axes that turn with `instance` (row-major model->world), built
+ * as the cascades build theirs from a world axis: from the model's up axis,
+ * or its forward axis while up is within ~25 degrees of the light. Returns
+ * zero for a degenerate transform. */
+static int shadow_instance_light_axes(const AeronSceneMeshInstance* instance, const float light_dir[3],
+									  float x_axis[3], float y_axis[3]) {
+	float reference[3] = { instance->transform[0 * 4 + 2], instance->transform[1 * 4 + 2],
+						   instance->transform[2 * 4 + 2] };
+	if (!shadow_normalize3(reference)) {
+		return 0;
+	}
+	if (fabsf(shadow_dot3(reference, light_dir)) > 0.9f) {
+		reference[0] = instance->transform[0 * 4 + 1];
+		reference[1] = instance->transform[1 * 4 + 1];
+		reference[2] = instance->transform[2 * 4 + 1];
+	}
+	shadow_cross3(x_axis, reference, light_dir);
+	if (!shadow_normalize3(x_axis)) {
+		return 0;
+	}
+	shadow_cross3(y_axis, light_dir, x_axis);
+	return shadow_normalize3(y_axis);
+}
+
 static void shadow_prepare_receiver_local(struct AeronScene3D*                   scene,
 										  const AeronSceneDirectionalShadowDesc* desc,
-										  const float light_dir[3], const float x_axis[3],
-										  const float y_axis[3]) {
+										  const float light_dir[3], const float world_x_axis[3],
+										  const float world_y_axis[3]) {
 	memset(&scene->receiver_local_shadow_uniform, 0, sizeof scene->receiver_local_shadow_uniform);
 	scene->receiver_local_shadow_caster_count         = 0;
 	scene->receiver_local_owned                       = 0;
@@ -513,6 +549,24 @@ static void shadow_prepare_receiver_local(struct AeronScene3D*                  
 	scene->shadow_stats.receiver_local_size           = 0;
 	scene->shadow_stats.receiver_local_caster_count   = 0;
 	scene->shadow_stats.receiver_local_triangle_count = 0;
+
+	/* The map's texel grid turns and moves with the first receiver, so its
+	 * own geometry keeps its texels as it moves or turns about the light;
+	 * only the light's angle to it moves its shadows. */
+	const AeronSceneMeshInstance* anchor = NULL;
+	for (int index = 0; index < scene->instance_count && !anchor; index++) {
+		const AeronSceneMeshInstance* instance = &scene->instances[index];
+		if ((instance->shadow_flags & AERON_SCENE_INSTANCE_USE_RECEIVER_LOCAL_SHADOW) != 0 &&
+			(instance->shadow_flags & AERON_SCENE_INSTANCE_NO_RECEIVE_SHADOW) == 0) {
+			anchor = instance;
+		}
+	}
+	float x_axis[3], y_axis[3];
+	if (!anchor || !shadow_instance_light_axes(anchor, light_dir, x_axis, y_axis)) {
+		memcpy(x_axis, world_x_axis, sizeof x_axis);
+		memcpy(y_axis, world_y_axis, sizeof y_axis);
+		anchor = NULL;
+	}
 
 	float receiver_x_min = FLT_MAX;
 	float receiver_x_max = -FLT_MAX;
@@ -544,7 +598,7 @@ static void shadow_prepare_receiver_local(struct AeronScene3D*                  
 		return;
 	}
 
-	const uint32_t atlas_size  = AERON_SCENE_RECEIVER_LOCAL_SHADOW_SIZE;
+	const uint32_t atlas_size  = shadow_receiver_local_size(desc);
 	const uint32_t usable_size = atlas_size - 2u * AERON_SCENE_SHADOW_GUARD_TEXELS;
 	float          center_x    = 0.5f * (receiver_x_min + receiver_x_max);
 	float          center_y    = 0.5f * (receiver_y_min + receiver_y_max);
@@ -556,8 +610,14 @@ static void shadow_prepare_receiver_local(struct AeronScene3D*                  
 	extent += (desc->normal_bias_texels + filter_radius + 2.0f) * initial_world_per_texel;
 	const float world_per_texel = (2.0f * extent) / (float)usable_size;
 
-	const double origin_x          = shadow_dot_origin(desc->world_origin, x_axis);
-	const double origin_y          = shadow_dot_origin(desc->world_origin, y_axis);
+	/* Snap relative to the anchor's origin (else the world origin). */
+	double origin_x = shadow_dot_origin(desc->world_origin, x_axis);
+	double origin_y = shadow_dot_origin(desc->world_origin, y_axis);
+	if (anchor) {
+		const float anchor_origin[3] = { anchor->transform[3], anchor->transform[7], anchor->transform[11] };
+		origin_x                     = -(double)shadow_dot3(anchor_origin, x_axis);
+		origin_y                     = -(double)shadow_dot3(anchor_origin, y_axis);
+	}
 	const double absolute_center_x = origin_x + (double)center_x;
 	const double absolute_center_y = origin_y + (double)center_y;
 	center_x = (float)(floor(absolute_center_x / (double)world_per_texel + 0.5) * (double)world_per_texel -
@@ -567,6 +627,7 @@ static void shadow_prepare_receiver_local(struct AeronScene3D*                  
 
 	float     caster_z_max    = receiver_z_max;
 	int       excluded_caster = 0;
+	int       local_only_cast = 0;
 	const int combined_count  = scene->instance_count + scene->shadow_only_count;
 	for (int candidate = 0; candidate < combined_count; candidate++) {
 		const uint16_t encoded =
@@ -595,9 +656,14 @@ static void shadow_prepare_receiver_local(struct AeronScene3D*                  
 		if (scene->receiver_local_shadow_caster_count < AERON_SCENE_MAX_SHADOW_CASTERS) {
 			scene->receiver_local_shadow_casters[scene->receiver_local_shadow_caster_count++] = encoded;
 			caster_z_max = fmaxf(caster_z_max, bz + bound.radius);
+			if ((instance->shadow_flags & AERON_SCENE_INSTANCE_CAST_RECEIVER_LOCAL_ONLY) != 0) {
+				local_only_cast = 1;
+			}
 		}
 	}
-	if (!excluded_caster) {
+	/* The cascades serve the receivers as well unless a caster must be left
+	 * out of them, or one casts only here. */
+	if (!excluded_caster && !local_only_cast) {
 		scene->receiver_local_shadow_caster_count = 0;
 		return;
 	}
@@ -609,7 +675,7 @@ static void shadow_prepare_receiver_local(struct AeronScene3D*                  
 		scene->receiver_local_empty = 1;
 		return;
 	}
-	if (!shadow_ensure_receiver_local_atlas(scene)) {
+	if (!shadow_ensure_receiver_local_atlas(scene, atlas_size)) {
 		scene->receiver_local_shadow_caster_count = 0;
 		return;
 	}
@@ -1029,8 +1095,9 @@ int AeronSceneDirectionalShadow_Prepare(struct AeronScene3D* scene) {
 		}
 		object_indices[candidate] = encoded;
 		bound_valid[candidate]    = 1;
-		if ((instance->shadow_flags & AERON_SCENE_INSTANCE_NO_CAST_SHADOW) == 0 && instance->mesh &&
-			(instance->mesh->opaque_index_count + instance->mesh->mask_index_count) != 0) {
+		if ((instance->shadow_flags &
+			 (AERON_SCENE_INSTANCE_NO_CAST_SHADOW | AERON_SCENE_INSTANCE_CAST_RECEIVER_LOCAL_ONLY)) == 0 &&
+			instance->mesh && (instance->mesh->opaque_index_count + instance->mesh->mask_index_count) != 0) {
 			caster_valid[candidate] = 1;
 			scene->shadow_stats.candidate_count++;
 		}
@@ -1072,8 +1139,10 @@ static void shadow_draw_class(struct AeronScene3D* scene, AeronRenderPass* pass,
 		if (index_count == 0) {
 			continue;
 		}
-		AeronCullMode cull =
-			instance->cull_mode <= AERON_CULL_BACK ? (AeronCullMode)instance->cull_mode : AERON_CULL_NONE;
+		AeronCullMode cull = (instance->shadow_flags & AERON_SCENE_INSTANCE_SHADOW_DOUBLE_SIDED) == 0 &&
+									 instance->cull_mode <= AERON_CULL_BACK
+								 ? (AeronCullMode)instance->cull_mode
+								 : AERON_CULL_NONE;
 		AeronGraphicsPipeline* pipeline = masked ? scene->shadow_mask_pipes[cull] : scene->shadow_pipes[cull];
 		if (!pipeline) {
 			pipeline =
@@ -1178,7 +1247,7 @@ int AeronSceneDirectionalShadow_Render(struct AeronScene3D* scene, AeronCommandB
 	if (!scene->shadow_stats.receiver_local_active || !scene->receiver_local_shadow_atlas) {
 		return 1;
 	}
-	const int        receiver_size = AERON_SCENE_RECEIVER_LOCAL_SHADOW_SIZE;
+	const int        receiver_size = (int)scene->receiver_local_shadow_size;
 	AeronRenderPass* receiver_pass = Aeron_BeginRenderPass(&(AeronRenderPassDesc) {
 		.depth_target      = scene->receiver_local_shadow_atlas,
 		.viewport          = { 0, 0, receiver_size, receiver_size },

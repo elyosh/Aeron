@@ -35,7 +35,6 @@
  * of two above it. */
 #define AERON_SCENE_MESH_TABLE_HASH_CAP 8192
 #define AERON_SCENE_SHADOW_GUARD_TEXELS 4
-#define AERON_SCENE_RECEIVER_LOCAL_SHADOW_SIZE 1024
 
 /* Pipeline kinds for AeronScenePbr_Pipeline / _DrawInstances. Color
  * pipelines are single-target; the prepass variants own normal, velocity
@@ -294,6 +293,7 @@ struct AeronScene3D {
 	uint16_t                           receiver_local_shadow_casters[AERON_SCENE_MAX_SHADOW_CASTERS];
 	uint16_t                           receiver_local_shadow_caster_count;
 	AeronDepthTarget*                  receiver_local_shadow_atlas;
+	uint32_t                           receiver_local_shadow_size;
 	/* The receiver-local map serves the USE_RECEIVER_LOCAL instances this
 	 * frame (they leave the cascades' receivers); when it has no casters it
 	 * is not rendered and they sample no shadow. */

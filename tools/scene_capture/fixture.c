@@ -439,8 +439,9 @@ static void add_game_instances(AeronScene3D* scene, const Fixture* f, const Aero
 			continue;
 		}
 		if (in->role == CAPTURE_ROLE_COCKPIT) {
-			instance.shadow_flags =
-				AERON_SCENE_INSTANCE_NO_CAST_SHADOW | AERON_SCENE_INSTANCE_USE_RECEIVER_LOCAL_SHADOW;
+			instance.shadow_flags = AERON_SCENE_INSTANCE_USE_RECEIVER_LOCAL_SHADOW |
+									AERON_SCENE_INSTANCE_CAST_RECEIVER_LOCAL_ONLY |
+									AERON_SCENE_INSTANCE_SHADOW_DOUBLE_SIDED;
 			instance.velocity_stamp_screens = 1;
 			/* As flight.c submits the cockpit's model lights. */
 			for (uint32_t li = 0; li < instance.mesh->light_count && f->config.game.model_light_intensity > 0; ++li) {
