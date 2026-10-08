@@ -11,7 +11,7 @@ quality: 0
 reference_samples: 0
 msaa_samples: 1
 bloom:
-  intensity: 0.5
+  intensity: 0.1
   kernel: 4
 tonemap: agx
 output_dir: captures/bloom-1080p

@@ -9,10 +9,10 @@ static const struct {
 	const char* label;
 	float       rgb[3];
 	float       width, height;
-} targets[] = { { "below_threshold", { .8f, .8f, .8f }, .035f, .035f },
-				{ "threshold", { 1, 1, 1 }, .035f, .035f },
-				{ "soft_knee", { 1.15f, 1.15f, 1.15f }, .035f, .035f },
-				{ "knee_end", { 1.3f, 1.3f, 1.3f }, .035f, .035f },
+} targets[] = { { "white_0_8", { .8f, .8f, .8f }, .035f, .035f },
+				{ "white_1_0", { 1, 1, 1 }, .035f, .035f },
+				{ "white_1_15", { 1.15f, 1.15f, 1.15f }, .035f, .035f },
+				{ "white_1_3", { 1.3f, 1.3f, 1.3f }, .035f, .035f },
 				{ "small_2", { 2, 2, 2 }, .01f, .01f },
 				{ "small_4", { 4, 4, 4 }, .02f, .02f },
 				{ "medium_8", { 8, 8, 8 }, .04f, .04f },

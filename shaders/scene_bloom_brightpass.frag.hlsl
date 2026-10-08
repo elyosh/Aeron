@@ -1,24 +1,18 @@
 /*
  * Bloom bright-pass — first stage of the dual-filter chain.
  *
- * Samples the four HDR flight-RT texels covered by each half-resolution
- * output texel and extracts values above 1.0 before averaging them into
- * bloom mip0. Curve is a smoothstep gate:
- *   out = c * smoothstep(thr, thr + knee, br)
- * where `br = max(c.r, c.g, c.b)` so single-channel saturates
- * (pure-red bolt at (3, 0.4, 0.4) has br = 3) still bloom.
- *
- * Emissive meshes (laser/missile crafts, engine slots, explosion
- * billboards) are boosted >1.0 host-side; everything else stays
- * ≤ 1.0 and the gate rejects it. Pairs with composite_two_rt.vert.
+ * Averages the four HDR flight-RT texels covered by each half-resolution
+ * output texel into bloom mip0. There is no brightness threshold: all light
+ * scatters in proportion, as in a lens, and what visibly glows is what is
+ * far brighter than its surroundings (emitters, AeronScene_SetEmissiveScale).
+ * Pairs with composite_two_rt.vert.
  */
 
 cbuffer BrightPS : register(b0, space3)
 {
-    /* x, y = threshold and knee width
-     * z, w = inverse source dimensions */
+    /* x, y = inverse source dimensions */
     float4 params;
-    /* x = finest-band weight, applied after thresholding. */
+    /* x = finest-band weight. */
     float4 band_weight;
 };
 
@@ -31,7 +25,7 @@ struct VSOut
     float2 uv       : TEXCOORD0;
 };
 
-float3 extract_bloom(float3 c, float threshold, float knee)
+float3 bloom_source(float3 c)
 {
     /* Sanitize before the chain: a single NaN/Inf scene pixel (e.g. from a
      * degenerate authored normal) gets box-averaged by the downsample mips
@@ -41,26 +35,16 @@ float3 extract_bloom(float3 c, float threshold, float knee)
      * mesh VS, but bloom must stay robust to any NaN source. */
     if (any(isnan(c)) || any(isinf(c)))
         c = float3(0.0f, 0.0f, 0.0f);
-
-    float br = max(c.r, max(c.g, c.b));
-    float w  = smoothstep(threshold, threshold + knee, br);
-    return c * w;
+    return c;
 }
 
 float4 main(VSOut input) : SV_Target
 {
-    float threshold = params.x;
-    float knee = max(params.y, 1e-4f);
-    float2 offset = params.zw * 0.5f;
-
+    float2 offset = params.xy * 0.5f;
     float3 bloom =
-        extract_bloom(g_src.Sample(s_src, input.uv + offset * float2(-1.0f, -1.0f)).rgb,
-                      threshold, knee) +
-        extract_bloom(g_src.Sample(s_src, input.uv + offset * float2( 1.0f, -1.0f)).rgb,
-                      threshold, knee) +
-        extract_bloom(g_src.Sample(s_src, input.uv + offset * float2(-1.0f,  1.0f)).rgb,
-                      threshold, knee) +
-        extract_bloom(g_src.Sample(s_src, input.uv + offset * float2( 1.0f,  1.0f)).rgb,
-                      threshold, knee);
+        bloom_source(g_src.Sample(s_src, input.uv + offset * float2(-1.0f, -1.0f)).rgb) +
+        bloom_source(g_src.Sample(s_src, input.uv + offset * float2( 1.0f, -1.0f)).rgb) +
+        bloom_source(g_src.Sample(s_src, input.uv + offset * float2(-1.0f,  1.0f)).rgb) +
+        bloom_source(g_src.Sample(s_src, input.uv + offset * float2( 1.0f,  1.0f)).rgb);
     return float4(bloom * (0.25f * band_weight.x), 1.0f);
 }

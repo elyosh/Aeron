@@ -7,8 +7,8 @@
  * The pyramid is a 2x2 bright pass, 13-tap downsamples and 3x3 tent
  * upsamples, so compact bright sources stay round and do not snap to the
  * coarse levels' texel grid as they move.
- * Threshold/knee are fixed; presentation applies the runtime intensity.
- * Small and near-threshold emitters remain sensitive to source coverage. */
+ * The bright pass has no threshold; presentation applies the runtime
+ * intensity. Small emitters remain sensitive to source coverage. */
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -51,22 +51,17 @@ int AeronSceneBloom_Apply(AeronSceneBloom* b, struct AeronCommandBuffer* cmd, Ae
  * (scene_tonemap.frag) at fragment slot t1. */
 AeronRenderTarget* AeronSceneBloom_ColorRt(const AeronSceneBloom* b);
 
-/* Intensity uniform passed to the present pass. Process-wide runtime
- * knob (default 0.5); 0 disables the bloom contribution entirely —
- * hosts may also skip AeronSceneBloom_Apply when it reads 0 to save
- * the chain's GPU cost. */
+/* Intensity uniform passed to the present pass: the fraction of the scene's
+ * light the bloom scatters. Process-wide runtime knob (default 0.1); 0
+ * disables the bloom contribution entirely — hosts may also skip
+ * AeronSceneBloom_Apply when it reads 0 to save the chain's GPU cost.
+ *
+ * There is no brightness threshold: all light scatters in proportion, as
+ * in a lens, so what visibly glows is what is far brighter than its
+ * surroundings (AeronScene_SetEmissiveScale), and glass, haze or motion
+ * blur reduce a glow in proportion. */
 float AeronSceneBloom_Intensity(void);
 void  AeronSceneBloom_SetIntensity(float v);
-
-/* Bright-pass gate, process-wide like the intensity: a pixel contributes
- * colour x smoothstep(threshold, threshold + knee, max channel), in linear
- * HDR. Defaults 1.0 and 0.3. A wider knee makes bloom fade in proportion
- * when a source dims (glass, haze, motion blur) instead of cutting out. */
-#define AERON_SCENE_BLOOM_MIN_KNEE 0.001f
-float AeronSceneBloom_Threshold(void);
-void  AeronSceneBloom_SetThreshold(float v); /* clamped to >= 0 */
-float AeronSceneBloom_Knee(void);
-void  AeronSceneBloom_SetKnee(float v); /* clamped to >= AERON_SCENE_BLOOM_MIN_KNEE */
 
 #ifdef __cplusplus
 }

@@ -37,7 +37,7 @@ closing that window cancels the run.
 |---|---|
 | [motion-blur.yaml](presets/motion-blur.yaml) | Twelve cuboids with motion blur and a 64-sample temporal reference. |
 | [models.yaml](presets/models.yaml) | Motion blur on OPT models; configure `asset_root` and model paths first. |
-| [bloom.yaml](presets/bloom.yaml) | Static HDR chart for bloom threshold, color and spread measurements. |
+| [bloom.yaml](presets/bloom.yaml) | Static HDR chart for bloom proportionality, color and spread measurements. |
 | [bloom-motion.yaml](presets/bloom-motion.yaml) | Bright cuboids with both effects and a 16-sample motion-blur reference. |
 | [benchmark.yaml](presets/benchmark.yaml) | Repeating 30-frame scene with both effects and timing settings. |
 | [flight-benchmark.yaml](presets/flight-benchmark.yaml) | A game-like flight scene (`game_scene`): cockpit view with SSAO, shadows, point lights and converted XWAU models; configure `asset_root` first. |
@@ -58,7 +58,7 @@ Start from a preset; unknown keys are rejected. The main settings are:
 | `cull` | `none` (default, two-sided), `front` or `back`: the instances' cull mode. `front` culls what the game's `back` culls, as this camera's handedness is the opposite. |
 | `backface_fill` | `true` (default) or `false`: the dark fill behind cracks in single-sided instances (`AeronScene_SetBackfaceFill`). |
 | `screen_test` | Optional mapping: `eye: [x, y, z]` (model metres), `yaw_degrees`, `pitch_degrees` (positive looks down). Renders the first model alone from that point, unscaled, with test screen inputs: a gradient checker as graphics and a white "F" with a 32-pixel grid as text, every source covering the whole texture. Checks screen surfaces (cockpit displays, holograms) for placement, orientation and mirroring. |
-| `emissive_scale` | Shape/material emission multiplier; default 1. Use 8 to raise the cuboids above the bloom threshold. |
+| `emissive_scale` | Shape/material emission multiplier; default 1. Use 8 to make the cuboids glow strongly. |
 | `bloom` | Optional mapping requiring `intensity` and `kernel` (1 or 4 taps). Omit to disable bloom captures. |
 | `tonemap` | `agx` (default) or `aces`. |
 | `output_dir` | Directory for images and reports. |
@@ -127,8 +127,9 @@ increase `reference_samples` to check convergence.
 
 Bloom measurements have no dim-pixel cutoff. RGB integrals divide sums by image
 pixel count; spread is RGB-weighted standard deviation in image-height units.
-It measures the emitter plus halo, not the outer halo radius. Thresholding,
-pixel coverage and texture precision can change energy between resolutions.
+It measures the emitter plus halo, not the outer halo radius. Bloom has no
+brightness threshold, so energy scales with emitter brightness; pixel coverage
+and texture precision can change energy between resolutions.
 Zero-denominator ratios are `null`; zero-energy centroids/spreads are undefined
 and reported as zero.
 
@@ -146,8 +147,8 @@ such as 1279×719 also tests rounding and fractional sampling.
 
 The command requires no GPU and reports candidate/baseline ratios for normalized
 spread and bloom energy, plus RGB integral deltas. Ratios near 1 indicate
-consistency for resolved bright emitters; near-threshold and subpixel emitters
-also depend on coverage. There is no automatic pass threshold.
+consistency for resolved bright emitters; subpixel emitters also depend on
+coverage. There is no automatic pass threshold.
 
 View `present` images at the same displayed size to compare appearance, and at
 native resolution to inspect sampling artifacts. Keep the Aeron revision with

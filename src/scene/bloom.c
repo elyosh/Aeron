@@ -13,15 +13,10 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define BLOOM_THRESHOLD 1.0f
-#define BLOOM_KNEE 0.3f
-#define BLOOM_INTENSITY 0.5f
+#define BLOOM_INTENSITY 0.1f
 #define BLOOM_REFERENCE_LEVEL_COUNT 4
 #define BLOOM_MAX_LEVEL_COUNT 8
 #define BLOOM_CHAIN_FORMAT AERON_TEXTURE_FORMAT_R11G11B10_UFLOAT
-
-static float s_bloom_threshold = BLOOM_THRESHOLD;
-static float s_bloom_knee      = BLOOM_KNEE;
 
 typedef struct AeronSceneBloomLevel {
 	AeronRenderTarget* tex;
@@ -281,9 +276,9 @@ int AeronSceneBloom_Apply(AeronSceneBloom* b, AeronCommandBuffer* cmd, AeronText
 	/* Bright pass: flight RT -> mip0. */
 	{
 		struct {
-			float params[4]; /* xy=threshold/knee, zw=source texel size */
+			float params[4]; /* xy=source texel size */
 			float weight[4];
-		} u = { { s_bloom_threshold, s_bloom_knee, 1.0f / (float)rt_w, 1.0f / (float)rt_h },
+		} u = { { 1.0f / (float)rt_w, 1.0f / (float)rt_h, 0, 0 },
 				{ first_weight, 0, 0, 0 } };
 
 		if (!bloom_pass(cmd, b->levels[0].tex, b->levels[0].w, b->levels[0].h, b->brightpass_pipeline,
@@ -362,18 +357,3 @@ void AeronSceneBloom_SetIntensity(float v) {
 	s_bloom_intensity = v;
 }
 
-float AeronSceneBloom_Threshold(void) { return s_bloom_threshold; }
-
-void AeronSceneBloom_SetThreshold(float v) {
-	if (!(v >= 0.0f))
-		v = 0.0f;
-	s_bloom_threshold = v;
-}
-
-float AeronSceneBloom_Knee(void) { return s_bloom_knee; }
-
-void AeronSceneBloom_SetKnee(float v) {
-	if (!(v >= AERON_SCENE_BLOOM_MIN_KNEE))
-		v = AERON_SCENE_BLOOM_MIN_KNEE;
-	s_bloom_knee = v;
-}

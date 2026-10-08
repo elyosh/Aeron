@@ -10,9 +10,9 @@ quality: 2
 # Set to 0 to capture only sharp and blurred images.
 reference_samples: 16
 output_dir: captures/bloom-motion
-# Raise the legacy shapes above the bloom threshold without changing their geometry.
+# Make the legacy shapes glow strongly without changing their geometry.
 emissive_scale: 8
 bloom:
-  intensity: 0.5
+  intensity: 0.1
   kernel: 4
 tonemap: agx
