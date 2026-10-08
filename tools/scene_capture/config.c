@@ -268,18 +268,18 @@ static int load_game_lights(const AeronConfigNode* list, CaptureGameScene* game)
 		fprintf(stderr, "game_scene.point_lights must list at most %d lights\n", CAPTURE_MAX_LIGHTS);
 		return 0;
 	}
-	static const char* const keys[] = { "position", "radius", "color" };
+	static const char* const keys[] = { "position", "intensity" };
 	for (size_t i = 0; i < count; ++i) {
-		const AeronConfigNode* item   = AeronConfigNode_SequenceGet(list, i);
-		CaptureLight*          out    = &game->lights[i];
-		const double           radius = AeronConfigNode_Float(AeronConfigNode_MapGet(item, "radius"), NAN);
+		const AeronConfigNode* item = AeronConfigNode_SequenceGet(list, i);
+		CaptureLight*          out  = &game->lights[i];
 		if (!only_keys(item, "game_scene.point_lights item", keys, sizeof keys / sizeof keys[0]) ||
 			!vec3(AeronConfigNode_MapGet(item, "position"), out->position) ||
-			!vec3(AeronConfigNode_MapGet(item, "color"), out->color) || !isfinite(radius) || radius <= 0) {
-			fprintf(stderr, "game_scene.point_lights[%zu] needs position, radius > 0 and color\n", i);
+			!vec3(AeronConfigNode_MapGet(item, "intensity"), out->intensity) ||
+			!(fmaxf(out->intensity[0], fmaxf(out->intensity[1], out->intensity[2])) > 0) ||
+			fminf(out->intensity[0], fminf(out->intensity[1], out->intensity[2])) < 0) {
+			fprintf(stderr, "game_scene.point_lights[%zu] needs position and a positive intensity\n", i);
 			return 0;
 		}
-		out->radius = (float)radius;
 	}
 	game->light_count = (int)count;
 	return 1;

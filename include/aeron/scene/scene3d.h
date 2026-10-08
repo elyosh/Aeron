@@ -51,9 +51,11 @@ typedef struct AeronSceneMeshTable {
 
 /* Point-light falloff. CLASSIC is XWA's law, color * 0.5 / max(d, the
  * clustered-light min distance), with the configured diffuse wrap and
- * contribution cap. INVERSE_SQUARE is physical: color / max(d, min_distance)^2
- * with Lambert diffuse and no cap, so `color` is the intensity (the
- * illuminance at one world unit). Both fade to zero at `radius`. */
+ * contribution cap. INVERSE_SQUARE is physical: a sphere of radius
+ * `min_distance` giving color / max(d, min_distance)^2 with Lambert diffuse
+ * and no cap, so `color` is the intensity (the illuminance at one world
+ * unit); its specular highlight widens with the sphere's apparent size.
+ * Both fade to zero at `radius`. */
 typedef enum AeronSceneLightFalloff {
 	AERON_SCENE_LIGHT_FALLOFF_CLASSIC = 0,
 	AERON_SCENE_LIGHT_FALLOFF_INVERSE_SQUARE,
@@ -61,7 +63,7 @@ typedef enum AeronSceneLightFalloff {
 
 /* One point light for this frame (world position, radius in world
  * units, linear-HDR color premultiplied by intensity). `min_distance`
- * (world units, > 0) is the near clamp of INVERSE_SQUARE lights. */
+ * (world units, > 0) is the sphere radius of INVERSE_SQUARE lights. */
 typedef struct AeronSceneLight {
 	float                  pos[3];
 	float                  radius;

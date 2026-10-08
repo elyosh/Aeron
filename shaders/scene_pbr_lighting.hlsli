@@ -627,8 +627,12 @@ float3 cook_torrance_spec(float3 N, float3 V, float3 L,
  * glow sources saturate by design in the original law.
  *
  * Lights with color.w > 0 (AERON_SCENE_LIGHT_FALLOFF_INVERSE_SQUARE, such
- * as lights authored in models) are physical instead: win * color /
- * max(d, color.w)^2, Lambert diffuse, no cap. */
+ * as lights authored in models) are physical instead: spheres of radius
+ * color.w giving win * color / max(d, color.w)^2, Lambert diffuse, no
+ * cap. Their GGX alpha widens by half the sphere's angular radius
+ * (alpha + r / 2d), so a light passing close to a glossy surface leaves a
+ * highlight of its size rather than a pinpoint; the normalized GGX keeps
+ * the energy. */
 void accumulate_point_light(uint light_index, float3 N, float3 N_spec, float3 V,
                             float3 world_pos, PbrMaterialParams mp, float spec_mul,
                             inout float3 diff, inout float3 spec_out)
@@ -649,10 +653,13 @@ void accumulate_point_light(uint light_index, float3 N, float3 N_spec, float3 V,
     float  win = 1.0f - q2 * q2;
     win        = win * win;
     float3 radiance;
+    PbrMaterialParams spec_mp = mp;
     if (point_light.color.w > 0.0f) {
         float near_d = max(d, point_light.color.w);
         radiance     = point_light.color.rgb * (win / (near_d * near_d));
         wrap         = 0.0f;
+        float alpha  = saturate(mp.roughness * mp.roughness + point_light.color.w / (2.0f * near_d));
+        spec_mp.roughness = sqrt(alpha);
     } else {
         radiance = point_light.color.rgb * (win * 0.5f / max(d, min_d));
         if (cap > 0.0f) {
@@ -667,7 +674,7 @@ void accumulate_point_light(uint light_index, float3 N, float3 N_spec, float3 V,
     diff += radiance * shape;
     if (fs_point_params.y > 0.0f) {
         float g_unused;
-        spec_out += cook_torrance_spec(N_spec, V, L, mp, g_unused) * radiance *
+        spec_out += cook_torrance_spec(N_spec, V, L, spec_mp, g_unused) * radiance *
                     (mp.spec_intensity * spec_mul * fs_point_params.y);
     }
 }

@@ -145,9 +145,7 @@ int Fixture_Create(Fixture* f, const CaptureConfig* config) {
 	AeronScene_SetClearColor(f->reference_scene, clear);
 	if (config->game.enabled && config->game.light_count) {
 		/* resources/remaster/config.yaml's point_lights defaults. */
-		const AeronSceneClusteredLightDesc lights = {
-			.enabled = 1, .depth_slices = 24, .min_distance = 64, .contribution_cap = 1
-		};
+		const AeronSceneClusteredLightDesc lights = { .enabled = 1, .depth_slices = 24 };
 		if (!AeronScene_SetClusteredLights(f->scene, &lights) ||
 			(f->reference_scene && !AeronScene_SetClusteredLights(f->reference_scene, &lights))) {
 			Fixture_Destroy(f);
@@ -453,13 +451,21 @@ static void add_game_instances(AeronScene3D* scene, const Fixture* f, const Aero
 		}
 		AeronScene_AddMeshInstance(scene, &instance);
 	}
+	/* As XwaRemasterShip_ScenePointLight: 0.25 m spheres ending under
+	 * 1/1000 of a unit of illuminance. */
 	for (int i = 0; i < f->config.game.light_count; ++i) {
 		const CaptureLight* l     = &f->config.game.lights[i];
-		AeronSceneLight     light = { .radius = l->radius * GAME_UNITS_PER_METER };
+		AeronSceneLight     light = {
+				.falloff      = AERON_SCENE_LIGHT_FALLOFF_INVERSE_SQUARE,
+				.min_distance = 0.25f * GAME_UNITS_PER_METER,
+		};
+		float peak = 0;
 		for (int k = 0; k < 3; ++k) {
 			light.pos[k]   = l->position[k] * GAME_UNITS_PER_METER;
-			light.color[k] = l->color[k];
+			light.color[k] = l->intensity[k] * GAME_UNITS_PER_METER * GAME_UNITS_PER_METER;
+			peak           = fmaxf(peak, l->intensity[k]);
 		}
+		light.radius = sqrtf(peak / 0.001f) * GAME_UNITS_PER_METER;
 		AeronScene_AddLight(scene, &light);
 	}
 }
@@ -472,7 +478,7 @@ static void set_game_lighting(AeronScene3D* scene, const CaptureConfig* config) 
 		[0]  = { .8f, 1, 0, 0 }, /* intensity, specular, debug term, wrap */
 		[1]  = { 0, game->ssao.ssao_intensity, game->ssao.ssao_power, (float)config->width },
 		[2]  = { (float)config->height, game->ssao.ssao_direct, 1, 0 }, /* spec_geom_adapt */
-		[18] = { 64, 1, 1, 1 },                                         /* point min distance, spec, wrap, cap */
+		[18] = { 0, 1, 0, 0 },                                          /* classic min distance (unused), spec, classic wrap, cap (unused) */
 	};
 	for (int k = 0; k < 3; ++k) {
 		light[4][k] = game->sun_direction[k];

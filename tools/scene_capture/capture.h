@@ -30,8 +30,10 @@ typedef struct CaptureInstance {
 	float position[3], rotation[3]; /* metres, camera axes; yaw/pitch/roll degrees */
 } CaptureInstance;
 
+/* A game light: position in metres and intensity (the linear illuminance
+ * 1 m away), drawn as the game's physical point lights. */
 typedef struct CaptureLight {
-	float position[3], radius, color[3];
+	float position[3], intensity[3];
 } CaptureLight;
 
 /* game_scene: the game's Scene3D features (Scene3D defaults file), lighting
