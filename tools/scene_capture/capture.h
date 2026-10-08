@@ -43,6 +43,9 @@ typedef struct CaptureGameScene {
 	/* The cockpit and exterior turn with the panning camera (the craft
 	 * turns) instead of staying put (the pilot looks around). */
 	int                      cockpit_follows_camera;
+	/* Intensity multiplier of the cockpit's model lights (0 = off), as
+	 * point_lights.model_light_intensity in the game. */
+	float                    model_light_intensity;
 	CaptureInstance          instances[CAPTURE_MAX_INSTANCES];
 	int                      instance_count;
 	CaptureLight             lights[CAPTURE_MAX_LIGHTS];

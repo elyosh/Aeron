@@ -528,6 +528,52 @@ int AeronScene_AddLight(AeronScene3D* s, const AeronSceneLight* light) {
 	return 1;
 }
 
+/* Model lights cut off below this illuminance when they have no range. */
+#define SCENE_MESH_LIGHT_CUTOFF 0.001f
+/* Near clamp of model lights, in metres. */
+#define SCENE_MESH_LIGHT_MIN_DISTANCE 0.1f
+
+int AeronScene_MeshLight(const AeronSceneMesh* mesh, uint32_t index, const float transform[16],
+						 float units_per_meter, const AeronSceneMeshTable* table, float intensity_scale,
+						 AeronSceneLight* out) {
+	if (!mesh || index >= mesh->light_count || !transform || !(units_per_meter > 0.0f) || !out) {
+		return 0;
+	}
+	const AeronFlightLight* light = &mesh->lights[index];
+	float                   p[3]  = { light->position.x, light->position.y, light->position.z };
+	const uint32_t          slots = mesh->slot_count ? mesh->slot_count : 1u;
+	if (table && light->component_index < slots) {
+		const float(*rows)[4] = table->rows[light->component_index];
+		float articulated[3];
+		for (int r = 0; r < 3; ++r) {
+			articulated[r] = rows[r][0] * p[0] + rows[r][1] * p[1] + rows[r][2] * p[2] + rows[r][3];
+		}
+		memcpy(p, articulated, sizeof p);
+	}
+	memset(out, 0, sizeof *out);
+	for (int r = 0; r < 3; ++r) {
+		out->pos[r] = transform[r * 4 + 0] * p[0] + transform[r * 4 + 1] * p[1] + transform[r * 4 + 2] * p[2] +
+					  transform[r * 4 + 3];
+	}
+	/* I / d_m^2 = I * k^2 / d_world^2 with k world units per metre. */
+	const float intensity = light->intensity * intensity_scale;
+	float       peak      = 0.0f;
+	for (int c = 0; c < 3; ++c) {
+		out->color[c] = light->color[c] * intensity * units_per_meter * units_per_meter;
+		if (light->color[c] * intensity > peak) {
+			peak = light->color[c] * intensity;
+		}
+	}
+	if (!(peak > 0.0f) || !isfinite(peak)) {
+		return 0;
+	}
+	const float range_m = light->range > 0.0f ? light->range : sqrtf(peak / SCENE_MESH_LIGHT_CUTOFF);
+	out->radius         = range_m * units_per_meter;
+	out->falloff        = AERON_SCENE_LIGHT_FALLOFF_INVERSE_SQUARE;
+	out->min_distance   = SCENE_MESH_LIGHT_MIN_DISTANCE * units_per_meter;
+	return 1;
+}
+
 int AeronScene_SetClusteredLights(AeronScene3D* s, const AeronSceneClusteredLightDesc* desc) {
 	if (!s || !desc || desc->depth_slices < 4u || desc->depth_slices > 64u || !isfinite(desc->min_distance) ||
 		desc->min_distance < 0.0f || !isfinite(desc->contribution_cap) || desc->contribution_cap < 0.0f) {
@@ -1535,7 +1581,10 @@ int AeronSceneStorage_Prepare(AeronScene3D* s, AeronCommandBuffer* cmd) {
 		destination->color[0]                  = source->color[0];
 		destination->color[1]                  = source->color[1];
 		destination->color[2]                  = source->color[2];
-		destination->color[3]                  = 0.0f;
+		/* w: the INVERSE_SQUARE near clamp, 0 for the classic law. */
+		destination->color[3] = source->falloff == AERON_SCENE_LIGHT_FALLOFF_INVERSE_SQUARE
+									? (source->min_distance > 1e-3f ? source->min_distance : 1e-3f)
+									: 0.0f;
 		const float dx                         = source->pos[0] - s->camera.pos[0];
 		const float dy                         = source->pos[1] - s->camera.pos[1];
 		const float dz                         = source->pos[2] - s->camera.pos[2];
@@ -1548,7 +1597,8 @@ int AeronSceneStorage_Prepare(AeronScene3D* s, AeronCommandBuffer* cmd) {
 		cluster->point_light_index      = i;
 		cluster->luminance =
 			0.2126f * source->color[0] + 0.7152f * source->color[1] + 0.0722f * source->color[2];
-		cluster->_pad[0] = cluster->_pad[1] = 0.0f;
+		cluster->inverse_square_min_distance = destination->color[3];
+		cluster->_pad                        = 0.0f;
 	}
 	s->point_light_count = point_count;
 	AeronSceneClusteredLights_Classify(s);

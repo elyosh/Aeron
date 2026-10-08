@@ -49,12 +49,25 @@ typedef struct AeronSceneMeshTable {
 	float emissive_packed[AERON_MESH_PACKED_LANES][4];
 } AeronSceneMeshTable;
 
+/* Point-light falloff. CLASSIC is XWA's law, color * 0.5 / max(d, the
+ * clustered-light min distance), with the configured diffuse wrap and
+ * contribution cap. INVERSE_SQUARE is physical: color / max(d, min_distance)^2
+ * with Lambert diffuse and no cap, so `color` is the intensity (the
+ * illuminance at one world unit). Both fade to zero at `radius`. */
+typedef enum AeronSceneLightFalloff {
+	AERON_SCENE_LIGHT_FALLOFF_CLASSIC = 0,
+	AERON_SCENE_LIGHT_FALLOFF_INVERSE_SQUARE,
+} AeronSceneLightFalloff;
+
 /* One point light for this frame (world position, radius in world
- * units, linear-HDR color premultiplied by intensity). */
+ * units, linear-HDR color premultiplied by intensity). `min_distance`
+ * (world units, > 0) is the near clamp of INVERSE_SQUARE lights. */
 typedef struct AeronSceneLight {
-	float pos[3];
-	float radius;
-	float color[3];
+	float                  pos[3];
+	float                  radius;
+	float                  color[3];
+	AeronSceneLightFalloff falloff;
+	float                  min_distance;
 } AeronSceneLight;
 
 typedef struct AeronSceneClusteredLightDesc {
@@ -301,6 +314,18 @@ void AeronScene_AddMeshInstance(AeronScene3D* scene, const AeronSceneMeshInstanc
 /* Returns one when accepted. Capacity failures are counted and logged once
  * per frame rather than silently dropping a light. */
 int AeronScene_AddLight(AeronScene3D* scene, const AeronSceneLight* light);
+
+/* World-space INVERSE_SQUARE light for the mesh's model light `index`
+ * (AeronFlightLight), as placed by an instance: `transform` is the
+ * instance's row-major model->world matrix, scaled by `units_per_meter`
+ * world units per metre, and `table` (optional) articulates the light with
+ * its component. Intensity converts from metres, so the light gives the
+ * same illuminance 1 m away; a light without a range ends where it falls
+ * under 1/1000 of a unit of illuminance. `intensity_scale` multiplies the
+ * colour. Returns zero for an invalid index or a light that emits nothing. */
+int AeronScene_MeshLight(const AeronSceneMesh* mesh, uint32_t index, const float transform[16],
+						 float units_per_meter, const AeronSceneMeshTable* table, float intensity_scale,
+						 AeronSceneLight* out);
 
 /* Persistent clustered-forward point-light configuration. Tile size and the
  * low-light brute-force fallback are selected automatically per frame. */

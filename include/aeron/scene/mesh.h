@@ -120,6 +120,9 @@ typedef struct AeronSceneMesh {
 	/* Engine glows copied from the source flight model (owned). */
 	AeronFlightEngineGlow* engine_glows;
 	uint32_t               engine_glow_count;
+	/* Point lights copied from the source flight model (owned). */
+	AeronFlightLight* lights;
+	uint32_t          light_count;
 } AeronSceneMesh;
 
 typedef enum AeronSceneMeshCreateStatus {

@@ -89,6 +89,7 @@ positions stay in metres.
 |---|---|
 | `defaults` | Required: the Scene3D defaults file the game loads (`aeron/config/scene3d_defaults.yaml` from the OpenXWA root). Its SSAO and directional shadows apply; the capture keeps its own tonemap. |
 | `ssao`, `shadows` | `true` (default) or `false`, to turn either off. |
+| `model_light_intensity` | Intensity multiplier of the cockpit's model lights, as the game's `point_lights.model_light_intensity`; default 1, 0 turns them off. |
 | `cockpit_follows_camera` | `false` (default) or `true`. With a panning camera, `false` keeps the cockpit and exterior in place (the pilot looks around); `true` turns them with the camera (the craft turns), as the game carries its cockpit. |
 | `sun_direction`, `sun_color` | Surface-to-sun direction in camera axes (+X right, +Y down, +Z forward) and linear colour. The light block otherwise mirrors the game's `lighting` defaults. |
 | `ambient` | Linear ambient fill, default 0.08. |

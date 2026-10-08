@@ -168,6 +168,17 @@ typedef struct OptGltfScreen {
 	const char*      cover_name;
 } OptGltfScreen;
 
+/* A point light (KHR_lights_punctual) on the component built from OPT mesh
+ * `mesh`: position in OPT units, linear colour, intensity in candela and
+ * range in metres (0 = none). */
+typedef struct OptGltfLight {
+	int32_t mesh;
+	float   position[3];
+	float   color[3];
+	float   intensity;
+	float   range;
+} OptGltfLight;
+
 typedef struct OptGltfBuildOptions {
 	float smooth_angle_degrees;
 	bool  repair_normals;
@@ -191,6 +202,9 @@ typedef struct OptGltfBuildOptions {
 	/* Screen surfaces when set: one entry per OPT texture
 	 * (opt->texture_count); entries with `present` false are ordinary. */
 	const OptGltfScreen* screens;
+	/* Point lights, each on an existing OPT mesh. */
+	const OptGltfLight* lights;
+	size_t              light_count;
 } OptGltfBuildOptions;
 
 #define OPT_GLTF_MAX_SUBDIVIDE 8u

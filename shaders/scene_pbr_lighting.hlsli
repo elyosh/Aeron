@@ -624,7 +624,11 @@ float3 cook_torrance_spec(float3 N, float3 V, float3 L,
  * softened toward half-Lambert by the wrap knob so grazing hulls
  * under a passing bolt stay lit like the original. The per-light cap
  * mirrors the classic lit-color saturation (hue-preserving) — engine
- * glow sources saturate by design in the original law. */
+ * glow sources saturate by design in the original law.
+ *
+ * Lights with color.w > 0 (AERON_SCENE_LIGHT_FALLOFF_INVERSE_SQUARE, such
+ * as lights authored in models) are physical instead: win * color /
+ * max(d, color.w)^2, Lambert diffuse, no cap. */
 void accumulate_point_light(uint light_index, float3 N, float3 N_spec, float3 V,
                             float3 world_pos, PbrMaterialParams mp, float spec_mul,
                             inout float3 diff, inout float3 spec_out)
@@ -644,11 +648,18 @@ void accumulate_point_light(uint light_index, float3 N, float3 N_spec, float3 V,
     float  q2  = d2 / (r * r);
     float  win = 1.0f - q2 * q2;
     win        = win * win;
-    float3 radiance = point_light.color.rgb * (win * 0.5f / max(d, min_d));
-    if (cap > 0.0f) {
-        float m = max(radiance.r, max(radiance.g, radiance.b));
-        if (m > cap) {
-            radiance *= cap / m;
+    float3 radiance;
+    if (point_light.color.w > 0.0f) {
+        float near_d = max(d, point_light.color.w);
+        radiance     = point_light.color.rgb * (win / (near_d * near_d));
+        wrap         = 0.0f;
+    } else {
+        radiance = point_light.color.rgb * (win * 0.5f / max(d, min_d));
+        if (cap > 0.0f) {
+            float m = max(radiance.r, max(radiance.g, radiance.b));
+            if (m > cap) {
+                radiance *= cap / m;
+            }
         }
     }
     float ndotl = dot(N, L);

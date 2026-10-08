@@ -61,6 +61,18 @@ typedef struct AeronFlightEngineGlow {
 	bool            enabled;
 } AeronFlightEngineGlow;
 
+/* A KHR_lights_punctual point light on a "light" node under a component:
+ * model-space position (metres), linear colour, intensity in the glTF unit
+ * (candela: the illuminance it gives 1 m away, in the scene's lighting
+ * units) and range (metres; 0 when the glTF light has none). */
+typedef struct AeronFlightLight {
+	AeronFlightVec3 position;
+	float           color[3];
+	float           intensity;
+	float           range;
+	uint32_t        component_index;
+} AeronFlightLight;
+
 /* Game-defined component tag: lower-case ASCII letters, digits, '.' and '_'. */
 #define AERON_FLIGHT_TAG_MAX 64
 
@@ -106,6 +118,8 @@ typedef struct AeronFlightModel {
 	AeronFlightComponent*  components;
 	uint32_t               engine_glow_count;
 	AeronFlightEngineGlow* engine_glows;
+	uint32_t               light_count;
+	AeronFlightLight*      lights;
 	AeronFlightBounds      bounds;
 	float                  max_extent;
 	int32_t                bridge_component;
@@ -138,7 +152,8 @@ void Aeron_FlightModelReleaseRenderData(AeronFlightModel* model);
 /* Frees the data only simulation consumers read: each component's topology,
  * hardpoints, tags and cooked simulation data, and the cooked render data.
  * What AeronScene_MeshCreate reads stays: render data, render BVH,
- * component mesh types, rotations and bounds, engine glows and model bounds.
+ * component mesh types, rotations and bounds, engine glows, lights and model
+ * bounds.
  * For a game that builds its simulation data first and then hands the
  * model to its renderer. */
 void Aeron_FlightModelReleaseSimulationData(AeronFlightModel* model);

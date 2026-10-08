@@ -291,7 +291,7 @@ static int load_game_scene(AeronVfs* vfs, const AeronConfigFile* yaml, CaptureCo
 		return 1;
 	static const char* const keys[] = { "defaults", "ssao",    "shadows",      "sun_direction",
 										"sun_color", "ambient", "point_lights", "instances",
-										"cockpit_follows_camera" };
+										"cockpit_follows_camera", "model_light_intensity" };
 	CaptureGameScene*        game   = &config->game;
 	if (!only_keys(node, "game_scene", keys, sizeof keys / sizeof keys[0]))
 		return 0;
@@ -316,6 +316,16 @@ static int load_game_scene(AeronVfs* vfs, const AeronConfigFile* yaml, CaptureCo
 	int ssao, shadows;
 	if (!game_bool(node, "cockpit_follows_camera", 0, &game->cockpit_follows_camera))
 		return 0;
+	game->model_light_intensity                  = 1;
+	const AeronConfigNode* model_light_intensity = AeronConfigNode_MapGet(node, "model_light_intensity");
+	if (model_light_intensity) {
+		const double value = AeronConfigNode_Float(model_light_intensity, NAN);
+		if (!isfinite(value) || value < 0 || value > 64) {
+			fprintf(stderr, "game_scene.model_light_intensity must be 0..64\n");
+			return 0;
+		}
+		game->model_light_intensity = (float)value;
+	}
 	if (!game_bool(node, "ssao", 1, &ssao) || !game_bool(node, "shadows", 1, &shadows))
 		return 0;
 	if (!ssao)

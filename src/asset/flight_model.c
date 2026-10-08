@@ -18,6 +18,7 @@ typedef enum FlightNodeRole {
 	FLIGHT_ROLE_HARDPOINT,
 	FLIGHT_ROLE_ENGINE_GLOW,
 	FLIGHT_ROLE_COLLISION,
+	FLIGHT_ROLE_LIGHT,
 	FLIGHT_ROLE_INVALID,
 } FlightNodeRole;
 
@@ -58,6 +59,8 @@ static FlightNodeRole json_role(const cJSON* object) {
 		return FLIGHT_ROLE_ENGINE_GLOW;
 	if (strcmp(role->valuestring, "collision") == 0)
 		return FLIGHT_ROLE_COLLISION;
+	if (strcmp(role->valuestring, "light") == 0)
+		return FLIGHT_ROLE_LIGHT;
 	return FLIGHT_ROLE_INVALID;
 }
 
@@ -727,6 +730,46 @@ static bool append_engine_glows(const cgltf_node* node, uint32_t component_index
 	return true;
 }
 
+/* Point lights on "light" children (KHR_lights_punctual). Other light types
+ * are skipped with a warning; malformed values reject the model. */
+static bool append_lights(const cgltf_node* node, uint32_t component_index, AeronFlightModel* model) {
+	for (cgltf_size index = 0; index < node->children_count; ++index) {
+		const cgltf_node* child = node->children[index];
+		if (node_role(child) != FLIGHT_ROLE_LIGHT)
+			continue;
+		const cgltf_light* light = child->light;
+		if (child->mesh || child->children_count || child->has_matrix || !finite_node_transform(child) || !light)
+			return false;
+		if (light->type != cgltf_light_type_point) {
+			SDL_Log("[flight_model] light '%s' is not a point light; ignored", child->name ? child->name : "");
+			continue;
+		}
+		for (int channel = 0; channel < 3; ++channel)
+			if (!isfinite(light->color[channel]) || light->color[channel] < 0.0f)
+				return false;
+		if (!isfinite(light->intensity) || light->intensity < 0.0f || !isfinite(light->range) ||
+			light->range < 0.0f)
+			return false;
+		AeronFlightLight* grown = realloc(model->lights, (size_t)(model->light_count + 1) * sizeof *model->lights);
+		if (!grown)
+			return false;
+		model->lights        = grown;
+		AeronFlightLight* out = &grown[model->light_count++];
+		memset(out, 0, sizeof *out);
+		float matrix[16];
+		float origin[3] = { 0.0f, 0.0f, 0.0f };
+		float transformed[3];
+		cgltf_node_transform_world(child, matrix);
+		transform_point(matrix, origin, transformed);
+		gltf_to_aeron(transformed, &out->position);
+		memcpy(out->color, light->color, sizeof out->color);
+		out->intensity       = light->intensity;
+		out->range           = light->range;
+		out->component_index = component_index;
+	}
+	return true;
+}
+
 static bool build_semantics(const cgltf_data* data, AeronFlightModel* model) {
 	if (!data->scene || data->scene->nodes_count != 1 || data->animations_count || data->skins_count)
 		return false;
@@ -751,11 +794,12 @@ static bool build_semantics(const cgltf_data* data, AeronFlightModel* model) {
 			return false;
 		for (cgltf_size child = 0; child < node->children_count; ++child) {
 			const FlightNodeRole role = node_role(node->children[child]);
-			if (role != FLIGHT_ROLE_HARDPOINT && role != FLIGHT_ROLE_ENGINE_GLOW && role != FLIGHT_ROLE_COLLISION)
+			if (role != FLIGHT_ROLE_HARDPOINT && role != FLIGHT_ROLE_ENGINE_GLOW && role != FLIGHT_ROLE_COLLISION &&
+				role != FLIGHT_ROLE_LIGHT)
 				return false;
 		}
 		if (!build_component_semantics(data, node, component) || !build_hardpoints(node, component) ||
-			!append_engine_glows(node, index, component, model))
+			!append_engine_glows(node, index, component, model) || !append_lights(node, index, model))
 			return false;
 		if (component->mesh_type == 7 && model->bridge_component < 0)
 			model->bridge_component = (int32_t)index;
@@ -774,7 +818,8 @@ static bool build_semantics(const cgltf_data* data, AeronFlightModel* model) {
 		const FlightNodeRole role = node_role(node);
 		if (role == FLIGHT_ROLE_INVALID || (role == FLIGHT_ROLE_MODEL && node != root) ||
 			(role == FLIGHT_ROLE_COMPONENT && node->parent != root) ||
-			((role == FLIGHT_ROLE_HARDPOINT || role == FLIGHT_ROLE_ENGINE_GLOW || role == FLIGHT_ROLE_COLLISION) &&
+			((role == FLIGHT_ROLE_HARDPOINT || role == FLIGHT_ROLE_ENGINE_GLOW || role == FLIGHT_ROLE_COLLISION ||
+			  role == FLIGHT_ROLE_LIGHT) &&
 			 (!node->parent || node_role(node->parent) != FLIGHT_ROLE_COMPONENT ||
 			  node->parent->parent != root)))
 			return false;
@@ -929,6 +974,7 @@ void Aeron_FlightModelFreeSemantics(AeronFlightModel* model) {
 	}
 	free(model->components);
 	free(model->engine_glows);
+	free(model->lights);
 	free(model->render_data);
 	/* Render data has its own release path; leave it untouched. */
 	const AeronGltfModel render     = model->render;

@@ -51,6 +51,7 @@ void AeronScene_MeshDestroy(AeronSceneMesh* m) {
 		}
 	}
 	free(m->engine_glows);
+	free(m->lights);
 	free(m->cpu_vertices);
 	free(m->cpu_indices);
 	AeronFaceBvh_Free(m->render_bvh);
@@ -425,6 +426,19 @@ AeronSceneMesh* AeronScene_MeshCreate(AeronCommandBuffer* cmd, const AeronFlight
 		memcpy(s->engine_glows, flight_model->engine_glows,
 			   flight_model->engine_glow_count * sizeof *s->engine_glows);
 		s->engine_glow_count = flight_model->engine_glow_count;
+	}
+
+	/* ---- Point lights (owned copy) ---- */
+	if (flight_model->light_count > 0 && flight_model->lights) {
+		s->lights = (AeronFlightLight*)malloc(flight_model->light_count * sizeof *s->lights);
+		if (!s->lights) {
+			Aeron_LogError("aeron.scene", "%s: light allocation failed", name);
+			close_channel_payloads(channel_payloads);
+			AeronScene_MeshDestroy(s);
+			return NULL;
+		}
+		memcpy(s->lights, flight_model->lights, flight_model->light_count * sizeof *s->lights);
+		s->light_count = flight_model->light_count;
 	}
 
 	/* ---- Channel atlases (4 BC7 KTX2 blobs from the GLB BIN chunk) ----

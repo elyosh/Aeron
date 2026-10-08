@@ -143,7 +143,8 @@ typedef struct AeronSceneClusterLightGPU {
 	float    view_position_range[4];
 	uint32_t point_light_index;
 	float    luminance;
-	float    _pad[2];
+	float    inverse_square_min_distance; /* 0 = classic law */
+	float    _pad;
 } AeronSceneClusterLightGPU;
 
 typedef struct AeronSceneClusterHeaderGPU {

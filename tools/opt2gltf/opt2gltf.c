@@ -490,6 +490,8 @@ typedef struct {
 	size_t                  nodes_count, nodes_cap;
 	cgltf_node**            root_children;
 	size_t                  root_children_count;
+	cgltf_light*            lights;
+	size_t                  lights_count;
 
 	/* Stable strings emitted into the JSON (cgltf doesn't deep-copy on
 	 * write — we own the pointer lifetimes). */
@@ -2335,7 +2337,22 @@ static bool build_memory(const opt_file_t* opt, const char* basename, const OptG
 		total_hardpoints += opt->meshes[mi].hardpoint_count;
 		total_glows += opt->meshes[mi].engine_glow_count;
 	}
-	size_t total_nodes = 1 + total_meshes + total_hardpoints + total_glows;
+	const size_t total_lights = options ? options->light_count : 0;
+	for (size_t li = 0; li < total_lights; ++li) {
+		if (options->lights[li].mesh < 0 || options->lights[li].mesh >= opt->mesh_count) {
+			if (error)
+				snprintf(error->msg, sizeof error->msg, "light %zu names OPT mesh %d of %d", li,
+						 (int)options->lights[li].mesh, (int)opt->mesh_count);
+			goto fail;
+		}
+	}
+	if (total_lights) {
+		build->lights = (cgltf_light*)calloc(total_lights, sizeof *build->lights);
+		if (!build->lights)
+			goto fail;
+		build->lights_count = total_lights;
+	}
+	size_t total_nodes = 1 + total_meshes + total_hardpoints + total_glows + total_lights;
 	build->nodes       = (cgltf_node*)calloc(total_nodes, sizeof *build->nodes);
 	if (!build->nodes) {
 		fprintf(stderr, "opt2gltf: oom\n");
@@ -2353,8 +2370,8 @@ static bool build_memory(const opt_file_t* opt, const char* basename, const OptG
 	/* Layout in build->nodes[]:
 	 *   [0]                   = scene root
 	 *   [1 .. total_meshes]   = per-mesh nodes
-	 *   [1+total_meshes ..]   = hardpoint + engine-glow child nodes,
-	 *                           contiguous per parent mesh */
+	 *   [1+total_meshes ..]   = hardpoint + engine-glow + light child
+	 *                           nodes, contiguous per parent mesh */
 	cgltf_node* root_node = &build->nodes[0];
 	root_node->name       = gb_keep_string(build, xprintf_dup("OPT_%s", basename));
 	if (!set_flight_extension(build, root_node, "{\"role\":\"model\"}"))
@@ -2481,9 +2498,13 @@ static bool build_memory(const opt_file_t* opt, const char* basename, const OptG
 		if (!extension_set)
 			goto fail;
 
-		/* Child nodes: hardpoints first, then engine glows (both emitted
-		 * as empties so Blender and other tools surface them). */
-		int child_total = m->hardpoint_count + m->engine_glow_count;
+		/* Child nodes: hardpoints, engine glows, then lights (emitted as
+		 * empties so Blender and other tools surface them). */
+		int mesh_lights = 0;
+		for (size_t li = 0; li < total_lights; ++li)
+			if (options->lights[li].mesh == mi)
+				++mesh_lights;
+		int child_total = m->hardpoint_count + m->engine_glow_count + mesh_lights;
 		if (child_total > 0) {
 			cgltf_node** children = (cgltf_node**)calloc(child_total, sizeof *children);
 			if (!children) {
@@ -2549,6 +2570,31 @@ static bool build_memory(const opt_file_t* opt, const char* basename, const OptG
 					goto fail;
 				children[ci++] = egn;
 			}
+			for (size_t li = 0; li < total_lights; ++li) {
+				const OptGltfLight* source = &options->lights[li];
+				if (source->mesh != mi)
+					continue;
+				cgltf_light* light = &build->lights[li];
+				light->name        = gb_keep_string(build, xprintf_dup("light_%zu", li));
+				light->type        = cgltf_light_type_point;
+				memcpy(light->color, source->color, sizeof light->color);
+				light->intensity = source->intensity;
+				light->range     = source->range;
+				cgltf_node* ln   = next_child_node++;
+				ln->parent       = node;
+				ln->name         = light->name;
+				ln->light        = light;
+				const opt_vec3_t position = { source->position[0], source->position[1], source->position[2] };
+				float            pos[3];
+				swap_axis_v3(&position, pos);
+				ln->has_translation = 1;
+				ln->translation[0]  = pos[0] * meters_per_opt_unit;
+				ln->translation[1]  = pos[1] * meters_per_opt_unit;
+				ln->translation[2]  = pos[2] * meters_per_opt_unit;
+				if (!set_flight_extension(build, ln, "{\"role\":\"light\"}"))
+					goto fail;
+				children[ci++] = ln;
+			}
 			node->children       = children;
 			node->children_count = child_total;
 		}
@@ -2598,6 +2644,8 @@ static bool build_memory(const opt_file_t* opt, const char* basename, const OptG
 	document->data.scene              = &document->scene;
 	document->data.variants           = build->variants;
 	document->data.variants_count     = build->variants_count;
+	document->data.lights             = build->lights;
+	document->data.lights_count       = build->lights_count;
 
 	/* Declare the flight contract and optional material variants. */
 	const char*  ext_flight        = "AERON_flight_model";
@@ -2688,6 +2736,7 @@ void OptGltf_Free(OptGltfDocument* document) {
 	free(gb->views);
 	free(gb->accessors);
 	free(gb->nodes);
+	free(gb->lights);
 	free(gb->buffer.data ? gb->buffer.data : gb->bin);
 	free(document->data.extensions_used);
 

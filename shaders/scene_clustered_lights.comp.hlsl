@@ -9,7 +9,8 @@ struct ClusterLight {
 	float4 view_position_range;
 	uint   point_light_index;
 	float  luminance;
-	float2 _pad;
+	float  inverse_square_min_distance; /* 0 = classic law */
+	float  _pad;
 };
 
 StructuredBuffer<ClusterLight> g_lights : register(t0, space0);
@@ -127,10 +128,16 @@ bool candidate_better(float score, uint index, float best_score, uint best_index
 		for (uint i = 0u; i < candidate_count; ++i) {
 			ClusterLight light            = g_lights[s_candidate_lights[i]];
 			float nearest_distance = sqrt(s_candidate_values[i]);
-			float score            = light.luminance * 0.5f /
-								 max(nearest_distance, max(fs_cluster_point_min_distance, 1.0f));
-			if (fs_cluster_point_contribution_cap > 0.0f)
-				score = min(score, fs_cluster_point_contribution_cap);
+			float score;
+			if (light.inverse_square_min_distance > 0.0f) {
+				float d = max(nearest_distance, light.inverse_square_min_distance);
+				score   = light.luminance / (d * d);
+			} else {
+				score = light.luminance * 0.5f /
+						max(nearest_distance, max(fs_cluster_point_min_distance, 1.0f));
+				if (fs_cluster_point_contribution_cap > 0.0f)
+					score = min(score, fs_cluster_point_contribution_cap);
+			}
 			s_candidate_values[i] = score;
 			s_candidate_lights[i] = light.point_light_index;
 		}

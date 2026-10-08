@@ -5,7 +5,8 @@
  * Usage:
  *   opt2gltf [--smooth-angle DEG] [--emissive] [--fullbright STRENGTH]
  *            [--tag N=TAG]... [--subdivide N] [--cockpit-eye X,Y,Z]
- *            [--xwau-root DIR]... [--dynamic-cockpit FILE.dc]
+ *            [--cockpit-light X,Y,Z] [--xwau-root DIR]...
+ *            [--dynamic-cockpit FILE.dc]
  *            <input.opt|input_dir> <output_dir>
  *
  * If the input is a directory, every *.OPT inside (case-insensitive)
@@ -44,6 +45,13 @@
  * are replaced by one at (X, -Y, Z) on the first MainHull mesh (mesh 0
  * without one). The game reads the eye from the craft model's Cockpit
  * hardpoint; OpenXWA applies all three axes for GLB replacements.
+ *
+ * --cockpit-light X,Y,Z (single OPT only) adds a dim point light at the
+ * pilot eye given in craft-table units, as --cockpit-eye, for a cockpit
+ * model (which shares its craft's frame): white, COCKPIT_LIGHT_INTENSITY
+ * candela, COCKPIT_LIGHT_RANGE metres, on the first MainHull mesh (mesh 0
+ * without one). It lights the interior softly from the viewpoint, so its
+ * shadows would be hidden anyway.
  *
  * --subdivide N (development only, N <= 8) splits every triangle into four
  * by its edge midpoints N times, multiplying the face count by 4^N, to
@@ -333,23 +341,35 @@ static int convert_xwau(opt_file_t* opt, const char* out_dir, const char* basena
  * given in craft-table units (CockpitPovX/Y/Z): ModelMesh_GetHardpoint
  * returns (x, -y, z), so the eye's Y is the hardpoint's -y. It goes on the
  * first MainHull mesh, or mesh 0. */
-static int apply_cockpit_eye(opt_file_t* opt, const int eye[3]) {
-	opt_mesh_t* owner = NULL;
+/* The first MainHull mesh, or mesh 0; -1 without meshes. */
+static int32_t main_hull_mesh(const opt_file_t* opt) {
 	for (int32_t mi = 0; mi < opt->mesh_count; ++mi) {
-		opt_mesh_t* m = &opt->meshes[mi];
+		const opt_mesh_t* m = &opt->meshes[mi];
+		if (m->has_descriptor && m->descriptor.mesh_type == OPT_MT_MAIN_HULL)
+			return mi;
+	}
+	return opt->mesh_count > 0 ? 0 : -1;
+}
+
+/* Dim interior light of --cockpit-light: illuminance 0.1 at about 0.7 m,
+ * against 0.8 for the configured sun. */
+#define COCKPIT_LIGHT_INTENSITY 0.05f
+#define COCKPIT_LIGHT_RANGE 3.0f
+
+static int apply_cockpit_eye(opt_file_t* opt, const int eye[3]) {
+	for (int32_t mi = 0; mi < opt->mesh_count; ++mi) {
+		opt_mesh_t* m    = &opt->meshes[mi];
 		int32_t     kept = 0;
 		for (int32_t hi = 0; hi < m->hardpoint_count; ++hi) {
 			if ((int)m->hardpoints[hi].type != OPT_GLTF_COCKPIT_HARDPOINT)
 				m->hardpoints[kept++] = m->hardpoints[hi];
 		}
 		m->hardpoint_count = kept;
-		if (!owner && m->has_descriptor && m->descriptor.mesh_type == OPT_MT_MAIN_HULL)
-			owner = m;
 	}
-	if (!owner && opt->mesh_count > 0)
-		owner = &opt->meshes[0];
-	if (!owner)
+	const int32_t owner_index = main_hull_mesh(opt);
+	if (owner_index < 0)
 		return 0;
+	opt_mesh_t* owner = &opt->meshes[owner_index];
 	opt_hardpoint_t* grown =
 		(opt_hardpoint_t*)realloc(owner->hardpoints, (size_t)(owner->hardpoint_count + 1) * sizeof *grown);
 	if (!grown)
@@ -364,8 +384,8 @@ static int apply_cockpit_eye(opt_file_t* opt, const int eye[3]) {
 }
 
 static int convert_one(const char* opt_path, const char* out_dir, const char* basename,
-					   const OptGltfBuildOptions* options, const XwauContext* xwau, const int* cockpit_eye,
-					   const char* dynamic_cockpit) {
+					   const OptGltfBuildOptions* base_options, const XwauContext* xwau, const int* cockpit_eye,
+					   const int* cockpit_light, const char* dynamic_cockpit) {
 	opt_error_t err;
 	opt_file_t* opt = opt_load_file(opt_path, &err);
 	if (!opt) {
@@ -377,6 +397,25 @@ static int convert_one(const char* opt_path, const char* out_dir, const char* ba
 		opt_free(opt);
 		return 0;
 	}
+	OptGltfBuildOptions options_with_light = *base_options;
+	OptGltfLight        light;
+	if (cockpit_light) {
+		light = (OptGltfLight) {
+			.mesh      = main_hull_mesh(opt),
+			.position  = { (float)cockpit_light[0], (float)-cockpit_light[1], (float)cockpit_light[2] },
+			.color     = { 1.0f, 1.0f, 1.0f },
+			.intensity = COCKPIT_LIGHT_INTENSITY,
+			.range     = COCKPIT_LIGHT_RANGE,
+		};
+		if (light.mesh < 0) {
+			fprintf(stderr, "opt2gltf: %s: no mesh for the cockpit light\n", opt_path);
+			opt_free(opt);
+			return 0;
+		}
+		options_with_light.lights      = &light;
+		options_with_light.light_count = 1;
+	}
+	const OptGltfBuildOptions* options = &options_with_light;
 	DynamicCockpit dc = { 0 };
 	if (dynamic_cockpit) {
 		if (!DynamicCockpit_Load(dynamic_cockpit, opt, basename, xwau_find_file, (void*)xwau, &dc, opt_path) ||
@@ -412,6 +451,8 @@ int main(int argc, char** argv) {
 	unsigned long        subdivide_levels = 0;
 	int                  cockpit_eye[3];
 	bool                 has_cockpit_eye = false;
+	int                  cockpit_light[3];
+	bool                 has_cockpit_light = false;
 	const char*          dynamic_cockpit = NULL;
 	XwauContext          xwau             = { 0 };
 	int                  ai               = 1;
@@ -466,22 +507,26 @@ int main(int argc, char** argv) {
 			}
 			xwau.roots[xwau.root_count++] = argv[ai + 1];
 			ai += 2;
-		} else if (strcmp(argv[ai], "--cockpit-eye") == 0) {
-			char end = 0;
-			if (ai + 1 >= argc || sscanf(argv[ai + 1], "%d,%d,%d%c", &cockpit_eye[0], &cockpit_eye[1],
-										 &cockpit_eye[2], &end) != 3) {
-				fprintf(stderr, "opt2gltf: --cockpit-eye needs X,Y,Z (craft-table units)\n");
+		} else if (strcmp(argv[ai], "--cockpit-eye") == 0 || strcmp(argv[ai], "--cockpit-light") == 0) {
+			const bool light = strcmp(argv[ai], "--cockpit-light") == 0;
+			int*       eye   = light ? cockpit_light : cockpit_eye;
+			char       end   = 0;
+			if (ai + 1 >= argc || sscanf(argv[ai + 1], "%d,%d,%d%c", &eye[0], &eye[1], &eye[2], &end) != 3) {
+				fprintf(stderr, "opt2gltf: %s needs X,Y,Z (craft-table units)\n", argv[ai]);
 				free(tags);
 				return 2;
 			}
 			for (int k = 0; k < 3; ++k) {
-				if (cockpit_eye[k] < -32768 || cockpit_eye[k] > 32767) {
-					fprintf(stderr, "opt2gltf: --cockpit-eye values must fit in 16 bits\n");
+				if (eye[k] < -32768 || eye[k] > 32767) {
+					fprintf(stderr, "opt2gltf: %s values must fit in 16 bits\n", argv[ai]);
 					free(tags);
 					return 2;
 				}
 			}
-			has_cockpit_eye = true;
+			if (light)
+				has_cockpit_light = true;
+			else
+				has_cockpit_eye = true;
 			ai += 2;
 		} else if (strcmp(argv[ai], "--dynamic-cockpit") == 0) {
 			if (ai + 1 >= argc) {
@@ -510,7 +555,8 @@ int main(int argc, char** argv) {
 		fprintf(stderr,
 				"usage: %s [--smooth-angle DEG] [--no-normal-repair] "
 				"[--emissive] [--fullbright STRENGTH] [--tag N=TAG]... [--subdivide N] "
-				"[--cockpit-eye X,Y,Z] [--xwau-root DIR]... [--dynamic-cockpit FILE.dc] "
+				"[--cockpit-eye X,Y,Z] [--cockpit-light X,Y,Z] [--xwau-root DIR]... "
+				"[--dynamic-cockpit FILE.dc] "
 				"<input.OPT|input_dir> <output_dir>\n",
 				argv[0]);
 		free(tags);
@@ -551,8 +597,9 @@ int main(int argc, char** argv) {
 		return 1;
 	}
 
-	if (S_ISDIR(st.st_mode) && (has_cockpit_eye || dynamic_cockpit)) {
-		fprintf(stderr, "opt2gltf: --cockpit-eye and --dynamic-cockpit apply to a single OPT, not a directory\n");
+	if (S_ISDIR(st.st_mode) && (has_cockpit_eye || has_cockpit_light || dynamic_cockpit)) {
+		fprintf(stderr, "opt2gltf: --cockpit-eye, --cockpit-light and --dynamic-cockpit apply to a single OPT, "
+						"not a directory\n");
 		free(tags);
 		return 2;
 	}
@@ -561,7 +608,8 @@ int main(int argc, char** argv) {
 		free(tags);
 		return 2;
 	}
-	const int* cockpit_eye_arg = has_cockpit_eye ? cockpit_eye : NULL;
+	const int* cockpit_eye_arg   = has_cockpit_eye ? cockpit_eye : NULL;
+	const int* cockpit_light_arg = has_cockpit_light ? cockpit_light : NULL;
 	if (S_ISDIR(st.st_mode)) {
 		DIR* d = opendir(in);
 		if (!d) {
@@ -582,7 +630,7 @@ int main(int argc, char** argv) {
 			strip_ext(base, sizeof base, de->d_name);
 			char out_sub[1024];
 			snprintf(out_sub, sizeof out_sub, "%s/%s", outd, base);
-			if (convert_one(src, out_sub, base, &options, xwau_ctx, cockpit_eye_arg, NULL))
+			if (convert_one(src, out_sub, base, &options, xwau_ctx, cockpit_eye_arg, cockpit_light_arg, NULL))
 				++ok_count;
 			else
 				++fail_count;
@@ -596,7 +644,10 @@ int main(int argc, char** argv) {
 		const char* fname = slash ? slash + 1 : in;
 		char        base[256];
 		strip_ext(base, sizeof base, fname);
-		status = convert_one(in, outd, base, &options, xwau_ctx, cockpit_eye_arg, dynamic_cockpit) ? 0 : 1;
+		status = convert_one(in, outd, base, &options, xwau_ctx, cockpit_eye_arg, cockpit_light_arg,
+							 dynamic_cockpit)
+					 ? 0
+					 : 1;
 	}
 	free(tags);
 	return status;
