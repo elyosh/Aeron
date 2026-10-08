@@ -223,9 +223,10 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
     float3 L = fs_directional_dir;
     float  ndotl = saturate(dot(N, L));
 
-    float wrap_n = saturate((ndotl + light_wrap) / (1.0f + light_wrap));
-    wrap_n = lerp(wrap_n, wrap_n * wrap_n, light_wrap);
-    float  lambert_term = saturate(wrap_n * light_intensity);
+    /* Lights carry illuminance: the Lambert BRDF is albedo / pi, as for
+     * the environment's irradiance, consistent with the GGX specular. */
+    const float inv_pi = 0.31830989f;
+    float  lambert_term = ndotl * inv_pi;
     float3 ambient_rgb  = world_ambient(N);
     /* Kept apart from the ambient so specular image-based lighting can
      * take its Fresnel share (1 - F_ss) below. */
@@ -258,9 +259,9 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
             shadow_visibility = screen_shadow_visibility;
         } else {
             /* The shadow scales only the sun's diffuse and specular terms.
-             * Without wrap both are zero when N and N_face (and so N_spec,
-             * their blend) face away from the light: skip the lookup. */
-            float shadow_ndotl = light_wrap > 0.0f ? 1.0f : max(dot(N, L), dot(N_face, L));
+             * Both are zero when N and N_face (and so N_spec, their
+             * blend) face away from the light: skip the lookup. */
+            float shadow_ndotl = max(dot(N, L), dot(N_face, L));
             /* Opaque receivers read the screen pass, so outside the debug
              * variant (whose cascade view needs this path) only blended
              * materials come here: one comparison, as a soft penumbra is not
@@ -284,7 +285,7 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
      * specular; zero-color slots contribute nothing). */
     float3 extra_rgb = float3(0.0f, 0.0f, 0.0f);
     [unroll] for (int ed = 0; ed < 3; ed++) {
-        extra_rgb += saturate(dot(N, fs_extra_dir[ed].xyz)) * fs_extra_col[ed].rgb;
+        extra_rgb += saturate(dot(N, fs_extra_dir[ed].xyz)) * inv_pi * fs_extra_col[ed].rgb;
     }
     float3 base_rgb = albedo *
         ((sun_color * lambert_term * shadow_visibility + extra_rgb) * ao_direct + ambient_rgb * ao);
@@ -374,17 +375,16 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
     float  G_term;
     float3 spec_brdf = cook_torrance_spec(N_spec, V, L, mp, G_term);
     float3 spec_rgb  = spec_brdf
-                     * (sun_color * mp.spec_intensity * global_spec_mul)
+                     * (sun_color * mp.spec_intensity)
                      * shadow_visibility;
 
     /* Clustered punctual lights (laser bolts, explosions, engine
-     * glows): windowed classic 1/d attenuation, Lambert diffuse + per-light
-     * spec. Untouched by AO like the per-instance local lights. */
+     * glows): windowed inverse-square spheres and tubes, Lambert diffuse
+     * and per-light specular. Untouched by AO. */
     if (fs_cluster_point_count > 0u) {
         float3 point_diff = accumulate_point_lights(N, N_spec, V, i.world_pos,
-                                                    i.position.xy, mp,
-                                                    global_spec_mul, spec_rgb);
-        base_rgb += albedo * (1.0f - metallic) * point_diff;
+                                                    i.position.xy, mp, spec_rgb);
+        base_rgb += albedo * (1.0f - metallic) * inv_pi * point_diff;
     }
 
     float3 lit = base_rgb + spec_rgb + spec_ibl_rgb;

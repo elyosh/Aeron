@@ -359,10 +359,11 @@ static int load_game_scene(AeronVfs* vfs, const AeronConfigFile* yaml, CaptureCo
 		game->ssao.ssao_quality = 0;
 	game->shadows.enabled = game->shadows.enabled && shadows;
 
-	/* Lighting as resources/remaster/config.yaml's `lighting` defaults. */
+	/* Lighting as resources/remaster/config.yaml's `lighting` defaults: a
+	 * white classic sun of intensity 1 at sun_illuminance_scale 2.513. */
 	const float default_direction[3] = { -.5f, -.6f, .62f };
 	memcpy(game->sun_direction, default_direction, sizeof default_direction);
-	game->sun_color[0] = game->sun_color[1] = game->sun_color[2] = 1;
+	game->sun_color[0] = game->sun_color[1] = game->sun_color[2] = 2.513f;
 	game->ambient                                            = .08f;
 	const AeronConfigNode* direction = AeronConfigNode_MapGet(node, "sun_direction");
 	const AeronConfigNode* color     = AeronConfigNode_MapGet(node, "sun_color");

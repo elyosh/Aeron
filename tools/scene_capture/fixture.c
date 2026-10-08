@@ -331,13 +331,13 @@ static void add_objects(AeronScene3D* scene, const Fixture* f) {
 
 static void set_lighting(AeronScene3D* scene, const CaptureConfig* config) {
 	/* Float4 rows of PbrLightFS in scene_pbr_lighting.hlsli, FS b1.
-	 * Camera stays at the origin; the light remains fixed in world space. */
+	 * Camera stays at the origin; the light remains fixed in world space.
+	 * Its illuminance of 0.9 pi lights a white Lambert surface to 0.9. */
 	float light[23][4] = {
-		[0] = { 1, 0, 0, 0 }, /* diffuse intensity; specular disabled */
 		[1] = { 0, 0, 1, (float)config->width },
 		[2] = { (float)config->height, 0, 1, 0 },
 		[4] = { .32444284f, .48666426f, .81110711f, 0 },
-		[5] = { .9f, .9f, .9f, 0 },
+		[5] = { 2.8274334f, 2.8274334f, 2.8274334f, 0 },
 	};
 	for (int row = 6; row < 12; ++row)
 		for (int channel = 0; channel < 3; ++channel)
@@ -468,15 +468,13 @@ static void add_game_instances(AeronScene3D* scene, const Fixture* f, const Aero
 	}
 }
 
-/* The PbrLightFS block as XwaRemasterShip_SetPbrEnv fills it with
- * resources/remaster/config.yaml's `lighting` and `point_lights` defaults. */
+/* The PbrLightFS block as XwaRemasterShip_SetPbrEnv fills it; sun_color is
+ * the illuminance, after the game's lighting.sun_illuminance_scale. */
 static void set_game_lighting(AeronScene3D* scene, const CaptureConfig* config) {
 	const CaptureGameScene* game = &config->game;
 	float                   light[23][4] = {
-		[0]  = { .8f, 1, 0, 0 }, /* intensity, specular, debug term, wrap */
-		[1]  = { 0, game->ssao.ssao_intensity, game->ssao.ssao_power, 0 }, /* reserved, AO, reserved */
-		[2]  = { 0, game->ssao.ssao_direct, 1, 0 },                      /* reserved, AO, spec_geom_adapt */
-		[18] = { 0, 1, 0, 0 },                                          /* reserved, point-light spec, reserved, reserved */
+		[1] = { 0, game->ssao.ssao_intensity, game->ssao.ssao_power, 0 }, /* reserved, AO, reserved */
+		[2] = { 0, game->ssao.ssao_direct, 1, 0 },                      /* reserved, AO, spec_geom_adapt */
 	};
 	for (int k = 0; k < 3; ++k) {
 		light[4][k] = game->sun_direction[k];

@@ -35,10 +35,10 @@ struct PbrMaterialParams
  * Pushed once per pass by the host. */
 cbuffer PbrLightFS : register(AERON_PBR_LIGHT_UNIFORM_REGISTER, space3)
 {
-    float light_intensity;
-    float global_spec_mul;
+    float reserved_sun_gain; /* formerly the sun's diffuse gain */
+    float reserved_spec_mul; /* formerly the specular multiplier */
     float debug_isolate_term;
-    float light_wrap;
+    float reserved_wrap;     /* formerly the wrap-lighting amount */
     float reserved_xvt; /* formerly the XvT flat-shading switch */
     float ssao_intensity;
     float ssao_power;
@@ -60,13 +60,13 @@ cbuffer PbrLightFS : register(AERON_PBR_LIGHT_UNIFORM_REGISTER, space3)
     float3 amb_neg_z;             float _pad_amb_nz;
     /* Additional diffuse-only directional lights (XWA scenes carry
      * several backdrop suns/planets; the classic sums plain Lambert
-     * contributions per light — no wrap, no specular). Unused slots
-     * have zero color. dir = surface -> light. */
+     * contributions per light, with no specular). Unused slots have zero
+     * illuminance. dir = surface -> light. */
     float4 fs_extra_dir[3];
     float4 fs_extra_col[3];
-    /* Point-light evaluation: y = specular weight; x, z and w reserved
-     * (formerly the classic law's knobs). */
-	float4 fs_point_params;
+    /* Reserved: formerly the point-light knobs (the classic law's, then
+     * the specular weight). */
+	float4 fs_reserved_point;
 	/* Reserved: formerly the diffuse environment, now in the scene
 	 * lighting block (b2). Keeps the 368-byte layout games mirror. */
 	float4 fs_reserved_environment[4];
@@ -453,8 +453,7 @@ float3 world_ambient(float3 N)
  * Roughness is on a perceptual 0..1 scale; α = roughness² puts artist
  * values on a more linear lobe-sharpness curve. The ε on N·V avoids a
  * divide-by-zero at silhouettes. Caller multiplies in `spec_intensity`
- * and `global_spec_mul` and gates with whatever spec_gate it derives
- * from its own diffuse path.
+ * and the light's illuminance.
  *
  * `out_G` returns the Smith-Smith G product so the caller's debug-
  * isolate path can visualise it as a grayscale grid. */
@@ -486,9 +485,9 @@ float3 cook_torrance_spec(float3 N, float3 V, float3 L,
 }
 
 /* Clustered punctual-light accumulator. Returns the summed diffuse
- * RADIANCE (caller multiplies by albedo x (1-metallic)) and adds the
- * per-light Cook-Torrance specular into `spec_out` (already scaled by
- * spec_intensity x spec_mul x fs_point_params.y).
+ * ILLUMINANCE x N.L (the caller applies the Lambert BRDF, albedo x
+ * (1-metallic) / pi) and adds the per-light Cook-Torrance specular into
+ * `spec_out` (already scaled by spec_intensity).
  *
  * Lights are physical spheres of radius color.w giving
  * win * color / max(d, color.w)^2 with Lambert diffuse, where the
@@ -510,7 +509,7 @@ float3 cook_torrance_spec(float3 N, float3 V, float3 L,
  * length): the stretched highlight reflects about the energy of the
  * unstretched one. */
 void accumulate_point_light(uint light_index, float3 N, float3 N_spec, float3 V,
-                            float3 world_pos, PbrMaterialParams mp, float spec_mul,
+                            float3 world_pos, PbrMaterialParams mp,
                             inout float3 diff, inout float3 spec_out)
 {
     PbrPointLight point_light = fs_point_lights[light_index];
@@ -528,18 +527,15 @@ void accumulate_point_light(uint light_index, float3 N, float3 N_spec, float3 V,
     float  near_d = max(d, point_light.color.w);
     float3 radiance = point_light.color.rgb * (win / (near_d * near_d));
     diff += radiance * saturate(dot(N, L));
-    if (fs_point_params.y > 0.0f) {
-        PbrMaterialParams spec_mp = mp;
-        float alpha = saturate(mp.roughness * mp.roughness + point_light.color.w / (2.0f * near_d));
-        spec_mp.roughness = sqrt(alpha);
-        float g_unused;
-        spec_out += cook_torrance_spec(N_spec, V, L, spec_mp, g_unused) * radiance *
-                    (mp.spec_intensity * spec_mul * fs_point_params.y);
-    }
+    PbrMaterialParams spec_mp = mp;
+    float alpha = saturate(mp.roughness * mp.roughness + point_light.color.w / (2.0f * near_d));
+    spec_mp.roughness = sqrt(alpha);
+    float g_unused;
+    spec_out += cook_torrance_spec(N_spec, V, L, spec_mp, g_unused) * radiance * mp.spec_intensity;
 }
 
 void accumulate_tube_light(uint light_index, float3 N, float3 N_spec, float3 V,
-                           float3 world_pos, PbrMaterialParams mp, float spec_mul,
+                           float3 world_pos, PbrMaterialParams mp,
                            inout float3 diff, inout float3 spec_out)
 {
     PbrPointLight point_light = fs_point_lights[light_index];
@@ -566,26 +562,24 @@ void accumulate_tube_light(uint light_index, float3 N, float3 N_spec, float3 V,
     float3 n0       = L0 / l0;
     float3 n1       = L1 / l1;
     diff           += radiance * saturate(0.5f * dot(N, n0 + n1));
-    if (fs_point_params.y > 0.0f) {
-        float3 R    = reflect(-V, N_spec);
-        float  r_a  = dot(R, half_axis);
-        float  ts   = saturate((dot(R, L0) * r_a - dot(L0, half_axis)) /
-                               max(2.0f * (half_len2 - r_a * r_a), 1e-6f));
-        float3 Ls   = L0 + half_axis * (2.0f * ts);
-        float  ls   = max(length(Ls), 1e-3f);
-        float  alpha = saturate(mp.roughness * mp.roughness + source_r / (2.0f * max(ls, source_r)));
-        PbrMaterialParams spec_mp = mp;
-        spec_mp.roughness = sqrt(alpha);
-        float  spec_scale = alpha / saturate(alpha + 0.5f * length(n0 - n1));
-        float  g_unused;
-        spec_out += cook_torrance_spec(N_spec, V, Ls / ls, spec_mp, g_unused) * radiance *
-                    (spec_scale * mp.spec_intensity * spec_mul * fs_point_params.y);
-    }
+    float3 R    = reflect(-V, N_spec);
+    float  r_a  = dot(R, half_axis);
+    float  ts   = saturate((dot(R, L0) * r_a - dot(L0, half_axis)) /
+                           max(2.0f * (half_len2 - r_a * r_a), 1e-6f));
+    float3 Ls   = L0 + half_axis * (2.0f * ts);
+    float  ls   = max(length(Ls), 1e-3f);
+    float  alpha = saturate(mp.roughness * mp.roughness + source_r / (2.0f * max(ls, source_r)));
+    PbrMaterialParams spec_mp = mp;
+    spec_mp.roughness = sqrt(alpha);
+    float  spec_scale = alpha / saturate(alpha + 0.5f * length(n0 - n1));
+    float  g_unused;
+    spec_out += cook_torrance_spec(N_spec, V, Ls / ls, spec_mp, g_unused) * radiance *
+                (spec_scale * mp.spec_intensity);
 }
 
 float3 accumulate_point_lights(float3 N, float3 N_spec, float3 V, float3 world_pos,
                                float2 screen_position,
-                               PbrMaterialParams mp, float spec_mul,
+                               PbrMaterialParams mp,
                                inout float3 spec_out)
 {
     /* Each light list holds its spheres, then its tubes. */
@@ -595,11 +589,11 @@ float3 accumulate_point_lights(float3 N, float3 N_spec, float3 V, float3 world_p
         uint global_sphere = min(fs_cluster_global_sphere_count, global_count);
         for (uint gi = 0u; gi < global_sphere; ++gi) {
             accumulate_point_light(fs_cluster_global_indices[gi], N, N_spec, V, world_pos,
-                                   mp, spec_mul, diff, spec_out);
+                                   mp, diff, spec_out);
         }
         for (uint gt = global_sphere; gt < global_count; ++gt) {
             accumulate_tube_light(fs_cluster_global_indices[gt], N, N_spec, V, world_pos,
-                                  mp, spec_mul, diff, spec_out);
+                                  mp, diff, spec_out);
         }
         uint cluster_index;
         uint2 header = clustered_light_fragment_header(screen_position, world_pos,
@@ -609,21 +603,21 @@ float3 accumulate_point_lights(float3 N, float3 N_spec, float3 V, float3 world_p
         uint base    = cluster_index * AERON_CLUSTER_MAX_LIGHTS;
         for (uint pi = 0u; pi < spheres; ++pi) {
             accumulate_point_light(fs_cluster_indices[base + pi], N, N_spec, V, world_pos,
-                                   mp, spec_mul, diff, spec_out);
+                                   mp, diff, spec_out);
         }
         for (uint pt = spheres; pt < count; ++pt) {
             accumulate_tube_light(fs_cluster_indices[base + pt], N, N_spec, V, world_pos,
-                                  mp, spec_mul, diff, spec_out);
+                                  mp, diff, spec_out);
         }
     } else {
         uint tube_start = min(fs_cluster_tube_start, fs_cluster_point_count);
         for (uint light_index = 0u; light_index < tube_start; ++light_index) {
             accumulate_point_light(light_index, N, N_spec, V, world_pos,
-                                   mp, spec_mul, diff, spec_out);
+                                   mp, diff, spec_out);
         }
         for (uint tube_index = tube_start; tube_index < fs_cluster_point_count; ++tube_index) {
             accumulate_tube_light(tube_index, N, N_spec, V, world_pos,
-                                  mp, spec_mul, diff, spec_out);
+                                  mp, diff, spec_out);
         }
     }
     return diff;

@@ -40,12 +40,12 @@ game_scene:
   defaults: aeron/config/scene3d_defaults.yaml
   # Surface to sun, camera axes (+X right, +Y down, +Z forward).
   sun_direction: [-0.4, -0.7, -0.6]
-  sun_color: [1, 1, 1]
+  sun_color: [2.513, 2.513, 2.513]
   ambient: 0.08
   point_lights:
-    - { position: [-10, 3, 30], intensity: [0.244, 0.0244, 0.0183] }
-    - { position: [20, 0, 80], intensity: [0.0183, 0.183, 0.0244] }
-    - { position: [0, 1, 6], intensity: [0.183, 0.0122, 0.0122] }
+    - { position: [-10, 3, 30], intensity: [0.767, 0.0767, 0.0575] }
+    - { position: [20, 0, 80], intensity: [0.0575, 0.575, 0.0767] }
+    - { position: [0, 1, 6], intensity: [0.575, 0.0383, 0.0383] }
   # Ships: position in metres, camera axes; rotation_degrees [yaw, pitch, roll].
   instances:
     - { model: remaster/models/awingcockpit.glb, role: cockpit }
