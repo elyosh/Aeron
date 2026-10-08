@@ -7,6 +7,7 @@
 #include "aeron/scene/present.h"
 #include "aeron/scene/scene3d.h"
 #include "aeron/scene/settings.h"
+#include "aeron/temporal.h"
 
 #define CAPTURE_MAX_MODELS 8
 #define CAPTURE_MAX_INSTANCES 16
@@ -46,6 +47,10 @@ typedef struct CaptureGameScene {
 	/* Intensity multiplier of the cockpit's model lights (0 = off), as
 	 * point_lights.model_light_intensity in the game. */
 	float                    model_light_intensity;
+	/* FSR temporal upscaling, as the game's temporal_upscaling settings;
+	 * benchmarks only (output depends on frame history), without MSAA. */
+	AeronTemporalMode        temporal_mode;
+	float                    temporal_sharpness;
 	CaptureInstance          instances[CAPTURE_MAX_INSTANCES];
 	int                      instance_count;
 	CaptureLight             lights[CAPTURE_MAX_LIGHTS];

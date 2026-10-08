@@ -498,6 +498,8 @@ static void set_game_effects(AeronScene3D* scene, const CaptureConfig* config, i
 								  .mb_quality           = blur ? config->quality : 0,
 								  .mb_shutter           = (float)(config->shutter * .032 * config->fps),
 								  .mb_camera_blur       = 1,
+								  /* As the game ships (motion_blur.fsr_direct_motion). */
+								  .mb_fsr_direct_motion = config->game.temporal_mode != AERON_TEMPORAL_OFF,
 							  });
 	const AeronSceneShadowSettings* shadows = &config->game.shadows;
 	if (!shadows->enabled)
@@ -535,6 +537,16 @@ AeronRenderTarget* Fixture_Record(Fixture* f, double time, int blur, AeronComman
 	AeronSceneCamera previous = camera_at(&f->config, time - 1.0 / f->config.fps);
 	float            previous_matrix[16];
 	AeronScene_ComputeViewProj(&previous, previous_matrix);
+	if (f->config.game.enabled && blur) {
+		/* The pose sequence restarts with a camera jump: start a new history. */
+		const int frame = (int)floor(time * f->config.fps + 0.5);
+		AeronScene_SetTemporal(scene, &(AeronSceneTemporalDesc) {
+										  .mode                = f->config.game.temporal_mode,
+										  .frame_time_delta_ms = (float)(1000.0 / f->config.fps),
+										  .sharpness           = f->config.game.temporal_sharpness,
+										  .reset_history       = frame % f->config.frames == 0,
+									  });
+	}
 	if (!AeronScene_Begin(scene, &current))
 		return NULL;
 	if (f->config.game.enabled) {

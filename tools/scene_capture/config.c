@@ -291,7 +291,8 @@ static int load_game_scene(AeronVfs* vfs, const AeronConfigFile* yaml, CaptureCo
 		return 1;
 	static const char* const keys[] = { "defaults", "ssao",    "shadows",      "sun_direction",
 										"sun_color", "ambient", "point_lights", "instances",
-										"cockpit_follows_camera", "model_light_intensity" };
+										"cockpit_follows_camera", "model_light_intensity",
+										"temporal_upscaling" };
 	CaptureGameScene*        game   = &config->game;
 	if (!only_keys(node, "game_scene", keys, sizeof keys / sizeof keys[0]))
 		return 0;
@@ -316,6 +317,27 @@ static int load_game_scene(AeronVfs* vfs, const AeronConfigFile* yaml, CaptureCo
 	int ssao, shadows;
 	if (!game_bool(node, "cockpit_follows_camera", 0, &game->cockpit_follows_camera))
 		return 0;
+	const AeronConfigNode* temporal = AeronConfigNode_MapGet(node, "temporal_upscaling");
+	if (temporal) {
+		static const char* const temporal_keys[] = { "mode", "sharpness" };
+		const char*            mode = AeronConfigNode_String(AeronConfigNode_MapGet(temporal, "mode"), NULL);
+		const AeronConfigNode* sharpness       = AeronConfigNode_MapGet(temporal, "sharpness");
+		const double           sharpness_value = sharpness ? AeronConfigNode_Float(sharpness, NAN) : 0.0;
+		if (AeronConfigNode_Type(temporal) != AERON_CONFIG_MAP ||
+			!only_keys(temporal, "game_scene.temporal_upscaling", temporal_keys,
+					   sizeof temporal_keys / sizeof temporal_keys[0]) ||
+			!AeronTemporal_ParseMode(mode, &game->temporal_mode) || !isfinite(sharpness_value) ||
+			sharpness_value < 0 || sharpness_value > 1) {
+			fprintf(stderr, "game_scene.temporal_upscaling needs mode (off, native_aa, quality, balanced or "
+							"performance) and optional sharpness 0..1\n");
+			return 0;
+		}
+		game->temporal_sharpness = (float)sharpness_value;
+		if (game->temporal_mode != AERON_TEMPORAL_OFF && config->msaa_samples != 1) {
+			fprintf(stderr, "game_scene.temporal_upscaling needs msaa_samples: 1, as in the game\n");
+			return 0;
+		}
+	}
 	game->model_light_intensity                  = 1;
 	const AeronConfigNode* model_light_intensity = AeronConfigNode_MapGet(node, "model_light_intensity");
 	if (model_light_intensity) {
