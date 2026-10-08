@@ -35,4 +35,21 @@ float3 oct_decode(float2 e)
     return normalize(v);
 }
 
+/* A flag in the parity of the first R16G16_SNORM code: the encoded x is
+ * quantized to that format's step (1/32767) and its last bit set, costing
+ * one step of normal precision. The code stays within [-32766, 32767], so
+ * the format's clamp of -1 cannot change the parity. */
+float2 oct_encode_flagged(float3 v, bool flag)
+{
+    float2 e = oct_encode(v);
+    int code = clamp((int)round(e.x * 32767.0f), -32766, 32766);
+    code = (code & ~1) | (flag ? 1 : 0);
+    return float2((float)code / 32767.0f, e.y);
+}
+
+bool oct_flag(float2 e)
+{
+    return ((int)round(e.x * 32767.0f) & 1) != 0;
+}
+
 #endif

@@ -13,6 +13,7 @@ PbrPrepassVSOut main(VSIn input)
 		output.world_normal = float3(0.0f, 0.0f, 1.0f);
 		output.clip_curr = current.raster_position;
 		output.clip_prev = current.raster_position;
+		output.receiver_local_shadow = 0u;
 		return output;
 	}
 
@@ -27,5 +28,6 @@ PbrPrepassVSOut main(VSIn input)
 		pbr_safe_normalize(mul((float3x3)craft_to_world, rotated_normal),
 						   float3(0.0f, 0.0f, 1.0f));
 	pbr_build_velocity(input, current, output.clip_curr, output.clip_prev);
+	output.receiver_local_shadow = receiver_local_shadow;
 	return output;
 }

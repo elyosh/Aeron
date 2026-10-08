@@ -42,8 +42,7 @@ cbuffer PbrLightFS : register(AERON_PBR_LIGHT_UNIFORM_REGISTER, space3)
     float reserved_xvt; /* formerly the XvT flat-shading switch */
     float ssao_intensity;
     float ssao_power;
-    float ssao_rt_w;
-    float ssao_rt_h;
+    float2 reserved_ssao_rt; /* formerly the AO target size (now fs_render_size) */
     float ssao_direct;
     float spec_geom_adapt;
     float3 fs_camera_pos_world;   float _pad_fs_cam;

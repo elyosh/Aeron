@@ -1856,6 +1856,24 @@ int AeronScene_Render(AeronScene3D* s, AeronCommandBuffer* cmd) {
 		 !s->pbr_pipes[AERON_PBR_PIPE_FORWARD][AERON_CULL_NONE] || !AeronScenePost_EnsureSsao(s))) {
 		return scene_render_failure(s, cmd, "Scene SSAO resource preparation failed");
 	}
+	/* Opaque receivers take their directional shadow from the
+	 * half-resolution visibility pass, which therefore also runs without
+	 * SSAO; the cascade debug view shades it in the material shader. It
+	 * needs the prepass's normals: without them, the material shader's
+	 * single comparison serves. */
+	const int screen_shadow_wanted =
+		s->shadow_stats.active && !s->directional_shadow.debug_cascades && s->instance_count > 0;
+	if (screen_shadow_wanted && !s->normal_rt && !s->screen_shadow_warned) {
+		Aeron_LogWarn("aeron.scene", "directional shadows without a normal render target take one comparison");
+		s->screen_shadow_warned = 1;
+	}
+	const int screen_shadow_active = screen_shadow_wanted && s->normal_rt;
+	if (screen_shadow_active && !ssao_active &&
+		(!s->pbr_pipes[AERON_PBR_PIPE_PREPASS][AERON_CULL_NONE] ||
+		 !s->pbr_pipes[AERON_PBR_PIPE_FORWARD][AERON_CULL_NONE] || !AeronScenePost_EnsureSsao(s))) {
+		return scene_render_failure(s, cmd, "Scene shadow visibility resource preparation failed");
+	}
+	const int visibility_active = ssao_active || screen_shadow_active;
 	const int mb_active = mb_requested;
 	if (mb_requested && (!s->normal_rt || !s->pbr_pipes[AERON_PBR_PIPE_PREPASS_VEL][AERON_CULL_NONE] ||
 						 !s->pbr_pipes[AERON_PBR_PIPE_FORWARD][AERON_CULL_NONE] ||
@@ -1863,7 +1881,7 @@ int AeronScene_Render(AeronScene3D* s, AeronCommandBuffer* cmd) {
 		return scene_render_failure(s, cmd, "Scene motion-blur resource preparation failed");
 	}
 	const int msaa_active    = s->sample_count != AERON_SAMPLE_COUNT_1;
-	const int prepass_active = ssao_active || mb_active || s->temporal_active || msaa_active;
+	const int prepass_active = visibility_active || mb_active || s->temporal_active || msaa_active;
 	const int mb_regen       = mb_active && s->mb_velocity_regen;
 	const int velocity_write = mb_regen || s->temporal_active;
 	if (mb_regen) {
@@ -1950,12 +1968,12 @@ int AeronScene_Render(AeronScene3D* s, AeronCommandBuffer* cmd) {
 		}
 		Aeron_EndRenderPass(pre);
 
-		if (ssao_active) {
-			Aeron_GpuDebugPush(cmd, "SSAO");
-			const int ssao_ok = AeronScenePost_RunSsao(s, cmd);
+		if (visibility_active) {
+			Aeron_GpuDebugPush(cmd, "AO and shadow visibility");
+			const int visibility_ok = AeronScenePost_RunSsao(s, cmd, ssao_active);
 			Aeron_GpuDebugPop(cmd);
-			if (!ssao_ok) {
-				return scene_render_failure(s, cmd, "Scene SSAO recording failed");
+			if (!visibility_ok) {
+				return scene_render_failure(s, cmd, "Scene visibility recording failed");
 			}
 		}
 
@@ -1989,7 +2007,7 @@ int AeronScene_Render(AeronScene3D* s, AeronCommandBuffer* cmd) {
 		Aeron_GpuDebugMarker(cmd, "PBR forward instances");
 		if (!AeronScenePbr_DrawInstances(s, cmd, pass, AERON_PBR_PIPE_FORWARD, /*depth_only=*/0,
 										 /*velocity=*/0,
-										 ssao_active ? Aeron_RenderTargetGetTexture(s->ao_rt) : NULL)) {
+										 visibility_active ? Aeron_RenderTargetGetTexture(s->ao_rt) : NULL)) {
 			Aeron_EndRenderPass(pass);
 			return scene_render_failure(s, cmd, "Scene PBR forward recording failed");
 		}
@@ -2003,8 +2021,8 @@ int AeronScene_Render(AeronScene3D* s, AeronCommandBuffer* cmd) {
 		AeronSceneMeshOverlay_Draw(s, pass);
 		Aeron_GpuDebugMarker(cmd, "PBR transparent instances");
 		if (!AeronScenePbr_DrawTransparentInstances(s, pass, AERON_PBR_PIPE_FORWARD,
-													ssao_active ? Aeron_RenderTargetGetTexture(s->ao_rt)
-																: NULL)) {
+													visibility_active ? Aeron_RenderTargetGetTexture(s->ao_rt)
+																	  : NULL)) {
 			Aeron_EndRenderPass(pass);
 			return scene_render_failure(s, cmd, "Scene PBR transparent recording failed");
 		}

@@ -30,6 +30,8 @@ struct PbrPrepassVSOut {
 	float3 world_normal : TEXCOORD1;
 	float4 clip_curr : TEXCOORD2;
 	float4 clip_prev : TEXCOORD3;
+	/* Flags the normal G-buffer for the screen shadow pass. */
+	nointerpolation uint receiver_local_shadow : TEXCOORD4;
 };
 
 struct PbrMaskPrepassVSOut {
@@ -42,6 +44,7 @@ struct PbrMaskPrepassVSOut {
 	/* x=prim_id, y=variant_row_base, z=variant_group_count,
 	 * w=material_count. */
 	nointerpolation uint4 material_lookup : TEXCOORD5;
+	nointerpolation uint receiver_local_shadow : TEXCOORD6;
 };
 
 struct PbrStampVSOut {

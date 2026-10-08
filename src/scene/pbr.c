@@ -39,7 +39,8 @@ typedef struct AeronScenePbrVsBlock {
 	uint32_t screen_shadow;
 	uint32_t current_table_base;
 	uint32_t previous_table_base;
-	uint32_t _reserved[2];
+	uint32_t receiver_local_shadow;
+	uint32_t _reserved;
 	uint32_t table_slot_count;
 	float    prev_view_proj[16];
 	float    prev_model_to_world[16];
@@ -567,7 +568,10 @@ static void pbr_push_instance_uniforms(struct AeronScene3D* s, AeronRenderPass* 
 	vsb.base_color_emissive_strength = in->base_color_emissive_strength;
 	vsb.receive_shadow       = (in->shadow_flags & AERON_SCENE_INSTANCE_NO_RECEIVE_SHADOW) == 0 ? 1u : 0u;
 	const int receiver_local = (in->shadow_flags & AERON_SCENE_INSTANCE_USE_RECEIVER_LOCAL_SHADOW) != 0;
-	vsb.screen_shadow        = screen_shadow && vsb.receive_shadow && !receiver_local ? 1u : 0u;
+	/* Opaque receivers read the half-resolution screen pass, which takes
+	 * receiver-local pixels from their own map by the prepass's flag. */
+	vsb.screen_shadow         = screen_shadow && vsb.receive_shadow ? 1u : 0u;
+	vsb.receiver_local_shadow = vsb.receive_shadow && receiver_local ? 1u : 0u;
 	vsb.current_table_base           = prepared->current_table_base;
 	vsb.previous_table_base          = vel ? prepared->previous_table_base : prepared->current_table_base;
 	vsb.table_slot_count             = prepared->table_slot_count;

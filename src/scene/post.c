@@ -31,7 +31,10 @@ typedef struct SsaoUniforms {
 	float max_screen_frac;
 	float sample_jitter; /* per-pixel radius jitter [0,1] */
 	float view_rot[3][4];
-} SsaoUniforms; /* 96 B */
+	/* AO enabled, receiver-local pixels skipped (a second pass writes
+	 * their shadow), reserved, reserved. */
+	float visibility_params[4];
+} SsaoUniforms; /* 112 B */
 
 typedef struct SsaoBlurUniforms {
 	float direction_uv[2];
@@ -240,7 +243,7 @@ static int ensure_post_samplers(struct AeronScene3D* s) {
 
 int AeronScenePost_EnsureSsao(struct AeronScene3D* s) {
 	if (s->post_ssao_tried) {
-		return s->ssao_pipeline && s->ao_rt && s->ao_blur_rt;
+		return s->ssao_pipeline && s->ssao_receiver_local_pipeline && s->ao_rt && s->ao_blur_rt;
 	}
 	s->post_ssao_tried = 1;
 	if (!ensure_fullscreen_vs(s) || !ensure_post_samplers(s)) {
@@ -248,6 +251,8 @@ int AeronScenePost_EnsureSsao(struct AeronScene3D* s) {
 	}
 
 	s->ssao_ps = AeronSceneInternal_CompileShader("scene_ssao.frag", AERON_SHADER_STAGE_FRAGMENT, 4, 2, 0);
+	s->ssao_receiver_local_ps =
+		AeronSceneInternal_CompileShader("scene_ssao_receiver_local.frag", AERON_SHADER_STAGE_FRAGMENT, 4, 2, 0);
 	s->ssao_blur_ps =
 		AeronSceneInternal_CompileShader("scene_ssao_blur.frag", AERON_SHADER_STAGE_FRAGMENT, 2, 1, 0);
 	s->ssao_blur_lq_ps =
@@ -255,6 +260,11 @@ int AeronScenePost_EnsureSsao(struct AeronScene3D* s) {
 	const PostTarget ao = { AERON_TEXTURE_FORMAT_R8G8_UNORM, 0xF };
 	if (s->ssao_ps) {
 		s->ssao_pipeline = post_pipeline(s->fullscreen_vs, s->ssao_ps, &ao, 1, 0);
+	}
+	if (s->ssao_receiver_local_ps) {
+		const PostTarget shadow_only = { AERON_TEXTURE_FORMAT_R8G8_UNORM, 0x2 };
+		s->ssao_receiver_local_pipeline =
+			post_pipeline(s->fullscreen_vs, s->ssao_receiver_local_ps, &shadow_only, 1, 0);
 	}
 	if (s->ssao_blur_ps) {
 		s->ssao_blur_pipeline = post_pipeline(s->fullscreen_vs, s->ssao_blur_ps, &ao, 1, 0);
@@ -271,7 +281,7 @@ int AeronScenePost_EnsureSsao(struct AeronScene3D* s) {
 	s->ao_blur_rt = AeronSceneInternal_CreateColorRt(AERON_TEXTURE_FORMAT_R8G8_UNORM, s->ao_rt_w, s->ao_rt_h,
 													 "scene.visibility_blur");
 
-	if (!s->ssao_pipeline || !s->ao_rt || !s->ao_blur_rt) {
+	if (!s->ssao_pipeline || !s->ssao_receiver_local_pipeline || !s->ao_rt || !s->ao_blur_rt) {
 		Aeron_LogError("aeron.scene", "SSAO initialization failed");
 		return 0;
 	}
@@ -430,12 +440,16 @@ int AeronScenePost_EnsureMb(struct AeronScene3D* s) {
 void AeronScenePost_Release(struct AeronScene3D* s) {
 	if (s->ssao_pipeline)
 		Aeron_DestroyGraphicsPipeline(s->ssao_pipeline);
+	if (s->ssao_receiver_local_pipeline)
+		Aeron_DestroyGraphicsPipeline(s->ssao_receiver_local_pipeline);
 	if (s->ssao_blur_pipeline)
 		Aeron_DestroyGraphicsPipeline(s->ssao_blur_pipeline);
 	if (s->ssao_blur_lq_pipeline)
 		Aeron_DestroyGraphicsPipeline(s->ssao_blur_lq_pipeline);
 	if (s->ssao_ps)
 		Aeron_DestroyShader(s->ssao_ps);
+	if (s->ssao_receiver_local_ps)
+		Aeron_DestroyShader(s->ssao_receiver_local_ps);
 	if (s->ssao_blur_ps)
 		Aeron_DestroyShader(s->ssao_blur_ps);
 	if (s->ssao_blur_lq_ps)
@@ -502,6 +516,8 @@ void AeronScenePost_Release(struct AeronScene3D* s) {
 	s->post_point_sampler    = NULL;
 	s->post_linear_sampler   = NULL;
 	s->ssao_ps               = NULL;
+	s->ssao_receiver_local_ps = NULL;
+	s->ssao_receiver_local_pipeline = NULL;
 	s->ssao_blur_ps          = NULL;
 	s->ssao_blur_lq_ps       = NULL;
 	s->ssao_pipeline         = NULL;
@@ -548,8 +564,12 @@ void AeronScenePost_Release(struct AeronScene3D* s) {
 
 /* ===== SSAO compute + blur (from flight_gpu_passes) ================= */
 
-int AeronScenePost_RunSsao(struct AeronScene3D* s, AeronCommandBuffer* cmd) {
-	const int low = (s->post.ssao_quality == 1);
+int AeronScenePost_RunSsao(struct AeronScene3D* s, AeronCommandBuffer* cmd, int ao_enabled) {
+	/* Without AO, the shadow takes High's blur. */
+	const int low = ao_enabled && s->post.ssao_quality == 1;
+	const int receiver_local_mode = AeronSceneDirectionalShadow_ReceiverLocalMode(s);
+	const int receiver_local_pass = receiver_local_mode == AERON_SHADOW_RECEIVER_LOCAL_MAP &&
+									!s->directional_shadow.debug_cascades && !s->post.ssao_debug_viz;
 
 	AeronTexture* depth_tex  = Aeron_DepthTargetGetTexture(s->depth_rt);
 	AeronTexture* normal_tex = Aeron_RenderTargetGetTexture(s->normal_rt);
@@ -575,6 +595,9 @@ int AeronScenePost_RunSsao(struct AeronScene3D* s, AeronCommandBuffer* cmd) {
 		su.min_screen_frac = s->post.ssao_min_screen_frac;
 		su.max_screen_frac = s->post.ssao_max_screen_frac;
 		su.sample_jitter   = s->post.ssao_sample_jitter;
+		su.visibility_params[0] = ao_enabled ? 1.0f : 0.0f;
+		su.visibility_params[1] =
+			receiver_local_pass || receiver_local_mode == AERON_SHADOW_RECEIVER_LOCAL_UNSHADOWED ? 1.0f : 0.0f;
 		float view_rot[9];
 		AeronSceneInternal_QuatToMat3(s->camera.ori, view_rot);
 		for (int row = 0; row < 3; row++) {
@@ -599,6 +622,27 @@ int AeronScenePost_RunSsao(struct AeronScene3D* s, AeronCommandBuffer* cmd) {
 		Aeron_BindUniformData(pass, AERON_SHADER_STAGE_FRAGMENT, 0, &su, sizeof su);
 		Aeron_Draw(pass, 4, 0);
 		Aeron_EndRenderPass(pass);
+
+		/* Receiver-local pixels (the cockpit) take their shadow from their
+		 * own map, which the first pass left to this one. */
+		if (receiver_local_pass) {
+			AeronRenderPass* local = Aeron_BeginRenderPass(&(AeronRenderPassDesc) {
+				.color_target   = s->ao_rt,
+				.command_buffer = cmd,
+				.debug_label    = "Receiver-local directional shadow evaluate",
+			});
+			if (!local) {
+				return 0;
+			}
+			Aeron_BindGraphicsPipeline(local, s->ssao_receiver_local_pipeline);
+			for (uint32_t i = 0; i < 2; i++) {
+				Aeron_BindTextureSampler(local, AERON_SHADER_STAGE_FRAGMENT, i, texs[i], smps[i]);
+			}
+			AeronSceneDirectionalShadow_BindScreenReceiverLocal(s, local);
+			Aeron_BindUniformData(local, AERON_SHADER_STAGE_FRAGMENT, 0, &su, sizeof su);
+			Aeron_Draw(local, 4, 0);
+			Aeron_EndRenderPass(local);
+		}
 	}
 
 	const float ao_w                = (float)s->ao_rt_w;

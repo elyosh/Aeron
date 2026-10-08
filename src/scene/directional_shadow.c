@@ -1370,17 +1370,33 @@ void AeronSceneDirectionalShadow_BindForInstance(struct AeronScene3D* scene, Aer
 	}
 }
 
+int AeronSceneDirectionalShadow_ReceiverLocalMode(const struct AeronScene3D* scene) {
+	/* As BindForInstance chooses for receiver-local instances. */
+	if (scene->receiver_local_owned && scene->receiver_local_empty) {
+		return AERON_SHADOW_RECEIVER_LOCAL_UNSHADOWED;
+	}
+	if (scene->shadow_stats.active && scene->shadow_stats.receiver_local_active &&
+		scene->receiver_local_shadow_atlas) {
+		return AERON_SHADOW_RECEIVER_LOCAL_MAP;
+	}
+	return AERON_SHADOW_RECEIVER_LOCAL_CASCADES;
+}
+
 /* A camera-visible opaque or masked instance takes its shadow from the
- * half-resolution screen pass (pbr.c's screen_shadow rule); otherwise the
- * pass's shadow term is never read. */
+ * half-resolution screen pass (pbr.c's screen_shadow rule); the cascades
+ * there serve it unless it has its own receiver-local map. Without one,
+ * the pass's cascade term is never read. */
 static int shadow_screen_receivers(const struct AeronScene3D* scene) {
+	const int local_from_cascades =
+		AeronSceneDirectionalShadow_ReceiverLocalMode(scene) == AERON_SHADOW_RECEIVER_LOCAL_CASCADES;
 	for (int i = 0; i < scene->instance_count; ++i) {
 		const AeronSceneMeshInstance* instance = &scene->instances[i];
 		const AeronSceneMesh*         mesh     = instance->mesh;
 		if (mesh && scene->prepared_instances[i].camera_visible &&
 			(mesh->opaque_index_count + mesh->mask_index_count) != 0 &&
-			(instance->shadow_flags &
-			 (AERON_SCENE_INSTANCE_NO_RECEIVE_SHADOW | AERON_SCENE_INSTANCE_USE_RECEIVER_LOCAL_SHADOW)) == 0) {
+			(instance->shadow_flags & AERON_SCENE_INSTANCE_NO_RECEIVE_SHADOW) == 0 &&
+			(local_from_cascades ||
+			 (instance->shadow_flags & AERON_SCENE_INSTANCE_USE_RECEIVER_LOCAL_SHADOW) == 0)) {
 			return 1;
 		}
 	}
@@ -1397,6 +1413,15 @@ void AeronSceneDirectionalShadow_BindScreen(struct AeronScene3D* scene, AeronRen
 					   !scene->directional_shadow.debug_cascades && !scene->post.ssao_debug_viz &&
 					   shadow_screen_receivers(scene);
 	shadow_bind_map(scene, render_pass, &scene->shadow_uniform, scene->shadow_atlas, active, 2, 3, 1);
+}
+
+void AeronSceneDirectionalShadow_BindScreenReceiverLocal(struct AeronScene3D* scene, AeronRenderPass* render_pass) {
+	if (!scene || !render_pass || !shadow_ensure_common(scene)) {
+		return;
+	}
+	shadow_bind_map(scene, render_pass, &scene->receiver_local_shadow_uniform, scene->receiver_local_shadow_atlas,
+					AeronSceneDirectionalShadow_ReceiverLocalMode(scene) == AERON_SHADOW_RECEIVER_LOCAL_MAP, 2, 3,
+					1);
 }
 
 void AeronSceneDirectionalShadow_BindDisabled(struct AeronScene3D* scene, AeronRenderPass* render_pass) {

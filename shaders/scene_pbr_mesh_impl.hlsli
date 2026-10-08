@@ -237,21 +237,19 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
     uint shadow_cascade = 4u;
     float shadow_cascade_blend = 0.0f;
     float shadow_coverage = 0.0f;
-    /* SSAO — occludes indirect (ambient) light only. Sampled in screen
-     * space at this fragment; pow() applies the contrast knob, then the
-     * intensity lerp blends toward unoccluded. intensity 0 → ao 1 (and
-     * the sample is skipped). */
+    /* The half-resolution visibility pass: R is SSAO, which occludes
+     * indirect (ambient) light only (pow() applies the contrast knob, then
+     * the intensity lerp blends toward unoccluded; intensity 0 → ao 1); G is
+     * the directional shadow of opaque receivers. Blended surfaces lie over
+     * the depth layer it describes: no lookup. */
     float ao = 1.0f;
     float screen_shadow_visibility = 1.0f;
-    /* Blended surfaces lie over the depth layer SSAO describes (the
-     * renderer binds white AO for them): no lookup. */
-    if (!AERON_PBR_ALPHA_BLEND && ssao_intensity > 0.0f) {
-        float2 ao_uv = i.position.xy / float2(ssao_rt_w, ssao_rt_h);
-        float2 visibility = g_ao.Sample(g_ao_sampler, ao_uv);
-        float  ao_s  = visibility.x;
+    if (!AERON_PBR_ALPHA_BLEND && (ssao_intensity > 0.0f || i.screen_shadow != 0u)) {
+        float2 visibility = g_ao.Sample(g_ao_sampler, i.position.xy * fs_render_size.zw);
         screen_shadow_visibility = visibility.y;
-        ao_s = pow(ao_s, ssao_power);
-        ao   = lerp(1.0f, ao_s, ssao_intensity);
+        if (ssao_intensity > 0.0f) {
+            ao = lerp(1.0f, pow(visibility.x, ssao_power), ssao_intensity);
+        }
     }
 
     float shadow_visibility = 1.0f;
@@ -263,10 +261,13 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
              * Without wrap both are zero when N and N_face (and so N_spec,
              * their blend) face away from the light: skip the lookup. */
             float shadow_ndotl = light_wrap > 0.0f ? 1.0f : max(dot(N, L), dot(N_face, L));
-            /* Blended materials (canopy glass) take one comparison: a
-             * soft penumbra is not discernible through them. */
-            bool shadow_single_tap =
-                AERON_PBR_ALPHA_BLEND || (g_materials[mat].flags & GLTF_MATERIAL_ALPHA_BLEND) != 0u;
+            /* Opaque receivers read the screen pass, so outside the debug
+             * variant (whose cascade view needs this path) only blended
+             * materials come here: one comparison, as a soft penumbra is not
+             * discernible through canopy glass. Compiling the filter out
+             * keeps it from costing the whole shader. */
+            bool shadow_single_tap = !AERON_PBR_DEBUG_VIEWS || AERON_PBR_ALPHA_BLEND ||
+                                     (g_materials[mat].flags & GLTF_MATERIAL_ALPHA_BLEND) != 0u;
             shadow_visibility = directional_shadow_visibility(
                 i.world_pos, N_face, shadow_ndotl,
                 world_pos_dx, world_pos_dy, i.position.xy, shadow_single_tap,

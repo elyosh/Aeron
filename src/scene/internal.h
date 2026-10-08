@@ -187,12 +187,14 @@ typedef struct AeronSceneLightingUniformGPU {
 	float                       environment_basis[3][4]; /* world-to-local rows */
 	float                       debug_material[4];       /* enabled, metallic, roughness, 0 */
 	float                       emission[4];             /* emissive scale, 0, 0, 0 */
+	float                       render_size[4];          /* width, height, 1 / width, 1 / height */
 } AeronSceneLightingUniformGPU;
 
 /* Layout checks against the HLSL blocks (ClusteredLightUniform, 112 bytes;
- * with the environment, the debug material and the emission, 208 bytes). */
+ * with the environment, the debug material, the emission and the render
+ * size, 224 bytes). */
 typedef char AeronSceneClusterUniformSizeCheck[sizeof(AeronSceneClusterUniformGPU) == 112 ? 1 : -1];
-typedef char AeronSceneLightingUniformSizeCheck[sizeof(AeronSceneLightingUniformGPU) == 208 ? 1 : -1];
+typedef char AeronSceneLightingUniformSizeCheck[sizeof(AeronSceneLightingUniformGPU) == 224 ? 1 : -1];
 
 enum {
 	AERON_SCENE_CLUSTER_ENABLED    = 1u << 0,
@@ -335,6 +337,8 @@ struct AeronScene3D {
 	uint32_t                   mesh_table_staging_cap;
 	AeronScenePointLightGPU*   point_light_staging;
 	uint32_t                   point_light_count;
+	/* Directional shadows ran without a normal render target (logged once). */
+	int                        screen_shadow_warned;
 	/* Spheres are packed first; point lights from here on are tubes. */
 	uint32_t                   point_tube_start;
 	uint32_t                   point_light_staging_cap;
@@ -414,9 +418,11 @@ struct AeronScene3D {
 	AeronSampler*          post_linear_sampler; /* LINEAR clamp (ao/color) */
 	/* Half-resolution SSAO + opaque directional-shadow visibility. */
 	AeronShader*           ssao_ps;
+	AeronShader*           ssao_receiver_local_ps; /* receiver-local shadow, G only */
 	AeronShader*           ssao_blur_ps;
 	AeronShader*           ssao_blur_lq_ps;
 	AeronGraphicsPipeline* ssao_pipeline;
+	AeronGraphicsPipeline* ssao_receiver_local_pipeline;
 	AeronGraphicsPipeline* ssao_blur_pipeline;
 	AeronGraphicsPipeline* ssao_blur_lq_pipeline;
 	AeronRenderTarget*     ao_rt;
@@ -622,6 +628,17 @@ void AeronSceneDirectionalShadow_Bind(struct AeronScene3D* scene, AeronRenderPas
 void AeronSceneDirectionalShadow_BindForInstance(struct AeronScene3D* scene, AeronRenderPass* render_pass,
 												 uint8_t shadow_flags);
 void AeronSceneDirectionalShadow_BindScreen(struct AeronScene3D* scene, AeronRenderPass* render_pass);
+/* How the screen pass shades receiver-local pixels: from the cascades
+ * (the map is unused), from their own map (bound by
+ * BindScreenReceiverLocal for a second pass), or unshadowed (the map is
+ * owned but empty). */
+enum {
+	AERON_SHADOW_RECEIVER_LOCAL_CASCADES = 0,
+	AERON_SHADOW_RECEIVER_LOCAL_MAP,
+	AERON_SHADOW_RECEIVER_LOCAL_UNSHADOWED,
+};
+int  AeronSceneDirectionalShadow_ReceiverLocalMode(const struct AeronScene3D* scene);
+void AeronSceneDirectionalShadow_BindScreenReceiverLocal(struct AeronScene3D* scene, AeronRenderPass* render_pass);
 void AeronSceneDirectionalShadow_BindDisabled(struct AeronScene3D* scene, AeronRenderPass* render_pass);
 int  AeronSceneDirectionalShadow_DebugVisualize(struct AeronScene3D* scene,
 												AeronCommandBuffer*  command_buffer);
@@ -652,7 +669,9 @@ void AeronSceneMeshOverlay_Release(struct AeronScene3D* scene);
 int  AeronScenePost_EnsureSsao(struct AeronScene3D* s);
 int  AeronScenePost_EnsureMb(struct AeronScene3D* s);
 void AeronScenePost_Release(struct AeronScene3D* s);
-int  AeronScenePost_RunSsao(struct AeronScene3D* s, AeronCommandBuffer* cmd);
+/* The half-resolution visibility passes: AO when `ao_enabled` (else R is
+ * 1) and the opaque receivers' directional shadow, then their blur. */
+int  AeronScenePost_RunSsao(struct AeronScene3D* s, AeronCommandBuffer* cmd, int ao_enabled);
 int  AeronScenePost_DebugVisualizeSsao(struct AeronScene3D* s, AeronCommandBuffer* cmd);
 int  AeronScenePost_MbPrepareTemporalMotion(struct AeronScene3D* s, AeronCommandBuffer* cmd);
 int  AeronScenePost_MbVisualizeTemporal(struct AeronScene3D* s, AeronCommandBuffer* cmd, AeronTexture* motion,

@@ -14,6 +14,8 @@
  *                the SSAO hemisphere. Derived here at full res, so it avoids
  *                the grid that per-pixel half-res reconstruction in the SSAO
  *                pass produced.
+ *                The parity of its first code flags receiver-local shadow
+ *                receivers (oct_encode_flagged) for the screen shadow pass.
  *   SV_Target1 — screen-space velocity (R16G16_FLOAT), consumed by the
  *                motion-blur resolve. Only bound when the MB tier is on
  *                (2-RT prepass pipeline); the 1-RT pipeline drops it.
@@ -29,5 +31,5 @@
 PbrPrepassFSOut main(PbrPrepassVSOut i)
 {
     return pbr_build_prepass_output(i.position, i.world_pos, i.world_normal,
-                                    i.clip_curr, i.clip_prev);
+                                    i.clip_curr, i.clip_prev, i.receiver_local_shadow);
 }

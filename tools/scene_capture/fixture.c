@@ -474,8 +474,8 @@ static void set_game_lighting(AeronScene3D* scene, const CaptureConfig* config) 
 	const CaptureGameScene* game = &config->game;
 	float                   light[23][4] = {
 		[0]  = { .8f, 1, 0, 0 }, /* intensity, specular, debug term, wrap */
-		[1]  = { 0, game->ssao.ssao_intensity, game->ssao.ssao_power, (float)config->width },
-		[2]  = { (float)config->height, game->ssao.ssao_direct, 1, 0 }, /* spec_geom_adapt */
+		[1]  = { 0, game->ssao.ssao_intensity, game->ssao.ssao_power, 0 }, /* reserved, AO, reserved */
+		[2]  = { 0, game->ssao.ssao_direct, 1, 0 },                      /* reserved, AO, spec_geom_adapt */
 		[18] = { 0, 1, 0, 0 },                                          /* reserved, point-light spec, reserved, reserved */
 	};
 	for (int k = 0; k < 3; ++k) {

@@ -244,6 +244,7 @@ set(AERON_SHADER_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_tonemap_hdr.frag.hlsl
     # aeron_scene SSAO + motion-blur chains (scene-internal post stack).
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_ssao.frag.hlsl
+    ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_ssao_receiver_local.frag.hlsl
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_ssao_blur.frag.hlsl
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_ssao_blur_lq.frag.hlsl
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_mb_camera_fill.frag.hlsl

@@ -17,5 +17,5 @@ PbrPrepassFSOut main(PbrMaskPrepassVSOut i)
                          material.metal_rough.z);
 
     return pbr_build_prepass_output(i.position, i.world_pos, i.world_normal,
-                                    i.clip_curr, i.clip_prev);
+                                    i.clip_curr, i.clip_prev, i.receiver_local_shadow);
 }

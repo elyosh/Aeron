@@ -13,6 +13,7 @@ PbrMaskPrepassVSOut main(VSIn input)
 		output.world_normal = float3(0.0f, 0.0f, 1.0f);
 		output.clip_curr = current.raster_position;
 		output.clip_prev = current.raster_position;
+		output.receiver_local_shadow = 0u;
 		output.uv = float2(0.0f, 0.0f);
 		output.material_lookup = uint4(0xFFFFFFFFu, 0u, 0u, 0u);
 		return output;
@@ -29,6 +30,7 @@ PbrMaskPrepassVSOut main(VSIn input)
 		pbr_safe_normalize(mul((float3x3)craft_to_world, rotated_normal),
 						   float3(0.0f, 0.0f, 1.0f));
 	pbr_build_velocity(input, current, output.clip_curr, output.clip_prev);
+	output.receiver_local_shadow = receiver_local_shadow;
 	output.uv = input.uv;
 	output.material_lookup =
 		uint4(input.prim_id, variant_row_base, variant_group_count, material_count);

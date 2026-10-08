@@ -44,6 +44,8 @@ cbuffer ClusteredLightUniform : AERON_CLUSTER_UNIFORM_BINDING {
 	float4 fs_debug_material;
 	/* x = emissive scale (AeronScene_SetEmissiveScale). */
 	float4 fs_emission;
+	/* xy = render-target size in pixels, zw = its inverse. */
+	float4 fs_render_size;
 #endif
 };
 

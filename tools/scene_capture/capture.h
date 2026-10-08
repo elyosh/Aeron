@@ -11,7 +11,7 @@
 
 #define CAPTURE_MAX_MODELS 8
 #define CAPTURE_MAX_INSTANCES 16
-#define CAPTURE_MAX_LIGHTS 32
+#define CAPTURE_MAX_LIGHTS AERON_SCENE_POINT_LIGHT_CAPACITY
 
 int Capture_Compare(const char* baseline, const char* candidate);
 

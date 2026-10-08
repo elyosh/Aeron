@@ -29,7 +29,9 @@ cbuffer GltfMeshVSUniforms : register(b0, space1) {
 	 * both holding at least table_slot_count slots). */
 	uint current_table_base;
 	uint previous_table_base;
-	uint2 reserved;
+	/* Receives shadows from the receiver-local map (the cockpit). */
+	uint receiver_local_shadow;
+	uint reserved;
 	uint table_slot_count;
 	/* Previous transforms used by the velocity-producing vertex variants. */
 	row_major float4x4 prev_view_proj;

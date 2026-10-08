@@ -229,8 +229,9 @@ typedef struct AeronSceneDirectionalShadowStats {
  * R11G11B10_UFLOAT); the depth target is D32_FLOAT and created
  * sampled (SSAO / depth-aware hooks read it). `with_normal_rt`
  * allocates the R16G16_SNORM octahedral world-normal G-buffer the
- * SSAO path consumes. MSAA also allocates it for the single-sample
- * prepass used by depth-aware post effects. */
+ * SSAO and the half-resolution directional shadow consume (without it,
+ * shadowed surfaces take a single comparison). MSAA also allocates it for
+ * the single-sample prepass used by depth-aware post effects. */
 typedef struct AeronScene3DDesc {
 	int                rt_width;
 	int                rt_height;

@@ -21,7 +21,8 @@ float2 pbr_prepass_velocity(float4 clip_curr, float4 clip_prev)
 
 PbrPrepassFSOut pbr_build_prepass_output(float4 position, float3 world_pos,
                                          float3 world_normal,
-                                         float4 clip_curr, float4 clip_prev)
+                                         float4 clip_curr, float4 clip_prev,
+                                         uint receiver_local_shadow)
 {
     PbrPrepassFSOut output;
 
@@ -30,7 +31,8 @@ PbrPrepassFSOut pbr_build_prepass_output(float4 position, float3 world_pos,
     float3 geometric_normal = normalize(cross(ddx(world_pos), ddy(world_pos)));
     if (dot(geometric_normal, normalize(world_normal)) < 0.0f)
         geometric_normal = -geometric_normal;
-    output.normal = oct_encode(geometric_normal);
+    /* The flag tells the screen shadow pass to use the receiver-local map. */
+    output.normal = oct_encode_flagged(geometric_normal, receiver_local_shadow != 0u);
 
     output.velocity = pbr_prepass_velocity(clip_curr, clip_prev);
     output.depth = position.z;
