@@ -135,7 +135,7 @@ static int load_effects(const AeronConfigFile* yaml, CaptureConfig* config) {
 	config->tonemap =
 		!strcmp(tonemap, "aces") ? AERON_SCENE_TONEMAP_ACES : AERON_SCENE_TONEMAP_AGX_PARAMETRIC;
 	config->bloom_kernel         = AERON_SCENE_BLOOM_KERNEL_4_TAP;
-	config->bloom_intensity      = .5f;
+	config->bloom_intensity      = .2f;
 	const AeronConfigNode* bloom = AeronConfigFile_GetNode(yaml, "bloom");
 	if (bloom) {
 		if (AeronConfigNode_Type(bloom) != AERON_CONFIG_MAP) {
@@ -151,7 +151,7 @@ static int load_effects(const AeronConfigFile* yaml, CaptureConfig* config) {
 		}
 		double intensity;
 		int    kernel;
-		if (!number(yaml, "bloom.intensity", 0, 16, &intensity) ||
+		if (!number(yaml, "bloom.intensity", 0, 1, &intensity) ||
 			!integer(yaml, "bloom.kernel", 1, 4, &kernel))
 			return 0;
 		if (kernel != 1 && kernel != 4) {

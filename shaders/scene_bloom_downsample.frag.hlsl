@@ -13,8 +13,7 @@
 
 cbuffer DownsamplePS : register(b0, space3)
 {
-    /* xy = 1.0 / source_size (texel size in UV).
-     * z = input normalization, w = unused. */
+    /* xy = 1.0 / source_size (texel size in UV), zw = unused. */
     float4 src_texel;
 };
 
@@ -43,5 +42,5 @@ float4 main(VSOut input) : SV_Target
     float3 l = tap(uv, t, -1.0f,  1.0f), m = tap(uv, t, 1.0f,  1.0f);
     float3 sum = e * 0.125f + (a + c + g + i) * 0.03125f + (b + d + f + h) * 0.0625f +
                  (j + k + l + m) * 0.125f;
-    return float4(sum * src_texel.z, 1.0f);
+    return float4(sum, 1.0f);
 }

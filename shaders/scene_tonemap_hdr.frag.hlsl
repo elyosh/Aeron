@@ -34,7 +34,8 @@
 cbuffer TonemapPS : register(b0, space3)
 {
     /* Bloom inputs (identical to SDR variant):
-     *   x = intensity multiplier
+     *   x = intensity: the fraction of the light the bloom scatters,
+     *       blended in as lerp(scene, bloom, x)
      *   y = horizontal bloom filter offset in UV
      *   z = vertical bloom filter offset in UV
      *   w = bar_y_uv (UV.y at the message-bar top; bloom gated to 0
@@ -226,12 +227,12 @@ float4 main(VSOut input) : SV_Target
     }
 
     float bar_gate = step(input.uv.y, bloom_params.w);
-    float3 bloom_contrib = bloom * bloom_params.x * bar_gate;
+    float  bloom_weight = bloom_params.x * bar_gate;
 
-    /* Compose scene + bloom + exposure, then peak-parameterised
+    /* Blend in the scattered light, apply exposure, then peak-parameterised
      * tonemap. tonemap_params.z carries hdr_peak_scale; .y picks
      * operator. */
-    float3 rgb = (scene + bloom_contrib) * tonemap_params.x;
+    float3 rgb = lerp(scene, bloom, bloom_weight) * tonemap_params.x;
     float  peak = tonemap_params.z;
     /* Match the host enum: 0 = ACES, 1 = AGX parametric. Both run as
      * peak-parameterised HDR implementations here. ACES gets a

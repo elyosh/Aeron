@@ -42,7 +42,8 @@ float ign_dither(float2 pixel)
 cbuffer TonemapPS : register(b0, space3)
 {
     /* Bloom inputs:
-     *   x = intensity multiplier
+     *   x = intensity: the fraction of the light the bloom scatters,
+     *       blended in as lerp(scene, bloom, x)
      *   y = horizontal bloom filter offset in UV
      *   z = vertical bloom filter offset in UV
      *   w = bar_y_uv (UV.y at the message-bar top; bloom gated to 0
@@ -156,9 +157,10 @@ float4 main(VSOut input) : SV_Target
 
     /* Message-bar gate — zero bloom contribution below bar_y_uv. */
     float bar_gate = step(input.uv.y, bloom_params.w);
-    float3 bloom_contrib = bloom * bloom_params.x * bar_gate;
+    float  bloom_weight = bloom_params.x * bar_gate;
 
-    /* HDR scene + bloom, then exposure, then tonemap.
+    /* HDR scene with its scattered share replaced by bloom, then
+     * exposure, then tonemap.
      *
      * tonemap_params.y picks the operator at runtime (set by the host
      * each frame from flight_gpu_tonemap_op(); Cmd+T flips it live).
@@ -166,7 +168,7 @@ float4 main(VSOut input) : SV_Target
      * exactly one path per frame — no per-pixel divergence, no
      * measurable perf delta vs hard-coding one operator. Both branches
      * return linear display-referred values. */
-    float3 rgb = (scene + bloom_contrib) * tonemap_params.x;
+    float3 rgb = lerp(scene, bloom, bloom_weight) * tonemap_params.x;
     /* Match the host enum: 0 = ACES Fitted, 1 = AGX parametric.
      * Branch is uniform across the quad. ACES gets a pre-exposure
      * boost (present_misc.z) to lift its dark toe up to AgX's. */

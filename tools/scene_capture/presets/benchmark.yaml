@@ -12,7 +12,7 @@ reference_samples: 0
 msaa_samples: 2
 emissive_scale: 8
 bloom:
-  intensity: 0.1
+  intensity: 0.2
   kernel: 4
 tonemap: agx
 benchmark:

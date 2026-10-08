@@ -60,7 +60,7 @@ Start from a preset; unknown keys are rejected. The main settings are:
 | `backface_fill` | `true` (default) or `false`: the dark fill behind cracks in single-sided instances (`AeronScene_SetBackfaceFill`). |
 | `screen_test` | Optional mapping: `eye: [x, y, z]` (model metres), `yaw_degrees`, `pitch_degrees` (positive looks down). Renders the first model alone from that point, unscaled, with test screen inputs: a gradient checker as graphics and a white "F" with a 32-pixel grid as text, every source covering the whole texture. Checks screen surfaces (cockpit displays, holograms) for placement, orientation and mirroring. |
 | `emissive_scale` | Shape/material emission multiplier; default 1. Use 8 to make the cuboids glow strongly. |
-| `bloom` | Optional mapping requiring `intensity` and `kernel` (1 or 4 taps). Omit to disable bloom captures. |
+| `bloom` | Optional mapping requiring `intensity` (the fraction of light scattered, 0 to 1) and `kernel` (1 or 4 taps). Omit to disable bloom captures. |
 | `tonemap` | `agx` (default) or `aces`. |
 | `output_dir` | Directory for images and reports. |
 | `game_scene` | Optional mapping: renders with the game's Scene3D features instead of the plain fixture (see below). |

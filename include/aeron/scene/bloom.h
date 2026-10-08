@@ -3,7 +3,8 @@
 
 /* HDR bloom with an approximately resolution-independent screen-space radius.
  * The reference is four equally weighted pyramid bands at 2160p. At other
- * heights their weights move between native pyramid levels, keeping gain 4.
+ * heights their weights move between native pyramid levels, keeping their
+ * sum at 1, so the result is a blurred copy of the scene at its brightness.
  * The pyramid is a 2x2 bright pass, 13-tap downsamples and 3x3 tent
  * upsamples, so compact bright sources stay round and do not snap to the
  * coarse levels' texel grid as they move.
@@ -31,8 +32,8 @@ void AeronSceneBloom_Destroy(AeronSceneBloom* b);
 
 /* Run the bright pass and weighted down/up chain. Leaves the
  * accumulated bloom in mip0 (queryable via AeronSceneBloom_ColorRt) so
- * the swapchain composite shader can sample it and fold the additive
- * contribution into its own pass — eliminating a dedicated full-res
+ * the swapchain composite shader can sample it and blend it in within
+ * its own pass — eliminating a dedicated full-res
  * "Bloom composite" pass on the flight RT.
  *
  * `scissor_max_y` is the lowest Y pixel of the flight RT that bloom
@@ -52,9 +53,11 @@ int AeronSceneBloom_Apply(AeronSceneBloom* b, struct AeronCommandBuffer* cmd, Ae
 AeronRenderTarget* AeronSceneBloom_ColorRt(const AeronSceneBloom* b);
 
 /* Intensity uniform passed to the present pass: the fraction of the scene's
- * light the bloom scatters. Process-wide runtime knob (default 0.1); 0
- * disables the bloom contribution entirely — hosts may also skip
- * AeronSceneBloom_Apply when it reads 0 to save the chain's GPU cost.
+ * light the bloom scatters, blended in as lerp(scene, bloom, intensity) so
+ * the scattered light leaves its source. Process-wide runtime knob in
+ * [0, 1] (default 0.2, tuned on flight captures); 0 disables the bloom
+ * contribution entirely — hosts may also skip AeronSceneBloom_Apply when
+ * it reads 0 to save the chain's GPU cost.
  *
  * There is no brightness threshold: all light scatters in proportion, as
  * in a lens, so what visibly glows is what is far brighter than its

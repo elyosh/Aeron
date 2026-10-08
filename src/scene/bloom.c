@@ -1,6 +1,8 @@
 /* Resolution-scaled dual-filter bloom. The four equally weighted bands at
  * 2160p define the reference look; other heights redistribute their weights
- * over the native half-resolution pyramid. Presentation composites mip0. */
+ * over the native half-resolution pyramid. The weights sum to 1, so mip0 is
+ * a blurred copy of the scene at its brightness, which presentation blends
+ * in by the intensity. */
 
 #include "aeron/scene/bloom.h"
 #include <stdio.h>
@@ -13,7 +15,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define BLOOM_INTENSITY 0.1f
+#define BLOOM_INTENSITY 0.2f
 #define BLOOM_REFERENCE_LEVEL_COUNT 4
 #define BLOOM_MAX_LEVEL_COUNT 8
 #define BLOOM_CHAIN_FORMAT AERON_TEXTURE_FORMAT_R11G11B10_UFLOAT
@@ -82,11 +84,13 @@ static AeronGraphicsPipeline* create_pipeline(AeronShader* vs, AeronShader* ps, 
 
 /* Squared filter radius grows by four per pyramid level. Interpolate in
  * that space so fractional resolutions change continuously. Clamping bands
- * finer than mip0 preserves their energy at the available spatial detail. */
+ * finer than mip0 preserves their energy at the available spatial detail.
+ * Each band carries an equal share of the total weight of 1. */
 static void configure_levels(AeronSceneBloom* b) {
-	float scale          = (float)b->rt_h / AERON_SCENE_BLOOM_REFERENCE_HEIGHT;
-	float radius_squared = scale * scale;
-	b->level_count       = 1;
+	const float band_weight    = 1.0f / BLOOM_REFERENCE_LEVEL_COUNT;
+	float       scale          = (float)b->rt_h / AERON_SCENE_BLOOM_REFERENCE_HEIGHT;
+	float       radius_squared = scale * scale;
+	b->level_count             = 1;
 	for (int band = 0; band < BLOOM_REFERENCE_LEVEL_COUNT; ++band, radius_squared *= 4.0f) {
 		int   level = 0;
 		float lower = 1.0f;
@@ -97,9 +101,9 @@ static void configure_levels(AeronSceneBloom* b) {
 		float fraction = radius_squared > lower ? (radius_squared - lower) / (3.0f * lower) : 0.0f;
 		if (level == BLOOM_MAX_LEVEL_COUNT - 1)
 			fraction = 0.0f;
-		b->levels[level].weight += 1.0f - fraction;
+		b->levels[level].weight += band_weight * (1.0f - fraction);
 		if (fraction > 0.0f) {
-			b->levels[++level].weight += fraction;
+			b->levels[++level].weight += band_weight * fraction;
 		}
 		if (b->level_count < level + 1)
 			b->level_count = level + 1;
@@ -268,18 +272,12 @@ int AeronSceneBloom_Apply(AeronSceneBloom* b, AeronCommandBuffer* cmd, AeronText
 		bright_scissor.height = max_y_mip0;
 	}
 
-	/* Collapsed finer bands can give mip0 weight >1. Apply that
-	 * weight after extraction, then undo it in the first downsample so the
-	 * remaining bands stay independent. All blend factors stay in [0,1]. */
-	float first_weight = b->levels[0].weight > 1.0f ? b->levels[0].weight : 1.0f;
-
-	/* Bright pass: flight RT -> mip0. */
+	/* Bright pass: flight RT -> mip0. A single level holds every band, at
+	 * weight 1; otherwise mip0's weight applies when the chain folds back. */
 	{
 		struct {
-			float params[4]; /* xy=source texel size */
-			float weight[4];
-		} u = { { 1.0f / (float)rt_w, 1.0f / (float)rt_h, 0, 0 },
-				{ first_weight, 0, 0, 0 } };
+			float params[4]; /* xy = source texel size */
+		} u = { { 1.0f / (float)rt_w, 1.0f / (float)rt_h, 0, 0 } };
 
 		if (!bloom_pass(cmd, b->levels[0].tex, b->levels[0].w, b->levels[0].h, b->brightpass_pipeline,
 						flight_color_rt, b->sampler, &u, sizeof u,
@@ -295,8 +293,8 @@ int AeronSceneBloom_Apply(AeronSceneBloom* b, AeronCommandBuffer* cmd, AeronText
 		const AeronSceneBloomLevel* dst = &b->levels[i];
 
 		struct {
-			float src_texel[4]; /* xy = 1/src_size, z = input normalization */
-		} u = { { 1.0f / (float)src->w, 1.0f / (float)src->h, i == 1 ? 1.0f / first_weight : 1.0f, 0.0f } };
+			float src_texel[4]; /* xy = 1/src_size */
+		} u = { { 1.0f / (float)src->w, 1.0f / (float)src->h, 0.0f, 0.0f } };
 
 		char label[32];
 		snprintf(label, sizeof label, "Bloom down %d->%d", i - 1, i);
@@ -308,7 +306,7 @@ int AeronSceneBloom_Apply(AeronSceneBloom* b, AeronCommandBuffer* cmd, AeronText
 		}
 	}
 
-	/* Accumulate each band with its own weight, preserving total gain 4. */
+	/* Accumulate each band with its own weight, preserving total gain 1. */
 	for (int i = b->level_count - 1; i > 0; --i) {
 		const AeronSceneBloomLevel* src = &b->levels[i];
 		const AeronSceneBloomLevel* dst = &b->levels[i - 1];
@@ -317,7 +315,7 @@ int AeronSceneBloom_Apply(AeronSceneBloom* b, AeronCommandBuffer* cmd, AeronText
 			float dst_texel[4]; /* xy = 1/dst_size, zw = source/destination weights */
 			float src_texel[4]; /* xy = 1/src_size */
 		} u = { { 1.0f / (float)dst->w, 1.0f / (float)dst->h, i == b->level_count - 1 ? src->weight : 1.0f,
-				  i == 1 ? dst->weight / first_weight : dst->weight },
+				  dst->weight },
 				{ 1.0f / (float)src->w, 1.0f / (float)src->h, 0.0f, 0.0f } };
 
 		char label[32];
@@ -354,6 +352,8 @@ float AeronSceneBloom_Intensity(void) { return s_bloom_intensity; }
 void AeronSceneBloom_SetIntensity(float v) {
 	if (v < 0.0f)
 		v = 0.0f;
+	if (v > 1.0f)
+		v = 1.0f;
 	s_bloom_intensity = v;
 }
 

@@ -13,6 +13,6 @@ output_dir: captures/bloom-motion
 # Make the legacy shapes glow strongly without changing their geometry.
 emissive_scale: 8
 bloom:
-  intensity: 0.1
+  intensity: 0.2
   kernel: 4
 tonemap: agx
