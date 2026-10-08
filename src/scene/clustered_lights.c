@@ -180,6 +180,12 @@ static void cluster_prepare_uniform(AeronScene3D* s) {
 	u->flags |= s->cluster_global_count << AERON_CLUSTER_GLOBAL_COUNT_SHIFT;
 	u->flags |= s->cluster_light_count << AERON_CLUSTER_LOCAL_COUNT_SHIFT;
 	memcpy(u->global_light_indices, s->cluster_global_indices, sizeof u->global_light_indices);
+	/* Global lights are classified in index order, so their spheres lead. */
+	u->tube_start          = s->point_tube_start;
+	u->global_sphere_count = 0;
+	for (uint32_t i = 0; i < s->cluster_global_count; ++i) {
+		u->global_sphere_count += s->cluster_global_indices[i] < s->point_tube_start ? 1u : 0u;
+	}
 }
 
 int AeronSceneClusteredLights_Ensure(AeronScene3D* s) {

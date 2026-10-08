@@ -176,6 +176,11 @@ typedef struct AeronSceneClusterUniformGPU {
 	uint32_t tile_size;
 	uint32_t flags;
 	uint32_t global_light_indices[AERON_SCENE_CLUSTER_MAX_GLOBAL_LIGHTS];
+	/* Point lights from tube_start on are tubes; the first
+	 * global_sphere_count global lights are spheres. */
+	uint32_t tube_start;
+	uint32_t global_sphere_count;
+	uint32_t _reserved[2];
 } AeronSceneClusterUniformGPU;
 
 /* Fragment b2: the scene lighting block. Mirrors ClusteredLightUniform
@@ -189,10 +194,10 @@ typedef struct AeronSceneLightingUniformGPU {
 	float                       emission[4];             /* emissive scale, 0, 0, 0 */
 } AeronSceneLightingUniformGPU;
 
-/* Layout checks against the HLSL blocks (ClusteredLightUniform, 112 bytes;
- * with the environment, the debug material and the emission, 208 bytes). */
-typedef char AeronSceneClusterUniformSizeCheck[sizeof(AeronSceneClusterUniformGPU) == 112 ? 1 : -1];
-typedef char AeronSceneLightingUniformSizeCheck[sizeof(AeronSceneLightingUniformGPU) == 208 ? 1 : -1];
+/* Layout checks against the HLSL blocks (ClusteredLightUniform, 128 bytes;
+ * with the environment, the debug material and the emission, 224 bytes). */
+typedef char AeronSceneClusterUniformSizeCheck[sizeof(AeronSceneClusterUniformGPU) == 128 ? 1 : -1];
+typedef char AeronSceneLightingUniformSizeCheck[sizeof(AeronSceneLightingUniformGPU) == 224 ? 1 : -1];
 
 enum {
 	AERON_SCENE_CLUSTER_ENABLED    = 1u << 0,
@@ -338,6 +343,8 @@ struct AeronScene3D {
 	uint32_t                   local_light_staging_cap;
 	AeronScenePointLightGPU*   point_light_staging;
 	uint32_t                   point_light_count;
+	/* Spheres are packed first; point lights from here on are tubes. */
+	uint32_t                   point_tube_start;
 	uint32_t                   point_light_staging_cap;
 	AeronSceneClusterLightGPU* cluster_light_staging;
 	uint32_t                   cluster_light_staging_cap;

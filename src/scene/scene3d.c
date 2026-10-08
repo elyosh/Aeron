@@ -21,7 +21,7 @@ typedef char AeronSceneLightGPUSizeCheck[sizeof(AeronSceneLightGPU) == 32 ? 1 : 
 typedef char AeronScenePointLightGPUSizeCheck[sizeof(AeronScenePointLightGPU) == 48 ? 1 : -1];
 typedef char AeronSceneClusterLightGPUSizeCheck[sizeof(AeronSceneClusterLightGPU) == 32 ? 1 : -1];
 typedef char AeronSceneClusterHeaderGPUSizeCheck[sizeof(AeronSceneClusterHeaderGPU) == 8 ? 1 : -1];
-typedef char AeronSceneClusterUniformGPUSizeCheck[sizeof(AeronSceneClusterUniformGPU) == 112 ? 1 : -1];
+typedef char AeronSceneClusterUniformGPUSizeCheck[sizeof(AeronSceneClusterUniformGPU) == 128 ? 1 : -1];
 
 /* struct AeronScene3D lives in internal.h (shared with
  * the material-class translation units). */
@@ -511,6 +511,16 @@ void AeronScene_AddMeshInstance(AeronScene3D* s, const AeronSceneMeshInstance* i
 		return;
 	}
 	s->instances[s->instance_count++] = *instance;
+}
+
+/* An INVERSE_SQUARE light with a finite, non-zero half axis. */
+static int scene_light_is_tube(const AeronSceneLight* light) {
+	if (light->falloff != AERON_SCENE_LIGHT_FALLOFF_INVERSE_SQUARE) {
+		return 0;
+	}
+	const float length_sq = light->half_axis[0] * light->half_axis[0] + light->half_axis[1] * light->half_axis[1] +
+							light->half_axis[2] * light->half_axis[2];
+	return length_sq > 0.0f && isfinite(length_sq);
 }
 
 int AeronScene_AddLight(AeronScene3D* s, const AeronSceneLight* light) {
@@ -1570,8 +1580,15 @@ int AeronSceneStorage_Prepare(AeronScene3D* s, AeronCommandBuffer* cmd) {
 	}
 	float view_rotation[9];
 	AeronSceneInternal_QuatToMat3(s->camera.ori, view_rotation);
+	/* Spheres first, then tubes, so the shader takes each in its own loop. */
+	uint32_t tube_start = 0;
 	for (uint32_t i = 0; i < point_count; ++i) {
-		const AeronSceneLight*     source      = &s->lights[i];
+		tube_start += scene_light_is_tube(&s->lights[i]) ? 0u : 1u;
+	}
+	uint32_t next_sphere = 0, next_tube = tube_start;
+	for (uint32_t light = 0; light < point_count; ++light) {
+		const AeronSceneLight*     source      = &s->lights[light];
+		const uint32_t             i           = scene_light_is_tube(source) ? next_tube++ : next_sphere++;
 		AeronScenePointLightGPU*   destination = &s->point_light_staging[i];
 		AeronSceneClusterLightGPU* cluster     = &s->cluster_light_staging[i];
 		destination->position_range[0]         = source->pos[0];
@@ -1585,14 +1602,12 @@ int AeronSceneStorage_Prepare(AeronScene3D* s, AeronCommandBuffer* cmd) {
 		destination->color[3] = source->falloff == AERON_SCENE_LIGHT_FALLOFF_INVERSE_SQUARE
 									? (source->min_distance > 1e-3f ? source->min_distance : 1e-3f)
 									: 0.0f;
-		/* A tube's segment, for INVERSE_SQUARE lights only; clusters
-		 * bound it with a sphere around its centre. */
-		float half_length = 0.0f;
+		/* A tube's segment; clusters bound it with a sphere around its
+		 * centre. */
+		const int is_tube     = scene_light_is_tube(source);
+		float     half_length = 0.0f;
 		for (int axis = 0; axis < 3; ++axis) {
-			destination->half_axis[axis] =
-				source->falloff == AERON_SCENE_LIGHT_FALLOFF_INVERSE_SQUARE && isfinite(source->half_axis[axis])
-					? source->half_axis[axis]
-					: 0.0f;
+			destination->half_axis[axis] = is_tube ? source->half_axis[axis] : 0.0f;
 			half_length += destination->half_axis[axis] * destination->half_axis[axis];
 		}
 		destination->half_axis[3] = 0.0f;
@@ -1613,6 +1628,7 @@ int AeronSceneStorage_Prepare(AeronScene3D* s, AeronCommandBuffer* cmd) {
 		cluster->_pad                        = 0.0f;
 	}
 	s->point_light_count = point_count;
+	s->point_tube_start  = tube_start;
 	AeronSceneClusteredLights_Classify(s);
 
 	if (s->local_light_count == 0) {

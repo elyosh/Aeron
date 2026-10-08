@@ -169,7 +169,12 @@ bool candidate_better(float score, uint index, float best_score, uint best_index
 	}
 
 	uint cluster_index       = (group_id.z * fs_cluster_grid_y + group_id.y) * fs_cluster_grid_x + group_id.x;
-	g_headers[cluster_index] = uint2(retained_count, candidate_count);
+	/* The indices are ascending and the tubes come last, so they are the
+	 * tail; the header's high half counts them. */
+	uint tube_count = 0u;
+	for (uint t = 0u; t < retained_count; ++t)
+		tube_count += s_selected[t] >= fs_cluster_tube_start ? 1u : 0u;
+	g_headers[cluster_index] = uint2(retained_count | (tube_count << 16u), candidate_count);
 	uint base                = cluster_index * AERON_CLUSTER_MAX_LIGHTS;
 	for (uint i = 0u; i < retained_count; ++i)
 		g_indices[base + i] = s_selected[i];
