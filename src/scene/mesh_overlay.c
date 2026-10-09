@@ -11,7 +11,7 @@ typedef struct OverlayVertexUniforms {
 	float    transform[16];
 	float    params[4];
 	uint32_t mesh_table_base;
-	uint32_t table_slot_count;
+	uint32_t table_component_count;
 	uint32_t _pad[2];
 } OverlayVertexUniforms;
 
@@ -85,7 +85,7 @@ static AeronGraphicsPipeline* create_overlay_pipeline(AeronScene3D* scene, int b
 		{ .location    = 2,
 		  .buffer_slot = 0,
 		  .format      = AERON_VERTEX_FORMAT_FLOAT,
-		  .offset      = (uint32_t)offsetof(AeronSceneMeshOverlayVertex, mesh_index) },
+		  .offset      = (uint32_t)offsetof(AeronSceneMeshOverlayVertex, component) },
 	};
 	AeronVertexBufferLayoutDesc vertex_buffer_layout = { .slot = 0,
 														 .stride =
@@ -202,7 +202,7 @@ void AeronSceneMeshOverlay_Draw(AeronScene3D* scene, AeronRenderPass* render_pas
 		memcpy(vertex_uniforms.transform, overlay->transform, sizeof vertex_uniforms.transform);
 		vertex_uniforms.params[0]        = overlay->depth_bias;
 		vertex_uniforms.mesh_table_base  = overlay->mesh_table_base;
-		vertex_uniforms.table_slot_count = overlay->table_slot_count;
+		vertex_uniforms.table_component_count = overlay->table_component_count;
 		Aeron_BindUniformData(render_pass, AERON_SHADER_STAGE_VERTEX, 0, &vertex_uniforms,
 							  sizeof vertex_uniforms);
 		OverlayFragmentUniforms fragment_uniforms;

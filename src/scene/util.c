@@ -255,26 +255,27 @@ int AeronSceneInternal_InstanceBox(const AeronSceneMeshInstance* instance, const
 		return 0;
 	}
 	const AeronSceneMeshTable* table = instance->mesh_table;
-	const uint32_t table_slots       = table && table->slot_count && table->slot_count < AERON_MAX_MESH_SLOTS
-										   ? table->slot_count
-										   : AERON_MAX_MESH_SLOTS;
+	const uint32_t             table_components =
+		table && table->component_count && table->component_count < AERON_MAX_MESH_COMPONENTS
+			? table->component_count
+			: AERON_MAX_MESH_COMPONENTS;
 	const float*   axes[3]           = { x_axis, y_axis, z_axis };
 	float          lo[3]             = { FLT_MAX, FLT_MAX, FLT_MAX };
 	float          hi[3]             = { -FLT_MAX, -FLT_MAX, -FLT_MAX };
 	const float*   transform         = instance->transform;
-	for (uint32_t slot = 0; slot < mesh->slot_count; slot++) {
-		const uint32_t row = slot < table_slots ? slot : table_slots - 1u;
+	for (uint32_t component = 0; component < mesh->component_count; component++) {
+		const uint32_t row = component < table_components ? component : table_components - 1u;
 		if (table && table->visibility_packed[row >> 2][row & 3] < 0.5f) {
 			continue;
 		}
-		/* model = transform * slot row (identity without a table). */
+		/* model = transform * the component's row (identity without a table). */
 		float model[3][4];
 		for (int r = 0; r < 3; r++) {
 			for (int c = 0; c < 4; c++) {
 				float value = c == 3 ? transform[r * 4 + 3] : 0.0f;
 				for (int k = 0; k < 3; k++) {
-					const float slot_value = table ? table->rows[row][k][c] : (c == k ? 1.0f : 0.0f);
-					value += transform[r * 4 + k] * slot_value;
+					const float component_value = table ? table->rows[row][k][c] : (c == k ? 1.0f : 0.0f);
+					value += transform[r * 4 + k] * component_value;
 				}
 				model[r][c] = value;
 			}
@@ -282,8 +283,10 @@ int AeronSceneInternal_InstanceBox(const AeronSceneMeshInstance* instance, const
 		float local_center[3];
 		float local_half[3];
 		for (int k = 0; k < 3; k++) {
-			local_center[k] = 0.5f * (mesh->slot_bound_min[slot][k] + mesh->slot_bound_max[slot][k]);
-			local_half[k]   = 0.5f * (mesh->slot_bound_max[slot][k] - mesh->slot_bound_min[slot][k]);
+			local_center[k] =
+				0.5f * (mesh->component_bound_min[component][k] + mesh->component_bound_max[component][k]);
+			local_half[k] =
+				0.5f * (mesh->component_bound_max[component][k] - mesh->component_bound_min[component][k]);
 		}
 		float world_center[3];
 		for (int r = 0; r < 3; r++) {

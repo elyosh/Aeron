@@ -5,7 +5,7 @@
 struct VSIn
 {
     float3 position   : POSITION;
-    float  mesh_index : COLOR0;
+    float  component : COLOR0;
 };
 
 struct VSOut
@@ -16,7 +16,7 @@ struct VSOut
 VSOut main(VSIn input)
 {
     VSOut output;
-    directional_shadow_project_vertex(input.position, input.mesh_index,
+    directional_shadow_project_vertex(input.position, input.component,
                                       output.position);
     return output;
 }

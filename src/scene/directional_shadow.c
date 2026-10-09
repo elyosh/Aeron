@@ -15,7 +15,7 @@ typedef struct ShadowVsBlock {
 	uint32_t variant_row_base;
 	uint32_t variant_group_count;
 	uint32_t material_count;
-	uint32_t table_slot_count;
+	uint32_t table_component_count;
 	uint32_t _pad[3];
 } ShadowVsBlock;
 
@@ -305,7 +305,7 @@ static AeronGraphicsPipeline* shadow_pipeline(struct AeronScene3D* scene, AeronC
 		{ .location    = 1,
 		  .buffer_slot = 0,
 		  .format      = AERON_VERTEX_FORMAT_FLOAT,
-		  .offset      = (uint32_t)offsetof(AeronGltfVertex, mesh_index) },
+		  .offset      = (uint32_t)offsetof(AeronGltfVertex, component) },
 	};
 	if (masked) {
 		attributes[1] = (AeronVertexAttributeDesc) { .location    = 1,
@@ -316,7 +316,7 @@ static AeronGraphicsPipeline* shadow_pipeline(struct AeronScene3D* scene, AeronC
 			(AeronVertexAttributeDesc) { .location    = 2,
 										 .buffer_slot = 0,
 										 .format      = AERON_VERTEX_FORMAT_FLOAT,
-										 .offset      = (uint32_t)offsetof(AeronGltfVertex, mesh_index) };
+										 .offset      = (uint32_t)offsetof(AeronGltfVertex, component) };
 		attributes[3] = (AeronVertexAttributeDesc) { .location    = 3,
 													 .buffer_slot = 0,
 													 .format      = AERON_VERTEX_FORMAT_UINT,
@@ -1204,10 +1204,10 @@ static void shadow_draw_class(struct AeronScene3D* scene, AeronRenderPass* pass,
 		memcpy(block.view_proj, view_proj, sizeof block.view_proj);
 		memcpy(block.model_to_world, instance->transform, sizeof block.model_to_world);
 		block.mesh_table_base =
-			AeronSceneStorage_ShadowTableBase(scene, casters[item], &block.table_slot_count);
+			AeronSceneStorage_ShadowTableBase(scene, casters[item], &block.table_component_count);
 		uint32_t variant       = instance->variant;
-		if (variant >= mesh->variant_slots)
-			variant = mesh->variant_slots ? mesh->variant_slots - 1u : 0u;
+		if (variant >= mesh->variant_rows)
+			variant = mesh->variant_rows ? mesh->variant_rows - 1u : 0u;
 		block.variant_row_base    = variant * mesh->variant_groups_per_row;
 		block.variant_group_count = mesh->variant_groups_per_row;
 		block.material_count      = mesh->material_count;

@@ -11,7 +11,7 @@ cbuffer DirectionalShadowVS : register(b0, space1)
     uint variant_row_base;
     uint variant_group_count;
     uint material_count;
-    uint table_slot_count;
+    uint table_component_count;
     uint3 _pad;
 };
 
@@ -19,22 +19,22 @@ cbuffer DirectionalShadowVS : register(b0, space1)
 
 StructuredBuffer<float4> mesh_tables : register(t0, space0);
 
-bool directional_shadow_project_vertex(float3 position, float mesh_index_value,
+bool directional_shadow_project_vertex(float3 position, float component_value,
                                        out float4 projected_position)
 {
-    int mesh_index = clamp((int)round(mesh_index_value), 0,
-                           (int)table_slot_count - 1);
+    int component = clamp((int)round(component_value), 0,
+                           (int)table_component_count - 1);
     uint table_base = mesh_table_base;
-    if (mesh_tables[table_base + 3u * table_slot_count +
-                    AERON_MESH_LANE_VISIBILITY * AERON_MESH_LANE_VEC4(table_slot_count) +
-                    ((uint)mesh_index >> 2u)][(uint)mesh_index & 3u] < 0.5f) {
+    if (mesh_tables[table_base + 3u * table_component_count +
+                    AERON_MESH_LANE_VISIBILITY * AERON_MESH_LANE_VEC4(table_component_count) +
+                    ((uint)component >> 2u)][(uint)component & 3u] < 0.5f) {
         projected_position = float4(0.0f, 0.0f, 0.0f, -1.0f);
         return false;
     }
 
-    float4 r0 = mesh_tables[table_base + (uint)mesh_index * 3u + 0u];
-    float4 r1 = mesh_tables[table_base + (uint)mesh_index * 3u + 1u];
-    float4 r2 = mesh_tables[table_base + (uint)mesh_index * 3u + 2u];
+    float4 r0 = mesh_tables[table_base + (uint)component * 3u + 0u];
+    float4 r1 = mesh_tables[table_base + (uint)component * 3u + 1u];
+    float4 r2 = mesh_tables[table_base + (uint)component * 3u + 2u];
     float3 articulated = float3(
         dot(r0.xyz, position) + r0.w,
         dot(r1.xyz, position) + r1.w,

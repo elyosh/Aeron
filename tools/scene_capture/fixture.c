@@ -43,7 +43,7 @@ static AeronSceneMesh* create_cube(AeronCommandBuffer* cmd) {
 												   .blend_index_offset    = 36,
 												   .material_count        = 1,
 												   .materials             = &material,
-												   .variant_slots         = 1,
+												   .variant_columns       = 1,
 												   .total_prim_count      = 1,
 												   .prim_variant_material = &variant },
 								   .bounds     = { .min = { -1, -1, -1 }, .max = { 1, 1, 1 } },

@@ -32,17 +32,17 @@ enum {
 	AERON_SCENE_CLUSTER_LIGHT_CAPACITY = 32,
 };
 
-/* Per-mesh-slot payload packed into the scene's per-frame storage
- * buffer: per-slot 3x4 affine + packed visibility / highlight / markings /
+/* Per-component payload packed into the scene's per-frame storage
+ * buffer: per-component 3x4 affine + packed visibility / highlight / markings /
  * emissive lanes. Instances without one get the identity default.
  *
- * Capacity is AERON_MAX_MESH_SLOTS, but only slots 0..slot_count-1 are
- * read: writers fill those (normally the model's AeronSceneMesh.slot_count)
+ * Capacity is AERON_MAX_MESH_COMPONENTS, but only components
+ * 0..component_count-1 are read: writers fill those (normally the model's AeronSceneMesh.component_count)
  * and leave the rest untouched, and the scene uploads the table packed at
- * slot_count (mesh_table_layout.hlsli). Zero means the full capacity. */
+ * component_count (mesh_table_layout.hlsli). Zero means the full capacity. */
 typedef struct AeronSceneMeshTable {
-	uint32_t slot_count;
-	float    rows[AERON_MAX_MESH_SLOTS][3][4];
+	uint32_t component_count;
+	float    rows[AERON_MAX_MESH_COMPONENTS][3][4];
 	float visibility_packed[AERON_MESH_PACKED_LANES][4];
 	float highlight_packed[AERON_MESH_PACKED_LANES][4];
 	float markings_packed[AERON_MESH_PACKED_LANES][4];

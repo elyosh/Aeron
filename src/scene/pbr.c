@@ -41,7 +41,7 @@ typedef struct AeronScenePbrVsBlock {
 	uint32_t previous_table_base;
 	uint32_t receiver_local_shadow;
 	uint32_t _reserved;
-	uint32_t table_slot_count;
+	uint32_t table_component_count;
 	float    prev_view_proj[16];
 	float    prev_model_to_world[16];
 } AeronScenePbrVsBlock; /* 368 B */
@@ -81,7 +81,7 @@ static void pbr_vertex_input(AeronVertexAttributeDesc attrs[6], AeronVertexBuffe
 	attrs[4] = (AeronVertexAttributeDesc) { .location    = 4,
 											.buffer_slot = 0,
 											.format      = AERON_VERTEX_FORMAT_FLOAT,
-											.offset      = (uint32_t)offsetof(AeronGltfVertex, mesh_index) };
+											.offset      = (uint32_t)offsetof(AeronGltfVertex, component) };
 	attrs[5] = (AeronVertexAttributeDesc) { .location    = 5,
 											.buffer_slot = 0,
 											.format      = AERON_VERTEX_FORMAT_UINT,
@@ -530,8 +530,8 @@ const AeronSceneMeshTable* AeronScenePbr_IdentityTable(void) {
 	static AeronSceneMeshTable t;
 	static int                 built;
 	if (!built) {
-		t.slot_count = AERON_MAX_MESH_SLOTS;
-		for (int mi = 0; mi < AERON_MAX_MESH_SLOTS; ++mi) {
+		t.component_count = AERON_MAX_MESH_COMPONENTS;
+		for (int mi = 0; mi < AERON_MAX_MESH_COMPONENTS; ++mi) {
 			t.rows[mi][0][0]                     = 1.0f;
 			t.rows[mi][1][1]                     = 1.0f;
 			t.rows[mi][2][2]                     = 1.0f;
@@ -558,8 +558,8 @@ static void pbr_push_instance_uniforms(struct AeronScene3D* s, AeronRenderPass* 
 		   sizeof vsb.prev_view_proj);
 	memcpy(vsb.prev_model_to_world, vel ? in->prev_transform : in->transform, sizeof vsb.prev_model_to_world);
 	uint32_t variant = in->variant;
-	if (variant >= m->variant_slots) {
-		variant = m->variant_slots ? m->variant_slots - 1u : 0u;
+	if (variant >= m->variant_rows) {
+		variant = m->variant_rows ? m->variant_rows - 1u : 0u;
 	}
 	vsb.variant_row_base             = variant * m->variant_groups_per_row;
 	vsb.variant_group_count          = m->variant_groups_per_row;
@@ -574,7 +574,7 @@ static void pbr_push_instance_uniforms(struct AeronScene3D* s, AeronRenderPass* 
 	vsb.receiver_local_shadow = vsb.receive_shadow && receiver_local ? 1u : 0u;
 	vsb.current_table_base           = prepared->current_table_base;
 	vsb.previous_table_base          = vel ? prepared->previous_table_base : prepared->current_table_base;
-	vsb.table_slot_count             = prepared->table_slot_count;
+	vsb.table_component_count        = prepared->table_component_count;
 	Aeron_BindUniformData(pass, AERON_SHADER_STAGE_VERTEX, 0, &vsb, sizeof vsb);
 
 	(void)depth_only;

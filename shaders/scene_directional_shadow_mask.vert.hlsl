@@ -6,7 +6,7 @@ struct VSIn
 {
     float3 position   : POSITION;
     float2 uv         : TEXCOORD0;
-    float  mesh_index : COLOR0;
+    float  component : COLOR0;
     uint   prim_id    : COLOR1;
 };
 
@@ -20,7 +20,7 @@ struct VSOut
 VSOut main(VSIn input)
 {
     VSOut output;
-    if (!directional_shadow_project_vertex(input.position, input.mesh_index,
+    if (!directional_shadow_project_vertex(input.position, input.component,
                                            output.position)) {
         output.uv = float2(0.0f, 0.0f);
         output.material_lookup = uint4(0xFFFFFFFFu, 0u, 0u, 0u);

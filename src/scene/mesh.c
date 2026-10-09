@@ -297,13 +297,13 @@ static int build_variant_storage(AeronSceneMesh* s, const AeronGltfModel* model,
 	for (size_t i = 0; i < value_count; ++i) {
 		values[i] = AERON_GLTF_NO_MATERIAL;
 	}
-	if (model->prim_variant_material && model->variant_slots > 0) {
+	if (model->prim_variant_material && model->variant_columns > 0) {
 		for (uint32_t row = 0; row < rows; ++row) {
 			/* Storage row `row` holds variant index `row`. */
 			const uint32_t column = variant_column(model, set, row);
 			for (uint32_t primitive = 0; primitive < primitive_count; ++primitive) {
 				values[((size_t)row * groups + primitive / 4u) * 4u + primitive % 4u] =
-					model->prim_variant_material[(size_t)primitive * model->variant_slots + column];
+					model->prim_variant_material[(size_t)primitive * model->variant_columns + column];
 			}
 		}
 	}
@@ -532,7 +532,7 @@ static AeronSceneMesh* mesh_create(AeronCommandBuffer* cmd, const AeronFlightMod
 			AeronSceneMeshCpuVertex* retained_vertex = &s->cpu_vertices[vertex_index];
 			memcpy(retained_vertex->pos, source_vertex->pos, sizeof retained_vertex->pos);
 			memcpy(retained_vertex->normal, source_vertex->normal, sizeof retained_vertex->normal);
-			retained_vertex->mesh_index = source_vertex->mesh_index;
+			retained_vertex->component = source_vertex->component;
 		}
 		memcpy(s->cpu_indices, model->indices, (size_t)model->index_count * sizeof *s->cpu_indices);
 		if (flight_model->render_bvh) {
@@ -602,8 +602,8 @@ static AeronSceneMesh* mesh_create(AeronCommandBuffer* cmd, const AeronFlightMod
 	}
 
 	/* ---- Immutable material and variant storage ---- */
-	s->variant_slots              = variant_index_count(model, set);
-	s->variant_count              = model->variant_count > 0 ? s->variant_slots : 0u;
+	s->variant_rows               = variant_index_count(model, set);
+	s->variant_count              = model->variant_count > 0 ? s->variant_rows : 0u;
 	s->total_prim_count           = model->total_prim_count;
 	s->all_materials_single_sided = true;
 	for (uint32_t index = 0; index < model->material_count; ++index) {
@@ -661,14 +661,15 @@ static AeronSceneMesh* mesh_create(AeronCommandBuffer* cmd, const AeronFlightMod
 	}
 
 	/* ---- Articulation + bounds ---- */
-	s->slot_count = flight_model->component_count < AERON_MAX_MESH_SLOTS ? flight_model->component_count
-																		 : AERON_MAX_MESH_SLOTS;
-	if (s->slot_count == 0) {
-		s->slot_count = 1;
+	s->component_count = flight_model->component_count < AERON_MAX_MESH_COMPONENTS
+							 ? flight_model->component_count
+							 : AERON_MAX_MESH_COMPONENTS;
+	if (s->component_count == 0) {
+		s->component_count = 1;
 	}
-	for (uint32_t i = 0; i < s->slot_count; ++i) {
+	for (uint32_t i = 0; i < s->component_count; ++i) {
 		const AeronFlightComponent* component = &flight_model->components[i];
-		AeronMeshRot*               rotation  = &s->mesh_rot[i];
+		AeronMeshRot*               rotation  = &s->component_rot[i];
 		rotation->mesh_type                   = (uint8_t)component->mesh_type;
 		if (component->has_rotation) {
 			rotation->has_rotation = 1;
@@ -679,15 +680,15 @@ static AeronSceneMesh* mesh_create(AeronCommandBuffer* cmd, const AeronFlightMod
 			rotation->axis[1]      = component->rotation.rotation_axis.y;
 			rotation->axis[2]      = component->rotation.rotation_axis.z;
 		}
-		s->slot_bound_min[i][0] = component->bounds.min.x;
-		s->slot_bound_min[i][1] = component->bounds.min.y;
-		s->slot_bound_min[i][2] = component->bounds.min.z;
-		s->slot_bound_max[i][0] = component->bounds.max.x;
-		s->slot_bound_max[i][1] = component->bounds.max.y;
-		s->slot_bound_max[i][2] = component->bounds.max.z;
+		s->component_bound_min[i][0] = component->bounds.min.x;
+		s->component_bound_min[i][1] = component->bounds.min.y;
+		s->component_bound_min[i][2] = component->bounds.min.z;
+		s->component_bound_max[i][0] = component->bounds.max.x;
+		s->component_bound_max[i][1] = component->bounds.max.y;
+		s->component_bound_max[i][2] = component->bounds.max.z;
 	}
-	for (uint32_t i = 0; i < s->slot_count; i++) {
-		if (s->mesh_rot[i].has_rotation) {
+	for (uint32_t i = 0; i < s->component_count; i++) {
+		if (s->component_rot[i].has_rotation) {
 			s->has_any_rotation = true;
 			break;
 		}

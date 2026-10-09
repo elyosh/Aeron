@@ -546,8 +546,8 @@ int AeronScene_MeshLight(const AeronSceneMesh* mesh, uint32_t index, const float
 	}
 	const AeronFlightLight* light = &mesh->lights[index];
 	float                   p[3]  = { light->position.x, light->position.y, light->position.z };
-	const uint32_t          slots = mesh->slot_count ? mesh->slot_count : 1u;
-	if (table && light->component_index < slots) {
+	const uint32_t          components = mesh->component_count ? mesh->component_count : 1u;
+	if (table && light->component_index < components) {
 		const float(*rows)[4] = table->rows[light->component_index];
 		float articulated[3];
 		for (int r = 0; r < 3; ++r) {
@@ -1302,20 +1302,20 @@ static uint32_t scene_mesh_table_hash(const AeronSceneMeshTable* table) {
 	return (uint32_t)value & (AERON_SCENE_MESH_TABLE_HASH_CAP - 1u);
 }
 
-/* Appends `table` to the frame's storage, packed at its slot count (see
+/* Appends `table` to the frame's storage, packed at its component count (see
  * mesh_table_layout.hlsli), once per distinct pointer. Returns its float4
- * base and slot count, or UINT32_MAX. */
+ * base and component count, or UINT32_MAX. */
 static uint32_t scene_register_mesh_table(AeronScene3D* s, const AeronSceneMeshTable* table,
-										  uint32_t* out_slot_count) {
+										  uint32_t* out_component_count) {
 	if (!table) {
 		table = AeronScenePbr_IdentityTable();
 	}
 	uint32_t slot = scene_mesh_table_hash(table);
 	for (uint32_t probe = 0; probe < AERON_SCENE_MESH_TABLE_HASH_CAP; ++probe) {
 		if (!s->mesh_table_keys[slot]) {
-			const uint32_t n    = table->slot_count && table->slot_count < AERON_MAX_MESH_SLOTS
-									  ? table->slot_count
-									  : AERON_MAX_MESH_SLOTS;
+			const uint32_t n    = table->component_count && table->component_count < AERON_MAX_MESH_COMPONENTS
+									  ? table->component_count
+									  : AERON_MAX_MESH_COMPONENTS;
 			const uint32_t base = s->mesh_table_vec4_count;
 			if (s->mesh_table_count >= AERON_SCENE_MAX_MESH_TABLES ||
 				!scene_storage_reserve((void**)&s->mesh_table_staging, &s->mesh_table_staging_cap,
@@ -1334,12 +1334,12 @@ static uint32_t scene_register_mesh_table(AeronScene3D* s, const AeronSceneMeshT
 			s->mesh_table_vec4_count += AERON_MESH_TABLE_VEC4(n);
 			s->mesh_table_keys[slot]   = table;
 			s->mesh_table_values[slot] = base;
-			s->mesh_table_slots[slot]  = n;
-			*out_slot_count            = n;
+			s->mesh_table_component_counts[slot] = n;
+			*out_component_count                 = n;
 			return base;
 		}
 		if (s->mesh_table_keys[slot] == table) {
-			*out_slot_count = s->mesh_table_slots[slot];
+			*out_component_count = s->mesh_table_component_counts[slot];
 			return s->mesh_table_values[slot];
 		}
 		slot = (slot + 1u) & (AERON_SCENE_MESH_TABLE_HASH_CAP - 1u);
@@ -1483,8 +1483,8 @@ int AeronSceneStorage_Prepare(AeronScene3D* s, AeronCommandBuffer* cmd) {
 	s->point_light_count = 0;
 	memset(s->mesh_table_keys, 0, sizeof s->mesh_table_keys);
 
-	uint32_t identity_slots = 0;
-	if (scene_register_mesh_table(s, AeronScenePbr_IdentityTable(), &identity_slots) != 0u) {
+	uint32_t identity_components = 0;
+	if (scene_register_mesh_table(s, AeronScenePbr_IdentityTable(), &identity_components) != 0u) {
 		scene_storage_report_failure(s, "scene.mesh_tables.cpu", (uint32_t)sizeof(AeronSceneMeshTable));
 		return 0;
 	}
@@ -1503,18 +1503,18 @@ int AeronSceneStorage_Prepare(AeronScene3D* s, AeronCommandBuffer* cmd) {
 			order_keys[s->camera_order_count++] = key;
 		}
 		prepared->current_table_base =
-			scene_register_mesh_table(s, instance->mesh_table, &prepared->table_slot_count);
-		uint32_t previous_slots = 0;
+			scene_register_mesh_table(s, instance->mesh_table, &prepared->table_component_count);
+		uint32_t previous_components = 0;
 		prepared->previous_table_base =
 			instance->prev_mesh_table
-				? scene_register_mesh_table(s, instance->prev_mesh_table, &previous_slots)
+				? scene_register_mesh_table(s, instance->prev_mesh_table, &previous_components)
 				: prepared->current_table_base;
 		if (prepared->current_table_base == UINT32_MAX || prepared->previous_table_base == UINT32_MAX) {
 			scene_storage_report_failure(s, "scene.mesh_tables.cpu", (s->mesh_table_vec4_count + 1u) * 16u);
 			return 0;
 		}
-		/* The shader indexes both tables with the current slot range. */
-		if (instance->prev_mesh_table && previous_slots < prepared->table_slot_count) {
+		/* The shader indexes both tables with the current component range. */
+		if (instance->prev_mesh_table && previous_components < prepared->table_component_count) {
 			prepared->previous_table_base = prepared->current_table_base;
 		}
 	}
@@ -1526,7 +1526,7 @@ int AeronSceneStorage_Prepare(AeronScene3D* s, AeronCommandBuffer* cmd) {
 		AeronScenePreparedInstance* prepared = &s->prepared_shadow_only[i];
 		memset(prepared, 0, sizeof *prepared);
 		prepared->current_table_base =
-			scene_register_mesh_table(s, s->shadow_only[i].mesh_table, &prepared->table_slot_count);
+			scene_register_mesh_table(s, s->shadow_only[i].mesh_table, &prepared->table_component_count);
 		if (prepared->current_table_base == UINT32_MAX) {
 			scene_storage_report_failure(s, "scene.mesh_tables.cpu", (s->mesh_table_vec4_count + 1u) * 16u);
 			return 0;
@@ -1535,7 +1535,7 @@ int AeronSceneStorage_Prepare(AeronScene3D* s, AeronCommandBuffer* cmd) {
 	}
 	for (uint32_t i = 0; i < s->overlay_count; ++i) {
 		s->overlays[i].mesh_table_base =
-			scene_register_mesh_table(s, s->overlays[i].mesh_table, &s->overlays[i].table_slot_count);
+			scene_register_mesh_table(s, s->overlays[i].mesh_table, &s->overlays[i].table_component_count);
 		if (s->overlays[i].mesh_table_base == UINT32_MAX) {
 			scene_storage_report_failure(s, "scene.mesh_tables.cpu", (s->mesh_table_vec4_count + 1u) * 16u);
 			return 0;
@@ -1667,7 +1667,7 @@ int AeronSceneStorage_Prepare(AeronScene3D* s, AeronCommandBuffer* cmd) {
 }
 
 uint32_t AeronSceneStorage_ShadowTableBase(const AeronScene3D* s, uint16_t encoded_caster,
-										   uint32_t* slot_count) {
+										   uint32_t* component_count) {
 	const AeronScenePreparedInstance* prepared = NULL;
 	if (s && s->storage_ready) {
 		if (encoded_caster < AERON_SCENE_MAX_INSTANCES) {
@@ -1682,7 +1682,7 @@ uint32_t AeronSceneStorage_ShadowTableBase(const AeronScene3D* s, uint16_t encod
 		}
 	}
 	/* Base 0 is the identity table, registered first at full capacity. */
-	*slot_count = prepared ? prepared->table_slot_count : AERON_MAX_MESH_SLOTS;
+	*component_count = prepared ? prepared->table_component_count : AERON_MAX_MESH_COMPONENTS;
 	return prepared ? prepared->current_table_base : 0u;
 }
 

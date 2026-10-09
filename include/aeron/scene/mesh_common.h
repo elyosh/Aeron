@@ -2,8 +2,8 @@
 #define AERON_SCENE_MESH_COMMON_H
 
 /*
- * Shared scene-mesh constants and articulation POD. AERON_MAX_MESH_SLOTS comes from
- * mesh_table_layout.hlsli, shared with the shaders. Mesh pipelines
+ * Shared scene-mesh constants and articulation POD. AERON_MAX_MESH_COMPONENTS
+ * comes from mesh_table_layout.hlsli, shared with the shaders. Mesh pipelines
  * share the same scene storage record, indexed by component ordinal. */
 
 #include <stdint.h>
@@ -15,10 +15,10 @@ extern "C" {
 #endif
 
 /* Per-component articulation source. Indexed by model-local component ordinal
- * (0..AERON_MAX_MESH_SLOTS-1). The game-side table builder reads
- * axis/pivot/has_rotation here and composes the per-mesh affine.
+ * (0..AERON_MAX_MESH_COMPONENTS-1). The game-side table builder reads
+ * axis/pivot/has_rotation here and composes the per-component affine.
  *
- * Unused slots stay zero (has_rotation == 0) — the slot still
+ * Unused entries stay zero (has_rotation == 0) — the component still
  * contributes an identity affine to the storage record. */
 typedef struct AeronMeshRot {
 	float   axis[3];

@@ -189,7 +189,7 @@ static uint32_t variant_by_name(const AeronGltfModel* out, const char* name) {
 
 static bool read_variants(const cgltf_data* data, const char* source_label, AeronGltfModel* out) {
 	out->variant_count       = (uint32_t)data->variants_count;
-	out->variant_slots       = out->variant_count > 0 ? out->variant_count : 1u;
+	out->variant_columns     = out->variant_count > 0 ? out->variant_count : 1u;
 	out->asset_variant_count = out->variant_count;
 	if (out->variant_count) {
 		out->variant_names = (char**)calloc(out->variant_count, sizeof *out->variant_names);
@@ -552,9 +552,9 @@ static bool material_is_screen(const AeronGltfModel* model, uint32_t material) {
 /* A primitive goes to the screen tail of its range when any variant
  * gives it a screen material. */
 static bool primitive_is_screen(const AeronGltfModel* model, uint32_t prim_id) {
-	for (uint32_t variant = 0; variant < model->variant_slots; ++variant) {
-		if (material_is_screen(model,
-							   model->prim_variant_material[(size_t)prim_id * model->variant_slots + variant]))
+	for (uint32_t variant = 0; variant < model->variant_columns; ++variant) {
+		if (material_is_screen(
+				model, model->prim_variant_material[(size_t)prim_id * model->variant_columns + variant]))
 			return true;
 	}
 	return false;
@@ -567,7 +567,7 @@ static bool primitive_is_screen(const AeronGltfModel* model, uint32_t prim_id) {
  * primitive's range relative to its global vertex_offset so the
  * renderer issues a single indexed draw across all primitives.
  *
- * Also bakes per-vertex `mesh_index` (= component ordinal) and
+ * Also bakes per-vertex `component` (= component ordinal) and
  * `prim_id` (= global prim slot). */
 static bool append_primitive_vertices(const cgltf_primitive* p, const cgltf_node* node,
 									  uint16_t component_index, uint32_t prim_id, AeronGltfVertex* verts,
@@ -624,7 +624,7 @@ static bool append_primitive_vertices(const cgltf_primitive* p, const cgltf_node
 		gltf_to_aeron_tangent(tangent, v->tangent);
 		v->uv[0]      = uvs[i * 2 + 0];
 		v->uv[1]      = uvs[i * 2 + 1];
-		v->mesh_index = (float)component_index;
+		v->component  = (float)component_index;
 		v->prim_id    = prim_id;
 	}
 	free(positions);
@@ -720,7 +720,7 @@ bool Aeron_GltfMeshBuildData(const cgltf_data* data, const char* source_label, A
 	for (cgltf_size i = 0; i < root->children_count; i++) {
 		const cgltf_node* n               = root->children[i];
 		const uint16_t    component_index = (uint16_t)i;
-		if (!n->mesh || i >= AERON_MAX_MESH_SLOTS)
+		if (!n->mesh || i >= AERON_MAX_MESH_COMPONENTS)
 			goto cleanup;
 
 		NodePlan* plan = &plans[plan_count++];
@@ -755,10 +755,10 @@ bool Aeron_GltfMeshBuildData(const cgltf_data* data, const char* source_label, A
 	out->total_prim_count = total_prims;
 	if (total_prims > 0) {
 		out->prim_variant_material =
-			(uint32_t*)malloc((size_t)total_prims * out->variant_slots * sizeof(uint32_t));
+			(uint32_t*)malloc((size_t)total_prims * out->variant_columns * sizeof(uint32_t));
 		if (!out->prim_variant_material)
 			goto cleanup;
-		for (size_t k = 0; k < (size_t)total_prims * out->variant_slots; k++)
+		for (size_t k = 0; k < (size_t)total_prims * out->variant_columns; k++)
 			out->prim_variant_material[k] = AERON_GLTF_NO_MATERIAL;
 	}
 
@@ -777,14 +777,14 @@ bool Aeron_GltfMeshBuildData(const cgltf_data* data, const char* source_label, A
 				goto cleanup;
 			uint32_t default_mat =
 				p->material ? (uint32_t)cgltf_material_index(data, p->material) : AERON_GLTF_NO_MATERIAL;
-			for (uint32_t vs = 0; vs < out->variant_slots; vs++)
-				out->prim_variant_material[(size_t)prim_id * out->variant_slots + vs] = default_mat;
+			for (uint32_t vs = 0; vs < out->variant_columns; vs++)
+				out->prim_variant_material[(size_t)prim_id * out->variant_columns + vs] = default_mat;
 			for (cgltf_size mi = 0; mi < p->mappings_count; mi++) {
 				const cgltf_material_mapping* mp = &p->mappings[mi];
-				if (mp->variant < out->variant_slots) {
+				if (mp->variant < out->variant_columns) {
 					uint32_t mat = mp->material ? (uint32_t)cgltf_material_index(data, mp->material)
 												: AERON_GLTF_NO_MATERIAL;
-					out->prim_variant_material[(size_t)prim_id * out->variant_slots + mp->variant] = mat;
+					out->prim_variant_material[(size_t)prim_id * out->variant_columns + mp->variant] = mat;
 				}
 			}
 			prim_id++;
@@ -794,15 +794,16 @@ bool Aeron_GltfMeshBuildData(const cgltf_data* data, const char* source_label, A
 	/* A fixed index partition requires every runtime material variant of a
 	 * primitive to remain in the same render class. */
 	for (uint32_t pid = 0; pid < out->total_prim_count; ++pid) {
-		const uint32_t default_material       = out->prim_variant_material[(size_t)pid * out->variant_slots];
+		const uint32_t default_material = out->prim_variant_material[(size_t)pid * out->variant_columns];
 		const AeronGltfAlphaMode default_mode = material_alpha_mode(out, default_material);
 		if ((int)default_mode < 0) {
 			SDL_Log("[flight_gltf] '%s' primitive %u references invalid material %u", source_label, pid,
 					default_material);
 			goto cleanup;
 		}
-		for (uint32_t variant = 1; variant < out->variant_slots; ++variant) {
-			const uint32_t material = out->prim_variant_material[(size_t)pid * out->variant_slots + variant];
+		for (uint32_t variant = 1; variant < out->variant_columns; ++variant) {
+			const uint32_t material =
+				out->prim_variant_material[(size_t)pid * out->variant_columns + variant];
 			const AeronGltfAlphaMode mode = material_alpha_mode(out, material);
 			if ((int)mode < 0 || mode != default_mode) {
 				SDL_Log("[flight_gltf] '%s' primitive %u variant %u changes alpha class "
@@ -849,7 +850,7 @@ bool Aeron_GltfMeshBuildData(const cgltf_data* data, const char* source_label, A
 			starts[c] = w;
 			for (uint32_t t = 0; t + 2 < out->index_count; t += 3) {
 				const uint32_t pid = out->vertices[out->indices[t]].prim_id;
-				const uint32_t mat = out->prim_variant_material[(size_t)pid * out->variant_slots];
+				const uint32_t mat = out->prim_variant_material[(size_t)pid * out->variant_columns];
 				if (material_alpha_mode(out, mat) != classes[c].mode ||
 					(classes[c].screen != 2 && prim_screen[pid] != classes[c].screen))
 					continue;

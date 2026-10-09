@@ -22,7 +22,7 @@ typedef enum AeronSceneMeshOverlayBlend {
 typedef struct AeronSceneMeshOverlayVertex {
 	float pos[3];
 	float uv[2];
-	float mesh_index;
+	float component;
 } AeronSceneMeshOverlayVertex;
 
 typedef struct AeronSceneMeshOverlayDesc {

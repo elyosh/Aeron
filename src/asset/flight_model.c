@@ -777,8 +777,8 @@ static bool build_semantics(const cgltf_data* data, AeronFlightModel* model) {
 	if (node_role(root) != FLIGHT_ROLE_MODEL || root->mesh || root->skin || !uniform_positive_transform(root) ||
 		!build_model_render_data(data, root, model))
 		return false;
-	/* The renderer's per-component tables hold AERON_MAX_MESH_SLOTS entries. */
-	if (!root->children_count || root->children_count > AERON_MAX_MESH_SLOTS)
+	/* The renderer's per-component tables hold AERON_MAX_MESH_COMPONENTS entries. */
+	if (!root->children_count || root->children_count > AERON_MAX_MESH_COMPONENTS)
 		return false;
 	/* Set the count only with its array: the failure path frees per component. */
 	model->components = calloc(root->children_count, sizeof *model->components);

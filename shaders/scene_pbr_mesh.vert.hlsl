@@ -1,8 +1,8 @@
 /*
  * Forward vertex shader for the glTF mesh path.
  *
- * Vertex stream is AeronGltfVertex (56 B). Per-vertex mesh_index selects an
- * articulated mesh-table slot; prim_id selects material/variant data in the
+ * Vertex stream is AeronGltfVertex (56 B). Per-vertex component selects an
+ * articulated component's mesh-table entry; prim_id selects material/variant data in the
  * fragment shader.
  */
 
@@ -48,14 +48,14 @@ PbrForwardVSOut main(VSIn input)
 		pbr_safe_normalize(mul((float3x3)craft_to_world, rotated_tangent),
 						   float3(1.0f, 0.0f, 0.0f));
 
-	uint mesh_index = current.mesh_index;
+	uint component = current.component;
 	output.position = current.raster_position;
 	output.world_pos = current.world_position.xyz;
 	output.world_normal = world_normal;
 	output.world_tangent = world_tangent;
 	output.tangent_sign = input.tangent.w;
 	output.uv = input.uv;
-	output.emissive_mul = mesh_table_lane(AERON_MESH_LANE_EMISSIVE, mesh_index);
+	output.emissive_mul = mesh_table_lane(AERON_MESH_LANE_EMISSIVE, component);
 	output.prim_id = input.prim_id;
 	output.base_color_emissive_strength = base_color_emissive_strength;
 	output.receive_shadow = receive_shadow;

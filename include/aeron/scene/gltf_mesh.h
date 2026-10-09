@@ -56,7 +56,7 @@ typedef struct AeronGltfVertex {
 	float tangent[4]; /* xyz unit + handedness sign in w */
 	float uv[2];      /* TEXCOORD_0 (material-local) */
 	/* Model-local component ordinal used by the scene mesh table. */
-	float mesh_index;
+	float component;
 	/* Stable global identifier (0..total_prim_count-1) for the source
 	 * primitive this vertex belongs to. The shader resolves it through
 	 * the mesh-owned, variant-major material-index storage table. */
@@ -214,16 +214,16 @@ typedef struct AeronGltfScreenRect {
 
 /* ===== Ship asset ===================================================
  *
- * One merged VBO + IBO covers the whole ship; per-vertex `mesh_index`
- * + `prim_id` drive per-mesh affine lookup through scene storage and
+ * One merged VBO + IBO covers the whole ship; per-vertex `component`
+ * + `prim_id` drive per-component affine lookup through scene storage and
  * per-primitive material resolution through mesh-owned variant storage.
  * The renderer issues one indexed draw per instance.
  *
- * `prim_variant_material` is the [total_prim_count][variant_slots]
- * resolution table — row prim, column variant_idx. variant_slots is
+ * `prim_variant_material` is the [total_prim_count][variant_columns]
+ * resolution table — row prim, column variant_idx. variant_columns is
  * max(variant_count, 1) so ships without KHR_materials_variants still
  * have a column 0 holding the default material. AERON_GLTF_NO_MATERIAL
- * in a slot means "no material" (renderer skips fragments via factor-
+ * in a cell means "no material" (renderer skips fragments via factor-
  * only fallback). Mesh creation transposes this source table into
  * variant-major packed storage; each draw selects a row by index. */
 typedef struct AeronGltfModel {
@@ -251,10 +251,10 @@ typedef struct AeronGltfModel {
 	uint32_t           material_count;
 	AeronGltfMaterial* materials; /* sized [material_count] */
 
-	/* Variant table — flat [total_prim_count * variant_slots] row-
-	 * major, indexed (prim_id * variant_slots + variant_idx). */
+	/* Variant table — flat [total_prim_count * variant_columns] row-
+	 * major, indexed (prim_id * variant_columns + variant_idx). */
 	uint32_t  variant_count; /* asset-level KHR count, 0 = none */
-	uint32_t  variant_slots; /* max(variant_count, 1) */
+	uint32_t  variant_columns; /* max(variant_count, 1) */
 	uint32_t  total_prim_count;
 	uint32_t* prim_variant_material;
 	/* Variant names ([variant_count], NULL for an unnamed variant). */

@@ -110,7 +110,7 @@ typedef struct AeronSceneMeshOverlayEntry {
 	uint32_t                   first_vertex;
 	uint32_t                   vertex_count;
 	uint32_t                   mesh_table_base;
-	uint32_t                   table_slot_count;
+	uint32_t                   table_component_count;
 	float                      transform[16];
 	float                      uv_xform[4];
 	float                      uv_rect[4];
@@ -122,10 +122,10 @@ typedef struct AeronSceneMeshOverlayEntry {
 
 typedef struct AeronScenePreparedInstance {
 	/* float4 bases of the current and previous mesh tables in the frame's
-	 * storage; both hold at least table_slot_count slots. */
+	 * storage; both hold at least table_component_count components. */
 	uint32_t current_table_base;
 	uint32_t previous_table_base;
-	uint32_t table_slot_count;
+	uint32_t table_component_count;
 	/* The bound intersects the camera frustum; camera passes skip the
 	 * instance otherwise (shadow passes cull per cascade). */
 	uint32_t camera_visible;
@@ -330,7 +330,7 @@ struct AeronScene3D {
 	 * are deduplicated by borrowed pointer; local and point lights are packed. */
 	const AeronSceneMeshTable* mesh_table_keys[AERON_SCENE_MESH_TABLE_HASH_CAP];
 	uint32_t                   mesh_table_values[AERON_SCENE_MESH_TABLE_HASH_CAP]; /* float4 base */
-	uint32_t                   mesh_table_slots[AERON_SCENE_MESH_TABLE_HASH_CAP];  /* packed slots */
+	uint32_t mesh_table_component_counts[AERON_SCENE_MESH_TABLE_HASH_CAP]; /* packed component counts */
 	float (*mesh_table_staging)[4]; /* variable-length tables, float4 units */
 	uint32_t                   mesh_table_count;
 	uint32_t                   mesh_table_vec4_count;
@@ -590,9 +590,9 @@ AeronTexture*              AeronSceneInternal_BrdfLutTexture(void);
 const AeronSceneMeshTable* AeronScenePbr_IdentityTable(void);
 int                        AeronSceneStorage_Prepare(struct AeronScene3D* s, AeronCommandBuffer* cmd);
 void                       AeronSceneStorage_Release(struct AeronScene3D* s);
-/* float4 base of a shadow caster's mesh table, and its packed slot count. */
+/* float4 base of a shadow caster's mesh table, and its packed component count. */
 uint32_t AeronSceneStorage_ShadowTableBase(const struct AeronScene3D* s, uint16_t encoded_caster,
-										   uint32_t* slot_count);
+										   uint32_t* component_count);
 
 /* clustered_lights.c */
 void AeronSceneClusteredLights_Classify(struct AeronScene3D* s);
@@ -693,12 +693,12 @@ int AeronScenePost_Fullscreen(AeronCommandBuffer* cmd, AeronGraphicsPipeline* pi
 void AeronSceneInternal_QuatToMat3(const float q[4], float m[9]);
 
 /* An instance's box along three orthonormal axes (world axes for the
- * camera, the light's for shadows): the union of its visible slots' bounds,
+ * camera, the light's for shadows): the union of its visible components' bounds,
  * each placed by its mesh-table row as the vertex shaders place its vertices
- * (a slot past the table's count uses its last row). `center` is in world
+ * (a component past the table's count uses its last row). `center` is in world
  * space, `half` holds the half extents along the axes and `radius` the
  * sphere about `center` that holds the box. 0 without a mesh or a visible
- * slot: the instance then draws nothing. */
+ * component: the instance then draws nothing. */
 typedef struct AeronSceneInstanceBox {
 	float center[3];
 	float half[3];

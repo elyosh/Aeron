@@ -26,51 +26,51 @@ cbuffer GltfMeshVSUniforms : register(b0, space1) {
 	uint  receive_shadow;
 	uint  screen_shadow;
 	/* Current/previous articulation tables (float4 bases into mesh_tables,
-	 * both holding at least table_slot_count slots). */
+	 * both holding at least table_component_count components). */
 	uint current_table_base;
 	uint previous_table_base;
 	/* Receives shadows from the receiver-local map (the cockpit). */
 	uint receiver_local_shadow;
 	uint reserved;
-	uint table_slot_count;
+	uint table_component_count;
 	/* Previous transforms used by the velocity-producing vertex variants. */
 	row_major float4x4 prev_view_proj;
 	row_major float4x4 prev_craft_to_world;
 };
 
 /* One variable-length record per unique submitted mesh table, packed at
- * its slot count; layout in mesh_table_layout.hlsli. */
+ * its component count; layout in mesh_table_layout.hlsli. */
 #include "mesh_table_layout.hlsli"
 StructuredBuffer<float4> mesh_tables : register(t0, space0);
 
-/* Row r of a slot's 3x4 affine. */
-float4 mesh_table_row(uint table_base, uint slot, uint r)
+/* Row r of a component's 3x4 affine. */
+float4 mesh_table_row(uint table_base, uint component, uint r)
 {
-	return mesh_tables[table_base + slot * 3u + r];
+	return mesh_tables[table_base + component * 3u + r];
 }
 
-/* One slot's value in a packed lane of the current table. */
-float mesh_table_lane(uint lane, uint slot)
+/* One component's value in a packed lane of the current table. */
+float mesh_table_lane(uint lane, uint component)
 {
-	uint lane_vec4 = AERON_MESH_LANE_VEC4(table_slot_count);
-	return mesh_tables[current_table_base + 3u * table_slot_count + lane * lane_vec4 +
-					   (slot >> 2u)][slot & 3u];
+	uint lane_vec4 = AERON_MESH_LANE_VEC4(table_component_count);
+	return mesh_tables[current_table_base + 3u * table_component_count + lane * lane_vec4 +
+					   (component >> 2u)][component & 3u];
 }
 
 struct VSIn {
-	/* AeronGltfVertex: position/normal/tangent are mesh-local; mesh_index
-	 * selects one of the instance's table_slot_count articulated mesh
-	 * slots. */
+	/* AeronGltfVertex: position/normal/tangent are mesh-local; component
+	 * selects one of the instance's table_component_count articulated
+	 * components. */
 	float3 position : POSITION;
 	float3 normal : NORMAL;
 	float4 tangent : TANGENT;
 	float2 uv : TEXCOORD0;
-	float  mesh_index : COLOR0;
+	float  component : COLOR0;
 	uint   prim_id : COLOR1;
 };
 
 struct PbrCurrentVertex {
-	uint mesh_index;
+	uint component;
 	float4 row0;
 	float4 row1;
 	float4 row2;
@@ -112,11 +112,11 @@ float4 pbr_mul_fma(float4x4 m, float4 v)
  */
 bool pbr_build_current_vertex(VSIn input, out PbrCurrentVertex current)
 {
-	uint mesh_index = (uint)clamp((int)round(input.mesh_index), 0,
-								  (int)table_slot_count - 1);
-	float visibility = mesh_table_lane(AERON_MESH_LANE_VISIBILITY, mesh_index);
+	uint component = (uint)clamp((int)round(input.component), 0,
+								  (int)table_component_count - 1);
+	float visibility = mesh_table_lane(AERON_MESH_LANE_VISIBILITY, component);
 
-	current.mesh_index = mesh_index;
+	current.component = component;
 	current.row0 = float4(0.0f, 0.0f, 0.0f, 0.0f);
 	current.row1 = float4(0.0f, 0.0f, 0.0f, 0.0f);
 	current.row2 = float4(0.0f, 0.0f, 0.0f, 0.0f);
@@ -127,9 +127,9 @@ bool pbr_build_current_vertex(VSIn input, out PbrCurrentVertex current)
 		return false;
 	}
 
-	current.row0 = mesh_table_row(current_table_base, mesh_index, 0u);
-	current.row1 = mesh_table_row(current_table_base, mesh_index, 1u);
-	current.row2 = mesh_table_row(current_table_base, mesh_index, 2u);
+	current.row0 = mesh_table_row(current_table_base, component, 0u);
+	current.row1 = mesh_table_row(current_table_base, component, 1u);
+	current.row2 = mesh_table_row(current_table_base, component, 2u);
 
 	float4 local_position = float4(input.position, 1.0f);
 	precise float3 rotated_local = float3(pbr_dot4_fma(current.row0, local_position),
@@ -147,10 +147,10 @@ bool pbr_build_current_vertex(VSIn input, out PbrCurrentVertex current)
 void pbr_build_velocity(VSIn input, PbrCurrentVertex current,
 						out float4 clip_curr, out float4 clip_prev)
 {
-	uint mesh_index = current.mesh_index;
-	float4 row0 = mesh_table_row(previous_table_base, mesh_index, 0u);
-	float4 row1 = mesh_table_row(previous_table_base, mesh_index, 1u);
-	float4 row2 = mesh_table_row(previous_table_base, mesh_index, 2u);
+	uint component = current.component;
+	float4 row0 = mesh_table_row(previous_table_base, component, 0u);
+	float4 row1 = mesh_table_row(previous_table_base, component, 1u);
+	float4 row2 = mesh_table_row(previous_table_base, component, 2u);
 	float3 previous_local;
 	previous_local.x = dot(row0.xyz, input.position) + row0.w;
 	previous_local.y = dot(row1.xyz, input.position) + row1.w;

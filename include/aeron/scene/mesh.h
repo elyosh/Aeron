@@ -8,7 +8,7 @@
  * GPU resources: one merged VBO/IBO in the fixed AeronGltfVertex
  * layout, the four channel atlases, the per-material storage
  * payload the "pbr" material class consumes, the per-primitive variant
- * table, per-mesh-slot articulation, and bounds.
+ * table, per-component articulation, and bounds.
  */
 
 #include <stdbool.h>
@@ -59,11 +59,11 @@ typedef struct AeronPbrScreenRect {
 
 /* Compact retained geometry for receiver-local effects such as decals.
  * It deliberately omits material data and tangents: projection only needs
- * positions, normals, mesh-slot identity, and triangle connectivity. */
+ * positions, normals, component identity, and triangle connectivity. */
 typedef struct AeronSceneMeshCpuVertex {
 	float pos[3];
 	float normal[3];
-	float mesh_index;
+	float component;
 } AeronSceneMeshCpuVertex;
 
 typedef struct AeronSceneMesh {
@@ -94,7 +94,7 @@ typedef struct AeronSceneMesh {
 	AeronBuffer* variant_buffer;
 	uint32_t     material_count;
 	uint32_t     total_prim_count;
-	uint32_t     variant_slots;
+	uint32_t     variant_rows;
 	uint32_t     variant_count;
 	uint32_t     variant_groups_per_row;
 	bool         all_materials_single_sided;
@@ -107,19 +107,19 @@ typedef struct AeronSceneMesh {
 	uint32_t     screen_hide_mask;
 	uint64_t     screen_source_mask;
 
-	/* Per-mesh-slot articulation (indexed by the per-vertex mesh index);
-	 * slot_count = the model's component count, the slots its mesh tables
-	 * must fill. */
-	AeronMeshRot mesh_rot[AERON_MAX_MESH_SLOTS];
-	uint32_t     slot_count;
+	/* Per-component articulation (indexed by the per-vertex component);
+	 * component_count = the model's component count, the entries its mesh
+	 * tables must fill. */
+	AeronMeshRot component_rot[AERON_MAX_MESH_COMPONENTS];
+	uint32_t     component_count;
 	bool         has_any_rotation;
 
 	float bound_min[3];
 	float bound_max[3];
-	/* Each slot's render-geometry bounds, in the vertices' local frame
+	/* Each component's render-geometry bounds, in the vertices' local frame
 	 * (before its mesh-table row); the model bounds are their union. */
-	float slot_bound_min[AERON_MAX_MESH_SLOTS][3];
-	float slot_bound_max[AERON_MAX_MESH_SLOTS][3];
+	float component_bound_min[AERON_MAX_MESH_COMPONENTS][3];
+	float component_bound_max[AERON_MAX_MESH_COMPONENTS][3];
 	/* Engine glows copied from the source flight model (owned). */
 	AeronFlightEngineGlow* engine_glows;
 	uint32_t               engine_glow_count;
