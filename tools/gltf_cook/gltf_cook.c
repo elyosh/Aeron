@@ -529,6 +529,37 @@ bool aeron_gltf_cook_data(cgltf_data* data, const char* source_label,
 		}
 		/* Groups: pages of the core's size, and one mip count for all. */
 		if (channel_groups) {
+			/* Group pages take the core's page size. A grouped image the
+			 * core's pages can't hold (an emissive or metallic-roughness
+			 * image of a texture whose own is a constant, beside a small
+			 * core) grows the core's pages to its footprint, or to square
+			 * power-of-two pages when it needs a dedicated layer. */
+			int largest = 0, widest = 0, tallest = 0;
+			for (int g = 0; g < group_count; g++) {
+				for (int r = 0; groups[g].channel == c && r < groups[g].atlas.rect_count; r++) {
+					const ChannelRect* rect = &groups[g].atlas.rects[r];
+					const int          gut  = opts.mip_min_subrect;
+					const int          fw   = (rect->src_w + 3 * gut - 1) / gut * gut;
+					const int          fh   = (rect->src_h + 3 * gut - 1) / gut * gut;
+					largest                 = rect->src_w > largest ? rect->src_w : largest;
+					largest                 = rect->src_h > largest ? rect->src_h : largest;
+					widest                  = fw > widest ? fw : widest;
+					tallest                 = fh > tallest ? fh : tallest;
+				}
+			}
+			if (largest > ca->page / 2) {
+				int page = ca->page;
+				while (page < largest)
+					page *= 2;
+				ca->fixed_width = ca->fixed_height = page;
+				ok                                 = channel_atlas_pack(ca, page, opts.mip_min_subrect);
+			} else if (widest > ca->width || tallest > ca->height) {
+				ca->fixed_width  = widest > ca->width ? widest : ca->width;
+				ca->fixed_height = tallest > ca->height ? tallest : ca->height;
+				ok               = channel_atlas_pack(ca, ca->page, opts.mip_min_subrect);
+			}
+			if (!ok)
+				break;
 			int pages = 0;
 			for (int g = 0; g < group_count && ok; g++) {
 				if (groups[g].channel != c)
