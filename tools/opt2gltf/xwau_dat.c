@@ -11,6 +11,7 @@
 #include "bcdec.h"
 
 #define XWAU_DAT_SIGNATURE 0x5602235657062357ull
+#define XWAU_DAT_FORMAT_8BPP_ALPHA 24
 #define XWAU_DAT_FORMAT_32BPP 25
 #define XWAU_DAT_IMAGE_HEADER_BYTES 0x2C
 #define XWAU_DAT_IMAGE_COLORS_OFFSET 0x28
@@ -112,9 +113,47 @@ static bool decode_blocks(XwauDatEncoding encoding, const uint8_t* data, size_t 
 	return true;
 }
 
+/* Stock format 24: the image header gives the palette (RGB triplets) and pixel
+ * offsets; each texel is a palette index and an alpha byte (DatImage.cs;
+ * src/xwa_formats/xwa_2d/xwa_dat.c). */
+static bool decode_indexed(const char* path, uint32_t w, uint32_t h, const uint8_t* payload, size_t size,
+						   XwauDatImage* out, char* error, size_t error_size) {
+	const uint32_t color_offset = rd32(payload + 4);
+	const uint32_t rows_offset  = rd32(payload + 8);
+	const uint32_t color_count  = rd32(payload + XWAU_DAT_IMAGE_COLORS_OFFSET);
+	const size_t   texels       = (size_t)w * h;
+	if (!color_count || color_count > 256 || color_offset > size ||
+		3u * (size_t)color_count > size - color_offset || rows_offset > size ||
+		size - rows_offset < texels * 2) {
+		set_error(error, error_size, path, "invalid format-24 image");
+		return false;
+	}
+	out->rgba = (uint8_t*)calloc(texels, 4);
+	if (!out->rgba) {
+		set_error(error, error_size, path, "out of memory");
+		return false;
+	}
+	out->width            = w;
+	out->height           = h;
+	out->encoding         = XWAU_DAT_ENCODING_INDEXED;
+	const uint8_t* colors = payload + color_offset;
+	const uint8_t* p      = payload + rows_offset;
+	for (size_t i = 0; i < texels; ++i) {
+		const uint8_t index = p[2 * i], alpha = p[2 * i + 1];
+		if (index >= color_count || !alpha)
+			continue;
+		memcpy(&out->rgba[i * 4], &colors[3u * index], 3);
+		out->rgba[i * 4 + 3] = alpha;
+	}
+	return true;
+}
+
 static bool decode_image(const char* path, uint16_t format, uint32_t w, uint32_t h, int32_t colors,
 						 const uint8_t* data, size_t size, XwauDatImage* out, char* error,
 						 size_t error_size) {
+	if (format == XWAU_DAT_FORMAT_8BPP_ALPHA)
+		return decode_indexed(path, w, h, data - XWAU_DAT_IMAGE_HEADER_BYTES,
+							  size + XWAU_DAT_IMAGE_HEADER_BYTES, out, error, error_size);
 	if (format != XWAU_DAT_FORMAT_32BPP) {
 		char msg[64];
 		snprintf(msg, sizeof msg, "unsupported DAT image format %u", (unsigned)format);
@@ -176,21 +215,45 @@ static bool decode_image(const char* path, uint16_t format, uint32_t w, uint32_t
 	return ok;
 }
 
-bool XwauDat_LoadImage(const char* path, int group, int image, XwauDatImage* out, char* error,
-					   size_t error_size) {
-	memset(out, 0, sizeof *out);
-	size_t   size = 0;
-	uint8_t* file = read_file(path, &size);
-	if (!file) {
-		set_error(error, error_size, path, "cannot read file");
-		return false;
+typedef struct XwauDatEntry {
+	int      group, image;
+	uint16_t format, width, height;
+	size_t   offset; /* of the 0x2C-byte image header */
+	uint32_t bytes;  /* header and data */
+} XwauDatEntry;
+
+struct XwauDat {
+	char*         path;
+	uint8_t*      file;
+	size_t        size;
+	XwauDatEntry* entries;
+	size_t        count;
+	int*          ids; /* ListGroup scratch */
+};
+
+XwauDat* XwauDat_Open(const char* path, char* error, size_t error_size) {
+	XwauDat* dat = (XwauDat*)calloc(1, sizeof *dat);
+	if (!dat) {
+		set_error(error, error_size, path, "out of memory");
+		return NULL;
 	}
-	bool found = false, ok = false;
+	dat->path = (char*)malloc(strlen(path) + 1);
+	if (dat->path)
+		strcpy(dat->path, path);
+	dat->file = read_file(path, &dat->size);
+	if (!dat->path || !dat->file) {
+		set_error(error, error_size, path, "cannot read file");
+		XwauDat_Close(dat);
+		return NULL;
+	}
+	const uint8_t* file = dat->file;
+	const size_t   size = dat->size;
 	/* File header: signature, group format, group count, image count,
 	 * length, then 12 bytes more when the group format is non-zero, then 4. */
 	if (size < 18 || (rd32(file) | ((uint64_t)rd32(file + 4) << 32)) != XWAU_DAT_SIGNATURE) {
 		set_error(error, error_size, path, "not a DAT file");
-		goto done;
+		XwauDat_Close(dat);
+		return NULL;
 	}
 	const uint16_t group_format = rd16(file + 8);
 	const uint16_t group_count  = rd16(file + 10);
@@ -202,41 +265,85 @@ bool XwauDat_LoadImage(const char* path, int group, int image, XwauDatImage* out
 		total_images += rd16(file + pos + 2);
 		pos += 8 + (group_format ? 12 : 0) + 4;
 	}
+	dat->entries = (XwauDatEntry*)calloc(total_images ? total_images : 1, sizeof *dat->entries);
+	dat->ids     = (int*)calloc(total_images ? total_images : 1, sizeof *dat->ids);
+	if (!dat->entries || !dat->ids) {
+		set_error(error, error_size, path, "out of memory");
+		XwauDat_Close(dat);
+		return NULL;
+	}
 	/* Images follow, group by group: an 18-byte sub-header (format, width,
 	 * height, color key, colors count, group, image, data length), then a
 	 * 0x2C-byte image header and the data. */
 	for (uint32_t i = 0; i < total_images; ++i) {
 		if (pos + 18 > size)
 			goto truncated;
-		const uint8_t* h          = file + pos;
-		const uint16_t format     = rd16(h);
-		const uint16_t width      = rd16(h + 2);
-		const uint16_t height     = rd16(h + 4);
-		const int16_t  img_group  = (int16_t)rd16(h + 10);
-		const int16_t  img_id     = (int16_t)rd16(h + 12);
-		const uint32_t data_bytes = rd32(h + 14);
+		const uint8_t* h = file + pos;
+		XwauDatEntry*  e = &dat->entries[dat->count++];
+		e->format        = rd16(h);
+		e->width         = rd16(h + 2);
+		e->height        = rd16(h + 4);
+		e->group         = (int16_t)rd16(h + 10);
+		e->image         = (int16_t)rd16(h + 12);
+		e->bytes         = rd32(h + 14);
 		pos += 18;
-		if (data_bytes < XWAU_DAT_IMAGE_HEADER_BYTES || pos + data_bytes > size)
+		if (e->bytes < XWAU_DAT_IMAGE_HEADER_BYTES || pos + e->bytes > size)
 			goto truncated;
-		if (img_group == group && img_id == image) {
-			const int32_t colors = (int32_t)rd32(file + pos + XWAU_DAT_IMAGE_COLORS_OFFSET);
-			found                = true;
-			ok = decode_image(path, format, width, height, colors, file + pos + XWAU_DAT_IMAGE_HEADER_BYTES,
-							  data_bytes - XWAU_DAT_IMAGE_HEADER_BYTES, out, error, error_size);
-			break;
-		}
-		pos += data_bytes;
+		e->offset = pos;
+		pos += e->bytes;
 	}
-	if (!found) {
-		char msg[64];
-		snprintf(msg, sizeof msg, "no image %d-%d", group, image);
-		set_error(error, error_size, path, msg);
-	}
-	goto done;
+	return dat;
 truncated:
 	set_error(error, error_size, path, "truncated DAT file");
-done:
-	free(file);
+	XwauDat_Close(dat);
+	return NULL;
+}
+
+void XwauDat_Close(XwauDat* dat) {
+	if (!dat)
+		return;
+	free(dat->path);
+	free(dat->file);
+	free(dat->entries);
+	free(dat->ids);
+	free(dat);
+}
+
+size_t XwauDat_ListGroup(const XwauDat* dat, int group, const int** images) {
+	size_t n = 0;
+	for (size_t i = 0; i < dat->count; ++i)
+		if (dat->entries[i].group == group)
+			dat->ids[n++] = dat->entries[i].image;
+	*images = dat->ids;
+	return n;
+}
+
+bool XwauDat_LoadImageFrom(const XwauDat* dat, int group, int image, XwauDatImage* out, char* error,
+						   size_t error_size) {
+	memset(out, 0, sizeof *out);
+	for (size_t i = 0; i < dat->count; ++i) {
+		const XwauDatEntry* e = &dat->entries[i];
+		if (e->group != group || e->image != image)
+			continue;
+		const int32_t colors = (int32_t)rd32(dat->file + e->offset + XWAU_DAT_IMAGE_COLORS_OFFSET);
+		return decode_image(dat->path, e->format, e->width, e->height, colors,
+							dat->file + e->offset + XWAU_DAT_IMAGE_HEADER_BYTES,
+							e->bytes - XWAU_DAT_IMAGE_HEADER_BYTES, out, error, error_size);
+	}
+	char msg[64];
+	snprintf(msg, sizeof msg, "no image %d-%d", group, image);
+	set_error(error, error_size, dat->path, msg);
+	return false;
+}
+
+bool XwauDat_LoadImage(const char* path, int group, int image, XwauDatImage* out, char* error,
+					   size_t error_size) {
+	memset(out, 0, sizeof *out);
+	XwauDat* dat = XwauDat_Open(path, error, error_size);
+	if (!dat)
+		return false;
+	const bool ok = XwauDat_LoadImageFrom(dat, group, image, out, error, error_size);
+	XwauDat_Close(dat);
 	return ok;
 }
 

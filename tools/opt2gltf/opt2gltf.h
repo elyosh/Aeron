@@ -119,6 +119,35 @@ typedef struct OptGltfXwauMaterial {
 } OptGltfXwauMaterial;
 
 /*
+ * Animated materials of one OPT texture in XWAU mode (docs:
+ * xwau_animated_materials.md, "Model material extras"). The caller resolves
+ * them from the XWAU material files:
+ *   - `extras`: members spliced into the material's extras (aeronFlipbooks,
+ *     aeronDamage, aeronEnergy), JSON text without the enclosing braces;
+ *   - `layer_base`: write aeronLayerBase, an image of the texture's colours
+ *     before the illumination split, for its material and each of its skin
+ *     variant materials;
+ *   - `static_layer` / `static_emissive`: frame 0 of an `always` illumination
+ *     flipbook, baked as library images (RGB layer_base and A k; RGB
+ *     emission), sampled at uv·(uv_scale_x, 1) + uv_offset, clamped when
+ *     uv_clamp. The material's base becomes c·k + layer_base and its emission
+ *     the frame's, with emissive strength 1. rgba NULL for none.
+ */
+typedef struct OptGltfXwauAnim {
+	const char*      extras;
+	bool             layer_base;
+	OptGltfImageView static_layer;
+	OptGltfImageView static_emissive;
+	float            uv_scale_x;
+	float            uv_offset[2];
+	bool             uv_clamp;
+} OptGltfXwauAnim;
+
+/* Whether XWAU's renderer gives texture `t` an illumination layer: a 32bpp
+ * texture with the illumination flag, or an 8bpp one with a lit texel. */
+bool OptGltf_XwauTextureHasIllum(const opt_texture_t* t);
+
+/*
  * Screen surfaces: OPT textures that show a game-provided texture pair (a
  * captured HUD) through rectangles, as the XWAU Dynamic Cockpit does. The
  * caller resolves them (dynamic_cockpit.h); the converter rewrites the
@@ -246,6 +275,9 @@ typedef struct OptGltfBuildOptions {
 	size_t              light_count;
 	/* Skin variants when set; needs xwau_materials. */
 	const OptGltfSkins* skins;
+	/* Animated materials when set: one entry per OPT texture; needs
+	 * xwau_materials. */
+	const OptGltfXwauAnim* xwau_anim;
 } OptGltfBuildOptions;
 
 #define OPT_GLTF_MAX_SUBDIVIDE 8u

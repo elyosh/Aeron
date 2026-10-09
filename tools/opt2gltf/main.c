@@ -143,6 +143,7 @@
 #include "dynamic_cockpit.h"
 #include "opt.h"
 #include "opt2gltf.h"
+#include "xwau_anim.h"
 #include "xwau_dat.h"
 #include "xwau_mat.h"
 #include "xwau_skins.h"
@@ -328,9 +329,14 @@ static int convert_xwau(opt_file_t* opt, const char* out_dir, const char* basena
 
 	const size_t         count     = opt->texture_count ? (size_t)opt->texture_count : 1;
 	OptGltfXwauMaterial* materials = (OptGltfXwauMaterial*)calloc(count, sizeof *materials);
+	OptGltfXwauAnim*     anims     = (OptGltfXwauAnim*)calloc(count, sizeof *anims);
+	XwauAnim*            anim      = XwauAnim_Begin(basename, xwau_find_file, (void*)x, label);
 	XwauNormalMap**      maps      = NULL;
 	size_t               map_count = 0;
-	if (!materials) {
+	if (!materials || !anims || !anim) {
+		free(materials);
+		free(anims);
+		XwauAnim_End(anim);
 		XwauMat_Free(mat);
 		return 0;
 	}
@@ -339,6 +345,14 @@ static int convert_xwau(opt_file_t* opt, const char* out_dir, const char* basena
 	for (int32_t i = 0; i < opt->texture_count; ++i) {
 		const XwauMatParams* p = mat ? XwauMat_Find(mat, opt->textures[i].name) : &x->global;
 		xwau_fill(&materials[i], p);
+		if (!XwauAnim_Texture(anim, mat, &opt->textures[i], &anims[i])) {
+			fprintf(stderr, "opt2gltf: %s: out of memory (animations)\n", label);
+			free(materials);
+			free(anims);
+			XwauAnim_End(anim);
+			XwauMat_Free(mat);
+			return 0;
+		}
 		for (int k = 0; k < x->ignore_shadeless_count; ++k) {
 			if (xwau_texture_named(opt->textures[i].name, x->ignore_shadeless[k])) {
 				materials[i].shadeless = false;
@@ -369,9 +383,19 @@ static int convert_xwau(opt_file_t* opt, const char* out_dir, const char* basena
 	options.xwau_materials      = materials;
 	options.xwau_untextured     = &untextured;
 	options.screens             = screens;
+	options.xwau_anim           = XwauAnim_Any(anim) ? anims : NULL;
 	fprintf(stderr, "opt2gltf: %s: xwau materials %s, %zu of %d textures normal-mapped (%zu maps)\n", label,
 			mat ? path : "(default)", normal_textures, (int)opt->texture_count, map_count);
+	XwauAnim_Report(anim);
 	int ok = opt2gltf_convert(opt, out_dir, basename, &options, label) ? 1 : 0;
+	if (ok && XwauAnim_Any(anim)) {
+		char sidecar[1024];
+		snprintf(sidecar, sizeof sidecar, "%s/%s.effects.json", out_dir, basename);
+		if (!XwauAnim_WriteSidecar(anim, sidecar)) {
+			fprintf(stderr, "opt2gltf: %s: cannot write %s\n", label, sidecar);
+			ok = 0;
+		}
+	}
 
 	for (size_t i = 0; i < map_count; ++i) {
 		XwauDat_FreeImage(&maps[i]->image);
@@ -379,6 +403,8 @@ static int convert_xwau(opt_file_t* opt, const char* out_dir, const char* basena
 	}
 	free(maps);
 	free(materials);
+	free(anims);
+	XwauAnim_End(anim);
 	XwauMat_Free(mat);
 	return ok;
 }

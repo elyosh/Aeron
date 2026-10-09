@@ -262,6 +262,7 @@ typedef struct XwauBaked {
 	float    roughness;      /* factors when metal_rough is NULL */
 	float    specular_color; /* KHR_materials_specular specularColorFactor */
 	bool     transparent;
+	bool     unit_emission; /* emissive is an animation frame's: strength 1 */
 } XwauBaked;
 
 static float clamp01f(float x) { return x < 0.0f ? 0.0f : (x > 1.0f ? 1.0f : x); }
@@ -313,6 +314,14 @@ static void xwau_baked_free(XwauBaked* baked) {
 	memset(baked, 0, sizeof *baked);
 }
 
+static void xwau_colour_free(uint8_t** colour, int32_t count) {
+	if (!colour)
+		return;
+	for (int32_t i = 0; i < count; ++i)
+		free(colour[i]);
+	free(colour);
+}
+
 static void xwau_state_free(XwauBaked* baked, int32_t count, int32_t* normal_owner, int32_t* normal_image) {
 	if (baked) {
 		for (int32_t i = 0; i < count; ++i)
@@ -323,16 +332,127 @@ static void xwau_state_free(XwauBaked* baked, int32_t count, int32_t* normal_own
 	free(normal_image);
 }
 
+bool OptGltf_XwauTextureHasIllum(const opt_texture_t* t) {
+	if (t->bytes_per_texel == 4)
+		return t->flag_illum;
+	/* The renderer creates the light texture when any stored texel, mips
+	 * included, is lit. */
+	for (int32_t k = 0; k < t->mip_chain_bytes; ++k)
+		if (xwau_palette_lit(t->palette, t->pixels[k]))
+			return true;
+	return false;
+}
+
 static bool xwau_bake_rgba(const opt_texture_t* t, const OptGltfXwauMaterial* xm, uint8_t* rgba,
 						   XwauBaked* out);
 
+/* Copies `n` RGBA texels; NULL on OOM. */
+static uint8_t* rgba_dup(const uint8_t* rgba, size_t n) {
+	uint8_t* copy = (uint8_t*)malloc(n * 4);
+	if (copy)
+		memcpy(copy, rgba, n * 4);
+	return copy;
+}
+
+/* `colour`, when set, receives a copy of the decoded colours before the bake
+ * (NULL without pixels). */
 static bool xwau_bake_texture(const opt_texture_t* t, int base_shade, const OptGltfXwauMaterial* xm,
-							  XwauBaked* out) {
+							  XwauBaked* out, uint8_t** colour) {
 	memset(out, 0, sizeof *out);
+	if (colour)
+		*colour = NULL;
 	uint8_t* rgba = decode_texture_rgba8(t, base_shade);
 	if (!rgba)
 		return true; /* no pixels: the caller emits the missing-image material */
+	if (colour) {
+		*colour = rgba_dup(rgba, (size_t)t->width * (size_t)t->height);
+		if (!*colour) {
+			free(rgba);
+			return false;
+		}
+	}
 	return xwau_bake_rgba(t, xm, rgba, out);
+}
+
+static float srgb_to_linear(float c) {
+	c = clamp01f(c);
+	return c <= 0.04045f ? c / 12.92f : powf((c + 0.055f) / 1.055f, 2.4f);
+}
+
+static float linear_to_srgb(float c) {
+	c = clamp01f(c);
+	return c <= 0.0031308f ? c * 12.92f : 1.055f * powf(c, 1.0f / 2.4f) - 0.055f;
+}
+
+/* Bilinear sample of `img` (0..1 per channel) at the frame UV of texture UV
+ * (u, v): frac(1 + frac(uv)) · (uv_scale_x, 1) + uv_offset, clamped or
+ * wrapped, as PixelShaderAnim.hlsl. */
+static void anim_frame_sample(const OptGltfImageView* img, const OptGltfXwauAnim* a, float u, float v,
+							  float out[4]) {
+	u        = u - floorf(u);
+	v        = v - floorf(v);
+	float fu = u * a->uv_scale_x + a->uv_offset[0];
+	float fv = v + a->uv_offset[1];
+	if (a->uv_clamp) {
+		fu = clamp01f(fu);
+		fv = clamp01f(fv);
+	} else {
+		fu -= floorf(fu);
+		fv -= floorf(fv);
+	}
+	const float x = fu * (float)img->width - 0.5f, y = fv * (float)img->height - 0.5f;
+	const int   x0 = (int)floorf(x), y0 = (int)floorf(y);
+	const float tx = x - (float)x0, ty = y - (float)y0;
+	for (int k = 0; k < 4; ++k)
+		out[k] = 0.0f;
+	for (int j = 0; j < 2; ++j) {
+		for (int i = 0; i < 2; ++i) {
+			int sx = x0 + i, sy = y0 + j;
+			if (a->uv_clamp) {
+				sx = sx < 0 ? 0 : (sx >= (int)img->width ? (int)img->width - 1 : sx);
+				sy = sy < 0 ? 0 : (sy >= (int)img->height ? (int)img->height - 1 : sy);
+			} else {
+				sx = ((sx % (int)img->width) + (int)img->width) % (int)img->width;
+				sy = ((sy % (int)img->height) + (int)img->height) % (int)img->height;
+			}
+			const float    wgt = (i ? tx : 1.0f - tx) * (j ? ty : 1.0f - ty);
+			const uint8_t* p   = &img->rgba[((size_t)sy * img->width + (size_t)sx) * 4];
+			for (int k = 0; k < 4; ++k)
+				out[k] += wgt * (float)p[k] / 255.0f;
+		}
+	}
+}
+
+/* Static look of an `always` illumination flipbook (OptGltfXwauAnim): base =
+ * c·k + layer_base and the frame's emission, from the texture's colours
+ * `colour`. */
+static bool xwau_apply_static_frame(const uint8_t* colour, uint32_t w, uint32_t h, const OptGltfXwauAnim* a,
+									XwauBaked* baked) {
+	if (!a || !a->static_layer.rgba || !a->static_emissive.rgba || !colour || !baked->base)
+		return true;
+	const size_t n = (size_t)w * h;
+	if (!baked->emissive) {
+		baked->emissive = (uint8_t*)malloc(n * 4);
+		if (!baked->emissive)
+			return false;
+	}
+	for (uint32_t y = 0; y < h; ++y) {
+		for (uint32_t x = 0; x < w; ++x) {
+			const size_t i = (size_t)y * w + x;
+			const float  u = ((float)x + 0.5f) / (float)w, v = ((float)y + 0.5f) / (float)h;
+			float        layer[4], emission[4];
+			anim_frame_sample(&a->static_layer, a, u, v, layer);
+			anim_frame_sample(&a->static_emissive, a, u, v, emission);
+			for (int k = 0; k < 3; ++k) {
+				const float c              = srgb_to_linear(colour[i * 4 + (size_t)k] / 255.0f);
+				baked->base[i * 4 + k]     = unorm8(linear_to_srgb(c * layer[3] + srgb_to_linear(layer[k])));
+				baked->emissive[i * 4 + k] = unorm8(emission[k]);
+			}
+			baked->emissive[i * 4 + 3] = 255;
+		}
+	}
+	baked->unit_emission = true;
+	return true;
 }
 
 /* Bakes `rgba`, the decoded colors of texture `t` (owned from here, baked in
@@ -344,13 +464,7 @@ static bool xwau_bake_rgba(const opt_texture_t* t, const OptGltfXwauMaterial* xm
 	const size_t n           = (size_t)t->width * (size_t)t->height;
 	const bool   bpp32       = t->bytes_per_texel == 4;
 	const bool   transparent = t->alpha != NULL;
-	bool         has_illum   = bpp32 && t->flag_illum;
-	if (!bpp32) {
-		/* The renderer creates the light texture when any stored texel,
-		 * mips included, is lit. */
-		for (int32_t k = 0; k < t->mip_chain_bytes && !has_illum; ++k)
-			has_illum = xwau_palette_lit(t->palette, t->pixels[k]);
-	}
+	const bool   has_illum   = OptGltf_XwauTextureHasIllum(t);
 	const bool glass =
 		transparent && !xm->shadeless && !xm->alpha_isnt_glass && !xm->alpha_to_bloom && !has_illum;
 	const float metallic    = xwau_metallic(xm->metallic);
@@ -1398,6 +1512,61 @@ static void json_append_vec3(char** out, size_t* len, size_t* cap, const char* k
 	json_append(out, len, cap, ",\"%s\":[%.9g,%.9g,%.9g]", key, (double)v[0], (double)v[1], (double)v[2]);
 }
 
+/* `existing` extras (or none) with the JSON members `members` (no braces)
+ * appended; NULL on OOM. */
+static char* extras_with_members(const char* existing, const char* members) {
+	size_t len = 0, cap = 256;
+	char*  out = (char*)malloc(cap);
+	if (!out)
+		return NULL;
+	out[0]            = 0;
+	const char* close = existing ? strrchr(existing, '}') : NULL;
+	if (close) {
+		json_append(&out, &len, &cap, "%.*s", (int)(close - existing), existing);
+		const char* p = close;
+		while (p > existing && (p[-1] == ' ' || p[-1] == '\n' || p[-1] == '\t'))
+			--p;
+		json_append(&out, &len, &cap, p > existing && p[-1] == '{' ? "" : ",");
+	} else {
+		json_append(&out, &len, &cap, "{");
+	}
+	json_append(&out, &len, &cap, "%s}", members);
+	return out;
+}
+
+/* The animation members of a material: `anim->extras`, then aeronLayerBase
+ * for texture slot `layer_base` (-1: none). NULL on OOM. */
+static char* anim_members(const OptGltfXwauAnim* anim, int32_t layer_base) {
+	size_t len = 0, cap = 256;
+	char*  out = (char*)malloc(cap);
+	if (!out)
+		return NULL;
+	out[0] = 0;
+	json_append(&out, &len, &cap, "%s", anim->extras ? anim->extras : "");
+	if (layer_base >= 0)
+		json_append(&out, &len, &cap, "%s\"aeronLayerBase\":{\"texture\":%d}", len ? "," : "",
+					(int)layer_base);
+	return out;
+}
+
+/* Splices the animation members into `mat`'s extras. */
+static bool anim_apply(GltfBuild* build, cgltf_material* mat, const OptGltfXwauAnim* anim, int32_t layer_base,
+					   const char* base_extras) {
+	char* members = anim_members(anim, layer_base);
+	if (!members)
+		return false;
+	if (!members[0]) {
+		free(members);
+		return true;
+	}
+	char* extras = extras_with_members(base_extras, members);
+	free(members);
+	if (!extras)
+		return false;
+	mat->extras.data = gb_keep_string(build, extras);
+	return true;
+}
+
 /* The material's extras with `aeronScreen` added: a new object, or the
  * existing one with the member appended. */
 static char* screen_extras_json(const OptGltfScreen* s, const char* existing) {
@@ -1566,7 +1735,9 @@ typedef struct SkinComposite {
 	bool      same_metal_rough;
 	uint32_t* variants; /* skin variant indices, ascending */
 	size_t    variant_count;
-	int32_t   images[3]; /* image slots only this composite uses; -1 */
+	int32_t   images[4]; /* image slots only this composite uses (base, emissive,
+							metallic-roughness, layer base); -1 */
+	uint8_t*  colour;    /* colours before the bake, for aeronLayerBase */
 	size_t    image_count;
 } SkinComposite;
 
@@ -1581,6 +1752,7 @@ static void skin_state_free(SkinState* state) {
 	for (size_t c = 0; c < state->count; ++c) {
 		free(state->composites[c].chain);
 		free(state->composites[c].variants);
+		free(state->composites[c].colour);
 		xwau_baked_free(&state->composites[c].baked);
 	}
 	free(state->composites);
@@ -1653,8 +1825,8 @@ static bool skin_validate(const OptGltfSkins* skins, opt_error_t* error) {
 /* Finds and bakes the composites. `baked` holds each texture's own bake;
  * textures without pixels and screen surfaces are not skinned. */
 static bool skin_state_build(const opt_file_t* opt, const OptGltfSkins* skins, const OptGltfScreen* screens,
-							 int base_shade, const OptGltfXwauMaterial* xwau, const XwauBaked* baked,
-							 SkinState* state) {
+							 int base_shade, const OptGltfXwauMaterial* xwau, const OptGltfXwauAnim* anim,
+							 const XwauBaked* baked, SkinState* state) {
 	memset(state, 0, sizeof *state);
 	const size_t texture_count = (size_t)opt->texture_count;
 	bool*        skinnable     = (bool*)calloc(texture_count ? texture_count : 1, sizeof *skinnable);
@@ -1705,7 +1877,7 @@ static bool skin_state_build(const opt_file_t* opt, const OptGltfSkins* skins, c
 				added->chain       = (OptGltfSkinLayer*)malloc(count * sizeof *added->chain);
 				added->chain_count = count;
 				added->variants    = (uint32_t*)malloc(skins->variant_count * sizeof *added->variants);
-				for (int k = 0; k < 3; ++k)
+				for (int k = 0; k < 4; ++k)
 					added->images[k] = -1;
 				if (!added->chain || !added->variants)
 					goto fail;
@@ -1726,7 +1898,17 @@ static bool skin_state_build(const opt_file_t* opt, const OptGltfSkins* skins, c
 			skin_blend(rgba,
 					   &skins->images[composite->chain[l].skin * texture_count + (size_t)composite->texture],
 					   composite->chain[l].opacity);
-		if (!xwau_bake_rgba(t, &xwau[composite->texture], rgba, &composite->baked))
+		const OptGltfXwauAnim* a = anim ? &anim[composite->texture] : NULL;
+		if (a && a->layer_base) {
+			composite->colour = rgba_dup(rgba, (size_t)t->width * (size_t)t->height);
+			if (!composite->colour) {
+				free(rgba);
+				goto fail;
+			}
+		}
+		if (!xwau_bake_rgba(t, &xwau[composite->texture], rgba, &composite->baked) ||
+			!xwau_apply_static_frame(composite->colour, (uint32_t)t->width, (uint32_t)t->height, a,
+									 &composite->baked))
 			goto fail;
 		const size_t bytes  = (size_t)t->width * (size_t)t->height * 4u;
 		XwauBaked*   result = &composite->baked;
@@ -1746,7 +1928,8 @@ static bool skin_state_build(const opt_file_t* opt, const OptGltfSkins* skins, c
 			free(result->metal_rough);
 			result->metal_rough = NULL;
 		}
-		composite->image_count = 1u + (result->emissive ? 1u : 0u) + (result->metal_rough ? 1u : 0u);
+		composite->image_count = 1u + (result->emissive ? 1u : 0u) + (result->metal_rough ? 1u : 0u) +
+								 (composite->colour ? 1u : 0u);
 	}
 	free(skinnable);
 	free(chain);
@@ -1836,6 +2019,12 @@ static bool build_memory(const opt_file_t* opt, const char* basename, const OptG
 			snprintf(error->msg, sizeof error->msg, "skins need XWAU materials");
 		return false;
 	}
+	const OptGltfXwauAnim* anim = options ? options->xwau_anim : NULL;
+	if (anim && !xwau) {
+		if (error)
+			snprintf(error->msg, sizeof error->msg, "animated materials need XWAU materials");
+		return false;
+	}
 	if (skins && !skin_validate(skins, error))
 		return false;
 	/* XWAU's renderer uses each corner's stored normal: no remap, no repair. */
@@ -1863,6 +2052,9 @@ static bool build_memory(const opt_file_t* opt, const char* basename, const OptG
 	XwauBaked* xwau_baked        = NULL;
 	int32_t*   xwau_normal_owner = NULL;
 	int32_t*   xwau_normal_image = NULL;
+	/* Animated materials: per texture, its colours before the bake when it
+	 * writes aeronLayerBase. */
+	uint8_t** xwau_colour = NULL;
 	/* Screen surfaces: per texture, the image slot of its cover's base image
 	 * (the emissive image follows it), or -1. Textures sharing a cover share
 	 * its images. */
@@ -1917,18 +2109,24 @@ static bool build_memory(const opt_file_t* opt, const char* basename, const OptG
 		xwau_baked         = (XwauBaked*)calloc(count, sizeof *xwau_baked);
 		xwau_normal_owner  = (int32_t*)malloc(count * sizeof *xwau_normal_owner);
 		xwau_normal_image  = (int32_t*)malloc(count * sizeof *xwau_normal_image);
-		if (!xwau_baked || !xwau_normal_owner || !xwau_normal_image) {
+		xwau_colour        = (uint8_t**)calloc(count, sizeof *xwau_colour);
+		if (!xwau_baked || !xwau_normal_owner || !xwau_normal_image || !xwau_colour) {
 			fprintf(stderr, "opt2gltf: oom (xwau)\n");
 			goto fail;
 		}
 		for (int32_t i = 0; i < opt->texture_count; ++i) {
 			xwau_normal_owner[i] = -1;
 			xwau_normal_image[i] = -1;
-			if (!xwau_bake_texture(&opt->textures[i], base_shade, &xwau[i], &xwau_baked[i])) {
+			const OptGltfXwauAnim* a = anim ? &anim[i] : NULL;
+			if (!xwau_bake_texture(&opt->textures[i], base_shade, &xwau[i], &xwau_baked[i],
+								   a && a->layer_base ? &xwau_colour[i] : NULL) ||
+				!xwau_apply_static_frame(xwau_colour[i], (uint32_t)opt->textures[i].width,
+										 (uint32_t)opt->textures[i].height, a, &xwau_baked[i])) {
 				fprintf(stderr, "opt2gltf: oom (xwau bake)\n");
 				goto fail;
 			}
-			n_xwau_images += (xwau_baked[i].emissive ? 1u : 0u) + (xwau_baked[i].metal_rough ? 1u : 0u);
+			n_xwau_images += (xwau_baked[i].emissive ? 1u : 0u) + (xwau_baked[i].metal_rough ? 1u : 0u) +
+							 (xwau_colour[i] && xwau_baked[i].base ? 1u : 0u);
 			if (!xwau[i].normal_map.rgba || !xwau_baked[i].base)
 				continue;
 			xwau_normal_owner[i] = i;
@@ -1968,7 +2166,7 @@ static bool build_memory(const opt_file_t* opt, const char* basename, const OptG
 
 	size_t n_skin_images = 0;
 	if (skins) {
-		if (!skin_state_build(opt, skins, screens, base_shade, xwau, xwau_baked, &skin_state)) {
+		if (!skin_state_build(opt, skins, screens, base_shade, xwau, anim, xwau_baked, &skin_state)) {
 			fprintf(stderr, "opt2gltf: oom (skins)\n");
 			goto fail;
 		}
@@ -2143,7 +2341,7 @@ static bool build_memory(const opt_file_t* opt, const char* basename, const OptG
 				baked->emissive         = NULL;
 				mat->emissive_factor[0] = mat->emissive_factor[1] = mat->emissive_factor[2] = 1.0f;
 				mat->has_emissive_strength                                                  = 1;
-				mat->emissive_strength.emissive_strength                                    = XWAU_ILLUM_GAIN;
+				mat->emissive_strength.emissive_strength = baked->unit_emission ? 1.0f : XWAU_ILLUM_GAIN;
 				emi++;
 			}
 			if (baked->metal_rough) {
@@ -2176,6 +2374,21 @@ static bool build_memory(const opt_file_t* opt, const char* basename, const OptG
 				mat->normal_texture.texture = &build->textures[xwau_normal_image[owner]];
 			mat->normal_texture.scale = 1.0f;
 			xwau_set_specular(mat, baked->specular_color);
+			/* Animated material: aeronLayerBase and the extras members. */
+			if (anim) {
+				int32_t layer_base = -1;
+				if (xwau_colour[i]) {
+					document_set_image(document, emi, xwau_colour[i], (uint32_t)t->width, (uint32_t)t->height,
+									   xprintf_dup("Tex%02d_layer_base", (int)i),
+									   xprintf_dup("%s_Tex%02d_layer_base.png", basename, (int)i));
+					xwau_colour[i] = NULL;
+					layer_base     = (int32_t)emi++;
+				}
+				if (!anim_apply(build, mat, &anim[i], layer_base, mat->extras.data)) {
+					fprintf(stderr, "opt2gltf: oom (anim extras)\n");
+					goto fail;
+				}
+			}
 		}
 
 		/* Screen surface: replaces the material's textures (opt2gltf.h). */
@@ -2303,7 +2516,7 @@ static bool build_memory(const opt_file_t* opt, const char* basename, const OptG
 				composite->images[1]    = (int32_t)emi++;
 				mat->emissive_factor[0] = mat->emissive_factor[1] = mat->emissive_factor[2] = 1.0f;
 				mat->has_emissive_strength                                                  = 1;
-				mat->emissive_strength.emissive_strength                                    = XWAU_ILLUM_GAIN;
+				mat->emissive_strength.emissive_strength = baked->unit_emission ? 1.0f : XWAU_ILLUM_GAIN;
 			} else {
 				mat->emissive_texture.texture = NULL;
 				mat->emissive_factor[0] = mat->emissive_factor[1] = mat->emissive_factor[2] = 0.0f;
@@ -2327,6 +2540,19 @@ static bool build_memory(const opt_file_t* opt, const char* basename, const OptG
 			}
 		}
 		xwau_set_specular(mat, baked->specular_color);
+		/* Animated material: its own aeronLayerBase (the composite's
+		 * colours) with the texture's members. */
+		if (anim && composite->colour) {
+			document_set_image(document, emi, composite->colour, (uint32_t)t->width, (uint32_t)t->height,
+							   xprintf_dup("Tex%02d_skin%03zu_layer_base", (int)ti, c),
+							   xprintf_dup("%s_Tex%02d_skin%03zu_layer_base.png", basename, (int)ti, c));
+			composite->colour    = NULL;
+			composite->images[3] = (int32_t)emi++;
+			if (!anim_apply(build, mat, &anim[ti], composite->images[3], NULL)) {
+				fprintf(stderr, "opt2gltf: oom (anim extras)\n");
+				goto fail;
+			}
+		}
 	}
 
 	build->images_count   = emi;
@@ -2426,7 +2652,7 @@ static bool build_memory(const opt_file_t* opt, const char* basename, const OptG
 			goto fail;
 		}
 		gb_keep_string(build, json);
-		for (int k = 0; k < 3; ++k)
+		for (int k = 0; k < 4; ++k)
 			if (composite->images[k] >= 0)
 				build->images[composite->images[k]].extras.data = json;
 	}
@@ -3049,6 +3275,7 @@ static bool build_memory(const opt_file_t* opt, const char* basename, const OptG
 	free(built);
 	built = NULL;
 	xwau_state_free(xwau_baked, opt->texture_count, xwau_normal_owner, xwau_normal_image);
+	xwau_colour_free(xwau_colour, opt->texture_count);
 	free(screen_cover_image);
 	skin_state_free(&skin_state);
 
@@ -3061,6 +3288,7 @@ fail:
 	free(screen_cover_image);
 	skin_state_free(&skin_state);
 	xwau_state_free(xwau_baked, opt->texture_count, xwau_normal_owner, xwau_normal_image);
+	xwau_colour_free(xwau_colour, opt->texture_count);
 	if (built) {
 		for (int32_t mi = 0; mi < opt->mesh_count; ++mi)
 			built_mesh_free(&built[mi]);

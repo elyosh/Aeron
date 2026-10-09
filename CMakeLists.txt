@@ -973,6 +973,8 @@ if(AERON_BUILD_TOOLS)
     # Alliance Upgrade files and hand resolved materials to opt2gltf_lib.
     add_executable(opt2gltf
         tools/opt2gltf/main.c
+        tools/opt2gltf/xwau_anim.c
+        tools/opt2gltf/xwau_effect_bake.c
         tools/opt2gltf/xwau_mat.c
         tools/opt2gltf/xwau_dat.c
         tools/opt2gltf/dynamic_cockpit.c
@@ -991,6 +993,26 @@ endif()
 
 if(AERON_BUILD_TOOLS)
     add_subdirectory(tools/environment_bake)
+
+    # xwau_effects — effect image libraries of converted XWAU models (docs:
+    # xwau_animated_materials.md); shares opt2gltf's XWAU readers and the
+    # cook's atlas packer.
+    add_executable(xwau_effects
+        tools/xwau_effects/main.c
+        tools/opt2gltf/xwau_mat.c
+        tools/opt2gltf/xwau_dat.c
+        tools/opt2gltf/xwau_effect_bake.c
+        third_party/lzma/LzmaDec.c)
+    target_include_directories(xwau_effects PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/tools/opt2gltf
+        ${CMAKE_CURRENT_SOURCE_DIR}/third_party/lzma
+        ${CMAKE_CURRENT_SOURCE_DIR}/third_party/bcdec)
+    target_link_libraries(xwau_effects PRIVATE aeron_gltf_cook_lib aeron_cjson)
+    if(NOT MSVC)
+        target_link_libraries(xwau_effects PRIVATE m)
+    endif()
+    set_target_properties(xwau_effects PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
 endif()
 
 if(AERON_BUILD_TOOLS OR AERON_BUILD_SCENE_CAPTURE)
