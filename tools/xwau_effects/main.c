@@ -34,10 +34,11 @@
 #define MAX_ROOTS 16
 /* Pages of 2048 + 2048/16 texels: with 16-texel gutters, two 1024² or four
  * 512² images fit a row (a 2048² page holds one 1024² image). Every image,
- * up to IMAGE_MAX, is a shared rect: none needs a dedicated layer. */
+ * up to IMAGE_MAX (only Factory.dat's 2678×1536 frames are larger), is a
+ * shared rect: none needs a dedicated layer. */
 #define PAGE_SIZE 2176
 #define PACK_SIZE 4096
-#define IMAGE_MAX 2048
+#define IMAGE_MAX 1024
 #define GUTTER 16
 #define ENERGY_MAX 512
 #define RANDOM_FRAMES 64
