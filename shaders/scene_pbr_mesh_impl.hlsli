@@ -225,11 +225,14 @@ float3 anim_energy(uint4 anim, float3 model_pos, float3 model_normal)
 }
 
 /* The playing frame record of a layer's flipbook (0: none, or a frame
- * missing from its library), and the flipbook record. */
+ * missing from its library), and the flipbook record: the first one whose
+ * state is active, timed from when its state last became set. */
 uint anim_layer_frame(uint4 anim, uint layer, out uint flipbook)
 {
-    flipbook = material_anim_select(anim.y & 0xFFFFu, anim.y >> 16, layer, 0u);
-    uint frame = flipbook != 0u ? material_anim_frame(flipbook, fs_anim.x) : 0u;
+    flipbook = material_anim_select(anim.y & 0xFFFFu, anim.y >> 16, layer, fs_anim_state.x);
+    uint state = g_anim_records[flipbook].x & 0x1Fu;
+    float onset = state == AERON_ANIM_STATE_ALWAYS ? 0.0f : fs_anim_onset[state >> 2u][state & 3u];
+    uint frame = flipbook != 0u ? material_anim_frame(flipbook, fs_anim.x - onset) : 0u;
     return frame != 0u && (g_anim_records[frame].x & 0xFFFu) != AERON_ANIM_NO_LAYER ? frame : 0u;
 }
 #endif
