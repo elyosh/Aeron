@@ -10,7 +10,11 @@
  * AERON_ANIM_STATE_ALWAYS, which is always active.
  *
  * Per-mesh animation buffer (StructuredBuffer<uint4>), records:
- *   header (record 0): reserved, 0, 0, 0
+ *   header (record 0): x first energy record (0: none), 0, 0, 0
+ *   energy effects (when present): per AERON_EFFECT_ENERGY_* effect a
+ *             flipbook record (layer colour, so one record per frame), then
+ *             asuint(strength), asuint(tile size, metres), 0, 0; then the
+ *             effects' frames, each the emissive image with its end time
  *   flipbook: x state | layer << 8 | mode << 9 | has_uv << 10,
  *             y first frame record, z frame count, w asuint(total seconds)
  *   flipbook uv (when has_uv, right after it): asuint(scale.x),

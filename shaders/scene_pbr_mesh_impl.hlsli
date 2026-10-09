@@ -122,7 +122,7 @@ cbuffer PbrAnimFS : register(b3, space3)
 {
     float4 fs_anim;          /* x: animation time (seconds), y: effect page size (texels) */
     uint4  fs_anim_state;    /* x: state mask, y: seed, z: damage stage, w: energy */
-    float4 fs_anim_energy;   /* x: energy start (seconds), yzw: energy strengths */
+    float4 fs_anim_energy;   /* x: energy start (seconds), yzw: unused */
     float4 fs_anim_onset[8]; /* state onsets (seconds), 4 per float4 */
 };
 #define AERON_ANIM_RECORD(i) g_anim_records[i]
@@ -181,6 +181,47 @@ float4 anim_damage(uint4 anim, float2 uv)
     float2 range = float2(r.x1 - r.x0, r.y1 - r.y0);
     return anim_frame_sample_grad(g_effect_layer, g_effect_layer_sampler, frame,
                                   saturate((t - float2(r.x0, r.y0)) / range), uv_dx / range, uv_dy / range);
+}
+
+/* The instance's energy effect (fs_anim_state.w: 1 shields down, 2
+ * tractor, 3 jamming) as emission at the model-frame position: its frame,
+ * started at fs_anim_energy.x, projected on the three model planes and
+ * blended by normalize(|n|^4), tiled by the effect's size, the projection
+ * turned and offset at random per start. Zero when the material does not
+ * receive that effect. */
+float3 anim_energy(uint4 anim, float3 model_pos, float3 model_normal)
+{
+    float3 pos_dx = ddx(model_pos);
+    float3 pos_dy = ddy(model_pos);
+    uint   energy = fs_anim_state.w;
+    uint   first  = g_anim_records[0].x;
+    if (energy == 0u || energy > 3u || first == 0u || ((anim.w >> (energy - 1u)) & 1u) == 0u)
+        return float3(0.0f, 0.0f, 0.0f);
+    uint book  = first + (energy - 1u) * 2u;
+    uint frame = material_anim_frame(book, fs_anim.x - fs_anim_energy.x);
+    if (frame == 0u || (g_anim_records[frame].x & 0xFFFu) == AERON_ANIM_NO_LAYER)
+        return float3(0.0f, 0.0f, 0.0f);
+    float strength = asfloat(g_anim_records[book + 1u].x);
+    float inv_tile = 1.0f / max(asfloat(g_anim_records[book + 1u].y), 1e-4f);
+    uint  h        = material_anim_hash(fs_anim_state.y, asuint(fs_anim_energy.x));
+    float angle    = material_anim_unorm(h) * 6.28318531f;
+    float3 offset  = float3(material_anim_unorm(material_anim_hash(h, 1u)),
+                            material_anim_unorm(material_anim_hash(h, 2u)),
+                            material_anim_unorm(material_anim_hash(h, 3u)));
+    float s, c;
+    sincos(angle, s, c);
+    /* A turn about the model's up axis, the same for the normal. */
+    float3x3 turn = float3x3(c, -s, 0.0f, s, c, 0.0f, 0.0f, 0.0f, 1.0f);
+    float3 p  = mul(turn, model_pos) * inv_tile + offset;
+    float3 dx = mul(turn, pos_dx) * inv_tile;
+    float3 dy = mul(turn, pos_dy) * inv_tile;
+    float3 w  = pow(abs(mul(turn, model_normal)), 4.0f);
+    w /= max(w.x + w.y + w.z, 1e-6f);
+    uint4 f = g_anim_records[frame];
+    float3 e = w.x * anim_frame_sample_grad(g_effect_emissive, g_effect_emissive_sampler, f, frac(p.yz), dx.yz, dy.yz).rgb +
+               w.y * anim_frame_sample_grad(g_effect_emissive, g_effect_emissive_sampler, f, frac(p.xz), dx.xz, dy.xz).rgb +
+               w.z * anim_frame_sample_grad(g_effect_emissive, g_effect_emissive_sampler, f, frac(p.xy), dx.xy, dy.xy).rgb;
+    return e * strength;
 }
 
 /* The playing frame record of a layer's flipbook (0: none, or a frame
@@ -261,6 +302,7 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
     float3 anim_emissive = float3(0.0f, 0.0f, 0.0f);
     float  anim_gloss    = 1.0f;
     uint4  anim = g_materials[mat].anim;
+    float3 anim_energy_rgb = anim_energy(anim, i.model_pos, i.model_normal);
     if (anim.y != 0u || anim.z != 0u) {
         uint colour_book = 0u, lit_book = 0u;
         uint colour_frame = anim.y != 0u ? anim_layer_frame(anim, AERON_ANIM_LAYER_COLOUR, colour_book) : 0u;
@@ -636,6 +678,14 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
             lit += emissive;
         }
     }
+
+#if AERON_PBR_ANIM
+    /* ===== Energy effect ==========================================
+     * Additive emission over the lit surface, scaled like the material's. */
+    if (isolate == 0) {
+        lit += anim_energy_rgb * (i.emissive_mul * fs_emission.x);
+    }
+#endif
 
 #if AERON_PBR_SCREENS
     /* ===== Opaque screens =========================================

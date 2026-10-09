@@ -585,6 +585,7 @@ struct AeronScene3D {
 	AeronEffectAtlas*      effect_atlas;
 	float                  animation_time;
 	int                    pbr_anim_tried;
+	AeronShader*           pbr_anim_vs;
 	AeronShader*           pbr_anim_fs[2][4];
 	AeronGraphicsPipeline* pbr_anim_pipes[2][AERON_PBR_PIPE_KIND_COUNT][3];
 };

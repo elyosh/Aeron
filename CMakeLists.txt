@@ -203,6 +203,7 @@ set(AERON_SHADER_SOURCES
     # aeron_scene "pbr" material class (C2b) — forward, prepass, and
     # alpha-tested velocity-stamp variants for cooked glTF meshes.
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_pbr_mesh.vert.hlsl
+    ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_pbr_mesh_anim.vert.hlsl
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_pbr_mesh.frag.hlsl
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_pbr_mesh_mask.frag.hlsl
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_pbr_mesh_blend.frag.hlsl

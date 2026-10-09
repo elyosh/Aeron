@@ -51,7 +51,8 @@ typedef struct AeronPbrMaterialEntry {
 								  * (material_anim_layout.hlsli); 0 without
 								  * z: first damage alternative record |
 								  *    alternative count << 16; 0 without
-								  * w: damage choice << 8 | placement << 20 */
+								  * w: energy mask (bits 0-2) | damage choice << 8 |
+								  *    placement << 20 */
 } AeronPbrMaterialEntry;         /* 192 B */
 
 /* Shader record of one screen rectangle (AeronGltfScreenRect): float4 and
@@ -178,6 +179,9 @@ typedef struct AeronSceneMeshCreateInfo {
 	const char*                   debug_name;
 	const AeronSceneMeshVariants* variants;     /* NULL: the asset variants */
 	AeronEffectAtlas*             effect_atlas; /* NULL: no material animation */
+	/* The game's effect data (energy effects), loaded in effect_atlas; NULL:
+	 * no energy effects. Borrowed: it must outlive the mesh. */
+	const AeronEffectData* effect_data;
 } AeronSceneMeshCreateInfo;
 
 /* AeronScene_MeshCreateWithVariants with an effect atlas: the model's

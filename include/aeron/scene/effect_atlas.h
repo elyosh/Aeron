@@ -69,7 +69,8 @@ uint32_t AeronEffectAtlas_PageSize(const AeronEffectAtlas* atlas);
 /*
  * AeronEffectData — the game's effect data, `effects.yaml` in the atlas
  * directory: flipbooks for images the game draws directly, keyed by the
- * game's image name ("G-I"), with their frames resolved in the atlas.
+ * game's image name ("G-I"), and the energy effects, with their frames
+ * resolved in the atlas.
  */
 typedef struct AeronEffectData AeronEffectData;
 
@@ -79,6 +80,28 @@ typedef struct AeronEffectData AeronEffectData;
 AeronEffectData* AeronEffectData_Load(AeronEffectAtlas* atlas, AeronCommandBuffer* cmd);
 /* Releases the libraries. */
 void AeronEffectData_Destroy(AeronEffectData* data);
+
+/* Energy effects (the `energy` section): an effect that plays over a
+ * surface, sampled from emissive images. */
+#define AERON_EFFECT_ENERGY_SHIELDS 0 /* shields down */
+#define AERON_EFFECT_ENERGY_TRACTOR 1 /* under a tractor beam */
+#define AERON_EFFECT_ENERGY_JAMMING 2 /* under a jamming beam */
+#define AERON_EFFECT_ENERGY_COUNT 3
+
+typedef struct AeronEffectEnergy {
+	bool     once;     /* held at the last frame, else looped */
+	float    strength; /* emission scale */
+	float    tile;     /* projection tile, as a fraction of a mesh's largest extent */
+	uint32_t frame_count;
+} AeronEffectEnergy;
+
+/* Energy effect `effect` (AERON_EFFECT_ENERGY_*); 0 when absent. */
+int AeronEffectData_Energy(const AeronEffectData* data, int effect, AeronEffectEnergy* out);
+/* Frame `frame` of an energy effect: its image (emissive) and the end of the
+ * frame in seconds from the start; 0 when the image is not in its library
+ * (`end` is still set). */
+int AeronEffectData_EnergyFrame(const AeronEffectData* data, int effect, uint32_t frame,
+								AeronEffectImage* out, double* end);
 
 /* Index of the flipbook of DAT image `key` ("G-I"); -1 without one. */
 int AeronEffectData_FindImage(const AeronEffectData* data, const char* key);

@@ -69,7 +69,9 @@ static AeronSceneMesh* create_mesh(AeronCommandBuffer* cmd, const Fixture* f, in
 			highest            = in->markings > highest ? in->markings : highest;
 		}
 	}
-	AeronSceneMeshCreateInfo info = { .model = model, .debug_name = path, .effect_atlas = f->effect_atlas };
+	AeronSceneMeshCreateInfo info = {
+		.model = model, .debug_name = path, .effect_atlas = f->effect_atlas, .effect_data = f->effect_data
+	};
 	if (highest < 0)
 		return AeronScene_MeshCreateEx(cmd, &info, NULL);
 	const AeronGltfModel* render = &model->render;

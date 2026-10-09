@@ -28,6 +28,10 @@ PbrForwardVSOut main(VSIn input)
 		output.variant_row_base = 0u;
 		output.variant_group_count = 0u;
 		output.material_count = 0u;
+#if AERON_PBR_ANIM
+		output.model_pos = float3(0.0f, 0.0f, 0.0f);
+		output.model_normal = float3(0.0f, 0.0f, 1.0f);
+#endif
 		return output;
 	}
 
@@ -63,5 +67,9 @@ PbrForwardVSOut main(VSIn input)
 	output.variant_row_base = variant_row_base;
 	output.variant_group_count = variant_group_count;
 	output.material_count = material_count;
+#if AERON_PBR_ANIM
+	output.model_pos = input.position;
+	output.model_normal = input.normal;
+#endif
 	return output;
 }

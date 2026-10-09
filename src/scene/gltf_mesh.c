@@ -760,6 +760,30 @@ static bool read_damage(const cgltf_material* m, AeronGltfModel* model, Flipbook
 	return true;
 }
 
+/* A material's `aeronEnergy` into its energy mask; unknown names are
+ * reported and ignored. */
+static void read_energy(const cgltf_material* m, AeronGltfMaterial* out, const char* source_label,
+						uint32_t material_index) {
+	out->energy_mask = 0;
+	if (!m || !m->extras.data || !strstr(m->extras.data, "aeronEnergy"))
+		return;
+	static const char* const names[] = { "shields", "tractor", "jamming" };
+	cJSON*                   root    = cJSON_ParseWithOpts(m->extras.data, NULL, true);
+	const cJSON*             energy  = cJSON_GetObjectItemCaseSensitive(root, "aeronEnergy");
+	const cJSON*             item;
+	cJSON_ArrayForEach(item, energy) {
+		uint32_t e = 0;
+		while (e < 3 && !(cJSON_IsString(item) && strcmp(item->valuestring, names[e]) == 0))
+			e++;
+		if (e < 3)
+			out->energy_mask |= 1u << e;
+		else
+			SDL_Log("[flight_gltf] '%s' material %u: unknown aeronEnergy entry ignored", source_label,
+					material_index);
+	}
+	cJSON_Delete(root);
+}
+
 /* Reads a material's `aeronLayerBase` and `aeronFlipbooks` extras. A
  * malformed entry is reported and the material keeps no animation. Returns
  * false only when memory runs out. */
@@ -980,6 +1004,7 @@ bool Aeron_GltfMeshBuildData(const cgltf_data* data, const char* source_label, A
 				!read_damage(&data->materials[i], out, &flipbook_capacity, &out->materials[i], source_label,
 							 i))
 				goto cleanup;
+			read_energy(&data->materials[i], &out->materials[i], source_label, i);
 			/* Holograms and transparent screens blend over the scene, and
 			 * the PBR shader leaves them transparent when hidden: only the
 			 * blend range can draw them. */

@@ -196,7 +196,7 @@ static uint32_t populate_material_entries(AeronPbrMaterialEntry* entries, const 
 		e->screen_first = m->screen_first;
 		e->screen_count = m->screen_count;
 		e->screen_flags = m->screen_flags;
-		if (anim && (anim[i][0] || anim[i][1])) {
+		if (anim && (anim[i][0] || anim[i][1] || anim[i][2])) {
 			const uint32_t page = src->group_count ? channel_layer(src, set, AERON_GLTF_CHANNEL_BASE_COLOR,
 																   core_layers[AERON_GLTF_CHANNEL_BASE_COLOR],
 																   m->layer_base_page)
@@ -405,10 +405,59 @@ static bool anim_damage(AnimRecords* r, const AeronEffectAtlas* atlas, uint32_t 
 /* Builds the records of the model's flipbooks and damage alternatives, and
  * each material's anim.y, z and w (all 0 without animation) into
  * `out_anim`; no records when nothing animates. Returns 0 on OOM. */
+/* The energy effects' records, from header record 0.x: per effect a
+ * flipbook record (mode, first frame, frame count, total seconds), then
+ * asuint(strength), asuint(tile size in metres), then its frames, one
+ * record each (the emissive image). Returns false on OOM. */
+static bool anim_energy(AnimRecords* r, const AeronEffectData* data, float extent, uint32_t* missing) {
+	r->items[0][0] = r->count;
+	uint32_t book[AERON_EFFECT_ENERGY_COUNT];
+	for (int e = 0; e < AERON_EFFECT_ENERGY_COUNT; e++) {
+		AeronEffectEnergy energy = { 0 };
+		AeronEffectData_Energy(data, e, &energy);
+		book[e] = r->count;
+		if (!anim_record(r) || !anim_record(r))
+			return false;
+		uint32_t* record = r->items[book[e]];
+		uint32_t* params = r->items[book[e] + 1];
+		record[0]        = (energy.once ? AERON_ANIM_MODE_ONCE : AERON_ANIM_MODE_LOOP)
+						   << AERON_ANIM_FLIPBOOK_MODE_SHIFT;
+		record[2]        = energy.frame_count;
+		params[0]        = float_bits(energy.strength);
+		params[1]        = float_bits(energy.tile * extent);
+	}
+	for (int e = 0; e < AERON_EFFECT_ENERGY_COUNT; e++) {
+		r->items[book[e]][1] = r->count;
+		double end           = 0.0;
+		for (uint32_t f = 0; f < r->items[book[e]][2]; f++) {
+			AeronEffectImage image;
+			const int        found = AeronEffectData_EnergyFrame(data, e, f, &image, &end);
+			if (!anim_record(r))
+				return false;
+			uint32_t* record = r->items[r->count - 1];
+			record[0]        = AERON_ANIM_NO_LAYER;
+			record[3]        = float_bits((float)end);
+			*missing += !found;
+			if (found) {
+				record[0] = (image.layer[AERON_EFFECT_EMISSIVE] & 0xFFFu) |
+							(image.lod[AERON_EFFECT_EMISSIVE] & 0xFu) << 12;
+				record[1] = image.rect[AERON_EFFECT_EMISSIVE][0] | image.rect[AERON_EFFECT_EMISSIVE][1] << 16;
+				record[2] = image.rect[AERON_EFFECT_EMISSIVE][2] | image.rect[AERON_EFFECT_EMISSIVE][3] << 16;
+			}
+		}
+		r->items[book[e]][3] = float_bits((float)end);
+	}
+	return true;
+}
+
 static int build_anim_records(AeronSceneMesh* s, AeronCommandBuffer* cmd, const AeronGltfModel* model,
-							  const char* name, AnimRecords* r, uint32_t (**out_anim)[3]) {
-	*out_anim = NULL;
-	if (!s->effect_atlas || (!model->flipbook_count && !model->damage_count))
+							  const AeronEffectData* effect_data, float extent, const char* name,
+							  AnimRecords* r, uint32_t (**out_anim)[3]) {
+	*out_anim            = NULL;
+	uint32_t energy_mask = 0;
+	for (uint32_t m = 0; effect_data && m < model->material_count; m++)
+		energy_mask |= model->materials[m].energy_mask;
+	if (!s->effect_atlas || (!model->flipbook_count && !model->damage_count && !energy_mask))
 		return 1;
 	const uint32_t library_capacity = model->flipbook_count + model->damage_count;
 	uint32_t (*anim)[3]             = (uint32_t (*)[3])calloc(model->material_count, sizeof *anim);
@@ -417,9 +466,12 @@ static int build_anim_records(AeronSceneMesh* s, AeronCommandBuffer* cmd, const 
 	s->effect_libraries             = (uint32_t*)calloc(library_capacity, sizeof *s->effect_libraries);
 	int      ok           = anim && names && failed && s->effect_libraries && anim_record(r);
 	uint32_t failed_count = 0, missing = 0, frames = 0;
+	if (ok && energy_mask)
+		ok = anim_energy(r, effect_data, extent, &missing);
 	for (uint32_t m = 0; ok && m < model->material_count; m++) {
 		const AeronGltfMaterial* material = &model->materials[m];
-		if (!material->flipbook_count && !material->damage_count)
+		const uint32_t           energy   = effect_data ? material->energy_mask & 0x7u : 0u;
+		if (!material->flipbook_count && !material->damage_count && !energy)
 			continue;
 		/* The flipbooks, then their frames, then the damage alternatives. */
 		const uint32_t first = r->count;
@@ -479,6 +531,7 @@ static int build_anim_records(AeronSceneMesh* s, AeronCommandBuffer* cmd, const 
 			anim[m][2] = (material->damage_choice & 0xFFFu) << 8 | (material->damage_placement & 0xFFFu)
 																	   << 20;
 		}
+		anim[m][2] |= energy;
 	}
 	free((void*)names);
 	free((void*)failed);
@@ -587,7 +640,8 @@ static AeronTexture* upload_channel_groups(AeronCommandBuffer* cmd, const AeronG
 
 static AeronSceneMesh* mesh_create(AeronCommandBuffer* cmd, const AeronFlightModel* flight_model,
 								   const char* debug_name, const AeronSceneMeshVariants* set,
-								   AeronEffectAtlas* effect_atlas, AeronSceneMeshCreateStatus* status) {
+								   AeronEffectAtlas* effect_atlas, const AeronEffectData* effect_data,
+								   AeronSceneMeshCreateStatus* status) {
 	if (status) {
 		*status = AERON_SCENE_MESH_CREATE_RESOURCE_FAILURE;
 	}
@@ -858,7 +912,12 @@ static AeronSceneMesh* mesh_create(AeronCommandBuffer* cmd, const AeronFlightMod
 	snprintf(screen_name, sizeof screen_name, "%s.screen_rects", name);
 	snprintf(anim_name, sizeof anim_name, "%s.material_anim", name);
 	s->effect_atlas = effect_atlas;
-	int built       = build_anim_records(s, cmd, model, name, &anim_records, &anim);
+	/* Energy effects tile by the model's largest extent. */
+	const float extent = fmaxf(flight_model->bounds.max.x - flight_model->bounds.min.x,
+							   fmaxf(flight_model->bounds.max.y - flight_model->bounds.min.y,
+									 flight_model->bounds.max.z - flight_model->bounds.min.z));
+	int         built  = build_anim_records(s, cmd, model, effect_data, extent > 0.0f ? extent : 1.0f, name,
+											&anim_records, &anim);
 	if (built && anim_records.count > 1) {
 		s->anim_buffer = Aeron_CreateBuffer(&(AeronBufferDesc) {
 			.size       = anim_records.count * (uint32_t)sizeof *anim_records.items,
@@ -965,14 +1024,14 @@ static AeronSceneMesh* mesh_create(AeronCommandBuffer* cmd, const AeronFlightMod
 
 AeronSceneMesh* AeronScene_MeshCreate(AeronCommandBuffer* cmd, const AeronFlightModel* model,
 									  const char* debug_name, AeronSceneMeshCreateStatus* status) {
-	return mesh_create(cmd, model, debug_name, NULL, NULL, status);
+	return mesh_create(cmd, model, debug_name, NULL, NULL, NULL, status);
 }
 
 AeronSceneMesh* AeronScene_MeshCreateWithVariants(AeronCommandBuffer* cmd, const AeronFlightModel* model,
 												  const char*                   debug_name,
 												  const AeronSceneMeshVariants* variants,
 												  AeronSceneMeshCreateStatus*   status) {
-	return mesh_create(cmd, model, debug_name, variants, NULL, status);
+	return mesh_create(cmd, model, debug_name, variants, NULL, NULL, status);
 }
 
 AeronSceneMesh* AeronScene_MeshCreateEx(AeronCommandBuffer* cmd, const AeronSceneMeshCreateInfo* info,
@@ -982,5 +1041,6 @@ AeronSceneMesh* AeronScene_MeshCreateEx(AeronCommandBuffer* cmd, const AeronScen
 			*status = AERON_SCENE_MESH_CREATE_RESOURCE_FAILURE;
 		return NULL;
 	}
-	return mesh_create(cmd, info->model, info->debug_name, info->variants, info->effect_atlas, status);
+	return mesh_create(cmd, info->model, info->debug_name, info->variants, info->effect_atlas,
+					   info->effect_data, status);
 }

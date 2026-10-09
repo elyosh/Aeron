@@ -186,6 +186,9 @@ typedef struct AeronGltfMaterial {
 	uint32_t damage_count;
 	uint32_t damage_choice;
 	uint32_t damage_placement;
+	/* Energy effects the material receives (`aeronEnergy`): bit per
+	 * AERON_EFFECT_ENERGY_* (shields 0, tractor 1, jamming 2). */
+	uint32_t energy_mask;
 } AeronGltfMaterial;
 
 /* ===== Material animation ===========================================
@@ -203,6 +206,7 @@ typedef struct AeronGltfMaterial {
  *                    "alternatives": [ { "stages": [key | null] x 3,
  *                                        "scale": [min, max],
  *                                        "offset": [x0, y0, x1, y1] | "inside" } ] }
+ *   "aeronEnergy": [ "shields" | "tractor" | "jamming" ]
  *
  * Frames and damage stages name images of an effect library
  * (aeron/scene/effect_atlas.h). Illumination flipbooks are dropped from a

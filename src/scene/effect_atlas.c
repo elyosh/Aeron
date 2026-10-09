@@ -398,14 +398,18 @@ typedef struct EffectDataFrame {
 typedef struct EffectDataImage {
 	char*            key;
 	bool             once;
+	float            strength, tile; /* energy effects */
 	EffectDataFrame* frames;
 	uint32_t         frame_count;
 } EffectDataImage;
+
+static const char* const kEnergyNames[AERON_EFFECT_ENERGY_COUNT] = { "shields", "tractor", "jamming" };
 
 struct AeronEffectData {
 	AeronEffectAtlas* atlas;
 	EffectDataImage*  images; /* sorted by key */
 	uint32_t          image_count;
+	EffectDataImage   energy[AERON_EFFECT_ENERGY_COUNT]; /* frame_count 0: absent */
 	uint32_t*         libraries;
 	uint32_t          library_count;
 };
@@ -428,16 +432,25 @@ static uint32_t data_library(AeronEffectData* data, AeronCommandBuffer* cmd, con
 	return library;
 }
 
-static int data_read_image(AeronEffectData* data, AeronCommandBuffer* cmd, const char* key,
-						   const AeronConfigNode* node, uint32_t library_capacity, EffectDataImage* out) {
+/* A flipbook entry: an image's (`which` AERON_EFFECT_LAYER, kind "mark") or
+ * an energy effect's (AERON_EFFECT_EMISSIVE, with strength and tile). */
+static int data_read_flipbook(AeronEffectData* data, AeronCommandBuffer* cmd, const char* key,
+							  const AeronConfigNode* node, uint32_t library_capacity, int which,
+							  EffectDataImage* out) {
 	const char*            library = AeronConfigNode_String(AeronConfigNode_MapGet(node, "library"), NULL);
 	const char*            kind    = AeronConfigNode_String(AeronConfigNode_MapGet(node, "kind"), NULL);
 	const char*            mode    = AeronConfigNode_String(AeronConfigNode_MapGet(node, "mode"), NULL);
 	const AeronConfigNode* frames  = AeronConfigNode_MapGet(node, "frames");
 	const size_t           count   = AeronConfigNode_SequenceCount(frames);
-	if (!library || !kind || strcmp(kind, "mark") != 0 || !mode ||
+	if (!library || (which == AERON_EFFECT_LAYER && (!kind || strcmp(kind, "mark") != 0)) || !mode ||
 		(strcmp(mode, "loop") != 0 && strcmp(mode, "once") != 0) || count == 0 || count > 0xFFFF)
 		return 0;
+	if (which == AERON_EFFECT_EMISSIVE) {
+		out->strength = (float)AeronConfigNode_Float(AeronConfigNode_MapGet(node, "strength"), -1.0);
+		out->tile     = (float)AeronConfigNode_Float(AeronConfigNode_MapGet(node, "tile"), -1.0);
+		if (!(out->strength >= 0.0f) || !(out->tile > 0.0f))
+			return 0;
+	}
 	out->key    = strdup(key);
 	out->once   = strcmp(mode, "once") == 0;
 	out->frames = (EffectDataFrame*)calloc(count, sizeof *out->frames);
@@ -455,7 +468,7 @@ static int data_read_image(AeronEffectData* data, AeronCommandBuffer* cmd, const
 		end += seconds;
 		d->end   = end;
 		d->found = lib != UINT32_MAX && AeronEffectAtlas_Find(data->atlas, lib, image, &d->image) &&
-				   d->image.present[AERON_EFFECT_LAYER];
+				   d->image.present[which];
 	}
 	out->frame_count = (uint32_t)count;
 	return 1;
@@ -474,22 +487,34 @@ AeronEffectData* AeronEffectData_Load(AeronEffectAtlas* atlas, AeronCommandBuffe
 		return NULL;
 	}
 	const AeronConfigNode* images = AeronConfigFile_GetNode(yaml, "images");
+	const AeronConfigNode* energy    = AeronConfigFile_GetNode(yaml, "energy");
 	const uint32_t         count  = (uint32_t)AeronConfigNode_MapCount(images);
+	const uint32_t         libraries = count + AERON_EFFECT_ENERGY_COUNT;
 	AeronEffectData*       data   = (AeronEffectData*)calloc(1, sizeof *data);
 	int                    ok     = data && AeronConfigFile_GetInt(yaml, "version", 0) == 1;
 	if (ok) {
 		data->atlas     = atlas;
 		data->images    = (EffectDataImage*)calloc(count ? count : 1, sizeof *data->images);
-		data->libraries = (uint32_t*)calloc(count ? count : 1, sizeof *data->libraries);
+		data->libraries = (uint32_t*)calloc(libraries, sizeof *data->libraries);
 		ok              = data->images && data->libraries;
 	}
 	for (uint32_t i = 0; ok && i < count; ++i) {
-		ok                = data_read_image(data, cmd, AeronConfigNode_MapKeyAt(images, i),
-											AeronConfigNode_MapValueAt(images, i), count, &data->images[i]);
+		ok = data_read_flipbook(data, cmd, AeronConfigNode_MapKeyAt(images, i),
+								AeronConfigNode_MapValueAt(images, i), libraries, AERON_EFFECT_LAYER,
+								&data->images[i]);
 		data->image_count = i + 1u;
 		if (!ok)
 			Aeron_LogError("aeron.scene", "%s: malformed image '%s'", path,
 						   AeronConfigNode_MapKeyAt(images, i));
+	}
+	for (int e = 0; ok && e < AERON_EFFECT_ENERGY_COUNT; ++e) {
+		const AeronConfigNode* node = AeronConfigNode_MapGet(energy, kEnergyNames[e]);
+		if (!node)
+			continue;
+		ok = data_read_flipbook(data, cmd, kEnergyNames[e], node, libraries, AERON_EFFECT_EMISSIVE,
+								&data->energy[e]);
+		if (!ok)
+			Aeron_LogError("aeron.scene", "%s: malformed energy effect '%s'", path, kEnergyNames[e]);
 	}
 	AeronConfigFile_Destroy(yaml);
 	if (!ok) {
@@ -510,6 +535,10 @@ void AeronEffectData_Destroy(AeronEffectData* data) {
 	for (uint32_t i = 0; i < data->image_count; ++i) {
 		free(data->images[i].key);
 		free(data->images[i].frames);
+	}
+	for (int e = 0; e < AERON_EFFECT_ENERGY_COUNT; ++e) {
+		free(data->energy[e].key);
+		free(data->energy[e].frames);
 	}
 	free(data->images);
 	free(data->libraries);
@@ -546,5 +575,32 @@ int AeronEffectData_ImageFrame(const AeronEffectData* data, int index, double t,
 	if (!image->frames[f].found)
 		return 0;
 	*out = image->frames[f].image;
+	return 1;
+}
+
+int AeronEffectData_Energy(const AeronEffectData* data, int effect, AeronEffectEnergy* out) {
+	if (!data || effect < 0 || effect >= AERON_EFFECT_ENERGY_COUNT || !out ||
+		!data->energy[effect].frame_count)
+		return 0;
+	const EffectDataImage* e = &data->energy[effect];
+	out->once                = e->once;
+	out->strength            = e->strength;
+	out->tile                = e->tile;
+	out->frame_count         = e->frame_count;
+	return 1;
+}
+
+int AeronEffectData_EnergyFrame(const AeronEffectData* data, int effect, uint32_t frame,
+								AeronEffectImage* out, double* end) {
+	if (!data || effect < 0 || effect >= AERON_EFFECT_ENERGY_COUNT ||
+		frame >= data->energy[effect].frame_count)
+		return 0;
+	const EffectDataFrame* f = &data->energy[effect].frames[frame];
+	if (end)
+		*end = f->end;
+	if (!f->found)
+		return 0;
+	if (out)
+		*out = f->image;
 	return 1;
 }

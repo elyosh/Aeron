@@ -61,7 +61,7 @@ typedef struct AeronScenePbrAnimBlock {
 	float    _pad[2];
 	uint32_t state_mask, seed, damage_stage, energy;
 	float    energy_start;
-	float    energy_strength[3]; /* shields, tractor, jamming */
+	float    _pad1[3];
 	float    onset[32];
 } AeronScenePbrAnimBlock; /* 176 B */
 
@@ -212,7 +212,7 @@ static int pbr_screen_kind(int kind) {
 /* Create the (kind, cull) variant. Kind fixes shaders, targets and
  * depth state; cull is free per variant. */
 static AeronGraphicsPipeline* pbr_pipeline_create(struct AeronScene3D* s, int kind, AeronCullMode cull,
-												  AeronShader* color_fs) {
+												  AeronShader* color_vs, AeronShader* color_fs) {
 	const PbrTargetDesc normal_rw = { AERON_TEXTURE_FORMAT_R16G16_SNORM, 0xF };
 	const PbrTargetDesc normal_wm = { AERON_TEXTURE_FORMAT_R16G16_SNORM, 0x0 };
 	const PbrTargetDesc vel_rw    = { AERON_TEXTURE_FORMAT_R16G16_FLOAT, 0xF };
@@ -224,18 +224,18 @@ static AeronGraphicsPipeline* pbr_pipeline_create(struct AeronScene3D* s, int ki
 
 	switch (kind) {
 		case AERON_PBR_PIPE_MESH:
-			return pbr_pipeline(s->pbr_vs, color_fs, &color_rw, 1, 1, 1, AERON_COMPARE_GREATER_EQUAL, cull, 0,
+			return pbr_pipeline(color_vs, color_fs, &color_rw, 1, 1, 1, AERON_COMPARE_GREATER_EQUAL, cull, 0,
 								s->sample_count);
 		case AERON_PBR_PIPE_FORWARD:
-			return pbr_pipeline(s->pbr_vs, color_fs, &color_rw, 1, 1, s->sample_count != AERON_SAMPLE_COUNT_1,
+			return pbr_pipeline(color_vs, color_fs, &color_rw, 1, 1, s->sample_count != AERON_SAMPLE_COUNT_1,
 								s->sample_count != AERON_SAMPLE_COUNT_1 ? AERON_COMPARE_GREATER_EQUAL
 																		: AERON_COMPARE_EQUAL,
 								cull, 0, s->sample_count);
 		case AERON_PBR_PIPE_MESH_MASK:
-			return pbr_pipeline(s->pbr_vs, color_fs, &color_rw, 1, 1, 1, AERON_COMPARE_GREATER_EQUAL, cull, 0,
+			return pbr_pipeline(color_vs, color_fs, &color_rw, 1, 1, 1, AERON_COMPARE_GREATER_EQUAL, cull, 0,
 								s->sample_count);
 		case AERON_PBR_PIPE_FORWARD_MASK:
-			return pbr_pipeline(s->pbr_vs, color_fs, &color_rw, 1, 1, s->sample_count != AERON_SAMPLE_COUNT_1,
+			return pbr_pipeline(color_vs, color_fs, &color_rw, 1, 1, s->sample_count != AERON_SAMPLE_COUNT_1,
 								s->sample_count != AERON_SAMPLE_COUNT_1 ? AERON_COMPARE_GREATER_EQUAL
 																		: AERON_COMPARE_EQUAL,
 								cull, 0, s->sample_count);
@@ -311,10 +311,10 @@ static AeronGraphicsPipeline* pbr_pipeline_create(struct AeronScene3D* s, int ki
 		 * glass is excluded from the depth prepass, so EQUAL cannot match),
 		 * no depth write, alpha blending on. */
 		case AERON_PBR_PIPE_MESH_BLEND:
-			return pbr_pipeline(s->pbr_vs, color_fs, &color_rw, 1, 1, 0, AERON_COMPARE_GREATER_EQUAL, cull, 1,
+			return pbr_pipeline(color_vs, color_fs, &color_rw, 1, 1, 0, AERON_COMPARE_GREATER_EQUAL, cull, 1,
 								s->sample_count);
 		case AERON_PBR_PIPE_FORWARD_BLEND:
-			return pbr_pipeline(s->pbr_vs, color_fs, &color_rw, 1, 1, 0, AERON_COMPARE_GREATER_EQUAL, cull, 1,
+			return pbr_pipeline(color_vs, color_fs, &color_rw, 1, 1, 0, AERON_COMPARE_GREATER_EQUAL, cull, 1,
 								s->sample_count);
 		default:
 			return NULL;
@@ -366,7 +366,8 @@ static AeronShader* pbr_color_shader(struct AeronScene3D* s, int kind, int debug
 static AeronGraphicsPipeline* pbr_cached_pipeline(struct AeronScene3D* s, AeronGraphicsPipeline* (*pipes)[3],
 												  int kind, AeronCullMode cull, int ibl) {
 	if (!pipes[kind][cull]) {
-		pipes[kind][cull] = pbr_pipeline_create(s, pbr_state_kind(kind), cull, pbr_color_shader(s, kind, 0, ibl));
+		pipes[kind][cull] =
+			pbr_pipeline_create(s, pbr_state_kind(kind), cull, s->pbr_vs, pbr_color_shader(s, kind, 0, ibl));
 		if (!pipes[kind][cull] && cull != AERON_CULL_NONE) {
 			Aeron_LogWarn("aeron.scene",
 						  "PBR pipeline creation failed (kind %d, cull %d); using no-cull variant", kind,
@@ -398,17 +399,18 @@ static AeronGraphicsPipeline* pbr_anim_pipeline(struct AeronScene3D* s, int kind
 	};
 	if (!s->pbr_anim_tried) {
 		s->pbr_anim_tried = 1;
+		s->pbr_anim_vs    = pbr_shader("scene_pbr_mesh_anim.vert", AERON_SHADER_STAGE_VERTEX, 0, 1, 1);
 		for (int ibl = 0; ibl < 2; ++ibl)
 			for (int v = 0; v < 4; ++v)
 				s->pbr_anim_fs[ibl][v] = pbr_shader(names[ibl][v], AERON_SHADER_STAGE_FRAGMENT, 14, 4, 8);
 	}
 	const int    ibl    = s->pbr_environment_set;
 	AeronShader* shader = s->pbr_anim_fs[ibl][pbr_color_variant(kind)];
-	if (!shader)
+	if (!shader || !s->pbr_anim_vs)
 		return NULL;
 	AeronGraphicsPipeline** pipe = &s->pbr_anim_pipes[ibl][kind][cull];
 	if (!*pipe) {
-		*pipe = pbr_pipeline_create(s, pbr_state_kind(kind), cull, shader);
+		*pipe = pbr_pipeline_create(s, pbr_state_kind(kind), cull, s->pbr_anim_vs, shader);
 		if (!*pipe && cull != AERON_CULL_NONE)
 			return pbr_anim_pipeline(s, kind, AERON_CULL_NONE);
 	}
@@ -434,7 +436,8 @@ static AeronGraphicsPipeline* pbr_debug_pipeline(struct AeronScene3D* s, int kin
 		return NULL;
 	}
 	if (!s->pbr_debug_pipes[kind][cull]) {
-		s->pbr_debug_pipes[kind][cull] = pbr_pipeline_create(s, pbr_state_kind(kind), cull, pbr_color_shader(s, kind, 1, 1));
+		s->pbr_debug_pipes[kind][cull] =
+			pbr_pipeline_create(s, pbr_state_kind(kind), cull, s->pbr_vs, pbr_color_shader(s, kind, 1, 1));
 		if (!s->pbr_debug_pipes[kind][cull] && cull != AERON_CULL_NONE) {
 			return pbr_debug_pipeline(s, kind, AERON_CULL_NONE);
 		}
@@ -512,8 +515,8 @@ int AeronScenePbr_Ensure(struct AeronScene3D* s) {
 		/* The back-face fill only culls front faces. */
 		if (kind == AERON_PBR_PIPE_BACKFACE_FILL)
 			continue;
-		s->pbr_pipes[kind][AERON_CULL_NONE] =
-			pbr_pipeline_create(s, pbr_state_kind(kind), AERON_CULL_NONE, pbr_color_shader(s, kind, 0, 0));
+		s->pbr_pipes[kind][AERON_CULL_NONE] = pbr_pipeline_create(s, pbr_state_kind(kind), AERON_CULL_NONE,
+																  s->pbr_vs, pbr_color_shader(s, kind, 0, 0));
 	}
 	if (!pbr_required_pipelines_ready(s)) {
 		Aeron_LogError("aeron.scene", "PBR pipeline creation failed");
@@ -590,6 +593,9 @@ void AeronScenePbr_Release(struct AeronScene3D* s) {
 			s->pbr_anim_fs[ibl][v] = NULL;
 		}
 	}
+	if (s->pbr_anim_vs)
+		Aeron_DestroyShader(s->pbr_anim_vs);
+	s->pbr_anim_vs    = NULL;
 	s->pbr_anim_tried = 0;
 #ifdef AERON_DEBUG_UI
 	if (s->pbr_debug_fs)
