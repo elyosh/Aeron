@@ -11,9 +11,12 @@
  *   1  LZMA: 5 property bytes, then the raw B,G,R,A stream
  *   2  BC3
  *   3  BC5
- * The block-compressed encodings are produced by JeremyAnsel's encoders
- * from the B,G,R,A bytes, so BC3/BC7 channel 0 holds blue; they are swapped
- * back here. BC5 holds red and green (normal-map X and Y).
+ * The block-compressed encodings hold standard R,G,B,A blocks: XWAU uploads
+ * BC7 images as DXGI_FORMAT_BC7_UNORM without swizzling
+ * (XwaTextureData::CreateSRVFromBuffer), and decoded plainly they match the
+ * OPT textures they animate (MillenniumFalcon2Cockpit.dat against
+ * CorellianTransport2Cockpit's panels). BC3 comes from the same encoder
+ * family. BC5 holds red and green (normal-map X and Y).
  */
 
 #include <stdbool.h>

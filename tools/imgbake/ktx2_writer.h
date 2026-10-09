@@ -60,10 +60,14 @@ typedef enum {
 } Ktx2TransferFn;
 
 /* Stored RGB/alpha association. Most legacy image users use PMA; glTF
- * base-color textures follow the specification's straight-alpha contract. */
+ * base-color textures follow the specification's straight-alpha contract.
+ * KTX2_ALPHA_INDEPENDENT stores the bytes as given and box-filters every
+ * channel on its own, for data whose alpha is not coverage (effect library
+ * layers: an additive colour and a multiplier). */
 typedef enum {
 	KTX2_ALPHA_PREMULTIPLIED = 0,
 	KTX2_ALPHA_STRAIGHT      = 1,
+	KTX2_ALPHA_INDEPENDENT   = 2,
 } Ktx2AlphaEncoding;
 
 /* Write an uncompressed RGBA8 KTX2 with the given mip chain. */

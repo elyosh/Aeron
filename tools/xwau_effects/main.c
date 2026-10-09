@@ -622,7 +622,7 @@ static bool encode(const ChannelAtlas* ca, const char* path) {
 	size_t   size = 0;
 	bool     ok   = write_ktx2_bc7_with_generated_mips_to_buffer_limited_alpha(
 						ca->width, ca->height, ca->page_count, ca->rgba, KTX2_BC7_QUALITY_MED, KTX2_TF_SRGB, true,
-						ca->mip_count, KTX2_ALPHA_PREMULTIPLIED, &buf, &size) &&
+						ca->mip_count, KTX2_ALPHA_INDEPENDENT, &buf, &size) &&
 					write_file(path, buf, size);
 	free(buf);
 	return ok;

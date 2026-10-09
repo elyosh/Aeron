@@ -116,7 +116,7 @@ static uint8_t* make_premultiplied_copy(const uint8_t* rgba, int w, int h) {
 static uint8_t* make_alpha_encoded_copy(const uint8_t* rgba, int w, int h, Ktx2AlphaEncoding encoding) {
 	if (encoding == KTX2_ALPHA_PREMULTIPLIED)
 		return make_premultiplied_copy(rgba, w, h);
-	if (encoding != KTX2_ALPHA_STRAIGHT)
+	if (encoding != KTX2_ALPHA_STRAIGHT && encoding != KTX2_ALPHA_INDEPENDENT)
 		return NULL;
 	const size_t bytes = (size_t)w * (size_t)h * 4u;
 	uint8_t*     copy  = (uint8_t*)malloc(bytes);
@@ -129,7 +129,7 @@ static uint8_t* downsample_alpha_encoded_rgba8(const uint8_t* source, int width,
 											   int* out_height, Ktx2AlphaEncoding encoding) {
 	if (encoding == KTX2_ALPHA_STRAIGHT)
 		return Aeron_ImageDownsampleStraightAlphaRgba8(source, width, height, out_width, out_height);
-	return encoding == KTX2_ALPHA_PREMULTIPLIED
+	return encoding == KTX2_ALPHA_PREMULTIPLIED || encoding == KTX2_ALPHA_INDEPENDENT
 			   ? Aeron_ImageDownsampleRgba8(source, width, height, out_width, out_height)
 			   : NULL;
 }
