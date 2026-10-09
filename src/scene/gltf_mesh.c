@@ -157,6 +157,15 @@ static bool copy_channel_ktx2(const cgltf_data* data, const char* atlas_name, Ae
 	return true;
 }
 
+/* The cooker's atlas image names, by AERON_GLTF_CHANNEL_*; a variant group
+ * names its channel without the prefix. */
+static const char* kAtlasNames[AERON_GLTF_CHANNEL_COUNT] = {
+	"atlas_base_color",
+	"atlas_normal",
+	"atlas_metallic_roughness",
+	"atlas_emissive",
+};
+
 /* ===== Variants and their groups ====================================
  *
  * The asset extras of a model with XWAU skins (opt2gltf, aeron_gltf_cook):
@@ -241,6 +250,7 @@ static bool read_variants(const cgltf_data* data, const char* source_label, Aero
 			if (!ok)
 				break;
 			AeronGltfVariantGroup* group    = &out->groups[g++];
+			const cJSON*           channel  = cJSON_GetObjectItemCaseSensitive(entry, "channel");
 			const cJSON*           view     = cJSON_GetObjectItemCaseSensitive(entry, "bufferView");
 			const cJSON*           layers   = cJSON_GetObjectItemCaseSensitive(entry, "layers");
 			const cJSON*           variants = cJSON_GetObjectItemCaseSensitive(entry, "variants");
@@ -248,6 +258,17 @@ static bool read_variants(const cgltf_data* data, const char* source_label, Aero
 				 view->valuedouble < (double)data->buffer_views_count && cJSON_IsNumber(layers) &&
 				 layers->valuedouble >= 1 && layers->valuedouble <= AERON_GLTF_ATLAS_MAX_PAGE &&
 				 cJSON_IsArray(variants) && cJSON_GetArraySize(variants) > 0;
+			/* The channel, base colour when absent. */
+			group->channel = AERON_GLTF_CHANNEL_BASE_COLOR;
+			if (ok && channel) {
+				ok = false;
+				for (int c = 0; c < AERON_GLTF_CHANNEL_COUNT && cJSON_IsString(channel); c++) {
+					if (strcmp(channel->valuestring, kAtlasNames[c] + strlen("atlas_")) == 0) {
+						group->channel = (uint32_t)c;
+						ok             = true;
+					}
+				}
+			}
 			if (!ok)
 				break;
 			const cgltf_buffer_view* bv = &data->buffer_views[(size_t)view->valuedouble];
@@ -625,13 +646,6 @@ static bool append_primitive_vertices(const cgltf_primitive* p, const cgltf_node
 }
 
 /* ===== Public API =================================================== */
-
-static const char* kAtlasNames[AERON_GLTF_CHANNEL_COUNT] = {
-	"atlas_base_color",
-	"atlas_normal",
-	"atlas_metallic_roughness",
-	"atlas_emissive",
-};
 
 bool Aeron_GltfMeshBuildData(const cgltf_data* data, const char* source_label, AeronGltfModel* out) {
 	if (!data || !out)

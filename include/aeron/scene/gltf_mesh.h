@@ -102,9 +102,10 @@ typedef struct AeronGltfChannelKtx2 {
 
 /* ===== Variant groups ===============================================
  *
- * Base-colour pages only some variants use (XWAU skins), cooked as separate
- * KTX2 blocks and listed in the asset extras `aeronVariantGroups`. Their
- * pages follow the core base-colour pages in group order; a mesh uploads
+ * Atlas pages only some variants use (XWAU skins: base colour, emissive,
+ * metallic-roughness), cooked as separate KTX2 blocks and listed in the
+ * asset extras `aeronVariantGroups`. A group's pages follow its channel's
+ * core pages, in the order of that channel's groups; a mesh uploads
  * only the groups of the variants it shows (AeronScene_MeshCreateWithVariants).
  * The asset extras also give `aeronAssetVariants`, the number of leading
  * variants that are the model's own paint states (the variant indices of a mesh built
@@ -113,7 +114,8 @@ typedef struct AeronGltfChannelKtx2 {
 #define AERON_GLTF_NO_VARIANT 0xFFFFFFFFu
 
 typedef struct AeronGltfVariantGroup {
-	AeronGltfChannelKtx2 ktx2;     /* base-colour layers */
+	uint32_t             channel;  /* AERON_GLTF_CHANNEL_* */
+	AeronGltfChannelKtx2 ktx2;     /* the channel's layers */
 	uint32_t             layers;   /* its layer count */
 	uint32_t*            variants; /* the variants using it */
 	uint32_t             variant_count;
