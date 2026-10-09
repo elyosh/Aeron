@@ -976,6 +976,7 @@ if(AERON_BUILD_TOOLS)
         tools/opt2gltf/xwau_mat.c
         tools/opt2gltf/xwau_dat.c
         tools/opt2gltf/dynamic_cockpit.c
+        tools/opt2gltf/xwau_skins.c
         third_party/lzma/LzmaDec.c)
     target_include_directories(opt2gltf PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/tools/opt2gltf
@@ -983,7 +984,7 @@ if(AERON_BUILD_TOOLS)
         ${CMAKE_CURRENT_SOURCE_DIR}/third_party/stb
         ${CMAKE_CURRENT_SOURCE_DIR}/third_party/lzma
         ${CMAKE_CURRENT_SOURCE_DIR}/third_party/bcdec)
-    target_link_libraries(opt2gltf PRIVATE opt2gltf_lib)
+    target_link_libraries(opt2gltf PRIVATE opt2gltf_lib aeron_cjson)
     set_target_properties(opt2gltf PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
 endif()

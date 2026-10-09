@@ -7,7 +7,9 @@
  *            [--tag N=TAG]... [--subdivide N] [--cockpit-eye X,Y,Z]
  *            [--cockpit-light X,Y,Z] [--xwau-root DIR]...
  *            [--xwau-ignore-shadeless TEXTURE]... [--dynamic-cockpit FILE.dc]
+ *            [--xwau-skins DIR --xwau-skin-variants FILE.json]
  *            <input.opt|input_dir> <output_dir>
+ *   opt2gltf --state-count FILE.opt...
  *
  * If the input is a directory, every *.OPT inside (case-insensitive)
  * is converted and emitted under <output_dir>/<basename>/. If a single
@@ -116,6 +118,14 @@
  * names become screen surfaces showing the captured HUD, with their cover
  * images from the Effects DATs, and hologram faces move by the craft INI's
  * [CockpitHoloOffsets]. See dynamic_cockpit.h for the parsing rules.
+ *
+ * --xwau-skins DIR --xwau-skin-variants FILE.json (single OPT, with
+ * --xwau-root) adds XWAU skin variants (docs: xwau_skins.md): the variants
+ * file the conversion tools resolve, with the skin images they extract under
+ * DIR. See xwau_skins.h for the inputs and opt2gltf.h for the output.
+ *
+ * --state-count prints, for each OPT given, the largest texture count of a
+ * face group over all LODs (its asset states), one per line, and exits.
  */
 
 #include <ctype.h>
@@ -130,11 +140,12 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 
-#include "opt.h"
 #include "dynamic_cockpit.h"
+#include "opt.h"
 #include "opt2gltf.h"
 #include "xwau_dat.h"
 #include "xwau_mat.h"
+#include "xwau_skins.h"
 
 static int ends_with_icase(const char* s, const char* suffix) {
 	size_t ls = strlen(s), lf = strlen(suffix);
@@ -419,8 +430,9 @@ static int apply_cockpit_eye(opt_file_t* opt, const int eye[3]) {
 }
 
 static int convert_one(const char* opt_path, const char* out_dir, const char* basename,
-					   const OptGltfBuildOptions* base_options, const XwauContext* xwau, const int* cockpit_eye,
-					   const int* cockpit_light, const char* dynamic_cockpit) {
+					   const OptGltfBuildOptions* base_options, const XwauContext* xwau,
+					   const int* cockpit_eye, const int* cockpit_light, const char* dynamic_cockpit,
+					   const char* skins_dir, const char* skin_variants) {
 	opt_error_t err;
 	opt_file_t* opt = opt_load_file(opt_path, &err);
 	if (!opt) {
@@ -450,6 +462,14 @@ static int convert_one(const char* opt_path, const char* out_dir, const char* ba
 		options_with_light.lights      = &light;
 		options_with_light.light_count = 1;
 	}
+	XwauSkins skins = { 0 };
+	if (skin_variants) {
+		if (!XwauSkins_Load(skin_variants, skins_dir, opt, opt_path, &skins)) {
+			opt_free(opt);
+			return 0;
+		}
+		options_with_light.skins = &skins.skins;
+	}
 	const OptGltfBuildOptions* options = &options_with_light;
 	DynamicCockpit dc = { 0 };
 	if (dynamic_cockpit) {
@@ -457,6 +477,7 @@ static int convert_one(const char* opt_path, const char* out_dir, const char* ba
 			!DynamicCockpit_ApplyHologramOffset(opt, &dc)) {
 			fprintf(stderr, "opt2gltf: %s: cannot apply %s\n", opt_path, dynamic_cockpit);
 			DynamicCockpit_Free(&dc);
+			XwauSkins_Free(&skins);
 			opt_free(opt);
 			return 0;
 		}
@@ -464,11 +485,37 @@ static int convert_one(const char* opt_path, const char* out_dir, const char* ba
 	int ok = xwau ? convert_xwau(opt, out_dir, basename, options, xwau, dc.screens, opt_path)
 				  : (opt2gltf_convert(opt, out_dir, basename, options, opt_path) ? 1 : 0);
 	DynamicCockpit_Free(&dc);
+	XwauSkins_Free(&skins);
 	opt_free(opt);
 	return ok;
 }
 
+/* --state-count: the largest face-group texture count over all LODs. */
+static int print_state_counts(int argc, char** argv) {
+	int status = 0;
+	for (int ai = 2; ai < argc; ++ai) {
+		opt_error_t err;
+		opt_file_t* opt = opt_load_file(argv[ai], &err);
+		if (!opt) {
+			fprintf(stderr, "opt2gltf: %s: %s\n", argv[ai], err.msg);
+			status = 1;
+			continue;
+		}
+		int32_t states = 1;
+		for (int32_t mi = 0; mi < opt->mesh_count; ++mi)
+			for (int32_t li = 0; li < opt->meshes[mi].lod_count; ++li)
+				for (int32_t g = 0; g < opt->meshes[mi].lods[li].group_count; ++g)
+					if (opt->meshes[mi].lods[li].groups[g].state_count > states)
+						states = opt->meshes[mi].lods[li].groups[g].state_count;
+		printf("%d\n", (int)states);
+		opt_free(opt);
+	}
+	return status;
+}
+
 int main(int argc, char** argv) {
+	if (argc > 1 && strcmp(argv[1], "--state-count") == 0)
+		return argc > 2 ? print_state_counts(argc, argv) : 2;
 	/* Default: keep the original 1998 OPT normals (full-Gouraud rounded
 	 * look). Pass --smooth-angle DEG to regenerate with a threshold. */
 	float smooth_angle_deg = -1.0f;
@@ -489,6 +536,8 @@ int main(int argc, char** argv) {
 	int                  cockpit_light[3];
 	bool                 has_cockpit_light = false;
 	const char*          dynamic_cockpit = NULL;
+	const char*          skins_dir         = NULL;
+	const char*          skin_variants     = NULL;
 	XwauContext          xwau             = { 0 };
 	int                  ai               = 1;
 	/* Optional conversion flags, in any order before the positional args. */
@@ -580,6 +629,14 @@ int main(int argc, char** argv) {
 			}
 			dynamic_cockpit = argv[ai + 1];
 			ai += 2;
+		} else if (strcmp(argv[ai], "--xwau-skins") == 0 || strcmp(argv[ai], "--xwau-skin-variants") == 0) {
+			if (ai + 1 >= argc) {
+				fprintf(stderr, "opt2gltf: %s needs a value\n", argv[ai]);
+				free(tags);
+				return 2;
+			}
+			*(strcmp(argv[ai], "--xwau-skins") == 0 ? &skins_dir : &skin_variants) = argv[ai + 1];
+			ai += 2;
 		} else if (strcmp(argv[ai], "--subdivide") == 0) {
 			char* end        = NULL;
 			subdivide_levels = ai + 1 < argc ? strtoul(argv[ai + 1], &end, 10) : 0;
@@ -601,8 +658,14 @@ int main(int argc, char** argv) {
 				"[--emissive] [--fullbright STRENGTH] [--tag N=TAG]... [--subdivide N] "
 				"[--cockpit-eye X,Y,Z] [--cockpit-light X,Y,Z] [--xwau-root DIR]... "
 				"[--xwau-ignore-shadeless TEXTURE]... [--dynamic-cockpit FILE.dc] "
-				"<input.OPT|input_dir> <output_dir>\n",
-				argv[0]);
+				"[--xwau-skins DIR --xwau-skin-variants FILE.json] "
+				"<input.OPT|input_dir> <output_dir>\n       %s --state-count FILE.opt...\n",
+				argv[0], argv[0]);
+		free(tags);
+		return 2;
+	}
+	if (!skins_dir != !skin_variants || (skin_variants && !xwau.root_count)) {
+		fprintf(stderr, "opt2gltf: --xwau-skins and --xwau-skin-variants go together, with --xwau-root\n");
 		free(tags);
 		return 2;
 	}
@@ -646,9 +709,10 @@ int main(int argc, char** argv) {
 		return 1;
 	}
 
-	if (S_ISDIR(st.st_mode) && (has_cockpit_eye || has_cockpit_light || dynamic_cockpit)) {
-		fprintf(stderr, "opt2gltf: --cockpit-eye, --cockpit-light and --dynamic-cockpit apply to a single OPT, "
-						"not a directory\n");
+	if (S_ISDIR(st.st_mode) && (has_cockpit_eye || has_cockpit_light || dynamic_cockpit || skin_variants)) {
+		fprintf(stderr,
+				"opt2gltf: --cockpit-eye, --cockpit-light, --dynamic-cockpit and the skin options apply "
+				"to a single OPT, not a directory\n");
 		free(tags);
 		return 2;
 	}
@@ -679,7 +743,8 @@ int main(int argc, char** argv) {
 			strip_ext(base, sizeof base, de->d_name);
 			char out_sub[1024];
 			snprintf(out_sub, sizeof out_sub, "%s/%s", outd, base);
-			if (convert_one(src, out_sub, base, &options, xwau_ctx, cockpit_eye_arg, cockpit_light_arg, NULL))
+			if (convert_one(src, out_sub, base, &options, xwau_ctx, cockpit_eye_arg, cockpit_light_arg, NULL,
+							NULL, NULL))
 				++ok_count;
 			else
 				++fail_count;
@@ -694,7 +759,7 @@ int main(int argc, char** argv) {
 		char        base[256];
 		strip_ext(base, sizeof base, fname);
 		status = convert_one(in, outd, base, &options, xwau_ctx, cockpit_eye_arg, cockpit_light_arg,
-							 dynamic_cockpit)
+							 dynamic_cockpit, skins_dir, skin_variants)
 					 ? 0
 					 : 1;
 	}

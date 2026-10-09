@@ -323,12 +323,24 @@ static void xwau_state_free(XwauBaked* baked, int32_t count, int32_t* normal_own
 	free(normal_image);
 }
 
+static bool xwau_bake_rgba(const opt_texture_t* t, const OptGltfXwauMaterial* xm, uint8_t* rgba,
+						   XwauBaked* out);
+
 static bool xwau_bake_texture(const opt_texture_t* t, int base_shade, const OptGltfXwauMaterial* xm,
 							  XwauBaked* out) {
 	memset(out, 0, sizeof *out);
-	out->base = decode_texture_rgba8(t, base_shade);
-	if (!out->base)
+	uint8_t* rgba = decode_texture_rgba8(t, base_shade);
+	if (!rgba)
 		return true; /* no pixels: the caller emits the missing-image material */
+	return xwau_bake_rgba(t, xm, rgba, out);
+}
+
+/* Bakes `rgba`, the decoded colors of texture `t` (owned from here, baked in
+ * place into out->base); `t` gives the alpha, illumination and format. */
+static bool xwau_bake_rgba(const opt_texture_t* t, const OptGltfXwauMaterial* xm, uint8_t* rgba,
+						   XwauBaked* out) {
+	memset(out, 0, sizeof *out);
+	out->base                = rgba;
 	const size_t n           = (size_t)t->width * (size_t)t->height;
 	const bool   bpp32       = t->bytes_per_texel == 4;
 	const bool   transparent = t->alpha != NULL;
@@ -1539,6 +1551,228 @@ static const opt_file_t* faceless_patch_apply(const opt_file_t* opt, FacelessPat
 	return &patch->file;
 }
 
+/* ===== XWAU skins ==================================================== */
+
+/* One composite: texture `texture` with the effective chain `chain` (the
+ * layers of a variant that have an image for it), shared by `variants`. */
+typedef struct SkinComposite {
+	int32_t           texture;
+	OptGltfSkinLayer* chain;
+	size_t            chain_count;
+	XwauBaked         baked;
+	/* The bake's emissive / metallic-roughness equal the texture's own: the
+	 * composite material keeps the texture's (baked copies freed). */
+	bool      same_emissive;
+	bool      same_metal_rough;
+	uint32_t* variants; /* skin variant indices, ascending */
+	size_t    variant_count;
+	int32_t   images[3]; /* image slots only this composite uses; -1 */
+	size_t    image_count;
+} SkinComposite;
+
+typedef struct SkinState {
+	SkinComposite* composites;
+	size_t         count;
+	/* [skin variant * texture_count + texture]: composite index or -1. */
+	int32_t* composite_of;
+} SkinState;
+
+static void skin_state_free(SkinState* state) {
+	for (size_t c = 0; c < state->count; ++c) {
+		free(state->composites[c].chain);
+		free(state->composites[c].variants);
+		xwau_baked_free(&state->composites[c].baked);
+	}
+	free(state->composites);
+	free(state->composite_of);
+	memset(state, 0, sizeof *state);
+}
+
+/* The hook's CombineTextures: straight alpha in integer arithmetic onto the
+ * color channels; the destination alpha is kept. */
+static void skin_blend(uint8_t* dst, const OptGltfImageView* src, uint32_t opacity) {
+	const size_t n = (size_t)src->width * src->height;
+	for (size_t i = 0; i < n; ++i) {
+		const int a = ((int)src->rgba[i * 4 + 3] * (int)opacity + 50) / 100;
+		for (int k = 0; k < 3; ++k)
+			dst[i * 4 + k] = (uint8_t)(dst[i * 4 + k] * (255 - a) / 255 + src->rgba[i * 4 + k] * a / 255);
+	}
+}
+
+static bool skin_chain_equal(const SkinComposite* c, int32_t texture, const OptGltfSkinLayer* chain,
+							 size_t count) {
+	if (c->texture != texture || c->chain_count != count)
+		return false;
+	for (size_t i = 0; i < count; ++i)
+		if (c->chain[i].skin != chain[i].skin || c->chain[i].opacity != chain[i].opacity)
+			return false;
+	return true;
+}
+
+/* Whether some skin variant has a composite of texture `texture`. */
+static bool skin_texture_has_composite(const SkinState* state, size_t variant_count, int32_t texture_count,
+									   int32_t texture) {
+	if (texture < 0 || texture >= texture_count)
+		return false;
+	for (size_t v = 0; v < variant_count; ++v)
+		if (state->composite_of[v * (size_t)texture_count + (size_t)texture] >= 0)
+			return true;
+	return false;
+}
+
+static bool skin_validate(const OptGltfSkins* skins, opt_error_t* error) {
+	for (size_t v = 0; v < skins->variant_count; ++v) {
+		const OptGltfSkinVariant* variant = &skins->variants[v];
+		bool                      ok      = variant->name && variant->name[0];
+		for (size_t w = 0; ok && w < v; ++w)
+			ok = strcmp(skins->variants[w].name, variant->name) != 0;
+		for (size_t l = 0; ok && l < variant->layer_count; ++l)
+			ok = variant->layers[l].skin < skins->skin_count && variant->layers[l].opacity <= 100;
+		if (!ok) {
+			if (error)
+				snprintf(error->msg, sizeof error->msg, "invalid or duplicate skin variant %zu '%s'", v,
+						 variant->name ? variant->name : "");
+			return false;
+		}
+	}
+	for (size_t m = 0; m < skins->markings_count; ++m) {
+		const char* name  = skins->default_markings[m];
+		bool        found = name == NULL;
+		for (size_t v = 0; !found && v < skins->variant_count; ++v)
+			found = strcmp(skins->variants[v].name, name) == 0;
+		if (!found) {
+			if (error)
+				snprintf(error->msg, sizeof error->msg, "markings %zu names unknown skin variant '%s'", m,
+						 name);
+			return false;
+		}
+	}
+	return true;
+}
+
+/* Finds and bakes the composites. `baked` holds each texture's own bake;
+ * textures without pixels and screen surfaces are not skinned. */
+static bool skin_state_build(const opt_file_t* opt, const OptGltfSkins* skins, const OptGltfScreen* screens,
+							 int base_shade, const OptGltfXwauMaterial* xwau, const XwauBaked* baked,
+							 SkinState* state) {
+	memset(state, 0, sizeof *state);
+	const size_t texture_count = (size_t)opt->texture_count;
+	bool*        skinnable     = (bool*)calloc(texture_count ? texture_count : 1, sizeof *skinnable);
+	state->composite_of =
+		(int32_t*)malloc((skins->variant_count * texture_count ? skins->variant_count * texture_count : 1) *
+						 sizeof *state->composite_of);
+	size_t max_layers = 1;
+	for (size_t v = 0; v < skins->variant_count; ++v)
+		if (skins->variants[v].layer_count > max_layers)
+			max_layers = skins->variants[v].layer_count;
+	OptGltfSkinLayer* chain = (OptGltfSkinLayer*)malloc(max_layers * sizeof *chain);
+	if (!skinnable || !state->composite_of || !chain)
+		goto fail;
+	for (int32_t mi = 0; mi < opt->mesh_count; ++mi) {
+		const opt_lod_t* lod = &opt->meshes[mi].lods[0];
+		for (int32_t g = 0; g < lod->group_count; ++g) {
+			const int32_t t = lod->groups[g].texture_index;
+			if (lod->groups[g].face_count > 0 && t >= 0 && t < opt->texture_count && baked[t].base &&
+				!(screens && screens[t].present))
+				skinnable[t] = true;
+		}
+	}
+	for (size_t v = 0; v < skins->variant_count; ++v) {
+		const OptGltfSkinVariant* variant = &skins->variants[v];
+		for (size_t t = 0; t < texture_count; ++t) {
+			int32_t* slot = &state->composite_of[v * texture_count + t];
+			*slot         = -1;
+			if (!skinnable[t])
+				continue;
+			size_t count = 0;
+			for (size_t l = 0; l < variant->layer_count; ++l)
+				if (skins->images[variant->layers[l].skin * texture_count + t].rgba)
+					chain[count++] = variant->layers[l];
+			if (count == 0)
+				continue;
+			size_t c = 0;
+			while (c < state->count && !skin_chain_equal(&state->composites[c], (int32_t)t, chain, count))
+				++c;
+			if (c == state->count) {
+				SkinComposite* grown =
+					(SkinComposite*)realloc(state->composites, (state->count + 1) * sizeof *grown);
+				if (!grown)
+					goto fail;
+				state->composites    = grown;
+				SkinComposite* added = &grown[state->count++];
+				memset(added, 0, sizeof *added);
+				added->texture     = (int32_t)t;
+				added->chain       = (OptGltfSkinLayer*)malloc(count * sizeof *added->chain);
+				added->chain_count = count;
+				added->variants    = (uint32_t*)malloc(skins->variant_count * sizeof *added->variants);
+				for (int k = 0; k < 3; ++k)
+					added->images[k] = -1;
+				if (!added->chain || !added->variants)
+					goto fail;
+				memcpy(added->chain, chain, count * sizeof *chain);
+			}
+			state->composites[c].variants[state->composites[c].variant_count++] = (uint32_t)v;
+			*slot                                                               = (int32_t)c;
+		}
+	}
+	for (size_t c = 0; c < state->count; ++c) {
+		SkinComposite*       composite = &state->composites[c];
+		const opt_texture_t* t         = &opt->textures[composite->texture];
+		const XwauBaked*     own       = &baked[composite->texture];
+		uint8_t*             rgba      = decode_texture_rgba8(t, base_shade);
+		if (!rgba)
+			goto fail;
+		for (size_t l = 0; l < composite->chain_count; ++l)
+			skin_blend(rgba,
+					   &skins->images[composite->chain[l].skin * texture_count + (size_t)composite->texture],
+					   composite->chain[l].opacity);
+		if (!xwau_bake_rgba(t, &xwau[composite->texture], rgba, &composite->baked))
+			goto fail;
+		const size_t bytes  = (size_t)t->width * (size_t)t->height * 4u;
+		XwauBaked*   result = &composite->baked;
+		composite->same_emissive =
+			(!result->emissive && !own->emissive) ||
+			(result->emissive && own->emissive && memcmp(result->emissive, own->emissive, bytes) == 0);
+		composite->same_metal_rough =
+			(!result->metal_rough && !own->metal_rough && result->metallic == own->metallic &&
+			 result->roughness == own->roughness) ||
+			(result->metal_rough && own->metal_rough &&
+			 memcmp(result->metal_rough, own->metal_rough, bytes) == 0);
+		if (composite->same_emissive) {
+			free(result->emissive);
+			result->emissive = NULL;
+		}
+		if (composite->same_metal_rough) {
+			free(result->metal_rough);
+			result->metal_rough = NULL;
+		}
+		composite->image_count = 1u + (result->emissive ? 1u : 0u) + (result->metal_rough ? 1u : 0u);
+	}
+	free(skinnable);
+	free(chain);
+	return true;
+
+fail:
+	free(skinnable);
+	free(chain);
+	skin_state_free(state);
+	return false;
+}
+
+/* Appends `text` as a JSON string. */
+static void json_append_string(char** out, size_t* len, size_t* cap, const char* text) {
+	json_append(out, len, cap, "\"");
+	for (const unsigned char* p = (const unsigned char*)text; *p; ++p) {
+		if (*p == '"' || *p == '\\')
+			json_append(out, len, cap, "\\%c", *p);
+		else if (*p < 0x20)
+			json_append(out, len, cap, "\\u%04x", *p);
+		else
+			json_append(out, len, cap, "%c", *p);
+	}
+	json_append(out, len, cap, "\"");
+}
+
 static bool build_memory(const opt_file_t* opt, const char* basename, const OptGltfBuildOptions* options,
 						 OptGltfDocument** out_document, opt_error_t* error);
 
@@ -1596,6 +1830,14 @@ static bool build_memory(const opt_file_t* opt, const char* basename, const OptG
 					 "XWAU materials exclude --smooth-angle, --emissive and --fullbright");
 		return false;
 	}
+	const OptGltfSkins* skins = options ? options->skins : NULL;
+	if (skins && !xwau) {
+		if (error)
+			snprintf(error->msg, sizeof error->msg, "skins need XWAU materials");
+		return false;
+	}
+	if (skins && !skin_validate(skins, error))
+		return false;
 	/* XWAU's renderer uses each corner's stored normal: no remap, no repair. */
 	const bool  repair_normals      = xwau ? false : (options ? options->repair_normals : true);
 	const float fullbright_strength = options ? options->fullbright_strength : 0.0f;
@@ -1626,6 +1868,7 @@ static bool build_memory(const opt_file_t* opt, const char* basename, const OptG
 	 * its images. */
 	const OptGltfScreen* screens            = options ? options->screens : NULL;
 	int32_t*             screen_cover_image = NULL;
+	SkinState            skin_state         = { 0 };
 
 	/* Negative angle → keep the original OPT normals; otherwise
 	 * regenerate with an angle-based smoothing threshold. */
@@ -1723,14 +1966,26 @@ static bool build_memory(const opt_file_t* opt, const char* basename, const OptG
 		}
 	}
 
-	const size_t image_total = (size_t)opt->texture_count + n_emissive + n_xwau_images + n_screen_images;
+	size_t n_skin_images = 0;
+	if (skins) {
+		if (!skin_state_build(opt, skins, screens, base_shade, xwau, xwau_baked, &skin_state)) {
+			fprintf(stderr, "opt2gltf: oom (skins)\n");
+			goto fail;
+		}
+		for (size_t c = 0; c < skin_state.count; ++c)
+			n_skin_images += skin_state.composites[c].image_count;
+	}
+
+	const size_t image_total =
+		(size_t)opt->texture_count + n_emissive + n_xwau_images + n_screen_images + n_skin_images;
 	build->images            = (cgltf_image*)calloc(image_total ? image_total : 1, sizeof *build->images);
 	build->textures          = (cgltf_texture*)calloc(image_total ? image_total : 1, sizeof *build->textures);
-	/* Room for the base materials (one per texture plus the untextured one)
-	 * and, after them, up to two alpha-promoted copies of each (see
-	 * promoted_variant_material). Primitives point into this array, so it
-	 * is never reallocated. */
-	build->materials = (cgltf_material*)calloc((size_t)(opt->texture_count + 1) * 3, sizeof *build->materials);
+	/* Room for the base materials (one per texture, the untextured one, then
+	 * one per skin composite) and, after them, up to two alpha-promoted
+	 * copies of each (see promoted_variant_material). Primitives point into
+	 * this array, so it is never reallocated. */
+	build->materials = (cgltf_material*)calloc(((size_t)opt->texture_count + 1 + skin_state.count) * 3,
+											   sizeof *build->materials);
 	document->image_pixels =
 		(OptGltfOwnedImage*)calloc(image_total ? image_total : 1, sizeof *document->image_pixels);
 	document->image_pixels_count = image_total;
@@ -2021,6 +2276,59 @@ static bool build_memory(const opt_file_t* opt, const char* basename, const OptG
 	build->materials_count                             = (size_t)opt->texture_count + 1;
 	const size_t untex_idx                             = (size_t)opt->texture_count;
 
+	/* Skin composites: a copy of the texture's material with the composite's
+	 * base color, and its own emissive or metallic-roughness where the bake
+	 * differs. Material untex_idx + 1 + c. */
+	for (size_t c = 0; c < skin_state.count; ++c) {
+		SkinComposite*       composite = &skin_state.composites[c];
+		const int32_t        ti        = composite->texture;
+		const opt_texture_t* t         = &opt->textures[ti];
+		XwauBaked*           baked     = &composite->baked;
+		cgltf_material*      mat       = &build->materials[build->materials_count++];
+		*mat                           = build->materials[ti];
+		mat->name = gb_keep_string(build, xprintf_dup("%s_skin%03zu", build->materials[ti].name, c));
+		mat->pbr_metallic_roughness.base_color_texture.texture =
+			document_set_image(document, emi, baked->base, (uint32_t)t->width, (uint32_t)t->height,
+							   xprintf_dup("Tex%02d_skin%03zu", (int)ti, c),
+							   xprintf_dup("%s_Tex%02d_skin%03zu.png", basename, (int)ti, c));
+		baked->base          = NULL;
+		composite->images[0] = (int32_t)emi++;
+		if (!composite->same_emissive) {
+			if (baked->emissive) {
+				mat->emissive_texture.texture = document_set_image(
+					document, emi, baked->emissive, (uint32_t)t->width, (uint32_t)t->height,
+					xprintf_dup("Tex%02d_skin%03zu_emissive", (int)ti, c),
+					xprintf_dup("%s_Tex%02d_skin%03zu_emissive.png", basename, (int)ti, c));
+				baked->emissive         = NULL;
+				composite->images[1]    = (int32_t)emi++;
+				mat->emissive_factor[0] = mat->emissive_factor[1] = mat->emissive_factor[2] = 1.0f;
+				mat->has_emissive_strength                                                  = 1;
+				mat->emissive_strength.emissive_strength                                    = XWAU_ILLUM_GAIN;
+			} else {
+				mat->emissive_texture.texture = NULL;
+				mat->emissive_factor[0] = mat->emissive_factor[1] = mat->emissive_factor[2] = 0.0f;
+				mat->has_emissive_strength                                                  = 0;
+			}
+		}
+		if (!composite->same_metal_rough) {
+			if (baked->metal_rough) {
+				mat->pbr_metallic_roughness.metallic_roughness_texture.texture =
+					document_set_image(document, emi, baked->metal_rough, (uint32_t)t->width,
+									   (uint32_t)t->height, xprintf_dup("Tex%02d_skin%03zu_mr", (int)ti, c),
+									   xprintf_dup("%s_Tex%02d_skin%03zu_mr.png", basename, (int)ti, c));
+				baked->metal_rough                           = NULL;
+				composite->images[2]                         = (int32_t)emi++;
+				mat->pbr_metallic_roughness.metallic_factor  = 1.0f;
+				mat->pbr_metallic_roughness.roughness_factor = 1.0f;
+			} else {
+				mat->pbr_metallic_roughness.metallic_roughness_texture.texture = NULL;
+				mat->pbr_metallic_roughness.metallic_factor                    = baked->metallic;
+				mat->pbr_metallic_roughness.roughness_factor                   = baked->roughness;
+			}
+		}
+		xwau_set_specular(mat, baked->specular_color);
+	}
+
 	build->images_count   = emi;
 	build->textures_count = emi;
 	free(tex_emissive);
@@ -2081,12 +2389,14 @@ static bool build_memory(const opt_file_t* opt, const char* basename, const OptG
 		fprintf(stderr, "opt2gltf: %s: repaired %u zero + %u face-opposed canonical normals\n", basename,
 				fixed_zero, fixed_flip);
 	}
-	if (max_state_count > 4)
-		max_state_count = 4;
 
 	/* ---- Variants (asset-level) ---------------------------------- */
-	if (max_state_count > 1) {
-		build->variants = (cgltf_material_variant*)calloc(max_state_count, sizeof *build->variants);
+	/* Asset states first, then skin variants; with skin variants the asset
+	 * states are emitted even for a single state. */
+	const size_t skin_variant_count = skins ? skins->variant_count : 0;
+	if (max_state_count > 1 || skin_variant_count > 0) {
+		const size_t count = (size_t)max_state_count + skin_variant_count;
+		build->variants    = (cgltf_material_variant*)calloc(count, sizeof *build->variants);
 		if (!build->variants) {
 			fprintf(stderr, "opt2gltf: oom\n");
 			goto fail;
@@ -2094,7 +2404,31 @@ static bool build_memory(const opt_file_t* opt, const char* basename, const OptG
 		for (int v = 0; v < max_state_count; ++v) {
 			build->variants[v].name = gb_keep_string(build, xprintf_dup("Variant%d", v));
 		}
-		build->variants_count = (size_t)max_state_count;
+		for (size_t v = 0; v < skin_variant_count; ++v)
+			build->variants[(size_t)max_state_count + v].name =
+				gb_keep_string(build, xstrdup(skins->variants[v].name));
+		build->variants_count = count;
+	}
+	/* Images only a composite uses list its variants. */
+	for (size_t c = 0; c < skin_state.count; ++c) {
+		const SkinComposite* composite = &skin_state.composites[c];
+		size_t               len = 0, cap = 64;
+		char*                json = (char*)malloc(cap);
+		if (json)
+			json[0] = '\0';
+		json_append(&json, &len, &cap, "{\"aeronVariants\":[");
+		for (size_t v = 0; v < composite->variant_count; ++v)
+			json_append(&json, &len, &cap, "%s%zu", v ? "," : "",
+						(size_t)max_state_count + composite->variants[v]);
+		json_append(&json, &len, &cap, "]}");
+		if (!json) {
+			fprintf(stderr, "opt2gltf: oom (skin extras)\n");
+			goto fail;
+		}
+		gb_keep_string(build, json);
+		for (int k = 0; k < 3; ++k)
+			if (composite->images[k] >= 0)
+				build->images[composite->images[k]].extras.data = json;
 	}
 
 	/* ---- Pass 2: write geometry to .bin + accessors + meshes ----- */
@@ -2128,9 +2462,10 @@ static bool build_memory(const opt_file_t* opt, const char* basename, const OptG
 			total_attrs += streams; /* POSITION, NORMAL, TEXCOORD_0 [, TANGENT] */
 			total_views += 1; /* index buffer view */
 			total_accs += 1;  /* index accessor */
-			int sc = lod->groups[g].state_count;
-			if (sc > 1)
-				total_maps += max_state_count;
+			const int32_t t0 = lod->groups[g].texture_index;
+			if ((lod->groups[g].state_count > 1 && lod->groups[g].state_textures) ||
+				skin_texture_has_composite(&skin_state, skin_variant_count, opt->texture_count, t0))
+				total_maps += build->variants_count;
 		}
 	}
 	build->views      = (cgltf_buffer_view*)calloc(total_views ? total_views : 1, sizeof *build->views);
@@ -2287,40 +2622,56 @@ static bool build_memory(const opt_file_t* opt, const char* basename, const OptG
 			prim->material =
 				(t0 >= 0 && t0 < opt->texture_count) ? &build->materials[t0] : &build->materials[untex_idx];
 
-			/* Variant mappings — only if this face group has > 1 state. */
-			int sc = grp->state_count;
-			if (sc > 1 && grp->state_textures) {
-				if (sc > 4)
-					sc = 4;
-				cgltf_material_mapping* maps =
-					(cgltf_material_mapping*)push_array((void**)&build->mappings, &build->mappings_count,
-														&build->mappings_cap, sizeof *maps, max_state_count);
-				/* The original OPT walker clamps each switch to its last child. */
+			/* Variant mappings: for a face group with more than one state or
+			 * a skin composite, one per variant. */
+			const int  sc       = grp->state_count;
+			const bool switched = sc > 1 && grp->state_textures;
+			if (switched ||
+				skin_texture_has_composite(&skin_state, skin_variant_count, opt->texture_count, t0)) {
+				const size_t            vc   = build->variants_count;
+				cgltf_material_mapping* maps = (cgltf_material_mapping*)push_array(
+					(void**)&build->mappings, &build->mappings_count, &build->mappings_cap, sizeof *maps, vc);
 				int rank = alpha_class_rank(prim->material);
-				for (int v = 0; v < max_state_count; ++v) {
-					int             ti    = grp->state_textures[v < sc ? v : sc - 1];
-					cgltf_material* m_ref = (ti >= 0 && ti < opt->texture_count)
-												? &build->materials[ti]
-												: &build->materials[untex_idx];
-					maps[v].variant       = (cgltf_size)v;
-					maps[v].material      = m_ref;
+				for (size_t v = 0; v < vc; ++v) {
+					/* Asset variant v shows state v; a skin variant its
+					 * composite, else its state. */
+					size_t  state     = v;
+					int32_t composite = -1;
+					if (v >= (size_t)max_state_count) {
+						const size_t sv = v - (size_t)max_state_count;
+						state           = skins->variants[sv].state;
+						if (t0 >= 0 && t0 < opt->texture_count)
+							composite = skin_state.composite_of[sv * (size_t)opt->texture_count + (size_t)t0];
+					}
+					cgltf_material* m_ref;
+					if (composite >= 0) {
+						m_ref = &build->materials[untex_idx + 1 + (size_t)composite];
+					} else {
+						/* The original OPT walker clamps each switch to its last child. */
+						const int ti =
+							switched ? grp->state_textures[state < (size_t)sc ? state : (size_t)sc - 1] : t0;
+						m_ref = (ti >= 0 && ti < opt->texture_count) ? &build->materials[ti]
+																	 : &build->materials[untex_idx];
+					}
+					maps[v].variant  = (cgltf_size)v;
+					maps[v].material = m_ref;
 					if (alpha_class_rank(m_ref) > rank)
 						rank = alpha_class_rank(m_ref);
 				}
 				int mixed = alpha_class_rank(prim->material) != rank;
-				for (int v = 0; v < max_state_count; ++v)
+				for (size_t v = 0; v < vc; ++v)
 					mixed |= alpha_class_rank(maps[v].material) != rank;
 				if (mixed) {
 					prim->material = promoted_variant_material(build, prim->material, rank, base_material_count,
 															   promoted_materials);
-					for (int v = 0; v < max_state_count; ++v)
+					for (size_t v = 0; v < vc; ++v)
 						maps[v].material = promoted_variant_material(build, maps[v].material, rank,
 																	 base_material_count, promoted_materials);
 					fprintf(stderr, "opt2gltf: %s: mesh %d face group %d switch states mix alpha classes; all use %s\n",
 							basename, (int)mi, (int)g, rank == 2 ? "BLEND" : "MASK");
 				}
 				prim->mappings       = maps;
-				prim->mappings_count = (cgltf_size)max_state_count;
+				prim->mappings_count = (cgltf_size)vc;
 			}
 			mesh_prim_count++;
 		}
@@ -2620,6 +2971,35 @@ static bool build_memory(const opt_file_t* opt, const char* basename, const OptG
 	/* Final cgltf_data wiring. */
 	document->data.asset.version   = "2.0";
 	document->data.asset.generator = "opt2gltf";
+	if (skins) {
+		size_t len = 0, cap = 256;
+		char*  json = (char*)malloc(cap);
+		if (json)
+			json[0] = '\0';
+		json_append(&json, &len, &cap, "{\"aeronSkinMarkings\":[");
+		for (size_t m = 0; m < skins->markings_count; ++m) {
+			json_append(&json, &len, &cap, m ? "," : "");
+			if (skins->default_markings[m])
+				json_append_string(&json, &len, &cap, skins->default_markings[m]);
+			else
+				json_append(&json, &len, &cap, "null");
+		}
+		json_append(&json, &len, &cap, "]}");
+		if (!json)
+			goto fail;
+		document->data.asset.extras.data = gb_keep_string(build, json);
+		size_t own_emissive = 0, own_metal_rough = 0;
+		for (size_t c = 0; c < skin_state.count; ++c) {
+			own_emissive += skin_state.composites[c].images[1] >= 0;
+			own_metal_rough += skin_state.composites[c].images[2] >= 0;
+		}
+		fprintf(
+			stderr,
+			"opt2gltf: %s: %zu skin variants, %zu composites (%zu own emissive, %zu own metallic-roughness), "
+			"%zu markings\n",
+			basename, skins->variant_count, skin_state.count, own_emissive, own_metal_rough,
+			skins->markings_count);
+	}
 
 	document->data.buffers            = &build->buffer;
 	document->data.buffers_count      = 1;
@@ -2670,6 +3050,7 @@ static bool build_memory(const opt_file_t* opt, const char* basename, const OptG
 	built = NULL;
 	xwau_state_free(xwau_baked, opt->texture_count, xwau_normal_owner, xwau_normal_image);
 	free(screen_cover_image);
+	skin_state_free(&skin_state);
 
 	*out_document = document;
 	return true;
@@ -2678,6 +3059,7 @@ fail:
 	free(promoted_materials);
 	free(tex_emissive);
 	free(screen_cover_image);
+	skin_state_free(&skin_state);
 	xwau_state_free(xwau_baked, opt->texture_count, xwau_normal_owner, xwau_normal_image);
 	if (built) {
 		for (int32_t mi = 0; mi < opt->mesh_count; ++mi)

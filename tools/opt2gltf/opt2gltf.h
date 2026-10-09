@@ -31,8 +31,9 @@
  *
  *   - Paint-scheme variants: OPT NodeSwitch's per-face-group
  *     state_textures[] become a KHR_materials_variants extension at
- *     asset level. The variant count equals the largest state_count
- *     across all face groups (typically 4 in the IVFILES set). Each
+ *     asset level. The variant count equals the largest LOD 0
+ *     state_count across all face groups (typically 4 in the IVFILES
+ *     set), followed by any skin variants (OptGltfSkins). Each
  *     multi-state face group emits its primitive with mappings from
  *     variant index to material; single-state face groups use a
  *     single default material.
@@ -179,6 +180,43 @@ typedef struct OptGltfLight {
 	float   range;
 } OptGltfLight;
 
+/*
+ * XWAU skins (XWAU mode only; docs: xwau_skins.md). Each variant becomes a
+ * KHR_materials_variants variant after the asset variants (which are then
+ * emitted even for a single state). For every state-0 texture of LOD 0 that
+ * is not a screen surface, a variant's layers with an image for the texture
+ * are blended, in order and with the hook's integer straight-alpha blend,
+ * onto its decoded colors; the result is baked as the texture is and gets
+ * its own material. Primitives without a composite in a variant show the
+ * asset material of the variant's state. Images only composites use carry
+ * the extras `aeronVariants` (their variant indices); the asset carries the
+ * extras `aeronSkinMarkings` (the default markings map).
+ */
+typedef struct OptGltfSkinLayer {
+	uint32_t skin;    /* index into OptGltfSkins.images rows */
+	uint32_t opacity; /* 0..100 */
+} OptGltfSkinLayer;
+
+typedef struct OptGltfSkinVariant {
+	const char*             name;
+	uint32_t                state; /* asset state of primitives without a composite */
+	const OptGltfSkinLayer* layers;
+	size_t                  layer_count;
+} OptGltfSkinVariant;
+
+typedef struct OptGltfSkins {
+	/* images[skin * opt->texture_count + texture]: the skin's image for that
+	 * OPT texture, of the texture's size, rows in OPT order; rgba NULL when
+	 * the skin has none. */
+	const OptGltfImageView*   images;
+	size_t                    skin_count;
+	const OptGltfSkinVariant* variants;
+	size_t                    variant_count;
+	/* Variant name per markings value; NULL for an unskinned one. */
+	const char* const* default_markings;
+	size_t             markings_count;
+} OptGltfSkins;
+
 typedef struct OptGltfBuildOptions {
 	float smooth_angle_degrees;
 	bool  repair_normals;
@@ -205,6 +243,8 @@ typedef struct OptGltfBuildOptions {
 	/* Point lights, each on an existing OPT mesh. */
 	const OptGltfLight* lights;
 	size_t              light_count;
+	/* Skin variants when set; needs xwau_materials. */
+	const OptGltfSkins* skins;
 } OptGltfBuildOptions;
 
 #define OPT_GLTF_MAX_SUBDIVIDE 8u
