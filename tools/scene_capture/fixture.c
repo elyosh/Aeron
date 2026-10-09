@@ -53,8 +53,8 @@ static AeronSceneMesh* create_cube(AeronCommandBuffer* cmd) {
 
 static int create_screen_textures(Fixture* f, AeronCommandBuffer* cmd);
 
-/* A model whose game_scene instances give markings values gets one row per
- * markings value up to the highest: a used value shows the model's default
+/* A model whose game_scene instances give markings values gets one variant
+ * index per markings value up to the highest: a used value shows the model's default
  * skin for it (aeronSkinMarkings), any other its asset paint state, as the
  * game maps markings. Others keep the asset variants. */
 static AeronSceneMesh* create_mesh(AeronCommandBuffer* cmd, const Fixture* f, int model_index,

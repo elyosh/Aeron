@@ -107,7 +107,7 @@ typedef struct AeronGltfChannelKtx2 {
  * pages follow the core base-colour pages in group order; a mesh uploads
  * only the groups of the variants it shows (AeronScene_MeshCreateWithVariants).
  * The asset extras also give `aeronAssetVariants`, the number of leading
- * variants that are the model's own paint states (the rows of a mesh built
+ * variants that are the model's own paint states (the variant indices of a mesh built
  * without a variant choice), and `aeronSkinMarkings`, the variant name each
  * markings value shows by default. */
 #define AERON_GLTF_NO_VARIANT 0xFFFFFFFFu

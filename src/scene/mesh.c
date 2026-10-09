@@ -60,37 +60,39 @@ void AeronScene_MeshDestroy(AeronSceneMesh* m) {
 
 /* ===== Variant choice ================================================
  *
- * Without a choice (`set` NULL) the rows are the model's asset variants and
- * no variant group is loaded; with one, row i is variant set->variants[i]
+ * Without a choice (`set` NULL) the variant indices are the model's asset
+ * variants and no variant group is loaded; with one, variant index i shows
+ * variant set->variants[i]
  * and the groups those variants use are loaded. A loaded group's base-colour
  * layers follow the core layers in group order, skipping groups not loaded. */
-static uint32_t variant_rows(const AeronGltfModel* model, const AeronSceneMeshVariants* set) {
+static uint32_t variant_index_count(const AeronGltfModel* model, const AeronSceneMeshVariants* set) {
 	if (set)
 		return set->count;
 	return model->variant_count > 0 && model->asset_variant_count > 0 ? model->asset_variant_count : 1u;
 }
 
-/* The prim_variant_material column row `row` reads. */
-static uint32_t variant_column(const AeronGltfModel* model, const AeronSceneMeshVariants* set, uint32_t row) {
+/* The prim_variant_material column variant index `index` shows. */
+static uint32_t variant_column(const AeronGltfModel* model, const AeronSceneMeshVariants* set,
+							   uint32_t index) {
 	if (set)
-		return set->variants[row] == AERON_GLTF_NO_VARIANT ? 0u : set->variants[row];
-	return model->variant_count > 0 ? row : 0u;
+		return set->variants[index] == AERON_GLTF_NO_VARIANT ? 0u : set->variants[index];
+	return model->variant_count > 0 ? index : 0u;
 }
 
 static bool group_loaded(const AeronGltfModel* model, const AeronSceneMeshVariants* set, uint32_t group) {
 	if (!set)
 		return false;
 	const AeronGltfVariantGroup* g = &model->groups[group];
-	for (uint32_t row = 0; row < set->count; ++row)
+	for (uint32_t index = 0; index < set->count; ++index)
 		for (uint32_t v = 0; v < g->variant_count; ++v)
-			if (g->variants[v] == set->variants[row])
+			if (g->variants[v] == set->variants[index])
 				return true;
 	return false;
 }
 
 /* The uploaded layer of base-colour page `page`: a core page is kept, a
  * loaded group's page moves to its compacted layer, a page of a group not
- * loaded becomes 0 (no row shows its materials); UINT32_MAX past the
+ * loaded becomes 0 (no variant index shows its materials); UINT32_MAX past the
  * groups. */
 static uint32_t base_color_layer(const AeronGltfModel* model, const AeronSceneMeshVariants* set,
 								 uint32_t core_layers, uint32_t page) {
@@ -279,7 +281,7 @@ static int build_variant_storage(AeronSceneMesh* s, const AeronGltfModel* model,
 	*out_values = NULL;
 	*out_bytes                 = 0;
 	const uint32_t groups      = primitive_count > 0 ? (primitive_count + 3u) / 4u : 1u;
-	const uint32_t rows        = variant_rows(model, set);
+	const uint32_t rows        = variant_index_count(model, set);
 	const size_t   value_count = (size_t)groups * rows * 4u;
 	if (value_count > UINT32_MAX / sizeof(uint32_t)) {
 		return 0;
@@ -293,6 +295,7 @@ static int build_variant_storage(AeronSceneMesh* s, const AeronGltfModel* model,
 	}
 	if (model->prim_variant_material && model->variant_slots > 0) {
 		for (uint32_t row = 0; row < rows; ++row) {
+			/* Storage row `row` holds variant index `row`. */
 			const uint32_t column = variant_column(model, set, row);
 			for (uint32_t primitive = 0; primitive < primitive_count; ++primitive) {
 				values[((size_t)row * groups + primitive / 4u) * 4u + primitive % 4u] =
@@ -347,8 +350,8 @@ static AeronTexture* upload_base_color_groups(AeronCommandBuffer* cmd, const Aer
 		}
 	}
 	AeronTexture* texture = ok ? Aeron_ImageUploadKtx2Layers(cmd, parts, count, label) : NULL;
-	Aeron_LogInfo("aeron.scene", "%s: %u variant rows, %u of %u variant groups (%u layers, %zu bytes)", label,
-				  set->count, count - 1u, model->group_count, layers, bytes);
+	Aeron_LogInfo("aeron.scene", "%s: %u variant indices, %u of %u variant groups (%u layers, %zu bytes)",
+				  label, set->count, count - 1u, model->group_count, layers, bytes);
 	for (uint32_t i = 1; i < count; ++i) {
 		ktx2_close((Ktx2*)parts[i]);
 	}
@@ -369,8 +372,9 @@ static AeronSceneMesh* mesh_create(AeronCommandBuffer* cmd, const AeronFlightMod
 	const char*           name  = debug_name ? debug_name : "<mesh>";
 	if (set) {
 		bool valid = set->variants && set->count > 0;
-		for (uint32_t row = 0; valid && row < set->count; ++row)
-			valid = set->variants[row] == AERON_GLTF_NO_VARIANT || set->variants[row] < model->variant_count;
+		for (uint32_t index = 0; valid && index < set->count; ++index)
+			valid =
+				set->variants[index] == AERON_GLTF_NO_VARIANT || set->variants[index] < model->variant_count;
 		if (!valid) {
 			Aeron_LogError("aeron.scene", "%s: invalid variant choice", name);
 			if (status) {
@@ -587,7 +591,7 @@ static AeronSceneMesh* mesh_create(AeronCommandBuffer* cmd, const AeronFlightMod
 	}
 
 	/* ---- Immutable material and variant storage ---- */
-	s->variant_slots              = variant_rows(model, set);
+	s->variant_slots              = variant_index_count(model, set);
 	s->variant_count              = model->variant_count > 0 ? s->variant_slots : 0u;
 	s->total_prim_count           = model->total_prim_count;
 	s->all_materials_single_sided = true;

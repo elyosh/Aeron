@@ -137,12 +137,12 @@ typedef enum AeronSceneMeshCreateStatus {
 /* Upload `model` through `cmd` (no pass may be open). Returns NULL on any
  * failure and classifies it through `status`; everything allocated so far is
  * released. `debug_name` labels diagnostics. The caller owns `model`. The
- * mesh's variant rows are the model's asset variants (asset_variant_count)
+ * mesh's variant indices are the model's asset variants (asset_variant_count)
  * and no base-colour variant group is uploaded. */
 AeronSceneMesh* AeronScene_MeshCreate(AeronCommandBuffer* cmd, const AeronFlightModel* model,
 									  const char* debug_name, AeronSceneMeshCreateStatus* status);
 
-/* A mesh's variant choice: row i (AeronSceneMeshInstance.variant) shows
+/* A mesh's variant choice: variant index i (AeronSceneMeshInstance.variant) shows
  * variant `variants[i]`, or the default materials for AERON_GLTF_NO_VARIANT.
  * Only the base-colour variant groups those variants use are uploaded. */
 typedef struct AeronSceneMeshVariants {

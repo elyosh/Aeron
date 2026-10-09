@@ -30,7 +30,7 @@ enum { CAPTURE_ROLE_SHIP, CAPTURE_ROLE_COCKPIT, CAPTURE_ROLE_EXTERIOR };
 
 typedef struct CaptureInstance {
 	int   model, role;
-	int   markings;                 /* XWAU markings value (variant row), -1 when not given */
+	int   markings;                 /* XWAU markings value (variant index), -1 when not given */
 	float position[3], rotation[3]; /* metres, camera axes; yaw/pitch/roll degrees */
 } CaptureInstance;
 
