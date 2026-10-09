@@ -116,7 +116,10 @@ typedef struct AeronSceneMesh {
 
 	float bound_min[3];
 	float bound_max[3];
-	float bound_radius;
+	/* Each slot's render-geometry bounds, in the vertices' local frame
+	 * (before its mesh-table row); the model bounds are their union. */
+	float slot_bound_min[AERON_MAX_MESH_SLOTS][3];
+	float slot_bound_max[AERON_MAX_MESH_SLOTS][3];
 	/* Engine glows copied from the source flight model (owned). */
 	AeronFlightEngineGlow* engine_glows;
 	uint32_t               engine_glow_count;

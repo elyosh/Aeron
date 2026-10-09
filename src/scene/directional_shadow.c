@@ -27,11 +27,6 @@ typedef struct ShadowDebugUniforms {
 	float selected_cascade;
 } ShadowDebugUniforms;
 
-typedef struct ShadowBound {
-	float center[3];
-	float radius;
-} ShadowBound;
-
 typedef struct ShadowBounds {
 	float min[3];
 	float max[3];
@@ -90,17 +85,16 @@ static int shadow_bounds_valid(const ShadowBounds* bounds) {
 		   bounds->min[2] <= bounds->max[2];
 }
 
-static void shadow_bounds_include_sphere(ShadowBounds* bounds, const ShadowBound* sphere,
-										 const float x_axis[3], const float y_axis[3],
-										 const float z_axis[3]) {
+static void shadow_bounds_include_box(ShadowBounds* bounds, const AeronSceneInstanceBox* box,
+									  const float x_axis[3], const float y_axis[3], const float z_axis[3]) {
 	const float projected[3] = {
-		shadow_dot3(sphere->center, x_axis),
-		shadow_dot3(sphere->center, y_axis),
-		shadow_dot3(sphere->center, z_axis),
+		shadow_dot3(box->center, x_axis),
+		shadow_dot3(box->center, y_axis),
+		shadow_dot3(box->center, z_axis),
 	};
 	for (int axis = 0; axis < 3; axis++) {
-		bounds->min[axis] = fminf(bounds->min[axis], projected[axis] - sphere->radius);
-		bounds->max[axis] = fmaxf(bounds->max[axis], projected[axis] + sphere->radius);
+		bounds->min[axis] = fminf(bounds->min[axis], projected[axis] - box->half[axis]);
+		bounds->max[axis] = fmaxf(bounds->max[axis], projected[axis] + box->half[axis]);
 	}
 }
 
@@ -110,10 +104,6 @@ static const AeronSceneMeshInstance* shadow_caster(const struct AeronScene3D* sc
 	}
 	index = (uint16_t)(index - AERON_SCENE_MAX_INSTANCES);
 	return index < (uint16_t)scene->shadow_only_count ? &scene->shadow_only[index] : NULL;
-}
-
-static int shadow_instance_bound(const AeronSceneMeshInstance* instance, ShadowBound* out) {
-	return out && AeronSceneInternal_InstanceBound(instance, out->center, &out->radius);
 }
 
 static void shadow_build_split_frustum(const struct AeronScene3D* scene, float near_z, float far_z,
@@ -182,7 +172,7 @@ static void shadow_project_split_bounds(const ShadowSplitFrustum* frustum, const
 }
 
 static int shadow_bound_intersects_split(const struct AeronScene3D* scene, const ShadowSplitFrustum* frustum,
-										 const ShadowBound* bound, float near_z, float far_z) {
+										 const AeronSceneInstanceBox* bound, float near_z, float far_z) {
 	float delta[3] = {
 		bound->center[0] - scene->camera.pos[0],
 		bound->center[1] - scene->camera.pos[1],
@@ -592,19 +582,19 @@ static void shadow_prepare_receiver_local(struct AeronScene3D*                  
 			(instance->shadow_flags & AERON_SCENE_INSTANCE_NO_RECEIVE_SHADOW) != 0) {
 			continue;
 		}
-		ShadowBound bound;
-		if (!shadow_instance_bound(instance, &bound)) {
+		AeronSceneInstanceBox bound;
+		if (!AeronSceneInternal_InstanceBox(instance, x_axis, y_axis, light_dir, &bound)) {
 			continue;
 		}
 		const float bx = shadow_dot3(bound.center, x_axis);
 		const float by = shadow_dot3(bound.center, y_axis);
 		const float bz = shadow_dot3(bound.center, light_dir);
-		receiver_x_min = fminf(receiver_x_min, bx - bound.radius);
-		receiver_x_max = fmaxf(receiver_x_max, bx + bound.radius);
-		receiver_y_min = fminf(receiver_y_min, by - bound.radius);
-		receiver_y_max = fmaxf(receiver_y_max, by + bound.radius);
-		receiver_z_min = fminf(receiver_z_min, bz - bound.radius);
-		receiver_z_max = fmaxf(receiver_z_max, bz + bound.radius);
+		receiver_x_min = fminf(receiver_x_min, bx - bound.half[0]);
+		receiver_x_max = fmaxf(receiver_x_max, bx + bound.half[0]);
+		receiver_y_min = fminf(receiver_y_min, by - bound.half[1]);
+		receiver_y_max = fmaxf(receiver_y_max, by + bound.half[1]);
+		receiver_z_min = fminf(receiver_z_min, bz - bound.half[2]);
+		receiver_z_max = fmaxf(receiver_z_max, bz + bound.half[2]);
 	}
 	if (receiver_x_min == FLT_MAX) {
 		return;
@@ -672,18 +662,18 @@ static void shadow_prepare_receiver_local(struct AeronScene3D*                  
 				? (uint16_t)candidate
 				: (uint16_t)(AERON_SCENE_MAX_INSTANCES + candidate - scene->instance_count);
 		const AeronSceneMeshInstance* instance = shadow_caster(scene, encoded);
-		ShadowBound                   bound;
+		AeronSceneInstanceBox         bound;
 		if (!instance || !instance->mesh ||
 			(instance->mesh->opaque_index_count + instance->mesh->mask_index_count) == 0 ||
 			(instance->shadow_flags & AERON_SCENE_INSTANCE_NO_CAST_SHADOW) != 0 ||
-			!shadow_instance_bound(instance, &bound)) {
+			!AeronSceneInternal_InstanceBox(instance, x_axis, y_axis, light_dir, &bound)) {
 			continue;
 		}
 		const float bx = shadow_dot3(bound.center, x_axis);
 		const float by = shadow_dot3(bound.center, y_axis);
 		const float bz = shadow_dot3(bound.center, light_dir);
-		if (fabsf(bx - center_x) > extent + bound.radius || fabsf(by - center_y) > extent + bound.radius ||
-			bz + bound.radius < receiver_z_min || bz - bound.radius > receiver_z_max + desc->max_distance) {
+		if (fabsf(bx - center_x) > extent + bound.half[0] || fabsf(by - center_y) > extent + bound.half[1] ||
+			bz + bound.half[2] < receiver_z_min || bz - bound.half[2] > receiver_z_max + desc->max_distance) {
 			continue;
 		}
 		if ((instance->shadow_flags & AERON_SCENE_INSTANCE_EXCLUDE_FROM_RECEIVER_LOCAL_SHADOW) != 0) {
@@ -692,7 +682,7 @@ static void shadow_prepare_receiver_local(struct AeronScene3D*                  
 		}
 		if (scene->receiver_local_shadow_caster_count < AERON_SCENE_MAX_SHADOW_CASTERS) {
 			scene->receiver_local_shadow_casters[scene->receiver_local_shadow_caster_count++] = encoded;
-			caster_z_max = fmaxf(caster_z_max, bz + bound.radius);
+			caster_z_max = fmaxf(caster_z_max, bz + bound.half[2]);
 			if ((instance->shadow_flags & AERON_SCENE_INSTANCE_CAST_RECEIVER_LOCAL_ONLY) != 0) {
 				local_only_cast = 1;
 			}
@@ -780,15 +770,17 @@ static void shadow_prepare_receiver_local(struct AeronScene3D*                  
 	scene->shadow_stats.receiver_local_caster_count = scene->receiver_local_shadow_caster_count;
 }
 
-static int shadow_bounds_overlap_xy(const ShadowBounds* bounds, float x, float y, float radius) {
-	return x + radius >= bounds->min[0] && x - radius <= bounds->max[0] && y + radius >= bounds->min[1] &&
-		   y - radius <= bounds->max[1];
+static int shadow_bounds_overlap_xy(const ShadowBounds* bounds, float x, float y, float half_x,
+									float half_y) {
+	return x + half_x >= bounds->min[0] && x - half_x <= bounds->max[0] && y + half_y >= bounds->min[1] &&
+		   y - half_y <= bounds->max[1];
 }
 
 static void shadow_prepare_cascade(struct AeronScene3D* scene, const AeronSceneDirectionalShadowDesc* desc,
 								   const float light_dir[3], const float x_axis[3], const float y_axis[3],
 								   const float split_edges[AERON_SCENE_SHADOW_MAX_CASCADES + 1],
-								   uint32_t cascade, uint32_t usable_size, const ShadowBound object_bounds[],
+								   uint32_t cascade, uint32_t usable_size,
+								   const AeronSceneInstanceBox object_bounds[],
 								   const uint16_t object_indices[], const uint8_t bound_valid[],
 								   const uint8_t caster_valid[], int combined_count) {
 	float fit_near = split_edges[cascade];
@@ -820,8 +812,7 @@ static void shadow_prepare_cascade(struct AeronScene3D* scene, const AeronSceneD
 											   fit_far)) {
 				continue;
 			}
-			shadow_bounds_include_sphere(&receiver_bounds, &object_bounds[candidate], x_axis, y_axis,
-										 light_dir);
+			shadow_bounds_include_box(&receiver_bounds, &object_bounds[candidate], x_axis, y_axis, light_dir);
 			receiver_count++;
 		}
 		if (shadow_bounds_valid(&receiver_bounds)) {
@@ -831,16 +822,16 @@ static void shadow_prepare_cascade(struct AeronScene3D* scene, const AeronSceneD
 				if (!caster_valid[candidate]) {
 					continue;
 				}
-				const ShadowBound* bound = &object_bounds[candidate];
+				const AeronSceneInstanceBox* bound = &object_bounds[candidate];
 				const float        bx    = shadow_dot3(bound->center, x_axis);
 				const float        by    = shadow_dot3(bound->center, y_axis);
 				const float        bz    = shadow_dot3(bound->center, light_dir);
-				if (!shadow_bounds_overlap_xy(&split_bounds, bx, by, bound->radius) ||
-					bz + bound->radius < receiver_bounds.min[2] ||
-					bz - bound->radius > receiver_bounds.max[2] + desc->max_distance) {
+				if (!shadow_bounds_overlap_xy(&split_bounds, bx, by, bound->half[0], bound->half[1]) ||
+					bz + bound->half[2] < receiver_bounds.min[2] ||
+					bz - bound->half[2] > receiver_bounds.max[2] + desc->max_distance) {
 					continue;
 				}
-				shadow_bounds_include_sphere(&caster_bounds, bound, x_axis, y_axis, light_dir);
+				shadow_bounds_include_box(&caster_bounds, bound, x_axis, y_axis, light_dir);
 			}
 			for (int axis = 0; axis < 2; axis++) {
 				fit_bounds.min[axis] = fmaxf(split_bounds.min[axis], receiver_bounds.min[axis]);
@@ -918,19 +909,19 @@ static void shadow_prepare_cascade(struct AeronScene3D* scene, const AeronSceneD
 		if (!caster_valid[candidate]) {
 			continue;
 		}
-		const ShadowBound* bound = &object_bounds[candidate];
+		const AeronSceneInstanceBox* bound = &object_bounds[candidate];
 		const float        bx    = shadow_dot3(bound->center, x_axis);
 		const float        by    = shadow_dot3(bound->center, y_axis);
 		const float        bz    = shadow_dot3(bound->center, light_dir);
-		if (fabsf(bx - center[0]) > extent[0] + bound->radius ||
-			fabsf(by - center[1]) > extent[1] + bound->radius || bz + bound->radius < receiver_z_min ||
-			bz - bound->radius > receiver_z_max + desc->max_distance) {
+		if (fabsf(bx - center[0]) > extent[0] + bound->half[0] ||
+			fabsf(by - center[1]) > extent[1] + bound->half[1] || bz + bound->half[2] < receiver_z_min ||
+			bz - bound->half[2] > receiver_z_max + desc->max_distance) {
 			continue;
 		}
 		uint16_t* count = &scene->shadow_caster_count[cascade];
 		if (*count < AERON_SCENE_MAX_SHADOW_CASTERS) {
 			scene->shadow_casters[cascade][(*count)++] = object_indices[candidate];
-			caster_z_max                               = fmaxf(caster_z_max, bz + bound->radius);
+			caster_z_max                               = fmaxf(caster_z_max, bz + bound->half[2]);
 		}
 	}
 
@@ -1120,7 +1111,7 @@ int AeronSceneDirectionalShadow_Prepare(struct AeronScene3D* scene) {
 	const uint32_t tile_size      = desc.cascade_count == 1 ? desc.atlas_size : desc.atlas_size / 2;
 	const uint32_t usable_size    = tile_size - 2u * AERON_SCENE_SHADOW_GUARD_TEXELS;
 	const int      combined_count = scene->instance_count + scene->shadow_only_count;
-	ShadowBound    object_bounds[AERON_SCENE_MAX_SHADOW_CASTERS];
+	AeronSceneInstanceBox object_bounds[AERON_SCENE_MAX_SHADOW_CASTERS];
 	uint16_t       object_indices[AERON_SCENE_MAX_SHADOW_CASTERS];
 	uint8_t        bound_valid[AERON_SCENE_MAX_SHADOW_CASTERS];
 	uint8_t        caster_valid[AERON_SCENE_MAX_SHADOW_CASTERS];
@@ -1133,7 +1124,8 @@ int AeronSceneDirectionalShadow_Prepare(struct AeronScene3D* scene) {
 				? (uint16_t)candidate
 				: (uint16_t)(AERON_SCENE_MAX_INSTANCES + candidate - scene->instance_count);
 		const AeronSceneMeshInstance* instance = shadow_caster(scene, encoded);
-		if (!instance || !shadow_instance_bound(instance, &object_bounds[candidate])) {
+		if (!instance ||
+			!AeronSceneInternal_InstanceBox(instance, x_axis, y_axis, light_dir, &object_bounds[candidate])) {
 			continue;
 		}
 		object_indices[candidate] = encoded;

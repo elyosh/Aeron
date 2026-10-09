@@ -6,6 +6,7 @@
 
 #include "aeron/aeron.h"
 
+#include <float.h>
 #include <math.h>
 #include <stdint.h>
 #include <string.h>
@@ -247,52 +248,74 @@ AeronTexture* AeronSceneInternal_BrdfLutTexture(void) {
 	return tex;
 }
 
-int AeronSceneInternal_InstanceBound(const AeronSceneMeshInstance* instance, float center[3], float* radius) {
+int AeronSceneInternal_InstanceBox(const AeronSceneMeshInstance* instance, const float x_axis[3],
+								   const float y_axis[3], const float z_axis[3], AeronSceneInstanceBox* out) {
 	const AeronSceneMesh* mesh = instance ? instance->mesh : NULL;
-	if (!mesh || !center || !radius) {
+	if (!mesh || !out) {
 		return 0;
 	}
-	for (int row = 0; row < 3; row++) {
-		center[row] = instance->transform[row * 4 + 3];
-	}
-	float scale = 0.0f;
-	for (int row = 0; row < 3; row++) {
-		const float row_scale = sqrtf(instance->transform[row * 4 + 0] * instance->transform[row * 4 + 0] +
-									  instance->transform[row * 4 + 1] * instance->transform[row * 4 + 1] +
-									  instance->transform[row * 4 + 2] * instance->transform[row * 4 + 2]);
-		if (row_scale > scale) {
-			scale = row_scale;
+	const AeronSceneMeshTable* table = instance->mesh_table;
+	const uint32_t table_slots       = table && table->slot_count && table->slot_count < AERON_MAX_MESH_SLOTS
+										   ? table->slot_count
+										   : AERON_MAX_MESH_SLOTS;
+	const float*   axes[3]           = { x_axis, y_axis, z_axis };
+	float          lo[3]             = { FLT_MAX, FLT_MAX, FLT_MAX };
+	float          hi[3]             = { -FLT_MAX, -FLT_MAX, -FLT_MAX };
+	const float*   transform         = instance->transform;
+	for (uint32_t slot = 0; slot < mesh->slot_count; slot++) {
+		const uint32_t row = slot < table_slots ? slot : table_slots - 1u;
+		if (table && table->visibility_packed[row >> 2][row & 3] < 0.5f) {
+			continue;
 		}
-	}
-	const float local_extent[3] = {
-		fmaxf(fabsf(mesh->bound_min[0]), fabsf(mesh->bound_max[0])),
-		fmaxf(fabsf(mesh->bound_min[1]), fabsf(mesh->bound_max[1])),
-		fmaxf(fabsf(mesh->bound_min[2]), fabsf(mesh->bound_max[2])),
-	};
-	const float local_radius = sqrtf(local_extent[0] * local_extent[0] + local_extent[1] * local_extent[1] +
-									 local_extent[2] * local_extent[2]);
-	float articulation_padding = 0.0f;
-	if (instance->mesh_table) {
-		const int slots =
-			instance->mesh_table->slot_count && instance->mesh_table->slot_count < AERON_MAX_MESH_SLOTS
-				? (int)instance->mesh_table->slot_count
-				: AERON_MAX_MESH_SLOTS;
-		for (int mesh_index = 0; mesh_index < slots; mesh_index++) {
-			if (instance->mesh_table->visibility_packed[mesh_index >> 2][mesh_index & 3] < 0.5f) {
-				continue;
-			}
-			const float tx          = instance->mesh_table->rows[mesh_index][0][3];
-			const float ty          = instance->mesh_table->rows[mesh_index][1][3];
-			const float tz          = instance->mesh_table->rows[mesh_index][2][3];
-			const float translation = sqrtf(tx * tx + ty * ty + tz * tz);
-			if (translation > articulation_padding) {
-				articulation_padding = translation;
+		/* model = transform * slot row (identity without a table). */
+		float model[3][4];
+		for (int r = 0; r < 3; r++) {
+			for (int c = 0; c < 4; c++) {
+				float value = c == 3 ? transform[r * 4 + 3] : 0.0f;
+				for (int k = 0; k < 3; k++) {
+					const float slot_value = table ? table->rows[row][k][c] : (c == k ? 1.0f : 0.0f);
+					value += transform[r * 4 + k] * slot_value;
+				}
+				model[r][c] = value;
 			}
 		}
+		float local_center[3];
+		float local_half[3];
+		for (int k = 0; k < 3; k++) {
+			local_center[k] = 0.5f * (mesh->slot_bound_min[slot][k] + mesh->slot_bound_max[slot][k]);
+			local_half[k]   = 0.5f * (mesh->slot_bound_max[slot][k] - mesh->slot_bound_min[slot][k]);
+		}
+		float world_center[3];
+		for (int r = 0; r < 3; r++) {
+			world_center[r] = model[r][0] * local_center[0] + model[r][1] * local_center[1] +
+							  model[r][2] * local_center[2] + model[r][3];
+		}
+		for (int axis = 0; axis < 3; axis++) {
+			const float* a      = axes[axis];
+			const float  center = world_center[0] * a[0] + world_center[1] * a[1] + world_center[2] * a[2];
+			float        half   = 0.0f;
+			for (int k = 0; k < 3; k++) {
+				half += fabsf(a[0] * model[0][k] + a[1] * model[1][k] + a[2] * model[2][k]) * local_half[k];
+			}
+			lo[axis] = fminf(lo[axis], center - half);
+			hi[axis] = fmaxf(hi[axis], center + half);
+		}
 	}
-	/* Bounds and articulation translations share the GPU vertex's raw local
-	 * units. An origin-centered sphere remains valid under mesh rotations;
-	 * pivot translations and the instance transform are applied exactly once. */
-	*radius = scale * (local_radius + articulation_padding);
-	return isfinite(*radius) && *radius > 0.0f;
+	if (!(lo[0] <= hi[0] && lo[1] <= hi[1] && lo[2] <= hi[2])) {
+		return 0;
+	}
+	float radius_sq = 0.0f;
+	for (int axis = 0; axis < 3; axis++) {
+		out->half[axis] = 0.5f * (hi[axis] - lo[axis]);
+		radius_sq += out->half[axis] * out->half[axis];
+	}
+	for (int r = 0; r < 3; r++) {
+		out->center[r] = 0.0f;
+		for (int axis = 0; axis < 3; axis++) {
+			out->center[r] += axes[axis][r] * 0.5f * (lo[axis] + hi[axis]);
+		}
+	}
+	out->radius = sqrtf(radius_sq);
+	return isfinite(out->radius) && isfinite(out->center[0]) && isfinite(out->center[1]) &&
+		   isfinite(out->center[2]);
 }

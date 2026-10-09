@@ -691,9 +691,21 @@ int AeronScenePost_Fullscreen(AeronCommandBuffer* cmd, AeronGraphicsPipeline* pi
 							  const char* debug_label);
 /* util */
 void AeronSceneInternal_QuatToMat3(const float q[4], float m[9]);
-/* World bounding sphere of an instance: conservative for any mesh rotation,
- * padded by its visible articulated slots' pivot translations. 0 when the
- * instance has no usable bound. */
-int  AeronSceneInternal_InstanceBound(const AeronSceneMeshInstance* instance, float center[3], float* radius);
+
+/* An instance's box along three orthonormal axes (world axes for the
+ * camera, the light's for shadows): the union of its visible slots' bounds,
+ * each placed by its mesh-table row as the vertex shaders place its vertices
+ * (a slot past the table's count uses its last row). `center` is in world
+ * space, `half` holds the half extents along the axes and `radius` the
+ * sphere about `center` that holds the box. 0 without a mesh or a visible
+ * slot: the instance then draws nothing. */
+typedef struct AeronSceneInstanceBox {
+	float center[3];
+	float half[3];
+	float radius;
+} AeronSceneInstanceBox;
+
+int AeronSceneInternal_InstanceBox(const AeronSceneMeshInstance* instance, const float x_axis[3],
+								   const float y_axis[3], const float z_axis[3], AeronSceneInstanceBox* out);
 
 #endif /* AERON_SCENE_INTERNAL_H */

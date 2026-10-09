@@ -679,6 +679,12 @@ static AeronSceneMesh* mesh_create(AeronCommandBuffer* cmd, const AeronFlightMod
 			rotation->axis[1]      = component->rotation.rotation_axis.y;
 			rotation->axis[2]      = component->rotation.rotation_axis.z;
 		}
+		s->slot_bound_min[i][0] = component->bounds.min.x;
+		s->slot_bound_min[i][1] = component->bounds.min.y;
+		s->slot_bound_min[i][2] = component->bounds.min.z;
+		s->slot_bound_max[i][0] = component->bounds.max.x;
+		s->slot_bound_max[i][1] = component->bounds.max.y;
+		s->slot_bound_max[i][2] = component->bounds.max.z;
 	}
 	for (uint32_t i = 0; i < s->slot_count; i++) {
 		if (s->mesh_rot[i].has_rotation) {
@@ -692,10 +698,6 @@ static AeronSceneMesh* mesh_create(AeronCommandBuffer* cmd, const AeronFlightMod
 	s->bound_max[0] = flight_model->bounds.max.x;
 	s->bound_max[1] = flight_model->bounds.max.y;
 	s->bound_max[2] = flight_model->bounds.max.z;
-	const float ex  = fmaxf(fabsf(s->bound_min[0]), fabsf(s->bound_max[0]));
-	const float ey  = fmaxf(fabsf(s->bound_min[1]), fabsf(s->bound_max[1]));
-	const float ez  = fmaxf(fabsf(s->bound_min[2]), fabsf(s->bound_max[2]));
-	s->bound_radius = sqrtf(ex * ex + ey * ey + ez * ez);
 	if (status) {
 		*status = AERON_SCENE_MESH_CREATE_SUCCESS;
 	}

@@ -1442,25 +1442,34 @@ static int scene_order_key_compare(const void* a, const void* b) {
 /* An instance without a usable bound stays visible, and sorts last. */
 static int scene_instance_in_frustum(const AeronScene3D* s, const AeronSceneMeshInstance* instance,
 									 const float planes[5][4], SceneOrderKey* key) {
-	float center[3];
-	float radius;
+	static const float    world_axes[3][3] = { { 1.0f, 0.0f, 0.0f },
+											   { 0.0f, 1.0f, 0.0f },
+											   { 0.0f, 0.0f, 1.0f } };
+	AeronSceneInstanceBox box;
 	key->surface = FLT_MAX;
 	key->center  = FLT_MAX;
-	if (!AeronSceneInternal_InstanceBound(instance, center, &radius)) {
+	if (!AeronSceneInternal_InstanceBox(instance, world_axes[0], world_axes[1], world_axes[2], &box)) {
 		return 1;
 	}
 	for (int p = 0; p < 5; p++) {
-		const float distance =
-			planes[p][0] * center[0] + planes[p][1] * center[1] + planes[p][2] * center[2] + planes[p][3];
-		if (distance < -radius) {
+		const float distance = planes[p][0] * box.center[0] + planes[p][1] * box.center[1] +
+							   planes[p][2] * box.center[2] + planes[p][3];
+		const float reach    = fabsf(planes[p][0]) * box.half[0] + fabsf(planes[p][1]) * box.half[1] +
+							   fabsf(planes[p][2]) * box.half[2];
+		if (distance < -reach) {
 			return 0;
 		}
 	}
-	const float dx = center[0] - s->camera.pos[0];
-	const float dy = center[1] - s->camera.pos[1];
-	const float dz = center[2] - s->camera.pos[2];
-	key->center    = sqrtf(dx * dx + dy * dy + dz * dz);
-	key->surface   = fmaxf(key->center - radius, 0.0f);
+	float center_sq  = 0.0f;
+	float surface_sq = 0.0f;
+	for (int axis = 0; axis < 3; axis++) {
+		const float delta  = box.center[axis] - s->camera.pos[axis];
+		const float beyond = fmaxf(fabsf(delta) - box.half[axis], 0.0f);
+		center_sq += delta * delta;
+		surface_sq += beyond * beyond;
+	}
+	key->center  = sqrtf(center_sq);
+	key->surface = sqrtf(surface_sq);
 	return 1;
 }
 
