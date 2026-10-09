@@ -6,7 +6,7 @@
  *   opt2gltf [--smooth-angle DEG] [--emissive] [--fullbright STRENGTH]
  *            [--tag N=TAG]... [--subdivide N] [--cockpit-eye X,Y,Z]
  *            [--cockpit-light X,Y,Z] [--xwau-root DIR]...
- *            [--dynamic-cockpit FILE.dc]
+ *            [--xwau-ignore-shadeless TEXTURE]... [--dynamic-cockpit FILE.dc]
  *            <input.opt|input_dir> <output_dir>
  *
  * If the input is a directory, every *.OPT inside (case-insensitive)
@@ -104,6 +104,13 @@
  * baked in and MikkTSpace tangents. Stored normals are used per corner.
  * Excludes --smooth-angle, --emissive, --fullbright and --no-normal-repair.
  *
+ * --xwau-ignore-shadeless TEXTURE (repeatable, with --xwau-root) shades the
+ * named OPT texture as a lit surface although its material sets Shadeless:
+ * some XWAU materials make crew textures shadeless, which reads as glowing
+ * under physical lighting. Names match as material lookups do (case-
+ * insensitive, ignoring a "_fg_" skin suffix); a name that matches no
+ * texture is reported.
+ *
  * --dynamic-cockpit FILE.dc (single OPT, with --xwau-root) applies an XWAU
  * Dynamic Cockpit file (docs: dynamic_cockpit.md): the cockpit textures it
  * names become screen surfaces showing the captured HUD, with their cover
@@ -146,12 +153,28 @@ static void strip_ext(char* dst, size_t cap, const char* fname) {
 /* ===== XWAU materials (--xwau-root) =================================== */
 
 #define XWAU_MAX_ROOTS 16
+#define XWAU_MAX_IGNORE_SHADELESS 64
 
 typedef struct XwauContext {
 	const char*  roots[XWAU_MAX_ROOTS]; /* first root holding a file wins */
 	int          root_count;
 	XwauMatParams global; /* Materials/DefaultGlobalMaterial.mat, else code defaults */
+	const char*   ignore_shadeless[XWAU_MAX_IGNORE_SHADELESS]; /* --xwau-ignore-shadeless */
+	int           ignore_shadeless_count;
 } XwauContext;
+
+/* Texture `name` without a "_fg_" skin suffix equals `wanted`, ignoring ASCII
+ * case (XwauMat_Find's comparison). */
+static bool xwau_texture_named(const char* name, const char* wanted) {
+	for (;; ++name, ++wanted) {
+		const bool name_end = !*name || (name[0] == '_' && tolower((unsigned char)name[1]) == 'f' &&
+										 tolower((unsigned char)name[2]) == 'g' && name[3] == '_');
+		if (name_end || !*wanted)
+			return name_end && !*wanted;
+		if (tolower((unsigned char)*name) != tolower((unsigned char)*wanted))
+			return false;
+	}
+}
 
 /* Resolve a game-relative path (backslashes or slashes) under the first root
  * that has it, matching every component case-insensitively. */
@@ -301,9 +324,16 @@ static int convert_xwau(opt_file_t* opt, const char* out_dir, const char* basena
 		return 0;
 	}
 	size_t normal_textures = 0;
+	bool   ignored[XWAU_MAX_IGNORE_SHADELESS] = { false };
 	for (int32_t i = 0; i < opt->texture_count; ++i) {
 		const XwauMatParams* p = mat ? XwauMat_Find(mat, opt->textures[i].name) : &x->global;
 		xwau_fill(&materials[i], p);
+		for (int k = 0; k < x->ignore_shadeless_count; ++k) {
+			if (xwau_texture_named(opt->textures[i].name, x->ignore_shadeless[k])) {
+				materials[i].shadeless = false;
+				ignored[k]             = true;
+			}
+		}
 		if (p->normal_map[0]) {
 			const XwauNormalMap* nm = xwau_normal_map(x, p->normal_map, &maps, &map_count, label);
 			if (nm) {
@@ -314,6 +344,11 @@ static int convert_xwau(opt_file_t* opt, const char* out_dir, const char* basena
 				normal_textures++;
 			}
 		}
+	}
+	for (int k = 0; k < x->ignore_shadeless_count; ++k) {
+		if (!ignored[k])
+			fprintf(stderr, "opt2gltf: %s: --xwau-ignore-shadeless %s: no such texture\n", label,
+					x->ignore_shadeless[k]);
 	}
 	/* Untextured faces: the material lookup of an empty name is slot 0. */
 	OptGltfXwauMaterial untextured;
@@ -507,6 +542,15 @@ int main(int argc, char** argv) {
 			}
 			xwau.roots[xwau.root_count++] = argv[ai + 1];
 			ai += 2;
+		} else if (strcmp(argv[ai], "--xwau-ignore-shadeless") == 0) {
+			if (ai + 1 >= argc || xwau.ignore_shadeless_count == XWAU_MAX_IGNORE_SHADELESS) {
+				fprintf(stderr, "opt2gltf: --xwau-ignore-shadeless needs a texture name (at most %d)\n",
+						XWAU_MAX_IGNORE_SHADELESS);
+				free(tags);
+				return 2;
+			}
+			xwau.ignore_shadeless[xwau.ignore_shadeless_count++] = argv[ai + 1];
+			ai += 2;
 		} else if (strcmp(argv[ai], "--cockpit-eye") == 0 || strcmp(argv[ai], "--cockpit-light") == 0) {
 			const bool light = strcmp(argv[ai], "--cockpit-light") == 0;
 			int*       eye   = light ? cockpit_light : cockpit_eye;
@@ -556,9 +600,14 @@ int main(int argc, char** argv) {
 				"usage: %s [--smooth-angle DEG] [--no-normal-repair] "
 				"[--emissive] [--fullbright STRENGTH] [--tag N=TAG]... [--subdivide N] "
 				"[--cockpit-eye X,Y,Z] [--cockpit-light X,Y,Z] [--xwau-root DIR]... "
-				"[--dynamic-cockpit FILE.dc] "
+				"[--xwau-ignore-shadeless TEXTURE]... [--dynamic-cockpit FILE.dc] "
 				"<input.OPT|input_dir> <output_dir>\n",
 				argv[0]);
+		free(tags);
+		return 2;
+	}
+	if (xwau.ignore_shadeless_count && !xwau.root_count) {
+		fprintf(stderr, "opt2gltf: --xwau-ignore-shadeless needs --xwau-root\n");
 		free(tags);
 		return 2;
 	}
