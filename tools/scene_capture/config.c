@@ -46,7 +46,17 @@ static int load_models(const AeronConfigFile* yaml, CaptureConfig* config) {
 		fprintf(stderr, "Invalid asset_root\n");
 		return 0;
 	}
-	config->model_count           = 0;
+	config->model_count               = 0;
+	const AeronConfigNode* effect_dir = AeronConfigFile_GetNode(yaml, "effect_dir");
+	config->effect_dir[0]             = '\0';
+	if (effect_dir &&
+		!copy_path(config->effect_dir, sizeof config->effect_dir, AeronConfigNode_String(effect_dir, NULL))) {
+		fprintf(stderr, "Invalid effect_dir\n");
+		return 0;
+	}
+	config->animation_time = 0;
+	if (AeronConfigFile_GetNode(yaml, "time") && !number(yaml, "time", 0, 1e6, &config->animation_time))
+		return 0;
 	const AeronConfigNode* models = AeronConfigFile_GetNode(yaml, "models");
 	if (!models)
 		return 1;
@@ -457,6 +467,8 @@ int CaptureConfig_Load(const char* path, CaptureConfig* config) {
 									  "output_dir",
 									  "asset_root",
 									  "models",
+									  "effect_dir",
+									  "time",
 									  "fixture",
 									  "msaa_samples",
 									  "tonemap",

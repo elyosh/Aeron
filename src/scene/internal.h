@@ -573,6 +573,15 @@ struct AeronScene3D {
 #ifdef AERON_DEBUG_UI
 	AeronGraphicsPipeline* pbr_debug_pipes[AERON_PBR_PIPE_KIND_COUNT][3];
 #endif
+	/* Material animation (AeronScene_SetEffectAtlas): the atlas, the
+	 * animation time, and the colour shaders with animation, loaded on
+	 * first use, by [image-based lighting][plain, mask, blend, screen], and
+	 * their pipelines by [image-based lighting][kind][cull]. */
+	AeronEffectAtlas*      effect_atlas;
+	float                  animation_time;
+	int                    pbr_anim_tried;
+	AeronShader*           pbr_anim_fs[2][4];
+	AeronGraphicsPipeline* pbr_anim_pipes[2][AERON_PBR_PIPE_KIND_COUNT][3];
 };
 
 /* Shared small helpers (util.c). */

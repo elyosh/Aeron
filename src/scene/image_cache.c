@@ -322,6 +322,42 @@ AeronTexture* Aeron_ImageUploadKtx2Layers(AeronCommandBuffer* cmd, const Ktx2* c
 	return upload_ktx2(cmd, parts, part_count, true, debug_name);
 }
 
+int Aeron_ImageUploadKtx2IntoLayers(AeronCommandBuffer* cmd, const Ktx2* ktx, AeronTexture* texture,
+									const uint32_t* layers) {
+	if (!cmd || !ktx || !texture || !layers || ktx2_face_count(ktx) != 1)
+		return 0;
+	const int levels      = ktx2_level_count(ktx);
+	const int layer_count = ktx2_layer_count(ktx) > 0 ? ktx2_layer_count(ktx) : 1;
+	if (levels <= 0)
+		return 0;
+	const uint32_t          upload_count = (uint32_t)levels * (uint32_t)layer_count;
+	AeronTextureUploadDesc* uploads      = (AeronTextureUploadDesc*)calloc(upload_count, sizeof *uploads);
+	if (!uploads)
+		return 0;
+	uint32_t n = 0;
+	for (int i = 0; i < levels; i++) {
+		for (int l = 0; l < layer_count; l++) {
+			Ktx2Level lv = ktx2_level_face(ktx, i, l);
+			if (!lv.data || lv.size == 0 || lv.size > UINT32_MAX) {
+				free(uploads);
+				return 0;
+			}
+			uploads[n++] = (AeronTextureUploadDesc) {
+				.texture   = texture,
+				.mip_level = i,
+				.layer     = (int)layers[l],
+				.width     = lv.width,
+				.height    = lv.height,
+				.raw_data  = lv.data,
+				.raw_size  = (uint32_t)lv.size,
+			};
+		}
+	}
+	const int ok = Aeron_UploadTextureBatchCmd(cmd, uploads, upload_count);
+	free(uploads);
+	return ok;
+}
+
 AeronTexture* Aeron_ImageUploadRgba8(AeronCommandBuffer* cmd, const uint8_t* rgba, int width, int height,
 									 size_t pitch, AeronTextureFormat format, AeronColorSpace color_space,
 									 AeronImageAlphaMode alpha_mode, bool generate_mips,

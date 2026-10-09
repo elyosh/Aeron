@@ -433,6 +433,13 @@ typedef struct AeronSceneScreenFrame {
 void AeronScene_SetScreenSources(AeronScene3D* scene, AeronTexture* graphics, AeronTexture* text,
 								 const AeronSceneScreenFrame* frame);
 
+/* Material animation (gltf_mesh.h, "Material animation"): meshes created
+ * with `atlas` (AeronScene_MeshCreateEx) draw their flipbooks from it at
+ * the animation time, in seconds. Without an atlas, every mesh draws its
+ * static materials. Both persist across frames; the atlas is borrowed. */
+void AeronScene_SetEffectAtlas(AeronScene3D* scene, AeronEffectAtlas* atlas);
+void AeronScene_SetAnimationTime(AeronScene3D* scene, double seconds);
+
 /* Image-based lighting environment for the PBR shader, for the current
  * frame. `diffuse` is a Lambert irradiance / pi cube; its sample along the
  * shading normal, times `diffuse_strength`, adds to the diffuse ambient.

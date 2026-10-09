@@ -170,7 +170,50 @@ typedef struct AeronGltfMaterial {
 	uint32_t screen_first;
 	uint32_t screen_count;
 	uint32_t screen_flags;
+	/* Animation (material extras, "Material animation" below): the
+	 * base-atlas binding of `aeronLayerBase` (uv_xform convention, scale
+	 * zero without one) and the material's flipbooks
+	 * [flipbook_first, flipbook_first + flipbook_count) of the model's. */
+	float    layer_base_xform[4];
+	uint32_t layer_base_page;
+	uint32_t layer_base_max_lod;
+	uint32_t flipbook_first;
+	uint32_t flipbook_count;
 } AeronGltfMaterial;
+
+/* ===== Material animation ===========================================
+ *
+ * XWAU animated materials (docs: xwau_animated_materials.md, "Model
+ * material extras"), as converted by opt2gltf and cooked by
+ * aeron_gltf_cook:
+ *
+ *   "aeronLayerBase": { "page", "lod", "offset": [u, v], "scale": [su, sv] }
+ *   "aeronFlipbooks": [ { "state", "layer": "colour" | "illumination",
+ *                         "mode": "loop" | "once", "library",
+ *                         "frames": [ [key, seconds], ... ],
+ *                         "uv": { "scale": [sx, 1], "offset": [ox, oy],
+ *                                 "clamp": bool } } ]
+ *
+ * Frames name images of an effect library (aeron/scene/effect_atlas.h).
+ * Illumination flipbooks are dropped from a material without
+ * `aeronLayerBase`. */
+typedef struct AeronGltfFlipbookFrame {
+	char* key;
+	float seconds;
+} AeronGltfFlipbookFrame;
+
+typedef struct AeronGltfFlipbook {
+	uint32_t state; /* AERON_ANIM_STATE_* */
+	uint32_t layer; /* AERON_ANIM_LAYER_* */
+	uint32_t mode;  /* AERON_ANIM_MODE_* */
+	char*    library;
+	uint32_t frame_first; /* the model's flipbook_frames */
+	uint32_t frame_count;
+	bool     has_uv;
+	bool     uv_clamp;
+	float    uv_scale_x;
+	float    uv_offset[2];
+} AeronGltfFlipbook;
 
 /* ===== Screen surfaces ==============================================
  *
@@ -274,6 +317,12 @@ typedef struct AeronGltfModel {
 	uint32_t             screen_rect_count;
 	AeronGltfScreenRect* screen_rects;
 	uint32_t             screen_hide_mask;
+
+	/* Flipbooks of every material and their frames. */
+	uint32_t                flipbook_count;
+	AeronGltfFlipbook*      flipbooks;
+	uint32_t                flipbook_frame_count;
+	AeronGltfFlipbookFrame* flipbook_frames;
 } AeronGltfModel;
 
 /* Internal render builder used by the common flight-model construction.

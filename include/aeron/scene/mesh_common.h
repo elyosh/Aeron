@@ -3,11 +3,13 @@
 
 /*
  * Shared scene-mesh constants and articulation POD. AERON_MAX_MESH_COMPONENTS
- * comes from mesh_table_layout.hlsli, shared with the shaders. Mesh pipelines
+ * comes from mesh_table_layout.hlsli and the AERON_ANIM_* material animation
+ * constants from material_anim_layout.hlsli, both shared with the shaders. Mesh pipelines
  * share the same scene storage record, indexed by component ordinal. */
 
 #include <stdint.h>
 
+#include "../../../shaders/material_anim_layout.hlsli"
 #include "../../../shaders/mesh_table_layout.hlsli"
 
 #ifdef __cplusplus

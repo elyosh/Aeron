@@ -536,6 +536,196 @@ static bool read_screen(const cgltf_material* m, AeronGltfModel* model, uint32_t
 	return true;
 }
 
+/* ===== Material animation =========================================== */
+
+/* Flipbook state names, indexed by AERON_ANIM_STATE_*. */
+static const char* const kAnimStates[AERON_ANIM_STATE_ALWAYS + 1] = {
+	"threat.laser",
+	"threat.turret",
+	"threat.beam",
+	"threat.missile_locking",
+	"threat.missile_locked",
+	"cannon.1",
+	"cannon.2",
+	"cannon.3",
+	"cannon.4",
+	"cannon.5",
+	"cannon.6",
+	"cannon.7",
+	"cannon.8",
+	"broken.cmd",
+	"broken.laser_ion",
+	"broken.beam_weapon",
+	"broken.shields",
+	"broken.throttle",
+	"broken.sensors",
+	"broken.laser_recharge",
+	"broken.engine_power",
+	"broken.shield_recharge",
+	"broken.beam_recharge",
+	"hull.25",
+	"hull.50",
+	"hull.75",
+	"laser_lock",
+	"warhead.locking",
+	"warhead.locked",
+	"hangar",
+	"target",
+	"always",
+};
+
+static bool json_string_index(const cJSON* object, const char* key, const char* const* names, uint32_t count,
+							  uint32_t* out) {
+	const cJSON* item = cJSON_GetObjectItemCaseSensitive(object, key);
+	for (uint32_t i = 0; cJSON_IsString(item) && i < count; i++) {
+		if (strcmp(item->valuestring, names[i]) == 0) {
+			*out = i;
+			return true;
+		}
+	}
+	return false;
+}
+
+typedef struct FlipbookCapacity {
+	uint32_t flipbooks, frames;
+} FlipbookCapacity;
+
+static bool grow(void** items, uint32_t* capacity, uint32_t needed, size_t size) {
+	if (needed <= *capacity)
+		return true;
+	uint32_t cap = *capacity ? *capacity * 2u : 32u;
+	while (cap < needed)
+		cap *= 2u;
+	void* grown = realloc(*items, (size_t)cap * size);
+	if (!grown)
+		return false;
+	*items    = grown;
+	*capacity = cap;
+	return true;
+}
+
+/* One flipbook appended to the model; false when malformed. Frames are
+ * kept only with the flipbook. */
+static bool read_flipbook(const cJSON* json, AeronGltfModel* model, FlipbookCapacity* cap, bool* oom) {
+	const cJSON*             frames   = cJSON_GetObjectItemCaseSensitive(json, "frames");
+	const cJSON*             library  = cJSON_GetObjectItemCaseSensitive(json, "library");
+	const cJSON*             uv       = cJSON_GetObjectItemCaseSensitive(json, "uv");
+	static const char* const layers[] = { "colour", "illumination" };
+	static const char* const modes[]  = { "loop", "once" };
+	AeronGltfFlipbook        fb       = { 0 };
+	const int                count    = cJSON_IsArray(frames) ? cJSON_GetArraySize(frames) : -1;
+	if (!json_string_index(json, "state", kAnimStates, AERON_ANIM_STATE_ALWAYS + 1, &fb.state) ||
+		!json_string_index(json, "layer", layers, 2, &fb.layer) ||
+		!json_string_index(json, "mode", modes, 2, &fb.mode) || count < 0 || count > 0xFFFF ||
+		(count > 0 && !cJSON_IsString(library)))
+		return false;
+	if (uv) {
+		float scale[2], offset[2];
+		if (!json_floats(cJSON_GetObjectItemCaseSensitive(uv, "scale"), scale, 2) ||
+			!json_floats(cJSON_GetObjectItemCaseSensitive(uv, "offset"), offset, 2))
+			return false;
+		fb.has_uv       = true;
+		fb.uv_scale_x   = scale[0];
+		fb.uv_offset[0] = offset[0];
+		fb.uv_offset[1] = offset[1];
+		fb.uv_clamp     = json_bool(uv, "clamp");
+	}
+	for (int i = 0; i < count; i++) {
+		const cJSON* frame   = cJSON_GetArrayItem(frames, i);
+		const cJSON* key     = cJSON_GetArrayItem(frame, 0);
+		const cJSON* seconds = cJSON_GetArrayItem(frame, 1);
+		if (cJSON_GetArraySize(frame) != 2 || !cJSON_IsString(key) || !cJSON_IsNumber(seconds) ||
+			!isfinite(seconds->valuedouble) || seconds->valuedouble < 0.0)
+			return false;
+	}
+	if (!grow((void**)&model->flipbooks, &cap->flipbooks, model->flipbook_count + 1u,
+			  sizeof *model->flipbooks) ||
+		!grow((void**)&model->flipbook_frames, &cap->frames, model->flipbook_frame_count + (uint32_t)count,
+			  sizeof *model->flipbook_frames)) {
+		*oom = true;
+		return false;
+	}
+	fb.frame_first = model->flipbook_frame_count;
+	fb.library     = count > 0 ? copy_string(library->valuestring) : NULL;
+	if (count > 0 && !fb.library) {
+		*oom = true;
+		return false;
+	}
+	for (int i = 0; i < count; i++) {
+		const cJSON*            frame = cJSON_GetArrayItem(frames, i);
+		AeronGltfFlipbookFrame* out   = &model->flipbook_frames[model->flipbook_frame_count];
+		out->key                      = copy_string(cJSON_GetArrayItem(frame, 0)->valuestring);
+		out->seconds                  = (float)cJSON_GetArrayItem(frame, 1)->valuedouble;
+		if (!out->key) {
+			*oom = true;
+			free(fb.library);
+			return false;
+		}
+		model->flipbook_frame_count++;
+		fb.frame_count++;
+	}
+	model->flipbooks[model->flipbook_count++] = fb;
+	return true;
+}
+
+/* Reads a material's `aeronLayerBase` and `aeronFlipbooks` extras. A
+ * malformed entry is reported and the material keeps no animation. Returns
+ * false only when memory runs out. */
+static bool read_animation(const cgltf_material* m, AeronGltfModel* model, FlipbookCapacity* cap,
+						   AeronGltfMaterial* out, const char* source_label, uint32_t material_index) {
+	if (!m || !m->extras.data || !strstr(m->extras.data, "aeronFlipbooks"))
+		return true;
+	cJSON*       root     = cJSON_ParseWithOpts(m->extras.data, NULL, true);
+	const cJSON* books    = cJSON_GetObjectItemCaseSensitive(root, "aeronFlipbooks");
+	const cJSON* base     = cJSON_GetObjectItemCaseSensitive(root, "aeronLayerBase");
+	const int    count    = cJSON_IsArray(books) ? cJSON_GetArraySize(books) : -1;
+	bool         has_base = false;
+	bool         valid    = count >= 0;
+	if (valid && base) {
+		float    offset[2], scale[2];
+		uint32_t page = 0, lod = 0;
+		has_base = json_floats(cJSON_GetObjectItemCaseSensitive(base, "offset"), offset, 2) &&
+				   json_floats(cJSON_GetObjectItemCaseSensitive(base, "scale"), scale, 2) &&
+				   json_uint(base, "page", AERON_GLTF_ATLAS_MAX_PAGE, &page) &&
+				   json_uint(base, "lod", AERON_GLTF_ATLAS_UNCLAMPED_LOD, &lod) && scale[0] > 0.0f &&
+				   scale[1] > 0.0f;
+		valid    = has_base;
+		if (has_base) {
+			out->layer_base_xform[0] = offset[0];
+			out->layer_base_xform[1] = offset[1];
+			out->layer_base_xform[2] = scale[0];
+			out->layer_base_xform[3] = scale[1];
+			out->layer_base_page     = page;
+			out->layer_base_max_lod  = lod;
+		}
+	}
+	const uint32_t first_book = model->flipbook_count, first_frame = model->flipbook_frame_count;
+	bool           oom = false;
+	for (int i = 0; valid && i < count; i++)
+		valid = read_flipbook(cJSON_GetArrayItem(books, i), model, cap, &oom);
+	cJSON_Delete(root);
+	/* Without the layer base, illumination flipbooks cannot render. */
+	for (uint32_t b = first_book; valid && !has_base && b < model->flipbook_count; b++)
+		valid = model->flipbooks[b].layer != AERON_ANIM_LAYER_ILLUMINATION;
+	if (!valid) {
+		for (uint32_t b = first_book; b < model->flipbook_count; b++)
+			free(model->flipbooks[b].library);
+		for (uint32_t f = first_frame; f < model->flipbook_frame_count; f++)
+			free(model->flipbook_frames[f].key);
+		model->flipbook_count       = first_book;
+		model->flipbook_frame_count = first_frame;
+		memset(out->layer_base_xform, 0, sizeof out->layer_base_xform);
+		if (oom)
+			return false;
+		SDL_Log("[flight_gltf] '%s' material %u: malformed aeronFlipbooks or aeronLayerBase ignored",
+				source_label, material_index);
+		return true;
+	}
+	out->flipbook_first = first_book;
+	out->flipbook_count = model->flipbook_count - first_book;
+	return true;
+}
+
 static AeronGltfAlphaMode material_alpha_mode(const AeronGltfModel* model, uint32_t material) {
 	if (material == AERON_GLTF_NO_MATERIAL)
 		return AERON_GLTF_ALPHA_OPAQUE;
@@ -684,14 +874,17 @@ bool Aeron_GltfMeshBuildData(const cgltf_data* data, const char* source_label, A
 		if (!out->materials)
 			goto cleanup;
 		out->material_count = (uint32_t)data->materials_count;
-		uint32_t screen_rect_capacity = 0;
+		uint32_t         screen_rect_capacity = 0;
+		FlipbookCapacity flipbook_capacity    = { 0 };
 		for (uint32_t i = 0; i < out->material_count; i++) {
 			if (!read_material(&data->materials[i], &out->materials[i])) {
 				SDL_Log("[flight_gltf] '%s' material %u has invalid alpha state", source_label, i);
 				goto cleanup;
 			}
 			if (!read_screen(&data->materials[i], out, &screen_rect_capacity, &out->materials[i],
-							 source_label, i))
+							 source_label, i) ||
+				!read_animation(&data->materials[i], out, &flipbook_capacity, &out->materials[i],
+								source_label, i))
 				goto cleanup;
 			/* Holograms and transparent screens blend over the scene, and
 			 * the PBR shader leaves them transparent when hidden: only the
@@ -911,6 +1104,12 @@ void Aeron_GltfMeshFree(AeronGltfModel* m) {
 	free(m->materials);
 	free(m->prim_variant_material);
 	free(m->screen_rects);
+	for (uint32_t b = 0; m->flipbooks && b < m->flipbook_count; b++)
+		free(m->flipbooks[b].library);
+	free(m->flipbooks);
+	for (uint32_t f = 0; m->flipbook_frames && f < m->flipbook_frame_count; f++)
+		free(m->flipbook_frames[f].key);
+	free(m->flipbook_frames);
 	for (int c = 0; c < AERON_GLTF_CHANNEL_COUNT; c++)
 		free(m->channels[c].data);
 	for (uint32_t v = 0; m->variant_names && v < m->variant_count; v++)

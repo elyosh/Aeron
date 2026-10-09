@@ -14,7 +14,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-typedef char AeronPbrMaterialEntrySizeCheck[sizeof(AeronPbrMaterialEntry) == 160 ? 1 : -1];
+typedef char AeronPbrMaterialEntrySizeCheck[sizeof(AeronPbrMaterialEntry) == 192 ? 1 : -1];
 typedef char AeronPbrScreenRectSizeCheck[sizeof(AeronPbrScreenRect) == 96 ? 1 : -1];
 
 static const char* channel_name(int c) {
@@ -45,6 +45,10 @@ void AeronScene_MeshDestroy(AeronSceneMesh* m) {
 	Aeron_DestroyBuffer(m->material_buffer);
 	Aeron_DestroyBuffer(m->variant_buffer);
 	Aeron_DestroyBuffer(m->screen_rect_buffer);
+	Aeron_DestroyBuffer(m->anim_buffer);
+	for (uint32_t i = 0; i < m->effect_library_count; i++)
+		AeronEffectAtlas_Release(m->effect_atlas, m->effect_libraries[i]);
+	free(m->effect_libraries);
 	for (int c = 0; c < AERON_GLTF_CHANNEL_COUNT; c++) {
 		if (m->atlas[c]) {
 			Aeron_DestroyTexture(m->atlas[c]);
@@ -111,8 +115,6 @@ static uint32_t channel_layer(const AeronGltfModel* model, const AeronSceneMeshV
 	return UINT32_MAX;
 }
 
-/* Copy factors and atlas transforms into the shader's 160-byte storage
- * record. The temporary array is released immediately after upload. */
 /* The material primitives without one use (pbr_default_material's values):
  * white base colour factor, no emission, metallic 0, roughness 1, no
  * channel textures. */
@@ -133,7 +135,8 @@ static void populate_default_material_entry(AeronPbrMaterialEntry* e) {
  * buffer. Returns the material count. */
 static uint32_t populate_material_entries(AeronPbrMaterialEntry* entries, const AeronGltfModel* src,
 										  const AeronSceneMeshVariants* set,
-										  const uint32_t core_layers[AERON_GLTF_CHANNEL_COUNT]) {
+										  const uint32_t                core_layers[AERON_GLTF_CHANNEL_COUNT],
+										  const uint32_t*               anim) {
 	uint32_t n = src->material_count;
 	if (n > AERON_GLTF_MAX_MATERIALS) {
 		n = AERON_GLTF_MAX_MATERIALS;
@@ -193,14 +196,24 @@ static uint32_t populate_material_entries(AeronPbrMaterialEntry* entries, const 
 		e->screen_first = m->screen_first;
 		e->screen_count = m->screen_count;
 		e->screen_flags = m->screen_flags;
+		if (anim && anim[i]) {
+			const uint32_t page = src->group_count ? channel_layer(src, set, AERON_GLTF_CHANNEL_BASE_COLOR,
+																   core_layers[AERON_GLTF_CHANNEL_BASE_COLOR],
+																   m->layer_base_page)
+												   : m->layer_base_page;
+			memcpy(e->layer_base_rect, m->layer_base_xform, sizeof e->layer_base_rect);
+			e->anim[0] = (page & 0xFFFu) | (m->layer_base_max_lod & 0xFu) << 12;
+			e->anim[1] = anim[i];
+		}
 	}
 	return n;
 }
 
 static int build_material_storage(AeronSceneMesh* s, const AeronGltfModel* model,
 								  const AeronSceneMeshVariants* set,
-								  const uint32_t core_layers[AERON_GLTF_CHANNEL_COUNT], const char* name,
-								  AeronPbrMaterialEntry** out_entries, uint32_t* out_bytes) {
+								  const uint32_t core_layers[AERON_GLTF_CHANNEL_COUNT], const uint32_t* anim,
+								  const char* name, AeronPbrMaterialEntry** out_entries,
+								  uint32_t* out_bytes) {
 	/* The mesh's materials, then the default one. */
 	const uint32_t allocation_count =
 		(model->material_count > AERON_GLTF_MAX_MATERIALS ? AERON_GLTF_MAX_MATERIALS : model->material_count) +
@@ -215,7 +228,7 @@ static int build_material_storage(AeronSceneMesh* s, const AeronGltfModel* model
 	if (!entries) {
 		return 0;
 	}
-	s->material_count    = populate_material_entries(entries, model, set, core_layers);
+	s->material_count    = populate_material_entries(entries, model, set, core_layers, anim);
 	const uint32_t bytes = allocation_count * (uint32_t)sizeof *entries;
 	s->material_buffer   = Aeron_CreateBuffer(&(AeronBufferDesc) {
 		.size       = bytes,
@@ -272,6 +285,158 @@ static int build_screen_storage(AeronSceneMesh* s, const AeronGltfModel* model, 
 	s->screen_rect_count = model->screen_rect_count;
 	*out_rects           = rects;
 	*out_bytes           = bytes;
+	return 1;
+}
+
+/* ===== Material animation ============================================
+ *
+ * The records of material_anim_layout.hlsli: the header, then per animated
+ * material its flipbooks (each followed by its uv record when it has one),
+ * then their frames. */
+typedef struct AnimRecords {
+	uint32_t (*items)[4];
+	uint32_t count, capacity;
+} AnimRecords;
+
+static uint32_t* anim_record(AnimRecords* r) {
+	if (r->count == r->capacity) {
+		const uint32_t capacity = r->capacity ? r->capacity * 2u : 64u;
+		uint32_t (*grown)[4]    = (uint32_t (*)[4])realloc(r->items, capacity * sizeof *r->items);
+		if (!grown)
+			return NULL;
+		r->items    = grown;
+		r->capacity = capacity;
+	}
+	uint32_t* record = r->items[r->count++];
+	memset(record, 0, sizeof *r->items);
+	return record;
+}
+
+static uint32_t float_bits(float f) {
+	uint32_t u;
+	memcpy(&u, &f, sizeof u);
+	return u;
+}
+
+/* The mesh's effect library index of `name`, acquiring it once; UINT32_MAX
+ * when it cannot be loaded (its frames show the static material). `names`
+ * are the acquired libraries' names, `failed` those that failed. */
+static uint32_t anim_library(AeronSceneMesh* s, AeronCommandBuffer* cmd, const char* name, const char** names,
+							 const char** failed, uint32_t* failed_count) {
+	for (uint32_t i = 0; i < s->effect_library_count; i++)
+		if (strcmp(names[i], name) == 0)
+			return s->effect_libraries[i];
+	for (uint32_t i = 0; i < *failed_count; i++)
+		if (strcmp(failed[i], name) == 0)
+			return UINT32_MAX;
+	uint32_t library;
+	if (!AeronEffectAtlas_Acquire(s->effect_atlas, cmd, name, &library)) {
+		failed[(*failed_count)++] = name;
+		return UINT32_MAX;
+	}
+	names[s->effect_library_count]                 = name;
+	s->effect_libraries[s->effect_library_count++] = library;
+	return library;
+}
+
+/* A frame record (two for illumination) of image `key`; the layer
+ * AERON_ANIM_NO_LAYER when the library lacks it. Returns false on OOM. */
+static bool anim_frame(AnimRecords* r, const AeronEffectAtlas* atlas, uint32_t library, uint32_t layer,
+					   const char* key, float end, uint32_t* missing) {
+	AeronEffectImage image;
+	const bool       found = library != UINT32_MAX && AeronEffectAtlas_Find(atlas, library, key, &image) &&
+							 image.present[AERON_EFFECT_LAYER] &&
+							 (layer != AERON_ANIM_LAYER_ILLUMINATION || image.present[AERON_EFFECT_EMISSIVE]);
+	*missing += !found;
+	for (uint32_t t = 0; t < AERON_ANIM_FRAME_RECORDS(layer); t++) {
+		uint32_t* record = anim_record(r);
+		if (!record)
+			return false;
+		record[0] = AERON_ANIM_NO_LAYER;
+		record[3] = t == 0 ? float_bits(end) : 0u;
+		if (found) {
+			record[0] = (image.layer[t] & 0xFFFu) | (image.lod[t] & 0xFu) << 12;
+			record[1] = image.rect[t][0] | image.rect[t][1] << 16;
+			record[2] = image.rect[t][2] | image.rect[t][3] << 16;
+		}
+	}
+	return true;
+}
+
+/* Builds the records of the model's flipbooks and each material's packed
+ * `anim.y` (0 without animation) into `out_anim`; no records when nothing
+ * animates. Returns 0 on OOM. */
+static int build_anim_records(AeronSceneMesh* s, AeronCommandBuffer* cmd, const AeronGltfModel* model,
+							  const char* name, AnimRecords* r, uint32_t** out_anim) {
+	*out_anim = NULL;
+	if (!s->effect_atlas || !model->flipbook_count)
+		return 1;
+	uint32_t*    anim     = (uint32_t*)calloc(model->material_count, sizeof *anim);
+	const char** names    = (const char**)calloc(model->flipbook_count, sizeof *names);
+	const char** failed   = (const char**)calloc(model->flipbook_count, sizeof *failed);
+	s->effect_libraries   = (uint32_t*)calloc(model->flipbook_count, sizeof *s->effect_libraries);
+	int      ok           = anim && names && failed && s->effect_libraries && anim_record(r);
+	uint32_t failed_count = 0, missing = 0, frames = 0;
+	for (uint32_t m = 0; ok && m < model->material_count; m++) {
+		const AeronGltfMaterial* material = &model->materials[m];
+		if (!material->flipbook_count)
+			continue;
+		/* The flipbooks, then their frames. */
+		const uint32_t first = r->count;
+		for (uint32_t b = 0; ok && b < material->flipbook_count; b++) {
+			const AeronGltfFlipbook* fb     = &model->flipbooks[material->flipbook_first + b];
+			uint32_t*                record = anim_record(r);
+			ok                              = record != NULL;
+			if (ok) {
+				record[0] = fb->state | fb->layer << AERON_ANIM_FLIPBOOK_LAYER_SHIFT |
+							fb->mode << AERON_ANIM_FLIPBOOK_MODE_SHIFT |
+							(fb->has_uv ? AERON_ANIM_FLIPBOOK_HAS_UV : 0u);
+				record[2] = fb->frame_count;
+			}
+			if (ok && fb->has_uv) {
+				record = anim_record(r);
+				ok     = record != NULL;
+				if (ok) {
+					record[0] = float_bits(fb->uv_scale_x);
+					record[1] = float_bits(fb->uv_offset[0]);
+					record[2] = float_bits(fb->uv_offset[1]);
+					record[3] = fb->uv_clamp ? 1u : 0u;
+				}
+			}
+		}
+		for (uint32_t b = 0, book = first; ok && b < material->flipbook_count; b++) {
+			const AeronGltfFlipbook* fb = &model->flipbooks[material->flipbook_first + b];
+			const uint32_t library = fb->frame_count
+										 ? anim_library(s, cmd, fb->library, names, failed, &failed_count)
+										 : UINT32_MAX;
+			float          end     = 0.0f;
+			r->items[book][1]      = r->count;
+			for (uint32_t f = 0; ok && f < fb->frame_count; f++) {
+				const AeronGltfFlipbookFrame* frame = &model->flipbook_frames[fb->frame_first + f];
+				end += frame->seconds;
+				ok = anim_frame(r, s->effect_atlas, library, fb->layer, frame->key, end, &missing);
+			}
+			r->items[book][3] = float_bits(end);
+			frames += fb->frame_count;
+			book += fb->has_uv ? 2u : 1u;
+		}
+		if (first > 0xFFFFu) {
+			Aeron_LogError("aeron.scene", "%s: too many animation records; material %u stays static", name,
+						   m);
+			continue;
+		}
+		anim[m] = first | material->flipbook_count << 16;
+	}
+	free((void*)names);
+	free((void*)failed);
+	if (!ok) {
+		free(anim);
+		return 0;
+	}
+	if (missing)
+		Aeron_LogWarn("aeron.scene", "%s: %u of %u animation frames are not in their libraries", name,
+					  missing, frames);
+	*out_anim = anim;
 	return 1;
 }
 
@@ -369,7 +534,7 @@ static AeronTexture* upload_channel_groups(AeronCommandBuffer* cmd, const AeronG
 
 static AeronSceneMesh* mesh_create(AeronCommandBuffer* cmd, const AeronFlightModel* flight_model,
 								   const char* debug_name, const AeronSceneMeshVariants* set,
-								   AeronSceneMeshCreateStatus* status) {
+								   AeronEffectAtlas* effect_atlas, AeronSceneMeshCreateStatus* status) {
 	if (status) {
 		*status = AERON_SCENE_MESH_CREATE_RESOURCE_FAILURE;
 	}
@@ -459,6 +624,21 @@ static AeronSceneMesh* mesh_create(AeronCommandBuffer* cmd, const AeronFlightMod
 			if (page >= layers) {
 				Aeron_LogError("aeron.scene", "%s: material %u samples %s atlas page %u of %u", name, index,
 							   channel_name(c), model->materials[index].atlas_page[c], layers);
+				if (status) {
+					*status = AERON_SCENE_MESH_CREATE_INVALID_SOURCE;
+				}
+				close_channel_payloads(channel_payloads);
+				return NULL;
+			}
+			/* The material's aeronLayerBase is on the base atlas. */
+			const AeronGltfMaterial* material = &model->materials[index];
+			const uint32_t           base_page =
+				c != AERON_GLTF_CHANNEL_BASE_COLOR || material->layer_base_xform[2] <= 0.0f ? 0u
+				: model->group_count ? channel_layer(model, set, c, core_layers[c], material->layer_base_page)
+									 : material->layer_base_page;
+			if (base_page >= layers) {
+				Aeron_LogError("aeron.scene", "%s: material %u layer base samples base atlas page %u of %u",
+							   name, index, material->layer_base_page, layers);
 				if (status) {
 					*status = AERON_SCENE_MESH_CREATE_INVALID_SOURCE;
 				}
@@ -615,23 +795,41 @@ static AeronSceneMesh* mesh_create(AeronCommandBuffer* cmd, const AeronFlightMod
 	char                material_name[512];
 	char                variant_name[512];
 	char                screen_name[512];
+	char                anim_name[512];
 	AeronPbrScreenRect* screen_rects = NULL;
 	uint32_t            screen_bytes = 0;
+	AnimRecords         anim_records = { 0 };
+	uint32_t*           anim         = NULL;
 	snprintf(material_name, sizeof material_name, "%s.materials", name);
 	snprintf(variant_name, sizeof variant_name, "%s.material_variants", name);
 	snprintf(screen_name, sizeof screen_name, "%s.screen_rects", name);
-	if (!build_material_storage(s, model, set, core_layers, material_name, &material_entries,
+	snprintf(anim_name, sizeof anim_name, "%s.material_anim", name);
+	s->effect_atlas = effect_atlas;
+	int built       = build_anim_records(s, cmd, model, name, &anim_records, &anim);
+	if (built && anim_records.count > 1) {
+		s->anim_buffer = Aeron_CreateBuffer(&(AeronBufferDesc) {
+			.size       = anim_records.count * (uint32_t)sizeof *anim_records.items,
+			.usage      = AERON_BUFFER_USAGE_STORAGE,
+			.debug_name = anim_name,
+		});
+		built          = s->anim_buffer != NULL;
+	}
+	if (!built ||
+		!build_material_storage(s, model, set, core_layers, anim, material_name, &material_entries,
 								&material_bytes) ||
 		!build_variant_storage(s, model, set, variant_name, &variant_values, &variant_bytes) ||
 		!build_screen_storage(s, model, screen_name, &screen_rects, &screen_bytes)) {
 		free(material_entries);
 		free(variant_values);
 		free(screen_rects);
+		free(anim_records.items);
+		free(anim);
 		Aeron_LogError("aeron.scene", "%s: material storage build failed", name);
 		AeronScene_MeshDestroy(s);
 		return NULL;
 	}
-	AeronBufferUploadDesc buffer_uploads[5];
+	free(anim);
+	AeronBufferUploadDesc buffer_uploads[6];
 	uint32_t              buffer_upload_count = 0;
 	if (s->vbo) {
 		buffer_uploads[buffer_upload_count++] =
@@ -650,10 +848,17 @@ static AeronSceneMesh* mesh_create(AeronCommandBuffer* cmd, const AeronFlightMod
 																		  .data   = screen_rects,
 																		  .size   = screen_bytes };
 	}
+	if (s->anim_buffer) {
+		buffer_uploads[buffer_upload_count++] =
+			(AeronBufferUploadDesc) { .buffer = s->anim_buffer,
+									  .data   = anim_records.items,
+									  .size   = anim_records.count * (uint32_t)sizeof *anim_records.items };
+	}
 	const int buffers_uploaded = Aeron_UploadBufferBatchCmd(cmd, buffer_uploads, buffer_upload_count);
 	free(material_entries);
 	free(variant_values);
 	free(screen_rects);
+	free(anim_records.items);
 	if (!buffers_uploaded) {
 		Aeron_LogError("aeron.scene", "%s: geometry/material batch upload failed", name);
 		AeronScene_MeshDestroy(s);
@@ -707,12 +912,22 @@ static AeronSceneMesh* mesh_create(AeronCommandBuffer* cmd, const AeronFlightMod
 
 AeronSceneMesh* AeronScene_MeshCreate(AeronCommandBuffer* cmd, const AeronFlightModel* model,
 									  const char* debug_name, AeronSceneMeshCreateStatus* status) {
-	return mesh_create(cmd, model, debug_name, NULL, status);
+	return mesh_create(cmd, model, debug_name, NULL, NULL, status);
 }
 
 AeronSceneMesh* AeronScene_MeshCreateWithVariants(AeronCommandBuffer* cmd, const AeronFlightModel* model,
 												  const char*                   debug_name,
 												  const AeronSceneMeshVariants* variants,
 												  AeronSceneMeshCreateStatus*   status) {
-	return mesh_create(cmd, model, debug_name, variants, status);
+	return mesh_create(cmd, model, debug_name, variants, NULL, status);
+}
+
+AeronSceneMesh* AeronScene_MeshCreateEx(AeronCommandBuffer* cmd, const AeronSceneMeshCreateInfo* info,
+										AeronSceneMeshCreateStatus* status) {
+	if (!info) {
+		if (status)
+			*status = AERON_SCENE_MESH_CREATE_RESOURCE_FAILURE;
+		return NULL;
+	}
+	return mesh_create(cmd, info->model, info->debug_name, info->variants, info->effect_atlas, status);
 }

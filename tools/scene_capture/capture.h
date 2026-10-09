@@ -72,6 +72,11 @@ typedef struct CaptureConfig {
 	char                   asset_root[1024];
 	char                   models[CAPTURE_MAX_MODELS][1024];
 	int                    model_count;
+	/* Material animation: the effect libraries' directory under asset_root
+	 * ("" for none: static materials) and the animation time of frame 0,
+	 * which advances with the capture time. */
+	char                   effect_dir[1024];
+	double                 animation_time;
 	int                    bloom_chart, bloom_enabled, bloom_kernel, msaa_samples, tonemap;
 	int                    cull_mode, backface_fill;
 	float                  bloom_intensity, emissive_scale;
@@ -91,6 +96,8 @@ typedef struct CaptureMesh {
 
 typedef struct Fixture {
 	AeronScene3D *     scene, *reference_scene;
+	AeronVfs*          vfs;
+	AeronEffectAtlas*  effect_atlas;
 	CaptureMesh        meshes[CAPTURE_MAX_MODELS];
 	CaptureConfig      config;
 	AeronRenderTarget* chart_rt;

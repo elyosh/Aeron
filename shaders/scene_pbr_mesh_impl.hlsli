@@ -44,7 +44,9 @@
  *   t11/s11 — screen capture, text (premultiplied, sRGB)
  */
 
-/* Variants: AERON_PBR_SCREENS 0 drops the screen code, which the renderer
+/* Variants: AERON_PBR_ANIM 1 adds material animation (material_anim.hlsli):
+ * the effect atlas at t12/t13 and the animation records in storage, which
+ * moves every storage register up by two. AERON_PBR_SCREENS 0 drops the screen code, which the renderer
  * draws with its own pipeline (a mesh's screen primitives). AERON_PBR_ALPHA_BLEND
  * 1 is the variant for blended materials. AERON_PBR_ENVIRONMENT 0 drops the
  * image-based lighting, for scenes without an environment. All keep this
@@ -59,9 +61,22 @@
 #ifndef AERON_PBR_ALPHA_BLEND
 #define AERON_PBR_ALPHA_BLEND 0
 #endif
+#ifndef AERON_PBR_ANIM
+#define AERON_PBR_ANIM 0
+#endif
 
 #define AERON_DIRECTIONAL_SHADOW_UNIFORM_REGISTER b0
 #define AERON_PBR_LIGHT_UNIFORM_REGISTER b1
+#if AERON_PBR_ANIM
+#define AERON_PBR_MATERIAL_REGISTER t14
+#define AERON_PBR_VARIANT_REGISTER t15
+#define AERON_PBR_POINT_LIGHT_REGISTER t16
+#define AERON_CLUSTER_HEADER_REGISTER t17
+#define AERON_CLUSTER_INDEX_REGISTER t18
+#define AERON_PBR_SCREEN_RECT_REGISTER t19
+#define AERON_PBR_SCREEN_FRAME_REGISTER t20
+#define AERON_PBR_ANIM_RECORD_REGISTER t21
+#else
 #define AERON_PBR_MATERIAL_REGISTER t12
 #define AERON_PBR_VARIANT_REGISTER t13
 #define AERON_PBR_POINT_LIGHT_REGISTER t14
@@ -69,6 +84,7 @@
 #define AERON_CLUSTER_INDEX_REGISTER t16
 #define AERON_PBR_SCREEN_RECT_REGISTER t17
 #define AERON_PBR_SCREEN_FRAME_REGISTER t18
+#endif
 #include "scene_pbr_lighting.hlsli"
 #include "scene_pbr_atlas_sample.hlsli"
 #include "scene_pbr_vsout.hlsli"
@@ -93,6 +109,47 @@ TextureCube<float4> g_specular_environment : register(t8, space2);
 SamplerState g_specular_environment_sampler : register(s8, space2);
 Texture2D<float2> g_brdf_lut : register(t9, space2);
 SamplerState g_brdf_lut_sampler : register(s9, space2);
+
+#if AERON_PBR_ANIM
+/* Effect atlas (layer, emissive) and the mesh's animation records. */
+Texture2DArray g_effect_layer : register(t12, space2);
+SamplerState g_effect_layer_sampler : register(s12, space2);
+Texture2DArray g_effect_emissive : register(t13, space2);
+SamplerState g_effect_emissive_sampler : register(s13, space2);
+StructuredBuffer<uint4> g_anim_records : register(AERON_PBR_ANIM_RECORD_REGISTER, space2);
+cbuffer PbrAnimFS : register(b3, space3)
+{
+    float4 fs_anim; /* x: animation time (seconds), y: effect page size (texels) */
+};
+#define AERON_ANIM_RECORD(i) g_anim_records[i]
+#include "material_anim.hlsli"
+
+/* A flipbook's frame UV: its uv record's scale and offset, clamped to the
+ * image when set. */
+float2 anim_frame_uv(uint flipbook, float2 uv)
+{
+    if ((g_anim_records[flipbook].x & AERON_ANIM_FLIPBOOK_HAS_UV) == 0u) return uv;
+    uint4  t = g_anim_records[flipbook + 1u];
+    float2 r = uv * float2(asfloat(t.x), 1.0f) + float2(asfloat(t.y), asfloat(t.z));
+    return t.w != 0u ? min(saturate(r), 0.99999f) : r;
+}
+
+/* Samples the image of a frame record. */
+float4 anim_frame_sample(Texture2DArray tex, SamplerState s, uint4 frame, float2 uv)
+{
+    float4 rect = float4(frame.y & 0xFFFFu, frame.y >> 16, frame.z & 0xFFFFu, frame.z >> 16) / fs_anim.y;
+    return atlas_sample(tex, s, uv, rect, frame.x & 0xFFFu, (frame.x >> 12) & 0xFu);
+}
+
+/* The playing frame record of a layer's flipbook (0: none, or a frame
+ * missing from its library), and the flipbook record. */
+uint anim_layer_frame(uint4 anim, uint layer, out uint flipbook)
+{
+    flipbook = material_anim_select(anim.y & 0xFFFFu, anim.y >> 16, layer, 0u);
+    uint frame = flipbook != 0u ? material_anim_frame(flipbook, fs_anim.x) : 0u;
+    return frame != 0u && (g_anim_records[frame].x & 0xFFFu) != AERON_ANIM_NO_LAYER ? frame : 0u;
+}
+#endif
 
 float3 environment_local(float3 world_direction)
 {
@@ -150,6 +207,41 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
 #if AERON_PBR_ALPHA_MASK
     pbr_apply_alpha_mask(albedo_tex.a * g_materials[mat].base_color_factor.a,
                          g_materials[mat].metal_rough.z);
+#endif
+#if AERON_PBR_ANIM
+    /* ===== Flipbooks =============================================
+     * colour: the frame over the colour; illumination: base = c·k +
+     * layer_base over the full colour c (aeronLayerBase), and its emission
+     * replaces the material's. A layer without a playing frame keeps the
+     * static material. */
+    bool   anim_emission = false;
+    float3 anim_emissive = float3(0.0f, 0.0f, 0.0f);
+    uint4  anim = g_materials[mat].anim;
+    if (anim.y != 0u) {
+        uint colour_book, lit_book;
+        uint colour_frame = anim_layer_frame(anim, AERON_ANIM_LAYER_COLOUR, colour_book);
+        uint lit_frame    = anim_layer_frame(anim, AERON_ANIM_LAYER_ILLUMINATION, lit_book);
+        float3 c = albedo_tex.rgb;
+        if (lit_frame != 0u) {
+            c = atlas_sample(g_base_color, g_base_sampler, i.uv, g_materials[mat].layer_base_rect,
+                             anim.x & 0xFFFu, (anim.x >> 12) & 0xFu).rgb;
+        }
+        if (colour_frame != 0u) {
+            float4 frame = anim_frame_sample(g_effect_layer, g_effect_layer_sampler, g_anim_records[colour_frame],
+                                             anim_frame_uv(colour_book, i.uv));
+            c = lerp(c, frame.rgb, frame.a);
+        }
+        if (lit_frame != 0u) {
+            float2 frame_uv = anim_frame_uv(lit_book, i.uv);
+            float4 layer = anim_frame_sample(g_effect_layer, g_effect_layer_sampler, g_anim_records[lit_frame],
+                                             frame_uv);
+            c = c * layer.a + layer.rgb;
+            anim_emissive = anim_frame_sample(g_effect_emissive, g_effect_emissive_sampler,
+                                              g_anim_records[lit_frame + 1u], frame_uv).rgb;
+            anim_emission = true;
+        }
+        albedo_tex.rgb = c;
+    }
 #endif
     float3 albedo = albedo_tex.rgb * g_materials[mat].base_color_factor.rgb;
 
@@ -448,6 +540,10 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
      * additive emissive composition. */
     if (isolate == 0 && i.base_color_emissive_strength > 0.0f) {
         lit = albedo * (i.base_color_emissive_strength * fs_emission.x);
+#if AERON_PBR_ANIM
+    } else if (anim_emission) {
+        lit += anim_emissive * (i.emissive_mul * fs_emission.x);
+#endif
     } else {
         float3 emissive = g_materials[mat].emissive_packed.rgb;
         float emissive_coverage = 0.0f;

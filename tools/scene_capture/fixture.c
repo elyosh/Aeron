@@ -68,8 +68,9 @@ static AeronSceneMesh* create_mesh(AeronCommandBuffer* cmd, const Fixture* f, in
 			highest            = in->markings > highest ? in->markings : highest;
 		}
 	}
+	AeronSceneMeshCreateInfo info = { .model = model, .debug_name = path, .effect_atlas = f->effect_atlas };
 	if (highest < 0)
-		return AeronScene_MeshCreate(cmd, model, path, NULL);
+		return AeronScene_MeshCreateEx(cmd, &info, NULL);
 	const AeronGltfModel* render = &model->render;
 	uint32_t              variants[CAPTURE_MAX_MARKINGS + 1];
 	for (int m = 0; m <= highest; ++m) {
@@ -80,15 +81,19 @@ static AeronSceneMesh* create_mesh(AeronCommandBuffer* cmd, const Fixture* f, in
 			render->skin_markings[m] != AERON_GLTF_NO_VARIANT)
 			variants[m] = render->skin_markings[m];
 	}
-	return AeronScene_MeshCreateWithVariants(
-		cmd, model, path, &(AeronSceneMeshVariants) { .variants = variants, .count = (uint32_t)highest + 1u },
-		NULL);
+	info.variants = &(AeronSceneMeshVariants) { .variants = variants, .count = (uint32_t)highest + 1u };
+	return AeronScene_MeshCreateEx(cmd, &info, NULL);
 }
 
 static int load_models(Fixture* f, AeronCommandBuffer* cmd) {
-	AeronVfs* vfs = AeronVfs_Create(&(AeronVfsConfig) { .asset_root = f->config.asset_root });
+	AeronVfs* vfs = f->vfs = AeronVfs_Create(&(AeronVfsConfig) { .asset_root = f->config.asset_root });
 	if (!vfs)
 		return 0;
+	if (f->config.effect_dir[0]) {
+		f->effect_atlas = AeronEffectAtlas_Create(vfs, AERON_VFS_ROOT_ASSET, f->config.effect_dir);
+		if (!f->effect_atlas)
+			return 0;
+	}
 	int ok = 1;
 	for (int i = 0; ok && i < f->config.model_count; ++i) {
 		const char* path  = f->config.models[i];
@@ -129,7 +134,6 @@ static int load_models(Fixture* f, AeronCommandBuffer* cmd) {
 		}
 		Aeron_FlightModelFree(&model);
 	}
-	AeronVfs_Destroy(vfs);
 	return ok;
 }
 
@@ -171,6 +175,9 @@ int Fixture_Create(Fixture* f, const CaptureConfig* config) {
 		Fixture_Destroy(f);
 		return 0;
 	}
+	AeronEffectAtlas_Commit(f->effect_atlas);
+	AeronScene_SetEffectAtlas(f->scene, f->effect_atlas);
+	AeronScene_SetEffectAtlas(f->reference_scene, f->effect_atlas);
 	float       background = config->model_count ? 0 : .005f;
 	const float clear[4]   = { background, background, background, 1 };
 	AeronScene_SetClearColor(f->scene, clear);
@@ -284,6 +291,8 @@ void Fixture_Destroy(Fixture* f) {
 	AeronScene_Destroy(f->reference_scene);
 	for (int i = 0; i < CAPTURE_MAX_MODELS; ++i)
 		AeronScene_MeshDestroy(f->meshes[i].mesh);
+	AeronEffectAtlas_Destroy(f->effect_atlas);
+	AeronVfs_Destroy(f->vfs);
 	memset(f, 0, sizeof *f);
 }
 
@@ -581,6 +590,7 @@ AeronRenderTarget* Fixture_Record(Fixture* f, double time, int blur, AeronComman
 	}
 	if (!AeronScene_Begin(scene, &current))
 		return NULL;
+	AeronScene_SetAnimationTime(scene, f->config.animation_time + time);
 	if (f->config.game.enabled) {
 		set_game_effects(scene, &f->config, blur);
 		AeronScene_SetMotionContext(scene, previous_matrix, 1);

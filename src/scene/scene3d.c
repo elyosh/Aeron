@@ -1151,6 +1151,16 @@ void AeronScene_SetScreenSources(AeronScene3D* s, AeronTexture* graphics, AeronT
 	s->screen_frame    = *frame;
 }
 
+void AeronScene_SetEffectAtlas(AeronScene3D* s, AeronEffectAtlas* atlas) {
+	if (s)
+		s->effect_atlas = atlas;
+}
+
+void AeronScene_SetAnimationTime(AeronScene3D* s, double seconds) {
+	if (s)
+		s->animation_time = (float)seconds;
+}
+
 void AeronScene_SetPbrEnvironment(AeronScene3D* s, const AeronScenePbrEnvironment* environment) {
 	if (!s) {
 		return;

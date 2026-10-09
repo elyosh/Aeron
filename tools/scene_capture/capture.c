@@ -198,6 +198,11 @@ int Capture_SaveConfig(const CaptureConfig* c) {
 			/* Sequence entries use YAML's quoted scalar form, including paths with apostrophes. */
 			ok = write_yaml_path(stream, "  - ", c->models[i]);
 		}
+		if (ok && c->effect_dir[0]) {
+			snprintf(text, sizeof text, "time: %.9g\n", c->animation_time);
+			ok = write_yaml_path(stream, "effect_dir: ", c->effect_dir) &&
+				 SDL_WriteIO(stream, text, strlen(text)) == strlen(text);
+		}
 	}
 	if (!SDL_CloseIO(stream))
 		ok = 0;

@@ -16,6 +16,7 @@
 
 #include "aeron/asset/flight_model.h"
 #include "aeron/render.h"
+#include "aeron/scene/effect_atlas.h"
 #include "aeron/scene/mesh_common.h"
 
 #ifdef __cplusplus
@@ -44,7 +45,12 @@ typedef struct AeronPbrMaterialEntry {
 	uint32_t screen_first;         /* screen rectangles (AeronPbrScreenRect) */
 	uint32_t screen_count;
 	uint32_t screen_flags; /* AERON_GLTF_SCREEN_* */
-} AeronPbrMaterialEntry; /* 160 B */
+	float    layer_base_rect[4]; /* aeronLayerBase in the base atlas; zw == 0: none */
+	uint32_t anim[4];            /* x: layer_base page | lod << 12
+								  * y: first flipbook record | flipbook count << 16
+								  * (material_anim_layout.hlsli); 0 without
+								  * z, w: 0 */
+} AeronPbrMaterialEntry;         /* 192 B */
 
 /* Shader record of one screen rectangle (AeronGltfScreenRect): float4 and
  * uint4 members only, so the layout is the same on every backend. */
@@ -126,6 +132,13 @@ typedef struct AeronSceneMesh {
 	/* Point lights copied from the source flight model (owned). */
 	AeronFlightLight* lights;
 	uint32_t          light_count;
+
+	/* Material animation records (material_anim_layout.hlsli), NULL when
+	 * no material animates, and the effect libraries they hold. */
+	AeronBuffer*      anim_buffer;
+	AeronEffectAtlas* effect_atlas;
+	uint32_t*         effect_libraries;
+	uint32_t          effect_library_count;
 } AeronSceneMesh;
 
 typedef enum AeronSceneMeshCreateStatus {
@@ -157,6 +170,21 @@ AeronSceneMesh* AeronScene_MeshCreateWithVariants(AeronCommandBuffer* cmd, const
 												  const char*                   debug_name,
 												  const AeronSceneMeshVariants* variants,
 												  AeronSceneMeshCreateStatus*   status);
+
+typedef struct AeronSceneMeshCreateInfo {
+	const AeronFlightModel*       model;
+	const char*                   debug_name;
+	const AeronSceneMeshVariants* variants;     /* NULL: the asset variants */
+	AeronEffectAtlas*             effect_atlas; /* NULL: no material animation */
+} AeronSceneMeshCreateInfo;
+
+/* AeronScene_MeshCreateWithVariants with an effect atlas: the model's
+ * flipbooks resolve their frames there, acquiring their libraries through
+ * `cmd` until the mesh is destroyed; a library or image that is missing
+ * leaves its frames on the static material. The atlas must outlive the
+ * mesh. */
+AeronSceneMesh* AeronScene_MeshCreateEx(AeronCommandBuffer* cmd, const AeronSceneMeshCreateInfo* info,
+										AeronSceneMeshCreateStatus* status);
 
 void AeronScene_MeshDestroy(AeronSceneMesh* mesh);
 

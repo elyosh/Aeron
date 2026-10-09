@@ -55,6 +55,7 @@ Start from a preset; unknown keys are rejected. The main settings are:
 | `reference_samples` | Temporal reference samples; 0 disables it, maximum 256. |
 | `fixture` | `shapes` (default) or `bloom_chart`. |
 | `models`, `asset_root` | Optional OPT or cooked `.glb` paths and their VFS root; replaces the cuboids. |
+| `effect_dir`, `time` | Optional material animation: the effect libraries' directory under `asset_root` (`remaster/effects`) and the animation time of frame 0 in seconds (default 0), which advances with the frames. Without `effect_dir`, animated materials show their static look. |
 | `msaa_samples` | 1, 2, 4 or 8; default 2. |
 | `cull` | `none` (default, two-sided), `front` or `back`: the instances' cull mode. `front` culls what the game's `back` culls, as this camera's handedness is the opposite. |
 | `backface_fill` | `true` (default) or `false`: the dark fill behind cracks in single-sided instances (`AeronScene_SetBackfaceFill`). |
