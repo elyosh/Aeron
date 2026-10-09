@@ -193,6 +193,32 @@ static void place_rect(ChannelAtlas* ca, const AeronAtlasRect* cell, int page) {
 	r->y           = cell->y * ca->gutter + ca->gutter;
 }
 
+/* First-fit pages from page `first`: pack the `count` rects of `order` at
+ * the full page width and move the rects that do not fit to the next page.
+ * The first rect always lands at the bottom of an empty page. Returns the
+ * page count after them, or -1 when a rect fits no page; `order` is
+ * reused as scratch. */
+static int first_fit_pages(ChannelAtlas* ca, int* order, int count, AeronAtlasRect* cells, int grid_w,
+						   int grid_h, int first) {
+	int pages = first, remaining = count;
+	while (remaining) {
+		if (pack_cells(ca, order, remaining, cells, grid_w) < 0)
+			return -1;
+		int kept = 0;
+		for (int i = 0; i < remaining; i++) {
+			if (cells[i].y + cells[i].h <= grid_h)
+				place_rect(ca, &cells[i], pages);
+			else
+				order[kept++] = (int)cells[i].key;
+		}
+		if (kept == remaining)
+			return -1;
+		remaining = kept;
+		pages++;
+	}
+	return pages;
+}
+
 bool channel_atlas_pack(ChannelAtlas* ca, int page_size, int gutter) {
 	if (!ca || !is_pow2(page_size) || page_size < 128 || !is_pow2(gutter) || gutter < 4 || gutter > 32 ||
 		page_size < 8 * gutter)
@@ -253,12 +279,23 @@ bool channel_atlas_pack(ChannelAtlas* ca, int page_size, int gutter) {
 	}
 	sort_rects_largest_first(ca->rects, order, packed);
 
-	const int grid      = page / gutter;
-	int       width     = page;
-	int       height    = page;
+	const bool fixed = ca->fixed_width > 0 && ca->fixed_height > 0;
+	if (fixed && (ca->fixed_width % gutter || ca->fixed_height % gutter ||
+				  (dedicated && (ca->fixed_width != page || ca->fixed_height != page)))) {
+		fprintf(stderr, "[aeron_gltf_cook] channel %d: %d×%d pages do not fit its sources\n", ca->channel,
+				ca->fixed_width, ca->fixed_height);
+		free(order);
+		free(cells);
+		return false;
+	}
+	const int grid_w    = fixed ? ca->fixed_width / gutter : page / gutter;
+	const int grid_h    = fixed ? ca->fixed_height / gutter : page / gutter;
+	int       width     = fixed ? ca->fixed_width : page;
+	int       height    = fixed ? ca->fixed_height : page;
 	int       pages     = dedicated;
 	int       remaining = packed;
-	if (packed && !dedicated) {
+	if (packed && !dedicated && !fixed) {
+		const int grid = grid_w;
 		/* A single shared page: the first power-of-two trial width that
 		 * fits, trimmed to its occupied bounds. */
 		int widest = 0;
@@ -286,33 +323,45 @@ bool channel_atlas_pack(ChannelAtlas* ca, int page_size, int gutter) {
 			remaining = 0;
 		}
 	}
-	/* First-fit pages: pack what remains at the full page width and move
-	 * the rects that do not fit to the next page. The first rect always
-	 * lands at the bottom of an empty page. */
-	while (remaining) {
-		if (pack_cells(ca, order, remaining, cells, grid) < 0)
-			break;
-		int kept = 0;
-		for (int i = 0; i < remaining; i++) {
-			if (cells[i].y + cells[i].h <= grid)
-				place_rect(ca, &cells[i], pages);
-			else
-				order[kept++] = (int)cells[i].key;
+	if (remaining) {
+		/* The gutters keep power-of-two sources from tiling power-of-two
+		 * pages (two 1024-wide footprints need 2112 texels), so a multi-page
+		 * atlas without dedicated layers also tries pages of P + P/16 and
+		 * keeps the size that needs fewer texels. */
+		const int  alternative     = page + page / 16;
+		const bool try_alternative = !fixed && !dedicated && (page / 16) % gutter == 0;
+		int*       sorted = try_alternative ? (int*)malloc((size_t)remaining * sizeof *sorted) : NULL;
+		if (sorted)
+			memcpy(sorted, order, (size_t)remaining * sizeof *sorted);
+		const int count = remaining;
+		pages           = first_fit_pages(ca, order, count, cells, grid_w, grid_h, pages);
+		if (sorted && pages > 1) {
+			const int alt_grid = alternative / gutter;
+			memcpy(order, sorted, (size_t)count * sizeof *order);
+			const int alt_pages = first_fit_pages(ca, order, count, cells, alt_grid, alt_grid, 0);
+			if (alt_pages > 0 &&
+				(double)alt_pages * alternative * alternative < (double)pages * page * page) {
+				pages  = alt_pages;
+				width  = alternative;
+				height = alternative;
+			} else {
+				memcpy(order, sorted, (size_t)count * sizeof *order);
+				pages = first_fit_pages(ca, order, count, cells, grid_w, grid_h, 0);
+			}
 		}
-		if (kept == remaining)
-			break;
-		remaining = kept;
-		pages++;
+		free(sorted);
+		remaining = pages < 0 ? count : 0;
 	}
 	free(order);
 	free(cells);
 	if (remaining) {
 		fprintf(stderr, "[aeron_gltf_cook] channel %d: cannot pack %d sub-rects into %d×%d pages\n",
-				ca->channel, remaining, page, page);
+				ca->channel, remaining, width, height);
 		return false;
 	}
 	ca->width      = width;
 	ca->height     = height;
+	ca->page       = page;
 	ca->page_count = pages;
 	ca->mip_count  = deepest + 1;
 	return true;

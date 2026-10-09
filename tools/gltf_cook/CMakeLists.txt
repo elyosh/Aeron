@@ -10,7 +10,7 @@ target_include_directories(aeron_gltf_cook_lib
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/../../third_party/cgltf)
 
-target_link_libraries(aeron_gltf_cook_lib PUBLIC imgbake aeron_cgltf)
+target_link_libraries(aeron_gltf_cook_lib PUBLIC imgbake aeron_cgltf PRIVATE aeron_cjson)
 set_target_properties(aeron_gltf_cook_lib PROPERTIES
     C_STANDARD 11
     C_STANDARD_REQUIRED ON)

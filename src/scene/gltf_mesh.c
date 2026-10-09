@@ -157,6 +157,125 @@ static bool copy_channel_ktx2(const cgltf_data* data, const char* atlas_name, Ae
 	return true;
 }
 
+/* ===== Variants and their groups ====================================
+ *
+ * The asset extras of a model with XWAU skins (opt2gltf, aeron_gltf_cook):
+ *   "aeronAssetVariants": N, "aeronSkinMarkings": [name or null, ...],
+ *   "aeronVariantGroups": [{"bufferView": b, "layers": l, "variants": [...]}]
+ * The groups' KTX2 blocks are copied like the core atlases. */
+static char* copy_string(const char* s) {
+	const size_t n    = strlen(s) + 1;
+	char*        copy = (char*)malloc(n);
+	if (copy)
+		memcpy(copy, s, n);
+	return copy;
+}
+
+static uint32_t variant_by_name(const AeronGltfModel* out, const char* name) {
+	for (uint32_t v = 0; v < out->variant_count; v++)
+		if (out->variant_names[v] && strcmp(out->variant_names[v], name) == 0)
+			return v;
+	return AERON_GLTF_NO_VARIANT;
+}
+
+static bool read_variants(const cgltf_data* data, const char* source_label, AeronGltfModel* out) {
+	out->variant_count       = (uint32_t)data->variants_count;
+	out->variant_slots       = out->variant_count > 0 ? out->variant_count : 1u;
+	out->asset_variant_count = out->variant_count;
+	if (out->variant_count) {
+		out->variant_names = (char**)calloc(out->variant_count, sizeof *out->variant_names);
+		if (!out->variant_names)
+			return false;
+		for (uint32_t v = 0; v < out->variant_count; v++) {
+			const char* name = data->variants[v].name;
+			if (name && !(out->variant_names[v] = copy_string(name)))
+				return false;
+		}
+	}
+	const cgltf_extras* extras = &data->asset.extras;
+	cJSON*              root   = NULL;
+	if (extras->data)
+		root = cJSON_Parse(extras->data);
+	else if (data->json && extras->end_offset > extras->start_offset)
+		root = cJSON_ParseWithLength(data->json + extras->start_offset,
+									 (size_t)(extras->end_offset - extras->start_offset));
+	if (!root)
+		return true;
+	bool         ok       = true;
+	const cJSON* assets   = cJSON_GetObjectItemCaseSensitive(root, "aeronAssetVariants");
+	const cJSON* markings = cJSON_GetObjectItemCaseSensitive(root, "aeronSkinMarkings");
+	const cJSON* groups   = cJSON_GetObjectItemCaseSensitive(root, "aeronVariantGroups");
+	if (assets) {
+		ok = cJSON_IsNumber(assets) && assets->valuedouble >= 1 && assets->valuedouble <= out->variant_count;
+		if (ok)
+			out->asset_variant_count = (uint32_t)assets->valuedouble;
+	}
+	if (ok && cJSON_IsArray(markings)) {
+		out->skin_markings_count = (uint32_t)cJSON_GetArraySize(markings);
+		out->skin_markings       = (uint32_t*)calloc(out->skin_markings_count ? out->skin_markings_count : 1,
+													 sizeof *out->skin_markings);
+		ok                       = out->skin_markings != NULL;
+		uint32_t     m           = 0;
+		const cJSON* entry       = NULL;
+		cJSON_ArrayForEach(entry, markings) {
+			if (!ok)
+				break;
+			out->skin_markings[m] = AERON_GLTF_NO_VARIANT;
+			if (cJSON_IsString(entry)) {
+				out->skin_markings[m] = variant_by_name(out, entry->valuestring);
+				ok                    = out->skin_markings[m] != AERON_GLTF_NO_VARIANT;
+			} else {
+				ok = cJSON_IsNull(entry);
+			}
+			m++;
+		}
+	}
+	if (ok && cJSON_IsArray(groups)) {
+		out->group_count = (uint32_t)cJSON_GetArraySize(groups);
+		out->groups =
+			(AeronGltfVariantGroup*)calloc(out->group_count ? out->group_count : 1, sizeof *out->groups);
+		ok                 = out->groups != NULL;
+		uint32_t     g     = 0;
+		const cJSON* entry = NULL;
+		cJSON_ArrayForEach(entry, groups) {
+			if (!ok)
+				break;
+			AeronGltfVariantGroup* group    = &out->groups[g++];
+			const cJSON*           view     = cJSON_GetObjectItemCaseSensitive(entry, "bufferView");
+			const cJSON*           layers   = cJSON_GetObjectItemCaseSensitive(entry, "layers");
+			const cJSON*           variants = cJSON_GetObjectItemCaseSensitive(entry, "variants");
+			ok = cJSON_IsNumber(view) && view->valuedouble >= 0 &&
+				 view->valuedouble < (double)data->buffer_views_count && cJSON_IsNumber(layers) &&
+				 layers->valuedouble >= 1 && layers->valuedouble <= AERON_GLTF_ATLAS_MAX_PAGE &&
+				 cJSON_IsArray(variants) && cJSON_GetArraySize(variants) > 0;
+			if (!ok)
+				break;
+			const cgltf_buffer_view* bv = &data->buffer_views[(size_t)view->valuedouble];
+			group->layers               = (uint32_t)layers->valuedouble;
+			group->variant_count        = (uint32_t)cJSON_GetArraySize(variants);
+			group->variants             = (uint32_t*)calloc(group->variant_count, sizeof *group->variants);
+			group->ktx2.data            = (uint8_t*)malloc(bv->size ? bv->size : 1);
+			ok = group->variants && group->ktx2.data && bv->buffer && bv->buffer->data && bv->size > 0;
+			if (!ok)
+				break;
+			memcpy(group->ktx2.data, (const uint8_t*)bv->buffer->data + bv->offset, bv->size);
+			group->ktx2.size  = bv->size;
+			uint32_t     v    = 0;
+			const cJSON* item = NULL;
+			cJSON_ArrayForEach(item, variants) {
+				ok = ok && cJSON_IsNumber(item) && item->valuedouble >= out->asset_variant_count &&
+					 item->valuedouble < out->variant_count;
+				if (ok)
+					group->variants[v++] = (uint32_t)item->valuedouble;
+			}
+		}
+	}
+	cJSON_Delete(root);
+	if (!ok)
+		SDL_Log("[flight_gltf] '%s' has invalid skin variant data in its asset extras", source_label);
+	return ok;
+}
+
 /* ===== Per-material read ============================================
  *
  * Pulls factors + per-channel UV transform out of cgltf_material.
@@ -537,8 +656,8 @@ bool Aeron_GltfMeshBuildData(const cgltf_data* data, const char* source_label, A
 	}
 
 	/* ---- Variants ------------------------------------------------- */
-	out->variant_count = (uint32_t)data->variants_count;
-	out->variant_slots = out->variant_count > 0 ? out->variant_count : 1u;
+	if (!read_variants(data, source_label, out))
+		goto cleanup;
 
 	/* ---- Materials (factors + per-channel UV transform) ----------- */
 	if (data->materials_count > AERON_GLTF_MAX_MATERIALS) {
@@ -753,6 +872,9 @@ bool Aeron_GltfMeshBuildData(const cgltf_data* data, const char* source_label, A
 			out->blend_index_count, out->opaque_screen_index_count, out->blend_screen_index_count,
 			out->total_prim_count, out->material_count, out->variant_count,
 			out->channels[0].size, out->channels[1].size, out->channels[2].size, out->channels[3].size);
+	if (out->group_count > 0)
+		SDL_Log("[flight_gltf] %s: %u asset variants, %u skin markings, %u variant groups", source_label,
+				out->asset_variant_count, out->skin_markings_count, out->group_count);
 	if (out->screen_rect_count > 0 || out->screen_hide_mask != 0)
 		SDL_Log("[flight_gltf] %s: %u screen rectangles, hide mask 0x%x", source_label,
 				out->screen_rect_count, out->screen_hide_mask);
@@ -776,5 +898,14 @@ void Aeron_GltfMeshFree(AeronGltfModel* m) {
 	free(m->screen_rects);
 	for (int c = 0; c < AERON_GLTF_CHANNEL_COUNT; c++)
 		free(m->channels[c].data);
+	for (uint32_t v = 0; m->variant_names && v < m->variant_count; v++)
+		free(m->variant_names[v]);
+	free(m->variant_names);
+	free(m->skin_markings);
+	for (uint32_t g = 0; m->groups && g < m->group_count; g++) {
+		free(m->groups[g].ktx2.data);
+		free(m->groups[g].variants);
+	}
+	free(m->groups);
 	memset(m, 0, sizeof *m);
 }

@@ -25,8 +25,12 @@ typedef struct CaptureBenchmarkConfig {
  * the same place, hidden and casting only (as in the game's cockpit view). */
 enum { CAPTURE_ROLE_SHIP, CAPTURE_ROLE_COCKPIT, CAPTURE_ROLE_EXTERIOR };
 
+/* Highest game_scene instance markings value. */
+#define CAPTURE_MAX_MARKINGS 255
+
 typedef struct CaptureInstance {
 	int   model, role;
+	int   markings;                 /* XWAU markings value (variant row), -1 when not given */
 	float position[3], rotation[3]; /* metres, camera axes; yaw/pitch/roll degrees */
 } CaptureInstance;
 

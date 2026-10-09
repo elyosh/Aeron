@@ -53,6 +53,38 @@ static AeronSceneMesh* create_cube(AeronCommandBuffer* cmd) {
 
 static int create_screen_textures(Fixture* f, AeronCommandBuffer* cmd);
 
+/* A model whose game_scene instances give markings values gets one row per
+ * markings value up to the highest: a used value shows the model's default
+ * skin for it (aeronSkinMarkings), any other its asset paint state, as the
+ * game maps markings. Others keep the asset variants. */
+static AeronSceneMesh* create_mesh(AeronCommandBuffer* cmd, const Fixture* f, int model_index,
+								   const AeronFlightModel* model, const char* path) {
+	bool used[CAPTURE_MAX_MARKINGS + 1] = { false };
+	int  highest                        = -1;
+	for (int i = 0; i < f->config.game.instance_count; ++i) {
+		const CaptureInstance* in = &f->config.game.instances[i];
+		if (in->model == model_index && in->markings >= 0) {
+			used[in->markings] = true;
+			highest            = in->markings > highest ? in->markings : highest;
+		}
+	}
+	if (highest < 0)
+		return AeronScene_MeshCreate(cmd, model, path, NULL);
+	const AeronGltfModel* render = &model->render;
+	uint32_t              variants[CAPTURE_MAX_MARKINGS + 1];
+	for (int m = 0; m <= highest; ++m) {
+		const uint32_t assets = render->asset_variant_count;
+		variants[m]           = render->variant_count ? ((uint32_t)m < assets ? (uint32_t)m : assets - 1u)
+													  : AERON_GLTF_NO_VARIANT;
+		if (used[m] && (uint32_t)m < render->skin_markings_count &&
+			render->skin_markings[m] != AERON_GLTF_NO_VARIANT)
+			variants[m] = render->skin_markings[m];
+	}
+	return AeronScene_MeshCreateWithVariants(
+		cmd, model, path, &(AeronSceneMeshVariants) { .variants = variants, .count = (uint32_t)highest + 1u },
+		NULL);
+}
+
 static int load_models(Fixture* f, AeronCommandBuffer* cmd) {
 	AeronVfs* vfs = AeronVfs_Create(&(AeronVfsConfig) { .asset_root = f->config.asset_root });
 	if (!vfs)
@@ -92,7 +124,7 @@ static int load_models(Fixture* f, AeronCommandBuffer* cmd) {
 			mesh->center[0]   = (model.bounds.min.x + model.bounds.max.x) * .5f;
 			mesh->center[1]   = (model.bounds.min.y + model.bounds.max.y) * .5f;
 			mesh->center[2]   = (model.bounds.min.z + model.bounds.max.z) * .5f;
-			mesh->mesh        = AeronScene_MeshCreate(cmd, &model, path, NULL);
+			mesh->mesh        = create_mesh(cmd, f, i, &model, path);
 			ok                = mesh->mesh != NULL;
 		}
 		Aeron_FlightModelFree(&model);
@@ -413,8 +445,9 @@ static void add_game_instances(AeronScene3D* scene, const Fixture* f, const Aero
 	for (int i = 0; i < f->config.game.instance_count; ++i) {
 		const CaptureInstance* in       = &f->config.game.instances[i];
 		AeronSceneMeshInstance instance = {
-			.mesh            = f->meshes[in->model].mesh,
-			.cull_mode       = (AeronCullMode)f->config.cull_mode,
+			.mesh      = f->meshes[in->model].mesh,
+			.cull_mode = (AeronCullMode)f->config.cull_mode,
+			.variant   = in->markings > 0 ? (uint32_t)in->markings : 0u,
 		};
 		if (in->role == CAPTURE_ROLE_SHIP)
 			place_ship(instance.transform, in);

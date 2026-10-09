@@ -190,7 +190,8 @@ typedef struct OptGltfLight {
  * its own material. Primitives without a composite in a variant show the
  * asset material of the variant's state. Images only composites use carry
  * the extras `aeronVariants` (their variant indices); the asset carries the
- * extras `aeronSkinMarkings` (the default markings map).
+ * extras `aeronSkinMarkings` (the default markings map) and
+ * `aeronAssetVariants` (the number of asset variants before them).
  */
 typedef struct OptGltfSkinLayer {
 	uint32_t skin;    /* index into OptGltfSkins.images rows */

@@ -221,7 +221,7 @@ static int load_game_instances(const AeronConfigNode* list, CaptureConfig* confi
 		fprintf(stderr, "game_scene.instances must list 1-%d instances\n", CAPTURE_MAX_INSTANCES);
 		return 0;
 	}
-	static const char* const keys[] = { "model", "role", "position", "rotation_degrees" };
+	static const char* const keys[] = { "model", "role", "position", "rotation_degrees", "markings" };
 	for (size_t i = 0; i < count; ++i) {
 		const AeronConfigNode* item = AeronConfigNode_SequenceGet(list, i);
 		CaptureInstance*       out  = &game->instances[i];
@@ -247,6 +247,13 @@ static int load_game_instances(const AeronConfigNode* list, CaptureConfig* confi
 												: CAPTURE_ROLE_SHIP;
 		if (out->role != CAPTURE_ROLE_SHIP && !config->screen_test) {
 			fprintf(stderr, "game_scene cockpit and exterior instances need screen_test's eye\n");
+			return 0;
+		}
+		const AeronConfigNode* markings = AeronConfigNode_MapGet(item, "markings");
+		out->markings                   = markings ? (int)AeronConfigNode_Int(markings, -1) : -1;
+		if (markings && (AeronConfigNode_Type(markings) != AERON_CONFIG_INT || out->markings < 0 ||
+						 out->markings > CAPTURE_MAX_MARKINGS)) {
+			fprintf(stderr, "game_scene.instances[%zu].markings must be 0..%d\n", i, CAPTURE_MAX_MARKINGS);
 			return 0;
 		}
 		const AeronConfigNode* position = AeronConfigNode_MapGet(item, "position");

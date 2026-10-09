@@ -70,6 +70,11 @@ AeronTexture* Aeron_ImageUploadKtx2(AeronCommandBuffer* cmd, const struct Ktx2* 
 AeronTexture* Aeron_ImageUploadKtx2Array(AeronCommandBuffer* cmd, const struct Ktx2* ktx,
 										 const char* debug_name);
 
+/* Same, with the layers of several KTX2 blocks in order (one layer for a
+ * plain 2D KTX2). The blocks must agree in size, format and level count. */
+AeronTexture* Aeron_ImageUploadKtx2Layers(AeronCommandBuffer* cmd, const struct Ktx2* const* parts,
+										  uint32_t part_count, const char* debug_name);
+
 /* Upload an RGBA8 image from memory with the same alpha, color-space and mip
  * handling used by runtime atlases and fonts. The caller owns the texture. */
 AeronTexture* Aeron_ImageUploadRgba8(AeronCommandBuffer* cmd, const uint8_t* rgba, int width, int height,

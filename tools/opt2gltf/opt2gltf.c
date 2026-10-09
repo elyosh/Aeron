@@ -2984,7 +2984,7 @@ static bool build_memory(const opt_file_t* opt, const char* basename, const OptG
 			else
 				json_append(&json, &len, &cap, "null");
 		}
-		json_append(&json, &len, &cap, "]}");
+		json_append(&json, &len, &cap, "],\"aeronAssetVariants\":%d}", max_state_count);
 		if (!json)
 			goto fail;
 		document->data.asset.extras.data = gb_keep_string(build, json);

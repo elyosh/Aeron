@@ -210,23 +210,32 @@ void Aeron_ImageCacheClearOverrides(AeronImageCache* cache) {
 	}
 }
 
-/* `as_array` creates a 2D array texture, of one layer when the KTX2 is not
- * an array. Otherwise a KTX2 array is rejected. */
-static AeronTexture* upload_ktx2(AeronCommandBuffer* cmd, const Ktx2* ktx, bool as_array,
-								 const char* debug_name) {
-	if (!cmd || !ktx)
+/* `as_array` creates a 2D array texture of the layers of every part, in
+ * order (one layer for a part that is not a KTX2 array); the parts must
+ * agree in size, format and level count. Otherwise the single part's
+ * texture, of which a KTX2 array is rejected. */
+static AeronTexture* upload_ktx2(AeronCommandBuffer* cmd, const Ktx2* const* parts, uint32_t part_count,
+								 bool as_array, const char* debug_name) {
+	if (!cmd || !parts || !part_count || !parts[0] || (!as_array && part_count != 1))
 		return NULL;
-	int w      = ktx2_width(ktx);
-	int h      = ktx2_height(ktx);
-	int nl     = ktx2_level_count(ktx);
-	int faces  = ktx2_face_count(ktx);
-	int layers = ktx2_layer_count(ktx);
+	const Ktx2* ktx    = parts[0];
+	int         w      = ktx2_width(ktx);
+	int         h      = ktx2_height(ktx);
+	int         nl     = ktx2_level_count(ktx);
+	int         faces  = ktx2_face_count(ktx);
+	int         layers = 0;
+	for (uint32_t p = 0; p < part_count; p++) {
+		const Ktx2* part = parts[p];
+		if (!part || ktx2_width(part) != w || ktx2_height(part) != h || ktx2_level_count(part) != nl ||
+			ktx2_format(part) != ktx2_format(ktx) || ktx2_face_count(part) != faces) {
+			Aeron_LogError("aeron.scene", "KTX2 part %u does not match the first (%s)", p,
+						   debug_name ? debug_name : "<unnamed>");
+			return NULL;
+		}
+		layers += ktx2_layer_count(part) > 0 ? ktx2_layer_count(part) : (as_array ? 1 : 0);
+	}
 	if (w <= 0 || h <= 0 || nl <= 0 || (layers > 0 && !as_array) || (as_array && faces != 1))
 		return NULL;
-	if (as_array) {
-		layers = layers > 0 ? layers : 1;
-		faces  = layers; /* the uploads below walk layers like faces */
-	}
 
 	AeronTexture* tex = Aeron_CreateTexture(&(AeronTextureDesc) {
 		.width       = w,
@@ -244,7 +253,8 @@ static AeronTexture* upload_ktx2(AeronCommandBuffer* cmd, const Ktx2* ktx, bool 
 		return NULL;
 	}
 
-	const uint64_t upload_count64 = (uint64_t)nl * (uint64_t)faces;
+	/* Arrays walk each part's layers like faces. */
+	const uint64_t upload_count64 = (uint64_t)nl * (uint64_t)(as_array ? layers : faces);
 	if (upload_count64 == 0 || upload_count64 > UINT32_MAX ||
 		upload_count64 > SIZE_MAX / sizeof(AeronTextureUploadDesc)) {
 		Aeron_LogError("aeron.scene", "invalid KTX2 mip/face count (%s)",
@@ -260,26 +270,32 @@ static AeronTexture* upload_ktx2(AeronCommandBuffer* cmd, const Ktx2* ktx, bool 
 	}
 
 	uint32_t upload_index = 0;
-	for (int i = 0; i < nl; i++) {
-		for (int f = 0; f < faces; f++) {
-			Ktx2Level lv = ktx2_level_face(ktx, i, f);
-			if (!lv.data || lv.size == 0 || lv.size > UINT32_MAX) {
-				Aeron_LogError("aeron.scene", "invalid KTX2 level %d face %d (%s)", i, f,
-							   debug_name ? debug_name : "<unnamed>");
-				free(uploads);
-				Aeron_DestroyTexture(tex);
-				return NULL;
+	int      first_layer  = 0;
+	for (uint32_t p = 0; p < part_count; p++) {
+		const int part_faces =
+			as_array ? (ktx2_layer_count(parts[p]) > 0 ? ktx2_layer_count(parts[p]) : 1) : faces;
+		for (int i = 0; i < nl; i++) {
+			for (int f = 0; f < part_faces; f++) {
+				Ktx2Level lv = ktx2_level_face(parts[p], i, f);
+				if (!lv.data || lv.size == 0 || lv.size > UINT32_MAX) {
+					Aeron_LogError("aeron.scene", "invalid KTX2 level %d face %d (%s)", i, f,
+								   debug_name ? debug_name : "<unnamed>");
+					free(uploads);
+					Aeron_DestroyTexture(tex);
+					return NULL;
+				}
+				uploads[upload_index++] = (AeronTextureUploadDesc) {
+					.texture   = tex,
+					.mip_level = i,
+					.layer     = first_layer + f,
+					.width     = lv.width,
+					.height    = lv.height,
+					.raw_data  = lv.data,
+					.raw_size  = (uint32_t)lv.size,
+				};
 			}
-			uploads[upload_index++] = (AeronTextureUploadDesc) {
-				.texture   = tex,
-				.mip_level = i,
-				.layer     = f,
-				.width     = lv.width,
-				.height    = lv.height,
-				.raw_data  = lv.data,
-				.raw_size  = (uint32_t)lv.size,
-			};
 		}
+		first_layer += part_faces;
 	}
 	if (!Aeron_UploadTextureBatchCmd(cmd, uploads, upload_count)) {
 		Aeron_LogError("aeron.scene", "KTX2 mip/face batch upload failed (%s)",
@@ -294,11 +310,16 @@ static AeronTexture* upload_ktx2(AeronCommandBuffer* cmd, const Ktx2* ktx, bool 
 }
 
 AeronTexture* Aeron_ImageUploadKtx2(AeronCommandBuffer* cmd, const Ktx2* ktx, const char* debug_name) {
-	return upload_ktx2(cmd, ktx, false, debug_name);
+	return upload_ktx2(cmd, &ktx, 1, false, debug_name);
 }
 
 AeronTexture* Aeron_ImageUploadKtx2Array(AeronCommandBuffer* cmd, const Ktx2* ktx, const char* debug_name) {
-	return upload_ktx2(cmd, ktx, true, debug_name);
+	return upload_ktx2(cmd, &ktx, 1, true, debug_name);
+}
+
+AeronTexture* Aeron_ImageUploadKtx2Layers(AeronCommandBuffer* cmd, const Ktx2* const* parts,
+										  uint32_t part_count, const char* debug_name) {
+	return upload_ktx2(cmd, parts, part_count, true, debug_name);
 }
 
 AeronTexture* Aeron_ImageUploadRgba8(AeronCommandBuffer* cmd, const uint8_t* rgba, int width, int height,

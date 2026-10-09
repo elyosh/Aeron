@@ -58,6 +58,55 @@ void AeronScene_MeshDestroy(AeronSceneMesh* m) {
 	free(m);
 }
 
+/* ===== Variant choice ================================================
+ *
+ * Without a choice (`set` NULL) the rows are the model's asset variants and
+ * no variant group is loaded; with one, row i is variant set->variants[i]
+ * and the groups those variants use are loaded. A loaded group's base-colour
+ * layers follow the core layers in group order, skipping groups not loaded. */
+static uint32_t variant_rows(const AeronGltfModel* model, const AeronSceneMeshVariants* set) {
+	if (set)
+		return set->count;
+	return model->variant_count > 0 && model->asset_variant_count > 0 ? model->asset_variant_count : 1u;
+}
+
+/* The prim_variant_material column row `row` reads. */
+static uint32_t variant_column(const AeronGltfModel* model, const AeronSceneMeshVariants* set, uint32_t row) {
+	if (set)
+		return set->variants[row] == AERON_GLTF_NO_VARIANT ? 0u : set->variants[row];
+	return model->variant_count > 0 ? row : 0u;
+}
+
+static bool group_loaded(const AeronGltfModel* model, const AeronSceneMeshVariants* set, uint32_t group) {
+	if (!set)
+		return false;
+	const AeronGltfVariantGroup* g = &model->groups[group];
+	for (uint32_t row = 0; row < set->count; ++row)
+		for (uint32_t v = 0; v < g->variant_count; ++v)
+			if (g->variants[v] == set->variants[row])
+				return true;
+	return false;
+}
+
+/* The uploaded layer of base-colour page `page`: a core page is kept, a
+ * loaded group's page moves to its compacted layer, a page of a group not
+ * loaded becomes 0 (no row shows its materials); UINT32_MAX past the
+ * groups. */
+static uint32_t base_color_layer(const AeronGltfModel* model, const AeronSceneMeshVariants* set,
+								 uint32_t core_layers, uint32_t page) {
+	if (page < core_layers)
+		return page;
+	uint32_t first = core_layers, compacted = core_layers;
+	for (uint32_t g = 0; g < model->group_count; ++g) {
+		const bool loaded = group_loaded(model, set, g);
+		if (page < first + model->groups[g].layers)
+			return loaded ? compacted + (page - first) : 0u;
+		first += model->groups[g].layers;
+		compacted += loaded ? model->groups[g].layers : 0u;
+	}
+	return UINT32_MAX;
+}
+
 /* Copy factors and atlas transforms into the shader's 160-byte storage
  * record. The temporary array is released immediately after upload. */
 /* The material primitives without one use (pbr_default_material's values):
@@ -78,7 +127,8 @@ static void populate_default_material_entry(AeronPbrMaterialEntry* e) {
 /* Fills the mesh's materials, then the default one after them (index
  * material_count), so shaders read any primitive's material from the
  * buffer. Returns the material count. */
-static uint32_t populate_material_entries(AeronPbrMaterialEntry* entries, const AeronGltfModel* src) {
+static uint32_t populate_material_entries(AeronPbrMaterialEntry* entries, const AeronGltfModel* src,
+										  const AeronSceneMeshVariants* set, uint32_t core_layers) {
 	uint32_t n = src->material_count;
 	if (n > AERON_GLTF_MAX_MATERIALS) {
 		n = AERON_GLTF_MAX_MATERIALS;
@@ -107,7 +157,10 @@ static uint32_t populate_material_entries(AeronPbrMaterialEntry* entries, const 
 		e->specular[2]        = m->specular_color_factor[2];
 		e->specular[3]        = m->specular_factor;
 		for (int c = 0; c < AERON_GLTF_CHANNEL_COUNT; c++) {
-			e->atlas[c] = (m->atlas_page[c] & 0xFFFu) | (m->atlas_max_lod[c] & 0xFu) << 12;
+			const uint32_t page = c == AERON_GLTF_CHANNEL_BASE_COLOR && src->group_count
+									  ? base_color_layer(src, set, core_layers, m->atlas_page[c])
+									  : m->atlas_page[c];
+			e->atlas[c]         = (page & 0xFFFu) | (m->atlas_max_lod[c] & 0xFu) << 12;
 		}
 
 		/* flags mirror UV-xform scale presence (scale.xy > 0), matching
@@ -139,7 +192,8 @@ static uint32_t populate_material_entries(AeronPbrMaterialEntry* entries, const 
 	return n;
 }
 
-static int build_material_storage(AeronSceneMesh* s, const AeronGltfModel* model, const char* name,
+static int build_material_storage(AeronSceneMesh* s, const AeronGltfModel* model,
+								  const AeronSceneMeshVariants* set, uint32_t core_layers, const char* name,
 								  AeronPbrMaterialEntry** out_entries, uint32_t* out_bytes) {
 	/* The mesh's materials, then the default one. */
 	const uint32_t allocation_count =
@@ -155,7 +209,7 @@ static int build_material_storage(AeronSceneMesh* s, const AeronGltfModel* model
 	if (!entries) {
 		return 0;
 	}
-	s->material_count    = populate_material_entries(entries, model);
+	s->material_count    = populate_material_entries(entries, model, set, core_layers);
 	const uint32_t bytes = allocation_count * (uint32_t)sizeof *entries;
 	s->material_buffer   = Aeron_CreateBuffer(&(AeronBufferDesc) {
 		.size       = bytes,
@@ -215,8 +269,9 @@ static int build_screen_storage(AeronSceneMesh* s, const AeronGltfModel* model, 
 	return 1;
 }
 
-static int build_variant_storage(AeronSceneMesh* s, const AeronGltfModel* model, const char* name,
-								 uint32_t** out_values, uint32_t* out_bytes) {
+static int build_variant_storage(AeronSceneMesh* s, const AeronGltfModel* model,
+								 const AeronSceneMeshVariants* set, const char* name, uint32_t** out_values,
+								 uint32_t* out_bytes) {
 	const uint32_t primitive_count = model->total_prim_count;
 	if (!out_values || !out_bytes) {
 		return 0;
@@ -224,7 +279,7 @@ static int build_variant_storage(AeronSceneMesh* s, const AeronGltfModel* model,
 	*out_values = NULL;
 	*out_bytes                 = 0;
 	const uint32_t groups      = primitive_count > 0 ? (primitive_count + 3u) / 4u : 1u;
-	const uint32_t rows        = model->variant_slots > 0 ? model->variant_slots : 1u;
+	const uint32_t rows        = variant_rows(model, set);
 	const size_t   value_count = (size_t)groups * rows * 4u;
 	if (value_count > UINT32_MAX / sizeof(uint32_t)) {
 		return 0;
@@ -237,10 +292,11 @@ static int build_variant_storage(AeronSceneMesh* s, const AeronGltfModel* model,
 		values[i] = AERON_GLTF_NO_MATERIAL;
 	}
 	if (model->prim_variant_material && model->variant_slots > 0) {
-		for (uint32_t variant = 0; variant < rows; ++variant) {
+		for (uint32_t row = 0; row < rows; ++row) {
+			const uint32_t column = variant_column(model, set, row);
 			for (uint32_t primitive = 0; primitive < primitive_count; ++primitive) {
-				values[((size_t)variant * groups + primitive / 4u) * 4u + primitive % 4u] =
-					model->prim_variant_material[(size_t)primitive * model->variant_slots + variant];
+				values[((size_t)row * groups + primitive / 4u) * 4u + primitive % 4u] =
+					model->prim_variant_material[(size_t)primitive * model->variant_slots + column];
 			}
 		}
 	}
@@ -260,8 +316,49 @@ static int build_variant_storage(AeronSceneMesh* s, const AeronGltfModel* model,
 	return 1;
 }
 
-AeronSceneMesh* AeronScene_MeshCreate(AeronCommandBuffer* cmd, const AeronFlightModel* flight_model,
-									  const char* debug_name, AeronSceneMeshCreateStatus* status) {
+/* The base-colour atlas: the core layers, then those of the variant groups
+ * `set` uses. Returns NULL on failure (logged). */
+static AeronTexture* upload_base_color_groups(AeronCommandBuffer* cmd, const AeronGltfModel* model,
+											  const AeronSceneMeshVariants* set, const Ktx2* core,
+											  const char* label) {
+	const Ktx2** parts = (const Ktx2**)calloc((size_t)model->group_count + 1u, sizeof *parts);
+	if (!parts) {
+		return NULL;
+	}
+	uint32_t count = 0, layers = 0;
+	size_t   bytes = 0;
+	bool     ok    = true;
+	parts[count++] = core;
+	for (uint32_t g = 0; ok && g < model->group_count; ++g) {
+		if (!group_loaded(model, set, g)) {
+			continue;
+		}
+		const AeronGltfVariantGroup* group = &model->groups[g];
+		Ktx2*                        part  = ktx2_open_mem(group->ktx2.data, group->ktx2.size, label);
+		ok                                 = part && ktx2_layer_count(part) == (int)group->layers;
+		if (part) {
+			parts[count++] = part;
+		}
+		layers += group->layers;
+		bytes += group->ktx2.size;
+		if (!ok) {
+			Aeron_LogError("aeron.scene", "%s: variant group %u is not a %u-layer KTX2", label, g,
+						   group->layers);
+		}
+	}
+	AeronTexture* texture = ok ? Aeron_ImageUploadKtx2Layers(cmd, parts, count, label) : NULL;
+	Aeron_LogInfo("aeron.scene", "%s: %u variant rows, %u of %u variant groups (%u layers, %zu bytes)", label,
+				  set->count, count - 1u, model->group_count, layers, bytes);
+	for (uint32_t i = 1; i < count; ++i) {
+		ktx2_close((Ktx2*)parts[i]);
+	}
+	free(parts);
+	return texture;
+}
+
+static AeronSceneMesh* mesh_create(AeronCommandBuffer* cmd, const AeronFlightModel* flight_model,
+								   const char* debug_name, const AeronSceneMeshVariants* set,
+								   AeronSceneMeshCreateStatus* status) {
 	if (status) {
 		*status = AERON_SCENE_MESH_CREATE_RESOURCE_FAILURE;
 	}
@@ -270,6 +367,20 @@ AeronSceneMesh* AeronScene_MeshCreate(AeronCommandBuffer* cmd, const AeronFlight
 	}
 	const AeronGltfModel* model = &flight_model->render;
 	const char*           name  = debug_name ? debug_name : "<mesh>";
+	if (set) {
+		bool valid = set->variants && set->count > 0;
+		for (uint32_t row = 0; valid && row < set->count; ++row)
+			valid = set->variants[row] == AERON_GLTF_NO_VARIANT || set->variants[row] < model->variant_count;
+		if (!valid) {
+			Aeron_LogError("aeron.scene", "%s: invalid variant choice", name);
+			if (status) {
+				*status = AERON_SCENE_MESH_CREATE_INVALID_SOURCE;
+			}
+			return NULL;
+		}
+	}
+	/* Base-colour core layers, known once that atlas is open. */
+	uint32_t core_layers = 0;
 	if (model->mask_index_offset != model->opaque_index_count ||
 		model->mask_index_offset > model->index_count ||
 		model->mask_index_count > model->index_count - model->mask_index_offset ||
@@ -319,11 +430,21 @@ AeronSceneMesh* AeronScene_MeshCreate(AeronCommandBuffer* cmd, const AeronFlight
 			close_channel_payloads(channel_payloads);
 			return NULL;
 		}
-		/* Every binding must name an existing layer of its atlas. */
-		const uint32_t layers =
+		/* Every binding must name an existing layer of its atlas; base-colour
+		 * pages after the variant groups' remapping. */
+		uint32_t layers =
 			ktx2_layer_count(channel_payloads[c]) > 0 ? (uint32_t)ktx2_layer_count(channel_payloads[c]) : 1u;
+		const bool grouped = c == AERON_GLTF_CHANNEL_BASE_COLOR && model->group_count;
+		if (c == AERON_GLTF_CHANNEL_BASE_COLOR) {
+			core_layers = layers;
+			for (uint32_t g = 0; g < model->group_count; ++g)
+				layers += group_loaded(model, set, g) ? model->groups[g].layers : 0u;
+		}
 		for (uint32_t index = 0; index < model->material_count; ++index) {
-			if (model->materials[index].atlas_page[c] >= layers) {
+			const uint32_t page =
+				grouped ? base_color_layer(model, set, core_layers, model->materials[index].atlas_page[c])
+						: model->materials[index].atlas_page[c];
+			if (page >= layers) {
 				Aeron_LogError("aeron.scene", "%s: material %u samples %s atlas page %u of %u", name, index,
 							   channel_name(c), model->materials[index].atlas_page[c], layers);
 				if (status) {
@@ -450,7 +571,11 @@ AeronSceneMesh* AeronScene_MeshCreate(AeronCommandBuffer* cmd, const AeronFlight
 		}
 		char label[96];
 		snprintf(label, sizeof label, "%s.%s", name, channel_name(c));
-		s->atlas[c] = Aeron_ImageUploadKtx2Array(cmd, channel_payloads[c], label);
+		if (c == AERON_GLTF_CHANNEL_BASE_COLOR && set && model->group_count) {
+			s->atlas[c] = upload_base_color_groups(cmd, model, set, channel_payloads[c], label);
+		} else {
+			s->atlas[c] = Aeron_ImageUploadKtx2Array(cmd, channel_payloads[c], label);
+		}
 		ktx2_close(channel_payloads[c]);
 		channel_payloads[c] = NULL;
 		if (!s->atlas[c]) {
@@ -462,8 +587,8 @@ AeronSceneMesh* AeronScene_MeshCreate(AeronCommandBuffer* cmd, const AeronFlight
 	}
 
 	/* ---- Immutable material and variant storage ---- */
-	s->variant_count              = model->variant_count;
-	s->variant_slots              = model->variant_slots;
+	s->variant_slots              = variant_rows(model, set);
+	s->variant_count              = model->variant_count > 0 ? s->variant_slots : 0u;
 	s->total_prim_count           = model->total_prim_count;
 	s->all_materials_single_sided = true;
 	for (uint32_t index = 0; index < model->material_count; ++index) {
@@ -480,8 +605,9 @@ AeronSceneMesh* AeronScene_MeshCreate(AeronCommandBuffer* cmd, const AeronFlight
 	snprintf(material_name, sizeof material_name, "%s.materials", name);
 	snprintf(variant_name, sizeof variant_name, "%s.material_variants", name);
 	snprintf(screen_name, sizeof screen_name, "%s.screen_rects", name);
-	if (!build_material_storage(s, model, material_name, &material_entries, &material_bytes) ||
-		!build_variant_storage(s, model, variant_name, &variant_values, &variant_bytes) ||
+	if (!build_material_storage(s, model, set, core_layers, material_name, &material_entries,
+								&material_bytes) ||
+		!build_variant_storage(s, model, set, variant_name, &variant_values, &variant_bytes) ||
 		!build_screen_storage(s, model, screen_name, &screen_rects, &screen_bytes)) {
 		free(material_entries);
 		free(variant_values);
@@ -559,4 +685,16 @@ AeronSceneMesh* AeronScene_MeshCreate(AeronCommandBuffer* cmd, const AeronFlight
 		*status = AERON_SCENE_MESH_CREATE_SUCCESS;
 	}
 	return s;
+}
+
+AeronSceneMesh* AeronScene_MeshCreate(AeronCommandBuffer* cmd, const AeronFlightModel* model,
+									  const char* debug_name, AeronSceneMeshCreateStatus* status) {
+	return mesh_create(cmd, model, debug_name, NULL, status);
+}
+
+AeronSceneMesh* AeronScene_MeshCreateWithVariants(AeronCommandBuffer* cmd, const AeronFlightModel* model,
+												  const char*                   debug_name,
+												  const AeronSceneMeshVariants* variants,
+												  AeronSceneMeshCreateStatus*   status) {
+	return mesh_create(cmd, model, debug_name, variants, status);
 }

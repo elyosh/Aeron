@@ -100,6 +100,25 @@ typedef struct AeronGltfChannelKtx2 {
 	size_t   size;
 } AeronGltfChannelKtx2;
 
+/* ===== Variant groups ===============================================
+ *
+ * Base-colour pages only some variants use (XWAU skins), cooked as separate
+ * KTX2 blocks and listed in the asset extras `aeronVariantGroups`. Their
+ * pages follow the core base-colour pages in group order; a mesh uploads
+ * only the groups of the variants it shows (AeronScene_MeshCreateWithVariants).
+ * The asset extras also give `aeronAssetVariants`, the number of leading
+ * variants that are the model's own paint states (the rows of a mesh built
+ * without a variant choice), and `aeronSkinMarkings`, the variant name each
+ * markings value shows by default. */
+#define AERON_GLTF_NO_VARIANT 0xFFFFFFFFu
+
+typedef struct AeronGltfVariantGroup {
+	AeronGltfChannelKtx2 ktx2;     /* base-colour layers */
+	uint32_t             layers;   /* its layer count */
+	uint32_t*            variants; /* the variants using it */
+	uint32_t             variant_count;
+} AeronGltfVariantGroup;
+
 typedef enum AeronGltfEmissiveMode {
 	/* Standard glTF behavior: emissive RGB is added to the lit material. */
 	AERON_GLTF_EMISSIVE_ADDITIVE = 0,
@@ -236,6 +255,17 @@ typedef struct AeronGltfModel {
 	uint32_t  variant_slots; /* max(variant_count, 1) */
 	uint32_t  total_prim_count;
 	uint32_t* prim_variant_material;
+	/* Variant names ([variant_count], NULL for an unnamed variant). */
+	char** variant_names;
+	/* Asset paint-state variants: aeronAssetVariants, else variant_count. */
+	uint32_t asset_variant_count;
+	/* Default variant per markings value (aeronSkinMarkings), or
+	 * AERON_GLTF_NO_VARIANT for an unskinned one. */
+	uint32_t  skin_markings_count;
+	uint32_t* skin_markings;
+	/* Base-colour variant groups. */
+	uint32_t               group_count;
+	AeronGltfVariantGroup* groups;
 
 	/* Screen rectangles of every screen material, and the OR of their
 	 * `hide` masks. */

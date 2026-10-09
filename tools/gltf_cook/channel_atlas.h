@@ -69,11 +69,17 @@ typedef struct ChannelAtlas {
 	int          rect_capacity;
 
 	int      width, height; /* page dimensions; set by channel_atlas_pack */
+	int      page;          /* the power-of-two page size P; set by channel_atlas_pack */
 	int      page_count;    /* array layers; set by channel_atlas_pack */
 	uint8_t* rgba;          /* page_count pages of width*height*4 bytes; set by materialize */
 
 	int mip_count; /* level count to generate; 0 = the complete chain */
 	int gutter;    /* footprint gutter and alignment, in texels */
+
+	/* Set before channel_atlas_pack to pack onto pages of exactly this
+	 * size (multiples of the gutter), as another atlas whose array this
+	 * one joins; 0 packs as described there. */
+	int fixed_width, fixed_height;
 } ChannelAtlas;
 
 void channel_atlas_init(ChannelAtlas* ca, int channel);
@@ -86,9 +92,14 @@ int channel_atlas_add_rect(ChannelAtlas* ca, const void* key, int src_w, int src
 
 /* Plan the pages. The page size P is `page_size` raised to the next power
  * of two of the largest source. A single shared page with no dedicated
- * layer is trimmed to its occupied bounds; otherwise every page is P×P.
+ * layer is trimmed to its occupied bounds; otherwise every page is P×P, or
+ * (P + P/16)² when there is no dedicated layer and that size needs fewer
+ * texels (the gutters keep power-of-two sources from tiling P).
  * `page_size` must be a power of two ≥ 128 and ≥ 8 × `gutter`, and
- * `gutter` a power of two in [4, 32]. Returns false on invalid arguments or OOM. */
+ * `gutter` a power of two in [4, 32]. With fixed_width/fixed_height, every
+ * page has that size instead and a source needing a dedicated layer must
+ * find a P×P page. Returns false on invalid arguments, OOM or a source
+ * that does not fit. */
 bool channel_atlas_pack(ChannelAtlas* ca, int page_size, int gutter);
 
 /* Allocate ca.rgba and fill every footprint and dedicated layer. Returns
