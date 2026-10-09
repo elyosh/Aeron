@@ -21,10 +21,12 @@ typedef struct OverlayFragmentUniforms {
 	float uv_xform[4];
 	float uv_rect[4];
 	float color[4];
+	float layer[4]; /* array textures: layer, max mip level, clamp outside uv_rect */
 } OverlayFragmentUniforms;
 
 void AeronScene_AddMeshOverlay(AeronScene3D* scene, const AeronSceneMeshOverlayDesc* overlay) {
-	if (!scene || !overlay || !overlay->vertices || overlay->vertex_count == 0 || !overlay->texture) {
+	if (!scene || !overlay || !overlay->vertices || overlay->vertex_count == 0 ||
+		(!overlay->texture && !overlay->texture_array)) {
 		return;
 	}
 	if (scene->overlay_count >= AERON_SCENE_MAX_MESH_OVERLAYS ||
@@ -55,7 +57,11 @@ void AeronScene_AddMeshOverlay(AeronScene3D* scene, const AeronSceneMeshOverlayD
 	}
 	AeronSceneMeshOverlayEntry* entry = &scene->overlays[scene->overlay_count++];
 	memset(entry, 0, sizeof *entry);
-	entry->texture      = overlay->texture;
+	entry->texture      = overlay->texture_array ? overlay->texture_array : overlay->texture;
+	entry->array        = overlay->texture_array != NULL;
+	entry->layer        = overlay->texture_layer;
+	entry->max_lod      = overlay->texture_max_lod;
+	entry->clamp        = overlay->texture_clamp != 0;
 	entry->mesh_table   = overlay->mesh_table;
 	entry->first_vertex = scene->overlay_vertex_count;
 	entry->vertex_count = overlay->vertex_count;
@@ -71,8 +77,8 @@ void AeronScene_AddMeshOverlay(AeronScene3D* scene, const AeronSceneMeshOverlayD
 	scene->overlay_vertex_count = required_vertex_count;
 }
 
-static AeronGraphicsPipeline* create_overlay_pipeline(AeronScene3D* scene, int blend_mode,
-													  AeronCullMode cull_mode) {
+static AeronGraphicsPipeline* create_overlay_pipeline(AeronScene3D* scene, AeronShader* fragment_shader,
+													  int blend_mode, AeronCullMode cull_mode) {
 	AeronVertexAttributeDesc vertex_attributes[3] = {
 		{ .location    = 0,
 		  .buffer_slot = 0,
@@ -119,7 +125,7 @@ static AeronGraphicsPipeline* create_overlay_pipeline(AeronScene3D* scene, int b
 	}
 	return Aeron_CreateGraphicsPipeline(&(AeronGraphicsPipelineDesc) {
 		.vertex_shader       = scene->overlay_vs,
-		.fragment_shader     = scene->overlay_fs,
+		.fragment_shader     = fragment_shader,
 		.primitive_type      = AERON_PRIMITIVE_TRIANGLES,
 		.cull_mode           = cull_mode,
 		.vertex_buffers      = &vertex_buffer_layout,
@@ -143,13 +149,18 @@ static int ensure_overlay_resources(AeronScene3D* scene) {
 		AeronSceneInternal_CompileShader("scene_mesh_overlay.vert", AERON_SHADER_STAGE_VERTEX, 0, 1, 1);
 	scene->overlay_fs =
 		AeronSceneInternal_CompileShader("scene_mesh_overlay.frag", AERON_SHADER_STAGE_FRAGMENT, 1, 1, 0);
+	scene->overlay_array_fs = AeronSceneInternal_CompileShader("scene_mesh_overlay_array.frag",
+															   AERON_SHADER_STAGE_FRAGMENT, 1, 1, 0);
 	if (!scene->overlay_vs || !scene->overlay_fs) {
 		return 0;
 	}
 	for (int blend_mode = 0; blend_mode < 3; blend_mode++) {
 		for (int cull_mode = 0; cull_mode < 3; cull_mode++) {
 			scene->overlay_pipes[blend_mode][cull_mode] =
-				create_overlay_pipeline(scene, blend_mode, (AeronCullMode)cull_mode);
+				create_overlay_pipeline(scene, scene->overlay_fs, blend_mode, (AeronCullMode)cull_mode);
+			if (scene->overlay_array_fs)
+				scene->overlay_array_pipes[blend_mode][cull_mode] = create_overlay_pipeline(
+					scene, scene->overlay_array_fs, blend_mode, (AeronCullMode)cull_mode);
 		}
 	}
 	return scene->overlay_pipes[0][0] != NULL;
@@ -191,7 +202,9 @@ void AeronSceneMeshOverlay_Draw(AeronScene3D* scene, AeronRenderPass* render_pas
 	Aeron_BindStorageBuffer(render_pass, AERON_SHADER_STAGE_VERTEX, 0, scene->mesh_table_buffer);
 	for (uint32_t overlay_index = 0; overlay_index < scene->overlay_count; overlay_index++) {
 		const AeronSceneMeshOverlayEntry* overlay  = &scene->overlays[overlay_index];
-		AeronGraphicsPipeline*            pipeline = scene->overlay_pipes[overlay->blend][overlay->cull_mode];
+		AeronGraphicsPipeline* pipeline = overlay->array
+											  ? scene->overlay_array_pipes[overlay->blend][overlay->cull_mode]
+											  : scene->overlay_pipes[overlay->blend][overlay->cull_mode];
 		if (!pipeline) {
 			continue;
 		}
@@ -209,6 +222,10 @@ void AeronSceneMeshOverlay_Draw(AeronScene3D* scene, AeronRenderPass* render_pas
 		memcpy(fragment_uniforms.uv_xform, overlay->uv_xform, sizeof fragment_uniforms.uv_xform);
 		memcpy(fragment_uniforms.uv_rect, overlay->uv_rect, sizeof fragment_uniforms.uv_rect);
 		memcpy(fragment_uniforms.color, overlay->color, sizeof fragment_uniforms.color);
+		fragment_uniforms.layer[0] = (float)overlay->layer;
+		fragment_uniforms.layer[1] = (float)overlay->max_lod;
+		fragment_uniforms.layer[2] = overlay->clamp ? 1.0f : 0.0f;
+		fragment_uniforms.layer[3] = 0.0f;
 		Aeron_BindUniformData(render_pass, AERON_SHADER_STAGE_FRAGMENT, 0, &fragment_uniforms,
 							  sizeof fragment_uniforms);
 		Aeron_BindTextureSampler(render_pass, AERON_SHADER_STAGE_FRAGMENT, 0, overlay->texture,
@@ -226,6 +243,9 @@ void AeronSceneMeshOverlay_Release(AeronScene3D* scene) {
 			if (scene->overlay_pipes[blend_mode][cull_mode]) {
 				Aeron_DestroyGraphicsPipeline(scene->overlay_pipes[blend_mode][cull_mode]);
 			}
+			if (scene->overlay_array_pipes[blend_mode][cull_mode]) {
+				Aeron_DestroyGraphicsPipeline(scene->overlay_array_pipes[blend_mode][cull_mode]);
+			}
 		}
 	}
 	if (scene->overlay_vs) {
@@ -233,6 +253,9 @@ void AeronSceneMeshOverlay_Release(AeronScene3D* scene) {
 	}
 	if (scene->overlay_fs) {
 		Aeron_DestroyShader(scene->overlay_fs);
+	}
+	if (scene->overlay_array_fs) {
+		Aeron_DestroyShader(scene->overlay_array_fs);
 	}
 	if (scene->overlay_vb) {
 		Aeron_DestroyBuffer(scene->overlay_vb);

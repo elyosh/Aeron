@@ -1,6 +1,7 @@
 #include "aeron/asset/flight_model.h"
 #include "aeron/asset/opt_model.h"
 #include "aeron/scene/image_cache.h"
+#include "aeron/scene/mesh_overlay.h"
 #include "capture.h"
 
 #include <SDL3/SDL.h>
@@ -93,6 +94,7 @@ static int load_models(Fixture* f, AeronCommandBuffer* cmd) {
 		f->effect_atlas = AeronEffectAtlas_Create(vfs, AERON_VFS_ROOT_ASSET, f->config.effect_dir);
 		if (!f->effect_atlas)
 			return 0;
+		f->effect_data = AeronEffectData_Load(f->effect_atlas, cmd);
 	}
 	int ok = 1;
 	for (int i = 0; ok && i < f->config.model_count; ++i) {
@@ -176,6 +178,11 @@ int Fixture_Create(Fixture* f, const CaptureConfig* config) {
 		return 0;
 	}
 	AeronEffectAtlas_Commit(f->effect_atlas);
+	if (config->blast_image[0] && !f->effect_data) {
+		Aeron_LogError("scene_capture", "blast_mark: no effects.yaml under '%s'", config->effect_dir);
+		Fixture_Destroy(f);
+		return 0;
+	}
 	AeronScene_SetEffectAtlas(f->scene, f->effect_atlas);
 	AeronScene_SetEffectAtlas(f->reference_scene, f->effect_atlas);
 	float       background = config->model_count ? 0 : .005f;
@@ -291,6 +298,7 @@ void Fixture_Destroy(Fixture* f) {
 	AeronScene_Destroy(f->reference_scene);
 	for (int i = 0; i < CAPTURE_MAX_MODELS; ++i)
 		AeronScene_MeshDestroy(f->meshes[i].mesh);
+	AeronEffectData_Destroy(f->effect_data);
 	AeronEffectAtlas_Destroy(f->effect_atlas);
 	AeronVfs_Destroy(f->vfs);
 	memset(f, 0, sizeof *f);
@@ -330,7 +338,55 @@ static void place_model(float transform[16], const CaptureMesh* mesh, const floa
 	}
 }
 
-static void add_objects(AeronScene3D* scene, const Fixture* f) {
+/* The blast_mark image's frame at `time`, as glow_marks.c draws an animated
+ * blast mark: the classic square (`size` wide) shows the image's crop, and
+ * the image spreads around it, edge texels clamped, over the faces the
+ * classic pass draws, here a square three times as wide. */
+static void add_blast_mark(AeronScene3D* scene, const Fixture* f, const float transform[16], double time) {
+	const int        index = AeronEffectData_FindImage(f->effect_data, f->config.blast_image);
+	AeronEffectImage image;
+	const float      page = (float)AeronEffectAtlas_PageSize(f->effect_atlas);
+	if (index < 0 ||
+		!AeronEffectData_ImageFrame(f->effect_data, index, f->config.animation_time + time, &image)) {
+		Aeron_LogWarn("scene_capture", "blast_mark: no frame of '%s'", f->config.blast_image);
+		return;
+	}
+	const float* c = f->config.blast_center;
+	const float  h = f->config.blast_size * 1.5f;
+	/* Two triangles, counter-clockwise seen from +Z; uv -1.5..1.5, the
+	 * classic square being -0.5..0.5. */
+	static const float corners[6][2] = { { -1, -1 }, { 1, -1 }, { 1, 1 }, { -1, -1 }, { 1, 1 }, { -1, 1 } };
+	AeronSceneMeshOverlayVertex vertices[6];
+	for (int v = 0; v < 6; ++v)
+		vertices[v] = (AeronSceneMeshOverlayVertex) {
+			.pos = { c[0] + corners[v][0] * h, c[1] + corners[v][1] * h, c[2] },
+			.uv  = { corners[v][0] * 1.5f, corners[v][1] * 1.5f },
+		};
+	const uint32_t* r       = image.rect[AERON_EFFECT_LAYER];
+	const float     rect[4] = { ((float)r[0] + .5f) / page, ((float)r[1] + .5f) / page,
+								((float)(r[0] + r[2]) - .5f) / page, ((float)(r[1] + r[3]) - .5f) / page };
+	const float     width = rect[2] - rect[0], height = rect[3] - rect[1];
+	AeronSceneMeshOverlayDesc overlay = {
+		.vertices        = vertices,
+		.vertex_count    = 6,
+		.texture_array   = AeronEffectAtlas_Texture(f->effect_atlas, AERON_EFFECT_LAYER),
+		.texture_layer   = image.layer[AERON_EFFECT_LAYER],
+		.texture_max_lod = image.lod[AERON_EFFECT_LAYER],
+		.texture_clamp   = 1,
+		.uv_xform = { rect[0] + (image.crop[0] + image.crop[2]) * .5f * width,
+					  rect[1] + (image.crop[1] + image.crop[3]) * .5f * height,
+					  (image.crop[2] - image.crop[0]) * width, (image.crop[3] - image.crop[1]) * height },
+		.uv_rect  = { rect[0], rect[1], rect[2], rect[3] },
+		.color    = { 1, 1, 1, 1 },
+		.depth_bias_view = .05f,
+		.blend           = AERON_SCENE_MESH_OVERLAY_BLEND_PMA,
+		.cull_mode       = AERON_CULL_NONE,
+	};
+	memcpy(overlay.transform, transform, sizeof overlay.transform);
+	AeronScene_AddMeshOverlay(scene, &overlay);
+}
+
+static void add_objects(AeronScene3D* scene, const Fixture* f, double time) {
 	/* Half-extents, center, in-plane rotation, and emissive multiplier. */
 	static const float objects[][8] = {
 		{ 2.4f, 1.6f, .35f, -3.0f, -.6f, 12, 0, 1 },
@@ -367,6 +423,8 @@ static void add_objects(AeronScene3D* scene, const Fixture* f) {
 			place_model(instance.transform, mesh, o, i);
 		memcpy(instance.prev_transform, instance.transform, sizeof instance.transform);
 		AeronScene_AddMeshInstance(scene, &instance);
+		if (i == 0 && f->config.blast_image[0])
+			add_blast_mark(scene, f, instance.transform, time);
 	}
 }
 
@@ -611,7 +669,7 @@ AeronRenderTarget* Fixture_Record(Fixture* f, double time, int blur, AeronComman
 	set_lighting(scene, &f->config);
 	if (f->config.screen_test)
 		set_screen_sources(scene, f, time);
-	add_objects(scene, f);
+	add_objects(scene, f, time);
 	if (!AeronScene_Render(scene, cmd))
 		return NULL;
 	return AeronScene_SceneRt(scene);

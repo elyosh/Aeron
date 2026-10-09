@@ -236,6 +236,7 @@ set(AERON_SHADER_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_directional_shadow_debug.frag.hlsl
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_mesh_overlay.vert.hlsl
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_mesh_overlay.frag.hlsl
+    ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_mesh_overlay_array.frag.hlsl
     # aeron_scene sky cube (AeronScene_SetSkyCube) — fullscreen-triangle
     # cube-map sky under all meshes/billboards, promoted from the TIE
     # shell (flight_skybox.*).

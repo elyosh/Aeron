@@ -67,6 +67,29 @@ AeronTexture* AeronEffectAtlas_Texture(const AeronEffectAtlas* atlas, int which)
 /* Texel size of a page; 0 before any library is loaded. */
 uint32_t AeronEffectAtlas_PageSize(const AeronEffectAtlas* atlas);
 
+/*
+ * AeronEffectData — the game's effect data, `effects.yaml` in the atlas
+ * directory (docs: xwau_animated_materials.md, "Game effect data"):
+ * flipbooks for DAT images the game draws directly, keyed "G-I", with their
+ * frames resolved in the atlas.
+ */
+typedef struct AeronEffectData AeronEffectData;
+
+/* Loads effects.yaml and acquires the libraries its images use, through
+ * `cmd`. NULL when the file is absent (silently) or malformed (logged). The
+ * atlas must outlive the data. */
+AeronEffectData* AeronEffectData_Load(AeronEffectAtlas* atlas, AeronCommandBuffer* cmd);
+/* Releases the libraries. */
+void AeronEffectData_Destroy(AeronEffectData* data);
+
+/* Index of the flipbook of DAT image `key` ("G-I"); -1 without one. */
+int AeronEffectData_FindImage(const AeronEffectData* data, const char* key);
+/* Seconds of one pass through image flipbook `index`. */
+double AeronEffectData_ImageDuration(const AeronEffectData* data, int index);
+/* The frame of image flipbook `index` `t` seconds after it started (looped,
+ * or held at the end for `once`); 0 when that frame is not in its library. */
+int AeronEffectData_ImageFrame(const AeronEffectData* data, int index, double t, AeronEffectImage* out);
+
 #ifdef __cplusplus
 }
 #endif

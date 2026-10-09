@@ -10,6 +10,7 @@
 #include "aeron/scene/image_cache.h"
 #include "aeron/scene/ktx2_reader.h"
 
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -385,3 +386,165 @@ AeronTexture* AeronEffectAtlas_Texture(const AeronEffectAtlas* atlas, int which)
 }
 
 uint32_t AeronEffectAtlas_PageSize(const AeronEffectAtlas* atlas) { return atlas ? atlas->page_size : 0u; }
+
+/* ---- effects.yaml ------------------------------------------------------ */
+
+typedef struct EffectDataFrame {
+	AeronEffectImage image;
+	bool             found;
+	double           end; /* seconds from the flipbook start */
+} EffectDataFrame;
+
+typedef struct EffectDataImage {
+	char*            key;
+	bool             once;
+	EffectDataFrame* frames;
+	uint32_t         frame_count;
+} EffectDataImage;
+
+struct AeronEffectData {
+	AeronEffectAtlas* atlas;
+	EffectDataImage*  images; /* sorted by key */
+	uint32_t          image_count;
+	uint32_t*         libraries;
+	uint32_t          library_count;
+};
+
+static int data_image_compare(const void* a, const void* b) {
+	return strcmp(((const EffectDataImage*)a)->key, ((const EffectDataImage*)b)->key);
+}
+
+/* The data's index of library `name`, acquiring it once; UINT32_MAX when it
+ * cannot be loaded. */
+static uint32_t data_library(AeronEffectData* data, AeronCommandBuffer* cmd, const char* name,
+							 uint32_t capacity) {
+	for (uint32_t i = 0; i < data->library_count; ++i)
+		if (strcmp(data->atlas->libraries[data->libraries[i]].name, name) == 0)
+			return data->libraries[i];
+	uint32_t library;
+	if (data->library_count == capacity || !AeronEffectAtlas_Acquire(data->atlas, cmd, name, &library))
+		return UINT32_MAX;
+	data->libraries[data->library_count++] = library;
+	return library;
+}
+
+static int data_read_image(AeronEffectData* data, AeronCommandBuffer* cmd, const char* key,
+						   const AeronConfigNode* node, uint32_t library_capacity, EffectDataImage* out) {
+	const char*            library = AeronConfigNode_String(AeronConfigNode_MapGet(node, "library"), NULL);
+	const char*            kind    = AeronConfigNode_String(AeronConfigNode_MapGet(node, "kind"), NULL);
+	const char*            mode    = AeronConfigNode_String(AeronConfigNode_MapGet(node, "mode"), NULL);
+	const AeronConfigNode* frames  = AeronConfigNode_MapGet(node, "frames");
+	const size_t           count   = AeronConfigNode_SequenceCount(frames);
+	if (!library || !kind || strcmp(kind, "mark") != 0 || !mode ||
+		(strcmp(mode, "loop") != 0 && strcmp(mode, "once") != 0) || count == 0 || count > 0xFFFF)
+		return 0;
+	out->key    = strdup(key);
+	out->once   = strcmp(mode, "once") == 0;
+	out->frames = (EffectDataFrame*)calloc(count, sizeof *out->frames);
+	if (!out->key || !out->frames)
+		return 0;
+	const uint32_t lib = data_library(data, cmd, library, library_capacity);
+	double         end = 0.0;
+	for (size_t f = 0; f < count; ++f) {
+		const AeronConfigNode* frame   = AeronConfigNode_SequenceGet(frames, f);
+		const char*            image   = AeronConfigNode_String(AeronConfigNode_SequenceGet(frame, 0), NULL);
+		const double           seconds = AeronConfigNode_Float(AeronConfigNode_SequenceGet(frame, 1), -1.0);
+		if (AeronConfigNode_SequenceCount(frame) != 2 || !image || !(seconds >= 0.0))
+			return 0;
+		EffectDataFrame* d = &out->frames[f];
+		end += seconds;
+		d->end   = end;
+		d->found = lib != UINT32_MAX && AeronEffectAtlas_Find(data->atlas, lib, image, &d->image) &&
+				   d->image.present[AERON_EFFECT_LAYER];
+	}
+	out->frame_count = (uint32_t)count;
+	return 1;
+}
+
+AeronEffectData* AeronEffectData_Load(AeronEffectAtlas* atlas, AeronCommandBuffer* cmd) {
+	if (!atlas || !cmd)
+		return NULL;
+	char path[512];
+	snprintf(path, sizeof path, "%s/effects.yaml", atlas->dir);
+	AeronConfigFile* yaml  = NULL;
+	AeronConfigError error = { 0 };
+	if (!AeronConfigFile_LoadYamlEx(atlas->vfs, atlas->root, path, &yaml, &error)) {
+		if (error.code != AERON_CONFIG_ERROR_NOT_FOUND)
+			Aeron_LogError("aeron.scene", "%s: %s", path, error.message);
+		return NULL;
+	}
+	const AeronConfigNode* images = AeronConfigFile_GetNode(yaml, "images");
+	const uint32_t         count  = (uint32_t)AeronConfigNode_MapCount(images);
+	AeronEffectData*       data   = (AeronEffectData*)calloc(1, sizeof *data);
+	int                    ok     = data && AeronConfigFile_GetInt(yaml, "version", 0) == 1;
+	if (ok) {
+		data->atlas     = atlas;
+		data->images    = (EffectDataImage*)calloc(count ? count : 1, sizeof *data->images);
+		data->libraries = (uint32_t*)calloc(count ? count : 1, sizeof *data->libraries);
+		ok              = data->images && data->libraries;
+	}
+	for (uint32_t i = 0; ok && i < count; ++i) {
+		ok                = data_read_image(data, cmd, AeronConfigNode_MapKeyAt(images, i),
+											AeronConfigNode_MapValueAt(images, i), count, &data->images[i]);
+		data->image_count = i + 1u;
+		if (!ok)
+			Aeron_LogError("aeron.scene", "%s: malformed image '%s'", path,
+						   AeronConfigNode_MapKeyAt(images, i));
+	}
+	AeronConfigFile_Destroy(yaml);
+	if (!ok) {
+		AeronEffectData_Destroy(data);
+		return NULL;
+	}
+	qsort(data->images, data->image_count, sizeof *data->images, data_image_compare);
+	Aeron_LogInfo("aeron.scene", "%s: %u image flipbooks from %u libraries", path, data->image_count,
+				  data->library_count);
+	return data;
+}
+
+void AeronEffectData_Destroy(AeronEffectData* data) {
+	if (!data)
+		return;
+	for (uint32_t i = 0; i < data->library_count; ++i)
+		AeronEffectAtlas_Release(data->atlas, data->libraries[i]);
+	for (uint32_t i = 0; i < data->image_count; ++i) {
+		free(data->images[i].key);
+		free(data->images[i].frames);
+	}
+	free(data->images);
+	free(data->libraries);
+	free(data);
+}
+
+int AeronEffectData_FindImage(const AeronEffectData* data, const char* key) {
+	if (!data || !key)
+		return -1;
+	const EffectDataImage  probe = { .key = (char*)key };
+	const EffectDataImage* found = (const EffectDataImage*)bsearch(&probe, data->images, data->image_count,
+																   sizeof *data->images, data_image_compare);
+	return found ? (int)(found - data->images) : -1;
+}
+
+double AeronEffectData_ImageDuration(const AeronEffectData* data, int index) {
+	if (!data || index < 0 || (uint32_t)index >= data->image_count)
+		return 0.0;
+	const EffectDataImage* image = &data->images[index];
+	return image->frames[image->frame_count - 1].end;
+}
+
+int AeronEffectData_ImageFrame(const AeronEffectData* data, int index, double t, AeronEffectImage* out) {
+	if (!data || index < 0 || (uint32_t)index >= data->image_count || !out)
+		return 0;
+	const EffectDataImage* image = &data->images[index];
+	const double           total = image->frames[image->frame_count - 1].end;
+	double                 local = 0.0;
+	if (total > 0.0)
+		local = image->once ? (t < 0.0 ? 0.0 : (t < total ? t : total)) : t - total * floor(t / total);
+	uint32_t f = 0;
+	while (f + 1 < image->frame_count && !(local < image->frames[f].end))
+		f++;
+	if (!image->frames[f].found)
+		return 0;
+	*out = image->frames[f].image;
+	return 1;
+}

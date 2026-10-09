@@ -29,6 +29,15 @@ typedef struct AeronSceneMeshOverlayDesc {
 	const AeronSceneMeshOverlayVertex* vertices;
 	uint32_t                           vertex_count; /* triangle list */
 	AeronTexture*                      texture;
+	/* A 2D array texture, used instead of `texture` when set: layer
+	 * `texture_layer`, sampling mips up to `texture_max_lod` (an image packed
+	 * with neighbours, as in an AeronEffectAtlas). */
+	AeronTexture* texture_array;
+	uint32_t      texture_layer;
+	uint32_t      texture_max_lod;
+	/* Array textures: outside uv_rect, sample its edge texels (D3D CLAMP
+	 * addressing) instead of discarding. */
+	uint8_t                            texture_clamp;
 	float                              transform[16];
 	const AeronSceneMeshTable*         mesh_table;
 	/* atlas_uv = uv * zw + xy. uv_rect is minU,minV,maxU,maxV. */

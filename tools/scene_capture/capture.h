@@ -77,6 +77,11 @@ typedef struct CaptureConfig {
 	 * which advances with the capture time. */
 	char                   effect_dir[1024];
 	double                 animation_time;
+	/* blast_mark: an effects.yaml image ("G-I", "" for none) drawn as a
+	 * PMA overlay square on the first model's first instance, centred at
+	 * `center` (model metres) in the model's XY plane, `size` metres wide. */
+	char                   blast_image[32];
+	float                  blast_center[3], blast_size;
 	int                    bloom_chart, bloom_enabled, bloom_kernel, msaa_samples, tonemap;
 	int                    cull_mode, backface_fill;
 	float                  bloom_intensity, emissive_scale;
@@ -98,6 +103,7 @@ typedef struct Fixture {
 	AeronScene3D *     scene, *reference_scene;
 	AeronVfs*          vfs;
 	AeronEffectAtlas*  effect_atlas;
+	AeronEffectData*   effect_data;
 	CaptureMesh        meshes[CAPTURE_MAX_MODELS];
 	CaptureConfig      config;
 	AeronRenderTarget* chart_rt;

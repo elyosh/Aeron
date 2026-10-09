@@ -106,6 +106,9 @@ typedef struct AeronSceneBb3dEntry {
 
 typedef struct AeronSceneMeshOverlayEntry {
 	AeronTexture*              texture;
+	int                        array; /* texture is a 2D array */
+	uint32_t                   layer, max_lod;
+	int                        clamp; /* array: clamp to uv_rect instead of discarding */
 	const AeronSceneMeshTable* mesh_table;
 	uint32_t                   first_vertex;
 	uint32_t                   vertex_count;
@@ -385,7 +388,9 @@ struct AeronScene3D {
 	int                          overlay_tried;
 	AeronShader*                 overlay_vs;
 	AeronShader*                 overlay_fs;
+	AeronShader*                 overlay_array_fs;
 	AeronGraphicsPipeline*       overlay_pipes[3][3];
+	AeronGraphicsPipeline*       overlay_array_pipes[3][3]; /* [blend][cull], 2D array textures */
 
 	/* Post stack (post.c). */
 	AeronScenePostDesc     post;

@@ -57,6 +57,24 @@ static int load_models(const AeronConfigFile* yaml, CaptureConfig* config) {
 	config->animation_time = 0;
 	if (AeronConfigFile_GetNode(yaml, "time") && !number(yaml, "time", 0, 1e6, &config->animation_time))
 		return 0;
+	config->blast_image[0]              = '\0';
+	const AeronConfigNode* blast        = AeronConfigFile_GetNode(yaml, "blast_mark");
+	const AeronConfigNode* blast_center = AeronConfigNode_MapGet(blast, "center");
+	double                 blast_size   = 0;
+	const char*            blast_image = AeronConfigNode_String(AeronConfigNode_MapGet(blast, "image"), NULL);
+	if (blast) {
+		blast_size = AeronConfigNode_Float(AeronConfigNode_MapGet(blast, "size"), 0);
+		if (!effect_dir || !blast_image || strlen(blast_image) >= sizeof config->blast_image ||
+			AeronConfigNode_SequenceCount(blast_center) != 3 || !(blast_size > 0)) {
+			fprintf(stderr, "blast_mark needs effect_dir, image, center: [x, y, z] and size > 0\n");
+			return 0;
+		}
+		snprintf(config->blast_image, sizeof config->blast_image, "%s", blast_image);
+		for (int k = 0; k < 3; ++k)
+			config->blast_center[k] =
+				(float)AeronConfigNode_Float(AeronConfigNode_SequenceGet(blast_center, (size_t)k), 0);
+		config->blast_size = (float)blast_size;
+	}
 	const AeronConfigNode* models = AeronConfigFile_GetNode(yaml, "models");
 	if (!models)
 		return 1;
@@ -469,6 +487,7 @@ int CaptureConfig_Load(const char* path, CaptureConfig* config) {
 									  "models",
 									  "effect_dir",
 									  "time",
+									  "blast_mark",
 									  "fixture",
 									  "msaa_samples",
 									  "tonemap",
