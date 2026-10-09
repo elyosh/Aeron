@@ -8,9 +8,7 @@
  * shaders/ because shadercross accepts a single -I directory; the C
  * side includes it by relative path.
  *
- * AERON_MAX_MESH_COMPONENTS is the per-model component capacity: the 255
- * meshes the XWAU hooks configure, against the original engine's 50
- * (XWA_SNAP_MAX_MESH_SLOTS).
+ * AERON_MAX_MESH_COMPONENTS is the per-model component capacity, 255.
  *
  * A table holds `n` entries (its model's component count) and is packed at
  * that count, in float4 units from the table's base:

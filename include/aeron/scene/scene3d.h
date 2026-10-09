@@ -104,6 +104,17 @@ enum {
 	AERON_SCENE_INSTANCE_SHADOW_DOUBLE_SIDED                = 1u << 5,
 };
 
+/* An instance's material animation state (gltf_mesh.h, "Material
+ * animation"). */
+typedef struct AeronSceneMaterialAnim {
+	uint32_t state_mask;   /* player states, bit per AERON_ANIM_STATE_* (0-30) */
+	uint32_t seed;         /* stable per object: its damage choice and placement */
+	uint32_t damage_stage; /* 0 none, 1-3: the 75, 50, 25 % hull stages */
+	uint32_t energy;       /* 0 none, 1 shields, 2 tractor, 3 jamming */
+	float    energy_start; /* animation seconds when `energy` began */
+	float    onset[32];    /* animation seconds when each state last became set */
+} AeronSceneMaterialAnim;
+
 /* One mesh instance for this frame. `transform`/`prev_transform` are
  * row-major model->world. Equal transforms and articulation yield zero
  * velocity when the motion-vector prepass consumes them. `variant` selects
@@ -149,6 +160,9 @@ typedef struct AeronSceneMeshInstance {
 	 * default. A receiver-local shadow map can preserve environment
 	 * shadows while excluding selected casters from selected receivers. */
 	uint8_t shadow_flags;
+	/* Material animation state, borrowed for the frame; NULL for none
+	 * (AeronScene_SetEffectAtlas). */
+	const AeronSceneMaterialAnim* anim;
 } AeronSceneMeshInstance;
 
 typedef void (*AeronSceneAfterMeshesFn)(AeronCommandBuffer* cmd, AeronRenderPass* pass,

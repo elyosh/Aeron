@@ -6,8 +6,7 @@
  * and the shaders (material_anim.hlsli). Preprocessor only, like
  * mesh_table_layout.hlsli.
  *
- * Player states (docs: xwau_animated_materials.md, "Player"), in the
- * converter's priority order; a flipbook's state is one of them or
+ * Player states, in priority order; a flipbook's state is one of them or
  * AERON_ANIM_STATE_ALWAYS, which is always active.
  *
  * Per-mesh animation buffer (StructuredBuffer<uint4>), records:
@@ -24,6 +23,13 @@
  *   x, y, z, and w 0.
  * Frames of one flipbook are consecutive, AERON_ANIM_FRAME_RECORDS(layer)
  * records each.
+ *   damage alternative (AERON_ANIM_DAMAGE_RECORDS records): three frame
+ *             records for the 75, 50 and 25 % stages (layer
+ *             AERON_ANIM_NO_LAYER: no damage at that stage), then
+ *             x asuint(scale min), y asuint(scale max), z has scale,
+ *             w offset mode (AERON_ANIM_OFFSET_*), then
+ *             asuint of the offset range x0, y0, x1, y1.
+ *   A material's alternatives are consecutive.
  */
 
 #define AERON_ANIM_STATE_THREAT_LASER 0
@@ -62,5 +68,11 @@
 #define AERON_ANIM_FLIPBOOK_HAS_UV 0x400u
 #define AERON_ANIM_NO_LAYER 0xFFFu
 #define AERON_ANIM_FRAME_RECORDS(layer) ((layer) == AERON_ANIM_LAYER_ILLUMINATION ? 2u : 1u)
+
+#define AERON_ANIM_DAMAGE_RECORDS 5u
+#define AERON_ANIM_DAMAGE_STAGES 3u
+#define AERON_ANIM_OFFSET_FIXED 0u  /* FIXED_LOC */
+#define AERON_ANIM_OFFSET_INSIDE 1u /* RAND_LOC */
+#define AERON_ANIM_OFFSET_RANGE 2u  /* RAND_LOC=(x0,y0,x1,y1) and the default */
 
 #endif /* AERON_SCENE_MATERIAL_ANIM_LAYOUT_H */

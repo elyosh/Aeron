@@ -4,7 +4,7 @@
  * A screen material shows a game-provided texture pair (graphics and text,
  * premultiplied) through rectangles of its TEXCOORD_0 space. Each rectangle
  * maps its part of the surface onto a per-frame source rectangle of the
- * textures. Holograms port PixelShaderDCHolo.hlsl of xwa_ddraw_d3d11. */
+ * textures. */
 
 #ifndef SCENE_PBR_SCREEN_HLSLI
 #define SCENE_PBR_SCREEN_HLSLI
@@ -22,7 +22,7 @@ static const uint SCREEN_LAYER_BAR = 0x4u;
 static const uint SCREEN_FRAME_HIDE_TRANSPARENT = 0x1u;
 static const uint SCREEN_FRAME_BAR_VISIBLE = 0x2u;
 
-/* XWAU's fill-bar background, 0x101010, linear. */
+/* The fill-bar background, 0x101010, linear. */
 static const float3 SCREEN_BAR_BACKGROUND = float3(0.00518f, 0.00518f, 0.00518f);
 
 struct ScreenRect
@@ -98,8 +98,7 @@ bool screen_rect_lookup(ScreenRect r, float2 uv, out float2 st, out float2 sourc
     return all(source_uv >= min(s.xy, s.zw)) && all(source_uv <= max(s.xy, s.zw));
 }
 
-/* Linear screen radiance of a screen material (PixelShaderDC.hlsl's HUD
- * part): the first rectangle's background outside every rectangle; inside
+/* Linear screen radiance of a screen material: the first rectangle's background outside every rectangle; inside
  * one, its content (text over graphics, layers per rectangle, scaled by the
  * gain) over its background. */
 float3 screen_evaluate(GltfMaterial m, float2 uv_in, ScreenFrame f)
@@ -139,7 +138,7 @@ float3 screen_evaluate(GltfMaterial m, float2 uv_in, ScreenFrame f)
     return screen * f.display_strength;
 }
 
-/* ===== Hologram (PixelShaderDCHolo.hlsl) ============================ */
+/* ===== Hologram ===================================================== */
 
 /* Value noise of shadertoy 4sfGzS. */
 float screen_hash(float3 p)
@@ -173,8 +172,8 @@ float3 screen_straight_srgb(float4 c)
     return c.a > 1.0e-4f ? AeronLinearToSrgb(saturate(c.rgb / c.a)) : float3(0.0f, 0.0f, 0.0f);
 }
 
-/* Linear colour and straight alpha of a hologram. XWAU computes it in
- * display (sRGB) values; so does this, converting once at the end. */
+/* Linear colour and straight alpha of a hologram, computed in display
+ * (sRGB) values and converted once at the end. */
 float4 screen_hologram(GltfMaterial m, float2 uv_in, ScreenFrame f)
 {
     float2 uv = frac(uv_in);

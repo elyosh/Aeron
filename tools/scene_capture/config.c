@@ -57,6 +57,39 @@ static int load_models(const AeronConfigFile* yaml, CaptureConfig* config) {
 	config->animation_time = 0;
 	if (AeronConfigFile_GetNode(yaml, "time") && !number(yaml, "time", 0, 1e6, &config->animation_time))
 		return 0;
+	config->anim_enabled = 0;
+	memset(&config->anim, 0, sizeof config->anim);
+	const AeronConfigNode* anim = AeronConfigFile_GetNode(yaml, "anim");
+	if (anim) {
+		static const char* const anim_keys[] = { "state_mask", "seed",         "damage_stage",
+												 "energy",     "energy_start", "onset" };
+		for (size_t i = 0; i < AeronConfigNode_MapCount(anim); ++i) {
+			size_t k = 0;
+			while (k < 6 && strcmp(AeronConfigNode_MapKeyAt(anim, i), anim_keys[k]) != 0)
+				k++;
+			if (k == 6) {
+				fprintf(stderr, "Unknown anim setting: %s\n", AeronConfigNode_MapKeyAt(anim, i));
+				return 0;
+			}
+		}
+		const int64_t          stage  = AeronConfigNode_Int(AeronConfigNode_MapGet(anim, "damage_stage"), 0);
+		const int64_t          energy = AeronConfigNode_Int(AeronConfigNode_MapGet(anim, "energy"), 0);
+		const AeronConfigNode* onset  = AeronConfigNode_MapGet(anim, "onset");
+		if (stage < 0 || stage > 3 || energy < 0 || energy > 3 || AeronConfigNode_SequenceCount(onset) > 32) {
+			fprintf(stderr, "anim: damage_stage and energy are 0-3, onset at most 32 values\n");
+			return 0;
+		}
+		config->anim_enabled = 1;
+		config->anim.state_mask =
+			(uint32_t)AeronConfigNode_Int(AeronConfigNode_MapGet(anim, "state_mask"), 0);
+		config->anim.seed         = (uint32_t)AeronConfigNode_Int(AeronConfigNode_MapGet(anim, "seed"), 0);
+		config->anim.damage_stage = (uint32_t)stage;
+		config->anim.energy       = (uint32_t)energy;
+		config->anim.energy_start =
+			(float)AeronConfigNode_Float(AeronConfigNode_MapGet(anim, "energy_start"), 0);
+		for (size_t i = 0; i < AeronConfigNode_SequenceCount(onset); ++i)
+			config->anim.onset[i] = (float)AeronConfigNode_Float(AeronConfigNode_SequenceGet(onset, i), 0);
+	}
 	config->blast_image[0]              = '\0';
 	const AeronConfigNode* blast        = AeronConfigFile_GetNode(yaml, "blast_mark");
 	const AeronConfigNode* blast_center = AeronConfigNode_MapGet(blast, "center");
@@ -488,6 +521,7 @@ int CaptureConfig_Load(const char* path, CaptureConfig* config) {
 									  "effect_dir",
 									  "time",
 									  "blast_mark",
+									  "anim",
 									  "fixture",
 									  "msaa_samples",
 									  "tonemap",

@@ -82,6 +82,10 @@ typedef struct CaptureConfig {
 	 * `center` (model metres) in the model's XY plane, `size` metres wide. */
 	char                   blast_image[32];
 	float                  blast_center[3], blast_size;
+	/* anim: the material animation state of every instance, each with
+	 * seed = its index + anim.seed. */
+	int                    anim_enabled;
+	AeronSceneMaterialAnim anim;
 	int                    bloom_chart, bloom_enabled, bloom_kernel, msaa_samples, tonemap;
 	int                    cull_mode, backface_fill;
 	float                  bloom_intensity, emissive_scale;

@@ -53,13 +53,19 @@ typedef struct AeronScenePbrVsBlock {
 
 typedef char AeronScenePbrVsBlockSizeCheck[sizeof(AeronScenePbrVsBlock) == 368 ? 1 : -1];
 
-/* Animation FS cbuffer (b3 space3) — mirrors `cbuffer PbrAnimFS` in
- * scene_pbr_mesh_impl.hlsli. */
+/* Animation FS cbuffer (b3 space3), per instance — mirrors `cbuffer
+ * PbrAnimFS` in scene_pbr_mesh_impl.hlsli. */
 typedef struct AeronScenePbrAnimBlock {
-	float time;      /* animation time, seconds */
-	float page_size; /* effect atlas page, texels */
-	float _pad[2];
-} AeronScenePbrAnimBlock;
+	float    time;      /* animation time, seconds */
+	float    page_size; /* effect atlas page, texels */
+	float    _pad[2];
+	uint32_t state_mask, seed, damage_stage, energy;
+	float    energy_start;
+	float    energy_strength[3]; /* shields, tractor, jamming */
+	float    onset[32];
+} AeronScenePbrAnimBlock; /* 176 B */
+
+typedef char AeronScenePbrAnimBlockSizeCheck[sizeof(AeronScenePbrAnimBlock) == 176 ? 1 : -1];
 
 static AeronShader* pbr_shader(const char* name, AeronShaderStage stage, uint32_t samplers, uint32_t ubs,
 							   uint32_t sbs) {
@@ -650,7 +656,22 @@ static void pbr_push_instance_uniforms(struct AeronScene3D* s, AeronRenderPass* 
 	vsb.table_component_count        = prepared->table_component_count;
 	Aeron_BindUniformData(pass, AERON_SHADER_STAGE_VERTEX, 0, &vsb, sizeof vsb);
 
-	(void)depth_only;
+	/* The `_anim` colour shaders' animation block: the instance's state. */
+	if (!depth_only && s->effect_atlas) {
+		AeronScenePbrAnimBlock anim;
+		memset(&anim, 0, sizeof anim);
+		anim.time      = s->animation_time;
+		anim.page_size = (float)AeronEffectAtlas_PageSize(s->effect_atlas);
+		if (in->anim) {
+			anim.state_mask   = in->anim->state_mask;
+			anim.seed         = in->anim->seed;
+			anim.damage_stage = in->anim->damage_stage;
+			anim.energy       = in->anim->energy;
+			anim.energy_start = in->anim->energy_start;
+			memcpy(anim.onset, in->anim->onset, sizeof anim.onset);
+		}
+		Aeron_BindUniformData(pass, AERON_SHADER_STAGE_FRAGMENT, 3, &anim, sizeof anim);
+	}
 }
 
 /* Blend-range pipeline kind for a base kind (-1 = range not drawn by
@@ -715,8 +736,8 @@ static void pbr_bind_ao(struct AeronScene3D* s, AeronRenderPass* pass, AeronText
 							 s->screen_text ? s->screen_text : AeronSceneInternal_WhiteTexture(),
 							 screen_sampler);
 	Aeron_BindStorageBuffer(pass, AERON_SHADER_STAGE_FRAGMENT, 6, s->screen_frame_buffer);
-	/* Material animation: the effect atlas (samplers 12, 13) and the
-	 * animation block, read by the `_anim` shaders only. */
+	/* Material animation: the effect atlas (samplers 12, 13), read by the
+	 * `_anim` shaders only. */
 	if (s->effect_atlas) {
 		AeronSampler* sampler = s->mesh_sampler ? s->mesh_sampler : s->pbr_sampler;
 		for (int which = 0; which < 2; ++which) {
@@ -724,10 +745,6 @@ static void pbr_bind_ao(struct AeronScene3D* s, AeronRenderPass* pass, AeronText
 			Aeron_BindTextureSampler(pass, AERON_SHADER_STAGE_FRAGMENT, 12u + (uint32_t)which,
 									 texture ? texture : AeronSceneInternal_WhiteArrayTexture(), sampler);
 		}
-		const AeronScenePbrAnimBlock anim = { .time = s->animation_time,
-											  .page_size =
-												  (float)AeronEffectAtlas_PageSize(s->effect_atlas) };
-		Aeron_BindUniformData(pass, AERON_SHADER_STAGE_FRAGMENT, 3, &anim, sizeof anim);
 	}
 }
 

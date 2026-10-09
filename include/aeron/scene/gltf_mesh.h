@@ -75,7 +75,7 @@ typedef struct AeronGltfVertex {
 
 /* Per-model material cap used to validate and bound cooked assets. It is not
  * an original-engine value: the classic renderers walk per-face textures.
- * The measured XWA corpus peaks at 104 materials and the XWAU corpus at 156.
+ * The measured corpora peak at 156 materials.
  * GPU storage is allocated to the actual retained count rather than this
  * maximum, so no static array depends on it. */
 #define AERON_GLTF_MAX_MATERIALS 4096
@@ -102,7 +102,7 @@ typedef struct AeronGltfChannelKtx2 {
 
 /* ===== Variant groups ===============================================
  *
- * Atlas pages only some variants use (XWAU skins: base colour, emissive,
+ * Atlas pages only some variants use (skins: base colour, emissive,
  * metallic-roughness), cooked as separate KTX2 blocks and listed in the
  * asset extras `aeronVariantGroups`. A group's pages follow its channel's
  * core pages, in the order of that channel's groups; a mesh uploads
@@ -179,13 +179,18 @@ typedef struct AeronGltfMaterial {
 	uint32_t layer_base_max_lod;
 	uint32_t flipbook_first;
 	uint32_t flipbook_count;
+	/* Hull damage (`aeronDamage`): alternatives [damage_first, damage_first
+	 * + damage_count) of the model's, and the sections whose random choice
+	 * and placement apply. */
+	uint32_t damage_first;
+	uint32_t damage_count;
+	uint32_t damage_choice;
+	uint32_t damage_placement;
 } AeronGltfMaterial;
 
 /* ===== Material animation ===========================================
  *
- * XWAU animated materials (docs: xwau_animated_materials.md, "Model
- * material extras"), as converted by opt2gltf and cooked by
- * aeron_gltf_cook:
+ * Animated materials, as material extras (cooked by aeron_gltf_cook):
  *
  *   "aeronLayerBase": { "page", "lod", "offset": [u, v], "scale": [su, sv] }
  *   "aeronFlipbooks": [ { "state", "layer": "colour" | "illumination",
@@ -194,13 +199,29 @@ typedef struct AeronGltfMaterial {
  *                         "uv": { "scale": [sx, 1], "offset": [ox, oy],
  *                                 "clamp": bool } } ]
  *
- * Frames name images of an effect library (aeron/scene/effect_atlas.h).
- * Illumination flipbooks are dropped from a material without
- * `aeronLayerBase`. */
+ *   "aeronDamage": { "library", "choice", "placement",
+ *                    "alternatives": [ { "stages": [key | null] x 3,
+ *                                        "scale": [min, max],
+ *                                        "offset": [x0, y0, x1, y1] | "inside" } ] }
+ *
+ * Frames and damage stages name images of an effect library
+ * (aeron/scene/effect_atlas.h). Illumination flipbooks are dropped from a
+ * material without `aeronLayerBase`. */
 typedef struct AeronGltfFlipbookFrame {
 	char* key;
 	float seconds;
 } AeronGltfFlipbookFrame;
+
+/* One hull-damage alternative: the `multiply` images of the 75, 50 and 25 %
+ * stages (NULL: none at that stage) and its placement. */
+typedef struct AeronGltfDamage {
+	char*    library;
+	char*    stages[3];
+	bool     has_scale;
+	float    scale[2];    /* RAND_SCALE min, max */
+	uint32_t offset_mode; /* AERON_ANIM_OFFSET_* */
+	float    offset[4];   /* range: x0, y0, x1, y1 */
+} AeronGltfDamage;
 
 typedef struct AeronGltfFlipbook {
 	uint32_t state; /* AERON_ANIM_STATE_* */
@@ -323,6 +344,9 @@ typedef struct AeronGltfModel {
 	AeronGltfFlipbook*      flipbooks;
 	uint32_t                flipbook_frame_count;
 	AeronGltfFlipbookFrame* flipbook_frames;
+	/* Hull-damage alternatives of every material. */
+	uint32_t         damage_count;
+	AeronGltfDamage* damages;
 } AeronGltfModel;
 
 /* Internal render builder used by the common flight-model construction.

@@ -168,7 +168,7 @@ static const char* kAtlasNames[AERON_GLTF_CHANNEL_COUNT] = {
 
 /* ===== Variants and their groups ====================================
  *
- * The asset extras of a model with XWAU skins (opt2gltf, aeron_gltf_cook):
+ * The asset extras of a model with skin variants (aeron_gltf_cook):
  *   "aeronAssetVariants": N, "aeronSkinMarkings": [name or null, ...],
  *   "aeronVariantGroups": [{"bufferView": b, "layers": l, "variants": [...]}]
  * The groups' KTX2 blocks are copied like the core atlases. */
@@ -587,7 +587,7 @@ static bool json_string_index(const cJSON* object, const char* key, const char* 
 }
 
 typedef struct FlipbookCapacity {
-	uint32_t flipbooks, frames;
+	uint32_t flipbooks, frames, damages;
 } FlipbookCapacity;
 
 static bool grow(void** items, uint32_t* capacity, uint32_t needed, size_t size) {
@@ -665,6 +665,98 @@ static bool read_flipbook(const cJSON* json, AeronGltfModel* model, FlipbookCapa
 		fb.frame_count++;
 	}
 	model->flipbooks[model->flipbook_count++] = fb;
+	return true;
+}
+
+static void free_damage(AeronGltfDamage* d) {
+	free(d->library);
+	for (int s = 0; s < 3; s++)
+		free(d->stages[s]);
+	memset(d, 0, sizeof *d);
+}
+
+/* One damage alternative; false when malformed (or *oom). */
+static bool read_damage_alternative(const cJSON* json, const char* library, AeronGltfDamage* out, bool* oom) {
+	memset(out, 0, sizeof *out);
+	const cJSON* stages = cJSON_GetObjectItemCaseSensitive(json, "stages");
+	const cJSON* scale  = cJSON_GetObjectItemCaseSensitive(json, "scale");
+	const cJSON* offset = cJSON_GetObjectItemCaseSensitive(json, "offset");
+	if (!cJSON_IsArray(stages) || cJSON_GetArraySize(stages) != 3)
+		return false;
+	out->library = copy_string(library);
+	*oom         = !out->library;
+	for (int s = 0; !*oom && s < 3; s++) {
+		const cJSON* stage = cJSON_GetArrayItem(stages, s);
+		if (cJSON_IsNull(stage))
+			continue;
+		if (!cJSON_IsString(stage))
+			return false;
+		out->stages[s] = copy_string(stage->valuestring);
+		*oom           = !out->stages[s];
+	}
+	if (*oom)
+		return false;
+	if (scale) {
+		if (!json_floats(scale, out->scale, 2))
+			return false;
+		out->has_scale = true;
+	}
+	if (cJSON_IsString(offset)) {
+		if (strcmp(offset->valuestring, "inside") != 0)
+			return false;
+		out->offset_mode = AERON_ANIM_OFFSET_INSIDE;
+	} else if (offset) {
+		if (!json_floats(offset, out->offset, 4))
+			return false;
+		out->offset_mode = AERON_ANIM_OFFSET_RANGE;
+	}
+	return true;
+}
+
+/* A material's `aeronDamage`: appended to the model's alternatives. A
+ * malformed one is reported and dropped. Returns false only on OOM. */
+static bool read_damage(const cgltf_material* m, AeronGltfModel* model, FlipbookCapacity* cap,
+						AeronGltfMaterial* out, const char* source_label, uint32_t material_index) {
+	if (!m || !m->extras.data || !strstr(m->extras.data, "aeronDamage"))
+		return true;
+	cJSON*         root    = cJSON_ParseWithOpts(m->extras.data, NULL, true);
+	const cJSON*   damage  = cJSON_GetObjectItemCaseSensitive(root, "aeronDamage");
+	const cJSON*   library = cJSON_GetObjectItemCaseSensitive(damage, "library");
+	const cJSON*   alts    = cJSON_GetObjectItemCaseSensitive(damage, "alternatives");
+	const int      count   = cJSON_IsArray(alts) ? cJSON_GetArraySize(alts) : -1;
+	uint32_t       choice = 0, placement = 0;
+	bool           oom   = false;
+	bool           valid = cJSON_IsString(library) && count > 0 && count <= 0xFFFF &&
+						   json_uint(damage, "choice", 0xFFFu, &choice) &&
+						   json_uint(damage, "placement", 0xFFFu, &placement);
+	const uint32_t first = model->damage_count;
+	if (valid &&
+		!grow((void**)&model->damages, &cap->damages, first + (uint32_t)count, sizeof *model->damages)) {
+		cJSON_Delete(root);
+		return false;
+	}
+	for (int i = 0; valid && i < count; i++) {
+		valid = read_damage_alternative(cJSON_GetArrayItem(alts, i), library->valuestring,
+										&model->damages[model->damage_count], &oom);
+		if (valid)
+			model->damage_count++;
+		else
+			free_damage(&model->damages[model->damage_count]);
+	}
+	cJSON_Delete(root);
+	if (!valid) {
+		while (model->damage_count > first)
+			free_damage(&model->damages[--model->damage_count]);
+		if (oom)
+			return false;
+		SDL_Log("[flight_gltf] '%s' material %u: malformed aeronDamage ignored", source_label,
+				material_index);
+		return true;
+	}
+	out->damage_first     = first;
+	out->damage_count     = (uint32_t)count;
+	out->damage_choice    = choice;
+	out->damage_placement = placement;
 	return true;
 }
 
@@ -884,7 +976,9 @@ bool Aeron_GltfMeshBuildData(const cgltf_data* data, const char* source_label, A
 			if (!read_screen(&data->materials[i], out, &screen_rect_capacity, &out->materials[i],
 							 source_label, i) ||
 				!read_animation(&data->materials[i], out, &flipbook_capacity, &out->materials[i],
-								source_label, i))
+								source_label, i) ||
+				!read_damage(&data->materials[i], out, &flipbook_capacity, &out->materials[i], source_label,
+							 i))
 				goto cleanup;
 			/* Holograms and transparent screens blend over the scene, and
 			 * the PBR shader leaves them transparent when hidden: only the
@@ -1110,6 +1204,9 @@ void Aeron_GltfMeshFree(AeronGltfModel* m) {
 	for (uint32_t f = 0; m->flipbook_frames && f < m->flipbook_frame_count; f++)
 		free(m->flipbook_frames[f].key);
 	free(m->flipbook_frames);
+	for (uint32_t d = 0; m->damages && d < m->damage_count; d++)
+		free_damage(&m->damages[d]);
+	free(m->damages);
 	for (int c = 0; c < AERON_GLTF_CHANNEL_COUNT; c++)
 		free(m->channels[c].data);
 	for (uint32_t v = 0; m->variant_names && v < m->variant_count; v++)

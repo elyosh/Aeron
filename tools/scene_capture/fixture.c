@@ -386,6 +386,17 @@ static void add_blast_mark(AeronScene3D* scene, const Fixture* f, const float tr
 	AeronScene_AddMeshOverlay(scene, &overlay);
 }
 
+/* The `anim` state of instance `index`, borrowed for the frame; NULL
+ * without one. */
+static const AeronSceneMaterialAnim* instance_anim(const Fixture* f, int index) {
+	static AeronSceneMaterialAnim anims[CAPTURE_MAX_INSTANCES + 16];
+	if (!f->config.anim_enabled || index < 0 || index >= (int)(sizeof anims / sizeof anims[0]))
+		return NULL;
+	anims[index] = f->config.anim;
+	anims[index].seed += (uint32_t)index;
+	return &anims[index];
+}
+
 static void add_objects(AeronScene3D* scene, const Fixture* f, double time) {
 	/* Half-extents, center, in-plane rotation, and emissive multiplier. */
 	static const float objects[][8] = {
@@ -422,6 +433,7 @@ static void add_objects(AeronScene3D* scene, const Fixture* f, double time) {
 		else if (f->config.model_count)
 			place_model(instance.transform, mesh, o, i);
 		memcpy(instance.prev_transform, instance.transform, sizeof instance.transform);
+		instance.anim = instance_anim(f, (int)i);
 		AeronScene_AddMeshInstance(scene, &instance);
 		if (i == 0 && f->config.blast_image[0])
 			add_blast_mark(scene, f, instance.transform, time);
@@ -547,6 +559,7 @@ static void add_game_instances(AeronScene3D* scene, const Fixture* f, const Aero
 					AeronScene_AddLight(scene, &light);
 			}
 		}
+		instance.anim = instance_anim(f, (int)i);
 		AeronScene_AddMeshInstance(scene, &instance);
 	}
 	/* As XwaRemasterShip_ScenePointLight: 0.25 m spheres ending under

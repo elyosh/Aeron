@@ -2,8 +2,7 @@
 #define AERON_SCENE_EFFECT_ATLAS_H
 
 /*
- * AeronEffectAtlas — resident effect image libraries (docs:
- * xwau_animated_materials.md, "Image libraries" and "Effect atlas").
+ * AeronEffectAtlas — resident effect image libraries.
  *
  * A library is `<dir>/<name>.yaml` (its index) with `<name>.layer.ktx2`
  * and/or `<name>.emissive.ktx2`, 2D arrays of equal square pages. The atlas
@@ -69,9 +68,8 @@ uint32_t AeronEffectAtlas_PageSize(const AeronEffectAtlas* atlas);
 
 /*
  * AeronEffectData — the game's effect data, `effects.yaml` in the atlas
- * directory (docs: xwau_animated_materials.md, "Game effect data"):
- * flipbooks for DAT images the game draws directly, keyed "G-I", with their
- * frames resolved in the atlas.
+ * directory: flipbooks for images the game draws directly, keyed by the
+ * game's image name ("G-I"), with their frames resolved in the atlas.
  */
 typedef struct AeronEffectData AeronEffectData;
 

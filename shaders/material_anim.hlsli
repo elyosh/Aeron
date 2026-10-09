@@ -2,8 +2,7 @@
 #define AERON_SCENE_MATERIAL_ANIM_HLSLI
 
 /*
- * Material animation evaluation (docs: xwau_animated_materials.md,
- * "Shaders"), over the per-mesh animation records of
+ * Material animation evaluation, over the per-mesh animation records of
  * material_anim_layout.hlsli. Written in the subset that also compiles as
  * C, so CPU references run this code: the includer defines
  * AERON_ANIM_RECORD(i) as an expression with .x .y .z .w members (a
@@ -28,6 +27,15 @@ static inline float material_anim_asfloat(uint u) {
 	return f;
 }
 #define material_anim_floor floorf
+#endif
+
+/* A damage rectangle in the texture's UV: s0 to s1. */
+struct MaterialAnimRect
+{
+	float x0, y0, x1, y1;
+};
+#ifndef __HLSL_VERSION
+typedef struct MaterialAnimRect MaterialAnimRect;
 #endif
 
 /* The record of the first of a material's `count` flipbooks from record
@@ -86,6 +94,78 @@ AERON_ANIM_FN uint material_anim_frame(uint flipbook, float t)
 	float local  = material_anim_local_time((x >> AERON_ANIM_FLIPBOOK_MODE_SHIFT) & 1u,
 											material_anim_asfloat(AERON_ANIM_RECORD(flipbook).w), t);
 	return first + material_anim_frame_index(first, count, stride, local) * stride;
+}
+
+/* Integer hash (lowbias32) of two values. */
+AERON_ANIM_FN uint material_anim_hash(uint a, uint b)
+{
+	uint x = a * 0x9E3779B9u ^ b;
+	x ^= x >> 16;
+	x *= 0x7FEB352Du;
+	x ^= x >> 15;
+	x *= 0x846CA68Bu;
+	x ^= x >> 16;
+	return x;
+}
+
+/* A hash as a value in [0, 1). */
+AERON_ANIM_FN float material_anim_unorm(uint h)
+{
+	return (float)(h >> 8) * (1.0f / 16777216.0f);
+}
+
+/* The first record of the damage alternative an object (`seed`) shows: one
+ * per (object, section `choice`), the same at every stage. */
+AERON_ANIM_FN uint material_anim_damage_alternative(uint first, uint count, uint seed, uint choice)
+{
+	return first + (material_anim_hash(seed, choice * 4u) % count) * AERON_ANIM_DAMAGE_RECORDS;
+}
+
+/* The damage rectangle of alternative record `alternative` for an object
+ * (`seed`), with random values per (object, section `placement`): r_s for
+ * the size, r per axis for the offset. Without a scale it is the whole
+ * texture; an "inside" offset keeps it within the texture, a range offset
+ * moves it by (x1 - x0)·r - x0 per axis. */
+AERON_ANIM_FN MaterialAnimRect material_anim_damage_rect(uint alternative, uint seed, uint placement)
+{
+	uint  scale_min_bits = AERON_ANIM_RECORD(alternative + 3u).x;
+	uint  scale_max_bits = AERON_ANIM_RECORD(alternative + 3u).y;
+	uint  has_scale      = AERON_ANIM_RECORD(alternative + 3u).z;
+	uint  mode           = AERON_ANIM_RECORD(alternative + 3u).w;
+	float r_s            = material_anim_unorm(material_anim_hash(seed, placement * 4u + 1u));
+	float r_x            = material_anim_unorm(material_anim_hash(seed, placement * 4u + 2u));
+	float r_y            = material_anim_unorm(material_anim_hash(seed, placement * 4u + 3u));
+	MaterialAnimRect rect;
+	rect.x0 = 0.0f;
+	rect.y0 = 0.0f;
+	rect.x1 = 1.0f;
+	rect.y1 = 1.0f;
+	if (has_scale != 0u) {
+		/* RAND_SCALE: a centred square of side lerp(min, max, r_s). */
+		float smin = material_anim_asfloat(scale_min_bits);
+		float side = smin + (material_anim_asfloat(scale_max_bits) - smin) * r_s;
+		float half_rest = (1.0f - side) * 0.5f;
+		rect.x0 = half_rest;
+		rect.y0 = half_rest;
+		rect.x1 = 1.0f - half_rest;
+		rect.y1 = 1.0f - half_rest;
+	}
+	float ofs_x = 0.0f;
+	float ofs_y = 0.0f;
+	if (mode == AERON_ANIM_OFFSET_INSIDE) {
+		ofs_x = (rect.x0 + (1.0f - rect.x1)) * r_x - rect.x0;
+		ofs_y = (rect.y0 + (1.0f - rect.y1)) * r_y - rect.y0;
+	} else if (mode == AERON_ANIM_OFFSET_RANGE) {
+		float x0 = material_anim_asfloat(AERON_ANIM_RECORD(alternative + 4u).x);
+		float y0 = material_anim_asfloat(AERON_ANIM_RECORD(alternative + 4u).y);
+		ofs_x = (material_anim_asfloat(AERON_ANIM_RECORD(alternative + 4u).z) - x0) * r_x - x0;
+		ofs_y = (material_anim_asfloat(AERON_ANIM_RECORD(alternative + 4u).w) - y0) * r_y - y0;
+	}
+	rect.x0 += ofs_x;
+	rect.y0 += ofs_y;
+	rect.x1 += ofs_x;
+	rect.y1 += ofs_y;
+	return rect;
 }
 
 #endif /* AERON_SCENE_MATERIAL_ANIM_HLSLI */

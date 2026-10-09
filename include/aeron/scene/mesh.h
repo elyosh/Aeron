@@ -49,7 +49,9 @@ typedef struct AeronPbrMaterialEntry {
 	uint32_t anim[4];            /* x: layer_base page | lod << 12
 								  * y: first flipbook record | flipbook count << 16
 								  * (material_anim_layout.hlsli); 0 without
-								  * z, w: 0 */
+								  * z: first damage alternative record |
+								  *    alternative count << 16; 0 without
+								  * w: damage choice << 8 | placement << 20 */
 } AeronPbrMaterialEntry;         /* 192 B */
 
 /* Shader record of one screen rectangle (AeronGltfScreenRect): float4 and

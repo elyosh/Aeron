@@ -117,9 +117,13 @@ SamplerState g_effect_layer_sampler : register(s12, space2);
 Texture2DArray g_effect_emissive : register(t13, space2);
 SamplerState g_effect_emissive_sampler : register(s13, space2);
 StructuredBuffer<uint4> g_anim_records : register(AERON_PBR_ANIM_RECORD_REGISTER, space2);
+/* The instance's animation state (AeronScenePbrAnimBlock). */
 cbuffer PbrAnimFS : register(b3, space3)
 {
-    float4 fs_anim; /* x: animation time (seconds), y: effect page size (texels) */
+    float4 fs_anim;          /* x: animation time (seconds), y: effect page size (texels) */
+    uint4  fs_anim_state;    /* x: state mask, y: seed, z: damage stage, w: energy */
+    float4 fs_anim_energy;   /* x: energy start (seconds), yzw: energy strengths */
+    float4 fs_anim_onset[8]; /* state onsets (seconds), 4 per float4 */
 };
 #define AERON_ANIM_RECORD(i) g_anim_records[i]
 #include "material_anim.hlsli"
@@ -139,6 +143,44 @@ float4 anim_frame_sample(Texture2DArray tex, SamplerState s, uint4 frame, float2
 {
     float4 rect = float4(frame.y & 0xFFFFu, frame.y >> 16, frame.z & 0xFFFFu, frame.z >> 16) / fs_anim.y;
     return atlas_sample(tex, s, uv, rect, frame.x & 0xFFFu, (frame.x >> 12) & 0xFu);
+}
+
+/* Samples the image of a frame record at `uv` in [0, 1] with explicit
+ * gradients, limited to the image's mips as atlas_sample does. */
+float4 anim_frame_sample_grad(Texture2DArray tex, SamplerState s, uint4 frame, float2 uv, float2 dx, float2 dy)
+{
+    float4 rect = float4(frame.y & 0xFFFFu, frame.y >> 16, frame.z & 0xFFFFu, frame.z >> 16) / fs_anim.y;
+    uint width, height, layers, levels;
+    tex.GetDimensions(0, width, height, layers, levels);
+    float2 size = float2(width, height);
+    dx *= rect.zw;
+    dy *= rect.zw;
+    float2 tdx    = dx * size;
+    float2 tdy    = dy * size;
+    float  lod    = 0.5f * log2(max(max(dot(tdx, tdx), dot(tdy, tdy)), 1e-20f));
+    float  shrink = exp2(min((float)((frame.x >> 12) & 0xFu) - lod, 0.0f));
+    return tex.SampleGrad(s, float3(rect.xy + uv * rect.zw, (float)(frame.x & 0xFFFu)), dx * shrink, dy * shrink);
+}
+
+/* The hull damage at `uv` for the instance's stage: rgb multiplies the
+ * colour, a the gloss (roughness, metallic and specular); 1 outside the
+ * damage rectangle and without damage. The rectangle applies where the
+ * wrapped UV falls inside it, sampling the stage image across it. */
+float4 anim_damage(uint4 anim, float2 uv)
+{
+    float2 uv_dx = ddx(uv);
+    float2 uv_dy = ddy(uv);
+    if (fs_anim_state.z == 0u || anim.z == 0u) return float4(1.0f, 1.0f, 1.0f, 1.0f);
+    uint alternative = material_anim_damage_alternative(anim.z & 0xFFFFu, anim.z >> 16, fs_anim_state.y,
+                                                        (anim.w >> 8) & 0xFFFu);
+    uint4 frame = g_anim_records[alternative + min(fs_anim_state.z, AERON_ANIM_DAMAGE_STAGES) - 1u];
+    if ((frame.x & 0xFFFu) == AERON_ANIM_NO_LAYER) return float4(1.0f, 1.0f, 1.0f, 1.0f);
+    MaterialAnimRect r = material_anim_damage_rect(alternative, fs_anim_state.y, (anim.w >> 20) & 0xFFFu);
+    float2 t = frac(1.0f + frac(uv));
+    if (t.x < r.x0 || t.x > r.x1 || t.y < r.y0 || t.y > r.y1) return float4(1.0f, 1.0f, 1.0f, 1.0f);
+    float2 range = float2(r.x1 - r.x0, r.y1 - r.y0);
+    return anim_frame_sample_grad(g_effect_layer, g_effect_layer_sampler, frame,
+                                  saturate((t - float2(r.x0, r.y0)) / range), uv_dx / range, uv_dy / range);
 }
 
 /* The playing frame record of a layer's flipbook (0: none, or a frame
@@ -209,18 +251,22 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
                          g_materials[mat].metal_rough.z);
 #endif
 #if AERON_PBR_ANIM
-    /* ===== Flipbooks =============================================
-     * colour: the frame over the colour; illumination: base = c·k +
-     * layer_base over the full colour c (aeronLayerBase), and its emission
+    /* ===== Flipbooks and hull damage ==============================
+     * colour: the frame over the colour; damage: its factor multiplies
+     * the result; illumination: base = c·k + layer_base over that colour c
+     * (the full colour aeronLayerBase when it plays), and its emission
      * replaces the material's. A layer without a playing frame keeps the
      * static material. */
     bool   anim_emission = false;
     float3 anim_emissive = float3(0.0f, 0.0f, 0.0f);
+    float  anim_gloss    = 1.0f;
     uint4  anim = g_materials[mat].anim;
-    if (anim.y != 0u) {
-        uint colour_book, lit_book;
-        uint colour_frame = anim_layer_frame(anim, AERON_ANIM_LAYER_COLOUR, colour_book);
-        uint lit_frame    = anim_layer_frame(anim, AERON_ANIM_LAYER_ILLUMINATION, lit_book);
+    if (anim.y != 0u || anim.z != 0u) {
+        uint colour_book = 0u, lit_book = 0u;
+        uint colour_frame = anim.y != 0u ? anim_layer_frame(anim, AERON_ANIM_LAYER_COLOUR, colour_book) : 0u;
+        uint lit_frame    = anim.y != 0u ? anim_layer_frame(anim, AERON_ANIM_LAYER_ILLUMINATION, lit_book) : 0u;
+        float4 damage     = anim_damage(anim, i.uv);
+        anim_gloss        = damage.a;
         float3 c = albedo_tex.rgb;
         if (lit_frame != 0u) {
             c = atlas_sample(g_base_color, g_base_sampler, i.uv, g_materials[mat].layer_base_rect,
@@ -231,6 +277,8 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
                                              anim_frame_uv(colour_book, i.uv));
             c = lerp(c, frame.rgb, frame.a);
         }
+        /* Damage darkens the colour under the illumination layer. */
+        c *= damage.rgb;
         if (lit_frame != 0u) {
             float2 frame_uv = anim_frame_uv(lit_book, i.uv);
             float4 layer = anim_frame_sample(g_effect_layer, g_effect_layer_sampler, g_anim_records[lit_frame],
@@ -247,7 +295,7 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
 
 #if AERON_PBR_SCREENS
     /* ===== Transparent screens ===================================
-     * Unlit like XWAU's (no normal or shading): the cover, when present,
+     * Unlit (no normal or shading): the cover, when present,
      * over the screen, with alpha from the display luminance. */
     if ((g_materials[mat].screen_flags & SCREEN_TRANSPARENT) != 0u) {
         ScreenFrame screen_frame = screen_load_frame();
@@ -403,13 +451,21 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
         mp.roughness = fs_debug_material.z;
     }
 #endif
+    float specular_factor = g_materials[mat].specular.a;
+#if AERON_PBR_ANIM
+    /* Damage dulls the surface: the gloss factor raises roughness and
+     * scales metallic and specular. */
+    mp.roughness = 1.0f - (1.0f - mp.roughness) * anim_gloss;
+    metallic *= anim_gloss;
+    specular_factor *= anim_gloss;
+#endif
     mp.roughness = max(mp.roughness, 0.045f);
     /* KHR_materials_specular: the dielectric F0 is scaled by the colour
      * factor and both dielectric Fresnel ends by specularFactor; the
      * defaults (1, 1) give the plain metallic-roughness model. */
-    float3 f0_dielectric = min(0.04f * g_materials[mat].specular.rgb, 1.0f) * g_materials[mat].specular.a;
+    float3 f0_dielectric = min(0.04f * g_materials[mat].specular.rgb, 1.0f) * specular_factor;
     mp.F0  = lerp(f0_dielectric, albedo, metallic);
-    mp.F90 = lerp(g_materials[mat].specular.a, 1.0f, metallic);
+    mp.F90 = lerp(specular_factor, 1.0f, metallic);
     base_rgb *= (1.0f - metallic);
 
     /* ===== Cook-Torrance specular ================================
