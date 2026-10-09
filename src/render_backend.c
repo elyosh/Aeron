@@ -1703,6 +1703,8 @@ int Aeron_Present(void) {
 		borrowed_render_pass.render_pass      = render_pass;
 		borrowed_render_pass.owner            = &borrowed_command_buffer;
 		borrowed_render_pass.output_rgb_scale = output_rgb_scale;
+		borrowed_render_pass.width            = (int)swapchain_width;
+		borrowed_render_pass.height           = (int)swapchain_height;
 		SDL_zero(borrowed_render_target);
 		borrowed_render_target.color.texture   = swapchain_texture;
 		borrowed_render_target.color.width     = (int)swapchain_width;
@@ -3784,6 +3786,16 @@ AeronTexture* Aeron_DepthTargetGetTexture(AeronDepthTarget* target) {
 	return &target->depth;
 }
 
+/* Clamps `rect` to the pass's attachments, which the GPU requires of a
+ * scissor. A rect entirely outside them marks the scissor empty: draws are
+ * skipped until a scissor that covers some of the target is set. */
+static int pass_clamp_scissor(AeronRenderPass* pass, const AeronRectI* rect, SDL_Rect* out) {
+	const SDL_Rect wanted = { rect->x, rect->y, rect->width, rect->height };
+	const SDL_Rect target = { 0, 0, pass->width, pass->height };
+	pass->scissor_empty   = !SDL_GetRectIntersection(&wanted, &target, out);
+	return !pass->scissor_empty;
+}
+
 AeronRenderPass* Aeron_BeginRenderPass(const AeronRenderPassDesc* desc) {
 	SDL_GPUColorTargetInfo               color_targets[AERON_MAX_COLOR_TARGETS];
 	SDL_GPUDepthStencilTargetInfo        depth_target;
@@ -3845,6 +3857,8 @@ AeronRenderPass* Aeron_BeginRenderPass(const AeronRenderPassDesc* desc) {
 	pass->output_rgb_scale = 1.0f;
 	pass->sample_count     = pass_sample_count;
 	pass->depth_format     = has_depth ? desc->depth_target->depth.format : AERON_TEXTURE_FORMAT_UNKNOWN;
+	pass->width            = has_color ? desc->color_target->color.width : desc->depth_target->depth.width;
+	pass->height           = has_color ? desc->color_target->color.height : desc->depth_target->depth.height;
 
 	if (!desc->command_buffer->command_buffer || desc->command_buffer->failed ||
 		desc->command_buffer->compute_pass_active || desc->command_buffer->render_pass_active) {
@@ -3925,11 +3939,9 @@ AeronRenderPass* Aeron_BeginRenderPass(const AeronRenderPassDesc* desc) {
 	}
 
 	if (desc->scissor.width > 0 && desc->scissor.height > 0) {
-		scissor.x = desc->scissor.x;
-		scissor.y = desc->scissor.y;
-		scissor.w = desc->scissor.width;
-		scissor.h = desc->scissor.height;
-		SDL_SetGPUScissor(pass->render_pass, &scissor);
+		if (pass_clamp_scissor(pass, &desc->scissor, &scissor)) {
+			SDL_SetGPUScissor(pass->render_pass, &scissor);
+		}
 	}
 
 	return pass;
@@ -4314,16 +4326,13 @@ void Aeron_SetScissor(AeronRenderPass* pass, const AeronRectI* rect) {
 	if (!pass || !pass->render_pass || !rect || rect->width <= 0 || rect->height <= 0) {
 		return;
 	}
-
-	scissor.x = rect->x;
-	scissor.y = rect->y;
-	scissor.w = rect->width;
-	scissor.h = rect->height;
-	SDL_SetGPUScissor(pass->render_pass, &scissor);
+	if (pass_clamp_scissor(pass, rect, &scissor)) {
+		SDL_SetGPUScissor(pass->render_pass, &scissor);
+	}
 }
 
 void Aeron_Draw(AeronRenderPass* pass, uint32_t vertex_count, uint32_t first_vertex) {
-	if (!pass || !pass->render_pass || vertex_count == 0) {
+	if (!pass || !pass->render_pass || pass->scissor_empty || vertex_count == 0) {
 		return;
 	}
 
@@ -4332,7 +4341,7 @@ void Aeron_Draw(AeronRenderPass* pass, uint32_t vertex_count, uint32_t first_ver
 
 void Aeron_DrawIndexed(AeronRenderPass* pass, uint32_t index_count, uint32_t first_index,
 					   int32_t vertex_offset) {
-	if (!pass || !pass->render_pass || index_count == 0) {
+	if (!pass || !pass->render_pass || pass->scissor_empty || index_count == 0) {
 		return;
 	}
 
@@ -4341,7 +4350,7 @@ void Aeron_DrawIndexed(AeronRenderPass* pass, uint32_t index_count, uint32_t fir
 
 void Aeron_DrawInstanced(AeronRenderPass* pass, uint32_t vertex_count, uint32_t instance_count,
 						 uint32_t first_vertex) {
-	if (!pass || !pass->render_pass || vertex_count == 0 || instance_count == 0) {
+	if (!pass || !pass->render_pass || pass->scissor_empty || vertex_count == 0 || instance_count == 0) {
 		return;
 	}
 
@@ -4350,7 +4359,7 @@ void Aeron_DrawInstanced(AeronRenderPass* pass, uint32_t vertex_count, uint32_t 
 
 void Aeron_DrawIndexedInstanced(AeronRenderPass* pass, uint32_t index_count, uint32_t instance_count,
 								uint32_t first_index, int32_t vertex_offset) {
-	if (!pass || !pass->render_pass || index_count == 0 || instance_count == 0) {
+	if (!pass || !pass->render_pass || pass->scissor_empty || index_count == 0 || instance_count == 0) {
 		return;
 	}
 

@@ -1004,7 +1004,9 @@ void Aeron_BindStorageBuffer(AeronRenderPass* pass, AeronShaderStage stage, uint
 /* Sets the render-target-pixel viewport for subsequent draw calls. */
 void Aeron_SetViewport(AeronRenderPass* pass, const AeronRectI* rect);
 
-/* Sets the render-target-pixel scissor rectangle for subsequent draw calls. */
+/* Sets the render-target-pixel scissor rectangle for subsequent draw calls,
+ * clamped to the pass's attachments. A rectangle entirely outside them skips
+ * the draws until the next scissor; an empty one is ignored. */
 void Aeron_SetScissor(AeronRenderPass* pass, const AeronRectI* rect);
 
 /* Issues a non-indexed draw with one instance. */
