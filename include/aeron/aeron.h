@@ -33,6 +33,8 @@ typedef enum AeronPresentationMode {
 typedef struct AeronConfig {
 	const char* org_name;
 	const char* app_name;
+	/* Optional version string recorded in the session log and crash reports. */
+	const char* app_version;
 	const char* asset_root;
 	/* Optional explicit resource root. When unset, resource_path is resolved
 	 * relative to the application directory. */
@@ -60,7 +62,9 @@ typedef struct AeronConfig {
 	float clear_color_rgba[4];
 } AeronConfig;
 
-/* Initializes SDL, the Aeron window, render backend, text input, and VFS. */
+/* Initializes SDL, the Aeron window, render backend, text input, and VFS.
+ * Also starts the per-session log file under the user root's diagnostics/
+ * directory and, on Windows, a crash handler that writes minidumps there. */
 int Aeron_Init(const AeronConfig* config);
 /* Shuts down Aeron and releases all runtime-owned resources. */
 void Aeron_Shutdown(void);

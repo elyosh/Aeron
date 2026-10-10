@@ -43,6 +43,7 @@ int Aeron_Init(const AeronConfig* config) {
 	if (g_aeron.initialized) {
 		return 1;
 	}
+	Aeron_DiagnosticsInit(config);
 
 	memset(&g_aeron, 0, sizeof(g_aeron));
 	g_aeron.clear_color_rgba[0] = 0.035f;

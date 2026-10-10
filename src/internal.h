@@ -9,6 +9,11 @@
 #include <stdint.h>
 
 #define AERON_MAX_PATH 1024
+#ifdef _WIN32
+#define AERON_PATH_SEPARATOR "\\"
+#else
+#define AERON_PATH_SEPARATOR "/"
+#endif
 #define AERON_MAX_DELTA_US 250000
 #define AERON_MAX_RENDER_LAYERS 64
 #define AERON_MAX_PIXEL_LAYER_UPLOADS 8
@@ -290,6 +295,24 @@ void Aeron_HandleControllerEvent(const SDL_Event* event);
 void Aeron_UpdateControllers(AeronInputSnapshot* input);
 
 void Aeron_InitVfs(const AeronConfig* config);
+
+/* Starts the session log file and crash handler once per process, both writing to the
+ * user root's diagnostics/ directory. Safe before SDL_Init. */
+void Aeron_DiagnosticsInit(const AeronConfig* config);
+/* Deletes all but the newest keep files in directory matching pattern; names must sort by age. */
+void Aeron_DiagnosticsPrune(const char* directory, const char* pattern, int keep);
+/* Mirrors SDL log output into directory/<app_name>-<date>-<time>.log, pruning old sessions. */
+void Aeron_LogFileInit(const char* directory, const char* app_name);
+/* Native HANDLE of the open log file on Windows, else NULL. Used by the crash handler. */
+void* Aeron_LogFileNativeHandle(void);
+/* File descriptor of the open log file on POSIX, else -1. Used by the crash handler. */
+int Aeron_LogFileDescriptor(void);
+#if defined(_WIN32) || defined(__linux__)
+#define AERON_HAS_CRASH_HANDLER 1
+/* Installs process-wide crash reporting into the diagnostics directory: minidumps
+ * on Windows, a signal handler appending a backtrace to the session log on Linux. */
+void Aeron_CrashHandlerInit(const char* directory, const char* app_name, const char* app_version);
+#endif
 void Aeron_ClearRenderSubmissions(void);
 
 /* ---- Debug UI internal hooks (src/debug_ui.cpp) ----

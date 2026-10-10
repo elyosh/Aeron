@@ -344,6 +344,7 @@ set(AERON_SOURCES
     src/atlas_pack.c
     src/audio.c
     src/config_file.c
+    src/diagnostics.c
     src/dialog.c
     src/events.c
     src/gamepad.c
@@ -408,8 +409,13 @@ target_link_libraries(aeron
 
 add_dependencies(aeron aeron_shaders)
 
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    target_sources(aeron PRIVATE src/crash_handler_linux.c)
+endif()
+
 if(WIN32)
-    target_link_libraries(aeron PRIVATE bcrypt)
+    target_sources(aeron PRIVATE src/crash_handler_win32.c)
+    target_link_libraries(aeron PRIVATE bcrypt shell32)
 endif()
 
 if(AERON_ENABLE_DPLAY AND NOT AERON_ENABLE_COMPAT)
