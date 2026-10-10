@@ -50,7 +50,7 @@ static int cmp_key(const void* a, const void* b) {
 }
 
 bool EffectPack_Write(const char* tool, const char* out_dir, const char* name, const char* source,
-					  const EffectPackImage* images, size_t count, EffectPackResult* result) {
+					  const char* inputs, const EffectPackImage* images, size_t count, EffectPackResult* result) {
 	size_t* order         = (size_t*)malloc((count ? count : 1) * sizeof *order);
 	int*    layer_rect    = (int*)malloc((count ? count : 1) * sizeof *layer_rect);
 	int*    emissive_rect = (int*)malloc((count ? count : 1) * sizeof *emissive_rect);
@@ -103,6 +103,8 @@ bool EffectPack_Write(const char* tool, const char* out_dir, const char* name, c
 			fprintf(f, "version: 1\n");
 			if (source)
 				fprintf(f, "source: %s\n", source);
+			if (inputs)
+				fprintf(f, "inputs: %s\n", inputs);
 			fprintf(f, "page_size: %d\nlayer_pages: %d\nemissive_pages: %d\nimages:\n", EFFECT_PACK_PAGE_SIZE,
 					layer_pages, emissive_pages);
 			for (size_t k = 0; k < count; ++k) {

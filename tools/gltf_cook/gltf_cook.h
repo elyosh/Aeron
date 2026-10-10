@@ -79,6 +79,9 @@ typedef struct AeronGltfCookOptions {
 	 * Disable when a downstream consumer rejects supercompressed
 	 * KTX2. */
 	bool zstd_supercompress;
+	/* Its level, 1 to 22. Default: 9 (KTX2_ZSTD_LEVEL_DEFAULT): 19 is
+	 * about 14x slower for payloads about 6% smaller. */
+	int zstd_level;
 
 	/* Verbose cook progress on stderr. */
 	bool verbose;

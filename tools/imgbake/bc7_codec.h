@@ -33,8 +33,9 @@ void bc7_codec_encode_block(uint8_t out_block[16], const uint8_t in_rgba_4x4[64]
 /* Encode a whole RGBA8 image (tightly-packed, R first) into a flat
  * BC7 block stream. Out buffer must be ≥ ceil(w/4)*ceil(h/4)*16
  * bytes. Pixels at the right/bottom edges that don't fill a full
- * 4×4 block are padded with the last row/col before encode. Returns
- * the number of bytes written. */
+ * 4×4 block are padded with the last row/col before encode. Large
+ * images are encoded on all hardware threads; the output is the same
+ * as a single-threaded encode. Returns the number of bytes written. */
 size_t bc7_codec_encode_image(uint8_t* out_blocks, size_t out_cap, const uint8_t* rgba, int w, int h,
 							  Bc7Quality quality);
 

@@ -14,6 +14,17 @@
 
 #include <zstd.h>
 
+static int g_zstd_level = KTX2_ZSTD_LEVEL_DEFAULT;
+
+bool ktx2_set_zstd_level(int level) {
+	if (level < 1 || level > ZSTD_maxCLevel())
+		return false;
+	g_zstd_level = level;
+	return true;
+}
+
+int ktx2_zstd_level(void) { return g_zstd_level; }
+
 /* Encode level: zstd-compress the given bytes if `enabled`, else
  * memcpy into a fresh malloc. Caller frees the returned buffer.
  * Returns NULL on failure. */
@@ -30,9 +41,7 @@ static uint8_t* encode_level(const uint8_t* src, size_t src_size, bool enabled, 
 	uint8_t* buf   = (uint8_t*)malloc(bound);
 	if (!buf)
 		return NULL;
-	/* Level 19 favors compact build-time assets. Decompression speed is
-	 * independent of the compression level. */
-	size_t got = ZSTD_compress(buf, bound, src, src_size, 19);
+	size_t got = ZSTD_compress(buf, bound, src, src_size, g_zstd_level);
 	if (ZSTD_isError(got)) {
 		fprintf(stderr, "[ktx2-write] zstd compress failed: %s\n", ZSTD_getErrorName(got));
 		free(buf);

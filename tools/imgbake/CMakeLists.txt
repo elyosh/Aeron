@@ -99,7 +99,9 @@ target_include_directories(imgbake
         ${IMGBAKE_TP}/stb)                   # stb_image*/truetype
 
 # zstd — KTX2 supercompressionScheme=2 (aeron already requires it).
-target_link_libraries(imgbake PUBLIC aeron zstd::libzstd)
+# Threads — the BC7 encoder splits large images across threads.
+find_package(Threads REQUIRED)
+target_link_libraries(imgbake PUBLIC aeron zstd::libzstd PRIVATE Threads::Threads)
 
 set_target_properties(imgbake PROPERTIES C_STANDARD 11)
 target_compile_features(imgbake PUBLIC cxx_std_17)

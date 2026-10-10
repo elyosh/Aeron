@@ -41,11 +41,13 @@ typedef struct EffectPackResult {
 	int emissive_pages;
 } EffectPackResult;
 
-/* Writes library `name` into `out_dir`. `source`, when not NULL, is noted
- * in the index (`source:`). Keys must be unique. Messages go to stderr,
- * prefixed with `tool`. Returns false on failure. */
+/* Writes library `name` into `out_dir`. `source` and `inputs`, when not
+ * NULL, are noted in the index (`source:`, `inputs:`, which the runtime
+ * ignores: a tool's own record of what it built the library from). Keys
+ * must be unique. Messages go to stderr, prefixed with `tool`. Returns false
+ * on failure. */
 bool EffectPack_Write(const char* tool, const char* out_dir, const char* name, const char* source,
-					  const EffectPackImage* images, size_t count, EffectPackResult* result);
+					  const char* inputs, const EffectPackImage* images, size_t count, EffectPackResult* result);
 
 #ifdef __cplusplus
 }

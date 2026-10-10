@@ -52,6 +52,7 @@ void aeron_gltf_cook_default_options(AeronGltfCookOptions* out) {
 	out->encoding           = AERON_GLTF_COOK_ENCODING_BC;
 	out->bc7_quality        = 1; /* KTX2_BC7_QUALITY_MED */
 	out->zstd_supercompress = true;
+	out->zstd_level         = KTX2_ZSTD_LEVEL_DEFAULT;
 	out->verbose            = false;
 }
 
@@ -637,6 +638,11 @@ bool aeron_gltf_cook_data(cgltf_data* data, const char* source_label,
 		opts = *opts_in;
 	else
 		aeron_gltf_cook_default_options(&opts);
+	if (opts.zstd_supercompress &&
+		!ktx2_set_zstd_level(opts.zstd_level ? opts.zstd_level : KTX2_ZSTD_LEVEL_DEFAULT)) {
+		fprintf(stderr, "[aeron_gltf_cook] invalid zstd level %d\n", opts.zstd_level);
+		return false;
+	}
 
 	if (data->buffers_count != 1) {
 		fprintf(stderr,

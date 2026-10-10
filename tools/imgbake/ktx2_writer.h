@@ -48,6 +48,14 @@ typedef struct {
  * supercompressed KTX2 (e.g. quick visual inspection in a generic
  * image viewer that ignores supercompression). */
 
+/* zstd level of every writer in the process: KTX2_ZSTD_LEVEL_DEFAULT
+ * unless set. On BC7 atlases level 9 is about 14x faster than 19 for
+ * about 6% larger payloads; decompression speed does not depend on the
+ * level. Returns false (and keeps the level) outside 1..ZSTD_maxCLevel. */
+#define KTX2_ZSTD_LEVEL_DEFAULT 9
+bool ktx2_set_zstd_level(int level);
+int  ktx2_zstd_level(void);
+
 /* Transfer-function tag — picks between the _UNORM and _SRGB variants
  * of the chosen Vulkan format. Every 2D writer needs the same choice:
  * sRGB-authored colour textures (palette art, cockpit bitmaps, film

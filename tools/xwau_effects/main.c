@@ -2,7 +2,8 @@
  * xwau_effects — builds the effect image libraries and the game effect data
  * of converted XWAU models (docs: xwau_animated_materials.md, "Asset Format").
  *
- *   xwau_effects [--xwau-root DIR]... --out DIR [MODEL.glb | DIR]...
+ *   xwau_effects [--xwau-root DIR]... [--reuse DIR] [--zstd-level N] --out DIR
+ *                [MODEL.glb | DIR]...
  *
  * Reads the library images the models use (the keys of their aeronFlipbooks
  * frames and aeronDamage stages, from the .glb files given or found in the
@@ -13,7 +14,13 @@
  *   - effects.yaml: the energy effects and the flipbooks of DAT images the
  *     game draws directly (the blast marks of group 3050);
  *   - per library (one per source DAT): <name>.layer.ktx2, <name>.emissive.ktx2
- *     (when it has emission) and the <name>.yaml index.
+ *     (when it has emission) and the <name>.yaml index, which records a hash
+ *     of what the library was built from (`inputs:`).
+ * With --reuse DIR (an earlier output, e.g. the installed libraries), a
+ * library whose index in DIR records the same inputs is copied from there
+ * instead of being rebuilt. The inputs are this executable, the zstd level
+ * (--zstd-level, default KTX2_ZSTD_LEVEL_DEFAULT), the source DAT and the
+ * library's images, so a rebuilt tool rebuilds every library once.
  * Roots are searched in order, the first holding a file wins (as opt2gltf).
  */
 
@@ -26,9 +33,18 @@
 #include <string.h>
 #include <strings.h>
 #include <sys/stat.h>
+#if defined(__APPLE__)
+#include <mach-o/dyld.h>
+#elif defined(__linux__)
+#include <unistd.h>
+#endif
+
+#define XXH_INLINE_ALL
+#include "xxhash.h"
 
 #include "cJSON.h"
 #include "effect_pack.h"
+#include "ktx2_writer.h"
 #include "xwau_dat.h"
 #include "xwau_effect_bake.h"
 #include "xwau_mat.h"
@@ -641,19 +657,156 @@ static bool write_file(const char* path, const void* data, size_t size) {
 	return fclose(f) == 0 && ok;
 }
 
-/* Decodes and bakes a library's images, and writes it with effect_pack. */
-static bool build_library(Library* l, const char* out_dir) {
-	char path[1024], err[512];
+/* ---- Reuse ---------------------------------------------------------------- */
+
+/* A library's inputs hash covers everything its files are built from: this
+ * executable (the bake, packing and encoding linked into it, so a rebuilt
+ * tool rebuilds every library once), the source DAT's content and the
+ * library's requests. With --reuse, a library whose index there records the
+ * same hash is copied from there instead of rebuilt. */
+
+static uint64_t g_tool_hash; /* 0: unknown, nothing is reused */
+
+static bool hash_file(const char* path, uint64_t* out) {
+	FILE* f = fopen(path, "rb");
+	if (!f)
+		return false;
+	enum { CHUNK = 1 << 20 };
+	XXH3_state_t* state = XXH3_createState();
+	uint8_t*      buf   = (uint8_t*)malloc(CHUNK);
+	bool          ok    = state && buf && XXH3_64bits_reset(state) == XXH_OK;
+	size_t        n;
+	while (ok && (n = fread(buf, 1, CHUNK, f)) > 0)
+		ok = XXH3_64bits_update(state, buf, n) == XXH_OK;
+	ok = ok && !ferror(f);
+	if (ok)
+		*out = XXH3_64bits_digest(state);
+	free(buf);
+	XXH3_freeState(state);
+	fclose(f);
+	return ok;
+}
+
+static void hash_executable(void) {
+	char path[4096];
+#if defined(__APPLE__)
+	uint32_t size = sizeof path;
+	if (_NSGetExecutablePath(path, &size) != 0)
+		return;
+#elif defined(__linux__)
+	const ssize_t n = readlink("/proc/self/exe", path, sizeof path - 1);
+	if (n <= 0)
+		return;
+	path[n] = 0;
+#else
+	return;
+#endif
+	if (!hash_file(path, &g_tool_hash))
+		g_tool_hash = 0;
+}
+
+/* The inputs hash of library `l` (requests sorted) built from the DAT at
+ * `dat_path`, as 16 hex digits; false when it cannot be computed. */
+static bool library_inputs(const Library* l, const char* dat_path, char out[17]) {
+	uint64_t dat_hash;
+	if (!g_tool_hash || !hash_file(dat_path, &dat_hash))
+		return false;
+	XXH3_state_t* s = XXH3_createState();
+	if (!s || XXH3_64bits_reset(s) != XXH_OK) {
+		XXH3_freeState(s);
+		return false;
+	}
+	const int32_t zstd_level = ktx2_zstd_level();
+	XXH3_64bits_update(s, &g_tool_hash, sizeof g_tool_hash);
+	XXH3_64bits_update(s, &zstd_level, sizeof zstd_level);
+	XXH3_64bits_update(s, &dat_hash, sizeof dat_hash);
+	XXH3_64bits_update(s, l->name, strlen(l->name) + 1);
+	XXH3_64bits_update(s, l->dat, strlen(l->dat) + 1);
+	for (size_t i = 0; i < l->count; ++i) {
+		const Request* r    = &l->requests[i];
+		const int32_t  v[5] = { r->group, r->image, (int32_t)r->kind, r->alpha_mode, r->crop };
+		XXH3_64bits_update(s, r->key, strlen(r->key) + 1);
+		XXH3_64bits_update(s, v, sizeof v);
+		XXH3_64bits_update(s, r->tint, sizeof r->tint);
+	}
+	snprintf(out, 17, "%016llx", (unsigned long long)XXH3_64bits_digest(s));
+	XXH3_freeState(s);
+	return true;
+}
+
+static bool copy_file(const char* from, const char* to) {
+	FILE* f = fopen(from, "rb");
+	if (!f)
+		return false;
+	bool  ok   = fseek(f, 0, SEEK_END) == 0;
+	long  size = ok ? ftell(f) : -1;
+	char* data = size >= 0 ? (char*)malloc(size ? (size_t)size : 1) : NULL;
+	ok         = data && fseek(f, 0, SEEK_SET) == 0 && fread(data, 1, (size_t)size, f) == (size_t)size;
+	fclose(f);
+	ok = ok && write_file(to, data, (size_t)size);
+	free(data);
+	return ok;
+}
+
+/* Copies library `l` from `reuse_dir` into `out_dir` when its index there
+ * records `inputs` and its page files are present. */
+static bool reuse_library(const Library* l, const char* inputs, const char* reuse_dir, const char* out_dir) {
+	char path[1024], line[512];
+	snprintf(path, sizeof path, "%s/%s.yaml", reuse_dir, l->name);
+	FILE* f = fopen(path, "rb");
+	if (!f)
+		return false;
+	bool same     = false;
+	int  pages[2] = { -1, -1 };
+	while (fgets(line, sizeof line, f) && strncmp(line, "images:", 7) != 0) {
+		char value[64];
+		if (sscanf(line, "inputs: %63s", value) == 1)
+			same = strcmp(value, inputs) == 0;
+		sscanf(line, "layer_pages: %d", &pages[0]);
+		sscanf(line, "emissive_pages: %d", &pages[1]);
+	}
+	fclose(f);
+	if (!same || pages[0] < 0 || pages[1] < 0)
+		return false;
+	static const char* const suffix[2] = { "layer", "emissive" };
+	char                     from[1024], to[1024];
+	for (int a = 0; a < 2; ++a) {
+		struct stat st;
+		snprintf(from, sizeof from, "%s/%s.%s.ktx2", reuse_dir, l->name, suffix[a]);
+		if (pages[a] && stat(from, &st) != 0)
+			return false;
+	}
+	for (int a = 0; a < 2; ++a) {
+		if (!pages[a])
+			continue;
+		snprintf(from, sizeof from, "%s/%s.%s.ktx2", reuse_dir, l->name, suffix[a]);
+		snprintf(to, sizeof to, "%s/%s.%s.ktx2", out_dir, l->name, suffix[a]);
+		if (!copy_file(from, to))
+			return false;
+	}
+	snprintf(to, sizeof to, "%s/%s.yaml", out_dir, l->name);
+	return copy_file(path, to);
+}
+
+/* Decodes and bakes a library's images, and writes it with effect_pack, or
+ * copies it from `reuse_dir` (NULL: none) when its inputs are unchanged. */
+static bool build_library(Library* l, const char* out_dir, const char* reuse_dir) {
+	char path[1024], err[512], inputs[17];
 	if (!find_file(l->dat, path, sizeof path)) {
 		fprintf(stderr, "xwau_effects: %s: %s not found\n", l->name, l->dat);
 		return false;
+	}
+	qsort(l->requests, l->count, sizeof *l->requests, cmp_request);
+	const bool have_inputs = library_inputs(l, path, inputs);
+	if (have_inputs && reuse_dir && reuse_library(l, inputs, reuse_dir, out_dir)) {
+		fprintf(stderr, "xwau_effects: %s: %zu image(s), reused (inputs unchanged)\n", l->name, l->count);
+		return true;
 	}
 	XwauDat* dat = XwauDat_Open(path, err, sizeof err);
 	if (!dat) {
 		fprintf(stderr, "xwau_effects: %s\n", err);
 		return false;
 	}
-	qsort(l->requests, l->count, sizeof *l->requests, cmp_request);
 	Decoded*         decoded       = (Decoded*)calloc(l->count, sizeof *decoded);
 	Baked*           baked         = (Baked*)calloc(l->count, sizeof *baked);
 	EffectPackImage* images        = (EffectPackImage*)calloc(l->count ? l->count : 1, sizeof *images);
@@ -698,7 +851,8 @@ static bool build_library(Library* l, const char* out_dir) {
 	}
 	XwauDat_Close(dat);
 	EffectPackResult result = { 0 };
-	ok = ok && EffectPack_Write("xwau_effects", out_dir, l->name, l->dat, images, image_count, &result);
+	ok = ok && EffectPack_Write("xwau_effects", out_dir, l->name, l->dat, have_inputs ? inputs : NULL, images,
+								image_count, &result);
 	if (ok)
 		fprintf(stderr, "xwau_effects: %s: %zu image(s), %d layer and %d emissive page(s)\n", l->name,
 				l->count, result.layer_pages, result.emissive_pages);
@@ -719,18 +873,25 @@ static int cmp_library(const void* a, const void* b) {
 }
 
 static int usage(void) {
-	fprintf(stderr, "usage: xwau_effects [--xwau-root DIR]... --out DIR [MODEL.glb | DIR]...\n");
+	fprintf(stderr, "usage: xwau_effects [--xwau-root DIR]... [--reuse DIR] [--zstd-level N] --out DIR "
+					"[MODEL.glb | DIR]...\n");
 	return 2;
 }
 
 int main(int argc, char** argv) {
 	const char* out         = NULL;
+	const char* reuse       = NULL;
 	int         first_input = argc;
 	for (int i = 1; i < argc; ++i) {
 		if (strcmp(argv[i], "--xwau-root") == 0 && i + 1 < argc) {
 			if (g_root_count == MAX_ROOTS)
 				return usage();
 			g_roots[g_root_count++] = argv[++i];
+		} else if (strcmp(argv[i], "--reuse") == 0 && i + 1 < argc) {
+			reuse = argv[++i];
+		} else if (strcmp(argv[i], "--zstd-level") == 0 && i + 1 < argc) {
+			if (!ktx2_set_zstd_level(atoi(argv[++i])))
+				return usage();
 		} else if (strcmp(argv[i], "--out") == 0 && i + 1 < argc) {
 			out = argv[++i];
 		} else if (argv[i][0] == '-') {
@@ -742,6 +903,8 @@ int main(int argc, char** argv) {
 	}
 	if (!out || !g_root_count)
 		return usage();
+	if (reuse)
+		hash_executable();
 	bool ok = true;
 	for (int i = first_input; i < argc; ++i)
 		ok &= read_models(argv[i]);
@@ -769,7 +932,7 @@ int main(int argc, char** argv) {
 	free(g_skipped);
 	qsort(g_libraries, g_library_count, sizeof *g_libraries, cmp_library);
 	for (size_t i = 0; i < g_library_count; ++i)
-		ok &= build_library(&g_libraries[i], out);
+		ok &= build_library(&g_libraries[i], out, reuse);
 	for (size_t i = 0; i < g_library_count; ++i)
 		free(g_libraries[i].requests);
 	free(g_libraries);

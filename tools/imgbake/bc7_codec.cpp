@@ -19,7 +19,10 @@ extern "C" {
 }
 #include "third_party/bc7enc/bc7enc.h"
 
+#include <atomic>
 #include <mutex>
+#include <thread>
+#include <vector>
 
 static std::once_flag s_init_flag;
 
@@ -111,13 +114,34 @@ size_t bc7_codec_encode_image(uint8_t *out_blocks, size_t out_cap,
     bc7enc_compress_block_params params;
     params_for(&params, quality);
 
-    for (int y = 0; y < by; ++y) {
-        for (int x = 0; x < bx; ++x) {
-            uint8_t block_rgba[64];
-            copy_4x4_padded(block_rgba, rgba, w, h, x, y);
-            uint8_t *dst = out_blocks + ((size_t)y * (size_t)bx + (size_t)x) * 16u;
-            bc7enc_compress_block(dst, block_rgba, &params);
+    /* Block rows go to worker threads one at a time (block cost varies
+     * widely). Blocks are encoded independently and bc7enc only reads
+     * its tables after bc7_codec_init, so the output does not depend on
+     * the thread count. Small images stay on the calling thread. */
+    std::atomic<int> next_row(0);
+    auto encode_rows = [&]() {
+        for (int y = next_row++; y < by; y = next_row++) {
+            for (int x = 0; x < bx; ++x) {
+                uint8_t block_rgba[64];
+                copy_4x4_padded(block_rgba, rgba, w, h, x, y);
+                uint8_t *dst = out_blocks + ((size_t)y * (size_t)bx + (size_t)x) * 16u;
+                bc7enc_compress_block(dst, block_rgba, &params);
+            }
         }
+    };
+    unsigned threads = std::thread::hardware_concurrency();
+    if ((size_t)bx * (size_t)by < 4096u || threads < 2) {
+        encode_rows();
+        return need;
     }
+    if (threads > (unsigned)by)
+        threads = (unsigned)by;
+    std::vector<std::thread> workers;
+    workers.reserve(threads - 1);
+    for (unsigned t = 1; t < threads; ++t)
+        workers.emplace_back(encode_rows);
+    encode_rows();
+    for (std::thread &worker : workers)
+        worker.join();
     return need;
 }

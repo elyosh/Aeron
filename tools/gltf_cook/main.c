@@ -44,6 +44,8 @@ static void usage(void) {
 					"  --quality {fast|med|uber}\n"
 					"                        BC7 encoder preset (default med).\n"
 					"  --no-zstd             Skip zstd supercompression on KTX2 payloads.\n"
+					"  --zstd-level <N>      zstd level, 1 to 22 (default 9; 19 is about\n"
+					"                        14x slower for ~6%% smaller payloads).\n"
 					"  --animations <file>   Merge an animation file (<model>.anim.yaml:\n"
 					"                        materials' flipbooks, damage, energy and\n"
 					"                        animBaseColor) into the materials first.\n"
@@ -134,6 +136,8 @@ int main(int argc, char** argv) {
 			}
 		} else if (strcmp(a, "--no-zstd") == 0) {
 			opts.zstd_supercompress = false;
+		} else if (strcmp(a, "--zstd-level") == 0 && i + 1 < argc) {
+			opts.zstd_level = atoi(argv[++i]);
 		} else if (strcmp(a, "--animations") == 0 && i + 1 < argc) {
 			animations = argv[++i];
 		} else if (strcmp(a, "--effects-dir") == 0 && i + 1 < argc) {

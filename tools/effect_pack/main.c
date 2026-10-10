@@ -209,7 +209,7 @@ int main(int argc, char** argv) {
 		}
 	}
 	EffectPackResult result = { 0 };
-	if (ok && EffectPack_Write("effect_pack", out, library->valuestring, NULL, baked, (size_t)n, &result))
+	if (ok && EffectPack_Write("effect_pack", out, library->valuestring, NULL, NULL, baked, (size_t)n, &result))
 		fprintf(stderr, "effect_pack: %s: %d image(s), %d layer and %d emissive page(s)\n",
 				library->valuestring, n, result.layer_pages, result.emissive_pages);
 	else

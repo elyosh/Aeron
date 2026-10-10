@@ -1018,7 +1018,8 @@ if(AERON_BUILD_TOOLS)
     target_include_directories(xwau_effects PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/tools/opt2gltf
         ${CMAKE_CURRENT_SOURCE_DIR}/third_party/lzma
-        ${CMAKE_CURRENT_SOURCE_DIR}/third_party/bcdec)
+        ${CMAKE_CURRENT_SOURCE_DIR}/third_party/bcdec
+        ${CMAKE_CURRENT_SOURCE_DIR}/third_party/xxhash)
     target_link_libraries(xwau_effects PRIVATE aeron_effect_pack_lib aeron_cjson)
     if(NOT MSVC)
         target_link_libraries(xwau_effects PRIVATE m)
