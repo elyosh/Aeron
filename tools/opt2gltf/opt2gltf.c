@@ -332,6 +332,10 @@ static void xwau_state_free(XwauBaked* baked, int32_t count, int32_t* normal_own
 	free(normal_image);
 }
 
+float OptGltf_XwauUnlit(const OptGltfXwauMaterial* xm) {
+	return (xm->shadeless || xm->alpha_to_bloom) ? 1.0f : clamp01f(xm->ambient);
+}
+
 bool OptGltf_XwauTextureHasIllum(const opt_texture_t* t) {
 	if (t->bytes_per_texel == 4)
 		return t->flag_illum;
@@ -470,7 +474,7 @@ static bool xwau_bake_rgba(const opt_texture_t* t, const OptGltfXwauMaterial* xm
 	const float metallic    = xwau_metallic(xm->metallic);
 	const float roughness   = xwau_roughness(xm->glossiness);
 	const float glass_rough = 1.0f - XWAU_GLASS_GLOSS * XWAU_GLASS_GLOSS;
-	const float shadeless   = (xm->shadeless || xm->alpha_to_bloom) ? 1.0f : clamp01f(xm->ambient);
+	const float shadeless   = OptGltf_XwauUnlit(xm);
 
 	out->transparent = transparent;
 	out->emissive    = (uint8_t*)malloc(n * 4);
@@ -2502,7 +2506,7 @@ static bool build_memory(const opt_file_t* opt, const char* basename, const OptG
 	}
 	if (xwau) {
 		const OptGltfXwauMaterial* um = options->xwau_untextured;
-		const float                s  = (um->shadeless || um->alpha_to_bloom) ? 1.0f : clamp01f(um->ambient);
+		const float                s  = OptGltf_XwauUnlit(um);
 		for (int channel = 0; channel < 3; ++channel) {
 			const float grey = untex->pbr_metallic_roughness.base_color_factor[channel];
 			untex->pbr_metallic_roughness.base_color_factor[channel] = grey * (1.0f - s);

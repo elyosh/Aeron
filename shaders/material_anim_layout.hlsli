@@ -16,7 +16,8 @@
  *             asuint(strength), asuint(tile size, metres), 0, 0; then the
  *             effects' frames, each the emissive image with its end time
  *   flipbook: x state | layer << 8 | mode << 9 | has_uv << 10 |
- *             uv_clamp << 11, y first frame record, z frame count,
+ *             uv_clamp << 11 | unlit << 16 (colour: the unlit weight
+ *             0..255 for 0..1), y first frame record, z frame count,
  *             w asuint(total seconds)
  *   flipbook uv (when has_uv, right after it): asuint of scale.x, scale.y,
  *             offset.x, offset.y
@@ -72,6 +73,7 @@
 #define AERON_ANIM_FLIPBOOK_MODE_SHIFT 9
 #define AERON_ANIM_FLIPBOOK_HAS_UV 0x400u
 #define AERON_ANIM_FLIPBOOK_UV_CLAMP 0x800u
+#define AERON_ANIM_FLIPBOOK_UNLIT_SHIFT 16
 #define AERON_ANIM_NO_LAYER 0xFFFu
 #define AERON_ANIM_FRAME_RECORDS(layer) ((layer) == AERON_ANIM_LAYER_ILLUMINATION ? 2u : 1u)
 

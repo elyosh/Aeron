@@ -201,7 +201,7 @@ typedef struct AeronGltfMaterial {
  *                         "frames": [ [key, seconds], ... ],
  *                         "uv": { "scale": [sx, sy], "offset": [ox, oy],
  *                                 "clamp": bool },
- *                         "emissiveStrength": s } ]
+ *                         "emissiveStrength": s, "unlit": u } ]
  *
  *   "aeronDamage": { "library", "choice", "placement",
  *                    "alternatives": [ { "stages": [key | null] x 3,
@@ -212,7 +212,10 @@ typedef struct AeronGltfMaterial {
  * Frames and damage stages name images of an effect library
  * (aeron/scene/effect_atlas.h). `aeronAnimBaseColor`, optional, is the
  * colour animation frames apply over while an illumination frame plays; the
- * base colour without it. */
+ * base colour without it. `unlit` (0..1, default 0), for a colour flipbook,
+ * is the part of its frames drawn unlit: while one plays without an
+ * illumination frame, its colour c becomes base c·(1 − u) and emission c·u,
+ * replacing the material's emission (0 keeps the material's emission). */
 typedef struct AeronGltfFlipbookFrame {
 	char* key;
 	float seconds;
@@ -241,6 +244,7 @@ typedef struct AeronGltfFlipbook {
 	float    uv_scale[2];
 	float    uv_offset[2];
 	float    emissive_strength; /* illumination frames' emission scale (1) */
+	float    unlit;             /* colour frames' unlit weight (0) */
 } AeronGltfFlipbook;
 
 /* ===== Screen surfaces ==============================================

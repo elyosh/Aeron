@@ -86,6 +86,7 @@ is active plays, so a colour and an illumination flipbook can play together.
 | `library` | Optional, default the file's |
 | `uv` | Optional `{ scale: [sx, sy], offset: [ox, oy], clamp: true }`: frames are sampled at `uv·scale + offset` |
 | `emissiveStrength` | Optional, default 1: brightness of illumination frames |
+| `unlit` | Optional, 0 to 1, default 0, colour flipbooks: the part of the frames drawn unlit, as emission in place of the material's (for screens whose material is unlit) |
 
 A flipbook plays from the moment its state becomes active; `always` plays
 from the start.

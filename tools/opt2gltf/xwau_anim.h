@@ -27,10 +27,12 @@ typedef struct XwauAnim XwauAnim;
  * report lines. */
 XwauAnim* XwauAnim_Begin(const char* model, XwauAnimFindFile find, void* find_context, const char* label);
 
-/* Fills `out` for OPT texture `t` from `mat` (NULL: no material file). The
- * strings and images it points to live until XwauAnim_End. Returns false
- * on OOM. */
-bool XwauAnim_Texture(XwauAnim* anim, const XwauMatFile* mat, const opt_texture_t* t, OptGltfXwauAnim* out);
+/* Fills `out` for OPT texture `t` from `mat` (NULL: no material file).
+ * `unlit` is the texture's unlit weight (OptGltf_XwauUnlit), which its
+ * colour frames take. The strings and images it points to live until
+ * XwauAnim_End. Returns false on OOM. */
+bool XwauAnim_Texture(XwauAnim* anim, const XwauMatFile* mat, const opt_texture_t* t, float unlit,
+					  OptGltfXwauAnim* out);
 
 /* Whether any texture has animation data. */
 bool XwauAnim_Any(const XwauAnim* anim);

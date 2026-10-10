@@ -442,19 +442,19 @@ static int convert_xwau(opt_file_t* opt, const char* out_dir, const char* basena
 	for (int32_t i = 0; i < opt->texture_count; ++i) {
 		const XwauMatParams* p = mat ? XwauMat_Find(mat, opt->textures[i].name) : &x->global;
 		xwau_fill(&materials[i], p);
-		if (!XwauAnim_Texture(anim, mat, &opt->textures[i], &anims[i])) {
+		for (int k = 0; k < x->ignore_shadeless_count; ++k) {
+			if (xwau_texture_named(opt->textures[i].name, x->ignore_shadeless[k])) {
+				materials[i].shadeless = false;
+				ignored[k]             = true;
+			}
+		}
+		if (!XwauAnim_Texture(anim, mat, &opt->textures[i], OptGltf_XwauUnlit(&materials[i]), &anims[i])) {
 			fprintf(stderr, "opt2gltf: %s: out of memory (animations)\n", label);
 			free(materials);
 			free(anims);
 			XwauAnim_End(anim);
 			XwauMat_Free(mat);
 			return 0;
-		}
-		for (int k = 0; k < x->ignore_shadeless_count; ++k) {
-			if (xwau_texture_named(opt->textures[i].name, x->ignore_shadeless[k])) {
-				materials[i].shadeless = false;
-				ignored[k]             = true;
-			}
 		}
 		if (p->normal_map[0]) {
 			const XwauNormalMap* nm = xwau_normal_map(x, p->normal_map, &maps, &map_count, label);

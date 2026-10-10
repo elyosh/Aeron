@@ -300,8 +300,11 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
      * colour: the frame over the colour; damage: its factor multiplies
      * the result; illumination: base = c·k + layer_rgb over that colour c
      * (while it plays, the material's aeronAnimBaseColor when it has one, else
-     * its base colour), and its emission replaces the material's. A layer
-     * without a playing frame keeps the static material. */
+     * its base colour), and its emission replaces the material's. Without
+     * an illumination frame, a colour flipbook's unlit weight u splits the
+     * result as the static bake does: base c·(1 − u), emission c·u in place
+     * of the material's. A layer without a playing frame keeps the static
+     * material. */
     bool   anim_emission = false;
     float3 anim_emissive = float3(0.0f, 0.0f, 0.0f);
     float  anim_gloss    = 1.0f;
@@ -325,6 +328,14 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
         }
         /* Damage darkens the colour under the illumination layer. */
         c *= damage.rgb;
+        float unlit = colour_frame != 0u
+            ? float((g_anim_records[colour_book].x >> AERON_ANIM_FLIPBOOK_UNLIT_SHIFT) & 0xFFu) * (1.0f / 255.0f)
+            : 0.0f;
+        if (lit_frame == 0u && unlit > 0.0f) {
+            anim_emissive = c * unlit;
+            anim_emission = true;
+            c *= 1.0f - unlit;
+        }
         if (lit_frame != 0u) {
             float2 frame_uv = anim_frame_uv(lit_book, i.uv);
             float4 layer = anim_frame_sample(g_effect_layer, g_effect_layer_sampler, g_anim_records[lit_frame],

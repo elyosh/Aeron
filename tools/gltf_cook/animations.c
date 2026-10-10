@@ -162,13 +162,14 @@ static const char* entry_library(Merge* m, const cJSON* entry, const char* what)
 /* One flipbook, validated, in the order the loader documents. */
 static cJSON* flipbook(Merge* m, const cJSON* in) {
 	static const char* const fields[] = { "state", "layer",           "mode", "library", "frames",
-										  "uv",    "emissiveStrength" };
+										  "uv",    "emissiveStrength", "unlit" };
 	const cJSON*             state    = cJSON_GetObjectItemCaseSensitive(in, "state");
 	const cJSON*             layer    = cJSON_GetObjectItemCaseSensitive(in, "layer");
 	const cJSON*             mode     = cJSON_GetObjectItemCaseSensitive(in, "mode");
 	const cJSON*             frames   = cJSON_GetObjectItemCaseSensitive(in, "frames");
 	const cJSON*             uv       = cJSON_GetObjectItemCaseSensitive(in, "uv");
 	const cJSON*             strength = cJSON_GetObjectItemCaseSensitive(in, "emissiveStrength");
+	const cJSON*             unlit    = cJSON_GetObjectItemCaseSensitive(in, "unlit");
 	if (!cJSON_IsObject(in) || !only_members(m, "flipbook", in, fields, COUNT(fields)))
 		return NULL;
 	if (!one_of(state, kStates, COUNT(kStates)) || !one_of(layer, kLayers, COUNT(kLayers)) ||
@@ -211,6 +212,10 @@ static cJSON* flipbook(Merge* m, const cJSON* in) {
 		fprintf(stderr, TAG ": %s: material %s: emissiveStrength is a number >= 0\n", m->anim, m->material);
 		return NULL;
 	}
+	if (unlit && (!cJSON_IsNumber(unlit) || !(unlit->valuedouble >= 0.0 && unlit->valuedouble <= 1.0))) {
+		fprintf(stderr, TAG ": %s: material %s: unlit is a number in [0, 1]\n", m->anim, m->material);
+		return NULL;
+	}
 	cJSON* out = cJSON_CreateObject();
 	cJSON_AddStringToObject(out, "state", state->valuestring);
 	cJSON_AddStringToObject(out, "layer", layer->valuestring);
@@ -228,6 +233,8 @@ static cJSON* flipbook(Merge* m, const cJSON* in) {
 	}
 	if (strength)
 		cJSON_AddNumberToObject(out, "emissiveStrength", strength->valuedouble);
+	if (unlit)
+		cJSON_AddNumberToObject(out, "unlit", unlit->valuedouble);
 	return out;
 }
 

@@ -308,7 +308,8 @@ typedef struct Flipbook {
 	Frames              frames;
 } Flipbook;
 
-static bool print_flipbook(XwauAnim* a, Text* t, const char* state, int layer, const Flipbook* fb) {
+static bool print_flipbook(XwauAnim* a, Text* t, const char* state, int layer, const Flipbook* fb,
+						   float unlit) {
 	const XwauSequence* q = fb->seq;
 	char                library[64], rel[256];
 	dat_names(fb->dat->rel, rel, sizeof rel, library, sizeof library);
@@ -325,6 +326,11 @@ static bool print_flipbook(XwauAnim* a, Text* t, const char* state, int layer, c
 	if (q->aspect != 1.0f || q->offset[0] != 0.0f || q->offset[1] != 0.0f || q->clamp)
 		text_add(t, ",\"uv\":{\"scale\":[%.9g,1],\"offset\":[%.9g,%.9g],\"clamp\":%s}", (double)q->aspect,
 				 (double)q->offset[0], (double)q->offset[1], q->clamp ? "true" : "false");
+	/* A colour frame replaces the texture, so it is drawn as unlit as the
+	   texture's bake (XWAU's animation shader drops Shadeless: a deviation
+	   that keeps unlit screens unlit while they animate). */
+	if (layer == XWAU_SEQ_COLOUR && unlit > 0.0f)
+		text_add(t, ",\"unlit\":%.9g", (double)unlit);
 	text_add(t, "}");
 	return true;
 }
@@ -464,7 +470,8 @@ static bool damage_json(XwauAnim* a, Text* t, const XwauMatSequences* own_list,
 	return true;
 }
 
-bool XwauAnim_Texture(XwauAnim* a, const XwauMatFile* mat, const opt_texture_t* tex, OptGltfXwauAnim* out) {
+bool XwauAnim_Texture(XwauAnim* a, const XwauMatFile* mat, const opt_texture_t* tex, float unlit,
+					  OptGltfXwauAnim* out) {
 	memset(out, 0, sizeof *out);
 	out->uv_scale_x = 1.0f;
 	if (!mat)
@@ -565,7 +572,7 @@ bool XwauAnim_Texture(XwauAnim* a, const XwauMatFile* mat, const opt_texture_t* 
 				if (!first)
 					text_add(&t, ",");
 				first = false;
-				if (!print_flipbook(a, &t, kEventStates[s].state, layer, fb)) {
+				if (!print_flipbook(a, &t, kEventStates[s].state, layer, fb, unlit)) {
 					free(t.s);
 					return false;
 				}

@@ -178,6 +178,11 @@ typedef struct OptGltfXwauAnim {
  * texture with the illumination flag, or an 8bpp one with a lit texel. */
 bool OptGltf_XwauTextureHasIllum(const opt_texture_t* t);
 
+/* The material's unlit weight s, 0..1: 1 for Shadeless (or AlphaToBloom),
+ * else Ambient. The bake stores lerp(lit, color, s) as base color
+ * color·(1 − s) plus emission color·s; colour frames take the same split. */
+float OptGltf_XwauUnlit(const OptGltfXwauMaterial* xm);
+
 /*
  * Screen surfaces: OPT textures that show a game-provided texture pair (a
  * captured HUD) through rectangles, as the XWAU Dynamic Cockpit does. The

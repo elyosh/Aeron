@@ -611,6 +611,7 @@ static bool read_flipbook(const cJSON* json, AeronGltfModel* model, FlipbookCapa
 	const cJSON*             library  = cJSON_GetObjectItemCaseSensitive(json, "library");
 	const cJSON*             uv       = cJSON_GetObjectItemCaseSensitive(json, "uv");
 	const cJSON*             strength = cJSON_GetObjectItemCaseSensitive(json, "emissiveStrength");
+	const cJSON*             unlit    = cJSON_GetObjectItemCaseSensitive(json, "unlit");
 	static const char* const layers[] = { "colour", "illumination" };
 	static const char* const modes[]  = { "loop", "once" };
 	AeronGltfFlipbook        fb       = { 0 };
@@ -625,6 +626,11 @@ static bool read_flipbook(const cJSON* json, AeronGltfModel* model, FlipbookCapa
 		if (!cJSON_IsNumber(strength) || !isfinite(strength->valuedouble) || strength->valuedouble < 0.0)
 			return false;
 		fb.emissive_strength = (float)strength->valuedouble;
+	}
+	if (unlit) {
+		if (!cJSON_IsNumber(unlit) || !(unlit->valuedouble >= 0.0 && unlit->valuedouble <= 1.0))
+			return false;
+		fb.unlit = (float)unlit->valuedouble;
 	}
 	if (uv) {
 		float scale[2], offset[2];
