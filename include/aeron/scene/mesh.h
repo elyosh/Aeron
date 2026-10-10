@@ -34,7 +34,7 @@ typedef struct AeronPbrMaterialEntry {
 	float    emissive_rect[4];     /* atlas emissive sub-rect */
 	float    base_color_factor[4]; /* RGBA factor */
 	float    emissive_factor[4];   /* (RGB, emissive_strength) packed */
-	float    metal_rough[4];       /* (metallic, roughness, alpha_cutoff, _) */
+	float    metal_rough[4];       /* (metallic, roughness, alpha_cutoff, transmission) */
 	float    specular[4];          /* KHR_materials_specular (color.rgb, factor) */
 	uint32_t atlas[4];             /* per channel (base, normal, MR, emissive):
 									* bits 0-11 atlas page, 12-15 max mip level */

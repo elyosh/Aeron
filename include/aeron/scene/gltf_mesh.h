@@ -164,6 +164,13 @@ typedef struct AeronGltfMaterial {
 	/* KHR_materials_specular factors; defaults (1, (1,1,1)). */
 	float specular_factor;
 	float specular_color_factor[3];
+	/* KHR_materials_transmission factor, 0 without. A transmissive material
+	 * draws in the blend range as thin glass, without refraction or tint:
+	 * it covers 1 - transmission of the background and keeps its specular
+	 * reflection. The base texture's alpha holds the transmission texture
+	 * (aeron_gltf_cook), and the base-colour factor's alpha is unused. Its
+	 * primitives' variant materials must then be BLEND or transmissive. */
+	float transmission_factor;
 	/* Screen surface (material extras `aeronScreen`): rectangles
 	 * [screen_first, screen_first + screen_count) of the model's
 	 * screen_rects and AERON_GLTF_SCREEN_* flags. All zero otherwise. */

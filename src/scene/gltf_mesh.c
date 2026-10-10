@@ -373,6 +373,7 @@ static bool read_material(const cgltf_material* m, AeronGltfMaterial* out) {
 	out->specular_color_factor[0] = 1.0f;
 	out->specular_color_factor[1] = 1.0f;
 	out->specular_color_factor[2] = 1.0f;
+	out->transmission_factor      = 0.0f;
 
 	if (!m)
 		return true;
@@ -418,6 +419,15 @@ static bool read_material(const cgltf_material* m, AeronGltfMaterial* out) {
 		for (int i = 0; i < 3; i++)
 			if (!isfinite(out->specular_color_factor[i]) || out->specular_color_factor[i] < 0.0f)
 				return false;
+	}
+	if (m->has_transmission) {
+		const float factor = m->transmission.transmission_factor;
+		if (!isfinite(factor) || factor < 0.0f || factor > 1.0f)
+			return false;
+		out->transmission_factor = factor;
+		/* Glass blends over the scene: only the blend range draws it. */
+		if (factor > 0.0f)
+			out->alpha_mode = AERON_GLTF_ALPHA_BLEND;
 	}
 
 	for (int c = 0; c < AERON_GLTF_CHANNEL_COUNT; c++) {

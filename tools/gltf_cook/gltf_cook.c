@@ -375,6 +375,53 @@ static cgltf_texture* anim_base_texture(const cgltf_data* data, const cgltf_mate
 	return texture;
 }
 
+/* The atlas of channel `c` that an image with `variants_of`'s
+ * `aeronVariants` goes to: their variant group (created when new), else
+ * the core atlas. Sets *group_out (-1: core); NULL on OOM. */
+static ChannelAtlas* target_atlas(const cgltf_data* data, ChannelAtlas* atlases, CookGroup** groups,
+								  int* group_count, int c, const cgltf_image* variants_of, int* group_out) {
+	*group_out     = -1;
+	char* variants = image_variants(data, variants_of);
+	if (!variants)
+		return &atlases[c];
+	int g = 0;
+	while (g < *group_count && ((*groups)[g].channel != c || strcmp((*groups)[g].variants, variants) != 0))
+		g++;
+	if (g == *group_count) {
+		CookGroup* grown = (CookGroup*)realloc(*groups, (size_t)(*group_count + 1) * sizeof *grown);
+		if (!grown) {
+			free(variants);
+			return NULL;
+		}
+		*groups = grown;
+		memset(&grown[g], 0, sizeof grown[g]);
+		channel_atlas_init(&grown[g].atlas, c);
+		grown[g].channel  = c;
+		grown[g].variants = variants;
+		(*group_count)++;
+	} else {
+		free(variants);
+	}
+	*group_out = g;
+	return &(*groups)[g].atlas;
+}
+
+/* The pixels of `image`, from the provider or the PNG cache. */
+static bool image_view(const char* source_label, AeronGltfCookImageProvider image_provider,
+					   void* image_context, ImageCache* cache, cgltf_image* image,
+					   AeronGltfCookImageView* view) {
+	memset(view, 0, sizeof *view);
+	if (image_provider)
+		return image_provider(image_context, image, view);
+	const CachedImage* img = load_or_cache_image(cache, source_label, image->uri);
+	if (!img)
+		return false;
+	view->rgba   = img->rgba;
+	view->width  = img->w;
+	view->height = img->h;
+	return true;
+}
+
 /* Places `image` on channel `c`: in the variant group of its `aeronVariants`
  * (created when new), else on the core atlas; an image already placed
  * shares its rect. Sets *group_out (-1: core) and *rect_out. */
@@ -382,49 +429,157 @@ static bool place_image(cgltf_data* data, const char* source_label, AeronGltfCoo
 						void* image_context, ImageCache* cache, const AeronGltfCookOptions* opts,
 						ChannelAtlas* atlases, CookGroup** groups, int* group_count, int c,
 						cgltf_image* image, int* group_out, int* rect_out) {
-	ChannelAtlas* atlas = &atlases[c];
-	*group_out          = -1;
-	char* variants      = image_variants(data, image);
-	if (variants) {
-		int g = 0;
-		while (g < *group_count &&
-			   ((*groups)[g].channel != c || strcmp((*groups)[g].variants, variants) != 0))
-			g++;
-		if (g == *group_count) {
-			CookGroup* grown = (CookGroup*)realloc(*groups, (size_t)(*group_count + 1) * sizeof *grown);
-			if (!grown) {
-				free(variants);
-				return false;
-			}
-			*groups = grown;
-			memset(&grown[g], 0, sizeof grown[g]);
-			channel_atlas_init(&grown[g].atlas, c);
-			grown[g].channel  = c;
-			grown[g].variants = variants;
-			(*group_count)++;
-		} else {
-			free(variants);
-		}
-		*group_out = g;
-		atlas      = &(*groups)[g].atlas;
-	}
+	ChannelAtlas* atlas = target_atlas(data, atlases, groups, group_count, c, image, group_out);
+	if (!atlas)
+		return false;
 	*rect_out = find_channel_rect(atlas, image);
 	if (*rect_out >= 0)
 		return true;
-	AeronGltfCookImageView view = { 0 };
-	if (image_provider) {
-		if (!image_provider(image_context, image, &view))
-			return false;
-	} else {
-		const CachedImage* img = load_or_cache_image(cache, source_label, image->uri);
-		if (!img)
-			return false;
-		view.rgba   = img->rgba;
-		view.width  = img->w;
-		view.height = img->h;
-	}
+	AeronGltfCookImageView view;
+	if (!image_view(source_label, image_provider, image_context, cache, image, &view))
+		return false;
 	*rect_out =
 		channel_atlas_add_rect(atlas, image, view.width, view.height, view.rgba, opts->max_texture_size);
+	return *rect_out >= 0;
+}
+
+/* ---------- transmission ------------------------------------------
+ *
+ * KHR_materials_transmission's texture goes in the base colour's alpha,
+ * which the runtime reads as the transmission of a transmissive material
+ * (aeron/scene/gltf_mesh.h): the material's base image with A the
+ * transmission texture's R, or 255 without one (the factor alone applies).
+ * A merged image is keyed by a placeholder cgltf_image whose uri names both
+ * sources, so materials sharing them share its rect. */
+
+typedef struct MergedImage {
+	cgltf_image key;
+	uint8_t*    rgba;
+} MergedImage;
+
+typedef struct MergedImages {
+	MergedImage** items;
+	int           count;
+} MergedImages;
+
+static void merged_images_free(MergedImages* merged) {
+	for (int i = 0; i < merged->count; i++) {
+		free(merged->items[i]->key.uri);
+		free(merged->items[i]->rgba);
+		free(merged->items[i]);
+	}
+	free(merged->items);
+	memset(merged, 0, sizeof *merged);
+}
+
+static bool same_texture_mapping(const cgltf_texture_view* a, const cgltf_texture_view* b) {
+	if (a->texcoord != b->texcoord || a->has_transform != b->has_transform)
+		return false;
+	if (!a->has_transform)
+		return true;
+	const cgltf_texture_transform* x = &a->transform;
+	const cgltf_texture_transform* y = &b->transform;
+	return x->offset[0] == y->offset[0] && x->offset[1] == y->offset[1] && x->scale[0] == y->scale[0] &&
+		   x->scale[1] == y->scale[1] && x->rotation == y->rotation && x->has_texcoord == y->has_texcoord &&
+		   (!x->has_texcoord || x->texcoord == y->texcoord);
+}
+
+/* Places transmissive material `m`'s base image on the base channel, with
+ * the transmission texture in its alpha. Sets *handled when it did (the
+ * caller then skips the material's own base image). */
+static bool place_transmission(cgltf_data* data, const char* source_label,
+							   AeronGltfCookImageProvider image_provider, void* image_context,
+							   ImageCache* cache, const AeronGltfCookOptions* opts, ChannelAtlas* atlases,
+							   CookGroup** groups, int* group_count, MergedImages* merged, cgltf_material* m,
+							   int* group_out, int* rect_out, bool* handled) {
+	const int           c     = AERON_GLTF_COOK_CHANNEL_BASE_COLOR;
+	cgltf_texture_view* base  = material_channel_view(m, c);
+	cgltf_texture_view* trans = &m->transmission.transmission_texture;
+	const char*         name  = m->name ? m->name : "<unnamed>";
+	*handled                  = false;
+	cgltf_image* base_image   = base && base->texture && base->texture->image && base->texture->image->uri
+									? base->texture->image
+									: NULL;
+	cgltf_image* trans_image =
+		trans->texture && trans->texture->image && trans->texture->image->uri ? trans->texture->image : NULL;
+	if (m->alpha_mode != cgltf_alpha_mode_opaque)
+		fprintf(stderr, "[aeron_gltf_cook] material '%s': transmissive, its alpha mode is ignored\n", name);
+	if (trans_image && !base) {
+		fprintf(stderr,
+				"[aeron_gltf_cook] material '%s': transmission texture without pbrMetallicRoughness "
+				"ignored (the factor applies)\n",
+				name);
+		trans_image = NULL;
+	} else if (trans_image && base_image && !same_texture_mapping(base, trans)) {
+		fprintf(stderr,
+				"[aeron_gltf_cook] material '%s': transmission texture mapped unlike the base colour "
+				"ignored (the factor applies)\n",
+				name);
+		trans_image = NULL;
+	}
+	if (!base_image && !trans_image)
+		return true;
+	*handled = true;
+
+	size_t key_size =
+		strlen(base_image ? base_image->uri : "") + strlen(trans_image ? trans_image->uri : "") + 32;
+	char* key = (char*)malloc(key_size);
+	if (!key)
+		return false;
+	snprintf(key, key_size, "%s#transmission=%s", base_image ? base_image->uri : "",
+			 trans_image ? trans_image->uri : "");
+	ChannelAtlas* atlas =
+		target_atlas(data, atlases, groups, group_count, c, base_image ? base_image : trans_image, group_out);
+	cgltf_image probe = { 0 };
+	probe.uri         = key;
+	*rect_out         = atlas ? find_channel_rect(atlas, &probe) : -1;
+	if (!atlas || *rect_out >= 0) {
+		free(key);
+		return atlas != NULL;
+	}
+
+	AeronGltfCookImageView base_view = { 0 }, trans_view = { 0 };
+	if ((base_image &&
+		 !image_view(source_label, image_provider, image_context, cache, base_image, &base_view)) ||
+		(trans_image &&
+		 !image_view(source_label, image_provider, image_context, cache, trans_image, &trans_view))) {
+		free(key);
+		return false;
+	}
+	const int     w     = base_image ? base_view.width : trans_view.width;
+	const int     h     = base_image ? base_view.height : trans_view.height;
+	MergedImage*  image = (MergedImage*)calloc(1, sizeof *image);
+	MergedImage** grown =
+		image ? (MergedImage**)realloc(merged->items, (size_t)(merged->count + 1) * sizeof *grown) : NULL;
+	uint8_t* rgba = grown ? (uint8_t*)malloc((size_t)w * (size_t)h * 4) : NULL;
+	if (!rgba) {
+		free(key);
+		free(image);
+		if (grown)
+			merged->items = grown;
+		return false;
+	}
+	merged->items                  = grown;
+	merged->items[merged->count++] = image;
+	image->key.uri                 = key;
+	image->rgba                    = rgba;
+	for (int y = 0; y < h; y++) {
+		for (int x = 0; x < w; x++) {
+			uint8_t* px = &rgba[((size_t)y * (size_t)w + (size_t)x) * 4];
+			if (base_image)
+				memcpy(px, &base_view.rgba[((size_t)y * (size_t)w + (size_t)x) * 4], 3);
+			else
+				px[0] = px[1] = px[2] = 255;
+			px[3] = 255;
+			if (trans_image) {
+				/* Nearest texel at the same normalized position. */
+				const size_t tx = (size_t)x * (size_t)trans_view.width / (size_t)w;
+				const size_t ty = (size_t)y * (size_t)trans_view.height / (size_t)h;
+				px[3]           = trans_view.rgba[(ty * (size_t)trans_view.width + tx) * 4];
+			}
+		}
+	}
+	*rect_out = channel_atlas_add_rect(atlas, &image->key, w, h, rgba, opts->max_texture_size);
 	return *rect_out >= 0;
 }
 
@@ -493,6 +648,7 @@ bool aeron_gltf_cook_data(cgltf_data* data, const char* source_label,
 
 	ImageCache cache;
 	image_cache_init(&cache);
+	MergedImages merged = { 0 };
 
 	ChannelAtlas atlases[AERON_GLTF_COOK_CHANNEL_COUNT];
 	for (int c = 0; c < AERON_GLTF_COOK_CHANNEL_COUNT; c++)
@@ -538,10 +694,18 @@ bool aeron_gltf_cook_data(cgltf_data* data, const char* source_label,
 	/* Track which (material, channel) pairs we plan to atlas. Materials
 	 * that bind the same image share its rect. */
 	for (size_t mi = 0; mi < data->materials_count && ok; mi++) {
-		cgltf_material* m = &data->materials[mi];
+		cgltf_material* m           = &data->materials[mi];
+		bool            merged_base = false;
+		if (m->has_transmission && m->transmission.transmission_factor > 0.0f)
+			ok = place_transmission(data, source_label, image_provider, image_context, &cache, &opts, atlases,
+									&groups, &group_count, &merged, m,
+									&group_of[AERON_GLTF_COOK_CHANNEL_BASE_COLOR][mi],
+									&rect_of[AERON_GLTF_COOK_CHANNEL_BASE_COLOR][mi], &merged_base);
 		for (int c = 0; c < AERON_GLTF_COOK_CHANNEL_COUNT && ok; c++) {
 			cgltf_texture_view* tv = material_channel_view(m, c);
 			if (!tv || !tv->texture || !tv->texture->image || !tv->texture->image->uri)
+				continue;
+			if (c == AERON_GLTF_COOK_CHANNEL_BASE_COLOR && merged_base)
 				continue;
 			/* An image some variants use goes to their group. */
 			ok = place_image(data, source_label, image_provider, image_context, &cache, &opts, atlases,
@@ -859,7 +1023,13 @@ bool aeron_gltf_cook_data(cgltf_data* data, const char* source_label,
 	const size_t        saved_view_count = data->materials_count * AERON_GLTF_COOK_CHANNEL_COUNT;
 	cgltf_texture_view* saved_views =
 		(cgltf_texture_view*)calloc(saved_view_count ? saved_view_count : 1, sizeof *saved_views);
-	if (!saved_views) {
+	/* Transmission textures, which the cooked graph carries in the base
+	 * colour's alpha. */
+	cgltf_texture_view* saved_transmission = (cgltf_texture_view*)calloc(
+		data->materials_count ? data->materials_count : 1, sizeof *saved_transmission);
+	if (!saved_views || !saved_transmission) {
+		free(saved_views);
+		free(saved_transmission);
 		free(new_bvs);
 		free(new_smp[0].name);
 		free(new_smp);
@@ -880,6 +1050,9 @@ bool aeron_gltf_cook_data(cgltf_data* data, const char* source_label,
 			if (tv)
 				saved_views[mi * AERON_GLTF_COOK_CHANNEL_COUNT + (size_t)c] = *tv;
 		}
+		cgltf_texture_view* transmission = &data->materials[mi].transmission.transmission_texture;
+		saved_transmission[mi]           = *transmission;
+		memset(transmission, 0, sizeof *transmission);
 	}
 
 	/* Mutate each material's per-channel texture_view in place: clear
@@ -1046,10 +1219,12 @@ bool aeron_gltf_cook_data(cgltf_data* data, const char* source_label,
 			if (tv)
 				*tv = saved_views[mi * AERON_GLTF_COOK_CHANNEL_COUNT + (size_t)c];
 		}
+		data->materials[mi].transmission.transmission_texture = saved_transmission[mi];
 	}
 
 	/* Free our owned arrays. */
 	free(saved_views);
+	free(saved_transmission);
 	free(new_bvs);
 	for (int c = 0; c < AERON_GLTF_COOK_CHANNEL_COUNT; c++) {
 		free(new_imgs[c].name);
@@ -1079,6 +1254,7 @@ cleanup:
 		channel_atlas_free(&atlases[c]);
 	}
 	image_cache_free(&cache);
+	merged_images_free(&merged);
 	for (size_t mi = 0; layer_extras && mi < data->materials_count; mi++)
 		free(layer_extras[mi]);
 	free(layer_extras);

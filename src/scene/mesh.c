@@ -160,6 +160,7 @@ static uint32_t populate_material_entries(AeronPbrMaterialEntry* entries, const 
 		e->metal_rough[0]     = m->metallic_factor;
 		e->metal_rough[1]     = m->roughness_factor;
 		e->metal_rough[2]     = m->alpha_cutoff;
+		e->metal_rough[3]     = m->transmission_factor;
 		e->specular[0]        = m->specular_color_factor[0];
 		e->specular[1]        = m->specular_color_factor[1];
 		e->specular[2]        = m->specular_color_factor[2];
@@ -191,6 +192,9 @@ static uint32_t populate_material_entries(AeronPbrMaterialEntry* entries, const 
 		}
 		if (m->alpha_mode == AERON_GLTF_ALPHA_MASK) {
 			flags |= 0x20u; /* FS: discard base alpha below metal_rough.z */
+		}
+		if (m->transmission_factor > 0.0f) {
+			flags |= 0x40u; /* FS: thin glass, transmission metal_rough.w x base alpha */
 		}
 		e->flags        = flags;
 		e->screen_first = m->screen_first;

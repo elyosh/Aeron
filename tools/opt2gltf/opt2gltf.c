@@ -243,9 +243,10 @@ static uint8_t* decode_texture_emissive_rgba8(const opt_file_t* opt, const opt_t
  *   - Shadeless/Ambient: output = lerp(lit, color, s), stored as base color
  *     color * (1 - s) plus emissive color * s;
  *   - glass (transparent, not shadeless, no illumination): below alpha 0.95
- *     a texel gets alpha a^2, gloss 0.93 and metallic 0. XWAU also makes it
- *     0.8 shadeless, to see into cockpits; as emission that reads as
- *     glowing glass, so the glass is lit (its a^2 alpha keeps it clear);
+ *     a texel gets coverage a^2, gloss 0.93 and metallic 0. XWAU also makes
+ *     it 0.8 shadeless, to see into cockpits; as emission that reads as
+ *     glowing glass, so the glass is lit. The material is opaque with
+ *     KHR_materials_transmission (1 - coverage) and F0 0.04;
  *   - dark-texel reflectance fade (PBRAddCommon.h "blackish"): approximated
  *     by raising roughness to 1;
  *   - Metallic, Glossiness: metallic and roughness = 1 - min(0.93, G)^2.
@@ -259,6 +260,7 @@ typedef struct XwauBaked {
 	uint8_t* base;           /* RGBA */
 	uint8_t* emissive;       /* RGBA / XWAU_ILLUM_GAIN; NULL when no texel emits */
 	uint8_t* metal_rough;    /* RGBA, G roughness, B metallic; NULL when uniform */
+	uint8_t* transmission;   /* RGBA, R = 1 - glass coverage; NULL without glass texels */
 	float    metallic;       /* factors when metal_rough is NULL */
 	float    roughness;      /* factors when metal_rough is NULL */
 	float    specular_color; /* KHR_materials_specular specularColorFactor */
@@ -312,6 +314,7 @@ static void xwau_baked_free(XwauBaked* baked) {
 	free(baked->base);
 	free(baked->emissive);
 	free(baked->metal_rough);
+	free(baked->transmission);
 	memset(baked, 0, sizeof *baked);
 }
 
@@ -545,7 +548,26 @@ static bool xwau_bake_rgba(const opt_texture_t* t, const OptGltfXwauMaterial* xm
 		free(out->metal_rough);
 		out->metal_rough = NULL;
 	}
-	out->specular_color = (glass && any_glass) ? 4.0f : xwau_specular_color(xm->intensity);
+	out->specular_color = xwau_specular_color(xm->intensity);
+	if (glass && any_glass) {
+		/* Glass (KHR_materials_transmission): an opaque material whose
+		 * transmission texture is 1 - the coverage the bake gave, with the
+		 * dielectric F0 0.04 of real glass (XWAU's reflectance 1, F0 0.16,
+		 * was for glass mostly drawn unlit). */
+		out->transmission = (uint8_t*)malloc(n * 4);
+		if (!out->transmission) {
+			xwau_baked_free(out);
+			return false;
+		}
+		for (size_t i = 0; i < n; ++i) {
+			const uint8_t clear          = (uint8_t)(255 - out->base[i * 4 + 3]);
+			out->transmission[i * 4 + 0] = out->transmission[i * 4 + 1] = out->transmission[i * 4 + 2] =
+				clear;
+			out->transmission[i * 4 + 3] = 255;
+			out->base[i * 4 + 3]         = 255;
+		}
+		out->specular_color = 1.0f;
+	}
 	return true;
 }
 
@@ -765,10 +787,14 @@ static cgltf_accessor* gb_new_accessor(GltfBuild* gb, cgltf_buffer_view* view, c
  * texture beside one with translucent texels) uses, for every state, a copy
  * of its material promoted to the most transparent class among them; an
  * opaque texture draws the same under MASK (alpha 1 passes any cutoff) or
- * BLEND. Copies are shared per (base material, class). */
+ * BLEND. Copies are shared per (base material, class). A transmissive
+ * material draws in the BLEND range (aeron/scene/gltf_mesh.h). */
 
 static int alpha_class_rank(const cgltf_material* m) {
-	return m->alpha_mode == cgltf_alpha_mode_blend ? 2 : m->alpha_mode == cgltf_alpha_mode_mask ? 1 : 0;
+	if (m->alpha_mode == cgltf_alpha_mode_blend ||
+		(m->has_transmission && m->transmission.transmission_factor > 0.0f))
+		return 2;
+	return m->alpha_mode == cgltf_alpha_mode_mask ? 1 : 0;
 }
 
 static cgltf_material* promoted_variant_material(GltfBuild* build, cgltf_material* base, int rank,
@@ -1721,6 +1747,8 @@ static const opt_file_t* faceless_patch_apply(const opt_file_t* opt, FacelessPat
 
 /* ===== XWAU skins ==================================================== */
 
+enum { SKIN_COMPOSITE_IMAGES = 5 };
+
 /* One composite: texture `texture` with the effective chain `chain` (the
  * layers of a variant that have an image for it), shared by `variants`. */
 typedef struct SkinComposite {
@@ -1728,15 +1756,18 @@ typedef struct SkinComposite {
 	OptGltfSkinLayer* chain;
 	size_t            chain_count;
 	XwauBaked         baked;
-	/* The bake's emissive / metallic-roughness equal the texture's own: the
-	 * composite material keeps the texture's (baked copies freed). */
+	/* The bake's emissive / metallic-roughness / transmission equal the
+	 * texture's own: the composite material keeps the texture's (baked
+	 * copies freed). */
 	bool      same_emissive;
 	bool      same_metal_rough;
+	bool      same_transmission;
 	uint32_t* variants; /* skin variant indices, ascending */
 	size_t    variant_count;
-	int32_t   images[4]; /* image slots only this composite uses (base, emissive,
-							metallic-roughness, anim base colour); -1 */
-	uint8_t*  colour;    /* colours before the bake, for aeronAnimBaseColor */
+	/* Image slots only this composite uses (base, emissive,
+	 * metallic-roughness, anim base colour, transmission); -1. */
+	int32_t   images[SKIN_COMPOSITE_IMAGES];
+	uint8_t*  colour; /* colours before the bake, for aeronAnimBaseColor */
 	size_t    image_count;
 } SkinComposite;
 
@@ -1876,7 +1907,7 @@ static bool skin_state_build(const opt_file_t* opt, const OptGltfSkins* skins, c
 				added->chain       = (OptGltfSkinLayer*)malloc(count * sizeof *added->chain);
 				added->chain_count = count;
 				added->variants    = (uint32_t*)malloc(skins->variant_count * sizeof *added->variants);
-				for (int k = 0; k < 4; ++k)
+				for (int k = 0; k < SKIN_COMPOSITE_IMAGES; ++k)
 					added->images[k] = -1;
 				if (!added->chain || !added->variants)
 					goto fail;
@@ -1927,8 +1958,15 @@ static bool skin_state_build(const opt_file_t* opt, const OptGltfSkins* skins, c
 			free(result->metal_rough);
 			result->metal_rough = NULL;
 		}
+		composite->same_transmission = (!result->transmission && !own->transmission) ||
+									   (result->transmission && own->transmission &&
+										memcmp(result->transmission, own->transmission, bytes) == 0);
+		if (composite->same_transmission) {
+			free(result->transmission);
+			result->transmission = NULL;
+		}
 		composite->image_count = 1u + (result->emissive ? 1u : 0u) + (result->metal_rough ? 1u : 0u) +
-								 (composite->colour ? 1u : 0u);
+								 (result->transmission ? 1u : 0u) + (composite->colour ? 1u : 0u);
 	}
 	free(skinnable);
 	free(chain);
@@ -2163,6 +2201,7 @@ static bool build_memory(const opt_file_t* opt, const char* basename, const OptG
 				goto fail;
 			}
 			n_xwau_images += (xwau_baked[i].emissive ? 1u : 0u) + (xwau_baked[i].metal_rough ? 1u : 0u) +
+							 (xwau_baked[i].transmission ? 1u : 0u) +
 							 (xwau_colour[i] && xwau_baked[i].base ? 1u : 0u);
 			if (!xwau[i].normal_map.rgba || !xwau_baked[i].base)
 				continue;
@@ -2396,6 +2435,16 @@ static bool build_memory(const opt_file_t* opt, const char* basename, const OptG
 				mat->pbr_metallic_roughness.metallic_factor  = baked->metallic;
 				mat->pbr_metallic_roughness.roughness_factor = baked->roughness;
 			}
+			if (baked->transmission) {
+				mat->has_transmission                 = 1;
+				mat->transmission.transmission_factor = 1.0f;
+				mat->transmission.transmission_texture.texture =
+					document_set_image(document, emi, baked->transmission, (uint32_t)t->width,
+									   (uint32_t)t->height, xprintf_dup("Tex%02d_transmission", (int)i),
+									   xprintf_dup("%s_Tex%02d_transmission.png", basename, (int)i));
+				baked->transmission = NULL;
+				emi++;
+			}
 			const int32_t owner = xwau_normal_owner[i];
 			if (owner == i) {
 				uint8_t* normal = xwau_bake_normal(&xwau[i].normal_map, xwau[i].nm_intensity);
@@ -2579,6 +2628,19 @@ static bool build_memory(const opt_file_t* opt, const char* basename, const OptG
 				mat->pbr_metallic_roughness.roughness_factor                   = baked->roughness;
 			}
 		}
+		if (!composite->same_transmission) {
+			mat->has_transmission                          = baked->transmission != NULL;
+			mat->transmission.transmission_factor          = baked->transmission ? 1.0f : 0.0f;
+			mat->transmission.transmission_texture.texture = NULL;
+			if (baked->transmission) {
+				mat->transmission.transmission_texture.texture = document_set_image(
+					document, emi, baked->transmission, (uint32_t)t->width, (uint32_t)t->height,
+					xprintf_dup("Tex%02d_skin%03zu_transmission", (int)ti, c),
+					xprintf_dup("%s_Tex%02d_skin%03zu_transmission.png", basename, (int)ti, c));
+				baked->transmission  = NULL;
+				composite->images[4] = (int32_t)emi++;
+			}
+		}
 		xwau_set_specular(mat, baked->specular_color);
 		/* Animated material: its own aeronAnimBaseColor (the composite's
 		 * colours) when it needs one, and the texture's animation entry. */
@@ -2696,7 +2758,7 @@ static bool build_memory(const opt_file_t* opt, const char* basename, const OptG
 			goto fail;
 		}
 		gb_keep_string(build, json);
-		for (int k = 0; k < 4; ++k)
+		for (int k = 0; k < SKIN_COMPOSITE_IMAGES; ++k)
 			if (composite->images[k] >= 0)
 				build->images[composite->images[k]].extras.data = json;
 	}

@@ -23,6 +23,7 @@ static const uint GLTF_MATERIAL_HAS_EMISSIVE = 0x4u;
 static const uint GLTF_MATERIAL_ALPHA_BLEND = 0x8u;
 static const uint GLTF_MATERIAL_LEGACY_EMISSIVE = 0x10u;
 static const uint GLTF_MATERIAL_ALPHA_MASK = 0x20u;
+static const uint GLTF_MATERIAL_TRANSMISSION = 0x40u;
 
 static const uint GLTF_ATLAS_BASE = 0u;
 static const uint GLTF_ATLAS_NORMAL = 1u;
@@ -37,7 +38,7 @@ struct GltfMaterial
     float4 emissive_rect;
     float4 base_color_factor;
     float4 emissive_packed;
-    float4 metal_rough; /* x=metallic, y=roughness, z=alpha cutoff */
+    float4 metal_rough; /* x=metallic, y=roughness, z=alpha cutoff, w=transmission */
     float4 specular;    /* KHR_materials_specular: rgb=color factor, a=factor */
     uint4  atlas;       /* per channel: bits 0-11 page, 12-15 max mip level */
     uint   flags;

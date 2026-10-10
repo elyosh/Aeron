@@ -714,6 +714,25 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
     }
 #endif
 
+#if AERON_PBR_ALPHA_BLEND
+    /* ===== Transmission ===========================================
+     * KHR_materials_transmission without refraction or tint: the surface
+     * covers c = 1 - transmission of the background (the base texture's
+     * alpha holds the transmission texture, aeron_gltf_cook), and its
+     * specular reflection does not fade with c. Fresnel hides more of the
+     * background at grazing angles: a = c + (1 - c)·F. The blend state is
+     * SRC_ALPHA, so the colour is divided by a to composite as
+     * surface·c + specular + background·(1 - a). */
+    if ((g_materials[mat].flags & GLTF_MATERIAL_TRANSMISSION) != 0u && isolate == 0) {
+        float  coverage = saturate(1.0f - g_materials[mat].metal_rough.w * albedo_tex.a);
+        float3 fresnel  = mp.F0 + (mp.F90 - mp.F0) * pow(1.0f - saturate(dot(N_spec, V)), 5.0f);
+        float  covered  = coverage + (1.0f - coverage) * saturate(dot(fresnel, 1.0f / 3.0f));
+        float3 specular = spec_rgb + spec_ibl_rgb;
+        _out.color = float4(((lit - specular) * coverage + specular) / max(covered, 1.0e-3f), covered);
+        return _out;
+    }
+#endif
+
     /* Alpha-BLEND materials (flag bit 3 — canopy glass, drawn by the
      * blend pipelines) carry texture x factor alpha; every opaque
      * material writes 1 so the scene RT keeps full coverage. */
