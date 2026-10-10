@@ -15,16 +15,17 @@
  *             flipbook record (layer colour, so one record per frame), then
  *             asuint(strength), asuint(tile size, metres), 0, 0; then the
  *             effects' frames, each the emissive image with its end time
- *   flipbook: x state | layer << 8 | mode << 9 | has_uv << 10,
- *             y first frame record, z frame count, w asuint(total seconds)
- *   flipbook uv (when has_uv, right after it): asuint(scale.x),
- *             asuint(offset.x), asuint(offset.y), clamp
+ *   flipbook: x state | layer << 8 | mode << 9 | has_uv << 10 |
+ *             uv_clamp << 11, y first frame record, z frame count,
+ *             w asuint(total seconds)
+ *   flipbook uv (when has_uv, right after it): asuint of scale.x, scale.y,
+ *             offset.x, offset.y
  *   frame:    x atlas layer | lod << 12 (layer AERON_ANIM_NO_LAYER: not in
  *             its library, the static material shows), y rect x | y << 16,
  *             z rect w | h << 16 (texels of an effect page),
  *             w asuint(end time, seconds)
  *   An illumination frame has a second record: the emissive image, same
- *   x, y, z, and w 0.
+ *   x, y, z, and w asuint(emission strength).
  * Frames of one flipbook are consecutive, AERON_ANIM_FRAME_RECORDS(layer)
  * records each.
  *   damage alternative (AERON_ANIM_DAMAGE_RECORDS records): three frame
@@ -70,6 +71,7 @@
 #define AERON_ANIM_FLIPBOOK_LAYER_SHIFT 8
 #define AERON_ANIM_FLIPBOOK_MODE_SHIFT 9
 #define AERON_ANIM_FLIPBOOK_HAS_UV 0x400u
+#define AERON_ANIM_FLIPBOOK_UV_CLAMP 0x800u
 #define AERON_ANIM_NO_LAYER 0xFFFu
 #define AERON_ANIM_FRAME_RECORDS(layer) ((layer) == AERON_ANIM_LAYER_ILLUMINATION ? 2u : 1u)
 

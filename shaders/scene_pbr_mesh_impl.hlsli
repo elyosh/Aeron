@@ -132,10 +132,11 @@ cbuffer PbrAnimFS : register(b3, space3)
  * image when set. */
 float2 anim_frame_uv(uint flipbook, float2 uv)
 {
-    if ((g_anim_records[flipbook].x & AERON_ANIM_FLIPBOOK_HAS_UV) == 0u) return uv;
+    uint x = g_anim_records[flipbook].x;
+    if ((x & AERON_ANIM_FLIPBOOK_HAS_UV) == 0u) return uv;
     uint4  t = g_anim_records[flipbook + 1u];
-    float2 r = uv * float2(asfloat(t.x), 1.0f) + float2(asfloat(t.y), asfloat(t.z));
-    return t.w != 0u ? min(saturate(r), 0.99999f) : r;
+    float2 r = uv * float2(asfloat(t.x), asfloat(t.y)) + float2(asfloat(t.z), asfloat(t.w));
+    return (x & AERON_ANIM_FLIPBOOK_UV_CLAMP) != 0u ? min(saturate(r), 0.99999f) : r;
 }
 
 /* Samples the image of a frame record. */
@@ -329,8 +330,9 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
             float4 layer = anim_frame_sample(g_effect_layer, g_effect_layer_sampler, g_anim_records[lit_frame],
                                              frame_uv);
             c = c * layer.a + layer.rgb;
-            anim_emissive = anim_frame_sample(g_effect_emissive, g_effect_emissive_sampler,
-                                              g_anim_records[lit_frame + 1u], frame_uv).rgb;
+            uint4 lit_emissive = g_anim_records[lit_frame + 1u];
+            anim_emissive = anim_frame_sample(g_effect_emissive, g_effect_emissive_sampler, lit_emissive,
+                                              frame_uv).rgb * asfloat(lit_emissive.w);
             anim_emission = true;
         }
         albedo_tex.rgb = c;

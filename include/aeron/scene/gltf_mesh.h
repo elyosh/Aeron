@@ -199,8 +199,9 @@ typedef struct AeronGltfMaterial {
  *   "aeronFlipbooks": [ { "state", "layer": "colour" | "illumination",
  *                         "mode": "loop" | "once", "library",
  *                         "frames": [ [key, seconds], ... ],
- *                         "uv": { "scale": [sx, 1], "offset": [ox, oy],
- *                                 "clamp": bool } } ]
+ *                         "uv": { "scale": [sx, sy], "offset": [ox, oy],
+ *                                 "clamp": bool },
+ *                         "emissiveStrength": s } ]
  *
  *   "aeronDamage": { "library", "choice", "placement",
  *                    "alternatives": [ { "stages": [key | null] x 3,
@@ -237,8 +238,9 @@ typedef struct AeronGltfFlipbook {
 	uint32_t frame_count;
 	bool     has_uv;
 	bool     uv_clamp;
-	float    uv_scale_x;
+	float    uv_scale[2];
 	float    uv_offset[2];
+	float    emissive_strength; /* illumination frames' emission scale (1) */
 } AeronGltfFlipbook;
 
 /* ===== Screen surfaces ==============================================

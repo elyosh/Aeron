@@ -341,10 +341,11 @@ static uint32_t anim_library(AeronSceneMesh* s, AeronCommandBuffer* cmd, const c
 	return library;
 }
 
-/* A frame record (two for illumination) of image `key`; the layer
- * AERON_ANIM_NO_LAYER when the library lacks it. Returns false on OOM. */
+/* A frame record (two for illumination, the second with the emission
+ * strength) of image `key`; the layer AERON_ANIM_NO_LAYER when the library
+ * lacks it. Returns false on OOM. */
 static bool anim_frame(AnimRecords* r, const AeronEffectAtlas* atlas, uint32_t library, uint32_t layer,
-					   const char* key, float end, uint32_t* missing) {
+					   const char* key, float end, float emissive_strength, uint32_t* missing) {
 	AeronEffectImage image;
 	const bool       found = library != UINT32_MAX && AeronEffectAtlas_Find(atlas, library, key, &image) &&
 							 image.present[AERON_EFFECT_LAYER] &&
@@ -355,7 +356,7 @@ static bool anim_frame(AnimRecords* r, const AeronEffectAtlas* atlas, uint32_t l
 		if (!record)
 			return false;
 		record[0] = AERON_ANIM_NO_LAYER;
-		record[3] = t == 0 ? float_bits(end) : 0u;
+		record[3] = float_bits(t == 0 ? end : emissive_strength);
 		if (found) {
 			record[0] = (image.layer[t] & 0xFFFu) | (image.lod[t] & 0xFu) << 12;
 			record[1] = image.rect[t][0] | image.rect[t][1] << 16;
@@ -482,17 +483,18 @@ static int build_anim_records(AeronSceneMesh* s, AeronCommandBuffer* cmd, const 
 			if (ok) {
 				record[0] = fb->state | fb->layer << AERON_ANIM_FLIPBOOK_LAYER_SHIFT |
 							fb->mode << AERON_ANIM_FLIPBOOK_MODE_SHIFT |
-							(fb->has_uv ? AERON_ANIM_FLIPBOOK_HAS_UV : 0u);
+							(fb->has_uv ? AERON_ANIM_FLIPBOOK_HAS_UV : 0u) |
+							(fb->uv_clamp ? AERON_ANIM_FLIPBOOK_UV_CLAMP : 0u);
 				record[2] = fb->frame_count;
 			}
 			if (ok && fb->has_uv) {
 				record = anim_record(r);
 				ok     = record != NULL;
 				if (ok) {
-					record[0] = float_bits(fb->uv_scale_x);
-					record[1] = float_bits(fb->uv_offset[0]);
-					record[2] = float_bits(fb->uv_offset[1]);
-					record[3] = fb->uv_clamp ? 1u : 0u;
+					record[0] = float_bits(fb->uv_scale[0]);
+					record[1] = float_bits(fb->uv_scale[1]);
+					record[2] = float_bits(fb->uv_offset[0]);
+					record[3] = float_bits(fb->uv_offset[1]);
 				}
 			}
 		}
@@ -506,7 +508,8 @@ static int build_anim_records(AeronSceneMesh* s, AeronCommandBuffer* cmd, const 
 			for (uint32_t f = 0; ok && f < fb->frame_count; f++) {
 				const AeronGltfFlipbookFrame* frame = &model->flipbook_frames[fb->frame_first + f];
 				end += frame->seconds;
-				ok = anim_frame(r, s->effect_atlas, library, fb->layer, frame->key, end, &missing);
+				ok = anim_frame(r, s->effect_atlas, library, fb->layer, frame->key, end, fb->emissive_strength,
+								&missing);
 			}
 			r->items[book][3] = float_bits(end);
 			frames += fb->frame_count;

@@ -610,6 +610,7 @@ static bool read_flipbook(const cJSON* json, AeronGltfModel* model, FlipbookCapa
 	const cJSON*             frames   = cJSON_GetObjectItemCaseSensitive(json, "frames");
 	const cJSON*             library  = cJSON_GetObjectItemCaseSensitive(json, "library");
 	const cJSON*             uv       = cJSON_GetObjectItemCaseSensitive(json, "uv");
+	const cJSON*             strength = cJSON_GetObjectItemCaseSensitive(json, "emissiveStrength");
 	static const char* const layers[] = { "colour", "illumination" };
 	static const char* const modes[]  = { "loop", "once" };
 	AeronGltfFlipbook        fb       = { 0 };
@@ -619,13 +620,20 @@ static bool read_flipbook(const cJSON* json, AeronGltfModel* model, FlipbookCapa
 		!json_string_index(json, "mode", modes, 2, &fb.mode) || count < 0 || count > 0xFFFF ||
 		(count > 0 && !cJSON_IsString(library)))
 		return false;
+	fb.emissive_strength = 1.0f;
+	if (strength) {
+		if (!cJSON_IsNumber(strength) || !isfinite(strength->valuedouble) || strength->valuedouble < 0.0)
+			return false;
+		fb.emissive_strength = (float)strength->valuedouble;
+	}
 	if (uv) {
 		float scale[2], offset[2];
 		if (!json_floats(cJSON_GetObjectItemCaseSensitive(uv, "scale"), scale, 2) ||
 			!json_floats(cJSON_GetObjectItemCaseSensitive(uv, "offset"), offset, 2))
 			return false;
 		fb.has_uv       = true;
-		fb.uv_scale_x   = scale[0];
+		fb.uv_scale[0]  = scale[0];
+		fb.uv_scale[1]  = scale[1];
 		fb.uv_offset[0] = offset[0];
 		fb.uv_offset[1] = offset[1];
 		fb.uv_clamp     = json_bool(uv, "clamp");
