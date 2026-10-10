@@ -139,6 +139,9 @@ typedef struct OptGltfXwauMaterial {
 	bool  shadeless;
 	bool  alpha_isnt_glass;
 	bool  alpha_to_bloom;
+	/* Baked as a plain lit surface: no unlit weight and no glass, whatever
+	 * Shadeless, Ambient or AlphaToBloom say (--xwau-ignore-shadeless). */
+	bool  lit;
 	/* Tangent-space normal map: R, G, B = X, Y, Z encoded 0..1 (+Y toward
 	 * the first row), rows in UV order, alpha ignored; rgba NULL when the
 	 * texture has none. normal_map_name labels its baked image file and must
@@ -179,8 +182,9 @@ typedef struct OptGltfXwauAnim {
 bool OptGltf_XwauTextureHasIllum(const opt_texture_t* t);
 
 /* The material's unlit weight s, 0..1: 1 for Shadeless (or AlphaToBloom),
- * else Ambient. The bake stores lerp(lit, color, s) as base color
- * color·(1 − s) plus emission color·s; colour frames take the same split. */
+ * else Ambient; 0 for a `lit` material. The bake stores lerp(lit, color, s)
+ * as base color color·(1 − s) plus emission color·s; colour frames take the
+ * same split. */
 float OptGltf_XwauUnlit(const OptGltfXwauMaterial* xm);
 
 /*

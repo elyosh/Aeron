@@ -243,7 +243,9 @@ static uint8_t* decode_texture_emissive_rgba8(const opt_file_t* opt, const opt_t
  *   - Shadeless/Ambient: output = lerp(lit, color, s), stored as base color
  *     color * (1 - s) plus emissive color * s;
  *   - glass (transparent, not shadeless, no illumination): below alpha 0.95
- *     a texel gets alpha a^2, gloss 0.93, metallic 0 and shadeless 0.8;
+ *     a texel gets alpha a^2, gloss 0.93 and metallic 0. XWAU also makes it
+ *     0.8 shadeless, to see into cockpits; as emission that reads as
+ *     glowing glass, so the glass is lit (its a^2 alpha keeps it clear);
  *   - dark-texel reflectance fade (PBRAddCommon.h "blackish"): approximated
  *     by raising roughness to 1;
  *   - Metallic, Glossiness: metallic and roughness = 1 - min(0.93, G)^2.
@@ -251,7 +253,6 @@ static uint8_t* decode_texture_emissive_rgba8(const opt_file_t* opt, const opt_t
  * setting is a display option, not material color. */
 
 #define XWAU_GLASS_GLOSS 0.93f
-#define XWAU_GLASS_SHADELESS 0.8f
 #define XWAU_ILLUM_GAIN 1.25f
 
 typedef struct XwauBaked {
@@ -333,6 +334,8 @@ static void xwau_state_free(XwauBaked* baked, int32_t count, int32_t* normal_own
 }
 
 float OptGltf_XwauUnlit(const OptGltfXwauMaterial* xm) {
+	if (xm->lit)
+		return 0.0f;
 	return (xm->shadeless || xm->alpha_to_bloom) ? 1.0f : clamp01f(xm->ambient);
 }
 
@@ -468,9 +471,12 @@ static bool xwau_bake_rgba(const opt_texture_t* t, const OptGltfXwauMaterial* xm
 	const size_t n           = (size_t)t->width * (size_t)t->height;
 	const bool   bpp32       = t->bytes_per_texel == 4;
 	const bool   transparent = t->alpha != NULL;
-	const bool   has_illum   = OptGltf_XwauTextureHasIllum(t);
-	const bool glass =
-		transparent && !xm->shadeless && !xm->alpha_isnt_glass && !xm->alpha_to_bloom && !has_illum;
+	/* A shadeless transparent texture (cockpit glass) returns before the
+	   illumination branch (XwaD3dPixelShader.hlsl:80); so does a `lit` one,
+	   whose Shadeless the override cleared. */
+	const bool  has_illum   = OptGltf_XwauTextureHasIllum(t) && !(transparent && (xm->shadeless || xm->lit));
+	const bool  glass       = transparent && !xm->lit && !xm->shadeless && !xm->alpha_isnt_glass &&
+							  !xm->alpha_to_bloom && !has_illum;
 	const float metallic    = xwau_metallic(xm->metallic);
 	const float roughness   = xwau_roughness(xm->glossiness);
 	const float glass_rough = 1.0f - XWAU_GLASS_GLOSS * XWAU_GLASS_GLOSS;
@@ -499,7 +505,7 @@ static bool xwau_bake_rgba(const opt_texture_t* t, const OptGltfXwauMaterial* xm
 									 smoothstepf(0.2f, 0.9f, 5.0f * illum / 255.0f)
 							   : 0.0f;
 		const float gl = glass ? 1.0f - smoothstepf(0.95f, 1.0f, a) : 0.0f;
-		const float s  = lerpf(lerpf(shadeless, XWAU_GLASS_SHADELESS, gl), 1.0f, w);
+		const float s  = lerpf(shadeless * (1.0f - gl), 1.0f, w);
 
 		const float luma =
 			0.299f * c[0] * c[0] + 0.587f * c[1] * c[1] + 0.114f * c[2] * c[2]; /* on the decoded color */

@@ -124,9 +124,10 @@
  * Excludes --smooth-angle, --emissive, --fullbright and --no-normal-repair.
  *
  * --xwau-ignore-shadeless TEXTURE (repeatable, with --xwau-root) shades the
- * named OPT texture as a lit surface although its material sets Shadeless:
- * some XWAU materials make crew textures shadeless, which reads as glowing
- * under physical lighting. Names match as material lookups do (case-
+ * named OPT texture as a plain lit surface although its material sets
+ * Shadeless: some XWAU materials make crew textures and cockpit glass
+ * shadeless, which reads as glowing under physical lighting. A transparent
+ * texture keeps its alpha and does not become XWAU glass. Names match as material lookups do (case-
  * insensitive, ignoring a "_fg_" skin suffix); a name that matches no
  * texture is reported.
  *
@@ -445,6 +446,7 @@ static int convert_xwau(opt_file_t* opt, const char* out_dir, const char* basena
 		for (int k = 0; k < x->ignore_shadeless_count; ++k) {
 			if (xwau_texture_named(opt->textures[i].name, x->ignore_shadeless[k])) {
 				materials[i].shadeless = false;
+				materials[i].lit       = true;
 				ignored[k]             = true;
 			}
 		}
