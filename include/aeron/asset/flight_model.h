@@ -80,6 +80,37 @@ typedef struct AeronFlightTag {
 	char name[AERON_FLIGHT_TAG_MAX];
 } AeronFlightTag;
 
+/* Game-defined articulation: component `component` turns about its
+ * `rotation` hinge, in a group the game drives. `component` indexes the
+ * game's per-component state (0..254), so it may name a component of another
+ * model the game draws with the same state, such as a cockpit. `group` and
+ * `behavior` follow the tag syntax; `behavior` is empty when absent. `angle`
+ * is in 1/256 turn, `speed` and `speed_back` in 1/256 turn per game step. */
+typedef struct AeronFlightArticulation {
+	char    group[AERON_FLIGHT_TAG_MAX];
+	char    behavior[AERON_FLIGHT_TAG_MAX];
+	uint8_t component;
+	int16_t angle;
+	uint8_t speed;
+	uint8_t speed_back;
+} AeronFlightArticulation;
+
+/* Game-defined model articulation setting: a name with the tag syntax and an
+ * integer value. */
+typedef struct AeronFlightArticulationSetting {
+	char    name[AERON_FLIGHT_TAG_MAX];
+	int32_t value;
+} AeronFlightArticulationSetting;
+
+/* Game-defined named set of component ordinals (0..254). Like an
+ * articulation's component, a member may be past this model's components:
+ * it indexes the game's per-component state, which the game may also draw
+ * another model with. `name` follows the tag syntax. */
+typedef struct AeronFlightComponentSet {
+	char     name[AERON_FLIGHT_TAG_MAX];
+	uint32_t members[8]; /* bit n % 32 of word n / 32: component n */
+} AeronFlightComponentSet;
+
 typedef struct AeronFlightComponent {
 	int32_t             mesh_type;
 	uint32_t            explosion_flags;
@@ -123,6 +154,12 @@ typedef struct AeronFlightModel {
 	AeronFlightBounds      bounds;
 	float                  max_extent;
 	int32_t                bridge_component;
+	uint32_t                        articulation_count;
+	AeronFlightArticulation*        articulations;
+	uint32_t                        articulation_setting_count;
+	AeronFlightArticulationSetting* articulation_settings;
+	uint32_t                        component_set_count;
+	AeronFlightComponentSet*        component_sets;
 	/* Cooked render data (`renderData` on the model root): an owned copy of
 	 * its buffer view, verified against the merged render arrays. */
 	bool                   has_render_data;
@@ -150,7 +187,8 @@ bool Aeron_FlightModelBuildSemanticsMemory(const void* bytes, size_t size, const
 
 void Aeron_FlightModelReleaseRenderData(AeronFlightModel* model);
 /* Frees the data only simulation consumers read: each component's topology,
- * hardpoints, tags and cooked simulation data, and the cooked render data.
+ * hardpoints, tags and cooked simulation data, the model's articulations,
+ * articulation settings and component sets, and the cooked render data.
  * What AeronScene_MeshCreate reads stays: render data, render BVH,
  * component mesh types, rotations and bounds, engine glows, lights and model
  * bounds.

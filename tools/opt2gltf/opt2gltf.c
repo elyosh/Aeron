@@ -1993,6 +1993,44 @@ static bool build_memory(const opt_file_t* opt, const char* basename, const OptG
 			return false;
 		}
 	}
+	const size_t articulation_count = options ? options->component_articulation_count : 0;
+	for (size_t i = 0; i < articulation_count; ++i) {
+		const OptGltfComponentArticulation* a = &options->component_articulations[i];
+		if (!valid_component_tag(a->group) || (a->behavior[0] && !valid_component_tag(a->behavior)) ||
+			a->angle < -128 || a->angle > 255 || a->speed < 0 || a->speed > 255 || a->speed_back < 0 ||
+			a->speed_back > 255 || a->component > 254) {
+			if (error)
+				snprintf(error->msg, sizeof error->msg, "invalid articulation %u=%s:%d:%d:%d:%s", a->component,
+						 a->group, (int)a->angle, (int)a->speed, (int)a->speed_back, a->behavior);
+			return false;
+		}
+	}
+	const size_t component_set_count = options ? options->component_set_count : 0;
+	for (size_t i = 0; i < component_set_count; ++i) {
+		bool duplicate = false;
+		for (size_t previous = 0; previous < i; ++previous)
+			duplicate |= strcmp(options->component_sets[previous].name, options->component_sets[i].name) == 0;
+		if (!valid_component_tag(options->component_sets[i].name) || duplicate ||
+			(options->component_sets[i].members[7] & 0x80000000u)) {
+			if (error)
+				snprintf(error->msg, sizeof error->msg, "invalid or repeated component set %s",
+						 options->component_sets[i].name);
+			return false;
+		}
+	}
+	const size_t setting_count = options ? options->articulation_setting_count : 0;
+	for (size_t i = 0; i < setting_count; ++i) {
+		bool duplicate = false;
+		for (size_t previous = 0; previous < i; ++previous)
+			duplicate |= strcmp(options->articulation_settings[previous].name,
+								options->articulation_settings[i].name) == 0;
+		if (!valid_component_tag(options->articulation_settings[i].name) || duplicate) {
+			if (error)
+				snprintf(error->msg, sizeof error->msg, "invalid or repeated articulation setting %s",
+						 options->articulation_settings[i].name);
+			return false;
+		}
+	}
 	const float                smooth_angle_deg = options ? options->smooth_angle_degrees : -1.0f;
 	const OptGltfXwauMaterial* xwau             = options ? options->xwau_materials : NULL;
 	if (xwau && (smooth_angle_deg >= 0.0f || options->emissive || options->fullbright_strength > 0.0f ||
@@ -2947,8 +2985,57 @@ static bool build_memory(const opt_file_t* opt, const char* basename, const OptG
 	 *                           nodes, contiguous per parent mesh */
 	cgltf_node* root_node = &build->nodes[0];
 	root_node->name       = gb_keep_string(build, xprintf_dup("OPT_%s", basename));
-	if (!set_flight_extension(build, root_node, "{\"role\":\"model\"}"))
-		goto fail;
+	{
+		/* Each articulation needs at most 256 bytes, each setting 80, each
+		 * component set 72 plus 4 per member. */
+		const size_t root_size = 64 + articulation_count * 256 + setting_count * 80 + component_set_count * (72 + 255 * 4);
+		char*        root_ext  = (char*)malloc(root_size);
+		if (!root_ext)
+			goto fail;
+		size_t root_off = (size_t)snprintf(root_ext, root_size, "{\"role\":\"model\"");
+		/* Articulations in option order; speedBack only when it differs. */
+		for (size_t a = 0; a < articulation_count; ++a) {
+			const OptGltfComponentArticulation* art = &options->component_articulations[a];
+			root_off += (size_t)snprintf(root_ext + root_off, root_size - root_off,
+										 "%s{\"component\":%u,\"group\":\"%s\",\"angle\":%d,\"speed\":%d",
+										 a ? "," : ",\"articulations\":[", art->component, art->group,
+										 (int)art->angle, (int)art->speed);
+			if (art->speed_back != art->speed)
+				root_off += (size_t)snprintf(root_ext + root_off, root_size - root_off, ",\"speedBack\":%d",
+											 (int)art->speed_back);
+			if (art->behavior[0])
+				root_off += (size_t)snprintf(root_ext + root_off, root_size - root_off, ",\"behavior\":\"%s\"",
+											 art->behavior);
+			root_off += (size_t)snprintf(root_ext + root_off, root_size - root_off,
+										 a + 1 == articulation_count ? "}]" : "}");
+		}
+		for (size_t s = 0; s < setting_count; ++s)
+			root_off += (size_t)snprintf(root_ext + root_off, root_size - root_off, "%s\"%s\":%d",
+										 s ? "," : ",\"articulationSettings\":{",
+										 options->articulation_settings[s].name,
+										 (int)options->articulation_settings[s].value);
+		if (setting_count)
+			root_off += (size_t)snprintf(root_ext + root_off, root_size - root_off, "}");
+		for (size_t s = 0; s < component_set_count; ++s) {
+			const OptGltfComponentSet* set = &options->component_sets[s];
+			root_off += (size_t)snprintf(root_ext + root_off, root_size - root_off, "%s\"%s\":[",
+										 s ? "," : ",\"componentSets\":{", set->name);
+			bool first = true;
+			for (int component = 0; component < 255; ++component) {
+				if (set->members[component / 32] & (1u << (component % 32))) {
+					root_off += (size_t)snprintf(root_ext + root_off, root_size - root_off, "%s%d", first ? "" : ",",
+												 component);
+					first = false;
+				}
+			}
+			root_off += (size_t)snprintf(root_ext + root_off, root_size - root_off, "]");
+		}
+		snprintf(root_ext + root_off, root_size - root_off, component_set_count ? "}}" : "}");
+		const bool root_set = set_flight_extension(build, root_node, root_ext);
+		free(root_ext);
+		if (!root_set)
+			goto fail;
+	}
 
 	cgltf_node** root_children = (cgltf_node**)calloc(total_meshes, sizeof *root_children);
 	if (!root_children) {

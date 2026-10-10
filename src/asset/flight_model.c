@@ -420,6 +420,122 @@ static bool build_component_tags(const cJSON* extension, AeronFlightComponent* c
 	return true;
 }
 
+/* Parses an optional integer field within [min, max]; `fallback` when absent. */
+static bool json_int_range(const cJSON* object, const char* field, int32_t min, int32_t max, int32_t fallback,
+						   int32_t* out) {
+	const cJSON* value = cJSON_GetObjectItemCaseSensitive(object, field);
+	if (!value) {
+		*out = fallback;
+		return true;
+	}
+	return json_int(value, out) && *out >= min && *out <= max;
+}
+
+/* Parses the optional model-root `articulations` array. Groups and behaviors
+ * follow the tag syntax; the game interprets them. */
+static bool build_model_articulations(const cJSON* extension, AeronFlightModel* model) {
+	const cJSON* articulations = cJSON_GetObjectItemCaseSensitive(extension, "articulations");
+	if (!articulations)
+		return true;
+	if (!cJSON_IsArray(articulations))
+		return false;
+	const int count = cJSON_GetArraySize(articulations);
+	if (count == 0)
+		return true;
+	model->articulations = calloc((size_t)count, sizeof *model->articulations);
+	if (!model->articulations)
+		return false;
+	for (int index = 0; index < count; ++index) {
+		const cJSON*             item     = cJSON_GetArrayItem(articulations, index);
+		const cJSON*             group    = cJSON_GetObjectItemCaseSensitive(item, "group");
+		const cJSON*             behavior = cJSON_GetObjectItemCaseSensitive(item, "behavior");
+		AeronFlightArticulation* out      = &model->articulations[index];
+		int32_t                  component = 0, angle = 0, speed = 0, speed_back = 0;
+		if (!cJSON_IsObject(item) || !cJSON_IsString(group) || !group->valuestring ||
+			!valid_tag(group->valuestring) || !cJSON_GetObjectItemCaseSensitive(item, "component") ||
+			!cJSON_GetObjectItemCaseSensitive(item, "angle") || !cJSON_GetObjectItemCaseSensitive(item, "speed") ||
+			!json_int_range(item, "component", 0, 254, 0, &component) ||
+			!json_int_range(item, "angle", -128, 255, 0, &angle) ||
+			!json_int_range(item, "speed", 0, 255, 0, &speed) ||
+			!json_int_range(item, "speedBack", 0, 255, speed, &speed_back))
+			return false;
+		if (behavior && (!cJSON_IsString(behavior) || !behavior->valuestring || !valid_tag(behavior->valuestring)))
+			return false;
+		strcpy(out->group, group->valuestring);
+		if (behavior)
+			strcpy(out->behavior, behavior->valuestring);
+		out->component  = (uint8_t)component;
+		out->angle      = (int16_t)angle;
+		out->speed      = (uint8_t)speed;
+		out->speed_back = (uint8_t)speed_back;
+		model->articulation_count = (uint32_t)index + 1;
+	}
+	return true;
+}
+
+/* Parses the optional model-root `articulationSettings` object: names with
+ * the tag syntax, integer values. */
+static bool build_model_articulation_settings(const cJSON* extension, AeronFlightModel* model) {
+	const cJSON* settings = cJSON_GetObjectItemCaseSensitive(extension, "articulationSettings");
+	if (!settings)
+		return true;
+	if (!cJSON_IsObject(settings))
+		return false;
+	const int count = cJSON_GetArraySize(settings);
+	if (count == 0)
+		return true;
+	model->articulation_settings = calloc((size_t)count, sizeof *model->articulation_settings);
+	if (!model->articulation_settings)
+		return false;
+	const cJSON* setting = NULL;
+	cJSON_ArrayForEach(setting, settings) {
+		AeronFlightArticulationSetting* out = &model->articulation_settings[model->articulation_setting_count];
+		if (!setting->string || !valid_tag(setting->string) || !json_int(setting, &out->value))
+			return false;
+		for (uint32_t existing = 0; existing < model->articulation_setting_count; ++existing)
+			if (strcmp(model->articulation_settings[existing].name, setting->string) == 0)
+				return false;
+		strcpy(out->name, setting->string);
+		++model->articulation_setting_count;
+	}
+	return true;
+}
+
+/* Parses the optional model-root `componentSets` object: names with the tag
+ * syntax, each an array of component ordinals 0..254 (repeats ignored). */
+static bool build_model_component_sets(const cJSON* extension, AeronFlightModel* model) {
+	const cJSON* sets = cJSON_GetObjectItemCaseSensitive(extension, "componentSets");
+	if (!sets)
+		return true;
+	if (!cJSON_IsObject(sets))
+		return false;
+	const int count = cJSON_GetArraySize(sets);
+	if (count == 0)
+		return true;
+	model->component_sets = calloc((size_t)count, sizeof *model->component_sets);
+	if (!model->component_sets)
+		return false;
+	const cJSON* set = NULL;
+	cJSON_ArrayForEach(set, sets) {
+		AeronFlightComponentSet* out = &model->component_sets[model->component_set_count];
+		if (!set->string || !valid_tag(set->string) || !cJSON_IsArray(set))
+			return false;
+		for (uint32_t existing = 0; existing < model->component_set_count; ++existing)
+			if (strcmp(model->component_sets[existing].name, set->string) == 0)
+				return false;
+		const cJSON* member = NULL;
+		cJSON_ArrayForEach(member, set) {
+			int32_t component = 0;
+			if (!json_int(member, &component) || component < 0 || component > 254)
+				return false;
+			out->members[component / 32] |= 1u << (component % 32);
+		}
+		strcpy(out->name, set->string);
+		++model->component_set_count;
+	}
+	return true;
+}
+
 /* Parses a 16-digit lower-case hexadecimal hash. */
 static bool parse_hash(const cJSON* value, uint64_t* out) {
 	if (!cJSON_IsString(value) || !value->valuestring || strlen(value->valuestring) != 16)
@@ -482,7 +598,9 @@ static bool build_model_render_data(const cgltf_data* data, const cgltf_node* ro
 	if (!extension)
 		return false;
 	const bool ok = parse_cooked_reference(data, extension, "renderData", "meshHash", &model->has_render_data,
-										   &model->render_data, &model->render_data_size, &model->render_mesh_hash);
+										   &model->render_data, &model->render_data_size, &model->render_mesh_hash) &&
+					build_model_articulations(extension, model) && build_model_articulation_settings(extension, model) &&
+					build_model_component_sets(extension, model);
 	cJSON_Delete(extension);
 	return ok;
 }
@@ -949,9 +1067,18 @@ void Aeron_FlightModelReleaseSimulationData(AeronFlightModel* model) {
 		component->simulation_data_size = 0;
 	}
 	free(model->render_data);
-	model->has_render_data  = false;
-	model->render_data      = NULL;
-	model->render_data_size = 0;
+	free(model->articulations);
+	free(model->articulation_settings);
+	free(model->component_sets);
+	model->component_set_count        = 0;
+	model->component_sets             = NULL;
+	model->has_render_data            = false;
+	model->render_data                = NULL;
+	model->render_data_size           = 0;
+	model->articulation_count         = 0;
+	model->articulations              = NULL;
+	model->articulation_setting_count = 0;
+	model->articulation_settings      = NULL;
 }
 
 void Aeron_FlightModelFree(AeronFlightModel* model) {
@@ -973,6 +1100,9 @@ void Aeron_FlightModelFreeSemantics(AeronFlightModel* model) {
 		free(component->simulation_data);
 	}
 	free(model->components);
+	free(model->articulations);
+	free(model->articulation_settings);
+	free(model->component_sets);
 	free(model->engine_glows);
 	free(model->lights);
 	free(model->render_data);

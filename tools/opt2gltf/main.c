@@ -4,7 +4,9 @@
  *
  * Usage:
  *   opt2gltf [--smooth-angle DEG] [--emissive] [--fullbright STRENGTH]
- *            [--tag N=TAG]... [--subdivide N] [--cockpit-eye X,Y,Z]
+ *            [--tag N=TAG]... [--articulation N=GROUP:ANGLE:SPEED[:SPEED_BACK][:BEHAVIOR]]...
+ *            [--articulation-setting NAME=VALUE]... [--component-set NAME=N[,N...]]...
+ *            [--subdivide N] [--cockpit-eye X,Y,Z]
  *            [--cockpit-light X,Y,Z] [--xwau-root DIR]...
  *            [--xwau-ignore-shadeless TEXTURE]... [--dynamic-cockpit FILE.dc]
  *            [--xwau-skins DIR --xwau-skin-variants FILE.json]
@@ -40,7 +42,22 @@
  *     behaviour such as the crew animation is off.
  *
  * --tag N=TAG (repeatable) adds TAG ([a-z0-9._]{1,63}) to the component
- * built from OPT mesh N, e.g. --tag 6=crew.side --tag 9=crew.forward.
+ * built from OPT mesh N, e.g. --tag 0=hangarcrane.arm.
+ *
+ * --articulation N=GROUP:ANGLE:SPEED[:SPEED_BACK][:BEHAVIOR] (repeatable) adds
+ * an AERON_flight_model articulation for component N (0..254, an OPT mesh
+ * index, which may be past this OPT's meshes when the game draws another
+ * model with the same per-component state) to the model root: GROUP and
+ * BEHAVIOR match the tag syntax, ANGLE is -128..255, SPEED and SPEED_BACK
+ * 0..255 (SPEED_BACK defaults to SPEED), e.g.
+ * --articulation 3=sfoils:12:1 or --articulation 23=crew:32:2:random_pause.
+ * --articulation-setting NAME=VALUE (repeatable) adds an integer to the model
+ * root's articulationSettings. The game defines groups, behaviors and settings.
+ *
+ * --component-set NAME=N[,N...] (repeatable; a repeated NAME adds members)
+ * adds component ordinals N (0..254, which may be past this OPT's meshes) to
+ * the model root's componentSets entry NAME (tag syntax), e.g.
+ * --component-set hidden_by_profile.quad=7,8,19. The game defines the names.
  *
  * --cockpit-eye X,Y,Z (single OPT only) sets the pilot eye in craft-table
  * units, as XWAU's CockpitPovX/Y/Z: the OPT's Cockpit (type 31) hardpoints
@@ -147,6 +164,86 @@
 #include "xwau_dat.h"
 #include "xwau_mat.h"
 #include "xwau_skins.h"
+
+#define OPT2GLTF_MAX_ARTICULATIONS 4096
+#define OPT2GLTF_MAX_SETTINGS 64
+#define OPT2GLTF_MAX_COMPONENT_SETS 256
+
+/* Copies the name ending at `end` into `out` (64 bytes); false when empty or
+ * too long. The name's syntax is checked by the converter. */
+static bool copy_name(const char* begin, const char* end, char out[64]) {
+	if (end <= begin || end - begin >= 64)
+		return false;
+	memcpy(out, begin, (size_t)(end - begin));
+	out[end - begin] = 0;
+	return true;
+}
+
+/* Parses NAME=N[,N...] into the set named NAME among `sets`, adding it when
+ * new. Fails on a bad name, member or a full table. */
+static bool parse_component_set(const char* text, OptGltfComponentSet* sets, size_t* count) {
+	const char* equals = strchr(text, '=');
+	char        name[64];
+	if (!equals || !copy_name(text, equals, name))
+		return false;
+	size_t index = 0;
+	while (index < *count && strcmp(sets[index].name, name) != 0)
+		++index;
+	if (index == *count) {
+		if (*count == OPT2GLTF_MAX_COMPONENT_SETS)
+			return false;
+		memset(&sets[index], 0, sizeof sets[index]);
+		strcpy(sets[index].name, name);
+	}
+	const char* cur = equals + 1;
+	do {
+		char*         end    = NULL;
+		const long    member = strtol(cur, &end, 10);
+		if (end == cur || (*end && *end != ',') || member < 0 || member > 254)
+			return false;
+		sets[index].members[member / 32] |= 1u << (member % 32);
+		cur = *end ? end + 1 : end;
+	} while (*cur);
+	if (index == *count)
+		++*count;
+	return true;
+}
+
+/* Parses N=GROUP:ANGLE:SPEED[:SPEED_BACK][:BEHAVIOR]. */
+static bool parse_articulation(const char* text, OptGltfComponentArticulation* out) {
+	char*               end  = NULL;
+	const unsigned long mesh = strtoul(text, &end, 10);
+	if (end == text || *end != '=' || mesh > UINT32_MAX)
+		return false;
+	memset(out, 0, sizeof *out);
+	out->component    = (uint32_t)mesh;
+	const char* group = end + 1;
+	const char* colon = strchr(group, ':');
+	if (!colon || !copy_name(group, colon, out->group))
+		return false;
+	long value = strtol(colon + 1, &end, 10);
+	if (end == colon + 1 || *end != ':' || value < INT32_MIN || value > INT32_MAX)
+		return false;
+	out->angle      = (int32_t)value;
+	const char* cur = end + 1;
+	value           = strtol(cur, &end, 10);
+	if (end == cur || (*end && *end != ':') || value < 0 || value > INT32_MAX)
+		return false;
+	out->speed = out->speed_back = (int32_t)value;
+	if (!*end)
+		return true;
+	cur   = end + 1;
+	value = strtol(cur, &end, 10);
+	if (end != cur) {
+		if ((*end && *end != ':') || value < 0 || value > INT32_MAX)
+			return false;
+		out->speed_back = (int32_t)value;
+		if (!*end)
+			return true;
+		cur = end + 1;
+	}
+	return copy_name(cur, cur + strlen(cur), out->behavior);
+}
 
 static int ends_with_icase(const char* s, const char* suffix) {
 	size_t ls = strlen(s), lf = strlen(suffix);
@@ -548,6 +645,12 @@ int main(int argc, char** argv) {
 	/* Tags point into argv. */
 	OptGltfComponentTag* tags             = NULL;
 	size_t               tag_count        = 0;
+	static OptGltfComponentArticulation articulations[OPT2GLTF_MAX_ARTICULATIONS];
+	size_t                              articulation_count = 0;
+	static OptGltfArticulationSetting   settings[OPT2GLTF_MAX_SETTINGS];
+	size_t                              setting_count = 0;
+	static OptGltfComponentSet          component_sets[OPT2GLTF_MAX_COMPONENT_SETS];
+	size_t                              component_set_count = 0;
 	unsigned long        subdivide_levels = 0;
 	int                  cockpit_eye[3];
 	bool                 has_cockpit_eye = false;
@@ -600,6 +703,40 @@ int main(int argc, char** argv) {
 			tags                       = grown;
 			tags[tag_count].mesh_index = (uint32_t)mesh;
 			tags[tag_count++].tag      = equals + 1;
+			ai += 2;
+		} else if (strcmp(argv[ai], "--articulation") == 0) {
+			if (ai + 1 >= argc || articulation_count == OPT2GLTF_MAX_ARTICULATIONS ||
+				!parse_articulation(argv[ai + 1], &articulations[articulation_count])) {
+				fprintf(stderr,
+						"opt2gltf: --articulation needs N=GROUP:ANGLE:SPEED[:SPEED_BACK][:BEHAVIOR] (at most %d)\n",
+						OPT2GLTF_MAX_ARTICULATIONS);
+				free(tags);
+				return 2;
+			}
+			++articulation_count;
+			ai += 2;
+		} else if (strcmp(argv[ai], "--component-set") == 0) {
+			if (ai + 1 >= argc || !parse_component_set(argv[ai + 1], component_sets, &component_set_count)) {
+				fprintf(stderr, "opt2gltf: --component-set needs NAME=N[,N...] with N in 0..254 (at most %d sets)\n",
+						OPT2GLTF_MAX_COMPONENT_SETS);
+				free(tags);
+				return 2;
+			}
+			ai += 2;
+		} else if (strcmp(argv[ai], "--articulation-setting") == 0) {
+			const char* equals = ai + 1 < argc ? strchr(argv[ai + 1], '=') : NULL;
+			char*       end    = NULL;
+			const long  value  = equals ? strtol(equals + 1, &end, 10) : 0;
+			if (!equals || equals == argv[ai + 1] || (size_t)(equals - argv[ai + 1]) >= 64 || end == equals + 1 ||
+				*end || value < INT32_MIN || value > INT32_MAX || setting_count == OPT2GLTF_MAX_SETTINGS) {
+				fprintf(stderr, "opt2gltf: --articulation-setting needs NAME=INTEGER (at most %d)\n",
+						OPT2GLTF_MAX_SETTINGS);
+				free(tags);
+				return 2;
+			}
+			memcpy(settings[setting_count].name, argv[ai + 1], (size_t)(equals - argv[ai + 1]));
+			settings[setting_count].name[equals - argv[ai + 1]] = 0;
+			settings[setting_count++].value                     = (int32_t)value;
 			ai += 2;
 		} else if (strcmp(argv[ai], "--xwau-root") == 0) {
 			if (ai + 1 >= argc || xwau.root_count == XWAU_MAX_ROOTS) {
@@ -673,7 +810,9 @@ int main(int argc, char** argv) {
 	if (argc - ai != 2) {
 		fprintf(stderr,
 				"usage: %s [--smooth-angle DEG] [--no-normal-repair] "
-				"[--emissive] [--fullbright STRENGTH] [--tag N=TAG]... [--subdivide N] "
+				"[--emissive] [--fullbright STRENGTH] [--tag N=TAG]... "
+				"[--articulation N=GROUP:ANGLE:SPEED[:SPEED_BACK][:BEHAVIOR]]... "
+				"[--articulation-setting NAME=VALUE]... [--component-set NAME=N[,N...]]... [--subdivide N] "
 				"[--cockpit-eye X,Y,Z] [--cockpit-light X,Y,Z] [--xwau-root DIR]... "
 				"[--xwau-ignore-shadeless TEXTURE]... [--dynamic-cockpit FILE.dc] "
 				"[--xwau-skins DIR --xwau-skin-variants FILE.json] "
@@ -714,6 +853,12 @@ int main(int argc, char** argv) {
 		.fullbright_strength  = fullbright_strength,
 		.component_tags       = tags,
 		.component_tag_count  = tag_count,
+		.component_articulations      = articulations,
+		.component_articulation_count = articulation_count,
+		.articulation_settings        = settings,
+		.articulation_setting_count   = setting_count,
+		.component_sets               = component_sets,
+		.component_set_count          = component_set_count,
 		.subdivide_levels     = (uint32_t)subdivide_levels,
 	};
 	int         status;

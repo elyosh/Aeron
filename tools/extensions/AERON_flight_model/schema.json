@@ -53,12 +53,38 @@
       "type": "string",
       "pattern": "^[a-z0-9._]{1,63}$"
     },
+    "articulation": {
+      "type": "object",
+      "required": ["component", "group", "angle", "speed"],
+      "properties": {
+        "component": { "type": "integer", "minimum": 0, "maximum": 254 },
+        "group": { "$ref": "#/$defs/tag" },
+        "angle": { "type": "integer", "minimum": -128, "maximum": 255 },
+        "speed": { "type": "integer", "minimum": 0, "maximum": 255 },
+        "speedBack": { "type": "integer", "minimum": 0, "maximum": 255 },
+        "behavior": { "$ref": "#/$defs/tag" }
+      }
+    },
     "model": {
       "type": "object",
       "required": ["role"],
       "properties": {
         "role": { "const": "model" },
-        "renderData": { "$ref": "#/$defs/renderData" }
+        "renderData": { "$ref": "#/$defs/renderData" },
+        "articulations": { "type": "array", "items": { "$ref": "#/$defs/articulation" } },
+        "componentSets": {
+          "type": "object",
+          "propertyNames": { "$ref": "#/$defs/tag" },
+          "additionalProperties": {
+            "type": "array",
+            "items": { "type": "integer", "minimum": 0, "maximum": 254 }
+          }
+        },
+        "articulationSettings": {
+          "type": "object",
+          "propertyNames": { "$ref": "#/$defs/tag" },
+          "additionalProperties": { "type": "integer", "minimum": -2147483648, "maximum": 2147483647 }
+        }
       }
     },
     "rotation": {

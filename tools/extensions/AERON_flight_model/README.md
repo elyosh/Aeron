@@ -20,9 +20,11 @@ sizes and Z is signed depth.
 
 ## Roles
 
-- `model`: `{ "role": "model" }`
+- `model`: `{ "role": "model" }`; optionally carries `articulations`,
+  `articulationSettings` and `componentSets`
 - `component`: requires `meshType` in `0..31`; optionally carries
-  `explosionFlags`, `targetId`, `target`, descriptor geometry, and `rotation`
+  `explosionFlags`, `targetId`, `target`, descriptor geometry, `rotation`
+  and `tags`
 - `hardpoint`: requires raw hardpoint `type` in `0..39`
 - `engineGlow`: requires `coreColor` and `outerColor`; `enabled` defaults to
   true
@@ -57,9 +59,39 @@ A component may carry `tags`, an array of game-defined strings. Each tag is 1
 to 63 characters of lower-case ASCII letters, digits, `.` and `_`; malformed
 tags are invalid and duplicates within one component are ignored. A tag binds
 a component to a role that game code identifies by name instead of by
-ordinal, for example `crew.side`. Aeron stores tags without interpreting them;
+ordinal, for example `hangarcrane.arm`. Aeron stores tags without interpreting them;
 each game documents the tags it reads and which must be unique in a model.
 Games ignore tags they do not read.
+
+## Articulations
+
+The model root may carry `articulations`, an array of objects that let a
+game turn components about their `rotation` hinge:
+
+- `component`: required integer in `0..254`, the component ordinal. It
+  indexes the game's per-component state, so it may be past this model's
+  components when the game draws another model, such as a cockpit, with the
+  same state;
+- `group`: required, a game-defined name with the tag syntax;
+- `angle`: required integer in `-128..255`, in 1/256 turn;
+- `speed`: required integer in `0..255`, in 1/256 turn per game step;
+- `speedBack`: optional integer in `0..255`, defaults to `speed`;
+- `behavior`: optional game-defined name with the tag syntax.
+
+The model root may also carry `articulationSettings`, an object whose keys are
+game-defined names with the tag syntax and whose values are integers. Aeron
+stores articulations and settings without interpreting them; each game
+documents the groups, behaviors and settings it reads, and ignores the
+others.
+
+## Component sets
+
+The model root may carry `componentSets`, an object whose keys are
+game-defined names with the tag syntax and whose values are arrays of
+component ordinals in `0..254`; repeats are ignored. Like an articulation's
+`component`, a member may be past this model's components, so a set can name
+components of another model the game draws with the same per-component
+state. Aeron stores sets without interpreting them.
 
 ## Cooked data
 

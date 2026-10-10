@@ -83,6 +83,35 @@ typedef struct OptGltfComponentTag {
 	const char* tag;
 } OptGltfComponentTag;
 
+/* An AERON_flight_model articulation on the model root, for component
+ * `component` (0..254, an OPT mesh index; it may be past this OPT's meshes
+ * when the game draws another model, such as a cockpit, with the same
+ * per-component state). `group` and `behavior` (empty for none) match
+ * [a-z0-9._]{1,63}; `angle` is -128..255, `speed` and `speed_back` 0..255. */
+typedef struct OptGltfComponentArticulation {
+	uint32_t component;
+	char     group[64];
+	char     behavior[64];
+	int32_t  angle;
+	int32_t  speed;
+	int32_t  speed_back;
+} OptGltfComponentArticulation;
+
+/* A model-root AERON_flight_model component set: `name` matches
+ * [a-z0-9._]{1,63} and is unique; bit n % 32 of members[n / 32] is
+ * component n (0..254, which may be past this OPT's meshes). */
+typedef struct OptGltfComponentSet {
+	char     name[64];
+	uint32_t members[8];
+} OptGltfComponentSet;
+
+/* A model-root AERON_flight_model articulation setting; `name` matches
+ * [a-z0-9._]{1,63} and is unique. */
+typedef struct OptGltfArticulationSetting {
+	char    name[64];
+	int32_t value;
+} OptGltfArticulationSetting;
+
 typedef struct OptGltfImageView {
 	const uint8_t* rgba;
 	uint32_t       width;
@@ -261,6 +290,12 @@ typedef struct OptGltfBuildOptions {
 	size_t                             alpha_override_count;
 	const OptGltfComponentTag*         component_tags;
 	size_t                             component_tag_count;
+	const OptGltfComponentArticulation* component_articulations;
+	size_t                              component_articulation_count;
+	const OptGltfArticulationSetting*   articulation_settings;
+	size_t                              articulation_setting_count;
+	const OptGltfComponentSet*          component_sets;
+	size_t                              component_set_count;
 	/* Development only: split every triangle into four by its edge midpoints
 	 * this many times (at most OPT_GLTF_MAX_SUBDIVIDE). */
 	uint32_t subdivide_levels;

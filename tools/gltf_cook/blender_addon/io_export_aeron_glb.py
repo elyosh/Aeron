@@ -118,7 +118,7 @@ class AeronFlightProperties(PropertyGroup):
         name="Tags",
         description=(
             "Comma-separated game-defined tags (lower-case letters, digits, "
-            "'.' and '_'), e.g. crew.side"
+            "'.' and '_'), e.g. hangarcrane.arm"
         ),
         default="",
     )
