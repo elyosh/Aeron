@@ -1,0 +1,511 @@
+/*
+ * The animation merge of aeron_gltf_cook (animations.h). Validates what the
+ * runtime loader (aeron/src/scene/gltf_mesh.c) reads, so a merged model
+ * loads with its animations.
+ */
+#include "animations.h"
+
+#include <limits.h>
+#include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#include "cJSON.h"
+#include "yaml_json.h"
+
+#define TAG "[aeron_gltf_cook] animations"
+
+/* AERON_ANIM_STATE_* names, as the loader reads them. */
+static const char* const kStates[]   = { "threat.laser",
+										 "threat.turret",
+										 "threat.beam",
+										 "threat.missile_locking",
+										 "threat.missile_locked",
+										 "cannon.1",
+										 "cannon.2",
+										 "cannon.3",
+										 "cannon.4",
+										 "cannon.5",
+										 "cannon.6",
+										 "cannon.7",
+										 "cannon.8",
+										 "broken.cmd",
+										 "broken.laser_ion",
+										 "broken.beam_weapon",
+										 "broken.shields",
+										 "broken.throttle",
+										 "broken.sensors",
+										 "broken.laser_recharge",
+										 "broken.engine_power",
+										 "broken.shield_recharge",
+										 "broken.beam_recharge",
+										 "hull.25",
+										 "hull.50",
+										 "hull.75",
+										 "laser_lock",
+										 "warhead.locking",
+										 "warhead.locked",
+										 "hangar",
+										 "target",
+										 "always" };
+static const char* const kLayers[]   = { "colour", "illumination" };
+static const char* const kModes[]    = { "loop", "once" };
+static const char* const kEnergies[] = { "shields", "tractor", "jamming" };
+static const char* const kMembers[]  = { "aeronFlipbooks", "aeronDamage", "aeronEnergy",
+										 "aeronAnimBaseColor" };
+
+#define COUNT(a) (sizeof(a) / sizeof((a)[0]))
+
+typedef struct Merge {
+	const char* anim;        /* for messages */
+	const char* material;    /* for messages */
+	const char* library;     /* the file's, or NULL */
+	const char* effects_dir; /* or NULL */
+	cJSON**     indexes;     /* loaded library indexes, by name */
+	char**      index_names;
+	size_t      index_count;
+} Merge;
+
+static bool one_of(const cJSON* item, const char* const* names, size_t count) {
+	for (size_t i = 0; cJSON_IsString(item) && i < count; ++i)
+		if (strcmp(item->valuestring, names[i]) == 0)
+			return true;
+	return false;
+}
+
+static bool numbers(const cJSON* item, int count) {
+	if (!cJSON_IsArray(item) || cJSON_GetArraySize(item) != count)
+		return false;
+	const cJSON* n;
+	cJSON_ArrayForEach(n, item) {
+		if (!cJSON_IsNumber(n) || !isfinite(n->valuedouble))
+			return false;
+	}
+	return true;
+}
+
+static bool non_negative_int(const cJSON* item) {
+	return cJSON_IsNumber(item) && item->valuedouble >= 0.0 && item->valuedouble <= INT_MAX &&
+		   item->valuedouble == floor(item->valuedouble);
+}
+
+/* Only `allowed` members in `object`. */
+static bool only_members(Merge* m, const char* what, const cJSON* object, const char* const* allowed,
+						 size_t count) {
+	const cJSON* member;
+	cJSON_ArrayForEach(member, object) {
+		bool known = false;
+		for (size_t i = 0; i < count && !known; ++i)
+			known = strcmp(member->string, allowed[i]) == 0;
+		if (!known) {
+			fprintf(stderr, TAG ": %s: material %s: %s: unknown field \"%s\"\n", m->anim, m->material, what,
+					member->string);
+			return false;
+		}
+	}
+	return true;
+}
+
+/* Whether `key` is in library `library` of the effects directory. */
+static bool key_known(Merge* m, const char* library, const char* key) {
+	if (!m->effects_dir)
+		return true;
+	cJSON* index = NULL;
+	size_t i     = 0;
+	while (i < m->index_count && strcmp(m->index_names[i], library) != 0)
+		i++;
+	if (i < m->index_count) {
+		index = m->indexes[i];
+	} else {
+		char path[1024], err[512];
+		snprintf(path, sizeof path, "%s/%s.yaml", m->effects_dir, library);
+		index         = YamlJson_Load(path, err, sizeof err);
+		cJSON** grown = (cJSON**)realloc(m->indexes, (m->index_count + 1) * sizeof *grown);
+		char**  names = grown ? (char**)realloc(m->index_names, (m->index_count + 1) * sizeof *names) : NULL;
+		if (grown)
+			m->indexes = grown;
+		if (names)
+			m->index_names = names;
+		if (!grown || !names) {
+			cJSON_Delete(index);
+			return false;
+		}
+		m->indexes[m->index_count]     = index;
+		m->index_names[m->index_count] = strdup(library);
+		m->index_count++;
+		if (!index)
+			fprintf(stderr, TAG ": %s: library %s: %s\n", m->anim, library, err);
+	}
+	const bool found =
+		cJSON_GetObjectItemCaseSensitive(cJSON_GetObjectItemCaseSensitive(index, "images"), key);
+	if (index && !found)
+		fprintf(stderr, TAG ": %s: material %s: \"%s\" is not in library %s\n", m->anim, m->material, key,
+				library);
+	return found;
+}
+
+/* The library of a flipbook or damage entry: its own, else the file's. */
+static const char* entry_library(Merge* m, const cJSON* entry, const char* what) {
+	const cJSON* own = cJSON_GetObjectItemCaseSensitive(entry, "library");
+	if (own && !cJSON_IsString(own)) {
+		fprintf(stderr, TAG ": %s: material %s: %s: library is not a name\n", m->anim, m->material, what);
+		return NULL;
+	}
+	const char* library = own ? own->valuestring : m->library;
+	if (!library)
+		fprintf(stderr, TAG ": %s: material %s: %s: no library (none in the file either)\n", m->anim,
+				m->material, what);
+	return library;
+}
+
+/* One flipbook, validated, in the order the loader documents. */
+static cJSON* flipbook(Merge* m, const cJSON* in) {
+	static const char* const fields[] = { "state", "layer",           "mode", "library", "frames",
+										  "uv",    "emissiveStrength" };
+	const cJSON*             state    = cJSON_GetObjectItemCaseSensitive(in, "state");
+	const cJSON*             layer    = cJSON_GetObjectItemCaseSensitive(in, "layer");
+	const cJSON*             mode     = cJSON_GetObjectItemCaseSensitive(in, "mode");
+	const cJSON*             frames   = cJSON_GetObjectItemCaseSensitive(in, "frames");
+	const cJSON*             uv       = cJSON_GetObjectItemCaseSensitive(in, "uv");
+	const cJSON*             strength = cJSON_GetObjectItemCaseSensitive(in, "emissiveStrength");
+	if (!cJSON_IsObject(in) || !only_members(m, "flipbook", in, fields, COUNT(fields)))
+		return NULL;
+	if (!one_of(state, kStates, COUNT(kStates)) || !one_of(layer, kLayers, COUNT(kLayers)) ||
+		!one_of(mode, kModes, COUNT(kModes)) || !cJSON_IsArray(frames)) {
+		fprintf(stderr,
+				TAG ": %s: material %s: a flipbook needs a known state, layer (colour, illumination), "
+					"mode (loop, once) and frames\n",
+				m->anim, m->material);
+		return NULL;
+	}
+	const char* library = cJSON_GetArraySize(frames) ? entry_library(m, in, "flipbook") : NULL;
+	if (cJSON_GetArraySize(frames) && !library)
+		return NULL;
+	const cJSON* frame;
+	cJSON_ArrayForEach(frame, frames) {
+		const cJSON* key     = cJSON_GetArrayItem(frame, 0);
+		const cJSON* seconds = cJSON_GetArrayItem(frame, 1);
+		if (cJSON_GetArraySize(frame) != 2 || !cJSON_IsString(key) || !cJSON_IsNumber(seconds) ||
+			!isfinite(seconds->valuedouble) || seconds->valuedouble < 0.0) {
+			fprintf(stderr, TAG ": %s: material %s: frames are [image, seconds] pairs\n", m->anim,
+					m->material);
+			return NULL;
+		}
+		if (!key_known(m, library, key->valuestring))
+			return NULL;
+	}
+	if (uv) {
+		static const char* const uv_fields[] = { "scale", "offset", "clamp" };
+		const cJSON*             clamp       = cJSON_GetObjectItemCaseSensitive(uv, "clamp");
+		if (!only_members(m, "uv", uv, uv_fields, COUNT(uv_fields)) ||
+			!numbers(cJSON_GetObjectItemCaseSensitive(uv, "scale"), 2) ||
+			!numbers(cJSON_GetObjectItemCaseSensitive(uv, "offset"), 2) || (clamp && !cJSON_IsBool(clamp))) {
+			fprintf(stderr, TAG ": %s: material %s: uv is { scale: [x, y], offset: [x, y], clamp: bool }\n",
+					m->anim, m->material);
+			return NULL;
+		}
+	}
+	if (strength &&
+		(!cJSON_IsNumber(strength) || !isfinite(strength->valuedouble) || strength->valuedouble < 0.0)) {
+		fprintf(stderr, TAG ": %s: material %s: emissiveStrength is a number >= 0\n", m->anim, m->material);
+		return NULL;
+	}
+	cJSON* out = cJSON_CreateObject();
+	cJSON_AddStringToObject(out, "state", state->valuestring);
+	cJSON_AddStringToObject(out, "layer", layer->valuestring);
+	cJSON_AddStringToObject(out, "mode", mode->valuestring);
+	if (library)
+		cJSON_AddStringToObject(out, "library", library);
+	cJSON_AddItemToObject(out, "frames", cJSON_Duplicate(frames, true));
+	if (uv) {
+		cJSON* u = cJSON_AddObjectToObject(out, "uv");
+		cJSON_AddItemToObject(u, "scale",
+							  cJSON_Duplicate(cJSON_GetObjectItemCaseSensitive(uv, "scale"), true));
+		cJSON_AddItemToObject(u, "offset",
+							  cJSON_Duplicate(cJSON_GetObjectItemCaseSensitive(uv, "offset"), true));
+		cJSON_AddBoolToObject(u, "clamp", cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(uv, "clamp")));
+	}
+	if (strength)
+		cJSON_AddNumberToObject(out, "emissiveStrength", strength->valuedouble);
+	return out;
+}
+
+/* The damage entry, validated. */
+static cJSON* damage(Merge* m, const cJSON* in) {
+	static const char* const fields[]     = { "library", "choice", "placement", "alternatives" };
+	static const char* const alt_fields[] = { "stages", "scale", "offset" };
+	const cJSON*             choice       = cJSON_GetObjectItemCaseSensitive(in, "choice");
+	const cJSON*             placement    = cJSON_GetObjectItemCaseSensitive(in, "placement");
+	const cJSON*             alternatives = cJSON_GetObjectItemCaseSensitive(in, "alternatives");
+	if (!cJSON_IsObject(in) || !only_members(m, "damage", in, fields, COUNT(fields)))
+		return NULL;
+	const char* library = entry_library(m, in, "damage");
+	if (!library)
+		return NULL;
+	if (!non_negative_int(choice) || !non_negative_int(placement) || !cJSON_IsArray(alternatives) ||
+		!cJSON_GetArraySize(alternatives)) {
+		fprintf(stderr,
+				TAG ": %s: material %s: damage needs choice, placement (integers >= 0) and "
+					"alternatives\n",
+				m->anim, m->material);
+		return NULL;
+	}
+	const cJSON* alt;
+	cJSON_ArrayForEach(alt, alternatives) {
+		const cJSON* stages = cJSON_GetObjectItemCaseSensitive(alt, "stages");
+		const cJSON* scale  = cJSON_GetObjectItemCaseSensitive(alt, "scale");
+		const cJSON* offset = cJSON_GetObjectItemCaseSensitive(alt, "offset");
+		if (!cJSON_IsObject(alt) ||
+			!only_members(m, "damage alternative", alt, alt_fields, COUNT(alt_fields)))
+			return NULL;
+		bool ok = cJSON_IsArray(stages) && cJSON_GetArraySize(stages) == 3 && (!scale || numbers(scale, 2)) &&
+				  (!offset || numbers(offset, 4) ||
+				   (cJSON_IsString(offset) && strcmp(offset->valuestring, "inside") == 0));
+		const cJSON* stage;
+		const cJSON* stage_list = ok ? stages : NULL;
+		cJSON_ArrayForEach(stage, stage_list) {
+			ok = ok && (cJSON_IsNull(stage) ||
+						(cJSON_IsString(stage) && key_known(m, library, stage->valuestring)));
+		}
+		if (!ok) {
+			fprintf(stderr,
+					TAG ": %s: material %s: a damage alternative is { stages: [image | null] x 3, "
+						"scale: [min, max], offset: [x0, y0, x1, y1] | inside }\n",
+					m->anim, m->material);
+			return NULL;
+		}
+	}
+	cJSON* out = cJSON_CreateObject();
+	cJSON_AddStringToObject(out, "library", library);
+	cJSON_AddNumberToObject(out, "choice", choice->valuedouble);
+	cJSON_AddNumberToObject(out, "placement", placement->valuedouble);
+	cJSON_AddItemToObject(out, "alternatives", cJSON_Duplicate(alternatives, true));
+	return out;
+}
+
+/* The energy list, validated. */
+static cJSON* energy(Merge* m, const cJSON* in) {
+	const cJSON* e;
+	bool         ok     = cJSON_IsArray(in);
+	const cJSON* e_list = ok ? in : NULL;
+	cJSON_ArrayForEach(e, e_list) { ok = ok && one_of(e, kEnergies, COUNT(kEnergies)); }
+	if (!ok) {
+		fprintf(stderr, TAG ": %s: material %s: energy lists shields, tractor and/or jamming\n", m->anim,
+				m->material);
+		return NULL;
+	}
+	return cJSON_Duplicate(in, true);
+}
+
+/* `path` relative to directory `dir`, both resolved to absolute paths. */
+static bool relative_path(const char* dir, const char* path, char* out, size_t cap) {
+	char d[PATH_MAX + 1], p[PATH_MAX + 1];
+	if (!realpath(dir, d) || !realpath(path, p))
+		return false;
+	strcat(d, "/");
+	/* The longest common prefix that ends at a '/' of both. */
+	size_t common = 0;
+	for (size_t i = 0; d[i] && d[i] == p[i]; ++i)
+		if (d[i] == '/')
+			common = i + 1;
+	out[0]   = 0;
+	size_t n = 0;
+	for (const char* s = d + common; *s; ++s)
+		if (*s == '/')
+			n += (size_t)snprintf(out + n, n < cap ? cap - n : 0, "../");
+	n += (size_t)snprintf(out + n, n < cap ? cap - n : 0, "%s", p + common);
+	return n < cap;
+}
+
+static char* read_text(const char* path) {
+	FILE* f = fopen(path, "rb");
+	if (!f)
+		return NULL;
+	fseek(f, 0, SEEK_END);
+	const long n = ftell(f);
+	fseek(f, 0, SEEK_SET);
+	char* text = n >= 0 ? (char*)malloc((size_t)n + 1) : NULL;
+	if (text && fread(text, 1, (size_t)n, f) == (size_t)n) {
+		text[n] = 0;
+	} else {
+		free(text);
+		text = NULL;
+	}
+	fclose(f);
+	return text;
+}
+
+static void dir_of(const char* path, char* out, size_t cap) {
+	const char* slash = strrchr(path, '/');
+	if (slash)
+		snprintf(out, cap, "%.*s", (int)(slash - path), path);
+	else
+		snprintf(out, cap, ".");
+}
+
+/* Merges one material entry of the animation file into material `mat`. */
+static bool merge_material(Merge* m, cJSON* doc, cJSON* mat, const cJSON* entry, const char* anim_dir,
+						   const char* gltf_dir) {
+	static const char* const fields[] = { "flipbooks", "damage", "energy", "animBaseColor" };
+	if (!cJSON_IsObject(entry) || !only_members(m, "material", entry, fields, COUNT(fields)))
+		return false;
+	cJSON*       members[4] = { NULL, NULL, NULL, NULL };
+	bool         ok         = true;
+	const cJSON* books      = cJSON_GetObjectItemCaseSensitive(entry, "flipbooks");
+	if (books) {
+		ok         = cJSON_IsArray(books);
+		members[0] = cJSON_CreateArray();
+		const cJSON* book;
+		const cJSON* book_list = ok ? books : NULL;
+		cJSON_ArrayForEach(book, book_list) {
+			cJSON* b = flipbook(m, book);
+			ok       = ok && b;
+			if (b)
+				cJSON_AddItemToArray(members[0], b);
+		}
+		if (!cJSON_IsArray(books))
+			fprintf(stderr, TAG ": %s: material %s: flipbooks is a list\n", m->anim, m->material);
+	}
+	const cJSON* dmg = cJSON_GetObjectItemCaseSensitive(entry, "damage");
+	if (ok && dmg)
+		ok = (members[1] = damage(m, dmg)) != NULL;
+	const cJSON* nrg = cJSON_GetObjectItemCaseSensitive(entry, "energy");
+	if (ok && nrg)
+		ok = (members[2] = energy(m, nrg)) != NULL;
+	const cJSON* base = cJSON_GetObjectItemCaseSensitive(entry, "animBaseColor");
+	if (ok && base) {
+		char png[2048], uri[2048];
+		if (cJSON_IsString(base) && base->valuestring[0] == '/')
+			snprintf(png, sizeof png, "%s", base->valuestring);
+		else if (cJSON_IsString(base))
+			snprintf(png, sizeof png, "%s/%s", anim_dir, base->valuestring);
+		ok = cJSON_IsString(base) && relative_path(gltf_dir, png, uri, sizeof uri);
+		if (!ok) {
+			fprintf(stderr, TAG ": %s: material %s: animBaseColor %s not found\n", m->anim, m->material,
+					cJSON_IsString(base) ? png : "is not a path");
+		} else {
+			/* A new image and texture, with the sampler of the material's
+			 * base colour texture. */
+			cJSON* images   = cJSON_GetObjectItemCaseSensitive(doc, "images");
+			cJSON* textures = cJSON_GetObjectItemCaseSensitive(doc, "textures");
+			if (!images)
+				images = cJSON_AddArrayToObject(doc, "images");
+			if (!textures)
+				textures = cJSON_AddArrayToObject(doc, "textures");
+			cJSON* image = cJSON_CreateObject();
+			cJSON_AddStringToObject(image, "name", "anim_base_color");
+			cJSON_AddStringToObject(image, "uri", uri);
+			cJSON_AddStringToObject(image, "mimeType", "image/png");
+			cJSON_AddItemToArray(images, image);
+			cJSON* texture = cJSON_CreateObject();
+			cJSON_AddNumberToObject(texture, "source", cJSON_GetArraySize(images) - 1);
+			const cJSON* bct = cJSON_GetObjectItemCaseSensitive(
+				cJSON_GetObjectItemCaseSensitive(
+					cJSON_GetObjectItemCaseSensitive(mat, "pbrMetallicRoughness"), "baseColorTexture"),
+				"index");
+			const cJSON* sampler =
+				cJSON_IsNumber(bct)
+					? cJSON_GetObjectItemCaseSensitive(cJSON_GetArrayItem(textures, bct->valueint), "sampler")
+					: NULL;
+			if (cJSON_IsNumber(sampler))
+				cJSON_AddNumberToObject(texture, "sampler", sampler->valuedouble);
+			cJSON_AddItemToArray(textures, texture);
+			members[3] = cJSON_CreateObject();
+			cJSON_AddNumberToObject(members[3], "texture", cJSON_GetArraySize(textures) - 1);
+		}
+	}
+	if (!ok) {
+		for (int k = 0; k < 4; ++k)
+			cJSON_Delete(members[k]);
+		return false;
+	}
+	cJSON* extras = cJSON_GetObjectItemCaseSensitive(mat, "extras");
+	if (!cJSON_IsObject(extras)) {
+		cJSON_DeleteItemFromObjectCaseSensitive(mat, "extras");
+		extras = cJSON_AddObjectToObject(mat, "extras");
+	}
+	for (int k = 0; k < 4; ++k) {
+		if (members[k]) {
+			cJSON_DeleteItemFromObjectCaseSensitive(extras, kMembers[k]);
+			cJSON_AddItemToObject(extras, kMembers[k], members[k]);
+		}
+	}
+	return true;
+}
+
+bool aeron_gltf_cook_merge_animations(const char* gltf, const char* anim, const char* effects_dir,
+									  const char* out_gltf) {
+	char   err[512];
+	char*  text = read_text(gltf);
+	cJSON* doc  = text ? cJSON_Parse(text) : NULL;
+	free(text);
+	cJSON* file = YamlJson_Load(anim, err, sizeof err);
+	if (!doc || !file) {
+		fprintf(stderr, TAG ": %s\n", !doc ? "the input is not a .gltf (JSON)" : err);
+		cJSON_Delete(doc);
+		cJSON_Delete(file);
+		return false;
+	}
+	Merge        m         = { .anim = anim, .effects_dir = effects_dir };
+	const cJSON* version   = cJSON_GetObjectItemCaseSensitive(file, "version");
+	const cJSON* library   = cJSON_GetObjectItemCaseSensitive(file, "library");
+	const cJSON* materials = cJSON_GetObjectItemCaseSensitive(file, "materials");
+	bool ok = cJSON_IsNumber(version) && version->valueint == 1 && (!library || cJSON_IsString(library)) &&
+			  cJSON_IsObject(materials);
+	if (!ok)
+		fprintf(stderr, TAG ": %s: needs version 1 and materials (library, when given, is a name)\n", anim);
+	m.library = cJSON_IsString(library) ? library->valuestring : NULL;
+	char anim_dir[1024], gltf_dir[1024];
+	dir_of(anim, anim_dir, sizeof anim_dir);
+	dir_of(gltf, gltf_dir, sizeof gltf_dir);
+	cJSON*       gltf_materials = cJSON_GetObjectItemCaseSensitive(doc, "materials");
+	const cJSON* entry;
+	size_t       merged     = 0;
+	const cJSON* entry_list = ok ? materials : NULL;
+	cJSON_ArrayForEach(entry, entry_list) {
+		m.material  = entry->string;
+		cJSON* mat  = NULL;
+		int    hits = 0;
+		cJSON* candidate;
+		cJSON_ArrayForEach(candidate, gltf_materials) {
+			const cJSON* name = cJSON_GetObjectItemCaseSensitive(candidate, "name");
+			if (cJSON_IsString(name) && strcmp(name->valuestring, entry->string) == 0) {
+				mat = candidate;
+				hits++;
+			}
+		}
+		if (hits != 1) {
+			fprintf(stderr, TAG ": %s: material %s: %s in %s\n", anim, entry->string,
+					hits ? "more than one material has this name" : "no such material", gltf);
+			ok = false;
+			continue;
+		}
+		if (merge_material(&m, doc, mat, entry, anim_dir, gltf_dir))
+			merged++;
+		else
+			ok = false;
+	}
+	char* printed = ok ? cJSON_PrintUnformatted(doc) : NULL;
+	if (printed) {
+		FILE* f = fopen(out_gltf, "wb");
+		ok      = f && fputs(printed, f) >= 0;
+		ok      = f && fclose(f) == 0 && ok;
+		if (!ok)
+			fprintf(stderr, TAG ": cannot write %s\n", out_gltf);
+	} else {
+		ok = false;
+	}
+	if (ok)
+		fprintf(stderr, TAG ": %zu material(s) from %s\n", merged, anim);
+	free(printed);
+	for (size_t i = 0; i < m.index_count; ++i) {
+		cJSON_Delete(m.indexes[i]);
+		free(m.index_names[i]);
+	}
+	free(m.indexes);
+	free(m.index_names);
+	cJSON_Delete(doc);
+	cJSON_Delete(file);
+	return ok;
+}

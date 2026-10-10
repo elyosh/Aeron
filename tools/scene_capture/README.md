@@ -42,6 +42,7 @@ run.
 | [bloom-motion.yaml](presets/bloom-motion.yaml) | Bright cuboids with both effects and a 16-sample motion-blur reference. |
 | [benchmark.yaml](presets/benchmark.yaml) | Repeating 30-frame scene with both effects and timing settings. |
 | [flight-benchmark.yaml](presets/flight-benchmark.yaml) | A game-like flight scene (`game_scene`): cockpit view with SSAO, shadows, point lights and converted XWAU models; configure `asset_root` first. |
+| [anim-example.yaml](presets/anim-example.yaml), [anim-example-target.yaml](presets/anim-example-target.yaml) | The authored animated-material example of `tools/effect_pack/example` at two times, without and with the `target` state. Build its assets first with `tools/effect_pack/example/build.sh <build dir> captures/anim-example-assets`. |
 
 Start from a preset; unknown keys are rejected. The main settings are:
 

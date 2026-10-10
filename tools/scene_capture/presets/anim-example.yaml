@@ -1,0 +1,25 @@
+# The effect_pack authoring example (aeron/tools/effect_pack/example), built
+# with its build.sh into captures/anim-example-assets. Frames at 0.25 s and
+# 0.75 s: the lamps alternate; the screen animates only with the target state.
+width: 960
+height: 540
+frames: 2
+fps: 2
+pan_degrees_per_second: 0
+pan_direction_degrees: 0
+shutter: 0
+quality: 0
+reference_samples: 0
+msaa_samples: 4
+output_dir: captures/anim-example
+asset_root: captures/anim-example-assets
+models:
+  - remaster/models/panel.glb
+effect_dir: remaster/effects
+time: 0.25
+screen_test:
+  eye: [0, 0, 0]
+  yaw_degrees: 0
+  pitch_degrees: 0
+anim:
+  state_mask: 0

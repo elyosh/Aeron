@@ -548,7 +548,7 @@ bool aeron_gltf_cook_data(cgltf_data* data, const char* source_label,
 							 &groups, &group_count, c, tv->texture->image, &group_of[c][mi], &rect_of[c][mi]);
 		}
 		/* aeronAnimBaseColor: a second base-colour image, referenced from the
-		 * material's extras (docs: xwau_animated_materials.md). */
+		 * material's extras. */
 		const cgltf_texture* layer = ok ? anim_base_texture(data, m) : NULL;
 		if (layer && layer->image && layer->image->uri)
 			ok = place_image(data, source_label, image_provider, image_context, &cache, &opts, atlases,

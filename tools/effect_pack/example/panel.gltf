@@ -1,0 +1,276 @@
+{
+ "asset": {
+  "version": "2.0",
+  "generator": "effect_pack example"
+ },
+ "scene": 0,
+ "scenes": [
+  {
+   "nodes": [
+    0
+   ]
+  }
+ ],
+ "nodes": [
+  {
+   "name": "Panel",
+   "children": [
+    1,
+    2
+   ],
+   "extensions": {
+    "AERON_flight_model": {
+     "role": "model"
+    }
+   }
+  },
+  {
+   "mesh": 0,
+   "name": "LightsPanel",
+   "extensions": {
+    "AERON_flight_model": {
+     "role": "component",
+     "meshType": 0
+    }
+   }
+  },
+  {
+   "mesh": 1,
+   "name": "ScreenPanel",
+   "extensions": {
+    "AERON_flight_model": {
+     "role": "component",
+     "meshType": 0
+    }
+   }
+  }
+ ],
+ "meshes": [
+  {
+   "name": "LightsPanel",
+   "primitives": [
+    {
+     "attributes": {
+      "POSITION": 0,
+      "NORMAL": 1,
+      "TEXCOORD_0": 2
+     },
+     "indices": 3,
+     "material": 0
+    }
+   ]
+  },
+  {
+   "name": "ScreenPanel",
+   "primitives": [
+    {
+     "attributes": {
+      "POSITION": 4,
+      "NORMAL": 5,
+      "TEXCOORD_0": 6
+     },
+     "indices": 7,
+     "material": 1
+    }
+   ]
+  }
+ ],
+ "materials": [
+  {
+   "name": "Lights",
+   "doubleSided": true,
+   "pbrMetallicRoughness": {
+    "baseColorTexture": {
+     "index": 0
+    },
+    "metallicFactor": 0,
+    "roughnessFactor": 0.8
+   },
+   "emissiveTexture": {
+    "index": 1
+   },
+   "emissiveFactor": [
+    1,
+    1,
+    1
+   ]
+  },
+  {
+   "name": "Screen",
+   "doubleSided": true,
+   "pbrMetallicRoughness": {
+    "baseColorTexture": {
+     "index": 2
+    },
+    "metallicFactor": 0,
+    "roughnessFactor": 0.6
+   }
+  }
+ ],
+ "samplers": [
+  {
+   "magFilter": 9729,
+   "minFilter": 9987
+  }
+ ],
+ "images": [
+  {
+   "name": "lights_base",
+   "uri": "textures/lights_base.png",
+   "mimeType": "image/png"
+  },
+  {
+   "name": "lights_emissive",
+   "uri": "textures/lights_emissive.png",
+   "mimeType": "image/png"
+  },
+  {
+   "name": "screen_base",
+   "uri": "textures/screen_base.png",
+   "mimeType": "image/png"
+  }
+ ],
+ "textures": [
+  {
+   "source": 0,
+   "sampler": 0
+  },
+  {
+   "source": 1,
+   "sampler": 0
+  },
+  {
+   "source": 2,
+   "sampler": 0
+  }
+ ],
+ "buffers": [
+  {
+   "uri": "panel.bin",
+   "byteLength": 280
+  }
+ ],
+ "bufferViews": [
+  {
+   "buffer": 0,
+   "byteOffset": 0,
+   "byteLength": 48,
+   "target": 34962
+  },
+  {
+   "buffer": 0,
+   "byteOffset": 48,
+   "byteLength": 48,
+   "target": 34962
+  },
+  {
+   "buffer": 0,
+   "byteOffset": 96,
+   "byteLength": 32,
+   "target": 34962
+  },
+  {
+   "buffer": 0,
+   "byteOffset": 128,
+   "byteLength": 12,
+   "target": 34963
+  },
+  {
+   "buffer": 0,
+   "byteOffset": 140,
+   "byteLength": 48,
+   "target": 34962
+  },
+  {
+   "buffer": 0,
+   "byteOffset": 188,
+   "byteLength": 48,
+   "target": 34962
+  },
+  {
+   "buffer": 0,
+   "byteOffset": 236,
+   "byteLength": 32,
+   "target": 34962
+  },
+  {
+   "buffer": 0,
+   "byteOffset": 268,
+   "byteLength": 12,
+   "target": 34963
+  }
+ ],
+ "accessors": [
+  {
+   "bufferView": 0,
+   "componentType": 5126,
+   "count": 4,
+   "type": "VEC3",
+   "min": [
+    0.10000000000000009,
+    -0.5,
+    3
+   ],
+   "max": [
+    1.1,
+    0.5,
+    3
+   ]
+  },
+  {
+   "bufferView": 1,
+   "componentType": 5126,
+   "count": 4,
+   "type": "VEC3"
+  },
+  {
+   "bufferView": 2,
+   "componentType": 5126,
+   "count": 4,
+   "type": "VEC2"
+  },
+  {
+   "bufferView": 3,
+   "componentType": 5123,
+   "count": 6,
+   "type": "SCALAR"
+  },
+  {
+   "bufferView": 4,
+   "componentType": 5126,
+   "count": 4,
+   "type": "VEC3",
+   "min": [
+    -1.1,
+    -0.5,
+    3
+   ],
+   "max": [
+    -0.1,
+    0.5,
+    3
+   ]
+  },
+  {
+   "bufferView": 5,
+   "componentType": 5126,
+   "count": 4,
+   "type": "VEC3"
+  },
+  {
+   "bufferView": 6,
+   "componentType": 5126,
+   "count": 4,
+   "type": "VEC2"
+  },
+  {
+   "bufferView": 7,
+   "componentType": 5123,
+   "count": 6,
+   "type": "SCALAR"
+  }
+ ],
+ "extensionsUsed": [
+  "AERON_flight_model"
+ ]
+}

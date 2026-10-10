@@ -9,6 +9,7 @@
  * the result is loaded back the way a game loads it before it is written.
  */
 
+#include "animations.h"
 #include "flight_data.h"
 #include "gltf_cook.h"
 
@@ -43,6 +44,11 @@ static void usage(void) {
 					"  --quality {fast|med|uber}\n"
 					"                        BC7 encoder preset (default med).\n"
 					"  --no-zstd             Skip zstd supercompression on KTX2 payloads.\n"
+					"  --animations <file>   Merge an animation file (<model>.anim.yaml:\n"
+					"                        materials' flipbooks, damage, energy and\n"
+					"                        animBaseColor) into the materials first.\n"
+					"  --effects-dir <dir>   With --animations, check every image key\n"
+					"                        against the libraries in <dir>.\n"
 					"  --verbose             Print per-channel cook progress.\n"
 					"  -h, --help            Show this help.\n");
 	exit(2);
@@ -96,8 +102,10 @@ int main(int argc, char** argv) {
 	if (strcmp(argv[1], "-h") == 0 || strcmp(argv[1], "--help") == 0)
 		usage();
 
-	const char* in_path  = argv[1];
-	const char* out_path = NULL;
+	const char* in_path     = argv[1];
+	const char* out_path    = NULL;
+	const char* animations  = NULL;
+	const char* effects_dir = NULL;
 
 	AeronGltfCookOptions opts;
 	aeron_gltf_cook_default_options(&opts);
@@ -126,6 +134,10 @@ int main(int argc, char** argv) {
 			}
 		} else if (strcmp(a, "--no-zstd") == 0) {
 			opts.zstd_supercompress = false;
+		} else if (strcmp(a, "--animations") == 0 && i + 1 < argc) {
+			animations = argv[++i];
+		} else if (strcmp(a, "--effects-dir") == 0 && i + 1 < argc) {
+			effects_dir = argv[++i];
 		} else if (strcmp(a, "--verbose") == 0) {
 			opts.verbose = true;
 		} else if (strcmp(a, "-h") == 0 || strcmp(a, "--help") == 0) {
@@ -159,7 +171,26 @@ int main(int argc, char** argv) {
 		return 2;
 	}
 
-	if (!aeron_gltf_cook(in_path, out_path, &opts))
+	if (effects_dir && !animations) {
+		fprintf(stderr, "[aeron_gltf_cook] --effects-dir needs --animations\n");
+		return 2;
+	}
+
+	/* The animation file merged into a copy of the input, next to it so its
+	 * buffer and image URIs still resolve. */
+	char merged[1024];
+	if (animations) {
+		snprintf(merged, sizeof merged, "%s.animations.gltf", in_path);
+		if (!aeron_gltf_cook_merge_animations(in_path, animations, effects_dir, merged)) {
+			remove(merged);
+			return 1;
+		}
+		in_path = merged;
+	}
+	const bool cooked = aeron_gltf_cook(in_path, out_path, &opts);
+	if (animations)
+		remove(merged);
+	if (!cooked)
 		return 1;
 	return add_flight_data(out_path) ? 0 : 1;
 }

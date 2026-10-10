@@ -1,0 +1,20 @@
+# Animation file of panel.gltf (tools/effect_pack/README.md). effect_pack builds the `examplepanel` library from `images`;
+# aeron_gltf_cook --animations merges `materials` into the model.
+version: 1
+library: examplepanel
+images:
+  lights_0: { kind: illumination, emissive: frames/lights_0.png }
+  lights_1: { kind: illumination, emissive: frames/lights_1.png }
+  screen_a: { kind: colour, image: frames/screen_a.png }
+  screen_b: { kind: colour, image: frames/screen_b.png }
+materials:
+  Lights:
+    flipbooks:
+      # Always: lamps 0 and 2 amber, then 1 and 3 green, half a second each.
+      - { state: always, layer: illumination, mode: loop, emissiveStrength: 3,
+          frames: [[lights_0, 0.5], [lights_1, 0.5]] }
+  Screen:
+    flipbooks:
+      # While the player has a target: blue, then red; else the black glass.
+      - { state: target, layer: colour, mode: loop,
+          frames: [[screen_a, 0.5], [screen_b, 0.5]] }
