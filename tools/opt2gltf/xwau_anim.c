@@ -65,16 +65,6 @@ static const char* const kEnergyNames[3]  = { "shields", "tractor", "jamming" };
 
 /* ---- Context ---------------------------------------------------------- */
 
-typedef struct SidecarImage {
-	char  library[64];
-	char  dat[256];
-	int   group, image;
-	int   kind;
-	float tint[3];
-	int   alpha_mode;
-	char  key[96];
-} SidecarImage;
-
 typedef struct OpenDat {
 	char     rel[256]; /* lower case, slashes */
 	char     path[1024];
@@ -91,8 +81,6 @@ struct XwauAnim {
 	char             label[256];
 	XwauAnimFindFile find;
 	void*            find_context;
-	SidecarImage*    images;
-	size_t           image_count;
 	OpenDat**        dats; /* individually allocated: entries keep pointers */
 	size_t           dat_count;
 	Owned            owned;
@@ -137,7 +125,6 @@ void XwauAnim_End(XwauAnim* a) {
 		free(a->dats[i]);
 	}
 	free(a->dats);
-	free(a->images);
 	free(a);
 }
 
@@ -180,29 +167,6 @@ static const OpenDat* open_dat(XwauAnim* a, const char* written) {
 			fprintf(stderr, "opt2gltf: %s: %s\n", a->label, err);
 	}
 	return d->dat ? d : NULL;
-}
-
-static bool add_sidecar(XwauAnim* a, const OpenDat* d, int group, int image, XwauFxKind kind,
-						const float tint[3], int alpha_mode, const char* key) {
-	for (size_t i = 0; i < a->image_count; ++i)
-		if (strcmp(a->images[i].dat, d->rel) == 0 && strcmp(a->images[i].key, key) == 0)
-			return true;
-	SidecarImage* grown = (SidecarImage*)realloc(a->images, (a->image_count + 1) * sizeof *grown);
-	if (!grown)
-		return false;
-	a->images       = grown;
-	SidecarImage* s = &grown[a->image_count++];
-	memset(s, 0, sizeof *s);
-	char rel[256];
-	dat_names(d->rel, rel, sizeof rel, s->library, sizeof s->library);
-	snprintf(s->dat, sizeof s->dat, "%s", d->rel);
-	s->group      = group;
-	s->image      = image;
-	s->kind       = (int)kind;
-	s->alpha_mode = alpha_mode == 1 ? 1 : 0;
-	memcpy(s->tint, tint, sizeof s->tint);
-	snprintf(s->key, sizeof s->key, "%s", key);
-	return true;
 }
 
 /* ---- JSON text -------------------------------------------------------- */
@@ -356,8 +320,6 @@ static bool print_flipbook(XwauAnim* a, Text* t, const char* state, int layer, c
 		char                key[96];
 		XwauFx_Key(key, sizeof key, f->group, f->image, kind, q->tint, q->alpha_mode);
 		text_add(t, "%s[\"%s\",%.9g]", i ? "," : "", key, (double)f->seconds);
-		if (!add_sidecar(a, fb->dat, f->group, f->image, kind, q->tint, q->alpha_mode, key))
-			return false;
 	}
 	text_add(t, "]");
 	if (q->aspect != 1.0f || q->offset[0] != 0.0f || q->offset[1] != 0.0f || q->clamp)
@@ -457,8 +419,8 @@ static bool damage_json(XwauAnim* a, Text* t, const XwauMatSequences* own_list,
 		has_own_instance |= own_list->items[i].instance;
 	const int choice    = src[0] ? src[0]->section : (src[1] ? src[1]->section : src[2]->section);
 	const int placement = has_own_instance ? own_list->section : 0;
-	text_add(t, "\"aeronDamage\":{\"library\":\"%s\",\"choice\":%d,\"placement\":%d,\"alternatives\":[",
-			 library, choice, placement);
+	text_add(t, "\"damage\":{\"library\":\"%s\",\"choice\":%d,\"placement\":%d,\"alternatives\":[", library,
+			 choice, placement);
 	for (size_t n = 0; n < alternatives; ++n) {
 		const XwauSequence* line[3];
 		bool                any = false;
@@ -477,9 +439,6 @@ static bool damage_json(XwauAnim* a, Text* t, const XwauMatSequences* own_list,
 				XwauFx_Key(key, sizeof key, q->frames[0].group, q->frames[0].image, XWAU_FX_MULTIPLY, q->tint,
 						   q->alpha_mode);
 				text_add(t, "%s\"%s\"", k ? "," : "", key);
-				if (!add_sidecar(a, d, q->frames[0].group, q->frames[0].image, XWAU_FX_MULTIPLY, q->tint,
-								 q->alpha_mode, key))
-					return false;
 				any = true;
 			} else {
 				text_add(t, "%snull", k ? "," : "");
@@ -586,7 +545,7 @@ bool XwauAnim_Texture(XwauAnim* a, const XwauMatFile* mat, const opt_texture_t* 
 		for (size_t s = 0; s < EVENT_STATE_COUNT; ++s)
 			any_book |= books[layer][s].seq != NULL;
 	if (any_book) {
-		text_add(&t, "\"aeronFlipbooks\":[");
+		text_add(&t, "\"flipbooks\":[");
 		bool first = true;
 		for (int layer = 0; layer < 2; ++layer) {
 			const bool target = books[layer][state_slot("EVT_TARGET_SEL")].seq ||
@@ -636,7 +595,7 @@ bool XwauAnim_Texture(XwauAnim* a, const XwauMatFile* mat, const opt_texture_t* 
 		free(d.s);
 	}
 	if (energy[0] || energy[1] || energy[2]) {
-		text_add(&t, "%s\"aeronEnergy\":[", first_member ? "" : ",");
+		text_add(&t, "%s\"energy\":[", first_member ? "" : ",");
 		bool first = true;
 		for (int k = 0; k < 3; ++k) {
 			if (energy[k]) {
@@ -656,7 +615,7 @@ bool XwauAnim_Texture(XwauAnim* a, const XwauMatFile* mat, const opt_texture_t* 
 	}
 	if (!own(a, t.s))
 		return false;
-	out->extras     = t.s;
+	out->members   = t.s;
 	out->anim_base = any_illum;
 	a->anim_bases += any_illum;
 	a->any = true;
@@ -665,35 +624,15 @@ bool XwauAnim_Texture(XwauAnim* a, const XwauMatFile* mat, const opt_texture_t* 
 	return true;
 }
 
-static const char* kKindNames[] = { "illumination", "colour", "multiply", "energy", "mark" };
-
-bool XwauAnim_WriteSidecar(const XwauAnim* a, const char* path) {
-	FILE* f = fopen(path, "wb");
-	if (!f)
-		return false;
-	fprintf(f, "{\"version\":1,\"model\":\"%s\",\"images\":[", a->model);
-	for (size_t i = 0; i < a->image_count; ++i) {
-		const SidecarImage* s = &a->images[i];
-		fprintf(f,
-				"%s\n{\"library\":\"%s\",\"dat\":\"%s\",\"group\":%d,\"image\":%d,\"kind\":\"%s\","
-				"\"tint\":[%.9g,%.9g,%.9g],\"alphaMode\":%d,\"key\":\"%s\"}",
-				i ? "," : "", s->library, s->dat, s->group, s->image, kKindNames[s->kind], (double)s->tint[0],
-				(double)s->tint[1], (double)s->tint[2], s->alpha_mode, s->key);
-	}
-	fprintf(f, "\n]}\n");
-	return fclose(f) == 0;
-}
-
 void XwauAnim_Report(const XwauAnim* a) {
 	if (!a->any && !a->skipped_no_illum && !a->skipped_missing_dat && !a->skipped_unsupported &&
 		!a->unknown_events)
 		return;
 	fprintf(stderr,
-			"opt2gltf: %s: animations: %zu flipbook(s), %zu damage and %zu energy material(s), %zu layer "
-			"base(s), "
-			"%zu static frame(s), %zu library image(s)\n",
+			"opt2gltf: %s: animations: %zu flipbook(s), %zu damage and %zu energy material(s), %zu anim "
+			"base colour(s), %zu static frame(s)\n",
 			a->label, a->flipbooks, a->damage_materials, a->energy_materials, a->anim_bases,
-			a->static_frames, a->image_count);
+			a->static_frames);
 	if (a->skipped_no_illum)
 		fprintf(stderr,
 				"opt2gltf: %s: %zu illumination sequence(s) on textures without illumination skipped\n",

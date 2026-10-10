@@ -122,8 +122,10 @@ typedef struct OptGltfXwauMaterial {
  * Animated materials of one OPT texture in XWAU mode (docs:
  * xwau_animated_materials.md, "Model material extras"). The caller resolves
  * them from the XWAU material files:
- *   - `extras`: members spliced into the material's extras (aeronFlipbooks,
- *     aeronDamage, aeronEnergy), JSON text without the enclosing braces;
+ *   - `members`: the material's entry in the animation file
+ *     (<basename>.anim.yaml: flipbooks, damage, energy), JSON members without
+ *     the enclosing braces; aeron_gltf_cook --animations merges them into the
+ *     material extras;
  *   - `anim_base`: write aeronAnimBaseColor, an image of the texture's colours
  *     before the illumination split, for its material and each of its skin
  *     variant materials;
@@ -134,7 +136,7 @@ typedef struct OptGltfXwauMaterial {
  *     the frame's, with emissive strength 1. rgba NULL for none.
  */
 typedef struct OptGltfXwauAnim {
-	const char*      extras;
+	const char*      members;
 	bool             anim_base;
 	OptGltfImageView static_layer;
 	OptGltfImageView static_emissive;

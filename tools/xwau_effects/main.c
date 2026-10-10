@@ -2,11 +2,14 @@
  * xwau_effects — builds the effect image libraries and the game effect data
  * of converted XWAU models (docs: xwau_animated_materials.md, "Asset Format").
  *
- *   xwau_effects [--xwau-root DIR]... --out DIR [SIDECAR | DIR]...
+ *   xwau_effects [--xwau-root DIR]... --out DIR [MODEL.glb | DIR]...
  *
- * Reads the `.effects.json` sidecars opt2gltf writes next to each converted
- * model (files, or directories searched two levels deep), and the DAT-named
- * material files (Materials/dat-<G>-<I>.mat) of the roots. Writes into --out:
+ * Reads the library images the models use (the keys of their aeronFlipbooks
+ * frames and aeronDamage stages, from the .glb files given or found in the
+ * directories given) and the DAT-named material files
+ * (Materials/dat-<G>-<I>.mat) of the roots. A library is the images of
+ * Effects/<library>.dat; a library with no such DAT in the roots is not an
+ * XWAU one (authored content) and is left alone. Writes into --out:
  *   - effects.yaml: the energy effects and the flipbooks of DAT images the
  *     game draws directly (the blast marks of group 3050);
  *   - per library (one per source DAT): <name>.layer.ktx2, <name>.emissive.ktx2
@@ -25,21 +28,14 @@
 #include <sys/stat.h>
 
 #include "cJSON.h"
-#include "channel_atlas.h"
-#include "ktx2_writer.h"
+#include "effect_pack.h"
 #include "xwau_dat.h"
 #include "xwau_effect_bake.h"
 #include "xwau_mat.h"
 
 #define MAX_ROOTS 16
-/* Pages of 2048 + 2048/16 texels: with 16-texel gutters, two 1024² or four
- * 512² images fit a row (a 2048² page holds one 1024² image). Every image,
- * up to IMAGE_MAX (only Factory.dat's 2678×1536 frames are larger), is a
- * shared rect: none needs a dedicated layer. */
-#define PAGE_SIZE 2176
-#define PACK_SIZE 4096
-#define IMAGE_MAX 1024
-#define GUTTER 16
+/* Images are capped at EFFECT_PACK_IMAGE_MAX (only Factory.dat's 2678×1536
+ * frames are larger), energy frames at ENERGY_MAX. */
 #define ENERGY_MAX 512
 #define RANDOM_FRAMES 64
 
@@ -111,8 +107,6 @@ typedef struct Request {
 	float      tint[3];
 	int        alpha_mode;
 	bool       crop;
-	/* Output */
-	int layer_rect, emissive_rect;
 } Request;
 
 typedef struct Library {
@@ -171,113 +165,150 @@ static bool request(const char* dat_written, int group, int image, XwauFxKind ki
 	r->alpha_mode = alpha_mode == 1 ? 1 : 0;
 	r->crop       = crop;
 	memcpy(r->tint, tint, sizeof r->tint);
-	r->layer_rect = r->emissive_rect = -1;
 	return true;
 }
 
-static bool kind_from_name(const char* name, XwauFxKind* out) {
-	for (int k = XWAU_FX_ILLUMINATION; k <= XWAU_FX_MARK; ++k)
-		if (strcmp(name, XwauFx_KindName((XwauFxKind)k)) == 0) {
-			*out = (XwauFxKind)k;
+/* ---- Models --------------------------------------------------------------- */
+
+static size_t g_models;
+static char** g_skipped; /* libraries without an XWAU DAT */
+static size_t g_skipped_count;
+
+/* Requests the image `key` of library `library`, the DAT Effects/<library>.dat;
+ * notes the library as skipped when the roots have no such DAT. */
+static bool model_key(const char* path, const char* library, const char* key) {
+	for (size_t i = 0; i < g_skipped_count; ++i)
+		if (strcmp(g_skipped[i], library) == 0)
 			return true;
+	char dat[256], found[1024];
+	snprintf(dat, sizeof dat, "effects/%s.dat", library);
+	bool known = false;
+	for (size_t i = 0; i < g_library_count && !known; ++i)
+		known = strcmp(g_libraries[i].dat, dat) == 0;
+	if (!known && !find_file(dat, found, sizeof found)) {
+		char** grown = (char**)realloc(g_skipped, (g_skipped_count + 1) * sizeof *grown);
+		if (!grown || !(grown[g_skipped_count] = strdup(library))) {
+			g_skipped = grown ? grown : g_skipped;
+			return false;
 		}
-	return false;
+		g_skipped = grown;
+		g_skipped_count++;
+		return true;
+	}
+	int        group, image, alpha_mode;
+	XwauFxKind kind;
+	float      tint[3];
+	if (!XwauFx_ParseKey(key, &group, &image, &kind, tint, &alpha_mode)) {
+		fprintf(stderr, "xwau_effects: %s: library %s: \"%s\" is not an XWAU image key\n", path, library,
+				key);
+		return false;
+	}
+	return request(dat, group, image, kind, tint, alpha_mode, false);
 }
 
-/* ---- Sidecars ----------------------------------------------------------- */
-
-static char* read_text(const char* path) {
+/* The JSON chunk of a .glb, parsed; NULL when it is not one. */
+static cJSON* read_glb_json(const char* path) {
 	FILE* f = fopen(path, "rb");
 	if (!f)
 		return NULL;
-	fseek(f, 0, SEEK_END);
-	const long n = ftell(f);
-	fseek(f, 0, SEEK_SET);
-	char* text = n >= 0 ? (char*)malloc((size_t)n + 1) : NULL;
-	if (text && fread(text, 1, (size_t)n, f) == (size_t)n)
-		text[n] = 0;
-	else {
+	uint8_t head[20];
+	cJSON*  root = NULL;
+	if (fread(head, 1, sizeof head, f) == sizeof head && memcmp(head, "glTF", 4) == 0 &&
+		memcmp(head + 16, "JSON", 4) == 0) {
+		const uint32_t n    = (uint32_t)head[12] | (uint32_t)head[13] << 8 | (uint32_t)head[14] << 16 |
+							  (uint32_t)head[15] << 24;
+		char*          text = (char*)malloc((size_t)n + 1);
+		if (text && fread(text, 1, n, f) == n) {
+			text[n] = 0;
+			root    = cJSON_ParseWithLength(text, n);
+		}
 		free(text);
-		text = NULL;
 	}
 	fclose(f);
-	return text;
+	return root;
 }
 
-static size_t g_sidecars;
-
-static bool read_sidecar(const char* path) {
-	char*  text = read_text(path);
-	cJSON* root = text ? cJSON_Parse(text) : NULL;
-	free(text);
-	const cJSON* images = cJSON_GetObjectItemCaseSensitive(root, "images");
-	if (!cJSON_IsArray(images)) {
-		fprintf(stderr, "xwau_effects: %s: not a sidecar\n", path);
-		cJSON_Delete(root);
+/* The library images a model's materials use. */
+static bool read_model(const char* path) {
+	cJSON* root = read_glb_json(path);
+	if (!root) {
+		fprintf(stderr, "xwau_effects: %s: not a glTF binary\n", path);
 		return false;
 	}
 	bool         ok = true;
-	const cJSON* item;
-	cJSON_ArrayForEach(item, images) {
-		const cJSON* dat   = cJSON_GetObjectItemCaseSensitive(item, "dat");
-		const cJSON* group = cJSON_GetObjectItemCaseSensitive(item, "group");
-		const cJSON* image = cJSON_GetObjectItemCaseSensitive(item, "image");
-		const cJSON* kind  = cJSON_GetObjectItemCaseSensitive(item, "kind");
-		const cJSON* tint  = cJSON_GetObjectItemCaseSensitive(item, "tint");
-		const cJSON* alpha = cJSON_GetObjectItemCaseSensitive(item, "alphaMode");
-		XwauFxKind   k;
-		if (!cJSON_IsString(dat) || !cJSON_IsNumber(group) || !cJSON_IsNumber(image) ||
-			!cJSON_IsString(kind) || !kind_from_name(kind->valuestring, &k) ||
-			cJSON_GetArraySize(tint) != 3) {
-			fprintf(stderr, "xwau_effects: %s: malformed image entry\n", path);
-			ok = false;
-			continue;
+	const cJSON* material;
+	cJSON_ArrayForEach(material, cJSON_GetObjectItemCaseSensitive(root, "materials")) {
+		const cJSON* extras = cJSON_GetObjectItemCaseSensitive(material, "extras");
+		const cJSON* book;
+		cJSON_ArrayForEach(book, cJSON_GetObjectItemCaseSensitive(extras, "aeronFlipbooks")) {
+			const cJSON* library = cJSON_GetObjectItemCaseSensitive(book, "library");
+			const cJSON* frame;
+			cJSON_ArrayForEach(frame, cJSON_GetObjectItemCaseSensitive(book, "frames")) {
+				const cJSON* key = cJSON_GetArrayItem(frame, 0);
+				if (cJSON_IsString(library) && cJSON_IsString(key))
+					ok &= model_key(path, library->valuestring, key->valuestring);
+			}
 		}
-		float t[3];
-		for (int c = 0; c < 3; ++c)
-			t[c] = (float)cJSON_GetArrayItem(tint, c)->valuedouble;
-		ok &= request(dat->valuestring, group->valueint, image->valueint, k, t,
-					  cJSON_IsNumber(alpha) ? alpha->valueint : 0, false);
+		const cJSON* damage  = cJSON_GetObjectItemCaseSensitive(extras, "aeronDamage");
+		const cJSON* library = cJSON_GetObjectItemCaseSensitive(damage, "library");
+		const cJSON* alternative;
+		cJSON_ArrayForEach(alternative, cJSON_GetObjectItemCaseSensitive(damage, "alternatives")) {
+			const cJSON* stage;
+			cJSON_ArrayForEach(stage, cJSON_GetObjectItemCaseSensitive(alternative, "stages")) {
+				if (cJSON_IsString(library) && cJSON_IsString(stage))
+					ok &= model_key(path, library->valuestring, stage->valuestring);
+			}
+		}
 	}
 	cJSON_Delete(root);
-	g_sidecars++;
+	g_models++;
 	return ok;
 }
 
 static bool ends_with(const char* s, const char* suffix) {
 	const size_t ls = strlen(s), lf = strlen(suffix);
-	return ls >= lf && strcmp(s + ls - lf, suffix) == 0;
+	return ls >= lf && strcasecmp(s + ls - lf, suffix) == 0;
 }
 
-/* A sidecar file, or a directory searched `depth` levels deep. */
-static bool read_sidecars(const char* path, int depth) {
+static int cmp_string(const void* a, const void* b) { return strcmp(*(char* const*)a, *(char* const*)b); }
+
+/* A .glb file, or the .glb files of a directory, in name order. */
+static bool read_models(const char* path) {
 	struct stat st;
 	if (stat(path, &st) != 0) {
 		fprintf(stderr, "xwau_effects: %s: not found\n", path);
 		return false;
 	}
 	if (S_ISREG(st.st_mode))
-		return read_sidecar(path);
-	if (!S_ISDIR(st.st_mode) || depth < 0)
-		return true;
+		return read_model(path);
 	DIR* d = opendir(path);
 	if (!d)
 		return false;
-	bool           ok = true;
+	char**         names = NULL;
+	size_t         count = 0;
+	bool           ok    = true;
 	struct dirent* de;
 	while ((de = readdir(d))) {
-		if (de->d_name[0] == '.')
+		if (de->d_name[0] == '.' || !ends_with(de->d_name, ".glb"))
 			continue;
-		char child[1024];
-		snprintf(child, sizeof child, "%s/%s", path, de->d_name);
-		if (stat(child, &st) != 0)
-			continue;
-		if (S_ISDIR(st.st_mode))
-			ok &= read_sidecars(child, depth - 1);
-		else if (ends_with(de->d_name, ".effects.json"))
-			ok &= read_sidecar(child);
+		char** grown = (char**)realloc(names, (count + 1) * sizeof *grown);
+		if (!grown || !(grown[count] = strdup(de->d_name))) {
+			names = grown ? grown : names;
+			ok    = false;
+			break;
+		}
+		names = grown;
+		count++;
 	}
 	closedir(d);
+	qsort(names, count, sizeof *names, cmp_string);
+	for (size_t i = 0; i < count; ++i) {
+		char child[1024];
+		snprintf(child, sizeof child, "%s/%s", path, names[i]);
+		ok &= read_model(child);
+		free(names[i]);
+	}
+	free(names);
 	return ok;
 }
 
@@ -610,24 +641,7 @@ static bool write_file(const char* path, const void* data, size_t size) {
 	return fclose(f) == 0 && ok;
 }
 
-static void yaml_rect(FILE* f, const char* name, const ChannelAtlas* ca, int index) {
-	const ChannelRect* r = &ca->rects[index];
-	const int          w = r->dedicated ? ca->width : r->src_w, h = r->dedicated ? ca->height : r->src_h;
-	fprintf(f, "%s: { page: %d, rect: [%d, %d, %d, %d], lod: %d }", name, r->page, r->x, r->y, w, h,
-			r->max_lod);
-}
-
-static bool encode(const ChannelAtlas* ca, const char* path) {
-	uint8_t* buf  = NULL;
-	size_t   size = 0;
-	bool     ok   = write_ktx2_bc7_with_generated_mips_to_buffer_limited_alpha(
-						ca->width, ca->height, ca->page_count, ca->rgba, KTX2_BC7_QUALITY_MED, KTX2_TF_SRGB, true,
-						ca->mip_count, KTX2_ALPHA_INDEPENDENT, &buf, &size) &&
-					write_file(path, buf, size);
-	free(buf);
-	return ok;
-}
-
+/* Decodes and bakes a library's images, and writes it with effect_pack. */
 static bool build_library(Library* l, const char* out_dir) {
 	char path[1024], err[512];
 	if (!find_file(l->dat, path, sizeof path)) {
@@ -640,13 +654,11 @@ static bool build_library(Library* l, const char* out_dir) {
 		return false;
 	}
 	qsort(l->requests, l->count, sizeof *l->requests, cmp_request);
-	Decoded*     decoded       = (Decoded*)calloc(l->count, sizeof *decoded);
-	Baked*       baked         = (Baked*)calloc(l->count, sizeof *baked);
-	size_t       decoded_count = 0;
-	bool         ok            = decoded && baked;
-	ChannelAtlas layer, emissive;
-	channel_atlas_init(&layer, AERON_GLTF_COOK_CHANNEL_BASE_COLOR);
-	channel_atlas_init(&emissive, AERON_GLTF_COOK_CHANNEL_EMISSIVE);
+	Decoded*         decoded       = (Decoded*)calloc(l->count, sizeof *decoded);
+	Baked*           baked         = (Baked*)calloc(l->count, sizeof *baked);
+	EffectPackImage* images        = (EffectPackImage*)calloc(l->count ? l->count : 1, sizeof *images);
+	size_t           decoded_count = 0, image_count = 0;
+	bool             ok = decoded && baked && images;
 	for (size_t i = 0; ok && i < l->count; ++i) {
 		Request* r = &l->requests[i];
 		Decoded* d = NULL;
@@ -674,66 +686,29 @@ static bool build_library(Library* l, const char* out_dir) {
 			break;
 		}
 		XwauFx_Bake(r->kind, d->im.rgba, n, r->tint, r->alpha_mode, b->layer, b->emissive);
-		const int max = r->kind == XWAU_FX_ENERGY ? ENERGY_MAX : IMAGE_MAX;
-		if (b->layer)
-			r->layer_rect = channel_atlas_add_rect(&layer, r, b->w, b->h, b->layer, max);
-		if (b->emissive)
-			r->emissive_rect = channel_atlas_add_rect(&emissive, r, b->w, b->h, b->emissive, max);
-		ok = (!b->layer || r->layer_rect >= 0) && (!b->emissive || r->emissive_rect >= 0);
+		images[image_count++] = (EffectPackImage) {
+			.key      = r->key,
+			.width    = b->w,
+			.height   = b->h,
+			.layer    = b->layer,
+			.emissive = b->emissive,
+			.max_size = r->kind == XWAU_FX_ENERGY ? ENERGY_MAX : EFFECT_PACK_IMAGE_MAX,
+			.crop     = r->crop ? kBlastMarkCrop : NULL,
+		};
 	}
 	XwauDat_Close(dat);
-	ChannelAtlas* atlases[2] = { &layer, &emissive };
-	const char*   suffix[2]  = { "layer", "emissive" };
-	for (int a = 0; ok && a < 2; ++a) {
-		if (!atlases[a]->rect_count)
-			continue;
-		atlases[a]->fixed_width = atlases[a]->fixed_height = PAGE_SIZE;
-		ok = channel_atlas_pack(atlases[a], PACK_SIZE, GUTTER) && channel_atlas_materialize(atlases[a]);
-		snprintf(path, sizeof path, "%s/%s.%s.ktx2", out_dir, l->name, suffix[a]);
-		ok = ok && encode(atlases[a], path);
-		if (!ok)
-			fprintf(stderr, "xwau_effects: %s: cannot pack or write the %s pages\n", l->name, suffix[a]);
-	}
-	if (ok) {
-		snprintf(path, sizeof path, "%s/%s.yaml", out_dir, l->name);
-		FILE* f = fopen(path, "wb");
-		ok      = f != NULL;
-		if (f) {
-			fprintf(f,
-					"version: 1\nsource: %s\npage_size: %d\nlayer_pages: %d\nemissive_pages: %d\nimages:\n",
-					l->dat, PAGE_SIZE, layer.rect_count ? layer.page_count : 0,
-					emissive.rect_count ? emissive.page_count : 0);
-			for (size_t i = 0; i < l->count; ++i) {
-				const Request* r = &l->requests[i];
-				if (r->layer_rect < 0 && r->emissive_rect < 0)
-					continue;
-				fprintf(f, "  \"%s\": { ", r->key);
-				if (r->layer_rect >= 0)
-					yaml_rect(f, "layer", &layer, r->layer_rect);
-				if (r->emissive_rect >= 0) {
-					fprintf(f, "%s", r->layer_rect >= 0 ? ", " : "");
-					yaml_rect(f, "emissive", &emissive, r->emissive_rect);
-				}
-				if (r->crop)
-					fprintf(f, ", crop: [%g, %g, %g, %g]", (double)kBlastMarkCrop[0],
-							(double)kBlastMarkCrop[1], (double)kBlastMarkCrop[2], (double)kBlastMarkCrop[3]);
-				fprintf(f, " }\n");
-			}
-			ok = fclose(f) == 0;
-		}
-	}
+	EffectPackResult result = { 0 };
+	ok = ok && EffectPack_Write("xwau_effects", out_dir, l->name, l->dat, images, image_count, &result);
 	if (ok)
 		fprintf(stderr, "xwau_effects: %s: %zu image(s), %d layer and %d emissive page(s)\n", l->name,
-				l->count, layer.rect_count ? layer.page_count : 0,
-				emissive.rect_count ? emissive.page_count : 0);
-	channel_atlas_free(&layer);
-	channel_atlas_free(&emissive);
+				l->count, result.layer_pages, result.emissive_pages);
 	for (size_t i = 0; baked && i < l->count; ++i) {
 		free(baked[i].layer);
 		free(baked[i].emissive);
 	}
 	for (size_t k = 0; decoded && k < decoded_count; ++k)
 		XwauDat_FreeImage(&decoded[k].im);
+	free(images);
 	free(baked);
 	free(decoded);
 	return ok;
@@ -744,7 +719,7 @@ static int cmp_library(const void* a, const void* b) {
 }
 
 static int usage(void) {
-	fprintf(stderr, "usage: xwau_effects [--xwau-root DIR]... --out DIR [SIDECAR | DIR]...\n");
+	fprintf(stderr, "usage: xwau_effects [--xwau-root DIR]... --out DIR [MODEL.glb | DIR]...\n");
 	return 2;
 }
 
@@ -769,7 +744,7 @@ int main(int argc, char** argv) {
 		return usage();
 	bool ok = true;
 	for (int i = first_input; i < argc; ++i)
-		ok &= read_sidecars(argv[i], 2);
+		ok &= read_models(argv[i]);
 	Text y = { 0 };
 	text_add(&y, "version: 1\n");
 	ok &= energy_yaml(&y) && images_yaml(&y);
@@ -784,8 +759,14 @@ int main(int argc, char** argv) {
 		ok = false;
 	}
 	free(y.s);
-	fprintf(stderr, "xwau_effects: %zu sidecar(s), %zu librar%s\n", g_sidecars, g_library_count,
+	fprintf(stderr, "xwau_effects: %zu model(s), %zu librar%s\n", g_models, g_library_count,
 			g_library_count == 1 ? "y" : "ies");
+	for (size_t i = 0; i < g_skipped_count; ++i) {
+		fprintf(stderr, "xwau_effects: library %s: no Effects/%s.dat, not an XWAU library; left alone\n",
+				g_skipped[i], g_skipped[i]);
+		free(g_skipped[i]);
+	}
+	free(g_skipped);
 	qsort(g_libraries, g_library_count, sizeof *g_libraries, cmp_library);
 	for (size_t i = 0; i < g_library_count; ++i)
 		ok &= build_library(&g_libraries[i], out);

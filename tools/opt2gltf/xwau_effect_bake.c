@@ -2,6 +2,7 @@
 
 #include <math.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 static float clamp01(float x) { return x < 0.0f ? 0.0f : (x > 1.0f ? 1.0f : x); }
@@ -44,13 +45,74 @@ bool XwauFx_HasLayer(XwauFxKind kind) { return kind != XWAU_FX_ENERGY; }
 
 bool XwauFx_HasEmissive(XwauFxKind kind) { return kind == XWAU_FX_ILLUMINATION || kind == XWAU_FX_ENERGY; }
 
+/* `v` with the fewest significant digits, from 6, that read back as `v`. */
+static void exact_float(char* out, size_t cap, float v) {
+	for (int digits = 6; digits <= 9; ++digits) {
+		snprintf(out, cap, "%.*g", digits, (double)v);
+		if (strtof(out, NULL) == v)
+			return;
+	}
+}
+
 void XwauFx_Key(char* out, size_t cap, int group, int image, XwauFxKind kind, const float tint[3],
 				int alpha_mode) {
 	int n = snprintf(out, cap, "%d-%d:%s", group, image, XwauFx_KindName(kind));
 	if (alpha_mode == 1 && n > 0 && (size_t)n < cap)
 		n += snprintf(out + n, cap - (size_t)n, ":a1");
-	if (tint && (tint[0] != 1.0f || tint[1] != 1.0f || tint[2] != 1.0f) && n > 0 && (size_t)n < cap)
-		snprintf(out + n, cap - (size_t)n, ":t%g_%g_%g", (double)tint[0], (double)tint[1], (double)tint[2]);
+	if (tint && (tint[0] != 1.0f || tint[1] != 1.0f || tint[2] != 1.0f) && n > 0 && (size_t)n < cap) {
+		char c[3][32];
+		for (int k = 0; k < 3; ++k)
+			exact_float(c[k], sizeof c[k], tint[k]);
+		snprintf(out + n, cap - (size_t)n, ":t%s_%s_%s", c[0], c[1], c[2]);
+	}
+}
+
+bool XwauFx_ParseKey(const char* key, int* group, int* image, XwauFxKind* kind, float tint[3],
+					 int* alpha_mode) {
+	char*      end;
+	const long g = strtol(key, &end, 10);
+	if (end == key || *end != '-')
+		return false;
+	const char* p = end + 1;
+	const long  i = strtol(p, &end, 10);
+	if (end == p || *end != ':')
+		return false;
+	p                  = end + 1;
+	const size_t len   = strcspn(p, ":");
+	bool         found = false;
+	for (int k = XWAU_FX_ILLUMINATION; k <= XWAU_FX_MARK && !found; ++k) {
+		const char* name = XwauFx_KindName((XwauFxKind)k);
+		if (strlen(name) == len && strncmp(p, name, len) == 0) {
+			*kind = (XwauFxKind)k;
+			found = true;
+		}
+	}
+	if (!found)
+		return false;
+	p += len;
+	*alpha_mode = 0;
+	tint[0] = tint[1] = tint[2] = 1.0f;
+	if (strncmp(p, ":a1", 3) == 0) {
+		*alpha_mode = 1;
+		p += 3;
+	}
+	if (strncmp(p, ":t", 2) == 0) {
+		p += 2;
+		for (int k = 0; k < 3; ++k) {
+			tint[k] = strtof(p, &end);
+			if (end == p || (k < 2 && *end != '_'))
+				return false;
+			p = k < 2 ? end + 1 : end;
+		}
+	}
+	if (*p)
+		return false;
+	*group = (int)g;
+	*image = (int)i;
+	/* Only keys XwauFx_Key writes: one spelling per image. */
+	char again[96];
+	XwauFx_Key(again, sizeof again, *group, *image, *kind, tint, *alpha_mode);
+	return strcmp(again, key) == 0;
 }
 
 void XwauFx_Bake(XwauFxKind kind, const uint8_t* src, size_t n, const float tint[3], int alpha_mode,

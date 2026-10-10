@@ -388,14 +388,6 @@ static int convert_xwau(opt_file_t* opt, const char* out_dir, const char* basena
 			mat ? path : "(default)", normal_textures, (int)opt->texture_count, map_count);
 	XwauAnim_Report(anim);
 	int ok = opt2gltf_convert(opt, out_dir, basename, &options, label) ? 1 : 0;
-	if (ok && XwauAnim_Any(anim)) {
-		char sidecar[1024];
-		snprintf(sidecar, sizeof sidecar, "%s/%s.effects.json", out_dir, basename);
-		if (!XwauAnim_WriteSidecar(anim, sidecar)) {
-			fprintf(stderr, "opt2gltf: %s: cannot write %s\n", label, sidecar);
-			ok = 0;
-		}
-	}
 
 	for (size_t i = 0; i < map_count; ++i) {
 		XwauDat_FreeImage(&maps[i]->image);

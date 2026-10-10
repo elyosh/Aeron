@@ -5,9 +5,9 @@
  * XWAU image sequences (xwau_mat.h) to the animated-material data of one
  * converted model (docs: xwau_animated_materials.md): per OPT texture, the
  * aeronFlipbooks / aeronDamage / aeronEnergy extras, whether it needs
- * aeronAnimBaseColor, and the static look of an `always` illumination flipbook;
- * per model, the effect-library images it references (the `.effects.json`
- * sidecar the library build reads).
+ * aeronAnimBaseColor, and the static look of an `always` illumination flipbook.
+ * The library images the extras name are built by xwau_effects, which reads
+ * them back from the converted models.
  */
 
 #include <stdbool.h>
@@ -34,12 +34,6 @@ bool XwauAnim_Texture(XwauAnim* anim, const XwauMatFile* mat, const opt_texture_
 
 /* Whether any texture has animation data. */
 bool XwauAnim_Any(const XwauAnim* anim);
-
-/* Writes the referenced library images as JSON:
- *   {"version":1,"model":"...","images":[{"library":"genericdamage",
- *    "dat":"Effects/GenericDamage.dat","group":8,"image":2,"kind":"multiply",
- *    "tint":[1,1,1],"alphaMode":0,"key":"8-2:multiply"}, ...]} */
-bool XwauAnim_WriteSidecar(const XwauAnim* anim, const char* path);
 
 /* Prints the conversion summary and what was skipped. */
 void XwauAnim_Report(const XwauAnim* anim);

@@ -602,6 +602,9 @@ typedef struct {
 	cgltf_sampler           sampler; /* single repeat/linear sampler shared by all */
 	cgltf_material*         materials;
 	size_t                  materials_count;
+	/* Per material: its entry in the animation file (members without
+	 * braces), or NULL; a material's copies share it. */
+	const char**            material_anim;
 	cgltf_mesh*             meshes;
 	size_t                  meshes_count;
 	cgltf_primitive*        primitives;
@@ -776,6 +779,8 @@ static cgltf_material* promoted_variant_material(GltfBuild* build, cgltf_materia
 		copy->alpha_mode   = cgltf_alpha_mode_mask;
 		copy->alpha_cutoff = 0.5f;
 	}
+	if (build->material_anim)
+		build->material_anim[copy - build->materials] = build->material_anim[index];
 	*slot = copy;
 	return copy;
 }
@@ -1534,36 +1539,20 @@ static char* extras_with_members(const char* existing, const char* members) {
 	return out;
 }
 
-/* The animation members of a material: `anim->extras`, then aeronAnimBaseColor
- * for texture slot `anim_base` (-1: none). NULL on OOM. */
-static char* anim_members(const OptGltfXwauAnim* anim, int32_t anim_base) {
-	size_t len = 0, cap = 256;
-	char*  out = (char*)malloc(cap);
-	if (!out)
-		return NULL;
-	out[0] = 0;
-	json_append(&out, &len, &cap, "%s", anim->extras ? anim->extras : "");
-	if (anim_base >= 0)
-		json_append(&out, &len, &cap, "%s\"aeronAnimBaseColor\":{\"texture\":%d}", len ? "," : "",
-					(int)anim_base);
-	return out;
-}
-
-/* Splices the animation members into `mat`'s extras. */
-static bool anim_apply(GltfBuild* build, cgltf_material* mat, const OptGltfXwauAnim* anim, int32_t anim_base,
-					   const char* base_extras) {
-	char* members = anim_members(anim, anim_base);
-	if (!members)
-		return false;
-	if (!members[0]) {
-		free(members);
+/* A material's animation: aeronAnimBaseColor for texture slot `anim_base`
+ * (-1: none) spliced into its extras, and its entry in the animation file. */
+static bool anim_apply(OptGltfDocument* document, cgltf_material* mat, const OptGltfXwauAnim* anim,
+					   int32_t anim_base, const char* base_extras) {
+	document->gb.material_anim[mat - document->gb.materials] =
+		anim->members && anim->members[0] ? anim->members : NULL;
+	if (anim_base < 0)
 		return true;
-	}
+	char members[64];
+	snprintf(members, sizeof members, "\"aeronAnimBaseColor\":{\"texture\":%d}", (int)anim_base);
 	char* extras = extras_with_members(base_extras, members);
-	free(members);
 	if (!extras)
 		return false;
-	mat->extras.data = gb_keep_string(build, extras);
+	mat->extras.data = gb_keep_string(&document->gb, extras);
 	return true;
 }
 
@@ -2184,10 +2173,13 @@ static bool build_memory(const opt_file_t* opt, const char* basename, const OptG
 	 * this array, so it is never reallocated. */
 	build->materials = (cgltf_material*)calloc(((size_t)opt->texture_count + 1 + skin_state.count) * 3,
 											   sizeof *build->materials);
+	build->material_anim = (const char**)calloc(((size_t)opt->texture_count + 1 + skin_state.count) * 3,
+												sizeof *build->material_anim);
 	document->image_pixels =
 		(OptGltfOwnedImage*)calloc(image_total ? image_total : 1, sizeof *document->image_pixels);
 	document->image_pixels_count = image_total;
-	if (!build->images || !build->textures || !build->materials || !document->image_pixels) {
+	if (!build->images || !build->textures || !build->materials || !build->material_anim ||
+		!document->image_pixels) {
 		fprintf(stderr, "opt2gltf: oom (textures)\n");
 		goto fail;
 	}
@@ -2384,7 +2376,7 @@ static bool build_memory(const opt_file_t* opt, const char* basename, const OptG
 					xwau_colour[i] = NULL;
 					anim_base     = (int32_t)emi++;
 				}
-				if (!anim_apply(build, mat, &anim[i], anim_base, mat->extras.data)) {
+				if (!anim_apply(document, mat, &anim[i], anim_base, mat->extras.data)) {
 					fprintf(stderr, "opt2gltf: oom (anim extras)\n");
 					goto fail;
 				}
@@ -2541,17 +2533,21 @@ static bool build_memory(const opt_file_t* opt, const char* basename, const OptG
 		}
 		xwau_set_specular(mat, baked->specular_color);
 		/* Animated material: its own aeronAnimBaseColor (the composite's
-		 * colours) with the texture's members. */
+		 * colours) when it needs one, and the texture's animation entry. */
 		if (anim && composite->colour) {
 			document_set_image(document, emi, composite->colour, (uint32_t)t->width, (uint32_t)t->height,
 							   xprintf_dup("Tex%02d_skin%03zu_anim_base", (int)ti, c),
 							   xprintf_dup("%s_Tex%02d_skin%03zu_anim_base.png", basename, (int)ti, c));
 			composite->colour    = NULL;
 			composite->images[3] = (int32_t)emi++;
-			if (!anim_apply(build, mat, &anim[ti], composite->images[3], NULL)) {
+			if (!anim_apply(document, mat, &anim[ti], composite->images[3], NULL)) {
 				fprintf(stderr, "opt2gltf: oom (anim extras)\n");
 				goto fail;
 			}
+		} else if (anim && !anim_apply(document, mat, &anim[ti], -1, mat->extras.data)) {
+			/* Its entry in the animation file; the extras it copied stay. */
+			fprintf(stderr, "opt2gltf: oom (anim extras)\n");
+			goto fail;
 		}
 	}
 
@@ -3338,6 +3334,7 @@ void OptGltf_Free(OptGltfDocument* document) {
 	free(gb->images);
 	free(gb->textures);
 	free(gb->materials);
+	free(gb->material_anim);
 	free(gb->meshes);
 	free(gb->primitives);
 	free(gb->attributes);
@@ -3386,6 +3383,28 @@ bool OptGltf_WriteFiles(const OptGltfDocument* document, const char* out_dir, co
 
 	cgltf_options opts = { 0 };
 	if (cgltf_write_file(&opts, gltf_path, &document->data) != cgltf_result_success)
+		return false;
+	/* The animation file: per animated material, its entry. */
+	FILE* af      = NULL;
+	bool  written = true;
+	for (size_t m = 0; m < document->gb.materials_count; ++m) {
+		const char* members = document->gb.material_anim ? document->gb.material_anim[m] : NULL;
+		if (!members)
+			continue;
+		if (!af) {
+			char anim_path[1024];
+			snprintf(filename, sizeof filename, "%s.anim.yaml", basename);
+			path_join(anim_path, sizeof anim_path, out_dir, filename);
+			if (!(af = fopen(anim_path, "wb")))
+				return false;
+			written &= fprintf(af, "version: 1\nmaterials:\n") >= 0;
+		}
+		written &= fputs("  \"", af) >= 0;
+		for (const char* c = document->gb.materials[m].name ? document->gb.materials[m].name : ""; *c; ++c)
+			written &= fprintf(af, *c == '"' || *c == '\\' ? "\\%c" : "%c", *c) >= 0;
+		written &= fprintf(af, "\": {%s}\n", members) >= 0;
+	}
+	if (af && (fclose(af) != 0 || !written))
 		return false;
 	FILE* fp = fopen(bin_path, "wb");
 	if (!fp)

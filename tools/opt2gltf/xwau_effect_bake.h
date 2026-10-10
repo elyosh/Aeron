@@ -46,9 +46,14 @@ void XwauFx_Bake(XwauFxKind kind, const uint8_t* src, size_t n, const float tint
 				 uint8_t* layer, uint8_t* emissive);
 
 /* The library key of an image: "G-I:kind", then ":a1" for alpha mode 1 and
- * ":t<r>_<g>_<b>" (%g) for a tint other than white. */
+ * ":t<r>_<g>_<b>" for a tint other than white, each component with the
+ * fewest digits (from 6, as %g) that read back as the same float. */
 void XwauFx_Key(char* out, size_t cap, int group, int image, XwauFxKind kind, const float tint[3],
 				int alpha_mode);
+
+/* The inverse of XwauFx_Key. False when `key` is not one XwauFx_Key writes. */
+bool XwauFx_ParseKey(const char* key, int* group, int* image, XwauFxKind* kind, float tint[3],
+					 int* alpha_mode);
 
 /* sRGB transfer, 0..1. */
 float XwauFx_ToLinear(float srgb);
