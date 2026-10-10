@@ -5,7 +5,7 @@
  * XWAU image sequences (xwau_mat.h) to the animated-material data of one
  * converted model (docs: xwau_animated_materials.md): per OPT texture, the
  * aeronFlipbooks / aeronDamage / aeronEnergy extras, whether it needs
- * aeronLayerBase, and the static look of an `always` illumination flipbook;
+ * aeronAnimBaseColor, and the static look of an `always` illumination flipbook;
  * per model, the effect-library images it references (the `.effects.json`
  * sidecar the library build reads).
  */

@@ -124,18 +124,18 @@ typedef struct OptGltfXwauMaterial {
  * them from the XWAU material files:
  *   - `extras`: members spliced into the material's extras (aeronFlipbooks,
  *     aeronDamage, aeronEnergy), JSON text without the enclosing braces;
- *   - `layer_base`: write aeronLayerBase, an image of the texture's colours
+ *   - `anim_base`: write aeronAnimBaseColor, an image of the texture's colours
  *     before the illumination split, for its material and each of its skin
  *     variant materials;
  *   - `static_layer` / `static_emissive`: frame 0 of an `always` illumination
- *     flipbook, baked as library images (RGB layer_base and A k; RGB
+ *     flipbook, baked as library images (RGB layer_rgb and A k; RGB
  *     emission), sampled at uv·(uv_scale_x, 1) + uv_offset, clamped when
- *     uv_clamp. The material's base becomes c·k + layer_base and its emission
+ *     uv_clamp. The material's base becomes c·k + layer_rgb and its emission
  *     the frame's, with emissive strength 1. rgba NULL for none.
  */
 typedef struct OptGltfXwauAnim {
 	const char*      extras;
-	bool             layer_base;
+	bool             anim_base;
 	OptGltfImageView static_layer;
 	OptGltfImageView static_emissive;
 	float            uv_scale_x;

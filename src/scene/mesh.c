@@ -199,10 +199,10 @@ static uint32_t populate_material_entries(AeronPbrMaterialEntry* entries, const 
 		if (anim && (anim[i][0] || anim[i][1] || anim[i][2])) {
 			const uint32_t page = src->group_count ? channel_layer(src, set, AERON_GLTF_CHANNEL_BASE_COLOR,
 																   core_layers[AERON_GLTF_CHANNEL_BASE_COLOR],
-																   m->layer_base_page)
-												   : m->layer_base_page;
-			memcpy(e->layer_base_rect, m->layer_base_xform, sizeof e->layer_base_rect);
-			e->anim[0] = (page & 0xFFFu) | (m->layer_base_max_lod & 0xFu) << 12;
+																   m->anim_base_page)
+												   : m->anim_base_page;
+			memcpy(e->anim_base_rect, m->anim_base_xform, sizeof e->anim_base_rect);
+			e->anim[0] = (page & 0xFFFu) | (m->anim_base_max_lod & 0xFu) << 12;
 			e->anim[1] = anim[i][0];
 			e->anim[2] = anim[i][1];
 			e->anim[3] = anim[i][2];
@@ -737,15 +737,15 @@ static AeronSceneMesh* mesh_create(AeronCommandBuffer* cmd, const AeronFlightMod
 				close_channel_payloads(channel_payloads);
 				return NULL;
 			}
-			/* The material's aeronLayerBase is on the base atlas. */
+			/* The material's aeronAnimBaseColor is on the base atlas. */
 			const AeronGltfMaterial* material = &model->materials[index];
 			const uint32_t           base_page =
-				c != AERON_GLTF_CHANNEL_BASE_COLOR || material->layer_base_xform[2] <= 0.0f ? 0u
-				: model->group_count ? channel_layer(model, set, c, core_layers[c], material->layer_base_page)
-									 : material->layer_base_page;
+				c != AERON_GLTF_CHANNEL_BASE_COLOR || material->anim_base_xform[2] <= 0.0f ? 0u
+				: model->group_count ? channel_layer(model, set, c, core_layers[c], material->anim_base_page)
+									 : material->anim_base_page;
 			if (base_page >= layers) {
-				Aeron_LogError("aeron.scene", "%s: material %u layer base samples base atlas page %u of %u",
-							   name, index, material->layer_base_page, layers);
+				Aeron_LogError("aeron.scene", "%s: material %u anim base colour samples base atlas page %u of %u",
+							   name, index, material->anim_base_page, layers);
 				if (status) {
 					*status = AERON_SCENE_MESH_CREATE_INVALID_SOURCE;
 				}

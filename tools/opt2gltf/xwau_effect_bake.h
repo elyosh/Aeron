@@ -8,7 +8,7 @@
  * `alpha_mode` are the sequence's. Each kind is computed in linear light and
  * stored sRGB-encoded, with linear alpha.
  *
- *   illumination  layer:    RGB layer_base = L'·a·(1 − s), A k = (1 − a)(1 − s)
+ *   illumination  layer:    RGB layer_rgb = L'·a·(1 − s), A k = (1 − a)(1 − s)
  *                 emissive: RGB L'·a·s, A 255
  *   colour        layer:    RGB the tinted colour, A its coverage
  *   multiply      layer:    RGB the damage factor m, A m.r (linear, for gloss,

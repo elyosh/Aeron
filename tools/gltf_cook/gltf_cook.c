@@ -356,17 +356,17 @@ static bool binding_rect(const ChannelAtlas* atlases, const CookGroup* groups, i
 	return true;
 }
 
-/* The texture an `aeronLayerBase` material extra names ({"texture": n}),
+/* The texture an `aeronAnimBaseColor` material extra names ({"texture": n}),
  * or NULL. */
-static cgltf_texture* layer_base_texture(const cgltf_data* data, const cgltf_material* m) {
+static cgltf_texture* anim_base_texture(const cgltf_data* data, const cgltf_material* m) {
 	char* json = extras_json(data, &m->extras);
-	if (!json || !strstr(json, "aeronLayerBase")) {
+	if (!json || !strstr(json, "aeronAnimBaseColor")) {
 		free(json);
 		return NULL;
 	}
 	cJSON* root = cJSON_Parse(json);
 	free(json);
-	const cJSON*   layer   = cJSON_GetObjectItemCaseSensitive(root, "aeronLayerBase");
+	const cJSON*   layer   = cJSON_GetObjectItemCaseSensitive(root, "aeronAnimBaseColor");
 	const cJSON*   index   = cJSON_GetObjectItemCaseSensitive(layer, "texture");
 	cgltf_texture* texture = NULL;
 	if (cJSON_IsNumber(index) && index->valuedouble >= 0 && (size_t)index->valuedouble < data->textures_count)
@@ -428,9 +428,9 @@ static bool place_image(cgltf_data* data, const char* source_label, AeronGltfCoo
 	return *rect_out >= 0;
 }
 
-/* The material's extras with `aeronLayerBase` rewritten to its packed rect
+/* The material's extras with `aeronAnimBaseColor` rewritten to its packed rect
  * on the base atlas (owned), or NULL on OOM. */
-static char* extras_with_layer_base(const cgltf_data* data, const cgltf_material* m, const ChannelAtlas* ca,
+static char* extras_with_anim_base(const cgltf_data* data, const cgltf_material* m, const ChannelAtlas* ca,
 									const ChannelRect* rect) {
 	char*  json = extras_json(data, &m->extras);
 	cJSON* root = json ? cJSON_Parse(json) : NULL;
@@ -441,8 +441,8 @@ static char* extras_with_layer_base(const cgltf_data* data, const cgltf_material
 	}
 	float off[2], scl[2];
 	channel_atlas_rect_uv_transform(ca, rect, off, scl);
-	cJSON_DeleteItemFromObjectCaseSensitive(root, "aeronLayerBase");
-	cJSON* layer   = cJSON_AddObjectToObject(root, "aeronLayerBase");
+	cJSON_DeleteItemFromObjectCaseSensitive(root, "aeronAnimBaseColor");
+	cJSON* layer   = cJSON_AddObjectToObject(root, "aeronAnimBaseColor");
 	cJSON* offset  = layer ? cJSON_AddArrayToObject(layer, "offset") : NULL;
 	cJSON* scale   = layer ? cJSON_AddArrayToObject(layer, "scale") : NULL;
 	char*  printed = NULL;
@@ -509,7 +509,7 @@ bool aeron_gltf_cook_data(cgltf_data* data, const char* source_label,
 	int        group_count                             = 0;
 	int*       group_of[AERON_GLTF_COOK_CHANNEL_COUNT] = { 0 };
 
-	/* aeronLayerBase rect of each material on the base channel, or -1. */
+	/* aeronAnimBaseColor rect of each material on the base channel, or -1. */
 	int* layer_rect_of =
 		(int*)malloc((data->materials_count ? data->materials_count : 1) * sizeof *layer_rect_of);
 	int* layer_group_of =
@@ -547,9 +547,9 @@ bool aeron_gltf_cook_data(cgltf_data* data, const char* source_label,
 			ok = place_image(data, source_label, image_provider, image_context, &cache, &opts, atlases,
 							 &groups, &group_count, c, tv->texture->image, &group_of[c][mi], &rect_of[c][mi]);
 		}
-		/* aeronLayerBase: a second base-colour image, referenced from the
+		/* aeronAnimBaseColor: a second base-colour image, referenced from the
 		 * material's extras (docs: xwau_animated_materials.md). */
-		const cgltf_texture* layer = ok ? layer_base_texture(data, m) : NULL;
+		const cgltf_texture* layer = ok ? anim_base_texture(data, m) : NULL;
 		if (layer && layer->image && layer->image->uri)
 			ok = place_image(data, source_label, image_provider, image_context, &cache, &opts, atlases,
 							 &groups, &group_count, AERON_GLTF_COOK_CHANNEL_BASE_COLOR, layer->image,
@@ -984,7 +984,7 @@ bool aeron_gltf_cook_data(cgltf_data* data, const char* source_label,
 	src_buf->uri              = NULL;
 	if (group_extras)
 		data->asset.extras.data = group_extras;
-	/* aeronLayerBase: the packed rect on the base atlas. */
+	/* aeronAnimBaseColor: the packed rect on the base atlas. */
 	bool          layers_ok = true;
 	cgltf_extras* layer_saved =
 		(cgltf_extras*)calloc(data->materials_count ? data->materials_count : 1, sizeof *layer_saved);
@@ -998,7 +998,7 @@ bool aeron_gltf_cook_data(cgltf_data* data, const char* source_label,
 		ChannelRect         rect = ca->rects[layer_rect_of[mi]];
 		if (g >= 0)
 			rect.page += atlases[c].page_count + groups[g].page_base;
-		layer_extras[mi] = extras_with_layer_base(data, &data->materials[mi], ca, &rect);
+		layer_extras[mi] = extras_with_anim_base(data, &data->materials[mi], ca, &rect);
 		layers_ok        = layer_extras[mi] != NULL;
 		if (layers_ok) {
 			layer_saved[mi]                 = data->materials[mi].extras;

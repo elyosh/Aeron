@@ -171,12 +171,12 @@ typedef struct AeronGltfMaterial {
 	uint32_t screen_count;
 	uint32_t screen_flags;
 	/* Animation (material extras, "Material animation" below): the
-	 * base-atlas binding of `aeronLayerBase` (uv_xform convention, scale
+	 * base-atlas binding of `aeronAnimBaseColor` (uv_xform convention, scale
 	 * zero without one) and the material's flipbooks
 	 * [flipbook_first, flipbook_first + flipbook_count) of the model's. */
-	float    layer_base_xform[4];
-	uint32_t layer_base_page;
-	uint32_t layer_base_max_lod;
+	float    anim_base_xform[4];
+	uint32_t anim_base_page;
+	uint32_t anim_base_max_lod;
 	uint32_t flipbook_first;
 	uint32_t flipbook_count;
 	/* Hull damage (`aeronDamage`): alternatives [damage_first, damage_first
@@ -195,7 +195,7 @@ typedef struct AeronGltfMaterial {
  *
  * Animated materials, as material extras (cooked by aeron_gltf_cook):
  *
- *   "aeronLayerBase": { "page", "lod", "offset": [u, v], "scale": [su, sv] }
+ *   "aeronAnimBaseColor": { "page", "lod", "offset": [u, v], "scale": [su, sv] }
  *   "aeronFlipbooks": [ { "state", "layer": "colour" | "illumination",
  *                         "mode": "loop" | "once", "library",
  *                         "frames": [ [key, seconds], ... ],
@@ -209,8 +209,9 @@ typedef struct AeronGltfMaterial {
  *   "aeronEnergy": [ "shields" | "tractor" | "jamming" ]
  *
  * Frames and damage stages name images of an effect library
- * (aeron/scene/effect_atlas.h). Illumination flipbooks are dropped from a
- * material without `aeronLayerBase`. */
+ * (aeron/scene/effect_atlas.h). `aeronAnimBaseColor`, optional, is the
+ * colour animation frames apply over while an illumination frame plays; the
+ * base colour without it. */
 typedef struct AeronGltfFlipbookFrame {
 	char* key;
 	float seconds;

@@ -98,7 +98,7 @@ struct XwauAnim {
 	Owned            owned;
 	bool             any;
 	/* Report counters. */
-	size_t flipbooks, damage_materials, energy_materials, layer_bases, static_frames;
+	size_t flipbooks, damage_materials, energy_materials, anim_bases, static_frames;
 	size_t skipped_no_illum, skipped_missing_dat, skipped_unsupported, unknown_events, mixed_damage;
 };
 
@@ -657,8 +657,8 @@ bool XwauAnim_Texture(XwauAnim* a, const XwauMatFile* mat, const opt_texture_t* 
 	if (!own(a, t.s))
 		return false;
 	out->extras     = t.s;
-	out->layer_base = any_illum;
-	a->layer_bases += any_illum;
+	out->anim_base = any_illum;
+	a->anim_bases += any_illum;
 	a->any = true;
 	if (always_illum && !static_frame(a, always_illum, out))
 		return false;
@@ -692,7 +692,7 @@ void XwauAnim_Report(const XwauAnim* a) {
 			"opt2gltf: %s: animations: %zu flipbook(s), %zu damage and %zu energy material(s), %zu layer "
 			"base(s), "
 			"%zu static frame(s), %zu library image(s)\n",
-			a->label, a->flipbooks, a->damage_materials, a->energy_materials, a->layer_bases,
+			a->label, a->flipbooks, a->damage_materials, a->energy_materials, a->anim_bases,
 			a->static_frames, a->image_count);
 	if (a->skipped_no_illum)
 		fprintf(stderr,

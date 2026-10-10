@@ -784,7 +784,7 @@ static void read_energy(const cgltf_material* m, AeronGltfMaterial* out, const c
 	cJSON_Delete(root);
 }
 
-/* Reads a material's `aeronLayerBase` and `aeronFlipbooks` extras. A
+/* Reads a material's `aeronAnimBaseColor` and `aeronFlipbooks` extras. A
  * malformed entry is reported and the material keeps no animation. Returns
  * false only when memory runs out. */
 static bool read_animation(const cgltf_material* m, AeronGltfModel* model, FlipbookCapacity* cap,
@@ -793,7 +793,7 @@ static bool read_animation(const cgltf_material* m, AeronGltfModel* model, Flipb
 		return true;
 	cJSON*       root     = cJSON_ParseWithOpts(m->extras.data, NULL, true);
 	const cJSON* books    = cJSON_GetObjectItemCaseSensitive(root, "aeronFlipbooks");
-	const cJSON* base     = cJSON_GetObjectItemCaseSensitive(root, "aeronLayerBase");
+	const cJSON* base     = cJSON_GetObjectItemCaseSensitive(root, "aeronAnimBaseColor");
 	const int    count    = cJSON_IsArray(books) ? cJSON_GetArraySize(books) : -1;
 	bool         has_base = false;
 	bool         valid    = count >= 0;
@@ -807,12 +807,12 @@ static bool read_animation(const cgltf_material* m, AeronGltfModel* model, Flipb
 				   scale[1] > 0.0f;
 		valid    = has_base;
 		if (has_base) {
-			out->layer_base_xform[0] = offset[0];
-			out->layer_base_xform[1] = offset[1];
-			out->layer_base_xform[2] = scale[0];
-			out->layer_base_xform[3] = scale[1];
-			out->layer_base_page     = page;
-			out->layer_base_max_lod  = lod;
+			out->anim_base_xform[0] = offset[0];
+			out->anim_base_xform[1] = offset[1];
+			out->anim_base_xform[2] = scale[0];
+			out->anim_base_xform[3] = scale[1];
+			out->anim_base_page     = page;
+			out->anim_base_max_lod  = lod;
 		}
 	}
 	const uint32_t first_book = model->flipbook_count, first_frame = model->flipbook_frame_count;
@@ -820,9 +820,6 @@ static bool read_animation(const cgltf_material* m, AeronGltfModel* model, Flipb
 	for (int i = 0; valid && i < count; i++)
 		valid = read_flipbook(cJSON_GetArrayItem(books, i), model, cap, &oom);
 	cJSON_Delete(root);
-	/* Without the layer base, illumination flipbooks cannot render. */
-	for (uint32_t b = first_book; valid && !has_base && b < model->flipbook_count; b++)
-		valid = model->flipbooks[b].layer != AERON_ANIM_LAYER_ILLUMINATION;
 	if (!valid) {
 		for (uint32_t b = first_book; b < model->flipbook_count; b++)
 			free(model->flipbooks[b].library);
@@ -830,10 +827,10 @@ static bool read_animation(const cgltf_material* m, AeronGltfModel* model, Flipb
 			free(model->flipbook_frames[f].key);
 		model->flipbook_count       = first_book;
 		model->flipbook_frame_count = first_frame;
-		memset(out->layer_base_xform, 0, sizeof out->layer_base_xform);
+		memset(out->anim_base_xform, 0, sizeof out->anim_base_xform);
 		if (oom)
 			return false;
-		SDL_Log("[flight_gltf] '%s' material %u: malformed aeronFlipbooks or aeronLayerBase ignored",
+		SDL_Log("[flight_gltf] '%s' material %u: malformed aeronFlipbooks or aeronAnimBaseColor ignored",
 				source_label, material_index);
 		return true;
 	}
