@@ -24,8 +24,12 @@ unless it is on the `PATH`.
 1. Import a model with File > Import > Aeron Flight Model. Import the
    **uncooked** `.gltf` (with its PNG textures) that the conversion keeps:
    Blender cannot read a cooked `.glb`'s textures.
-2. Edit it. The 3D view's **Aeron** tab adds parts to the active component
-   at the 3D cursor and checks the model.
+2. Edit it. The **Aeron** tab of the 3D view's sidebar (N, or View >
+   Sidebar) adds parts to the active component at the 3D cursor and checks
+   the model. The selected object's flight data is in Object properties >
+   Aeron Flight Model: the model root's component order, articulations and
+   sets; a component's fields, hardpoint and glow order, descriptor and
+   hinge.
 3. Export with File > Export > Aeron Flight Model (or the tab's Export).
    The export checks the model first: Aeron > Problems lists every problem
    with a button that selects its object.
