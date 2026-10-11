@@ -848,15 +848,79 @@ static bool append_engine_glows(const cgltf_node* node, uint32_t component_index
 	return true;
 }
 
-/* Point lights on "light" children (KHR_lights_punctual). Other light types
- * are skipped with a warning; malformed values reject the model. */
+static bool json_positive(const cJSON* value, float* out) {
+	if (!cJSON_IsNumber(value) || !isfinite(value->valuedouble) || !(value->valuedouble > 0.0) ||
+		value->valuedouble > FLT_MAX)
+		return false;
+	*out = (float)value->valuedouble;
+	return true;
+}
+
+/* A light's shape from its AERON_flight_model object: `shape` (point,
+ * tube or panel, default point), a tube's `length` and optional
+ * `oneSided`, a panel's `size`, and the optional `radius` of a point or a
+ * tube. Fields that do not apply to the shape are rejected. */
+static bool parse_light_shape(const cJSON* extension, AeronFlightLightShape* shape, float* length, float size[2],
+							  bool* one_sided, float* radius) {
+	const cJSON* shape_value     = cJSON_GetObjectItemCaseSensitive(extension, "shape");
+	const cJSON* length_value    = cJSON_GetObjectItemCaseSensitive(extension, "length");
+	const cJSON* size_value      = cJSON_GetObjectItemCaseSensitive(extension, "size");
+	const cJSON* one_sided_value = cJSON_GetObjectItemCaseSensitive(extension, "oneSided");
+	const cJSON* radius_value    = cJSON_GetObjectItemCaseSensitive(extension, "radius");
+	*shape                       = AERON_FLIGHT_LIGHT_POINT;
+	*one_sided                   = false;
+	*radius                      = AERON_FLIGHT_LIGHT_DEFAULT_RADIUS;
+	if (shape_value) {
+		if (!cJSON_IsString(shape_value) || !shape_value->valuestring)
+			return false;
+		if (strcmp(shape_value->valuestring, "tube") == 0)
+			*shape = AERON_FLIGHT_LIGHT_TUBE;
+		else if (strcmp(shape_value->valuestring, "panel") == 0)
+			*shape = AERON_FLIGHT_LIGHT_PANEL;
+		else if (strcmp(shape_value->valuestring, "point") != 0)
+			return false;
+	}
+	if (radius_value && (*shape == AERON_FLIGHT_LIGHT_PANEL || !json_positive(radius_value, radius)))
+		return false;
+	switch (*shape) {
+	case AERON_FLIGHT_LIGHT_POINT:
+		return !length_value && !size_value && !one_sided_value;
+	case AERON_FLIGHT_LIGHT_TUBE:
+		if (size_value || !json_positive(length_value, length) || (one_sided_value && !cJSON_IsBool(one_sided_value)))
+			return false;
+		*one_sided = cJSON_IsTrue(one_sided_value);
+		return true;
+	case AERON_FLIGHT_LIGHT_PANEL:
+		if (length_value || (one_sided_value && !cJSON_IsTrue(one_sided_value)) ||
+			!cJSON_IsArray(size_value) || cJSON_GetArraySize(size_value) != 2 ||
+			!json_positive(cJSON_GetArrayItem(size_value, 0), &size[0]) ||
+			!json_positive(cJSON_GetArrayItem(size_value, 1), &size[1]))
+			return false;
+		*one_sided = true;
+		return true;
+	}
+	return false;
+}
+
+/* A node-local vector in glTF scene space, without translation. */
+static void transform_vector(const float matrix[16], const float vector[3], float out[3]) {
+	for (int row = 0; row < 3; ++row)
+		out[row] = matrix[row] * vector[0] + matrix[4 + row] * vector[1] + matrix[8 + row] * vector[2];
+}
+
+/* Lights on "light" children: the node's KHR_lights_punctual point light
+ * gives colour, intensity (candela) and range, its AERON_flight_model object
+ * the shape (parse_light_shape). The node's rotation and uniform scale orient
+ * and scale it: a tube lies along its local +X, a panel spans its local X and
+ * Y, and one-sided lights emit along its local -Z. Other light types are
+ * skipped with a warning; malformed values reject the model. */
 static bool append_lights(const cgltf_node* node, uint32_t component_index, AeronFlightModel* model) {
 	for (cgltf_size index = 0; index < node->children_count; ++index) {
 		const cgltf_node* child = node->children[index];
 		if (node_role(child) != FLIGHT_ROLE_LIGHT)
 			continue;
 		const cgltf_light* light = child->light;
-		if (child->mesh || child->children_count || child->has_matrix || !finite_node_transform(child) || !light)
+		if (child->mesh || child->children_count || !uniform_positive_transform(child) || !light)
 			return false;
 		if (light->type != cgltf_light_type_point) {
 			SDL_Log("[flight_model] light '%s' is not a point light; ignored", child->name ? child->name : "");
@@ -867,6 +931,15 @@ static bool append_lights(const cgltf_node* node, uint32_t component_index, Aero
 				return false;
 		if (!isfinite(light->intensity) || light->intensity < 0.0f || !isfinite(light->range) ||
 			light->range < 0.0f)
+			return false;
+		cJSON*                extension = parse_flight_extension(child);
+		AeronFlightLightShape shape;
+		float                 length = 0.0f, size[2] = { 0.0f, 0.0f }, radius;
+		bool                  one_sided;
+		const bool            valid =
+			extension && parse_light_shape(extension, &shape, &length, size, &one_sided, &radius);
+		cJSON_Delete(extension);
+		if (!valid)
 			return false;
 		AeronFlightLight* grown = realloc(model->lights, (size_t)(model->light_count + 1) * sizeof *model->lights);
 		if (!grown)
@@ -884,6 +957,35 @@ static bool append_lights(const cgltf_node* node, uint32_t component_index, Aero
 		out->intensity       = light->intensity;
 		out->range           = light->range;
 		out->component_index = component_index;
+		out->shape           = shape;
+		/* Lengths take the node's and its parents' scale. */
+		const float local_x[3] = { 0.5f * (shape == AERON_FLIGHT_LIGHT_TUBE ? length : size[0]), 0.0f, 0.0f };
+		const float local_y[3] = { 0.0f, 0.5f * size[1], 0.0f };
+		const float local_r[3] = { radius, 0.0f, 0.0f };
+		const float back[3]    = { 0.0f, 0.0f, -1.0f };
+		if (shape != AERON_FLIGHT_LIGHT_POINT) {
+			transform_vector(matrix, local_x, transformed);
+			gltf_to_aeron(transformed, &out->half_x);
+		}
+		if (shape == AERON_FLIGHT_LIGHT_PANEL) {
+			transform_vector(matrix, local_y, transformed);
+			gltf_to_aeron(transformed, &out->half_y);
+		} else {
+			transform_vector(matrix, local_r, transformed);
+			out->source_radius =
+				sqrtf(transformed[0] * transformed[0] + transformed[1] * transformed[1] + transformed[2] * transformed[2]);
+		}
+		if (one_sided) {
+			transform_vector(matrix, back, transformed);
+			const float length_sq =
+				transformed[0] * transformed[0] + transformed[1] * transformed[1] + transformed[2] * transformed[2];
+			if (!(length_sq > 0.0f) || !isfinite(length_sq))
+				return false;
+			const float inverse = 1.0f / sqrtf(length_sq);
+			for (int axis = 0; axis < 3; ++axis)
+				transformed[axis] *= inverse;
+			gltf_to_aeron(transformed, &out->direction);
+		}
 	}
 	return true;
 }

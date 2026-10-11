@@ -53,8 +53,8 @@ typedef struct CaptureGameScene {
 	/* The cockpit and exterior turn with the panning camera (the craft
 	 * turns) instead of staying put (the pilot looks around). */
 	int                      cockpit_follows_camera;
-	/* Intensity multiplier of the cockpit's model lights (0 = off), as
-	 * point_lights.model_light_intensity in the game. */
+	/* Scene illuminance per lux of the models' authored lights (candela;
+	 * 0 = off), as point_lights.model_light_intensity in the game. */
 	float                    model_light_intensity;
 	/* FSR temporal upscaling, as the game's temporal_upscaling settings;
 	 * benchmarks only (output depends on frame history), without MSAA. */

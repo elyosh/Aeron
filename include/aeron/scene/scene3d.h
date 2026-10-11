@@ -323,14 +323,18 @@ void AeronScene_AddMeshInstance(AeronScene3D* scene, const AeronSceneMeshInstanc
  * per frame rather than silently dropping a light. */
 int AeronScene_AddLight(AeronScene3D* scene, const AeronSceneLight* light);
 
-/* World-space INVERSE_SQUARE light for the mesh's model light `index`
- * (AeronFlightLight), as placed by an instance: `transform` is the
- * instance's row-major model->world matrix, scaled by `units_per_meter`
- * world units per metre, and `table` (optional) articulates the light with
- * its component. Intensity converts from metres, so the light gives the
- * same illuminance 1 m away; a light without a range ends where it falls
- * under 1/1000 of a unit of illuminance. `intensity_scale` multiplies the
- * colour. Returns zero for an invalid index or a light that emits nothing. */
+/* World-space light for the mesh's model light `index` (AeronFlightLight),
+ * as placed by an instance: `transform` is the instance's row-major
+ * model->world matrix, scaled by `units_per_meter` world units per metre,
+ * and `table` (optional) articulates the light with its component.
+ * `intensity_scale` converts the light's candela to the scene's units (the
+ * scene illuminance per lux); intensity also converts from metres, so the
+ * light gives the same illuminance 1 m away. A light without a range ends
+ * where it falls under 1/1000 of a unit of scene illuminance. A point is a
+ * sphere and a tube a tube; a panel is a one-sided tube along its length
+ * when it is at least three times longer than wide, else a one-sided sphere
+ * of its area. Returns zero for an invalid index, a light that emits
+ * nothing, or a light on a component the table hides. */
 int AeronScene_MeshLight(const AeronSceneMesh* mesh, uint32_t index, const float transform[16],
 						 float units_per_meter, const AeronSceneMeshTable* table, float intensity_scale,
 						 AeronSceneLight* out);

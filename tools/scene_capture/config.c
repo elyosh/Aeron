@@ -416,12 +416,13 @@ static int load_game_scene(AeronVfs* vfs, const AeronConfigFile* yaml, CaptureCo
 			return 0;
 		}
 	}
-	game->model_light_intensity                  = 1;
+	/* The game's default: 1/683, Blender's W/m^2 per lux. */
+	game->model_light_intensity                  = 1.0f / 683.0f;
 	const AeronConfigNode* model_light_intensity = AeronConfigNode_MapGet(node, "model_light_intensity");
 	if (model_light_intensity) {
 		const double value = AeronConfigNode_Float(model_light_intensity, NAN);
-		if (!isfinite(value) || value < 0 || value > 64) {
-			fprintf(stderr, "game_scene.model_light_intensity must be 0..64\n");
+		if (!isfinite(value) || value < 0 || value > 1) {
+			fprintf(stderr, "game_scene.model_light_intensity must be 0..1\n");
 			return 0;
 		}
 		game->model_light_intensity = (float)value;

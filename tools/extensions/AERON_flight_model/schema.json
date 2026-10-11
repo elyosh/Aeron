@@ -6,7 +6,8 @@
     { "$ref": "#/$defs/component" },
     { "$ref": "#/$defs/hardpoint" },
     { "$ref": "#/$defs/engineGlow" },
-    { "$ref": "#/$defs/collision" }
+    { "$ref": "#/$defs/collision" },
+    { "$ref": "#/$defs/light" }
   ],
   "$defs": {
     "vec3": {
@@ -147,6 +148,62 @@
       "type": "object",
       "required": ["role"],
       "properties": { "role": { "const": "collision" } }
+    },
+    "positive": {
+      "type": "number",
+      "exclusiveMinimum": 0
+    },
+    "light": {
+      "type": "object",
+      "required": ["role"],
+      "properties": {
+        "role": { "const": "light" },
+        "shape": { "enum": ["point", "tube", "panel"], "default": "point" },
+        "length": { "$ref": "#/$defs/positive" },
+        "size": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/positive" },
+          "minItems": 2,
+          "maxItems": 2
+        },
+        "oneSided": { "type": "boolean" },
+        "radius": { "$ref": "#/$defs/positive" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "shape": { "const": "tube" } }, "required": ["shape"] },
+          "then": {
+            "required": ["length"],
+            "not": { "required": ["size"] }
+          }
+        },
+        {
+          "if": { "properties": { "shape": { "const": "panel" } }, "required": ["shape"] },
+          "then": {
+            "required": ["size"],
+            "properties": { "oneSided": { "const": true } },
+            "allOf": [
+              { "not": { "required": ["length"] } },
+              { "not": { "required": ["radius"] } }
+            ]
+          }
+        },
+        {
+          "if": {
+            "anyOf": [
+              { "not": { "required": ["shape"] } },
+              { "properties": { "shape": { "const": "point" } } }
+            ]
+          },
+          "then": {
+            "allOf": [
+              { "not": { "required": ["length"] } },
+              { "not": { "required": ["size"] } },
+              { "not": { "required": ["oneSided"] } }
+            ]
+          }
+        }
+      ]
     },
     "engineGlow": {
       "type": "object",

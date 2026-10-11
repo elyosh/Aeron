@@ -61,16 +61,41 @@ typedef struct AeronFlightEngineGlow {
 	bool            enabled;
 } AeronFlightEngineGlow;
 
-/* A KHR_lights_punctual point light on a "light" node under a component:
- * model-space position (metres), linear colour, intensity in the glTF unit
- * (candela: the illuminance it gives 1 m away, in the scene's lighting
- * units) and range (metres; 0 when the glTF light has none). */
+typedef enum AeronFlightLightShape {
+	AERON_FLIGHT_LIGHT_POINT = 0,
+	AERON_FLIGHT_LIGHT_TUBE,
+	AERON_FLIGHT_LIGHT_PANEL,
+} AeronFlightLightShape;
+
+/* Sphere radius of a point light, and thickness of a tube, without an
+ * authored radius (metres). */
+#define AERON_FLIGHT_LIGHT_DEFAULT_RADIUS 0.1f
+
+/* A light on a "light" node under a component: the node's KHR_lights_punctual
+ * point light gives its linear colour, its intensity in candela and its
+ * range (metres; 0 when the glTF light has none), the node's
+ * AERON_flight_model object its shape. Model space, metres:
+ *   - `position`: the centre;
+ *   - `half_x`: a tube's half axis, or a panel's half extent along its first
+ *     size; zero for a point;
+ *   - `half_y`: a panel's half extent along its second size; zero otherwise;
+ *   - `direction`: the unit emitting direction of a one-sided tube or a
+ *     panel; zero for a light emitting all around;
+ *   - `source_radius`: a point's sphere radius or a tube's thickness; zero
+ *     for a panel.
+ * A one-sided light's intensity is the intensity straight ahead; a tube
+ * emits the total of a point light of its intensity. */
 typedef struct AeronFlightLight {
-	AeronFlightVec3 position;
-	float           color[3];
-	float           intensity;
-	float           range;
-	uint32_t        component_index;
+	AeronFlightVec3       position;
+	float                 color[3];
+	float                 intensity;
+	float                 range;
+	uint32_t              component_index;
+	AeronFlightLightShape shape;
+	AeronFlightVec3       half_x;
+	AeronFlightVec3       half_y;
+	AeronFlightVec3       direction;
+	float                 source_radius;
 } AeronFlightLight;
 
 /* Game-defined component tag: lower-case ASCII letters, digits, '.' and '_'. */

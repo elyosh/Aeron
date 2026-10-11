@@ -7,7 +7,7 @@
  *            [--tag N=TAG]... [--articulation N=GROUP:ANGLE:SPEED[:SPEED_BACK][:BEHAVIOR]]...
  *            [--articulation-setting NAME=VALUE]... [--component-set NAME=N[,N...]]...
  *            [--subdivide N] [--cockpit-eye X,Y,Z]
- *            [--cockpit-light X,Y,Z] [--xwau-root DIR]...
+ *            [--cockpit-light X,Y,Z [--cockpit-light-intensity CD]] [--xwau-root DIR]...
  *            [--xwau-ignore-shadeless TEXTURE]... [--dynamic-cockpit FILE.dc]
  *            [--xwau-skins DIR --xwau-skin-variants FILE.json]
  *            <input.opt|input_dir> <output_dir>
@@ -67,10 +67,11 @@
  *
  * --cockpit-light X,Y,Z (single OPT only) adds a dim point light at the
  * pilot eye given in craft-table units, as --cockpit-eye, for a cockpit
- * model (which shares its craft's frame): white, COCKPIT_LIGHT_INTENSITY
- * candela, COCKPIT_LIGHT_RANGE metres, on the first MainHull mesh (mesh 0
- * without one). It lights the interior softly from the viewpoint, so its
- * shadows would be hidden anyway.
+ * model (which shares its craft's frame): white, COCKPIT_LIGHT_RANGE metres,
+ * on the first MainHull mesh (mesh 0 without one). It lights the interior
+ * softly from the viewpoint, so its shadows would be hidden anyway.
+ * --cockpit-light-intensity CD (> 0, with --cockpit-light) sets its
+ * intensity in candela; the default is DEFAULT_COCKPIT_LIGHT_INTENSITY.
  *
  * --subdivide N (development only, N <= 8) splits every triangle into four
  * by its edge midpoints N times, multiplying the face count by 4^N, to
@@ -514,9 +515,10 @@ static int32_t main_hull_mesh(const opt_file_t* opt) {
 	return opt->mesh_count > 0 ? 0 : -1;
 }
 
-/* Dim interior light of --cockpit-light: illuminance 0.1 at about 0.7 m,
- * against 0.8 for the configured sun. */
-#define COCKPIT_LIGHT_INTENSITY 0.05f
+/* Interior light of --cockpit-light. Its default intensity is a 100 W
+ * Blender point light in candela, as Blender's glTF exporter converts it
+ * (683 lm/W over 4 pi sr). */
+#define DEFAULT_COCKPIT_LIGHT_INTENSITY (100.0f * 683.0f / (4.0f * 3.14159265f))
 #define COCKPIT_LIGHT_RANGE 3.0f
 
 static int apply_cockpit_eye(opt_file_t* opt, const int eye[3]) {
@@ -548,8 +550,8 @@ static int apply_cockpit_eye(opt_file_t* opt, const int eye[3]) {
 
 static int convert_one(const char* opt_path, const char* out_dir, const char* basename,
 					   const OptGltfBuildOptions* base_options, const XwauContext* xwau,
-					   const int* cockpit_eye, const int* cockpit_light, const char* dynamic_cockpit,
-					   const char* skins_dir, const char* skin_variants) {
+					   const int* cockpit_eye, const int* cockpit_light, float cockpit_light_intensity,
+					   const char* dynamic_cockpit, const char* skins_dir, const char* skin_variants) {
 	opt_error_t err;
 	opt_file_t* opt = opt_load_file(opt_path, &err);
 	if (!opt) {
@@ -568,7 +570,7 @@ static int convert_one(const char* opt_path, const char* out_dir, const char* ba
 			.mesh      = main_hull_mesh(opt),
 			.position  = { (float)cockpit_light[0], (float)-cockpit_light[1], (float)cockpit_light[2] },
 			.color     = { 1.0f, 1.0f, 1.0f },
-			.intensity = COCKPIT_LIGHT_INTENSITY,
+			.intensity = cockpit_light_intensity,
 			.range     = COCKPIT_LIGHT_RANGE,
 		};
 		if (light.mesh < 0) {
@@ -658,6 +660,8 @@ int main(int argc, char** argv) {
 	bool                 has_cockpit_eye = false;
 	int                  cockpit_light[3];
 	bool                 has_cockpit_light = false;
+	float                cockpit_light_intensity     = DEFAULT_COCKPIT_LIGHT_INTENSITY;
+	bool                 has_cockpit_light_intensity = false;
 	const char*          dynamic_cockpit = NULL;
 	const char*          skins_dir         = NULL;
 	const char*          skin_variants     = NULL;
@@ -778,6 +782,17 @@ int main(int argc, char** argv) {
 			else
 				has_cockpit_eye = true;
 			ai += 2;
+		} else if (strcmp(argv[ai], "--cockpit-light-intensity") == 0) {
+			char* end               = NULL;
+			cockpit_light_intensity = ai + 1 < argc ? strtof(argv[ai + 1], &end) : 0.0f;
+			if (ai + 1 >= argc || end == argv[ai + 1] || *end || !isfinite(cockpit_light_intensity) ||
+				cockpit_light_intensity <= 0.0f) {
+				fprintf(stderr, "opt2gltf: --cockpit-light-intensity needs a positive intensity in candela\n");
+				free(tags);
+				return 2;
+			}
+			has_cockpit_light_intensity = true;
+			ai += 2;
 		} else if (strcmp(argv[ai], "--dynamic-cockpit") == 0) {
 			if (ai + 1 >= argc) {
 				fprintf(stderr, "opt2gltf: --dynamic-cockpit needs a .dc file\n");
@@ -815,7 +830,8 @@ int main(int argc, char** argv) {
 				"[--emissive] [--fullbright STRENGTH] [--tag N=TAG]... "
 				"[--articulation N=GROUP:ANGLE:SPEED[:SPEED_BACK][:BEHAVIOR]]... "
 				"[--articulation-setting NAME=VALUE]... [--component-set NAME=N[,N...]]... [--subdivide N] "
-				"[--cockpit-eye X,Y,Z] [--cockpit-light X,Y,Z] [--xwau-root DIR]... "
+				"[--cockpit-eye X,Y,Z] [--cockpit-light X,Y,Z [--cockpit-light-intensity CD]] "
+				"[--xwau-root DIR]... "
 				"[--xwau-ignore-shadeless TEXTURE]... [--dynamic-cockpit FILE.dc] "
 				"[--xwau-skins DIR --xwau-skin-variants FILE.json] "
 				"<input.OPT|input_dir> <output_dir>\n       %s --state-count FILE.opt...\n",
@@ -825,6 +841,11 @@ int main(int argc, char** argv) {
 	}
 	if (!skins_dir != !skin_variants || (skin_variants && !xwau.root_count)) {
 		fprintf(stderr, "opt2gltf: --xwau-skins and --xwau-skin-variants go together, with --xwau-root\n");
+		free(tags);
+		return 2;
+	}
+	if (has_cockpit_light_intensity && !has_cockpit_light) {
+		fprintf(stderr, "opt2gltf: --cockpit-light-intensity needs --cockpit-light\n");
 		free(tags);
 		return 2;
 	}
@@ -908,8 +929,8 @@ int main(int argc, char** argv) {
 			strip_ext(base, sizeof base, de->d_name);
 			char out_sub[1024];
 			snprintf(out_sub, sizeof out_sub, "%s/%s", outd, base);
-			if (convert_one(src, out_sub, base, &options, xwau_ctx, cockpit_eye_arg, cockpit_light_arg, NULL,
-							NULL, NULL))
+			if (convert_one(src, out_sub, base, &options, xwau_ctx, cockpit_eye_arg, cockpit_light_arg,
+							cockpit_light_intensity, NULL, NULL, NULL))
 				++ok_count;
 			else
 				++fail_count;
@@ -924,7 +945,7 @@ int main(int argc, char** argv) {
 		char        base[256];
 		strip_ext(base, sizeof base, fname);
 		status = convert_one(in, outd, base, &options, xwau_ctx, cockpit_eye_arg, cockpit_light_arg,
-							 dynamic_cockpit, skins_dir, skin_variants)
+							 cockpit_light_intensity, dynamic_cockpit, skins_dir, skin_variants)
 					 ? 0
 					 : 1;
 	}

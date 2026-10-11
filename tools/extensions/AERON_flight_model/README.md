@@ -5,10 +5,10 @@ flight asset. It is a node extension listed in `extensionsUsed` and is not
 listed in `extensionsRequired`.
 
 The default scene contains one model-role root. Its ordered direct children
-are 1 to 255 component-role mesh nodes. A component's ordered children are hardpoint-
-or engine-glow-role empty nodes, plus at most one collision-role mesh node.
+are 1 to 255 component-role mesh nodes. A component's ordered children are hardpoint-,
+engine-glow- or light-role empty nodes, plus at most one collision-role mesh node.
 Child order defines component, hardpoint and flattened engine-glow ordinals;
-collision nodes do not take part in any ordinal.
+collision and light nodes do not take part in any ordinal.
 
 Files use standard glTF right-handed coordinates and meters. Omitted TRS
 members use the glTF defaults: zero translation, identity rotation and unit
@@ -16,7 +16,8 @@ scale. Model and component transforms are TRS with positive uniform scale.
 Hardpoints permit translation only; explicitly serialized rotation and scale
 must be identity. Engine glows permit translation, quaternion rotation and
 scale: local +X is right, +Y is up and +Z is look; X/Y scale are positive full
-sizes and Z is signed depth.
+sizes and Z is signed depth. Lights permit translation, quaternion rotation
+and positive uniform scale.
 
 ## Roles
 
@@ -34,6 +35,8 @@ sizes and Z is signed depth.
   uniform scale. When present, its mesh is the component's simulation
   topology (collision) instead of the component's render mesh. It is never
   rendered, and its materials are ignored.
+- `light`: on an empty node with a `KHR_lights_punctual` light, a direct
+  child of a component; see [Lights](#lights)
 
 Component `rotation` requires `pivot`, `rotationAxis`, `directionAxis`, and
 `upAxis`. These vectors are retained independently and are not normalized or
@@ -92,6 +95,32 @@ component ordinals in `0..254`; repeats are ignored. Like an articulation's
 `component`, a member may be past this model's components, so a set can name
 components of another model the game draws with the same per-component
 state. Aeron stores sets without interpreting them.
+
+## Lights
+
+A light-role node carries a `KHR_lights_punctual` point light, which gives
+its colour, its intensity in candela and its range in metres (no range: the
+game ends the light where it becomes negligible). Spot and directional
+lights are ignored with a warning. The node's `AERON_flight_model` object
+gives the shape:
+
+- `shape`: `point` (default), `tube` or `panel`;
+- `length`: required for a tube, its length in metres along the node's
+  local +X;
+- `size`: required for a panel, `[x, y]` in metres along the node's local X
+  and Y;
+- `oneSided`: optional for a tube (default false); a panel is always
+  one-sided. A one-sided light emits only toward the node's local -Z, as a
+  glTF spot light points, with a Lambertian (cosine) falloff;
+- `radius`: optional for a point or a tube, its sphere radius or thickness
+  in metres (default 0.1).
+
+Fields that do not apply to the shape are invalid. Lengths take the node's
+scale and its parents'. The intensity is the light straight ahead for a
+one-sided light; a tube emits the total of a point light of its intensity,
+spread along its length. A light lights the scene while its component is
+shown, and follows the component's articulation. Games map candela to their
+own lighting units.
 
 ## Cooked data
 

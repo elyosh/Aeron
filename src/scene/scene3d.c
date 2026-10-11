@@ -561,8 +561,30 @@ int AeronScene_AddLight(AeronScene3D* s, const AeronSceneLight* light) {
 
 /* Model lights cut off below this illuminance when they have no range. */
 #define SCENE_MESH_LIGHT_CUTOFF 0.001f
-/* Sphere radius of model lights, in metres. */
-#define SCENE_MESH_LIGHT_RADIUS 0.1f
+/* A panel at least this many times longer than wide is drawn as a one-sided
+ * tube along its length; a squarer one as a one-sided sphere of its area. */
+#define SCENE_MESH_LIGHT_PANEL_TUBE_ASPECT 3.0f
+
+/* `v` through the component's articulation rows, then the instance
+ * transform, both without translation. */
+static void scene_mesh_light_vector(const float (*rows)[4], const float transform[16], const AeronFlightVec3* v,
+									float out[3]) {
+	float local[3] = { v->x, v->y, v->z };
+	if (rows) {
+		float articulated[3];
+		for (int r = 0; r < 3; ++r) {
+			articulated[r] = rows[r][0] * local[0] + rows[r][1] * local[1] + rows[r][2] * local[2];
+		}
+		memcpy(local, articulated, sizeof local);
+	}
+	for (int r = 0; r < 3; ++r) {
+		out[r] = transform[r * 4 + 0] * local[0] + transform[r * 4 + 1] * local[1] + transform[r * 4 + 2] * local[2];
+	}
+}
+
+static float scene_vec3_length(const float v[3]) {
+	return sqrtf(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
+}
 
 int AeronScene_MeshLight(const AeronSceneMesh* mesh, uint32_t index, const float transform[16],
 						 float units_per_meter, const AeronSceneMeshTable* table, float intensity_scale,
@@ -573,8 +595,14 @@ int AeronScene_MeshLight(const AeronSceneMesh* mesh, uint32_t index, const float
 	const AeronFlightLight* light = &mesh->lights[index];
 	float                   p[3]  = { light->position.x, light->position.y, light->position.z };
 	const uint32_t          components = mesh->component_count ? mesh->component_count : 1u;
+	const float(*rows)[4]          = NULL;
 	if (table && light->component_index < components) {
-		const float(*rows)[4] = table->rows[light->component_index];
+		const uint32_t c = light->component_index;
+		/* A hidden component (destroyed, or hidden by a profile) is dark. */
+		if (table->visibility_packed[c >> 2][c & 3] == 0.0f) {
+			return 0;
+		}
+		rows = table->rows[c];
 		float articulated[3];
 		for (int r = 0; r < 3; ++r) {
 			articulated[r] = rows[r][0] * p[0] + rows[r][1] * p[1] + rows[r][2] * p[2] + rows[r][3];
@@ -585,6 +613,29 @@ int AeronScene_MeshLight(const AeronSceneMesh* mesh, uint32_t index, const float
 	for (int r = 0; r < 3; ++r) {
 		out->pos[r] = transform[r * 4 + 0] * p[0] + transform[r * 4 + 1] * p[1] + transform[r * 4 + 2] * p[2] +
 					  transform[r * 4 + 3];
+	}
+	/* The shape, in world units. */
+	float source_radius = light->source_radius > 0.0f ? light->source_radius : AERON_FLIGHT_LIGHT_DEFAULT_RADIUS;
+	source_radius *= units_per_meter;
+	if (light->shape == AERON_FLIGHT_LIGHT_TUBE) {
+		scene_mesh_light_vector(rows, transform, &light->half_x, out->half_axis);
+	} else if (light->shape == AERON_FLIGHT_LIGHT_PANEL) {
+		float half_x[3], half_y[3];
+		scene_mesh_light_vector(rows, transform, &light->half_x, half_x);
+		scene_mesh_light_vector(rows, transform, &light->half_y, half_y);
+		const float length_x = scene_vec3_length(half_x);
+		const float length_y = scene_vec3_length(half_y);
+		const float longer   = length_x > length_y ? length_x : length_y;
+		const float shorter  = length_x > length_y ? length_y : length_x;
+		if (longer >= SCENE_MESH_LIGHT_PANEL_TUBE_ASPECT * shorter) {
+			memcpy(out->half_axis, length_x > length_y ? half_x : half_y, sizeof out->half_axis);
+			source_radius = shorter;
+		} else {
+			source_radius = 2.0f * sqrtf(length_x * length_y / 3.14159265f);
+		}
+	}
+	if (light->direction.x != 0.0f || light->direction.y != 0.0f || light->direction.z != 0.0f) {
+		scene_mesh_light_vector(rows, transform, &light->direction, out->direction);
 	}
 	/* I / d_m^2 = I * k^2 / d_world^2 with k world units per metre. */
 	const float intensity = light->intensity * intensity_scale;
@@ -600,7 +651,7 @@ int AeronScene_MeshLight(const AeronSceneMesh* mesh, uint32_t index, const float
 	}
 	const float range_m = light->range > 0.0f ? light->range : sqrtf(peak / SCENE_MESH_LIGHT_CUTOFF);
 	out->radius         = range_m * units_per_meter;
-	out->source_radius  = SCENE_MESH_LIGHT_RADIUS * units_per_meter;
+	out->source_radius  = source_radius;
 	return 1;
 }
 
