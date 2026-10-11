@@ -5,7 +5,7 @@ import json
 import bpy
 from bpy.types import Panel, UIList
 
-from . import common
+from . import common, overlays
 
 # Labels of the objects the lists show, filled by filter_items (which runs
 # before draw_item), by list type then object name.
@@ -502,6 +502,49 @@ class VIEW3D_PT_aeron(Panel):
         layout.operator("export_scene.aeron_flight_model", text="Export .glb", icon='EXPORT')
 
 
+class VIEW3D_PT_aeron_overlays(Panel):
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = "Aeron"
+    bl_label = "Overlays"
+    bl_parent_id = "VIEW3D_PT_aeron"
+
+    def draw_header(self, context):
+        self.layout.prop(context.scene.aeron_flight, "overlays", text="")
+
+    def draw(self, context):
+        settings = context.scene.aeron_flight
+        layout = self.layout
+        layout.active = settings.overlays
+        column = layout.column(align=True)
+        column.prop(settings, "overlay_glows")
+        row = column.row()
+        row.active = settings.overlay_glows
+        row.prop(settings, "overlay_throttle", slider=True)
+        column.separator()
+        column.prop(settings, "overlay_hardpoints")
+        row = column.row()
+        row.active = settings.overlay_hardpoints
+        row.prop(settings, "overlay_hardpoint_labels", text="Labels")
+        root = common.model_root(context.active_object)
+        if settings.overlay_hardpoints and root is not None:
+            counts = [0] * len(overlays.HARDPOINT_FAMILIES)
+            for component in common.components(root):
+                for child in component.children:
+                    if common.role(child) == 'hardpoint':
+                        counts[overlays.hardpoint_family(int(child.aeron_flight.hardpoint_type))] += 1
+            legend = column.column(align=True)
+            if not any(counts):
+                legend.label(text="No hardpoints in " + root.name, icon='INFO')
+            for index, family in enumerate(overlays.HARDPOINT_FAMILIES):
+                if counts[index]:
+                    legend.label(text="{}: {}".format(family[0], counts[index]), icon=overlays.family_icon(index))
+        column.separator()
+        for name in ("overlay_descriptors", "overlay_targets", "overlay_hinges", "overlay_lights",
+                     "overlay_light_ranges", "overlay_component_labels", "overlay_in_front"):
+            column.prop(settings, name)
+
+
 class VIEW3D_PT_aeron_problems(Panel):
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
@@ -538,6 +581,7 @@ classes = (
     OBJECT_PT_aeron_hinge,
     MATERIAL_PT_aeron_animation,
     VIEW3D_PT_aeron,
+    VIEW3D_PT_aeron_overlays,
     VIEW3D_PT_aeron_problems,
 )
 

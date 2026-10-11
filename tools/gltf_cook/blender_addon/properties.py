@@ -6,6 +6,7 @@ from bpy.props import (
     BoolProperty,
     CollectionProperty,
     EnumProperty,
+    FloatProperty,
     FloatVectorProperty,
     IntProperty,
     PointerProperty,
@@ -13,7 +14,7 @@ from bpy.props import (
 )
 from bpy.types import PropertyGroup
 
-from . import common
+from . import common, overlays
 
 
 def _component_poll(self, obj):
@@ -128,9 +129,10 @@ class AeronFlightProperties(PropertyGroup):
 
     # Engine glow.
     glow_enabled: BoolProperty(name="Enabled", default=True)
-    core_color: FloatVectorProperty(name="Core color", size=4, subtype='COLOR', min=0.0, max=1.0,
+    # sRGB, as the format stores them.
+    core_color: FloatVectorProperty(name="Core color", size=4, subtype='COLOR_GAMMA', min=0.0, max=1.0,
                                     default=(1.0, 0.8, 0.3, 1.0))
-    outer_color: FloatVectorProperty(name="Outer color", size=4, subtype='COLOR', min=0.0, max=1.0,
+    outer_color: FloatVectorProperty(name="Outer color", size=4, subtype='COLOR_GAMMA', min=0.0, max=1.0,
                                      default=(1.0, 0.2, 0.0, 0.0))
 
     # Light (a Blender light under a component).
@@ -181,6 +183,34 @@ class AeronSceneProperties(PropertyGroup):
         name="Game-like light preview", default=False, update=_game_preview_update,
         description="Turn off the model lights' shadows, as the game draws them "
                     "(turning it off again turns their shadows on)")
+
+    # Viewport overlays (overlays.py).
+    overlays: BoolProperty(name="Overlays", default=True, update=overlays.tag_redraw,
+                           description="Draw the active object's flight model as the game uses it")
+    overlay_glows: BoolProperty(name="Engine glows", default=True, update=overlays.tag_redraw,
+                                description="Engine glows as the game draws them, seen from the view")
+    overlay_throttle: FloatProperty(
+        name="Throttle", default=1.0, min=0.0, max=1.0, subtype='FACTOR', update=overlays.tag_redraw,
+        description="The engine glows' size and length follow the throttle")
+    overlay_hardpoints: BoolProperty(name="Hardpoints", default=True, update=overlays.tag_redraw,
+                                     description="Hardpoints, coloured by family")
+    overlay_hardpoint_labels: BoolProperty(name="Hardpoint labels", default=False, update=overlays.tag_redraw,
+                                           description="Each hardpoint's ordinal and type")
+    overlay_descriptors: BoolProperty(
+        name="Descriptors", default=False, update=overlays.tag_redraw,
+        description="Descriptor boxes: authored, or faint where the game computes them from the mesh")
+    overlay_targets: BoolProperty(name="Targets", default=True, update=overlays.tag_redraw,
+                                  description="Target points, joined to their component")
+    overlay_hinges: BoolProperty(name="Hinges", default=True, update=overlays.tag_redraw,
+                                 description="Hinge pivots and axes, and each articulation's opened angle")
+    overlay_lights: BoolProperty(name="Light shapes", default=True, update=overlays.tag_redraw,
+                                 description="The shape the game gives each model light")
+    overlay_light_ranges: BoolProperty(name="Light ranges", default=False, update=overlays.tag_redraw,
+                                       description="The range of model lights that have one (Custom Distance)")
+    overlay_component_labels: BoolProperty(name="Component labels", default=False, update=overlays.tag_redraw,
+                                           description="Each component's ordinal and name")
+    overlay_in_front: BoolProperty(name="In front", default=False, update=overlays.tag_redraw,
+                                   description="Draw the markers over the model instead of hidden by it")
 
 
 classes = (

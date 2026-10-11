@@ -85,6 +85,34 @@ become the components of a new model root (or of the active one).
   per component, glows across the whole model.
 - Objects without a role are not exported (a warning lists them).
 
+## Overlays
+
+The Aeron tab's **Overlays** draw the active object's model as the game
+uses it, with a toggle per kind. They follow Blender's overlay toggle and
+leave the model unchanged.
+
+- **Engine glows** as the game draws them from the current view: a patch
+  of the glow's width and height that stretches along the look axis by its
+  depth when seen from the side, the core colour fading to the outer one.
+  Its size and length follow **Throttle**. A selected glow is outlined; a
+  disabled one is only outlined, in grey.
+- **Hardpoints** coloured by family (the legend lists the model's, with
+  their counts), with optional labels giving their ordinal and type. The
+  pilot eye has a small view frustum.
+- **Descriptors**: each component's descriptor box, faint where the game
+  computes it from the collision (or render) mesh; the active component's
+  is highlighted.
+- **Targets**: the target point, joined to its component.
+- **Hinges**: the pivot, the rotation axis (red), the direction (green)
+  and up (blue) axes, and an arc to each articulation's opened angle,
+  named on the active component.
+- **Light shapes**: the sphere, tube or panel the game makes of each model
+  light (a long panel becomes a tube), an arrow for one-sided lights, and
+  optionally the range of lights that have one.
+- **Component labels**: ordinal and name.
+
+**In front** draws the markers over the model instead of hidden by it.
+
 ## Materials
 
 A material's animation (flipbooks, hull damage, energy effects) from the
