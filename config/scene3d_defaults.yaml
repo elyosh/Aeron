@@ -1,7 +1,7 @@
 ssao:
   quality: 2
   intensity: 1.0
-  power: 3.0
+  power: 2.0
   radius_view: 2048.0
   bias_view: 0.0
   direct: 1.0
