@@ -13,7 +13,7 @@
 /* Frames of an XWAU `_rand` sequence: frame 0, then random picks. */
 #define XWAU_ANIM_RANDOM_FRAMES 64
 
-/* ---- Player states (docs: "Player"), in XWAU priority order ----------- */
+/* ---- Player states, in XWAU priority order ------------------------------ */
 
 typedef struct EventState {
 	const char* event; /* GameEvent name; NULL marks the hangar slot */
@@ -86,7 +86,7 @@ struct XwauAnim {
 	Owned            owned;
 	bool             any;
 	/* Report counters. */
-	size_t flipbooks, damage_materials, energy_materials, anim_bases, static_frames;
+	size_t flipbooks, damage_materials, energy_materials, anim_bases, always_illuminations, missing_frames;
 	size_t skipped_no_illum, skipped_missing_dat, skipped_unsupported, unknown_events, mixed_damage;
 };
 
@@ -227,22 +227,41 @@ typedef struct Frames {
 	size_t        count;
 } Frames;
 
+/* Whether image (group, image) is in the DAT. */
+static bool dat_has_image(const OpenDat* d, int group, int image) {
+	const int*   ids   = NULL;
+	const size_t count = XwauDat_ListGroup(d->dat, group, &ids);
+	for (size_t i = 0; i < count; ++i)
+		if (ids[i] == image)
+			return true;
+	return false;
+}
+
 /* The frames a sequence plays: its listed frames, or its DAT group at
- * 1/fps (one frame when fps <= 0, which never advances). */
+ * 1/fps (one frame when fps <= 0, which never advances). Frames whose image
+ * the DAT lacks (content errors) are left out and counted. */
 static bool sequence_frames(XwauAnim* a, const XwauSequence* q, const OpenDat* d, Frames* out) {
 	memset(out, 0, sizeof *out);
 	if (!q->group_frames) {
 		out->items = (XwauSeqFrame*)malloc(q->frame_count * sizeof *out->items);
 		if (!out->items)
 			return false;
-		memcpy(out->items, q->frames, q->frame_count * sizeof *out->items);
-		out->count = q->frame_count;
+		for (size_t i = 0; i < q->frame_count; ++i) {
+			if (dat_has_image(d, q->frames[i].group, q->frames[i].image))
+				out->items[out->count++] = q->frames[i];
+			else
+				a->missing_frames++;
+		}
 		return own(a, out->items);
 	}
 	const int* ids   = NULL;
 	size_t     count = 0;
 	int        single;
 	if (q->image >= 0) {
+		if (!dat_has_image(d, q->group, q->image)) {
+			a->missing_frames++;
+			return true;
+		}
 		single = q->image;
 		ids    = &single;
 		count  = 1;
@@ -281,11 +300,13 @@ static bool randomize(XwauAnim* a, const char* texture, const XwauSequence* q, F
 	return true;
 }
 
+/* Whether a damage stage's image shows nothing: white (a neutral multiply),
+ * or missing from its DAT (a content error, left out of the library). */
 static bool image_is_white(const OpenDat* d, int group, int image) {
 	XwauDatImage im;
 	char         err[256];
 	if (!XwauDat_LoadImageFrom(d->dat, group, image, &im, err, sizeof err))
-		return false;
+		return true;
 	bool         white = true;
 	const size_t n     = (size_t)im.width * im.height;
 	for (size_t i = 0; i < n && white; ++i)
@@ -335,33 +356,6 @@ static bool print_flipbook(XwauAnim* a, Text* t, const char* state, int layer, c
 	return true;
 }
 
-/* Static look: frame 0 of the flipbook, baked as illumination. */
-static bool static_frame(XwauAnim* a, const Flipbook* fb, OptGltfXwauAnim* out) {
-	const XwauSeqFrame* f = &fb->frames.items[0];
-	XwauDatImage        im;
-	char                err[512];
-	if (!XwauDat_LoadImageFrom(fb->dat->dat, f->group, f->image, &im, err, sizeof err)) {
-		fprintf(stderr, "opt2gltf: %s: %s\n", a->label, err);
-		return true;
-	}
-	const size_t n        = (size_t)im.width * im.height;
-	uint8_t*     layer    = (uint8_t*)malloc(n * 4);
-	uint8_t*     emissive = (uint8_t*)malloc(n * 4);
-	if (!layer || !emissive || !own(a, layer) || !own(a, emissive)) {
-		XwauDat_FreeImage(&im);
-		return false;
-	}
-	XwauFx_Bake(XWAU_FX_ILLUMINATION, im.rgba, n, fb->seq->tint, fb->seq->alpha_mode, layer, emissive);
-	out->static_layer    = (OptGltfImageView) { layer, im.width, im.height };
-	out->static_emissive = (OptGltfImageView) { emissive, im.width, im.height };
-	out->uv_scale_x      = fb->seq->aspect;
-	out->uv_offset[0]    = fb->seq->offset[0];
-	out->uv_offset[1]    = fb->seq->offset[1];
-	out->uv_clamp        = fb->seq->clamp;
-	XwauDat_FreeImage(&im);
-	a->static_frames++;
-	return true;
-}
 
 static const XwauSequence* find_instance(const XwauMatSequences* list, const char* event, size_t nth) {
 	for (size_t i = 0; i < list->count; ++i) {
@@ -473,7 +467,6 @@ static bool damage_json(XwauAnim* a, Text* t, const XwauMatSequences* own_list,
 bool XwauAnim_Texture(XwauAnim* a, const XwauMatFile* mat, const opt_texture_t* tex, float unlit,
 					  OptGltfXwauAnim* out) {
 	memset(out, 0, sizeof *out);
-	out->uv_scale_x = 1.0f;
 	if (!mat)
 		return true;
 	XwauMatSequences own_list, inherited;
@@ -626,20 +619,22 @@ bool XwauAnim_Texture(XwauAnim* a, const XwauMatFile* mat, const opt_texture_t* 
 	out->anim_base = any_illum;
 	a->anim_bases += any_illum;
 	a->any = true;
-	if (always_illum && !static_frame(a, always_illum, out))
-		return false;
+	if (always_illum && always_illum->frames.count) {
+		out->always_illumination = true;
+		a->always_illuminations++;
+	}
 	return true;
 }
 
 void XwauAnim_Report(const XwauAnim* a) {
 	if (!a->any && !a->skipped_no_illum && !a->skipped_missing_dat && !a->skipped_unsupported &&
-		!a->unknown_events)
+		!a->unknown_events && !a->missing_frames)
 		return;
 	fprintf(stderr,
-			"opt2gltf: %s: animations: %zu flipbook(s), %zu damage and %zu energy material(s), %zu anim "
-			"base colour(s), %zu static frame(s)\n",
+			"opt2gltf: %s: animations: %zu flipbook(s), %zu damage and %zu energy material(s), %zu with "
+			"illumination frames, %zu always lit\n",
 			a->label, a->flipbooks, a->damage_materials, a->energy_materials, a->anim_bases,
-			a->static_frames);
+			a->always_illuminations);
 	if (a->skipped_no_illum)
 		fprintf(stderr,
 				"opt2gltf: %s: %zu illumination sequence(s) on textures without illumination skipped\n",
@@ -647,6 +642,9 @@ void XwauAnim_Report(const XwauAnim* a) {
 	if (a->skipped_missing_dat)
 		fprintf(stderr, "opt2gltf: %s: %zu sequence(s) with a missing DAT or image skipped\n", a->label,
 				a->skipped_missing_dat);
+	if (a->missing_frames)
+		fprintf(stderr, "opt2gltf: %s: %zu frame(s) whose image their DAT lacks left out\n", a->label,
+				a->missing_frames);
 	if (a->skipped_unsupported)
 		fprintf(stderr, "opt2gltf: %s: %zu sequence(s) with an unsupported event/layer combination skipped\n",
 				a->label, a->skipped_unsupported);

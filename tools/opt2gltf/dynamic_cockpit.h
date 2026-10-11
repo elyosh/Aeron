@@ -5,7 +5,7 @@
  * X-Wing Alliance Upgrade Dynamic Cockpit files (`DynamicCockpit/<Cockpit>.dc`)
  * resolved into the converter's screen surfaces (opt2gltf.h). Parsing follows
  * xwa_ddraw_d3d11's LoadIndividualDCParams and LoadDCUVCoords, quirks
- * included (docs: dynamic_cockpit.md, 1.3 and 2.4):
+ * included:
  *
  *   - `cover_texture_size` applies to every later `uv_coords` line, across
  *     sections, until changed;

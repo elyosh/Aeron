@@ -45,9 +45,8 @@ struct GltfMaterial
     uint   screen_first; /* screen rectangles (scene_pbr_screen.hlsli) */
     uint   screen_count;
     uint   screen_flags;
-    float4 anim_base_rect; /* aeronAnimBaseColor on the base atlas; zw == 0: none */
-    uint4  anim;            /* x: anim base page | lod << 12, y: first flipbook
-                             * record | flipbook count << 16 (0: none) */
+    uint4  anim;         /* x: unused, y: first flipbook record | flipbook
+                          * count << 16 (0: none) */
 };
 
 StructuredBuffer<GltfMaterial> g_materials

@@ -122,8 +122,7 @@ typedef struct OptGltfImageView {
  * Material of one OPT texture as the X-Wing Alliance Upgrade "effects"
  * renderer (xwa_ddraw_d3d11) shades it, resolved by the caller from the XWAU
  * material files (see xwau_mat.h). With these, the converter reproduces that
- * renderer's per-texel logic in standard glTF inputs (docs:
- * xwau_model_import.md, "Per-material output"): authored colors, palette or
+ * renderer's per-texel logic in standard glTF inputs: authored colors, palette or
  * 32bpp illumination, Shadeless/Ambient, glass, the dark-texel reflectance
  * fade (approximated through roughness), Metallic/Glossiness, Intensity as
  * KHR_materials_specular, and the normal map with NMIntensity baked in. Stored
@@ -151,30 +150,22 @@ typedef struct OptGltfXwauMaterial {
 } OptGltfXwauMaterial;
 
 /*
- * Animated materials of one OPT texture in XWAU mode (docs:
- * xwau_animated_materials.md, "Model material extras"). The caller resolves
+ * Animated materials of one OPT texture in XWAU mode. The caller resolves
  * them from the XWAU material files:
  *   - `members`: the material's entry in the animation file
  *     (<basename>.anim.yaml: flipbooks, damage, energy), JSON members without
  *     the enclosing braces; aeron_gltf_cook --animations merges them into the
  *     material extras;
- *   - `anim_base`: write aeronAnimBaseColor, an image of the texture's colours
- *     before the illumination split, for its material and each of its skin
- *     variant materials;
- *   - `static_layer` / `static_emissive`: frame 0 of an `always` illumination
- *     flipbook, baked as library images (RGB layer_rgb and A k; RGB
- *     emission), sampled at uv·(uv_scale_x, 1) + uv_offset, clamped when
- *     uv_clamp. The material's base becomes c·k + layer_rgb and its emission
- *     the frame's, with emissive strength 1. rgba NULL for none.
+ *   - `anim_base`: it has illumination flipbooks. Its base colour (and each
+ *     of its skin variant materials') is then the texture's colours before
+ *     the illumination split, which the frames apply over;
+ *   - `always_illumination`: one of them always plays. The material then
+ *     has no emission of its own (the frames are its glow).
  */
 typedef struct OptGltfXwauAnim {
-	const char*      members;
-	bool             anim_base;
-	OptGltfImageView static_layer;
-	OptGltfImageView static_emissive;
-	float            uv_scale_x;
-	float            uv_offset[2];
-	bool             uv_clamp;
+	const char* members;
+	bool        anim_base;
+	bool        always_illumination;
 } OptGltfXwauAnim;
 
 /* Whether XWAU's renderer gives texture `t` an illumination layer: a 32bpp
@@ -192,7 +183,7 @@ float OptGltf_XwauUnlit(const OptGltfXwauMaterial* xm);
  * captured HUD) through rectangles, as the XWAU Dynamic Cockpit does. The
  * caller resolves them (dynamic_cockpit.h); the converter rewrites the
  * texture's material and records the rectangles in its `extras` as
- * `aeronScreen` (docs: dynamic_cockpit.md, 2.4):
+ * `aeronScreen`:
  *
  *   - with a cover image: base color = the cover premultiplied by its alpha,
  *     base alpha = the cover alpha (the screen shows where it is below 1),
@@ -250,17 +241,17 @@ typedef struct OptGltfLight {
 } OptGltfLight;
 
 /*
- * XWAU skins (XWAU mode only; docs: xwau_skins.md). Each variant becomes a
+ * XWAU skins (XWAU mode only). Each variant becomes a
  * KHR_materials_variants variant after the asset variants (which are then
  * emitted even for a single state). For every state-0 texture of LOD 0 that
  * is not a screen surface, a variant's layers with an image for the texture
  * are blended, in order and with the hook's integer straight-alpha blend,
  * onto its decoded colors; the result is baked as the texture is and gets
  * its own material. Primitives without a composite in a variant show the
- * asset material of the variant's state. Images only composites use carry
- * the extras `aeronVariants` (their variant indices); the asset carries the
- * extras `aeronSkinMarkings` (the default markings map) and
- * `aeronAssetVariants` (the number of asset variants before them).
+ * asset material of the variant's state. The asset carries the extras
+ * `aeronSkinMarkings` (the default markings map) and `aeronAssetVariants`
+ * (the number of asset variants before them); aeron_gltf_cook derives
+ * which images belong to which variants.
  */
 typedef struct OptGltfSkinLayer {
 	uint32_t skin;    /* index into OptGltfSkins.images rows */

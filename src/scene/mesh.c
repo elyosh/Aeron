@@ -14,7 +14,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-typedef char AeronPbrMaterialEntrySizeCheck[sizeof(AeronPbrMaterialEntry) == 192 ? 1 : -1];
+typedef char AeronPbrMaterialEntrySizeCheck[sizeof(AeronPbrMaterialEntry) == 176 ? 1 : -1];
 typedef char AeronPbrScreenRectSizeCheck[sizeof(AeronPbrScreenRect) == 96 ? 1 : -1];
 
 static const char* channel_name(int c) {
@@ -201,12 +201,6 @@ static uint32_t populate_material_entries(AeronPbrMaterialEntry* entries, const 
 		e->screen_count = m->screen_count;
 		e->screen_flags = m->screen_flags;
 		if (anim && (anim[i][0] || anim[i][1] || anim[i][2])) {
-			const uint32_t page = src->group_count ? channel_layer(src, set, AERON_GLTF_CHANNEL_BASE_COLOR,
-																   core_layers[AERON_GLTF_CHANNEL_BASE_COLOR],
-																   m->anim_base_page)
-												   : m->anim_base_page;
-			memcpy(e->anim_base_rect, m->anim_base_xform, sizeof e->anim_base_rect);
-			e->anim[0] = (page & 0xFFFu) | (m->anim_base_max_lod & 0xFu) << 12;
 			e->anim[1] = anim[i][0];
 			e->anim[2] = anim[i][1];
 			e->anim[3] = anim[i][2];
@@ -739,21 +733,6 @@ static AeronSceneMesh* mesh_create(AeronCommandBuffer* cmd, const AeronFlightMod
 			if (page >= layers) {
 				Aeron_LogError("aeron.scene", "%s: material %u samples %s atlas page %u of %u", name, index,
 							   channel_name(c), model->materials[index].atlas_page[c], layers);
-				if (status) {
-					*status = AERON_SCENE_MESH_CREATE_INVALID_SOURCE;
-				}
-				close_channel_payloads(channel_payloads);
-				return NULL;
-			}
-			/* The material's aeronAnimBaseColor is on the base atlas. */
-			const AeronGltfMaterial* material = &model->materials[index];
-			const uint32_t           base_page =
-				c != AERON_GLTF_CHANNEL_BASE_COLOR || material->anim_base_xform[2] <= 0.0f ? 0u
-				: model->group_count ? channel_layer(model, set, c, core_layers[c], material->anim_base_page)
-									 : material->anim_base_page;
-			if (base_page >= layers) {
-				Aeron_LogError("aeron.scene", "%s: material %u anim base colour samples base atlas page %u of %u",
-							   name, index, material->anim_base_page, layers);
 				if (status) {
 					*status = AERON_SCENE_MESH_CREATE_INVALID_SOURCE;
 				}

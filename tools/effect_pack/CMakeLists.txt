@@ -14,6 +14,7 @@ target_link_libraries(aeron_yaml_json PUBLIC aeron_yaml aeron_cjson)
 
 if(AERON_BUILD_TOOLS)
     add_executable(effect_pack main.c)
+    target_include_directories(effect_pack PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../../third_party/xxhash)
     target_link_libraries(effect_pack PRIVATE aeron_effect_pack_lib aeron_yaml_json)
     if(NOT MSVC)
         target_link_libraries(effect_pack PRIVATE m)

@@ -1,5 +1,4 @@
-/* Screen surfaces of the PBR mesh shader (gltf_mesh.h, "Screen surfaces";
- * docs: dynamic_cockpit.md, 2.5).
+/* Screen surfaces of the PBR mesh shader (gltf_mesh.h, "Screen surfaces").
  *
  * A screen material shows a game-provided texture pair (graphics and text,
  * premultiplied) through rectangles of its TEXCOORD_0 space. Each rectangle

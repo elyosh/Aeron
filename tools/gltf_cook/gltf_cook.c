@@ -270,18 +270,21 @@ static const CachedImage* load_or_cache_image(ImageCache* cache, const char* glt
 
 /* ---------- variant groups ----------------------------------------
  *
- * Images that list the variants using them (image extras `aeronVariants`,
- * written by opt2gltf for skin composites: base colour, and their own
- * emissive or metallic-roughness) are packed by channel and variant set
- * into groups, each its own KTX2 block, so a runtime loads only the groups
- * of the variants it shows. A group's pages have its channel's core atlas
+ * Images only some variants use are packed by channel and variant set into
+ * groups, each its own KTX2 block, so a runtime loads only the groups of
+ * the variants it shows. With the asset extras `aeronAssetVariants` (the
+ * number of leading variants that are the model's own paint states), an
+ * image is core when a primitive's own material, or a material an asset
+ * variant maps, uses it; otherwise it belongs to the variants whose mapped
+ * materials use it (skin composites: base colour, and their own emissive or
+ * metallic-roughness). Without it, every image is core. A group's pages have its channel's core atlas
  * size: they join that array after the core pages, in group order. The
  * asset extras `aeronVariantGroups` lists them:
  *   [{"channel": c, "bufferView": b, "layers": l, "variants": [v, ...]}, ...] */
 
 typedef struct CookGroup {
 	int          channel;  /* AeronGltfCookChannel */
-	char*        variants; /* the aeronVariants array, printed */
+	char*        variants; /* its variant indices, printed as a JSON array */
 	ChannelAtlas atlas;
 	int          page_base; /* pages of the channel's earlier groups */
 	uint8_t*     ktx2;
@@ -301,19 +304,6 @@ static char* extras_json(const cgltf_data* data, const cgltf_extras* extras) {
 		copy[length] = '\0';
 	}
 	return copy;
-}
-
-/* The image's `aeronVariants` array, printed (owned), or NULL. */
-static char* image_variants(const cgltf_data* data, const cgltf_image* image) {
-	char* json = extras_json(data, &image->extras);
-	if (!json)
-		return NULL;
-	cJSON* root = cJSON_Parse(json);
-	free(json);
-	const cJSON* variants = cJSON_GetObjectItemCaseSensitive(root, "aeronVariants");
-	char*        printed  = cJSON_IsArray(variants) ? cJSON_PrintUnformatted(variants) : NULL;
-	cJSON_Delete(root);
-	return printed;
 }
 
 /* The asset extras with `aeronVariantGroups` added (owned), or NULL. */
@@ -357,32 +347,92 @@ static bool binding_rect(const ChannelAtlas* atlases, const CookGroup* groups, i
 	return true;
 }
 
-/* The texture an `aeronAnimBaseColor` material extra names ({"texture": n}),
- * or NULL. */
-static cgltf_texture* anim_base_texture(const cgltf_data* data, const cgltf_material* m) {
-	char* json = extras_json(data, &m->extras);
-	if (!json || !strstr(json, "aeronAnimBaseColor")) {
-		free(json);
-		return NULL;
+/* Marks the images material `m` binds (its channels and transmission):
+ * `core` set, or variant `v`'s bit in `uses`. */
+static void mark_material_images(const cgltf_data* data, cgltf_material* m, bool* core, uint8_t* uses,
+								 size_t variants, size_t v, bool is_core) {
+	const cgltf_image* images[AERON_GLTF_COOK_CHANNEL_COUNT + 1] = { 0 };
+	for (int c = 0; c < AERON_GLTF_COOK_CHANNEL_COUNT; c++) {
+		const cgltf_texture_view* tv = material_channel_view(m, c);
+		images[c]                    = tv && tv->texture ? tv->texture->image : NULL;
 	}
-	cJSON* root = cJSON_Parse(json);
-	free(json);
-	const cJSON*   layer   = cJSON_GetObjectItemCaseSensitive(root, "aeronAnimBaseColor");
-	const cJSON*   index   = cJSON_GetObjectItemCaseSensitive(layer, "texture");
-	cgltf_texture* texture = NULL;
-	if (cJSON_IsNumber(index) && index->valuedouble >= 0 && (size_t)index->valuedouble < data->textures_count)
-		texture = &data->textures[(size_t)index->valuedouble];
-	cJSON_Delete(root);
-	return texture;
+	if (m->has_transmission && m->transmission.transmission_texture.texture)
+		images[AERON_GLTF_COOK_CHANNEL_COUNT] = m->transmission.transmission_texture.texture->image;
+	for (size_t k = 0; k < sizeof images / sizeof *images; k++) {
+		if (!images[k])
+			continue;
+		const size_t i = (size_t)(images[k] - data->images);
+		if (is_core)
+			core[i] = true;
+		else
+			uses[i * variants + v] = 1;
+	}
 }
 
-/* The atlas of channel `c` that an image with `variants_of`'s
- * `aeronVariants` goes to: their variant group (created when new), else
- * the core atlas. Sets *group_out (-1: core); NULL on OOM. */
-static ChannelAtlas* target_atlas(const cgltf_data* data, ChannelAtlas* atlases, CookGroup** groups,
-								  int* group_count, int c, const cgltf_image* variants_of, int* group_out) {
-	*group_out     = -1;
-	char* variants = image_variants(data, variants_of);
+/* The variants each image belongs to (variant groups above), printed as a
+ * JSON array, NULL for a core image; NULL table on OOM. */
+static char** derive_image_variants(const cgltf_data* data) {
+	char** out = (char**)calloc(data->images_count ? data->images_count : 1, sizeof *out);
+	char*  json = out ? extras_json(data, &data->asset.extras) : NULL;
+	cJSON* root = json ? cJSON_Parse(json) : NULL;
+	free(json);
+	const cJSON* asset_variants = cJSON_GetObjectItemCaseSensitive(root, "aeronAssetVariants");
+	const size_t variants       = data->variants_count;
+	const size_t own            = cJSON_IsNumber(asset_variants) && asset_variants->valuedouble >= 0
+									  ? (size_t)asset_variants->valuedouble
+									  : variants;
+	cJSON_Delete(root);
+	if (!out || own >= variants || !data->images_count)
+		return out;
+	bool*    core = (bool*)calloc(data->images_count, sizeof *core);
+	uint8_t* uses = (uint8_t*)calloc(data->images_count * variants, 1);
+	bool     ok   = core && uses;
+	for (size_t mi = 0; ok && mi < data->meshes_count; mi++) {
+		for (size_t pi = 0; pi < data->meshes[mi].primitives_count; pi++) {
+			const cgltf_primitive* p = &data->meshes[mi].primitives[pi];
+			if (p->material)
+				mark_material_images(data, p->material, core, uses, variants, 0, true);
+			for (size_t k = 0; k < p->mappings_count; k++)
+				mark_material_images(data, p->mappings[k].material, core, uses, variants,
+									 p->mappings[k].variant, p->mappings[k].variant < own);
+		}
+	}
+	for (size_t i = 0; ok && i < data->images_count; i++) {
+		if (core[i])
+			continue;
+		cJSON* list = NULL;
+		for (size_t v = 0; v < variants; v++) {
+			if (!uses[i * variants + v])
+				continue;
+			list = list ? list : cJSON_CreateArray();
+			cJSON_AddItemToArray(list, cJSON_CreateNumber((double)v));
+		}
+		if (list) {
+			out[i] = cJSON_PrintUnformatted(list);
+			ok     = out[i] != NULL;
+			cJSON_Delete(list);
+		}
+	}
+	free(core);
+	free(uses);
+	if (!ok) {
+		for (size_t i = 0; i < data->images_count; i++)
+			free(out[i]);
+		free(out);
+		return NULL;
+	}
+	return out;
+}
+
+/* The atlas of channel `c` that `variants_of` goes to: the group of its
+ * variants (`image_variants`, created when new), else the core atlas. Sets
+ * *group_out (-1: core); NULL on OOM. */
+static ChannelAtlas* target_atlas(const cgltf_data* data, char* const* image_variants, ChannelAtlas* atlases,
+								  CookGroup** groups, int* group_count, int c, const cgltf_image* variants_of,
+								  int* group_out) {
+	*group_out           = -1;
+	const char* derived  = image_variants[variants_of - data->images];
+	char*       variants = derived ? cook_strdup(derived) : NULL;
 	if (!variants)
 		return &atlases[c];
 	int g = 0;
@@ -423,14 +473,14 @@ static bool image_view(const char* source_label, AeronGltfCookImageProvider imag
 	return true;
 }
 
-/* Places `image` on channel `c`: in the variant group of its `aeronVariants`
- * (created when new), else on the core atlas; an image already placed
- * shares its rect. Sets *group_out (-1: core) and *rect_out. */
-static bool place_image(cgltf_data* data, const char* source_label, AeronGltfCookImageProvider image_provider,
-						void* image_context, ImageCache* cache, const AeronGltfCookOptions* opts,
-						ChannelAtlas* atlases, CookGroup** groups, int* group_count, int c,
-						cgltf_image* image, int* group_out, int* rect_out) {
-	ChannelAtlas* atlas = target_atlas(data, atlases, groups, group_count, c, image, group_out);
+/* Places `image` on channel `c`: in the group of its variants (created
+ * when new), else on the core atlas; an image already placed shares its
+ * rect. Sets *group_out (-1: core) and *rect_out. */
+static bool place_image(cgltf_data* data, char* const* image_variants, const char* source_label,
+						AeronGltfCookImageProvider image_provider, void* image_context, ImageCache* cache,
+						const AeronGltfCookOptions* opts, ChannelAtlas* atlases, CookGroup** groups,
+						int* group_count, int c, cgltf_image* image, int* group_out, int* rect_out) {
+	ChannelAtlas* atlas = target_atlas(data, image_variants, atlases, groups, group_count, c, image, group_out);
 	if (!atlas)
 		return false;
 	*rect_out = find_channel_rect(atlas, image);
@@ -488,7 +538,7 @@ static bool same_texture_mapping(const cgltf_texture_view* a, const cgltf_textur
 /* Places transmissive material `m`'s base image on the base channel, with
  * the transmission texture in its alpha. Sets *handled when it did (the
  * caller then skips the material's own base image). */
-static bool place_transmission(cgltf_data* data, const char* source_label,
+static bool place_transmission(cgltf_data* data, char* const* image_variants, const char* source_label,
 							   AeronGltfCookImageProvider image_provider, void* image_context,
 							   ImageCache* cache, const AeronGltfCookOptions* opts, ChannelAtlas* atlases,
 							   CookGroup** groups, int* group_count, MergedImages* merged, cgltf_material* m,
@@ -530,7 +580,8 @@ static bool place_transmission(cgltf_data* data, const char* source_label,
 	snprintf(key, key_size, "%s#transmission=%s", base_image ? base_image->uri : "",
 			 trans_image ? trans_image->uri : "");
 	ChannelAtlas* atlas =
-		target_atlas(data, atlases, groups, group_count, c, base_image ? base_image : trans_image, group_out);
+		target_atlas(data, image_variants, atlases, groups, group_count, c, base_image ? base_image : trans_image,
+					 group_out);
 	cgltf_image probe = { 0 };
 	probe.uri         = key;
 	*rect_out         = atlas ? find_channel_rect(atlas, &probe) : -1;
@@ -582,37 +633,6 @@ static bool place_transmission(cgltf_data* data, const char* source_label,
 	}
 	*rect_out = channel_atlas_add_rect(atlas, &image->key, w, h, rgba, opts->max_texture_size);
 	return *rect_out >= 0;
-}
-
-/* The material's extras with `aeronAnimBaseColor` rewritten to its packed rect
- * on the base atlas (owned), or NULL on OOM. */
-static char* extras_with_anim_base(const cgltf_data* data, const cgltf_material* m, const ChannelAtlas* ca,
-									const ChannelRect* rect) {
-	char*  json = extras_json(data, &m->extras);
-	cJSON* root = json ? cJSON_Parse(json) : NULL;
-	free(json);
-	if (!cJSON_IsObject(root)) {
-		cJSON_Delete(root);
-		return NULL;
-	}
-	float off[2], scl[2];
-	channel_atlas_rect_uv_transform(ca, rect, off, scl);
-	cJSON_DeleteItemFromObjectCaseSensitive(root, "aeronAnimBaseColor");
-	cJSON* layer   = cJSON_AddObjectToObject(root, "aeronAnimBaseColor");
-	cJSON* offset  = layer ? cJSON_AddArrayToObject(layer, "offset") : NULL;
-	cJSON* scale   = layer ? cJSON_AddArrayToObject(layer, "scale") : NULL;
-	char*  printed = NULL;
-	if (offset && scale) {
-		cJSON_AddNumberToObject(layer, "page", rect->page);
-		cJSON_AddNumberToObject(layer, "lod", rect->max_lod);
-		for (int k = 0; k < 2; k++) {
-			cJSON_AddItemToArray(offset, cJSON_CreateNumber(off[k]));
-			cJSON_AddItemToArray(scale, cJSON_CreateNumber(scl[k]));
-		}
-		printed = cJSON_PrintUnformatted(root);
-	}
-	cJSON_Delete(root);
-	return printed;
 }
 
 /* ---------- cooking orchestration ----------------------------------- */
@@ -671,17 +691,8 @@ bool aeron_gltf_cook_data(cgltf_data* data, const char* source_label,
 	int        group_count                             = 0;
 	int*       group_of[AERON_GLTF_COOK_CHANNEL_COUNT] = { 0 };
 
-	/* aeronAnimBaseColor rect of each material on the base channel, or -1. */
-	int* layer_rect_of =
-		(int*)malloc((data->materials_count ? data->materials_count : 1) * sizeof *layer_rect_of);
-	int* layer_group_of =
-		(int*)malloc((data->materials_count ? data->materials_count : 1) * sizeof *layer_group_of);
-	char** layer_extras =
-		(char**)calloc(data->materials_count ? data->materials_count : 1, sizeof *layer_extras);
-
-	bool ok = validate_material_textures(data) && layer_rect_of && layer_group_of && layer_extras;
-	for (size_t mi = 0; mi < data->materials_count && ok; mi++)
-		layer_rect_of[mi] = layer_group_of[mi] = -1;
+	char** image_variants = derive_image_variants(data);
+	bool   ok             = validate_material_textures(data) && image_variants;
 	for (int c = 0; c < AERON_GLTF_COOK_CHANNEL_COUNT && ok; c++) {
 		group_of[c] = (int*)malloc((data->materials_count ? data->materials_count : 1) * sizeof *group_of[c]);
 		ok          = group_of[c] != NULL;
@@ -703,7 +714,8 @@ bool aeron_gltf_cook_data(cgltf_data* data, const char* source_label,
 		cgltf_material* m           = &data->materials[mi];
 		bool            merged_base = false;
 		if (m->has_transmission && m->transmission.transmission_factor > 0.0f)
-			ok = place_transmission(data, source_label, image_provider, image_context, &cache, &opts, atlases,
+			ok = place_transmission(data, image_variants, source_label, image_provider, image_context, &cache,
+									&opts, atlases,
 									&groups, &group_count, &merged, m,
 									&group_of[AERON_GLTF_COOK_CHANNEL_BASE_COLOR][mi],
 									&rect_of[AERON_GLTF_COOK_CHANNEL_BASE_COLOR][mi], &merged_base);
@@ -714,16 +726,10 @@ bool aeron_gltf_cook_data(cgltf_data* data, const char* source_label,
 			if (c == AERON_GLTF_COOK_CHANNEL_BASE_COLOR && merged_base)
 				continue;
 			/* An image some variants use goes to their group. */
-			ok = place_image(data, source_label, image_provider, image_context, &cache, &opts, atlases,
-							 &groups, &group_count, c, tv->texture->image, &group_of[c][mi], &rect_of[c][mi]);
+			ok = place_image(data, image_variants, source_label, image_provider, image_context, &cache, &opts,
+							 atlases, &groups, &group_count, c, tv->texture->image, &group_of[c][mi],
+							 &rect_of[c][mi]);
 		}
-		/* aeronAnimBaseColor: a second base-colour image, referenced from the
-		 * material's extras. */
-		const cgltf_texture* layer = ok ? anim_base_texture(data, m) : NULL;
-		if (layer && layer->image && layer->image->uri)
-			ok = place_image(data, source_label, image_provider, image_context, &cache, &opts, atlases,
-							 &groups, &group_count, AERON_GLTF_COOK_CHANNEL_BASE_COLOR, layer->image,
-							 &layer_group_of[mi], &layer_rect_of[mi]);
 	}
 
 	if (!ok)
@@ -1163,34 +1169,8 @@ bool aeron_gltf_cook_data(cgltf_data* data, const char* source_label,
 	src_buf->uri              = NULL;
 	if (group_extras)
 		data->asset.extras.data = group_extras;
-	/* aeronAnimBaseColor: the packed rect on the base atlas. */
-	bool          layers_ok = true;
-	cgltf_extras* layer_saved =
-		(cgltf_extras*)calloc(data->materials_count ? data->materials_count : 1, sizeof *layer_saved);
-	layers_ok = layer_saved != NULL;
-	for (size_t mi = 0; mi < data->materials_count && layers_ok; mi++) {
-		if (layer_rect_of[mi] < 0)
-			continue;
-		const int           c    = AERON_GLTF_COOK_CHANNEL_BASE_COLOR;
-		const int           g    = layer_group_of[mi];
-		const ChannelAtlas* ca   = g >= 0 ? &groups[g].atlas : &atlases[c];
-		ChannelRect         rect = ca->rects[layer_rect_of[mi]];
-		if (g >= 0)
-			rect.page += atlases[c].page_count + groups[g].page_base;
-		layer_extras[mi] = extras_with_anim_base(data, &data->materials[mi], ca, &rect);
-		layers_ok        = layer_extras[mi] != NULL;
-		if (layers_ok) {
-			layer_saved[mi]                 = data->materials[mi].extras;
-			data->materials[mi].extras.data = layer_extras[mi];
-		}
-	}
+	ok = (!group_count || group_extras) && consumer(consumer_context, data);
 
-	ok = (!group_count || group_extras) && layers_ok && consumer(consumer_context, data);
-
-	for (size_t mi = 0; layer_saved && mi < data->materials_count; mi++)
-		if (layer_extras[mi])
-			data->materials[mi].extras = layer_saved[mi];
-	free(layer_saved);
 	data->asset.extras = orig_extras;
 	free(group_extras);
 
@@ -1261,11 +1241,9 @@ cleanup:
 	}
 	image_cache_free(&cache);
 	merged_images_free(&merged);
-	for (size_t mi = 0; layer_extras && mi < data->materials_count; mi++)
-		free(layer_extras[mi]);
-	free(layer_extras);
-	free(layer_rect_of);
-	free(layer_group_of);
+	for (size_t i = 0; image_variants && i < data->images_count; i++)
+		free(image_variants[i]);
+	free(image_variants);
 	return ok;
 }
 

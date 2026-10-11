@@ -808,37 +808,17 @@ static void read_energy(const cgltf_material* m, AeronGltfMaterial* out, const c
 	cJSON_Delete(root);
 }
 
-/* Reads a material's `aeronAnimBaseColor` and `aeronFlipbooks` extras. A
- * malformed entry is reported and the material keeps no animation. Returns
- * false only when memory runs out. */
+/* Reads a material's `aeronFlipbooks` extras. A malformed entry is reported
+ * and the material keeps no animation. Returns false only when memory runs
+ * out. */
 static bool read_animation(const cgltf_material* m, AeronGltfModel* model, FlipbookCapacity* cap,
 						   AeronGltfMaterial* out, const char* source_label, uint32_t material_index) {
 	if (!m || !m->extras.data || !strstr(m->extras.data, "aeronFlipbooks"))
 		return true;
-	cJSON*       root     = cJSON_ParseWithOpts(m->extras.data, NULL, true);
-	const cJSON* books    = cJSON_GetObjectItemCaseSensitive(root, "aeronFlipbooks");
-	const cJSON* base     = cJSON_GetObjectItemCaseSensitive(root, "aeronAnimBaseColor");
-	const int    count    = cJSON_IsArray(books) ? cJSON_GetArraySize(books) : -1;
-	bool         has_base = false;
-	bool         valid    = count >= 0;
-	if (valid && base) {
-		float    offset[2], scale[2];
-		uint32_t page = 0, lod = 0;
-		has_base = json_floats(cJSON_GetObjectItemCaseSensitive(base, "offset"), offset, 2) &&
-				   json_floats(cJSON_GetObjectItemCaseSensitive(base, "scale"), scale, 2) &&
-				   json_uint(base, "page", AERON_GLTF_ATLAS_MAX_PAGE, &page) &&
-				   json_uint(base, "lod", AERON_GLTF_ATLAS_UNCLAMPED_LOD, &lod) && scale[0] > 0.0f &&
-				   scale[1] > 0.0f;
-		valid    = has_base;
-		if (has_base) {
-			out->anim_base_xform[0] = offset[0];
-			out->anim_base_xform[1] = offset[1];
-			out->anim_base_xform[2] = scale[0];
-			out->anim_base_xform[3] = scale[1];
-			out->anim_base_page     = page;
-			out->anim_base_max_lod  = lod;
-		}
-	}
+	cJSON*       root  = cJSON_ParseWithOpts(m->extras.data, NULL, true);
+	const cJSON* books = cJSON_GetObjectItemCaseSensitive(root, "aeronFlipbooks");
+	const int    count = cJSON_IsArray(books) ? cJSON_GetArraySize(books) : -1;
+	bool         valid = count >= 0;
 	const uint32_t first_book = model->flipbook_count, first_frame = model->flipbook_frame_count;
 	bool           oom = false;
 	for (int i = 0; valid && i < count; i++)
@@ -851,11 +831,10 @@ static bool read_animation(const cgltf_material* m, AeronGltfModel* model, Flipb
 			free(model->flipbook_frames[f].key);
 		model->flipbook_count       = first_book;
 		model->flipbook_frame_count = first_frame;
-		memset(out->anim_base_xform, 0, sizeof out->anim_base_xform);
 		if (oom)
 			return false;
-		SDL_Log("[flight_gltf] '%s' material %u: malformed aeronFlipbooks or aeronAnimBaseColor ignored",
-				source_label, material_index);
+		SDL_Log("[flight_gltf] '%s' material %u: malformed aeronFlipbooks ignored", source_label,
+				material_index);
 		return true;
 	}
 	out->flipbook_first = first_book;

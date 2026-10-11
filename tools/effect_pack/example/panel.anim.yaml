@@ -5,8 +5,8 @@ library: examplepanel
 images:
   lights_0: { kind: illumination, emissive: frames/lights_0.png }
   lights_1: { kind: illumination, emissive: frames/lights_1.png }
-  screen_a: { kind: colour, image: frames/screen_a.png }
-  screen_b: { kind: colour, image: frames/screen_b.png }
+  screen_a: { kind: colour, baseColor: frames/screen_a.png }
+  screen_b: { kind: colour, baseColor: frames/screen_b.png }
 materials:
   Lights:
     flipbooks:

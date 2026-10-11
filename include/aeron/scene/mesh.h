@@ -45,15 +45,14 @@ typedef struct AeronPbrMaterialEntry {
 	uint32_t screen_first;         /* screen rectangles (AeronPbrScreenRect) */
 	uint32_t screen_count;
 	uint32_t screen_flags; /* AERON_GLTF_SCREEN_* */
-	float    anim_base_rect[4]; /* aeronAnimBaseColor in the base atlas; zw == 0: none */
-	uint32_t anim[4];            /* x: anim_base page | lod << 12
-								  * y: first flipbook record | flipbook count << 16
+	uint32_t anim[4];      /* x: unused
+							* y: first flipbook record | flipbook count << 16
 								  * (material_anim_layout.hlsli); 0 without
 								  * z: first damage alternative record |
 								  *    alternative count << 16; 0 without
 								  * w: energy mask (bits 0-2) | damage choice << 8 |
 								  *    placement << 20 */
-} AeronPbrMaterialEntry;         /* 192 B */
+} AeronPbrMaterialEntry;         /* 176 B */
 
 /* Shader record of one screen rectangle (AeronGltfScreenRect): float4 and
  * uint4 members only, so the layout is the same on every backend. */

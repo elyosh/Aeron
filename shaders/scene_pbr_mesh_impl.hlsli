@@ -298,9 +298,8 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
 #if AERON_PBR_ANIM
     /* ===== Flipbooks and hull damage ==============================
      * colour: the frame over the colour; damage: its factor multiplies
-     * the result; illumination: base = c·k + layer_rgb over that colour c
-     * (while it plays, the material's aeronAnimBaseColor when it has one, else
-     * its base colour), and its emission replaces the material's. Without
+     * the result; illumination: base = c·k + layer_rgb over that colour c,
+     * and its emission replaces the material's. Without
      * an illumination frame, a colour flipbook's unlit weight u splits the
      * result as the static bake does: base c·(1 − u), emission c·u in place
      * of the material's. A layer without a playing frame keeps the static
@@ -317,10 +316,6 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
         float4 damage     = anim_damage(anim, i.uv);
         anim_gloss        = damage.a;
         float3 c = albedo_tex.rgb;
-        if (lit_frame != 0u && g_materials[mat].anim_base_rect.z > 0.0f) {
-            c = atlas_sample(g_base_color, g_base_sampler, i.uv, g_materials[mat].anim_base_rect,
-                             anim.x & 0xFFFu, (anim.x >> 12) & 0xFu).rgb;
-        }
         if (colour_frame != 0u) {
             float4 frame = anim_frame_sample(g_effect_layer, g_effect_layer_sampler, g_anim_records[colour_frame],
                                              anim_frame_uv(colour_book, i.uv));

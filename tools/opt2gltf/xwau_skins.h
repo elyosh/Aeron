@@ -2,7 +2,7 @@
 #define AERON_OPT2GLTF_XWAU_SKINS_H
 
 /*
- * XWAU skin inputs of one OPT (docs: xwau_skins.md, 2.1 and 2.2): the
+ * XWAU skin inputs of one OPT: the
  * variants file the conversion tools write, and the skin images they
  * extract to <skins dir>/<skin>/<file name>, lower case.
  *

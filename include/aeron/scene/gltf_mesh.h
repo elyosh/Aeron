@@ -180,12 +180,8 @@ typedef struct AeronGltfMaterial {
 	uint32_t screen_count;
 	uint32_t screen_flags;
 	/* Animation (material extras, "Material animation" below): the
-	 * base-atlas binding of `aeronAnimBaseColor` (uv_xform convention, scale
-	 * zero without one) and the material's flipbooks
-	 * [flipbook_first, flipbook_first + flipbook_count) of the model's. */
-	float    anim_base_xform[4];
-	uint32_t anim_base_page;
-	uint32_t anim_base_max_lod;
+	 * material's flipbooks [flipbook_first, flipbook_first +
+	 * flipbook_count) of the model's. */
 	uint32_t flipbook_first;
 	uint32_t flipbook_count;
 	/* Hull damage (`aeronDamage`): alternatives [damage_first, damage_first
@@ -204,7 +200,6 @@ typedef struct AeronGltfMaterial {
  *
  * Animated materials, as material extras (cooked by aeron_gltf_cook):
  *
- *   "aeronAnimBaseColor": { "page", "lod", "offset": [u, v], "scale": [su, sv] }
  *   "aeronFlipbooks": [ { "state", "layer": "colour" | "illumination",
  *                         "mode": "loop" | "once", "library",
  *                         "frames": [ [key, seconds], ... ],
@@ -219,12 +214,10 @@ typedef struct AeronGltfMaterial {
  *   "aeronEnergy": [ "shields" | "tractor" | "jamming" ]
  *
  * Frames and damage stages name images of an effect library
- * (aeron/scene/effect_atlas.h). `aeronAnimBaseColor`, optional, is the
- * colour animation frames apply over while an illumination frame plays; the
- * base colour without it. `unlit` (0..1, default 0), for a colour flipbook,
- * is the part of its frames drawn unlit: while one plays without an
- * illumination frame, its colour c becomes base c·(1 − u) and emission c·u,
- * replacing the material's emission (0 keeps the material's emission). */
+ * (aeron/scene/effect_atlas.h). `unlit` (0..1, default 0), for a colour
+ * flipbook, is the part of its frames drawn unlit: while one plays without
+ * an illumination frame, its colour c becomes base c·(1 − u) and emission
+ * c·u, replacing the material's emission (0 keeps the material's emission). */
 typedef struct AeronGltfFlipbookFrame {
 	char* key;
 	float seconds;

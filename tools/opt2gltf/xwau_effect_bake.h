@@ -2,8 +2,7 @@
 #define AERON_XWAU_EFFECT_BAKE_H
 
 /*
- * Bakes of XWAU animation frames into effect-library images (docs:
- * xwau_animated_materials.md, "Image libraries"). A source is a decoded DAT
+ * Bakes of XWAU animation frames into effect-library images. A source is a decoded DAT
  * image (sRGB-encoded R, G, B and linear A, rows in file order); `tint` and
  * `alpha_mode` are the sequence's. Each kind is computed in linear light and
  * stored sRGB-encoded, with linear alpha.

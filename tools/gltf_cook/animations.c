@@ -52,8 +52,7 @@ static const char* const kStates[]   = { "threat.laser",
 static const char* const kLayers[]   = { "colour", "illumination" };
 static const char* const kModes[]    = { "loop", "once" };
 static const char* const kEnergies[] = { "shields", "tractor", "jamming" };
-static const char* const kMembers[]  = { "aeronFlipbooks", "aeronDamage", "aeronEnergy",
-										 "aeronAnimBaseColor" };
+static const char* const kMembers[]  = { "aeronFlipbooks", "aeronDamage", "aeronEnergy" };
 
 #define COUNT(a) (sizeof(a) / sizeof((a)[0]))
 
@@ -305,26 +304,6 @@ static cJSON* energy(Merge* m, const cJSON* in) {
 	return cJSON_Duplicate(in, true);
 }
 
-/* `path` relative to directory `dir`, both resolved to absolute paths. */
-static bool relative_path(const char* dir, const char* path, char* out, size_t cap) {
-	char d[PATH_MAX + 1], p[PATH_MAX + 1];
-	if (!realpath(dir, d) || !realpath(path, p))
-		return false;
-	strcat(d, "/");
-	/* The longest common prefix that ends at a '/' of both. */
-	size_t common = 0;
-	for (size_t i = 0; d[i] && d[i] == p[i]; ++i)
-		if (d[i] == '/')
-			common = i + 1;
-	out[0]   = 0;
-	size_t n = 0;
-	for (const char* s = d + common; *s; ++s)
-		if (*s == '/')
-			n += (size_t)snprintf(out + n, n < cap ? cap - n : 0, "../");
-	n += (size_t)snprintf(out + n, n < cap ? cap - n : 0, "%s", p + common);
-	return n < cap;
-}
-
 static char* read_text(const char* path) {
 	FILE* f = fopen(path, "rb");
 	if (!f)
@@ -343,21 +322,12 @@ static char* read_text(const char* path) {
 	return text;
 }
 
-static void dir_of(const char* path, char* out, size_t cap) {
-	const char* slash = strrchr(path, '/');
-	if (slash)
-		snprintf(out, cap, "%.*s", (int)(slash - path), path);
-	else
-		snprintf(out, cap, ".");
-}
-
 /* Merges one material entry of the animation file into material `mat`. */
-static bool merge_material(Merge* m, cJSON* doc, cJSON* mat, const cJSON* entry, const char* anim_dir,
-						   const char* gltf_dir) {
-	static const char* const fields[] = { "flipbooks", "damage", "energy", "animBaseColor" };
+static bool merge_material(Merge* m, cJSON* mat, const cJSON* entry) {
+	static const char* const fields[] = { "flipbooks", "damage", "energy" };
 	if (!cJSON_IsObject(entry) || !only_members(m, "material", entry, fields, COUNT(fields)))
 		return false;
-	cJSON*       members[4] = { NULL, NULL, NULL, NULL };
+	cJSON*       members[3] = { NULL, NULL, NULL };
 	bool         ok         = true;
 	const cJSON* books      = cJSON_GetObjectItemCaseSensitive(entry, "flipbooks");
 	if (books) {
@@ -380,50 +350,8 @@ static bool merge_material(Merge* m, cJSON* doc, cJSON* mat, const cJSON* entry,
 	const cJSON* nrg = cJSON_GetObjectItemCaseSensitive(entry, "energy");
 	if (ok && nrg)
 		ok = (members[2] = energy(m, nrg)) != NULL;
-	const cJSON* base = cJSON_GetObjectItemCaseSensitive(entry, "animBaseColor");
-	if (ok && base) {
-		char png[2048], uri[2048];
-		if (cJSON_IsString(base) && base->valuestring[0] == '/')
-			snprintf(png, sizeof png, "%s", base->valuestring);
-		else if (cJSON_IsString(base))
-			snprintf(png, sizeof png, "%s/%s", anim_dir, base->valuestring);
-		ok = cJSON_IsString(base) && relative_path(gltf_dir, png, uri, sizeof uri);
-		if (!ok) {
-			fprintf(stderr, TAG ": %s: material %s: animBaseColor %s not found\n", m->anim, m->material,
-					cJSON_IsString(base) ? png : "is not a path");
-		} else {
-			/* A new image and texture, with the sampler of the material's
-			 * base colour texture. */
-			cJSON* images   = cJSON_GetObjectItemCaseSensitive(doc, "images");
-			cJSON* textures = cJSON_GetObjectItemCaseSensitive(doc, "textures");
-			if (!images)
-				images = cJSON_AddArrayToObject(doc, "images");
-			if (!textures)
-				textures = cJSON_AddArrayToObject(doc, "textures");
-			cJSON* image = cJSON_CreateObject();
-			cJSON_AddStringToObject(image, "name", "anim_base_color");
-			cJSON_AddStringToObject(image, "uri", uri);
-			cJSON_AddStringToObject(image, "mimeType", "image/png");
-			cJSON_AddItemToArray(images, image);
-			cJSON* texture = cJSON_CreateObject();
-			cJSON_AddNumberToObject(texture, "source", cJSON_GetArraySize(images) - 1);
-			const cJSON* bct = cJSON_GetObjectItemCaseSensitive(
-				cJSON_GetObjectItemCaseSensitive(
-					cJSON_GetObjectItemCaseSensitive(mat, "pbrMetallicRoughness"), "baseColorTexture"),
-				"index");
-			const cJSON* sampler =
-				cJSON_IsNumber(bct)
-					? cJSON_GetObjectItemCaseSensitive(cJSON_GetArrayItem(textures, bct->valueint), "sampler")
-					: NULL;
-			if (cJSON_IsNumber(sampler))
-				cJSON_AddNumberToObject(texture, "sampler", sampler->valuedouble);
-			cJSON_AddItemToArray(textures, texture);
-			members[3] = cJSON_CreateObject();
-			cJSON_AddNumberToObject(members[3], "texture", cJSON_GetArraySize(textures) - 1);
-		}
-	}
 	if (!ok) {
-		for (int k = 0; k < 4; ++k)
+		for (int k = 0; k < 3; ++k)
 			cJSON_Delete(members[k]);
 		return false;
 	}
@@ -432,7 +360,7 @@ static bool merge_material(Merge* m, cJSON* doc, cJSON* mat, const cJSON* entry,
 		cJSON_DeleteItemFromObjectCaseSensitive(mat, "extras");
 		extras = cJSON_AddObjectToObject(mat, "extras");
 	}
-	for (int k = 0; k < 4; ++k) {
+	for (int k = 0; k < 3; ++k) {
 		if (members[k]) {
 			cJSON_DeleteItemFromObjectCaseSensitive(extras, kMembers[k]);
 			cJSON_AddItemToObject(extras, kMembers[k], members[k]);
@@ -463,9 +391,6 @@ bool aeron_gltf_cook_merge_animations(const char* gltf, const char* anim, const 
 	if (!ok)
 		fprintf(stderr, TAG ": %s: needs version 1 and materials (library, when given, is a name)\n", anim);
 	m.library = cJSON_IsString(library) ? library->valuestring : NULL;
-	char anim_dir[1024], gltf_dir[1024];
-	dir_of(anim, anim_dir, sizeof anim_dir);
-	dir_of(gltf, gltf_dir, sizeof gltf_dir);
 	cJSON*       gltf_materials = cJSON_GetObjectItemCaseSensitive(doc, "materials");
 	const cJSON* entry;
 	size_t       merged     = 0;
@@ -488,7 +413,7 @@ bool aeron_gltf_cook_merge_animations(const char* gltf, const char* anim, const 
 			ok = false;
 			continue;
 		}
-		if (merge_material(&m, doc, mat, entry, anim_dir, gltf_dir))
+		if (merge_material(&m, mat, entry))
 			merged++;
 		else
 			ok = false;

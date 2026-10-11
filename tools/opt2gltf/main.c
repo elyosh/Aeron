@@ -112,7 +112,7 @@
  * specular. It supersedes --emissive.
  *
  * --xwau-root DIR (repeatable) converts X-Wing Alliance Upgrade models with
- * their materials (docs: xwau_model_import.md). The roots are layered game
+ * their materials. The roots are layered game
  * directories, searched in order with case-insensitive paths: list the
  * update before the full release, e.g. UPD .../Group_2_Materials/OverwriteOn,
  * UPD .../Group_2_Effects/OverwriteOn, then the same for Full. For each OPT,
@@ -133,13 +133,13 @@
  * texture is reported.
  *
  * --dynamic-cockpit FILE.dc (single OPT, with --xwau-root) applies an XWAU
- * Dynamic Cockpit file (docs: dynamic_cockpit.md): the cockpit textures it
+ * Dynamic Cockpit file: the cockpit textures it
  * names become screen surfaces showing the captured HUD, with their cover
  * images from the Effects DATs, and hologram faces move by the craft INI's
  * [CockpitHoloOffsets]. See dynamic_cockpit.h for the parsing rules.
  *
  * --xwau-skins DIR --xwau-skin-variants FILE.json (single OPT, with
- * --xwau-root) adds XWAU skin variants (docs: xwau_skins.md): the variants
+ * --xwau-root) adds XWAU skin variants: the variants
  * file the conversion tools resolve, with the skin images they extract under
  * DIR. See xwau_skins.h for the inputs and opt2gltf.h for the output.
  *

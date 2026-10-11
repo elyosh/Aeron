@@ -4,14 +4,21 @@
  *
  *   effect_pack --out DIR FILE.anim.yaml
  *
- * Image paths are relative to the animation file. Per kind, the inputs and
- * what is stored (colour sRGB, alpha linear; products in linear light):
- *   colour        image (RGBA, alpha coverage)   layer: as given
- *   illumination  emissive (RGB); optional colour (RGBA, alpha coverage c)
- *                 layer: RGB colour·c, A 1 − c; emissive: RGB
- *   multiply      image (RGB factor, A gloss)    layer: as given
- *   mark          image (RGBA)                   layer: RGB rgb·a, A a
- *   energy        image (RGBA)                   emissive: RGB rgb·a
+ * Image paths are relative to the animation file. Per kind, the inputs, named
+ * after the material channel they change, and what is stored (colour sRGB,
+ * alpha linear; products in linear light):
+ *   colour        baseColor (RGBA, alpha coverage)   layer: as given
+ *   illumination  emissive (RGB); optional baseColor (RGBA, alpha coverage c)
+ *                 layer: RGB baseColor·c, A 1 − c; emissive: RGB
+ *   multiply      factor (RGB factor, A gloss)       layer: as given
+ *   mark          baseColor (RGBA)                   layer: RGB rgb·a, A a
+ *   energy        emissive (RGBA, A intensity)       emissive: RGB rgb·a
+ * `maxSize` caps an image's longer side, `crop` records the part a blast
+ * mark's [0, 1] maps to.
+ *
+ * The index records a hash of the inputs (this executable, the file and
+ * its images); a library whose index in DIR records the same is left as
+ * it is.
  */
 
 #include <math.h>
@@ -20,6 +27,15 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
+#if defined(__APPLE__)
+#include <mach-o/dyld.h>
+#elif defined(__linux__)
+#include <unistd.h>
+#endif
+
+#define XXH_INLINE_ALL
+#include "xxhash.h"
 
 #include "cJSON.h"
 #include "effect_pack.h"
@@ -43,6 +59,14 @@ static uint8_t to_srgb8(float c) {
 	return (uint8_t)(s * 255.0f + 0.5f);
 }
 
+/* The path of input `name`, resolved next to the animation file. */
+static void input_path(const char* dir, const char* name, char* path, size_t cap) {
+	if (name[0] == '/')
+		snprintf(path, cap, "%s", name);
+	else
+		snprintf(path, cap, "%s/%s", dir, name);
+}
+
 /* An input PNG of image `key`, resolved next to the animation file; NULL
  * after a message when missing or of another size than `*w` × `*h` (0: any). */
 static uint8_t* load_input(const char* dir, const char* key, const char* field, const cJSON* entry, int* w,
@@ -61,10 +85,7 @@ static uint8_t* load_input(const char* dir, const char* key, const char* field, 
 		return NULL;
 	}
 	char path[1024], err[512];
-	if (name->valuestring[0] == '/')
-		snprintf(path, sizeof path, "%s", name->valuestring);
-	else
-		snprintf(path, sizeof path, "%s/%s", dir, name->valuestring);
+	input_path(dir, name->valuestring, path, sizeof path);
 	uint8_t* rgba = NULL;
 	int      iw = 0, ih = 0;
 	if (!read_png_rgba(path, &rgba, &iw, &ih, err, sizeof err)) {
@@ -84,6 +105,120 @@ static uint8_t* load_input(const char* dir, const char* key, const char* field, 
 	return rgba;
 }
 
+/* `maxSize` and `crop` of an image entry into `out` (crop owned by the
+ * caller). */
+static bool image_options(const char* key, const cJSON* entry, EffectPackImage* out) {
+	const cJSON* max_size = cJSON_GetObjectItemCaseSensitive(entry, "maxSize");
+	if (max_size) {
+		if (!cJSON_IsNumber(max_size) || max_size->valueint < 1 || max_size->valueint > EFFECT_PACK_IMAGE_MAX) {
+			fprintf(stderr, "effect_pack: image %s: maxSize must be 1 to %d\n", key, EFFECT_PACK_IMAGE_MAX);
+			return false;
+		}
+		out->max_size = max_size->valueint;
+	}
+	const cJSON* crop = cJSON_GetObjectItemCaseSensitive(entry, "crop");
+	if (crop) {
+		float* values = (float*)malloc(4 * sizeof *values);
+		bool   ok     = values && cJSON_IsArray(crop) && cJSON_GetArraySize(crop) == 4;
+		for (int i = 0; ok && i < 4; ++i) {
+			const cJSON* v = cJSON_GetArrayItem(crop, i);
+			ok             = cJSON_IsNumber(v);
+			if (ok)
+				values[i] = (float)v->valuedouble;
+		}
+		if (!ok) {
+			free(values);
+			fprintf(stderr, "effect_pack: image %s: crop must be [x0, y0, x1, y1]\n", key);
+			return false;
+		}
+		out->crop = values;
+	}
+	return true;
+}
+
+/* ---- Inputs hash ----------------------------------------------------------- */
+
+static bool hash_file(XXH3_state_t* state, const char* path) {
+	FILE* f = fopen(path, "rb");
+	if (!f)
+		return false;
+	uint8_t buf[1 << 16];
+	size_t  n;
+	bool    ok = true;
+	while (ok && (n = fread(buf, 1, sizeof buf, f)) > 0)
+		ok = XXH3_64bits_update(state, buf, n) == XXH_OK;
+	ok = ok && !ferror(f);
+	fclose(f);
+	return ok;
+}
+
+static bool executable_path(char* path, size_t cap) {
+#if defined(__APPLE__)
+	uint32_t size = (uint32_t)cap;
+	return _NSGetExecutablePath(path, &size) == 0;
+#elif defined(__linux__)
+	const ssize_t n = readlink("/proc/self/exe", path, cap - 1);
+	if (n <= 0)
+		return false;
+	path[n] = 0;
+	return true;
+#else
+	(void)path;
+	(void)cap;
+	return false;
+#endif
+}
+
+/* The inputs hash of the library (this executable, the animation file and
+ * every image input it names), as 16 hex digits; false when unknown. */
+static bool library_inputs(const char* file, const char* dir, const cJSON* images, char out[17]) {
+	static const char* const fields[] = { "baseColor", "emissive", "factor" };
+	char                     path[4096];
+	XXH3_state_t*            s  = XXH3_createState();
+	bool                     ok = s && XXH3_64bits_reset(s) == XXH_OK && executable_path(path, sizeof path) &&
+			 hash_file(s, path) && hash_file(s, file);
+	const cJSON* entry;
+	cJSON_ArrayForEach(entry, images) {
+		for (size_t i = 0; ok && i < sizeof fields / sizeof *fields; ++i) {
+			const cJSON* name = cJSON_GetObjectItemCaseSensitive(entry, fields[i]);
+			if (!cJSON_IsString(name))
+				continue;
+			input_path(dir, name->valuestring, path, sizeof path);
+			ok = hash_file(s, path);
+		}
+	}
+	if (ok)
+		snprintf(out, 17, "%016llx", (unsigned long long)XXH3_64bits_digest(s));
+	XXH3_freeState(s);
+	return ok;
+}
+
+/* Whether library `name` in `out_dir` records `inputs` and has its pages. */
+static bool library_current(const char* out_dir, const char* name, const char* inputs) {
+	char  path[1024], line[512];
+	snprintf(path, sizeof path, "%s/%s.yaml", out_dir, name);
+	FILE* f = fopen(path, "rb");
+	if (!f)
+		return false;
+	bool same     = false;
+	int  pages[2] = { -1, -1 };
+	while (fgets(line, sizeof line, f) && strncmp(line, "images:", 7) != 0) {
+		char value[64];
+		if (sscanf(line, "inputs: %63s", value) == 1)
+			same = strcmp(value, inputs) == 0;
+		sscanf(line, "layer_pages: %d", &pages[0]);
+		sscanf(line, "emissive_pages: %d", &pages[1]);
+	}
+	fclose(f);
+	static const char* const suffix[2] = { "layer", "emissive" };
+	for (int a = 0; same && a < 2; ++a) {
+		struct stat st;
+		snprintf(path, sizeof path, "%s/%s.%s.ktx2", out_dir, name, suffix[a]);
+		same = pages[a] >= 0 && (!pages[a] || stat(path, &st) == 0);
+	}
+	return same;
+}
+
 /* Bakes one image entry into `out` (layer/emissive owned by the caller). */
 static bool bake(const char* dir, const char* key, const cJSON* entry, EffectPackImage* out) {
 	const cJSON* kind_item = cJSON_GetObjectItemCaseSensitive(entry, "kind");
@@ -98,9 +233,11 @@ static bool bake(const char* dir, const char* key, const cJSON* entry, EffectPac
 	}
 	bool ok = true;
 	int  w = 0, h = 0;
+	if (!image_options(key, entry, out))
+		return false;
 	if (kind == KIND_ILLUMINATION) {
 		uint8_t* emissive = load_input(dir, key, "emissive", entry, &w, &h, true, &ok);
-		uint8_t* colour   = ok ? load_input(dir, key, "colour", entry, &w, &h, false, &ok) : NULL;
+		uint8_t* colour   = ok ? load_input(dir, key, "baseColor", entry, &w, &h, false, &ok) : NULL;
 		uint8_t* layer    = ok ? (uint8_t*)malloc((size_t)w * h * 4) : NULL;
 		if (!ok || !layer) {
 			free(emissive);
@@ -119,7 +256,9 @@ static bool bake(const char* dir, const char* key, const cJSON* entry, EffectPac
 		out->layer    = layer;
 		out->emissive = emissive;
 	} else {
-		uint8_t* image = load_input(dir, key, "image", entry, &w, &h, true, &ok);
+		/* The input names the material channel the image changes. */
+		const char* field = kind == KIND_MULTIPLY ? "factor" : kind == KIND_ENERGY ? "emissive" : "baseColor";
+		uint8_t*    image = load_input(dir, key, field, entry, &w, &h, true, &ok);
 		if (!ok)
 			return false;
 		for (size_t i = 0; (kind == KIND_MARK || kind == KIND_ENERGY) && i < (size_t)w * h; ++i) {
@@ -195,6 +334,13 @@ int main(int argc, char** argv) {
 	char        dir[1024];
 	const char* slash = strrchr(file, '/');
 	snprintf(dir, sizeof dir, "%.*s", slash ? (int)(slash - file) : 1, slash ? file : ".");
+	char       inputs[17];
+	const bool have_inputs = ok && library_inputs(file, dir, images, inputs);
+	if (have_inputs && library_current(out, library->valuestring, inputs)) {
+		fprintf(stderr, "effect_pack: %s: unchanged\n", library->valuestring);
+		cJSON_Delete(root);
+		return 0;
+	}
 	const int        count = ok ? cJSON_GetArraySize(images) : 0;
 	EffectPackImage* baked = (EffectPackImage*)calloc(count ? (size_t)count : 1, sizeof *baked);
 	ok                     = ok && baked;
@@ -209,14 +355,16 @@ int main(int argc, char** argv) {
 		}
 	}
 	EffectPackResult result = { 0 };
-	if (ok && EffectPack_Write("effect_pack", out, library->valuestring, NULL, NULL, baked, (size_t)n, &result))
+	if (ok && EffectPack_Write("effect_pack", out, library->valuestring, NULL, have_inputs ? inputs : NULL, baked,
+							   (size_t)n, &result))
 		fprintf(stderr, "effect_pack: %s: %d image(s), %d layer and %d emissive page(s)\n",
 				library->valuestring, n, result.layer_pages, result.emissive_pages);
 	else
 		ok = false;
-	for (int i = 0; i < n; ++i) {
+	for (int i = 0; i < count; ++i) {
 		free((void*)baked[i].layer);
 		free((void*)baked[i].emissive);
+		free((void*)baked[i].crop);
 	}
 	free(baked);
 	cJSON_Delete(root);

@@ -22,8 +22,8 @@ aeron_gltf_cook --animations model.anim.yaml --effects-dir <asset root>/remaster
 1. **Model.** Export glTF with ordinary PBR materials. Give each animated
    surface its own material and UV island: frames cover the material's whole
    UV space (or the part `uv` selects).
-2. **Frames.** Paint each frame as an sRGB PNG with the material texture's
-   UV layout.
+2. **Frames.** Paint each frame's base colour and emissive images as sRGB
+   PNGs with the material texture's UV layout.
 3. **Animation file.** Describe the images and the materials' animations.
 4. **Build** with the commands above, and install the model in
    `remaster/models/` and the library in `remaster/effects/`.
@@ -39,7 +39,7 @@ library: mycockpit              # default library of the materials' frames
 images:
   lights_0: { kind: illumination, emissive: frames/lights_0.png }
   lights_1: { kind: illumination, emissive: frames/lights_1.png }
-  screen_a: { kind: colour, image: frames/screen_a.png }
+  screen_a: { kind: colour, baseColor: frames/screen_a.png }
 materials:                      # glTF material names
   PanelLights:
     flipbooks:
@@ -56,19 +56,51 @@ model avoids clashes.
 
 ### Image kinds
 
-| Kind | Inputs | Use |
+Each image changes one or both of the material's PBR channels, and its
+inputs are named after them. All are sRGB PNGs in the material texture's UV
+layout.
+
+| Kind | Inputs | What it does |
 |-|-|-|
-| `colour` | `image` (RGBA, alpha = coverage) | Paints over the material's colour |
-| `illumination` | `emissive` (RGB); optional `colour` (RGBA, alpha = coverage) | Replaces the material's glow; with `colour`, also paints over its colour |
-| `multiply` | `image` (RGB factor, alpha = gloss factor) | Hull damage |
-| `mark` | `image` (RGBA) | Blast marks |
-| `energy` | `image` (RGBA, alpha = intensity) | Energy effects |
+| `colour` | `baseColor` (RGBA) | Paints over the material's base colour, alpha being the coverage |
+| `illumination` | `emissive` (RGB); optional `baseColor` (RGBA) | Replaces the material's emissive; with `baseColor`, also paints over its base colour |
+| `multiply` | `factor` (RGB; alpha: gloss) | Hull damage: multiplies the base colour; alpha below 1 dulls the surface |
+| `mark` | `baseColor` (RGBA) | Blast marks, painted over the hull |
+| `energy` | `emissive` (RGBA; alpha: intensity) | Energy effects (shields, tractor, jamming), added as emission |
+
+A flipbook's `layer` is the kind of its frames: `colour` frames change the
+base colour, `illumination` frames the emissive (and the base colour when
+they have one).
+
+### How a frame changes the material
+
+While frames play, the material is drawn as any PBR material, with its
+base colour and emissive changed:
+
+1. Base colour: the material's base colour texture, then:
+   - a `colour` frame painted over it: `lerp(base, frame.rgb, frame.a)`;
+   - hull damage: times the damage factor;
+   - an illumination frame's `baseColor` painted over the result.
+2. The surface is lit with that base colour and the material's own normal,
+   metallic and roughness (hull damage dulls the last two).
+3. Emissive: while an illumination frame plays, its `emissive` image
+   **replaces** the material's emissive over the whole material, black
+   meaning no emission; otherwise the material's own emissive shows.
+
+Emission brightness: the `emissive` image's colour (0 to 1 per channel,
+from sRGB) × the flipbook's `emissiveStrength` (default 1) × the game's
+emissive scale, which also applies to the material's own emissive. Paint
+the image as the emitted colour at full brightness where it should be
+brightest; raise `emissiveStrength` to go beyond white.
 
 `mark` and `energy` images are the game's own effects, which
 `remaster/effects/effects.yaml` names; materials do not reference them.
 
 All inputs of one image have the same size. Images are capped at 1024
-texels on their longer side.
+texels on their longer side, or `maxSize`.
+
+`crop: [x0, y0, x1, y1]` (blast marks) records the part of the image that
+the classic texture's `[0, 1]` maps to.
 
 ### Materials
 
@@ -120,12 +152,10 @@ damage: { choice: 0, placement: 0, alternatives: [
 **`energy`**: the energy effects the material shows, any of `shields`,
 `tractor` and `jamming`.
 
-**`animBaseColor`**: optional PNG, the colour illumination frames apply
-over when the material's base colour is not it (for example a base colour
-darkened where the texture glows).
-
 ## Libraries
 
 `effect_pack` writes `<library>.yaml` (the index), and `<library>.layer.ktx2`
 and `<library>.emissive.ktx2` (the frames, as needed). Models load the
-libraries they name from `remaster/effects/`.
+libraries they name from `remaster/effects/`. The index records a hash of
+the inputs (the tool, the animation file and its images); a library whose
+index already records the same is left as it is.

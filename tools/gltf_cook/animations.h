@@ -11,9 +11,8 @@
 /* Writes `out_gltf`, the .gltf `gltf` with the animation file `anim` merged:
  * per material named there, the `flipbooks`, `damage` and `energy` it gives
  * replace the material's aeronFlipbooks, aeronDamage and aeronEnergy, the
- * file's `library` filling in a flipbook's or damage's own; an
- * `animBaseColor` PNG becomes a new image and texture named by
- * aeronAnimBaseColor. Members the file does not give are kept.
+ * file's `library` filling in a flipbook's or damage's own. Members the
+ * file does not give are kept.
  * `out_gltf` must be in the directory of `gltf` (buffer and image URIs
  * stay relative to it). With `effects_dir`, every key must be in its
  * library there. Messages go to stderr. */
