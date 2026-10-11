@@ -347,20 +347,14 @@ static bool merge_material(Merge* m, cJSON* mat, const cJSON* entry) {
 	return true;
 }
 
-bool aeron_gltf_cook_merge_animations(const char* gltf, const char* anim, const char* effects_dir,
-									  const char* out_gltf) {
+/* The model animation file `anim`, or NULL with a message. */
+static cJSON* load_file(const char* anim) {
 	char   err[512];
-	char*  text = read_text(gltf);
-	cJSON* doc  = text ? cJSON_Parse(text) : NULL;
-	free(text);
 	cJSON* file = YamlJson_Load(anim, err, sizeof err);
-	if (!doc || !file) {
-		fprintf(stderr, TAG ": %s\n", !doc ? "the input is not a .gltf (JSON)" : err);
-		cJSON_Delete(doc);
-		cJSON_Delete(file);
-		return false;
+	if (!file) {
+		fprintf(stderr, TAG ": %s\n", err);
+		return NULL;
 	}
-	Merge        m         = { .anim = anim, .effects_dir = effects_dir };
 	const cJSON* version   = cJSON_GetObjectItemCaseSensitive(file, "version");
 	const cJSON* materials = cJSON_GetObjectItemCaseSensitive(file, "materials");
 	bool         ok        = cJSON_IsNumber(version) && version->valueint == 1 && cJSON_IsObject(materials);
@@ -370,13 +364,54 @@ bool aeron_gltf_cook_merge_animations(const char* gltf, const char* anim, const 
 	cJSON_ArrayForEach(member, file) {
 		ok = ok && (strcmp(member->string, "version") == 0 || strcmp(member->string, "materials") == 0);
 	}
-	if (!ok)
+	if (!ok) {
 		fprintf(stderr, TAG ": %s: a model animation file has version 1 and materials, nothing else\n", anim);
+		cJSON_Delete(file);
+		return NULL;
+	}
+	return file;
+}
+
+bool aeron_gltf_cook_print_animations(const char* anim) {
+	cJSON* file = load_file(anim);
+	if (!file)
+		return false;
+	Merge        m  = { .anim = anim };
+	bool         ok = true;
+	const cJSON* entry;
+	cJSON_ArrayForEach(entry, cJSON_GetObjectItemCaseSensitive(file, "materials")) {
+		m.material   = entry->string;
+		cJSON* probe = cJSON_CreateObject();
+		ok           = merge_material(&m, probe, entry) && ok;
+		cJSON_Delete(probe);
+	}
+	char* printed = ok ? cJSON_PrintUnformatted(file) : NULL;
+	ok = printed && fputs(printed, stdout) >= 0 && fputc('\n', stdout) != EOF && fflush(stdout) == 0;
+	free(printed);
+	cJSON_Delete(file);
+	return ok;
+}
+
+bool aeron_gltf_cook_merge_animations(const char* gltf, const char* anim, const char* effects_dir,
+									  const char* out_gltf) {
+	char*  text = read_text(gltf);
+	cJSON* doc  = text ? cJSON_Parse(text) : NULL;
+	free(text);
+	if (!doc) {
+		fprintf(stderr, TAG ": the input is not a .gltf (JSON)\n");
+		return false;
+	}
+	cJSON* file = load_file(anim);
+	if (!file) {
+		cJSON_Delete(doc);
+		return false;
+	}
+	Merge        m              = { .anim = anim, .effects_dir = effects_dir };
+	bool         ok             = true;
 	cJSON*       gltf_materials = cJSON_GetObjectItemCaseSensitive(doc, "materials");
 	const cJSON* entry;
-	size_t       merged     = 0;
-	const cJSON* entry_list = ok ? materials : NULL;
-	cJSON_ArrayForEach(entry, entry_list) {
+	size_t       merged = 0;
+	cJSON_ArrayForEach(entry, cJSON_GetObjectItemCaseSensitive(file, "materials")) {
 		m.material  = entry->string;
 		cJSON* mat  = NULL;
 		int    hits = 0;

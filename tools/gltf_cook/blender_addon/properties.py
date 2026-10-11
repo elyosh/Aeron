@@ -150,6 +150,16 @@ class AeronFlightProperties(PropertyGroup):
     component_sets: CollectionProperty(type=AeronComponentSet)
     active_set: IntProperty()
     active_component: IntProperty()
+    # Kept from the import (sources.py): the glTF file, its asset extras
+    # (JSON), and the extensions and extras names it had (JSON).
+    source_path: StringProperty(subtype='FILE_PATH')
+    asset_extras: StringProperty()
+    source_names: StringProperty()
+
+
+class AeronMaterialProperties(PropertyGroup):
+    # The material's entry of the model animation file, as JSON (sources.py).
+    animation: StringProperty()
 
 
 class AeronProblem(PropertyGroup):
@@ -179,6 +189,7 @@ classes = (
     AeronSetMember,
     AeronComponentSet,
     AeronFlightProperties,
+    AeronMaterialProperties,
     AeronProblem,
     AeronSceneProperties,
 )
@@ -188,11 +199,13 @@ def register():
     for cls in classes:
         bpy.utils.register_class(cls)
     bpy.types.Object.aeron_flight = PointerProperty(type=AeronFlightProperties)
+    bpy.types.Material.aeron_flight = PointerProperty(type=AeronMaterialProperties)
     bpy.types.Scene.aeron_flight = PointerProperty(type=AeronSceneProperties)
 
 
 def unregister():
     del bpy.types.Scene.aeron_flight
+    del bpy.types.Material.aeron_flight
     del bpy.types.Object.aeron_flight
     for cls in reversed(classes):
         bpy.utils.unregister_class(cls)

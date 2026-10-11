@@ -31,6 +31,10 @@ class AeronFlightModelPreferences(AddonPreferences):
         items=[('fast', "Fast", "Quickest encode"), ('med', "Medium", "Default"),
                ('uber', "Uber", "Slowest, near-lossless")])
     zstd: BoolProperty(name="Zstd supercompression", default=True)
+    effects_dir: StringProperty(
+        name="Effects directory", subtype='DIR_PATH',
+        description="The game's remaster/effects directory: with it, the .glb export checks every "
+                    "animation frame against its library (empty: not checked)")
 
     def draw(self, context):
         layout = self.layout
@@ -46,6 +50,7 @@ class AeronFlightModelPreferences(AddonPreferences):
         row.prop(self, "mip_min_subrect")
         row.prop(self, "bc7_quality")
         layout.prop(self, "zstd")
+        layout.prop(self, "effects_dir")
 
 
 def get(context):

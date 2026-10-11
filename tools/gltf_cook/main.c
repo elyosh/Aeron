@@ -2,6 +2,7 @@
  * aeron_gltf_cook — CLI entry point.
  *
  * Usage: aeron_gltf_cook <in.gltf> --out <out.glb> [options]
+ *        aeron_gltf_cook --animations-json <model>.anim.yaml
  *
  * Cooks an artist-authored .gltf into a runtime-ready .glb with
  * KHR_texture_basisu / KHR_texture_transform per-channel atlases. An
@@ -19,6 +20,7 @@
 
 static void usage(void) {
 	fprintf(stderr, "Usage: aeron_gltf_cook <in.gltf> --out <out.glb> [options]\n"
+					"       aeron_gltf_cook --animations-json <model>.anim.yaml\n"
 					"\n"
 					"Cooks an artist-authored .gltf (PNG textures, optional\n"
 					"KHR_materials_variants) into one .glb file with four compressed\n"
@@ -52,7 +54,10 @@ static void usage(void) {
 					"  --effects-dir <dir>   With --animations, check every image key\n"
 					"                        against the libraries in <dir>.\n"
 					"  --verbose             Print per-channel cook progress.\n"
-					"  -h, --help            Show this help.\n");
+					"  -h, --help            Show this help.\n"
+					"\n"
+					"--animations-json checks a model animation file as --animations\n"
+					"does and prints it as JSON (for tools without a YAML reader).\n");
 	exit(2);
 }
 
@@ -103,6 +108,11 @@ int main(int argc, char** argv) {
 		usage();
 	if (strcmp(argv[1], "-h") == 0 || strcmp(argv[1], "--help") == 0)
 		usage();
+	if (strcmp(argv[1], "--animations-json") == 0) {
+		if (argc != 3)
+			usage();
+		return aeron_gltf_cook_print_animations(argv[2]) ? 0 : 1;
+	}
 
 	const char* in_path     = argv[1];
 	const char* out_path    = NULL;

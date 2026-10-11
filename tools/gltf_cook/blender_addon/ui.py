@@ -1,5 +1,7 @@
 # Panels (Object properties per role, and the 3D view's Aeron tab) and lists.
 
+import json
+
 import bpy
 from bpy.types import Panel, UIList
 
@@ -252,6 +254,31 @@ class OBJECT_PT_aeron_components(_RolePanel, Panel):
         self.layout.label(text="The order is the component ordinal the game uses")
 
 
+class OBJECT_PT_aeron_source(_RolePanel, Panel):
+    bl_label = "Source"
+    bl_options = {'DEFAULT_CLOSED'}
+    role = 'model'
+
+    def draw(self, context):
+        props = context.object.aeron_flight
+        layout = self.layout
+        if not props.source_path:
+            layout.label(text="Not imported: the source export asks where to write it")
+            return
+        layout.label(text=props.source_path, icon='FILE')
+        layout.operator("aeron.reload_animations", icon='FILE_REFRESH')
+        extras = json.loads(props.asset_extras or "{}")
+        markings = extras.get("aeronSkinMarkings")
+        if "aeronAssetVariants" in extras:
+            layout.label(text="Own paint states: the first {} material variant(s)".format(
+                extras["aeronAssetVariants"]))
+        if markings:
+            column = layout.column(align=True)
+            column.label(text="Skin per markings value:")
+            for value, name in enumerate(markings):
+                column.label(text="  {}: {}".format(value, name or "(paint state)"))
+
+
 class OBJECT_PT_aeron_articulations(_RolePanel, Panel):
     bl_label = "Articulations"
     bl_options = {'DEFAULT_CLOSED'}
@@ -399,6 +426,44 @@ class OBJECT_PT_aeron_hinge(_RolePanel, Panel):
         layout.operator("aeron.from_cursor", text="Axes From 3D Cursor", icon='ORIENTATION_CURSOR').field = 'axes'
 
 
+# ---- Material properties ---------------------------------------------------------
+
+def _frames(book):
+    return "{} frame(s)".format(len(book.get("frames", [])))
+
+
+class MATERIAL_PT_aeron_animation(Panel):
+    bl_space_type = 'PROPERTIES'
+    bl_region_type = 'WINDOW'
+    bl_context = 'material'
+    bl_label = "Aeron Animation"
+
+    @classmethod
+    def poll(cls, context):
+        return context.material is not None and bool(context.material.aeron_flight.animation)
+
+    def draw(self, context):
+        layout = self.layout
+        try:
+            entry = json.loads(context.material.aeron_flight.animation)
+        except ValueError:
+            layout.label(text="Not JSON: clear it", icon='ERROR')
+            entry = {}
+        column = layout.column(align=True)
+        for book in entry.get("flipbooks", []):
+            column.label(text="{}: {} {}, {} ({})".format(
+                book.get("state"), book.get("layer"), book.get("mode"), book.get("library"), _frames(book)),
+                icon='RENDER_ANIMATION')
+        damage = entry.get("damage")
+        if damage:
+            column.label(text="Hull damage: {} alternative(s), {}".format(
+                len(damage.get("alternatives", [])), damage.get("library")), icon='MOD_EXPLODE')
+        if entry.get("energy"):
+            column.label(text="Energy: " + ", ".join(entry["energy"]), icon='LIGHT_SUN')
+        layout.label(text="Written to the model's animation file on source export")
+        layout.operator("aeron.clear_animation", icon='X')
+
+
 # ---- 3D view -------------------------------------------------------------------
 
 def draw_add_buttons(layout):
@@ -433,7 +498,8 @@ class VIEW3D_PT_aeron(Panel):
         layout.prop(context.scene.aeron_flight, "game_preview")
         row = layout.row(align=True)
         row.operator("import_scene.aeron_flight_model", text="Import", icon='IMPORT')
-        row.operator("export_scene.aeron_flight_model", text="Export", icon='EXPORT')
+        row.operator("export_scene.aeron_flight_model_source", text="Export Source", icon='EXPORT')
+        layout.operator("export_scene.aeron_flight_model", text="Export .glb", icon='EXPORT')
 
 
 class VIEW3D_PT_aeron_problems(Panel):
@@ -462,6 +528,7 @@ classes = (
     AERON_UL_problems,
     OBJECT_PT_aeron,
     OBJECT_PT_aeron_components,
+    OBJECT_PT_aeron_source,
     OBJECT_PT_aeron_articulations,
     OBJECT_PT_aeron_settings,
     OBJECT_PT_aeron_sets,
@@ -469,6 +536,7 @@ classes = (
     OBJECT_PT_aeron_children,
     OBJECT_PT_aeron_descriptor,
     OBJECT_PT_aeron_hinge,
+    MATERIAL_PT_aeron_animation,
     VIEW3D_PT_aeron,
     VIEW3D_PT_aeron_problems,
 )

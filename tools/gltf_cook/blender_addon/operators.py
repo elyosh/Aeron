@@ -1,11 +1,14 @@
 # Authoring operators.
 
+import json
+import os
+
 import bpy
 from bpy.props import EnumProperty, StringProperty
 from bpy.types import Operator
 from mathutils import Vector
 
-from . import common, validation
+from . import common, sources, validation
 
 
 def _component(obj):
@@ -314,6 +317,61 @@ class AERON_OT_list_edit(Operator):
         return {'FINISHED'}
 
 
+class AERON_OT_clear_animation(Operator):
+    """Remove the material's animation (written to the model's animation file on export)"""
+
+    bl_idname = "aeron.clear_animation"
+    bl_label = "Clear Animation"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        return context.material is not None and bool(context.material.aeron_flight.animation)
+
+    def execute(self, context):
+        context.material.aeron_flight.animation = ""
+        return {'FINISHED'}
+
+
+class AERON_OT_reload_animations(Operator):
+    """Read the model's animation file again into its materials, replacing their animations"""
+
+    bl_idname = "aeron.reload_animations"
+    bl_label = "Reload Animations"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        return common.role(context.object) == 'model' and bool(context.object.aeron_flight.source_path)
+
+    def execute(self, context):
+        from . import preferences
+
+        root = context.object
+        path = sources.animation_path(bpy.path.abspath(root.aeron_flight.source_path))
+        animations = {}
+        if os.path.exists(path):
+            cooker = preferences.cooker_path(context)
+            if not cooker:
+                self.report({'ERROR'}, "reading the animation file needs aeron_gltf_cook: see the "
+                                       "add-on's preferences")
+                return {'CANCELLED'}
+            try:
+                animations = sources.read_animations(cooker, path)
+            except (OSError, RuntimeError) as error:
+                self.report({'ERROR'}, "cannot read {}: {}".format(path, error))
+                return {'CANCELLED'}
+        materials = sources.model_materials(root)
+        for material in materials:
+            entry = animations.get(material.name)
+            material.aeron_flight.animation = json.dumps(entry, separators=(",", ":")) if entry else ""
+        unmatched = sorted(set(animations) - {material.name for material in materials})
+        self.report({'WARNING'} if unmatched else {'INFO'}, "{} animated material(s){}".format(
+            len(animations) - len(unmatched),
+            "; no material named " + ", ".join(unmatched) if unmatched else ""))
+        return {'FINISHED'}
+
+
 classes = (
     AERON_OT_make_flight_model,
     AERON_OT_add,
@@ -323,6 +381,8 @@ classes = (
     AERON_OT_descriptor_from_bounds,
     AERON_OT_validate,
     AERON_OT_list_edit,
+    AERON_OT_clear_animation,
+    AERON_OT_reload_animations,
 )
 
 

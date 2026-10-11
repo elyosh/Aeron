@@ -1,7 +1,7 @@
 schema_version = "1.0.0"
 
 id = "aeron_flight_model"
-version = "2.0.0"
+version = "2.1.0"
 name = "Aeron Flight Model"
 tagline = "Import, author and export Aeron flight models (glTF)"
 maintainer = "Aeron"
@@ -14,3 +14,6 @@ license = ["SPDX:GPL-3.0-or-later"]
 
 [permissions]
 files = "Import and export glTF files, run aeron_gltf_cook"
+
+[build]
+paths_exclude_pattern = ["__pycache__/", "/.*", "/tests/"]

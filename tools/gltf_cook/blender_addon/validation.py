@@ -2,7 +2,7 @@
 # every problem with the object it concerns. Transforms are checked as the
 # glTF exporter writes them (relative to the parent's world matrix).
 
-from . import common
+from . import common, sources
 
 EPSILON = 1.0e-5
 
@@ -177,6 +177,8 @@ def validate(root):
         names.add(component_set.name)
         for member in component_set.members:
             _check_reference(problems, root, "component set {!r}".format(component_set.name), member)
+
+    sources.check_asset_extras(problems, root)
 
     for obj in root.children_recursive:
         if common.role(obj) in {'model'}:

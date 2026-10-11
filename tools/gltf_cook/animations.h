@@ -20,4 +20,8 @@
 bool aeron_gltf_cook_merge_animations(const char* gltf, const char* anim, const char* effects_dir,
 									  const char* out_gltf);
 
+/* Prints the model animation file `anim` as JSON on stdout, after checking
+ * it as the merge does (libraries aside). Messages go to stderr. */
+bool aeron_gltf_cook_print_animations(const char* anim);
+
 #endif /* AERON_GLTF_COOK_ANIMATIONS_H */

@@ -17,22 +17,51 @@ blender --command extension build --source-dir aeron/tools/gltf_cook/blender_add
 For development, link this directory as
 `<extensions>/user_default/aeron_flight_model` instead. In the add-on's
 preferences, set the path of `aeron_gltf_cook` (built with the Aeron tools),
-unless it is on the `PATH`.
+unless it is on the `PATH`: it cooks `.glb` files and reads animation files.
+Setting the game's `remaster/effects` directory there makes the `.glb`
+export check every animation frame against its library.
+
+`tests/roundtrip.py` checks that models import and export unchanged (run it
+with `--help`).
 
 ## Workflow
 
-1. Import a model with File > Import > Aeron Flight Model. Import the
-   **uncooked** `.gltf` (with its PNG textures) that the conversion keeps:
-   Blender cannot read a cooked `.glb`'s textures.
+A model's source is a directory: `<model>.gltf`, its `.bin`, its PNG
+textures (usually under `textures/`) and, when its materials are animated,
+`<model>.anim.yaml` ([format](../../effect_pack/README.md)).
+
+1. Import the model's `.gltf` with File > Import > Aeron Flight Model, and
+   save your work as a `.blend`. Blender cannot read a cooked `.glb`'s
+   textures: import the source.
 2. Edit it. The **Aeron** tab of the 3D view's sidebar (N, or View >
    Sidebar) adds parts to the active component at the 3D cursor and checks
    the model. The selected object's flight data is in Object properties >
    Aeron Flight Model: the model root's component order, articulations and
    sets; a component's fields, hardpoint and glow order, descriptor and
    hinge.
-3. Export with File > Export > Aeron Flight Model (or the tab's Export).
-   The export checks the model first: Aeron > Problems lists every problem
-   with a button that selects its object.
+3. Paint textures with any program, in the model's directory. Textures
+   you have not used yet can stay there: only what the materials use is
+   exported.
+4. Export with File > Export > Aeron Flight Model Source (or the tab's
+   Export Source). It offers the imported file, and writes the `.gltf`, its
+   `.bin` and, when the animations changed, the animation file. Textures
+   stay where they are; images from elsewhere, or that exist only in
+   Blender, are copied into `textures/` as PNG. Nothing else in the
+   directory is changed or removed.
+5. Build the game's model from the source, or try it at once with File >
+   Export > Aeron Flight Model (.glb), which cooks it into a `.glb` for the
+   game's `remaster/models/`.
+
+Both exports check the model first: Aeron > Problems lists every problem
+with a button that selects its object. The source export also stops when:
+- an image has unsaved changes (save it first: the export uses the file);
+- a copied image would replace a different file of the same name;
+- the result would lack an extension or extras the imported file had,
+  which Blender or this add-on does not carry (Allow Losing Data exports
+  anyway).
+
+When the source file changes outside Blender, import it again rather than
+export over it from an older `.blend`.
 
 To start from plain meshes, select them and use **Make Flight Model**: they
 become the components of a new model root (or of the active one).
@@ -55,6 +84,21 @@ become the components of a new model root (or of the active one).
   The component's list orders its hardpoints and glows: hardpoints count
   per component, glows across the whole model.
 - Objects without a role are not exported (a warning lists them).
+
+## Materials
+
+A material's animation (flipbooks, hull damage, energy effects) from the
+model's animation file is kept on the material: Material properties >
+Aeron Animation shows it, and Clear Animation removes it. It follows the
+material when you rename or duplicate it, and a material that no longer
+exists drops it. To change animations, edit the animation file, then use
+Reload Animations in the model root's Source panel (otherwise the next
+export writes Blender's animations back over your edit).
+
+The model's skins are material variants (Blender's glTF material variants).
+The model root's Source panel shows which skin each markings value shows
+and how many variants are the model's own paint states; a skin named there
+must keep its variant name.
 
 Glass is a transmissive material (`KHR_materials_transmission`): its base
 colour tints what shows through it, as in any glTF viewer. Converted glass

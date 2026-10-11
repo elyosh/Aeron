@@ -1,13 +1,16 @@
 # Export: Blender's glTF exporter writes the model's objects (filtered,
 # ordered and given their AERON_flight_model data by the hooks below, which
-# act only during this add-on's export), then aeron_gltf_cook cooks the
-# .gltf into the runtime .glb.
+# act only during this add-on's export). The flight model export cooks that
+# .gltf into the runtime .glb with aeron_gltf_cook; the source export writes
+# it into a model directory of the source tree, with its animation file.
 
+import filecmp
 import json
 import os
 import shutil
 import subprocess
 import tempfile
+import urllib.parse
 
 import bpy
 from bpy.props import BoolProperty, StringProperty
@@ -15,7 +18,7 @@ from bpy.types import Operator
 from bpy_extras.io_utils import ExportHelper
 from mathutils import Matrix
 
-from . import common, validation
+from . import common, sources, validation
 
 # Blender (x, y, z) -> glTF (x, z, -y).
 _TO_GLTF = Matrix(((1.0, 0.0, 0.0, 0.0), (0.0, 0.0, 1.0, 0.0), (0.0, -1.0, 0.0, 0.0), (0.0, 0.0, 0.0, 1.0)))
@@ -99,6 +102,7 @@ class _ExportState:
     """What the hooks write, prepared from the validated model."""
 
     def __init__(self, root):
+        self.asset_extras = json.loads(root.aeron_flight.asset_extras or "{}")
         self.names = {root.name}
         self.extensions = {}
         self.lights = {}
@@ -189,6 +193,18 @@ class glTF2ExportUserExtension:
             gltf_scene.extras.pop("aeron_flight", None)
             gltf_scene.extras = gltf_scene.extras or None
 
+    def gather_material_hook(self, gltf_material, blender_material, export_settings):
+        # The animation goes to the animation file, not the material.
+        if _state is not None and isinstance(gltf_material.extras, dict):
+            gltf_material.extras.pop("aeron_flight", None)
+            gltf_material.extras = gltf_material.extras or None
+
+    def gather_asset_hook(self, gltf_asset, export_settings):
+        if _state is not None and _state.asset_extras:
+            extras = gltf_asset.extras if isinstance(gltf_asset.extras, dict) else {}
+            extras.update(_state.asset_extras)
+            gltf_asset.extras = extras
+
 
 def _png_images(gltf_path):
     """The cooker reads PNG only: convert the exported JPEG and WebP images."""
@@ -218,8 +234,10 @@ def _png_images(gltf_path):
             json.dump(document, stream, separators=(",", ":"))
 
 
-def export_gltf(root, filepath, apply_modifiers=True):
-    """Write `root`'s model as an uncooked .gltf (with its .bin and images)."""
+def export_gltf(root, filepath, apply_modifiers=True, keep_originals=False):
+    """Write `root`'s model as an uncooked .gltf (with its .bin and images).
+    With `keep_originals`, images that have a file are referenced where they
+    are; the others are written under textures/."""
     global _state
     context = bpy.context
     active = context.view_layer.objects.active
@@ -234,7 +252,8 @@ def export_gltf(root, filepath, apply_modifiers=True):
             export_import_convert_lighting_mode='SPEC', export_skins=False, export_morph=False,
             export_gpu_instances=False, export_draco_mesh_compression_enable=False,
             export_hierarchy_flatten_objs=False, use_selection=False, use_visible=False,
-            use_renderable=False, use_active_collection=False, will_save_settings=False)
+            use_renderable=False, use_active_collection=False, will_save_settings=False,
+            export_keep_originals=keep_originals, export_texture_dir="textures" if keep_originals else "")
     finally:
         _state = None
         # The exporter leaves edit and other modes for object mode.
@@ -242,11 +261,34 @@ def export_gltf(root, filepath, apply_modifiers=True):
             bpy.ops.object.mode_set(mode=mode)
     if 'FINISHED' not in result:
         raise RuntimeError("Blender's glTF export did not finish ({})".format(result))
-    _png_images(filepath)
+    if not keep_originals:
+        _png_images(filepath)
 
 
 def _tail(text, count=20):
     return "\n".join((text or "").rstrip().splitlines()[-count:])
+
+
+def _check(operator, context, source=False):
+    """The validated model root, or None after reporting its problems."""
+    root = common.model_root(context.active_object) or _single_root(context.scene)
+    problems = validation.validate(root)
+    if source and root is not None:
+        for image in sorted(sources.model_images(root), key=lambda image: image.name):
+            if image.is_dirty:
+                problems.error(None, "image {} has unsaved changes: save it (Image > Save) "
+                                     "first".format(image.name))
+    validation.store(context.scene, problems)
+    if problems.errors:
+        operator.report({'ERROR'}, "{} problem(s), see Aeron > Problems: {}".format(
+            len(problems.errors), problems.errors[0][1]))
+        return None
+    operator.warnings = len(problems.items) - len(problems.errors)
+    return root
+
+
+def _warnings(count):
+    return " ({} warning(s), see Aeron > Problems)".format(count) if count else ""
 
 
 class EXPORT_OT_aeron_flight_model(Operator, ExportHelper):
@@ -272,12 +314,8 @@ class EXPORT_OT_aeron_flight_model(Operator, ExportHelper):
         if not cooker:
             self.report({'ERROR'}, "aeron_gltf_cook is not set: see the add-on's preferences")
             return {'CANCELLED'}
-        root = common.model_root(context.active_object) or _single_root(context.scene)
-        problems = validation.validate(root)
-        validation.store(context.scene, problems)
-        if problems.errors:
-            self.report({'ERROR'}, "{} problem(s), see Aeron > Problems: {}".format(
-                len(problems.errors), problems.errors[0][1]))
+        root = _check(self, context)
+        if root is None:
             return {'CANCELLED'}
 
         out_glb = bpy.path.abspath(self.filepath)
@@ -289,6 +327,8 @@ class EXPORT_OT_aeron_flight_model(Operator, ExportHelper):
         scratch_gltf = os.path.join(scratch, os.path.splitext(os.path.basename(out_glb))[0] + ".gltf")
         try:
             export_gltf(root, scratch_gltf, self.apply_modifiers)
+            with open(scratch_gltf, "r", encoding="utf-8") as stream:
+                document = json.load(stream)
         except Exception as error:
             self.report({'ERROR'}, "glTF export failed: {}. Scratch: {}".format(error, scratch))
             return {'CANCELLED'}
@@ -299,6 +339,13 @@ class EXPORT_OT_aeron_flight_model(Operator, ExportHelper):
                 "--mip-min-subrect", prefs.mip_min_subrect, "--quality", prefs.bc7_quality]
         if not prefs.zstd:
             argv.append("--no-zstd")
+        animations = sources.material_animations(m.get("name") for m in document.get("materials", []))
+        if animations:
+            animation_file = sources.animation_path(scratch_gltf)
+            sources.write_animations(animation_file, animations)
+            argv += ["--animations", animation_file]
+            if prefs.effects_dir:
+                argv += ["--effects-dir", bpy.path.abspath(prefs.effects_dir)]
         try:
             completed = subprocess.run(argv, capture_output=True, text=True)
         except OSError as error:
@@ -314,9 +361,167 @@ class EXPORT_OT_aeron_flight_model(Operator, ExportHelper):
             shutil.move(scratch, kept)
         else:
             shutil.rmtree(scratch, ignore_errors=True)
-        warnings = len(problems.items) - len(problems.errors)
-        self.report({'INFO'}, "Wrote {}{}".format(
-            out_glb, " ({} warning(s), see Aeron > Problems)".format(warnings) if warnings else ""))
+        self.report({'INFO'}, "Wrote {}{}".format(out_glb, _warnings(self.warnings)))
+        return {'FINISHED'}
+
+
+def _inside(path, directory):
+    directory = os.path.realpath(directory)
+    return os.path.commonpath([os.path.realpath(path), directory]) == directory
+
+
+def _to_png(source, target):
+    loaded = bpy.data.images.load(source)
+    try:
+        loaded.pixels[0]  # loads the image before its path changes
+        loaded.file_format = 'PNG'
+        loaded.filepath_raw = target
+        loaded.save()
+    finally:
+        bpy.data.images.remove(loaded)
+
+
+def _place_images(document, scratch, model_dir):
+    """Where the exported images go in the model directory: images under it
+    stay; the others (written by the export, or elsewhere on disk) are
+    copied to its textures/, PNG. Returns [(source, target)] and rewrites
+    the URIs; raises ValueError when a target holds another file."""
+    copies = {}
+    converted = os.path.join(scratch, "converted")
+    for image in document.get("images", []):
+        uri = image.get("uri")
+        if not uri:
+            continue
+        path = os.path.normpath(os.path.join(scratch, urllib.parse.unquote(uri)))
+        if _inside(path, model_dir) and not _inside(path, scratch):
+            target = path
+        else:
+            target = os.path.join(model_dir, "textures", os.path.basename(path))
+        if os.path.splitext(path)[1].lower() != ".png":
+            target = os.path.splitext(target)[0] + ".png"
+            os.makedirs(converted, exist_ok=True)
+            png = os.path.join(converted, os.path.basename(target))
+            if not os.path.exists(png):
+                _to_png(path, png)
+            path = png
+            image["mimeType"] = "image/png"
+        if path != target:
+            if copies.get(target, path) != path:
+                raise ValueError("{} and {} would both be {}".format(copies[target], path, target))
+            if os.path.exists(target) and not filecmp.cmp(path, target, shallow=False):
+                raise ValueError("{} exists with other content: rename the image that goes there "
+                                 "({})".format(target, path))
+            copies[target] = path
+        image["uri"] = urllib.parse.quote(os.path.relpath(target, model_dir).replace(os.sep, "/"))
+    return [(source, target) for target, source in copies.items()]
+
+
+def _buffer_paths(document, directory):
+    return [os.path.join(directory, urllib.parse.unquote(buffer["uri"]))
+            for buffer in document.get("buffers", []) if buffer.get("uri")]
+
+
+class EXPORT_OT_aeron_flight_model_source(Operator, ExportHelper):
+    """Export the selected object's flight model into a model directory of the source tree"""
+
+    bl_idname = "export_scene.aeron_flight_model_source"
+    bl_label = "Export Aeron Flight Model Source"
+
+    filename_ext = ".gltf"
+    filter_glob: StringProperty(default="*.gltf", options={'HIDDEN'})
+    apply_modifiers: BoolProperty(name="Apply Modifiers", default=True,
+                                  description="Export meshes with their modifiers applied")
+    allow_loss: BoolProperty(
+        name="Allow Losing Data", default=False,
+        description="Export even when the result lacks extensions or extras the imported file had")
+
+    def invoke(self, context, event):
+        root = common.model_root(context.active_object) or _single_root(context.scene)
+        if root is not None and root.aeron_flight.source_path:
+            self.filepath = root.aeron_flight.source_path
+        return ExportHelper.invoke(self, context, event)
+
+    def execute(self, context):
+        from . import preferences
+
+        root = _check(self, context, source=True)
+        if root is None:
+            return {'CANCELLED'}
+        out_gltf = os.path.abspath(bpy.path.abspath(self.filepath))
+        model_dir = os.path.dirname(out_gltf)
+        animation_file = sources.animation_path(out_gltf)
+        if not os.path.isdir(model_dir):
+            self.report({'ERROR'}, "no such directory: " + model_dir)
+            return {'CANCELLED'}
+        cooker = preferences.cooker_path(context)
+        scratch = tempfile.mkdtemp(prefix="aeron_flight_model_source_")
+        scratch_gltf = os.path.join(scratch, os.path.basename(out_gltf))
+
+        def fail(message):
+            self.report({'ERROR'}, "{}. Scratch: {}".format(message, scratch))
+            return {'CANCELLED'}
+
+        try:
+            export_gltf(root, scratch_gltf, self.apply_modifiers, keep_originals=True)
+            with open(scratch_gltf, "r", encoding="utf-8") as stream:
+                document = json.load(stream)
+        except Exception as error:
+            return fail("glTF export failed: {}".format(error))
+        if root.aeron_flight.source_names and not self.allow_loss:
+            missing = sources.lost(json.loads(root.aeron_flight.source_names), document)
+            if missing:
+                return fail("the export would lose what the imported file had: {} (Allow Losing Data "
+                            "exports anyway)".format(", ".join(missing)))
+        try:
+            copies = _place_images(document, scratch, model_dir)
+        except (OSError, ValueError) as error:
+            return fail("textures: {}".format(error))
+
+        # The animation file is rewritten only when the animations changed.
+        animations = sources.material_animations(m.get("name") for m in document.get("materials", []))
+        previous = {}
+        if animations or os.path.exists(animation_file):
+            if not cooker:
+                return fail("the animation file needs aeron_gltf_cook: see the add-on's preferences")
+            try:
+                if os.path.exists(animation_file):
+                    previous = sources.read_animations(cooker, animation_file)
+                scratch_animations = sources.animation_path(scratch_gltf)
+                sources.write_animations(scratch_animations, animations)
+                sources.read_animations(cooker, scratch_animations)
+            except (OSError, RuntimeError) as error:
+                return fail("animations: {}".format(error))
+        animations_changed = animations != previous
+
+        # Everything is checked: write into the model directory.
+        try:
+            old_buffers = []
+            if os.path.exists(out_gltf):
+                old_buffers = _buffer_paths(sources.read_document(out_gltf), model_dir)
+            for source, target in copies:
+                os.makedirs(os.path.dirname(target), exist_ok=True)
+                shutil.copyfile(source, target)
+            for path in old_buffers:
+                if _inside(path, model_dir) and os.path.isfile(path):
+                    os.remove(path)
+            for source, target in zip(_buffer_paths(document, scratch), _buffer_paths(document, model_dir)):
+                shutil.copyfile(source, target)
+            with open(out_gltf, "w", encoding="utf-8") as stream:
+                json.dump(document, stream, separators=(",", ":"))
+            if animations_changed:
+                shutil.copyfile(scratch_animations, animation_file)
+        except (OSError, ValueError) as error:
+            return fail("writing {} failed: {}".format(model_dir, error))
+        shutil.rmtree(scratch, ignore_errors=True)
+        root.aeron_flight.source_path = out_gltf
+
+        message = "Wrote {}: {} texture(s) added".format(out_gltf, len(copies))
+        if animations_changed:
+            dropped = sorted(set(previous) - set(animations))
+            message += ", animations of {} material(s) written".format(len(animations))
+            if dropped:
+                message += " (dropped: {})".format(", ".join(dropped))
+        self.report({'INFO'}, message + _warnings(self.warnings))
         return {'FINISHED'}
 
 
@@ -327,9 +532,10 @@ def _single_root(scene):
 
 def menu_func(self, context):
     self.layout.operator(EXPORT_OT_aeron_flight_model.bl_idname, text="Aeron Flight Model (.glb)")
+    self.layout.operator(EXPORT_OT_aeron_flight_model_source.bl_idname, text="Aeron Flight Model Source (.gltf)")
 
 
-classes = (EXPORT_OT_aeron_flight_model,)
+classes = (EXPORT_OT_aeron_flight_model, EXPORT_OT_aeron_flight_model_source)
 
 
 def register():

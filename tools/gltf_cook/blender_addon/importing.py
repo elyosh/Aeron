@@ -2,14 +2,18 @@
 # only during this add-on's import) restores the AERON_flight_model data on
 # the objects it created: roles and fields, the ordinals as list order, the
 # model root's articulations, settings and sets, and the model lights as
-# Blender point and area lights.
+# Blender point and area lights. The model's animation file, asset extras
+# and the names of its extensions and extras are kept too (sources.py).
+
+import json
+import os
 
 import bpy
 from bpy.props import StringProperty
 from bpy.types import Operator
 from bpy_extras.io_utils import ImportHelper
 
-from . import common
+from . import common, sources
 
 # The running import's results (None outside this add-on's imports).
 _state = None
@@ -165,6 +169,8 @@ class glTF2ImportUserExtension:
         if _state is None:
             return
         _state["cooked"] = "KHR_texture_basisu" in (gltf.data.extensions_used or [])
+        _state["materials"] = {material.name: set(getattr(material, "blender_material", {}).values())
+                               for material in gltf.data.materials or [] if material.name}
         try:
             restore(gltf)
         except Exception as error:  # the importer would only log it
@@ -197,8 +203,28 @@ class IMPORT_OT_aeron_flight_model(Operator, ImportHelper):
     filter_glob: StringProperty(default="*.gltf;*.glb", options={'HIDDEN'})
 
     def execute(self, context):
+        from . import preferences
+
         global _state
-        _state = {"roots": [], "components": 0, "lights": 0, "cooked": False, "error": None}
+        try:
+            document = sources.read_document(self.filepath)
+        except (OSError, ValueError) as error:
+            self.report({'ERROR'}, "cannot read {}: {}".format(self.filepath, error))
+            return {'CANCELLED'}
+        animations = {}
+        animation_file = sources.animation_path(self.filepath)
+        if os.path.isfile(animation_file):
+            cooker = preferences.cooker_path(context)
+            if not cooker:
+                self.report({'ERROR'}, "reading the model's animation file needs aeron_gltf_cook: see the "
+                                       "add-on's preferences")
+                return {'CANCELLED'}
+            try:
+                animations = sources.read_animations(cooker, animation_file)
+            except (OSError, RuntimeError) as error:
+                self.report({'ERROR'}, "cannot read {}: {}".format(animation_file, error))
+                return {'CANCELLED'}
+        _state = {"roots": [], "components": 0, "lights": 0, "cooked": False, "error": None, "materials": {}}
         try:
             result = bpy.ops.import_scene.gltf(
                 filepath=self.filepath, merge_vertices=False, import_shading='NORMALS',
@@ -212,12 +238,30 @@ class IMPORT_OT_aeron_flight_model(Operator, ImportHelper):
         if state["error"]:
             self.report({'ERROR'}, "the flight data was not restored: " + state["error"])
             return {'CANCELLED'}
+        unmatched = []
+        for name, entry in animations.items():
+            matched = [bpy.data.materials.get(blender_name) for blender_name in state["materials"].get(name, ())]
+            matched = [material for material in matched if material is not None]
+            for material in matched:
+                material.aeron_flight.animation = json.dumps(entry, separators=(",", ":"))
+            if not matched:
+                unmatched.append(name)
         if not state["roots"]:
             self.report({'WARNING'}, "no Aeron flight model in this file: imported as plain glTF")
             return {'FINISHED'}
+        root = state["roots"][0]
+        root.aeron_flight.source_path = os.path.abspath(self.filepath)
+        asset_extras = (document.get("asset") or {}).get("extras")
+        root.aeron_flight.asset_extras = json.dumps(asset_extras) if isinstance(asset_extras, dict) else ""
+        root.aeron_flight.source_names = json.dumps(sources.names(document))
         _preview_transmission(state["roots"])
-        context.view_layer.objects.active = state["roots"][0]
+        context.view_layer.objects.active = root
         message = "Imported {} component(s), {} light(s)".format(state["components"], state["lights"])
+        if animations:
+            message += ", {} animated material(s)".format(len(animations) - len(unmatched))
+        if unmatched:
+            self.report({'WARNING'}, "the animation file names material(s) the model does not have, "
+                                     "dropped: " + ", ".join(unmatched))
         if state["cooked"]:
             self.report({'WARNING'}, message + "; a cooked .glb has textures Blender cannot read: "
                                                "import the uncooked .gltf instead")
