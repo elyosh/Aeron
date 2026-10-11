@@ -9,6 +9,10 @@ add-on in a headless Blender, and exported back over the copy with the source
 export. The result must keep:
 - the flight data: the same nodes per role, in the loader's order, with the
   same AERON_flight_model objects, lights and world transforms;
+- the geometry: per component and collision mesh, the same triangles (corner
+  positions, winding, material). Blender holds one face per set of corners,
+  so a triangle the source repeats is kept once, and of a triangle with two
+  materials one is kept: both are reported, not failures;
 - every material a primitive or skin uses, with its extras and the same
   texture file in each slot;
 - the asset extras, and every extension and extras name (the add-on's guard);
@@ -20,14 +24,16 @@ must use the same materials and skins.
 """
 
 import argparse
+import collections
 import importlib.util
 import json
-import math
 import os
 import shutil
+import struct
 import subprocess
 import sys
 import tempfile
+import urllib.parse
 
 ADDON_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MODULE = "bl_ext.user_default.aeron_flight_model"
@@ -186,6 +192,66 @@ def compare_flight(original, result, failures):
                 break
 
 
+def _accessor(document, directory, index, buffers):
+    accessor = document["accessors"][index]
+    view = document["bufferViews"][accessor["bufferView"]]
+    if view["buffer"] not in buffers:
+        uri = urllib.parse.unquote(document["buffers"][view["buffer"]]["uri"])
+        with open(os.path.join(directory, uri), "rb") as stream:
+            buffers[view["buffer"]] = stream.read()
+    count = {"SCALAR": 1, "VEC2": 2, "VEC3": 3, "VEC4": 4}[accessor["type"]]
+    fmt = {5126: "f", 5125: "I", 5123: "H", 5121: "B"}[accessor["componentType"]]
+    size = struct.calcsize(fmt)
+    stride = view.get("byteStride", count * size)
+    offset = view.get("byteOffset", 0) + accessor.get("byteOffset", 0)
+    return [struct.unpack_from("<" + fmt * count, buffers[view["buffer"]], offset + k * stride)
+            for k in range(accessor["count"])]
+
+
+def _geometry(document, directory):
+    """Per flight model mesh node (by its loader label), its triangles:
+    Counter of (corners from the smallest, winding kept; material name)."""
+    buffers, geometry = {}, {}
+    for label, node, _ in _flight(document):
+        if "mesh" not in node:
+            continue
+        triangles = collections.Counter()
+        for primitive in document["meshes"][node["mesh"]]["primitives"]:
+            positions = _accessor(document, directory, primitive["attributes"]["POSITION"], buffers)
+            indices = ([i[0] for i in _accessor(document, directory, primitive["indices"], buffers)]
+                       if "indices" in primitive else list(range(len(positions))))
+            material = (document["materials"][primitive["material"]].get("name")
+                        if "material" in primitive else None)
+            for t in range(0, len(indices) - 2, 3):
+                corners = [tuple(round(c, 4) for c in positions[i]) for i in indices[t:t + 3]]
+                triangles[(tuple(min(corners[r:] + corners[:r] for r in range(3))), material)] += 1
+        geometry[label] = triangles
+    return geometry
+
+
+def compare_geometry(before, after, failures, notes):
+    repeats = shared = 0
+    for label in sorted(set(before) | set(after)):
+        a, b = before.get(label, collections.Counter()), after.get(label, collections.Counter())
+        shapes_b = {shape for shape, _ in b}
+        materials_a = collections.Counter(shape for shape, _ in a)
+        for (shape, material), count in a.items():
+            if (shape, material) not in b:
+                if shape in shapes_b and materials_a[shape] > 1:
+                    shared += 1
+                else:
+                    failures.append("{}: a triangle of {} lost".format(label, material))
+            elif b[(shape, material)] < count:
+                repeats += count - b[(shape, material)]
+        for key in b:
+            if key not in a:
+                failures.append("{}: a triangle of {} added".format(label, key[1]))
+    if repeats:
+        notes.append("{} repeated triangle(s) kept once".format(repeats))
+    if shared:
+        notes.append("{} triangle(s) with two materials kept with one".format(shared))
+
+
 def _texture_files(document, directory, material):
     files = {}
 
@@ -262,6 +328,7 @@ def roundtrip(args, model_dir, scratch, notes):
     gltf = os.path.join(copy, key + ".gltf")
     animations = os.path.join(copy, key + ".anim.yaml")
     original = _sources().read_document(gltf)
+    geometry = _geometry(original, copy)
     textures_before = [path for path in _listing(copy) if path.startswith("textures" + os.sep)]
     animation_bytes = open(animations, "rb").read() if os.path.exists(animations) else None
     if animation_bytes is not None:
@@ -284,6 +351,7 @@ def roundtrip(args, model_dir, scratch, notes):
     result = _sources().read_document(gltf)
     sources = _sources()
     compare_flight(original, result, failures)
+    compare_geometry(geometry, _geometry(result, copy), failures, notes)
     compare_materials(original, result, copy, sources, failures)
     textures_after = [path for path in _listing(copy) if path.startswith("textures" + os.sep)]
     if textures_after != textures_before:

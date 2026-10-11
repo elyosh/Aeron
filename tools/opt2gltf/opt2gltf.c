@@ -827,6 +827,10 @@ typedef struct {
 	 * classic-remap block in built_mesh_from_opt). */
 	uint32_t fixed_zero_normals;
 	uint32_t fixed_flipped_normals;
+	/* Triangles the OPT repeats (see built_mesh_emit_triangle): left out,
+	 * or kept because the repeat has another texture. */
+	uint32_t skipped_repeats;
+	uint32_t kept_repeats;
 	bool     has_tangents; /* vertices carry TANGENT (built_mesh_generate_tangents) */
 } BuiltMesh;
 
@@ -978,6 +982,82 @@ static uint32_t built_mesh_emit_corner(BuiltMesh* bm, const opt_mesh_t* m, int32
 	return built_mesh_intern_vertex(bm, &gv);
 }
 
+/* The triangles a mesh has emitted, by their corners (rotated to start at
+ * the smallest index, so a reversed triangle, the back of a two-sided
+ * surface, is another key), with the face group that emitted each. */
+typedef struct {
+	uint32_t v[3];
+	int32_t  group; /* -1: empty slot */
+} SeenTriangle;
+
+typedef struct {
+	SeenTriangle* slots;
+	uint32_t      cap; /* a power of 2 */
+} TriangleSet;
+
+static bool triangle_set_init(TriangleSet* set, const opt_lod_t* lod) {
+	uint32_t triangles = 0;
+	for (int32_t g = 0; g < lod->group_count; ++g)
+		for (int32_t f = 0; f < lod->groups[g].face_count; ++f)
+			triangles += lod->groups[g].faces[f].verts[3] >= 0 ? 2u : 1u;
+	set->cap = 16;
+	while (set->cap < triangles * 2u)
+		set->cap *= 2;
+	set->slots = (SeenTriangle*)malloc(set->cap * sizeof *set->slots);
+	for (uint32_t i = 0; set->slots && i < set->cap; ++i)
+		set->slots[i].group = -1;
+	return set->slots != NULL;
+}
+
+/* The slot of triangle `v` (rotated), found or empty. */
+static SeenTriangle* triangle_set_slot(TriangleSet* set, const uint32_t v[3]) {
+	uint32_t hash = (v[0] * 73856093u) ^ (v[1] * 19349663u) ^ (v[2] * 83492791u);
+	for (uint32_t i = hash & (set->cap - 1);; i = (i + 1) & (set->cap - 1)) {
+		SeenTriangle* slot = &set->slots[i];
+		if (slot->group < 0 || (slot->v[0] == v[0] && slot->v[1] == v[1] && slot->v[2] == v[2]))
+			return slot;
+	}
+}
+
+static bool same_textures(const opt_face_group_t* a, const opt_face_group_t* b) {
+	if (a->texture_index != b->texture_index || a->state_count != b->state_count)
+		return false;
+	for (int32_t s = 0; a->state_textures && b->state_textures && s < a->state_count; ++s)
+		if (a->state_textures[s] != b->state_textures[s])
+			return false;
+	return true;
+}
+
+/* Emits triangle (a, b, c) of face group `g`, unless the mesh already has
+ * it with the same textures: some shipped OPTs list a face twice, which
+ * draws the same pixels, and which Blender cannot hold (two faces on the
+ * same vertices). A repeat with another texture is kept: which one shows
+ * is not data to drop. */
+static void built_mesh_emit_triangle(BuiltMesh* bm, TriangleSet* seen, const opt_lod_t* lod, int32_t g,
+									 uint32_t a, uint32_t b, uint32_t c) {
+	uint32_t v[3] = { a, b, c };
+	while (v[0] > v[1] || v[0] > v[2]) {
+		const uint32_t first = v[0];
+		v[0]                 = v[1];
+		v[1]                 = v[2];
+		v[2]                 = first;
+	}
+	SeenTriangle* slot = triangle_set_slot(seen, v);
+	if (slot->group >= 0) {
+		if (same_textures(&lod->groups[slot->group], &lod->groups[g])) {
+			bm->skipped_repeats++;
+			return;
+		}
+		bm->kept_repeats++;
+	} else {
+		memcpy(slot->v, v, sizeof v);
+		slot->group = g;
+	}
+	built_mesh_emit_index(bm, a);
+	built_mesh_emit_index(bm, b);
+	built_mesh_emit_index(bm, c);
+}
+
 /* Walk LOD 0 of an OPT mesh and emit deduplicated vertices + indices
  * grouped by face group. Skips degenerate faces and empty groups.
  * `regen` enables angle-based normal regeneration; when false the stored
@@ -996,8 +1076,14 @@ static bool built_mesh_from_opt(BuiltMesh* bm, const opt_mesh_t* m, float meters
 	if (!bm->fg_index_start || !bm->fg_index_count_arr)
 		return false;
 
+	TriangleSet seen = { 0 };
+	if (!triangle_set_init(&seen, lod)) {
+		built_mesh_free(bm);
+		return false;
+	}
 	float* corner_normals = regen ? built_mesh_build_corner_normals(m, lod, smooth_angle_degrees) : NULL;
 	if (regen && !corner_normals) {
+		free(seen.slots);
 		built_mesh_free(bm);
 		return false;
 	}
@@ -1025,6 +1111,7 @@ static bool built_mesh_from_opt(BuiltMesh* bm, const opt_mesh_t* m, float meters
 			free(classic_normals);
 			free(classic_normal_set);
 			free(corner_normals);
+			free(seen.slots);
 			return false;
 		}
 	}
@@ -1063,9 +1150,7 @@ static bool built_mesh_from_opt(BuiltMesh* bm, const opt_mesh_t* m, float meters
 					}
 					if (!ok)
 						continue;
-					built_mesh_emit_index(bm, v[0]);
-					built_mesh_emit_index(bm, v[1]);
-					built_mesh_emit_index(bm, v[2]);
+					built_mesh_emit_triangle(bm, &seen, lod, g, v[0], v[1], v[2]);
 				}
 				continue;
 			}
@@ -1109,14 +1194,9 @@ static bool built_mesh_from_opt(BuiltMesh* bm, const opt_mesh_t* m, float meters
 			}
 			if (!ok)
 				continue;
-			built_mesh_emit_index(bm, v[0]);
-			built_mesh_emit_index(bm, v[1]);
-			built_mesh_emit_index(bm, v[2]);
-			if (corners == 4) {
-				built_mesh_emit_index(bm, v[0]);
-				built_mesh_emit_index(bm, v[2]);
-				built_mesh_emit_index(bm, v[3]);
-			}
+			built_mesh_emit_triangle(bm, &seen, lod, g, v[0], v[1], v[2]);
+			if (corners == 4)
+				built_mesh_emit_triangle(bm, &seen, lod, g, v[0], v[2], v[3]);
 		}
 		bm->fg_index_start[g]     = start;
 		bm->fg_index_count_arr[g] = bm->index_count - start;
@@ -1126,6 +1206,7 @@ static bool built_mesh_from_opt(BuiltMesh* bm, const opt_mesh_t* m, float meters
 	free(corner_normals);
 	free(classic_normals);
 	free(classic_normal_set);
+	free(seen.slots);
 	return bm->index_count > 0;
 }
 
@@ -2584,7 +2665,7 @@ static bool build_memory(const opt_file_t* opt, const char* basename, const OptG
 	}
 	size_t   total_meshes    = 0;
 	int      max_state_count = 1; /* drives KHR_materials_variants */
-	uint32_t fixed_zero = 0, fixed_flip = 0;
+	uint32_t fixed_zero = 0, fixed_flip = 0, skipped_repeats = 0, kept_repeats = 0;
 	for (int32_t mi = 0; mi < opt->mesh_count; ++mi) {
 		const opt_mesh_t* m = &opt->meshes[mi];
 		if (!built_mesh_from_opt(&built[mi], m, meters_per_opt_unit, regen, smooth_angle_deg,
@@ -2620,6 +2701,8 @@ static bool build_memory(const opt_file_t* opt, const char* basename, const OptG
 		total_meshes++;
 		fixed_zero += built[mi].fixed_zero_normals;
 		fixed_flip += built[mi].fixed_flipped_normals;
+		skipped_repeats += built[mi].skipped_repeats;
+		kept_repeats += built[mi].kept_repeats;
 		const opt_lod_t* lod = &m->lods[0];
 		for (int32_t g = 0; g < lod->group_count; ++g) {
 			int sc = lod->groups[g].state_count;
@@ -2631,6 +2714,11 @@ static bool build_memory(const opt_file_t* opt, const char* basename, const OptG
 		fprintf(stderr, "opt2gltf: %s: repaired %u zero + %u face-opposed canonical normals\n", basename,
 				fixed_zero, fixed_flip);
 	}
+	if (skipped_repeats)
+		fprintf(stderr, "opt2gltf: %s: left out %u repeated triangle(s)\n", basename, skipped_repeats);
+	if (kept_repeats)
+		fprintf(stderr, "opt2gltf: %s: %u triangle(s) repeat one with another texture (kept)\n", basename,
+				kept_repeats);
 
 	/* ---- Variants (asset-level) ---------------------------------- */
 	/* Asset states first, then skin variants; with skin variants the asset
