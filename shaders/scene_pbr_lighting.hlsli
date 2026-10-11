@@ -565,7 +565,8 @@ float one_sided_tube_diffuse(float3 to_center, float3 half_axis, float a, float 
  *
  * Lights are physical spheres of radius color.w giving
  * win * color / max(d, color.w)^2 with Lambert diffuse, where the
- * (1-(d/r)^4)^2 window ends them at their range r. Their GGX alpha widens
+ * 1-(d/r)^4 window (KHR_lights_punctual's recommended falloff) ends them at
+ * their range r. Their GGX alpha widens
  * by half the sphere's angular radius (alpha + r / 2d), so a light passing
  * close to a glossy surface leaves a highlight of its size rather than a
  * pinpoint; the normalized GGX keeps the energy.
@@ -602,7 +603,6 @@ void accumulate_point_light(uint light_index, float3 N, float3 N_spec, float3 V,
     float  d      = sqrt(d2);
     float3 L      = dv / max(d, 1e-3f);
     float  win    = 1.0f - q2 * q2;
-    win           = win * win;
     float  source_r = abs(point_light.color.w);
     float  near_d = max(d, source_r);
     float3 radiance = point_light.color.rgb * (win / (near_d * near_d));
@@ -639,7 +639,6 @@ void accumulate_tube_light(uint light_index, float3 N, float3 N_spec, float3 V, 
         return;
     }
     float  win      = 1.0f - q2 * q2;
-    win             = win * win;
     float  source_r = abs(point_light.color.w);
     float3 L0       = to_center - half_axis;
     float3 L1       = to_center + half_axis;
