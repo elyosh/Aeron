@@ -246,7 +246,11 @@ static uint8_t* decode_texture_emissive_rgba8(const opt_file_t* opt, const opt_t
  *     a texel gets coverage a^2, gloss 0.93 and metallic 0. XWAU also makes
  *     it 0.8 shadeless, to see into cockpits; as emission that reads as
  *     glowing glass, so the glass is lit. The material is opaque with
- *     KHR_materials_transmission (1 - coverage) and F0 0.04;
+ *     KHR_materials_transmission and F0 0.04, its base colour and
+ *     transmission giving that blend under the spec's tint (glass bake).
+ *     Its roughness is XWAU_GLASS_ROUGHNESS, not gloss 0.93's 0.135: XWAU
+ *     blended glass, so its gloss only shaped highlights, while the spec's
+ *     roughness also blurs what shows through, which would frost it;
  *   - dark-texel reflectance fade (PBRAddCommon.h "blackish"): approximated
  *     by raising roughness to 1;
  *   - Metallic, Glossiness: metallic and roughness = 1 - min(0.93, G)^2.
@@ -254,6 +258,7 @@ static uint8_t* decode_texture_emissive_rgba8(const opt_file_t* opt, const opt_t
  * setting is a display option, not material color. */
 
 #define XWAU_GLASS_GLOSS 0.93f
+#define XWAU_GLASS_ROUGHNESS 0.05f
 #define XWAU_ILLUM_GAIN 1.25f
 
 typedef struct XwauBaked {
@@ -482,7 +487,7 @@ static bool xwau_bake_rgba(const opt_texture_t* t, const OptGltfXwauMaterial* xm
 							  !xm->alpha_to_bloom && !has_illum;
 	const float metallic    = xwau_metallic(xm->metallic);
 	const float roughness   = xwau_roughness(xm->glossiness);
-	const float glass_rough = 1.0f - XWAU_GLASS_GLOSS * XWAU_GLASS_GLOSS;
+	const float glass_rough = XWAU_GLASS_ROUGHNESS;
 	const float shadeless   = OptGltf_XwauUnlit(xm);
 
 	out->transparent = transparent;
@@ -550,21 +555,37 @@ static bool xwau_bake_rgba(const opt_texture_t* t, const OptGltfXwauMaterial* xm
 	}
 	out->specular_color = xwau_specular_color(xm->intensity);
 	if (glass && any_glass) {
-		/* Glass (KHR_materials_transmission): an opaque material whose
-		 * transmission texture is 1 - the coverage the bake gave, with the
-		 * dielectric F0 0.04 of real glass (XWAU's reflectance 1, F0 0.16,
-		 * was for glass mostly drawn unlit). */
+		/* Glass (KHR_materials_transmission): an opaque, thin material whose
+		 * base colour B tints the light it transmits, with the dielectric F0
+		 * 0.04 of real glass (XWAU's reflectance 1, F0 0.16, was for glass
+		 * mostly drawn unlit). XWAU blends the colour C over the background
+		 * with the coverage c the bake gave: bg·(1 - c) + C·c. With
+		 * B = (1 - c) + c·C (linear) and transmission T = (1 - c) / Y(B),
+		 * the spec's bg·T·B + (1 - T)·B gives both terms back for neutral
+		 * glass, and the background's luminance otherwise (the runtime tints
+		 * by Y(B), the Rec. 709 luminance). */
 		out->transmission = (uint8_t*)malloc(n * 4);
 		if (!out->transmission) {
 			xwau_baked_free(out);
 			return false;
 		}
 		for (size_t i = 0; i < n; ++i) {
-			const uint8_t clear          = (uint8_t)(255 - out->base[i * 4 + 3]);
+			uint8_t*    px    = &out->base[i * 4];
+			const float c     = px[3] / 255.0f;
+			uint8_t     clear = 0;
+			if (px[3] < 255) {
+				float colour[3];
+				for (int k = 0; k < 3; ++k)
+					colour[k] = srgb_to_linear(px[k] / 255.0f);
+				const float tint = (1.0f - c) + c * (0.2126f * colour[0] + 0.7152f * colour[1] + 0.0722f * colour[2]);
+				clear            = unorm8((1.0f - c) / tint);
+				for (int k = 0; k < 3; ++k)
+					px[k] = unorm8(linear_to_srgb((1.0f - c) + c * colour[k]));
+			}
 			out->transmission[i * 4 + 0] = out->transmission[i * 4 + 1] = out->transmission[i * 4 + 2] =
 				clear;
 			out->transmission[i * 4 + 3] = 255;
-			out->base[i * 4 + 3]         = 255;
+			px[3]                        = 255;
 		}
 		out->specular_color = 1.0f;
 	}

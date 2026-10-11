@@ -171,6 +171,22 @@ class glTF2ImportUserExtension:
             _state["error"] = "{}: {}".format(type(error).__name__, error)
 
 
+def _preview_transmission(roots):
+    """EEVEE shows what is behind transmissive (glass) materials only with
+    raytraced transmission; a preview setting that is not exported."""
+    for root in roots:
+        for obj in root.children_recursive:
+            for slot in obj.material_slots:
+                material = slot.material
+                if material is None or material.node_tree is None:
+                    continue
+                for node in material.node_tree.nodes:
+                    if node.type == 'BSDF_PRINCIPLED':
+                        weight = node.inputs["Transmission Weight"]
+                        if weight.is_linked or weight.default_value > 0.0:
+                            material.use_raytrace_refraction = True
+
+
 class IMPORT_OT_aeron_flight_model(Operator, ImportHelper):
     """Import a flight model (.gltf or .glb) with its Aeron flight data"""
 
@@ -199,6 +215,7 @@ class IMPORT_OT_aeron_flight_model(Operator, ImportHelper):
         if not state["roots"]:
             self.report({'WARNING'}, "no Aeron flight model in this file: imported as plain glTF")
             return {'FINISHED'}
+        _preview_transmission(state["roots"])
         context.view_layer.objects.active = state["roots"][0]
         message = "Imported {} component(s), {} light(s)".format(state["components"], state["lights"])
         if state["cooked"]:

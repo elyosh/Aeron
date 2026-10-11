@@ -56,6 +56,13 @@ become the components of a new model root (or of the active one).
   per component, glows across the whole model.
 - Objects without a role are not exported (a warning lists them).
 
+Glass is a transmissive material (`KHR_materials_transmission`): its base
+colour tints what shows through it, as in any glTF viewer. Converted glass
+keeps XWAU's look in both its base colour and transmission textures, so
+retouch them together. EEVEE shows what is behind glass with Raytracing on
+(Render properties); the import turns on the materials' raytraced
+transmission.
+
 Components and collision meshes need a positive uniform scale, and nothing
 may be mirrored or animated. Vectors (target, hinge pivot and axes,
 descriptor) are in the component's local space; the buttons next to them
