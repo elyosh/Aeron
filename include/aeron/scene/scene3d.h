@@ -56,13 +56,19 @@ typedef struct AeronSceneMeshTable {
  * apparent size. It fades to zero at `radius` (world units). A non-zero
  * `half_axis` (world units) makes it a tube: the segment pos +- half_axis,
  * `source_radius` thick, emitting the same total intensity (a point light
- * of `color` from afar), with `radius` measured from the segment. */
+ * of `color` from afar), with `radius` measured from the segment. A
+ * non-zero `direction` makes the light one-sided, a Lambertian emitter
+ * such as a ceiling panel: it gives `color * cos(angle from direction)` in
+ * front and nothing behind, so the light straight ahead is unchanged. A
+ * tube's direction is made perpendicular to its axis (a flat strip); one
+ * along the axis leaves the tube emitting all around. */
 typedef struct AeronSceneLight {
 	float pos[3];
 	float radius;
 	float color[3];
 	float source_radius;
 	float half_axis[3];
+	float direction[3];
 } AeronSceneLight;
 
 typedef struct AeronSceneClusteredLightDesc {

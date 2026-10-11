@@ -76,7 +76,12 @@ struct PbrPointLight
 {
     float4 position_range;
     float4 color;
-    float4 half_axis; /* xyz: a tube's half axis, zero for a sphere */
+    /* xyz: a tube's half axis, w: its half length (zero for a sphere). */
+    float4 half_axis;
+    /* xyz: a one-sided light's unit direction; w: the inverse of a tube's
+     * half length. A one-sided light has a negative color.w (its sphere
+     * radius), so others never load the direction. */
+    float4 direction;
 };
 #ifndef AERON_PBR_POINT_LIGHT_REGISTER
 #define AERON_PBR_POINT_LIGHT_REGISTER t9
@@ -484,6 +489,69 @@ float3 cook_torrance_spec(float3 N, float3 V, float3 L,
     return (D * G) * F / max(4.0f * ndotv, 1e-4f);
 }
 
+/* cook_torrance_spec for a local light, which runs once per light: it takes
+ * the light's widened GGX alpha directly, and folds the four divisions into
+ * one, as F alpha^2 N.L N.V / (pi d^2 (N.L (1-k) + k) (N.V (1-k) + k) 4 N.V). */
+float3 local_light_spec(float3 N, float3 V, float3 L, float alpha, PbrMaterialParams mp)
+{
+    float3 H     = normalize(L + V);
+    float  ndotl = saturate(dot(N, L));
+    float  ndotv = saturate(dot(N, V));
+    float  ndoth = saturate(dot(N, H));
+    float  vdoth = saturate(dot(V, H));
+
+    float alpha2  = alpha * alpha;
+    float d_denom = ndoth * ndoth * (alpha2 - 1.0f) + 1.0f;
+    float k       = (alpha + 1.0f) * (alpha + 1.0f) * (1.0f / 8.0f);
+    float denom   = 3.14159265f * d_denom * d_denom * (ndotl * (1.0f - k) + k) *
+                    (ndotv * (1.0f - k) + k) * max(4.0f * ndotv, 1e-4f);
+
+    float3 F = mp.F0 + (mp.F90 - mp.F0) * pow(1.0f - vdoth, 5.0f);
+    return F * (alpha2 * ndotl * ndotv / denom);
+}
+
+/* Diffuse illuminance per unit colour from a one-sided tube: the
+ * Lambertian strip centre +- half_axis emitting along `n` (perpendicular
+ * to the axis) with 1 / (2 |half_axis|) per unit length, seen from a
+ * surface of normal N at `to_center` from the centre. With n perpendicular
+ * to the axis, the emitter cosine along the strip is h / |L|, h the
+ * surface's height in front of the strip's plane, so the integral of
+ * h N.L / |L|^4 has a closed form once the strip is clipped to the
+ * surface's side of its plane. The thickness keeps it finite at the strip.
+ * The caller rejects surfaces behind the strip (h <= 0). `a` is the half
+ * length and `inv_a` its inverse. */
+float one_sided_tube_diffuse(float3 to_center, float3 half_axis, float a, float inv_a, float3 n,
+                             float3 N, float source_r)
+{
+    float  h    = -dot(n, to_center);
+    float3 u    = half_axis * inv_a;
+    /* s runs along the axis from the point of its line nearest the
+     * surface, where N.L = A + s B and |L|^2 = d^2 + s^2. */
+    float  t0   = -dot(to_center, u);
+    float3 perp = to_center + u * t0;
+    float  d2   = dot(perp, perp) + source_r * source_r;
+    float  d    = sqrt(d2);
+    float  A    = dot(N, perp);
+    float  B    = dot(N, u);
+    float  s0   = -a - t0;
+    float  s1   = a - t0;
+    if (B > 0.0f) {
+        s0 = max(s0, -A / B);
+    } else if (B < 0.0f) {
+        s1 = min(s1, -A / B);
+    } else if (A <= 0.0f) {
+        return 0.0f;
+    }
+    if (s1 <= s0) {
+        return 0.0f;
+    }
+    float q0 = d2 + s0 * s0;
+    float q1 = d2 + s1 * s1;
+    /* Two atan cost less than one atan2 of the difference on Apple GPUs. */
+    float along = s1 / q1 - s0 / q0 + (atan(s1 / d) - atan(s0 / d)) / d;
+    return 0.25f * h * inv_a * (A / d2 * along - B * (1.0f / q1 - 1.0f / q0));
+}
+
 /* Clustered punctual-light accumulator. Returns the summed diffuse
  * ILLUMINANCE x N.L (the caller applies the Lambert BRDF, albedo x
  * (1-metallic) / pi) and adds the per-light Cook-Torrance specular into
@@ -507,7 +575,13 @@ float3 cook_torrance_spec(float3 N, float3 V, float3 L,
  * reflection ray (the representative point), widened by the thickness
  * as a sphere, and scales it by alpha / (alpha + half the tube's angular
  * length): the stretched highlight reflects about the energy of the
- * unstretched one. */
+ * unstretched one.
+ *
+ * A light with a direction is one-sided: a sphere's light and highlight
+ * scale by the emitter cosine toward the surface, and nothing reaches
+ * surfaces behind it. A one-sided tube's diffuse is the closed form of
+ * one_sided_tube_diffuse, its highlight scaled by the emitter cosine
+ * toward the representative point. */
 void accumulate_point_light(uint light_index, float3 N, float3 N_spec, float3 V,
                             float3 world_pos, PbrMaterialParams mp,
                             inout float3 diff, inout float3 spec_out)
@@ -524,14 +598,19 @@ void accumulate_point_light(uint light_index, float3 N, float3 N_spec, float3 V,
     float  q2     = d2 / (r * r);
     float  win    = 1.0f - q2 * q2;
     win           = win * win;
-    float  near_d = max(d, point_light.color.w);
+    float  source_r = abs(point_light.color.w);
+    float  near_d = max(d, source_r);
     float3 radiance = point_light.color.rgb * (win / (near_d * near_d));
+    if (point_light.color.w < 0.0f) {
+        float emit = -dot(point_light.direction.xyz, L);
+        if (emit <= 0.0f) {
+            return;
+        }
+        radiance *= emit;
+    }
     diff += radiance * saturate(dot(N, L));
-    PbrMaterialParams spec_mp = mp;
-    float alpha = saturate(mp.roughness * mp.roughness + point_light.color.w / (2.0f * near_d));
-    spec_mp.roughness = sqrt(alpha);
-    float g_unused;
-    spec_out += cook_torrance_spec(N_spec, V, L, spec_mp, g_unused) * radiance * mp.spec_intensity;
+    float alpha = saturate(mp.roughness * mp.roughness + source_r / (2.0f * near_d));
+    spec_out += local_light_spec(N_spec, V, L, alpha, mp) * radiance * mp.spec_intensity;
 }
 
 void accumulate_tube_light(uint light_index, float3 N, float3 N_spec, float3 V,
@@ -541,9 +620,11 @@ void accumulate_tube_light(uint light_index, float3 N, float3 N_spec, float3 V,
     PbrPointLight point_light = fs_point_lights[light_index];
     float3 to_center = point_light.position_range.xyz - world_pos;
     float3 half_axis = point_light.half_axis.xyz;
-    float  half_len2 = dot(half_axis, half_axis);
+    float  half_len  = point_light.half_axis.w;
+    float  inv_len   = point_light.direction.w;
+    float  half_len2 = half_len * half_len;
     /* The window measures from the segment's nearest point. */
-    float3 dv = to_center + half_axis * clamp(-dot(to_center, half_axis) / half_len2, -1.0f, 1.0f);
+    float3 dv = to_center + half_axis * clamp(-dot(to_center, half_axis) * (inv_len * inv_len), -1.0f, 1.0f);
     float  r  = point_light.position_range.w;
     float  d2 = dot(dv, dv);
     if (d2 >= r * r) {
@@ -552,7 +633,7 @@ void accumulate_tube_light(uint light_index, float3 N, float3 N_spec, float3 V,
     float  q2       = d2 / (r * r);
     float  win      = 1.0f - q2 * q2;
     win             = win * win;
-    float  source_r = point_light.color.w;
+    float  source_r = abs(point_light.color.w);
     float3 L0       = to_center - half_axis;
     float3 L1       = to_center + half_axis;
     float  l0       = max(length(L0), 1e-3f);
@@ -561,7 +642,18 @@ void accumulate_tube_light(uint light_index, float3 N, float3 N_spec, float3 V,
                       (win * 2.0f / (l0 * l1 + dot(L0, L1) + 2.0f * source_r * source_r));
     float3 n0       = L0 / l0;
     float3 n1       = L1 / l1;
-    diff           += radiance * saturate(0.5f * dot(N, n0 + n1));
+    bool   one_sided = point_light.color.w < 0.0f;
+    float3 emit_dir  = 0.0f.xxx;
+    if (one_sided) {
+        emit_dir = point_light.direction.xyz;
+        if (dot(emit_dir, to_center) >= 0.0f) {
+            return;
+        }
+        diff += point_light.color.rgb *
+                (win * one_sided_tube_diffuse(to_center, half_axis, half_len, inv_len, emit_dir, N, source_r));
+    } else {
+        diff += radiance * saturate(0.5f * dot(N, n0 + n1));
+    }
     float3 R    = reflect(-V, N_spec);
     float  r_a  = dot(R, half_axis);
     float  ts   = saturate((dot(R, L0) * r_a - dot(L0, half_axis)) /
@@ -569,11 +661,11 @@ void accumulate_tube_light(uint light_index, float3 N, float3 N_spec, float3 V,
     float3 Ls   = L0 + half_axis * (2.0f * ts);
     float  ls   = max(length(Ls), 1e-3f);
     float  alpha = saturate(mp.roughness * mp.roughness + source_r / (2.0f * max(ls, source_r)));
-    PbrMaterialParams spec_mp = mp;
-    spec_mp.roughness = sqrt(alpha);
     float  spec_scale = alpha / saturate(alpha + 0.5f * length(n0 - n1));
-    float  g_unused;
-    spec_out += cook_torrance_spec(N_spec, V, Ls / ls, spec_mp, g_unused) * radiance *
+    if (one_sided) {
+        spec_scale *= saturate(-dot(emit_dir, Ls) / ls);
+    }
+    spec_out += local_light_spec(N_spec, V, Ls / ls, alpha, mp) * radiance *
                 (spec_scale * mp.spec_intensity);
 }
 

@@ -17,7 +17,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-typedef char AeronScenePointLightGPUSizeCheck[sizeof(AeronScenePointLightGPU) == 48 ? 1 : -1];
+typedef char AeronScenePointLightGPUSizeCheck[sizeof(AeronScenePointLightGPU) == 64 ? 1 : -1];
 typedef char AeronSceneClusterLightGPUSizeCheck[sizeof(AeronSceneClusterLightGPU) == 32 ? 1 : -1];
 typedef char AeronSceneClusterHeaderGPUSizeCheck[sizeof(AeronSceneClusterHeaderGPU) == 8 ? 1 : -1];
 typedef char AeronSceneClusterUniformGPUSizeCheck[sizeof(AeronSceneClusterUniformGPU) == 112 ? 1 : -1];
@@ -516,6 +516,32 @@ static int scene_light_is_tube(const AeronSceneLight* light) {
 	const float length_sq = light->half_axis[0] * light->half_axis[0] + light->half_axis[1] * light->half_axis[1] +
 							light->half_axis[2] * light->half_axis[2];
 	return length_sq > 0.0f && isfinite(length_sq);
+}
+
+/* The unit direction of a one-sided light into `out`, returning one, or
+ * zero for a light emitting all around (`out` untouched). A tube's
+ * direction loses its part along the axis. */
+static int scene_light_direction(const AeronSceneLight* light, int is_tube, float out[3]) {
+	float d[3] = { light->direction[0], light->direction[1], light->direction[2] };
+	if (is_tube) {
+		const float axis_sq = light->half_axis[0] * light->half_axis[0] +
+							  light->half_axis[1] * light->half_axis[1] + light->half_axis[2] * light->half_axis[2];
+		const float along =
+			(d[0] * light->half_axis[0] + d[1] * light->half_axis[1] + d[2] * light->half_axis[2]) / axis_sq;
+		for (int k = 0; k < 3; ++k) {
+			d[k] -= along * light->half_axis[k];
+		}
+	}
+	const float length = sqrtf(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
+	const float input  = sqrtf(light->direction[0] * light->direction[0] +
+							   light->direction[1] * light->direction[1] + light->direction[2] * light->direction[2]);
+	if (!(length > 1e-3f * input) || !isfinite(length)) {
+		return 0;
+	}
+	for (int k = 0; k < 3; ++k) {
+		out[k] = d[k] / length;
+	}
+	return 1;
 }
 
 int AeronScene_AddLight(AeronScene3D* s, const AeronSceneLight* light) {
@@ -1587,8 +1613,7 @@ int AeronSceneStorage_Prepare(AeronScene3D* s, AeronCommandBuffer* cmd) {
 		destination->color[0]                  = source->color[0];
 		destination->color[1]                  = source->color[1];
 		destination->color[2]                  = source->color[2];
-		/* w: the sphere radius. */
-		destination->color[3] = source->source_radius > 1e-3f ? source->source_radius : 1e-3f;
+		const float source_radius = source->source_radius > 1e-3f ? source->source_radius : 1e-3f;
 		/* A tube's segment; clusters bound it with a sphere around its
 		 * centre. */
 		const int is_tube     = scene_light_is_tube(source);
@@ -1597,8 +1622,13 @@ int AeronSceneStorage_Prepare(AeronScene3D* s, AeronCommandBuffer* cmd) {
 			destination->half_axis[axis] = is_tube ? source->half_axis[axis] : 0.0f;
 			half_length += destination->half_axis[axis] * destination->half_axis[axis];
 		}
-		destination->half_axis[3] = 0.0f;
 		half_length               = sqrtf(half_length);
+		destination->half_axis[3] = half_length;
+		memset(destination->direction, 0, sizeof destination->direction);
+		const int one_sided       = scene_light_direction(source, is_tube, destination->direction);
+		destination->direction[3] = is_tube ? 1.0f / half_length : 0.0f;
+		/* w: the sphere radius, negative for a one-sided light. */
+		destination->color[3] = one_sided ? -source_radius : source_radius;
 		const float dx                         = source->pos[0] - s->camera.pos[0];
 		const float dy                         = source->pos[1] - s->camera.pos[1];
 		const float dz                         = source->pos[2] - s->camera.pos[2];
@@ -1611,7 +1641,7 @@ int AeronSceneStorage_Prepare(AeronScene3D* s, AeronCommandBuffer* cmd) {
 		cluster->point_light_index      = i;
 		cluster->luminance =
 			0.2126f * source->color[0] + 0.7152f * source->color[1] + 0.0722f * source->color[2];
-		cluster->source_radius               = destination->color[3];
+		cluster->source_radius               = source_radius;
 		cluster->_pad                        = 0.0f;
 	}
 	s->point_light_count = point_count;

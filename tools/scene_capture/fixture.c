@@ -103,14 +103,15 @@ static int load_models(Fixture* f, AeronCommandBuffer* cmd) {
 		const char* path  = f->config.models[i];
 		uint8_t*    bytes = NULL;
 		size_t      size  = 0;
-		if (!AeronVfs_ReadAll(vfs, AERON_VFS_ROOT_ASSET, path, 64u * 1024u * 1024u, &bytes, &size)) {
+		/* A cooked .glb loads as a game loads it, without a size limit (skinned
+		 * models exceed 100 MiB); anything else is an OPT. */
+		const size_t length = strlen(path);
+		const bool   glb    = length > 4 && SDL_strcasecmp(path + length - 4, ".glb") == 0;
+		if (!AeronVfs_ReadAll(vfs, AERON_VFS_ROOT_ASSET, path, glb ? 0 : 64u * 1024u * 1024u, &bytes, &size)) {
 			Aeron_LogError("scene_capture", "Cannot read model '%s' under '%s'", path, f->config.asset_root);
 			ok = 0;
 			break;
 		}
-		/* A cooked .glb loads as a game loads it; anything else is an OPT. */
-		const size_t       length = strlen(path);
-		const bool         glb    = length > 4 && SDL_strcasecmp(path + length - 4, ".glb") == 0;
 		AeronFlightModel   model  = { 0 };
 		AeronOptModelError error  = { 0 };
 		ok = glb ? Aeron_FlightModelBuildMemory(bytes, size, path, &model)
@@ -575,6 +576,7 @@ static void add_game_instances(AeronScene3D* scene, const Fixture* f, const Aero
 		for (int k = 0; k < 3; ++k) {
 			light.pos[k]       = l->position[k] * GAME_UNITS_PER_METER;
 			light.half_axis[k] = l->half_axis[k] * GAME_UNITS_PER_METER;
+			light.direction[k] = l->direction[k];
 			light.color[k]     = l->intensity[k] * GAME_UNITS_PER_METER * GAME_UNITS_PER_METER;
 			peak           = fmaxf(peak, l->intensity[k]);
 		}

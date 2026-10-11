@@ -37,9 +37,10 @@ typedef struct CaptureInstance {
 /* A game light: position in metres and intensity (the linear illuminance
  * 1 m away), drawn as the game's physical point lights; a non-zero half
  * axis (metres) makes it a tube along position +- half_axis, as the game's
- * laser streaks. */
+ * laser streaks, and a non-zero direction (camera axes) makes it one-sided
+ * (AeronSceneLight.direction). */
 typedef struct CaptureLight {
-	float position[3], intensity[3], half_axis[3];
+	float position[3], intensity[3], half_axis[3], direction[3];
 } CaptureLight;
 
 /* game_scene: the game's Scene3D features (Scene3D defaults file), lighting

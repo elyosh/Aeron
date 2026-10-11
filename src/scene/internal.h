@@ -137,8 +137,14 @@ typedef struct AeronScenePreparedInstance {
 typedef struct AeronScenePointLightGPU {
 	float position_range[4];
 	float color[4];
-	/* xyz: a tube's half axis (zero for a sphere); w unused. */
+	/* xyz: a tube's half axis, w: its half length (zero for a sphere). */
 	float half_axis[4];
+	/* xyz: a one-sided light's unit direction (zero for a light emitting
+	 * all around), w: the inverse of a tube's half length. Per-light values
+	 * the shader would otherwise derive at every fragment. A one-sided
+	 * light's color.w (its sphere radius) is negated, so lights emitting
+	 * all around never load the direction. */
+	float direction[4];
 } AeronScenePointLightGPU;
 
 typedef struct AeronSceneClusterLightGPU {
