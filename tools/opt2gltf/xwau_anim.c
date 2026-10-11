@@ -88,6 +88,7 @@ struct XwauAnim {
 	/* Report counters. */
 	size_t flipbooks, damage_materials, energy_materials, anim_bases, always_illuminations, missing_frames;
 	size_t skipped_no_illum, skipped_missing_dat, skipped_unsupported, unknown_events, mixed_damage;
+	size_t skipped_on_screens;
 };
 
 static bool own(XwauAnim* a, void* p) {
@@ -462,7 +463,7 @@ static bool damage_json(XwauAnim* a, Text* t, const XwauMatSequences* own_list,
 }
 
 bool XwauAnim_Texture(XwauAnim* a, const XwauMatFile* mat, const opt_texture_t* tex, float unlit,
-					  OptGltfXwauAnim* out) {
+					  XwauAnimScreen screen, OptGltfXwauAnim* out) {
 	memset(out, 0, sizeof *out);
 	if (!mat)
 		return true;
@@ -504,6 +505,30 @@ bool XwauAnim_Texture(XwauAnim* a, const XwauMatFile* mat, const opt_texture_t* 
 			energy[k] = true;
 		else
 			a->skipped_unsupported++;
+	}
+	/* A Dynamic Cockpit screen: XWAU draws it with its screen shader
+	   (PixelShaderDC.hlsl), not the animation shader. A colour frame takes
+	   the cover's place; without a cover only cockpit damage shows, unlit,
+	   in place of the display; a hologram's shader shows no frame. The
+	   screen shader reads no illumination frame, hull damage or energy
+	   effect. */
+	if (screen != XWAU_ANIM_SCREEN_NONE) {
+		for (size_t s = 0; s < EVENT_STATE_COUNT; ++s) {
+			const bool keep = screen == XWAU_ANIM_SCREEN_COVER ||
+							  (screen == XWAU_ANIM_SCREEN_NO_COVER &&
+							   strncmp(kEventStates[s].state, "broken.", 7) == 0);
+			a->skipped_on_screens += (chosen[XWAU_SEQ_ILLUMINATION][s] != NULL) +
+									 (!keep && chosen[XWAU_SEQ_COLOUR][s] != NULL);
+			chosen[XWAU_SEQ_ILLUMINATION][s] = NULL;
+			if (!keep)
+				chosen[XWAU_SEQ_COLOUR][s] = NULL;
+		}
+		for (int k = 0; k < 3; ++k) {
+			a->skipped_on_screens += energy[k];
+			energy[k] = false;
+		}
+		if (screen == XWAU_ANIM_SCREEN_NO_COVER)
+			unlit = 1.0f;
 	}
 
 	Text t = { 0 };
@@ -580,7 +605,7 @@ bool XwauAnim_Texture(XwauAnim* a, const XwauMatFile* mat, const opt_texture_t* 
 		text_add(&t, "]");
 		first_member = false;
 	}
-	{
+	if (screen == XWAU_ANIM_SCREEN_NONE) {
 		Text d = { 0 };
 		text_add(&d, "%s", "");
 		if (!damage_json(a, &d, &own_list, &inherited)) {
@@ -628,7 +653,7 @@ bool XwauAnim_Texture(XwauAnim* a, const XwauMatFile* mat, const opt_texture_t* 
 
 void XwauAnim_Report(const XwauAnim* a) {
 	if (!a->any && !a->skipped_no_illum && !a->skipped_missing_dat && !a->skipped_unsupported &&
-		!a->unknown_events && !a->missing_frames)
+		!a->unknown_events && !a->missing_frames && !a->skipped_on_screens)
 		return;
 	fprintf(stderr,
 			"opt2gltf: %s: animations: %zu flipbook(s), %zu damage and %zu energy material(s), %zu with "
@@ -645,6 +670,11 @@ void XwauAnim_Report(const XwauAnim* a) {
 	if (a->missing_frames)
 		fprintf(stderr, "opt2gltf: %s: %zu frame(s) whose image their DAT lacks left out\n", a->label,
 				a->missing_frames);
+	if (a->skipped_on_screens)
+		fprintf(stderr,
+				"opt2gltf: %s: %zu sequence(s) and energy effect(s) on Dynamic Cockpit screens left out "
+				"(XWAU's screen shader shows none)\n",
+				a->label, a->skipped_on_screens);
 	if (a->skipped_unsupported)
 		fprintf(stderr, "opt2gltf: %s: %zu sequence(s) with an unsupported event, layer or UV mapping skipped\n",
 				a->label, a->skipped_unsupported);

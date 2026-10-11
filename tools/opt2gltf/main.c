@@ -451,7 +451,13 @@ static int convert_xwau(opt_file_t* opt, const char* out_dir, const char* basena
 				ignored[k]             = true;
 			}
 		}
-		if (!XwauAnim_Texture(anim, mat, &opt->textures[i], OptGltf_XwauUnlit(&materials[i]), &anims[i])) {
+		XwauAnimScreen screen = XWAU_ANIM_SCREEN_NONE;
+		if (screens && screens[i].present)
+			screen = screens[i].hologram           ? XWAU_ANIM_SCREEN_HOLOGRAM
+					 : screens[i].cover_base.rgba ? XWAU_ANIM_SCREEN_COVER
+												  : XWAU_ANIM_SCREEN_NO_COVER;
+		if (!XwauAnim_Texture(anim, mat, &opt->textures[i], OptGltf_XwauUnlit(&materials[i]), screen,
+							  &anims[i])) {
 			fprintf(stderr, "opt2gltf: %s: out of memory (animations)\n", label);
 			free(materials);
 			free(anims);

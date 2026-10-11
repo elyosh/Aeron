@@ -292,8 +292,11 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
      * an illumination frame, a colour flipbook's unlit weight u splits the
      * result as the static bake does: base c·(1 − u), emission c·u in place
      * of the material's. A layer without a playing frame keeps the static
-     * material. */
+     * material. A colour frame also covers a screen's display (below). */
     bool   anim_emission = false;
+    bool   anim_base = false; /* albedo below is the composite, factor included */
+    bool   anim_screen_frame = false;
+    float  anim_screen_cover = 0.0f;
     float3 anim_emissive = float3(0.0f, 0.0f, 0.0f);
     float  anim_gloss    = 1.0f;
     uint4  anim = g_materials[mat].anim;
@@ -304,11 +307,14 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
         uint lit_frame    = anim.y != 0u ? anim_layer_frame(anim, AERON_ANIM_LAYER_ILLUMINATION, lit_book) : 0u;
         float4 damage     = anim_damage(anim, i.uv);
         anim_gloss        = damage.a;
-        float3 c = albedo_tex.rgb;
+        /* Frames paint over the base colour, its factor included. */
+        float3 c = albedo_tex.rgb * g_materials[mat].base_color_factor.rgb;
         if (colour_frame != 0u) {
             float4 frame = anim_frame_sample(g_effect_layer, g_effect_layer_sampler, g_anim_records[colour_frame],
                                              i.uv);
             c = lerp(c, frame.rgb, frame.a);
+            anim_screen_frame = true;
+            anim_screen_cover = frame.a;
         }
         /* Damage darkens the colour under the illumination layer. */
         c *= damage.rgb;
@@ -330,14 +336,21 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
             anim_emission = true;
         }
         albedo_tex.rgb = c;
+        anim_base      = true;
     }
 #endif
-    float3 albedo = albedo_tex.rgb * g_materials[mat].base_color_factor.rgb;
+    float3 albedo = albedo_tex.rgb;
+#if AERON_PBR_ANIM
+    if (!anim_base)
+#endif
+        albedo *= g_materials[mat].base_color_factor.rgb;
 
 #if AERON_PBR_SCREENS
     /* ===== Transparent screens ===================================
      * Unlit (no normal or shading): the cover, when present,
-     * over the screen, with alpha from the display luminance. */
+     * over the screen, with alpha from the display luminance. A playing
+     * colour frame covers the display as on opaque screens (below); its
+     * unlit part is in its emission. */
     if ((g_materials[mat].screen_flags & SCREEN_TRANSPARENT) != 0u) {
         ScreenFrame screen_frame = screen_load_frame();
         if ((screen_frame.flags & SCREEN_FRAME_HIDE_TRANSPARENT) != 0u &&
@@ -345,17 +358,25 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
             _out.color = float4(0.0f, 0.0f, 0.0f, 0.0f);
             return _out;
         }
-        float3 screen = screen_evaluate(g_materials[mat], i.uv, screen_frame);
-        float3 color = screen;
-        if ((g_materials[mat].screen_flags & SCREEN_COVER) != 0u) {
-            float3 cover_glow = float3(0.0f, 0.0f, 0.0f);
-            if ((g_materials[mat].flags & GLTF_MATERIAL_HAS_EMISSIVE) != 0u) {
-                cover_glow = pbr_sample_channel(g_emissive, g_em_sampler, g_materials[mat], GLTF_ATLAS_EMISSIVE,
-                                                g_materials[mat].emissive_rect, i.uv).rgb *
-                             g_materials[mat].emissive_packed.rgb * g_materials[mat].emissive_packed.a;
-            }
-            color = albedo + cover_glow + screen * (1.0f - albedo_tex.a);
+        float3 screen  = screen_evaluate(g_materials[mat], i.uv, screen_frame);
+        bool   cover   = (g_materials[mat].screen_flags & SCREEN_COVER) != 0u;
+        bool   surface = cover; /* the cover, or a frame in its place */
+        float  open    = cover ? 1.0f - albedo_tex.a : 1.0f;
+        float3 glow    = float3(0.0f, 0.0f, 0.0f);
+        if (cover && (g_materials[mat].flags & GLTF_MATERIAL_HAS_EMISSIVE) != 0u) {
+            glow = pbr_sample_channel(g_emissive, g_em_sampler, g_materials[mat], GLTF_ATLAS_EMISSIVE,
+                                      g_materials[mat].emissive_rect, i.uv).rgb *
+                   g_materials[mat].emissive_packed.rgb * g_materials[mat].emissive_packed.a;
         }
+#if AERON_PBR_ANIM
+        if (anim_screen_frame) {
+            surface = true;
+            open    = cover ? open * (1.0f - anim_screen_cover) : 0.0f;
+            if (anim_emission)
+                glow = anim_emissive;
+        }
+#endif
+        float3 color = (surface ? albedo + glow : float3(0.0f, 0.0f, 0.0f)) + screen * open;
         /* Alpha from the unscaled display, so the scale changes brightness
          * only. */
         float luma = dot(AeronLinearToSrgb(saturate(color)), float3(0.333f, 0.333f, 0.333f));
@@ -689,11 +710,18 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
 #if AERON_PBR_SCREENS
     /* ===== Opaque screens =========================================
      * Unlit screen radiance, shown where the cover is transparent (all of
-     * the surface without a cover). */
+     * the surface without a cover). A playing colour frame covers the
+     * display by its coverage over a cover's window, and replaces the
+     * display of a screen without a cover. */
     if (g_materials[mat].screen_count != 0u && isolate == 0) {
         float3 screen = screen_evaluate(g_materials[mat], i.uv, screen_load_frame());
-        lit += screen * fs_emission.x *
-               ((g_materials[mat].screen_flags & SCREEN_COVER) != 0u ? 1.0f - albedo_tex.a : 1.0f);
+        bool   cover  = (g_materials[mat].screen_flags & SCREEN_COVER) != 0u;
+        float  open   = cover ? 1.0f - albedo_tex.a : 1.0f;
+#if AERON_PBR_ANIM
+        if (anim_screen_frame)
+            open = cover ? open * (1.0f - anim_screen_cover) : 0.0f;
+#endif
+        lit += screen * fs_emission.x * open;
     }
 #endif
 

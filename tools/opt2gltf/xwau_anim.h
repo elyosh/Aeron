@@ -28,12 +28,23 @@ typedef struct XwauAnim XwauAnim;
  * report lines. */
 XwauAnim* XwauAnim_Begin(const char* model, XwauAnimFindFile find, void* find_context, const char* label);
 
+/* What the texture becomes in the Dynamic Cockpit: no screen, a screen
+ * with a cover, one without, or a hologram. */
+typedef enum XwauAnimScreen {
+	XWAU_ANIM_SCREEN_NONE,
+	XWAU_ANIM_SCREEN_COVER,
+	XWAU_ANIM_SCREEN_NO_COVER,
+	XWAU_ANIM_SCREEN_HOLOGRAM
+} XwauAnimScreen;
+
 /* Fills `out` for OPT texture `t` from `mat` (NULL: no material file).
  * `unlit` is the texture's unlit weight (OptGltf_XwauUnlit), which its
- * colour frames take. The strings and images it points to live until
- * XwauAnim_End. Returns false on OOM. */
+ * colour frames take. On a screen, only what XWAU's screen shader shows is
+ * kept: colour frames over a cover; without a cover, cockpit damage frames
+ * only, unlit; on a hologram, nothing. The strings and images it points to
+ * live until XwauAnim_End. Returns false on OOM. */
 bool XwauAnim_Texture(XwauAnim* anim, const XwauMatFile* mat, const opt_texture_t* t, float unlit,
-					  OptGltfXwauAnim* out);
+					  XwauAnimScreen screen, OptGltfXwauAnim* out);
 
 /* Whether any texture has animation data. */
 bool XwauAnim_Any(const XwauAnim* anim);

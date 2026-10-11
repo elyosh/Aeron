@@ -153,6 +153,9 @@ base colour and emissive changed:
 3. Emissive: while an `emissive` frame plays, its `emissive` image
    **replaces** the material's emissive over the whole material, black
    meaning no emission; otherwise the material's own emissive shows.
+4. Screen (a material with `aeronScreen`, whose display is drawn live): a
+   `baseColor` frame covers the display by its coverage where the cover's
+   window shows it, and replaces the display of a screen without a cover.
 
 Emission brightness: the `emissive` image's colour (0 to 1 per channel,
 from sRGB) × the flipbook's `emissiveStrength` (default 1) × the game's
