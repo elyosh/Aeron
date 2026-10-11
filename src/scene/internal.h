@@ -135,6 +135,7 @@ typedef struct AeronScenePreparedInstance {
 } AeronScenePreparedInstance;
 
 typedef struct AeronScenePointLightGPU {
+	/* xyz: the position, w: the inverse square of the range. */
 	float position_range[4];
 	float color[4];
 	/* xyz: a tube's half axis, w: its half length (zero for a sphere). */

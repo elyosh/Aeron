@@ -1609,7 +1609,10 @@ int AeronSceneStorage_Prepare(AeronScene3D* s, AeronCommandBuffer* cmd) {
 		destination->position_range[0]         = source->pos[0];
 		destination->position_range[1]         = source->pos[1];
 		destination->position_range[2]         = source->pos[2];
-		destination->position_range[3]         = source->radius;
+		/* Infinite for no range: the shader then treats every surface as
+		 * out of range. */
+		destination->position_range[3] =
+			source->radius > 0.0f ? 1.0f / (source->radius * source->radius) : INFINITY;
 		destination->color[0]                  = source->color[0];
 		destination->color[1]                  = source->color[1];
 		destination->color[2]                  = source->color[2];

@@ -74,6 +74,7 @@ cbuffer PbrLightFS : register(AERON_PBR_LIGHT_UNIFORM_REGISTER, space3)
 
 struct PbrPointLight
 {
+    /* xyz: the position, w: the inverse square of the range. */
     float4 position_range;
     float4 color;
     /* xyz: a tube's half axis, w: its half length (zero for a sphere). */
@@ -506,7 +507,11 @@ float3 local_light_spec(float3 N, float3 V, float3 L, float alpha, PbrMaterialPa
     float denom   = 3.14159265f * d_denom * d_denom * (ndotl * (1.0f - k) + k) *
                     (ndotv * (1.0f - k) + k) * max(4.0f * ndotv, 1e-4f);
 
-    float3 F = mp.F0 + (mp.F90 - mp.F0) * pow(1.0f - vdoth, 5.0f);
+    /* (1 - v.h)^5 by multiplications: DXC keeps pow for the Vulkan and
+     * D3D12 drivers, which may not expand it (Metal does). */
+    float  f1 = 1.0f - vdoth;
+    float  f2 = f1 * f1;
+    float3 F  = mp.F0 + (mp.F90 - mp.F0) * (f2 * f2 * f1);
     return F * (alpha2 * ndotl * ndotv / denom);
 }
 
@@ -530,7 +535,6 @@ float one_sided_tube_diffuse(float3 to_center, float3 half_axis, float a, float 
     float  t0   = -dot(to_center, u);
     float3 perp = to_center + u * t0;
     float  d2   = dot(perp, perp) + source_r * source_r;
-    float  d    = sqrt(d2);
     float  A    = dot(N, perp);
     float  B    = dot(N, u);
     float  s0   = -a - t0;
@@ -545,9 +549,11 @@ float one_sided_tube_diffuse(float3 to_center, float3 half_axis, float a, float 
     if (s1 <= s0) {
         return 0.0f;
     }
+    /* Two atan cost less than one atan2 of the difference on Apple GPUs, and
+     * these divisions less than shared reciprocals. */
+    float d  = sqrt(d2);
     float q0 = d2 + s0 * s0;
     float q1 = d2 + s1 * s1;
-    /* Two atan cost less than one atan2 of the difference on Apple GPUs. */
     float along = s1 / q1 - s0 / q0 + (atan(s1 / d) - atan(s0 / d)) / d;
     return 0.25f * h * inv_a * (A / d2 * along - B * (1.0f / q1 - 1.0f / q0));
 }
@@ -588,14 +594,13 @@ void accumulate_point_light(uint light_index, float3 N, float3 N_spec, float3 V,
 {
     PbrPointLight point_light = fs_point_lights[light_index];
     float3 dv = point_light.position_range.xyz - world_pos;
-    float  r  = point_light.position_range.w;
     float  d2 = dot(dv, dv);
-    if (d2 >= r * r) {
+    float  q2 = d2 * point_light.position_range.w;
+    if (!(q2 < 1.0f)) {
         return;
     }
     float  d      = sqrt(d2);
     float3 L      = dv / max(d, 1e-3f);
-    float  q2     = d2 / (r * r);
     float  win    = 1.0f - q2 * q2;
     win           = win * win;
     float  source_r = abs(point_light.color.w);
@@ -613,7 +618,10 @@ void accumulate_point_light(uint light_index, float3 N, float3 N_spec, float3 V,
     spec_out += local_light_spec(N_spec, V, L, alpha, mp) * radiance * mp.spec_intensity;
 }
 
-void accumulate_tube_light(uint light_index, float3 N, float3 N_spec, float3 V,
+/* `R` is the view direction reflected about N_spec, the same for every
+ * light. Lengths and their divisions share one rsqrt: each division
+ * expands to several instructions. */
+void accumulate_tube_light(uint light_index, float3 N, float3 N_spec, float3 V, float3 R,
                            float3 world_pos, PbrMaterialParams mp,
                            inout float3 diff, inout float3 spec_out)
 {
@@ -625,23 +633,26 @@ void accumulate_tube_light(uint light_index, float3 N, float3 N_spec, float3 V,
     float  half_len2 = half_len * half_len;
     /* The window measures from the segment's nearest point. */
     float3 dv = to_center + half_axis * clamp(-dot(to_center, half_axis) * (inv_len * inv_len), -1.0f, 1.0f);
-    float  r  = point_light.position_range.w;
     float  d2 = dot(dv, dv);
-    if (d2 >= r * r) {
+    float  q2 = d2 * point_light.position_range.w;
+    if (!(q2 < 1.0f)) {
         return;
     }
-    float  q2       = d2 / (r * r);
     float  win      = 1.0f - q2 * q2;
     win             = win * win;
     float  source_r = abs(point_light.color.w);
     float3 L0       = to_center - half_axis;
     float3 L1       = to_center + half_axis;
-    float  l0       = max(length(L0), 1e-3f);
-    float  l1       = max(length(L1), 1e-3f);
+    /* The lengths are at least 1e-3. */
+    float  l0_sq    = max(dot(L0, L0), 1e-6f);
+    float  l1_sq    = max(dot(L1, L1), 1e-6f);
+    float  inv_l0   = rsqrt(l0_sq);
+    float  inv_l1   = rsqrt(l1_sq);
     float3 radiance = point_light.color.rgb *
-                      (win * 2.0f / (l0 * l1 + dot(L0, L1) + 2.0f * source_r * source_r));
-    float3 n0       = L0 / l0;
-    float3 n1       = L1 / l1;
+                      (win * 2.0f / (l0_sq * inv_l0 * l1_sq * inv_l1 + dot(L0, L1) +
+                                     2.0f * source_r * source_r));
+    float3 n0       = L0 * inv_l0;
+    float3 n1       = L1 * inv_l1;
     bool   one_sided = point_light.color.w < 0.0f;
     float3 emit_dir  = 0.0f.xxx;
     if (one_sided) {
@@ -654,18 +665,20 @@ void accumulate_tube_light(uint light_index, float3 N, float3 N_spec, float3 V,
     } else {
         diff += radiance * saturate(0.5f * dot(N, n0 + n1));
     }
-    float3 R    = reflect(-V, N_spec);
-    float  r_a  = dot(R, half_axis);
-    float  ts   = saturate((dot(R, L0) * r_a - dot(L0, half_axis)) /
-                           max(2.0f * (half_len2 - r_a * r_a), 1e-6f));
-    float3 Ls   = L0 + half_axis * (2.0f * ts);
-    float  ls   = max(length(Ls), 1e-3f);
-    float  alpha = saturate(mp.roughness * mp.roughness + source_r / (2.0f * max(ls, source_r)));
+    float  r_a    = dot(R, half_axis);
+    float  ts     = saturate((dot(R, L0) * r_a - dot(L0, half_axis)) /
+                             max(2.0f * (half_len2 - r_a * r_a), 1e-6f));
+    float3 Ls     = L0 + half_axis * (2.0f * ts);
+    float  ls_sq  = max(dot(Ls, Ls), 1e-6f);
+    float  inv_ls = rsqrt(ls_sq);
+    float3 Ls_dir = Ls * inv_ls;
+    float  alpha  = saturate(mp.roughness * mp.roughness +
+                             source_r / (2.0f * max(ls_sq * inv_ls, source_r)));
     float  spec_scale = alpha / saturate(alpha + 0.5f * length(n0 - n1));
     if (one_sided) {
-        spec_scale *= saturate(-dot(emit_dir, Ls) / ls);
+        spec_scale *= saturate(-dot(emit_dir, Ls_dir));
     }
-    spec_out += local_light_spec(N_spec, V, Ls / ls, alpha, mp) * radiance *
+    spec_out += local_light_spec(N_spec, V, Ls_dir, alpha, mp) * radiance *
                 (spec_scale * mp.spec_intensity);
 }
 
@@ -676,6 +689,7 @@ float3 accumulate_point_lights(float3 N, float3 N_spec, float3 V, float3 world_p
 {
     /* Each light list holds its spheres, then its tubes. */
     float3 diff = float3(0.0f, 0.0f, 0.0f);
+    float3 R    = reflect(-V, N_spec);
     if (fs_cluster_enabled != 0u) {
         uint global_count  = min(fs_cluster_global_count, AERON_CLUSTER_MAX_GLOBAL_LIGHTS);
         uint global_sphere = min(fs_cluster_global_sphere_count, global_count);
@@ -684,7 +698,7 @@ float3 accumulate_point_lights(float3 N, float3 N_spec, float3 V, float3 world_p
                                    mp, diff, spec_out);
         }
         for (uint gt = global_sphere; gt < global_count; ++gt) {
-            accumulate_tube_light(fs_cluster_global_indices[gt], N, N_spec, V, world_pos,
+            accumulate_tube_light(fs_cluster_global_indices[gt], N, N_spec, V, R, world_pos,
                                   mp, diff, spec_out);
         }
         uint cluster_index;
@@ -698,7 +712,7 @@ float3 accumulate_point_lights(float3 N, float3 N_spec, float3 V, float3 world_p
                                    mp, diff, spec_out);
         }
         for (uint pt = spheres; pt < count; ++pt) {
-            accumulate_tube_light(fs_cluster_indices[base + pt], N, N_spec, V, world_pos,
+            accumulate_tube_light(fs_cluster_indices[base + pt], N, N_spec, V, R, world_pos,
                                   mp, diff, spec_out);
         }
     } else {
@@ -708,7 +722,7 @@ float3 accumulate_point_lights(float3 N, float3 N_spec, float3 V, float3 world_p
                                    mp, diff, spec_out);
         }
         for (uint tube_index = tube_start; tube_index < fs_cluster_point_count; ++tube_index) {
-            accumulate_tube_light(tube_index, N, N_spec, V, world_pos,
+            accumulate_tube_light(tube_index, N, N_spec, V, R, world_pos,
                                   mp, diff, spec_out);
         }
     }
