@@ -128,17 +128,6 @@ cbuffer PbrAnimFS : register(b3, space3)
 #define AERON_ANIM_RECORD(i) g_anim_records[i]
 #include "material_anim.hlsli"
 
-/* A flipbook's frame UV: its uv record's scale and offset, clamped to the
- * image when set. */
-float2 anim_frame_uv(uint flipbook, float2 uv)
-{
-    uint x = g_anim_records[flipbook].x;
-    if ((x & AERON_ANIM_FLIPBOOK_HAS_UV) == 0u) return uv;
-    uint4  t = g_anim_records[flipbook + 1u];
-    float2 r = uv * float2(asfloat(t.x), asfloat(t.y)) + float2(asfloat(t.z), asfloat(t.w));
-    return (x & AERON_ANIM_FLIPBOOK_UV_CLAMP) != 0u ? min(saturate(r), 0.99999f) : r;
-}
-
 /* Samples the image of a frame record. */
 float4 anim_frame_sample(Texture2DArray tex, SamplerState s, uint4 frame, float2 uv)
 {
@@ -318,7 +307,7 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
         float3 c = albedo_tex.rgb;
         if (colour_frame != 0u) {
             float4 frame = anim_frame_sample(g_effect_layer, g_effect_layer_sampler, g_anim_records[colour_frame],
-                                             anim_frame_uv(colour_book, i.uv));
+                                             i.uv);
             c = lerp(c, frame.rgb, frame.a);
         }
         /* Damage darkens the colour under the illumination layer. */
@@ -332,13 +321,12 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
             c *= 1.0f - unlit;
         }
         if (lit_frame != 0u) {
-            float2 frame_uv = anim_frame_uv(lit_book, i.uv);
             float4 layer = anim_frame_sample(g_effect_layer, g_effect_layer_sampler, g_anim_records[lit_frame],
-                                             frame_uv);
+                                             i.uv);
             c = c * layer.a + layer.rgb;
             uint4 lit_emissive = g_anim_records[lit_frame + 1u];
             anim_emissive = anim_frame_sample(g_effect_emissive, g_effect_emissive_sampler, lit_emissive,
-                                              frame_uv).rgb * asfloat(lit_emissive.w);
+                                              i.uv).rgb * asfloat(lit_emissive.w);
             anim_emission = true;
         }
         albedo_tex.rgb = c;

@@ -1,0 +1,9 @@
+# Effect library `examplepanel` (../README.md, "Effect libraries"): the
+# frames of panel.gltf's animations. effect_pack builds it.
+version: 1
+library: examplepanel
+images:
+  lights_0: { kind: emissive, emissive: frames/lights_0.png }
+  lights_1: { kind: emissive, emissive: frames/lights_1.png }
+  screen_a: { kind: baseColor, baseColor: frames/screen_a.png }
+  screen_b: { kind: baseColor, baseColor: frames/screen_b.png }

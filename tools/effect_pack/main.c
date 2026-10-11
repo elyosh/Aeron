@@ -1,18 +1,18 @@
 /*
- * effect_pack — builds an effect image library from the `images` of an
- * animation file (README.md).
+ * effect_pack — builds an effect library from its file, <library>.yaml
+ * (README.md): `version`, `library` and `images`.
  *
- *   effect_pack --out DIR FILE.anim.yaml
+ *   effect_pack --out DIR FILE.yaml
  *
- * Image paths are relative to the animation file. Per kind, the inputs, named
- * after the material channel they change, and what is stored (colour sRGB,
- * alpha linear; products in linear light):
- *   colour        baseColor (RGBA, alpha coverage)   layer: as given
- *   illumination  emissive (RGB); optional baseColor (RGBA, alpha coverage c)
- *                 layer: RGB baseColor·c, A 1 − c; emissive: RGB
- *   multiply      factor (RGB factor, A gloss)       layer: as given
- *   mark          baseColor (RGBA)                   layer: RGB rgb·a, A a
- *   energy        emissive (RGBA, A intensity)       emissive: RGB rgb·a
+ * Image paths are relative to the file. Per kind, the inputs, named after
+ * the material channel they change, and what is stored (colour sRGB, alpha
+ * linear; products in linear light):
+ *   baseColor  baseColor (RGBA, alpha coverage)      layer: as given
+ *   emissive   emissive (RGB); optional baseColor (RGBA, alpha coverage c)
+ *              layer: RGB baseColor·c, A 1 − c; emissive: RGB
+ *   damage     factor (RGB factor, A gloss)          layer: as given
+ *   mark       baseColor (RGBA)                      layer: RGB rgb·a, A a
+ *   energy     emissive (RGBA, A intensity)          emissive: RGB rgb·a
  * `maxSize` caps an image's longer side, `crop` records the part a blast
  * mark's [0, 1] maps to.
  *
@@ -42,9 +42,9 @@
 #include "png_read.h"
 #include "yaml_json.h"
 
-typedef enum Kind { KIND_COLOUR, KIND_ILLUMINATION, KIND_MULTIPLY, KIND_MARK, KIND_ENERGY, KIND_COUNT } Kind;
+typedef enum Kind { KIND_BASE_COLOR, KIND_EMISSIVE, KIND_DAMAGE, KIND_MARK, KIND_ENERGY, KIND_COUNT } Kind;
 
-static const char* const kKinds[KIND_COUNT] = { "colour", "illumination", "multiply", "mark", "energy" };
+static const char* const kKinds[KIND_COUNT] = { "baseColor", "emissive", "damage", "mark", "energy" };
 
 static float clamp01(float x) { return x < 0.0f ? 0.0f : (x > 1.0f ? 1.0f : x); }
 
@@ -59,7 +59,7 @@ static uint8_t to_srgb8(float c) {
 	return (uint8_t)(s * 255.0f + 0.5f);
 }
 
-/* The path of input `name`, resolved next to the animation file. */
+/* The path of input `name`, resolved next to the library file. */
 static void input_path(const char* dir, const char* name, char* path, size_t cap) {
 	if (name[0] == '/')
 		snprintf(path, cap, "%s", name);
@@ -67,7 +67,7 @@ static void input_path(const char* dir, const char* name, char* path, size_t cap
 		snprintf(path, cap, "%s/%s", dir, name);
 }
 
-/* An input PNG of image `key`, resolved next to the animation file; NULL
+/* An input PNG of image `key`, resolved next to the library file; NULL
  * after a message when missing or of another size than `*w` × `*h` (0: any). */
 static uint8_t* load_input(const char* dir, const char* key, const char* field, const cJSON* entry, int* w,
 						   int* h, bool required, bool* ok) {
@@ -169,7 +169,7 @@ static bool executable_path(char* path, size_t cap) {
 #endif
 }
 
-/* The inputs hash of the library (this executable, the animation file and
+/* The inputs hash of the library (this executable, the library file and
  * every image input it names), as 16 hex digits; false when unknown. */
 static bool library_inputs(const char* file, const char* dir, const cJSON* images, char out[17]) {
 	static const char* const fields[] = { "baseColor", "emissive", "factor" };
@@ -227,15 +227,14 @@ static bool bake(const char* dir, const char* key, const cJSON* entry, EffectPac
 		if (strcmp(kind_item->valuestring, kKinds[k]) == 0)
 			kind = k;
 	if (kind < 0) {
-		fprintf(stderr,
-				"effect_pack: image %s: kind must be colour, illumination, multiply, mark or energy\n", key);
+		fprintf(stderr, "effect_pack: image %s: kind must be baseColor, emissive, damage, mark or energy\n", key);
 		return false;
 	}
 	bool ok = true;
 	int  w = 0, h = 0;
 	if (!image_options(key, entry, out))
 		return false;
-	if (kind == KIND_ILLUMINATION) {
+	if (kind == KIND_EMISSIVE) {
 		uint8_t* emissive = load_input(dir, key, "emissive", entry, &w, &h, true, &ok);
 		uint8_t* colour   = ok ? load_input(dir, key, "baseColor", entry, &w, &h, false, &ok) : NULL;
 		uint8_t* layer    = ok ? (uint8_t*)malloc((size_t)w * h * 4) : NULL;
@@ -257,7 +256,7 @@ static bool bake(const char* dir, const char* key, const cJSON* entry, EffectPac
 		out->emissive = emissive;
 	} else {
 		/* The input names the material channel the image changes. */
-		const char* field = kind == KIND_MULTIPLY ? "factor" : kind == KIND_ENERGY ? "emissive" : "baseColor";
+		const char* field = kind == KIND_DAMAGE ? "factor" : kind == KIND_ENERGY ? "emissive" : "baseColor";
 		uint8_t*    image = load_input(dir, key, field, entry, &w, &h, true, &ok);
 		if (!ok)
 			return false;
@@ -292,7 +291,7 @@ static bool valid_name(const char* s) {
 }
 
 static int usage(void) {
-	fprintf(stderr, "usage: effect_pack --out DIR FILE.anim.yaml\n");
+	fprintf(stderr, "usage: effect_pack --out DIR <library>.yaml\n");
 	return 2;
 }
 
@@ -319,6 +318,17 @@ int main(int argc, char** argv) {
 	const cJSON* library = cJSON_GetObjectItemCaseSensitive(root, "library");
 	const cJSON* images  = cJSON_GetObjectItemCaseSensitive(root, "images");
 	bool         ok      = true;
+	/* A library file holds only the library; a model's animations are its
+	   own file, which aeron_gltf_cook reads. */
+	const cJSON* member;
+	cJSON_ArrayForEach(member, root) {
+		if (strcmp(member->string, "version") && strcmp(member->string, "library") &&
+			strcmp(member->string, "images")) {
+			fprintf(stderr, "effect_pack: %s: unknown member %s (a library has version, library and images)\n",
+					file, member->string);
+			ok = false;
+		}
+	}
 	if (!cJSON_IsNumber(version) || version->valueint != 1) {
 		fprintf(stderr, "effect_pack: %s: version must be 1\n", file);
 		ok = false;

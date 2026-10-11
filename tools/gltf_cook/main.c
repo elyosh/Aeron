@@ -46,7 +46,7 @@ static void usage(void) {
 					"  --no-zstd             Skip zstd supercompression on KTX2 payloads.\n"
 					"  --zstd-level <N>      zstd level, 1 to 22 (default 9; 19 is about\n"
 					"                        14x slower for ~6%% smaller payloads).\n"
-					"  --animations <file>   Merge an animation file (<model>.anim.yaml:\n"
+					"  --animations <file>   Merge a model animation file (<model>.anim.yaml:\n"
 					"                        materials' flipbooks, damage and energy)\n"
 					"                        into the materials first.\n"
 					"  --effects-dir <dir>   With --animations, check every image key\n"

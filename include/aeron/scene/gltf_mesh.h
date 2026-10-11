@@ -203,8 +203,6 @@ typedef struct AeronGltfMaterial {
  *   "aeronFlipbooks": [ { "state", "layer": "colour" | "illumination",
  *                         "mode": "loop" | "once", "library",
  *                         "frames": [ [key, seconds], ... ],
- *                         "uv": { "scale": [sx, sy], "offset": [ox, oy],
- *                                 "clamp": bool },
  *                         "emissiveStrength": s, "unlit": u } ]
  *
  *   "aeronDamage": { "library", "choice", "placement",
@@ -241,10 +239,6 @@ typedef struct AeronGltfFlipbook {
 	char*    library;
 	uint32_t frame_first; /* the model's flipbook_frames */
 	uint32_t frame_count;
-	bool     has_uv;
-	bool     uv_clamp;
-	float    uv_scale[2];
-	float    uv_offset[2];
 	float    emissive_strength; /* illumination frames' emission scale (1) */
 	float    unlit;             /* colour frames' unlit weight (0) */
 } AeronGltfFlipbook;

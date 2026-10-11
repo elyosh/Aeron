@@ -335,7 +335,7 @@ static bool print_flipbook(XwauAnim* a, Text* t, const char* state, int layer, c
 	char                library[64], rel[256];
 	dat_names(fb->dat->rel, rel, sizeof rel, library, sizeof library);
 	text_add(t, "{\"state\":\"%s\",\"layer\":\"%s\",\"mode\":\"%s\",\"library\":\"%s\",\"frames\":[", state,
-			 layer ? "illumination" : "colour", q->mode == XWAU_SEQ_ONCE ? "once" : "loop", library);
+			 layer ? "emissive" : "baseColor", q->mode == XWAU_SEQ_ONCE ? "once" : "loop", library);
 	const XwauFxKind kind = layer ? XWAU_FX_ILLUMINATION : XWAU_FX_COLOUR;
 	for (size_t i = 0; i < fb->frames.count; ++i) {
 		const XwauSeqFrame* f = &fb->frames.items[i];
@@ -344,9 +344,6 @@ static bool print_flipbook(XwauAnim* a, Text* t, const char* state, int layer, c
 		text_add(t, "%s[\"%s\",%.9g]", i ? "," : "", key, (double)f->seconds);
 	}
 	text_add(t, "]");
-	if (q->aspect != 1.0f || q->offset[0] != 0.0f || q->offset[1] != 0.0f || q->clamp)
-		text_add(t, ",\"uv\":{\"scale\":[%.9g,1],\"offset\":[%.9g,%.9g],\"clamp\":%s}", (double)q->aspect,
-				 (double)q->offset[0], (double)q->offset[1], q->clamp ? "true" : "false");
 	/* A colour frame replaces the texture, so it is drawn as unlit as the
 	   texture's bake (XWAU's animation shader drops Shadeless: a deviation
 	   that keeps unlit screens unlit while they animate). */
@@ -483,7 +480,10 @@ bool XwauAnim_Texture(XwauAnim* a, const XwauMatFile* mat, const opt_texture_t* 
 		a->unknown_events += q->event_unknown;
 		if (q->instance)
 			continue;
-		if (q->overlay != XWAU_SEQ_REPLACE) {
+		/* Frames sample the material's own UVs: a sequence that scales,
+		   offsets or clamps them (none in XWAU's data) is not converted. */
+		if (q->overlay != XWAU_SEQ_REPLACE || q->aspect != 1.0f || q->offset[0] != 0.0f ||
+			q->offset[1] != 0.0f || q->clamp) {
 			a->skipped_unsupported++;
 			continue;
 		}
@@ -555,7 +555,7 @@ bool XwauAnim_Texture(XwauAnim* a, const XwauMatFile* mat, const opt_texture_t* 
 			for (size_t s = 0; s < EVENT_STATE_COUNT; ++s) {
 				if (s == HANGAR_SLOT && target) {
 					text_add(&t, "%s{\"state\":\"hangar\",\"layer\":\"%s\",\"mode\":\"loop\",\"frames\":[]}",
-							 first ? "" : ",", layer ? "illumination" : "colour");
+							 first ? "" : ",", layer ? "emissive" : "baseColor");
 					first = false;
 					continue;
 				}
@@ -646,7 +646,7 @@ void XwauAnim_Report(const XwauAnim* a) {
 		fprintf(stderr, "opt2gltf: %s: %zu frame(s) whose image their DAT lacks left out\n", a->label,
 				a->missing_frames);
 	if (a->skipped_unsupported)
-		fprintf(stderr, "opt2gltf: %s: %zu sequence(s) with an unsupported event/layer combination skipped\n",
+		fprintf(stderr, "opt2gltf: %s: %zu sequence(s) with an unsupported event, layer or UV mapping skipped\n",
 				a->label, a->skipped_unsupported);
 	if (a->unknown_events)
 		fprintf(stderr, "opt2gltf: %s: %zu sequence(s) with an unknown event (played as EVT_NONE)\n",

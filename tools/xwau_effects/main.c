@@ -8,8 +8,8 @@
  *
  * Reads the library images the models use (the keys of their aeronFlipbooks
  * frames and aeronDamage stages, from the .glb files given or found in the
- * directories given; or the flipbooks and damage of animation files, given
- * or found as models/<key>/<key>.anim.yaml in a source tree) and the
+ * directories given; or the flipbooks and damage of model animation files,
+ * given or found as models/<key>/<key>.anim.yaml in a source tree) and the
  * DAT-named material files
  * (Materials/dat-<G>-<I>.mat) of the roots. A library is the images of
  * Effects/<library>.dat; a library with no such DAT in the roots is not an
@@ -27,8 +27,8 @@
  * Roots are searched in order, the first holding a file wins (as opt2gltf).
  *
  * With --sources, it writes the libraries as sources instead, in an asset
- * source tree: TREE/effects/<library>/<library>.anim.yaml, each
- * image's effect_pack inputs as PNGs under frames/ (XWAU's rules applied:
+ * source tree: TREE/effects/<library>/<library>.yaml (effect_pack's library
+ * file), each image's inputs as PNGs under frames/ (XWAU's rules applied:
  * an illumination frame as its emissive and its base colour with coverage,
  * the tint and alpha mode baked in), with its size cap and crop; and
  * TREE/effects/effects.yaml.
@@ -258,14 +258,12 @@ static cJSON* read_glb_json(const char* path) {
 }
 
 /* The library images of one material's flipbooks and damage (`books` and
- * `damage` in `holder`), their library their own or `fallback`. */
-static bool material_keys(const char* path, const cJSON* holder, const char* books, const char* damage_name,
-						  const cJSON* fallback) {
+ * `damage` in `holder`). */
+static bool material_keys(const char* path, const cJSON* holder, const char* books, const char* damage_name) {
 	bool         ok = true;
 	const cJSON* book;
 	cJSON_ArrayForEach(book, cJSON_GetObjectItemCaseSensitive(holder, books)) {
 		const cJSON* library = cJSON_GetObjectItemCaseSensitive(book, "library");
-		library              = library ? library : fallback;
 		const cJSON* frame;
 		cJSON_ArrayForEach(frame, cJSON_GetObjectItemCaseSensitive(book, "frames")) {
 			const cJSON* key = cJSON_GetArrayItem(frame, 0);
@@ -275,7 +273,6 @@ static bool material_keys(const char* path, const cJSON* holder, const char* boo
 	}
 	const cJSON* damage  = cJSON_GetObjectItemCaseSensitive(holder, damage_name);
 	const cJSON* library = cJSON_GetObjectItemCaseSensitive(damage, "library");
-	library              = library ? library : fallback;
 	const cJSON* alternative;
 	cJSON_ArrayForEach(alternative, cJSON_GetObjectItemCaseSensitive(damage, "alternatives")) {
 		const cJSON* stage;
@@ -298,14 +295,14 @@ static bool read_model(const char* path) {
 	const cJSON* material;
 	cJSON_ArrayForEach(material, cJSON_GetObjectItemCaseSensitive(root, "materials")) {
 		ok &= material_keys(path, cJSON_GetObjectItemCaseSensitive(material, "extras"), "aeronFlipbooks",
-							"aeronDamage", NULL);
+							"aeronDamage");
 	}
 	cJSON_Delete(root);
 	g_models++;
 	return ok;
 }
 
-/* The library images an animation file's materials use. */
+/* The library images a model animation file's materials use. */
 static bool read_anim(const char* path) {
 	char   err[512];
 	cJSON* root = YamlJson_Load(path, err, sizeof err);
@@ -313,11 +310,10 @@ static bool read_anim(const char* path) {
 		fprintf(stderr, "xwau_effects: %s\n", err);
 		return false;
 	}
-	const cJSON* library = cJSON_GetObjectItemCaseSensitive(root, "library");
-	bool         ok      = true;
+	bool         ok = true;
 	const cJSON* material;
 	cJSON_ArrayForEach(material, cJSON_GetObjectItemCaseSensitive(root, "materials")) {
-		ok &= material_keys(path, material, "flipbooks", "damage", library);
+		ok &= material_keys(path, material, "flipbooks", "damage");
 	}
 	cJSON_Delete(root);
 	g_models++;
@@ -992,7 +988,7 @@ static bool write_frame(const char* dir, const char* file, int w, int h, const u
 	return false;
 }
 
-/* Writes library `l` as sources under `effects_dir`: <name>/<name>.anim.yaml
+/* Writes library `l` as sources under `effects_dir`: <name>/<name>.yaml
  * and its images under <name>/frames/, each key's inputs in effect_pack's
  * kinds (the XWAU rules applied: illumination as an emissive image and a
  * base colour image with its coverage, tint and alpha mode baked in).
@@ -1062,13 +1058,14 @@ static bool write_library_sources(Library* l, const char* effects_dir) {
 			snprintf(file, sizeof file, "%s_emissive.png", base);
 			snprintf(base_color, sizeof base_color, "%s_base_color.png", base);
 			ok = write_frame(dir, file, w, h, emissive) && (!any_base_color || write_frame(dir, base_color, w, h, input));
-			text_add(&y, "  \"%s\": { kind: illumination, emissive: %s", r->key, file);
+			text_add(&y, "  \"%s\": { kind: emissive, emissive: %s", r->key, file);
 			if (any_base_color)
 				text_add(&y, ", baseColor: %s", base_color);
 		} else if (ok && (r->kind == XWAU_FX_COLOUR || r->kind == XWAU_FX_MULTIPLY)) {
 			snprintf(file, sizeof file, "%s.png", base);
 			ok = write_frame(dir, file, w, h, layer);
-			text_add(&y, "  \"%s\": { kind: %s, %s: %s", r->key, XwauFx_KindName(r->kind),
+			text_add(&y, "  \"%s\": { kind: %s, %s: %s", r->key,
+					 r->kind == XWAU_FX_MULTIPLY ? "damage" : "baseColor",
 					 r->kind == XWAU_FX_MULTIPLY ? "factor" : "baseColor", file);
 		} else if (ok) {
 			/* Mark, energy: the tinted frame with its alpha, which effect_pack
@@ -1103,7 +1100,7 @@ static bool write_library_sources(Library* l, const char* effects_dir) {
 		XwauDat_FreeImage(&im);
 	}
 	XwauDat_Close(dat);
-	snprintf(path, sizeof path, "%s/%s.anim.yaml", dir, l->name);
+	snprintf(path, sizeof path, "%s/%s.yaml", dir, l->name);
 	ok = ok && y.s && write_file(path, y.s, y.len);
 	free(y.s);
 	if (ok)

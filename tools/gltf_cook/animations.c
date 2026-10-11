@@ -49,7 +49,9 @@ static const char* const kStates[]   = { "threat.laser",
 										 "hangar",
 										 "target",
 										 "always" };
-static const char* const kLayers[]   = { "colour", "illumination" };
+/* Flipbook layers as authored, and as the loader reads them. */
+static const char* const kLayers[]       = { "baseColor", "emissive" };
+static const char* const kLoaderLayers[] = { "colour", "illumination" };
 static const char* const kModes[]    = { "loop", "once" };
 static const char* const kEnergies[] = { "shields", "tractor", "jamming" };
 static const char* const kMembers[]  = { "aeronFlipbooks", "aeronDamage", "aeronEnergy" };
@@ -59,7 +61,6 @@ static const char* const kMembers[]  = { "aeronFlipbooks", "aeronDamage", "aeron
 typedef struct Merge {
 	const char* anim;        /* for messages */
 	const char* material;    /* for messages */
-	const char* library;     /* the file's, or NULL */
 	const char* effects_dir; /* or NULL */
 	cJSON**     indexes;     /* loaded library indexes, by name */
 	char**      index_names;
@@ -144,29 +145,25 @@ static bool key_known(Merge* m, const char* library, const char* key) {
 	return found;
 }
 
-/* The library of a flipbook or damage entry: its own, else the file's. */
+/* The library a flipbook or damage entry names. */
 static const char* entry_library(Merge* m, const cJSON* entry, const char* what) {
-	const cJSON* own = cJSON_GetObjectItemCaseSensitive(entry, "library");
-	if (own && !cJSON_IsString(own)) {
-		fprintf(stderr, TAG ": %s: material %s: %s: library is not a name\n", m->anim, m->material, what);
+	const cJSON* library = cJSON_GetObjectItemCaseSensitive(entry, "library");
+	if (!cJSON_IsString(library)) {
+		fprintf(stderr, TAG ": %s: material %s: %s: library must name the effect library of its images\n",
+				m->anim, m->material, what);
 		return NULL;
 	}
-	const char* library = own ? own->valuestring : m->library;
-	if (!library)
-		fprintf(stderr, TAG ": %s: material %s: %s: no library (none in the file either)\n", m->anim,
-				m->material, what);
-	return library;
+	return library->valuestring;
 }
 
 /* One flipbook, validated, in the order the loader documents. */
 static cJSON* flipbook(Merge* m, const cJSON* in) {
-	static const char* const fields[] = { "state", "layer",           "mode", "library", "frames",
-										  "uv",    "emissiveStrength", "unlit" };
+	static const char* const fields[] = { "state",  "layer",           "mode", "library",
+										  "frames", "emissiveStrength", "unlit" };
 	const cJSON*             state    = cJSON_GetObjectItemCaseSensitive(in, "state");
 	const cJSON*             layer    = cJSON_GetObjectItemCaseSensitive(in, "layer");
 	const cJSON*             mode     = cJSON_GetObjectItemCaseSensitive(in, "mode");
 	const cJSON*             frames   = cJSON_GetObjectItemCaseSensitive(in, "frames");
-	const cJSON*             uv       = cJSON_GetObjectItemCaseSensitive(in, "uv");
 	const cJSON*             strength = cJSON_GetObjectItemCaseSensitive(in, "emissiveStrength");
 	const cJSON*             unlit    = cJSON_GetObjectItemCaseSensitive(in, "unlit");
 	if (!cJSON_IsObject(in) || !only_members(m, "flipbook", in, fields, COUNT(fields)))
@@ -174,7 +171,7 @@ static cJSON* flipbook(Merge* m, const cJSON* in) {
 	if (!one_of(state, kStates, COUNT(kStates)) || !one_of(layer, kLayers, COUNT(kLayers)) ||
 		!one_of(mode, kModes, COUNT(kModes)) || !cJSON_IsArray(frames)) {
 		fprintf(stderr,
-				TAG ": %s: material %s: a flipbook needs a known state, layer (colour, illumination), "
+				TAG ": %s: material %s: a flipbook needs a known state, layer (baseColor, emissive), "
 					"mode (loop, once) and frames\n",
 				m->anim, m->material);
 		return NULL;
@@ -195,17 +192,6 @@ static cJSON* flipbook(Merge* m, const cJSON* in) {
 		if (!key_known(m, library, key->valuestring))
 			return NULL;
 	}
-	if (uv) {
-		static const char* const uv_fields[] = { "scale", "offset", "clamp" };
-		const cJSON*             clamp       = cJSON_GetObjectItemCaseSensitive(uv, "clamp");
-		if (!only_members(m, "uv", uv, uv_fields, COUNT(uv_fields)) ||
-			!numbers(cJSON_GetObjectItemCaseSensitive(uv, "scale"), 2) ||
-			!numbers(cJSON_GetObjectItemCaseSensitive(uv, "offset"), 2) || (clamp && !cJSON_IsBool(clamp))) {
-			fprintf(stderr, TAG ": %s: material %s: uv is { scale: [x, y], offset: [x, y], clamp: bool }\n",
-					m->anim, m->material);
-			return NULL;
-		}
-	}
 	if (strength &&
 		(!cJSON_IsNumber(strength) || !isfinite(strength->valuedouble) || strength->valuedouble < 0.0)) {
 		fprintf(stderr, TAG ": %s: material %s: emissiveStrength is a number >= 0\n", m->anim, m->material);
@@ -217,19 +203,11 @@ static cJSON* flipbook(Merge* m, const cJSON* in) {
 	}
 	cJSON* out = cJSON_CreateObject();
 	cJSON_AddStringToObject(out, "state", state->valuestring);
-	cJSON_AddStringToObject(out, "layer", layer->valuestring);
+	cJSON_AddStringToObject(out, "layer", kLoaderLayers[strcmp(layer->valuestring, kLayers[0]) == 0 ? 0 : 1]);
 	cJSON_AddStringToObject(out, "mode", mode->valuestring);
 	if (library)
 		cJSON_AddStringToObject(out, "library", library);
 	cJSON_AddItemToObject(out, "frames", cJSON_Duplicate(frames, true));
-	if (uv) {
-		cJSON* u = cJSON_AddObjectToObject(out, "uv");
-		cJSON_AddItemToObject(u, "scale",
-							  cJSON_Duplicate(cJSON_GetObjectItemCaseSensitive(uv, "scale"), true));
-		cJSON_AddItemToObject(u, "offset",
-							  cJSON_Duplicate(cJSON_GetObjectItemCaseSensitive(uv, "offset"), true));
-		cJSON_AddBoolToObject(u, "clamp", cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(uv, "clamp")));
-	}
 	if (strength)
 		cJSON_AddNumberToObject(out, "emissiveStrength", strength->valuedouble);
 	if (unlit)
@@ -384,13 +362,16 @@ bool aeron_gltf_cook_merge_animations(const char* gltf, const char* anim, const 
 	}
 	Merge        m         = { .anim = anim, .effects_dir = effects_dir };
 	const cJSON* version   = cJSON_GetObjectItemCaseSensitive(file, "version");
-	const cJSON* library   = cJSON_GetObjectItemCaseSensitive(file, "library");
 	const cJSON* materials = cJSON_GetObjectItemCaseSensitive(file, "materials");
-	bool ok = cJSON_IsNumber(version) && version->valueint == 1 && (!library || cJSON_IsString(library)) &&
-			  cJSON_IsObject(materials);
+	bool         ok        = cJSON_IsNumber(version) && version->valueint == 1 && cJSON_IsObject(materials);
+	/* A model's animations only; an effect library is its own file, which
+	   effect_pack reads. */
+	const cJSON* member;
+	cJSON_ArrayForEach(member, file) {
+		ok = ok && (strcmp(member->string, "version") == 0 || strcmp(member->string, "materials") == 0);
+	}
 	if (!ok)
-		fprintf(stderr, TAG ": %s: needs version 1 and materials (library, when given, is a name)\n", anim);
-	m.library = cJSON_IsString(library) ? library->valuestring : NULL;
+		fprintf(stderr, TAG ": %s: a model animation file has version 1 and materials, nothing else\n", anim);
 	cJSON*       gltf_materials = cJSON_GetObjectItemCaseSensitive(doc, "materials");
 	const cJSON* entry;
 	size_t       merged     = 0;

@@ -1,6 +1,6 @@
 /*
- * A YAML file as a cJSON tree, for the tools that read animation files
- * (README.md, "Animation file"). Mappings become
+ * A YAML file as a cJSON tree, for the tools that read effect library and
+ * model animation files (README.md). Mappings become
  * objects (keys as strings), sequences arrays. A plain scalar is null
  * (`null`, `~`, empty), a boolean (`true`, `false`), a number when it reads
  * as one, else a string; a quoted scalar is always a string. Anchors and

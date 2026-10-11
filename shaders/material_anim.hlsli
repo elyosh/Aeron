@@ -49,7 +49,7 @@ AERON_ANIM_FN uint material_anim_select(uint first, uint count, uint layer, uint
 		uint x = AERON_ANIM_RECORD(record).x;
 		if (((x >> AERON_ANIM_FLIPBOOK_LAYER_SHIFT) & 1u) == layer && ((active >> (x & 0x1Fu)) & 1u) != 0u)
 			return record;
-		record += (x & AERON_ANIM_FLIPBOOK_HAS_UV) != 0u ? 2u : 1u;
+		record++;
 	}
 	return 0u;
 }

@@ -7,7 +7,8 @@ set_target_properties(aeron_effect_pack_lib PROPERTIES
     C_STANDARD 11
     C_STANDARD_REQUIRED ON)
 
-# The YAML reader of the animation files (effect_pack, gltf_cook --animations).
+# The YAML reader of effect library and model animation files (effect_pack,
+# gltf_cook --animations).
 add_library(aeron_yaml_json STATIC yaml_json.c)
 target_include_directories(aeron_yaml_json PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(aeron_yaml_json PUBLIC aeron_yaml aeron_cjson)

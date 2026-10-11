@@ -7,6 +7,6 @@ here=$(cd "$(dirname "$0")" && pwd)
 build=$1
 out=$2
 mkdir -p "$out/remaster/effects" "$out/remaster/models"
-"$build/effect_pack" --out "$out/remaster/effects" "$here/panel.anim.yaml"
+"$build/effect_pack" --out "$out/remaster/effects" "$here/examplepanel.yaml"
 "$build/aeron_gltf_cook" "$here/panel.gltf" --out "$out/remaster/models/panel.glb" \
 	--animations "$here/panel.anim.yaml" --effects-dir "$out/remaster/effects"
