@@ -393,6 +393,12 @@ class AERON_OT_show_skin(Operator):
     def poll(cls, context):
         return common.role(context.object) == 'model'
 
+    @classmethod
+    def description(cls, context, properties):
+        if properties.markings < 0:
+            return "Show the meshes' own materials, which the exports write, instead of a markings value's variant"
+        return "Show the variant the game draws for markings value {}".format(properties.markings)
+
     def execute(self, context):
         root = context.object
         root.aeron_flight.preview_markings = self.markings
