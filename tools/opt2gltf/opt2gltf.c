@@ -2011,6 +2011,49 @@ static void json_append_string(char** out, size_t* len, size_t* cap, const char*
 	json_append(out, len, cap, "\"");
 }
 
+/* The model root's markings list as `,"markings":[...]` (owned), "" when
+ * every markings value shows the own materials, NULL on OOM. Entry m is the
+ * skin `default_markings` names for m, else state min(m, N - 1) (`null`
+ * for state 0), up to the longer of the two lists; after a last skin, the
+ * state of the values past it, which the list's last entry then repeats. */
+static char* markings_json(const OptGltfSkins* skins, int state_count) {
+	const size_t named = skins ? skins->markings_count : 0;
+	size_t       count = named > (size_t)state_count ? named : (size_t)state_count;
+	const char*  skin[257];
+	int          state[257];
+	for (size_t m = 0; m < count && m < 256; ++m) {
+		skin[m]  = m < named ? skins->default_markings[m] : NULL;
+		state[m] = m < (size_t)state_count ? (int)m : state_count - 1;
+	}
+	count = count < 256 ? count : 256;
+	if (count && skin[count - 1] && count < 256) {
+		skin[count]  = NULL;
+		state[count] = count < (size_t)state_count ? (int)count : state_count - 1;
+		count++;
+	}
+	while (count > 1 && !skin[count - 1] && !skin[count - 2] && state[count - 1] == state[count - 2])
+		count--;
+	bool shown = false;
+	for (size_t m = 0; m < count; ++m)
+		shown |= skin[m] != NULL || state[m] != 0;
+	size_t len = 0, cap = 256;
+	char*  json = (char*)malloc(cap);
+	if (json)
+		json[0] = '\0';
+	for (size_t m = 0; shown && m < count; ++m) {
+		json_append(&json, &len, &cap, m ? "," : ",\"markings\":[");
+		if (skin[m])
+			json_append_string(&json, &len, &cap, skin[m]);
+		else if (state[m])
+			json_append(&json, &len, &cap, "\"State %d\"", state[m]);
+		else
+			json_append(&json, &len, &cap, "null");
+	}
+	if (shown)
+		json_append(&json, &len, &cap, "]");
+	return json;
+}
+
 static bool build_memory(const opt_file_t* opt, const char* basename, const OptGltfBuildOptions* options,
 						 OptGltfDocument** out_document, opt_error_t* error);
 
@@ -2721,21 +2764,21 @@ static bool build_memory(const opt_file_t* opt, const char* basename, const OptG
 				kept_repeats);
 
 	/* ---- Variants (asset-level) ---------------------------------- */
-	/* Asset states first, then skin variants; with skin variants the asset
-	 * states are emitted even for a single state. */
-	const size_t skin_variant_count = skins ? skins->variant_count : 0;
-	if (max_state_count > 1 || skin_variant_count > 0) {
-		const size_t count = (size_t)max_state_count + skin_variant_count;
+	/* State 0 is the primitives' own materials; states 1 to N - 1, then the
+	 * skin variants. */
+	const size_t skin_variant_count  = skins ? skins->variant_count : 0;
+	const size_t state_variant_count = (size_t)max_state_count - 1;
+	if (state_variant_count + skin_variant_count > 0) {
+		const size_t count = state_variant_count + skin_variant_count;
 		build->variants    = (cgltf_material_variant*)calloc(count, sizeof *build->variants);
 		if (!build->variants) {
 			fprintf(stderr, "opt2gltf: oom\n");
 			goto fail;
 		}
-		for (int v = 0; v < max_state_count; ++v) {
-			build->variants[v].name = gb_keep_string(build, xprintf_dup("Variant%d", v));
-		}
+		for (size_t v = 0; v < state_variant_count; ++v)
+			build->variants[v].name = gb_keep_string(build, xprintf_dup("State %d", (int)v + 1));
 		for (size_t v = 0; v < skin_variant_count; ++v)
-			build->variants[(size_t)max_state_count + v].name =
+			build->variants[state_variant_count + v].name =
 				gb_keep_string(build, xstrdup(skins->variants[v].name));
 		build->variants_count = count;
 	}
@@ -2932,22 +2975,25 @@ static bool build_memory(const opt_file_t* opt, const char* basename, const OptG
 				(t0 >= 0 && t0 < opt->texture_count) ? &build->materials[t0] : &build->materials[untex_idx];
 
 			/* Variant mappings: for a face group with more than one state or
-			 * a skin composite, one per variant. */
+			 * a skin composite, one per variant giving it another material. */
 			const int  sc       = grp->state_count;
 			const bool switched = sc > 1 && grp->state_textures;
 			if (switched ||
 				skin_texture_has_composite(&skin_state, skin_variant_count, opt->texture_count, t0)) {
-				const size_t            vc   = build->variants_count;
-				cgltf_material_mapping* maps = (cgltf_material_mapping*)push_array(
-					(void**)&build->mappings, &build->mappings_count, &build->mappings_cap, sizeof *maps, vc);
+				const size_t     vc        = build->variants_count;
+				cgltf_material** materials = (cgltf_material**)calloc(vc ? vc : 1, sizeof *materials);
+				if (!materials) {
+					fprintf(stderr, "opt2gltf: oom\n");
+					goto fail;
+				}
 				int rank = alpha_class_rank(prim->material);
 				for (size_t v = 0; v < vc; ++v) {
-					/* Asset variant v shows state v; a skin variant its
+					/* A state variant shows its state; a skin variant its
 					 * composite, else its state. */
-					size_t  state     = v;
+					size_t  state     = v + 1;
 					int32_t composite = -1;
-					if (v >= (size_t)max_state_count) {
-						const size_t sv = v - (size_t)max_state_count;
+					if (v >= state_variant_count) {
+						const size_t sv = v - state_variant_count;
 						state           = skins->variants[sv].state;
 						if (t0 >= 0 && t0 < opt->texture_count)
 							composite = skin_state.composite_of[sv * (size_t)opt->texture_count + (size_t)t0];
@@ -2962,30 +3008,92 @@ static bool build_memory(const opt_file_t* opt, const char* basename, const OptG
 						m_ref = (ti >= 0 && ti < opt->texture_count) ? &build->materials[ti]
 																	 : &build->materials[untex_idx];
 					}
-					maps[v].variant  = (cgltf_size)v;
-					maps[v].material = m_ref;
+					materials[v] = m_ref;
 					if (alpha_class_rank(m_ref) > rank)
 						rank = alpha_class_rank(m_ref);
 				}
 				int mixed = alpha_class_rank(prim->material) != rank;
 				for (size_t v = 0; v < vc; ++v)
-					mixed |= alpha_class_rank(maps[v].material) != rank;
+					mixed |= alpha_class_rank(materials[v]) != rank;
 				if (mixed) {
 					prim->material = promoted_variant_material(build, prim->material, rank, base_material_count,
 															   promoted_materials);
 					for (size_t v = 0; v < vc; ++v)
-						maps[v].material = promoted_variant_material(build, maps[v].material, rank,
-																	 base_material_count, promoted_materials);
+						materials[v] = promoted_variant_material(build, materials[v], rank, base_material_count,
+																 promoted_materials);
 					fprintf(stderr, "opt2gltf: %s: mesh %d face group %d switch states mix alpha classes; all use %s\n",
 							basename, (int)mi, (int)g, rank == 2 ? "BLEND" : "MASK");
 				}
-				prim->mappings       = maps;
-				prim->mappings_count = (cgltf_size)vc;
+				size_t mapped = 0;
+				for (size_t v = 0; v < vc; ++v)
+					mapped += materials[v] != prim->material;
+				if (mapped) {
+					cgltf_material_mapping* maps = (cgltf_material_mapping*)push_array(
+						(void**)&build->mappings, &build->mappings_count, &build->mappings_cap, sizeof *maps,
+						mapped);
+					size_t k = 0;
+					for (size_t v = 0; v < vc; ++v) {
+						if (materials[v] == prim->material)
+							continue;
+						maps[k].variant    = (cgltf_size)v;
+						maps[k++].material = materials[v];
+					}
+					prim->mappings       = maps;
+					prim->mappings_count = (cgltf_size)mapped;
+				}
+				free(materials);
 			}
 			mesh_prim_count++;
 		}
 		mesh->primitives       = mesh_prims_start;
 		mesh->primitives_count = mesh_prim_count;
+	}
+
+	/* A variant that changes no primitive's material (a skin none of whose
+	 * images match) still maps the first primitive to its own material, so
+	 * that editors writing only mapped variants (Blender's glTF exporter)
+	 * keep it for the markings list and missions to name. */
+	if (build->variants_count && build->primitives_count) {
+		size_t unmapped = 0;
+		bool*  mapped   = (bool*)calloc(build->variants_count, sizeof *mapped);
+		if (!mapped) {
+			fprintf(stderr, "opt2gltf: oom\n");
+			goto fail;
+		}
+		for (size_t k = 0; k < build->mappings_count; ++k)
+			mapped[build->mappings[k].variant] = true;
+		for (size_t v = 0; v < build->variants_count; ++v)
+			unmapped += !mapped[v];
+		if (unmapped) {
+			/* cgltf points primitives at their mappings: rebuild the array. */
+			const size_t            count    = build->mappings_count + unmapped;
+			cgltf_material_mapping* mappings = (cgltf_material_mapping*)calloc(count, sizeof *mappings);
+			if (!mappings) {
+				free(mapped);
+				fprintf(stderr, "opt2gltf: oom\n");
+				goto fail;
+			}
+			size_t k = 0;
+			for (size_t p = 0; p < build->primitives_count; ++p) {
+				cgltf_primitive*        prim  = &build->primitives[p];
+				cgltf_material_mapping* first = mappings + k;
+				for (size_t m = 0; m < prim->mappings_count; ++m)
+					mappings[k++] = prim->mappings[m];
+				for (size_t v = 0; p == 0 && v < build->variants_count; ++v) {
+					if (!mapped[v]) {
+						mappings[k].variant    = (cgltf_size)v;
+						mappings[k++].material = prim->material;
+					}
+				}
+				prim->mappings_count = (cgltf_size)(mappings + k - first);
+				prim->mappings       = prim->mappings_count ? first : NULL;
+			}
+			free(build->mappings);
+			build->mappings       = mappings;
+			build->mappings_count = count;
+			build->mappings_cap   = count;
+		}
+		free(mapped);
 	}
 
 	/* ---- Nodes: one root + one per mesh (with hardpoint children) -- */
@@ -3037,10 +3145,16 @@ static bool build_memory(const opt_file_t* opt, const char* basename, const OptG
 	{
 		/* Each articulation needs at most 256 bytes, each setting 80, each
 		 * component set 72 plus 4 per member. */
-		const size_t root_size = 64 + articulation_count * 256 + setting_count * 80 + component_set_count * (72 + 255 * 4);
-		char*        root_ext  = (char*)malloc(root_size);
-		if (!root_ext)
+		char* markings = markings_json(skins, max_state_count);
+		if (!markings)
 			goto fail;
+		const size_t root_size = 64 + articulation_count * 256 + setting_count * 80 +
+								 component_set_count * (72 + 255 * 4) + strlen(markings);
+		char* root_ext = (char*)malloc(root_size);
+		if (!root_ext) {
+			free(markings);
+			goto fail;
+		}
 		size_t root_off = (size_t)snprintf(root_ext, root_size, "{\"role\":\"model\"");
 		/* Articulations in option order; speedBack only when it differs. */
 		for (size_t a = 0; a < articulation_count; ++a) {
@@ -3079,7 +3193,10 @@ static bool build_memory(const opt_file_t* opt, const char* basename, const OptG
 			}
 			root_off += (size_t)snprintf(root_ext + root_off, root_size - root_off, "]");
 		}
-		snprintf(root_ext + root_off, root_size - root_off, component_set_count ? "}}" : "}");
+		if (component_set_count)
+			root_off += (size_t)snprintf(root_ext + root_off, root_size - root_off, "}");
+		snprintf(root_ext + root_off, root_size - root_off, "%s}", markings);
+		free(markings);
 		const bool root_set = set_flight_extension(build, root_node, root_ext);
 		free(root_ext);
 		if (!root_set)
@@ -3330,22 +3447,6 @@ static bool build_memory(const opt_file_t* opt, const char* basename, const OptG
 	document->data.asset.version   = "2.0";
 	document->data.asset.generator = "opt2gltf";
 	if (skins) {
-		size_t len = 0, cap = 256;
-		char*  json = (char*)malloc(cap);
-		if (json)
-			json[0] = '\0';
-		json_append(&json, &len, &cap, "{\"aeronSkinMarkings\":[");
-		for (size_t m = 0; m < skins->markings_count; ++m) {
-			json_append(&json, &len, &cap, m ? "," : "");
-			if (skins->default_markings[m])
-				json_append_string(&json, &len, &cap, skins->default_markings[m]);
-			else
-				json_append(&json, &len, &cap, "null");
-		}
-		json_append(&json, &len, &cap, "],\"aeronAssetVariants\":%d}", max_state_count);
-		if (!json)
-			goto fail;
-		document->data.asset.extras.data = gb_keep_string(build, json);
 		size_t own_emissive = 0, own_metal_rough = 0;
 		for (size_t c = 0; c < skin_state.count; ++c) {
 			own_emissive += skin_state.composites[c].images[1] >= 0;

@@ -55,9 +55,10 @@ static AeronSceneMesh* create_cube(AeronCommandBuffer* cmd) {
 static int create_screen_textures(Fixture* f, AeronCommandBuffer* cmd);
 
 /* A model whose game_scene instances give markings values gets one variant
- * index per markings value up to the highest: a used value shows the model's default
- * skin for it (aeronSkinMarkings), any other its asset paint state, as the
- * game maps markings. Others keep the asset variants. */
+ * index per markings value up to the highest: a used value shows its
+ * markings list entry, as the game maps markings, any other the own
+ * materials, and only the used variants' textures are loaded. Others get
+ * their whole markings list. */
 static AeronSceneMesh* create_mesh(AeronCommandBuffer* cmd, const Fixture* f, int model_index,
 								   const AeronFlightModel* model, const char* path) {
 	bool used[CAPTURE_MAX_MARKINGS + 1] = { false };
@@ -76,14 +77,8 @@ static AeronSceneMesh* create_mesh(AeronCommandBuffer* cmd, const Fixture* f, in
 		return AeronScene_MeshCreateEx(cmd, &info, NULL);
 	const AeronGltfModel* render = &model->render;
 	uint32_t              variants[CAPTURE_MAX_MARKINGS + 1];
-	for (int m = 0; m <= highest; ++m) {
-		const uint32_t assets = render->asset_variant_count;
-		variants[m]           = render->variant_count ? ((uint32_t)m < assets ? (uint32_t)m : assets - 1u)
-													  : AERON_GLTF_NO_VARIANT;
-		if (used[m] && (uint32_t)m < render->skin_markings_count &&
-			render->skin_markings[m] != AERON_GLTF_NO_VARIANT)
-			variants[m] = render->skin_markings[m];
-	}
+	for (int m = 0; m <= highest; ++m)
+		variants[m] = used[m] ? Aeron_GltfMarkingsVariant(render, (uint32_t)m) : AERON_GLTF_NO_VARIANT;
 	info.variants = &(AeronSceneMeshVariants) { .variants = variants, .count = (uint32_t)highest + 1u };
 	return AeronScene_MeshCreateEx(cmd, &info, NULL);
 }

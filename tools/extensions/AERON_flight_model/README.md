@@ -22,7 +22,7 @@ and positive uniform scale.
 ## Roles
 
 - `model`: `{ "role": "model" }`; optionally carries `articulations`,
-  `articulationSettings` and `componentSets`
+  `articulationSettings`, `componentSets` and `markings`
 - `component`: requires `meshType` in `0..31`; optionally carries
   `explosionFlags`, `targetId`, `target`, descriptor geometry, `rotation`
   and `tags`
@@ -95,6 +95,24 @@ component ordinals in `0..254`; repeats are ignored. Like an articulation's
 `component`, a member may be past this model's components, so a set can name
 components of another model the game draws with the same per-component
 state. Aeron stores sets without interpreting them.
+
+## Markings
+
+The game gives each object a markings value (0 to 255). The model root may
+carry `markings`, an array of at most 256 entries: entry m is the name of
+the `KHR_materials_variants` variant that markings value m shows, or `null`
+for the primitives' own materials. A value past the end shows the last
+entry; without the array, every value shows the own materials. Every name
+must be one of the file's variants.
+
+```json
+"markings": [null, "Red", "Blue"]
+```
+
+Here markings 0 shows the model as modelled, 1 shows `Red`, and 2 and above
+`Blue`. A game may let a mission choose another variant, or `null`, for a
+markings value. Aeron loads a texture that only variants use when a
+markings value in use shows one of them.
 
 ## Lights
 

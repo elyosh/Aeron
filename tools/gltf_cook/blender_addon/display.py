@@ -1,13 +1,11 @@
 # What the viewport shows of a model as the game would for a profile or a
-# markings value: a component set's members hidden, a skin's materials.
+# markings value: a component set's members hidden, a variant's materials.
 #
 # A set hides its members and everything under them, flagging what it hid,
-# and shows back only what it flagged. A skin swaps material slots between
-# the meshes' glTF variant materials; Blender's glTF exporter puts the
-# original materials back before writing, and so does the add-on's export,
-# which shows the skin again afterwards.
-
-import json
+# and shows back only what it flagged. A markings value swaps material slots
+# between the meshes' glTF variant materials; Blender's glTF exporter puts
+# the original materials back before writing, and so does the add-on's
+# export, which shows the variant again afterwards.
 
 import bpy
 
@@ -62,7 +60,7 @@ def apply_sets(root):
             pass
 
 
-# ---- skins -------------------------------------------------------------------------
+# ---- markings -------------------------------------------------------------------------
 
 
 def _variants():
@@ -70,43 +68,27 @@ def _variants():
     return getattr(bpy.data.scenes[0], "gltf2_KHR_materials_variants_variants", ())
 
 
-def skin_extras(root):
-    """The asset extras naming the model's skins, kept from the import."""
-    try:
-        return json.loads(root.aeron_flight.asset_extras or "{}")
-    except ValueError:
-        return {}
-
-
 def markings_count(root):
-    """The markings values with a skin of their own: the named ones and the
-    model's paint states; 0 without variants."""
-    variants = len(_variants())
-    if not variants:
-        return 0
-    extras = skin_extras(root)
-    return max(len(extras.get("aeronSkinMarkings") or ()), extras.get("aeronAssetVariants", variants))
+    """The length of the model's markings list."""
+    return len(root.aeron_flight.markings)
 
 
 def markings_variant(root, markings):
-    """The variant index the game shows for `markings`, as the renderer
-    picks it: the skin named for it, otherwise the paint state
-    min(markings, paint states - 1). None without variants."""
-    variants = _variants()
-    if not len(variants):
+    """The variant index the game shows for `markings`, from the markings
+    list (the last entry past its end); None for the materials as modelled
+    or a name no variant has."""
+    entries = root.aeron_flight.markings
+    if not len(entries):
         return None
-    extras = skin_extras(root)
-    names = extras.get("aeronSkinMarkings") or ()
-    if markings < len(names) and names[markings] is not None:
-        for variant in variants:
-            if variant.name == names[markings]:
-                return variant.variant_idx
-        return None
-    return min(markings, extras.get("aeronAssetVariants", len(variants)) - 1)
+    name = entries[min(markings, len(entries) - 1)].variant
+    for variant in _variants():
+        if name and variant.name == name:
+            return variant.variant_idx
+    return None
 
 
 def apply_skin(root, markings=None):
-    """Shows the skin of the model's chosen markings value (`markings`
+    """Shows the look of the model's chosen markings value (`markings`
     when given; -1 for the original materials) on its components."""
     if markings is None:
         markings = root.aeron_flight.preview_markings

@@ -330,6 +330,7 @@ class AERON_OT_list_edit(Operator):
         ('articulation_settings', "Setting", ""),
         ('component_sets', "Component Set", ""),
         ('members', "Member", ""),
+        ('markings', "Markings Value", ""),
     ])
     action: EnumProperty(items=[('ADD', "Add", ""), ('REMOVE', "Remove", ""), ('ADD_SELECTED', "Add Selected", "")])
 
@@ -347,13 +348,15 @@ class AERON_OT_list_edit(Operator):
         else:
             owner, items = props, getattr(props, self.target)
             active = {'articulations': "active_articulation", 'articulation_settings': "active_setting",
-                      'component_sets': "active_set"}[self.target]
+                      'component_sets': "active_set", 'markings': "active_markings"}[self.target]
         if self.action == 'ADD':
             item = items.add()
             if self.target in {'articulation_settings', 'component_sets'}:
                 item.name = "name"
             elif self.target == 'articulations':
                 item.speed = 1  # 0 would never move
+            elif self.target == 'markings' and len(items) > 1:
+                item.variant = items[len(items) - 2].variant  # what the value showed
             setattr(owner, active, len(items) - 1)
         elif self.action == 'ADD_SELECTED':
             present = {member.component for member in items}
@@ -372,14 +375,16 @@ class AERON_OT_list_edit(Operator):
             preview.apply(context.object)
         elif self.target in {'component_sets', 'members'}:
             display.apply_sets(context.object)
+        elif self.target == 'markings':
+            display.apply_skin(context.object)
         return {'FINISHED'}
 
 
 class AERON_OT_show_skin(Operator):
-    """Show the skin the game gives this markings value, or the materials as modelled"""
+    """Show the variant the game gives this markings value, or the materials as modelled"""
 
     bl_idname = "aeron.show_skin"
-    bl_label = "Show Skin"
+    bl_label = "Show Markings"
     bl_options = {'REGISTER', 'UNDO'}
 
     markings: IntProperty(name="Markings", min=-1, default=-1,

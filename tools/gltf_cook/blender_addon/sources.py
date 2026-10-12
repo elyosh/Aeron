@@ -1,7 +1,6 @@
 # What a model's source holds besides what Blender keeps of a glTF: the model
 # animation file (`<model>.anim.yaml`, tools/effect_pack/README.md), kept per
-# material; the asset extras (the skins' aeronSkinMarkings and
-# aeronAssetVariants), kept on the model root; and the names of the
+# material; the asset extras, kept on the model root; and the names of the
 # extensions and extras the file had, so that an export losing one stops.
 # Blender is imported only where needed: tests/roundtrip.py reads files with
 # it outside Blender.
@@ -23,8 +22,9 @@ OPTIONAL_EXTENSIONS = {
     "KHR_materials_variants",
     "KHR_texture_transform",
 }
-# Extras the cooker derives, or that are no longer written.
-OBSOLETE_EXTRAS = {"aeronAnimBaseColor", "aeronVariants"}
+# Extras the cooker derives, or that are no longer written (the markings
+# list replaced aeronAssetVariants and aeronSkinMarkings).
+OBSOLETE_EXTRAS = {"aeronAnimBaseColor", "aeronVariants", "aeronAssetVariants", "aeronSkinMarkings"}
 _EXTRAS_LEVELS = ("asset", "scenes", "nodes", "meshes", "materials", "textures", "images")
 
 
@@ -100,8 +100,9 @@ def lost(recorded, document):
     return missing
 
 
-def check_asset_extras(problems, root):
-    """The skins' asset extras name variants that the scene still has."""
+def check_markings(problems, root):
+    """The markings list names variants that the scene has and that some part
+    of the model maps (Blender's glTF exporter writes only those)."""
     import bpy
 
     try:
@@ -109,16 +110,26 @@ def check_asset_extras(problems, root):
     except ValueError:
         problems.error(root, "the kept asset extras are not JSON")
         return
+    if "aeronAssetVariants" in extras or "aeronSkinMarkings" in extras:
+        problems.error(root, "the source gives its looks by aeronAssetVariants or aeronSkinMarkings, which "
+                             "the markings list replaced: convert the model again")
     # Blender's glTF add-on registers its variants only once a file had some.
-    variants = [variant.name for variant in getattr(bpy.data.scenes[0], "gltf2_KHR_materials_variants_variants", ())]
-    for name in extras.get("aeronSkinMarkings", []):
-        if name is not None and name not in variants:
-            problems.error(root, "skin markings name the material variant {!r}, which no longer "
-                                 "exists".format(name))
-    count = extras.get("aeronAssetVariants")
-    if count is not None and not 1 <= count <= len(variants):
-        problems.error(root, "the model's own paint states are its first {} material variant(s), but "
-                             "there are {}".format(count, len(variants)))
+    variants = {variant.name: variant.variant_idx
+                for variant in getattr(bpy.data.scenes[0], "gltf2_KHR_materials_variants_variants", ())}
+    mapped = set()
+    for obj in root.children_recursive:
+        if obj.type == 'MESH':
+            for item in getattr(obj.data, "gltf2_variant_mesh_data", ()):
+                mapped.update(pointer.variant.variant_idx for pointer in item.variants)
+    for markings, entry in enumerate(root.aeron_flight.markings):
+        if not entry.variant:
+            continue
+        if entry.variant not in variants:
+            problems.error(root, "markings value {} shows the material variant {!r}, which does not "
+                                 "exist".format(markings, entry.variant))
+        elif variants[entry.variant] not in mapped:
+            problems.error(root, "markings value {} shows the material variant {!r}, which no part of the "
+                                 "model maps: the export would leave it out".format(markings, entry.variant))
 
 
 def model_materials(root):

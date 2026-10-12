@@ -144,7 +144,7 @@
  * DIR. See xwau_skins.h for the inputs and opt2gltf.h for the output.
  *
  * --state-count prints, for each OPT given, the largest texture count of a
- * face group over all LODs (its asset states), one per line, and exits.
+ * LOD 0 face group (its states), one per line, and exits.
  */
 
 #include <ctype.h>
@@ -615,7 +615,8 @@ static int convert_one(const char* opt_path, const char* out_dir, const char* ba
 	return ok;
 }
 
-/* --state-count: the largest face-group texture count over all LODs. */
+/* --state-count: the largest face-group texture count of LOD 0, the one
+ * converted. */
 static int print_state_counts(int argc, char** argv) {
 	int status = 0;
 	for (int ai = 2; ai < argc; ++ai) {
@@ -628,10 +629,9 @@ static int print_state_counts(int argc, char** argv) {
 		}
 		int32_t states = 1;
 		for (int32_t mi = 0; mi < opt->mesh_count; ++mi)
-			for (int32_t li = 0; li < opt->meshes[mi].lod_count; ++li)
-				for (int32_t g = 0; g < opt->meshes[mi].lods[li].group_count; ++g)
-					if (opt->meshes[mi].lods[li].groups[g].state_count > states)
-						states = opt->meshes[mi].lods[li].groups[g].state_count;
+			for (int32_t g = 0; opt->meshes[mi].lod_count > 0 && g < opt->meshes[mi].lods[0].group_count; ++g)
+				if (opt->meshes[mi].lods[0].groups[g].state_count > states)
+					states = opt->meshes[mi].lods[0].groups[g].state_count;
 		printf("%d\n", (int)states);
 		opt_free(opt);
 	}

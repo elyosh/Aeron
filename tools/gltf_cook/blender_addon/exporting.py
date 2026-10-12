@@ -50,6 +50,8 @@ def _model_extension(root, ordinals):
     if len(props.component_sets):
         extension["componentSets"] = {
             s.name: [_ordinal(ordinals, member) for member in s.members] for s in props.component_sets}
+    if len(props.markings):
+        extension["markings"] = [entry.variant or None for entry in props.markings]
     return extension
 
 

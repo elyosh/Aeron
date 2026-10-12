@@ -122,6 +122,23 @@ class AERON_UL_named(UIList):
             row.prop(item, "preview", text="", icon='HIDE_ON' if item.preview else 'HIDE_OFF', emboss=False)
 
 
+class AERON_UL_markings(UIList):
+    """The markings list: a variant per markings value, and a button showing it."""
+
+    def draw_item(self, context, layout, data, item, icon, active_data, active_propname, index):
+        split = layout.split(factor=0.12)
+        split.label(text=str(index))
+        row = split.row(align=True)
+        variants = getattr(context.scene, "gltf2_KHR_materials_variants_variants", None)
+        if variants is not None:
+            row.prop_search(item, "variant", context.scene, "gltf2_KHR_materials_variants_variants", text="")
+        else:
+            row.prop(item, "variant", text="")
+        shown = data.preview_markings == index
+        row.operator("aeron.show_skin", text="", icon='HIDE_OFF' if shown else 'HIDE_ON',
+                     emboss=False).markings = index
+
+
 class AERON_UL_problems(UIList):
     def draw_item(self, context, layout, data, item, icon, active_data, active_propname, index):
         row = layout.row(align=True)
@@ -270,36 +287,28 @@ class OBJECT_PT_aeron_source(_RolePanel, Panel):
         layout.operator("aeron.reload_animations", icon='FILE_REFRESH')
 
 
-class OBJECT_PT_aeron_skins(_RolePanel, Panel):
-    bl_label = "Skins"
+class OBJECT_PT_aeron_markings(_RolePanel, Panel):
+    bl_label = "Markings"
     role = 'model'
 
     @classmethod
     def poll(cls, context):
-        return super().poll(context) and display.markings_count(context.object) > 0
+        return super().poll(context) and (display.markings_count(context.object) > 0 or
+                                          len(getattr(context.scene, "gltf2_KHR_materials_variants_variants", ())))
 
     def draw(self, context):
         root = context.object
+        props = root.aeron_flight
         layout = self.layout
-        extras = display.skin_extras(root)
-        variants = getattr(context.scene, "gltf2_KHR_materials_variants_variants", ())
-        named = extras.get("aeronSkinMarkings") or ()
-        layout.label(text="The skin the game shows for each markings value:")
+        layout.label(text="The material variant each markings value shows:")
+        row = layout.row()
+        row.template_list("AERON_UL_markings", "", props, "markings", props, "active_markings", rows=3)
+        _list_buttons(row, 'markings')
         column = layout.column(align=True)
-        shown = root.aeron_flight.preview_markings
-        column.operator("aeron.show_skin", text="As Modelled", depress=shown < 0).markings = -1
-        for markings in range(display.markings_count(root)):
-            variant = display.markings_variant(root, markings)
-            if variant is None or variant >= len(variants):
-                text = "{}: (missing variant)".format(markings)
-            elif markings < len(named) and named[markings] is not None:
-                text = "{}: {}".format(markings, variants[variant].name)
-            else:
-                text = "{}: {} (paint state)".format(markings, variants[variant].name)
-            column.operator("aeron.show_skin", text=text, depress=shown == markings).markings = markings
-        if "aeronAssetVariants" in extras:
-            layout.label(text="Own paint states: the first {} material variant(s)".format(
-                extras["aeronAssetVariants"]))
+        column.label(text="Empty: the materials as modelled.")
+        column.label(text="Values past the end show the last row.")
+        layout.operator("aeron.show_skin", text="Show As Modelled",
+                        depress=props.preview_markings < 0).markings = -1
 
 
 class OBJECT_PT_aeron_articulations(_RolePanel, Panel):
@@ -661,11 +670,12 @@ classes = (
     AERON_UL_children,
     AERON_UL_references,
     AERON_UL_named,
+    AERON_UL_markings,
     AERON_UL_problems,
     OBJECT_PT_aeron,
     OBJECT_PT_aeron_components,
     OBJECT_PT_aeron_source,
-    OBJECT_PT_aeron_skins,
+    OBJECT_PT_aeron_markings,
     OBJECT_PT_aeron_articulations,
     OBJECT_PT_aeron_preview,
     OBJECT_PT_aeron_settings,

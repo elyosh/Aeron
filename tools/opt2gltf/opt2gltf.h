@@ -242,16 +242,16 @@ typedef struct OptGltfLight {
 
 /*
  * XWAU skins (XWAU mode only). Each variant becomes a
- * KHR_materials_variants variant after the asset variants (which are then
- * emitted even for a single state). For every state-0 texture of LOD 0 that
- * is not a screen surface, a variant's layers with an image for the texture
- * are blended, in order and with the hook's integer straight-alpha blend,
- * onto its decoded colors; the result is baked as the texture is and gets
- * its own material. Primitives without a composite in a variant show the
- * asset material of the variant's state. The asset carries the extras
- * `aeronSkinMarkings` (the default markings map) and `aeronAssetVariants`
- * (the number of asset variants before them); aeron_gltf_cook derives
- * which images belong to which variants.
+ * KHR_materials_variants variant after the state variants (`State 1` ...
+ * `State N-1`; state 0 is the primitives' own materials). For every
+ * state-0 texture of LOD 0 that is not a screen surface, a variant's layers
+ * with an image for the texture are blended, in order and with the hook's
+ * integer straight-alpha blend, onto its decoded colors; the result is
+ * baked as the texture is and gets its own material. Primitives without a
+ * composite in a variant show the material of the variant's state. The
+ * model root's markings list gives, per markings value, the skin
+ * `default_markings` names, else the state the OPT clamps it to;
+ * aeron_gltf_cook derives which images belong to which variants.
  */
 typedef struct OptGltfSkinLayer {
 	uint32_t skin;    /* index into OptGltfSkins.images rows */

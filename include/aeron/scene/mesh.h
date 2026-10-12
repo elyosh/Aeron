@@ -155,14 +155,15 @@ typedef enum AeronSceneMeshCreateStatus {
 /* Upload `model` through `cmd` (no pass may be open). Returns NULL on any
  * failure and classifies it through `status`; everything allocated so far is
  * released. `debug_name` labels diagnostics. The caller owns `model`. The
- * mesh's variant indices are the model's asset variants (asset_variant_count)
- * and no base-colour variant group is uploaded. */
+ * mesh's variant indices are the markings values of the model's markings
+ * list (AeronGltfModel.markings), whose variants' groups are uploaded. */
 AeronSceneMesh* AeronScene_MeshCreate(AeronCommandBuffer* cmd, const AeronFlightModel* model,
 									  const char* debug_name, AeronSceneMeshCreateStatus* status);
 
 /* A mesh's variant choice: variant index i (AeronSceneMeshInstance.variant) shows
- * variant `variants[i]`, or the default materials for AERON_GLTF_NO_VARIANT.
- * Only the base-colour variant groups those variants use are uploaded. */
+ * variant `variants[i]`, or the primitives' own materials for
+ * AERON_GLTF_NO_VARIANT. Only the variant groups those variants use are
+ * uploaded. */
 typedef struct AeronSceneMeshVariants {
 	const uint32_t* variants;
 	uint32_t        count; /* at least 1 */
@@ -176,7 +177,7 @@ AeronSceneMesh* AeronScene_MeshCreateWithVariants(AeronCommandBuffer* cmd, const
 typedef struct AeronSceneMeshCreateInfo {
 	const AeronFlightModel*       model;
 	const char*                   debug_name;
-	const AeronSceneMeshVariants* variants;     /* NULL: the asset variants */
+	const AeronSceneMeshVariants* variants;     /* NULL: the markings list */
 	AeronEffectAtlas*             effect_atlas; /* NULL: no material animation */
 	/* The game's effect data (energy effects), loaded in effect_atlas; NULL:
 	 * no energy effects. Borrowed: it must outlive the mesh. */

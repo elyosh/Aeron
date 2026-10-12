@@ -85,6 +85,11 @@
           "type": "object",
           "propertyNames": { "$ref": "#/$defs/tag" },
           "additionalProperties": { "type": "integer", "minimum": -2147483648, "maximum": 2147483647 }
+        },
+        "markings": {
+          "type": "array",
+          "maxItems": 256,
+          "items": { "type": ["string", "null"] }
         }
       }
     },

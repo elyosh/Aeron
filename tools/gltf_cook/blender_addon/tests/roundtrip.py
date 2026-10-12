@@ -313,7 +313,8 @@ def _cooked(cooker, gltf, effects_dir, out):
         return None, (completed.stderr or completed.stdout).strip().splitlines()[-1:]
     document = _sources().read_document(out)
     variants = document.get("extensions", {}).get("KHR_materials_variants", {}).get("variants", [])
-    return (sorted(_used_materials(document)), [variant.get("name") for variant in variants]), None
+    # Variants are named looks: Blender writes them in first-use order.
+    return (sorted(_used_materials(document)), sorted(variant.get("name") for variant in variants)), None
 
 
 def _listing(directory):

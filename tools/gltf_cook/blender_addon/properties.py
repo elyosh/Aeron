@@ -89,6 +89,18 @@ class AeronComponentSet(PropertyGroup):
                     "a profile's set")
 
 
+def _markings_update(self, context):
+    root = self.id_data
+    if root.aeron_flight.preview_markings >= 0:
+        display.apply_skin(root)
+
+
+class AeronMarkingsEntry(PropertyGroup):
+    variant: StringProperty(
+        name="Variant", update=_markings_update,
+        description="The material variant this markings value shows; empty: the materials as modelled")
+
+
 def _role_update(self, context):
     obj = self.id_data
     if self.role in {'component', 'hardpoint', 'engineGlow'} and obj.parent is not None:
@@ -200,9 +212,13 @@ class AeronFlightProperties(PropertyGroup):
     active_setting: IntProperty()
     component_sets: CollectionProperty(type=AeronComponentSet)
     active_set: IntProperty()
+    # The material variant each markings value shows; past the end, the
+    # last entry's.
+    markings: CollectionProperty(type=AeronMarkingsEntry)
+    active_markings: IntProperty()
     preview_active: BoolProperty()
     preview_groups: CollectionProperty(type=AeronPreviewGroup)
-    # The markings value whose skin the components show; -1: their own
+    # The markings value whose look the components show; -1: their own
     # materials (display.py).
     preview_markings: IntProperty(default=-1, min=-1)
     active_component: IntProperty()
@@ -273,6 +289,7 @@ classes = (
     AeronSetMember,
     AeronPreviewGroup,
     AeronComponentSet,
+    AeronMarkingsEntry,
     AeronFlightProperties,
     AeronMaterialProperties,
     AeronProblem,

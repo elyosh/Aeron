@@ -160,6 +160,8 @@ def restore(gltf):
             component_set.name = name
             for ordinal in members:
                 _set_reference(component_set.members.add(), ordinal, parts)
+        for name in extension.get("markings", []):
+            props.markings.add().variant = name or ""
 
 
 class glTF2ImportUserExtension:

@@ -102,15 +102,12 @@ typedef struct AeronGltfChannelKtx2 {
 
 /* ===== Variant groups ===============================================
  *
- * Atlas pages only some variants use (skins: base colour, emissive,
+ * Atlas pages only some variants use (base colour, emissive,
  * metallic-roughness), cooked as separate KTX2 blocks and listed in the
  * asset extras `aeronVariantGroups`. A group's pages follow its channel's
  * core pages, in the order of that channel's groups; a mesh uploads
  * only the groups of the variants it shows (AeronScene_MeshCreateWithVariants).
- * The asset extras also give `aeronAssetVariants`, the number of leading
- * variants that are the model's own paint states (the variant indices of a mesh built
- * without a variant choice), and `aeronSkinMarkings`, the variant name each
- * markings value shows by default. */
+ * The pages the primitives' own materials use are core. */
 #define AERON_GLTF_NO_VARIANT 0xFFFFFFFFu
 
 typedef struct AeronGltfVariantGroup {
@@ -291,9 +288,9 @@ typedef struct AeronGltfScreenRect {
  * The renderer issues one indexed draw per instance.
  *
  * `prim_variant_material` is the [total_prim_count][variant_columns]
- * resolution table — row prim, column variant_idx. variant_columns is
- * max(variant_count, 1) so ships without KHR_materials_variants still
- * have a column 0 holding the default material. AERON_GLTF_NO_MATERIAL
+ * resolution table — row prim, column 0 the primitive's own material and
+ * column v + 1 variant v's, so ships without KHR_materials_variants have
+ * the one column. AERON_GLTF_NO_MATERIAL
  * in a cell means "no material" (renderer skips fragments via factor-
  * only fallback). Mesh creation transposes this source table into
  * variant-major packed storage; each draw selects a row by index. */
@@ -323,19 +320,19 @@ typedef struct AeronGltfModel {
 	AeronGltfMaterial* materials; /* sized [material_count] */
 
 	/* Variant table — flat [total_prim_count * variant_columns] row-
-	 * major, indexed (prim_id * variant_columns + variant_idx). */
+	 * major, indexed (prim_id * variant_columns + column): column 0 holds
+	 * the primitive's own material, column v + 1 variant v's. */
 	uint32_t  variant_count; /* asset-level KHR count, 0 = none */
-	uint32_t  variant_columns; /* max(variant_count, 1) */
+	uint32_t  variant_columns; /* variant_count + 1 */
 	uint32_t  total_prim_count;
 	uint32_t* prim_variant_material;
 	/* Variant names ([variant_count], NULL for an unnamed variant). */
 	char** variant_names;
-	/* Asset paint-state variants: aeronAssetVariants, else variant_count. */
-	uint32_t asset_variant_count;
-	/* Default variant per markings value (aeronSkinMarkings), or
-	 * AERON_GLTF_NO_VARIANT for an unskinned one. */
-	uint32_t  skin_markings_count;
-	uint32_t* skin_markings;
+	/* The markings list (the model root's `markings`): the variant markings
+	 * value m shows, or AERON_GLTF_NO_VARIANT for the own materials; values
+	 * past the end show the last entry (Aeron_GltfMarkingsVariant). */
+	uint32_t  markings_count;
+	uint32_t* markings;
 	/* Base-colour variant groups. */
 	uint32_t               group_count;
 	AeronGltfVariantGroup* groups;
@@ -363,6 +360,11 @@ typedef struct AeronGltfModel {
 bool Aeron_GltfMeshBuildData(const struct cgltf_data* data, const char* source_label, AeronGltfModel* out);
 
 void Aeron_GltfMeshFree(AeronGltfModel* m);
+
+/* The variant markings value `markings` shows: the markings list's entry
+ * min(markings, count - 1); AERON_GLTF_NO_VARIANT (the own materials)
+ * without a list. */
+uint32_t Aeron_GltfMarkingsVariant(const AeronGltfModel* m, uint32_t markings);
 
 #ifdef __cplusplus
 }

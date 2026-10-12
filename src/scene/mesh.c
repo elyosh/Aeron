@@ -64,23 +64,22 @@ void AeronScene_MeshDestroy(AeronSceneMesh* m) {
 
 /* ===== Variant choice ================================================
  *
- * Without a choice (`set` NULL) the variant indices are the model's asset
- * variants and no variant group is loaded; with one, variant index i shows
- * variant set->variants[i]
- * and the groups those variants use are loaded. A loaded group's base-colour
- * layers follow the core layers in group order, skipping groups not loaded. */
+ * Variant index i shows variant set->variants[i] (the own materials for
+ * AERON_GLTF_NO_VARIANT), and the groups those variants use are loaded.
+ * Without a choice the model's markings list is the choice; without one,
+ * the single variant index shows the own materials. A loaded group's
+ * layers follow the core layers in group order, skipping groups not
+ * loaded. */
 static uint32_t variant_index_count(const AeronGltfModel* model, const AeronSceneMeshVariants* set) {
-	if (set)
-		return set->count;
-	return model->variant_count > 0 && model->asset_variant_count > 0 ? model->asset_variant_count : 1u;
+	(void)model;
+	return set ? set->count : 1u;
 }
 
 /* The prim_variant_material column variant index `index` shows. */
 static uint32_t variant_column(const AeronGltfModel* model, const AeronSceneMeshVariants* set,
 							   uint32_t index) {
-	if (set)
-		return set->variants[index] == AERON_GLTF_NO_VARIANT ? 0u : set->variants[index];
-	return model->variant_count > 0 ? index : 0u;
+	(void)model;
+	return set && set->variants[index] != AERON_GLTF_NO_VARIANT ? set->variants[index] + 1u : 0u;
 }
 
 static bool group_loaded(const AeronGltfModel* model, const AeronSceneMeshVariants* set, uint32_t group) {
@@ -640,6 +639,9 @@ static AeronSceneMesh* mesh_create(AeronCommandBuffer* cmd, const AeronFlightMod
 	}
 	const AeronGltfModel* model = &flight_model->render;
 	const char*           name  = debug_name ? debug_name : "<mesh>";
+	const AeronSceneMeshVariants own_markings = { model->markings, model->markings_count };
+	if (!set && model->markings_count)
+		set = &own_markings;
 	if (set) {
 		bool valid = set->variants && set->count > 0;
 		for (uint32_t index = 0; valid && index < set->count; ++index)

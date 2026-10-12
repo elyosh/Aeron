@@ -28,6 +28,8 @@
 
 #include "aeron/scene/gltf_mesh.h"
 
+#include "aeron/asset/flight_model.h"
+
 #include <math.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -166,10 +168,11 @@ static const char* kAtlasNames[AERON_GLTF_CHANNEL_COUNT] = {
 	"atlas_emissive",
 };
 
-/* ===== Variants and their groups ====================================
+/* ===== Variants, the markings list and the variant groups ===========
  *
- * The asset extras of a model with skin variants (aeron_gltf_cook):
- *   "aeronAssetVariants": N, "aeronSkinMarkings": [name or null, ...],
+ * The model root's AERON_flight_model `markings`: [variant name or null,
+ * ...], at most 256 entries. The asset extras of a cooked model with
+ * variant textures (aeron_gltf_cook):
  *   "aeronVariantGroups": [{"bufferView": b, "layers": l, "variants": [...]}]
  * The groups' KTX2 blocks are copied like the core atlases. */
 static char* copy_string(const char* s) {
@@ -187,10 +190,48 @@ static uint32_t variant_by_name(const AeronGltfModel* out, const char* name) {
 	return AERON_GLTF_NO_VARIANT;
 }
 
+/* Reads the model root's markings list into `out->markings`. */
+static bool read_markings(const cgltf_data* data, const char* source_label, AeronGltfModel* out) {
+	const cgltf_node* root = data->scene && data->scene->nodes_count ? data->scene->nodes[0] : NULL;
+	const char*       json = NULL;
+	for (cgltf_size e = 0; root && e < root->extensions_count; e++)
+		if (root->extensions[e].name && root->extensions[e].data &&
+			strcmp(root->extensions[e].name, AERON_FLIGHT_MODEL_EXTENSION) == 0)
+			json = root->extensions[e].data;
+	cJSON* extension = json ? cJSON_Parse(json) : NULL;
+	const cJSON* markings = cJSON_GetObjectItemCaseSensitive(extension, "markings");
+	bool ok = !markings || (cJSON_IsArray(markings) && cJSON_GetArraySize(markings) <= 256);
+	const uint32_t count = ok && markings ? (uint32_t)cJSON_GetArraySize(markings) : 0u;
+	if (ok && count) {
+		out->markings = (uint32_t*)malloc(count * sizeof *out->markings);
+		ok            = out->markings != NULL;
+		const cJSON* entry = NULL;
+		cJSON_ArrayForEach(entry, markings) {
+			if (!ok)
+				break;
+			uint32_t variant = AERON_GLTF_NO_VARIANT;
+			if (cJSON_IsString(entry)) {
+				variant = variant_by_name(out, entry->valuestring);
+				if (variant == AERON_GLTF_NO_VARIANT) {
+					SDL_Log("[flight_gltf] '%s': markings value %u names no variant '%s'", source_label,
+							out->markings_count, entry->valuestring);
+					ok = false;
+				}
+			} else {
+				ok = cJSON_IsNull(entry);
+			}
+			out->markings[out->markings_count++] = variant;
+		}
+	}
+	cJSON_Delete(extension);
+	if (!ok)
+		SDL_Log("[flight_gltf] '%s' has an invalid markings list", source_label);
+	return ok;
+}
+
 static bool read_variants(const cgltf_data* data, const char* source_label, AeronGltfModel* out) {
-	out->variant_count       = (uint32_t)data->variants_count;
-	out->variant_columns     = out->variant_count > 0 ? out->variant_count : 1u;
-	out->asset_variant_count = out->variant_count;
+	out->variant_count   = (uint32_t)data->variants_count;
+	out->variant_columns = out->variant_count + 1u;
 	if (out->variant_count) {
 		out->variant_names = (char**)calloc(out->variant_count, sizeof *out->variant_names);
 		if (!out->variant_names)
@@ -201,6 +242,8 @@ static bool read_variants(const cgltf_data* data, const char* source_label, Aero
 				return false;
 		}
 	}
+	if (!read_markings(data, source_label, out))
+		return false;
 	const cgltf_extras* extras = &data->asset.extras;
 	cJSON*              root   = NULL;
 	if (extras->data)
@@ -210,35 +253,17 @@ static bool read_variants(const cgltf_data* data, const char* source_label, Aero
 									 (size_t)(extras->end_offset - extras->start_offset));
 	if (!root)
 		return true;
-	bool         ok       = true;
-	const cJSON* assets   = cJSON_GetObjectItemCaseSensitive(root, "aeronAssetVariants");
-	const cJSON* markings = cJSON_GetObjectItemCaseSensitive(root, "aeronSkinMarkings");
-	const cJSON* groups   = cJSON_GetObjectItemCaseSensitive(root, "aeronVariantGroups");
-	if (assets) {
-		ok = cJSON_IsNumber(assets) && assets->valuedouble >= 1 && assets->valuedouble <= out->variant_count;
-		if (ok)
-			out->asset_variant_count = (uint32_t)assets->valuedouble;
+	/* A model from before the markings list: its looks would change. */
+	if (cJSON_GetObjectItemCaseSensitive(root, "aeronAssetVariants") ||
+		cJSON_GetObjectItemCaseSensitive(root, "aeronSkinMarkings")) {
+		SDL_Log("[flight_gltf] '%s' gives its looks by aeronAssetVariants or aeronSkinMarkings, which "
+				"the markings list replaced; convert it again",
+				source_label);
+		cJSON_Delete(root);
+		return false;
 	}
-	if (ok && cJSON_IsArray(markings)) {
-		out->skin_markings_count = (uint32_t)cJSON_GetArraySize(markings);
-		out->skin_markings       = (uint32_t*)calloc(out->skin_markings_count ? out->skin_markings_count : 1,
-													 sizeof *out->skin_markings);
-		ok                       = out->skin_markings != NULL;
-		uint32_t     m           = 0;
-		const cJSON* entry       = NULL;
-		cJSON_ArrayForEach(entry, markings) {
-			if (!ok)
-				break;
-			out->skin_markings[m] = AERON_GLTF_NO_VARIANT;
-			if (cJSON_IsString(entry)) {
-				out->skin_markings[m] = variant_by_name(out, entry->valuestring);
-				ok                    = out->skin_markings[m] != AERON_GLTF_NO_VARIANT;
-			} else {
-				ok = cJSON_IsNull(entry);
-			}
-			m++;
-		}
-	}
+	bool         ok     = true;
+	const cJSON* groups = cJSON_GetObjectItemCaseSensitive(root, "aeronVariantGroups");
 	if (ok && cJSON_IsArray(groups)) {
 		out->group_count = (uint32_t)cJSON_GetArraySize(groups);
 		out->groups =
@@ -284,7 +309,7 @@ static bool read_variants(const cgltf_data* data, const char* source_label, Aero
 			uint32_t     v    = 0;
 			const cJSON* item = NULL;
 			cJSON_ArrayForEach(item, variants) {
-				ok = ok && cJSON_IsNumber(item) && item->valuedouble >= out->asset_variant_count &&
+				ok = ok && cJSON_IsNumber(item) && item->valuedouble >= 0 &&
 					 item->valuedouble < out->variant_count;
 				if (ok)
 					group->variants[v++] = (uint32_t)item->valuedouble;
@@ -293,7 +318,7 @@ static bool read_variants(const cgltf_data* data, const char* source_label, Aero
 	}
 	cJSON_Delete(root);
 	if (!ok)
-		SDL_Log("[flight_gltf] '%s' has invalid skin variant data in its asset extras", source_label);
+		SDL_Log("[flight_gltf] '%s' has invalid variant groups in its asset extras", source_label);
 	return ok;
 }
 
@@ -845,9 +870,9 @@ static bool material_is_screen(const AeronGltfModel* model, uint32_t material) {
 /* A primitive goes to the screen tail of its range when any variant
  * gives it a screen material. */
 static bool primitive_is_screen(const AeronGltfModel* model, uint32_t prim_id) {
-	for (uint32_t variant = 0; variant < model->variant_columns; ++variant) {
+	for (uint32_t column = 0; column < model->variant_columns; ++column) {
 		if (material_is_screen(
-				model, model->prim_variant_material[(size_t)prim_id * model->variant_columns + variant]))
+				model, model->prim_variant_material[(size_t)prim_id * model->variant_columns + column]))
 			return true;
 	}
 	return false;
@@ -1080,10 +1105,10 @@ bool Aeron_GltfMeshBuildData(const cgltf_data* data, const char* source_label, A
 				out->prim_variant_material[(size_t)prim_id * out->variant_columns + vs] = default_mat;
 			for (cgltf_size mi = 0; mi < p->mappings_count; mi++) {
 				const cgltf_material_mapping* mp = &p->mappings[mi];
-				if (mp->variant < out->variant_columns) {
+				if (mp->variant < out->variant_count) {
 					uint32_t mat = mp->material ? (uint32_t)cgltf_material_index(data, mp->material)
 												: AERON_GLTF_NO_MATERIAL;
-					out->prim_variant_material[(size_t)prim_id * out->variant_columns + mp->variant] = mat;
+					out->prim_variant_material[(size_t)prim_id * out->variant_columns + mp->variant + 1u] = mat;
 				}
 			}
 			prim_id++;
@@ -1100,14 +1125,14 @@ bool Aeron_GltfMeshBuildData(const cgltf_data* data, const char* source_label, A
 					default_material);
 			goto cleanup;
 		}
-		for (uint32_t variant = 1; variant < out->variant_columns; ++variant) {
+		for (uint32_t column = 1; column < out->variant_columns; ++column) {
 			const uint32_t material =
-				out->prim_variant_material[(size_t)pid * out->variant_columns + variant];
+				out->prim_variant_material[(size_t)pid * out->variant_columns + column];
 			const AeronGltfAlphaMode mode = material_alpha_mode(out, material);
 			if ((int)mode < 0 || mode != default_mode) {
 				SDL_Log("[flight_gltf] '%s' primitive %u variant %u changes alpha class "
 						"(material %u mode %d -> material %u mode %d)",
-						source_label, pid, variant, default_material, (int)default_mode, material, (int)mode);
+						source_label, pid, column - 1u, default_material, (int)default_mode, material, (int)mode);
 				goto cleanup;
 			}
 		}
@@ -1186,9 +1211,9 @@ bool Aeron_GltfMeshBuildData(const cgltf_data* data, const char* source_label, A
 			out->blend_index_count, out->opaque_screen_index_count, out->blend_screen_index_count,
 			out->total_prim_count, out->material_count, out->variant_count,
 			out->channels[0].size, out->channels[1].size, out->channels[2].size, out->channels[3].size);
-	if (out->group_count > 0)
-		SDL_Log("[flight_gltf] %s: %u asset variants, %u skin markings, %u variant groups", source_label,
-				out->asset_variant_count, out->skin_markings_count, out->group_count);
+	if (out->markings_count > 0 || out->group_count > 0)
+		SDL_Log("[flight_gltf] %s: %u markings, %u variant groups", source_label, out->markings_count,
+				out->group_count);
 	if (out->screen_rect_count > 0 || out->screen_hide_mask != 0)
 		SDL_Log("[flight_gltf] %s: %u screen rectangles, hide mask 0x%x", source_label,
 				out->screen_rect_count, out->screen_hide_mask);
@@ -1224,11 +1249,17 @@ void Aeron_GltfMeshFree(AeronGltfModel* m) {
 	for (uint32_t v = 0; m->variant_names && v < m->variant_count; v++)
 		free(m->variant_names[v]);
 	free(m->variant_names);
-	free(m->skin_markings);
+	free(m->markings);
 	for (uint32_t g = 0; m->groups && g < m->group_count; g++) {
 		free(m->groups[g].ktx2.data);
 		free(m->groups[g].variants);
 	}
 	free(m->groups);
 	memset(m, 0, sizeof *m);
+}
+
+uint32_t Aeron_GltfMarkingsVariant(const AeronGltfModel* m, uint32_t markings) {
+	if (!m || m->markings_count == 0)
+		return AERON_GLTF_NO_VARIANT;
+	return m->markings[markings < m->markings_count ? markings : m->markings_count - 1u];
 }

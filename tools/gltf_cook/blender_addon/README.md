@@ -137,7 +137,7 @@ When every slider is back at 0, or with **Reset Preview**, the components
 are as before, keeping any edit made meanwhile. The exports and Check Model
 refuse to run while a slider is not at 0.
 
-## Profiles, skins and the pilot eye
+## Profiles, markings and the pilot eye
 
 A component set named `hidden_by_profile.<profile>` lists the components
 the game hides for that profile. The eye in a set's row (or **Hide
@@ -145,8 +145,14 @@ Members**) hides its members and what is under them, one set at a time.
 When a mission chooses no profile, the game uses `Default_<markings>`,
 then `Default`.
 
-The model root's **Skins** panel shows the skin the game gives each
-markings value, as it picks it; **As Modelled** shows the materials back.
+The game gives each object a markings value (0 to 255), usually its flight
+group's, and the model's markings list says which material variant each
+value shows. Edit it in the model root's **Markings** panel: a row per
+value, from 0, naming a variant, or empty for the materials as modelled.
+Values past the end show the last row, so a new row starts as the last one.
+The eye in a row shows that value's look; **Show As Modelled** shows the
+materials back. Check Model reports a row naming a variant that is missing
+or that no part maps (Blender's glTF exporter would leave it out).
 
 **View From Pilot Eye** (Aeron tab) looks from the pilot eye hardpoint
 toward the model's forward.
@@ -163,10 +169,9 @@ exists drops it. To change animations, edit the animation file, then use
 Reload Animations in the model root's Source panel (otherwise the next
 export writes Blender's animations back over your edit).
 
-The model's skins are material variants (Blender's glTF material variants).
-The model root's Skins panel shows which skin each markings value shows
-and how many variants are the model's own paint states; a skin named there
-must keep its variant name.
+The model's looks (converted paint states and skins) are material variants
+(Blender's glTF material variants). The markings list and missions name
+them, so renaming a variant breaks those names.
 
 Glass is a transmissive material (`KHR_materials_transmission`): its base
 colour tints what shows through it, as in any glTF viewer. Converted glass

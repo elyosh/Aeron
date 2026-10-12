@@ -272,14 +272,11 @@ static const CachedImage* load_or_cache_image(ImageCache* cache, const char* glt
  *
  * Images only some variants use are packed by channel and variant set into
  * groups, each its own KTX2 block, so a runtime loads only the groups of
- * the variants it shows. With the asset extras `aeronAssetVariants` (the
- * number of leading variants that are the model's own paint states), an
- * image is core when a primitive's own material, or a material an asset
- * variant maps, uses it; otherwise it belongs to the variants whose mapped
- * materials use it (skin composites: base colour, and their own emissive or
- * metallic-roughness). Without it, every image is core. A group's pages have its channel's core atlas
- * size: they join that array after the core pages, in group order. The
- * asset extras `aeronVariantGroups` lists them:
+ * the variants it shows. An image is core when a primitive's own material
+ * uses it, or it is in a channel no own material uses; otherwise it belongs
+ * to the variants whose mapped materials use it. A group's pages have its channel's core atlas size: they join that
+ * array after the core pages, in group order. The asset extras
+ * `aeronVariantGroups` lists them:
  *   [{"channel": c, "bufferView": b, "layers": l, "variants": [v, ...]}, ...] */
 
 typedef struct CookGroup {
@@ -372,17 +369,9 @@ static void mark_material_images(const cgltf_data* data, cgltf_material* m, bool
 /* The variants each image belongs to (variant groups above), printed as a
  * JSON array, NULL for a core image; NULL table on OOM. */
 static char** derive_image_variants(const cgltf_data* data) {
-	char** out = (char**)calloc(data->images_count ? data->images_count : 1, sizeof *out);
-	char*  json = out ? extras_json(data, &data->asset.extras) : NULL;
-	cJSON* root = json ? cJSON_Parse(json) : NULL;
-	free(json);
-	const cJSON* asset_variants = cJSON_GetObjectItemCaseSensitive(root, "aeronAssetVariants");
-	const size_t variants       = data->variants_count;
-	const size_t own            = cJSON_IsNumber(asset_variants) && asset_variants->valuedouble >= 0
-									  ? (size_t)asset_variants->valuedouble
-									  : variants;
-	cJSON_Delete(root);
-	if (!out || own >= variants || !data->images_count)
+	char**       out      = (char**)calloc(data->images_count ? data->images_count : 1, sizeof *out);
+	const size_t variants = data->variants_count;
+	if (!out || !variants || !data->images_count)
 		return out;
 	bool*    core = (bool*)calloc(data->images_count, sizeof *core);
 	uint8_t* uses = (uint8_t*)calloc(data->images_count * variants, 1);
@@ -394,9 +383,27 @@ static char** derive_image_variants(const cgltf_data* data) {
 				mark_material_images(data, p->material, core, uses, variants, 0, true);
 			for (size_t k = 0; k < p->mappings_count; k++)
 				mark_material_images(data, p->mappings[k].material, core, uses, variants,
-									 p->mappings[k].variant, p->mappings[k].variant < own);
+									 p->mappings[k].variant, false);
 		}
 	}
+	/* A channel no primitive's own material uses has no core atlas for
+	 * groups to follow: its images are core. */
+	bool own_channel[AERON_GLTF_COOK_CHANNEL_COUNT] = { false };
+	for (size_t mi = 0; ok && mi < data->meshes_count; mi++)
+		for (size_t pi = 0; pi < data->meshes[mi].primitives_count; pi++)
+			for (int c = 0; data->meshes[mi].primitives[pi].material && c < AERON_GLTF_COOK_CHANNEL_COUNT; c++) {
+				const cgltf_texture_view* tv = material_channel_view(data->meshes[mi].primitives[pi].material, c);
+				own_channel[c] |= tv && tv->texture && tv->texture->image;
+			}
+	for (size_t mi = 0; ok && mi < data->meshes_count; mi++)
+		for (size_t pi = 0; pi < data->meshes[mi].primitives_count; pi++)
+			for (size_t k = 0; k < data->meshes[mi].primitives[pi].mappings_count; k++)
+				for (int c = 0; c < AERON_GLTF_COOK_CHANNEL_COUNT; c++) {
+					const cgltf_texture_view* tv =
+						material_channel_view(data->meshes[mi].primitives[pi].mappings[k].material, c);
+					if (!own_channel[c] && tv && tv->texture && tv->texture->image)
+						core[tv->texture->image - data->images] = true;
+				}
 	for (size_t i = 0; ok && i < data->images_count; i++) {
 		if (core[i])
 			continue;
@@ -422,6 +429,21 @@ static char** derive_image_variants(const cgltf_data* data) {
 		return NULL;
 	}
 	return out;
+}
+
+/* Whether the asset extras give looks the markings list replaced; such a
+ * model must be converted again. */
+static bool has_replaced_extras(const cgltf_data* data) {
+	char*  json     = extras_json(data, &data->asset.extras);
+	cJSON* root     = json ? cJSON_Parse(json) : NULL;
+	const bool found = cJSON_GetObjectItemCaseSensitive(root, "aeronAssetVariants") ||
+					   cJSON_GetObjectItemCaseSensitive(root, "aeronSkinMarkings");
+	free(json);
+	cJSON_Delete(root);
+	if (found)
+		fprintf(stderr, "[aeron_gltf_cook] the asset extras give looks by aeronAssetVariants or "
+						"aeronSkinMarkings, which the markings list replaced; convert the model again\n");
+	return found;
 }
 
 /* The atlas of channel `c` that `variants_of` goes to: the group of its
@@ -692,7 +714,7 @@ bool aeron_gltf_cook_data(cgltf_data* data, const char* source_label,
 	int*       group_of[AERON_GLTF_COOK_CHANNEL_COUNT] = { 0 };
 
 	char** image_variants = derive_image_variants(data);
-	bool   ok             = validate_material_textures(data) && image_variants;
+	bool   ok             = !has_replaced_extras(data) && validate_material_textures(data) && image_variants;
 	for (int c = 0; c < AERON_GLTF_COOK_CHANNEL_COUNT && ok; c++) {
 		group_of[c] = (int*)malloc((data->materials_count ? data->materials_count : 1) * sizeof *group_of[c]);
 		ok          = group_of[c] != NULL;

@@ -180,7 +180,7 @@ def validate(root):
         for member in component_set.members:
             _check_reference(problems, root, "component set {!r}".format(component_set.name), member)
 
-    sources.check_asset_extras(problems, root)
+    sources.check_markings(problems, root)
 
     for obj in root.children_recursive:
         if common.role(obj) in {'model'}:
