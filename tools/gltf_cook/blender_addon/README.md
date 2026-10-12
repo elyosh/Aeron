@@ -137,6 +137,22 @@ When every slider is back at 0, or with **Reset Preview**, the components
 are as before, keeping any edit made meanwhile. The exports and Check Model
 refuse to run while a slider is not at 0.
 
+## Profiles, skins and the pilot eye
+
+A component set named `hidden_by_profile.<profile>` lists the components
+the game hides for that profile. The eye in a set's row (or **Hide
+Members**) hides its members and what is under them, one set at a time.
+When a mission chooses no profile, the game uses `Default_<markings>`,
+then `Default`.
+
+The model root's **Skins** panel shows the skin the game gives each
+markings value, as it picks it; **As Modelled** shows the materials back.
+
+**View From Pilot Eye** (Aeron tab) looks from the pilot eye hardpoint
+toward the model's forward.
+
+None of these change what the exports write.
+
 ## Materials
 
 A material's animation (flipbooks, hull damage, energy effects) from the
@@ -148,7 +164,7 @@ Reload Animations in the model root's Source panel (otherwise the next
 export writes Blender's animations back over your edit).
 
 The model's skins are material variants (Blender's glTF material variants).
-The model root's Source panel shows which skin each markings value shows
+The model root's Skins panel shows which skin each markings value shows
 and how many variants are the model's own paint states; a skin named there
 must keep its variant name.
 

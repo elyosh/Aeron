@@ -5,7 +5,7 @@ import json
 import bpy
 from bpy.types import Panel, UIList
 
-from . import common, overlays
+from . import common, display, overlays
 
 # Labels of the objects the lists show, filled by filter_items (which runs
 # before draw_item), by list type then object name.
@@ -119,6 +119,7 @@ class AERON_UL_named(UIList):
             row.prop(item, "value", text="")
         elif hasattr(item, "members"):
             row.label(text="{} component(s)".format(len(item.members)))
+            row.prop(item, "preview", text="", icon='HIDE_ON' if item.preview else 'HIDE_OFF', emboss=False)
 
 
 class AERON_UL_problems(UIList):
@@ -267,16 +268,38 @@ class OBJECT_PT_aeron_source(_RolePanel, Panel):
             return
         layout.label(text=props.source_path, icon='FILE')
         layout.operator("aeron.reload_animations", icon='FILE_REFRESH')
-        extras = json.loads(props.asset_extras or "{}")
-        markings = extras.get("aeronSkinMarkings")
+
+
+class OBJECT_PT_aeron_skins(_RolePanel, Panel):
+    bl_label = "Skins"
+    role = 'model'
+
+    @classmethod
+    def poll(cls, context):
+        return super().poll(context) and display.markings_count(context.object) > 0
+
+    def draw(self, context):
+        root = context.object
+        layout = self.layout
+        extras = display.skin_extras(root)
+        variants = getattr(context.scene, "gltf2_KHR_materials_variants_variants", ())
+        named = extras.get("aeronSkinMarkings") or ()
+        layout.label(text="The skin the game shows for each markings value:")
+        column = layout.column(align=True)
+        shown = root.aeron_flight.preview_markings
+        column.operator("aeron.show_skin", text="As Modelled", depress=shown < 0).markings = -1
+        for markings in range(display.markings_count(root)):
+            variant = display.markings_variant(root, markings)
+            if variant is None or variant >= len(variants):
+                text = "{}: (missing variant)".format(markings)
+            elif markings < len(named) and named[markings] is not None:
+                text = "{}: {}".format(markings, variants[variant].name)
+            else:
+                text = "{}: {} (paint state)".format(markings, variants[variant].name)
+            column.operator("aeron.show_skin", text=text, depress=shown == markings).markings = markings
         if "aeronAssetVariants" in extras:
             layout.label(text="Own paint states: the first {} material variant(s)".format(
                 extras["aeronAssetVariants"]))
-        if markings:
-            column = layout.column(align=True)
-            column.label(text="Skin per markings value:")
-            for value, name in enumerate(markings):
-                column.label(text="  {}: {}".format(value, name or "(paint state)"))
 
 
 class OBJECT_PT_aeron_articulations(_RolePanel, Panel):
@@ -350,6 +373,10 @@ class OBJECT_PT_aeron_sets(_RolePanel, Panel):
         if not 0 <= props.active_set < len(props.component_sets):
             return
         component_set = props.component_sets[props.active_set]
+        layout.prop(component_set, "preview")
+        profile = display.profile_name(component_set.name)
+        if profile is not None:
+            layout.label(text="The game hides these for the profile " + profile, icon='INFO')
         layout.label(text="Members of " + component_set.name)
         row = layout.row()
         row.template_list("AERON_UL_references", "members", component_set, "members", component_set,
@@ -557,6 +584,7 @@ class VIEW3D_PT_aeron(Panel):
                 len(parts), sum(1 for c in children if common.role(c) == 'hardpoint'),
                 sum(1 for c in children if common.role(c) == 'engineGlow'),
                 sum(1 for c in children if common.is_model_light(c))))
+            layout.operator("aeron.view_pilot_eye", icon='HIDE_OFF')
         layout.operator("aeron.make_flight_model", icon='OUTLINER_OB_EMPTY')
         layout.label(text="Add to the active component, at the 3D cursor:")
         draw_add_buttons(layout)
@@ -637,6 +665,7 @@ classes = (
     OBJECT_PT_aeron,
     OBJECT_PT_aeron_components,
     OBJECT_PT_aeron_source,
+    OBJECT_PT_aeron_skins,
     OBJECT_PT_aeron_articulations,
     OBJECT_PT_aeron_preview,
     OBJECT_PT_aeron_settings,

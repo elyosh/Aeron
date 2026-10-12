@@ -14,7 +14,7 @@ from bpy.props import (
 )
 from bpy.types import PropertyGroup
 
-from . import common, overlays, preview
+from . import common, display, overlays, preview
 
 
 def _component_poll(self, obj):
@@ -70,9 +70,23 @@ class AeronPreviewGroup(PropertyGroup):
                           description="0: as modelled; 1: each member at its articulation's angle")
 
 
+def _set_preview_update(self, context):
+    """One set hidden at a time, as the game applies one profile."""
+    root = self.id_data
+    if self.preview:
+        for other in root.aeron_flight.component_sets:
+            if other != self and other.preview:
+                other.preview = False
+    display.apply_sets(root)
+
+
 class AeronComponentSet(PropertyGroup):
     members: CollectionProperty(type=AeronSetMember)
     active_member: IntProperty()
+    preview: BoolProperty(
+        name="Hide Members", update=_set_preview_update,
+        description="Hide the set's members (and what is under them) in the viewport, as the game hides "
+                    "a profile's set")
 
 
 def _role_update(self, context):
@@ -155,6 +169,8 @@ class AeronFlightProperties(PropertyGroup):
         description="Turn the component to this angle (1/256 turn) in the preview, whatever its groups")
     preview_matrix: FloatVectorProperty(size=16, default=preview.IDENTITY)
     preview_rest: FloatVectorProperty(size=17)  # its transform channels at the start
+    # Hidden by a component set's preview (display.py).
+    preview_hidden: BoolProperty()
 
     # Hardpoint.
     hardpoint_type: EnumProperty(
@@ -186,6 +202,9 @@ class AeronFlightProperties(PropertyGroup):
     active_set: IntProperty()
     preview_active: BoolProperty()
     preview_groups: CollectionProperty(type=AeronPreviewGroup)
+    # The markings value whose skin the components show; -1: their own
+    # materials (display.py).
+    preview_markings: IntProperty(default=-1, min=-1)
     active_component: IntProperty()
     # Kept from the import (sources.py): the glTF file, its asset extras
     # (JSON), and the extensions and extras names it had (JSON).

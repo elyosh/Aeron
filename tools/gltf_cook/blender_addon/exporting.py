@@ -18,7 +18,7 @@ from bpy.types import Operator
 from bpy_extras.io_utils import ExportHelper
 from mathutils import Matrix
 
-from . import common, sources, validation
+from . import common, display, sources, validation
 
 # Blender (x, y, z) -> glTF (x, z, -y).
 _TO_GLTF = Matrix(((1.0, 0.0, 0.0, 0.0), (0.0, 0.0, 1.0, 0.0), (0.0, -1.0, 0.0, 0.0), (0.0, 0.0, 0.0, 1.0)))
@@ -243,6 +243,10 @@ def export_gltf(root, filepath, apply_modifiers=True, keep_originals=False):
     active = context.view_layer.objects.active
     mode = active.mode if active is not None else 'OBJECT'
     _state = _ExportState(root)
+    # The original materials, not a skin shown (shown again after).
+    showing = display.models_showing_skins()
+    for model in showing:
+        display.apply_skin(model, -1)
     try:
         # Tangents (MikkTSpace, as glTF expects): the game's normal maps need them.
         result = bpy.ops.export_scene.gltf(
@@ -256,6 +260,8 @@ def export_gltf(root, filepath, apply_modifiers=True, keep_originals=False):
             export_keep_originals=keep_originals, export_texture_dir="textures" if keep_originals else "")
     finally:
         _state = None
+        for model in showing:
+            display.apply_skin(model)
         # The exporter leaves edit and other modes for object mode.
         if active is not None and mode != 'OBJECT' and context.view_layer.objects.active == active:
             bpy.ops.object.mode_set(mode=mode)

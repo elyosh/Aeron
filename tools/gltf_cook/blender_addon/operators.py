@@ -6,9 +6,9 @@ import os
 import bpy
 from bpy.props import EnumProperty, IntProperty, StringProperty
 from bpy.types import Operator
-from mathutils import Vector
+from mathutils import Matrix, Vector
 
-from . import common, preview, sources, validation
+from . import common, display, preview, sources, validation
 
 
 def _component(obj):
@@ -370,6 +370,64 @@ class AERON_OT_list_edit(Operator):
         if self.target == 'articulations':
             preview.sync_groups(context.object)
             preview.apply(context.object)
+        elif self.target in {'component_sets', 'members'}:
+            display.apply_sets(context.object)
+        return {'FINISHED'}
+
+
+class AERON_OT_show_skin(Operator):
+    """Show the skin the game gives this markings value, or the materials as modelled"""
+
+    bl_idname = "aeron.show_skin"
+    bl_label = "Show Skin"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    markings: IntProperty(name="Markings", min=-1, default=-1,
+                          description="The markings value; -1: the materials as modelled")
+
+    @classmethod
+    def poll(cls, context):
+        return common.role(context.object) == 'model'
+
+    def execute(self, context):
+        root = context.object
+        root.aeron_flight.preview_markings = self.markings
+        display.apply_skin(root)
+        return {'FINISHED'}
+
+
+def pilot_eye(root):
+    """The model's pilot eye hardpoint (the first, in component order), or None."""
+    for component in common.components(root):
+        for child in common.ordered_children(component, roles=('hardpoint',)):
+            if int(child.aeron_flight.hardpoint_type) == common.COCKPIT_HARDPOINT_TYPE:
+                return child
+    return None
+
+
+class AERON_OT_view_pilot_eye(Operator):
+    """Look from the model's pilot eye hardpoint toward the model's forward (-Y), its up up"""
+
+    bl_idname = "aeron.view_pilot_eye"
+    bl_label = "View From Pilot Eye"
+
+    @classmethod
+    def poll(cls, context):
+        root = common.model_root(context.active_object)
+        return (context.area is not None and context.area.type == 'VIEW_3D' and root is not None and
+                pilot_eye(root) is not None)
+
+    def execute(self, context):
+        root = common.model_root(context.active_object)
+        eye = pilot_eye(root).matrix_world.translation
+        basis = root.matrix_world.to_3x3().normalized()
+        forward, up = basis @ Vector((0.0, -1.0, 0.0)), basis @ Vector((0.0, 0.0, 1.0))
+        # A view looks along its -Z, its Y up; it orbits a point ahead.
+        rv3d = context.space_data.region_3d
+        rv3d.view_perspective = 'PERSP'
+        rv3d.view_rotation = Matrix((forward.cross(up), up, -forward)).transposed().to_quaternion()
+        rv3d.view_distance = 1.0
+        rv3d.view_location = eye + forward * rv3d.view_distance
         return {'FINISHED'}
 
 
@@ -439,6 +497,8 @@ classes = (
     AERON_OT_articulation_reset,
     AERON_OT_validate,
     AERON_OT_list_edit,
+    AERON_OT_show_skin,
+    AERON_OT_view_pilot_eye,
     AERON_OT_clear_animation,
     AERON_OT_reload_animations,
 )
