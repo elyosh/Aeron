@@ -17,8 +17,8 @@ set_target_properties(aeron_gltf_cook_lib PROPERTIES
 
 if(AERON_BUILD_TOOLS)
     add_executable(aeron_gltf_cook main.c flight_data.c animations.c)
-    target_link_libraries(aeron_gltf_cook PRIVATE aeron_gltf_cook_lib aeron_flight_model aeron_collision aeron_cjson
-        aeron_yaml_json)
+    target_link_libraries(aeron_gltf_cook PRIVATE aeron_gltf_cook_lib aeron_effect_pack_lib aeron_flight_model
+        aeron_collision aeron_cjson aeron_yaml_json)
     # Cooked simulation data must be bit-identical across platforms.
     if(MSVC)
         set_source_files_properties(flight_data.c PROPERTIES COMPILE_OPTIONS "/fp:precise")

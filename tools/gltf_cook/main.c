@@ -3,6 +3,7 @@
  *
  * Usage: aeron_gltf_cook <in.gltf> --out <out.glb> [options]
  *        aeron_gltf_cook --animations-json <model>.anim.yaml
+ *        aeron_gltf_cook --library-json <library>.yaml
  *
  * Cooks an artist-authored .gltf into a runtime-ready .glb with
  * KHR_texture_basisu / KHR_texture_transform per-channel atlases. An
@@ -11,6 +12,7 @@
  */
 
 #include "animations.h"
+#include "effect_pack.h"
 #include "flight_data.h"
 #include "gltf_cook.h"
 
@@ -18,9 +20,12 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "cJSON.h"
+
 static void usage(void) {
 	fprintf(stderr, "Usage: aeron_gltf_cook <in.gltf> --out <out.glb> [options]\n"
 					"       aeron_gltf_cook --animations-json <model>.anim.yaml\n"
+					"       aeron_gltf_cook --library-json <library>.yaml\n"
 					"\n"
 					"Cooks an artist-authored .gltf (PNG textures, optional\n"
 					"KHR_materials_variants) into one .glb file with four compressed\n"
@@ -57,8 +62,20 @@ static void usage(void) {
 					"  -h, --help            Show this help.\n"
 					"\n"
 					"--animations-json checks a model animation file as --animations\n"
-					"does and prints it as JSON (for tools without a YAML reader).\n");
+					"does and prints it as JSON (for tools without a YAML reader).\n"
+					"--library-json does the same for an effect library file, with the\n"
+					"checks effect_pack applies before reading its images.\n");
 	exit(2);
+}
+
+/* Prints effect library file `file` as JSON on stdout, once checked. */
+static bool print_library(const char* file) {
+	cJSON* library = EffectPack_ReadLibrary("[aeron_gltf_cook] library", file);
+	char*  printed = library ? cJSON_PrintUnformatted(library) : NULL;
+	const bool ok  = printed && fputs(printed, stdout) >= 0 && fputc('\n', stdout) != EOF && fflush(stdout) == 0;
+	free(printed);
+	cJSON_Delete(library);
+	return ok;
 }
 
 /* Rewrites the cooked GLB with cooked AERON_flight_model data. */
@@ -112,6 +129,11 @@ int main(int argc, char** argv) {
 		if (argc != 3)
 			usage();
 		return aeron_gltf_cook_print_animations(argv[2]) ? 0 : 1;
+	}
+	if (strcmp(argv[1], "--library-json") == 0) {
+		if (argc != 3)
+			usage();
+		return print_library(argv[2]) ? 0 : 1;
 	}
 
 	const char* in_path     = argv[1];

@@ -1006,8 +1006,8 @@ endif()
 if(AERON_BUILD_TOOLS)
     add_subdirectory(tools/environment_bake)
 
-    # xwau_effects — effect image libraries of converted XWAU models; shares
-    # opt2gltf's XWAU readers and the effect_pack library writer.
+    # xwau_effects — imports the effect images of converted XWAU models into
+    # an asset source tree; shares opt2gltf's XWAU readers.
     add_executable(xwau_effects
         tools/xwau_effects/main.c
         tools/opt2gltf/xwau_mat.c
@@ -1017,9 +1017,8 @@ if(AERON_BUILD_TOOLS)
     target_include_directories(xwau_effects PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/tools/opt2gltf
         ${CMAKE_CURRENT_SOURCE_DIR}/third_party/lzma
-        ${CMAKE_CURRENT_SOURCE_DIR}/third_party/bcdec
-        ${CMAKE_CURRENT_SOURCE_DIR}/third_party/xxhash)
-    target_link_libraries(xwau_effects PRIVATE aeron_effect_pack_lib aeron_yaml_json aeron_cjson)
+        ${CMAKE_CURRENT_SOURCE_DIR}/third_party/bcdec)
+    target_link_libraries(xwau_effects PRIVATE imgbake aeron_yaml_json aeron_cjson)
     if(NOT MSVC)
         target_link_libraries(xwau_effects PRIVATE m)
     endif()

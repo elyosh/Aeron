@@ -1,37 +1,24 @@
 /*
- * xwau_effects — builds the effect image libraries and the game effect data
- * of converted XWAU models.
+ * xwau_effects — imports the effect images and the game effect data of
+ * converted XWAU models into an asset source tree (docs: asset_sources.md).
  *
- *   xwau_effects [--xwau-root DIR]... [--reuse DIR] [--zstd-level N] --out DIR
- *                [MODEL.glb | MODEL.anim.yaml | DIR]...
- *   xwau_effects [--xwau-root DIR]... --sources TREE [MODEL.anim.yaml | DIR]...
+ *   xwau_effects [--xwau-root DIR]... --sources TREE [MODEL.anim.yaml | TREE]...
  *
- * Reads the library images the models use (the keys of their aeronFlipbooks
- * frames and aeronDamage stages, from the .glb files given or found in the
- * directories given; or the flipbooks and damage of model animation files,
- * given or found as models/<key>/<key>.anim.yaml in a source tree) and the
- * DAT-named material files
+ * Reads the library images the models use (the flipbooks and damage of
+ * model animation files, given or found as models/<key>/<key>.anim.yaml in
+ * a source tree) and the DAT-named material files
  * (Materials/dat-<G>-<I>.mat) of the roots. A library is the images of
  * Effects/<library>.dat; a library with no such DAT in the roots is not an
- * XWAU one (authored content) and is left alone. Writes into --out:
- *   - effects.yaml: the energy effects and the flipbooks of DAT images the
- *     game draws directly (the blast marks of group 3050);
- *   - per library (one per source DAT): <name>.layer.ktx2, <name>.emissive.ktx2
- *     (when it has emission) and the <name>.yaml index, which records a hash
- *     of what the library was built from (`inputs:`).
- * With --reuse DIR (an earlier output, e.g. the installed libraries), a
- * library whose index in DIR records the same inputs is copied from there
- * instead of being rebuilt. The inputs are this executable, the zstd level
- * (--zstd-level, default KTX2_ZSTD_LEVEL_DEFAULT), the source DAT and the
- * library's images, so a rebuilt tool rebuilds every library once.
+ * XWAU one (authored content) and is left alone.
  * Roots are searched in order, the first holding a file wins (as opt2gltf).
  *
- * With --sources, it writes the libraries as sources instead, in an asset
- * source tree: TREE/effects/<library>/<library>.yaml (effect_pack's library
- * file), each image's inputs as PNGs under frames/ (XWAU's rules applied:
- * an illumination frame as its emissive and its base colour with coverage,
- * the tint and alpha mode baked in), with its size cap and crop; and
- * TREE/effects/effects.yaml.
+ * Writes TREE/effects/<library>/<library>.yaml (an effect library file,
+ * tools/effect_pack/README.md), each image's inputs as PNGs under frames/
+ * (XWAU's rules applied: an illumination frame as its emissive and its base
+ * colour with coverage, the tint and alpha mode baked in), with its size cap
+ * and crop; and TREE/effects/effects.yaml (the energy effects and the
+ * flipbooks of DAT images the game draws directly, the blast marks of group
+ * 3050). The libraries are then built from the tree like any other.
  */
 
 #include <ctype.h>
@@ -44,18 +31,8 @@
 #include <string.h>
 #include <strings.h>
 #include <sys/stat.h>
-#if defined(__APPLE__)
-#include <mach-o/dyld.h>
-#elif defined(__linux__)
-#include <unistd.h>
-#endif
-
-#define XXH_INLINE_ALL
-#include "xxhash.h"
 
 #include "cJSON.h"
-#include "effect_pack.h"
-#include "ktx2_writer.h"
 #include "png_write.h"
 #include "xwau_dat.h"
 #include "xwau_effect_bake.h"
@@ -63,8 +40,8 @@
 #include "yaml_json.h"
 
 #define MAX_ROOTS 16
-/* Images are capped at EFFECT_PACK_IMAGE_MAX (only Factory.dat's 2678×1536
- * frames are larger), energy frames at ENERGY_MAX. */
+/* Energy frames are capped at ENERGY_MAX (`maxSize`); other images keep the
+ * library's default cap. */
 #define ENERGY_MAX 512
 #define RANDOM_FRAMES 64
 
@@ -235,34 +212,11 @@ static bool model_key(const char* path, const char* library, const char* key) {
 	return request(dat, group, image, kind, tint, alpha_mode, false);
 }
 
-/* The JSON chunk of a .glb, parsed; NULL when it is not one. */
-static cJSON* read_glb_json(const char* path) {
-	FILE* f = fopen(path, "rb");
-	if (!f)
-		return NULL;
-	uint8_t head[20];
-	cJSON*  root = NULL;
-	if (fread(head, 1, sizeof head, f) == sizeof head && memcmp(head, "glTF", 4) == 0 &&
-		memcmp(head + 16, "JSON", 4) == 0) {
-		const uint32_t n    = (uint32_t)head[12] | (uint32_t)head[13] << 8 | (uint32_t)head[14] << 16 |
-							  (uint32_t)head[15] << 24;
-		char*          text = (char*)malloc((size_t)n + 1);
-		if (text && fread(text, 1, n, f) == n) {
-			text[n] = 0;
-			root    = cJSON_ParseWithLength(text, n);
-		}
-		free(text);
-	}
-	fclose(f);
-	return root;
-}
-
-/* The library images of one material's flipbooks and damage (`books` and
- * `damage` in `holder`). */
-static bool material_keys(const char* path, const cJSON* holder, const char* books, const char* damage_name) {
+/* The library images of one material's flipbooks and damage. */
+static bool material_keys(const char* path, const cJSON* material) {
 	bool         ok = true;
 	const cJSON* book;
-	cJSON_ArrayForEach(book, cJSON_GetObjectItemCaseSensitive(holder, books)) {
+	cJSON_ArrayForEach(book, cJSON_GetObjectItemCaseSensitive(material, "flipbooks")) {
 		const cJSON* library = cJSON_GetObjectItemCaseSensitive(book, "library");
 		const cJSON* frame;
 		cJSON_ArrayForEach(frame, cJSON_GetObjectItemCaseSensitive(book, "frames")) {
@@ -271,7 +225,7 @@ static bool material_keys(const char* path, const cJSON* holder, const char* boo
 				ok &= model_key(path, library->valuestring, key->valuestring);
 		}
 	}
-	const cJSON* damage  = cJSON_GetObjectItemCaseSensitive(holder, damage_name);
+	const cJSON* damage  = cJSON_GetObjectItemCaseSensitive(material, "damage");
 	const cJSON* library = cJSON_GetObjectItemCaseSensitive(damage, "library");
 	const cJSON* alternative;
 	cJSON_ArrayForEach(alternative, cJSON_GetObjectItemCaseSensitive(damage, "alternatives")) {
@@ -281,24 +235,6 @@ static bool material_keys(const char* path, const cJSON* holder, const char* boo
 				ok &= model_key(path, library->valuestring, stage->valuestring);
 		}
 	}
-	return ok;
-}
-
-/* The library images a model's materials use. */
-static bool read_model(const char* path) {
-	cJSON* root = read_glb_json(path);
-	if (!root) {
-		fprintf(stderr, "xwau_effects: %s: not a glTF binary\n", path);
-		return false;
-	}
-	bool         ok = true;
-	const cJSON* material;
-	cJSON_ArrayForEach(material, cJSON_GetObjectItemCaseSensitive(root, "materials")) {
-		ok &= material_keys(path, cJSON_GetObjectItemCaseSensitive(material, "extras"), "aeronFlipbooks",
-							"aeronDamage");
-	}
-	cJSON_Delete(root);
-	g_models++;
 	return ok;
 }
 
@@ -313,16 +249,11 @@ static bool read_anim(const char* path) {
 	bool         ok = true;
 	const cJSON* material;
 	cJSON_ArrayForEach(material, cJSON_GetObjectItemCaseSensitive(root, "materials")) {
-		ok &= material_keys(path, material, "flipbooks", "damage");
+		ok &= material_keys(path, material);
 	}
 	cJSON_Delete(root);
 	g_models++;
 	return ok;
-}
-
-static bool ends_with(const char* s, const char* suffix) {
-	const size_t ls = strlen(s), lf = strlen(suffix);
-	return ls >= lf && strcasecmp(s + ls - lf, suffix) == 0;
 }
 
 static int cmp_string(const void* a, const void* b) { return strcmp(*(char* const*)a, *(char* const*)b); }
@@ -358,8 +289,8 @@ static bool is_model_dir(const char* dir, const char* name) {
 	return stat(path, &st) == 0 && S_ISREG(st.st_mode);
 }
 
-/* A .glb or .anim.yaml file; a source tree's models/<key>/<key>.anim.yaml;
- * or the .glb files of a directory; in name order. */
+/* A model animation file, or a source tree's models/<key>/<key>.anim.yaml
+ * in name order. */
 static bool read_models(const char* path) {
 	struct stat st;
 	if (stat(path, &st) != 0) {
@@ -367,7 +298,7 @@ static bool read_models(const char* path) {
 		return false;
 	}
 	if (S_ISREG(st.st_mode))
-		return ends_with(path, ".anim.yaml") ? read_anim(path) : read_model(path);
+		return read_anim(path);
 	char models[1024];
 	snprintf(models, sizeof models, "%s/models", path);
 	if (stat(models, &st) == 0 && S_ISDIR(st.st_mode)) {
@@ -383,35 +314,8 @@ static bool read_models(const char* path) {
 		free(keys);
 		return ok;
 	}
-	DIR* d = opendir(path);
-	if (!d)
-		return false;
-	char**         names = NULL;
-	size_t         count = 0;
-	bool           ok    = true;
-	struct dirent* de;
-	while ((de = readdir(d))) {
-		if (de->d_name[0] == '.' || !ends_with(de->d_name, ".glb"))
-			continue;
-		char** grown = (char**)realloc(names, (count + 1) * sizeof *grown);
-		if (!grown || !(grown[count] = strdup(de->d_name))) {
-			names = grown ? grown : names;
-			ok    = false;
-			break;
-		}
-		names = grown;
-		count++;
-	}
-	closedir(d);
-	qsort(names, count, sizeof *names, cmp_string);
-	for (size_t i = 0; i < count; ++i) {
-		char child[1024];
-		snprintf(child, sizeof child, "%s/%s", path, names[i]);
-		ok &= read_model(child);
-		free(names[i]);
-	}
-	free(names);
-	return ok;
+	fprintf(stderr, "xwau_effects: %s: not a model animation file or a source tree\n", path);
+	return false;
 }
 
 /* ---- effects.yaml ------------------------------------------------------- */
@@ -721,237 +625,12 @@ static bool images_yaml(Text* y) {
 	return ok;
 }
 
-/* ---- Library build ------------------------------------------------------ */
-
-typedef struct Decoded {
-	int          group, image;
-	XwauDatImage im;
-	bool         ok;
-} Decoded;
-
-typedef struct Baked {
-	uint8_t* layer;
-	uint8_t* emissive;
-	int      w, h;
-} Baked;
-
 static bool write_file(const char* path, const void* data, size_t size) {
 	FILE* f = fopen(path, "wb");
 	if (!f)
 		return false;
 	const bool ok = fwrite(data, 1, size, f) == size;
 	return fclose(f) == 0 && ok;
-}
-
-/* ---- Reuse ---------------------------------------------------------------- */
-
-/* A library's inputs hash covers everything its files are built from: this
- * executable (the bake, packing and encoding linked into it, so a rebuilt
- * tool rebuilds every library once), the source DAT's content and the
- * library's requests. With --reuse, a library whose index there records the
- * same hash is copied from there instead of rebuilt. */
-
-static uint64_t g_tool_hash; /* 0: unknown, nothing is reused */
-
-static bool hash_file(const char* path, uint64_t* out) {
-	FILE* f = fopen(path, "rb");
-	if (!f)
-		return false;
-	enum { CHUNK = 1 << 20 };
-	XXH3_state_t* state = XXH3_createState();
-	uint8_t*      buf   = (uint8_t*)malloc(CHUNK);
-	bool          ok    = state && buf && XXH3_64bits_reset(state) == XXH_OK;
-	size_t        n;
-	while (ok && (n = fread(buf, 1, CHUNK, f)) > 0)
-		ok = XXH3_64bits_update(state, buf, n) == XXH_OK;
-	ok = ok && !ferror(f);
-	if (ok)
-		*out = XXH3_64bits_digest(state);
-	free(buf);
-	XXH3_freeState(state);
-	fclose(f);
-	return ok;
-}
-
-static void hash_executable(void) {
-	char path[4096];
-#if defined(__APPLE__)
-	uint32_t size = sizeof path;
-	if (_NSGetExecutablePath(path, &size) != 0)
-		return;
-#elif defined(__linux__)
-	const ssize_t n = readlink("/proc/self/exe", path, sizeof path - 1);
-	if (n <= 0)
-		return;
-	path[n] = 0;
-#else
-	return;
-#endif
-	if (!hash_file(path, &g_tool_hash))
-		g_tool_hash = 0;
-}
-
-/* The inputs hash of library `l` (requests sorted) built from the DAT at
- * `dat_path`, as 16 hex digits; false when it cannot be computed. */
-static bool library_inputs(const Library* l, const char* dat_path, char out[17]) {
-	uint64_t dat_hash;
-	if (!g_tool_hash || !hash_file(dat_path, &dat_hash))
-		return false;
-	XXH3_state_t* s = XXH3_createState();
-	if (!s || XXH3_64bits_reset(s) != XXH_OK) {
-		XXH3_freeState(s);
-		return false;
-	}
-	const int32_t zstd_level = ktx2_zstd_level();
-	XXH3_64bits_update(s, &g_tool_hash, sizeof g_tool_hash);
-	XXH3_64bits_update(s, &zstd_level, sizeof zstd_level);
-	XXH3_64bits_update(s, &dat_hash, sizeof dat_hash);
-	XXH3_64bits_update(s, l->name, strlen(l->name) + 1);
-	XXH3_64bits_update(s, l->dat, strlen(l->dat) + 1);
-	for (size_t i = 0; i < l->count; ++i) {
-		const Request* r    = &l->requests[i];
-		const int32_t  v[5] = { r->group, r->image, (int32_t)r->kind, r->alpha_mode, r->crop };
-		XXH3_64bits_update(s, r->key, strlen(r->key) + 1);
-		XXH3_64bits_update(s, v, sizeof v);
-		XXH3_64bits_update(s, r->tint, sizeof r->tint);
-	}
-	snprintf(out, 17, "%016llx", (unsigned long long)XXH3_64bits_digest(s));
-	XXH3_freeState(s);
-	return true;
-}
-
-static bool copy_file(const char* from, const char* to) {
-	FILE* f = fopen(from, "rb");
-	if (!f)
-		return false;
-	bool  ok   = fseek(f, 0, SEEK_END) == 0;
-	long  size = ok ? ftell(f) : -1;
-	char* data = size >= 0 ? (char*)malloc(size ? (size_t)size : 1) : NULL;
-	ok         = data && fseek(f, 0, SEEK_SET) == 0 && fread(data, 1, (size_t)size, f) == (size_t)size;
-	fclose(f);
-	ok = ok && write_file(to, data, (size_t)size);
-	free(data);
-	return ok;
-}
-
-/* Copies library `l` from `reuse_dir` into `out_dir` when its index there
- * records `inputs` and its page files are present. */
-static bool reuse_library(const Library* l, const char* inputs, const char* reuse_dir, const char* out_dir) {
-	char path[1024], line[512];
-	snprintf(path, sizeof path, "%s/%s.yaml", reuse_dir, l->name);
-	FILE* f = fopen(path, "rb");
-	if (!f)
-		return false;
-	bool same     = false;
-	int  pages[2] = { -1, -1 };
-	while (fgets(line, sizeof line, f) && strncmp(line, "images:", 7) != 0) {
-		char value[64];
-		if (sscanf(line, "inputs: %63s", value) == 1)
-			same = strcmp(value, inputs) == 0;
-		sscanf(line, "layer_pages: %d", &pages[0]);
-		sscanf(line, "emissive_pages: %d", &pages[1]);
-	}
-	fclose(f);
-	if (!same || pages[0] < 0 || pages[1] < 0)
-		return false;
-	static const char* const suffix[2] = { "layer", "emissive" };
-	char                     from[1024], to[1024];
-	for (int a = 0; a < 2; ++a) {
-		struct stat st;
-		snprintf(from, sizeof from, "%s/%s.%s.ktx2", reuse_dir, l->name, suffix[a]);
-		if (pages[a] && stat(from, &st) != 0)
-			return false;
-	}
-	for (int a = 0; a < 2; ++a) {
-		if (!pages[a])
-			continue;
-		snprintf(from, sizeof from, "%s/%s.%s.ktx2", reuse_dir, l->name, suffix[a]);
-		snprintf(to, sizeof to, "%s/%s.%s.ktx2", out_dir, l->name, suffix[a]);
-		if (!copy_file(from, to))
-			return false;
-	}
-	snprintf(to, sizeof to, "%s/%s.yaml", out_dir, l->name);
-	return copy_file(path, to);
-}
-
-/* Decodes and bakes a library's images, and writes it with effect_pack, or
- * copies it from `reuse_dir` (NULL: none) when its inputs are unchanged. */
-static bool build_library(Library* l, const char* out_dir, const char* reuse_dir) {
-	char path[1024], err[512], inputs[17];
-	if (!find_file(l->dat, path, sizeof path)) {
-		fprintf(stderr, "xwau_effects: %s: %s not found\n", l->name, l->dat);
-		return false;
-	}
-	qsort(l->requests, l->count, sizeof *l->requests, cmp_request);
-	const bool have_inputs = library_inputs(l, path, inputs);
-	if (have_inputs && reuse_dir && reuse_library(l, inputs, reuse_dir, out_dir)) {
-		fprintf(stderr, "xwau_effects: %s: %zu image(s), reused (inputs unchanged)\n", l->name, l->count);
-		return true;
-	}
-	XwauDat* dat = XwauDat_Open(path, err, sizeof err);
-	if (!dat) {
-		fprintf(stderr, "xwau_effects: %s\n", err);
-		return false;
-	}
-	Decoded*         decoded       = (Decoded*)calloc(l->count, sizeof *decoded);
-	Baked*           baked         = (Baked*)calloc(l->count, sizeof *baked);
-	EffectPackImage* images        = (EffectPackImage*)calloc(l->count ? l->count : 1, sizeof *images);
-	size_t           decoded_count = 0, image_count = 0;
-	bool             ok = decoded && baked && images;
-	for (size_t i = 0; ok && i < l->count; ++i) {
-		Request* r = &l->requests[i];
-		Decoded* d = NULL;
-		for (size_t k = 0; k < decoded_count && !d; ++k)
-			if (decoded[k].group == r->group && decoded[k].image == r->image)
-				d = &decoded[k];
-		if (!d) {
-			d        = &decoded[decoded_count++];
-			d->group = r->group;
-			d->image = r->image;
-			d->ok    = XwauDat_LoadImageFrom(dat, r->group, r->image, &d->im, err, sizeof err);
-			if (!d->ok)
-				fprintf(stderr, "xwau_effects: %s\n", err);
-		}
-		if (!d->ok)
-			continue;
-		const size_t n = (size_t)d->im.width * d->im.height;
-		Baked*       b = &baked[i];
-		b->w           = (int)d->im.width;
-		b->h           = (int)d->im.height;
-		b->layer       = XwauFx_HasLayer(r->kind) ? (uint8_t*)malloc(n * 4) : NULL;
-		b->emissive    = XwauFx_HasEmissive(r->kind) ? (uint8_t*)malloc(n * 4) : NULL;
-		if ((XwauFx_HasLayer(r->kind) && !b->layer) || (XwauFx_HasEmissive(r->kind) && !b->emissive)) {
-			ok = false;
-			break;
-		}
-		XwauFx_Bake(r->kind, d->im.rgba, n, r->tint, r->alpha_mode, b->layer, b->emissive);
-		images[image_count++] = (EffectPackImage) {
-			.key      = r->key,
-			.width    = b->w,
-			.height   = b->h,
-			.layer    = b->layer,
-			.emissive = b->emissive,
-			.max_size = r->kind == XWAU_FX_ENERGY ? ENERGY_MAX : EFFECT_PACK_IMAGE_MAX,
-			.crop     = r->crop ? kBlastMarkCrop : NULL,
-		};
-	}
-	XwauDat_Close(dat);
-	EffectPackResult result = { 0 };
-	ok = ok && EffectPack_Write("xwau_effects", out_dir, l->name, l->dat, have_inputs ? inputs : NULL, images,
-								image_count, &result);
-	if (ok)
-		fprintf(stderr, "xwau_effects: %s: %zu image(s), %d layer and %d emissive page(s)\n", l->name,
-				l->count, result.layer_pages, result.emissive_pages);
-	for (size_t i = 0; baked && i < l->count; ++i) {
-		free(baked[i].layer);
-		free(baked[i].emissive);
-	}
-	for (size_t k = 0; decoded && k < decoded_count; ++k)
-		XwauDat_FreeImage(&decoded[k].im);
-	free(images);
-	free(baked);
-	free(decoded);
-	return ok;
 }
 
 /* ---- Sources ------------------------------------------------------------ */
@@ -1114,29 +793,18 @@ static int cmp_library(const void* a, const void* b) {
 }
 
 static int usage(void) {
-	fprintf(stderr, "usage: xwau_effects [--xwau-root DIR]... [--reuse DIR] [--zstd-level N] --out DIR "
-					"[MODEL.glb | MODEL.anim.yaml | DIR]...\n"
-					"       xwau_effects [--xwau-root DIR]... --sources TREE [MODEL.anim.yaml | DIR]...\n");
+	fprintf(stderr, "usage: xwau_effects [--xwau-root DIR]... --sources TREE [MODEL.anim.yaml | TREE]...\n");
 	return 2;
 }
 
 int main(int argc, char** argv) {
-	const char* out         = NULL;
 	const char* sources     = NULL;
-	const char* reuse       = NULL;
 	int         first_input = argc;
 	for (int i = 1; i < argc; ++i) {
 		if (strcmp(argv[i], "--xwau-root") == 0 && i + 1 < argc) {
 			if (g_root_count == MAX_ROOTS)
 				return usage();
 			g_roots[g_root_count++] = argv[++i];
-		} else if (strcmp(argv[i], "--reuse") == 0 && i + 1 < argc) {
-			reuse = argv[++i];
-		} else if (strcmp(argv[i], "--zstd-level") == 0 && i + 1 < argc) {
-			if (!ktx2_set_zstd_level(atoi(argv[++i])))
-				return usage();
-		} else if (strcmp(argv[i], "--out") == 0 && i + 1 < argc) {
-			out = argv[++i];
 		} else if (strcmp(argv[i], "--sources") == 0 && i + 1 < argc) {
 			sources = argv[++i];
 		} else if (argv[i][0] == '-') {
@@ -1146,19 +814,14 @@ int main(int argc, char** argv) {
 			break;
 		}
 	}
-	if (!(out || sources) || (out && sources) || !g_root_count)
+	if (!sources || !g_root_count)
 		return usage();
-	char effects_dir[1024];
-	if (sources) {
-		snprintf(effects_dir, sizeof effects_dir, "%s/effects", sources);
-		if (!make_dir(effects_dir)) {
-			fprintf(stderr, "xwau_effects: cannot create %s\n", effects_dir);
-			return 1;
-		}
-		out = effects_dir;
+	char out[1024];
+	snprintf(out, sizeof out, "%s/effects", sources);
+	if (!make_dir(out)) {
+		fprintf(stderr, "xwau_effects: cannot create %s\n", out);
+		return 1;
 	}
-	if (reuse)
-		hash_executable();
 	bool ok = true;
 	for (int i = first_input; i < argc; ++i)
 		ok &= read_models(argv[i]);
@@ -1186,7 +849,7 @@ int main(int argc, char** argv) {
 	free(g_skipped);
 	qsort(g_libraries, g_library_count, sizeof *g_libraries, cmp_library);
 	for (size_t i = 0; i < g_library_count; ++i)
-		ok &= sources ? write_library_sources(&g_libraries[i], out) : build_library(&g_libraries[i], out, reuse);
+		ok &= write_library_sources(&g_libraries[i], out);
 	for (size_t i = 0; i < g_library_count; ++i)
 		free(g_libraries[i].requests);
 	free(g_libraries);

@@ -16,9 +16,9 @@
  * `maxSize` caps an image's longer side, `crop` records the part a blast
  * mark's [0, 1] maps to.
  *
- * The index records a hash of the inputs (this executable, the file and
- * its images); a library whose index in DIR records the same is left as
- * it is.
+ * The index records a hash of the inputs (EFFECT_PACK_BAKE_VERSION, the
+ * file and its images); a library whose index in DIR records the same is
+ * left as it is.
  */
 
 #include <math.h>
@@ -28,11 +28,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
-#if defined(__APPLE__)
-#include <mach-o/dyld.h>
-#elif defined(__linux__)
-#include <unistd.h>
-#endif
 
 #define XXH_INLINE_ALL
 #include "xxhash.h"
@@ -40,11 +35,6 @@
 #include "cJSON.h"
 #include "effect_pack.h"
 #include "png_read.h"
-#include "yaml_json.h"
-
-typedef enum Kind { KIND_BASE_COLOR, KIND_EMISSIVE, KIND_DAMAGE, KIND_MARK, KIND_ENERGY, KIND_COUNT } Kind;
-
-static const char* const kKinds[KIND_COUNT] = { "baseColor", "emissive", "damage", "mark", "energy" };
 
 static float clamp01(float x) { return x < 0.0f ? 0.0f : (x > 1.0f ? 1.0f : x); }
 
@@ -105,32 +95,19 @@ static uint8_t* load_input(const char* dir, const char* key, const char* field, 
 	return rgba;
 }
 
-/* `maxSize` and `crop` of an image entry into `out` (crop owned by the
- * caller). */
-static bool image_options(const char* key, const cJSON* entry, EffectPackImage* out) {
+/* `maxSize` and `crop` of a checked image entry into `out` (crop owned by
+ * the caller). */
+static bool image_options(const cJSON* entry, EffectPackImage* out) {
 	const cJSON* max_size = cJSON_GetObjectItemCaseSensitive(entry, "maxSize");
-	if (max_size) {
-		if (!cJSON_IsNumber(max_size) || max_size->valueint < 1 || max_size->valueint > EFFECT_PACK_IMAGE_MAX) {
-			fprintf(stderr, "effect_pack: image %s: maxSize must be 1 to %d\n", key, EFFECT_PACK_IMAGE_MAX);
-			return false;
-		}
+	if (max_size)
 		out->max_size = max_size->valueint;
-	}
 	const cJSON* crop = cJSON_GetObjectItemCaseSensitive(entry, "crop");
 	if (crop) {
 		float* values = (float*)malloc(4 * sizeof *values);
-		bool   ok     = values && cJSON_IsArray(crop) && cJSON_GetArraySize(crop) == 4;
-		for (int i = 0; ok && i < 4; ++i) {
-			const cJSON* v = cJSON_GetArrayItem(crop, i);
-			ok             = cJSON_IsNumber(v);
-			if (ok)
-				values[i] = (float)v->valuedouble;
-		}
-		if (!ok) {
-			free(values);
-			fprintf(stderr, "effect_pack: image %s: crop must be [x0, y0, x1, y1]\n", key);
+		if (!values)
 			return false;
-		}
+		for (int i = 0; i < 4; ++i)
+			values[i] = (float)cJSON_GetArrayItem(crop, i)->valuedouble;
 		out->crop = values;
 	}
 	return true;
@@ -152,31 +129,16 @@ static bool hash_file(XXH3_state_t* state, const char* path) {
 	return ok;
 }
 
-static bool executable_path(char* path, size_t cap) {
-#if defined(__APPLE__)
-	uint32_t size = (uint32_t)cap;
-	return _NSGetExecutablePath(path, &size) == 0;
-#elif defined(__linux__)
-	const ssize_t n = readlink("/proc/self/exe", path, cap - 1);
-	if (n <= 0)
-		return false;
-	path[n] = 0;
-	return true;
-#else
-	(void)path;
-	(void)cap;
-	return false;
-#endif
-}
-
-/* The inputs hash of the library (this executable, the library file and
- * every image input it names), as 16 hex digits; false when unknown. */
+/* The inputs hash of the library (EFFECT_PACK_BAKE_VERSION, the library
+ * file and every image input it names), as 16 hex digits; false when
+ * unknown. */
 static bool library_inputs(const char* file, const char* dir, const cJSON* images, char out[17]) {
 	static const char* const fields[] = { "baseColor", "emissive", "factor" };
+	static const uint32_t    version  = EFFECT_PACK_BAKE_VERSION;
 	char                     path[4096];
 	XXH3_state_t*            s  = XXH3_createState();
-	bool                     ok = s && XXH3_64bits_reset(s) == XXH_OK && executable_path(path, sizeof path) &&
-			 hash_file(s, path) && hash_file(s, file);
+	bool                     ok = s && XXH3_64bits_reset(s) == XXH_OK &&
+			 XXH3_64bits_update(s, &version, sizeof version) == XXH_OK && hash_file(s, file);
 	const cJSON* entry;
 	cJSON_ArrayForEach(entry, images) {
 		for (size_t i = 0; ok && i < sizeof fields / sizeof *fields; ++i) {
@@ -219,22 +181,15 @@ static bool library_current(const char* out_dir, const char* name, const char* i
 	return same;
 }
 
-/* Bakes one image entry into `out` (layer/emissive owned by the caller). */
+/* Bakes one checked image entry into `out` (layer/emissive owned by the
+ * caller). */
 static bool bake(const char* dir, const char* key, const cJSON* entry, EffectPackImage* out) {
-	const cJSON* kind_item = cJSON_GetObjectItemCaseSensitive(entry, "kind");
-	int          kind      = -1;
-	for (int k = 0; k < KIND_COUNT && cJSON_IsString(kind_item); ++k)
-		if (strcmp(kind_item->valuestring, kKinds[k]) == 0)
-			kind = k;
-	if (kind < 0) {
-		fprintf(stderr, "effect_pack: image %s: kind must be baseColor, emissive, damage, mark or energy\n", key);
+	const EffectPackKind kind = EffectPack_ImageKind(entry);
+	bool                 ok   = true;
+	int                  w = 0, h = 0;
+	if (!image_options(entry, out))
 		return false;
-	}
-	bool ok = true;
-	int  w = 0, h = 0;
-	if (!image_options(key, entry, out))
-		return false;
-	if (kind == KIND_EMISSIVE) {
+	if (kind == EFFECT_PACK_EMISSIVE) {
 		uint8_t* emissive = load_input(dir, key, "emissive", entry, &w, &h, true, &ok);
 		uint8_t* colour   = ok ? load_input(dir, key, "baseColor", entry, &w, &h, false, &ok) : NULL;
 		uint8_t* layer    = ok ? (uint8_t*)malloc((size_t)w * h * 4) : NULL;
@@ -256,19 +211,18 @@ static bool bake(const char* dir, const char* key, const cJSON* entry, EffectPac
 		out->emissive = emissive;
 	} else {
 		/* The input names the material channel the image changes. */
-		const char* field = kind == KIND_DAMAGE ? "factor" : kind == KIND_ENERGY ? "emissive" : "baseColor";
-		uint8_t*    image = load_input(dir, key, field, entry, &w, &h, true, &ok);
+		uint8_t* image = load_input(dir, key, EffectPack_ImageInput(kind, 0), entry, &w, &h, true, &ok);
 		if (!ok)
 			return false;
-		for (size_t i = 0; (kind == KIND_MARK || kind == KIND_ENERGY) && i < (size_t)w * h; ++i) {
+		for (size_t i = 0; (kind == EFFECT_PACK_MARK || kind == EFFECT_PACK_ENERGY) && i < (size_t)w * h; ++i) {
 			uint8_t*    p = &image[i * 4];
 			const float a = p[3] / 255.0f;
 			for (int k = 0; k < 3; ++k)
 				p[k] = to_srgb8(to_linear(p[k]) * a);
-			if (kind == KIND_ENERGY)
+			if (kind == EFFECT_PACK_ENERGY)
 				p[3] = 255;
 		}
-		if (kind == KIND_ENERGY)
+		if (kind == EFFECT_PACK_ENERGY)
 			out->emissive = image;
 		else
 			out->layer = image;
@@ -276,17 +230,6 @@ static bool bake(const char* dir, const char* key, const cJSON* entry, EffectPac
 	out->key    = key;
 	out->width  = w;
 	out->height = h;
-	return true;
-}
-
-/* Library names are file names under remaster/effects: lower-case letters,
- * digits, '_' and '-'. */
-static bool valid_name(const char* s) {
-	if (!*s)
-		return false;
-	for (; *s; ++s)
-		if (!((*s >= 'a' && *s <= 'z') || (*s >= '0' && *s <= '9') || *s == '_' || *s == '-'))
-			return false;
 	return true;
 }
 
@@ -308,39 +251,12 @@ int main(int argc, char** argv) {
 	}
 	if (!out || !file)
 		return usage();
-	char   err[512];
-	cJSON* root = YamlJson_Load(file, err, sizeof err);
-	if (!root) {
-		fprintf(stderr, "effect_pack: %s\n", err);
+	cJSON* root = EffectPack_ReadLibrary("effect_pack", file);
+	if (!root)
 		return 1;
-	}
-	const cJSON* version = cJSON_GetObjectItemCaseSensitive(root, "version");
 	const cJSON* library = cJSON_GetObjectItemCaseSensitive(root, "library");
 	const cJSON* images  = cJSON_GetObjectItemCaseSensitive(root, "images");
 	bool         ok      = true;
-	/* A library file holds only the library; a model's animations are its
-	   own file, which aeron_gltf_cook reads. */
-	const cJSON* member;
-	cJSON_ArrayForEach(member, root) {
-		if (strcmp(member->string, "version") && strcmp(member->string, "library") &&
-			strcmp(member->string, "images")) {
-			fprintf(stderr, "effect_pack: %s: unknown member %s (a library has version, library and images)\n",
-					file, member->string);
-			ok = false;
-		}
-	}
-	if (!cJSON_IsNumber(version) || version->valueint != 1) {
-		fprintf(stderr, "effect_pack: %s: version must be 1\n", file);
-		ok = false;
-	}
-	if (!cJSON_IsString(library) || !valid_name(library->valuestring)) {
-		fprintf(stderr, "effect_pack: %s: library must be a name of a-z, 0-9, '_' and '-'\n", file);
-		ok = false;
-	}
-	if (!cJSON_IsObject(images) || !cJSON_GetArraySize(images)) {
-		fprintf(stderr, "effect_pack: %s: no images\n", file);
-		ok = false;
-	}
 	char        dir[1024];
 	const char* slash = strrchr(file, '/');
 	snprintf(dir, sizeof dir, "%.*s", slash ? (int)(slash - file) : 1, slash ? file : ".");

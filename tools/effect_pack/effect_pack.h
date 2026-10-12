@@ -1,6 +1,7 @@
 /*
- * Effect image library writer (README.md, "Libraries"): packs baked images into the layer and emissive page arrays
- * and writes the library's three files,
+ * Effect image libraries (README.md, "Effect libraries"): reading a library
+ * file, <library>.yaml, and the writer, which packs baked images into the
+ * layer and emissive page arrays and writes the library's three files,
  *
  *   <out>/<name>.yaml           the index: key -> page, rect, mip limit
  *   <out>/<name>.layer.ktx2     when an image has a layer
@@ -21,6 +22,15 @@
 extern "C" {
 #endif
 
+struct cJSON;
+
+/* The version of what makes a library's files from its inputs: baking the
+ * images by kind, packing and encoding them. Raise it with any change that
+ * alters the files built from the same inputs, including in the encoder
+ * (imgbake): the inputs hash a library's index records includes it, so the
+ * tools rebuild every library once, and only then. */
+#define EFFECT_PACK_BAKE_VERSION 1
+
 #define EFFECT_PACK_PAGE_SIZE 2176
 #define EFFECT_PACK_IMAGE_MAX 1024 /* longest side; larger images are box-downscaled */
 
@@ -40,6 +50,29 @@ typedef struct EffectPackResult {
 	int layer_pages;
 	int emissive_pages;
 } EffectPackResult;
+
+typedef enum EffectPackKind {
+	EFFECT_PACK_BASE_COLOR,
+	EFFECT_PACK_EMISSIVE,
+	EFFECT_PACK_DAMAGE,
+	EFFECT_PACK_MARK,
+	EFFECT_PACK_ENERGY,
+	EFFECT_PACK_KIND_COUNT, /* not a kind */
+} EffectPackKind;
+
+/* Reads library file `file` as a cJSON tree (owned by the caller) and checks
+ * what it can without reading the images: its members, version and name,
+ * and per image its kind, its inputs' presence (strings, paths relative to
+ * the file), maxSize and crop. NULL on failure, with messages on stderr
+ * prefixed with `tool`. */
+struct cJSON* EffectPack_ReadLibrary(const char* tool, const char* file);
+
+/* The kind of a checked image entry. */
+EffectPackKind EffectPack_ImageKind(const struct cJSON* image);
+
+/* The field naming a kind's required input (`optional` 0), or its optional
+ * one (1, NULL when it has none). */
+const char* EffectPack_ImageInput(EffectPackKind kind, int optional);
 
 /* Writes library `name` into `out_dir`. `source` and `inputs`, when not
  * NULL, are noted in the index (`source:`, `inputs:`, which the runtime
