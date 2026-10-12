@@ -4,11 +4,11 @@ import json
 import os
 
 import bpy
-from bpy.props import EnumProperty, StringProperty
+from bpy.props import EnumProperty, IntProperty, StringProperty
 from bpy.types import Operator
 from mathutils import Vector
 
-from . import common, sources, validation
+from . import common, preview, sources, validation
 
 
 def _component(obj):
@@ -244,6 +244,57 @@ class AERON_OT_descriptor_from_bounds(Operator):
         return {'FINISHED'}
 
 
+class AERON_OT_component_articulation(Operator):
+    """Add an articulation turning this component, or remove one, from the model root's list"""
+
+    bl_idname = "aeron.component_articulation"
+    bl_label = "Component Articulation"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    action: EnumProperty(items=[('ADD', "Add", ""), ('REMOVE', "Remove", "")])
+    index: IntProperty(default=-1, description="The articulation to remove, in the model root's list")
+
+    @classmethod
+    def poll(cls, context):
+        return common.role(context.object) == 'component' and common.role(context.object.parent) == 'model'
+
+    def execute(self, context):
+        component = context.object
+        root = component.parent
+        props = root.aeron_flight
+        if self.action == 'ADD':
+            articulation = props.articulations.add()
+            articulation.component = component
+            articulation.speed = 1  # 0 would never move
+            props.active_articulation = len(props.articulations) - 1
+        else:
+            if not 0 <= self.index < len(props.articulations) or \
+                    props.articulations[self.index].component != component:
+                return {'CANCELLED'}
+            props.articulations.remove(self.index)
+            props.active_articulation = min(props.active_articulation, len(props.articulations) - 1)
+        preview.sync_groups(root)
+        preview.apply(root)
+        return {'FINISHED'}
+
+
+class AERON_OT_articulation_reset(Operator):
+    """Set the articulation preview's sliders back to 0, turning the components back as modelled"""
+
+    bl_idname = "aeron.articulation_reset"
+    bl_label = "Reset Preview"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        root = common.model_root(context.object)
+        return root is not None and root.aeron_flight.preview_active
+
+    def execute(self, context):
+        preview.reset(common.model_root(context.object))
+        return {'FINISHED'}
+
+
 class AERON_OT_validate(Operator):
     """Check the active object's flight model and list its problems"""
 
@@ -301,6 +352,8 @@ class AERON_OT_list_edit(Operator):
             item = items.add()
             if self.target in {'articulation_settings', 'component_sets'}:
                 item.name = "name"
+            elif self.target == 'articulations':
+                item.speed = 1  # 0 would never move
             setattr(owner, active, len(items) - 1)
         elif self.action == 'ADD_SELECTED':
             present = {member.component for member in items}
@@ -314,6 +367,9 @@ class AERON_OT_list_edit(Operator):
                 return {'CANCELLED'}
             items.remove(index)
             setattr(owner, active, min(index, len(items) - 1))
+        if self.target == 'articulations':
+            preview.sync_groups(context.object)
+            preview.apply(context.object)
         return {'FINISHED'}
 
 
@@ -379,6 +435,8 @@ classes = (
     AERON_OT_select,
     AERON_OT_from_cursor,
     AERON_OT_descriptor_from_bounds,
+    AERON_OT_component_articulation,
+    AERON_OT_articulation_reset,
     AERON_OT_validate,
     AERON_OT_list_edit,
     AERON_OT_clear_animation,

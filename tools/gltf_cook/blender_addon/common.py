@@ -27,21 +27,15 @@ MESH_TYPE_NAMES = (
 # The hardpoint XWA reads as the pilot eye (index in HARDPOINT_TYPE_NAMES).
 COCKPIT_HARDPOINT_TYPE = 31
 
+# XWA's hardpoint types (as named by JeremyAnsel.Xwa.Opt).
 HARDPOINT_TYPE_NAMES = (
-    "None", "Laser cannon / Rebel laser", "Ion cannon / Turbo rebel laser",
-    "Turbo laser / Empire laser", "Ion turbo laser / Turbo empire laser",
-    "Cluster missile / Ion cannon", "Torpedo mag pulse / Turbo ion cannon",
-    "Concussion missile / Torpedo", "Proton torpedo / Missile",
-    "Advanced concussion / Super rebel laser",
-    "Advanced proton torpedo / Super empire laser",
-    "Advanced torpedo mag pulse / Super ion cannon", "Bomb / Super torpedo",
-    "Beam weapon / Super missile", "Dumb bomb", "Fire rocket / Fired bomb",
-    "Mag pulse", "Turbo mag pulse", "Warhead / Super mag pulse", "Gunner",
-    "Cockpit sparks", "Docking point", "Towing", "Acceleration start",
-    "Acceleration end", "Cockpit / inside hangar", "Engine / outside hangar",
-    "Passive heavy dock / dock from big", "Passive light dock / dock from small",
-    "Active heavy dock / dock to big", "Active light dock / dock to small",
-    "Primary sweep / cockpit (XWA pilot eye)",
+    "None", "Rebel laser", "Turbo rebel laser", "Empire laser", "Turbo empire laser",
+    "Ion cannon", "Turbo ion cannon", "Torpedo", "Missile", "Super rebel laser",
+    "Super empire laser", "Super ion cannon", "Super torpedo", "Super missile",
+    "Dumb bomb", "Fired bomb", "Mag pulse", "Turbo mag pulse", "Super mag pulse",
+    "Gunner", "Cockpit sparks", "Docking point", "Towing", "Acceleration start",
+    "Acceleration end", "Inside hangar", "Outside hangar", "Dock from big",
+    "Dock from small", "Dock to big", "Dock to small", "Cockpit (pilot eye)",
     "Engine glow", "Custom 1", "Custom 2", "Custom 3", "Custom 4", "Custom 5",
     "Custom 6", "Jamming point",
 )

@@ -14,7 +14,7 @@ from bpy.props import (
 )
 from bpy.types import PropertyGroup
 
-from . import common, overlays
+from . import common, overlays, preview
 
 
 def _component_poll(self, obj):
@@ -34,9 +34,23 @@ class AeronComponentRef:
                     "component that its cockpit model turns")
 
 
+def _preview_update(self, context):
+    root = common.model_root(self.id_data)
+    if root is not None:
+        preview.apply(root)
+
+
+def _group_update(self, context):
+    root = common.model_root(self.id_data)
+    if root is not None:
+        preview.sync_groups(root)
+        preview.apply(root)
+
+
 class AeronArticulation(AeronComponentRef, PropertyGroup):
-    group: StringProperty(name="Group", description="Game-defined group (tag syntax)")
-    angle: IntProperty(name="Angle", min=-128, max=255, description="Opened angle, in 1/256 turn")
+    group: StringProperty(name="Group", description="Game-defined group (tag syntax)", update=_group_update)
+    angle: IntProperty(name="Angle", min=-128, max=255, description="Opened angle, in 1/256 turn",
+                       update=_preview_update)
     speed: IntProperty(name="Speed", min=0, max=255, description="1/256 turn per game step")
     has_speed_back: BoolProperty(name="Own closing speed", default=False)
     speed_back: IntProperty(name="Closing speed", min=0, max=255, description="1/256 turn per game step")
@@ -49,6 +63,11 @@ class AeronSetting(PropertyGroup):
 
 class AeronSetMember(AeronComponentRef, PropertyGroup):
     pass
+
+
+class AeronPreviewGroup(PropertyGroup):
+    amount: FloatProperty(name="Amount", min=0.0, max=1.0, subtype='FACTOR', update=_preview_update,
+                          description="0: as modelled; 1: each member at its articulation's angle")
 
 
 class AeronComponentSet(PropertyGroup):
@@ -115,13 +134,21 @@ class AeronFlightProperties(PropertyGroup):
     descriptor_center: FloatVectorProperty(name="Center", size=3, subtype='TRANSLATION', unit='LENGTH')
     descriptor_bounds_min: FloatVectorProperty(name="Bounds min", size=3, subtype='TRANSLATION', unit='LENGTH')
     descriptor_bounds_max: FloatVectorProperty(name="Bounds max", size=3, subtype='TRANSLATION', unit='LENGTH')
-    has_rotation: BoolProperty(name="Hinge", default=False,
+    has_rotation: BoolProperty(name="Hinge", default=False, update=_preview_update,
                                description="The game can turn this component about a hinge")
-    pivot: FloatVectorProperty(name="Pivot", size=3, subtype='TRANSLATION', unit='LENGTH')
-    rotation_axis: FloatVectorProperty(name="Rotation axis", size=3, subtype='XYZ', default=(0.0, 1.0, 0.0))
+    pivot: FloatVectorProperty(name="Pivot", size=3, subtype='TRANSLATION', unit='LENGTH', update=_preview_update)
+    rotation_axis: FloatVectorProperty(name="Rotation axis", size=3, subtype='XYZ', default=(0.0, 1.0, 0.0),
+                                       update=_preview_update)
     direction_axis: FloatVectorProperty(name="Direction axis", size=3, subtype='XYZ', default=(0.0, 0.0, 1.0))
     up_axis: FloatVectorProperty(name="Up axis", size=3, subtype='XYZ', default=(1.0, 0.0, 0.0))
     active_child: IntProperty()
+    # Articulation preview (preview.py): the component's own angle, the turn
+    # the preview gave it, and its transform when the preview started.
+    preview_angle: IntProperty(
+        name="Try angle", min=-128, max=255, update=_preview_update,
+        description="Turn the component to this angle (1/256 turn) in the preview, whatever its groups")
+    preview_matrix: FloatVectorProperty(size=16, default=preview.IDENTITY)
+    preview_rest: FloatVectorProperty(size=17)  # its transform channels at the start
 
     # Hardpoint.
     hardpoint_type: EnumProperty(
@@ -151,6 +178,8 @@ class AeronFlightProperties(PropertyGroup):
     active_setting: IntProperty()
     component_sets: CollectionProperty(type=AeronComponentSet)
     active_set: IntProperty()
+    preview_active: BoolProperty()
+    preview_groups: CollectionProperty(type=AeronPreviewGroup)
     active_component: IntProperty()
     # Kept from the import (sources.py): the glTF file, its asset extras
     # (JSON), and the extensions and extras names it had (JSON).
@@ -217,6 +246,7 @@ classes = (
     AeronArticulation,
     AeronSetting,
     AeronSetMember,
+    AeronPreviewGroup,
     AeronComponentSet,
     AeronFlightProperties,
     AeronMaterialProperties,

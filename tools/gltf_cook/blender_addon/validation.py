@@ -138,6 +138,8 @@ def validate(root):
         problems.error(root, "the model root needs a positive uniform scale")
     if _animated(root):
         problems.error(root, "flight model objects cannot be animated")
+    if root.aeron_flight.preview_active:
+        problems.error(root, "the articulation preview has turned components: reset it (Articulation Preview panel)")
     parts = common.components(root)
     if not parts:
         problems.error(root, "the model has no components")

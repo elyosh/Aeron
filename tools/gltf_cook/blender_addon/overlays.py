@@ -19,9 +19,8 @@ from mathutils import Matrix, Vector
 
 from . import common
 
-# Hardpoint families by XWA's meaning of the types (the second names of
-# common.HARDPOINT_TYPE_NAMES): label, theme collection colour (None: grey)
-# and types. The last family takes the types no other lists.
+# Hardpoint families of common.HARDPOINT_TYPE_NAMES: label, theme collection
+# colour (None: grey) and types. The last family takes the types no other lists.
 HARDPOINT_FAMILIES = (
     ("Lasers", 0, {1, 2, 3, 4, 9, 10}),
     ("Ion cannons and mag pulse", 4, {5, 6, 11, 16, 17, 18}),

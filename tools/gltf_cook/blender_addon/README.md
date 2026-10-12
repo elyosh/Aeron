@@ -113,6 +113,21 @@ leave the model unchanged.
 
 **In front** draws the markers over the model instead of hidden by it.
 
+## Articulation preview
+
+The model root's **Articulation Preview** panel turns components about their
+hinges as the game does: a slider per articulation group goes from the
+model as built (0) to each member at its articulation's angle (1). A
+component's **Try angle** (Hinge panel) turns it alone, to try a hinge no
+articulation names yet. A component's **Articulations** panel lists the
+articulations that turn it, to edit, add or remove them there. Hardpoints,
+glows and lights follow. A component in
+several groups takes the last of its articulations whose group is not at 0.
+
+When every slider is back at 0, or with **Reset Preview**, the components
+are as before, keeping any edit made meanwhile. The exports and Check Model
+refuse to run while a slider is not at 0.
+
 ## Materials
 
 A material's animation (flipbooks, hull damage, energy effects) from the

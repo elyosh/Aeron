@@ -305,6 +305,24 @@ class OBJECT_PT_aeron_articulations(_RolePanel, Panel):
             column.prop(item, "behavior")
 
 
+class OBJECT_PT_aeron_preview(_RolePanel, Panel):
+    """A slider per articulation group, from the model as built (0) to each
+    member at its articulation's angle (1)."""
+    bl_label = "Articulation Preview"
+    role = 'model'
+
+    def draw(self, context):
+        props = context.object.aeron_flight
+        layout = self.layout
+        column = layout.column(align=True)
+        for group in props.preview_groups:
+            column.prop(group, "amount", text=group.name, slider=True)
+        if not len(props.preview_groups):
+            column.label(text="Each group the articulations name gets a slider here")
+        if props.preview_active:
+            layout.operator("aeron.articulation_reset", icon='LOOP_BACK')
+
+
 class OBJECT_PT_aeron_settings(_RolePanel, Panel):
     bl_label = "Articulation Settings"
     bl_options = {'DEFAULT_CLOSED'}
@@ -402,6 +420,46 @@ class OBJECT_PT_aeron_descriptor(_RolePanel, Panel):
         layout.operator("aeron.descriptor_from_bounds")
 
 
+class OBJECT_PT_aeron_component_articulations(_RolePanel, Panel):
+    """The model root's articulations that turn this component."""
+    bl_label = "Articulations"
+    role = 'component'
+
+    def draw(self, context):
+        obj = context.object
+        layout = self.layout
+        root = obj.parent if common.role(obj.parent) == 'model' else None
+        if root is None:
+            layout.label(text="Not under a model root", icon='ERROR')
+            return
+        entries = [(index, item) for index, item in enumerate(root.aeron_flight.articulations)
+                   if item.component == obj]
+        if entries and not obj.aeron_flight.has_rotation:
+            layout.label(text="Turns about its hinge: tick the Hinge panel", icon='ERROR')
+        if not entries:
+            layout.label(text="No articulation turns this component")
+        for index, item in entries:
+            box = layout.box()
+            row = box.row(align=True)
+            row.prop(item, "group", text="", icon='CON_ROTLIKE')
+            operator = row.operator("aeron.component_articulation", text="", icon='X')
+            operator.action, operator.index = 'REMOVE', index
+            column = box.column(align=True)
+            column.use_property_split = True
+            row = column.row(align=True)
+            row.prop(item, "angle")
+            row.label(text="{:.1f}\u00b0".format(item.angle * 360.0 / 256.0))
+            column.prop(item, "speed")
+            row = column.row(align=True, heading="Closing speed")
+            row.prop(item, "has_speed_back", text="")
+            sub = row.row(align=True)
+            sub.active = item.has_speed_back
+            sub.prop(item, "speed_back", text="")
+            column.prop(item, "behavior")
+        operator = layout.operator("aeron.component_articulation", text="Add Articulation", icon='ADD')
+        operator.action = 'ADD'
+
+
 class OBJECT_PT_aeron_hinge(_RolePanel, Panel):
     bl_label = "Hinge"
     bl_options = {'DEFAULT_CLOSED'}
@@ -424,6 +482,12 @@ class OBJECT_PT_aeron_hinge(_RolePanel, Panel):
         column.prop(props, "direction_axis")
         column.prop(props, "up_axis")
         layout.operator("aeron.from_cursor", text="Axes From 3D Cursor", icon='ORIENTATION_CURSOR').field = 'axes'
+        row = layout.row()
+        row.prop(props, "preview_angle", slider=True)
+        row.label(text="{:.1f}\u00b0".format(props.preview_angle * 360.0 / 256.0))
+        root = common.model_root(context.object)
+        if root is not None and root.aeron_flight.preview_active:
+            layout.operator("aeron.articulation_reset", icon='LOOP_BACK')
 
 
 # ---- Material properties ---------------------------------------------------------
@@ -573,12 +637,14 @@ classes = (
     OBJECT_PT_aeron_components,
     OBJECT_PT_aeron_source,
     OBJECT_PT_aeron_articulations,
+    OBJECT_PT_aeron_preview,
     OBJECT_PT_aeron_settings,
     OBJECT_PT_aeron_sets,
     OBJECT_PT_aeron_component,
     OBJECT_PT_aeron_children,
     OBJECT_PT_aeron_descriptor,
     OBJECT_PT_aeron_hinge,
+    OBJECT_PT_aeron_component_articulations,
     MATERIAL_PT_aeron_animation,
     VIEW3D_PT_aeron,
     VIEW3D_PT_aeron_overlays,
