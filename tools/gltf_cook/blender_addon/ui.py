@@ -306,7 +306,7 @@ class OBJECT_PT_aeron_markings(_RolePanel, Panel):
         _list_buttons(row, 'markings')
         column = layout.column(align=True)
         column.label(text="Empty: the materials as modelled.")
-        column.label(text="Values past the end show the last row.")
+        column.label(text="Values without a row show the last row.")
         layout.operator("aeron.show_skin", text="Show As Modelled",
                         depress=props.preview_markings < 0).markings = -1
 

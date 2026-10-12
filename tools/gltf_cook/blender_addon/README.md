@@ -149,7 +149,8 @@ The game gives each object a markings value (0 to 255), usually its flight
 group's, and the model's markings list says which material variant each
 value shows. Edit it in the model root's **Markings** panel: a row per
 value, from 0, naming a variant, or empty for the materials as modelled.
-Values past the end show the last row, so a new row starts as the last one.
+A markings value without a row of its own shows the last row's variant. A
+new row starts with the last row's variant, so adding one changes no look.
 The eye in a row shows that value's look; **Show As Modelled** shows the
 materials back. Check Model reports a row naming a variant that is missing
 or that no part maps (Blender's glTF exporter would leave it out).
