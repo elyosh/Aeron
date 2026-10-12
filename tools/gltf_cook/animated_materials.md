@@ -16,9 +16,10 @@ aeron_gltf_cook model.gltf --out <asset root>/remaster/models/model.glb \
 ```
 
 Build the libraries first: with `--effects-dir`, the cooker checks that
-every frame a model names is in its library there. With
-`--library-sources <dir>` as well, the cook first builds each library the
-model names from `<dir>/<library>/<library>.yaml`, when that file exists.
+every frame a model names is in its library there, as an image of the
+right kind. With `--library-sources <dir>` as well, the cook first builds
+each library the model names from `<dir>/<library>/<library>.yaml`, when
+that file exists.
 
 [`example/`](example) is a working model with its library and animations.
 
@@ -73,17 +74,24 @@ texels on their longer side, or `maxSize`. `crop: [x0, y0, x1, y1]` (blast
 marks) records the part of the image that the classic texture's `[0, 1]`
 maps to.
 
-`--library` writes `<library>.yaml` (the index), and `<library>.layer.ktx2`
-and `<library>.emissive.ktx2` (the frames, as needed). The index records a
-hash of the inputs (the library file, its images and the baking version,
-`EFFECT_LIBRARY_BAKE_VERSION` in `effect_library.h`); a library whose index
-already records the same is left as it is. A change to how libraries are
-baked or encoded raises that version, so every library is rebuilt once.
+`--library` writes `<library>.yaml` (the index: each image's kind and
+place), and `<library>.layer.ktx2` and `<library>.emissive.ktx2` (the
+frames, as needed). The index records a hash of the inputs (the library
+file, its images and the baking version, `EFFECT_LIBRARY_BAKE_VERSION` in
+`effect_library.h`); a library whose index already records the same is
+left as it is. A change to how libraries are baked or encoded raises that
+version, so every library is rebuilt once.
+
+Models share libraries, and name their frames by key. A rebuild that
+replaces an index reports the keys it no longer has and the images whose
+kind changed, one line each (`removed "<key>"`, `"<key>" changed kind from
+<old> to <new>`): the models that name them lose those frames.
 
 ## Model animations
 
 ```yaml
 version: 1
+energy: [shields, tractor, jamming]   # every material without its own
 materials:                      # glTF material names
   PanelLights:
     flipbooks:
@@ -106,7 +114,7 @@ together.
 | `layer` | `baseColor` or `emissive`: the kind of its frames |
 | `mode` | `loop`, or `once` (holds the last frame) |
 | `library` | The library of its frames |
-| `frames` | `[key, seconds]` pairs |
+| `frames` | `[key, seconds]` pairs: images of the layer's kind |
 | `emissiveStrength` | Optional, default 1: brightness of emissive frames |
 | `unlit` | Optional, 0 to 1, default 0, base colour flipbooks: the part of the frames drawn unlit, as emission in place of the material's (for screens whose material is unlit) |
 
@@ -122,7 +130,7 @@ States: `target`, `laser_lock`, `warhead.locking`, `warhead.locked`,
 `broken.beam_recharge`, `hangar`. They are the player's, shown on the
 player's craft and cockpit.
 
-**`damage`**: hull damage, as `damage` images.
+**`damage`**: hull damage, as images of kind `damage`.
 
 ```yaml
 damage: { library: mycockpit, choice: 0, placement: 0, alternatives: [
@@ -141,7 +149,28 @@ damage: { library: mycockpit, choice: 0, placement: 0, alternatives: [
   share the random placement.
 
 **`energy`**: the energy effects the material shows, any of `shields`,
-`tractor` and `jamming`.
+`tractor` and `jamming`; `[]` for none.
+
+The file's own `energy` is the default of every material of the model that
+gives none, listed in the file or not: energy effects are usually the whole
+model's, with a few exceptions (a cockpit's screens). Without it, a material
+without `energy` keeps what its glTF material says, usually none.
+
+## Canonical form
+
+Either file may be written by hand, in any YAML. The tools write them in
+one canonical form, so that the same values are always written the same
+way: the file's leading comment lines, then one material or image per line
+in flow style (`lights_0: { kind: emissive, emissive: frames/lights_0.png }`),
+materials and images in key order, strings quoted only when they need it,
+each number as the shortest decimal that reads back as the same 32-bit
+float, the energy default after `version`, and `emissiveStrength: 1` and
+`unlit: 0` left out. A tool rewriting
+a file keeps its leading comments only. `aeron_gltf_cook
+--animations-json` and `--library-json` print a file as JSON;
+`--animations-from-json` and `--library-from-json` check such JSON and write
+the file in this form, keeping the leading comments of the file they
+replace.
 
 ## How a frame changes the material
 

@@ -176,7 +176,9 @@ A material's animation (flipbooks, hull damage, energy effects) from the
 model's animation file is kept on the material: Material properties >
 Aeron Animation shows it, and Clear Animation removes it. It follows the
 material when you rename or duplicate it, and a material that no longer
-exists drops it. To change animations, edit the animation file, then use
+exists drops it. The file's energy default, the energy effects of every
+material without its own, is kept on the model root (its Source panel shows
+it). To change animations, edit the animation file, then use
 Reload Animations in the model root's Source panel (otherwise the next
 export writes Blender's animations back over your edit).
 

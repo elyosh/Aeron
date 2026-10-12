@@ -33,6 +33,7 @@
 #include <sys/stat.h>
 
 #include "cJSON.h"
+#include "effect_files.h"
 #include "png_write.h"
 #include "xwau_dat.h"
 #include "xwau_effect_bake.h"
@@ -692,10 +693,12 @@ static bool write_library_sources(Library* l, const char* effects_dir) {
 		fprintf(stderr, "xwau_effects: %s\n", err);
 		return false;
 	}
-	Text y = { 0 };
-	text_add(&y, "# Effect library %s, imported from XWAU's %s.\n", l->name, l->dat);
-	text_add(&y, "version: 1\nlibrary: %s\nimages:\n", l->name);
-	bool   ok     = true;
+	/* The library file, written canonically (effect_files.h). */
+	cJSON* doc     = cJSON_CreateObject();
+	cJSON* entries = NULL;
+	bool   ok      = doc && cJSON_AddNumberToObject(doc, "version", 1) &&
+					 cJSON_AddStringToObject(doc, "library", l->name) &&
+					 (entries = cJSON_AddObjectToObject(doc, "images"));
 	size_t images = 0;
 	int    diff   = 0;
 	for (size_t i = 0; ok && i < l->count; ++i) {
@@ -714,7 +717,8 @@ static bool write_library_sources(Library* l, const char* effects_dir) {
 		if (ok)
 			XwauFx_Bake(r->kind, im.rgba, n, r->tint, r->alpha_mode, layer, emissive);
 		/* The file names: the key, ':' made '_'. */
-		char base[128], file[160], base_color[160];
+		char   base[128], file[160], base_color[160];
+		cJSON* entry = NULL;
 		snprintf(base, sizeof base, "frames/%s", r->key);
 		for (char* c = base; *c; ++c)
 			if (*c == ':')
@@ -737,15 +741,17 @@ static bool write_library_sources(Library* l, const char* effects_dir) {
 			snprintf(file, sizeof file, "%s_emissive.png", base);
 			snprintf(base_color, sizeof base_color, "%s_base_color.png", base);
 			ok = write_frame(dir, file, w, h, emissive) && (!any_base_color || write_frame(dir, base_color, w, h, input));
-			text_add(&y, "  \"%s\": { kind: emissive, emissive: %s", r->key, file);
+			entry = cJSON_AddObjectToObject(entries, r->key);
+			cJSON_AddStringToObject(entry, "kind", "emissive");
+			cJSON_AddStringToObject(entry, "emissive", file);
 			if (any_base_color)
-				text_add(&y, ", baseColor: %s", base_color);
+				cJSON_AddStringToObject(entry, "baseColor", base_color);
 		} else if (ok && (r->kind == XWAU_FX_COLOUR || r->kind == XWAU_FX_MULTIPLY)) {
 			snprintf(file, sizeof file, "%s.png", base);
 			ok = write_frame(dir, file, w, h, layer);
-			text_add(&y, "  \"%s\": { kind: %s, %s: %s", r->key,
-					 r->kind == XWAU_FX_MULTIPLY ? "damage" : "baseColor",
-					 r->kind == XWAU_FX_MULTIPLY ? "factor" : "baseColor", file);
+			entry = cJSON_AddObjectToObject(entries, r->key);
+			cJSON_AddStringToObject(entry, "kind", r->kind == XWAU_FX_MULTIPLY ? "damage" : "baseColor");
+			cJSON_AddStringToObject(entry, r->kind == XWAU_FX_MULTIPLY ? "factor" : "baseColor", file);
 		} else if (ok) {
 			/* Mark, energy: the tinted frame with its alpha, which the library
 			 * builder premultiplies. */
@@ -761,16 +767,16 @@ static bool write_library_sources(Library* l, const char* effects_dir) {
 			}
 			snprintf(file, sizeof file, "%s.png", base);
 			ok = write_frame(dir, file, w, h, input);
-			text_add(&y, "  \"%s\": { kind: %s, %s: %s", r->key, XwauFx_KindName(r->kind),
-					 r->kind == XWAU_FX_MARK ? "baseColor" : "emissive", file);
+			entry = cJSON_AddObjectToObject(entries, r->key);
+			cJSON_AddStringToObject(entry, "kind", XwauFx_KindName(r->kind));
+			cJSON_AddStringToObject(entry, r->kind == XWAU_FX_MARK ? "baseColor" : "emissive", file);
 		}
 		if (ok) {
 			if (r->kind == XWAU_FX_ENERGY)
-				text_add(&y, ", maxSize: %d", ENERGY_MAX);
+				cJSON_AddNumberToObject(entry, "maxSize", ENERGY_MAX);
 			if (r->crop)
-				text_add(&y, ", crop: [%.9g, %.9g, %.9g, %.9g]", kBlastMarkCrop[0], kBlastMarkCrop[1],
-						 kBlastMarkCrop[2], kBlastMarkCrop[3]);
-			text_add(&y, " }\n");
+				cJSON_AddItemToObject(entry, "crop", cJSON_CreateFloatArray(kBlastMarkCrop, 4));
+			ok = entry != NULL;
 			images++;
 		}
 		free(layer);
@@ -780,8 +786,10 @@ static bool write_library_sources(Library* l, const char* effects_dir) {
 	}
 	XwauDat_Close(dat);
 	snprintf(path, sizeof path, "%s/%s.yaml", dir, l->name);
-	ok = ok && y.s && write_file(path, y.s, y.len);
-	free(y.s);
+	char header[300];
+	snprintf(header, sizeof header, "# Effect library %s, imported from XWAU's %s.\n", l->name, l->dat);
+	ok = ok && EffectFiles_Write("xwau_effects", doc, header, path);
+	cJSON_Delete(doc);
 	if (ok)
 		fprintf(stderr, "xwau_effects: %s: %zu image(s) as sources (largest rounding: %d/255)\n", l->name, images,
 				diff);

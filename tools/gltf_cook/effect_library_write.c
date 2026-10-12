@@ -113,11 +113,13 @@ bool EffectLibrary_Write(const char* tool, const char* out_dir, const char* name
 				const EffectLibraryImage* im = &images[i];
 				if (layer_rect[i] < 0 && emissive_rect[i] < 0)
 					continue;
-				fprintf(f, "  \"%s\": { ", im->key);
-				if (layer_rect[i] >= 0)
+				fprintf(f, "  \"%s\": { kind: %s", im->key, EffectLibrary_KindName(im->kind));
+				if (layer_rect[i] >= 0) {
+					fprintf(f, ", ");
 					yaml_rect(f, "layer", &layer, layer_rect[i]);
+				}
 				if (emissive_rect[i] >= 0) {
-					fprintf(f, "%s", layer_rect[i] >= 0 ? ", " : "");
+					fprintf(f, ", ");
 					yaml_rect(f, "emissive", &emissive, emissive_rect[i]);
 				}
 				if (im->crop)

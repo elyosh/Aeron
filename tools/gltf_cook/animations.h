@@ -26,4 +26,11 @@ bool aeron_gltf_cook_merge_animations(const char* gltf, const char* anim, const 
  * it as the merge does (libraries aside). Messages go to stderr. */
 bool aeron_gltf_cook_print_animations(const char* anim);
 
+struct cJSON;
+
+/* Writes `file`, a model animation file's content (as printed by
+ * aeron_gltf_cook_print_animations; read from `label`, for messages), to
+ * `out` in the canonical form (effect_files.h), after the same checks. */
+bool aeron_gltf_cook_write_animations(const char* label, const struct cJSON* file, const char* out);
+
 #endif /* AERON_GLTF_COOK_ANIMATIONS_H */

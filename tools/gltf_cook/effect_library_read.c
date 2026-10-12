@@ -28,6 +28,8 @@ EffectLibraryKind EffectLibrary_ImageKind(const cJSON* image) {
 	return EFFECT_LIBRARY_KIND_COUNT;
 }
 
+const char* EffectLibrary_KindName(EffectLibraryKind kind) { return kKinds[kind]; }
+
 const char* EffectLibrary_ImageInput(EffectLibraryKind kind, int optional) {
 	return kInputs[kind][optional != 0];
 }
@@ -82,13 +84,7 @@ static bool check_image(const char* tool, const char* key, const cJSON* entry) {
 	return ok;
 }
 
-cJSON* EffectLibrary_ReadLibrary(const char* tool, const char* file) {
-	char   err[512];
-	cJSON* root = YamlJson_Load(file, err, sizeof err);
-	if (!root) {
-		fprintf(stderr, "%s: %s\n", tool, err);
-		return NULL;
-	}
+bool EffectLibrary_CheckLibrary(const char* tool, const char* file, const cJSON* root) {
 	const cJSON* version = cJSON_GetObjectItemCaseSensitive(root, "version");
 	const cJSON* library = cJSON_GetObjectItemCaseSensitive(root, "library");
 	const cJSON* images  = cJSON_GetObjectItemCaseSensitive(root, "images");
@@ -122,7 +118,17 @@ cJSON* EffectLibrary_ReadLibrary(const char* tool, const char* file) {
 		if (cJSON_IsObject(images) && !check_image(tool, entry->string, entry))
 			ok = false;
 	}
-	if (!ok) {
+	return ok;
+}
+
+cJSON* EffectLibrary_ReadLibrary(const char* tool, const char* file) {
+	char   err[512];
+	cJSON* root = YamlJson_Load(file, err, sizeof err);
+	if (!root) {
+		fprintf(stderr, "%s: %s\n", tool, err);
+		return NULL;
+	}
+	if (!EffectLibrary_CheckLibrary(tool, file, root)) {
 		cJSON_Delete(root);
 		return NULL;
 	}

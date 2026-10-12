@@ -793,7 +793,7 @@ target_include_directories(opt2gltf_lib
         ${CMAKE_CURRENT_SOURCE_DIR}/third_party/stb
         ${CMAKE_CURRENT_SOURCE_DIR}/third_party/mikktspace
 )
-target_link_libraries(opt2gltf_lib PUBLIC aeron_opt aeron_cgltf aeron)
+target_link_libraries(opt2gltf_lib PUBLIC aeron_opt aeron_cgltf aeron PRIVATE aeron_effect_files)
 if(NOT MSVC)
     target_link_libraries(opt2gltf_lib PUBLIC m)
 endif()
@@ -1026,7 +1026,7 @@ if(AERON_BUILD_TOOLS)
         ${CMAKE_CURRENT_SOURCE_DIR}/tools/opt2gltf
         ${CMAKE_CURRENT_SOURCE_DIR}/third_party/lzma
         ${CMAKE_CURRENT_SOURCE_DIR}/third_party/bcdec)
-    target_link_libraries(xwau_effects PRIVATE imgbake aeron_yaml_json aeron_cjson)
+    target_link_libraries(xwau_effects PRIVATE imgbake aeron_yaml_json aeron_effect_files aeron_cjson)
     if(NOT MSVC)
         target_link_libraries(xwau_effects PRIVATE m)
     endif()

@@ -12,6 +12,7 @@
 #include <string.h>
 
 #include "cJSON.h"
+#include "effect_files.h"
 #include "effect_library.h"
 #include "yaml_json.h"
 
@@ -122,8 +123,20 @@ static bool build_library(Merge* m, const char* library) {
 		   EFFECT_LIBRARY_FAILED;
 }
 
-/* Whether `key` is in library `library` of the effects directory. */
-static bool key_known(Merge* m, const char* library, const char* key) {
+/* Whether every image of library index `index` records its kind (indexes
+ * from before EFFECT_LIBRARY_BAKE_VERSION 2 do not). */
+static bool index_has_kinds(const cJSON* index) {
+	const cJSON* entry;
+	cJSON_ArrayForEach(entry, cJSON_GetObjectItemCaseSensitive(index, "images")) {
+		if (!cJSON_IsString(cJSON_GetObjectItemCaseSensitive(entry, "kind")))
+			return false;
+	}
+	return true;
+}
+
+/* Whether `key` is in library `library` of the effects directory, an image
+ * of kind `kind`. */
+static bool key_known(Merge* m, const char* library, const char* key, const char* kind) {
 	if (!m->effects_dir)
 		return true;
 	cJSON* index = NULL;
@@ -137,6 +150,11 @@ static bool key_known(Merge* m, const char* library, const char* key) {
 		snprintf(path, sizeof path, "%s/%s.yaml", m->effects_dir, library);
 		const bool built = !m->sources || build_library(m, library);
 		index            = built ? YamlJson_Load(path, err, sizeof err) : NULL;
+		if (index && !index_has_kinds(index)) {
+			snprintf(err, sizeof err, "built by an older aeron_gltf_cook, without image kinds: rebuild it");
+			cJSON_Delete(index);
+			index = NULL;
+		}
 		cJSON** grown = (cJSON**)realloc(m->indexes, (m->index_count + 1) * sizeof *grown);
 		char**  names = grown ? (char**)realloc(m->index_names, (m->index_count + 1) * sizeof *names) : NULL;
 		if (grown)
@@ -153,12 +171,16 @@ static bool key_known(Merge* m, const char* library, const char* key) {
 		if (!index && built)
 			fprintf(stderr, TAG ": %s: library %s: %s\n", m->anim, library, err);
 	}
-	const bool found =
+	const cJSON* image =
 		cJSON_GetObjectItemCaseSensitive(cJSON_GetObjectItemCaseSensitive(index, "images"), key);
-	if (index && !found)
+	const cJSON* image_kind = cJSON_GetObjectItemCaseSensitive(image, "kind");
+	if (index && !image)
 		fprintf(stderr, TAG ": %s: material %s: \"%s\" is not in library %s\n", m->anim, m->material, key,
 				library);
-	return found;
+	else if (image && strcmp(image_kind->valuestring, kind) != 0)
+		fprintf(stderr, TAG ": %s: material %s: \"%s\" of library %s is a %s image, not %s\n", m->anim,
+				m->material, key, library, image_kind->valuestring, kind);
+	return image && strcmp(image_kind->valuestring, kind) == 0;
 }
 
 /* The library a flipbook or damage entry names. */
@@ -205,7 +227,8 @@ static cJSON* flipbook(Merge* m, const cJSON* in) {
 					m->material);
 			return NULL;
 		}
-		if (!key_known(m, library, key->valuestring))
+		/* A flipbook's frames are images of its layer's kind. */
+		if (!key_known(m, library, key->valuestring, layer->valuestring))
 			return NULL;
 	}
 	if (strength &&
@@ -266,7 +289,7 @@ static cJSON* damage(Merge* m, const cJSON* in) {
 		const cJSON* stage_list = ok ? stages : NULL;
 		cJSON_ArrayForEach(stage, stage_list) {
 			ok = ok && (cJSON_IsNull(stage) ||
-						(cJSON_IsString(stage) && key_known(m, library, stage->valuestring)));
+						(cJSON_IsString(stage) && key_known(m, library, stage->valuestring, "damage")));
 		}
 		if (!ok) {
 			fprintf(stderr,
@@ -316,6 +339,17 @@ static char* read_text(const char* path) {
 	return text;
 }
 
+/* Sets material `mat`'s extras member `name` to `item` (owned), replacing it. */
+static void set_extra(cJSON* mat, const char* name, cJSON* item) {
+	cJSON* extras = cJSON_GetObjectItemCaseSensitive(mat, "extras");
+	if (!cJSON_IsObject(extras)) {
+		cJSON_DeleteItemFromObjectCaseSensitive(mat, "extras");
+		extras = cJSON_AddObjectToObject(mat, "extras");
+	}
+	cJSON_DeleteItemFromObjectCaseSensitive(extras, name);
+	cJSON_AddItemToObject(extras, name, item);
+}
+
 /* Merges one material entry of the animation file into material `mat`. */
 static bool merge_material(Merge* m, cJSON* mat, const cJSON* entry) {
 	static const char* const fields[] = { "flipbooks", "damage", "energy" };
@@ -349,18 +383,40 @@ static bool merge_material(Merge* m, cJSON* mat, const cJSON* entry) {
 			cJSON_Delete(members[k]);
 		return false;
 	}
-	cJSON* extras = cJSON_GetObjectItemCaseSensitive(mat, "extras");
-	if (!cJSON_IsObject(extras)) {
-		cJSON_DeleteItemFromObjectCaseSensitive(mat, "extras");
-		extras = cJSON_AddObjectToObject(mat, "extras");
-	}
 	for (int k = 0; k < 3; ++k) {
-		if (members[k]) {
-			cJSON_DeleteItemFromObjectCaseSensitive(extras, kMembers[k]);
-			cJSON_AddItemToObject(extras, kMembers[k], members[k]);
-		}
+		if (members[k])
+			set_extra(mat, kMembers[k], members[k]);
 	}
 	return true;
+}
+
+/* Whether `file` (read from `anim`) has a model animation file's members,
+ * with a message when not. */
+static bool check_members(const char* anim, const cJSON* file) {
+	const cJSON* version   = cJSON_GetObjectItemCaseSensitive(file, "version");
+	const cJSON* materials = cJSON_GetObjectItemCaseSensitive(file, "materials");
+	bool         ok        = cJSON_IsNumber(version) && version->valueint == 1 && cJSON_IsObject(materials);
+	/* A model's animations only; an effect library is its own file
+	   (--library). */
+	const cJSON* member;
+	cJSON_ArrayForEach(member, file) {
+		ok = ok && (strcmp(member->string, "version") == 0 || strcmp(member->string, "energy") == 0 ||
+					strcmp(member->string, "materials") == 0);
+	}
+	if (!ok) {
+		fprintf(stderr, TAG ": %s: a model animation file has version 1, materials and an energy default\n",
+				anim);
+		return false;
+	}
+	/* The energy effects of every material without its own. */
+	const cJSON* defaults = cJSON_GetObjectItemCaseSensitive(file, "energy");
+	if (defaults) {
+		Merge  m       = { .anim = anim, .material = "(the energy default)" };
+		cJSON* checked = energy(&m, defaults);
+		ok             = checked != NULL;
+		cJSON_Delete(checked);
+	}
+	return ok;
 }
 
 /* The model animation file `anim`, or NULL with a message. */
@@ -371,27 +427,15 @@ static cJSON* load_file(const char* anim) {
 		fprintf(stderr, TAG ": %s\n", err);
 		return NULL;
 	}
-	const cJSON* version   = cJSON_GetObjectItemCaseSensitive(file, "version");
-	const cJSON* materials = cJSON_GetObjectItemCaseSensitive(file, "materials");
-	bool         ok        = cJSON_IsNumber(version) && version->valueint == 1 && cJSON_IsObject(materials);
-	/* A model's animations only; an effect library is its own file
-	   (--library). */
-	const cJSON* member;
-	cJSON_ArrayForEach(member, file) {
-		ok = ok && (strcmp(member->string, "version") == 0 || strcmp(member->string, "materials") == 0);
-	}
-	if (!ok) {
-		fprintf(stderr, TAG ": %s: a model animation file has version 1 and materials, nothing else\n", anim);
+	if (!check_members(anim, file)) {
 		cJSON_Delete(file);
 		return NULL;
 	}
 	return file;
 }
 
-bool aeron_gltf_cook_print_animations(const char* anim) {
-	cJSON* file = load_file(anim);
-	if (!file)
-		return false;
+/* Checks every material entry of `file` as the merge does, libraries aside. */
+static bool check_materials(const char* anim, const cJSON* file) {
 	Merge        m  = { .anim = anim };
 	bool         ok = true;
 	const cJSON* entry;
@@ -401,6 +445,19 @@ bool aeron_gltf_cook_print_animations(const char* anim) {
 		ok           = merge_material(&m, probe, entry) && ok;
 		cJSON_Delete(probe);
 	}
+	return ok;
+}
+
+bool aeron_gltf_cook_write_animations(const char* label, const cJSON* file, const char* out) {
+	return check_members(label, file) && check_materials(label, file) &&
+		   EffectFiles_Write(TAG, file, NULL, out);
+}
+
+bool aeron_gltf_cook_print_animations(const char* anim) {
+	cJSON* file = load_file(anim);
+	if (!file)
+		return false;
+	bool  ok      = check_materials(anim, file);
 	char* printed = ok ? cJSON_PrintUnformatted(file) : NULL;
 	ok = printed && fputs(printed, stdout) >= 0 && fputc('\n', stdout) != EOF && fflush(stdout) == 0;
 	free(printed);
@@ -449,6 +506,19 @@ bool aeron_gltf_cook_merge_animations(const char* gltf, const char* anim, const 
 			merged++;
 		else
 			ok = false;
+	}
+	/* The energy default, for every material without energy of its own in
+	   the file, listed or not: it replaces energy extras the material has. */
+	const cJSON* defaults  = cJSON_GetObjectItemCaseSensitive(file, "energy");
+	const cJSON* entries   = cJSON_GetObjectItemCaseSensitive(file, "materials");
+	cJSON*       defaulted = defaults ? gltf_materials : NULL;
+	cJSON*       target;
+	cJSON_ArrayForEach(target, defaulted) {
+		const cJSON* name = cJSON_GetObjectItemCaseSensitive(target, "name");
+		const cJSON* own =
+			cJSON_IsString(name) ? cJSON_GetObjectItemCaseSensitive(entries, name->valuestring) : NULL;
+		if (!cJSON_GetObjectItemCaseSensitive(own, "energy"))
+			set_extra(target, "aeronEnergy", cJSON_Duplicate(defaults, true));
 	}
 	char* printed = ok ? cJSON_PrintUnformatted(doc) : NULL;
 	if (printed) {

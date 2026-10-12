@@ -5,6 +5,8 @@
  *        aeron_gltf_cook --library <library>.yaml --out <effects dir>
  *        aeron_gltf_cook --animations-json <model>.anim.yaml
  *        aeron_gltf_cook --library-json <library>.yaml
+ *        aeron_gltf_cook --animations-from-json <in.json> <model>.anim.yaml
+ *        aeron_gltf_cook --library-from-json <in.json> <library>.yaml
  *
  * Cooks an artist-authored .gltf into a runtime-ready .glb with
  * KHR_texture_basisu / KHR_texture_transform per-channel atlases. An
@@ -14,6 +16,7 @@
  */
 
 #include "animations.h"
+#include "effect_files.h"
 #include "effect_library.h"
 #include "flight_data.h"
 #include "gltf_cook.h"
@@ -28,6 +31,8 @@ static void usage(void) {
 	fprintf(stderr, "Usage: aeron_gltf_cook <in.gltf> --out <out.glb> [options]\n"
 					"       aeron_gltf_cook --library <library>.yaml --out <effects dir>\n"
 					"       aeron_gltf_cook --animations-json <model>.anim.yaml\n"
+					"       aeron_gltf_cook --animations-from-json <in.json> <model>.anim.yaml\n"
+					"       aeron_gltf_cook --library-from-json <in.json> <library>.yaml\n"
 					"       aeron_gltf_cook --library-json <library>.yaml\n"
 					"\n"
 					"Cooks an artist-authored .gltf (PNG textures, optional\n"
@@ -77,7 +82,12 @@ static void usage(void) {
 					"--animations-json checks a model animation file as --animations\n"
 					"does and prints it as JSON (for tools without a YAML reader).\n"
 					"--library-json does the same for an effect library file, with the\n"
-					"checks --library applies before reading its images.\n");
+					"checks --library applies before reading its images.\n"
+					"\n"
+					"--animations-from-json and --library-from-json are their inverses:\n"
+					"they read such JSON (<in.json>, or - for stdin), check it the same\n"
+					"way and write the file in its canonical form, keeping the leading\n"
+					"comment lines of the file they replace.\n");
 	exit(2);
 }
 
@@ -89,6 +99,42 @@ static bool print_library(const char* file) {
 	char*  printed = library ? cJSON_PrintUnformatted(library) : NULL;
 	const bool ok  = printed && fputs(printed, stdout) >= 0 && fputc('\n', stdout) != EOF && fflush(stdout) == 0;
 	free(printed);
+	cJSON_Delete(library);
+	return ok;
+}
+
+/* The JSON in file `path` (- for stdin), or NULL with a message. */
+static cJSON* read_json(const char* path) {
+	FILE*  f    = strcmp(path, "-") == 0 ? stdin : fopen(path, "rb");
+	char*  text = NULL;
+	size_t len = 0, cap = 0, n;
+	char   chunk[65536];
+	while (f && (n = fread(chunk, 1, sizeof chunk, f)) > 0) {
+		if (len + n + 1 > cap) {
+			cap        = (len + n + 1) * 2;
+			char* grow = (char*)realloc(text, cap);
+			if (!grow)
+				break;
+			text = grow;
+		}
+		memcpy(text + len, chunk, n);
+		len += n;
+		text[len] = '\0';
+	}
+	if (f && f != stdin)
+		fclose(f);
+	cJSON* json = text ? cJSON_Parse(text) : NULL;
+	free(text);
+	if (!json)
+		fprintf(stderr, "[aeron_gltf_cook] %s: not JSON\n", path);
+	return json;
+}
+
+/* Writes effect library file `out` from the JSON in `in`, once checked. */
+static bool write_library(const char* in, const char* out) {
+	cJSON*     library = read_json(in);
+	const bool ok      = library && EffectLibrary_CheckLibrary(LIBRARY_TAG, in, library) &&
+						 EffectFiles_Write(LIBRARY_TAG, library, NULL, out);
 	cJSON_Delete(library);
 	return ok;
 }
@@ -154,6 +200,19 @@ int main(int argc, char** argv) {
 		if (argc != 3)
 			usage();
 		return print_library(argv[2]) ? 0 : 1;
+	}
+	if (strcmp(argv[1], "--animations-from-json") == 0) {
+		if (argc != 4)
+			usage();
+		cJSON*     file = read_json(argv[2]);
+		const bool ok   = file && aeron_gltf_cook_write_animations(argv[2], file, argv[3]);
+		cJSON_Delete(file);
+		return ok ? 0 : 1;
+	}
+	if (strcmp(argv[1], "--library-from-json") == 0) {
+		if (argc != 4)
+			usage();
+		return write_library(argv[2], argv[3]) ? 0 : 1;
 	}
 
 	const char* in_path     = argv[1];

@@ -364,10 +364,10 @@ def roundtrip(args, model_dir, scratch, notes):
         read = lambda path: _sources().read_animations(args.cooker, path)
         before = read(os.path.join(scratch, key + ".anim.yaml"))
         used = _used_materials(original)
-        if read(animations) != {name: entry for name, entry in before.items() if name in used}:
+        if read(animations) != ({name: entry for name, entry in before[0].items() if name in used}, before[1]):
             failures.append("the animation file changed")
         else:
-            notes.append("animations of unused materials dropped: " + ", ".join(sorted(set(before) - used)))
+            notes.append("animations of unused materials dropped: " + ", ".join(sorted(set(before[0]) - used)))
     cooked_after, error = _cooked(args.cooker, gltf, args.effects_dir, os.path.join(scratch, key + ".after.glb"))
     if error:
         failures.append("the result does not cook: {}".format(error))

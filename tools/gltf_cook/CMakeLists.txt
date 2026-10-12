@@ -21,6 +21,18 @@ add_library(aeron_yaml_json STATIC yaml_json.c)
 target_include_directories(aeron_yaml_json PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(aeron_yaml_json PUBLIC aeron_yaml aeron_cjson)
 
+# The canonical written form of the model animation and effect library files
+# (effect_files.h): the cooker, opt2gltf and xwau_effects write them.
+add_library(aeron_effect_files STATIC effect_files.c)
+target_include_directories(aeron_effect_files PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(aeron_effect_files PUBLIC aeron_cjson)
+if(NOT MSVC)
+    target_link_libraries(aeron_effect_files PRIVATE m)
+endif()
+set_target_properties(aeron_effect_files PROPERTIES
+    C_STANDARD 11
+    C_STANDARD_REQUIRED ON)
+
 # Effect libraries (animated_materials.md): reading a library file, building
 # it and writing it (aeron_gltf_cook --library). Apart from
 # aeron_gltf_cook_lib, which the game links too.
@@ -31,7 +43,8 @@ add_library(aeron_effect_library STATIC
 target_include_directories(aeron_effect_library
     PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}
     PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../../third_party/xxhash)
-target_link_libraries(aeron_effect_library PUBLIC aeron_gltf_cook_lib aeron_yaml_json aeron_cjson)
+target_link_libraries(aeron_effect_library PUBLIC aeron_gltf_cook_lib aeron_yaml_json aeron_effect_files
+    aeron_cjson)
 if(NOT MSVC)
     target_link_libraries(aeron_effect_library PRIVATE m)
 endif()

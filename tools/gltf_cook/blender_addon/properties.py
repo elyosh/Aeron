@@ -227,6 +227,9 @@ class AeronFlightProperties(PropertyGroup):
     source_path: StringProperty(subtype='FILE_PATH')
     asset_extras: StringProperty()
     source_names: StringProperty()
+    # The animation file's energy default: the energy effects of every
+    # material without its own, as JSON ("" for none).
+    energy_default: StringProperty()
 
 
 class AeronMaterialProperties(PropertyGroup):

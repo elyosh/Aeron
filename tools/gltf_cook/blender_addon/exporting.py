@@ -348,9 +348,13 @@ class EXPORT_OT_aeron_flight_model(Operator, ExportHelper):
         if not prefs.zstd:
             argv.append("--no-zstd")
         animations = sources.material_animations(m.get("name") for m in document.get("materials", []))
-        if animations:
+        if animations or sources.energy_default(root) is not None:
             animation_file = sources.animation_path(scratch_gltf)
-            sources.write_animations(animation_file, animations)
+            try:
+                sources.write_animations(cooker, animation_file, animations, sources.energy_default(root))
+            except (OSError, RuntimeError) as error:
+                self.report({'ERROR'}, "animations: {}. Scratch: {}".format(error, scratch))
+                return {'CANCELLED'}
             argv += ["--animations", animation_file]
             if prefs.effects_dir:
                 argv += ["--effects-dir", bpy.path.abspath(prefs.effects_dir)]
@@ -492,19 +496,22 @@ class EXPORT_OT_aeron_flight_model_source(Operator, ExportHelper):
 
         # The animation file is rewritten only when the animations changed.
         animations = sources.material_animations(m.get("name") for m in document.get("materials", []))
-        previous = {}
-        if animations or os.path.exists(animation_file):
+        energy = sources.energy_default(root)
+        previous = {}, None
+        if animations or energy is not None or os.path.exists(animation_file):
             if not cooker:
                 return fail("the animation file needs aeron_gltf_cook: see the add-on's preferences")
             try:
                 if os.path.exists(animation_file):
                     previous = sources.read_animations(cooker, animation_file)
                 scratch_animations = sources.animation_path(scratch_gltf)
-                sources.write_animations(scratch_animations, animations)
-                sources.read_animations(cooker, scratch_animations)
+                if os.path.exists(animation_file):
+                    # The writer keeps the comment lines of the file it replaces.
+                    shutil.copyfile(animation_file, scratch_animations)
+                sources.write_animations(cooker, scratch_animations, animations, energy)
             except (OSError, RuntimeError) as error:
                 return fail("animations: {}".format(error))
-        animations_changed = animations != previous
+        animations_changed = (animations, energy) != previous
 
         # Everything is checked: write into the model directory.
         try:
@@ -530,7 +537,7 @@ class EXPORT_OT_aeron_flight_model_source(Operator, ExportHelper):
 
         message = "Wrote {}: {} texture(s) added".format(out_gltf, len(copies))
         if animations_changed:
-            dropped = sorted(set(previous) - set(animations))
+            dropped = sorted(set(previous[0]) - set(animations))
             message += ", animations of {} material(s) written".format(len(animations))
             if dropped:
                 message += " (dropped: {})".format(", ".join(dropped))

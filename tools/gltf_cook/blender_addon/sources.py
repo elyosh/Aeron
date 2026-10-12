@@ -34,22 +34,39 @@ def animation_path(gltf_path):
 
 
 def read_animations(cooker, path):
-    """The materials of a model animation file, {name: entry}, as the cooker
-    reads and checks them. Raises RuntimeError with the cooker's message."""
+    """The materials of a model animation file, {name: entry}, and its
+    energy default (a list, or None), as the cooker reads and checks them.
+    Raises RuntimeError with the cooker's message."""
     completed = subprocess.run([cooker, "--animations-json", path], capture_output=True, text=True)
     if completed.returncode != 0:
         raise RuntimeError((completed.stderr or "").strip() or "aeron_gltf_cook exit {}".format(
             completed.returncode))
-    return json.loads(completed.stdout)["materials"]
+    document = json.loads(completed.stdout)
+    return document["materials"], document.get("energy")
 
 
-def write_animations(path, materials):
-    """Writes a model animation file, one material per line."""
-    lines = ["version: 1", "materials:" if materials else "materials: {}"]
-    for name, entry in materials.items():
-        lines.append("  {}: {}".format(json.dumps(name), json.dumps(entry, separators=(",", ":"))))
-    with open(path, "w", encoding="utf-8", newline="\n") as stream:
-        stream.write("\n".join(lines) + "\n")
+def write_animations(cooker, path, materials, energy=None):
+    """Writes a model animation file in its canonical form through the
+    cooker, which checks it and keeps the leading comment lines of the file
+    `path` holds: `materials` {name: entry}, and the energy default (a list,
+    or None). Raises RuntimeError with the cooker's message."""
+    document = {"version": 1, "materials": materials}
+    if energy is not None:
+        document["energy"] = energy
+    completed = subprocess.run([cooker, "--animations-from-json", "-", path], input=json.dumps(document),
+                               capture_output=True, text=True)
+    if completed.returncode != 0:
+        raise RuntimeError((completed.stderr or "").strip() or "aeron_gltf_cook exit {}".format(
+            completed.returncode))
+
+
+def energy_default(root):
+    """The model's energy default (a list), or None."""
+    return json.loads(root.aeron_flight.energy_default) if root.aeron_flight.energy_default else None
+
+
+def set_energy_default(root, energy):
+    root.aeron_flight.energy_default = json.dumps(energy) if energy is not None else ""
 
 
 def material_animations(names):

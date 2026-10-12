@@ -468,7 +468,7 @@ class AERON_OT_reload_animations(Operator):
 
         root = context.object
         path = sources.animation_path(bpy.path.abspath(root.aeron_flight.source_path))
-        animations = {}
+        animations, energy = {}, None
         if os.path.exists(path):
             cooker = preferences.cooker_path(context)
             if not cooker:
@@ -476,10 +476,11 @@ class AERON_OT_reload_animations(Operator):
                                        "add-on's preferences")
                 return {'CANCELLED'}
             try:
-                animations = sources.read_animations(cooker, path)
+                animations, energy = sources.read_animations(cooker, path)
             except (OSError, RuntimeError) as error:
                 self.report({'ERROR'}, "cannot read {}: {}".format(path, error))
                 return {'CANCELLED'}
+        sources.set_energy_default(root, energy)
         materials = sources.model_materials(root)
         for material in materials:
             entry = animations.get(material.name)

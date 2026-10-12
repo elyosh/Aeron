@@ -10,6 +10,8 @@
 #include "opt2gltf.h"
 #include "aeron/log.h"
 #include "aeron/mesh_normals.h"
+#include "cJSON.h"
+#include "effect_files.h"
 #include "opt.h"
 
 #include "mikktspace.h"
@@ -3590,6 +3592,113 @@ void OptGltf_Free(OptGltfDocument* document) {
 	free(document);
 }
 
+/* The energy effects an animation file entry names, as bits of
+ * kAnimEnergies. */
+static const char* const kAnimEnergies[] = { "shields", "tractor", "jamming" };
+
+static unsigned energy_bits(const cJSON* entry) {
+	unsigned     bits = 0;
+	const cJSON* name;
+	cJSON_ArrayForEach(name, cJSON_GetObjectItemCaseSensitive(entry, "energy")) {
+		for (unsigned e = 0; e < 3; ++e)
+			if (cJSON_IsString(name) && strcmp(name->valuestring, kAnimEnergies[e]) == 0)
+				bits |= 1u << e;
+	}
+	return bits;
+}
+
+static cJSON* energy_list(unsigned bits) {
+	cJSON* list = cJSON_CreateArray();
+	for (unsigned e = 0; list && e < 3; ++e)
+		if (bits & 1u << e)
+			cJSON_AddItemToArray(list, cJSON_CreateString(kAnimEnergies[e]));
+	return list;
+}
+
+/* The model animation file of `document` (NULL when no material is
+ * animated): per animated material, its entry. The energy effects most of
+ * the materials the primitives use have (ties: the smaller set) become the
+ * file's default; only the used materials with other effects keep their own,
+ * `energy: []` for none (a material XWAU's texture-name sections never
+ * reached, such as the faces without a texture). Unused materials are drawn
+ * by nothing: their entries name no energy. `*ok` is cleared on failure. */
+static cJSON* animation_file(const OptGltfDocument* document, bool* ok) {
+	const GltfBuild* gb       = &document->gb;
+	const size_t     count    = gb->materials_count;
+	cJSON**          entries  = (cJSON**)calloc(count ? count : 1, sizeof *entries);
+	bool*            used     = (bool*)calloc(count ? count : 1, sizeof *used);
+	unsigned         tally[8] = { 0 };
+	bool             any      = false;
+	if (!entries || !used) {
+		free(entries);
+		free(used);
+		*ok = false;
+		return NULL;
+	}
+	/* A material is used by a primitive directly or through a variant. */
+	for (size_t p = 0; p < gb->primitives_count; ++p) {
+		const cgltf_primitive* prim = &gb->primitives[p];
+		if (prim->material)
+			used[prim->material - gb->materials] = true;
+		for (size_t k = 0; k < prim->mappings_count; ++k)
+			if (prim->mappings[k].material)
+				used[prim->mappings[k].material - gb->materials] = true;
+	}
+	for (size_t m = 0; m < count; ++m) {
+		const char* members = gb->material_anim ? gb->material_anim[m] : NULL;
+		if (members) {
+			const size_t length = strlen(members) + 3;
+			char*        text   = (char*)malloc(length);
+			if (text)
+				snprintf(text, length, "{%s}", members);
+			entries[m] = text ? cJSON_Parse(text) : NULL;
+			free(text);
+			*ok = *ok && entries[m];
+			any = true;
+		}
+		if (used[m])
+			tally[energy_bits(entries[m])]++;
+	}
+	unsigned common = 0;
+	for (unsigned bits = 1; bits < 8; ++bits)
+		if (tally[bits] > tally[common])
+			common = bits;
+	cJSON* file      = any && *ok ? cJSON_CreateObject() : NULL;
+	cJSON* materials = NULL;
+	*ok = *ok && (!any || (file && cJSON_AddNumberToObject(file, "version", 1) &&
+						   (!common || cJSON_AddItemToObject(file, "energy", energy_list(common))) &&
+						   (materials = cJSON_AddObjectToObject(file, "materials"))));
+	for (size_t m = 0; m < count; ++m) {
+		cJSON* entry = entries[m];
+		entries[m]   = NULL;
+		if (*ok && !used[m]) {
+			cJSON_DeleteItemFromObjectCaseSensitive(entry, "energy");
+		} else if (*ok && common) {
+			const unsigned bits = energy_bits(entry);
+			if (bits == common) {
+				cJSON_DeleteItemFromObjectCaseSensitive(entry, "energy");
+			} else {
+				entry = entry ? entry : cJSON_CreateObject();
+				cJSON_DeleteItemFromObjectCaseSensitive(entry, "energy");
+				cJSON_AddItemToObject(entry, "energy", energy_list(bits));
+			}
+		}
+		if (*ok && entry && entry->child) {
+			const char* name = gb->materials[m].name ? gb->materials[m].name : "";
+			*ok              = cJSON_AddItemToObject(materials, name, entry);
+		} else {
+			cJSON_Delete(entry);
+		}
+	}
+	free(entries);
+	free(used);
+	if (!*ok) {
+		cJSON_Delete(file);
+		return NULL;
+	}
+	return file;
+}
+
 bool OptGltf_WriteFiles(const OptGltfDocument* document, const char* out_dir, const char* basename) {
 	if (!document || !out_dir || !basename)
 		return false;
@@ -3621,27 +3730,17 @@ bool OptGltf_WriteFiles(const OptGltfDocument* document, const char* out_dir, co
 	cgltf_options opts = { 0 };
 	if (cgltf_write_file(&opts, gltf_path, &document->data) != cgltf_result_success)
 		return false;
-	/* The animation file: per animated material, its entry. */
-	FILE* af      = NULL;
-	bool  written = true;
-	for (size_t m = 0; m < document->gb.materials_count; ++m) {
-		const char* members = document->gb.material_anim ? document->gb.material_anim[m] : NULL;
-		if (!members)
-			continue;
-		if (!af) {
-			char anim_path[1024];
-			snprintf(filename, sizeof filename, "%s.anim.yaml", basename);
-			path_join(anim_path, sizeof anim_path, out_dir, filename);
-			if (!(af = fopen(anim_path, "wb")))
-				return false;
-			written &= fprintf(af, "version: 1\nmaterials:\n") >= 0;
-		}
-		written &= fputs("  \"", af) >= 0;
-		for (const char* c = document->gb.materials[m].name ? document->gb.materials[m].name : ""; *c; ++c)
-			written &= fprintf(af, *c == '"' || *c == '\\' ? "\\%c" : "%c", *c) >= 0;
-		written &= fprintf(af, "\": {%s}\n", members) >= 0;
+	/* The animation file, in its canonical form (effect_files.h). */
+	bool   written = true;
+	cJSON* anim    = animation_file(document, &written);
+	if (anim && written) {
+		char anim_path[1024];
+		snprintf(filename, sizeof filename, "%s.anim.yaml", basename);
+		path_join(anim_path, sizeof anim_path, out_dir, filename);
+		written = EffectFiles_Write("opt2gltf", anim, "", anim_path);
 	}
-	if (af && (fclose(af) != 0 || !written))
+	cJSON_Delete(anim);
+	if (!written)
 		return false;
 	FILE* fp = fopen(bin_path, "wb");
 	if (!fp)

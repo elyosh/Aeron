@@ -284,6 +284,9 @@ class OBJECT_PT_aeron_source(_RolePanel, Panel):
             layout.label(text="Not imported: the source export asks where to write it")
             return
         layout.label(text=props.source_path, icon='FILE')
+        if props.energy_default:
+            energy = json.loads(props.energy_default)
+            layout.label(text="Energy effects by default: " + (", ".join(energy) or "none"), icon='LIGHT_SUN')
         layout.operator("aeron.reload_animations", icon='FILE_REFRESH')
 
 

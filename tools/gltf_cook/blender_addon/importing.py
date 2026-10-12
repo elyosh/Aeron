@@ -213,7 +213,7 @@ class IMPORT_OT_aeron_flight_model(Operator, ImportHelper):
         except (OSError, ValueError) as error:
             self.report({'ERROR'}, "cannot read {}: {}".format(self.filepath, error))
             return {'CANCELLED'}
-        animations = {}
+        animations, energy = {}, None
         animation_file = sources.animation_path(self.filepath)
         if os.path.isfile(animation_file):
             cooker = preferences.cooker_path(context)
@@ -222,7 +222,7 @@ class IMPORT_OT_aeron_flight_model(Operator, ImportHelper):
                                        "add-on's preferences")
                 return {'CANCELLED'}
             try:
-                animations = sources.read_animations(cooker, animation_file)
+                animations, energy = sources.read_animations(cooker, animation_file)
             except (OSError, RuntimeError) as error:
                 self.report({'ERROR'}, "cannot read {}: {}".format(animation_file, error))
                 return {'CANCELLED'}
@@ -253,6 +253,7 @@ class IMPORT_OT_aeron_flight_model(Operator, ImportHelper):
             return {'FINISHED'}
         root = state["roots"][0]
         root.aeron_flight.source_path = os.path.abspath(self.filepath)
+        sources.set_energy_default(root, energy)
         asset_extras = (document.get("asset") or {}).get("extras")
         root.aeron_flight.asset_extras = json.dumps(asset_extras) if isinstance(asset_extras, dict) else ""
         root.aeron_flight.source_names = json.dumps(sources.names(document))

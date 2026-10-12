@@ -33,6 +33,7 @@
 #include "cJSON.h"
 #include "effect_library.h"
 #include "png_read.h"
+#include "yaml_json.h"
 
 static float clamp01(float x) { return x < 0.0f ? 0.0f : (x > 1.0f ? 1.0f : x); }
 
@@ -229,9 +230,41 @@ static bool bake(const char* tool, const char* dir, const char* key, const cJSON
 			out->layer = image;
 	}
 	out->key    = key;
+	out->kind   = kind;
 	out->width  = w;
 	out->height = h;
 	return true;
+}
+
+/* A key as a JSON string, for messages a tool reads. */
+static void print_key(const char* key) {
+	cJSON* string  = cJSON_CreateString(key);
+	char*  printed = string ? cJSON_PrintUnformatted(string) : NULL;
+	fputs(printed ? printed : "\"\"", stderr);
+	free(printed);
+	cJSON_Delete(string);
+}
+
+/* What replacing index `old` (NULL: none) with the library file's `images`
+ * removes: its keys the library no longer has, and its images whose kind
+ * changed (an index from before kinds were recorded has none). */
+static void report_replaced(const char* tool, const char* name, const cJSON* old, const cJSON* images) {
+	const cJSON* entry;
+	cJSON_ArrayForEach(entry, cJSON_GetObjectItemCaseSensitive(old, "images")) {
+		const cJSON* image = cJSON_GetObjectItemCaseSensitive(images, entry->string);
+		const cJSON* kind  = cJSON_GetObjectItemCaseSensitive(entry, "kind");
+		if (!image) {
+			fprintf(stderr, "%s: %s: removed ", tool, name);
+			print_key(entry->string);
+			fputc('\n', stderr);
+		} else if (cJSON_IsString(kind) &&
+				   strcmp(kind->valuestring, EffectLibrary_KindName(EffectLibrary_ImageKind(image))) != 0) {
+			fprintf(stderr, "%s: %s: ", tool, name);
+			print_key(entry->string);
+			fprintf(stderr, " changed kind from %s to %s\n", kind->valuestring,
+					EffectLibrary_KindName(EffectLibrary_ImageKind(image)));
+		}
+	}
 }
 
 EffectLibraryBuild EffectLibrary_BuildLibrary(const char* tool, const char* file, const char* name,
@@ -269,13 +302,20 @@ EffectLibraryBuild EffectLibrary_BuildLibrary(const char* tool, const char* file
 				ok = false;
 		}
 	}
+	/* The index being replaced, to report what other models may lose. */
+	char path[1024], err[512];
+	snprintf(path, sizeof path, "%s/%s.yaml", out_dir, library->valuestring);
+	cJSON*              old    = ok ? YamlJson_Load(path, err, sizeof err) : NULL;
 	EffectLibraryResult result = { 0 };
 	if (ok && EffectLibrary_Write(tool, out_dir, library->valuestring, NULL, have_inputs ? inputs : NULL,
-								  baked, (size_t)n, &result))
+								  baked, (size_t)n, &result)) {
 		fprintf(stderr, "%s: %s: built, %d image(s), %d layer and %d emissive page(s)\n", tool,
 				library->valuestring, n, result.layer_pages, result.emissive_pages);
-	else
+		report_replaced(tool, library->valuestring, old, images);
+	} else {
 		ok = false;
+	}
+	cJSON_Delete(old);
 	for (int i = 0; baked && i < count; ++i) {
 		free((void*)baked[i].layer);
 		free((void*)baked[i].emissive);
