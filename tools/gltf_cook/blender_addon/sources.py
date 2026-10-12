@@ -7,6 +7,7 @@
 
 import json
 import os
+import re
 import struct
 import subprocess
 
@@ -61,6 +62,20 @@ def material_animations(names):
         if material is not None and material.aeron_flight.animation:
             entries[name] = json.loads(material.aeron_flight.animation)
     return entries
+
+
+def library_sources(source_path):
+    """The effect library sources of the source tree holding the model file
+    `source_path` (<tree>/models/<key>/<key>.gltf): <tree>/effects, or ""
+    for a model outside a source tree."""
+    models = os.path.dirname(os.path.dirname(source_path)) if source_path else ""
+    effects = os.path.join(os.path.dirname(models), "effects")
+    return effects if os.path.basename(models) == "models" and os.path.isdir(effects) else ""
+
+
+def built_libraries(messages):
+    """The effect libraries a cook's messages say it built."""
+    return re.findall(r"^\[aeron_gltf_cook\] library: ([a-z0-9_-]+): built", messages or "", re.MULTILINE)
 
 
 def read_document(path):

@@ -10,7 +10,7 @@ presets of `scene_capture`.
 | `frames/` | The animation frames, PNGs in the materials' UV layout. |
 | `examplepanel.yaml` | The effect library: its frames. |
 | `panel.anim.yaml` | The model's animations: each material's flipbooks. |
-| `build.sh` | Builds the library with `effect_pack` and cooks the model with `aeron_gltf_cook --animations`. |
+| `build.sh` | Builds the library with `aeron_gltf_cook --library` and cooks the model with `--animations`. |
 
 ```sh
 aeron/tools/effect_pack/example/build.sh cmake-build-release captures/anim-example-assets

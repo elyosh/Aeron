@@ -640,8 +640,8 @@ static bool make_dir(const char* path) {
 	return mkdir(path, 0755) == 0 || (stat(path, &st) == 0 && S_ISDIR(st.st_mode));
 }
 
-/* effect_pack's transfer functions (8-bit sRGB in and out), to check that
- * the written inputs bake back into the library's images. */
+/* The library builder's transfer functions (8-bit sRGB in and out), to
+ * check that the written inputs bake back into the library's images. */
 static float lin8(uint8_t v) {
 	const float c = v / 255.0f;
 	return c <= 0.04045f ? c / 12.92f : powf((c + 0.055f) / 1.055f, 2.4f);
@@ -668,11 +668,11 @@ static bool write_frame(const char* dir, const char* file, int w, int h, const u
 }
 
 /* Writes library `l` as sources under `effects_dir`: <name>/<name>.yaml
- * and its images under <name>/frames/, each key's inputs in effect_pack's
- * kinds (the XWAU rules applied: illumination as an emissive image and a
+ * and its images under <name>/frames/, each key's inputs in the library
+ * file's kinds (the XWAU rules applied: illumination as an emissive image and a
  * base colour image with its coverage, tint and alpha mode baked in).
- * Reports the largest difference, per channel, between what effect_pack
- * bakes from them and the XWAU bake (8-bit rounding of the base colour). */
+ * Reports the largest difference, per channel, between what the library
+ * builder bakes from them and the XWAU bake (8-bit rounding of the base colour). */
 static bool write_library_sources(Library* l, const char* effects_dir) {
 	char path[1024], err[512], dir[1024];
 	if (!find_file(l->dat, path, sizeof path)) {
@@ -747,8 +747,8 @@ static bool write_library_sources(Library* l, const char* effects_dir) {
 					 r->kind == XWAU_FX_MULTIPLY ? "damage" : "baseColor",
 					 r->kind == XWAU_FX_MULTIPLY ? "factor" : "baseColor", file);
 		} else if (ok) {
-			/* Mark, energy: the tinted frame with its alpha, which effect_pack
-			 * premultiplies. */
+			/* Mark, energy: the tinted frame with its alpha, which the library
+			 * builder premultiplies. */
 			const uint8_t* baked = r->kind == XWAU_FX_MARK ? layer : emissive;
 			for (size_t t = 0; t < n; ++t) {
 				const uint8_t* src = &im.rgba[t * 4];

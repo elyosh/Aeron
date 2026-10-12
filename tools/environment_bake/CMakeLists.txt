@@ -2,7 +2,7 @@
 # diffuse irradiance and GGX specular cubes, sun sprites, package entry).
 
 add_executable(environment_bake main.c)
-target_link_libraries(environment_bake PRIVATE imgbake aeron_scene)
+target_link_libraries(environment_bake PRIVATE imgbake_bc6h aeron_scene)
 set_target_properties(environment_bake PROPERTIES
     C_STANDARD 11
     C_STANDARD_REQUIRED ON

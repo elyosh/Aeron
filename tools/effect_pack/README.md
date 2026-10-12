@@ -4,19 +4,21 @@ A model's materials can play animated frames: flipbooks driven by game
 states, hull damage and energy effects. Two files describe them:
 
 - an **effect library** (`<library>.yaml`): a set of frames, shared by any
-  models. `effect_pack` builds it.
+  models. `aeron_gltf_cook --library` builds it.
 - a **model's animations** (`<model>.anim.yaml`): which frames of which
   libraries each material plays, and when. `aeron_gltf_cook --animations`
   merges them into the model.
 
 ```sh
-effect_pack --out <asset root>/remaster/effects mylibrary.yaml
+aeron_gltf_cook --library mylibrary.yaml --out <asset root>/remaster/effects
 aeron_gltf_cook model.gltf --out <asset root>/remaster/models/model.glb \
     --animations model.anim.yaml --effects-dir <asset root>/remaster/effects
 ```
 
 Build the libraries first: with `--effects-dir`, the cooker checks that
-every frame a model names is in its library there.
+every frame a model names is in its library there. With
+`--library-sources <dir>` as well, the cook first builds each library the
+model names from `<dir>/<library>/<library>.yaml`, when that file exists.
 
 [`example/`](example) is a working model with its library and animations.
 
@@ -71,7 +73,7 @@ texels on their longer side, or `maxSize`. `crop: [x0, y0, x1, y1]` (blast
 marks) records the part of the image that the classic texture's `[0, 1]`
 maps to.
 
-`effect_pack` writes `<library>.yaml` (the index), and `<library>.layer.ktx2`
+`--library` writes `<library>.yaml` (the index), and `<library>.layer.ktx2`
 and `<library>.emissive.ktx2` (the frames, as needed). The index records a
 hash of the inputs (the library file, its images and the baking version,
 `EFFECT_PACK_BAKE_VERSION` in `effect_pack.h`); a library whose index

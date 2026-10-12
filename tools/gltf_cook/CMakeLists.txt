@@ -25,6 +25,20 @@ if(AERON_BUILD_TOOLS)
     else()
         set_source_files_properties(flight_data.c PROPERTIES COMPILE_OPTIONS "-ffp-contract=off")
     endif()
+    # The cooker calls no SDL function, but links aeron (through imgbake),
+    # which links SDL: the unused library is dropped, so that the cooker runs
+    # where SDL is not installed. (A Windows executable imports only the DLLs
+    # it uses.)
+    if(APPLE)
+        target_link_options(aeron_gltf_cook PRIVATE LINKER:-dead_strip_dylibs)
+    elseif(UNIX)
+        target_link_options(aeron_gltf_cook PRIVATE LINKER:--as-needed)
+    endif()
+    # MinGW's C++ runtime is DLLs no Windows has. (Linux keeps the system's
+    # libstdc++: a static one needs a newer glibc.)
+    if(AERON_GLTF_COOK_STANDALONE AND WIN32 AND NOT MSVC)
+        target_link_options(aeron_gltf_cook PRIVATE -static)
+    endif()
     set_target_properties(aeron_gltf_cook PROPERTIES
         C_STANDARD 11
         C_STANDARD_REQUIRED ON

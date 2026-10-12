@@ -1,8 +1,6 @@
 /*
- * effect_pack — builds an effect library from its file, <library>.yaml
- * (README.md): `version`, `library` and `images`.
- *
- *   effect_pack --out DIR FILE.yaml
+ * Building an effect library from its file, <library>.yaml (README.md):
+ * `version`, `library` and `images` (aeron_gltf_cook --library).
  *
  * Image paths are relative to the file. Per kind, the inputs, named after
  * the material channel they change, and what is stored (colour sRGB, alpha
@@ -17,8 +15,8 @@
  * mark's [0, 1] maps to.
  *
  * The index records a hash of the inputs (EFFECT_PACK_BAKE_VERSION, the
- * file and its images); a library whose index in DIR records the same is
- * left as it is.
+ * file and its images); a library whose index in the output directory
+ * records the same is left as it is.
  */
 
 #include <math.h>
@@ -59,18 +57,18 @@ static void input_path(const char* dir, const char* name, char* path, size_t cap
 
 /* An input PNG of image `key`, resolved next to the library file; NULL
  * after a message when missing or of another size than `*w` × `*h` (0: any). */
-static uint8_t* load_input(const char* dir, const char* key, const char* field, const cJSON* entry, int* w,
-						   int* h, bool required, bool* ok) {
+static uint8_t* load_input(const char* tool, const char* dir, const char* key, const char* field,
+						   const cJSON* entry, int* w, int* h, bool required, bool* ok) {
 	const cJSON* name = cJSON_GetObjectItemCaseSensitive(entry, field);
 	if (!name) {
 		if (required) {
-			fprintf(stderr, "effect_pack: image %s: no %s\n", key, field);
+			fprintf(stderr, "%s: image %s: no %s\n", tool, key, field);
 			*ok = false;
 		}
 		return NULL;
 	}
 	if (!cJSON_IsString(name)) {
-		fprintf(stderr, "effect_pack: image %s: %s is not a path\n", key, field);
+		fprintf(stderr, "%s: image %s: %s is not a path\n", tool, key, field);
 		*ok = false;
 		return NULL;
 	}
@@ -79,13 +77,13 @@ static uint8_t* load_input(const char* dir, const char* key, const char* field, 
 	uint8_t* rgba = NULL;
 	int      iw = 0, ih = 0;
 	if (!read_png_rgba(path, &rgba, &iw, &ih, err, sizeof err)) {
-		fprintf(stderr, "effect_pack: image %s: %s\n", key, err);
+		fprintf(stderr, "%s: image %s: %s\n", tool, key, err);
 		*ok = false;
 		return NULL;
 	}
 	if (*w && (iw != *w || ih != *h)) {
-		fprintf(stderr, "effect_pack: image %s: %s is %dx%d, not %dx%d like its other input\n", key, field,
-				iw, ih, *w, *h);
+		fprintf(stderr, "%s: image %s: %s is %dx%d, not %dx%d like its other input\n", tool, key, field, iw,
+				ih, *w, *h);
 		free(rgba);
 		*ok = false;
 		return NULL;
@@ -183,15 +181,16 @@ static bool library_current(const char* out_dir, const char* name, const char* i
 
 /* Bakes one checked image entry into `out` (layer/emissive owned by the
  * caller). */
-static bool bake(const char* dir, const char* key, const cJSON* entry, EffectPackImage* out) {
+static bool bake(const char* tool, const char* dir, const char* key, const cJSON* entry,
+				 EffectPackImage* out) {
 	const EffectPackKind kind = EffectPack_ImageKind(entry);
 	bool                 ok   = true;
 	int                  w = 0, h = 0;
 	if (!image_options(entry, out))
 		return false;
 	if (kind == EFFECT_PACK_EMISSIVE) {
-		uint8_t* emissive = load_input(dir, key, "emissive", entry, &w, &h, true, &ok);
-		uint8_t* colour   = ok ? load_input(dir, key, "baseColor", entry, &w, &h, false, &ok) : NULL;
+		uint8_t* emissive = load_input(tool, dir, key, "emissive", entry, &w, &h, true, &ok);
+		uint8_t* colour   = ok ? load_input(tool, dir, key, "baseColor", entry, &w, &h, false, &ok) : NULL;
 		uint8_t* layer    = ok ? (uint8_t*)malloc((size_t)w * h * 4) : NULL;
 		if (!ok || !layer) {
 			free(emissive);
@@ -211,7 +210,7 @@ static bool bake(const char* dir, const char* key, const cJSON* entry, EffectPac
 		out->emissive = emissive;
 	} else {
 		/* The input names the material channel the image changes. */
-		uint8_t* image = load_input(dir, key, EffectPack_ImageInput(kind, 0), entry, &w, &h, true, &ok);
+		uint8_t* image = load_input(tool, dir, key, EffectPack_ImageInput(kind, 0), entry, &w, &h, true, &ok);
 		if (!ok)
 			return false;
 		for (size_t i = 0; (kind == EFFECT_PACK_MARK || kind == EFFECT_PACK_ENERGY) && i < (size_t)w * h; ++i) {
@@ -233,66 +232,53 @@ static bool bake(const char* dir, const char* key, const cJSON* entry, EffectPac
 	return true;
 }
 
-static int usage(void) {
-	fprintf(stderr, "usage: effect_pack --out DIR <library>.yaml\n");
-	return 2;
-}
-
-int main(int argc, char** argv) {
-	const char* out  = NULL;
-	const char* file = NULL;
-	for (int i = 1; i < argc; ++i) {
-		if (strcmp(argv[i], "--out") == 0 && i + 1 < argc)
-			out = argv[++i];
-		else if (argv[i][0] == '-' || file)
-			return usage();
-		else
-			file = argv[i];
-	}
-	if (!out || !file)
-		return usage();
-	cJSON* root = EffectPack_ReadLibrary("effect_pack", file);
+EffectPackBuild EffectPack_BuildLibrary(const char* tool, const char* file, const char* name, const char* out_dir) {
+	cJSON* root = EffectPack_ReadLibrary(tool, file);
 	if (!root)
-		return 1;
+		return EFFECT_PACK_FAILED;
 	const cJSON* library = cJSON_GetObjectItemCaseSensitive(root, "library");
 	const cJSON* images  = cJSON_GetObjectItemCaseSensitive(root, "images");
-	bool         ok      = true;
+	if (name && strcmp(library->valuestring, name) != 0) {
+		fprintf(stderr, "%s: %s: holds library %s, not %s\n", tool, file, library->valuestring, name);
+		cJSON_Delete(root);
+		return EFFECT_PACK_FAILED;
+	}
 	char        dir[1024];
 	const char* slash = strrchr(file, '/');
 	snprintf(dir, sizeof dir, "%.*s", slash ? (int)(slash - file) : 1, slash ? file : ".");
 	char       inputs[17];
-	const bool have_inputs = ok && library_inputs(file, dir, images, inputs);
-	if (have_inputs && library_current(out, library->valuestring, inputs)) {
-		fprintf(stderr, "effect_pack: %s: unchanged\n", library->valuestring);
+	const bool have_inputs = library_inputs(file, dir, images, inputs);
+	if (have_inputs && library_current(out_dir, library->valuestring, inputs)) {
+		fprintf(stderr, "%s: %s: unchanged\n", tool, library->valuestring);
 		cJSON_Delete(root);
-		return 0;
+		return EFFECT_PACK_UNCHANGED;
 	}
-	const int        count = ok ? cJSON_GetArraySize(images) : 0;
-	EffectPackImage* baked = (EffectPackImage*)calloc(count ? (size_t)count : 1, sizeof *baked);
-	ok                     = ok && baked;
-	int          n         = 0;
-	const cJSON* entry;
+	const int        count = cJSON_GetArraySize(images);
+	EffectPackImage* baked = (EffectPackImage*)calloc((size_t)count, sizeof *baked);
+	bool             ok    = baked != NULL;
+	int              n     = 0;
+	const cJSON*     entry;
 	if (ok) {
 		cJSON_ArrayForEach(entry, images) {
-			if (bake(dir, entry->string, entry, &baked[n]))
+			if (bake(tool, dir, entry->string, entry, &baked[n]))
 				n++;
 			else
 				ok = false;
 		}
 	}
 	EffectPackResult result = { 0 };
-	if (ok && EffectPack_Write("effect_pack", out, library->valuestring, NULL, have_inputs ? inputs : NULL, baked,
+	if (ok && EffectPack_Write(tool, out_dir, library->valuestring, NULL, have_inputs ? inputs : NULL, baked,
 							   (size_t)n, &result))
-		fprintf(stderr, "effect_pack: %s: %d image(s), %d layer and %d emissive page(s)\n",
+		fprintf(stderr, "%s: %s: built, %d image(s), %d layer and %d emissive page(s)\n", tool,
 				library->valuestring, n, result.layer_pages, result.emissive_pages);
 	else
 		ok = false;
-	for (int i = 0; i < count; ++i) {
+	for (int i = 0; baked && i < count; ++i) {
 		free((void*)baked[i].layer);
 		free((void*)baked[i].emissive);
 		free((void*)baked[i].crop);
 	}
 	free(baked);
 	cJSON_Delete(root);
-	return ok ? 0 : 1;
+	return ok ? EFFECT_PACK_BUILT : EFFECT_PACK_FAILED;
 }

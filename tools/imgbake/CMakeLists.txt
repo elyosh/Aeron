@@ -13,9 +13,10 @@ enable_language(CXX)
 set(IMGBAKE_TP ${CMAKE_CURRENT_SOURCE_DIR}/../../third_party)
 
 # BC6H uses the ISPC Texture Compressor (third_party/ispc_texcomp), whose
-# kernel is compiled by the ISPC compiler for the host CPU. imgbake is host
-# tooling only: package builds (tools off) configure without ISPC and never
-# build this library.
+# kernel is compiled by the ISPC compiler for the host CPU; it is
+# imgbake_bc6h, apart, so that the libraries without it need no ISPC. It is
+# host tooling only: package builds (tools off) configure without ISPC and
+# never build it, nor does the add-on's cooker (AERON_GLTF_COOK_STANDALONE).
 if(DEFINED AERON_ISPC_EXECUTABLE AND AERON_ISPC_EXECUTABLE STREQUAL "")
     unset(AERON_ISPC_EXECUTABLE CACHE)
 endif()
@@ -54,10 +55,10 @@ else()
     if(AERON_ISPC_EXECUTABLE)
         set(imgbake_ispc_problem "ISPC has no target for processor '${CMAKE_SYSTEM_PROCESSOR}'")
     endif()
-    if(AERON_BUILD_TOOLS)
+    if(AERON_BUILD_TOOLS AND NOT AERON_GLTF_COOK_STANDALONE)
         message(FATAL_ERROR "imgbake: ${imgbake_ispc_problem}")
     endif()
-    message(STATUS "imgbake: ${imgbake_ispc_problem}; imgbake cannot be built (tools are off)")
+    message(STATUS "imgbake: ${imgbake_ispc_problem}; imgbake_bc6h cannot be built")
     add_custom_command(
         OUTPUT ${IMGBAKE_ISPC_OUTPUTS} ${IMGBAKE_ISPC_HEADER}
         COMMAND ${CMAKE_COMMAND} -E echo "imgbake: ${imgbake_ispc_problem}"
@@ -80,12 +81,8 @@ add_library(imgbake STATIC
     # C++: BC codec facades over vendored encoders.
     bc7_codec.cpp
     bc5_codec.cpp
-    bc6h_codec.cpp
     ${IMGBAKE_TP}/bc7enc/bc7enc.cpp   # BC7 (bc7_codec)
-    ${IMGBAKE_TP}/bc7enc/rgbcx.cpp    # BC5  (bc5_codec)
-    ${IMGBAKE_TP}/ispc_texcomp/ispc_texcomp.cpp  # BC6H (bc6h_codec)
-    ${IMGBAKE_ISPC_HEADER}
-    ${IMGBAKE_ISPC_OUTPUTS})
+    ${IMGBAKE_TP}/bc7enc/rgbcx.cpp)   # BC5  (bc5_codec)
 
 target_include_directories(imgbake
     PUBLIC
@@ -94,17 +91,28 @@ target_include_directories(imgbake
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/../..    # third_party/bc7enc/...
         ${IMGBAKE_TP}/bc7enc                 # rgbcx.h, bc7enc.h
-        ${IMGBAKE_TP}/ispc_texcomp           # ispc_texcomp.h
-        ${IMGBAKE_ISPC_DIR}                  # kernel_ispc.h (generated)
         ${IMGBAKE_TP}/stb)                   # stb_image*/truetype
 
 # zstd — KTX2 supercompressionScheme=2 (aeron already requires it).
 # Threads — the BC7 encoder splits large images across threads.
 find_package(Threads REQUIRED)
-target_link_libraries(imgbake PUBLIC aeron zstd::libzstd PRIVATE Threads::Threads)
+target_link_libraries(imgbake PUBLIC aeron ${AERON_ZSTD} PRIVATE Threads::Threads)
 
 set_target_properties(imgbake PROPERTIES C_STANDARD 11)
 target_compile_features(imgbake PUBLIC cxx_std_17)
+
+# The BC6H encoder and the BC6H cubemap writer (environment_bake).
+add_library(imgbake_bc6h STATIC
+    ktx2_writer_bc6h.c
+    bc6h_codec.cpp
+    ${IMGBAKE_TP}/ispc_texcomp/ispc_texcomp.cpp  # BC6H (bc6h_codec)
+    ${IMGBAKE_ISPC_HEADER}
+    ${IMGBAKE_ISPC_OUTPUTS})
+target_include_directories(imgbake_bc6h PRIVATE
+    ${IMGBAKE_TP}/ispc_texcomp           # ispc_texcomp.h
+    ${IMGBAKE_ISPC_DIR})                 # kernel_ispc.h (generated)
+target_link_libraries(imgbake_bc6h PUBLIC imgbake PRIVATE Threads::Threads)
+set_target_properties(imgbake_bc6h PROPERTIES C_STANDARD 11)
 
 # Vendored encoders trip the project's strict warnings (sign compares,
 # unused locals, MSVC pragmas); they are correct upstream — suppress

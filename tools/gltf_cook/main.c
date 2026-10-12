@@ -2,6 +2,7 @@
  * aeron_gltf_cook — CLI entry point.
  *
  * Usage: aeron_gltf_cook <in.gltf> --out <out.glb> [options]
+ *        aeron_gltf_cook --library <library>.yaml --out <effects dir>
  *        aeron_gltf_cook --animations-json <model>.anim.yaml
  *        aeron_gltf_cook --library-json <library>.yaml
  *
@@ -9,6 +10,7 @@
  * KHR_texture_basisu / KHR_texture_transform per-channel atlases. An
  * AERON_flight_model asset also gets cooked simulation and render data, and
  * the result is loaded back the way a game loads it before it is written.
+ * --library builds an effect library (tools/effect_pack/README.md).
  */
 
 #include "animations.h"
@@ -24,6 +26,7 @@
 
 static void usage(void) {
 	fprintf(stderr, "Usage: aeron_gltf_cook <in.gltf> --out <out.glb> [options]\n"
+					"       aeron_gltf_cook --library <library>.yaml --out <effects dir>\n"
 					"       aeron_gltf_cook --animations-json <model>.anim.yaml\n"
 					"       aeron_gltf_cook --library-json <library>.yaml\n"
 					"\n"
@@ -58,19 +61,31 @@ static void usage(void) {
 					"                        into the materials first.\n"
 					"  --effects-dir <dir>   With --animations, check every image key\n"
 					"                        against the libraries in <dir>.\n"
+					"  --library-sources <dir>\n"
+					"                        With --effects-dir, first build each library\n"
+					"                        the animations name that <dir> holds, as\n"
+					"                        <dir>/<library>/<library>.yaml, into the\n"
+					"                        effects directory (as --library does).\n"
 					"  --verbose             Print per-channel cook progress.\n"
 					"  -h, --help            Show this help.\n"
+					"\n"
+					"--library builds an effect library file: its images, baked by kind,\n"
+					"into page arrays and an index in <effects dir>. A library whose\n"
+					"index there records the same inputs (the file, its images and the\n"
+					"baking version) is left as it is.\n"
 					"\n"
 					"--animations-json checks a model animation file as --animations\n"
 					"does and prints it as JSON (for tools without a YAML reader).\n"
 					"--library-json does the same for an effect library file, with the\n"
-					"checks effect_pack applies before reading its images.\n");
+					"checks --library applies before reading its images.\n");
 	exit(2);
 }
 
+#define LIBRARY_TAG "[aeron_gltf_cook] library"
+
 /* Prints effect library file `file` as JSON on stdout, once checked. */
 static bool print_library(const char* file) {
-	cJSON* library = EffectPack_ReadLibrary("[aeron_gltf_cook] library", file);
+	cJSON* library = EffectPack_ReadLibrary(LIBRARY_TAG, file);
 	char*  printed = library ? cJSON_PrintUnformatted(library) : NULL;
 	const bool ok  = printed && fputs(printed, stdout) >= 0 && fputc('\n', stdout) != EOF && fflush(stdout) == 0;
 	free(printed);
@@ -130,6 +145,11 @@ int main(int argc, char** argv) {
 			usage();
 		return aeron_gltf_cook_print_animations(argv[2]) ? 0 : 1;
 	}
+	if (strcmp(argv[1], "--library") == 0) {
+		if (argc != 5 || strcmp(argv[3], "--out") != 0)
+			usage();
+		return EffectPack_BuildLibrary(LIBRARY_TAG, argv[2], NULL, argv[4]) != EFFECT_PACK_FAILED ? 0 : 1;
+	}
 	if (strcmp(argv[1], "--library-json") == 0) {
 		if (argc != 3)
 			usage();
@@ -140,6 +160,7 @@ int main(int argc, char** argv) {
 	const char* out_path    = NULL;
 	const char* animations  = NULL;
 	const char* effects_dir = NULL;
+	const char* library_sources = NULL;
 
 	AeronGltfCookOptions opts;
 	aeron_gltf_cook_default_options(&opts);
@@ -174,6 +195,8 @@ int main(int argc, char** argv) {
 			animations = argv[++i];
 		} else if (strcmp(a, "--effects-dir") == 0 && i + 1 < argc) {
 			effects_dir = argv[++i];
+		} else if (strcmp(a, "--library-sources") == 0 && i + 1 < argc) {
+			library_sources = argv[++i];
 		} else if (strcmp(a, "--verbose") == 0) {
 			opts.verbose = true;
 		} else if (strcmp(a, "-h") == 0 || strcmp(a, "--help") == 0) {
@@ -211,13 +234,17 @@ int main(int argc, char** argv) {
 		fprintf(stderr, "[aeron_gltf_cook] --effects-dir needs --animations\n");
 		return 2;
 	}
+	if (library_sources && !effects_dir) {
+		fprintf(stderr, "[aeron_gltf_cook] --library-sources needs --effects-dir\n");
+		return 2;
+	}
 
 	/* The animation file merged into a copy of the input, next to it so its
 	 * buffer and image URIs still resolve. */
 	char merged[1024];
 	if (animations) {
 		snprintf(merged, sizeof merged, "%s.animations.gltf", in_path);
-		if (!aeron_gltf_cook_merge_animations(in_path, animations, effects_dir, merged)) {
+		if (!aeron_gltf_cook_merge_animations(in_path, animations, effects_dir, library_sources, merged)) {
 			remove(merged);
 			return 1;
 		}

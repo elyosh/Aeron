@@ -12,6 +12,7 @@
 #include <string.h>
 
 #include "cJSON.h"
+#include "effect_pack.h"
 #include "yaml_json.h"
 
 #define TAG "[aeron_gltf_cook] animations"
@@ -62,6 +63,7 @@ typedef struct Merge {
 	const char* anim;        /* for messages */
 	const char* material;    /* for messages */
 	const char* effects_dir; /* or NULL */
+	const char* sources;     /* library sources built into effects_dir first, or NULL */
 	cJSON**     indexes;     /* loaded library indexes, by name */
 	char**      index_names;
 	size_t      index_count;
@@ -107,6 +109,19 @@ static bool only_members(Merge* m, const char* what, const cJSON* object, const 
 	return true;
 }
 
+/* Builds library `library` into the effects directory from the library
+ * sources, when they hold it; false when that fails. */
+static bool build_library(Merge* m, const char* library) {
+	char file[1024];
+	snprintf(file, sizeof file, "%s/%s/%s.yaml", m->sources, library, library);
+	FILE* f = fopen(file, "rb");
+	if (!f)
+		return true; /* not a source library: only checked */
+	fclose(f);
+	return EffectPack_BuildLibrary("[aeron_gltf_cook] library", file, library, m->effects_dir) !=
+		   EFFECT_PACK_FAILED;
+}
+
 /* Whether `key` is in library `library` of the effects directory. */
 static bool key_known(Merge* m, const char* library, const char* key) {
 	if (!m->effects_dir)
@@ -120,7 +135,8 @@ static bool key_known(Merge* m, const char* library, const char* key) {
 	} else {
 		char path[1024], err[512];
 		snprintf(path, sizeof path, "%s/%s.yaml", m->effects_dir, library);
-		index         = YamlJson_Load(path, err, sizeof err);
+		const bool built = !m->sources || build_library(m, library);
+		index            = built ? YamlJson_Load(path, err, sizeof err) : NULL;
 		cJSON** grown = (cJSON**)realloc(m->indexes, (m->index_count + 1) * sizeof *grown);
 		char**  names = grown ? (char**)realloc(m->index_names, (m->index_count + 1) * sizeof *names) : NULL;
 		if (grown)
@@ -134,7 +150,7 @@ static bool key_known(Merge* m, const char* library, const char* key) {
 		m->indexes[m->index_count]     = index;
 		m->index_names[m->index_count] = strdup(library);
 		m->index_count++;
-		if (!index)
+		if (!index && built)
 			fprintf(stderr, TAG ": %s: library %s: %s\n", m->anim, library, err);
 	}
 	const bool found =
@@ -358,8 +374,8 @@ static cJSON* load_file(const char* anim) {
 	const cJSON* version   = cJSON_GetObjectItemCaseSensitive(file, "version");
 	const cJSON* materials = cJSON_GetObjectItemCaseSensitive(file, "materials");
 	bool         ok        = cJSON_IsNumber(version) && version->valueint == 1 && cJSON_IsObject(materials);
-	/* A model's animations only; an effect library is its own file, which
-	   effect_pack reads. */
+	/* A model's animations only; an effect library is its own file
+	   (--library). */
 	const cJSON* member;
 	cJSON_ArrayForEach(member, file) {
 		ok = ok && (strcmp(member->string, "version") == 0 || strcmp(member->string, "materials") == 0);
@@ -393,7 +409,7 @@ bool aeron_gltf_cook_print_animations(const char* anim) {
 }
 
 bool aeron_gltf_cook_merge_animations(const char* gltf, const char* anim, const char* effects_dir,
-									  const char* out_gltf) {
+									  const char* library_sources, const char* out_gltf) {
 	char*  text = read_text(gltf);
 	cJSON* doc  = text ? cJSON_Parse(text) : NULL;
 	free(text);
@@ -406,7 +422,7 @@ bool aeron_gltf_cook_merge_animations(const char* gltf, const char* anim, const 
 		cJSON_Delete(doc);
 		return false;
 	}
-	Merge        m              = { .anim = anim, .effects_dir = effects_dir };
+	Merge        m              = { .anim = anim, .effects_dir = effects_dir, .sources = library_sources };
 	bool         ok             = true;
 	cJSON*       gltf_materials = cJSON_GetObjectItemCaseSensitive(doc, "materials");
 	const cJSON* entry;

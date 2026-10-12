@@ -354,6 +354,9 @@ class EXPORT_OT_aeron_flight_model(Operator, ExportHelper):
             argv += ["--animations", animation_file]
             if prefs.effects_dir:
                 argv += ["--effects-dir", bpy.path.abspath(prefs.effects_dir)]
+                library_sources = sources.library_sources(bpy.path.abspath(root.aeron_flight.source_path))
+                if library_sources:
+                    argv += ["--library-sources", library_sources]
         try:
             completed = subprocess.run(argv, capture_output=True, text=True)
         except OSError as error:
@@ -369,7 +372,9 @@ class EXPORT_OT_aeron_flight_model(Operator, ExportHelper):
             shutil.move(scratch, kept)
         else:
             shutil.rmtree(scratch, ignore_errors=True)
-        self.report({'INFO'}, "Wrote {}{}".format(out_glb, _warnings(self.warnings)))
+        built = sources.built_libraries(completed.stderr)
+        rebuilt = " (libraries rebuilt: {})".format(", ".join(built)) if built else ""
+        self.report({'INFO'}, "Wrote {}{}{}".format(out_glb, rebuilt, _warnings(self.warnings)))
         return {'FINISHED'}
 
 

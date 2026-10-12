@@ -7,19 +7,28 @@ or later.
 
 ## Install
 
-Build the extension and install the zip (Edit > Preferences > Get
-Extensions > Install from Disk):
+Install the package for your platform, published with the game's
+releases (`aeron_flight_model-<version>-<platform>.zip`), with Edit >
+Preferences > Get Extensions > Install from Disk. Use the add-on of the
+game version you play: the `.glb` it cooks must suit the game. The package
+holds its own `aeron_gltf_cook`, which cooks `.glb` files and reads
+animation and library files.
 
-```sh
-blender --command extension build --source-dir aeron/tools/gltf_cook/blender_addon
-```
+To build a package (with a cooker built with `AERON_GLTF_COOK_STANDALONE`,
+which needs no library of the build machine), run
+`aeron/tools/gltf_cook/package_addon.py --help`.
 
 For development, link this directory as
-`<extensions>/user_default/aeron_flight_model` instead. In the add-on's
-preferences, set the path of `aeron_gltf_cook` (built with the Aeron tools),
-unless it is on the `PATH`: it cooks `.glb` files and reads animation files.
+`<extensions>/user_default/aeron_flight_model`, and set the path of
+`aeron_gltf_cook` (built with the Aeron tools) in the add-on's preferences,
+unless it is on the `PATH`. The path set there is used over the packaged
+cooker.
+
 Setting the game's `remaster/effects` directory there makes the `.glb`
-export check every animation frame against its library.
+export check every animation frame against its library, after building
+there the libraries of the model's source tree (`<tree>/effects`, beside
+the `models/` directory holding the model) that the model names and that
+changed.
 
 `tests/roundtrip.py` checks that models import and export unchanged (run it
 with `--help`).
@@ -50,7 +59,8 @@ textures (usually under `textures/`) and, when its materials are animated,
    directory is changed or removed.
 5. Build the game's model from the source, or try it at once with File >
    Export > Aeron Flight Model (.glb), which cooks it into a `.glb` for the
-   game's `remaster/models/`.
+   game's `remaster/models/`. With the effects directory set, it first
+   rebuilds the effect libraries whose frames changed, and says which.
 
 Both exports check the model first: Aeron > Problems lists every problem
 with a button that selects its object. The source export also stops when:

@@ -10,6 +10,10 @@ option(AERON_DEBUG_UI "Build the Dear ImGui debug overlay into aeron" OFF)
 option(AERON_BUILD_TOOLS "Build Aeron asset and diagnostic tools" ${PROJECT_IS_TOP_LEVEL})
 option(AERON_BUILD_SCENE_CAPTURE "Build scene capture independently of other tools" OFF)
 option(AERON_HOST_TOOLS_ONLY "Build only tools that must run on the build host" OFF)
+# A build of the Blender add-on's packaged aeron_gltf_cook, which must run
+# without the build's libraries: zstd is linked statically (into everything
+# this build links), and MinGW's C++ runtime.
+option(AERON_GLTF_COOK_STANDALONE "Link aeron_gltf_cook to run without the build's libraries" OFF)
 option(AERON_ENABLE_COMPAT "Build the Win32/DirectX-era API compatibility target" OFF)
 option(AERON_ENABLE_DPLAY "Build DirectPlay support in aeron_compat" OFF)
 
@@ -72,6 +76,11 @@ endif()
 
 # libzstd — KTX2 supercompressionScheme=2 path in aeron_scene's reader.
 find_package(zstd REQUIRED CONFIG)
+if(AERON_GLTF_COOK_STANDALONE)
+    set(AERON_ZSTD zstd::libzstd_static)
+else()
+    set(AERON_ZSTD zstd::libzstd)
+endif()
 
 # SDL 3.4 can request optional Vulkan feature chains during GPU-device
 # creation. Keep Vulkan headers optional so Metal- and D3D12-only builds do
@@ -924,7 +933,7 @@ target_link_libraries(aeron_scene
     PRIVATE
         aeron_yaml
         aeron_fsr3
-        zstd::libzstd
+        ${AERON_ZSTD}
 )
 
 # The Environment debug tool exists only with the ImGui overlay.

@@ -1,7 +1,8 @@
 /*
  * Effect image libraries (README.md, "Effect libraries"): reading a library
- * file, <library>.yaml, and the writer, which packs baked images into the
- * layer and emissive page arrays and writes the library's three files,
+ * file, <library>.yaml, building it, and the writer, which packs baked
+ * images into the layer and emissive page arrays and writes the library's
+ * three files,
  *
  *   <out>/<name>.yaml           the index: key -> page, rect, mip limit
  *   <out>/<name>.layer.ktx2     when an image has a layer
@@ -73,6 +74,20 @@ EffectPackKind EffectPack_ImageKind(const struct cJSON* image);
 /* The field naming a kind's required input (`optional` 0), or its optional
  * one (1, NULL when it has none). */
 const char* EffectPack_ImageInput(EffectPackKind kind, int optional);
+
+typedef enum EffectPackBuild {
+	EFFECT_PACK_FAILED,
+	EFFECT_PACK_UNCHANGED, /* the index in the output directory records the same inputs */
+	EFFECT_PACK_BUILT,
+} EffectPackBuild;
+
+/* Builds library file `file` into `out_dir`: reads and checks it, bakes its
+ * images by kind and writes the library, unless the index there already
+ * records the same inputs (EFFECT_PACK_BAKE_VERSION, the file and its
+ * images). With `name`, the file must hold that library. Messages go to
+ * stderr, prefixed with `tool`: one line per library built or unchanged. */
+EffectPackBuild EffectPack_BuildLibrary(const char* tool, const char* file, const char* name,
+										const char* out_dir);
 
 /* Writes library `name` into `out_dir`. `source` and `inputs`, when not
  * NULL, are noted in the index (`source:`, `inputs:`, which the runtime

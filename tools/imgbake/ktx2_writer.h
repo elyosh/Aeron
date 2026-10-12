@@ -208,7 +208,8 @@ bool write_ktx2_bc7_cubemap_with_generated_mips(const char* path, int face_size,
  * VK_FORMAT_BC6H_UFLOAT_BLOCK.
  *
  * `quality` is accepted for API parity; every value uses the BC6H
- * encoder's highest-quality profile (see bc6h_codec.h). */
+ * encoder's highest-quality profile (see bc6h_codec.h). In imgbake_bc6h,
+ * with the encoder. */
 typedef enum {
 	KTX2_BC6H_QUALITY_FAST = 0,
 	KTX2_BC6H_QUALITY_MED  = 1,

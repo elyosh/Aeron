@@ -2,6 +2,8 @@
 
 import os
 import shutil
+import stat
+import sys
 
 import bpy
 from bpy.props import BoolProperty, EnumProperty, IntProperty, StringProperty
@@ -17,7 +19,8 @@ class AeronFlightModelPreferences(AddonPreferences):
 
     cooker: StringProperty(
         name="aeron_gltf_cook", subtype='FILE_PATH',
-        description="The aeron_gltf_cook executable (empty: found on the PATH)")
+        description="The aeron_gltf_cook executable (empty: the one packaged with the add-on, else "
+                    "found on the PATH)")
     atlas_page: IntProperty(name="Atlas page", default=2048, min=128, max=16384,
                             description="Atlas page size per axis, a power of 2")
     max_texture: IntProperty(name="Max texture", default=4096, min=4, max=16384,
@@ -33,7 +36,8 @@ class AeronFlightModelPreferences(AddonPreferences):
     zstd: BoolProperty(name="Zstd supercompression", default=True)
     effects_dir: StringProperty(
         name="Effects directory", subtype='DIR_PATH',
-        description="The game's remaster/effects directory: with it, the .glb export checks every "
+        description="The game's remaster/effects directory: with it, the .glb export rebuilds the "
+                    "effect libraries of the model's source tree that changed, then checks every "
                     "animation frame against its library (empty: not checked)")
 
     def draw(self, context):
@@ -57,9 +61,25 @@ def get(context):
     return context.preferences.addons[__package__].preferences
 
 
+def _packaged_cooker():
+    """The cooker packaged in the add-on's bin/, or "". Installing a package
+    does not keep file permissions: it is made executable first."""
+    name = "aeron_gltf_cook.exe" if sys.platform == "win32" else "aeron_gltf_cook"
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bin", name)
+    if os.path.isfile(path) and not os.access(path, os.X_OK):
+        try:
+            os.chmod(path, os.stat(path).st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+        except OSError:
+            return ""
+    return path if os.path.isfile(path) else ""
+
+
 def cooker_path(context):
-    """The cooker's path when it is an executable, else ""."""
-    path = bpy.path.abspath(get(context).cooker) if get(context).cooker else shutil.which("aeron_gltf_cook")
+    """The cooker's path when it is an executable, else "": the preference's
+    when set, else the packaged one, else the PATH's (an add-on linked from
+    a checkout has no bin/)."""
+    setting = get(context).cooker
+    path = bpy.path.abspath(setting) if setting else _packaged_cooker() or shutil.which("aeron_gltf_cook")
     return path if path and os.path.isfile(path) and os.access(path, os.X_OK) else ""
 
 
