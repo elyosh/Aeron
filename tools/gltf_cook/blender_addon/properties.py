@@ -14,7 +14,7 @@ from bpy.props import (
 )
 from bpy.types import PropertyGroup
 
-from . import animation, common, display, overlays, preview
+from . import animation, common, display, flipbook_preview, overlays, preview
 
 
 def _component_poll(self, obj):
@@ -259,6 +259,8 @@ class AeronSceneProperties(PropertyGroup):
         name="Game-like light preview", default=False, update=_game_preview_update,
         description="Turn off the model lights' shadows, as the game draws them "
                     "(turning it off again turns their shadows on)")
+    # The game states active in the flipbook preview (flipbook_preview.py).
+    flipbook_states: PointerProperty(type=flipbook_preview.AeronFlipbookStates)
 
     # Viewport overlays (overlays.py).
     overlays: BoolProperty(name="Overlays", default=True, update=overlays.tag_redraw,

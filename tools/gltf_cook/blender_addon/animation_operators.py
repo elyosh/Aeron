@@ -17,7 +17,7 @@ from bpy.props import BoolProperty, CollectionProperty, EnumProperty, FloatPrope
 from bpy.types import Operator, OperatorFileListElement
 from bpy_extras.io_utils import ImportHelper
 
-from . import common, libraries, sources
+from . import common, flipbook_preview, libraries, sources
 
 LIBRARY_NAME = re.compile(r"^[a-z0-9_-]+$")
 
@@ -68,6 +68,7 @@ class AERON_OT_flipbook_add(_MaterialOperator, Operator):
         book.library = libraries.selected_library(context)
         props.flipbooks_given = True
         props.active_flipbook = len(props.flipbooks) - 1
+        flipbook_preview.schedule()
         return {'FINISHED'}
 
 
@@ -82,6 +83,7 @@ class AERON_OT_flipbook_remove(_FlipbookOperator, Operator):
         props.flipbooks.remove(props.active_flipbook)
         props.active_flipbook = max(min(props.active_flipbook, len(props.flipbooks) - 1), 0)
         props.flipbooks_given = len(props.flipbooks) > 0
+        flipbook_preview.schedule()
         return {'FINISHED'}
 
 
@@ -95,6 +97,7 @@ class AERON_OT_flipbook_move(_FlipbookOperator, Operator):
     def execute(self, context):
         props = _material(context).aeron_flight
         props.active_flipbook = _move(props.flipbooks, props.active_flipbook, self.direction)
+        flipbook_preview.schedule()
         return {'FINISHED'}
 
 
@@ -114,6 +117,7 @@ class AERON_OT_frame_add(_FlipbookOperator, Operator):
             book.active_frame += 1
         else:
             book.active_frame = len(book.frames) - 1
+        flipbook_preview.schedule()
         return {'FINISHED'}
 
 
@@ -131,6 +135,7 @@ class AERON_OT_frame_remove(_FlipbookOperator, Operator):
         book = _flipbook(context)
         book.frames.remove(book.active_frame)
         book.active_frame = max(min(book.active_frame, len(book.frames) - 1), 0)
+        flipbook_preview.schedule()
         return {'FINISHED'}
 
 
@@ -144,6 +149,7 @@ class AERON_OT_frame_move(_FlipbookOperator, Operator):
     def execute(self, context):
         book = _flipbook(context)
         book.active_frame = _move(book.frames, book.active_frame, self.direction)
+        flipbook_preview.schedule()
         return {'FINISHED'}
 
 
@@ -180,6 +186,7 @@ class AERON_OT_frames_add_prefix(_FlipbookOperator, Operator):
             return {'CANCELLED'}
         _append_frames(book, keys, self.seconds)
         self.report({'INFO'}, "{} frame(s) added".format(len(keys)))
+        flipbook_preview.schedule()
         return {'FINISHED'}
 
 
@@ -196,6 +203,7 @@ class AERON_OT_frames_set_duration(_FlipbookOperator, Operator):
     def execute(self, context):
         for frame in _flipbook(context).frames:
             frame.seconds = self.seconds
+        flipbook_preview.schedule()
         return {'FINISHED'}
 
 
@@ -222,6 +230,7 @@ class AERON_OT_frames_add_added(_FlipbookOperator, Operator):
             return {'CANCELLED'}
         book.library = library
         _append_frames(book, keys, self.seconds)
+        flipbook_preview.schedule()
         return {'FINISHED'}
 
 
@@ -368,6 +377,7 @@ class AERON_OT_libraries_refresh(Operator):
             self.report({'WARNING'}, "{} file(s) not read: {}".format(len(loaded.errors), loaded.errors[0]))
         else:
             self.report({'INFO'}, "{} libraries".format(len(loaded.libraries)))
+        flipbook_preview.schedule()
         return {'FINISHED'}
 
 
@@ -477,6 +487,7 @@ class AERON_OT_library_add_images(Operator, ImportHelper):
             return {'CANCELLED'}
         libraries.state(context).added = json.dumps([name, sorted(images)])
         libraries.select(context, name, sorted(images)[0])
+        flipbook_preview.schedule()
         return {'FINISHED'}
 
 
@@ -487,7 +498,8 @@ def _image_items(self, context):
     """Blender's images, painted ones included (kept referenced: Blender
     reads the strings after the call)."""
     _image_list[:] = [(image.name, image.name, "") for image in bpy.data.images
-                      if image.type not in {'RENDER_RESULT', 'COMPOSITING'}] or [("", "(no image)", "")]
+                      if image.type not in {'RENDER_RESULT', 'COMPOSITING'} and not image.get(flipbook_preview.TAG)
+                      ] or [("", "(no image)", "")]
     return _image_list
 
 
@@ -541,6 +553,7 @@ Writes the library file at once"""
             return {'CANCELLED'}
         libraries.state(context).added = json.dumps([name, [key]])
         libraries.select(context, name, key)
+        flipbook_preview.schedule()
         return {'FINISHED'}
 
 
@@ -608,6 +621,7 @@ Writes the library file at once"""
         if not _write(self, context, loaded, cooker, name, document, "image {} of {} changed".format(key, name)):
             return {'CANCELLED'}
         libraries.select(context, name, key)
+        flipbook_preview.schedule()
         return {'FINISHED'}
 
 
@@ -655,6 +669,7 @@ Writes the library file at once; models that use it lose it"""
         del document["images"][key]
         if not _write(self, context, loaded, cooker, name, document, "image {} removed from {}".format(key, name)):
             return {'CANCELLED'}
+        flipbook_preview.schedule()
         return {'FINISHED'}
 
 
@@ -705,6 +720,7 @@ Writes the library file at once"""
         libraries.select(context, name, self.new_key)
         if renamed:
             self.report({'INFO'}, "{} use(s) renamed in this model (written by its source export)".format(renamed))
+        flipbook_preview.schedule()
         return {'FINISHED'}
 
 

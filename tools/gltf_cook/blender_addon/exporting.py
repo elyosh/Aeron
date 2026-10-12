@@ -18,7 +18,7 @@ from bpy.types import Operator
 from bpy_extras.io_utils import ExportHelper
 from mathutils import Matrix
 
-from . import animation, common, display, libraries, sources, validation
+from . import animation, common, display, flipbook_preview, libraries, sources, validation
 
 # Blender (x, y, z) -> glTF (x, z, -y).
 _TO_GLTF = Matrix(((1.0, 0.0, 0.0, 0.0), (0.0, 0.0, 1.0, 0.0), (0.0, -1.0, 0.0, 0.0), (0.0, 0.0, 0.0, 1.0)))
@@ -316,6 +316,10 @@ class EXPORT_OT_aeron_flight_model(Operator, ExportHelper):
                     "(a failed cook always keeps them)")
 
     def execute(self, context):
+        with flipbook_preview.suspended():
+            return self._execute(context)
+
+    def _execute(self, context):
         from . import preferences
 
         cooker = preferences.cooker_path(context)
@@ -487,6 +491,10 @@ class EXPORT_OT_aeron_flight_model_source(Operator, ExportHelper):
         return ExportHelper.invoke(self, context, event)
 
     def execute(self, context):
+        with flipbook_preview.suspended():
+            return self._execute(context)
+
+    def _execute(self, context):
         from . import preferences
 
         root = _check(self, context, source=True)

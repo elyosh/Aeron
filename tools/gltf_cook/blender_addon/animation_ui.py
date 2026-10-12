@@ -4,7 +4,7 @@
 import bpy
 from bpy.types import Panel, UIList
 
-from . import animation, common, libraries
+from . import animation, common, flipbook_preview, libraries
 
 _STATE_NAMES = {identifier: name for identifier, name, _ in animation.STATES}
 
@@ -136,6 +136,32 @@ class MATERIAL_PT_aeron_flipbooks(_MaterialPanel, Panel):
         row.operator("aeron.frames_set_duration", text="Set Duration…")
 
 
+class MATERIAL_PT_aeron_preview(_MaterialPanel, Panel):
+    bl_label = "Preview"
+    bl_parent_id = "MATERIAL_PT_aeron_animation"
+    bl_options = {'DEFAULT_CLOSED'}
+
+    def draw_header(self, context):
+        self.layout.prop(context.window_manager, "aeron_flipbook_preview", text="")
+
+    def draw(self, context):
+        layout = self.layout
+        playing = context.screen is not None and context.screen.is_animation_playing
+        layout.operator("screen.animation_play", text="Pause" if playing else "Play Timeline",
+                        icon='PAUSE' if playing else 'PLAY')
+        if context.window_manager.aeron_flipbook_preview:
+            if flipbook_preview.message:
+                layout.label(text=flipbook_preview.message, icon='ERROR')
+            reason = flipbook_preview.skipped.get(context.material.name)
+            if reason:
+                layout.label(text="Not shown: " + reason, icon='INFO')
+        layout.label(text="Active States")
+        states = context.scene.aeron_flight.flipbook_states
+        flow = layout.grid_flow(columns=2, even_columns=True, align=True)
+        for state, _, _ in animation.STATES[1:]:
+            flow.prop(states, flipbook_preview.state_property(state))
+
+
 class MATERIAL_PT_aeron_damage(_MaterialPanel, Panel):
     bl_label = "Hull Damage"
     bl_parent_id = "MATERIAL_PT_aeron_animation"
@@ -210,6 +236,7 @@ classes = (
     AERON_UL_library_images,
     MATERIAL_PT_aeron_animation,
     MATERIAL_PT_aeron_flipbooks,
+    MATERIAL_PT_aeron_preview,
     MATERIAL_PT_aeron_damage,
     MATERIAL_PT_aeron_libraries,
 )

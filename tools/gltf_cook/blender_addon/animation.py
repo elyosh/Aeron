@@ -70,6 +70,12 @@ def _library_search(self, context, text):
     return libraries.search_libraries(context, text)
 
 
+def _preview_update(self, context):
+    from . import flipbook_preview
+
+    flipbook_preview.schedule()
+
+
 def _owner(item, collection):
     """The element of the material's `collection` that holds `item`."""
     path = item.path_from_id()
@@ -94,24 +100,24 @@ class AeronEnergy(PropertyGroup):
 
 
 class AeronFrame(PropertyGroup):
-    key: StringProperty(name="Key", search=_frame_search, search_options={'SUGGESTION'},
+    key: StringProperty(name="Key", search=_frame_search, search_options={'SUGGESTION'}, update=_preview_update,
                         description="The frame's image, a key of the flipbook's library")
-    seconds: FloatProperty(name="Seconds", default=0.1, min=0.0, precision=3, step=1,
+    seconds: FloatProperty(name="Seconds", default=0.1, min=0.0, precision=3, step=1, update=_preview_update,
                            description="How long the frame shows")
 
 
 class AeronFlipbook(PropertyGroup):
-    state: EnumProperty(name="State", items=STATES, default="always",
+    state: EnumProperty(name="State", items=STATES, default="always", update=_preview_update,
                         description="The game state the flipbook plays on, from the moment it becomes active")
-    layer: EnumProperty(name="Layer", items=LAYERS, default="baseColor",
+    layer: EnumProperty(name="Layer", items=LAYERS, default="baseColor", update=_preview_update,
                         description="What the frames change; per layer, the first active flipbook plays")
     mode: EnumProperty(name="Mode", items=(("loop", "Loop", "Repeat"), ("once", "Once", "Hold the last frame")),
-                       default="loop")
+                       default="loop", update=_preview_update)
     library: StringProperty(name="Library", search=_library_search, search_options={'SUGGESTION'},
-                            description="The effect library of the frames")
+                            update=_preview_update, description="The effect library of the frames")
     emissive_strength: FloatProperty(name="Emissive Strength", default=1.0, min=0.0, soft_max=10.0,
-                                     description="Brightness of emissive frames")
-    unlit: FloatProperty(name="Unlit", default=0.0, min=0.0, max=1.0, subtype='FACTOR',
+                                     update=_preview_update, description="Brightness of emissive frames")
+    unlit: FloatProperty(name="Unlit", default=0.0, min=0.0, max=1.0, subtype='FACTOR', update=_preview_update,
                          description="Base colour flipbooks: the part of the frames drawn unlit, as emission")
     frames: CollectionProperty(type=AeronFrame)
     active_frame: IntProperty()
@@ -178,6 +184,9 @@ def has_animation(material):
 
 
 def clear(material):
+    from . import flipbook_preview
+
+    flipbook_preview.schedule()
     props = material.aeron_flight
     props.flipbooks.clear()
     props.flipbooks_given = props.has_damage = props.energy_override = False

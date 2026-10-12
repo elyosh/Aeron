@@ -30,9 +30,9 @@ there the libraries of the model's source tree (`<tree>/effects`, beside
 the `models/` directory holding the model) that the model names and that
 changed.
 
-`tests/roundtrip.py` checks that models import and export unchanged, and
-`tests/animation_editor.py` the animation editor and the library operators
-(run them with `--help`).
+`tests/roundtrip.py` checks that models import and export unchanged,
+`tests/animation_editor.py` the animation editor and the library operators,
+and `tests/flipbook_preview.py` the flipbook preview (run them with `--help`).
 
 ## Workflow
 
@@ -195,6 +195,20 @@ outside Blender, use Reload Animations in the model root's Material
 Animations panel (otherwise the next export writes Blender's animations back
 over the edit). Check Model reports frames without a library and, once the libraries are
 loaded, keys a library lacks or of the wrong kind.
+
+**Preview.** With the checkbox of the Aeron Animation > Preview sub-panel,
+the viewport (Material Preview or Rendered shading) shows the flipbooks as
+in the game at the timeline's frame, with the checked states active (and
+`always`). The preview follows Blender's timeline: play it (the panel's
+Play Timeline button, or Space) or scrub it to animate them; the scene's
+start frame is the flipbooks' start, and its frame range bounds how long
+they play before looping back. It shows
+flipbooks only, not hull damage or energy effects, and needs the model in a
+source tree (it loads the tree's libraries). A material is shown when it is
+a Principled BSDF whose base colour is a texture or a value; the panel says
+why another is not. The preview adds a node group and image nodes to the
+materials, which it removes when it stops, around the exports and while the
+file is saved: they never reach your files.
 
 **Effect libraries.** For a model in a source tree (`<tree>/models/<key>/`),
 the Effect Libraries sub-panel loads the tree's libraries

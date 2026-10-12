@@ -185,7 +185,10 @@ base colour and emissive changed:
    metallic and roughness (hull damage dulls the last two).
 3. Emissive: while an `emissive` frame plays, its `emissive` image
    **replaces** the material's emissive over the whole material, black
-   meaning no emission; otherwise the material's own emissive shows.
+   meaning no emission. Otherwise, while a `baseColor` frame plays from a
+   flipbook with `unlit` u above 0, the base colour c of step 1 is split:
+   c·(1 − u) is lit and c·u replaces the material's emissive. Otherwise
+   the material's own emissive shows.
 4. Screen (a material with `aeronScreen`, whose display is drawn live): a
    `baseColor` frame covers the display by its coverage where the cover's
    window shows it, and replaces the display of a screen without a cover.
