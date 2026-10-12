@@ -18,7 +18,7 @@ from bpy.types import Operator
 from bpy_extras.io_utils import ExportHelper
 from mathutils import Matrix
 
-from . import common, display, sources, validation
+from . import animation, common, display, libraries, sources, validation
 
 # Blender (x, y, z) -> glTF (x, z, -y).
 _TO_GLTF = Matrix(((1.0, 0.0, 0.0, 0.0), (0.0, 0.0, 1.0, 0.0), (0.0, -1.0, 0.0, 0.0), (0.0, 0.0, 0.0, 1.0)))
@@ -347,18 +347,25 @@ class EXPORT_OT_aeron_flight_model(Operator, ExportHelper):
                 "--mip-min-subrect", prefs.mip_min_subrect, "--quality", prefs.bc7_quality]
         if not prefs.zstd:
             argv.append("--no-zstd")
-        animations = sources.material_animations(m.get("name") for m in document.get("materials", []))
-        if animations or sources.energy_default(root) is not None:
+        library_sources = sources.library_sources(bpy.path.abspath(root.aeron_flight.source_path))
+        unsaved = sorted(image.name for image in bpy.data.images
+                         if image.is_dirty and image.filepath and library_sources and
+                         _inside(bpy.path.abspath(image.filepath), library_sources))
+        if unsaved:
+            self.report({'ERROR'}, "library images have unsaved changes, save them first (Image > Save): " +
+                        ", ".join(unsaved))
+            return {'CANCELLED'}
+        animations = animation.entries(m.get("name") for m in document.get("materials", []))
+        if animations or animation.energy_default(root) is not None:
             animation_file = sources.animation_path(scratch_gltf)
             try:
-                sources.write_animations(cooker, animation_file, animations, sources.energy_default(root))
+                sources.write_animations(cooker, animation_file, animations, animation.energy_default(root))
             except (OSError, RuntimeError) as error:
                 self.report({'ERROR'}, "animations: {}. Scratch: {}".format(error, scratch))
                 return {'CANCELLED'}
             argv += ["--animations", animation_file]
             if prefs.effects_dir:
                 argv += ["--effects-dir", bpy.path.abspath(prefs.effects_dir)]
-                library_sources = sources.library_sources(bpy.path.abspath(root.aeron_flight.source_path))
                 if library_sources:
                     argv += ["--library-sources", library_sources]
         try:
@@ -379,7 +386,28 @@ class EXPORT_OT_aeron_flight_model(Operator, ExportHelper):
         built = sources.built_libraries(completed.stderr)
         rebuilt = " (libraries rebuilt: {})".format(", ".join(built)) if built else ""
         self.report({'INFO'}, "Wrote {}{}{}".format(out_glb, rebuilt, _warnings(self.warnings)))
+        broken = _broken_models(cooker, library_sources, libraries.model_key(root), completed.stderr)
+        if broken:
+            self.report({'WARNING'}, "the rebuilt libraries no longer serve other models (their .glb shows "
+                                     "nothing for these frames and their next cook fails): " + "; ".join(broken))
         return {'FINISHED'}
+
+
+def _broken_models(cooker, effects, model, messages):
+    """The other models of the tree that name keys a cook's library rebuilds
+    removed or gave another kind, as "<library> <key> (<what>): <models>"."""
+    changes = sources.library_changes(messages)
+    if not changes or not effects:
+        return []
+    loaded = libraries._trees.get(effects)
+    if loaded is None:
+        loaded = libraries.load(cooker, effects)
+    result = []
+    for library, key, what in changes:
+        models = loaded.users_of(library, key, exclude=model)
+        if models:
+            result.append("{} {} ({}): {}".format(library, key, what, ", ".join(models)))
+    return result
 
 
 def _inside(path, directory):
@@ -495,8 +523,8 @@ class EXPORT_OT_aeron_flight_model_source(Operator, ExportHelper):
             return fail("textures: {}".format(error))
 
         # The animation file is rewritten only when the animations changed.
-        animations = sources.material_animations(m.get("name") for m in document.get("materials", []))
-        energy = sources.energy_default(root)
+        animations = animation.entries(m.get("name") for m in document.get("materials", []))
+        energy = animation.energy_default(root)
         previous = {}, None
         if animations or energy is not None or os.path.exists(animation_file):
             if not cooker:
@@ -511,7 +539,8 @@ class EXPORT_OT_aeron_flight_model_source(Operator, ExportHelper):
                 sources.write_animations(cooker, scratch_animations, animations, energy)
             except (OSError, RuntimeError) as error:
                 return fail("animations: {}".format(error))
-        animations_changed = (animations, energy) != previous
+        # At 32-bit precision: a file with more digits is not rewritten for them.
+        animations_changed = animation.float32([animations, energy]) != animation.float32(list(previous))
 
         # Everything is checked: write into the model directory.
         try:
@@ -534,6 +563,10 @@ class EXPORT_OT_aeron_flight_model_source(Operator, ExportHelper):
             return fail("writing {} failed: {}".format(model_dir, error))
         shutil.rmtree(scratch, ignore_errors=True)
         root.aeron_flight.source_path = out_gltf
+        if animations_changed:
+            # The library lists count this model's keys from its file.
+            libraries.update_model(cooker, sources.library_sources(out_gltf), os.path.basename(model_dir),
+                                   animation_file)
 
         message = "Wrote {}: {} texture(s) added".format(out_gltf, len(copies))
         if animations_changed:

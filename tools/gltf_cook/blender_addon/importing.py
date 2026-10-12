@@ -13,7 +13,7 @@ from bpy.props import StringProperty
 from bpy.types import Operator
 from bpy_extras.io_utils import ImportHelper
 
-from . import common, sources
+from . import animation, common, sources
 
 # The running import's results (None outside this add-on's imports).
 _state = None
@@ -245,7 +245,7 @@ class IMPORT_OT_aeron_flight_model(Operator, ImportHelper):
             matched = [bpy.data.materials.get(blender_name) for blender_name in state["materials"].get(name, ())]
             matched = [material for material in matched if material is not None]
             for material in matched:
-                material.aeron_flight.animation = json.dumps(entry, separators=(",", ":"))
+                animation.set_entry(material, entry)
             if not matched:
                 unmatched.append(name)
         if not state["roots"]:
@@ -253,7 +253,7 @@ class IMPORT_OT_aeron_flight_model(Operator, ImportHelper):
             return {'FINISHED'}
         root = state["roots"][0]
         root.aeron_flight.source_path = os.path.abspath(self.filepath)
-        sources.set_energy_default(root, energy)
+        animation.set_energy_default(root, energy)
         asset_extras = (document.get("asset") or {}).get("extras")
         root.aeron_flight.asset_extras = json.dumps(asset_extras) if isinstance(asset_extras, dict) else ""
         root.aeron_flight.source_names = json.dumps(sources.names(document))

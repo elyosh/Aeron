@@ -1,0 +1,296 @@
+# The source tree's effect libraries (../animated_materials.md): read through
+# the cooker for picking frames, cached for the session per tree, and written
+# through the cooker when the add-on edits them. The tree's animation files
+# are read too, to know which models use which keys: libraries are shared.
+# A model's tree is the one holding its source (sources.library_sources).
+
+import concurrent.futures
+import glob
+import json
+import os
+import subprocess
+
+import bpy
+import bpy.utils.previews
+from bpy.props import CollectionProperty, IntProperty, PointerProperty, StringProperty
+from bpy.types import PropertyGroup
+
+from . import common, sources
+
+# The input that shows an image of each kind.
+SHOWN_INPUT = {"baseColor": "baseColor", "emissive": "emissive", "damage": "factor", "mark": "baseColor",
+               "energy": "emissive"}
+# The inputs of each kind: required, then optional.
+INPUTS = {"baseColor": ("baseColor",), "emissive": ("emissive", "baseColor"), "damage": ("factor",),
+          "mark": ("baseColor",), "energy": ("emissive",)}
+KINDS = (("baseColor", "Base colour", "Painted over the base colour by its alpha"),
+         ("emissive", "Emissive", "Replaces the emissive; an optional base colour image paints over"),
+         ("damage", "Damage", "Hull damage: multiplies the base colour, its alpha dulls the surface"),
+         ("mark", "Mark", "A blast mark (the game's own effects)"),
+         ("energy", "Energy", "An energy effect (the game's own effects)"))
+
+_trees = {}
+_previews = None
+
+
+class Tree:
+    """A source tree's libraries {name: {"path": file, "images": {key: entry}}}
+    and the models naming their keys {library: {key: {model}}}."""
+
+    def __init__(self, effects):
+        self.effects = effects
+        self.libraries = {}
+        self.users = {}
+        self.errors = []
+
+    def library_path(self, name):
+        return os.path.join(self.effects, name, name + ".yaml")
+
+    def models_using(self, library):
+        return set().union(*self.users.get(library, {}).values())
+
+    def users_of(self, library, key, exclude=None):
+        return sorted(self.users.get(library, {}).get(key, set()) - {exclude})
+
+
+def effects_dir(context):
+    """The library sources of the active object's model, or "" outside a source tree."""
+    root = common.model_root(context.object) if context.object else None
+    return sources.library_sources(bpy.path.abspath(root.aeron_flight.source_path)) if root else ""
+
+
+def model_key(root):
+    """The model's key in its source tree (its directory's name)."""
+    return os.path.basename(os.path.dirname(bpy.path.abspath(root.aeron_flight.source_path)))
+
+
+def tree(context):
+    """The loaded tree of the active object's model, or None."""
+    return _trees.get(effects_dir(context))
+
+
+def tree_of(root):
+    """The loaded tree of model `root`, or None."""
+    effects = sources.library_sources(bpy.path.abspath(root.aeron_flight.source_path))
+    return _trees.get(effects) if effects else None
+
+
+def _run(cooker, argv, stdin=None):
+    completed = subprocess.run([cooker] + argv, input=stdin, capture_output=True, text=True)
+    if completed.returncode != 0:
+        raise RuntimeError((completed.stderr or "").strip() or "aeron_gltf_cook exit {}".format(
+            completed.returncode))
+    return completed.stdout
+
+
+def _read_library(cooker, path):
+    return json.loads(_run(cooker, ["--library-json", path]))
+
+
+def _model_users(cooker, path):
+    """{library: {key}} the model animation file `path` names."""
+    names = {}
+    document = json.loads(_run(cooker, ["--animations-json", path]))
+    for entry in document["materials"].values():
+        for book in entry.get("flipbooks", []):
+            names.setdefault(book.get("library", ""), set()).update(key for key, _ in book.get("frames", []))
+        damage = entry.get("damage")
+        if damage:
+            names.setdefault(damage["library"], set()).update(
+                stage for alternative in damage["alternatives"] for stage in alternative["stages"] if stage)
+    return names
+
+
+def load(cooker, effects):
+    """Reads the tree's libraries and animation files (again)."""
+    result = Tree(effects)
+    files = sorted(path for path in glob.glob(os.path.join(effects, "*", "*.yaml"))
+                   if os.path.basename(path) == os.path.basename(os.path.dirname(path)) + ".yaml")
+    models = sorted(glob.glob(os.path.join(os.path.dirname(effects), "models", "*", "*.anim.yaml")))
+    with concurrent.futures.ThreadPoolExecutor(max_workers=os.cpu_count() or 4) as pool:
+        library_jobs = {pool.submit(_read_library, cooker, path): path for path in files}
+        model_jobs = {pool.submit(_model_users, cooker, path): path for path in models}
+        for job, path in library_jobs.items():
+            try:
+                document = job.result()
+                result.libraries[document["library"]] = {"path": path, "images": document["images"]}
+            except (OSError, RuntimeError, ValueError) as error:
+                result.errors.append("{}: {}".format(path, error))
+        for job, path in model_jobs.items():
+            model = os.path.basename(os.path.dirname(path))
+            try:
+                for library, keys in job.result().items():
+                    for key in keys:
+                        result.users.setdefault(library, {}).setdefault(key, set()).add(model)
+            except (OSError, RuntimeError, ValueError) as error:
+                result.errors.append("{}: {}".format(path, error))
+    _trees[effects] = result
+    clear_icons()
+    return result
+
+
+def update_model(cooker, effects, model, path):
+    """Reads model `model`'s animation file again (after it was written)."""
+    loaded = _trees.get(effects)
+    if loaded is None:
+        return
+    for keys in loaded.users.values():
+        for models in keys.values():
+            models.discard(model)
+    if os.path.exists(path):
+        for library, keys in _model_users(cooker, path).items():
+            for key in keys:
+                loaded.users.setdefault(library, {}).setdefault(key, set()).add(model)
+
+
+def write_library(cooker, loaded, name, document):
+    """Writes library `name`'s file in its canonical form through the cooker
+    (which checks it), and reads it back. Raises RuntimeError."""
+    path = loaded.library_path(name)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    _run(cooker, ["--library-from-json", "-", path], json.dumps(document))
+    written = _read_library(cooker, path)
+    loaded.libraries[name] = {"path": path, "images": written["images"]}
+    clear_icons()
+    return path
+
+
+# ---- pickers and thumbnails ------------------------------------------------------
+
+def search_libraries(context, text):
+    loaded = tree(context)
+    return sorted(name for name in loaded.libraries if text.lower() in name) if loaded else []
+
+
+def search_keys(context, library, kind, text):
+    """The keys of `library` whose image is of `kind`, containing `text`."""
+    loaded = tree(context)
+    images = loaded.libraries.get(library, {}).get("images", {}) if loaded else {}
+    return sorted(key for key, image in images.items() if image.get("kind") == kind and text in key)
+
+
+def image_file(loaded, library, key):
+    """The PNG that shows image `key` of `library`, or ""."""
+    entry = loaded.libraries.get(library, {}).get("images", {}).get(key)
+    if entry is None:
+        return ""
+    name = entry.get(SHOWN_INPUT.get(entry.get("kind"), ""))
+    return os.path.join(os.path.dirname(loaded.libraries[library]["path"]), name) if name else ""
+
+
+def icon(context, library, key):
+    """The thumbnail of image `key` of `library`, as an icon id (0: none),
+    loaded as it is first drawn."""
+    global _previews
+    loaded = tree(context)
+    path = image_file(loaded, library, key) if loaded else ""
+    if not path or not os.path.isfile(path):
+        return 0
+    if _previews is None:
+        _previews = bpy.utils.previews.new()
+    name = library + "/" + key
+    preview = _previews.get(name) or _previews.load(name, path, 'IMAGE')
+    return preview.icon_id
+
+
+def clear_icons():
+    if _previews is not None:
+        _previews.clear()
+
+
+# ---- the lists the panels show (session data, never saved) -----------------------
+
+class AeronLibraryItem(PropertyGroup):
+    images: IntProperty()
+    models: IntProperty()
+
+
+class AeronLibraryImageItem(PropertyGroup):
+    kind: StringProperty()
+
+
+def _active_library_update(self, context):
+    sync(context)
+
+
+class AeronLibrariesState(PropertyGroup):
+    libraries: CollectionProperty(type=AeronLibraryItem)
+    active_library: IntProperty(update=_active_library_update)
+    images: CollectionProperty(type=AeronLibraryImageItem)
+    active_image: IntProperty()
+    # The keys Add Images last added, as JSON [library, [keys]], for Add
+    # Frames from Images.
+    added: StringProperty()
+
+
+def state(context):
+    return context.window_manager.aeron_libraries
+
+
+def selected_library(context):
+    current = state(context)
+    return current.libraries[current.active_library].name if 0 <= current.active_library < len(
+        current.libraries) else ""
+
+
+def selected_image(context):
+    current = state(context)
+    return current.images[current.active_image].name if 0 <= current.active_image < len(current.images) else ""
+
+
+def select(context, library, key=None):
+    """Selects `library` (and image `key`) in the lists."""
+    current = state(context)
+    for index, item in enumerate(current.libraries):
+        if item.name == library:
+            current.active_library = index
+    sync(context)
+    for index, item in enumerate(current.images):
+        if item.name == key:
+            current.active_image = index
+
+
+def sync(context):
+    """Fills the lists from the active model's loaded tree."""
+    current = state(context)
+    loaded = tree(context)
+    names = sorted(loaded.libraries) if loaded else []
+    if [item.name for item in current.libraries] != names:
+        selected = selected_library(context)
+        current.libraries.clear()
+        for name in names:
+            current.libraries.add().name = name
+        current["active_library"] = names.index(selected) if selected in names else 0
+    for item in current.libraries:
+        item.images = len(loaded.libraries[item.name]["images"])
+        item.models = len(loaded.models_using(item.name))
+    library = selected_library(context)
+    images = loaded.libraries.get(library, {}).get("images", {}) if loaded else {}
+    if [item.name for item in current.images] != sorted(images):
+        current.images.clear()
+        for key in sorted(images):
+            item = current.images.add()
+            item.name = key
+    for item in current.images:
+        item.kind = images[item.name].get("kind", "")
+    current["active_image"] = min(current.active_image, max(len(current.images) - 1, 0))
+
+
+classes = (AeronLibraryItem, AeronLibraryImageItem, AeronLibrariesState)
+
+
+def register():
+    for cls in classes:
+        bpy.utils.register_class(cls)
+    bpy.types.WindowManager.aeron_libraries = PointerProperty(type=AeronLibrariesState)
+
+
+def unregister():
+    global _previews
+    del bpy.types.WindowManager.aeron_libraries
+    for cls in reversed(classes):
+        bpy.utils.unregister_class(cls)
+    if _previews is not None:
+        bpy.utils.previews.remove(_previews)
+        _previews = None
+    _trees.clear()

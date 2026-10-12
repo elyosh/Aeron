@@ -30,8 +30,9 @@ there the libraries of the model's source tree (`<tree>/effects`, beside
 the `models/` directory holding the model) that the model names and that
 changed.
 
-`tests/roundtrip.py` checks that models import and export unchanged (run it
-with `--help`).
+`tests/roundtrip.py` checks that models import and export unchanged, and
+`tests/animation_editor.py` the animation editor and the library operators
+(run them with `--help`).
 
 ## Workflow
 
@@ -172,15 +173,51 @@ None of these change what the exports write.
 
 ## Materials
 
-A material's animation (flipbooks, hull damage, energy effects) from the
-model's animation file is kept on the material: Material properties >
-Aeron Animation shows it, and Clear Animation removes it. It follows the
-material when you rename or duplicate it, and a material that no longer
-exists drops it. The file's energy default, the energy effects of every
-material without its own, is kept on the model root (its Source panel shows
-it). To change animations, edit the animation file, then use
-Reload Animations in the model root's Source panel (otherwise the next
-export writes Blender's animations back over your edit).
+A material's animation ([format](../animated_materials.md)) is edited in
+Material properties > Aeron Animation, and written to the model's animation
+file by the source export:
+
+- **Flipbooks**: a reorderable list (per layer, the first whose state is
+  active plays), each with its state, layer, mode, library, emissive
+  strength or unlit part, and frames (key, seconds, thumbnail). By Prefix
+  adds every image of the library whose key starts with a prefix, From
+  Added the images last added to a library, and Set Duration gives all
+  frames one duration.
+- **Hull Damage**: its library, choice and placement, and alternatives of
+  three stages each, with an optional scale and offset.
+- **Energy effects**: the model's Energy Default (the model root's Object
+  properties > Material Animations), shown greyed, or with Own Energy
+  Effects the material's.
+
+The animation follows the material when you rename or duplicate it, and a
+material that no longer exists drops it. When the animation file changes
+outside Blender, use Reload Animations in the model root's Material
+Animations panel (otherwise the next export writes Blender's animations back
+over the edit). Check Model reports frames without a library and, once the libraries are
+loaded, keys a library lacks or of the wrong kind.
+
+**Effect libraries.** For a model in a source tree (`<tree>/models/<key>/`),
+the Effect Libraries sub-panel loads the tree's libraries
+(`<tree>/effects/`): key fields then offer the library's images of the
+right kind, frames show thumbnails, and each library shows how many models
+use it (libraries are shared). Library operators write the library's files
+at once, not at the source export, and Blender's undo does not revert them:
+
+- New Library and Add Images: PNG files copied into the library's
+  `frames/`, one image per file, keyed by file name. For emissive images,
+  `<key>_base_color.png` gives `<key>`'s base colour.
+- Add Blender Image: an image painted in Blender, saved as
+  `frames/<key>.png`; save later repaints with Image > Save (the `.glb`
+  export refuses unsaved library images).
+- Edit, Rename and Remove Image. Rename and Remove first list the models
+  that use the key; Rename also renames it in this model's frames, not in
+  other models' files.
+
+So a new animation is: paint the frames, Add Images, From Added on the
+material's flipbook, then the `.glb` export (which builds the changed libraries) to
+try it, and the source export to keep it. When a library rebuild removes a
+key, or changes an image's kind, that other models use, the `.glb` export
+names them: their next cook fails.
 
 The model's looks (converted paint states and skins) are material variants
 (Blender's glTF material variants). The markings list and missions name

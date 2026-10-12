@@ -36,6 +36,8 @@ import tempfile
 import urllib.parse
 
 ADDON_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# The add-on is loaded from its source directory: no bytecode caches there.
+sys.dont_write_bytecode = True
 MODULE = "bl_ext.user_default.aeron_flight_model"
 EXTENSION = "AERON_flight_model"
 TOLERANCE = 1.0e-4

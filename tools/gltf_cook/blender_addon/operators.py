@@ -1,6 +1,5 @@
 # Authoring operators.
 
-import json
 import os
 
 import bpy
@@ -8,7 +7,7 @@ from bpy.props import EnumProperty, IntProperty, StringProperty
 from bpy.types import Operator
 from mathutils import Matrix, Vector
 
-from . import common, display, preview, sources, validation
+from . import animation, common, display, preview, sources, validation
 
 
 def _component(obj):
@@ -445,10 +444,10 @@ class AERON_OT_clear_animation(Operator):
 
     @classmethod
     def poll(cls, context):
-        return context.material is not None and bool(context.material.aeron_flight.animation)
+        return context.material is not None and animation.has_animation(context.material)
 
     def execute(self, context):
-        context.material.aeron_flight.animation = ""
+        animation.clear(context.material)
         return {'FINISHED'}
 
 
@@ -480,11 +479,10 @@ class AERON_OT_reload_animations(Operator):
             except (OSError, RuntimeError) as error:
                 self.report({'ERROR'}, "cannot read {}: {}".format(path, error))
                 return {'CANCELLED'}
-        sources.set_energy_default(root, energy)
+        animation.set_energy_default(root, energy)
         materials = sources.model_materials(root)
         for material in materials:
-            entry = animations.get(material.name)
-            material.aeron_flight.animation = json.dumps(entry, separators=(",", ":")) if entry else ""
+            animation.set_entry(material, animations.get(material.name))
         unmatched = sorted(set(animations) - {material.name for material in materials})
         self.report({'WARNING'} if unmatched else {'INFO'}, "{} animated material(s){}".format(
             len(animations) - len(unmatched),

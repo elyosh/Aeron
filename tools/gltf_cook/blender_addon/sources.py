@@ -60,27 +60,6 @@ def write_animations(cooker, path, materials, energy=None):
             completed.returncode))
 
 
-def energy_default(root):
-    """The model's energy default (a list), or None."""
-    return json.loads(root.aeron_flight.energy_default) if root.aeron_flight.energy_default else None
-
-
-def set_energy_default(root, energy):
-    root.aeron_flight.energy_default = json.dumps(energy) if energy is not None else ""
-
-
-def material_animations(names):
-    """The animation entries of the Blender materials `names` that have one."""
-    import bpy
-
-    entries = {}
-    for name in names:
-        material = bpy.data.materials.get(name)
-        if material is not None and material.aeron_flight.animation:
-            entries[name] = json.loads(material.aeron_flight.animation)
-    return entries
-
-
 def library_sources(source_path):
     """The effect library sources of the source tree holding the model file
     `source_path` (<tree>/models/<key>/<key>.gltf): <tree>/effects, or ""
@@ -93,6 +72,20 @@ def library_sources(source_path):
 def built_libraries(messages):
     """The effect libraries a cook's messages say it built."""
     return re.findall(r"^\[aeron_gltf_cook\] library: ([a-z0-9_-]+): built", messages or "", re.MULTILINE)
+
+
+def library_changes(messages):
+    """What a cook's library rebuilds removed: [(library, key, what)], `what`
+    "removed" or "changed kind from <old> to <new>"."""
+    changes = []
+    for library, rest in re.findall(r"^\[aeron_gltf_cook\] library: ([a-z0-9_-]+): (\".*)$", messages or "",
+                                    re.MULTILINE):
+        key, end = json.JSONDecoder().raw_decode(rest)
+        changes.append((library, key, rest[end:].strip()))
+    for library, rest in re.findall(r"^\[aeron_gltf_cook\] library: ([a-z0-9_-]+): removed (\".*)$",
+                                    messages or "", re.MULTILINE):
+        changes.append((library, json.loads(rest), "removed"))
+    return changes
 
 
 def read_document(path):
