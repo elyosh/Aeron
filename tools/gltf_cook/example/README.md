@@ -1,7 +1,7 @@
 # Animated material example
 
 A small model whose materials animate. It shows the authoring flow
-([`../README.md`](../README.md)) and is captured by the `anim-example`
+([`../animated_materials.md`](../animated_materials.md)) and is captured by the `anim-example`
 presets of `scene_capture`.
 
 | File | Role |
@@ -13,7 +13,7 @@ presets of `scene_capture`.
 | `build.sh` | Builds the library with `aeron_gltf_cook --library` and cooks the model with `--animations`. |
 
 ```sh
-aeron/tools/effect_pack/example/build.sh cmake-build-release captures/anim-example-assets
+aeron/tools/gltf_cook/example/build.sh cmake-build-release captures/anim-example-assets
 cp aeron/tools/scene_capture/presets/anim-example*.yaml .
 cmake-build-release/scene_capture anim-example.yaml
 cmake-build-release/scene_capture anim-example-target.yaml

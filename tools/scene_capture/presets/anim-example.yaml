@@ -1,4 +1,4 @@
-# The effect_pack authoring example (aeron/tools/effect_pack/example), built
+# The animated-material example (aeron/tools/gltf_cook/example), built
 # with its build.sh into captures/anim-example-assets. Frames at 0.25 s and
 # 0.75 s: the lamps alternate; the screen animates only with the target state.
 width: 960

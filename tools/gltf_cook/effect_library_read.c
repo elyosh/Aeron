@@ -1,8 +1,8 @@
 /*
- * Reading an effect library file, <library>.yaml (README.md, "Effect
- * libraries"), for the tools that build libraries or show their images.
+ * Reading an effect library file, <library>.yaml (animated_materials.md,
+ * "Effect libraries"): aeron_gltf_cook --library and --library-json.
  */
-#include "effect_pack.h"
+#include "effect_library.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -10,23 +10,27 @@
 #include "cJSON.h"
 #include "yaml_json.h"
 
-static const char* const kKinds[EFFECT_PACK_KIND_COUNT] = { "baseColor", "emissive", "damage", "mark", "energy" };
+static const char* const kKinds[EFFECT_LIBRARY_KIND_COUNT] = { "baseColor", "emissive", "damage", "mark",
+															   "energy" };
 
 /* Per kind, its required input and its optional one, named after the
  * material channel they change. */
-static const char* const kInputs[EFFECT_PACK_KIND_COUNT][2] = {
-	{ "baseColor", NULL }, { "emissive", "baseColor" }, { "factor", NULL }, { "baseColor", NULL }, { "emissive", NULL },
+static const char* const kInputs[EFFECT_LIBRARY_KIND_COUNT][2] = {
+	{ "baseColor", NULL }, { "emissive", "baseColor" }, { "factor", NULL },
+	{ "baseColor", NULL }, { "emissive", NULL },
 };
 
-EffectPackKind EffectPack_ImageKind(const cJSON* image) {
+EffectLibraryKind EffectLibrary_ImageKind(const cJSON* image) {
 	const cJSON* kind = cJSON_GetObjectItemCaseSensitive(image, "kind");
-	for (int k = 0; k < EFFECT_PACK_KIND_COUNT && cJSON_IsString(kind); ++k)
+	for (int k = 0; k < EFFECT_LIBRARY_KIND_COUNT && cJSON_IsString(kind); ++k)
 		if (strcmp(kind->valuestring, kKinds[k]) == 0)
-			return (EffectPackKind)k;
-	return EFFECT_PACK_KIND_COUNT;
+			return (EffectLibraryKind)k;
+	return EFFECT_LIBRARY_KIND_COUNT;
 }
 
-const char* EffectPack_ImageInput(EffectPackKind kind, int optional) { return kInputs[kind][optional != 0]; }
+const char* EffectLibrary_ImageInput(EffectLibraryKind kind, int optional) {
+	return kInputs[kind][optional != 0];
+}
 
 /* Library names are file names under remaster/effects: lower-case letters,
  * digits, '_' and '-'. */
@@ -41,15 +45,16 @@ static bool valid_name(const char* s) {
 
 /* Checks image `key`: its kind, its inputs' presence, maxSize and crop. */
 static bool check_image(const char* tool, const char* key, const cJSON* entry) {
-	const EffectPackKind kind = EffectPack_ImageKind(entry);
-	if (kind == EFFECT_PACK_KIND_COUNT) {
-		fprintf(stderr, "%s: image %s: kind must be baseColor, emissive, damage, mark or energy\n", tool, key);
+	const EffectLibraryKind kind = EffectLibrary_ImageKind(entry);
+	if (kind == EFFECT_LIBRARY_KIND_COUNT) {
+		fprintf(stderr, "%s: image %s: kind must be baseColor, emissive, damage, mark or energy\n", tool,
+				key);
 		return false;
 	}
 	bool ok = true;
 	for (int optional = 0; optional < 2; ++optional) {
-		const char* field = kInputs[kind][optional];
-		const cJSON* name = field ? cJSON_GetObjectItemCaseSensitive(entry, field) : NULL;
+		const char*  field = kInputs[kind][optional];
+		const cJSON* name  = field ? cJSON_GetObjectItemCaseSensitive(entry, field) : NULL;
 		if (field && !name && !optional) {
 			fprintf(stderr, "%s: image %s: no %s\n", tool, key, field);
 			ok = false;
@@ -59,9 +64,9 @@ static bool check_image(const char* tool, const char* key, const cJSON* entry) {
 		}
 	}
 	const cJSON* max_size = cJSON_GetObjectItemCaseSensitive(entry, "maxSize");
-	if (max_size &&
-		(!cJSON_IsNumber(max_size) || max_size->valueint < 1 || max_size->valueint > EFFECT_PACK_IMAGE_MAX)) {
-		fprintf(stderr, "%s: image %s: maxSize must be 1 to %d\n", tool, key, EFFECT_PACK_IMAGE_MAX);
+	if (max_size && (!cJSON_IsNumber(max_size) || max_size->valueint < 1 ||
+					 max_size->valueint > EFFECT_LIBRARY_IMAGE_MAX)) {
+		fprintf(stderr, "%s: image %s: maxSize must be 1 to %d\n", tool, key, EFFECT_LIBRARY_IMAGE_MAX);
 		ok = false;
 	}
 	const cJSON* crop = cJSON_GetObjectItemCaseSensitive(entry, "crop");
@@ -77,7 +82,7 @@ static bool check_image(const char* tool, const char* key, const cJSON* entry) {
 	return ok;
 }
 
-cJSON* EffectPack_ReadLibrary(const char* tool, const char* file) {
+cJSON* EffectLibrary_ReadLibrary(const char* tool, const char* file) {
 	char   err[512];
 	cJSON* root = YamlJson_Load(file, err, sizeof err);
 	if (!root) {
@@ -95,8 +100,8 @@ cJSON* EffectPack_ReadLibrary(const char* tool, const char* file) {
 	cJSON_ArrayForEach(member, root) {
 		if (object && strcmp(member->string, "version") && strcmp(member->string, "library") &&
 			strcmp(member->string, "images")) {
-			fprintf(stderr, "%s: %s: unknown member %s (a library has version, library and images)\n", tool, file,
-					member->string);
+			fprintf(stderr, "%s: %s: unknown member %s (a library has version, library and images)\n", tool,
+					file, member->string);
 			ok = false;
 		}
 	}

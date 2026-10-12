@@ -45,7 +45,7 @@ run.
 | [hangar-lights.yaml](presets/hangar-lights.yaml) | An indoor `game_scene`: a converted XWAU hangar with fifteen parked fighters, lit only by point lights under its ceiling panels, for comparing local-light models; configure `asset_root` first. |
 | [hangar-tubes.yaml](presets/hangar-tubes.yaml) | `hangar-lights.yaml` with one tube light per ceiling row in place of its point lights. |
 | [hangar-one-sided.yaml](presets/hangar-one-sided.yaml) | `hangar-tubes.yaml` with one-sided tubes emitting downward, as the ceiling strips. |
-| [anim-example.yaml](presets/anim-example.yaml), [anim-example-target.yaml](presets/anim-example-target.yaml) | The authored animated-material example of `tools/effect_pack/example` at two times, without and with the `target` state. Build its assets first with `tools/effect_pack/example/build.sh <build dir> captures/anim-example-assets`. |
+| [anim-example.yaml](presets/anim-example.yaml), [anim-example-target.yaml](presets/anim-example-target.yaml) | The authored animated-material example of `tools/gltf_cook/example` at two times, without and with the `target` state. Build its assets first with `tools/gltf_cook/example/build.sh <build dir> captures/anim-example-assets`. |
 
 Start from a preset; unknown keys are rejected. The main settings are:
 

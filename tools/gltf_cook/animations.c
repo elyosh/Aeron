@@ -12,7 +12,7 @@
 #include <string.h>
 
 #include "cJSON.h"
-#include "effect_pack.h"
+#include "effect_library.h"
 #include "yaml_json.h"
 
 #define TAG "[aeron_gltf_cook] animations"
@@ -118,8 +118,8 @@ static bool build_library(Merge* m, const char* library) {
 	if (!f)
 		return true; /* not a source library: only checked */
 	fclose(f);
-	return EffectPack_BuildLibrary("[aeron_gltf_cook] library", file, library, m->effects_dir) !=
-		   EFFECT_PACK_FAILED;
+	return EffectLibrary_BuildLibrary("[aeron_gltf_cook] library", file, library, m->effects_dir) !=
+		   EFFECT_LIBRARY_FAILED;
 }
 
 /* Whether `key` is in library `library` of the effects directory. */

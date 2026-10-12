@@ -1,4 +1,4 @@
-# Effect library `examplepanel` (../README.md, "Effect libraries"): the
+# Effect library `examplepanel` (../animated_materials.md, "Effect libraries"): the
 # frames of panel.gltf's animations. aeron_gltf_cook --library builds it.
 version: 1
 library: examplepanel

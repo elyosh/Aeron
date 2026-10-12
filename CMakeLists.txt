@@ -954,7 +954,6 @@ endif()
 # CPU-only normal builder and owns its copy of the OPT parser.
 add_subdirectory(tools/imgbake)
 add_subdirectory(tools/gltf_cook)
-add_subdirectory(tools/effect_pack)
 add_subdirectory(tools/fontbake)
 
 add_library(aeron_asset STATIC

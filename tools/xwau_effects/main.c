@@ -13,10 +13,10 @@
  * Roots are searched in order, the first holding a file wins (as opt2gltf).
  *
  * Writes TREE/effects/<library>/<library>.yaml (an effect library file,
- * tools/effect_pack/README.md), each image's inputs as PNGs under frames/
- * (XWAU's rules applied: an illumination frame as its emissive and its base
- * colour with coverage, the tint and alpha mode baked in), with its size cap
- * and crop; and TREE/effects/effects.yaml (the energy effects and the
+ * tools/gltf_cook/animated_materials.md), each image's inputs as PNGs under
+ * frames/ (XWAU's rules applied: an illumination frame as its emissive and
+ * its base colour with coverage, the tint and alpha mode baked in), with its
+ * size cap and crop; and TREE/effects/effects.yaml (the energy effects and the
  * flipbooks of DAT images the game draws directly, the blast marks of group
  * 3050). The libraries are then built from the tree like any other.
  */

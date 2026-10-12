@@ -10,11 +10,11 @@
  * KHR_texture_basisu / KHR_texture_transform per-channel atlases. An
  * AERON_flight_model asset also gets cooked simulation and render data, and
  * the result is loaded back the way a game loads it before it is written.
- * --library builds an effect library (tools/effect_pack/README.md).
+ * --library builds an effect library (animated_materials.md).
  */
 
 #include "animations.h"
-#include "effect_pack.h"
+#include "effect_library.h"
 #include "flight_data.h"
 #include "gltf_cook.h"
 
@@ -85,7 +85,7 @@ static void usage(void) {
 
 /* Prints effect library file `file` as JSON on stdout, once checked. */
 static bool print_library(const char* file) {
-	cJSON* library = EffectPack_ReadLibrary(LIBRARY_TAG, file);
+	cJSON* library = EffectLibrary_ReadLibrary(LIBRARY_TAG, file);
 	char*  printed = library ? cJSON_PrintUnformatted(library) : NULL;
 	const bool ok  = printed && fputs(printed, stdout) >= 0 && fputc('\n', stdout) != EOF && fflush(stdout) == 0;
 	free(printed);
@@ -148,7 +148,7 @@ int main(int argc, char** argv) {
 	if (strcmp(argv[1], "--library") == 0) {
 		if (argc != 5 || strcmp(argv[3], "--out") != 0)
 			usage();
-		return EffectPack_BuildLibrary(LIBRARY_TAG, argv[2], NULL, argv[4]) != EFFECT_PACK_FAILED ? 0 : 1;
+		return EffectLibrary_BuildLibrary(LIBRARY_TAG, argv[2], NULL, argv[4]) != EFFECT_LIBRARY_FAILED ? 0 : 1;
 	}
 	if (strcmp(argv[1], "--library-json") == 0) {
 		if (argc != 3)

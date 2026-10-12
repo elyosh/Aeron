@@ -15,9 +15,33 @@ set_target_properties(aeron_gltf_cook_lib PROPERTIES
     C_STANDARD 11
     C_STANDARD_REQUIRED ON)
 
+# The YAML reader of effect library and model animation files
+# (animated_materials.md).
+add_library(aeron_yaml_json STATIC yaml_json.c)
+target_include_directories(aeron_yaml_json PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(aeron_yaml_json PUBLIC aeron_yaml aeron_cjson)
+
+# Effect libraries (animated_materials.md): reading a library file, building
+# it and writing it (aeron_gltf_cook --library). Apart from
+# aeron_gltf_cook_lib, which the game links too.
+add_library(aeron_effect_library STATIC
+    effect_library_read.c
+    effect_library_build.c
+    effect_library_write.c)
+target_include_directories(aeron_effect_library
+    PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}
+    PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../../third_party/xxhash)
+target_link_libraries(aeron_effect_library PUBLIC aeron_gltf_cook_lib aeron_yaml_json aeron_cjson)
+if(NOT MSVC)
+    target_link_libraries(aeron_effect_library PRIVATE m)
+endif()
+set_target_properties(aeron_effect_library PROPERTIES
+    C_STANDARD 11
+    C_STANDARD_REQUIRED ON)
+
 if(AERON_BUILD_TOOLS)
     add_executable(aeron_gltf_cook main.c flight_data.c animations.c)
-    target_link_libraries(aeron_gltf_cook PRIVATE aeron_gltf_cook_lib aeron_effect_pack_lib aeron_flight_model
+    target_link_libraries(aeron_gltf_cook PRIVATE aeron_gltf_cook_lib aeron_effect_library aeron_flight_model
         aeron_collision aeron_cjson aeron_yaml_json)
     # Cooked simulation data must be bit-identical across platforms.
     if(MSVC)

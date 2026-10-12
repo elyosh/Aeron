@@ -76,7 +76,7 @@ maps to.
 `--library` writes `<library>.yaml` (the index), and `<library>.layer.ktx2`
 and `<library>.emissive.ktx2` (the frames, as needed). The index records a
 hash of the inputs (the library file, its images and the baking version,
-`EFFECT_PACK_BAKE_VERSION` in `effect_pack.h`); a library whose index
+`EFFECT_LIBRARY_BAKE_VERSION` in `effect_library.h`); a library whose index
 already records the same is left as it is. A change to how libraries are
 baked or encoded raises that version, so every library is rebuilt once.
 

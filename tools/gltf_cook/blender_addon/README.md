@@ -37,7 +37,7 @@ with `--help`).
 
 A model's source is a directory: `<model>.gltf`, its `.bin`, its PNG
 textures (usually under `textures/`) and, when its materials are animated,
-`<model>.anim.yaml` ([format](../../effect_pack/README.md)).
+`<model>.anim.yaml` ([format](../animated_materials.md)).
 
 1. Import the model's `.gltf` with File > Import > Aeron Flight Model, and
    save your work as a `.blend`. Blender cannot read a cooked `.glb`'s

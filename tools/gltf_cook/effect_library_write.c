@@ -1,7 +1,7 @@
 /*
- * Effect image library writer (effect_pack.h).
+ * Effect image library writer (effect_library.h).
  */
-#include "effect_pack.h"
+#include "effect_library.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -12,7 +12,7 @@
 
 /* Pages of 2048 + 2048/16 texels: with 16-texel gutters, two 1024² or four
  * 512² images fit a row (a 2048² page holds one 1024² image). Every image,
- * up to EFFECT_PACK_IMAGE_MAX, is a shared rect: none needs a dedicated
+ * up to EFFECT_LIBRARY_IMAGE_MAX, is a shared rect: none needs a dedicated
  * layer. */
 #define PACK_SIZE 4096
 #define GUTTER 16
@@ -43,14 +43,15 @@ static bool encode(const ChannelAtlas* ca, const char* path) {
 	return ok;
 }
 
-static const EffectPackImage* g_sort_images;
+static const EffectLibraryImage* g_sort_images;
 
 static int cmp_key(const void* a, const void* b) {
 	return strcmp(g_sort_images[*(const size_t*)a].key, g_sort_images[*(const size_t*)b].key);
 }
 
-bool EffectPack_Write(const char* tool, const char* out_dir, const char* name, const char* source,
-					  const char* inputs, const EffectPackImage* images, size_t count, EffectPackResult* result) {
+bool EffectLibrary_Write(const char* tool, const char* out_dir, const char* name, const char* source,
+						 const char* inputs, const EffectLibraryImage* images, size_t count,
+						 EffectLibraryResult* result) {
 	size_t* order         = (size_t*)malloc((count ? count : 1) * sizeof *order);
 	int*    layer_rect    = (int*)malloc((count ? count : 1) * sizeof *layer_rect);
 	int*    emissive_rect = (int*)malloc((count ? count : 1) * sizeof *emissive_rect);
@@ -64,9 +65,9 @@ bool EffectPack_Write(const char* tool, const char* out_dir, const char* name, c
 	channel_atlas_init(&layer, AERON_GLTF_COOK_CHANNEL_BASE_COLOR);
 	channel_atlas_init(&emissive, AERON_GLTF_COOK_CHANNEL_EMISSIVE);
 	for (size_t k = 0; ok && k < count; ++k) {
-		const size_t           i   = order[k];
-		const EffectPackImage* im  = &images[i];
-		const int              max = im->max_size > 0 ? im->max_size : EFFECT_PACK_IMAGE_MAX;
+		const size_t              i   = order[k];
+		const EffectLibraryImage* im  = &images[i];
+		const int                 max = im->max_size > 0 ? im->max_size : EFFECT_LIBRARY_IMAGE_MAX;
 		if (k > 0 && strcmp(images[order[k - 1]].key, im->key) == 0) {
 			fprintf(stderr, "%s: %s: image \"%s\" given twice\n", tool, name, im->key);
 			ok = false;
@@ -86,7 +87,7 @@ bool EffectPack_Write(const char* tool, const char* out_dir, const char* name, c
 	for (int a = 0; ok && a < 2; ++a) {
 		if (!atlases[a]->rect_count)
 			continue;
-		atlases[a]->fixed_width = atlases[a]->fixed_height = EFFECT_PACK_PAGE_SIZE;
+		atlases[a]->fixed_width = atlases[a]->fixed_height = EFFECT_LIBRARY_PAGE_SIZE;
 		ok = channel_atlas_pack(atlases[a], PACK_SIZE, GUTTER) && channel_atlas_materialize(atlases[a]);
 		snprintf(path, sizeof path, "%s/%s.%s.ktx2", out_dir, name, suffix[a]);
 		ok = ok && encode(atlases[a], path);
@@ -105,11 +106,11 @@ bool EffectPack_Write(const char* tool, const char* out_dir, const char* name, c
 				fprintf(f, "source: %s\n", source);
 			if (inputs)
 				fprintf(f, "inputs: %s\n", inputs);
-			fprintf(f, "page_size: %d\nlayer_pages: %d\nemissive_pages: %d\nimages:\n", EFFECT_PACK_PAGE_SIZE,
-					layer_pages, emissive_pages);
+			fprintf(f, "page_size: %d\nlayer_pages: %d\nemissive_pages: %d\nimages:\n",
+					EFFECT_LIBRARY_PAGE_SIZE, layer_pages, emissive_pages);
 			for (size_t k = 0; k < count; ++k) {
-				const size_t           i  = order[k];
-				const EffectPackImage* im = &images[i];
+				const size_t              i  = order[k];
+				const EffectLibraryImage* im = &images[i];
 				if (layer_rect[i] < 0 && emissive_rect[i] < 0)
 					continue;
 				fprintf(f, "  \"%s\": { ", im->key);

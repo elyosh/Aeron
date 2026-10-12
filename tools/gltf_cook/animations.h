@@ -1,9 +1,9 @@
 /*
  * The animation merge of aeron_gltf_cook --animations
- * (tools/effect_pack/README.md, "Model animations"): the `materials` of a
- * model animation file written into a .gltf's material extras, before
- * cooking. Authored layer names (baseColor, emissive) become the loader's
- * (colour, illumination).
+ * (animated_materials.md, "Model animations"): the `materials` of a model
+ * animation file written into a .gltf's material extras, before cooking.
+ * Authored layer names (baseColor, emissive) become the loader's (colour,
+ * illumination).
  */
 #ifndef AERON_GLTF_COOK_ANIMATIONS_H
 #define AERON_GLTF_COOK_ANIMATIONS_H

@@ -1,4 +1,4 @@
-# Animations of panel.gltf (../README.md, "Model animations"): which frames
+# Animations of panel.gltf (../animated_materials.md, "Model animations"): which frames
 # of the examplepanel library its materials play, and when.
 # aeron_gltf_cook --animations merges them into the model.
 version: 1

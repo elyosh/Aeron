@@ -1,5 +1,5 @@
 # What a model's source holds besides what Blender keeps of a glTF: the model
-# animation file (`<model>.anim.yaml`, tools/effect_pack/README.md), kept per
+# animation file (`<model>.anim.yaml`, ../animated_materials.md), kept per
 # material; the asset extras, kept on the model root; and the names of the
 # extensions and extras the file had, so that an export losing one stops.
 # Blender is imported only where needed: tests/roundtrip.py reads files with
