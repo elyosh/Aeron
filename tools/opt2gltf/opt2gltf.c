@@ -2059,6 +2059,130 @@ static char* markings_json(const OptGltfSkins* skins, int state_count) {
 static bool build_memory(const opt_file_t* opt, const char* basename, const OptGltfBuildOptions* options,
 						 OptGltfDocument** out_document, opt_error_t* error);
 
+/* The texture views of material `m` (kViewCount of them). */
+enum { kViewCount = 21 };
+
+static void material_views(cgltf_material* m, cgltf_texture_view* views[kViewCount]) {
+	cgltf_texture_view* const all[kViewCount] = {
+		&m->pbr_metallic_roughness.base_color_texture,
+		&m->pbr_metallic_roughness.metallic_roughness_texture,
+		&m->pbr_specular_glossiness.diffuse_texture,
+		&m->pbr_specular_glossiness.specular_glossiness_texture,
+		&m->clearcoat.clearcoat_texture,
+		&m->clearcoat.clearcoat_roughness_texture,
+		&m->clearcoat.clearcoat_normal_texture,
+		&m->transmission.transmission_texture,
+		&m->specular.specular_texture,
+		&m->specular.specular_color_texture,
+		&m->volume.thickness_texture,
+		&m->sheen.sheen_color_texture,
+		&m->sheen.sheen_roughness_texture,
+		&m->iridescence.iridescence_texture,
+		&m->iridescence.iridescence_thickness_texture,
+		&m->diffuse_transmission.diffuse_transmission_texture,
+		&m->diffuse_transmission.diffuse_transmission_color_texture,
+		&m->anisotropy.anisotropy_texture,
+		&m->normal_texture,
+		&m->occlusion_texture,
+		&m->emissive_texture,
+	};
+	memcpy(views, all, sizeof all);
+}
+
+/* Leaves out the materials no primitive draws, directly or through a
+ * variant (those only the OPT's lower LODs use: the conversion keeps LOD 0),
+ * then the textures and images only they used. cgltf references them by
+ * pointer, so the arrays are compacted and the pointers moved. */
+static bool prune_unused(OptGltfDocument* document) {
+	GltfBuild*   gb = &document->gb;
+	const size_t largest =
+		gb->materials_count > gb->textures_count ? gb->materials_count : gb->textures_count;
+	const size_t count = largest > gb->images_count ? largest : gb->images_count;
+	size_t*      to    = (size_t*)malloc((count ? count : 1) * sizeof *to);
+	if (!to)
+		return false;
+
+	/* Materials. */
+	for (size_t m = 0; m < gb->materials_count; ++m)
+		to[m] = SIZE_MAX;
+	for (size_t p = 0; p < gb->primitives_count; ++p) {
+		const cgltf_primitive* prim = &gb->primitives[p];
+		if (prim->material)
+			to[prim->material - gb->materials] = 0;
+		for (size_t k = 0; k < prim->mappings_count; ++k)
+			if (prim->mappings[k].material)
+				to[prim->mappings[k].material - gb->materials] = 0;
+	}
+	size_t kept = 0;
+	for (size_t m = 0; m < gb->materials_count; ++m) {
+		if (to[m] == SIZE_MAX)
+			continue;
+		gb->materials[kept]     = gb->materials[m];
+		gb->material_anim[kept] = gb->material_anim[m];
+		to[m]                   = kept++;
+	}
+	for (size_t p = 0; p < gb->primitives_count; ++p) {
+		cgltf_primitive* prim = &gb->primitives[p];
+		if (prim->material)
+			prim->material = &gb->materials[to[prim->material - gb->materials]];
+		for (size_t k = 0; k < prim->mappings_count; ++k)
+			if (prim->mappings[k].material)
+				prim->mappings[k].material = &gb->materials[to[prim->mappings[k].material - gb->materials]];
+	}
+	gb->materials_count = kept;
+
+	/* Textures. */
+	cgltf_texture_view* views[kViewCount];
+	for (size_t t = 0; t < gb->textures_count; ++t)
+		to[t] = SIZE_MAX;
+	for (size_t m = 0; m < gb->materials_count; ++m) {
+		material_views(&gb->materials[m], views);
+		for (int v = 0; v < kViewCount; ++v)
+			if (views[v]->texture)
+				to[views[v]->texture - gb->textures] = 0;
+	}
+	kept = 0;
+	for (size_t t = 0; t < gb->textures_count; ++t) {
+		if (to[t] == SIZE_MAX)
+			continue;
+		gb->textures[kept] = gb->textures[t];
+		to[t]              = kept++;
+	}
+	for (size_t m = 0; m < gb->materials_count; ++m) {
+		material_views(&gb->materials[m], views);
+		for (int v = 0; v < kViewCount; ++v)
+			if (views[v]->texture)
+				views[v]->texture = &gb->textures[to[views[v]->texture - gb->textures]];
+	}
+	gb->textures_count = kept;
+
+	/* Images, with their pixels. */
+	for (size_t i = 0; i < gb->images_count; ++i)
+		to[i] = SIZE_MAX;
+	for (size_t t = 0; t < gb->textures_count; ++t)
+		if (gb->textures[t].image)
+			to[gb->textures[t].image - gb->images] = 0;
+	kept = 0;
+	for (size_t i = 0; i < gb->images_count; ++i) {
+		if (to[i] == SIZE_MAX) {
+			free(document->image_pixels[i].rgba);
+			continue;
+		}
+		gb->images[kept]             = gb->images[i];
+		document->image_pixels[kept] = document->image_pixels[i];
+		to[i]                        = kept++;
+	}
+	for (size_t i = gb->images_count; i < document->image_pixels_count; ++i)
+		free(document->image_pixels[i].rgba);
+	for (size_t t = 0; t < gb->textures_count; ++t)
+		if (gb->textures[t].image)
+			gb->textures[t].image = &gb->images[to[gb->textures[t].image - gb->images]];
+	gb->images_count             = kept;
+	document->image_pixels_count = kept;
+	free(to);
+	return true;
+}
+
 bool OptGltf_BuildMemory(const opt_file_t* opt, const char* basename, const OptGltfBuildOptions* options,
 						 OptGltfDocument** out_document, opt_error_t* error) {
 	if (!opt)
@@ -3445,6 +3569,9 @@ static bool build_memory(const opt_file_t* opt, const char* basename, const OptG
 	build->buffer.size = build->bin_size;
 	build->buffer.data = build->bin;
 
+	if (!prune_unused(document))
+		goto fail;
+
 	/* Final cgltf_data wiring. */
 	document->data.asset.version   = "2.0";
 	document->data.asset.generator = "opt2gltf";
@@ -3617,32 +3744,20 @@ static cJSON* energy_list(unsigned bits) {
 
 /* The model animation file of `document` (NULL when no material is
  * animated): per animated material, its entry. The energy effects most of
- * the materials the primitives use have (ties: the smaller set) become the
- * file's default; only the used materials with other effects keep their own,
- * `energy: []` for none (a material XWAU's texture-name sections never
- * reached, such as the faces without a texture). Unused materials are drawn
- * by nothing: their entries name no energy. `*ok` is cleared on failure. */
+ * the materials have (ties: the smaller set; every material is drawn, see
+ * prune_unused) become the file's default; only the materials with other
+ * effects keep their own, `energy: []` for none (a material XWAU's
+ * texture-name sections never reached, such as the faces without a
+ * texture). `*ok` is cleared on failure. */
 static cJSON* animation_file(const OptGltfDocument* document, bool* ok) {
 	const GltfBuild* gb       = &document->gb;
 	const size_t     count    = gb->materials_count;
 	cJSON**          entries  = (cJSON**)calloc(count ? count : 1, sizeof *entries);
-	bool*            used     = (bool*)calloc(count ? count : 1, sizeof *used);
 	unsigned         tally[8] = { 0 };
 	bool             any      = false;
-	if (!entries || !used) {
-		free(entries);
-		free(used);
+	if (!entries) {
 		*ok = false;
 		return NULL;
-	}
-	/* A material is used by a primitive directly or through a variant. */
-	for (size_t p = 0; p < gb->primitives_count; ++p) {
-		const cgltf_primitive* prim = &gb->primitives[p];
-		if (prim->material)
-			used[prim->material - gb->materials] = true;
-		for (size_t k = 0; k < prim->mappings_count; ++k)
-			if (prim->mappings[k].material)
-				used[prim->mappings[k].material - gb->materials] = true;
 	}
 	for (size_t m = 0; m < count; ++m) {
 		const char* members = gb->material_anim ? gb->material_anim[m] : NULL;
@@ -3656,8 +3771,7 @@ static cJSON* animation_file(const OptGltfDocument* document, bool* ok) {
 			*ok = *ok && entries[m];
 			any = true;
 		}
-		if (used[m])
-			tally[energy_bits(entries[m])]++;
+		tally[energy_bits(entries[m])]++;
 	}
 	unsigned common = 0;
 	for (unsigned bits = 1; bits < 8; ++bits)
@@ -3671,9 +3785,7 @@ static cJSON* animation_file(const OptGltfDocument* document, bool* ok) {
 	for (size_t m = 0; m < count; ++m) {
 		cJSON* entry = entries[m];
 		entries[m]   = NULL;
-		if (*ok && !used[m]) {
-			cJSON_DeleteItemFromObjectCaseSensitive(entry, "energy");
-		} else if (*ok && common) {
+		if (*ok && common) {
 			const unsigned bits = energy_bits(entry);
 			if (bits == common) {
 				cJSON_DeleteItemFromObjectCaseSensitive(entry, "energy");
@@ -3691,7 +3803,6 @@ static cJSON* animation_file(const OptGltfDocument* document, bool* ok) {
 		}
 	}
 	free(entries);
-	free(used);
 	if (!*ok) {
 		cJSON_Delete(file);
 		return NULL;

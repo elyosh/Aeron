@@ -3,7 +3,7 @@
 
 /*
  * opt2gltf — convert one OPT file to glTF 2.0 (one .gltf JSON + one
- * .bin buffer + one .png per OPT texture, written to `out_dir`).
+ * .bin buffer + one .png per OPT texture LOD 0 uses, written to `out_dir`).
  *
  * Output is faithful to every OPT datum the engine reads:
  *
@@ -43,6 +43,8 @@
  *     them via baseColorTexture. The shaded-15 base mip is what gets
  *     written (the OPT format stores per-shade mip chains; we keep
  *     only the base — generators can re-derive mips on import).
+ *     Only LOD 0 is converted: the materials no LOD 0 face draws (in any
+ *     variant), and the textures and images only they use, are left out.
  *
  * `emissive` enables self-illumination export (off by default). When set,
  * textures whose palette marks self-lit texels (the flat-ramp trick used by
