@@ -100,9 +100,11 @@ leave the model unchanged.
   their counts), with optional labels giving their ordinal and type. The
   pilot eye has a small view frustum.
 - **Descriptors**: each component's descriptor box, faint where the game
-  computes it from the collision (or render) mesh; the active component's
-  is highlighted.
-- **Targets**: the target point, joined to its component.
+  computes it from the collision (or render) mesh, aligned with the model;
+  the active component's is highlighted.
+- **Targets**: the point the game aims a component's targeting box at:
+  its target, joined to the component, with a target ID; otherwise,
+  fainter, its descriptor's center.
 - **Hinges**: the pivot, the rotation axis (red), the direction (green)
   and up (blue) axes, and an arc to each articulation's opened angle,
   named on the active component.
@@ -112,6 +114,13 @@ leave the model unchanged.
 - **Component labels**: ordinal and name.
 
 **In front** draws the markers over the model instead of hidden by it.
+
+The active component also gets gizmos for what its overlays show: drag the
+target point (with a target ID) or the hinge's pivot (Ctrl snaps, following the snapping
+settings), turn the hinge's three axes together with the dial around
+each one, and resize an authored descriptor box by its faces, edges and
+corners. A box whose center and span matched its bounds keeps them
+matched. Each drag is one undo step.
 
 ## Articulation preview
 

@@ -32,6 +32,7 @@ HARDPOINT_FAMILIES = (
 )
 _GREY = (0.7, 0.7, 0.7)
 _TARGET_COLOR = (0.9, 0.35, 0.9, 1.0)
+_CENTER_TARGET_COLOR = (0.9, 0.35, 0.9, 0.45)
 _DESCRIPTOR_COLOR = (0.35, 0.8, 0.9)
 _PIVOT_COLOR = (1.0, 0.85, 0.2, 1.0)
 _AXIS_COLORS = ((0.9, 0.3, 0.3, 1.0), (0.4, 0.85, 0.4, 1.0), (0.4, 0.6, 1.0, 1.0))  # rotation, direction, up
@@ -234,16 +235,19 @@ def _component_of(obj):
     return obj
 
 
-def _mesh_bounds(component):
-    """Bounds in the component's local space of the mesh the game computes
-    its descriptor from: the collision mesh, otherwise the render mesh."""
-    source, matrix = component, Matrix.Identity(4)
-    for child in component.children:
-        if common.role(child) == 'collision':
-            source, matrix = child, common.local_matrix(child)
-    corners = [matrix @ Vector(corner) for corner in source.bound_box]
-    return ([min(corner[axis] for corner in corners) for axis in range(3)],
-            [max(corner[axis] for corner in corners) for axis in range(3)])
+def _computed_bounds(root, component):
+    """The bounds the game computes the descriptor from when none is
+    authored, in the model's space: those of the collision mesh's
+    vertices, otherwise the render mesh's. None without vertices."""
+    source = next((child for child in component.children if common.role(child) == 'collision'), component)
+    count = len(source.data.vertices)
+    if not count:
+        return None
+    coords = numpy.empty(count * 3, dtype=numpy.float32)
+    source.data.vertices.foreach_get("co", coords)
+    matrix = numpy.array(root.matrix_world.inverted_safe() @ source.matrix_world)
+    points = coords.reshape(-1, 3) @ matrix[:3, :3].T + matrix[:3, 3]
+    return points.min(axis=0), points.max(axis=0)
 
 
 def _hinge(geometry, root, component, size, labelled):
@@ -336,17 +340,31 @@ def build(root, active, settings):
         matrix = component.matrix_world
         size = max(0.25, 0.5 * max(component.dimensions))
         if component.visible_get():
-            if settings.overlay_descriptors:
-                authored = props.has_descriptor_geometry
-                low, high = ((props.descriptor_bounds_min, props.descriptor_bounds_max) if authored
-                             else _mesh_bounds(component))
+            authored = props.has_descriptor_geometry
+            computed = None
+            if not authored and (settings.overlay_descriptors or
+                                 (settings.overlay_targets and not props.target_id)):
+                computed = _computed_bounds(root, component)
+            if settings.overlay_descriptors and (authored or computed is not None):
                 highlighted = component == active_component
                 color = (selected_color if highlighted else _DESCRIPTOR_COLOR + ((0.9,) if authored else (0.35,)))
-                geometry.box(matrix, low, high, color, thick=highlighted)
-            if settings.overlay_targets and (props.target_id or any(props.target)):
-                target = matrix @ Vector(props.target)
-                geometry.cross(target, size * 0.08, _TARGET_COLOR)
-                geometry.line(matrix.translation, target, _TARGET_COLOR)
+                if authored:
+                    geometry.box(matrix, props.descriptor_bounds_min, props.descriptor_bounds_max, color,
+                                 thick=highlighted)
+                else:
+                    geometry.box(root.matrix_world, computed[0], computed[1], color, thick=highlighted)
+            if settings.overlay_targets:
+                # The point the game aims the component's targeting box at
+                # and turns it about when it breaks off: the target with a
+                # target ID, otherwise the descriptor's center.
+                if props.target_id:
+                    target = matrix @ Vector(props.target)
+                    geometry.cross(target, size * 0.08, _TARGET_COLOR)
+                    geometry.line(matrix.translation, target, _TARGET_COLOR)
+                elif authored or computed is not None:
+                    center = (matrix @ Vector(props.descriptor_center) if authored else
+                              root.matrix_world @ Vector((computed[0] + computed[1]) * 0.5))
+                    geometry.cross(center, size * 0.08, _CENTER_TARGET_COLOR)
             if settings.overlay_hinges and props.has_rotation:
                 _hinge(geometry, root, component, size, component == active_component)
             if settings.overlay_component_labels:

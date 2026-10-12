@@ -376,6 +376,7 @@ class OBJECT_PT_aeron_component(_RolePanel, Panel):
         layout.prop(props, "tags")
         layout.prop(props, "target_id")
         row = layout.row(align=True)
+        row.active = props.target_id != 0
         row.prop(props, "target")
         row.operator("aeron.from_cursor", text="", icon='PIVOT_CURSOR').field = 'target'
 

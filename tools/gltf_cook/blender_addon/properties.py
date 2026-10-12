@@ -123,9 +123,15 @@ class AeronFlightProperties(PropertyGroup):
         name="Tags",
         description="Comma-separated game-defined tags (lower-case letters, digits, "
                     "'.' and '_'), e.g. hangarcrane.arm")
-    target_id: IntProperty(name="Target ID", default=0)
-    target: FloatVectorProperty(name="Target", size=3, subtype='TRANSLATION', unit='LENGTH',
-                                description="Target point, in the component's local space")
+    target_id: IntProperty(
+        name="Target ID", default=0,
+        description="Components sharing a nonzero ID and their mesh type are targeted as one, by the first; "
+                    "a nonzero ID also makes the game use the target point")
+    target: FloatVectorProperty(
+        name="Target", size=3, subtype='TRANSLATION', unit='LENGTH',
+        description="Where the game aims the component's targeting box and turns it about when it breaks "
+                    "off, in the component's local space; used with a target ID (otherwise the "
+                    "descriptor's center)")
     has_descriptor_geometry: BoolProperty(
         name="Authored descriptor", default=False,
         description="Store the descriptor below instead of the game computing it from the "
