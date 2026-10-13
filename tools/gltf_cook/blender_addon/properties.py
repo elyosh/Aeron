@@ -226,18 +226,18 @@ class AeronFlightProperties(PropertyGroup):
     # (JSON), and the extensions and extras names it had (JSON).
     source_path: StringProperty(
         name="Model File", subtype='FILE_PATH',
-        description="The .gltf the model was imported from or last exported to (its <model>.anim.yaml is beside it)")
+        description="The .gltf the model was imported from or last exported to")
     asset_extras: StringProperty()
     source_names: StringProperty()
-    # The animation file's energy default: the energy effects of every
-    # material without its own (animation.py), when the file gives one.
+    # The model's energy default (its AERON_flight_model `energy`): the
+    # energy effects of every material without its own (animation.py).
     energy_default_given: BoolProperty(
         name="Energy Default", description="The energy effects of every material that has none of its own")
     energy_default: PointerProperty(type=animation.AeronEnergy)
 
 
 class AeronMaterialProperties(animation.AeronAnimation, PropertyGroup):
-    """The material's entry of the model animation file (animation.py)."""
+    """The material's AERON_flight_model object (animation.py)."""
 
 
 class AeronProblem(PropertyGroup):

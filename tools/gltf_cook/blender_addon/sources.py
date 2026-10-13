@@ -1,17 +1,15 @@
-# What a model's source holds besides what Blender keeps of a glTF: the model
-# animation file (`<model>.anim.yaml`, ../animated_materials.md), kept per
-# material; the asset extras, kept on the model root; and the names of the
-# extensions and extras the file had, so that an export losing one stops.
-# Blender is imported only where needed: tests/roundtrip.py reads files with
-# it outside Blender.
+# What a model's source holds besides what Blender keeps of a glTF: the asset
+# extras, kept on the model root, and the names of the extensions, extras and
+# material AERON_flight_model members the file had, so that an export losing
+# one stops. Blender is imported only where needed: tests/roundtrip.py reads
+# files with it outside Blender.
 
 import json
 import os
 import re
 import struct
-import subprocess
 
-ANIMATION_SUFFIX = ".anim.yaml"
+EXTENSION_NAME = "AERON_flight_model"
 
 # Extensions an export may lack without losing data: Blender writes these
 # only while they hold something (a specular or emissive strength at its
@@ -23,41 +21,26 @@ OPTIONAL_EXTENSIONS = {
     "KHR_materials_variants",
     "KHR_texture_transform",
 }
-# Extras the cooker derives, or that are no longer written (the markings
-# list replaced aeronAssetVariants and aeronSkinMarkings).
-OBSOLETE_EXTRAS = {"aeronAnimBaseColor", "aeronVariants", "aeronAssetVariants", "aeronSkinMarkings"}
 _EXTRAS_LEVELS = ("asset", "scenes", "nodes", "meshes", "materials", "textures", "images")
 
 
-def animation_path(gltf_path):
-    return os.path.splitext(gltf_path)[0] + ANIMATION_SUFFIX
+def material_extensions(document):
+    """The AERON_flight_model objects of a glTF document's materials, by name."""
+    return {material.get("name"): material["extensions"][EXTENSION_NAME]
+            for material in document.get("materials", [])
+            if EXTENSION_NAME in (material.get("extensions") or {})}
 
 
-def read_animations(cooker, path):
-    """The materials of a model animation file, {name: entry}, and its
-    energy default (a list, or None), as the cooker reads and checks them.
-    Raises RuntimeError with the cooker's message."""
-    completed = subprocess.run([cooker, "--animations-json", path], capture_output=True, text=True)
-    if completed.returncode != 0:
-        raise RuntimeError((completed.stderr or "").strip() or "aeron_gltf_cook exit {}".format(
-            completed.returncode))
-    document = json.loads(completed.stdout)
-    return document["materials"], document.get("energy")
-
-
-def write_animations(cooker, path, materials, energy=None):
-    """Writes a model animation file in its canonical form through the
-    cooker, which checks it and keeps the leading comment lines of the file
-    `path` holds: `materials` {name: entry}, and the energy default (a list,
-    or None). Raises RuntimeError with the cooker's message."""
-    document = {"version": 1, "materials": materials}
-    if energy is not None:
-        document["energy"] = energy
-    completed = subprocess.run([cooker, "--animations-from-json", "-", path], input=json.dumps(document),
-                               capture_output=True, text=True)
-    if completed.returncode != 0:
-        raise RuntimeError((completed.stderr or "").strip() or "aeron_gltf_cook exit {}".format(
-            completed.returncode))
+def model_extension(document):
+    """The AERON_flight_model object of a glTF document's model root, or {}."""
+    scenes = document.get("scenes") or [{}]
+    roots = scenes[document.get("scene", 0)].get("nodes") or []
+    nodes = document.get("nodes", [])
+    for index in roots:
+        extension = (nodes[index].get("extensions") or {}).get(EXTENSION_NAME) or {}
+        if extension.get("role") == "model":
+            return extension
+    return {}
 
 
 def library_sources(source_path):
@@ -101,7 +84,8 @@ def read_document(path):
 
 
 def names(document):
-    """The extensions and extras keys of a glTF document, per level."""
+    """The extensions and extras keys of a glTF document, per level, and the
+    members of its materials' AERON_flight_model objects."""
     extras = {}
     for level in _EXTRAS_LEVELS:
         items = [document.get("asset")] if level == "asset" else document.get(level) or []
@@ -111,7 +95,11 @@ def names(document):
                 keys.update(item["extras"])
         if keys:
             extras[level] = sorted(keys)
-    return {"extensions": sorted(set(document.get("extensionsUsed", []))), "extras": extras}
+    members = set()
+    for extension in material_extensions(document).values():
+        members.update(extension)
+    return {"extensions": sorted(set(document.get("extensionsUsed", []))), "extras": extras,
+            "materialMembers": sorted(members)}
 
 
 def lost(recorded, document):
@@ -120,8 +108,9 @@ def lost(recorded, document):
     missing = ["extension " + name for name in recorded.get("extensions", [])
                if name not in now["extensions"] and name not in OPTIONAL_EXTENSIONS]
     for level, keys in recorded.get("extras", {}).items():
-        missing += ["{} extras {}".format(level, key) for key in keys
-                    if key not in now["extras"].get(level, []) and key not in OBSOLETE_EXTRAS]
+        missing += ["{} extras {}".format(level, key) for key in keys if key not in now["extras"].get(level, [])]
+    missing += ["material {} {}".format(EXTENSION_NAME, member) for member in recorded.get("materialMembers", [])
+                if member not in now["materialMembers"]]
     return missing
 
 
@@ -131,13 +120,10 @@ def check_markings(problems, root):
     import bpy
 
     try:
-        extras = json.loads(root.aeron_flight.asset_extras or "{}")
+        json.loads(root.aeron_flight.asset_extras or "{}")
     except ValueError:
         problems.error(root, "the kept asset extras are not JSON")
         return
-    if "aeronAssetVariants" in extras or "aeronSkinMarkings" in extras:
-        problems.error(root, "the source gives its looks by aeronAssetVariants or aeronSkinMarkings, which "
-                             "the markings list replaced: convert the model again")
     # Blender's glTF add-on registers its variants only once a file had some.
     variants = {variant.name: variant.variant_idx
                 for variant in getattr(bpy.data.scenes[0], "gltf2_KHR_materials_variants_variants", ())}

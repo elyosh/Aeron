@@ -11,8 +11,8 @@ Install the package for your platform, published with the game's
 releases (`aeron_flight_model-<version>-<platform>.zip`), with Edit >
 Preferences > Get Extensions > Install from Disk. Use the add-on of the
 game version you play: the `.glb` it cooks must suit the game. The package
-holds its own `aeron_gltf_cook`, which cooks `.glb` files and reads
-animation and library files.
+holds its own `aeron_gltf_cook`, which cooks `.glb` files and reads and
+writes effect library files.
 
 To build a package (with a cooker built with `AERON_GLTF_COOK_STANDALONE`,
 which needs no library of the build machine), run
@@ -36,9 +36,9 @@ and `tests/flipbook_preview.py` the flipbook preview (run them with `--help`).
 
 ## Workflow
 
-A model's source is a directory: `<model>.gltf`, its `.bin`, its PNG
-textures (usually under `textures/`) and, when its materials are animated,
-`<model>.anim.yaml` ([format](../animated_materials.md)).
+A model's source is a directory: `<model>.gltf`, its `.bin` and its PNG
+textures (usually under `textures/`). The `.gltf` holds everything else,
+the materials' animations ([format](../animated_materials.md)) included.
 
 1. Import the model's `.gltf` with File > Import > Aeron Flight Model, and
    save your work as a `.blend`. Blender cannot read a cooked `.glb`'s
@@ -53,8 +53,8 @@ textures (usually under `textures/`) and, when its materials are animated,
    you have not used yet can stay there: only what the materials use is
    exported.
 4. Export with File > Export > Aeron Flight Model Source (or the tab's
-   Export Source). It offers the imported file, and writes the `.gltf`, its
-   `.bin` and, when the animations changed, the animation file. Textures
+   Export Source). It offers the imported file, and writes the `.gltf` and
+   its `.bin`. Textures
    stay where they are; images from elsewhere, or that exist only in
    Blender, are copied into `textures/` as PNG. Nothing else in the
    directory is changed or removed.
@@ -174,8 +174,8 @@ None of these change what the exports write.
 ## Materials
 
 A material's animation ([format](../animated_materials.md)) is edited in
-Material properties > Aeron Animation, and written to the model's animation
-file by the source export:
+Material properties > Aeron Animation, and written to its
+`AERON_flight_model` object by the exports:
 
 - **Flipbooks**: a reorderable list (per layer, the first whose state is
   active plays), each with its state, layer, mode, library, emissive
@@ -190,10 +190,11 @@ file by the source export:
   Effects the material's.
 
 The animation follows the material when you rename or duplicate it, and a
-material that no longer exists drops it. When the animation file changes
-outside Blender, use Reload Animations in the model root's Material
+material that no longer exists drops it. When the `.gltf`'s animations
+change outside Blender, use Reload Animations in the model root's Material
 Animations panel (otherwise the next export writes Blender's animations back
-over the edit). Check Model reports frames without a library and, once the libraries are
+over the edit). A material's screen (a cockpit display) is kept as it was
+imported. Check Model reports frames without a library and, once the libraries are
 loaded, keys a library lacks or of the wrong kind.
 
 **Preview.** With the checkbox of the Aeron Animation > Preview sub-panel,

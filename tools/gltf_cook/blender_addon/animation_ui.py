@@ -196,7 +196,8 @@ class MATERIAL_PT_aeron_damage(_MaterialPanel, Panel):
                 column.prop(alternative, "scale")
             column.prop(alternative, "offset_mode")
             if alternative.offset_mode == 'RANGE':
-                column.prop(alternative, "offset")
+                column.prop(alternative, "offset_min")
+                column.prop(alternative, "offset_max")
         layout.operator("aeron.damage_remove", icon='X')
 
 

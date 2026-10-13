@@ -1,9 +1,12 @@
-# A material's animation, as Blender properties: its entry of the model
-# animation file (../animated_materials.md), held exactly as the format
-# expresses it, and the model root's energy default. Import and Reload
-# Animations fill them from the file; the exports build the file's entries
-# from them (entry, energy_default) and write it through the cooker.
+# A material's animation, as Blender properties: the flipbooks, hull damage
+# and energy effects of its AERON_flight_model object
+# (../../extensions/AERON_flight_model, ../animated_materials.md), held
+# exactly as the format expresses them, and the model root's energy default.
+# Import and Reload Animations fill them from the .gltf; the exports write
+# them back (extension, energy_default). A material's screen, which the
+# add-on does not edit, is kept as it was imported.
 
+import json
 import struct
 
 import bpy
@@ -137,9 +140,11 @@ class AeronDamageAlternative(PropertyGroup):
         name="Offset", default='NONE',
         items=(('NONE', "Centred", "The square is centred"),
                ('INSIDE', "Inside", "Anywhere within the texture"),
-               ('RANGE', "Range", "Moved by (x1 - x0)·r - x0 per axis, r random in [0, 1)")))
-    offset: FloatVectorProperty(name="Range", size=4, default=(-0.2, -0.2, 0.2, 0.2),
-                                description="[x0, y0, x1, y1]")
+               ('RANGE', "Range", "Moved by min + (max - min)·r per axis, r random in [0, 1)")))
+    offset_min: FloatVectorProperty(name="Min", size=2, default=(-0.2, -0.2),
+                                    description="The smallest [x, y] offset, as a fraction of the texture")
+    offset_max: FloatVectorProperty(name="Max", size=2, default=(0.2, 0.2),
+                                    description="The largest [x, y] offset, as a fraction of the texture")
 
 
 class AeronDamage(PropertyGroup):
@@ -174,6 +179,9 @@ class AeronAnimation:
         description="Give the material its own energy effects instead of the model's default (set on the "
                     "model root: Object properties > Material Animations)")
     energy: PointerProperty(type=AeronEnergy)
+    # The material's screen (its AERON_flight_model `screen`, JSON), kept as
+    # imported: the add-on does not edit screens.
+    screen: StringProperty(options={'HIDDEN'})
 
 
 # ---- conversions ---------------------------------------------------------------
@@ -230,8 +238,9 @@ def set_entry(material, entry):
                 item.scale = alternative["scale"]
             offset = alternative.get("offset")
             item.offset_mode = 'INSIDE' if offset == "inside" else 'RANGE' if offset else 'NONE'
-            if isinstance(offset, list):
-                item.offset = offset
+            if isinstance(offset, dict):
+                item.offset_min = offset["min"]
+                item.offset_max = offset["max"]
     if "energy" in entry:
         props.energy_override = True
         props.energy.set(entry["energy"])
@@ -263,7 +272,7 @@ def entry(material):
             if alternative.offset_mode == 'INSIDE':
                 out["offset"] = "inside"
             elif alternative.offset_mode == 'RANGE':
-                out["offset"] = list(alternative.offset)
+                out["offset"] = {"min": list(alternative.offset_min), "max": list(alternative.offset_max)}
             alternatives.append(out)
         result["damage"] = {"library": damage.library, "choice": damage.choice, "placement": damage.placement,
                             "alternatives": alternatives}
@@ -273,7 +282,7 @@ def entry(material):
 
 
 def entries(names):
-    """The file entries of the Blender materials `names` that have one."""
+    """The entries of the Blender materials `names` that have one."""
     result = {}
     for name in names:
         material = bpy.data.materials.get(name)
@@ -281,6 +290,38 @@ def entries(names):
         if value is not None:
             result[name] = value
     return result
+
+
+def shortest(value):
+    """`value` with each number as the shortest decimal that reads back as
+    the same 32-bit float (the properties' precision), and the defaults the
+    format leaves out (emissiveStrength 1, unlit 0) removed."""
+    if isinstance(value, dict):
+        out = {key: shortest(item) for key, item in value.items()}
+        if out.get("emissiveStrength") == 1:
+            del out["emissiveStrength"]
+        if out.get("unlit") == 0:
+            del out["unlit"]
+        return out
+    if isinstance(value, list):
+        return [shortest(item) for item in value]
+    if isinstance(value, float):
+        single = struct.unpack("f", struct.pack("f", value))[0]
+        for digits in range(1, 10):
+            text = "%.*g" % (digits, single)
+            if struct.unpack("f", struct.pack("f", float(text)))[0] == single:
+                number = float(text)
+                return int(number) if number.is_integer() else number
+    return value
+
+
+def extension(material):
+    """`material`'s AERON_flight_model object (its animation and kept
+    screen), or None when it has neither."""
+    result = shortest(entry(material) or {})
+    if material.aeron_flight.screen:
+        result["screen"] = json.loads(material.aeron_flight.screen)
+    return result or None
 
 
 def energy_default(root):

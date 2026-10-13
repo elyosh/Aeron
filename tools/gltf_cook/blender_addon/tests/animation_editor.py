@@ -6,19 +6,19 @@ Builds a scratch source tree from the animated example
 (../../example): models `panel` and `panel2`, `panel2` naming an image
 `extra` of the shared library `examplepanel` that `panel` does not. In a
 headless Blender, with this add-on, it:
-- imports `panel`: the materials' properties hold the animation file's
-  entries exactly;
+- imports `panel`: the materials' properties hold its materials'
+  AERON_flight_model objects exactly;
 - loads the tree's libraries: `extra` is named by `panel2` only;
 - creates library `newlib` with Add Images (two emissive images, one with
   its base colour) and plays them on material Screen with Add Frames from
   Images; edits frames and flipbooks, renames an image (the open model's
   frames follow), edits one and adds a Blender image; draws the panels;
-- exports the source (the cooker accepts the animation file) and the .glb
+- exports the source (its materials' objects are written back) and the .glb
   (which builds `newlib` from the tree);
 - removes `extra` from `examplepanel` and exports the .glb again: the export
   warns that `panel2` names it.
-Then it checks the files: the animation file plays newlib's frames, newlib
-is built, and the cooked model's Screen material plays them.
+Then it checks the files: the source's Screen material plays newlib's
+frames, newlib is built, and the cooked model's Screen material plays them.
 """
 
 import argparse
@@ -117,10 +117,12 @@ def blender_main(cooker, tree, effects, paint, scratch):
     check('FINISHED' in bpy.ops.import_scene.aeron_flight_model(filepath=gltf), "import")
     root = next(obj for obj in bpy.data.objects if obj.aeron_flight.role == 'model')
     bpy.context.view_layer.objects.active = root
-    materials, energy = sources.read_animations(cooker, sources.animation_path(gltf))
-    held = animation.entries(materials)
-    check(animation.float32([held, animation.energy_default(root)]) == animation.float32([materials, energy]),
-          "the properties hold the animation file")
+    document = sources.read_document(gltf)
+    materials = sources.material_extensions(document)
+    held = {name: animation.extension(bpy.data.materials[name]) for name in materials}
+    check(animation.float32(held) == animation.float32(materials) and
+          animation.energy_default(root) == sources.model_extension(document).get("energy"),
+          "the properties hold the materials' objects")
 
     with bpy.context.temp_override(object=root):
         check('FINISHED' in bpy.ops.aeron.libraries_refresh(), "load the libraries")
@@ -204,19 +206,31 @@ def blender_main(cooker, tree, effects, paint, scratch):
 
 # ---- outside -------------------------------------------------------------------
 
-def _copy_model(tree, key):
+def _copy_model(tree, key, screen=None):
+    """The example as model `key`, its Screen material's object replaced by
+    `screen` when given."""
     model = os.path.join(tree, "models", key)
     os.makedirs(model)
-    shutil.copyfile(os.path.join(EXAMPLE, "panel.gltf"), os.path.join(model, key + ".gltf"))
+    with open(os.path.join(EXAMPLE, "panel.gltf"), encoding="utf-8") as stream:
+        document = json.load(stream)
+    if screen is not None:
+        for material in document["materials"]:
+            if material["name"] == "Screen":
+                material["extensions"]["AERON_flight_model"] = screen
+    with open(os.path.join(model, key + ".gltf"), "w", encoding="utf-8") as stream:
+        json.dump(document, stream, indent=1)
     shutil.copyfile(os.path.join(EXAMPLE, "panel.bin"), os.path.join(model, "panel.bin"))
     shutil.copytree(os.path.join(EXAMPLE, "textures"), os.path.join(model, "textures"))
     return model
 
 
-def _materials(glb):
-    data = open(glb, "rb").read()
-    length = struct.unpack_from("<I", data, 12)[0]
-    return {m.get("name"): m.get("extras", {}) for m in json.loads(data[20:20 + length])["materials"]}
+def _materials(path):
+    """The AERON_flight_model objects of a .gltf's or .glb's materials, by name."""
+    data = open(path, "rb").read()
+    if data[:4] == b"glTF":
+        data = data[20:20 + struct.unpack_from("<I", data, 12)[0]]
+    return {m.get("name"): m.get("extensions", {}).get("AERON_flight_model", {})
+            for m in json.loads(data)["materials"]}
 
 
 def main():
@@ -246,11 +260,8 @@ def main():
     with open(os.path.join(library, "examplepanel.yaml"), "w", encoding="utf-8") as stream:
         stream.write(text + "  extra: { kind: baseColor, baseColor: frames/extra.png }\n")
     _copy_model(tree, "panel")
-    shutil.copyfile(os.path.join(EXAMPLE, "panel.anim.yaml"), os.path.join(tree, "models", "panel", "panel.anim.yaml"))
-    model2 = _copy_model(tree, "panel2")
-    with open(os.path.join(model2, "panel2.anim.yaml"), "w", encoding="utf-8") as stream:
-        stream.write("version: 1\nmaterials:\n  Screen: { flipbooks: [{ state: target, layer: baseColor, "
-                     "mode: loop, library: examplepanel, frames: [[extra, 1]] }] }\n")
+    _copy_model(tree, "panel2", {"flipbooks": [{"state": "target", "layer": "baseColor", "mode": "loop",
+                                                "library": "examplepanel", "frames": [["extra", 1]]}]})
     # Frames painted elsewhere: two emissive images, the first with its base colour.
     frames = os.path.join(EXAMPLE, "frames")
     shutil.copyfile(os.path.join(frames, "lights_0.png"), os.path.join(paint, "glow_0_emissive.png"))
@@ -279,18 +290,15 @@ def main():
     if not any("panel2" in line and "extra" in line for line in warned):
         failures.append("the .glb export after the removal did not name panel2")
 
-    anim = json.loads(subprocess.run([args.cooker, "--animations-json",
-                                      os.path.join(tree, "models", "panel", "panel.anim.yaml")],
-                                     capture_output=True, text=True).stdout or "{}")
-    books = anim.get("materials", {}).get("Screen", {}).get("flipbooks", [])
+    books = _materials(os.path.join(tree, "models", "panel", "panel.gltf")).get("Screen", {}).get("flipbooks", [])
     if not any(book.get("library") == "newlib" and [k for k, _ in book["frames"]] == ["glow_0", "glow_one"]
                for book in books):
-        failures.append("the animation file does not play newlib's frames on Screen")
+        failures.append("the source does not play newlib's frames on Screen")
     if not os.path.exists(os.path.join(effects, "newlib.yaml")):
         failures.append("newlib was not built")
     glb = os.path.join(scratch, "panel.glb")
     played = os.path.exists(glb) and any(book.get("library") == "newlib" for book in
-                                         _materials(glb).get("Screen", {}).get("aeronFlipbooks", []))
+                                         _materials(glb).get("Screen", {}).get("flipbooks", []))
     if not played:
         failures.append("the cooked model does not play newlib's frames on Screen")
 

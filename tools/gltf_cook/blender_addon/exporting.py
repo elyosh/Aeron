@@ -1,8 +1,9 @@
 # Export: Blender's glTF exporter writes the model's objects (filtered,
 # ordered and given their AERON_flight_model data by the hooks below, which
-# act only during this add-on's export). The flight model export cooks that
-# .gltf into the runtime .glb with aeron_gltf_cook; the source export writes
-# it into a model directory of the source tree, with its animation file.
+# act only during this add-on's export), its materials their animations and
+# screens. The flight model export cooks that .gltf into the runtime .glb
+# with aeron_gltf_cook; the source export writes it into a model directory
+# of the source tree.
 
 import filecmp
 import json
@@ -52,6 +53,9 @@ def _model_extension(root, ordinals):
             s.name: [_ordinal(ordinals, member) for member in s.members] for s in props.component_sets}
     if len(props.markings):
         extension["markings"] = [entry.variant or None for entry in props.markings]
+    energy = animation.energy_default(root)
+    if energy is not None:
+        extension["energy"] = energy
     return extension
 
 
@@ -196,7 +200,8 @@ class glTF2ExportUserExtension:
             gltf_scene.extras = gltf_scene.extras or None
 
     def gather_material_hook(self, gltf_material, blender_material, export_settings):
-        # The animation goes to the animation file, not the material.
+        # The animation and screen go to the material's extension
+        # (_material_extensions), not its extras.
         if _state is not None and isinstance(gltf_material.extras, dict):
             gltf_material.extras.pop("aeron_flight", None)
             gltf_material.extras = gltf_material.extras or None
@@ -236,6 +241,29 @@ def _png_images(gltf_path):
             json.dump(document, stream, separators=(",", ":"))
 
 
+def _material_extensions(gltf_path):
+    """Writes each material's AERON_flight_model object into the exported
+    .gltf. Blender's exporter drops empty arrays, which the object needs (an
+    `energy` of [] shows none, against the model's default), so the objects
+    are written after it."""
+    with open(gltf_path, "r", encoding="utf-8") as stream:
+        document = json.load(stream)
+    for material in document.get("materials", []):
+        blender_material = bpy.data.materials.get(material.get("name", ""))
+        extension = animation.extension(blender_material) if blender_material is not None else None
+        extensions = material.setdefault("extensions", {})
+        extensions.pop(common.EXTENSION_NAME, None)
+        if extension:
+            extensions[common.EXTENSION_NAME] = extension
+        if not extensions:
+            del material["extensions"]
+    used = document.setdefault("extensionsUsed", [])
+    if common.EXTENSION_NAME not in used:
+        used.append(common.EXTENSION_NAME)
+    with open(gltf_path, "w", encoding="utf-8") as stream:
+        json.dump(document, stream, separators=(",", ":"))
+
+
 def export_gltf(root, filepath, apply_modifiers=True, keep_originals=False):
     """Write `root`'s model as an uncooked .gltf (with its .bin and images).
     With `keep_originals`, images that have a file are referenced where they
@@ -269,6 +297,7 @@ def export_gltf(root, filepath, apply_modifiers=True, keep_originals=False):
             bpy.ops.object.mode_set(mode=mode)
     if 'FINISHED' not in result:
         raise RuntimeError("Blender's glTF export did not finish ({})".format(result))
+    _material_extensions(filepath)
     if not keep_originals:
         _png_images(filepath)
 
@@ -359,19 +388,12 @@ class EXPORT_OT_aeron_flight_model(Operator, ExportHelper):
             self.report({'ERROR'}, "library images have unsaved changes, save them first (Image > Save): " +
                         ", ".join(unsaved))
             return {'CANCELLED'}
-        animations = animation.entries(m.get("name") for m in document.get("materials", []))
-        if animations or animation.energy_default(root) is not None:
-            animation_file = sources.animation_path(scratch_gltf)
-            try:
-                sources.write_animations(cooker, animation_file, animations, animation.energy_default(root))
-            except (OSError, RuntimeError) as error:
-                self.report({'ERROR'}, "animations: {}. Scratch: {}".format(error, scratch))
-                return {'CANCELLED'}
-            argv += ["--animations", animation_file]
-            if prefs.effects_dir:
-                argv += ["--effects-dir", bpy.path.abspath(prefs.effects_dir)]
-                if library_sources:
-                    argv += ["--library-sources", library_sources]
+        # The frames the materials name are checked against the libraries,
+        # which are first built from the tree's sources.
+        if prefs.effects_dir:
+            argv += ["--effects-dir", bpy.path.abspath(prefs.effects_dir)]
+            if library_sources:
+                argv += ["--library-sources", library_sources]
         try:
             completed = subprocess.run(argv, capture_output=True, text=True)
         except OSError as error:
@@ -495,18 +517,14 @@ class EXPORT_OT_aeron_flight_model_source(Operator, ExportHelper):
             return self._execute(context)
 
     def _execute(self, context):
-        from . import preferences
-
         root = _check(self, context, source=True)
         if root is None:
             return {'CANCELLED'}
         out_gltf = os.path.abspath(bpy.path.abspath(self.filepath))
         model_dir = os.path.dirname(out_gltf)
-        animation_file = sources.animation_path(out_gltf)
         if not os.path.isdir(model_dir):
             self.report({'ERROR'}, "no such directory: " + model_dir)
             return {'CANCELLED'}
-        cooker = preferences.cooker_path(context)
         scratch = tempfile.mkdtemp(prefix="aeron_flight_model_source_")
         scratch_gltf = os.path.join(scratch, os.path.basename(out_gltf))
 
@@ -530,26 +548,6 @@ class EXPORT_OT_aeron_flight_model_source(Operator, ExportHelper):
         except (OSError, ValueError) as error:
             return fail("textures: {}".format(error))
 
-        # The animation file is rewritten only when the animations changed.
-        animations = animation.entries(m.get("name") for m in document.get("materials", []))
-        energy = animation.energy_default(root)
-        previous = {}, None
-        if animations or energy is not None or os.path.exists(animation_file):
-            if not cooker:
-                return fail("the animation file needs aeron_gltf_cook: see the add-on's preferences")
-            try:
-                if os.path.exists(animation_file):
-                    previous = sources.read_animations(cooker, animation_file)
-                scratch_animations = sources.animation_path(scratch_gltf)
-                if os.path.exists(animation_file):
-                    # The writer keeps the comment lines of the file it replaces.
-                    shutil.copyfile(animation_file, scratch_animations)
-                sources.write_animations(cooker, scratch_animations, animations, energy)
-            except (OSError, RuntimeError) as error:
-                return fail("animations: {}".format(error))
-        # At 32-bit precision: a file with more digits is not rewritten for them.
-        animations_changed = animation.float32([animations, energy]) != animation.float32(list(previous))
-
         # Everything is checked: write into the model directory.
         try:
             old_buffers = []
@@ -565,24 +563,16 @@ class EXPORT_OT_aeron_flight_model_source(Operator, ExportHelper):
                 shutil.copyfile(source, target)
             with open(out_gltf, "w", encoding="utf-8") as stream:
                 json.dump(document, stream, separators=(",", ":"))
-            if animations_changed:
-                shutil.copyfile(scratch_animations, animation_file)
         except (OSError, ValueError) as error:
             return fail("writing {} failed: {}".format(model_dir, error))
         shutil.rmtree(scratch, ignore_errors=True)
         root.aeron_flight.source_path = out_gltf
-        if animations_changed:
-            # The library lists count this model's keys from its file.
-            libraries.update_model(cooker, sources.library_sources(out_gltf), os.path.basename(model_dir),
-                                   animation_file)
-
-        message = "Wrote {}: {} texture(s) added".format(out_gltf, len(copies))
-        if animations_changed:
-            dropped = sorted(set(previous[0]) - set(animations))
-            message += ", animations of {} material(s) written".format(len(animations))
-            if dropped:
-                message += " (dropped: {})".format(", ".join(dropped))
-        self.report({'INFO'}, message + _warnings(self.warnings))
+        # The library lists count this model's keys from its file.
+        libraries.update_model(sources.library_sources(out_gltf), os.path.basename(model_dir), out_gltf)
+        animated = sum(1 for extension in sources.material_extensions(document).values()
+                       if set(extension) - {"screen"})
+        self.report({'INFO'}, "Wrote {}: {} texture(s) added, {} animated material(s){}".format(
+            out_gltf, len(copies), animated, _warnings(self.warnings)))
         return {'FINISHED'}
 
 

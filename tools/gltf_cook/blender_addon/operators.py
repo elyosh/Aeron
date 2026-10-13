@@ -1,6 +1,5 @@
 # Authoring operators.
 
-import os
 
 import bpy
 from bpy.props import EnumProperty, IntProperty, StringProperty
@@ -442,7 +441,7 @@ class AERON_OT_view_pilot_eye(Operator):
 
 
 class AERON_OT_clear_animation(Operator):
-    """Remove the material's animation (written to the model's animation file on export)"""
+    """Remove the material's animation (flipbooks, hull damage and own energy effects)"""
 
     bl_idname = "aeron.clear_animation"
     bl_label = "Clear Animation"
@@ -458,7 +457,7 @@ class AERON_OT_clear_animation(Operator):
 
 
 class AERON_OT_reload_animations(Operator):
-    """Read the model's animation file again into its materials, replacing their animations"""
+    """Read the materials' animations and the energy default again from the model's .gltf, replacing them"""
 
     bl_idname = "aeron.reload_animations"
     bl_label = "Reload Animations"
@@ -469,30 +468,20 @@ class AERON_OT_reload_animations(Operator):
         return common.role(context.object) == 'model' and bool(context.object.aeron_flight.source_path)
 
     def execute(self, context):
-        from . import preferences
-
         root = context.object
-        path = sources.animation_path(bpy.path.abspath(root.aeron_flight.source_path))
-        animations, energy = {}, None
-        if os.path.exists(path):
-            cooker = preferences.cooker_path(context)
-            if not cooker:
-                self.report({'ERROR'}, "reading the animation file needs aeron_gltf_cook: see the "
-                                       "add-on's preferences")
-                return {'CANCELLED'}
-            try:
-                animations, energy = sources.read_animations(cooker, path)
-            except (OSError, RuntimeError) as error:
-                self.report({'ERROR'}, "cannot read {}: {}".format(path, error))
-                return {'CANCELLED'}
-        animation.set_energy_default(root, energy)
-        materials = sources.model_materials(root)
-        for material in materials:
-            animation.set_entry(material, animations.get(material.name))
-        unmatched = sorted(set(animations) - {material.name for material in materials})
-        self.report({'WARNING'} if unmatched else {'INFO'}, "{} animated material(s){}".format(
-            len(animations) - len(unmatched),
-            "; no material named " + ", ".join(unmatched) if unmatched else ""))
+        path = bpy.path.abspath(root.aeron_flight.source_path)
+        try:
+            document = sources.read_document(path)
+        except (OSError, ValueError) as error:
+            self.report({'ERROR'}, "cannot read {}: {}".format(path, error))
+            return {'CANCELLED'}
+        extensions = sources.material_extensions(document)
+        animation.set_energy_default(root, sources.model_extension(document).get("energy"))
+        animated = 0
+        for material in sources.model_materials(root):
+            animation.set_entry(material, extensions.get(material.name))
+            animated += animation.has_animation(material)
+        self.report({'INFO'}, "{} animated material(s)".format(animated))
         return {'FINISHED'}
 
 

@@ -3,8 +3,8 @@
     python3 roundtrip.py --blender BLENDER --cooker AERON_GLTF_COOK
                          [--effects-dir DIR] [--keep] MODEL_DIR...
 
-Each model directory (`<key>/<key>.gltf`, its buffers, textures and
-optional `<key>.anim.yaml`) is copied to a scratch tree, imported with the
+Each model directory (`<key>/<key>.gltf`, its buffers and textures) is
+copied to a scratch tree, imported with the
 add-on in a headless Blender, and exported back over the copy with the source
 export. The result must keep:
 - the flight data: the same nodes per role, in the loader's order, with the
@@ -13,14 +13,13 @@ export. The result must keep:
   positions, winding, material). Blender holds one face per set of corners,
   so a triangle the source repeats is kept once, and of a triangle with two
   materials one is kept: both are reported, not failures;
-- every material a primitive or skin uses, with its extras and the same
-  texture file in each slot;
+- every material a primitive or skin uses, with its extras, its
+  AERON_flight_model object (animations and screen, at 32-bit precision)
+  and the same texture file in each slot;
 - the asset extras, and every extension and extras name (the add-on's guard);
-- the animation file, byte for byte (nothing was edited), except for the
-  entries of materials nothing uses, which Blender drops with them;
 - the textures: none added, none removed.
-Both the original and the result are cooked (with their animations), and
-must use the same materials and skins.
+Both the original and the result are cooked, and must use the same materials
+and skins.
 """
 
 import argparse
@@ -282,6 +281,23 @@ def _used_materials(document):
     return {document["materials"][index].get("name") for index in used}
 
 
+def _float32(value):
+    """`value` with its numbers at 32-bit precision and the defaults the
+    format leaves out (emissiveStrength 1, unlit 0) removed."""
+    if isinstance(value, dict):
+        out = {key: _float32(item) for key, item in value.items()}
+        if out.get("emissiveStrength") == 1.0:
+            del out["emissiveStrength"]
+        if out.get("unlit") == 0.0:
+            del out["unlit"]
+        return out
+    if isinstance(value, list):
+        return [_float32(item) for item in value]
+    if isinstance(value, float) or (isinstance(value, int) and not isinstance(value, bool)):
+        return struct.unpack("f", struct.pack("f", value))[0]
+    return value
+
+
 def compare_materials(original, result, directory, sources, failures):
     by_name = {material.get("name"): material for material in result.get("materials", [])}
     for material in original.get("materials", []):
@@ -290,8 +306,13 @@ def compare_materials(original, result, directory, sources, failures):
             if name in _used_materials(original):
                 failures.append("material {}: lost".format(name))
             continue
-        extras_a = {k: v for k, v in (material.get("extras") or {}).items() if k not in sources.OBSOLETE_EXTRAS}
-        _close(extras_a, by_name[name].get("extras") or {}, "material {} extras".format(name), failures)
+        _close(material.get("extras") or {}, by_name[name].get("extras") or {}, "material {} extras".format(name),
+               failures)
+        objects = [_float32((m.get("extensions") or {}).get(sources.EXTENSION_NAME) or {})
+                   for m in (material, by_name[name])]
+        if objects[0] != objects[1]:
+            failures.append("material {}: AERON_flight_model {} -> {}".format(
+                name, json.dumps(objects[0])[:200], json.dumps(objects[1])[:200]))
         files_a = _texture_files(original, directory, material)
         files_b = _texture_files(result, directory, by_name[name])
         if files_a != files_b:
@@ -305,11 +326,8 @@ def compare_materials(original, result, directory, sources, failures):
 
 def _cooked(cooker, gltf, effects_dir, out):
     argv = [cooker, gltf, "--out", out, "--quality", "fast"]
-    animations = os.path.splitext(gltf)[0] + ".anim.yaml"
-    if os.path.exists(animations):
-        argv += ["--animations", animations]
-        if effects_dir:
-            argv += ["--effects-dir", effects_dir]
+    if effects_dir:
+        argv += ["--effects-dir", effects_dir]
     completed = subprocess.run(argv, capture_output=True, text=True)
     if completed.returncode != 0:
         return None, (completed.stderr or completed.stdout).strip().splitlines()[-1:]
@@ -329,13 +347,9 @@ def roundtrip(args, model_dir, scratch, notes):
     copy = os.path.join(scratch, "models", key)
     shutil.copytree(model_dir, copy)
     gltf = os.path.join(copy, key + ".gltf")
-    animations = os.path.join(copy, key + ".anim.yaml")
     original = _sources().read_document(gltf)
     geometry = _geometry(original, copy)
     textures_before = [path for path in _listing(copy) if path.startswith("textures" + os.sep)]
-    animation_bytes = open(animations, "rb").read() if os.path.exists(animations) else None
-    if animation_bytes is not None:
-        shutil.copyfile(animations, os.path.join(scratch, key + ".anim.yaml"))
     cooked_before, error = _cooked(args.cooker, gltf, args.effects_dir, os.path.join(scratch, key + ".before.glb"))
     if error:
         return ["the original does not cook: {}".format(error)]
@@ -361,15 +375,6 @@ def roundtrip(args, model_dir, scratch, notes):
         failures.append("textures: added {}, removed {}".format(
             sorted(set(textures_after) - set(textures_before))[:5],
             sorted(set(textures_before) - set(textures_after))[:5]))
-    after = open(animations, "rb").read() if os.path.exists(animations) else None
-    if after != animation_bytes:
-        read = lambda path: _sources().read_animations(args.cooker, path)
-        before = read(os.path.join(scratch, key + ".anim.yaml"))
-        used = _used_materials(original)
-        if read(animations) != ({name: entry for name, entry in before[0].items() if name in used}, before[1]):
-            failures.append("the animation file changed")
-        else:
-            notes.append("animations of unused materials dropped: " + ", ".join(sorted(set(before[0]) - used)))
     cooked_after, error = _cooked(args.cooker, gltf, args.effects_dir, os.path.join(scratch, key + ".after.glb"))
     if error:
         failures.append("the result does not cook: {}".format(error))

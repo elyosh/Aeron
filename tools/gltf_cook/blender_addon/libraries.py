@@ -1,8 +1,9 @@
 # The source tree's effect libraries (../animated_materials.md): read through
 # the cooker for picking frames, cached for the session per tree, and written
-# through the cooker when the add-on edits them. The tree's animation files
-# are read too, to know which models use which keys: libraries are shared.
-# A model's tree is the one holding its source (sources.library_sources).
+# through the cooker when the add-on edits them. The tree's models (their
+# materials' animations) are read too, to know which models use which keys:
+# libraries are shared. A model's tree is the one holding its source
+# (sources.library_sources).
 
 import concurrent.futures
 import glob
@@ -87,11 +88,10 @@ def _read_library(cooker, path):
     return json.loads(_run(cooker, ["--library-json", path]))
 
 
-def _model_users(cooker, path):
-    """{library: {key}} the model animation file `path` names."""
+def _model_users(path):
+    """{library: {key}} the materials of the model .gltf `path` name."""
     names = {}
-    document = json.loads(_run(cooker, ["--animations-json", path]))
-    for entry in document["materials"].values():
+    for entry in sources.material_extensions(sources.read_document(path)).values():
         for book in entry.get("flipbooks", []):
             names.setdefault(book.get("library", ""), set()).update(key for key, _ in book.get("frames", []))
         damage = entry.get("damage")
@@ -102,14 +102,15 @@ def _model_users(cooker, path):
 
 
 def load(cooker, effects):
-    """Reads the tree's libraries and animation files (again)."""
+    """Reads the tree's libraries and models (again)."""
     result = Tree(effects)
     files = sorted(path for path in glob.glob(os.path.join(effects, "*", "*.yaml"))
                    if os.path.basename(path) == os.path.basename(os.path.dirname(path)) + ".yaml")
-    models = sorted(glob.glob(os.path.join(os.path.dirname(effects), "models", "*", "*.anim.yaml")))
+    models = sorted(path for path in glob.glob(os.path.join(os.path.dirname(effects), "models", "*", "*.gltf"))
+                    if os.path.basename(path) == os.path.basename(os.path.dirname(path)) + ".gltf")
     with concurrent.futures.ThreadPoolExecutor(max_workers=os.cpu_count() or 4) as pool:
         library_jobs = {pool.submit(_read_library, cooker, path): path for path in files}
-        model_jobs = {pool.submit(_model_users, cooker, path): path for path in models}
+        model_jobs = {pool.submit(_model_users, path): path for path in models}
         for job, path in library_jobs.items():
             try:
                 document = job.result()
@@ -129,8 +130,8 @@ def load(cooker, effects):
     return result
 
 
-def update_model(cooker, effects, model, path):
-    """Reads model `model`'s animation file again (after it was written)."""
+def update_model(effects, model, path):
+    """Reads model `model`'s .gltf `path` again (after it was written)."""
     loaded = _trees.get(effects)
     if loaded is None:
         return
@@ -138,7 +139,7 @@ def update_model(cooker, effects, model, path):
         for models in keys.values():
             models.discard(model)
     if os.path.exists(path):
-        for library, keys in _model_users(cooker, path).items():
+        for library, keys in _model_users(path).items():
             for key in keys:
                 loaded.users.setdefault(library, {}).setdefault(key, set()).add(model)
 

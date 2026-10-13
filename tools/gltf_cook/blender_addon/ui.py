@@ -294,7 +294,7 @@ class OBJECT_PT_aeron_material_animations(_RolePanel, Panel):
     def draw(self, context):
         props = context.object.aeron_flight
         layout = self.layout
-        # The animation file's energy default (animation.py).
+        # The model's energy default (animation.py).
         layout.prop(props, "energy_default_given")
         row = layout.row(align=True)
         row.enabled = props.energy_default_given

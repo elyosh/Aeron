@@ -206,7 +206,7 @@ def main():
     shutil.copyfile(os.path.join(EXAMPLE, "examplepanel.yaml"), os.path.join(library, "examplepanel.yaml"))
     model = os.path.join(tree, "models", "panel")
     os.makedirs(model)
-    for name in ("panel.gltf", "panel.bin", "panel.anim.yaml"):
+    for name in ("panel.gltf", "panel.bin"):
         shutil.copyfile(os.path.join(EXAMPLE, name), os.path.join(model, name))
     shutil.copytree(os.path.join(EXAMPLE, "textures"), os.path.join(model, "textures"))
 

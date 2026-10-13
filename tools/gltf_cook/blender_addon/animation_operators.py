@@ -1,7 +1,7 @@
 # Operators of the material animation editor (animation.py) and of the
 # source tree's effect libraries (libraries.py). Animation operators edit the
-# material's properties, written to the model's animation file by the source
-# export. Library operators write the library's files at once (its
+# material's properties, written to its AERON_flight_model object by the
+# exports. Library operators write the library's files at once (its
 # <library>.yaml through the cooker, and the PNGs of its frames/): a library
 # is the tree's, shared by models, so Blender's undo does not revert them.
 
