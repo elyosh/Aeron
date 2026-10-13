@@ -94,19 +94,19 @@ static int compare_profiles(const void* a, const void* b) {
 
 /* The `ObjectProfile_fg_<N> = <profile>` selections of mission `base`, by
  * flight group. */
-static bool profiles(const XwauRoots* roots, const char* base, Profile** out, size_t* count) {
+static bool profiles(const char* game, const char* base, Profile** out, size_t* count) {
 	*out   = NULL;
 	*count = 0;
 	char      rel[1100], path[1024];
 	XwauLines lines;
 	if (!PathFormat(rel, sizeof rel, "%s_Objects.txt", base) ||
-		!XwauLines_Read(XwauRoots_FindFile(roots, rel, path, sizeof path) ? path : NULL, "", XWAU_RULES_CPP,
+		!XwauLines_Read(Xwau_FindFile(game, rel, path, sizeof path) ? path : NULL, "", XWAU_RULES_CPP,
 						&lines))
 		return false;
 	bool ok = true;
 	if (!lines.count) {
 		ok = PathFormat(rel, sizeof rel, "%s.ini", base) &&
-			 XwauLines_Read(XwauRoots_FindFile(roots, rel, path, sizeof path) ? path : NULL, "Objects",
+			 XwauLines_Read(Xwau_FindFile(game, rel, path, sizeof path) ? path : NULL, "Objects",
 							XWAU_RULES_CPP, &lines);
 	}
 	static const char kPrefix[] = "objectprofile_", kFgPrefix[] = "objectprofile_fg_";
@@ -188,17 +188,13 @@ static void free_skin_models(SkinModels* s) {
 	memset(s, 0, sizeof *s);
 }
 
-/* The models with skins: the OPTs of the roots' FlightModels, the first
- * root's for a name, by name. */
-static bool load_skin_models(const XwauRoots* roots, const XwauMissions* missions, SkinModels* out) {
+/* The models with skins: the OPTs of FlightModels, by name. */
+static bool load_skin_models(const char* game, const XwauMissions* missions, SkinModels* out) {
 	memset(out, 0, sizeof *out);
-	out->scratch   = (XwauMarkings*)malloc(XWAU_SKINS_MAX_MARKINGS * sizeof *out->scratch);
-	bool      ok   = out->scratch != NULL;
-	XwauLines seen = { 0 };
-	for (int r = 0; ok && r < roots->count; ++r) {
-		char dir[1024];
-		if (!XwauRoots_FindDir(roots, r, "FlightModels", dir, sizeof dir))
-			continue;
+	out->scratch = (XwauMarkings*)malloc(XWAU_SKINS_MAX_MARKINGS * sizeof *out->scratch);
+	bool ok      = out->scratch != NULL;
+	char dir[1024];
+	if (Xwau_FindDir(game, "FlightModels", dir, sizeof dir)) {
 		size_t count   = 0;
 		char** entries = ListDir(dir, true, &count);
 		for (size_t i = 0; ok && i < count; ++i) {
@@ -207,22 +203,12 @@ static bool load_skin_models(const XwauRoots* roots, const XwauMissions* mission
 			if (len <= 4 || strcasecmp(entries[i] + len - 4, ".opt") != 0 || len - 4 >= sizeof key)
 				continue;
 			LowerCopy(key, len - 3, entries[i]);
-			bool known = false;
-			for (size_t k = 0; !known && k < seen.count; ++k)
-				known = strcmp(seen.items[k], key) == 0;
 			char path[2048];
-			if (known || !PathFormat(path, sizeof path, "%s/%s", dir, entries[i]) || !IsFile(path))
+			if (!PathFormat(path, sizeof path, "%s/%s", dir, entries[i]) || !IsFile(path))
 				continue;
-			char*  copy = StrDup(key);
-			char** slot = copy ? ARRAY_PUSH(seen.items, seen.count) : NULL;
-			if (slot)
-				*slot = copy;
-			else
-				free(copy);
-			ok              = slot != NULL;
 			SkinModel model = { 0 };
 			snprintf(model.key, sizeof model.key, "%s", key);
-			ok = ok && XwauSkins_Names(roots, key, &model.skins);
+			ok = XwauSkins_Names(game, key, &model.skins);
 			if (!ok || !model.skins.exists) {
 				XwauSkins_FreeNames(&model.skins);
 				continue;
@@ -253,7 +239,6 @@ static bool load_skin_models(const XwauRoots* roots, const XwauMissions* mission
 		}
 		FreeList(entries, count);
 	}
-	XwauLines_Free(&seen);
 	if (ok && out->count)
 		qsort(out->models, out->count, sizeof *out->models, compare_skin_models);
 	return ok;
@@ -440,7 +425,7 @@ static bool write_mission(const char* path, const char* base, const Profile* pro
 
 /* The selections of mission `name` of folder `dir`, written when it has
  * some. */
-static bool import_mission(const XwauRoots* roots, const XwauMissions* missions, const XwauRoots* stock_roots,
+static bool import_mission(const char* game, const XwauMissions* missions, const char* stock_game,
 						   const char* dir, const char* name, const char* out, SkinModels* skin_models,
 						   bool* skins_loaded, Totals* totals) {
 	char base[1100];
@@ -451,10 +436,10 @@ static bool import_mission(const XwauRoots* roots, const XwauMissions* missions,
 	SkinChoice* skins         = NULL;
 	size_t      skin_count    = 0;
 	XwauLines   lines         = { 0 };
-	bool        ok            = profiles(roots, base, &profile_list, &profile_count) &&
-								XwauMissions_OwnSkinLines(roots, base, &lines);
+	bool        ok =
+		profiles(game, base, &profile_list, &profile_count) && XwauMissions_OwnSkinLines(game, base, &lines);
 	if (ok && lines.count && !*skins_loaded) {
-		ok            = load_skin_models(roots, missions, skin_models);
+		ok            = load_skin_models(game, missions, skin_models);
 		*skins_loaded = true;
 	}
 	ok = ok && (!lines.count || skin_choices(skin_models, &lines, base, &skins, &skin_count));
@@ -472,8 +457,8 @@ static bool import_mission(const XwauRoots* roots, const XwauMissions* missions,
 
 	char       rel[1200], xwau_path[1024], stock_path[1024];
 	const bool named     = PathFormat(rel, sizeof rel, "%s.tie", base);
-	const bool has_xwau  = named && XwauRoots_FindFile(roots, rel, xwau_path, sizeof xwau_path);
-	const bool has_stock = named && XwauRoots_FindFile(stock_roots, rel, stock_path, sizeof stock_path);
+	const bool has_xwau  = named && Xwau_FindFile(game, rel, xwau_path, sizeof xwau_path);
+	const bool has_stock = named && Xwau_FindFile(stock_game, rel, stock_path, sizeof stock_path);
 	Tie        xwau = { 0 }, stock = { 0 };
 	if (has_xwau)
 		xwau.groups = XwauTie_FlightGroups(xwau_path, &xwau.count);
@@ -534,18 +519,17 @@ static bool import_mission(const XwauRoots* roots, const XwauMissions* missions,
 	return ok;
 }
 
-bool XwauMissionFiles_Write(const XwauRoots* roots, const XwauMissions* missions, const char* stock_game,
+bool XwauMissionFiles_Write(const char* game, const XwauMissions* missions, const char* stock_game,
 							const char* out) {
-	const XwauRoots stock_roots  = { { stock_game }, 1 };
-	SkinModels      skin_models  = { 0 };
-	bool            skins_loaded = false;
-	Totals          totals       = { 0 };
-	bool            ok           = true;
+	SkinModels skin_models  = { 0 };
+	bool       skins_loaded = false;
+	Totals     totals       = { 0 };
+	bool       ok           = true;
 	for (size_t d = 0; ok && d < 2; ++d) {
 		XwauLines names;
-		ok = XwauMissions_Names(roots, kMissionDirs[d], &names);
+		ok = XwauMissions_Names(game, kMissionDirs[d], &names);
 		for (size_t n = 0; ok && n < names.count; ++n)
-			ok = import_mission(roots, missions, &stock_roots, kMissionDirs[d], names.items[n], out,
+			ok = import_mission(game, missions, stock_game, kMissionDirs[d], names.items[n], out,
 								&skin_models, &skins_loaded, &totals);
 		XwauLines_Free(&names);
 	}

@@ -47,10 +47,9 @@
  *     replaced by one at the eye.
  *
  * XWAU mode converts X-Wing Alliance Upgrade models with everything XWAU
- * gives them. The roots are layered game directories (an installation, or
- * unpacked package groups), searched in order with case-insensitive paths:
- * an update comes before the release it updates. Stored normals are used
- * per corner. For each OPT:
+ * gives them, read from an XWAU installation (the game folder XWAU is
+ * installed into) with case-insensitive paths. Stored normals are used per
+ * corner. For each OPT:
  *   - Materials/<basename>.mat (on top of Materials/DefaultGlobalMaterial.mat)
  *     gives each texture's material and normal map, read from the DAT image
  *     it names. The converter then reproduces that renderer's shading in
@@ -80,14 +79,14 @@ typedef struct ModelConversion {
 	float smooth_angle; /* stock mode: degrees, 0 to 180; negative: 90 */
 	bool  xwau;
 	/* XWAU mode (ModelConversion_InitXwau). */
-	XwauRoots     roots;
+	const char*   game;   /* the XWAU installation */
 	XwauMatParams global; /* Materials/DefaultGlobalMaterial.mat, else code defaults */
 	XwauMissions* missions;
 } ModelConversion;
 
-/* XWAU mode over `roots`: reads the global material and the missions.
- * False when out of memory (reported). */
-bool ModelConversion_InitXwau(ModelConversion* mc, const XwauRoots* roots);
+/* XWAU mode over the installation `game`: reads the global material and
+ * the missions. False when out of memory (reported). */
+bool ModelConversion_InitXwau(ModelConversion* mc, const char* game);
 void ModelConversion_Free(ModelConversion* mc);
 
 /* Converts the OPT at `opt_path`, named `basename`, into <out_dir> as

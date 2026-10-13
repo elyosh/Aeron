@@ -86,14 +86,13 @@ static void report(const XwauMissions* m, const char* base, const char* format, 
 
 /* ---- Skin contexts ------------------------------------------------------------ */
 
-static bool global_skin_lines(const XwauRoots* roots, XwauLines* out) {
+static bool global_skin_lines(const char* game, XwauLines* out) {
 	char path[1024];
-	if (!XwauLines_Read(XwauRoots_FindFile(roots, "FlightModels/Skins.txt", path, sizeof path) ? path : NULL,
-						"", XWAU_RULES_CS, out))
+	if (!XwauLines_Read(Xwau_FindFile(game, "FlightModels/Skins.txt", path, sizeof path) ? path : NULL, "",
+						XWAU_RULES_CS, out))
 		return false;
 	return out->count ||
-		   XwauLines_Read(XwauRoots_FindFile(roots, "FlightModels/default.ini", path, sizeof path) ? path
-																								   : NULL,
+		   XwauLines_Read(Xwau_FindFile(game, "FlightModels/default.ini", path, sizeof path) ? path : NULL,
 						  "Skins", XWAU_RULES_CS, out);
 }
 
@@ -110,15 +109,13 @@ static bool copy_lines(const XwauLines* from, XwauLines* to) {
 
 /* The missions with a .ini or _Skins.txt: "<dir>/<base>" as first found,
  * sorted by its lower case. */
-static bool skin_missions(const XwauRoots* roots, XwauLines* out) {
+static bool skin_missions(const char* game, XwauLines* out) {
 	memset(out, 0, sizeof *out);
 	XwauLines keys = { 0 };
 	bool      ok   = true;
 	for (size_t d = 0; ok && d < 2; ++d) {
-		for (int r = 0; ok && r < roots->count; ++r) {
-			char dir[1024];
-			if (!XwauRoots_FindDir(roots, r, kMissionDirs[d], dir, sizeof dir))
-				continue;
+		char dir[1024];
+		if (Xwau_FindDir(game, kMissionDirs[d], dir, sizeof dir)) {
 			size_t count   = 0;
 			char** entries = ListDir(dir, true, &count);
 			for (size_t i = 0; ok && i < count; ++i) {
@@ -163,11 +160,11 @@ static bool skin_missions(const XwauRoots* roots, XwauLines* out) {
 	return ok;
 }
 
-static bool load_skin_contexts(const XwauRoots* roots, XwauMissions* m) {
+static bool load_skin_contexts(const char* game, XwauMissions* m) {
 	XwauLines global, missions;
-	if (!global_skin_lines(roots, &global))
+	if (!global_skin_lines(game, &global))
 		return false;
-	if (!skin_missions(roots, &missions)) {
+	if (!skin_missions(game, &missions)) {
 		XwauLines_Free(&global);
 		return false;
 	}
@@ -181,7 +178,7 @@ static bool load_skin_contexts(const XwauRoots* roots, XwauMissions* m) {
 	for (size_t i = 0; ok && i < missions.count; ++i) {
 		/* The mission's own lines, else the global ones. */
 		XwauLines* lines = &m->contexts[m->context_count];
-		ok               = XwauMissions_OwnSkinLines(roots, missions.items[i], lines);
+		ok               = XwauMissions_OwnSkinLines(game, missions.items[i], lines);
 		if (ok && !lines->count)
 			ok = copy_lines(&m->contexts[0], lines);
 		m->context_count += ok;
@@ -191,18 +188,17 @@ static bool load_skin_contexts(const XwauRoots* roots, XwauMissions* m) {
 	return ok;
 }
 
-bool XwauMissions_OwnSkinLines(const XwauRoots* roots, const char* base, XwauLines* out) {
+bool XwauMissions_OwnSkinLines(const char* game, const char* base, XwauLines* out) {
 	char rel[1100], path[1024];
 	if (!PathFormat(rel, sizeof rel, "%s_Skins.txt", base) ||
-		!XwauLines_Read(XwauRoots_FindFile(roots, rel, path, sizeof path) ? path : NULL, "", XWAU_RULES_CS,
-						out))
+		!XwauLines_Read(Xwau_FindFile(game, rel, path, sizeof path) ? path : NULL, "", XWAU_RULES_CS, out))
 		return false;
 	if (out->count)
 		return true;
 	if (!PathFormat(rel, sizeof rel, "%s.ini", base))
 		return false;
-	return XwauLines_Read(XwauRoots_FindFile(roots, rel, path, sizeof path) ? path : NULL, "Skins",
-						  XWAU_RULES_CS, out);
+	return XwauLines_Read(Xwau_FindFile(game, rel, path, sizeof path) ? path : NULL, "Skins", XWAU_RULES_CS,
+						  out);
 }
 
 size_t XwauMissions_SkinContextCount(const XwauMissions* missions) { return missions->context_count; }
@@ -213,13 +209,11 @@ const XwauLines* XwauMissions_SkinContext(const XwauMissions* missions, size_t i
 
 /* ---- Articulation lists ------------------------------------------------------- */
 
-bool XwauMissions_Names(const XwauRoots* roots, const char* dir_name, XwauLines* out) {
+bool XwauMissions_Names(const char* game, const char* dir_name, XwauLines* out) {
 	memset(out, 0, sizeof *out);
 	bool ok = true;
-	for (int r = 0; ok && r < roots->count; ++r) {
-		char dir[1024];
-		if (!XwauRoots_FindDir(roots, r, dir_name, dir, sizeof dir))
-			continue;
+	char dir[1024];
+	if (Xwau_FindDir(game, dir_name, dir, sizeof dir)) {
 		size_t count   = 0;
 		char** entries = ListDir(dir, false, &count);
 		for (size_t i = 0; ok && i < count; ++i) {
@@ -341,18 +335,18 @@ static const struct {
 
 /* The start lines "fg, N, close_SFoils, 1" and "fg, N, open_LandingGears, 1"
  * of mission `base` (<mission>.txt, else [mission_tie] of <mission>.ini). */
-static bool start_lines(const XwauRoots* roots, const XwauMissions* m, const char* base,
-						FlightGroupLists** fgs, size_t* count) {
+static bool start_lines(const char* game, const XwauMissions* m, const char* base, FlightGroupLists** fgs,
+						size_t* count) {
 	char      rel[1100], path[1024];
 	XwauLines lines;
 	if (!PathFormat(rel, sizeof rel, "%s.txt", base) ||
-		!XwauLines_Read(XwauRoots_FindFile(roots, rel, path, sizeof path) ? path : NULL, "", XWAU_RULES_CPP,
+		!XwauLines_Read(Xwau_FindFile(game, rel, path, sizeof path) ? path : NULL, "", XWAU_RULES_CPP,
 						&lines))
 		return false;
 	bool ok = true;
 	if (!lines.count) {
 		ok = PathFormat(rel, sizeof rel, "%s.ini", base) &&
-			 XwauLines_Read(XwauRoots_FindFile(roots, rel, path, sizeof path) ? path : NULL, "mission_tie",
+			 XwauLines_Read(Xwau_FindFile(game, rel, path, sizeof path) ? path : NULL, "mission_tie",
 							XWAU_RULES_CPP, &lines);
 	}
 	for (size_t i = 0; ok && i < lines.count; ++i) {
@@ -386,25 +380,23 @@ static bool start_lines(const XwauRoots* roots, const XwauMissions* m, const cha
 
 /* The lists of each flight group of mission `base`: its [<Section>_fg_N]
  * sections. */
-static bool mission_lists(const XwauRoots* roots, const XwauMissions* m, const char* base,
-						  FlightGroupLists** out, size_t* count) {
+static bool mission_lists(const char* game, const XwauMissions* m, const char* base, FlightGroupLists** out,
+						  size_t* count) {
 	char rel[1100], ini[1024];
 	if (!PathFormat(rel, sizeof rel, "%s.ini", base))
 		return false;
-	const bool has_ini = XwauRoots_FindFile(roots, rel, ini, sizeof ini);
+	const bool has_ini = Xwau_FindFile(game, rel, ini, sizeof ini);
 	XwauLines  sections;
 	if (!ini_sections(has_ini ? ini : NULL, &sections))
 		return false;
-	/* Then <mission>_<section>.txt files, each root's folder in listing order. */
+	/* Then <mission>_<section>.txt files, in listing order. */
 	const char* slash = strrchr(base, '/');
 	char        dir_name[256], prefix[512];
 	snprintf(dir_name, sizeof dir_name, "%.*s", (int)(slash - base), base);
 	snprintf(prefix, sizeof prefix, "%s_", slash + 1);
 	bool ok = true;
-	for (int r = 0; ok && r < roots->count; ++r) {
-		char dir[1024];
-		if (!XwauRoots_FindDir(roots, r, dir_name, dir, sizeof dir))
-			continue;
+	char dir[1024];
+	if (Xwau_FindDir(game, dir_name, dir, sizeof dir)) {
 		size_t n       = 0;
 		char** entries = ListDir(dir, false, &n);
 		for (size_t i = 0; ok && i < n; ++i) {
@@ -436,8 +428,8 @@ static bool mission_lists(const XwauRoots* roots, const XwauMissions* m, const c
 		char      path[1024];
 		if (!(ok = PathFormat(rel, sizeof rel, "%s_%s.txt", base, sections.items[s])))
 			break;
-		ok = XwauLines_Read(XwauRoots_FindFile(roots, rel, path, sizeof path) ? path : NULL, "",
-							XWAU_RULES_CPP, &lines);
+		ok = XwauLines_Read(Xwau_FindFile(game, rel, path, sizeof path) ? path : NULL, "", XWAU_RULES_CPP,
+							&lines);
 		if (ok && !lines.count)
 			ok = XwauLines_Read(has_ini ? ini : NULL, sections.items[s], XWAU_RULES_CPP, &lines);
 		/* The hook's settings keys are not flight-group ones. */
@@ -518,11 +510,11 @@ static bool same_lists(const Lists* a, const Lists* b) {
 
 /* The craft list rows: the lower-case model names of
  * FlightModels/Spacecraft0.LST. */
-static bool craft_list(const XwauRoots* roots, XwauLines* rows) {
+static bool craft_list(const char* game, XwauLines* rows) {
 	memset(rows, 0, sizeof *rows);
 	char      path[1024];
 	XwauLines lines;
-	if (!XwauRoots_FindFile(roots, "FlightModels/Spacecraft0.LST", path, sizeof path))
+	if (!Xwau_FindFile(game, "FlightModels/Spacecraft0.LST", path, sizeof path))
 		return true;
 	FILE* f = fopen(path, "rb");
 	if (!f)
@@ -608,25 +600,25 @@ static XwauFlightGroupArticulation* add_articulation(XwauMissions* m, const char
 	return entry;
 }
 
-static bool load_variants(const XwauRoots* roots, XwauMissions* m) {
+static bool load_variants(const char* game, XwauMissions* m) {
 	XwauLines rows;
-	if (!craft_list(roots, &rows))
+	if (!craft_list(game, &rows))
 		return false;
 	bool ok = true;
 	for (size_t d = 0; ok && d < 2; ++d) {
 		XwauLines names;
-		ok = XwauMissions_Names(roots, kMissionDirs[d], &names);
+		ok = XwauMissions_Names(game, kMissionDirs[d], &names);
 		for (size_t n = 0; ok && n < names.count; ++n) {
 			char              base[1100];
 			FlightGroupLists* fgs   = NULL;
 			size_t            count = 0;
 			ok = PathFormat(base, sizeof base, "%s/%s", kMissionDirs[d], names.items[n]) &&
-				 start_lines(roots, m, base, &fgs, &count) && mission_lists(roots, m, base, &fgs, &count);
+				 start_lines(game, m, base, &fgs, &count) && mission_lists(game, m, base, &fgs, &count);
 			size_t              group_count = 0;
 			XwauTieFlightGroup* groups      = NULL;
 			char                rel[1200], tie[1024];
 			if (ok && count && PathFormat(rel, sizeof rel, "%s.tie", base) &&
-				XwauRoots_FindFile(roots, rel, tie, sizeof tie))
+				Xwau_FindFile(game, rel, tie, sizeof tie))
 				groups = XwauTie_FlightGroups(tie, &group_count);
 			if (count)
 				qsort(fgs, count, sizeof *fgs, compare_fg);
@@ -682,11 +674,11 @@ static bool load_variants(const XwauRoots* roots, XwauMissions* m) {
 	return ok;
 }
 
-XwauMissions* XwauMissions_Load(const XwauRoots* roots, bool report_problems) {
+XwauMissions* XwauMissions_Load(const char* game, bool report_problems) {
 	XwauMissions* m = (XwauMissions*)calloc(1, sizeof *m);
 	if (m)
 		m->report = report_problems;
-	if (m && load_skin_contexts(roots, m) && load_variants(roots, m))
+	if (m && load_skin_contexts(game, m) && load_variants(game, m))
 		return m;
 	XwauMissions_Free(m);
 	return NULL;

@@ -78,11 +78,11 @@ typedef struct XwauModel {
 
 /* Reads the files of `model` (the OPT's name without extension). False
  * when out of memory or a table is full. */
-bool XwauModel_Read(const XwauRoots* roots, const XwauMissions* missions, const char* model, XwauModel* out,
+bool XwauModel_Read(const char* game, const XwauMissions* missions, const char* model, XwauModel* out,
 					const char* label);
 
 /* The pilot eye of `model`: its POV lines, else XWAU's craft table. */
-bool XwauModel_Eye(const XwauRoots* roots, const char* model, int eye[3], const char* label);
+bool XwauModel_Eye(const char* game, const char* model, int eye[3], const char* label);
 
 /* The articulation group of mesh rotation section `section` (case
  * insensitive), or false when it is none. The group may be longer than a

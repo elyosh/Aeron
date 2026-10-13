@@ -2,7 +2,7 @@
 #define AERON_OPT2GLTF_XWAU_MISSIONS_H
 
 /*
- * What the XWAU missions (Missions/ and Melee/ of the roots) give models,
+ * What the XWAU missions (Missions/ and Melee/ of the game) give models,
  * read once for all the models converted:
  *
  *   - skin lines (hook_32bpp): FlightModels/Skins.txt, else [Skins] of
@@ -35,20 +35,20 @@
 
 typedef struct XwauMissions XwauMissions;
 
-/* Reads the roots' missions; NULL when out of memory. With
+/* Reads the installation's missions; NULL when out of memory. With
  * `report_problems`, the problems of the missions' files go to stderr (a
  * model conversion leaves them out: every model would repeat them). */
-XwauMissions* XwauMissions_Load(const XwauRoots* roots, bool report_problems);
+XwauMissions* XwauMissions_Load(const char* game, bool report_problems);
 void          XwauMissions_Free(XwauMissions* missions);
 
 /* The lower-case names of the missions of folder `dir` (Missions or Melee)
  * with a .ini, _Objects.txt, _Skins.txt, _SFoils*.txt or (beside its .TIE)
  * .txt file, sorted. False when out of memory. */
-bool XwauMissions_Names(const XwauRoots* roots, const char* dir, XwauLines* out);
+bool XwauMissions_Names(const char* game, const char* dir, XwauLines* out);
 
 /* The skin lines of mission `base` ("<dir>/<name>"): <mission>_Skins.txt,
  * else [Skins] of <mission>.ini; none when it has neither. */
-bool XwauMissions_OwnSkinLines(const XwauRoots* roots, const char* base, XwauLines* out);
+bool XwauMissions_OwnSkinLines(const char* game, const char* base, XwauLines* out);
 
 /* The skin contexts: 0 is the global one. */
 size_t           XwauMissions_SkinContextCount(const XwauMissions* missions);

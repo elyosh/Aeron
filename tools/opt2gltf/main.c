@@ -3,10 +3,10 @@
  * textures), and write the batch outputs of an XWA Upgrade conversion.
  *
  * Usage:
- *   opt2gltf (--stock | --xwau-root DIR...) [--smooth-angle DEG]
+ *   opt2gltf (--stock | --xwau-root DIR) [--smooth-angle DEG]
  *            (--project DIR [--replace] | <output_dir>) FILE.opt
- *   opt2gltf effects --xwau-root DIR... --project DIR <project|model.gltf>...
- *   opt2gltf missions --xwau-root DIR... --stock-game DIR <output_dir>
+ *   opt2gltf effects --xwau-root DIR --project DIR <project|model.gltf>...
+ *   opt2gltf missions --xwau-root DIR --stock-game DIR <output_dir>
  *
  * The model is written into <output_dir>, or into a project with --project:
  * a folder holding models (models/<key>/) and their effect libraries
@@ -31,8 +31,8 @@
  *
  * The cooked GLB replaces the OPT whose lower-cased basename it has.
  * --stock converts an OPT of the original game as the game draws it,
- * --xwau-root DIR (repeatable) an X-Wing Alliance Upgrade model with
- * everything XWAU gives it (model_conversion.h).
+ * --xwau-root DIR an X-Wing Alliance Upgrade model with everything XWAU
+ * gives it, read from the XWAU installation DIR (model_conversion.h).
  */
 
 #include <errno.h>
@@ -85,14 +85,14 @@ static bool convert_into_project(const ModelConversion* mc, const char* opt_path
 	if (!PathFormat(to, sizeof to, "%s/%s.gltf", final_dir, key))
 		return false;
 	Report(opt_path, "wrote %s", to);
-	return !mc->xwau || XwauLibrary_AddModel(&mc->roots, project, to);
+	return !mc->xwau || XwauLibrary_AddModel(mc->game, project, to);
 }
 
 static int usage(void) {
-	fprintf(stderr, "usage: opt2gltf (--stock | --xwau-root DIR...) [--smooth-angle DEG]\n"
+	fprintf(stderr, "usage: opt2gltf (--stock | --xwau-root DIR) [--smooth-angle DEG]\n"
 					"                (--project DIR [--replace] | <output_dir>) FILE.opt\n"
-					"       opt2gltf effects --xwau-root DIR... --project DIR <project|model.gltf>...\n"
-					"       opt2gltf missions --xwau-root DIR... --stock-game DIR <output_dir>\n");
+					"       opt2gltf effects --xwau-root DIR --project DIR <project|model.gltf>...\n"
+					"       opt2gltf missions --xwau-root DIR --stock-game DIR <output_dir>\n");
 	return 2;
 }
 
@@ -121,7 +121,7 @@ static const struct {
 };
 
 typedef struct Args {
-	XwauRoots   roots;
+	const char* xwau_root;
 	bool        stock;
 	float       smooth_angle; /* negative when not given */
 	const char* project;
@@ -156,11 +156,11 @@ static bool parse_args(int argc, char** argv, unsigned allowed, Args* out) {
 				out->stock = true;
 				break;
 			case FLAG_XWAU_ROOT:
-				if (out->roots.count == XWAU_MAX_ROOTS) {
-					Report(NULL, "--xwau-root: at most %d", XWAU_MAX_ROOTS);
+				if (out->xwau_root) {
+					Report(NULL, "--xwau-root is given once: the XWAU installation");
 					return false;
 				}
-				out->roots.dirs[out->roots.count++] = value;
+				out->xwau_root = value;
 				break;
 			case FLAG_SMOOTH_ANGLE: {
 				char* end         = NULL;
@@ -190,7 +190,7 @@ static bool parse_args(int argc, char** argv, unsigned allowed, Args* out) {
 
 /* ===== Commands ========================================================= */
 
-/* opt2gltf (--stock | --xwau-root DIR...) [--smooth-angle DEG]
+/* opt2gltf (--stock | --xwau-root DIR) [--smooth-angle DEG]
  *          (--project DIR [--replace] | <output_dir>) FILE.opt */
 static int run_convert(int argc, char** argv) {
 	Args a;
@@ -199,7 +199,7 @@ static int run_convert(int argc, char** argv) {
 	if (!parse_args(argc, argv, FLAG_STOCK | FLAG_XWAU_ROOT | FLAG_SMOOTH_ANGLE | FLAG_PROJECT | FLAG_REPLACE,
 					&a))
 		return 2;
-	if (a.stock == (a.roots.count > 0)) {
+	if (a.stock == (a.xwau_root != NULL)) {
 		Report(NULL, "give --stock or --xwau-root");
 		return usage();
 	}
@@ -220,7 +220,7 @@ static int run_convert(int argc, char** argv) {
 	}
 
 	ModelConversion mc = { .smooth_angle = a.smooth_angle };
-	if (!a.stock && !ModelConversion_InitXwau(&mc, &a.roots)) {
+	if (!a.stock && !ModelConversion_InitXwau(&mc, a.xwau_root)) {
 		ModelConversion_Free(&mc);
 		return 1;
 	}
@@ -243,34 +243,35 @@ static int run_convert(int argc, char** argv) {
 	return ok ? 0 : 1;
 }
 
-/* opt2gltf effects --xwau-root DIR... --project DIR <project|model.gltf>... */
+/* opt2gltf effects --xwau-root DIR --project DIR <project|model.gltf>... */
 static int run_effects(int argc, char** argv) {
 	Args a;
 	if (!parse_args(argc, argv, FLAG_XWAU_ROOT | FLAG_PROJECT, &a))
 		return 2;
-	if (!a.roots.count || !a.project || !a.input_count) {
+	if (!a.xwau_root || !a.project || !a.input_count) {
 		Report(NULL, "effects needs --xwau-root, --project and inputs");
 		return 2;
 	}
-	return XwauLibrary_Rebuild(&a.roots, a.project, (const char* const*)a.inputs, (size_t)a.input_count) ? 0
-																										 : 1;
+	return XwauLibrary_Rebuild(a.xwau_root, a.project, (const char* const*)a.inputs, (size_t)a.input_count)
+			   ? 0
+			   : 1;
 }
 
-/* opt2gltf missions --xwau-root DIR... --stock-game DIR <output_dir> */
+/* opt2gltf missions --xwau-root DIR --stock-game DIR <output_dir> */
 static int run_missions(int argc, char** argv) {
 	Args a;
 	if (!parse_args(argc, argv, FLAG_XWAU_ROOT | FLAG_STOCK_GAME, &a))
 		return 2;
-	if (!a.roots.count || !a.stock_game || a.input_count != 1) {
+	if (!a.xwau_root || !a.stock_game || a.input_count != 1) {
 		Report(NULL, "missions needs --xwau-root, --stock-game and an output folder");
 		return 2;
 	}
-	XwauMissions* missions = XwauMissions_Load(&a.roots, true);
+	XwauMissions* missions = XwauMissions_Load(a.xwau_root, true);
 	if (!missions) {
 		Report(NULL, "out of memory (missions)");
 		return 1;
 	}
-	const bool ok = XwauMissionFiles_Write(&a.roots, missions, a.stock_game, a.inputs[0]);
+	const bool ok = XwauMissionFiles_Write(a.xwau_root, missions, a.stock_game, a.inputs[0]);
 	XwauMissions_Free(missions);
 	return ok ? 0 : 1;
 }

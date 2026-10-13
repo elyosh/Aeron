@@ -123,38 +123,35 @@ static bool skin_set_add(XwauSkinSet* set, const char* name) {
 	return true;
 }
 
-bool XwauSkins_Names(const XwauRoots* roots, const char* model, XwauSkinSet* out) {
+bool XwauSkins_Names(const char* game, const char* model, XwauSkinSet* out) {
 	memset(out, 0, sizeof *out);
-	char rel[512];
+	char rel[512], dir[1024];
 	if (!PathFormat(rel, sizeof rel, "FlightModels/Skins/%s", model))
 		return false;
-	bool ok = true;
-	for (int r = 0; ok && r < roots->count; ++r) {
-		char dir[1024];
-		if (!XwauRoots_FindDir(roots, r, rel, dir, sizeof dir))
-			continue;
-		out->exists    = true;
-		size_t count   = 0;
-		char** entries = ListDir(dir, false, &count);
-		for (size_t i = 0; ok && i < count; ++i) {
-			char path[2048];
-			if (!(ok = PathFormat(path, sizeof path, "%s/%s", dir, entries[i])))
-				break;
-			const size_t len = strlen(entries[i]);
-			if (IsDir(path)) {
-				if (has_files(path))
-					ok = skin_set_add(out, entries[i]);
-			} else if (IsFile(path)) {
-				ok = skin_set_add(out, "");
-				if (ok && len > 4 && strcasecmp(entries[i] + len - 4, ".zip") == 0) {
-					char base[1024];
-					snprintf(base, sizeof base, "%.*s", (int)(len - 4), entries[i]);
-					ok = skin_set_add(out, base);
-				}
+	if (!Xwau_FindDir(game, rel, dir, sizeof dir))
+		return true;
+	out->exists    = true;
+	bool   ok      = true;
+	size_t count   = 0;
+	char** entries = ListDir(dir, false, &count);
+	for (size_t i = 0; ok && i < count; ++i) {
+		char path[2048];
+		if (!(ok = PathFormat(path, sizeof path, "%s/%s", dir, entries[i])))
+			break;
+		const size_t len = strlen(entries[i]);
+		if (IsDir(path)) {
+			if (has_files(path))
+				ok = skin_set_add(out, entries[i]);
+		} else if (IsFile(path)) {
+			ok = skin_set_add(out, "");
+			if (ok && len > 4 && strcasecmp(entries[i] + len - 4, ".zip") == 0) {
+				char base[1024];
+				snprintf(base, sizeof base, "%.*s", (int)(len - 4), entries[i]);
+				ok = skin_set_add(out, base);
 			}
 		}
-		FreeList(entries, count);
 	}
+	FreeList(entries, count);
 	return ok;
 }
 
@@ -333,17 +330,12 @@ static bool add_variant(XwauSkins* s, const char* name, int state, const char* k
 
 /* The skin image file `file` (lower case): from the skin's folders, else
  * its zip. */
-static uint8_t* skin_file(const XwauRoots* roots, const char* model, const char* skin, const char* file,
+static uint8_t* skin_file(const char* game, const char* model, const char* skin, const char* file,
 						  size_t* size, const char* label) {
-	char rel[1024];
+	char rel[1024], dir[1024];
 	if (!PathFormat(rel, sizeof rel, "FlightModels/Skins/%s/%s", model, skin))
 		return NULL;
-	bool folders = false;
-	for (int r = 0; r < roots->count; ++r) {
-		char dir[1024];
-		if (!XwauRoots_FindDir(roots, r, rel, dir, sizeof dir) || !has_files(dir))
-			continue;
-		folders        = true;
+	if (Xwau_FindDir(game, rel, dir, sizeof dir) && has_files(dir)) {
 		size_t count   = 0;
 		char** entries = ListDir(dir, false, &count);
 		for (size_t i = 0; i < count; ++i) {
@@ -361,40 +353,36 @@ static uint8_t* skin_file(const XwauRoots* roots, const char* model, const char*
 			}
 		}
 		FreeList(entries, count);
-	}
-	if (folders || !PathFormat(rel, sizeof rel, "FlightModels/Skins/%s", model))
 		return NULL;
-	for (int r = 0; r < roots->count; ++r) {
-		char dir[1024];
-		if (!XwauRoots_FindDir(roots, r, rel, dir, sizeof dir))
-			continue;
-		size_t count     = 0;
-		char** entries   = ListDir(dir, false, &count);
-		char   zip[2048] = "";
-		for (size_t i = 0; i < count; ++i) {
-			char path[2048], lower[1024];
-			snprintf(lower, sizeof lower, "%s", entries[i]);
-			LowerInPlace(lower);
-			if (strlen(lower) == strlen(skin) + 4 && strncmp(lower, skin, strlen(skin)) == 0 &&
-				strcmp(lower + strlen(skin), ".zip") == 0 &&
-				PathFormat(path, sizeof path, "%s/%s", dir, entries[i]) && IsFile(path))
-				snprintf(zip, sizeof zip, "%s", path);
-		}
-		FreeList(entries, count);
-		if (!zip[0])
-			continue;
-		size_t   zip_size = 0;
-		uint8_t* data     = (uint8_t*)ReadWholeFile(zip, &zip_size);
-		uint8_t* entry    = data ? zip_entry(data, zip_size, file, size, label, zip) : NULL;
-		free(data);
-		return entry;
 	}
-	return NULL;
+	if (!PathFormat(rel, sizeof rel, "FlightModels/Skins/%s", model) ||
+		!Xwau_FindDir(game, rel, dir, sizeof dir))
+		return NULL;
+	size_t count     = 0;
+	char** entries   = ListDir(dir, false, &count);
+	char   zip[2048] = "";
+	for (size_t i = 0; i < count; ++i) {
+		char path[2048], lower[1024];
+		snprintf(lower, sizeof lower, "%s", entries[i]);
+		LowerInPlace(lower);
+		if (strlen(lower) == strlen(skin) + 4 && strncmp(lower, skin, strlen(skin)) == 0 &&
+			strcmp(lower + strlen(skin), ".zip") == 0 &&
+			PathFormat(path, sizeof path, "%s/%s", dir, entries[i]) && IsFile(path))
+			snprintf(zip, sizeof zip, "%s", path);
+	}
+	FreeList(entries, count);
+	if (!zip[0])
+		return NULL;
+	size_t   zip_size = 0;
+	uint8_t* data     = (uint8_t*)ReadWholeFile(zip, &zip_size);
+	uint8_t* entry    = data ? zip_entry(data, zip_size, file, size, label, zip) : NULL;
+	free(data);
+	return entry;
 }
 
 /* The skin's image for texture `t`: NULL rgba when it has none, or when its
  * size differs (reported). */
-static bool load_image(const XwauRoots* roots, const char* model, const char* skin, const opt_texture_t* t,
+static bool load_image(const char* game, const char* model, const char* skin, const opt_texture_t* t,
 					   const char* label, size_t* skipped, OptGltfImageView* out) {
 	char name[256];
 	snprintf(name, sizeof name, "%s", t->name);
@@ -406,7 +394,7 @@ static bool load_image(const XwauRoots* roots, const char* model, const char* sk
 		char file[300];
 		snprintf(file, sizeof file, "%s%s", name, kExtensions[e]);
 		size_t   size = 0;
-		uint8_t* data = skin_file(roots, model, skin, file, &size, label);
+		uint8_t* data = skin_file(game, model, skin, file, &size, label);
 		if (!data)
 			continue;
 		int      w = 0, h = 0, channels = 0;
@@ -448,11 +436,11 @@ int XwauSkins_StateCount(const opt_file_t* opt) {
 	return (int)states;
 }
 
-bool XwauSkins_Resolve(const XwauRoots* roots, const XwauMissions* missions, const char* model,
+bool XwauSkins_Resolve(const char* game, const XwauMissions* missions, const char* model,
 					   const opt_file_t* opt, const char* label, XwauSkins* out) {
 	memset(out, 0, sizeof *out);
 	XwauSkinSet skins;
-	if (!XwauSkins_Names(roots, model, &skins))
+	if (!XwauSkins_Names(game, model, &skins))
 		return false;
 	const int     states = XwauSkins_StateCount(opt);
 	XwauMarkings* lists  = (XwauMarkings*)malloc(XWAU_SKINS_MAX_MARKINGS * sizeof *lists);
@@ -504,7 +492,7 @@ bool XwauSkins_Resolve(const XwauRoots* roots, const XwauMissions* missions, con
 	for (size_t s = 0; ok && s < out->skins.skin_count; ++s) {
 		for (size_t t = 0; ok && t < texture_count; ++t) {
 			OptGltfImageView* view = &out->images[s * texture_count + t];
-			ok = load_image(roots, model, out->skin_names[s], &opt->textures[t], label, &skipped, view);
+			ok = load_image(game, model, out->skin_names[s], &opt->textures[t], label, &skipped, view);
 			found += view->rgba != NULL;
 		}
 	}

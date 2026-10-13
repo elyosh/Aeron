@@ -2,11 +2,11 @@
 #define AERON_OPT2GLTF_XWAU_CONFIG_H
 
 /*
- * XWA Upgrade (XWAU) data folders and the hooks' configuration files.
+ * XWA Upgrade (XWAU) data and the hooks' configuration files.
  *
- * The roots are layered game folders (an installation, or unpacked package
- * groups), searched in order: the first one holding a file wins. Paths are
- * game-relative ('\' or '/'), every component matched case-insensitively.
+ * The data is read from an XWAU installation: the game folder XWAU is
+ * installed into. Paths are game-relative ('\' or '/'), every component
+ * matched case-insensitively.
  *
  * The hooks read their .ini and .txt files with two readers, whose rules
  * differ and are both reproduced:
@@ -25,18 +25,11 @@
 #include <stdbool.h>
 #include <stddef.h>
 
-#define XWAU_MAX_ROOTS 16
+/* The file at `rel` of the installation `game`; false when it has none. */
+bool Xwau_FindFile(const char* game, const char* rel, char* out, size_t cap);
 
-typedef struct XwauRoots {
-	const char* dirs[XWAU_MAX_ROOTS];
-	int         count;
-} XwauRoots;
-
-/* The first root's file at `rel`; false when no root has it. */
-bool XwauRoots_FindFile(const XwauRoots* roots, const char* rel, char* out, size_t cap);
-
-/* Root `root`'s folder at `rel`; false when it has none. */
-bool XwauRoots_FindDir(const XwauRoots* roots, int root, const char* rel, char* out, size_t cap);
+/* The folder at `rel` of the installation `game`; false when it has none. */
+bool Xwau_FindDir(const char* game, const char* rel, char* out, size_t cap);
 
 typedef enum XwauRules { XWAU_RULES_CPP, XWAU_RULES_CS } XwauRules;
 

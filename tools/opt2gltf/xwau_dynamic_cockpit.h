@@ -18,8 +18,8 @@
  *     name; a section without rectangles keeps the texture as it is and
  *     only erases its HUD regions.
  *
- * Covers are DAT images (`Effects\<File>.dat-<group>-<image>`), found under
- * the XWAU roots and baked as opt_gltf.h describes. Hologram sections move
+ * Covers are DAT images (`Effects\<File>.dat-<group>-<image>`), found in
+ * the XWAU installation and baked as opt_gltf.h describes. Hologram sections move
  * their faces by FlightModels/<Craft>.ini [CockpitHoloOffsets] (OPT units),
  * read as LoadHoloOffsetFromIniFile does: <Craft> is the cockpit name without
  * its last 7 characters, and [GunnerTurretHoloOffsets] writes the same
@@ -33,7 +33,7 @@
 #include "opt.h"
 #include "opt_gltf.h"
 
-/* Resolve a game-relative path under the XWAU roots; returns 0 if absent. */
+/* Resolve a game-relative path in the XWAU installation; returns 0 if absent. */
 typedef int (*XwauDynamicCockpitFindFile)(void* context, const char* relative, char* out, size_t capacity);
 
 typedef struct XwauDynamicCockpitCover XwauDynamicCockpitCover;

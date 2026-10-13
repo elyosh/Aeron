@@ -6,7 +6,7 @@
  * GetFlightgroupsColors), as the converter's skin variants (opt_gltf.h).
  *
  * A skin is FlightModels/Skins/<Opt>/<Skin>, a folder with files at its top
- * level (the folders of every root), else <Skin>.zip (the first root's).
+ * level, else <Skin>.zip.
  * Each skin context (xwau_missions.h) gives each markings value i a list:
  * the `<Opt> = ...` tokens then the `<Opt>_fgc_<i> = ...` ones; when both
  * are empty, Default_<i> if that skin exists, else Default. The values
@@ -21,11 +21,10 @@
  * the markings values' default variants.
  *
  * A skin's image for an OPT texture is its file named after the texture
- * (case-insensitive) with .bmp, else .png, else .jpg: in a folder, the first
- * root's; in a zip, the first entry with that file name, whatever its
- * folder. It is decoded at 8 bits per channel and flipped vertically into
- * OPT row order, as the hook flips it; an image of another size than the
- * texture's is skipped and reported.
+ * (case-insensitive) with .bmp, else .png, else .jpg: in a zip, the first
+ * entry with that file name, whatever its folder. It is decoded at 8 bits
+ * per channel and flipped vertically into OPT row order, as the hook flips
+ * it; an image of another size than the texture's is skipped and reported.
  */
 
 #include <stdbool.h>
@@ -84,21 +83,21 @@ typedef struct XwauSkins {
 /* Resolves the skins of `model` (the OPT's name without extension). No
  * variant (skins.variant_count 0) when it shows none. False on an error
  * (reported). */
-bool XwauSkins_Resolve(const XwauRoots* roots, const XwauMissions* missions, const char* model,
+bool XwauSkins_Resolve(const char* game, const XwauMissions* missions, const char* model,
 					   const opt_file_t* opt, const char* label, XwauSkins* out);
 void XwauSkins_Free(XwauSkins* skins);
 
 /* The OPT's states: the largest texture count of a LOD 0 face group. */
 int XwauSkins_StateCount(const opt_file_t* opt);
 
-/* The skins of a model across the roots. */
+/* The skins of a model: the folders and zips of FlightModels/Skins/<Opt>. */
 typedef struct XwauSkinSet {
 	char** names; /* lower case; "" is the skin folder's own files */
 	size_t count;
-	bool   exists; /* a root has FlightModels/Skins/<Opt> */
+	bool   exists; /* the game has FlightModels/Skins/<Opt> */
 } XwauSkinSet;
 
-bool XwauSkins_Names(const XwauRoots* roots, const char* model, XwauSkinSet* out);
+bool XwauSkins_Names(const char* game, const char* model, XwauSkinSet* out);
 void XwauSkins_FreeNames(XwauSkinSet* set);
 
 #define XWAU_SKINS_MAX_MARKINGS 256

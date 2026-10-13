@@ -187,8 +187,7 @@ static void test_skins(const char* scratch) {
 			}
 			write_file(path, "x");
 		}
-		XwauRoots     roots    = { { root }, 1 };
-		XwauMissions* missions = XwauMissions_Load(&roots, false);
+		XwauMissions* missions = XwauMissions_Load(root, false);
 		/* An OPT with one face group of `states` states, no texture. */
 		opt_face_group_t group = { 0 };
 		group.state_count      = k->states;
@@ -202,7 +201,7 @@ static void test_skins(const char* scratch) {
 		opt.mesh_count         = 1;
 		opt.meshes             = &mesh;
 		XwauSkins skins;
-		int       ok = missions && XwauSkins_Resolve(&roots, missions, k->model, &opt, "test", &skins);
+		int       ok = missions && XwauSkins_Resolve(root, missions, k->model, &opt, "test", &skins);
 		if (ok && k->markings < 0) {
 			ok = skins.skins.variant_count == 0;
 		} else if (ok) {

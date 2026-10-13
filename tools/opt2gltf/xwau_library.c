@@ -32,13 +32,11 @@
 #define BLAST_MARK_GROUP 3050
 static const float kBlastMarkCrop[4] = { 0.3f, 0.3f, 0.65f, 0.65f };
 
-static const XwauRoots* g_roots;
+static const char* g_game;
 
 /* ---- Paths -------------------------------------------------------------- */
 
-static int find_file(const char* rel, char* out, size_t cap) {
-	return XwauRoots_FindFile(g_roots, rel, out, cap);
-}
+static int find_file(const char* rel, char* out, size_t cap) { return Xwau_FindFile(g_game, rel, out, cap); }
 
 /* ---- Library requests ------------------------------------------------------ */
 
@@ -112,7 +110,7 @@ static char** g_skipped; /* libraries without an XWAU DAT */
 static size_t g_skipped_count;
 
 /* Requests the image `key` of library `library`, the DAT Effects/<library>.dat;
- * notes the library as skipped when the roots have no such DAT. */
+ * notes the library as skipped when the game has no such DAT. */
 static bool model_key(const char* path, const char* library, const char* key) {
 	for (size_t i = 0; i < g_skipped_count; ++i)
 		if (strcmp(g_skipped[i], library) == 0)
@@ -427,14 +425,12 @@ static bool image_flipbook(Text* y, const char* name, const XwauMatFile* mat, in
 	return ok;
 }
 
-/* DAT-named materials of the roots: "dat-<G>-<I>.mat", first root wins. */
+/* DAT-named materials: "dat-<G>-<I>.mat". */
 static bool images_yaml(Text* y) {
-	DatImage* found = NULL;
-	size_t    count = 0;
-	for (int r = 0; r < g_roots->count; ++r) {
-		char mdir[1024] = "";
-		if (!XwauRoots_FindDir(g_roots, r, "Materials", mdir, sizeof mdir))
-			continue;
+	DatImage* found      = NULL;
+	size_t    count      = 0;
+	char      mdir[1024] = "";
+	if (Xwau_FindDir(g_game, "Materials", mdir, sizeof mdir)) {
 		size_t entry_count = 0;
 		char** entries     = ListDir(mdir, false, &entry_count);
 		for (size_t e = 0; e < entry_count; ++e) {
@@ -442,11 +438,6 @@ static bool images_yaml(Text* y) {
 			char tail[16];
 			if (strncasecmp(entries[e], "dat-", 4) != 0 ||
 				sscanf(entries[e] + 4, "%d-%d.%15s", &g, &i, tail) != 3 || strcasecmp(tail, "mat") != 0)
-				continue;
-			bool dup = false;
-			for (size_t k = 0; k < count && !dup; ++k)
-				dup = found[k].group == g && found[k].image == i;
-			if (dup)
 				continue;
 			DatImage* image = ARRAY_PUSH(found, count);
 			if (!image || !PathFormat(image->mat, sizeof image->mat, "%s/%s", mdir, entries[e])) {
@@ -699,7 +690,7 @@ static int cmp_library(const void* a, const void* b) {
 }
 
 /* Clears what the previous run read. */
-static void reset(const XwauRoots* roots) {
+static void reset(const char* game) {
 	for (size_t i = 0; i < g_library_count; ++i)
 		free(g_libraries[i].requests);
 	free(g_libraries);
@@ -711,7 +702,7 @@ static void reset(const XwauRoots* roots) {
 	g_skipped       = NULL;
 	g_skipped_count = 0;
 	g_models        = 0;
-	g_roots         = roots;
+	g_game          = game;
 }
 
 /* Writes the libraries read into <project>/effects. */
@@ -726,9 +717,8 @@ static bool write_libraries(const char* effects, bool merge) {
 	return ok;
 }
 
-bool XwauLibrary_Rebuild(const XwauRoots* roots, const char* project, const char* const* inputs,
-						 size_t count) {
-	reset(roots);
+bool XwauLibrary_Rebuild(const char* game, const char* project, const char* const* inputs, size_t count) {
+	reset(game);
 	char out[1024];
 	if (!PathFormat(out, sizeof out, "%s/effects", project))
 		return false;
@@ -759,8 +749,8 @@ bool XwauLibrary_Rebuild(const XwauRoots* roots, const char* project, const char
 	return ok;
 }
 
-bool XwauLibrary_AddModel(const XwauRoots* roots, const char* project, const char* gltf) {
-	reset(roots);
+bool XwauLibrary_AddModel(const char* game, const char* project, const char* gltf) {
+	reset(game);
 	char out[1024];
 	bool ok = PathFormat(out, sizeof out, "%s/effects", project) && read_model(gltf);
 	if (ok && g_library_count && !MakeDirs(out)) {

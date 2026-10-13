@@ -29,18 +29,17 @@ static const char* const kBehaviors[] = { "swing", "random", "random_pause" };
 
 /* The lines of `section`: <Model><Section>.txt, else [<Section>] of
  * <Model>.ini (hook GetFileLines). */
-static bool section_lines(const XwauRoots* roots, const char* model, const char* section, XwauLines* out) {
+static bool section_lines(const char* game, const char* model, const char* section, XwauLines* out) {
 	char rel[512], path[1024];
 	if (!PathFormat(rel, sizeof rel, "FlightModels/%s%s.txt", model, section) ||
-		!XwauLines_Read(XwauRoots_FindFile(roots, rel, path, sizeof path) ? path : NULL, "", XWAU_RULES_CPP,
-						out))
+		!XwauLines_Read(Xwau_FindFile(game, rel, path, sizeof path) ? path : NULL, "", XWAU_RULES_CPP, out))
 		return false;
 	if (out->count)
 		return true;
 	if (!PathFormat(rel, sizeof rel, "FlightModels/%s.ini", model))
 		return false;
-	return XwauLines_Read(XwauRoots_FindFile(roots, rel, path, sizeof path) ? path : NULL, section,
-						  XWAU_RULES_CPP, out);
+	return XwauLines_Read(Xwau_FindFile(game, rel, path, sizeof path) ? path : NULL, section, XWAU_RULES_CPP,
+						  out);
 }
 
 /* ---- Pilot eye ------------------------------------------------------------- */
@@ -65,11 +64,11 @@ static bool eye_from_lines(const XwauLines* lines, int eye[3], const char* label
 	return true;
 }
 
-bool XwauModel_Eye(const XwauRoots* roots, const char* model, int eye[3], const char* label) {
+bool XwauModel_Eye(const char* game, const char* model, int eye[3], const char* label) {
 	static const char* const sections[] = { "CockpitPov_Default", "CockpitPov" };
 	for (size_t s = 0; s < 2; ++s) {
 		XwauLines lines;
-		if (!section_lines(roots, model, sections[s], &lines))
+		if (!section_lines(game, model, sections[s], &lines))
 			return false;
 		const bool found = eye_from_lines(&lines, eye, label, sections[s]);
 		XwauLines_Free(&lines);
@@ -122,9 +121,9 @@ static bool resolve_profile(const XwauLines* lines, const char* profile, const c
 	return ok;
 }
 
-static bool read_profiles(const XwauRoots* roots, const char* model, XwauModel* out, const char* label) {
+static bool read_profiles(const char* game, const char* model, XwauModel* out, const char* label) {
 	XwauLines lines;
-	if (!section_lines(roots, model, "ObjectProfiles", &lines))
+	if (!section_lines(game, model, "ObjectProfiles", &lines))
 		return false;
 	bool ok = true;
 	for (size_t i = 0; ok && i < lines.count; ++i) {
@@ -271,12 +270,12 @@ static bool add_articulation(XwauModel* out, const char* where, const char* grou
 	return true;
 }
 
-static bool add_section(const XwauRoots* roots, const char* model, const char* section, const char* group,
+static bool add_section(const char* game, const char* model, const char* section, const char* group,
 						XwauModel* out, const char* label) {
 	XwauLines     lines;
 	XwauMeshLine* mesh_lines = NULL;
 	size_t        count      = 0;
-	if (!section_lines(roots, model, section, &lines))
+	if (!section_lines(game, model, section, &lines))
 		return false;
 	bool ok = XwauModel_MeshLines(&lines, &mesh_lines, &count, label, section);
 	XwauLines_Free(&lines);
@@ -292,12 +291,12 @@ static bool add_section(const XwauRoots* roots, const char* model, const char* s
 /* The <key>s of the SFoilsCargoClamps_<key> sections of <Model>.ini and of
  * the <Model>SFoilsCargoClamps_<key>.txt files beside it, first occurrence
  * of each (case-insensitive). */
-static bool cargo_clamp_keys(const XwauRoots* roots, const char* model, XwauLines* keys) {
+static bool cargo_clamp_keys(const char* game, const char* model, XwauLines* keys) {
 	memset(keys, 0, sizeof *keys);
 	char rel[512], ini[1024];
 	if (!PathFormat(rel, sizeof rel, "FlightModels/%s.ini", model))
 		return false;
-	if (!XwauRoots_FindFile(roots, rel, ini, sizeof ini))
+	if (!Xwau_FindFile(game, rel, ini, sizeof ini))
 		return true;
 	XwauLines found = { 0 };
 	FILE*     f     = fopen(ini, "rb");
@@ -369,18 +368,18 @@ static bool add_setting(XwauModel* out, const char* name, long long value) {
 	return true;
 }
 
-static bool read_rotations(const XwauRoots* roots, const XwauMissions* missions, const char* model,
-						   XwauModel* out, const char* label) {
+static bool read_rotations(const char* game, const XwauMissions* missions, const char* model, XwauModel* out,
+						   const char* label) {
 	bool ok = true;
 	for (size_t i = 0; ok && i < SECTION_COUNT; ++i)
-		ok = add_section(roots, model, kSections[i].section, kSections[i].group, out, label);
+		ok = add_section(game, model, kSections[i].section, kSections[i].group, out, label);
 	XwauLines keys = { 0 };
-	ok             = ok && cargo_clamp_keys(roots, model, &keys);
+	ok             = ok && cargo_clamp_keys(game, model, &keys);
 	for (size_t i = 0; ok && i < keys.count; ++i) {
 		char section[512], group[512];
 		snprintf(section, sizeof section, "%s%s", CARGO_CLAMPS, keys.items[i]);
 		XwauModel_SectionGroup(section, group, sizeof group);
-		ok = add_section(roots, model, section, group, out, label);
+		ok = add_section(game, model, section, group, out, label);
 	}
 	XwauLines_Free(&keys);
 
@@ -389,7 +388,7 @@ static bool read_rotations(const XwauRoots* roots, const XwauMissions* missions,
 	XwauMeshLine* mesh_lines = NULL;
 	size_t        count      = 0;
 	bool          has_crew   = false;
-	if (ok && (ok = section_lines(roots, model, "Pilot", &lines))) {
+	if (ok && (ok = section_lines(game, model, "Pilot", &lines))) {
 		ok = XwauModel_MeshLines(&lines, &mesh_lines, &count, label, "Pilot");
 		XwauLines_Free(&lines);
 	}
@@ -407,14 +406,14 @@ static bool read_rotations(const XwauRoots* roots, const XwauMissions* missions,
 		has_crew |= added;
 	}
 	free(mesh_lines);
-	if (ok && (ok = section_lines(roots, model, "PilotCockpit", &lines))) {
+	if (ok && (ok = section_lines(game, model, "PilotCockpit", &lines))) {
 		if (lines.count)
 			Report(label, "PilotCockpit: not converted (OpenXWA has no cockpit list)");
 		XwauLines_Free(&lines);
 	}
 
 	/* The settings, read from [SFoils] only, as the hook does. */
-	if (ok && (ok = section_lines(roots, model, "SFoils", &lines))) {
+	if (ok && (ok = section_lines(game, model, "SFoils", &lines))) {
 		for (size_t i = 0; ok && i < sizeof kSettings / sizeof kSettings[0]; ++i) {
 			char      text[256];
 			long long value;
@@ -441,21 +440,21 @@ static bool read_rotations(const XwauRoots* roots, const XwauMissions* missions,
 											XWAU_MODEL_MAX_ARTICULATIONS, label);
 }
 
-bool XwauModel_Read(const XwauRoots* roots, const XwauMissions* missions, const char* model, XwauModel* out,
+bool XwauModel_Read(const char* game, const XwauMissions* missions, const char* model, XwauModel* out,
 					const char* label) {
 	memset(out, 0, sizeof *out);
-	out->has_eye = XwauModel_Eye(roots, model, out->eye, label);
+	out->has_eye = XwauModel_Eye(game, model, out->eye, label);
 	/* A cockpit model shares its craft's frame: its craft's eye. */
 	const size_t len = strlen(model);
 	if (len > 7 && strcasecmp(model + len - 7, "cockpit") == 0) {
 		char craft[256];
 		snprintf(craft, sizeof craft, "%.*s", (int)(len - 7), model);
-		out->has_craft_eye = XwauModel_Eye(roots, craft, out->craft_eye, label);
+		out->has_craft_eye = XwauModel_Eye(game, craft, out->craft_eye, label);
 	}
 	char rel[512];
 	if (!PathFormat(rel, sizeof rel, "DynamicCockpit/%s.dc", model))
 		return false;
-	if (!XwauRoots_FindFile(roots, rel, out->dynamic_cockpit, sizeof out->dynamic_cockpit))
+	if (!Xwau_FindFile(game, rel, out->dynamic_cockpit, sizeof out->dynamic_cockpit))
 		out->dynamic_cockpit[0] = 0;
-	return read_profiles(roots, model, out, label) && read_rotations(roots, missions, model, out, label);
+	return read_profiles(game, model, out, label) && read_rotations(game, missions, model, out, label);
 }

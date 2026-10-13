@@ -134,7 +134,7 @@ static bool xwau_texture_named(const char* name, const char* wanted) {
 }
 
 static int xwau_find(const ModelConversion* mc, const char* rel, char* out, size_t cap) {
-	return XwauRoots_FindFile(&mc->roots, rel, out, cap) ? 1 : 0;
+	return Xwau_FindFile(mc->game, rel, out, cap) ? 1 : 0;
 }
 
 typedef struct XwauNormalMap {
@@ -348,7 +348,7 @@ static bool prepare_stock(Conversion* c, const ModelConversion* mc, const char* 
 static bool prepare_xwau(Conversion* c, const ModelConversion* mc, const opt_file_t* opt,
 						 const char* basename, const char* label) {
 	c->model        = (XwauModel*)malloc(sizeof *c->model);
-	const bool read = c->model && XwauModel_Read(&mc->roots, mc->missions, basename, c->model, label);
+	const bool read = c->model && XwauModel_Read(mc->game, mc->missions, basename, c->model, label);
 	if (read) {
 		c->options.model.articulations      = c->model->articulations;
 		c->options.model.articulation_count = c->model->articulation_count;
@@ -373,7 +373,7 @@ static bool prepare_xwau(Conversion* c, const ModelConversion* mc, const opt_fil
 	const int32_t weapons = weapon_hardpoints(opt);
 	if (weapons > WEAPON_SLOTS)
 		Report(label, "%d weapon hardpoints; the game keeps %d weapon slots", (int)weapons, WEAPON_SLOTS);
-	return read && XwauSkins_Resolve(&mc->roots, mc->missions, basename, opt, label, &c->skins);
+	return read && XwauSkins_Resolve(mc->game, mc->missions, basename, opt, label, &c->skins);
 }
 
 /* The pilot eye hardpoint and a cockpit model's interior light. */
@@ -539,17 +539,17 @@ bool ModelConversion_Convert(const ModelConversion* mc, const char* opt_path, co
 
 /* ===== The mode ========================================================= */
 
-bool ModelConversion_InitXwau(ModelConversion* mc, const XwauRoots* roots) {
+bool ModelConversion_InitXwau(ModelConversion* mc, const char* game) {
 	memset(mc, 0, sizeof *mc);
-	mc->xwau  = true;
-	mc->roots = *roots;
+	mc->xwau = true;
+	mc->game = game;
 	XwauMat_CodeDefaults(&mc->global);
 	char global_path[1024];
 	if (xwau_find(mc, "Materials/DefaultGlobalMaterial.mat", global_path, sizeof global_path))
 		XwauMat_ReadGlobalDefault(global_path, &mc->global);
 	else
 		Report(NULL, "no Materials/DefaultGlobalMaterial.mat; using built-in defaults");
-	if (!(mc->missions = XwauMissions_Load(&mc->roots, false))) {
+	if (!(mc->missions = XwauMissions_Load(mc->game, false))) {
 		Report(NULL, "out of memory (missions)");
 		return false;
 	}

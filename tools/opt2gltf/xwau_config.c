@@ -9,7 +9,7 @@
 
 #include "util.h"
 
-/* ---- Roots ---------------------------------------------------------------- */
+/* ---- Paths ---------------------------------------------------------------- */
 
 /* `base`/`rel` with each component of `rel` matched case-insensitively, into
  * `out`; false when a component is missing. */
@@ -45,17 +45,13 @@ static bool resolve(const char* base, const char* rel, char* out, size_t cap) {
 	return true;
 }
 
-bool XwauRoots_FindFile(const XwauRoots* roots, const char* rel, char* out, size_t cap) {
-	for (int r = 0; r < roots->count; ++r) {
-		char path[1024];
-		if (resolve(roots->dirs[r], rel, path, sizeof path) && IsFile(path))
-			return PathFormat(out, cap, "%s", path);
-	}
-	return false;
+bool Xwau_FindFile(const char* game, const char* rel, char* out, size_t cap) {
+	char path[1024];
+	return resolve(game, rel, path, sizeof path) && IsFile(path) && PathFormat(out, cap, "%s", path);
 }
 
-bool XwauRoots_FindDir(const XwauRoots* roots, int root, const char* rel, char* out, size_t cap) {
-	return root >= 0 && root < roots->count && resolve(roots->dirs[root], rel, out, cap) && IsDir(out);
+bool Xwau_FindDir(const char* game, const char* rel, char* out, size_t cap) {
+	return resolve(game, rel, out, cap) && IsDir(out);
 }
 
 /* ---- Text ------------------------------------------------------------------ */

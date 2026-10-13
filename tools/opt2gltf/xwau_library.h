@@ -8,8 +8,8 @@
  *
  * The images are those the models' materials name (the flipbooks and
  * damage of their AERON_flight_model objects). A library is the images of
- * Effects/<library>.dat under the XWAU roots; a library with no such DAT is
- * not an XWAU one and is left alone. An image's key names its DAT image and
+ * the XWAU installation's Effects/<library>.dat; a library with no such
+ * DAT is not an XWAU one and is left alone. An image's key names its DAT image and
  * how it is baked (xwau_effect_bake.h), so the same key always gives the
  * same image: <library>/<library>.yaml lists them, with each image's inputs
  * as PNGs under <library>/frames/ (XWAU's rules applied: an illumination
@@ -30,11 +30,10 @@
  * and the flipbooks of the DAT images the game draws directly (the
  * DAT-named material files Materials/dat-<G>-<I>.mat; the blast marks of
  * group 3050). */
-bool XwauLibrary_Rebuild(const XwauRoots* roots, const char* project, const char* const* inputs,
-						 size_t count);
+bool XwauLibrary_Rebuild(const char* game, const char* project, const char* const* inputs, size_t count);
 
 /* Adds the images the model `gltf` names that its project's libraries lack
  * to <project>/effects: images already there are kept as they are. */
-bool XwauLibrary_AddModel(const XwauRoots* roots, const char* project, const char* gltf);
+bool XwauLibrary_AddModel(const char* game, const char* project, const char* gltf);
 
 #endif /* AERON_OPT2GLTF_XWAU_LIBRARY_H */

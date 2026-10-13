@@ -26,14 +26,12 @@
  * imported; XWAU's data has none.
  *
  * Skins (hook_32bpp): for a mission with skin lines of its own
- * (XwauMissions_OwnSkinLines), each model with skins (the OPTs of the
- * roots' FlightModels, the first root's for a name) is resolved as the conversion
- * resolves it (xwau_skins.h), and the markings values whose variant
- * differs from the model's default (the global context's) are written
- * under the model's key (its name in lower case): the variant, or `~` for
- * the model as modelled. Skin lines need no flight-group matching, but they
- * assume a flight group keeps its markings: flight groups whose markings
- * differ between XWAU's mission and the original one are reported.
+ * (XwauMissions_OwnSkinLines), each model with skins (the OPTs of
+ * FlightModels) is resolved as the conversion resolves it (xwau_skins.h), and the markings values whose
+ * variant differs from the model's default (the global context's) are written under the model's key (its name
+ * in lower case): the variant, or `~` for the model as modelled. Skin lines need no flight-group matching,
+ * but they assume a flight group keeps its markings: flight groups whose markings differ between XWAU's
+ * mission and the original one are reported.
  *
  * Articulations (hook_sfoils): the flight groups' start lines and variants
  * (xwau_missions.h).
@@ -56,7 +54,7 @@
 
 /* Writes the mission files under `out`, for the original game installed at
  * `stock_game` (its Missions/ and Melee/ .TIE files). False on an error. */
-bool XwauMissionFiles_Write(const XwauRoots* roots, const XwauMissions* missions, const char* stock_game,
+bool XwauMissionFiles_Write(const char* game, const XwauMissions* missions, const char* stock_game,
 							const char* out);
 
 #endif /* AERON_OPT2GLTF_XWAU_MISSION_FILES_H */
