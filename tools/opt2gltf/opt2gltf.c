@@ -11,7 +11,6 @@
 #include "aeron/log.h"
 #include "aeron/mesh_normals.h"
 #include "cJSON.h"
-#include "effect_files.h"
 #include "opt.h"
 
 #include "mikktspace.h"
@@ -607,9 +606,11 @@ typedef struct {
 	cgltf_sampler           sampler; /* single repeat/linear sampler shared by all */
 	cgltf_material*         materials;
 	size_t                  materials_count;
-	/* Per material: its entry in the animation file (members without
-	 * braces), or NULL; a material's copies share it. */
+	/* Per material: its animation (AERON_flight_model members without
+	 * braces) and its screen (a JSON object), or NULL; a material's copies
+	 * share them. */
 	const char**            material_anim;
+	const char**            material_screen;
 	cgltf_mesh*             meshes;
 	size_t                  meshes_count;
 	cgltf_primitive*        primitives;
@@ -788,8 +789,10 @@ static cgltf_material* promoted_variant_material(GltfBuild* build, cgltf_materia
 		copy->alpha_mode   = cgltf_alpha_mode_mask;
 		copy->alpha_cutoff = 0.5f;
 	}
-	if (build->material_anim)
-		build->material_anim[copy - build->materials] = build->material_anim[index];
+	if (build->material_anim) {
+		build->material_anim[copy - build->materials]   = build->material_anim[index];
+		build->material_screen[copy - build->materials] = build->material_screen[index];
+	}
 	*slot = copy;
 	return copy;
 }
@@ -1607,33 +1610,21 @@ static void json_append_vec3(char** out, size_t* len, size_t* cap, const char* k
 	json_append(out, len, cap, ",\"%s\":[%.9g,%.9g,%.9g]", key, (double)v[0], (double)v[1], (double)v[2]);
 }
 
-/* A material's entry in the animation file. */
+/* A material's animation. */
 static void anim_apply(OptGltfDocument* document, cgltf_material* mat, const OptGltfXwauAnim* anim) {
 	document->gb.material_anim[mat - document->gb.materials] =
 		anim->members && anim->members[0] ? anim->members : NULL;
 }
 
-/* The material's extras with `aeronScreen` added: a new object, or the
- * existing one with the member appended. */
-static char* screen_extras_json(const OptGltfScreen* s, const char* existing) {
+/* The material's AERON_flight_model `screen`. */
+static char* screen_json(const OptGltfScreen* s) {
 	size_t len = 0, cap = 1024;
 	char*  out = (char*)malloc(cap);
 	if (!out)
 		return NULL;
-	out[0]            = 0;
-	const char* close = existing ? strrchr(existing, '}') : NULL;
-	if (close) {
-		json_append(&out, &len, &cap, "%.*s", (int)(close - existing), existing);
-		/* An empty object needs no separator. */
-		const char* p = close;
-		while (p > existing && (p[-1] == ' ' || p[-1] == '\n' || p[-1] == '\t'))
-			--p;
-		json_append(&out, &len, &cap, p > existing && p[-1] == '{' ? "" : ",");
-	} else {
-		json_append(&out, &len, &cap, "{");
-	}
+	out[0] = 0;
 	json_append(&out, &len, &cap,
-				"\"aeronScreen\":{\"cover\":%s,\"transparent\":%s,\"alwaysVisible\":%s,\"hologram\":%s,"
+				"{\"cover\":%s,\"transparent\":%s,\"alwaysVisible\":%s,\"hologram\":%s,"
 				"\"noisy\":%s,\"hide\":%u,\"rects\":[",
 				s->cover_base.rgba && !s->hologram ? "true" : "false", s->transparent ? "true" : "false",
 				s->always_visible ? "true" : "false", s->hologram ? "true" : "false", s->noisy ? "true" : "false",
@@ -1650,7 +1641,7 @@ static char* screen_extras_json(const OptGltfScreen* s, const char* existing) {
 			json_append_vec3(&out, &len, &cap, "bar", r->bar);
 		json_append(&out, &len, &cap, "}");
 	}
-	json_append(&out, &len, &cap, "]}}");
+	json_append(&out, &len, &cap, "]}");
 	return out;
 }
 
@@ -1658,10 +1649,10 @@ static char* screen_extras_json(const OptGltfScreen* s, const char* existing) {
  * `cover_base` and `cover_emissive` are the cover's textures, or NULL. */
 static bool screen_apply(GltfBuild* build, cgltf_material* mat, const OptGltfScreen* s, cgltf_texture* cover_base,
 						 cgltf_texture* cover_emissive) {
-	char* extras = screen_extras_json(s, mat->extras.data);
-	if (!extras)
+	char* screen = screen_json(s);
+	if (!screen)
 		return false;
-	mat->extras.data = gb_keep_string(build, extras);
+	build->material_screen[mat - build->materials] = gb_keep_string(build, screen);
 
 	mat->normal_texture.texture                                    = NULL;
 	mat->pbr_metallic_roughness.metallic_roughness_texture.texture = NULL;
@@ -2118,7 +2109,8 @@ static bool prune_unused(OptGltfDocument* document) {
 		if (to[m] == SIZE_MAX)
 			continue;
 		gb->materials[kept]     = gb->materials[m];
-		gb->material_anim[kept] = gb->material_anim[m];
+		gb->material_anim[kept]   = gb->material_anim[m];
+		gb->material_screen[kept] = gb->material_screen[m];
 		to[m]                   = kept++;
 	}
 	for (size_t p = 0; p < gb->primitives_count; ++p) {
@@ -2181,6 +2173,105 @@ static bool prune_unused(OptGltfDocument* document) {
 	document->image_pixels_count = kept;
 	free(to);
 	return true;
+}
+
+/* The energy effects an AERON_flight_model entry names, as bits of
+ * kAnimEnergies. */
+static const char* const kAnimEnergies[] = { "shields", "tractor", "jamming" };
+
+static unsigned energy_bits(const cJSON* entry) {
+	unsigned     bits = 0;
+	const cJSON* name;
+	cJSON_ArrayForEach(name, cJSON_GetObjectItemCaseSensitive(entry, "energy")) {
+		for (unsigned e = 0; e < 3; ++e)
+			if (cJSON_IsString(name) && strcmp(name->valuestring, kAnimEnergies[e]) == 0)
+				bits |= 1u << e;
+	}
+	return bits;
+}
+
+static cJSON* energy_list(unsigned bits) {
+	cJSON* list = cJSON_CreateArray();
+	for (unsigned e = 0; list && e < 3; ++e)
+		if (bits & 1u << e)
+			cJSON_AddItemToArray(list, cJSON_CreateString(kAnimEnergies[e]));
+	return list;
+}
+
+/* Each material's AERON_flight_model object: its animation and its screen.
+ * The energy effects most of the materials have (ties: the smaller set;
+ * every material is drawn, see prune_unused) become the model root's
+ * `energy`; only the materials with other effects keep their own, `[]` for
+ * none (a material XWAU's texture-name sections never reached, such as the
+ * faces without a texture). */
+static bool material_extensions(OptGltfDocument* document) {
+	GltfBuild*   gb       = &document->gb;
+	const size_t count    = gb->materials_count;
+	cJSON**      entries  = (cJSON**)calloc(count ? count : 1, sizeof *entries);
+	unsigned     tally[8] = { 0 };
+	bool         ok       = entries != NULL;
+	for (size_t m = 0; ok && m < count; ++m) {
+		const char* members = gb->material_anim ? gb->material_anim[m] : NULL;
+		if (members) {
+			const size_t length = strlen(members) + 3;
+			char*        text   = (char*)malloc(length);
+			if (text)
+				snprintf(text, length, "{%s}", members);
+			entries[m] = text ? cJSON_Parse(text) : NULL;
+			free(text);
+			ok = entries[m] != NULL;
+		}
+		tally[energy_bits(entries[m])]++;
+	}
+	unsigned common = 0;
+	for (unsigned bits = 1; bits < 8; ++bits)
+		if (tally[bits] > tally[common])
+			common = bits;
+	for (size_t m = 0; ok && m < count; ++m) {
+		cJSON* entry = entries[m] ? entries[m] : cJSON_CreateObject();
+		entries[m]   = entry;
+		ok           = entry != NULL;
+		if (ok && common) {
+			const unsigned bits = energy_bits(entry);
+			cJSON_DeleteItemFromObjectCaseSensitive(entry, "energy");
+			if (bits != common)
+				cJSON_AddItemToObject(entry, "energy", energy_list(bits));
+		}
+		const char* screen = gb->material_screen ? gb->material_screen[m] : NULL;
+		if (ok && screen) {
+			cJSON* object = cJSON_Parse(screen);
+			ok            = object && cJSON_AddItemToObject(entry, "screen", object);
+		}
+		if (ok && entry->child) {
+			char*            printed   = cJSON_PrintUnformatted(entry);
+			cgltf_extension* extension = (cgltf_extension*)calloc(1, sizeof *extension);
+			ok                         = printed && extension;
+			if (ok) {
+				extension->name                    = (char*)"AERON_flight_model";
+				extension->data                    = gb_keep_string(gb, printed);
+				gb->materials[m].extensions       = extension;
+				gb->materials[m].extensions_count = 1;
+			} else {
+				free(printed);
+				free(extension);
+			}
+		}
+	}
+	/* The model root's energy default, appended to its object. */
+	cgltf_node* root = &gb->nodes[0];
+	if (ok && common && root->extensions_count == 1) {
+		cJSON* object = cJSON_Parse(root->extensions[0].data);
+		ok            = object && cJSON_AddItemToObject(object, "energy", energy_list(common));
+		char* printed = ok ? cJSON_PrintUnformatted(object) : NULL;
+		ok            = printed != NULL;
+		if (ok)
+			root->extensions[0].data = gb_keep_string(gb, printed);
+		cJSON_Delete(object);
+	}
+	for (size_t m = 0; entries && m < count; ++m)
+		cJSON_Delete(entries[m]);
+	free(entries);
+	return ok;
 }
 
 bool OptGltf_BuildMemory(const opt_file_t* opt, const char* basename, const OptGltfBuildOptions* options,
@@ -2448,10 +2539,12 @@ static bool build_memory(const opt_file_t* opt, const char* basename, const OptG
 											   sizeof *build->materials);
 	build->material_anim = (const char**)calloc(((size_t)opt->texture_count + 1 + skin_state.count) * 3,
 												sizeof *build->material_anim);
+	build->material_screen = (const char**)calloc(((size_t)opt->texture_count + 1 + skin_state.count) * 3,
+												  sizeof *build->material_screen);
 	document->image_pixels =
 		(OptGltfOwnedImage*)calloc(image_total ? image_total : 1, sizeof *document->image_pixels);
 	document->image_pixels_count = image_total;
-	if (!build->images || !build->textures || !build->materials || !build->material_anim ||
+	if (!build->images || !build->textures || !build->materials || !build->material_anim || !build->material_screen ||
 		!document->image_pixels) {
 		fprintf(stderr, "opt2gltf: oom (textures)\n");
 		goto fail;
@@ -2563,10 +2656,19 @@ static bool build_memory(const opt_file_t* opt, const char* basename, const OptG
 		}
 
 		/* Emissive: self-illuminated texels (e.g. lit windows) get a second
-		 * texture holding their base color on black, wired as emissiveTexture
-		 * with a unit emissiveFactor. */
+		 * texture holding their glow colour on black, wired as
+		 * emissiveTexture with a unit emissiveFactor. The classic renderer
+		 * drew them over the lit surface, glow · c + lit · (1 - c) with c
+		 * their coverage, 1 on a lit texel: the base colour is black under
+		 * them, so that the standard lit + emission draws the same. */
 		if (tex_emissive[i]) {
 			uint8_t* em = decode_texture_emissive_rgba8(opt, t, base_shade, OPT_EMISSIVE_SHADE_TOL);
+			uint8_t* base_rgba = document->image_pixels[i].rgba;
+			if (em && base_rgba) {
+				for (size_t k = 0; k < (size_t)t->width * (size_t)t->height; ++k)
+					if (em[k * 4 + 3])
+						base_rgba[k * 4 + 0] = base_rgba[k * 4 + 1] = base_rgba[k * 4 + 2] = 0;
+			}
 			if (em) {
 				char png_rel[256];
 				snprintf(png_rel, sizeof png_rel, "textures/%s_Tex%02d_emissive.png", basename, (int)i);
@@ -2583,10 +2685,6 @@ static bool build_memory(const opt_file_t* opt, const char* basename, const OptG
 				mat->emissive_factor[0]       = 1.0f;
 				mat->emissive_factor[1]       = 1.0f;
 				mat->emissive_factor[2]       = 1.0f;
-				/* Generic Aeron material mode: emissive alpha carries
-				 * coverage for a legacy fixed-function sRGB/SRCALPHA pass. */
-				mat->extras.data =
-					gb_keep_string(build, xstrdup("{\"aeronEmissiveMode\":\"legacy_srgb_srcalpha\"}"));
 				emi++;
 			}
 		}
@@ -2691,7 +2789,7 @@ static bool build_memory(const opt_file_t* opt, const char* basename, const OptG
 				glow = s->cover_emissive.rgba ? &build->textures[screen_cover_image[i] + 1] : NULL;
 			}
 			if (!screen_apply(build, mat, s, base, glow)) {
-				fprintf(stderr, "opt2gltf: oom (screen extras)\n");
+				fprintf(stderr, "opt2gltf: oom (screen)\n");
 				goto fail;
 			}
 		}
@@ -2762,6 +2860,7 @@ static bool build_memory(const opt_file_t* opt, const char* basename, const OptG
 		XwauBaked*           baked     = &composite->baked;
 		cgltf_material*      mat       = &build->materials[build->materials_count++];
 		*mat                           = build->materials[ti];
+		build->material_screen[mat - build->materials] = build->material_screen[ti];
 		mat->name = gb_keep_string(build, xprintf_dup("%s_skin%03zu", build->materials[ti].name, c));
 		mat->pbr_metallic_roughness.base_color_texture.texture =
 			document_set_image(document, emi, baked->base, (uint32_t)t->width, (uint32_t)t->height,
@@ -3569,7 +3668,7 @@ static bool build_memory(const opt_file_t* opt, const char* basename, const OptG
 	build->buffer.size = build->bin_size;
 	build->buffer.data = build->bin;
 
-	if (!prune_unused(document))
+	if (!prune_unused(document) || !material_extensions(document))
 		goto fail;
 
 	/* Final cgltf_data wiring. */
@@ -3701,6 +3800,9 @@ void OptGltf_Free(OptGltfDocument* document) {
 	free(gb->textures);
 	free(gb->materials);
 	free(gb->material_anim);
+	free(gb->material_screen);
+	for (size_t i = 0; i < gb->materials_count; ++i)
+		free(gb->materials[i].extensions);
 	free(gb->meshes);
 	free(gb->primitives);
 	free(gb->attributes);
@@ -3717,97 +3819,6 @@ void OptGltf_Free(OptGltfDocument* document) {
 		free(gb->owned_strings[i]);
 	free(gb->owned_strings);
 	free(document);
-}
-
-/* The energy effects an animation file entry names, as bits of
- * kAnimEnergies. */
-static const char* const kAnimEnergies[] = { "shields", "tractor", "jamming" };
-
-static unsigned energy_bits(const cJSON* entry) {
-	unsigned     bits = 0;
-	const cJSON* name;
-	cJSON_ArrayForEach(name, cJSON_GetObjectItemCaseSensitive(entry, "energy")) {
-		for (unsigned e = 0; e < 3; ++e)
-			if (cJSON_IsString(name) && strcmp(name->valuestring, kAnimEnergies[e]) == 0)
-				bits |= 1u << e;
-	}
-	return bits;
-}
-
-static cJSON* energy_list(unsigned bits) {
-	cJSON* list = cJSON_CreateArray();
-	for (unsigned e = 0; list && e < 3; ++e)
-		if (bits & 1u << e)
-			cJSON_AddItemToArray(list, cJSON_CreateString(kAnimEnergies[e]));
-	return list;
-}
-
-/* The model animation file of `document` (NULL when no material is
- * animated): per animated material, its entry. The energy effects most of
- * the materials have (ties: the smaller set; every material is drawn, see
- * prune_unused) become the file's default; only the materials with other
- * effects keep their own, `energy: []` for none (a material XWAU's
- * texture-name sections never reached, such as the faces without a
- * texture). `*ok` is cleared on failure. */
-static cJSON* animation_file(const OptGltfDocument* document, bool* ok) {
-	const GltfBuild* gb       = &document->gb;
-	const size_t     count    = gb->materials_count;
-	cJSON**          entries  = (cJSON**)calloc(count ? count : 1, sizeof *entries);
-	unsigned         tally[8] = { 0 };
-	bool             any      = false;
-	if (!entries) {
-		*ok = false;
-		return NULL;
-	}
-	for (size_t m = 0; m < count; ++m) {
-		const char* members = gb->material_anim ? gb->material_anim[m] : NULL;
-		if (members) {
-			const size_t length = strlen(members) + 3;
-			char*        text   = (char*)malloc(length);
-			if (text)
-				snprintf(text, length, "{%s}", members);
-			entries[m] = text ? cJSON_Parse(text) : NULL;
-			free(text);
-			*ok = *ok && entries[m];
-			any = true;
-		}
-		tally[energy_bits(entries[m])]++;
-	}
-	unsigned common = 0;
-	for (unsigned bits = 1; bits < 8; ++bits)
-		if (tally[bits] > tally[common])
-			common = bits;
-	cJSON* file      = any && *ok ? cJSON_CreateObject() : NULL;
-	cJSON* materials = NULL;
-	*ok = *ok && (!any || (file && cJSON_AddNumberToObject(file, "version", 1) &&
-						   (!common || cJSON_AddItemToObject(file, "energy", energy_list(common))) &&
-						   (materials = cJSON_AddObjectToObject(file, "materials"))));
-	for (size_t m = 0; m < count; ++m) {
-		cJSON* entry = entries[m];
-		entries[m]   = NULL;
-		if (*ok && common) {
-			const unsigned bits = energy_bits(entry);
-			if (bits == common) {
-				cJSON_DeleteItemFromObjectCaseSensitive(entry, "energy");
-			} else {
-				entry = entry ? entry : cJSON_CreateObject();
-				cJSON_DeleteItemFromObjectCaseSensitive(entry, "energy");
-				cJSON_AddItemToObject(entry, "energy", energy_list(bits));
-			}
-		}
-		if (*ok && entry && entry->child) {
-			const char* name = gb->materials[m].name ? gb->materials[m].name : "";
-			*ok              = cJSON_AddItemToObject(materials, name, entry);
-		} else {
-			cJSON_Delete(entry);
-		}
-	}
-	free(entries);
-	if (!*ok) {
-		cJSON_Delete(file);
-		return NULL;
-	}
-	return file;
 }
 
 bool OptGltf_WriteFiles(const OptGltfDocument* document, const char* out_dir, const char* basename) {
@@ -3840,18 +3851,6 @@ bool OptGltf_WriteFiles(const OptGltfDocument* document, const char* out_dir, co
 
 	cgltf_options opts = { 0 };
 	if (cgltf_write_file(&opts, gltf_path, &document->data) != cgltf_result_success)
-		return false;
-	/* The animation file, in its canonical form (effect_files.h). */
-	bool   written = true;
-	cJSON* anim    = animation_file(document, &written);
-	if (anim && written) {
-		char anim_path[1024];
-		snprintf(filename, sizeof filename, "%s.anim.yaml", basename);
-		path_join(anim_path, sizeof anim_path, out_dir, filename);
-		written = EffectFiles_Write("opt2gltf", anim, "", anim_path);
-	}
-	cJSON_Delete(anim);
-	if (!written)
 		return false;
 	FILE* fp = fopen(bin_path, "wb");
 	if (!fp)

@@ -3,11 +3,10 @@
 
 /*
  * XWAU image sequences (xwau_mat.h) to the animated-material data of one
- * converted model: per OPT texture, the
- * aeronFlipbooks / aeronDamage / aeronEnergy extras, whether its illumination
- * frames need the colours before the illumination split, and whether one
- * of them always plays.
- * The library images the extras name are built by xwau_effects, which reads
+ * converted model: per OPT texture, the flipbooks, damage and energy of its
+ * material's AERON_flight_model object, whether its illumination frames need
+ * the colours before the illumination split, and whether one of them always
+ * plays. The library images they name are built by xwau_effects, which reads
  * them back from the converted models.
  */
 

@@ -49,8 +49,10 @@
  * `emissive` enables self-illumination export (off by default). When set,
  * textures whose palette marks self-lit texels (the flat-ramp trick used by
  * both TIE98 and XWA — e.g. lit windows, cockpit lights) get a second
- * `<basename>_TexNN_emissive.png` (base color on black) wired as the
- * material's emissiveTexture with a unit emissiveFactor.
+ * `<basename>_TexNN_emissive.png` (their glow colour on black) wired as the
+ * material's emissiveTexture with a unit emissiveFactor, and their base
+ * colour is black: the classic renderer drew the glow over the surface in
+ * their place.
  *
  * `smooth_angle_deg` controls vertex-normal regeneration. The 1998 OPT
  * normals are full-Gouraud (every adjacent face averaged, no angle
@@ -154,10 +156,9 @@ typedef struct OptGltfXwauMaterial {
 /*
  * Animated materials of one OPT texture in XWAU mode. The caller resolves
  * them from the XWAU material files:
- *   - `members`: the material's entry in the animation file
- *     (<basename>.anim.yaml: flipbooks, damage, energy), JSON members without
- *     the enclosing braces; aeron_gltf_cook --animations merges them into the
- *     material extras;
+ *   - `members`: the material's flipbooks, damage and energy, members of
+ *     its AERON_flight_model object without the enclosing braces (the
+ *     energy most materials share becomes the model root's default);
  *   - `anim_base`: it has illumination flipbooks. Its base colour (and each
  *     of its skin variant materials') is then the texture's colours before
  *     the illumination split, which the frames apply over;
@@ -184,8 +185,8 @@ float OptGltf_XwauUnlit(const OptGltfXwauMaterial* xm);
  * Screen surfaces: OPT textures that show a game-provided texture pair (a
  * captured HUD) through rectangles, as the XWAU Dynamic Cockpit does. The
  * caller resolves them (dynamic_cockpit.h); the converter rewrites the
- * texture's material and records the rectangles in its `extras` as
- * `aeronScreen`:
+ * texture's material and records the rectangles in its AERON_flight_model
+ * object as `screen`:
  *
  *   - with a cover image: base color = the cover premultiplied by its alpha,
  *     base alpha = the cover alpha (the screen shows where it is below 1),

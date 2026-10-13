@@ -172,6 +172,15 @@ static const OpenDat* open_dat(XwauAnim* a, const char* written) {
 
 /* ---- JSON text -------------------------------------------------------- */
 
+/* `value` as the shortest decimal that reads back as the same float. */
+static void shortest_float(char out[24], float value) {
+	for (int digits = 1; digits <= 9; ++digits) {
+		snprintf(out, 24, "%.*g", digits, (double)value);
+		if (strtof(out, NULL) == value)
+			return;
+	}
+}
+
 typedef struct Text {
 	char*  s;
 	size_t len, cap;
@@ -451,9 +460,16 @@ static bool damage_json(XwauAnim* a, Text* t, const XwauMatSequences* own_list,
 				text_add(t, ",\"scale\":[%.9g,%.9g]", (double)m->scale[0], (double)m->scale[1]);
 			if (m->loc == XWAU_SEQ_LOC_INSIDE)
 				text_add(t, ",\"offset\":\"inside\"");
-			else if (m->loc == XWAU_SEQ_LOC_RANGE)
-				text_add(t, ",\"offset\":[%.9g,%.9g,%.9g,%.9g]", (double)m->loc_range[0],
-						 (double)m->loc_range[1], (double)m->loc_range[2], (double)m->loc_range[3]);
+			else if (m->loc == XWAU_SEQ_LOC_RANGE) {
+				/* XWAU moves the square by (x1 - x0)·r - x0 per axis: the
+				 * range min = -x0, max = x1 - 2·x0. */
+				char min_x[24], min_y[24], max_x[24], max_y[24];
+				shortest_float(min_x, -m->loc_range[0]);
+				shortest_float(min_y, -m->loc_range[1]);
+				shortest_float(max_x, m->loc_range[2] - 2.0f * m->loc_range[0]);
+				shortest_float(max_y, m->loc_range[3] - 2.0f * m->loc_range[1]);
+				text_add(t, ",\"offset\":{\"min\":[%s,%s],\"max\":[%s,%s]}", min_x, min_y, max_x, max_y);
+			}
 		}
 		text_add(t, "}");
 	}

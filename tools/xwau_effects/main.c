@@ -2,11 +2,11 @@
  * xwau_effects — imports the effect images and the game effect data of
  * converted XWAU models into an asset source tree (docs: asset_sources.md).
  *
- *   xwau_effects [--xwau-root DIR]... --sources TREE [MODEL.anim.yaml | TREE]...
+ *   xwau_effects [--xwau-root DIR]... --sources TREE [MODEL.gltf | TREE]...
  *
  * Reads the library images the models use (the flipbooks and damage of
- * model animation files, given or found as models/<key>/<key>.anim.yaml in
- * a source tree) and the DAT-named material files
+ * their materials' AERON_flight_model objects, in .gltf files given or found
+ * as models/<key>/<key>.gltf in a source tree) and the DAT-named material files
  * (Materials/dat-<G>-<I>.mat) of the roots. A library is the images of
  * Effects/<library>.dat; a library with no such DAT in the roots is not an
  * XWAU one (authored content) and is left alone.
@@ -239,8 +239,8 @@ static bool material_keys(const char* path, const cJSON* material) {
 	return ok;
 }
 
-/* The library images a model animation file's materials use. */
-static bool read_anim(const char* path) {
+/* The library images a model's materials use (a .gltf). */
+static bool read_model(const char* path) {
 	char   err[512];
 	cJSON* root = YamlJson_Load(path, err, sizeof err);
 	if (!root) {
@@ -250,7 +250,8 @@ static bool read_anim(const char* path) {
 	bool         ok = true;
 	const cJSON* material;
 	cJSON_ArrayForEach(material, cJSON_GetObjectItemCaseSensitive(root, "materials")) {
-		ok &= material_keys(path, material);
+		const cJSON* extensions = cJSON_GetObjectItemCaseSensitive(material, "extensions");
+		ok &= material_keys(path, cJSON_GetObjectItemCaseSensitive(extensions, "AERON_flight_model"));
 	}
 	cJSON_Delete(root);
 	g_models++;
@@ -286,12 +287,12 @@ static char** list_dir(const char* path, bool (*keep)(const char* dir, const cha
 static bool is_model_dir(const char* dir, const char* name) {
 	char        path[1024];
 	struct stat st;
-	snprintf(path, sizeof path, "%s/%s/%s.anim.yaml", dir, name, name);
+	snprintf(path, sizeof path, "%s/%s/%s.gltf", dir, name, name);
 	return stat(path, &st) == 0 && S_ISREG(st.st_mode);
 }
 
-/* A model animation file, or a source tree's models/<key>/<key>.anim.yaml
- * in name order. */
+/* A model's .gltf, or a source tree's models/<key>/<key>.gltf in name
+ * order. */
 static bool read_models(const char* path) {
 	struct stat st;
 	if (stat(path, &st) != 0) {
@@ -299,7 +300,7 @@ static bool read_models(const char* path) {
 		return false;
 	}
 	if (S_ISREG(st.st_mode))
-		return read_anim(path);
+		return read_model(path);
 	char models[1024];
 	snprintf(models, sizeof models, "%s/models", path);
 	if (stat(models, &st) == 0 && S_ISDIR(st.st_mode)) {
@@ -307,15 +308,15 @@ static bool read_models(const char* path) {
 		char** keys  = list_dir(models, is_model_dir, &count);
 		bool   ok    = true;
 		for (size_t i = 0; i < count; ++i) {
-			char anim[2048];
-			snprintf(anim, sizeof anim, "%s/%s/%s.anim.yaml", models, keys[i], keys[i]);
-			ok &= read_anim(anim);
+			char model[2048];
+			snprintf(model, sizeof model, "%s/%s/%s.gltf", models, keys[i], keys[i]);
+			ok &= read_model(model);
 			free(keys[i]);
 		}
 		free(keys);
 		return ok;
 	}
-	fprintf(stderr, "xwau_effects: %s: not a model animation file or a source tree\n", path);
+	fprintf(stderr, "xwau_effects: %s: not a model .gltf or a source tree\n", path);
 	return false;
 }
 
@@ -801,7 +802,7 @@ static int cmp_library(const void* a, const void* b) {
 }
 
 static int usage(void) {
-	fprintf(stderr, "usage: xwau_effects [--xwau-root DIR]... --sources TREE [MODEL.anim.yaml | TREE]...\n");
+	fprintf(stderr, "usage: xwau_effects [--xwau-root DIR]... --sources TREE [MODEL.gltf | TREE]...\n");
 	return 2;
 }
 

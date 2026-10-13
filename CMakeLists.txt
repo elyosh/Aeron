@@ -793,7 +793,7 @@ target_include_directories(opt2gltf_lib
         ${CMAKE_CURRENT_SOURCE_DIR}/third_party/stb
         ${CMAKE_CURRENT_SOURCE_DIR}/third_party/mikktspace
 )
-target_link_libraries(opt2gltf_lib PUBLIC aeron_opt aeron_cgltf aeron PRIVATE aeron_effect_files)
+target_link_libraries(opt2gltf_lib PUBLIC aeron_opt aeron_cgltf aeron PRIVATE aeron_cjson)
 if(NOT MSVC)
     target_link_libraries(opt2gltf_lib PUBLIC m)
 endif()
