@@ -103,8 +103,8 @@ class AeronEnergy(PropertyGroup):
 
 
 class AeronFrame(PropertyGroup):
-    key: StringProperty(name="Key", search=_frame_search, search_options={'SUGGESTION'}, update=_preview_update,
-                        description="Key of the frame image in the flipbook library")
+    key: StringProperty(name="Image", search=_frame_search, search_options={'SUGGESTION'}, update=_preview_update,
+                        description="Image of the flipbook library that the frame shows")
     seconds: FloatProperty(name="Seconds", default=0.1, min=0.0, precision=3, step=1, update=_preview_update,
                            description="How long the frame shows")
 
@@ -122,7 +122,7 @@ class AeronFlipbook(PropertyGroup):
                             update=_preview_update, description="Effect library that holds the frames")
     emissive_strength: FloatProperty(name="Strength", default=1.0, min=0.0, soft_max=10.0,
                                      update=_preview_update, description="Brightness of the emissive frames")
-    unlit: FloatProperty(name="Unlit", default=0.0, min=0.0, max=1.0, subtype='FACTOR', update=_preview_update,
+    unlit: FloatProperty(name="Unlit Amount", default=0.0, min=0.0, max=1.0, subtype='FACTOR', update=_preview_update,
                          description="Part of the frames drawn unlit, as emission. For screens whose material "
                                      "is unlit")
     frames: CollectionProperty(type=AeronFrame)
@@ -154,11 +154,11 @@ class AeronDamageAlternative(PropertyGroup):
 class AeronDamage(PropertyGroup):
     library: StringProperty(name="Library", search=_library_search, search_options={'SUGGESTION'},
                             description="Effect library that holds the damage images")
-    choice: IntProperty(name="Choice", min=0,
-                        description="Each object picks one alternative. Materials with the same choice pick the "
-                                    "same one")
-    placement: IntProperty(name="Placement", min=0,
-                           description="Materials with the same placement share the same random square")
+    choice: IntProperty(name="Pick Group", min=0,
+                        description="Each object picks one alternative. Materials with the same pick group pick "
+                                    "the same one")
+    placement: IntProperty(name="Square Group", min=0,
+                           description="Materials with the same square group share the same random square")
     alternatives: CollectionProperty(type=AeronDamageAlternative)
     active_alternative: IntProperty()
 
@@ -374,7 +374,7 @@ def check(problems, root, materials):
             for frame in book.frames:
                 image(owner, what, book.library, frame.key, book.layer)
                 if not frame.key:
-                    problems.error(owner, what + ": a frame has no key")
+                    problems.error(owner, what + ": a frame has no image")
         if props.has_damage:
             what = "material {} hull damage".format(material.name)
             if not props.damage.library:

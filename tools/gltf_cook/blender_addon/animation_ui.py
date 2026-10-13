@@ -155,7 +155,7 @@ class MATERIAL_PT_aeron_preview(_MaterialPanel, Panel):
             reason = flipbook_preview.skipped.get(context.material.name)
             if reason:
                 layout.label(text="Not shown: " + reason, icon='INFO')
-        layout.label(text="Active States")
+        layout.label(text="Preview States")
         states = context.scene.aeron_flight.flipbook_states
         flow = layout.grid_flow(columns=2, even_columns=True, align=True)
         for state, _, _ in animation.STATES[1:]:

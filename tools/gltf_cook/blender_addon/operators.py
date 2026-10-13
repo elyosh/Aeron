@@ -212,8 +212,8 @@ class AERON_OT_from_cursor(Operator):
 
 
 class AERON_OT_descriptor_from_bounds(Operator):
-    """Set the descriptor from the bounds of the collision mesh (or else the component's mesh), the way the
-    game computes it"""
+    """Set the bounds from the collision mesh (or else the component's mesh), the way the game computes
+    them"""
 
     bl_idname = "aeron.descriptor_from_bounds"
     bl_label = "From Mesh Bounds"
@@ -457,10 +457,11 @@ class AERON_OT_clear_animation(Operator):
 
 
 class AERON_OT_reload_animations(Operator):
-    """Reload the material animations and the energy default from the model's .gltf file"""
+    """Discard the changes to the material animations and the default energy effects, and read them again
+    from the model's .gltf file"""
 
     bl_idname = "aeron.reload_animations"
-    bl_label = "Reload Animations"
+    bl_label = "Revert Animations"
     bl_options = {'REGISTER', 'UNDO'}
 
     @classmethod

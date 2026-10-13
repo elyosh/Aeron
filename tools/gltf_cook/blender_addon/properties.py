@@ -28,11 +28,11 @@ class AeronComponentRef:
     articulations turn components of its craft."""
     component: PointerProperty(
         name="Component", type=bpy.types.Object, poll=_component_poll,
-        description="A component of this model. Leave empty to give an ordinal instead")
+        description="A component of this model. Leave empty to give a component number instead")
     component_index: IntProperty(
-        name="Ordinal", min=0, max=common.MAX_COMPONENT_ORDINAL,
-        description="Ordinal of the component when none is picked, such as a craft component that "
-                    "its cockpit model turns")
+        name="Number", min=0, max=common.MAX_COMPONENT_ORDINAL,
+        description="Number of the component when none is picked, such as a craft component that its "
+                    "cockpit model turns")
 
 
 def _preview_update(self, context):
@@ -111,17 +111,15 @@ def _role_update(self, context):
         self.order = common.next_order(siblings)
 
 
-def _get_explosion_flags(self):
-    return str(self.explosion_flags_bits & 0xFFFFFFFF)
+def _explosion_flag(bit):
+    """A checkbox for one bit of the explosion flags. The other bits are kept."""
+    def get(self):
+        return bool(self.explosion_flags_bits & bit)
 
+    def set(self, value):
+        self.explosion_flags_bits = self.explosion_flags_bits | bit if value else self.explosion_flags_bits & ~bit
 
-def _set_explosion_flags(self, text):
-    try:
-        value = int(text.strip(), 0)
-    except ValueError:
-        return
-    if 0 <= value <= 0xFFFFFFFF:
-        self.explosion_flags_bits = value - (1 << 32) if value >= (1 << 31) else value
+    return get, set
 
 
 class AeronFlightProperties(PropertyGroup):
@@ -144,9 +142,19 @@ class AeronFlightProperties(PropertyGroup):
     # Component.
     mesh_type: EnumProperty(name="Mesh Type", items=common.enum_items(common.MESH_TYPE_NAMES), default='0')
     explosion_flags_bits: IntProperty()
-    explosion_flags: StringProperty(
-        name="Explosion Flags", get=_get_explosion_flags, set=_set_explosion_flags,
-        description="Unsigned 32-bit value, in decimal or 0x hexadecimal")
+    # The explosion flags of the OPT format, which OPT editors call Type 1 to 3.
+    # The tooltips give their meaning in X-Wing Alliance.
+    explosion_type1: BoolProperty(
+        name="Hit Through Shields", get=_explosion_flag(1)[0], set=_explosion_flag(1)[1],
+        description="Explosion type 1. In XWA, the component takes damage even while the shields are up, "
+                    "except on the hardest difficulty")
+    explosion_type2: BoolProperty(
+        name="Destructible", get=_explosion_flag(2)[0], set=_explosion_flag(2)[1],
+        description="Explosion type 2. In XWA, the component has hit points, shows its health when "
+                    "targeted, and breaks off when destroyed")
+    explosion_type3: BoolProperty(
+        name="Type 3", get=_explosion_flag(4)[0], set=_explosion_flag(4)[1],
+        description="Explosion type 3. Not used by XWA")
     tags: StringProperty(
         name="Tags",
         description="Tags defined by the game, separated by commas, such as hangarcrane.arm. "
@@ -158,11 +166,11 @@ class AeronFlightProperties(PropertyGroup):
     target: FloatVectorProperty(
         name="Target", size=3, subtype='TRANSLATION', unit='LENGTH',
         description="Where the game puts the targeting box, and the point the component turns around when "
-                    "it breaks off. Without a target ID, the game uses the descriptor center")
+                    "it breaks off. Without a target ID, the game uses the center of the bounds")
     has_descriptor_geometry: BoolProperty(
-        name="Authored Descriptor", default=False,
-        description="Export the descriptor below instead of letting the game compute it from the bounds of "
-                    "the collision mesh (or else the render mesh)")
+        name="Custom Bounds", default=False,
+        description="Export the bounds below instead of letting the game compute them from the collision mesh "
+                    "(or else the render mesh)")
     descriptor_span: FloatVectorProperty(name="Span", size=3, subtype='XYZ', unit='LENGTH')
     descriptor_center: FloatVectorProperty(name="Center", size=3, subtype='TRANSLATION', unit='LENGTH')
     descriptor_bounds_min: FloatVectorProperty(name="Bounds Min", size=3, subtype='TRANSLATION', unit='LENGTH')
@@ -199,7 +207,7 @@ class AeronFlightProperties(PropertyGroup):
                                      default=(1.0, 0.2, 0.0, 0.0))
 
     # Light (a Blender light under a component).
-    light_exclude: BoolProperty(name="Not a Model Light", default=False,
+    light_exclude: BoolProperty(name="Exclude from Model", default=False,
                                 description="Leave this light out of the exported model")
     light_tube: BoolProperty(name="Tube", default=False,
                              description="Export this area light as a tube. Its X size is the length "
@@ -234,7 +242,7 @@ class AeronFlightProperties(PropertyGroup):
     # The model's energy default, which is `energy` in its AERON_flight_model
     # extension. Materials without their own energy effects use it (animation.py).
     energy_default_given: BoolProperty(
-        name="Energy Default", description="Energy effects for every material that has none of its own")
+        name="Default Energy Effects", description="Energy effects for every material that has none of its own")
     energy_default: PointerProperty(type=animation.AeronEnergy)
 
 
@@ -277,10 +285,10 @@ class AeronSceneProperties(PropertyGroup):
     overlay_hardpoints: BoolProperty(name="Hardpoints", default=True, update=overlays.tag_redraw,
                                      description="Draw hardpoints, colored by family")
     overlay_hardpoint_labels: BoolProperty(name="Hardpoint Labels", default=False, update=overlays.tag_redraw,
-                                           description="Show each hardpoint's ordinal and type")
+                                           description="Show each hardpoint's number and type")
     overlay_descriptors: BoolProperty(
-        name="Descriptors", default=False, update=overlays.tag_redraw,
-        description="Draw descriptor boxes. Boxes that the game computes from the mesh are faint")
+        name="Bounds", default=False, update=overlays.tag_redraw,
+        description="Draw the bounds of the components. Bounds that the game computes from the mesh are faint")
     overlay_targets: BoolProperty(name="Targets", default=True, update=overlays.tag_redraw,
                                   description="Draw target points, with a line to their component")
     overlay_hinges: BoolProperty(name="Hinges", default=True, update=overlays.tag_redraw,
@@ -291,7 +299,7 @@ class AeronSceneProperties(PropertyGroup):
                                        description="Draw the range of model lights that set one with Custom "
                                                    "Distance")
     overlay_component_labels: BoolProperty(name="Component Labels", default=False, update=overlays.tag_redraw,
-                                           description="Show each component's ordinal and name")
+                                           description="Show each component's number and name")
     overlay_in_front: BoolProperty(name="In Front", default=False, update=overlays.tag_redraw,
                                    description="Draw the markers on top of the model, even where it hides them")
 

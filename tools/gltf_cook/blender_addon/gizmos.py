@@ -167,7 +167,7 @@ class AERON_GGT_component(GizmoGroup):
         center = matrix.translation
         size = Vector([abs(matrix[axis][axis]) for axis in range(3)])
         _sync_descriptor(component.aeron_flight, center - size * 0.5, center + size * 0.5)
-        _dragged(self, "Resize Descriptor")
+        _dragged(self, "Resize Bounds")
 
     def draw_prepare(self, context):
         component = _component(context)

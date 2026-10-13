@@ -163,11 +163,11 @@ def _append_frames(book, keys, seconds):
 
 
 class AERON_OT_frames_add_prefix(_FlipbookOperator, Operator):
-    """Add the images of the flipbook library whose key starts with a prefix, sorted by key"""
+    """Add the images of the flipbook library whose name starts with a prefix, sorted by name"""
 
     bl_idname = "aeron.frames_add_prefix"
     bl_label = "Add Frames by Prefix"
-    prefix: StringProperty(name="Prefix", description="Start of the keys to add. Empty adds all images")
+    prefix: StringProperty(name="Prefix", description="Start of the image names to add. Empty adds all images")
     seconds: FloatProperty(name="Seconds", default=0.1, min=0.0, precision=3, description="Duration of each frame")
 
     @classmethod
@@ -182,7 +182,7 @@ class AERON_OT_frames_add_prefix(_FlipbookOperator, Operator):
         keys = [key for key in libraries.search_keys(context, book.library, book.layer, "")
                 if key.startswith(self.prefix)]
         if not keys:
-            self.report({'ERROR'}, "Library {} has no {} image whose key starts with '{}'".format(
+            self.report({'ERROR'}, "Library {} has no {} image whose name starts with '{}'".format(
                 book.library or "(none)", book.layer, self.prefix))
             return {'CANCELLED'}
         _append_frames(book, keys, self.seconds)
@@ -399,8 +399,8 @@ def _place(source, library_dir):
 
 
 class AERON_OT_library_add_images(Operator, ImportHelper):
-    """Add PNG images to the selected library, keyed by file name, and write the library file at once.
-An emissive image takes its base color from <key>_base_color.png"""
+    """Add PNG images to the selected library, named after their files, and write the library file at once.
+An emissive image takes its base color from <name>_base_color.png"""
 
     bl_idname = "aeron.library_add_images"
     bl_label = "Add Images"
@@ -412,7 +412,7 @@ An emissive image takes its base color from <key>_base_color.png"""
     create: BoolProperty(options={'HIDDEN', 'SKIP_SAVE'})
     new_library: StringProperty(name="Library Name", options={'SKIP_SAVE'},
                                 description="Name of the new library. Use a-z, 0-9, '_' and '-'")
-    kind: EnumProperty(name="Kind", items=libraries.KINDS, default="baseColor")
+    kind: EnumProperty(name="Type", items=libraries.KINDS, default="baseColor")
     max_size: IntProperty(name="Max Size", default=0, min=0, max=1024,
                           description="Largest size of the longer side, in texels. 0 uses the default, 1024")
 
@@ -463,7 +463,7 @@ An emissive image takes its base color from <key>_base_color.png"""
         if not images or lonely or taken:
             self.report({'ERROR'}, "No images selected" if not images else
                         "Base color images without an emissive image: " + ", ".join(lonely) if lonely else
-                        "Library {} already has these keys: {}".format(name, ", ".join(taken)))
+                        "Library {} already has images with these names: {}".format(name, ", ".join(taken)))
             return {'CANCELLED'}
         library_dir = os.path.dirname(loaded.library_path(name))
         document = _document(loaded, name)
@@ -513,8 +513,8 @@ Writes the library file at once"""
     bl_idname = "aeron.library_add_blender_image"
     bl_label = "Add Blender Image"
     image: EnumProperty(name="Image", items=_image_items)
-    key: StringProperty(name="Key", description="Key of the image in the library. Empty uses the image name")
-    kind: EnumProperty(name="Kind", items=libraries.KINDS, default="baseColor")
+    key: StringProperty(name="Name", description="Name of the image in the library. Empty uses the Blender image name")
+    kind: EnumProperty(name="Type", items=libraries.KINDS, default="baseColor")
     max_size: IntProperty(name="Max Size", default=0, min=0, max=1024,
                           description="Largest size of the longer side, in texels. 0 uses the default, 1024")
 
@@ -536,7 +536,7 @@ Writes the library file at once"""
         key = self.key or os.path.splitext(image.name)[0]
         document = _document(loaded, name)
         if key in document["images"]:
-            self.report({'ERROR'}, "Library {} already has key {}".format(name, key))
+            self.report({'ERROR'}, "Library {} already has an image named {}".format(name, key))
             return {'CANCELLED'}
         library_dir = os.path.dirname(loaded.library_path(name))
         target = os.path.join(library_dir, "frames", key + ".png")
@@ -567,17 +567,17 @@ class _ImageOperator:
 
 
 class AERON_OT_library_edit_image(_ImageOperator, Operator):
-    """Change the kind, inputs, size cap and crop of the selected library image.
+    """Change the type, inputs, size cap and crop of the selected library image.
 Writes the library file at once"""
 
     bl_idname = "aeron.library_edit_image"
     bl_label = "Edit Image"
-    kind: EnumProperty(name="Kind", items=libraries.KINDS)
+    kind: EnumProperty(name="Type", items=libraries.KINDS)
     base_color: StringProperty(name="Base Color",
                                description="Path of the base color input, relative to the library. Empty for none")
     emissive: StringProperty(name="Emissive",
                              description="Path of the emissive input, relative to the library. Empty for none")
-    factor: StringProperty(name="Factor",
+    factor: StringProperty(name="Damage Factor",
                            description="Path of the damage factor input, relative to the library. Empty for none")
     max_size: IntProperty(name="Max Size", min=0, max=1024,
                           description="Largest size of the longer side, in texels. 0 uses the default, 1024")
@@ -682,12 +682,12 @@ Writes the library file at once. Models that use the image lose it"""
 
 
 class AERON_OT_library_rename_image(_ImageOperator, Operator):
-    """Rename the key of the selected image, and its uses in this model. Other models keep the old key.
+    """Rename the selected image, and its uses in this model. Other models keep the old name.
 Writes the library file at once"""
 
     bl_idname = "aeron.library_rename_image"
     bl_label = "Rename Image"
-    new_key: StringProperty(name="New Key")
+    new_key: StringProperty(name="New Name")
 
     def invoke(self, context, event):
         self.new_key = libraries.selected_image(context)
@@ -705,7 +705,7 @@ Writes the library file at once"""
         name, key = libraries.selected_library(context), libraries.selected_image(context)
         document = _document(loaded, name)
         if not self.new_key or self.new_key in document["images"]:
-            self.report({'ERROR'}, "Enter a key that library {} does not have yet".format(name))
+            self.report({'ERROR'}, "Enter a name that library {} does not have yet".format(name))
             return {'CANCELLED'}
         document["images"] = {self.new_key if k == key else k: v for k, v in document["images"].items()}
         if not _write(self, context, loaded, cooker, name, document,

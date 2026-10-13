@@ -62,7 +62,7 @@ def _check_component(problems, component):
         _check_tag(problems, component, "tag", tag)
     if props.has_descriptor_geometry and any(
             props.descriptor_bounds_min[axis] > props.descriptor_bounds_max[axis] for axis in range(3)):
-        problems.error(component, "descriptor bounds: min is greater than max")
+        problems.error(component, "custom bounds: min is greater than max")
     collisions = 0
     for child in component.children:
         role = common.role(child)

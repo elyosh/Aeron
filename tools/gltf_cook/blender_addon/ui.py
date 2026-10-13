@@ -107,7 +107,7 @@ class AERON_UL_references(UIList):
 
     def draw_item(self, context, layout, data, item, icon, active_data, active_propname, index):
         row = layout.row(align=True)
-        name = item.component.name if item.component else "ordinal {}".format(item.component_index)
+        name = item.component.name if item.component else "component {}".format(item.component_index)
         if hasattr(item, "group"):
             row.label(text=item.group or "(no group)", icon='CON_ROTLIKE')
         row.label(text=name, icon='MESH_DATA' if item.component else 'LINENUMBERS_ON')
@@ -255,7 +255,7 @@ def draw_light(layout, obj):
         if props.light_tube:
             row.prop(props, "light_one_sided")
     column = layout.column(align=True)
-    column.label(text="Game: " + common.light_game_shape(obj))
+    column.label(text="In Game: " + common.light_game_shape(obj))
     column.label(text="Intensity: {:.5g} cd".format(common.light_punctual(obj, obj.matrix_world)["intensity"]))
     if light.use_custom_distance:
         column.label(text="Range: {:.4g} m, fading out".format(light.cutoff_distance))
@@ -274,7 +274,7 @@ class OBJECT_PT_aeron_components(_RolePanel, Panel):
         row.template_list("AERON_UL_components", "", context.scene, "objects", obj.aeron_flight,
                           "active_component", rows=8)
         _move_buttons(row, 'components')
-        self.layout.label(text="List order is the component ordinal")
+        self.layout.label(text="List order is the component number")
 
 
 class OBJECT_PT_aeron_model_file(_RolePanel, Panel):
@@ -429,7 +429,13 @@ class OBJECT_PT_aeron_component(_RolePanel, Panel):
         layout = self.layout
         layout.use_property_split = True
         layout.prop(props, "mesh_type")
-        layout.prop(props, "explosion_flags")
+        column = layout.column(heading="Explosion", align=True)
+        column.prop(props, "explosion_type1")
+        column.prop(props, "explosion_type2")
+        column.prop(props, "explosion_type3")
+        other = props.explosion_flags_bits & 0xFFFFFFF8
+        if other:
+            column.label(text="Other flags: 0x{:X}".format(other))
         layout.prop(props, "tags")
         layout.prop(props, "target_id")
         row = layout.row(align=True)
@@ -454,7 +460,7 @@ class OBJECT_PT_aeron_children(_RolePanel, Panel):
 
 
 class OBJECT_PT_aeron_descriptor(_RolePanel, Panel):
-    bl_label = "Descriptor"
+    bl_label = "Bounds"
     bl_options = {'DEFAULT_CLOSED'}
     role = 'component'
 

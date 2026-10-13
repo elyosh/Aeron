@@ -32,7 +32,7 @@ class AeronFlightModelPreferences(AddonPreferences):
     max_texture: IntProperty(name="Max Texture", default=4096, min=4, max=16384,
                              description="Larger textures are downscaled to this size")
     mip_min_subrect: EnumProperty(
-        name="Sub-Rect Gutter", default='16',
+        name="Atlas Padding", default='16',
         items=[(value, value, "Texels of padding around each sub-rect. It also limits the number of mip levels")
                for value in ('4', '8', '16', '32')])
     bc7_quality: EnumProperty(
@@ -45,13 +45,13 @@ class AeronFlightModelPreferences(AddonPreferences):
         description="The opt2gltf executable, which converts OPT models. If empty, the one packaged with "
                     "the add-on is used, or else the one on the PATH")
     xwau_folder: StringProperty(
-        name="XWA Upgrade", subtype='DIR_PATH',
+        name="XWA Upgrade Folder", subtype='DIR_PATH',
         description="The XWA Upgrade game folder, with FlightModels and Materials. Import XWA OPT uses it "
                     "for an OPT outside an installation, and sets it when the OPT is inside one")
     recent_projects: CollectionProperty(type=AeronRecentProject, options={'HIDDEN'},
                                         description="The projects of the last OPT imports, most recent first")
     effects_dir: StringProperty(
-        name="Effects Directory", subtype='DIR_PATH',
+        name="Game Effects Folder", subtype='DIR_PATH',
         description="The game's remaster/effects directory. When set, Export for Game rebuilds the project's "
                     "changed effect libraries in it, and checks each animation frame against its library")
 

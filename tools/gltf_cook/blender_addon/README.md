@@ -27,7 +27,7 @@ set the paths of `aeron_gltf_cook` and `opt2gltf` (built with the Aeron
 tools), unless they are on the `PATH`. Paths set in the preferences are
 used instead of the packaged tools.
 
-If you also set **Effects Directory** in the preferences to the game's
+If you also set **Game Effects Folder** in the preferences to the game's
 `remaster/effects` folder, Export for Game checks every animation frame
 against its library. Before that, it rebuilds in that folder the project
 libraries that the model uses and that have changed.
@@ -57,7 +57,7 @@ including the material animations ([format](../animated_materials.md)).
    the model. The flight data of the selected object is in Object
    properties > Aeron Flight Model. For the model root, this is the
    component order, the articulations and the sets. For a component, it is
-   its fields, the order of its hardpoints and engine glows, its descriptor
+   its fields, the order of its hardpoints and engine glows, its bounds
    and its hinge.
 3. Paint textures with any program, in the model folder. Textures that no
    material uses yet can stay there: only the textures that the materials
@@ -69,7 +69,7 @@ including the material animations ([format](../animated_materials.md)).
    `textures/` as PNG. Nothing else in the folder is changed or removed.
 5. Try the model in the game with **Export for Game** (or File > Export >
    Aeron Flight Model for Game (.glb)). It builds a `.glb` for the game's
-   `remaster/models/` folder. When the effects directory is set, it first
+   `remaster/models/` folder. When the game effects folder is set, it first
    rebuilds the effect libraries whose frames changed, and lists them.
 
 Both exports check the model first. Aeron > Problems lists every problem,
@@ -119,9 +119,9 @@ dialog shows which XWA Upgrade installation the import will use.
 
 XWAU data is read from the game folder that contains the OPT's
 `FlightModels` folder, if that game folder has XWAU's `Materials` folder.
-Importing an OPT from such a folder also sets **XWA Upgrade** in the
-preferences. That installation is then used for OPTs that are not in a game
-folder.
+Importing an OPT from such a folder also sets **XWA Upgrade Folder** in
+the preferences. That installation is then used for OPTs that are not in a
+game folder.
 
 To start from plain meshes, select them and click **Make Flight Model**.
 They become the components of a new model root, or of the active one.
@@ -130,11 +130,11 @@ They become the components of a new model root, or of the active one.
 
 - **Model root**: an Empty without a parent. Its panels list the components
   in order, and hold the articulations, the articulation settings and the
-  component sets. These name a component by its object, or by a raw ordinal
+  component sets. These name a component by its object, or by its number
   for a component outside the model (for example, a cockpit names the
   components of its craft).
 - **Components**: meshes directly under the root. Their order in the list is
-  the ordinal that the game uses. Reorder them with the arrows.
+  the component number that the game uses. Reorder them with the arrows.
 - Under a component:
   - **hardpoints**: Empties that have only a position (no rotation or
     scale);
@@ -160,22 +160,22 @@ toggle and do not change the model.
   outer color. **Throttle** sets its size and length. A selected glow is
   outlined. A glow that is not enabled is only outlined, in gray.
 - **Hardpoints**, colored by family. The legend lists the families of the
-  model with their counts. **Labels** shows the ordinal and type of each
+  model with their counts. **Labels** shows the number and type of each
   hardpoint. The pilot eye has a small view frustum.
-- **Descriptors**: the descriptor box of each component, aligned with the
+- **Bounds**: the bounds box of each component, aligned with the
   model. A box that the game computes from the collision mesh (or else the
   render mesh) is faint. The box of the active component is highlighted.
 - **Targets**: the point where the game puts the targeting box of a
   component. For a component with a target ID, this is its target point,
   with a line to the component. Otherwise it is the center of its
-  descriptor, drawn fainter.
+  bounds, drawn fainter.
 - **Hinges**: the pivot, the rotation axis (red), the direction axis
   (green), the up axis (blue), and an arc to the open angle of each
   articulation. The arcs are named on the active component.
 - **Light Shapes**: the sphere, tube or panel that the game makes of each
   model light (a long panel becomes a tube), and an arrow for one-sided
   lights. **Light Ranges** also draws the range of lights that have one.
-- **Component Labels**: the ordinal and name of each component.
+- **Component Labels**: the number and name of each component.
 
 **In Front** draws the markers on top of the model instead of hiding them
 behind it.
@@ -184,7 +184,7 @@ The active component also gets gizmos for what its overlays show:
 - drag the target point (when it has a target ID) or the hinge pivot. Ctrl
   snaps, following the snapping settings;
 - turn the three hinge axes together with the dial around each axis;
-- resize an authored descriptor box by its faces, edges and corners. If the
+- resize a custom bounds box by its faces, edges and corners. If the
   center and span of the box matched its bounds, they stay matched.
 
 Each drag is one undo step.
@@ -239,31 +239,31 @@ in Material properties > Aeron Animation. The exports write it to the
 
 - **Flipbooks**: a list that you can reorder. On each layer, the first
   flipbook whose state is active plays. Each flipbook has a state, a layer,
-  a mode, a library, an emissive strength or unlit part, and frames (key,
-  seconds and thumbnail). **Add by Prefix…** adds every image of the library
-  whose key starts with a given prefix. **Add Recent…** adds the images last
+  a mode, a library, a strength or unlit amount, and frames (image, seconds
+  and thumbnail). **Add by Prefix…** adds every image of the library whose
+  name starts with a given prefix. **Add Recent…** adds the images last
   added to a library. **Set Duration…** gives all frames the same duration.
-- **Hull Damage**: its library, choice and placement, and alternatives with
-  three stages each (75%, 50% and 25% hull). Each alternative can use a
-  **Random Square** of the texture instead of the whole texture, with a
-  **Square Size** and an **Offset**.
-- **Energy effects**: by default, the material uses the model's **Energy
-  Default** (in Object properties > Material Animations of the model root),
-  shown grayed out. With **Own Energy Effects**, it uses its own.
+- **Hull Damage**: its library, **Pick Group** and **Square Group**, and
+  alternatives with three stages each (75%, 50% and 25% hull). Each
+  alternative can use a **Random Square** of the texture instead of the
+  whole texture, with a **Square Size** and an **Offset**.
+- **Energy effects**: by default, the material uses the model's **Default
+  Energy Effects** (in Object properties > Material Animations of the model
+  root), shown grayed out. With **Own Energy Effects**, it uses its own.
 
 The animation follows the material when you rename or duplicate it, and it
 is dropped when the material is deleted. If the animations in the `.gltf`
-change outside Blender, click **Reload Animations** in the Material
+change outside Blender, click **Revert Animations** in the Material
 Animations panel of the model root. Otherwise the next export writes the
 animations from Blender back over your changes. The screen of a material
 (a cockpit display) is kept as it was imported. Check Model reports frames
-without a library. Once the libraries are loaded, it also reports keys that
-are missing from a library or that are of the wrong kind.
+without a library. Once the libraries are loaded, it also reports images
+that are missing from a library or that are of the wrong type.
 
 **Preview.** Turn on the checkbox of the Aeron Animation > Preview
 sub-panel. The viewport (in Material Preview or Rendered shading) then
 shows the flipbooks as in the game, at the current frame of the timeline,
-with the states checked under Active States (and Always) active. The
+with the states checked under Preview States (and Always) active. The
 preview follows Blender's timeline: play it (**Play Timeline** in the panel,
 or Space) or scrub it to animate the flipbooks. The start frame of the scene
 is where the flipbooks start, and its frame range sets how long they play
@@ -277,29 +277,29 @@ and while the file is saved, so they never reach your files.
 
 **Effect libraries.** For a model in a project (`<project>/models/<key>/`),
 **Load Libraries** in the Effect Libraries sub-panel loads the project's
-libraries (`<project>/effects/`). Key fields then suggest the images of the
-library that have the right kind, frames show thumbnails, and each library
+libraries (`<project>/effects/`). Image fields then suggest the images of the
+library that have the right type, frames show thumbnails, and each library
 shows how many models use it (libraries are shared). The library operators
 write the library files immediately, not at Save to Project, and Blender's
 undo does not revert them:
 
 - **Add Images**, and the new library button above it: copy PNG files into
-  the `frames/` folder of the library, one image per file, keyed by file
-  name. For emissive images, `<key>_emissive.png` is also keyed `<key>`,
-  and `<key>_base_color.png` gives the base color of `<key>`.
+  the `frames/` folder of the library, one image per file, named after the
+  file. For emissive images, `<name>_emissive.png` is also named `<name>`,
+  and `<name>_base_color.png` gives the base color of `<name>`.
 - **Add Blender Image**: saves an image painted in Blender as
-  `frames/<key>.png`. Save later changes to it with Image > Save. Export for
+  `frames/<name>.png`. Save later changes to it with Image > Save. Export for
   Game refuses library images with unsaved changes.
 - **Edit Image**, **Rename Image** and **Remove Image**. Rename Image and
-  Remove Image first list the models that use the key. Rename Image also
-  renames the key in the frames of this model, but not in the files of other
+  Remove Image first list the models that use the image. Rename Image also
+  renames the image in the frames of this model, but not in the files of other
   models. Remove Image keeps the PNG files in `frames/`.
 
-So to make a new animation: paint the frames, use Add Images, then Last
-Added… on the flipbook of the material. Then use Export for Game (which
+So to make a new animation: paint the frames, use Add Images, then Add
+Recent… on the flipbook of the material. Then use Export for Game (which
 builds the changed libraries) to try it, and Save to Project to keep it. If
-a library rebuild removes a key that other models use, or changes the kind
-of its image, Export for Game names those models: their next build fails.
+a library rebuild removes an image that other models use, or changes its
+type, Export for Game names those models: their next build fails.
 
 The looks of the model (converted paint states and skins) are material
 variants (Blender's glTF material variants). The markings list and the
@@ -314,15 +314,14 @@ materials.
 
 Components and collision meshes need a positive uniform scale, and nothing
 may be mirrored or animated. Vectors (target, hinge pivot and axes,
-descriptor) are in the local space of the component. The buttons next to
-them set them from the 3D cursor. Without an authored descriptor, the game
-computes the descriptor from the bounds of the collision mesh (or else the
-render mesh).
+custom bounds) are in the local space of the component. The buttons next to
+them set them from the 3D cursor. Without custom bounds, the game computes
+the bounds from the collision mesh (or else the render mesh).
 
 ## Lights
 
 Every point or area light under a component is a model light, unless its
-**Not a Model Light** box is checked. The game draws lights without
+**Exclude from Model** box is checked. The game draws lights without
 shadows. The **Game-Like Lights** toggle turns off the shadows of model
 lights.
 
