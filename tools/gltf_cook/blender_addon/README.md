@@ -25,7 +25,8 @@ For development, link this folder as
 `<extensions>/user_default/aeron_flight_model`. In the add-on preferences,
 set the paths of `aeron_gltf_cook` and `opt2gltf` (built with the Aeron
 tools), unless they are on the `PATH`. Paths set in the preferences are
-used instead of the packaged tools.
+used instead of the packaged tools. The hangar lighting bake also needs
+`environment_bake`, which the packages don't include yet.
 
 If you also set **Game Effects Folder** in the preferences to the game's
 `remaster/effects` folder, Export for Game checks every animation frame
@@ -419,3 +420,46 @@ light where it becomes negligible.
 
 Each frame, the game ranks all its lights and keeps the 256 that matter
 most near the camera. A light on a hidden (destroyed) component is dark.
+
+## Hangar lighting
+
+In the game, a hangar has an environment package: its light on the ships
+and their reflections of the hangar. To bake it, import the hangar model,
+place the 3D cursor where ships stand, and use **Add Environment Probe**
+(Aeron tab). The probe is a sphere under the model root. Only its position
+matters, so its rotation is locked. **Bake Hangar Lighting** in its panel
+renders the hangar from the probe with Cycles and bakes the package.
+
+The bake renders what the scene renders, so props that you import and place
+(shuttle, droids, crane) are baked too. Turn off the render visibility (the
+camera icon in the Outliner) of anything to leave out, such as a ship
+imported for reference. Nothing comes from outside the hangar: the World
+is black during the bake.
+
+The package holds all of the hangar's light except the game's ceiling key
+light, which the game adds itself because it casts the shadows:
+- the light objects of the hangar are baked, both their light on the walls
+  and the lights themselves, which ships reflect. The game no longer adds
+  them while it uses the package;
+- the bake adds the key light as a Sun lamp, so that the walls receive it;
+- emissive surfaces are baked.
+
+The light levels are the game's: the bake reads them from `config.yaml` in
+the `remaster` folder (`hangar_lighting`, `lighting.sun_illuminance_scale`,
+`lighting.emissive_scale` and `point_lights.model_light_intensity`). If they
+change later, adjust the package's `intensity` (live in the game's
+Environment debug tool). Bake again only to restore the balance between the
+key light and the emitters when just one of them changed, or after a change
+of the key light's direction or color.
+
+One probe gives every ship the same light and reflections, as seen from
+the probe. Reflections are only approximate away from it, mostly on large
+flat surfaces.
+
+The bake writes into the game's `remaster` folder (the parent of the Game
+Effects Folder setting, or else a folder you choose), in
+`flight/environments/hangars/<model key>/`: `diffuse.ktx2`,
+`specular.ktx2`, `package.yaml` and `mapping.yaml`. Merge the last two
+into the environment manifest (`flight/environments/environments.yaml`)
+to use the package for that hangar model. Save to Project keeps the probe
+and its settings in the model's `.gltf`.

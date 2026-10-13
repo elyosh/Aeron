@@ -144,6 +144,16 @@
         "energy": {
           "$ref": "#/$defs/energy",
           "description": "The energy effects of every material without its own. Without it, such materials show none."
+        },
+        "environmentProbe": {
+          "title": "Environment probe",
+          "description": "Where an authoring tool bakes a hangar's environment package from. The game ignores it.",
+          "type": "object",
+          "required": ["position"],
+          "properties": {
+            "position": { "$ref": "#/$defs/vec3", "description": "In the model's frame, in metres." },
+            "samples": { "title": "Samples", "description": "Render samples per pixel.", "type": "integer", "minimum": 1 }
+          }
         }
       }
     },

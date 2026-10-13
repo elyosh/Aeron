@@ -20,7 +20,8 @@ from bpy.types import Operator
 from bpy_extras.io_utils import ExportHelper
 from mathutils import Matrix
 
-from . import animation, common, display, flipbook_preview, libraries, skins, sources, validation, variants
+from . import (animation, common, display, flipbook_preview, hangar_lighting, libraries, skins, sources, validation,
+               variants)
 
 # Blender (x, y, z) -> glTF (x, z, -y).
 _TO_GLTF = Matrix(((1.0, 0.0, 0.0, 0.0), (0.0, 0.0, 1.0, 0.0), (0.0, -1.0, 0.0, 0.0), (0.0, 0.0, 0.0, 1.0)))
@@ -57,6 +58,9 @@ def _model_extension(root, ordinals):
         extension["skinVariants"] = skin_variants
     if len(props.markings):
         extension["markings"] = [entry.variant or None for entry in props.markings]
+    probe = hangar_lighting.probe_json(root)
+    if probe:
+        extension["environmentProbe"] = probe
     energy = animation.energy_default(root)
     if energy is not None:
         extension["energy"] = energy

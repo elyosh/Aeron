@@ -1,11 +1,12 @@
 """Builds the Blender add-on's package for one platform, with its tools.
 
     python3 package_addon.py --platform PLATFORM --cooker AERON_GLTF_COOK --opt2gltf OPT2GLTF
-                             --out DIR [--license NAME=FILE]... [--blender BLENDER]
+                             [--environment-bake ENVIRONMENT_BAKE] --out DIR
+                             [--license NAME=FILE]... [--blender BLENDER]
 
 PLATFORM is windows-x64, macos (universal tools: Apple silicon and Intel)
-or linux-x64. The package is blender_addon/ with the cooker and opt2gltf in
-bin/, the licenses of what they link in licenses/ (the third_party ones,
+or linux-x64. The package is blender_addon/ with the cooker, opt2gltf and,
+when given, environment_bake in bin/, the licenses of what they link in licenses/ (the third_party ones,
 and each --license, e.g. zstd's), and the manifest's platforms set; it is
 written as DIR/aeron_flight_model-<version>-<platform>.zip. Blender's own
 build sorts only Python wheels between platforms, so it is assembled here.
@@ -85,6 +86,8 @@ def main():
     parser.add_argument("--platform", required=True, choices=sorted(PLATFORMS))
     parser.add_argument("--cooker", required=True, help="the aeron_gltf_cook built for the platform")
     parser.add_argument("--opt2gltf", required=True, help="the opt2gltf built for the platform")
+    parser.add_argument("--environment-bake", help="the environment_bake built for the platform, for the hangar "
+                                                   "lighting bake")
     parser.add_argument("--out", required=True, help="the directory the package is written to")
     parser.add_argument("--license", action="append", default=[], metavar="NAME=FILE",
                         help="another license of what the tools link (repeatable)")
@@ -97,13 +100,16 @@ def main():
         if not separator or not name:
             parser.error("--license takes NAME=FILE")
         licenses[name] = path
-    for path in [args.cooker, args.opt2gltf] + list(licenses.values()):
+    for path in [args.cooker, args.opt2gltf] + ([args.environment_bake] if args.environment_bake else []) + \
+            list(licenses.values()):
         if not os.path.isfile(path):
             parser.error("no such file: " + path)
 
     text, version = manifest(PLATFORMS[args.platform])
     exe = ".exe" if args.platform.startswith("windows") else ""
-    tools = (("bin/aeron_gltf_cook" + exe, args.cooker), ("bin/opt2gltf" + exe, args.opt2gltf))
+    tools = [("bin/aeron_gltf_cook" + exe, args.cooker), ("bin/opt2gltf" + exe, args.opt2gltf)]
+    if args.environment_bake:
+        tools.append(("bin/environment_bake" + exe, args.environment_bake))
     os.makedirs(args.out, exist_ok=True)
     package = os.path.join(args.out, "aeron_flight_model-{}-{}.zip".format(version, args.platform))
     with zipfile.ZipFile(package, "w") as archive:

@@ -3,7 +3,7 @@
 # checked as the glTF exporter writes them, relative to the world matrix of
 # the parent.
 
-from . import animation, common, skins, sources, variants
+from . import animation, common, hangar_lighting, skins, sources, variants
 
 EPSILON = 1.0e-5
 
@@ -151,7 +151,7 @@ def validate(root):
         role = common.role(child)
         if role == 'none':
             problems.warning(child, "no role under the model root, so it is not exported")
-        elif role != 'component':
+        elif role not in {'component', 'environmentProbe'}:
             problems.error(child, "a {} must be under a component, not the model root".format(role))
     for component in parts:
         _check_component(problems, component)
@@ -185,6 +185,7 @@ def validate(root):
     sources.check_markings(problems, root)
     skins.check(problems, root)
     variants.check(problems, root)
+    hangar_lighting.check(problems, root)
     animation.check(problems, root, sources.model_materials(root))
 
     for obj in root.children_recursive:

@@ -1,6 +1,6 @@
-# Add-on preferences: the tools (the cooker and opt2gltf), the cooker's
-# options, and the XWA Upgrade installation and recent projects used by the
-# OPT import.
+# Add-on preferences: the tools (the cooker, opt2gltf and environment_bake),
+# the cooker's options, and the XWA Upgrade installation and recent projects
+# used by the OPT import.
 
 import os
 import shutil
@@ -44,6 +44,10 @@ class AeronFlightModelPreferences(AddonPreferences):
         name="opt2gltf", subtype='FILE_PATH',
         description="The opt2gltf executable, which converts OPT models. If empty, the one packaged with "
                     "the add-on is used, or else the one on the PATH")
+    environment_bake: StringProperty(
+        name="environment_bake", subtype='FILE_PATH',
+        description="The environment_bake executable, which bakes hangar lighting. If empty, the one packaged "
+                    "with the add-on is used, or else the one on the PATH")
     xwau_folder: StringProperty(
         name="XWA Upgrade Folder", subtype='DIR_PATH',
         description="The XWA Upgrade game folder, with FlightModels and Materials. Import XWA OPT uses it "
@@ -61,6 +65,7 @@ class AeronFlightModelPreferences(AddonPreferences):
         if not cooker_path(context):
             layout.label(text="aeron_gltf_cook not found, set its path", icon='ERROR')
         layout.prop(self, "opt2gltf")
+        layout.prop(self, "environment_bake")
         if not opt2gltf_path(context):
             layout.label(text="opt2gltf not found, set its path", icon='ERROR')
         row = layout.row()
@@ -110,6 +115,10 @@ def cooker_path(context):
 
 def opt2gltf_path(context):
     return _tool_path(get(context).opt2gltf, "opt2gltf")
+
+
+def environment_bake_path(context):
+    return _tool_path(get(context).environment_bake, "environment_bake")
 
 
 classes = (AeronRecentProject, AeronFlightModelPreferences)

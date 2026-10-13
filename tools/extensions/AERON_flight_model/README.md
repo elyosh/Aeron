@@ -31,7 +31,8 @@ and positive uniform scale.
 ## Roles
 
 - `model`: `{ "role": "model" }`; optionally carries `articulations`,
-  `articulationSettings`, `componentSets`, `markings` and `energy`
+  `articulationSettings`, `componentSets`, `markings`, `energy`,
+  `skinVariants` and `environmentProbe`
 - `component`: requires `meshType` in `0..31`; optionally carries
   `explosionFlags`, `targetId`, `target`, descriptor geometry, `rotation`
   and `tags`
@@ -111,9 +112,10 @@ state. Aeron stores sets without interpreting them.
 The game gives each object a markings value (0 to 255). The model root may
 carry `markings`, an array of at most 256 entries: entry m is the name of
 the variant that markings value m shows (a `KHR_materials_variants` variant
-or a skin variant, see Skins), or `null` for the primitives' own materials. A value past the end shows the last
-entry; without the array, every value shows the own materials. Every name
-must be one of the file's variants.
+or a skin variant, see Skins), or `null` for the primitives' own
+materials. A value past the end shows the last entry; without the array,
+every value shows the own materials. Every name must be one of the file's
+variants.
 
 ```json
 "markings": [null, "Red", "Blue"]
@@ -123,6 +125,19 @@ Here markings 0 shows the model as modelled, 1 shows `Red`, and 2 and above
 `Blue`. A game may let a mission choose another variant, or `null`, for a
 markings value. Aeron loads a texture that only variants use when a
 markings value in use shows one of them.
+
+## Environment probe
+
+A hangar model's root may carry `environmentProbe`, the point from which
+an authoring tool bakes the hangar's environment package (its lighting and
+reflections). The game ignores it.
+
+```json
+"environmentProbe": { "position": [0.0, 1.2, -4.5], "samples": 256 }
+```
+
+- `position`: required, in the model's frame, in metres;
+- `samples`: render samples per pixel.
 
 ## Skins
 
