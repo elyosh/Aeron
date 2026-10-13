@@ -1,6 +1,6 @@
-/* The conversion of an OPT into a glTF document (opt_gltf.h): its phases,
- * the geometry's buffers and primitives, the nodes and their
- * AERON_flight_model objects. */
+/* Converts an OPT into a glTF document (opt_gltf.h). This file holds the
+ * phases of the conversion, the buffers and primitives of the geometry, and
+ * the nodes with their AERON_flight_model objects. */
 
 #include <math.h>
 
@@ -67,10 +67,10 @@ static bool valid_component_tag(const char* tag) {
 
 /* ===== The build ====================================================== */
 
-/* The options' defaults, when none are given. */
+/* Default options, used when none are given. */
 static const OptGltfBuildOptions kDefaultOptions;
 
-/* Sets the build's error message; returns false. */
+/* Sets the error message of the build and returns false. */
 bool opt_gltf_build_fail(Build* b, const char* format, ...) {
 	if (b->error) {
 		va_list args;
@@ -105,8 +105,9 @@ static void build_free(Build* b) {
 
 /* ---- Options ------------------------------------------------------------ */
 
-/* The variants' names set and unique, their markings named, and their
- * materials' textures and indices in range. */
+/* Checks that the variant names are set and unique, that the markings name
+ * known variants, and that the textures and indices of the variant
+ * materials are in range. */
 static bool validate_variants(Build* b) {
 	const OptGltfVariants* v             = b->variants;
 	const size_t           texture_count = (size_t)b->opt->texture_count;
@@ -124,14 +125,15 @@ static bool validate_variants(Build* b) {
 	for (size_t m = 0; m < v->material_count; ++m)
 		if (v->materials[m].texture < 0 || v->materials[m].texture >= b->opt->texture_count ||
 			!v->materials[m].material.base.view.rgba)
-			return opt_gltf_build_fail(b, "invalid material %zu of the variants", m);
+			return opt_gltf_build_fail(b, "invalid variant material %zu", m);
 	for (size_t m = 0; m < v->markings_count; ++m) {
 		const char* name  = v->default_markings[m];
 		bool        found = name == NULL;
 		for (size_t i = 0; !found && i < v->count; ++i)
 			found = strcmp(v->variants[i].name, name) == 0;
 		if (!found)
-			return opt_gltf_build_fail(b, "markings %zu names unknown material variant '%s'", m, name);
+			return opt_gltf_build_fail(b, "markings value %zu names an unknown material variant '%s'", m,
+									   name);
 	}
 	return true;
 }
@@ -174,24 +176,28 @@ static bool validate_options(Build* b) {
 	const OptGltfGeometryOptions* g = &o->geometry;
 	if (g->normals == OPT_GLTF_NORMALS_SMOOTHED &&
 		!(g->smooth_angle_degrees >= 0.0f && g->smooth_angle_degrees <= 180.0f))
-		return opt_gltf_build_fail(b, "smoothing angle %g outside 0 to 180 degrees",
+		return opt_gltf_build_fail(b, "smoothing angle %g is outside 0 to 180 degrees",
 								   (double)g->smooth_angle_degrees);
 	const OptGltfMaterialOptions* m = &o->material;
 	if (m->source == OPT_GLTF_MATERIALS_FULLBRIGHT && !(m->fullbright_strength > 0.0f))
 		return opt_gltf_build_fail(b, "fullbright materials need a positive strength");
 	if (m->source == OPT_GLTF_MATERIALS_GIVEN && (!m->given || !m->untextured))
-		return opt_gltf_build_fail(b, "given materials need one per texture and the untextured one");
+		return opt_gltf_build_fail(
+			b, "given materials need one material per texture and an untextured material");
 	if (m->variants && m->source != OPT_GLTF_MATERIALS_GIVEN)
 		return opt_gltf_build_fail(b, "material variants need given materials");
 	return !b->variants || validate_variants(b);
 }
 
-/* Adds the model root's markings list to `root`: entry m is the variant
- * `default_markings` names for m, else state min(m, N - 1) (null for state
- * 0), up to the longer of the two lists; after a last variant, the state of
- * the values past it, which the list's last entry then repeats. Nothing
- * when every markings value shows the own materials. False when out of
- * memory. */
+/* Adds the markings list of the model root to `root`. Entry m is the
+ * variant that `default_markings` names for markings value m. If it names
+ * none, the entry is state min(m, N - 1), written as null for state 0. The
+ * list is as long as the longer of `default_markings` and the states. The
+ * last entry also applies to every later value, so when the last entry is a
+ * named variant, one more entry follows with the state of the next value.
+ * Trailing state entries that repeat the state entry before them are
+ * dropped. Nothing is added when every markings value shows the primitives'
+ * own materials. Returns false when out of memory. */
 static bool markings_json(cJSON* root, const OptGltfVariants* variants, int state_count) {
 	const size_t named = variants ? variants->markings_count : 0;
 	size_t       count = named > (size_t)state_count ? named : (size_t)state_count;
@@ -230,9 +236,9 @@ static bool markings_json(cJSON* root, const OptGltfVariants* variants, int stat
 
 /* ---- Geometry ----------------------------------------------------------- */
 
-/* Pass 1: each OPT mesh's vertices and per-face-group indices, with
- * tangents for the meshes drawing a normal-mapped material in any switch
- * state. */
+/* Pass 1 builds the vertices of each OPT mesh and the indices of each face
+ * group. Meshes that draw a normal-mapped material in any switch state also
+ * get tangents. */
 static bool build_geometry(Build* b) {
 	const opt_file_t* opt = b->opt;
 	b->built              = (BuiltMesh*)calloc(opt->mesh_count ? opt->mesh_count : 1, sizeof *b->built);
@@ -271,17 +277,19 @@ static bool build_geometry(Build* b) {
 				b->max_state_count = m->lods[0].groups[g].state_count;
 	}
 	if (fixed_zero || fixed_flip)
-		opt_gltf_log(b->options, true, "repaired %u zero + %u face-opposed canonical normals", fixed_zero,
-					 fixed_flip);
+		opt_gltf_log(b->options, true, "repaired %u zero-length and %u face-opposed canonical normals",
+					 fixed_zero, fixed_flip);
 	if (skipped_repeats)
 		opt_gltf_log(b->options, true, "left out %u repeated triangle(s)", skipped_repeats);
 	if (kept_repeats)
-		opt_gltf_log(b->options, true, "%u triangle(s) repeat one with another texture (kept)", kept_repeats);
+		opt_gltf_log(b->options, true, "kept %u repeated triangle(s) that have another texture",
+					 kept_repeats);
 	return true;
 }
 
-/* The asset's variants: state 0 is the primitives' own materials; states 1
- * to N - 1, then the given variants. */
+/* The variants of the asset are states 1 to N - 1, followed by the given
+ * variants. State 0 uses the primitives' own materials, so it has no
+ * variant. */
 static bool build_variants(Build* b) {
 	GltfBuild* gb          = b->gb;
 	b->given_variant_count = b->variants ? b->variants->count : 0;
@@ -301,11 +309,13 @@ static bool build_variants(Build* b) {
 	return true;
 }
 
-/* The vertex attributes of a mesh: POSITION, NORMAL, TEXCOORD_0 [, TANGENT]. */
+/* The number of vertex attributes of a mesh: POSITION, NORMAL, TEXCOORD_0
+ * and, if present, TANGENT. */
 static size_t mesh_attribute_count(const BuiltMesh* bm) { return bm->has_tangents ? 4u : 3u; }
 
-/* Whether a face group's primitive maps variants: it switches states, or a
- * given variant has a material for its texture. */
+/* Whether the primitive of a face group maps variants. It does when the face
+ * group switches states, or when a given variant has a material for its
+ * texture. */
 static bool group_has_variants(const Build* b, const opt_face_group_t* grp) {
 	if (grp->state_count > 1 && grp->state_textures)
 		return true;
@@ -316,9 +326,9 @@ static bool group_has_variants(const Build* b, const opt_face_group_t* grp) {
 	return false;
 }
 
-/* The meshes, buffer views, accessors, primitives, attributes and
- * mappings pass 2 writes. cgltf points into these arrays, so each is
- * allocated once, at its full size. */
+/* Allocates the meshes, buffer views, accessors, primitives, attributes and
+ * mappings that pass 2 writes. cgltf points into these arrays, so each one
+ * is allocated once at its full size. */
 static bool allocate_geometry(Build* b) {
 	const opt_file_t* opt = b->opt;
 	GltfBuild*        gb  = b->gb;
@@ -330,8 +340,8 @@ static bool allocate_geometry(Build* b) {
 	for (int32_t mi = 0; mi < opt->mesh_count; ++mi) {
 		const opt_lod_t* lod     = &opt->meshes[mi].lods[0];
 		const size_t     streams = mesh_attribute_count(&b->built[mi]);
-		/* One view and accessor per vertex attribute, then per face group
-		 * with indices its index view and accessor. */
+		/* One view and accessor for each vertex attribute, plus an index view
+		 * and accessor for each face group that has indices. */
 		views += streams;
 		accessors += streams;
 		for (int32_t g = 0; g < lod->group_count; ++g) {
@@ -364,8 +374,8 @@ static bool allocate_geometry(Build* b) {
 	return true;
 }
 
-/* One vertex attribute of every vertex (`size` bytes at `offset` in
- * GltfVertex), as a buffer view and its accessor. */
+/* Writes one vertex attribute of every vertex (`size` bytes at `offset` in
+ * GltfVertex) as a buffer view with its accessor. */
 static cgltf_accessor* write_attribute(GltfBuild* gb, const BuiltMesh* bm, size_t offset, size_t size,
 									   cgltf_type type) {
 	const size_t start = opt_gltf_bin_append(gb, NULL, 0);
@@ -376,16 +386,19 @@ static cgltf_accessor* write_attribute(GltfBuild* gb, const BuiltMesh* bm, size_
 	return opt_gltf_new_accessor(gb, view, bm->vertex_count, type, cgltf_component_type_r_32f);
 }
 
-/* The material texture `ti` shows: its own, else the untextured one. */
+/* The material of texture `ti`, or the untextured material when `ti` is not
+ * a texture. */
 static cgltf_material* texture_material_of(const Build* b, int32_t ti) {
 	return &b->gb->materials[ti >= 0 && ti < b->opt->texture_count ? (size_t)ti : b->untextured];
 }
 
-/* The variant mappings of a primitive drawing face group `grp`: per
- * variant giving it another material, that material. A state variant shows
- * its state (the original OPT walker clamps each switch to its last child);
- * a given variant its material, else its state. Materials of different
- * alpha classes are promoted to the most transparent one. */
+/* Builds the variant mappings of the primitive that draws face group `grp`.
+ * Each variant that gives the primitive another material gets a mapping. A
+ * state variant shows its state, clamped to the last state of the group, as
+ * the original OPT walker clamps each switch to its last child. A given
+ * variant shows its own material for the texture, or else its state. When
+ * the materials have different alpha classes, they are all promoted to the
+ * most transparent one. */
 static bool primitive_mappings(Build* b, cgltf_primitive* prim, const opt_face_group_t* grp, int32_t mi,
 							   int32_t g) {
 	GltfBuild*       gb        = b->gb;
@@ -423,7 +436,8 @@ static bool primitive_mappings(Build* b, cgltf_primitive* prim, const opt_face_g
 		for (size_t v = 0; v < vc; ++v)
 			materials[v] =
 				opt_gltf_promoted_material(gb, materials[v], rank, b->base_material_count, b->promoted);
-		opt_gltf_log(b->options, true, "mesh %d face group %d switch states mix alpha classes; all use %s",
+		opt_gltf_log(b->options, true,
+					 "mesh %d face group %d: the switch states have different alpha classes, so all use %s",
 					 (int)mi, (int)g, rank == 2 ? "BLEND" : "MASK");
 	}
 	size_t mapped = 0;
@@ -446,9 +460,9 @@ static bool primitive_mappings(Build* b, cgltf_primitive* prim, const opt_face_g
 	return true;
 }
 
-/* The primitive of face group `g` of mesh `mi`: its indices (16-bit while
- * every vertex fits), the mesh's vertex attributes, its material and
- * variant mappings. */
+/* Writes the primitive of face group `g` of mesh `mi`. It has its indices
+ * (16-bit when every vertex index fits), the vertex attributes of the mesh,
+ * its material and its variant mappings. */
 static bool write_primitive(Build* b, int32_t mi, int32_t g, cgltf_accessor* const vertex_attributes[4]) {
 	GltfBuild*              gb            = b->gb;
 	const BuiltMesh*        bm            = &b->built[mi];
@@ -502,13 +516,13 @@ static bool write_primitive(Build* b, int32_t mi, int32_t g, cgltf_accessor* con
 	prim->attributes       = attrs;
 	prim->attributes_count = attr_count;
 
-	/* Default material: state 0 (or the untextured one). */
+	/* The default material is the one of state 0, or the untextured one. */
 	prim->material = texture_material_of(b, grp->texture_index);
 	return !group_has_variants(b, grp) || primitive_mappings(b, prim, grp, mi, g);
 }
 
-/* Pass 2: mesh `mi`'s vertex attributes into the .bin, then one primitive
- * per face group with indices. */
+/* Pass 2 writes the vertex attributes of mesh `mi` into the .bin, then one
+ * primitive for each face group that has indices. */
 static bool write_mesh(Build* b, int32_t mi) {
 	GltfBuild*        gb   = b->gb;
 	const BuiltMesh*  bm   = &b->built[mi];
@@ -551,10 +565,11 @@ static bool write_mesh(Build* b, int32_t mi) {
 	return true;
 }
 
-/* A variant that changes no primitive's material (one without materials
- * of its own for the textures drawn) still maps the first primitive to its own material, so that
- * editors writing only mapped variants (Blender's glTF exporter) keep it
- * for the markings list and missions to name. */
+/* A variant may change no material, when it has no materials of its own for
+ * the textures that are drawn. Such a variant still maps the first primitive
+ * to the primitive's own material. Editors that write only mapped variants,
+ * such as the Blender glTF exporter, then keep the variant, so the markings
+ * list and the missions can still name it. */
 static bool map_every_variant(Build* b) {
 	GltfBuild* gb = b->gb;
 	if (!gb->variants_count || !gb->primitives_count)
@@ -568,7 +583,7 @@ static bool map_every_variant(Build* b) {
 	for (size_t v = 0; v < gb->variants_count; ++v)
 		unmapped += !mapped[v];
 	if (unmapped) {
-		/* cgltf points primitives at their mappings: rebuild the array. */
+		/* Primitives point into the mappings array, so build a new array. */
 		const size_t            count    = gb->mappings_count + unmapped;
 		cgltf_material_mapping* mappings = (cgltf_material_mapping*)calloc(count, sizeof *mappings);
 		if (!mappings) {
@@ -610,10 +625,11 @@ static bool write_meshes(Build* b) {
 
 /* ---- Nodes -------------------------------------------------------------- */
 
-/* The model root's AERON_flight_model object: the articulations (in option
- * order; speedBack only when it differs), articulation settings, component
- * sets, markings and the materials' common energy (bits of kAnimEnergies);
- * NULL when out of memory. */
+/* Builds the AERON_flight_model object of the model root. It holds the
+ * articulations in option order, the articulation settings, the component
+ * sets, the markings, and the energy shared by the materials (bits of
+ * kAnimEnergies). speedBack is written only when it differs from speed.
+ * Returns NULL when out of memory. */
 static cJSON* root_extension(const Build* b, unsigned energy) {
 	const OptGltfBuildOptions* o    = b->options;
 	cJSON*                     root = cJSON_CreateObject();
@@ -665,8 +681,8 @@ static bool add_position(cJSON* object, const char* key, const opt_vec3_t* value
 	return OptJson_Add(object, key, OptJson_Floats(v, 3));
 }
 
-/* Mesh `mi`'s component AERON_flight_model object; NULL when out of
- * memory. */
+/* Builds the component AERON_flight_model object of mesh `mi`. Returns NULL
+ * when out of memory. */
 static cJSON* component_extension(const Build* b, int32_t mi) {
 	const OptGltfBuildOptions* o     = b->options;
 	const opt_mesh_t*          m     = &b->opt->meshes[mi];
@@ -691,16 +707,18 @@ static cJSON* component_extension(const Build* b, int32_t mi) {
 	}
 	if (ok && m->descriptor.target_id != 0)
 		ok = add_position(ext, "target", &m->descriptor.target);
-	/* Every mesh with a rotation frame has it: the default axis frame is
-	 * not static, XWA rotates default-frame meshes about their pivot
-	 * whenever their runtime angle is nonzero (hangar droid antennas spin
-	 * about the default vertical axis). */
+	/* Write the rotation of every mesh that has a rotation frame, even the
+	 * default frame. The default frame is not static. XWA rotates such a
+	 * mesh about its pivot whenever its runtime angle is nonzero. For
+	 * example, the antennas of hangar droids spin about the default vertical
+	 * axis. */
 	if (ok && m->has_rotation_scale) {
 		float rax[3], dax[3], uax[3];
 		swap_axis_v3(&m->rotation_scale.rotation_axis, rax);
 		swap_axis_v3(&m->rotation_scale.direction_axis, dax);
 		swap_axis_v3(&m->rotation_scale.up_axis, uax);
-		/* The pivot is a position, scaled; the axes are directions. */
+		/* The pivot is a position, which add_position scales. The axes are
+		 * directions. */
 		for (int axis = 0; axis < 3; ++axis) {
 			rax[axis] /= OPT_Q15_TO_UNIT;
 			dax[axis] /= OPT_Q15_TO_UNIT;
@@ -712,7 +730,7 @@ static cJSON* component_extension(const Build* b, int32_t mi) {
 						  OptJson_Add(rotation, "directionAxis", OptJson_Floats(dax, 3)) &&
 						  OptJson_Add(rotation, "upAxis", OptJson_Floats(uax, 3));
 	}
-	/* Tags in option order, duplicates dropped. */
+	/* Tags are written in option order, without duplicates. */
 	cJSON* tags = NULL;
 	for (size_t t = 0; ok && t < o->model.tag_count; ++t) {
 		const OptGltfComponentTag* tag = &o->model.tags[t];
@@ -735,7 +753,7 @@ static cJSON* component_extension(const Build* b, int32_t mi) {
 	return ext;
 }
 
-/* A child node at `position` (OPT axes and units) under `parent`. */
+/* Places `node` under `parent` at `position` (OPT axes and units). */
 static void child_node(cgltf_node* node, cgltf_node* parent, const opt_vec3_t* position) {
 	float pos[3];
 	swap_axis_v3(position, pos);
@@ -791,7 +809,7 @@ static bool engine_glow_node(Build* b, cgltf_node* node, cgltf_node* parent, con
 	return opt_gltf_set_extension(b->gb, node, extension);
 }
 
-/* Light `li` (a point light) and its node. */
+/* Builds point light `li` and its node. */
 static bool light_node(Build* b, cgltf_node* node, cgltf_node* parent, size_t li) {
 	const OptGltfLight* source = &b->options->model.lights[li];
 	cgltf_light*        light  = &b->gb->lights[li];
@@ -812,9 +830,9 @@ static bool light_node(Build* b, cgltf_node* node, cgltf_node* parent, size_t li
 	return opt_gltf_set_extension(b->gb, node, extension);
 }
 
-/* Mesh `mi`'s node, with its child nodes from *next_child: hardpoints,
- * engine glows, then lights (empties, so that Blender and other tools show
- * them). */
+/* Builds the node of mesh `mi` and its child nodes, taken from *next_child.
+ * The children are the hardpoints, then the engine glows, then the lights.
+ * They are empties, so that Blender and other tools show them. */
 static bool mesh_node(Build* b, int32_t mi, cgltf_node* node, cgltf_node** next_child) {
 	const opt_mesh_t* m    = &b->opt->meshes[mi];
 	cgltf_node*       root = &b->gb->nodes[0];
@@ -858,7 +876,8 @@ static bool mesh_node(Build* b, int32_t mi, cgltf_node* node, cgltf_node** next_
 	return true;
 }
 
-/* The nodes: the model root, one per mesh, then each mesh's children. */
+/* Builds the model root, one node per mesh, then the children of each
+ * mesh. */
 static bool build_nodes(Build* b) {
 	const opt_file_t*          opt            = b->opt;
 	const OptGltfBuildOptions* o              = b->options;
@@ -868,7 +887,7 @@ static bool build_nodes(Build* b) {
 		children_total += (size_t)opt->meshes[mi].hardpoint_count + (size_t)opt->meshes[mi].engine_glow_count;
 	for (size_t li = 0; li < o->model.light_count; ++li)
 		if (o->model.lights[li].mesh < 0 || o->model.lights[li].mesh >= opt->mesh_count)
-			return opt_gltf_build_fail(b, "light %zu names OPT mesh %d of %d", li,
+			return opt_gltf_build_fail(b, "light %zu is on OPT mesh %d, but the OPT has %d meshes", li,
 									   (int)o->model.lights[li].mesh, (int)opt->mesh_count);
 	if (o->model.light_count) {
 		gb->lights = (cgltf_light*)calloc(o->model.light_count, sizeof *gb->lights);
@@ -881,7 +900,8 @@ static bool build_nodes(Build* b) {
 	if (!gb->nodes)
 		return opt_gltf_build_fail(b, "out of memory");
 	gb->nodes_count = total;
-	/* cgltf transform helpers read the implicit glTF defaults from these. */
+	/* The cgltf transform helpers read the default glTF transform from
+	 * these fields. */
 	for (size_t i = 0; i < total; ++i) {
 		gb->nodes[i].rotation[3] = 1.0f;
 		set_color(gb->nodes[i].scale, 1.0f, 1.0f, 1.0f);
@@ -906,7 +926,7 @@ static bool finish_document(Build* b) {
 	OptGltfDocument* document = b->document;
 	GltfBuild*       gb       = b->gb;
 	document->scene.name      = opt_gltf_keep_string(gb, xstrdup("Scene"));
-	/* The scene has exactly one root: the model root. */
+	/* The scene has one root node, the model root. */
 	document->scene_roots = (cgltf_node**)calloc(1, sizeof *document->scene_roots);
 	if (!document->scene_roots)
 		return false;
@@ -915,7 +935,7 @@ static bool finish_document(Build* b) {
 	document->scene.nodes_count = 1;
 	gb->buffer.size             = gb->bin_size;
 	gb->buffer.data             = gb->bin;
-	/* The model root's object takes the materials' common energy. */
+	/* The object of the model root gets the energy shared by the materials. */
 	unsigned energy = 0;
 	if (!opt_gltf_prune_unused(document) || !opt_gltf_material_extensions(document, &energy) ||
 		!opt_gltf_set_extension(gb, &gb->nodes[0], root_extension(b, energy)))
@@ -949,7 +969,8 @@ static bool finish_document(Build* b) {
 	data->variants_count     = gb->variants_count;
 	data->lights             = gb->lights;
 	data->lights_count       = gb->lights_count;
-	/* The flight contract, and the material variants when there are any. */
+	/* AERON_flight_model, plus KHR_materials_variants when there are
+	 * variants. */
 	const size_t extension_count = gb->variants_count > 0 ? 2u : 1u;
 	data->extensions_used        = (char**)calloc(extension_count, sizeof(char*));
 	if (!data->extensions_used)

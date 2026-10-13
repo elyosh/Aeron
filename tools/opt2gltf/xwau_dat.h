@@ -2,21 +2,22 @@
 #define AERON_XWAU_DAT_H
 
 /*
- * DAT image containers (JeremyAnsel.Xwa.Dat DatFile.cs): XWA's container,
- * groups of images addressed by (group id, image id). Image formats 24 (stock,
- * palette index and alpha per texel) and 25 are decoded; 25 is the 32-bit format
- * of the XWAU tools (read in game by XWAU's
- * hook_32bpp), whose `colors` header field selects the XWAU encoding:
+ * Reads DAT files, the image containers of XWA (DatFile.cs in
+ * JeremyAnsel.Xwa.Dat). A DAT file holds groups of images, and each image is
+ * addressed by a group id and an image id. Two image formats are decoded.
+ * Format 24 is the stock format, with a palette index and an alpha value per
+ * texel. Format 25 is the 32-bit format of the XWAU tools, which XWAU's
+ * hook_32bpp reads in game. Its `colors` header field selects the encoding:
  *   0  raw B,G,R,A (or BC7 when the data is shorter than W*H*4)
  *   1  LZMA: 5 property bytes, then the raw B,G,R,A stream
  *   2  BC3
  *   3  BC5
- * The block-compressed encodings hold standard R,G,B,A blocks: XWAU uploads
+ * The block-compressed encodings hold standard R,G,B,A blocks. XWAU uploads
  * BC7 images as DXGI_FORMAT_BC7_UNORM without swizzling
- * (XwaTextureData::CreateSRVFromBuffer), and decoded plainly they match the
- * OPT textures they animate (MillenniumFalcon2Cockpit.dat against
- * CorellianTransport2Cockpit's panels). BC3 comes from the same encoder
- * family. BC5 holds red and green (normal-map X and Y).
+ * (XwaTextureData::CreateSRVFromBuffer). Decoded without a swizzle, they match
+ * the OPT textures they animate, as MillenniumFalcon2Cockpit.dat does with the
+ * panels of CorellianTransport2Cockpit. BC3 comes from the same family of
+ * encoders. BC5 holds red and green, which are the X and Y of a normal map.
  */
 
 #include <stdbool.h>
@@ -36,28 +37,29 @@ typedef struct XwauDatImage {
 	uint32_t        width;
 	uint32_t        height;
 	XwauDatEncoding encoding;
-	/* width*height R,G,B,A rows in file order (first row = UV v 0). For BC5,
-	 * R and G are the stored channels, B is 0 and A is 255. */
+	/* width*height R,G,B,A texels, with rows in file order (the first row is at
+	 * UV v = 0). For BC5, R and G are the stored channels, B is 0 and A is 255. */
 	uint8_t* rgba;
 } XwauDatImage;
 
 /* A DAT file read into memory, with its image directory. */
 typedef struct XwauDat XwauDat;
 
-/* Read and index the DAT file at `path`; NULL with `error` set on failure. */
+/* Reads and indexes the DAT file at `path`. Returns NULL and sets `error` on
+ * failure. */
 XwauDat* XwauDat_Open(const char* path, char* error, size_t error_size);
 
 void XwauDat_Close(XwauDat* dat);
 
-/* The image ids of `group` in file order (owned by `dat`); 0 when the group
- * has none. */
+/* Sets `images` to the image ids of `group` in file order, and returns their
+ * count (0 when the group has none). The ids are owned by `dat`. */
 size_t XwauDat_ListGroup(const XwauDat* dat, int group, const int** images);
 
-/* Decode image (group, image) of an opened DAT file. */
+/* Decodes the image (group, image) of an open DAT file. */
 bool XwauDat_LoadImageFrom(const XwauDat* dat, int group, int image, XwauDatImage* out, char* error,
 						   size_t error_size);
 
-/* Decode image (group, image) of the DAT file at `path`. */
+/* Decodes the image (group, image) of the DAT file at `path`. */
 bool XwauDat_LoadImage(const char* path, int group, int image, XwauDatImage* out, char* error,
 					   size_t error_size);
 

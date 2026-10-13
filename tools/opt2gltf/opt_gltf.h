@@ -2,49 +2,49 @@
 #define AERON_OPT2GLTF_OPT_GLTF_H
 
 /*
- * OPT models as glTF 2.0 documents in memory (written as a .gltf, its .bin
- * and a PNG per image by opt_gltf_write.h).
+ * Converts OPT models to glTF 2.0 documents in memory. opt_gltf_write.h
+ * writes a document as a .gltf file, its .bin file and one PNG per image.
  *
- * Output is faithful to every OPT datum the engine reads:
+ * The output keeps every OPT value that the engine reads:
  *
- *   - Geometry: one glTF node per OPT mesh, parented to a single root
- *     scene node. Each mesh node carries the complete authored MeshDescriptor
- *     in the `AERON_flight_model` node extension. Coordinates use standard
- *     glTF axes and meters.
+ *   - Geometry: each OPT mesh becomes one glTF node, and all of them are
+ *     children of a single root node in the scene. Each mesh node carries the
+ *     full MeshDescriptor in the `AERON_flight_model` node extension.
+ *     Coordinates use standard glTF axes and meters.
  *
- *   - Rotation pivots and axes are preserved in the component role.
+ *   - Rotation pivots and axes are kept in the component role.
  *
- *   - Hardpoints: each OPT mesh's hardpoints become child empty
- *     nodes (no mesh, just translation) named "hardpoint_<type>". Each
- *     carries an `AERON_flight_model` hardpoint role and raw type.
+ *   - Hardpoints: the hardpoints of each OPT mesh become empty child nodes
+ *     (a translation and no mesh) named "hardpoint_<type>". Each one carries
+ *     an `AERON_flight_model` hardpoint role and the raw OPT type.
  *
- *   - Every OPT mesh becomes exactly one component, so component ordinals
- *     match the OPT's mesh numbers. A mesh with vertices but no LOD 0 faces
- *     becomes one untextured degenerate triangle over its vertices, which
- *     the flight-model topology keeps as positions without faces; a mesh
- *     without vertices or LOD 0 triangles fails the conversion.
+ *   - Each OPT mesh becomes exactly one component, so the component numbers
+ *     match the OPT mesh numbers. A mesh with vertices but no LOD 0 faces
+ *     becomes one untextured degenerate triangle over its vertices. The
+ *     flight-model topology keeps its positions and drops the face. A mesh
+ *     with no vertices and no LOD 0 triangles makes the conversion fail.
  *
- *   - A switched face group whose state textures fall in different alpha
- *     classes (opaque, mask, blend) uses, for every state, a copy of its
- *     material promoted to the most transparent class among them: the
- *     renderer keeps each primitive in one alpha class across variants.
+ *   - When the state textures of a switched face group have different alpha
+ *     classes (opaque, mask, blend), every state uses a copy of its material
+ *     promoted to the most transparent of these classes. The renderer needs
+ *     each primitive to keep one alpha class in all variants.
  *
- *   - Paint-scheme variants: OPT NodeSwitch's per-face-group
- *     state_textures[] become a KHR_materials_variants extension at
- *     asset level. The variant count equals the largest LOD 0
- *     state_count across all face groups (typically 4 in the IVFILES
- *     set), followed by any given variants (OptGltfVariants). Each
- *     multi-state face group emits its primitive with mappings from
- *     variant index to material; single-state face groups use a
- *     single default material.
+ *   - Paint-scheme variants: the state_textures[] of each face group (OPT
+ *     NodeSwitch) become a KHR_materials_variants extension at asset level.
+ *     There is one variant for each state after state 0, up to the largest
+ *     LOD 0 state_count of any face group (typically 4 in the IVFILES set).
+ *     The given variants (OptGltfVariants) come after them. The primitive of
+ *     a face group with several states maps variant indices to materials.
+ *     Other face groups use a single default material, unless a given
+ *     variant has a material for their texture.
  *
- *   - Textures: one glTF image per OPT texture, written as
- *     <out_dir>/textures/<opt_basename>_TexNN.png. Materials reference
- *     them via baseColorTexture. The shaded-15 base mip is what gets
- *     written (the OPT format stores per-shade mip chains; we keep
- *     only the base — generators can re-derive mips on import).
- *     Only LOD 0 is converted: the materials no LOD 0 face draws (in any
- *     variant), and the textures and images only they use, are left out.
+ *   - Textures: each OPT texture becomes one glTF image, written as
+ *     <out_dir>/textures/<opt_basename>_TexNN.png. Materials use them as
+ *     baseColorTexture. Only the base mip is written, at the base-color row
+ *     of the palette (opt_palette_base_shade). The OPT format stores a mip
+ *     chain for each shade, but tools can generate mips again on import.
+ *     Only LOD 0 is converted. Materials that no LOD 0 face draws in any
+ *     variant are left out, with the textures and images that only they use.
  *
  */
 
@@ -56,17 +56,18 @@
 #include "opt.h"
 
 /* Adds `tag` to the component built from OPT mesh `mesh_index`. Tags match
- * [a-z0-9._]{1,63}; duplicates on one component are dropped. */
+ * [a-z0-9._]{1,63}. A tag repeated on one component is written once. */
 typedef struct OptGltfComponentTag {
 	uint32_t    mesh_index;
 	const char* tag;
 } OptGltfComponentTag;
 
 /* An AERON_flight_model articulation on the model root, for component
- * `component` (0..254, an OPT mesh index; it may be past this OPT's meshes
- * when the game draws another model, such as a cockpit, with the same
- * per-component state). `group` and `behavior` (empty for none) match
- * [a-z0-9._]{1,63}; `angle` is -128..255, `speed` and `speed_back` 0..255. */
+ * `component`. The component is an OPT mesh index, 0..254. It may be past
+ * the meshes of this OPT when the game draws another model with the same
+ * per-component state, such as a cockpit. `group` and `behavior` match
+ * [a-z0-9._]{1,63}, and `behavior` may be empty. `angle` is -128..255,
+ * `speed` and `speed_back` are 0..255. */
 typedef struct OptGltfComponentArticulation {
 	uint32_t component;
 	char     group[64];
@@ -76,16 +77,16 @@ typedef struct OptGltfComponentArticulation {
 	int32_t  speed_back;
 } OptGltfComponentArticulation;
 
-/* A model-root AERON_flight_model component set: `name` matches
- * [a-z0-9._]{1,63} and is unique; bit n % 32 of members[n / 32] is
- * component n (0..254, which may be past this OPT's meshes). */
+/* An AERON_flight_model component set on the model root. `name` matches
+ * [a-z0-9._]{1,63} and is unique. Bit n % 32 of members[n / 32] stands for
+ * component n (0..254), which may be past the meshes of this OPT. */
 typedef struct OptGltfComponentSet {
 	char     name[64];
 	uint32_t members[8];
 } OptGltfComponentSet;
 
-/* A model-root AERON_flight_model articulation setting; `name` matches
- * [a-z0-9._]{1,63} and is unique. */
+/* An AERON_flight_model articulation setting on the model root. `name`
+ * matches [a-z0-9._]{1,63} and is unique. */
 typedef struct OptGltfArticulationSetting {
 	char    name[64];
 	int32_t value;
@@ -98,29 +99,29 @@ typedef struct OptGltfImageView {
 } OptGltfImageView;
 
 /*
- * Materials given by the caller instead of the OPT textures' stock ones
- * (OptGltfBuildOptions.materials), in glTF's PBR inputs.
+ * Materials that the caller gives in place of the stock materials of the
+ * OPT textures (OptGltfMaterialOptions.given), as glTF PBR inputs.
  *
- * An image is RGBA pixels, rows in OPT order, with its glTF name and its
- * file name under textures/. The document refers to the pixels, which must
- * outlive it; an image given more than once (the same pixels) is written
- * once.
+ * An image is RGBA pixels with rows in OPT order, a glTF name, and a file
+ * name under textures/. The document points to the pixels, so they must
+ * outlive it. An image given more than once (the same pixel pointer) is
+ * written once.
  */
 typedef struct OptGltfImage {
-	OptGltfImageView view; /* rgba NULL: none */
+	OptGltfImageView view; /* rgba is NULL when there is no image */
 	const char*      name;
 	const char*      file;
 } OptGltfImage;
 
 typedef struct OptGltfMaterial {
-	const char* name; /* NULL: the stock name */
-	/* The base color image, of the texture's size. A texture's base image
-	 * takes the stock name and file; without one (rgba NULL), the texture
-	 * has no pixels and its material is the stock one (the rest is
-	 * ignored). */
+	const char* name; /* NULL for the stock name */
+	/* The base color image, with the size of the texture. It uses the stock
+	 * name and file name. When its rgba is NULL, the texture keeps its stock
+	 * material and the other fields are ignored. */
 	OptGltfImage base;
-	/* The alpha mode is classified from the base image's alpha, else the
-	 * material is opaque; alpha overrides apply either way. */
+	/* When set, the alpha mode is classified from the alpha of the base
+	 * image. Otherwise the material is opaque. Alpha overrides apply in both
+	 * cases. */
 	bool         alpha_from_base;
 	float        base_color[3];
 	OptGltfImage emissive;
@@ -129,31 +130,34 @@ typedef struct OptGltfMaterial {
 	OptGltfImage metallic_roughness;
 	float        metallic;
 	float        roughness;
-	OptGltfImage transmission; /* KHR_materials_transmission, factor 1, when set */
-	/* A tangent-space normal map; the meshes drawing the material get
+	OptGltfImage transmission; /* KHR_materials_transmission with factor 1, when set */
+	/* A tangent-space normal map. Meshes that draw the material get
 	 * tangents. */
 	OptGltfImage normal;
-	bool         specular; /* KHR_materials_specular: factor 1, color factor specular_color */
+	bool         specular; /* KHR_materials_specular with factor 1 and color factor specular_color */
 	float        specular_color;
-	const char*  json; /* its AERON_flight_model object (animations), or NULL */
+	const char*  json; /* the material's AERON_flight_model object (animations), or NULL */
 } OptGltfMaterial;
 
 /*
- * Material variants beyond the switch states (KHR_materials_variants): each
- * comes after the state variants (`State 1` ... `State N-1`; state 0 is the
- * primitives' own materials), shows, for the face groups of a texture, a
- * material of its own when it has one, else the material of its state. The
- * model root's markings list gives, per markings value, the variant
- * `default_markings` names, else the state the OPT clamps it to.
+ * Material variants added after the switch-state variants
+ * (KHR_materials_variants). The state variants are `State 1` ... `State N-1`,
+ * and state 0 uses the primitives' own materials. On the face groups of a
+ * texture, a given variant shows its own material for that texture if it
+ * has one. Otherwise it shows the material of its `state`. For each markings
+ * value, the markings list on the model root names the variant from
+ * `default_markings`. If there is none, it names the state that the OPT
+ * clamps the value to.
  */
 typedef struct OptGltfVariant {
 	const char* name;
 	uint32_t    state; /* the state shown where the variant has no material */
 } OptGltfVariant;
 
-/* A variant's material for the face groups of texture `texture`: it takes
- * that texture's material's alpha mode, and its name followed by `suffix`.
- * Its base image is set. */
+/* The material that a variant shows on the face groups of texture
+ * `texture`. It uses the alpha mode of that texture's material, and its name
+ * is the name of that material followed by `suffix`. Its base image must be
+ * set. */
 typedef struct OptGltfVariantMaterial {
 	int32_t         texture;
 	const char*     suffix;
@@ -165,46 +169,49 @@ typedef struct OptGltfVariants {
 	size_t                        count;
 	const OptGltfVariantMaterial* materials;
 	size_t                        material_count;
-	/* [variant * opt->texture_count + texture]: the variant's material for
-	 * the texture (an index into `materials`), or -1. */
+	/* Indexed by [variant * opt->texture_count + texture]. Each entry is the
+	 * index into `materials` of the variant's material for the texture, or
+	 * -1. */
 	const int32_t* material_of;
-	/* Variant name per markings value; NULL for one showing a state. */
+	/* The variant name for each markings value, or NULL when the value shows
+	 * a state. */
 	const char* const* default_markings;
 	size_t             markings_count;
 } OptGltfVariants;
 
 /*
- * Screen surfaces: OPT textures that show a game-provided texture pair (a
- * captured HUD) through rectangles, as the XWAU Dynamic Cockpit does. The
- * caller resolves them (xwau_dynamic_cockpit.h); the converter rewrites the
- * texture's material and records the rectangles in its AERON_flight_model
- * object as `screen`:
+ * Screen surfaces are OPT textures that show a texture pair from the game
+ * (a captured HUD) through rectangles, like the XWAU Dynamic Cockpit. The
+ * caller resolves them (xwau_dynamic_cockpit.h). The converter rewrites the
+ * material of the texture and writes the rectangles as `screen` in its
+ * AERON_flight_model object:
  *
- *   - with a cover image: base color = the cover premultiplied by its alpha,
- *     base alpha = the cover alpha (the screen shows where it is below 1),
- *     emissive = the cover's lit texels;
- *   - without a cover, or for a hologram: no base color (black) and no
- *     emissive texture, so the surface shows only the screen;
- *   - normal and metallic-roughness textures are dropped (they follow the
- *     OPT texture's layout, not the cover's);
- *   - transparent and hologram surfaces are BLEND, others OPAQUE.
+ *   - With a cover image, the base color is the cover premultiplied by its
+ *     alpha, and the base alpha is the cover alpha. The screen shows where
+ *     this alpha is below 1. The emissive texture holds the lit texels of
+ *     the cover.
+ *   - Without a cover, or for a hologram, there is no base color (black) and
+ *     no emissive texture, so the surface shows only the screen.
+ *   - Normal and metallic-roughness textures are dropped, because they
+ *     follow the layout of the OPT texture and not the layout of the cover.
+ *   - Transparent and hologram surfaces are BLEND, the others are OPAQUE.
  */
 #define OPT_GLTF_SCREEN_MAX_RECTS 12
 
 /* `layers` bits. */
 #define OPT_GLTF_SCREEN_LAYER_GRAPHICS 1u
 #define OPT_GLTF_SCREEN_LAYER_TEXT 2u
-#define OPT_GLTF_SCREEN_LAYER_BAR 4u /* filled from the bottom; no texture */
+#define OPT_GLTF_SCREEN_LAYER_BAR 4u /* filled from the bottom, without a texture */
 
 typedef struct OptGltfScreenRect {
 	uint32_t source; /* source index (XWAU table order) */
-	float    dst[4]; /* u0, v0, u1, v1 in TEXCOORD_0; swapped corners mirror */
+	float    dst[4]; /* u0, v0, u1, v1 in TEXCOORD_0. Swapped corners mirror the content. */
 	float    bg[3];  /* linear background colours */
 	float    highlight[3];
 	float    lock[3];
 	float    gain;   /* emissive multiplier of the rectangle's content */
 	uint32_t layers; /* OPT_GLTF_SCREEN_LAYER_* */
-	float    bar[3]; /* linear fill colour, with OPT_GLTF_SCREEN_LAYER_BAR */
+	float    bar[3]; /* linear fill colour for OPT_GLTF_SCREEN_LAYER_BAR */
 } OptGltfScreenRect;
 
 typedef struct OptGltfScreen {
@@ -213,21 +220,21 @@ typedef struct OptGltfScreen {
 	bool              always_visible;
 	bool              hologram;
 	bool              noisy;
-	uint32_t          hide; /* bit per HUD region the 2D overlay drops */
+	uint32_t          hide; /* one bit per HUD region that the 2D overlay drops */
 	uint32_t          rect_count;
 	OptGltfScreenRect rects[OPT_GLTF_SCREEN_MAX_RECTS];
-	/* Cover images, rows in UV order; rgba NULL without a cover. The two
-	 * views of one cover share cover_name, which labels the image files and
-	 * must be unique per distinct cover. */
+	/* Cover images, with rows in UV order. rgba is NULL when there is no
+	 * cover. Both views of a cover use cover_name, which names the image
+	 * files. Each distinct cover needs its own cover_name. */
 	OptGltfImageView cover_base;
 	OptGltfImageView cover_emissive;
 	const char*      cover_name;
-	float            cover_emissive_strength; /* KHR_materials_emissive_strength of the cover's lit texels */
+	float            cover_emissive_strength; /* KHR_materials_emissive_strength of the lit cover texels */
 } OptGltfScreen;
 
 /* A point light (KHR_lights_punctual) on the component built from OPT mesh
- * `mesh`: position in OPT units, linear colour, intensity in candela and
- * range in metres (0 = none). */
+ * `mesh`. The position is in OPT units, the colour is linear, the intensity
+ * is in candela and the range is in metres (0 means no range). */
 typedef struct OptGltfLight {
 	int32_t mesh;
 	float   position[3];
@@ -238,25 +245,28 @@ typedef struct OptGltfLight {
 
 /* How vertex normals are made. */
 typedef enum OptGltfNormals {
-	/* The stored normals as the classic renderer draws them (the default).
-	 * The 1998 normals are full-Gouraud (every adjacent face averaged, no
-	 * angle threshold), which fakes roundness on the low-poly hulls. The
-	 * renderer's per-FaceData position remap is reproduced: the first
-	 * face-order normal for each position is reused by later corners, which
-	 * keeps the rounded look without the conflicting corner normals it
-	 * ignored; then a zero-length canonical normal is replaced by the face
-	 * normal, and one opposing its first face plane negated. */
+	/* The stored normals, as the classic renderer draws them (the default).
+	 * The 1998 normals are full Gouraud: they average every adjacent face,
+	 * with no angle threshold, which makes the low-poly hulls look round.
+	 * The position remap that the renderer does for each FaceData is
+	 * reproduced. For each position, the first normal in face order is
+	 * reused by the later corners. This keeps the rounded look and drops the
+	 * conflicting corner normals that the renderer ignored. Then a
+	 * zero-length canonical normal is replaced by the face normal, and a
+	 * canonical normal that points against the plane of its first face is
+	 * negated. */
 	OPT_GLTF_NORMALS_CLASSIC = 0,
-	/* Each corner's stored normal as is (XWAU's renderer). */
+	/* The stored normal of each corner, unchanged, as XWAU's renderer uses
+	 * it. */
 	OPT_GLTF_NORMALS_STORED,
-	/* Regenerated, the stored normals ignored: geometric face normals form
-	 * connected smoothing fans across shared edges that meet
-	 * smooth_angle_degrees, then are corner-angle weighted so that the
-	 * triangulation's density does not bias them. A fan that wraps around a
-	 * non-manifold vertex is split where its average would point behind a
-	 * rendered triangle. Edges beyond the angle split the vertex, e.g. 45
-	 * for a crisp hard-surface look, or 90 for the rounded appearance of
-	 * the low-poly original models. */
+	/* New normals that ignore the stored ones. Face normals are grouped into
+	 * connected smoothing fans across shared edges whose angle is within
+	 * smooth_angle_degrees. Each face normal is weighted by its corner
+	 * angle, so that the density of the triangulation does not bias the
+	 * result. A fan that wraps around a non-manifold vertex is split where
+	 * its average would point behind a rendered triangle. Edges with a
+	 * larger angle split the vertex. Use 45 for a crisp hard-surface look,
+	 * or 90 for the rounded look of the low-poly original models. */
 	OPT_GLTF_NORMALS_SMOOTHED,
 } OptGltfNormals;
 
@@ -267,21 +277,22 @@ typedef struct OptGltfGeometryOptions {
 
 /* Where the materials come from. */
 typedef enum OptGltfMaterialSource {
-	/* The textures' colors (the default). With `emissive`, the textures
-	 * whose palette marks self-lit texels (the flat-ramp trick of TIE98 and
-	 * XWA: lit windows, cockpit lights) get a second <basename>_TexNN_
-	 * emissive.png (their glow colour on black) as the material's
-	 * emissiveTexture with a unit emissiveFactor, and their base colour is
-	 * black there: the classic renderer drew the glow over the surface in
-	 * their place. */
+	/* The colors of the textures (the default). With `emissive`, a texture
+	 * whose palette marks self-lit texels (lit windows and cockpit lights,
+	 * drawn with the flat-ramp trick of TIE98 and XWA) gets a second image,
+	 * <basename>_TexNN_emissive.png. It holds the glow colour on black and
+	 * is the emissiveTexture of the material, with an emissiveFactor of 1.
+	 * The base colour of those texels is black, because the classic renderer
+	 * drew the glow instead of the surface there. */
 	OPT_GLTF_MATERIALS_STOCK = 0,
-	/* Every material fully self-lit, as the classic renderer draws
-	 * projectiles: black base color (alpha kept), the base texture as
-	 * emissiveTexture, and fullbright_strength (> 0) as
+	/* Every material is fully self-lit, the way the classic renderer draws
+	 * projectiles. The base color is black (alpha is kept), the base texture
+	 * becomes the emissiveTexture, and fullbright_strength (> 0) becomes
 	 * KHR_materials_emissive_strength. */
 	OPT_GLTF_MATERIALS_FULLBRIGHT,
-	/* The caller's: `given`, one per OPT texture (opt->texture_count), the
-	 * material of untextured faces (its factors), and `variants` when set. */
+	/* Materials from the caller. `given` holds one material per OPT texture
+	 * (opt->texture_count). `untextured` is the material of untextured faces,
+	 * and only its factors are used. `variants` is optional. */
 	OPT_GLTF_MATERIALS_GIVEN,
 } OptGltfMaterialSource;
 
@@ -292,8 +303,8 @@ typedef struct OptGltfMaterialOptions {
 	const OptGltfMaterial* given;               /* OPT_GLTF_MATERIALS_GIVEN */
 	const OptGltfMaterial* untextured;
 	const OptGltfVariants* variants;
-	/* Screen surfaces when set: one entry per OPT texture
-	 * (opt->texture_count); entries with `present` false are ordinary. */
+	/* Optional screen surfaces, with one entry per OPT texture
+	 * (opt->texture_count). Entries with `present` false are ordinary. */
 	const OptGltfScreen*               screens;
 	const struct OptGltfAlphaOverride* alpha_overrides;
 	size_t                             alpha_override_count;
@@ -313,20 +324,22 @@ typedef struct OptGltfModelOptions {
 	size_t                              light_count;
 } OptGltfModelOptions;
 
-/* The conversion's options; zero-initialized, the defaults. */
+/* Conversion options. Zero-initialized options give the defaults. */
 typedef struct OptGltfBuildOptions {
 	OptGltfGeometryOptions geometry;
 	OptGltfMaterialOptions material;
 	OptGltfModelOptions    model;
-	/* Receives the conversion's notes (a texture's alpha class) and warnings
-	 * (an unused alpha override, repaired normals), with `log_context`; the
-	 * messages do not name the model. Without it, nothing is reported.
-	 * Errors go to OptGltf_BuildMemory's `error`. */
+	/* Receives the notes of the conversion (such as the alpha class of a
+	 * texture) and its warnings (such as an unused alpha override or
+	 * repaired normals), with `log_context`. The messages do not name the
+	 * model. When `log` is NULL, nothing is reported. Errors go to the
+	 * `error` argument of OptGltf_BuildMemory. */
 	void (*log)(void* context, bool warning, const char* message);
 	void* log_context;
 } OptGltfBuildOptions;
 
-/* OPT hardpoint type whose Y and Z the game reads as the pilot eye (31). */
+/* The OPT hardpoint type (31) whose Y and Z the game reads as the position
+ * of the pilot's eye. */
 #define OPT_GLTF_COCKPIT_HARDPOINT 31
 
 typedef enum OptGltfAlphaMode {
@@ -341,14 +354,15 @@ typedef struct OptGltfAlphaOverride {
 	float            alpha_cutoff;
 } OptGltfAlphaOverride;
 
-/* The base mip of an OPT texture as RGBA8, at palette shade row `shade`
- * (the file's base-color row, opt_palette_base_shade); NULL without
- * pixels, or when out of memory. */
+/* Decodes the base mip of an OPT texture as RGBA8, with palette shade row
+ * `shade`. opt_palette_base_shade gives the base-color row of the file.
+ * Returns NULL when the texture has no pixels or when out of memory. */
 uint8_t* OptGltf_DecodeTexture(const opt_texture_t* t, int shade);
 
-/* Classify a legacy OPT base-level alpha plane. OPT stores samples but no
- * material semantic, so coverage is inferred conservatively from endpoint
- * prevalence. */
+/* Classifies the alpha plane of the base level of an OPT texture. OPT
+ * stores alpha samples but not how a material should use them, so the mode
+ * is guessed conservatively from how many samples are fully transparent or
+ * fully opaque. */
 OptGltfAlphaMode OptGltf_ClassifyAlpha(const uint8_t* alpha, size_t sample_count);
 
 typedef struct OptGltfDocument OptGltfDocument;

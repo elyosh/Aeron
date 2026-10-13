@@ -1,6 +1,7 @@
-/* Each OPT mesh's LOD 0 as glTF vertices and per-face-group indices:
- * normals (stored, remapped and repaired as the classic renderer, or
- * regenerated), tangents, and the meshes without faces. */
+/* Converts LOD 0 of each OPT mesh to glTF vertices, with indices per face
+ * group. Normals are either the stored ones, remapped and repaired the way
+ * the classic renderer uses them, or regenerated. This file also generates
+ * tangents and handles meshes without faces. */
 
 #include <math.h>
 
@@ -19,7 +20,7 @@ void opt_gltf_built_mesh_free(BuiltMesh* bm) {
 }
 
 static uint32_t built_mesh_intern_vertex(BuiltMesh* bm, const GltfVertex* v) {
-	/* Linear dedup. fine for OPT mesh sizes. */
+	/* Linear dedup, fine for OPT mesh sizes. */
 	for (uint32_t i = 0; i < bm->vertex_count; ++i) {
 		const GltfVertex* e = &bm->vertices[i];
 		if (e->pos[0] == v->pos[0] && e->pos[1] == v->pos[1] && e->pos[2] == v->pos[2] &&
@@ -75,7 +76,7 @@ static void built_mesh_emit_index(BuiltMesh* bm, uint32_t v) {
  * diagonal of a two-triangle panel no longer gives one side extra weight.
  * It also avoids making a dense patch of small triangles dominate a
  * neighbouring coarse patch. */
-/* Sets `error`'s message; returns false. */
+/* Sets the message of `error` and returns false. */
 static bool mesh_fail(opt_error_t* error, const char* format, ...) {
 	if (error) {
 		va_list args;
@@ -137,7 +138,7 @@ static float* built_mesh_build_corner_normals(const opt_mesh_t* mesh, const opt_
 	const bool built = Aeron_MeshNormalsBuildCorners(&input, normals, &normals_error);
 	free(indices);
 	if (!built) {
-		mesh_fail(error, "normal build failed: %s", normals_error.message);
+		mesh_fail(error, "could not build normals: %s", normals_error.message);
 		free(normals);
 		return NULL;
 	}
@@ -154,9 +155,9 @@ static uint32_t built_mesh_emit_corner(BuiltMesh* bm, const opt_mesh_t* m, int32
 	gv.pos[1] *= meters_per_opt_unit;
 	gv.pos[2] *= meters_per_opt_unit;
 	swap_axis_v3(normal, gv.nrm);
-	/* Stored OPT normals are decoded from Q15 and may be slightly off
-	 * unit length; regenerated normals are already unit length, but use
-	 * the same final normalization for both paths. */
+	/* Stored OPT normals are decoded from Q15 and may not be exactly unit
+	 * length. Regenerated normals are already unit length, but both paths
+	 * use the same final normalization. */
 	float nl = sqrtf(gv.nrm[0] * gv.nrm[0] + gv.nrm[1] * gv.nrm[1] + gv.nrm[2] * gv.nrm[2]);
 	if (nl > 1e-9f) {
 		gv.nrm[0] /= nl;
@@ -170,9 +171,10 @@ static uint32_t built_mesh_emit_corner(BuiltMesh* bm, const opt_mesh_t* m, int32
 	return built_mesh_intern_vertex(bm, &gv);
 }
 
-/* The triangles a mesh has emitted, by their corners (rotated to start at
- * the smallest index, so a reversed triangle, the back of a two-sided
- * surface, is another key), with the face group that emitted each. */
+/* The triangles that a mesh has already emitted, keyed by their corners,
+ * with the face group that emitted each one. The corners are rotated to
+ * start at the smallest index. A reversed triangle, such as the back of a
+ * two-sided surface, is a different key. */
 typedef struct {
 	uint32_t v[3];
 	int32_t  group; /* -1: empty slot */
@@ -197,7 +199,8 @@ static bool triangle_set_init(TriangleSet* set, const opt_lod_t* lod) {
 	return set->slots != NULL;
 }
 
-/* The slot of triangle `v` (rotated), found or empty. */
+/* Returns the slot of the rotated triangle `v`, or the empty slot where it
+ * goes. */
 static SeenTriangle* triangle_set_slot(TriangleSet* set, const uint32_t v[3]) {
 	uint32_t hash = (v[0] * 73856093u) ^ (v[1] * 19349663u) ^ (v[2] * 83492791u);
 	for (uint32_t i = hash & (set->cap - 1);; i = (i + 1) & (set->cap - 1)) {
@@ -217,10 +220,10 @@ static bool same_textures(const opt_face_group_t* a, const opt_face_group_t* b) 
 }
 
 /* Emits triangle (a, b, c) of face group `g`, unless the mesh already has
- * it with the same textures: some shipped OPTs list a face twice, which
- * draws the same pixels, and which Blender cannot hold (two faces on the
- * same vertices). A repeat with another texture is kept: which one shows
- * is not data to drop. */
+ * it with the same textures. Some shipped OPTs list a face twice. The copy
+ * draws the same pixels, and Blender cannot hold two faces on the same
+ * vertices. A repeat with a different texture is kept, because which
+ * texture shows is data that must not be lost. */
 static void built_mesh_emit_triangle(BuiltMesh* bm, TriangleSet* seen, const opt_lod_t* lod, int32_t g,
 									 uint32_t a, uint32_t b, uint32_t c) {
 	uint32_t v[3] = { a, b, c };
@@ -246,10 +249,10 @@ static void built_mesh_emit_triangle(BuiltMesh* bm, TriangleSet* seen, const opt
 	built_mesh_emit_index(bm, c);
 }
 
-/* Walk LOD 0 of an OPT mesh and emit deduplicated vertices + indices
- * grouped by face group. Skips degenerate faces and empty groups.
- * `regen` enables angle-based normal regeneration; when false the stored
- * OPT normals are used. */
+/* Walks LOD 0 of an OPT mesh and emits deduplicated vertices and indices,
+ * grouped by face group. Skips degenerate faces and empty groups. `regen`
+ * enables angle-based normal regeneration. Without it, the stored OPT
+ * normals are used. */
 bool opt_gltf_built_mesh_from_opt(BuiltMesh* bm, const opt_mesh_t* m, float meters_per_opt_unit, bool regen,
 								  float smooth_angle_degrees, bool repair_normals, opt_error_t* error) {
 	memset(bm, 0, sizeof *bm);
@@ -286,11 +289,11 @@ bool opt_gltf_built_mesh_from_opt(BuiltMesh* bm, const opt_mesh_t* m, float mete
 	 * otherwise coplanar two-triangle panel.
 	 *
 	 * A static glTF cannot reproduce the view-dependent "first visible"
-	 * choice at a non-coplanar junction. File order is exact for coplanar
-	 * pairs, however, because both faces have identical culling, and is the
-	 * closest stable representation elsewhere. Keep repair_normals false as
-	 * the raw per-corner diagnostic path, so this compatibility remap is
-	 * enabled together with the normal sanitization default. */
+	 * choice at a non-coplanar junction. For coplanar pairs, file order is
+	 * exact because both faces have the same culling. Elsewhere it is the
+	 * closest stable choice. With repair_normals false, the raw per-corner
+	 * normals are kept for diagnostics. So this remap is enabled only
+	 * together with normal sanitization, which is on by default. */
 	opt_vec3_t* classic_normals    = NULL;
 	uint8_t*    classic_normal_set = NULL;
 	if (!regen && repair_normals && m->vertex_count > 0) {
@@ -357,10 +360,10 @@ bool opt_gltf_built_mesh_from_opt(BuiltMesh* bm, const opt_mesh_t* m, float mete
 				if (classic_normal_set) {
 					if (!classic_normal_set[vi]) {
 						/* Sanitize only the canonical, first-use normal.
-						 * Later per-corner normals are ignored by the
-						 * classic renderer and must not be repaired
-						 * independently: doing so turns them into real
-						 * glTF seams. */
+						 * The classic renderer ignores the later per-corner
+						 * normals. They must not be repaired separately,
+						 * because that would turn them into real glTF
+						 * seams. */
 						double nlen2 = (double)n->x * n->x + (double)n->y * n->y + (double)n->z * n->z;
 						if (nlen2 < 1e-12) {
 							classic_normals[vi] = f->face_normal;
@@ -403,12 +406,13 @@ bool opt_gltf_built_mesh_from_opt(BuiltMesh* bm, const opt_mesh_t* m, float mete
 
 /* ===== Tangents ======================================================
  *
- * MikkTSpace over the mesh's final triangle list, in the glTF frame. glTF
- * puts the texture's first row at v = 0 and wants the bitangent
- * cross(normal, tangent) * w to point toward that row (+Y of a normal map is
- * "up" in the image), so MikkTSpace sees (u, 1 - v): its bitangent then
- * follows decreasing v and its sign is the glTF w. Vertices are re-interned
- * with their tangent, splitting where corner frames differ. */
+ * Tangents come from MikkTSpace, run on the final triangle list of the mesh
+ * in the glTF frame. glTF puts the first row of the texture at v = 0, and
+ * wants the bitangent cross(normal, tangent) * w to point toward that row
+ * (+Y of a normal map is "up" in the image). So MikkTSpace gets (u, 1 - v).
+ * Its bitangent then follows decreasing v, and its sign is the glTF w.
+ * Vertices are interned again with their tangent, so a vertex is split
+ * where the corner frames differ. */
 
 typedef struct TangentBuild {
 	const BuiltMesh* bm;
@@ -552,8 +556,9 @@ const opt_file_t* opt_gltf_faceless_patch_apply(const opt_file_t* opt, const Opt
 		lod->groups          = group;
 		m->lod_count         = 1;
 		m->lods              = lod;
-		opt_gltf_log(options, true, "mesh %d has %d vertices and no LOD 0 faces; converted without faces",
-					 (int)mi, (int)m->vertex_count);
+		opt_gltf_log(options, true,
+					 "mesh %d has %d vertices but no LOD 0 faces, so it is converted without faces", (int)mi,
+					 (int)m->vertex_count);
 		++next;
 	}
 	patch->file.meshes = patch->meshes;

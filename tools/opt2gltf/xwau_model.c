@@ -27,8 +27,8 @@ static const struct {
 
 static const char* const kBehaviors[] = { "swing", "random", "random_pause" };
 
-/* The lines of `section`: <Model><Section>.txt, else [<Section>] of
- * <Model>.ini (hook GetFileLines). */
+/* Reads the lines of `section` from <Model><Section>.txt, or else from the
+ * [<Section>] section of <Model>.ini (hook GetFileLines). */
 static bool section_lines(const char* game, const char* model, const char* section, XwauLines* out) {
 	char rel[512], path[1024];
 	if (!PathFormat(rel, sizeof rel, "FlightModels/%s%s.txt", model, section) ||
@@ -44,7 +44,7 @@ static bool section_lines(const char* game, const char* model, const char* secti
 
 /* ---- Pilot eye ------------------------------------------------------------- */
 
-/* The eye of POV lines defining CockpitPovX, Y and Z. */
+/* Reads the eye from POV lines that define CockpitPovX, Y and Z. */
 static bool eye_from_lines(const XwauLines* lines, int eye[3], const char* label, const char* where) {
 	static const char* const keys[] = { "CockpitPovX", "CockpitPovY", "CockpitPovZ" };
 	char                     values[3][256];
@@ -85,8 +85,9 @@ typedef struct Indices {
 	size_t count;
 } Indices;
 
-/* hook GetModelObjectProfileIndices: the meshes `profile` hides; false on a
- * reference cycle (`stack` holds the profiles being resolved). */
+/* Collects the meshes that `profile` hides, as hook
+ * GetModelObjectProfileIndices does. `stack` holds the profiles being
+ * resolved. Returns false on a reference cycle. */
 static bool resolve_profile(const XwauLines* lines, const char* profile, const char** stack, size_t depth,
 							Indices* out, bool* oom) {
 	for (size_t i = 0; i < depth; ++i)
@@ -127,7 +128,8 @@ static bool read_profiles(const char* game, const char* model, XwauModel* out, c
 		return false;
 	bool ok = true;
 	for (size_t i = 0; ok && i < lines.count; ++i) {
-		/* Profile names: the section's keys, first occurrence only. */
+		/* The profile names are the keys of the section. Only the first
+		 * occurrence of each key counts. */
 		const char* eq = strchr(lines.items[i], '=');
 		char        name[256];
 		snprintf(name, sizeof name, "%.*s", eq ? (int)(eq - lines.items[i]) : 0, lines.items[i]);
@@ -169,7 +171,7 @@ static bool read_profiles(const char* game, const char* model, XwauModel* out, c
 				}
 			}
 			if (dropped)
-				Report(label, "profile '%s': mesh indices past %d dropped", name, COMPONENT_MAX);
+				Report(label, "profile '%s': mesh indices above %d dropped", name, COMPONENT_MAX);
 			if (any) {
 				if (out->set_count == XWAU_MODEL_MAX_SETS) {
 					ok = false;
@@ -240,7 +242,8 @@ bool XwauModel_MeshLines(const XwauLines* lines, XwauMeshLine** out, size_t* cou
 	return true;
 }
 
-/* Adds an articulation after the hook's range checks (reported). */
+/* Adds an articulation if it passes the hook's range checks. Failed checks
+ * are reported. */
 static bool add_articulation(XwauModel* out, const char* where, const char* group, long long mesh,
 							 long long angle, long long speed, long long speed_back, const char* behavior,
 							 bool* added, const char* label) {
@@ -288,9 +291,9 @@ static bool add_section(const char* game, const char* model, const char* section
 	return ok;
 }
 
-/* The <key>s of the SFoilsCargoClamps_<key> sections of <Model>.ini and of
- * the <Model>SFoilsCargoClamps_<key>.txt files beside it, first occurrence
- * of each (case-insensitive). */
+/* Collects the <key> of each SFoilsCargoClamps_<key> section in <Model>.ini
+ * and of each <Model>SFoilsCargoClamps_<key>.txt file next to it. Each key is
+ * kept once, compared in any case. */
 static bool cargo_clamp_keys(const char* game, const char* model, XwauLines* keys) {
 	memset(keys, 0, sizeof *keys);
 	char rel[512], ini[1024];
@@ -315,7 +318,7 @@ static bool cargo_clamp_keys(const char* game, const char* model, XwauLines* key
 		}
 		fclose(f);
 	}
-	/* The .txt files beside the .ini, by name. */
+	/* The .txt files next to the .ini, matched by name. */
 	char dir[1024];
 	snprintf(dir, sizeof dir, "%s", ini);
 	*strrchr(dir, '/') = 0;
@@ -383,7 +386,7 @@ static bool read_rotations(const char* game, const XwauMissions* missions, const
 	}
 	XwauLines_Free(&keys);
 
-	/* The crew: Pilot's lines, behaviors 0 to 2. */
+	/* The crew: the lines of Pilot, with behaviors 0 to 2. */
 	XwauLines     lines;
 	XwauMeshLine* mesh_lines = NULL;
 	size_t        count      = 0;
@@ -444,7 +447,8 @@ bool XwauModel_Read(const char* game, const XwauMissions* missions, const char* 
 					const char* label) {
 	memset(out, 0, sizeof *out);
 	out->has_eye = XwauModel_Eye(game, model, out->eye, label);
-	/* A cockpit model shares its craft's frame: its craft's eye. */
+	/* A cockpit model uses the same frame as its craft, so it also gets the
+	 * eye of its craft. */
 	const size_t len = strlen(model);
 	if (len > 7 && strcasecmp(model + len - 7, "cockpit") == 0) {
 		char craft[256];

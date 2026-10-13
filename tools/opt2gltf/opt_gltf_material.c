@@ -1,6 +1,8 @@
-/* The materials: the textures' stock ones (decoded colors, self-lit texels,
- * alpha classes and overrides, fullbright) or given ones, screens, the
- * variants' materials, and the materials' AERON_flight_model objects. */
+/* Builds the glTF materials. Each texture gets either a stock material
+ * (decoded colors, self-lit texels, alpha class or alpha override,
+ * fullbright) or a given material. This file also handles screen surfaces,
+ * the variant materials, and the AERON_flight_model object of each
+ * material. */
 
 #include <math.h>
 
@@ -17,11 +19,12 @@ static inline void rgb565_to_rgb8(uint16_t w, uint8_t* r, uint8_t* g, uint8_t* b
 	*b         = (uint8_t)((b5 << 3) | (b5 >> 2));
 }
 
-/* Decode the base mip of an OPT texture into RGBA8 at the given palette
- * shade row (the file's base-color row; see opt_palette_base_shade).
- * 32bpp textures ignore the shade and keep their authored B,G,R,A color;
- * their alpha is t->alpha (set only with the texture's alpha flag), else
- * opaque. Caller owns the returned buffer. Returns NULL on bad inputs. */
+/* Decodes the base mip of an OPT texture into RGBA8, using palette shade
+ * row `shade` (the base-color row of the file, see opt_palette_base_shade).
+ * 32bpp textures ignore the shade and keep their authored color. Their
+ * alpha comes from t->alpha, which is set only when the texture has the
+ * alpha flag. Without it, they are opaque. The caller owns the returned
+ * buffer. Returns NULL on bad inputs. */
 uint8_t* OptGltf_DecodeTexture(const opt_texture_t* t, int shade) {
 	if (!t || !t->pixels || t->width <= 0 || t->height <= 0)
 		return NULL;
@@ -48,37 +51,40 @@ uint8_t* OptGltf_DecodeTexture(const opt_texture_t* t, int shade) {
 		out[i * 4 + 0] = r;
 		out[i * 4 + 1] = g;
 		out[i * 4 + 2] = b;
-		/* Alpha from an XWA TextureAlpha node (base mip), else opaque. */
+		/* Alpha comes from an XWA TextureAlpha node (base mip). Without one,
+		 * the texel is opaque. */
 		out[i * 4 + 3] = t->alpha ? t->alpha[i] : 255;
 	}
 	return out;
 }
 
-/* Decode the base mip into an emissive RGBA8 map: glow color + alpha 255
- * on self-illuminated texels, transparent black elsewhere. The alpha is
- * the classic lightmap coverage mask; gltf_cook premultiplies it before
- * mip generation so the runtime can reconstruct the original gamma-space
- * filtering and SRCALPHA pass in the opaque PBR shader. Returns NULL if
- * the texture builds no emissive layer (so no emissive PNG/material is
- * emitted for it). Caller owns the returned buffer.
+/* Decodes the base mip into an emissive RGBA8 map. Self-illuminated texels
+ * get their glow color and alpha 255. All other texels are transparent
+ * black. The alpha is the classic lightmap coverage mask. gltf_cook
+ * premultiplies it before it generates the mips, so that the runtime can
+ * reconstruct the original gamma-space filtering and SRCALPHA pass in the
+ * opaque PBR shader. Returns NULL if the texture has no emissive layer, so
+ * that no emissive PNG or material is written for it. The caller owns the
+ * returned buffer.
  *
- * XWA (version 5) files replicate the engine EXACTLY
- * (ModelTexture_FilterHardwarePalette + CreateD3DfromTexture): entries
- * classified by opt_palette_classic_lit, glow color from palette row 10,
- * no lightmap for textures named "_*" or when all/none of the 256
- * entries classify lit. Legacy files keep the flat-ramp heuristic with
- * `tol`, sampling the base shade. */
+ * For XWA files (version 5), this matches the engine EXACTLY
+ * (ModelTexture_FilterHardwarePalette + CreateD3DfromTexture). Palette
+ * entries are classified by opt_palette_classic_lit, and the glow color
+ * comes from palette row 10. There is no lightmap for a texture whose name
+ * starts with "_", or when all or none of the 256 entries are lit. Older
+ * files keep the flat-ramp heuristic with `tol`, and sample the base
+ * shade. */
 static uint8_t* decode_texture_emissive_rgba8(const opt_file_t* opt, const opt_texture_t* t, int shade,
 											  int tol) {
 	if (!t || !t->pixels || t->width <= 0 || t->height <= 0)
 		return NULL;
-	/* The classifiers read the palette; a 32bpp texture has none (its
-	 * illumination is a separate plane, t->illum). */
+	/* The classifiers read the palette. A 32bpp texture has no palette, and
+	 * its illumination is a separate plane (t->illum). */
 	if (t->bytes_per_texel == 4)
 		return NULL;
 	const int xwa = opt && opt->version >= 5;
 	if (xwa && t->name[0] == '_') {
-		return NULL; /* engine gate: underscore textures never glow */
+		return NULL; /* engine rule: textures named "_*" never glow */
 	}
 
 	int lit[OPT_PALETTE_COLORS];
@@ -88,8 +94,8 @@ static uint8_t* decode_texture_emissive_rgba8(const opt_file_t* opt, const opt_t
 					 : opt_palette_index_emissive(opt, t->palette, i, tol);
 		lit_count += lit[i];
 	}
-	/* Engine gate (clearedCount at 0x44A600): a lightmap builds only
-	 * when SOME but not ALL palette entries classify lit. */
+	/* Engine rule (clearedCount at 0x44A600): a lightmap is built only
+	 * when SOME but not ALL palette entries are lit. */
 	if (xwa && (lit_count == 0 || lit_count == OPT_PALETTE_COLORS)) {
 		return NULL;
 	}
@@ -128,14 +134,15 @@ static uint8_t* decode_texture_emissive_rgba8(const opt_file_t* opt, const opt_t
 
 /* ===== Switch-state alpha classes =================================== */
 
-/* The renderer partitions a model's indices once into OPAQUE, MASK and BLEND
- * ranges, so every material variant of a primitive must share one alpha
- * class. A switched face group whose state textures differ (an opaque
- * texture beside one with translucent texels) uses, for every state, a copy
- * of its material promoted to the most transparent class among them; an
- * opaque texture draws the same under MASK (alpha 1 passes any cutoff) or
- * BLEND. Copies are shared per (base material, class). A transmissive
- * material draws in the BLEND range (aeron/scene/gltf_mesh.h). */
+/* The renderer splits the indices of a model once into OPAQUE, MASK and
+ * BLEND ranges, so all material variants of a primitive must have the same
+ * alpha class. The state textures of a switched face group can have
+ * different classes, for example an opaque texture and a texture with
+ * translucent texels. Every state then uses a copy of its material that is
+ * promoted to the most transparent class among them. An opaque texture
+ * draws the same under MASK (alpha 1 passes any cutoff) or BLEND. There is
+ * one copy per base material and class. A transmissive material draws in
+ * the BLEND range (aeron/scene/gltf_mesh.h). */
 
 int opt_gltf_alpha_class_rank(const cgltf_material* m) {
 	if (m->alpha_mode == cgltf_alpha_mode_blend ||
@@ -272,7 +279,7 @@ bool opt_gltf_validate_alpha_overrides(const OptGltfBuildOptions* options, opt_e
 		return true;
 	if (!options->material.alpha_overrides) {
 		if (error)
-			snprintf(error->msg, sizeof error->msg, "alpha override count has no records");
+			snprintf(error->msg, sizeof error->msg, "alpha override count is set but there are no records");
 		return false;
 	}
 	for (size_t i = 0; i < options->material.alpha_override_count; ++i) {
@@ -299,7 +306,8 @@ bool opt_gltf_validate_alpha_overrides(const OptGltfBuildOptions* options, opt_e
 
 /* ===== Screen surfaces ============================================== */
 
-/* The material's AERON_flight_model `screen` (owned), or NULL. */
+/* Returns the `screen` JSON for the AERON_flight_model object of the
+ * material, owned by the caller, or NULL. */
 static char* screen_json(const OptGltfScreen* s) {
 	cJSON* object = cJSON_CreateObject();
 	bool   ok     = OptJson_Add(object, "cover", cJSON_CreateBool(s->cover_base.rgba && !s->hologram)) &&
@@ -330,8 +338,8 @@ static char* screen_json(const OptGltfScreen* s) {
 	return OptJson_Print(object);
 }
 
-/* Rewrite the material of a screen texture (opt_gltf.h, "Screen surfaces").
- * `cover_base` and `cover_emissive` are the cover's textures, or NULL. */
+/* Rewrites the material of a screen texture (opt_gltf.h, "Screen surfaces").
+ * `cover_base` and `cover_emissive` are the textures of the cover, or NULL. */
 static bool screen_apply(GltfBuild* build, cgltf_material* mat, const OptGltfScreen* s,
 						 cgltf_texture* cover_base, cgltf_texture* cover_emissive) {
 	char* screen = screen_json(s);
@@ -358,8 +366,8 @@ static bool screen_apply(GltfBuild* build, cgltf_material* mat, const OptGltfScr
 	return true;
 }
 
-/* The energy effects an AERON_flight_model entry names, as bits of
- * kAnimEnergies. */
+/* The energy effects. energy_bits returns the effects listed in an
+ * AERON_flight_model entry, as bits of this array. */
 static const char* const kAnimEnergies[] = { "shields", "tractor", "jamming" };
 
 static unsigned energy_bits(const cJSON* entry) {
@@ -373,8 +381,8 @@ static unsigned energy_bits(const cJSON* entry) {
 	return bits;
 }
 
-/* Adds `energy`, the effects of `bits`, to `object`; false when out of
- * memory. */
+/* Adds an `energy` list with the effects in `bits` to `object`. Returns
+ * false when out of memory. */
 bool opt_gltf_add_energy(cJSON* object, unsigned bits) {
 	cJSON* list = OptJson_AddArray(object, "energy");
 	bool   ok   = list != NULL;
@@ -384,12 +392,14 @@ bool opt_gltf_add_energy(cJSON* object, unsigned bits) {
 	return ok;
 }
 
-/* Each material's AERON_flight_model object: its animation and its screen.
- * The energy effects most of the materials have (ties: the smaller set;
- * every material is drawn, see opt_gltf_prune_unused) become the model root's
- * `energy` (*common, bits of kAnimEnergies); only the materials with other
- * effects keep their own, `[]` for none (a material without an object,
- * such as the faces without a texture). */
+/* Builds the AERON_flight_model object of each material, with its animation
+ * and its screen. The set of energy effects that most materials have
+ * becomes the `energy` of the model root (*common_energy, bits of
+ * kAnimEnergies). On a tie, the smaller bit value wins. Counting every
+ * material is correct because unused materials were already removed (see
+ * opt_gltf_prune_unused). Only the materials with a different set keep their
+ * own `energy`, which is `[]` when they have no effect. This includes the
+ * materials without an animation object, such as the untextured one. */
 bool opt_gltf_material_extensions(OptGltfDocument* document, unsigned* common_energy) {
 	GltfBuild*   gb       = &document->gb;
 	const size_t count    = gb->materials_count;
@@ -445,10 +455,10 @@ bool opt_gltf_material_extensions(OptGltfDocument* document, unsigned* common_en
 
 /* ---- Texture preparation ------------------------------------------------ */
 
-/* Self-illuminated texels (flat palette ramp) become a second, emissive
- * image per affected texture (with `emissive`). Counted first, as every
- * image: cgltf points into the image and texture arrays, which are never
- * reallocated. */
+/* With `emissive`, each texture with self-illuminated texels (flat palette
+ * ramp) gets a second, emissive image. Like all images, these are counted
+ * before the arrays are allocated, because cgltf points into the image and
+ * texture arrays and they are never reallocated. */
 static bool find_stock_emissive(Build* b, size_t* images) {
 	const opt_file_t* opt = b->opt;
 	b->tex_emissive = (int*)calloc(opt->texture_count ? opt->texture_count : 1, sizeof *b->tex_emissive);
@@ -466,8 +476,8 @@ static bool find_stock_emissive(Build* b, size_t* images) {
 	return true;
 }
 
-/* The images of a given material, as they are written: base color,
- * emissive, metallic-roughness, transmission, normal. */
+/* Lists the images of a given material in the order they are written:
+ * base color, emissive, metallic-roughness, transmission, normal. */
 static void material_images(const OptGltfMaterial* m, const OptGltfImage* out[5]) {
 	out[0] = &m->base;
 	out[1] = &m->emissive;
@@ -476,7 +486,8 @@ static void material_images(const OptGltfMaterial* m, const OptGltfImage* out[5]
 	out[4] = &m->normal;
 }
 
-/* Adds `pixels` to `seen` (a list of `*count`) when new; true when new. */
+/* Adds `pixels` to `seen` (`*count` entries) if it is not there yet.
+ * Returns true if it was added. */
 static bool see_pixels(const uint8_t** seen, size_t* count, const uint8_t* pixels) {
 	for (size_t i = 0; i < *count; ++i)
 		if (seen[i] == pixels)
@@ -485,8 +496,9 @@ static bool see_pixels(const uint8_t** seen, size_t* count, const uint8_t* pixel
 	return true;
 }
 
-/* Given materials: the images besides the textures' base ones, each
- * distinct image once (the textures' then the variants' materials'). */
+/* Counts the images of the given materials, except the base images of the
+ * textures, which are already counted. Each distinct image is counted once.
+ * The texture materials come first, then the variant materials. */
 static bool count_given_images(Build* b, size_t* images) {
 	const opt_file_t* opt      = b->opt;
 	const size_t      variants = b->variants ? b->variants->material_count : 0;
@@ -511,7 +523,7 @@ static bool count_given_images(Build* b, size_t* images) {
 	return true;
 }
 
-/* Screen surfaces: the cover images, one set per cover. */
+/* Counts the cover images of screen surfaces, once for each cover. */
 static bool find_screen_covers(Build* b, size_t* images) {
 	const opt_file_t*    opt     = b->opt;
 	const OptGltfScreen* screens = b->screens;
@@ -546,7 +558,7 @@ bool opt_gltf_prepare_textures(Build* b) {
 	gb->images   = (cgltf_image*)calloc(images ? images : 1, sizeof *gb->images);
 	gb->textures = (cgltf_texture*)calloc(images ? images : 1, sizeof *gb->textures);
 	/* Room for the base materials (one per texture, the untextured one, then
-	 * the variants') and, after them, up to two alpha-promoted copies of
+	 * the variant materials), followed by up to two alpha-promoted copies of
 	 * each (see opt_gltf_promoted_material). Primitives point into this
 	 * array, so it is never reallocated. */
 	const size_t materials =
@@ -567,9 +579,9 @@ bool opt_gltf_prepare_textures(Build* b) {
 
 /* ---- Texture materials -------------------------------------------------- */
 
-/* The material's alpha mode: classified from the texture's alpha (for a
- * given material, its base image's when it says so), or an alpha
- * override. */
+/* Sets the alpha mode of the material from an alpha override, or else by
+ * classifying the alpha of the texture. A given material uses the alpha of
+ * its base image when it sets alpha_from_base, and is opaque otherwise. */
 static bool material_alpha(Build* b, int32_t i, cgltf_material* mat, const uint8_t* rgba) {
 	const opt_texture_t* t               = &b->opt->textures[i];
 	AlphaHistogram       alpha_histogram = { 0, 0, 0 };
@@ -588,7 +600,7 @@ static bool material_alpha(Build* b, int32_t i, cgltf_material* mat, const uint8
 	float                       alpha_cutoff   = 0.5f;
 	const OptGltfAlphaOverride* alpha_override = find_alpha_override(b->options, t, i);
 	if (alpha_override_match_count(b->options, t, i) > 1)
-		return opt_gltf_build_fail(b, "multiple alpha overrides resolve to texture '%s'", t->name);
+		return opt_gltf_build_fail(b, "several alpha overrides match texture '%s'", t->name);
 	if (alpha_override) {
 		if (alpha_override->alpha_mode < OPT_GLTF_ALPHA_OPAQUE ||
 			alpha_override->alpha_mode > OPT_GLTF_ALPHA_BLEND || !isfinite(alpha_override->alpha_cutoff) ||
@@ -615,12 +627,12 @@ static bool material_alpha(Build* b, int32_t i, cgltf_material* mat, const uint8
 	return true;
 }
 
-/* Emissive: self-illuminated texels (e.g. lit windows) get a second texture
- * holding their glow colour on black, wired as emissiveTexture with a unit
- * emissiveFactor. The classic renderer drew them over the lit surface,
- * glow · c + lit · (1 - c) with c their coverage, 1 on a lit texel: the
- * base colour is black under them, so that the standard lit + emission
- * draws the same. */
+/* Self-illuminated texels (such as lit windows) get a second texture with
+ * their glow colour on black. It is used as emissiveTexture, with an
+ * emissiveFactor of 1. The classic renderer drew these texels over the lit
+ * surface as glow · c + lit · (1 - c), where c is their coverage, which is
+ * 1 on a lit texel. So the base colour is set to black under them, and the
+ * standard lit + emission result looks the same. */
 static void stock_emissive(Build* b, int32_t i, cgltf_material* mat) {
 	const opt_texture_t* t  = &b->opt->textures[i];
 	uint8_t*             em = decode_texture_emissive_rgba8(b->opt, t, b->base_shade, OPT_EMISSIVE_SHADE_TOL);
@@ -638,8 +650,9 @@ static void stock_emissive(Build* b, int32_t i, cgltf_material* mat) {
 	set_color(mat->emissive_factor, 1.0f, 1.0f, 1.0f);
 }
 
-/* The texture of a given material's image: its image, written in the next
- * slot unless already written (the same pixels). */
+/* Returns the texture for an image of a given material. The image is
+ * written to the next slot, unless an image with the same pixels was
+ * already written. */
 static cgltf_texture* given_image(Build* b, const OptGltfImage* image) {
 	for (size_t slot = 0; slot < b->image_slot; ++slot)
 		if (b->document->image_pixels[slot].rgba == image->view.rgba)
@@ -653,8 +666,8 @@ static cgltf_texture* given_image(Build* b, const OptGltfImage* image) {
 	return texture;
 }
 
-/* A given material's inputs beyond its base color image, written in the
- * material's image order. */
+/* Applies the inputs of a given material other than its base color image.
+ * Images are written in the order of material_images. */
 static void given_material(Build* b, cgltf_material* mat, const OptGltfMaterial* in) {
 	if (in->name)
 		mat->name = opt_gltf_keep_string(b->gb, xstrdup(in->name));
@@ -690,8 +703,8 @@ static void given_material(Build* b, cgltf_material* mat, const OptGltfMaterial*
 	b->gb->material_anim[mat - b->gb->materials] = in->json;
 }
 
-/* Screen surface: replaces the material's textures (opt_gltf.h), with its
- * cover's images (written once per cover). */
+/* Replaces the textures of a screen surface's material (opt_gltf.h) with
+ * the images of its cover. The images of each cover are written once. */
 static bool screen_material(Build* b, int32_t i, cgltf_material* mat) {
 	const OptGltfScreen* s       = &b->screens[i];
 	cgltf_texture*       base    = NULL;
@@ -729,7 +742,7 @@ static bool screen_material(Build* b, int32_t i, cgltf_material* mat) {
 	return true;
 }
 
-/* Texture `i`'s image (slot i) and material (material i). */
+/* Writes the image (slot i) and the material (material i) of texture `i`. */
 static bool texture_material(Build* b, int32_t i) {
 	const opt_texture_t*   t     = &b->opt->textures[i];
 	GltfBuild*             gb    = b->gb;
@@ -747,8 +760,8 @@ static bool texture_material(Build* b, int32_t i) {
 		gb->textures[i].name    = gb->images[i].name;
 	}
 
-	/* PBR material: baseColorTexture only; metallic 0, roughness 1 by
-	 * default. */
+	/* PBR material with only baseColorTexture. By default, metallic is 0
+	 * and roughness is 1. */
 	cgltf_material* mat             = &gb->materials[i];
 	mat->name                       = opt_gltf_keep_string(gb, xprintf_dup("Mat_Tex%02d", (int)i));
 	mat->has_pbr_metallic_roughness = 1;
@@ -760,8 +773,8 @@ static bool texture_material(Build* b, int32_t i) {
 	if (!material_alpha(b, i, mat, rgba))
 		return false;
 
-	/* Fullbright: the texture lights itself and the scene adds nothing
-	 * diffuse, as the classic renderer draws projectiles. Alpha still comes
+	/* Fullbright: the texture lights itself and the scene adds no diffuse
+	 * light, like projectiles in the classic renderer. Alpha still comes
 	 * from the base texture. */
 	if (b->fullbright) {
 		set_color(mat->pbr_metallic_roughness.base_color_factor, 0.0f, 0.0f, 0.0f);
@@ -814,7 +827,7 @@ static void untextured_material(Build* b) {
 		untex->emissive_strength.emissive_strength = b->fullbright_strength;
 	}
 	if (b->materials) {
-		/* The given factors (images are ignored). */
+		/* Use the given factors. Images are ignored. */
 		const OptGltfMaterial* um = b->options->material.untextured;
 		set_color(untex->pbr_metallic_roughness.base_color_factor, um->base_color[0], um->base_color[1],
 				  um->base_color[2]);
@@ -837,8 +850,9 @@ static void untextured_material(Build* b) {
 	b->untextured          = (size_t)b->opt->texture_count;
 }
 
-/* The variants' material `m` (material untextured + 1 + m): its texture's
- * material's alpha mode and name with the suffix, and its own inputs. */
+/* Builds variant material `m`, at index untextured + 1 + m. Its name is the
+ * name of its texture's material plus the variant suffix, and it copies the
+ * alpha mode of that material. All its other inputs are its own. */
 static void variant_material(Build* b, size_t m) {
 	GltfBuild*                    gb  = b->gb;
 	const OptGltfVariantMaterial* in  = &b->variants->materials[m];

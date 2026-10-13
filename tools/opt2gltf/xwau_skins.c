@@ -44,12 +44,13 @@ static uint32_t le16(const uint8_t* p) { return (uint32_t)p[0] | ((uint32_t)p[1]
 
 static uint32_t le32(const uint8_t* p) { return le16(p) | (le16(p + 2) << 16); }
 
-/* The data of the first entry of the zip `zip` whose file name (whatever its
- * folder) is `name` (case-insensitive), stored or deflated; NULL when it has
- * none. */
+/* Returns the data of the first entry in the zip `zip` whose file name is
+ * `name`, in any folder and in any case. The entry must be stored or
+ * deflated. Returns NULL when there is no such entry. */
 static uint8_t* zip_entry(const uint8_t* zip, size_t size, const char* name, size_t* out_size,
 						  const char* label, const char* path) {
-	/* The end of central directory record, up to 64 KiB of comment after it. */
+	/* Find the end of central directory record. A comment of up to 64 KiB can
+	 * follow it. */
 	size_t end = size >= 22 ? size - 22 : 0;
 	while (size >= 22 && le32(zip + end) != 0x06054b50) {
 		if (end == 0 || size - end > 22 + 65535)
@@ -160,8 +161,8 @@ void XwauSkins_FreeNames(XwauSkinSet* set) {
 	memset(set, 0, sizeof *set);
 }
 
-/* A list token as CombineTextures reads it: the skin (lower case) and its
- * opacity. */
+/* Parses a list token as CombineTextures does, into the skin name (lower
+ * case) and its opacity. */
 static void parse_token(const char* token, char* name, size_t cap, int* opacity) {
 	const char* dash = strchr(token, '-');
 	snprintf(name, cap, "%.*s", dash ? (int)(dash - token) : (int)strlen(token), token);
@@ -170,7 +171,8 @@ static void parse_token(const char* token, char* name, size_t cap, int* opacity)
 	*opacity = 100;
 	if (!dash)
 		return;
-	/* The text up to the next '-', trimmed: [+-]?[0-9]+ within the int range. */
+	/* The opacity is the text up to the next '-', trimmed. It must match
+	 * [+-]?[0-9]+ and fit in an int. */
 	const char* next = strchr(dash + 1, '-');
 	char        text[64];
 	snprintf(text, sizeof text, "%.*s", next ? (int)(next - dash - 1) : (int)strlen(dash + 1), dash + 1);
@@ -184,8 +186,9 @@ static void parse_token(const char* token, char* name, size_t cap, int* opacity)
 	*opacity = value < 0 ? 0 : value > 100 ? 100 : (int)value;
 }
 
-/* Appends the canonical list of `tokens` to `key`: the existing skins,
- * "-<opacity>" when not 100, joined with ','. */
+/* Appends the canonical list of `tokens` to `key`. It holds the skins that
+ * exist, each with "-<opacity>" when the opacity is not 100, joined with
+ * ','. */
 static void canonical(const XwauLines* tokens, const XwauSkinSet* skins, char* key, size_t cap) {
 	size_t layers = 0;
 	for (size_t i = 0; i < tokens->count; ++i) {
@@ -268,7 +271,8 @@ bool XwauSkins_Markings(const XwauLines* lines, const char* model, int states, c
 	return ok;
 }
 
-/* Index of `name` in the skin list, added when new; -1 when out of memory. */
+/* Returns the index of `name` in the skin list, and adds it if it is new.
+ * Returns -1 when out of memory. */
 static int skin_index(XwauSkins* s, const char* name) {
 	for (size_t i = 0; i < s->skins.skin_count; ++i)
 		if (strcmp(s->skin_names[i], name) == 0)
@@ -287,7 +291,7 @@ static bool add_variant(XwauSkins* s, const char* name, int state, const char* k
 	for (size_t i = 0; i < s->skins.variant_count; ++i)
 		if (strcmp(s->variant_names[i], name) == 0)
 			return true;
-	/* The variants and their names, side by side. */
+	/* The variants and their names are kept in two parallel arrays. */
 	const size_t v    = s->skins.variant_count;
 	char*        copy = StrDup(name);
 	if (!copy || !ArrayGrow((void**)&s->variants, v, sizeof *s->variants) ||
@@ -298,7 +302,8 @@ static bool add_variant(XwauSkins* s, const char* name, int state, const char* k
 	s->variant_names[v]  = copy;
 	s->variants[v].state = (uint32_t)state;
 	s->skins.variant_count++;
-	/* The layers, stored by index: pointers are set once all are known. */
+	/* The layers are stored by index. Their pointers are set once all the
+	 * variants are known. */
 	char list[1024];
 	snprintf(list, sizeof list, "%s", key);
 	for (char *token = list, *next; token; token = next) {
@@ -312,7 +317,7 @@ static bool add_variant(XwauSkins* s, const char* name, int state, const char* k
 			opacity = atoi(dash + 1);
 		}
 		if (!token[0]) {
-			Report(label, "variant %s names the empty skin; layer left out", name);
+			Report(label, "variant %s has a layer with an empty skin name, which is left out", name);
 			continue;
 		}
 		const int index = skin_index(s, token);
@@ -328,8 +333,8 @@ static bool add_variant(XwauSkins* s, const char* name, int state, const char* k
 	return true;
 }
 
-/* The skin image file `file` (lower case): from the skin's folders, else
- * its zip. */
+/* Reads the skin image file `file` (lower case) from the skin's folder, or
+ * else from its zip. */
 static uint8_t* skin_file(const char* game, const char* model, const char* skin, const char* file,
 						  size_t* size, const char* label) {
 	char rel[1024], dir[1024];
@@ -343,7 +348,7 @@ static uint8_t* skin_file(const char* game, const char* model, const char* skin,
 			if (strcasecmp(entries[i], file) == 0 &&
 				PathFormat(entry, sizeof entry, "%s/%s", dir, entries[i]) && IsFile(entry)) {
 				FreeList(entries, count);
-				/* An empty file is no image. */
+				/* An empty file is not an image. */
 				uint8_t* data = (uint8_t*)ReadWholeFile(entry, size);
 				if (data && !*size) {
 					free(data);
@@ -380,8 +385,8 @@ static uint8_t* skin_file(const char* game, const char* model, const char* skin,
 	return entry;
 }
 
-/* The skin's image for texture `t`: NULL rgba when it has none, or when its
- * size differs (reported). */
+/* Loads the skin's image for texture `t`. rgba is NULL when the skin has no
+ * image for it, or when the image size differs (which is reported). */
 static bool load_image(const char* game, const char* model, const char* skin, const opt_texture_t* t,
 					   const char* label, size_t* skipped, OptGltfImageView* out) {
 	char name[256];
@@ -405,13 +410,13 @@ static bool load_image(const char* game, const char* model, const char* skin, co
 			return false;
 		}
 		if (w != t->width || h != t->height) {
-			Report(label, "skin %s image %s is %dx%d, texture %dx%d; skipped", skin, file, w, h,
-				   (int)t->width, (int)t->height);
+			Report(label, "skin %s image %s is %dx%d but the texture is %dx%d, so it is skipped", skin, file,
+				   w, h, (int)t->width, (int)t->height);
 			stbi_image_free(rgba);
 			++*skipped;
 			return true;
 		}
-		/* OPT row order: the hook flips the loaded image (FlipPixels). */
+		/* Flip the image into OPT row order, as the hook does (FlipPixels). */
 		uint8_t*     flipped = (uint8_t*)malloc((size_t)w * h * 4);
 		const size_t stride  = (size_t)w * 4;
 		if (!flipped) {
@@ -471,7 +476,7 @@ bool XwauSkins_Resolve(const char* game, const XwauMissions* missions, const cha
 		XwauSkins_Free(out);
 		return true;
 	}
-	/* The layers' pointers, now that every variant's are known. */
+	/* Set the layer pointers, now that the layers of every variant are known. */
 	size_t next = 0;
 	for (size_t v = 0; ok && v < out->skins.variant_count; ++v) {
 		out->variants[v].name   = out->variant_names[v];

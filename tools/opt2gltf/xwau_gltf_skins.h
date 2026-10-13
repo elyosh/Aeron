@@ -2,15 +2,16 @@
 #define AERON_OPT2GLTF_XWAU_GLTF_SKINS_H
 
 /*
- * XWAU skins (xwau_skins.h) as the conversion's material variants
- * (opt_gltf.h, OptGltfVariants). For every state-0 texture of LOD 0 with
- * pixels that is not a screen surface, a skin variant's layers with an
- * image for the texture are blended, in order and with the hook's integer
- * straight-alpha blend, onto its decoded colors; each distinct result (a
- * composite, shared by the variants with the same layers) is baked as the
- * texture is (xwau_gltf_material.h) and becomes a material of its own. A
- * composite's emissive, metallic-roughness or transmission equal to the
- * texture's own is the texture's.
+ * Turns XWAU skins (xwau_skins.h) into material variants of the conversion
+ * (opt_gltf.h, OptGltfVariants). This applies to every state-0 texture of
+ * LOD 0 that has pixels and is not a screen surface. For each skin variant,
+ * the layers that have an image for the texture are blended onto its
+ * decoded colors, in order, with the integer straight-alpha blend of the
+ * hook. Each distinct result is a composite, shared by all variants with
+ * the same layers. A composite is baked like the texture itself
+ * (xwau_gltf_material.h) and becomes a separate material. When the
+ * emissive, metallic-roughness or transmission of a composite is equal to
+ * that of the texture, the composite uses the image of the texture.
  */
 
 #include <stdbool.h>
@@ -23,17 +24,18 @@
 
 typedef struct XwauGltfSkins XwauGltfSkins;
 
-/* The variants of `skins` for `opt`: `materials`, `anims` (may be NULL) and
- * `baked` have one entry per texture, `textures` holds the textures' own
- * given materials, `screens` one entry per texture or NULL. Image files are
- * named after `basename`. NULL when out of memory, or when the skins are
- * invalid (reported). */
+/* Builds the variants of `skins` for `opt`. `materials`, `anims` and
+ * `baked` have one entry per texture, and `anims` may be NULL. `textures`
+ * holds the given materials of the textures. `screens` has one entry per
+ * texture or is NULL. Image files are named after `basename`. Returns NULL
+ * when out of memory or when the skins are invalid. Both cases are
+ * reported. */
 XwauGltfSkins* XwauGltfSkins_Build(const opt_file_t* opt, const char* basename, const XwauSkinVariants* skins,
 								   const OptGltfScreen* screens, int base_shade,
 								   const XwauGltfMaterial* materials, const XwauGltfAnim* anims,
 								   const XwauBaked* baked, const OptGltfMaterial* textures);
 
-/* The variants (valid while `skins` is). */
+/* Returns the variants. They stay valid as long as `skins` does. */
 const OptGltfVariants* XwauGltfSkins_Variants(const XwauGltfSkins* skins);
 
 /* Reports the variants and composites to stderr. */

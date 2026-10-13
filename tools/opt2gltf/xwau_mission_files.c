@@ -48,9 +48,10 @@ typedef struct Tie {
 	size_t              count;
 } Tie;
 
-/* The original mission's flight group that XWAU's flight group `index` is:
- * the same index with the same name and craft type, else the only such
- * flight group when it is the only one in both missions; -1 otherwise. */
+/* Returns the original mission's flight group that matches XWAU's flight
+ * group `index`, or -1. A match has the same name and craft type. It is the
+ * flight group at the same index if that one matches. Otherwise it is the
+ * only match, when XWAU's mission also has only one. */
 static int stock_index(long long index, const Tie* xwau, const Tie* stock) {
 	if (index < 0 || (size_t)index >= xwau->count)
 		return -1;
@@ -70,10 +71,10 @@ static int stock_index(long long index, const Tie* xwau, const Tie* stock) {
 	return stock_matches == 1 && xwau_matches == 1 ? match : -1;
 }
 
-/* Why XWAU's flight group `index` has no original one, for a report. */
+/* Writes why XWAU's flight group `index` has no original match, for a report. */
 static void why_dropped(const Tie* xwau, long long index, char* out, size_t cap) {
 	if (index >= 0 && (size_t)index < xwau->count)
-		snprintf(out, cap, "XWAU's '%.*s' (craft %d) has no unique original match",
+		snprintf(out, cap, "XWAU's '%.*s' (craft %d) has no unique match in the original mission",
 				 (int)name_length(xwau->groups[index].name), xwau->groups[index].name,
 				 xwau->groups[index].craft);
 	else
@@ -92,8 +93,8 @@ static int compare_profiles(const void* a, const void* b) {
 	return x < y ? -1 : x > y;
 }
 
-/* The `ObjectProfile_fg_<N> = <profile>` selections of mission `base`, by
- * flight group. */
+/* Reads the `ObjectProfile_fg_<N> = <profile>` lines of mission `base`,
+ * sorted by flight group. */
 static bool profiles(const char* game, const char* base, Profile** out, size_t* count) {
 	*out   = NULL;
 	*count = 0;
@@ -125,7 +126,7 @@ static bool profiles(const char* game, const char* base, Profile** out, size_t* 
 		bool        by_fg  = strncasecmp(key, kFgPrefix, sizeof kFgPrefix - 1) == 0 && *digits &&
 							 strspn(digits, "0123456789") == strlen(digits);
 		if (!by_fg) {
-			Report(base, "'%s' does not select by flight group; not imported", key);
+			Report(base, "'%s' does not select a flight group, so it is not imported", key);
 			continue;
 		}
 		long long fg = 0;
@@ -164,7 +165,7 @@ typedef struct SkinModel {
 	char          key[256]; /* the model's name in lower case */
 	int           states;
 	XwauSkinSet   skins;
-	XwauMarkings* defaults; /* the global context's */
+	XwauMarkings* defaults; /* markings in the global context */
 	size_t        default_count;
 } SkinModel;
 
@@ -188,7 +189,7 @@ static void free_skin_models(SkinModels* s) {
 	memset(s, 0, sizeof *s);
 }
 
-/* The models with skins: the OPTs of FlightModels, by name. */
+/* Loads the OPTs in FlightModels that have skins, sorted by name. */
 static bool load_skin_models(const char* game, const XwauMissions* missions, SkinModels* out) {
 	memset(out, 0, sizeof *out);
 	out->scratch = (XwauMarkings*)malloc(XWAU_SKINS_MAX_MARKINGS * sizeof *out->scratch);
@@ -216,7 +217,7 @@ static bool load_skin_models(const char* game, const XwauMissions* missions, Ski
 			opt_error_t err;
 			opt_file_t* opt = opt_load_file(path, &err);
 			if (!opt) {
-				Report(path, "%s; its skins are left out", err.msg);
+				Report(path, "%s, so its skins are left out", err.msg);
 				XwauSkins_FreeNames(&model.skins);
 				continue;
 			}
@@ -244,15 +245,15 @@ static bool load_skin_models(const char* game, const XwauMissions* missions, Ski
 	return ok;
 }
 
-/* A markings value whose variant differs from its model's default. */
+/* A markings value whose variant is not the model's default one. */
 typedef struct SkinChoice {
 	size_t model;
 	size_t markings;
 	char   variant[1100]; /* "" for the model as modelled */
 } SkinChoice;
 
-/* The markings values the skin lines `lines` change, by model then
- * markings value. */
+/* Lists the markings values that the skin lines `lines` change, by model
+ * and then by markings value. */
 static bool skin_choices(const SkinModels* s, const XwauLines* lines, const char* base, SkinChoice** out,
 						 size_t* count) {
 	*out    = NULL;
@@ -278,10 +279,10 @@ static bool skin_choices(const SkinModels* s, const XwauLines* lines, const char
 			if (now->skinned) {
 				snprintf(entry->variant, sizeof entry->variant, "%d|%s", now->state, now->list);
 			} else {
-				/* State 0 is the model as modelled; the others are variants. */
+				/* State 0 is the model as modelled. The other states are variants. */
 				if (now->state)
 					snprintf(entry->variant, sizeof entry->variant, "State %d", now->state);
-				Report(base, "%s markings %zu is unskinned against a skinned default; using %s", model->key,
+				Report(base, "%s markings %zu has no skin but its default has one, so %s is used", model->key,
 					   i, entry->variant[0] ? entry->variant : "the model as modelled");
 			}
 		}
@@ -295,7 +296,8 @@ typedef struct Totals {
 	size_t files, profiles, profiles_dropped, skins, articulations, articulations_dropped;
 } Totals;
 
-/* The original flight group of each selection (-1 when dropped, reported). */
+/* Returns the original flight group of each selection, or -1 when the
+ * selection is dropped (and reported). */
 static int* match_profiles(const Profile* list, size_t count, const Tie* xwau, const Tie* stock,
 						   const char* base, Totals* totals) {
 	int* targets = (int*)malloc((count ? count : 1) * sizeof *targets);
@@ -308,11 +310,11 @@ static int* match_profiles(const Profile* list, size_t count, const Tie* xwau, c
 		char why[128];
 		if (target < 0) {
 			why_dropped(xwau, list[i].fg, why, sizeof why);
-			Report(base, "flight group %lld (%s) dropped: %s", list[i].fg, list[i].profile, why);
+			Report(base, "flight group %lld (%s) is dropped because %s", list[i].fg, list[i].profile, why);
 			++totals->profiles_dropped;
 		} else if (target != list[i].fg) {
-			Report(base, "flight group %lld (%s) is original flight group %d", list[i].fg, list[i].profile,
-				   target);
+			Report(base, "flight group %lld (%s) is flight group %d in the original mission", list[i].fg,
+				   list[i].profile, target);
 		}
 	}
 	return targets;
@@ -330,18 +332,19 @@ static int* match_articulations(const XwauFlightGroupArticulation* fgs, size_t c
 		char why[128];
 		if (target < 0) {
 			why_dropped(xwau, fgs[i].flight_group, why, sizeof why);
-			Report(base, "flight group %d articulations dropped: %s", fgs[i].flight_group, why);
+			Report(base, "the articulations of flight group %d are dropped because %s", fgs[i].flight_group,
+				   why);
 			++totals->articulations_dropped;
 		} else if (target != fgs[i].flight_group) {
-			Report(base, "flight group %d articulations are original flight group %d's", fgs[i].flight_group,
-				   target);
+			Report(base, "the articulations of flight group %d go to flight group %d in the original mission",
+				   fgs[i].flight_group, target);
 		}
 	}
 	return targets;
 }
 
-/* The order of `targets` by original flight group (the dropped ones
- * first, to be skipped). */
+/* Returns the indices of `targets` sorted by original flight group. The
+ * dropped ones (-1) come first, and the caller skips them. */
 static size_t* by_target(const int* targets, size_t count) {
 	size_t* order = (size_t*)malloc((count ? count : 1) * sizeof *order);
 	for (size_t i = 0; order && i < count; ++i) {
@@ -423,8 +426,8 @@ static bool write_mission(const char* path, const char* base, const Profile* pro
 	return ok;
 }
 
-/* The selections of mission `name` of folder `dir`, written when it has
- * some. */
+/* Imports the selections of mission `name` in folder `dir`, and writes its
+ * file when it has some. */
 static bool import_mission(const char* game, const XwauMissions* missions, const char* stock_game,
 						   const char* dir, const char* name, const char* out, SkinModels* skin_models,
 						   bool* skins_loaded, Totals* totals) {
@@ -466,8 +469,8 @@ static bool import_mission(const char* game, const XwauMissions* missions, const
 		stock.groups = XwauTie_FlightGroups(stock_path, &stock.count);
 	if (!xwau.groups || !stock.groups) {
 		Report(base,
-			   "%zu selections, %zu skinned models and %zu articulation flight groups dropped: no "
-			   "%s .TIE",
+			   "%zu object profile selections, %zu skinned models and %zu flight groups with "
+			   "articulations are dropped because there is no %s .TIE",
 			   profile_count, skinned_models, fg_count, xwau.groups ? "original" : "XWAU");
 		totals->profiles_dropped += profile_count;
 		totals->articulations_dropped += fg_count;
@@ -483,7 +486,7 @@ static bool import_mission(const char* game, const XwauMissions* missions, const
 			const int target = stock_index((long long)i, &xwau, &stock);
 			if (target >= 0 && xwau.groups[i].markings != stock.groups[target].markings)
 				Report(base,
-					   "flight group %zu '%.*s' has markings %d in XWAU's mission, %d in the "
+					   "flight group %zu '%.*s' has markings %d in XWAU's mission but %d in the "
 					   "original one",
 					   i, (int)name_length(xwau.groups[i].name), xwau.groups[i].name, xwau.groups[i].markings,
 					   stock.groups[target].markings);
@@ -537,8 +540,8 @@ bool XwauMissionFiles_Write(const char* game, const XwauMissions* missions, cons
 	if (!ok)
 		return false;
 	Report(NULL,
-		   "%zu mission files: %zu object profile selections (%zu dropped), %zu skin selections, %zu "
-		   "articulation flight groups (%zu dropped)",
+		   "wrote %zu mission files with %zu object profile selections (%zu dropped), %zu skin "
+		   "selections and %zu flight groups with articulations (%zu dropped)",
 		   totals.files, totals.profiles, totals.profiles_dropped, totals.skins, totals.articulations,
 		   totals.articulations_dropped);
 	return true;

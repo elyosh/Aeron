@@ -8,9 +8,10 @@ typedef struct Eye {
 	int         eye[3];
 } Eye;
 
-/* XWAU 2025 Full 1.0.0's craft table (its installer's
- * XWAU2025_Full_1.0.0.202 patch; the 1.1.0 update changes no eye): the
- * entries with a name, which hook_mission_objects matches to the OPT name. */
+/* The craft table of XWAU 2025 Full 1.0.0, from the XWAU2025_Full_1.0.0.202
+ * patch of its installer. The 1.1.0 update changes no eye. Only the entries
+ * with a name are listed, because hook_mission_objects matches that name to
+ * the OPT name. */
 static const Eye kXwauEyes[] = {
 	{ "Xwing", { 0, 33, 32 } },
 	{ "Ywing", { 0, 187, 13 } },
@@ -53,10 +54,11 @@ static const Eye kXwauEyes[] = {
 	{ "Ghost", { 0, 605, -71 } },
 };
 
-/* The original game's craft table: the entries with a name (the player's
- * craft; the game builds their cockpit file names from it), by the model
- * their craft type uses. The X-wing's model is also used by an unnamed
- * entry (OBJ_XWing_030) with the eye (0, -30, 15). */
+/* The craft table of the original game. Only the entries with a name are
+ * listed. These are the player's craft, and the game builds their cockpit file
+ * names from that name. Each entry is listed under the model that its craft
+ * type uses. An unnamed entry (OBJ_XWing_030) also uses the X-wing model, with
+ * the eye (0, -30, 15). */
 static const Eye kStockEyes[] = {
 	{ "assaultgunboat", { 0, -30, 15 } },
 	{ "awing", { 0, -30, 22 } },
@@ -100,9 +102,10 @@ bool ModelTables_StockEye(const char* model, int eye[3]) {
 	return find_eye(kStockEyes, COUNT(kStockEyes), model, eye);
 }
 
-/* The original game's craft list row of each craft type: the type's object
- * type (craftTypeToObjectType), that type's row of the model table, and its
- * craft list row. XWAU changes the list's rows, not this table. */
+/* The craft list row of each craft type in the original game. The craft type
+ * gives an object type (craftTypeToObjectType), the object type gives a row of
+ * the model table, and that row gives the craft list row. XWAU changes the
+ * rows of the list, but not this table. */
 static const short kCraftListRows[] = {
 	-1,  0,   1,   2,   3,   4,   5,   6,   7,   8,   9,   10,  11,  12,  13,  14,  15,  37,  38,  42,  43,
 	39,  40,  41,  32,  33,  53,  54,  55,  56,  34,  35,  68,  69,  70,  71,  72,  44,  45,  46,  80,  81,
@@ -133,26 +136,29 @@ static const char* find_entry(const Entry* entries, size_t count, const char* mo
 	return NULL;
 }
 
-/* Replacement models carry no stock layout, so behaviour that recovered code
- * ties to fixed component numbers is driven by these tags and articulations,
- * which reproduce the stock numbers. */
+/* Replacement models do not have the stock component layout. The recovered
+ * code ties some behaviour to fixed component numbers, so these tags and
+ * articulations drive that behaviour instead. They use the stock numbers. */
 static const Entry kStockTags[] = {
-	/* Crew animation (FlightObject_AnimateCrewMeshRotations): the stock
-	 * per-type ordinals, on the craft model: the side motion is `random`,
-	 * the forward one `random_pause`, both at angle 32 and speed 2. The
-	 * ordinals index the craft's per-mesh rotations, which the game also
-	 * applies to its exterior model: the crew meshes are exterior meshes,
-	 * except the Millennium Falcon's (no exterior OPT). Component 9 of the
-	 * Family Transport is a gun turret that the game nods like a crew head. */
+	/* Crew animation (FlightObject_AnimateCrewMeshRotations). These are the
+	 * stock ordinals of each craft type, on the craft model. The side motion
+	 * is `random` and the forward motion is `random_pause`, both at angle 32
+	 * and speed 2. The ordinals index the per-mesh rotations of the craft,
+	 * which the game also applies to its exterior model. The crew meshes are
+	 * exterior meshes, except on the Millennium Falcon, which has no exterior
+	 * OPT. Component 9 of the Family Transport is a gun turret, and the game
+	 * nods it like a crew head. */
 	{ "XWING", "6=crew:32:2:random 9=crew:32:2:random_pause" },
 	{ "AWING", "4=crew:32:2:random_pause" },
 	{ "YWING", "8=crew:32:2:random 13=crew:32:2:random_pause" },
 	{ "CORELLIANTRANSPORT2", "19=crew:32:2:random 17=crew:32:2:random_pause" },
 	{ "FAMILYTRANSPORT", "13=crew:32:2:random 9=crew:32:2:random_pause" },
 	{ "MILLENIUMFALCON2", "21=crew:32:2:random 19=crew:32:2:random_pause" },
-	/* Platforms: components hidden when the flight group mounts a beam weapon
-	 * (g_platformBeamDisabledComponentIds). Only in-range entries are listed;
-	 * Platform3 and Platform5 have none in range. */
+	/* Platforms: components hidden when the flight group has a beam weapon
+	 * (g_platformBeamDisabledComponentIds). Any beam hides hidden_by_beam, and
+	 * every beam except the tractor beam also hides hidden_by_jamming_decoy.
+	 * Only the ids that are meshes of the OPT are listed. Platform3 and
+	 * Platform5 have none. */
 	{ "PLATFORM1",
 	  "5=platform.hidden_by_beam 6=platform.hidden_by_jamming_decoy 15=platform.hidden_by_jamming_decoy" },
 	{ "PLATFORM2",
@@ -167,7 +173,7 @@ static const Entry kStockTags[] = {
 	{ "HANGARDROID", "3=hangardroid.nod" },
 	{ "HANGARDROID2", "1=hangardroid2.swing 2=hangardroid2.spin" },
 	{ "WORKDROID1", "0=workdroid1.spin 3=workdroid1.turn 4=workdroid1.nod.1 6=workdroid1.nod.2" },
-	/* Pilots: the head and the four limbs, each with the forward motion. */
+	/* Pilots: the head and the four limbs all use the forward motion. */
 	{ "REBELPILOT", "1=crew:32:2:random_pause 2=crew:32:2:random_pause 3=crew:32:2:random_pause "
 					"4=crew:32:2:random_pause 5=crew:32:2:random_pause" },
 	{ "IMPERIALPILOT", "1=crew:32:2:random_pause 2=crew:32:2:random_pause 3=crew:32:2:random_pause "
@@ -190,8 +196,8 @@ const char* ModelTables_StockTags(const char* model) {
 	return find_entry(kStockTags, COUNT(kStockTags), model);
 }
 
-/* The projectiles: the craft list rows (Equipment0.LST) of the player and
- * NPC projectile kinds. */
+/* Projectile models: the rows of the craft list (Equipment0.LST) for the
+ * projectile kinds of the player and of NPCs. */
 static const char* const kProjectiles[] = {
 	"LASERREBEL",        "LASERREBELTURBO", "LASERIMP",    "LASERIMPTURBO", "LASERION", "LASERIONTURBO",
 	"CONCUSSIONMISSILE", "PROTONTORPEDO",   "HEAVYROCKET", "SPACEBOMB",     "MAGPULSE", "FLARE",
@@ -205,13 +211,13 @@ bool ModelTables_IsProjectile(const char* model) {
 	return false;
 }
 
-/* XWAU's materials make some crew textures Shadeless: its renderer then
+/* XWAU's materials make some crew textures Shadeless. XWAU's renderer then
  * draws them unlit at full texture brightness, which keeps faces readable in
- * its dark cockpits, but as emission under physical lighting they read as
- * glowing. Cockpit glass is Shadeless too: XWAU composites it unlit after
- * tone mapping, while as emission its grime glows; listed, a transparent
- * texture is a plain lit surface with its own alpha. Lights and displays
- * keep their material. */
+ * its dark cockpits. As emission under physical lighting, they would look like
+ * they glow. Cockpit glass is Shadeless too. XWAU composites it unlit after
+ * tone mapping, but as emission its grime would glow. A transparent texture in
+ * this list becomes a plain lit surface with its own alpha. Lights and
+ * displays keep their material. */
 static const Entry kLitTextures[] = {
 	/* Pilot and crew faces. */
 	{ "AWing", "AWFace XWFace" },

@@ -13,18 +13,19 @@
 #include "xwau_dat.h"
 #include "xwau_effect_bake.h"
 
-/* Frames of an XWAU `_rand` sequence: frame 0, then random picks. */
+/* Number of frames for an XWAU `_rand` sequence: frame 0, then random picks. */
 #define XWAU_ANIM_RANDOM_FRAMES 64
 
 /* ---- Player states, in XWAU priority order ------------------------------ */
 
 typedef struct EventState {
-	const char* event; /* GameEvent name; NULL marks the hangar slot */
+	const char* event; /* GameEvent name, NULL for the hangar slot */
 	const char* state;
 } EventState;
 
-/* GetCurrentATCIndex (Materials.h:711-842): warning lights, cannons, broken
- * instruments, hull, locks, the hangar rule, target selected, none. */
+/* The order of GetCurrentATCIndex (Materials.h:711-842): warning lights,
+ * cannons, broken instruments, hull, locks, the hangar rule, target selected,
+ * then none. */
 static const EventState kEventStates[] = {
 	{ "EVT_WLIGHT_LEFT", "threat.laser" },
 	{ "EVT_WLIGHT_MID_LEFT", "threat.turret" },
@@ -69,7 +70,7 @@ static const char* const kEnergyNames[3]  = { "shields", "tractor", "jamming" };
 /* ---- Context ---------------------------------------------------------- */
 
 typedef struct OpenDat {
-	char     rel[256]; /* lower case, slashes */
+	char     rel[256]; /* lower case, with slashes */
 	char     path[1024];
 	XwauDat* dat; /* NULL when unreadable */
 } OpenDat;
@@ -84,7 +85,7 @@ struct XwauAnim {
 	char             label[256];
 	XwauAnimFindFile find;
 	void*            find_context;
-	OpenDat**        dats; /* individually allocated: entries keep pointers */
+	OpenDat**        dats; /* allocated one by one, because flipbooks keep pointers to them */
 	size_t           dat_count;
 	Owned            owned;
 	bool             any;
@@ -159,7 +160,7 @@ static const OpenDat* open_dat(XwauAnim* a, const char* written) {
 
 /* ---- JSON ------------------------------------------------------------- */
 
-/* `value` as the shortest decimal that reads back as the same float. */
+/* Returns `value` as the shortest decimal that reads back as the same float. */
 static cJSON* shortest_float(float value) {
 	char text[24];
 	for (int digits = 1; digits <= 9; ++digits) {
@@ -202,9 +203,10 @@ static bool dat_has_image(const OpenDat* d, int group, int image) {
 	return false;
 }
 
-/* The frames a sequence plays: its listed frames, or its DAT group at
- * 1/fps (one frame when fps <= 0, which never advances). Frames whose image
- * the DAT lacks (content errors) are left out and counted. */
+/* Gets the frames that a sequence plays. These are its listed frames, or the
+ * images of its DAT group at 1/fps each. When fps <= 0, there is only one frame,
+ * because the sequence never advances. A frame whose image is missing from the
+ * DAT is a content error. It is left out and counted. */
 static bool sequence_frames(XwauAnim* a, const XwauSequence* q, const OpenDat* d, Frames* out) {
 	memset(out, 0, sizeof *out);
 	if (!q->group_frames) {
@@ -246,8 +248,8 @@ static bool sequence_frames(XwauAnim* a, const XwauSequence* q, const OpenDat* d
 	return own(a, out->items);
 }
 
-/* An `_rand` sequence as a loop: frame 0, then random picks, each keeping
- * its duration (AnimatedTexControl::Animate). */
+/* Turns an `_rand` sequence into a loop of frame 0 followed by random picks.
+ * Each pick keeps its duration (AnimatedTexControl::Animate). */
 static bool randomize(XwauAnim* a, const char* texture, const XwauSequence* q, Frames* f) {
 	if (q->mode != XWAU_SEQ_RANDOM || f->count < 2)
 		return true;
@@ -265,8 +267,9 @@ static bool randomize(XwauAnim* a, const char* texture, const XwauSequence* q, F
 	return true;
 }
 
-/* Whether a damage stage's image shows nothing: white (a neutral multiply),
- * or missing from its DAT (a content error, left out of the library). */
+/* Whether the image of a damage stage shows nothing. This is the case when the
+ * image is white, which is a neutral multiply, or when it is missing from its
+ * DAT. A missing image is a content error and is left out of the library. */
 static bool image_is_white(const OpenDat* d, int group, int image) {
 	XwauDatImage im;
 	char         err[256];
@@ -294,7 +297,7 @@ typedef struct Flipbook {
 	Frames              frames;
 } Flipbook;
 
-/* Adds a flipbook's entry to `list`; false when out of memory. */
+/* Adds the entry of a flipbook to `list`. Returns false when out of memory. */
 static bool flipbook_json(cJSON* list, const char* state, int layer, const Flipbook* fb, float unlit) {
 	const XwauSequence* q = fb->seq;
 	char                library[64], rel[256];
@@ -316,9 +319,10 @@ static bool flipbook_json(cJSON* list, const char* state, int layer, const Flipb
 		ok           = OptJson_Add(frame, NULL, cJSON_CreateString(key)) &&
 					   OptJson_Add(frame, NULL, OptJson_Float(f->seconds));
 	}
-	/* A colour frame replaces the texture, so it is drawn as unlit as the
-	   texture's bake (XWAU's animation shader drops Shadeless: a deviation
-	   that keeps unlit screens unlit while they animate). */
+	/* A colour frame replaces the texture, so it gets the same unlit weight
+	   as the baked texture. XWAU's animation shader ignores Shadeless, so this
+	   is a deviation from XWAU. It keeps unlit screens unlit while they
+	   animate. */
 	if (ok && layer == XWAU_SEQ_COLOUR && unlit > 0.0f)
 		ok = OptJson_Add(object, "unlit", OptJson_Float(unlit));
 	return ok;
@@ -342,8 +346,8 @@ static size_t count_instance(const XwauMatSequences* list, const char* event) {
 	return n;
 }
 
-/* The list an instance event comes from: the texture's own lines, else
- * [Default]'s (ATCListContainsEventType). */
+/* Returns the list that an instance event comes from: the lines of the
+ * texture itself, or else the lines of [Default] (ATCListContainsEventType). */
 static const XwauMatSequences* instance_source(const XwauMatSequences* own_list,
 											   const XwauMatSequences* inherited, const char* event) {
 	if (count_instance(own_list, event))
@@ -351,7 +355,8 @@ static const XwauMatSequences* instance_source(const XwauMatSequences* own_list,
 	return count_instance(inherited, event) ? inherited : NULL;
 }
 
-/* Adds the material's `damage` to `object`; false when out of memory. */
+/* Adds the `damage` of the material to `object`. Returns false when out of
+ * memory. */
 static bool damage_json(XwauAnim* a, cJSON* object, const XwauMatSequences* own_list,
 						const XwauMatSequences* inherited) {
 	const XwauMatSequences* src[3];
@@ -419,8 +424,9 @@ static bool damage_json(XwauAnim* a, cJSON* object, const XwauMatSequences* own_
 				ok = OptJson_Add(stages, NULL, cJSON_CreateNull());
 			}
 		}
-		/* Placement: the alternative's first stage line (XWAU keeps it per
-		 * line; shipped alternatives repeat it across stages). */
+		/* The placement comes from the first stage line of the alternative.
+		 * XWAU keeps a placement for each line, but the alternatives that XWAU
+		 * ships repeat the same placement in all stages. */
 		const XwauSequence* m = line[0] ? line[0] : (line[1] ? line[1] : line[2]);
 		if (ok && any && m) {
 			if (m->rand_scale)
@@ -428,8 +434,8 @@ static bool damage_json(XwauAnim* a, cJSON* object, const XwauMatSequences* own_
 			if (ok && m->loc == XWAU_SEQ_LOC_INSIDE) {
 				ok = OptJson_Add(alternative, "offset", cJSON_CreateString("inside"));
 			} else if (ok && m->loc == XWAU_SEQ_LOC_RANGE) {
-				/* XWAU moves the square by (x1 - x0)·r - x0 per axis: the
-				 * range min = -x0, max = x1 - 2·x0. */
+				/* XWAU moves the square by (x1 - x0)·r - x0 on each axis, so
+				 * the range is min = -x0, max = x1 - 2·x0. */
 				cJSON* offset = OptJson_AddObject(alternative, "offset");
 				cJSON* min    = OptJson_AddArray(offset, "min");
 				cJSON* max    = OptJson_AddArray(offset, "max");
@@ -455,8 +461,8 @@ bool XwauAnim_Texture(XwauAnim* a, const XwauMatFile* mat, const opt_texture_t* 
 	XwauMat_FindSequences(mat, tex->name, &own_list, &inherited);
 	const bool has_illum = XwauGltf_TextureHasIllum(tex);
 
-	/* Global events: per layer, the last line of each event
-	 * (AssignTextureEvent overwrites). */
+	/* Global events: for each layer, the last line of each event is used,
+	 * because AssignTextureEvent overwrites the earlier ones. */
 	const XwauSequence* chosen[2][EVENT_STATE_COUNT];
 	memset(chosen, 0, sizeof chosen);
 	bool energy[3] = { false, false, false };
@@ -465,8 +471,9 @@ bool XwauAnim_Texture(XwauAnim* a, const XwauMatFile* mat, const opt_texture_t* 
 		a->unknown_events += q->event_unknown;
 		if (q->instance)
 			continue;
-		/* Frames sample the material's own UVs: a sequence that scales,
-		   offsets or clamps them (none in XWAU's data) is not converted. */
+		/* Frames use the UVs of the material as they are. A sequence that
+		   scales, offsets or clamps them is not converted. XWAU's data has
+		   none. */
 		if (q->overlay != XWAU_SEQ_REPLACE || q->aspect != 1.0f || q->offset[0] != 0.0f ||
 			q->offset[1] != 0.0f || q->clamp) {
 			a->skipped_unsupported++;
@@ -479,7 +486,8 @@ bool XwauAnim_Texture(XwauAnim* a, const XwauMatFile* mat, const opt_texture_t* 
 		}
 		chosen[q->layer][slot] = q;
 	}
-	/* Energy: the texture's own lines, else [Default]'s. */
+	/* Energy comes from the lines of the texture, or else from those of
+	 * [Default]. */
 	for (int k = 0; k < 3; ++k) {
 		const XwauMatSequences* src = instance_source(&own_list, &inherited, kEnergyEvents[k]);
 		if (!src)
@@ -490,12 +498,12 @@ bool XwauAnim_Texture(XwauAnim* a, const XwauMatFile* mat, const opt_texture_t* 
 		else
 			a->skipped_unsupported++;
 	}
-	/* A Dynamic Cockpit screen: XWAU draws it with its screen shader
-	   (PixelShaderDC.hlsl), not the animation shader. A colour frame takes
-	   the cover's place; without a cover only cockpit damage shows, unlit,
-	   in place of the display; a hologram's shader shows no frame. The
-	   screen shader reads no illumination frame, hull damage or energy
-	   effect. */
+	/* XWAU draws a Dynamic Cockpit screen with its screen shader
+	   (PixelShaderDC.hlsl), not with the animation shader. A colour frame
+	   replaces the cover. Without a cover, only cockpit damage shows, unlit,
+	   in place of the display. The hologram shader shows no frame. The
+	   screen shader does not read illumination frames, hull damage or
+	   energy effects. */
 	if (screen != XWAU_ANIM_SCREEN_NONE) {
 		for (size_t s = 0; s < EVENT_STATE_COUNT; ++s) {
 			const bool keep =
@@ -620,22 +628,24 @@ void XwauAnim_Report(const XwauAnim* a) {
 		   "illumination frames, %zu always lit",
 		   a->flipbooks, a->damage_materials, a->energy_materials, a->anim_bases, a->always_illuminations);
 	if (a->skipped_no_illum)
-		Report(a->label, "%zu illumination sequence(s) on textures without illumination skipped",
+		Report(a->label, "%zu illumination sequence(s) skipped on textures without illumination",
 			   a->skipped_no_illum);
 	if (a->skipped_missing_dat)
-		Report(a->label, "%zu sequence(s) with a missing DAT or image skipped", a->skipped_missing_dat);
+		Report(a->label, "%zu sequence(s) skipped because of a missing DAT or image", a->skipped_missing_dat);
 	if (a->missing_frames)
-		Report(a->label, "%zu frame(s) whose image their DAT lacks left out", a->missing_frames);
+		Report(a->label, "%zu frame(s) left out because their image is missing from the DAT",
+			   a->missing_frames);
 	if (a->skipped_on_screens)
 		Report(a->label,
-			   "%zu sequence(s) and energy effect(s) on Dynamic Cockpit screens left out "
-			   "(XWAU's screen shader shows none)",
+			   "%zu sequence(s) and energy effect(s) left out on Dynamic Cockpit screens "
+			   "(XWAU's screen shader does not show them)",
 			   a->skipped_on_screens);
 	if (a->skipped_unsupported)
-		Report(a->label, "%zu sequence(s) with an unsupported event, layer or UV mapping skipped",
+		Report(a->label, "%zu sequence(s) skipped because of an unsupported event, layer or UV mapping",
 			   a->skipped_unsupported);
 	if (a->unknown_events)
 		Report(a->label, "%zu sequence(s) with an unknown event (played as EVT_NONE)", a->unknown_events);
 	if (a->mixed_damage)
-		Report(a->label, "%zu material(s) with uneven damage stage lists", a->mixed_damage);
+		Report(a->label, "%zu material(s) whose damage stages have different numbers of lines",
+			   a->mixed_damage);
 }

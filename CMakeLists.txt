@@ -782,9 +782,9 @@ else()
     set_source_files_properties(tools/opt2gltf/opt_write.c PROPERTIES COMPILE_OPTIONS "-ffp-contract=off")
 endif()
 
-# The OPT to glTF conversion (tools/opt2gltf/opt_gltf.h), which the engine
-# runs on original OPTs; the converter's files, XWAU reading and writing
-# are opt2gltf_tool's.
+# The OPT to glTF conversion (tools/opt2gltf/opt_gltf.h). The engine runs it
+# on original OPTs. File writing and the XWAU reading and writing of the
+# converter are in opt2gltf_tool.
 add_library(opt2gltf_lib STATIC
     tools/opt2gltf/opt_gltf.c
     tools/opt2gltf/opt_gltf_document.c
@@ -951,12 +951,13 @@ else()
     target_compile_options(aeron_scene PRIVATE -Wall -Wextra -Wpedantic -Wno-deprecated-declarations -fno-common)
 endif()
 
-# opt2gltf — 1998 LucasArts OPT ship models -> glTF 2.0 + .bin + .png,
-# preserving the engine-specific data the scene renderer reads
-# (mesh_type, rotation axes/pivots, hardpoints, paint-scheme variants
-# via KHR_materials_variants). Moved from the TIE repo (plan E1) so
-# both game asset pipelines share one converter. The host tool uses Aeron's
-# CPU-only normal builder and owns its copy of the OPT parser.
+# opt2gltf converts 1998 LucasArts OPT ship models to glTF 2.0 (.gltf, .bin
+# and .png). It keeps the engine-specific data that the scene renderer reads:
+# mesh_type, rotation axes and pivots, hardpoints, and paint-scheme variants
+# through KHR_materials_variants. It was moved from the TIE repository (plan
+# E1) so that the asset pipelines of both games share one converter. The host
+# tool uses Aeron's CPU-only normal builder and has its own copy of the OPT
+# parser.
 add_subdirectory(tools/imgbake)
 add_subdirectory(tools/gltf_cook)
 add_subdirectory(tools/fontbake)
@@ -994,11 +995,10 @@ set_target_properties(aeron_asset PROPERTIES
 )
 
 if(AERON_BUILD_TOOLS)
-    # The XWAU readers and the effect library writer are CLI-only: they read
-    # the X-Wing Alliance Upgrade files and hand resolved materials to
-    # opt2gltf_lib.
-    # The converter's own parts: file writing, the XWA Upgrade data and the
-    # model tables, for opt2gltf and its test.
+    # The parts used only by the command-line converter: file writing, the
+    # readers of the X-Wing Alliance Upgrade files, the effect library writer
+    # and the model tables. They pass resolved materials to opt2gltf_lib.
+    # opt2gltf and its test link this library.
     add_library(opt2gltf_tool STATIC
         tools/opt2gltf/opt_gltf_write.c
         tools/opt2gltf/util.c
@@ -1034,9 +1034,9 @@ if(AERON_BUILD_TOOLS)
 
     add_executable(opt2gltf tools/opt2gltf/main.c tools/opt2gltf/model_conversion.c)
     target_link_libraries(opt2gltf PRIVATE opt2gltf_tool)
-    # As aeron_gltf_cook (tools/gltf_cook/CMakeLists.txt), which the Blender
-    # add-on packages with it: the unused SDL is dropped, and a standalone
-    # MinGW build links its C runtime statically.
+    # Linked the same way as aeron_gltf_cook (tools/gltf_cook/CMakeLists.txt),
+    # which the Blender add-on packages with it. The unused SDL library is
+    # dropped, and a standalone MinGW build links its C runtime statically.
     if(APPLE)
         target_link_options(opt2gltf PRIVATE LINKER:-dead_strip_dylibs)
     elseif(UNIX)
@@ -1048,7 +1048,7 @@ if(AERON_BUILD_TOOLS)
     set_target_properties(opt2gltf PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
 
-    # The hooks' file rules and the skin selection, checked on fixed texts.
+    # Tests the hook file rules and the skin selection on fixed texts.
     add_executable(opt2gltf_xwau_test tools/opt2gltf/tests/xwau_rules_test.c)
     target_link_libraries(opt2gltf_xwau_test PRIVATE opt2gltf_tool)
     set_target_properties(opt2gltf_xwau_test PROPERTIES

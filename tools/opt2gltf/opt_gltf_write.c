@@ -13,7 +13,7 @@
 bool OptGltf_WriteFiles(const OptGltfDocument* document, const char* out_dir, const char* basename) {
 	if (!document || !out_dir || !basename)
 		return false;
-	/* No separator after one ending out_dir. */
+	/* Add no separator when out_dir already ends with one. */
 	const size_t len = strlen(out_dir);
 	const char*  sep = len && out_dir[len - 1] == '/' ? "" : "/";
 	char         tex_dir[1024];
@@ -57,7 +57,7 @@ bool OptGltf_WriteFiles(const OptGltfDocument* document, const char* out_dir, co
 	return true;
 }
 
-/* The conversion's warnings, reported under the label (log_context). */
+/* Reports the warnings of the conversion under the label (log_context). */
 static void report_warning(void* label, bool warning, const char* message) {
 	if (warning)
 		Report((const char*)label, "%s", message);

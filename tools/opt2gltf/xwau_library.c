@@ -1,6 +1,6 @@
 /*
- * The effect library images of converted XWAU models, written into a
- * project (xwau_library.h).
+ * Writes the effect library images of converted XWAU models into a project
+ * (xwau_library.h).
  */
 
 #include <ctype.h>
@@ -23,12 +23,12 @@
 #include "xwau_mat.h"
 #include "yaml_json.h"
 
-/* Energy frames are capped at ENERGY_MAX (`maxSize`); other images keep the
- * library's default cap. */
+/* Energy frames are capped at ENERGY_MAX (`maxSize`). Other images keep the
+ * default cap of the library. */
 #define ENERGY_MAX 512
 #define RANDOM_FRAMES 64
 
-/* Blast marks: XWAU samples the central 35% of every blast-mark image. */
+/* XWAU samples only the central 35% of every blast-mark image. */
 #define BLAST_MARK_GROUP 3050
 static const float kBlastMarkCrop[4] = { 0.3f, 0.3f, 0.65f, 0.65f };
 
@@ -66,8 +66,8 @@ static Library* library_for(const char* dat_written) {
 	for (size_t i = 0; i < g_library_count; ++i)
 		if (strcmp(g_libraries[i].name, name) == 0) {
 			if (strcmp(g_libraries[i].dat, rel) != 0)
-				Report(NULL, "library %s comes from %s and %s; using the first", name, g_libraries[i].dat,
-					   rel);
+				Report(NULL, "library %s comes from both %s and %s, using the first one", name,
+					   g_libraries[i].dat, rel);
 			return &g_libraries[i];
 		}
 	Library* l = ARRAY_PUSH(g_libraries, g_library_count);
@@ -109,8 +109,9 @@ static size_t g_models;
 static char** g_skipped; /* libraries without an XWAU DAT */
 static size_t g_skipped_count;
 
-/* Requests the image `key` of library `library`, the DAT Effects/<library>.dat;
- * notes the library as skipped when the game has no such DAT. */
+/* Requests the image `key` from the library `library`, which is the DAT
+ * Effects/<library>.dat. If the game has no such DAT, the library is marked as
+ * skipped. */
 static bool model_key(const char* path, const char* library, const char* key) {
 	for (size_t i = 0; i < g_skipped_count; ++i)
 		if (strcmp(g_skipped[i], library) == 0)
@@ -141,7 +142,8 @@ static bool model_key(const char* path, const char* library, const char* key) {
 	return request(dat, group, image, kind, tint, alpha_mode, false);
 }
 
-/* The library images of one material's flipbooks and damage. */
+/* Requests the library images used by the flipbooks and damage of one
+ * material. */
 static bool material_keys(const char* path, const cJSON* material) {
 	bool         ok = true;
 	const cJSON* book;
@@ -167,7 +169,7 @@ static bool material_keys(const char* path, const cJSON* material) {
 	return ok;
 }
 
-/* The library images a model's materials use (a .gltf). */
+/* Requests the library images used by the materials of a model .gltf. */
 static bool read_model(const char* path) {
 	char   err[512];
 	cJSON* root = YamlJson_Load(path, err, sizeof err);
@@ -186,7 +188,8 @@ static bool read_model(const char* path) {
 	return ok;
 }
 
-/* A model's .gltf, or a project's models/<key>/<key>.gltf in name order. */
+/* Reads a model .gltf, or every models/<key>/<key>.gltf of a project in name
+ * order. */
 static bool read_models(const char* path) {
 	if (IsFile(path))
 		return read_model(path);
@@ -251,8 +254,9 @@ static void text_add(Text* t, const char* fmt, ...) {
 	t->len += (size_t)n;
 }
 
-/* The energy effects: GenericDamage.dat groups 2, 1 and 3 (the shipped
- * IEVT_SHIELDS_DOWN / IEVT_TRACTOR_BEAM / IEVT_JAMMING_BEAM lines). */
+/* The energy effects use groups 2, 1 and 3 of GenericDamage.dat, like the
+ * IEVT_SHIELDS_DOWN, IEVT_TRACTOR_BEAM and IEVT_JAMMING_BEAM lines that XWAU
+ * ships. */
 typedef struct Energy {
 	const char* name;
 	int         group;
@@ -274,7 +278,7 @@ static const float kWhite[3] = { 1.0f, 1.0f, 1.0f };
 static bool energy_yaml(Text* y) {
 	char rel[1024];
 	if (!find_file(ENERGY_DAT, rel, sizeof rel)) {
-		Report(NULL, "%s not found: no energy effects", ENERGY_DAT);
+		Report(NULL, "%s not found, so there are no energy effects", ENERGY_DAT);
 		return true;
 	}
 	char     err[512];
@@ -339,8 +343,9 @@ typedef struct DatImage {
 	char mat[1024]; /* resolved material file */
 } DatImage;
 
-/* The flipbook of a DAT image from its [Default] sequences: the last
- * EVT_NONE colour sequence (XWAU's TextureATCIndices[TEXTURE][EVT_NONE]). */
+/* Writes the flipbook of a DAT image from the sequences of its [Default]
+ * section. It uses the last EVT_NONE colour sequence, like XWAU's
+ * TextureATCIndices[TEXTURE][EVT_NONE]. */
 static bool image_flipbook(Text* y, const char* name, const XwauMatFile* mat, int group, int image) {
 	XwauMatSequences own, inherited;
 	XwauMat_FindSequences(mat, "", &own, &inherited);
@@ -360,7 +365,7 @@ static bool image_flipbook(Text* y, const char* name, const XwauMatFile* mat, in
 		Report(NULL, "%s", err);
 		return false;
 	}
-	/* Frames: listed, or the DAT group at 1/fps. */
+	/* The frames are either listed, or the images of a DAT group at 1/fps each. */
 	XwauSeqFrame* frames = NULL;
 	size_t        count  = 0;
 	if (q->group_frames) {
@@ -391,7 +396,8 @@ static bool image_flipbook(Text* y, const char* name, const XwauMatFile* mat, in
 		free(frames);
 		return false;
 	}
-	/* _rand: frame 0, then random picks, each keeping its duration. */
+	/* A _rand sequence becomes frame 0 followed by random picks. Each pick keeps
+	 * its duration. */
 	if (q->mode == XWAU_SEQ_RANDOM && count > 1) {
 		XwauSeqFrame* picks = (XwauSeqFrame*)malloc(RANDOM_FRAMES * sizeof *picks);
 		if (!picks) {
@@ -425,7 +431,8 @@ static bool image_flipbook(Text* y, const char* name, const XwauMatFile* mat, in
 	return ok;
 }
 
-/* DAT-named materials: "dat-<G>-<I>.mat". */
+/* Writes the flipbooks of the material files named after DAT images
+ * ("dat-<G>-<I>.mat"). */
 static bool images_yaml(Text* y) {
 	DatImage* found      = NULL;
 	size_t    count      = 0;
@@ -468,7 +475,8 @@ static bool images_yaml(Text* y) {
 		if (has && found[k].group == BLAST_MARK_GROUP && mark_images)
 			mark_images[marks++] = found[k].image;
 	}
-	/* Blast-mark images without a sequence: their own image, static. */
+	/* A blast-mark image without a sequence gets a static flipbook of its own
+	 * image. */
 	if (marks) {
 		char        path[1024], err[512];
 		const char* dat_written = "ResData\\BlastMarks.dat";
@@ -510,8 +518,8 @@ static bool images_yaml(Text* y) {
 
 /* ---- Sources ------------------------------------------------------------ */
 
-/* The library builder's transfer functions (8-bit sRGB in and out), to
- * check that the written inputs bake back into the library's images. */
+/* The sRGB transfer functions of the library builder, on 8-bit values. They
+ * check that the written inputs bake back into the same library images. */
 static float lin8(uint8_t v) {
 	const float c = v / 255.0f;
 	return c <= 0.04045f ? c / 12.92f : powf((c + 0.055f) / 1.055f, 2.4f);
@@ -529,7 +537,7 @@ static uint8_t unorm8f(float c) {
 
 static int max_diff(int d, int a, int b) { return abs(a - b) > d ? abs(a - b) : d; }
 
-/* Writes `rgba` as <dir>/<file>; false after a message. */
+/* Writes `rgba` to <dir>/<file>. Returns false after reporting an error. */
 static bool write_frame(const char* dir, const char* file, int w, int h, const uint8_t* rgba) {
 	char png[1200];
 	if (!PathFormat(png, sizeof png, "%s/%s", dir, file))
@@ -540,12 +548,14 @@ static bool write_frame(const char* dir, const char* file, int w, int h, const u
 	return false;
 }
 
-/* Writes library `l` as sources under `effects_dir`: <name>/<name>.yaml
- * and its images under <name>/frames/, each key's inputs in the library
- * file's kinds (the XWAU rules applied: illumination as an emissive image and a
- * base colour image with its coverage, tint and alpha mode baked in).
- * Reports the largest difference, per channel, between what the library
- * builder bakes from them and the XWAU bake (8-bit rounding of the base colour). */
+/* Writes the sources of library `l` under `effects_dir`. They are the file
+ * <name>/<name>.yaml and its images under <name>/frames/. The inputs of each
+ * key use the kinds of the library file, with XWAU's rules applied: an
+ * illumination frame becomes an emissive image and a base colour image with
+ * coverage, and the tint and alpha mode are baked in. Reports the largest
+ * per-channel difference between what the library builder bakes from these
+ * inputs and the XWAU bake. The difference comes from the 8-bit rounding of
+ * the base colour. */
 static bool write_library_sources(Library* l, const char* effects_dir, bool merge) {
 	char path[1024], err[512], dir[1024];
 	if (!find_file(l->dat, path, sizeof path)) {
@@ -566,8 +576,9 @@ static bool write_library_sources(Library* l, const char* effects_dir, bool merg
 		Report(NULL, "%s", err);
 		return false;
 	}
-	/* The library file, written canonically (effect_files.h); merging, the
-	 * project's file keeps its images and gets those it lacks. */
+	/* The library file is written in canonical form (effect_files.h). When
+	 * merging, the existing file in the project keeps its images, and only the
+	 * missing ones are added. */
 	char file[1100];
 	if (!PathFormat(file, sizeof file, "%s/%s.yaml", dir, l->name)) {
 		XwauDat_Close(dat);
@@ -603,7 +614,7 @@ static bool write_library_sources(Library* l, const char* effects_dir, bool merg
 		ok = input && (layer || !XwauFx_HasLayer(r->kind)) && (emissive || !XwauFx_HasEmissive(r->kind));
 		if (ok)
 			XwauFx_Bake(r->kind, im.rgba, n, r->tint, r->alpha_mode, layer, emissive);
-		/* The file names: the key, ':' made '_'. */
+		/* A file name is the key with ':' replaced by '_'. */
 		char   base[128] = "", file[160], base_color[160];
 		cJSON* entry     = NULL;
 		ok               = ok && PathFormat(base, sizeof base, "frames/%s", r->key);
@@ -612,7 +623,7 @@ static bool write_library_sources(Library* l, const char* effects_dir, bool merg
 				*c = '_';
 		bool any_base_color = false;
 		if (ok && r->kind == XWAU_FX_ILLUMINATION) {
-			/* Base colour: coverage c = 1 - k, colour layer_rgb / c. */
+			/* Base colour: the coverage is c = 1 - k and the colour is layer_rgb / c. */
 			for (size_t t = 0; t < n; ++t) {
 				const uint8_t* lt = &layer[t * 4];
 				uint8_t*       pt = &input[t * 4];
@@ -640,8 +651,8 @@ static bool write_library_sources(Library* l, const char* effects_dir, bool merg
 			cJSON_AddStringToObject(entry, "kind", r->kind == XWAU_FX_MULTIPLY ? "damage" : "baseColor");
 			cJSON_AddStringToObject(entry, r->kind == XWAU_FX_MULTIPLY ? "factor" : "baseColor", file);
 		} else if (ok) {
-			/* Mark, energy: the tinted frame with its alpha, which the library
-			 * builder premultiplies. */
+			/* Mark and energy: writes the tinted frame with its alpha. The library
+			 * builder premultiplies it. */
 			const uint8_t* baked = r->kind == XWAU_FX_MARK ? layer : emissive;
 			for (size_t t = 0; t < n; ++t) {
 				const uint8_t* src = &im.rgba[t * 4];
@@ -680,7 +691,7 @@ static bool write_library_sources(Library* l, const char* effects_dir, bool merg
 	ok = ok && EffectFiles_Write("opt2gltf", doc, existing ? NULL : header, file);
 	cJSON_Delete(doc);
 	if (ok)
-		Report(NULL, "library %s: %zu image(s) %s (largest rounding: %d/255)", l->name, images,
+		Report(NULL, "library %s: %zu image(s) %s (largest rounding error: %d/255)", l->name, images,
 			   existing ? "added" : "written", diff);
 	return ok;
 }

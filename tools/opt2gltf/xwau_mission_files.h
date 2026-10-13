@@ -2,9 +2,10 @@
 #define AERON_OPT2GLTF_XWAU_MISSION_FILES_H
 
 /*
- * What XWAU's missions select, for the original game's missions: each
- * mission with selections becomes <out>/<dir>/<mission>.yaml (lower case),
- * which the game reads at mission load:
+ * Writes the selections of XWAU's missions for the original game's missions.
+ * Each mission with at least one selection gets a file
+ * <out>/<dir>/<mission>.yaml (lower case). The game reads it when it loads
+ * the mission:
  *
  *     version: 1
  *     object_profiles:
@@ -17,32 +18,39 @@
  *       flight_groups:
  *         13: { name: "Red", craft: 1, variant: "1b0m7fw_fg13", start: [sfoils] }
  *
- * The missions are those of XwauMissions_Names, Missions/ then Melee/.
+ * The missions come from XwauMissions_Names, first Missions/ then Melee/.
  *
- * Object profiles (hook_mission_objects): `ObjectProfile_fg_<N> = <profile>`
- * lines (<mission>_Objects.txt, else [Objects] of <mission>.ini; C++ rules,
- * the first line of a flight group winning) select a flight group's
- * profile. Other ObjectProfile_* keys (by model) are reported and not
- * imported; XWAU's data has none.
+ * Object profiles (hook_mission_objects): a line
+ * `ObjectProfile_fg_<N> = <profile>` sets the profile of flight group N.
+ * The lines are read from <mission>_Objects.txt, or else from the [Objects]
+ * section of <mission>.ini, with the hook's C++ rules: when a flight group
+ * has several lines, the first one is used. Other ObjectProfile_* keys
+ * select a profile by model. They are reported but not imported, and
+ * XWAU's data has none.
  *
- * Skins (hook_32bpp): for a mission with skin lines of its own
- * (XwauMissions_OwnSkinLines), each model with skins (the OPTs of
- * FlightModels) is resolved as the conversion resolves it (xwau_skins.h), and the markings values whose
- * variant differs from the model's default (the global context's) are written under the model's key (its name
- * in lower case): the variant, or `~` for the model as modelled. Skin lines need no flight-group matching,
- * but they assume a flight group keeps its markings: flight groups whose markings differ between XWAU's
- * mission and the original one are reported.
+ * Skins (hook_32bpp): only missions that have their own skin lines
+ * (XwauMissions_OwnSkinLines) get skins. For each model that has skins (the
+ * OPTs in FlightModels), the skins are resolved the same way as during the
+ * conversion (xwau_skins.h). A markings value is written only when its
+ * variant is not the model's default one, which comes from the global
+ * context. It goes under the model's name in lower case. The value is the
+ * variant, or `~` for the model as modelled. Skin lines do not need flight
+ * group matching, but they assume that a flight group keeps its markings.
+ * Flight groups whose markings differ between XWAU's mission and the
+ * original one are reported.
  *
- * Articulations (hook_sfoils): the flight groups' start lines and variants
- * (xwau_missions.h).
+ * Articulations (hook_sfoils): the start lines and variants of the flight
+ * groups (xwau_missions.h).
  *
- * Flight group indices are XWAU's missions', which add, remove, rename and
- * re-craft flight groups. A selection is written for the original
- * mission's flight group with the same name (trailing white space aside)
- * and craft type: the one at the same index, else the only such flight
- * group when it is also the only one in XWAU's mission. The rest are
- * reported and dropped. The key is the original flight group's index;
- * `name` and `craft` are its own, which the game checks again.
+ * XWAU's missions add, remove, rename flight groups and change their craft,
+ * so XWAU's flight group indices can differ from the original mission's.
+ * A selection is written for the original flight group with the same name
+ * (ignoring trailing white space) and the same craft type. This is the
+ * flight group at the same index if it matches. Otherwise it is the only
+ * matching flight group, when XWAU's mission also has only one. Other
+ * selections are reported and dropped. The key is the original flight
+ * group's index. `name` and `craft` are the original flight group's
+ * values, and the game checks them again.
  *
  * Text is written as UTF-8. Problems go to stderr.
  */
@@ -52,8 +60,9 @@
 #include "xwau_config.h"
 #include "xwau_missions.h"
 
-/* Writes the mission files under `out`, for the original game installed at
- * `stock_game` (its Missions/ and Melee/ .TIE files). False on an error. */
+/* Writes the mission files under `out`. `stock_game` is the original game
+ * installation, whose Missions/ and Melee/ .TIE files give the original
+ * flight groups. Returns false on an error. */
 bool XwauMissionFiles_Write(const char* game, const XwauMissions* missions, const char* stock_game,
 							const char* out);
 

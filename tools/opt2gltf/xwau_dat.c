@@ -46,8 +46,8 @@ static void bgra_to_rgba(uint8_t* px, size_t count) {
 	}
 }
 
-/* Decode a block-compressed image into width*height RGBA, cropping the
- * 4x4-padded block grid. */
+/* Decodes a block-compressed image into width*height RGBA texels. The block
+ * grid is padded to a multiple of 4x4 and is cropped. */
 static bool decode_blocks(XwauDatEncoding encoding, const uint8_t* data, size_t size, uint32_t w, uint32_t h,
 						  uint8_t* rgba) {
 	const uint32_t bw = (w + 3) / 4, bh = (h + 3) / 4;
@@ -93,9 +93,9 @@ static bool decode_blocks(XwauDatEncoding encoding, const uint8_t* data, size_t 
 	return true;
 }
 
-/* Stock format 24: the image header gives the palette (RGB triplets) and pixel
- * offsets; each texel is a palette index and an alpha byte (DatImage.cs;
- * src/xwa_formats/xwa_2d/xwa_dat.c). */
+/* Stock format 24. The image header gives the offsets of the palette (RGB
+ * triplets) and of the pixels. Each texel is a palette index and an alpha byte
+ * (DatImage.cs, src/xwa_formats/xwa_2d/xwa_dat.c). */
 static bool decode_indexed(const char* path, uint32_t w, uint32_t h, const uint8_t* payload, size_t size,
 						   XwauDatImage* out, char* error, size_t error_size) {
 	const uint32_t color_offset = rd32(payload + 4);
@@ -228,8 +228,9 @@ XwauDat* XwauDat_Open(const char* path, char* error, size_t error_size) {
 	}
 	const uint8_t* file = dat->file;
 	const size_t   size = dat->size;
-	/* File header: signature, group format, group count, image count,
-	 * length, then 12 bytes more when the group format is non-zero, then 4. */
+	/* The file header holds the signature, group format, group count, image
+	 * count and length. It is followed by 12 more bytes when the group format
+	 * is not zero, and then by 4 bytes. */
 	if (size < 18 || (rd32(file) | ((uint64_t)rd32(file + 4) << 32)) != XWAU_DAT_SIGNATURE) {
 		set_error(error, error_size, path, "not a DAT file");
 		XwauDat_Close(dat);
@@ -252,9 +253,9 @@ XwauDat* XwauDat_Open(const char* path, char* error, size_t error_size) {
 		XwauDat_Close(dat);
 		return NULL;
 	}
-	/* Images follow, group by group: an 18-byte sub-header (format, width,
-	 * height, color key, colors count, group, image, data length), then a
-	 * 0x2C-byte image header and the data. */
+	/* The images follow, group by group. Each image has an 18-byte sub-header
+	 * (format, width, height, color key, colors count, group, image, data
+	 * length), then a 0x2C-byte image header and the data. */
 	for (uint32_t i = 0; i < total_images; ++i) {
 		if (pos + 18 > size)
 			goto truncated;

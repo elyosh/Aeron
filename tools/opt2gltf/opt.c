@@ -1,13 +1,13 @@
 /*
  * opt.c - OPT mesh file parser. See opt.h for the public types.
  *
- * Header (8 bytes for version != 0, 4 bytes for version 0):
- *     int32 -version          (negative; absent => version = 0)
+ * Header (8 bytes, or 4 bytes for version 0):
+ *     int32 -version          (negative; missing in version 0)
  *     int32 file_size - 8
  *
- * Container header (14 bytes, starts at file offset 8 / 4):
- *     int32 global_base_raw   (subtract OPT_HEADER_BYTES to get the bias
- *                              applied to every absolute pointer in the file)
+ * Container header (14 bytes, at file offset 8, or 4 for version 0):
+ *     int32 global_base_raw   (minus the header size, this is the bias of
+ *                              every absolute pointer in the file)
  *     int16 _padding
  *     int32 root_node_count
  *     int32 root_table_ptr    (absolute pointer)
@@ -17,11 +17,12 @@
  *     int32 node_type
  *     int32 child_count
  *     int32 child_table_ptr   (absolute pointer to int32[child_count])
- *     int32 p1                (per-node-type, often a count)
- *     int32 p2                (per-node-type, often a data pointer)
+ *     int32 p1                (depends on the node type, often a count)
+ *     int32 p2                (depends on the node type, often a data pointer)
  *
- * After the header come (in this order, all optional): a name string, the
- * child-pointer table, the node's own data block, then the children's bodies.
+ * The node header can be followed, in this order, by a name string, the
+ * table of child pointers, the data block of the node, and then the child
+ * nodes. Each of these is optional.
  */
 
 #include "opt.h"
@@ -60,9 +61,9 @@
 
 /* MeshDescriptor data block: 2 int32 (mesh_type, explosion_type) +
  * 4 vec3 (span, center, bbox_min, bbox_max) + 1 int32 (target_id) +
- * 1 vec3 (target) = 72 bytes. The trailing target_id + target pair
- * was the source of the 56 vs 72 byte discrepancy with XWA's reader;
- * ~42% of 1998 meshes use it for component-level AI targeting. */
+ * 1 vec3 (target) = 72 bytes. The trailing target_id and target caused
+ * the 56 vs 72 byte difference with XWA's reader. About 42% of 1998
+ * meshes use them to let the AI target components. */
 #define OPT_MESH_DESCRIPTOR_BYTES (3 * sizeof(int32_t) + 5 * OPT_VEC3_BYTES)
 
 /* Hardpoint data block: int32 type + vec3 pos */
@@ -75,10 +76,10 @@
 /* RotationScale data block: 4 vec3 (pivot + 3 axes) */
 #define OPT_ROTATION_SCALE_BYTES (4 * OPT_VEC3_BYTES)
 
-/* Q15 axes remain in their on-disk scale. Consumers choose the conversion
- * required by their runtime representation. */
+/* Q15 axes keep the scale they have in the file. Each user converts them
+ * as it needs. */
 
-/* Texture data block (precedes pixels) */
+/* Texture data block (before the pixels) */
 #define OPT_TEX_OFF_PALETTE_PTR 0
 #define OPT_TEX_OFF_PALETTE_TYPE 4
 #define OPT_TEX_OFF_TEXTURE_SIZE 8
@@ -87,7 +88,7 @@
 #define OPT_TEX_OFF_HEIGHT 20
 #define OPT_TEX_DATA_HEADER_BYTES 24
 
-#define OPT_MAX_NODE_SWITCH_STATES 16 /* observed max is 4 across all IVFILES */
+#define OPT_MAX_NODE_SWITCH_STATES 16 /* the largest seen in IVFILES is 4 */
 
 typedef struct {
 	int32_t texture; /* state 0 binding, -1 if none */
@@ -97,9 +98,9 @@ typedef struct {
 
 /* --- Read helpers --------------------------------------------------------- */
 /*
- * Direct pointer arithmetic on the file buffer would work on little-endian
- * hosts (x86, ARM), but using memcpy keeps the parser correct under strict
- * aliasing rules and trivial to port to a big-endian host (swap inside ru32).
+ * Reading through pointer casts on the file buffer would work on
+ * little-endian hosts (x86, ARM). memcpy keeps the parser correct under
+ * strict aliasing, and a big-endian port only needs a byte swap in ru32.
  */
 
 static int32_t ru32(const uint8_t* buf, size_t off) {
@@ -127,8 +128,9 @@ static void rvec2(const uint8_t* buf, size_t off, opt_vec2_t* v) {
 
 /* --- Parser context ------------------------------------------------------- */
 /*
- * Holds the file buffer, its length, the pointer bias (global_base), and
- * staging arrays for textures (which need deduplication by name).
+ * Holds the file buffer and its length, the pointer bias (global_base), and
+ * the texture table. The table is built during the parse because textures
+ * are deduplicated by name.
  */
 typedef struct {
 	const uint8_t* buf;
@@ -136,15 +138,14 @@ typedef struct {
 	int32_t        global_base;
 	int32_t        version;
 
-	/* Texture table being assembled during the parse. */
 	opt_texture_t* textures;
 	int32_t        texture_count;
 	int32_t        texture_capacity;
 
-	/* Texture state after the most recently parsed LOD-0 mesh root. The
-	 * engine walks every root with one shared draw state, so FaceData may
-	 * inherit either a top-level Texture root (SYSTEMPATROLCRAFT) or the
-	 * final binding from the preceding mesh (VSD). */
+	/* Texture binding shared by all roots. The engine walks every root with
+	 * one shared draw state, so a FaceData can inherit a top-level Texture
+	 * root (SYSTEMPATROLCRAFT) or the last binding in LOD 0 of the previous
+	 * mesh (VSD). */
 	opt_texture_binding_t active_texture;
 
 	opt_error_t* err;
@@ -161,7 +162,7 @@ static void set_err(opt_ctx_t* c, const char* fmt, ...) {
 	va_end(ap);
 }
 
-/* Convert an absolute on-disk pointer into a file offset (0 if pointer is 0). */
+/* Converts an absolute pointer from the file to a file offset (0 if the pointer is 0). */
 static size_t ptr_to_off(const opt_ctx_t* c, int32_t ptr) {
 	return ptr == 0 ? 0 : (size_t)(ptr - c->global_base);
 }
@@ -171,7 +172,7 @@ static int range_ok(const opt_ctx_t* c, size_t off, size_t len) { return off + l
 static const char* cstring(const opt_ctx_t* c, size_t off) {
 	if (off == 0 || off >= c->size)
 		return "";
-	/* Trust the file: scan up to the next NUL within bounds. */
+	/* Look for the terminating NUL before the end of the buffer. */
 	for (size_t i = off; i < c->size; i++) {
 		if (c->buf[i] == 0)
 			return (const char*)(c->buf + off);
@@ -203,7 +204,7 @@ static int read_node(const opt_ctx_t* c, size_t off, opt_node_t* out) {
 	return 1;
 }
 
-/* Iterate node->children and call fn for each. fn returns 0 to keep going. */
+/* Calls fn for each child of a node. Stops when the parse has failed. */
 typedef void (*child_fn_t)(opt_ctx_t* c, const opt_node_t* child, void* user);
 
 static void for_each_child(opt_ctx_t* c, const opt_node_t* n, child_fn_t fn, void* user) {
@@ -296,8 +297,8 @@ static void parse_mesh_descriptor(opt_ctx_t* c, const opt_node_t* n, opt_mesh_t*
 	rvec3(c->buf, off + 8 + 1 * OPT_VEC3_BYTES, &d->center);
 	rvec3(c->buf, off + 8 + 2 * OPT_VEC3_BYTES, &d->bbox_min);
 	rvec3(c->buf, off + 8 + 3 * OPT_VEC3_BYTES, &d->bbox_max);
-	/* AI / T-key target reference (trailing 16 bytes). XWA's reader
-	 * documents this layout; 1998 files author it ~42% of the time. */
+	/* Target point for the AI and the T key, in the last 16 bytes. XWA's
+	 * reader documents this layout. About 42% of 1998 meshes set it. */
 	d->target_id = ru32(c->buf, off + 8 + 4 * OPT_VEC3_BYTES);
 	rvec3(c->buf, off + 8 + 4 * OPT_VEC3_BYTES + sizeof(int32_t), &d->target);
 	m->has_descriptor = 1;
@@ -357,9 +358,9 @@ static void parse_rotation_scale(opt_ctx_t* c, const opt_node_t* n, opt_mesh_t* 
 }
 
 /* --- Texture deduplication -----------------------------------------------
- * Textures are stored as inline Texture nodes; other meshes may instead
- * carry a NodeReference whose data block is just the referenced name.
- * We collect every unique name into ctx->textures and return its index.
+ * A Texture node stores a texture inline. Other meshes can use a
+ * NodeReference instead, whose data block is only the texture name. Each
+ * unique name is added once to ctx->textures, and its index is returned.
  */
 
 static int32_t texture_lookup_or_add(opt_ctx_t* c, const char* name) {
@@ -385,9 +386,9 @@ static int32_t texture_lookup_or_add(opt_ctx_t* c, const char* name) {
 	return c->texture_count++;
 }
 
-/* Count mip levels consistent with a given chain size in texels. Mips halve
- * each axis (min 1) until both dimensions are 1; the file may store fewer
- * levels than the theoretical max if data_size stops earlier. */
+/* Counts the mip levels that fit in a chain of chain_texels texels. Each
+ * level halves both axes (down to 1) until the level is 1x1. The file can
+ * store fewer levels than the maximum when data_size ends earlier. */
 static int32_t count_mip_levels(int32_t width, int32_t height, int32_t chain_texels) {
 	int32_t levels      = 0;
 	int32_t accumulated = 0;
@@ -406,8 +407,8 @@ static int32_t count_mip_levels(int32_t width, int32_t height, int32_t chain_tex
 	return levels < 1 ? 1 : levels;
 }
 
-/* First TextureAlpha (node type 26) child of a Texture node: p1 = byte count,
- * p2 = data pointer. Returns 0 when there is none. */
+/* Finds the first TextureAlpha child (node type 26) of a Texture node. Its
+ * p1 is the byte count and p2 the data pointer. Returns 0 when there is none. */
 static int find_texture_alpha_child(opt_ctx_t* c, const opt_node_t* n, opt_node_t* out) {
 	if (n->child_count <= 0 || n->child_table_ptr == 0)
 		return 0;
@@ -426,12 +427,13 @@ static int find_texture_alpha_child(opt_ctx_t* c, const opt_node_t* n, opt_node_
 	return 0;
 }
 
-/* Alpha and illumination planes of a 32bpp texture (flags already read).
- * Alpha is the texel A byte over the whole chain, kept only when the alpha
- * flag is set: without it XWAU's renderer draws the texture opaque. Illumination is the
- * TextureAlpha child, used only when the illumination flag is set, base
- * level only: its p1 can be 4x the chain length (zero padding), so only the
- * first W*H bytes are meaningful. */
+/* Reads the alpha and illumination planes of a 32bpp texture, once its flags
+ * are read. Alpha is the A byte of each texel over the whole chain. It is
+ * kept only when the alpha flag is set, because without the flag XWAU's
+ * renderer draws the texture opaque. Illumination comes from the
+ * TextureAlpha child, only when the illumination flag is set. Only the base
+ * level is read: p1 can be 4 times the chain length (zero padding), and only
+ * the first W*H bytes are meaningful. */
 static void parse_texture_32bpp_planes(opt_ctx_t* c, const opt_node_t* n, opt_texture_t* t) {
 	if (!t->pixels || t->bytes_per_texel != 4)
 		return;
@@ -479,16 +481,17 @@ static void parse_texture_data(opt_ctx_t* c, const opt_node_t* n, int32_t tex_in
 	t->width         = width;
 	t->height        = height;
 
-	/* If texture_size == 0, data_size == width*height and there are no mips.
-	 * Otherwise data_size covers the full halving mip chain starting at base. */
+	/* When texture_size is 0, data_size is width*height and there are no
+	 * mips. Otherwise data_size covers the whole mip chain, base level first. */
 	size_t  pixels_off  = data_off + OPT_TEX_DATA_HEADER_BYTES;
 	int32_t chain_bytes = (texture_size == 0) ? (int32_t)((size_t)width * (size_t)height) : data_size;
 
-	/* Texel size from the chain length (JeremyAnsel.Xwa.Opt Texture.cs
-	 * BitsPerPixel): [4*W*H, 8*W*H) bytes is 32bpp B,G,R,A, as written by the
-	 * XWAU tools. Every other length keeps the 1-byte palette-index reading.
-	 * A base-only 32bpp texture stores texture_size = W*H with
-	 * data_size = 4*W*H, so it lands in the data_size branch above. */
+	/* The texel size follows from the chain length (BitsPerPixel in
+	 * JeremyAnsel.Xwa.Opt Texture.cs). A length in [4*W*H, 8*W*H) bytes means
+	 * 32bpp B,G,R,A texels, as written by the XWAU tools. Any other length is
+	 * read as 1-byte palette indices. A 32bpp texture without mips stores
+	 * texture_size = W*H and data_size = 4*W*H, so it takes the data_size
+	 * branch above. */
 	const int64_t texels      = (int64_t)width * (int64_t)height;
 	const int32_t texel_bytes = (texels > 0 && chain_bytes >= 4 * texels && chain_bytes < 8 * texels) ? 4 : 1;
 	const int32_t chain_texels = chain_bytes / texel_bytes;
@@ -504,21 +507,18 @@ static void parse_texture_data(opt_ctx_t* c, const opt_node_t* n, int32_t tex_in
 		t->mip_count       = (texture_size == 0) ? 1 : count_mip_levels(width, height, chain_texels);
 	}
 
-	/* Palette: always 16 * 256 * 2 bytes. Two storage modes:
-	 *   palette_type == 0 → shared palette referenced via palette_ptr
-	 *                       (typical: dozens of textures share the same
-	 *                       palette to save space).
-	 *   palette_type != 0 → palette is appended right AFTER this
-	 *                       texture's pixel data. CORTN's Tex00008 +
-	 *                       Tex00009 use this — without honouring it
-	 *                       they sample a zero palette and render
-	 *                       solid black. Match the XWA reader's
-	 *                       handling: discriminate on palette_type and
-	 *                       pick the right source. */
+	/* The palette is always 16 * 256 * 2 bytes. It is stored in one of two ways:
+	 *   palette_type == 0: a shared palette at palette_ptr. Usually dozens
+	 *                      of textures share the same palette to save space.
+	 *   palette_type != 0: the palette directly follows the pixel data of
+	 *                      this texture. Tex00008 and Tex00009 in CORTN do
+	 *                      this. If it is ignored, they read a zero palette
+	 *                      and render solid black.
+	 * As in the XWA reader, palette_type selects the source. */
 	size_t pal_off = (palette_type == 0) ? ptr_to_off(c, palette_ptr) : pixels_off + (size_t)chain_bytes;
 	if (texel_bytes == 4) {
-		/* A 32bpp texture has no palette: the block holds only its alpha and
-		 * illumination flags. t->palette stays zero. */
+		/* A 32bpp texture has no palette. The block only holds its alpha and
+		 * illumination flags, and t->palette stays zero. */
 		if (pal_off != 0 && range_ok(c, pal_off, OPT_TEXTURE_32BPP_FLAG_ILLUM + 1)) {
 			t->flag_alpha = c->buf[pal_off + OPT_TEXTURE_32BPP_FLAG_ALPHA] != 0;
 			t->flag_illum = c->buf[pal_off + OPT_TEXTURE_32BPP_FLAG_ILLUM] != 0;
@@ -542,10 +542,10 @@ static void parse_texture_data(opt_ctx_t* c, const opt_node_t* n, int32_t tex_in
 		return;
 	}
 
-	/* Optional alpha: an XWA Texture node may carry a TextureAlpha child
-	 * (node type 26) whose data block is a 1-byte-per-pixel alpha map with
-	 * the same mip-chain length as the pixel data. p1 = byte count,
-	 * p2 = data pointer. Stored verbatim; opaque (no alpha) when absent. */
+	/* An XWA Texture node can have a TextureAlpha child (node type 26). Its
+	 * data block is an alpha map with 1 byte per pixel and the same mip-chain
+	 * length as the pixel data. It is copied as is. Without it, the texture
+	 * is opaque. */
 	opt_node_t child;
 	if (t->alpha == NULL && find_texture_alpha_child(c, n, &child)) {
 		int32_t alpha_bytes = child.p1;
@@ -562,10 +562,10 @@ static void parse_texture_data(opt_ctx_t* c, const opt_node_t* n, int32_t tex_in
 }
 
 /* --- Face group walker ----------------------------------------------------
- * Inside one LOD NodeGroup, children alternate as:
+ * In one LOD NodeGroup, the children alternate like this:
  *     [Texture|NodeReference|NodeSwitch], FaceData, [Texture|...], FaceData, ...
- * A NodeSwitch carries N alternate textures (e.g. damage states). Both the
- * primary texture and the full state list get attached to the next FaceData.
+ * A NodeSwitch holds N alternative textures (for example damage states). The
+ * next FaceData gets both the primary texture and the full list of states.
  */
 typedef struct {
 	opt_face_group_t* groups;
@@ -574,12 +574,11 @@ typedef struct {
 	int32_t           current_texture;     /* state 0 binding, -1 if none */
 	int32_t           current_state_count; /* >=1 once any texture is bound */
 	int32_t           current_states[OPT_MAX_NODE_SWITCH_STATES];
-	int               pending_binding; /* 1 if a binding child was the
-										  last seen and no FaceData
-										  has consumed it yet. */
+	int               pending_binding; /* 1 if the last child was a binding
+										  that no FaceData has used yet */
 } opt_lod_builder_t;
 
-/* Resolve a single Texture / NodeReference child to its texture-table index. */
+/* Returns the texture table index of a Texture or NodeReference child. */
 static int32_t resolve_texture_node(opt_ctx_t* c, const opt_node_t* n) {
 	if (n->type == OPT_NODE_TEXTURE) {
 		const char* name = cstring(c, ptr_to_off(c, n->name_ptr));
@@ -666,7 +665,8 @@ static void parse_face_data(opt_ctx_t* c, const opt_node_t* n, opt_lod_builder_t
 	}
 }
 
-/* Texture-like node -> update lb->current_texture and lb->current_states. */
+/* Updates lb->current_texture and lb->current_states from a Texture,
+ * NodeReference or NodeSwitch node. */
 static void bind_texture(opt_ctx_t* c, const opt_node_t* n, opt_lod_builder_t* lb) {
 	if (n->type == OPT_NODE_TEXTURE || n->type == OPT_NODE_NODE_REFERENCE) {
 		int32_t idx = resolve_texture_node(c, n);
@@ -676,20 +676,19 @@ static void bind_texture(opt_ctx_t* c, const opt_node_t* n, opt_lod_builder_t* l
 		lb->current_state_count = 1;
 		lb->current_states[0]   = idx;
 	} else if (n->type == OPT_NODE_NODE_SWITCH) {
-		/* Per-face-group runtime state slots. Children are Texture or
-		 * NodeReference nodes, one per state. State 0 is the base
-		 * binding; higher slots are selected at runtime by the engine
-		 * (camoflage byte / variant index).
+		/* State slots of the face group. The children are Texture or
+		 * NodeReference nodes, one per state. State 0 is the base binding.
+		 * The engine selects the higher states at runtime (camouflage byte
+		 * or variant index).
 		 *
-		 * Two reasons we must walk EVERY child, not just the first
-		 * OPT_MAX_NODE_SWITCH_STATES: (1) some NodeSwitch parents
-		 * embed Texture data nodes as trailing children that other
-		 * meshes reference by name elsewhere in the file — capping
-		 * the loop early would skip resolve_texture_node on those and
-		 * leave their pixel data unparsed (Z-95.OPT does this for
-		 * Tex00026 at child[22] of a 23-child NodeSwitch). (2) The
-		 * cap still applies to the recorded state list because
-		 * current_states[] is a fixed-size buffer. */
+		 * Every child is walked, not only the first
+		 * OPT_MAX_NODE_SWITCH_STATES. Some NodeSwitch nodes hold Texture
+		 * data nodes as trailing children, which other meshes in the file
+		 * reference by name. If the loop stopped early,
+		 * resolve_texture_node would skip them and their pixel data would
+		 * not be parsed. Z-95.OPT does this for Tex00026, child 22 of a
+		 * NodeSwitch with 23 children. The limit still applies to the
+		 * recorded states, because current_states[] has a fixed size. */
 		size_t  table = ptr_to_off(c, n->child_table_ptr);
 		int32_t count = 0;
 		for (int32_t i = 0; i < n->child_count; i++) {
@@ -725,19 +724,18 @@ static void on_lod_child(opt_ctx_t* c, const opt_node_t* child, void* user) {
 			break;
 		case OPT_NODE_FACE_DATA:
 			parse_face_data(c, child, lb);
-			/* A FaceData consumes the pending preceding binding. */
+			/* A FaceData uses up the pending binding. */
 			lb->pending_binding = 0;
 			break;
 		case OPT_NODE_GROUP:
-			/* Some 1998 OPTs nest Group nodes inside the LOD container
-			 * before the Texture/FaceData pairs. SHUTTLE.OPT's Fuselage
-			 * LOD 0 has 3 levels of nested Groups; without recursion
-			 * the parser drops every Texture/FaceData and the mesh
-			 * comes out empty (renderer skips it, opt2gltf doesn't
-			 * emit it). Recurse — current_texture / state / pending
-			 * carry across siblings via lb, so the binding semantics
-			 * are preserved even when the bindings sit deeper than
-			 * the LOD's direct children. */
+			/* Some 1998 OPTs nest Group nodes in the LOD container, before
+			 * the Texture/FaceData pairs. LOD 0 of the Fuselage in
+			 * SHUTTLE.OPT has 3 levels of nested Groups. Without recursion,
+			 * the parser drops every Texture and FaceData, and the mesh is
+			 * empty: the renderer skips it and opt2gltf does not write it.
+			 * The texture, states and pending flag stay in lb across
+			 * siblings, so bindings work the same way when they are deeper
+			 * than the direct children of the LOD. */
 			for_each_child(c, child, on_lod_child, lb);
 			break;
 		default:
@@ -756,20 +754,19 @@ static void parse_lod_node(opt_ctx_t* c, const opt_node_t* lod_group_node, float
 		memcpy(lb.current_states, entry_binding->states,
 			   (size_t)lb.current_state_count * sizeof lb.current_states[0]);
 	for_each_child(c, lod_group_node, on_lod_child, &lb);
-	/* Trailing-orphan texture binding: when a LOD ends with a Texture /
-	 * NodeReference / NodeSwitch that wasn't consumed by a following
-	 * FaceData, the original 1998 X-Wing/TIE engine applies it to the
-	 * LAST emitted face group. The export tools sometimes emit the
-	 * texture binding AFTER the face data (instead of the usual before-
-	 * pattern) — most visibly on the top turrets of PLATA where without
-	 * this rule the second and third turret render untextured even
-	 * though they reference Tex00004.
+	/* Binding left over at the end of a LOD: when a LOD ends with a Texture,
+	 * NodeReference or NodeSwitch that no FaceData follows, the original
+	 * 1998 X-Wing/TIE engine applies it to the last face group. The export
+	 * tools sometimes wrote the binding after the face data instead of
+	 * before it. This is most visible on the top turrets of PLATA. Without
+	 * this rule, the second and third turrets render untextured even though
+	 * they reference Tex00004.
 	 *
-	 * Only RECOVER missing bindings (texture_index == -1) — never
-	 * OVERWRITE an existing one. FRIGA's launcher mesh has a
-	 * Texture+FaceData pair (correctly binding Tex00031) followed by a
-	 * stray malformed NodeReference; the stray binding is meaningless
-	 * scratch data and the face group already has its real texture. */
+	 * The binding only fills a missing texture (texture_index == -1) and
+	 * never replaces an existing one. The launcher mesh of FRIGA has a
+	 * Texture and FaceData pair that correctly binds Tex00031, followed by
+	 * a stray, malformed NodeReference. That stray binding is meaningless
+	 * scratch data, and the face group already has its real texture. */
 	if (lb.pending_binding && lb.group_count > 0 && lb.current_texture >= 0) {
 		opt_face_group_t* last = &lb.groups[lb.group_count - 1];
 		if (last->texture_index < 0) {
@@ -789,13 +786,14 @@ static void parse_lod_node(opt_ctx_t* c, const opt_node_t* lod_group_node, float
 }
 
 /* --- Mesh-level walking --------------------------------------------------
- * One mesh = one top-level NodeGroup. Its direct children mix the component
+ * One mesh is one top-level NodeGroup. Its direct children mix component
  * nodes (MeshVertices, MeshDescriptor, Hardpoint, RotationScale, ...) with
- * a sub-NodeGroup that wraps the FaceGrouping (LOD list).
+ * a sub-NodeGroup that wraps the FaceGrouping (the LOD list).
  *
- * The XWA reader handles both layouts (children at the top vs nested one
- * level deeper) by treating the union of the two child lists; we do the
- * same via a recursive walker that descends through plain NodeGroups.
+ * The components can be direct children or nested one level deeper. The
+ * XWA reader handles both layouts by using both child lists together. This
+ * parser does the same with a recursive walker that goes down through plain
+ * NodeGroups.
  */
 
 typedef struct {
@@ -820,8 +818,8 @@ static void parse_face_grouping(opt_ctx_t* c, const opt_node_t* fg, opt_mesh_t* 
 	}
 	mesh->lod_count = lod_count;
 
-	/* Read distances, then iterate the FaceGrouping's children (each is one
-	 * LOD NodeGroup). */
+	/* Read the distances and parse the children of the FaceGrouping. Each
+	 * child is one LOD NodeGroup. */
 	size_t                      table                  = ptr_to_off(c, fg->child_table_ptr);
 	const opt_texture_binding_t entry_binding          = c->active_texture;
 	opt_texture_binding_t       lod0_exit_binding      = entry_binding;
@@ -845,9 +843,9 @@ static void parse_face_grouping(opt_ctx_t* c, const opt_node_t* fg, opt_mesh_t* 
 		}
 		mesh->lods[i].distance_threshold = dist;
 	}
-	/* The static glTF path emits LOD 0. Advance the shared draw state by
-	 * that same traversal so the next mesh receives the texture the classic
-	 * renderer would have active for the exported geometry. */
+	/* The static glTF output uses LOD 0. The shared draw state is therefore
+	 * advanced by the walk of LOD 0, so the next mesh gets the texture that
+	 * the classic renderer would have active for the exported geometry. */
 	if (have_lod0_exit_binding)
 		c->active_texture = lod0_exit_binding;
 }
@@ -882,7 +880,7 @@ static void on_mesh_descendant(opt_ctx_t* c, const opt_node_t* n, void* user) {
 			parse_face_grouping(c, n, m);
 			break;
 		case OPT_NODE_GROUP:
-			/* Recurse through nested groups (LOD container layer). */
+			/* Walk nested groups (the LOD container layer). */
 			if (mb->depth < 2) {
 				mb->depth++;
 				for_each_child(c, n, on_mesh_descendant, mb);
@@ -932,7 +930,7 @@ static opt_file_t* parse_from_buffer(const uint8_t* data, size_t size, opt_error
 		return NULL;
 	}
 
-	/* Container header: global pointer bias + root node table. */
+	/* Container header: the global pointer bias and the root node table. */
 	size_t  cont         = hdr_bytes;
 	int32_t base_raw     = ru32(data, cont);
 	int32_t root_count   = ru32(data, cont + sizeof(int32_t) + OPT_CONTAINER_PAD_BYTES);
@@ -974,8 +972,8 @@ static opt_file_t* parse_from_buffer(const uint8_t* data, size_t size, opt_error
 		if (top.type != OPT_NODE_GROUP && top.type != OPT_NODE_TEXTURE)
 			continue;
 		if (top.type == OPT_NODE_TEXTURE) {
-			/* A top-level Texture participates in the same shared state as
-			 * bindings nested inside mesh roots. */
+			/* A top-level Texture changes the same shared binding as the
+			 * bindings inside mesh roots. */
 			const char* name = cstring(&c, ptr_to_off(&c, top.name_ptr));
 			int32_t     idx  = texture_lookup_or_add(&c, name);
 			parse_texture_data(&c, &top, idx);
@@ -1005,7 +1003,8 @@ static opt_file_t* parse_from_buffer(const uint8_t* data, size_t size, opt_error
 	return f;
 
 fail: {
-	/* Free everything assembled so far without touching opt_file storage. */
+	/* Free everything built so far. The opt_file_t here is only a temporary
+	 * on the stack. */
 	opt_file_t tmp    = { 0 };
 	tmp.meshes        = meshes;
 	tmp.mesh_count    = mesh_count;
@@ -1060,7 +1059,7 @@ opt_file_t* opt_load_file(const char* path, opt_error_t* err) {
 	return f;
 }
 
-/* Internal: free the arrays inside an opt_file without freeing the struct. */
+/* Frees the arrays of an opt_file_t, but not the struct itself. */
 static void opt_free_contents(opt_file_t* opt) {
 	if (!opt)
 		return;
@@ -1260,8 +1259,8 @@ int opt_mesh_type_is_rotary(opt_mesh_type_t t) {
 }
 
 int opt_rotation_scale_is_identity(const opt_rotation_scale_t* rs) {
-	/* Static meshes carry one of two identity frames depending on chirality;
-	 * everything else is a real rotation. */
+	/* Static meshes have one of two identity frames, depending on handedness.
+	 * Any other frame is a real rotation. */
 	static const opt_vec3_t za_pos = { 0, 0, 1 }, za_neg = { 0, 0, -1 };
 	static const opt_vec3_t ya     = { 0, 1, 0 };
 	static const opt_vec3_t xa_pos = { 1, 0, 0 }, xa_neg = { -1, 0, 0 };
@@ -1307,30 +1306,26 @@ int32_t opt_face_group_texture(const opt_face_group_t* g, int state) {
 }
 
 int opt_palette_base_shade(const opt_file_t* opt) {
-	/* The 16 palette rows are a brightness ramp; which row holds the
-	 * texture's unlit base color is a per-game convention. XWA (version 5)
-	 * centers the ramp on shade 8: rows 1..7 darken the base toward black,
-	 * rows 9..15 brighten it toward white, row 0 is cleared. The XWA
-	 * reference reader (JeremyAnsel.Xwa.Opt) always samples row 8. The
-	 * earlier TIE98/XvT/BoP family (version 2, or legacy 0) instead authors
-	 * the ramp in rows 8..15 with the fully-lit primary at row 15.
+	/* See OPT_PRIMARY_SHADE and OPT_XWA_BASE_SHADE. The XWA reference reader
+	 * (JeremyAnsel.Xwa.Opt) always samples row 8. Older files (version < 5)
+	 * have the fully lit primary color at row 15.
 	 *
-	 * Sampling row 15 of an XWA texture lands at the near-white top of its
-	 * ramp, where green sits one 565-step below red/blue — a washed-out,
-	 * faintly magenta result (the "wrong palette / red tint" symptom). */
+	 * Row 15 of an XWA texture is the near-white top of its ramp, where green
+	 * is one 565 step below red and blue. Sampling it gives a washed-out,
+	 * faintly magenta color (the "wrong palette / red tint" symptom). */
 	return (opt && opt->version >= 5) ? OPT_XWA_BASE_SHADE : OPT_PRIMARY_SHADE;
 }
 
 int opt_palette_classic_lit(const uint8_t palette[OPT_PALETTE_BYTES], int index) {
-	/* Exact mirror of ModelTexture_FilterHardwarePalette @ 0x44A600:
-	 * 5-bit channels with green's LSB dropped ((c >> 6) & 0x1f). */
+	/* Same as ModelTexture_FilterHardwarePalette @ 0x44A600. All channels are
+	 * 5 bits, and green drops its lowest bit ((c >> 6) & 0x1f). */
 	uint16_t c0;
 	memcpy(&c0, palette + (size_t)index * OPT_PALETTE_BPP, sizeof c0);
 	const int b0 = c0 & 0x1f;
 	const int g0 = (c0 >> 6) & 0x1f;
 	const int r0 = (c0 >> 11) & 0x1f;
 	if (b0 * b0 + g0 * g0 + r0 * r0 < 32) {
-		return 0; /* dark when unlit — a normal surface */
+		return 0; /* dark when unlit, so a normal surface */
 	}
 	for (int plane = 1; plane <= 6; plane++) {
 		uint16_t cp;
@@ -1340,7 +1335,7 @@ int opt_palette_classic_lit(const uint8_t palette[OPT_PALETTE_BYTES], int index)
 		const int dg = (int)((cp >> 6) & 0x1f) - g0;
 		const int dr = (int)((cp >> 11) & 0x1f) - r0;
 		if (db * db + dg * dg + dr * dr > 16) {
-			return 0; /* brightness responds to illumination — lit surface */
+			return 0; /* brightness follows the light, so a lit surface */
 		}
 	}
 	return 1;
@@ -1357,13 +1352,13 @@ int opt_palette_index_emissive(const opt_file_t* opt, const uint8_t palette[OPT_
 	memcpy(&cd, palette + dim_off, sizeof cd);
 	unsigned rb = (cb >> 11) & 0x1F, gb = (cb >> 5) & 0x3F, bb = cb & 0x1F;
 	unsigned rd = (cd >> 11) & 0x1F, gd = (cd >> 5) & 0x3F, bd = cd & 0x1F;
-	/* Near-black colors are flat only because the 5-6-5 ramp collapses at
-	 * tiny values; they are dark surfaces, not lights. Match the XWA
-	 * reader's RGB565 thresholds. */
+	/* Near-black colors look flat only because the 5-6-5 ramp collapses at
+	 * very small values. They are dark surfaces, not lights. The thresholds
+	 * are the RGB565 ones of the XWA reader. */
 	if (rb <= 8 && gb <= 16 && bb <= 8)
 		return 0;
-	/* Glowing texels keep (within `tol`) their base color under reduced
-	 * lighting; normal texels darken by several steps. */
+	/* A glowing texel keeps its base color, within `tol`, in dim light. A
+	 * normal texel gets darker by several steps. */
 	if (abs((int)rb - (int)rd) > tol)
 		return 0;
 	if (abs((int)gb - (int)gd) > tol)
@@ -1378,8 +1373,8 @@ void opt_palette_rgb(const uint8_t palette[OPT_PALETTE_BYTES], int shade, int in
 	size_t   off = (size_t)shade * OPT_PALETTE_COLORS * OPT_PALETTE_BPP + (size_t)index * OPT_PALETTE_BPP;
 	uint16_t c;
 	memcpy(&c, palette + off, sizeof c);
-	/* RGB565: RRRRR GGGGGG BBBBB. Scale up to 8-bit with rounding to match
-	 * Jeremy Ansel's XWA reader. */
+	/* RGB565: RRRRR GGGGGG BBBBB. Scale to 8 bits with rounding, as Jeremy
+	 * Ansel's XWA reader does. */
 	unsigned r5 = (c >> 11) & 0x1F;
 	unsigned g6 = (c >> 5) & 0x3F;
 	unsigned b5 = c & 0x1F;

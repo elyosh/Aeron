@@ -11,8 +11,8 @@
 
 /* ---- Paths ---------------------------------------------------------------- */
 
-/* `base`/`rel` with each component of `rel` matched case-insensitively, into
- * `out`; false when a component is missing. */
+/* Writes `base`/`rel` into `out`, matching each component of `rel` in any
+ * case. Returns false when a component is missing. */
 static bool resolve(const char* base, const char* rel, char* out, size_t cap) {
 	char parts[1024];
 	if (!PathFormat(out, cap, "%s", base) || !PathFormat(parts, sizeof parts, "%s", rel))
@@ -117,7 +117,7 @@ bool XwauLines_Read(const char* path, const char* section, XwauRules rules, Xwau
 		if (rules == XWAU_RULES_CS && end < size && text[end] == '\r' && end + 1 < size &&
 			text[end + 1] == '\n')
 			next = end + 2;
-		/* The line, trimmed; text may hold NUL bytes, which end it. */
+		/* Copy and trim the line. A NUL byte in the text ends the line. */
 		char* line = (char*)malloc(end - at + 1);
 		if (!line) {
 			ok = false;
@@ -197,7 +197,7 @@ bool Xwau_Tokenize(const char* value, XwauRules rules, XwauLines* out) {
 
 /* ---- Numbers --------------------------------------------------------------- */
 
-/* Skips white space and the sign; returns the sign. */
+/* Skips the white space and the sign, and returns the sign. */
 static int sign_of(const char** text) {
 	while (is_space(**text, XWAU_RULES_CPP))
 		++*text;
@@ -219,8 +219,9 @@ static int digit_value(char c) {
 	return 99;
 }
 
-/* The digits at `text` in `base`, until another character; false without
- * any. Saturates far outside the int range. */
+/* Reads the digits in `base` at `text`, up to the first other character.
+ * Returns false when there are none. The value stops growing far outside
+ * the int range. */
 static bool digits(const char* text, int base, long long* out) {
 	long long value = 0;
 	int       count = 0;

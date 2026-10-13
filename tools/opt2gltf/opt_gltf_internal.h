@@ -2,13 +2,14 @@
 #define AERON_OPT2GLTF_OPT_GLTF_INTERNAL_H
 
 /*
- * What the conversion's files share (opt_gltf.c, opt_gltf_document.c,
- * opt_gltf_material.c, opt_gltf_mesh.c); not part of the library's
- * interface (opt_gltf.h).
+ * Declarations shared by the conversion files (opt_gltf.c,
+ * opt_gltf_document.c, opt_gltf_material.c, opt_gltf_mesh.c). They are not
+ * part of the library interface (opt_gltf.h).
  *
- * OPT (+X right, -Y forward, +Z up) maps to standard meter-space glTF:
- * glTF = (-OPT.x, OPT.z, -OPT.y). The reflection converts OPT clockwise
- * face order to glTF counterclockwise order without changing indices.
+ * OPT axes (+X right, -Y forward, +Z up) map to standard glTF axes in meters
+ * as glTF = (-OPT.x, OPT.z, -OPT.y). This mapping is a reflection, so it
+ * turns the clockwise face order of OPT into the counterclockwise order of
+ * glTF without changing the indices.
  */
 
 #include <stdarg.h>
@@ -55,11 +56,11 @@ static inline void set_color(float out[], float r, float g, float b) {
 	out[2] = b;
 }
 
-/* Linear allocator for arrays of cgltf structs — we know all the
- * sizes after a counting pass, so one big malloc per array. */
+/* Arrays of cgltf structs. A counting pass finds all the sizes first, so
+ * each array takes a single malloc. */
 typedef struct {
-	/* Buffers (one .bin file with vertices + indices interleaved per
-	 * mesh). Byte stream + buffer_views into it + accessors. */
+	/* The .bin buffer holds the vertices and indices of each mesh in turn.
+	 * Buffer views and accessors point into it. */
 	uint8_t* bin;
 	size_t   bin_size;
 	size_t   bin_cap;
@@ -76,8 +77,8 @@ typedef struct {
 	cgltf_sampler      sampler; /* single repeat/linear sampler shared by all */
 	cgltf_material*    materials;
 	size_t             materials_count;
-	/* Per material: its animation (its AERON_flight_model object) and its
-	 * screen (a JSON object), or NULL; a material's copies share them. */
+	/* For each material, its animation (its AERON_flight_model object) and
+	 * its screen (a JSON object), or NULL. Copies of a material share them. */
 	const char**            material_anim;
 	const char**            material_screen;
 	cgltf_mesh*             meshes;
@@ -97,13 +98,13 @@ typedef struct {
 	cgltf_light*            lights;
 	size_t                  lights_count;
 
-	/* Stable strings emitted into the JSON (cgltf doesn't deep-copy on
-	 * write — we own the pointer lifetimes). */
+	/* Strings used in the JSON. cgltf does not copy them when it writes, so
+	 * the build owns them. */
 	char** owned_strings;
 	size_t owned_strings_count, owned_strings_cap;
 
-	/* Keeping a string or growing the .bin ran out of memory: the build
-	 * fails. */
+	/* Set when keeping a string or growing the .bin runs out of memory. The
+	 * build then fails. */
 	bool out_of_memory;
 } GltfBuild;
 
@@ -111,7 +112,7 @@ typedef struct OptGltfOwnedImage {
 	uint8_t* rgba;
 	uint32_t width;
 	uint32_t height;
-	bool     borrowed; /* a given material's: the caller's pixels */
+	bool     borrowed; /* pixels of a given material, owned by the caller */
 } OptGltfOwnedImage;
 
 struct OptGltfDocument {
@@ -123,16 +124,15 @@ struct OptGltfDocument {
 	size_t             image_pixels_count;
 };
 
-/* OPT face data is per-corner-indexed (separate verts/uvs/normals
- * arrays per face vertex). glTF needs (position, normal, uv) tuples
- * per vertex. In stored-normal mode we first reproduce the classic
- * renderer's position-index remap (see opt_gltf_built_mesh_from_opt), then
- * dedup-by-tuple within a mesh so UV seams still split vertices while
- * carrying the same effective lighting normal.
+/* OPT faces index each corner separately, with separate vertex, UV and
+ * normal arrays. glTF needs one (position, normal, uv) tuple per vertex.
+ * With the classic normals (OPT_GLTF_NORMALS_CLASSIC), the position-index
+ * remap of the classic renderer is reproduced first (see
+ * opt_gltf_built_mesh_from_opt). Then equal tuples are merged within a mesh,
+ * so UV seams still split vertices that have the same lighting normal.
  *
- * For the IVFILES set, faces are small (3-4 corners) and dedup keys
- * fit in a small hash. We use an unsorted linear scan — meshes are
- * under a couple thousand vertices, so it's fast enough.
+ * The merge uses an unsorted linear scan. This is fast enough because the
+ * meshes have at most a couple thousand vertices.
  */
 
 typedef struct {
@@ -152,25 +152,26 @@ typedef struct {
 	uint32_t*   fg_index_start;
 	uint32_t*   fg_index_count_arr;
 	uint32_t    fg_count; /* face groups with non-empty indices */
-	/* Defective canonical source normals repaired at emit (see the
-	 * classic-remap block in opt_gltf_built_mesh_from_opt). */
+	/* Defective canonical normals repaired while emitting vertices (see the
+	 * classic remap in opt_gltf_built_mesh_from_opt). */
 	uint32_t fixed_zero_normals;
 	uint32_t fixed_flipped_normals;
-	/* Triangles the OPT repeats (see built_mesh_emit_triangle): left out,
-	 * or kept because the repeat has another texture. */
+	/* Triangles that the OPT lists twice (see built_mesh_emit_triangle).
+	 * They are left out, or kept when the repeat has another texture. */
 	uint32_t skipped_repeats;
 	uint32_t kept_repeats;
 	bool     has_tangents;  /* vertices carry TANGENT (opt_gltf_generate_tangents) */
 	bool     out_of_memory; /* growing the vertices or indices failed */
 } BuiltMesh;
 
-/* Some shipped OPTs carry meshes with vertices but no LOD 0 faces
- * (Interdictor2Hangar's meshes 2 and 3: two vertices, no LOD), which the
- * game loads as components without geometry. Each GLB component needs a
- * mesh, and the flight-model topology keeps the positions of a component
- * whose triangles are all degenerate while dropping the triangles, so such
- * a mesh is converted as one untextured degenerate triangle over its own
- * vertices: the same positions and no faces, and nothing drawn. */
+/* Some shipped OPTs have meshes with vertices but no LOD 0 faces. For
+ * example, meshes 2 and 3 of Interdictor2Hangar have two vertices and no
+ * LOD. The game loads them as components without geometry. Each GLB
+ * component needs a mesh. The flight-model topology keeps the positions of
+ * a component whose triangles are all degenerate, and drops the triangles.
+ * So such a mesh is converted to one untextured degenerate triangle over
+ * its own vertices. The result has the same positions, no faces, and draws
+ * nothing. */
 typedef struct FacelessPatch {
 	opt_file_t        file;
 	opt_mesh_t*       meshes;
@@ -179,7 +180,7 @@ typedef struct FacelessPatch {
 	opt_face_t*       faces;
 } FacelessPatch;
 
-/* What the build's phases share. */
+/* State shared by the phases of the build. */
 typedef struct Build {
 	const opt_file_t*          opt;
 	const char*                basename;
@@ -188,14 +189,14 @@ typedef struct Build {
 	const OptGltfMaterial*     materials; /* the given materials, or NULL */
 	const OptGltfVariants*     variants;
 	const OptGltfScreen*       screens;
-	float                      smooth_angle; /* negative: the OPT's own normals */
+	float                      smooth_angle; /* negative to keep the OPT's own normals */
 	bool                       repair_normals;
 	bool                       emissive;
 	bool                       fullbright;
 	float                      fullbright_strength;
-	/* The palette row of base colours: it depends on the authoring game
-	 * (XWA = 8, TIE98/XvT = 15); sampling the wrong row washes XWA textures
-	 * out toward a faintly magenta white. */
+	/* The palette row that holds the base colours. It depends on the game
+	 * that made the file (XWA = 8, TIE98/XvT = 15). Sampling the wrong row
+	 * washes XWA textures out to a faintly magenta white. */
 	int base_shade;
 
 	OptGltfDocument* document;
@@ -203,31 +204,32 @@ typedef struct Build {
 	size_t           image_slot; /* the next image and texture slot */
 	size_t           image_count;
 
-	/* Per texture: whether it has self-lit texels (stock emissive). */
+	/* For each texture, whether it has self-lit texels (stock emissive). */
 	int* tex_emissive;
-	/* Screen surfaces, per texture: the image slot of its cover's base image
-	 * (the emissive image follows it), or -1. Textures sharing a cover share
-	 * its images. */
+	/* Screen surfaces. For each texture, the image slot of the base image of
+	 * its cover, or -1. The emissive image is in the next slot. Textures with
+	 * the same cover share its images. */
 	int32_t* screen_cover_image;
-	/* The untextured material: the texture materials come before it, the
-	 * variants' materials after it. */
+	/* Index of the untextured material. The texture materials come before
+	 * it, and the variant materials come after it. */
 	size_t untextured;
 
 	BuiltMesh* built;
 	int        max_state_count; /* drives KHR_materials_variants */
 	size_t     state_variant_count;
 	size_t     given_variant_count;
-	/* opt_gltf_promoted_material's copies: [base material * 2 + rank - 1]. */
+	/* Copies made by opt_gltf_promoted_material, indexed by
+	 * [base material * 2 + rank - 1]. */
 	cgltf_material** promoted;
 	size_t           base_material_count;
 } Build;
 
 /* ---- opt_gltf.c --------------------------------------------------------- */
 
-/* Sets the build's error message; returns false. */
+/* Sets the error message of the build and returns false. */
 bool opt_gltf_build_fail(Build* b, const char* format, ...);
 
-/* Sends a note or a warning to the options' log. */
+/* Sends a note or a warning to `options->log`. */
 void opt_gltf_log(const OptGltfBuildOptions* options, bool warning, const char* format, ...);
 
 /* ---- opt_gltf_document.c ------------------------------------------------ */

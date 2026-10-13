@@ -45,7 +45,8 @@ bool XwauFx_HasLayer(XwauFxKind kind) { return kind != XWAU_FX_ENERGY; }
 
 bool XwauFx_HasEmissive(XwauFxKind kind) { return kind == XWAU_FX_ILLUMINATION || kind == XWAU_FX_ENERGY; }
 
-/* `v` with the fewest significant digits, from 6, that read back as `v`. */
+/* Writes `v` with the fewest significant digits, from 6 up, that read back as
+ * `v`. */
 static void exact_float(char* out, size_t cap, float v) {
 	for (int digits = 6; digits <= 9; ++digits) {
 		snprintf(out, cap, "%.*g", digits, (double)v);
@@ -109,7 +110,8 @@ bool XwauFx_ParseKey(const char* key, int* group, int* image, XwauFxKind* kind, 
 		return false;
 	*group = (int)g;
 	*image = (int)i;
-	/* Only keys XwauFx_Key writes: one spelling per image. */
+	/* Accept only keys exactly as XwauFx_Key writes them, so that each image has
+	 * one spelling. */
 	char again[96];
 	XwauFx_Key(again, sizeof again, *group, *image, *kind, tint, *alpha_mode);
 	return strcmp(again, key) == 0;
@@ -122,7 +124,7 @@ void XwauFx_Bake(XwauFxKind kind, const uint8_t* src, size_t n, const float tint
 		tint = white;
 	for (size_t i = 0; i < n; ++i) {
 		const uint8_t* p = &src[i * 4];
-		/* The renderer's shader math runs on the stored (sRGB) values. */
+		/* The shader math of the renderer works on the stored sRGB values. */
 		float c[3];
 		for (int k = 0; k < 3; ++k)
 			c[k] = p[k] / 255.0f * tint[k];
@@ -152,8 +154,9 @@ void XwauFx_Bake(XwauFxKind kind, const uint8_t* src, size_t n, const float tint
 				l[3] = unorm8(a);
 				break;
 			case XWAU_FX_MULTIPLY:
-				/* sRGB-encoded m sampled through an sRGB view gives the linear
-				 * factor of the renderer's sRGB-space multiply. */
+				/* The renderer multiplies by m in sRGB space. Storing m sRGB-encoded
+				 * and sampling it through an sRGB view gives the matching factor
+				 * in linear space. */
 				for (int k = 0; k < 3; ++k)
 					l[k] = unorm8(c[k]);
 				l[3] = unorm8(c[0]);

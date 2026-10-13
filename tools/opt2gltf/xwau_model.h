@@ -2,51 +2,54 @@
 #define AERON_OPT2GLTF_XWAU_MODEL_H
 
 /*
- * What XWAU's hooks read for one model from its files beside the OPT, as
- * the converter's options. Each section is read from
- * FlightModels/<Model><Section>.txt, else from [<Section>] of
+ * Reads what XWAU's hooks read for one model from the files next to its OPT,
+ * and turns it into converter options. Each section is read from
+ * FlightModels/<Model><Section>.txt, or else from the [<Section>] section of
  * FlightModels/<Model>.ini, with the C++ rules (xwau_config.h):
  *
- *   - the pilot eye (hook_mission_objects): CockpitPov_Default, else
- *     CockpitPov, when it defines all of CockpitPovX, Y and Z (read as
- *     std::stoi(value, 0, 0), stored as 16 bits); else the eye XWAU's craft
- *     table gives a craft of that name (model_tables.h). Missions select
- *     other POV profiles; the model is converted with the Default one.
+ *   - the pilot eye (hook_mission_objects) comes from CockpitPov_Default, or
+ *     else from CockpitPov, when the section defines all of CockpitPovX, Y and
+ *     Z. The values are read with std::stoi(value, 0, 0) and stored as 16
+ *     bits. Otherwise, the eye comes from XWAU's craft table, for the craft
+ *     with the model's name (model_tables.h). Missions can select other POV
+ *     profiles, but the model is converted with the Default one.
  *
- *   - object profiles (hook_mission_objects): each key of ObjectProfiles
- *     (but TargetableMeshes) is a profile hiding the meshes its value lists:
- *     tokens read as std::stoi; a token that does not parse, or -1, names
- *     another profile, resolved recursively (a cycle skips the profile);
- *     other negative numbers are ignored. A profile becomes the component
- *     set hidden_by_profile.<name>, the name encoded (Xwau_EncodeName);
- *     meshes past 254 are dropped, and a profile hiding nothing makes no
- *     set (the game then uses the Default profile, as XWAU).
+ *   - object profiles (hook_mission_objects): each key of ObjectProfiles,
+ *     except TargetableMeshes, is a profile that hides the meshes listed in
+ *     its value. Tokens are read with std::stoi. A token that does not parse,
+ *     or -1, is the name of another profile, which is resolved recursively.
+ *     If the references form a cycle, the profile is skipped. Other negative
+ *     numbers are ignored. A profile becomes the component set
+ *     hidden_by_profile.<name>, with the name encoded by Xwau_EncodeName.
+ *     Meshes above 254 are dropped. A profile that hides nothing creates no
+ *     set, and the game then uses the Default profile, as XWAU does.
  *
- *   - mesh rotations (hook_sfoils, hook_pilot): the lines "mesh, angle,
- *     speed, speed back" of SFoils, SFoilsLandingGears, SFoilsHangarDoors,
- *     SFoilsHatches and SFoilsWarheadsBay (groups sfoils, landing_gear,
- *     hangar_doors, hatches, warheads_bay), and of each
- *     SFoilsCargoClamps_<key> (a section of the .ini, or a
- *     <Model>SFoilsCargoClamps_<key>.txt beside it; group
- *     cargo_clamps.open, cargo_clamps.close or cargo_clamps.<encoded key>),
- *     and the "mesh, angle, speed, behavior" lines of Pilot (group crew,
- *     behaviors 0 to 2: swing, random, random_pause), become articulations.
- *     A line with fewer than four tokens is not a mesh line; numbers read
- *     as std::stoi(text, 0, 0). A mesh outside 0..254, an angle outside
- *     -128..255 or a speed outside 0..255 skips the line (all reported).
- *     PilotCockpit is reported and skipped. The [SFoils] keys
- *     CloseSFoilsInHyperspace, SFoilsAnimationSpeed,
- *     AllowFireWhenSFoilsAreClosed, ParkOrderSFoilsClosed and
- *     HangarDoorsDistance become the settings sfoils.close_in_hyperspace,
- *     step_ticks (15 × speed), sfoils.allow_fire_closed, sfoils.park_closed
- *     and hangar_doors.distance where they differ from the defaults; a
- *     model with crew gets crew.update_all = 1. Then the missions' variants
+ *   - mesh rotations (hook_sfoils, hook_pilot) become articulations. The
+ *     sections SFoils, SFoilsLandingGears, SFoilsHangarDoors, SFoilsHatches
+ *     and SFoilsWarheadsBay have lines "mesh, angle, speed, speed back", for
+ *     the groups sfoils, landing_gear, hangar_doors, hatches and warheads_bay.
+ *     Each SFoilsCargoClamps_<key> has the same lines. It is a section of the
+ *     .ini or a <Model>SFoilsCargoClamps_<key>.txt file next to it, and its
+ *     group is cargo_clamps.open, cargo_clamps.close or
+ *     cargo_clamps.<encoded key>. Pilot has lines "mesh, angle, speed,
+ *     behavior" for the group crew, with behaviors 0 to 2 (swing, random,
+ *     random_pause). A line with fewer than four tokens is not a mesh line.
+ *     Numbers are read with std::stoi(text, 0, 0). A line is skipped and
+ *     reported when its mesh is outside 0..254, its angle is outside
+ *     -128..255, or a speed is outside 0..255. PilotCockpit is reported and
+ *     skipped. The [SFoils] keys CloseSFoilsInHyperspace,
+ *     SFoilsAnimationSpeed, AllowFireWhenSFoilsAreClosed,
+ *     ParkOrderSFoilsClosed and HangarDoorsDistance become the settings
+ *     sfoils.close_in_hyperspace, step_ticks (15 × speed),
+ *     sfoils.allow_fire_closed, sfoils.park_closed and hangar_doors.distance,
+ *     when they differ from the defaults. A model with crew gets
+ *     crew.update_all = 1. The variants from the missions are added last
  *     (xwau_missions.h).
  *
  *   - the Dynamic Cockpit file DynamicCockpit/<Model>.dc;
  *
- *   - for a cockpit model (<Craft>Cockpit), its craft's pilot eye, which a
- *     light of the interior is placed at.
+ *   - for a cockpit model (<Craft>Cockpit), the pilot eye of its craft. An
+ *     interior light is placed there.
  *
  * Problems go to stderr.
  */
@@ -65,7 +68,7 @@
 typedef struct XwauModel {
 	bool                         has_eye;
 	int                          eye[3];
-	bool                         has_craft_eye; /* a cockpit model's craft's eye */
+	bool                         has_craft_eye; /* for a cockpit model, the eye of its craft */
 	int                          craft_eye[3];
 	OptGltfComponentSet          sets[XWAU_MODEL_MAX_SETS];
 	size_t                       set_count;
@@ -76,17 +79,18 @@ typedef struct XwauModel {
 	char                         dynamic_cockpit[1024]; /* "" without one */
 } XwauModel;
 
-/* Reads the files of `model` (the OPT's name without extension). False
- * when out of memory or a table is full. */
+/* Reads the files of `model` (the OPT name without the extension). Returns
+ * false when out of memory or when a table is full. */
 bool XwauModel_Read(const char* game, const XwauMissions* missions, const char* model, XwauModel* out,
 					const char* label);
 
-/* The pilot eye of `model`: its POV lines, else XWAU's craft table. */
+/* Gets the pilot eye of `model` from its POV lines, or else from XWAU's craft table. */
 bool XwauModel_Eye(const char* game, const char* model, int eye[3], const char* label);
 
-/* The articulation group of mesh rotation section `section` (case
- * insensitive), or false when it is none. The group may be longer than a
- * tag (63 characters), which the callers report. */
+/* Gets the articulation group of the mesh rotation section `section`, which
+ * can be in any case. Returns false when `section` is not a mesh rotation
+ * section. The group can be longer than a tag (63 characters), and the callers
+ * report that. */
 bool XwauModel_SectionGroup(const char* section, char* group, size_t cap);
 
 /* One mesh line of a rotation section. */
@@ -94,8 +98,9 @@ typedef struct XwauMeshLine {
 	long long values[4]; /* mesh, angle, speed, speed back (or behavior) */
 } XwauMeshLine;
 
-/* The mesh lines of `lines` (lines whose numbers do not parse are skipped,
- * and reported unless `label` is NULL). False when out of memory. */
+/* Collects the mesh lines of `lines`. Lines whose numbers do not parse are
+ * skipped, and reported unless `label` is NULL. Returns false when out of
+ * memory. */
 bool XwauModel_MeshLines(const XwauLines* lines, XwauMeshLine** out, size_t* count, const char* label,
 						 const char* where);
 

@@ -1,5 +1,6 @@
-/* The document's arrays, strings, buffer and images (opt_gltf_internal.h),
- * and the document functions of opt_gltf.h. */
+/* Manages the arrays, strings, buffer and images of the document
+ * (opt_gltf_internal.h), and implements the document functions of
+ * opt_gltf.h. */
 
 #include "opt_gltf_internal.h"
 #include "opt_json.h"
@@ -18,9 +19,9 @@ void* opt_gltf_push_array(void** arr, size_t* count, size_t* cap, size_t elem_si
 	return slot;
 }
 
-/* owned_strings: realloc-safe pointer vector (cgltf indexes nothing
- * into this; it only references the strings themselves, which we
- * allocate separately and never move). */
+/* owned_strings can be reallocated safely. cgltf keeps no pointers into
+ * this array, only pointers to the strings, which are allocated separately
+ * and never move. */
 char* opt_gltf_keep_string(GltfBuild* gb, char* s) {
 	if (!s) {
 		gb->out_of_memory = true;
@@ -41,7 +42,8 @@ char* opt_gltf_keep_string(GltfBuild* gb, char* s) {
 	return s;
 }
 
-/* Sets the node's AERON_flight_model object, printed; deletes `object`. */
+/* Prints `object` as the AERON_flight_model extension of the node, and
+ * deletes `object`. */
 bool opt_gltf_set_extension(GltfBuild* build, cgltf_node* node, cJSON* object) {
 	cgltf_extension* extension = (cgltf_extension*)calloc(1, sizeof *extension);
 	char*            data      = OptJson_Print(object);
@@ -57,9 +59,8 @@ bool opt_gltf_set_extension(GltfBuild* build, cgltf_node* node, cJSON* object) {
 	return true;
 }
 
-/* Append bytes to the .bin buffer with 4-byte alignment as required by
- * the glTF accessor spec for component bounds. Returns the byte offset
- * where the data starts. */
+/* Appends bytes to the .bin buffer at a 4-byte boundary, as the glTF spec
+ * requires for accessors. Returns the byte offset of the data. */
 size_t opt_gltf_bin_append(GltfBuild* gb, const void* data, size_t bytes) {
 	if (gb->bin_size + bytes + 4 > gb->bin_cap) {
 		size_t ncap = gb->bin_cap ? gb->bin_cap * 2 : 4096;
@@ -73,8 +74,7 @@ size_t opt_gltf_bin_append(GltfBuild* gb, const void* data, size_t bytes) {
 		gb->bin     = grown;
 		gb->bin_cap = ncap;
 	}
-	/* 4-byte align (cgltf writes accessor.componentType-specific offsets,
-	 * float and uint16 alignments fit inside 4-byte alignment). */
+	/* Align to 4 bytes, which covers both float and uint16 components. */
 	size_t off = (gb->bin_size + 3) & ~(size_t)3;
 	while (gb->bin_size < off)
 		gb->bin[gb->bin_size++] = 0;
@@ -103,13 +103,13 @@ cgltf_accessor* opt_gltf_new_accessor(GltfBuild* gb, cgltf_buffer_view* view, cg
 	a->count          = count;
 	a->type           = type;
 	a->component_type = comp;
-	/* Parsed cgltf graphs derive this during pointer fixup. Our graph is
-	 * constructed directly, so populate it explicitly for accessor reads. */
+	/* cgltf sets the stride when it parses a file. This graph is built
+	 * directly, so the stride is set here for accessor reads. */
 	a->stride = cgltf_calc_size(type, comp);
 	return a;
 }
 
-/* Register an owned RGBA image as image and texture `slot`, written to
+/* Registers an RGBA image as image and texture `slot`, written to
  * textures/<file>. Takes ownership of `rgba`, `name` and `file`. */
 cgltf_texture* opt_gltf_set_image(OptGltfDocument* document, size_t slot, uint8_t* rgba, uint32_t width,
 								  uint32_t height, char* name, char* file) {
@@ -127,7 +127,7 @@ cgltf_texture* opt_gltf_set_image(OptGltfDocument* document, size_t slot, uint8_
 	return &build->textures[slot];
 }
 
-/* The texture views of material `m` (kViewCount of them). */
+/* material_views lists the kViewCount texture views of material `m`. */
 enum { kViewCount = 21 };
 
 static void material_views(cgltf_material* m, cgltf_texture_view* views[kViewCount]) {
@@ -157,10 +157,11 @@ static void material_views(cgltf_material* m, cgltf_texture_view* views[kViewCou
 	memcpy(views, all, sizeof all);
 }
 
-/* Leaves out the materials no primitive draws, directly or through a
- * variant (those only the OPT's lower LODs use: the conversion keeps LOD 0),
- * then the textures and images only they used. cgltf references them by
- * pointer, so the arrays are compacted and the pointers moved. */
+/* Removes the materials that no primitive draws, directly or through a
+ * variant. These are the materials used only by the lower LODs of the OPT,
+ * since the conversion keeps only LOD 0. Then removes the textures and
+ * images that only those materials used. cgltf references them by pointer,
+ * so the arrays are compacted and the pointers are updated. */
 bool opt_gltf_prune_unused(OptGltfDocument* document) {
 	GltfBuild*   gb = &document->gb;
 	const size_t largest =
@@ -277,10 +278,9 @@ void OptGltf_Free(OptGltfDocument* document) {
 		return;
 	GltfBuild* gb = &document->gb;
 
-	/* The per-node children loop already covers both root_children
-	 * (gb.nodes[0].children) and per-mesh hp_children — both are
-	 * stored as node->children. Freeing root_children here would be
-	 * a double-free. */
+	/* The loop below frees the children of the root (gb.nodes[0].children)
+	 * and the children of each mesh node, since both are stored in
+	 * node->children. Freeing root_children as well would free it twice. */
 	for (size_t i = 0; i < gb->nodes_count; ++i) {
 		free(gb->nodes[i].children);
 		free(gb->nodes[i].extensions);

@@ -1,6 +1,6 @@
 /*
- * opt2gltf — convert an OPT model to glTF 2.0 (.gltf, .bin and PNG
- * textures), and write the batch outputs of an XWA Upgrade conversion.
+ * opt2gltf converts an OPT model to glTF 2.0 (a .gltf file, a .bin file and PNG
+ * textures). It also writes the batch outputs of an XWA Upgrade conversion.
  *
  * Usage:
  *   opt2gltf (--stock | --xwau-root DIR) [--smooth-angle DEG]
@@ -8,31 +8,32 @@
  *   opt2gltf effects --xwau-root DIR --project DIR <project|model.gltf>...
  *   opt2gltf missions --xwau-root DIR --stock-game DIR <output_dir>
  *
- * The model is written into <output_dir>, or into a project with --project:
- * a folder holding models (models/<key>/) and their effect libraries
- * (effects/<library>/), where the OPT becomes models/<key>/<key>.gltf, its
- * .bin and textures/, the key being the OPT's name in lower case; in XWAU
- * mode, the effect library images its materials name that the project
- * lacks are added (xwau_library.h). An existing model folder is an error,
- * unless --replace replaces it.
+ * The model is written into <output_dir>, or into a project with --project.
+ * A project is a folder that holds models (models/<key>/) and their effect
+ * libraries (effects/<library>/). The key is the OPT name in lower case, and
+ * the OPT becomes models/<key>/<key>.gltf with its .bin and a textures/ folder.
+ * In XWAU mode, the effect library images that the materials name and that the
+ * project does not have yet are added (xwau_library.h). If the model folder
+ * already exists, this is an error unless --replace is given.
  *
- * `effects` writes the effect libraries every model given names (a model
- * .gltf, or every model of a project) into the --project's effects/,
- * replacing them, with the game's effects.yaml (xwau_library.h).
+ * `effects` writes the effect libraries that the given models use into the
+ * effects/ folder of --project, replacing them, together with the game's
+ * effects.yaml (xwau_library.h). Each input is a model .gltf or a project, which
+ * stands for all its models.
  *
- * `missions` writes what XWAU's missions select for the original game's
- * missions (installed at --stock-game) as <output_dir>/<dir>/<mission>.yaml
- * (xwau_mission_files.h).
+ * `missions` writes the selections of XWAU's missions for the missions of the
+ * original game, installed in --stock-game. Each mission gets a file
+ * <output_dir>/<dir>/<mission>.yaml (xwau_mission_files.h).
  *
  * Replacement workflow (both tools are built with AERON_BUILD_TOOLS):
  *
  *   opt2gltf --stock FLIGHTMODELS/XWING.OPT out
  *   aeron_gltf_cook out/XWING.gltf --out <asset root>/remaster/models/xwing.glb
  *
- * The cooked GLB replaces the OPT whose lower-cased basename it has.
- * --stock converts an OPT of the original game as the game draws it,
- * --xwau-root DIR an X-Wing Alliance Upgrade model with everything XWAU
- * gives it, read from the XWAU installation DIR (model_conversion.h).
+ * The cooked GLB replaces the OPT that has the same base name in lower case.
+ * --stock converts an OPT of the original game the way the game draws it.
+ * --xwau-root DIR converts an X-Wing Alliance Upgrade model with everything XWAU
+ * adds to it, read from the XWAU installation in DIR (model_conversion.h).
  */
 
 #include <errno.h>
@@ -48,8 +49,8 @@
 #include "xwau_mission_files.h"
 #include "xwau_missions.h"
 
-/* Converts into a project: models/<key>/<key>.gltf, its .bin and textures,
- * then, in XWAU mode, the library images it names. */
+/* Converts the OPT into models/<key>/ in the project. In XWAU mode, it then
+ * adds the library images that the model names. */
 static bool convert_into_project(const ModelConversion* mc, const char* opt_path, const char* basename,
 								 const char* project, bool replace) {
 	char key[256], models[1024], final_dir[1300], scratch[1300];
@@ -59,7 +60,7 @@ static bool convert_into_project(const ModelConversion* mc, const char* opt_path
 		!PathFormat(scratch, sizeof scratch, "%s/.%s.opt2gltf", models, key))
 		return false;
 	if ((IsDir(final_dir) || IsFile(final_dir)) && !replace) {
-		Report(opt_path, "%s exists (--replace replaces it)", final_dir);
+		Report(opt_path, "%s already exists (use --replace to replace it)", final_dir);
 		return false;
 	}
 	if (!MakeDirs(project) || !MakeDirs(models) || !RemoveTree(scratch)) {
@@ -78,7 +79,7 @@ static bool convert_into_project(const ModelConversion* mc, const char* opt_path
 	}
 	if ((strcmp(from, to) != 0 && rename(from, to) != 0) || !RemoveTree(final_dir) ||
 		rename(scratch, final_dir) != 0) {
-		Report(opt_path, "cannot place %s: %s", final_dir, strerror(errno));
+		Report(opt_path, "cannot create %s: %s", final_dir, strerror(errno));
 		RemoveTree(scratch);
 		return false;
 	}
@@ -131,8 +132,8 @@ typedef struct Args {
 	int         input_count;
 } Args;
 
-/* Parses the flags `allowed` names, then the inputs; false on a flag that
- * is unknown, not allowed or without its value (reported). */
+/* Parses the flags listed in `allowed`, then the inputs. Returns false, after
+ * reporting it, when a flag is unknown, not allowed, or has no value. */
 static bool parse_args(int argc, char** argv, unsigned allowed, Args* out) {
 	memset(out, 0, sizeof *out);
 	out->smooth_angle = -1.0f;
@@ -157,7 +158,7 @@ static bool parse_args(int argc, char** argv, unsigned allowed, Args* out) {
 				break;
 			case FLAG_XWAU_ROOT:
 				if (out->xwau_root) {
-					Report(NULL, "--xwau-root is given once: the XWAU installation");
+					Report(NULL, "--xwau-root can only be given once");
 					return false;
 				}
 				out->xwau_root = value;
@@ -200,11 +201,11 @@ static int run_convert(int argc, char** argv) {
 					&a))
 		return 2;
 	if (a.stock == (a.xwau_root != NULL)) {
-		Report(NULL, "give --stock or --xwau-root");
+		Report(NULL, "give exactly one of --stock and --xwau-root");
 		return usage();
 	}
 	if (a.smooth_angle >= 0.0f && !a.stock) {
-		Report(NULL, "--smooth-angle applies to --stock");
+		Report(NULL, "--smooth-angle only works with --stock");
 		return 2;
 	}
 	if (a.replace && !a.project) {
@@ -225,7 +226,7 @@ static int run_convert(int argc, char** argv) {
 		return 1;
 	}
 
-	/* The OPT's name: after the last '/' (or '\\' on Windows), without its
+	/* The OPT name is the part after the last '/' or '\\', without the
 	 * extension. */
 	const char* fname = in;
 	for (const char* c = in; *c; ++c)
@@ -249,7 +250,7 @@ static int run_effects(int argc, char** argv) {
 	if (!parse_args(argc, argv, FLAG_XWAU_ROOT | FLAG_PROJECT, &a))
 		return 2;
 	if (!a.xwau_root || !a.project || !a.input_count) {
-		Report(NULL, "effects needs --xwau-root, --project and inputs");
+		Report(NULL, "effects needs --xwau-root, --project and at least one input");
 		return 2;
 	}
 	return XwauLibrary_Rebuild(a.xwau_root, a.project, (const char* const*)a.inputs, (size_t)a.input_count)

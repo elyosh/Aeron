@@ -22,8 +22,8 @@
 
 /* ===== Stock tables ===================================================== */
 
-/* Copies the name ending at `end` into `out` (64 bytes); false when empty or
- * too long. The name's syntax is checked by the converter. */
+/* Copies the name from `begin` to `end` into `out` (64 bytes). Returns false
+ * when it is empty or too long. The converter checks the name syntax. */
 static bool copy_name(const char* begin, const char* end, char out[64]) {
 	if (end <= begin || end - begin >= 64)
 		return false;
@@ -68,13 +68,13 @@ static bool parse_articulation(const char* text, OptGltfComponentArticulation* o
 	return copy_name(cur, cur + strlen(cur), out->behavior);
 }
 
-/* The original game's tags and articulations of a model (model_tables.h). */
+/* The tags and articulations of a model in the original game (model_tables.h). */
 typedef struct StockTags {
 	OptGltfComponentTag*          tags;
 	size_t                        tag_count;
 	OptGltfComponentArticulation* articulations;
 	size_t                        articulation_count;
-	char*                         text; /* the table's text the tags point into */
+	char*                         text; /* copy of the table text, which the tags point into */
 } StockTags;
 
 static void stock_tags_free(StockTags* t) {
@@ -120,8 +120,8 @@ static bool stock_tags_read(StockTags* t, const char* model, const char* label) 
 	return true;
 }
 
-/* Texture `name` without a "_fg_" skin suffix equals `wanted`, ignoring ASCII
- * case (XwauMat_Find's comparison). */
+/* Whether texture `name`, without its "_fg_" skin suffix, equals `wanted` in
+ * any ASCII case. XwauMat_Find compares names the same way. */
 static bool xwau_texture_named(const char* name, const char* wanted) {
 	for (;; ++name, ++wanted) {
 		const bool name_end = !*name || (name[0] == '_' && tolower((unsigned char)name[1]) == 'f' &&
@@ -139,13 +139,14 @@ static int xwau_find(const ModelConversion* mc, const char* rel, char* out, size
 
 typedef struct XwauNormalMap {
 	char         key[1100]; /* resolved path + group + image */
-	char         name[160]; /* file-name label: <datbase>_<group>_<image> */
+	char         name[160]; /* used in file names: <datbase>_<group>_<image> */
 	XwauDatImage image;
 	int          ok;
 } XwauNormalMap;
 
-/* Load (once per OPT) the image a NormalMap value names: "<path>.dat-G-I".
- * Entries are allocated individually: materials keep pointers into them. */
+/* Loads the image that a NormalMap value names ("<path>.dat-G-I"), once per
+ * OPT. Each entry is allocated on its own because materials keep pointers
+ * into it. */
 static const XwauNormalMap* xwau_normal_map(const ModelConversion* mc, const char* value,
 											XwauNormalMap*** cache, size_t* count, const char* label) {
 	char spec[XWAU_MAT_PATH_MAX];
@@ -199,8 +200,8 @@ static const XwauNormalMap* xwau_normal_map(const ModelConversion* mc, const cha
 		return NULL;
 	}
 	if (nm->image.encoding == XWAU_DAT_ENCODING_BC5) {
-		/* BC5 stores X and Y only: rebuild Z (XWAU's DATReader rebuilds it
-		 * from 0..1 values, a bug not reproduced here). */
+		/* BC5 stores only X and Y, so Z is rebuilt here. XWAU's DATReader
+		 * rebuilds Z from 0..1 values, which is a bug and is not reproduced. */
 		const size_t n = (size_t)nm->image.width * nm->image.height;
 		for (size_t i = 0; i < n; ++i) {
 			uint8_t*     px = &nm->image.rgba[i * 4];
@@ -222,8 +223,8 @@ static void xwau_fill(XwauGltfMaterial* out, const XwauMatParams* p) {
 	out->ambient          = p->ambient;
 	out->shadeless        = p->shadeless;
 	out->alpha_isnt_glass = p->alpha_isnt_glass;
-	/* NoColorAlpha only acts with AlphaToBloom, which already maps to a
-	 * glow-only texel. */
+	/* NoColorAlpha only has an effect together with AlphaToBloom, and
+	 * AlphaToBloom already maps to a texel that only glows. */
 	out->alpha_to_bloom = p->alpha_to_bloom;
 }
 
@@ -235,7 +236,7 @@ static int xwau_find_file(void* context, const char* rel, char* out, size_t cap)
 
 /* ===== The cockpit and the weapons ====================================== */
 
-/* The first MainHull mesh, or mesh 0; -1 without meshes. */
+/* Returns the first MainHull mesh, or mesh 0, or -1 when there are no meshes. */
 static int32_t main_hull_mesh(const opt_file_t* opt) {
 	for (int32_t mi = 0; mi < opt->mesh_count; ++mi) {
 		const opt_mesh_t* m = &opt->meshes[mi];
@@ -245,17 +246,18 @@ static int32_t main_hull_mesh(const opt_file_t* opt) {
 	return opt->mesh_count > 0 ? 0 : -1;
 }
 
-/* A cockpit model's interior light: white, at its craft's pilot eye, dim
- * enough to light the interior softly from the viewpoint (its shadows would
- * be hidden anyway). Its intensity is a 100 W Blender point light in
- * candela, as Blender's glTF exporter converts it (683 lm/W over 4 pi sr). */
+/* The interior light of a cockpit model. It is white and placed at the pilot
+ * eye of its craft. It is dim, so it lights the interior softly from the
+ * viewpoint, where its shadows would be hidden anyway. The intensity is that
+ * of a 100 W Blender point light, converted to candela as Blender's glTF
+ * exporter does (683 lm/W over 4 pi sr). */
 #define COCKPIT_LIGHT_INTENSITY (100.0f * 683.0f / (4.0f * 3.14159265f))
 #define COCKPIT_LIGHT_RANGE 3.0f
 
-/* Replaces the OPT's Cockpit (type 31) hardpoints with one at the pilot eye
- * given in craft-table units (CockpitPovX/Y/Z): ModelMesh_GetHardpoint
- * returns (x, -y, z), so the eye's Y is the hardpoint's -y. It goes on the
- * first MainHull mesh, or mesh 0. */
+/* Replaces the Cockpit hardpoints (type 31) of the OPT with one hardpoint at
+ * the pilot eye. The eye is in craft-table units (CockpitPovX/Y/Z).
+ * ModelMesh_GetHardpoint returns (x, -y, z), so the hardpoint's y is the
+ * eye's -Y. The new hardpoint goes on the first MainHull mesh, or on mesh 0. */
 static int apply_cockpit_eye(opt_file_t* opt, const int eye[3]) {
 	for (int32_t mi = 0; mi < opt->mesh_count; ++mi) {
 		opt_mesh_t* m    = &opt->meshes[mi];
@@ -280,8 +282,8 @@ static int apply_cockpit_eye(opt_file_t* opt, const int eye[3]) {
 	return 1;
 }
 
-/* The weapon hardpoints of the laser and warhead kinds, types 1 to 18
- * (g_optHardpointWeaponGroupKindByType): the game keeps 120 weapon slots. */
+/* Weapon hardpoints are the laser and warhead types, 1 to 18
+ * (g_optHardpointWeaponGroupKindByType). The game keeps 120 weapon slots. */
 #define WEAPON_SLOTS 120
 
 static int32_t weapon_hardpoints(const opt_file_t* opt) {
@@ -294,7 +296,7 @@ static int32_t weapon_hardpoints(const opt_file_t* opt) {
 
 /* ===== One conversion =================================================== */
 
-/* An OPT's build options and the data they point to. */
+/* The build options of one OPT and the data they point to. */
 typedef struct Conversion {
 	OptGltfBuildOptions options;
 	const int*          cockpit_eye;   /* craft-table units, or NULL */
@@ -309,12 +311,12 @@ typedef struct Conversion {
 	XwauModel*         model;
 	XwauSkins          skins;
 	XwauDynamicCockpit dc;
-	/* The textures shaded as lit surfaces although their material makes
-	 * them Shadeless, pointing into lit_text. */
+	/* Textures shaded as lit surfaces even though their material makes them
+	 * Shadeless. The names point into lit_text. */
 	char        lit_text[1024];
 	const char* lit[MAX_LIT_TEXTURES];
 	int         lit_count;
-	/* The materials' inputs and their bake. */
+	/* The material inputs and the baked result. */
 	XwauMatFile*      mat;
 	char              mat_path[1024];
 	XwauGltfMaterial* materials;
@@ -326,7 +328,7 @@ typedef struct Conversion {
 	bool              has_baked;
 } Conversion;
 
-/* The original game's settings. */
+/* Sets the options of stock mode, as the original game draws the model. */
 static bool prepare_stock(Conversion* c, const ModelConversion* mc, const char* basename, const char* label) {
 	c->options.geometry.normals              = OPT_GLTF_NORMALS_SMOOTHED;
 	c->options.geometry.smooth_angle_degrees = mc->smooth_angle >= 0.0f ? mc->smooth_angle : 90.0f;
@@ -344,7 +346,7 @@ static bool prepare_stock(Conversion* c, const ModelConversion* mc, const char* 
 	return ok;
 }
 
-/* What XWAU's files give the model, but its materials. */
+/* Reads what XWAU's files give the model, except its materials. */
 static bool prepare_xwau(Conversion* c, const ModelConversion* mc, const opt_file_t* opt,
 						 const char* basename, const char* label) {
 	c->model        = (XwauModel*)malloc(sizeof *c->model);
@@ -376,7 +378,7 @@ static bool prepare_xwau(Conversion* c, const ModelConversion* mc, const opt_fil
 	return read && XwauSkins_Resolve(mc->game, mc->missions, basename, opt, label, &c->skins);
 }
 
-/* The pilot eye hardpoint and a cockpit model's interior light. */
+/* Adds the pilot eye hardpoint and, for a cockpit model, the interior light. */
 static bool place_cockpit(Conversion* c, opt_file_t* opt, const char* label) {
 	if (c->cockpit_eye && !apply_cockpit_eye(opt, c->cockpit_eye)) {
 		Report(label, "cannot add the cockpit eye hardpoint");
@@ -400,7 +402,7 @@ static bool place_cockpit(Conversion* c, opt_file_t* opt, const char* label) {
 	return true;
 }
 
-/* The model's Dynamic Cockpit screens, when it has a file for them. */
+/* Loads the Dynamic Cockpit screens of the model, if it has a .dc file. */
 static bool load_dynamic_cockpit(Conversion* c, const ModelConversion* mc, opt_file_t* opt,
 								 const char* basename, const char* label) {
 	const char* dynamic = c->model && c->model->dynamic_cockpit[0] ? c->model->dynamic_cockpit : NULL;
@@ -413,8 +415,8 @@ static bool load_dynamic_cockpit(Conversion* c, const ModelConversion* mc, opt_f
 	return true;
 }
 
-/* Reads each texture's XWAU material, normal map and animations, and bakes
- * them into the given materials. */
+/* Reads the XWAU material, normal map and animations of each texture, and
+ * bakes them into the material options. */
 static bool bake_xwau(Conversion* c, const ModelConversion* mc, const opt_file_t* opt, const char* basename,
 					  const char* label) {
 	char rel[512];
@@ -468,7 +470,7 @@ static bool bake_xwau(Conversion* c, const ModelConversion* mc, const opt_file_t
 		if (!ignored[k])
 			Report(label, "lit texture %s: no such texture", c->lit[k]);
 	}
-	/* Untextured faces: the material lookup of an empty name is slot 0. */
+	/* Untextured faces use the material found for an empty name, which is slot 0. */
 	XwauGltfMaterial untextured;
 	xwau_fill(&untextured, c->mat ? XwauMat_Find(c->mat, "") : &mc->global);
 
@@ -486,8 +488,8 @@ static bool bake_xwau(Conversion* c, const ModelConversion* mc, const opt_file_t
 	m->untextured             = &c->baked.untextured;
 	m->variants               = c->baked.variants.count ? &c->baked.variants : NULL;
 	m->screens                = screens;
-	/* XWAU's renderer uses each corner's stored normal: no remap, no
-	 * repair. */
+	/* XWAU's renderer uses the stored normal of each corner, without
+	 * remapping or repairing it. */
 	c->options.geometry.normals = OPT_GLTF_NORMALS_STORED;
 	return true;
 }

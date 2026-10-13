@@ -13,30 +13,33 @@
 
 /* ===== XWAU material bake ============================================
  *
- * Reproduces, per texel, how the X-Wing Alliance Upgrade "effects" renderer
- * (xwa_ddraw_d3d11, PBR deferred path) shades an OPT texture, and stores the
- * result in standard glTF inputs. The math runs on gamma-encoded values, as
- * that renderer does.
- *   - illumination: 8bpp texels whose palette row 4 equals row 8 and are not
- *     near-black (XwaD3dRendererHook.cpp D3dOptCreateTextureColorLight), or
- *     the 32bpp illumination plane; XwaD3dPixelShader.hlsl's illum branch
- *     makes them unlit at 1.25x their color;
+ * Reproduces, texel by texel, how the X-Wing Alliance Upgrade "effects"
+ * renderer (xwa_ddraw_d3d11, PBR deferred path) shades an OPT texture, and
+ * stores the result in standard glTF inputs. Like that renderer, the math
+ * works on gamma-encoded values.
+ *   - Illumination: an 8bpp texel is lit when its palette row 4 equals row 8
+ *     and is not near-black (D3dOptCreateTextureColorLight in
+ *     XwaD3dRendererHook.cpp). A 32bpp texture uses its illumination plane.
+ *     The illum branch of XwaD3dPixelShader.hlsl draws these texels unlit
+ *     at 1.25x their color.
  *   - Shadeless/Ambient: output = lerp(lit, color, s), stored as base color
- *     color * (1 - s) plus emissive color * s;
- *   - glass (transparent, not shadeless, no illumination): below alpha 0.95
- *     a texel gets coverage a^2, gloss 0.93 and metallic 0. XWAU also makes
- *     it 0.8 shadeless, to see into cockpits; as emission that reads as
- *     glowing glass, so the glass is lit. The material is opaque with
- *     KHR_materials_transmission and F0 0.04, its base colour and
- *     transmission giving that blend under the spec's tint (glass bake).
- *     Its roughness is XWAU_GLASS_ROUGHNESS, not gloss 0.93's 0.135: XWAU
- *     blended glass, so its gloss only shaped highlights, while the spec's
- *     roughness also blurs what shows through, which would frost it;
- *   - dark-texel reflectance fade (PBRAddCommon.h "blackish"): approximated
- *     by raising roughness to 1;
- *   - Metallic, Glossiness: metallic and roughness = 1 - min(0.93, G)^2.
- * Colors are authored ones (palette row 8, raw 32bpp): XWA's brightness
- * setting is a display option, not material color. */
+ *     color * (1 - s) plus emissive color * s.
+ *   - Glass (transparent, not shadeless, no illumination): a texel with
+ *     alpha below 0.95 gets coverage a^2, gloss 0.93 and metallic 0. XWAU
+ *     also makes it 0.8 shadeless, so that the player can see into
+ *     cockpits. As emission, this would look like glowing glass, so the
+ *     glass is lit instead. The material is opaque with
+ *     KHR_materials_transmission and F0 0.04. Its base colour and
+ *     transmission give the same blend under the tint of the spec (see the
+ *     glass bake). Its roughness is XWAU_GLASS_ROUGHNESS, not 0.135 (the
+ *     roughness for gloss 0.93). XWAU blended glass, so its gloss only
+ *     shaped the highlights. With the spec, roughness also blurs what shows
+ *     through the glass, which would make it look frosted.
+ *   - Dark-texel reflectance fade (PBRAddCommon.h "blackish"): approximated
+ *     by raising roughness to 1.
+ *   - Metallic, Glossiness: metallic, and roughness = 1 - min(0.93, G)^2.
+ * Colors are the authored ones (palette row 8, raw 32bpp). The brightness
+ * setting of XWA is a display option, not a material color. */
 
 #define XWAU_GLASS_GLOSS 0.93f
 #define XWAU_GLASS_ROUGHNESS 0.05f
@@ -53,25 +56,26 @@ static float smoothstepf(float edge0, float edge1, float x) {
 
 static uint8_t unorm8(float x) { return (uint8_t)(clamp01f(x) * 255.0f + 0.5f); }
 
-/* Metallic as the renderer decodes it: stored as Metallic * 0.5 in an 8-bit
- * channel, read back as metallic unless the stored value reaches METAL_HI
- * (0.55), which reads as 0.25. */
+/* Metallic as the renderer decodes it. It is stored as Metallic * 0.5 in an
+ * 8-bit channel and read back as Metallic, unless the stored value reaches
+ * METAL_HI (0.55). In that case it reads as 0.25. */
 static float xwau_metallic(float metallic) {
 	const float stored = clamp01f(metallic * 0.5f);
 	return stored < 0.55f ? clamp01f(stored / 0.5f) : 0.25f;
 }
 
-/* Glossiness: stored in 8 bits, capped at 0.93; roughness = 1 - g^2. */
+/* Glossiness is stored in 8 bits and capped at 0.93. Roughness is 1 - g^2. */
 static float xwau_roughness(float glossiness) {
 	const float g = fminf(XWAU_GLASS_GLOSS, clamp01f(glossiness));
 	return 1.0f - g * g;
 }
 
-/* F0 = 0.16 * intensity^2 = 0.04 * specularColorFactor (specularFactor 1
- * keeps F90 = 1, as the renderer's Schlick term). */
+/* F0 = 0.16 * intensity^2 = 0.04 * specularColorFactor. specularFactor 1
+ * keeps F90 = 1, like the Schlick term of the renderer. */
 static float xwau_specular_color(float intensity) { return 4.0f * intensity * intensity; }
 
-/* 8bpp illumination: row 4 (dim) equals row 8 (base) and is not near-black. */
+/* 8bpp illumination: a texel is lit when row 4 (dim) equals row 8 (base)
+ * and is not near-black. */
 static bool xwau_palette_lit(const uint8_t* palette, uint8_t index) {
 	const uint8_t* dim = palette + ((size_t)4 * OPT_PALETTE_COLORS + index) * OPT_PALETTE_BPP;
 	const uint8_t* base =
@@ -108,7 +112,7 @@ bool XwauGltf_TextureHasIllum(const opt_texture_t* t) {
 	return false;
 }
 
-/* Copies `n` RGBA texels; NULL on OOM. */
+/* Returns a copy of `n` RGBA texels, or NULL when out of memory. */
 uint8_t* XwauGltf_RgbaDup(const uint8_t* rgba, size_t n) {
 	uint8_t* copy = (uint8_t*)malloc(n * 4);
 	if (copy)
@@ -116,8 +120,8 @@ uint8_t* XwauGltf_RgbaDup(const uint8_t* rgba, size_t n) {
 	return copy;
 }
 
-/* `colour`, when set, receives a copy of the decoded colours before the bake
- * (NULL without pixels). */
+/* When `colour` is set, it receives a copy of the decoded colours before the
+ * bake, or NULL when the texture has no pixels. */
 static bool xwau_bake_texture(const opt_texture_t* t, int base_shade, const XwauGltfMaterial* xm,
 							  XwauBaked* out, uint8_t** colour) {
 	memset(out, 0, sizeof *out);
@@ -146,12 +150,13 @@ static float linear_to_srgb(float c) {
 	return c <= 0.0031308f ? c * 12.92f : 1.055f * powf(c, 1.0f / 2.4f) - 0.055f;
 }
 
-/* The base colour of a material with illumination flipbooks
- * (XwauGltfAnim.anim_base): the colours `*colour` (before the bake),
- * which its frames apply over. XWAU shows them, lit, where a frame turns
- * the texture's own glow off; at rest the glowing texels then also receive
- * the scene's light. With an `always` flipbook the material has no
- * emission of its own (the frames are its glow). Frees `*colour`. */
+/* Sets the base colour of a material with illumination flipbooks
+ * (XwauGltfAnim.anim_base) to `*colour`, the colours before the bake. The
+ * frames are applied over this base. XWAU shows these colours, lit, where
+ * a frame turns off the glow of the texture. Because the base keeps them,
+ * the glowing texels also receive the light of the scene when no frame
+ * plays. With an `always` flipbook, the material has no emission of its
+ * own, because the frames are its glow. Frees `*colour`. */
 void XwauGltf_AnimBase(uint8_t** colour, uint32_t w, uint32_t h, const XwauGltfAnim* a, XwauBaked* baked) {
 	if (!a || !*colour || !baked->base)
 		return;
@@ -167,8 +172,9 @@ void XwauGltf_AnimBase(uint8_t** colour, uint32_t w, uint32_t h, const XwauGltfA
 	*colour = NULL;
 }
 
-/* Bakes `rgba`, the decoded colors of texture `t` (owned from here, baked in
- * place into out->base); `t` gives the alpha, illumination and format. */
+/* Bakes `rgba`, the decoded colors of texture `t`. The function takes
+ * ownership of `rgba` and bakes it in place into out->base. `t` gives the
+ * alpha, the illumination and the format. */
 bool XwauGltf_BakeRgba(const opt_texture_t* t, const XwauGltfMaterial* xm, uint8_t* rgba, XwauBaked* out) {
 	memset(out, 0, sizeof *out);
 	out->base                = rgba;
@@ -176,8 +182,9 @@ bool XwauGltf_BakeRgba(const opt_texture_t* t, const XwauGltfMaterial* xm, uint8
 	const bool   bpp32       = t->bytes_per_texel == 4;
 	const bool   transparent = t->alpha != NULL;
 	/* A shadeless transparent texture (cockpit glass) returns before the
-	   illumination branch (XwaD3dPixelShader.hlsl:80); so does a `lit` one,
-	   whose Shadeless the override cleared. */
+	   illumination branch (XwaD3dPixelShader.hlsl:80). A transparent `lit`
+	   texture is treated the same way, because the `lit` override cleared
+	   its Shadeless flag. */
 	const bool  has_illum   = XwauGltf_TextureHasIllum(t) && !(transparent && (xm->shadeless || xm->lit));
 	const bool  glass       = transparent && !xm->lit && !xm->shadeless && !xm->alpha_isnt_glass &&
 							  !xm->alpha_to_bloom && !has_illum;
@@ -251,15 +258,16 @@ bool XwauGltf_BakeRgba(const opt_texture_t* t, const XwauGltfMaterial* xm, uint8
 	}
 	out->specular_color = xwau_specular_color(xm->intensity);
 	if (glass && any_glass) {
-		/* Glass (KHR_materials_transmission): an opaque, thin material whose
-		 * base colour B tints the light it transmits, with the dielectric F0
-		 * 0.04 of real glass (XWAU's reflectance 1, F0 0.16, was for glass
-		 * mostly drawn unlit). XWAU blends the colour C over the background
-		 * with the coverage c the bake gave: bg·(1 - c) + C·c. With
-		 * B = (1 - c) + c·C (linear) and transmission T = (1 - c) / Y(B),
-		 * the spec's bg·T·B + (1 - T)·B gives both terms back for neutral
-		 * glass, and the background's luminance otherwise (the runtime tints
-		 * by Y(B), the Rec. 709 luminance). */
+		/* Glass uses KHR_materials_transmission. It is an opaque, thin
+		 * material whose base colour B tints the light it transmits, with
+		 * the dielectric F0 0.04 of real glass. XWAU used reflectance 1
+		 * (F0 0.16), but its glass was mostly drawn unlit. XWAU blends the
+		 * colour C over the background with the coverage c from the bake:
+		 * bg·(1 - c) + C·c. Here B = (1 - c) + c·C (linear), and the
+		 * transmission is T = (1 - c) / Y(B). The spec formula
+		 * bg·T·B + (1 - T)·B then gives both terms back for neutral glass.
+		 * For tinted glass, it gives back the luminance of the background,
+		 * because the runtime tints by Y(B), the Rec. 709 luminance. */
 		out->transmission = (uint8_t*)malloc(n * 4);
 		if (!out->transmission) {
 			XwauGltf_BakedFree(out);
@@ -289,9 +297,10 @@ bool XwauGltf_BakeRgba(const opt_texture_t* t, const XwauGltfMaterial* xm, uint8
 	return true;
 }
 
-/* Normal map with NMIntensity baked in: XWAU blends N = lerp(N_vertex,
- * N_mapped, k) in tangent space, i.e. n' = normalize(lerp((0,0,1), n, k)).
- * Output is 0..1-encoded RGB with A = 255. */
+/* Bakes NMIntensity into a normal map. XWAU blends
+ * N = lerp(N_vertex, N_mapped, k) in tangent space, which gives
+ * n' = normalize(lerp((0,0,1), n, k)). The output is RGB encoded as 0..1,
+ * with A = 255. */
 static uint8_t* xwau_bake_normal(const OptGltfImageView* map, float k) {
 	const size_t n   = (size_t)map->width * (size_t)map->height;
 	uint8_t*     out = (uint8_t*)malloc(n * 4);
@@ -327,7 +336,8 @@ struct XwauGltfBakeState {
 	XwauGltfSkins* skins;
 };
 
-/* `format` printed into a new string kept by `s`; NULL when out of memory. */
+/* Prints `format` into a new string that `s` keeps. Returns NULL when out of
+ * memory. */
 static const char* keep(struct XwauGltfBakeState* s, const char* format, ...) {
 	char    text[512];
 	va_list args;
@@ -343,7 +353,8 @@ static const char* keep(struct XwauGltfBakeState* s, const char* format, ...) {
 	return *slot = copy;
 }
 
-/* Texture `i`'s image `kind` (Tex<i>_<kind>, <basename>_Tex<i>_<kind>.png). */
+/* Sets image `kind` of texture `i`, named Tex<i>_<kind> and written to
+ * <basename>_Tex<i>_<kind>.png. */
 static bool texture_image(struct XwauGltfBakeState* s, const char* basename, int32_t i, const char* kind,
 						  uint8_t* rgba, const opt_texture_t* t, OptGltfImage* out) {
 	out->view = (OptGltfImageView) { rgba, (uint32_t)t->width, (uint32_t)t->height };
@@ -352,15 +363,15 @@ static bool texture_image(struct XwauGltfBakeState* s, const char* basename, int
 	return out->name && out->file;
 }
 
-/* Texture `i`'s given material, from its bake. */
+/* Builds the given material of texture `i` from its bake. */
 static bool texture_material(struct XwauGltfBakeState* s, const opt_file_t* opt, const char* basename,
 							 int32_t i, const XwauGltfMaterial* materials, const int32_t* normal_owner,
 							 const XwauGltfAnim* anims, OptGltfMaterial* m) {
 	const opt_texture_t* t     = &opt->textures[i];
 	const XwauBaked*     baked = &s->baked[i];
 	if (!baked->base)
-		return true; /* no pixels: the stock material */
-	/* XWAU materials are keyed by texture name: keep it. */
+		return true; /* no pixels: use the stock material */
+	/* XWAU materials are keyed by texture name, so keep that name. */
 	m->name            = t->name[0] ? t->name : NULL;
 	m->base.view       = (OptGltfImageView) { baked->base, (uint32_t)t->width, (uint32_t)t->height };
 	m->alpha_from_base = baked->transparent;
@@ -411,10 +422,11 @@ bool XwauGltf_Bake(const opt_file_t* opt, const char* basename, const XwauGltfMa
 	}
 	bool ok = s && owner && out->textures && s->baked && s->normals;
 	if (!ok)
-		Report(NULL, "oom (xwau)");
+		Report(NULL, "out of memory (xwau)");
 
-	/* Each texture's bake, and the first texture sharing its baked normal
-	 * map (same source and NMIntensity), which bakes it. */
+	/* Bake each texture. Also find the first texture with the same normal
+	 * map source and NMIntensity. That texture bakes the shared normal
+	 * map. */
 	const int base_shade = opt_palette_base_shade(opt);
 	for (int32_t i = 0; ok && i < opt->texture_count; ++i) {
 		const opt_texture_t* t      = &opt->textures[i];
@@ -422,7 +434,7 @@ bool XwauGltf_Bake(const opt_file_t* opt, const char* basename, const XwauGltfMa
 		uint8_t*             colour = NULL;
 		if (!xwau_bake_texture(t, base_shade, &materials[i], &s->baked[i],
 							   a && a->anim_base ? &colour : NULL)) {
-			Report(NULL, "oom (xwau bake)");
+			Report(NULL, "out of memory (xwau bake)");
 			ok = false;
 			break;
 		}
@@ -444,14 +456,14 @@ bool XwauGltf_Bake(const opt_file_t* opt, const char* basename, const XwauGltfMa
 		if (owner[i] != i)
 			continue;
 		if (!(s->normals[i] = xwau_bake_normal(&materials[i].normal_map, materials[i].nm_intensity))) {
-			Report(NULL, "oom (xwau normal)");
+			Report(NULL, "out of memory (xwau normal)");
 			ok = false;
 		}
 	}
 	for (int32_t i = 0; ok && i < opt->texture_count; ++i)
 		ok = texture_material(s, opt, basename, i, materials, owner, anims, &out->textures[i]);
 
-	/* Untextured faces: grey, with the material's unlit split. */
+	/* Untextured faces are grey, split by the unlit weight of the material. */
 	const float unlit = XwauGltf_Unlit(untextured);
 	for (int channel = 0; ok && channel < 3; ++channel) {
 		const float grey                         = 0.6f;

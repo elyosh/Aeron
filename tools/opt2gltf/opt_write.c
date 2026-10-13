@@ -86,7 +86,8 @@ void opt_writer_free(opt_writer_t* writer) {
 	free(writer);
 }
 
-/* Adds a node and returns its handle; `payload` (owned) may be NULL. */
+/* Adds a node and returns its handle. The node takes ownership of
+ * `payload`, which can be NULL. */
 static opt_wnode_t add_node(opt_writer_t* writer, int32_t type, const char* name, const opt_wnode_t* children,
 							int child_count, int32_t param1, uint8_t* payload, uint32_t payload_size) {
 	if (!writer || writer->failed || child_count < 0 || (child_count && !children))
@@ -248,8 +249,8 @@ opt_wnode_t opt_w_texture(opt_writer_t* writer, const char* name, int width, int
 	if (!writer || !name || width <= 0 || height <= 0 || width > 16384 || height > 16384 || !mip_chain ||
 		chain_bytes < width * height || !rgb565_16x256)
 		return node_failed(writer);
-	/* V2 palettes prefix the RGB565 rows with a 4096-byte 8-bit shade table,
-	 * left at the 0xCD fill the original tools wrote. */
+	/* In V2, a 4096-byte 8-bit shade table comes before the RGB565 rows. It
+	 * is filled with 0xCD, as the original tools wrote it. */
 	const uint32_t prefix  = writer->profile == OPT_WRITE_PROFILE_V2 ? 4096u : 0u;
 	const uint32_t palette = prefix + 16u * 256u * 2u;
 	const uint32_t size    = TEXTURE_HEADER_BYTES + (uint32_t)chain_bytes + palette;
@@ -300,7 +301,8 @@ static uint64_t node_bytes(const write_node* node) {
 		   node->payload_size;
 }
 
-/* Assigns pre-order offsets: each node is followed by its unplaced children. */
+/* Assigns offsets in pre-order. Each node is followed by its children that
+ * are not placed yet. */
 static bool place(opt_writer_t* writer, opt_wnode_t handle, uint64_t* cursor, int depth) {
 	if (handle == 0)
 		return true;

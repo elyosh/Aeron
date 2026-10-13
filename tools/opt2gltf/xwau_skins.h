@@ -2,29 +2,34 @@
 #define AERON_OPT2GLTF_XWAU_SKINS_H
 
 /*
- * XWAU skins of one OPT (hook_32bpp: ReadOptFunction, ReadFgSkins,
- * GetFlightgroupsColors), as the converter's skin variants (opt_gltf.h).
+ * Converts the XWAU skins of one OPT (hook_32bpp: ReadOptFunction,
+ * ReadFgSkins, GetFlightgroupsColors) into skin variants for the converter
+ * (opt_gltf.h).
  *
- * A skin is FlightModels/Skins/<Opt>/<Skin>, a folder with files at its top
- * level, else <Skin>.zip.
- * Each skin context (xwau_missions.h) gives each markings value i a list:
- * the `<Opt> = ...` tokens then the `<Opt>_fgc_<i> = ...` ones; when both
- * are empty, Default_<i> if that skin exists, else Default. The values
- * counted are up to the highest _fgc_ line, the OPT's states and the highest
- * Default_<N> skin. A token is `<skin>[-<opacity>]` (opacity clamped to 0
- * to 100, 100 when it does not parse); a skin that does not exist adds
- * nothing, and a list left empty shows no skin. Unskinned face groups show
- * state i when the OPT has that many states, else 0.
+ * A skin is a folder FlightModels/Skins/<Opt>/<Skin> with files at its top
+ * level, or else a file <Skin>.zip in FlightModels/Skins/<Opt>.
  *
- * Every distinct list over the contexts is a variant, named
- * "<state>|<skin>[-<opacity>],..." (lower case); the global context gives
- * the markings values' default variants.
+ * Each skin context (xwau_missions.h) gives each markings value i a list of
+ * tokens. The list holds the `<Opt> = ...` tokens followed by the
+ * `<Opt>_fgc_<i> = ...` tokens. When both are empty, the list is
+ * Default_<i> if that skin exists, or else Default. The markings values go
+ * up to the highest _fgc_ line, the last state of the OPT or the highest
+ * Default_<N> skin, whichever is highest. A token is `<skin>[-<opacity>]`.
+ * The opacity is clamped to 0..100, and it is 100 when it does not parse.
+ * A skin that does not exist adds nothing, and a list that ends up empty
+ * shows no skin. Face groups without a skin show state i if the OPT has
+ * more than i states, or else state 0.
  *
- * A skin's image for an OPT texture is its file named after the texture
- * (case-insensitive) with .bmp, else .png, else .jpg: in a zip, the first
- * entry with that file name, whatever its folder. It is decoded at 8 bits
- * per channel and flipped vertically into OPT row order, as the hook flips
- * it; an image of another size than the texture's is skipped and reported.
+ * Each distinct list across the contexts is a variant, named
+ * "<state>|<skin>[-<opacity>],..." (lower case). The global context gives
+ * the default variant of each markings value.
+ *
+ * The image of a skin for an OPT texture is the skin file named after the
+ * texture (in any case), with .bmp, .png or .jpg tried in this order. In a
+ * zip, it is the first entry with that file name, in any folder. The image
+ * is decoded at 8 bits per channel and flipped vertically into OPT row
+ * order, as the hook does. An image whose size is not the texture's size is
+ * skipped and reported.
  */
 
 #include <stdbool.h>
@@ -36,13 +41,13 @@
 #include "xwau_missions.h"
 
 /*
- * The skins as material variants, each after the state variants (the
- * conversion's are xwau_gltf_skins.h). For every state-0 texture of LOD 0
- * that is not a screen surface, a variant's layers with an image for the
- * texture are blended, in order and with the hook's integer straight-alpha
- * blend, onto its decoded colors; the result is baked as the texture is and
- * gets its own material. Primitives without a composite in a variant show
- * the material of the variant's state.
+ * The skins as material variants, which come after the state variants. The
+ * conversion is in xwau_gltf_skins.h. For each state-0 texture of LOD 0
+ * that is not a screen surface, the layers of a variant that have an image
+ * for the texture are blended onto its decoded colors. They are blended in
+ * order, with the hook's integer straight-alpha blend. The result is baked
+ * in the same way as the texture and gets its own material. Primitives
+ * without a composite in a variant show the material of the variant's state.
  */
 typedef struct XwauSkinLayer {
 	uint32_t skin;    /* index into XwauSkinVariants.images rows */
@@ -57,14 +62,14 @@ typedef struct XwauSkinVariant {
 } XwauSkinVariant;
 
 typedef struct XwauSkinVariants {
-	/* images[skin * opt->texture_count + texture]: the skin's image for that
-	 * OPT texture, of the texture's size, rows in OPT order; rgba NULL when
-	 * the skin has none. */
+	/* images[skin * opt->texture_count + texture] is the image of the skin
+	 * for that OPT texture. It has the size of the texture and its rows are
+	 * in OPT order. rgba is NULL when the skin has no image for it. */
 	const OptGltfImageView* images;
 	size_t                  skin_count;
 	const XwauSkinVariant*  variants;
 	size_t                  variant_count;
-	/* Variant name per markings value; NULL for an unskinned one. */
+	/* Variant name for each markings value, or NULL when it has no skin. */
 	const char* const* default_markings;
 	size_t             markings_count;
 } XwauSkinVariants;
@@ -80,19 +85,21 @@ typedef struct XwauSkins {
 	char**            markings;
 } XwauSkins;
 
-/* Resolves the skins of `model` (the OPT's name without extension). No
- * variant (skins.variant_count 0) when it shows none. False on an error
- * (reported). */
+/* Resolves the skins of `model` (the OPT's name without extension). When
+ * the model shows no skin, skins.variant_count is 0. Returns false on an
+ * error, which is reported. */
 bool XwauSkins_Resolve(const char* game, const XwauMissions* missions, const char* model,
 					   const opt_file_t* opt, const char* label, XwauSkins* out);
 void XwauSkins_Free(XwauSkins* skins);
 
-/* The OPT's states: the largest texture count of a LOD 0 face group. */
+/* Returns the state count of the OPT, which is the largest texture count of
+ * a LOD 0 face group. */
 int XwauSkins_StateCount(const opt_file_t* opt);
 
-/* The skins of a model: the folders and zips of FlightModels/Skins/<Opt>. */
+/* The skins of a model, which are the folders and zips in
+ * FlightModels/Skins/<Opt>. */
 typedef struct XwauSkinSet {
-	char** names; /* lower case; "" is the skin folder's own files */
+	char** names; /* lower case; "" is for the files directly in Skins/<Opt> */
 	size_t count;
 	bool   exists; /* the game has FlightModels/Skins/<Opt> */
 } XwauSkinSet;
@@ -102,17 +109,19 @@ void XwauSkins_FreeNames(XwauSkinSet* set);
 
 #define XWAU_SKINS_MAX_MARKINGS 256
 
-/* What a markings value shows in one skin context: its list (the variant
- * "<state>|<list>" when skinned), or no skin and state `state`. */
+/* What a markings value shows in one skin context. When it is skinned, it
+ * shows its list as the variant "<state>|<list>". Otherwise it shows no
+ * skin, with state `state`. */
 typedef struct XwauMarkings {
 	bool skinned;
 	int  state;
 	char list[1024];
 } XwauMarkings;
 
-/* The markings values of `model`, of `states` states, in the skin context
- * `lines` (*count of them, at most XWAU_SKINS_MAX_MARKINGS; 0 when it shows
- * no skin). False when out of memory. */
+/* Resolves the markings values of `model`, which has `states` states, in
+ * the skin context `lines`. Sets *count to their number, at most
+ * XWAU_SKINS_MAX_MARKINGS, or 0 when the model shows no skin. Returns false
+ * when out of memory. */
 bool XwauSkins_Markings(const XwauLines* lines, const char* model, int states, const XwauSkinSet* skins,
 						XwauMarkings* out, size_t* count);
 

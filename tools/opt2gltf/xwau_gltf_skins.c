@@ -8,16 +8,17 @@
 #include "util.h"
 #include "xwau_config.h"
 
-/* One composite: texture `texture` with the effective chain `chain` (the
- * layers of a variant that have an image for it), shared by `variants`. */
+/* One composite: texture `texture` with the layer chain `chain`, shared by
+ * `variants`. The chain holds the layers of a variant that have an image
+ * for the texture. */
 typedef struct SkinComposite {
 	int32_t        texture;
 	XwauSkinLayer* chain;
 	size_t         chain_count;
 	XwauBaked      baked;
-	/* The bake's emissive / metallic-roughness / transmission equal the
-	 * texture's own: the composite material keeps the texture's (baked
-	 * copies freed). */
+	/* Set when the baked emissive, metallic-roughness or transmission is
+	 * equal to that of the texture. The composite material then uses the
+	 * image of the texture, and the baked copy is freed. */
 	bool      same_emissive;
 	bool      same_metal_rough;
 	bool      same_transmission;
@@ -45,8 +46,9 @@ static void skin_state_free(SkinState* state) {
 	memset(state, 0, sizeof *state);
 }
 
-/* The hook's CombineTextures: straight alpha in integer arithmetic onto the
- * color channels; the destination alpha is kept. */
+/* Same as CombineTextures in the hook: blends with straight alpha, in
+ * integer arithmetic, onto the color channels. The destination alpha is
+ * kept. */
 static void skin_blend(uint8_t* dst, const OptGltfImageView* src, uint32_t opacity) {
 	const size_t n = (size_t)src->width * src->height;
 	for (size_t i = 0; i < n; ++i) {
@@ -66,7 +68,8 @@ static bool skin_chain_equal(const SkinComposite* c, int32_t texture, const Xwau
 	return true;
 }
 
-/* Skin layers in range, and variant names set and unique. */
+/* Checks that the skin layers are in range, and that the variant names are
+ * set and unique. */
 static bool skin_validate(const XwauSkinVariants* skins, const char* basename) {
 	for (size_t v = 0; v < skins->variant_count; ++v) {
 		const XwauSkinVariant* variant = &skins->variants[v];
@@ -84,8 +87,8 @@ static bool skin_validate(const XwauSkinVariants* skins, const char* basename) {
 	return true;
 }
 
-/* Finds and bakes the composites. `baked` holds each texture's own bake;
- * textures without pixels and screen surfaces are not skinned. */
+/* Finds and bakes the composites. `baked` holds the bake of each texture.
+ * Textures without pixels and screen surfaces get no skins. */
 static bool skin_state_build(const opt_file_t* opt, const XwauSkinVariants* skins,
 							 const OptGltfScreen* screens, int base_shade, const XwauGltfMaterial* xwau,
 							 const XwauGltfAnim* anim, const XwauBaked* baked, SkinState* state) {
@@ -215,7 +218,8 @@ struct XwauGltfSkins {
 	size_t                  own_metal_rough;
 };
 
-/* `format` printed into a new string kept by `s`; NULL when out of memory. */
+/* Prints `format` into a new string that `s` keeps. Returns NULL when out of
+ * memory. */
 static const char* keep(XwauGltfSkins* s, const char* format, ...) {
 	char    text[512];
 	va_list args;
@@ -231,7 +235,7 @@ static const char* keep(XwauGltfSkins* s, const char* format, ...) {
 	return *slot = copy;
 }
 
-/* Composite `c`'s image `kind` ("" for its base). */
+/* Sets image `kind` of composite `c` ("" for its base image). */
 static bool composite_image(XwauGltfSkins* s, const char* basename, size_t c, int32_t texture,
 							const char* kind, uint8_t* rgba, uint32_t w, uint32_t h, OptGltfImage* out) {
 	out->view = (OptGltfImageView) { rgba, w, h };
@@ -240,9 +244,9 @@ static bool composite_image(XwauGltfSkins* s, const char* basename, size_t c, in
 	return out->name && out->file;
 }
 
-/* Composite `c`'s material: a copy of its texture's with the composite's
- * base color, and its own emissive, metallic-roughness or transmission
- * where they differ. */
+/* Builds the material of composite `c`. It is a copy of the material of
+ * its texture, with the base color of the composite. Where the emissive,
+ * metallic-roughness or transmission differ, it uses its own. */
 static bool composite_material(XwauGltfSkins* s, const char* basename, size_t c, const OptGltfMaterial* own,
 							   const XwauGltfAnim* anims, OptGltfVariantMaterial* out) {
 	SkinComposite*   composite = &s->state.composites[c];
@@ -296,7 +300,7 @@ XwauGltfSkins* XwauGltfSkins_Build(const opt_file_t* opt, const char* basename, 
 		return NULL;
 	XwauGltfSkins* s = (XwauGltfSkins*)calloc(1, sizeof *s);
 	if (!s || !skin_state_build(opt, skins, screens, base_shade, materials, anims, baked, &s->state)) {
-		Report(NULL, "oom (skins)");
+		Report(NULL, "out of memory (skins)");
 		free(s);
 		return NULL;
 	}
@@ -310,7 +314,7 @@ XwauGltfSkins* XwauGltfSkins_Build(const opt_file_t* opt, const char* basename, 
 		ok = composite_material(s, basename, c, &textures[s->state.composites[c].texture], anims,
 								&s->materials[c]);
 	if (!ok) {
-		Report(NULL, "oom (skins)");
+		Report(NULL, "out of memory (skins)");
 		XwauGltfSkins_Free(s);
 		return NULL;
 	}

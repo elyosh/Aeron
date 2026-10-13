@@ -1,5 +1,5 @@
 /*
- * XWAU Dynamic Cockpit files resolved into opt2gltf screen surfaces
+ * Reads XWAU Dynamic Cockpit files into opt2gltf screen surfaces
  * (xwau_dynamic_cockpit.h).
  */
 
@@ -16,8 +16,9 @@
 #include <string.h>
 #include <strings.h>
 
-/* xwa_ddraw_d3d11 DynamicCockpit.h: MAX_DC_SRC_ELEMENTS sections per
- * cockpit, MAX_DC_COORDS_PER_TEXTURE rectangles and erase regions each. */
+/* Limits from DynamicCockpit.h in xwa_ddraw_d3d11: MAX_DC_SRC_ELEMENTS
+ * sections per cockpit, and MAX_DC_COORDS_PER_TEXTURE rectangles and erase
+ * regions per section. */
 #define DC_MAX_SECTIONS 57
 #define DC_MAX_COORDS 12
 
@@ -114,7 +115,7 @@ struct XwauDynamicCockpitCover {
 	char         name[160]; /* <datbase>_<group>_<image> */
 	XwauDatImage image;
 	uint8_t*     base;
-	uint8_t*     emissive; /* NULL without lit texels */
+	uint8_t*     emissive; /* NULL when no texel is lit */
 	bool         ok;
 };
 
@@ -125,8 +126,8 @@ static int lookup_name(const char* const* names, size_t count, const char* name)
 	return -1;
 }
 
-/* ReadNameFromLine: the first token, without a trailing ';' or ','. Returns
- * the token length before that strip (0 when absent). */
+/* ReadNameFromLine: reads the first token and removes a trailing ';' or ','.
+ * Returns the token length before the removal, or 0 when there is no token. */
 static int read_name_from_line(const char* buf, char name[50]) {
 	if (sscanf(buf, "%49s", name) < 1)
 		return 0;
@@ -218,9 +219,9 @@ static void color_to_linear(uint32_t color, float out[3]) {
 	out[2] = srgb_to_linear((float)(color & 0xffu) / 255.0f);
 }
 
-/* The cover's base image (premultiplied colour, cover alpha) and its lit
- * texels (PixelShaderDC: V * a >= 0.8 is shadeless and 20% brighter; it
- * shows no HUD, hence base alpha 1). */
+/* Bakes the base image of the cover (premultiplied colour, cover alpha) and
+ * its lit texels. In PixelShaderDC, a texel with V * a >= 0.8 is shadeless and
+ * 20% brighter. It shows no HUD, so its base alpha is 1. */
 static bool bake_cover(XwauDynamicCockpitCover* cover) {
 	const size_t n = (size_t)cover->image.width * cover->image.height;
 	cover->base    = (uint8_t*)malloc(n * 4);
@@ -258,7 +259,7 @@ static bool bake_cover(XwauDynamicCockpitCover* cover) {
 	return true;
 }
 
-/* Load (once per cockpit) the cover a cover_texture value names. */
+/* Loads the cover that a cover_texture value names, once per cockpit. */
 static const XwauDynamicCockpitCover* load_cover(XwauDynamicCockpit* dc, const char* value,
 												 XwauDynamicCockpitFindFile find, void* find_context,
 												 const char* label) {
@@ -492,7 +493,7 @@ bool XwauDynamicCockpit_Load(const char* dc_path, const opt_file_t* opt, const c
 		}
 		OptGltfScreen* screen = &out->screens[ti];
 		if (screen->present) {
-			Report(label, "section [%s] repeats texture %s; skipped", section->name, texture);
+			Report(label, "section [%s]: texture %s is already used; skipped", section->name, texture);
 			continue;
 		}
 		screen->present        = true;
@@ -519,8 +520,8 @@ bool XwauDynamicCockpit_Load(const char* dc_path, const opt_file_t* opt, const c
 				memcpy(r->bar, bar, sizeof bar);
 			}
 		}
-		/* Without rectangles XWAU draws the texture as it is; the section
-		 * only erases HUD regions. */
+		/* Without rectangles, XWAU draws the texture as it is, and the
+		 * section only erases HUD regions. */
 		if (screen->rect_count == 0) {
 			screen->transparent = screen->hologram = screen->noisy = false;
 		} else if (section->cover[0] && !section->hologram) {
@@ -532,7 +533,7 @@ bool XwauDynamicCockpit_Load(const char* dc_path, const opt_file_t* opt, const c
 					(OptGltfImageView) { cover->emissive, cover->emissive ? cover->image.width : 0,
 										 cover->emissive ? cover->image.height : 0 };
 				screen->cover_name = cover->name;
-				/* Lit texels glow as the illumination does. */
+				/* Lit texels glow with the same strength as illumination. */
 				screen->cover_emissive_strength = XWAU_GLTF_ILLUM_GAIN;
 			}
 		}

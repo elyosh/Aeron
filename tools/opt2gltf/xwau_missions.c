@@ -15,7 +15,7 @@
 #define COMPONENT_MAX 254
 #define FLIGHT_GROUP_MAX 192
 
-/* An XWA .TIE: the header, then the flight groups. */
+/* An XWA .TIE file has a header, followed by the flight groups. */
 #define TIE_HEADER_SIZE 0x23F0
 #define TIE_FLIGHT_GROUP_SIZE 0xE3E
 #define TIE_FLIGHT_GROUP_NAME 20
@@ -50,7 +50,7 @@ typedef struct ModelVariants {
 	size_t   count;
 } ModelVariants;
 
-/* The flight groups a mission starts deployed or gives a variant. */
+/* The flight groups that a mission starts deployed or gives a variant. */
 typedef struct MissionArticulations {
 	char                         base[256]; /* "<dir>/<lower-case name>" */
 	XwauFlightGroupArticulation* fgs;
@@ -74,7 +74,7 @@ static void lists_free(Lists* lists) {
 	memset(lists, 0, sizeof *lists);
 }
 
-/* Reports a problem of mission `base`, when the missions report. */
+/* Reports a problem in mission `base`, if reporting is on. */
 static void report(const XwauMissions* m, const char* base, const char* format, ...) {
 	if (!m->report)
 		return;
@@ -107,8 +107,9 @@ static bool copy_lines(const XwauLines* from, XwauLines* to) {
 	return true;
 }
 
-/* The missions with a .ini or _Skins.txt: "<dir>/<base>" as first found,
- * sorted by its lower case. */
+/* Lists the missions that have a .ini or _Skins.txt file, as "<dir>/<base>".
+ * Each mission is listed once, with the spelling found first. The list is
+ * sorted by lower-case path. */
 static bool skin_missions(const char* game, XwauLines* out) {
 	memset(out, 0, sizeof *out);
 	XwauLines keys = { 0 };
@@ -136,7 +137,7 @@ static bool skin_missions(const char* game, XwauLines* out) {
 					seen = strcmp(keys.items[k], key) == 0;
 				if (seen)
 					continue;
-				/* "<key>\n<path>": sorted by the key. */
+				/* Each entry is "<key>\n<path>", so sorting the entries sorts by key. */
 				const size_t size  = strlen(key) + strlen(path) + 2;
 				char*        entry = (char*)malloc(size);
 				char**       slot  = entry ? ARRAY_PUSH(keys.items, keys.count) : NULL;
@@ -176,7 +177,7 @@ static bool load_skin_contexts(const char* game, XwauMissions* m) {
 		memset(&global, 0, sizeof global);
 	}
 	for (size_t i = 0; ok && i < missions.count; ++i) {
-		/* The mission's own lines, else the global ones. */
+		/* The mission's own lines, or the global ones when it has none. */
 		XwauLines* lines = &m->contexts[m->context_count];
 		ok               = XwauMissions_OwnSkinLines(game, missions.items[i], lines);
 		if (ok && !lines->count)
@@ -256,7 +257,8 @@ bool XwauMissions_Names(const char* game, const char* dir_name, XwauLines* out) 
 	return ok;
 }
 
-/* "<section>_fg_<N>" (N without leading zeros): the section and N. */
+/* Splits "<section>_fg_<N>" into the section and N. N must have no leading
+ * zeros. */
 static bool split_fg_section(const char* section, char* base, size_t cap, int* fg) {
 	const char* at = NULL;
 	for (const char* p = section; *p; ++p)
@@ -316,7 +318,8 @@ typedef struct FlightGroupLists {
 	Lists       lists;
 } FlightGroupLists;
 
-/* Flight group `fg` of `fgs`, added when new; NULL when out of memory. */
+/* Finds flight group `fg` in `fgs`, or adds it. Returns NULL when out of
+ * memory. */
 static FlightGroupLists* flight_group_lists(FlightGroupLists** fgs, size_t* count, int fg) {
 	for (size_t i = 0; i < *count; ++i)
 		if ((*fgs)[i].fg == fg)
@@ -333,8 +336,9 @@ static const struct {
 	const char* group;
 } kStartElements[] = { { "close_SFoils", "sfoils" }, { "open_LandingGears", "landing_gear" } };
 
-/* The start lines "fg, N, close_SFoils, 1" and "fg, N, open_LandingGears, 1"
- * of mission `base` (<mission>.txt, else [mission_tie] of <mission>.ini). */
+/* Reads the start lines "fg, N, close_SFoils, 1" and
+ * "fg, N, open_LandingGears, 1" of mission `base`. They come from
+ * <mission>.txt, or else from the [mission_tie] section of <mission>.ini. */
 static bool start_lines(const char* game, const XwauMissions* m, const char* base, FlightGroupLists** fgs,
 						size_t* count) {
 	char      rel[1100], path[1024];
@@ -378,8 +382,8 @@ static bool start_lines(const char* game, const XwauMissions* m, const char* bas
 	return ok;
 }
 
-/* The lists of each flight group of mission `base`: its [<Section>_fg_N]
- * sections. */
+/* Reads the lists of each flight group of mission `base` from its
+ * [<Section>_fg_N] sections. */
 static bool mission_lists(const char* game, const XwauMissions* m, const char* base, FlightGroupLists** out,
 						  size_t* count) {
 	char rel[1100], ini[1024];
@@ -389,7 +393,7 @@ static bool mission_lists(const char* game, const XwauMissions* m, const char* b
 	XwauLines  sections;
 	if (!ini_sections(has_ini ? ini : NULL, &sections))
 		return false;
-	/* Then <mission>_<section>.txt files, in listing order. */
+	/* Add the sections of the <mission>_<section>.txt files, in listing order. */
 	const char* slash = strrchr(base, '/');
 	char        dir_name[256], prefix[512];
 	snprintf(dir_name, sizeof dir_name, "%.*s", (int)(slash - base), base);
@@ -432,7 +436,7 @@ static bool mission_lists(const char* game, const XwauMissions* m, const char* b
 							&lines);
 		if (ok && !lines.count)
 			ok = XwauLines_Read(has_ini ? ini : NULL, sections.items[s], XWAU_RULES_CPP, &lines);
-		/* The hook's settings keys are not flight-group ones. */
+		/* The hook does not read its settings keys from flight group sections. */
 		for (size_t i = 0; ok && i < lines.count; ++i) {
 			XwauLines tokens;
 			ok = Xwau_Tokenize(lines.items[i], XWAU_RULES_CPP, &tokens);
@@ -445,7 +449,7 @@ static bool mission_lists(const char* game, const XwauMissions* m, const char* b
 		ok = ok && XwauModel_MeshLines(&lines, &mesh_lines, &mesh_count, m->report ? base : NULL,
 									   sections.items[s]);
 		XwauLines_Free(&lines);
-		/* The flight group's lists, and its group's meshes. */
+		/* Add the meshes to the flight group's list for this group. */
 		FlightGroupLists* entry = ok ? flight_group_lists(out, count, fg) : NULL;
 		GroupList*        list  = entry ? group_list(&entry->lists, group) : NULL;
 		ok                      = ok && list;
@@ -469,7 +473,8 @@ static bool mission_lists(const char* game, const XwauMissions* m, const char* b
 			for (size_t k = 0; !listed && k < list->count; ++k)
 				listed = list->meshes[k].mesh == (int)v[0];
 			if (listed) {
-				report(m, base, "%s: mesh %lld listed again; the first line is kept", section, v[0]);
+				report(m, base, "%s: mesh %lld is listed again, and only the first line is kept", section,
+					   v[0]);
 				continue;
 			}
 			MeshEntry* mesh = ARRAY_PUSH(list->meshes, list->count);
@@ -477,7 +482,7 @@ static bool mission_lists(const char* game, const XwauMissions* m, const char* b
 				*mesh = (MeshEntry) { (int)v[0], (int)v[1], (int)v[2], (int)v[3] };
 		}
 		free(mesh_lines);
-		/* A group without meshes is no list. */
+		/* Remove the group if it has no meshes. */
 		if (ok && list && !list->count) {
 			free(list->meshes);
 			*list = entry->lists.groups[--entry->lists.count];
@@ -508,8 +513,8 @@ static bool same_lists(const Lists* a, const Lists* b) {
 	return true;
 }
 
-/* The craft list rows: the lower-case model names of
- * FlightModels/Spacecraft0.LST. */
+/* Reads the rows of the craft list FlightModels/Spacecraft0.LST as
+ * lower-case model names. */
 static bool craft_list(const char* game, XwauLines* rows) {
 	memset(rows, 0, sizeof *rows);
 	char      path[1024];
@@ -584,8 +589,8 @@ static int compare_fg(const void* a, const void* b) {
 	return ((const FlightGroupLists*)a)->fg - ((const FlightGroupLists*)b)->fg;
 }
 
-/* Flight group `fg` of mission `base`'s articulations; NULL when out of
- * memory. */
+/* Adds flight group `fg` to the articulations of mission `base`. Returns
+ * NULL when out of memory. */
 static XwauFlightGroupArticulation* add_articulation(XwauMissions* m, const char* base, int fg) {
 	MissionArticulations* mission = m->mission_count ? &m->missions[m->mission_count - 1] : NULL;
 	if (!mission || strcmp(mission->base, base) != 0) {
@@ -631,7 +636,8 @@ static bool load_variants(const char* game, XwauMissions* m) {
 					ModelVariants* model = NULL;
 					if (row < 0 || (size_t)row >= rows.count)
 						report(m, base,
-							   "flight group %d: articulation lists dropped: no model for its craft type",
+							   "flight group %d: the articulation lists are dropped because its craft type "
+							   "has no model",
 							   fgs[i].fg);
 					else
 						ok = (model = model_variants(m, rows.items[row], true)) != NULL;
@@ -642,7 +648,8 @@ static bool load_variants(const char* game, XwauMissions* m) {
 						Variant* v = ARRAY_PUSH(model->variants, model->count);
 						ok         = v != NULL;
 						if (ok) {
-							/* The name: "<mission>_fg<N>", other than [a-z0-9_] as '_'. */
+							/* The name is "<mission>_fg<N>", with every character outside [a-z0-9_]
+							 * replaced by '_'. */
 							snprintf(v->name, sizeof v->name, "%s_fg%d", names.items[n], fgs[i].fg);
 							for (char* c = v->name; *c; ++c)
 								if (!((*c >= 'a' && *c <= 'z') || (*c >= '0' && *c <= '9') || *c == '_'))

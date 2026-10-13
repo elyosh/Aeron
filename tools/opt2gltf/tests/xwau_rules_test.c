@@ -1,8 +1,9 @@
 /*
- * The hooks' file rules opt2gltf reproduces (xwau_config.h) and its skin
- * selection (xwau_skins.h), on fixed texts and skin folders written under a
- * scratch folder. Built with the tools as opt2gltf_xwau_test; prints each
- * check, exits non-zero on a failure.
+ * Tests the hook file rules that opt2gltf reproduces (xwau_config.h) and its
+ * skin selection (xwau_skins.h). The inputs are fixed texts and skin folders
+ * written to a scratch folder. The test is built with the tools as
+ * opt2gltf_xwau_test. It prints each check and exits with a non-zero status
+ * when a check fails.
  */
 
 #include <stdio.h>
@@ -60,7 +61,7 @@ static void test_rules(const char* scratch) {
 	XwauLines_Read(path, "CockpitPov", XWAU_RULES_CPP, &lines);
 	XwauLines_Value(&lines, "COCKPITPOVX", XWAU_RULES_CPP, value, sizeof value);
 	check(lines.count == 2 && strcmp(value, "2") == 0,
-		  "sections whole and without case ([CockpitPov;] is another), the first key wins");
+		  "section names match whole and in any case ([CockpitPov;] differs), and the first key wins");
 	XwauLines_Free(&lines);
 
 	snprintf(path, sizeof path, "%s/cs.txt", scratch);
@@ -77,9 +78,10 @@ static void test_rules(const char* scratch) {
 
 /* ---- Skins ------------------------------------------------------------------ */
 
-/* A case: the global skin lines, the OPT's skins ("" for a file directly in
- * its skin folder; NULL for no skin folder), its states, and the expected
- * default markings (NULL: unskinned; none when no variant). */
+/* A test case: the global skin lines, the OPT's skins, its state count and
+ * the expected default markings. In `skins`, "" puts a file directly in the
+ * skin folder, and a NULL first entry means no skin folder. In `expected`,
+ * NULL means unskinned, and nothing is expected when there is no variant. */
 typedef struct Case {
 	const char*       what;
 	const char*       lines;
@@ -188,7 +190,7 @@ static void test_skins(const char* scratch) {
 			write_file(path, "x");
 		}
 		XwauMissions* missions = XwauMissions_Load(root, false);
-		/* An OPT with one face group of `states` states, no texture. */
+		/* An OPT with one face group that has `states` states and no texture. */
 		opt_face_group_t group = { 0 };
 		group.state_count      = k->states;
 		opt_lod_t  lod         = { 0 };
@@ -205,7 +207,7 @@ static void test_skins(const char* scratch) {
 		if (ok && k->markings < 0) {
 			ok = skins.skins.variant_count == 0;
 		} else if (ok) {
-			/* The default markings, unskinned values NULL. */
+			/* Compare the default markings. Unskinned values are NULL. */
 			ok = skins.skins.markings_count == (size_t)k->markings;
 			for (int i = 0; ok && i < k->markings; ++i) {
 				const char* got = skins.markings[i];

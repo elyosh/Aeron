@@ -143,7 +143,7 @@ bool MakeDirs(const char* path) {
 	struct stat st;
 	if (stat(path, &st) == 0)
 		return false;
-	/* Its parent first. */
+	/* Create the parent first. */
 	char* parent = StrDup(path);
 	if (!parent)
 		return false;

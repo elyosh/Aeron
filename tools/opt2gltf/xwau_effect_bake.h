@@ -2,10 +2,10 @@
 #define AERON_XWAU_EFFECT_BAKE_H
 
 /*
- * Bakes of XWAU animation frames into effect-library images. A source is a decoded DAT
- * image (sRGB-encoded R, G, B and linear A, rows in file order); `tint` and
- * `alpha_mode` are the sequence's. Each kind is computed in linear light and
- * stored sRGB-encoded, with linear alpha.
+ * Bakes XWAU animation frames into effect library images. The source is a
+ * decoded DAT image with sRGB-encoded R, G, B and linear A, and rows in file
+ * order. `tint` and `alpha_mode` come from the sequence. Each kind is computed
+ * in linear light and stored sRGB-encoded, with linear alpha.
  *
  *   illumination  layer:    RGB layer_rgb = L'·a·(1 − s), A k = (1 − a)(1 − s)
  *                 emissive: RGB L'·a·s, A 255
@@ -15,9 +15,10 @@
  *   energy        emissive: RGB rgb·a, A 255
  *   mark          layer:    RGB premultiplied rgb·a, A a
  *
- * L' and s follow PixelShaderAnim.hlsl on the tinted sRGB values: L' =
- * saturate(1.25·L) (the HSV value gain), s = smoothstep(0.75, 0.85, V)·
- * smoothstep(0.45, 0.55, a) with V = max(L); with alpha mode 1, a = V.
+ * L' and s are computed as in PixelShaderAnim.hlsl, on the tinted sRGB values.
+ * L' = saturate(1.25·L) is the gain on the HSV value.
+ * s = smoothstep(0.75, 0.85, V)·smoothstep(0.45, 0.55, a), where V = max(L).
+ * With alpha mode 1, a = V.
  */
 
 #include <stdbool.h>
@@ -32,7 +33,8 @@ typedef enum XwauFxKind {
 	XWAU_FX_MARK,
 } XwauFxKind;
 
-/* Kind name as used in library keys ("illumination", ...); NULL if invalid. */
+/* Returns the kind name used in library keys ("illumination", ...), or NULL
+ * if `kind` is invalid. */
 const char* XwauFx_KindName(XwauFxKind kind);
 
 /* Whether `kind` writes the layer and the emissive image. */
@@ -44,17 +46,19 @@ bool XwauFx_HasEmissive(XwauFxKind kind);
 void XwauFx_Bake(XwauFxKind kind, const uint8_t* src, size_t n, const float tint[3], int alpha_mode,
 				 uint8_t* layer, uint8_t* emissive);
 
-/* The library key of an image: "G-I:kind", then ":a1" for alpha mode 1 and
- * ":t<r>_<g>_<b>" for a tint other than white, each component with the
- * fewest digits (from 6, as %g) that read back as the same float. */
+/* Writes the library key of an image. The key is "G-I:kind", followed by ":a1"
+ * for alpha mode 1 and by ":t<r>_<g>_<b>" for a tint other than white. Each
+ * tint component is written with the fewest digits, from 6 up (as %g), that
+ * read back as the same float. */
 void XwauFx_Key(char* out, size_t cap, int group, int image, XwauFxKind kind, const float tint[3],
 				int alpha_mode);
 
-/* The inverse of XwauFx_Key. False when `key` is not one XwauFx_Key writes. */
+/* The inverse of XwauFx_Key. Returns false when `key` is not exactly what
+ * XwauFx_Key writes. */
 bool XwauFx_ParseKey(const char* key, int* group, int* image, XwauFxKind* kind, float tint[3],
 					 int* alpha_mode);
 
-/* sRGB transfer, 0..1. */
+/* sRGB transfer functions, on 0..1 values. */
 float XwauFx_ToLinear(float srgb);
 float XwauFx_ToSrgb(float linear);
 

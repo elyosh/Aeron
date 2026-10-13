@@ -7,7 +7,7 @@
 
 #include "util.h"
 
-/* fgets buffer of LoadIndividualMATParams. */
+/* Size of the fgets buffer in LoadIndividualMATParams. */
 #define XWAU_MAT_LINE_MAX 3000
 
 typedef struct XwauMatEntry {
@@ -20,7 +20,7 @@ typedef struct XwauMatEntry {
 typedef struct XwauMatSection {
 	XwauSequence* items;
 	size_t        count;
-	int           order; /* 0 for [Default], else the section's 1-based order */
+	int           order; /* 0 for [Default], otherwise the 1-based order of the section */
 } XwauMatSection;
 
 struct XwauMatFile {
@@ -50,8 +50,9 @@ static int ascii_casecmp(const char* a, const char* b) {
 	}
 }
 
-/* sscanf(line, "%s = %s", param, value): returns the number of fields
- * converted (0 for a blank line). The value is "" unless 2 fields convert. */
+/* Does sscanf(line, "%s = %s", param, value) and returns the number of fields
+ * converted (0 for a blank line). The value is "" unless both fields are
+ * converted. */
 static int scan_key_line(const char* line, char* param, size_t param_cap, char* value, size_t value_cap) {
 	const char* p = line;
 	param[0] = value[0] = 0;
@@ -85,7 +86,7 @@ static int scan_key_line(const char* line, char* param, size_t param_cap, char* 
 	return 2;
 }
 
-/* ReadMaterialLine for the shading keys; every other key is ignored. */
+/* ReadMaterialLine for the shading keys. Other keys are ignored. */
 static void read_material_line(const char* line, XwauMatParams* m) {
 	char param[256], value[XWAU_MAT_LINE_MAX];
 	if (line[0] == ';' || line[0] == '#')
@@ -146,7 +147,7 @@ static const char* stristr_c(const char* haystack, const char* needle) {
 
 static char* stristr_m(char* haystack, const char* needle) { return (char*)stristr_c(haystack, needle); }
 
-/* Event names, in GameEventEnum / InstEventType order (Materials.cpp). */
+/* Event names, in the order of GameEventEnum and InstEventType (Materials.cpp). */
 static const char* const kGameEvents[] = {
 	"EVT_NONE",
 	"EVT_TARGET_SEL",
@@ -185,8 +186,8 @@ static const char* const kInstanceEvents[] = {
 	"IEVT_SHIELDS_DOWN", "IEVT_TRACTOR_BEAM", "IEVT_JAMMING_BEAM",
 };
 
-/* ParseEvent: the first whitespace-delimited token of `s`; unmatched names
- * are EVT_NONE. */
+/* ParseEvent: reads the first token of `s`, up to white space. A name that
+ * matches no event is EVT_NONE. */
 static void parse_event(const char* s, XwauSequence* q) {
 	char token[80];
 	while (*s && isspace((unsigned char)*s))
@@ -215,7 +216,7 @@ static void parse_event(const char* s, XwauSequence* q) {
 	}
 }
 
-/* SKIP_WHITESPACES: skip spaces; the parse fails at the end of the line. */
+/* SKIP_WHITESPACES: skips spaces. The parse fails at the end of the line. */
 #define SKIP_SPACES(s)                                                                                       \
 	do {                                                                                                     \
 		while (*(s) == ' ')                                                                                  \
@@ -224,7 +225,7 @@ static void parse_event(const char* s, XwauSequence* q) {
 			return false;                                                                                    \
 	} while (0)
 
-/* Moves `t` to the next `c`; false at the end of the line. */
+/* Moves `t` to the next `c`. Returns false at the end of the line. */
 static bool skip_to(char** t, char c) {
 	while (**t && **t != c)
 		(*t)++;
@@ -237,7 +238,7 @@ static char* parse_modifiers(char* s, XwauSequence* q) {
 	for (;;) {
 		char* t;
 		if (stristr_m(s, "UV_AREA")) {
-			/* UV_AREA has no effect on what is drawn; parsed to skip it. */
+			/* UV_AREA has no effect on what is drawn. It is parsed only to skip it. */
 			t = s;
 			if (!skip_to(&t, '='))
 				return NULL;
@@ -281,7 +282,7 @@ static char* parse_modifiers(char* s, XwauSequence* q) {
 			}
 			s = t;
 		} else if (stristr_m(s, "SCALE") && !stristr_m(s, "RAND_SCALE")) {
-			/* SCALE has no effect on what is drawn; parsed to skip it. */
+			/* SCALE has no effect on what is drawn. It is parsed only to skip it. */
 			t = s;
 			if (!skip_to(&t, '='))
 				return NULL;
@@ -338,8 +339,8 @@ static bool push_frame(XwauSequence* q, int group, int image, float seconds) {
 	return true;
 }
 
-/* Copies the token from `s` up to the next comma into `out` (the comma is
- * replaced by NUL); false at the end of the line. */
+/* Copies the text from `s` up to the next comma into `out`, and replaces the
+ * comma with NUL. Returns false at the end of the line. */
 static bool take_to_comma(char** s, char* out, size_t cap) {
 	char* t = *s;
 	if (!skip_to(&t, ','))
@@ -350,7 +351,7 @@ static bool take_to_comma(char** s, char* out, size_t cap) {
 	return true;
 }
 
-/* sscanf("%s"): the first whitespace-delimited token. */
+/* Like sscanf("%s"): copies the first token, up to white space. */
 static void first_token(const char* s, char* out, size_t cap) {
 	while (*s && isspace((unsigned char)*s))
 		s++;
@@ -360,8 +361,9 @@ static void first_token(const char* s, char* out, size_t cap) {
 	out[n] = 0;
 }
 
-/* LoadTextureSequence: [event,] [LYR_x,] [modifiers,] <file>.dat, [{alpha, [r,g,b]},]
- * G-I, seconds, intensity, ... Elements read before a syntax error are kept. */
+/* LoadTextureSequence, for lines of the form
+ * [event,] [LYR_x,] [modifiers,] <file>.dat, [{alpha, [r,g,b]},] G-I, seconds, intensity, ...
+ * The elements read before a syntax error are kept. */
 static bool parse_listed(const char* line, XwauSequence* q) {
 	char buf[XWAU_MAT_LINE_MAX];
 	remove_parentheses(line, buf, sizeof buf);
@@ -441,7 +443,7 @@ static bool parse_listed(const char* line, XwauSequence* q) {
 		t = s;
 		while (*t && *t != ',')
 			t++;
-		/* intensity: bloom only, not converted */
+		/* The intensity only affects bloom and is not converted. */
 		int group = -1, image = -1;
 		if (!dat_file || sscanf(name, "%d-%d", &group, &image) < 2)
 			return false;
@@ -449,8 +451,8 @@ static bool parse_listed(const char* line, XwauSequence* q) {
 			if (!push_frame(q, group, image, seconds))
 				return false;
 		} else if (image != prev_image && prev_image >= 0) {
-			/* InterpolateTexSequence: images after the previous one up to this
-			 * one, in the previous one's group. */
+			/* InterpolateTexSequence: adds the images after the previous image up
+			 * to this one, in the group of the previous image. */
 			const int   step = image > prev_image ? 1 : -1;
 			const float size = (float)(image - prev_image);
 			for (int cur = prev_image + step;; cur += step) {
@@ -472,8 +474,9 @@ static bool parse_listed(const char* line, XwauSequence* q) {
 	return true;
 }
 
-/* LoadFrameSequence: event, [LYR_x,] [modifiers,] <file>.dat-G[-I], fps,
- * is_lightmap, intensity, alpha [; [r,g,b], aspect, offset_x, offset_y, clamp]. */
+/* LoadFrameSequence, for lines of the form
+ * event, [LYR_x,] [modifiers,] <file>.dat-G[-I], fps, is_lightmap, intensity, alpha
+ * [; [r,g,b], aspect, offset_x, offset_y, clamp]. */
 static bool parse_frames(const char* line, XwauSequence* q) {
 	char buf[XWAU_MAT_LINE_MAX];
 	remove_parentheses(line, buf, sizeof buf);
@@ -544,7 +547,8 @@ static void sequence_free(XwauSequence* q) {
 	q->frame_count = 0;
 }
 
-/* A sequence key line: parses it into a new sequence of `section`. */
+/* Parses a sequence key line into a new sequence of `section`. Other keys are
+ * ignored. */
 static bool read_sequence_line(const char* param, const char* line, XwauMatSection* section) {
 	const bool listed = ascii_casecmp(param, "lightmap_seq") == 0 ||
 						ascii_casecmp(param, "lightmap_rand") == 0 ||
@@ -577,7 +581,7 @@ static bool read_sequence_line(const char* param, const char* line, XwauMatSecti
 	else
 		parse_frames(line, &q);
 	if (!q.group_frames && q.frame_count == 0) {
-		/* No animation data: the renderer drops the line. */
+		/* The renderer drops a line without animation data. */
 		sequence_free(&q);
 		return true;
 	}
@@ -605,8 +609,8 @@ static bool push_entry(XwauMatFile* file, const char* name, const XwauMatParams*
 	return true;
 }
 
-/* Close a section: every listed name receives the section's material;
- * "Default" replaces slot 0 instead. */
+/* Closes a section. Each listed name gets the material of the section, except
+ * "Default", which replaces slot 0 instead. */
 static bool save_section(XwauMatFile* file, char (*names)[XWAU_MAT_NAME_MAX], size_t name_count,
 						 const XwauMatParams* cur, int section) {
 	for (size_t i = 0; i < name_count; ++i) {
@@ -622,7 +626,7 @@ static bool save_section(XwauMatFile* file, char (*names)[XWAU_MAT_NAME_MAX], si
 	return true;
 }
 
-/* Opens a new section; its order is 0 when it is named Default. */
+/* Opens a new section. Its order is 0 when one of its names is Default. */
 static int open_section(XwauMatFile* file, char (*names)[XWAU_MAT_NAME_MAX], size_t name_count,
 						int* next_order) {
 	XwauMatSection* section = ARRAY_PUSH(file->sections, file->section_count);
@@ -635,8 +639,8 @@ static int open_section(XwauMatFile* file, char (*names)[XWAU_MAT_NAME_MAX], siz
 	return (int)file->section_count - 1;
 }
 
-/* "[A,B,...]" -> names. A token counts only when ',' or ']' ends it; no
- * trimming, as the renderer does. */
+/* Splits "[A,B,...]" into names. A name counts only when ',' or ']' ends it.
+ * Like in the renderer, names are not trimmed. */
 static size_t parse_section_names(const char* line, char (*names)[XWAU_MAT_NAME_MAX], size_t cap) {
 	size_t      count = 0;
 	const char* start = line + 1;
