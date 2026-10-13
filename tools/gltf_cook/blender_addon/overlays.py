@@ -1,6 +1,7 @@
 # Viewport overlays that show the flight model of the active object as the game
-# uses it: engine glows as the game draws them, hardpoints by family, descriptor
-# boxes, targets, hinges, the shapes the game draws for model lights, and labels.
+# uses it: engine glows as the game draws them, hardpoints by family with the
+# projectile each weapon fires, bounds, targets, hinges, the shapes the game
+# draws for model lights, and labels.
 # The overlays only draw and never change the scene.
 #
 # The geometry is rebuilt when the depsgraph reports a change. The engine glows
@@ -17,7 +18,7 @@ from bpy_extras.view3d_utils import location_3d_to_region_2d
 from gpu_extras.batch import batch_for_shader
 from mathutils import Matrix, Vector
 
-from . import common
+from . import common, projectiles
 
 # Families of hardpoint types (indices into common.HARDPOINT_TYPE_NAMES): label,
 # theme collection colour (None: grey) and types. The last family gets every type
@@ -170,6 +171,7 @@ class Geometry:
         self.points = []
         self.labels = []
         self.glows = []  # (position, right, up, look, dimensions, core, outer, enabled, selected)
+        self.projectiles = []  # (parts, world matrix)
 
     def line(self, start, end, color, thick=False):
         self.lines.append((Vector(start), Vector(end), color, thick))
@@ -384,6 +386,17 @@ def build(root, active, settings):
                 color = family_colors[hardpoint_family(hardpoint_type)]
                 position = child.matrix_world.translation.copy()
                 geometry.points.append((position, color, child.select_get()))
+                if projectiles.is_weapon(hardpoint_type):
+                    # The projectile it fires, leaving it along the model's -Y,
+                    # or else an arrow in that direction.
+                    parts = (projectiles.model(bpy.context, hardpoint_type)
+                             if settings.overlay_projectiles else None)
+                    turn = root.matrix_world.to_3x3()
+                    if parts:
+                        geometry.projectiles.append((parts, Matrix.Translation(position) @ turn.to_4x4()))
+                    else:
+                        forward = (turn @ Vector((0.0, -1.0, 0.0))).normalized()
+                        geometry.arrow(position, position + forward * size * 0.4, color)
                 if hardpoint_type == common.COCKPIT_HARDPOINT_TYPE:
                     _pilot_eye(geometry, root, position, color)
                 if settings.overlay_hardpoint_labels:
@@ -412,6 +425,7 @@ class _Cache:
     geometry = None
     batches = None
     glows = None
+    projectiles = None
 
 
 @persistent
@@ -428,7 +442,8 @@ def tag_redraw(_self=None, _context=None):
                 area.tag_redraw()
 
 
-_SETTINGS = ("overlay_glows", "overlay_hardpoints", "overlay_hardpoint_labels", "overlay_descriptors",
+_SETTINGS = ("overlay_glows", "overlay_hardpoints", "overlay_hardpoint_labels", "overlay_projectiles",
+             "overlay_descriptors",
              "overlay_targets", "overlay_hinges", "overlay_lights", "overlay_light_ranges",
              "overlay_component_labels")
 
@@ -448,6 +463,7 @@ def _current(context):
         _Cache.key, _Cache.dirty = key, False
         _Cache.geometry = build(root, active, settings)
         _Cache.batches = None
+        _Cache.projectiles = None
         glows = _Cache.geometry.glows
         if glows:
             columns = list(zip(*glows))
@@ -529,12 +545,56 @@ def _draw_glows(context, settings, scale_ui):
         batch_for_shader(shader, 'LINES', {"pos": [tuple(p) for p in positions], "color": colors}).draw(shader)
 
 
+def _projectile_batches(geometry):
+    """One batch per projectile texture, with every copy placed in world space."""
+    shader = gpu.shader.from_builtin('IMAGE')
+    groups = {}
+    for parts, matrix in geometry.projectiles:
+        turn = numpy.array(matrix.to_3x3(), dtype=numpy.float32)
+        offset = numpy.array(matrix.translation, dtype=numpy.float32)
+        for part in parts:
+            if part.image_path:
+                groups.setdefault(part.image_path, []).append((part.positions @ turn.T + offset, part))
+    batches = []
+    for path, copies in groups.items():
+        positions, uvs, triangles, start = [], [], [], 0
+        for placed, part in copies:
+            positions.append(placed)
+            uvs.append(part.uvs)
+            triangles.append(part.triangles + start)
+            start += len(placed)
+        batches.append((path, batch_for_shader(shader, 'TRIS', {
+            "pos": numpy.concatenate(positions), "texCoord": numpy.concatenate(uvs)},
+            indices=numpy.concatenate(triangles))))
+    return shader, batches
+
+
+def _draw_projectiles(geometry):
+    if not geometry.projectiles:
+        return
+    if _Cache.projectiles is None:
+        _Cache.projectiles = _projectile_batches(geometry)
+    shader, batches = _Cache.projectiles
+    gpu.state.depth_test_set('LESS_EQUAL')
+    gpu.state.depth_mask_set(False)
+    gpu.state.blend_set('ALPHA')
+    for path, batch in batches:
+        image = projectiles.image(path)
+        if image is None:  # removed, for example by Purge: loaded again
+            if projectiles.missing_images():
+                _Cache.dirty = True
+            continue
+        shader.uniform_sampler("image", gpu.texture.from_image(image))
+        batch.draw(shader)
+
+
 def _draw_view():
     context = bpy.context
     geometry, settings = _current(context)
     if geometry is None:
         return
     scale_ui = context.preferences.system.ui_scale
+    _draw_projectiles(geometry)
     _draw_glows(context, settings, scale_ui)
     if _Cache.batches is None:
         _Cache.batches = _line_batches(geometry)
@@ -601,3 +661,5 @@ def unregister():
         bpy.types.SpaceView3D.draw_handler_remove(handler, 'WINDOW')
     _handlers.clear()
     _Cache.key, _Cache.dirty, _Cache.geometry, _Cache.batches, _Cache.glows = None, True, None, None, None
+    _Cache.projectiles = None
+    projectiles.clear()

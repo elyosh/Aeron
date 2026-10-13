@@ -7,7 +7,7 @@ import os
 import bpy
 from bpy.types import Panel, UIList
 
-from . import common, display, opt_import, overlays
+from . import common, display, opt_import, overlays, preview
 
 # Labels of the objects shown in the lists, keyed by list kind and then by
 # object name. filter_items fills it, and it runs before draw_item.
@@ -372,8 +372,12 @@ class OBJECT_PT_aeron_preview(_RolePanel, Panel):
             column.prop(group, "amount", text=group.name, slider=True)
         if not len(props.preview_groups):
             column.label(text="No articulation groups yet")
+        row = layout.row(align=True)
+        playing = preview.playing(context.object)
+        row.operator("aeron.articulation_play", text="Pause" if playing else "Play",
+                     icon='PAUSE' if playing else 'PLAY')
         if props.preview_active:
-            layout.operator("aeron.articulation_reset", icon='LOOP_BACK')
+            row.operator("aeron.articulation_reset", icon='LOOP_BACK')
 
 
 class OBJECT_PT_aeron_settings(_RolePanel, Panel):
@@ -623,6 +627,7 @@ class VIEW3D_PT_aeron_overlays(Panel):
         row = column.row()
         row.active = settings.overlay_hardpoints
         row.prop(settings, "overlay_hardpoint_labels", text="Labels")
+        row.prop(settings, "overlay_projectiles")
         root = common.model_root(context.active_object)
         if settings.overlay_hardpoints and root is not None:
             counts = [0] * len(overlays.HARDPOINT_FAMILIES)

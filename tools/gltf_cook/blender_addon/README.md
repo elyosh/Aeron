@@ -49,9 +49,9 @@ textures (usually in `textures/`). The `.gltf` holds everything else,
 including the material animations ([format](../animated_materials.md)).
 
 1. Import the model's `.gltf` with File > Import > Aeron Flight Model
-   (.gltf/.glb), and save your work as a `.blend`. Import the `.gltf`, not
-   a `.glb` built for the game: Blender cannot read the textures of such a
-   `.glb`.
+   (.gltf/.glb), and save your work as a `.blend`. Every 3D view then shows
+   the whole model. Import the `.gltf`, not a `.glb` built for the game:
+   Blender cannot read the textures of such a `.glb`.
 2. Edit the model. The **Aeron** tab of the 3D view sidebar (N, or View >
    Sidebar) adds parts to the active component at the 3D cursor, and checks
    the model. The flight data of the selected object is in Object
@@ -162,6 +162,12 @@ toggle and do not change the model.
 - **Hardpoints**, colored by family. The legend lists the families of the
   model with their counts. **Labels** shows the number and type of each
   hardpoint. The pilot eye has a small view frustum.
+  With **Projectiles**, each weapon hardpoint shows the projectile it fires,
+  at its real size, leaving the hardpoint toward the front of the model.
+  The projectiles are converted once from the game folder set in the
+  preferences (**XWA Upgrade Folder**), as the original game draws them.
+  Without that folder, or with **Projectiles** off, an arrow shows the
+  direction of fire.
 - **Bounds**: the bounds box of each component, aligned with the
   model. A box that the game computes from the collision mesh (or else the
   render mesh) is faint. The box of the active component is highlighted.
@@ -201,6 +207,14 @@ it, and you can edit, add or remove them there. Hardpoints, engine glows
 and lights move with their component. If a component is in several groups,
 the last of its articulations whose group is not at 0 is used.
 
+**Play** moves the model as the game does: each articulation group opens
+at its **Speed**, stays open for a second, closes at its **Closing Speed**,
+stays closed for a second, and starts again. Speeds are in 1/256 turn per
+`step_ticks` game ticks (an articulation setting, 15 by default; the game
+runs 236 ticks per second). Rotary gun turrets turn on their hinge at the
+game's idle speed and change direction about every 2.7 seconds. **Pause**
+keeps the components where they are.
+
 When every slider is back at 0, or when you click **Reset Preview**, the
 components go back to where they were, and edits made during the preview
 are kept. The exports and Check Model do not run while the preview has
@@ -226,8 +240,12 @@ modeled materials again. Check Model reports a row that names a variant
 that does not exist, or that no mesh uses (Blender's glTF exporter would
 leave that variant out).
 
-**View From Pilot Eye** (Aeron tab) looks from the pilot eye hardpoint
-toward the front of the model.
+The import adds a camera named "<model> Pilot Eye" for a model with a
+pilot eye hardpoint, with the game's cockpit field of view (64 degrees
+across). It follows the pilot eye hardpoint. **View From Pilot Eye** (Aeron
+tab) makes it the scene camera and looks through it, and creates it again
+if it was deleted. It is not part of the model, so the exports leave it
+out.
 
 None of these change what the exports write.
 

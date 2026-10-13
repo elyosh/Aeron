@@ -1,5 +1,6 @@
 # Authoring operators.
 
+import math
 
 import bpy
 from bpy.props import EnumProperty, IntProperty, StringProperty
@@ -293,6 +294,25 @@ class AERON_OT_articulation_reset(Operator):
         return {'FINISHED'}
 
 
+class AERON_OT_articulation_play(Operator):
+    """Play the articulations at the game's speeds, and turn the rotary gun turrets. Click again to pause"""
+
+    bl_idname = "aeron.articulation_play"
+    bl_label = "Play"
+
+    @classmethod
+    def poll(cls, context):
+        return common.model_root(context.object) is not None
+
+    def execute(self, context):
+        root = common.model_root(context.object)
+        if preview.playing(root):
+            preview.pause(root)
+        else:
+            preview.play(root)
+        return {'FINISHED'}
+
+
 class AERON_OT_validate(Operator):
     """Check the active object's flight model and list its problems"""
 
@@ -414,11 +434,43 @@ def pilot_eye(root):
     return None
 
 
+# The game's cockpit view: its projection scale is 0.8 times the screen width,
+# so the horizontal field of view is 2 atan(0.625), 64 degrees. With a 36 mm
+# sensor fitted horizontally, this is a 28.8 mm lens.
+GAME_SENSOR_WIDTH = 36.0
+GAME_LENS = 28.8
+
+
+def pilot_eye_camera(context, root, eye):
+    """The model's pilot eye camera, created the first time. It is outside the
+    model root, so it is not part of the model, and a Child Of constraint keeps
+    it at the pilot eye, looking along the model's -Y with its +Z up."""
+    name = root.name + " Pilot Eye"
+    camera = bpy.data.objects.get(name)
+    if camera is None or camera.type != 'CAMERA':
+        camera = bpy.data.objects.new(name, bpy.data.cameras.new(name))
+    if context.scene.objects.get(camera.name) is None:
+        context.scene.collection.objects.link(camera)
+    camera.data.sensor_fit = 'HORIZONTAL'
+    camera.data.sensor_width = GAME_SENSOR_WIDTH
+    camera.data.lens = GAME_LENS
+    constraint = camera.constraints.get("Pilot Eye")
+    if constraint is None or constraint.type != 'CHILD_OF':
+        constraint = camera.constraints.new('CHILD_OF')
+        constraint.name = "Pilot Eye"
+    constraint.target = eye
+    constraint.inverse_matrix = Matrix.Identity(4)
+    # A camera looks along its -Z with +Y up: turn that to -Y with +Z up.
+    camera.matrix_basis = Matrix.Rotation(math.pi, 4, 'Z') @ Matrix.Rotation(math.pi / 2.0, 4, 'X')
+    return camera
+
+
 class AERON_OT_view_pilot_eye(Operator):
-    """Look from the pilot eye hardpoint along the model's forward axis (-Y), with the model's +Z up"""
+    """Look through a camera at the pilot eye hardpoint, with the game's cockpit field of view"""
 
     bl_idname = "aeron.view_pilot_eye"
     bl_label = "View From Pilot Eye"
+    bl_options = {'REGISTER', 'UNDO'}
 
     @classmethod
     def poll(cls, context):
@@ -428,15 +480,8 @@ class AERON_OT_view_pilot_eye(Operator):
 
     def execute(self, context):
         root = common.model_root(context.active_object)
-        eye = pilot_eye(root).matrix_world.translation
-        basis = root.matrix_world.to_3x3().normalized()
-        forward, up = basis @ Vector((0.0, -1.0, 0.0)), basis @ Vector((0.0, 0.0, 1.0))
-        # A 3D view looks along its -Z axis with Y up, and orbits a point in front of it.
-        rv3d = context.space_data.region_3d
-        rv3d.view_perspective = 'PERSP'
-        rv3d.view_rotation = Matrix((forward.cross(up), up, -forward)).transposed().to_quaternion()
-        rv3d.view_distance = 1.0
-        rv3d.view_location = eye + forward * rv3d.view_distance
+        context.scene.camera = pilot_eye_camera(context, root, pilot_eye(root))
+        context.space_data.region_3d.view_perspective = 'CAMERA'
         return {'FINISHED'}
 
 
@@ -495,6 +540,7 @@ classes = (
     AERON_OT_descriptor_from_bounds,
     AERON_OT_component_articulation,
     AERON_OT_articulation_reset,
+    AERON_OT_articulation_play,
     AERON_OT_validate,
     AERON_OT_list_edit,
     AERON_OT_show_skin,

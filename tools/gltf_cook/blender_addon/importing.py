@@ -14,8 +14,9 @@ import bpy
 from bpy.props import StringProperty
 from bpy.types import Operator
 from bpy_extras.io_utils import ImportHelper
+from mathutils import Vector
 
-from . import animation, common, sources
+from . import animation, common, operators, sources
 
 # Results of the running import, or None outside this add-on's imports.
 _state = None
@@ -211,6 +212,27 @@ def _preview_transmission(roots):
                             material.use_raytrace_refraction = True
 
 
+def _frame(context, root):
+    """Shows the whole model in every 3D view of the window, as View Selected
+    does: the glTF import selects what it imported. A large model gets a clip
+    end far enough to show it."""
+    window = context.window
+    if window is None:
+        return
+    corners = [obj.matrix_world @ Vector(corner) for obj in [root] + root.children_recursive
+               if obj.type == 'MESH' for corner in obj.bound_box]
+    size = (Vector(map(max, *corners)) - Vector(map(min, *corners))).length if corners else 0.0
+    for area in window.screen.areas:
+        if area.type != 'VIEW_3D':
+            continue
+        space = area.spaces.active
+        if space.clip_end < 10.0 * size:
+            space.clip_end = 10.0 * size
+        region = next((region for region in area.regions if region.type == 'WINDOW'), None)
+        with context.temp_override(window=window, area=area, region=region):
+            bpy.ops.view3d.view_selected()
+
+
 class IMPORT_OT_aeron_flight_model(Operator, ImportHelper):
     """Import a flight model (.gltf or .glb) with its Aeron flight data"""
 
@@ -251,6 +273,14 @@ class IMPORT_OT_aeron_flight_model(Operator, ImportHelper):
         root.aeron_flight.source_names = json.dumps(sources.names(document))
         _preview_transmission(state["roots"])
         context.view_layer.objects.active = root
+        _frame(context, root)
+        # The camera at the pilot eye, ready for Numpad 0. It becomes the scene
+        # camera only when the scene has none.
+        eye = operators.pilot_eye(root)
+        if eye is not None:
+            camera = operators.pilot_eye_camera(context, root, eye)
+            if context.scene.camera is None:
+                context.scene.camera = camera
         message = "Imported {} component(s), {} light(s)".format(state["components"], state["lights"])
         if state["animated"]:
             message += ", {} animated material(s)".format(len(state["animated"]))

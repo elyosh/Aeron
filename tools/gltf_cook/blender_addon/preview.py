@@ -7,8 +7,13 @@
 # and keeps any edit made during the preview. If nothing was edited, the
 # component gets back its exact saved transform. The exports and Check Model
 # refuse to run during a preview.
+#
+# Play moves the model the way the game does: each articulation group opens at
+# its speed, stays open, closes at its closing speed, stays closed, and starts
+# again, and rotary gun turrets turn on their hinge. Nothing is keyframed.
 
 import math
+import time
 
 import bpy
 from bpy.app.handlers import persistent
@@ -48,11 +53,15 @@ def hinge_matrix(component, turns):
 
 def component_turns(root, component):
     """Returns the component's angle in the preview, in turns. This is its
-    own preview angle when set. Otherwise it comes from the component's last
+    own preview angle when set, or else its angle in the playback when the
+    model plays or is paused. Otherwise it comes from the component's last
     articulation in list order whose group slider is not at 0, and it is the
     slider amount times the articulation angle."""
     if component.aeron_flight.preview_angle:
         return component.aeron_flight.preview_angle / 256.0
+    played = _playback.get(root.name)
+    if played is not None:
+        return played["turns"].get(component.name, 0.0)
     props = root.aeron_flight
     amounts = {group.name: group.amount for group in props.preview_groups}
     turns = 0.0
@@ -70,7 +79,7 @@ def _set(component, matrix):
 
 
 def _wanted(root):
-    return (any(group.amount > 0.0 for group in root.aeron_flight.preview_groups) or
+    return (root.name in _playback or any(group.amount > 0.0 for group in root.aeron_flight.preview_groups) or
             any(component.aeron_flight.preview_angle for component in common.components(root)))
 
 
@@ -106,7 +115,8 @@ def _end(root):
 
 
 def reset(root):
-    """Sets every slider back to 0, which ends the preview."""
+    """Sets every slider back to 0 and stops the playback, which ends the preview."""
+    _playback.pop(root.name, None)
     for group in root.aeron_flight.preview_groups:
         if group.amount:
             group.amount = 0.0
@@ -136,8 +146,131 @@ def sync_groups(root):
     apply(root)
 
 
+# ---- playback --------------------------------------------------------------------
+
+# The game clock runs at 236 ticks per second. Articulations move by their speed
+# (1/256 turn) every step_ticks ticks, an articulation setting of the model. Idle
+# rotary gun turrets turn 4/256 turn every 15 ticks, and the game reverses them
+# at random, on average every 43 updates. The playback reverses them every 43
+# updates, so it is the same every time.
+TICKS_PER_SECOND = 236.0
+DEFAULT_STEP_TICKS = 15
+HOLD_SECONDS = 1.0
+TURRET_SPEED = 4.0 * TICKS_PER_SECOND / 15.0  # 1/256 turn per second
+TURRET_REVERSE_SECONDS = 43 * 15 / TICKS_PER_SECOND
+ROTARY_GUN_TURRET = 21  # index into common.MESH_TYPE_NAMES
+_FRAME_SECONDS = 1.0 / 30.0
+
+# Per playing or paused model root name: "time" (seconds of playback), "last"
+# (wall clock of the last step, None when paused) and "turns" (per component name).
+_playback = {}
+
+
+def playing(root):
+    state = _playback.get(root.name)
+    return state is not None and state["last"] is not None
+
+
+def _speed(root, units):
+    """Converts a speed in 1/256 turn per step into 1/256 turn per second."""
+    settings = {item.name: item.value for item in root.aeron_flight.articulation_settings}
+    step = max(1, settings.get("step_ticks", DEFAULT_STEP_TICKS))
+    return units * TICKS_PER_SECOND / step
+
+
+def _travel(angle, speed, seconds):
+    """Angle reached after `seconds` from 0 toward `angle` at `speed` (both in
+    1/256 turn). A speed of 0 jumps to the angle."""
+    if speed <= 0.0:
+        return float(angle)
+    return math.copysign(min(abs(angle), speed * seconds), angle)
+
+
+def _group_turns(root, articulations, seconds):
+    """Angles in turns of one group's articulations at `seconds` in its cycle:
+    opening, open, closing, closed."""
+    opening = max((abs(a.angle) / _speed(root, a.speed) if a.speed else 0.0) for a in articulations)
+    closing = max((abs(a.angle) / _speed(root, a.speed_back if a.has_speed_back else a.speed)
+                   if (a.speed_back if a.has_speed_back else a.speed) else 0.0) for a in articulations)
+    cycle = opening + closing + 2.0 * HOLD_SECONDS
+    t = seconds % cycle if cycle > 0.0 else 0.0
+    turns = {}
+    for a in articulations:
+        back = a.speed_back if a.has_speed_back else a.speed
+        if t < opening:
+            angle = _travel(a.angle, _speed(root, a.speed), t)
+        elif t < opening + HOLD_SECONDS:
+            angle = a.angle
+        elif t < opening + HOLD_SECONDS + closing:
+            angle = a.angle - _travel(a.angle, _speed(root, back), t - opening - HOLD_SECONDS)
+        else:
+            angle = 0.0
+        turns[a] = angle / 256.0
+    return turns
+
+
+def _turret_turns(seconds):
+    """Angle in turns of an idle rotary gun turret after `seconds`: it turns at
+    the game's speed and reverses every TURRET_REVERSE_SECONDS."""
+    legs, rest = divmod(seconds, TURRET_REVERSE_SECONDS)
+    full = TURRET_SPEED * TURRET_REVERSE_SECONDS
+    # Even legs turn forward, odd legs back, so the angle swings between 0 and one leg.
+    angle = rest * TURRET_SPEED if int(legs) % 2 == 0 else full - rest * TURRET_SPEED
+    return angle / 256.0
+
+
+def played_turns(root, seconds):
+    """Angles in turns of the model's components at `seconds` of playback."""
+    turns = {}
+    groups = {}
+    for articulation in root.aeron_flight.articulations:
+        if articulation.component is not None and articulation.group:
+            groups.setdefault(articulation.group, []).append(articulation)
+    for articulations in groups.values():
+        for articulation, value in _group_turns(root, articulations, seconds).items():
+            turns[articulation.component.name] = value
+    for component in common.components(root):
+        props = component.aeron_flight
+        if props.has_rotation and int(props.mesh_type) == ROTARY_GUN_TURRET:
+            turns[component.name] = _turret_turns(seconds)
+    return turns
+
+
+def _step():
+    now = time.monotonic()
+    for name in list(_playback):
+        state = _playback[name]
+        root = bpy.data.objects.get(name)
+        if root is None or common.role(root) != 'model':
+            del _playback[name]
+            continue
+        if state["last"] is None:
+            continue
+        state["time"] += now - state["last"]
+        state["last"] = now
+        state["turns"] = played_turns(root, state["time"])
+        apply(root)
+    return _FRAME_SECONDS if any(state["last"] is not None for state in _playback.values()) else None
+
+
+def play(root):
+    """Starts or resumes the playback of the model."""
+    state = _playback.setdefault(root.name, {"time": 0.0, "last": None, "turns": {}})
+    state["last"] = time.monotonic()
+    if not bpy.app.timers.is_registered(_step):
+        bpy.app.timers.register(_step, first_interval=0.0)
+
+
+def pause(root):
+    """Stops the playback and leaves the components where they are."""
+    state = _playback.get(root.name)
+    if state is not None:
+        state["last"] = None
+
+
 @persistent
 def _on_load(*_args):
+    _playback.clear()
     for obj in bpy.data.objects:
         if common.role(obj) == 'model':
             sync_groups(obj)
@@ -148,5 +281,8 @@ def register():
 
 
 def unregister():
+    _playback.clear()
+    if bpy.app.timers.is_registered(_step):
+        bpy.app.timers.unregister(_step)
     if _on_load in bpy.app.handlers.load_post:
         bpy.app.handlers.load_post.remove(_on_load)

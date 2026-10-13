@@ -284,6 +284,10 @@ class AeronSceneProperties(PropertyGroup):
         description="Throttle for the engine glows, which sets their size and length")
     overlay_hardpoints: BoolProperty(name="Hardpoints", default=True, update=overlays.tag_redraw,
                                      description="Draw hardpoints, colored by family")
+    overlay_projectiles: BoolProperty(
+        name="Projectiles", default=True, update=overlays.tag_redraw,
+        description="Draw the projectile that each weapon hardpoint fires. The models are converted from the "
+                    "game folder set in the preferences (XWA Upgrade Folder)")
     overlay_hardpoint_labels: BoolProperty(name="Hardpoint Labels", default=False, update=overlays.tag_redraw,
                                            description="Show each hardpoint's number and type")
     overlay_descriptors: BoolProperty(
