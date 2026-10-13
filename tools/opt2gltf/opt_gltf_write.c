@@ -12,6 +12,7 @@
 #define STB_IMAGE_WRITE_STATIC
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "stb_image_write.h"
+#include "util.h"
 
 static void path_join(char* out, size_t cap, const char* a, const char* b) {
 	size_t la       = strlen(a);
@@ -85,18 +86,27 @@ bool OptGltf_WriteFiles(const OptGltfDocument* document, const char* out_dir, co
 	return true;
 }
 
+/* The conversion's warnings, reported under the label (log_context). */
+static void report_warning(void* label, bool warning, const char* message) {
+	if (warning)
+		Report((const char*)label, "%s", message);
+}
+
 bool OptGltf_Convert(const opt_file_t* opt, const char* out_dir, const char* basename,
 					 const OptGltfBuildOptions* options, const char* label) {
-	OptGltfDocument* document = NULL;
-	opt_error_t      error    = { { 0 } };
-	if (!OptGltf_BuildMemory(opt, basename, options, &document, &error)) {
+	OptGltfBuildOptions reported = *options;
+	reported.log                 = report_warning;
+	reported.log_context         = (void*)label;
+	OptGltfDocument* document    = NULL;
+	opt_error_t      error       = { { 0 } };
+	if (!OptGltf_BuildMemory(opt, basename, &reported, &document, &error)) {
 		if (error.msg[0])
-			fprintf(stderr, "opt2gltf: %s: %s\n", label, error.msg);
+			Report(label, "%s", error.msg);
 		return false;
 	}
 	const bool succeeded = OptGltf_WriteFiles(document, out_dir, basename);
 	if (!succeeded)
-		fprintf(stderr, "opt2gltf: %s: could not write %s\n", label, out_dir);
+		Report(label, "could not write %s", out_dir);
 	OptGltf_Free(document);
 	return succeeded;
 }

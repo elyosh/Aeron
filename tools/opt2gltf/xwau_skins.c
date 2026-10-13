@@ -13,6 +13,7 @@
 #define STBI_ONLY_BMP
 #define STBI_ONLY_JPEG
 #include "stb_image.h"
+#include "util.h"
 
 static const char* const kExtensions[] = { ".bmp", ".png", ".jpg" };
 #define EXTENSION_COUNT (sizeof kExtensions / sizeof kExtensions[0])
@@ -132,7 +133,7 @@ static uint8_t* zip_entry(const uint8_t* zip, size_t size, const char* name, siz
 		} else if (method != 8 ||
 				   stbi_zlib_decode_noheader_buffer((char*)out, (int)unpacked, (const char*)zip + data,
 													(int)packed) != (int)unpacked) {
-			fprintf(stderr, "opt2gltf: %s: %s: cannot read %s\n", label, path, name);
+			Report(label, "%s: cannot read %s", path, name);
 			free(out);
 			return NULL;
 		}
@@ -355,7 +356,7 @@ static bool add_variant(XwauSkins* s, const char* name, int state, const char* k
 			opacity = atoi(dash + 1);
 		}
 		if (!token[0]) {
-			fprintf(stderr, "opt2gltf: %s: variant %s names the empty skin; layer left out\n", label, name);
+			Report(label, "variant %s names the empty skin; layer left out", name);
 			continue;
 		}
 		const int index = skin_index(s, token);
@@ -449,12 +450,12 @@ static bool load_image(const XwauRoots* roots, const char* model, const char* sk
 		uint8_t* rgba = stbi_load_from_memory(data, (int)size, &w, &h, &channels, 4);
 		free(data);
 		if (!rgba) {
-			fprintf(stderr, "opt2gltf: %s: skin %s image %s: %s\n", label, skin, file, stbi_failure_reason());
+			Report(label, "skin %s image %s: %s", skin, file, stbi_failure_reason());
 			return false;
 		}
 		if (w != t->width || h != t->height) {
-			fprintf(stderr, "opt2gltf: %s: skin %s image %s is %dx%d, texture %dx%d; skipped\n", label, skin,
-					file, w, h, (int)t->width, (int)t->height);
+			Report(label, "skin %s image %s is %dx%d, texture %dx%d; skipped", skin, file, w, h,
+				   (int)t->width, (int)t->height);
 			stbi_image_free(rgba);
 			++*skipped;
 			return true;
@@ -549,8 +550,8 @@ bool XwauSkins_Resolve(const XwauRoots* roots, const XwauMissions* missions, con
 		return false;
 	}
 	out->skins.images = out->images;
-	fprintf(stderr, "opt2gltf: %s: %zu skin variants, %zu skins, %zu skin images, %zu skipped\n", label,
-			out->skins.variant_count, out->skins.skin_count, found, skipped);
+	Report(label, "%zu skin variants, %zu skins, %zu skin images, %zu skipped", out->skins.variant_count,
+		   out->skins.skin_count, found, skipped);
 	return true;
 }
 

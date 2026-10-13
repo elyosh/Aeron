@@ -6,6 +6,7 @@
 #include <strings.h>
 
 #include "opt.h"
+#include "util.h"
 #include "xwau_skins.h"
 
 static const char* const kMissionDirs[] = { "Missions", "Melee" };
@@ -131,7 +132,7 @@ static bool profiles(const XwauRoots* roots, const char* base, Profile** out, si
 		bool        by_fg  = strncasecmp(key, kFgPrefix, sizeof kFgPrefix - 1) == 0 && *digits &&
 							 strspn(digits, "0123456789") == strlen(digits);
 		if (!by_fg) {
-			fprintf(stderr, "opt2gltf: %s: '%s' does not select by flight group; not imported\n", base, key);
+			Report(base, "'%s' does not select by flight group; not imported", key);
 			continue;
 		}
 		long long fg = 0;
@@ -235,7 +236,7 @@ static bool load_skin_models(const XwauRoots* roots, const XwauMissions* mission
 			opt_error_t err;
 			opt_file_t* opt = opt_load_file(path, &err);
 			if (!opt) {
-				fprintf(stderr, "opt2gltf: %s: %s; its skins are left out\n", path, err.msg);
+				Report(path, "%s; its skins are left out", err.msg);
 				XwauSkins_FreeNames(&model.skins);
 				continue;
 			}
@@ -306,9 +307,8 @@ static bool skin_choices(const SkinModels* s, const XwauLines* lines, const char
 				/* State 0 is the model as modelled; the others are variants. */
 				if (now->state)
 					snprintf(entry->variant, sizeof entry->variant, "State %d", now->state);
-				fprintf(stderr,
-						"opt2gltf: %s: %s markings %zu is unskinned against a skinned default; using %s\n",
-						base, model->key, i, entry->variant[0] ? entry->variant : "the model as modelled");
+				Report(base, "%s markings %zu is unskinned against a skinned default; using %s", model->key,
+					   i, entry->variant[0] ? entry->variant : "the model as modelled");
 			}
 		}
 	}
@@ -334,12 +334,11 @@ static int* match_profiles(const Profile* list, size_t count, const Tie* xwau, c
 		char why[128];
 		if (target < 0) {
 			why_dropped(xwau, list[i].fg, why, sizeof why);
-			fprintf(stderr, "opt2gltf: %s: flight group %lld (%s) dropped: %s\n", base, list[i].fg,
-					list[i].profile, why);
+			Report(base, "flight group %lld (%s) dropped: %s", list[i].fg, list[i].profile, why);
 			++totals->profiles_dropped;
 		} else if (target != list[i].fg) {
-			fprintf(stderr, "opt2gltf: %s: flight group %lld (%s) is original flight group %d\n", base,
-					list[i].fg, list[i].profile, target);
+			Report(base, "flight group %lld (%s) is original flight group %d", list[i].fg, list[i].profile,
+				   target);
 		}
 	}
 	return targets;
@@ -357,12 +356,11 @@ static int* match_articulations(const XwauFlightGroupArticulation* fgs, size_t c
 		char why[128];
 		if (target < 0) {
 			why_dropped(xwau, fgs[i].flight_group, why, sizeof why);
-			fprintf(stderr, "opt2gltf: %s: flight group %d articulations dropped: %s\n", base,
-					fgs[i].flight_group, why);
+			Report(base, "flight group %d articulations dropped: %s", fgs[i].flight_group, why);
 			++totals->articulations_dropped;
 		} else if (target != fgs[i].flight_group) {
-			fprintf(stderr, "opt2gltf: %s: flight group %d articulations are original flight group %d's\n",
-					base, fgs[i].flight_group, target);
+			Report(base, "flight group %d articulations are original flight group %d's", fgs[i].flight_group,
+				   target);
 		}
 	}
 	return targets;
@@ -387,7 +385,7 @@ static bool write_mission(const char* path, const char* base, const Profile* pro
 						  const int* fg_targets, size_t fg_count, const Tie* stock) {
 	FILE* f = fopen(path, "wb");
 	if (!f) {
-		fprintf(stderr, "opt2gltf: cannot write %s\n", path);
+		Report(NULL, "cannot write %s", path);
 		return false;
 	}
 	fprintf(f, "# Imported from XWAU's %s selections by opt2gltf.\nversion: 1\n", base);
@@ -447,7 +445,7 @@ static bool write_mission(const char* path, const char* base, const Profile* pro
 	free(order);
 	const bool ok = !ferror(f) && fclose(f) == 0;
 	if (!ok)
-		fprintf(stderr, "opt2gltf: cannot write %s\n", path);
+		Report(NULL, "cannot write %s", path);
 	return ok;
 }
 
@@ -492,11 +490,10 @@ static bool import_mission(const XwauRoots* roots, const XwauMissions* missions,
 	if (has_stock)
 		stock.groups = XwauTie_FlightGroups(stock_path, &stock.count);
 	if (!xwau.groups || !stock.groups) {
-		fprintf(
-			stderr,
-			"opt2gltf: %s: %zu selections, %zu skinned models and %zu articulation flight groups dropped: no "
-			"%s .TIE\n",
-			base, profile_count, skinned_models, fg_count, xwau.groups ? "original" : "XWAU");
+		Report(base,
+			   "%zu selections, %zu skinned models and %zu articulation flight groups dropped: no "
+			   "%s .TIE",
+			   profile_count, skinned_models, fg_count, xwau.groups ? "original" : "XWAU");
 		totals->profiles_dropped += profile_count;
 		totals->articulations_dropped += fg_count;
 		free_profiles(profile_list, profile_count);
@@ -510,11 +507,11 @@ static bool import_mission(const XwauRoots* roots, const XwauMissions* missions,
 		for (size_t i = 0; i < xwau.count; ++i) {
 			const int target = stock_index((long long)i, &xwau, &stock);
 			if (target >= 0 && xwau.groups[i].markings != stock.groups[target].markings)
-				fprintf(stderr,
-						"opt2gltf: %s: flight group %zu '%.*s' has markings %d in XWAU's mission, %d in the "
-						"original one\n",
-						base, i, (int)name_length(xwau.groups[i].name), xwau.groups[i].name,
-						xwau.groups[i].markings, stock.groups[target].markings);
+				Report(base,
+					   "flight group %zu '%.*s' has markings %d in XWAU's mission, %d in the "
+					   "original one",
+					   i, (int)name_length(xwau.groups[i].name), xwau.groups[i].name, xwau.groups[i].markings,
+					   stock.groups[target].markings);
 		}
 	}
 	int*   fg_targets    = match_articulations(fgs, fg_count, &xwau, &stock, base, totals);
@@ -566,11 +563,10 @@ bool XwauMissionFiles_Write(const XwauRoots* roots, const XwauMissions* missions
 	free_skin_models(&skin_models);
 	if (!ok)
 		return false;
-	fprintf(
-		stderr,
-		"opt2gltf: %zu mission files: %zu object profile selections (%zu dropped), %zu skin selections, %zu "
-		"articulation flight groups (%zu dropped)\n",
-		totals.files, totals.profiles, totals.profiles_dropped, totals.skins, totals.articulations,
-		totals.articulations_dropped);
+	Report(NULL,
+		   "%zu mission files: %zu object profile selections (%zu dropped), %zu skin selections, %zu "
+		   "articulation flight groups (%zu dropped)",
+		   totals.files, totals.profiles, totals.profiles_dropped, totals.skins, totals.articulations,
+		   totals.articulations_dropped);
 	return true;
 }

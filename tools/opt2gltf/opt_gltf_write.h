@@ -15,8 +15,8 @@
  * parent must exist. */
 bool OptGltf_WriteFiles(const OptGltfDocument* document, const char* out_dir, const char* basename);
 
-/* Builds `opt` (OptGltf_BuildMemory) and writes it; errors go to stderr,
- * prefixed with `label`. */
+/* Builds `opt` (OptGltf_BuildMemory) and writes it; errors and warnings
+ * are reported under `label` (its log is replaced). */
 bool OptGltf_Convert(const opt_file_t* opt, const char* out_dir, const char* basename,
 					 const OptGltfBuildOptions* options, const char* label);
 

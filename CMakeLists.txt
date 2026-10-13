@@ -1001,6 +1001,7 @@ if(AERON_BUILD_TOOLS)
     # model tables, for opt2gltf and its test.
     add_library(opt2gltf_tool STATIC
         tools/opt2gltf/opt_gltf_write.c
+        tools/opt2gltf/util.c
         tools/opt2gltf/model_tables.c
         tools/opt2gltf/xwau_anim.c
         tools/opt2gltf/xwau_config.c

@@ -8,6 +8,7 @@
 #include <string.h>
 
 #include "opt_json.h"
+#include "util.h"
 #include "xwau_dat.h"
 #include "xwau_effect_bake.h"
 
@@ -166,7 +167,7 @@ static const OpenDat* open_dat(XwauAnim* a, const char* written) {
 		char err[512];
 		d->dat = XwauDat_Open(d->path, err, sizeof err);
 		if (!d->dat)
-			fprintf(stderr, "opt2gltf: %s: %s\n", a->label, err);
+			Report(a->label, "%s", err);
 	}
 	return d->dat ? d : NULL;
 }
@@ -627,34 +628,27 @@ void XwauAnim_Report(const XwauAnim* a) {
 	if (!a->any && !a->skipped_no_illum && !a->skipped_missing_dat && !a->skipped_unsupported &&
 		!a->unknown_events && !a->missing_frames && !a->skipped_on_screens)
 		return;
-	fprintf(stderr,
-			"opt2gltf: %s: animations: %zu flipbook(s), %zu damage and %zu energy material(s), %zu with "
-			"illumination frames, %zu always lit\n",
-			a->label, a->flipbooks, a->damage_materials, a->energy_materials, a->anim_bases,
-			a->always_illuminations);
+	Report(a->label,
+		   "animations: %zu flipbook(s), %zu damage and %zu energy material(s), %zu with "
+		   "illumination frames, %zu always lit",
+		   a->flipbooks, a->damage_materials, a->energy_materials, a->anim_bases, a->always_illuminations);
 	if (a->skipped_no_illum)
-		fprintf(stderr,
-				"opt2gltf: %s: %zu illumination sequence(s) on textures without illumination skipped\n",
-				a->label, a->skipped_no_illum);
+		Report(a->label, "%zu illumination sequence(s) on textures without illumination skipped",
+			   a->skipped_no_illum);
 	if (a->skipped_missing_dat)
-		fprintf(stderr, "opt2gltf: %s: %zu sequence(s) with a missing DAT or image skipped\n", a->label,
-				a->skipped_missing_dat);
+		Report(a->label, "%zu sequence(s) with a missing DAT or image skipped", a->skipped_missing_dat);
 	if (a->missing_frames)
-		fprintf(stderr, "opt2gltf: %s: %zu frame(s) whose image their DAT lacks left out\n", a->label,
-				a->missing_frames);
+		Report(a->label, "%zu frame(s) whose image their DAT lacks left out", a->missing_frames);
 	if (a->skipped_on_screens)
-		fprintf(stderr,
-				"opt2gltf: %s: %zu sequence(s) and energy effect(s) on Dynamic Cockpit screens left out "
-				"(XWAU's screen shader shows none)\n",
-				a->label, a->skipped_on_screens);
+		Report(a->label,
+			   "%zu sequence(s) and energy effect(s) on Dynamic Cockpit screens left out "
+			   "(XWAU's screen shader shows none)",
+			   a->skipped_on_screens);
 	if (a->skipped_unsupported)
-		fprintf(stderr,
-				"opt2gltf: %s: %zu sequence(s) with an unsupported event, layer or UV mapping skipped\n",
-				a->label, a->skipped_unsupported);
+		Report(a->label, "%zu sequence(s) with an unsupported event, layer or UV mapping skipped",
+			   a->skipped_unsupported);
 	if (a->unknown_events)
-		fprintf(stderr, "opt2gltf: %s: %zu sequence(s) with an unknown event (played as EVT_NONE)\n",
-				a->label, a->unknown_events);
+		Report(a->label, "%zu sequence(s) with an unknown event (played as EVT_NONE)", a->unknown_events);
 	if (a->mixed_damage)
-		fprintf(stderr, "opt2gltf: %s: %zu material(s) with uneven damage stage lists\n", a->label,
-				a->mixed_damage);
+		Report(a->label, "%zu material(s) with uneven damage stage lists", a->mixed_damage);
 }

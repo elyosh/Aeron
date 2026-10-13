@@ -81,6 +81,17 @@ bool opt_gltf_build_fail(Build* b, const char* format, ...) {
 	return false;
 }
 
+void opt_gltf_log(const OptGltfBuildOptions* options, bool warning, const char* format, ...) {
+	if (!options->log)
+		return;
+	char    message[512];
+	va_list args;
+	va_start(args, format);
+	vsnprintf(message, sizeof message, format, args);
+	va_end(args);
+	options->log(options->log_context, warning, message);
+}
+
 static void build_free(Build* b) {
 	free(b->promoted);
 	free(b->tex_emissive);
@@ -225,19 +236,18 @@ static bool markings_json(cJSON* root, const OptGltfVariants* variants, int stat
 static bool build_geometry(Build* b) {
 	const opt_file_t* opt = b->opt;
 	b->built              = (BuiltMesh*)calloc(opt->mesh_count ? opt->mesh_count : 1, sizeof *b->built);
-	if (!b->built) {
-		fprintf(stderr, "opt2gltf: oom (meshes)\n");
-		return false;
-	}
+	if (!b->built)
+		return opt_gltf_build_fail(b, "out of memory (meshes)");
 	b->max_state_count  = 1;
 	uint32_t fixed_zero = 0, fixed_flip = 0, skipped_repeats = 0, kept_repeats = 0;
 	for (int32_t mi = 0; mi < opt->mesh_count; ++mi) {
 		const opt_mesh_t* m  = &opt->meshes[mi];
 		BuiltMesh*        bm = &b->built[mi];
 		/* Components stay one-to-one with the OPT meshes. */
+		opt_error_t why;
 		if (!opt_gltf_built_mesh_from_opt(bm, m, OPT_METERS_PER_UNIT, b->smooth_angle >= 0.0f,
-										  b->smooth_angle, b->repair_normals))
-			return opt_gltf_build_fail(b, "mesh %d has no LOD 0 triangles", (int)mi);
+										  b->smooth_angle, b->repair_normals, &why))
+			return opt_gltf_build_fail(b, "mesh %d: %s", (int)mi, why.msg);
 		bool needs_tangents = false;
 		for (int32_t g = 0; b->materials && !needs_tangents && g < m->lods[0].group_count; ++g) {
 			const opt_face_group_t* grp = &m->lods[0].groups[g];
@@ -250,10 +260,8 @@ static bool build_geometry(Build* b) {
 								   b->materials[ti].normal.view.rgba;
 			}
 		}
-		if (needs_tangents && !opt_gltf_generate_tangents(bm)) {
-			fprintf(stderr, "opt2gltf: oom (tangents)\n");
-			return false;
-		}
+		if (needs_tangents && !opt_gltf_generate_tangents(bm))
+			return opt_gltf_build_fail(b, "out of memory (tangents)");
 		fixed_zero += bm->fixed_zero_normals;
 		fixed_flip += bm->fixed_flipped_normals;
 		skipped_repeats += bm->skipped_repeats;
@@ -263,13 +271,12 @@ static bool build_geometry(Build* b) {
 				b->max_state_count = m->lods[0].groups[g].state_count;
 	}
 	if (fixed_zero || fixed_flip)
-		fprintf(stderr, "opt2gltf: %s: repaired %u zero + %u face-opposed canonical normals\n", b->basename,
-				fixed_zero, fixed_flip);
+		opt_gltf_log(b->options, true, "repaired %u zero + %u face-opposed canonical normals", fixed_zero,
+					 fixed_flip);
 	if (skipped_repeats)
-		fprintf(stderr, "opt2gltf: %s: left out %u repeated triangle(s)\n", b->basename, skipped_repeats);
+		opt_gltf_log(b->options, true, "left out %u repeated triangle(s)", skipped_repeats);
 	if (kept_repeats)
-		fprintf(stderr, "opt2gltf: %s: %u triangle(s) repeat one with another texture (kept)\n", b->basename,
-				kept_repeats);
+		opt_gltf_log(b->options, true, "%u triangle(s) repeat one with another texture (kept)", kept_repeats);
 	return true;
 }
 
@@ -283,10 +290,8 @@ static bool build_variants(Build* b) {
 	if (count == 0)
 		return true;
 	gb->variants = (cgltf_material_variant*)calloc(count, sizeof *gb->variants);
-	if (!gb->variants) {
-		fprintf(stderr, "opt2gltf: oom\n");
-		return false;
-	}
+	if (!gb->variants)
+		return opt_gltf_build_fail(b, "out of memory");
 	for (size_t v = 0; v < b->state_variant_count; ++v)
 		gb->variants[v].name = opt_gltf_keep_string(gb, xprintf_dup("State %d", (int)v + 1));
 	for (size_t v = 0; v < b->given_variant_count; ++v)
@@ -318,10 +323,8 @@ static bool allocate_geometry(Build* b) {
 	const opt_file_t* opt = b->opt;
 	GltfBuild*        gb  = b->gb;
 	gb->meshes            = (cgltf_mesh*)calloc((size_t)opt->mesh_count, sizeof *gb->meshes);
-	if (!gb->meshes) {
-		fprintf(stderr, "opt2gltf: oom\n");
-		return false;
-	}
+	if (!gb->meshes)
+		return opt_gltf_build_fail(b, "out of memory");
 	gb->meshes_count = (size_t)opt->mesh_count;
 	size_t prims = 0, attrs = 0, maps = 0, views = 0, accessors = 0;
 	for (int32_t mi = 0; mi < opt->mesh_count; ++mi) {
@@ -352,16 +355,12 @@ static bool allocate_geometry(Build* b) {
 	gb->primitives_cap = prims;
 	gb->attributes_cap = attrs;
 	gb->mappings_cap   = maps;
-	if (!gb->views || !gb->accessors || !gb->primitives || !gb->attributes || !gb->mappings) {
-		fprintf(stderr, "opt2gltf: oom (geometry arrays)\n");
-		return false;
-	}
+	if (!gb->views || !gb->accessors || !gb->primitives || !gb->attributes || !gb->mappings)
+		return opt_gltf_build_fail(b, "out of memory (geometry arrays)");
 	b->base_material_count = gb->materials_count;
 	b->promoted            = (cgltf_material**)calloc(b->base_material_count * 2, sizeof *b->promoted);
-	if (!b->promoted) {
-		fprintf(stderr, "opt2gltf: oom (promoted materials)\n");
-		return false;
-	}
+	if (!b->promoted)
+		return opt_gltf_build_fail(b, "out of memory (promoted materials)");
 	return true;
 }
 
@@ -395,10 +394,8 @@ static bool primitive_mappings(Build* b, cgltf_primitive* prim, const opt_face_g
 	const int        sc        = grp->state_count;
 	const bool       switched  = sc > 1 && grp->state_textures;
 	cgltf_material** materials = (cgltf_material**)calloc(vc ? vc : 1, sizeof *materials);
-	if (!materials) {
-		fprintf(stderr, "opt2gltf: oom\n");
-		return false;
-	}
+	if (!materials)
+		return opt_gltf_build_fail(b, "out of memory");
 	int rank = opt_gltf_alpha_class_rank(prim->material);
 	for (size_t v = 0; v < vc; ++v) {
 		size_t  state     = v + 1;
@@ -426,8 +423,8 @@ static bool primitive_mappings(Build* b, cgltf_primitive* prim, const opt_face_g
 		for (size_t v = 0; v < vc; ++v)
 			materials[v] =
 				opt_gltf_promoted_material(gb, materials[v], rank, b->base_material_count, b->promoted);
-		fprintf(stderr, "opt2gltf: %s: mesh %d face group %d switch states mix alpha classes; all use %s\n",
-				b->basename, (int)mi, (int)g, rank == 2 ? "BLEND" : "MASK");
+		opt_gltf_log(b->options, true, "mesh %d face group %d switch states mix alpha classes; all use %s",
+					 (int)mi, (int)g, rank == 2 ? "BLEND" : "MASK");
 	}
 	size_t mapped = 0;
 	for (size_t v = 0; v < vc; ++v)
@@ -563,10 +560,8 @@ static bool map_every_variant(Build* b) {
 	if (!gb->variants_count || !gb->primitives_count)
 		return true;
 	bool* mapped = (bool*)calloc(gb->variants_count, sizeof *mapped);
-	if (!mapped) {
-		fprintf(stderr, "opt2gltf: oom\n");
-		return false;
-	}
+	if (!mapped)
+		return opt_gltf_build_fail(b, "out of memory");
 	size_t unmapped = 0;
 	for (size_t k = 0; k < gb->mappings_count; ++k)
 		mapped[gb->mappings[k].variant] = true;
@@ -578,8 +573,7 @@ static bool map_every_variant(Build* b) {
 		cgltf_material_mapping* mappings = (cgltf_material_mapping*)calloc(count, sizeof *mappings);
 		if (!mappings) {
 			free(mapped);
-			fprintf(stderr, "opt2gltf: oom\n");
-			return false;
+			return opt_gltf_build_fail(b, "out of memory");
 		}
 		size_t k = 0;
 		for (size_t p = 0; p < gb->primitives_count; ++p) {
@@ -839,10 +833,8 @@ static bool mesh_node(Build* b, int32_t mi, cgltf_node* node, cgltf_node** next_
 	if (child_total == 0)
 		return true;
 	cgltf_node** children = (cgltf_node**)calloc(child_total, sizeof *children);
-	if (!children) {
-		fprintf(stderr, "opt2gltf: oom\n");
-		return false;
-	}
+	if (!children)
+		return opt_gltf_build_fail(b, "out of memory");
 	node->children       = children;
 	node->children_count = child_total;
 	int ci               = 0;
@@ -886,10 +878,8 @@ static bool build_nodes(Build* b) {
 	}
 	const size_t total = 1 + (size_t)opt->mesh_count + children_total + o->model.light_count;
 	gb->nodes          = (cgltf_node*)calloc(total, sizeof *gb->nodes);
-	if (!gb->nodes) {
-		fprintf(stderr, "opt2gltf: oom\n");
-		return false;
-	}
+	if (!gb->nodes)
+		return opt_gltf_build_fail(b, "out of memory");
 	gb->nodes_count = total;
 	/* cgltf transform helpers read the implicit glTF defaults from these. */
 	for (size_t i = 0; i < total; ++i) {
@@ -900,10 +890,8 @@ static bool build_nodes(Build* b) {
 	cgltf_node* root = &gb->nodes[0];
 	root->name       = opt_gltf_keep_string(gb, xprintf_dup("OPT_%s", b->basename));
 	root->children   = (cgltf_node**)calloc((size_t)opt->mesh_count, sizeof *root->children);
-	if (!root->children) {
-		fprintf(stderr, "opt2gltf: oom\n");
-		return false;
-	}
+	if (!root->children)
+		return opt_gltf_build_fail(b, "out of memory");
 	root->children_count   = (size_t)opt->mesh_count;
 	cgltf_node* next_child = &gb->nodes[1 + opt->mesh_count];
 	for (int32_t mi = 0; mi < opt->mesh_count; ++mi)
@@ -1011,7 +999,8 @@ static bool build_memory(const opt_file_t* opt, const char* basename, const OptG
 	b.gb->sampler.wrap_t     = 10497; /* REPEAT */
 
 	const bool ok = opt_gltf_prepare_textures(&b) && opt_gltf_build_materials(&b) && build_geometry(&b) &&
-					build_variants(&b) && write_meshes(&b) && build_nodes(&b) && finish_document(&b);
+					build_variants(&b) && write_meshes(&b) && build_nodes(&b) && finish_document(&b) &&
+					(!b.gb->out_of_memory || opt_gltf_build_fail(&b, "out of memory"));
 	build_free(&b);
 	if (!ok) {
 		if (error && !error->msg[0])
@@ -1028,7 +1017,8 @@ bool OptGltf_BuildMemory(const opt_file_t* opt, const char* basename, const OptG
 	if (!opt)
 		return build_memory(opt, basename, options, out_document, error);
 	FacelessPatch     patch;
-	const opt_file_t* source = opt_gltf_faceless_patch_apply(opt, &patch);
+	const opt_file_t* source =
+		opt_gltf_faceless_patch_apply(opt, options ? options : &kDefaultOptions, &patch);
 	if (!source) {
 		if (out_document)
 			*out_document = NULL;

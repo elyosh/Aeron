@@ -452,10 +452,8 @@ bool opt_gltf_material_extensions(OptGltfDocument* document, unsigned* common_en
 static bool find_stock_emissive(Build* b, size_t* images) {
 	const opt_file_t* opt = b->opt;
 	b->tex_emissive = (int*)calloc(opt->texture_count ? opt->texture_count : 1, sizeof *b->tex_emissive);
-	if (!b->tex_emissive) {
-		fprintf(stderr, "opt2gltf: oom\n");
-		return false;
-	}
+	if (!b->tex_emissive)
+		return opt_gltf_build_fail(b, "out of memory");
 	for (int32_t i = 0; b->emissive && i < opt->texture_count; ++i) {
 		uint8_t* em =
 			decode_texture_emissive_rgba8(opt, &opt->textures[i], b->base_shade, OPT_EMISSIVE_SHADE_TOL);
@@ -495,10 +493,8 @@ static bool count_given_images(Build* b, size_t* images) {
 	const uint8_t**   seen =
 		(const uint8_t**)malloc(((size_t)opt->texture_count + variants) * 5 * sizeof *seen + 1);
 	size_t count = 0;
-	if (!seen) {
-		fprintf(stderr, "opt2gltf: oom (given materials)\n");
-		return false;
-	}
+	if (!seen)
+		return opt_gltf_build_fail(b, "out of memory (given materials)");
 	for (int32_t i = 0; i < opt->texture_count; ++i) {
 		const OptGltfImage* list[5];
 		material_images(&b->materials[i], list);
@@ -521,10 +517,8 @@ static bool find_screen_covers(Build* b, size_t* images) {
 	const OptGltfScreen* screens = b->screens;
 	b->screen_cover_image        = (int32_t*)malloc((opt->texture_count ? (size_t)opt->texture_count : 1) *
 													sizeof *b->screen_cover_image);
-	if (!b->screen_cover_image) {
-		fprintf(stderr, "opt2gltf: oom (screens)\n");
-		return false;
-	}
+	if (!b->screen_cover_image)
+		return opt_gltf_build_fail(b, "out of memory (screens)");
 	for (int32_t i = 0; i < opt->texture_count; ++i) {
 		b->screen_cover_image[i] = -1;
 		const OptGltfScreen* s   = &screens[i];
@@ -565,10 +559,8 @@ bool opt_gltf_prepare_textures(Build* b) {
 	b->document->image_pixels_count = images;
 	b->image_count                  = images;
 	if (!gb->images || !gb->textures || !gb->materials || !gb->material_anim || !gb->material_screen ||
-		!b->document->image_pixels) {
-		fprintf(stderr, "opt2gltf: oom (textures)\n");
-		return false;
-	}
+		!b->document->image_pixels)
+		return opt_gltf_build_fail(b, "out of memory (textures)");
 	b->image_slot = (size_t)opt->texture_count;
 	return true;
 }
@@ -585,10 +577,8 @@ static bool material_alpha(Build* b, int32_t i, cgltf_material* mat, const uint8
 	if (b->materials && rgba && b->materials[i].alpha_from_base) {
 		const size_t n = (size_t)t->width * (size_t)t->height;
 		given_alpha    = (uint8_t*)malloc(n);
-		if (!given_alpha) {
-			fprintf(stderr, "opt2gltf: oom (alpha)\n");
-			return false;
-		}
+		if (!given_alpha)
+			return opt_gltf_build_fail(b, "out of memory (alpha)");
 		for (size_t k = 0; k < n; ++k)
 			given_alpha[k] = rgba[k * 4 + 3];
 	}
@@ -608,16 +598,14 @@ static bool material_alpha(Build* b, int32_t i, cgltf_material* mat, const uint8
 		alpha_mode   = alpha_override->alpha_mode;
 		alpha_cutoff = alpha_override->alpha_cutoff;
 	}
-	if (t->alpha && b->options->log) {
-		char note[512];
-		snprintf(note, sizeof note,
-				 "[opt_alpha] %s %s: mode=%s source=%s zero=%llu full=%llu intermediate=%llu cutoff=%.3g",
-				 b->basename, t->name[0] ? t->name : b->gb->images[i].name, alpha_mode_name(alpha_mode),
-				 alpha_override ? "override" : "heuristic", (unsigned long long)alpha_histogram.zero_count,
-				 (unsigned long long)alpha_histogram.full_count,
-				 (unsigned long long)alpha_histogram.intermediate_count, (double)alpha_cutoff);
-		b->options->log(false, note);
-	}
+	if (t->alpha)
+		opt_gltf_log(b->options, false,
+					 "[opt_alpha] %s: mode=%s source=%s zero=%llu full=%llu intermediate=%llu cutoff=%.3g",
+					 t->name[0] ? t->name : b->gb->images[i].name, alpha_mode_name(alpha_mode),
+					 alpha_override ? "override" : "heuristic",
+					 (unsigned long long)alpha_histogram.zero_count,
+					 (unsigned long long)alpha_histogram.full_count,
+					 (unsigned long long)alpha_histogram.intermediate_count, (double)alpha_cutoff);
 	if (alpha_mode == OPT_GLTF_ALPHA_MASK) {
 		mat->alpha_mode   = cgltf_alpha_mode_mask;
 		mat->alpha_cutoff = alpha_cutoff;
@@ -656,10 +644,8 @@ static cgltf_texture* given_image(Build* b, const OptGltfImage* image) {
 	for (size_t slot = 0; slot < b->image_slot; ++slot)
 		if (b->document->image_pixels[slot].rgba == image->view.rgba)
 			return &b->gb->textures[slot];
-	if (b->image_slot == b->image_count) {
-		fprintf(stderr, "opt2gltf: image %s past the %zu counted\n", image->name, b->image_count);
-		abort();
-	}
+	if (b->image_slot == b->image_count)
+		abort(); /* count_given_images missed it */
 	cgltf_texture* texture =
 		opt_gltf_set_image(b->document, b->image_slot, (uint8_t*)image->view.rgba, image->view.width,
 						   image->view.height, xstrdup(image->name), xstrdup(image->file));
@@ -726,10 +712,8 @@ static bool screen_material(Build* b, int32_t i, cgltf_material* mat) {
 				continue;
 			const size_t bytes = (size_t)views[k]->width * views[k]->height * 4u;
 			uint8_t*     copy  = (uint8_t*)malloc(bytes);
-			if (!copy) {
-				fprintf(stderr, "opt2gltf: oom (screen cover)\n");
-				return false;
-			}
+			if (!copy)
+				return opt_gltf_build_fail(b, "out of memory (screen cover)");
 			memcpy(copy, views[k]->rgba, bytes);
 			opt_gltf_set_image(b->document, b->image_slot++, copy, views[k]->width, views[k]->height,
 							   xprintf_dup("Cover_%s_%s", cover, kinds[k]),
@@ -740,10 +724,8 @@ static bool screen_material(Build* b, int32_t i, cgltf_material* mat) {
 		base = &b->gb->textures[b->screen_cover_image[i]];
 		glow = s->cover_emissive.rgba ? &b->gb->textures[b->screen_cover_image[i] + 1] : NULL;
 	}
-	if (!screen_apply(b->gb, mat, s, base, glow)) {
-		fprintf(stderr, "opt2gltf: oom (screen)\n");
-		return false;
-	}
+	if (!screen_apply(b->gb, mat, s, base, glow))
+		return opt_gltf_build_fail(b, "out of memory (screen)");
 	return true;
 }
 
@@ -808,15 +790,9 @@ static void report_unused_alpha_overrides(const Build* b) {
 								 b->opt->textures[texture_index].name) ||
 				alpha_name_equal(o->material.alpha_overrides[override_index].texture_name, generated_name);
 		}
-		if (!matched) {
-			char warning[512];
-			snprintf(warning, sizeof warning, "%s: unused alpha override '%s'", b->basename,
-					 o->material.alpha_overrides[override_index].texture_name);
-			if (o->log)
-				o->log(true, warning);
-			else
-				fprintf(stderr, "opt2gltf: %s\n", warning);
-		}
+		if (!matched)
+			opt_gltf_log(o, true, "unused alpha override '%s'",
+						 o->material.alpha_overrides[override_index].texture_name);
 	}
 }
 

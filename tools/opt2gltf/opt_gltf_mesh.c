@@ -32,8 +32,8 @@ static uint32_t built_mesh_intern_vertex(BuiltMesh* bm, const GltfVertex* v) {
 		uint32_t    ncap  = bm->vertex_cap ? bm->vertex_cap * 2 : 64;
 		GltfVertex* grown = (GltfVertex*)realloc(bm->vertices, ncap * sizeof *grown);
 		if (!grown) {
-			fprintf(stderr, "opt2gltf: oom\n");
-			abort();
+			bm->out_of_memory = true;
+			return 0;
 		}
 		bm->vertices   = grown;
 		bm->vertex_cap = ncap;
@@ -47,8 +47,8 @@ static void built_mesh_emit_index(BuiltMesh* bm, uint32_t v) {
 		uint32_t  ncap  = bm->index_cap ? bm->index_cap * 2 : 128;
 		uint32_t* grown = (uint32_t*)realloc(bm->indices, ncap * sizeof *grown);
 		if (!grown) {
-			fprintf(stderr, "opt2gltf: oom\n");
-			abort();
+			bm->out_of_memory = true;
+			return;
 		}
 		bm->indices   = grown;
 		bm->index_cap = ncap;
@@ -75,8 +75,19 @@ static void built_mesh_emit_index(BuiltMesh* bm, uint32_t v) {
  * diagonal of a two-triangle panel no longer gives one side extra weight.
  * It also avoids making a dense patch of small triangles dominate a
  * neighbouring coarse patch. */
+/* Sets `error`'s message; returns false. */
+static bool mesh_fail(opt_error_t* error, const char* format, ...) {
+	if (error) {
+		va_list args;
+		va_start(args, format);
+		vsnprintf(error->msg, sizeof error->msg, format, args);
+		va_end(args);
+	}
+	return false;
+}
+
 static float* built_mesh_build_corner_normals(const opt_mesh_t* mesh, const opt_lod_t* lod,
-											  float smooth_angle_degrees) {
+											  float smooth_angle_degrees, opt_error_t* error) {
 	uint32_t triangle_count = 0;
 	for (int32_t group = 0; group < lod->group_count; ++group) {
 		const opt_face_group_t* face_group = &lod->groups[group];
@@ -91,6 +102,7 @@ static float* built_mesh_build_corner_normals(const opt_mesh_t* mesh, const opt_
 	if (!indices || !normals) {
 		free(indices);
 		free(normals);
+		mesh_fail(error, "out of memory");
 		return NULL;
 	}
 	uint32_t triangle = 0;
@@ -113,8 +125,8 @@ static float* built_mesh_build_corner_normals(const opt_mesh_t* mesh, const opt_
 			}
 		}
 	}
-	AeronMeshNormalsError       error = { 0 };
-	const AeronMeshNormalsInput input = {
+	AeronMeshNormalsError       normals_error = { 0 };
+	const AeronMeshNormalsInput input         = {
 		.positions                 = &mesh->vertices[0].x,
 		.position_stride           = sizeof mesh->vertices[0],
 		.position_count            = (uint32_t)mesh->vertex_count,
@@ -122,10 +134,10 @@ static float* built_mesh_build_corner_normals(const opt_mesh_t* mesh, const opt_
 		.triangle_count            = triangle_count,
 		.smooth_angle_degrees      = smooth_angle_degrees,
 	};
-	const bool built = Aeron_MeshNormalsBuildCorners(&input, normals, &error);
+	const bool built = Aeron_MeshNormalsBuildCorners(&input, normals, &normals_error);
 	free(indices);
 	if (!built) {
-		fprintf(stderr, "opt2gltf: normal build failed: %s\n", error.message);
+		mesh_fail(error, "normal build failed: %s", normals_error.message);
 		free(normals);
 		return NULL;
 	}
@@ -239,29 +251,30 @@ static void built_mesh_emit_triangle(BuiltMesh* bm, TriangleSet* seen, const opt
  * `regen` enables angle-based normal regeneration; when false the stored
  * OPT normals are used. */
 bool opt_gltf_built_mesh_from_opt(BuiltMesh* bm, const opt_mesh_t* m, float meters_per_opt_unit, bool regen,
-								  float smooth_angle_degrees, bool repair_normals) {
+								  float smooth_angle_degrees, bool repair_normals, opt_error_t* error) {
 	memset(bm, 0, sizeof *bm);
-	if (m->lod_count <= 0)
-		return false;
+	if (error)
+		error->msg[0] = '\0';
+	if (m->lod_count <= 0 || m->lods[0].group_count <= 0)
+		return mesh_fail(error, "no LOD 0 triangles");
 	const opt_lod_t* lod = &m->lods[0];
-	if (lod->group_count <= 0)
-		return false;
 
 	bm->fg_index_start     = (uint32_t*)calloc(lod->group_count, sizeof(uint32_t));
 	bm->fg_index_count_arr = (uint32_t*)calloc(lod->group_count, sizeof(uint32_t));
 	if (!bm->fg_index_start || !bm->fg_index_count_arr)
-		return false;
+		return mesh_fail(error, "out of memory");
 
 	TriangleSet seen = { 0 };
 	if (!triangle_set_init(&seen, lod)) {
 		opt_gltf_built_mesh_free(bm);
-		return false;
+		return mesh_fail(error, "out of memory");
 	}
-	float* corner_normals = regen ? built_mesh_build_corner_normals(m, lod, smooth_angle_degrees) : NULL;
+	float* corner_normals =
+		regen ? built_mesh_build_corner_normals(m, lod, smooth_angle_degrees, error) : NULL;
 	if (regen && !corner_normals) {
 		free(seen.slots);
 		opt_gltf_built_mesh_free(bm);
-		return false;
+		return error && error->msg[0] ? false : mesh_fail(error, "no LOD 0 triangles");
 	}
 
 	/* The classic renderer resets g_vertexRemap for every FaceData group,
@@ -288,7 +301,7 @@ bool opt_gltf_built_mesh_from_opt(BuiltMesh* bm, const opt_mesh_t* m, float mete
 			free(classic_normal_set);
 			free(corner_normals);
 			free(seen.slots);
-			return false;
+			return mesh_fail(error, "out of memory");
 		}
 	}
 
@@ -383,7 +396,9 @@ bool opt_gltf_built_mesh_from_opt(BuiltMesh* bm, const opt_mesh_t* m, float mete
 	free(classic_normals);
 	free(classic_normal_set);
 	free(seen.slots);
-	return bm->index_count > 0;
+	if (bm->out_of_memory)
+		return mesh_fail(error, "out of memory");
+	return bm->index_count > 0 || mesh_fail(error, "no LOD 0 triangles");
 }
 
 /* ===== Tangents ======================================================
@@ -472,7 +487,7 @@ bool opt_gltf_generate_tangents(BuiltMesh* bm) {
 	bm->vertex_count = rebuilt.vertex_count;
 	bm->vertex_cap   = rebuilt.vertex_cap;
 	bm->has_tangents = true;
-	return true;
+	return !rebuilt.out_of_memory;
 }
 
 /* ===== Faceless meshes ============================================== */
@@ -495,7 +510,8 @@ void opt_gltf_faceless_patch_free(FacelessPatch* patch) {
 
 /* Returns `opt` when nothing needs patching, the patched copy otherwise, or
  * NULL when out of memory. */
-const opt_file_t* opt_gltf_faceless_patch_apply(const opt_file_t* opt, FacelessPatch* patch) {
+const opt_file_t* opt_gltf_faceless_patch_apply(const opt_file_t* opt, const OptGltfBuildOptions* options,
+												FacelessPatch* patch) {
 	memset(patch, 0, sizeof *patch);
 	int32_t count = 0;
 	for (int32_t mi = 0; mi < opt->mesh_count; ++mi)
@@ -536,8 +552,8 @@ const opt_file_t* opt_gltf_faceless_patch_apply(const opt_file_t* opt, FacelessP
 		lod->groups          = group;
 		m->lod_count         = 1;
 		m->lods              = lod;
-		fprintf(stderr, "opt2gltf: mesh %d has %d vertices and no LOD 0 faces; converted without faces\n",
-				(int)mi, (int)m->vertex_count);
+		opt_gltf_log(options, true, "mesh %d has %d vertices and no LOD 0 faces; converted without faces",
+					 (int)mi, (int)m->vertex_count);
 		++next;
 	}
 	patch->file.meshes = patch->meshes;

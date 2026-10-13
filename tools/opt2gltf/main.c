@@ -107,6 +107,7 @@
 #include "opt.h"
 #include "opt_gltf.h"
 #include "opt_gltf_write.h"
+#include "util.h"
 #include "xwau_anim.h"
 #include "xwau_config.h"
 #include "xwau_dat.h"
@@ -224,18 +225,18 @@ static const XwauNormalMap* xwau_normal_map(const XwauContext* x, const char* va
 		group_sep  = strrchr(spec, '-');
 	}
 	if (!group_sep) {
-		fprintf(stderr, "opt2gltf: %s: unreadable NormalMap '%s'\n", label, value);
+		Report(label, "unreadable NormalMap '%s'", value);
 		return NULL;
 	}
 	*group_sep      = 0;
 	const int group = atoi(group_sep + 1), image = atoi(image_sep + 1);
 	if (!ends_with_icase(spec, ".dat")) {
-		fprintf(stderr, "opt2gltf: %s: NormalMap '%s' is not a DAT image; skipped\n", label, value);
+		Report(label, "NormalMap '%s' is not a DAT image; skipped", value);
 		return NULL;
 	}
 	char path[1024];
 	if (!xwau_find(x, spec, path, sizeof path)) {
-		fprintf(stderr, "opt2gltf: %s: NormalMap file '%s' not found; skipped\n", label, spec);
+		Report(label, "NormalMap file '%s' not found; skipped", spec);
 		return NULL;
 	}
 	char key[1100];
@@ -263,7 +264,7 @@ static const XwauNormalMap* xwau_normal_map(const XwauContext* x, const char* va
 	char err[512];
 	nm->ok = XwauDat_LoadImage(path, group, image, &nm->image, err, sizeof err);
 	if (!nm->ok) {
-		fprintf(stderr, "opt2gltf: %s: NormalMap %s; skipped\n", label, err);
+		Report(label, "NormalMap %s; skipped", err);
 		return NULL;
 	}
 	if (nm->image.encoding == XWAU_DAT_ENCODING_BC5) {
@@ -342,7 +343,7 @@ static int convert_xwau(opt_file_t* opt, const char* out_dir, const char* basena
 												  : XWAU_ANIM_SCREEN_NO_COVER;
 		if (!XwauAnim_Texture(anim, mat, &opt->textures[i], XwauGltf_Unlit(&materials[i]), screen,
 							  &anims[i])) {
-			fprintf(stderr, "opt2gltf: %s: out of memory (animations)\n", label);
+			Report(label, "out of memory (animations)");
 			free(materials);
 			free(anims);
 			XwauAnim_End(anim);
@@ -362,14 +363,14 @@ static int convert_xwau(opt_file_t* opt, const char* out_dir, const char* basena
 	}
 	for (int k = 0; k < lit_count; ++k) {
 		if (!ignored[k])
-			fprintf(stderr, "opt2gltf: %s: lit texture %s: no such texture\n", label, lit[k]);
+			Report(label, "lit texture %s: no such texture", lit[k]);
 	}
 	/* Untextured faces: the material lookup of an empty name is slot 0. */
 	XwauGltfMaterial untextured;
 	xwau_fill(&untextured, mat ? XwauMat_Find(mat, "") : &x->global);
 
-	fprintf(stderr, "opt2gltf: %s: xwau materials %s, %zu of %d textures normal-mapped (%zu maps)\n", label,
-			mat ? path : "(default)", normal_textures, (int)opt->texture_count, map_count);
+	Report(label, "xwau materials %s, %zu of %d textures normal-mapped (%zu maps)", mat ? path : "(default)",
+		   normal_textures, (int)opt->texture_count, map_count);
 	XwauAnim_Report(anim);
 	XwauGltfMaterials baked;
 	int ok = XwauGltf_Bake(opt, basename, materials, &untextured, XwauAnim_Any(anim) ? anims : NULL, screens,
@@ -508,7 +509,7 @@ static bool stock_tags_read(StockTags* t, const char* model, const char* label) 
 		unsigned long mesh   = strtoul(token, &end, 10);
 		if (strchr(token, ':')) {
 			if (!parse_articulation(token, &t->articulations[t->articulation_count])) {
-				fprintf(stderr, "opt2gltf: %s: bad stock articulation %s\n", label, token);
+				Report(label, "bad stock articulation %s", token);
 				return false;
 			}
 			t->articulation_count++;
@@ -524,7 +525,7 @@ static int convert_one(const char* opt_path, const char* out_dir, const char* ba
 	opt_error_t err;
 	opt_file_t* opt = opt_load_file(opt_path, &err);
 	if (!opt) {
-		fprintf(stderr, "opt2gltf: %s: %s\n", opt_path, err.msg);
+		Report(opt_path, "%s", err.msg);
 		return 0;
 	}
 	OptGltfBuildOptions options = *s->base;
@@ -576,13 +577,13 @@ static int convert_one(const char* opt_path, const char* out_dir, const char* ba
 		}
 		const int32_t weapons = weapon_hardpoints(opt);
 		if (weapons > WEAPON_SLOTS)
-			fprintf(stderr, "opt2gltf: %s: %d weapon hardpoints; the game keeps %d weapon slots\n", opt_path,
-					(int)weapons, WEAPON_SLOTS);
+			Report(opt_path, "%d weapon hardpoints; the game keeps %d weapon slots", (int)weapons,
+				   WEAPON_SLOTS);
 		ok = ok && XwauSkins_Resolve(&s->xwau->roots, s->xwau->missions, basename, opt, opt_path, &skins);
 	}
 
 	if (ok && cockpit_eye && !apply_cockpit_eye(opt, cockpit_eye)) {
-		fprintf(stderr, "opt2gltf: %s: cannot add the cockpit eye hardpoint\n", opt_path);
+		Report(opt_path, "cannot add the cockpit eye hardpoint");
 		ok = 0;
 	}
 	OptGltfLight light;
@@ -595,7 +596,7 @@ static int convert_one(const char* opt_path, const char* out_dir, const char* ba
 			.range     = COCKPIT_LIGHT_RANGE,
 		};
 		if (light.mesh < 0) {
-			fprintf(stderr, "opt2gltf: %s: no mesh for the cockpit light\n", opt_path);
+			Report(opt_path, "no mesh for the cockpit light");
 			ok = 0;
 		}
 		options.model.lights      = &light;
@@ -605,7 +606,7 @@ static int convert_one(const char* opt_path, const char* out_dir, const char* ba
 	if (dynamic &&
 		(!XwauDynamicCockpit_Load(dynamic, opt, basename, xwau_find_file, (void*)s->xwau, &dc, opt_path) ||
 		 !XwauDynamicCockpit_ApplyHologramOffset(opt, &dc))) {
-		fprintf(stderr, "opt2gltf: %s: cannot apply %s\n", opt_path, dynamic);
+		Report(opt_path, "cannot apply %s", dynamic);
 		ok = 0;
 	}
 	if (ok)
@@ -633,11 +634,11 @@ static int convert_into_project(const char* opt_path, const char* basename, cons
 	snprintf(scratch, sizeof scratch, "%s/.%s.opt2gltf", models, key);
 	struct stat st;
 	if (stat(final_dir, &st) == 0 && !replace) {
-		fprintf(stderr, "opt2gltf: %s: %s exists (--replace replaces it)\n", opt_path, final_dir);
+		Report(opt_path, "%s exists (--replace replaces it)", final_dir);
 		return 0;
 	}
 	if (!Xwau_MakeDir(project) || !Xwau_MakeDir(models) || !Xwau_RemoveTree(scratch)) {
-		fprintf(stderr, "opt2gltf: %s: cannot write into %s\n", opt_path, models);
+		Report(opt_path, "cannot write into %s", models);
 		return 0;
 	}
 	if (!convert_one(opt_path, scratch, basename, s)) {
@@ -649,12 +650,12 @@ static int convert_into_project(const char* opt_path, const char* basename, cons
 	snprintf(to, sizeof to, "%s/%s.gltf", scratch, key);
 	if ((strcmp(from, to) != 0 && rename(from, to) != 0) || !Xwau_RemoveTree(final_dir) ||
 		rename(scratch, final_dir) != 0) {
-		fprintf(stderr, "opt2gltf: %s: cannot place %s: %s\n", opt_path, final_dir, strerror(errno));
+		Report(opt_path, "cannot place %s: %s", final_dir, strerror(errno));
 		Xwau_RemoveTree(scratch);
 		return 0;
 	}
 	snprintf(to, sizeof to, "%s/%s.gltf", final_dir, key);
-	fprintf(stderr, "opt2gltf: %s: wrote %s\n", opt_path, to);
+	Report(opt_path, "wrote %s", to);
 	return !s->xwau || XwauLibrary_AddModel(&s->xwau->roots, project, to);
 }
 
@@ -712,12 +713,12 @@ static bool parse_args(int argc, char** argv, unsigned allowed, Args* out) {
 		while (f < sizeof kFlags / sizeof kFlags[0] && strcmp(argv[ai], kFlags[f].name) != 0)
 			++f;
 		if (f == sizeof kFlags / sizeof kFlags[0] || !(allowed & kFlags[f].flag)) {
-			fprintf(stderr, "opt2gltf: unknown option '%s'\n", argv[ai]);
+			Report(NULL, "unknown option '%s'", argv[ai]);
 			return false;
 		}
 		const char* value = kFlags[f].value ? argv[ai + 1] : NULL;
 		if (kFlags[f].value && (ai + 1 == argc || !value)) {
-			fprintf(stderr, "opt2gltf: %s needs a value\n", argv[ai]);
+			Report(NULL, "%s needs a value", argv[ai]);
 			return false;
 		}
 		ai += kFlags[f].value;
@@ -727,7 +728,7 @@ static bool parse_args(int argc, char** argv, unsigned allowed, Args* out) {
 				break;
 			case FLAG_XWAU_ROOT:
 				if (out->roots.count == XWAU_MAX_ROOTS) {
-					fprintf(stderr, "opt2gltf: --xwau-root: at most %d\n", XWAU_MAX_ROOTS);
+					Report(NULL, "--xwau-root: at most %d", XWAU_MAX_ROOTS);
 					return false;
 				}
 				out->roots.dirs[out->roots.count++] = value;
@@ -737,7 +738,7 @@ static bool parse_args(int argc, char** argv, unsigned allowed, Args* out) {
 				out->smooth_angle = strtof(value, &end);
 				if (end == value || *end || !isfinite(out->smooth_angle) || out->smooth_angle < 0.0f ||
 					out->smooth_angle > 180.0f) {
-					fprintf(stderr, "opt2gltf: --smooth-angle needs an angle from 0 to 180 degrees\n");
+					Report(NULL, "--smooth-angle needs an angle from 0 to 180 degrees");
 					return false;
 				}
 				break;
@@ -770,15 +771,15 @@ static int run_convert(int argc, char** argv) {
 					&a))
 		return 2;
 	if (a.stock == (a.roots.count > 0)) {
-		fprintf(stderr, "opt2gltf: give --stock or --xwau-root\n");
+		Report(NULL, "give --stock or --xwau-root");
 		return usage();
 	}
 	if (a.smooth_angle >= 0.0f && !a.stock) {
-		fprintf(stderr, "opt2gltf: --smooth-angle applies to --stock\n");
+		Report(NULL, "--smooth-angle applies to --stock");
 		return 2;
 	}
 	if (a.replace && !a.project) {
-		fprintf(stderr, "opt2gltf: --replace needs --project\n");
+		Report(NULL, "--replace needs --project");
 		return 2;
 	}
 	if (a.input_count != (a.project ? 1 : 2))
@@ -786,7 +787,7 @@ static int run_convert(int argc, char** argv) {
 	const char* in = a.inputs[0];
 	struct stat st;
 	if (stat(in, &st) != 0 || !S_ISREG(st.st_mode)) {
-		fprintf(stderr, "opt2gltf: %s: not an OPT file\n", in);
+		Report(in, "not an OPT file");
 		return 1;
 	}
 
@@ -803,9 +804,9 @@ static int run_convert(int argc, char** argv) {
 		if (xwau_find(&xwau, "Materials/DefaultGlobalMaterial.mat", global_path, sizeof global_path))
 			XwauMat_ReadGlobalDefault(global_path, &xwau.global);
 		else
-			fprintf(stderr, "opt2gltf: no Materials/DefaultGlobalMaterial.mat; using built-in defaults\n");
+			Report(NULL, "no Materials/DefaultGlobalMaterial.mat; using built-in defaults");
 		if (!(xwau.missions = XwauMissions_Load(&xwau.roots, false))) {
-			fprintf(stderr, "opt2gltf: out of memory (missions)\n");
+			Report(NULL, "out of memory (missions)");
 			return 1;
 		}
 	}
@@ -830,7 +831,7 @@ static int run_effects(int argc, char** argv) {
 	if (!parse_args(argc, argv, FLAG_XWAU_ROOT | FLAG_PROJECT, &a))
 		return 2;
 	if (!a.roots.count || !a.project || !a.input_count) {
-		fprintf(stderr, "opt2gltf: effects needs --xwau-root, --project and inputs\n");
+		Report(NULL, "effects needs --xwau-root, --project and inputs");
 		return 2;
 	}
 	return XwauLibrary_Rebuild(&a.roots, a.project, (const char* const*)a.inputs, (size_t)a.input_count) ? 0
@@ -843,12 +844,12 @@ static int run_missions(int argc, char** argv) {
 	if (!parse_args(argc, argv, FLAG_XWAU_ROOT | FLAG_STOCK_GAME, &a))
 		return 2;
 	if (!a.roots.count || !a.stock_game || a.input_count != 1) {
-		fprintf(stderr, "opt2gltf: missions needs --xwau-root, --stock-game and an output folder\n");
+		Report(NULL, "missions needs --xwau-root, --stock-game and an output folder");
 		return 2;
 	}
 	XwauMissions* missions = XwauMissions_Load(&a.roots, true);
 	if (!missions) {
-		fprintf(stderr, "opt2gltf: out of memory (missions)\n");
+		Report(NULL, "out of memory (missions)");
 		return 1;
 	}
 	const bool ok = XwauMissionFiles_Write(&a.roots, missions, a.stock_game, a.inputs[0]);

@@ -8,6 +8,7 @@
 #include <strings.h>
 
 #include "model_tables.h"
+#include "util.h"
 #include "xwau_model.h"
 
 #define TAG_MAX 63
@@ -91,9 +92,7 @@ static void report(const XwauMissions* m, const char* base, const char* format, 
 		return;
 	va_list args;
 	va_start(args, format);
-	fprintf(stderr, "opt2gltf: %s: ", base);
-	vfprintf(stderr, format, args);
-	fputc('\n', stderr);
+	ReportV(base, format, args);
 	va_end(args);
 }
 
@@ -810,9 +809,8 @@ bool XwauMissions_Articulations(const XwauMissions* missions, const char* model,
 			char       tag[1024];
 			snprintf(tag, sizeof tag, "variant.%s.%s", sorted[i]->name, list->group);
 			if (strlen(tag) > TAG_MAX) {
-				fprintf(stderr,
-						"opt2gltf: %s: variant %s: skipped: group '%s' is longer than %d characters\n", label,
-						sorted[i]->name, tag, TAG_MAX);
+				Report(label, "variant %s: skipped: group '%s' is longer than %d characters", sorted[i]->name,
+					   tag, TAG_MAX);
 				continue;
 			}
 			qsort(list->meshes, list->count, sizeof *list->meshes, compare_meshes);

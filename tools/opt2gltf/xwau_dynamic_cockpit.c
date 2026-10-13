@@ -7,6 +7,7 @@
 
 #include "xwau_gltf_material.h"
 
+#include "util.h"
 #include "xwau_dat.h"
 
 #include <math.h>
@@ -139,8 +140,8 @@ static int read_name_from_line(const char* buf, char name[50]) {
 static void load_uv_coords(DcSection* section, const char* buf, float width, float height, int line,
 						   const char* label) {
 	if (section->coord_count >= DC_MAX_COORDS) {
-		fprintf(stderr, "opt2gltf: %s:%d: more than %d uv_coords in [%s]; skipped\n", label, line,
-				DC_MAX_COORDS, section->name);
+		Report(NULL, "%s:%d: more than %d uv_coords in [%s]; skipped", label, line, DC_MAX_COORDS,
+			   section->name);
 		return;
 	}
 	const char* s = strchr(buf, '=');
@@ -156,7 +157,7 @@ static void load_uv_coords(DcSection* section, const char* buf, float width, flo
 	const int source =
 		strstr(slot_name, "SRC") ? lookup_name(dc_source_names, DC_SOURCE_COUNT, slot_name) : -1;
 	if (source < 0) {
-		fprintf(stderr, "opt2gltf: %s:%d: unknown source '%s'; skipped\n", label, line, slot_name);
+		Report(NULL, "%s:%d: unknown source '%s'; skipped", label, line, slot_name);
 		return;
 	}
 	s += len + 1;
@@ -166,7 +167,7 @@ static void load_uv_coords(DcSection* section, const char* buf, float width, flo
 	const int res = sscanf(s, "%f, %f, %f, %f; 0x%x; %f; %d; %d; 0x%x; 0x%x; %d", &x0, &y0, &x1, &y1, &color,
 						   &intensity, &text_layer, &obj_layer, &highlight, &lock, &bloom);
 	if (res < 4) {
-		fprintf(stderr, "opt2gltf: %s:%d: expected at least 4 coordinates; skipped\n", label, line);
+		Report(NULL, "%s:%d: expected at least 4 coordinates; skipped", label, line);
 		return;
 	}
 	uint32_t bits = 0x04u | 0x08u; /* text and graphics layers */
@@ -270,19 +271,19 @@ static const XwauDynamicCockpitCover* load_cover(XwauDynamicCockpit* dc, const c
 		group_sep  = strrchr(spec, '-');
 	}
 	if (!group_sep) {
-		fprintf(stderr, "opt2gltf: %s: unreadable cover_texture '%s'; no cover\n", label, value);
+		Report(label, "unreadable cover_texture '%s'; no cover", value);
 		return NULL;
 	}
 	*group_sep         = 0;
 	const int    group = atoi(group_sep + 1), image = atoi(image_sep + 1);
 	const size_t spec_len = strlen(spec);
 	if (spec_len < 4 || strcasecmp(spec + spec_len - 4, ".dat") != 0) {
-		fprintf(stderr, "opt2gltf: %s: cover_texture '%s' is not a DAT image; no cover\n", label, value);
+		Report(label, "cover_texture '%s' is not a DAT image; no cover", value);
 		return NULL;
 	}
 	char path[1024];
 	if (!find(find_context, spec, path, sizeof path)) {
-		fprintf(stderr, "opt2gltf: %s: cover file '%s' not found; no cover\n", label, spec);
+		Report(label, "cover file '%s' not found; no cover", spec);
 		return NULL;
 	}
 	char key[1100];
@@ -310,11 +311,11 @@ static const XwauDynamicCockpitCover* load_cover(XwauDynamicCockpit* dc, const c
 	snprintf(cover->name, sizeof cover->name, "%s_%d_%d", stem, group, image);
 	char err[512];
 	if (!XwauDat_LoadImage(path, group, image, &cover->image, err, sizeof err)) {
-		fprintf(stderr, "opt2gltf: %s: cover %s; no cover\n", label, err);
+		Report(label, "cover %s; no cover", err);
 		return NULL;
 	}
 	if (!bake_cover(cover)) {
-		fprintf(stderr, "opt2gltf: %s: out of memory baking cover %s\n", label, cover->name);
+		Report(label, "out of memory baking cover %s", cover->name);
 		return NULL;
 	}
 	cover->ok = true;
@@ -367,7 +368,7 @@ bool XwauDynamicCockpit_Load(const char* dc_path, const opt_file_t* opt, const c
 	memset(out, 0, sizeof *out);
 	FILE* f = fopen(dc_path, "rt");
 	if (!f) {
-		fprintf(stderr, "opt2gltf: %s: cannot read %s\n", label, dc_path);
+		Report(label, "cannot read %s", dc_path);
 		return false;
 	}
 	DcSection* sections = (DcSection*)calloc(DC_MAX_SECTIONS, sizeof *sections);
@@ -411,19 +412,19 @@ bool XwauDynamicCockpit_Load(const char* dc_path, const opt_file_t* opt, const c
 				current = &sections[section_count++];
 				snprintf(current->name, sizeof current->name, "%s", name);
 			} else {
-				fprintf(stderr, "opt2gltf: %s:%d: more than %d sections; [%s] ignored\n", label, line,
-						DC_MAX_SECTIONS, name);
+				Report(NULL, "%s:%d: more than %d sections; [%s] ignored", label, line, DC_MAX_SECTIONS,
+					   name);
 			}
 		} else if (strcasecmp(param, "uv_coords") == 0) {
 			if (current)
 				load_uv_coords(current, buf, cover_width, cover_height, line, label);
 			else
-				fprintf(stderr, "opt2gltf: %s:%d: uv_coords outside a section; skipped\n", label, line);
+				Report(NULL, "%s:%d: uv_coords outside a section; skipped", label, line);
 		} else if (strcasecmp(param, "erase_region") == 0) {
 			const int region =
 				strstr(svalue, "REGION") ? lookup_name(dc_region_names, DC_REGION_COUNT, svalue) : -1;
 			if (!current || region < 0)
-				fprintf(stderr, "opt2gltf: %s:%d: erase_region '%s' skipped\n", label, line, svalue);
+				Report(NULL, "%s:%d: erase_region '%s' skipped", label, line, svalue);
 			else if (current->erase_count < DC_MAX_COORDS)
 				current->erase[current->erase_count++] = region;
 		} else if (strcasecmp(param, "cover_texture") == 0) {
@@ -432,7 +433,7 @@ bool XwauDynamicCockpit_Load(const char* dc_path, const opt_file_t* opt, const c
 		} else if (strcasecmp(param, "cover_texture_size") == 0) {
 			const char* s = strchr(buf, '=');
 			if (s && sscanf(s + 1, "%f, %f", &cover_width, &cover_height) < 2)
-				fprintf(stderr, "opt2gltf: %s:%d: expected 'width, height'\n", label, line);
+				Report(NULL, "%s:%d: expected 'width, height'", label, line);
 		} else if (strcasecmp(param, "hologram") == 0) {
 			if (current)
 				current->hologram = value != 0.0f;
@@ -456,7 +457,7 @@ bool XwauDynamicCockpit_Load(const char* dc_path, const opt_file_t* opt, const c
 				   strcasecmp(param, "ion_energy_color") != 0 &&
 				   strcasecmp(param, "fix_missles_countermeasures_text") != 0 &&
 				   strcasecmp(param, "fix_missiles_countermeasures_text") != 0) {
-			fprintf(stderr, "opt2gltf: %s:%d: unknown key '%s' ignored\n", label, line, param);
+			Report(NULL, "%s:%d: unknown key '%s' ignored", label, line, param);
 		}
 	}
 	fclose(f);
@@ -473,7 +474,7 @@ bool XwauDynamicCockpit_Load(const char* dc_path, const opt_file_t* opt, const c
 		snprintf(opt_name, sizeof opt_name, "%s", section->name);
 		char* comma = strchr(opt_name, ',');
 		if (!comma) {
-			fprintf(stderr, "opt2gltf: %s: section [%s] names no texture; skipped\n", label, section->name);
+			Report(label, "section [%s] names no texture; skipped", section->name);
 			continue;
 		}
 		*comma                  = 0;
@@ -488,14 +489,12 @@ bool XwauDynamicCockpit_Load(const char* dc_path, const opt_file_t* opt, const c
 			if (strcasecmp(opt->textures[i].name, texture) == 0)
 				ti = i;
 		if (ti < 0) {
-			fprintf(stderr, "opt2gltf: %s: section [%s] matches no texture of %s; skipped\n", label,
-					section->name, basename);
+			Report(label, "section [%s] matches no texture of %s; skipped", section->name, basename);
 			continue;
 		}
 		OptGltfScreen* screen = &out->screens[ti];
 		if (screen->present) {
-			fprintf(stderr, "opt2gltf: %s: section [%s] repeats texture %s; skipped\n", label, section->name,
-					texture);
+			Report(label, "section [%s] repeats texture %s; skipped", section->name, texture);
 			continue;
 		}
 		screen->present        = true;
@@ -556,12 +555,11 @@ bool XwauDynamicCockpit_Load(const char* dc_path, const opt_file_t* opt, const c
 			out->has_hologram_offset = out->hologram_offset[0] != 0.0f || out->hologram_offset[1] != 0.0f ||
 									   out->hologram_offset[2] != 0.0f;
 	}
-	fprintf(
-		stderr,
-		"opt2gltf: %s: dynamic cockpit %s: %d of %d sections bound, %d rectangles, %zu covers, %d holograms"
-		"%s\n",
-		label, dc_path, bound, section_count, rects, out->cover_count, holograms,
-		out->has_hologram_offset ? " (offset)" : "");
+	Report(label,
+		   "dynamic cockpit %s: %d of %d sections bound, %d rectangles, %zu covers, %d holograms"
+		   "%s",
+		   dc_path, bound, section_count, rects, out->cover_count, holograms,
+		   out->has_hologram_offset ? " (offset)" : "");
 	return true;
 }
 

@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "util.h"
 #include "xwau_config.h"
 
 /* One composite: texture `texture` with the effective chain `chain` (the
@@ -75,8 +76,8 @@ static bool skin_validate(const XwauSkinVariants* skins, const char* basename) {
 		for (size_t l = 0; ok && l < variant->layer_count; ++l)
 			ok = variant->layers[l].skin < skins->skin_count && variant->layers[l].opacity <= 100;
 		if (!ok) {
-			fprintf(stderr, "opt2gltf: %s: invalid or duplicate skin variant %zu '%s'\n", basename, v,
-					variant->name ? variant->name : "");
+			Report(basename, "invalid or duplicate skin variant %zu '%s'", v,
+				   variant->name ? variant->name : "");
 			return false;
 		}
 	}
@@ -297,7 +298,7 @@ XwauGltfSkins* XwauGltfSkins_Build(const opt_file_t* opt, const char* basename, 
 		return NULL;
 	XwauGltfSkins* s = (XwauGltfSkins*)calloc(1, sizeof *s);
 	if (!s || !skin_state_build(opt, skins, screens, base_shade, materials, anims, baked, &s->state)) {
-		fprintf(stderr, "opt2gltf: oom (skins)\n");
+		Report(NULL, "oom (skins)");
 		free(s);
 		return NULL;
 	}
@@ -311,7 +312,7 @@ XwauGltfSkins* XwauGltfSkins_Build(const opt_file_t* opt, const char* basename, 
 		ok = composite_material(s, basename, c, &textures[s->state.composites[c].texture], anims,
 								&s->materials[c]);
 	if (!ok) {
-		fprintf(stderr, "opt2gltf: oom (skins)\n");
+		Report(NULL, "oom (skins)");
 		XwauGltfSkins_Free(s);
 		return NULL;
 	}
@@ -330,11 +331,10 @@ XwauGltfSkins* XwauGltfSkins_Build(const opt_file_t* opt, const char* basename, 
 const OptGltfVariants* XwauGltfSkins_Variants(const XwauGltfSkins* s) { return &s->out; }
 
 void XwauGltfSkins_Report(const XwauGltfSkins* s, const char* basename) {
-	fprintf(stderr,
-			"opt2gltf: %s: %zu skin variants, %zu composites (%zu own emissive, %zu own metallic-roughness), "
-			"%zu markings\n",
-			basename, s->out.count, s->state.count, s->own_emissive, s->own_metal_rough,
-			s->out.markings_count);
+	Report(basename,
+		   "%zu skin variants, %zu composites (%zu own emissive, %zu own metallic-roughness), "
+		   "%zu markings",
+		   s->out.count, s->state.count, s->own_emissive, s->own_metal_rough, s->out.markings_count);
 }
 
 void XwauGltfSkins_Free(XwauGltfSkins* s) {

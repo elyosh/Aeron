@@ -101,6 +101,10 @@ typedef struct {
 	 * write — we own the pointer lifetimes). */
 	char** owned_strings;
 	size_t owned_strings_count, owned_strings_cap;
+
+	/* Keeping a string or growing the .bin ran out of memory: the build
+	 * fails. */
+	bool out_of_memory;
 } GltfBuild;
 
 typedef struct OptGltfOwnedImage {
@@ -156,7 +160,8 @@ typedef struct {
 	 * or kept because the repeat has another texture. */
 	uint32_t skipped_repeats;
 	uint32_t kept_repeats;
-	bool     has_tangents; /* vertices carry TANGENT (opt_gltf_generate_tangents) */
+	bool     has_tangents;  /* vertices carry TANGENT (opt_gltf_generate_tangents) */
+	bool     out_of_memory; /* growing the vertices or indices failed */
 } BuiltMesh;
 
 /* Some shipped OPTs carry meshes with vertices but no LOD 0 faces
@@ -222,6 +227,9 @@ typedef struct Build {
 /* Sets the build's error message; returns false. */
 bool opt_gltf_build_fail(Build* b, const char* format, ...);
 
+/* Sends a note or a warning to the options' log. */
+void opt_gltf_log(const OptGltfBuildOptions* options, bool warning, const char* format, ...);
+
 /* ---- opt_gltf_document.c ------------------------------------------------ */
 
 void*              opt_gltf_push_array(void** arr, size_t* count, size_t* cap, size_t elem_size, size_t want);
@@ -250,9 +258,10 @@ bool            opt_gltf_material_extensions(OptGltfDocument* document, unsigned
 
 void opt_gltf_built_mesh_free(BuiltMesh* bm);
 bool opt_gltf_built_mesh_from_opt(BuiltMesh* bm, const opt_mesh_t* m, float meters_per_opt_unit, bool regen,
-								  float smooth_angle_degrees, bool repair_normals);
+								  float smooth_angle_degrees, bool repair_normals, opt_error_t* error);
 bool opt_gltf_generate_tangents(BuiltMesh* bm);
-const opt_file_t* opt_gltf_faceless_patch_apply(const opt_file_t* opt, FacelessPatch* patch);
+const opt_file_t* opt_gltf_faceless_patch_apply(const opt_file_t* opt, const OptGltfBuildOptions* options,
+												FacelessPatch* patch);
 void              opt_gltf_faceless_patch_free(FacelessPatch* patch);
 
 #endif /* AERON_OPT2GLTF_OPT_GLTF_INTERNAL_H */

@@ -6,6 +6,7 @@
 #include <strings.h>
 
 #include "model_tables.h"
+#include "util.h"
 
 #define TAG_MAX 63
 #define COMPONENT_MAX 254
@@ -55,8 +56,7 @@ static bool eye_from_lines(const XwauLines* lines, int eye[3], const char* label
 	for (int k = 0; k < 3; ++k) {
 		long long value;
 		if (!Xwau_StoiAuto(values[k], &value)) {
-			fprintf(stderr, "opt2gltf: %s: %s: %s = %s is not a number; no eye\n", label, where, keys[k],
-					values[k]);
+			Report(label, "%s: %s = %s is not a number; no eye", where, keys[k], values[k]);
 			return false;
 		}
 		eye[k] = (int)(short)(unsigned short)(value & 0xFFFF);
@@ -155,10 +155,9 @@ static bool read_profiles(const XwauRoots* roots, const char* model, XwauModel* 
 		}
 		char set[64] = "hidden_by_profile.";
 		if (!found) {
-			fprintf(stderr, "opt2gltf: %s: profile '%s' skipped: reference cycle\n", label, name);
+			Report(label, "profile '%s' skipped: reference cycle", name);
 		} else if (!Xwau_EncodeName(name, set + strlen(set), sizeof set - strlen(set))) {
-			fprintf(stderr, "opt2gltf: %s: profile '%s' skipped: its set name is longer than %d characters\n",
-					label, name, TAG_MAX);
+			Report(label, "profile '%s' skipped: its set name is longer than %d characters", name, TAG_MAX);
 		} else {
 			uint32_t members[8] = { 0 };
 			bool     any = false, dropped = false;
@@ -171,8 +170,7 @@ static bool read_profiles(const XwauRoots* roots, const char* model, XwauModel* 
 				}
 			}
 			if (dropped)
-				fprintf(stderr, "opt2gltf: %s: profile '%s': mesh indices past %d dropped\n", label, name,
-						COMPONENT_MAX);
+				Report(label, "profile '%s': mesh indices past %d dropped", name, COMPONENT_MAX);
 			if (any) {
 				if (out->set_count == XWAU_MODEL_MAX_SETS) {
 					ok = false;
@@ -228,8 +226,7 @@ bool XwauModel_MeshLines(const XwauLines* lines, XwauMeshLine** out, size_t* cou
 		for (int k = 0; numbers && k < 4; ++k)
 			numbers = Xwau_StoiAuto(tokens.items[k], &line.values[k]);
 		if (tokens.count >= 4 && !numbers && label)
-			fprintf(stderr, "opt2gltf: %s: %s: line '%s' skipped: not a number (XWAU would fail)\n", label,
-					where, lines->items[i]);
+			Report(label, "%s: line '%s' skipped: not a number (XWAU would fail)", where, lines->items[i]);
 		XwauLines_Free(&tokens);
 		if (!numbers)
 			continue;
@@ -251,17 +248,14 @@ static bool add_articulation(XwauModel* out, const char* where, const char* grou
 							 bool* added, const char* label) {
 	*added = false;
 	if (mesh < 0 || mesh > COMPONENT_MAX) {
-		fprintf(stderr, "opt2gltf: %s: %s: mesh %lld skipped: outside 0..%d\n", label, where, mesh,
-				COMPONENT_MAX);
+		Report(label, "%s: mesh %lld skipped: outside 0..%d", where, mesh, COMPONENT_MAX);
 	} else if (angle < -128 || angle > 255) {
-		fprintf(stderr, "opt2gltf: %s: %s: mesh %lld skipped: angle %lld outside -128..255\n", label, where,
-				mesh, angle);
+		Report(label, "%s: mesh %lld skipped: angle %lld outside -128..255", where, mesh, angle);
 	} else if (speed < 0 || speed > 255 || speed_back < 0 || speed_back > 255) {
-		fprintf(stderr, "opt2gltf: %s: %s: mesh %lld skipped: speeds %lld, %lld outside 0..255\n", label,
-				where, mesh, speed, speed_back);
+		Report(label, "%s: mesh %lld skipped: speeds %lld, %lld outside 0..255", where, mesh, speed,
+			   speed_back);
 	} else if (strlen(group) > TAG_MAX) {
-		fprintf(stderr, "opt2gltf: %s: %s: skipped: group '%s' is longer than %d characters\n", label, where,
-				group, TAG_MAX);
+		Report(label, "%s: skipped: group '%s' is longer than %d characters", where, group, TAG_MAX);
 	} else if (out->articulation_count == XWAU_MODEL_MAX_ARTICULATIONS) {
 		return false;
 	} else {
@@ -420,8 +414,8 @@ static bool read_rotations(const XwauRoots* roots, const XwauMissions* missions,
 	for (size_t i = 0; ok && i < count; ++i) {
 		const long long behavior = mesh_lines[i].values[3];
 		if (behavior < 0 || behavior > 2) {
-			fprintf(stderr, "opt2gltf: %s: Pilot: mesh %lld skipped: behavior %lld is not converted\n", label,
-					mesh_lines[i].values[0], behavior);
+			Report(label, "Pilot: mesh %lld skipped: behavior %lld is not converted", mesh_lines[i].values[0],
+				   behavior);
 			continue;
 		}
 		bool added;
@@ -433,8 +427,7 @@ static bool read_rotations(const XwauRoots* roots, const XwauMissions* missions,
 	free(mesh_lines);
 	if (ok && (ok = section_lines(roots, model, "PilotCockpit", &lines))) {
 		if (lines.count)
-			fprintf(stderr, "opt2gltf: %s: PilotCockpit: not converted (OpenXWA has no cockpit list)\n",
-					label);
+			Report(label, "PilotCockpit: not converted (OpenXWA has no cockpit list)");
 		XwauLines_Free(&lines);
 	}
 
@@ -447,8 +440,8 @@ static bool read_rotations(const XwauRoots* roots, const XwauMissions* missions,
 			if (!text[0])
 				continue;
 			if (!Xwau_StoiAuto(text, &value)) {
-				fprintf(stderr, "opt2gltf: %s: SFoils: %s = %s skipped: not a number (XWAU would fail)\n",
-						label, kSettings[i].key, text);
+				Report(label, "SFoils: %s = %s skipped: not a number (XWAU would fail)", kSettings[i].key,
+					   text);
 				continue;
 			}
 			if (kSettings[i].kind == 0)

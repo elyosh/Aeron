@@ -10,12 +10,7 @@ void* opt_gltf_push_array(void** arr, size_t* count, size_t* cap, size_t elem_si
 		 * entry. cgltf records pointers (not indices) into these arrays
 		 * and writes them by pointer arithmetic at serialization time,
 		 * so a realloc here would dangle every pointer captured before
-		 * this call. Abort with a diagnostic instead of silently
-		 * corrupting the output. */
-		fprintf(stderr,
-				"opt2gltf: opt_gltf_push_array would realloc "
-				"(count=%zu + want=%zu > cap=%zu); pre-count missed.\n",
-				*count, want, *cap);
+		 * this call. Abort instead of silently corrupting the output. */
 		abort();
 	}
 	void* slot = (char*)*arr + *count * elem_size;
@@ -27,12 +22,17 @@ void* opt_gltf_push_array(void** arr, size_t* count, size_t* cap, size_t elem_si
  * into this; it only references the strings themselves, which we
  * allocate separately and never move). */
 char* opt_gltf_keep_string(GltfBuild* gb, char* s) {
+	if (!s) {
+		gb->out_of_memory = true;
+		return NULL;
+	}
 	if (gb->owned_strings_count + 1 > gb->owned_strings_cap) {
 		size_t ncap  = gb->owned_strings_cap ? gb->owned_strings_cap * 2 : 64;
 		char** grown = (char**)realloc(gb->owned_strings, ncap * sizeof(char*));
 		if (!grown) {
-			fprintf(stderr, "opt2gltf: oom\n");
-			abort();
+			free(s);
+			gb->out_of_memory = true;
+			return NULL;
 		}
 		gb->owned_strings     = grown;
 		gb->owned_strings_cap = ncap;
@@ -67,8 +67,8 @@ size_t opt_gltf_bin_append(GltfBuild* gb, const void* data, size_t bytes) {
 			ncap *= 2;
 		uint8_t* grown = (uint8_t*)realloc(gb->bin, ncap);
 		if (!grown) {
-			fprintf(stderr, "opt2gltf: oom\n");
-			abort();
+			gb->out_of_memory = true;
+			return 0;
 		}
 		gb->bin     = grown;
 		gb->bin_cap = ncap;

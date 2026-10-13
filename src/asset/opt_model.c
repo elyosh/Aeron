@@ -18,12 +18,13 @@ typedef struct OptModelCookContext {
 	bool              render_build_failed;
 } OptModelCookContext;
 
-/* The converter's notes and warnings, in the engine's log. */
-static void opt_model_log(bool warning, const char* message) {
+/* The converter's notes and warnings, in the engine's log under the
+ * model's label (the context). */
+static void opt_model_log(void* label, bool warning, const char* message) {
 	if (warning)
-		Aeron_LogWarn("aeron.opt", "%s", message);
+		Aeron_LogWarn("aeron.opt", "%s: %s", (const char*)label, message);
 	else
-		Aeron_LogDebug("aeron.opt", "%s", message);
+		Aeron_LogDebug("aeron.opt", "%s: %s", (const char*)label, message);
 }
 
 static bool opt_model_error(AeronOptModelError* error, int code, const char* message) {
@@ -320,13 +321,14 @@ bool Aeron_OptModelBuildMemory(const void* bytes, size_t size, const char* label
 		}
 	}
 	const OptGltfBuildOptions build_options = {
-		.geometry = { .normals              = OPT_GLTF_NORMALS_SMOOTHED,
-					  .smooth_angle_degrees = options->smooth_angle_degrees },
-		.material = { .source               = OPT_GLTF_MATERIALS_STOCK,
-					  .emissive             = options->emissive,
-					  .alpha_overrides      = alpha_overrides,
-					  .alpha_override_count = options->alpha_override_count },
-		.log      = opt_model_log,
+		.geometry    = { .normals              = OPT_GLTF_NORMALS_SMOOTHED,
+						 .smooth_angle_degrees = options->smooth_angle_degrees },
+		.material    = { .source               = OPT_GLTF_MATERIALS_STOCK,
+						 .emissive             = options->emissive,
+						 .alpha_overrides      = alpha_overrides,
+						 .alpha_override_count = options->alpha_override_count },
+		.log         = opt_model_log,
+		.log_context = (void*)label,
 	};
 	OptGltfDocument* document  = NULL;
 	const bool       converted = OptGltf_BuildMemory(source, label, &build_options, &document, &parser_error);

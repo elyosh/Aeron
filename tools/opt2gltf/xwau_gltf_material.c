@@ -6,6 +6,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "util.h"
 #include "xwau_config.h"
 #include "xwau_gltf_skins.h"
 #include "xwau_skins.h"
@@ -408,7 +409,7 @@ bool XwauGltf_Bake(const opt_file_t* opt, const char* basename, const XwauGltfMa
 	}
 	bool ok = s && owner && out->textures && s->baked && s->normals;
 	if (!ok)
-		fprintf(stderr, "opt2gltf: oom (xwau)\n");
+		Report(NULL, "oom (xwau)");
 
 	/* Each texture's bake, and the first texture sharing its baked normal
 	 * map (same source and NMIntensity), which bakes it. */
@@ -419,7 +420,7 @@ bool XwauGltf_Bake(const opt_file_t* opt, const char* basename, const XwauGltfMa
 		uint8_t*             colour = NULL;
 		if (!xwau_bake_texture(t, base_shade, &materials[i], &s->baked[i],
 							   a && a->anim_base ? &colour : NULL)) {
-			fprintf(stderr, "opt2gltf: oom (xwau bake)\n");
+			Report(NULL, "oom (xwau bake)");
 			ok = false;
 			break;
 		}
@@ -441,7 +442,7 @@ bool XwauGltf_Bake(const opt_file_t* opt, const char* basename, const XwauGltfMa
 		if (owner[i] != i)
 			continue;
 		if (!(s->normals[i] = xwau_bake_normal(&materials[i].normal_map, materials[i].nm_intensity))) {
-			fprintf(stderr, "opt2gltf: oom (xwau normal)\n");
+			Report(NULL, "oom (xwau normal)");
 			ok = false;
 		}
 	}

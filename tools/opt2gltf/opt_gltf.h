@@ -318,9 +318,12 @@ typedef struct OptGltfBuildOptions {
 	OptGltfGeometryOptions geometry;
 	OptGltfMaterialOptions material;
 	OptGltfModelOptions    model;
-	/* The conversion's notes (a texture's alpha class) and warnings (an
-	 * unused alpha override) when set; without it, warnings go to stderr. */
-	void (*log)(bool warning, const char* message);
+	/* Receives the conversion's notes (a texture's alpha class) and warnings
+	 * (an unused alpha override, repaired normals), with `log_context`; the
+	 * messages do not name the model. Without it, nothing is reported.
+	 * Errors go to OptGltf_BuildMemory's `error`. */
+	void (*log)(void* context, bool warning, const char* message);
+	void* log_context;
 } OptGltfBuildOptions;
 
 /* OPT hardpoint type whose Y and Z the game reads as the pilot eye (31). */
