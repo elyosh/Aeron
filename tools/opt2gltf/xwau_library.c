@@ -1,29 +1,11 @@
 /*
- * xwau_effects — imports the effect images and the game effect data of
- * converted XWAU models into an asset source tree (docs: asset_sources.md).
- *
- *   xwau_effects [--xwau-root DIR]... --sources TREE [MODEL.gltf | TREE]...
- *
- * Reads the library images the models use (the flipbooks and damage of
- * their materials' AERON_flight_model objects, in .gltf files given or found
- * as models/<key>/<key>.gltf in a source tree) and the DAT-named material files
- * (Materials/dat-<G>-<I>.mat) of the roots. A library is the images of
- * Effects/<library>.dat; a library with no such DAT in the roots is not an
- * XWAU one (authored content) and is left alone.
- * Roots are searched in order, the first holding a file wins (as opt2gltf).
- *
- * Writes TREE/effects/<library>/<library>.yaml (an effect library file,
- * tools/gltf_cook/animated_materials.md), each image's inputs as PNGs under
- * frames/ (XWAU's rules applied: an illumination frame as its emissive and
- * its base colour with coverage, the tint and alpha mode baked in), with its
- * size cap and crop; and TREE/effects/effects.yaml (the energy effects and the
- * flipbooks of DAT images the game draws directly, the blast marks of group
- * 3050). The libraries are then built from the tree like any other.
+ * The effect library images of converted XWAU models, written into a
+ * project (xwau_library.h).
  */
 
 #include <ctype.h>
-#include <math.h>
 #include <dirent.h>
+#include <math.h>
 #include <stdarg.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -31,6 +13,8 @@
 #include <string.h>
 #include <strings.h>
 #include <sys/stat.h>
+
+#include "xwau_library.h"
 
 #include "cJSON.h"
 #include "effect_files.h"
@@ -40,7 +24,6 @@
 #include "xwau_mat.h"
 #include "yaml_json.h"
 
-#define MAX_ROOTS 16
 /* Energy frames are capped at ENERGY_MAX (`maxSize`); other images keep the
  * library's default cap. */
 #define ENERGY_MAX 512
@@ -50,46 +33,12 @@
 #define BLAST_MARK_GROUP 3050
 static const float kBlastMarkCrop[4] = { 0.3f, 0.3f, 0.65f, 0.65f };
 
-static const char* g_roots[MAX_ROOTS];
-static int         g_root_count;
+static const XwauRoots* g_roots;
 
 /* ---- Paths -------------------------------------------------------------- */
 
-/* Resolves a game-relative path under the first root that has it, matching
- * each component case-insensitively. */
 static int find_file(const char* rel, char* out, size_t cap) {
-	for (int r = 0; r < g_root_count; ++r) {
-		char path[1024], parts[512];
-		snprintf(path, sizeof path, "%s", g_roots[r]);
-		snprintf(parts, sizeof parts, "%s", rel);
-		for (char* c = parts; *c; ++c)
-			if (*c == '\\')
-				*c = '/';
-		int   found = 1;
-		char* save  = NULL;
-		for (char* part = strtok_r(parts, "/", &save); part && found; part = strtok_r(NULL, "/", &save)) {
-			DIR* d = opendir(path);
-			found  = 0;
-			if (!d)
-				break;
-			struct dirent* de;
-			while ((de = readdir(d))) {
-				if (strcasecmp(de->d_name, part) == 0) {
-					size_t len = strlen(path);
-					snprintf(path + len, sizeof path - len, "/%s", de->d_name);
-					found = 1;
-					break;
-				}
-			}
-			closedir(d);
-		}
-		struct stat st;
-		if (found && stat(path, &st) == 0 && S_ISREG(st.st_mode)) {
-			snprintf(out, cap, "%s", path);
-			return 1;
-		}
-	}
-	return 0;
+	return XwauRoots_FindFile(g_roots, rel, out, cap);
 }
 
 /* "Effects\GenericDamage.dat" -> "effects/genericdamage.dat", "genericdamage". */
@@ -132,7 +81,7 @@ static Library* library_for(const char* dat_written) {
 	for (size_t i = 0; i < g_library_count; ++i)
 		if (strcmp(g_libraries[i].name, name) == 0) {
 			if (strcmp(g_libraries[i].dat, rel) != 0)
-				fprintf(stderr, "xwau_effects: library %s comes from %s and %s; using the first\n", name,
+				fprintf(stderr, "opt2gltf: library %s comes from %s and %s; using the first\n", name,
 						g_libraries[i].dat, rel);
 			return &g_libraries[i];
 		}
@@ -194,7 +143,7 @@ static bool model_key(const char* path, const char* library, const char* key) {
 		known = strcmp(g_libraries[i].dat, dat) == 0;
 	if (!known && !find_file(dat, found, sizeof found)) {
 		char** grown = (char**)realloc(g_skipped, (g_skipped_count + 1) * sizeof *grown);
-		if (!grown || !(grown[g_skipped_count] = strdup(library))) {
+		if (!grown || !(grown[g_skipped_count] = Xwau_Strdup(library))) {
 			g_skipped = grown ? grown : g_skipped;
 			return false;
 		}
@@ -206,8 +155,7 @@ static bool model_key(const char* path, const char* library, const char* key) {
 	XwauFxKind kind;
 	float      tint[3];
 	if (!XwauFx_ParseKey(key, &group, &image, &kind, tint, &alpha_mode)) {
-		fprintf(stderr, "xwau_effects: %s: library %s: \"%s\" is not an XWAU image key\n", path, library,
-				key);
+		fprintf(stderr, "opt2gltf: %s: library %s: \"%s\" is not an XWAU image key\n", path, library, key);
 		return false;
 	}
 	return request(dat, group, image, kind, tint, alpha_mode, false);
@@ -244,7 +192,7 @@ static bool read_model(const char* path) {
 	char   err[512];
 	cJSON* root = YamlJson_Load(path, err, sizeof err);
 	if (!root) {
-		fprintf(stderr, "xwau_effects: %s\n", err);
+		fprintf(stderr, "opt2gltf: %s\n", err);
 		return false;
 	}
 	bool         ok = true;
@@ -262,8 +210,8 @@ static int cmp_string(const void* a, const void* b) { return strcmp(*(char* cons
 
 /* The sorted entries of directory `path` that `keep` accepts. */
 static char** list_dir(const char* path, bool (*keep)(const char* dir, const char* name), size_t* count) {
-	*count  = 0;
-	DIR* d  = opendir(path);
+	*count = 0;
+	DIR* d = opendir(path);
 	if (!d)
 		return NULL;
 	char**         names = NULL;
@@ -272,7 +220,7 @@ static char** list_dir(const char* path, bool (*keep)(const char* dir, const cha
 		if (de->d_name[0] == '.' || !keep(path, de->d_name))
 			continue;
 		char** grown = (char**)realloc(names, (*count + 1) * sizeof *grown);
-		if (!grown || !(grown[*count] = strdup(de->d_name))) {
+		if (!grown || !(grown[*count] = Xwau_Strdup(de->d_name))) {
 			names = grown ? grown : names;
 			break;
 		}
@@ -291,12 +239,11 @@ static bool is_model_dir(const char* dir, const char* name) {
 	return stat(path, &st) == 0 && S_ISREG(st.st_mode);
 }
 
-/* A model's .gltf, or a source tree's models/<key>/<key>.gltf in name
- * order. */
+/* A model's .gltf, or a project's models/<key>/<key>.gltf in name order. */
 static bool read_models(const char* path) {
 	struct stat st;
 	if (stat(path, &st) != 0) {
-		fprintf(stderr, "xwau_effects: %s: not found\n", path);
+		fprintf(stderr, "opt2gltf: %s: not found\n", path);
 		return false;
 	}
 	if (S_ISREG(st.st_mode))
@@ -316,7 +263,7 @@ static bool read_models(const char* path) {
 		free(keys);
 		return ok;
 	}
-	fprintf(stderr, "xwau_effects: %s: not a model .gltf or a source tree\n", path);
+	fprintf(stderr, "opt2gltf: %s: not a model .gltf or a project\n", path);
 	return false;
 }
 
@@ -377,13 +324,13 @@ static const float kWhite[3] = { 1.0f, 1.0f, 1.0f };
 static bool energy_yaml(Text* y) {
 	char rel[1024];
 	if (!find_file(ENERGY_DAT, rel, sizeof rel)) {
-		fprintf(stderr, "xwau_effects: %s not found: no energy effects\n", ENERGY_DAT);
+		fprintf(stderr, "opt2gltf: %s not found: no energy effects\n", ENERGY_DAT);
 		return true;
 	}
 	char     err[512];
 	XwauDat* dat = XwauDat_Open(rel, err, sizeof err);
 	if (!dat) {
-		fprintf(stderr, "xwau_effects: %s\n", err);
+		fprintf(stderr, "opt2gltf: %s\n", err);
 		return false;
 	}
 	char lrel[256], library[64];
@@ -454,12 +401,12 @@ static bool image_flipbook(Text* y, const char* name, const XwauMatFile* mat, in
 		return false;
 	char path[1024], err[512];
 	if (!find_file(q->dat, path, sizeof path)) {
-		fprintf(stderr, "xwau_effects: %s: %s not found\n", name, q->dat);
+		fprintf(stderr, "opt2gltf: %s: %s not found\n", name, q->dat);
 		return false;
 	}
 	XwauDat* dat = XwauDat_Open(path, err, sizeof err);
 	if (!dat) {
-		fprintf(stderr, "xwau_effects: %s\n", err);
+		fprintf(stderr, "opt2gltf: %s\n", err);
 		return false;
 	}
 	/* Frames: listed, or the DAT group at 1/fps. */
@@ -530,17 +477,12 @@ static bool image_flipbook(Text* y, const char* name, const XwauMatFile* mat, in
 static bool images_yaml(Text* y) {
 	DatImage* found = NULL;
 	size_t    count = 0;
-	for (int r = 0; r < g_root_count; ++r) {
-		DIR* root = opendir(g_roots[r]);
-		if (!root)
-			continue;
+	for (int r = 0; r < g_roots->count; ++r) {
 		struct dirent* de;
 		char           mdir[1024] = "";
-		while ((de = readdir(root)))
-			if (strcasecmp(de->d_name, "Materials") == 0)
-				snprintf(mdir, sizeof mdir, "%s/%s", g_roots[r], de->d_name);
-		closedir(root);
-		DIR* d = mdir[0] ? opendir(mdir) : NULL;
+		if (!XwauRoots_FindDir(g_roots, r, "Materials", mdir, sizeof mdir))
+			continue;
+		DIR* d = opendir(mdir);
 		if (!d)
 			continue;
 		while ((de = readdir(d))) {
@@ -618,7 +560,7 @@ static bool images_yaml(Text* y) {
 				}
 				XwauDat_Close(dat);
 			} else {
-				fprintf(stderr, "xwau_effects: %s\n", err);
+				fprintf(stderr, "opt2gltf: %s\n", err);
 			}
 		}
 	}
@@ -637,10 +579,7 @@ static bool write_file(const char* path, const void* data, size_t size) {
 
 /* ---- Sources ------------------------------------------------------------ */
 
-static bool make_dir(const char* path) {
-	struct stat st;
-	return mkdir(path, 0755) == 0 || (stat(path, &st) == 0 && S_ISDIR(st.st_mode));
-}
+static bool make_dir(const char* path) { return Xwau_MakeDir(path); }
 
 /* The library builder's transfer functions (8-bit sRGB in and out), to
  * check that the written inputs bake back into the library's images. */
@@ -655,7 +594,9 @@ static uint8_t srgb8(float c) {
 	return (uint8_t)(s * 255.0f + 0.5f);
 }
 
-static uint8_t unorm8f(float c) { return (uint8_t)((c < 0.0f ? 0.0f : (c > 1.0f ? 1.0f : c)) * 255.0f + 0.5f); }
+static uint8_t unorm8f(float c) {
+	return (uint8_t)((c < 0.0f ? 0.0f : (c > 1.0f ? 1.0f : c)) * 255.0f + 0.5f);
+}
 
 static int max_diff(int d, int a, int b) { return abs(a - b) > d ? abs(a - b) : d; }
 
@@ -665,7 +606,7 @@ static bool write_frame(const char* dir, const char* file, int w, int h, const u
 	snprintf(png, sizeof png, "%s/%s", dir, file);
 	if (write_png_rgba(png, w, h, rgba))
 		return true;
-	fprintf(stderr, "xwau_effects: cannot write %s\n", png);
+	fprintf(stderr, "opt2gltf: cannot write %s\n", png);
 	return false;
 }
 
@@ -675,10 +616,10 @@ static bool write_frame(const char* dir, const char* file, int w, int h, const u
  * base colour image with its coverage, tint and alpha mode baked in).
  * Reports the largest difference, per channel, between what the library
  * builder bakes from them and the XWAU bake (8-bit rounding of the base colour). */
-static bool write_library_sources(Library* l, const char* effects_dir) {
+static bool write_library_sources(Library* l, const char* effects_dir, bool merge) {
 	char path[1024], err[512], dir[1024];
 	if (!find_file(l->dat, path, sizeof path)) {
-		fprintf(stderr, "xwau_effects: %s: %s not found\n", l->name, l->dat);
+		fprintf(stderr, "opt2gltf: %s: %s not found\n", l->name, l->dat);
 		return false;
 	}
 	qsort(l->requests, l->count, sizeof *l->requests, cmp_request);
@@ -686,27 +627,39 @@ static bool write_library_sources(Library* l, const char* effects_dir) {
 	char frames[1100];
 	snprintf(frames, sizeof frames, "%s/frames", dir);
 	if (!make_dir(dir) || !make_dir(frames)) {
-		fprintf(stderr, "xwau_effects: cannot create %s\n", frames);
+		fprintf(stderr, "opt2gltf: cannot create %s\n", frames);
 		return false;
 	}
 	XwauDat* dat = XwauDat_Open(path, err, sizeof err);
 	if (!dat) {
-		fprintf(stderr, "xwau_effects: %s\n", err);
+		fprintf(stderr, "opt2gltf: %s\n", err);
 		return false;
 	}
-	/* The library file, written canonically (effect_files.h). */
-	cJSON* doc     = cJSON_CreateObject();
-	cJSON* entries = NULL;
-	bool   ok      = doc && cJSON_AddNumberToObject(doc, "version", 1) &&
-					 cJSON_AddStringToObject(doc, "library", l->name) &&
-					 (entries = cJSON_AddObjectToObject(doc, "images"));
+	/* The library file, written canonically (effect_files.h); merging, the
+	 * project's file keeps its images and gets those it lacks. */
+	char file[1100];
+	snprintf(file, sizeof file, "%s/%s.yaml", dir, l->name);
+	struct stat st;
+	const bool  existing = merge && stat(file, &st) == 0;
+	cJSON*      doc      = existing ? YamlJson_Load(file, err, sizeof err) : cJSON_CreateObject();
+	cJSON*      entries  = existing ? cJSON_GetObjectItemCaseSensitive(doc, "images") : NULL;
+	if (existing && !doc)
+		fprintf(stderr, "opt2gltf: %s\n", err);
+	bool ok = doc && (existing ? cJSON_IsObject(entries)
+							   : cJSON_AddNumberToObject(doc, "version", 1) &&
+									 cJSON_AddStringToObject(doc, "library", l->name) &&
+									 (entries = cJSON_AddObjectToObject(doc, "images")));
+	if (existing && doc && !ok)
+		fprintf(stderr, "opt2gltf: %s: no images\n", file);
 	size_t images = 0;
 	int    diff   = 0;
 	for (size_t i = 0; ok && i < l->count; ++i) {
 		const Request* r = &l->requests[i];
-		XwauDatImage   im;
+		if (existing && cJSON_GetObjectItemCaseSensitive(entries, r->key))
+			continue;
+		XwauDatImage im;
 		if (!XwauDat_LoadImageFrom(dat, r->group, r->image, &im, err, sizeof err)) {
-			fprintf(stderr, "xwau_effects: %s\n", err);
+			fprintf(stderr, "opt2gltf: %s\n", err);
 			continue;
 		}
 		const int    w = (int)im.width, h = (int)im.height;
@@ -741,7 +694,8 @@ static bool write_library_sources(Library* l, const char* effects_dir) {
 			}
 			snprintf(file, sizeof file, "%s_emissive.png", base);
 			snprintf(base_color, sizeof base_color, "%s_base_color.png", base);
-			ok = write_frame(dir, file, w, h, emissive) && (!any_base_color || write_frame(dir, base_color, w, h, input));
+			ok    = write_frame(dir, file, w, h, emissive) &&
+					(!any_base_color || write_frame(dir, base_color, w, h, input));
 			entry = cJSON_AddObjectToObject(entries, r->key);
 			cJSON_AddStringToObject(entry, "kind", "emissive");
 			cJSON_AddStringToObject(entry, "emissive", file);
@@ -749,7 +703,7 @@ static bool write_library_sources(Library* l, const char* effects_dir) {
 				cJSON_AddStringToObject(entry, "baseColor", base_color);
 		} else if (ok && (r->kind == XWAU_FX_COLOUR || r->kind == XWAU_FX_MULTIPLY)) {
 			snprintf(file, sizeof file, "%s.png", base);
-			ok = write_frame(dir, file, w, h, layer);
+			ok    = write_frame(dir, file, w, h, layer);
 			entry = cJSON_AddObjectToObject(entries, r->key);
 			cJSON_AddStringToObject(entry, "kind", r->kind == XWAU_FX_MULTIPLY ? "damage" : "baseColor");
 			cJSON_AddStringToObject(entry, r->kind == XWAU_FX_MULTIPLY ? "factor" : "baseColor", file);
@@ -767,7 +721,7 @@ static bool write_library_sources(Library* l, const char* effects_dir) {
 				pt[3] = src[3];
 			}
 			snprintf(file, sizeof file, "%s.png", base);
-			ok = write_frame(dir, file, w, h, input);
+			ok    = write_frame(dir, file, w, h, input);
 			entry = cJSON_AddObjectToObject(entries, r->key);
 			cJSON_AddStringToObject(entry, "kind", XwauFx_KindName(r->kind));
 			cJSON_AddStringToObject(entry, r->kind == XWAU_FX_MARK ? "baseColor" : "emissive", file);
@@ -786,14 +740,17 @@ static bool write_library_sources(Library* l, const char* effects_dir) {
 		XwauDat_FreeImage(&im);
 	}
 	XwauDat_Close(dat);
-	snprintf(path, sizeof path, "%s/%s.yaml", dir, l->name);
 	char header[300];
 	snprintf(header, sizeof header, "# Effect library %s, imported from XWAU's %s.\n", l->name, l->dat);
-	ok = ok && EffectFiles_Write("xwau_effects", doc, header, path);
+	if (existing && !images) {
+		cJSON_Delete(doc);
+		return ok;
+	}
+	ok = ok && EffectFiles_Write("opt2gltf", doc, existing ? NULL : header, file);
 	cJSON_Delete(doc);
 	if (ok)
-		fprintf(stderr, "xwau_effects: %s: %zu image(s) as sources (largest rounding: %d/255)\n", l->name, images,
-				diff);
+		fprintf(stderr, "opt2gltf: library %s: %zu image(s) %s (largest rounding: %d/255)\n", l->name, images,
+				existing ? "added" : "written", diff);
 	return ok;
 }
 
@@ -801,66 +758,78 @@ static int cmp_library(const void* a, const void* b) {
 	return strcmp(((const Library*)a)->name, ((const Library*)b)->name);
 }
 
-static int usage(void) {
-	fprintf(stderr, "usage: xwau_effects [--xwau-root DIR]... --sources TREE [MODEL.gltf | TREE]...\n");
-	return 2;
+/* Clears what the previous run read. */
+static void reset(const XwauRoots* roots) {
+	for (size_t i = 0; i < g_library_count; ++i)
+		free(g_libraries[i].requests);
+	free(g_libraries);
+	for (size_t i = 0; i < g_skipped_count; ++i)
+		free(g_skipped[i]);
+	free(g_skipped);
+	g_libraries     = NULL;
+	g_library_count = 0;
+	g_skipped       = NULL;
+	g_skipped_count = 0;
+	g_models        = 0;
+	g_roots         = roots;
 }
 
-int main(int argc, char** argv) {
-	const char* sources     = NULL;
-	int         first_input = argc;
-	for (int i = 1; i < argc; ++i) {
-		if (strcmp(argv[i], "--xwau-root") == 0 && i + 1 < argc) {
-			if (g_root_count == MAX_ROOTS)
-				return usage();
-			g_roots[g_root_count++] = argv[++i];
-		} else if (strcmp(argv[i], "--sources") == 0 && i + 1 < argc) {
-			sources = argv[++i];
-		} else if (argv[i][0] == '-') {
-			return usage();
-		} else {
-			first_input = i;
-			break;
-		}
-	}
-	if (!sources || !g_root_count)
-		return usage();
+/* Writes the libraries read into <project>/effects. */
+static bool write_libraries(const char* effects, bool merge) {
+	for (size_t i = 0; i < g_skipped_count; ++i)
+		fprintf(stderr, "opt2gltf: library %s: no Effects/%s.dat, not an XWAU library; left alone\n",
+				g_skipped[i], g_skipped[i]);
+	qsort(g_libraries, g_library_count, sizeof *g_libraries, cmp_library);
+	bool ok = true;
+	for (size_t i = 0; i < g_library_count; ++i)
+		ok &= write_library_sources(&g_libraries[i], effects, merge);
+	return ok;
+}
+
+bool XwauLibrary_Rebuild(const XwauRoots* roots, const char* project, const char* const* inputs,
+						 size_t count) {
+	reset(roots);
 	char out[1024];
-	snprintf(out, sizeof out, "%s/effects", sources);
-	if (!make_dir(out)) {
-		fprintf(stderr, "xwau_effects: cannot create %s\n", out);
-		return 1;
+	snprintf(out, sizeof out, "%s/effects", project);
+	if (!make_dir(project) || !make_dir(out)) {
+		fprintf(stderr, "opt2gltf: cannot create %s\n", out);
+		return false;
 	}
 	bool ok = true;
-	for (int i = first_input; i < argc; ++i)
-		ok &= read_models(argv[i]);
+	for (size_t i = 0; i < count; ++i)
+		ok &= read_models(inputs[i]);
 	Text y = { 0 };
 	text_add(&y, "version: 1\n");
 	ok &= energy_yaml(&y) && images_yaml(&y);
 	if (!y.s) {
-		fprintf(stderr, "xwau_effects: out of memory\n");
-		return 1;
+		fprintf(stderr, "opt2gltf: out of memory\n");
+		reset(NULL);
+		return false;
 	}
 	char path[1024];
 	snprintf(path, sizeof path, "%s/effects.yaml", out);
 	if (!write_file(path, y.s, y.len)) {
-		fprintf(stderr, "xwau_effects: cannot write %s\n", path);
+		fprintf(stderr, "opt2gltf: cannot write %s\n", path);
 		ok = false;
 	}
 	free(y.s);
-	fprintf(stderr, "xwau_effects: %zu model(s), %zu librar%s\n", g_models, g_library_count,
+	fprintf(stderr, "opt2gltf: %zu model(s), %zu librar%s\n", g_models, g_library_count,
 			g_library_count == 1 ? "y" : "ies");
-	for (size_t i = 0; i < g_skipped_count; ++i) {
-		fprintf(stderr, "xwau_effects: library %s: no Effects/%s.dat, not an XWAU library; left alone\n",
-				g_skipped[i], g_skipped[i]);
-		free(g_skipped[i]);
+	ok &= write_libraries(out, false);
+	reset(NULL);
+	return ok;
+}
+
+bool XwauLibrary_AddModel(const XwauRoots* roots, const char* project, const char* gltf) {
+	reset(roots);
+	char out[1024];
+	snprintf(out, sizeof out, "%s/effects", project);
+	bool ok = read_model(gltf);
+	if (ok && g_library_count && !make_dir(out)) {
+		fprintf(stderr, "opt2gltf: cannot create %s\n", out);
+		ok = false;
 	}
-	free(g_skipped);
-	qsort(g_libraries, g_library_count, sizeof *g_libraries, cmp_library);
-	for (size_t i = 0; i < g_library_count; ++i)
-		ok &= write_library_sources(&g_libraries[i], out);
-	for (size_t i = 0; i < g_library_count; ++i)
-		free(g_libraries[i].requests);
-	free(g_libraries);
-	return ok ? 0 : 1;
+	ok = ok && write_libraries(out, true);
+	reset(NULL);
+	return ok;
 }

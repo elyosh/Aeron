@@ -21,8 +21,8 @@ add_library(aeron_yaml_json STATIC yaml_json.c)
 target_include_directories(aeron_yaml_json PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(aeron_yaml_json PUBLIC aeron_yaml aeron_cjson)
 
-# The canonical written form of the model animation and effect library files
-# (effect_files.h): the cooker and xwau_effects write them.
+# The canonical written form of the effect library files (effect_files.h):
+# the cooker and opt2gltf write them.
 add_library(aeron_effect_files STATIC effect_files.c)
 target_include_directories(aeron_effect_files PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(aeron_effect_files PUBLIC aeron_cjson)

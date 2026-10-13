@@ -1,11 +1,11 @@
 #include "xwau_skins.h"
 
-#include "cJSON.h"
-
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
+#include <sys/stat.h>
 
 #define STB_IMAGE_STATIC
 #define STB_IMAGE_IMPLEMENTATION
@@ -14,23 +14,10 @@
 #define STBI_ONLY_JPEG
 #include "stb_image.h"
 
-static char* read_text(const char* path) {
-	FILE* f = fopen(path, "rb");
-	if (!f)
-		return NULL;
-	char* text = NULL;
-	long  size = fseek(f, 0, SEEK_END) == 0 ? ftell(f) : -1;
-	if (size >= 0 && fseek(f, 0, SEEK_SET) == 0 && (text = (char*)malloc((size_t)size + 1)) != NULL) {
-		if (fread(text, 1, (size_t)size, f) != (size_t)size) {
-			free(text);
-			text = NULL;
-		} else {
-			text[size] = '\0';
-		}
-	}
-	fclose(f);
-	return text;
-}
+#define MAX_MARKINGS 256
+
+static const char* const kExtensions[] = { ".bmp", ".png", ".jpg" };
+#define EXTENSION_COUNT (sizeof kExtensions / sizeof kExtensions[0])
 
 static char* dup_string(const char* s) {
 	const size_t n    = strlen(s) + 1;
@@ -38,6 +25,307 @@ static char* dup_string(const char* s) {
 	if (copy)
 		memcpy(copy, s, n);
 	return copy;
+}
+
+/* ASCII lower case (file names are UTF-8). */
+static void ascii_lower(char* s) {
+	for (; *s; ++s)
+		if (*s >= 'A' && *s <= 'Z')
+			*s = (char)(*s + 32);
+}
+
+static bool has_extension(const char* name) {
+	const size_t len = strlen(name);
+	for (size_t e = 0; e < EXTENSION_COUNT; ++e)
+		if (len >= 4 && strcasecmp(name + len - 4, kExtensions[e]) == 0)
+			return true;
+	return false;
+}
+
+static bool is_file(const char* path) {
+	struct stat st;
+	return stat(path, &st) == 0 && S_ISREG(st.st_mode);
+}
+
+static bool is_dir(const char* path) {
+	struct stat st;
+	return stat(path, &st) == 0 && S_ISDIR(st.st_mode);
+}
+
+/* Whether folder `dir` has a file at its top level. */
+static bool has_files(const char* dir) {
+	size_t count   = 0;
+	char** entries = Xwau_ListDir(dir, false, &count);
+	bool   found   = false;
+	for (size_t i = 0; !found && i < count; ++i) {
+		char path[2048];
+		snprintf(path, sizeof path, "%s/%s", dir, entries[i]);
+		found = is_file(path);
+	}
+	Xwau_FreeList(entries, count);
+	return found;
+}
+
+/* ---- Zip archives ------------------------------------------------------------- */
+
+static uint32_t le16(const uint8_t* p) { return (uint32_t)p[0] | ((uint32_t)p[1] << 8); }
+
+static uint32_t le32(const uint8_t* p) { return le16(p) | (le16(p + 2) << 16); }
+
+static uint8_t* read_all(const char* path, size_t* size) {
+	FILE* f = fopen(path, "rb");
+	if (!f)
+		return NULL;
+	uint8_t* data = NULL;
+	long     n    = fseek(f, 0, SEEK_END) == 0 ? ftell(f) : -1;
+	if (n > 0 && fseek(f, 0, SEEK_SET) == 0 && (data = (uint8_t*)malloc((size_t)n)) != NULL &&
+		fread(data, 1, (size_t)n, f) != (size_t)n) {
+		free(data);
+		data = NULL;
+	}
+	fclose(f);
+	*size = data ? (size_t)n : 0;
+	return data;
+}
+
+/* The data of the first entry of the zip `zip` whose file name (whatever its
+ * folder) is `name` (case-insensitive), stored or deflated; NULL when it has
+ * none. */
+static uint8_t* zip_entry(const uint8_t* zip, size_t size, const char* name, size_t* out_size,
+						  const char* label, const char* path) {
+	/* The end of central directory record, up to 64 KiB of comment after it. */
+	size_t end = size >= 22 ? size - 22 : 0;
+	while (size >= 22 && le32(zip + end) != 0x06054b50) {
+		if (end == 0 || size - end > 22 + 65535)
+			return NULL;
+		--end;
+	}
+	if (size < 22)
+		return NULL;
+	const size_t entries = le16(zip + end + 10);
+	size_t       at      = le32(zip + end + 16);
+	for (size_t i = 0; i < entries && at + 46 <= size && le32(zip + at) == 0x02014b50; ++i) {
+		const uint32_t method = le16(zip + at + 10), packed = le32(zip + at + 20),
+					   unpacked = le32(zip + at + 24);
+		const size_t   name_len = le16(zip + at + 28),
+					   next     = at + 46 + name_len + le16(zip + at + 30) + le16(zip + at + 32);
+		const size_t   local    = le32(zip + at + 42);
+		if (at + 46 + name_len > size)
+			return NULL;
+		/* The file name, after its last '/' or '\'. */
+		const char* entry = (const char*)zip + at + 46;
+		size_t      start = 0;
+		for (size_t c = 0; c < name_len; ++c)
+			if (entry[c] == '/' || entry[c] == '\\')
+				start = c + 1;
+		at = next;
+		if (name_len - start != strlen(name) || strncasecmp(entry + start, name, name_len - start) != 0)
+			continue;
+		if (local + 30 > size || le32(zip + local) != 0x04034b50)
+			break;
+		const size_t data = local + 30 + le16(zip + local + 26) + le16(zip + local + 28);
+		if (data + packed > size)
+			break;
+		uint8_t* out = (uint8_t*)malloc(unpacked ? unpacked : 1);
+		if (!out)
+			return NULL;
+		if (method == 0 && packed == unpacked) {
+			memcpy(out, zip + data, unpacked);
+		} else if (method != 8 ||
+				   stbi_zlib_decode_noheader_buffer((char*)out, (int)unpacked, (const char*)zip + data,
+													(int)packed) != (int)unpacked) {
+			fprintf(stderr, "opt2gltf: %s: %s: cannot read %s\n", label, path, name);
+			free(out);
+			return NULL;
+		}
+		*out_size = unpacked;
+		return out;
+	}
+	return NULL;
+}
+
+/* ---- Skins -------------------------------------------------------------------- */
+
+typedef struct SkinSet {
+	char** names; /* lower case; "" is the skin folder's own files */
+	size_t count;
+	bool   exists; /* a root has FlightModels/Skins/<Opt> */
+} SkinSet;
+
+static bool skin_set_has(const SkinSet* set, const char* name) {
+	for (size_t i = 0; i < set->count; ++i)
+		if (strcmp(set->names[i], name) == 0)
+			return true;
+	return false;
+}
+
+static bool skin_set_add(SkinSet* set, const char* name) {
+	if (skin_set_has(set, name))
+		return true;
+	char** grown = (char**)realloc(set->names, (set->count + 1) * sizeof *grown);
+	if (!grown)
+		return false;
+	set->names = grown;
+	if (!(grown[set->count] = dup_string(name)))
+		return false;
+	ascii_lower(grown[set->count++]);
+	return true;
+}
+
+/* The skins of `model` across the roots. */
+static bool skin_names(const XwauRoots* roots, const char* model, SkinSet* out) {
+	memset(out, 0, sizeof *out);
+	char rel[512];
+	snprintf(rel, sizeof rel, "FlightModels/Skins/%s", model);
+	bool ok = true;
+	for (int r = 0; ok && r < roots->count; ++r) {
+		char dir[1024];
+		if (!XwauRoots_FindDir(roots, r, rel, dir, sizeof dir))
+			continue;
+		out->exists    = true;
+		size_t count   = 0;
+		char** entries = Xwau_ListDir(dir, false, &count);
+		for (size_t i = 0; ok && i < count; ++i) {
+			char path[2048];
+			snprintf(path, sizeof path, "%s/%s", dir, entries[i]);
+			const size_t len = strlen(entries[i]);
+			if (is_dir(path)) {
+				if (has_files(path))
+					ok = skin_set_add(out, entries[i]);
+			} else if (is_file(path)) {
+				ok = skin_set_add(out, "");
+				if (ok && len > 4 && strcasecmp(entries[i] + len - 4, ".zip") == 0) {
+					char base[1024];
+					snprintf(base, sizeof base, "%.*s", (int)(len - 4), entries[i]);
+					ok = skin_set_add(out, base);
+				}
+			}
+		}
+		Xwau_FreeList(entries, count);
+	}
+	return ok;
+}
+
+static void skin_set_free(SkinSet* set) {
+	Xwau_FreeList(set->names, set->count);
+	memset(set, 0, sizeof *set);
+}
+
+/* A list token as CombineTextures reads it: the skin (lower case) and its
+ * opacity. */
+static void parse_token(const char* token, char* name, size_t cap, int* opacity) {
+	const char* dash = strchr(token, '-');
+	snprintf(name, cap, "%.*s", dash ? (int)(dash - token) : (int)strlen(token), token);
+	for (char* c = name; *c; ++c)
+		*c = Xwau_Lower(*c);
+	*opacity = 100;
+	if (!dash)
+		return;
+	/* The text up to the next '-', trimmed: [+-]?[0-9]+ within the int range. */
+	const char* next = strchr(dash + 1, '-');
+	char        text[64];
+	snprintf(text, sizeof text, "%.*s", next ? (int)(next - dash - 1) : (int)strlen(dash + 1), dash + 1);
+	Xwau_Trim(text, XWAU_RULES_CS);
+	const char* digits = text + (text[0] == '+' || text[0] == '-');
+	if (!*digits || strspn(digits, "0123456789") != strlen(digits))
+		return;
+	long long value;
+	if (!Xwau_Stoi(text, &value))
+		return;
+	*opacity = value < 0 ? 0 : value > 100 ? 100 : (int)value;
+}
+
+/* Appends the canonical list of `tokens` to `key`: the existing skins,
+ * "-<opacity>" when not 100, joined with ','. */
+static void canonical(const XwauLines* tokens, const SkinSet* skins, char* key, size_t cap) {
+	size_t layers = 0;
+	for (size_t i = 0; i < tokens->count; ++i) {
+		char name[256];
+		int  opacity;
+		parse_token(tokens->items[i], name, sizeof name, &opacity);
+		if (!skin_set_has(skins, name))
+			continue;
+		const size_t len = strlen(key);
+		if (opacity == 100)
+			snprintf(key + len, cap - len, "%s%s", layers ? "," : "", name);
+		else
+			snprintf(key + len, cap - len, "%s%s-%d", layers ? "," : "", name, opacity);
+		++layers;
+	}
+}
+
+typedef struct Resolved {
+	bool skinned;
+	int  state;
+	char key[1024];
+} Resolved;
+
+/* The lists of one context, per markings value (*count of them; 0 when the
+ * OPT shows no skin). */
+static bool resolve(const XwauLines* lines, const char* model, int states, const SkinSet* skins,
+					Resolved* out, size_t* count) {
+	*count = 0;
+	if (!skins->exists)
+		return true;
+	char base_value[4096];
+	XwauLines_Value(lines, model, XWAU_RULES_CS, base_value, sizeof base_value);
+	XwauLines base;
+	if (!Xwau_Tokenize(base_value, XWAU_RULES_CS, &base))
+		return false;
+	static char fgc[MAX_MARKINGS][4096];
+	int         fgc_count = 0, default_count = 0;
+	for (int i = 0; i < MAX_MARKINGS; ++i) {
+		char key[512], skin[32];
+		snprintf(key, sizeof key, "%s_fgc_%d", model, i);
+		XwauLines_Value(lines, key, XWAU_RULES_CS, fgc[i], sizeof fgc[i]);
+		if (fgc[i][0])
+			fgc_count = i + 1;
+		snprintf(skin, sizeof skin, "default_%d", i);
+		if (skin_set_has(skins, skin))
+			default_count = i + 1;
+	}
+	const bool has_default = skin_set_has(skins, "default") || default_count;
+	if (!(has_default || base.count || fgc_count)) {
+		XwauLines_Free(&base);
+		return true;
+	}
+	int markings = fgc_count > states ? fgc_count : states;
+	if (default_count > markings)
+		markings = default_count;
+	const bool has_base = has_default || base_value[0];
+	bool       ok       = true;
+	for (int i = 0; ok && i < markings; ++i) {
+		Resolved* r = &out[(*count)++];
+		r->state    = i < states ? i : 0;
+		r->key[0]   = 0;
+		if (fgc[i][0] || has_base) {
+			XwauLines own, tokens = { 0 };
+			ok = Xwau_Tokenize(fgc[i], XWAU_RULES_CS, &own);
+			for (size_t t = 0; ok && t < base.count + own.count; ++t) {
+				const char* token = t < base.count ? base.items[t] : own.items[t - base.count];
+				char**      grown = (char**)realloc(tokens.items, (tokens.count + 1) * sizeof *grown);
+				ok                = grown && (grown[tokens.count] = dup_string(token)) != NULL;
+				if (grown)
+					tokens.items = grown;
+				tokens.count += ok;
+			}
+			if (ok && !tokens.count) {
+				char fallback[32], lower[32];
+				snprintf(lower, sizeof lower, "default_%d", i);
+				snprintf(fallback, sizeof fallback, skin_set_has(skins, lower) ? "Default_%d" : "Default", i);
+				tokens.items = (char**)malloc(sizeof *tokens.items);
+				ok           = tokens.items && (tokens.items[0] = dup_string(fallback)) != NULL;
+				tokens.count = ok;
+			}
+			if (ok)
+				canonical(&tokens, skins, r->key, sizeof r->key);
+			XwauLines_Free(&own);
+			XwauLines_Free(&tokens);
+		}
+		r->skinned = r->key[0] != 0;
+	}
+	XwauLines_Free(&base);
+	return ok;
 }
 
 /* Index of `name` in the skin list, added when new; -1 when out of memory. */
@@ -54,35 +342,136 @@ static int skin_index(XwauSkins* s, const char* name) {
 	return (int)s->skins.skin_count++;
 }
 
+static bool add_variant(XwauSkins* s, const char* name, int state, const char* key, const char* label) {
+	for (size_t i = 0; i < s->skins.variant_count; ++i)
+		if (strcmp(s->variant_names[i], name) == 0)
+			return true;
+	const size_t        v     = s->skins.variant_count;
+	OptGltfSkinVariant* grown = (OptGltfSkinVariant*)realloc(s->variants, (v + 1) * sizeof *grown);
+	char**              names = grown ? (char**)realloc(s->variant_names, (v + 1) * sizeof *names) : NULL;
+	if (grown)
+		s->variants = grown;
+	if (names)
+		s->variant_names = names;
+	if (!grown || !names || !(names[v] = dup_string(name)))
+		return false;
+	memset(&grown[v], 0, sizeof grown[v]);
+	grown[v].state = (uint32_t)state;
+	s->skins.variant_count++;
+	/* The layers, stored by index: pointers are set once all are known. */
+	char list[1024];
+	snprintf(list, sizeof list, "%s", key);
+	for (char *token = list, *next; token; token = next) {
+		next = strchr(token, ',');
+		if (next)
+			*next++ = 0;
+		char* dash    = strchr(token, '-');
+		int   opacity = 100;
+		if (dash) {
+			*dash   = 0;
+			opacity = atoi(dash + 1);
+		}
+		if (!token[0]) {
+			fprintf(stderr, "opt2gltf: %s: variant %s names the empty skin; layer left out\n", label, name);
+			continue;
+		}
+		const int index = skin_index(s, token);
+		size_t    layer = 0;
+		for (size_t i = 0; i < v; ++i)
+			layer += s->variants[i].layer_count;
+		layer += grown[v].layer_count;
+		OptGltfSkinLayer* layers = (OptGltfSkinLayer*)realloc(s->layers, (layer + 1) * sizeof *layers);
+		if (index < 0 || !layers)
+			return false;
+		s->layers        = layers;
+		s->layers[layer] = (OptGltfSkinLayer) { (uint32_t)index, (uint32_t)opacity };
+		grown[v].layer_count++;
+	}
+	return true;
+}
+
+/* The skin image file `file` (lower case): from the skin's folders, else
+ * its zip. */
+static uint8_t* skin_file(const XwauRoots* roots, const char* model, const char* skin, const char* file,
+						  size_t* size, const char* label) {
+	char rel[1024];
+	snprintf(rel, sizeof rel, "FlightModels/Skins/%s/%s", model, skin);
+	bool folders = false;
+	for (int r = 0; r < roots->count; ++r) {
+		char dir[1024];
+		if (!XwauRoots_FindDir(roots, r, rel, dir, sizeof dir) || !has_files(dir))
+			continue;
+		folders        = true;
+		size_t count   = 0;
+		char** entries = Xwau_ListDir(dir, false, &count);
+		for (size_t i = 0; i < count; ++i) {
+			char entry[2048];
+			snprintf(entry, sizeof entry, "%s/%s", dir, entries[i]);
+			if (strcasecmp(entries[i], file) == 0 && is_file(entry)) {
+				Xwau_FreeList(entries, count);
+				return read_all(entry, size);
+			}
+		}
+		Xwau_FreeList(entries, count);
+	}
+	if (folders)
+		return NULL;
+	snprintf(rel, sizeof rel, "FlightModels/Skins/%s", model);
+	for (int r = 0; r < roots->count; ++r) {
+		char dir[1024];
+		if (!XwauRoots_FindDir(roots, r, rel, dir, sizeof dir))
+			continue;
+		size_t count     = 0;
+		char** entries   = Xwau_ListDir(dir, false, &count);
+		char   zip[2048] = "";
+		for (size_t i = 0; i < count; ++i) {
+			char path[2048], lower[1024];
+			snprintf(lower, sizeof lower, "%s", entries[i]);
+			ascii_lower(lower);
+			snprintf(path, sizeof path, "%s/%s", dir, entries[i]);
+			if (strlen(lower) == strlen(skin) + 4 && strncmp(lower, skin, strlen(skin)) == 0 &&
+				strcmp(lower + strlen(skin), ".zip") == 0 && is_file(path))
+				snprintf(zip, sizeof zip, "%s", path);
+		}
+		Xwau_FreeList(entries, count);
+		if (!zip[0])
+			continue;
+		size_t   zip_size = 0;
+		uint8_t* data     = read_all(zip, &zip_size);
+		uint8_t* entry    = data ? zip_entry(data, zip_size, file, size, label, zip) : NULL;
+		free(data);
+		return entry;
+	}
+	return NULL;
+}
+
 /* The skin's image for texture `t`: NULL rgba when it has none, or when its
  * size differs (reported). */
-static bool load_image(const char* skins_dir, const char* skin, const opt_texture_t* t, const char* label,
-					   size_t* skipped, OptGltfImageView* out) {
-	static const char* const extensions[] = { ".bmp", ".png", ".jpg" };
-	char                     name[256];
-	size_t                   n = 0;
-	for (const char* c = t->name; *c && n + 1 < sizeof name; ++c)
-		name[n++] = (*c >= 'A' && *c <= 'Z') ? (char)(*c - 'A' + 'a') : *c;
-	name[n] = '\0';
+static bool load_image(const XwauRoots* roots, const char* model, const char* skin, const opt_texture_t* t,
+					   const char* label, size_t* skipped, OptGltfImageView* out) {
+	char name[256];
+	snprintf(name, sizeof name, "%s", t->name);
+	ascii_lower(name);
 	memset(out, 0, sizeof *out);
 	if (!name[0])
 		return true;
-	for (size_t e = 0; e < sizeof extensions / sizeof extensions[0]; ++e) {
-		char  path[1024];
-		FILE* probe;
-		snprintf(path, sizeof path, "%s/%s/%s%s", skins_dir, skin, name, extensions[e]);
-		if (!(probe = fopen(path, "rb")))
+	for (size_t e = 0; e < EXTENSION_COUNT; ++e) {
+		char file[300];
+		snprintf(file, sizeof file, "%s%s", name, kExtensions[e]);
+		size_t   size = 0;
+		uint8_t* data = skin_file(roots, model, skin, file, &size, label);
+		if (!data)
 			continue;
-		fclose(probe);
 		int      w = 0, h = 0, channels = 0;
-		uint8_t* rgba = stbi_load(path, &w, &h, &channels, 4);
+		uint8_t* rgba = stbi_load_from_memory(data, (int)size, &w, &h, &channels, 4);
+		free(data);
 		if (!rgba) {
-			fprintf(stderr, "opt2gltf: %s: skin image %s: %s\n", label, path, stbi_failure_reason());
+			fprintf(stderr, "opt2gltf: %s: skin %s image %s: %s\n", label, skin, file, stbi_failure_reason());
 			return false;
 		}
 		if (w != t->width || h != t->height) {
-			fprintf(stderr, "opt2gltf: %s: skin %s image %s%s is %dx%d, texture %dx%d; skipped\n", label,
-					skin, name, extensions[e], w, h, (int)t->width, (int)t->height);
+			fprintf(stderr, "opt2gltf: %s: skin %s image %s is %dx%d, texture %dx%d; skipped\n", label, skin,
+					file, w, h, (int)t->width, (int)t->height);
 			stbi_image_free(rgba);
 			++*skipped;
 			return true;
@@ -103,96 +492,60 @@ static bool load_image(const char* skins_dir, const char* skin, const opt_textur
 	return true;
 }
 
-static bool parse(const cJSON* root, XwauSkins* s, const char* label) {
-	const cJSON* variants = cJSON_GetObjectItemCaseSensitive(root, "variants");
-	const cJSON* markings = cJSON_GetObjectItemCaseSensitive(root, "default_markings");
-	if (!cJSON_IsArray(variants) || !cJSON_IsArray(markings)) {
-		fprintf(stderr, "opt2gltf: %s: skin variants need 'variants' and 'default_markings' arrays\n", label);
-		return false;
-	}
-	const size_t variant_count = (size_t)cJSON_GetArraySize(variants);
-	size_t       layer_total   = 0;
-	const cJSON* variant;
-	cJSON_ArrayForEach(variant, variants) {
-		layer_total += (size_t)cJSON_GetArraySize(cJSON_GetObjectItemCaseSensitive(variant, "layers"));
-	}
-	s->variants      = (OptGltfSkinVariant*)calloc(variant_count ? variant_count : 1, sizeof *s->variants);
-	s->variant_names = (char**)calloc(variant_count ? variant_count : 1, sizeof *s->variant_names);
-	s->layers        = (OptGltfSkinLayer*)calloc(layer_total ? layer_total : 1, sizeof *s->layers);
-	if (!s->variants || !s->variant_names || !s->layers)
-		return false;
-	s->skins.variants      = s->variants;
-	s->skins.variant_count = variant_count;
-	size_t v = 0, next_layer = 0;
-	cJSON_ArrayForEach(variant, variants) {
-		const cJSON* name   = cJSON_GetObjectItemCaseSensitive(variant, "name");
-		const cJSON* state  = cJSON_GetObjectItemCaseSensitive(variant, "state");
-		const cJSON* layers = cJSON_GetObjectItemCaseSensitive(variant, "layers");
-		if (!cJSON_IsString(name) || !cJSON_IsNumber(state) || state->valuedouble < 0 ||
-			!cJSON_IsArray(layers)) {
-			fprintf(stderr, "opt2gltf: %s: skin variant %zu needs 'name', 'state' and 'layers'\n", label, v);
-			return false;
-		}
-		OptGltfSkinVariant* out = &s->variants[v];
-		if (!(s->variant_names[v] = dup_string(name->valuestring)))
-			return false;
-		out->name   = s->variant_names[v];
-		out->state  = (uint32_t)state->valueint;
-		out->layers = &s->layers[next_layer];
-		const cJSON* layer;
-		cJSON_ArrayForEach(layer, layers) {
-			const cJSON* skin    = cJSON_GetObjectItemCaseSensitive(layer, "skin");
-			const cJSON* opacity = cJSON_GetObjectItemCaseSensitive(layer, "opacity");
-			if (!cJSON_IsString(skin) || !cJSON_IsNumber(opacity) || opacity->valueint < 0 ||
-				opacity->valueint > 100) {
-				fprintf(stderr, "opt2gltf: %s: skin variant '%s' has a bad layer\n", label, out->name);
-				return false;
-			}
-			const int index = skin_index(s, skin->valuestring);
-			if (index < 0)
-				return false;
-			s->layers[next_layer++] = (OptGltfSkinLayer) { (uint32_t)index, (uint32_t)opacity->valueint };
-			out->layer_count++;
-		}
-		++v;
-	}
-	const size_t markings_count = (size_t)cJSON_GetArraySize(markings);
-	s->markings                 = (char**)calloc(markings_count ? markings_count : 1, sizeof *s->markings);
-	if (!s->markings)
-		return false;
-	s->skins.default_markings = (const char* const*)s->markings;
-	s->skins.markings_count   = markings_count;
-	size_t       m            = 0;
-	const cJSON* entry;
-	cJSON_ArrayForEach(entry, markings) {
-		if (cJSON_IsString(entry)) {
-			if (!(s->markings[m] = dup_string(entry->valuestring)))
-				return false;
-		} else if (!cJSON_IsNull(entry)) {
-			fprintf(stderr, "opt2gltf: %s: default_markings %zu is neither a name nor null\n", label, m);
-			return false;
-		}
-		++m;
-	}
-	return true;
+/* The OPT's states: the largest texture count of a LOD 0 face group. */
+static int state_count(const opt_file_t* opt) {
+	int32_t states = 1;
+	for (int32_t mi = 0; mi < opt->mesh_count; ++mi)
+		for (int32_t g = 0; opt->meshes[mi].lod_count > 0 && g < opt->meshes[mi].lods[0].group_count; ++g)
+			if (opt->meshes[mi].lods[0].groups[g].state_count > states)
+				states = opt->meshes[mi].lods[0].groups[g].state_count;
+	return (int)states;
 }
 
-bool XwauSkins_Load(const char* variants_path, const char* skins_dir, const opt_file_t* opt,
-					const char* label, XwauSkins* out) {
+bool XwauSkins_Resolve(const XwauRoots* roots, const XwauMissions* missions, const char* model,
+					   const opt_file_t* opt, const char* label, XwauSkins* out) {
 	memset(out, 0, sizeof *out);
-	char* text = read_text(variants_path);
-	if (!text) {
-		fprintf(stderr, "opt2gltf: %s: cannot read %s\n", label, variants_path);
+	SkinSet skins;
+	if (!skin_names(roots, model, &skins))
 		return false;
+	const int states = state_count(opt);
+	Resolved* lists  = (Resolved*)malloc(MAX_MARKINGS * sizeof *lists);
+	bool      ok     = lists != NULL;
+	for (size_t c = 0; ok && skins.exists && c < XwauMissions_SkinContextCount(missions); ++c) {
+		size_t count = 0;
+		ok           = resolve(XwauMissions_SkinContext(missions, c), model, states, &skins, lists, &count);
+		for (size_t i = 0; ok && i < count; ++i) {
+			char name[1100];
+			snprintf(name, sizeof name, "%d|%s", lists[i].state, lists[i].key);
+			if (lists[i].skinned)
+				ok = add_variant(out, name, lists[i].state, lists[i].key, label);
+		}
+		if (ok && c == 0 && count) {
+			out->markings = (char**)calloc(count, sizeof *out->markings);
+			ok            = out->markings != NULL;
+			for (size_t i = 0; ok && i < count; ++i) {
+				char name[1100];
+				snprintf(name, sizeof name, "%d|%s", lists[i].state, lists[i].key);
+				ok = !lists[i].skinned || (out->markings[i] = dup_string(name)) != NULL;
+			}
+			out->skins.markings_count = ok ? count : 0;
+		}
 	}
-	cJSON* root = cJSON_Parse(text);
-	free(text);
-	if (!root) {
-		fprintf(stderr, "opt2gltf: %s: %s is not JSON\n", label, variants_path);
-		return false;
+	free(lists);
+	skin_set_free(&skins);
+	if (ok && !out->skins.variant_count) {
+		XwauSkins_Free(out);
+		return true;
 	}
-	bool ok = parse(root, out, label);
-	cJSON_Delete(root);
+	/* The layers' pointers, now that every variant's are known. */
+	size_t next = 0;
+	for (size_t v = 0; ok && v < out->skins.variant_count; ++v) {
+		out->variants[v].name   = out->variant_names[v];
+		out->variants[v].layers = &out->layers[next];
+		next += out->variants[v].layer_count;
+	}
+	out->skins.variants         = out->variants;
+	out->skins.default_markings = (const char* const*)out->markings;
 
 	const size_t texture_count = (size_t)opt->texture_count;
 	size_t       found = 0, skipped = 0;
@@ -205,7 +558,7 @@ bool XwauSkins_Load(const char* variants_path, const char* skins_dir, const opt_
 	for (size_t s = 0; ok && s < out->skins.skin_count; ++s) {
 		for (size_t t = 0; ok && t < texture_count; ++t) {
 			OptGltfImageView* view = &out->images[s * texture_count + t];
-			ok = load_image(skins_dir, out->skin_names[s], &opt->textures[t], label, &skipped, view);
+			ok = load_image(roots, model, out->skin_names[s], &opt->textures[t], label, &skipped, view);
 			found += view->rgba != NULL;
 		}
 	}
@@ -214,8 +567,8 @@ bool XwauSkins_Load(const char* variants_path, const char* skins_dir, const opt_
 		return false;
 	}
 	out->skins.images = out->images;
-	fprintf(stderr, "opt2gltf: %s: %zu skins, %zu skin images, %zu skipped\n", label, out->skins.skin_count,
-			found, skipped);
+	fprintf(stderr, "opt2gltf: %s: %zu skin variants, %zu skins, %zu skin images, %zu skipped\n", label,
+			out->skins.variant_count, out->skins.skin_count, found, skipped);
 	return true;
 }
 

@@ -989,14 +989,20 @@ set_target_properties(aeron_asset PROPERTIES
 )
 
 if(AERON_BUILD_TOOLS)
-    # The XWAU material and DAT readers are CLI-only: they read the X-Wing
-    # Alliance Upgrade files and hand resolved materials to opt2gltf_lib.
+    # The XWAU readers and the effect library writer are CLI-only: they read
+    # the X-Wing Alliance Upgrade files and hand resolved materials to
+    # opt2gltf_lib.
     add_executable(opt2gltf
         tools/opt2gltf/main.c
+        tools/opt2gltf/model_tables.c
         tools/opt2gltf/xwau_anim.c
+        tools/opt2gltf/xwau_config.c
         tools/opt2gltf/xwau_effect_bake.c
+        tools/opt2gltf/xwau_library.c
         tools/opt2gltf/xwau_mat.c
         tools/opt2gltf/xwau_dat.c
+        tools/opt2gltf/xwau_missions.c
+        tools/opt2gltf/xwau_model.c
         tools/opt2gltf/dynamic_cockpit.c
         tools/opt2gltf/xwau_skins.c
         third_party/lzma/LzmaDec.c)
@@ -1006,32 +1012,42 @@ if(AERON_BUILD_TOOLS)
         ${CMAKE_CURRENT_SOURCE_DIR}/third_party/stb
         ${CMAKE_CURRENT_SOURCE_DIR}/third_party/lzma
         ${CMAKE_CURRENT_SOURCE_DIR}/third_party/bcdec)
-    target_link_libraries(opt2gltf PRIVATE opt2gltf_lib aeron_cjson)
+    target_link_libraries(opt2gltf PRIVATE opt2gltf_lib imgbake aeron_yaml_json aeron_effect_files aeron_cjson)
+    if(NOT MSVC)
+        target_link_libraries(opt2gltf PRIVATE m)
+    endif()
+    # As aeron_gltf_cook (tools/gltf_cook/CMakeLists.txt), which the Blender
+    # add-on packages with it: the unused SDL is dropped, and a standalone
+    # MinGW build links its C runtime statically.
+    if(APPLE)
+        target_link_options(opt2gltf PRIVATE LINKER:-dead_strip_dylibs)
+    elseif(UNIX)
+        target_link_options(opt2gltf PRIVATE LINKER:--as-needed)
+    endif()
+    if(AERON_GLTF_COOK_STANDALONE AND WIN32 AND NOT MSVC)
+        target_link_options(opt2gltf PRIVATE -static)
+    endif()
     set_target_properties(opt2gltf PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
+
+    # The hooks' file rules and the skin selection, checked on fixed texts.
+    add_executable(opt2gltf_xwau_test
+        tools/opt2gltf/tests/xwau_rules_test.c
+        tools/opt2gltf/model_tables.c
+        tools/opt2gltf/xwau_config.c
+        tools/opt2gltf/xwau_missions.c
+        tools/opt2gltf/xwau_model.c
+        tools/opt2gltf/xwau_skins.c)
+    target_include_directories(opt2gltf_xwau_test PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/tools/opt2gltf
+        ${CMAKE_CURRENT_SOURCE_DIR}/third_party/stb)
+    target_link_libraries(opt2gltf_xwau_test PRIVATE opt2gltf_lib)
+    set_target_properties(opt2gltf_xwau_test PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
 endif()
 
 if(AERON_BUILD_TOOLS)
     add_subdirectory(tools/environment_bake)
-
-    # xwau_effects — imports the effect images of converted XWAU models into
-    # an asset source tree; shares opt2gltf's XWAU readers.
-    add_executable(xwau_effects
-        tools/xwau_effects/main.c
-        tools/opt2gltf/xwau_mat.c
-        tools/opt2gltf/xwau_dat.c
-        tools/opt2gltf/xwau_effect_bake.c
-        third_party/lzma/LzmaDec.c)
-    target_include_directories(xwau_effects PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/tools/opt2gltf
-        ${CMAKE_CURRENT_SOURCE_DIR}/third_party/lzma
-        ${CMAKE_CURRENT_SOURCE_DIR}/third_party/bcdec)
-    target_link_libraries(xwau_effects PRIVATE imgbake aeron_yaml_json aeron_effect_files aeron_cjson)
-    if(NOT MSVC)
-        target_link_libraries(xwau_effects PRIVATE m)
-    endif()
-    set_target_properties(xwau_effects PROPERTIES
-        RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
 endif()
 
 if(AERON_BUILD_TOOLS OR AERON_BUILD_SCENE_CAPTURE)

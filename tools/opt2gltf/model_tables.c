@@ -1,0 +1,260 @@
+#include "model_tables.h"
+
+#include <string.h>
+#include <strings.h>
+
+typedef struct Eye {
+	const char* model;
+	int         eye[3];
+} Eye;
+
+/* XWAU 2025 Full 1.0.0's craft table (its installer's
+ * XWAU2025_Full_1.0.0.202 patch; the 1.1.0 update changes no eye): the
+ * entries with a name, which hook_mission_objects matches to the OPT name. */
+static const Eye kXwauEyes[] = {
+	{ "Xwing", { 0, 33, 32 } },
+	{ "Ywing", { 0, 187, 13 } },
+	{ "Awing", { 0, 2, 31 } },
+	{ "Bwing", { 0, 50, 204 } },
+	{ "TieFighter", { 0, -3, 3 } },
+	{ "TieInterceptor", { 0, -3, 3 } },
+	{ "TieBomber", { 52, 37, 3 } },
+	{ "TieAvenger", { 0, -3, 3 } },
+	{ "TieDefender", { 0, -3, 3 } },
+	{ "IrdFighter", { 0, 105, 8 } },
+	{ "ToscanFighter", { 0, 94, 25 } },
+	{ "MissileBoat", { 0, 126, 22 } },
+	{ "Twing", { 0, 0, 31 } },
+	{ "Z-95", { 0, -19, 33 } },
+	{ "R41Starchaser", { 0, 26, 11 } },
+	{ "AssaultGunboat", { 0, 39, 18 } },
+	{ "SkiprayBlastboat", { 0, 347, 81 } },
+	{ "TieBizarro", { -124, 2, 5 } },
+	{ "TieBigGun", { 0, 2, 5 } },
+	{ "TieWarheads", { 0, 2, 5 } },
+	{ "TieBooster", { 0, 2, 5 } },
+	{ "CloakShapeFighter", { 0, 275, 72 } },
+	{ "RazorFighter", { 0, 137, 42 } },
+	{ "PlanetaryFighter", { 0, 216, 58 } },
+	{ "SupaFighter", { -149, 238, 35 } },
+	{ "PinookFighter", { -26, 116, 44 } },
+	{ "TieAdvancedX1", { 0, -3, 3 } },
+	{ "PreybirdFighter", { 0, 157, 26 } },
+	{ "SlaveOne", { 0, 135, 50 } },
+	{ "Pursuer1", { 0, -382, 168 } },
+	{ "UWing", { 13, -82, 37 } },
+	{ "Shuttle", { 35, 160, 96 } },
+	{ "EscortShuttle", { 0, -30, 15 } },
+	{ "CorellianTransport2", { 463, 325, 110 } },
+	{ "MillenniumFalcon2", { 463, 325, 110 } },
+	{ "Outrider", { 462, 293, 15 } },
+	{ "LuxuryYacht", { -21, 456, 46 } },
+	{ "FamilyTransport", { 0, 628, 25 } },
+	{ "Ghost", { 0, 605, -71 } },
+};
+
+/* The original game's craft table: the entries with a name (the player's
+ * craft; the game builds their cockpit file names from it), by the model
+ * their craft type uses. The X-wing's model is also used by an unnamed
+ * entry (OBJ_XWing_030) with the eye (0, -30, 15). */
+static const Eye kStockEyes[] = {
+	{ "assaultgunboat", { 0, -30, 15 } },
+	{ "awing", { 0, -30, 22 } },
+	{ "bwing", { -1, -17, 9 } },
+	{ "cloakshapefighter", { 0, -30, 15 } },
+	{ "corelliantransport2", { 174, -121, 33 } },
+	{ "familytransport", { 6, 636, 25 } },
+	{ "milleniumfalcon2", { 174, -125, 33 } },
+	{ "missileboat", { 0, -30, 15 } },
+	{ "r41", { 0, -30, 15 } },
+	{ "skiprayblastboat", { 0, -30, 15 } },
+	{ "tieadvanced", { 0, -8, 6 } },
+	{ "tiebizarro", { 0, -8, 6 } },
+	{ "tiebomber", { 76, -8, 6 } },
+	{ "tiebooster", { 0, 24, 4 } },
+	{ "tiedefender", { 0, -8, 6 } },
+	{ "tiefighter", { 0, -8, 6 } },
+	{ "tieinterceptor", { 0, -8, 6 } },
+	{ "xwing", { 1, -22, 34 } },
+	{ "ywing", { -2, 299, 35 } },
+	{ "z-95", { 0, 65, 29 } },
+};
+
+#define COUNT(a) (sizeof(a) / sizeof((a)[0]))
+
+static bool find_eye(const Eye* eyes, size_t count, const char* model, int eye[3]) {
+	for (size_t i = 0; i < count; ++i) {
+		if (strcasecmp(eyes[i].model, model) == 0) {
+			memcpy(eye, eyes[i].eye, sizeof eyes[i].eye);
+			return true;
+		}
+	}
+	return false;
+}
+
+bool ModelTables_XwauEye(const char* model, int eye[3]) {
+	return find_eye(kXwauEyes, COUNT(kXwauEyes), model, eye);
+}
+
+bool ModelTables_StockEye(const char* model, int eye[3]) {
+	return find_eye(kStockEyes, COUNT(kStockEyes), model, eye);
+}
+
+/* The original game's craft list row of each craft type: the type's object
+ * type (craftTypeToObjectType), that type's row of the model table, and its
+ * craft list row. XWAU changes the list's rows, not this table. */
+static const short kCraftListRows[] = {
+	-1,  0,   1,   2,   3,   4,   5,   6,   7,   8,   9,   10,  11,  12,  13,  14,  15,  37,  38,  42,  43,
+	39,  40,  41,  32,  33,  53,  54,  55,  56,  34,  35,  68,  69,  70,  71,  72,  44,  45,  46,  80,  81,
+	82,  83,  84,  85,  86,  87,  88,  89,  90,  91,  92,  93,  94,  57,  58,  59,  60,  61,  102, 103, 104,
+	105, 106, 107, 108, 133, 134, 109, -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,
+	-1,  -1,  -1,  -1,  -1,  62,  110, 111, 95,  96,  97,  98,  99,  48,  49,  100, 73,  101, 50,  51,  74,
+	75,  76,  77,  78,  79,  52,  47,  -1,  16,  17,  18,  19,  20,  21,  22,  23,  24,  25,  26,  -1,  28,
+	29,  30,  31,  112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 126, 127, 128, 129,
+	130, 131, 132, 36,  63,  64,  65,  66,  67,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  136, 137, 138, -1,
+	-1,  139, 140, -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,
+	-1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,
+	-1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  135, 92,  -1,
+};
+
+int ModelTables_CraftListRow(int craft_type) {
+	return craft_type >= 0 && (size_t)craft_type < COUNT(kCraftListRows) ? kCraftListRows[craft_type] : -1;
+}
+
+typedef struct Entry {
+	const char* model;
+	const char* values;
+} Entry;
+
+static const char* find_entry(const Entry* entries, size_t count, const char* model) {
+	for (size_t i = 0; i < count; ++i)
+		if (strcasecmp(entries[i].model, model) == 0)
+			return entries[i].values;
+	return NULL;
+}
+
+/* Replacement models carry no stock layout, so behaviour that recovered code
+ * ties to fixed component numbers is driven by these tags and articulations,
+ * which reproduce the stock numbers. */
+static const Entry kStockTags[] = {
+	/* Crew animation (FlightObject_AnimateCrewMeshRotations): the stock
+	 * per-type ordinals, on the craft model: the side motion is `random`,
+	 * the forward one `random_pause`, both at angle 32 and speed 2. The
+	 * ordinals index the craft's per-mesh rotations, which the game also
+	 * applies to its exterior model: the crew meshes are exterior meshes,
+	 * except the Millennium Falcon's (no exterior OPT). Component 9 of the
+	 * Family Transport is a gun turret that the game nods like a crew head. */
+	{ "XWING", "6=crew:32:2:random 9=crew:32:2:random_pause" },
+	{ "AWING", "4=crew:32:2:random_pause" },
+	{ "YWING", "8=crew:32:2:random 13=crew:32:2:random_pause" },
+	{ "CORELLIANTRANSPORT2", "19=crew:32:2:random 17=crew:32:2:random_pause" },
+	{ "FAMILYTRANSPORT", "13=crew:32:2:random 9=crew:32:2:random_pause" },
+	{ "MILLENIUMFALCON2", "21=crew:32:2:random 19=crew:32:2:random_pause" },
+	/* Platforms: components hidden when the flight group mounts a beam weapon
+	 * (g_platformBeamDisabledComponentIds). Only in-range entries are listed;
+	 * Platform3 and Platform5 have none in range. */
+	{ "PLATFORM1",
+	  "5=platform.hidden_by_beam 6=platform.hidden_by_jamming_decoy 15=platform.hidden_by_jamming_decoy" },
+	{ "PLATFORM2",
+	  "3=platform.hidden_by_beam 5=platform.hidden_by_beam 9=platform.hidden_by_beam "
+	  "10=platform.hidden_by_beam 1=platform.hidden_by_jamming_decoy 4=platform.hidden_by_jamming_decoy "
+	  "7=platform.hidden_by_jamming_decoy 8=platform.hidden_by_jamming_decoy" },
+	{ "PLATFORM4", "5=platform.hidden_by_beam 13=platform.hidden_by_beam 15=platform.hidden_by_beam "
+				   "6=platform.hidden_by_jamming_decoy 11=platform.hidden_by_jamming_decoy "
+				   "14=platform.hidden_by_jamming_decoy" },
+	/* Hangar props animated by the hangar and family-base scenes. */
+	{ "HANGARCRANE", "0=hangarcrane.arm" },
+	{ "HANGARDROID", "3=hangardroid.nod" },
+	{ "HANGARDROID2", "1=hangardroid2.swing 2=hangardroid2.spin" },
+	{ "WORKDROID1", "0=workdroid1.spin 3=workdroid1.turn 4=workdroid1.nod.1 6=workdroid1.nod.2" },
+	/* Pilots: the head and the four limbs, each with the forward motion. */
+	{ "REBELPILOT", "1=crew:32:2:random_pause 2=crew:32:2:random_pause 3=crew:32:2:random_pause "
+					"4=crew:32:2:random_pause 5=crew:32:2:random_pause" },
+	{ "IMPERIALPILOT", "1=crew:32:2:random_pause 2=crew:32:2:random_pause 3=crew:32:2:random_pause "
+					   "4=crew:32:2:random_pause 5=crew:32:2:random_pause" },
+	/* Proving grounds. */
+	{ "ACCELRING2", "4=accelring.core" },
+	{ "ACCELRING3", "4=accelring.core" },
+	{ "COMPACTOR", "1=compactor.door.1 2=compactor.door.2 3=compactor.door.3 4=compactor.door.4" },
+	{ "CENTRIFUGE", "3=centrifuge.spin.1 4=centrifuge.spin.2 12=centrifuge.spin.3 8=centrifuge.door.1 "
+					"7=centrifuge.door.2 6=centrifuge.door.3" },
+	{ "SMELTINGROOM",
+	  "3=smeltingroom.turret.1 4=smeltingroom.turret.2 5=smeltingroom.turret.3 "
+	  "6=smeltingroom.turret.4 7=smeltingroom.turret.5 8=smeltingroom.turret.6 2=smeltingroom.power.1 "
+	  "10=smeltingroom.power.2 9=smeltingroom.target" },
+	/* Death Star reactor. */
+	{ "DSREACTORCORE", "1=dsreactorcore.regenerator 2=dsreactorcore.reactor" },
+};
+
+const char* ModelTables_StockTags(const char* model) {
+	return find_entry(kStockTags, COUNT(kStockTags), model);
+}
+
+/* The projectiles: the craft list rows (Equipment0.LST) of the player and
+ * NPC projectile kinds. */
+static const char* const kProjectiles[] = {
+	"LASERREBEL",        "LASERREBELTURBO", "LASERIMP",    "LASERIMPTURBO", "LASERION", "LASERIONTURBO",
+	"CONCUSSIONMISSILE", "PROTONTORPEDO",   "HEAVYROCKET", "SPACEBOMB",     "MAGPULSE", "FLARE",
+	"LASERIMPDS",        "DSLASERINTERNAL",
+};
+
+bool ModelTables_IsProjectile(const char* model) {
+	for (size_t i = 0; i < COUNT(kProjectiles); ++i)
+		if (strcasecmp(kProjectiles[i], model) == 0)
+			return true;
+	return false;
+}
+
+/* XWAU's materials make some crew textures Shadeless: its renderer then
+ * draws them unlit at full texture brightness, which keeps faces readable in
+ * its dark cockpits, but as emission under physical lighting they read as
+ * glowing. Cockpit glass is Shadeless too: XWAU composites it unlit after
+ * tone mapping, while as emission its grime glows; listed, a transparent
+ * texture is a plain lit surface with its own alpha. Lights and displays
+ * keep their material. */
+static const Entry kLitTextures[] = {
+	/* Pilot and crew faces. */
+	{ "AWing", "AWFace XWFace" },
+	{ "AWingExterior", "AWFace XWFace" },
+	{ "XWing", "XWFace" },
+	{ "XWingExterior", "XWFace" },
+	{ "YWing", "XWFace YWFace" },
+	{ "YWingExterior", "XWFace YWFace" },
+	{ "Z-95", "Face Eyes Head" },
+	{ "Z-95Exterior", "Face Eyes Head" },
+	{ "FamilyTransport", "Eyes Hair Head" },
+	{ "FamilyTransportExterior", "Eyes Hair Head" },
+	{ "PreybirdFighter", "Pilot PilotHead" },
+	{ "PreybirdFighterExterior", "Pilot PilotHead" },
+	/* Crew figures. */
+	{ "CorellianTransport2Cockpit", "Emon" },
+	{ "MillenniumFalcon2Cockpit", "Chewbacca NienArms NienBoots NienChest NienEyes NienHands NienHead" },
+	{ "MiniFalconCockpit", "Chewbacca NienArms NienBoots NienChest NienEyes NienHands NienHead" },
+	{ "LuxuryYacht", "LandoHands LandoLegs LandoTorso" },
+	{ "LuxuryYachtExterior", "LandoHands LandoLegs LandoTorso" },
+	{ "AssaultShuttle", "TrooperFront TrooperTop WorkerFront WorkerTop" },
+	/* Cockpit glass (windows, canopies) and visors. */
+	{ "AwingCockpit", "TEX00029" },
+	{ "PlanetaryFighterCockpit", "TEX00037" },
+	{ "PreybirdFighterCockpit", "Canopy" },
+	{ "TieAdvancedX1Cockpit", "Tex00029 Tex00067" },
+	{ "TieAvengerCockpit", "Tex00022 Tex00023 Tex00075" },
+	{ "TieBigGunCockpit", "Tex00011 Tex00060" },
+	{ "TieBizarroCockpit", "Tex00011 Tex00060" },
+	{ "TieBomberCockpit", "Tex00022 Tex00023" },
+	{ "TieBoosterCockpit", "Tex00011 Tex00060" },
+	{ "TIECockpit", "Tex00022 Tex00023" },
+	{ "TieDefenderCockpit", "Tex00022 Tex00023" },
+	{ "TieFighterCockpit", "Tex00022 Tex00023" },
+	{ "TieFighterOutlandCockpit", "Tex00022 Tex00023" },
+	{ "TieInterceptorCockpit", "Tex00022 Tex00023" },
+	{ "TieWarheadsCockpit", "Tex00011 Tex00062" },
+	{ "TwingCockpit", "Tex00025" },
+	{ "XwingCockpit", "Tex00089" },
+	{ "YwingCockpit", "TEX00018" },
+	{ "Z-95Cockpit", "Tex00020" },
+};
+
+const char* ModelTables_LitTextures(const char* model) {
+	return find_entry(kLitTextures, COUNT(kLitTextures), model);
+}
