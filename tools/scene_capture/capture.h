@@ -10,7 +10,8 @@
 #include "aeron/temporal.h"
 
 #define CAPTURE_MAX_MODELS 8
-#define CAPTURE_MAX_INSTANCES 16
+/* game_scene instances; Scene3D holds up to 2048 (AERON_SCENE_MAX_INSTANCES). */
+#define CAPTURE_MAX_INSTANCES 1024
 #define CAPTURE_MAX_LIGHTS AERON_SCENE_POINT_LIGHT_CAPACITY
 
 int Capture_Compare(const char* baseline, const char* candidate);
