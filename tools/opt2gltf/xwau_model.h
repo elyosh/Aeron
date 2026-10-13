@@ -94,8 +94,8 @@ typedef struct XwauMeshLine {
 	long long values[4]; /* mesh, angle, speed, speed back (or behavior) */
 } XwauMeshLine;
 
-/* The mesh lines of `lines` (lines whose numbers do not parse are reported
- * and skipped). False when out of memory. */
+/* The mesh lines of `lines` (lines whose numbers do not parse are skipped,
+ * and reported unless `label` is NULL). False when out of memory. */
 bool XwauModel_MeshLines(const XwauLines* lines, XwauMeshLine** out, size_t* count, const char* label,
 						 const char* where);
 

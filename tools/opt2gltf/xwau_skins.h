@@ -54,4 +54,33 @@ bool XwauSkins_Resolve(const XwauRoots* roots, const XwauMissions* missions, con
 					   const opt_file_t* opt, const char* label, XwauSkins* out);
 void XwauSkins_Free(XwauSkins* skins);
 
+/* The OPT's states: the largest texture count of a LOD 0 face group. */
+int XwauSkins_StateCount(const opt_file_t* opt);
+
+/* The skins of a model across the roots. */
+typedef struct XwauSkinSet {
+	char** names; /* lower case; "" is the skin folder's own files */
+	size_t count;
+	bool   exists; /* a root has FlightModels/Skins/<Opt> */
+} XwauSkinSet;
+
+bool XwauSkins_Names(const XwauRoots* roots, const char* model, XwauSkinSet* out);
+void XwauSkins_FreeNames(XwauSkinSet* set);
+
+#define XWAU_SKINS_MAX_MARKINGS 256
+
+/* What a markings value shows in one skin context: its list (the variant
+ * "<state>|<list>" when skinned), or no skin and state `state`. */
+typedef struct XwauMarkings {
+	bool skinned;
+	int  state;
+	char list[1024];
+} XwauMarkings;
+
+/* The markings values of `model`, of `states` states, in the skin context
+ * `lines` (*count of them, at most XWAU_SKINS_MAX_MARKINGS; 0 when it shows
+ * no skin). False when out of memory. */
+bool XwauSkins_Markings(const XwauLines* lines, const char* model, int states, const XwauSkinSet* skins,
+						XwauMarkings* out, size_t* count);
+
 #endif /* AERON_OPT2GLTF_XWAU_SKINS_H */

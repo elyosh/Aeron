@@ -187,7 +187,7 @@ static void test_skins(const char* scratch) {
 			write_file(path, "x");
 		}
 		XwauRoots     roots    = { { root }, 1 };
-		XwauMissions* missions = XwauMissions_Load(&roots);
+		XwauMissions* missions = XwauMissions_Load(&roots, false);
 		/* An OPT with one face group of `states` states, no texture. */
 		opt_face_group_t group = { 0 };
 		group.state_count      = k->states;

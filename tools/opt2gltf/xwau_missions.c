@@ -1,5 +1,6 @@
 #include "xwau_missions.h"
 
+#include <stdarg.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -16,7 +17,9 @@
 /* An XWA .TIE: the header, then the flight groups. */
 #define TIE_HEADER_SIZE 0x23F0
 #define TIE_FLIGHT_GROUP_SIZE 0xE3E
+#define TIE_FLIGHT_GROUP_NAME 20
 #define TIE_FLIGHT_GROUP_CRAFT 0x6B
+#define TIE_FLIGHT_GROUP_MARKINGS 0x73
 
 static const char* const kMissionDirs[] = { "Missions", "Melee" };
 
@@ -46,11 +49,21 @@ typedef struct ModelVariants {
 	size_t   count;
 } ModelVariants;
 
+/* The flight groups a mission starts deployed or gives a variant. */
+typedef struct MissionArticulations {
+	char                         base[256]; /* "<dir>/<lower-case name>" */
+	XwauFlightGroupArticulation* fgs;
+	size_t                       count;
+} MissionArticulations;
+
 struct XwauMissions {
-	XwauLines*     contexts;
-	size_t         context_count;
-	ModelVariants* models;
-	size_t         model_count;
+	bool                  report;
+	XwauLines*            contexts;
+	size_t                context_count;
+	ModelVariants*        models;
+	size_t                model_count;
+	MissionArticulations* missions;
+	size_t                mission_count;
 };
 
 static void lists_free(Lists* lists) {
@@ -70,6 +83,18 @@ static void lower_copy(char* out, size_t cap, const char* text) {
 static bool ends_with(const char* text, const char* suffix) {
 	const size_t a = strlen(text), b = strlen(suffix);
 	return a >= b && strcasecmp(text + a - b, suffix) == 0;
+}
+
+/* Reports a problem of mission `base`, when the missions report. */
+static void report(const XwauMissions* m, const char* base, const char* format, ...) {
+	if (!m->report)
+		return;
+	va_list args;
+	va_start(args, format);
+	fprintf(stderr, "opt2gltf: %s: ", base);
+	vfprintf(stderr, format, args);
+	fputc('\n', stderr);
+	va_end(args);
 }
 
 /* ---- Skin contexts ------------------------------------------------------------ */
@@ -174,17 +199,9 @@ static bool load_skin_contexts(const XwauRoots* roots, XwauMissions* m) {
 		memset(&global, 0, sizeof global);
 	}
 	for (size_t i = 0; ok && i < missions.count; ++i) {
-		/* <mission>_Skins.txt, else [Skins] of <mission>.ini, else global. */
-		char       rel[1100], path[1024];
+		/* The mission's own lines, else the global ones. */
 		XwauLines* lines = &m->contexts[m->context_count];
-		snprintf(rel, sizeof rel, "%s_Skins.txt", missions.items[i]);
-		ok = XwauLines_Read(XwauRoots_FindFile(roots, rel, path, sizeof path) ? path : NULL, "",
-							XWAU_RULES_CS, lines);
-		if (ok && !lines->count) {
-			snprintf(rel, sizeof rel, "%s.ini", missions.items[i]);
-			ok = XwauLines_Read(XwauRoots_FindFile(roots, rel, path, sizeof path) ? path : NULL, "Skins",
-								XWAU_RULES_CS, lines);
-		}
+		ok               = XwauMissions_OwnSkinLines(roots, missions.items[i], lines);
 		if (ok && !lines->count)
 			ok = copy_lines(&m->contexts[0], lines);
 		m->context_count += ok;
@@ -192,6 +209,19 @@ static bool load_skin_contexts(const XwauRoots* roots, XwauMissions* m) {
 	XwauLines_Free(&global);
 	XwauLines_Free(&missions);
 	return ok;
+}
+
+bool XwauMissions_OwnSkinLines(const XwauRoots* roots, const char* base, XwauLines* out) {
+	char rel[1100], path[1024];
+	snprintf(rel, sizeof rel, "%s_Skins.txt", base);
+	if (!XwauLines_Read(XwauRoots_FindFile(roots, rel, path, sizeof path) ? path : NULL, "", XWAU_RULES_CS,
+						out))
+		return false;
+	if (out->count)
+		return true;
+	snprintf(rel, sizeof rel, "%s.ini", base);
+	return XwauLines_Read(XwauRoots_FindFile(roots, rel, path, sizeof path) ? path : NULL, "Skins",
+						  XWAU_RULES_CS, out);
 }
 
 size_t XwauMissions_SkinContextCount(const XwauMissions* missions) { return missions->context_count; }
@@ -202,9 +232,7 @@ const XwauLines* XwauMissions_SkinContext(const XwauMissions* missions, size_t i
 
 /* ---- Articulation lists ------------------------------------------------------- */
 
-/* The lower-case names of the missions of `dir` with a .ini, _Objects.txt,
- * _Skins.txt, _SFoils*.txt or (beside its .TIE) .txt file, sorted. */
-static bool mission_names(const XwauRoots* roots, const char* dir_name, XwauLines* out) {
+bool XwauMissions_Names(const XwauRoots* roots, const char* dir_name, XwauLines* out) {
 	memset(out, 0, sizeof *out);
 	bool ok = true;
 	for (int r = 0; ok && r < roots->count; ++r) {
@@ -318,14 +346,81 @@ static GroupList* group_list(Lists* lists, const char* group) {
 }
 
 typedef struct FlightGroupLists {
-	int   fg;
-	Lists lists;
+	int         fg;
+	const char* start[2]; /* the groups its start lines deploy, in order */
+	size_t      start_count;
+	Lists       lists;
 } FlightGroupLists;
 
-/* The lists of each flight group of mission `base` ("<dir>/<lower name>"). */
-static bool mission_lists(const XwauRoots* roots, const char* base, FlightGroupLists** out, size_t* count) {
-	*out   = NULL;
-	*count = 0;
+/* Flight group `fg` of `fgs`, added when new; NULL when out of memory. */
+static FlightGroupLists* flight_group_lists(FlightGroupLists** fgs, size_t* count, int fg) {
+	for (size_t i = 0; i < *count; ++i)
+		if ((*fgs)[i].fg == fg)
+			return &(*fgs)[i];
+	FlightGroupLists* grown = (FlightGroupLists*)realloc(*fgs, (*count + 1) * sizeof *grown);
+	if (!grown)
+		return NULL;
+	*fgs                    = grown;
+	FlightGroupLists* entry = &grown[(*count)++];
+	memset(entry, 0, sizeof *entry);
+	entry->fg = fg;
+	return entry;
+}
+
+static const struct {
+	const char* element;
+	const char* group;
+} kStartElements[] = { { "close_SFoils", "sfoils" }, { "open_LandingGears", "landing_gear" } };
+
+/* The start lines "fg, N, close_SFoils, 1" and "fg, N, open_LandingGears, 1"
+ * of mission `base` (<mission>.txt, else [mission_tie] of <mission>.ini). */
+static bool start_lines(const XwauRoots* roots, const XwauMissions* m, const char* base,
+						FlightGroupLists** fgs, size_t* count) {
+	char      rel[1100], path[1024];
+	XwauLines lines;
+	snprintf(rel, sizeof rel, "%s.txt", base);
+	if (!XwauLines_Read(XwauRoots_FindFile(roots, rel, path, sizeof path) ? path : NULL, "", XWAU_RULES_CPP,
+						&lines))
+		return false;
+	bool ok = true;
+	if (!lines.count) {
+		snprintf(rel, sizeof rel, "%s.ini", base);
+		ok = XwauLines_Read(XwauRoots_FindFile(roots, rel, path, sizeof path) ? path : NULL, "mission_tie",
+							XWAU_RULES_CPP, &lines);
+	}
+	for (size_t i = 0; ok && i < lines.count; ++i) {
+		XwauLines tokens;
+		if (!(ok = Xwau_Tokenize(lines.items[i], XWAU_RULES_CPP, &tokens)))
+			break;
+		int element = -1;
+		for (int e = 0; tokens.count >= 4 && Xwau_SameName(tokens.items[0], "fg") && e < 2; ++e)
+			if (Xwau_SameName(tokens.items[2], kStartElements[e].element))
+				element = e;
+		long long  fg = 0, value = 0;
+		const bool numbers =
+			element >= 0 && Xwau_Stoi(tokens.items[1], &fg) && Xwau_Stoi(tokens.items[3], &value);
+		if (element >= 0 && !numbers)
+			report(m, base, "mission_tie: line '%s' skipped: not a number (XWAU would fail)", lines.items[i]);
+		if (numbers && fg >= 0 && fg <= FLIGHT_GROUP_MAX && value == 1) {
+			FlightGroupLists* entry = flight_group_lists(fgs, count, (int)fg);
+			const char*       group = kStartElements[element].group;
+			bool              found = false;
+			ok                      = entry != NULL;
+			for (size_t k = 0; ok && k < entry->start_count; ++k)
+				found |= entry->start[k] == group;
+			if (ok && !found)
+				entry->start[entry->start_count++] = group;
+		}
+		XwauLines_Free(&tokens);
+	}
+	XwauLines_Free(&lines);
+	return ok;
+}
+
+/* The lists of each flight group of mission `base`: its [<Section>_fg_N]
+ * sections. */
+static bool mission_lists(const XwauRoots* roots, const XwauMissions* m, const char* base,
+						  FlightGroupLists** out, size_t* count) {
 	char rel[1100], ini[1024];
 	snprintf(rel, sizeof rel, "%s.ini", base);
 	const bool has_ini = XwauRoots_FindFile(roots, rel, ini, sizeof ini);
@@ -367,8 +462,13 @@ static bool mission_lists(const XwauRoots* roots, const char* base, FlightGroupL
 		bool seen = false;
 		for (size_t j = 0; !seen && j < s; ++j)
 			seen = Xwau_SameName(sections.items[j], sections.items[s]);
-		if (seen || fg > FLIGHT_GROUP_MAX || strlen(group) > TAG_MAX)
+		if (seen || fg > FLIGHT_GROUP_MAX)
 			continue;
+		if (strlen(group) > TAG_MAX) {
+			report(m, base, "%s: skipped: group '%s' is longer than %d characters", sections.items[s], group,
+				   TAG_MAX);
+			continue;
+		}
 		XwauLines lines;
 		snprintf(rel, sizeof rel, "%s_%s.txt", base, sections.items[s]);
 		char path[1024];
@@ -376,37 +476,46 @@ static bool mission_lists(const XwauRoots* roots, const char* base, FlightGroupL
 							XWAU_RULES_CPP, &lines);
 		if (ok && !lines.count)
 			ok = XwauLines_Read(has_ini ? ini : NULL, sections.items[s], XWAU_RULES_CPP, &lines);
+		/* The hook's settings keys are not flight-group ones. */
+		for (size_t i = 0; ok && i < lines.count; ++i) {
+			XwauLines tokens;
+			ok = Xwau_Tokenize(lines.items[i], XWAU_RULES_CPP, &tokens);
+			if (ok && strchr(lines.items[i], '=') && tokens.count < 2)
+				report(m, base, "%s: setting '%s' not imported", sections.items[s], lines.items[i]);
+			XwauLines_Free(&tokens);
+		}
 		XwauMeshLine* mesh_lines = NULL;
 		size_t        mesh_count = 0;
-		ok = ok && XwauModel_MeshLines(&lines, &mesh_lines, &mesh_count, base, sections.items[s]);
+		ok = ok && XwauModel_MeshLines(&lines, &mesh_lines, &mesh_count, m->report ? base : NULL,
+									   sections.items[s]);
 		XwauLines_Free(&lines);
 		/* The flight group's lists, and its group's meshes. */
-		FlightGroupLists* entry = NULL;
-		for (size_t j = 0; ok && !entry && j < *count; ++j)
-			if ((*out)[j].fg == fg)
-				entry = &(*out)[j];
-		if (ok && !entry) {
-			FlightGroupLists* grown = (FlightGroupLists*)realloc(*out, (*count + 1) * sizeof *grown);
-			ok                      = grown != NULL;
-			if (ok) {
-				*out  = grown;
-				entry = &grown[(*count)++];
-				memset(entry, 0, sizeof *entry);
-				entry->fg = fg;
-			}
-		}
-		GroupList* list = ok ? group_list(&entry->lists, group) : NULL;
-		ok              = ok && list;
+		FlightGroupLists* entry = ok ? flight_group_lists(out, count, fg) : NULL;
+		GroupList*        list  = entry ? group_list(&entry->lists, group) : NULL;
+		ok                      = ok && list;
 		for (size_t i = 0; ok && i < mesh_count; ++i) {
-			const long long* v = mesh_lines[i].values;
-			if (v[0] < 0 || v[0] > COMPONENT_MAX || v[1] < -128 || v[1] > 255 || v[2] < 0 || v[2] > 255 ||
-				v[3] < 0 || v[3] > 255)
+			const long long* v       = mesh_lines[i].values;
+			const char*      section = sections.items[s];
+			if (v[0] < 0 || v[0] > COMPONENT_MAX) {
+				report(m, base, "%s: mesh %lld skipped: outside 0..%d", section, v[0], COMPONENT_MAX);
 				continue;
+			}
+			if (v[1] < -128 || v[1] > 255) {
+				report(m, base, "%s: mesh %lld skipped: angle %lld outside -128..255", section, v[0], v[1]);
+				continue;
+			}
+			if (v[2] < 0 || v[2] > 255 || v[3] < 0 || v[3] > 255) {
+				report(m, base, "%s: mesh %lld skipped: speeds %lld, %lld outside 0..255", section, v[0],
+					   v[2], v[3]);
+				continue;
+			}
 			bool listed = false;
 			for (size_t k = 0; !listed && k < list->count; ++k)
 				listed = list->meshes[k].mesh == (int)v[0];
-			if (listed)
+			if (listed) {
+				report(m, base, "%s: mesh %lld listed again; the first line is kept", section, v[0]);
 				continue;
+			}
 			MeshEntry* grown = (MeshEntry*)realloc(list->meshes, (list->count + 1) * sizeof *grown);
 			ok               = grown != NULL;
 			if (ok) {
@@ -484,8 +593,7 @@ static bool craft_list(const XwauRoots* roots, XwauLines* rows) {
 	return ok;
 }
 
-/* The craft type of each flight group of a .TIE. */
-static uint8_t* tie_craft_types(const char* path, size_t* count) {
+XwauTieFlightGroup* XwauTie_FlightGroups(const char* path, size_t* count) {
 	*count  = 0;
 	FILE* f = fopen(path, "rb");
 	if (!f)
@@ -494,17 +602,20 @@ static uint8_t* tie_craft_types(const char* path, size_t* count) {
 	int16_t groups = 0;
 	if (fread(header, 1, 4, f) == 4)
 		groups = (int16_t)(header[2] | (header[3] << 8));
-	uint8_t* types = (uint8_t*)calloc(groups > 0 ? (size_t)groups : 1, 1);
-	for (int16_t i = 0; types && i < groups; ++i) {
-		uint8_t type;
-		if (fseek(f, TIE_HEADER_SIZE + (long)i * TIE_FLIGHT_GROUP_SIZE + TIE_FLIGHT_GROUP_CRAFT, SEEK_SET) !=
-				0 ||
-			fread(&type, 1, 1, f) != 1)
+	XwauTieFlightGroup* out = (XwauTieFlightGroup*)calloc(groups > 0 ? (size_t)groups : 1, sizeof *out);
+	for (int16_t i = 0; out && i < groups; ++i) {
+		uint8_t record[TIE_FLIGHT_GROUP_MARKINGS + 1];
+		if (fseek(f, TIE_HEADER_SIZE + (long)i * TIE_FLIGHT_GROUP_SIZE, SEEK_SET) != 0 ||
+			fread(record, 1, sizeof record, f) != sizeof record)
 			break;
-		types[(*count)++] = type;
+		XwauTieFlightGroup* g = &out[(*count)++];
+		memcpy(g->name, record, TIE_FLIGHT_GROUP_NAME);
+		g->name[TIE_FLIGHT_GROUP_NAME] = 0;
+		g->craft                       = record[TIE_FLIGHT_GROUP_CRAFT];
+		g->markings                    = record[TIE_FLIGHT_GROUP_MARKINGS];
 	}
 	fclose(f);
-	return types;
+	return out;
 }
 
 static ModelVariants* model_variants(XwauMissions* m, const char* model, bool add) {
@@ -527,6 +638,31 @@ static int compare_fg(const void* a, const void* b) {
 	return ((const FlightGroupLists*)a)->fg - ((const FlightGroupLists*)b)->fg;
 }
 
+/* Flight group `fg` of mission `base`'s articulations; NULL when out of
+ * memory. */
+static XwauFlightGroupArticulation* add_articulation(XwauMissions* m, const char* base, int fg) {
+	MissionArticulations* mission = m->mission_count ? &m->missions[m->mission_count - 1] : NULL;
+	if (!mission || strcmp(mission->base, base) != 0) {
+		MissionArticulations* grown =
+			(MissionArticulations*)realloc(m->missions, (m->mission_count + 1) * sizeof *grown);
+		if (!grown)
+			return NULL;
+		m->missions = grown;
+		mission     = &grown[m->mission_count++];
+		memset(mission, 0, sizeof *mission);
+		snprintf(mission->base, sizeof mission->base, "%s", base);
+	}
+	XwauFlightGroupArticulation* grown =
+		(XwauFlightGroupArticulation*)realloc(mission->fgs, (mission->count + 1) * sizeof *grown);
+	if (!grown)
+		return NULL;
+	mission->fgs                       = grown;
+	XwauFlightGroupArticulation* entry = &grown[mission->count++];
+	memset(entry, 0, sizeof *entry);
+	entry->flight_group = fg;
+	return entry;
+}
+
 static bool load_variants(const XwauRoots* roots, XwauMissions* m) {
 	XwauLines rows;
 	if (!craft_list(roots, &rows))
@@ -534,51 +670,67 @@ static bool load_variants(const XwauRoots* roots, XwauMissions* m) {
 	bool ok = true;
 	for (size_t d = 0; ok && d < 2; ++d) {
 		XwauLines names;
-		ok = mission_names(roots, kMissionDirs[d], &names);
+		ok = XwauMissions_Names(roots, kMissionDirs[d], &names);
 		for (size_t n = 0; ok && n < names.count; ++n) {
 			char base[1100];
 			snprintf(base, sizeof base, "%s/%s", kMissionDirs[d], names.items[n]);
 			FlightGroupLists* fgs   = NULL;
 			size_t            count = 0;
-			ok                      = mission_lists(roots, base, &fgs, &count);
-			size_t   type_count     = 0;
-			uint8_t* types          = NULL;
-			char     rel[1200], tie[1024];
+			ok = start_lines(roots, m, base, &fgs, &count) && mission_lists(roots, m, base, &fgs, &count);
+			size_t              group_count = 0;
+			XwauTieFlightGroup* groups      = NULL;
+			char                rel[1200], tie[1024];
 			snprintf(rel, sizeof rel, "%s.tie", base);
 			if (ok && count && XwauRoots_FindFile(roots, rel, tie, sizeof tie))
-				types = tie_craft_types(tie, &type_count);
+				groups = XwauTie_FlightGroups(tie, &group_count);
 			if (count)
 				qsort(fgs, count, sizeof *fgs, compare_fg);
 			for (size_t i = 0; ok && i < count; ++i) {
-				if (!fgs[i].lists.count)
+				char variant[128] = "";
+				if (fgs[i].lists.count) {
+					const int      row   = (size_t)fgs[i].fg < group_count
+											   ? ModelTables_CraftListRow(groups[fgs[i].fg].craft)
+											   : -1;
+					ModelVariants* model = NULL;
+					if (row < 0 || (size_t)row >= rows.count)
+						report(m, base,
+							   "flight group %d: articulation lists dropped: no model for its craft type",
+							   fgs[i].fg);
+					else
+						ok = (model = model_variants(m, rows.items[row], true)) != NULL;
+					for (size_t v = 0; ok && model && !variant[0] && v < model->count; ++v)
+						if (same_lists(&model->variants[v].lists, &fgs[i].lists))
+							snprintf(variant, sizeof variant, "%s", model->variants[v].name);
+					if (ok && model && !variant[0]) {
+						Variant* grown =
+							(Variant*)realloc(model->variants, (model->count + 1) * sizeof *grown);
+						ok = grown != NULL;
+						if (ok) {
+							model->variants = grown;
+							Variant* v      = &grown[model->count++];
+							memset(v, 0, sizeof *v);
+							/* The name: "<mission>_fg<N>", other than [a-z0-9_] as '_'. */
+							snprintf(v->name, sizeof v->name, "%s_fg%d", names.items[n], fgs[i].fg);
+							for (char* c = v->name; *c; ++c)
+								if (!((*c >= 'a' && *c <= 'z') || (*c >= '0' && *c <= '9') || *c == '_'))
+									*c = '_';
+							v->lists     = fgs[i].lists;
+							fgs[i].lists = (Lists) { 0 };
+							snprintf(variant, sizeof variant, "%s", v->name);
+						}
+					}
+				}
+				if (!ok || (!fgs[i].start_count && !variant[0]))
 					continue;
-				const int row =
-					(size_t)fgs[i].fg < type_count ? ModelTables_CraftListRow(types[fgs[i].fg]) : -1;
-				if (row < 0 || (size_t)row >= rows.count)
-					continue;
-				ModelVariants* model = model_variants(m, rows.items[row], true);
-				ok                   = model != NULL;
-				bool known           = false;
-				for (size_t v = 0; ok && !known && v < model->count; ++v)
-					known = same_lists(&model->variants[v].lists, &fgs[i].lists);
-				if (!ok || known)
-					continue;
-				Variant* grown = (Variant*)realloc(model->variants, (model->count + 1) * sizeof *grown);
-				ok             = grown != NULL;
+				XwauFlightGroupArticulation* entry = add_articulation(m, base, fgs[i].fg);
+				ok                                 = entry != NULL;
 				if (ok) {
-					model->variants = grown;
-					Variant* v      = &grown[model->count++];
-					memset(v, 0, sizeof *v);
-					/* The name: "<mission>_fg<N>", other than [a-z0-9_] as '_'. */
-					snprintf(v->name, sizeof v->name, "%s_fg%d", names.items[n], fgs[i].fg);
-					for (char* c = v->name; *c; ++c)
-						if (!((*c >= 'a' && *c <= 'z') || (*c >= '0' && *c <= '9') || *c == '_'))
-							*c = '_';
-					v->lists     = fgs[i].lists;
-					fgs[i].lists = (Lists) { 0 };
+					memcpy(entry->start, fgs[i].start, sizeof entry->start);
+					entry->start_count = fgs[i].start_count;
+					snprintf(entry->variant, sizeof entry->variant, "%s", variant);
 				}
 			}
-			free(types);
+			free(groups);
 			for (size_t i = 0; i < count; ++i)
 				lists_free(&fgs[i].lists);
 			free(fgs);
@@ -589,12 +741,26 @@ static bool load_variants(const XwauRoots* roots, XwauMissions* m) {
 	return ok;
 }
 
-XwauMissions* XwauMissions_Load(const XwauRoots* roots) {
+XwauMissions* XwauMissions_Load(const XwauRoots* roots, bool report_problems) {
 	XwauMissions* m = (XwauMissions*)calloc(1, sizeof *m);
+	if (m)
+		m->report = report_problems;
 	if (m && load_skin_contexts(roots, m) && load_variants(roots, m))
 		return m;
 	XwauMissions_Free(m);
 	return NULL;
+}
+
+size_t XwauMissions_FlightGroupArticulations(const XwauMissions* m, const char* base,
+											 const XwauFlightGroupArticulation** out) {
+	for (size_t i = 0; i < m->mission_count; ++i) {
+		if (strcmp(m->missions[i].base, base) == 0) {
+			*out = m->missions[i].fgs;
+			return m->missions[i].count;
+		}
+	}
+	*out = NULL;
+	return 0;
 }
 
 void XwauMissions_Free(XwauMissions* m) {
@@ -609,6 +775,9 @@ void XwauMissions_Free(XwauMissions* m) {
 		free(m->models[i].variants);
 	}
 	free(m->models);
+	for (size_t i = 0; i < m->mission_count; ++i)
+		free(m->missions[i].fgs);
+	free(m->missions);
 	free(m);
 }
 

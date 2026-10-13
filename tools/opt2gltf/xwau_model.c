@@ -227,7 +227,7 @@ bool XwauModel_MeshLines(const XwauLines* lines, XwauMeshLine** out, size_t* cou
 		bool         numbers = tokens.count >= 4;
 		for (int k = 0; numbers && k < 4; ++k)
 			numbers = Xwau_StoiAuto(tokens.items[k], &line.values[k]);
-		if (tokens.count >= 4 && !numbers)
+		if (tokens.count >= 4 && !numbers && label)
 			fprintf(stderr, "opt2gltf: %s: %s: line '%s' skipped: not a number (XWAU would fail)\n", label,
 					where, lines->items[i]);
 		XwauLines_Free(&tokens);

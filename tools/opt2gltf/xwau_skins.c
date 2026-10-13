@@ -14,8 +14,6 @@
 #define STBI_ONLY_JPEG
 #include "stb_image.h"
 
-#define MAX_MARKINGS 256
-
 static const char* const kExtensions[] = { ".bmp", ".png", ".jpg" };
 #define EXTENSION_COUNT (sizeof kExtensions / sizeof kExtensions[0])
 
@@ -146,20 +144,14 @@ static uint8_t* zip_entry(const uint8_t* zip, size_t size, const char* name, siz
 
 /* ---- Skins -------------------------------------------------------------------- */
 
-typedef struct SkinSet {
-	char** names; /* lower case; "" is the skin folder's own files */
-	size_t count;
-	bool   exists; /* a root has FlightModels/Skins/<Opt> */
-} SkinSet;
-
-static bool skin_set_has(const SkinSet* set, const char* name) {
+static bool skin_set_has(const XwauSkinSet* set, const char* name) {
 	for (size_t i = 0; i < set->count; ++i)
 		if (strcmp(set->names[i], name) == 0)
 			return true;
 	return false;
 }
 
-static bool skin_set_add(SkinSet* set, const char* name) {
+static bool skin_set_add(XwauSkinSet* set, const char* name) {
 	if (skin_set_has(set, name))
 		return true;
 	char** grown = (char**)realloc(set->names, (set->count + 1) * sizeof *grown);
@@ -172,8 +164,7 @@ static bool skin_set_add(SkinSet* set, const char* name) {
 	return true;
 }
 
-/* The skins of `model` across the roots. */
-static bool skin_names(const XwauRoots* roots, const char* model, SkinSet* out) {
+bool XwauSkins_Names(const XwauRoots* roots, const char* model, XwauSkinSet* out) {
 	memset(out, 0, sizeof *out);
 	char rel[512];
 	snprintf(rel, sizeof rel, "FlightModels/Skins/%s", model);
@@ -206,7 +197,7 @@ static bool skin_names(const XwauRoots* roots, const char* model, SkinSet* out) 
 	return ok;
 }
 
-static void skin_set_free(SkinSet* set) {
+void XwauSkins_FreeNames(XwauSkinSet* set) {
 	Xwau_FreeList(set->names, set->count);
 	memset(set, 0, sizeof *set);
 }
@@ -237,7 +228,7 @@ static void parse_token(const char* token, char* name, size_t cap, int* opacity)
 
 /* Appends the canonical list of `tokens` to `key`: the existing skins,
  * "-<opacity>" when not 100, joined with ','. */
-static void canonical(const XwauLines* tokens, const SkinSet* skins, char* key, size_t cap) {
+static void canonical(const XwauLines* tokens, const XwauSkinSet* skins, char* key, size_t cap) {
 	size_t layers = 0;
 	for (size_t i = 0; i < tokens->count; ++i) {
 		char name[256];
@@ -254,16 +245,8 @@ static void canonical(const XwauLines* tokens, const SkinSet* skins, char* key, 
 	}
 }
 
-typedef struct Resolved {
-	bool skinned;
-	int  state;
-	char key[1024];
-} Resolved;
-
-/* The lists of one context, per markings value (*count of them; 0 when the
- * OPT shows no skin). */
-static bool resolve(const XwauLines* lines, const char* model, int states, const SkinSet* skins,
-					Resolved* out, size_t* count) {
+bool XwauSkins_Markings(const XwauLines* lines, const char* model, int states, const XwauSkinSet* skins,
+						XwauMarkings* out, size_t* count) {
 	*count = 0;
 	if (!skins->exists)
 		return true;
@@ -272,9 +255,9 @@ static bool resolve(const XwauLines* lines, const char* model, int states, const
 	XwauLines base;
 	if (!Xwau_Tokenize(base_value, XWAU_RULES_CS, &base))
 		return false;
-	static char fgc[MAX_MARKINGS][4096];
+	static char fgc[XWAU_SKINS_MAX_MARKINGS][4096];
 	int         fgc_count = 0, default_count = 0;
-	for (int i = 0; i < MAX_MARKINGS; ++i) {
+	for (int i = 0; i < XWAU_SKINS_MAX_MARKINGS; ++i) {
 		char key[512], skin[32];
 		snprintf(key, sizeof key, "%s_fgc_%d", model, i);
 		XwauLines_Value(lines, key, XWAU_RULES_CS, fgc[i], sizeof fgc[i]);
@@ -295,9 +278,9 @@ static bool resolve(const XwauLines* lines, const char* model, int states, const
 	const bool has_base = has_default || base_value[0];
 	bool       ok       = true;
 	for (int i = 0; ok && i < markings; ++i) {
-		Resolved* r = &out[(*count)++];
-		r->state    = i < states ? i : 0;
-		r->key[0]   = 0;
+		XwauMarkings* r = &out[(*count)++];
+		r->state        = i < states ? i : 0;
+		r->list[0]      = 0;
 		if (fgc[i][0] || has_base) {
 			XwauLines own, tokens = { 0 };
 			ok = Xwau_Tokenize(fgc[i], XWAU_RULES_CS, &own);
@@ -318,11 +301,11 @@ static bool resolve(const XwauLines* lines, const char* model, int states, const
 				tokens.count = ok;
 			}
 			if (ok)
-				canonical(&tokens, skins, r->key, sizeof r->key);
+				canonical(&tokens, skins, r->list, sizeof r->list);
 			XwauLines_Free(&own);
 			XwauLines_Free(&tokens);
 		}
-		r->skinned = r->key[0] != 0;
+		r->skinned = r->list[0] != 0;
 	}
 	XwauLines_Free(&base);
 	return ok;
@@ -492,8 +475,7 @@ static bool load_image(const XwauRoots* roots, const char* model, const char* sk
 	return true;
 }
 
-/* The OPT's states: the largest texture count of a LOD 0 face group. */
-static int state_count(const opt_file_t* opt) {
+int XwauSkins_StateCount(const opt_file_t* opt) {
 	int32_t states = 1;
 	for (int32_t mi = 0; mi < opt->mesh_count; ++mi)
 		for (int32_t g = 0; opt->meshes[mi].lod_count > 0 && g < opt->meshes[mi].lods[0].group_count; ++g)
@@ -505,34 +487,34 @@ static int state_count(const opt_file_t* opt) {
 bool XwauSkins_Resolve(const XwauRoots* roots, const XwauMissions* missions, const char* model,
 					   const opt_file_t* opt, const char* label, XwauSkins* out) {
 	memset(out, 0, sizeof *out);
-	SkinSet skins;
-	if (!skin_names(roots, model, &skins))
+	XwauSkinSet skins;
+	if (!XwauSkins_Names(roots, model, &skins))
 		return false;
-	const int states = state_count(opt);
-	Resolved* lists  = (Resolved*)malloc(MAX_MARKINGS * sizeof *lists);
-	bool      ok     = lists != NULL;
+	const int     states = XwauSkins_StateCount(opt);
+	XwauMarkings* lists  = (XwauMarkings*)malloc(XWAU_SKINS_MAX_MARKINGS * sizeof *lists);
+	bool          ok     = lists != NULL;
 	for (size_t c = 0; ok && skins.exists && c < XwauMissions_SkinContextCount(missions); ++c) {
 		size_t count = 0;
-		ok           = resolve(XwauMissions_SkinContext(missions, c), model, states, &skins, lists, &count);
+		ok = XwauSkins_Markings(XwauMissions_SkinContext(missions, c), model, states, &skins, lists, &count);
 		for (size_t i = 0; ok && i < count; ++i) {
 			char name[1100];
-			snprintf(name, sizeof name, "%d|%s", lists[i].state, lists[i].key);
+			snprintf(name, sizeof name, "%d|%s", lists[i].state, lists[i].list);
 			if (lists[i].skinned)
-				ok = add_variant(out, name, lists[i].state, lists[i].key, label);
+				ok = add_variant(out, name, lists[i].state, lists[i].list, label);
 		}
 		if (ok && c == 0 && count) {
 			out->markings = (char**)calloc(count, sizeof *out->markings);
 			ok            = out->markings != NULL;
 			for (size_t i = 0; ok && i < count; ++i) {
 				char name[1100];
-				snprintf(name, sizeof name, "%d|%s", lists[i].state, lists[i].key);
+				snprintf(name, sizeof name, "%d|%s", lists[i].state, lists[i].list);
 				ok = !lists[i].skinned || (out->markings[i] = dup_string(name)) != NULL;
 			}
 			out->skins.markings_count = ok ? count : 0;
 		}
 	}
 	free(lists);
-	skin_set_free(&skins);
+	XwauSkins_FreeNames(&skins);
 	if (ok && !out->skins.variant_count) {
 		XwauSkins_Free(out);
 		return true;

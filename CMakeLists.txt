@@ -1001,6 +1001,7 @@ if(AERON_BUILD_TOOLS)
         tools/opt2gltf/xwau_library.c
         tools/opt2gltf/xwau_mat.c
         tools/opt2gltf/xwau_dat.c
+        tools/opt2gltf/xwau_mission_files.c
         tools/opt2gltf/xwau_missions.c
         tools/opt2gltf/xwau_model.c
         tools/opt2gltf/dynamic_cockpit.c

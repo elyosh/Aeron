@@ -6,7 +6,7 @@
  *   opt2gltf [options] <input.opt|input_dir> <output_dir>
  *   opt2gltf [options] --project DIR [--replace] <input.opt|input_dir>
  *   opt2gltf --xwau-effects --xwau-root DIR... --project DIR <project|model.gltf>...
- *   opt2gltf --state-count FILE.opt...
+ *   opt2gltf --xwau-missions --xwau-root DIR... --stock-game DIR <output_dir>
  *
  * Options:
  *   [--stock] [--smooth-angle DEG] [--no-normal-repair] [--emissive]
@@ -32,6 +32,10 @@
  * --xwau-effects writes the effect libraries every model given names (a
  * model .gltf, or every model of a project) into the --project's effects/,
  * replacing them, with the game's effects.yaml (xwau_library.h).
+ *
+ * --xwau-missions writes what XWAU's missions select for the original
+ * game's missions (installed at --stock-game) as <output_dir>/<dir>/
+ * <mission>.yaml (xwau_mission_files.h).
  *
  * Replacement workflow (both tools are built with AERON_BUILD_TOOLS):
  *
@@ -171,9 +175,6 @@
  * names become screen surfaces showing the captured HUD, with their cover
  * images from the Effects DATs, and hologram faces move by the craft INI's
  * [CockpitHoloOffsets]. See dynamic_cockpit.h for the parsing rules.
- *
- * --state-count prints, for each OPT given, the largest texture count of a
- * LOD 0 face group (its states), one per line, and exits.
  */
 
 #include <ctype.h>
@@ -197,6 +198,7 @@
 #include "xwau_dat.h"
 #include "xwau_library.h"
 #include "xwau_mat.h"
+#include "xwau_mission_files.h"
 #include "xwau_missions.h"
 #include "xwau_model.h"
 #include "xwau_skins.h"
@@ -836,36 +838,13 @@ static int convert_into_project(const char* opt_path, const char* basename, cons
 	return !s->xwau || XwauLibrary_AddModel(&s->xwau->roots, project, to);
 }
 
-/* --state-count: the largest face-group texture count of LOD 0, the one
- * converted. */
-static int print_state_counts(int argc, char** argv) {
-	int status = 0;
-	for (int ai = 2; ai < argc; ++ai) {
-		opt_error_t err;
-		opt_file_t* opt = opt_load_file(argv[ai], &err);
-		if (!opt) {
-			fprintf(stderr, "opt2gltf: %s: %s\n", argv[ai], err.msg);
-			status = 1;
-			continue;
-		}
-		int32_t states = 1;
-		for (int32_t mi = 0; mi < opt->mesh_count; ++mi)
-			for (int32_t g = 0; opt->meshes[mi].lod_count > 0 && g < opt->meshes[mi].lods[0].group_count; ++g)
-				if (opt->meshes[mi].lods[0].groups[g].state_count > states)
-					states = opt->meshes[mi].lods[0].groups[g].state_count;
-		printf("%d\n", (int)states);
-		opt_free(opt);
-	}
-	return status;
-}
-
 static int usage(const char* program) {
 	fprintf(
 		stderr,
 		"usage: %s [options] <input.OPT|input_dir> <output_dir>\n"
 		"       %s [options] --project DIR [--replace] <input.OPT|input_dir>\n"
 		"       %s --xwau-effects --xwau-root DIR... --project DIR <project|model.gltf>...\n"
-		"       %s --state-count FILE.opt...\n"
+		"       %s --xwau-missions --xwau-root DIR... --stock-game DIR <output_dir>\n"
 		"options: [--stock] [--smooth-angle DEG] [--no-normal-repair] [--emissive] [--fullbright STRENGTH] "
 		"[--tag N=TAG]... [--articulation N=GROUP:ANGLE:SPEED[:SPEED_BACK][:BEHAVIOR]]... "
 		"[--articulation-setting NAME=VALUE]... [--component-set NAME=N[,N...]]... [--subdivide N] "
@@ -876,8 +855,6 @@ static int usage(const char* program) {
 }
 
 int main(int argc, char** argv) {
-	if (argc > 1 && strcmp(argv[1], "--state-count") == 0)
-		return argc > 2 ? print_state_counts(argc, argv) : 2;
 	/* Default: keep the original 1998 OPT normals (full-Gouraud rounded
 	 * look). Pass --smooth-angle DEG to regenerate with a threshold. */
 	float smooth_angle_deg = -1.0f;
@@ -910,6 +887,8 @@ int main(int argc, char** argv) {
 	const char*                         project                 = NULL;
 	bool                                replace                 = false;
 	bool                                xwau_effects            = false;
+	bool                                xwau_missions           = false;
+	const char*                         stock_game              = NULL;
 	static XwauContext                  xwau;
 	int                                 ai = 1;
 	/* Optional conversion flags, in any order before the positional args. */
@@ -918,12 +897,13 @@ int main(int argc, char** argv) {
 		const char* value = ai + 1 < argc ? argv[ai + 1] : NULL;
 		if (strcmp(flag, "--stock") == 0 || strcmp(flag, "--no-normal-repair") == 0 ||
 			strcmp(flag, "--emissive") == 0 || strcmp(flag, "--replace") == 0 ||
-			strcmp(flag, "--xwau-effects") == 0) {
+			strcmp(flag, "--xwau-effects") == 0 || strcmp(flag, "--xwau-missions") == 0) {
 			stock |= strcmp(flag, "--stock") == 0;
 			repair_normals &= strcmp(flag, "--no-normal-repair") != 0;
 			emissive |= strcmp(flag, "--emissive") == 0;
 			replace |= strcmp(flag, "--replace") == 0;
 			xwau_effects |= strcmp(flag, "--xwau-effects") == 0;
+			xwau_missions |= strcmp(flag, "--xwau-missions") == 0;
 			ai += 1;
 			continue;
 		}
@@ -945,6 +925,8 @@ int main(int argc, char** argv) {
 			}
 		} else if (strcmp(flag, "--project") == 0) {
 			project = value;
+		} else if (strcmp(flag, "--stock-game") == 0) {
+			stock_game = value;
 		} else if (strcmp(flag, "--tag") == 0) {
 			const char*   equals = strchr(value, '=');
 			char*         end    = NULL;
@@ -1063,6 +1045,27 @@ int main(int argc, char** argv) {
 				   ? 0
 				   : 1;
 	}
+	if (xwau_missions) {
+		free(tags);
+		if (!xwau.roots.count || !stock_game || argc - ai != 1) {
+			fprintf(stderr,
+					"opt2gltf: --xwau-missions needs --xwau-root, --stock-game and an output folder\n");
+			return 2;
+		}
+		XwauMissions* missions = XwauMissions_Load(&xwau.roots, true);
+		if (!missions) {
+			fprintf(stderr, "opt2gltf: out of memory (missions)\n");
+			return 1;
+		}
+		const bool ok = XwauMissionFiles_Write(&xwau.roots, missions, stock_game, argv[ai]);
+		XwauMissions_Free(missions);
+		return ok ? 0 : 1;
+	}
+	if (stock_game) {
+		fprintf(stderr, "opt2gltf: --stock-game needs --xwau-missions\n");
+		free(tags);
+		return 2;
+	}
 	if (argc - ai != (project ? 1 : 2)) {
 		free(tags);
 		return usage(argv[0]);
@@ -1101,7 +1104,7 @@ int main(int argc, char** argv) {
 			XwauMat_ReadGlobalDefault(global_path, &xwau.global);
 		else
 			fprintf(stderr, "opt2gltf: no Materials/DefaultGlobalMaterial.mat; using built-in defaults\n");
-		if (!(xwau.missions = XwauMissions_Load(&xwau.roots))) {
+		if (!(xwau.missions = XwauMissions_Load(&xwau.roots, false))) {
 			fprintf(stderr, "opt2gltf: out of memory (missions)\n");
 			free(tags);
 			return 1;
