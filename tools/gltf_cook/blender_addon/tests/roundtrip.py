@@ -1,25 +1,26 @@
-"""Round trip of project models through Blender and this add-on.
+"""Imports project models with this add-on, saves them back, and checks that nothing is lost.
 
     python3 roundtrip.py --blender BLENDER --cooker AERON_GLTF_COOK
                          [--effects-dir DIR] [--keep] MODEL_DIR...
 
-Each model directory (`<key>/<key>.gltf`, its buffers and textures) is
-copied to a scratch folder, imported with the
-add-on in a headless Blender, and saved back over the copy with Save to
-Project. The result must keep:
-- the flight data: the same nodes per role, in the loader's order, with the
-  same AERON_flight_model objects, lights and world transforms;
-- the geometry: per component and collision mesh, the same triangles (corner
-  positions, winding, material). Blender holds one face per set of corners,
-  so a triangle the source repeats is kept once, and of a triangle with two
-  materials one is kept: both are reported, not failures;
-- every material a primitive or skin uses, with its extras, its
+Each model folder (`<key>/<key>.gltf`, its buffers and textures) is copied
+to a scratch folder, imported with the add-on in a headless Blender, and
+saved back over the copy with Save to Project. The result must keep:
+- the flight data: the same nodes for each role, in the loader's order,
+  with the same AERON_flight_model objects, lights and world transforms;
+- the geometry: the same triangles (corner positions, winding, material)
+  in each component and collision mesh. Blender keeps one face for each
+  set of corners. So a triangle repeated in the source is kept once, and a
+  triangle with two materials is kept with one of them. Both cases are
+  reported as notes, not failures;
+- every material that a primitive or skin uses, with its extras, its
   AERON_flight_model object (animations and screen, at 32-bit precision)
   and the same texture file in each slot;
-- the asset extras, and every extension and extras name (the add-on's guard);
+- the asset extras, and the name of every extension and extras (the
+  add-on checks this too before saving);
 - the textures: none added, none removed.
-Both the original and the result are built for the game, and must use the
-same materials and skins.
+Both the original and the result are built for the game, and they must use
+the same materials and skins.
 """
 
 import argparse
@@ -35,13 +36,13 @@ import tempfile
 import urllib.parse
 
 ADDON_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-# The add-on is loaded from its source directory: no bytecode caches there.
+# The add-on is loaded from its source directory, so do not write bytecode caches there.
 sys.dont_write_bytecode = True
 MODULE = "bl_ext.user_default.aeron_flight_model"
 EXTENSION = "AERON_flight_model"
 TOLERANCE = 1.0e-4
-# Fields at their default (AERON_flight_model's README), which a writer may
-# leave out.
+# Default values of fields, which a writer may leave out (see the README
+# of AERON_flight_model).
 DEFAULTS = {
     "model": {"articulations": [], "articulationSettings": {}, "componentSets": {}},
     "component": {"explosionFlags": 0, "targetId": 0, "target": [0.0, 0.0, 0.0], "tags": []},
@@ -117,8 +118,9 @@ def _local(node):
 
 
 def _flight(document):
-    """The flight model's nodes as the loader orders them: (label, node,
-    world matrix), lights sorted by position (their order is not data)."""
+    """Returns the nodes of the flight model in the loader's order, as
+    (label, node, world matrix). Lights are sorted by position, because
+    their order carries no data."""
     nodes = document.get("nodes", [])
     lights = document.get("extensions", {}).get("KHR_lights_punctual", {}).get("lights", [])
     parents = {child: index for index, node in enumerate(nodes) for child in node.get("children", [])}
@@ -162,7 +164,7 @@ def _flight(document):
 
 
 def _explicit(node):
-    """The node's AERON_flight_model object without fields at their default."""
+    """Returns the AERON_flight_model object of the node without the fields at their default value."""
     extension = node.get("extensions", {}).get(EXTENSION, {})
     defaults = DEFAULTS.get(extension.get("role"), {})
     explicit = {}
@@ -210,8 +212,9 @@ def _accessor(document, directory, index, buffers):
 
 
 def _geometry(document, directory):
-    """Per flight model mesh node (by its loader label), its triangles:
-    Counter of (corners from the smallest, winding kept; material name)."""
+    """Returns the triangles of each mesh node of the flight model, keyed by
+    its loader label. The triangles are a Counter of (corners, material
+    name). The corners start from the smallest one and keep the winding."""
     buffers, geometry = {}, {}
     for label, node, _ in _flight(document):
         if "mesh" not in node:
@@ -282,8 +285,9 @@ def _used_materials(document):
 
 
 def _float32(value):
-    """`value` with its numbers at 32-bit precision and the defaults the
-    format leaves out (emissiveStrength 1, unlit 0) removed."""
+    """Returns `value` with its numbers rounded to 32-bit precision, and
+    without the defaults that the format leaves out (emissiveStrength 1,
+    unlit 0)."""
     if isinstance(value, dict):
         out = {key: _float32(item) for key, item in value.items()}
         if out.get("emissiveStrength") == 1.0:
@@ -333,7 +337,7 @@ def _cooked(cooker, gltf, effects_dir, out):
         return None, (completed.stderr or completed.stdout).strip().splitlines()[-1:]
     document = _sources().read_document(out)
     variants = document.get("extensions", {}).get("KHR_materials_variants", {}).get("variants", [])
-    # Variants are named looks: Blender writes them in first-use order.
+    # Blender writes the variants in the order they are first used, so sort them by name.
     return (sorted(_used_materials(document)), sorted(variant.get("name") for variant in variants)), None
 
 

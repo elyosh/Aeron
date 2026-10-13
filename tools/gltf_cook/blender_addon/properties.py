@@ -1,5 +1,5 @@
-# The add-on's data on objects (roles and their fields, the model root's
-# articulations, settings and component sets) and on the scene.
+# The add-on's data on objects, materials and the scene: object roles and
+# their fields, and the model root's articulations, settings and component sets.
 
 import bpy
 from bpy.props import (
@@ -18,20 +18,21 @@ from . import animation, common, display, flipbook_preview, overlays, preview
 
 
 def _component_poll(self, obj):
-    """Components of the model that owns the property."""
+    """Accept only the components of the model that owns the property."""
     return common.role(obj) == 'component' and obj.parent == self.id_data
 
 
 class AeronComponentRef:
-    """A component ordinal: the object when it is in this model, otherwise a
-    raw ordinal (a cockpit's articulations name its craft's components)."""
+    """A reference to a component. It is the object when the component is in
+    this model. Otherwise it is an ordinal, for example when a cockpit's
+    articulations turn components of its craft."""
     component: PointerProperty(
         name="Component", type=bpy.types.Object, poll=_component_poll,
-        description="A component of this model; empty for a raw ordinal")
+        description="A component of this model. Leave empty to give an ordinal instead")
     component_index: IntProperty(
         name="Ordinal", min=0, max=common.MAX_COMPONENT_ORDINAL,
-        description="Component ordinal when no component is picked, such as a craft's "
-                    "component that its cockpit model turns")
+        description="Ordinal of the component when none is picked, such as a craft component that "
+                    "its cockpit model turns")
 
 
 def _preview_update(self, context):
@@ -48,13 +49,14 @@ def _group_update(self, context):
 
 
 class AeronArticulation(AeronComponentRef, PropertyGroup):
-    group: StringProperty(name="Group", description="Game-defined group (tag syntax)", update=_group_update)
-    angle: IntProperty(name="Angle", min=-128, max=255, description="Opened angle, in 1/256 turn",
+    group: StringProperty(name="Group", description="Group defined by the game, written as a tag", update=_group_update)
+    angle: IntProperty(name="Angle", min=-128, max=255, description="Angle when open, in 1/256 turn",
                        update=_preview_update)
-    speed: IntProperty(name="Speed", min=0, max=255, description="1/256 turn per game step")
-    has_speed_back: BoolProperty(name="Own closing speed", default=False)
-    speed_back: IntProperty(name="Closing speed", min=0, max=255, description="1/256 turn per game step")
-    behavior: StringProperty(name="Behavior", description="Optional game-defined behavior (tag syntax)")
+    speed: IntProperty(name="Speed", min=0, max=255, description="Turning speed, in 1/256 turn per game step")
+    has_speed_back: BoolProperty(name="Own Closing Speed", default=False)
+    speed_back: IntProperty(name="Closing Speed", min=0, max=255,
+                            description="Speed when closing, in 1/256 turn per game step")
+    behavior: StringProperty(name="Behavior", description="Optional behavior defined by the game, written as a tag")
 
 
 class AeronSetting(PropertyGroup):
@@ -67,11 +69,11 @@ class AeronSetMember(AeronComponentRef, PropertyGroup):
 
 class AeronPreviewGroup(PropertyGroup):
     amount: FloatProperty(name="Amount", min=0.0, max=1.0, subtype='FACTOR', update=_preview_update,
-                          description="0: as modelled; 1: each member at its articulation's angle")
+                          description="0 shows the members as modeled, 1 turns each one to its articulation's angle")
 
 
 def _set_preview_update(self, context):
-    """One set hidden at a time, as the game applies one profile."""
+    """Only one set is hidden at a time, because the game applies one profile."""
     root = self.id_data
     if self.preview:
         for other in root.aeron_flight.component_sets:
@@ -85,8 +87,8 @@ class AeronComponentSet(PropertyGroup):
     active_member: IntProperty()
     preview: BoolProperty(
         name="Hide Members", update=_set_preview_update,
-        description="Hide the set's members (and what is under them) in the viewport, as the game hides "
-                    "a profile's set")
+        description="Hide the set's members and their children in the viewport, as the game does for "
+                    "the set's profile")
 
 
 def _markings_update(self, context):
@@ -98,7 +100,7 @@ def _markings_update(self, context):
 class AeronMarkingsEntry(PropertyGroup):
     variant: StringProperty(
         name="Variant", update=_markings_update,
-        description="The material variant this markings value shows; empty: the materials as modelled")
+        description="Material variant shown for this markings value. Empty shows the materials as modeled")
 
 
 def _role_update(self, context):
@@ -127,61 +129,61 @@ class AeronFlightProperties(PropertyGroup):
         name="Role",
         items=[
             ('none', "None", "Not part of a flight model"),
-            ('model', "Model", "Root of one flight model"),
-            ('component', "Component", "A part of the model, in the model's component order"),
-            ('hardpoint', "Hardpoint", "A weapon or attachment point of its component"),
-            ('engineGlow', "Engine glow", "An engine glow of its component"),
-            ('collision', "Collision", "Collision mesh of its component (not rendered)"),
+            ('model', "Model", "Root of a flight model"),
+            ('component', "Component", "A part of the flight model"),
+            ('hardpoint', "Hardpoint", "A weapon or attachment point on its component"),
+            ('engineGlow', "Engine Glow", "An engine glow on its component"),
+            ('collision', "Collision", "The collision mesh of its component, never rendered"),
         ],
         default='none',
         update=_role_update,
     )
-    # Ordinal order among siblings; set by the order lists, not typed.
+    # Position among siblings with the same role, set by the order lists.
     order: IntProperty(name="Order", default=0, min=0)
 
     # Component.
-    mesh_type: EnumProperty(name="Mesh type", items=common.enum_items(common.MESH_TYPE_NAMES), default='0')
+    mesh_type: EnumProperty(name="Mesh Type", items=common.enum_items(common.MESH_TYPE_NAMES), default='0')
     explosion_flags_bits: IntProperty()
     explosion_flags: StringProperty(
-        name="Explosion flags", get=_get_explosion_flags, set=_set_explosion_flags,
-        description="Unsigned 32-bit value (decimal, or 0x hexadecimal)")
+        name="Explosion Flags", get=_get_explosion_flags, set=_set_explosion_flags,
+        description="Unsigned 32-bit value, in decimal or 0x hexadecimal")
     tags: StringProperty(
         name="Tags",
-        description="Comma-separated game-defined tags (lower-case letters, digits, "
-                    "'.' and '_'), e.g. hangarcrane.arm")
+        description="Tags defined by the game, separated by commas, such as hangarcrane.arm. "
+                    "Use lower-case letters, digits, '.' and '_'")
     target_id: IntProperty(
         name="Target ID", default=0,
-        description="Components sharing a nonzero ID and their mesh type are targeted as one, by the first; "
-                    "a nonzero ID also makes the game use the target point")
+        description="Components with the same nonzero ID and mesh type are targeted as one, through the "
+                    "first of them. A nonzero ID also makes the game use the target point")
     target: FloatVectorProperty(
         name="Target", size=3, subtype='TRANSLATION', unit='LENGTH',
-        description="Where the game aims the component's targeting box and turns it about when it breaks "
-                    "off, in the component's local space; used with a target ID (otherwise the "
-                    "descriptor's center)")
+        description="Where the game puts the targeting box, and the point the component turns around when "
+                    "it breaks off. Without a target ID, the game uses the descriptor center")
     has_descriptor_geometry: BoolProperty(
-        name="Authored descriptor", default=False,
-        description="Store the descriptor below instead of the game computing it from the "
-                    "collision (or render) mesh's bounds")
+        name="Authored Descriptor", default=False,
+        description="Export the descriptor below instead of letting the game compute it from the bounds of "
+                    "the collision mesh (or else the render mesh)")
     descriptor_span: FloatVectorProperty(name="Span", size=3, subtype='XYZ', unit='LENGTH')
     descriptor_center: FloatVectorProperty(name="Center", size=3, subtype='TRANSLATION', unit='LENGTH')
-    descriptor_bounds_min: FloatVectorProperty(name="Bounds min", size=3, subtype='TRANSLATION', unit='LENGTH')
-    descriptor_bounds_max: FloatVectorProperty(name="Bounds max", size=3, subtype='TRANSLATION', unit='LENGTH')
+    descriptor_bounds_min: FloatVectorProperty(name="Bounds Min", size=3, subtype='TRANSLATION', unit='LENGTH')
+    descriptor_bounds_max: FloatVectorProperty(name="Bounds Max", size=3, subtype='TRANSLATION', unit='LENGTH')
     has_rotation: BoolProperty(name="Hinge", default=False, update=_preview_update,
-                               description="The game can turn this component about a hinge")
+                               description="The game can turn this component around a hinge")
     pivot: FloatVectorProperty(name="Pivot", size=3, subtype='TRANSLATION', unit='LENGTH', update=_preview_update)
-    rotation_axis: FloatVectorProperty(name="Rotation axis", size=3, subtype='XYZ', default=(0.0, 1.0, 0.0),
+    rotation_axis: FloatVectorProperty(name="Rotation Axis", size=3, subtype='XYZ', default=(0.0, 1.0, 0.0),
                                        update=_preview_update)
-    direction_axis: FloatVectorProperty(name="Direction axis", size=3, subtype='XYZ', default=(0.0, 0.0, 1.0))
-    up_axis: FloatVectorProperty(name="Up axis", size=3, subtype='XYZ', default=(1.0, 0.0, 0.0))
+    direction_axis: FloatVectorProperty(name="Direction Axis", size=3, subtype='XYZ', default=(0.0, 0.0, 1.0))
+    up_axis: FloatVectorProperty(name="Up Axis", size=3, subtype='XYZ', default=(1.0, 0.0, 0.0))
     active_child: IntProperty()
-    # Articulation preview (preview.py): the component's own angle, the turn
-    # the preview gave it, and its transform when the preview started.
+    # Articulation preview (preview.py): the component's own preview angle,
+    # the turn the preview applied, and its transform when the preview started.
     preview_angle: IntProperty(
-        name="Try angle", min=-128, max=255, update=_preview_update,
-        description="Turn the component to this angle (1/256 turn) in the preview, whatever its groups")
+        name="Preview Angle", min=-128, max=255, update=_preview_update,
+        description="Angle of the component in the preview, in 1/256 turn. When not 0, it overrides the "
+                    "articulation groups")
     preview_matrix: FloatVectorProperty(size=16, default=preview.IDENTITY)
-    preview_rest: FloatVectorProperty(size=17)  # its transform channels at the start
-    # Hidden by a component set's preview (display.py).
+    preview_rest: FloatVectorProperty(size=17)  # its transform channels when the preview started
+    # Hidden by the Hide Members option of a component set (display.py).
     preview_hidden: BoolProperty()
 
     # Hardpoint.
@@ -190,20 +192,20 @@ class AeronFlightProperties(PropertyGroup):
 
     # Engine glow.
     glow_enabled: BoolProperty(name="Enabled", default=True)
-    # sRGB, as the format stores them.
-    core_color: FloatVectorProperty(name="Core color", size=4, subtype='COLOR_GAMMA', min=0.0, max=1.0,
+    # sRGB, as the file format stores them.
+    core_color: FloatVectorProperty(name="Core Color", size=4, subtype='COLOR_GAMMA', min=0.0, max=1.0,
                                     default=(1.0, 0.8, 0.3, 1.0))
-    outer_color: FloatVectorProperty(name="Outer color", size=4, subtype='COLOR_GAMMA', min=0.0, max=1.0,
+    outer_color: FloatVectorProperty(name="Outer Color", size=4, subtype='COLOR_GAMMA', min=0.0, max=1.0,
                                      default=(1.0, 0.2, 0.0, 0.0))
 
     # Light (a Blender light under a component).
-    light_exclude: BoolProperty(name="Not a model light", default=False,
+    light_exclude: BoolProperty(name="Not a Model Light", default=False,
                                 description="Leave this light out of the exported model")
     light_tube: BoolProperty(name="Tube", default=False,
-                             description="Export this area light as a tube along its X size, "
-                                         "its Y size the tube's thickness")
-    light_one_sided: BoolProperty(name="One-sided", default=False,
-                                  description="The tube emits only toward the light's -Z, as a strip")
+                             description="Export this area light as a tube. Its X size is the length "
+                                         "and its Y size the thickness")
+    light_one_sided: BoolProperty(name="One-Sided", default=False,
+                                  description="The tube emits only toward the light's -Z, like a strip")
 
     # Model root.
     articulations: CollectionProperty(type=AeronArticulation)
@@ -212,32 +214,32 @@ class AeronFlightProperties(PropertyGroup):
     active_setting: IntProperty()
     component_sets: CollectionProperty(type=AeronComponentSet)
     active_set: IntProperty()
-    # The material variant each markings value shows; past the end, the
-    # last entry's.
+    # The material variant each markings value shows. Values past the end
+    # show the last entry's variant.
     markings: CollectionProperty(type=AeronMarkingsEntry)
     active_markings: IntProperty()
     preview_active: BoolProperty()
     preview_groups: CollectionProperty(type=AeronPreviewGroup)
-    # The markings value whose look the components show; -1: their own
-    # materials (display.py).
+    # The markings value shown in the viewport, or -1 for the materials as
+    # modelled (display.py).
     preview_markings: IntProperty(default=-1, min=-1)
     active_component: IntProperty()
     # Kept from the import (sources.py): the glTF file, its asset extras
-    # (JSON), and the extensions and extras names it had (JSON).
+    # (JSON), and the names of the extensions and extras it had (JSON).
     source_path: StringProperty(
         name="Model File", subtype='FILE_PATH',
         description="The .gltf the model was imported from or last saved to")
     asset_extras: StringProperty()
     source_names: StringProperty()
-    # The model's energy default (its AERON_flight_model `energy`): the
-    # energy effects of every material without its own (animation.py).
+    # The model's energy default, which is `energy` in its AERON_flight_model
+    # extension. Materials without their own energy effects use it (animation.py).
     energy_default_given: BoolProperty(
-        name="Energy Default", description="The energy effects of every material that has none of its own")
+        name="Energy Default", description="Energy effects for every material that has none of its own")
     energy_default: PointerProperty(type=animation.AeronEnergy)
 
 
 class AeronMaterialProperties(animation.AeronAnimation, PropertyGroup):
-    """The material's AERON_flight_model object (animation.py)."""
+    """The AERON_flight_model data of a material (animation.py)."""
 
 
 class AeronProblem(PropertyGroup):
@@ -256,39 +258,39 @@ class AeronSceneProperties(PropertyGroup):
     problems: CollectionProperty(type=AeronProblem)
     active_problem: IntProperty()
     game_preview: BoolProperty(
-        name="Game-like light preview", default=False, update=_game_preview_update,
-        description="Turn off the model lights' shadows, as the game draws them "
-                    "(turning it off again turns their shadows on)")
+        name="Game-Like Lights", default=False, update=_game_preview_update,
+        description="Turn off the shadows of model lights, as the game draws them without shadows")
     # The game states active in the flipbook preview (flipbook_preview.py).
     flipbook_states: PointerProperty(type=flipbook_preview.AeronFlipbookStates)
 
     # Viewport overlays (overlays.py).
     overlays: BoolProperty(name="Overlays", default=True, update=overlays.tag_redraw,
-                           description="Draw the active object's flight model as the game uses it")
-    overlay_glows: BoolProperty(name="Engine glows", default=True, update=overlays.tag_redraw,
-                                description="Engine glows as the game draws them, seen from the view")
+                           description="Draw the game data of the active object's flight model in the viewport")
+    overlay_glows: BoolProperty(name="Engine Glows", default=True, update=overlays.tag_redraw,
+                                description="Draw engine glows as the game draws them from this view")
     overlay_throttle: FloatProperty(
         name="Throttle", default=1.0, min=0.0, max=1.0, subtype='FACTOR', update=overlays.tag_redraw,
-        description="The engine glows' size and length follow the throttle")
+        description="Throttle for the engine glows, which sets their size and length")
     overlay_hardpoints: BoolProperty(name="Hardpoints", default=True, update=overlays.tag_redraw,
-                                     description="Hardpoints, coloured by family")
-    overlay_hardpoint_labels: BoolProperty(name="Hardpoint labels", default=False, update=overlays.tag_redraw,
-                                           description="Each hardpoint's ordinal and type")
+                                     description="Draw hardpoints, colored by family")
+    overlay_hardpoint_labels: BoolProperty(name="Hardpoint Labels", default=False, update=overlays.tag_redraw,
+                                           description="Show each hardpoint's ordinal and type")
     overlay_descriptors: BoolProperty(
         name="Descriptors", default=False, update=overlays.tag_redraw,
-        description="Descriptor boxes: authored, or faint where the game computes them from the mesh")
+        description="Draw descriptor boxes. Boxes that the game computes from the mesh are faint")
     overlay_targets: BoolProperty(name="Targets", default=True, update=overlays.tag_redraw,
-                                  description="Target points, joined to their component")
+                                  description="Draw target points, with a line to their component")
     overlay_hinges: BoolProperty(name="Hinges", default=True, update=overlays.tag_redraw,
-                                 description="Hinge pivots and axes, and each articulation's opened angle")
-    overlay_lights: BoolProperty(name="Light shapes", default=True, update=overlays.tag_redraw,
-                                 description="The shape the game gives each model light")
-    overlay_light_ranges: BoolProperty(name="Light ranges", default=False, update=overlays.tag_redraw,
-                                       description="The range of model lights that have one (Custom Distance)")
-    overlay_component_labels: BoolProperty(name="Component labels", default=False, update=overlays.tag_redraw,
-                                           description="Each component's ordinal and name")
-    overlay_in_front: BoolProperty(name="In front", default=False, update=overlays.tag_redraw,
-                                   description="Draw the markers over the model instead of hidden by it")
+                                 description="Draw hinge pivots and axes, and the open angle of each articulation")
+    overlay_lights: BoolProperty(name="Light Shapes", default=True, update=overlays.tag_redraw,
+                                 description="Draw the shape the game gives each model light")
+    overlay_light_ranges: BoolProperty(name="Light Ranges", default=False, update=overlays.tag_redraw,
+                                       description="Draw the range of model lights that set one with Custom "
+                                                   "Distance")
+    overlay_component_labels: BoolProperty(name="Component Labels", default=False, update=overlays.tag_redraw,
+                                           description="Show each component's ordinal and name")
+    overlay_in_front: BoolProperty(name="In Front", default=False, update=overlays.tag_redraw,
+                                   description="Draw the markers on top of the model, even where it hides them")
 
 
 classes = (

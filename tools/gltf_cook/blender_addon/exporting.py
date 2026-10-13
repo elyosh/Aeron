@@ -1,9 +1,10 @@
-# Export: Blender's glTF exporter writes the model's objects (filtered,
-# ordered and given their AERON_flight_model data by the hooks below, which
-# act only during this add-on's export), its materials their animations and
-# screens. Export for Game builds that .gltf into the game's .glb with
-# aeron_gltf_cook; Save to Project writes it into the model's folder of its
-# project.
+# Exports a flight model. Blender's glTF exporter writes the model's objects,
+# and the hooks below filter them, order them and add their
+# AERON_flight_model data. The hooks act only during this add-on's exports.
+# The animations and screens of the materials are added to the file after the
+# export. Export for Game builds the .gltf into the game's .glb with
+# aeron_gltf_cook. Save to Project writes the .gltf into the model's folder
+# in its project.
 
 import filecmp
 import json
@@ -24,7 +25,7 @@ from . import animation, common, display, flipbook_preview, libraries, sources, 
 # Blender (x, y, z) -> glTF (x, z, -y).
 _TO_GLTF = Matrix(((1.0, 0.0, 0.0, 0.0), (0.0, 0.0, 1.0, 0.0), (0.0, -1.0, 0.0, 0.0), (0.0, 0.0, 0.0, 1.0)))
 
-# The running export (None outside this add-on's exports).
+# The running export, or None outside this add-on's exports.
 _state = None
 
 
@@ -89,8 +90,9 @@ def _component_extension(obj):
 
 
 def _glow_trs(obj):
-    """An engine glow's glTF TRS: X/Y scale positive (its size), Z signed
-    (its depth), which a plain decomposition does not keep."""
+    """The glTF TRS of an engine glow. The X and Y scales stay positive (its
+    size) and Z keeps its sign (its depth), which a plain decomposition would
+    not do."""
     matrix = _TO_GLTF @ common.local_matrix(obj) @ _TO_GLTF.inverted()
     basis = matrix.to_3x3()
     columns = [basis.col[axis].copy() for axis in range(3)]
@@ -105,7 +107,7 @@ def _glow_trs(obj):
 
 
 class _ExportState:
-    """What the hooks write, prepared from the validated model."""
+    """The data that the hooks write, prepared from the validated model."""
 
     def __init__(self, root):
         self.asset_extras = json.loads(root.aeron_flight.asset_extras or "{}")
@@ -168,15 +170,16 @@ class _ExportState:
         if obj.name in self.glows:
             gltf_node.translation, gltf_node.rotation, gltf_node.scale = self.glows[obj.name]
         if obj.name in self.lights:
-            # The sizes carry the light's scale; Blender exports area lights
-            # without a light, and point lights in its own way.
+            # The light's sizes already include its scale. Blender exports
+            # area lights without a light, and point lights in its own way.
             gltf_node.scale = None
             light = ChildOfRootExtension(name=common.LIGHTS_EXTENSION_NAME, path=["lights"],
                                          extension=self.lights[obj.name])
             gltf_node.extensions[common.LIGHTS_EXTENSION_NAME] = Extension(
                 name=common.LIGHTS_EXTENSION_NAME, extension={"light": light}, required=False)
         if extension["role"] == 'collision' and gltf_node.mesh is not None:
-            # Never rendered: no materials, so the cooker atlases no textures.
+            # Collision meshes are never drawn. Without materials, the cooker
+            # adds no textures for them to the atlas.
             for primitive in gltf_node.mesh.primitives:
                 primitive.material = None
         if gltf_node.children:
@@ -184,7 +187,7 @@ class _ExportState:
 
 
 class glTF2ExportUserExtension:
-    """Blender's glTF exporter hooks (found on the add-on's module)."""
+    """Hooks for Blender's glTF exporter, which finds them on the add-on's module."""
 
     def gather_tree_filter_tag_hook(self, vtree, export_settings):
         if _state is not None:
@@ -200,8 +203,8 @@ class glTF2ExportUserExtension:
             gltf_scene.extras = gltf_scene.extras or None
 
     def gather_material_hook(self, gltf_material, blender_material, export_settings):
-        # The animation and screen go to the material's extension
-        # (_material_extensions), not its extras.
+        # The animation and screen are written later to the material's
+        # extension (_material_extensions), not to its extras.
         if _state is not None and isinstance(gltf_material.extras, dict):
             gltf_material.extras.pop("aeron_flight", None)
             gltf_material.extras = gltf_material.extras or None
@@ -214,7 +217,7 @@ class glTF2ExportUserExtension:
 
 
 def _png_images(gltf_path):
-    """The cooker reads PNG only: convert the exported JPEG and WebP images."""
+    """Converts the exported JPEG and WebP images to PNG, the only format the cooker reads."""
     with open(gltf_path, "r", encoding="utf-8") as stream:
         document = json.load(stream)
     directory = os.path.dirname(gltf_path)
@@ -242,10 +245,10 @@ def _png_images(gltf_path):
 
 
 def _material_extensions(gltf_path):
-    """Writes each material's AERON_flight_model object into the exported
-    .gltf. Blender's exporter drops empty arrays, which the object needs (an
-    `energy` of [] shows none, against the model's default), so the objects
-    are written after it."""
+    """Writes the AERON_flight_model object of each material into the
+    exported .gltf. This is done after Blender's exporter, because it drops
+    empty arrays and the object needs them. For example, an `energy` of []
+    shows no energy effect instead of the model's default."""
     with open(gltf_path, "r", encoding="utf-8") as stream:
         document = json.load(stream)
     for material in document.get("materials", []):
@@ -265,20 +268,21 @@ def _material_extensions(gltf_path):
 
 
 def export_gltf(root, filepath, apply_modifiers=True, keep_originals=False):
-    """Write `root`'s model as an uncooked .gltf (with its .bin and images).
-    With `keep_originals`, images that have a file are referenced where they
-    are; the others are written under textures/."""
+    """Writes the model of `root` as an uncooked .gltf, with its .bin and
+    images. With `keep_originals`, images that have a file are referenced
+    where they are, and the others are written under textures/."""
     global _state
     context = bpy.context
     active = context.view_layer.objects.active
     mode = active.mode if active is not None else 'OBJECT'
     _state = _ExportState(root)
-    # The original materials, not a skin shown (shown again after).
+    # Export the original materials, not the skin being shown. The skin is
+    # shown again afterwards.
     showing = display.models_showing_skins()
     for model in showing:
         display.apply_skin(model, -1)
     try:
-        # Tangents (MikkTSpace, as glTF expects): the game's normal maps need them.
+        # The game's normal maps need tangents (MikkTSpace, as glTF expects).
         result = bpy.ops.export_scene.gltf(
             filepath=filepath, export_format='GLTF_SEPARATE', export_image_format='AUTO',
             export_yup=True, export_apply=apply_modifiers, export_tangents=True, export_animations=False,
@@ -292,11 +296,11 @@ def export_gltf(root, filepath, apply_modifiers=True, keep_originals=False):
         _state = None
         for model in showing:
             display.apply_skin(model)
-        # The exporter leaves edit and other modes for object mode.
+        # The exporter switches to object mode. Restore the previous mode.
         if active is not None and mode != 'OBJECT' and context.view_layer.objects.active == active:
             bpy.ops.object.mode_set(mode=mode)
     if 'FINISHED' not in result:
-        raise RuntimeError("Blender's glTF export did not finish ({})".format(result))
+        raise RuntimeError("Blender's glTF export failed ({})".format(result))
     _material_extensions(filepath)
     if not keep_originals:
         _png_images(filepath)
@@ -307,17 +311,17 @@ def _tail(text, count=20):
 
 
 def _check(operator, context, source=False):
-    """The validated model root, or None after reporting its problems."""
+    """Returns the validated model root, or None after reporting its problems."""
     root = common.model_root(context.active_object) or _single_root(context.scene)
     problems = validation.validate(root)
     if source and root is not None:
         for image in sorted(sources.model_images(root), key=lambda image: image.name):
             if image.is_dirty:
-                problems.error(None, "image {} has unsaved changes: save it (Image > Save) "
-                                     "first".format(image.name))
+                problems.error(None, "Image {} has unsaved changes. Save it first (Image > "
+                                     "Save)".format(image.name))
     validation.store(context.scene, problems)
     if problems.errors:
-        operator.report({'ERROR'}, "{} problem(s), see Aeron > Problems: {}".format(
+        operator.report({'ERROR'}, "{} problem(s), listed in Aeron > Problems. First: {}".format(
             len(problems.errors), problems.errors[0][1]))
         return None
     operator.warnings = len(problems.items) - len(problems.errors)
@@ -341,8 +345,7 @@ class EXPORT_OT_aeron_flight_model(Operator, ExportHelper):
                                   description="Export meshes with their modifiers applied")
     keep_intermediate: BoolProperty(
         name="Keep Intermediate .gltf", default=False,
-        description="Keep the .gltf, .bin and images the .glb is built from next to it "
-                    "(a failed build always keeps them)")
+        description="Keep the .gltf, .bin and images that the .glb is built from, in a folder next to it")
 
     def execute(self, context):
         with flipbook_preview.suspended():
@@ -353,7 +356,7 @@ class EXPORT_OT_aeron_flight_model(Operator, ExportHelper):
 
         cooker = preferences.cooker_path(context)
         if not cooker:
-            self.report({'ERROR'}, "aeron_gltf_cook is not set: see the add-on's preferences")
+            self.report({'ERROR'}, "Set the aeron_gltf_cook path in the add-on preferences")
             return {'CANCELLED'}
         root = _check(self, context)
         if root is None:
@@ -362,7 +365,7 @@ class EXPORT_OT_aeron_flight_model(Operator, ExportHelper):
         out_glb = bpy.path.abspath(self.filepath)
         out_dir = os.path.dirname(out_glb)
         if out_dir and not os.path.isdir(out_dir):
-            self.report({'ERROR'}, "no such directory: " + out_dir)
+            self.report({'ERROR'}, "Folder not found: " + out_dir)
             return {'CANCELLED'}
         scratch = tempfile.mkdtemp(prefix="aeron_flight_model_")
         scratch_gltf = os.path.join(scratch, os.path.splitext(os.path.basename(out_glb))[0] + ".gltf")
@@ -371,7 +374,7 @@ class EXPORT_OT_aeron_flight_model(Operator, ExportHelper):
             with open(scratch_gltf, "r", encoding="utf-8") as stream:
                 document = json.load(stream)
         except Exception as error:
-            self.report({'ERROR'}, "glTF export failed: {}. Scratch: {}".format(error, scratch))
+            self.report({'ERROR'}, "glTF export failed: {}. Temporary files are in {}".format(error, scratch))
             return {'CANCELLED'}
 
         prefs = preferences.get(context)
@@ -385,11 +388,11 @@ class EXPORT_OT_aeron_flight_model(Operator, ExportHelper):
                          if image.is_dirty and image.filepath and effects and
                          _inside(bpy.path.abspath(image.filepath), effects))
         if unsaved:
-            self.report({'ERROR'}, "library images have unsaved changes, save them first (Image > Save): " +
+            self.report({'ERROR'}, "Save the changed library images first (Image > Save): " +
                         ", ".join(unsaved))
             return {'CANCELLED'}
-        # The frames the materials name are checked against the libraries,
-        # which are first built from the project's.
+        # The cooker checks the frames that the materials name against the
+        # effect libraries. It first builds them from the project's libraries.
         if prefs.effects_dir:
             argv += ["--effects-dir", bpy.path.abspath(prefs.effects_dir)]
             if effects:
@@ -397,10 +400,10 @@ class EXPORT_OT_aeron_flight_model(Operator, ExportHelper):
         try:
             completed = subprocess.run(argv, capture_output=True, text=True)
         except OSError as error:
-            self.report({'ERROR'}, "cannot run {}: {}. Scratch: {}".format(cooker, error, scratch))
+            self.report({'ERROR'}, "Cannot run {}: {}. Temporary files are in {}".format(cooker, error, scratch))
             return {'CANCELLED'}
         if completed.returncode != 0:
-            self.report({'ERROR'}, "aeron_gltf_cook failed (exit {}). Scratch: {}\n{}".format(
+            self.report({'ERROR'}, "aeron_gltf_cook failed (exit code {}). Temporary files are in {}\n{}".format(
                 completed.returncode, scratch, _tail(completed.stderr or completed.stdout)))
             return {'CANCELLED'}
         if self.keep_intermediate:
@@ -414,14 +417,16 @@ class EXPORT_OT_aeron_flight_model(Operator, ExportHelper):
         self.report({'INFO'}, "Wrote {}{}{}".format(out_glb, rebuilt, _warnings(self.warnings)))
         broken = _broken_models(cooker, effects, libraries.model_key(root), completed.stderr)
         if broken:
-            self.report({'WARNING'}, "the rebuilt libraries no longer serve other models (their .glb shows "
-                                     "nothing for these frames and their next build fails): " + "; ".join(broken))
+            self.report({'WARNING'}, "Other models use frames that the rebuilt libraries removed or changed. "
+                                     "Their .glb shows nothing there and their next build fails: " +
+                                     "; ".join(broken))
         return {'FINISHED'}
 
 
 def _broken_models(cooker, effects, model, messages):
-    """The other models of the project that name keys a build's library rebuilds
-    removed or gave another kind, as "<library> <key> (<what>): <models>"."""
+    """Lists the other models in the project that use keys which the build
+    removed, or changed to another kind, when it rebuilt the libraries. Each
+    item reads "<library> <key> (<what>): <models>"."""
     changes = sources.library_changes(messages)
     if not changes or not effects:
         return []
@@ -453,10 +458,11 @@ def _to_png(source, target):
 
 
 def _place_images(document, scratch, model_dir):
-    """Where the exported images go in the model directory: images under it
-    stay; the others (written by the export, or elsewhere on disk) are
-    copied to its textures/, PNG. Returns [(source, target)] and rewrites
-    the URIs; raises ValueError when a target holds another file."""
+    """Decides where the exported images go in the model folder. Images
+    that are already in it stay where they are. The others, written by the
+    export or found elsewhere on disk, are copied as PNG into its textures/
+    folder. Rewrites the URIs and returns [(source, target)]. Raises
+    ValueError when a target already holds a different file."""
     copies = {}
     converted = os.path.join(scratch, "converted")
     for image in document.get("images", []):
@@ -478,10 +484,10 @@ def _place_images(document, scratch, model_dir):
             image["mimeType"] = "image/png"
         if path != target:
             if copies.get(target, path) != path:
-                raise ValueError("{} and {} would both be {}".format(copies[target], path, target))
+                raise ValueError("{} and {} would both be copied to {}".format(copies[target], path, target))
             if os.path.exists(target) and not filecmp.cmp(path, target, shallow=False):
-                raise ValueError("{} exists with other content: rename the image that goes there "
-                                 "({})".format(target, path))
+                raise ValueError("{} already exists with different content. Rename the image from "
+                                 "{}".format(target, path))
             copies[target] = path
         image["uri"] = urllib.parse.quote(os.path.relpath(target, model_dir).replace(os.sep, "/"))
     return [(source, target) for target, source in copies.items()]
@@ -493,7 +499,7 @@ def _buffer_paths(document, directory):
 
 
 class EXPORT_OT_aeron_flight_model_project(Operator, ExportHelper):
-    """Save the selected object's flight model into its folder of the project: its .gltf, .bin and textures"""
+    """Save the flight model's .gltf, .bin and textures into its folder in the project"""
 
     bl_idname = "export_scene.aeron_flight_model_project"
     bl_label = "Save to Project"
@@ -504,7 +510,7 @@ class EXPORT_OT_aeron_flight_model_project(Operator, ExportHelper):
                                   description="Export meshes with their modifiers applied")
     allow_loss: BoolProperty(
         name="Allow Losing Data", default=False,
-        description="Export even when the result lacks extensions or extras the imported file had")
+        description="Save even if the result loses extensions or extras that the imported file had")
 
     def invoke(self, context, event):
         root = common.model_root(context.active_object) or _single_root(context.scene)
@@ -529,7 +535,7 @@ class EXPORT_OT_aeron_flight_model_project(Operator, ExportHelper):
         scratch_gltf = os.path.join(scratch, os.path.basename(out_gltf))
 
         def fail(message):
-            self.report({'ERROR'}, "{}. Scratch: {}".format(message, scratch))
+            self.report({'ERROR'}, "{}. Temporary files are in {}".format(message, scratch))
             return {'CANCELLED'}
 
         try:
@@ -541,14 +547,14 @@ class EXPORT_OT_aeron_flight_model_project(Operator, ExportHelper):
         if root.aeron_flight.source_names and not self.allow_loss:
             missing = sources.lost(json.loads(root.aeron_flight.source_names), document)
             if missing:
-                return fail("the export would lose what the imported file had: {} (Allow Losing Data "
-                            "exports anyway)".format(", ".join(missing)))
+                return fail("The export would lose data from the imported file: {}. Turn on Allow Losing "
+                            "Data to save anyway".format(", ".join(missing)))
         try:
             copies = _place_images(document, scratch, model_dir)
         except (OSError, ValueError) as error:
-            return fail("textures: {}".format(error))
+            return fail("Cannot place the textures: {}".format(error))
 
-        # Everything is checked: write into the model directory.
+        # All checks passed. Write into the model folder.
         try:
             old_buffers = []
             if os.path.exists(out_gltf):
@@ -564,10 +570,11 @@ class EXPORT_OT_aeron_flight_model_project(Operator, ExportHelper):
             with open(out_gltf, "w", encoding="utf-8") as stream:
                 json.dump(document, stream, separators=(",", ":"))
         except (OSError, ValueError) as error:
-            return fail("writing {} failed: {}".format(model_dir, error))
+            return fail("Cannot write to {}: {}".format(model_dir, error))
         shutil.rmtree(scratch, ignore_errors=True)
         root.aeron_flight.source_path = out_gltf
-        # The library lists count this model's keys from its file.
+        # The library lists count the keys that this model uses, read from
+        # its file.
         libraries.update_model(sources.project_effects(out_gltf), os.path.basename(model_dir), out_gltf)
         animated = sum(1 for extension in sources.material_extensions(document).values()
                        if set(extension) - {"screen"})

@@ -1,11 +1,12 @@
-# Import of an X-Wing Alliance OPT: opt2gltf converts it into a project (the
-# model's folder and, for an XWA Upgrade model, the effect library images
-# its materials use), then the model's .gltf is imported like any other.
+# Imports an X-Wing Alliance OPT. opt2gltf converts the OPT into a project:
+# it writes the model's folder and, for an XWA Upgrade model, the effect
+# library images that its materials use. Then the model's .gltf is imported
+# like any other.
 #
-# The OPT browser asks only for the OPT and the project, chosen from the
-# known ones. A new project folder, and the confirmation to replace a model,
-# are asked once the browser has closed: Blender opens one file browser at
-# a time.
+# The OPT file browser asks only for the OPT and for one of the known
+# projects. Blender opens only one file browser at a time, so a new project
+# folder and the confirmation to replace a model are asked after the browser
+# closes.
 
 import os
 import subprocess
@@ -21,7 +22,7 @@ RECENT_PROJECTS = 5
 
 
 def _entry(directory, name):
-    """`directory`'s entry named `name` (any case), or ""."""
+    """The entry of `directory` named `name` in any case, or ""."""
     try:
         entries = os.listdir(directory)
     except OSError:
@@ -30,21 +31,22 @@ def _entry(directory, name):
 
 
 def installation(opt_path):
-    """The game folder holding the OPT's FlightModels folder, or ""."""
+    """The game folder whose FlightModels folder holds the OPT, or ""."""
     folder = os.path.dirname(opt_path)
     return os.path.dirname(folder) if os.path.basename(folder).lower() == "flightmodels" else ""
 
 
 def has_xwau(folder):
-    """Whether `folder` is an XWA Upgrade installation: it has a Materials
-    folder."""
+    """Whether `folder` is an XWA Upgrade installation, which means that it
+    has a Materials folder."""
     return bool(folder) and os.path.isdir(_entry(folder, "Materials"))
 
 
 def xwau_installation(context, opt_path):
-    """The XWA Upgrade installation to read the OPT's data from, or "": the
-    OPT's own installation when it is in one (with or without XWA Upgrade),
-    else the preferences' one."""
+    """The XWA Upgrade installation to read the OPT's data from, or "".
+    When the OPT is in a game folder, only that folder is used, and only if
+    it has XWA Upgrade. Otherwise the installation set in the preferences is
+    used."""
     own = installation(opt_path)
     if own:
         return os.path.normpath(own) if has_xwau(own) else ""
@@ -62,8 +64,8 @@ def _key(opt):
 
 
 def project_root(folder):
-    """The project `folder` is in when it is a project's models or effects
-    folder, or a model's folder; else `folder`."""
+    """The project that contains `folder` when `folder` is the models or
+    effects folder of a project, or a model folder. Otherwise `folder`."""
     folder = os.path.normpath(folder)
     parent = os.path.dirname(folder)
     if os.path.basename(folder) in ("models", "effects"):
@@ -74,8 +76,9 @@ def project_root(folder):
 
 
 def projects(context):
-    """The existing projects an import can go into, best first: those of the
-    scene's models (the active one first), then the recent ones."""
+    """The existing projects that an import can use, best first. The
+    projects of the scene's models come first, starting with the active
+    model, then the recent projects."""
     active = common.model_root(getattr(context, "active_object", None))
     roots = [active] if active else []
     roots += [obj for obj in context.scene.objects if common.role(obj) == 'model' and obj != active]
@@ -90,7 +93,7 @@ def projects(context):
 
 
 def _remember(context, project):
-    """Puts `project` first in the recent projects."""
+    """Moves `project` to the top of the recent projects."""
     recent = preferences.get(context).recent_projects
     paths = [project] + [entry.path for entry in recent if os.path.normpath(bpy.path.abspath(entry.path)) != project]
     recent.clear()
@@ -112,9 +115,9 @@ def _project_items(self, context):
 
 
 def _invoke_later(context, idname, **props):
-    """Invokes an operator once the current one has returned, in the same
-    window: a file browser or popup cannot open while the OPT browser is
-    still open."""
+    """Invokes an operator in the same window after the current one returns.
+    A file browser or popup cannot open while the OPT browser is still
+    open."""
     window = context.window
     category, name = idname.split(".")
 
@@ -133,18 +136,18 @@ def _invoke_later(context, idname, **props):
 
 
 def _start(operator, context, opt, project, data, replace):
-    """Imports `opt` into `project`. Run from the UI, it first asks for a
-    project folder when there is none, and whether to replace a model the
-    project already has."""
+    """Imports `opt` into `project`. When run from the UI, it first asks for
+    a project folder if there is none, and asks before it replaces a model
+    that the project already has."""
     if not os.path.isfile(opt):
-        operator.report({'ERROR'}, "no such file: " + opt)
+        operator.report({'ERROR'}, "File not found: " + opt)
         return {'CANCELLED'}
     interactive = operator.options.is_invoke
     if not project:
         if interactive:
             _invoke_later(context, "aeron.opt_import_project", opt=opt, data=data)
             return {'CANCELLED'}
-        operator.report({'ERROR'}, "choose a project folder")
+        operator.report({'ERROR'}, "Choose a project folder")
         return {'CANCELLED'}
     project = project_root(project)
     key = _key(opt)
@@ -152,7 +155,7 @@ def _start(operator, context, opt, project, data, replace):
         if interactive:
             _invoke_later(context, "aeron.opt_import_replace", opt=opt, project=project, data=data)
             return {'CANCELLED'}
-        operator.report({'ERROR'}, "{} already has models/{}: use Replace".format(project, key))
+        operator.report({'ERROR'}, "{} already has models/{}. Pass replace=True to replace it".format(project, key))
         return {'CANCELLED'}
     return _convert(operator, context, opt, project, data, replace)
 
@@ -161,40 +164,42 @@ def _convert(operator, context, opt, project, data, replace):
     """Converts `opt` into `project` with opt2gltf, then imports the model."""
     opt2gltf = preferences.opt2gltf_path(context)
     if not opt2gltf:
-        operator.report({'ERROR'}, "opt2gltf is not set: see the add-on's preferences")
+        operator.report({'ERROR'}, "Set the opt2gltf path in the add-on preferences")
         return {'CANCELLED'}
     folder = xwau_installation(context, opt)
     xwau = data == 'XWAU' or (data == 'AUTO' and bool(folder))
     if xwau and not folder:
         own = installation(opt)
         operator.report({'ERROR'}, "{} has no XWA Upgrade data (no Materials folder)".format(own) if own else
-                        "no XWA Upgrade installation: the OPT is not in one's FlightModels folder, and the "
-                        "preferences set none")
+                        "The OPT is not in an XWA Upgrade installation. Set one in the add-on "
+                        "preferences")
         return {'CANCELLED'}
     argv = [opt2gltf] + (["--xwau-root", folder] if xwau else ["--stock"])
     argv += ["--project", project] + (["--replace"] if replace else []) + [opt]
     try:
         completed = subprocess.run(argv, capture_output=True, text=True)
     except OSError as error:
-        operator.report({'ERROR'}, "cannot run {}: {}".format(opt2gltf, error))
+        operator.report({'ERROR'}, "Cannot run {}: {}".format(opt2gltf, error))
         return {'CANCELLED'}
-    # The whole conversion log, in the system console.
+    # Print the full conversion log to the system console.
     print(completed.stderr)
     if completed.returncode != 0:
-        operator.report({'ERROR'}, "opt2gltf failed (exit {}):\n{}".format(
+        operator.report({'ERROR'}, "opt2gltf failed (exit code {}):\n{}".format(
             completed.returncode, _tail(completed.stderr or completed.stdout)))
         return {'CANCELLED'}
     key = _key(opt)
     gltf = os.path.join(project, "models", key, key + ".gltf")
     _remember(context, project)
-    # An OPT of an XWA Upgrade installation makes it the one for OPTs outside.
+    # After importing an OPT from an XWA Upgrade installation, use that
+    # installation for OPTs that are outside any installation.
     if folder and folder == os.path.normpath(installation(opt)) and folder != preferences.get(context).xwau_folder:
         preferences.get(context).xwau_folder = folder
         context.preferences.is_dirty = True
     result = bpy.ops.import_scene.aeron_flight_model(filepath=gltf)
     if 'FINISHED' not in result:
         return {'CANCELLED'}
-    # A loaded project gets the libraries the import added.
+    # If the project's libraries are loaded, reload them so that they include
+    # the libraries that the import added.
     effects = sources.project_effects(gltf)
     if effects in libraries._projects:
         cooker = preferences.cooker_path(context)
@@ -204,23 +209,23 @@ def _convert(operator, context, opt, project, data, replace):
             else:
                 libraries._projects.pop(effects, None)
         except (OSError, RuntimeError, ValueError) as error:
-            operator.report({'WARNING'}, "reading the libraries: {}".format(error))
+            operator.report({'WARNING'}, "Cannot read the effect libraries: {}".format(error))
     operator.report({'INFO'}, "Imported {} into {} ({})".format(
         key, project, "XWA Upgrade" if xwau else "original game"))
     return {'FINISHED'}
 
 
 _DATA_ITEMS = [
-    ('AUTO', "Detect", "XWA Upgrade when its data is found: in the OPT's game folder, or for an OPT outside "
-                       "one, in the preferences' installation. Else the original game"),
-    ('STOCK', "Original Game", "The OPT alone, converted as the original game draws it"),
-    ('XWAU', "XWA Upgrade", "The OPT with what XWA Upgrade gives it: materials, animations, skins, profiles, "
-                            "moving parts, pilot eye and cockpit displays"),
+    ('AUTO', "Detect", "Use XWA Upgrade data if found, otherwise the original game. The data comes from the "
+                       "OPT's game folder, or from the preferences for an OPT outside a game folder"),
+    ('STOCK', "Original Game", "Convert the OPT alone, as the original game draws it"),
+    ('XWAU', "XWA Upgrade", "Convert the OPT with its XWA Upgrade data, such as materials, animations, skins, "
+                            "moving parts and cockpit displays"),
 ]
 
 
 class IMPORT_OT_xwa_opt(Operator, ImportHelper):
-    """Import an X-Wing Alliance OPT model into a project, with its XWA Upgrade data"""
+    """Convert an X-Wing Alliance OPT model into a project and import it"""
 
     bl_idname = "import_scene.xwa_opt"
     bl_label = "Import XWA OPT"
@@ -230,16 +235,16 @@ class IMPORT_OT_xwa_opt(Operator, ImportHelper):
     filter_glob: StringProperty(default="*.opt;*.OPT", options={'HIDDEN'})
     project_choice: EnumProperty(
         name="Project", items=_project_items, options={'SKIP_SAVE'},
-        description="The folder the model goes into: models/<key>/ for the model, effects/ for the images "
-                    "its animations play")
+        description="The project to import into. The model goes into its models folder and the animation "
+                    "images into its effects folder")
     data: EnumProperty(name="Data", default='AUTO', items=_DATA_ITEMS)
-    # For scripts: the project folder (over the choice above), and replacing
-    # a model the project has without asking.
+    # For scripts: a project folder that overrides the choice above, and
+    # whether to replace an existing model without asking.
     project: StringProperty(subtype='DIR_PATH', options={'HIDDEN', 'SKIP_SAVE'})
     replace: BoolProperty(options={'HIDDEN', 'SKIP_SAVE'})
 
     def invoke(self, context, event):
-        # A file dropped on the window: a dialog instead of the browser.
+        # A file dropped on the window opens a dialog instead of the browser.
         if self.properties.is_property_set("filepath"):
             return context.window_manager.invoke_props_dialog(
                 self, title=os.path.basename(self.filepath), confirm_text="Import", translate=False)
@@ -257,7 +262,7 @@ class IMPORT_OT_xwa_opt(Operator, ImportHelper):
 
 
 class AERON_OT_opt_import_project(Operator):
-    """Choose the project folder the OPT goes into"""
+    """Choose the project folder for the OPT"""
 
     bl_idname = "aeron.opt_import_project"
     bl_label = "Choose Project Folder"
@@ -269,7 +274,7 @@ class AERON_OT_opt_import_project(Operator):
     data: EnumProperty(items=_DATA_ITEMS, options={'HIDDEN', 'SKIP_SAVE'})
 
     def invoke(self, context, event):
-        # Start beside the last project, where a new one usually goes.
+        # Start in the folder of the last project, where a new one usually goes.
         recent = preferences.get(context).recent_projects
         if not self.directory and recent:
             parent = os.path.dirname(os.path.normpath(bpy.path.abspath(recent[0].path)))
@@ -280,13 +285,13 @@ class AERON_OT_opt_import_project(Operator):
 
     def execute(self, context):
         if not self.directory:
-            self.report({'ERROR'}, "choose a project folder")
+            self.report({'ERROR'}, "Choose a project folder")
             return {'CANCELLED'}
         return _start(self, context, self.opt, os.path.normpath(bpy.path.abspath(self.directory)), self.data, False)
 
 
 class AERON_OT_opt_import_replace(Operator):
-    """Replace a model of the project with the OPT's conversion"""
+    """Replace the project's model with the converted OPT"""
 
     bl_idname = "aeron.opt_import_replace"
     bl_label = "Replace Model"
@@ -300,7 +305,7 @@ class AERON_OT_opt_import_replace(Operator):
         key = _key(self.opt)
         return context.window_manager.invoke_confirm(
             self, event, title="Replace {}?".format(key), confirm_text="Replace", icon='WARNING',
-            message="{} already has models/{}/. Replacing it loses the changes made there.".format(
+            message="{} already has models/{}/. The changes made to it will be lost.".format(
                 os.path.basename(self.project), key), translate=False)
 
     def execute(self, context):

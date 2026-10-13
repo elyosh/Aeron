@@ -1,10 +1,10 @@
-# Viewport overlays: the active object's flight model as the game uses it,
-# drawn over the 3D view (engine glows as the game draws them, hardpoints by
-# family, descriptor boxes, targets, hinges, the game's shapes of model
-# lights, labels). They only draw.
+# Viewport overlays that show the flight model of the active object as the game
+# uses it: engine glows as the game draws them, hardpoints by family, descriptor
+# boxes, targets, hinges, the shapes the game draws for model lights, and labels.
+# The overlays only draw and never change the scene.
 #
-# The geometry is rebuilt when the depsgraph reports a change; the engine
-# glows, which depend on the view, are rebuilt at each redraw.
+# The geometry is rebuilt when the depsgraph reports a change. The engine glows
+# depend on the view, so they are rebuilt at each redraw.
 
 import math
 
@@ -19,15 +19,16 @@ from mathutils import Matrix, Vector
 
 from . import common
 
-# Hardpoint families of common.HARDPOINT_TYPE_NAMES: label, theme collection
-# colour (None: grey) and types. The last family takes the types no other lists.
+# Families of hardpoint types (indices into common.HARDPOINT_TYPE_NAMES): label,
+# theme collection colour (None: grey) and types. The last family gets every type
+# that no other family lists.
 HARDPOINT_FAMILIES = (
     ("Lasers", 0, {1, 2, 3, 4, 9, 10}),
-    ("Ion cannons and mag pulse", 4, {5, 6, 11, 16, 17, 18}),
+    ("Ion Cannons and Mag Pulse", 4, {5, 6, 11, 16, 17, 18}),
     ("Warheads", 1, {7, 8, 12, 13, 14, 15}),
-    ("Docking and towing", 3, {21, 22, 27, 28, 29, 30}),
-    ("Pilot eye", 2, {common.COCKPIT_HARDPOINT_TYPE}),
-    ("Hangar and acceleration", 5, {23, 24, 25, 26}),
+    ("Docking and Towing", 3, {21, 22, 27, 28, 29, 30}),
+    ("Pilot Eye", 2, {common.COCKPIT_HARDPOINT_TYPE}),
+    ("Hangar and Acceleration", 5, {23, 24, 25, 26}),
     ("Other", None, set()),
 )
 _GREY = (0.7, 0.7, 0.7)
@@ -39,9 +40,9 @@ _AXIS_COLORS = ((0.9, 0.3, 0.3, 1.0), (0.4, 0.85, 0.4, 1.0), (0.4, 0.6, 1.0, 1.0
 _LABEL_COLOR = (1.0, 1.0, 1.0, 0.9)
 _DISABLED_GLOW_COLOR = (0.6, 0.6, 0.6, 0.6)
 
-# The game's engine glow (XwaRemasterShip_SubmitEngineGlows): the quad's
-# size follows the engine scale up to this, and an engine scale has this
-# floor (a craft's, from its throttle).
+# Constants of the game's engine glows (XwaRemasterShip_SubmitEngineGlows). The
+# quad size follows the engine scale up to GLOW_SIZE_SCALE_MAX. The engine scale
+# of a craft comes from its throttle and is at least GLOW_SCALE_MIN.
 GLOW_SIZE_SCALE_MAX = 0.80000001
 GLOW_SCALE_MIN = 0.34999999
 GLOW_ROUND_RATIOS = (0.85000002, 1.2)
@@ -74,11 +75,11 @@ def hardpoint_family(hardpoint_type):
 
 
 def glow_frame(matrix):
-    """An engine glow's position, right, up and look directions and its
-    dimensions (width, height, signed depth), from its world matrix, as the
-    exporter writes and the loader reads them: Blender's X, Z and -Y are the
-    glTF X, Y and Z; a negative determinant makes the depth negative. None
-    for a zero scale."""
+    """Returns the position, the right, up and look directions, and the
+    dimensions (width, height, signed depth) of an engine glow from its world
+    matrix, the same way the exporter writes them and the loader reads them.
+    Blender's X, Z and -Y are the glTF X, Y and Z. A negative determinant
+    makes the depth negative. Returns None for a zero scale."""
     basis = matrix.to_3x3()
     columns = [basis.col[axis].copy() for axis in range(3)]
     sign = -1.0 if basis.determinant() < 0.0 else 1.0
@@ -92,12 +93,12 @@ def glow_frame(matrix):
 
 
 def glow_corners(position, right, up, look, dimensions, eye, forward, scale):
-    """The game's quads of engine glows, (G, 4, 3) corners, from (G, 3)
-    arrays: a rectangle in the right/up plane, or for a round glow a square
-    turned toward the eye, whose corners are pushed along the look axis by
-    their depth from the glow's center. `eye` is the camera position, None
-    for an orthographic view; `forward` the view direction; `scale` the
-    engine scale."""
+    """Returns the corners (G, 4, 3) of the quads the game draws for engine
+    glows, from (G, 3) arrays. A quad is a rectangle in the right/up plane or,
+    for a round glow, a square turned toward the eye. Its corners are then
+    pushed along the look axis by their depth from the glow's center. `eye` is
+    the camera position, or None for an orthographic view. `forward` is the
+    view direction and `scale` is the engine scale."""
     to_glow = position - eye if eye is not None else numpy.broadcast_to(forward, position.shape)
     clamped = min(scale, GLOW_SIZE_SCALE_MAX)
     width, height, depth = dimensions[:, 0:1], dimensions[:, 1:2], dimensions[:, 2:3]
@@ -128,8 +129,8 @@ def glow_corners(position, right, up, look, dimensions, eye, forward, scale):
 
 
 def _glow_grid():
-    """Bilinear weights of the grid's vertices over a quad's corners, each
-    vertex's (u, v) in [-1, 1], and the grid's triangles."""
+    """Returns the bilinear weights of the grid vertices over the corners of a
+    quad, the (u, v) of each vertex in [-1, 1], and the triangles of the grid."""
     steps = numpy.linspace(0.0, 1.0, _GLOW_GRID)
     t, s = numpy.meshgrid(steps, steps, indexing='ij')
     s, t = s.ravel(), t.ravel()
@@ -146,9 +147,9 @@ _GRID_WEIGHTS, _GRID_UV, _GRID_TRIANGLES = _glow_grid()
 
 
 def glow_colors(core, outer):
-    """Premultiplied vertex colours of glows' grids, (G * N, 4): the game
-    fans the core colour at the center to the outer colour at the rim; a
-    round falloff stands in for its sprite."""
+    """Premultiplied vertex colours (G * N, 4) for the grids of the glows. As
+    in the game, the colour goes from the core colour at the center to the
+    outer colour at the rim. A round falloff replaces the game's sprite."""
     rim = numpy.max(numpy.abs(_GRID_UV), axis=1)[None, :, None]
     distance = numpy.minimum(numpy.hypot(_GRID_UV[:, 0], _GRID_UV[:, 1]), 1.0)
     falloff = (1.0 - distance * distance * (3.0 - 2.0 * distance))[None, :, None]
@@ -196,8 +197,8 @@ class Geometry:
             self.line(end, back + offset * head * 0.4, color)
 
     def circle(self, center, normal, radius, color, start=None, angle=2.0 * math.pi):
-        """A circle about `normal`, or an arc of `angle` (right-handed) from
-        `start`, a vector perpendicular to `normal`."""
+        """A circle around `normal`, or an arc of `angle` (right-handed) that
+        starts at `start`, a vector perpendicular to `normal`."""
         normal = normal.normalized()
         start = (start if start is not None else normal.orthogonal()).normalized() * radius
         steps = max(2, int(math.ceil(abs(angle) / math.radians(7.5))))
@@ -236,9 +237,10 @@ def _component_of(obj):
 
 
 def _computed_bounds(root, component):
-    """The bounds the game computes the descriptor from when none is
-    authored, in the model's space: those of the collision mesh's
-    vertices, otherwise the render mesh's. None without vertices."""
+    """The bounds, in model space, from which the game computes the
+    descriptor when none is authored. They are the bounds of the collision
+    mesh vertices, or of the render mesh vertices when there is no collision
+    mesh. None when the mesh has no vertices."""
     source = next((child for child in component.children if common.role(child) == 'collision'), component)
     count = len(source.data.vertices)
     if not count:
@@ -265,10 +267,11 @@ def _hinge(geometry, root, component, size, labelled):
     for vector, color in zip(axes[1:], _AXIS_COLORS[1:]):
         if vector.length > 0.0:
             geometry.line(pivot, pivot + vector.normalized() * size * 0.5, color)
-    # The swing of the direction axis to each articulation's angle, named
-    # on the active component (`labelled`). The
-    # renderer turns a component by -angle about its axis in the game's
-    # frame, which mirrors Blender's X: +angle, right-handed, here.
+    # An arc from the direction axis to the angle of each articulation, with
+    # the articulation's name on the active component (`labelled`). The
+    # renderer turns a component by -angle around its axis in the game's
+    # frame. That frame mirrors Blender's X axis, so here the turn is +angle,
+    # right-handed.
     start = axes[1] - rotation_axis * axes[1].dot(rotation_axis)
     if start.length < 1e-6:
         start = rotation_axis.orthogonal()
@@ -329,7 +332,7 @@ def _light(geometry, light, settings):
 
 
 def build(root, active, settings):
-    """The overlays of `root`'s model."""
+    """Builds the overlay geometry for the model `root`."""
     geometry = Geometry()
     theme = bpy.context.preferences.themes[0].view_3d
     selected_color = tuple(theme.object_selected) + (1.0,)
@@ -354,9 +357,10 @@ def build(root, active, settings):
                 else:
                     geometry.box(root.matrix_world, computed[0], computed[1], color, thick=highlighted)
             if settings.overlay_targets:
-                # The point the game aims the component's targeting box at
-                # and turns it about when it breaks off: the target with a
-                # target ID, otherwise the descriptor's center.
+                # The point the game aims the targeting box at, and that the
+                # component turns around when it breaks off. This is the
+                # target when there is a target ID, otherwise the center of
+                # the descriptor.
                 if props.target_id:
                     target = matrix @ Vector(props.target)
                     geometry.cross(target, size * 0.08, _TARGET_COLOR)
@@ -416,7 +420,7 @@ def _on_change(*_args):
 
 
 def tag_redraw(_self=None, _context=None):
-    """Redraws the 3D views (an update callback of the overlay settings)."""
+    """Redraws the 3D views. This is the update callback of the overlay settings."""
     _Cache.dirty = True
     for window in bpy.context.window_manager.windows:
         for area in window.screen.areas:
@@ -561,7 +565,7 @@ def _draw_labels():
     blf.size(font, 11.0 * scale_ui)
     blf.enable(font, blf.SHADOW)
     blf.shadow(font, 3, 0.0, 0.0, 0.0, 1.0)
-    # Labels at the same position (hardpoints sharing one) are stacked.
+    # Labels at the same position, such as hardpoints at the same place, are stacked.
     line = 14.0 * scale_ui
     stacked = {}
     for position, text, color in geometry.labels:

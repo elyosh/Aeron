@@ -1,5 +1,5 @@
-# Material properties > Aeron Animation: the material animation editor
-# (animation.py) and the project's effect libraries (libraries.py).
+# The Aeron Animation panel in Material Properties: the material animation
+# editor (animation.py) and the effect libraries of the project (libraries.py).
 
 import bpy
 from bpy.types import Panel, UIList
@@ -10,7 +10,7 @@ _STATE_NAMES = {identifier: name for identifier, name, _ in animation.STATES}
 
 
 def _side_buttons(layout, *buttons):
-    """A list's side column: (operator, icon, {property: value}) or None for a gap."""
+    """Draws the buttons beside a list. A button is (operator, icon, {property: value}), or None for a gap."""
     column = layout.column(align=True)
     for button in buttons:
         if button is None:
@@ -97,7 +97,7 @@ class MATERIAL_PT_aeron_animation(_MaterialPanel, Panel):
         props = context.material.aeron_flight
         layout.prop(props, "energy_override")
         root = common.model_root(context.object) if context.object else None
-        # Not overridden: the model's default, greyed.
+        # Without an override, show the model's default, greyed out.
         source = props.energy if props.energy_override or root is None else root.aeron_flight.energy_default
         row = layout.row(align=True)
         row.enabled = props.energy_override
@@ -131,9 +131,9 @@ class MATERIAL_PT_aeron_flipbooks(_MaterialPanel, Panel):
         row.template_list("AERON_UL_frames", "", book, "frames", book, "active_frame", rows=4)
         _list_buttons(row, "frame")
         row = layout.row(align=True)
-        row.operator("aeron.frames_add_prefix", text="By Prefix…")
-        row.operator("aeron.frames_add_added", text="From Added…")
-        row.operator("aeron.frames_set_duration", text="Set Duration…")
+        row.operator("aeron.frames_add_prefix", text="Add by Prefix…")
+        row.operator("aeron.frames_add_added", text="Add Recent…")
+        layout.operator("aeron.frames_set_duration", text="Set Duration…")
 
 
 class MATERIAL_PT_aeron_preview(_MaterialPanel, Panel):

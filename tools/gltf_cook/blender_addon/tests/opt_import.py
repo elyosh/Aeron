@@ -1,21 +1,23 @@
-"""Import XWA OPT, headless.
+"""Tests Import XWA OPT in a headless Blender.
 
     python3 opt_import.py --blender BLENDER --cooker AERON_GLTF_COOK --opt2gltf OPT2GLTF
                           --stock OPT [--xwau OPT] [--keep]
 
-In a headless Blender with this add-on, imports the original game's OPT
-(Original Game) into a scratch project and, with --xwau, an OPT of an XWA
-Upgrade installation's FlightModels folder (Detect) into another. For each:
-- the scene gets the model: its root and one component per OPT mesh, as
-  many as the model's .gltf has;
-- the project holds models/<key>/, the same as opt2gltf converts it;
-- the project's libraries hold every image the model's materials name;
+In a headless Blender with this add-on, it imports an OPT of the original
+game (Original Game) into a scratch project. With --xwau, it also imports
+an OPT from the FlightModels folder of an XWA Upgrade installation
+(Detect) into another project. For each import, it checks that:
+- the scene has the model root and one component per OPT mesh, as many as
+  the model's .gltf has;
+- the project has models/<key>/, identical to what opt2gltf converts;
+- the project's libraries have every image that the model's materials use;
 - the project becomes the first recent project;
-- importing it again fails without Replace and leaves the model;
-- importing it again with Replace and no project goes into the scene
-  model's project.
-The XWA Upgrade import also sets the preferences' installation, and a copy
-of the OPT outside the installation then converts the same (Detect).
+- a second import without Replace fails and keeps the model;
+- a second import with Replace and no project goes into the project of the
+  model in the scene.
+The XWA Upgrade import also sets the installation in the preferences. A
+copy of the OPT outside the installation must then convert the same way
+(Detect).
 """
 
 import argparse
@@ -28,7 +30,7 @@ import sys
 import tempfile
 
 ADDON_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-# The add-on is loaded from its source directory: no bytecode caches there.
+# The add-on is loaded from its source directory, so do not write bytecode caches there.
 sys.dont_write_bytecode = True
 MODULE = "bl_ext.user_default.aeron_flight_model"
 
@@ -99,7 +101,7 @@ def blender_main(cooker, opt2gltf, projects, stock, xwau, outside):
 # ---- outside -------------------------------------------------------------------
 
 def _library_keys(cooker, project):
-    """{library: {key}} of the project's libraries."""
+    """Returns the keys of each library in the project, as {library: {key}}."""
     keys = {}
     effects = os.path.join(project, "effects")
     for name in sorted(os.listdir(effects)) if os.path.isdir(effects) else []:
@@ -111,7 +113,7 @@ def _library_keys(cooker, project):
 
 
 def _named_keys(gltf):
-    """{library: {key}} the model's materials name."""
+    """Returns the keys that the model's materials use, as {library: {key}}."""
     with open(gltf, encoding="utf-8") as stream:
         document = json.load(stream)
     names = {}
@@ -171,8 +173,8 @@ def main():
     if completed.returncode != 0:
         failures.append("Blender: " + " | ".join(completed.stderr.strip().splitlines()[-5:]))
 
-    # The project's models are opt2gltf's own conversion; their libraries
-    # hold what they name.
+    # Check that each model in the project is what opt2gltf converts on its
+    # own, and that the libraries have every image the model uses.
     for opt, mode, data in ((args.stock, ["--stock"], "stock"), (args.xwau, None, "auto")):
         if not opt:
             continue

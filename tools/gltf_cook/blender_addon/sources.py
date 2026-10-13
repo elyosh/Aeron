@@ -1,8 +1,9 @@
-# What a model's .gltf holds besides what Blender keeps of a glTF: the asset
-# extras, kept on the model root, and the names of the extensions, extras and
-# material AERON_flight_model members the file had, so that an export losing
-# one stops. Blender is imported only where needed: tests/roundtrip.py reads
-# files with it outside Blender.
+# Data in a model's .gltf that Blender does not keep when it imports a glTF.
+# The asset extras are kept on the model root. The names of the file's
+# extensions, extras and material AERON_flight_model members are recorded
+# too, so that an export that would lose one of them stops. Blender is
+# imported only where needed, because tests/roundtrip.py uses this module
+# outside Blender.
 
 import json
 import os
@@ -11,9 +12,10 @@ import struct
 
 EXTENSION_NAME = "AERON_flight_model"
 
-# Extensions an export may lack without losing data: Blender writes these
-# only while they hold something (a specular or emissive strength at its
-# default, an identity transform), or the scene holds them (lights, skins).
+# Extensions that an export may drop without losing data. Blender leaves
+# them out when they hold only defaults, such as a default specular or
+# emissive strength or an identity texture transform, or when the scene does
+# not use them (lights, skins).
 OPTIONAL_EXTENSIONS = {
     "KHR_lights_punctual",
     "KHR_materials_emissive_strength",
@@ -25,14 +27,14 @@ _EXTRAS_LEVELS = ("asset", "scenes", "nodes", "meshes", "materials", "textures",
 
 
 def material_extensions(document):
-    """The AERON_flight_model objects of a glTF document's materials, by name."""
+    """The AERON_flight_model objects of the materials in a glTF document, by material name."""
     return {material.get("name"): material["extensions"][EXTENSION_NAME]
             for material in document.get("materials", [])
             if EXTENSION_NAME in (material.get("extensions") or {})}
 
 
 def model_extension(document):
-    """The AERON_flight_model object of a glTF document's model root, or {}."""
+    """The AERON_flight_model object of the model root in a glTF document, or {}."""
     scenes = document.get("scenes") or [{}]
     roots = scenes[document.get("scene", 0)].get("nodes") or []
     nodes = document.get("nodes", [])
@@ -44,7 +46,7 @@ def model_extension(document):
 
 
 def model_project(model_path):
-    """The project holding the model file `model_path`
+    """The project that holds the model file `model_path`
     (<project>/models/<key>/<key>.gltf), or "" for a model outside a
     project."""
     models = os.path.dirname(os.path.dirname(model_path)) if model_path else ""
@@ -60,13 +62,14 @@ def project_effects(model_path):
 
 
 def built_libraries(messages):
-    """The effect libraries a cook's messages say it built."""
+    """The effect libraries that a cook built, read from its messages."""
     return re.findall(r"^\[aeron_gltf_cook\] library: ([a-z0-9_-]+): built", messages or "", re.MULTILINE)
 
 
 def library_changes(messages):
-    """What a cook's library rebuilds removed: [(library, key, what)], `what`
-    "removed" or "changed kind from <old> to <new>"."""
+    """The keys that a cook removed or changed when it rebuilt the libraries,
+    as [(library, key, what)]. `what` is "removed" or "changed kind from
+    <old> to <new>"."""
     changes = []
     for library, rest in re.findall(r"^\[aeron_gltf_cook\] library: ([a-z0-9_-]+): (\".*)$", messages or "",
                                     re.MULTILINE):
@@ -79,7 +82,7 @@ def library_changes(messages):
 
 
 def read_document(path):
-    """The JSON of a .gltf, or of a .glb's JSON chunk."""
+    """Reads the JSON of a .gltf, or the JSON chunk of a .glb."""
     with open(path, "rb") as stream:
         data = stream.read()
     if data[:4] == b"glTF":
@@ -91,8 +94,8 @@ def read_document(path):
 
 
 def names(document):
-    """The extensions and extras keys of a glTF document, per level, and the
-    members of its materials' AERON_flight_model objects."""
+    """The extensions of a glTF document, its extras keys at each level, and
+    the members of the AERON_flight_model objects of its materials."""
     extras = {}
     for level in _EXTRAS_LEVELS:
         items = [document.get("asset")] if level == "asset" else document.get(level) or []
@@ -110,7 +113,7 @@ def names(document):
 
 
 def lost(recorded, document):
-    """What of `recorded` (names()) the exported `document` lacks."""
+    """The names in `recorded` (from names()) that the exported `document` lacks."""
     now = names(document)
     missing = ["extension " + name for name in recorded.get("extensions", [])
                if name not in now["extensions"] and name not in OPTIONAL_EXTENSIONS]
@@ -122,16 +125,18 @@ def lost(recorded, document):
 
 
 def check_markings(problems, root):
-    """The markings list names variants that the scene has and that some part
-    of the model maps (Blender's glTF exporter writes only those)."""
+    """Checks that each markings value names a material variant that exists
+    and that a mesh of the model uses. Blender's glTF exporter writes only
+    those variants."""
     import bpy
 
     try:
         json.loads(root.aeron_flight.asset_extras or "{}")
     except ValueError:
-        problems.error(root, "the kept asset extras are not JSON")
+        problems.error(root, "the asset extras kept from the import are not valid JSON")
         return
-    # Blender's glTF add-on registers its variants only once a file had some.
+    # Blender's glTF add-on creates its variant list only after a file with
+    # variants was imported.
     variants = {variant.name: variant.variant_idx
                 for variant in getattr(bpy.data.scenes[0], "gltf2_KHR_materials_variants_variants", ())}
     mapped = set()
@@ -143,15 +148,15 @@ def check_markings(problems, root):
         if not entry.variant:
             continue
         if entry.variant not in variants:
-            problems.error(root, "markings value {} shows the material variant {!r}, which does not "
-                                 "exist".format(markings, entry.variant))
+            problems.error(root, "markings value {}: material variant {!r} does not exist".format(
+                markings, entry.variant))
         elif variants[entry.variant] not in mapped:
-            problems.error(root, "markings value {} shows the material variant {!r}, which no part of the "
-                                 "model maps: the export would leave it out".format(markings, entry.variant))
+            problems.error(root, "markings value {}: no mesh uses material variant {!r}, so the export "
+                                 "would drop it".format(markings, entry.variant))
 
 
 def model_materials(root):
-    """The materials the model's meshes use, their skin variants included."""
+    """The materials that the model's meshes use, including those of their variants."""
     materials = set()
     for obj in [root] + list(root.children_recursive):
         materials.update(slot.material for slot in obj.material_slots if slot.material is not None)

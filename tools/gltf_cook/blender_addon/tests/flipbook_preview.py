@@ -1,19 +1,20 @@
-"""The flipbook preview, headless.
+"""Tests the flipbook preview in a headless Blender.
 
     python3 flipbook_preview.py --blender BLENDER --cooker AERON_GLTF_COOK [--keep]
 
-Builds a scratch project holding the animated example (../../example)
-as model `panel`, imports it in a headless Blender with this add-on, and
-turns the preview on:
-- materials Lights and Screen get the preview's nodes;
-- at given frames and states, the frame images and values the game would
-  show: Lights' emissive frames (always, half a second each), Screen's
-  base colour frames only while `target` is checked, its unlit part, and a
-  `once` flipbook holding its last frame;
-- saving during the preview writes no preview data, and the preview is
-  back after;
-- turning it off gives the materials back their nodes exactly, and the
-  model saved to the project is the same file as before the preview.
+Builds a scratch project with the animated example (../../example) as
+model `panel`, imports it in a headless Blender with this add-on, and
+turns the preview on. It checks that:
+- the preview adds its nodes to materials Lights and Screen;
+- at given frames and states, the materials show the frame images and
+  values that the game would show. Lights shows its emissive frames
+  (state Always, half a second each). Screen shows its base color frames
+  only while `target` is checked, and uses its unlit part. A `once`
+  flipbook holds its last frame;
+- saving during the preview writes no preview data, and the preview comes
+  back afterwards;
+- turning the preview off restores the exact nodes of the materials, and
+  the model saved to the project is the same file as before the preview.
 """
 
 import argparse
@@ -25,7 +26,7 @@ import sys
 import tempfile
 
 ADDON_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-# The add-on is loaded from its source directory: no bytecode caches there.
+# The add-on is loaded from its source directory, so do not write bytecode caches there.
 sys.dont_write_bytecode = True
 EXAMPLE = os.path.join(ADDON_DIR, "..", "example")
 MODULE = "bl_ext.user_default.aeron_flight_model"
@@ -34,7 +35,7 @@ MODULE = "bl_ext.user_default.aeron_flight_model"
 # ---- inside Blender ------------------------------------------------------------
 
 def _snapshot(material):
-    """A material's nodes, links and BSDF input values."""
+    """Returns the nodes, links and BSDF input values of a material."""
     tree = material.node_tree
     links = sorted((link.from_node.name, link.from_socket.identifier, link.to_node.name, link.to_socket.identifier)
                    for link in tree.links)
@@ -46,8 +47,8 @@ def _snapshot(material):
 
 
 def _save_to_project(path):
-    """Save to Project, over the model's own file (the save makes the
-    model's file the one it writes)."""
+    """Runs Save to Project over the model's own file and returns the saved
+    document. The save also makes that file the model's file."""
     import bpy
 
     assert 'FINISHED' in bpy.ops.export_scene.aeron_flight_model_project(filepath=path)
@@ -119,7 +120,7 @@ def blender_main(cooker, project, scratch):
     check(showing(screen, "colour") == "screen_a.png", "Screen with target, at frame 1: screen_a")
     screen.aeron_flight.flipbooks[0].unlit = 0.5
     check(bpy.app.timers.is_registered(flipbook_preview._deferred), "an edit schedules a refresh")
-    flipbook_preview._deferred()  # a headless script runs no timers
+    flipbook_preview._deferred()  # a headless script runs no timers, so call it directly
     check(abs(value(screen, "Unlit") - 128.0 / 255.0) < 1e-6 and value(screen, "Replace") == 1.0,
           "Screen's unlit part, as the game quantizes it")
     lights.aeron_flight.flipbooks[0].mode = "once"
@@ -153,7 +154,7 @@ def blender_main(cooker, project, scratch):
     with bpy.data.libraries.load(blend) as (source, target):
         names, groups, images = list(source.materials), list(source.node_groups), list(source.images)
         target.materials = list(names)
-    saved = dict(zip(names, target.materials))  # appended as Lights.001…
+    saved = dict(zip(names, target.materials))  # appended as Lights.001 and so on
     check(flipbook_preview.GROUP not in groups and not any(name.startswith(".Aeron Frame") for name in images) and
           all(_snapshot(saved[name]) == before[name] for name in ("Lights", "Screen")),
           "the saved file holds no preview data")
@@ -164,8 +165,8 @@ def blender_main(cooker, project, scratch):
 
 
 class _Layout:
-    """A stand-in UI layout: drawing a panel with it checks that every
-    property it shows exists (a headless Blender draws no UI)."""
+    """A fake UI layout. A headless Blender draws no UI, so drawing a panel
+    with this layout checks that every property it shows exists."""
 
     def __getattr__(self, name):
         return lambda *args, **kwargs: _Layout()

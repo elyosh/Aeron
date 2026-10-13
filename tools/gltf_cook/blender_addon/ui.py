@@ -1,5 +1,6 @@
-# Panels (Object properties per role, and the 3D view's Aeron tab) and lists.
-# Material animations and effect libraries are animation_ui.py's.
+# Panels and lists: the Object properties panels for each role, and the
+# Aeron tab of the 3D view. The panels for material animations and effect
+# libraries are in animation_ui.py.
 
 import os
 
@@ -8,8 +9,8 @@ from bpy.types import Panel, UIList
 
 from . import common, display, opt_import, overlays
 
-# Labels of the objects the lists show, filled by filter_items (which runs
-# before draw_item), by list type then object name.
+# Labels of the objects shown in the lists, keyed by list kind and then by
+# object name. filter_items fills it, and it runs before draw_item.
 _labels = {}
 
 
@@ -18,7 +19,7 @@ def _select_button(layout, obj):
 
 
 def _glow_base(component):
-    """Model-wide ordinal of the component's first engine glow."""
+    """Returns the number of engine glows in the components before this one."""
     root = component.parent
     count = 0
     for other in common.components(root):
@@ -36,13 +37,13 @@ def _child_labels(component):
                 hardpoint, common.HARDPOINT_TYPE_NAMES[int(child.aeron_flight.hardpoint_type)])
             hardpoint += 1
         else:
-            labels[child.name] = "Engine glow {}".format(glow)
+            labels[child.name] = "Engine Glow {}".format(glow)
             glow += 1
     return labels
 
 
 class _ObjectList(UIList):
-    """Scene objects, showing only `members(context)` in their order."""
+    """Lists the scene objects but shows only `members(context)`, in their order."""
 
     kind = ""
 
@@ -102,7 +103,7 @@ class AERON_UL_children(_ObjectList):
 
 
 class AERON_UL_references(UIList):
-    """Articulations and set members: their component, or raw ordinal."""
+    """Articulations and set members. Shows the component, or the ordinal when no component is set."""
 
     def draw_item(self, context, layout, data, item, icon, active_data, active_propname, index):
         row = layout.row(align=True)
@@ -124,7 +125,7 @@ class AERON_UL_named(UIList):
 
 
 class AERON_UL_markings(UIList):
-    """The markings list: a variant per markings value, and a button showing it."""
+    """The markings list. Each row gives the variant of a markings value, with a button to show it."""
 
     def draw_item(self, context, layout, data, item, icon, active_data, active_propname, index):
         split = layout.split(factor=0.12)
@@ -187,7 +188,7 @@ class _RolePanel(_ObjectPanel):
 
 
 def _status(obj):
-    """Where the object stands in its model, or why it is not exported."""
+    """Returns where the object is in its model, or why it is not exported."""
     role = common.role(obj)
     root = common.model_root(obj)
     if role == 'model':
@@ -230,14 +231,17 @@ class OBJECT_PT_aeron(_ObjectPanel, Panel):
             layout.prop(props, "glow_enabled")
             layout.prop(props, "core_color")
             layout.prop(props, "outer_color")
-            layout.label(text="Looks toward -Y; X and Z scale are its size, Y its depth")
+            column = layout.column(align=True)
+            column.label(text="Glows toward -Y")
+            column.label(text="X and Z scale set its width")
+            column.label(text="Y scale sets its length")
 
 
 def draw_light(layout, obj):
     props = obj.aeron_flight
     light = obj.data
     if common.role(obj.parent) != 'component':
-        layout.label(text="A light under a component is a model light", icon='INFO')
+        layout.label(text="Parent to a component to export it", icon='INFO')
         return
     layout.prop(props, "light_exclude")
     if props.light_exclude:
@@ -254,10 +258,10 @@ def draw_light(layout, obj):
     column.label(text="Game: " + common.light_game_shape(obj))
     column.label(text="Intensity: {:.5g} cd".format(common.light_punctual(obj, obj.matrix_world)["intensity"]))
     if light.use_custom_distance:
-        column.label(text="Range: {:.4g} m (fading out just before it)".format(light.cutoff_distance))
+        column.label(text="Range: {:.4g} m, fading out".format(light.cutoff_distance))
     else:
-        column.label(text="Range: automatic (Custom Distance sets one)")
-    layout.label(text="Power, color, size: the Light properties", icon='LIGHT')
+        column.label(text="Range: auto (set Custom Distance)")
+    layout.label(text="Set power, color, size in Light tab", icon='LIGHT')
 
 
 class OBJECT_PT_aeron_components(_RolePanel, Panel):
@@ -270,7 +274,7 @@ class OBJECT_PT_aeron_components(_RolePanel, Panel):
         row.template_list("AERON_UL_components", "", context.scene, "objects", obj.aeron_flight,
                           "active_component", rows=8)
         _move_buttons(row, 'components')
-        self.layout.label(text="The order is the component ordinal the game uses")
+        self.layout.label(text="List order is the component ordinal")
 
 
 class OBJECT_PT_aeron_model_file(_RolePanel, Panel):
@@ -296,7 +300,7 @@ class OBJECT_PT_aeron_material_animations(_RolePanel, Panel):
     def draw(self, context):
         props = context.object.aeron_flight
         layout = self.layout
-        # The model's energy default (animation.py).
+        # The model's default energy state (animation.py).
         layout.prop(props, "energy_default_given")
         row = layout.row(align=True)
         row.enabled = props.energy_default_given
@@ -318,14 +322,14 @@ class OBJECT_PT_aeron_markings(_RolePanel, Panel):
         root = context.object
         props = root.aeron_flight
         layout = self.layout
-        layout.label(text="The material variant each markings value shows:")
+        layout.label(text="Variant shown per markings value:")
         row = layout.row()
         row.template_list("AERON_UL_markings", "", props, "markings", props, "active_markings", rows=3)
         _list_buttons(row, 'markings')
         column = layout.column(align=True)
-        column.label(text="Empty: the materials as modelled.")
-        column.label(text="Values without a row show the last row.")
-        layout.operator("aeron.show_skin", text="Show As Modelled",
+        column.label(text="Empty list: materials as modeled")
+        column.label(text="Higher values use the last row")
+        layout.operator("aeron.show_skin", text="Show As Modeled",
                         depress=props.preview_markings < 0).markings = -1
 
 
@@ -356,8 +360,7 @@ class OBJECT_PT_aeron_articulations(_RolePanel, Panel):
 
 
 class OBJECT_PT_aeron_preview(_RolePanel, Panel):
-    """A slider per articulation group, from the model as built (0) to each
-    member at its articulation's angle (1)."""
+    """One slider per articulation group, from 0 (as built) to 1 (each member at its articulation angle)"""
     bl_label = "Articulation Preview"
     role = 'model'
 
@@ -368,7 +371,7 @@ class OBJECT_PT_aeron_preview(_RolePanel, Panel):
         for group in props.preview_groups:
             column.prop(group, "amount", text=group.name, slider=True)
         if not len(props.preview_groups):
-            column.label(text="Each group the articulations name gets a slider here")
+            column.label(text="No articulation groups yet")
         if props.preview_active:
             layout.operator("aeron.articulation_reset", icon='LOOP_BACK')
 
@@ -403,7 +406,7 @@ class OBJECT_PT_aeron_sets(_RolePanel, Panel):
         layout.prop(component_set, "preview")
         profile = display.profile_name(component_set.name)
         if profile is not None:
-            layout.label(text="The game hides these for the profile " + profile, icon='INFO')
+            layout.label(text="Hidden by the profile " + profile, icon='INFO')
         layout.label(text="Members of " + component_set.name)
         row = layout.row()
         row.template_list("AERON_UL_references", "members", component_set, "members", component_set,
@@ -446,7 +449,7 @@ class OBJECT_PT_aeron_children(_RolePanel, Panel):
         row.template_list("AERON_UL_children", "", context.scene, "objects", obj.aeron_flight,
                           "active_child", rows=4)
         _move_buttons(row, 'children')
-        layout.label(text="Hardpoints count per component, engine glows across the model")
+        layout.label(text="Engine glows are numbered model-wide")
         draw_add_buttons(layout)
 
 
@@ -462,8 +465,8 @@ class OBJECT_PT_aeron_descriptor(_RolePanel, Panel):
         props = context.object.aeron_flight
         layout = self.layout
         if not props.has_descriptor_geometry:
-            layout.label(text="Computed by the game from the collision (or render) mesh")
-            layout.operator("aeron.descriptor_from_bounds", text="Author From Mesh Bounds")
+            layout.label(text="The game computes it from the mesh")
+            layout.operator("aeron.descriptor_from_bounds", text="Set From Mesh Bounds")
             return
         layout.label(text="In the component's local space")
         column = layout.column()
@@ -476,7 +479,7 @@ class OBJECT_PT_aeron_descriptor(_RolePanel, Panel):
 
 
 class OBJECT_PT_aeron_component_articulations(_RolePanel, Panel):
-    """The model root's articulations that turn this component."""
+    """The articulations of the model root that turn this component"""
     bl_label = "Articulations"
     role = 'component'
 
@@ -490,9 +493,9 @@ class OBJECT_PT_aeron_component_articulations(_RolePanel, Panel):
         entries = [(index, item) for index, item in enumerate(root.aeron_flight.articulations)
                    if item.component == obj]
         if entries and not obj.aeron_flight.has_rotation:
-            layout.label(text="Turns about its hinge: tick the Hinge panel", icon='ERROR')
+            layout.label(text="Enable Hinge so it can turn", icon='ERROR')
         if not entries:
-            layout.label(text="No articulation turns this component")
+            layout.label(text="No articulation turns it")
         for index, item in entries:
             box = layout.box()
             row = box.row(align=True)
@@ -505,7 +508,7 @@ class OBJECT_PT_aeron_component_articulations(_RolePanel, Panel):
             row.prop(item, "angle")
             row.label(text="{:.1f}\u00b0".format(item.angle * 360.0 / 256.0))
             column.prop(item, "speed")
-            row = column.row(align=True, heading="Closing speed")
+            row = column.row(align=True, heading="Closing Speed")
             row.prop(item, "has_speed_back", text="")
             sub = row.row(align=True)
             sub.active = item.has_speed_back
@@ -548,7 +551,7 @@ class OBJECT_PT_aeron_hinge(_RolePanel, Panel):
 # ---- 3D view -------------------------------------------------------------------
 
 def draw_add_buttons(layout):
-    grid = layout.grid_flow(columns=3, align=True)
+    grid = layout.grid_flow(columns=2, align=True)
     for kind, text, icon in (('hardpoint', "Hardpoint", 'EMPTY_AXIS'), ('engineGlow', "Engine Glow", 'LIGHT_SUN'),
                              ('collision', "Collision", 'MOD_PHYSICS'), ('point', "Point", 'LIGHT_POINT'),
                              ('panel', "Panel", 'LIGHT_AREA'), ('tube', "Tube", 'MESH_CYLINDER')):
@@ -569,23 +572,25 @@ class VIEW3D_PT_aeron(Panel):
             children = [child for part in parts for child in part.children]
             box = layout.box()
             box.label(text=root.name, icon='EMPTY_DATA')
-            box.label(text="{} components, {} hardpoints, {} engine glows, {} lights".format(
-                len(parts), sum(1 for c in children if common.role(c) == 'hardpoint'),
-                sum(1 for c in children if common.role(c) == 'engineGlow'),
-                sum(1 for c in children if common.is_model_light(c))))
+            box.label(text="{} components, {} lights".format(
+                len(parts), sum(1 for c in children if common.is_model_light(c))))
+            box.label(text="{} hardpoints, {} engine glows".format(
+                sum(1 for c in children if common.role(c) == 'hardpoint'),
+                sum(1 for c in children if common.role(c) == 'engineGlow')))
             layout.operator("aeron.view_pilot_eye", icon='HIDE_OFF')
         layout.operator("aeron.make_flight_model", icon='OUTLINER_OB_EMPTY')
-        layout.label(text="Add to the active component, at the 3D cursor:")
+        layout.label(text="Add to active component at cursor:")
         draw_add_buttons(layout)
         layout.prop(context.scene.aeron_flight, "game_preview")
         row = layout.row(align=True)
         row.operator("import_scene.aeron_flight_model", text="Import", icon='IMPORT')
         row.operator("import_scene.xwa_opt", text="Import OPT", icon='IMPORT')
-        row.operator("export_scene.aeron_flight_model_project", text="Save to Project", icon='FILE_TICK')
-        # Where Import OPT puts a model unless another project is chosen.
+        # The project where Import OPT puts a model, unless the user picks another one.
         known = opt_import.projects(context)
         layout.label(text="OPT project: " + (os.path.basename(known[0]) if known else "none yet"), icon='FILE_FOLDER')
-        layout.operator("export_scene.aeron_flight_model", text="Export for Game", icon='EXPORT')
+        row = layout.row(align=True)
+        row.operator("export_scene.aeron_flight_model_project", text="Save to Project", icon='FILE_TICK')
+        row.operator("export_scene.aeron_flight_model", text="Export for Game", icon='EXPORT')
 
 
 class VIEW3D_PT_aeron_overlays(Panel):
@@ -646,7 +651,7 @@ class VIEW3D_PT_aeron_problems(Panel):
             layout.template_list("AERON_UL_problems", "", scene_props, "problems", scene_props,
                                  "active_problem", rows=4)
         else:
-            layout.label(text="Check Model lists the problems here")
+            layout.label(text="Run Check Model to list problems")
 
 
 classes = (

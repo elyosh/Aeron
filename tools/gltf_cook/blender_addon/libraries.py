@@ -1,8 +1,8 @@
-# A project's effect libraries (../animated_materials.md): read through the
-# cooker for picking frames, cached for the session per project, and written
-# through the cooker when the add-on edits them. The project's models (their
-# materials' animations) are read too, to know which models use which keys:
-# libraries are shared. A model's project is the one holding its .gltf
+# The effect libraries of a project (../animated_materials.md). The cooker reads
+# them so that frames can be picked, and writes them when the add-on edits them.
+# They are cached per project for the session. Libraries are shared by models, so
+# the material animations of all the models in the project are read too, to know
+# which models use which keys. A model belongs to the project that holds its .gltf
 # (sources.project_effects).
 
 import concurrent.futures
@@ -18,25 +18,26 @@ from bpy.types import PropertyGroup
 
 from . import common, sources
 
-# The input that shows an image of each kind.
+# For each kind, the input whose image is shown as the thumbnail.
 SHOWN_INPUT = {"baseColor": "baseColor", "emissive": "emissive", "damage": "factor", "mark": "baseColor",
                "energy": "emissive"}
 # The inputs of each kind: required, then optional.
 INPUTS = {"baseColor": ("baseColor",), "emissive": ("emissive", "baseColor"), "damage": ("factor",),
           "mark": ("baseColor",), "energy": ("emissive",)}
-KINDS = (("baseColor", "Base colour", "Painted over the base colour by its alpha"),
-         ("emissive", "Emissive", "Replaces the emissive; an optional base colour image paints over"),
-         ("damage", "Damage", "Hull damage: multiplies the base colour, its alpha dulls the surface"),
-         ("mark", "Mark", "A blast mark (the game's own effects)"),
-         ("energy", "Energy", "An energy effect (the game's own effects)"))
+KINDS = (("baseColor", "Base Color", "Painted over the base color, using its alpha"),
+         ("emissive", "Emissive",
+          "Replaces the emission. An optional base color image is painted over the base color"),
+         ("damage", "Damage", "Hull damage. Multiplies the base color, and its alpha dulls the surface"),
+         ("mark", "Mark", "Blast mark, for the game's own effects"),
+         ("energy", "Energy", "Energy effect, for the game's own effects"))
 
 _projects = {}
 _previews = None
 
 
 class Project:
-    """A project's libraries {name: {"path": file, "images": {key: entry}}}
-    and the models naming their keys {library: {key: {model}}}."""
+    """The libraries of a project, as {name: {"path": file, "images": {key: entry}}},
+    and the models that use their keys, as {library: {key: {model}}}."""
 
     def __init__(self, effects):
         self.effects = effects
@@ -55,18 +56,18 @@ class Project:
 
 
 def effects_dir(context):
-    """The effects folder of the active object's model's project, or "" outside a project."""
+    """The effects folder of the project that holds the model of the active object, or "" if there is none."""
     root = common.model_root(context.object) if context.object else None
     return sources.project_effects(bpy.path.abspath(root.aeron_flight.source_path)) if root else ""
 
 
 def model_key(root):
-    """The model's key in its project (its folder's name)."""
+    """The key of the model in its project, which is the name of its folder."""
     return os.path.basename(os.path.dirname(bpy.path.abspath(root.aeron_flight.source_path)))
 
 
 def project(context):
-    """The loaded project of the active object's model, or None."""
+    """The loaded project of the model of the active object, or None."""
     return _projects.get(effects_dir(context))
 
 
@@ -79,7 +80,7 @@ def project_of(root):
 def _run(cooker, argv, stdin=None):
     completed = subprocess.run([cooker] + argv, input=stdin, capture_output=True, text=True)
     if completed.returncode != 0:
-        raise RuntimeError((completed.stderr or "").strip() or "aeron_gltf_cook exit {}".format(
+        raise RuntimeError((completed.stderr or "").strip() or "aeron_gltf_cook failed (exit code {})".format(
             completed.returncode))
     return completed.stdout
 
@@ -89,7 +90,7 @@ def _read_library(cooker, path):
 
 
 def _model_users(path):
-    """{library: {key}} the materials of the model .gltf `path` name."""
+    """The keys used by the materials of the model .gltf `path`, as {library: {key}}."""
     names = {}
     for entry in sources.material_extensions(sources.read_document(path)).values():
         for book in entry.get("flipbooks", []):
@@ -102,7 +103,7 @@ def _model_users(path):
 
 
 def load(cooker, effects):
-    """Reads the project's libraries and models (again)."""
+    """Reads the libraries and models of the project, or reads them again."""
     result = Project(effects)
     files = sorted(path for path in glob.glob(os.path.join(effects, "*", "*.yaml"))
                    if os.path.basename(path) == os.path.basename(os.path.dirname(path)) + ".yaml")
@@ -131,7 +132,7 @@ def load(cooker, effects):
 
 
 def update_model(effects, model, path):
-    """Reads model `model`'s .gltf `path` again (after it was written)."""
+    """Reads the .gltf `path` of `model` again after it was written."""
     loaded = _projects.get(effects)
     if loaded is None:
         return
@@ -145,8 +146,8 @@ def update_model(effects, model, path):
 
 
 def write_library(cooker, loaded, name, document):
-    """Writes library `name`'s file in its canonical form through the cooker
-    (which checks it), and reads it back. Raises RuntimeError."""
+    """Writes the file of library `name` in its canonical form through the cooker,
+    which checks it, and reads it back. Raises RuntimeError."""
     path = loaded.library_path(name)
     os.makedirs(os.path.dirname(path), exist_ok=True)
     _run(cooker, ["--library-from-json", "-", path], json.dumps(document))
@@ -180,8 +181,8 @@ def image_file(loaded, library, key):
 
 
 def icon(context, library, key):
-    """The thumbnail of image `key` of `library`, as an icon id (0: none),
-    loaded as it is first drawn."""
+    """The icon id of the thumbnail of image `key` in `library`, or 0 if there is
+    none. The thumbnail is loaded the first time it is drawn."""
     global _previews
     loaded = project(context)
     path = image_file(loaded, library, key) if loaded else ""
@@ -199,7 +200,7 @@ def clear_icons():
         _previews.clear()
 
 
-# ---- the lists the panels show (session data, never saved) -----------------------
+# ---- lists shown in the panels (session data, never saved) -----------------------
 
 class AeronLibraryItem(PropertyGroup):
     images: IntProperty()
@@ -219,7 +220,7 @@ class AeronLibrariesState(PropertyGroup):
     active_library: IntProperty(update=_active_library_update)
     images: CollectionProperty(type=AeronLibraryImageItem)
     active_image: IntProperty()
-    # The keys Add Images last added, as JSON [library, [keys]], for Add
+    # The keys that Add Images added last, as JSON [library, [keys]], for Add
     # Frames from Images.
     added: StringProperty()
 

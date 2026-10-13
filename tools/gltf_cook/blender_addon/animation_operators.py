@@ -1,9 +1,10 @@
 # Operators of the material animation editor (animation.py) and of the
-# project's effect libraries (libraries.py). Animation operators edit the
-# material's properties, written to its AERON_flight_model object by the
-# exports. Library operators write the library's files at once (its
-# <library>.yaml through the cooker, and the PNGs of its frames/): a library
-# is the project's, shared by models, so Blender's undo does not revert them.
+# effect libraries of the project (libraries.py). The animation operators edit
+# the material properties, and the exports write them to the material's
+# AERON_flight_model object. The library operators write the library files at
+# once: <library>.yaml through the cooker, and the PNGs in its frames/ folder.
+# A library belongs to the project and models share it, so Blender's undo
+# does not revert these files.
 
 import filecmp
 import json
@@ -32,7 +33,7 @@ def _flipbook(context):
 
 
 def _move(collection, index, direction):
-    """Moves item `index` up (-1) or down (1); returns its new index."""
+    """Moves item `index` up (-1) or down (1) and returns its new index."""
     target = index + direction
     if 0 <= index < len(collection) and 0 <= target < len(collection):
         collection.move(index, target)
@@ -57,7 +58,7 @@ class _FlipbookOperator(_MaterialOperator):
 # ---- flipbooks and frames ------------------------------------------------------
 
 class AERON_OT_flipbook_add(_MaterialOperator, Operator):
-    """Add a flipbook to the material (frames of an effect library played on a game state)"""
+    """Add a flipbook: frames from an effect library that play on a game state"""
 
     bl_idname = "aeron.flipbook_add"
     bl_label = "Add Flipbook"
@@ -88,7 +89,7 @@ class AERON_OT_flipbook_remove(_FlipbookOperator, Operator):
 
 
 class AERON_OT_flipbook_move(_FlipbookOperator, Operator):
-    """Move the selected flipbook: per layer, the first flipbook whose state is active plays"""
+    """Move the selected flipbook. On each layer, the first flipbook with an active state plays"""
 
     bl_idname = "aeron.flipbook_move"
     bl_label = "Move Flipbook"
@@ -162,12 +163,12 @@ def _append_frames(book, keys, seconds):
 
 
 class AERON_OT_frames_add_prefix(_FlipbookOperator, Operator):
-    """Add every image of the flipbook's library whose key starts with a prefix, in key order"""
+    """Add the images of the flipbook library whose key starts with a prefix, sorted by key"""
 
     bl_idname = "aeron.frames_add_prefix"
-    bl_label = "Add Frames"
-    prefix: StringProperty(name="Prefix", description="The keys to add start with it (empty: all)")
-    seconds: FloatProperty(name="Seconds", default=0.1, min=0.0, precision=3, description="Each frame's duration")
+    bl_label = "Add Frames by Prefix"
+    prefix: StringProperty(name="Prefix", description="Start of the keys to add. Empty adds all images")
+    seconds: FloatProperty(name="Seconds", default=0.1, min=0.0, precision=3, description="Duration of each frame")
 
     @classmethod
     def poll(cls, context):
@@ -181,11 +182,11 @@ class AERON_OT_frames_add_prefix(_FlipbookOperator, Operator):
         keys = [key for key in libraries.search_keys(context, book.library, book.layer, "")
                 if key.startswith(self.prefix)]
         if not keys:
-            self.report({'ERROR'}, "library {} has no {} image starting with '{}'".format(
+            self.report({'ERROR'}, "Library {} has no {} image whose key starts with '{}'".format(
                 book.library or "(none)", book.layer, self.prefix))
             return {'CANCELLED'}
         _append_frames(book, keys, self.seconds)
-        self.report({'INFO'}, "{} frame(s) added".format(len(keys)))
+        self.report({'INFO'}, "Added {} frame(s)".format(len(keys)))
         flipbook_preview.schedule()
         return {'FINISHED'}
 
@@ -208,11 +209,11 @@ class AERON_OT_frames_set_duration(_FlipbookOperator, Operator):
 
 
 class AERON_OT_frames_add_added(_FlipbookOperator, Operator):
-    """Add the images Add Images last added to a library as frames of the selected flipbook"""
+    """Add the images that Add Images last added to a library as frames of the selected flipbook"""
 
     bl_idname = "aeron.frames_add_added"
-    bl_label = "Add Frames from Images"
-    seconds: FloatProperty(name="Seconds", default=0.1, min=0.0, precision=3, description="Each frame's duration")
+    bl_label = "Add Recent Images"
+    seconds: FloatProperty(name="Seconds", default=0.1, min=0.0, precision=3, description="Duration of each frame")
 
     @classmethod
     def poll(cls, context):
@@ -225,7 +226,7 @@ class AERON_OT_frames_add_added(_FlipbookOperator, Operator):
         book = _flipbook(context)
         library, keys = json.loads(libraries.state(context).added)
         if book.library and book.library != library:
-            self.report({'ERROR'}, "the images are in library {}, the flipbook's frames in {}".format(
+            self.report({'ERROR'}, "The images are in library {}, but the flipbook uses library {}".format(
                 library, book.library))
             return {'CANCELLED'}
         book.library = library
@@ -237,7 +238,7 @@ class AERON_OT_frames_add_added(_FlipbookOperator, Operator):
 # ---- hull damage and energy ------------------------------------------------------
 
 class AERON_OT_damage_add(_MaterialOperator, Operator):
-    """Give the material hull damage: images that show as the hull weakens"""
+    """Add hull damage images that show on the material as the hull weakens"""
 
     bl_idname = "aeron.damage_add"
     bl_label = "Add Hull Damage"
@@ -264,7 +265,7 @@ class AERON_OT_damage_remove(_MaterialOperator, Operator):
 
 
 class AERON_OT_damage_alternative_add(_MaterialOperator, Operator):
-    """Add a damage alternative (each object picks one)"""
+    """Add a damage alternative. Each object picks one alternative"""
 
     bl_idname = "aeron.damage_alternative_add"
     bl_label = "Add Alternative"
@@ -300,16 +301,17 @@ def _cooker(operator, context):
 
     cooker = preferences.cooker_path(context)
     if not cooker:
-        operator.report({'ERROR'}, "the effect libraries need aeron_gltf_cook: see the add-on's preferences")
+        operator.report({'ERROR'}, "Set the aeron_gltf_cook path in the add-on preferences")
     return cooker
 
 
 def _loaded(operator, context):
-    """The active model's project, loaded if it was not; None after a message."""
+    """Returns (project, cooker path) for the active model, and loads the project if needed. Returns
+    (None, None) after reporting an error."""
     effects = libraries.effects_dir(context)
     if not effects:
-        operator.report({'ERROR'}, "the model is not in a project (save it to <project>/models/<key>/ "
-                                   "first)")
+        operator.report({'ERROR'}, "The model is not in a project. Save it to <project>/models/<key>/ "
+                                   "first")
         return None, None
     cooker = _cooker(operator, context)
     if not cooker:
@@ -318,7 +320,7 @@ def _loaded(operator, context):
     try:
         return (loaded or libraries.load(cooker, effects)), cooker
     except (OSError, RuntimeError, ValueError) as error:
-        operator.report({'ERROR'}, "reading the libraries: {}".format(error))
+        operator.report({'ERROR'}, "Cannot read the libraries: {}".format(error))
         return None, None
 
 
@@ -330,7 +332,7 @@ def _write(operator, context, loaded, cooker, name, document, message):
     try:
         path = libraries.write_library(cooker, loaded, name, document)
     except (OSError, RuntimeError, ValueError) as error:
-        operator.report({'ERROR'}, "writing library {}: {}".format(name, error))
+        operator.report({'ERROR'}, "Cannot write library {}: {}".format(name, error))
         return False
     libraries.sync(context)
     operator.report({'INFO'}, "{} (wrote {})".format(message, path))
@@ -338,7 +340,7 @@ def _write(operator, context, loaded, cooker, name, document, message):
 
 
 def _model_users(context, library, key):
-    """The open model's materials whose animation names image `key` of `library`."""
+    """Names of the materials of the open model whose animation uses image `key` of `library`."""
     root = common.model_root(context.object) if context.object else None
     names = set()
     for material in sources.model_materials(root) if root else ():
@@ -354,7 +356,7 @@ def _model_users(context, library, key):
 
 
 class AERON_OT_libraries_refresh(Operator):
-    """Read the project's effect libraries, and which models use them, again"""
+    """Read the effect libraries of the project again, and which models use them"""
 
     bl_idname = "aeron.libraries_refresh"
     bl_label = "Refresh Libraries"
@@ -370,21 +372,22 @@ class AERON_OT_libraries_refresh(Operator):
         try:
             loaded = libraries.load(cooker, libraries.effects_dir(context))
         except (OSError, RuntimeError, ValueError) as error:
-            self.report({'ERROR'}, "reading the libraries: {}".format(error))
+            self.report({'ERROR'}, "Cannot read the libraries: {}".format(error))
             return {'CANCELLED'}
         libraries.sync(context)
         if loaded.errors:
-            self.report({'WARNING'}, "{} file(s) not read: {}".format(len(loaded.errors), loaded.errors[0]))
+            self.report({'WARNING'}, "Could not read {} file(s): {}".format(len(loaded.errors), loaded.errors[0]))
         else:
-            self.report({'INFO'}, "{} libraries".format(len(loaded.libraries)))
+            self.report({'INFO'}, "Loaded {} libraries".format(len(loaded.libraries)))
         flipbook_preview.schedule()
         return {'FINISHED'}
 
 
 def _place(source, library_dir):
-    """Where image file `source` goes in the library: where it is when inside
-    it, else frames/<its name>. Returns (target, relative path); raises
-    ValueError when the target holds another file."""
+    """Returns where the image file `source` goes in the library, as (target,
+    relative path). A file inside the library stays where it is, and other
+    files go to frames/<file name>. Raises ValueError when the target exists
+    with other content."""
     source = os.path.abspath(source)
     if os.path.commonpath([source, os.path.abspath(library_dir)]) == os.path.abspath(library_dir):
         target = source
@@ -396,8 +399,8 @@ def _place(source, library_dir):
 
 
 class AERON_OT_library_add_images(Operator, ImportHelper):
-    """Add PNG images to the selected library: copied into its frames/, one image per file, keyed by file name
-(an emissive image's base colour: <key>_base_color.png). Writes the library file at once"""
+    """Add PNG images to the selected library, keyed by file name, and write the library file at once.
+An emissive image takes its base color from <key>_base_color.png"""
 
     bl_idname = "aeron.library_add_images"
     bl_label = "Add Images"
@@ -408,10 +411,10 @@ class AERON_OT_library_add_images(Operator, ImportHelper):
     directory: StringProperty(subtype='DIR_PATH', options={'HIDDEN', 'SKIP_SAVE'})
     create: BoolProperty(options={'HIDDEN', 'SKIP_SAVE'})
     new_library: StringProperty(name="Library Name", options={'SKIP_SAVE'},
-                                description="The new library's name: a-z, 0-9, '_' and '-'")
+                                description="Name of the new library. Use a-z, 0-9, '_' and '-'")
     kind: EnumProperty(name="Kind", items=libraries.KINDS, default="baseColor")
     max_size: IntProperty(name="Max Size", default=0, min=0, max=1024,
-                          description="Cap of the images' longer side (0: the default, 1024)")
+                          description="Largest size of the longer side, in texels. 0 uses the default, 1024")
 
     @classmethod
     def poll(cls, context):
@@ -420,7 +423,7 @@ class AERON_OT_library_add_images(Operator, ImportHelper):
     @classmethod
     def description(cls, context, properties):
         if properties.create:
-            return "Create an effect library from PNG images (writes its files at once)"
+            return "Create an effect library from PNG images and write its files at once"
         return cls.__doc__
 
     def draw(self, context):
@@ -439,14 +442,14 @@ class AERON_OT_library_add_images(Operator, ImportHelper):
         name = self.new_library if self.create else libraries.selected_library(context)
         if self.create and (not LIBRARY_NAME.match(name) or name in loaded.libraries or
                             os.path.exists(loaded.library_path(name))):
-            self.report({'ERROR'}, "a new library needs a new name of a-z, 0-9, '_' and '-'")
+            self.report({'ERROR'}, "Give the new library an unused name of a-z, 0-9, '_' and '-'")
             return {'CANCELLED'}
         if not name:
-            self.report({'ERROR'}, "select a library, or name a new one")
+            self.report({'ERROR'}, "Select a library or name a new one")
             return {'CANCELLED'}
         paths = [os.path.join(self.directory, item.name) for item in self.files if item.name]
         images = {}
-        # An emissive image's base colour is <key>_base_color.png beside it.
+        # The base colour of an emissive image is <key>_base_color.png in the same folder.
         inputs = libraries.INPUTS[self.kind]
         for path in sorted(paths):
             stem = os.path.splitext(os.path.basename(path))[0]
@@ -458,9 +461,9 @@ class AERON_OT_library_add_images(Operator, ImportHelper):
         lonely = sorted(key for key, files in images.items() if inputs[0] not in files)
         taken = sorted(key for key in images if key in loaded.libraries.get(name, {}).get("images", {}))
         if not images or lonely or taken:
-            self.report({'ERROR'}, "no image" if not images else
-                        "base colour without its emissive image: " + ", ".join(lonely) if lonely else
-                        "library {} has these keys already: {}".format(name, ", ".join(taken)))
+            self.report({'ERROR'}, "No images selected" if not images else
+                        "Base color images without an emissive image: " + ", ".join(lonely) if lonely else
+                        "Library {} already has these keys: {}".format(name, ", ".join(taken)))
             return {'CANCELLED'}
         library_dir = os.path.dirname(loaded.library_path(name))
         document = _document(loaded, name)
@@ -483,7 +486,7 @@ class AERON_OT_library_add_images(Operator, ImportHelper):
                 os.makedirs(os.path.dirname(target), exist_ok=True)
                 shutil.copyfile(source, target)
         if not _write(self, context, loaded, cooker, name, document,
-                      "{} image(s) added to {}".format(len(images), name)):
+                      "Added {} image(s) to {}".format(len(images), name)):
             return {'CANCELLED'}
         libraries.state(context).added = json.dumps([name, sorted(images)])
         libraries.select(context, name, sorted(images)[0])
@@ -495,8 +498,8 @@ _image_list = []
 
 
 def _image_items(self, context):
-    """Blender's images, painted ones included (kept referenced: Blender
-    reads the strings after the call)."""
+    """The images in Blender, painted ones included. The list stays
+    referenced because Blender reads the strings after the call returns."""
     _image_list[:] = [(image.name, image.name, "") for image in bpy.data.images
                       if image.type not in {'RENDER_RESULT', 'COMPOSITING'} and not image.get(flipbook_preview.TAG)
                       ] or [("", "(no image)", "")]
@@ -504,16 +507,16 @@ def _image_items(self, context):
 
 
 class AERON_OT_library_add_blender_image(Operator):
-    """Save an image painted in Blender as a PNG in the selected library's frames/, and add it.
+    """Save an image painted in Blender as a PNG in the selected library, and add it.
 Writes the library file at once"""
 
     bl_idname = "aeron.library_add_blender_image"
     bl_label = "Add Blender Image"
     image: EnumProperty(name="Image", items=_image_items)
-    key: StringProperty(name="Key", description="The image's key (empty: the image's name)")
+    key: StringProperty(name="Key", description="Key of the image in the library. Empty uses the image name")
     kind: EnumProperty(name="Kind", items=libraries.KINDS, default="baseColor")
     max_size: IntProperty(name="Max Size", default=0, min=0, max=1024,
-                          description="Cap of the image's longer side (0: the default, 1024)")
+                          description="Largest size of the longer side, in texels. 0 uses the default, 1024")
 
     @classmethod
     def poll(cls, context):
@@ -528,20 +531,20 @@ Writes the library file at once"""
         name = libraries.selected_library(context)
         if loaded is None or image is None or not name:
             if loaded is not None:
-                self.report({'ERROR'}, "select a library and an image")
+                self.report({'ERROR'}, "Select a library and an image")
             return {'CANCELLED'}
         key = self.key or os.path.splitext(image.name)[0]
         document = _document(loaded, name)
         if key in document["images"]:
-            self.report({'ERROR'}, "library {} has key {} already".format(name, key))
+            self.report({'ERROR'}, "Library {} already has key {}".format(name, key))
             return {'CANCELLED'}
         library_dir = os.path.dirname(loaded.library_path(name))
         target = os.path.join(library_dir, "frames", key + ".png")
         if os.path.exists(target):
-            self.report({'ERROR'}, "{} exists".format(target))
+            self.report({'ERROR'}, "{} already exists".format(target))
             return {'CANCELLED'}
         os.makedirs(os.path.dirname(target), exist_ok=True)
-        # The image becomes that file: repaints are saved with Image > Save.
+        # The image now uses that file, so later repaints are saved with Image > Save.
         image.filepath_raw = target
         image.file_format = 'PNG'
         image.save()
@@ -549,7 +552,7 @@ Writes the library file at once"""
         if self.max_size:
             entry["maxSize"] = self.max_size
         document["images"][key] = entry
-        if not _write(self, context, loaded, cooker, name, document, "image {} added to {}".format(key, name)):
+        if not _write(self, context, loaded, cooker, name, document, "Added image {} to {}".format(key, name)):
             return {'CANCELLED'}
         libraries.state(context).added = json.dumps([name, [key]])
         libraries.select(context, name, key)
@@ -564,17 +567,22 @@ class _ImageOperator:
 
 
 class AERON_OT_library_edit_image(_ImageOperator, Operator):
-    """Change the selected library image: its kind, inputs (paths relative to the library), size cap and crop.
+    """Change the kind, inputs, size cap and crop of the selected library image.
 Writes the library file at once"""
 
     bl_idname = "aeron.library_edit_image"
     bl_label = "Edit Image"
     kind: EnumProperty(name="Kind", items=libraries.KINDS)
-    base_color: StringProperty(name="Base Colour", description="baseColor input (empty: none)")
-    emissive: StringProperty(name="Emissive", description="emissive input (empty: none)")
-    factor: StringProperty(name="Factor", description="factor input (empty: none)")
-    max_size: IntProperty(name="Max Size", min=0, max=1024, description="0: the default, 1024")
-    has_crop: BoolProperty(name="Crop", description="The part of the image a blast mark's [0, 1] maps to")
+    base_color: StringProperty(name="Base Color",
+                               description="Path of the base color input, relative to the library. Empty for none")
+    emissive: StringProperty(name="Emissive",
+                             description="Path of the emissive input, relative to the library. Empty for none")
+    factor: StringProperty(name="Factor",
+                           description="Path of the damage factor input, relative to the library. Empty for none")
+    max_size: IntProperty(name="Max Size", min=0, max=1024,
+                          description="Largest size of the longer side, in texels. 0 uses the default, 1024")
+    has_crop: BoolProperty(name="Crop",
+                           description="Part of the image that the [0, 1] texture range of a blast mark maps to")
     crop: FloatVectorProperty(name="Crop", size=4, default=(0.0, 0.0, 1.0, 1.0))
 
     def invoke(self, context, event):
@@ -592,7 +600,7 @@ Writes the library file at once"""
 
     def draw(self, context):
         layout = self.layout
-        layout.label(text="{} of {}".format(libraries.selected_image(context), libraries.selected_library(context)))
+        layout.label(text="{} in {}".format(libraries.selected_image(context), libraries.selected_library(context)))
         layout.prop(self, "kind")
         for field, prop in (("baseColor", "base_color"), ("emissive", "emissive"), ("factor", "factor")):
             if field in libraries.INPUTS[self.kind]:
@@ -618,7 +626,7 @@ Writes the library file at once"""
             entry["crop"] = list(self.crop)
         document = _document(loaded, name)
         document["images"][key] = entry
-        if not _write(self, context, loaded, cooker, name, document, "image {} of {} changed".format(key, name)):
+        if not _write(self, context, loaded, cooker, name, document, "Changed image {} in {}".format(key, name)):
             return {'CANCELLED'}
         libraries.select(context, name, key)
         flipbook_preview.schedule()
@@ -635,16 +643,16 @@ def _draw_users(layout, context, library, key):
     others = loaded.users_of(library, key, exclude=libraries.model_key(root) if root else None)
     here = _model_users(context, library, key)
     if others:
-        layout.label(text="Used by: " + _names(others), icon='ERROR')
+        layout.label(text="Used by other models: " + _names(others), icon='ERROR')
     if here:
-        layout.label(text="This model: " + _names(here))
+        layout.label(text="Used by this model: " + _names(here))
     if not others and not here:
         layout.label(text="Not used")
 
 
 class AERON_OT_library_remove_image(_ImageOperator, Operator):
-    """Remove the selected image from its library (its PNG files stay in frames/).
-Writes the library file at once; models that use it lose it"""
+    """Remove the selected image from its library. Its PNG files stay in frames/.
+Writes the library file at once. Models that use the image lose it"""
 
     bl_idname = "aeron.library_remove_image"
     bl_label = "Remove Image"
@@ -664,17 +672,17 @@ Writes the library file at once; models that use it lose it"""
         name, key = libraries.selected_library(context), libraries.selected_image(context)
         document = _document(loaded, name)
         if len(document["images"]) == 1:
-            self.report({'ERROR'}, "a library keeps at least one image: delete its directory to remove it")
+            self.report({'ERROR'}, "A library needs at least one image. Delete its folder to remove the library")
             return {'CANCELLED'}
         del document["images"][key]
-        if not _write(self, context, loaded, cooker, name, document, "image {} removed from {}".format(key, name)):
+        if not _write(self, context, loaded, cooker, name, document, "Removed image {} from {}".format(key, name)):
             return {'CANCELLED'}
         flipbook_preview.schedule()
         return {'FINISHED'}
 
 
 class AERON_OT_library_rename_image(_ImageOperator, Operator):
-    """Rename the selected image's key, and this model's frames that use it (not other models').
+    """Rename the key of the selected image, and its uses in this model. Other models keep the old key.
 Writes the library file at once"""
 
     bl_idname = "aeron.library_rename_image"
@@ -697,11 +705,11 @@ Writes the library file at once"""
         name, key = libraries.selected_library(context), libraries.selected_image(context)
         document = _document(loaded, name)
         if not self.new_key or self.new_key in document["images"]:
-            self.report({'ERROR'}, "the new key must be new to library {}".format(name))
+            self.report({'ERROR'}, "Enter a key that library {} does not have yet".format(name))
             return {'CANCELLED'}
         document["images"] = {self.new_key if k == key else k: v for k, v in document["images"].items()}
         if not _write(self, context, loaded, cooker, name, document,
-                      "image {} of {} renamed {}".format(key, name, self.new_key)):
+                      "Renamed image {} in {} to {}".format(key, name, self.new_key)):
             return {'CANCELLED'}
         renamed = 0
         root = common.model_root(context.object) if context.object else None
@@ -719,7 +727,8 @@ Writes the library file at once"""
                         renamed += 1
         libraries.select(context, name, self.new_key)
         if renamed:
-            self.report({'INFO'}, "{} use(s) renamed in this model (written when it is saved to its project)".format(renamed))
+            self.report({'INFO'}, "Renamed {} use(s) in this model. Save the model to its project to write them"
+                        .format(renamed))
         flipbook_preview.schedule()
         return {'FINISHED'}
 

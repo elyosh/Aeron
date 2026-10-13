@@ -1,11 +1,12 @@
-# Articulation preview: components turned about their hinge as the game
-# turns them, from a slider per articulation group (and a component's own
-# angle, to try a hinge). The preview starts when a slider leaves 0, taking
-# the components' transforms, and ends when all are back at 0. A component
-# keeps the rotation it was given, so the end removes exactly that, keeping
-# any edit made meanwhile, and gives back the exact transform it had when
-# nothing was edited. The exports and Check Model refuse to run during a
-# preview.
+# Articulation preview. It turns components about their hinge the way the
+# game does. Each articulation group has a slider, and each component also
+# has its own preview angle for trying out its hinge. The preview starts
+# when a slider moves away from 0 and saves the transforms of the
+# components. It ends when all sliders are back at 0. Each component stores
+# the rotation the preview gave it, so the end removes exactly that rotation
+# and keeps any edit made during the preview. If nothing was edited, the
+# component gets back its exact saved transform. The exports and Check Model
+# refuse to run during a preview.
 
 import math
 
@@ -20,7 +21,7 @@ _REST_TOLERANCE = 1e-5
 
 
 def _rest(obj):
-    """The transform channels of `obj` (all rotation modes), exactly."""
+    """Returns the exact transform channels of `obj`, for all rotation modes."""
     return (tuple(obj.location) + tuple(obj.rotation_quaternion) + tuple(obj.rotation_euler) +
             tuple(obj.rotation_axis_angle) + tuple(obj.scale))
 
@@ -31,10 +32,11 @@ def _restore(obj, rest):
 
 
 def hinge_matrix(component, turns):
-    """The turn of `turns` about the component's hinge, in its local space.
-    The renderer turns a component by -angle about its axis in the game's
-    frame, which mirrors Blender's X: +angle, right-handed, here. A zero
-    axis does not turn, as in the renderer."""
+    """Returns the rotation by `turns` about the component's hinge, in its
+    local space. The renderer turns a component by -angle about its axis in
+    the game's frame. That frame mirrors Blender's X axis, so here the
+    rotation is +angle, right-handed. A zero axis does not turn, as in the
+    renderer."""
     props = component.aeron_flight
     axis = Vector(props.rotation_axis)
     if not props.has_rotation or turns == 0.0 or axis.length < 1e-4:
@@ -45,9 +47,10 @@ def hinge_matrix(component, turns):
 
 
 def component_turns(root, component):
-    """The component's angle in the preview, in turns: its own preview
-    angle when set, otherwise its last articulation (in list order) whose
-    group's amount is not 0, at that amount of its angle."""
+    """Returns the component's angle in the preview, in turns. This is its
+    own preview angle when set. Otherwise it comes from the component's last
+    articulation in list order whose group slider is not at 0, and it is the
+    slider amount times the articulation angle."""
     if component.aeron_flight.preview_angle:
         return component.aeron_flight.preview_angle / 256.0
     props = root.aeron_flight
@@ -60,7 +63,7 @@ def component_turns(root, component):
 
 
 def _set(component, matrix):
-    """Replaces the rotation the preview gave the component by `matrix`."""
+    """Replaces the rotation that the preview gave the component with `matrix`."""
     given = Matrix([component.aeron_flight.preview_matrix[row * 4:row * 4 + 4] for row in range(4)])
     component.matrix_basis = component.matrix_basis @ given.inverted_safe() @ matrix
     component.aeron_flight.preview_matrix = [value for row in matrix for value in row]
@@ -72,8 +75,8 @@ def _wanted(root):
 
 
 def apply(root):
-    """Turns the model's components to the preview's angles, starting or
-    ending the preview as its sliders leave or come back to 0."""
+    """Turns the model's components to their preview angles. Starts the
+    preview when a slider leaves 0, and ends it when all are back at 0."""
     props = root.aeron_flight
     wanted = _wanted(root)
     if not props.preview_active:
@@ -115,8 +118,8 @@ def reset(root):
 
 
 def sync_groups(root):
-    """One slider per group the articulations name, in their order, keeping
-    the amounts of the groups that remain."""
+    """Makes one slider for each group named by the articulations, in their
+    order. Groups that still exist keep their amounts."""
     props = root.aeron_flight
     names = []
     for articulation in props.articulations:

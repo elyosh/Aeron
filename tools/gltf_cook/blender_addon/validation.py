@@ -1,6 +1,7 @@
-# Checks a flight model against the format and the loader's rules, listing
-# every problem with the object it concerns. Transforms are checked as the
-# glTF exporter writes them (relative to the parent's world matrix).
+# Checks a flight model against the rules of the format and of the game's
+# loader. Each problem is listed with the object it concerns. Transforms are
+# checked as the glTF exporter writes them, relative to the world matrix of
+# the parent.
 
 from . import animation, common, sources
 
@@ -61,7 +62,7 @@ def _check_component(problems, component):
         _check_tag(problems, component, "tag", tag)
     if props.has_descriptor_geometry and any(
             props.descriptor_bounds_min[axis] > props.descriptor_bounds_max[axis] for axis in range(3)):
-        problems.error(component, "descriptor bounds min exceeds max")
+        problems.error(component, "descriptor bounds: min is greater than max")
     collisions = 0
     for child in component.children:
         role = common.role(child)
@@ -69,7 +70,7 @@ def _check_component(problems, component):
             _check_light(problems, child)
             continue
         if role == 'none':
-            problems.warning(child, "no role under component {}: not exported".format(component.name))
+            problems.warning(child, "no role under component {}, so it is not exported".format(component.name))
             continue
         if _animated(child):
             problems.error(child, "flight model objects cannot be animated")
@@ -93,10 +94,10 @@ def _check_component(problems, component):
                 rotation, scale = matrix.to_quaternion(), matrix.to_scale()
                 if (abs(abs(rotation.w) - 1.0) > EPSILON or
                         any(abs(value - 1.0) > EPSILON for value in scale)):
-                    problems.error(child, "a hardpoint is a position only: clear its rotation and scale")
+                    problems.error(child, "a hardpoint has only a position. Clear its rotation and scale")
             elif min(abs(value) for value in matrix.to_scale()) <= EPSILON:
-                problems.error(child, "an engine glow needs a nonzero scale: X and Z are its size, "
-                                      "Y its depth")
+                problems.error(child, "an engine glow needs a nonzero scale. X and Z set its size, "
+                                      "Y its length")
         else:
             problems.error(child, "a {} cannot be under a component".format(role))
 
@@ -106,8 +107,8 @@ def _check_light(problems, obj):
         return
     light = obj.data
     if light.type not in {'POINT', 'AREA'}:
-        problems.error(obj, "{} lights are not supported: use a point or area light, or exclude "
-                            "it".format(light.type.capitalize()))
+        problems.error(obj, "{} lights are not supported. Use a point or area light, or exclude "
+                            "the light".format(light.type.capitalize()))
         return
     if obj.children:
         problems.error(obj, "a model light cannot have children")
@@ -118,7 +119,7 @@ def _check_light(problems, obj):
         problems.error(obj, "a light needs a positive scale (not mirrored)")
         return
     if not light.energy > 0.0:
-        problems.error(obj, "the light has no power")
+        problems.error(obj, "the light needs a positive power")
     shape = common.light_shape(obj, scale)
     sizes = [shape.get("length", 1.0), shape.get("radius", 1.0)] + shape.get("size", [])
     if light.type == 'AREA' and min(sizes) <= 0.0:
@@ -130,7 +131,7 @@ def _check_light(problems, obj):
 def validate(root):
     problems = Problems()
     if root is None:
-        problems.error(None, "no model root: select an object of the model (or make one)")
+        problems.error(None, "No model root. Select an object of the model, or create a model")
         return problems
     if root.type != 'EMPTY' or root.parent is not None:
         problems.error(root, "the model root must be an Empty without a parent")
@@ -139,16 +140,17 @@ def validate(root):
     if _animated(root):
         problems.error(root, "flight model objects cannot be animated")
     if root.aeron_flight.preview_active:
-        problems.error(root, "the articulation preview has turned components: reset it (Articulation Preview panel)")
+        problems.error(root, "the articulation preview has turned components. Reset it in Articulation Preview")
     parts = common.components(root)
     if not parts:
         problems.error(root, "the model has no components")
     elif len(parts) > common.MAX_COMPONENTS:
-        problems.error(root, "the model has {} components (at most {})".format(len(parts), common.MAX_COMPONENTS))
+        problems.error(root, "the model has {} components, more than the limit of {}".format(
+            len(parts), common.MAX_COMPONENTS))
     for child in root.children:
         role = common.role(child)
         if role == 'none':
-            problems.warning(child, "no role under the model root: not exported")
+            problems.warning(child, "no role under the model root, so it is not exported")
         elif role != 'component':
             problems.error(child, "a {} must be under a component, not the model root".format(role))
     for component in parts:
@@ -156,7 +158,7 @@ def validate(root):
     cockpits = [obj for component in parts for obj in common.ordered_children(component, ('hardpoint',))
                 if int(obj.aeron_flight.hardpoint_type) == common.COCKPIT_HARDPOINT_TYPE]
     for obj in cockpits[1:]:
-        problems.error(obj, "a model has at most one pilot eye hardpoint (type {})".format(
+        problems.error(obj, "a model can have only one pilot eye hardpoint (type {})".format(
             common.COCKPIT_HARDPOINT_TYPE))
 
     props = root.aeron_flight
@@ -190,7 +192,7 @@ def validate(root):
 
 
 def store(scene, problems):
-    """Keep the problems on the scene for the UI's list."""
+    """Stores the problems on the scene for the Problems list."""
     items = scene.aeron_flight.problems
     items.clear()
     for obj, message, warning in problems.items:

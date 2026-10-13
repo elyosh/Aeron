@@ -1,11 +1,13 @@
-# What the viewport shows of a model as the game would for a profile or a
-# markings value: a component set's members hidden, a variant's materials.
+# Shows a model in the viewport the way the game shows it for a profile or
+# a markings value. For a profile, the members of a component set are hidden.
+# For a markings value, the materials of a variant are used.
 #
-# A set hides its members and everything under them, flagging what it hid,
-# and shows back only what it flagged. A markings value swaps material slots
-# between the meshes' glTF variant materials; Blender's glTF exporter puts
-# the original materials back before writing, and so does the add-on's
-# export, which shows the variant again afterwards.
+# A set hides its members and everything under them, and flags each object
+# it hid. When it shows them again, it only shows the flagged objects.
+# A markings value puts the meshes' glTF variant materials in their material
+# slots. Blender's glTF exporter restores the original materials before it
+# writes the file. The add-on's export does the same, and shows the variant
+# again afterwards.
 
 import bpy
 
@@ -15,8 +17,9 @@ PROFILE_PREFIX = "hidden_by_profile."
 
 
 def profile_name(set_name):
-    """The profile whose set `set_name` is, as the game names it (lower
-    case, '.' and two hex digits for other bytes), or None."""
+    """Returns the name of the profile that the set `set_name` belongs to, or None if it is not a
+    profile set. The name is decoded as the game encodes it: lower case, with '.' and two hex digits
+    for any other byte."""
     if not set_name.startswith(PROFILE_PREFIX):
         return None
     encoded, name, index = set_name[len(PROFILE_PREFIX):], "", 0
@@ -37,8 +40,8 @@ def profile_name(set_name):
 
 
 def apply_sets(root):
-    """Hides the members of the model's sets shown hidden, and shows back
-    what a set hid and no longer does."""
+    """Hides the members of the model's sets whose preview is on. Shows again
+    the objects that a set hid but no longer hides."""
     hidden = set()
     for component_set in root.aeron_flight.component_sets:
         if component_set.preview:
@@ -64,19 +67,20 @@ def apply_sets(root):
 
 
 def _variants():
-    # Blender's glTF add-on registers its variants only once a file had some.
+    # The variants property exists only once Blender's glTF add-on has
+    # registered it, which it does when a file has variants.
     return getattr(bpy.data.scenes[0], "gltf2_KHR_materials_variants_variants", ())
 
 
 def markings_count(root):
-    """The length of the model's markings list."""
     return len(root.aeron_flight.markings)
 
 
 def markings_variant(root, markings):
-    """The variant index the game shows for `markings`, from the markings
-    list (the last entry past its end); None for the materials as modelled
-    or a name no variant has."""
+    """Returns the index of the variant that the game shows for the markings
+    value `markings`. Values past the end of the markings list use its last
+    entry. Returns None for the materials as modelled (an empty list or an
+    empty name), and for a name that no variant has."""
     entries = root.aeron_flight.markings
     if not len(entries):
         return None
@@ -88,8 +92,9 @@ def markings_variant(root, markings):
 
 
 def apply_skin(root, markings=None):
-    """Shows the look of the model's chosen markings value (`markings`
-    when given; -1 for the original materials) on its components."""
+    """Shows the materials of a markings value on the model's components.
+    `markings` defaults to the value chosen for the preview, and -1 shows
+    the original materials."""
     if markings is None:
         markings = root.aeron_flight.preview_markings
     variant = markings_variant(root, markings) if markings >= 0 else None

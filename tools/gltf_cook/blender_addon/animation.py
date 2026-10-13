@@ -1,10 +1,10 @@
-# A material's animation, as Blender properties: the flipbooks, hull damage
-# and energy effects of its AERON_flight_model object
-# (../../extensions/AERON_flight_model, ../animated_materials.md), held
-# exactly as the format expresses them, and the model root's energy default.
-# Import and Reload Animations fill them from the .gltf; the exports write
-# them back (extension, energy_default). A material's screen, which the
-# add-on does not edit, is kept as it was imported.
+# The animation of a material as Blender properties: the flipbooks, hull
+# damage and energy effects of its AERON_flight_model object
+# (../../extensions/AERON_flight_model, ../animated_materials.md), stored
+# exactly as the format writes them. Also the energy default of the model
+# root. Import and Reload Animations fill them from the .gltf, and the exports
+# write them back (extension, energy_default). The add-on does not edit the
+# screen of a material, so it keeps it as imported.
 
 import json
 import struct
@@ -24,42 +24,42 @@ from bpy.types import PropertyGroup
 
 from . import common, libraries
 
-# The game states a flipbook plays on (animated_materials.md, "States").
+# The game states that can play a flipbook (animated_materials.md, "States").
 STATES = (
-    ("always", "Always", "From the start"),
+    ("always", "Always", "Active from the start"),
     ("target", "Target", "The player has a target"),
-    ("laser_lock", "Laser lock", ""),
-    ("warhead.locking", "Warhead locking", ""),
-    ("warhead.locked", "Warhead locked", ""),
-    ("threat.laser", "Threat: laser", ""),
-    ("threat.turret", "Threat: turret", ""),
-    ("threat.beam", "Threat: beam", ""),
-    ("threat.missile_locking", "Threat: missile locking", ""),
-    ("threat.missile_locked", "Threat: missile locked", ""),
+    ("laser_lock", "Laser Lock", ""),
+    ("warhead.locking", "Warhead Locking", ""),
+    ("warhead.locked", "Warhead Locked", ""),
+    ("threat.laser", "Threat: Laser", ""),
+    ("threat.turret", "Threat: Turret", ""),
+    ("threat.beam", "Threat: Beam", ""),
+    ("threat.missile_locking", "Threat: Missile Locking", ""),
+    ("threat.missile_locked", "Threat: Missile Locked", ""),
     ("hull.75", "Hull 75%", "Hull at 75% or less"),
     ("hull.50", "Hull 50%", "Hull at 50% or less"),
     ("hull.25", "Hull 25%", "Hull at 25% or less"),
 ) + tuple(("cannon.{}".format(i), "Cannon {}".format(i), "") for i in range(1, 9)) + (
     ("broken.cmd", "Broken: CMD", ""),
-    ("broken.laser_ion", "Broken: laser and ion", ""),
-    ("broken.beam_weapon", "Broken: beam weapon", ""),
-    ("broken.shields", "Broken: shields", ""),
-    ("broken.throttle", "Broken: throttle", ""),
-    ("broken.sensors", "Broken: sensors", ""),
-    ("broken.laser_recharge", "Broken: laser recharge", ""),
-    ("broken.engine_power", "Broken: engine power", ""),
-    ("broken.shield_recharge", "Broken: shield recharge", ""),
-    ("broken.beam_recharge", "Broken: beam recharge", ""),
-    ("hangar", "Hangar", "The craft is in a hangar"),
+    ("broken.laser_ion", "Broken: Laser and Ion", ""),
+    ("broken.beam_weapon", "Broken: Beam Weapon", ""),
+    ("broken.shields", "Broken: Shields", ""),
+    ("broken.throttle", "Broken: Throttle", ""),
+    ("broken.sensors", "Broken: Sensors", ""),
+    ("broken.laser_recharge", "Broken: Laser Recharge", ""),
+    ("broken.engine_power", "Broken: Engine Power", ""),
+    ("broken.shield_recharge", "Broken: Shield Recharge", ""),
+    ("broken.beam_recharge", "Broken: Beam Recharge", ""),
+    ("hangar", "Hangar", "The player's craft is in a hangar"),
 )
 ENERGIES = ("shields", "tractor", "jamming")
-# A flipbook layer, and the image kind its frames have.
-LAYERS = (("baseColor", "Base colour", "Frames painted over the base colour"),
+# The flipbook layers. A layer is also the image kind of its frames.
+LAYERS = (("baseColor", "Base Color", "Frames painted over the base color"),
           ("emissive", "Emissive", "Frames that replace the emissive"))
 
 
 def _frame_search(self, context, text):
-    """The keys of the frame's flipbook's library, of its layer's kind."""
+    """Keys of the images in the flipbook library whose kind matches the flipbook layer."""
     flipbook = _owner(self, "flipbooks")
     return libraries.search_keys(context, flipbook.library, flipbook.layer, text) if flipbook else []
 
@@ -80,7 +80,7 @@ def _preview_update(self, context):
 
 
 def _owner(item, collection):
-    """The element of the material's `collection` that holds `item`."""
+    """The element of `collection` in the material that holds `item`."""
     path = item.path_from_id()
     marker = "aeron_flight.{}[".format(collection)
     if marker not in path:
@@ -90,9 +90,9 @@ def _owner(item, collection):
 
 
 class AeronEnergy(PropertyGroup):
-    shields: BoolProperty(name="Shields", description="Shield hits and shields going down")
-    tractor: BoolProperty(name="Tractor", description="Tractor beams")
-    jamming: BoolProperty(name="Jamming", description="Jamming beams")
+    shields: BoolProperty(name="Shields", description="Show shield hits and shields going down")
+    tractor: BoolProperty(name="Tractor", description="Show tractor beams")
+    jamming: BoolProperty(name="Jamming", description="Show jamming beams")
 
     def get(self):
         return [name for name in ENERGIES if getattr(self, name)]
@@ -104,62 +104,67 @@ class AeronEnergy(PropertyGroup):
 
 class AeronFrame(PropertyGroup):
     key: StringProperty(name="Key", search=_frame_search, search_options={'SUGGESTION'}, update=_preview_update,
-                        description="The frame's image, a key of the flipbook's library")
+                        description="Key of the frame image in the flipbook library")
     seconds: FloatProperty(name="Seconds", default=0.1, min=0.0, precision=3, step=1, update=_preview_update,
                            description="How long the frame shows")
 
 
 class AeronFlipbook(PropertyGroup):
     state: EnumProperty(name="State", items=STATES, default="always", update=_preview_update,
-                        description="The game state the flipbook plays on, from the moment it becomes active")
+                        description="The flipbook plays from the moment this game state becomes active")
     layer: EnumProperty(name="Layer", items=LAYERS, default="baseColor", update=_preview_update,
-                        description="What the frames change; per layer, the first active flipbook plays")
-    mode: EnumProperty(name="Mode", items=(("loop", "Loop", "Repeat"), ("once", "Once", "Hold the last frame")),
+                        description="What the frames change. On each layer, the first flipbook with an active "
+                                    "state plays")
+    mode: EnumProperty(name="Mode", items=(("loop", "Loop", "Repeat the frames"),
+                                           ("once", "Once", "Play once and hold the last frame")),
                        default="loop", update=_preview_update)
     library: StringProperty(name="Library", search=_library_search, search_options={'SUGGESTION'},
-                            update=_preview_update, description="The effect library of the frames")
-    emissive_strength: FloatProperty(name="Emissive Strength", default=1.0, min=0.0, soft_max=10.0,
-                                     update=_preview_update, description="Brightness of emissive frames")
+                            update=_preview_update, description="Effect library that holds the frames")
+    emissive_strength: FloatProperty(name="Strength", default=1.0, min=0.0, soft_max=10.0,
+                                     update=_preview_update, description="Brightness of the emissive frames")
     unlit: FloatProperty(name="Unlit", default=0.0, min=0.0, max=1.0, subtype='FACTOR', update=_preview_update,
-                         description="Base colour flipbooks: the part of the frames drawn unlit, as emission")
+                         description="Part of the frames drawn unlit, as emission. For screens whose material "
+                                     "is unlit")
     frames: CollectionProperty(type=AeronFrame)
     active_frame: IntProperty()
 
 
 class AeronDamageAlternative(PropertyGroup):
     stage_75: StringProperty(name="75%", search=_stage_search, search_options={'SUGGESTION'},
-                             description="The damage image at 75% hull (empty: none)")
+                             description="Damage image at 75% hull. Empty shows none")
     stage_50: StringProperty(name="50%", search=_stage_search, search_options={'SUGGESTION'},
-                             description="The damage image at 50% hull (empty: none)")
+                             description="Damage image at 50% hull. Empty shows none")
     stage_25: StringProperty(name="25%", search=_stage_search, search_options={'SUGGESTION'},
-                             description="The damage image at 25% hull (empty: none)")
-    has_scale: BoolProperty(name="Scale", description="Place a random square instead of the whole texture")
-    scale: FloatVectorProperty(name="Scale", size=2, default=(0.2, 0.5), min=0.0, max=1.0,
-                               description="The square's [min, max] side, a fraction of the texture")
+                             description="Damage image at 25% hull. Empty shows none")
+    has_scale: BoolProperty(name="Random Square",
+                            description="Show the damage in a square of random size instead of the whole texture")
+    scale: FloatVectorProperty(name="Square Size", size=2, default=(0.2, 0.5), min=0.0, max=1.0,
+                               description="Smallest and largest side of the square, as a fraction of the texture")
     offset_mode: EnumProperty(
         name="Offset", default='NONE',
-        items=(('NONE', "Centred", "The square is centred"),
-               ('INSIDE', "Inside", "Anywhere within the texture"),
-               ('RANGE', "Range", "Moved by min + (max - min)·r per axis, r random in [0, 1)")))
+        items=(('NONE', "Centered", "Center the square"),
+               ('INSIDE', "Inside", "Place the square anywhere within the texture"),
+               ('RANGE', "Range", "Move the square by a random offset between Min and Max on each axis")))
     offset_min: FloatVectorProperty(name="Min", size=2, default=(-0.2, -0.2),
-                                    description="The smallest [x, y] offset, as a fraction of the texture")
+                                    description="Smallest x and y offset, as a fraction of the texture")
     offset_max: FloatVectorProperty(name="Max", size=2, default=(0.2, 0.2),
-                                    description="The largest [x, y] offset, as a fraction of the texture")
+                                    description="Largest x and y offset, as a fraction of the texture")
 
 
 class AeronDamage(PropertyGroup):
     library: StringProperty(name="Library", search=_library_search, search_options={'SUGGESTION'},
-                            description="The effect library of the damage images")
+                            description="Effect library that holds the damage images")
     choice: IntProperty(name="Choice", min=0,
-                        description="Materials with the same choice pick the same alternative")
+                        description="Each object picks one alternative. Materials with the same choice pick the "
+                                    "same one")
     placement: IntProperty(name="Placement", min=0,
-                           description="Materials with the same placement share the random placement")
+                           description="Materials with the same placement share the same random square")
     alternatives: CollectionProperty(type=AeronDamageAlternative)
     active_alternative: IntProperty()
 
 
 def _energy_override_update(self, context):
-    """Overriding starts from the model's default."""
+    """When the override is turned on, start from the default of the model."""
     root = common.model_root(context.object) if self.energy_override and context.object else None
     if root is not None:
         self.energy.set(energy_default(root) or ())
@@ -167,8 +172,8 @@ def _energy_override_update(self, context):
 
 class AeronAnimation:
     """The animation fields of AeronMaterialProperties (properties.py)."""
-    # Whether the entry gives `flipbooks` (an empty list still replaces the
-    # glTF material's own).
+    # Whether the entry has `flipbooks`. An empty list still replaces the
+    # flipbooks of the glTF material.
     flipbooks_given: BoolProperty()
     flipbooks: CollectionProperty(type=AeronFlipbook)
     active_flipbook: IntProperty()
@@ -176,11 +181,11 @@ class AeronAnimation:
     damage: PointerProperty(type=AeronDamage)
     energy_override: BoolProperty(
         name="Own Energy Effects", update=_energy_override_update,
-        description="Give the material its own energy effects instead of the model's default (set on the "
-                    "model root: Object properties > Material Animations)")
+        description="Use energy effects for this material instead of the model's default. The default is set "
+                    "on the model root, in Object Properties > Material Animations")
     energy: PointerProperty(type=AeronEnergy)
-    # The material's screen (its AERON_flight_model `screen`, JSON), kept as
-    # imported: the add-on does not edit screens.
+    # The `screen` of the material's AERON_flight_model object, as JSON. The
+    # add-on does not edit screens, so it keeps it as imported.
     screen: StringProperty(options={'HIDDEN'})
 
 
@@ -205,7 +210,7 @@ def clear(material):
 
 
 def set_entry(material, entry):
-    """Fill `material`'s animation from its file entry (None: none)."""
+    """Fills the animation of `material` from its file entry. A None entry clears it."""
     clear(material)
     props = material.aeron_flight
     if not entry:
@@ -247,7 +252,7 @@ def set_entry(material, entry):
 
 
 def entry(material):
-    """`material`'s file entry, or None when it has no animation."""
+    """The file entry of `material`, or None when it has no animation."""
     props = material.aeron_flight
     result = {}
     if props.flipbooks_given or len(props.flipbooks):
@@ -282,7 +287,7 @@ def entry(material):
 
 
 def entries(names):
-    """The entries of the Blender materials `names` that have one."""
+    """The file entries of the Blender materials in `names`, for those that have one."""
     result = {}
     for name in names:
         material = bpy.data.materials.get(name)
@@ -293,9 +298,10 @@ def entries(names):
 
 
 def shortest(value):
-    """`value` with each number as the shortest decimal that reads back as
-    the same 32-bit float (the properties' precision), and the defaults the
-    format leaves out (emissiveStrength 1, unlit 0) removed."""
+    """Returns `value` with each number written as the shortest decimal that
+    reads back as the same 32-bit float, the precision of the properties. Also
+    removes the defaults that the format leaves out (emissiveStrength 1,
+    unlit 0)."""
     if isinstance(value, dict):
         out = {key: shortest(item) for key, item in value.items()}
         if out.get("emissiveStrength") == 1:
@@ -316,8 +322,8 @@ def shortest(value):
 
 
 def extension(material):
-    """`material`'s AERON_flight_model object (its animation and kept
-    screen), or None when it has neither."""
+    """The AERON_flight_model object of `material`, with its animation and
+    its kept screen. None when it has neither."""
     result = shortest(entry(material) or {})
     if material.aeron_flight.screen:
         result["screen"] = json.loads(material.aeron_flight.screen)
@@ -337,10 +343,10 @@ def set_energy_default(root, energy):
 
 
 def check(problems, root, materials):
-    """Adds the problems of `materials`' animations (the model `root`'s) that
-    the cooker would refuse: frames or stages without a library, damage
-    without alternatives, and, when the model's libraries are loaded, a
-    library, key or image kind they do not have."""
+    """Adds the animation problems of `materials` in the model `root` that
+    the cooker would refuse: frames or stages without a library, and damage
+    without alternatives. When the libraries of the model are loaded, also
+    a library, key or image kind that they do not have."""
     loaded = libraries.project_of(root)
     users = {}
     for obj in [root] + list(root.children_recursive):
@@ -374,16 +380,16 @@ def check(problems, root, materials):
             if not props.damage.library:
                 problems.error(owner, what + ": it needs a library")
             if not len(props.damage.alternatives):
-                problems.error(owner, what + ": it needs an alternative")
+                problems.error(owner, what + ": it needs at least one alternative")
             for alternative in props.damage.alternatives:
                 for key in (alternative.stage_75, alternative.stage_50, alternative.stage_25):
                     image(owner, what, props.damage.library, key, "damage")
 
 
 def float32(value):
-    """`value` with its numbers at 32-bit precision (the properties' and the
-    game's), and the defaults the canonical form leaves out removed, to
-    compare a file's values with the properties'."""
+    """Returns `value` with its numbers at 32-bit precision, as in the
+    properties and the game, and without the defaults that the canonical form
+    leaves out. Used to compare the values of a file with the properties."""
     if isinstance(value, dict):
         out = {key: float32(item) for key, item in value.items()}
         if out.get("emissiveStrength") == 1.0:

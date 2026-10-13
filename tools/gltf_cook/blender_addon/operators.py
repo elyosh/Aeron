@@ -10,7 +10,7 @@ from . import animation, common, display, preview, sources, validation
 
 
 def _component(obj):
-    """The component `obj` is or belongs to."""
+    """The component that `obj` is or belongs to."""
     while obj is not None and common.role(obj) != 'component':
         obj = obj.parent
     return obj
@@ -24,7 +24,7 @@ def _select_only(context, obj):
 
 
 def _parent_at(obj, parent, world_location):
-    """Parent `obj` with an identity local rotation and scale at `world_location`."""
+    """Parent `obj` to `parent` at `world_location`, with no local rotation and a scale of 1."""
     obj.parent = parent
     obj.matrix_parent_inverse.identity()
     obj.location = parent.matrix_world.inverted() @ world_location
@@ -36,7 +36,7 @@ def _renumber(objects):
 
 
 class AERON_OT_make_flight_model(Operator):
-    """Make the selected meshes the components of a flight model (a new one, or the active model root)"""
+    """Make the selected meshes components of the active model root, or of a new flight model"""
 
     bl_idname = "aeron.make_flight_model"
     bl_label = "Make Flight Model"
@@ -67,12 +67,12 @@ class AERON_OT_make_flight_model(Operator):
             obj.aeron_flight.order = order
             order += 1
         _select_only(context, root)
-        self.report({'INFO'}, "{}: {} component(s)".format(root.name, len(common.components(root))))
+        self.report({'INFO'}, "{} has {} component(s)".format(root.name, len(common.components(root))))
         return {'FINISHED'}
 
 
 class AERON_OT_add(Operator):
-    """Add a part to the active component, at the 3D cursor"""
+    """Add a part to the active component at the 3D cursor"""
 
     bl_idname = "aeron.add"
     bl_label = "Add to Component"
@@ -80,11 +80,11 @@ class AERON_OT_add(Operator):
 
     kind: EnumProperty(items=[
         ('hardpoint', "Hardpoint", "A weapon or attachment point"),
-        ('engineGlow', "Engine Glow", "An engine glow, looking toward -Y; X and Z scale are its size"),
-        ('collision', "Collision Mesh", "A copy of the component's mesh to simplify into its collision mesh"),
+        ('engineGlow', "Engine Glow", "An engine glow facing -Y, sized by its X and Z scale"),
+        ('collision', "Collision Mesh", "A copy of the component's mesh, to simplify into its collision mesh"),
         ('point', "Point Light", "A point light"),
         ('panel', "Panel Light", "A one-sided rectangle light, such as a ceiling panel"),
-        ('tube', "Tube Light", "A tube light along its X size"),
+        ('tube', "Tube Light", "A tube light whose length is its X size"),
     ])
 
     @classmethod
@@ -129,7 +129,7 @@ class AERON_OT_add(Operator):
 
 
 class AERON_OT_move(Operator):
-    """Move the list's active item up or down in its order"""
+    """Move the active item up or down the list"""
 
     bl_idname = "aeron.move"
     bl_label = "Move"
@@ -180,17 +180,17 @@ class AERON_OT_select(Operator):
 
 
 class AERON_OT_from_cursor(Operator):
-    """Set from the 3D cursor, in the component's local space"""
+    """Take the value from the 3D cursor location, or from its rotation for the hinge axes"""
 
     bl_idname = "aeron.from_cursor"
     bl_label = "From 3D Cursor"
     bl_options = {'REGISTER', 'UNDO'}
 
     field: EnumProperty(items=[
-        ('pivot', "Pivot", "The hinge's pivot at the cursor"),
-        ('axes', "Axes", "The hinge's axes from the cursor's rotation: rotation axis its Y, "
-                         "direction its Z, up its X"),
-        ('target', "Target", "The target at the cursor"),
+        ('pivot', "Pivot", "Put the hinge pivot at the 3D cursor"),
+        ('axes', "Axes", "Set the hinge axes from the 3D cursor rotation. Its Y is the rotation axis, "
+                         "Z the direction axis and X the up axis"),
+        ('target', "Target", "Put the target point at the 3D cursor"),
     ])
 
     @classmethod
@@ -212,8 +212,8 @@ class AERON_OT_from_cursor(Operator):
 
 
 class AERON_OT_descriptor_from_bounds(Operator):
-    """Author the descriptor from the bounds of the collision mesh (or the component's mesh), as the game
-    computes it when none is authored"""
+    """Set the descriptor from the bounds of the collision mesh (or else the component's mesh), the way the
+    game computes it"""
 
     bl_idname = "aeron.descriptor_from_bounds"
     bl_label = "From Mesh Bounds"
@@ -243,14 +243,14 @@ class AERON_OT_descriptor_from_bounds(Operator):
 
 
 class AERON_OT_component_articulation(Operator):
-    """Add an articulation turning this component, or remove one, from the model root's list"""
+    """Add or remove an articulation that turns this component"""
 
     bl_idname = "aeron.component_articulation"
     bl_label = "Component Articulation"
     bl_options = {'REGISTER', 'UNDO'}
 
     action: EnumProperty(items=[('ADD', "Add", ""), ('REMOVE', "Remove", "")])
-    index: IntProperty(default=-1, description="The articulation to remove, in the model root's list")
+    index: IntProperty(default=-1, description="Position of the articulation to remove in the model root's list")
 
     @classmethod
     def poll(cls, context):
@@ -277,7 +277,7 @@ class AERON_OT_component_articulation(Operator):
 
 
 class AERON_OT_articulation_reset(Operator):
-    """Set the articulation preview's sliders back to 0, turning the components back as modelled"""
+    """Set the preview sliders and angles back to 0, which puts the components back as modeled"""
 
     bl_idname = "aeron.articulation_reset"
     bl_label = "Reset Preview"
@@ -317,7 +317,7 @@ class AERON_OT_validate(Operator):
 
 
 class AERON_OT_list_edit(Operator):
-    """Add or remove an item of the model root's list"""
+    """Add or remove list items"""
 
     bl_idname = "aeron.list_edit"
     bl_label = "Edit List"
@@ -379,14 +379,14 @@ class AERON_OT_list_edit(Operator):
 
 
 class AERON_OT_show_skin(Operator):
-    """Show the variant the game gives this markings value, or the materials as modelled"""
+    """Show the variant the game uses for a markings value, or the materials as modeled"""
 
     bl_idname = "aeron.show_skin"
     bl_label = "Show Markings"
     bl_options = {'REGISTER', 'UNDO'}
 
     markings: IntProperty(name="Markings", min=-1, default=-1,
-                          description="The markings value; -1: the materials as modelled")
+                          description="Markings value to show, or -1 for the materials as modeled")
 
     @classmethod
     def poll(cls, context):
@@ -395,7 +395,7 @@ class AERON_OT_show_skin(Operator):
     @classmethod
     def description(cls, context, properties):
         if properties.markings < 0:
-            return "Show the meshes' own materials, which the exports write, instead of a markings value's variant"
+            return "Show the materials as modeled, which are the ones exported"
         return "Show the variant the game draws for markings value {}".format(properties.markings)
 
     def execute(self, context):
@@ -406,7 +406,7 @@ class AERON_OT_show_skin(Operator):
 
 
 def pilot_eye(root):
-    """The model's pilot eye hardpoint (the first, in component order), or None."""
+    """The model's first pilot eye hardpoint in component order, or None."""
     for component in common.components(root):
         for child in common.ordered_children(component, roles=('hardpoint',)):
             if int(child.aeron_flight.hardpoint_type) == common.COCKPIT_HARDPOINT_TYPE:
@@ -415,7 +415,7 @@ def pilot_eye(root):
 
 
 class AERON_OT_view_pilot_eye(Operator):
-    """Look from the model's pilot eye hardpoint toward the model's forward (-Y), its up up"""
+    """Look from the pilot eye hardpoint along the model's forward axis (-Y), with the model's +Z up"""
 
     bl_idname = "aeron.view_pilot_eye"
     bl_label = "View From Pilot Eye"
@@ -431,7 +431,7 @@ class AERON_OT_view_pilot_eye(Operator):
         eye = pilot_eye(root).matrix_world.translation
         basis = root.matrix_world.to_3x3().normalized()
         forward, up = basis @ Vector((0.0, -1.0, 0.0)), basis @ Vector((0.0, 0.0, 1.0))
-        # A view looks along its -Z, its Y up; it orbits a point ahead.
+        # A 3D view looks along its -Z axis with Y up, and orbits a point in front of it.
         rv3d = context.space_data.region_3d
         rv3d.view_perspective = 'PERSP'
         rv3d.view_rotation = Matrix((forward.cross(up), up, -forward)).transposed().to_quaternion()
@@ -441,7 +441,7 @@ class AERON_OT_view_pilot_eye(Operator):
 
 
 class AERON_OT_clear_animation(Operator):
-    """Remove the material's animation (flipbooks, hull damage and own energy effects)"""
+    """Remove the material's flipbooks, hull damage and own energy effects"""
 
     bl_idname = "aeron.clear_animation"
     bl_label = "Clear Animation"
@@ -457,7 +457,7 @@ class AERON_OT_clear_animation(Operator):
 
 
 class AERON_OT_reload_animations(Operator):
-    """Read the materials' animations and the energy default again from the model's .gltf, replacing them"""
+    """Reload the material animations and the energy default from the model's .gltf file"""
 
     bl_idname = "aeron.reload_animations"
     bl_label = "Reload Animations"
@@ -473,7 +473,7 @@ class AERON_OT_reload_animations(Operator):
         try:
             document = sources.read_document(path)
         except (OSError, ValueError) as error:
-            self.report({'ERROR'}, "cannot read {}: {}".format(path, error))
+            self.report({'ERROR'}, "Cannot read {}: {}".format(path, error))
             return {'CANCELLED'}
         extensions = sources.material_extensions(document)
         animation.set_energy_default(root, sources.model_extension(document).get("energy"))

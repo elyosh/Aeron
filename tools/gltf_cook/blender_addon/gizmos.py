@@ -1,8 +1,9 @@
-# Gizmos for the active component, shown with their overlays: move gizmos
-# for the target point (with a target ID) and the hinge's pivot, a dial per hinge axis turning
-# the three axes together, and a cage resizing the authored descriptor box.
-# They write the component's properties, in its local space. Blender
-# records no undo step for a gizmo, so one is pushed when a drag ends.
+# Gizmos for the active component, shown with their overlays. There is a
+# move gizmo for the target point (when the component has a target ID) and
+# one for the hinge pivot, a dial for each hinge axis that turns all three
+# axes together, and a cage that resizes the authored descriptor box. They
+# write the component's properties in its local space. Blender does not
+# record an undo step for a gizmo, so the add-on pushes one when a drag ends.
 
 import bpy
 from bpy.types import GizmoGroup
@@ -58,7 +59,7 @@ def _end_drag():
 
 
 def _sync_descriptor(props, low, high):
-    """Sets the bounds, and the center and span when they followed them."""
+    """Sets the bounds. Also sets the center and span if they matched the old bounds."""
     old_low, old_high = Vector(props.descriptor_bounds_min), Vector(props.descriptor_bounds_max)
     followed = ((Vector(props.descriptor_center) - (old_low + old_high) * 0.5).length < _SYNC_TOLERANCE and
                 (Vector(props.descriptor_span) - (old_high - old_low)).length < _SYNC_TOLERANCE)
@@ -125,9 +126,9 @@ class AERON_GGT_component(GizmoGroup):
             setattr(component.aeron_flight, field, component.matrix_world.inverted_safe() @ Vector(value))
             _dragged(self, message)
 
-    # A dial turns the three axes about its own; it reports the angle it
-    # was last set to, and turns the axes by each change. A dial's angle
-    # goes clockwise about its Z.
+    # A dial turns all three axes about its own axis. It reports the angle
+    # it was last set to, and turns the axes by the change at each update.
+    # The dial angle goes clockwise about its Z axis.
     def _dial_get(self, index):
         return lambda: self.angles[index]
 
@@ -146,8 +147,8 @@ class AERON_GGT_component(GizmoGroup):
             _dragged(self, "Turn Hinge Axes")
         return set_
 
-    # The cage is a unit box under the component's world matrix, which the
-    # descriptor bounds place and size.
+    # The cage is a unit box under the component's world matrix. The
+    # descriptor bounds set its position and size.
     def _cage_get(self):
         component = _component(bpy.context)
         if component is None:

@@ -4,8 +4,8 @@
 from . import (animation, animation_operators, animation_ui, exporting, flipbook_preview, gizmos, importing,
                libraries, operators, opt_import, overlays, preferences, preview, properties, ui)
 
-# Blender's glTF exporter and importer look for these on enabled add-ons;
-# they act only during this add-on's own export and import.
+# Blender's glTF exporter and importer look for these in enabled add-ons.
+# They act only during this add-on's own export and import.
 glTF2ExportUserExtension = exporting.glTF2ExportUserExtension
 glTF2ImportUserExtension = importing.glTF2ImportUserExtension
 

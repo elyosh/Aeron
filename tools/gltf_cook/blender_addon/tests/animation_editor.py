@@ -1,24 +1,26 @@
-"""The material animation editor and the effect library operators, headless.
+"""Tests the material animation editor and the effect library operators in a headless Blender.
 
     python3 animation_editor.py --blender BLENDER --cooker AERON_GLTF_COOK [--keep]
 
-Builds a scratch project from the animated example
-(../../example): models `panel` and `panel2`, `panel2` naming an image
-`extra` of the shared library `examplepanel` that `panel` does not. In a
-headless Blender, with this add-on, it:
-- imports `panel`: the materials' properties hold its materials'
-  AERON_flight_model objects exactly;
-- loads the project's libraries: `extra` is named by `panel2` only;
+Builds a scratch project from the animated example (../../example) with
+two models, `panel` and `panel2`. Both use the shared library
+`examplepanel`, which has an image `extra` that only `panel2` uses. Then,
+in a headless Blender with this add-on, it:
+- imports `panel` and checks that the material properties hold exactly the
+  AERON_flight_model objects of its materials;
+- loads the project's libraries and checks that only `panel2` uses `extra`;
 - creates library `newlib` with Add Images (two emissive images, one with
-  its base colour) and plays them on material Screen with Add Frames from
-  Images; edits frames and flipbooks, renames an image (the open model's
-  frames follow), edits one and adds a Blender image; draws the panels;
-- saves it to the project (its materials' objects are written back) and
-  exports it for the game (which builds `newlib` from the project);
-- removes `extra` from `examplepanel` and exports the .glb again: the export
-  warns that `panel2` names it.
-Then it checks the files: the saved model's Screen material plays newlib's
-frames, newlib is built, and the game model's Screen material plays them.
+  its base color), and plays them on material Screen with Add Recent
+  Images. It edits frames and flipbooks, renames an image (the frames of
+  the open model follow), edits an image, adds a Blender image and draws
+  the panels;
+- saves the model to the project, which writes the objects of its
+  materials back, and exports it for the game, which builds `newlib` from
+  the project;
+- removes `extra` from `examplepanel` and exports the .glb again. The
+  export must warn that `panel2` uses it.
+Then it checks the files: Screen plays the frames of newlib in the saved
+model and in the game model, and newlib is built.
 """
 
 import argparse
@@ -31,7 +33,7 @@ import sys
 import tempfile
 
 ADDON_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-# The add-on is loaded from its source directory: no bytecode caches there.
+# The add-on is loaded from its source directory, so do not write bytecode caches there.
 sys.dont_write_bytecode = True
 EXAMPLE = os.path.join(ADDON_DIR, "..", "example")
 MODULE = "bl_ext.user_default.aeron_flight_model"
@@ -40,8 +42,8 @@ MODULE = "bl_ext.user_default.aeron_flight_model"
 # ---- inside Blender ------------------------------------------------------------
 
 class _Layout:
-    """A stand-in UI layout: drawing a panel with it checks that every
-    property and operator it shows exists (a headless Blender draws no UI)."""
+    """A fake UI layout. A headless Blender draws no UI, so drawing a panel
+    with this layout checks that every property and operator it shows exists."""
 
     def __getattr__(self, name):
         return lambda *args, **kwargs: _Layout()
@@ -72,7 +74,7 @@ class _OperatorProperties:
 
 
 def _draw(context, root):
-    """Draws the animation and library panels and lists of every state the test reaches."""
+    """Draws the animation and library panels and lists, in each state the test reaches."""
     import bpy
 
     for name in ("MATERIAL_PT_aeron_animation", "MATERIAL_PT_aeron_flipbooks", "MATERIAL_PT_aeron_damage",
@@ -150,7 +152,7 @@ def blender_main(cooker, project, effects, paint, scratch):
         book = screen.aeron_flight.flipbooks[screen.aeron_flight.active_flipbook]
         book.layer = "emissive"
         book.library = ""
-        check('FINISHED' in bpy.ops.aeron.frames_add_added(seconds=0.25), "Add Frames from Images")
+        check('FINISHED' in bpy.ops.aeron.frames_add_added(seconds=0.25), "Add Recent Images")
         check([frame.key for frame in book.frames] == ["glow_0", "glow_1"] and book.library == "newlib",
               "the flipbook plays the new images")
         bpy.ops.aeron.damage_add()
@@ -162,12 +164,12 @@ def blender_main(cooker, project, effects, paint, scratch):
             check(False, "the panels draw: {}".format(error))
         bpy.ops.aeron.damage_remove()
         screen.aeron_flight.energy_override = False
-        # The other frame and flipbook operators, then the library image ones.
+        # Test the other frame and flipbook operators, then the library image operators.
         bpy.ops.aeron.flipbook_add()
         extra = screen.aeron_flight.flipbooks[-1]
         extra.layer, extra.library = "emissive", "newlib"
         check('FINISHED' in bpy.ops.aeron.frames_add_prefix(prefix="glow", seconds=0.5) and
-              [frame.key for frame in extra.frames] == ["glow_0", "glow_1"], "Add Frames by prefix")
+              [frame.key for frame in extra.frames] == ["glow_0", "glow_1"], "Add Frames by Prefix")
         bpy.ops.aeron.frames_set_duration(seconds=0.75)
         check(all(abs(frame.seconds - 0.75) < 1e-6 for frame in extra.frames), "Set Duration")
         bpy.ops.aeron.frame_move(direction=-1)
@@ -207,8 +209,8 @@ def blender_main(cooker, project, effects, paint, scratch):
 # ---- outside -------------------------------------------------------------------
 
 def _copy_model(project, key, screen=None):
-    """The example as model `key`, its Screen material's object replaced by
-    `screen` when given."""
+    """Copies the example as model `key`. When `screen` is given, it replaces
+    the AERON_flight_model object of the Screen material."""
     model = os.path.join(project, "models", key)
     os.makedirs(model)
     with open(os.path.join(EXAMPLE, "panel.gltf"), encoding="utf-8") as stream:
@@ -225,7 +227,7 @@ def _copy_model(project, key, screen=None):
 
 
 def _materials(path):
-    """The AERON_flight_model objects of a .gltf's or .glb's materials, by name."""
+    """Returns the AERON_flight_model objects of the materials in a .gltf or .glb, by material name."""
     data = open(path, "rb").read()
     if data[:4] == b"glTF":
         data = data[20:20 + struct.unpack_from("<I", data, 12)[0]]
@@ -249,8 +251,8 @@ def main():
     project, effects, paint = (os.path.join(scratch, name) for name in ("project", "effects", "paint"))
     os.makedirs(effects)
     os.makedirs(paint)
-    # The project: the example's library with one more image, `extra`, that
-    # only panel2 names.
+    # The project has the example's library with one more image, `extra`,
+    # which only panel2 uses.
     library = os.path.join(project, "effects", "examplepanel")
     os.makedirs(library)
     shutil.copytree(os.path.join(EXAMPLE, "frames"), os.path.join(library, "frames"))
@@ -262,7 +264,7 @@ def main():
     _copy_model(project, "panel")
     _copy_model(project, "panel2", {"flipbooks": [{"state": "target", "layer": "baseColor", "mode": "loop",
                                                 "library": "examplepanel", "frames": [["extra", 1]]}]})
-    # Frames painted elsewhere: two emissive images, the first with its base colour.
+    # Frames painted outside Blender: two emissive images, the first one with its base color.
     frames = os.path.join(EXAMPLE, "frames")
     shutil.copyfile(os.path.join(frames, "lights_0.png"), os.path.join(paint, "glow_0_emissive.png"))
     shutil.copyfile(os.path.join(frames, "screen_a.png"), os.path.join(paint, "glow_0_base_color.png"))
@@ -286,7 +288,7 @@ def main():
     if completed.returncode != 0:
         failures.append("Blender: " + " | ".join(completed.stderr.strip().splitlines()[-3:]))
     warned = [line for line in completed.stdout.splitlines()
-              if line.startswith("Warning:") and "no longer serve other models" in line]
+              if line.startswith("Warning:") and "rebuilt libraries removed or changed" in line]
     if not any("panel2" in line and "extra" in line for line in warned):
         failures.append("the .glb export after the removal did not name panel2")
 

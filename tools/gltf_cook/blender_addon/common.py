@@ -1,8 +1,8 @@
-# Shared definitions: the AERON_flight_model format as Blender sees it.
+# Definitions shared by the add-on: the AERON_flight_model format as Blender sees it.
 #
-# Blender is Z-up and glTF Y-up: a Blender vector (x, y, z) is the glTF
-# vector (x, z, -y) in the same object's local space (Blender's exporter
-# converts object transforms and vertices that way).
+# Blender is Z-up and glTF is Y-up. A Blender vector (x, y, z) is the glTF
+# vector (x, z, -y) in the same local space. Blender's glTF exporter converts
+# object transforms and vertices the same way.
 
 import math
 import re
@@ -14,35 +14,35 @@ MAX_COMPONENTS = 255
 MAX_COMPONENT_ORDINAL = 254
 
 MESH_TYPE_NAMES = (
-    "Default", "Main hull", "Wing", "Fuselage", "Gun turret", "Small gun",
-    "Engine", "Bridge", "Shield generator", "Energy generator", "Launcher",
-    "Communication system", "Beam system", "Command beam", "Docking platform",
-    "Landing platform", "Hangar", "Cargo pod", "Miscellaneous hull", "Antenna",
-    "Rotary wing", "Rotary gun turret", "Rotary launcher",
-    "Rotary communication system", "Rotary beam system", "Rotary command beam",
-    "Hatch", "Custom", "Weapon system 1", "Weapon system 2", "Power regenerator",
+    "Default", "Main Hull", "Wing", "Fuselage", "Gun Turret", "Small Gun",
+    "Engine", "Bridge", "Shield Generator", "Energy Generator", "Launcher",
+    "Communication System", "Beam System", "Command Beam", "Docking Platform",
+    "Landing Platform", "Hangar", "Cargo Pod", "Miscellaneous Hull", "Antenna",
+    "Rotary Wing", "Rotary Gun Turret", "Rotary Launcher",
+    "Rotary Communication System", "Rotary Beam System", "Rotary Command Beam",
+    "Hatch", "Custom", "Weapon System 1", "Weapon System 2", "Power Regenerator",
     "Reactor",
 )
 
-# The hardpoint XWA reads as the pilot eye (index in HARDPOINT_TYPE_NAMES).
+# The hardpoint type that XWA uses as the pilot eye (an index into HARDPOINT_TYPE_NAMES).
 COCKPIT_HARDPOINT_TYPE = 31
 
-# XWA's hardpoint types (as named by JeremyAnsel.Xwa.Opt).
+# XWA's hardpoint types, named after JeremyAnsel.Xwa.Opt.
 HARDPOINT_TYPE_NAMES = (
-    "None", "Rebel laser", "Turbo rebel laser", "Empire laser", "Turbo empire laser",
-    "Ion cannon", "Turbo ion cannon", "Torpedo", "Missile", "Super rebel laser",
-    "Super empire laser", "Super ion cannon", "Super torpedo", "Super missile",
-    "Dumb bomb", "Fired bomb", "Mag pulse", "Turbo mag pulse", "Super mag pulse",
-    "Gunner", "Cockpit sparks", "Docking point", "Towing", "Acceleration start",
-    "Acceleration end", "Inside hangar", "Outside hangar", "Dock from big",
-    "Dock from small", "Dock to big", "Dock to small", "Cockpit (pilot eye)",
-    "Engine glow", "Custom 1", "Custom 2", "Custom 3", "Custom 4", "Custom 5",
-    "Custom 6", "Jamming point",
+    "None", "Rebel Laser", "Turbo Rebel Laser", "Empire Laser", "Turbo Empire Laser",
+    "Ion Cannon", "Turbo Ion Cannon", "Torpedo", "Missile", "Super Rebel Laser",
+    "Super Empire Laser", "Super Ion Cannon", "Super Torpedo", "Super Missile",
+    "Dumb Bomb", "Fired Bomb", "Mag Pulse", "Turbo Mag Pulse", "Super Mag Pulse",
+    "Gunner", "Cockpit Sparks", "Docking Point", "Towing", "Acceleration Start",
+    "Acceleration End", "Inside Hangar", "Outside Hangar", "Dock from Big",
+    "Dock from Small", "Dock to Big", "Dock to Small", "Cockpit (Pilot Eye)",
+    "Engine Glow", "Custom 1", "Custom 2", "Custom 3", "Custom 4", "Custom 5",
+    "Custom 6", "Jamming Point",
 )
 
 
 def enum_items(names):
-    return [(str(index), name, "{} ({})".format(name, index)) for index, name in enumerate(names)]
+    return [(str(index), name, "Type {} in the game".format(index)) for index, name in enumerate(names)]
 
 
 def parse_tags(text):
@@ -110,7 +110,7 @@ def ordered_children(component, roles=('hardpoint', 'engineGlow')):
 
 
 def is_model_light(obj):
-    """A Blender light that is a model light: under a component, not excluded."""
+    """True for a light whose parent is a component, unless the light is excluded."""
     return (obj.type == 'LIGHT' and role(obj.parent) == 'component' and
             not obj.aeron_flight.light_exclude)
 
@@ -120,7 +120,7 @@ def next_order(siblings):
 
 
 def local_matrix(obj):
-    """`obj`'s matrix relative to its parent, as the glTF exporter writes it."""
+    """The matrix of `obj` relative to its parent, as the glTF exporter writes it."""
     if obj.parent is None:
         return obj.matrix_world.copy()
     return obj.parent.matrix_world.inverted_safe() @ obj.matrix_world
@@ -128,15 +128,15 @@ def local_matrix(obj):
 
 # ---- lights ------------------------------------------------------------------
 #
-# KHR_lights_punctual intensity is candela; Blender light power is watts,
-# converted as Blender's glTF exporter does (its default lighting mode,
-# 683 lm/W): a point light radiates over 4 pi sr, a one-sided emitter's
-# intensity straight ahead is its power over pi.
+# KHR_lights_punctual gives the intensity in candela, and Blender gives the light
+# power in watts. They are converted the way Blender's glTF exporter does in its
+# default lighting mode (683 lm/W). A point light spreads its power over 4 pi sr.
+# The intensity of a one-sided emitter straight ahead is its power divided by pi.
 
 WATTS_TO_LUMENS = 683.0
-DEFAULT_LIGHT_RADIUS = 0.1   # the format's default point radius and tube thickness
-PANEL_TUBE_ASPECT = 3.0      # the game draws longer panels as one-sided tubes
-DISK_TO_SQUARE = math.sqrt(math.pi) / 2.0  # a disk's diameter to the side of the same area
+DEFAULT_LIGHT_RADIUS = 0.1   # default radius of points and tubes in the format
+PANEL_TUBE_ASPECT = 3.0      # the game draws a panel this many times longer than wide as a one-sided tube
+DISK_TO_SQUARE = math.sqrt(math.pi) / 2.0  # from a disk's diameter to the side of a square of the same area
 
 
 def candela(watts, one_sided):
@@ -153,9 +153,8 @@ def light_one_sided(obj):
 
 
 def light_shape(obj, scale):
-    """The format's shape fields of a model light (`obj` a Blender light),
-    `scale` its local scale baked into the sizes. None for an unsupported
-    light type."""
+    """The shape fields of the format for the model light `obj`, with its local
+    `scale` baked into the sizes. Returns None for an unsupported light type."""
     light = obj.data
     if light.type == 'POINT':
         shape = {"shape": "point"}
@@ -200,10 +199,10 @@ def light_punctual(obj, matrix_world):
 
 
 def light_game_shape(obj):
-    """What the game draws for a model light, for the UI."""
+    """Describes for the UI what the game draws for a model light."""
     shape = light_shape(obj, local_matrix(obj).to_scale())
     if shape is None:
-        return "unsupported ({} light)".format(obj.data.type.lower())
+        return "unsupported {} light".format(obj.data.type.lower())
     if shape["shape"] == "point":
         return "sphere, radius {:.3g} m".format(shape.get("radius", DEFAULT_LIGHT_RADIUS))
     if shape["shape"] == "tube":
@@ -212,6 +211,5 @@ def light_game_shape(obj):
     size_x, size_y = shape["size"]
     longer, shorter = max(size_x, size_y), min(size_x, size_y)
     if longer >= PANEL_TUBE_ASPECT * shorter:
-        return "panel {:.3g} x {:.3g} m -> one-sided tube {:.3g} m".format(size_x, size_y, longer)
-    return "panel {:.3g} x {:.3g} m -> one-sided sphere, radius {:.3g} m".format(
-        size_x, size_y, math.sqrt(size_x * size_y / math.pi))
+        return "one-sided tube {:.3g} m".format(longer)
+    return "one-sided sphere, radius {:.3g} m".format(math.sqrt(size_x * size_y / math.pi))

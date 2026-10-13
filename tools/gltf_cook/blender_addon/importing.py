@@ -1,10 +1,11 @@
-# Import: Blender's glTF importer reads the model, then the hook below (active
-# only during this add-on's import) restores the AERON_flight_model data on
-# the objects it created: roles and fields, the ordinals as list order, the
-# model root's articulations, settings, sets and energy default, the model
-# lights as Blender point and area lights, and each material's animation and
-# screen. The asset extras and the names of the file's extensions and extras
-# are kept too (sources.py).
+# Imports a flight model. Blender's glTF importer reads the file, and the hooks
+# below restore the AERON_flight_model data on the objects it creates. The
+# hooks act only during this add-on's imports. They restore the roles and
+# fields, the ordinals as list order, the articulations, articulation
+# settings, component sets, markings and energy default of the model root,
+# the model lights as Blender point and area lights, and the animation and
+# screen of each material. The asset extras and the names of the file's
+# extensions and extras are kept too (sources.py).
 
 import json
 import os
@@ -16,7 +17,7 @@ from bpy_extras.io_utils import ImportHelper
 
 from . import animation, common, sources
 
-# The running import's results (None outside this add-on's imports).
+# Results of the running import, or None outside this add-on's imports.
 _state = None
 
 
@@ -167,7 +168,7 @@ def restore(gltf):
 
 
 class glTF2ImportUserExtension:
-    """Blender's glTF importer hooks (found on the add-on's module)."""
+    """Hooks for Blender's glTF importer, which finds them on the add-on's module."""
 
     def gather_import_material_after_hook(self, gltf_material, vertex_color, blender_material, gltf):
         if _state is None:
@@ -194,8 +195,9 @@ class glTF2ImportUserExtension:
 
 
 def _preview_transmission(roots):
-    """EEVEE shows what is behind transmissive (glass) materials only with
-    raytraced transmission; a preview setting that is not exported."""
+    """Turns on raytraced transmission for transmissive (glass) materials.
+    EEVEE needs it to show what is behind them. The setting is not
+    exported."""
     for root in roots:
         for obj in root.children_recursive:
             for slot in obj.material_slots:
@@ -223,7 +225,7 @@ class IMPORT_OT_aeron_flight_model(Operator, ImportHelper):
         try:
             document = sources.read_document(self.filepath)
         except (OSError, ValueError) as error:
-            self.report({'ERROR'}, "cannot read {}: {}".format(self.filepath, error))
+            self.report({'ERROR'}, "Cannot read {}: {}".format(self.filepath, error))
             return {'CANCELLED'}
         _state = {"roots": [], "components": 0, "lights": 0, "cooked": False, "error": None, "animated": set()}
         try:
@@ -234,13 +236,13 @@ class IMPORT_OT_aeron_flight_model(Operator, ImportHelper):
         finally:
             _state = None
         if 'FINISHED' not in result:
-            self.report({'ERROR'}, "Blender's glTF import did not finish")
+            self.report({'ERROR'}, "Blender's glTF import failed")
             return {'CANCELLED'}
         if state["error"]:
-            self.report({'ERROR'}, "the flight data was not restored: " + state["error"])
+            self.report({'ERROR'}, "Cannot restore the flight data: " + state["error"])
             return {'CANCELLED'}
         if not state["roots"]:
-            self.report({'WARNING'}, "no Aeron flight model in this file: imported as plain glTF")
+            self.report({'WARNING'}, "No flight model in this file. Imported it as plain glTF")
             return {'FINISHED'}
         root = state["roots"][0]
         root.aeron_flight.source_path = os.path.abspath(self.filepath)
@@ -253,8 +255,8 @@ class IMPORT_OT_aeron_flight_model(Operator, ImportHelper):
         if state["animated"]:
             message += ", {} animated material(s)".format(len(state["animated"]))
         if state["cooked"]:
-            self.report({'WARNING'}, message + "; a .glb for the game has textures Blender cannot read: "
-                                               "import the model's .gltf instead")
+            self.report({'WARNING'}, message + ". This .glb for the game has textures that Blender cannot "
+                                               "read. Import the model's .gltf instead")
         else:
             self.report({'INFO'}, message)
         return {'FINISHED'}

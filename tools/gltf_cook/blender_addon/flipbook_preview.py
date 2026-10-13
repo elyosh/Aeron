@@ -1,19 +1,21 @@
-# Flipbook preview: the materials' flipbooks played in the viewport (Material
-# Preview or Rendered shading) as the game's shader plays them
-# (scene_pbr_mesh_impl.hlsli): a base colour frame is painted over the base
-# colour by its alpha; an emissive frame replaces the emissive over the whole
-# material, its optional base colour painted over; without an emissive frame,
-# a base colour flipbook's unlit part u moves c·u of the colour c to emission
-# and leaves c·(1 − u) lit. Hull damage and energy effects are not shown.
+# Flipbook preview: plays the flipbooks of the materials in the viewport
+# (Material Preview or Rendered shading) the way the game's shader plays them
+# (scene_pbr_mesh_impl.hlsli):
+# - A base colour frame is painted over the base colour, using the frame's alpha.
+# - An emissive frame replaces the emission of the whole material. Its optional
+#   base colour image is painted over the base colour.
+# - Without an emissive frame, the unlit part u of a base colour flipbook moves
+#   c·u of the colour c to the emission and leaves c·(1 − u) lit.
+# Hull damage and energy effects are not shown.
 #
-# The scene's checked states (and `always`) are active from its start frame,
-# so the look is a function of the frame alone. A previewed material (a
-# Principled BSDF whose base colour is a texture or a value) gets a node
-# group before its base colour and emission inputs, and image nodes for the
-# playing frames (the libraries' PNGs in the project), sampled with the base colour
-# texture's own vector. All of it is tagged, and removed when the preview
-# stops, around the exports, while the file is saved, when a file is opened
-# and when the add-on is disabled.
+# The states checked in the scene, and `always`, are active from the scene's start
+# frame, so the look depends only on the frame. A material is previewed when it
+# uses a Principled BSDF whose base colour is a texture or a value. It gets a node
+# group in front of its base colour and emission inputs, and image nodes for the
+# playing frames (the library PNGs in the project). The image nodes use the same
+# vector as the base colour texture. All these nodes are tagged. They are removed
+# when the preview stops, during the exports, while the file is saved, when a file
+# is opened and when the add-on is disabled.
 
 import contextlib
 import math
@@ -29,11 +31,11 @@ from . import animation, common, libraries, sources
 TAG = "aeron_flipbook_preview"
 GROUP = ".Aeron Flipbook Preview"
 NODE = "Aeron Flipbook Preview"
-# The image nodes: the base colour frame, and an emissive frame's two inputs.
+# Image nodes for the base colour frame and for the two inputs of an emissive frame.
 IMAGE_NODES = {"colour": "Aeron Frame", "emissive": "Aeron Frame Emissive", "lit_base": "Aeron Frame Base Colour"}
 
-# Materials not previewed, and why {name: reason}, and why the libraries
-# could not be loaded, for the panel.
+# For the panel: the materials that are not previewed, as {name: reason}, and
+# why the libraries could not be loaded.
 skipped = {}
 message = ""
 _images = {}  # {PNG path: image name}
@@ -51,12 +53,13 @@ def active_states(scene):
 
 
 def seconds(scene):
-    """The preview's time at the scene's frame: 0 at its start frame."""
+    """The preview time in seconds at the current frame, 0 at the scene's start frame."""
     return (scene.frame_current - scene.frame_start) * scene.render.fps_base / scene.render.fps
 
 
 def local_time(mode, total, t):
-    """Time `t` into a flipbook of `total` seconds: wrapped for a loop, held at the end for `once`."""
+    """The time `t` within a flipbook of `total` seconds. It wraps around for a loop and stops at the end
+    for `once`."""
     if not total > 0.0:
         return 0.0
     if mode == "once":
@@ -65,7 +68,8 @@ def local_time(mode, total, t):
 
 
 def frame_index(durations, t):
-    """The frame showing at local time `t`: the first whose end exceeds it, the last one past the end."""
+    """The frame shown at local time `t`: the first frame that ends after `t`, or the last frame when `t` is
+    past the end."""
     end = 0.0
     for index, duration in enumerate(durations):
         end += duration
@@ -75,9 +79,9 @@ def frame_index(durations, t):
 
 
 def playing(material, states, t):
-    """{layer: (flipbook, key)} of `material` at `t` seconds with `states`
-    active: per layer the first flipbook whose state is active, at its frame
-    (none for a flipbook without frames)."""
+    """The frames that `material` shows at `t` seconds with `states` active, as
+    {layer: (flipbook, key)}. Each layer uses its first flipbook whose state is
+    active. A layer whose flipbook has no frames shows nothing."""
     result = {}
     for book in material.aeron_flight.flipbooks:
         if book.layer in result or book.state not in states:
@@ -101,8 +105,8 @@ def _socket(interface, name, in_out, socket_type, default=None):
 
 
 def _group():
-    """The shared node group: base colour and emission from the material's
-    own and the playing frames' (the game's composition)."""
+    """The shared node group. It combines the base colour and emission of the
+    material with the playing frames the way the game does."""
     group = bpy.data.node_groups.get(GROUP)
     if group is not None and group.get(TAG):
         return group
@@ -132,7 +136,7 @@ def _group():
         return node.outputs[0]
 
     def mix(factor, a, b):
-        """a + (b − a)·factor (black for None), colours unclamped."""
+        """a + (b − a)·factor, with None as black. Colours are not clamped."""
         node = nodes.new('ShaderNodeMix')
         node.data_type = 'RGBA'
         sockets = {socket.identifier: socket for socket in node.inputs}
@@ -159,12 +163,13 @@ def _group():
         return node.outputs[0]
 
     get = inputs.outputs.get
-    # The base colour frame over the colour c, then its unlit part u:
-    # c·(1 − u) lit, c·u emitted; an emissive frame's base colour over that.
+    # Paint the base colour frame over the colour c. With u the unlit part,
+    # c·(1 − u) stays lit and c·u is emitted. Then paint the base colour of an
+    # emissive frame over the lit part.
     painted = mix(math_node('MULTIPLY', get("Frame Alpha"), get("Frame On")), get("Base Color"), get("Frame"))
     lit = mix(get("Unlit"), painted, None)
     base = mix(math_node('MULTIPLY', get("Lit Base Alpha"), get("Lit Base On")), lit, get("Lit Base"))
-    # The frames' emission replaces the material's own.
+    # The emission of the frames replaces the emission of the material.
     frames = add(scale(painted, get("Unlit")), scale(get("Lit Emission"), get("Lit Strength")))
     emission = mix(get("Replace"), scale(get("Emission"), get("Strength")), frames)
     links.new(base, outputs.inputs["Base Color"])
@@ -199,15 +204,15 @@ def _texture(socket):
 
 
 def _insert(material):
-    """Inserts the preview's nodes into `material`; returns why it cannot, or None."""
+    """Inserts the preview nodes into `material`. Returns the reason if it cannot, or None."""
     tree = material.node_tree
     bsdf = _bsdf(tree) if tree is not None else None
     if bsdf is None:
-        return "Not a Principled BSDF"
+        return "not a Principled BSDF"
     base = bsdf.inputs["Base Color"]
     texture = _texture(base) if base.is_linked else None
     if base.is_linked and texture is None:
-        return "Base colour is not a texture or a value"
+        return "base color has no texture"
     vector = texture.inputs["Vector"].links if texture is not None else ()
     vector = vector[0].from_socket if vector else None
     group = tree.nodes.new('ShaderNodeGroup')
@@ -247,8 +252,8 @@ def _insert(material):
 
 
 def _remove(material):
-    """Removes the preview's nodes from `material`, giving its BSDF back its
-    inputs as they were (or as edited on the node group meanwhile)."""
+    """Removes the preview nodes from `material` and gives its BSDF back its
+    inputs. Inputs edited on the node group in the meantime keep their edits."""
     tree = material.node_tree
     if tree is None:
         return
@@ -294,8 +299,9 @@ def remove_all():
 # ---- frames ------------------------------------------------------------------------
 
 def _image(path):
-    """The image of the PNG `path`: one already open (a frame being painted),
-    or loaded for the preview once."""
+    """The image for the PNG `path`. An image that is already open, such as a
+    frame being painted, is reused. Otherwise the PNG is loaded once for the
+    preview."""
     name = _images.get(path)
     image = bpy.data.images.get(name) if name else None
     if image is None:
@@ -310,9 +316,9 @@ def _image(path):
 
 
 def _frame_image(loaded, library, key, kind, input_name):
-    """The image of input `input_name` of frame `key`, or None when the
-    library lacks the key (the game shows no frame), it is of another kind,
-    or the file is missing."""
+    """The image for input `input_name` of frame `key`. Returns None when the
+    library does not have the key (the game then shows no frame), when the
+    image is of another kind, or when the file is missing."""
     entry = loaded.libraries.get(library, {}).get("images", {}).get(key)
     if entry is None or entry.get("kind") != kind or not entry.get(input_name):
         return None
@@ -321,8 +327,8 @@ def _frame_image(loaded, library, key, kind, input_name):
 
 
 def _set(target, name, value):
-    """Sets a property only when it changes (a write updates the material's
-    shaders). Floats are compared at their 32-bit precision."""
+    """Sets a property only when its value changes, because each write updates
+    the material's shaders. Floats are compared at 32-bit precision."""
     current = getattr(target, name)
     if current != value if not isinstance(value, float) else abs(current - value) > 1e-6:
         setattr(target, name, value)
@@ -353,15 +359,15 @@ def _show(material, loaded, states, t):
 
 
 def _projects():
-    """{material: its model's loaded project, or why there is none}."""
+    """{material: loaded project of its model, or the reason why there is none}."""
     result = {}
     for obj in bpy.data.objects:
         if common.role(obj) != 'model':
             continue
         if not sources.project_effects(bpy.path.abspath(obj.aeron_flight.source_path)):
-            loaded = "The model is not in a project"
+            loaded = "model is not in a project"
         else:
-            loaded = libraries.project_of(obj) or "Libraries not loaded"
+            loaded = libraries.project_of(obj) or "libraries not loaded"
         for material in sources.model_materials(obj):
             if not isinstance(result.get(material), libraries.Project):
                 result[material] = loaded
@@ -374,8 +380,8 @@ def enabled():
 
 
 def refresh(scene=None):
-    """Brings the file in line with the preview: the playing frames when it
-    is on, nothing of it when it is off."""
+    """Updates the file to match the preview. When the preview is on, the
+    playing frames are shown. When it is off, everything it added is removed."""
     if not enabled():
         if any(group.get(TAG) for group in bpy.data.node_groups) or skipped:
             remove_all()
@@ -389,7 +395,7 @@ def refresh(scene=None):
             if _has_nodes(material):
                 _remove(material)
             continue
-        loaded = projects.get(material, "The model is not in a project")
+        loaded = projects.get(material, "model is not in a project")
         if not isinstance(loaded, libraries.Project):
             if _has_nodes(material):
                 _remove(material)
@@ -419,12 +425,12 @@ def load_projects(context):
         return None
     cooker = preferences.cooker_path(context)
     if not cooker:
-        return "aeron_gltf_cook is not set: see the add-on's preferences"
+        return "Set aeron_gltf_cook in preferences"
     for effects in sorted(wanted):
         try:
             libraries.load(cooker, effects)
         except (OSError, RuntimeError, ValueError) as error:
-            return "reading the libraries: {}".format(error)
+            return "Cannot read the libraries: {}".format(error)
     return None
 
 
@@ -434,15 +440,16 @@ def _deferred():
 
 
 def schedule():
-    """Refreshes the preview once Blender is idle: animation edits call it
-    (Blender's depsgraph does not report them)."""
+    """Refreshes the preview when Blender is idle. Animation edits call this
+    because the depsgraph does not report them."""
     if enabled() and not bpy.app.timers.is_registered(_deferred):
         bpy.app.timers.register(_deferred, first_interval=0.0)
 
 
 @contextlib.contextmanager
 def suspended():
-    """Without the preview's data in the file (the exports), then with it again."""
+    """Removes the preview data from the file for the duration of the block
+    (used by the exports), then adds it back."""
     remove_all()
     try:
         yield
@@ -496,7 +503,7 @@ def _on_save_post(*_args):
 
 @persistent
 def _on_load(*_args):
-    # Nothing of a preview stays in a file opened (an autosave may hold it).
+    # Remove any preview data from the opened file. An autosave may contain some.
     managers = bpy.data.window_managers
     if len(managers) and managers[0].aeron_flipbook_preview:
         managers[0]["aeron_flipbook_preview"] = False
@@ -512,9 +519,8 @@ def register():
     bpy.utils.register_class(AeronFlipbookStates)
     bpy.types.WindowManager.aeron_flipbook_preview = BoolProperty(
         name="Flipbook Preview", update=_enabled_update,
-        description="Show the materials' flipbooks in the viewport (Material Preview or Rendered shading) at "
-                    "the timeline's frame, with the checked states active. Play or scrub the timeline to "
-                    "animate them")
+        description="Show the flipbooks in Material Preview or Rendered shading, with the checked states "
+                    "active. Play or scrub the timeline to animate them")
     for handlers, handler in _HANDLERS:
         handlers.append(handler)
 
