@@ -257,6 +257,9 @@ def _game_preview_update(self, context):
 class AeronSceneProperties(PropertyGroup):
     problems: CollectionProperty(type=AeronProblem)
     active_problem: IntProperty()
+    opt_project: StringProperty(
+        name="OPT Project", subtype='DIR_PATH',
+        description="Project that Import XWA OPT uses by default in this file")
     game_preview: BoolProperty(
         name="Game-Like Lights", default=False, update=_game_preview_update,
         description="Turn off the shadows of model lights, as the game draws them without shadows")

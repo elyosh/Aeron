@@ -6,18 +6,18 @@
 In a headless Blender with this add-on, it imports an OPT of the original
 game (Original Game) into a scratch project. With --xwau, it also imports
 an OPT from the FlightModels folder of an XWA Upgrade installation
-(Detect) into another project. For each import, it checks that:
+(Auto) into another project. For each import, it checks that:
 - the scene has the model root and one component per OPT mesh, as many as
   the model's .gltf has;
 - the project has models/<key>/, identical to what opt2gltf converts;
 - the project's libraries have every image that the model's materials use;
 - the project becomes the first recent project;
 - a second import without Replace fails and keeps the model;
-- a second import with Replace and no project goes into the project of the
-  model in the scene.
+- a second import with Replace and no project goes into the scene's OPT
+  project.
 The XWA Upgrade import also sets the installation in the preferences. A
 copy of the OPT outside the installation must then convert the same way
-(Detect).
+(Auto).
 """
 
 import argparse

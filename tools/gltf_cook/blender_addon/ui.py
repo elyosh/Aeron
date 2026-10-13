@@ -585,9 +585,9 @@ class VIEW3D_PT_aeron(Panel):
         row = layout.row(align=True)
         row.operator("import_scene.aeron_flight_model", text="Import", icon='IMPORT')
         row.operator("import_scene.xwa_opt", text="Import OPT", icon='IMPORT')
-        # The project where Import OPT puts a model, unless the user picks another one.
         known = opt_import.projects(context)
-        layout.label(text="OPT project: " + (os.path.basename(known[0]) if known else "none yet"), icon='FILE_FOLDER')
+        layout.operator("aeron.opt_project", text="OPT Project: " + (os.path.basename(known[0]) if known else "None"),
+                        icon='FILE_FOLDER')
         row = layout.row(align=True)
         row.operator("export_scene.aeron_flight_model_project", text="Save to Project", icon='FILE_TICK')
         row.operator("export_scene.aeron_flight_model", text="Export for Game", icon='EXPORT')

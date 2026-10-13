@@ -92,13 +92,19 @@ To convert an OPT into a project and import it as above, use File > Import
 3D view. The model goes into `models/<key>/`, where the key is the OPT name
 in lower case.
 
-**Project** lists the projects of the models in the scene first, then the
-recent projects. The tab shows the first one as "OPT project". **Choose
-Folder...** opens a folder browser after the import's file browser closes.
-If the project already has the model, the import asks before it replaces
-it. Replacing it loses the changes made to that model.
+The import goes into the **OPT Project** shown in the tab. Click it to
+choose another one. It is the project of the last OPT imported into this
+file, or else the project of a model in the scene, or else the last project
+used. The file browser's sidebar can change it for one import, and suggests
+the known projects.
 
-**Data** sets what the conversion reads:
+A dialog asks for the project when there is none yet, and before replacing a
+model that the project already has. Replacing it loses the changes made to
+that model. A dropped OPT always opens this dialog. Its folder button picks
+a folder, and a new folder starts a new project. Under **Source**, the
+dialog shows which XWA Upgrade installation the import will use.
+
+**Source** sets the game the model comes from:
 
 - **Original Game**: the OPT alone, as the original game draws it, with the
   game's data for the model (its pilot eye, crew and moving parts).
@@ -108,7 +114,7 @@ it. Replacing it loses the changes made to that model.
   cockpit displays. The images that its animations play are added to the
   project's effect libraries. Images that the libraries already have are
   kept as they are.
-- **Detect** (the default): XWA Upgrade if its data is found, otherwise
+- **Auto** (the default): XWA Upgrade if its data is found, otherwise
   Original Game.
 
 XWAU data is read from the game folder that contains the OPT's
