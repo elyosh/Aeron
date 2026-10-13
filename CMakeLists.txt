@@ -1032,7 +1032,7 @@ if(AERON_BUILD_TOOLS)
         target_link_libraries(opt2gltf_tool PUBLIC m)
     endif()
 
-    add_executable(opt2gltf tools/opt2gltf/main.c)
+    add_executable(opt2gltf tools/opt2gltf/main.c tools/opt2gltf/model_conversion.c)
     target_link_libraries(opt2gltf PRIVATE opt2gltf_tool)
     # As aeron_gltf_cook (tools/gltf_cook/CMakeLists.txt), which the Blender
     # add-on packages with it: the unused SDL is dropped, and a standalone
