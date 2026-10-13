@@ -239,10 +239,15 @@ static bool build_slot(AeronEnvironmentLibrary* library, AeronCommandBuffer* cmd
 	int         count = 0;
 	paths[count]      = def->diffuse_path;
 	cubes[count++]    = true;
-	if (def->kind == AERON_ENV_KIND_FULL) {
-		paths[count]   = def->radiance_path;
-		cubes[count++] = true;
+	int specular = -1, radiance = -1;
+	if (def->specular_path[0]) {
+		specular       = count;
 		paths[count]   = def->specular_path;
+		cubes[count++] = true;
+	}
+	if (def->kind == AERON_ENV_KIND_FULL) {
+		radiance       = count;
+		paths[count]   = def->radiance_path;
 		cubes[count++] = true;
 		for (uint32_t i = 0; i < def->light_count; ++i) {
 			if (def->lights[i].visual == AERON_ENV_SUN_SPRITE) {
@@ -272,11 +277,12 @@ static bool build_slot(AeronEnvironmentLibrary* library, AeronCommandBuffer* cmd
 		return false;
 	slot->package.diffuse = list->items[indices[0]].texture;
 	slot->package.sampler = library->sampler;
-	if (def->kind == AERON_ENV_KIND_FULL) {
-		slot->package.radiance           = list->items[indices[1]].texture;
-		slot->package.specular           = list->items[indices[2]].texture;
-		slot->package.specular_mip_count = (uint32_t)list->items[indices[2]].level_count;
+	if (specular >= 0) {
+		slot->package.specular           = list->items[indices[specular]].texture;
+		slot->package.specular_mip_count = (uint32_t)list->items[indices[specular]].level_count;
 	}
+	if (radiance >= 0)
+		slot->package.radiance = list->items[indices[radiance]].texture;
 	return true;
 }
 

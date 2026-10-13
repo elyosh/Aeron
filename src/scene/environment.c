@@ -325,7 +325,8 @@ static bool parse_package(const char* name, const AeronConfigNode* map, AeronEnv
 		"directional_lights",
 	};
 	static const char* const lighting_fields[] = {
-		"kind", "intensity", "diffuse", "diffuse_strength", "ambient_fill", "rotation_degrees",
+		"kind",         "intensity",        "diffuse",  "diffuse_strength",
+		"ambient_fill", "rotation_degrees", "specular", "specular_strength",
 	};
 
 	char what[160];
@@ -362,8 +363,15 @@ static bool parse_package(const char* name, const AeronConfigNode* map, AeronEnv
 	for (int i = 0; i < 3; ++i)
 		def->rotation_degrees[i] = AeronEnvironment_NormalizeDegrees(def->rotation_degrees[i]);
 
-	if (def->kind == AERON_ENV_KIND_LIGHTING)
-		return true;
+	if (def->kind == AERON_ENV_KIND_LIGHTING) {
+		/* Reflections are optional: both fields or neither. */
+		const bool has_specular = AeronConfigNode_MapGet(map, "specular") != NULL;
+		if (has_specular != (AeronConfigNode_MapGet(map, "specular_strength") != NULL))
+			return env_error(error, map, "%s: give both 'specular' and 'specular_strength', or neither", what);
+		return !has_specular ||
+			   (read_path(map, what, "specular", def->specular_path, sizeof def->specular_path, error) &&
+				read_number(map, what, "specular_strength", true, 0.0, 4.0, &def->specular_strength, error));
+	}
 	return read_path(map, what, "radiance", def->radiance_path, sizeof def->radiance_path, error) &&
 		   read_path(map, what, "specular", def->specular_path, sizeof def->specular_path, error) &&
 		   read_number(map, what, "specular_strength", true, 0.0, 4.0, &def->specular_strength, error) &&
@@ -489,13 +497,13 @@ size_t AeronEnvironment_FormatPackageYaml(const AeronEnvironmentDefinition* d, c
 	yaml_printf(&y, "    diffuse: ");
 	yaml_string(&y, d->diffuse_path);
 	yaml_printf(&y, "\n");
-	if (d->kind == AERON_ENV_KIND_FULL) {
+	if (d->specular_path[0]) {
 		yaml_printf(&y, "    specular: ");
 		yaml_string(&y, d->specular_path);
 		yaml_printf(&y, "\n");
 	}
 	yaml_printf(&y, "    diffuse_strength: %.9g\n", (double)d->diffuse_strength);
-	if (d->kind == AERON_ENV_KIND_FULL)
+	if (d->specular_path[0])
 		yaml_printf(&y, "    specular_strength: %.9g\n", (double)d->specular_strength);
 	yaml_printf(&y, "    ambient_fill: ");
 	yaml_vec3(&y, d->ambient_fill);

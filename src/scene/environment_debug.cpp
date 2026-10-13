@@ -116,15 +116,10 @@ void slot_editor(AeronEnvironmentLibrary* library, EnvSlot* slot) {
 	/* One scale for everything derived from the sky image; the strengths
 	 * are relative adjustments, 1 = physically consistent. */
 	changed |= ImGui::SliderFloat("Intensity", &s->intensity, 0.0f, 16.0f, "%.3f");
-	if (s->kind == AERON_ENV_KIND_FULL) {
-		changed |=
-			ImGui::SliderFloat("Diffuse strength (relative)", &s->diffuse_strength, 0.0f, 4.0f, "%.3f");
+	changed |= ImGui::SliderFloat("Diffuse strength (relative)", &s->diffuse_strength, 0.0f, 4.0f, "%.3f");
+	if (s->specular_path[0])
 		changed |=
 			ImGui::SliderFloat("Specular strength (relative)", &s->specular_strength, 0.0f, 4.0f, "%.3f");
-	} else {
-		changed |=
-			ImGui::SliderFloat("Diffuse strength (relative)", &s->diffuse_strength, 0.0f, 4.0f, "%.3f");
-	}
 	if (ImGui::ColorEdit3("Ambient fill (linear)", s->ambient_fill,
 						  ImGuiColorEditFlags_Float | ImGuiColorEditFlags_HDR)) {
 		for (int c = 0; c < 3; ++c)

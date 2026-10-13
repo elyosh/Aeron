@@ -79,10 +79,10 @@ typedef struct AeronEnvironmentDefinition {
 	AeronEnvironmentKind            kind;
 	char                            radiance_path[AERON_ENV_PATH_MAX]; /* empty for lighting packages */
 	char                            diffuse_path[AERON_ENV_PATH_MAX];
-	char                            specular_path[AERON_ENV_PATH_MAX]; /* empty for lighting packages */
+	char                            specular_path[AERON_ENV_PATH_MAX]; /* empty: no reflections (lighting) */
 	float                           intensity; /* scales the sky, diffuse and specular together */
 	float                           diffuse_strength;
-	float                           specular_strength; /* 0 for lighting packages */
+	float                           specular_strength; /* 0 without a specular cube */
 	float                           ambient_fill[3];   /* linear radiance from every direction */
 	float                           rotation_degrees[3]; /* yaw, pitch, roll; each in [0, 360) */
 	AeronEnvironmentLightDefinition lights[AERON_ENV_MAX_LIGHTS];
