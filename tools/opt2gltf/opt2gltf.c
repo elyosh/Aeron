@@ -16,6 +16,7 @@
 
 #include <math.h>
 #include <stdarg.h>
+#include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -1945,9 +1946,6 @@ static char* markings_json(const OptGltfSkins* skins, int state_count) {
 	return json;
 }
 
-static bool build_memory(const opt_file_t* opt, const char* basename, const OptGltfBuildOptions* options,
-						 OptGltfDocument** out_document, opt_error_t* error);
-
 /* The texture views of material `m` (kViewCount of them). */
 enum { kViewCount = 21 };
 
@@ -2172,6 +2170,1473 @@ static bool material_extensions(OptGltfDocument* document) {
 	return ok;
 }
 
+/* ===== The build ====================================================== */
+
+/* What the build's phases share. */
+typedef struct Build {
+	const opt_file_t*          opt;
+	const char*                basename;
+	const OptGltfBuildOptions* options;
+	opt_error_t*               error;
+	const OptGltfXwauMaterial* xwau; /* XWAU mode when set */
+	const OptGltfXwauAnim*     anim;
+	const OptGltfSkins*        skins;
+	const OptGltfScreen*       screens;
+	float                      smooth_angle; /* negative: the OPT's own normals */
+	bool                       repair_normals;
+	bool                       emissive;
+	bool                       fullbright;
+	float                      fullbright_strength;
+	/* The palette row of base colours: it depends on the authoring game
+	 * (XWA = 8, TIE98/XvT = 15); sampling the wrong row washes XWA textures
+	 * out toward a faintly magenta white. */
+	int base_shade;
+
+	OptGltfDocument* document;
+	GltfBuild*       gb;
+	size_t           image_slot; /* the next image and texture slot */
+
+	/* Per texture: whether it has self-lit texels (stock emissive). */
+	int* tex_emissive;
+	/* XWAU mode, per texture: its bake results; the first texture sharing
+	 * its baked normal map (same source and NMIntensity) and the image slot
+	 * of that map once written; its colours before the bake when its
+	 * illumination frames need them (OptGltfXwauAnim.anim_base). */
+	XwauBaked* xwau_baked;
+	int32_t*   xwau_normal_owner;
+	int32_t*   xwau_normal_image;
+	uint8_t**  xwau_colour;
+	/* Screen surfaces, per texture: the image slot of its cover's base image
+	 * (the emissive image follows it), or -1. Textures sharing a cover share
+	 * its images. */
+	int32_t*  screen_cover_image;
+	SkinState skin_state;
+	/* The untextured material: the texture materials come before it, the
+	 * skin composites after it. */
+	size_t untextured;
+
+	BuiltMesh* built;
+	int        max_state_count; /* drives KHR_materials_variants */
+	size_t     state_variant_count;
+	size_t     skin_variant_count;
+	/* promoted_variant_material's copies: [base material * 2 + rank - 1]. */
+	cgltf_material** promoted;
+	size_t           base_material_count;
+} Build;
+
+/* The options' defaults, when none are given. */
+static const OptGltfBuildOptions kDefaultOptions = { .smooth_angle_degrees = -1.0f, .repair_normals = true };
+
+/* Sets the build's error message; returns false. */
+static bool build_fail(Build* b, const char* format, ...) {
+	if (b->error) {
+		va_list args;
+		va_start(args, format);
+		vsnprintf(b->error->msg, sizeof b->error->msg, format, args);
+		va_end(args);
+	}
+	return false;
+}
+
+static void build_free(Build* b) {
+	free(b->promoted);
+	free(b->tex_emissive);
+	free(b->screen_cover_image);
+	skin_state_free(&b->skin_state);
+	xwau_state_free(b->xwau_baked, b->opt->texture_count, b->xwau_normal_owner, b->xwau_normal_image);
+	xwau_colour_free(b->xwau_colour, b->opt->texture_count);
+	if (b->built) {
+		for (int32_t mi = 0; mi < b->opt->mesh_count; ++mi)
+			built_mesh_free(&b->built[mi]);
+		free(b->built);
+	}
+}
+
+/* ---- Options ------------------------------------------------------------ */
+
+static bool validate_options(Build* b) {
+	const OptGltfBuildOptions* o   = b->options;
+	const opt_file_t*          opt = b->opt;
+	if (!validate_alpha_overrides(o, b->error))
+		return false;
+	for (size_t i = 0; i < o->component_tag_count; ++i) {
+		const OptGltfComponentTag* tag = &o->component_tags[i];
+		if (!valid_component_tag(tag->tag) || tag->mesh_index >= (uint32_t)opt->mesh_count)
+			return build_fail(b, "invalid tag %u=%s (%d meshes)", tag->mesh_index, tag->tag ? tag->tag : "",
+							  (int)opt->mesh_count);
+	}
+	for (size_t i = 0; i < o->component_articulation_count; ++i) {
+		const OptGltfComponentArticulation* a = &o->component_articulations[i];
+		if (!valid_component_tag(a->group) || (a->behavior[0] && !valid_component_tag(a->behavior)) ||
+			a->angle < -128 || a->angle > 255 || a->speed < 0 || a->speed > 255 || a->speed_back < 0 ||
+			a->speed_back > 255 || a->component > 254)
+			return build_fail(b, "invalid articulation %u=%s:%d:%d:%d:%s", a->component, a->group,
+							  (int)a->angle, (int)a->speed, (int)a->speed_back, a->behavior);
+	}
+	for (size_t i = 0; i < o->component_set_count; ++i) {
+		bool duplicate = false;
+		for (size_t previous = 0; previous < i; ++previous)
+			duplicate |= strcmp(o->component_sets[previous].name, o->component_sets[i].name) == 0;
+		if (!valid_component_tag(o->component_sets[i].name) || duplicate ||
+			(o->component_sets[i].members[7] & 0x80000000u))
+			return build_fail(b, "invalid or repeated component set %s", o->component_sets[i].name);
+	}
+	for (size_t i = 0; i < o->articulation_setting_count; ++i) {
+		bool duplicate = false;
+		for (size_t previous = 0; previous < i; ++previous)
+			duplicate |=
+				strcmp(o->articulation_settings[previous].name, o->articulation_settings[i].name) == 0;
+		if (!valid_component_tag(o->articulation_settings[i].name) || duplicate)
+			return build_fail(b, "invalid or repeated articulation setting %s",
+							  o->articulation_settings[i].name);
+	}
+	if (b->xwau && (o->smooth_angle_degrees >= 0.0f || o->emissive || o->fullbright_strength > 0.0f ||
+					!o->xwau_untextured))
+		return build_fail(b, "XWAU materials exclude a smoothing angle, emissive and fullbright");
+	if (b->skins && !b->xwau)
+		return build_fail(b, "skins need XWAU materials");
+	if (b->anim && !b->xwau)
+		return build_fail(b, "animated materials need XWAU materials");
+	return !b->skins || skin_validate(b->skins, b->error);
+}
+
+/* ---- Texture preparation ------------------------------------------------ */
+
+/* Self-illuminated texels (flat palette ramp) become a second, emissive
+ * image per affected texture (with `emissive`). Counted first, as every
+ * image: cgltf points into the image and texture arrays, which are never
+ * reallocated. */
+static bool find_stock_emissive(Build* b, size_t* images) {
+	const opt_file_t* opt = b->opt;
+	b->tex_emissive = (int*)calloc(opt->texture_count ? opt->texture_count : 1, sizeof *b->tex_emissive);
+	if (!b->tex_emissive) {
+		fprintf(stderr, "opt2gltf: oom\n");
+		return false;
+	}
+	for (int32_t i = 0; b->emissive && i < opt->texture_count; ++i) {
+		uint8_t* em =
+			decode_texture_emissive_rgba8(opt, &opt->textures[i], b->base_shade, OPT_EMISSIVE_SHADE_TOL);
+		if (em) {
+			b->tex_emissive[i] = 1;
+			++*images;
+			free(em);
+		}
+	}
+	return true;
+}
+
+/* XWAU mode: bakes every texture, and finds the textures sharing a normal
+ * map. */
+static bool bake_xwau_textures(Build* b, size_t* images) {
+	const opt_file_t*          opt   = b->opt;
+	const OptGltfXwauMaterial* xwau  = b->xwau;
+	const size_t               count = opt->texture_count ? (size_t)opt->texture_count : 1;
+	b->xwau_baked                    = (XwauBaked*)calloc(count, sizeof *b->xwau_baked);
+	b->xwau_normal_owner             = (int32_t*)malloc(count * sizeof *b->xwau_normal_owner);
+	b->xwau_normal_image             = (int32_t*)malloc(count * sizeof *b->xwau_normal_image);
+	b->xwau_colour                   = (uint8_t**)calloc(count, sizeof *b->xwau_colour);
+	if (!b->xwau_baked || !b->xwau_normal_owner || !b->xwau_normal_image || !b->xwau_colour) {
+		fprintf(stderr, "opt2gltf: oom (xwau)\n");
+		return false;
+	}
+	for (int32_t i = 0; i < opt->texture_count; ++i) {
+		XwauBaked* baked         = &b->xwau_baked[i];
+		b->xwau_normal_owner[i]  = -1;
+		b->xwau_normal_image[i]  = -1;
+		const OptGltfXwauAnim* a = b->anim ? &b->anim[i] : NULL;
+		if (!xwau_bake_texture(&opt->textures[i], b->base_shade, &xwau[i], baked,
+							   a && a->anim_base ? &b->xwau_colour[i] : NULL)) {
+			fprintf(stderr, "opt2gltf: oom (xwau bake)\n");
+			return false;
+		}
+		xwau_anim_base(&b->xwau_colour[i], (uint32_t)opt->textures[i].width,
+					   (uint32_t)opt->textures[i].height, a, baked);
+		*images +=
+			(baked->emissive ? 1u : 0u) + (baked->metal_rough ? 1u : 0u) + (baked->transmission ? 1u : 0u);
+		if (!xwau[i].normal_map.rgba || !baked->base)
+			continue;
+		b->xwau_normal_owner[i] = i;
+		for (int32_t j = 0; j < i; ++j) {
+			if (b->xwau_normal_owner[j] == j && xwau[j].normal_map.rgba == xwau[i].normal_map.rgba &&
+				xwau[j].nm_intensity == xwau[i].nm_intensity) {
+				b->xwau_normal_owner[i] = j;
+				break;
+			}
+		}
+		if (b->xwau_normal_owner[i] == i)
+			++*images;
+	}
+	return true;
+}
+
+/* Screen surfaces: the cover images, one set per cover. */
+static bool find_screen_covers(Build* b, size_t* images) {
+	const opt_file_t*    opt     = b->opt;
+	const OptGltfScreen* screens = b->screens;
+	b->screen_cover_image        = (int32_t*)malloc((opt->texture_count ? (size_t)opt->texture_count : 1) *
+													sizeof *b->screen_cover_image);
+	if (!b->screen_cover_image) {
+		fprintf(stderr, "opt2gltf: oom (screens)\n");
+		return false;
+	}
+	for (int32_t i = 0; i < opt->texture_count; ++i) {
+		b->screen_cover_image[i] = -1;
+		const OptGltfScreen* s   = &screens[i];
+		if (!s->present || s->hologram || !s->cover_base.rgba)
+			continue;
+		bool shared = false;
+		for (int32_t j = 0; j < i && !shared; ++j)
+			shared = screens[j].present && !screens[j].hologram &&
+					 screens[j].cover_base.rgba == s->cover_base.rgba;
+		if (!shared)
+			*images += s->cover_emissive.rgba ? 2u : 1u;
+	}
+	return true;
+}
+
+static bool prepare_textures(Build* b) {
+	const opt_file_t* opt    = b->opt;
+	GltfBuild*        gb     = b->gb;
+	size_t            images = (size_t)opt->texture_count;
+	b->base_shade            = opt_palette_base_shade(opt);
+	if (!find_stock_emissive(b, &images) || (b->xwau && !bake_xwau_textures(b, &images)) ||
+		(b->screens && !find_screen_covers(b, &images)))
+		return false;
+	if (b->skins) {
+		if (!skin_state_build(opt, b->skins, b->screens, b->base_shade, b->xwau, b->anim, b->xwau_baked,
+							  &b->skin_state)) {
+			fprintf(stderr, "opt2gltf: oom (skins)\n");
+			return false;
+		}
+		for (size_t c = 0; c < b->skin_state.count; ++c)
+			images += b->skin_state.composites[c].image_count;
+	}
+
+	gb->images   = (cgltf_image*)calloc(images ? images : 1, sizeof *gb->images);
+	gb->textures = (cgltf_texture*)calloc(images ? images : 1, sizeof *gb->textures);
+	/* Room for the base materials (one per texture, the untextured one, then
+	 * one per skin composite) and, after them, up to two alpha-promoted
+	 * copies of each (see promoted_variant_material). Primitives point into
+	 * this array, so it is never reallocated. */
+	const size_t materials = ((size_t)opt->texture_count + 1 + b->skin_state.count) * 3;
+	gb->materials          = (cgltf_material*)calloc(materials, sizeof *gb->materials);
+	gb->material_anim      = (const char**)calloc(materials, sizeof *gb->material_anim);
+	gb->material_screen    = (const char**)calloc(materials, sizeof *gb->material_screen);
+	b->document->image_pixels =
+		(OptGltfOwnedImage*)calloc(images ? images : 1, sizeof *b->document->image_pixels);
+	b->document->image_pixels_count = images;
+	if (!gb->images || !gb->textures || !gb->materials || !gb->material_anim || !gb->material_screen ||
+		!b->document->image_pixels) {
+		fprintf(stderr, "opt2gltf: oom (textures)\n");
+		return false;
+	}
+	b->image_slot = (size_t)opt->texture_count;
+	return true;
+}
+
+/* ---- Texture materials -------------------------------------------------- */
+
+static void set_color(float out[], float r, float g, float b) {
+	out[0] = r;
+	out[1] = g;
+	out[2] = b;
+}
+
+/* The material's alpha mode: classified from the texture's alpha (in XWAU
+ * mode the baked one: glass remaps it), or an alpha override. */
+static bool material_alpha(Build* b, int32_t i, cgltf_material* mat, const uint8_t* rgba) {
+	const opt_texture_t* t               = &b->opt->textures[i];
+	AlphaHistogram       alpha_histogram = { 0, 0, 0 };
+	uint8_t*             xwau_alpha      = NULL;
+	if (b->xwau && rgba && b->xwau_baked[i].transparent) {
+		const size_t n = (size_t)t->width * (size_t)t->height;
+		xwau_alpha     = (uint8_t*)malloc(n);
+		if (!xwau_alpha) {
+			fprintf(stderr, "opt2gltf: oom (xwau alpha)\n");
+			return false;
+		}
+		for (size_t k = 0; k < n; ++k)
+			xwau_alpha[k] = rgba[k * 4 + 3];
+	}
+	OptGltfAlphaMode alpha_mode = classify_alpha(b->xwau ? xwau_alpha : t->alpha,
+												 (size_t)t->width * (size_t)t->height, &alpha_histogram);
+	free(xwau_alpha);
+	float                       alpha_cutoff   = 0.5f;
+	const OptGltfAlphaOverride* alpha_override = find_alpha_override(b->options, t, i);
+	if (alpha_override_match_count(b->options, t, i) > 1)
+		return build_fail(b, "multiple alpha overrides resolve to texture '%s'", t->name);
+	if (alpha_override) {
+		if (alpha_override->alpha_mode < OPT_GLTF_ALPHA_OPAQUE ||
+			alpha_override->alpha_mode > OPT_GLTF_ALPHA_BLEND || !isfinite(alpha_override->alpha_cutoff) ||
+			alpha_override->alpha_cutoff < 0.0f || alpha_override->alpha_cutoff > 1.0f ||
+			(alpha_override->alpha_mode != OPT_GLTF_ALPHA_OPAQUE && !t->alpha))
+			return build_fail(b, "invalid alpha override for texture '%s'", t->name);
+		alpha_mode   = alpha_override->alpha_mode;
+		alpha_cutoff = alpha_override->alpha_cutoff;
+	}
+	if (t->alpha && b->options->log) {
+		char note[512];
+		snprintf(note, sizeof note,
+				 "[opt_alpha] %s %s: mode=%s source=%s zero=%llu full=%llu intermediate=%llu cutoff=%.3g",
+				 b->basename, t->name[0] ? t->name : b->gb->images[i].name, alpha_mode_name(alpha_mode),
+				 alpha_override ? "override" : "heuristic", (unsigned long long)alpha_histogram.zero_count,
+				 (unsigned long long)alpha_histogram.full_count,
+				 (unsigned long long)alpha_histogram.intermediate_count, (double)alpha_cutoff);
+		b->options->log(false, note);
+	}
+	if (alpha_mode == OPT_GLTF_ALPHA_MASK) {
+		mat->alpha_mode   = cgltf_alpha_mode_mask;
+		mat->alpha_cutoff = alpha_cutoff;
+	} else if (alpha_mode == OPT_GLTF_ALPHA_BLEND) {
+		mat->alpha_mode = cgltf_alpha_mode_blend;
+	}
+	return true;
+}
+
+/* Emissive: self-illuminated texels (e.g. lit windows) get a second texture
+ * holding their glow colour on black, wired as emissiveTexture with a unit
+ * emissiveFactor. The classic renderer drew them over the lit surface,
+ * glow · c + lit · (1 - c) with c their coverage, 1 on a lit texel: the
+ * base colour is black under them, so that the standard lit + emission
+ * draws the same. */
+static void stock_emissive(Build* b, int32_t i, cgltf_material* mat) {
+	const opt_texture_t* t  = &b->opt->textures[i];
+	uint8_t*             em = decode_texture_emissive_rgba8(b->opt, t, b->base_shade, OPT_EMISSIVE_SHADE_TOL);
+	uint8_t*             base_rgba = b->document->image_pixels[i].rgba;
+	if (em && base_rgba) {
+		for (size_t k = 0; k < (size_t)t->width * (size_t)t->height; ++k)
+			if (em[k * 4 + 3])
+				base_rgba[k * 4 + 0] = base_rgba[k * 4 + 1] = base_rgba[k * 4 + 2] = 0;
+	}
+	if (!em)
+		return;
+	mat->emissive_texture.texture = document_set_image(
+		b->document, b->image_slot++, em, (uint32_t)t->width, (uint32_t)t->height,
+		xprintf_dup("Tex%02d_emissive", (int)i), xprintf_dup("%s_Tex%02d_emissive.png", b->basename, (int)i));
+	set_color(mat->emissive_factor, 1.0f, 1.0f, 1.0f);
+}
+
+/* XWAU: baked emissive, metallic-roughness, transmission and normal maps,
+ * the specular F0 and the animation. */
+static bool xwau_material(Build* b, int32_t i, cgltf_material* mat) {
+	const opt_texture_t*       t     = &b->opt->textures[i];
+	const OptGltfXwauMaterial* xwau  = &b->xwau[i];
+	XwauBaked*                 baked = &b->xwau_baked[i];
+	const uint32_t             w = (uint32_t)t->width, h = (uint32_t)t->height;
+	/* XWAU materials are keyed by texture name: keep it. */
+	if (t->name[0])
+		mat->name = gb_keep_string(b->gb, xstrdup(t->name));
+	if (baked->emissive) {
+		mat->emissive_texture.texture = document_set_image(
+			b->document, b->image_slot++, baked->emissive, w, h, xprintf_dup("Tex%02d_emissive", (int)i),
+			xprintf_dup("%s_Tex%02d_emissive.png", b->basename, (int)i));
+		baked->emissive = NULL;
+		set_color(mat->emissive_factor, 1.0f, 1.0f, 1.0f);
+		mat->has_emissive_strength               = 1;
+		mat->emissive_strength.emissive_strength = XWAU_ILLUM_GAIN;
+	}
+	if (baked->metal_rough) {
+		mat->pbr_metallic_roughness.metallic_roughness_texture.texture = document_set_image(
+			b->document, b->image_slot++, baked->metal_rough, w, h, xprintf_dup("Tex%02d_mr", (int)i),
+			xprintf_dup("%s_Tex%02d_mr.png", b->basename, (int)i));
+		baked->metal_rough                           = NULL;
+		mat->pbr_metallic_roughness.metallic_factor  = 1.0f;
+		mat->pbr_metallic_roughness.roughness_factor = 1.0f;
+	} else {
+		mat->pbr_metallic_roughness.metallic_factor  = baked->metallic;
+		mat->pbr_metallic_roughness.roughness_factor = baked->roughness;
+	}
+	if (baked->transmission) {
+		mat->has_transmission                 = 1;
+		mat->transmission.transmission_factor = 1.0f;
+		mat->transmission.transmission_texture.texture =
+			document_set_image(b->document, b->image_slot++, baked->transmission, w, h,
+							   xprintf_dup("Tex%02d_transmission", (int)i),
+							   xprintf_dup("%s_Tex%02d_transmission.png", b->basename, (int)i));
+		baked->transmission = NULL;
+	}
+	const int32_t owner = b->xwau_normal_owner[i];
+	if (owner == i) {
+		uint8_t* normal = xwau_bake_normal(&xwau->normal_map, xwau->nm_intensity);
+		if (!normal) {
+			fprintf(stderr, "opt2gltf: oom (xwau normal)\n");
+			return false;
+		}
+		b->xwau_normal_image[i] = (int32_t)b->image_slot;
+		document_set_image(b->document, b->image_slot++, normal, xwau->normal_map.width,
+						   xwau->normal_map.height, xprintf_dup("Tex%02d_normal", (int)i),
+						   xprintf_dup("%s_nm_%s_k%d.png", b->basename,
+									   xwau->normal_map_name ? xwau->normal_map_name : "map",
+									   (int)lroundf(xwau->nm_intensity * 1000.0f)));
+	}
+	if (owner >= 0)
+		mat->normal_texture.texture = &b->gb->textures[b->xwau_normal_image[owner]];
+	mat->normal_texture.scale = 1.0f;
+	xwau_set_specular(mat, baked->specular_color);
+	if (b->anim)
+		anim_apply(b->document, mat, &b->anim[i]);
+	return true;
+}
+
+/* Screen surface: replaces the material's textures (opt2gltf.h), with its
+ * cover's images (written once per cover). */
+static bool screen_material(Build* b, int32_t i, cgltf_material* mat) {
+	const OptGltfScreen* s       = &b->screens[i];
+	cgltf_texture*       base    = NULL;
+	cgltf_texture*       glow    = NULL;
+	int32_t              sharing = -1;
+	for (int32_t j = 0; j < i && sharing < 0 && s->cover_base.rgba && !s->hologram; ++j)
+		if (b->screen_cover_image[j] >= 0 && b->screens[j].cover_base.rgba == s->cover_base.rgba)
+			sharing = j;
+	if (sharing >= 0) {
+		b->screen_cover_image[i] = b->screen_cover_image[sharing];
+	} else if (s->cover_base.rgba && !s->hologram) {
+		const OptGltfImageView* views[2] = { &s->cover_base, &s->cover_emissive };
+		const char*             kinds[2] = { "base", "emissive" };
+		const char*             cover    = s->cover_name ? s->cover_name : "cover";
+		b->screen_cover_image[i]         = (int32_t)b->image_slot;
+		for (int k = 0; k < 2; ++k) {
+			if (!views[k]->rgba)
+				continue;
+			const size_t bytes = (size_t)views[k]->width * views[k]->height * 4u;
+			uint8_t*     copy  = (uint8_t*)malloc(bytes);
+			if (!copy) {
+				fprintf(stderr, "opt2gltf: oom (screen cover)\n");
+				return false;
+			}
+			memcpy(copy, views[k]->rgba, bytes);
+			document_set_image(b->document, b->image_slot++, copy, views[k]->width, views[k]->height,
+							   xprintf_dup("Cover_%s_%s", cover, kinds[k]),
+							   xprintf_dup("%s_cover_%s_%s.png", b->basename, cover, kinds[k]));
+		}
+	}
+	if (b->screen_cover_image[i] >= 0) {
+		base = &b->gb->textures[b->screen_cover_image[i]];
+		glow = s->cover_emissive.rgba ? &b->gb->textures[b->screen_cover_image[i] + 1] : NULL;
+	}
+	if (!screen_apply(b->gb, mat, s, base, glow)) {
+		fprintf(stderr, "opt2gltf: oom (screen)\n");
+		return false;
+	}
+	return true;
+}
+
+/* Texture `i`'s image (slot i) and material (material i). */
+static bool texture_material(Build* b, int32_t i) {
+	const opt_texture_t* t    = &b->opt->textures[i];
+	GltfBuild*           gb   = b->gb;
+	uint8_t*             rgba = b->xwau ? b->xwau_baked[i].base : decode_texture_rgba8(t, b->base_shade);
+	if (b->xwau)
+		b->xwau_baked[i].base = NULL; /* owned by the document from here */
+	if (rgba) {
+		document_set_image(b->document, (size_t)i, rgba, (uint32_t)t->width, (uint32_t)t->height,
+						   xprintf_dup("Tex%02d", (int)i),
+						   xprintf_dup("%s_Tex%02d.png", b->basename, (int)i));
+	} else {
+		gb->images[i].name      = gb_keep_string(gb, xprintf_dup("Tex%02d (missing pixels)", (int)i));
+		gb->textures[i].image   = &gb->images[i];
+		gb->textures[i].sampler = &gb->sampler;
+		gb->textures[i].name    = gb->images[i].name;
+	}
+
+	/* PBR material: baseColorTexture only; metallic 0, roughness 1 by
+	 * default. */
+	cgltf_material* mat             = &gb->materials[i];
+	mat->name                       = gb_keep_string(gb, xprintf_dup("Mat_Tex%02d", (int)i));
+	mat->has_pbr_metallic_roughness = 1;
+	set_color(mat->pbr_metallic_roughness.base_color_factor, 1.0f, 1.0f, 1.0f);
+	mat->pbr_metallic_roughness.base_color_factor[3]       = 1.0f;
+	mat->pbr_metallic_roughness.metallic_factor            = 0.0f;
+	mat->pbr_metallic_roughness.roughness_factor           = 1.0f;
+	mat->pbr_metallic_roughness.base_color_texture.texture = &gb->textures[i];
+	if (!material_alpha(b, i, mat, rgba))
+		return false;
+
+	/* Fullbright: the texture lights itself and the scene adds nothing
+	 * diffuse, as the classic renderer draws projectiles. Alpha still comes
+	 * from the base texture. */
+	if (b->fullbright) {
+		set_color(mat->pbr_metallic_roughness.base_color_factor, 0.0f, 0.0f, 0.0f);
+		mat->emissive_texture.texture = &gb->textures[i];
+		set_color(mat->emissive_factor, 1.0f, 1.0f, 1.0f);
+		mat->has_emissive_strength               = 1;
+		mat->emissive_strength.emissive_strength = b->fullbright_strength;
+	}
+	if (b->tex_emissive[i])
+		stock_emissive(b, i, mat);
+	if (b->xwau && rgba && !xwau_material(b, i, mat))
+		return false;
+	return !(b->screens && b->screens[i].present) || screen_material(b, i, mat);
+}
+
+static void report_unused_alpha_overrides(const Build* b) {
+	const OptGltfBuildOptions* o = b->options;
+	for (size_t override_index = 0; o->alpha_overrides && override_index < o->alpha_override_count;
+		 ++override_index) {
+		bool matched = false;
+		for (int32_t texture_index = 0; !matched && texture_index < b->opt->texture_count; ++texture_index) {
+			char generated_name[32];
+			snprintf(generated_name, sizeof generated_name, "Tex%02d", (int)texture_index);
+			matched = alpha_name_equal(o->alpha_overrides[override_index].texture_name,
+									   b->opt->textures[texture_index].name) ||
+					  alpha_name_equal(o->alpha_overrides[override_index].texture_name, generated_name);
+		}
+		if (!matched) {
+			char warning[512];
+			snprintf(warning, sizeof warning, "%s: unused alpha override '%s'", b->basename,
+					 o->alpha_overrides[override_index].texture_name);
+			if (o->log)
+				o->log(true, warning);
+			else
+				fprintf(stderr, "opt2gltf: %s\n", warning);
+		}
+	}
+}
+
+/* The material of untextured face groups (texture_index -1). */
+static void untextured_material(Build* b) {
+	cgltf_material* untex             = &b->gb->materials[b->opt->texture_count];
+	untex->name                       = gb_keep_string(b->gb, xstrdup("Mat_Untextured"));
+	untex->has_pbr_metallic_roughness = 1;
+	set_color(untex->pbr_metallic_roughness.base_color_factor, 0.6f, 0.6f, 0.6f);
+	untex->pbr_metallic_roughness.base_color_factor[3] = 1.0f;
+	untex->pbr_metallic_roughness.metallic_factor      = 0.0f;
+	untex->pbr_metallic_roughness.roughness_factor     = 1.0f;
+	if (b->fullbright) {
+		for (int channel = 0; channel < 3; ++channel) {
+			untex->emissive_factor[channel] = untex->pbr_metallic_roughness.base_color_factor[channel];
+			untex->pbr_metallic_roughness.base_color_factor[channel] = 0.0f;
+		}
+		untex->has_emissive_strength               = 1;
+		untex->emissive_strength.emissive_strength = b->fullbright_strength;
+	}
+	if (b->xwau) {
+		const OptGltfXwauMaterial* um = b->options->xwau_untextured;
+		const float                s  = OptGltf_XwauUnlit(um);
+		for (int channel = 0; channel < 3; ++channel) {
+			const float grey = untex->pbr_metallic_roughness.base_color_factor[channel];
+			untex->pbr_metallic_roughness.base_color_factor[channel] = grey * (1.0f - s);
+			untex->emissive_factor[channel]                          = grey * s / XWAU_ILLUM_GAIN;
+		}
+		if (s > 0.0f) {
+			untex->has_emissive_strength               = 1;
+			untex->emissive_strength.emissive_strength = XWAU_ILLUM_GAIN;
+		}
+		untex->pbr_metallic_roughness.metallic_factor  = xwau_metallic(um->metallic);
+		untex->pbr_metallic_roughness.roughness_factor = xwau_roughness(um->glossiness);
+		xwau_set_specular(untex, xwau_specular_color(um->intensity));
+	}
+	b->gb->materials_count = (size_t)b->opt->texture_count + 1;
+	b->untextured          = (size_t)b->opt->texture_count;
+}
+
+/* Skin composite `c`: a copy of its texture's material with the composite's
+ * base color, and its own emissive, metallic-roughness or transmission
+ * where the bake differs (material untextured + 1 + c). */
+static void skin_material(Build* b, size_t c) {
+	GltfBuild*           gb        = b->gb;
+	SkinComposite*       composite = &b->skin_state.composites[c];
+	const int32_t        ti        = composite->texture;
+	const opt_texture_t* t         = &b->opt->textures[ti];
+	const uint32_t       w = (uint32_t)t->width, h = (uint32_t)t->height;
+	XwauBaked*           baked               = &composite->baked;
+	cgltf_material*      mat                 = &gb->materials[gb->materials_count++];
+	*mat                                     = gb->materials[ti];
+	gb->material_screen[mat - gb->materials] = gb->material_screen[ti];
+	mat->name            = gb_keep_string(gb, xprintf_dup("%s_skin%03zu", gb->materials[ti].name, c));
+	composite->images[0] = (int32_t)b->image_slot;
+	mat->pbr_metallic_roughness.base_color_texture.texture = document_set_image(
+		b->document, b->image_slot++, baked->base, w, h, xprintf_dup("Tex%02d_skin%03zu", (int)ti, c),
+		xprintf_dup("%s_Tex%02d_skin%03zu.png", b->basename, (int)ti, c));
+	baked->base = NULL;
+	if (!composite->same_emissive) {
+		if (baked->emissive) {
+			composite->images[1] = (int32_t)b->image_slot;
+			mat->emissive_texture.texture =
+				document_set_image(b->document, b->image_slot++, baked->emissive, w, h,
+								   xprintf_dup("Tex%02d_skin%03zu_emissive", (int)ti, c),
+								   xprintf_dup("%s_Tex%02d_skin%03zu_emissive.png", b->basename, (int)ti, c));
+			baked->emissive = NULL;
+			set_color(mat->emissive_factor, 1.0f, 1.0f, 1.0f);
+			mat->has_emissive_strength               = 1;
+			mat->emissive_strength.emissive_strength = XWAU_ILLUM_GAIN;
+		} else {
+			mat->emissive_texture.texture = NULL;
+			set_color(mat->emissive_factor, 0.0f, 0.0f, 0.0f);
+			mat->has_emissive_strength = 0;
+		}
+	}
+	if (!composite->same_metal_rough) {
+		if (baked->metal_rough) {
+			composite->images[2] = (int32_t)b->image_slot;
+			mat->pbr_metallic_roughness.metallic_roughness_texture.texture =
+				document_set_image(b->document, b->image_slot++, baked->metal_rough, w, h,
+								   xprintf_dup("Tex%02d_skin%03zu_mr", (int)ti, c),
+								   xprintf_dup("%s_Tex%02d_skin%03zu_mr.png", b->basename, (int)ti, c));
+			baked->metal_rough                           = NULL;
+			mat->pbr_metallic_roughness.metallic_factor  = 1.0f;
+			mat->pbr_metallic_roughness.roughness_factor = 1.0f;
+		} else {
+			mat->pbr_metallic_roughness.metallic_roughness_texture.texture = NULL;
+			mat->pbr_metallic_roughness.metallic_factor                    = baked->metallic;
+			mat->pbr_metallic_roughness.roughness_factor                   = baked->roughness;
+		}
+	}
+	if (!composite->same_transmission) {
+		mat->has_transmission                          = baked->transmission != NULL;
+		mat->transmission.transmission_factor          = baked->transmission ? 1.0f : 0.0f;
+		mat->transmission.transmission_texture.texture = NULL;
+		if (baked->transmission) {
+			composite->images[4]                           = (int32_t)b->image_slot;
+			mat->transmission.transmission_texture.texture = document_set_image(
+				b->document, b->image_slot++, baked->transmission, w, h,
+				xprintf_dup("Tex%02d_skin%03zu_transmission", (int)ti, c),
+				xprintf_dup("%s_Tex%02d_skin%03zu_transmission.png", b->basename, (int)ti, c));
+			baked->transmission = NULL;
+		}
+	}
+	xwau_set_specular(mat, baked->specular_color);
+	if (b->anim)
+		anim_apply(b->document, mat, &b->anim[ti]);
+}
+
+static bool build_materials(Build* b) {
+	for (int32_t i = 0; i < b->opt->texture_count; ++i)
+		if (!texture_material(b, i))
+			return false;
+	report_unused_alpha_overrides(b);
+	untextured_material(b);
+	for (size_t c = 0; c < b->skin_state.count; ++c)
+		skin_material(b, c);
+	b->gb->images_count   = b->image_slot;
+	b->gb->textures_count = b->image_slot;
+	return true;
+}
+
+/* ---- Geometry ----------------------------------------------------------- */
+
+/* Pass 1: each OPT mesh's vertices and per-face-group indices, with
+ * tangents for the meshes drawing a normal-mapped material in any switch
+ * state (XWAU). */
+static bool build_geometry(Build* b) {
+	const opt_file_t* opt = b->opt;
+	b->built              = (BuiltMesh*)calloc(opt->mesh_count ? opt->mesh_count : 1, sizeof *b->built);
+	if (!b->built) {
+		fprintf(stderr, "opt2gltf: oom (meshes)\n");
+		return false;
+	}
+	b->max_state_count  = 1;
+	uint32_t fixed_zero = 0, fixed_flip = 0, skipped_repeats = 0, kept_repeats = 0;
+	for (int32_t mi = 0; mi < opt->mesh_count; ++mi) {
+		const opt_mesh_t* m  = &opt->meshes[mi];
+		BuiltMesh*        bm = &b->built[mi];
+		/* Components stay one-to-one with the OPT meshes. */
+		if (!built_mesh_from_opt(bm, m, OPT_METERS_PER_UNIT, b->smooth_angle >= 0.0f, b->smooth_angle,
+								 b->repair_normals))
+			return build_fail(b, "mesh %d has no LOD 0 triangles", (int)mi);
+		bool needs_tangents = false;
+		for (int32_t g = 0; b->xwau && !needs_tangents && g < m->lods[0].group_count; ++g) {
+			const opt_face_group_t* grp = &m->lods[0].groups[g];
+			if (bm->fg_index_count_arr[g] == 0)
+				continue;
+			const int states = (grp->state_count > 1 && grp->state_textures) ? grp->state_count : 1;
+			for (int st = 0; st < states && !needs_tangents; ++st) {
+				const int32_t ti = st == 0 ? grp->texture_index : grp->state_textures[st];
+				needs_tangents   = ti >= 0 && ti < opt->texture_count && b->xwau_normal_owner[ti] >= 0;
+			}
+		}
+		if (needs_tangents && !built_mesh_generate_tangents(bm)) {
+			fprintf(stderr, "opt2gltf: oom (tangents)\n");
+			return false;
+		}
+		fixed_zero += bm->fixed_zero_normals;
+		fixed_flip += bm->fixed_flipped_normals;
+		skipped_repeats += bm->skipped_repeats;
+		kept_repeats += bm->kept_repeats;
+		for (int32_t g = 0; g < m->lods[0].group_count; ++g)
+			if (m->lods[0].groups[g].state_count > b->max_state_count)
+				b->max_state_count = m->lods[0].groups[g].state_count;
+	}
+	if (fixed_zero || fixed_flip)
+		fprintf(stderr, "opt2gltf: %s: repaired %u zero + %u face-opposed canonical normals\n", b->basename,
+				fixed_zero, fixed_flip);
+	if (skipped_repeats)
+		fprintf(stderr, "opt2gltf: %s: left out %u repeated triangle(s)\n", b->basename, skipped_repeats);
+	if (kept_repeats)
+		fprintf(stderr, "opt2gltf: %s: %u triangle(s) repeat one with another texture (kept)\n", b->basename,
+				kept_repeats);
+	return true;
+}
+
+/* The asset's variants: state 0 is the primitives' own materials; states 1
+ * to N - 1, then the skin variants. */
+static bool build_variants(Build* b) {
+	GltfBuild* gb          = b->gb;
+	b->skin_variant_count  = b->skins ? b->skins->variant_count : 0;
+	b->state_variant_count = (size_t)b->max_state_count - 1;
+	const size_t count     = b->state_variant_count + b->skin_variant_count;
+	if (count == 0)
+		return true;
+	gb->variants = (cgltf_material_variant*)calloc(count, sizeof *gb->variants);
+	if (!gb->variants) {
+		fprintf(stderr, "opt2gltf: oom\n");
+		return false;
+	}
+	for (size_t v = 0; v < b->state_variant_count; ++v)
+		gb->variants[v].name = gb_keep_string(gb, xprintf_dup("State %d", (int)v + 1));
+	for (size_t v = 0; v < b->skin_variant_count; ++v)
+		gb->variants[b->state_variant_count + v].name =
+			gb_keep_string(gb, xstrdup(b->skins->variants[v].name));
+	gb->variants_count = count;
+	return true;
+}
+
+/* The vertex attributes of a mesh: POSITION, NORMAL, TEXCOORD_0 [, TANGENT]. */
+static size_t mesh_attribute_count(const BuiltMesh* bm) { return bm->has_tangents ? 4u : 3u; }
+
+/* Whether a face group's primitive maps variants: it switches states, or a
+ * skin variant has a composite of its texture. */
+static bool group_has_variants(const Build* b, const opt_face_group_t* grp) {
+	return (grp->state_count > 1 && grp->state_textures) ||
+		   skin_texture_has_composite(&b->skin_state, b->skin_variant_count, b->opt->texture_count,
+									  grp->texture_index);
+}
+
+/* The meshes, buffer views, accessors, primitives, attributes and
+ * mappings pass 2 writes. cgltf points into these arrays, so each is
+ * allocated once, at its full size. */
+static bool allocate_geometry(Build* b) {
+	const opt_file_t* opt = b->opt;
+	GltfBuild*        gb  = b->gb;
+	gb->meshes            = (cgltf_mesh*)calloc((size_t)opt->mesh_count, sizeof *gb->meshes);
+	if (!gb->meshes) {
+		fprintf(stderr, "opt2gltf: oom\n");
+		return false;
+	}
+	gb->meshes_count = (size_t)opt->mesh_count;
+	size_t prims = 0, attrs = 0, maps = 0, views = 0, accessors = 0;
+	for (int32_t mi = 0; mi < opt->mesh_count; ++mi) {
+		const opt_lod_t* lod     = &opt->meshes[mi].lods[0];
+		const size_t     streams = mesh_attribute_count(&b->built[mi]);
+		/* One view and accessor per vertex attribute, then per face group
+		 * with indices its index view and accessor. */
+		views += streams;
+		accessors += streams;
+		for (int32_t g = 0; g < lod->group_count; ++g) {
+			if (b->built[mi].fg_index_count_arr[g] == 0)
+				continue;
+			prims++;
+			attrs += streams;
+			views++;
+			accessors++;
+			if (group_has_variants(b, &lod->groups[g]))
+				maps += gb->variants_count;
+		}
+	}
+	gb->views          = (cgltf_buffer_view*)calloc(views ? views : 1, sizeof *gb->views);
+	gb->accessors      = (cgltf_accessor*)calloc(accessors ? accessors : 1, sizeof *gb->accessors);
+	gb->primitives     = (cgltf_primitive*)calloc(prims ? prims : 1, sizeof *gb->primitives);
+	gb->attributes     = (cgltf_attribute*)calloc(attrs ? attrs : 1, sizeof *gb->attributes);
+	gb->mappings       = (cgltf_material_mapping*)calloc(maps ? maps : 1, sizeof *gb->mappings);
+	gb->views_cap      = views;
+	gb->accessors_cap  = accessors;
+	gb->primitives_cap = prims;
+	gb->attributes_cap = attrs;
+	gb->mappings_cap   = maps;
+	if (!gb->views || !gb->accessors || !gb->primitives || !gb->attributes || !gb->mappings) {
+		fprintf(stderr, "opt2gltf: oom (geometry arrays)\n");
+		return false;
+	}
+	b->base_material_count = gb->materials_count;
+	b->promoted            = (cgltf_material**)calloc(b->base_material_count * 2, sizeof *b->promoted);
+	if (!b->promoted) {
+		fprintf(stderr, "opt2gltf: oom (promoted materials)\n");
+		return false;
+	}
+	return true;
+}
+
+/* One vertex attribute of every vertex (`size` bytes at `offset` in
+ * GltfVertex), as a buffer view and its accessor. */
+static cgltf_accessor* write_attribute(GltfBuild* gb, const BuiltMesh* bm, size_t offset, size_t size,
+									   cgltf_type type) {
+	const size_t start = bin_append(gb, NULL, 0);
+	for (uint32_t i = 0; i < bm->vertex_count; ++i)
+		bin_append(gb, (const char*)&bm->vertices[i] + offset, size);
+	cgltf_buffer_view* view =
+		gb_new_view(gb, start, bm->vertex_count * size, cgltf_buffer_view_type_vertices);
+	return gb_new_accessor(gb, view, bm->vertex_count, type, cgltf_component_type_r_32f);
+}
+
+/* The material texture `ti` shows: its own, else the untextured one. */
+static cgltf_material* texture_material_of(const Build* b, int32_t ti) {
+	return &b->gb->materials[ti >= 0 && ti < b->opt->texture_count ? (size_t)ti : b->untextured];
+}
+
+/* The variant mappings of a primitive drawing face group `grp`: per
+ * variant giving it another material, that material. A state variant shows
+ * its state (the original OPT walker clamps each switch to its last child);
+ * a skin variant its composite, else its state. Materials of different
+ * alpha classes are promoted to the most transparent one. */
+static bool primitive_mappings(Build* b, cgltf_primitive* prim, const opt_face_group_t* grp, int32_t mi,
+							   int32_t g) {
+	GltfBuild*       gb        = b->gb;
+	const size_t     vc        = gb->variants_count;
+	const int32_t    t0        = grp->texture_index;
+	const int        sc        = grp->state_count;
+	const bool       switched  = sc > 1 && grp->state_textures;
+	cgltf_material** materials = (cgltf_material**)calloc(vc ? vc : 1, sizeof *materials);
+	if (!materials) {
+		fprintf(stderr, "opt2gltf: oom\n");
+		return false;
+	}
+	int rank = alpha_class_rank(prim->material);
+	for (size_t v = 0; v < vc; ++v) {
+		size_t  state     = v + 1;
+		int32_t composite = -1;
+		if (v >= b->state_variant_count) {
+			const size_t sv = v - b->state_variant_count;
+			state           = b->skins->variants[sv].state;
+			if (t0 >= 0 && t0 < b->opt->texture_count)
+				composite = b->skin_state.composite_of[sv * (size_t)b->opt->texture_count + (size_t)t0];
+		}
+		if (composite >= 0)
+			materials[v] = &gb->materials[b->untextured + 1 + (size_t)composite];
+		else
+			materials[v] = texture_material_of(
+				b, switched ? grp->state_textures[state < (size_t)sc ? state : (size_t)sc - 1] : t0);
+		if (alpha_class_rank(materials[v]) > rank)
+			rank = alpha_class_rank(materials[v]);
+	}
+	int mixed = alpha_class_rank(prim->material) != rank;
+	for (size_t v = 0; v < vc; ++v)
+		mixed |= alpha_class_rank(materials[v]) != rank;
+	if (mixed) {
+		prim->material =
+			promoted_variant_material(gb, prim->material, rank, b->base_material_count, b->promoted);
+		for (size_t v = 0; v < vc; ++v)
+			materials[v] =
+				promoted_variant_material(gb, materials[v], rank, b->base_material_count, b->promoted);
+		fprintf(stderr, "opt2gltf: %s: mesh %d face group %d switch states mix alpha classes; all use %s\n",
+				b->basename, (int)mi, (int)g, rank == 2 ? "BLEND" : "MASK");
+	}
+	size_t mapped = 0;
+	for (size_t v = 0; v < vc; ++v)
+		mapped += materials[v] != prim->material;
+	if (mapped) {
+		cgltf_material_mapping* maps = (cgltf_material_mapping*)push_array(
+			(void**)&gb->mappings, &gb->mappings_count, &gb->mappings_cap, sizeof *maps, mapped);
+		size_t k = 0;
+		for (size_t v = 0; v < vc; ++v) {
+			if (materials[v] == prim->material)
+				continue;
+			maps[k].variant    = (cgltf_size)v;
+			maps[k++].material = materials[v];
+		}
+		prim->mappings       = maps;
+		prim->mappings_count = (cgltf_size)mapped;
+	}
+	free(materials);
+	return true;
+}
+
+/* The primitive of face group `g` of mesh `mi`: its indices (16-bit while
+ * every vertex fits), the mesh's vertex attributes, its material and
+ * variant mappings. */
+static bool write_primitive(Build* b, int32_t mi, int32_t g, cgltf_accessor* const vertex_attributes[4]) {
+	GltfBuild*              gb            = b->gb;
+	const BuiltMesh*        bm            = &b->built[mi];
+	const opt_face_group_t* grp           = &b->opt->meshes[mi].lods[0].groups[g];
+	const uint32_t          ic            = bm->fg_index_count_arr[g];
+	const uint32_t*         group_indices = bm->indices + bm->fg_index_start[g];
+	size_t                  idx_off, idx_bytes;
+	cgltf_component_type    idx_type;
+	if (bm->vertex_count <= 65536u) {
+		uint16_t* narrow = (uint16_t*)malloc((size_t)ic * sizeof *narrow);
+		if (!narrow)
+			return false;
+		for (uint32_t i = 0; i < ic; ++i)
+			narrow[i] = (uint16_t)group_indices[i];
+		idx_bytes = (size_t)ic * sizeof *narrow;
+		idx_off   = bin_append(gb, narrow, idx_bytes);
+		idx_type  = cgltf_component_type_r_16u;
+		free(narrow);
+	} else {
+		idx_bytes = (size_t)ic * sizeof *group_indices;
+		idx_off   = bin_append(gb, group_indices, idx_bytes);
+		idx_type  = cgltf_component_type_r_32u;
+	}
+	cgltf_buffer_view* idx_view = gb_new_view(gb, idx_off, idx_bytes, cgltf_buffer_view_type_indices);
+	cgltf_accessor*    idx_acc  = gb_new_accessor(gb, idx_view, ic, cgltf_type_scalar, idx_type);
+
+	cgltf_primitive* prim = (cgltf_primitive*)push_array((void**)&gb->primitives, &gb->primitives_count,
+														 &gb->primitives_cap, sizeof *prim, 1);
+	prim->type            = cgltf_primitive_type_triangles;
+	prim->indices         = idx_acc;
+
+	static const struct {
+		const char*          name;
+		cgltf_attribute_type type;
+	} kAttributes[4] = {
+		{ "POSITION", cgltf_attribute_type_position },
+		{ "NORMAL", cgltf_attribute_type_normal },
+		{ "TEXCOORD_0", cgltf_attribute_type_texcoord },
+		{ "TANGENT", cgltf_attribute_type_tangent },
+	};
+
+	const size_t     attr_count = mesh_attribute_count(bm);
+	cgltf_attribute* attrs = (cgltf_attribute*)push_array((void**)&gb->attributes, &gb->attributes_count,
+														  &gb->attributes_cap, sizeof *attrs, attr_count);
+	for (size_t a = 0; a < attr_count; ++a) {
+		attrs[a].name  = gb_keep_string(gb, xstrdup(kAttributes[a].name));
+		attrs[a].type  = kAttributes[a].type;
+		attrs[a].index = 0;
+		attrs[a].data  = vertex_attributes[a];
+	}
+	prim->attributes       = attrs;
+	prim->attributes_count = attr_count;
+
+	/* Default material: state 0 (or the untextured one). */
+	prim->material = texture_material_of(b, grp->texture_index);
+	return !group_has_variants(b, grp) || primitive_mappings(b, prim, grp, mi, g);
+}
+
+/* Pass 2: mesh `mi`'s vertex attributes into the .bin, then one primitive
+ * per face group with indices. */
+static bool write_mesh(Build* b, int32_t mi) {
+	GltfBuild*        gb   = b->gb;
+	const BuiltMesh*  bm   = &b->built[mi];
+	const opt_mesh_t* m    = &b->opt->meshes[mi];
+	cgltf_mesh*       mesh = &gb->meshes[mi];
+	mesh->name =
+		gb_keep_string(gb, xprintf_dup("Mesh%02d_%s", (int)mi, opt_mesh_type_name(m->descriptor.mesh_type)));
+
+	float pmin[3] = { +INFINITY, +INFINITY, +INFINITY };
+	float pmax[3] = { -INFINITY, -INFINITY, -INFINITY };
+	for (uint32_t i = 0; i < bm->vertex_count; ++i) {
+		for (int k = 0; k < 3; ++k) {
+			pmin[k] = bm->vertices[i].pos[k] < pmin[k] ? bm->vertices[i].pos[k] : pmin[k];
+			pmax[k] = bm->vertices[i].pos[k] > pmax[k] ? bm->vertices[i].pos[k] : pmax[k];
+		}
+	}
+	cgltf_accessor* attributes[4] = { NULL };
+	attributes[0] =
+		write_attribute(gb, bm, offsetof(GltfVertex, pos), sizeof bm->vertices[0].pos, cgltf_type_vec3);
+	attributes[0]->has_min = 1;
+	attributes[0]->has_max = 1;
+	memcpy(attributes[0]->min, pmin, sizeof pmin);
+	memcpy(attributes[0]->max, pmax, sizeof pmax);
+	attributes[1] =
+		write_attribute(gb, bm, offsetof(GltfVertex, nrm), sizeof bm->vertices[0].nrm, cgltf_type_vec3);
+	attributes[2] =
+		write_attribute(gb, bm, offsetof(GltfVertex, uv), sizeof bm->vertices[0].uv, cgltf_type_vec2);
+	if (bm->has_tangents)
+		attributes[3] =
+			write_attribute(gb, bm, offsetof(GltfVertex, tan), sizeof bm->vertices[0].tan, cgltf_type_vec4);
+
+	mesh->primitives = gb->primitives + gb->primitives_count;
+	for (int32_t g = 0; g < m->lods[0].group_count; ++g) {
+		if (bm->fg_index_count_arr[g] == 0)
+			continue;
+		if (!write_primitive(b, mi, g, attributes))
+			return false;
+		mesh->primitives_count++;
+	}
+	return true;
+}
+
+/* A variant that changes no primitive's material (a skin none of whose
+ * images match) still maps the first primitive to its own material, so that
+ * editors writing only mapped variants (Blender's glTF exporter) keep it
+ * for the markings list and missions to name. */
+static bool map_every_variant(Build* b) {
+	GltfBuild* gb = b->gb;
+	if (!gb->variants_count || !gb->primitives_count)
+		return true;
+	bool* mapped = (bool*)calloc(gb->variants_count, sizeof *mapped);
+	if (!mapped) {
+		fprintf(stderr, "opt2gltf: oom\n");
+		return false;
+	}
+	size_t unmapped = 0;
+	for (size_t k = 0; k < gb->mappings_count; ++k)
+		mapped[gb->mappings[k].variant] = true;
+	for (size_t v = 0; v < gb->variants_count; ++v)
+		unmapped += !mapped[v];
+	if (unmapped) {
+		/* cgltf points primitives at their mappings: rebuild the array. */
+		const size_t            count    = gb->mappings_count + unmapped;
+		cgltf_material_mapping* mappings = (cgltf_material_mapping*)calloc(count, sizeof *mappings);
+		if (!mappings) {
+			free(mapped);
+			fprintf(stderr, "opt2gltf: oom\n");
+			return false;
+		}
+		size_t k = 0;
+		for (size_t p = 0; p < gb->primitives_count; ++p) {
+			cgltf_primitive*        prim  = &gb->primitives[p];
+			cgltf_material_mapping* first = mappings + k;
+			for (size_t m = 0; m < prim->mappings_count; ++m)
+				mappings[k++] = prim->mappings[m];
+			for (size_t v = 0; p == 0 && v < gb->variants_count; ++v) {
+				if (!mapped[v]) {
+					mappings[k].variant    = (cgltf_size)v;
+					mappings[k++].material = prim->material;
+				}
+			}
+			prim->mappings_count = (cgltf_size)(mappings + k - first);
+			prim->mappings       = prim->mappings_count ? first : NULL;
+		}
+		free(gb->mappings);
+		gb->mappings       = mappings;
+		gb->mappings_count = count;
+		gb->mappings_cap   = count;
+	}
+	free(mapped);
+	return true;
+}
+
+static bool write_meshes(Build* b) {
+	if (!allocate_geometry(b))
+		return false;
+	for (int32_t mi = 0; mi < b->opt->mesh_count; ++mi)
+		if (!write_mesh(b, mi))
+			return false;
+	return map_every_variant(b);
+}
+
+/* ---- Nodes -------------------------------------------------------------- */
+
+/* The model root's AERON_flight_model object (owned), or NULL. */
+static char* root_extension(const Build* b) {
+	const OptGltfBuildOptions* o = b->options;
+	/* Each articulation needs at most 256 bytes, each setting 80, each
+	 * component set 72 plus 4 per member. */
+	char* markings = markings_json(b->skins, b->max_state_count);
+	if (!markings)
+		return NULL;
+	const size_t size = 64 + o->component_articulation_count * 256 + o->articulation_setting_count * 80 +
+						o->component_set_count * (72 + 255 * 4) + strlen(markings);
+	char*        ext  = (char*)malloc(size);
+	if (!ext) {
+		free(markings);
+		return NULL;
+	}
+	size_t off = (size_t)snprintf(ext, size, "{\"role\":\"model\"");
+	/* Articulations in option order; speedBack only when it differs. */
+	for (size_t a = 0; a < o->component_articulation_count; ++a) {
+		const OptGltfComponentArticulation* art = &o->component_articulations[a];
+		off += (size_t)snprintf(
+			ext + off, size - off, "%s{\"component\":%u,\"group\":\"%s\",\"angle\":%d,\"speed\":%d",
+			a ? "," : ",\"articulations\":[", art->component, art->group, (int)art->angle, (int)art->speed);
+		if (art->speed_back != art->speed)
+			off += (size_t)snprintf(ext + off, size - off, ",\"speedBack\":%d", (int)art->speed_back);
+		if (art->behavior[0])
+			off += (size_t)snprintf(ext + off, size - off, ",\"behavior\":\"%s\"", art->behavior);
+		off += (size_t)snprintf(ext + off, size - off, a + 1 == o->component_articulation_count ? "}]" : "}");
+	}
+	for (size_t s = 0; s < o->articulation_setting_count; ++s)
+		off += (size_t)snprintf(ext + off, size - off, "%s\"%s\":%d", s ? "," : ",\"articulationSettings\":{",
+								o->articulation_settings[s].name, (int)o->articulation_settings[s].value);
+	if (o->articulation_setting_count)
+		off += (size_t)snprintf(ext + off, size - off, "}");
+	for (size_t s = 0; s < o->component_set_count; ++s) {
+		const OptGltfComponentSet* set = &o->component_sets[s];
+		off += (size_t)snprintf(ext + off, size - off, "%s\"%s\":[", s ? "," : ",\"componentSets\":{",
+								set->name);
+		bool first = true;
+		for (int component = 0; component < 255; ++component) {
+			if (set->members[component / 32] & (1u << (component % 32))) {
+				off += (size_t)snprintf(ext + off, size - off, "%s%d", first ? "" : ",", component);
+				first = false;
+			}
+		}
+		off += (size_t)snprintf(ext + off, size - off, "]");
+	}
+	if (o->component_set_count)
+		off += (size_t)snprintf(ext + off, size - off, "}");
+	snprintf(ext + off, size - off, "%s}", markings);
+	free(markings);
+	return ext;
+}
+
+/* Mesh `mi`'s component AERON_flight_model object (owned), or NULL. */
+static char* component_extension(const Build* b, int32_t mi) {
+	const OptGltfBuildOptions* o     = b->options;
+	const opt_mesh_t*          m     = &b->opt->meshes[mi];
+	const float                scale = OPT_METERS_PER_UNIT;
+	/* Fixed fields fit in 2048 bytes; each tag needs at most 66. */
+	const size_t size = 2048 + o->component_tag_count * 66;
+	char*        ext  = (char*)malloc(size);
+	if (!ext)
+		return NULL;
+	size_t off = 0;
+	off += snprintf(ext + off, size - off,
+					"{\"role\":\"component\",\"meshType\":%d,"
+					"\"explosionFlags\":%u,\"targetId\":%d",
+					(int)m->descriptor.mesh_type, (unsigned)m->descriptor.explosion_type,
+					(int)m->descriptor.target_id);
+	if (m->has_descriptor) {
+		float center[3];
+		swap_axis_v3(&m->descriptor.center, center);
+		const float span[3]       = { m->descriptor.span.x, m->descriptor.span.z, m->descriptor.span.y };
+		const float bounds_min[3] = { -m->descriptor.bbox_max.x, m->descriptor.bbox_min.z,
+									  -m->descriptor.bbox_max.y };
+		const float bounds_max[3] = { -m->descriptor.bbox_min.x, m->descriptor.bbox_max.z,
+									  -m->descriptor.bbox_min.y };
+		off +=
+			snprintf(ext + off, size - off,
+					 ",\"span\":[%.9g,%.9g,%.9g],"
+					 "\"center\":[%.9g,%.9g,%.9g],"
+					 "\"boundsMin\":[%.9g,%.9g,%.9g],"
+					 "\"boundsMax\":[%.9g,%.9g,%.9g]",
+					 span[0] * scale, span[1] * scale, span[2] * scale, center[0] * scale, center[1] * scale,
+					 center[2] * scale, bounds_min[0] * scale, bounds_min[1] * scale, bounds_min[2] * scale,
+					 bounds_max[0] * scale, bounds_max[1] * scale, bounds_max[2] * scale);
+	}
+	if (m->descriptor.target_id != 0) {
+		float target[3];
+		swap_axis_v3(&m->descriptor.target, target);
+		off += snprintf(ext + off, size - off, ",\"target\":[%.9g,%.9g,%.9g]", target[0] * scale,
+						target[1] * scale, target[2] * scale);
+	}
+	/* Every mesh with a rotation frame has it: the default axis frame is
+	 * not static, XWA rotates default-frame meshes about their pivot
+	 * whenever their runtime angle is nonzero (hangar droid antennas spin
+	 * about the default vertical axis). */
+	if (m->has_rotation_scale) {
+		float pivot[3], rax[3], dax[3], uax[3];
+		swap_axis_v3(&m->rotation_scale.pivot, pivot);
+		swap_axis_v3(&m->rotation_scale.rotation_axis, rax);
+		swap_axis_v3(&m->rotation_scale.direction_axis, dax);
+		swap_axis_v3(&m->rotation_scale.up_axis, uax);
+		/* The pivot is a position, scaled; the axes are directions. */
+		for (int axis = 0; axis < 3; ++axis) {
+			pivot[axis] *= scale;
+			rax[axis] /= OPT_Q15_TO_UNIT;
+			dax[axis] /= OPT_Q15_TO_UNIT;
+			uax[axis] /= OPT_Q15_TO_UNIT;
+		}
+		off += snprintf(ext + off, size - off,
+						",\"rotation\":{"
+						"\"pivot\":[%.9g,%.9g,%.9g],"
+						"\"rotationAxis\":[%.9g,%.9g,%.9g],"
+						"\"directionAxis\":[%.9g,%.9g,%.9g],"
+						"\"upAxis\":[%.9g,%.9g,%.9g]}",
+						pivot[0], pivot[1], pivot[2], rax[0], rax[1], rax[2], dax[0], dax[1], dax[2], uax[0],
+						uax[1], uax[2]);
+	}
+	/* Tags in option order, duplicates dropped. */
+	bool tags_open = false;
+	for (size_t t = 0; t < o->component_tag_count; ++t) {
+		const OptGltfComponentTag* tag = &o->component_tags[t];
+		if (tag->mesh_index != (uint32_t)mi)
+			continue;
+		bool duplicate = false;
+		for (size_t previous = 0; previous < t && !duplicate; ++previous)
+			duplicate = o->component_tags[previous].mesh_index == (uint32_t)mi &&
+						strcmp(o->component_tags[previous].tag, tag->tag) == 0;
+		if (duplicate)
+			continue;
+		off += snprintf(ext + off, size - off, "%s\"%s\"", tags_open ? "," : ",\"tags\":[", tag->tag);
+		tags_open = true;
+	}
+	snprintf(ext + off, size - off, tags_open ? "]}" : "}");
+	return ext;
+}
+
+/* A child node at `position` (OPT axes and units) under `parent`. */
+static void child_node(cgltf_node* node, cgltf_node* parent, const opt_vec3_t* position) {
+	float pos[3];
+	swap_axis_v3(position, pos);
+	node->parent          = parent;
+	node->has_translation = 1;
+	for (int k = 0; k < 3; ++k)
+		node->translation[k] = pos[k] * OPT_METERS_PER_UNIT;
+}
+
+static bool hardpoint_node(Build* b, cgltf_node* node, cgltf_node* parent, const opt_hardpoint_t* hp) {
+	node->name = gb_keep_string(b->gb, xprintf_dup("hardpoint_%d", (int)hp->type));
+	child_node(node, parent, &hp->pos);
+	char extension[96];
+	snprintf(extension, sizeof extension, "{\"role\":\"hardpoint\",\"type\":%d}", (int)hp->type);
+	return set_flight_extension(b->gb, node, extension);
+}
+
+static bool engine_glow_node(Build* b, cgltf_node* node, cgltf_node* parent, const opt_engine_glow_t* eg,
+							 int e) {
+	node->name = gb_keep_string(b->gb, xprintf_dup("engine_glow_%d", e));
+	child_node(node, parent, &eg->position);
+	float look[3], up[3], right[3], rotation[4];
+	swap_axis_v3(&eg->look_axis, look);
+	swap_axis_v3(&eg->up_axis, up);
+	swap_axis_v3(&eg->right_axis, right);
+	quaternion_from_axes(right, up, look, rotation);
+	node->has_rotation = 1;
+	memcpy(node->rotation, rotation, sizeof rotation);
+	node->has_scale          = 1;
+	node->scale[0]           = eg->dimensions.x * OPT_METERS_PER_UNIT;
+	node->scale[1]           = eg->dimensions.y * OPT_METERS_PER_UNIT;
+	node->scale[2]           = eg->dimensions.z * OPT_METERS_PER_UNIT;
+	const uint32_t colors[2] = { eg->core_color, eg->outer_color };
+	float          rgba[2][4];
+	for (int color = 0; color < 2; ++color) {
+		rgba[color][0] = (float)((colors[color] >> 16) & 0xff) / 255.0f;
+		rgba[color][1] = (float)((colors[color] >> 8) & 0xff) / 255.0f;
+		rgba[color][2] = (float)(colors[color] & 0xff) / 255.0f;
+		rgba[color][3] = (float)((colors[color] >> 24) & 0xff) / 255.0f;
+	}
+	char extension[512];
+	snprintf(extension, sizeof extension,
+			 "{\"role\":\"engineGlow\",\"enabled\":%s,"
+			 "\"coreColor\":[%.9g,%.9g,%.9g,%.9g],"
+			 "\"outerColor\":[%.9g,%.9g,%.9g,%.9g]}",
+			 eg->is_disabled ? "false" : "true", rgba[0][0], rgba[0][1], rgba[0][2], rgba[0][3], rgba[1][0],
+			 rgba[1][1], rgba[1][2], rgba[1][3]);
+	return set_flight_extension(b->gb, node, extension);
+}
+
+/* Light `li` (a point light) and its node. */
+static bool light_node(Build* b, cgltf_node* node, cgltf_node* parent, size_t li) {
+	const OptGltfLight* source = &b->options->lights[li];
+	cgltf_light*        light  = &b->gb->lights[li];
+	light->name                = gb_keep_string(b->gb, xprintf_dup("light_%zu", li));
+	light->type                = cgltf_light_type_point;
+	memcpy(light->color, source->color, sizeof light->color);
+	light->intensity          = source->intensity;
+	light->range              = source->range;
+	node->name                = light->name;
+	node->light               = light;
+	const opt_vec3_t position = { source->position[0], source->position[1], source->position[2] };
+	child_node(node, parent, &position);
+	return set_flight_extension(b->gb, node, "{\"role\":\"light\"}");
+}
+
+/* Mesh `mi`'s node, with its child nodes from *next_child: hardpoints,
+ * engine glows, then lights (empties, so that Blender and other tools show
+ * them). */
+static bool mesh_node(Build* b, int32_t mi, cgltf_node* node, cgltf_node** next_child) {
+	const opt_mesh_t* m      = &b->opt->meshes[mi];
+	cgltf_node*       root   = &b->gb->nodes[0];
+	root->children[mi]       = node;
+	node->parent             = root;
+	node->mesh               = &b->gb->meshes[mi];
+	node->name               = b->gb->meshes[mi].name; /* already kept */
+	char*      extension     = component_extension(b, mi);
+	const bool extension_set = extension && set_flight_extension(b->gb, node, extension);
+	free(extension);
+	if (!extension_set)
+		return false;
+
+	const size_t light_count = b->options->light_count;
+	int          mesh_lights = 0;
+	for (size_t li = 0; li < light_count; ++li)
+		mesh_lights += b->options->lights[li].mesh == mi;
+	const int child_total = m->hardpoint_count + m->engine_glow_count + mesh_lights;
+	if (child_total == 0)
+		return true;
+	cgltf_node** children = (cgltf_node**)calloc(child_total, sizeof *children);
+	if (!children) {
+		fprintf(stderr, "opt2gltf: oom\n");
+		return false;
+	}
+	node->children       = children;
+	node->children_count = child_total;
+	int ci               = 0;
+	for (int h = 0; h < m->hardpoint_count; ++h) {
+		children[ci] = (*next_child)++;
+		if (!hardpoint_node(b, children[ci++], node, &m->hardpoints[h]))
+			return false;
+	}
+	for (int e = 0; e < m->engine_glow_count; ++e) {
+		children[ci] = (*next_child)++;
+		if (!engine_glow_node(b, children[ci++], node, &m->engine_glows[e], e))
+			return false;
+	}
+	for (size_t li = 0; li < light_count; ++li) {
+		if (b->options->lights[li].mesh != mi)
+			continue;
+		children[ci] = (*next_child)++;
+		if (!light_node(b, children[ci++], node, li))
+			return false;
+	}
+	return true;
+}
+
+/* The nodes: the model root, one per mesh, then each mesh's children. */
+static bool build_nodes(Build* b) {
+	const opt_file_t*          opt            = b->opt;
+	const OptGltfBuildOptions* o              = b->options;
+	GltfBuild*                 gb             = b->gb;
+	size_t                     children_total = 0;
+	for (int32_t mi = 0; mi < opt->mesh_count; ++mi)
+		children_total += (size_t)opt->meshes[mi].hardpoint_count + (size_t)opt->meshes[mi].engine_glow_count;
+	for (size_t li = 0; li < o->light_count; ++li)
+		if (o->lights[li].mesh < 0 || o->lights[li].mesh >= opt->mesh_count)
+			return build_fail(b, "light %zu names OPT mesh %d of %d", li, (int)o->lights[li].mesh,
+							  (int)opt->mesh_count);
+	if (o->light_count) {
+		gb->lights = (cgltf_light*)calloc(o->light_count, sizeof *gb->lights);
+		if (!gb->lights)
+			return false;
+		gb->lights_count = o->light_count;
+	}
+	const size_t total = 1 + (size_t)opt->mesh_count + children_total + o->light_count;
+	gb->nodes          = (cgltf_node*)calloc(total, sizeof *gb->nodes);
+	if (!gb->nodes) {
+		fprintf(stderr, "opt2gltf: oom\n");
+		return false;
+	}
+	gb->nodes_count = total;
+	/* cgltf transform helpers read the implicit glTF defaults from these. */
+	for (size_t i = 0; i < total; ++i) {
+		gb->nodes[i].rotation[3] = 1.0f;
+		set_color(gb->nodes[i].scale, 1.0f, 1.0f, 1.0f);
+	}
+
+	cgltf_node* root         = &gb->nodes[0];
+	root->name               = gb_keep_string(gb, xprintf_dup("OPT_%s", b->basename));
+	char*      extension     = root_extension(b);
+	const bool extension_set = extension && set_flight_extension(gb, root, extension);
+	free(extension);
+	if (!extension_set)
+		return false;
+	root->children = (cgltf_node**)calloc((size_t)opt->mesh_count, sizeof *root->children);
+	if (!root->children) {
+		fprintf(stderr, "opt2gltf: oom\n");
+		return false;
+	}
+	root->children_count   = (size_t)opt->mesh_count;
+	cgltf_node* next_child = &gb->nodes[1 + opt->mesh_count];
+	for (int32_t mi = 0; mi < opt->mesh_count; ++mi)
+		if (!mesh_node(b, mi, &gb->nodes[1 + mi], &next_child))
+			return false;
+	return true;
+}
+
+/* ---- Document ----------------------------------------------------------- */
+
+static bool finish_document(Build* b) {
+	OptGltfDocument* document = b->document;
+	GltfBuild*       gb       = b->gb;
+	document->scene.name      = gb_keep_string(gb, xstrdup("Scene"));
+	/* The scene has exactly one root: the model root. */
+	document->scene_roots = (cgltf_node**)calloc(1, sizeof *document->scene_roots);
+	if (!document->scene_roots)
+		return false;
+	document->scene_roots[0]    = &gb->nodes[0];
+	document->scene.nodes       = document->scene_roots;
+	document->scene.nodes_count = 1;
+	gb->buffer.size             = gb->bin_size;
+	gb->buffer.data             = gb->bin;
+	if (!prune_unused(document) || !material_extensions(document))
+		return false;
+
+	if (b->skins) {
+		size_t own_emissive = 0, own_metal_rough = 0;
+		for (size_t c = 0; c < b->skin_state.count; ++c) {
+			own_emissive += b->skin_state.composites[c].images[1] >= 0;
+			own_metal_rough += b->skin_state.composites[c].images[2] >= 0;
+		}
+		fprintf(
+			stderr,
+			"opt2gltf: %s: %zu skin variants, %zu composites (%zu own emissive, %zu own metallic-roughness), "
+			"%zu markings\n",
+			b->basename, b->skins->variant_count, b->skin_state.count, own_emissive, own_metal_rough,
+			b->skins->markings_count);
+	}
+
+	cgltf_data* data         = &document->data;
+	data->asset.version      = "2.0";
+	data->asset.generator    = "opt2gltf";
+	data->buffers            = &gb->buffer;
+	data->buffers_count      = 1;
+	data->buffer_views       = gb->views;
+	data->buffer_views_count = gb->views_count;
+	data->accessors          = gb->accessors;
+	data->accessors_count    = gb->accessors_count;
+	data->images             = gb->images;
+	data->images_count       = gb->images_count;
+	data->textures           = gb->textures;
+	data->textures_count     = gb->textures_count;
+	data->samplers           = &gb->sampler;
+	data->samplers_count     = 1;
+	data->materials          = gb->materials;
+	data->materials_count    = gb->materials_count;
+	data->meshes             = gb->meshes;
+	data->meshes_count       = gb->meshes_count;
+	data->nodes              = gb->nodes;
+	data->nodes_count        = gb->nodes_count;
+	data->scenes             = &document->scene;
+	data->scenes_count       = 1;
+	data->scene              = &document->scene;
+	data->variants           = gb->variants;
+	data->variants_count     = gb->variants_count;
+	data->lights             = gb->lights;
+	data->lights_count       = gb->lights_count;
+	/* The flight contract, and the material variants when there are any. */
+	const size_t extension_count = gb->variants_count > 0 ? 2u : 1u;
+	data->extensions_used        = (char**)calloc(extension_count, sizeof(char*));
+	if (!data->extensions_used)
+		return false;
+	data->extensions_used[0] = (char*)"AERON_flight_model";
+	if (gb->variants_count > 0)
+		data->extensions_used[1] = (char*)"KHR_materials_variants";
+	data->extensions_used_count = extension_count;
+	return true;
+}
+
+static bool build_memory(const opt_file_t* opt, const char* basename, const OptGltfBuildOptions* options,
+						 OptGltfDocument** out_document, opt_error_t* error) {
+	if (out_document)
+		*out_document = NULL;
+	if (error)
+		error->msg[0] = '\0';
+	if (!opt || !basename || !out_document)
+		return false;
+	const OptGltfBuildOptions* o = options ? options : &kDefaultOptions;
+	Build                      b = {
+		.opt          = opt,
+		.basename     = basename,
+		.options      = o,
+		.error        = error,
+		.xwau         = o->xwau_materials,
+		.anim         = o->xwau_anim,
+		.skins        = o->skins,
+		.screens      = o->screens,
+		.smooth_angle = o->smooth_angle_degrees,
+		/* XWAU's renderer uses each corner's stored normal: no remap, no repair. */
+		.repair_normals      = o->xwau_materials ? false : o->repair_normals,
+		.fullbright          = o->fullbright_strength > 0.0f,
+		.fullbright_strength = o->fullbright_strength,
+		.emissive            = o->emissive && !(o->fullbright_strength > 0.0f),
+	};
+	if (!validate_options(&b))
+		return false;
+	b.document = (OptGltfDocument*)calloc(1, sizeof *b.document);
+	if (!b.document)
+		return build_fail(&b, "out of memory");
+	b.gb             = &b.document->gb;
+	b.gb->buffer.uri = gb_keep_string(b.gb, xprintf_dup("%s.bin", basename));
+	/* One sampler: repeat, trilinear. */
+	b.gb->sampler.mag_filter = 9729;  /* LINEAR */
+	b.gb->sampler.min_filter = 9987;  /* LINEAR_MIPMAP_LINEAR */
+	b.gb->sampler.wrap_s     = 10497; /* REPEAT */
+	b.gb->sampler.wrap_t     = 10497; /* REPEAT */
+
+	const bool ok = prepare_textures(&b) && build_materials(&b) && build_geometry(&b) && build_variants(&b) &&
+					write_meshes(&b) && build_nodes(&b) && finish_document(&b);
+	build_free(&b);
+	if (!ok) {
+		if (error && !error->msg[0])
+			snprintf(error->msg, sizeof error->msg, "out of memory while converting %s", basename);
+		OptGltf_Free(b.document);
+		return false;
+	}
+	*out_document = b.document;
+	return true;
+}
+
 bool OptGltf_BuildMemory(const opt_file_t* opt, const char* basename, const OptGltfBuildOptions* options,
 						 OptGltfDocument** out_document, opt_error_t* error) {
 	if (!opt)
@@ -2188,1472 +3653,6 @@ bool OptGltf_BuildMemory(const opt_file_t* opt, const char* basename, const OptG
 	const bool ok = build_memory(source, basename, options, out_document, error);
 	faceless_patch_free(&patch);
 	return ok;
-}
-
-static bool build_memory(const opt_file_t* opt, const char* basename, const OptGltfBuildOptions* options,
-						 OptGltfDocument** out_document, opt_error_t* error) {
-	if (out_document)
-		*out_document = NULL;
-	if (error)
-		error->msg[0] = '\0';
-	if (!opt || !basename || !out_document)
-		return false;
-	if (!validate_alpha_overrides(options, error))
-		return false;
-	const size_t tag_count = options ? options->component_tag_count : 0;
-	for (size_t i = 0; i < tag_count; ++i) {
-		const OptGltfComponentTag* tag = &options->component_tags[i];
-		if (!valid_component_tag(tag->tag) || tag->mesh_index >= (uint32_t)opt->mesh_count) {
-			if (error)
-				snprintf(error->msg, sizeof error->msg, "invalid tag %u=%s (%d meshes)", tag->mesh_index,
-						 tag->tag ? tag->tag : "", (int)opt->mesh_count);
-			return false;
-		}
-	}
-	const size_t articulation_count = options ? options->component_articulation_count : 0;
-	for (size_t i = 0; i < articulation_count; ++i) {
-		const OptGltfComponentArticulation* a = &options->component_articulations[i];
-		if (!valid_component_tag(a->group) || (a->behavior[0] && !valid_component_tag(a->behavior)) ||
-			a->angle < -128 || a->angle > 255 || a->speed < 0 || a->speed > 255 || a->speed_back < 0 ||
-			a->speed_back > 255 || a->component > 254) {
-			if (error)
-				snprintf(error->msg, sizeof error->msg, "invalid articulation %u=%s:%d:%d:%d:%s",
-						 a->component, a->group, (int)a->angle, (int)a->speed, (int)a->speed_back,
-						 a->behavior);
-			return false;
-		}
-	}
-	const size_t component_set_count = options ? options->component_set_count : 0;
-	for (size_t i = 0; i < component_set_count; ++i) {
-		bool duplicate = false;
-		for (size_t previous = 0; previous < i; ++previous)
-			duplicate |= strcmp(options->component_sets[previous].name, options->component_sets[i].name) == 0;
-		if (!valid_component_tag(options->component_sets[i].name) || duplicate ||
-			(options->component_sets[i].members[7] & 0x80000000u)) {
-			if (error)
-				snprintf(error->msg, sizeof error->msg, "invalid or repeated component set %s",
-						 options->component_sets[i].name);
-			return false;
-		}
-	}
-	const size_t setting_count = options ? options->articulation_setting_count : 0;
-	for (size_t i = 0; i < setting_count; ++i) {
-		bool duplicate = false;
-		for (size_t previous = 0; previous < i; ++previous)
-			duplicate |= strcmp(options->articulation_settings[previous].name,
-								options->articulation_settings[i].name) == 0;
-		if (!valid_component_tag(options->articulation_settings[i].name) || duplicate) {
-			if (error)
-				snprintf(error->msg, sizeof error->msg, "invalid or repeated articulation setting %s",
-						 options->articulation_settings[i].name);
-			return false;
-		}
-	}
-	const float                smooth_angle_deg = options ? options->smooth_angle_degrees : -1.0f;
-	const OptGltfXwauMaterial* xwau             = options ? options->xwau_materials : NULL;
-	if (xwau && (smooth_angle_deg >= 0.0f || options->emissive || options->fullbright_strength > 0.0f ||
-				 !options->xwau_untextured)) {
-		if (error)
-			snprintf(error->msg, sizeof error->msg,
-					 "XWAU materials exclude a smoothing angle, emissive and fullbright");
-		return false;
-	}
-	const OptGltfSkins* skins = options ? options->skins : NULL;
-	if (skins && !xwau) {
-		if (error)
-			snprintf(error->msg, sizeof error->msg, "skins need XWAU materials");
-		return false;
-	}
-	const OptGltfXwauAnim* anim = options ? options->xwau_anim : NULL;
-	if (anim && !xwau) {
-		if (error)
-			snprintf(error->msg, sizeof error->msg, "animated materials need XWAU materials");
-		return false;
-	}
-	if (skins && !skin_validate(skins, error))
-		return false;
-	/* XWAU's renderer uses each corner's stored normal: no remap, no repair. */
-	const bool  repair_normals      = xwau ? false : (options ? options->repair_normals : true);
-	const float fullbright_strength = options ? options->fullbright_strength : 0.0f;
-	const bool  fullbright          = fullbright_strength > 0.0f;
-	const bool  emissive            = options && options->emissive && !fullbright;
-	const float meters_per_opt_unit = OPT_METERS_PER_UNIT;
-
-	OptGltfDocument* document = (OptGltfDocument*)calloc(1, sizeof *document);
-	if (!document) {
-		if (error)
-			snprintf(error->msg, sizeof error->msg, "out of memory");
-		return false;
-	}
-	GltfBuild* build        = &document->gb;
-	int*       tex_emissive = NULL;
-	BuiltMesh* built        = NULL;
-	/* promoted_variant_material's copies: [base material * 2 + rank - 1]. */
-	cgltf_material** promoted_materials  = NULL;
-	size_t           base_material_count = 0;
-	/* XWAU mode: per-texture bake results, and per texture the first
-	 * texture sharing its baked normal map (same source and NMIntensity)
-	 * plus the image slot of that map once emitted. */
-	XwauBaked* xwau_baked        = NULL;
-	int32_t*   xwau_normal_owner = NULL;
-	int32_t*   xwau_normal_image = NULL;
-	/* Animated materials: per texture, its colours before the bake when its
-	 * illumination frames need them (OptGltfXwauAnim.anim_base). */
-	uint8_t** xwau_colour = NULL;
-	/* Screen surfaces: per texture, the image slot of its cover's base image
-	 * (the emissive image follows it), or -1. Textures sharing a cover share
-	 * its images. */
-	const OptGltfScreen* screens            = options ? options->screens : NULL;
-	int32_t*             screen_cover_image = NULL;
-	SkinState            skin_state         = { 0 };
-
-	/* Negative angle → keep the original OPT normals; otherwise
-	 * regenerate with an angle-based smoothing threshold. */
-	const bool regen   = (smooth_angle_deg >= 0.0f);
-	build->buffer.size = 0; /* filled at end */
-	build->buffer.uri  = xprintf_dup("%s.bin", basename);
-	gb_keep_string(build, build->buffer.uri);
-
-	/* Sampler — single, repeat + trilinear. */
-	build->sampler.mag_filter = 9729;  /* LINEAR */
-	build->sampler.min_filter = 9987;  /* LINEAR_MIPMAP_LINEAR */
-	build->sampler.wrap_s     = 10497; /* REPEAT */
-	build->sampler.wrap_t     = 10497; /* REPEAT */
-
-	/* ---- Textures + images + materials --------------------------- */
-	/* Base-color palette row depends on the authoring game (XWA = 8,
-	 * TIE98/XvT = 15); sampling the wrong row washes XWA textures out
-	 * toward a faintly magenta white. */
-	const int base_shade = opt_palette_base_shade(opt);
-
-	/* Self-illuminated texels (flat palette ramp) become a second, emissive
-	 * texture/image per affected base texture (opt-in via `emissive`). Count
-	 * them first so the image/texture arrays — which cgltf indexes by
-	 * pointer — never realloc. */
-	tex_emissive      = (int*)calloc(opt->texture_count ? opt->texture_count : 1, sizeof *tex_emissive);
-	size_t n_emissive = 0;
-	if (!tex_emissive) {
-		fprintf(stderr, "opt2gltf: oom\n");
-		goto fail;
-	}
-	if (emissive) {
-		for (int32_t i = 0; i < opt->texture_count; ++i) {
-			uint8_t* em =
-				decode_texture_emissive_rgba8(opt, &opt->textures[i], base_shade, OPT_EMISSIVE_SHADE_TOL);
-			if (em) {
-				tex_emissive[i] = 1;
-				n_emissive++;
-				free(em);
-			}
-		}
-	}
-
-	size_t n_xwau_images = 0;
-	if (xwau) {
-		const size_t count = opt->texture_count ? (size_t)opt->texture_count : 1;
-		xwau_baked         = (XwauBaked*)calloc(count, sizeof *xwau_baked);
-		xwau_normal_owner  = (int32_t*)malloc(count * sizeof *xwau_normal_owner);
-		xwau_normal_image  = (int32_t*)malloc(count * sizeof *xwau_normal_image);
-		xwau_colour        = (uint8_t**)calloc(count, sizeof *xwau_colour);
-		if (!xwau_baked || !xwau_normal_owner || !xwau_normal_image || !xwau_colour) {
-			fprintf(stderr, "opt2gltf: oom (xwau)\n");
-			goto fail;
-		}
-		for (int32_t i = 0; i < opt->texture_count; ++i) {
-			xwau_normal_owner[i]     = -1;
-			xwau_normal_image[i]     = -1;
-			const OptGltfXwauAnim* a = anim ? &anim[i] : NULL;
-			if (!xwau_bake_texture(&opt->textures[i], base_shade, &xwau[i], &xwau_baked[i],
-								   a && a->anim_base ? &xwau_colour[i] : NULL)) {
-				fprintf(stderr, "opt2gltf: oom (xwau bake)\n");
-				goto fail;
-			}
-			xwau_anim_base(&xwau_colour[i], (uint32_t)opt->textures[i].width,
-						   (uint32_t)opt->textures[i].height, a, &xwau_baked[i]);
-			n_xwau_images += (xwau_baked[i].emissive ? 1u : 0u) + (xwau_baked[i].metal_rough ? 1u : 0u) +
-							 (xwau_baked[i].transmission ? 1u : 0u);
-			if (!xwau[i].normal_map.rgba || !xwau_baked[i].base)
-				continue;
-			xwau_normal_owner[i] = i;
-			for (int32_t j = 0; j < i; ++j) {
-				if (xwau_normal_owner[j] == j && xwau[j].normal_map.rgba == xwau[i].normal_map.rgba &&
-					xwau[j].nm_intensity == xwau[i].nm_intensity) {
-					xwau_normal_owner[i] = j;
-					break;
-				}
-			}
-			if (xwau_normal_owner[i] == i)
-				n_xwau_images++;
-		}
-	}
-
-	size_t n_screen_images = 0;
-	if (screens) {
-		screen_cover_image = (int32_t*)malloc((opt->texture_count ? (size_t)opt->texture_count : 1) *
-											  sizeof *screen_cover_image);
-		if (!screen_cover_image) {
-			fprintf(stderr, "opt2gltf: oom (screens)\n");
-			goto fail;
-		}
-		for (int32_t i = 0; i < opt->texture_count; ++i) {
-			screen_cover_image[i]  = -1;
-			const OptGltfScreen* s = &screens[i];
-			if (!s->present || s->hologram || !s->cover_base.rgba)
-				continue;
-			bool shared = false;
-			for (int32_t j = 0; j < i && !shared; ++j)
-				shared = screens[j].present && !screens[j].hologram &&
-						 screens[j].cover_base.rgba == s->cover_base.rgba;
-			if (!shared)
-				n_screen_images += s->cover_emissive.rgba ? 2u : 1u;
-		}
-	}
-
-	size_t n_skin_images = 0;
-	if (skins) {
-		if (!skin_state_build(opt, skins, screens, base_shade, xwau, anim, xwau_baked, &skin_state)) {
-			fprintf(stderr, "opt2gltf: oom (skins)\n");
-			goto fail;
-		}
-		for (size_t c = 0; c < skin_state.count; ++c)
-			n_skin_images += skin_state.composites[c].image_count;
-	}
-
-	const size_t image_total =
-		(size_t)opt->texture_count + n_emissive + n_xwau_images + n_screen_images + n_skin_images;
-	build->images   = (cgltf_image*)calloc(image_total ? image_total : 1, sizeof *build->images);
-	build->textures = (cgltf_texture*)calloc(image_total ? image_total : 1, sizeof *build->textures);
-	/* Room for the base materials (one per texture, the untextured one, then
-	 * one per skin composite) and, after them, up to two alpha-promoted
-	 * copies of each (see promoted_variant_material). Primitives point into
-	 * this array, so it is never reallocated. */
-	build->materials       = (cgltf_material*)calloc(((size_t)opt->texture_count + 1 + skin_state.count) * 3,
-													 sizeof *build->materials);
-	build->material_anim   = (const char**)calloc(((size_t)opt->texture_count + 1 + skin_state.count) * 3,
-												  sizeof *build->material_anim);
-	build->material_screen = (const char**)calloc(((size_t)opt->texture_count + 1 + skin_state.count) * 3,
-												  sizeof *build->material_screen);
-	document->image_pixels =
-		(OptGltfOwnedImage*)calloc(image_total ? image_total : 1, sizeof *document->image_pixels);
-	document->image_pixels_count = image_total;
-	if (!build->images || !build->textures || !build->materials || !build->material_anim ||
-		!build->material_screen || !document->image_pixels) {
-		fprintf(stderr, "opt2gltf: oom (textures)\n");
-		goto fail;
-	}
-	size_t emi = (size_t)opt->texture_count; /* next emissive image/texture slot */
-	for (int32_t i = 0; i < opt->texture_count; ++i) {
-		const opt_texture_t* t    = &opt->textures[i];
-		uint8_t*             rgba = xwau ? xwau_baked[i].base : decode_texture_rgba8(t, base_shade);
-		if (xwau)
-			xwau_baked[i].base = NULL; /* owned by the document from here */
-		if (rgba) {
-			char png_rel[256];
-			snprintf(png_rel, sizeof png_rel, "textures/%s_Tex%02d.png", basename, (int)i);
-			document->image_pixels[i].rgba   = rgba;
-			document->image_pixels[i].width  = (uint32_t)t->width;
-			document->image_pixels[i].height = (uint32_t)t->height;
-			build->images[i].name            = gb_keep_string(build, xprintf_dup("Tex%02d", (int)i));
-			build->images[i].uri             = gb_keep_string(build, xstrdup(png_rel));
-			build->images[i].mime_type       = "image/png";
-		} else {
-			build->images[i].name = gb_keep_string(build, xprintf_dup("Tex%02d (missing pixels)", (int)i));
-		}
-		build->textures[i].image   = &build->images[i];
-		build->textures[i].sampler = &build->sampler;
-		build->textures[i].name    = build->images[i].name;
-
-		/* PBR material: baseColorTexture only; metallic 0, roughness
-		 * 1 by default — author can refine. */
-		cgltf_material* mat             = &build->materials[i];
-		mat->name                       = gb_keep_string(build, xprintf_dup("Mat_Tex%02d", (int)i));
-		mat->has_pbr_metallic_roughness = 1;
-		mat->pbr_metallic_roughness.base_color_factor[0]       = 1.0f;
-		mat->pbr_metallic_roughness.base_color_factor[1]       = 1.0f;
-		mat->pbr_metallic_roughness.base_color_factor[2]       = 1.0f;
-		mat->pbr_metallic_roughness.base_color_factor[3]       = 1.0f;
-		mat->pbr_metallic_roughness.metallic_factor            = 0.0f;
-		mat->pbr_metallic_roughness.roughness_factor           = 1.0f;
-		mat->pbr_metallic_roughness.base_color_texture.texture = &build->textures[i];
-		AlphaHistogram alpha_histogram                         = { 0, 0, 0 };
-		/* XWAU mode classifies the baked alpha (glass remaps it). */
-		uint8_t* xwau_alpha = NULL;
-		if (xwau && rgba && xwau_baked[i].transparent) {
-			const size_t n = (size_t)t->width * (size_t)t->height;
-			xwau_alpha     = (uint8_t*)malloc(n);
-			if (!xwau_alpha) {
-				fprintf(stderr, "opt2gltf: oom (xwau alpha)\n");
-				goto fail;
-			}
-			for (size_t k = 0; k < n; ++k)
-				xwau_alpha[k] = rgba[k * 4 + 3];
-		}
-		OptGltfAlphaMode alpha_mode = classify_alpha(xwau ? xwau_alpha : t->alpha,
-													 (size_t)t->width * (size_t)t->height, &alpha_histogram);
-		free(xwau_alpha);
-		float                       alpha_cutoff   = 0.5f;
-		const OptGltfAlphaOverride* alpha_override = find_alpha_override(options, t, i);
-		if (alpha_override_match_count(options, t, i) > 1) {
-			if (error) {
-				snprintf(error->msg, sizeof error->msg, "multiple alpha overrides resolve to texture '%s'",
-						 t->name);
-			}
-			goto fail;
-		}
-		if (alpha_override) {
-			if (alpha_override->alpha_mode < OPT_GLTF_ALPHA_OPAQUE ||
-				alpha_override->alpha_mode > OPT_GLTF_ALPHA_BLEND ||
-				!isfinite(alpha_override->alpha_cutoff) || alpha_override->alpha_cutoff < 0.0f ||
-				alpha_override->alpha_cutoff > 1.0f ||
-				(alpha_override->alpha_mode != OPT_GLTF_ALPHA_OPAQUE && !t->alpha)) {
-				if (error) {
-					snprintf(error->msg, sizeof error->msg, "invalid alpha override for texture '%s'",
-							 t->name);
-				}
-				goto fail;
-			}
-			alpha_mode   = alpha_override->alpha_mode;
-			alpha_cutoff = alpha_override->alpha_cutoff;
-		}
-		if (t->alpha && options && options->log) {
-			char note[512];
-			snprintf(note, sizeof note,
-					 "[opt_alpha] %s %s: mode=%s source=%s zero=%llu full=%llu intermediate=%llu cutoff=%.3g",
-					 basename, t->name[0] ? t->name : build->images[i].name, alpha_mode_name(alpha_mode),
-					 alpha_override ? "override" : "heuristic",
-					 (unsigned long long)alpha_histogram.zero_count,
-					 (unsigned long long)alpha_histogram.full_count,
-					 (unsigned long long)alpha_histogram.intermediate_count, (double)alpha_cutoff);
-			options->log(false, note);
-		}
-		if (alpha_mode == OPT_GLTF_ALPHA_MASK) {
-			mat->alpha_mode   = cgltf_alpha_mode_mask;
-			mat->alpha_cutoff = alpha_cutoff;
-		} else if (alpha_mode == OPT_GLTF_ALPHA_BLEND) {
-			mat->alpha_mode = cgltf_alpha_mode_blend;
-		}
-
-		/* Fullbright: the texture lights itself and the scene adds nothing
-		 * diffuse, as the classic renderer draws projectiles. Alpha still
-		 * comes from the base texture. */
-		if (fullbright) {
-			mat->pbr_metallic_roughness.base_color_factor[0] = 0.0f;
-			mat->pbr_metallic_roughness.base_color_factor[1] = 0.0f;
-			mat->pbr_metallic_roughness.base_color_factor[2] = 0.0f;
-			mat->emissive_texture.texture                    = &build->textures[i];
-			mat->emissive_factor[0]                          = 1.0f;
-			mat->emissive_factor[1]                          = 1.0f;
-			mat->emissive_factor[2]                          = 1.0f;
-			mat->has_emissive_strength                       = 1;
-			mat->emissive_strength.emissive_strength         = fullbright_strength;
-		}
-
-		/* Emissive: self-illuminated texels (e.g. lit windows) get a second
-		 * texture holding their glow colour on black, wired as
-		 * emissiveTexture with a unit emissiveFactor. The classic renderer
-		 * drew them over the lit surface, glow · c + lit · (1 - c) with c
-		 * their coverage, 1 on a lit texel: the base colour is black under
-		 * them, so that the standard lit + emission draws the same. */
-		if (tex_emissive[i]) {
-			uint8_t* em        = decode_texture_emissive_rgba8(opt, t, base_shade, OPT_EMISSIVE_SHADE_TOL);
-			uint8_t* base_rgba = document->image_pixels[i].rgba;
-			if (em && base_rgba) {
-				for (size_t k = 0; k < (size_t)t->width * (size_t)t->height; ++k)
-					if (em[k * 4 + 3])
-						base_rgba[k * 4 + 0] = base_rgba[k * 4 + 1] = base_rgba[k * 4 + 2] = 0;
-			}
-			if (em) {
-				char png_rel[256];
-				snprintf(png_rel, sizeof png_rel, "textures/%s_Tex%02d_emissive.png", basename, (int)i);
-				document->image_pixels[emi].rgba   = em;
-				document->image_pixels[emi].width  = (uint32_t)t->width;
-				document->image_pixels[emi].height = (uint32_t)t->height;
-				build->images[emi].name      = gb_keep_string(build, xprintf_dup("Tex%02d_emissive", (int)i));
-				build->images[emi].uri       = gb_keep_string(build, xstrdup(png_rel));
-				build->images[emi].mime_type = "image/png";
-				build->textures[emi].image   = &build->images[emi];
-				build->textures[emi].sampler = &build->sampler;
-				build->textures[emi].name    = build->images[emi].name;
-				mat->emissive_texture.texture = &build->textures[emi];
-				mat->emissive_factor[0]       = 1.0f;
-				mat->emissive_factor[1]       = 1.0f;
-				mat->emissive_factor[2]       = 1.0f;
-				emi++;
-			}
-		}
-
-		/* XWAU: baked emissive, metallic-roughness and normal maps, plus
-		 * the specular F0. */
-		if (xwau && rgba) {
-			XwauBaked* baked = &xwau_baked[i];
-			/* XWAU materials are keyed by texture name: keep it. */
-			if (t->name[0])
-				mat->name = gb_keep_string(build, xstrdup(t->name));
-			if (baked->emissive) {
-				mat->emissive_texture.texture =
-					document_set_image(document, emi, baked->emissive, (uint32_t)t->width,
-									   (uint32_t)t->height, xprintf_dup("Tex%02d_emissive", (int)i),
-									   xprintf_dup("%s_Tex%02d_emissive.png", basename, (int)i));
-				baked->emissive         = NULL;
-				mat->emissive_factor[0] = mat->emissive_factor[1] = mat->emissive_factor[2] = 1.0f;
-				mat->has_emissive_strength                                                  = 1;
-				mat->emissive_strength.emissive_strength                                    = XWAU_ILLUM_GAIN;
-				emi++;
-			}
-			if (baked->metal_rough) {
-				mat->pbr_metallic_roughness.metallic_roughness_texture.texture = document_set_image(
-					document, emi, baked->metal_rough, (uint32_t)t->width, (uint32_t)t->height,
-					xprintf_dup("Tex%02d_mr", (int)i), xprintf_dup("%s_Tex%02d_mr.png", basename, (int)i));
-				baked->metal_rough                           = NULL;
-				mat->pbr_metallic_roughness.metallic_factor  = 1.0f;
-				mat->pbr_metallic_roughness.roughness_factor = 1.0f;
-				emi++;
-			} else {
-				mat->pbr_metallic_roughness.metallic_factor  = baked->metallic;
-				mat->pbr_metallic_roughness.roughness_factor = baked->roughness;
-			}
-			if (baked->transmission) {
-				mat->has_transmission                 = 1;
-				mat->transmission.transmission_factor = 1.0f;
-				mat->transmission.transmission_texture.texture =
-					document_set_image(document, emi, baked->transmission, (uint32_t)t->width,
-									   (uint32_t)t->height, xprintf_dup("Tex%02d_transmission", (int)i),
-									   xprintf_dup("%s_Tex%02d_transmission.png", basename, (int)i));
-				baked->transmission = NULL;
-				emi++;
-			}
-			const int32_t owner = xwau_normal_owner[i];
-			if (owner == i) {
-				uint8_t* normal = xwau_bake_normal(&xwau[i].normal_map, xwau[i].nm_intensity);
-				if (!normal) {
-					fprintf(stderr, "opt2gltf: oom (xwau normal)\n");
-					goto fail;
-				}
-				document_set_image(document, emi, normal, xwau[i].normal_map.width, xwau[i].normal_map.height,
-								   xprintf_dup("Tex%02d_normal", (int)i),
-								   xprintf_dup("%s_nm_%s_k%d.png", basename,
-											   xwau[i].normal_map_name ? xwau[i].normal_map_name : "map",
-											   (int)lroundf(xwau[i].nm_intensity * 1000.0f)));
-				xwau_normal_image[i] = (int32_t)emi++;
-			}
-			if (owner >= 0)
-				mat->normal_texture.texture = &build->textures[xwau_normal_image[owner]];
-			mat->normal_texture.scale = 1.0f;
-			xwau_set_specular(mat, baked->specular_color);
-			/* Animated material: its animation entry. */
-			if (anim)
-				anim_apply(document, mat, &anim[i]);
-		}
-
-		/* Screen surface: replaces the material's textures (opt2gltf.h). */
-		if (screens && screens[i].present) {
-			const OptGltfScreen* s       = &screens[i];
-			cgltf_texture*       base    = NULL;
-			cgltf_texture*       glow    = NULL;
-			int32_t              sharing = -1;
-			for (int32_t j = 0; j < i && sharing < 0 && s->cover_base.rgba && !s->hologram; ++j)
-				if (screen_cover_image[j] >= 0 && screens[j].cover_base.rgba == s->cover_base.rgba)
-					sharing = j;
-			if (sharing >= 0) {
-				screen_cover_image[i] = screen_cover_image[sharing];
-			} else if (s->cover_base.rgba && !s->hologram) {
-				const OptGltfImageView* views[2] = { &s->cover_base, &s->cover_emissive };
-				const char*             kinds[2] = { "base", "emissive" };
-				screen_cover_image[i]            = (int32_t)emi;
-				for (int k = 0; k < 2; ++k) {
-					if (!views[k]->rgba)
-						continue;
-					const size_t bytes = (size_t)views[k]->width * views[k]->height * 4u;
-					uint8_t*     copy  = (uint8_t*)malloc(bytes);
-					if (!copy) {
-						fprintf(stderr, "opt2gltf: oom (screen cover)\n");
-						goto fail;
-					}
-					memcpy(copy, views[k]->rgba, bytes);
-					document_set_image(
-						document, emi, copy, views[k]->width, views[k]->height,
-						xprintf_dup("Cover_%s_%s", s->cover_name ? s->cover_name : "cover", kinds[k]),
-						xprintf_dup("%s_cover_%s_%s.png", basename, s->cover_name ? s->cover_name : "cover",
-									kinds[k]));
-					emi++;
-				}
-			}
-			if (screen_cover_image[i] >= 0) {
-				base = &build->textures[screen_cover_image[i]];
-				glow = s->cover_emissive.rgba ? &build->textures[screen_cover_image[i] + 1] : NULL;
-			}
-			if (!screen_apply(build, mat, s, base, glow)) {
-				fprintf(stderr, "opt2gltf: oom (screen)\n");
-				goto fail;
-			}
-		}
-	}
-	if (options && options->alpha_overrides) {
-		for (size_t override_index = 0; override_index < options->alpha_override_count; ++override_index) {
-			bool matched = false;
-			for (int32_t texture_index = 0; texture_index < opt->texture_count; ++texture_index) {
-				const opt_texture_t* texture = &opt->textures[texture_index];
-				char                 generated_name[32];
-				snprintf(generated_name, sizeof generated_name, "Tex%02d", (int)texture_index);
-				if (alpha_name_equal(options->alpha_overrides[override_index].texture_name, texture->name) ||
-					alpha_name_equal(options->alpha_overrides[override_index].texture_name, generated_name)) {
-					matched = true;
-					break;
-				}
-			}
-			if (!matched) {
-				char warning[512];
-				snprintf(warning, sizeof warning, "%s: unused alpha override '%s'", basename,
-						 options->alpha_overrides[override_index].texture_name);
-				if (options->log)
-					options->log(true, warning);
-				else
-					fprintf(stderr, "opt2gltf: %s\n", warning);
-			}
-		}
-	}
-	/* One extra material for untextured face groups (texture_index = -1). */
-	cgltf_material* untex                              = &build->materials[opt->texture_count];
-	untex->name                                        = gb_keep_string(build, xstrdup("Mat_Untextured"));
-	untex->has_pbr_metallic_roughness                  = 1;
-	untex->pbr_metallic_roughness.base_color_factor[0] = 0.6f;
-	untex->pbr_metallic_roughness.base_color_factor[1] = 0.6f;
-	untex->pbr_metallic_roughness.base_color_factor[2] = 0.6f;
-	untex->pbr_metallic_roughness.base_color_factor[3] = 1.0f;
-	untex->pbr_metallic_roughness.metallic_factor      = 0.0f;
-	untex->pbr_metallic_roughness.roughness_factor     = 1.0f;
-	if (fullbright) {
-		for (int channel = 0; channel < 3; ++channel) {
-			untex->emissive_factor[channel] = untex->pbr_metallic_roughness.base_color_factor[channel];
-			untex->pbr_metallic_roughness.base_color_factor[channel] = 0.0f;
-		}
-		untex->has_emissive_strength               = 1;
-		untex->emissive_strength.emissive_strength = fullbright_strength;
-	}
-	if (xwau) {
-		const OptGltfXwauMaterial* um = options->xwau_untextured;
-		const float                s  = OptGltf_XwauUnlit(um);
-		for (int channel = 0; channel < 3; ++channel) {
-			const float grey = untex->pbr_metallic_roughness.base_color_factor[channel];
-			untex->pbr_metallic_roughness.base_color_factor[channel] = grey * (1.0f - s);
-			untex->emissive_factor[channel]                          = grey * s / XWAU_ILLUM_GAIN;
-		}
-		if (s > 0.0f) {
-			untex->has_emissive_strength               = 1;
-			untex->emissive_strength.emissive_strength = XWAU_ILLUM_GAIN;
-		}
-		untex->pbr_metallic_roughness.metallic_factor  = xwau_metallic(um->metallic);
-		untex->pbr_metallic_roughness.roughness_factor = xwau_roughness(um->glossiness);
-		xwau_set_specular(untex, xwau_specular_color(um->intensity));
-	}
-	build->materials_count = (size_t)opt->texture_count + 1;
-	const size_t untex_idx = (size_t)opt->texture_count;
-
-	/* Skin composites: a copy of the texture's material with the composite's
-	 * base color, and its own emissive or metallic-roughness where the bake
-	 * differs. Material untex_idx + 1 + c. */
-	for (size_t c = 0; c < skin_state.count; ++c) {
-		SkinComposite*       composite                 = &skin_state.composites[c];
-		const int32_t        ti                        = composite->texture;
-		const opt_texture_t* t                         = &opt->textures[ti];
-		XwauBaked*           baked                     = &composite->baked;
-		cgltf_material*      mat                       = &build->materials[build->materials_count++];
-		*mat                                           = build->materials[ti];
-		build->material_screen[mat - build->materials] = build->material_screen[ti];
-		mat->name = gb_keep_string(build, xprintf_dup("%s_skin%03zu", build->materials[ti].name, c));
-		mat->pbr_metallic_roughness.base_color_texture.texture =
-			document_set_image(document, emi, baked->base, (uint32_t)t->width, (uint32_t)t->height,
-							   xprintf_dup("Tex%02d_skin%03zu", (int)ti, c),
-							   xprintf_dup("%s_Tex%02d_skin%03zu.png", basename, (int)ti, c));
-		baked->base          = NULL;
-		composite->images[0] = (int32_t)emi++;
-		if (!composite->same_emissive) {
-			if (baked->emissive) {
-				mat->emissive_texture.texture = document_set_image(
-					document, emi, baked->emissive, (uint32_t)t->width, (uint32_t)t->height,
-					xprintf_dup("Tex%02d_skin%03zu_emissive", (int)ti, c),
-					xprintf_dup("%s_Tex%02d_skin%03zu_emissive.png", basename, (int)ti, c));
-				baked->emissive         = NULL;
-				composite->images[1]    = (int32_t)emi++;
-				mat->emissive_factor[0] = mat->emissive_factor[1] = mat->emissive_factor[2] = 1.0f;
-				mat->has_emissive_strength                                                  = 1;
-				mat->emissive_strength.emissive_strength                                    = XWAU_ILLUM_GAIN;
-			} else {
-				mat->emissive_texture.texture = NULL;
-				mat->emissive_factor[0] = mat->emissive_factor[1] = mat->emissive_factor[2] = 0.0f;
-				mat->has_emissive_strength                                                  = 0;
-			}
-		}
-		if (!composite->same_metal_rough) {
-			if (baked->metal_rough) {
-				mat->pbr_metallic_roughness.metallic_roughness_texture.texture =
-					document_set_image(document, emi, baked->metal_rough, (uint32_t)t->width,
-									   (uint32_t)t->height, xprintf_dup("Tex%02d_skin%03zu_mr", (int)ti, c),
-									   xprintf_dup("%s_Tex%02d_skin%03zu_mr.png", basename, (int)ti, c));
-				baked->metal_rough                           = NULL;
-				composite->images[2]                         = (int32_t)emi++;
-				mat->pbr_metallic_roughness.metallic_factor  = 1.0f;
-				mat->pbr_metallic_roughness.roughness_factor = 1.0f;
-			} else {
-				mat->pbr_metallic_roughness.metallic_roughness_texture.texture = NULL;
-				mat->pbr_metallic_roughness.metallic_factor                    = baked->metallic;
-				mat->pbr_metallic_roughness.roughness_factor                   = baked->roughness;
-			}
-		}
-		if (!composite->same_transmission) {
-			mat->has_transmission                          = baked->transmission != NULL;
-			mat->transmission.transmission_factor          = baked->transmission ? 1.0f : 0.0f;
-			mat->transmission.transmission_texture.texture = NULL;
-			if (baked->transmission) {
-				mat->transmission.transmission_texture.texture = document_set_image(
-					document, emi, baked->transmission, (uint32_t)t->width, (uint32_t)t->height,
-					xprintf_dup("Tex%02d_skin%03zu_transmission", (int)ti, c),
-					xprintf_dup("%s_Tex%02d_skin%03zu_transmission.png", basename, (int)ti, c));
-				baked->transmission  = NULL;
-				composite->images[4] = (int32_t)emi++;
-			}
-		}
-		xwau_set_specular(mat, baked->specular_color);
-		/* Animated material: the texture's animation entry. */
-		if (anim)
-			anim_apply(document, mat, &anim[ti]);
-	}
-
-	build->images_count   = emi;
-	build->textures_count = emi;
-	free(tex_emissive);
-	tex_emissive = NULL;
-
-	/* ---- Pass 1: build per-mesh geometry into BuiltMesh[] -------- */
-	built = (BuiltMesh*)calloc(opt->mesh_count ? opt->mesh_count : 1, sizeof *built);
-	if (!built) {
-		fprintf(stderr, "opt2gltf: oom (meshes)\n");
-		goto fail;
-	}
-	size_t   total_meshes    = 0;
-	int      max_state_count = 1; /* drives KHR_materials_variants */
-	uint32_t fixed_zero = 0, fixed_flip = 0, skipped_repeats = 0, kept_repeats = 0;
-	for (int32_t mi = 0; mi < opt->mesh_count; ++mi) {
-		const opt_mesh_t* m = &opt->meshes[mi];
-		if (!built_mesh_from_opt(&built[mi], m, meters_per_opt_unit, regen, smooth_angle_deg,
-								 repair_normals)) {
-			/* Components stay one-to-one with the OPT meshes. */
-			if (error)
-				snprintf(error->msg, sizeof error->msg, "mesh %d has no LOD 0 triangles", (int)mi);
-			goto fail;
-		}
-		/* XWAU: tangents for meshes drawing any normal-mapped material,
-		 * in any switch state. */
-		bool needs_tangents = false;
-		for (int32_t g = 0; xwau && !needs_tangents && g < m->lods[0].group_count; ++g) {
-			const opt_face_group_t* grp = &m->lods[0].groups[g];
-			if (built[mi].fg_index_count_arr[g] == 0)
-				continue;
-			const int states = (grp->state_count > 1 && grp->state_textures) ? grp->state_count : 1;
-			for (int st = 0; st < states && !needs_tangents; ++st) {
-				const int32_t ti = st == 0 ? grp->texture_index : grp->state_textures[st];
-				needs_tangents   = ti >= 0 && ti < opt->texture_count && xwau_normal_owner[ti] >= 0;
-			}
-		}
-		if (needs_tangents && !built_mesh_generate_tangents(&built[mi])) {
-			fprintf(stderr, "opt2gltf: oom (tangents)\n");
-			goto fail;
-		}
-		total_meshes++;
-		fixed_zero += built[mi].fixed_zero_normals;
-		fixed_flip += built[mi].fixed_flipped_normals;
-		skipped_repeats += built[mi].skipped_repeats;
-		kept_repeats += built[mi].kept_repeats;
-		const opt_lod_t* lod = &m->lods[0];
-		for (int32_t g = 0; g < lod->group_count; ++g) {
-			int sc = lod->groups[g].state_count;
-			if (sc > max_state_count)
-				max_state_count = sc;
-		}
-	}
-	if (fixed_zero || fixed_flip) {
-		fprintf(stderr, "opt2gltf: %s: repaired %u zero + %u face-opposed canonical normals\n", basename,
-				fixed_zero, fixed_flip);
-	}
-	if (skipped_repeats)
-		fprintf(stderr, "opt2gltf: %s: left out %u repeated triangle(s)\n", basename, skipped_repeats);
-	if (kept_repeats)
-		fprintf(stderr, "opt2gltf: %s: %u triangle(s) repeat one with another texture (kept)\n", basename,
-				kept_repeats);
-
-	/* ---- Variants (asset-level) ---------------------------------- */
-	/* State 0 is the primitives' own materials; states 1 to N - 1, then the
-	 * skin variants. */
-	const size_t skin_variant_count  = skins ? skins->variant_count : 0;
-	const size_t state_variant_count = (size_t)max_state_count - 1;
-	if (state_variant_count + skin_variant_count > 0) {
-		const size_t count = state_variant_count + skin_variant_count;
-		build->variants    = (cgltf_material_variant*)calloc(count, sizeof *build->variants);
-		if (!build->variants) {
-			fprintf(stderr, "opt2gltf: oom\n");
-			goto fail;
-		}
-		for (size_t v = 0; v < state_variant_count; ++v)
-			build->variants[v].name = gb_keep_string(build, xprintf_dup("State %d", (int)v + 1));
-		for (size_t v = 0; v < skin_variant_count; ++v)
-			build->variants[state_variant_count + v].name =
-				gb_keep_string(build, xstrdup(skins->variants[v].name));
-		build->variants_count = count;
-	}
-
-	/* ---- Pass 2: write geometry to .bin + accessors + meshes ----- */
-	build->meshes = (cgltf_mesh*)calloc(total_meshes, sizeof *build->meshes);
-	if (!build->meshes) {
-		fprintf(stderr, "opt2gltf: oom\n");
-		goto fail;
-	}
-	build->meshes_count = total_meshes;
-
-	/* Exact pre-sized allocations for every array cgltf indexes by
-	 * pointer arithmetic at write time. ANY realloc mid-build would
-	 * dangle the cgltf_* pointers stored in dependent records (e.g.
-	 * primitive.indices points into accessors[]; attribute.data points
-	 * into accessors[]; node.mesh points into meshes[]). pre-counting
-	 * is one extra walk; reallocs are forbidden. */
-	size_t total_prims = 0, total_attrs = 0, total_maps = 0;
-	size_t total_views = 0, total_accs = 0;
-	for (int32_t mi = 0; mi < opt->mesh_count; ++mi) {
-		const opt_mesh_t* m   = &opt->meshes[mi];
-		const opt_lod_t*  lod = &m->lods[0];
-		/* 3 vertex-attribute streams (pos/nrm/uv), plus TANGENT when
-		 * generated: one view + one accessor each. */
-		const size_t streams = built[mi].has_tangents ? 4u : 3u;
-		total_views += streams;
-		total_accs += streams;
-		for (int32_t g = 0; g < lod->group_count; ++g) {
-			if (built[mi].fg_index_count_arr[g] == 0)
-				continue;
-			total_prims++;
-			total_attrs += streams; /* POSITION, NORMAL, TEXCOORD_0 [, TANGENT] */
-			total_views += 1;       /* index buffer view */
-			total_accs += 1;        /* index accessor */
-			const int32_t t0 = lod->groups[g].texture_index;
-			if ((lod->groups[g].state_count > 1 && lod->groups[g].state_textures) ||
-				skin_texture_has_composite(&skin_state, skin_variant_count, opt->texture_count, t0))
-				total_maps += build->variants_count;
-		}
-	}
-	build->views      = (cgltf_buffer_view*)calloc(total_views ? total_views : 1, sizeof *build->views);
-	build->accessors  = (cgltf_accessor*)calloc(total_accs ? total_accs : 1, sizeof *build->accessors);
-	build->primitives = (cgltf_primitive*)calloc(total_prims ? total_prims : 1, sizeof *build->primitives);
-	build->attributes = (cgltf_attribute*)calloc(total_attrs ? total_attrs : 1, sizeof *build->attributes);
-	build->mappings   = (cgltf_material_mapping*)calloc(total_maps ? total_maps : 1, sizeof *build->mappings);
-	build->views_cap  = total_views;
-	build->accessors_cap  = total_accs;
-	build->primitives_cap = total_prims;
-	build->attributes_cap = total_attrs;
-	build->mappings_cap   = total_maps;
-	if (!build->views || !build->accessors || !build->primitives || !build->attributes || !build->mappings) {
-		fprintf(stderr, "opt2gltf: oom (geometry arrays)\n");
-		goto fail;
-	}
-
-	base_material_count = build->materials_count;
-	promoted_materials  = (cgltf_material**)calloc(base_material_count * 2, sizeof *promoted_materials);
-	if (!promoted_materials) {
-		fprintf(stderr, "opt2gltf: oom (promoted materials)\n");
-		goto fail;
-	}
-
-	size_t mesh_out = 0;
-	for (int32_t mi = 0; mi < opt->mesh_count; ++mi) {
-		BuiltMesh*        bm   = &built[mi];
-		const opt_mesh_t* m    = &opt->meshes[mi];
-		const opt_lod_t*  lod  = &m->lods[0];
-		cgltf_mesh*       mesh = &build->meshes[mesh_out++];
-		mesh->name             = gb_keep_string(
-			build, xprintf_dup("Mesh%02d_%s", (int)mi, opt_mesh_type_name(m->descriptor.mesh_type)));
-
-		/* Vertex stream: positions / normals / uvs. */
-		size_t pos_off = bin_append(build, NULL, 0);
-		/* compute min/max for POSITION accessor */
-		float pmin[3] = { +INFINITY, +INFINITY, +INFINITY };
-		float pmax[3] = { -INFINITY, -INFINITY, -INFINITY };
-		for (uint32_t i = 0; i < bm->vertex_count; ++i) {
-			const float* p = bm->vertices[i].pos;
-			for (int k = 0; k < 3; ++k) {
-				if (p[k] < pmin[k])
-					pmin[k] = p[k];
-				if (p[k] > pmax[k])
-					pmax[k] = p[k];
-			}
-		}
-		for (uint32_t i = 0; i < bm->vertex_count; ++i)
-			bin_append(build, bm->vertices[i].pos, sizeof bm->vertices[i].pos);
-		size_t             pos_bytes = bm->vertex_count * sizeof bm->vertices[0].pos;
-		cgltf_buffer_view* pos_view = gb_new_view(build, pos_off, pos_bytes, cgltf_buffer_view_type_vertices);
-		cgltf_accessor*    pos_acc =
-			gb_new_accessor(build, pos_view, bm->vertex_count, cgltf_type_vec3, cgltf_component_type_r_32f);
-		pos_acc->has_min = 1;
-		pos_acc->has_max = 1;
-		memcpy(pos_acc->min, pmin, sizeof pmin);
-		memcpy(pos_acc->max, pmax, sizeof pmax);
-
-		size_t nrm_off = bin_append(build, NULL, 0);
-		for (uint32_t i = 0; i < bm->vertex_count; ++i)
-			bin_append(build, bm->vertices[i].nrm, sizeof bm->vertices[i].nrm);
-		size_t             nrm_bytes = bm->vertex_count * sizeof bm->vertices[0].nrm;
-		cgltf_buffer_view* nrm_view = gb_new_view(build, nrm_off, nrm_bytes, cgltf_buffer_view_type_vertices);
-		cgltf_accessor*    nrm_acc =
-			gb_new_accessor(build, nrm_view, bm->vertex_count, cgltf_type_vec3, cgltf_component_type_r_32f);
-
-		size_t uv_off = bin_append(build, NULL, 0);
-		for (uint32_t i = 0; i < bm->vertex_count; ++i)
-			bin_append(build, bm->vertices[i].uv, sizeof bm->vertices[i].uv);
-		size_t             uv_bytes = bm->vertex_count * sizeof bm->vertices[0].uv;
-		cgltf_buffer_view* uv_view  = gb_new_view(build, uv_off, uv_bytes, cgltf_buffer_view_type_vertices);
-		cgltf_accessor*    uv_acc =
-			gb_new_accessor(build, uv_view, bm->vertex_count, cgltf_type_vec2, cgltf_component_type_r_32f);
-
-		cgltf_accessor* tan_acc = NULL;
-		if (bm->has_tangents) {
-			size_t tan_off = bin_append(build, NULL, 0);
-			for (uint32_t i = 0; i < bm->vertex_count; ++i)
-				bin_append(build, bm->vertices[i].tan, sizeof bm->vertices[i].tan);
-			size_t             tan_bytes = bm->vertex_count * sizeof bm->vertices[0].tan;
-			cgltf_buffer_view* tan_view =
-				gb_new_view(build, tan_off, tan_bytes, cgltf_buffer_view_type_vertices);
-			tan_acc = gb_new_accessor(build, tan_view, bm->vertex_count, cgltf_type_vec4,
-									  cgltf_component_type_r_32f);
-		}
-
-		/* One primitive per face group with indices. */
-		size_t           mesh_prim_count  = 0;
-		cgltf_primitive* mesh_prims_start = build->primitives + build->primitives_count;
-		for (int32_t g = 0; g < lod->group_count; ++g) {
-			uint32_t ic = bm->fg_index_count_arr[g];
-			if (ic == 0)
-				continue;
-			const opt_face_group_t* grp = &lod->groups[g];
-
-			/* Indices for this face group: 16-bit while every vertex fits. */
-			const uint32_t*      group_indices = bm->indices + bm->fg_index_start[g];
-			size_t               idx_off, idx_bytes;
-			cgltf_component_type idx_type;
-			if (bm->vertex_count <= 65536u) {
-				uint16_t* narrow = (uint16_t*)malloc((size_t)ic * sizeof *narrow);
-				if (!narrow)
-					goto fail;
-				for (uint32_t i = 0; i < ic; ++i)
-					narrow[i] = (uint16_t)group_indices[i];
-				idx_bytes = (size_t)ic * sizeof *narrow;
-				idx_off   = bin_append(build, narrow, idx_bytes);
-				idx_type  = cgltf_component_type_r_16u;
-				free(narrow);
-			} else {
-				idx_bytes = (size_t)ic * sizeof *group_indices;
-				idx_off   = bin_append(build, group_indices, idx_bytes);
-				idx_type  = cgltf_component_type_r_32u;
-			}
-			cgltf_buffer_view* idx_view =
-				gb_new_view(build, idx_off, idx_bytes, cgltf_buffer_view_type_indices);
-			cgltf_accessor* idx_acc = gb_new_accessor(build, idx_view, ic, cgltf_type_scalar, idx_type);
-
-			/* Build the primitive. */
-			cgltf_primitive* prim =
-				(cgltf_primitive*)push_array((void**)&build->primitives, &build->primitives_count,
-											 &build->primitives_cap, sizeof *prim, 1);
-			prim->type    = cgltf_primitive_type_triangles;
-			prim->indices = idx_acc;
-
-			/* Attributes: POSITION, NORMAL, TEXCOORD_0 [, TANGENT]. */
-			const size_t     attr_count = tan_acc ? 4u : 3u;
-			cgltf_attribute* attrs =
-				(cgltf_attribute*)push_array((void**)&build->attributes, &build->attributes_count,
-											 &build->attributes_cap, sizeof *attrs, attr_count);
-			attrs[0].name  = gb_keep_string(build, xstrdup("POSITION"));
-			attrs[0].type  = cgltf_attribute_type_position;
-			attrs[0].index = 0;
-			attrs[0].data  = pos_acc;
-			attrs[1].name  = gb_keep_string(build, xstrdup("NORMAL"));
-			attrs[1].type  = cgltf_attribute_type_normal;
-			attrs[1].index = 0;
-			attrs[1].data  = nrm_acc;
-			attrs[2].name  = gb_keep_string(build, xstrdup("TEXCOORD_0"));
-			attrs[2].type  = cgltf_attribute_type_texcoord;
-			attrs[2].index = 0;
-			attrs[2].data  = uv_acc;
-			if (tan_acc) {
-				attrs[3].name  = gb_keep_string(build, xstrdup("TANGENT"));
-				attrs[3].type  = cgltf_attribute_type_tangent;
-				attrs[3].index = 0;
-				attrs[3].data  = tan_acc;
-			}
-			prim->attributes       = attrs;
-			prim->attributes_count = attr_count;
-
-			/* Default material = state 0 (or untextured fallback). */
-			int t0 = grp->texture_index;
-			prim->material =
-				(t0 >= 0 && t0 < opt->texture_count) ? &build->materials[t0] : &build->materials[untex_idx];
-
-			/* Variant mappings: for a face group with more than one state or
-			 * a skin composite, one per variant giving it another material. */
-			const int  sc       = grp->state_count;
-			const bool switched = sc > 1 && grp->state_textures;
-			if (switched ||
-				skin_texture_has_composite(&skin_state, skin_variant_count, opt->texture_count, t0)) {
-				const size_t     vc        = build->variants_count;
-				cgltf_material** materials = (cgltf_material**)calloc(vc ? vc : 1, sizeof *materials);
-				if (!materials) {
-					fprintf(stderr, "opt2gltf: oom\n");
-					goto fail;
-				}
-				int rank = alpha_class_rank(prim->material);
-				for (size_t v = 0; v < vc; ++v) {
-					/* A state variant shows its state; a skin variant its
-					 * composite, else its state. */
-					size_t  state     = v + 1;
-					int32_t composite = -1;
-					if (v >= state_variant_count) {
-						const size_t sv = v - state_variant_count;
-						state           = skins->variants[sv].state;
-						if (t0 >= 0 && t0 < opt->texture_count)
-							composite = skin_state.composite_of[sv * (size_t)opt->texture_count + (size_t)t0];
-					}
-					cgltf_material* m_ref;
-					if (composite >= 0) {
-						m_ref = &build->materials[untex_idx + 1 + (size_t)composite];
-					} else {
-						/* The original OPT walker clamps each switch to its last child. */
-						const int ti =
-							switched ? grp->state_textures[state < (size_t)sc ? state : (size_t)sc - 1] : t0;
-						m_ref = (ti >= 0 && ti < opt->texture_count) ? &build->materials[ti]
-																	 : &build->materials[untex_idx];
-					}
-					materials[v] = m_ref;
-					if (alpha_class_rank(m_ref) > rank)
-						rank = alpha_class_rank(m_ref);
-				}
-				int mixed = alpha_class_rank(prim->material) != rank;
-				for (size_t v = 0; v < vc; ++v)
-					mixed |= alpha_class_rank(materials[v]) != rank;
-				if (mixed) {
-					prim->material = promoted_variant_material(build, prim->material, rank,
-															   base_material_count, promoted_materials);
-					for (size_t v = 0; v < vc; ++v)
-						materials[v] = promoted_variant_material(build, materials[v], rank,
-																 base_material_count, promoted_materials);
-					fprintf(
-						stderr,
-						"opt2gltf: %s: mesh %d face group %d switch states mix alpha classes; all use %s\n",
-						basename, (int)mi, (int)g, rank == 2 ? "BLEND" : "MASK");
-				}
-				size_t mapped = 0;
-				for (size_t v = 0; v < vc; ++v)
-					mapped += materials[v] != prim->material;
-				if (mapped) {
-					cgltf_material_mapping* maps =
-						(cgltf_material_mapping*)push_array((void**)&build->mappings, &build->mappings_count,
-															&build->mappings_cap, sizeof *maps, mapped);
-					size_t k = 0;
-					for (size_t v = 0; v < vc; ++v) {
-						if (materials[v] == prim->material)
-							continue;
-						maps[k].variant    = (cgltf_size)v;
-						maps[k++].material = materials[v];
-					}
-					prim->mappings       = maps;
-					prim->mappings_count = (cgltf_size)mapped;
-				}
-				free(materials);
-			}
-			mesh_prim_count++;
-		}
-		mesh->primitives       = mesh_prims_start;
-		mesh->primitives_count = mesh_prim_count;
-	}
-
-	/* A variant that changes no primitive's material (a skin none of whose
-	 * images match) still maps the first primitive to its own material, so
-	 * that editors writing only mapped variants (Blender's glTF exporter)
-	 * keep it for the markings list and missions to name. */
-	if (build->variants_count && build->primitives_count) {
-		size_t unmapped = 0;
-		bool*  mapped   = (bool*)calloc(build->variants_count, sizeof *mapped);
-		if (!mapped) {
-			fprintf(stderr, "opt2gltf: oom\n");
-			goto fail;
-		}
-		for (size_t k = 0; k < build->mappings_count; ++k)
-			mapped[build->mappings[k].variant] = true;
-		for (size_t v = 0; v < build->variants_count; ++v)
-			unmapped += !mapped[v];
-		if (unmapped) {
-			/* cgltf points primitives at their mappings: rebuild the array. */
-			const size_t            count    = build->mappings_count + unmapped;
-			cgltf_material_mapping* mappings = (cgltf_material_mapping*)calloc(count, sizeof *mappings);
-			if (!mappings) {
-				free(mapped);
-				fprintf(stderr, "opt2gltf: oom\n");
-				goto fail;
-			}
-			size_t k = 0;
-			for (size_t p = 0; p < build->primitives_count; ++p) {
-				cgltf_primitive*        prim  = &build->primitives[p];
-				cgltf_material_mapping* first = mappings + k;
-				for (size_t m = 0; m < prim->mappings_count; ++m)
-					mappings[k++] = prim->mappings[m];
-				for (size_t v = 0; p == 0 && v < build->variants_count; ++v) {
-					if (!mapped[v]) {
-						mappings[k].variant    = (cgltf_size)v;
-						mappings[k++].material = prim->material;
-					}
-				}
-				prim->mappings_count = (cgltf_size)(mappings + k - first);
-				prim->mappings       = prim->mappings_count ? first : NULL;
-			}
-			free(build->mappings);
-			build->mappings       = mappings;
-			build->mappings_count = count;
-			build->mappings_cap   = count;
-		}
-		free(mapped);
-	}
-
-	/* ---- Nodes: one root + one per mesh (with hardpoint children) -- */
-	/* Count nodes: 1 root + (visible meshes) + (hardpoint + engine-glow
-	 * child nodes across all visible meshes). */
-	size_t total_hardpoints = 0;
-	size_t total_glows      = 0;
-	for (int32_t mi = 0; mi < opt->mesh_count; ++mi) {
-		total_hardpoints += opt->meshes[mi].hardpoint_count;
-		total_glows += opt->meshes[mi].engine_glow_count;
-	}
-	const size_t total_lights = options ? options->light_count : 0;
-	for (size_t li = 0; li < total_lights; ++li) {
-		if (options->lights[li].mesh < 0 || options->lights[li].mesh >= opt->mesh_count) {
-			if (error)
-				snprintf(error->msg, sizeof error->msg, "light %zu names OPT mesh %d of %d", li,
-						 (int)options->lights[li].mesh, (int)opt->mesh_count);
-			goto fail;
-		}
-	}
-	if (total_lights) {
-		build->lights = (cgltf_light*)calloc(total_lights, sizeof *build->lights);
-		if (!build->lights)
-			goto fail;
-		build->lights_count = total_lights;
-	}
-	size_t total_nodes = 1 + total_meshes + total_hardpoints + total_glows + total_lights;
-	build->nodes       = (cgltf_node*)calloc(total_nodes, sizeof *build->nodes);
-	if (!build->nodes) {
-		fprintf(stderr, "opt2gltf: oom\n");
-		goto fail;
-	}
-	build->nodes_count = total_nodes;
-	/* cgltf transform helpers read the implicit glTF defaults from these arrays. */
-	for (size_t i = 0; i < total_nodes; ++i) {
-		build->nodes[i].rotation[3] = 1.0f;
-		build->nodes[i].scale[0]    = 1.0f;
-		build->nodes[i].scale[1]    = 1.0f;
-		build->nodes[i].scale[2]    = 1.0f;
-	}
-
-	/* Layout in build->nodes[]:
-	 *   [0]                   = scene root
-	 *   [1 .. total_meshes]   = per-mesh nodes
-	 *   [1+total_meshes ..]   = hardpoint + engine-glow + light child
-	 *                           nodes, contiguous per parent mesh */
-	cgltf_node* root_node = &build->nodes[0];
-	root_node->name       = gb_keep_string(build, xprintf_dup("OPT_%s", basename));
-	{
-		/* Each articulation needs at most 256 bytes, each setting 80, each
-		 * component set 72 plus 4 per member. */
-		char* markings = markings_json(skins, max_state_count);
-		if (!markings)
-			goto fail;
-		const size_t root_size = 64 + articulation_count * 256 + setting_count * 80 +
-								 component_set_count * (72 + 255 * 4) + strlen(markings);
-		char*        root_ext  = (char*)malloc(root_size);
-		if (!root_ext) {
-			free(markings);
-			goto fail;
-		}
-		size_t root_off = (size_t)snprintf(root_ext, root_size, "{\"role\":\"model\"");
-		/* Articulations in option order; speedBack only when it differs. */
-		for (size_t a = 0; a < articulation_count; ++a) {
-			const OptGltfComponentArticulation* art = &options->component_articulations[a];
-			root_off += (size_t)snprintf(root_ext + root_off, root_size - root_off,
-										 "%s{\"component\":%u,\"group\":\"%s\",\"angle\":%d,\"speed\":%d",
-										 a ? "," : ",\"articulations\":[", art->component, art->group,
-										 (int)art->angle, (int)art->speed);
-			if (art->speed_back != art->speed)
-				root_off += (size_t)snprintf(root_ext + root_off, root_size - root_off, ",\"speedBack\":%d",
-											 (int)art->speed_back);
-			if (art->behavior[0])
-				root_off += (size_t)snprintf(root_ext + root_off, root_size - root_off,
-											 ",\"behavior\":\"%s\"", art->behavior);
-			root_off += (size_t)snprintf(root_ext + root_off, root_size - root_off,
-										 a + 1 == articulation_count ? "}]" : "}");
-		}
-		for (size_t s = 0; s < setting_count; ++s)
-			root_off += (size_t)snprintf(root_ext + root_off, root_size - root_off, "%s\"%s\":%d",
-										 s ? "," : ",\"articulationSettings\":{",
-										 options->articulation_settings[s].name,
-										 (int)options->articulation_settings[s].value);
-		if (setting_count)
-			root_off += (size_t)snprintf(root_ext + root_off, root_size - root_off, "}");
-		for (size_t s = 0; s < component_set_count; ++s) {
-			const OptGltfComponentSet* set = &options->component_sets[s];
-			root_off += (size_t)snprintf(root_ext + root_off, root_size - root_off, "%s\"%s\":[",
-										 s ? "," : ",\"componentSets\":{", set->name);
-			bool first = true;
-			for (int component = 0; component < 255; ++component) {
-				if (set->members[component / 32] & (1u << (component % 32))) {
-					root_off += (size_t)snprintf(root_ext + root_off, root_size - root_off, "%s%d",
-												 first ? "" : ",", component);
-					first = false;
-				}
-			}
-			root_off += (size_t)snprintf(root_ext + root_off, root_size - root_off, "]");
-		}
-		if (component_set_count)
-			root_off += (size_t)snprintf(root_ext + root_off, root_size - root_off, "}");
-		snprintf(root_ext + root_off, root_size - root_off, "%s}", markings);
-		free(markings);
-		const bool root_set = set_flight_extension(build, root_node, root_ext);
-		free(root_ext);
-		if (!root_set)
-			goto fail;
-	}
-
-	cgltf_node** root_children = (cgltf_node**)calloc(total_meshes, sizeof *root_children);
-	if (!root_children) {
-		fprintf(stderr, "opt2gltf: oom\n");
-		goto fail;
-	}
-	root_node->children       = root_children;
-	root_node->children_count = total_meshes;
-
-	cgltf_node* next_mesh_node  = &build->nodes[1];
-	cgltf_node* next_child_node = &build->nodes[1 + total_meshes];
-
-	mesh_out = 0;
-	for (int32_t mi = 0; mi < opt->mesh_count; ++mi) {
-		const opt_mesh_t* m     = &opt->meshes[mi];
-		cgltf_node*       node  = next_mesh_node++;
-		root_children[mesh_out] = node;
-		node->parent            = root_node;
-		node->mesh              = &build->meshes[mesh_out];
-		/* Alias the mesh's already-kept name; do NOT re-push into
-		 * owned_strings or the cleanup loop will double-free. */
-		node->name = build->meshes[mesh_out].name;
-
-		/* Fixed fields fit in 2048 bytes; each tag needs at most 66. */
-		const size_t extension_size = 2048 + tag_count * 66;
-		char*        extension      = (char*)malloc(extension_size);
-		if (!extension)
-			goto fail;
-		size_t off = 0;
-		off += snprintf(extension + off, extension_size - off,
-						"{\"role\":\"component\",\"meshType\":%d,"
-						"\"explosionFlags\":%u,\"targetId\":%d",
-						(int)m->descriptor.mesh_type, (unsigned)m->descriptor.explosion_type,
-						(int)m->descriptor.target_id);
-		if (m->has_descriptor) {
-			float center[3];
-			swap_axis_v3(&m->descriptor.center, center);
-			const float span[3] = {
-				m->descriptor.span.x,
-				m->descriptor.span.z,
-				m->descriptor.span.y,
-			};
-			const float bounds_min[3] = {
-				-m->descriptor.bbox_max.x,
-				m->descriptor.bbox_min.z,
-				-m->descriptor.bbox_max.y,
-			};
-			const float bounds_max[3] = {
-				-m->descriptor.bbox_min.x,
-				m->descriptor.bbox_max.z,
-				-m->descriptor.bbox_min.y,
-			};
-			off += snprintf(extension + off, extension_size - off,
-							",\"span\":[%.9g,%.9g,%.9g],"
-							"\"center\":[%.9g,%.9g,%.9g],"
-							"\"boundsMin\":[%.9g,%.9g,%.9g],"
-							"\"boundsMax\":[%.9g,%.9g,%.9g]",
-							span[0] * meters_per_opt_unit, span[1] * meters_per_opt_unit,
-							span[2] * meters_per_opt_unit, center[0] * meters_per_opt_unit,
-							center[1] * meters_per_opt_unit, center[2] * meters_per_opt_unit,
-							bounds_min[0] * meters_per_opt_unit, bounds_min[1] * meters_per_opt_unit,
-							bounds_min[2] * meters_per_opt_unit, bounds_max[0] * meters_per_opt_unit,
-							bounds_max[1] * meters_per_opt_unit, bounds_max[2] * meters_per_opt_unit);
-		}
-		if (m->descriptor.target_id != 0) {
-			float target[3];
-			swap_axis_v3(&m->descriptor.target, target);
-			off += snprintf(extension + off, extension_size - off, ",\"target\":[%.9g,%.9g,%.9g]",
-							target[0] * meters_per_opt_unit, target[1] * meters_per_opt_unit,
-							target[2] * meters_per_opt_unit);
-		}
-
-		/* Emit for every mesh carrying the node — the default axis
-		 * frame is NOT "static": XWA rotates default-frame meshes
-		 * about their pivot whenever their runtime angle is nonzero
-		 * (hangar droid antennas spin about the default vertical axis). */
-		if (m->has_rotation_scale) {
-			float pivot[3], rax[3], dax[3], uax[3];
-			swap_axis_v3(&m->rotation_scale.pivot, pivot);
-			/* pivot is a position — scale it; axes are directions — don't. */
-			pivot[0] *= meters_per_opt_unit;
-			pivot[1] *= meters_per_opt_unit;
-			pivot[2] *= meters_per_opt_unit;
-			swap_axis_v3(&m->rotation_scale.rotation_axis, rax);
-			swap_axis_v3(&m->rotation_scale.direction_axis, dax);
-			swap_axis_v3(&m->rotation_scale.up_axis, uax);
-			for (int axis = 0; axis < 3; ++axis) {
-				rax[axis] /= OPT_Q15_TO_UNIT;
-				dax[axis] /= OPT_Q15_TO_UNIT;
-				uax[axis] /= OPT_Q15_TO_UNIT;
-			}
-			off += snprintf(extension + off, extension_size - off,
-							",\"rotation\":{"
-							"\"pivot\":[%.9g,%.9g,%.9g],"
-							"\"rotationAxis\":[%.9g,%.9g,%.9g],"
-							"\"directionAxis\":[%.9g,%.9g,%.9g],"
-							"\"upAxis\":[%.9g,%.9g,%.9g]}",
-							pivot[0], pivot[1], pivot[2], rax[0], rax[1], rax[2], dax[0], dax[1], dax[2],
-							uax[0], uax[1], uax[2]);
-		}
-		/* Tags in option order, duplicates dropped. */
-		bool tags_open = false;
-		for (size_t t = 0; t < tag_count; ++t) {
-			const OptGltfComponentTag* tag = &options->component_tags[t];
-			if (tag->mesh_index != (uint32_t)mi)
-				continue;
-			bool duplicate = false;
-			for (size_t previous = 0; previous < t && !duplicate; ++previous)
-				duplicate = options->component_tags[previous].mesh_index == (uint32_t)mi &&
-							strcmp(options->component_tags[previous].tag, tag->tag) == 0;
-			if (duplicate)
-				continue;
-			off += snprintf(extension + off, extension_size - off, "%s\"%s\"",
-							tags_open ? "," : ",\"tags\":[", tag->tag);
-			tags_open = true;
-		}
-		snprintf(extension + off, extension_size - off, tags_open ? "]}" : "}");
-		const bool extension_set = set_flight_extension(build, node, extension);
-		free(extension);
-		if (!extension_set)
-			goto fail;
-
-		/* Child nodes: hardpoints, engine glows, then lights (emitted as
-		 * empties so Blender and other tools surface them). */
-		int mesh_lights = 0;
-		for (size_t li = 0; li < total_lights; ++li)
-			if (options->lights[li].mesh == mi)
-				++mesh_lights;
-		int child_total = m->hardpoint_count + m->engine_glow_count + mesh_lights;
-		if (child_total > 0) {
-			cgltf_node** children = (cgltf_node**)calloc(child_total, sizeof *children);
-			if (!children) {
-				fprintf(stderr, "opt2gltf: oom\n");
-				goto fail;
-			}
-			int ci = 0;
-			for (int h = 0; h < m->hardpoint_count; ++h) {
-				const opt_hardpoint_t* hp  = &m->hardpoints[h];
-				cgltf_node*            hpn = next_child_node++;
-				hpn->parent                = node;
-				hpn->name = gb_keep_string(build, xprintf_dup("hardpoint_%d", (int)hp->type));
-				float pos[3];
-				swap_axis_v3(&hp->pos, pos);
-				hpn->has_translation = 1;
-				hpn->translation[0]  = pos[0] * meters_per_opt_unit;
-				hpn->translation[1]  = pos[1] * meters_per_opt_unit;
-				hpn->translation[2]  = pos[2] * meters_per_opt_unit;
-				char hardpoint_extension[96];
-				snprintf(hardpoint_extension, sizeof hardpoint_extension,
-						 "{\"role\":\"hardpoint\",\"type\":%d}", (int)hp->type);
-				if (!set_flight_extension(build, hpn, hardpoint_extension))
-					goto fail;
-				children[ci++] = hpn;
-			}
-			for (int e = 0; e < m->engine_glow_count; ++e) {
-				const opt_engine_glow_t* eg  = &m->engine_glows[e];
-				cgltf_node*              egn = next_child_node++;
-				egn->parent                  = node;
-				egn->name                    = gb_keep_string(build, xprintf_dup("engine_glow_%d", e));
-				float pos[3], look[3], up[3], right[3], rotation[4];
-				swap_axis_v3(&eg->position, pos);
-				swap_axis_v3(&eg->look_axis, look);
-				swap_axis_v3(&eg->up_axis, up);
-				swap_axis_v3(&eg->right_axis, right);
-				egn->has_translation = 1;
-				egn->translation[0]  = pos[0] * meters_per_opt_unit;
-				egn->translation[1]  = pos[1] * meters_per_opt_unit;
-				egn->translation[2]  = pos[2] * meters_per_opt_unit;
-				quaternion_from_axes(right, up, look, rotation);
-				egn->has_rotation = 1;
-				memcpy(egn->rotation, rotation, sizeof rotation);
-				egn->has_scale           = 1;
-				egn->scale[0]            = eg->dimensions.x * meters_per_opt_unit;
-				egn->scale[1]            = eg->dimensions.y * meters_per_opt_unit;
-				egn->scale[2]            = eg->dimensions.z * meters_per_opt_unit;
-				const uint32_t colors[2] = { eg->core_color, eg->outer_color };
-				float          rgba[2][4];
-				for (int color = 0; color < 2; ++color) {
-					rgba[color][0] = (float)((colors[color] >> 16) & 0xff) / 255.0f;
-					rgba[color][1] = (float)((colors[color] >> 8) & 0xff) / 255.0f;
-					rgba[color][2] = (float)(colors[color] & 0xff) / 255.0f;
-					rgba[color][3] = (float)((colors[color] >> 24) & 0xff) / 255.0f;
-				}
-				char glow_extension[512];
-				snprintf(glow_extension, sizeof glow_extension,
-						 "{\"role\":\"engineGlow\",\"enabled\":%s,"
-						 "\"coreColor\":[%.9g,%.9g,%.9g,%.9g],"
-						 "\"outerColor\":[%.9g,%.9g,%.9g,%.9g]}",
-						 eg->is_disabled ? "false" : "true", rgba[0][0], rgba[0][1], rgba[0][2], rgba[0][3],
-						 rgba[1][0], rgba[1][1], rgba[1][2], rgba[1][3]);
-				if (!set_flight_extension(build, egn, glow_extension))
-					goto fail;
-				children[ci++] = egn;
-			}
-			for (size_t li = 0; li < total_lights; ++li) {
-				const OptGltfLight* source = &options->lights[li];
-				if (source->mesh != mi)
-					continue;
-				cgltf_light* light = &build->lights[li];
-				light->name        = gb_keep_string(build, xprintf_dup("light_%zu", li));
-				light->type        = cgltf_light_type_point;
-				memcpy(light->color, source->color, sizeof light->color);
-				light->intensity          = source->intensity;
-				light->range              = source->range;
-				cgltf_node* ln            = next_child_node++;
-				ln->parent                = node;
-				ln->name                  = light->name;
-				ln->light                 = light;
-				const opt_vec3_t position = { source->position[0], source->position[1], source->position[2] };
-				float            pos[3];
-				swap_axis_v3(&position, pos);
-				ln->has_translation = 1;
-				ln->translation[0]  = pos[0] * meters_per_opt_unit;
-				ln->translation[1]  = pos[1] * meters_per_opt_unit;
-				ln->translation[2]  = pos[2] * meters_per_opt_unit;
-				if (!set_flight_extension(build, ln, "{\"role\":\"light\"}"))
-					goto fail;
-				children[ci++] = ln;
-			}
-			node->children       = children;
-			node->children_count = child_total;
-		}
-
-		mesh_out++;
-	}
-
-	/* ---- Scene + asset ------------------------------------------- */
-	document->scene.name        = gb_keep_string(build, xstrdup("Scene"));
-	document->scene.nodes_count = 1;
-	/* The scene has exactly one root: build->nodes[0]. */
-	cgltf_node** scene_roots = (cgltf_node**)calloc(1, sizeof *scene_roots);
-	if (!scene_roots)
-		goto fail;
-	scene_roots[0]        = root_node;
-	document->scene.nodes = scene_roots;
-	document->scene_roots = scene_roots;
-
-	/* Buffer size = total .bin bytes. */
-	build->buffer.size = build->bin_size;
-	build->buffer.data = build->bin;
-
-	if (!prune_unused(document) || !material_extensions(document))
-		goto fail;
-
-	/* Final cgltf_data wiring. */
-	document->data.asset.version   = "2.0";
-	document->data.asset.generator = "opt2gltf";
-	if (skins) {
-		size_t own_emissive = 0, own_metal_rough = 0;
-		for (size_t c = 0; c < skin_state.count; ++c) {
-			own_emissive += skin_state.composites[c].images[1] >= 0;
-			own_metal_rough += skin_state.composites[c].images[2] >= 0;
-		}
-		fprintf(
-			stderr,
-			"opt2gltf: %s: %zu skin variants, %zu composites (%zu own emissive, %zu own metallic-roughness), "
-			"%zu markings\n",
-			basename, skins->variant_count, skin_state.count, own_emissive, own_metal_rough,
-			skins->markings_count);
-	}
-
-	document->data.buffers            = &build->buffer;
-	document->data.buffers_count      = 1;
-	document->data.buffer_views       = build->views;
-	document->data.buffer_views_count = build->views_count;
-	document->data.accessors          = build->accessors;
-	document->data.accessors_count    = build->accessors_count;
-	document->data.images             = build->images;
-	document->data.images_count       = build->images_count;
-	document->data.textures           = build->textures;
-	document->data.textures_count     = build->textures_count;
-	document->data.samplers           = &build->sampler;
-	document->data.samplers_count     = 1;
-	document->data.materials          = build->materials;
-	document->data.materials_count    = build->materials_count;
-	document->data.meshes             = build->meshes;
-	document->data.meshes_count       = build->meshes_count;
-	document->data.nodes              = build->nodes;
-	document->data.nodes_count        = build->nodes_count;
-	document->data.scenes             = &document->scene;
-	document->data.scenes_count       = 1;
-	document->data.scene              = &document->scene;
-	document->data.variants           = build->variants;
-	document->data.variants_count     = build->variants_count;
-	document->data.lights             = build->lights;
-	document->data.lights_count       = build->lights_count;
-
-	/* Declare the flight contract and optional material variants. */
-	const char*  ext_flight        = "AERON_flight_model";
-	const char*  ext_variants      = "KHR_materials_variants";
-	const size_t extension_count   = build->variants_count > 0 ? 2u : 1u;
-	document->data.extensions_used = (char**)calloc(extension_count, sizeof(char*));
-	if (!document->data.extensions_used)
-		goto fail;
-	document->data.extensions_used[0] = (char*)ext_flight;
-	if (build->variants_count > 0)
-		document->data.extensions_used[1] = (char*)ext_variants;
-	document->data.extensions_used_count = extension_count;
-
-	free(promoted_materials);
-	promoted_materials = NULL;
-
-	/* The geometry build is temporary; the cgltf accessors now reference
-	 * copies in build->bin. */
-	for (int32_t mi = 0; mi < opt->mesh_count; ++mi)
-		built_mesh_free(&built[mi]);
-	free(built);
-	built = NULL;
-	xwau_state_free(xwau_baked, opt->texture_count, xwau_normal_owner, xwau_normal_image);
-	xwau_colour_free(xwau_colour, opt->texture_count);
-	free(screen_cover_image);
-	skin_state_free(&skin_state);
-
-	*out_document = document;
-	return true;
-
-fail:
-	free(promoted_materials);
-	free(tex_emissive);
-	free(screen_cover_image);
-	skin_state_free(&skin_state);
-	xwau_state_free(xwau_baked, opt->texture_count, xwau_normal_owner, xwau_normal_image);
-	xwau_colour_free(xwau_colour, opt->texture_count);
-	if (built) {
-		for (int32_t mi = 0; mi < opt->mesh_count; ++mi)
-			built_mesh_free(&built[mi]);
-		free(built);
-	}
-	if (error && !error->msg[0])
-		snprintf(error->msg, sizeof error->msg, "out of memory while converting %s", basename);
-	OptGltf_Free(document);
-	return false;
 }
 
 cgltf_data* OptGltf_Data(OptGltfDocument* document) { return document ? &document->data : NULL; }
