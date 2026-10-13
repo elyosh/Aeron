@@ -6,7 +6,7 @@
  * "effects" renderer (xwa_ddraw_d3d11) has its own way of shading the
  * textures of an OPT. This module bakes that shading into the given
  * materials of the conversion (opt_gltf.h, OptGltfMaterial), and turns the
- * skins into material variants (xwau_gltf_skins.h).
+ * skins into skin layers and skin variants (xwau_gltf_skins.h).
  *
  * The bake reproduces the per-texel logic of that renderer with standard
  * glTF inputs. It covers authored colors, palette or 32bpp illumination,
@@ -62,7 +62,7 @@ typedef struct XwauGltfMaterial {
  *     AERON_flight_model object, or NULL. The energy that most materials
  *     share becomes the default on the model root.
  *   - `anim_base`: the material has illumination flipbooks. Its base colour,
- *     and the base colour of each of its skin variant materials, is then
+ *     and the base colour of each of its skin layers, is then
  *     the colour of the texture before the illumination split. The frames
  *     are applied over it.
  *   - `always_illumination`: one of these flipbooks always plays. The
@@ -92,20 +92,21 @@ float XwauGltf_Unlit(const XwauGltfMaterial* xm);
 typedef struct XwauGltfMaterials {
 	OptGltfMaterial*          textures; /* opt->texture_count */
 	OptGltfMaterial           untextured;
-	OptGltfVariants           variants; /* the skins, count 0 if there are none */
+	OptGltfVariants           variants; /* the skin variants; none when there are no skins */
 	struct XwauGltfBakeState* state;
 } XwauGltfMaterials;
 
 /* Bakes the materials of `opt`. `materials` and `anims` have one entry per
  * texture, and `anims` may be NULL. `screens` has one entry per texture or
- * is NULL. Screen surfaces get no skins. `skins` may be NULL. Image files
- * are named after `basename`. Returns false when out of memory or when the
- * skins are invalid. */
+ * is NULL. Screen surfaces get no skins. `skins` may be NULL. The skins
+ * become skin layers and skin variants (xwau_gltf_skins.h). Image files are
+ * named after `basename`.
+ * Returns false when out of memory or when the skins are invalid. */
 bool XwauGltf_Bake(const opt_file_t* opt, const char* basename, const XwauGltfMaterial* materials,
 				   const XwauGltfMaterial* untextured, const XwauGltfAnim* anims,
 				   const OptGltfScreen* screens, const struct XwauSkins* skins, XwauGltfMaterials* out);
 
-/* Reports the skin variants and composites to stderr. */
+/* Reports the skin variants and layers to stderr. */
 void XwauGltf_ReportSkins(const XwauGltfMaterials* materials, const char* basename);
 
 void XwauGltf_Free(XwauGltfMaterials* materials, int32_t texture_count);

@@ -17,6 +17,7 @@
 #include "cJSON.h"
 #include "ktx2_writer.h" /* write_ktx2_bc7_with_generated_mips_to_buffer */
 #include "png_read.h"    /* png_read_rgba */
+#include "skin_layers.h"
 
 /* Per-channel block format. BC5 is restricted to the normal channel
  * (RG-only, no SRGB variant, linear-only); BC7 covers the other three
@@ -1195,9 +1196,75 @@ static bool write_cooked_glb(void* context, const cgltf_data* data) {
 	return true;
 }
 
+/* The file at `path`, NUL-terminated, or NULL. */
+static char* read_file(const char* path, size_t* size) {
+	FILE* f = fopen(path, "rb");
+	if (!f)
+		return NULL;
+	char*  text = NULL;
+	long   n    = -1;
+	if (fseek(f, 0, SEEK_END) == 0 && (n = ftell(f)) >= 0 && fseek(f, 0, SEEK_SET) == 0 &&
+		(text = (char*)malloc((size_t)n + 1)) != NULL && fread(text, 1, (size_t)n, f) != (size_t)n) {
+		free(text);
+		text = NULL;
+	}
+	fclose(f);
+	if (text) {
+		text[n] = 0;
+		*size   = (size_t)n;
+	}
+	return text;
+}
+
+/* The JSON of the .gltf `path` when it has skin layers to expand, else NULL. */
+static cJSON* skinned_document(const char* path) {
+	size_t size = 0;
+	char*  text = read_file(path, &size);
+	cJSON* doc  = text && size >= 4 && memcmp(text, "glTF", 4) != 0 ? cJSON_ParseWithLength(text, size) : NULL;
+	free(text);
+	if (doc && !SkinLayers_Present(doc)) {
+		cJSON_Delete(doc);
+		doc = NULL;
+	}
+	return doc;
+}
+
+/* Cooks a .gltf with skin layers: they are expanded into composite variants
+ * (skin_layers.h), and the composites are made while cooking. */
+static bool cook_skinned(cJSON* doc, const char* in_path, const char* out_path, const AeronGltfCookOptions* opts) {
+	SkinLayers* layers = SkinLayers_Expand(doc, in_path, opts && opts->verbose);
+	char*       json   = layers ? cJSON_PrintUnformatted(doc) : NULL;
+	cJSON_Delete(doc);
+	if (!json) {
+		SkinLayers_Free(layers);
+		return false;
+	}
+	cgltf_options parse_options = { 0 };
+	cgltf_data*   data          = NULL;
+	cgltf_result  result        = cgltf_parse(&parse_options, json, strlen(json), &data);
+	if (result == cgltf_result_success)
+		result = cgltf_load_buffers(&parse_options, data, in_path);
+	bool succeeded = false;
+	if (result != cgltf_result_success) {
+		fprintf(stderr, "[aeron_gltf_cook] parse of the expanded '%s' failed: %d\n", in_path, (int)result);
+	} else {
+		FileCookConsumerContext context = { out_path };
+		succeeded = aeron_gltf_cook_data(data, in_path, SkinLayers_ImageProvider, layers, write_cooked_glb,
+										 &context, opts);
+		SkinLayers_Report(layers);
+	}
+	cgltf_free(data);
+	free(json);
+	SkinLayers_Free(layers);
+	return succeeded;
+}
+
 bool aeron_gltf_cook(const char* in_path, const char* out_path, const AeronGltfCookOptions* opts) {
 	if (!in_path || !out_path)
 		return false;
+	cJSON* skinned = skinned_document(in_path);
+	if (skinned)
+		return cook_skinned(skinned, in_path, out_path, opts);
 	cgltf_options parse_options = { 0 };
 	cgltf_data*   data          = NULL;
 	cgltf_result  result        = cgltf_parse_file(&parse_options, in_path, &data);

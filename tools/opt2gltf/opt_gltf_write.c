@@ -27,9 +27,18 @@ bool OptGltf_WriteFiles(const OptGltfDocument* document, const char* out_dir, co
 		if (!image->uri || !OptGltf_ImageView(document, image, &pixels))
 			continue;
 		char png_path[1024];
-		if (!PathFormat(png_path, sizeof png_path, "%s%s%s", out_dir, sep, image->uri) ||
-			!stbi_write_png(png_path, (int)pixels.width, (int)pixels.height, 4, pixels.rgba,
-							(int)pixels.width * 4))
+		if (!PathFormat(png_path, sizeof png_path, "%s%s%s", out_dir, sep, image->uri))
+			return false;
+		/* Images may be in folders under textures/ (skins/<skin>/). */
+		char* slash = strrchr(png_path, '/');
+		if (slash && slash > png_path) {
+			*slash        = 0;
+			const bool ok = MakeDirs(png_path);
+			*slash        = '/';
+			if (!ok)
+				return false;
+		}
+		if (!stbi_write_png(png_path, (int)pixels.width, (int)pixels.height, 4, pixels.rgba, (int)pixels.width * 4))
 			return false;
 	}
 

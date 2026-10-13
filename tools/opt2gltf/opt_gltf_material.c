@@ -172,6 +172,7 @@ cgltf_material* opt_gltf_promoted_material(GltfBuild* build, cgltf_material* bas
 	if (build->material_anim) {
 		build->material_anim[copy - build->materials]   = build->material_anim[index];
 		build->material_screen[copy - build->materials] = build->material_screen[index];
+		build->material_given[copy - build->materials]  = build->material_given[index];
 	}
 	*slot = copy;
 	return copy;
@@ -392,6 +393,30 @@ bool opt_gltf_add_energy(cJSON* object, unsigned bits) {
 	return ok;
 }
 
+/* Adds the material's skin layers to its AERON_flight_model object `entry`
+ * as `skins`, with the indices of their textures. */
+static bool skins_json(const OptGltfDocument* document, cJSON* entry, const OptGltfMaterial* given) {
+	cJSON* skins = OptJson_AddObject(entry, "skins");
+	bool   ok    = skins != NULL;
+	for (size_t l = 0; ok && l < given->skin_count; ++l) {
+		const OptGltfSkinLayer* layer   = &given->skins[l];
+		static const char* const keys[] = { "baseColorTexture", "emissiveTexture", "metallicRoughnessTexture" };
+		const OptGltfImage*      skin[3] = { &layer->base, &layer->emissive, &layer->metallic_roughness };
+		cJSON*                   object  = OptJson_AddObject(skins, layer->skin);
+		ok                               = object != NULL;
+		for (int k = 0; ok && k < 3; ++k) {
+			if (!skin[k]->view.rgba)
+				continue;
+			const int texture = opt_gltf_texture_of_pixels(document, skin[k]->view.rgba);
+			cJSON*    info    = texture >= 0 ? OptJson_AddObject(object, keys[k]) : NULL;
+			ok                = info && OptJson_Add(info, "index", cJSON_CreateNumber(texture));
+		}
+		if (ok && layer->emissive_strength > 0.0f)
+			ok = OptJson_Add(object, "emissiveStrength", cJSON_CreateNumber(layer->emissive_strength));
+	}
+	return ok;
+}
+
 /* Builds the AERON_flight_model object of each material, with its animation
  * and its screen. The set of energy effects that most materials have
  * becomes the `energy` of the model root (*common_energy, bits of
@@ -431,6 +456,9 @@ bool opt_gltf_material_extensions(OptGltfDocument* document, unsigned* common_en
 		const char* screen = gb->material_screen ? gb->material_screen[m] : NULL;
 		if (ok && screen)
 			ok = OptJson_Add(entry, "screen", cJSON_Parse(screen));
+		const OptGltfMaterial* given = gb->material_given ? gb->material_given[m] : NULL;
+		if (ok && given && given->skin_count)
+			ok = skins_json(document, entry, given);
 		if (ok && entry->child) {
 			char*            printed   = cJSON_PrintUnformatted(entry);
 			cgltf_extension* extension = (cgltf_extension*)calloc(1, sizeof *extension);
@@ -507,11 +535,27 @@ static bool count_given_images(Build* b, size_t* images) {
 	size_t count = 0;
 	if (!seen)
 		return opt_gltf_build_fail(b, "out of memory (given materials)");
+	size_t skin_images = 0;
+	for (int32_t i = 0; i < opt->texture_count; ++i)
+		skin_images += b->materials[i].skin_count * 3;
+	const uint8_t** grown = (const uint8_t**)realloc(
+		seen, (((size_t)opt->texture_count + variants) * 5 + skin_images) * sizeof *seen + 1);
+	if (!grown) {
+		free(seen);
+		return opt_gltf_build_fail(b, "out of memory (given materials)");
+	}
+	seen = grown;
 	for (int32_t i = 0; i < opt->texture_count; ++i) {
 		const OptGltfImage* list[5];
 		material_images(&b->materials[i], list);
 		for (int k = 1; b->materials[i].base.view.rgba && k < 5; ++k)
 			*images += list[k]->view.rgba && see_pixels(seen, &count, list[k]->view.rgba);
+		for (size_t l = 0; b->materials[i].base.view.rgba && l < b->materials[i].skin_count; ++l) {
+			const OptGltfSkinLayer* layer   = &b->materials[i].skins[l];
+			const OptGltfImage*     skin[3] = { &layer->base, &layer->emissive, &layer->metallic_roughness };
+			for (int k = 0; k < 3; ++k)
+				*images += skin[k]->view.rgba && see_pixels(seen, &count, skin[k]->view.rgba);
+		}
 	}
 	for (size_t m = 0; m < variants; ++m) {
 		const OptGltfImage* list[5];
@@ -566,11 +610,13 @@ bool opt_gltf_prepare_textures(Build* b) {
 	gb->materials       = (cgltf_material*)calloc(materials, sizeof *gb->materials);
 	gb->material_anim   = (const char**)calloc(materials, sizeof *gb->material_anim);
 	gb->material_screen = (const char**)calloc(materials, sizeof *gb->material_screen);
+	gb->material_given  = (const OptGltfMaterial**)calloc(materials, sizeof *gb->material_given);
 	b->document->image_pixels =
 		(OptGltfOwnedImage*)calloc(images ? images : 1, sizeof *b->document->image_pixels);
 	b->document->image_pixels_count = images;
 	b->image_count                  = images;
 	if (!gb->images || !gb->textures || !gb->materials || !gb->material_anim || !gb->material_screen ||
+		!gb->material_given ||
 		!b->document->image_pixels)
 		return opt_gltf_build_fail(b, "out of memory (textures)");
 	b->image_slot = (size_t)opt->texture_count;
@@ -701,6 +747,16 @@ static void given_material(Build* b, cgltf_material* mat, const OptGltfMaterial*
 				  in->specular_color);
 	}
 	b->gb->material_anim[mat - b->gb->materials] = in->json;
+	/* The skin layers' images; opt_gltf_material_extensions writes `skins`. */
+	for (size_t l = 0; l < in->skin_count; ++l) {
+		const OptGltfSkinLayer* layer   = &in->skins[l];
+		const OptGltfImage*     skin[3] = { &layer->base, &layer->emissive, &layer->metallic_roughness };
+		for (int k = 0; k < 3; ++k)
+			if (skin[k]->view.rgba)
+				given_image(b, skin[k]);
+	}
+	if (in->skin_count)
+		b->gb->material_given[mat - b->gb->materials] = in;
 }
 
 /* Replaces the textures of a screen surface's material (opt_gltf.h) with

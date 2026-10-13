@@ -317,7 +317,8 @@ static bool check_screen(Check* c, const cJSON* in) {
 
 /* A material's AERON_flight_model object. */
 static bool check_material(Check* c, const char* json) {
-	static const char* const fields[] = { "flipbooks", "damage", "energy", "screen" };
+	/* The cook checks `skins` when it expands them (skin_layers.h). */
+	static const char* const fields[] = { "flipbooks", "damage", "energy", "screen", "skins" };
 	cJSON*                   object   = cJSON_Parse(json);
 	const cJSON*             books    = cJSON_GetObjectItemCaseSensitive(object, "flipbooks");
 	const cJSON*             damage   = cJSON_GetObjectItemCaseSensitive(object, "damage");

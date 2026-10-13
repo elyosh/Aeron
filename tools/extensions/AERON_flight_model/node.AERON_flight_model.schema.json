@@ -128,9 +128,15 @@
           "propertyNames": { "$ref": "#/$defs/tag" },
           "additionalProperties": { "type": "integer", "minimum": -2147483648, "maximum": 2147483647 }
         },
+        "skinVariants": {
+          "title": "Skin variants",
+          "description": "Material variants built from the materials' skins. The cooker composites each and adds it after the KHR_materials_variants variants.",
+          "type": "array",
+          "items": { "$ref": "#/$defs/skinVariant" }
+        },
         "markings": {
           "title": "Markings",
-          "description": "The look of each markings value the game gives an object (0 to 255): entry m names the KHR_materials_variants variant markings value m shows, or null for the primitives' own materials. A value past the end shows the last entry; without the array, every value shows the own materials.",
+          "description": "The look of each markings value the game gives an object (0 to 255): entry m names the variant (KHR_materials_variants or skinVariants) markings value m shows, or null for the primitives' own materials. A value past the end shows the last entry; without the array, every value shows the own materials.",
           "type": "array",
           "maxItems": 256,
           "items": { "type": ["string", "null"] }
@@ -138,6 +144,30 @@
         "energy": {
           "$ref": "#/$defs/energy",
           "description": "The energy effects of every material without its own. Without it, such materials show none."
+        }
+      }
+    },
+    "skinVariant": {
+      "title": "Skin variant",
+      "description": "A material variant made of skin layers. On a primitive whose material has at least one of its skins, it shows the material with those layers composited in order; on any other primitive, the base variant's material, or the own one.",
+      "type": "object",
+      "required": ["name", "layers"],
+      "properties": {
+        "name": { "title": "Name", "description": "Unique among skinVariants and the KHR_materials_variants variants.", "type": "string", "minLength": 1 },
+        "base": { "title": "Base variant", "description": "A KHR_materials_variants variant the skin variant starts from. Without it, the primitives' own materials.", "type": "string", "minLength": 1 },
+        "layers": {
+          "title": "Layers",
+          "description": "Skins applied in order.",
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["skin"],
+            "properties": {
+              "skin": { "title": "Skin", "description": "A skin name of the materials.", "type": "string", "pattern": "^[a-z0-9._-]{1,63}$" },
+              "opacity": { "title": "Opacity", "description": "Scales the coverage, in percent.", "type": "integer", "minimum": 0, "maximum": 100, "default": 100 }
+            }
+          }
         }
       }
     },

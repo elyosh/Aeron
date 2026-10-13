@@ -157,6 +157,17 @@ static void material_views(cgltf_material* m, cgltf_texture_view* views[kViewCou
 	memcpy(views, all, sizeof all);
 }
 
+int opt_gltf_texture_of_pixels(const OptGltfDocument* document, const uint8_t* rgba) {
+	const GltfBuild* gb = &document->gb;
+	for (size_t t = 0; rgba && t < gb->textures_count; ++t) {
+		const cgltf_image* image = gb->textures[t].image;
+		if (image && (size_t)(image - gb->images) < document->image_pixels_count &&
+			document->image_pixels[image - gb->images].rgba == rgba)
+			return (int)t;
+	}
+	return -1;
+}
+
 /* Removes the materials that no primitive draws, directly or through a
  * variant. These are the materials used only by the lower LODs of the OPT,
  * since the conversion keeps only LOD 0. Then removes the textures and
@@ -189,7 +200,9 @@ bool opt_gltf_prune_unused(OptGltfDocument* document) {
 		gb->materials[kept]       = gb->materials[m];
 		gb->material_anim[kept]   = gb->material_anim[m];
 		gb->material_screen[kept] = gb->material_screen[m];
-		to[m]                     = kept++;
+		if (gb->material_given)
+			gb->material_given[kept] = gb->material_given[m];
+		to[m] = kept++;
 	}
 	for (size_t p = 0; p < gb->primitives_count; ++p) {
 		cgltf_primitive* prim = &gb->primitives[p];
@@ -210,6 +223,17 @@ bool opt_gltf_prune_unused(OptGltfDocument* document) {
 		for (int v = 0; v < kViewCount; ++v)
 			if (views[v]->texture)
 				to[views[v]->texture - gb->textures] = 0;
+		/* The textures of the material's skin layers. */
+		const OptGltfMaterial* given = gb->material_given ? gb->material_given[m] : NULL;
+		for (size_t l = 0; given && l < given->skin_count; ++l) {
+			const OptGltfImage* skin[3] = { &given->skins[l].base, &given->skins[l].emissive,
+											&given->skins[l].metallic_roughness };
+			for (int k = 0; k < 3; ++k) {
+				const int t = opt_gltf_texture_of_pixels(document, skin[k]->view.rgba);
+				if (t >= 0)
+					to[t] = 0;
+			}
+		}
 	}
 	kept = 0;
 	for (size_t t = 0; t < gb->textures_count; ++t) {
@@ -297,6 +321,7 @@ void OptGltf_Free(OptGltfDocument* document) {
 	free(gb->materials);
 	free(gb->material_anim);
 	free(gb->material_screen);
+	free(gb->material_given);
 	free(gb->meshes);
 	free(gb->primitives);
 	free(gb->attributes);

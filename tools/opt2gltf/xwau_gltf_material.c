@@ -477,11 +477,13 @@ bool XwauGltf_Bake(const opt_file_t* opt, const char* basename, const XwauGltfMa
 	out->untextured.specular_color    = xwau_specular_color(untextured->intensity);
 
 	if (ok && skins && skins->skins.variant_count) {
-		s->skins = XwauGltfSkins_Build(opt, basename, &skins->skins, screens, base_shade, materials, anims,
-									   s->baked, out->textures);
+		s->skins = XwauGltfSkins_Build(opt, basename, &skins->skins, (const char* const*)skins->skin_names,
+									   screens, base_shade, materials, anims, s->baked);
 		ok       = s->skins != NULL;
 		if (ok)
 			out->variants = *XwauGltfSkins_Variants(s->skins);
+		for (int32_t i = 0; ok && i < opt->texture_count; ++i)
+			out->textures[i].skins = XwauGltfSkins_Layers(s->skins, i, &out->textures[i].skin_count);
 	}
 	free(owner);
 	if (!ok)

@@ -16,7 +16,7 @@ from bpy.types import Operator
 from bpy_extras.io_utils import ImportHelper
 from mathutils import Vector
 
-from . import animation, common, operators, sources
+from . import animation, common, operators, skins, sources
 
 # Results of the running import, or None outside this add-on's imports.
 _state = None
@@ -163,6 +163,7 @@ def restore(gltf):
             component_set.name = name
             for ordinal in members:
                 _set_reference(component_set.members.add(), ordinal, parts)
+        skins.restore_variants(root, extension)
         for name in extension.get("markings", []):
             props.markings.add().variant = name or ""
         animation.set_energy_default(root, extension.get("energy"))
@@ -179,6 +180,7 @@ class glTF2ImportUserExtension:
             animation.set_entry(blender_material, extension)
             screen = extension.get("screen")
             blender_material.aeron_flight.screen = json.dumps(screen) if screen is not None else ""
+            skins.restore_material(blender_material, extension, gltf)
         except Exception as error:  # the importer would only log it
             _state["error"] = "material {}: {}: {}".format(blender_material.name, type(error).__name__, error)
             return
@@ -233,6 +235,41 @@ def _frame(context, root):
             bpy.ops.view3d.view_selected()
 
 
+def _variant_list():
+    return getattr(bpy.data.scenes[0], "gltf2_KHR_materials_variants_variants", None)
+
+
+def _merge_variants(before, roots):
+    """Blender's glTF importer replaces the scene's variant list with the
+    file's. Meshes refer to variants by position in that list, so the meshes
+    imported before would show the wrong variants. This puts back the list as
+    it was, appends the file's new names, and moves the new meshes to the
+    merged positions. A name in both is one variant."""
+    variants = _variant_list()
+    if variants is None or not before:
+        return
+    imported = [variant.name for variant in variants]
+    if imported == before[:len(imported)] and len(imported) <= len(before):
+        merged = list(before)
+    else:
+        merged = list(before) + [name for name in imported if name not in before]
+    position = {name: index for index, name in enumerate(merged)}
+    for root in roots:
+        for obj in [root] + list(root.children_recursive):
+            if obj.type != 'MESH':
+                continue
+            for item in getattr(obj.data, "gltf2_variant_mesh_data", ()):
+                for pointer in item.variants:
+                    index = pointer.variant.variant_idx
+                    if 0 <= index < len(imported):
+                        pointer.variant.variant_idx = position[imported[index]]
+    variants.clear()
+    for index, name in enumerate(merged):
+        variant = variants.add()
+        variant.variant_idx = index  # set before the name: its setter uses the index
+        variant.name = name
+
+
 class IMPORT_OT_aeron_flight_model(Operator, ImportHelper):
     """Import a flight model (.gltf or .glb) with its Aeron flight data"""
 
@@ -250,6 +287,7 @@ class IMPORT_OT_aeron_flight_model(Operator, ImportHelper):
             self.report({'ERROR'}, "Cannot read {}: {}".format(self.filepath, error))
             return {'CANCELLED'}
         _state = {"roots": [], "components": 0, "lights": 0, "cooked": False, "error": None, "animated": set()}
+        variants_before = [variant.name for variant in _variant_list() or ()]
         try:
             result = bpy.ops.import_scene.gltf(
                 filepath=self.filepath, merge_vertices=False, import_shading='NORMALS',
@@ -260,6 +298,7 @@ class IMPORT_OT_aeron_flight_model(Operator, ImportHelper):
         if 'FINISHED' not in result:
             self.report({'ERROR'}, "Blender's glTF import failed")
             return {'CANCELLED'}
+        _merge_variants(variants_before, state["roots"])
         if state["error"]:
             self.report({'ERROR'}, "Cannot restore the flight data: " + state["error"])
             return {'CANCELLED'}

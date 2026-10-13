@@ -131,11 +131,7 @@ class AERON_UL_markings(UIList):
         split = layout.split(factor=0.12)
         split.label(text=str(index))
         row = split.row(align=True)
-        variants = getattr(context.scene, "gltf2_KHR_materials_variants_variants", None)
-        if variants is not None:
-            row.prop_search(item, "variant", context.scene, "gltf2_KHR_materials_variants_variants", text="")
-        else:
-            row.prop(item, "variant", text="")
+        row.prop(item, "variant", text="")  # searches glTF and skin variants
         shown = data.preview_markings == index
         row.operator("aeron.show_skin", text="", icon='HIDE_OFF' if shown else 'HIDE_ON',
                      emboss=False).markings = index
@@ -316,6 +312,7 @@ class OBJECT_PT_aeron_markings(_RolePanel, Panel):
     @classmethod
     def poll(cls, context):
         return super().poll(context) and (display.markings_count(context.object) > 0 or
+                                          len(context.object.aeron_flight.skin_variants) or
                                           len(getattr(context.scene, "gltf2_KHR_materials_variants_variants", ())))
 
     def draw(self, context):

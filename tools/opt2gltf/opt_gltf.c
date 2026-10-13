@@ -126,11 +126,25 @@ static bool validate_variants(Build* b) {
 		if (v->materials[m].texture < 0 || v->materials[m].texture >= b->opt->texture_count ||
 			!v->materials[m].material.base.view.rgba)
 			return opt_gltf_build_fail(b, "invalid variant material %zu", m);
+	for (size_t i = 0; i < v->skin_variant_count; ++i) {
+		const OptGltfSkinVariant* sv = &v->skin_variants[i];
+		bool                      ok = sv->name && sv->name[0] && sv->layer_count > 0;
+		for (size_t j = 0; ok && j < v->count; ++j)
+			ok = strcmp(v->variants[j].name, sv->name) != 0;
+		for (size_t j = 0; ok && j < i; ++j)
+			ok = strcmp(v->skin_variants[j].name, sv->name) != 0;
+		for (size_t l = 0; ok && l < sv->layer_count; ++l)
+			ok = sv->layers[l].skin && sv->layers[l].skin[0] && sv->layers[l].opacity <= 100;
+		if (!ok)
+			return opt_gltf_build_fail(b, "invalid or duplicate skin variant %zu '%s'", i, sv->name ? sv->name : "");
+	}
 	for (size_t m = 0; m < v->markings_count; ++m) {
 		const char* name  = v->default_markings[m];
 		bool        found = name == NULL;
 		for (size_t i = 0; !found && i < v->count; ++i)
 			found = strcmp(v->variants[i].name, name) == 0;
+		for (size_t i = 0; !found && i < v->skin_variant_count; ++i)
+			found = strcmp(v->skin_variants[i].name, name) == 0;
 		if (!found)
 			return opt_gltf_build_fail(b, "markings value %zu names an unknown material variant '%s'", m,
 									   name);
@@ -230,6 +244,38 @@ static bool markings_json(cJSON* root, const OptGltfVariants* variants, int stat
 						 named_variant[m] ? cJSON_CreateString(named_variant[m])
 						 : state[m]       ? cJSON_CreateString(name)
 										  : cJSON_CreateNull());
+	}
+	return ok;
+}
+
+/* Adds the skin variants to the model root's object `root` as
+ * `skinVariants`. A variant of state s > 0 starts from `State <s>`. */
+static bool skin_variants_json(Build* b, cJSON* root, const OptGltfVariants* variants) {
+	if (!variants || !variants->skin_variant_count)
+		return true;
+	for (size_t v = 0; v < variants->skin_variant_count; ++v)
+		if ((int)variants->skin_variants[v].state >= (b->max_state_count > 1 ? b->max_state_count : 1))
+			return opt_gltf_build_fail(b, "skin variant '%s' starts from state %u, which the OPT does not have",
+									   variants->skin_variants[v].name, variants->skin_variants[v].state);
+	cJSON* list = OptJson_AddArray(root, "skinVariants");
+	bool   ok   = list != NULL;
+	for (size_t v = 0; ok && v < variants->skin_variant_count; ++v) {
+		const OptGltfSkinVariant* sv     = &variants->skin_variants[v];
+		cJSON*                    object = OptJson_AddObject(list, NULL);
+		ok = object && OptJson_Add(object, "name", cJSON_CreateString(sv->name));
+		if (ok && sv->state > 0) {
+			char base[32];
+			snprintf(base, sizeof base, "State %u", sv->state);
+			ok = OptJson_Add(object, "base", cJSON_CreateString(base));
+		}
+		cJSON* layers = ok ? OptJson_AddArray(object, "layers") : NULL;
+		ok            = layers != NULL;
+		for (size_t l = 0; ok && l < sv->layer_count; ++l) {
+			cJSON* layer = OptJson_AddObject(layers, NULL);
+			ok           = layer && OptJson_Add(layer, "skin", cJSON_CreateString(sv->layers[l].skin));
+			if (ok && sv->layers[l].opacity != 100)
+				ok = OptJson_Add(layer, "opacity", cJSON_CreateNumber(sv->layers[l].opacity));
+		}
 	}
 	return ok;
 }
@@ -662,7 +708,7 @@ static cJSON* root_extension(const Build* b, unsigned energy) {
 			if (set->members[component / 32] & (1u << (component % 32)))
 				ok = OptJson_Add(members, NULL, cJSON_CreateNumber(component));
 	}
-	ok = ok && markings_json(root, b->variants, b->max_state_count) &&
+	ok = ok && skin_variants_json((Build*)b, root, b->variants) && markings_json(root, b->variants, b->max_state_count) &&
 		 (!energy || opt_gltf_add_energy(root, energy));
 	if (!ok) {
 		cJSON_Delete(root);

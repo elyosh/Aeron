@@ -81,6 +81,9 @@ typedef struct {
 	 * its screen (a JSON object), or NULL. Copies of a material share them. */
 	const char**            material_anim;
 	const char**            material_screen;
+	/* For each material, the given material whose skin layers it writes
+	 * (OptGltfMaterial.skins), or NULL. Copies of a material share it. */
+	const OptGltfMaterial** material_given;
 	cgltf_mesh*             meshes;
 	size_t                  meshes_count;
 	cgltf_primitive*        primitives;
@@ -236,6 +239,8 @@ void opt_gltf_log(const OptGltfBuildOptions* options, bool warning, const char* 
 
 void*              opt_gltf_push_array(void** arr, size_t* count, size_t* cap, size_t elem_size, size_t want);
 char*              opt_gltf_keep_string(GltfBuild* gb, char* s);
+/* The texture whose image has the pixels `rgba`, or -1. */
+int opt_gltf_texture_of_pixels(const OptGltfDocument* document, const uint8_t* rgba);
 bool               opt_gltf_set_extension(GltfBuild* build, cgltf_node* node, cJSON* object);
 size_t             opt_gltf_bin_append(GltfBuild* gb, const void* data, size_t bytes);
 cgltf_buffer_view* opt_gltf_new_view(GltfBuild* gb, size_t offset, size_t bytes, cgltf_buffer_view_type type);

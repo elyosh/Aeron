@@ -14,7 +14,7 @@ from bpy.props import (
 )
 from bpy.types import PropertyGroup
 
-from . import animation, common, display, flipbook_preview, overlays, preview
+from . import animation, common, display, flipbook_preview, overlays, preview, skins
 
 
 def _component_poll(self, obj):
@@ -97,10 +97,16 @@ def _markings_update(self, context):
         display.apply_skin(root)
 
 
+def _search_variants(self, context, edit_text):
+    names = skins.variant_names(self.id_data) if common.role(self.id_data) == 'model' else []
+    return [name for name in names if edit_text.lower() in name.lower()]
+
+
 class AeronMarkingsEntry(PropertyGroup):
     variant: StringProperty(
-        name="Variant", update=_markings_update,
-        description="Material variant shown for this markings value. Empty shows the materials as modeled")
+        name="Variant", update=_markings_update, search=_search_variants,
+        description="Material variant or skin variant shown for this markings value. Empty shows the materials "
+                    "as modeled")
 
 
 def _role_update(self, context):
@@ -222,6 +228,9 @@ class AeronFlightProperties(PropertyGroup):
     active_setting: IntProperty()
     component_sets: CollectionProperty(type=AeronComponentSet)
     active_set: IntProperty()
+    # Skin variants (skins.py): material variants made of the materials' skins.
+    skin_variants: CollectionProperty(type=skins.AeronSkinVariant)
+    active_skin_variant: IntProperty()
     # The material variant each markings value shows. Values past the end
     # show the last entry's variant.
     markings: CollectionProperty(type=AeronMarkingsEntry)
@@ -247,7 +256,12 @@ class AeronFlightProperties(PropertyGroup):
 
 
 class AeronMaterialProperties(animation.AeronAnimation, PropertyGroup):
-    """The AERON_flight_model data of a material (animation.py)."""
+    """The AERON_flight_model data of a material (animation.py), and its skins (skins.py)."""
+    skins: CollectionProperty(type=skins.AeronSkinLayer)
+    active_skin: IntProperty()
+    # A skin preview copy (skins.py): the material it shows, and the layers.
+    preview_of: PointerProperty(type=bpy.types.Material)
+    preview_key: StringProperty()
 
 
 class AeronProblem(PropertyGroup):

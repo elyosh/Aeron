@@ -20,7 +20,7 @@ from bpy.types import Operator
 from bpy_extras.io_utils import ExportHelper
 from mathutils import Matrix
 
-from . import animation, common, display, flipbook_preview, libraries, sources, validation
+from . import animation, common, display, flipbook_preview, libraries, skins, sources, validation
 
 # Blender (x, y, z) -> glTF (x, z, -y).
 _TO_GLTF = Matrix(((1.0, 0.0, 0.0, 0.0), (0.0, 0.0, 1.0, 0.0), (0.0, -1.0, 0.0, 0.0), (0.0, 0.0, 0.0, 1.0)))
@@ -52,6 +52,9 @@ def _model_extension(root, ordinals):
     if len(props.component_sets):
         extension["componentSets"] = {
             s.name: [_ordinal(ordinals, member) for member in s.members] for s in props.component_sets}
+    skin_variants = skins.variants_json(root)
+    if skin_variants:
+        extension["skinVariants"] = skin_variants
     if len(props.markings):
         extension["markings"] = [entry.variant or None for entry in props.markings]
     energy = animation.energy_default(root)
@@ -244,7 +247,7 @@ def _png_images(gltf_path):
             json.dump(document, stream, separators=(",", ":"))
 
 
-def _material_extensions(gltf_path):
+def _material_extensions(gltf_path, keep_originals=False):
     """Writes the AERON_flight_model object of each material into the
     exported .gltf. This is done after Blender's exporter, because it drops
     empty arrays and the object needs them. For example, an `energy` of []
@@ -260,6 +263,8 @@ def _material_extensions(gltf_path):
             extensions[common.EXTENSION_NAME] = extension
         if not extensions:
             del material["extensions"]
+    # The skin layers, with their images (skins.py).
+    skins.add_material_skins(document, gltf_path, keep_originals)
     used = document.setdefault("extensionsUsed", [])
     if common.EXTENSION_NAME not in used:
         used.append(common.EXTENSION_NAME)
@@ -301,7 +306,7 @@ def export_gltf(root, filepath, apply_modifiers=True, keep_originals=False):
             bpy.ops.object.mode_set(mode=mode)
     if 'FINISHED' not in result:
         raise RuntimeError("Blender's glTF export failed ({})".format(result))
-    _material_extensions(filepath)
+    _material_extensions(filepath, keep_originals)
     if not keep_originals:
         _png_images(filepath)
 
@@ -470,8 +475,11 @@ def _place_images(document, scratch, model_dir):
         if not uri:
             continue
         path = os.path.normpath(os.path.join(scratch, urllib.parse.unquote(uri)))
+        skin = image.pop(skins.SKIN_IMAGE_KEY, None)
         if _inside(path, model_dir) and not _inside(path, scratch):
             target = path
+        elif skin:
+            target = os.path.join(model_dir, "textures", "skins", skin, os.path.basename(path))
         else:
             target = os.path.join(model_dir, "textures", os.path.basename(path))
         if os.path.splitext(path)[1].lower() != ".png":

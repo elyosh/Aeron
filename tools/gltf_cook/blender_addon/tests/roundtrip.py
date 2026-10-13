@@ -302,6 +302,14 @@ def _float32(value):
     return value
 
 
+def _without_skin_indices(extension):
+    skins = extension.get("skins")
+    if not isinstance(skins, dict):
+        return extension
+    return dict(extension, skins={name: {key: ("texture" if isinstance(value, dict) else value)
+                                         for key, value in layer.items()} for name, layer in skins.items()})
+
+
 def compare_materials(original, result, directory, sources, failures):
     by_name = {material.get("name"): material for material in result.get("materials", [])}
     for material in original.get("materials", []):
@@ -312,7 +320,9 @@ def compare_materials(original, result, directory, sources, failures):
             continue
         _close(material.get("extras") or {}, by_name[name].get("extras") or {}, "material {} extras".format(name),
                failures)
-        objects = [_float32((m.get("extensions") or {}).get(sources.EXTENSION_NAME) or {})
+        # Skin layers name textures by index, which the export renumbers: the
+        # texture files are compared below.
+        objects = [_float32(_without_skin_indices((m.get("extensions") or {}).get(sources.EXTENSION_NAME) or {}))
                    for m in (material, by_name[name])]
         if objects[0] != objects[1]:
             failures.append("material {}: AERON_flight_model {} -> {}".format(

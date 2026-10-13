@@ -41,13 +41,10 @@
 #include "xwau_missions.h"
 
 /*
- * The skins as material variants, which come after the state variants. The
- * conversion is in xwau_gltf_skins.h. For each state-0 texture of LOD 0
- * that is not a screen surface, the layers of a variant that have an image
- * for the texture are blended onto its decoded colors. They are blended in
- * order, with the hook's integer straight-alpha blend. The result is baked
- * in the same way as the texture and gets its own material. Primitives
- * without a composite in a variant show the material of the variant's state.
+ * The skins as skin variants (xwau_gltf_skins.h): each variant lists its
+ * skins in order, and the cook composites them over the textures that have
+ * images of them, as the hook blends them. Primitives without any of a
+ * variant's skins show the material of the variant's state.
  */
 typedef struct XwauSkinLayer {
 	uint32_t skin;    /* index into XwauSkinVariants.images rows */
@@ -56,7 +53,7 @@ typedef struct XwauSkinLayer {
 
 typedef struct XwauSkinVariant {
 	const char*          name;
-	uint32_t             state; /* asset state of primitives without a composite */
+	uint32_t             state; /* asset state of primitives without any of its skins */
 	const XwauSkinLayer* layers;
 	size_t               layer_count;
 } XwauSkinVariant;

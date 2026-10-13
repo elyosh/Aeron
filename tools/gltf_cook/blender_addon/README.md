@@ -109,9 +109,9 @@ dialog shows which XWA Upgrade installation the import will use.
 - **Original Game**: the OPT alone, as the original game draws it, with the
   game's data for the model (its pilot eye, crew and moving parts).
 - **XWA Upgrade**: the OPT with everything XWAU adds to it: materials,
-  normal maps and animations, skins (as material variants, including the
-  ones that missions choose), object profiles, moving parts, pilot eye and
-  cockpit displays. The images that its animations play are added to the
+  normal maps and animations, skins (as skins and skin variants, including
+  the ones that missions choose), object profiles, moving parts, pilot eye
+  and cockpit displays. The images that its animations play are added to the
   project's effect libraries. Images that the libraries already have are
   kept as they are.
 - **Auto** (the default): XWA Upgrade if its data is found, otherwise
@@ -232,7 +232,7 @@ uses `Default_<markings>`, then `Default`.
 
 The game gives each object a markings value (0 to 255), usually the one of
 its flight group. The markings list of the model says which material
-variant each value shows. Edit it in the **Markings** panel of the model
+variant or skin variant each value shows. Edit it in the **Markings** panel of the model
 root. Each row is a value, starting from 0, and names a variant. An empty
 row shows the materials as modeled. A markings value without its own row
 shows the variant of the last row. A new row starts with the variant of the
@@ -321,10 +321,6 @@ builds the changed libraries) to try it, and Save to Project to keep it. If
 a library rebuild removes an image that other models use, or changes its
 type, Export for Game names those models: their next build fails.
 
-The looks of the model (converted paint states and skins) are material
-variants (Blender's glTF material variants). The markings list and the
-missions name them, so renaming a variant breaks those names.
-
 Glass is a transmissive material (`KHR_materials_transmission`). Its base
 color tints what shows through it, as in any glTF viewer. Converted glass
 keeps XWAU's look in both its base color and transmission textures, so
@@ -337,6 +333,33 @@ may be mirrored or animated. Vectors (target, hinge pivot and axes,
 custom bounds) are in the local space of the component. The buttons next to
 them set them from the 3D cursor. Without custom bounds, the game computes
 the bounds from the collision mesh (or else the render mesh).
+
+## Skins
+
+A skin is a set of images painted over materials. The **Aeron Skins** panel
+of a material lists its skins. Each has a base color image, whose alpha says
+where the skin covers the material, and optionally emissive and
+metallic-roughness images (roughness in G, metallic in B). The images use
+the UV layout of the material's base color texture, and have its size. A
+skin can be on any number of materials, with the same name.
+
+The **Skin Variants** panel of the model root lists the model's skin
+variants. A skin variant paints its layers (skins, each with an opacity)
+over the materials in order. It may start from a glTF material variant,
+such as a converted paint state: materials without any of its skins then
+show that variant. The markings list names skin variants like material
+variants. The eye of a markings row shows the skin: the materials that it
+changes are replaced by preview copies, which follow the skin images as you
+paint them. In the preview, a partly covering skin mixes in linear light,
+and the game's composite on the stored colors, so such texels can differ
+slightly. The exports write the own materials, the skins and the skin
+variants, and Export for Game composites each skin variant into the .glb.
+Save to Project keeps the skin images under `textures/skins/<skin>/`.
+
+The converted paint states are glTF material variants. The markings list,
+the skin variants and the missions name variants, so renaming one breaks
+those names. Check Model reports a skin variant that names no skin of the
+model, a skin no variant uses, and skin images of the wrong size.
 
 ## Lights
 

@@ -31,6 +31,7 @@ static void usage(void) {
 					"       aeron_gltf_cook --library <library>.yaml --out <effects dir>\n"
 					"       aeron_gltf_cook --library-from-json <in.json> <library>.yaml\n"
 					"       aeron_gltf_cook --library-json <library>.yaml\n"
+
 					"\n"
 					"Cooks an artist-authored .gltf (PNG textures, optional\n"
 					"KHR_materials_variants) into one .glb file with compressed KTX2\n"
@@ -39,7 +40,8 @@ static void usage(void) {
 					"material's texture bindings carry a KHR_texture_transform mapping\n"
 					"its UVs into the appropriate sub-rect of its atlas. It first\n"
 					"checks the materials' AERON_flight_model objects (animations,\n"
-					"screens).\n"
+					"screens). Skin layers (`skins`, `skinVariants`) become material\n"
+					"variants, composited while cooking.\n"
 					"\n"
 					"For an AERON_flight_model asset it also adds cooked simulation data\n"
 					"(per-component collision BVH) and render data (render BVH), then\n"

@@ -18,9 +18,46 @@
       "uniqueItems": true,
       "items": { "enum": ["shields", "tractor", "jamming"] }
     },
-    "screen": { "$ref": "#/$defs/screen" }
+    "screen": { "$ref": "#/$defs/screen" },
+    "skins": {
+      "title": "Skins",
+      "description": "The material's skin layers, keyed by skin name. The model root's skinVariants combine them; the cooker composites each combination. A viewer without this extension shows the material as defined.",
+      "type": "object",
+      "propertyNames": { "$ref": "#/$defs/skinName" },
+      "additionalProperties": { "$ref": "#/$defs/skinLayer" }
+    }
   },
   "$defs": {
+    "skinName": {
+      "title": "Skin name",
+      "description": "1 to 63 lower-case letters, digits, '.', '_' and '-'.",
+      "type": "string",
+      "pattern": "^[a-z0-9._-]{1,63}$"
+    },
+    "skinLayer": {
+      "title": "Skin layer",
+      "description": "The images of one skin on this material, in the texture coordinates of its base color texture. The base color texture's alpha is the layer's coverage for every channel.",
+      "type": "object",
+      "required": ["baseColorTexture"],
+      "properties": {
+        "baseColorTexture": { "$ref": "#/$defs/textureInfo", "description": "RGB: the layer's base color. Alpha: its coverage." },
+        "emissiveTexture": { "$ref": "#/$defs/textureInfo", "description": "The layer's emissive color; without it, the layer leaves the emissive unchanged." },
+        "metallicRoughnessTexture": { "$ref": "#/$defs/textureInfo", "description": "The layer's metallic (B) and roughness (G); without it, the layer leaves them unchanged." },
+        "emissiveStrength": {
+          "title": "Emissive strength",
+          "description": "The KHR_materials_emissive_strength of the layer's emissive. Default: the material's, or 1.",
+          "type": "number",
+          "minimum": 0
+        }
+      }
+    },
+    "textureInfo": {
+      "title": "Texture reference",
+      "description": "A glTF texture of this file. Its sampler and any texCoord or KHR_texture_transform are ignored: a layer uses those of the material's texture.",
+      "type": "object",
+      "required": ["index"],
+      "properties": { "index": { "type": "integer", "minimum": 0 } }
+    },
     "key": {
       "title": "Image key",
       "description": "The key of an image of the effect library.",

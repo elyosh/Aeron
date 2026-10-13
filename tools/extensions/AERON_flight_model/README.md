@@ -110,8 +110,8 @@ state. Aeron stores sets without interpreting them.
 
 The game gives each object a markings value (0 to 255). The model root may
 carry `markings`, an array of at most 256 entries: entry m is the name of
-the `KHR_materials_variants` variant that markings value m shows, or `null`
-for the primitives' own materials. A value past the end shows the last
+the variant that markings value m shows (a `KHR_materials_variants` variant
+or a skin variant, see Skins), or `null` for the primitives' own materials. A value past the end shows the last
 entry; without the array, every value shows the own materials. Every name
 must be one of the file's variants.
 
@@ -123,6 +123,59 @@ Here markings 0 shows the model as modelled, 1 shows `Red`, and 2 and above
 `Blue`. A game may let a mission choose another variant, or `null`, for a
 markings value. Aeron loads a texture that only variants use when a
 markings value in use shows one of them.
+
+## Skins
+
+A skin is a set of images painted over materials. A material's
+`AERON_flight_model` object may carry `skins`, keyed by skin name (1 to 63
+of `a-z`, `0-9`, `.`, `_`, `-`); each entry is a layer of that skin on this
+material:
+
+- `baseColorTexture`: required. Its RGB is the layer's base colour and its
+  alpha the layer's coverage, for every channel of the layer;
+- `emissiveTexture`, `metallicRoughnessTexture`: optional. Without one, the
+  layer leaves that channel as it is;
+- `emissiveStrength`: optional, the strength of the layer's emissive.
+  Default: the material's `KHR_materials_emissive_strength`, or 1.
+
+A layer's textures are ordinary glTF textures of the file. They use the
+texture coordinates of the material's base colour texture (its `texCoord`
+and `KHR_texture_transform`); their own sampler is ignored. Each must have
+the size of the material's own texture of the same channel; when the
+material has none, all layers of that channel must have the same size.
+
+The model root may carry `skinVariants`, an array of variants made of skins:
+
+```json
+"skinVariants": [
+  { "name": "Red", "layers": [{ "skin": "red" }] },
+  { "name": "Red, worn", "base": "State 1", "layers": [{ "skin": "red" }, { "skin": "dirt", "opacity": 60 }] }
+]
+```
+
+- `name`: required, unique among the skin variants and the
+  `KHR_materials_variants` variants;
+- `base`: optional, a `KHR_materials_variants` variant the skin variant
+  starts from;
+- `layers`: the skins in order, each with an optional `opacity` (0 to 100,
+  default 100) that scales its coverage. Every skin must be on at least one
+  material.
+
+On a primitive whose material has at least one of the variant's skins, the
+variant shows a composite of that material: each channel that a layer has
+is the material's own image (or, without one, its factor as a uniform
+image, the composite then using factor 1) with the layers painted over it
+in order, as `dst · (1 − a) + layer · a` on the stored values, where `a` is
+the coverage times the opacity. The composite keeps the material's alpha.
+Emissive layers whose strength differs from the composite's (the
+material's, else the first emissive layer's) are scaled in linear light
+first. Any other primitive shows the `base` variant's material, or its own.
+
+The cooker turns skins into `KHR_materials_variants`: one variant per skin
+variant, after the file's own variants, with a material per distinct
+(material, layers) composite. A cooked file has no `skins` or
+`skinVariants`. A viewer without this extension shows the materials
+without skins.
 
 ## Lights
 
@@ -160,7 +213,8 @@ beyond its glTF definition. It may hold:
 - `energy`: the energy effects it shows, any of `shields`, `tractor` and
   `jamming` (`[]` for none). The model root's `energy` is the default of
   every material without its own; without either, a material shows none;
-- `screen`: displays the game draws live on it (cockpit screens).
+- `screen`: displays the game draws live on it (cockpit screens);
+- `skins`: its skin layers (see Skins).
 
 Frames and damage stages are image keys of effect libraries, files the
 models share and the game loads from its `remaster/effects/`.

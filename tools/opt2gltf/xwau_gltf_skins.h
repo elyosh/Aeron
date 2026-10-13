@@ -2,16 +2,17 @@
 #define AERON_OPT2GLTF_XWAU_GLTF_SKINS_H
 
 /*
- * Turns XWAU skins (xwau_skins.h) into material variants of the conversion
- * (opt_gltf.h, OptGltfVariants). This applies to every state-0 texture of
- * LOD 0 that has pixels and is not a screen surface. For each skin variant,
- * the layers that have an image for the texture are blended onto its
- * decoded colors, in order, with the integer straight-alpha blend of the
- * hook. Each distinct result is a composite, shared by all variants with
- * the same layers. A composite is baked like the texture itself
- * (xwau_gltf_material.h) and becomes a separate material. When the
- * emissive, metallic-roughness or transmission of a composite is equal to
- * that of the texture, the composite uses the image of the texture.
+ * Turns XWAU skins (xwau_skins.h) into skin layers and skin variants of the
+ * conversion (opt_gltf.h; tools/extensions/AERON_flight_model, "Skins"). A
+ * skin is a layer of every state-0 texture of LOD 0 that has pixels, is not
+ * a screen surface and has an image of the skin. The layer is the skin's
+ * colors baked like the texture itself (xwau_gltf_material.h), with the
+ * texture's alpha and illumination; its coverage is the skin's alpha. The
+ * cook composites the layers of each variant over the baked texture, which
+ * matches baking the hook's blend of the colors wherever a layer is fully
+ * opaque or fully transparent. When one skin changes a texture's emissive or
+ * metallic-roughness under its coverage, every skin of that texture carries
+ * that channel, so that a later layer replaces it as the hook's blend would.
  */
 
 #include <stdbool.h>
@@ -24,21 +25,28 @@
 
 typedef struct XwauGltfSkins XwauGltfSkins;
 
-/* Builds the variants of `skins` for `opt`. `materials`, `anims` and
- * `baked` have one entry per texture, and `anims` may be NULL. `textures`
- * holds the given materials of the textures. `screens` has one entry per
- * texture or is NULL. Image files are named after `basename`. Returns NULL
- * when out of memory or when the skins are invalid. Both cases are
- * reported. */
+/* Builds the skin layers and skin variants of `skins` for `opt`. Each skin
+ * becomes a layer of the materials whose textures it has an image for: the
+ * skin's colors baked with the texture's alpha, illumination and material.
+ * Each variant becomes a skin variant, which the cook composites
+ * (tools/extensions/AERON_flight_model, "Skins"), or a plain variant that
+ * shows its state when none of its skins has an image. `skin_names` names
+ * each skin. `materials`, `anims` and `baked` have one entry per texture,
+ * and `anims` may be NULL. `screens` has one entry per texture or is NULL.
+ * Image files are named after `basename`. Returns NULL when out of memory
+ * or when the skins are invalid. Both cases are reported. */
 XwauGltfSkins* XwauGltfSkins_Build(const opt_file_t* opt, const char* basename, const XwauSkinVariants* skins,
-								   const OptGltfScreen* screens, int base_shade,
+								   const char* const* skin_names, const OptGltfScreen* screens, int base_shade,
 								   const XwauGltfMaterial* materials, const XwauGltfAnim* anims,
-								   const XwauBaked* baked, const OptGltfMaterial* textures);
+								   const XwauBaked* baked);
+
+/* The skin layers of texture `texture` in layer mode, and their count. */
+const OptGltfSkinLayer* XwauGltfSkins_Layers(const XwauGltfSkins* skins, int32_t texture, size_t* count);
 
 /* Returns the variants. They stay valid as long as `skins` does. */
 const OptGltfVariants* XwauGltfSkins_Variants(const XwauGltfSkins* skins);
 
-/* Reports the variants and composites to stderr. */
+/* Reports the variants and layers to stderr. */
 void XwauGltfSkins_Report(const XwauGltfSkins* skins, const char* basename);
 
 void XwauGltfSkins_Free(XwauGltfSkins* skins);

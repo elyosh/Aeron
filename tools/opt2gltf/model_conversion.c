@@ -486,7 +486,7 @@ static bool bake_xwau(Conversion* c, const ModelConversion* mc, const opt_file_t
 	m->source                 = OPT_GLTF_MATERIALS_GIVEN;
 	m->given                  = c->baked.textures;
 	m->untextured             = &c->baked.untextured;
-	m->variants               = c->baked.variants.count ? &c->baked.variants : NULL;
+	m->variants = c->baked.variants.count || c->baked.variants.skin_variant_count ? &c->baked.variants : NULL;
 	m->screens                = screens;
 	/* XWAU's renderer uses the stored normal of each corner, without
 	 * remapping or repairing it. */

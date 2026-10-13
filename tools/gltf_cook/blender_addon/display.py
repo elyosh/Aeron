@@ -11,7 +11,7 @@
 
 import bpy
 
-from . import common
+from . import common, skins
 
 PROFILE_PREFIX = "hidden_by_profile."
 
@@ -91,12 +91,39 @@ def markings_variant(root, markings):
     return None
 
 
+def _variant_index(name):
+    for variant in _variants():
+        if variant.name == name:
+            return variant.variant_idx
+    return None
+
+
+def _slot_variant_material(component, index, variant):
+    """The material that glTF variant `variant` puts in slot `index`, or None."""
+    for item in getattr(component.data, "gltf2_variant_mesh_data", ()):
+        if item.material_slot_index == index and any(p.variant.variant_idx == variant for p in item.variants):
+            return item.material
+    return None
+
+
 def apply_skin(root, markings=None):
     """Shows the materials of a markings value on the model's components.
     `markings` defaults to the value chosen for the preview, and -1 shows
-    the original materials."""
+    the original materials. A skin variant shows preview copies of the
+    materials it changes (skins.py)."""
     if markings is None:
         markings = root.aeron_flight.preview_markings
+    skins.restore(root)
+    entries = root.aeron_flight.markings
+    name = entries[min(markings, len(entries) - 1)].variant if markings >= 0 and len(entries) else ""
+    skin_variant = skins.skin_variant(root, name) if name else None
+    if skin_variant is not None:
+        base = _variant_index(skin_variant.base) if skin_variant.base else None
+        skins.show(root, skin_variant,
+                   lambda component, index: _slot_variant_material(component, index, base) if base is not None
+                   else None)
+        skins.remove_unused()
+        return
     variant = markings_variant(root, markings) if markings >= 0 else None
     for component in common.components(root):
         mesh = component.data
@@ -116,6 +143,7 @@ def apply_skin(root, markings=None):
                 continue
             if slot.material != material:
                 slot.material = material
+    skins.remove_unused()
 
 
 def models_showing_skins():

@@ -2,7 +2,8 @@
 
 add_library(aeron_gltf_cook_lib STATIC
     gltf_cook.c
-    channel_atlas.c)
+    channel_atlas.c
+    skin_layers.c)
 
 target_include_directories(aeron_gltf_cook_lib
     PUBLIC
@@ -11,6 +12,9 @@ target_include_directories(aeron_gltf_cook_lib
         ${CMAKE_CURRENT_SOURCE_DIR}/../../third_party/cgltf)
 
 target_link_libraries(aeron_gltf_cook_lib PUBLIC imgbake aeron_cgltf PRIVATE aeron_cjson)
+if(NOT MSVC)
+    target_link_libraries(aeron_gltf_cook_lib PRIVATE m)
+endif()
 set_target_properties(aeron_gltf_cook_lib PROPERTIES
     C_STANDARD 11
     C_STANDARD_REQUIRED ON)

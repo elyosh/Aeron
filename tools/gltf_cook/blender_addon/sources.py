@@ -144,8 +144,9 @@ def check_markings(problems, root):
         if obj.type == 'MESH':
             for item in getattr(obj.data, "gltf2_variant_mesh_data", ()):
                 mapped.update(pointer.variant.variant_idx for pointer in item.variants)
+    skin_variants = {variant.name for variant in root.aeron_flight.skin_variants}
     for markings, entry in enumerate(root.aeron_flight.markings):
-        if not entry.variant:
+        if not entry.variant or entry.variant in skin_variants:
             continue
         if entry.variant not in variants:
             problems.error(root, "markings value {}: material variant {!r} does not exist".format(
@@ -180,7 +181,12 @@ def _tree_images(tree, seen):
 
 
 def model_images(root):
+    """The images of the model's materials and of their skins."""
+    from . import skins
+
     images, seen = set(), set()
     for material in model_materials(root):
-        images.update(_tree_images(material.node_tree, seen))
+        if material.aeron_flight.preview_of is None:
+            images.update(_tree_images(material.node_tree, seen))
+    images.update(skins.skin_images(root))
     return images

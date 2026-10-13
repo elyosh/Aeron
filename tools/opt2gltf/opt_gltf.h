@@ -113,6 +113,19 @@ typedef struct OptGltfImage {
 	const char*      file;
 } OptGltfImage;
 
+/* A skin layer of a given material: its entry `skin` in the material's
+ * AERON_flight_model `skins` (tools/extensions/AERON_flight_model, "Skins").
+ * The base image is required, and its alpha is the coverage. The emissive
+ * and metallic-roughness images are optional. Images given more than once
+ * (the same pixel pointer) are written once. */
+typedef struct OptGltfSkinLayer {
+	const char*         skin;
+	struct OptGltfImage base;
+	struct OptGltfImage emissive;
+	struct OptGltfImage metallic_roughness;
+	float               emissive_strength; /* emissiveStrength when > 0 */
+} OptGltfSkinLayer;
+
 typedef struct OptGltfMaterial {
 	const char* name; /* NULL for the stock name */
 	/* The base color image, with the size of the texture. It uses the stock
@@ -137,6 +150,8 @@ typedef struct OptGltfMaterial {
 	bool         specular; /* KHR_materials_specular with factor 1 and color factor specular_color */
 	float        specular_color;
 	const char*  json; /* the material's AERON_flight_model object (animations), or NULL */
+	const OptGltfSkinLayer* skins; /* its skin layers, written as `skins` */
+	size_t                  skin_count;
 } OptGltfMaterial;
 
 /*
@@ -164,6 +179,21 @@ typedef struct OptGltfVariantMaterial {
 	OptGltfMaterial material;
 } OptGltfVariantMaterial;
 
+/* A variant made of skin layers, written to the model root's `skinVariants`
+ * (tools/extensions/AERON_flight_model, "Skins"). It starts from state
+ * `state`: the variant `State <state>`, or the own materials for state 0. */
+typedef struct OptGltfSkinVariantLayer {
+	const char* skin;
+	uint32_t    opacity; /* 0..100 */
+} OptGltfSkinVariantLayer;
+
+typedef struct OptGltfSkinVariant {
+	const char*                    name;
+	uint32_t                       state;
+	const OptGltfSkinVariantLayer* layers;
+	size_t                         layer_count;
+} OptGltfSkinVariant;
+
 typedef struct OptGltfVariants {
 	const OptGltfVariant*         variants;
 	size_t                        count;
@@ -173,6 +203,9 @@ typedef struct OptGltfVariants {
 	 * index into `materials` of the variant's material for the texture, or
 	 * -1. */
 	const int32_t* material_of;
+	/* Skin variants, after the given variants. The markings may name them. */
+	const OptGltfSkinVariant* skin_variants;
+	size_t                    skin_variant_count;
 	/* The variant name for each markings value, or NULL when the value shows
 	 * a state. */
 	const char* const* default_markings;
