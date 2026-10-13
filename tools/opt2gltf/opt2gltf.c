@@ -11,6 +11,7 @@
 #include "aeron/mesh_normals.h"
 #include "cJSON.h"
 #include "opt.h"
+#include "opt_json.h"
 
 #include "mikktspace.h"
 
@@ -607,9 +608,8 @@ typedef struct {
 	cgltf_sampler      sampler; /* single repeat/linear sampler shared by all */
 	cgltf_material*    materials;
 	size_t             materials_count;
-	/* Per material: its animation (AERON_flight_model members without
-	 * braces) and its screen (a JSON object), or NULL; a material's copies
-	 * share them. */
+	/* Per material: its animation (its AERON_flight_model object) and its
+	 * screen (a JSON object), or NULL; a material's copies share them. */
 	const char**            material_anim;
 	const char**            material_screen;
 	cgltf_mesh*             meshes;
@@ -687,9 +687,10 @@ static char* gb_keep_string(GltfBuild* gb, char* s) {
 	return s;
 }
 
-static bool set_flight_extension(GltfBuild* build, cgltf_node* node, const char* json) {
+/* Sets the node's AERON_flight_model object, printed; deletes `object`. */
+static bool set_flight_extension(GltfBuild* build, cgltf_node* node, cJSON* object) {
 	cgltf_extension* extension = (cgltf_extension*)calloc(1, sizeof *extension);
-	char*            data      = xstrdup(json);
+	char*            data      = OptJson_Print(object);
 	if (!extension || !data) {
 		free(extension);
 		free(data);
@@ -1472,76 +1473,40 @@ static void xwau_set_specular(cgltf_material* mat, float specular_color) {
 
 /* ===== Screen surfaces ============================================== */
 
-/* Appends formatted text to the string *out (length *len, capacity *cap);
- * on allocation failure *out becomes NULL and later calls do nothing. */
-static void json_append(char** out, size_t* len, size_t* cap, const char* fmt, ...) {
-	if (!*out)
-		return;
-	va_list args;
-	va_start(args, fmt);
-	const int n = vsnprintf(NULL, 0, fmt, args);
-	va_end(args);
-	if (n < 0) {
-		free(*out);
-		*out = NULL;
-		return;
-	}
-	if (*len + (size_t)n + 1 > *cap) {
-		size_t ncap = *cap * 2;
-		while (ncap < *len + (size_t)n + 1)
-			ncap *= 2;
-		char* grown = (char*)realloc(*out, ncap);
-		if (!grown) {
-			free(*out);
-			*out = NULL;
-			return;
-		}
-		*out = grown;
-		*cap = ncap;
-	}
-	va_start(args, fmt);
-	vsnprintf(*out + *len, *cap - *len, fmt, args);
-	va_end(args);
-	*len += (size_t)n;
-}
-
-static void json_append_vec3(char** out, size_t* len, size_t* cap, const char* key, const float v[3]) {
-	json_append(out, len, cap, ",\"%s\":[%.9g,%.9g,%.9g]", key, (double)v[0], (double)v[1], (double)v[2]);
-}
-
 /* A material's animation. */
 static void anim_apply(OptGltfDocument* document, cgltf_material* mat, const OptGltfXwauAnim* anim) {
-	document->gb.material_anim[mat - document->gb.materials] =
-		anim->members && anim->members[0] ? anim->members : NULL;
+	document->gb.material_anim[mat - document->gb.materials] = anim->json;
 }
 
-/* The material's AERON_flight_model `screen`. */
+/* The material's AERON_flight_model `screen` (owned), or NULL. */
 static char* screen_json(const OptGltfScreen* s) {
-	size_t len = 0, cap = 1024;
-	char*  out = (char*)malloc(cap);
-	if (!out)
-		return NULL;
-	out[0] = 0;
-	json_append(&out, &len, &cap,
-				"{\"cover\":%s,\"transparent\":%s,\"alwaysVisible\":%s,\"hologram\":%s,"
-				"\"noisy\":%s,\"hide\":%u,\"rects\":[",
-				s->cover_base.rgba && !s->hologram ? "true" : "false", s->transparent ? "true" : "false",
-				s->always_visible ? "true" : "false", s->hologram ? "true" : "false",
-				s->noisy ? "true" : "false", s->hide);
-	for (uint32_t i = 0; i < s->rect_count; ++i) {
-		const OptGltfScreenRect* r = &s->rects[i];
-		json_append(&out, &len, &cap, "%s{\"source\":%u,\"dst\":[%.9g,%.9g,%.9g,%.9g]", i ? "," : "",
-					r->source, (double)r->dst[0], (double)r->dst[1], (double)r->dst[2], (double)r->dst[3]);
-		json_append_vec3(&out, &len, &cap, "bg", r->bg);
-		json_append_vec3(&out, &len, &cap, "highlight", r->highlight);
-		json_append_vec3(&out, &len, &cap, "lock", r->lock);
-		json_append(&out, &len, &cap, ",\"gain\":%.9g,\"layers\":%u", (double)r->gain, r->layers);
-		if (r->layers & OPT_GLTF_SCREEN_LAYER_BAR)
-			json_append_vec3(&out, &len, &cap, "bar", r->bar);
-		json_append(&out, &len, &cap, "}");
+	cJSON* object = cJSON_CreateObject();
+	bool   ok     = OptJson_Add(object, "cover", cJSON_CreateBool(s->cover_base.rgba && !s->hologram)) &&
+					OptJson_Add(object, "transparent", cJSON_CreateBool(s->transparent)) &&
+					OptJson_Add(object, "alwaysVisible", cJSON_CreateBool(s->always_visible)) &&
+					OptJson_Add(object, "hologram", cJSON_CreateBool(s->hologram)) &&
+					OptJson_Add(object, "noisy", cJSON_CreateBool(s->noisy)) &&
+					OptJson_Add(object, "hide", cJSON_CreateNumber(s->hide));
+	cJSON* rects  = ok ? OptJson_AddArray(object, "rects") : NULL;
+	ok            = rects != NULL;
+	for (uint32_t i = 0; ok && i < s->rect_count; ++i) {
+		const OptGltfScreenRect* r    = &s->rects[i];
+		cJSON*                   rect = OptJson_AddObject(rects, NULL);
+		ok                            = OptJson_Add(rect, "source", cJSON_CreateNumber(r->source)) &&
+										OptJson_Add(rect, "dst", OptJson_Floats(r->dst, 4)) &&
+										OptJson_Add(rect, "bg", OptJson_Floats(r->bg, 3)) &&
+										OptJson_Add(rect, "highlight", OptJson_Floats(r->highlight, 3)) &&
+										OptJson_Add(rect, "lock", OptJson_Floats(r->lock, 3)) &&
+										OptJson_Add(rect, "gain", OptJson_Float(r->gain)) &&
+										OptJson_Add(rect, "layers", cJSON_CreateNumber(r->layers));
+		if (ok && (r->layers & OPT_GLTF_SCREEN_LAYER_BAR))
+			ok = OptJson_Add(rect, "bar", OptJson_Floats(r->bar, 3));
 	}
-	json_append(&out, &len, &cap, "]}");
-	return out;
+	if (!ok) {
+		cJSON_Delete(object);
+		return NULL;
+	}
+	return OptJson_Print(object);
 }
 
 /* Rewrite the material of a screen texture (opt2gltf.h, "Screen surfaces").
@@ -1889,26 +1854,13 @@ fail:
 	return false;
 }
 
-/* Appends `text` as a JSON string. */
-static void json_append_string(char** out, size_t* len, size_t* cap, const char* text) {
-	json_append(out, len, cap, "\"");
-	for (const unsigned char* p = (const unsigned char*)text; *p; ++p) {
-		if (*p == '"' || *p == '\\')
-			json_append(out, len, cap, "\\%c", *p);
-		else if (*p < 0x20)
-			json_append(out, len, cap, "\\u%04x", *p);
-		else
-			json_append(out, len, cap, "%c", *p);
-	}
-	json_append(out, len, cap, "\"");
-}
-
-/* The model root's markings list as `,"markings":[...]` (owned), "" when
- * every markings value shows the own materials, NULL on OOM. Entry m is the
- * skin `default_markings` names for m, else state min(m, N - 1) (`null`
- * for state 0), up to the longer of the two lists; after a last skin, the
- * state of the values past it, which the list's last entry then repeats. */
-static char* markings_json(const OptGltfSkins* skins, int state_count) {
+/* Adds the model root's markings list to `root`: entry m is the skin
+ * `default_markings` names for m, else state min(m, N - 1) (null for state
+ * 0), up to the longer of the two lists; after a last skin, the state of
+ * the values past it, which the list's last entry then repeats. Nothing
+ * when every markings value shows the own materials. False when out of
+ * memory. */
+static bool markings_json(cJSON* root, const OptGltfSkins* skins, int state_count) {
 	const size_t named = skins ? skins->markings_count : 0;
 	size_t       count = named > (size_t)state_count ? named : (size_t)state_count;
 	const char*  skin[257];
@@ -1928,22 +1880,19 @@ static char* markings_json(const OptGltfSkins* skins, int state_count) {
 	bool shown = false;
 	for (size_t m = 0; m < count; ++m)
 		shown |= skin[m] != NULL || state[m] != 0;
-	size_t len = 0, cap = 256;
-	char*  json = (char*)malloc(cap);
-	if (json)
-		json[0] = '\0';
-	for (size_t m = 0; shown && m < count; ++m) {
-		json_append(&json, &len, &cap, m ? "," : ",\"markings\":[");
-		if (skin[m])
-			json_append_string(&json, &len, &cap, skin[m]);
-		else if (state[m])
-			json_append(&json, &len, &cap, "\"State %d\"", state[m]);
-		else
-			json_append(&json, &len, &cap, "null");
+	if (!shown)
+		return true;
+	cJSON* list = OptJson_AddArray(root, "markings");
+	bool   ok   = list != NULL;
+	for (size_t m = 0; ok && m < count; ++m) {
+		char name[32];
+		snprintf(name, sizeof name, "State %d", state[m]);
+		ok = OptJson_Add(list, NULL,
+						 skin[m]    ? cJSON_CreateString(skin[m])
+						 : state[m] ? cJSON_CreateString(name)
+									: cJSON_CreateNull());
 	}
-	if (shown)
-		json_append(&json, &len, &cap, "]");
-	return json;
+	return ok;
 }
 
 /* The texture views of material `m` (kViewCount of them). */
@@ -2086,36 +2035,34 @@ static unsigned energy_bits(const cJSON* entry) {
 	return bits;
 }
 
-static cJSON* energy_list(unsigned bits) {
-	cJSON* list = cJSON_CreateArray();
-	for (unsigned e = 0; list && e < 3; ++e)
+/* Adds `energy`, the effects of `bits`, to `object`; false when out of
+ * memory. */
+static bool add_energy(cJSON* object, unsigned bits) {
+	cJSON* list = OptJson_AddArray(object, "energy");
+	bool   ok   = list != NULL;
+	for (unsigned e = 0; ok && e < 3; ++e)
 		if (bits & 1u << e)
-			cJSON_AddItemToArray(list, cJSON_CreateString(kAnimEnergies[e]));
-	return list;
+			ok = OptJson_Add(list, NULL, cJSON_CreateString(kAnimEnergies[e]));
+	return ok;
 }
 
 /* Each material's AERON_flight_model object: its animation and its screen.
  * The energy effects most of the materials have (ties: the smaller set;
  * every material is drawn, see prune_unused) become the model root's
- * `energy`; only the materials with other effects keep their own, `[]` for
- * none (a material XWAU's texture-name sections never reached, such as the
- * faces without a texture). */
-static bool material_extensions(OptGltfDocument* document) {
+ * `energy` (*common, bits of kAnimEnergies); only the materials with other
+ * effects keep their own, `[]` for none (a material XWAU's texture-name
+ * sections never reached, such as the faces without a texture). */
+static bool material_extensions(OptGltfDocument* document, unsigned* common_energy) {
 	GltfBuild*   gb       = &document->gb;
 	const size_t count    = gb->materials_count;
 	cJSON**      entries  = (cJSON**)calloc(count ? count : 1, sizeof *entries);
 	unsigned     tally[8] = { 0 };
 	bool         ok       = entries != NULL;
 	for (size_t m = 0; ok && m < count; ++m) {
-		const char* members = gb->material_anim ? gb->material_anim[m] : NULL;
-		if (members) {
-			const size_t length = strlen(members) + 3;
-			char*        text   = (char*)malloc(length);
-			if (text)
-				snprintf(text, length, "{%s}", members);
-			entries[m] = text ? cJSON_Parse(text) : NULL;
-			free(text);
-			ok = entries[m] != NULL;
+		const char* anim = gb->material_anim ? gb->material_anim[m] : NULL;
+		if (anim) {
+			entries[m] = cJSON_Parse(anim);
+			ok         = entries[m] != NULL;
 		}
 		tally[energy_bits(entries[m])]++;
 	}
@@ -2131,13 +2078,11 @@ static bool material_extensions(OptGltfDocument* document) {
 			const unsigned bits = energy_bits(entry);
 			cJSON_DeleteItemFromObjectCaseSensitive(entry, "energy");
 			if (bits != common)
-				cJSON_AddItemToObject(entry, "energy", energy_list(bits));
+				ok = add_energy(entry, bits);
 		}
 		const char* screen = gb->material_screen ? gb->material_screen[m] : NULL;
-		if (ok && screen) {
-			cJSON* object = cJSON_Parse(screen);
-			ok            = object && cJSON_AddItemToObject(entry, "screen", object);
-		}
+		if (ok && screen)
+			ok = OptJson_Add(entry, "screen", cJSON_Parse(screen));
 		if (ok && entry->child) {
 			char*            printed   = cJSON_PrintUnformatted(entry);
 			cgltf_extension* extension = (cgltf_extension*)calloc(1, sizeof *extension);
@@ -2153,17 +2098,7 @@ static bool material_extensions(OptGltfDocument* document) {
 			}
 		}
 	}
-	/* The model root's energy default, appended to its object. */
-	cgltf_node* root = &gb->nodes[0];
-	if (ok && common && root->extensions_count == 1) {
-		cJSON* object = cJSON_Parse(root->extensions[0].data);
-		ok            = object && cJSON_AddItemToObject(object, "energy", energy_list(common));
-		char* printed = ok ? cJSON_PrintUnformatted(object) : NULL;
-		ok            = printed != NULL;
-		if (ok)
-			root->extensions[0].data = gb_keep_string(gb, printed);
-		cJSON_Delete(object);
-	}
+	*common_energy = common;
 	for (size_t m = 0; entries && m < count; ++m)
 		cJSON_Delete(entries[m]);
 	free(entries);
@@ -3207,128 +3142,112 @@ static bool write_meshes(Build* b) {
 
 /* ---- Nodes -------------------------------------------------------------- */
 
-/* The model root's AERON_flight_model object (owned), or NULL. */
-static char* root_extension(const Build* b) {
-	const OptGltfBuildOptions* o = b->options;
-	/* Each articulation needs at most 256 bytes, each setting 80, each
-	 * component set 72 plus 4 per member. */
-	char* markings = markings_json(b->skins, b->max_state_count);
-	if (!markings)
+/* The model root's AERON_flight_model object: the articulations (in option
+ * order; speedBack only when it differs), articulation settings, component
+ * sets, markings and the materials' common energy (bits of kAnimEnergies);
+ * NULL when out of memory. */
+static cJSON* root_extension(const Build* b, unsigned energy) {
+	const OptGltfBuildOptions* o    = b->options;
+	cJSON*                     root = cJSON_CreateObject();
+	bool                       ok   = OptJson_Add(root, "role", cJSON_CreateString("model"));
+	cJSON* list = ok && o->component_articulation_count ? OptJson_AddArray(root, "articulations") : NULL;
+	ok          = ok && (list || !o->component_articulation_count);
+	for (size_t a = 0; ok && a < o->component_articulation_count; ++a) {
+		const OptGltfComponentArticulation* art    = &o->component_articulations[a];
+		cJSON*                              object = OptJson_AddObject(list, NULL);
+		ok = OptJson_Add(object, "component", cJSON_CreateNumber(art->component)) &&
+			 OptJson_Add(object, "group", cJSON_CreateString(art->group)) &&
+			 OptJson_Add(object, "angle", cJSON_CreateNumber(art->angle)) &&
+			 OptJson_Add(object, "speed", cJSON_CreateNumber(art->speed));
+		if (ok && art->speed_back != art->speed)
+			ok = OptJson_Add(object, "speedBack", cJSON_CreateNumber(art->speed_back));
+		if (ok && art->behavior[0])
+			ok = OptJson_Add(object, "behavior", cJSON_CreateString(art->behavior));
+	}
+	cJSON* settings =
+		ok && o->articulation_setting_count ? OptJson_AddObject(root, "articulationSettings") : NULL;
+	ok = ok && (settings || !o->articulation_setting_count);
+	for (size_t s = 0; ok && s < o->articulation_setting_count; ++s)
+		ok = OptJson_Add(settings, o->articulation_settings[s].name,
+						 cJSON_CreateNumber(o->articulation_settings[s].value));
+	cJSON* sets = ok && o->component_set_count ? OptJson_AddObject(root, "componentSets") : NULL;
+	ok          = ok && (sets || !o->component_set_count);
+	for (size_t s = 0; ok && s < o->component_set_count; ++s) {
+		const OptGltfComponentSet* set     = &o->component_sets[s];
+		cJSON*                     members = OptJson_AddArray(sets, set->name);
+		ok                                 = members != NULL;
+		for (int component = 0; ok && component < 255; ++component)
+			if (set->members[component / 32] & (1u << (component % 32)))
+				ok = OptJson_Add(members, NULL, cJSON_CreateNumber(component));
+	}
+	ok = ok && markings_json(root, b->skins, b->max_state_count) && (!energy || add_energy(root, energy));
+	if (!ok) {
+		cJSON_Delete(root);
 		return NULL;
-	const size_t size = 64 + o->component_articulation_count * 256 + o->articulation_setting_count * 80 +
-						o->component_set_count * (72 + 255 * 4) + strlen(markings);
-	char*        ext  = (char*)malloc(size);
-	if (!ext) {
-		free(markings);
-		return NULL;
 	}
-	size_t off = (size_t)snprintf(ext, size, "{\"role\":\"model\"");
-	/* Articulations in option order; speedBack only when it differs. */
-	for (size_t a = 0; a < o->component_articulation_count; ++a) {
-		const OptGltfComponentArticulation* art = &o->component_articulations[a];
-		off += (size_t)snprintf(
-			ext + off, size - off, "%s{\"component\":%u,\"group\":\"%s\",\"angle\":%d,\"speed\":%d",
-			a ? "," : ",\"articulations\":[", art->component, art->group, (int)art->angle, (int)art->speed);
-		if (art->speed_back != art->speed)
-			off += (size_t)snprintf(ext + off, size - off, ",\"speedBack\":%d", (int)art->speed_back);
-		if (art->behavior[0])
-			off += (size_t)snprintf(ext + off, size - off, ",\"behavior\":\"%s\"", art->behavior);
-		off += (size_t)snprintf(ext + off, size - off, a + 1 == o->component_articulation_count ? "}]" : "}");
-	}
-	for (size_t s = 0; s < o->articulation_setting_count; ++s)
-		off += (size_t)snprintf(ext + off, size - off, "%s\"%s\":%d", s ? "," : ",\"articulationSettings\":{",
-								o->articulation_settings[s].name, (int)o->articulation_settings[s].value);
-	if (o->articulation_setting_count)
-		off += (size_t)snprintf(ext + off, size - off, "}");
-	for (size_t s = 0; s < o->component_set_count; ++s) {
-		const OptGltfComponentSet* set = &o->component_sets[s];
-		off += (size_t)snprintf(ext + off, size - off, "%s\"%s\":[", s ? "," : ",\"componentSets\":{",
-								set->name);
-		bool first = true;
-		for (int component = 0; component < 255; ++component) {
-			if (set->members[component / 32] & (1u << (component % 32))) {
-				off += (size_t)snprintf(ext + off, size - off, "%s%d", first ? "" : ",", component);
-				first = false;
-			}
-		}
-		off += (size_t)snprintf(ext + off, size - off, "]");
-	}
-	if (o->component_set_count)
-		off += (size_t)snprintf(ext + off, size - off, "}");
-	snprintf(ext + off, size - off, "%s}", markings);
-	free(markings);
-	return ext;
+	return root;
 }
 
-/* Mesh `mi`'s component AERON_flight_model object (owned), or NULL. */
-static char* component_extension(const Build* b, int32_t mi) {
+/* Adds `values` (OPT axes and units) to `object` as `key`, in glTF axes
+ * and metres. */
+static bool add_position(cJSON* object, const char* key, const opt_vec3_t* values) {
+	float v[3];
+	swap_axis_v3(values, v);
+	for (int k = 0; k < 3; ++k)
+		v[k] *= OPT_METERS_PER_UNIT;
+	return OptJson_Add(object, key, OptJson_Floats(v, 3));
+}
+
+/* Mesh `mi`'s component AERON_flight_model object; NULL when out of
+ * memory. */
+static cJSON* component_extension(const Build* b, int32_t mi) {
 	const OptGltfBuildOptions* o     = b->options;
 	const opt_mesh_t*          m     = &b->opt->meshes[mi];
 	const float                scale = OPT_METERS_PER_UNIT;
-	/* Fixed fields fit in 2048 bytes; each tag needs at most 66. */
-	const size_t size = 2048 + o->component_tag_count * 66;
-	char*        ext  = (char*)malloc(size);
-	if (!ext)
-		return NULL;
-	size_t off = 0;
-	off += snprintf(ext + off, size - off,
-					"{\"role\":\"component\",\"meshType\":%d,"
-					"\"explosionFlags\":%u,\"targetId\":%d",
-					(int)m->descriptor.mesh_type, (unsigned)m->descriptor.explosion_type,
-					(int)m->descriptor.target_id);
-	if (m->has_descriptor) {
-		float center[3];
-		swap_axis_v3(&m->descriptor.center, center);
-		const float span[3]       = { m->descriptor.span.x, m->descriptor.span.z, m->descriptor.span.y };
-		const float bounds_min[3] = { -m->descriptor.bbox_max.x, m->descriptor.bbox_min.z,
-									  -m->descriptor.bbox_max.y };
-		const float bounds_max[3] = { -m->descriptor.bbox_min.x, m->descriptor.bbox_max.z,
-									  -m->descriptor.bbox_min.y };
-		off +=
-			snprintf(ext + off, size - off,
-					 ",\"span\":[%.9g,%.9g,%.9g],"
-					 "\"center\":[%.9g,%.9g,%.9g],"
-					 "\"boundsMin\":[%.9g,%.9g,%.9g],"
-					 "\"boundsMax\":[%.9g,%.9g,%.9g]",
-					 span[0] * scale, span[1] * scale, span[2] * scale, center[0] * scale, center[1] * scale,
-					 center[2] * scale, bounds_min[0] * scale, bounds_min[1] * scale, bounds_min[2] * scale,
-					 bounds_max[0] * scale, bounds_max[1] * scale, bounds_max[2] * scale);
+	cJSON*                     ext   = cJSON_CreateObject();
+	bool                       ok =
+		OptJson_Add(ext, "role", cJSON_CreateString("component")) &&
+		OptJson_Add(ext, "meshType", cJSON_CreateNumber((int)m->descriptor.mesh_type)) &&
+		OptJson_Add(ext, "explosionFlags", cJSON_CreateNumber((unsigned)m->descriptor.explosion_type)) &&
+		OptJson_Add(ext, "targetId", cJSON_CreateNumber((int)m->descriptor.target_id));
+	if (ok && m->has_descriptor) {
+		const float span[3]       = { m->descriptor.span.x * scale, m->descriptor.span.z * scale,
+									  m->descriptor.span.y * scale };
+		const float bounds_min[3] = { -m->descriptor.bbox_max.x * scale, m->descriptor.bbox_min.z * scale,
+									  -m->descriptor.bbox_max.y * scale };
+		const float bounds_max[3] = { -m->descriptor.bbox_min.x * scale, m->descriptor.bbox_max.z * scale,
+									  -m->descriptor.bbox_min.y * scale };
+		ok                        = OptJson_Add(ext, "span", OptJson_Floats(span, 3)) &&
+									add_position(ext, "center", &m->descriptor.center) &&
+									OptJson_Add(ext, "boundsMin", OptJson_Floats(bounds_min, 3)) &&
+									OptJson_Add(ext, "boundsMax", OptJson_Floats(bounds_max, 3));
 	}
-	if (m->descriptor.target_id != 0) {
-		float target[3];
-		swap_axis_v3(&m->descriptor.target, target);
-		off += snprintf(ext + off, size - off, ",\"target\":[%.9g,%.9g,%.9g]", target[0] * scale,
-						target[1] * scale, target[2] * scale);
-	}
+	if (ok && m->descriptor.target_id != 0)
+		ok = add_position(ext, "target", &m->descriptor.target);
 	/* Every mesh with a rotation frame has it: the default axis frame is
 	 * not static, XWA rotates default-frame meshes about their pivot
 	 * whenever their runtime angle is nonzero (hangar droid antennas spin
 	 * about the default vertical axis). */
-	if (m->has_rotation_scale) {
-		float pivot[3], rax[3], dax[3], uax[3];
-		swap_axis_v3(&m->rotation_scale.pivot, pivot);
+	if (ok && m->has_rotation_scale) {
+		float rax[3], dax[3], uax[3];
 		swap_axis_v3(&m->rotation_scale.rotation_axis, rax);
 		swap_axis_v3(&m->rotation_scale.direction_axis, dax);
 		swap_axis_v3(&m->rotation_scale.up_axis, uax);
 		/* The pivot is a position, scaled; the axes are directions. */
 		for (int axis = 0; axis < 3; ++axis) {
-			pivot[axis] *= scale;
 			rax[axis] /= OPT_Q15_TO_UNIT;
 			dax[axis] /= OPT_Q15_TO_UNIT;
 			uax[axis] /= OPT_Q15_TO_UNIT;
 		}
-		off += snprintf(ext + off, size - off,
-						",\"rotation\":{"
-						"\"pivot\":[%.9g,%.9g,%.9g],"
-						"\"rotationAxis\":[%.9g,%.9g,%.9g],"
-						"\"directionAxis\":[%.9g,%.9g,%.9g],"
-						"\"upAxis\":[%.9g,%.9g,%.9g]}",
-						pivot[0], pivot[1], pivot[2], rax[0], rax[1], rax[2], dax[0], dax[1], dax[2], uax[0],
-						uax[1], uax[2]);
+		cJSON* rotation = OptJson_AddObject(ext, "rotation");
+		ok              = add_position(rotation, "pivot", &m->rotation_scale.pivot) &&
+						  OptJson_Add(rotation, "rotationAxis", OptJson_Floats(rax, 3)) &&
+						  OptJson_Add(rotation, "directionAxis", OptJson_Floats(dax, 3)) &&
+						  OptJson_Add(rotation, "upAxis", OptJson_Floats(uax, 3));
 	}
 	/* Tags in option order, duplicates dropped. */
-	bool tags_open = false;
-	for (size_t t = 0; t < o->component_tag_count; ++t) {
+	cJSON* tags = NULL;
+	for (size_t t = 0; ok && t < o->component_tag_count; ++t) {
 		const OptGltfComponentTag* tag = &o->component_tags[t];
 		if (tag->mesh_index != (uint32_t)mi)
 			continue;
@@ -3338,10 +3257,14 @@ static char* component_extension(const Build* b, int32_t mi) {
 						strcmp(o->component_tags[previous].tag, tag->tag) == 0;
 		if (duplicate)
 			continue;
-		off += snprintf(ext + off, size - off, "%s\"%s\"", tags_open ? "," : ",\"tags\":[", tag->tag);
-		tags_open = true;
+		if (!tags)
+			tags = OptJson_AddArray(ext, "tags");
+		ok = OptJson_Add(tags, NULL, cJSON_CreateString(tag->tag));
 	}
-	snprintf(ext + off, size - off, tags_open ? "]}" : "}");
+	if (!ok) {
+		cJSON_Delete(ext);
+		return NULL;
+	}
 	return ext;
 }
 
@@ -3358,8 +3281,12 @@ static void child_node(cgltf_node* node, cgltf_node* parent, const opt_vec3_t* p
 static bool hardpoint_node(Build* b, cgltf_node* node, cgltf_node* parent, const opt_hardpoint_t* hp) {
 	node->name = gb_keep_string(b->gb, xprintf_dup("hardpoint_%d", (int)hp->type));
 	child_node(node, parent, &hp->pos);
-	char extension[96];
-	snprintf(extension, sizeof extension, "{\"role\":\"hardpoint\",\"type\":%d}", (int)hp->type);
+	cJSON* extension = cJSON_CreateObject();
+	if (!OptJson_Add(extension, "role", cJSON_CreateString("hardpoint")) ||
+		!OptJson_Add(extension, "type", cJSON_CreateNumber((int)hp->type))) {
+		cJSON_Delete(extension);
+		return false;
+	}
 	return set_flight_extension(b->gb, node, extension);
 }
 
@@ -3386,13 +3313,14 @@ static bool engine_glow_node(Build* b, cgltf_node* node, cgltf_node* parent, con
 		rgba[color][2] = (float)(colors[color] & 0xff) / 255.0f;
 		rgba[color][3] = (float)((colors[color] >> 24) & 0xff) / 255.0f;
 	}
-	char extension[512];
-	snprintf(extension, sizeof extension,
-			 "{\"role\":\"engineGlow\",\"enabled\":%s,"
-			 "\"coreColor\":[%.9g,%.9g,%.9g,%.9g],"
-			 "\"outerColor\":[%.9g,%.9g,%.9g,%.9g]}",
-			 eg->is_disabled ? "false" : "true", rgba[0][0], rgba[0][1], rgba[0][2], rgba[0][3], rgba[1][0],
-			 rgba[1][1], rgba[1][2], rgba[1][3]);
+	cJSON* extension = cJSON_CreateObject();
+	if (!OptJson_Add(extension, "role", cJSON_CreateString("engineGlow")) ||
+		!OptJson_Add(extension, "enabled", cJSON_CreateBool(!eg->is_disabled)) ||
+		!OptJson_Add(extension, "coreColor", OptJson_Floats(rgba[0], 4)) ||
+		!OptJson_Add(extension, "outerColor", OptJson_Floats(rgba[1], 4))) {
+		cJSON_Delete(extension);
+		return false;
+	}
 	return set_flight_extension(b->gb, node, extension);
 }
 
@@ -3409,23 +3337,25 @@ static bool light_node(Build* b, cgltf_node* node, cgltf_node* parent, size_t li
 	node->light               = light;
 	const opt_vec3_t position = { source->position[0], source->position[1], source->position[2] };
 	child_node(node, parent, &position);
-	return set_flight_extension(b->gb, node, "{\"role\":\"light\"}");
+	cJSON* extension = cJSON_CreateObject();
+	if (!OptJson_Add(extension, "role", cJSON_CreateString("light"))) {
+		cJSON_Delete(extension);
+		return false;
+	}
+	return set_flight_extension(b->gb, node, extension);
 }
 
 /* Mesh `mi`'s node, with its child nodes from *next_child: hardpoints,
  * engine glows, then lights (empties, so that Blender and other tools show
  * them). */
 static bool mesh_node(Build* b, int32_t mi, cgltf_node* node, cgltf_node** next_child) {
-	const opt_mesh_t* m      = &b->opt->meshes[mi];
-	cgltf_node*       root   = &b->gb->nodes[0];
-	root->children[mi]       = node;
-	node->parent             = root;
-	node->mesh               = &b->gb->meshes[mi];
-	node->name               = b->gb->meshes[mi].name; /* already kept */
-	char*      extension     = component_extension(b, mi);
-	const bool extension_set = extension && set_flight_extension(b->gb, node, extension);
-	free(extension);
-	if (!extension_set)
+	const opt_mesh_t* m    = &b->opt->meshes[mi];
+	cgltf_node*       root = &b->gb->nodes[0];
+	root->children[mi]     = node;
+	node->parent           = root;
+	node->mesh             = &b->gb->meshes[mi];
+	node->name             = b->gb->meshes[mi].name; /* already kept */
+	if (!set_flight_extension(b->gb, node, component_extension(b, mi)))
 		return false;
 
 	const size_t light_count = b->options->light_count;
@@ -3494,14 +3424,9 @@ static bool build_nodes(Build* b) {
 		set_color(gb->nodes[i].scale, 1.0f, 1.0f, 1.0f);
 	}
 
-	cgltf_node* root         = &gb->nodes[0];
-	root->name               = gb_keep_string(gb, xprintf_dup("OPT_%s", b->basename));
-	char*      extension     = root_extension(b);
-	const bool extension_set = extension && set_flight_extension(gb, root, extension);
-	free(extension);
-	if (!extension_set)
-		return false;
-	root->children = (cgltf_node**)calloc((size_t)opt->mesh_count, sizeof *root->children);
+	cgltf_node* root = &gb->nodes[0];
+	root->name       = gb_keep_string(gb, xprintf_dup("OPT_%s", b->basename));
+	root->children   = (cgltf_node**)calloc((size_t)opt->mesh_count, sizeof *root->children);
 	if (!root->children) {
 		fprintf(stderr, "opt2gltf: oom\n");
 		return false;
@@ -3529,7 +3454,10 @@ static bool finish_document(Build* b) {
 	document->scene.nodes_count = 1;
 	gb->buffer.size             = gb->bin_size;
 	gb->buffer.data             = gb->bin;
-	if (!prune_unused(document) || !material_extensions(document))
+	/* The model root's object takes the materials' common energy. */
+	unsigned energy = 0;
+	if (!prune_unused(document) || !material_extensions(document, &energy) ||
+		!set_flight_extension(gb, &gb->nodes[0], root_extension(b, energy)))
 		return false;
 
 	if (b->skins) {

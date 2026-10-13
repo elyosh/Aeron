@@ -7,6 +7,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "opt_json.h"
 #include "xwau_dat.h"
 #include "xwau_effect_bake.h"
 
@@ -170,49 +171,17 @@ static const OpenDat* open_dat(XwauAnim* a, const char* written) {
 	return d->dat ? d : NULL;
 }
 
-/* ---- JSON text -------------------------------------------------------- */
+/* ---- JSON ------------------------------------------------------------- */
 
 /* `value` as the shortest decimal that reads back as the same float. */
-static void shortest_float(char out[24], float value) {
+static cJSON* shortest_float(float value) {
+	char text[24];
 	for (int digits = 1; digits <= 9; ++digits) {
-		snprintf(out, 24, "%.*g", digits, (double)value);
-		if (strtof(out, NULL) == value)
-			return;
+		snprintf(text, sizeof text, "%.*g", digits, (double)value);
+		if (strtof(text, NULL) == value)
+			break;
 	}
-}
-
-typedef struct Text {
-	char*  s;
-	size_t len, cap;
-} Text;
-
-static void text_add(Text* t, const char* fmt, ...) {
-	if (!t->s && t->cap)
-		return; /* earlier OOM */
-	va_list args;
-	va_start(args, fmt);
-	const int n = vsnprintf(NULL, 0, fmt, args);
-	va_end(args);
-	if (n < 0)
-		return;
-	if (t->len + (size_t)n + 1 > t->cap) {
-		size_t cap = t->cap ? t->cap * 2 : 256;
-		while (cap < t->len + (size_t)n + 1)
-			cap *= 2;
-		char* grown = (char*)realloc(t->s, cap);
-		if (!grown) {
-			free(t->s);
-			t->s   = NULL;
-			t->cap = 1;
-			return;
-		}
-		t->s   = grown;
-		t->cap = cap;
-	}
-	va_start(args, fmt);
-	vsnprintf(t->s + t->len, t->cap - t->len, fmt, args);
-	va_end(args);
-	t->len += (size_t)n;
+	return cJSON_CreateRaw(text);
 }
 
 /* ---- Sequences -------------------------------------------------------- */
@@ -339,28 +308,33 @@ typedef struct Flipbook {
 	Frames              frames;
 } Flipbook;
 
-static bool print_flipbook(XwauAnim* a, Text* t, const char* state, int layer, const Flipbook* fb,
-						   float unlit) {
+/* Adds a flipbook's entry to `list`; false when out of memory. */
+static bool flipbook_json(cJSON* list, const char* state, int layer, const Flipbook* fb, float unlit) {
 	const XwauSequence* q = fb->seq;
 	char                library[64], rel[256];
 	dat_names(fb->dat->rel, rel, sizeof rel, library, sizeof library);
-	text_add(t, "{\"state\":\"%s\",\"layer\":\"%s\",\"mode\":\"%s\",\"library\":\"%s\",\"frames\":[", state,
-			 layer ? "emissive" : "baseColor", q->mode == XWAU_SEQ_ONCE ? "once" : "loop", library);
+	cJSON* object = OptJson_AddObject(list, NULL);
+	bool   ok = OptJson_Add(object, "state", cJSON_CreateString(state)) &&
+				OptJson_Add(object, "layer", cJSON_CreateString(layer ? "emissive" : "baseColor")) &&
+				OptJson_Add(object, "mode", cJSON_CreateString(q->mode == XWAU_SEQ_ONCE ? "once" : "loop")) &&
+				OptJson_Add(object, "library", cJSON_CreateString(library));
+	cJSON* frames         = ok ? OptJson_AddArray(object, "frames") : NULL;
 	const XwauFxKind kind = layer ? XWAU_FX_ILLUMINATION : XWAU_FX_COLOUR;
-	for (size_t i = 0; i < fb->frames.count; ++i) {
+	ok                    = frames != NULL;
+	for (size_t i = 0; ok && i < fb->frames.count; ++i) {
 		const XwauSeqFrame* f = &fb->frames.items[i];
 		char                key[96];
 		XwauFx_Key(key, sizeof key, f->group, f->image, kind, q->tint, q->alpha_mode);
-		text_add(t, "%s[\"%s\",%.9g]", i ? "," : "", key, (double)f->seconds);
+		cJSON* frame = OptJson_AddArray(frames, NULL);
+		ok           = OptJson_Add(frame, NULL, cJSON_CreateString(key)) &&
+					   OptJson_Add(frame, NULL, OptJson_Float(f->seconds));
 	}
-	text_add(t, "]");
 	/* A colour frame replaces the texture, so it is drawn as unlit as the
 	   texture's bake (XWAU's animation shader drops Shadeless: a deviation
 	   that keeps unlit screens unlit while they animate). */
-	if (layer == XWAU_SEQ_COLOUR && unlit > 0.0f)
-		text_add(t, ",\"unlit\":%.9g", (double)unlit);
-	text_add(t, "}");
-	return true;
+	if (ok && layer == XWAU_SEQ_COLOUR && unlit > 0.0f)
+		ok = OptJson_Add(object, "unlit", OptJson_Float(unlit));
+	return ok;
 }
 
 static const XwauSequence* find_instance(const XwauMatSequences* list, const char* event, size_t nth) {
@@ -390,7 +364,8 @@ static const XwauMatSequences* instance_source(const XwauMatSequences* own_list,
 	return count_instance(inherited, event) ? inherited : NULL;
 }
 
-static bool damage_json(XwauAnim* a, Text* t, const XwauMatSequences* own_list,
+/* Adds the material's `damage` to `object`; false when out of memory. */
+static bool damage_json(XwauAnim* a, cJSON* object, const XwauMatSequences* own_list,
 						const XwauMatSequences* inherited) {
 	const XwauMatSequences* src[3];
 	size_t                  sizes[3], alternatives = 0;
@@ -425,9 +400,13 @@ static bool damage_json(XwauAnim* a, Text* t, const XwauMatSequences* own_list,
 		has_own_instance |= own_list->items[i].instance;
 	const int choice    = src[0] ? src[0]->section : (src[1] ? src[1]->section : src[2]->section);
 	const int placement = has_own_instance ? own_list->section : 0;
-	text_add(t, "\"damage\":{\"library\":\"%s\",\"choice\":%d,\"placement\":%d,\"alternatives\":[", library,
-			 choice, placement);
-	for (size_t n = 0; n < alternatives; ++n) {
+	cJSON*    damage    = OptJson_AddObject(object, "damage");
+	bool      ok        = OptJson_Add(damage, "library", cJSON_CreateString(library)) &&
+						  OptJson_Add(damage, "choice", cJSON_CreateNumber(choice)) &&
+						  OptJson_Add(damage, "placement", cJSON_CreateNumber(placement));
+	cJSON*    list      = ok ? OptJson_AddArray(damage, "alternatives") : NULL;
+	ok                  = list != NULL;
+	for (size_t n = 0; ok && n < alternatives; ++n) {
 		const XwauSequence* line[3];
 		bool                any = false;
 		for (int k = 0; k < 3; ++k) {
@@ -437,42 +416,44 @@ static bool damage_json(XwauAnim* a, Text* t, const XwauMatSequences* own_list,
 				 !open_dat(a, line[k]->dat) || open_dat(a, line[k]->dat) != d))
 				line[k] = NULL;
 		}
-		text_add(t, "%s{\"stages\":[", n ? "," : "");
-		for (int k = 0; k < 3; ++k) {
+		cJSON* alternative = OptJson_AddObject(list, NULL);
+		cJSON* stages      = OptJson_AddArray(alternative, "stages");
+		ok                 = stages != NULL;
+		for (int k = 0; ok && k < 3; ++k) {
 			const XwauSequence* q = line[k];
 			if (q && !image_is_white(d, q->frames[0].group, q->frames[0].image)) {
 				char key[96];
 				XwauFx_Key(key, sizeof key, q->frames[0].group, q->frames[0].image, XWAU_FX_MULTIPLY, q->tint,
 						   q->alpha_mode);
-				text_add(t, "%s\"%s\"", k ? "," : "", key);
+				ok  = OptJson_Add(stages, NULL, cJSON_CreateString(key));
 				any = true;
 			} else {
-				text_add(t, "%snull", k ? "," : "");
+				ok = OptJson_Add(stages, NULL, cJSON_CreateNull());
 			}
 		}
-		text_add(t, "]");
 		/* Placement: the alternative's first stage line (XWAU keeps it per
 		 * line; shipped alternatives repeat it across stages). */
 		const XwauSequence* m = line[0] ? line[0] : (line[1] ? line[1] : line[2]);
-		if (any && m) {
+		if (ok && any && m) {
 			if (m->rand_scale)
-				text_add(t, ",\"scale\":[%.9g,%.9g]", (double)m->scale[0], (double)m->scale[1]);
-			if (m->loc == XWAU_SEQ_LOC_INSIDE)
-				text_add(t, ",\"offset\":\"inside\"");
-			else if (m->loc == XWAU_SEQ_LOC_RANGE) {
+				ok = OptJson_Add(alternative, "scale", OptJson_Floats(m->scale, 2));
+			if (ok && m->loc == XWAU_SEQ_LOC_INSIDE) {
+				ok = OptJson_Add(alternative, "offset", cJSON_CreateString("inside"));
+			} else if (ok && m->loc == XWAU_SEQ_LOC_RANGE) {
 				/* XWAU moves the square by (x1 - x0)·r - x0 per axis: the
 				 * range min = -x0, max = x1 - 2·x0. */
-				char min_x[24], min_y[24], max_x[24], max_y[24];
-				shortest_float(min_x, -m->loc_range[0]);
-				shortest_float(min_y, -m->loc_range[1]);
-				shortest_float(max_x, m->loc_range[2] - 2.0f * m->loc_range[0]);
-				shortest_float(max_y, m->loc_range[3] - 2.0f * m->loc_range[1]);
-				text_add(t, ",\"offset\":{\"min\":[%s,%s],\"max\":[%s,%s]}", min_x, min_y, max_x, max_y);
+				cJSON* offset = OptJson_AddObject(alternative, "offset");
+				cJSON* min    = OptJson_AddArray(offset, "min");
+				cJSON* max    = OptJson_AddArray(offset, "max");
+				ok = OptJson_Add(min, NULL, shortest_float(-m->loc_range[0])) &&
+					 OptJson_Add(min, NULL, shortest_float(-m->loc_range[1])) &&
+					 OptJson_Add(max, NULL, shortest_float(m->loc_range[2] - 2.0f * m->loc_range[0])) &&
+					 OptJson_Add(max, NULL, shortest_float(m->loc_range[3] - 2.0f * m->loc_range[1]));
 			}
 		}
-		text_add(t, "}");
 	}
-	text_add(t, "]}");
+	if (!ok)
+		return false;
 	a->damage_materials++;
 	return true;
 }
@@ -546,9 +527,8 @@ bool XwauAnim_Texture(XwauAnim* a, const XwauMatFile* mat, const opt_texture_t* 
 			unlit = 1.0f;
 	}
 
-	Text t = { 0 };
-	text_add(&t, "%s", "");
-	bool            first_member = true;
+	cJSON*          object       = cJSON_CreateObject();
+	bool            ok           = object != NULL;
 	bool            any_illum    = false;
 	const Flipbook* always_illum = NULL;
 	Flipbook        books[2][EVENT_STATE_COUNT];
@@ -571,7 +551,7 @@ bool XwauAnim_Texture(XwauAnim* a, const XwauMatFile* mat, const opt_texture_t* 
 				continue;
 			}
 			if (!sequence_frames(a, q, fb->dat, &fb->frames) || !randomize(a, tex->name, q, &fb->frames)) {
-				free(t.s);
+				cJSON_Delete(object);
 				return false;
 			}
 			if (!fb->frames.count) {
@@ -584,31 +564,28 @@ bool XwauAnim_Texture(XwauAnim* a, const XwauMatFile* mat, const opt_texture_t* 
 	for (int layer = 0; layer < 2; ++layer)
 		for (size_t s = 0; s < EVENT_STATE_COUNT; ++s)
 			any_book |= books[layer][s].seq != NULL;
-	if (any_book) {
-		text_add(&t, "\"flipbooks\":[");
-		bool first = true;
-		for (int layer = 0; layer < 2; ++layer) {
+	cJSON* flipbooks = ok && any_book ? OptJson_AddArray(object, "flipbooks") : NULL;
+	ok &= !any_book || flipbooks;
+	if (ok && any_book) {
+		for (int layer = 0; ok && layer < 2; ++layer) {
 			const bool target = books[layer][state_slot("EVT_TARGET_SEL")].seq ||
 								books[layer][state_slot("EVT_LASER_LOCKED")].seq ||
 								books[layer][state_slot("EVT_WARHEAD_LOCKING")].seq ||
 								books[layer][state_slot("EVT_WARHEAD_LOCKED")].seq;
-			for (size_t s = 0; s < EVENT_STATE_COUNT; ++s) {
+			for (size_t s = 0; ok && s < EVENT_STATE_COUNT; ++s) {
 				if (s == HANGAR_SLOT && target) {
-					text_add(&t, "%s{\"state\":\"hangar\",\"layer\":\"%s\",\"mode\":\"loop\",\"frames\":[]}",
-							 first ? "" : ",", layer ? "emissive" : "baseColor");
-					first = false;
+					/* The hangar shows the material as it is. */
+					cJSON* hangar = OptJson_AddObject(flipbooks, NULL);
+					ok = OptJson_Add(hangar, "state", cJSON_CreateString("hangar")) &&
+						 OptJson_Add(hangar, "layer", cJSON_CreateString(layer ? "emissive" : "baseColor")) &&
+						 OptJson_Add(hangar, "mode", cJSON_CreateString("loop")) &&
+						 OptJson_Add(hangar, "frames", cJSON_CreateArray());
 					continue;
 				}
 				const Flipbook* fb = &books[layer][s];
 				if (!fb->seq)
 					continue;
-				if (!first)
-					text_add(&t, ",");
-				first = false;
-				if (!print_flipbook(a, &t, kEventStates[s].state, layer, fb, unlit)) {
-					free(t.s);
-					return false;
-				}
+				ok = flipbook_json(flipbooks, kEventStates[s].state, layer, fb, unlit);
 				a->flipbooks++;
 				if (layer == XWAU_SEQ_ILLUMINATION) {
 					any_illum = true;
@@ -617,45 +594,25 @@ bool XwauAnim_Texture(XwauAnim* a, const XwauMatFile* mat, const opt_texture_t* 
 				}
 			}
 		}
-		text_add(&t, "]");
-		first_member = false;
 	}
-	if (screen == XWAU_ANIM_SCREEN_NONE) {
-		Text d = { 0 };
-		text_add(&d, "%s", "");
-		if (!damage_json(a, &d, &own_list, &inherited)) {
-			free(d.s);
-			free(t.s);
-			return false;
-		}
-		if (d.s && d.len) {
-			text_add(&t, "%s%s", first_member ? "" : ",", d.s);
-			first_member = false;
-		}
-		free(d.s);
-	}
-	if (energy[0] || energy[1] || energy[2]) {
-		text_add(&t, "%s\"energy\":[", first_member ? "" : ",");
-		bool first = true;
-		for (int k = 0; k < 3; ++k) {
-			if (energy[k]) {
-				text_add(&t, "%s\"%s\"", first ? "" : ",", kEnergyNames[k]);
-				first = false;
-			}
-		}
-		text_add(&t, "]");
-		first_member = false;
+	if (ok && screen == XWAU_ANIM_SCREEN_NONE)
+		ok = damage_json(a, object, &own_list, &inherited);
+	if (ok && (energy[0] || energy[1] || energy[2])) {
+		cJSON* list = OptJson_AddArray(object, "energy");
+		ok          = list != NULL;
+		for (int k = 0; ok && k < 3; ++k)
+			if (energy[k])
+				ok = OptJson_Add(list, NULL, cJSON_CreateString(kEnergyNames[k]));
 		a->energy_materials++;
 	}
-	if (!t.s)
-		return false;
-	if (!t.len) {
-		free(t.s);
-		return true;
+	if (!ok || !object->child) {
+		cJSON_Delete(object);
+		return ok;
 	}
-	if (!own(a, t.s))
+	char* json = OptJson_Print(object);
+	if (!own(a, json))
 		return false;
-	out->members   = t.s;
+	out->json      = json;
 	out->anim_base = any_illum;
 	a->anim_bases += any_illum;
 	a->any = true;

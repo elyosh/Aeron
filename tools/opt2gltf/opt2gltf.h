@@ -156,9 +156,9 @@ typedef struct OptGltfXwauMaterial {
 /*
  * Animated materials of one OPT texture in XWAU mode. The caller resolves
  * them from the XWAU material files:
- *   - `members`: the material's flipbooks, damage and energy, members of
- *     its AERON_flight_model object without the enclosing braces (the
- *     energy most materials share becomes the model root's default);
+ *   - `json`: the material's flipbooks, damage and energy, as its
+ *     AERON_flight_model object (the energy most materials share becomes
+ *     the model root's default), or NULL;
  *   - `anim_base`: it has illumination flipbooks. Its base colour (and each
  *     of its skin variant materials') is then the texture's colours before
  *     the illumination split, which the frames apply over;
@@ -166,7 +166,7 @@ typedef struct OptGltfXwauMaterial {
  *     has no emission of its own (the frames are its glow).
  */
 typedef struct OptGltfXwauAnim {
-	const char* members;
+	const char* json;
 	bool        anim_base;
 	bool        always_illumination;
 } OptGltfXwauAnim;
