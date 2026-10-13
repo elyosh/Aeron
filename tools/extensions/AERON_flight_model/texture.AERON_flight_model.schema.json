@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AERON_flight_model texture extension",
+  "description": "Written by aeron_gltf_cook, in cooked files only: the atlas page a texture uses. A cooked texture has no source of its own; KHR_texture_transform on the material's texture info places the texture within its page. Unknown fields are ignored.",
+  "type": "object",
+  "required": ["source", "layer"],
+  "properties": {
+    "source": {
+      "title": "Image",
+      "description": "The image: a KTX2 array of atlas pages, in a buffer view, of the channel of the material slots that reference it.",
+      "type": "integer",
+      "minimum": 0
+    },
+    "layer": {
+      "title": "Page",
+      "description": "The page of the image the texture uses.",
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 4095
+    },
+    "maxLod": {
+      "title": "Mip limit",
+      "description": "The mip levels the texture may sample: a texture packed on a shared page stops there, before its neighbours bleed into it. Without it, no limit.",
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 14
+    }
+  }
+}

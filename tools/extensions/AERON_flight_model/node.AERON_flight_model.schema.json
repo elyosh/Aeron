@@ -1,0 +1,292 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AERON_flight_model node extension",
+  "description": "The role of a node in an Aeron flight model, and its data. The default scene has one model-role root; its ordered direct children are 1 to 255 component-role mesh nodes; a component's ordered children are hardpoint, engine-glow and light empty nodes, plus at most one collision mesh node. Child order gives the component, hardpoint and engine-glow ordinals. Unknown fields are ignored.",
+  "oneOf": [
+    { "$ref": "#/$defs/model" },
+    { "$ref": "#/$defs/component" },
+    { "$ref": "#/$defs/hardpoint" },
+    { "$ref": "#/$defs/engineGlow" },
+    { "$ref": "#/$defs/collision" },
+    { "$ref": "#/$defs/light" }
+  ],
+  "$defs": {
+    "vec3": {
+      "title": "Vector",
+      "description": "A glTF-space vector, in metres for positions.",
+      "type": "array",
+      "items": { "type": "number" },
+      "minItems": 3,
+      "maxItems": 3
+    },
+    "extent3": {
+      "title": "Extent",
+      "description": "A size along each glTF axis, in metres, kept signed as authored.",
+      "type": "array",
+      "items": { "type": "number" },
+      "minItems": 3,
+      "maxItems": 3
+    },
+    "color": {
+      "title": "Colour",
+      "description": "RGBA as 8-bit sRGB values over 255, alpha included.",
+      "type": "array",
+      "items": { "type": "number", "minimum": 0, "maximum": 1 },
+      "minItems": 4,
+      "maxItems": 4
+    },
+    "hash": {
+      "title": "Hash",
+      "description": "XXH64 (seed 0) in 16 lower-case hexadecimal digits.",
+      "type": "string",
+      "pattern": "^[0-9a-f]{16}$"
+    },
+    "tag": {
+      "title": "Name",
+      "description": "A game-defined name: 1 to 63 characters among lower-case ASCII letters, digits, '.' and '_'.",
+      "type": "string",
+      "pattern": "^[a-z0-9._]{1,63}$"
+    },
+    "ordinal": {
+      "title": "Component ordinal",
+      "description": "A component's position among the model root's children. It indexes the game's per-component state, so it may be past this model's components when the game draws another model, such as a cockpit, with the same state.",
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 254
+    },
+    "energy": {
+      "title": "Energy effects",
+      "description": "The energy effects shown: any of shields (shield hits and shields going down), tractor and jamming (beams). An empty array shows none.",
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "enum": ["shields", "tractor", "jamming"] }
+    },
+    "simulationData": {
+      "title": "Simulation data",
+      "description": "Written by aeron_gltf_cook: the component's collision bounding volume hierarchy. A loader without it builds it, with a warning; stale or malformed data fails the load.",
+      "type": "object",
+      "required": ["version", "bufferView", "topologyHash"],
+      "properties": {
+        "version": { "title": "Version", "description": "The data layout's version.", "const": 1 },
+        "bufferView": { "title": "Buffer view", "description": "The buffer view holding the data.", "type": "integer", "minimum": 0 },
+        "topologyHash": { "$ref": "#/$defs/hash", "description": "The hash of the simulation topology the data was built from (the collision child's mesh, otherwise the render mesh)." }
+      }
+    },
+    "renderData": {
+      "title": "Render data",
+      "description": "Written by aeron_gltf_cook: the bounding volume hierarchy of the merged render triangles. A loader without it builds it, with a warning; stale or malformed data fails the load.",
+      "type": "object",
+      "required": ["version", "bufferView", "meshHash"],
+      "properties": {
+        "version": { "title": "Version", "description": "The data layout's version.", "const": 1 },
+        "bufferView": { "title": "Buffer view", "description": "The buffer view holding the data.", "type": "integer", "minimum": 0 },
+        "meshHash": { "$ref": "#/$defs/hash", "description": "The hash of the merged render triangles the data was built from." }
+      }
+    },
+    "articulation": {
+      "title": "Articulation",
+      "description": "A component the game turns about its rotation hinge. Aeron stores articulations without interpreting them; each game documents the groups and behaviors it reads.",
+      "type": "object",
+      "required": ["component", "group", "angle", "speed"],
+      "properties": {
+        "component": { "$ref": "#/$defs/ordinal", "description": "The component it turns." },
+        "group": { "$ref": "#/$defs/tag", "description": "The game-defined group it belongs to, such as the S-foils." },
+        "angle": { "title": "Angle", "description": "The angle it turns to, in the game's units of 1/256 turn.", "type": "integer", "minimum": -128, "maximum": 255 },
+        "speed": { "title": "Speed", "description": "How fast it turns there, in 1/256 turn per game step.", "type": "integer", "minimum": 0, "maximum": 255 },
+        "speedBack": { "title": "Speed back", "description": "How fast it turns back, in 1/256 turn per game step; default speed.", "type": "integer", "minimum": 0, "maximum": 255 },
+        "behavior": { "$ref": "#/$defs/tag", "description": "An optional game-defined behavior." }
+      }
+    },
+    "model": {
+      "title": "Model",
+      "description": "The model root, the scene's one root node.",
+      "type": "object",
+      "required": ["role"],
+      "properties": {
+        "role": { "title": "Role", "description": "The model root.", "const": "model" },
+        "renderData": { "$ref": "#/$defs/renderData" },
+        "articulations": {
+          "title": "Articulations",
+          "description": "The components the game turns.",
+          "type": "array",
+          "items": { "$ref": "#/$defs/articulation" }
+        },
+        "componentSets": {
+          "title": "Component sets",
+          "description": "Named sets of components, keyed by game-defined names; repeats are ignored. Aeron stores them without interpreting them; each game documents the sets it reads (such as the components a profile hides).",
+          "type": "object",
+          "propertyNames": { "$ref": "#/$defs/tag" },
+          "additionalProperties": {
+            "type": "array",
+            "items": { "$ref": "#/$defs/ordinal" }
+          }
+        },
+        "articulationSettings": {
+          "title": "Articulation settings",
+          "description": "Game-defined integer settings of the articulations, keyed by name.",
+          "type": "object",
+          "propertyNames": { "$ref": "#/$defs/tag" },
+          "additionalProperties": { "type": "integer", "minimum": -2147483648, "maximum": 2147483647 }
+        },
+        "markings": {
+          "title": "Markings",
+          "description": "The look of each markings value the game gives an object (0 to 255): entry m names the KHR_materials_variants variant markings value m shows, or null for the primitives' own materials. A value past the end shows the last entry; without the array, every value shows the own materials.",
+          "type": "array",
+          "maxItems": 256,
+          "items": { "type": ["string", "null"] }
+        },
+        "energy": {
+          "$ref": "#/$defs/energy",
+          "description": "The energy effects of every material without its own. Without it, such materials show none."
+        }
+      }
+    },
+    "rotation": {
+      "title": "Rotation frame",
+      "description": "The component's hinge and frame: what an articulation turns it about, and how the game aims a turret. The vectors are kept as authored, not normalized or orthogonalized.",
+      "type": "object",
+      "required": ["pivot", "rotationAxis", "directionAxis", "upAxis"],
+      "properties": {
+        "pivot": { "$ref": "#/$defs/vec3", "description": "The point it turns about, in the component's space." },
+        "rotationAxis": { "$ref": "#/$defs/vec3", "description": "The axis it turns about." },
+        "directionAxis": { "$ref": "#/$defs/vec3", "description": "Its forward direction." },
+        "upAxis": { "$ref": "#/$defs/vec3", "description": "Its up direction." }
+      }
+    },
+    "component": {
+      "title": "Component",
+      "description": "A mesh node the game simulates as one part of the model: it can be hit, damaged, destroyed, turned or hidden.",
+      "type": "object",
+      "required": ["role", "meshType"],
+      "properties": {
+        "role": { "title": "Role", "description": "A component of the model.", "const": "component" },
+        "meshType": { "title": "Mesh type", "description": "The game's type of the part (OPT mesh type: main hull, wing, engine, gun turret...).", "type": "integer", "minimum": 0, "maximum": 31 },
+        "explosionFlags": { "title": "Explosion flags", "description": "The game's flags of the part (OPT explosion type), as a bitmask: 1 gives it its own hit points, 2 makes it damageable.", "type": "integer", "minimum": 0, "maximum": 4294967295 },
+        "targetId": { "title": "Target group", "description": "Components with the same nonzero id and mesh type form one target; 0 for none.", "type": "integer", "minimum": -2147483648, "maximum": 2147483647 },
+        "target": { "$ref": "#/$defs/vec3", "description": "The point the game aims at on this target, required with a nonzero targetId." },
+        "span": { "$ref": "#/$defs/extent3", "description": "Descriptor: the part's authored size. Stock OPT descriptors include negative components, which the games read as stored." },
+        "center": { "$ref": "#/$defs/vec3", "description": "Descriptor: the part's authored centre." },
+        "boundsMin": { "$ref": "#/$defs/vec3", "description": "Descriptor: the part's authored minimum corner." },
+        "boundsMax": { "$ref": "#/$defs/vec3", "description": "Descriptor: the part's authored maximum corner." },
+        "rotation": { "$ref": "#/$defs/rotation" },
+        "tags": {
+          "title": "Tags",
+          "description": "Game-defined names binding the component to a role the game identifies by name instead of ordinal, such as hangarcrane.arm. Duplicates are ignored.",
+          "type": "array",
+          "items": { "$ref": "#/$defs/tag" }
+        },
+        "simulationData": { "$ref": "#/$defs/simulationData" }
+      },
+      "allOf": [
+        {
+          "if": {
+            "required": ["targetId"],
+            "properties": { "targetId": { "not": { "const": 0 } } }
+          },
+          "then": { "required": ["target"] }
+        },
+        {
+          "description": "The descriptor's four fields go together. Without them, the loader computes them from the simulation topology.",
+          "if": {
+            "anyOf": [
+              { "required": ["span"] },
+              { "required": ["center"] },
+              { "required": ["boundsMin"] },
+              { "required": ["boundsMax"] }
+            ]
+          },
+          "then": { "required": ["span", "center", "boundsMin", "boundsMax"] }
+        }
+      ]
+    },
+    "hardpoint": {
+      "title": "Hardpoint",
+      "description": "An empty node where the game fires or launches from; translation only.",
+      "type": "object",
+      "required": ["role", "type"],
+      "properties": {
+        "role": { "title": "Role", "description": "A hardpoint of its component.", "const": "hardpoint" },
+        "type": { "title": "Type", "description": "The game's hardpoint type (OPT weapon type: laser, ion cannon, torpedo...).", "type": "integer", "minimum": 0, "maximum": 39 }
+      }
+    },
+    "collision": {
+      "title": "Collision mesh",
+      "description": "A mesh node, direct child of a component, whose mesh is the component's simulation topology instead of its render mesh. Never rendered; at most one per component.",
+      "type": "object",
+      "required": ["role"],
+      "properties": { "role": { "title": "Role", "description": "The collision mesh of its component.", "const": "collision" } }
+    },
+    "positive": {
+      "type": "number",
+      "exclusiveMinimum": 0
+    },
+    "light": {
+      "title": "Light",
+      "description": "An empty node with a KHR_lights_punctual point light, which gives its colour, intensity (candela) and range; a direct child of a component, it lights the scene while the component shows. This object gives its shape. Fields that do not apply to the shape are invalid.",
+      "type": "object",
+      "required": ["role"],
+      "properties": {
+        "role": { "title": "Role", "description": "A light of its component.", "const": "light" },
+        "shape": { "title": "Shape", "description": "point, tube (a line along local +X) or panel (a rectangle in local XY).", "enum": ["point", "tube", "panel"], "default": "point" },
+        "length": { "$ref": "#/$defs/positive", "title": "Length", "description": "A tube's length in metres, along local +X; required for a tube." },
+        "size": {
+          "title": "Size",
+          "description": "A panel's [x, y] size in metres, along local X and Y; required for a panel.",
+          "type": "array",
+          "items": { "$ref": "#/$defs/positive" },
+          "minItems": 2,
+          "maxItems": 2
+        },
+        "oneSided": { "title": "One-sided", "description": "Emits only toward local -Z, with a cosine falloff. Optional for a tube (default false); a panel is always one-sided.", "type": "boolean" },
+        "radius": { "$ref": "#/$defs/positive", "title": "Radius", "description": "A point's sphere radius or a tube's thickness, in metres; default 0.1." }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "shape": { "const": "tube" } }, "required": ["shape"] },
+          "then": {
+            "required": ["length"],
+            "not": { "required": ["size"] }
+          }
+        },
+        {
+          "if": { "properties": { "shape": { "const": "panel" } }, "required": ["shape"] },
+          "then": {
+            "required": ["size"],
+            "properties": { "oneSided": { "const": true } },
+            "allOf": [
+              { "not": { "required": ["length"] } },
+              { "not": { "required": ["radius"] } }
+            ]
+          }
+        },
+        {
+          "if": {
+            "anyOf": [
+              { "not": { "required": ["shape"] } },
+              { "properties": { "shape": { "const": "point" } } }
+            ]
+          },
+          "then": {
+            "allOf": [
+              { "not": { "required": ["length"] } },
+              { "not": { "required": ["size"] } },
+              { "not": { "required": ["oneSided"] } }
+            ]
+          }
+        }
+      ]
+    },
+    "engineGlow": {
+      "title": "Engine glow",
+      "description": "An empty node where the game draws an engine glow: local +X right, +Y up, +Z look; X and Y scale are its full size, Z its signed depth.",
+      "type": "object",
+      "required": ["role", "coreColor", "outerColor"],
+      "properties": {
+        "role": { "title": "Role", "description": "An engine glow of its component.", "const": "engineGlow" },
+        "enabled": { "title": "Enabled", "description": "Whether the glow is drawn; a disabled glow keeps its ordinal.", "type": "boolean", "default": true },
+        "coreColor": { "$ref": "#/$defs/color", "description": "The glow's core colour." },
+        "outerColor": { "$ref": "#/$defs/color", "description": "The glow's outer colour." }
+      }
+    }
+  }
+}

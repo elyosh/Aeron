@@ -1,0 +1,213 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AERON_flight_model material extension",
+  "description": "What the game draws on a material beyond its glTF definition: frames played on game states, hull damage, energy effects and live screens. Frames and damage stages are image keys of effect libraries, which the models share (animated_materials.md). Unknown fields are ignored.",
+  "type": "object",
+  "properties": {
+    "flipbooks": {
+      "title": "Flipbooks",
+      "description": "Frames the material plays on game states, in order: per layer, the first flipbook whose state is active plays.",
+      "type": "array",
+      "items": { "$ref": "#/$defs/flipbook" }
+    },
+    "damage": { "$ref": "#/$defs/damage" },
+    "energy": {
+      "title": "Energy effects",
+      "description": "The energy effects the material shows: any of shields (shield hits and shields going down), tractor and jamming (beams); an empty array shows none. Without it, the model root's energy applies, and without that, none.",
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "enum": ["shields", "tractor", "jamming"] }
+    },
+    "screen": { "$ref": "#/$defs/screen" }
+  },
+  "$defs": {
+    "key": {
+      "title": "Image key",
+      "description": "The key of an image of the effect library.",
+      "type": "string",
+      "minLength": 1
+    },
+    "library": {
+      "title": "Library",
+      "description": "The name of an effect library: the game loads it from remaster/effects/<library>.yaml.",
+      "type": "string",
+      "pattern": "^[a-z0-9_-]+$"
+    },
+    "rgb": {
+      "title": "Linear RGB",
+      "description": "A linear RGB colour.",
+      "type": "array",
+      "items": { "type": "number" },
+      "minItems": 3,
+      "maxItems": 3
+    },
+    "state": {
+      "title": "State",
+      "description": "always, or a game state of the player's craft: target (a target is selected), laser_lock, warhead.locking, warhead.locked, threat.* (a threat of that kind), hull.75/50/25 (the hull at or below that level), cannon.1 to cannon.8 (the cannon that fired), broken.* (the system is damaged), hangar (in a hangar).",
+      "enum": [
+        "always", "target", "laser_lock", "warhead.locking", "warhead.locked",
+        "threat.laser", "threat.turret", "threat.beam", "threat.missile_locking", "threat.missile_locked",
+        "hull.75", "hull.50", "hull.25",
+        "cannon.1", "cannon.2", "cannon.3", "cannon.4", "cannon.5", "cannon.6", "cannon.7", "cannon.8",
+        "broken.cmd", "broken.laser_ion", "broken.beam_weapon", "broken.shields", "broken.throttle",
+        "broken.sensors", "broken.laser_recharge", "broken.engine_power", "broken.shield_recharge",
+        "broken.beam_recharge", "hangar"
+      ]
+    },
+    "flipbook": {
+      "title": "Flipbook",
+      "description": "Frames played from the moment a state becomes active (always: from the start).",
+      "type": "object",
+      "required": ["state", "layer", "mode", "frames"],
+      "properties": {
+        "state": { "$ref": "#/$defs/state" },
+        "layer": {
+          "title": "Layer",
+          "description": "What the frames change: baseColor frames are painted over the base colour by their alpha; emissive frames replace the material's emissive (an optional base colour of the frame painted over). The frames are library images of the same kind.",
+          "enum": ["baseColor", "emissive"]
+        },
+        "mode": {
+          "title": "Mode",
+          "description": "loop repeats the frames; once holds the last frame.",
+          "enum": ["loop", "once"]
+        },
+        "library": { "$ref": "#/$defs/library", "description": "The effect library of the frames; required with frames." },
+        "frames": {
+          "title": "Frames",
+          "description": "The frames in order, each [image key, seconds shown].",
+          "type": "array",
+          "maxItems": 65535,
+          "items": {
+            "type": "array",
+            "prefixItems": [
+              { "$ref": "#/$defs/key" },
+              { "title": "Seconds", "description": "How long the frame shows.", "type": "number", "minimum": 0 }
+            ],
+            "minItems": 2,
+            "maxItems": 2
+          }
+        },
+        "emissiveStrength": {
+          "title": "Emissive strength",
+          "description": "The brightness of emissive frames, a multiplier of their colour.",
+          "type": "number",
+          "minimum": 0,
+          "default": 1
+        },
+        "unlit": {
+          "title": "Unlit part",
+          "description": "Base colour frames: the part of the frames drawn unlit, as emission in place of the material's (0 to 1).",
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "default": 0
+        }
+      },
+      "if": { "properties": { "frames": { "minItems": 1 } } },
+      "then": { "required": ["library"] }
+    },
+    "damage": {
+      "title": "Hull damage",
+      "description": "Images the material shows as the hull weakens, multiplying its base colour (their alpha dulls the surface). Each object picks one alternative and places it at random.",
+      "type": "object",
+      "required": ["library", "choice", "placement", "alternatives"],
+      "properties": {
+        "library": { "$ref": "#/$defs/library", "description": "The effect library of the damage images." },
+        "choice": {
+          "title": "Choice group",
+          "description": "Materials of an object with the same choice pick the same alternative.",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4095
+        },
+        "placement": {
+          "title": "Placement group",
+          "description": "Materials of an object with the same placement share the random size and offset.",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4095
+        },
+        "alternatives": {
+          "title": "Alternatives",
+          "description": "The alternatives an object picks from.",
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 65535,
+          "items": { "$ref": "#/$defs/damageAlternative" }
+        }
+      }
+    },
+    "damageAlternative": {
+      "title": "Damage alternative",
+      "description": "One set of damage images and their placement.",
+      "type": "object",
+      "required": ["stages"],
+      "properties": {
+        "stages": {
+          "title": "Stages",
+          "description": "The images (of kind damage) shown at 75, 50 and 25% hull; null shows none.",
+          "type": "array",
+          "items": { "anyOf": [{ "$ref": "#/$defs/key" }, { "type": "null" }] },
+          "minItems": 3,
+          "maxItems": 3
+        },
+        "scale": {
+          "title": "Scale",
+          "description": "[min, max]: the image covers a square whose side is random between them, as a fraction of the texture, centred. Without it, the whole texture.",
+          "type": "array",
+          "items": { "type": "number" },
+          "minItems": 2,
+          "maxItems": 2
+        },
+        "offset": {
+          "title": "Offset",
+          "description": "Moves the square: inside, anywhere within the texture; or a range, by min + (max - min) * r per axis, r random in [0, 1). Without it, the square stays centred. Outside the square the stage shows nothing; the square is clipped at the texture's edges.",
+          "oneOf": [
+            { "const": "inside" },
+            {
+              "type": "object",
+              "required": ["min", "max"],
+              "properties": {
+                "min": { "title": "Minimum", "description": "The smallest [x, y] offset, as a fraction of the texture.", "type": "array", "items": { "type": "number" }, "minItems": 2, "maxItems": 2 },
+                "max": { "title": "Maximum", "description": "The largest [x, y] offset, as a fraction of the texture.", "type": "array", "items": { "type": "number" }, "minItems": 2, "maxItems": 2 }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "screenRect": {
+      "title": "Screen rectangle",
+      "description": "One of the game's displays, shown on a rectangle of the material's TEXCOORD_0 space.",
+      "type": "object",
+      "required": ["source", "dst", "bg", "highlight", "lock", "gain", "layers"],
+      "properties": {
+        "source": { "title": "Source", "description": "The game's display it shows (game-defined).", "type": "integer", "minimum": 0, "maximum": 63 },
+        "dst": { "title": "Rectangle", "description": "[u0, v0, u1, v1] in TEXCOORD_0; swapped corners mirror it.", "type": "array", "items": { "type": "number" }, "minItems": 4, "maxItems": 4 },
+        "bg": { "$ref": "#/$defs/rgb", "description": "The background in the display's normal state." },
+        "highlight": { "$ref": "#/$defs/rgb", "description": "The background while the display is highlighted." },
+        "lock": { "$ref": "#/$defs/rgb", "description": "The background while the display shows a lock." },
+        "gain": { "title": "Gain", "description": "The content's brightness.", "type": "number", "minimum": 0 },
+        "layers": { "title": "Layers", "description": "What it shows, a bitmask: 1 the display's graphics, 2 its text, 4 a fill bar (no texture).", "type": "integer", "minimum": 0, "maximum": 7 },
+        "bar": { "$ref": "#/$defs/rgb", "description": "The fill bar's colour; required with layer 4." }
+      },
+      "if": { "properties": { "layers": { "enum": [4, 5, 6, 7] } } },
+      "then": { "required": ["bar"] }
+    },
+    "screen": {
+      "title": "Screen",
+      "description": "Displays the game draws live on the material (cockpit screens).",
+      "type": "object",
+      "required": ["hide", "rects"],
+      "properties": {
+        "cover": { "title": "Cover", "description": "The base colour's alpha below 1 shows the screen through the material.", "type": "boolean", "default": false },
+        "transparent": { "title": "Transparent", "description": "Drawn unlit, its alpha from the screen's luminance.", "type": "boolean", "default": false },
+        "alwaysVisible": { "title": "Always visible", "description": "A transparent screen kept while the game draws its 2D HUD.", "type": "boolean", "default": false },
+        "hologram": { "title": "Hologram", "description": "Drawn as a hologram.", "type": "boolean", "default": false },
+        "noisy": { "title": "Noisy", "description": "A hologram with scanlines.", "type": "boolean", "default": false },
+        "hide": { "title": "Hidden HUD regions", "description": "A bitmask of the 2D HUD regions the game stops drawing while the screen shows (game-defined).", "type": "integer", "minimum": 0, "maximum": 4294967295 },
+        "rects": { "title": "Rectangles", "description": "The displays shown, up to 16.", "type": "array", "maxItems": 16, "items": { "$ref": "#/$defs/screenRect" } }
+      }
+    }
+  }
+}
