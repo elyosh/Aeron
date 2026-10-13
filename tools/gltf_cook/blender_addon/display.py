@@ -4,14 +4,16 @@
 #
 # A set hides its members and everything under them, and flags each object
 # it hid. When it shows them again, it only shows the flagged objects.
-# A markings value puts the meshes' glTF variant materials in their material
-# slots. Blender's glTF exporter restores the original materials before it
-# writes the file. The add-on's export does the same, and shows the variant
-# again afterwards.
+# A markings value puts the materials of its variant (variants.py) in the
+# material slots. Blender's glTF exporter restores the original materials
+# before it writes the file. The add-on's export does the same, and shows
+# the variant again afterwards.
+
+from types import SimpleNamespace
 
 import bpy
 
-from . import common, skins
+from . import common, skins, variants
 
 PROFILE_PREFIX = "hidden_by_profile."
 
@@ -66,77 +68,50 @@ def apply_sets(root):
 # ---- markings -------------------------------------------------------------------------
 
 
-def _variants():
-    # The variants property exists only once Blender's glTF add-on has
-    # registered it, which it does when a file has variants.
-    return getattr(bpy.data.scenes[0], "gltf2_KHR_materials_variants_variants", ())
-
-
 def markings_count(root):
     return len(root.aeron_flight.markings)
 
 
-def _variant_index(name):
-    for variant in _variants():
-        if variant.name == name:
-            return variant.variant_idx
-    return None
-
-
-def _slot_variant_material(component, index, variant):
-    """The material that glTF variant `variant` puts in slot `index`, or None."""
-    for item in getattr(component.data, "gltf2_variant_mesh_data", ()):
-        if item.material_slot_index == index and any(p.variant.variant_idx == variant for p in item.variants):
-            return item.material
-    return None
-
-
 def previewing(root):
-    """Whether the viewport shows a markings value or a skin variant of the model."""
-    return root.aeron_flight.preview_markings >= 0 or bool(root.aeron_flight.preview_variant)
+    """Whether the viewport shows a markings value, a variant or a skin of the model."""
+    props = root.aeron_flight
+    return props.preview_markings >= 0 or bool(props.preview_variant) or bool(props.preview_skin)
 
 
 def apply_skin(root, markings=None):
     """Shows the materials of a markings value on the model's components.
-    `markings` defaults to what the preview shows (a markings value, or else
-    the skin variant `preview_variant`), and -1 shows the original
-    materials. A skin variant shows preview copies of the materials it
-    changes (skins.py)."""
+    `markings` defaults to what the preview shows (a markings value, else the
+    variant `preview_variant`, else the skin `preview_skin` alone), and -1
+    shows the materials as modeled.
+    A variant's layers show as preview copies of the materials they paint
+    (skins.py)."""
     props = root.aeron_flight
-    name = ""
+    name = skin = ""
     if markings is None:
         markings = props.preview_markings
         if markings < 0:
             name = props.preview_variant
+            skin = "" if name else props.preview_skin
     skins.restore(root)
     entries = props.markings
     if markings >= 0 and len(entries):
         name = entries[min(markings, len(entries) - 1)].variant
-    skin_variant = skins.skin_variant(root, name) if name else None
-    if skin_variant is not None:
-        base = _variant_index(skin_variant.base) if skin_variant.base else None
-        skins.show(root, skin_variant,
-                   lambda component, index: _slot_variant_material(component, index, base) if base is not None
-                   else None)
-        skins.remove_unused()
-        return
-    variant = _variant_index(name) if name else None
+    entry = variants.variant(root, name) if name else None
+    if skin:  # a variant with that skin alone
+        entry = SimpleNamespace(base="", layers=[SimpleNamespace(skin=skin, opacity=100)])
+    own = variants.scene_index(name) if name else None
+    base = variants.scene_index(entry.base) if entry is not None and entry.base else None
     for component in common.components(root):
-        mesh = component.data
-        defaults = {item.material_slot_index: item.default_material
-                    for item in getattr(mesh, "gltf2_variant_default_materials", ())}
-        mapped = {}
-        if variant is not None:
-            for item in getattr(mesh, "gltf2_variant_mesh_data", ()):
-                if any(pointer.variant.variant_idx == variant for pointer in item.variants):
-                    mapped[item.material_slot_index] = item.material
         for index, slot in enumerate(component.material_slots):
-            if mapped.get(index) is not None:
-                material = mapped[index]
-            elif index in defaults:
-                material = defaults[index]
-            else:
+            modeled = variants.modeled_material(component, index)
+            if modeled is None:
                 continue
+            layers = skins.chain(modeled, entry) if entry is not None else []
+            if layers:
+                material = skins.preview(modeled, layers)
+            else:
+                material = ((own is not None and variants.slot_material(component, index, own)) or
+                            (base is not None and variants.slot_material(component, index, base)) or modeled)
             if slot.material != material:
                 slot.material = material
     skins.remove_unused()

@@ -125,35 +125,18 @@ def lost(recorded, document):
 
 
 def check_markings(problems, root):
-    """Checks that each markings value names a material variant that exists
-    and that a mesh of the model uses. Blender's glTF exporter writes only
-    those variants."""
-    import bpy
+    """Checks that each markings value names a variant of the model."""
+    from . import variants
 
     try:
         json.loads(root.aeron_flight.asset_extras or "{}")
     except ValueError:
         problems.error(root, "the asset extras kept from the import are not valid JSON")
         return
-    # Blender's glTF add-on creates its variant list only after a file with
-    # variants was imported.
-    variants = {variant.name: variant.variant_idx
-                for variant in getattr(bpy.data.scenes[0], "gltf2_KHR_materials_variants_variants", ())}
-    mapped = set()
-    for obj in root.children_recursive:
-        if obj.type == 'MESH':
-            for item in getattr(obj.data, "gltf2_variant_mesh_data", ()):
-                mapped.update(pointer.variant.variant_idx for pointer in item.variants)
-    skin_variants = {variant.name for variant in root.aeron_flight.skin_variants}
+    names = set(variants.names(root))
     for markings, entry in enumerate(root.aeron_flight.markings):
-        if not entry.variant or entry.variant in skin_variants:
-            continue
-        if entry.variant not in variants:
-            problems.error(root, "markings value {}: material variant {!r} does not exist".format(
-                markings, entry.variant))
-        elif variants[entry.variant] not in mapped:
-            problems.error(root, "markings value {}: no mesh uses material variant {!r}, so the export "
-                                 "would drop it".format(markings, entry.variant))
+        if entry.variant and entry.variant not in names:
+            problems.error(root, "markings value {}: variant {!r} does not exist".format(markings, entry.variant))
 
 
 def model_materials(root):

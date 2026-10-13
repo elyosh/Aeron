@@ -130,7 +130,7 @@
         },
         "skinVariants": {
           "title": "Skin variants",
-          "description": "Material variants built from the materials' skins. The cooker composites each and adds it after the KHR_materials_variants variants.",
+          "description": "Material variants built from the materials' skins. The cooker composites each into the KHR_materials_variants variant of the same name, or into a new variant after them.",
           "type": "array",
           "items": { "$ref": "#/$defs/skinVariant" }
         },
@@ -149,17 +149,16 @@
     },
     "skinVariant": {
       "title": "Skin variant",
-      "description": "A material variant made of skin layers. On a primitive whose material has at least one of its skins, it shows the material with those layers composited in order; on any other primitive, the base variant's material, or the own one.",
+      "description": "A material variant made of skin layers. On a primitive whose material has at least one of its skins, it shows the material with those layers composited in order; on any other primitive, the material of the KHR_materials_variants variant of the same name, else the base variant's, else the own one.",
       "type": "object",
-      "required": ["name", "layers"],
+      "required": ["name"],
       "properties": {
-        "name": { "title": "Name", "description": "Unique among skinVariants and the KHR_materials_variants variants.", "type": "string", "minLength": 1 },
-        "base": { "title": "Base variant", "description": "A KHR_materials_variants variant the skin variant starts from. Without it, the primitives' own materials.", "type": "string", "minLength": 1 },
+        "name": { "title": "Name", "description": "Unique among skinVariants. The name of a KHR_materials_variants variant adds the layers to that variant.", "type": "string", "minLength": 1 },
+        "base": { "title": "Base variant", "description": "Another KHR_materials_variants variant the skin variant starts from. Without it, the primitives' own materials.", "type": "string", "minLength": 1 },
         "layers": {
           "title": "Layers",
-          "description": "Skins applied in order.",
+          "description": "Skins applied in order. Required, and not empty, unless the skin variant has a base or the name of a KHR_materials_variants variant.",
           "type": "array",
-          "minItems": 1,
           "items": {
             "type": "object",
             "required": ["skin"],

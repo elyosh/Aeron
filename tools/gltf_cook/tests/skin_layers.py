@@ -8,6 +8,8 @@ The test cooks it and checks:
 - the cooked variants, the mappings and the composites that variants share;
 - the composite materials: their emissive strength, their animations, and
   no skins or skin variants left;
+- a skin variant with the name of a variant of the file: it paints that
+  variant, which keeps its other mappings;
 - the errors: an unknown skin, an unknown base, a repeated name and a layer
   of the wrong size.
 """
@@ -121,17 +123,23 @@ def mappings(doc, mesh):
     return out
 
 
-def check_cook(cooker, scratch, failures):
-    src = os.path.join(scratch, "cook")
-    path, _ = build(src)
-    glb = os.path.join(scratch, "panel.glb")
+def cook(cooker, path, failures):
+    """Cooks `path`; returns the cooked file's JSON, or None."""
+    glb = os.path.splitext(path)[0] + ".glb"
     run = subprocess.run([cooker, path, "--out", glb, "--quality", "fast"], capture_output=True, text=True)
     if run.returncode:
         failures.append("cook failed: " + (run.stderr.strip().splitlines() or ["?"])[-1])
-        return
+        return None
     data = open(glb, "rb").read()
     length = struct.unpack("<I", data[12:16])[0]
-    doc = json.loads(data[20:20 + length])
+    return json.loads(data[20:20 + length])
+
+
+def check_cook(cooker, scratch, failures):
+    path, _ = build(os.path.join(scratch, "cook"))
+    doc = cook(cooker, path, failures)
+    if doc is None:
+        return
     names = [v["name"] for v in doc["extensions"]["KHR_materials_variants"]["variants"]]
     if names != ["State 1", "Red", "Glow", "Red glow"]:
         failures.append("variants: %s" % names)
@@ -160,6 +168,31 @@ def check_cook(cooker, scratch, failures):
         failures.append("the composite lost the material's flipbooks")
 
 
+def check_merged(cooker, scratch, failures):
+    path, doc = build(os.path.join(scratch, "merged"))
+    # State 1 also replaces Screen, which has no glow: it keeps that mapping.
+    doc["meshes"][1]["primitives"][0]["extensions"] = {
+        "KHR_materials_variants": {"mappings": [{"material": 2, "variants": [0]}]}}
+    doc["nodes"][0]["extensions"]["AERON_flight_model"]["skinVariants"] = [
+        {"name": "State 1", "layers": [{"skin": "glow"}]}, {"name": "Red", "base": "State 1", "layers": []}]
+    doc["nodes"][0]["extensions"]["AERON_flight_model"]["markings"] = [None, "State 1"]
+    json.dump(doc, open(path, "w"))
+    doc = cook(cooker, path, failures)
+    if doc is None:
+        return
+    names = [v["name"] for v in doc["extensions"]["KHR_materials_variants"]["variants"]]
+    lights, screen, m = mappings(doc, 0), mappings(doc, 1), doc["materials"]
+    if names != ["State 1", "Red"]:
+        failures.append("merged: variants %s" % names)
+    if lights.get(0) is None or not m[lights[0]]["name"].startswith("Lights_skin"):
+        failures.append("merged: State 1 does not paint Lights: %s" % lights)
+    if m[screen.get(0, 0)].get("name") != "LightsAlt":
+        failures.append("merged: State 1 lost its Screen mapping: %s" % screen)
+    if m[lights.get(1, 0)].get("name") != "LightsAlt" or m[screen.get(1, 0)].get("name") != "LightsAlt":
+        failures.append("merged: Red, without layers, does not show its base's file materials: %s %s" % (
+            lights, screen))
+
+
 def check_errors(cooker, scratch, failures):
     def case(label, edit, expect, layer_size=SIZE):
         folder = os.path.join(scratch, "error_" + label.replace(" ", "_"))
@@ -178,7 +211,8 @@ def check_errors(cooker, scratch, failures):
     case("unknown skin", lambda d: variants(d)[0]["layers"].append({"skin": "blue"}), "no material has skin 'blue'")
     case("unknown base", lambda d: variants(d)[1].update(base="State 9"), "base 'State 9' is not a variant")
     case("repeated name", lambda d: variants(d)[2].update(name="Red"), "skin variant 'Red' is repeated")
-    case("file variant name", lambda d: variants(d)[2].update(name="State 1"), "has the name of a variant of the file")
+    case("own base", lambda d: variants(d)[2].update(name="State 1"), "is its own base")
+    case("no layers", lambda d: variants(d)[0].update(layers=[]), "skin variant 'Red' has no layers")
     case("layer size", lambda d: None, "a layer is 32x32, not 64x64", layer_size=32)
 
 
@@ -191,6 +225,7 @@ def main():
     failures = []
     try:
         check_cook(cooker, scratch, failures)
+        check_merged(cooker, scratch, failures)
         check_errors(cooker, scratch, failures)
     finally:
         shutil.rmtree(scratch, ignore_errors=True)

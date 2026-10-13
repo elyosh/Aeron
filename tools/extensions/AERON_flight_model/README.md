@@ -153,13 +153,14 @@ The model root may carry `skinVariants`, an array of variants made of skins:
 ]
 ```
 
-- `name`: required, unique among the skin variants and the
-  `KHR_materials_variants` variants;
-- `base`: optional, a `KHR_materials_variants` variant the skin variant
-  starts from;
+- `name`: required, unique among the skin variants. The name of a
+  `KHR_materials_variants` variant adds the layers to that variant;
+- `base`: optional, another `KHR_materials_variants` variant the skin
+  variant starts from;
 - `layers`: the skins in order, each with an optional `opacity` (0 to 100,
   default 100) that scales its coverage. Every skin must be on at least one
-  material.
+  material. It may be empty or absent only with a `base` or the name of a
+  `KHR_materials_variants` variant.
 
 On a primitive whose material has at least one of the variant's skins, the
 variant shows a composite of that material: each channel that a layer has
@@ -169,11 +170,15 @@ in order, as `dst · (1 − a) + layer · a` on the stored values, where `a` is
 the coverage times the opacity. The composite keeps the material's alpha.
 Emissive layers whose strength differs from the composite's (the
 material's, else the first emissive layer's) are scaled in linear light
-first. Any other primitive shows the `base` variant's material, or its own.
+first. Any other primitive shows the material that the
+`KHR_materials_variants` variant of the same name gives it, else the `base`
+variant's, else its own. Layers always paint the primitive's own material,
+not a variant's.
 
-The cooker turns skins into `KHR_materials_variants`: one variant per skin
-variant, after the file's own variants, with a material per distinct
-(material, layers) composite. A cooked file has no `skins` or
+The cooker turns skins into `KHR_materials_variants`, with one material per
+distinct (material, layers) composite. A skin variant with the same name as
+a file variant changes that variant. The others are added after the file's
+variants. A cooked file has no `skins` or
 `skinVariants`. A viewer without this extension shows the materials
 without skins.
 

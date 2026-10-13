@@ -3,7 +3,7 @@
 # checked as the glTF exporter writes them, relative to the world matrix of
 # the parent.
 
-from . import animation, common, skins, sources
+from . import animation, common, skins, sources, variants
 
 EPSILON = 1.0e-5
 
@@ -184,6 +184,7 @@ def validate(root):
 
     sources.check_markings(problems, root)
     skins.check(problems, root)
+    variants.check(problems, root)
     animation.check(problems, root, sources.model_materials(root))
 
     for obj in root.children_recursive:

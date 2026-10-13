@@ -16,7 +16,7 @@ from bpy.types import Operator
 from bpy_extras.io_utils import ImportHelper
 from mathutils import Vector
 
-from . import animation, common, operators, skins, sources
+from . import animation, common, operators, skins, sources, variants
 
 # Results of the running import, or None outside this add-on's imports.
 _state = None
@@ -163,7 +163,7 @@ def restore(gltf):
             component_set.name = name
             for ordinal in members:
                 _set_reference(component_set.members.add(), ordinal, parts)
-        skins.restore_variants(root, extension)
+        variants.restore(root, extension)
         for name in extension.get("markings", []):
             props.markings.add().variant = name or ""
         animation.set_energy_default(root, extension.get("energy"))
@@ -299,6 +299,8 @@ class IMPORT_OT_aeron_flight_model(Operator, ImportHelper):
             self.report({'ERROR'}, "Blender's glTF import failed")
             return {'CANCELLED'}
         _merge_variants(variants_before, state["roots"])
+        for root in state["roots"]:
+            variants.sync(root, first=True)
         if state["error"]:
             self.report({'ERROR'}, "Cannot restore the flight data: " + state["error"])
             return {'CANCELLED'}

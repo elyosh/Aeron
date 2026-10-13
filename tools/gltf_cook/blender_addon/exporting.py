@@ -20,7 +20,7 @@ from bpy.types import Operator
 from bpy_extras.io_utils import ExportHelper
 from mathutils import Matrix
 
-from . import animation, common, display, flipbook_preview, libraries, skins, sources, validation
+from . import animation, common, display, flipbook_preview, libraries, skins, sources, validation, variants
 
 # Blender (x, y, z) -> glTF (x, z, -y).
 _TO_GLTF = Matrix(((1.0, 0.0, 0.0, 0.0), (0.0, 0.0, 1.0, 0.0), (0.0, -1.0, 0.0, 0.0), (0.0, 0.0, 0.0, 1.0)))
@@ -52,7 +52,7 @@ def _model_extension(root, ordinals):
     if len(props.component_sets):
         extension["componentSets"] = {
             s.name: [_ordinal(ordinals, member) for member in s.members] for s in props.component_sets}
-    skin_variants = skins.variants_json(root)
+    skin_variants = variants.skin_variants_json(root)
     if skin_variants:
         extension["skinVariants"] = skin_variants
     if len(props.markings):
@@ -281,6 +281,7 @@ def export_gltf(root, filepath, apply_modifiers=True, keep_originals=False):
     active = context.view_layer.objects.active
     mode = active.mode if active is not None else 'OBJECT'
     _state = _ExportState(root)
+    variants.sync(root)
     # Export the original materials, not the skin being shown. The skin is
     # shown again afterwards.
     showing = display.models_showing_skins()

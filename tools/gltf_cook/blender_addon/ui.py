@@ -312,8 +312,7 @@ class OBJECT_PT_aeron_markings(_RolePanel, Panel):
     @classmethod
     def poll(cls, context):
         return super().poll(context) and (display.markings_count(context.object) > 0 or
-                                          len(context.object.aeron_flight.skin_variants) or
-                                          len(getattr(context.scene, "gltf2_KHR_materials_variants_variants", ())))
+                                          len(context.object.aeron_flight.variants))
 
     def draw(self, context):
         root = context.object

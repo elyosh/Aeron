@@ -399,32 +399,39 @@ class AERON_OT_list_edit(Operator):
 
 
 class AERON_OT_show_skin(Operator):
-    """Show the variant the game uses for a markings value, a skin variant, or the materials as modeled"""
+    """Show the variant the game uses for a markings value, a variant, a skin, or the materials as modeled"""
 
     bl_idname = "aeron.show_skin"
     bl_label = "Show Markings"
     bl_options = {'REGISTER', 'UNDO'}
 
-    markings: IntProperty(name="Markings", min=-1, default=-1,
+    # SKIP_SAVE: a button sets only some of these. Without it, Blender would
+    # reuse the others from the last click.
+    markings: IntProperty(name="Markings", min=-1, default=-1, options={'SKIP_SAVE'},
                           description="Markings value to show, or -1 for the materials as modeled")
-    variant: StringProperty(name="Skin Variant", description="Skin variant to show when markings is -1")
+    variant: StringProperty(name="Variant", options={'SKIP_SAVE'}, description="Variant to show when markings is -1")
+    skin: StringProperty(name="Skin", options={'SKIP_SAVE'},
+                         description="Skin to show alone when markings is -1 and there is no variant")
 
     @classmethod
     def poll(cls, context):
-        return common.role(context.object) == 'model'
+        return common.model_root(context.object) is not None
 
     @classmethod
     def description(cls, context, properties):
+        if properties.markings < 0 and properties.skin and not properties.variant:
+            return "Show skin {} alone, on every material that has it".format(properties.skin)
         if properties.markings < 0 and properties.variant:
-            return "Show skin variant {}".format(properties.variant)
+            return "Show variant {}".format(properties.variant)
         if properties.markings < 0:
             return "Show the materials as modeled, which are the ones exported"
         return "Show the variant the game draws for markings value {}".format(properties.markings)
 
     def execute(self, context):
-        root = context.object
+        root = common.model_root(context.object)
         root.aeron_flight.preview_markings = self.markings
         root.aeron_flight.preview_variant = self.variant if self.markings < 0 else ""
+        root.aeron_flight.preview_skin = self.skin if self.markings < 0 and not self.variant else ""
         display.apply_skin(root)
         return {'FINISHED'}
 

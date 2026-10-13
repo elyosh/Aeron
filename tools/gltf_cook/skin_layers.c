@@ -39,7 +39,9 @@ typedef struct SkinLayer {
 
 typedef struct SkinVariant {
 	char*      name;
-	int        base; /* variant index of the base, -1 for none */
+	int        own;   /* index of the file's variant of the same name, or -1 */
+	int        base;  /* variant index of the base, -1 for none */
+	int        index; /* index of the variant in the cooked file */
 	SkinLayer* layers;
 	size_t     layer_count;
 } SkinVariant;
@@ -312,8 +314,7 @@ static bool read_variants(cJSON* document, Inputs* in) {
 		out->name = dup_string(name->valuestring);
 		if (!out->name)
 			return fail("out of memory");
-		if (variant_index(in, out->name) >= 0)
-			return fail("skin variant '%s' has the name of a variant of the file", out->name);
+		out->own = variant_index(in, out->name);
 		for (size_t w = 0; w < v; ++w)
 			if (strcmp(in->variants[w].name, out->name) == 0)
 				return fail("skin variant '%s' is repeated", out->name);
@@ -322,11 +323,15 @@ static bool read_variants(cJSON* document, Inputs* in) {
 			if (!cJSON_IsString(base) || (out->base = variant_index(in, base->valuestring)) < 0)
 				return fail("skin variant '%s': base '%s' is not a variant of the file", out->name,
 							cJSON_IsString(base) ? base->valuestring : "?");
+			if (out->base == out->own)
+				return fail("skin variant '%s' is its own base", out->name);
 		}
-		if (!cJSON_IsArray(layers) || cJSON_GetArraySize(layers) == 0)
-			return fail("skin variant '%s' has no layers", out->name);
+		if (layers && !cJSON_IsArray(layers))
+			return fail("skin variant '%s': layers is not a list", out->name);
 		out->layer_count = (size_t)cJSON_GetArraySize(layers);
-		out->layers      = (SkinLayer*)calloc(out->layer_count, sizeof *out->layers);
+		if (!out->layer_count && out->base < 0 && out->own < 0)
+			return fail("skin variant '%s' has no layers", out->name);
+		out->layers = (SkinLayer*)calloc(out->layer_count + 1, sizeof *out->layers);
 		if (!out->layers)
 			return fail("out of memory");
 		for (size_t l = 0; l < out->layer_count; ++l) {
@@ -655,6 +660,21 @@ static bool map_variant(cJSON* primitive, int material, int variant) {
 		   cJSON_AddItemToArray(mappings, mapping);
 }
 
+/* Removes variant `variant` from the primitive's mappings. */
+static void unmap_variant(cJSON* primitive, int variant) {
+	cJSON* mappings = (cJSON*)get(get(get(primitive, "extensions"), "KHR_materials_variants"), "mappings");
+	for (int m = cJSON_GetArraySize(mappings) - 1; m >= 0; --m) {
+		cJSON* list = (cJSON*)get(cJSON_GetArrayItem(mappings, m), "variants");
+		for (int i = cJSON_GetArraySize(list) - 1; i >= 0; --i) {
+			const cJSON* index = cJSON_GetArrayItem(list, i);
+			if (cJSON_IsNumber(index) && index->valueint == variant)
+				cJSON_DeleteItemFromArray(list, i);
+		}
+		if (cJSON_GetArraySize(list) == 0)
+			cJSON_DeleteItemFromArray(mappings, m);
+	}
+}
+
 /* The material the primitive maps variant `variant` to, or -1. */
 static int mapped_material(const cJSON* primitive, int variant) {
 	const cJSON* mapping;
@@ -674,12 +694,17 @@ static bool expand(Expansion* x) {
 	cJSON*       document  = x->document;
 	const size_t khr_count = in->khr_count;
 
-	/* The variants: the file's, then the skin variants. */
+	/* The variants: the file's, then the skin variants that are not one of
+	 * the file's. */
 	cJSON* variants = NULL;
 	if (in->variant_count)
 		variants = get_or_add_array(
 			get_or_add_object(get_or_add_object(document, "extensions"), "KHR_materials_variants"), "variants");
+	size_t appended = 0;
 	for (size_t v = 0; variants && v < in->variant_count; ++v) {
+		in->variants[v].index = in->variants[v].own >= 0 ? in->variants[v].own : (int)(khr_count + appended++);
+		if (in->variants[v].own >= 0)
+			continue;
 		cJSON* item = cJSON_CreateObject();
 		if (!item || !cJSON_AddStringToObject(item, "name", in->variants[v].name)) {
 			cJSON_Delete(item);
@@ -696,14 +721,22 @@ static bool expand(Expansion* x) {
 	if (!found && in->variant_count)
 		cJSON_AddItemToArray(used, cJSON_CreateString("KHR_materials_variants"));
 
-	/* The primitives. */
+	/* The primitives. For each skin variant, a primitive shows a composite
+	 * if its material has any of the layers' skins, else the material that
+	 * the file's variant with the same name gives it, else the base's. All
+	 * materials are looked up in the file's mappings before any mapping
+	 * changes. */
 	SkinLayer*   chain = NULL;
 	size_t       most  = 1;
 	for (size_t v = 0; v < in->variant_count; ++v)
 		most = in->variants[v].layer_count > most ? in->variants[v].layer_count : most;
-	chain = (SkinLayer*)calloc(most, sizeof *chain);
-	if (!chain)
+	chain   = (SkinLayer*)calloc(most, sizeof *chain);
+	int* to = (int*)calloc(in->variant_count + 1, sizeof *to);
+	if (!chain || !to) {
+		free(chain);
+		free(to);
 		return fail("out of memory");
+	}
 	const cJSON* mesh;
 	cJSON_ArrayForEach(mesh, get(document, "meshes")) {
 		cJSON* primitive;
@@ -718,24 +751,32 @@ static bool expand(Expansion* x) {
 				for (size_t l = 0; l < sv->layer_count; ++l)
 					if (material_skin(in, m, sv->layers[l].skin))
 						chain[count++] = sv->layers[l];
-				const int variant = (int)(khr_count + v);
-				int       to      = -1;
+				to[v] = -1;
 				if (count) {
-					if ((to = composite_material(x, m, chain, count)) < 0) {
+					if ((to[v] = composite_material(x, m, chain, count)) < 0) {
 						free(chain);
+						free(to);
 						return false;
 					}
-				} else if (sv->base >= 0) {
-					to = mapped_material(primitive, sv->base);
+				} else if (sv->own < 0 || mapped_material(primitive, sv->own) < 0) {
+					to[v] = sv->base >= 0 ? mapped_material(primitive, sv->base) : -1;
 				}
-				if (to >= 0 && !map_variant(primitive, to, variant)) {
+			}
+			for (size_t v = 0; v < in->variant_count; ++v) {
+				if (to[v] < 0)
+					continue;
+				if (in->variants[v].own >= 0)
+					unmap_variant(primitive, in->variants[v].own);
+				if (!map_variant(primitive, to[v], in->variants[v].index)) {
 					free(chain);
+					free(to);
 					return fail("out of memory");
 				}
 			}
 		}
 	}
 	free(chain);
+	free(to);
 
 	/* The skins and skin variants are now variants. */
 	cJSON* material;

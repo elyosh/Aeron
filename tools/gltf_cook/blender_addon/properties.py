@@ -14,7 +14,7 @@ from bpy.props import (
 )
 from bpy.types import PropertyGroup
 
-from . import animation, common, display, flipbook_preview, overlays, preview, skins
+from . import animation, common, display, flipbook_preview, overlays, preview, skins, variants
 
 
 def _component_poll(self, obj):
@@ -98,15 +98,14 @@ def _markings_update(self, context):
 
 
 def _search_variants(self, context, edit_text):
-    names = skins.variant_names(self.id_data) if common.role(self.id_data) == 'model' else []
+    names = variants.names(self.id_data) if common.role(self.id_data) == 'model' else []
     return [name for name in names if edit_text.lower() in name.lower()]
 
 
 class AeronMarkingsEntry(PropertyGroup):
     variant: StringProperty(
         name="Variant", update=_markings_update, search=_search_variants,
-        description="Material variant or skin variant shown for this markings value. Empty shows the materials "
-                    "as modeled")
+        description="Variant shown for this markings value. Empty shows the materials as modeled")
 
 
 def _role_update(self, context):
@@ -228,9 +227,9 @@ class AeronFlightProperties(PropertyGroup):
     active_setting: IntProperty()
     component_sets: CollectionProperty(type=AeronComponentSet)
     active_set: IntProperty()
-    # Skin variants (skins.py): material variants made of the materials' skins.
-    skin_variants: CollectionProperty(type=skins.AeronSkinVariant)
-    active_skin_variant: IntProperty()
+    # The model's variants (variants.py).
+    variants: CollectionProperty(type=variants.AeronVariant)
+    active_variant: IntProperty()
     # The material variant each markings value shows. Values past the end
     # show the last entry's variant.
     markings: CollectionProperty(type=AeronMarkingsEntry)
@@ -240,9 +239,12 @@ class AeronFlightProperties(PropertyGroup):
     # The markings value shown in the viewport, or -1 for the materials as
     # modelled (display.py).
     preview_markings: IntProperty(default=-1, min=-1)
-    # The skin variant shown in the viewport when no markings value is
-    # (Skin Variants panel), or "".
+    # The variant shown in the viewport when no markings value is (Variants
+    # panel), or "".
     preview_variant: StringProperty()
+    # The skin shown alone when no markings value or variant is (Aeron Skins
+    # panel), or "".
+    preview_skin: StringProperty()
     active_component: IntProperty()
     # Kept from the import (sources.py): the glTF file, its asset extras
     # (JSON), and the names of the extensions and extras it had (JSON).

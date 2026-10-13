@@ -4,7 +4,8 @@
  * variants with composite materials, before the cook.
  *
  * SkinLayers_Expand rewrites the glTF JSON in place: it appends one variant
- * per skin variant after the file's variants, adds a material for each
+ * per skin variant after the file's variants (a skin variant with the name
+ * of one of them changes that one instead), adds a material for each
  * distinct (material, layers) composite and maps the primitives, then
  * removes `skins` and `skinVariants`. The composite images get URIs
  * "aeron-composite:<n>", and SkinLayers_ImageProvider gives their pixels

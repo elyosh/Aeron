@@ -109,9 +109,9 @@ dialog shows which XWA Upgrade installation the import will use.
 - **Original Game**: the OPT alone, as the original game draws it, with the
   game's data for the model (its pilot eye, crew and moving parts).
 - **XWA Upgrade**: the OPT with everything XWAU adds to it: materials,
-  normal maps and animations, skins (as skins and skin variants, including
-  the ones that missions choose), object profiles, moving parts, pilot eye
-  and cockpit displays. The images that its animations play are added to the
+  normal maps and animations, skins (as variants, including the ones that
+  missions choose), object profiles, moving parts, pilot eye and cockpit
+  displays. The images that its animations play are added to the
   project's effect libraries. Images that the libraries already have are
   kept as they are.
 - **Auto** (the default): XWA Upgrade if its data is found, otherwise
@@ -231,16 +231,15 @@ can hide its members at a time. When a mission chooses no profile, the game
 uses `Default_<markings>`, then `Default`.
 
 The game gives each object a markings value (0 to 255), usually the one of
-its flight group. The markings list of the model says which material
-variant or skin variant each value shows. Edit it in the **Markings** panel of the model
-root. Each row is a value, starting from 0, and names a variant. An empty
-row shows the materials as modeled. A markings value without its own row
-shows the variant of the last row. A new row starts with the variant of the
-last row, so adding a row does not change how any value looks. The eye in a
-row shows the look of that value, and **Show As Modeled** shows the
+its flight group. The markings list of the model says which variant
+(see [Variants and skins](#variants-and-skins)) each value shows. Edit it
+in the **Markings** panel of the model root. Each row is a value, starting
+from 0, and names a variant. An empty row shows the materials as modeled.
+Values after the last row use the last row. A new row starts with the
+variant of the last row, so adding a row doesn't change how any value
+looks. The eye on a row shows that value, and **Show As Modeled** shows the
 modeled materials again. Check Model reports a row that names a variant
-that does not exist, or that no mesh uses (Blender's glTF exporter would
-leave that variant out).
+that doesn't exist.
 
 The import adds a camera named "<model> Pilot Eye" for a model with a
 pilot eye hardpoint, with the game's cockpit field of view (64 degrees
@@ -334,32 +333,61 @@ custom bounds) are in the local space of the component. The buttons next to
 them set them from the 3D cursor. Without custom bounds, the game computes
 the bounds from the collision mesh (or else the render mesh).
 
-## Skins
+## Variants and skins
+
+A variant is a look of the model. Markings values and missions choose
+variants by name. The **Variants** panel of the model root lists them, with
+the markings values that show each one. The eye on a row shows the variant,
+and **Show As Modeled** shows the modeled materials again.
+
+A variant can:
+- replace materials. **Replaced materials** lists them, and **+** adds one:
+  wherever the model has the first material, the variant shows the second.
+- paint skins over materials. **Layers** lists the skins in painting
+  order, each with an opacity.
+- start from another variant (**Base**). Where this variant doesn't replace
+  or paint a material, the base's replacement shows. The base's layers are
+  not used.
 
 A skin is a set of images painted over materials. The **Aeron Skins** panel
-of a material lists its skins. Each has a base color image, whose alpha says
-where the skin covers the material, and optionally emissive and
+of a material lists its skins. A skin has a base color image, whose alpha
+says where the skin covers the material, and optional emissive and
 metallic-roughness images (roughness in G, metallic in B). The images use
-the UV layout of the material's base color texture, and have its size. A
-skin can be on any number of materials, with the same name.
+the UV layout of the material's base color texture and must have the same
+size. A skin can be on several materials, with the same name. A layer
+paints the modeled material, even where the variant or its base replaces
+that material.
 
-The **Skin Variants** panel of the model root lists the model's skin
-variants. A skin variant paints its layers (skins, each with an opacity)
-over the materials in order. It may start from a glTF material variant,
-such as a converted paint state: materials without any of its skins then
-show that variant. The markings list names skin variants like material
-variants. The eye of a skin variant, or of a markings row that names it,
-shows it: the materials that it changes are replaced by preview copies, which follow the skin images as you
-paint them. In the preview, a partly covering skin mixes in linear light,
-and the game's composite on the stored colors, so such texels can differ
-slightly. The exports write the own materials, the skins and the skin
-variants, and Export for Game composites each skin variant into the .glb.
-Save to Project keeps the skin images under `textures/skins/<skin>/`.
+The eye on a skin shows it alone, on every material that has it. **+** next
+to a skin image creates an image that changes nothing until you paint it: a
+transparent base color, or a copy of the material's emissive or
+metallic-roughness. It has the size of the material's texture and is saved
+in `textures/skins/<skin>/`.
 
-The converted paint states are glTF material variants. The markings list,
-the skin variants and the missions name variants, so renaming one breaks
-those names. Check Model reports a skin variant that names no skin of the
-model, a skin no variant uses, and skin images of the wrong size.
+To paint a skin image, click the brush next to it. This shows the skin
+alone, isolates the parts that have the material (local view), and starts
+Texture Paint on that image. Painting the base color also paints its alpha,
+which is where the skin covers the material: use the Erase Alpha blend to
+uncover. The emissive and metallic-roughness images show only where the
+base color covers. Save the image with Image > Save, and click the brush
+again to stop. After editing an image in another program, reload it
+(Image > Reload in the Image Editor). The preview mixes partly covering
+skins in linear light, and the game mixes the stored colors, so those
+texels can look slightly different.
+
+An OPT can give faces one texture per markings value. The import makes the
+first one the material and the others variants named `State 1`, `State 2`,
+and so on. Converted XWAU skins become skins and variants.
+
+Renaming a variant updates the markings rows and bases of the model that
+use the name. Missions that use the old name break.
+
+The exports write replaced materials as glTF material variants, and layers
+and bases as skin variants with the same name. Export for Game composites
+the skins into the .glb. Save to Project keeps the skin images under
+`textures/skins/<skin>/`. Check Model reports variants that change nothing,
+bases that replace nothing, layers whose skin no material has, skins that
+no variant uses, and skin images of the wrong size.
 
 ## Lights
 

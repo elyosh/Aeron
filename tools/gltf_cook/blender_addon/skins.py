@@ -1,10 +1,10 @@
 # Skin layers (tools/extensions/AERON_flight_model, "Skins"). A material's
-# skins are images painted over it; the model root's skin variants list
-# skins in order. The cooker composites each combination when it builds the
-# .glb. This module holds the data, reads and writes it, checks it, and
-# shows a skin variant in the viewport.
+# skins are images painted over it; a variant (variants.py) lists skins in
+# order. The cooker composites each combination when it builds the .glb.
+# This module holds the skins, reads and writes them, checks them, and makes
+# the preview copies of the materials that a variant paints.
 #
-# The preview puts a copy of each material that the variant changes in its
+# The preview puts a copy of each material that the variant paints in its
 # slots. The copy mixes each layer over the channels that the layer has
 # (base color, emissive, metallic-roughness), with the layer's base color
 # alpha times its opacity as the factor. It mixes in Blender's linear light,
@@ -18,6 +18,7 @@ import shutil
 import urllib.parse
 
 import bpy
+import numpy
 from bpy.props import BoolProperty, CollectionProperty, FloatProperty, IntProperty, PointerProperty, StringProperty
 from bpy.types import PropertyGroup
 
@@ -66,28 +67,22 @@ def skin_names(root):
     return names
 
 
-def khr_variant_names():
-    return [variant.name for variant in getattr(bpy.data.scenes[0], "gltf2_KHR_materials_variants_variants", ())]
-
-
-def variant_names(root):
-    """Every variant a markings entry can name: the glTF ones, then the skin variants."""
-    return khr_variant_names() + [variant.name for variant in root.aeron_flight.skin_variants]
-
-
 def _search_skins(self, context, edit_text):
     root = _root_of(self.id_data)
     return [name for name in (skin_names(root) if root else []) if edit_text.lower() in name.lower()]
 
 
-def _search_khr(self, context, edit_text):
-    return [name for name in khr_variant_names() if edit_text.lower() in name.lower()]
-
-
-def _preview_update(self, context):
+def preview_update(self, context):
     root = _root_of(self.id_data)
     from . import display
     if root is not None and display.previewing(root):
+        display.apply_skin(root)
+
+
+def _skin_update(self, context):
+    """Shows the change of a skin on every model that shows a variant."""
+    from . import display
+    for root in display.models_showing_skins():
         display.apply_skin(root)
 
 
@@ -95,41 +90,26 @@ class AeronSkinLayer(PropertyGroup):
     """A skin on a material: its images, in the UV layout of the base color texture."""
     # name: the skin name (PropertyGroup.name).
     base_color: PointerProperty(
-        type=bpy.types.Image, name="Base Color",
+        type=bpy.types.Image, name="Base Color", update=_skin_update,
         description="The skin's colors. Its alpha says where the skin covers the material, for every channel")
     emissive: PointerProperty(
-        type=bpy.types.Image, name="Emissive",
+        type=bpy.types.Image, name="Emissive", update=_skin_update,
         description="The skin's glow. Without it, the skin keeps the material's glow")
     metallic_roughness: PointerProperty(
-        type=bpy.types.Image, name="Metallic-Roughness",
+        type=bpy.types.Image, name="Metallic-Roughness", update=_skin_update,
         description="The skin's roughness (G) and metallic (B). Without it, the skin keeps the material's")
     emissive_strength_given: BoolProperty(
-        name="Own Strength", description="Give the skin's glow its own strength instead of the material's")
-    emissive_strength: FloatProperty(name="Strength", min=0.0, default=1.0,
+        name="Own Strength", update=_skin_update,
+        description="Give the skin's glow its own strength instead of the material's")
+    emissive_strength: FloatProperty(name="Strength", min=0.0, default=1.0, update=_skin_update,
                                      description="Strength of the skin's glow")
 
 
 class AeronSkinVariantLayer(PropertyGroup):
-    skin: StringProperty(name="Skin", search=_search_skins, update=_preview_update,
-                         description="A skin of the model's materials")
+    skin: StringProperty(name="Skin", search=_search_skins, update=preview_update,
+                         description="A skin of the model's materials, painted over the materials that have it")
     opacity: IntProperty(name="Opacity", min=0, max=100, default=100, subtype='PERCENTAGE',
-                         update=_preview_update, description="How much of the skin's coverage shows")
-
-
-class AeronSkinVariant(PropertyGroup):
-    """A material variant made of skins (PropertyGroup.name is its name)."""
-    base: StringProperty(name="Base", search=_search_khr, update=_preview_update,
-                         description="A glTF material variant the skin variant starts from, such as a paint "
-                                     "state. Empty: the materials as modeled")
-    layers: CollectionProperty(type=AeronSkinVariantLayer)
-    active_layer: IntProperty()
-
-
-def skin_variant(root, name):
-    for variant in root.aeron_flight.skin_variants:
-        if variant.name == name:
-            return variant
-    return None
+                         update=preview_update, description="How much of the skin's coverage shows")
 
 
 def chain(material, variant):
@@ -140,16 +120,16 @@ def chain(material, variant):
 
 # ---- import ---------------------------------------------------------------------------
 
-def _gltf_image_path(gltf, texture_index):
+def _gltf_image(gltf, texture_index):
+    """The file path and name of a texture's image in the glTF file, or (None, None)."""
     data = gltf.data
     try:
-        source = data.textures[texture_index].source
-        uri = data.images[source].uri
+        image = data.images[data.textures[texture_index].source]
     except (IndexError, TypeError, AttributeError):
-        return None
-    if not uri:
-        return None
-    return os.path.join(os.path.dirname(gltf.filename), urllib.parse.unquote(uri))
+        return None, None
+    if not image.uri:
+        return None, None
+    return os.path.join(os.path.dirname(gltf.filename), urllib.parse.unquote(image.uri)), image.name
 
 
 def restore_material(material, extension, gltf):
@@ -161,9 +141,14 @@ def restore_material(material, extension, gltf):
         skin.name = name
         for channel in CHANNELS:
             info = entry.get(JSON_KEYS[channel])
-            path = _gltf_image_path(gltf, info["index"]) if isinstance(info, dict) and "index" in info else None
+            path, image_name = (_gltf_image(gltf, info["index"]) if isinstance(info, dict) and "index" in info
+                                else (None, None))
             if path:
                 image = bpy.data.images.load(path, check_existing=True)
+                # Skins often have files of the same name in their own folders.
+                # The glTF name tells them apart in Blender's image list.
+                if image_name:
+                    image.name = image_name
                 if channel == "metallic_roughness":
                     image.colorspace_settings.name = 'Non-Color'
                 setattr(skin, channel, image)
@@ -172,42 +157,23 @@ def restore_material(material, extension, gltf):
             skin.emissive_strength = entry["emissiveStrength"]
 
 
-def restore_variants(root, extension):
-    variants = root.aeron_flight.skin_variants
-    variants.clear()
-    for item in extension.get("skinVariants", []):
-        variant = variants.add()
-        variant.name = item.get("name", "")
-        variant.base = item.get("base", "")
-        for layer in item.get("layers", []):
-            entry = variant.layers.add()
-            entry.skin = layer.get("skin", "")
-            entry.opacity = layer.get("opacity", 100)
-
-
 # ---- export ---------------------------------------------------------------------------
-
-def variants_json(root):
-    out = []
-    for variant in root.aeron_flight.skin_variants:
-        item = {"name": variant.name}
-        if variant.base:
-            item["base"] = variant.base
-        item["layers"] = [dict({"skin": layer.skin}, **({"opacity": layer.opacity} if layer.opacity != 100 else {}))
-                          for layer in variant.layers]
-        out.append(item)
-    return out
-
 
 def _image_file(image):
     path = bpy.path.abspath(image.filepath) if image.filepath else ""
     return os.path.normpath(path) if path and os.path.isfile(path) else None
 
 
-def _write_png(image, target):
-    """Saves a copy of `image` as a PNG at `target` (for images without a file)."""
-    copy = image.copy()
+def write_png(image, target):
+    """Saves the pixels of `image`, with any unsaved changes, as a PNG at
+    `target`. The image itself is not changed."""
+    width, height = image.size
+    pixels = numpy.empty(width * height * 4, dtype=numpy.float32)
+    image.pixels.foreach_get(pixels)
+    copy = bpy.data.images.new(image.name + " (export)", width, height, alpha=True)
     try:
+        copy.colorspace_settings.name = image.colorspace_settings.name
+        copy.pixels.foreach_set(pixels)
         copy.filepath_raw = target
         copy.file_format = 'PNG'
         copy.save()
@@ -219,9 +185,10 @@ def add_material_skins(document, gltf_path, keep_originals):
     """Adds the skins of the exported materials to `document`: a texture and
     an image for each skin image, and `skins` in each material's
     AERON_flight_model object. With `keep_originals` (Save to Project), an
-    image with a file is referenced where it is, as Blender's exporter does;
-    otherwise it is copied next to the .gltf. Images without a file are
-    written there as PNG. Returns whether anything was added."""
+    image with a file is referenced where it is, as Blender's exporter does.
+    Otherwise it is copied next to the .gltf, or written from its pixels when
+    it has unsaved changes or is not a PNG file. Returns whether anything was
+    added."""
     directory = os.path.dirname(gltf_path)
     images = document.setdefault("images", [])
     textures = document.setdefault("textures", [])
@@ -239,11 +206,11 @@ def add_material_skins(document, gltf_path, keep_originals):
             name = os.path.basename(source) if source else bpy.path.clean_name(image.name) + ".png"
             target = os.path.join(directory, "textures", "skins", skin_name, os.path.splitext(name)[0] + ".png")
             os.makedirs(os.path.dirname(target), exist_ok=True)
-            if source and source.lower().endswith(".png"):
+            if source and source.lower().endswith(".png") and not image.is_dirty:
                 if os.path.normpath(source) != os.path.normpath(target):
                     shutil.copyfile(source, target)
             else:
-                _write_png(image, target)
+                write_png(image, target)
         uri = urllib.parse.quote(os.path.relpath(target, directory).replace(os.sep, "/"))
         entry = {"name": image.name, "uri": uri, "mimeType": "image/png"}
         if keep_originals:
@@ -288,6 +255,54 @@ def skin_images(root):
     return out
 
 
+def _srgb(value):
+    return value * 12.92 if value <= 0.0031308 else 1.055 * value ** (1 / 2.4) - 0.055
+
+
+def new_image(root, material, skin, channel):
+    """Creates an image for a channel of a skin, with the size of the
+    material's texture. A base color image is transparent, so it covers
+    nothing. An emissive or metallic-roughness image starts as the
+    material's own image, or its value, so it changes nothing. When the
+    model's folder is known, the image is saved under
+    textures/skins/<skin>/. Returns the image."""
+    from .flipbook_preview import _bsdf
+    own = _own_image(material, channel)
+    sized = own or _own_image(material, "base_color") or skin.base_color
+    width, height = tuple(sized.size) if sized is not None and sized.size[0] else (1024, 1024)
+    image = bpy.data.images.new("{}_{}_{}".format(material.name, skin.name, channel), width, height, alpha=True)
+    if channel == "metallic_roughness":
+        image.colorspace_settings.name = 'Non-Color'
+    pixels = numpy.zeros(width * height * 4, dtype=numpy.float32)
+    if channel != "base_color":
+        if own is not None and tuple(own.size) == (width, height):
+            own.pixels.foreach_get(pixels)
+        else:
+            bsdf = _bsdf(material.node_tree) if material.node_tree is not None else None
+            if channel == "emissive":
+                color = tuple(bsdf.inputs["Emission Color"].default_value)[:3] if bsdf else (0.0, 0.0, 0.0)
+                value = [_srgb(c) for c in color] + [1.0]
+            else:
+                value = [0.0, bsdf.inputs["Roughness"].default_value if bsdf else 1.0,
+                         bsdf.inputs["Metallic"].default_value if bsdf else 0.0, 1.0]
+            pixels.reshape(-1, 4)[:] = value
+    image.pixels.foreach_set(pixels)
+    source = root.aeron_flight.source_path if root is not None else ""
+    if source:
+        folder = os.path.join(os.path.dirname(bpy.path.abspath(source)), "textures", "skins", skin.name)
+        os.makedirs(folder, exist_ok=True)
+        stem = bpy.path.clean_name("{}_{}".format(material.name, channel))
+        target = os.path.join(folder, stem + ".png")
+        number = 1
+        while os.path.exists(target):
+            target = os.path.join(folder, "{}.{:03d}.png".format(stem, number))
+            number += 1
+        image.filepath_raw = target
+        image.file_format = 'PNG'
+        image.save()
+    return image
+
+
 # ---- checks ------------------------------------------------------------------------------
 
 def _own_image(material, channel):
@@ -304,7 +319,6 @@ def _own_image(material, channel):
 
 def check(problems, root):
     materials = model_materials(root)
-    names = set()
     for material in materials:
         seen = set()
         for skin in material.aeron_flight.skins:
@@ -314,7 +328,6 @@ def check(problems, root):
             if skin.name in seen:
                 problems.error(root, "{}: the material has this skin twice".format(label))
             seen.add(skin.name)
-            names.add(skin.name)
             if skin.base_color is None:
                 problems.error(root, "{}: it needs a base color image".format(label))
                 continue
@@ -325,32 +338,17 @@ def check(problems, root):
                 if image is not None and tuple(image.size) != size:
                     problems.error(root, "{}: its {} image is {}x{}, not {}x{}".format(
                         label, channel.replace("_", " "), image.size[0], image.size[1], size[0], size[1]))
-    khr = khr_variant_names()
-    used = set()
-    seen = set()
-    for variant in root.aeron_flight.skin_variants:
-        label = "skin variant {!r}".format(variant.name)
-        if not variant.name:
-            problems.error(root, "a skin variant has no name")
-        elif variant.name in seen or variant.name in khr:
-            problems.error(root, "{}: another variant has this name".format(label))
-        seen.add(variant.name)
-        if variant.base and variant.base not in khr:
-            problems.error(root, "{}: base {!r} is not a material variant".format(label, variant.base))
-        if not len(variant.layers):
-            problems.error(root, "{}: it has no layers".format(label))
-        for layer in variant.layers:
-            used.add(layer.skin)
-            if layer.skin not in names:
-                problems.error(root, "{}: no material has skin {!r}".format(label, layer.skin))
-    for name in sorted(names - used):
-        problems.warning(root, "no skin variant uses skin {!r}".format(name))
 
 
 # ---- preview ------------------------------------------------------------------------------
 
 def _key(material, layers):
-    return material.name + "|" + ",".join("{}:{}".format(skin.name, opacity) for skin, opacity in layers)
+    """What a preview copy shows: a new key makes a new copy."""
+    def skin_key(skin, opacity):
+        images = [getattr(skin, channel).name if getattr(skin, channel) else "" for channel in CHANNELS]
+        strength = skin.emissive_strength if skin.emissive_strength_given else None
+        return "{}:{}:{}:{}".format(skin.name, opacity, "/".join(images), strength)
+    return material.name + "|" + ",".join(skin_key(skin, opacity) for skin, opacity in layers)
 
 
 def _source(tree, socket, value_node):
@@ -452,7 +450,8 @@ def _build(material, layers):
     return copy
 
 
-def _preview(material, layers):
+def preview(material, layers):
+    """The preview copy of `material` with `layers` mixed over it."""
     key = _key(material, layers)
     for existing in bpy.data.materials:
         if existing.get(PREVIEW_TAG) and existing.aeron_flight.preview_key == key and \
@@ -474,24 +473,7 @@ def remove_unused():
         bpy.data.materials.remove(material)
 
 
-def show(root, variant, base_material):
-    """Shows skin variant `variant`. `base_material(component, slot index)`
-    gives a slot's material in the base variant, or None for the own one."""
-    for component in common.components(root):
-        for index, slot in enumerate(component.material_slots):
-            material = own_material(slot.material)
-            if material is None:
-                continue
-            layers = chain(material, variant)
-            if layers:
-                target = _preview(material, layers)
-            else:
-                target = base_material(component, index) or material
-            if slot.material != target:
-                slot.material = target
-
-
-classes = (AeronSkinLayer, AeronSkinVariantLayer, AeronSkinVariant)
+classes = (AeronSkinLayer, AeronSkinVariantLayer)
 
 
 def register():
