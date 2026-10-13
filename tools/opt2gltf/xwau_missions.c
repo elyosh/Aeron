@@ -74,18 +74,6 @@ static void lists_free(Lists* lists) {
 	memset(lists, 0, sizeof *lists);
 }
 
-static void lower_copy(char* out, size_t cap, const char* text) {
-	size_t n = 0;
-	for (; text[n] && n + 1 < cap; ++n)
-		out[n] = (text[n] >= 'A' && text[n] <= 'Z') ? (char)(text[n] + 32) : text[n];
-	out[n] = 0;
-}
-
-static bool ends_with(const char* text, const char* suffix) {
-	const size_t a = strlen(text), b = strlen(suffix);
-	return a >= b && strcasecmp(text + a - b, suffix) == 0;
-}
-
 /* Reports a problem of mission `base`, when the missions report. */
 static void report(const XwauMissions* m, const char* base, const char* format, ...) {
 	if (!m->report)
@@ -115,13 +103,9 @@ static bool copy_lines(const XwauLines* from, XwauLines* to) {
 	if (!to->items)
 		return false;
 	for (; to->count < from->count; ++to->count)
-		if (!(to->items[to->count] = Xwau_Strdup(from->items[to->count])))
+		if (!(to->items[to->count] = StrDup(from->items[to->count])))
 			return false;
 	return true;
-}
-
-static int compare_strings(const void* a, const void* b) {
-	return strcmp(*(char* const*)a, *(char* const*)b);
 }
 
 /* The missions with a .ini or _Skins.txt: "<dir>/<base>" as first found,
@@ -136,47 +120,44 @@ static bool skin_missions(const XwauRoots* roots, XwauLines* out) {
 			if (!XwauRoots_FindDir(roots, r, kMissionDirs[d], dir, sizeof dir))
 				continue;
 			size_t count   = 0;
-			char** entries = Xwau_ListDir(dir, true, &count);
+			char** entries = ListDir(dir, true, &count);
 			for (size_t i = 0; ok && i < count; ++i) {
 				size_t base_len;
-				if (ends_with(entries[i], ".ini"))
+				if (EndsWithNoCase(entries[i], ".ini"))
 					base_len = strlen(entries[i]) - 4;
-				else if (ends_with(entries[i], "_skins.txt"))
+				else if (EndsWithNoCase(entries[i], "_skins.txt"))
 					base_len = strlen(entries[i]) - 10;
 				else
 					continue;
 				char path[1024], key[1024];
-				snprintf(path, sizeof path, "%s/%.*s", kMissionDirs[d], (int)base_len, entries[i]);
-				lower_copy(key, sizeof key, path);
+				if (!(ok = PathFormat(path, sizeof path, "%s/%.*s", kMissionDirs[d], (int)base_len,
+									  entries[i])))
+					break;
+				LowerCopy(key, sizeof key, path);
 				bool seen = false;
 				for (size_t k = 0; !seen && k < keys.count; ++k)
 					seen = strcmp(keys.items[k], key) == 0;
 				if (seen)
 					continue;
 				/* "<key>\n<path>": sorted by the key. */
-				char*  entry = (char*)malloc(strlen(key) + strlen(path) + 2);
-				char** grown = (char**)realloc(keys.items, (keys.count + 1) * sizeof *grown);
-				ok           = entry && grown;
-				if (grown)
-					keys.items = grown;
-				if (!ok) {
+				const size_t size  = strlen(key) + strlen(path) + 2;
+				char*        entry = (char*)malloc(size);
+				char**       slot  = entry ? ARRAY_PUSH(keys.items, keys.count) : NULL;
+				if (!(ok = slot != NULL)) {
 					free(entry);
 					break;
 				}
-				snprintf(entry, strlen(key) + strlen(path) + 2, "%s\n%s", key, path);
-				keys.items[keys.count++] = entry;
+				snprintf(entry, size, "%s\n%s", key, path);
+				*slot = entry;
 			}
-			Xwau_FreeList(entries, count);
+			FreeList(entries, count);
 		}
 	}
 	if (ok && keys.count)
-		qsort(keys.items, keys.count, sizeof *keys.items, compare_strings);
+		qsort(keys.items, keys.count, sizeof *keys.items, CompareStrings);
 	for (size_t i = 0; ok && i < keys.count; ++i) {
-		char** grown = (char**)realloc(out->items, (out->count + 1) * sizeof *grown);
-		ok           = grown && (grown[out->count] = Xwau_Strdup(strchr(keys.items[i], '\n') + 1)) != NULL;
-		if (grown)
-			out->items = grown;
-		out->count += ok;
+		const char* path = strchr(keys.items[i], '\n') + 1;
+		ok               = XwauLines_Add(out, path, strlen(path));
 	}
 	XwauLines_Free(&keys);
 	return ok;
@@ -212,13 +193,14 @@ static bool load_skin_contexts(const XwauRoots* roots, XwauMissions* m) {
 
 bool XwauMissions_OwnSkinLines(const XwauRoots* roots, const char* base, XwauLines* out) {
 	char rel[1100], path[1024];
-	snprintf(rel, sizeof rel, "%s_Skins.txt", base);
-	if (!XwauLines_Read(XwauRoots_FindFile(roots, rel, path, sizeof path) ? path : NULL, "", XWAU_RULES_CS,
+	if (!PathFormat(rel, sizeof rel, "%s_Skins.txt", base) ||
+		!XwauLines_Read(XwauRoots_FindFile(roots, rel, path, sizeof path) ? path : NULL, "", XWAU_RULES_CS,
 						out))
 		return false;
 	if (out->count)
 		return true;
-	snprintf(rel, sizeof rel, "%s.ini", base);
+	if (!PathFormat(rel, sizeof rel, "%s.ini", base))
+		return false;
 	return XwauLines_Read(XwauRoots_FindFile(roots, rel, path, sizeof path) ? path : NULL, "Skins",
 						  XWAU_RULES_CS, out);
 }
@@ -239,18 +221,18 @@ bool XwauMissions_Names(const XwauRoots* roots, const char* dir_name, XwauLines*
 		if (!XwauRoots_FindDir(roots, r, dir_name, dir, sizeof dir))
 			continue;
 		size_t count   = 0;
-		char** entries = Xwau_ListDir(dir, false, &count);
+		char** entries = ListDir(dir, false, &count);
 		for (size_t i = 0; ok && i < count; ++i) {
 			char lower[1024];
-			lower_copy(lower, sizeof lower, entries[i]);
+			LowerCopy(lower, sizeof lower, entries[i]);
 			const size_t             len = strlen(lower);
 			char                     names[4][1024];
 			int                      n          = 0;
 			static const char* const suffixes[] = { ".ini", "_objects.txt", "_skins.txt" };
 			for (size_t s = 0; s < 3; ++s)
-				if (ends_with(lower, suffixes[s]))
+				if (EndsWithNoCase(lower, suffixes[s]))
 					snprintf(names[n++], sizeof names[0], "%.*s", (int)(len - strlen(suffixes[s])), lower);
-			if (ends_with(lower, ".txt")) {
+			if (EndsWithNoCase(lower, ".txt")) {
 				const char* sfoils = strstr(lower, "_sfoils");
 				if (sfoils) {
 					snprintf(names[n++], sizeof names[0], "%.*s", (int)(sfoils - lower), lower);
@@ -270,17 +252,13 @@ bool XwauMissions_Names(const XwauRoots* roots, const char* dir_name, XwauLines*
 					seen = strcmp(out->items[j], names[k]) == 0;
 				if (seen)
 					continue;
-				char** grown = (char**)realloc(out->items, (out->count + 1) * sizeof *grown);
-				ok           = grown && (grown[out->count] = Xwau_Strdup(names[k])) != NULL;
-				if (grown)
-					out->items = grown;
-				out->count += ok;
+				ok = XwauLines_Add(out, names[k], strlen(names[k]));
 			}
 		}
-		Xwau_FreeList(entries, count);
+		FreeList(entries, count);
 	}
 	if (ok && out->count)
-		qsort(out->items, out->count, sizeof *out->items, compare_strings);
+		qsort(out->items, out->count, sizeof *out->items, CompareStrings);
 	return ok;
 }
 
@@ -319,11 +297,7 @@ static bool ini_sections(const char* path, XwauLines* out) {
 		Xwau_Trim(line, XWAU_RULES_CPP);
 		const size_t len = strlen(line);
 		if (len >= 2 && line[0] == '[' && line[len - 1] == ']') {
-			char** grown = (char**)realloc(out->items, (out->count + 1) * sizeof *grown);
-			ok           = grown && (grown[out->count] = Xwau_Strndup(line + 1, len - 2)) != NULL;
-			if (grown)
-				out->items = grown;
-			out->count += ok;
+			ok = XwauLines_Add(out, line + 1, len - 2);
 		}
 	}
 	fclose(f);
@@ -334,12 +308,9 @@ static GroupList* group_list(Lists* lists, const char* group) {
 	for (size_t i = 0; i < lists->count; ++i)
 		if (strcmp(lists->groups[i].group, group) == 0)
 			return &lists->groups[i];
-	GroupList* grown = (GroupList*)realloc(lists->groups, (lists->count + 1) * sizeof *grown);
-	if (!grown)
+	GroupList* g = ARRAY_PUSH(lists->groups, lists->count);
+	if (!g)
 		return NULL;
-	lists->groups = grown;
-	GroupList* g  = &grown[lists->count++];
-	memset(g, 0, sizeof *g);
 	snprintf(g->group, sizeof g->group, "%s", group);
 	return g;
 }
@@ -356,12 +327,9 @@ static FlightGroupLists* flight_group_lists(FlightGroupLists** fgs, size_t* coun
 	for (size_t i = 0; i < *count; ++i)
 		if ((*fgs)[i].fg == fg)
 			return &(*fgs)[i];
-	FlightGroupLists* grown = (FlightGroupLists*)realloc(*fgs, (*count + 1) * sizeof *grown);
-	if (!grown)
+	FlightGroupLists* entry = ARRAY_PUSH(*fgs, *count);
+	if (!entry)
 		return NULL;
-	*fgs                    = grown;
-	FlightGroupLists* entry = &grown[(*count)++];
-	memset(entry, 0, sizeof *entry);
 	entry->fg = fg;
 	return entry;
 }
@@ -377,14 +345,14 @@ static bool start_lines(const XwauRoots* roots, const XwauMissions* m, const cha
 						FlightGroupLists** fgs, size_t* count) {
 	char      rel[1100], path[1024];
 	XwauLines lines;
-	snprintf(rel, sizeof rel, "%s.txt", base);
-	if (!XwauLines_Read(XwauRoots_FindFile(roots, rel, path, sizeof path) ? path : NULL, "", XWAU_RULES_CPP,
+	if (!PathFormat(rel, sizeof rel, "%s.txt", base) ||
+		!XwauLines_Read(XwauRoots_FindFile(roots, rel, path, sizeof path) ? path : NULL, "", XWAU_RULES_CPP,
 						&lines))
 		return false;
 	bool ok = true;
 	if (!lines.count) {
-		snprintf(rel, sizeof rel, "%s.ini", base);
-		ok = XwauLines_Read(XwauRoots_FindFile(roots, rel, path, sizeof path) ? path : NULL, "mission_tie",
+		ok = PathFormat(rel, sizeof rel, "%s.ini", base) &&
+			 XwauLines_Read(XwauRoots_FindFile(roots, rel, path, sizeof path) ? path : NULL, "mission_tie",
 							XWAU_RULES_CPP, &lines);
 	}
 	for (size_t i = 0; ok && i < lines.count; ++i) {
@@ -421,7 +389,8 @@ static bool start_lines(const XwauRoots* roots, const XwauMissions* m, const cha
 static bool mission_lists(const XwauRoots* roots, const XwauMissions* m, const char* base,
 						  FlightGroupLists** out, size_t* count) {
 	char rel[1100], ini[1024];
-	snprintf(rel, sizeof rel, "%s.ini", base);
+	if (!PathFormat(rel, sizeof rel, "%s.ini", base))
+		return false;
 	const bool has_ini = XwauRoots_FindFile(roots, rel, ini, sizeof ini);
 	XwauLines  sections;
 	if (!ini_sections(has_ini ? ini : NULL, &sections))
@@ -437,20 +406,15 @@ static bool mission_lists(const XwauRoots* roots, const XwauMissions* m, const c
 		if (!XwauRoots_FindDir(roots, r, dir_name, dir, sizeof dir))
 			continue;
 		size_t n       = 0;
-		char** entries = Xwau_ListDir(dir, false, &n);
+		char** entries = ListDir(dir, false, &n);
 		for (size_t i = 0; ok && i < n; ++i) {
 			const size_t len = strlen(entries[i]), plen = strlen(prefix);
 			if (len >= plen + 4 && strncasecmp(entries[i], prefix, plen) == 0 &&
-				ends_with(entries[i], ".txt")) {
-				char** grown = (char**)realloc(sections.items, (sections.count + 1) * sizeof *grown);
-				ok = grown &&
-					 (grown[sections.count] = Xwau_Strndup(entries[i] + plen, len - plen - 4)) != NULL;
-				if (grown)
-					sections.items = grown;
-				sections.count += ok;
+				EndsWithNoCase(entries[i], ".txt")) {
+				ok = XwauLines_Add(&sections, entries[i] + plen, len - plen - 4);
 			}
 		}
-		Xwau_FreeList(entries, n);
+		FreeList(entries, n);
 	}
 	for (size_t s = 0; ok && s < sections.count; ++s) {
 		char section_base[512], group[512];
@@ -469,8 +433,9 @@ static bool mission_lists(const XwauRoots* roots, const XwauMissions* m, const c
 			continue;
 		}
 		XwauLines lines;
-		snprintf(rel, sizeof rel, "%s_%s.txt", base, sections.items[s]);
-		char path[1024];
+		char      path[1024];
+		if (!(ok = PathFormat(rel, sizeof rel, "%s_%s.txt", base, sections.items[s])))
+			break;
 		ok = XwauLines_Read(XwauRoots_FindFile(roots, rel, path, sizeof path) ? path : NULL, "",
 							XWAU_RULES_CPP, &lines);
 		if (ok && !lines.count)
@@ -515,12 +480,9 @@ static bool mission_lists(const XwauRoots* roots, const XwauMissions* m, const c
 				report(m, base, "%s: mesh %lld listed again; the first line is kept", section, v[0]);
 				continue;
 			}
-			MeshEntry* grown = (MeshEntry*)realloc(list->meshes, (list->count + 1) * sizeof *grown);
-			ok               = grown != NULL;
-			if (ok) {
-				list->meshes                = grown;
-				list->meshes[list->count++] = (MeshEntry) { (int)v[0], (int)v[1], (int)v[2], (int)v[3] };
-			}
+			MeshEntry* mesh = ARRAY_PUSH(list->meshes, list->count);
+			if ((ok = mesh != NULL))
+				*mesh = (MeshEntry) { (int)v[0], (int)v[1], (int)v[2], (int)v[3] };
 		}
 		free(mesh_lines);
 		/* A group without meshes is no list. */
@@ -578,15 +540,11 @@ static bool craft_list(const XwauRoots* roots, XwauLines* rows) {
 				name = c + 1;
 		char  key[512];
 		char* dot = NULL;
-		lower_copy(key, sizeof key, name);
+		LowerCopy(key, sizeof key, name);
 		dot = strrchr(key, '.');
 		if (dot)
 			*dot = 0;
-		char** grown = (char**)realloc(rows->items, (rows->count + 1) * sizeof *grown);
-		ok           = grown && (grown[rows->count] = Xwau_Strdup(key)) != NULL;
-		if (grown)
-			rows->items = grown;
-		rows->count += ok;
+		ok = XwauLines_Add(rows, key, strlen(key));
 	}
 	fclose(f);
 	return ok;
@@ -623,12 +581,9 @@ static ModelVariants* model_variants(XwauMissions* m, const char* model, bool ad
 			return &m->models[i];
 	if (!add)
 		return NULL;
-	ModelVariants* grown = (ModelVariants*)realloc(m->models, (m->model_count + 1) * sizeof *grown);
-	if (!grown)
+	ModelVariants* v = ARRAY_PUSH(m->models, m->model_count);
+	if (!v)
 		return NULL;
-	m->models        = grown;
-	ModelVariants* v = &grown[m->model_count++];
-	memset(v, 0, sizeof *v);
 	snprintf(v->model, sizeof v->model, "%s", model);
 	return v;
 }
@@ -642,22 +597,13 @@ static int compare_fg(const void* a, const void* b) {
 static XwauFlightGroupArticulation* add_articulation(XwauMissions* m, const char* base, int fg) {
 	MissionArticulations* mission = m->mission_count ? &m->missions[m->mission_count - 1] : NULL;
 	if (!mission || strcmp(mission->base, base) != 0) {
-		MissionArticulations* grown =
-			(MissionArticulations*)realloc(m->missions, (m->mission_count + 1) * sizeof *grown);
-		if (!grown)
+		if (!(mission = ARRAY_PUSH(m->missions, m->mission_count)) ||
+			!PathFormat(mission->base, sizeof mission->base, "%s", base))
 			return NULL;
-		m->missions = grown;
-		mission     = &grown[m->mission_count++];
-		memset(mission, 0, sizeof *mission);
-		snprintf(mission->base, sizeof mission->base, "%s", base);
 	}
-	XwauFlightGroupArticulation* grown =
-		(XwauFlightGroupArticulation*)realloc(mission->fgs, (mission->count + 1) * sizeof *grown);
-	if (!grown)
+	XwauFlightGroupArticulation* entry = ARRAY_PUSH(mission->fgs, mission->count);
+	if (!entry)
 		return NULL;
-	mission->fgs                       = grown;
-	XwauFlightGroupArticulation* entry = &grown[mission->count++];
-	memset(entry, 0, sizeof *entry);
 	entry->flight_group = fg;
 	return entry;
 }
@@ -671,16 +617,16 @@ static bool load_variants(const XwauRoots* roots, XwauMissions* m) {
 		XwauLines names;
 		ok = XwauMissions_Names(roots, kMissionDirs[d], &names);
 		for (size_t n = 0; ok && n < names.count; ++n) {
-			char base[1100];
-			snprintf(base, sizeof base, "%s/%s", kMissionDirs[d], names.items[n]);
+			char              base[1100];
 			FlightGroupLists* fgs   = NULL;
 			size_t            count = 0;
-			ok = start_lines(roots, m, base, &fgs, &count) && mission_lists(roots, m, base, &fgs, &count);
+			ok = PathFormat(base, sizeof base, "%s/%s", kMissionDirs[d], names.items[n]) &&
+				 start_lines(roots, m, base, &fgs, &count) && mission_lists(roots, m, base, &fgs, &count);
 			size_t              group_count = 0;
 			XwauTieFlightGroup* groups      = NULL;
 			char                rel[1200], tie[1024];
-			snprintf(rel, sizeof rel, "%s.tie", base);
-			if (ok && count && XwauRoots_FindFile(roots, rel, tie, sizeof tie))
+			if (ok && count && PathFormat(rel, sizeof rel, "%s.tie", base) &&
+				XwauRoots_FindFile(roots, rel, tie, sizeof tie))
 				groups = XwauTie_FlightGroups(tie, &group_count);
 			if (count)
 				qsort(fgs, count, sizeof *fgs, compare_fg);
@@ -701,13 +647,9 @@ static bool load_variants(const XwauRoots* roots, XwauMissions* m) {
 						if (same_lists(&model->variants[v].lists, &fgs[i].lists))
 							snprintf(variant, sizeof variant, "%s", model->variants[v].name);
 					if (ok && model && !variant[0]) {
-						Variant* grown =
-							(Variant*)realloc(model->variants, (model->count + 1) * sizeof *grown);
-						ok = grown != NULL;
+						Variant* v = ARRAY_PUSH(model->variants, model->count);
+						ok         = v != NULL;
 						if (ok) {
-							model->variants = grown;
-							Variant* v      = &grown[model->count++];
-							memset(v, 0, sizeof *v);
 							/* The name: "<mission>_fg<N>", other than [a-z0-9_] as '_'. */
 							snprintf(v->name, sizeof v->name, "%s_fg%d", names.items[n], fgs[i].fg);
 							for (char* c = v->name; *c; ++c)
@@ -792,7 +734,7 @@ bool XwauMissions_Articulations(const XwauMissions* missions, const char* model,
 								OptGltfComponentArticulation* out, size_t* count, size_t cap,
 								const char* label) {
 	char key[256];
-	lower_copy(key, sizeof key, model);
+	LowerCopy(key, sizeof key, model);
 	ModelVariants* entry = model_variants((XwauMissions*)missions, key, false);
 	if (!entry || !entry->count)
 		return true;

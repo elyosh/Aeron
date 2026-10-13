@@ -11,8 +11,8 @@
 
 #include "opt_gltf.h"
 
-/* Writes `document`; false on an I/O error. <out_dir> is created, and its
- * parent must exist. */
+/* Writes `document`; false on an I/O error. <out_dir> and its missing
+ * parents are created. */
 bool OptGltf_WriteFiles(const OptGltfDocument* document, const char* out_dir, const char* basename);
 
 /* Builds `opt` (OptGltf_BuildMemory) and writes it; errors and warnings

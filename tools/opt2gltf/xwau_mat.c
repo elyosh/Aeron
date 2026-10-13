@@ -5,6 +5,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "util.h"
+
 /* fgets buffer of LoadIndividualMATParams. */
 #define XWAU_MAT_LINE_MAX 3000
 
@@ -329,11 +331,10 @@ static void remove_parentheses(const char* in, char* out, size_t cap) {
 }
 
 static bool push_frame(XwauSequence* q, int group, int image, float seconds) {
-	XwauSeqFrame* grown = (XwauSeqFrame*)realloc(q->frames, (q->frame_count + 1) * sizeof *grown);
-	if (!grown)
+	XwauSeqFrame* frame = ARRAY_PUSH(q->frames, q->frame_count);
+	if (!frame)
 		return false;
-	q->frames                   = grown;
-	q->frames[q->frame_count++] = (XwauSeqFrame) { group, image, seconds };
+	*frame = (XwauSeqFrame) { group, image, seconds };
 	return true;
 }
 
@@ -527,7 +528,8 @@ static bool parse_frames(const char* line, XwauSequence* q) {
 	if (!split)
 		return false;
 	split[4] = 0;
-	snprintf(q->dat, sizeof q->dat, "%s", path);
+	if (!PathFormat(q->dat, sizeof q->dat, "%s", path))
+		return false;
 	const char* gi   = split + 5;
 	const char* dash = strrchr(gi, '-');
 	q->group_frames  = true;
@@ -579,13 +581,12 @@ static bool read_sequence_line(const char* param, const char* line, XwauMatSecti
 		sequence_free(&q);
 		return true;
 	}
-	XwauSequence* grown = (XwauSequence*)realloc(section->items, (section->count + 1) * sizeof *grown);
-	if (!grown) {
+	XwauSequence* added = ARRAY_PUSH(section->items, section->count);
+	if (!added) {
 		sequence_free(&q);
 		return false;
 	}
-	section->items                   = grown;
-	section->items[section->count++] = q;
+	*added = q;
 	return true;
 }
 
@@ -624,18 +625,14 @@ static bool save_section(XwauMatFile* file, char (*names)[XWAU_MAT_NAME_MAX], si
 /* Opens a new section; its order is 0 when it is named Default. */
 static int open_section(XwauMatFile* file, char (*names)[XWAU_MAT_NAME_MAX], size_t name_count,
 						int* next_order) {
-	XwauMatSection* grown =
-		(XwauMatSection*)realloc(file->sections, (file->section_count + 1) * sizeof *grown);
-	if (!grown)
+	XwauMatSection* section = ARRAY_PUSH(file->sections, file->section_count);
+	if (!section)
 		return -1;
-	file->sections  = grown;
 	bool is_default = false;
 	for (size_t i = 0; i < name_count; ++i)
 		is_default |= ascii_casecmp(names[i], "default") == 0;
-	XwauMatSection* section = &grown[file->section_count];
-	memset(section, 0, sizeof *section);
 	section->order = is_default ? 0 : (*next_order)++;
-	return (int)file->section_count++;
+	return (int)file->section_count - 1;
 }
 
 /* "[A,B,...]" -> names. A token counts only when ',' or ']' ends it; no

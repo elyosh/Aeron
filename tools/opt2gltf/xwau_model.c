@@ -31,13 +31,14 @@ static const char* const kBehaviors[] = { "swing", "random", "random_pause" };
  * <Model>.ini (hook GetFileLines). */
 static bool section_lines(const XwauRoots* roots, const char* model, const char* section, XwauLines* out) {
 	char rel[512], path[1024];
-	snprintf(rel, sizeof rel, "FlightModels/%s%s.txt", model, section);
-	if (!XwauLines_Read(XwauRoots_FindFile(roots, rel, path, sizeof path) ? path : NULL, "", XWAU_RULES_CPP,
+	if (!PathFormat(rel, sizeof rel, "FlightModels/%s%s.txt", model, section) ||
+		!XwauLines_Read(XwauRoots_FindFile(roots, rel, path, sizeof path) ? path : NULL, "", XWAU_RULES_CPP,
 						out))
 		return false;
 	if (out->count)
 		return true;
-	snprintf(rel, sizeof rel, "FlightModels/%s.ini", model);
+	if (!PathFormat(rel, sizeof rel, "FlightModels/%s.ini", model))
+		return false;
 	return XwauLines_Read(XwauRoots_FindFile(roots, rel, path, sizeof path) ? path : NULL, section,
 						  XWAU_RULES_CPP, out);
 }
@@ -108,14 +109,13 @@ static bool resolve_profile(const XwauLines* lines, const char* profile, const c
 		if (!Xwau_Stoi(tokens.items[t], &index) || index == -1) {
 			ok = resolve_profile(lines, tokens.items[t], stack, depth + 1, out, oom);
 		} else if (index >= 0) {
-			int* grown = (int*)realloc(out->items, (out->count + 1) * sizeof *grown);
-			if (!grown) {
+			int* item = ARRAY_PUSH(out->items, out->count);
+			if (!item) {
 				*oom = true;
 				ok   = false;
 				break;
 			}
-			out->items               = grown;
-			out->items[out->count++] = (int)index;
+			*item = (int)index;
 		}
 	}
 	XwauLines_Free(&tokens);
@@ -230,14 +230,13 @@ bool XwauModel_MeshLines(const XwauLines* lines, XwauMeshLine** out, size_t* cou
 		XwauLines_Free(&tokens);
 		if (!numbers)
 			continue;
-		XwauMeshLine* grown = (XwauMeshLine*)realloc(*out, (*count + 1) * sizeof *grown);
-		if (!grown) {
+		XwauMeshLine* added = ARRAY_PUSH(*out, *count);
+		if (!added) {
 			free(*out);
 			*out = NULL;
 			return false;
 		}
-		*out               = grown;
-		(*out)[(*count)++] = line;
+		*added = line;
 	}
 	return true;
 }
@@ -296,7 +295,8 @@ static bool add_section(const XwauRoots* roots, const char* model, const char* s
 static bool cargo_clamp_keys(const XwauRoots* roots, const char* model, XwauLines* keys) {
 	memset(keys, 0, sizeof *keys);
 	char rel[512], ini[1024];
-	snprintf(rel, sizeof rel, "FlightModels/%s.ini", model);
+	if (!PathFormat(rel, sizeof rel, "FlightModels/%s.ini", model))
+		return false;
 	if (!XwauRoots_FindFile(roots, rel, ini, sizeof ini))
 		return true;
 	XwauLines found = { 0 };
@@ -311,12 +311,7 @@ static bool cargo_clamp_keys(const XwauRoots* roots, const char* model, XwauLine
 			if (len >= 2 && line[0] == '[' && line[len - 1] == ']' && len - 2 >= prefix &&
 				strncasecmp(line + 1, CARGO_CLAMPS, prefix) == 0) {
 				line[len - 1] = 0;
-				char** grown  = (char**)realloc(found.items, (found.count + 1) * sizeof *grown);
-				ok            = grown && (grown[found.count] = Xwau_Strdup(line + 1 + prefix)) != NULL;
-				if (grown)
-					found.items = grown;
-				if (ok)
-					found.count++;
+				ok            = XwauLines_Add(&found, line + 1 + prefix, strlen(line + 1 + prefix));
 			}
 		}
 		fclose(f);
@@ -328,36 +323,23 @@ static bool cargo_clamp_keys(const XwauRoots* roots, const char* model, XwauLine
 	char prefix[512];
 	snprintf(prefix, sizeof prefix, "%s%s", model, CARGO_CLAMPS);
 	size_t       entry_count = 0;
-	char** const entries     = Xwau_ListDir(dir, true, &entry_count);
+	char** const entries     = ListDir(dir, true, &entry_count);
 	const size_t prefix_len  = strlen(prefix);
 	for (size_t i = 0; ok && i < entry_count; ++i) {
 		const size_t len = strlen(entries[i]);
 		if (len >= prefix_len + 4 && strncasecmp(entries[i], prefix, prefix_len) == 0 &&
 			strcasecmp(entries[i] + len - 4, ".txt") == 0) {
-			char** grown = (char**)realloc(found.items, (found.count + 1) * sizeof *grown);
-			ok           = grown != NULL;
-			if (ok) {
-				found.items = grown;
-				ok = (grown[found.count] = Xwau_Strndup(entries[i] + prefix_len, len - prefix_len - 4)) !=
-					 NULL;
-				found.count += ok;
-			}
+			ok = XwauLines_Add(&found, entries[i] + prefix_len, len - prefix_len - 4);
 		}
 	}
-	Xwau_FreeList(entries, entry_count);
+	FreeList(entries, entry_count);
 	for (size_t i = 0; ok && i < found.count; ++i) {
 		bool seen = !found.items[i][0];
 		for (size_t j = 0; !seen && j < keys->count; ++j)
 			seen = Xwau_SameName(keys->items[j], found.items[i]);
 		if (seen)
 			continue;
-		char** grown = (char**)realloc(keys->items, (keys->count + 1) * sizeof *grown);
-		ok           = grown != NULL;
-		if (ok) {
-			keys->items = grown;
-			ok          = (grown[keys->count] = Xwau_Strdup(found.items[i])) != NULL;
-			keys->count += ok;
-		}
+		ok = XwauLines_Add(keys, found.items[i], strlen(found.items[i]));
 	}
 	XwauLines_Free(&found);
 	if (!ok)
@@ -471,7 +453,8 @@ bool XwauModel_Read(const XwauRoots* roots, const XwauMissions* missions, const 
 		out->has_craft_eye = XwauModel_Eye(roots, craft, out->craft_eye, label);
 	}
 	char rel[512];
-	snprintf(rel, sizeof rel, "DynamicCockpit/%s.dc", model);
+	if (!PathFormat(rel, sizeof rel, "DynamicCockpit/%s.dc", model))
+		return false;
 	if (!XwauRoots_FindFile(roots, rel, out->dynamic_cockpit, sizeof out->dynamic_cockpit))
 		out->dynamic_cockpit[0] = 0;
 	return read_profiles(roots, model, out, label) && read_rotations(roots, missions, model, out, label);

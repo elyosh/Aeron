@@ -128,13 +128,9 @@ static bool skin_state_build(const opt_file_t* opt, const XwauSkinVariants* skin
 			while (c < state->count && !skin_chain_equal(&state->composites[c], (int32_t)t, chain, count))
 				++c;
 			if (c == state->count) {
-				SkinComposite* grown =
-					(SkinComposite*)realloc(state->composites, (state->count + 1) * sizeof *grown);
-				if (!grown)
+				SkinComposite* added = ARRAY_PUSH(state->composites, state->count);
+				if (!added)
 					goto fail;
-				state->composites    = grown;
-				SkinComposite* added = &grown[state->count++];
-				memset(added, 0, sizeof *added);
 				added->texture     = (int32_t)t;
 				added->chain       = (XwauSkinLayer*)malloc(count * sizeof *added->chain);
 				added->chain_count = count;
@@ -226,11 +222,13 @@ static const char* keep(XwauGltfSkins* s, const char* format, ...) {
 	va_start(args, format);
 	vsnprintf(text, sizeof text, format, args);
 	va_end(args);
-	char** grown = (char**)realloc(s->strings, (s->string_count + 1) * sizeof *grown);
-	if (!grown)
+	char*  copy = StrDup(text);
+	char** slot = copy ? ARRAY_PUSH(s->strings, s->string_count) : NULL;
+	if (!slot) {
+		free(copy);
 		return NULL;
-	s->strings = grown;
-	return (grown[s->string_count] = Xwau_Strdup(text)) ? grown[s->string_count++] : NULL;
+	}
+	return *slot = copy;
 }
 
 /* Composite `c`'s image `kind` ("" for its base). */

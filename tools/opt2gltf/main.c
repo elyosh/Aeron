@@ -35,14 +35,11 @@
  * everything XWAU gives it (model_conversion.h).
  */
 
-#include <ctype.h>
 #include <errno.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/stat.h>
-#include <sys/types.h>
 
 #include "model_conversion.h"
 #include "util.h"
@@ -51,47 +48,42 @@
 #include "xwau_mission_files.h"
 #include "xwau_missions.h"
 
-static void strip_ext(char* dst, size_t cap, const char* fname) {
-	snprintf(dst, cap, "%s", fname);
-	char* dot = strrchr(dst, '.');
-	if (dot)
-		*dot = '\0';
-}
-
 /* Converts into a project: models/<key>/<key>.gltf, its .bin and textures,
  * then, in XWAU mode, the library images it names. */
 static bool convert_into_project(const ModelConversion* mc, const char* opt_path, const char* basename,
 								 const char* project, bool replace) {
 	char key[256], models[1024], final_dir[1300], scratch[1300];
-	snprintf(key, sizeof key, "%s", basename);
-	for (char* c = key; *c; ++c)
-		*c = (char)tolower((unsigned char)*c);
-	snprintf(models, sizeof models, "%s/models", project);
-	snprintf(final_dir, sizeof final_dir, "%s/%s", models, key);
-	snprintf(scratch, sizeof scratch, "%s/.%s.opt2gltf", models, key);
-	struct stat st;
-	if (stat(final_dir, &st) == 0 && !replace) {
+	LowerCopy(key, sizeof key, basename);
+	if (!PathFormat(models, sizeof models, "%s/models", project) ||
+		!PathFormat(final_dir, sizeof final_dir, "%s/%s", models, key) ||
+		!PathFormat(scratch, sizeof scratch, "%s/.%s.opt2gltf", models, key))
+		return false;
+	if ((IsDir(final_dir) || IsFile(final_dir)) && !replace) {
 		Report(opt_path, "%s exists (--replace replaces it)", final_dir);
 		return false;
 	}
-	if (!Xwau_MakeDir(project) || !Xwau_MakeDir(models) || !Xwau_RemoveTree(scratch)) {
+	if (!MakeDirs(project) || !MakeDirs(models) || !RemoveTree(scratch)) {
 		Report(opt_path, "cannot write into %s", models);
 		return false;
 	}
 	if (!ModelConversion_Convert(mc, opt_path, basename, scratch)) {
-		Xwau_RemoveTree(scratch);
+		RemoveTree(scratch);
 		return false;
 	}
 	char from[1600], to[1600];
-	snprintf(from, sizeof from, "%s/%s.gltf", scratch, basename);
-	snprintf(to, sizeof to, "%s/%s.gltf", scratch, key);
-	if ((strcmp(from, to) != 0 && rename(from, to) != 0) || !Xwau_RemoveTree(final_dir) ||
-		rename(scratch, final_dir) != 0) {
-		Report(opt_path, "cannot place %s: %s", final_dir, strerror(errno));
-		Xwau_RemoveTree(scratch);
+	if (!PathFormat(from, sizeof from, "%s/%s.gltf", scratch, basename) ||
+		!PathFormat(to, sizeof to, "%s/%s.gltf", scratch, key)) {
+		RemoveTree(scratch);
 		return false;
 	}
-	snprintf(to, sizeof to, "%s/%s.gltf", final_dir, key);
+	if ((strcmp(from, to) != 0 && rename(from, to) != 0) || !RemoveTree(final_dir) ||
+		rename(scratch, final_dir) != 0) {
+		Report(opt_path, "cannot place %s: %s", final_dir, strerror(errno));
+		RemoveTree(scratch);
+		return false;
+	}
+	if (!PathFormat(to, sizeof to, "%s/%s.gltf", final_dir, key))
+		return false;
 	Report(opt_path, "wrote %s", to);
 	return !mc->xwau || XwauLibrary_AddModel(&mc->roots, project, to);
 }
@@ -222,8 +214,7 @@ static int run_convert(int argc, char** argv) {
 	if (a.input_count != (a.project ? 1 : 2))
 		return usage();
 	const char* in = a.inputs[0];
-	struct stat st;
-	if (stat(in, &st) != 0 || !S_ISREG(st.st_mode)) {
+	if (!IsFile(in)) {
 		Report(in, "not an OPT file");
 		return 1;
 	}
@@ -234,13 +225,18 @@ static int run_convert(int argc, char** argv) {
 		return 1;
 	}
 
-	/* The OPT's name: after the last '/' (or '\\' on Windows). */
+	/* The OPT's name: after the last '/' (or '\\' on Windows), without its
+	 * extension. */
 	const char* fname = in;
 	for (const char* c = in; *c; ++c)
 		if (*c == '/' || *c == '\\')
 			fname = c + 1;
-	char base[256];
-	strip_ext(base, sizeof base, fname);
+	const char* dot = strrchr(fname, '.');
+	char        base[256];
+	if (!PathFormat(base, sizeof base, "%.*s", dot ? (int)(dot - fname) : (int)strlen(fname), fname)) {
+		ModelConversion_Free(&mc);
+		return 1;
+	}
 	const bool ok = a.project ? convert_into_project(&mc, in, base, a.project, a.replace)
 							  : ModelConversion_Convert(&mc, in, base, a.inputs[1]);
 	ModelConversion_Free(&mc);

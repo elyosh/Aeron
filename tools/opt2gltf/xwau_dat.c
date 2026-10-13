@@ -9,6 +9,7 @@
 #define BCDEC_IMPLEMENTATION
 #define BCDEC_STATIC
 #include "bcdec.h"
+#include "util.h"
 
 #define XWAU_DAT_SIGNATURE 0x5602235657062357ull
 #define XWAU_DAT_FORMAT_8BPP_ALPHA 24
@@ -25,26 +26,6 @@ static uint16_t rd16(const uint8_t* p) { return (uint16_t)(p[0] | (p[1] << 8)); 
 
 static uint32_t rd32(const uint8_t* p) {
 	return (uint32_t)p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
-}
-
-static uint8_t* read_file(const char* path, size_t* size) {
-	FILE* f = fopen(path, "rb");
-	if (!f)
-		return NULL;
-	uint8_t* data = NULL;
-	if (fseek(f, 0, SEEK_END) == 0) {
-		long len = ftell(f);
-		if (len > 0 && fseek(f, 0, SEEK_SET) == 0) {
-			data = (uint8_t*)malloc((size_t)len);
-			if (data && fread(data, 1, (size_t)len, f) != (size_t)len) {
-				free(data);
-				data = NULL;
-			}
-			*size = (size_t)len;
-		}
-	}
-	fclose(f);
-	return data;
 }
 
 static void* lzma_alloc(ISzAllocPtr p, size_t size) {
@@ -239,7 +220,7 @@ XwauDat* XwauDat_Open(const char* path, char* error, size_t error_size) {
 	dat->path = (char*)malloc(strlen(path) + 1);
 	if (dat->path)
 		strcpy(dat->path, path);
-	dat->file = read_file(path, &dat->size);
+	dat->file = (uint8_t*)ReadWholeFile(path, &dat->size);
 	if (!dat->path || !dat->file) {
 		set_error(error, error_size, path, "cannot read file");
 		XwauDat_Close(dat);

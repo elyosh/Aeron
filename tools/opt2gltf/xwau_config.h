@@ -38,12 +38,6 @@ bool XwauRoots_FindFile(const XwauRoots* roots, const char* rel, char* out, size
 /* Root `root`'s folder at `rel`; false when it has none. */
 bool XwauRoots_FindDir(const XwauRoots* roots, int root, const char* rel, char* out, size_t cap);
 
-/* The entries of folder `dir` (not "." and ".."), in the order the file
- * system lists them, or sorted by name with `sorted`. NULL with *count 0
- * when it cannot be read. */
-char** Xwau_ListDir(const char* dir, bool sorted, size_t* count);
-void   Xwau_FreeList(char** names, size_t count);
-
 typedef enum XwauRules { XWAU_RULES_CPP, XWAU_RULES_CS } XwauRules;
 
 typedef struct XwauLines {
@@ -56,6 +50,9 @@ typedef struct XwauLines {
  * unreadable) gives no lines. False when out of memory. */
 bool XwauLines_Read(const char* path, const char* section, XwauRules rules, XwauLines* out);
 void XwauLines_Free(XwauLines* lines);
+
+/* Appends a copy of the `len` bytes of `text`. False when out of memory. */
+bool XwauLines_Add(XwauLines* lines, const char* text, size_t len);
 
 /* The value of the first line with `key`, trimmed, or "" (truncated to
  * `cap`). */
@@ -82,15 +79,10 @@ bool Xwau_Stoi(const char* text, long long* out);
  * number. False without digits. */
 bool Xwau_StoiAuto(const char* text, long long* out);
 
-/* A copy of `text`, or of its `len` first bytes; NULL when out of memory. */
-char* Xwau_Strdup(const char* text);
-char* Xwau_Strndup(const char* text, size_t len);
-
-/* Creates folder `path` and its missing parents; true when it exists. */
-bool Xwau_MakeDir(const char* path);
-
-/* Removes `path`, a file or a folder and everything in it. */
-bool Xwau_RemoveTree(const char* path);
+/* A DAT path as XWAU's files write it ("Effects\\GenericDamage.dat") as a
+ * lower-case relative path ("effects/genericdamage.dat") and its library
+ * name ("genericdamage"). False when one does not fit (reported). */
+bool Xwau_DatNames(const char* written, char* rel, size_t rel_cap, char* library, size_t lib_cap);
 
 /* A profile, skin or model name as a tag part: lower-case ASCII letters,
  * digits and '_', every other byte written as '.' and two hex digits

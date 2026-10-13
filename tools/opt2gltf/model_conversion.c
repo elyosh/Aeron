@@ -94,7 +94,7 @@ static bool stock_tags_read(StockTags* t, const char* model, const char* label) 
 		count += *c == ' ';
 	t->tags          = (OptGltfComponentTag*)calloc(count, sizeof *t->tags);
 	t->articulations = (OptGltfComponentArticulation*)calloc(count, sizeof *t->articulations);
-	t->text          = Xwau_Strdup(table);
+	t->text          = StrDup(table);
 	if (!t->tags || !t->articulations || !t->text)
 		return false;
 	for (char *token = t->text, *next; token; token = next) {
@@ -118,15 +118,6 @@ static bool stock_tags_read(StockTags* t, const char* model, const char* label) 
 		}
 	}
 	return true;
-}
-
-/* ===== XWAU materials =================================================== */
-
-static int ends_with_icase(const char* s, const char* suffix) {
-	size_t ls = strlen(s), lf = strlen(suffix);
-	if (lf > ls)
-		return 0;
-	return strcasecmp(s + ls - lf, suffix) == 0;
 }
 
 /* Texture `name` without a "_fg_" skin suffix equals `wanted`, ignoring ASCII
@@ -158,7 +149,8 @@ typedef struct XwauNormalMap {
 static const XwauNormalMap* xwau_normal_map(const ModelConversion* mc, const char* value,
 											XwauNormalMap*** cache, size_t* count, const char* label) {
 	char spec[XWAU_MAT_PATH_MAX];
-	snprintf(spec, sizeof spec, "%s", value);
+	if (!PathFormat(spec, sizeof spec, "%s", value))
+		return NULL;
 	char* image_sep = strrchr(spec, '-');
 	char* group_sep = NULL;
 	if (image_sep) {
@@ -171,7 +163,7 @@ static const XwauNormalMap* xwau_normal_map(const ModelConversion* mc, const cha
 	}
 	*group_sep      = 0;
 	const int group = atoi(group_sep + 1), image = atoi(image_sep + 1);
-	if (!ends_with_icase(spec, ".dat")) {
+	if (!EndsWithNoCase(spec, ".dat")) {
 		Report(label, "NormalMap '%s' is not a DAT image; skipped", value);
 		return NULL;
 	}
@@ -185,15 +177,13 @@ static const XwauNormalMap* xwau_normal_map(const ModelConversion* mc, const cha
 	for (size_t i = 0; i < *count; ++i)
 		if (strcmp((*cache)[i]->key, key) == 0)
 			return (*cache)[i]->ok ? (*cache)[i] : NULL;
-	XwauNormalMap** grown = (XwauNormalMap**)realloc(*cache, (*count + 1) * sizeof *grown);
-	XwauNormalMap*  nm    = (XwauNormalMap*)calloc(1, sizeof *nm);
-	if (grown)
-		*cache = grown;
-	if (!grown || !nm) {
+	XwauNormalMap*  nm   = (XwauNormalMap*)calloc(1, sizeof *nm);
+	XwauNormalMap** slot = nm ? ARRAY_PUSH(*cache, *count) : NULL;
+	if (!slot) {
 		free(nm);
 		return NULL;
 	}
-	grown[(*count)++] = nm;
+	*slot = nm;
 	snprintf(nm->key, sizeof nm->key, "%s", key);
 	const char* base = strrchr(path, '/');
 	char        stem[128];
@@ -279,17 +269,14 @@ static int apply_cockpit_eye(opt_file_t* opt, const int eye[3]) {
 	const int32_t owner_index = main_hull_mesh(opt);
 	if (owner_index < 0)
 		return 0;
-	opt_mesh_t*      owner = &opt->meshes[owner_index];
-	opt_hardpoint_t* grown =
-		(opt_hardpoint_t*)realloc(owner->hardpoints, (size_t)(owner->hardpoint_count + 1) * sizeof *grown);
-	if (!grown)
+	opt_mesh_t*      owner     = &opt->meshes[owner_index];
+	opt_hardpoint_t* eye_point = ARRAY_PUSH(owner->hardpoints, owner->hardpoint_count);
+	if (!eye_point)
 		return 0;
-	owner->hardpoints                         = grown;
-	owner->hardpoints[owner->hardpoint_count] = (opt_hardpoint_t) {
+	*eye_point = (opt_hardpoint_t) {
 		.type = (opt_hardpoint_type_t)OPT_GLTF_COCKPIT_HARDPOINT,
 		.pos  = { (float)eye[0], (float)-eye[1], (float)eye[2] },
 	};
-	owner->hardpoint_count++;
 	return 1;
 }
 
@@ -431,7 +418,8 @@ static bool load_dynamic_cockpit(Conversion* c, const ModelConversion* mc, opt_f
 static bool bake_xwau(Conversion* c, const ModelConversion* mc, const opt_file_t* opt, const char* basename,
 					  const char* label) {
 	char rel[512];
-	snprintf(rel, sizeof rel, "Materials/%s.mat", basename);
+	if (!PathFormat(rel, sizeof rel, "Materials/%s.mat", basename))
+		return false;
 	c->mat =
 		xwau_find(mc, rel, c->mat_path, sizeof c->mat_path) ? XwauMat_Load(c->mat_path, &mc->global) : NULL;
 

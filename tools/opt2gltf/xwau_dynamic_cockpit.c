@@ -263,7 +263,8 @@ static const XwauDynamicCockpitCover* load_cover(XwauDynamicCockpit* dc, const c
 												 XwauDynamicCockpitFindFile find, void* find_context,
 												 const char* label) {
 	char spec[512];
-	snprintf(spec, sizeof spec, "%s", value);
+	if (!PathFormat(spec, sizeof spec, "%s", value))
+		return NULL;
 	char* image_sep = strrchr(spec, '-');
 	char* group_sep = NULL;
 	if (image_sep) {
@@ -291,16 +292,13 @@ static const XwauDynamicCockpitCover* load_cover(XwauDynamicCockpit* dc, const c
 	for (size_t i = 0; i < dc->cover_count; ++i)
 		if (strcmp(dc->covers[i]->key, key) == 0)
 			return dc->covers[i]->ok ? dc->covers[i] : NULL;
-	XwauDynamicCockpitCover** grown =
-		(XwauDynamicCockpitCover**)realloc(dc->covers, (dc->cover_count + 1) * sizeof *grown);
-	XwauDynamicCockpitCover* cover = (XwauDynamicCockpitCover*)calloc(1, sizeof *cover);
-	if (grown)
-		dc->covers = grown;
-	if (!grown || !cover) {
+	XwauDynamicCockpitCover*  cover = (XwauDynamicCockpitCover*)calloc(1, sizeof *cover);
+	XwauDynamicCockpitCover** slot  = cover ? ARRAY_PUSH(dc->covers, dc->cover_count) : NULL;
+	if (!slot) {
 		free(cover);
 		return NULL;
 	}
-	grown[dc->cover_count++] = cover;
+	*slot = cover;
 	snprintf(cover->key, sizeof cover->key, "%s", key);
 	const char* base = strrchr(path, '/');
 	char        stem[128];
@@ -549,8 +547,8 @@ bool XwauDynamicCockpit_Load(const char* dc_path, const opt_file_t* opt, const c
 		const size_t len = strlen(basename);
 		char         craft[256], relative[300], path[1024];
 		snprintf(craft, sizeof craft, "%.*s", (int)(len > 7 ? len - 7 : 0), basename);
-		snprintf(relative, sizeof relative, "FlightModels/%s.ini", craft);
-		if (find(find_context, relative, path, sizeof path) &&
+		if (PathFormat(relative, sizeof relative, "FlightModels/%s.ini", craft) &&
+			find(find_context, relative, path, sizeof path) &&
 			load_hologram_offset(path, out->hologram_offset))
 			out->has_hologram_offset = out->hologram_offset[0] != 0.0f || out->hologram_offset[1] != 0.0f ||
 									   out->hologram_offset[2] != 0.0f;
@@ -597,15 +595,12 @@ bool XwauDynamicCockpit_ApplyHologramOffset(opt_file_t* opt, const XwauDynamicCo
 					if (vi < 0 || vi >= original)
 						continue;
 					if (moved[vi] < 0) {
-						opt_vec3_t* grown = (opt_vec3_t*)realloc(m->vertices, (size_t)(m->vertex_count + 1) *
-																				  sizeof *m->vertices);
-						if (!grown) {
+						const int32_t copy = m->vertex_count;
+						if (!ARRAY_PUSH(m->vertices, m->vertex_count)) {
 							free(moved);
 							return false;
 						}
-						m->vertices        = grown;
-						const int32_t copy = m->vertex_count++;
-						m->vertices[copy]  = m->vertices[vi];
+						m->vertices[copy] = m->vertices[vi];
 						m->vertices[copy].x += dc->hologram_offset[0];
 						m->vertices[copy].y += dc->hologram_offset[1];
 						m->vertices[copy].z += dc->hologram_offset[2];

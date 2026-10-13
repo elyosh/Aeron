@@ -11,13 +11,6 @@
 
 static const char* const kMissionDirs[] = { "Missions", "Melee" };
 
-static void lower_copy(char* out, size_t cap, const char* text) {
-	size_t n = 0;
-	for (; text[n] && n + 1 < cap; ++n)
-		out[n] = Xwau_Lower(text[n]);
-	out[n] = 0;
-}
-
 /* Writes ISO-8859-1 `text` as a quoted YAML string, in UTF-8. */
 static void write_string(FILE* f, const char* text) {
 	fputc('"', f);
@@ -106,14 +99,14 @@ static bool profiles(const XwauRoots* roots, const char* base, Profile** out, si
 	*count = 0;
 	char      rel[1100], path[1024];
 	XwauLines lines;
-	snprintf(rel, sizeof rel, "%s_Objects.txt", base);
-	if (!XwauLines_Read(XwauRoots_FindFile(roots, rel, path, sizeof path) ? path : NULL, "", XWAU_RULES_CPP,
+	if (!PathFormat(rel, sizeof rel, "%s_Objects.txt", base) ||
+		!XwauLines_Read(XwauRoots_FindFile(roots, rel, path, sizeof path) ? path : NULL, "", XWAU_RULES_CPP,
 						&lines))
 		return false;
 	bool ok = true;
 	if (!lines.count) {
-		snprintf(rel, sizeof rel, "%s.ini", base);
-		ok = XwauLines_Read(XwauRoots_FindFile(roots, rel, path, sizeof path) ? path : NULL, "Objects",
+		ok = PathFormat(rel, sizeof rel, "%s.ini", base) &&
+			 XwauLines_Read(XwauRoots_FindFile(roots, rel, path, sizeof path) ? path : NULL, "Objects",
 							XWAU_RULES_CPP, &lines);
 	}
 	static const char kPrefix[] = "objectprofile_", kFgPrefix[] = "objectprofile_fg_";
@@ -144,12 +137,14 @@ static bool profiles(const XwauRoots* roots, const char* base, Profile** out, si
 			seen = (*out)[k].fg == fg;
 		if (seen || !*value)
 			continue;
-		Profile* grown = (Profile*)realloc(*out, (*count + 1) * sizeof *grown);
-		ok             = grown && (grown[*count].profile = Xwau_Strdup(value)) != NULL;
-		if (grown)
-			*out = grown;
-		if (ok)
-			grown[(*count)++].fg = fg;
+		char*    profile = StrDup(value);
+		Profile* added   = profile ? ARRAY_PUSH(*out, *count) : NULL;
+		if (!(ok = added != NULL)) {
+			free(profile);
+			break;
+		}
+		added->profile = profile;
+		added->fg      = fg;
 	}
 	XwauLines_Free(&lines);
 	if (*count)
@@ -205,27 +200,26 @@ static bool load_skin_models(const XwauRoots* roots, const XwauMissions* mission
 		if (!XwauRoots_FindDir(roots, r, "FlightModels", dir, sizeof dir))
 			continue;
 		size_t count   = 0;
-		char** entries = Xwau_ListDir(dir, true, &count);
+		char** entries = ListDir(dir, true, &count);
 		for (size_t i = 0; ok && i < count; ++i) {
 			const size_t len = strlen(entries[i]);
 			char         key[256];
 			if (len <= 4 || strcasecmp(entries[i] + len - 4, ".opt") != 0 || len - 4 >= sizeof key)
 				continue;
-			lower_copy(key, len - 3, entries[i]);
+			LowerCopy(key, len - 3, entries[i]);
 			bool known = false;
 			for (size_t k = 0; !known && k < seen.count; ++k)
 				known = strcmp(seen.items[k], key) == 0;
 			char path[2048];
-			snprintf(path, sizeof path, "%s/%s", dir, entries[i]);
-			FILE* f = known ? NULL : fopen(path, "rb");
-			if (!f)
+			if (known || !PathFormat(path, sizeof path, "%s/%s", dir, entries[i]) || !IsFile(path))
 				continue;
-			fclose(f);
-			char** grown = (char**)realloc(seen.items, (seen.count + 1) * sizeof *grown);
-			ok           = grown && (grown[seen.count] = Xwau_Strdup(key)) != NULL;
-			if (grown)
-				seen.items = grown;
-			seen.count += ok;
+			char*  copy = StrDup(key);
+			char** slot = copy ? ARRAY_PUSH(seen.items, seen.count) : NULL;
+			if (slot)
+				*slot = copy;
+			else
+				free(copy);
+			ok              = slot != NULL;
 			SkinModel model = { 0 };
 			snprintf(model.key, sizeof model.key, "%s", key);
 			ok = ok && XwauSkins_Names(roots, key, &model.skins);
@@ -244,22 +238,20 @@ static bool load_skin_models(const XwauRoots* roots, const XwauMissions* mission
 			opt_free(opt);
 			ok = XwauSkins_Markings(XwauMissions_SkinContext(missions, 0), key, model.states, &model.skins,
 									out->scratch, &model.default_count);
-			model.defaults = ok ? (XwauMarkings*)malloc((model.default_count ? model.default_count : 1) *
-														sizeof *model.defaults)
-								: NULL;
-			SkinModel* models =
-				model.defaults ? (SkinModel*)realloc(out->models, (out->count + 1) * sizeof *models) : NULL;
-			ok = models != NULL;
+			model.defaults   = ok ? (XwauMarkings*)malloc((model.default_count ? model.default_count : 1) *
+														  sizeof *model.defaults)
+								  : NULL;
+			SkinModel* added = model.defaults ? ARRAY_PUSH(out->models, out->count) : NULL;
+			ok               = added != NULL;
 			if (!ok) {
 				XwauSkins_FreeNames(&model.skins);
 				free(model.defaults);
 				break;
 			}
 			memcpy(model.defaults, out->scratch, model.default_count * sizeof *model.defaults);
-			out->models               = models;
-			out->models[out->count++] = model;
+			*added = model;
 		}
-		Xwau_FreeList(entries, count);
+		FreeList(entries, count);
 	}
 	XwauLines_Free(&seen);
 	if (ok && out->count)
@@ -293,14 +285,11 @@ static bool skin_choices(const SkinModels* s, const XwauLines* lines, const char
 				 strcmp(now->list, before->list) == 0) ||
 				(!now->skinned && !before->skinned))
 				continue;
-			SkinChoice* grown = (SkinChoice*)realloc(*out, (*count + 1) * sizeof *grown);
-			if (!(ok = grown != NULL))
+			SkinChoice* entry = ARRAY_PUSH(*out, *count);
+			if (!(ok = entry != NULL))
 				break;
-			*out              = grown;
-			SkinChoice* entry = &grown[(*count)++];
-			entry->model      = m;
-			entry->markings   = i;
-			entry->variant[0] = 0;
+			entry->model    = m;
+			entry->markings = i;
 			if (now->skinned) {
 				snprintf(entry->variant, sizeof entry->variant, "%d|%s", now->state, now->list);
 			} else {
@@ -455,7 +444,8 @@ static bool import_mission(const XwauRoots* roots, const XwauMissions* missions,
 						   const char* dir, const char* name, const char* out, SkinModels* skin_models,
 						   bool* skins_loaded, Totals* totals) {
 	char base[1100];
-	snprintf(base, sizeof base, "%s/%s", dir, name);
+	if (!PathFormat(base, sizeof base, "%s/%s", dir, name))
+		return false;
 	Profile*    profile_list  = NULL;
 	size_t      profile_count = 0;
 	SkinChoice* skins         = NULL;
@@ -480,10 +470,10 @@ static bool import_mission(const XwauRoots* roots, const XwauMissions* missions,
 		return ok;
 	}
 
-	char rel[1200], xwau_path[1024], stock_path[1024];
-	snprintf(rel, sizeof rel, "%s.tie", base);
-	const bool has_xwau  = XwauRoots_FindFile(roots, rel, xwau_path, sizeof xwau_path);
-	const bool has_stock = XwauRoots_FindFile(stock_roots, rel, stock_path, sizeof stock_path);
+	char       rel[1200], xwau_path[1024], stock_path[1024];
+	const bool named     = PathFormat(rel, sizeof rel, "%s.tie", base);
+	const bool has_xwau  = named && XwauRoots_FindFile(roots, rel, xwau_path, sizeof xwau_path);
+	const bool has_stock = named && XwauRoots_FindFile(stock_roots, rel, stock_path, sizeof stock_path);
 	Tie        xwau = { 0 }, stock = { 0 };
 	if (has_xwau)
 		xwau.groups = XwauTie_FlightGroups(xwau_path, &xwau.count);
@@ -523,10 +513,9 @@ static bool import_mission(const XwauRoots* roots, const XwauMissions* missions,
 	ok = profile_targets && fg_targets;
 	if (ok && (profiles_kept || skin_count || fgs_kept)) {
 		char dir_path[1200], lower_dir[64], path[1400];
-		lower_copy(lower_dir, sizeof lower_dir, dir);
-		snprintf(dir_path, sizeof dir_path, "%s/%s", out, lower_dir);
-		snprintf(path, sizeof path, "%s/%s.yaml", dir_path, name);
-		ok = Xwau_MakeDir(dir_path) &&
+		LowerCopy(lower_dir, sizeof lower_dir, dir);
+		ok = PathFormat(dir_path, sizeof dir_path, "%s/%s", out, lower_dir) &&
+			 PathFormat(path, sizeof path, "%s/%s.yaml", dir_path, name) && MakeDirs(dir_path) &&
 			 write_mission(path, base, profile_list, profile_targets, profile_count, skin_models, skins,
 						   skin_count, fgs, fg_targets, fg_count, &stock);
 		if (ok) {

@@ -334,11 +334,13 @@ static const char* keep(struct XwauGltfBakeState* s, const char* format, ...) {
 	va_start(args, format);
 	vsnprintf(text, sizeof text, format, args);
 	va_end(args);
-	char** grown = (char**)realloc(s->strings, (s->string_count + 1) * sizeof *grown);
-	if (!grown)
+	char*  copy = StrDup(text);
+	char** slot = copy ? ARRAY_PUSH(s->strings, s->string_count) : NULL;
+	if (!slot) {
+		free(copy);
 		return NULL;
-	s->strings = grown;
-	return (grown[s->string_count] = Xwau_Strdup(text)) ? grown[s->string_count++] : NULL;
+	}
+	return *slot = copy;
 }
 
 /* Texture `i`'s image `kind` (Tex<i>_<kind>, <basename>_Tex<i>_<kind>.png). */

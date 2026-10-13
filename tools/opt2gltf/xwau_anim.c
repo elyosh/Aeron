@@ -9,6 +9,7 @@
 
 #include "opt_json.h"
 #include "util.h"
+#include "xwau_config.h"
 #include "xwau_dat.h"
 #include "xwau_effect_bake.h"
 
@@ -96,13 +97,12 @@ struct XwauAnim {
 static bool own(XwauAnim* a, void* p) {
 	if (!p)
 		return false;
-	void** grown = (void**)realloc(a->owned.items, (a->owned.count + 1) * sizeof *grown);
-	if (!grown) {
+	void** slot = ARRAY_PUSH(a->owned.items, a->owned.count);
+	if (!slot) {
 		free(p);
 		return false;
 	}
-	a->owned.items                   = grown;
-	a->owned.items[a->owned.count++] = p;
+	*slot = p;
 	return true;
 }
 
@@ -133,35 +133,20 @@ void XwauAnim_End(XwauAnim* a) {
 
 bool XwauAnim_Any(const XwauAnim* a) { return a->any; }
 
-/* "Effects\GenericDamage.dat" -> rel "effects/genericdamage.dat", library
- * "genericdamage". */
-static void dat_names(const char* written, char* rel, size_t rel_cap, char* library, size_t lib_cap) {
-	size_t n = 0;
-	for (const char* p = written; *p && n + 1 < rel_cap; ++p)
-		rel[n++] = *p == '\\' ? '/' : (char)tolower((unsigned char)*p);
-	rel[n]           = 0;
-	const char* base = strrchr(rel, '/');
-	base             = base ? base + 1 : rel;
-	snprintf(library, lib_cap, "%s", base);
-	char* dot = strrchr(library, '.');
-	if (dot)
-		*dot = 0;
-}
-
 static const OpenDat* open_dat(XwauAnim* a, const char* written) {
 	char rel[256], library[64];
-	dat_names(written, rel, sizeof rel, library, sizeof library);
+	if (!Xwau_DatNames(written, rel, sizeof rel, library, sizeof library))
+		return NULL;
 	for (size_t i = 0; i < a->dat_count; ++i)
 		if (strcmp(a->dats[i]->rel, rel) == 0)
 			return a->dats[i]->dat ? a->dats[i] : NULL;
-	OpenDat** grown = (OpenDat**)realloc(a->dats, (a->dat_count + 1) * sizeof *grown);
-	if (!grown)
+	OpenDat*  d    = (OpenDat*)calloc(1, sizeof *d);
+	OpenDat** slot = d ? ARRAY_PUSH(a->dats, a->dat_count) : NULL;
+	if (!slot) {
+		free(d);
 		return NULL;
-	a->dats    = grown;
-	OpenDat* d = (OpenDat*)calloc(1, sizeof *d);
-	if (!d)
-		return NULL;
-	grown[a->dat_count++] = d;
+	}
+	*slot = d;
 	snprintf(d->rel, sizeof d->rel, "%s", rel);
 	if (a->find(a->find_context, written, d->path, sizeof d->path)) {
 		char err[512];
@@ -313,7 +298,8 @@ typedef struct Flipbook {
 static bool flipbook_json(cJSON* list, const char* state, int layer, const Flipbook* fb, float unlit) {
 	const XwauSequence* q = fb->seq;
 	char                library[64], rel[256];
-	dat_names(fb->dat->rel, rel, sizeof rel, library, sizeof library);
+	if (!Xwau_DatNames(fb->dat->rel, rel, sizeof rel, library, sizeof library))
+		return false;
 	cJSON* object = OptJson_AddObject(list, NULL);
 	bool   ok = OptJson_Add(object, "state", cJSON_CreateString(state)) &&
 				OptJson_Add(object, "layer", cJSON_CreateString(layer ? "emissive" : "baseColor")) &&
@@ -395,7 +381,8 @@ static bool damage_json(XwauAnim* a, cJSON* object, const XwauMatSequences* own_
 		(sizes[2] && sizes[2] != alternatives) || !sizes[0] || !sizes[1] || !sizes[2])
 		a->mixed_damage++;
 	char library[64], rel[256];
-	dat_names(d->rel, rel, sizeof rel, library, sizeof library);
+	if (!Xwau_DatNames(d->rel, rel, sizeof rel, library, sizeof library))
+		return false;
 	bool has_own_instance = false;
 	for (size_t i = 0; i < own_list->count; ++i)
 		has_own_instance |= own_list->items[i].instance;

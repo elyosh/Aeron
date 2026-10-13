@@ -5,7 +5,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
-#include <sys/stat.h>
 
 #define STB_IMAGE_STATIC
 #define STB_IMAGE_IMPLEMENTATION
@@ -18,21 +17,6 @@
 static const char* const kExtensions[] = { ".bmp", ".png", ".jpg" };
 #define EXTENSION_COUNT (sizeof kExtensions / sizeof kExtensions[0])
 
-static char* dup_string(const char* s) {
-	const size_t n    = strlen(s) + 1;
-	char*        copy = (char*)malloc(n);
-	if (copy)
-		memcpy(copy, s, n);
-	return copy;
-}
-
-/* ASCII lower case (file names are UTF-8). */
-static void ascii_lower(char* s) {
-	for (; *s; ++s)
-		if (*s >= 'A' && *s <= 'Z')
-			*s = (char)(*s + 32);
-}
-
 static bool has_extension(const char* name) {
 	const size_t len = strlen(name);
 	for (size_t e = 0; e < EXTENSION_COUNT; ++e)
@@ -41,27 +25,16 @@ static bool has_extension(const char* name) {
 	return false;
 }
 
-static bool is_file(const char* path) {
-	struct stat st;
-	return stat(path, &st) == 0 && S_ISREG(st.st_mode);
-}
-
-static bool is_dir(const char* path) {
-	struct stat st;
-	return stat(path, &st) == 0 && S_ISDIR(st.st_mode);
-}
-
 /* Whether folder `dir` has a file at its top level. */
 static bool has_files(const char* dir) {
 	size_t count   = 0;
-	char** entries = Xwau_ListDir(dir, false, &count);
+	char** entries = ListDir(dir, false, &count);
 	bool   found   = false;
 	for (size_t i = 0; !found && i < count; ++i) {
 		char path[2048];
-		snprintf(path, sizeof path, "%s/%s", dir, entries[i]);
-		found = is_file(path);
+		found = PathFormat(path, sizeof path, "%s/%s", dir, entries[i]) && IsFile(path);
 	}
-	Xwau_FreeList(entries, count);
+	FreeList(entries, count);
 	return found;
 }
 
@@ -70,22 +43,6 @@ static bool has_files(const char* dir) {
 static uint32_t le16(const uint8_t* p) { return (uint32_t)p[0] | ((uint32_t)p[1] << 8); }
 
 static uint32_t le32(const uint8_t* p) { return le16(p) | (le16(p + 2) << 16); }
-
-static uint8_t* read_all(const char* path, size_t* size) {
-	FILE* f = fopen(path, "rb");
-	if (!f)
-		return NULL;
-	uint8_t* data = NULL;
-	long     n    = fseek(f, 0, SEEK_END) == 0 ? ftell(f) : -1;
-	if (n > 0 && fseek(f, 0, SEEK_SET) == 0 && (data = (uint8_t*)malloc((size_t)n)) != NULL &&
-		fread(data, 1, (size_t)n, f) != (size_t)n) {
-		free(data);
-		data = NULL;
-	}
-	fclose(f);
-	*size = data ? (size_t)n : 0;
-	return data;
-}
 
 /* The data of the first entry of the zip `zip` whose file name (whatever its
  * folder) is `name` (case-insensitive), stored or deflated; NULL when it has
@@ -155,20 +112,22 @@ static bool skin_set_has(const XwauSkinSet* set, const char* name) {
 static bool skin_set_add(XwauSkinSet* set, const char* name) {
 	if (skin_set_has(set, name))
 		return true;
-	char** grown = (char**)realloc(set->names, (set->count + 1) * sizeof *grown);
-	if (!grown)
+	char*  copy = StrDup(name);
+	char** slot = copy ? ARRAY_PUSH(set->names, set->count) : NULL;
+	if (!slot) {
+		free(copy);
 		return false;
-	set->names = grown;
-	if (!(grown[set->count] = dup_string(name)))
-		return false;
-	ascii_lower(grown[set->count++]);
+	}
+	LowerInPlace(copy);
+	*slot = copy;
 	return true;
 }
 
 bool XwauSkins_Names(const XwauRoots* roots, const char* model, XwauSkinSet* out) {
 	memset(out, 0, sizeof *out);
 	char rel[512];
-	snprintf(rel, sizeof rel, "FlightModels/Skins/%s", model);
+	if (!PathFormat(rel, sizeof rel, "FlightModels/Skins/%s", model))
+		return false;
 	bool ok = true;
 	for (int r = 0; ok && r < roots->count; ++r) {
 		char dir[1024];
@@ -176,15 +135,16 @@ bool XwauSkins_Names(const XwauRoots* roots, const char* model, XwauSkinSet* out
 			continue;
 		out->exists    = true;
 		size_t count   = 0;
-		char** entries = Xwau_ListDir(dir, false, &count);
+		char** entries = ListDir(dir, false, &count);
 		for (size_t i = 0; ok && i < count; ++i) {
 			char path[2048];
-			snprintf(path, sizeof path, "%s/%s", dir, entries[i]);
+			if (!(ok = PathFormat(path, sizeof path, "%s/%s", dir, entries[i])))
+				break;
 			const size_t len = strlen(entries[i]);
-			if (is_dir(path)) {
+			if (IsDir(path)) {
 				if (has_files(path))
 					ok = skin_set_add(out, entries[i]);
-			} else if (is_file(path)) {
+			} else if (IsFile(path)) {
 				ok = skin_set_add(out, "");
 				if (ok && len > 4 && strcasecmp(entries[i] + len - 4, ".zip") == 0) {
 					char base[1024];
@@ -193,13 +153,13 @@ bool XwauSkins_Names(const XwauRoots* roots, const char* model, XwauSkinSet* out
 				}
 			}
 		}
-		Xwau_FreeList(entries, count);
+		FreeList(entries, count);
 	}
 	return ok;
 }
 
 void XwauSkins_FreeNames(XwauSkinSet* set) {
-	Xwau_FreeList(set->names, set->count);
+	FreeList(set->names, set->count);
 	memset(set, 0, sizeof *set);
 }
 
@@ -253,11 +213,14 @@ bool XwauSkins_Markings(const XwauLines* lines, const char* model, int states, c
 		return true;
 	char base_value[4096];
 	XwauLines_Value(lines, model, XWAU_RULES_CS, base_value, sizeof base_value);
+	/* The <model>_fgc_<i> values. */
+	char (*fgc)[4096] = (char (*)[4096])calloc(XWAU_SKINS_MAX_MARKINGS, sizeof *fgc);
 	XwauLines base;
-	if (!Xwau_Tokenize(base_value, XWAU_RULES_CS, &base))
+	if (!fgc || !Xwau_Tokenize(base_value, XWAU_RULES_CS, &base)) {
+		free(fgc);
 		return false;
-	static char fgc[XWAU_SKINS_MAX_MARKINGS][4096];
-	int         fgc_count = 0, default_count = 0;
+	}
+	int fgc_count = 0, default_count = 0;
 	for (int i = 0; i < XWAU_SKINS_MAX_MARKINGS; ++i) {
 		char key[512], skin[32];
 		snprintf(key, sizeof key, "%s_fgc_%d", model, i);
@@ -271,6 +234,7 @@ bool XwauSkins_Markings(const XwauLines* lines, const char* model, int states, c
 	const bool has_default = skin_set_has(skins, "default") || default_count;
 	if (!(has_default || base.count || fgc_count)) {
 		XwauLines_Free(&base);
+		free(fgc);
 		return true;
 	}
 	int markings = fgc_count > states ? fgc_count : states;
@@ -287,19 +251,13 @@ bool XwauSkins_Markings(const XwauLines* lines, const char* model, int states, c
 			ok = Xwau_Tokenize(fgc[i], XWAU_RULES_CS, &own);
 			for (size_t t = 0; ok && t < base.count + own.count; ++t) {
 				const char* token = t < base.count ? base.items[t] : own.items[t - base.count];
-				char**      grown = (char**)realloc(tokens.items, (tokens.count + 1) * sizeof *grown);
-				ok                = grown && (grown[tokens.count] = dup_string(token)) != NULL;
-				if (grown)
-					tokens.items = grown;
-				tokens.count += ok;
+				ok                = XwauLines_Add(&tokens, token, strlen(token));
 			}
 			if (ok && !tokens.count) {
 				char fallback[32], lower[32];
 				snprintf(lower, sizeof lower, "default_%d", i);
 				snprintf(fallback, sizeof fallback, skin_set_has(skins, lower) ? "Default_%d" : "Default", i);
-				tokens.items = (char**)malloc(sizeof *tokens.items);
-				ok           = tokens.items && (tokens.items[0] = dup_string(fallback)) != NULL;
-				tokens.count = ok;
+				ok = XwauLines_Add(&tokens, fallback, strlen(fallback));
 			}
 			if (ok)
 				canonical(&tokens, skins, r->list, sizeof r->list);
@@ -309,6 +267,7 @@ bool XwauSkins_Markings(const XwauLines* lines, const char* model, int states, c
 		r->skinned = r->list[0] != 0;
 	}
 	XwauLines_Free(&base);
+	free(fgc);
 	return ok;
 }
 
@@ -317,30 +276,30 @@ static int skin_index(XwauSkins* s, const char* name) {
 	for (size_t i = 0; i < s->skins.skin_count; ++i)
 		if (strcmp(s->skin_names[i], name) == 0)
 			return (int)i;
-	char** grown = (char**)realloc(s->skin_names, (s->skins.skin_count + 1) * sizeof *grown);
-	if (!grown)
+	char*  copy = StrDup(name);
+	char** slot = copy ? ARRAY_PUSH(s->skin_names, s->skins.skin_count) : NULL;
+	if (!slot) {
+		free(copy);
 		return -1;
-	s->skin_names = grown;
-	if (!(grown[s->skins.skin_count] = dup_string(name)))
-		return -1;
-	return (int)s->skins.skin_count++;
+	}
+	*slot = copy;
+	return (int)s->skins.skin_count - 1;
 }
 
 static bool add_variant(XwauSkins* s, const char* name, int state, const char* key, const char* label) {
 	for (size_t i = 0; i < s->skins.variant_count; ++i)
 		if (strcmp(s->variant_names[i], name) == 0)
 			return true;
-	const size_t     v     = s->skins.variant_count;
-	XwauSkinVariant* grown = (XwauSkinVariant*)realloc(s->variants, (v + 1) * sizeof *grown);
-	char**           names = grown ? (char**)realloc(s->variant_names, (v + 1) * sizeof *names) : NULL;
-	if (grown)
-		s->variants = grown;
-	if (names)
-		s->variant_names = names;
-	if (!grown || !names || !(names[v] = dup_string(name)))
+	/* The variants and their names, side by side. */
+	const size_t v    = s->skins.variant_count;
+	char*        copy = StrDup(name);
+	if (!copy || !ArrayGrow((void**)&s->variants, v, sizeof *s->variants) ||
+		!ArrayGrow((void**)&s->variant_names, v, sizeof *s->variant_names)) {
+		free(copy);
 		return false;
-	memset(&grown[v], 0, sizeof grown[v]);
-	grown[v].state = (uint32_t)state;
+	}
+	s->variant_names[v]  = copy;
+	s->variants[v].state = (uint32_t)state;
 	s->skins.variant_count++;
 	/* The layers, stored by index: pointers are set once all are known. */
 	char list[1024];
@@ -363,13 +322,11 @@ static bool add_variant(XwauSkins* s, const char* name, int state, const char* k
 		size_t    layer = 0;
 		for (size_t i = 0; i < v; ++i)
 			layer += s->variants[i].layer_count;
-		layer += grown[v].layer_count;
-		XwauSkinLayer* layers = (XwauSkinLayer*)realloc(s->layers, (layer + 1) * sizeof *layers);
-		if (index < 0 || !layers)
+		layer += s->variants[v].layer_count;
+		if (index < 0 || !ArrayGrow((void**)&s->layers, layer, sizeof *s->layers))
 			return false;
-		s->layers        = layers;
 		s->layers[layer] = (XwauSkinLayer) { (uint32_t)index, (uint32_t)opacity };
-		grown[v].layer_count++;
+		s->variants[v].layer_count++;
 	}
 	return true;
 }
@@ -379,7 +336,8 @@ static bool add_variant(XwauSkins* s, const char* name, int state, const char* k
 static uint8_t* skin_file(const XwauRoots* roots, const char* model, const char* skin, const char* file,
 						  size_t* size, const char* label) {
 	char rel[1024];
-	snprintf(rel, sizeof rel, "FlightModels/Skins/%s/%s", model, skin);
+	if (!PathFormat(rel, sizeof rel, "FlightModels/Skins/%s/%s", model, skin))
+		return NULL;
 	bool folders = false;
 	for (int r = 0; r < roots->count; ++r) {
 		char dir[1024];
@@ -387,41 +345,46 @@ static uint8_t* skin_file(const XwauRoots* roots, const char* model, const char*
 			continue;
 		folders        = true;
 		size_t count   = 0;
-		char** entries = Xwau_ListDir(dir, false, &count);
+		char** entries = ListDir(dir, false, &count);
 		for (size_t i = 0; i < count; ++i) {
 			char entry[2048];
-			snprintf(entry, sizeof entry, "%s/%s", dir, entries[i]);
-			if (strcasecmp(entries[i], file) == 0 && is_file(entry)) {
-				Xwau_FreeList(entries, count);
-				return read_all(entry, size);
+			if (strcasecmp(entries[i], file) == 0 &&
+				PathFormat(entry, sizeof entry, "%s/%s", dir, entries[i]) && IsFile(entry)) {
+				FreeList(entries, count);
+				/* An empty file is no image. */
+				uint8_t* data = (uint8_t*)ReadWholeFile(entry, size);
+				if (data && !*size) {
+					free(data);
+					data = NULL;
+				}
+				return data;
 			}
 		}
-		Xwau_FreeList(entries, count);
+		FreeList(entries, count);
 	}
-	if (folders)
+	if (folders || !PathFormat(rel, sizeof rel, "FlightModels/Skins/%s", model))
 		return NULL;
-	snprintf(rel, sizeof rel, "FlightModels/Skins/%s", model);
 	for (int r = 0; r < roots->count; ++r) {
 		char dir[1024];
 		if (!XwauRoots_FindDir(roots, r, rel, dir, sizeof dir))
 			continue;
 		size_t count     = 0;
-		char** entries   = Xwau_ListDir(dir, false, &count);
+		char** entries   = ListDir(dir, false, &count);
 		char   zip[2048] = "";
 		for (size_t i = 0; i < count; ++i) {
 			char path[2048], lower[1024];
 			snprintf(lower, sizeof lower, "%s", entries[i]);
-			ascii_lower(lower);
-			snprintf(path, sizeof path, "%s/%s", dir, entries[i]);
+			LowerInPlace(lower);
 			if (strlen(lower) == strlen(skin) + 4 && strncmp(lower, skin, strlen(skin)) == 0 &&
-				strcmp(lower + strlen(skin), ".zip") == 0 && is_file(path))
+				strcmp(lower + strlen(skin), ".zip") == 0 &&
+				PathFormat(path, sizeof path, "%s/%s", dir, entries[i]) && IsFile(path))
 				snprintf(zip, sizeof zip, "%s", path);
 		}
-		Xwau_FreeList(entries, count);
+		FreeList(entries, count);
 		if (!zip[0])
 			continue;
 		size_t   zip_size = 0;
-		uint8_t* data     = read_all(zip, &zip_size);
+		uint8_t* data     = (uint8_t*)ReadWholeFile(zip, &zip_size);
 		uint8_t* entry    = data ? zip_entry(data, zip_size, file, size, label, zip) : NULL;
 		free(data);
 		return entry;
@@ -435,7 +398,7 @@ static bool load_image(const XwauRoots* roots, const char* model, const char* sk
 					   const char* label, size_t* skipped, OptGltfImageView* out) {
 	char name[256];
 	snprintf(name, sizeof name, "%s", t->name);
-	ascii_lower(name);
+	LowerInPlace(name);
 	memset(out, 0, sizeof *out);
 	if (!name[0])
 		return true;
@@ -509,7 +472,7 @@ bool XwauSkins_Resolve(const XwauRoots* roots, const XwauMissions* missions, con
 			for (size_t i = 0; ok && i < count; ++i) {
 				char name[1100];
 				snprintf(name, sizeof name, "%d|%s", lists[i].state, lists[i].list);
-				ok = !lists[i].skinned || (out->markings[i] = dup_string(name)) != NULL;
+				ok = !lists[i].skinned || (out->markings[i] = StrDup(name)) != NULL;
 			}
 			out->skins.markings_count = ok ? count : 0;
 		}

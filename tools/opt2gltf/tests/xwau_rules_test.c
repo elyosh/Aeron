@@ -10,6 +10,7 @@
 #include <string.h>
 
 #include "opt.h"
+#include "util.h"
 #include "xwau_config.h"
 #include "xwau_missions.h"
 #include "xwau_skins.h"
@@ -167,21 +168,21 @@ static void test_skins(const char* scratch) {
 		char        root[1024], dir[1100], path[1300];
 		snprintf(root, sizeof root, "%s/skins%zu", scratch, c);
 		snprintf(dir, sizeof dir, "%s/FlightModels", root);
-		Xwau_MakeDir(dir);
+		MakeDirs(dir);
 		snprintf(path, sizeof path, "%s/Skins.txt", dir);
 		write_file(path, k->lines);
 		for (size_t s = 0; s < 8 && k->skins[s]; ++s) {
 			if (!k->skins[s][0]) {
 				snprintf(path, sizeof path, "%s/Skins/%s", dir, k->model);
-				Xwau_MakeDir(path);
+				MakeDirs(path);
 				snprintf(path, sizeof path, "%s/Skins/%s/readme.txt", dir, k->model);
 			} else if (strcmp(k->skins[s], "readme") == 0) {
 				snprintf(path, sizeof path, "%s/Skins/%s/empty", dir, k->model);
-				Xwau_MakeDir(path);
+				MakeDirs(path);
 				continue;
 			} else {
 				snprintf(path, sizeof path, "%s/Skins/%s/%s", dir, k->model, k->skins[s]);
-				Xwau_MakeDir(path);
+				MakeDirs(path);
 				snprintf(path, sizeof path, "%s/Skins/%s/%s/a.txt", dir, k->model, k->skins[s]);
 			}
 			write_file(path, "x");
@@ -222,11 +223,11 @@ int main(void) {
 	char        scratch[1024];
 	const char* tmp = getenv("TMPDIR");
 	snprintf(scratch, sizeof scratch, "%s/opt2gltf_xwau_test", tmp && tmp[0] ? tmp : "/tmp");
-	Xwau_RemoveTree(scratch);
-	Xwau_MakeDir(scratch);
+	RemoveTree(scratch);
+	MakeDirs(scratch);
 	test_rules(scratch);
 	test_skins(scratch);
-	Xwau_RemoveTree(scratch);
+	RemoveTree(scratch);
 	printf("%s\n", g_failures ? "FAILED" : "passed");
 	return g_failures ? 1 : 0;
 }
