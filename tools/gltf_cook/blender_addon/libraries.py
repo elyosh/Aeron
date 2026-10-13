@@ -1,9 +1,9 @@
-# The source tree's effect libraries (../animated_materials.md): read through
-# the cooker for picking frames, cached for the session per tree, and written
-# through the cooker when the add-on edits them. The tree's models (their
+# A project's effect libraries (../animated_materials.md): read through the
+# cooker for picking frames, cached for the session per project, and written
+# through the cooker when the add-on edits them. The project's models (their
 # materials' animations) are read too, to know which models use which keys:
-# libraries are shared. A model's tree is the one holding its source
-# (sources.library_sources).
+# libraries are shared. A model's project is the one holding its .gltf
+# (sources.project_effects).
 
 import concurrent.futures
 import glob
@@ -30,12 +30,12 @@ KINDS = (("baseColor", "Base colour", "Painted over the base colour by its alpha
          ("mark", "Mark", "A blast mark (the game's own effects)"),
          ("energy", "Energy", "An energy effect (the game's own effects)"))
 
-_trees = {}
+_projects = {}
 _previews = None
 
 
-class Tree:
-    """A source tree's libraries {name: {"path": file, "images": {key: entry}}}
+class Project:
+    """A project's libraries {name: {"path": file, "images": {key: entry}}}
     and the models naming their keys {library: {key: {model}}}."""
 
     def __init__(self, effects):
@@ -55,25 +55,25 @@ class Tree:
 
 
 def effects_dir(context):
-    """The library sources of the active object's model, or "" outside a source tree."""
+    """The effects folder of the active object's model's project, or "" outside a project."""
     root = common.model_root(context.object) if context.object else None
-    return sources.library_sources(bpy.path.abspath(root.aeron_flight.source_path)) if root else ""
+    return sources.project_effects(bpy.path.abspath(root.aeron_flight.source_path)) if root else ""
 
 
 def model_key(root):
-    """The model's key in its source tree (its directory's name)."""
+    """The model's key in its project (its folder's name)."""
     return os.path.basename(os.path.dirname(bpy.path.abspath(root.aeron_flight.source_path)))
 
 
-def tree(context):
-    """The loaded tree of the active object's model, or None."""
-    return _trees.get(effects_dir(context))
+def project(context):
+    """The loaded project of the active object's model, or None."""
+    return _projects.get(effects_dir(context))
 
 
-def tree_of(root):
-    """The loaded tree of model `root`, or None."""
-    effects = sources.library_sources(bpy.path.abspath(root.aeron_flight.source_path))
-    return _trees.get(effects) if effects else None
+def project_of(root):
+    """The loaded project of model `root`, or None."""
+    effects = sources.project_effects(bpy.path.abspath(root.aeron_flight.source_path))
+    return _projects.get(effects) if effects else None
 
 
 def _run(cooker, argv, stdin=None):
@@ -102,8 +102,8 @@ def _model_users(path):
 
 
 def load(cooker, effects):
-    """Reads the tree's libraries and models (again)."""
-    result = Tree(effects)
+    """Reads the project's libraries and models (again)."""
+    result = Project(effects)
     files = sorted(path for path in glob.glob(os.path.join(effects, "*", "*.yaml"))
                    if os.path.basename(path) == os.path.basename(os.path.dirname(path)) + ".yaml")
     models = sorted(path for path in glob.glob(os.path.join(os.path.dirname(effects), "models", "*", "*.gltf"))
@@ -125,14 +125,14 @@ def load(cooker, effects):
                         result.users.setdefault(library, {}).setdefault(key, set()).add(model)
             except (OSError, RuntimeError, ValueError) as error:
                 result.errors.append("{}: {}".format(path, error))
-    _trees[effects] = result
+    _projects[effects] = result
     clear_icons()
     return result
 
 
 def update_model(effects, model, path):
     """Reads model `model`'s .gltf `path` again (after it was written)."""
-    loaded = _trees.get(effects)
+    loaded = _projects.get(effects)
     if loaded is None:
         return
     for keys in loaded.users.values():
@@ -159,13 +159,13 @@ def write_library(cooker, loaded, name, document):
 # ---- pickers and thumbnails ------------------------------------------------------
 
 def search_libraries(context, text):
-    loaded = tree(context)
+    loaded = project(context)
     return sorted(name for name in loaded.libraries if text.lower() in name) if loaded else []
 
 
 def search_keys(context, library, kind, text):
     """The keys of `library` whose image is of `kind`, containing `text`."""
-    loaded = tree(context)
+    loaded = project(context)
     images = loaded.libraries.get(library, {}).get("images", {}) if loaded else {}
     return sorted(key for key, image in images.items() if image.get("kind") == kind and text in key)
 
@@ -183,7 +183,7 @@ def icon(context, library, key):
     """The thumbnail of image `key` of `library`, as an icon id (0: none),
     loaded as it is first drawn."""
     global _previews
-    loaded = tree(context)
+    loaded = project(context)
     path = image_file(loaded, library, key) if loaded else ""
     if not path or not os.path.isfile(path):
         return 0
@@ -252,9 +252,9 @@ def select(context, library, key=None):
 
 
 def sync(context):
-    """Fills the lists from the active model's loaded tree."""
+    """Fills the lists from the active model's loaded project."""
     current = state(context)
-    loaded = tree(context)
+    loaded = project(context)
     names = sorted(loaded.libraries) if loaded else []
     if [item.name for item in current.libraries] != names:
         selected = selected_library(context)
@@ -294,4 +294,4 @@ def unregister():
     if _previews is not None:
         bpy.utils.previews.remove(_previews)
         _previews = None
-    _trees.clear()
+    _projects.clear()

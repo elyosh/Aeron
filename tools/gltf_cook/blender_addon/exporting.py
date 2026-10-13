@@ -1,9 +1,9 @@
 # Export: Blender's glTF exporter writes the model's objects (filtered,
 # ordered and given their AERON_flight_model data by the hooks below, which
 # act only during this add-on's export), its materials their animations and
-# screens. The flight model export cooks that .gltf into the runtime .glb
-# with aeron_gltf_cook; the source export writes it into a model directory
-# of the source tree.
+# screens. Export for Game builds that .gltf into the game's .glb with
+# aeron_gltf_cook; Save to Project writes it into the model's folder of its
+# project.
 
 import filecmp
 import json
@@ -329,10 +329,10 @@ def _warnings(count):
 
 
 class EXPORT_OT_aeron_flight_model(Operator, ExportHelper):
-    """Export the selected object's flight model to an Aeron runtime .glb"""
+    """Export the selected object's flight model as a .glb for the game"""
 
     bl_idname = "export_scene.aeron_flight_model"
-    bl_label = "Export Aeron Flight Model"
+    bl_label = "Export for Game"
     bl_options = {'PRESET'}
 
     filename_ext = ".glb"
@@ -341,8 +341,8 @@ class EXPORT_OT_aeron_flight_model(Operator, ExportHelper):
                                   description="Export meshes with their modifiers applied")
     keep_intermediate: BoolProperty(
         name="Keep Intermediate .gltf", default=False,
-        description="Keep the uncooked .gltf, .bin and images next to the .glb "
-                    "(a failed cook always keeps them)")
+        description="Keep the .gltf, .bin and images the .glb is built from next to it "
+                    "(a failed build always keeps them)")
 
     def execute(self, context):
         with flipbook_preview.suspended():
@@ -380,20 +380,20 @@ class EXPORT_OT_aeron_flight_model(Operator, ExportHelper):
                 "--mip-min-subrect", prefs.mip_min_subrect, "--quality", prefs.bc7_quality]
         if not prefs.zstd:
             argv.append("--no-zstd")
-        library_sources = sources.library_sources(bpy.path.abspath(root.aeron_flight.source_path))
+        effects = sources.project_effects(bpy.path.abspath(root.aeron_flight.source_path))
         unsaved = sorted(image.name for image in bpy.data.images
-                         if image.is_dirty and image.filepath and library_sources and
-                         _inside(bpy.path.abspath(image.filepath), library_sources))
+                         if image.is_dirty and image.filepath and effects and
+                         _inside(bpy.path.abspath(image.filepath), effects))
         if unsaved:
             self.report({'ERROR'}, "library images have unsaved changes, save them first (Image > Save): " +
                         ", ".join(unsaved))
             return {'CANCELLED'}
         # The frames the materials name are checked against the libraries,
-        # which are first built from the tree's sources.
+        # which are first built from the project's.
         if prefs.effects_dir:
             argv += ["--effects-dir", bpy.path.abspath(prefs.effects_dir)]
-            if library_sources:
-                argv += ["--library-sources", library_sources]
+            if effects:
+                argv += ["--project", os.path.dirname(effects)]
         try:
             completed = subprocess.run(argv, capture_output=True, text=True)
         except OSError as error:
@@ -412,20 +412,20 @@ class EXPORT_OT_aeron_flight_model(Operator, ExportHelper):
         built = sources.built_libraries(completed.stderr)
         rebuilt = " (libraries rebuilt: {})".format(", ".join(built)) if built else ""
         self.report({'INFO'}, "Wrote {}{}{}".format(out_glb, rebuilt, _warnings(self.warnings)))
-        broken = _broken_models(cooker, library_sources, libraries.model_key(root), completed.stderr)
+        broken = _broken_models(cooker, effects, libraries.model_key(root), completed.stderr)
         if broken:
             self.report({'WARNING'}, "the rebuilt libraries no longer serve other models (their .glb shows "
-                                     "nothing for these frames and their next cook fails): " + "; ".join(broken))
+                                     "nothing for these frames and their next build fails): " + "; ".join(broken))
         return {'FINISHED'}
 
 
 def _broken_models(cooker, effects, model, messages):
-    """The other models of the tree that name keys a cook's library rebuilds
+    """The other models of the project that name keys a build's library rebuilds
     removed or gave another kind, as "<library> <key> (<what>): <models>"."""
     changes = sources.library_changes(messages)
     if not changes or not effects:
         return []
-    loaded = libraries._trees.get(effects)
+    loaded = libraries._projects.get(effects)
     if loaded is None:
         loaded = libraries.load(cooker, effects)
     result = []
@@ -492,11 +492,11 @@ def _buffer_paths(document, directory):
             for buffer in document.get("buffers", []) if buffer.get("uri")]
 
 
-class EXPORT_OT_aeron_flight_model_source(Operator, ExportHelper):
-    """Export the selected object's flight model into a model directory of the source tree"""
+class EXPORT_OT_aeron_flight_model_project(Operator, ExportHelper):
+    """Save the selected object's flight model into its folder of the project: its .gltf, .bin and textures"""
 
-    bl_idname = "export_scene.aeron_flight_model_source"
-    bl_label = "Export Aeron Flight Model Source"
+    bl_idname = "export_scene.aeron_flight_model_project"
+    bl_label = "Save to Project"
 
     filename_ext = ".gltf"
     filter_glob: StringProperty(default="*.gltf", options={'HIDDEN'})
@@ -525,7 +525,7 @@ class EXPORT_OT_aeron_flight_model_source(Operator, ExportHelper):
         if not os.path.isdir(model_dir):
             self.report({'ERROR'}, "no such directory: " + model_dir)
             return {'CANCELLED'}
-        scratch = tempfile.mkdtemp(prefix="aeron_flight_model_source_")
+        scratch = tempfile.mkdtemp(prefix="aeron_flight_model_project_")
         scratch_gltf = os.path.join(scratch, os.path.basename(out_gltf))
 
         def fail(message):
@@ -568,7 +568,7 @@ class EXPORT_OT_aeron_flight_model_source(Operator, ExportHelper):
         shutil.rmtree(scratch, ignore_errors=True)
         root.aeron_flight.source_path = out_gltf
         # The library lists count this model's keys from its file.
-        libraries.update_model(sources.library_sources(out_gltf), os.path.basename(model_dir), out_gltf)
+        libraries.update_model(sources.project_effects(out_gltf), os.path.basename(model_dir), out_gltf)
         animated = sum(1 for extension in sources.material_extensions(document).values()
                        if set(extension) - {"screen"})
         self.report({'INFO'}, "Wrote {}: {} texture(s) added, {} animated material(s){}".format(
@@ -582,11 +582,11 @@ def _single_root(scene):
 
 
 def menu_func(self, context):
-    self.layout.operator(EXPORT_OT_aeron_flight_model.bl_idname, text="Aeron Flight Model (.glb)")
-    self.layout.operator(EXPORT_OT_aeron_flight_model_source.bl_idname, text="Aeron Flight Model Source (.gltf)")
+    self.layout.operator(EXPORT_OT_aeron_flight_model_project.bl_idname, text="Aeron Flight Model (.gltf)")
+    self.layout.operator(EXPORT_OT_aeron_flight_model.bl_idname, text="Aeron Flight Model for Game (.glb)")
 
 
-classes = (EXPORT_OT_aeron_flight_model, EXPORT_OT_aeron_flight_model_source)
+classes = (EXPORT_OT_aeron_flight_model, EXPORT_OT_aeron_flight_model_project)
 
 
 def register():

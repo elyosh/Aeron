@@ -1,9 +1,9 @@
 schema_version = "1.0.0"
 
 id = "aeron_flight_model"
-version = "3.0.0"
+version = "4.0.0"
 name = "Aeron Flight Model"
-tagline = "Import, author and export Aeron flight models (glTF)"
+tagline = "Import, author and export Aeron flight models (glTF, XWA OPT)"
 maintainer = "Aeron"
 type = "add-on"
 tags = ["Import-Export", "Object"]
@@ -13,7 +13,7 @@ blender_version_min = "5.0.0"
 license = ["SPDX:GPL-3.0-or-later"]
 
 [permissions]
-files = "Import and export glTF files, run aeron_gltf_cook"
+files = "Import OPT and glTF files, export glTF, run the bundled tools"
 
 [build]
 paths_exclude_pattern = ["__pycache__/", "/.*", "/tests/"]

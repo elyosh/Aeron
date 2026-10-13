@@ -1,12 +1,12 @@
-"""Builds the Blender add-on's package for one platform, with its cooker.
+"""Builds the Blender add-on's package for one platform, with its tools.
 
-    python3 package_addon.py --platform PLATFORM --cooker AERON_GLTF_COOK
+    python3 package_addon.py --platform PLATFORM --cooker AERON_GLTF_COOK --opt2gltf OPT2GLTF
                              --out DIR [--license NAME=FILE]... [--blender BLENDER]
 
-PLATFORM is windows-x64, macos (a universal cooker: Apple silicon and Intel)
-or linux-x64. The package is blender_addon/ with the cooker in bin/, the
-licenses of what the cooker links in licenses/ (the third_party ones, and
-each --license, e.g. zstd's), and the manifest's platforms set; it is
+PLATFORM is windows-x64, macos (universal tools: Apple silicon and Intel)
+or linux-x64. The package is blender_addon/ with the cooker and opt2gltf in
+bin/, the licenses of what they link in licenses/ (the third_party ones,
+and each --license, e.g. zstd's), and the manifest's platforms set; it is
 written as DIR/aeron_flight_model-<version>-<platform>.zip. Blender's own
 build sorts only Python wheels between platforms, so it is assembled here.
 With --blender, `blender --command extension validate` checks it.
@@ -27,13 +27,16 @@ PLATFORMS = {
     "macos": ["macos-arm64", "macos-x64"],
     "linux-x64": ["linux-x64"],
 }
-# The third_party code the cooker links, and its license file.
+# The third_party code the tools link, and its license file.
 LICENSES = {
     "bc7enc": "bc7enc/LICENSE",
+    "bcdec": "bcdec/LICENSE",
     "cgltf": "cgltf/LICENSE",
     "cJSON": "cjson/LICENSE",
     "ispc_texcomp": "ispc_texcomp/LICENSE",
     "libyaml": "libyaml/License",
+    "lzma": "lzma/LICENSE",
+    "mikktspace": "mikktspace/LICENSE",
     "stb": "stb/LICENSE",
     "xxhash": "xxhash/LICENSE",
 }
@@ -81,9 +84,10 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--platform", required=True, choices=sorted(PLATFORMS))
     parser.add_argument("--cooker", required=True, help="the aeron_gltf_cook built for the platform")
+    parser.add_argument("--opt2gltf", required=True, help="the opt2gltf built for the platform")
     parser.add_argument("--out", required=True, help="the directory the package is written to")
     parser.add_argument("--license", action="append", default=[], metavar="NAME=FILE",
-                        help="another license of what the cooker links (repeatable)")
+                        help="another license of what the tools link (repeatable)")
     parser.add_argument("--blender", help="a Blender executable to validate the package with")
     args = parser.parse_args()
 
@@ -93,12 +97,13 @@ def main():
         if not separator or not name:
             parser.error("--license takes NAME=FILE")
         licenses[name] = path
-    for path in [args.cooker] + list(licenses.values()):
+    for path in [args.cooker, args.opt2gltf] + list(licenses.values()):
         if not os.path.isfile(path):
             parser.error("no such file: " + path)
 
     text, version = manifest(PLATFORMS[args.platform])
-    cooker = "bin/aeron_gltf_cook" + (".exe" if args.platform.startswith("windows") else "")
+    exe = ".exe" if args.platform.startswith("windows") else ""
+    tools = (("bin/aeron_gltf_cook" + exe, args.cooker), ("bin/opt2gltf" + exe, args.opt2gltf))
     os.makedirs(args.out, exist_ok=True)
     package = os.path.join(args.out, "aeron_flight_model-{}-{}.zip".format(version, args.platform))
     with zipfile.ZipFile(package, "w") as archive:
@@ -108,8 +113,9 @@ def main():
             else:
                 with open(path, "rb") as stream:
                     add(archive, name, stream.read())
-        with open(args.cooker, "rb") as stream:
-            add(archive, cooker, stream.read(), 0o755)
+        for name, path in tools:
+            with open(path, "rb") as stream:
+                add(archive, name, stream.read(), 0o755)
         for name, path in sorted(licenses.items()):
             with open(path, "rb") as stream:
                 add(archive, "licenses/{}.txt".format(name), stream.read())

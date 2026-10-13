@@ -1,4 +1,4 @@
-# What a model's source holds besides what Blender keeps of a glTF: the asset
+# What a model's .gltf holds besides what Blender keeps of a glTF: the asset
 # extras, kept on the model root, and the names of the extensions, extras and
 # material AERON_flight_model members the file had, so that an export losing
 # one stops. Blender is imported only where needed: tests/roundtrip.py reads
@@ -43,11 +43,11 @@ def model_extension(document):
     return {}
 
 
-def library_sources(source_path):
-    """The effect library sources of the source tree holding the model file
-    `source_path` (<tree>/models/<key>/<key>.gltf): <tree>/effects, or ""
-    for a model outside a source tree."""
-    models = os.path.dirname(os.path.dirname(source_path)) if source_path else ""
+def project_effects(model_path):
+    """The effects folder of the project holding the model file `model_path`
+    (<project>/models/<key>/<key>.gltf): <project>/effects, or "" for a
+    model outside a project."""
+    models = os.path.dirname(os.path.dirname(model_path)) if model_path else ""
     effects = os.path.join(os.path.dirname(models), "effects")
     return effects if os.path.basename(models) == "models" and os.path.isdir(effects) else ""
 

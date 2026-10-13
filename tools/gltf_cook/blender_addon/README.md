@@ -2,77 +2,102 @@
 
 Imports, authors and exports Aeron flight models: glTF files with the
 [`AERON_flight_model`](../../extensions/AERON_flight_model/README.md)
-extension, cooked into the runtime `.glb` by `aeron_gltf_cook`. Blender 5.0
-or later.
+extension, built into the game's `.glb` by `aeron_gltf_cook`. It also
+imports X-Wing Alliance OPT models, of the original game or of the X-Wing
+Alliance Upgrade (XWAU). Blender 5.0 or later.
 
 ## Install
 
 Install the package for your platform, published with the game's
 releases (`aeron_flight_model-<version>-<platform>.zip`), with Edit >
 Preferences > Get Extensions > Install from Disk. Use the add-on of the
-game version you play: the `.glb` it cooks must suit the game. The package
-holds its own `aeron_gltf_cook`, which cooks `.glb` files and reads and
-writes effect library files.
+game version you play: the `.glb` it builds must suit the game. The
+package holds its own `aeron_gltf_cook`, which builds `.glb` files and reads
+and writes effect library files, and `opt2gltf`, which converts OPT models.
 
-To build a package (with a cooker built with `AERON_GLTF_COOK_STANDALONE`,
-which needs no library of the build machine), run
+To build a package (with tools built with `AERON_GLTF_COOK_STANDALONE`,
+which need no library of the build machine), run
 `aeron/tools/gltf_cook/package_addon.py --help`.
 
 For development, link this directory as
 `<extensions>/user_default/aeron_flight_model`, and set the path of
-`aeron_gltf_cook` (built with the Aeron tools) in the add-on's preferences,
-unless it is on the `PATH`. The path set there is used over the packaged
-cooker.
+`aeron_gltf_cook` and `opt2gltf` (built with the Aeron tools) in the
+add-on's preferences, unless they are on the `PATH`. The paths set there are
+used over the packaged tools.
 
-Setting the game's `remaster/effects` directory there makes the `.glb`
-export check every animation frame against its library, after building
-there the libraries of the model's source tree (`<tree>/effects`, beside
-the `models/` directory holding the model) that the model names and that
-changed.
+Setting the game's `remaster/effects` directory there makes Export for
+Game check every animation frame against its library, after building there
+the libraries of the model's project that the model names and that changed.
 
-`tests/roundtrip.py` checks that models import and export unchanged,
+`tests/roundtrip.py` checks that models import and save unchanged,
 `tests/animation_editor.py` the animation editor and the library operators,
-and `tests/flipbook_preview.py` the flipbook preview (run them with `--help`).
+`tests/flipbook_preview.py` the flipbook preview and `tests/opt_import.py`
+the OPT import (run them with `--help`).
 
 ## Workflow
 
-A model's source is a directory: `<model>.gltf`, its `.bin` and its PNG
-textures (usually under `textures/`). The `.gltf` holds everything else,
-the materials' animations ([format](../animated_materials.md)) included.
+Models live in a **project**: a folder holding each model in
+`models/<key>/` and the effect libraries its materials play frames from in
+`effects/<library>/` (libraries are shared by the project's models). A
+model's folder holds `<key>.gltf`, its `.bin` and its PNG textures (usually
+under `textures/`). The `.gltf` holds everything else, the materials'
+animations ([format](../animated_materials.md)) included.
 
 1. Import the model's `.gltf` with File > Import > Aeron Flight Model, and
-   save your work as a `.blend`. Blender cannot read a cooked `.glb`'s
-   textures: import the source.
+   save your work as a `.blend`. Blender cannot read the textures of a
+   `.glb` built for the game: import the `.gltf`.
 2. Edit it. The **Aeron** tab of the 3D view's sidebar (N, or View >
    Sidebar) adds parts to the active component at the 3D cursor and checks
    the model. The selected object's flight data is in Object properties >
    Aeron Flight Model: the model root's component order, articulations and
    sets; a component's fields, hardpoint and glow order, descriptor and
    hinge.
-3. Paint textures with any program, in the model's directory. Textures
-   you have not used yet can stay there: only what the materials use is
+3. Paint textures with any program, in the model's folder. Textures you
+   have not used yet can stay there: only what the materials use is
    exported.
-4. Export with File > Export > Aeron Flight Model Source (or the tab's
-   Export Source). It offers the imported file, and writes the `.gltf` and
-   its `.bin`. Textures
-   stay where they are; images from elsewhere, or that exist only in
-   Blender, are copied into `textures/` as PNG. Nothing else in the
-   directory is changed or removed.
-5. Build the game's model from the source, or try it at once with File >
-   Export > Aeron Flight Model (.glb), which cooks it into a `.glb` for the
-   game's `remaster/models/`. With the effects directory set, it first
-   rebuilds the effect libraries whose frames changed, and says which.
+4. Save it with the tab's **Save to Project** (or File > Export > Aeron
+   Flight Model (.gltf)). It offers the imported file, and writes the
+   `.gltf` and its `.bin`. Textures stay where they are; images from
+   elsewhere, or that exist only in Blender, are copied into `textures/` as
+   PNG. Nothing else in the folder is changed or removed.
+5. Try it in the game with **Export for Game** (or File > Export > Aeron
+   Flight Model for Game (.glb)), which builds a `.glb` for the game's
+   `remaster/models/`. With the effects directory set, it first rebuilds
+   the effect libraries whose frames changed, and says which.
 
-Both exports check the model first: Aeron > Problems lists every problem
-with a button that selects its object. The source export also stops when:
-- an image has unsaved changes (save it first: the export uses the file);
+Both check the model first: Aeron > Problems lists every problem with a
+button that selects its object. Save to Project also stops when:
+- an image has unsaved changes (save it first: the model uses the file);
 - a copied image would replace a different file of the same name;
 - the result would lack an extension or extras the imported file had,
-  which Blender or this add-on does not carry (Allow Losing Data exports
+  which Blender or this add-on does not carry (Allow Losing Data saves
   anyway).
 
-When the source file changes outside Blender, import it again rather than
-export over it from an older `.blend`.
+When the `.gltf` changes outside Blender, import it again rather than save
+over it from an older `.blend`.
+
+## Importing an OPT
+
+File > Import > XWA OPT (or the tab's **Import OPT**) converts an OPT into a
+project, then imports it as above. Choose the project folder: the model goes
+into `models/<key>/` (the OPT's name in lower case), and Replace replaces a
+model the project has already. **Data** says what the conversion reads:
+
+- **Original Game**: the OPT alone, as the original game draws it, with the
+  game's data for the model (its pilot eye, crew and moving parts).
+- **XWA Upgrade**: the OPT with everything XWAU gives it: its materials,
+  normal maps and animations, skins (as material variants, with those the
+  missions choose), object profiles, moving parts, pilot eye and cockpit
+  displays. The images its animations play are added to the project's
+  effect libraries; images the libraries hold already are kept as they
+  are.
+- **Detect** (the default): XWA Upgrade when its data is found, else the
+  original game.
+
+XWAU data is read from the OPT's installation (the folder holding its
+`FlightModels`), after the **XWA Upgrade folders** of the preferences, the
+first holding a file winning: list unpacked XWAU packages there, an
+update's folders before the release's.
 
 To start from plain meshes, select them and use **Make Flight Model**: they
 become the components of a new model root (or of the active one).
@@ -205,34 +230,34 @@ Play Timeline button, or Space) or scrub it to animate them; the scene's
 start frame is the flipbooks' start, and its frame range bounds how long
 they play before looping back. It shows
 flipbooks only, not hull damage or energy effects, and needs the model in a
-source tree (it loads the tree's libraries). A material is shown when it is
+project (it loads the project's libraries). A material is shown when it is
 a Principled BSDF whose base colour is a texture or a value; the panel says
 why another is not. The preview adds a node group and image nodes to the
 materials, which it removes when it stops, around the exports and while the
 file is saved: they never reach your files.
 
-**Effect libraries.** For a model in a source tree (`<tree>/models/<key>/`),
-the Effect Libraries sub-panel loads the tree's libraries
-(`<tree>/effects/`): key fields then offer the library's images of the
+**Effect libraries.** For a model in a project (`<project>/models/<key>/`),
+the Effect Libraries sub-panel loads the project's libraries
+(`<project>/effects/`): key fields then offer the library's images of the
 right kind, frames show thumbnails, and each library shows how many models
 use it (libraries are shared). Library operators write the library's files
-at once, not at the source export, and Blender's undo does not revert them:
+at once, not at Save to Project, and Blender's undo does not revert them:
 
 - New Library and Add Images: PNG files copied into the library's
   `frames/`, one image per file, keyed by file name. For emissive images,
   `<key>_base_color.png` gives `<key>`'s base colour.
 - Add Blender Image: an image painted in Blender, saved as
-  `frames/<key>.png`; save later repaints with Image > Save (the `.glb`
-  export refuses unsaved library images).
+  `frames/<key>.png`; save later repaints with Image > Save (Export for
+  Game refuses unsaved library images).
 - Edit, Rename and Remove Image. Rename and Remove first list the models
   that use the key; Rename also renames it in this model's frames, not in
   other models' files.
 
 So a new animation is: paint the frames, Add Images, From Added on the
-material's flipbook, then the `.glb` export (which builds the changed libraries) to
-try it, and the source export to keep it. When a library rebuild removes a
-key, or changes an image's kind, that other models use, the `.glb` export
-names them: their next cook fails.
+material's flipbook, then Export for Game (which builds the changed
+libraries) to try it, and Save to Project to keep it. When a library
+rebuild removes a key, or changes an image's kind, that other models use,
+Export for Game names them: their next build fails.
 
 The model's looks (converted paint states and skins) are material variants
 (Blender's glTF material variants). The markings list and missions name

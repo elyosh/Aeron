@@ -1,5 +1,5 @@
 # Material properties > Aeron Animation: the material animation editor
-# (animation.py) and the source tree's effect libraries (libraries.py).
+# (animation.py) and the project's effect libraries (libraries.py).
 
 import bpy
 from bpy.types import Panel, UIList
@@ -212,7 +212,7 @@ class MATERIAL_PT_aeron_libraries(_MaterialPanel, Panel):
 
     def draw(self, context):
         layout = self.layout
-        if libraries.tree(context) is None:
+        if libraries.project(context) is None:
             layout.operator("aeron.libraries_refresh", text="Load Libraries", icon='FILE_REFRESH')
             return
         current = libraries.state(context)

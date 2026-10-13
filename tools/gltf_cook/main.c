@@ -62,11 +62,10 @@ static void usage(void) {
 					"                        14x slower for ~6%% smaller payloads).\n"
 					"  --effects-dir <dir>   Check every frame and damage stage the\n"
 					"                        materials name against the libraries in <dir>.\n"
-					"  --library-sources <dir>\n"
-					"                        With --effects-dir, first build each library\n"
-					"                        the materials name that <dir> holds, as\n"
-					"                        <dir>/<library>/<library>.yaml, into the\n"
-					"                        effects directory (as --library does).\n"
+					"  --project <dir>       With --effects-dir, first build each library\n"
+					"                        the materials name that the project <dir>\n"
+					"                        holds, as <dir>/effects/<library>/<library>.yaml,\n"
+					"                        into the effects directory (as --library does).\n"
 					"  --verbose             Print per-channel cook progress.\n"
 					"  -h, --help            Show this help.\n"
 					"\n"
@@ -198,7 +197,7 @@ int main(int argc, char** argv) {
 	const char* in_path     = argv[1];
 	const char* out_path    = NULL;
 	const char* effects_dir = NULL;
-	const char* library_sources = NULL;
+	const char* project     = NULL;
 
 	AeronGltfCookOptions opts;
 	aeron_gltf_cook_default_options(&opts);
@@ -231,8 +230,8 @@ int main(int argc, char** argv) {
 			opts.zstd_level = atoi(argv[++i]);
 		} else if (strcmp(a, "--effects-dir") == 0 && i + 1 < argc) {
 			effects_dir = argv[++i];
-		} else if (strcmp(a, "--library-sources") == 0 && i + 1 < argc) {
-			library_sources = argv[++i];
+		} else if (strcmp(a, "--project") == 0 && i + 1 < argc) {
+			project = argv[++i];
 		} else if (strcmp(a, "--verbose") == 0) {
 			opts.verbose = true;
 		} else if (strcmp(a, "-h") == 0 || strcmp(a, "--help") == 0) {
@@ -266,12 +265,12 @@ int main(int argc, char** argv) {
 		return 2;
 	}
 
-	if (library_sources && !effects_dir) {
-		fprintf(stderr, "[aeron_gltf_cook] --library-sources needs --effects-dir\n");
+	if (project && !effects_dir) {
+		fprintf(stderr, "[aeron_gltf_cook] --project needs --effects-dir\n");
 		return 2;
 	}
 
-	if (!aeron_gltf_cook_check_materials(in_path, effects_dir, library_sources) ||
+	if (!aeron_gltf_cook_check_materials(in_path, effects_dir, project) ||
 		!aeron_gltf_cook(in_path, out_path, &opts))
 		return 1;
 	return add_flight_data(out_path) ? 0 : 1;

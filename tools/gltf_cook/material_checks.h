@@ -12,9 +12,9 @@
 
 /* Checks the materials of the .gltf or .glb `path`. With `effects_dir`,
  * every frame and damage stage must be an image of the right kind in its
- * library there; with `library_sources` too, each library named is first
- * built there from <library_sources>/<library>/<library>.yaml when that file
+ * library there; with `project` too, each library named is first built
+ * there from <project>/effects/<library>/<library>.yaml when that file
  * exists (an unchanged library is skipped). Messages go to stderr. */
-bool aeron_gltf_cook_check_materials(const char* path, const char* effects_dir, const char* library_sources);
+bool aeron_gltf_cook_check_materials(const char* path, const char* effects_dir, const char* project);
 
 #endif /* AERON_GLTF_COOK_MATERIAL_CHECKS_H */

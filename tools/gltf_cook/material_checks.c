@@ -63,7 +63,7 @@ typedef struct Check {
 	const char* path;        /* for messages */
 	char        owner[64];   /* for messages: "material <name>" or "the model root" */
 	const char* effects_dir; /* or NULL */
-	const char* sources;     /* library sources built into effects_dir first, or NULL */
+	const char* project;     /* project whose libraries are built into effects_dir first, or NULL */
 	cJSON**     indexes;     /* loaded library indexes, by name */
 	char**      index_names;
 	size_t      index_count;
@@ -113,14 +113,14 @@ static bool only_members(Check* c, const char* what, const cJSON* object, const 
 	return true;
 }
 
-/* Builds library `library` into the effects directory from the library
- * sources, when they hold it; false when that fails. */
+/* Builds library `library` into the effects directory from the project,
+ * when it holds it; false when that fails. */
 static bool build_library(Check* c, const char* library) {
 	char file[1024];
-	snprintf(file, sizeof file, "%s/%s/%s.yaml", c->sources, library, library);
+	snprintf(file, sizeof file, "%s/effects/%s/%s.yaml", c->project, library, library);
 	FILE* f = fopen(file, "rb");
 	if (!f)
-		return true; /* not a source library: only checked */
+		return true; /* not a library of the project: only checked */
 	fclose(f);
 	return EffectLibrary_BuildLibrary("[aeron_gltf_cook] library", file, library, c->effects_dir) !=
 		   EFFECT_LIBRARY_FAILED;
@@ -151,7 +151,7 @@ static bool key_known(Check* c, const char* library, const char* key, const char
 	} else {
 		char path[1024], err[512];
 		snprintf(path, sizeof path, "%s/%s.yaml", c->effects_dir, library);
-		const bool built = !c->sources || build_library(c, library);
+		const bool built = !c->project || build_library(c, library);
 		index            = built ? YamlJson_Load(path, err, sizeof err) : NULL;
 		if (index && !index_has_kinds(index)) {
 			snprintf(err, sizeof err, "built by an older aeron_gltf_cook, without image kinds: rebuild it");
@@ -343,14 +343,14 @@ static const char* flight_model_json(const cgltf_extension* extensions, cgltf_si
 	return NULL;
 }
 
-bool aeron_gltf_cook_check_materials(const char* path, const char* effects_dir, const char* library_sources) {
+bool aeron_gltf_cook_check_materials(const char* path, const char* effects_dir, const char* project) {
 	cgltf_options options = { 0 };
 	cgltf_data*   data    = NULL;
 	if (cgltf_parse_file(&options, path, &data) != cgltf_result_success) {
 		fprintf(stderr, TAG ": cannot parse %s\n", path);
 		return false;
 	}
-	Check c = { .path = path, .effects_dir = effects_dir, .sources = library_sources };
+	Check c  = { .path = path, .effects_dir = effects_dir, .project = project };
 	bool  ok = true;
 	for (cgltf_size m = 0; m < data->materials_count; m++) {
 		const char* json = flight_model_json(data->materials[m].extensions, data->materials[m].extensions_count);

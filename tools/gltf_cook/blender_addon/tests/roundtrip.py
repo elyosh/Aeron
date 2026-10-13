@@ -1,12 +1,12 @@
-"""Round trip of source tree models through Blender and this add-on.
+"""Round trip of project models through Blender and this add-on.
 
     python3 roundtrip.py --blender BLENDER --cooker AERON_GLTF_COOK
                          [--effects-dir DIR] [--keep] MODEL_DIR...
 
 Each model directory (`<key>/<key>.gltf`, its buffers and textures) is
-copied to a scratch tree, imported with the
-add-on in a headless Blender, and exported back over the copy with the source
-export. The result must keep:
+copied to a scratch folder, imported with the
+add-on in a headless Blender, and saved back over the copy with Save to
+Project. The result must keep:
 - the flight data: the same nodes per role, in the loader's order, with the
   same AERON_flight_model objects, lights and world transforms;
 - the geometry: per component and collision mesh, the same triangles (corner
@@ -18,8 +18,8 @@ export. The result must keep:
   and the same texture file in each slot;
 - the asset extras, and every extension and extras name (the add-on's guard);
 - the textures: none added, none removed.
-Both the original and the result are cooked, and must use the same materials
-and skins.
+Both the original and the result are built for the game, and must use the
+same materials and skins.
 """
 
 import argparse
@@ -65,7 +65,7 @@ def blender_main(argv):
     print("ROUNDTRIP import", result)
     if 'FINISHED' not in result:
         sys.exit(1)
-    result = bpy.ops.export_scene.aeron_flight_model_source(filepath=gltf)
+    result = bpy.ops.export_scene.aeron_flight_model_project(filepath=gltf)
     print("ROUNDTRIP export", result)
     for problem in bpy.context.scene.aeron_flight.problems:
         print("ROUNDTRIP problem", problem.object.name if problem.object else "-", problem.message)
@@ -392,7 +392,7 @@ def main():
     parser.add_argument("--blender", required=True)
     parser.add_argument("--cooker", required=True)
     parser.add_argument("--effects-dir")
-    parser.add_argument("--keep", action="store_true", help="keep the scratch tree")
+    parser.add_argument("--keep", action="store_true", help="keep the scratch folder")
     parser.add_argument("models", nargs="+")
     args = parser.parse_args()
     args.cooker = os.path.abspath(args.cooker)

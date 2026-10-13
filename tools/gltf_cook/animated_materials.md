@@ -17,9 +17,10 @@ aeron_gltf_cook model.gltf --out <asset root>/remaster/models/model.glb \
 
 Build the libraries first: with `--effects-dir`, the cooker checks that
 every frame a model names is in its library there, as an image of the
-right kind. With `--library-sources <dir>` as well, the cook first builds
-each library the model names from `<dir>/<library>/<library>.yaml`, when
-that file exists.
+right kind. With `--project <dir>` as well, the cook first builds each
+library the model names from `<dir>/effects/<library>/<library>.yaml`, when
+that file exists: a project folder holds models (`models/<key>/`) and
+their libraries (`effects/<library>/`).
 
 [`example/`](example) is a working model with its library and animations.
 

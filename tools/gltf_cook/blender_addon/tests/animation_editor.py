@@ -2,23 +2,23 @@
 
     python3 animation_editor.py --blender BLENDER --cooker AERON_GLTF_COOK [--keep]
 
-Builds a scratch source tree from the animated example
+Builds a scratch project from the animated example
 (../../example): models `panel` and `panel2`, `panel2` naming an image
 `extra` of the shared library `examplepanel` that `panel` does not. In a
 headless Blender, with this add-on, it:
 - imports `panel`: the materials' properties hold its materials'
   AERON_flight_model objects exactly;
-- loads the tree's libraries: `extra` is named by `panel2` only;
+- loads the project's libraries: `extra` is named by `panel2` only;
 - creates library `newlib` with Add Images (two emissive images, one with
   its base colour) and plays them on material Screen with Add Frames from
   Images; edits frames and flipbooks, renames an image (the open model's
   frames follow), edits one and adds a Blender image; draws the panels;
-- exports the source (its materials' objects are written back) and the .glb
-  (which builds `newlib` from the tree);
+- saves it to the project (its materials' objects are written back) and
+  exports it for the game (which builds `newlib` from the project);
 - removes `extra` from `examplepanel` and exports the .glb again: the export
   warns that `panel2` names it.
-Then it checks the files: the source's Screen material plays newlib's
-frames, newlib is built, and the cooked model's Screen material plays them.
+Then it checks the files: the saved model's Screen material plays newlib's
+frames, newlib is built, and the game model's Screen material plays them.
 """
 
 import argparse
@@ -95,7 +95,7 @@ def _draw(context, root):
         bpy.types.AERON_UL_library_images.draw_item(None, context, _Layout(), state, item, 0, state, "")
 
 
-def blender_main(cooker, tree, effects, paint, scratch):
+def blender_main(cooker, project, effects, paint, scratch):
     import addon_utils
     import bpy
 
@@ -113,7 +113,7 @@ def blender_main(cooker, tree, effects, paint, scratch):
 
     for obj in list(bpy.data.objects):
         bpy.data.objects.remove(obj)
-    gltf = os.path.join(tree, "models", "panel", "panel.gltf")
+    gltf = os.path.join(project, "models", "panel", "panel.gltf")
     check('FINISHED' in bpy.ops.import_scene.aeron_flight_model(filepath=gltf), "import")
     root = next(obj for obj in bpy.data.objects if obj.aeron_flight.role == 'model')
     bpy.context.view_layer.objects.active = root
@@ -126,7 +126,7 @@ def blender_main(cooker, tree, effects, paint, scratch):
 
     with bpy.context.temp_override(object=root):
         check('FINISHED' in bpy.ops.aeron.libraries_refresh(), "load the libraries")
-        loaded = libraries.tree(bpy.context)
+        loaded = libraries.project(bpy.context)
         check(loaded is not None and loaded.users_of("examplepanel", "extra", exclude="panel") == ["panel2"],
               "the libraries know panel2 names extra")
     lights = bpy.data.materials["Lights"]
@@ -194,7 +194,7 @@ def blender_main(cooker, tree, effects, paint, scratch):
               os.path.exists(bpy.path.abspath(painted.filepath)), "Add Blender Image")
 
     with bpy.context.temp_override(object=root):
-        check('FINISHED' in bpy.ops.export_scene.aeron_flight_model_source(filepath=gltf), "source export")
+        check('FINISHED' in bpy.ops.export_scene.aeron_flight_model_project(filepath=gltf), "save to project")
         glb = os.path.join(scratch, "panel.glb")
         check('FINISHED' in bpy.ops.export_scene.aeron_flight_model(filepath=glb), ".glb export")
         libraries.select(bpy.context, "examplepanel", "extra")
@@ -206,10 +206,10 @@ def blender_main(cooker, tree, effects, paint, scratch):
 
 # ---- outside -------------------------------------------------------------------
 
-def _copy_model(tree, key, screen=None):
+def _copy_model(project, key, screen=None):
     """The example as model `key`, its Screen material's object replaced by
     `screen` when given."""
-    model = os.path.join(tree, "models", key)
+    model = os.path.join(project, "models", key)
     os.makedirs(model)
     with open(os.path.join(EXAMPLE, "panel.gltf"), encoding="utf-8") as stream:
         document = json.load(stream)
@@ -246,12 +246,12 @@ def main():
         return
 
     scratch = tempfile.mkdtemp(prefix="aeron_animation_editor_")
-    tree, effects, paint = (os.path.join(scratch, name) for name in ("tree", "effects", "paint"))
+    project, effects, paint = (os.path.join(scratch, name) for name in ("project", "effects", "paint"))
     os.makedirs(effects)
     os.makedirs(paint)
-    # The tree: the example's library with one more image, `extra`, that
+    # The project: the example's library with one more image, `extra`, that
     # only panel2 names.
-    library = os.path.join(tree, "effects", "examplepanel")
+    library = os.path.join(project, "effects", "examplepanel")
     os.makedirs(library)
     shutil.copytree(os.path.join(EXAMPLE, "frames"), os.path.join(library, "frames"))
     shutil.copyfile(os.path.join(library, "frames", "screen_a.png"), os.path.join(library, "frames", "extra.png"))
@@ -259,8 +259,8 @@ def main():
         text = stream.read()
     with open(os.path.join(library, "examplepanel.yaml"), "w", encoding="utf-8") as stream:
         stream.write(text + "  extra: { kind: baseColor, baseColor: frames/extra.png }\n")
-    _copy_model(tree, "panel")
-    _copy_model(tree, "panel2", {"flipbooks": [{"state": "target", "layer": "baseColor", "mode": "loop",
+    _copy_model(project, "panel")
+    _copy_model(project, "panel2", {"flipbooks": [{"state": "target", "layer": "baseColor", "mode": "loop",
                                                 "library": "examplepanel", "frames": [["extra", 1]]}]})
     # Frames painted elsewhere: two emissive images, the first with its base colour.
     frames = os.path.join(EXAMPLE, "frames")
@@ -275,7 +275,7 @@ def main():
                BLENDER_USER_SCRIPTS=os.path.join(scratch, "scripts"))
     completed = subprocess.run([args.blender, "-b", "--factory-startup", "--python-exit-code", "1",
                                 "--python", os.path.abspath(__file__), "--", "--blender", args.blender,
-                                "--cooker", args.cooker, "--inside", tree, effects, paint, scratch],
+                                "--cooker", args.cooker, "--inside", project, effects, paint, scratch],
                                env=env, capture_output=True, text=True)
     failures = []
     for line in completed.stdout.splitlines():
@@ -290,17 +290,17 @@ def main():
     if not any("panel2" in line and "extra" in line for line in warned):
         failures.append("the .glb export after the removal did not name panel2")
 
-    books = _materials(os.path.join(tree, "models", "panel", "panel.gltf")).get("Screen", {}).get("flipbooks", [])
+    books = _materials(os.path.join(project, "models", "panel", "panel.gltf")).get("Screen", {}).get("flipbooks", [])
     if not any(book.get("library") == "newlib" and [k for k, _ in book["frames"]] == ["glow_0", "glow_one"]
                for book in books):
-        failures.append("the source does not play newlib's frames on Screen")
+        failures.append("the saved model does not play newlib's frames on Screen")
     if not os.path.exists(os.path.join(effects, "newlib.yaml")):
         failures.append("newlib was not built")
     glb = os.path.join(scratch, "panel.glb")
     played = os.path.exists(glb) and any(book.get("library") == "newlib" for book in
                                          _materials(glb).get("Screen", {}).get("flipbooks", []))
     if not played:
-        failures.append("the cooked model does not play newlib's frames on Screen")
+        failures.append("the game model does not play newlib's frames on Screen")
 
     for failure in failures:
         print("FAILED", failure)

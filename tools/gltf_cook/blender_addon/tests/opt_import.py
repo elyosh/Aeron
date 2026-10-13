@@ -1,0 +1,198 @@
+"""Import XWA OPT, headless.
+
+    python3 opt_import.py --blender BLENDER --cooker AERON_GLTF_COOK --opt2gltf OPT2GLTF
+                          --stock OPT [--xwau OPT [--xwau-root DIR]...] [--keep]
+
+In a headless Blender with this add-on, imports the original game's OPT
+(Original Game) into a scratch project and, with --xwau, an XWA Upgrade OPT
+(Detect, with the --xwau-root folders as the preferences' XWA Upgrade
+folders, its own installation after them) into another. For each:
+- the scene gets the model: its root and one component per OPT mesh, as
+  many as the model's .gltf has;
+- the project holds models/<key>/, the same as opt2gltf converts it;
+- the project's libraries hold every image the model's materials name;
+- importing it again fails without Replace and leaves the model, and
+  succeeds with it.
+"""
+
+import argparse
+import filecmp
+import json
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+
+ADDON_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# The add-on is loaded from its source directory: no bytecode caches there.
+sys.dont_write_bytecode = True
+MODULE = "bl_ext.user_default.aeron_flight_model"
+
+
+def _key(opt):
+    return os.path.splitext(os.path.basename(opt))[0].lower()
+
+
+# ---- inside Blender ------------------------------------------------------------
+
+def blender_main(cooker, opt2gltf, projects, stock, xwau, roots):
+    import addon_utils
+    import bpy
+
+    addon_utils.enable(MODULE, default_set=True, handle_error=None)
+    prefs = bpy.context.preferences.addons[MODULE].preferences
+    prefs.cooker = cooker
+    prefs.opt2gltf = opt2gltf
+    for root in roots:
+        prefs.xwau_folders.add().path = root
+    from bl_ext.user_default.aeron_flight_model import common
+
+    failures = []
+
+    def check(condition, message):
+        print("OPT", "ok" if condition else "FAILED", message)
+        if not condition:
+            failures.append(message)
+
+    for opt, data in ((stock, 'STOCK'), (xwau, 'AUTO')):
+        if not opt:
+            continue
+        key = _key(opt)
+        project = os.path.join(projects, data.lower())
+        for obj in list(bpy.data.objects):
+            bpy.data.objects.remove(obj)
+        try:
+            result = bpy.ops.import_scene.xwa_opt(filepath=opt, project=project, data=data)
+        except RuntimeError as error:
+            result = {str(error)}
+        check('FINISHED' in result, "{}: imported ({})".format(key, ", ".join(sorted(result))))
+        roots_found = [obj for obj in bpy.data.objects if common.role(obj) == 'model']
+        gltf = os.path.join(project, "models", key, key + ".gltf")
+        check(len(roots_found) == 1 and os.path.isfile(gltf), "{}: one model root, from {}".format(key, gltf))
+        if roots_found and os.path.isfile(gltf):
+            with open(gltf, encoding="utf-8") as stream:
+                document = json.load(stream)
+            expected = sum(1 for node in document["nodes"]
+                           if (node.get("extensions") or {}).get(common.EXTENSION_NAME, {}).get("role") == "component")
+            check(len(common.components(roots_found[0])) == expected,
+                  "{}: {} components".format(key, len(common.components(roots_found[0]))))
+        try:
+            bpy.ops.import_scene.xwa_opt(filepath=opt, project=project, data=data)
+            check(False, "{}: imported again without Replace".format(key))
+        except RuntimeError:
+            check(os.path.isfile(gltf), "{}: refused without Replace, model kept".format(key))
+        check('FINISHED' in bpy.ops.import_scene.xwa_opt(filepath=opt, project=project, data=data, replace=True),
+              "{}: imported again with Replace".format(key))
+    sys.exit(1 if failures else 0)
+
+
+# ---- outside -------------------------------------------------------------------
+
+def _library_keys(cooker, project):
+    """{library: {key}} of the project's libraries."""
+    keys = {}
+    effects = os.path.join(project, "effects")
+    for name in sorted(os.listdir(effects)) if os.path.isdir(effects) else []:
+        path = os.path.join(effects, name, name + ".yaml")
+        if os.path.isfile(path):
+            out = subprocess.run([cooker, "--library-json", path], capture_output=True, text=True, check=True).stdout
+            keys[name] = set(json.loads(out)["images"])
+    return keys
+
+
+def _named_keys(gltf):
+    """{library: {key}} the model's materials name."""
+    with open(gltf, encoding="utf-8") as stream:
+        document = json.load(stream)
+    names = {}
+    for material in document.get("materials", []):
+        extension = (material.get("extensions") or {}).get("AERON_flight_model") or {}
+        for book in extension.get("flipbooks", []):
+            names.setdefault(book.get("library"), set()).update(frame[0] for frame in book.get("frames", []))
+        damage = extension.get("damage")
+        if damage:
+            names.setdefault(damage["library"], set()).update(
+                stage for alternative in damage["alternatives"] for stage in alternative["stages"] if stage)
+    return names
+
+
+def _same_tree(a, b):
+    compared = filecmp.dircmp(a, b)
+    if compared.left_only or compared.right_only or compared.diff_files or compared.funny_files:
+        return False
+    return all(_same_tree(os.path.join(a, sub), os.path.join(b, sub)) for sub in compared.common_dirs)
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--blender", required=True)
+    parser.add_argument("--cooker", required=True)
+    parser.add_argument("--opt2gltf", required=True)
+    parser.add_argument("--stock", required=True, help="an OPT of the original game")
+    parser.add_argument("--xwau", help="an XWA Upgrade OPT, in its installation's FlightModels folder")
+    parser.add_argument("--xwau-root", action="append", default=[], help="an XWA Upgrade folder (repeatable)")
+    parser.add_argument("--keep", action="store_true", help="keep the scratch directory")
+    parser.add_argument("--inside", nargs=2, help=argparse.SUPPRESS)
+    argv = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else sys.argv[1:]
+    args = parser.parse_args(argv)
+    if args.inside:
+        blender_main(args.cooker, args.opt2gltf, args.inside[0], args.stock, args.xwau, args.xwau_root)
+        return
+
+    scratch = tempfile.mkdtemp(prefix="aeron_opt_import_")
+    projects = os.path.join(scratch, "projects")
+    os.makedirs(os.path.join(scratch, "ext", "user_default"))
+    os.symlink(ADDON_DIR, os.path.join(scratch, "ext", "user_default", "aeron_flight_model"))
+    env = dict(os.environ, BLENDER_USER_EXTENSIONS=os.path.join(scratch, "ext"),
+               BLENDER_USER_CONFIG=os.path.join(scratch, "config"),
+               BLENDER_USER_SCRIPTS=os.path.join(scratch, "scripts"))
+    inside = ["--blender", args.blender, "--cooker", args.cooker, "--opt2gltf", args.opt2gltf, "--stock", args.stock]
+    if args.xwau:
+        inside += ["--xwau", args.xwau] + [arg for root in args.xwau_root for arg in ("--xwau-root", root)]
+    completed = subprocess.run([args.blender, "-b", "--factory-startup", "--python-exit-code", "1",
+                                "--python", os.path.abspath(__file__), "--"] + inside +
+                               ["--inside", projects, scratch], env=env, capture_output=True, text=True)
+    failures = []
+    for line in completed.stdout.splitlines():
+        if line.startswith(("OPT", "Error:")):
+            print(line)
+    if completed.returncode != 0:
+        failures.append("Blender: " + " | ".join(completed.stderr.strip().splitlines()[-5:]))
+
+    # The project's models are opt2gltf's own conversion; their libraries
+    # hold what they name.
+    for opt, mode, data in ((args.stock, ["--stock"], "stock"), (args.xwau, None, "auto")):
+        if not opt:
+            continue
+        key = _key(opt)
+        project = os.path.join(projects, data)
+        direct = os.path.join(scratch, "direct", data)
+        if mode is None:
+            own = os.path.dirname(os.path.dirname(os.path.abspath(opt)))
+            roots = [root for root in args.xwau_root] + ([own] if own not in args.xwau_root else [])
+            mode = [arg for root in roots for arg in ("--xwau-root", root)]
+        subprocess.run([args.opt2gltf] + mode + ["--project", direct, opt], capture_output=True, check=True)
+        same = _same_tree(os.path.join(direct, "models", key), os.path.join(project, "models", key))
+        print("OPT", "ok" if same else "FAILED", "{}: the project's model is opt2gltf's".format(key))
+        if not same:
+            failures.append(key + " differs")
+        present = _library_keys(args.cooker, project)
+        missing = sorted("{} {}".format(library, image) for library, images in
+                         _named_keys(os.path.join(project, "models", key, key + ".gltf")).items()
+                         for image in images if image not in present.get(library, set()))
+        print("OPT", "FAILED" if missing else "ok", "{}: library images named: {}".format(
+            key, ", ".join(missing[:5]) if missing else "all present"))
+        if missing:
+            failures.append(key + " lacks library images")
+    for failure in failures:
+        print("FAILED", failure)
+    if args.keep or failures:
+        print("scratch:", scratch)
+    else:
+        shutil.rmtree(scratch, ignore_errors=True)
+    sys.exit(1 if failures else 0)
+
+
+if __name__ == "__main__":
+    main()

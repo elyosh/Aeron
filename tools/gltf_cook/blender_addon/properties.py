@@ -226,7 +226,7 @@ class AeronFlightProperties(PropertyGroup):
     # (JSON), and the extensions and extras names it had (JSON).
     source_path: StringProperty(
         name="Model File", subtype='FILE_PATH',
-        description="The .gltf the model was imported from or last exported to")
+        description="The .gltf the model was imported from or last saved to")
     asset_extras: StringProperty()
     source_names: StringProperty()
     # The model's energy default (its AERON_flight_model `energy`): the

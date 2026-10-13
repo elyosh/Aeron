@@ -341,7 +341,7 @@ def check(problems, root, materials):
     the cooker would refuse: frames or stages without a library, damage
     without alternatives, and, when the model's libraries are loaded, a
     library, key or image kind they do not have."""
-    loaded = libraries.tree_of(root)
+    loaded = libraries.project_of(root)
     users = {}
     for obj in [root] + list(root.children_recursive):
         for slot in obj.material_slots:
@@ -352,7 +352,7 @@ def check(problems, root, materials):
             return
         images = loaded.libraries.get(library, {}).get("images")
         if images is None:
-            problems.error(owner, "{}: no library {} in the source tree".format(what, library))
+            problems.error(owner, "{}: no library {} in the project".format(what, library))
         elif key not in images:
             problems.error(owner, "{}: {} is not in library {}".format(what, key, library))
         elif images[key].get("kind") != kind:

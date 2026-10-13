@@ -1,9 +1,9 @@
 # Operators of the material animation editor (animation.py) and of the
-# source tree's effect libraries (libraries.py). Animation operators edit the
+# project's effect libraries (libraries.py). Animation operators edit the
 # material's properties, written to its AERON_flight_model object by the
 # exports. Library operators write the library's files at once (its
 # <library>.yaml through the cooker, and the PNGs of its frames/): a library
-# is the tree's, shared by models, so Blender's undo does not revert them.
+# is the project's, shared by models, so Blender's undo does not revert them.
 
 import filecmp
 import json
@@ -171,7 +171,7 @@ class AERON_OT_frames_add_prefix(_FlipbookOperator, Operator):
 
     @classmethod
     def poll(cls, context):
-        return super().poll(context) and libraries.tree(context) is not None
+        return super().poll(context) and libraries.project(context) is not None
 
     def invoke(self, context, event):
         return context.window_manager.invoke_props_dialog(self)
@@ -305,16 +305,16 @@ def _cooker(operator, context):
 
 
 def _loaded(operator, context):
-    """The active model's tree, loaded if it was not; None after a message."""
+    """The active model's project, loaded if it was not; None after a message."""
     effects = libraries.effects_dir(context)
     if not effects:
-        operator.report({'ERROR'}, "the model is not in a source tree (export its source into "
-                                   "<tree>/models/<key>/ first)")
+        operator.report({'ERROR'}, "the model is not in a project (save it to <project>/models/<key>/ "
+                                   "first)")
         return None, None
     cooker = _cooker(operator, context)
     if not cooker:
         return None, None
-    loaded = libraries.tree(context)
+    loaded = libraries.project(context)
     try:
         return (loaded or libraries.load(cooker, effects)), cooker
     except (OSError, RuntimeError, ValueError) as error:
@@ -354,7 +354,7 @@ def _model_users(context, library, key):
 
 
 class AERON_OT_libraries_refresh(Operator):
-    """Read the source tree's effect libraries, and which models use them, again"""
+    """Read the project's effect libraries, and which models use them, again"""
 
     bl_idname = "aeron.libraries_refresh"
     bl_label = "Refresh Libraries"
@@ -560,7 +560,7 @@ Writes the library file at once"""
 class _ImageOperator:
     @classmethod
     def poll(cls, context):
-        return libraries.tree(context) is not None and bool(libraries.selected_image(context))
+        return libraries.project(context) is not None and bool(libraries.selected_image(context))
 
 
 class AERON_OT_library_edit_image(_ImageOperator, Operator):
@@ -578,7 +578,7 @@ Writes the library file at once"""
     crop: FloatVectorProperty(name="Crop", size=4, default=(0.0, 0.0, 1.0, 1.0))
 
     def invoke(self, context, event):
-        loaded = libraries.tree(context)
+        loaded = libraries.project(context)
         entry = loaded.libraries[libraries.selected_library(context)]["images"][libraries.selected_image(context)]
         self.kind = entry["kind"]
         self.base_color = entry.get("baseColor", "")
@@ -630,7 +630,7 @@ def _names(names):
 
 
 def _draw_users(layout, context, library, key):
-    loaded = libraries.tree(context)
+    loaded = libraries.project(context)
     root = common.model_root(context.object) if context.object else None
     others = loaded.users_of(library, key, exclude=libraries.model_key(root) if root else None)
     here = _model_users(context, library, key)
@@ -719,7 +719,7 @@ Writes the library file at once"""
                         renamed += 1
         libraries.select(context, name, self.new_key)
         if renamed:
-            self.report({'INFO'}, "{} use(s) renamed in this model (written by its source export)".format(renamed))
+            self.report({'INFO'}, "{} use(s) renamed in this model (written when it is saved to its project)".format(renamed))
         flipbook_preview.schedule()
         return {'FINISHED'}
 

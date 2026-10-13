@@ -2,7 +2,7 @@
 
     python3 flipbook_preview.py --blender BLENDER --cooker AERON_GLTF_COOK [--keep]
 
-Builds a scratch source tree holding the animated example (../../example)
+Builds a scratch project holding the animated example (../../example)
 as model `panel`, imports it in a headless Blender with this add-on, and
 turns the preview on:
 - materials Lights and Screen get the preview's nodes;
@@ -13,7 +13,7 @@ turns the preview on:
 - saving during the preview writes no preview data, and the preview is
   back after;
 - turning it off gives the materials back their nodes exactly, and the
-  source export writes the same file as before the preview.
+  model saved to the project is the same file as before the preview.
 """
 
 import argparse
@@ -45,17 +45,17 @@ def _snapshot(material):
     return sorted(node.name for node in tree.nodes), links, values
 
 
-def _source_export(path):
-    """The source export, over the model's own file (the export makes the
-    model's source the file it writes)."""
+def _save_to_project(path):
+    """Save to Project, over the model's own file (the save makes the
+    model's file the one it writes)."""
     import bpy
 
-    assert 'FINISHED' in bpy.ops.export_scene.aeron_flight_model_source(filepath=path)
+    assert 'FINISHED' in bpy.ops.export_scene.aeron_flight_model_project(filepath=path)
     with open(path, encoding="utf-8") as stream:
         return json.load(stream)
 
 
-def blender_main(cooker, tree, scratch):
+def blender_main(cooker, project, scratch):
     import addon_utils
     import bpy
 
@@ -72,7 +72,7 @@ def blender_main(cooker, tree, scratch):
 
     for obj in list(bpy.data.objects):
         bpy.data.objects.remove(obj)
-    gltf = os.path.join(tree, "models", "panel", "panel.gltf")
+    gltf = os.path.join(project, "models", "panel", "panel.gltf")
     check('FINISHED' in bpy.ops.import_scene.aeron_flight_model(filepath=gltf), "import")
     root = next(obj for obj in bpy.data.objects if obj.aeron_flight.role == 'model')
     bpy.context.view_layer.objects.active = root
@@ -81,7 +81,7 @@ def blender_main(cooker, tree, scratch):
     lights, screen = bpy.data.materials["Lights"], bpy.data.materials["Screen"]
     before = {material.name: _snapshot(material) for material in (lights, screen)}
     with bpy.context.temp_override(object=root):
-        exported = _source_export(gltf)
+        exported = _save_to_project(gltf)
 
     wm = bpy.context.window_manager
     wm.aeron_flipbook_preview = True
@@ -142,8 +142,8 @@ def blender_main(cooker, tree, scratch):
     bpy.ops.wm.save_as_mainfile(filepath=blend, copy=True)
     check(flipbook_preview._complete(lights) and flipbook_preview._complete(screen), "the preview is back after saving")
     with bpy.context.temp_override(object=root):
-        during = _source_export(gltf)
-    check(flipbook_preview._complete(lights), "the preview is back after the source export")
+        during = _save_to_project(gltf)
+    check(flipbook_preview._complete(lights), "the preview is back after Save to Project")
 
     wm.aeron_flipbook_preview = False
     after = {material.name: _snapshot(material) for material in (lights, screen)}
@@ -158,8 +158,8 @@ def blender_main(cooker, tree, scratch):
           all(_snapshot(saved[name]) == before[name] for name in ("Lights", "Screen")),
           "the saved file holds no preview data")
     with bpy.context.temp_override(object=root):
-        exported_after = _source_export(gltf)
-    check(exported_after == exported and during == exported, "the source export writes the same file")
+        exported_after = _save_to_project(gltf)
+    check(exported_after == exported and during == exported, "Save to Project writes the same file")
     sys.exit(1 if failures else 0)
 
 
@@ -199,12 +199,12 @@ def main():
         return
 
     scratch = tempfile.mkdtemp(prefix="aeron_flipbook_preview_")
-    tree = os.path.join(scratch, "tree")
-    library = os.path.join(tree, "effects", "examplepanel")
+    project = os.path.join(scratch, "project")
+    library = os.path.join(project, "effects", "examplepanel")
     os.makedirs(library)
     shutil.copytree(os.path.join(EXAMPLE, "frames"), os.path.join(library, "frames"))
     shutil.copyfile(os.path.join(EXAMPLE, "examplepanel.yaml"), os.path.join(library, "examplepanel.yaml"))
-    model = os.path.join(tree, "models", "panel")
+    model = os.path.join(project, "models", "panel")
     os.makedirs(model)
     for name in ("panel.gltf", "panel.bin"):
         shutil.copyfile(os.path.join(EXAMPLE, name), os.path.join(model, name))
@@ -217,7 +217,7 @@ def main():
                BLENDER_USER_SCRIPTS=os.path.join(scratch, "scripts"))
     completed = subprocess.run([args.blender, "-b", "--factory-startup", "--python-exit-code", "1",
                                 "--python", os.path.abspath(__file__), "--", "--blender", args.blender,
-                                "--cooker", args.cooker, "--inside", tree, scratch],
+                                "--cooker", args.cooker, "--inside", project, scratch],
                                env=env, capture_output=True, text=True)
     failed = completed.returncode != 0
     for line in completed.stdout.splitlines():

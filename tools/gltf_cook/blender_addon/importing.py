@@ -253,8 +253,8 @@ class IMPORT_OT_aeron_flight_model(Operator, ImportHelper):
         if state["animated"]:
             message += ", {} animated material(s)".format(len(state["animated"]))
         if state["cooked"]:
-            self.report({'WARNING'}, message + "; a cooked .glb has textures Blender cannot read: "
-                                               "import the uncooked .gltf instead")
+            self.report({'WARNING'}, message + "; a .glb for the game has textures Blender cannot read: "
+                                               "import the model's .gltf instead")
         else:
             self.report({'INFO'}, message)
         return {'FINISHED'}

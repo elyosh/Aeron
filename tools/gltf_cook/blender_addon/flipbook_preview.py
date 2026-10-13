@@ -10,7 +10,7 @@
 # so the look is a function of the frame alone. A previewed material (a
 # Principled BSDF whose base colour is a texture or a value) gets a node
 # group before its base colour and emission inputs, and image nodes for the
-# playing frames (the library sources' PNGs), sampled with the base colour
+# playing frames (the libraries' PNGs in the project), sampled with the base colour
 # texture's own vector. All of it is tagged, and removed when the preview
 # stops, around the exports, while the file is saved, when a file is opened
 # and when the add-on is disabled.
@@ -352,18 +352,18 @@ def _show(material, loaded, states, t):
         _set(group.inputs[name], "default_value", value)
 
 
-def _trees():
-    """{material: its model's loaded source tree, or why there is none}."""
+def _projects():
+    """{material: its model's loaded project, or why there is none}."""
     result = {}
     for obj in bpy.data.objects:
         if common.role(obj) != 'model':
             continue
-        if not sources.library_sources(bpy.path.abspath(obj.aeron_flight.source_path)):
-            loaded = "Not in a model of a source tree"
+        if not sources.project_effects(bpy.path.abspath(obj.aeron_flight.source_path)):
+            loaded = "The model is not in a project"
         else:
-            loaded = libraries.tree_of(obj) or "Libraries not loaded"
+            loaded = libraries.project_of(obj) or "Libraries not loaded"
         for material in sources.model_materials(obj):
-            if not isinstance(result.get(material), libraries.Tree):
+            if not isinstance(result.get(material), libraries.Project):
                 result[material] = loaded
     return result
 
@@ -382,15 +382,15 @@ def refresh(scene=None):
         return
     scene = scene or bpy.context.scene
     states, t = active_states(scene), seconds(scene)
-    trees = _trees()
+    projects = _projects()
     skipped.clear()
     for material in bpy.data.materials:
         if not len(material.aeron_flight.flipbooks):
             if _has_nodes(material):
                 _remove(material)
             continue
-        loaded = trees.get(material, "Not in a model of a source tree")
-        if not isinstance(loaded, libraries.Tree):
+        loaded = projects.get(material, "The model is not in a project")
+        if not isinstance(loaded, libraries.Project):
             if _has_nodes(material):
                 _remove(material)
             skipped[material.name] = loaded
@@ -404,15 +404,15 @@ def refresh(scene=None):
         _show(material, loaded, states, t)
 
 
-def load_trees(context):
-    """Loads the source trees of the scene's models that are not loaded yet.
+def load_projects(context):
+    """Loads the projects of the scene's models that are not loaded yet.
     Returns an error message, or None."""
     from . import preferences
 
     wanted = set()
     for obj in bpy.data.objects:
-        if common.role(obj) == 'model' and libraries.tree_of(obj) is None:
-            effects = sources.library_sources(bpy.path.abspath(obj.aeron_flight.source_path))
+        if common.role(obj) == 'model' and libraries.project_of(obj) is None:
+            effects = sources.project_effects(bpy.path.abspath(obj.aeron_flight.source_path))
             if effects:
                 wanted.add(effects)
     if not wanted:
@@ -454,7 +454,7 @@ def suspended():
 
 def _enabled_update(self, context):
     global message
-    message = (load_trees(context) or "") if self.aeron_flipbook_preview else ""
+    message = (load_projects(context) or "") if self.aeron_flipbook_preview else ""
     refresh(context.scene)
 
 

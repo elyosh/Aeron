@@ -578,8 +578,9 @@ class VIEW3D_PT_aeron(Panel):
         layout.prop(context.scene.aeron_flight, "game_preview")
         row = layout.row(align=True)
         row.operator("import_scene.aeron_flight_model", text="Import", icon='IMPORT')
-        row.operator("export_scene.aeron_flight_model_source", text="Export Source", icon='EXPORT')
-        layout.operator("export_scene.aeron_flight_model", text="Export .glb", icon='EXPORT')
+        row.operator("import_scene.xwa_opt", text="Import OPT", icon='IMPORT')
+        row.operator("export_scene.aeron_flight_model_project", text="Save to Project", icon='FILE_TICK')
+        layout.operator("export_scene.aeron_flight_model", text="Export for Game", icon='EXPORT')
 
 
 class VIEW3D_PT_aeron_overlays(Panel):
