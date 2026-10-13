@@ -4,7 +4,7 @@
  *
  * Usage:
  *   opt2gltf (--stock | --xwau-root DIR) [--smooth-angle DEG]
- *            (--project DIR [--replace] | <output_dir>) FILE.opt
+ *            (--project DIR [--replace] FILE.opt | FILE.opt <output_dir>)
  *   opt2gltf effects --xwau-root DIR --project DIR <project|model.gltf>...
  *   opt2gltf missions --xwau-root DIR --stock-game DIR <output_dir>
  *
@@ -91,7 +91,7 @@ static bool convert_into_project(const ModelConversion* mc, const char* opt_path
 
 static int usage(void) {
 	fprintf(stderr, "usage: opt2gltf (--stock | --xwau-root DIR) [--smooth-angle DEG]\n"
-					"                (--project DIR [--replace] | <output_dir>) FILE.opt\n"
+					"                (--project DIR [--replace] FILE.opt | FILE.opt <output_dir>)\n"
 					"       opt2gltf effects --xwau-root DIR --project DIR <project|model.gltf>...\n"
 					"       opt2gltf missions --xwau-root DIR --stock-game DIR <output_dir>\n");
 	return 2;
@@ -192,7 +192,7 @@ static bool parse_args(int argc, char** argv, unsigned allowed, Args* out) {
 /* ===== Commands ========================================================= */
 
 /* opt2gltf (--stock | --xwau-root DIR) [--smooth-angle DEG]
- *          (--project DIR [--replace] | <output_dir>) FILE.opt */
+ *          (--project DIR [--replace] FILE.opt | FILE.opt <output_dir>) */
 static int run_convert(int argc, char** argv) {
 	Args a;
 	if (!argc)
