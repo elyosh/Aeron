@@ -54,7 +54,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 
-#include "opt2gltf.h"
+#include "opt_gltf.h"
 #include "xwau_config.h"
 #include "xwau_missions.h"
 

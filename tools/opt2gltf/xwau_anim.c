@@ -459,13 +459,13 @@ static bool damage_json(XwauAnim* a, cJSON* object, const XwauMatSequences* own_
 }
 
 bool XwauAnim_Texture(XwauAnim* a, const XwauMatFile* mat, const opt_texture_t* tex, float unlit,
-					  XwauAnimScreen screen, OptGltfXwauAnim* out) {
+					  XwauAnimScreen screen, XwauGltfAnim* out) {
 	memset(out, 0, sizeof *out);
 	if (!mat)
 		return true;
 	XwauMatSequences own_list, inherited;
 	XwauMat_FindSequences(mat, tex->name, &own_list, &inherited);
-	const bool has_illum = OptGltf_XwauTextureHasIllum(tex);
+	const bool has_illum = XwauGltf_TextureHasIllum(tex);
 
 	/* Global events: per layer, the last line of each event
 	 * (AssignTextureEvent overwrites). */

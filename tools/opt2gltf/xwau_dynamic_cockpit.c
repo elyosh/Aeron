@@ -1,9 +1,11 @@
 /*
  * XWAU Dynamic Cockpit files resolved into opt2gltf screen surfaces
- * (dynamic_cockpit.h).
+ * (xwau_dynamic_cockpit.h).
  */
 
-#include "dynamic_cockpit.h"
+#include "xwau_dynamic_cockpit.h"
+
+#include "xwau_gltf_material.h"
 
 #include "xwau_dat.h"
 
@@ -106,7 +108,7 @@ typedef struct DcSection {
 	int     erase[DC_MAX_COORDS];
 } DcSection;
 
-struct DynamicCockpitCover {
+struct XwauDynamicCockpitCover {
 	char         key[1100]; /* resolved path + group + image */
 	char         name[160]; /* <datbase>_<group>_<image> */
 	XwauDatImage image;
@@ -218,7 +220,7 @@ static void color_to_linear(uint32_t color, float out[3]) {
 /* The cover's base image (premultiplied colour, cover alpha) and its lit
  * texels (PixelShaderDC: V * a >= 0.8 is shadeless and 20% brighter; it
  * shows no HUD, hence base alpha 1). */
-static bool bake_cover(DynamicCockpitCover* cover) {
+static bool bake_cover(XwauDynamicCockpitCover* cover) {
 	const size_t n = (size_t)cover->image.width * cover->image.height;
 	cover->base    = (uint8_t*)malloc(n * 4);
 	uint8_t* glow  = (uint8_t*)calloc(n * 4, 1);
@@ -256,9 +258,9 @@ static bool bake_cover(DynamicCockpitCover* cover) {
 }
 
 /* Load (once per cockpit) the cover a cover_texture value names. */
-static const DynamicCockpitCover* load_cover(DynamicCockpit* dc, const char* value,
-											 DynamicCockpitFindFile find, void* find_context,
-											 const char* label) {
+static const XwauDynamicCockpitCover* load_cover(XwauDynamicCockpit* dc, const char* value,
+												 XwauDynamicCockpitFindFile find, void* find_context,
+												 const char* label) {
 	char spec[512];
 	snprintf(spec, sizeof spec, "%s", value);
 	char* image_sep = strrchr(spec, '-');
@@ -288,9 +290,9 @@ static const DynamicCockpitCover* load_cover(DynamicCockpit* dc, const char* val
 	for (size_t i = 0; i < dc->cover_count; ++i)
 		if (strcmp(dc->covers[i]->key, key) == 0)
 			return dc->covers[i]->ok ? dc->covers[i] : NULL;
-	DynamicCockpitCover** grown =
-		(DynamicCockpitCover**)realloc(dc->covers, (dc->cover_count + 1) * sizeof *grown);
-	DynamicCockpitCover* cover = (DynamicCockpitCover*)calloc(1, sizeof *cover);
+	XwauDynamicCockpitCover** grown =
+		(XwauDynamicCockpitCover**)realloc(dc->covers, (dc->cover_count + 1) * sizeof *grown);
+	XwauDynamicCockpitCover* cover = (XwauDynamicCockpitCover*)calloc(1, sizeof *cover);
 	if (grown)
 		dc->covers = grown;
 	if (!grown || !cover) {
@@ -359,9 +361,9 @@ static DcSection* find_section(DcSection* sections, int count, const char* name)
 	return NULL;
 }
 
-bool DynamicCockpit_Load(const char* dc_path, const opt_file_t* opt, const char* basename,
-						 DynamicCockpitFindFile find, void* find_context, DynamicCockpit* out,
-						 const char* label) {
+bool XwauDynamicCockpit_Load(const char* dc_path, const opt_file_t* opt, const char* basename,
+							 XwauDynamicCockpitFindFile find, void* find_context, XwauDynamicCockpit* out,
+							 const char* label) {
 	memset(out, 0, sizeof *out);
 	FILE* f = fopen(dc_path, "rt");
 	if (!f) {
@@ -375,7 +377,7 @@ bool DynamicCockpit_Load(const char* dc_path, const opt_file_t* opt, const char*
 	if (!sections || !out->screens) {
 		fclose(f);
 		free(sections);
-		DynamicCockpit_Free(out);
+		XwauDynamicCockpit_Free(out);
 		return false;
 	}
 
@@ -525,7 +527,7 @@ bool DynamicCockpit_Load(const char* dc_path, const opt_file_t* opt, const char*
 		if (screen->rect_count == 0) {
 			screen->transparent = screen->hologram = screen->noisy = false;
 		} else if (section->cover[0] && !section->hologram) {
-			const DynamicCockpitCover* cover = load_cover(out, section->cover, find, find_context, label);
+			const XwauDynamicCockpitCover* cover = load_cover(out, section->cover, find, find_context, label);
 			if (cover) {
 				screen->cover_base =
 					(OptGltfImageView) { cover->base, cover->image.width, cover->image.height };
@@ -533,6 +535,8 @@ bool DynamicCockpit_Load(const char* dc_path, const opt_file_t* opt, const char*
 					(OptGltfImageView) { cover->emissive, cover->emissive ? cover->image.width : 0,
 										 cover->emissive ? cover->image.height : 0 };
 				screen->cover_name = cover->name;
+				/* Lit texels glow as the illumination does. */
+				screen->cover_emissive_strength = XWAU_GLTF_ILLUM_GAIN;
 			}
 		}
 		holograms += screen->hologram ? 1 : 0;
@@ -561,7 +565,7 @@ bool DynamicCockpit_Load(const char* dc_path, const opt_file_t* opt, const char*
 	return true;
 }
 
-bool DynamicCockpit_ApplyHologramOffset(opt_file_t* opt, const DynamicCockpit* dc) {
+bool XwauDynamicCockpit_ApplyHologramOffset(opt_file_t* opt, const XwauDynamicCockpit* dc) {
 	if (!dc->has_hologram_offset)
 		return true;
 	for (int32_t mi = 0; mi < opt->mesh_count; ++mi) {
@@ -618,7 +622,7 @@ bool DynamicCockpit_ApplyHologramOffset(opt_file_t* opt, const DynamicCockpit* d
 	return true;
 }
 
-void DynamicCockpit_Free(DynamicCockpit* dc) {
+void XwauDynamicCockpit_Free(XwauDynamicCockpit* dc) {
 	if (!dc)
 		return;
 	for (size_t i = 0; i < dc->cover_count; ++i) {

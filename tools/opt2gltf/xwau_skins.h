@@ -3,7 +3,7 @@
 
 /*
  * XWAU skins of one OPT (hook_32bpp: ReadOptFunction, ReadFgSkins,
- * GetFlightgroupsColors), as the converter's skin variants (opt2gltf.h).
+ * GetFlightgroupsColors), as the converter's skin variants (opt_gltf.h).
  *
  * A skin is FlightModels/Skins/<Opt>/<Skin>, a folder with files at its top
  * level (the folders of every root), else <Skin>.zip (the first root's).
@@ -32,19 +32,53 @@
 #include <stddef.h>
 
 #include "opt.h"
-#include "opt2gltf.h"
+#include "opt_gltf.h"
 #include "xwau_config.h"
 #include "xwau_missions.h"
 
+/*
+ * The skins as material variants, each after the state variants (the
+ * conversion's are xwau_gltf_skins.h). For every state-0 texture of LOD 0
+ * that is not a screen surface, a variant's layers with an image for the
+ * texture are blended, in order and with the hook's integer straight-alpha
+ * blend, onto its decoded colors; the result is baked as the texture is and
+ * gets its own material. Primitives without a composite in a variant show
+ * the material of the variant's state.
+ */
+typedef struct XwauSkinLayer {
+	uint32_t skin;    /* index into XwauSkinVariants.images rows */
+	uint32_t opacity; /* 0..100 */
+} XwauSkinLayer;
+
+typedef struct XwauSkinVariant {
+	const char*          name;
+	uint32_t             state; /* asset state of primitives without a composite */
+	const XwauSkinLayer* layers;
+	size_t               layer_count;
+} XwauSkinVariant;
+
+typedef struct XwauSkinVariants {
+	/* images[skin * opt->texture_count + texture]: the skin's image for that
+	 * OPT texture, of the texture's size, rows in OPT order; rgba NULL when
+	 * the skin has none. */
+	const OptGltfImageView* images;
+	size_t                  skin_count;
+	const XwauSkinVariant*  variants;
+	size_t                  variant_count;
+	/* Variant name per markings value; NULL for an unskinned one. */
+	const char* const* default_markings;
+	size_t             markings_count;
+} XwauSkinVariants;
+
 typedef struct XwauSkins {
-	OptGltfSkins        skins; /* points into the arrays below */
-	char**              skin_names;
-	OptGltfImageView*   images; /* skin_count * texture_count; rgba owned */
-	size_t              image_count;
-	OptGltfSkinVariant* variants;
-	char**              variant_names;
-	OptGltfSkinLayer*   layers;
-	char**              markings;
+	XwauSkinVariants  skins; /* points into the arrays below */
+	char**            skin_names;
+	OptGltfImageView* images; /* skin_count * texture_count; rgba owned */
+	size_t            image_count;
+	XwauSkinVariant*  variants;
+	char**            variant_names;
+	XwauSkinLayer*    layers;
+	char**            markings;
 } XwauSkins;
 
 /* Resolves the skins of `model` (the OPT's name without extension). No

@@ -782,15 +782,20 @@ else()
     set_source_files_properties(tools/opt2gltf/opt_write.c PROPERTIES COMPILE_OPTIONS "-ffp-contract=off")
 endif()
 
+# The OPT to glTF conversion (tools/opt2gltf/opt_gltf.h), which the engine
+# runs on original OPTs; the converter's files, XWAU reading and writing
+# are opt2gltf_tool's.
 add_library(opt2gltf_lib STATIC
-    tools/opt2gltf/opt2gltf.c
+    tools/opt2gltf/opt_gltf.c
+    tools/opt2gltf/opt_gltf_document.c
+    tools/opt2gltf/opt_gltf_material.c
+    tools/opt2gltf/opt_gltf_mesh.c
     third_party/mikktspace/mikktspace.c
 )
 target_include_directories(opt2gltf_lib
     PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/tools/opt2gltf
     PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/third_party/stb
         ${CMAKE_CURRENT_SOURCE_DIR}/third_party/mikktspace
 )
 target_link_libraries(opt2gltf_lib PUBLIC aeron_opt aeron_cgltf aeron PRIVATE aeron_cjson)
@@ -992,31 +997,42 @@ if(AERON_BUILD_TOOLS)
     # The XWAU readers and the effect library writer are CLI-only: they read
     # the X-Wing Alliance Upgrade files and hand resolved materials to
     # opt2gltf_lib.
-    add_executable(opt2gltf
-        tools/opt2gltf/main.c
+    # The converter's own parts: file writing, the XWA Upgrade data and the
+    # model tables, for opt2gltf and its test.
+    add_library(opt2gltf_tool STATIC
+        tools/opt2gltf/opt_gltf_write.c
         tools/opt2gltf/model_tables.c
         tools/opt2gltf/xwau_anim.c
         tools/opt2gltf/xwau_config.c
+        tools/opt2gltf/xwau_dat.c
+        tools/opt2gltf/xwau_dynamic_cockpit.c
         tools/opt2gltf/xwau_effect_bake.c
+        tools/opt2gltf/xwau_gltf_material.c
+        tools/opt2gltf/xwau_gltf_skins.c
         tools/opt2gltf/xwau_library.c
         tools/opt2gltf/xwau_mat.c
-        tools/opt2gltf/xwau_dat.c
         tools/opt2gltf/xwau_mission_files.c
         tools/opt2gltf/xwau_missions.c
         tools/opt2gltf/xwau_model.c
-        tools/opt2gltf/dynamic_cockpit.c
         tools/opt2gltf/xwau_skins.c
         third_party/lzma/LzmaDec.c)
-    target_include_directories(opt2gltf PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/tools/opt2gltf
-        ${CMAKE_CURRENT_SOURCE_DIR}/third_party/cgltf
-        ${CMAKE_CURRENT_SOURCE_DIR}/third_party/stb
-        ${CMAKE_CURRENT_SOURCE_DIR}/third_party/lzma
-        ${CMAKE_CURRENT_SOURCE_DIR}/third_party/bcdec)
-    target_link_libraries(opt2gltf PRIVATE opt2gltf_lib imgbake aeron_yaml_json aeron_effect_files aeron_cjson)
+    target_include_directories(opt2gltf_tool
+        PUBLIC
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/opt2gltf
+        PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/third_party/cgltf
+            ${CMAKE_CURRENT_SOURCE_DIR}/third_party/stb
+            ${CMAKE_CURRENT_SOURCE_DIR}/third_party/lzma
+            ${CMAKE_CURRENT_SOURCE_DIR}/third_party/bcdec)
+    target_link_libraries(opt2gltf_tool
+        PUBLIC opt2gltf_lib
+        PRIVATE imgbake aeron_yaml_json aeron_effect_files aeron_cjson)
     if(NOT MSVC)
-        target_link_libraries(opt2gltf PRIVATE m)
+        target_link_libraries(opt2gltf_tool PUBLIC m)
     endif()
+
+    add_executable(opt2gltf tools/opt2gltf/main.c)
+    target_link_libraries(opt2gltf PRIVATE opt2gltf_tool)
     # As aeron_gltf_cook (tools/gltf_cook/CMakeLists.txt), which the Blender
     # add-on packages with it: the unused SDL is dropped, and a standalone
     # MinGW build links its C runtime statically.
@@ -1032,17 +1048,8 @@ if(AERON_BUILD_TOOLS)
         RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
 
     # The hooks' file rules and the skin selection, checked on fixed texts.
-    add_executable(opt2gltf_xwau_test
-        tools/opt2gltf/tests/xwau_rules_test.c
-        tools/opt2gltf/model_tables.c
-        tools/opt2gltf/xwau_config.c
-        tools/opt2gltf/xwau_missions.c
-        tools/opt2gltf/xwau_model.c
-        tools/opt2gltf/xwau_skins.c)
-    target_include_directories(opt2gltf_xwau_test PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/tools/opt2gltf
-        ${CMAKE_CURRENT_SOURCE_DIR}/third_party/stb)
-    target_link_libraries(opt2gltf_xwau_test PRIVATE opt2gltf_lib)
+    add_executable(opt2gltf_xwau_test tools/opt2gltf/tests/xwau_rules_test.c)
+    target_link_libraries(opt2gltf_xwau_test PRIVATE opt2gltf_tool)
     set_target_properties(opt2gltf_xwau_test PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
 endif()

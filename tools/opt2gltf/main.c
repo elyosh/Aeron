@@ -103,13 +103,15 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 
-#include "dynamic_cockpit.h"
 #include "model_tables.h"
 #include "opt.h"
-#include "opt2gltf.h"
+#include "opt_gltf.h"
+#include "opt_gltf_write.h"
 #include "xwau_anim.h"
 #include "xwau_config.h"
 #include "xwau_dat.h"
+#include "xwau_dynamic_cockpit.h"
+#include "xwau_gltf_material.h"
 #include "xwau_library.h"
 #include "xwau_mat.h"
 #include "xwau_mission_files.h"
@@ -278,7 +280,7 @@ static const XwauNormalMap* xwau_normal_map(const XwauContext* x, const char* va
 	return nm;
 }
 
-static void xwau_fill(OptGltfXwauMaterial* out, const XwauMatParams* p) {
+static void xwau_fill(XwauGltfMaterial* out, const XwauMatParams* p) {
 	memset(out, 0, sizeof *out);
 	out->metallic         = p->metallic;
 	out->intensity        = p->intensity;
@@ -303,17 +305,17 @@ static int xwau_find_file(void* context, const char* rel, char* out, size_t cap)
  * makes them Shadeless. */
 static int convert_xwau(opt_file_t* opt, const char* out_dir, const char* basename,
 						const OptGltfBuildOptions* base, const XwauContext* x, const OptGltfScreen* screens,
-						const char* const* lit, int lit_count, const char* label) {
+						const char* const* lit, int lit_count, const XwauSkins* skins, const char* label) {
 	char rel[512], path[1024];
 	snprintf(rel, sizeof rel, "Materials/%s.mat", basename);
 	XwauMatFile* mat = xwau_find(x, rel, path, sizeof path) ? XwauMat_Load(path, &x->global) : NULL;
 
-	const size_t         count     = opt->texture_count ? (size_t)opt->texture_count : 1;
-	OptGltfXwauMaterial* materials = (OptGltfXwauMaterial*)calloc(count, sizeof *materials);
-	OptGltfXwauAnim*     anims     = (OptGltfXwauAnim*)calloc(count, sizeof *anims);
-	XwauAnim*            anim      = XwauAnim_Begin(basename, xwau_find_file, (void*)x, label);
-	XwauNormalMap**      maps      = NULL;
-	size_t               map_count = 0;
+	const size_t      count     = opt->texture_count ? (size_t)opt->texture_count : 1;
+	XwauGltfMaterial* materials = (XwauGltfMaterial*)calloc(count, sizeof *materials);
+	XwauGltfAnim*     anims     = (XwauGltfAnim*)calloc(count, sizeof *anims);
+	XwauAnim*         anim      = XwauAnim_Begin(basename, xwau_find_file, (void*)x, label);
+	XwauNormalMap**   maps      = NULL;
+	size_t            map_count = 0;
 	if (!materials || !anims || !anim) {
 		free(materials);
 		free(anims);
@@ -338,7 +340,7 @@ static int convert_xwau(opt_file_t* opt, const char* out_dir, const char* basena
 			screen = screens[i].hologram          ? XWAU_ANIM_SCREEN_HOLOGRAM
 					 : screens[i].cover_base.rgba ? XWAU_ANIM_SCREEN_COVER
 												  : XWAU_ANIM_SCREEN_NO_COVER;
-		if (!XwauAnim_Texture(anim, mat, &opt->textures[i], OptGltf_XwauUnlit(&materials[i]), screen,
+		if (!XwauAnim_Texture(anim, mat, &opt->textures[i], XwauGltf_Unlit(&materials[i]), screen,
 							  &anims[i])) {
 			fprintf(stderr, "opt2gltf: %s: out of memory (animations)\n", label);
 			free(materials);
@@ -363,18 +365,30 @@ static int convert_xwau(opt_file_t* opt, const char* out_dir, const char* basena
 			fprintf(stderr, "opt2gltf: %s: lit texture %s: no such texture\n", label, lit[k]);
 	}
 	/* Untextured faces: the material lookup of an empty name is slot 0. */
-	OptGltfXwauMaterial untextured;
+	XwauGltfMaterial untextured;
 	xwau_fill(&untextured, mat ? XwauMat_Find(mat, "") : &x->global);
 
-	OptGltfBuildOptions options = *base;
-	options.xwau_materials      = materials;
-	options.xwau_untextured     = &untextured;
-	options.screens             = screens;
-	options.xwau_anim           = XwauAnim_Any(anim) ? anims : NULL;
 	fprintf(stderr, "opt2gltf: %s: xwau materials %s, %zu of %d textures normal-mapped (%zu maps)\n", label,
 			mat ? path : "(default)", normal_textures, (int)opt->texture_count, map_count);
 	XwauAnim_Report(anim);
-	int ok = opt2gltf_convert(opt, out_dir, basename, &options, label) ? 1 : 0;
+	XwauGltfMaterials baked;
+	int ok = XwauGltf_Bake(opt, basename, materials, &untextured, XwauAnim_Any(anim) ? anims : NULL, screens,
+						   skins, &baked);
+	if (ok) {
+		OptGltfBuildOptions options = *base;
+		options.material.source     = OPT_GLTF_MATERIALS_GIVEN;
+		options.material.given      = baked.textures;
+		options.material.untextured = &baked.untextured;
+		options.material.variants   = baked.variants.count ? &baked.variants : NULL;
+		options.material.screens    = screens;
+		/* XWAU's renderer uses each corner's stored normal: no remap, no
+		 * repair. */
+		options.geometry.normals = OPT_GLTF_NORMALS_STORED;
+		ok                       = OptGltf_Convert(opt, out_dir, basename, &options, label) ? 1 : 0;
+		if (ok)
+			XwauGltf_ReportSkins(&baked, basename);
+		XwauGltf_Free(&baked, opt->texture_count);
+	}
 
 	for (size_t i = 0; i < map_count; ++i) {
 		XwauDat_FreeImage(&maps[i]->image);
@@ -517,7 +531,7 @@ static int convert_one(const char* opt_path, const char* out_dir, const char* ba
 	StockTags           stock   = { 0 };
 	XwauModel*          model   = s->xwau ? (XwauModel*)malloc(sizeof *model) : NULL;
 	XwauSkins           skins   = { 0 };
-	DynamicCockpit      dc      = { 0 };
+	XwauDynamicCockpit  dc      = { 0 };
 	const char*         lit[MAX_LIT_TEXTURES];
 	int                 lit_count      = 0;
 	char                lit_text[1024] = "";
@@ -528,25 +542,26 @@ static int convert_one(const char* opt_path, const char* out_dir, const char* ba
 	if (!s->xwau) {
 		/* The original game's settings. */
 		if (ModelTables_IsProjectile(basename))
-			options.fullbright_strength = 5.0f;
+			options.material = (OptGltfMaterialOptions) { .source = OPT_GLTF_MATERIALS_FULLBRIGHT,
+														  .fullbright_strength = 5.0f };
 		if (ModelTables_StockEye(basename, eye))
 			cockpit_eye = eye;
-		ok                                   = stock_tags_read(&stock, basename, opt_path);
-		options.component_tags               = stock.tags;
-		options.component_tag_count          = stock.tag_count;
-		options.component_articulations      = stock.articulations;
-		options.component_articulation_count = stock.articulation_count;
+		ok                               = stock_tags_read(&stock, basename, opt_path);
+		options.model.tags               = stock.tags;
+		options.model.tag_count          = stock.tag_count;
+		options.model.articulations      = stock.articulations;
+		options.model.articulation_count = stock.articulation_count;
 	} else {
 		ok = model && XwauModel_Read(&s->xwau->roots, s->xwau->missions, basename, model, opt_path);
 		if (ok) {
-			options.component_articulations      = model->articulations;
-			options.component_articulation_count = model->articulation_count;
-			options.component_sets               = model->sets;
-			options.component_set_count          = model->set_count;
-			options.articulation_settings        = model->settings;
-			options.articulation_setting_count   = model->setting_count;
-			cockpit_eye                          = model->has_eye ? model->eye : NULL;
-			cockpit_light                        = model->has_craft_eye ? model->craft_eye : NULL;
+			options.model.articulations      = model->articulations;
+			options.model.articulation_count = model->articulation_count;
+			options.model.sets               = model->sets;
+			options.model.set_count          = model->set_count;
+			options.model.settings           = model->settings;
+			options.model.setting_count      = model->setting_count;
+			cockpit_eye                      = model->has_eye ? model->eye : NULL;
+			cockpit_light                    = model->has_craft_eye ? model->craft_eye : NULL;
 		}
 		const char* listed = ModelTables_LitTextures(basename);
 		if (listed)
@@ -564,8 +579,6 @@ static int convert_one(const char* opt_path, const char* out_dir, const char* ba
 			fprintf(stderr, "opt2gltf: %s: %d weapon hardpoints; the game keeps %d weapon slots\n", opt_path,
 					(int)weapons, WEAPON_SLOTS);
 		ok = ok && XwauSkins_Resolve(&s->xwau->roots, s->xwau->missions, basename, opt, opt_path, &skins);
-		if (ok && skins.skins.variant_count)
-			options.skins = &skins.skins;
 	}
 
 	if (ok && cockpit_eye && !apply_cockpit_eye(opt, cockpit_eye)) {
@@ -585,21 +598,21 @@ static int convert_one(const char* opt_path, const char* out_dir, const char* ba
 			fprintf(stderr, "opt2gltf: %s: no mesh for the cockpit light\n", opt_path);
 			ok = 0;
 		}
-		options.lights      = &light;
-		options.light_count = 1;
+		options.model.lights      = &light;
+		options.model.light_count = 1;
 	}
 	const char* dynamic = ok && model && model->dynamic_cockpit[0] ? model->dynamic_cockpit : NULL;
 	if (dynamic &&
-		(!DynamicCockpit_Load(dynamic, opt, basename, xwau_find_file, (void*)s->xwau, &dc, opt_path) ||
-		 !DynamicCockpit_ApplyHologramOffset(opt, &dc))) {
+		(!XwauDynamicCockpit_Load(dynamic, opt, basename, xwau_find_file, (void*)s->xwau, &dc, opt_path) ||
+		 !XwauDynamicCockpit_ApplyHologramOffset(opt, &dc))) {
 		fprintf(stderr, "opt2gltf: %s: cannot apply %s\n", opt_path, dynamic);
 		ok = 0;
 	}
 	if (ok)
 		ok = s->xwau ? convert_xwau(opt, out_dir, basename, &options, s->xwau, dc.screens, lit, lit_count,
-									opt_path)
-					 : (opt2gltf_convert(opt, out_dir, basename, &options, opt_path) ? 1 : 0);
-	DynamicCockpit_Free(&dc);
+									skins.skins.variant_count ? &skins : NULL, opt_path)
+					 : (OptGltf_Convert(opt, out_dir, basename, &options, opt_path) ? 1 : 0);
+	XwauDynamicCockpit_Free(&dc);
 	XwauSkins_Free(&skins);
 	stock_tags_free(&stock);
 	free(model);
@@ -777,11 +790,12 @@ static int run_convert(int argc, char** argv) {
 		return 1;
 	}
 
-	OptGltfBuildOptions options = { .smooth_angle_degrees = -1.0f, .repair_normals = true };
+	OptGltfBuildOptions options = { 0 };
 	static XwauContext  xwau;
 	if (a.stock) {
-		options.smooth_angle_degrees = a.smooth_angle >= 0.0f ? a.smooth_angle : 90.0f;
-		options.emissive             = true;
+		options.geometry.normals              = OPT_GLTF_NORMALS_SMOOTHED;
+		options.geometry.smooth_angle_degrees = a.smooth_angle >= 0.0f ? a.smooth_angle : 90.0f;
+		options.material.emissive             = true;
 	} else {
 		xwau.roots = a.roots;
 		XwauMat_CodeDefaults(&xwau.global);

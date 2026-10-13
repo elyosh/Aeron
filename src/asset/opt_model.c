@@ -2,7 +2,7 @@
 #include "aeron/log.h"
 
 #include "gltf_cook.h"
-#include "opt2gltf.h"
+#include "opt_gltf.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -320,12 +320,13 @@ bool Aeron_OptModelBuildMemory(const void* bytes, size_t size, const char* label
 		}
 	}
 	const OptGltfBuildOptions build_options = {
-		.smooth_angle_degrees = options->smooth_angle_degrees,
-		.repair_normals       = true,
-		.emissive             = options->emissive,
-		.alpha_overrides      = alpha_overrides,
-		.alpha_override_count = options->alpha_override_count,
-		.log                  = opt_model_log,
+		.geometry = { .normals              = OPT_GLTF_NORMALS_SMOOTHED,
+					  .smooth_angle_degrees = options->smooth_angle_degrees },
+		.material = { .source               = OPT_GLTF_MATERIALS_STOCK,
+					  .emissive             = options->emissive,
+					  .alpha_overrides      = alpha_overrides,
+					  .alpha_override_count = options->alpha_override_count },
+		.log      = opt_model_log,
 	};
 	OptGltfDocument* document  = NULL;
 	const bool       converted = OptGltf_BuildMemory(source, label, &build_options, &document, &parser_error);

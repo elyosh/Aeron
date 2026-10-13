@@ -14,7 +14,8 @@
 #include <stddef.h>
 
 #include "opt.h"
-#include "opt2gltf.h"
+#include "opt_gltf.h"
+#include "xwau_gltf_material.h"
 #include "xwau_mat.h"
 
 /* Resolves a game-relative path (e.g. "Effects\GenericDamage.dat") to a
@@ -37,13 +38,13 @@ typedef enum XwauAnimScreen {
 } XwauAnimScreen;
 
 /* Fills `out` for OPT texture `t` from `mat` (NULL: no material file).
- * `unlit` is the texture's unlit weight (OptGltf_XwauUnlit), which its
+ * `unlit` is the texture's unlit weight (XwauGltf_Unlit), which its
  * colour frames take. On a screen, only what XWAU's screen shader shows is
  * kept: colour frames over a cover; without a cover, cockpit damage frames
  * only, unlit; on a hologram, nothing. The strings and images it points to
  * live until XwauAnim_End. Returns false on OOM. */
 bool XwauAnim_Texture(XwauAnim* anim, const XwauMatFile* mat, const opt_texture_t* t, float unlit,
-					  XwauAnimScreen screen, OptGltfXwauAnim* out);
+					  XwauAnimScreen screen, XwauGltfAnim* out);
 
 /* Whether any texture has animation data. */
 bool XwauAnim_Any(const XwauAnim* anim);

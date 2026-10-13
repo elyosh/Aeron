@@ -329,9 +329,9 @@ static bool add_variant(XwauSkins* s, const char* name, int state, const char* k
 	for (size_t i = 0; i < s->skins.variant_count; ++i)
 		if (strcmp(s->variant_names[i], name) == 0)
 			return true;
-	const size_t        v     = s->skins.variant_count;
-	OptGltfSkinVariant* grown = (OptGltfSkinVariant*)realloc(s->variants, (v + 1) * sizeof *grown);
-	char**              names = grown ? (char**)realloc(s->variant_names, (v + 1) * sizeof *names) : NULL;
+	const size_t     v     = s->skins.variant_count;
+	XwauSkinVariant* grown = (XwauSkinVariant*)realloc(s->variants, (v + 1) * sizeof *grown);
+	char**           names = grown ? (char**)realloc(s->variant_names, (v + 1) * sizeof *names) : NULL;
 	if (grown)
 		s->variants = grown;
 	if (names)
@@ -363,11 +363,11 @@ static bool add_variant(XwauSkins* s, const char* name, int state, const char* k
 		for (size_t i = 0; i < v; ++i)
 			layer += s->variants[i].layer_count;
 		layer += grown[v].layer_count;
-		OptGltfSkinLayer* layers = (OptGltfSkinLayer*)realloc(s->layers, (layer + 1) * sizeof *layers);
+		XwauSkinLayer* layers = (XwauSkinLayer*)realloc(s->layers, (layer + 1) * sizeof *layers);
 		if (index < 0 || !layers)
 			return false;
 		s->layers        = layers;
-		s->layers[layer] = (OptGltfSkinLayer) { (uint32_t)index, (uint32_t)opacity };
+		s->layers[layer] = (XwauSkinLayer) { (uint32_t)index, (uint32_t)opacity };
 		grown[v].layer_count++;
 	}
 	return true;
