@@ -1,18 +1,21 @@
 """Import XWA OPT, headless.
 
     python3 opt_import.py --blender BLENDER --cooker AERON_GLTF_COOK --opt2gltf OPT2GLTF
-                          --stock OPT [--xwau OPT [--xwau-root DIR]...] [--keep]
+                          --stock OPT [--xwau OPT] [--keep]
 
 In a headless Blender with this add-on, imports the original game's OPT
-(Original Game) into a scratch project and, with --xwau, an XWA Upgrade OPT
-(Detect, with the --xwau-root folders as the preferences' XWA Upgrade
-folders, its own installation after them) into another. For each:
+(Original Game) into a scratch project and, with --xwau, an OPT of an XWA
+Upgrade installation's FlightModels folder (Detect) into another. For each:
 - the scene gets the model: its root and one component per OPT mesh, as
   many as the model's .gltf has;
 - the project holds models/<key>/, the same as opt2gltf converts it;
 - the project's libraries hold every image the model's materials name;
-- importing it again fails without Replace and leaves the model, and
-  succeeds with it.
+- the project becomes the first recent project;
+- importing it again fails without Replace and leaves the model;
+- importing it again with Replace and no project goes into the scene
+  model's project.
+The XWA Upgrade import also sets the preferences' installation, and a copy
+of the OPT outside the installation then converts the same (Detect).
 """
 
 import argparse
@@ -36,7 +39,7 @@ def _key(opt):
 
 # ---- inside Blender ------------------------------------------------------------
 
-def blender_main(cooker, opt2gltf, projects, stock, xwau, roots):
+def blender_main(cooker, opt2gltf, projects, stock, xwau, outside):
     import addon_utils
     import bpy
 
@@ -44,8 +47,6 @@ def blender_main(cooker, opt2gltf, projects, stock, xwau, roots):
     prefs = bpy.context.preferences.addons[MODULE].preferences
     prefs.cooker = cooker
     prefs.opt2gltf = opt2gltf
-    for root in roots:
-        prefs.xwau_folders.add().path = root
     from bl_ext.user_default.aeron_flight_model import common
 
     failures = []
@@ -67,6 +68,8 @@ def blender_main(cooker, opt2gltf, projects, stock, xwau, roots):
         except RuntimeError as error:
             result = {str(error)}
         check('FINISHED' in result, "{}: imported ({})".format(key, ", ".join(sorted(result))))
+        check(len(prefs.recent_projects) > 0 and prefs.recent_projects[0].path == project,
+              "{}: first recent project".format(key))
         roots_found = [obj for obj in bpy.data.objects if common.role(obj) == 'model']
         gltf = os.path.join(project, "models", key, key + ".gltf")
         check(len(roots_found) == 1 and os.path.isfile(gltf), "{}: one model root, from {}".format(key, gltf))
@@ -82,8 +85,14 @@ def blender_main(cooker, opt2gltf, projects, stock, xwau, roots):
             check(False, "{}: imported again without Replace".format(key))
         except RuntimeError:
             check(os.path.isfile(gltf), "{}: refused without Replace, model kept".format(key))
-        check('FINISHED' in bpy.ops.import_scene.xwa_opt(filepath=opt, project=project, data=data, replace=True),
-              "{}: imported again with Replace".format(key))
+        check('FINISHED' in bpy.ops.import_scene.xwa_opt(filepath=opt, data=data, replace=True)
+              and prefs.recent_projects[0].path == project,
+              "{}: imported again with Replace, into the scene model's project".format(key))
+    if xwau:
+        installation = os.path.dirname(os.path.dirname(os.path.abspath(xwau)))
+        check(prefs.xwau_folder == installation, "the preferences' installation: " + prefs.xwau_folder)
+        result = bpy.ops.import_scene.xwa_opt(filepath=outside, project=os.path.join(projects, "outside"))
+        check('FINISHED' in result, "{}: imported from outside the installation".format(_key(outside)))
     sys.exit(1 if failures else 0)
 
 
@@ -130,14 +139,13 @@ def main():
     parser.add_argument("--cooker", required=True)
     parser.add_argument("--opt2gltf", required=True)
     parser.add_argument("--stock", required=True, help="an OPT of the original game")
-    parser.add_argument("--xwau", help="an XWA Upgrade OPT, in its installation's FlightModels folder")
-    parser.add_argument("--xwau-root", action="append", default=[], help="an XWA Upgrade folder (repeatable)")
+    parser.add_argument("--xwau", help="an OPT of an XWA Upgrade installation's FlightModels folder")
     parser.add_argument("--keep", action="store_true", help="keep the scratch directory")
     parser.add_argument("--inside", nargs=2, help=argparse.SUPPRESS)
     argv = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else sys.argv[1:]
     args = parser.parse_args(argv)
     if args.inside:
-        blender_main(args.cooker, args.opt2gltf, args.inside[0], args.stock, args.xwau, args.xwau_root)
+        blender_main(args.cooker, args.opt2gltf, args.inside[0], args.stock, args.xwau, args.inside[1])
         return
 
     scratch = tempfile.mkdtemp(prefix="aeron_opt_import_")
@@ -148,11 +156,14 @@ def main():
                BLENDER_USER_CONFIG=os.path.join(scratch, "config"),
                BLENDER_USER_SCRIPTS=os.path.join(scratch, "scripts"))
     inside = ["--blender", args.blender, "--cooker", args.cooker, "--opt2gltf", args.opt2gltf, "--stock", args.stock]
+    outside = os.path.join(scratch, "outside", os.path.basename(args.xwau or ""))
     if args.xwau:
-        inside += ["--xwau", args.xwau] + [arg for root in args.xwau_root for arg in ("--xwau-root", root)]
+        inside += ["--xwau", args.xwau]
+        os.makedirs(os.path.dirname(outside))
+        shutil.copyfile(args.xwau, outside)
     completed = subprocess.run([args.blender, "-b", "--factory-startup", "--python-exit-code", "1",
                                 "--python", os.path.abspath(__file__), "--"] + inside +
-                               ["--inside", projects, scratch], env=env, capture_output=True, text=True)
+                               ["--inside", projects, outside], env=env, capture_output=True, text=True)
     failures = []
     for line in completed.stdout.splitlines():
         if line.startswith(("OPT", "Error:")):
@@ -169,9 +180,7 @@ def main():
         project = os.path.join(projects, data)
         direct = os.path.join(scratch, "direct", data)
         if mode is None:
-            own = os.path.dirname(os.path.dirname(os.path.abspath(opt)))
-            roots = [root for root in args.xwau_root] + ([own] if own not in args.xwau_root else [])
-            mode = [arg for root in roots for arg in ("--xwau-root", root)]
+            mode = ["--xwau-root", os.path.dirname(os.path.dirname(os.path.abspath(opt)))]
         subprocess.run([args.opt2gltf] + mode + ["--project", direct, opt], capture_output=True, check=True)
         same = _same_tree(os.path.join(direct, "models", key), os.path.join(project, "models", key))
         print("OPT", "ok" if same else "FAILED", "{}: the project's model is opt2gltf's".format(key))
@@ -185,6 +194,13 @@ def main():
             key, ", ".join(missing[:5]) if missing else "all present"))
         if missing:
             failures.append(key + " lacks library images")
+    if args.xwau:
+        key = _key(args.xwau)
+        same = _same_tree(os.path.join(projects, "auto", "models", key),
+                          os.path.join(projects, "outside", "models", key))
+        print("OPT", "ok" if same else "FAILED", "{}: from outside, the same as from the installation".format(key))
+        if not same:
+            failures.append(key + " differs from outside")
     for failure in failures:
         print("FAILED", failure)
     if args.keep or failures:

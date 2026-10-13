@@ -78,10 +78,17 @@ over it from an older `.blend`.
 
 ## Importing an OPT
 
-File > Import > XWA OPT (or the tab's **Import OPT**) converts an OPT into a
-project, then imports it as above. Choose the project folder: the model goes
-into `models/<key>/` (the OPT's name in lower case), and Replace replaces a
-model the project has already. **Data** says what the conversion reads:
+File > Import > XWA OPT, the tab's **Import OPT**, or dropping an OPT on
+the 3D view converts the OPT into a project, then imports it as above. The
+model goes into `models/<key>/` (the OPT's name in lower case).
+
+**Project** offers the projects of the models in the scene, then the recent
+ones; the tab shows the first one. **Choose Folder...** opens a folder
+browser after the import's one. When the project already has the model,
+the import asks before replacing it: replacing it loses the changes made
+there.
+
+**Data** says what the conversion reads:
 
 - **Original Game**: the OPT alone, as the original game draws it, with the
   game's data for the model (its pilot eye, crew and moving parts).
@@ -94,10 +101,10 @@ model the project has already. **Data** says what the conversion reads:
 - **Detect** (the default): XWA Upgrade when its data is found, else the
   original game.
 
-XWAU data is read from the OPT's installation (the folder holding its
-`FlightModels`), after the **XWA Upgrade folders** of the preferences, the
-first holding a file winning: list unpacked XWAU packages there, an
-update's folders before the release's.
+XWAU data is read from the game folder holding the OPT's `FlightModels`
+folder, when it has XWAU's `Materials` folder. Importing an OPT from there
+also sets the **XWA Upgrade** installation of the preferences, which is
+used for OPTs outside a game folder.
 
 To start from plain meshes, select them and use **Make Flight Model**: they
 become the components of a new model root (or of the active one).

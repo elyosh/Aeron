@@ -1,10 +1,12 @@
 # Panels (Object properties per role, and the 3D view's Aeron tab) and lists.
 # Material animations and effect libraries are animation_ui.py's.
 
+import os
+
 import bpy
 from bpy.types import Panel, UIList
 
-from . import common, display, overlays
+from . import common, display, opt_import, overlays
 
 # Labels of the objects the lists show, filled by filter_items (which runs
 # before draw_item), by list type then object name.
@@ -580,6 +582,9 @@ class VIEW3D_PT_aeron(Panel):
         row.operator("import_scene.aeron_flight_model", text="Import", icon='IMPORT')
         row.operator("import_scene.xwa_opt", text="Import OPT", icon='IMPORT')
         row.operator("export_scene.aeron_flight_model_project", text="Save to Project", icon='FILE_TICK')
+        # Where Import OPT puts a model unless another project is chosen.
+        known = opt_import.projects(context)
+        layout.label(text="OPT project: " + (os.path.basename(known[0]) if known else "none yet"), icon='FILE_FOLDER')
         layout.operator("export_scene.aeron_flight_model", text="Export for Game", icon='EXPORT')
 
 

@@ -43,13 +43,20 @@ def model_extension(document):
     return {}
 
 
-def project_effects(model_path):
-    """The effects folder of the project holding the model file `model_path`
-    (<project>/models/<key>/<key>.gltf): <project>/effects, or "" for a
-    model outside a project."""
+def model_project(model_path):
+    """The project holding the model file `model_path`
+    (<project>/models/<key>/<key>.gltf), or "" for a model outside a
+    project."""
     models = os.path.dirname(os.path.dirname(model_path)) if model_path else ""
-    effects = os.path.join(os.path.dirname(models), "effects")
-    return effects if os.path.basename(models) == "models" and os.path.isdir(effects) else ""
+    return os.path.dirname(models) if os.path.basename(models) == "models" else ""
+
+
+def project_effects(model_path):
+    """<project>/effects for a model in a project, or "" when there is
+    none."""
+    project = model_project(model_path)
+    effects = os.path.join(project, "effects") if project else ""
+    return effects if effects and os.path.isdir(effects) else ""
 
 
 def built_libraries(messages):
