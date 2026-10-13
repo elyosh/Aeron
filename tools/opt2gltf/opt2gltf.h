@@ -318,6 +318,9 @@ typedef struct OptGltfBuildOptions {
 	/* Animated materials when set: one entry per OPT texture; needs
 	 * xwau_materials. */
 	const OptGltfXwauAnim* xwau_anim;
+	/* The conversion's notes (a texture's alpha class) and warnings (an
+	 * unused alpha override) when set; without it, warnings go to stderr. */
+	void (*log)(bool warning, const char* message);
 } OptGltfBuildOptions;
 
 #define OPT_GLTF_MAX_SUBDIVIDE 8u

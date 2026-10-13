@@ -72,6 +72,7 @@ add_library(imgbake STATIC
     atlas_pack.c
     ktx2_writer.c
     png_write.c
+    png_write_atomic.c
     png_read.c
     hdr_read.c
     envmap.c

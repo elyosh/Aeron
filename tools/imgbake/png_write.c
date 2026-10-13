@@ -3,20 +3,13 @@
  *
  * stb_image_write keeps the tool dependency-free and provides its own
  * deflate implementation. Files are typically compact for pixel-art
- * content.
+ * content. The atomic variant is png_write_atomic.c's, which needs SDL.
  */
 
 #include "png_write.h"
 
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "stb_image_write.h"
-
-#include <SDL3/SDL_error.h>
-#include <SDL3/SDL_filesystem.h>
-
-#include <errno.h>
-#include <stdio.h>
-#include <string.h>
 
 bool write_png_rgba(const char* path, int width, int height, const uint8_t* rgba) {
 	if (!path || !rgba || width <= 0 || height <= 0)
@@ -31,33 +24,4 @@ bool write_png_rgba(const char* path, int width, int height, const uint8_t* rgba
 	/* RGBA = 4 components, stride = width*4 (no row padding). */
 	int rc = stbi_write_png(path, width, height, 4, rgba, width * 4);
 	return rc != 0;
-}
-
-bool write_png_rgba_atomic(const char* path, int width, int height, const uint8_t* rgba, char* err,
-						   size_t errsz) {
-	if (!path || !rgba || width <= 0 || height <= 0) {
-		if (err && errsz)
-			snprintf(err, errsz, "invalid args");
-		return false;
-	}
-	char tmp[1100];
-	int  n = snprintf(tmp, sizeof tmp, "%s.tmp", path);
-	if (n < 0 || n >= (int)sizeof tmp) {
-		if (err && errsz)
-			snprintf(err, errsz, "path too long");
-		return false;
-	}
-	if (!write_png_rgba(tmp, width, height, rgba)) {
-		if (err && errsz)
-			snprintf(err, errsz, "write %s failed (errno=%d: %s)", tmp, errno, strerror(errno));
-		SDL_RemovePath(tmp);
-		return false;
-	}
-	if (!SDL_RenamePath(tmp, path)) {
-		if (err && errsz)
-			snprintf(err, errsz, "rename %s -> %s: %s", tmp, path, SDL_GetError());
-		SDL_RemovePath(tmp);
-		return false;
-	}
-	return true;
 }

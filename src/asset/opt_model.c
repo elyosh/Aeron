@@ -1,4 +1,5 @@
 #include "aeron/asset/opt_model.h"
+#include "aeron/log.h"
 
 #include "gltf_cook.h"
 #include "opt2gltf.h"
@@ -16,6 +17,14 @@ typedef struct OptModelCookContext {
 	const char*       label;
 	bool              render_build_failed;
 } OptModelCookContext;
+
+/* The converter's notes and warnings, in the engine's log. */
+static void opt_model_log(bool warning, const char* message) {
+	if (warning)
+		Aeron_LogWarn("aeron.opt", "%s", message);
+	else
+		Aeron_LogDebug("aeron.opt", "%s", message);
+}
 
 static bool opt_model_error(AeronOptModelError* error, int code, const char* message) {
 	if (error) {
@@ -316,6 +325,7 @@ bool Aeron_OptModelBuildMemory(const void* bytes, size_t size, const char* label
 		.emissive             = options->emissive,
 		.alpha_overrides      = alpha_overrides,
 		.alpha_override_count = options->alpha_override_count,
+		.log                  = opt_model_log,
 	};
 	OptGltfDocument* document  = NULL;
 	const bool       converted = OptGltf_BuildMemory(source, label, &build_options, &document, &parser_error);

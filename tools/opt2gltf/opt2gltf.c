@@ -8,7 +8,6 @@
  */
 
 #include "opt2gltf.h"
-#include "aeron/log.h"
 #include "aeron/mesh_normals.h"
 #include "cJSON.h"
 #include "opt.h"
@@ -2623,15 +2622,15 @@ static bool build_memory(const opt_file_t* opt, const char* basename, const OptG
 			alpha_mode   = alpha_override->alpha_mode;
 			alpha_cutoff = alpha_override->alpha_cutoff;
 		}
-		if (t->alpha) {
-			Aeron_LogDebug("aeron.opt",
-						   "[opt_alpha] %s %s: mode=%s source=%s zero=%llu full=%llu "
-						   "intermediate=%llu cutoff=%.3g",
-						   basename, t->name[0] ? t->name : build->images[i].name,
-						   alpha_mode_name(alpha_mode), alpha_override ? "override" : "heuristic",
-						   (unsigned long long)alpha_histogram.zero_count,
-						   (unsigned long long)alpha_histogram.full_count,
-						   (unsigned long long)alpha_histogram.intermediate_count, (double)alpha_cutoff);
+		if (t->alpha && options && options->log) {
+			char note[512];
+			snprintf(note, sizeof note,
+					 "[opt_alpha] %s %s: mode=%s source=%s zero=%llu full=%llu intermediate=%llu cutoff=%.3g",
+					 basename, t->name[0] ? t->name : build->images[i].name, alpha_mode_name(alpha_mode),
+					 alpha_override ? "override" : "heuristic", (unsigned long long)alpha_histogram.zero_count,
+					 (unsigned long long)alpha_histogram.full_count,
+					 (unsigned long long)alpha_histogram.intermediate_count, (double)alpha_cutoff);
+			options->log(false, note);
 		}
 		if (alpha_mode == OPT_GLTF_ALPHA_MASK) {
 			mat->alpha_mode   = cgltf_alpha_mode_mask;
@@ -2808,8 +2807,13 @@ static bool build_memory(const opt_file_t* opt, const char* basename, const OptG
 				}
 			}
 			if (!matched) {
-				Aeron_LogWarn("aeron.opt", "%s: unused alpha override '%s'", basename,
-							  options->alpha_overrides[override_index].texture_name);
+				char warning[512];
+				snprintf(warning, sizeof warning, "%s: unused alpha override '%s'", basename,
+						 options->alpha_overrides[override_index].texture_name);
+				if (options->log)
+					options->log(true, warning);
+				else
+					fprintf(stderr, "opt2gltf: %s\n", warning);
 			}
 		}
 	}
