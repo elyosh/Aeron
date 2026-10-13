@@ -24,8 +24,8 @@ bool ModelTables_StockEye(const char* model, int eye[3]);
 int ModelTables_CraftListRow(int craft_type);
 
 /* The original game's component tags and articulations of a model, as
- * opt2gltf's --tag (N=TAG) and --articulation (N=GROUP:...) values,
- * separated by spaces; NULL when it has none. */
+ * N=TAG and N=GROUP:ANGLE:SPEED[:SPEED_BACK][:BEHAVIOR] entries (N the
+ * component), separated by spaces; NULL when it has none. */
 const char* ModelTables_StockTags(const char* model);
 
 /* Whether the original game draws the model fully self-lit (projectiles). */

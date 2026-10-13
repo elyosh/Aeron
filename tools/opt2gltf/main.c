@@ -1,46 +1,33 @@
 /*
- * opt2gltf — convert one OPT file (or every OPT in a directory) to
- * glTF 2.0 + .bin + .png assets.
+ * opt2gltf — convert an OPT model to glTF 2.0 (.gltf, .bin and PNG
+ * textures), and write the batch outputs of an XWA Upgrade conversion.
  *
  * Usage:
- *   opt2gltf [options] <input.opt|input_dir> <output_dir>
- *   opt2gltf [options] --project DIR [--replace] <input.opt|input_dir>
- *   opt2gltf --xwau-effects --xwau-root DIR... --project DIR <project|model.gltf>...
- *   opt2gltf --xwau-missions --xwau-root DIR... --stock-game DIR <output_dir>
+ *   opt2gltf (--stock | --xwau-root DIR...) [--smooth-angle DEG]
+ *            (--project DIR [--replace] | <output_dir>) FILE.opt
+ *   opt2gltf effects --xwau-root DIR... --project DIR <project|model.gltf>...
+ *   opt2gltf missions --xwau-root DIR... --stock-game DIR <output_dir>
  *
- * Options:
- *   [--stock] [--smooth-angle DEG] [--no-normal-repair] [--emissive]
- *   [--fullbright STRENGTH] [--tag N=TAG]...
- *   [--articulation N=GROUP:ANGLE:SPEED[:SPEED_BACK][:BEHAVIOR]]...
- *   [--articulation-setting NAME=VALUE]... [--component-set NAME=N[,N...]]...
- *   [--subdivide N] [--cockpit-eye X,Y,Z] [--cockpit-light X,Y,Z]
- *   [--cockpit-light-intensity CD] [--xwau-root DIR]...
- *   [--xwau-ignore-shadeless TEXTURE]... [--dynamic-cockpit FILE.dc]
+ * The model is written into <output_dir>, or into a project with --project:
+ * a folder holding models (models/<key>/) and their effect libraries
+ * (effects/<library>/), where the OPT becomes models/<key>/<key>.gltf, its
+ * .bin and textures/, the key being the OPT's name in lower case; in XWAU
+ * mode, the effect library images its materials name that the project
+ * lacks are added (xwau_library.h). An existing model folder is an error,
+ * unless --replace replaces it.
  *
- * If the input is a directory, every *.OPT inside (case-insensitive)
- * is converted and emitted under <output_dir>/<basename>/. If a single
- * OPT file, the output goes directly into <output_dir>/. A file that fails
- * does not stop the others, but the exit status is then non-zero.
- *
- * --project DIR converts into a project instead, a folder holding models
- * (models/<key>/) and their effect libraries (effects/<library>/): each OPT
- * becomes models/<key>/<key>.gltf, its .bin and textures/, the key being
- * the OPT's name in lower case; with --xwau-root, the effect library images
- * its materials name that the project lacks are added (xwau_library.h). An
- * existing model folder is an error, unless --replace replaces it.
- *
- * --xwau-effects writes the effect libraries every model given names (a
- * model .gltf, or every model of a project) into the --project's effects/,
+ * `effects` writes the effect libraries every model given names (a model
+ * .gltf, or every model of a project) into the --project's effects/,
  * replacing them, with the game's effects.yaml (xwau_library.h).
  *
- * --xwau-missions writes what XWAU's missions select for the original
- * game's missions (installed at --stock-game) as <output_dir>/<dir>/
- * <mission>.yaml (xwau_mission_files.h).
+ * `missions` writes what XWAU's missions select for the original game's
+ * missions (installed at --stock-game) as <output_dir>/<dir>/<mission>.yaml
+ * (xwau_mission_files.h).
  *
  * Replacement workflow (both tools are built with AERON_BUILD_TOOLS):
  *
- *   opt2gltf --stock FLIGHTMODELS out
- *   aeron_gltf_cook out/XWING/XWING.gltf --out <asset root>/remaster/models/xwing.glb
+ *   opt2gltf --stock FLIGHTMODELS/XWING.OPT out
+ *   aeron_gltf_cook out/XWING.gltf --out <asset root>/remaster/models/xwing.glb
  *
  * The cooked GLB carries the AERON_flight_model extension with cooked
  * simulation and render data, and replaces the OPT whose lower-cased
@@ -56,129 +43,56 @@
  *   - positions round-trip through metres and differ at the ulp level;
  *   - the trailing MESHVERTS box follows the game's replacement policy;
  *   - engine-glow axes round-trip through a quaternion and come back
- *     orthonormalized;
- *   - components carry no tags unless --tag or --stock names them, so
- *     tag-driven behaviour such as the crew animation is off.
+ *     orthonormalized.
  *
  * --stock converts an OPT of the original game as the game draws it, with
- * nothing read beside it: --smooth-angle 90 and --emissive, unless given;
- * projectiles (model_tables.h) fully self-lit with --fullbright 5 instead;
- * the component tags and articulations the game ties to fixed component
- * numbers, and the pilot eye the game's craft table gives the player's
- * craft (model_tables.h). It excludes --xwau-root.
- *
- * --tag N=TAG (repeatable) adds TAG ([a-z0-9._]{1,63}) to the component
- * built from OPT mesh N, e.g. --tag 0=hangarcrane.arm.
- *
- * --articulation N=GROUP:ANGLE:SPEED[:SPEED_BACK][:BEHAVIOR] (repeatable) adds
- * an AERON_flight_model articulation for component N (0..254, an OPT mesh
- * index, which may be past this OPT's meshes when the game draws another
- * model with the same per-component state) to the model root: GROUP and
- * BEHAVIOR match the tag syntax, ANGLE is -128..255, SPEED and SPEED_BACK
- * 0..255 (SPEED_BACK defaults to SPEED), e.g.
- * --articulation 3=sfoils:12:1 or --articulation 23=crew:32:2:random_pause.
- * --articulation-setting NAME=VALUE (repeatable) adds an integer to the model
- * root's articulationSettings. The game defines groups, behaviors and settings.
- *
- * --component-set NAME=N[,N...] (repeatable; a repeated NAME adds members)
- * adds component ordinals N (0..254, which may be past this OPT's meshes) to
- * the model root's componentSets entry NAME (tag syntax), e.g.
- * --component-set hidden_by_profile.quad=7,8,19. The game defines the names.
- *
- * --cockpit-eye X,Y,Z (single OPT only) sets the pilot eye in craft-table
- * units, as XWAU's CockpitPovX/Y/Z: the OPT's Cockpit (type 31) hardpoints
- * are replaced by one at (X, -Y, Z) on the first MainHull mesh (mesh 0
- * without one). The game reads the eye from the craft model's Cockpit
- * hardpoint; OpenXWA applies all three axes for GLB replacements.
- *
- * --cockpit-light X,Y,Z (single OPT only) adds a dim point light at the
- * pilot eye given in craft-table units, as --cockpit-eye, for a cockpit
- * model (which shares its craft's frame): white, COCKPIT_LIGHT_RANGE metres,
- * on the first MainHull mesh (mesh 0 without one). It lights the interior
- * softly from the viewpoint, so its shadows would be hidden anyway.
- * --cockpit-light-intensity CD (> 0) sets its intensity in candela, and
- * that of the cockpit lights XWAU conversion adds; the default is
- * DEFAULT_COCKPIT_LIGHT_INTENSITY.
- *
- * --subdivide N (development only, N <= 8) splits every triangle into four
- * by its edge midpoints N times, multiplying the face count by 4^N, to
- * stress-test BVH, load and memory costs with stock silhouettes. Midpoints
- * are shared across edges so the mesh stays watertight; UVs are
- * interpolated, normals interpolated and normalized; descriptors,
- * hardpoints, glows and rotations are unchanged. Such models are test
- * content and are not meant to ship.
- *
- * --smooth-angle F regenerates vertex normals from geometry with an
- * F-degree smoothing threshold. Stored vertex and face normals are ignored.
- * Connected smoothing fans are built across shared edges, then averaged
- * with corner-angle weights so triangulation density does not bias them;
- * wrapped/non-manifold fans split before a normal can point behind its
- * rendered triangle.
- * The default is OFF (negative) — the original 1998 normals (full-Gouraud,
- * no threshold) are kept, preserving the rounded look.
- * Stored normals reproduce the classic renderer's per-FaceData position
- * remap: the first face-order normal for a position is reused by later
- * corners, preventing dormant conflicting normals from becoming glTF
- * seams. Pass e.g. --smooth-angle 45 for crisp flat panels, or 90 for a
- * smoother low-poly look without accepting back-facing neighbours.
- *
- * --emissive exports self-illumination (lit windows, cockpit lights, etc.):
- * textures with self-lit texels get a second *_emissive.png wired as the
- * material's emissiveTexture. Off by default. For XWA (version 5) OPTs this
- * replicates the engine's lightmap derivation EXACTLY
- * (ModelTexture_FilterHardwarePalette @ 0x44A600 + CreateD3DfromTexture):
- * an entry is self-lit when its darkest palette row is bright (squared
- * 5-bit magnitude >= 32, green LSB dropped) and rows 1..6 stay within
- * squared distance 16 of row 0; glow color from palette row 10; textures
- * named "_*" and palettes where none/all 256 entries classify are skipped.
- *
- * --fullbright STRENGTH (> 0) makes every material fully self-lit, as the
- * classic renderer draws projectiles: black base color with the texture's
- * alpha kept, the base texture as emissiveTexture, and STRENGTH as
- * KHR_materials_emissive_strength. Scene lighting then adds only a faint
- * specular. It supersedes --emissive.
+ * nothing read beside it:
+ *   - normals regenerated with a 90 degree smoothing threshold, or the
+ *     --smooth-angle one: connected smoothing fans are built across shared
+ *     edges, then averaged with corner-angle weights so triangulation
+ *     density does not bias them; wrapped/non-manifold fans split before a
+ *     normal can point behind its rendered triangle (e.g. 45 for crisp flat
+ *     panels);
+ *   - self-illumination (lit windows, cockpit lights): textures with
+ *     self-lit texels get a second *_emissive.png as the material's
+ *     emissiveTexture. For XWA (version 5) OPTs this replicates the
+ *     engine's lightmap derivation (ModelTexture_FilterHardwarePalette @
+ *     0x44A600 + CreateD3DfromTexture): an entry is self-lit when its
+ *     darkest palette row is bright (squared 5-bit magnitude >= 32, green
+ *     LSB dropped) and rows 1..6 stay within squared distance 16 of row 0;
+ *     glow color from palette row 10; textures named "_*" and palettes
+ *     where none/all 256 entries classify are skipped;
+ *   - projectiles (model_tables.h) fully self-lit instead, as the classic
+ *     renderer draws them: black base color with the texture's alpha kept,
+ *     the base texture as emissiveTexture at strength 5;
+ *   - the component tags and articulations the game ties to fixed component
+ *     numbers, and the pilot eye the game's craft table gives the player's
+ *     craft (model_tables.h): the OPT's Cockpit (type 31) hardpoints are
+ *     replaced by one at the eye.
  *
  * --xwau-root DIR (repeatable) converts X-Wing Alliance Upgrade models with
  * everything XWAU gives them. The roots are layered game directories (an
  * installation, or unpacked package groups), searched in order with
  * case-insensitive paths: list an update before the release it updates.
- * For each OPT:
+ * Stored normals are used per corner. For each OPT:
  *   - Materials/<basename>.mat (on top of Materials/DefaultGlobalMaterial.mat)
  *     gives each texture's material and normal map, read from the DAT image
  *     it names. The converter then reproduces that renderer's shading in
  *     standard glTF inputs: authored colors, illumination, shadeless and
  *     glass texels, metallic-roughness, KHR_materials_specular, normal maps
- *     with NMIntensity baked in and MikkTSpace tangents. Stored normals are
- *     used per corner;
+ *     with NMIntensity baked in and MikkTSpace tangents;
  *   - its image sequences become material animations (xwau_anim.h);
  *   - its files beside the OPT give the pilot eye, object profiles,
  *     articulations, Dynamic Cockpit and a cockpit model's interior light
  *     (xwau_model.h), and its skins material variants (xwau_skins.h), with
  *     what the missions give it (xwau_missions.h);
- *   - the crew and glass textures model_tables.h lists are lit surfaces;
+ *   - the crew and glass textures model_tables.h lists are lit surfaces
+ *     although their material makes them Shadeless;
  *   - more than 120 weapon hardpoints are reported: the game keeps the
  *     first 120 weapon slots, as XWAU does.
- * The options --cockpit-eye, --cockpit-light and --dynamic-cockpit replace
- * what the model's files give; the other options add to it. Excludes
- * --stock, --smooth-angle, --emissive, --fullbright and --no-normal-repair.
- *
- * --xwau-ignore-shadeless TEXTURE (repeatable, with --xwau-root) shades the
- * named OPT texture as a plain lit surface although its material sets
- * Shadeless: some XWAU materials make crew textures and cockpit glass
- * shadeless, which reads as glowing under physical lighting. A transparent
- * texture keeps its alpha and does not become XWAU glass. Names match as material lookups do (case-
- * insensitive, ignoring a "_fg_" skin suffix); a name that matches no
- * texture is reported.
- *
- * --dynamic-cockpit FILE.dc (single OPT, with --xwau-root) applies an XWAU
- * Dynamic Cockpit file: the cockpit textures it
- * names become screen surfaces showing the captured HUD, with their cover
- * images from the Effects DATs, and hologram faces move by the craft INI's
- * [CockpitHoloOffsets]. See dynamic_cockpit.h for the parsing rules.
  */
 
 #include <ctype.h>
-#include <dirent.h>
 #include <errno.h>
 #include <math.h>
 #include <stdint.h>
@@ -203,10 +117,6 @@
 #include "xwau_model.h"
 #include "xwau_skins.h"
 
-#define OPT2GLTF_MAX_ARTICULATIONS 4096
-#define OPT2GLTF_MAX_SETTINGS 64
-#define OPT2GLTF_MAX_COMPONENT_SETS 256
-
 /* Copies the name ending at `end` into `out` (64 bytes); false when empty or
  * too long. The name's syntax is checked by the converter. */
 static bool copy_name(const char* begin, const char* end, char out[64]) {
@@ -214,36 +124,6 @@ static bool copy_name(const char* begin, const char* end, char out[64]) {
 		return false;
 	memcpy(out, begin, (size_t)(end - begin));
 	out[end - begin] = 0;
-	return true;
-}
-
-/* Parses NAME=N[,N...] into the set named NAME among `sets`, adding it when
- * new. Fails on a bad name, member or a full table. */
-static bool parse_component_set(const char* text, OptGltfComponentSet* sets, size_t* count) {
-	const char* equals = strchr(text, '=');
-	char        name[64];
-	if (!equals || !copy_name(text, equals, name))
-		return false;
-	size_t index = 0;
-	while (index < *count && strcmp(sets[index].name, name) != 0)
-		++index;
-	if (index == *count) {
-		if (*count == OPT2GLTF_MAX_COMPONENT_SETS)
-			return false;
-		memset(&sets[index], 0, sizeof sets[index]);
-		strcpy(sets[index].name, name);
-	}
-	const char* cur = equals + 1;
-	do {
-		char*         end    = NULL;
-		const long    member = strtol(cur, &end, 10);
-		if (end == cur || (*end && *end != ',') || member < 0 || member > 254)
-			return false;
-		sets[index].members[member / 32] |= 1u << (member % 32);
-		cur = *end ? end + 1 : end;
-	} while (*cur);
-	if (index == *count)
-		++*count;
 	return true;
 }
 
@@ -299,13 +179,9 @@ static void strip_ext(char* dst, size_t cap, const char* fname) {
 
 /* ===== XWAU materials (--xwau-root) =================================== */
 
-#define XWAU_MAX_IGNORE_SHADELESS 64
-
 typedef struct XwauContext {
 	XwauRoots     roots;
 	XwauMatParams global; /* Materials/DefaultGlobalMaterial.mat, else code defaults */
-	const char*   ignore_shadeless[XWAU_MAX_IGNORE_SHADELESS]; /* --xwau-ignore-shadeless */
-	int           ignore_shadeless_count;
 	XwauMissions* missions;
 } XwauContext;
 
@@ -512,10 +388,6 @@ static int convert_xwau(opt_file_t* opt, const char* out_dir, const char* basena
 	return ok;
 }
 
-/* Replaces the OPT's Cockpit (type 31) hardpoints with one at the pilot eye
- * given in craft-table units (CockpitPovX/Y/Z): ModelMesh_GetHardpoint
- * returns (x, -y, z), so the eye's Y is the hardpoint's -y. It goes on the
- * first MainHull mesh, or mesh 0. */
 /* The first MainHull mesh, or mesh 0; -1 without meshes. */
 static int32_t main_hull_mesh(const opt_file_t* opt) {
 	for (int32_t mi = 0; mi < opt->mesh_count; ++mi) {
@@ -526,12 +398,17 @@ static int32_t main_hull_mesh(const opt_file_t* opt) {
 	return opt->mesh_count > 0 ? 0 : -1;
 }
 
-/* Interior light of --cockpit-light. Its default intensity is a 100 W
- * Blender point light in candela, as Blender's glTF exporter converts it
- * (683 lm/W over 4 pi sr). */
-#define DEFAULT_COCKPIT_LIGHT_INTENSITY (100.0f * 683.0f / (4.0f * 3.14159265f))
+/* A cockpit model's interior light: white, at its craft's pilot eye, dim
+ * enough to light the interior softly from the viewpoint (its shadows would
+ * be hidden anyway). Its intensity is a 100 W Blender point light in
+ * candela, as Blender's glTF exporter converts it (683 lm/W over 4 pi sr). */
+#define COCKPIT_LIGHT_INTENSITY (100.0f * 683.0f / (4.0f * 3.14159265f))
 #define COCKPIT_LIGHT_RANGE 3.0f
 
+/* Replaces the OPT's Cockpit (type 31) hardpoints with one at the pilot eye
+ * given in craft-table units (CockpitPovX/Y/Z): ModelMesh_GetHardpoint
+ * returns (x, -y, z), so the eye's Y is the hardpoint's -y. It goes on the
+ * first MainHull mesh, or mesh 0. */
 static int apply_cockpit_eye(opt_file_t* opt, const int eye[3]) {
 	for (int32_t mi = 0; mi < opt->mesh_count; ++mi) {
 		opt_mesh_t* m    = &opt->meshes[mi];
@@ -574,83 +451,39 @@ static int32_t weapon_hardpoints(const opt_file_t* opt) {
 /* What a conversion applies besides the build options. */
 typedef struct Settings {
 	const OptGltfBuildOptions* base;
-	const XwauContext*         xwau;  /* XWAU mode, or NULL */
-	bool                       stock; /* --stock */
-	bool                       fullbright_given;
-	const int*                 cockpit_eye; /* --cockpit-eye, or NULL */
-	const int*                 cockpit_light;
-	float                      cockpit_light_intensity;
-	const char*                dynamic_cockpit;
+	const XwauContext*         xwau; /* XWAU mode, else stock mode */
 } Settings;
 
-/* The model's own options: the given ones, then the model's. */
-typedef struct ModelOptions {
+/* The original game's tags and articulations of a model (model_tables.h). */
+typedef struct StockTags {
 	OptGltfComponentTag*          tags;
 	size_t                        tag_count;
 	OptGltfComponentArticulation* articulations;
 	size_t                        articulation_count;
-	OptGltfComponentSet*          sets;
-	size_t                        set_count;
-	OptGltfArticulationSetting*   settings;
-	size_t                        setting_count;
-	char*                         tag_text; /* the stock tags' text the tags point into */
-} ModelOptions;
+	char*                         text; /* the table's text the tags point into */
+} StockTags;
 
-static void model_options_free(ModelOptions* m) {
-	free(m->tags);
-	free(m->articulations);
-	free(m->sets);
-	free(m->settings);
-	free(m->tag_text);
-	memset(m, 0, sizeof *m);
+static void stock_tags_free(StockTags* t) {
+	free(t->tags);
+	free(t->articulations);
+	free(t->text);
+	memset(t, 0, sizeof *t);
 }
 
-/* Copies the given options, with room for `more` articulations, sets and
- * settings. */
-static bool model_options_init(ModelOptions* m, const OptGltfBuildOptions* base, size_t more) {
-	memset(m, 0, sizeof *m);
-	m->tags          = (OptGltfComponentTag*)calloc(base->component_tag_count + more + 1, sizeof *m->tags);
-	m->articulations = (OptGltfComponentArticulation*)calloc(base->component_articulation_count + more + 1,
-															 sizeof *m->articulations);
-	m->sets          = (OptGltfComponentSet*)calloc(base->component_set_count + more + 1, sizeof *m->sets);
-	m->settings =
-		(OptGltfArticulationSetting*)calloc(base->articulation_setting_count + more + 1, sizeof *m->settings);
-	if (!m->tags || !m->articulations || !m->sets || !m->settings) {
-		model_options_free(m);
-		return false;
-	}
-	memcpy(m->tags, base->component_tags, base->component_tag_count * sizeof *m->tags);
-	m->tag_count = base->component_tag_count;
-	memcpy(m->articulations, base->component_articulations,
-		   base->component_articulation_count * sizeof *m->articulations);
-	m->articulation_count = base->component_articulation_count;
-	memcpy(m->sets, base->component_sets, base->component_set_count * sizeof *m->sets);
-	m->set_count = base->component_set_count;
-	memcpy(m->settings, base->articulation_settings, base->articulation_setting_count * sizeof *m->settings);
-	m->setting_count = base->articulation_setting_count;
-	return true;
-}
-
-/* Adds the stock tags and articulations of `model` (model_tables.h). */
-static bool add_stock_tags(ModelOptions* m, const char* model, const char* label) {
+static bool stock_tags_read(StockTags* t, const char* model, const char* label) {
+	memset(t, 0, sizeof *t);
 	const char* table = ModelTables_StockTags(model);
 	if (!table)
 		return true;
 	size_t count = 1;
 	for (const char* c = table; *c; ++c)
 		count += *c == ' ';
-	OptGltfComponentTag* tags = (OptGltfComponentTag*)realloc(m->tags, (m->tag_count + count) * sizeof *tags);
-	OptGltfComponentArticulation* arts =
-		tags ? (OptGltfComponentArticulation*)realloc(m->articulations,
-													  (m->articulation_count + count) * sizeof *arts)
-			 : NULL;
-	if (tags)
-		m->tags = tags;
-	if (arts)
-		m->articulations = arts;
-	if (!tags || !arts || !(m->tag_text = Xwau_Strdup(table)))
+	t->tags          = (OptGltfComponentTag*)calloc(count, sizeof *t->tags);
+	t->articulations = (OptGltfComponentArticulation*)calloc(count, sizeof *t->articulations);
+	t->text          = Xwau_Strdup(table);
+	if (!t->tags || !t->articulations || !t->text)
 		return false;
-	for (char *token = m->tag_text, *next; token; token = next) {
+	for (char *token = t->text, *next; token; token = next) {
 		next = strchr(token, ' ');
 		if (next)
 			*next++ = 0;
@@ -660,37 +493,16 @@ static bool add_stock_tags(ModelOptions* m, const char* model, const char* label
 		char*         end    = NULL;
 		unsigned long mesh   = strtoul(token, &end, 10);
 		if (strchr(token, ':')) {
-			if (!parse_articulation(token, &m->articulations[m->articulation_count])) {
+			if (!parse_articulation(token, &t->articulations[t->articulation_count])) {
 				fprintf(stderr, "opt2gltf: %s: bad stock articulation %s\n", label, token);
 				return false;
 			}
-			m->articulation_count++;
+			t->articulation_count++;
 		} else if (equals && end == equals) {
-			m->tags[m->tag_count].mesh_index = (uint32_t)mesh;
-			m->tags[m->tag_count++].tag      = equals + 1;
+			t->tags[t->tag_count].mesh_index = (uint32_t)mesh;
+			t->tags[t->tag_count++].tag      = equals + 1;
 		}
 	}
-	return true;
-}
-
-/* Adds what the model's XWAU files give (xwau_model.h). */
-static bool add_xwau_model(ModelOptions* m, const XwauModel* model) {
-	memcpy(m->articulations + m->articulation_count, model->articulations,
-		   model->articulation_count * sizeof *m->articulations);
-	m->articulation_count += model->articulation_count;
-	for (size_t i = 0; i < model->set_count; ++i) {
-		/* A set the options name gets the model's members too. */
-		size_t s = 0;
-		while (s < m->set_count && strcmp(m->sets[s].name, model->sets[i].name) != 0)
-			++s;
-		if (s == m->set_count)
-			m->sets[m->set_count++] = model->sets[i];
-		else
-			for (int w = 0; w < 8; ++w)
-				m->sets[s].members[w] |= model->sets[i].members[w];
-	}
-	memcpy(m->settings + m->setting_count, model->settings, model->setting_count * sizeof *m->settings);
-	m->setting_count += model->setting_count;
 	return true;
 }
 
@@ -702,38 +514,40 @@ static int convert_one(const char* opt_path, const char* out_dir, const char* ba
 		return 0;
 	}
 	OptGltfBuildOptions options = *s->base;
-	ModelOptions        model_options;
-	XwauModel*          model = s->xwau ? (XwauModel*)malloc(sizeof *model) : NULL;
-	XwauSkins           skins = { 0 };
-	DynamicCockpit      dc    = { 0 };
+	StockTags           stock   = { 0 };
+	XwauModel*          model   = s->xwau ? (XwauModel*)malloc(sizeof *model) : NULL;
+	XwauSkins           skins   = { 0 };
+	DynamicCockpit      dc      = { 0 };
 	const char*         lit[MAX_LIT_TEXTURES];
 	int                 lit_count      = 0;
 	char                lit_text[1024] = "";
-	int                 eye[3], light_eye[3];
-	const int*          cockpit_eye   = s->cockpit_eye;
-	const int*          cockpit_light = s->cockpit_light;
-	const char*         dynamic       = s->dynamic_cockpit;
-	int ok = model_options_init(&model_options, s->base, model ? XWAU_MODEL_MAX_ARTICULATIONS : 0) &&
-			 (!s->xwau || model);
-	if (ok && s->stock) {
+	int                 eye[3];
+	const int*          cockpit_eye   = NULL;
+	const int*          cockpit_light = NULL;
+	int                 ok            = 1;
+	if (!s->xwau) {
 		/* The original game's settings. */
-		if (ModelTables_IsProjectile(basename) && !s->fullbright_given)
+		if (ModelTables_IsProjectile(basename))
 			options.fullbright_strength = 5.0f;
-		if (!cockpit_eye && ModelTables_StockEye(basename, eye))
+		if (ModelTables_StockEye(basename, eye))
 			cockpit_eye = eye;
-		ok = add_stock_tags(&model_options, basename, opt_path);
-	}
-	if (ok && s->xwau) {
-		ok = XwauModel_Read(&s->xwau->roots, s->xwau->missions, basename, model, opt_path) &&
-			 add_xwau_model(&model_options, model);
-		if (ok && !cockpit_eye && model->has_eye)
-			cockpit_eye = memcpy(eye, model->eye, sizeof eye);
-		if (ok && !cockpit_light && model->has_craft_eye)
-			cockpit_light = memcpy(light_eye, model->craft_eye, sizeof light_eye);
-		if (ok && !dynamic && model->dynamic_cockpit[0])
-			dynamic = model->dynamic_cockpit;
-		for (int k = 0; k < s->xwau->ignore_shadeless_count; ++k)
-			lit[lit_count++] = s->xwau->ignore_shadeless[k];
+		ok                                   = stock_tags_read(&stock, basename, opt_path);
+		options.component_tags               = stock.tags;
+		options.component_tag_count          = stock.tag_count;
+		options.component_articulations      = stock.articulations;
+		options.component_articulation_count = stock.articulation_count;
+	} else {
+		ok = model && XwauModel_Read(&s->xwau->roots, s->xwau->missions, basename, model, opt_path);
+		if (ok) {
+			options.component_articulations      = model->articulations;
+			options.component_articulation_count = model->articulation_count;
+			options.component_sets               = model->sets;
+			options.component_set_count          = model->set_count;
+			options.articulation_settings        = model->settings;
+			options.articulation_setting_count   = model->setting_count;
+			cockpit_eye                          = model->has_eye ? model->eye : NULL;
+			cockpit_light                        = model->has_craft_eye ? model->craft_eye : NULL;
+		}
 		const char* listed = ModelTables_LitTextures(basename);
 		if (listed)
 			snprintf(lit_text, sizeof lit_text, "%s", listed);
@@ -753,14 +567,6 @@ static int convert_one(const char* opt_path, const char* out_dir, const char* ba
 		if (ok && skins.skins.variant_count)
 			options.skins = &skins.skins;
 	}
-	options.component_tags               = model_options.tags;
-	options.component_tag_count          = model_options.tag_count;
-	options.component_articulations      = model_options.articulations;
-	options.component_articulation_count = model_options.articulation_count;
-	options.component_sets               = model_options.sets;
-	options.component_set_count          = model_options.set_count;
-	options.articulation_settings        = model_options.settings;
-	options.articulation_setting_count   = model_options.setting_count;
 
 	if (ok && cockpit_eye && !apply_cockpit_eye(opt, cockpit_eye)) {
 		fprintf(stderr, "opt2gltf: %s: cannot add the cockpit eye hardpoint\n", opt_path);
@@ -772,7 +578,7 @@ static int convert_one(const char* opt_path, const char* out_dir, const char* ba
 			.mesh      = main_hull_mesh(opt),
 			.position  = { (float)cockpit_light[0], (float)-cockpit_light[1], (float)cockpit_light[2] },
 			.color     = { 1.0f, 1.0f, 1.0f },
-			.intensity = s->cockpit_light_intensity,
+			.intensity = COCKPIT_LIGHT_INTENSITY,
 			.range     = COCKPIT_LIGHT_RANGE,
 		};
 		if (light.mesh < 0) {
@@ -782,7 +588,8 @@ static int convert_one(const char* opt_path, const char* out_dir, const char* ba
 		options.lights      = &light;
 		options.light_count = 1;
 	}
-	if (ok && dynamic &&
+	const char* dynamic = ok && model && model->dynamic_cockpit[0] ? model->dynamic_cockpit : NULL;
+	if (dynamic &&
 		(!DynamicCockpit_Load(dynamic, opt, basename, xwau_find_file, (void*)s->xwau, &dc, opt_path) ||
 		 !DynamicCockpit_ApplyHologramOffset(opt, &dc))) {
 		fprintf(stderr, "opt2gltf: %s: cannot apply %s\n", opt_path, dynamic);
@@ -794,7 +601,7 @@ static int convert_one(const char* opt_path, const char* out_dir, const char* ba
 					 : (opt2gltf_convert(opt, out_dir, basename, &options, opt_path) ? 1 : 0);
 	DynamicCockpit_Free(&dc);
 	XwauSkins_Free(&skins);
-	model_options_free(&model_options);
+	stock_tags_free(&stock);
 	free(model);
 	opt_free(opt);
 	return ok;
@@ -838,266 +645,145 @@ static int convert_into_project(const char* opt_path, const char* basename, cons
 	return !s->xwau || XwauLibrary_AddModel(&s->xwau->roots, project, to);
 }
 
-static int usage(const char* program) {
-	fprintf(
-		stderr,
-		"usage: %s [options] <input.OPT|input_dir> <output_dir>\n"
-		"       %s [options] --project DIR [--replace] <input.OPT|input_dir>\n"
-		"       %s --xwau-effects --xwau-root DIR... --project DIR <project|model.gltf>...\n"
-		"       %s --xwau-missions --xwau-root DIR... --stock-game DIR <output_dir>\n"
-		"options: [--stock] [--smooth-angle DEG] [--no-normal-repair] [--emissive] [--fullbright STRENGTH] "
-		"[--tag N=TAG]... [--articulation N=GROUP:ANGLE:SPEED[:SPEED_BACK][:BEHAVIOR]]... "
-		"[--articulation-setting NAME=VALUE]... [--component-set NAME=N[,N...]]... [--subdivide N] "
-		"[--cockpit-eye X,Y,Z] [--cockpit-light X,Y,Z] [--cockpit-light-intensity CD] "
-		"[--xwau-root DIR]... [--xwau-ignore-shadeless TEXTURE]... [--dynamic-cockpit FILE.dc]\n",
-		program, program, program, program);
+static int usage(void) {
+	fprintf(stderr, "usage: opt2gltf (--stock | --xwau-root DIR...) [--smooth-angle DEG]\n"
+					"                (--project DIR [--replace] | <output_dir>) FILE.opt\n"
+					"       opt2gltf effects --xwau-root DIR... --project DIR <project|model.gltf>...\n"
+					"       opt2gltf missions --xwau-root DIR... --stock-game DIR <output_dir>\n");
 	return 2;
 }
 
-int main(int argc, char** argv) {
-	/* Default: keep the original 1998 OPT normals (full-Gouraud rounded
-	 * look). Pass --smooth-angle DEG to regenerate with a threshold. */
-	float smooth_angle_deg = -1.0f;
-	bool  smooth_given     = false;
-	/* Classic position-normal remap + canonical-normal repair are on by
-	 * default (stored-normals mode); --no-normal-repair emits the source
-	 * per-corner data verbatim for diagnostics. */
-	bool repair_normals = true;
-	/* Self-illumination export is opt-in. */
-	bool emissive = false;
-	/* Fullbright export is opt-in; 0 leaves materials lit. */
-	float fullbright_strength = 0.0f;
-	bool  stock               = false;
-	/* Tags point into argv. */
-	OptGltfComponentTag*                tags      = NULL;
-	size_t                              tag_count = 0;
-	static OptGltfComponentArticulation articulations[OPT2GLTF_MAX_ARTICULATIONS];
-	size_t                              articulation_count = 0;
-	static OptGltfArticulationSetting   settings[OPT2GLTF_MAX_SETTINGS];
-	size_t                              setting_count = 0;
-	static OptGltfComponentSet          component_sets[OPT2GLTF_MAX_COMPONENT_SETS];
-	size_t                              component_set_count = 0;
-	unsigned long                       subdivide_levels    = 0;
-	int                                 cockpit_eye[3];
-	bool                                has_cockpit_eye = false;
-	int                                 cockpit_light[3];
-	bool                                has_cockpit_light       = false;
-	float                               cockpit_light_intensity = DEFAULT_COCKPIT_LIGHT_INTENSITY;
-	const char*                         dynamic_cockpit         = NULL;
-	const char*                         project                 = NULL;
-	bool                                replace                 = false;
-	bool                                xwau_effects            = false;
-	bool                                xwau_missions           = false;
-	const char*                         stock_game              = NULL;
-	static XwauContext                  xwau;
-	int                                 ai = 1;
-	/* Optional conversion flags, in any order before the positional args. */
-	while (ai < argc && argv[ai][0] == '-') {
-		const char* flag  = argv[ai];
-		const char* value = ai + 1 < argc ? argv[ai + 1] : NULL;
-		if (strcmp(flag, "--stock") == 0 || strcmp(flag, "--no-normal-repair") == 0 ||
-			strcmp(flag, "--emissive") == 0 || strcmp(flag, "--replace") == 0 ||
-			strcmp(flag, "--xwau-effects") == 0 || strcmp(flag, "--xwau-missions") == 0) {
-			stock |= strcmp(flag, "--stock") == 0;
-			repair_normals &= strcmp(flag, "--no-normal-repair") != 0;
-			emissive |= strcmp(flag, "--emissive") == 0;
-			replace |= strcmp(flag, "--replace") == 0;
-			xwau_effects |= strcmp(flag, "--xwau-effects") == 0;
-			xwau_missions |= strcmp(flag, "--xwau-missions") == 0;
-			ai += 1;
-			continue;
+/* ===== Arguments ======================================================== */
+
+enum {
+	FLAG_STOCK        = 1 << 0,
+	FLAG_XWAU_ROOT    = 1 << 1,
+	FLAG_SMOOTH_ANGLE = 1 << 2,
+	FLAG_PROJECT      = 1 << 3,
+	FLAG_REPLACE      = 1 << 4,
+	FLAG_STOCK_GAME   = 1 << 5,
+};
+
+static const struct {
+	const char* name;
+	unsigned    flag;
+	bool        value;
+} kFlags[] = {
+	{ "--stock", FLAG_STOCK, false },
+	{ "--xwau-root", FLAG_XWAU_ROOT, true },
+	{ "--smooth-angle", FLAG_SMOOTH_ANGLE, true },
+	{ "--project", FLAG_PROJECT, true },
+	{ "--replace", FLAG_REPLACE, false },
+	{ "--stock-game", FLAG_STOCK_GAME, true },
+};
+
+typedef struct Args {
+	XwauRoots   roots;
+	bool        stock;
+	float       smooth_angle; /* negative when not given */
+	const char* project;
+	bool        replace;
+	const char* stock_game;
+	char**      inputs; /* the arguments after the flags */
+	int         input_count;
+} Args;
+
+/* Parses the flags `allowed` names, then the inputs; false on a flag that
+ * is unknown, not allowed or without its value (reported). */
+static bool parse_args(int argc, char** argv, unsigned allowed, Args* out) {
+	memset(out, 0, sizeof *out);
+	out->smooth_angle = -1.0f;
+	int ai            = 0;
+	for (; ai < argc && strncmp(argv[ai], "--", 2) == 0; ++ai) {
+		size_t f = 0;
+		while (f < sizeof kFlags / sizeof kFlags[0] && strcmp(argv[ai], kFlags[f].name) != 0)
+			++f;
+		if (f == sizeof kFlags / sizeof kFlags[0] || !(allowed & kFlags[f].flag)) {
+			fprintf(stderr, "opt2gltf: unknown option '%s'\n", argv[ai]);
+			return false;
 		}
-		if (!value) {
-			fprintf(stderr, "opt2gltf: %s needs a value\n", flag);
-			free(tags);
-			return 2;
+		const char* value = kFlags[f].value ? argv[ai + 1] : NULL;
+		if (kFlags[f].value && (ai + 1 == argc || !value)) {
+			fprintf(stderr, "opt2gltf: %s needs a value\n", argv[ai]);
+			return false;
 		}
-		if (strcmp(flag, "--smooth-angle") == 0) {
-			smooth_angle_deg = strtof(value, NULL);
-			smooth_given     = true;
-		} else if (strcmp(flag, "--fullbright") == 0) {
-			char* end           = NULL;
-			fullbright_strength = strtof(value, &end);
-			if (end == value || *end || !isfinite(fullbright_strength) || fullbright_strength <= 0.0f) {
-				fprintf(stderr, "opt2gltf: --fullbright needs a positive strength\n");
-				free(tags);
-				return 2;
-			}
-		} else if (strcmp(flag, "--project") == 0) {
-			project = value;
-		} else if (strcmp(flag, "--stock-game") == 0) {
-			stock_game = value;
-		} else if (strcmp(flag, "--tag") == 0) {
-			const char*   equals = strchr(value, '=');
-			char*         end    = NULL;
-			unsigned long mesh   = equals ? strtoul(value, &end, 10) : 0;
-			if (!equals || end != equals || equals == value || mesh > UINT32_MAX) {
-				fprintf(stderr, "opt2gltf: --tag needs N=TAG\n");
-				free(tags);
-				return 2;
-			}
-			OptGltfComponentTag* grown = (OptGltfComponentTag*)realloc(tags, (tag_count + 1) * sizeof *tags);
-			if (!grown) {
-				free(tags);
-				return 1;
-			}
-			tags                       = grown;
-			tags[tag_count].mesh_index = (uint32_t)mesh;
-			tags[tag_count++].tag      = equals + 1;
-		} else if (strcmp(flag, "--articulation") == 0) {
-			if (articulation_count == OPT2GLTF_MAX_ARTICULATIONS ||
-				!parse_articulation(value, &articulations[articulation_count])) {
-				fprintf(stderr,
-						"opt2gltf: --articulation needs N=GROUP:ANGLE:SPEED[:SPEED_BACK][:BEHAVIOR] (at most %d)\n",
-						OPT2GLTF_MAX_ARTICULATIONS);
-				free(tags);
-				return 2;
-			}
-			++articulation_count;
-		} else if (strcmp(flag, "--component-set") == 0) {
-			if (!parse_component_set(value, component_sets, &component_set_count)) {
-				fprintf(stderr, "opt2gltf: --component-set needs NAME=N[,N...] with N in 0..254 (at most %d sets)\n",
-						OPT2GLTF_MAX_COMPONENT_SETS);
-				free(tags);
-				return 2;
-			}
-		} else if (strcmp(flag, "--articulation-setting") == 0) {
-			const char* equals = strchr(value, '=');
-			char*       end    = NULL;
-			const long  number = equals ? strtol(equals + 1, &end, 10) : 0;
-			if (!equals || equals == value || (size_t)(equals - value) >= 64 || end == equals + 1 || *end ||
-				number < INT32_MIN || number > INT32_MAX || setting_count == OPT2GLTF_MAX_SETTINGS) {
-				fprintf(stderr, "opt2gltf: --articulation-setting needs NAME=INTEGER (at most %d)\n",
-						OPT2GLTF_MAX_SETTINGS);
-				free(tags);
-				return 2;
-			}
-			memcpy(settings[setting_count].name, value, (size_t)(equals - value));
-			settings[setting_count].name[equals - value] = 0;
-			settings[setting_count++].value              = (int32_t)number;
-		} else if (strcmp(flag, "--xwau-root") == 0) {
-			if (xwau.roots.count == XWAU_MAX_ROOTS) {
-				fprintf(stderr, "opt2gltf: --xwau-root: at most %d\n", XWAU_MAX_ROOTS);
-				free(tags);
-				return 2;
-			}
-			xwau.roots.dirs[xwau.roots.count++] = value;
-		} else if (strcmp(flag, "--xwau-ignore-shadeless") == 0) {
-			if (xwau.ignore_shadeless_count == XWAU_MAX_IGNORE_SHADELESS) {
-				fprintf(stderr, "opt2gltf: --xwau-ignore-shadeless: at most %d\n", XWAU_MAX_IGNORE_SHADELESS);
-				free(tags);
-				return 2;
-			}
-			xwau.ignore_shadeless[xwau.ignore_shadeless_count++] = value;
-		} else if (strcmp(flag, "--cockpit-eye") == 0 || strcmp(flag, "--cockpit-light") == 0) {
-			const bool light = strcmp(flag, "--cockpit-light") == 0;
-			int*       eye   = light ? cockpit_light : cockpit_eye;
-			char       end   = 0;
-			if (sscanf(value, "%d,%d,%d%c", &eye[0], &eye[1], &eye[2], &end) != 3) {
-				fprintf(stderr, "opt2gltf: %s needs X,Y,Z (craft-table units)\n", flag);
-				free(tags);
-				return 2;
-			}
-			for (int k = 0; k < 3; ++k) {
-				if (eye[k] < -32768 || eye[k] > 32767) {
-					fprintf(stderr, "opt2gltf: %s values must fit in 16 bits\n", flag);
-					free(tags);
-					return 2;
+		ai += kFlags[f].value;
+		switch (kFlags[f].flag) {
+			case FLAG_STOCK:
+				out->stock = true;
+				break;
+			case FLAG_XWAU_ROOT:
+				if (out->roots.count == XWAU_MAX_ROOTS) {
+					fprintf(stderr, "opt2gltf: --xwau-root: at most %d\n", XWAU_MAX_ROOTS);
+					return false;
 				}
+				out->roots.dirs[out->roots.count++] = value;
+				break;
+			case FLAG_SMOOTH_ANGLE: {
+				char* end         = NULL;
+				out->smooth_angle = strtof(value, &end);
+				if (end == value || *end || !isfinite(out->smooth_angle) || out->smooth_angle < 0.0f ||
+					out->smooth_angle > 180.0f) {
+					fprintf(stderr, "opt2gltf: --smooth-angle needs an angle from 0 to 180 degrees\n");
+					return false;
+				}
+				break;
 			}
-			if (light)
-				has_cockpit_light = true;
-			else
-				has_cockpit_eye = true;
-		} else if (strcmp(flag, "--cockpit-light-intensity") == 0) {
-			char* end               = NULL;
-			cockpit_light_intensity = strtof(value, &end);
-			if (end == value || *end || !isfinite(cockpit_light_intensity) ||
-				cockpit_light_intensity <= 0.0f) {
-				fprintf(stderr, "opt2gltf: --cockpit-light-intensity needs a positive intensity in candela\n");
-				free(tags);
-				return 2;
-			}
-		} else if (strcmp(flag, "--dynamic-cockpit") == 0) {
-			dynamic_cockpit = value;
-		} else if (strcmp(flag, "--subdivide") == 0) {
-			char* end        = NULL;
-			subdivide_levels = strtoul(value, &end, 10);
-			if (end == value || *end || subdivide_levels > OPT_GLTF_MAX_SUBDIVIDE) {
-				fprintf(stderr, "opt2gltf: --subdivide needs a level from 0 to %u\n", OPT_GLTF_MAX_SUBDIVIDE);
-				free(tags);
-				return 2;
-			}
-		} else {
-			fprintf(stderr, "opt2gltf: unknown option '%s'\n", flag);
-			free(tags);
-			return 2;
+			case FLAG_PROJECT:
+				out->project = value;
+				break;
+			case FLAG_REPLACE:
+				out->replace = true;
+				break;
+			case FLAG_STOCK_GAME:
+				out->stock_game = value;
+				break;
 		}
-		ai += 2;
 	}
-	if (xwau_effects) {
-		free(tags);
-		if (!xwau.roots.count || !project || ai == argc) {
-			fprintf(stderr, "opt2gltf: --xwau-effects needs --xwau-root, --project and inputs\n");
-			return 2;
-		}
-		return XwauLibrary_Rebuild(&xwau.roots, project, (const char* const*)argv + ai, (size_t)(argc - ai))
-				   ? 0
-				   : 1;
+	out->inputs      = argv + ai;
+	out->input_count = argc - ai;
+	return true;
+}
+
+/* ===== Commands ========================================================= */
+
+/* opt2gltf (--stock | --xwau-root DIR...) [--smooth-angle DEG]
+ *          (--project DIR [--replace] | <output_dir>) FILE.opt */
+static int run_convert(int argc, char** argv) {
+	Args a;
+	if (!argc)
+		return usage();
+	if (!parse_args(argc, argv, FLAG_STOCK | FLAG_XWAU_ROOT | FLAG_SMOOTH_ANGLE | FLAG_PROJECT | FLAG_REPLACE,
+					&a))
+		return 2;
+	if (a.stock == (a.roots.count > 0)) {
+		fprintf(stderr, "opt2gltf: give --stock or --xwau-root\n");
+		return usage();
 	}
-	if (xwau_missions) {
-		free(tags);
-		if (!xwau.roots.count || !stock_game || argc - ai != 1) {
-			fprintf(stderr,
-					"opt2gltf: --xwau-missions needs --xwau-root, --stock-game and an output folder\n");
-			return 2;
-		}
-		XwauMissions* missions = XwauMissions_Load(&xwau.roots, true);
-		if (!missions) {
-			fprintf(stderr, "opt2gltf: out of memory (missions)\n");
-			return 1;
-		}
-		const bool ok = XwauMissionFiles_Write(&xwau.roots, missions, stock_game, argv[ai]);
-		XwauMissions_Free(missions);
-		return ok ? 0 : 1;
-	}
-	if (stock_game) {
-		fprintf(stderr, "opt2gltf: --stock-game needs --xwau-missions\n");
-		free(tags);
+	if (a.smooth_angle >= 0.0f && !a.stock) {
+		fprintf(stderr, "opt2gltf: --smooth-angle applies to --stock\n");
 		return 2;
 	}
-	if (argc - ai != (project ? 1 : 2)) {
-		free(tags);
-		return usage(argv[0]);
-	}
-	if (replace && !project) {
+	if (a.replace && !a.project) {
 		fprintf(stderr, "opt2gltf: --replace needs --project\n");
-		free(tags);
 		return 2;
 	}
-	if (xwau.ignore_shadeless_count && !xwau.roots.count) {
-		fprintf(stderr, "opt2gltf: --xwau-ignore-shadeless needs --xwau-root\n");
-		free(tags);
-		return 2;
+	if (a.input_count != (a.project ? 1 : 2))
+		return usage();
+	const char* in = a.inputs[0];
+	struct stat st;
+	if (stat(in, &st) != 0 || !S_ISREG(st.st_mode)) {
+		fprintf(stderr, "opt2gltf: %s: not an OPT file\n", in);
+		return 1;
 	}
-	if (stock && xwau.roots.count) {
-		fprintf(stderr, "opt2gltf: --stock excludes --xwau-root\n");
-		free(tags);
-		return 2;
-	}
-	if (stock) {
-		/* The original game's settings, unless given. */
-		if (!smooth_given)
-			smooth_angle_deg = 90.0f;
-		emissive = true;
-	}
-	if (xwau.roots.count) {
-		if (smooth_angle_deg >= 0.0f || emissive || fullbright_strength > 0.0f || !repair_normals) {
-			fprintf(stderr, "opt2gltf: --xwau-root excludes --smooth-angle, --emissive, --fullbright and "
-							"--no-normal-repair\n");
-			free(tags);
-			return 2;
-		}
+
+	OptGltfBuildOptions options = { .smooth_angle_degrees = -1.0f, .repair_normals = true };
+	static XwauContext  xwau;
+	if (a.stock) {
+		options.smooth_angle_degrees = a.smooth_angle >= 0.0f ? a.smooth_angle : 90.0f;
+		options.emissive             = true;
+	} else {
+		xwau.roots = a.roots;
 		XwauMat_CodeDefaults(&xwau.global);
 		char global_path[1024];
 		if (xwau_find(&xwau, "Materials/DefaultGlobalMaterial.mat", global_path, sizeof global_path))
@@ -1106,105 +792,60 @@ int main(int argc, char** argv) {
 			fprintf(stderr, "opt2gltf: no Materials/DefaultGlobalMaterial.mat; using built-in defaults\n");
 		if (!(xwau.missions = XwauMissions_Load(&xwau.roots, false))) {
 			fprintf(stderr, "opt2gltf: out of memory (missions)\n");
-			free(tags);
 			return 1;
 		}
 	}
-	const XwauContext*        xwau_ctx = xwau.roots.count ? &xwau : NULL;
-	const OptGltfBuildOptions options  = {
-		.smooth_angle_degrees         = smooth_angle_deg,
-		.repair_normals               = repair_normals,
-		.emissive                     = emissive,
-		.fullbright_strength          = fullbright_strength,
-		.component_tags               = tags,
-		.component_tag_count          = tag_count,
-		.component_articulations      = articulations,
-		.component_articulation_count = articulation_count,
-		.articulation_settings        = settings,
-		.articulation_setting_count   = setting_count,
-		.component_sets               = component_sets,
-		.component_set_count          = component_set_count,
-		.subdivide_levels             = (uint32_t)subdivide_levels,
-	};
-	int         status;
-	const char* in   = argv[ai];
-	const char* outd = project ? NULL : argv[ai + 1];
+	const Settings conversion = { .base = &options, .xwau = a.stock ? NULL : &xwau };
 
-	struct stat st;
-	if (stat(in, &st) != 0) {
-		fprintf(stderr, "opt2gltf: cannot stat '%s': %s\n", in, strerror(errno));
-		free(tags);
-		XwauMissions_Free(xwau.missions);
+	/* The OPT's name: after the last '/' (or '\\' on Windows). */
+	const char* fname = in;
+	for (const char* c = in; *c; ++c)
+		if (*c == '/' || *c == '\\')
+			fname = c + 1;
+	char base[256];
+	strip_ext(base, sizeof base, fname);
+	const int ok = a.project ? convert_into_project(in, base, &conversion, a.project, a.replace)
+							 : convert_one(in, a.inputs[1], base, &conversion);
+	XwauMissions_Free(xwau.missions);
+	return ok ? 0 : 1;
+}
+
+/* opt2gltf effects --xwau-root DIR... --project DIR <project|model.gltf>... */
+static int run_effects(int argc, char** argv) {
+	Args a;
+	if (!parse_args(argc, argv, FLAG_XWAU_ROOT | FLAG_PROJECT, &a))
+		return 2;
+	if (!a.roots.count || !a.project || !a.input_count) {
+		fprintf(stderr, "opt2gltf: effects needs --xwau-root, --project and inputs\n");
+		return 2;
+	}
+	return XwauLibrary_Rebuild(&a.roots, a.project, (const char* const*)a.inputs, (size_t)a.input_count) ? 0
+																										 : 1;
+}
+
+/* opt2gltf missions --xwau-root DIR... --stock-game DIR <output_dir> */
+static int run_missions(int argc, char** argv) {
+	Args a;
+	if (!parse_args(argc, argv, FLAG_XWAU_ROOT | FLAG_STOCK_GAME, &a))
+		return 2;
+	if (!a.roots.count || !a.stock_game || a.input_count != 1) {
+		fprintf(stderr, "opt2gltf: missions needs --xwau-root, --stock-game and an output folder\n");
+		return 2;
+	}
+	XwauMissions* missions = XwauMissions_Load(&a.roots, true);
+	if (!missions) {
+		fprintf(stderr, "opt2gltf: out of memory (missions)\n");
 		return 1;
 	}
+	const bool ok = XwauMissionFiles_Write(&a.roots, missions, a.stock_game, a.inputs[0]);
+	XwauMissions_Free(missions);
+	return ok ? 0 : 1;
+}
 
-	if (S_ISDIR(st.st_mode) && (has_cockpit_eye || has_cockpit_light || dynamic_cockpit)) {
-		fprintf(stderr,
-				"opt2gltf: --cockpit-eye, --cockpit-light and --dynamic-cockpit apply to a single OPT, not a "
-				"directory\n");
-		free(tags);
-		XwauMissions_Free(xwau.missions);
-		return 2;
-	}
-	if (dynamic_cockpit && !xwau_ctx) {
-		fprintf(stderr, "opt2gltf: --dynamic-cockpit needs --xwau-root (covers and hologram offsets)\n");
-		free(tags);
-		return 2;
-	}
-	const Settings conversion = {
-		.base                    = &options,
-		.xwau                    = xwau_ctx,
-		.stock                   = stock,
-		.fullbright_given        = fullbright_strength > 0.0f,
-		.cockpit_eye             = has_cockpit_eye ? cockpit_eye : NULL,
-		.cockpit_light           = has_cockpit_light ? cockpit_light : NULL,
-		.cockpit_light_intensity = cockpit_light_intensity,
-		.dynamic_cockpit         = dynamic_cockpit,
-	};
-	if (S_ISDIR(st.st_mode)) {
-		DIR* d = opendir(in);
-		if (!d) {
-			fprintf(stderr, "opt2gltf: cannot open dir '%s'\n", in);
-			free(tags);
-			XwauMissions_Free(xwau.missions);
-			return 1;
-		}
-		int            ok_count = 0, fail_count = 0;
-		struct dirent* de;
-		while ((de = readdir(d))) {
-			if (de->d_name[0] == '.')
-				continue;
-			if (!ends_with_icase(de->d_name, ".opt"))
-				continue;
-			char src[1024];
-			snprintf(src, sizeof src, "%s/%s", in, de->d_name);
-			char base[256];
-			strip_ext(base, sizeof base, de->d_name);
-			char out_sub[1024];
-			snprintf(out_sub, sizeof out_sub, "%s/%s", outd ? outd : "", base);
-			if (project ? convert_into_project(src, base, &conversion, project, replace)
-						: convert_one(src, out_sub, base, &conversion))
-				++ok_count;
-			else
-				++fail_count;
-		}
-		closedir(d);
-		fprintf(stderr, "opt2gltf: %d ok, %d failed\n", ok_count, fail_count);
-		status = fail_count == 0 ? 0 : 1;
-	} else {
-		/* Single file: its name after the last '/' (or '\\' on Windows). */
-		const char* fname = in;
-		for (const char* c = in; *c; ++c)
-			if (*c == '/' || *c == '\\')
-				fname = c + 1;
-		char        base[256];
-		strip_ext(base, sizeof base, fname);
-		status = (project ? convert_into_project(in, base, &conversion, project, replace)
-						  : convert_one(in, outd, base, &conversion))
-					 ? 0
-					 : 1;
-	}
-	free(tags);
-	XwauMissions_Free(xwau.missions);
-	return status;
+int main(int argc, char** argv) {
+	if (argc > 1 && strcmp(argv[1], "effects") == 0)
+		return run_effects(argc - 2, argv + 2);
+	if (argc > 1 && strcmp(argv[1], "missions") == 0)
+		return run_missions(argc - 2, argv + 2);
+	return run_convert(argc - 1, argv + 1);
 }

@@ -1103,7 +1103,7 @@ static bool built_mesh_from_opt(BuiltMesh* bm, const opt_mesh_t* m, float meters
 	 * A static glTF cannot reproduce the view-dependent "first visible"
 	 * choice at a non-coplanar junction. File order is exact for coplanar
 	 * pairs, however, because both faces have identical culling, and is the
-	 * closest stable representation elsewhere. Keep --no-normal-repair as
+	 * closest stable representation elsewhere. Keep repair_normals false as
 	 * the raw per-corner diagnostic path, so this compatibility remap is
 	 * enabled together with the normal sanitization default. */
 	opt_vec3_t* classic_normals    = NULL;
@@ -1212,108 +1212,6 @@ static bool built_mesh_from_opt(BuiltMesh* bm, const opt_mesh_t* m, float meters
 	free(classic_normal_set);
 	free(seen.slots);
 	return bm->index_count > 0;
-}
-
-/* ===== Development subdivision ======================================
- *
- * Splits every triangle into four by its edge midpoints. A midpoint is
- * shared between the triangles of an edge through a table keyed by the
- * sorted vertex pair. Vertices split by a UV or normal seam produce separate
- * midpoints, but those are computed in double from the same positions, so
- * they are bitwise equal and the mesh stays watertight. Children keep the
- * parent's winding; face groups stay contiguous and keep their order. */
-
-typedef struct EdgeSlot {
-	uint64_t key; /* UINT64_MAX = empty */
-	uint32_t vertex;
-} EdgeSlot;
-
-static void midpoint_vertex(const GltfVertex* a, const GltfVertex* b, GltfVertex* out) {
-	for (int k = 0; k < 3; ++k)
-		out->pos[k] = (float)(((double)a->pos[k] + (double)b->pos[k]) * 0.5);
-	for (int k = 0; k < 2; ++k)
-		out->uv[k] = (float)(((double)a->uv[k] + (double)b->uv[k]) * 0.5);
-	double normal[3];
-	for (int k = 0; k < 3; ++k)
-		normal[k] = (double)a->nrm[k] + (double)b->nrm[k];
-	const double length = sqrt(normal[0] * normal[0] + normal[1] * normal[1] + normal[2] * normal[2]);
-	for (int k = 0; k < 3; ++k)
-		out->nrm[k] = length > 1.0e-12 ? (float)(normal[k] / length) : a->nrm[k];
-	for (int k = 0; k < 4; ++k)
-		out->tan[k] = 0.0f;
-}
-
-static uint32_t edge_midpoint(BuiltMesh* bm, EdgeSlot* slots, uint64_t mask, uint32_t a, uint32_t b) {
-	if (a == b)
-		return a;
-	const uint64_t key = a < b ? ((uint64_t)a << 32) | b : ((uint64_t)b << 32) | a;
-	uint64_t       at  = (key * 0x9E3779B97F4A7C15ull) >> 32;
-	for (;; ++at) {
-		EdgeSlot* slot = &slots[at & mask];
-		if (slot->key == key)
-			return slot->vertex;
-		if (slot->key == UINT64_MAX) {
-			slot->key    = key;
-			slot->vertex = bm->vertex_count;
-			midpoint_vertex(&bm->vertices[a], &bm->vertices[b], &bm->vertices[bm->vertex_count]);
-			return bm->vertex_count++;
-		}
-	}
-}
-
-static bool built_mesh_subdivide_once(BuiltMesh* bm) {
-	/* Each triangle adds at most three midpoints; the index count grows by 4. */
-	if (bm->index_count > UINT32_MAX / 4u || bm->index_count > UINT32_MAX - bm->vertex_count)
-		return false;
-	const uint32_t vertex_cap = bm->vertex_count + bm->index_count;
-	uint64_t       slot_count = 16;
-	while (slot_count < (uint64_t)bm->index_count * 2u)
-		slot_count *= 2u;
-	GltfVertex* vertices = (GltfVertex*)realloc(bm->vertices, (size_t)vertex_cap * sizeof *vertices);
-	if (!vertices)
-		return false;
-	bm->vertices      = vertices;
-	bm->vertex_cap    = vertex_cap;
-	uint32_t* indices = (uint32_t*)malloc((size_t)bm->index_count * 4u * sizeof *indices);
-	EdgeSlot* slots   = (EdgeSlot*)malloc((size_t)slot_count * sizeof *slots);
-	if (!indices || !slots) {
-		free(indices);
-		free(slots);
-		return false;
-	}
-	for (uint64_t i = 0; i < slot_count; ++i)
-		slots[i].key = UINT64_MAX;
-
-	uint32_t out = 0;
-	for (uint32_t i = 0; i + 2 < bm->index_count; i += 3) {
-		const uint32_t a            = bm->indices[i + 0];
-		const uint32_t b            = bm->indices[i + 1];
-		const uint32_t c            = bm->indices[i + 2];
-		const uint32_t ab           = edge_midpoint(bm, slots, slot_count - 1, a, b);
-		const uint32_t bc           = edge_midpoint(bm, slots, slot_count - 1, b, c);
-		const uint32_t ca           = edge_midpoint(bm, slots, slot_count - 1, c, a);
-		const uint32_t children[12] = { a, ab, ca, ab, b, bc, ca, bc, c, ab, bc, ca };
-		memcpy(indices + out, children, sizeof children);
-		out += 12;
-	}
-	free(slots);
-	free(bm->indices);
-	bm->indices     = indices;
-	bm->index_count = out;
-	bm->index_cap   = out;
-	return true;
-}
-
-static bool built_mesh_subdivide(BuiltMesh* bm, int32_t group_count, uint32_t levels) {
-	for (uint32_t level = 0; level < levels; ++level) {
-		if (!built_mesh_subdivide_once(bm))
-			return false;
-		for (int32_t g = 0; g < group_count; ++g) {
-			bm->fg_index_start[g] *= 4u;
-			bm->fg_index_count_arr[g] *= 4u;
-		}
-	}
-	return true;
 }
 
 /* ===== Tangents ======================================================
@@ -2301,13 +2199,6 @@ static bool build_memory(const opt_file_t* opt, const char* basename, const OptG
 		return false;
 	if (!validate_alpha_overrides(options, error))
 		return false;
-	const uint32_t subdivide_levels = options ? options->subdivide_levels : 0;
-	if (subdivide_levels > OPT_GLTF_MAX_SUBDIVIDE) {
-		if (error)
-			snprintf(error->msg, sizeof error->msg, "subdivision level %u exceeds %u", subdivide_levels,
-					 OPT_GLTF_MAX_SUBDIVIDE);
-		return false;
-	}
 	const size_t tag_count = options ? options->component_tag_count : 0;
 	for (size_t i = 0; i < tag_count; ++i) {
 		const OptGltfComponentTag* tag = &options->component_tags[i];
@@ -2362,7 +2253,7 @@ static bool build_memory(const opt_file_t* opt, const char* basename, const OptG
 				 !options->xwau_untextured)) {
 		if (error)
 			snprintf(error->msg, sizeof error->msg,
-					 "XWAU materials exclude --smooth-angle, --emissive and --fullbright");
+					 "XWAU materials exclude a smoothing angle, emissive and fullbright");
 		return false;
 	}
 	const OptGltfSkins* skins = options ? options->skins : NULL;
@@ -2434,7 +2325,7 @@ static bool build_memory(const opt_file_t* opt, const char* basename, const OptG
 	const int base_shade = opt_palette_base_shade(opt);
 
 	/* Self-illuminated texels (flat palette ramp) become a second, emissive
-	 * texture/image per affected base texture (opt-in via --emissive). Count
+	 * texture/image per affected base texture (opt-in via `emissive`). Count
 	 * them first so the image/texture arrays — which cgltf indexes by
 	 * pointer — never realloc. */
 	tex_emissive      = (int*)calloc(opt->texture_count ? opt->texture_count : 1, sizeof *tex_emissive);
@@ -2945,12 +2836,6 @@ static bool build_memory(const opt_file_t* opt, const char* basename, const OptG
 			/* Components stay one-to-one with the OPT meshes. */
 			if (error)
 				snprintf(error->msg, sizeof error->msg, "mesh %d has no LOD 0 triangles", (int)mi);
-			goto fail;
-		}
-		if (!built_mesh_subdivide(&built[mi], m->lods[0].group_count, subdivide_levels)) {
-			if (error)
-				snprintf(error->msg, sizeof error->msg, "mesh %d is too large to subdivide %u times", (int)mi,
-						 subdivide_levels);
 			goto fail;
 		}
 		/* XWAU: tangents for meshes drawing any normal-mapped material,

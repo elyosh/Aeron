@@ -143,7 +143,7 @@ typedef struct OptGltfXwauMaterial {
 	bool  alpha_isnt_glass;
 	bool  alpha_to_bloom;
 	/* Baked as a plain lit surface: no unlit weight and no glass, whatever
-	 * Shadeless, Ambient or AlphaToBloom say (--xwau-ignore-shadeless). */
+	 * Shadeless, Ambient or AlphaToBloom say. */
 	bool  lit;
 	/* Tangent-space normal map: R, G, B = X, Y, Z encoded 0..1 (+Y toward
 	 * the first row), rows in UV order, alpha ignored; rgba NULL when the
@@ -299,9 +299,6 @@ typedef struct OptGltfBuildOptions {
 	size_t                              articulation_setting_count;
 	const OptGltfComponentSet*          component_sets;
 	size_t                              component_set_count;
-	/* Development only: split every triangle into four by its edge midpoints
-	 * this many times (at most OPT_GLTF_MAX_SUBDIVIDE). */
-	uint32_t subdivide_levels;
 	/* XWAU mode when set: one entry per OPT texture (opt->texture_count),
 	 * plus the material of untextured faces. Excludes smooth_angle_degrees
 	 * >= 0, emissive and fullbright_strength. */
@@ -323,7 +320,6 @@ typedef struct OptGltfBuildOptions {
 	void (*log)(bool warning, const char* message);
 } OptGltfBuildOptions;
 
-#define OPT_GLTF_MAX_SUBDIVIDE 8u
 /* OPT hardpoint type whose Y and Z the game reads as the pilot eye (31). */
 #define OPT_GLTF_COCKPIT_HARDPOINT 31
 
