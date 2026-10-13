@@ -240,6 +240,9 @@ class AeronFlightProperties(PropertyGroup):
     # The markings value shown in the viewport, or -1 for the materials as
     # modelled (display.py).
     preview_markings: IntProperty(default=-1, min=-1)
+    # The skin variant shown in the viewport when no markings value is
+    # (Skin Variants panel), or "".
+    preview_variant: StringProperty()
     active_component: IntProperty()
     # Kept from the import (sources.py): the glTF file, its asset extras
     # (JSON), and the names of the extensions and extras it had (JSON).

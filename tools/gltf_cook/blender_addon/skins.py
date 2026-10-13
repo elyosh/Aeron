@@ -86,8 +86,8 @@ def _search_khr(self, context, edit_text):
 
 def _preview_update(self, context):
     root = _root_of(self.id_data)
-    if root is not None and root.aeron_flight.preview_markings >= 0:
-        from . import display
+    from . import display
+    if root is not None and display.previewing(root):
         display.apply_skin(root)
 
 

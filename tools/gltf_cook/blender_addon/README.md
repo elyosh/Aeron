@@ -348,8 +348,8 @@ variants. A skin variant paints its layers (skins, each with an opacity)
 over the materials in order. It may start from a glTF material variant,
 such as a converted paint state: materials without any of its skins then
 show that variant. The markings list names skin variants like material
-variants. The eye of a markings row shows the skin: the materials that it
-changes are replaced by preview copies, which follow the skin images as you
+variants. The eye of a skin variant, or of a markings row that names it,
+shows it: the materials that it changes are replaced by preview copies, which follow the skin images as you
 paint them. In the preview, a partly covering skin mixes in linear light,
 and the game's composite on the stored colors, so such texels can differ
 slightly. The exports write the own materials, the skins and the skin

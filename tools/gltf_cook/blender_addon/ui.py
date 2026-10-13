@@ -327,7 +327,7 @@ class OBJECT_PT_aeron_markings(_RolePanel, Panel):
         column.label(text="Empty list: materials as modeled")
         column.label(text="Higher values use the last row")
         layout.operator("aeron.show_skin", text="Show As Modeled",
-                        depress=props.preview_markings < 0).markings = -1
+                        depress=not display.previewing(root)).markings = -1
 
 
 class OBJECT_PT_aeron_articulations(_RolePanel, Panel):

@@ -9,7 +9,8 @@ has another name. In a headless Blender with this add-on, it checks that:
   markings; importing the second model keeps the variants of the first;
 - showing a skin variant puts preview copies, which mix the layers, in the
   slots of the materials it changes, and the base variant's material
-  elsewhere; showing the materials as modeled puts the own ones back and
+  elsewhere; a skin variant that no markings row names shows from its
+  eye; showing the materials as modeled puts the own ones back and
   removes the copies;
 - Save to Project during a preview writes no preview material, and writes
   the same skins (by image file) and skin variants, with the images under
@@ -140,6 +141,18 @@ def blender_main(cooker, project, second):
           "Glow mixes its layer over the base color and the emissive")
     check(slot_screen.material == bpy.data.materials["Screen"], "Glow leaves Screen, which has no glow, as it is")
     root.aeron_flight.preview_markings = 2
+
+    # A skin variant that no markings row names.
+    bpy.context.view_layer.objects.active = root
+    with bpy.context.temp_override(object=root, active_object=root):
+        bpy.ops.aeron.show_skin(markings=-1, variant="Red glow")
+    check(slot_lights.material.aeron_flight.preview_of == bpy.data.materials["Lights"] and
+          len([n for n in slot_lights.material.node_tree.nodes if n.type == 'MIX']) == 3 and
+          display.models_showing_skins() == [root],
+          "the eye of Red glow mixes its three layers over Lights")
+    with bpy.context.temp_override(object=root, active_object=root):
+        bpy.ops.aeron.show_skin(markings=2)
+    check(root.aeron_flight.preview_variant == "", "showing a markings value ends the skin variant's preview")
 
     # Save to Project during the preview.
     bpy.context.view_layer.objects.active = root

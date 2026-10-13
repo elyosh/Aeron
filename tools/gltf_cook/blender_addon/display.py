@@ -76,21 +76,6 @@ def markings_count(root):
     return len(root.aeron_flight.markings)
 
 
-def markings_variant(root, markings):
-    """Returns the index of the variant that the game shows for the markings
-    value `markings`. Values past the end of the markings list use its last
-    entry. Returns None for the materials as modelled (an empty list or an
-    empty name), and for a name that no variant has."""
-    entries = root.aeron_flight.markings
-    if not len(entries):
-        return None
-    name = entries[min(markings, len(entries) - 1)].variant
-    for variant in _variants():
-        if name and variant.name == name:
-            return variant.variant_idx
-    return None
-
-
 def _variant_index(name):
     for variant in _variants():
         if variant.name == name:
@@ -106,16 +91,27 @@ def _slot_variant_material(component, index, variant):
     return None
 
 
+def previewing(root):
+    """Whether the viewport shows a markings value or a skin variant of the model."""
+    return root.aeron_flight.preview_markings >= 0 or bool(root.aeron_flight.preview_variant)
+
+
 def apply_skin(root, markings=None):
     """Shows the materials of a markings value on the model's components.
-    `markings` defaults to the value chosen for the preview, and -1 shows
-    the original materials. A skin variant shows preview copies of the
-    materials it changes (skins.py)."""
+    `markings` defaults to what the preview shows (a markings value, or else
+    the skin variant `preview_variant`), and -1 shows the original
+    materials. A skin variant shows preview copies of the materials it
+    changes (skins.py)."""
+    props = root.aeron_flight
+    name = ""
     if markings is None:
-        markings = root.aeron_flight.preview_markings
+        markings = props.preview_markings
+        if markings < 0:
+            name = props.preview_variant
     skins.restore(root)
-    entries = root.aeron_flight.markings
-    name = entries[min(markings, len(entries) - 1)].variant if markings >= 0 and len(entries) else ""
+    entries = props.markings
+    if markings >= 0 and len(entries):
+        name = entries[min(markings, len(entries) - 1)].variant
     skin_variant = skins.skin_variant(root, name) if name else None
     if skin_variant is not None:
         base = _variant_index(skin_variant.base) if skin_variant.base else None
@@ -124,7 +120,7 @@ def apply_skin(root, markings=None):
                    else None)
         skins.remove_unused()
         return
-    variant = markings_variant(root, markings) if markings >= 0 else None
+    variant = _variant_index(name) if name else None
     for component in common.components(root):
         mesh = component.data
         defaults = {item.material_slot_index: item.default_material
@@ -148,4 +144,4 @@ def apply_skin(root, markings=None):
 
 def models_showing_skins():
     return [obj for obj in bpy.data.objects
-            if common.role(obj) == 'model' and obj.aeron_flight.preview_markings >= 0]
+            if common.role(obj) == 'model' and previewing(obj)]

@@ -10,7 +10,7 @@ from . import common, display, skins, ui
 
 def _refresh(root):
     """Shows again the markings value on display, so that the preview follows an edit."""
-    if root is not None and root.aeron_flight.preview_markings >= 0:
+    if root is not None and display.previewing(root):
         display.apply_skin(root)
 
 
@@ -30,6 +30,9 @@ class AERON_UL_skin_variants(UIList):
         row = layout.row(align=True)
         row.prop(item, "name", text="", emboss=False, icon='MATERIAL')
         row.label(text="{} layer(s)".format(len(item.layers)))
+        shown = data.preview_markings < 0 and data.preview_variant == item.name
+        row.operator("aeron.show_skin", text="", icon='HIDE_OFF' if shown else 'HIDE_ON',
+                     emboss=False).variant = item.name
 
 
 class AERON_UL_skin_layers(UIList):
@@ -146,6 +149,7 @@ class OBJECT_PT_aeron_skin_variants(ui._RolePanel, Panel):
         row.template_list("AERON_UL_skin_variants", "", props, "skin_variants", props, "active_skin_variant",
                           rows=3)
         _buttons(row, 'VARIANTS', move=True)
+        layout.operator("aeron.show_skin", text="Show As Modeled", depress=not display.previewing(context.object))
         if not 0 <= props.active_skin_variant < len(props.skin_variants):
             layout.label(text="A skin variant paints skins over the materials")
             return

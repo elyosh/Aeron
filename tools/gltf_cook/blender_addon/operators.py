@@ -399,7 +399,7 @@ class AERON_OT_list_edit(Operator):
 
 
 class AERON_OT_show_skin(Operator):
-    """Show the variant the game uses for a markings value, or the materials as modeled"""
+    """Show the variant the game uses for a markings value, a skin variant, or the materials as modeled"""
 
     bl_idname = "aeron.show_skin"
     bl_label = "Show Markings"
@@ -407,6 +407,7 @@ class AERON_OT_show_skin(Operator):
 
     markings: IntProperty(name="Markings", min=-1, default=-1,
                           description="Markings value to show, or -1 for the materials as modeled")
+    variant: StringProperty(name="Skin Variant", description="Skin variant to show when markings is -1")
 
     @classmethod
     def poll(cls, context):
@@ -414,6 +415,8 @@ class AERON_OT_show_skin(Operator):
 
     @classmethod
     def description(cls, context, properties):
+        if properties.markings < 0 and properties.variant:
+            return "Show skin variant {}".format(properties.variant)
         if properties.markings < 0:
             return "Show the materials as modeled, which are the ones exported"
         return "Show the variant the game draws for markings value {}".format(properties.markings)
@@ -421,6 +424,7 @@ class AERON_OT_show_skin(Operator):
     def execute(self, context):
         root = context.object
         root.aeron_flight.preview_markings = self.markings
+        root.aeron_flight.preview_variant = self.variant if self.markings < 0 else ""
         display.apply_skin(root)
         return {'FINISHED'}
 
