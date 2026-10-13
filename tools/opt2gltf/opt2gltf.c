@@ -3798,11 +3798,11 @@ void OptGltf_Free(OptGltfDocument* document) {
 	free(document->image_pixels);
 	free(gb->images);
 	free(gb->textures);
+	for (size_t i = 0; i < gb->materials_count; ++i)
+		free(gb->materials[i].extensions);
 	free(gb->materials);
 	free(gb->material_anim);
 	free(gb->material_screen);
-	for (size_t i = 0; i < gb->materials_count; ++i)
-		free(gb->materials[i].extensions);
 	free(gb->meshes);
 	free(gb->primitives);
 	free(gb->attributes);
