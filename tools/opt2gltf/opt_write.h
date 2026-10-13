@@ -60,8 +60,9 @@ opt_wnode_t opt_w_face_grouping(opt_writer_t* writer, const float* inverse_dista
 /* Palettized texture: `mip_chain` holds chain_bytes of 8-bit indices, base
  * level first; `rgb565_16x256` holds 16 shade rows of 256 RGB565 colours,
  * written as the profile's inline palette block. */
-opt_wnode_t opt_w_texture(opt_writer_t* writer, const char* name, int width, int height, const uint8_t* mip_chain,
-						  int chain_bytes, const uint16_t* rgb565_16x256, uint32_t texture_id);
+opt_wnode_t opt_w_texture(opt_writer_t* writer, const char* name, int width, int height,
+						  const uint8_t* mip_chain, int chain_bytes, const uint16_t* rgb565_16x256,
+						  uint32_t texture_id);
 opt_wnode_t opt_w_node_ref(opt_writer_t* writer, const char* name);
 
 /* Serializes the tree. On success the caller frees *payload with free().

@@ -6,19 +6,19 @@
 #include <string.h>
 
 enum {
-	NODE_GROUP          = 0,
-	NODE_FACE_DATA      = 1,
-	NODE_MESH_VERTICES  = 3,
-	NODE_NODE_REFERENCE = 7,
-	NODE_VERTEX_NORMALS = 11,
-	NODE_TEXTURE_COORDS = 13,
-	NODE_TEXTURE        = 20,
-	NODE_FACE_GROUPING  = 21,
-	NODE_HARDPOINT      = 22,
-	NODE_ROTATION_SCALE = 23,
+	NODE_GROUP           = 0,
+	NODE_FACE_DATA       = 1,
+	NODE_MESH_VERTICES   = 3,
+	NODE_NODE_REFERENCE  = 7,
+	NODE_VERTEX_NORMALS  = 11,
+	NODE_TEXTURE_COORDS  = 13,
+	NODE_TEXTURE         = 20,
+	NODE_FACE_GROUPING   = 21,
+	NODE_HARDPOINT       = 22,
+	NODE_ROTATION_SCALE  = 23,
 	NODE_MESH_DESCRIPTOR = 25,
-	NODE_TEXTURE_ALPHA  = 26,
-	NODE_ENGINE_GLOW    = 28,
+	NODE_TEXTURE_ALPHA   = 26,
+	NODE_ENGINE_GLOW     = 28,
 };
 
 enum { NODE_HEADER_BYTES = 24, CONTAINER_BYTES = 14, TEXTURE_HEADER_BYTES = 24 };
@@ -146,7 +146,8 @@ opt_wnode_t opt_w_group(opt_writer_t* writer, const opt_wnode_t* children, int c
 	return add_node(writer, NODE_GROUP, NULL, children, count, 1, NULL, 0);
 }
 
-static opt_wnode_t vector_node(opt_writer_t* writer, int32_t type, const float* values, int count, int width) {
+static opt_wnode_t vector_node(opt_writer_t* writer, int32_t type, const float* values, int count,
+							   int width) {
 	if (count < 0 || (count && !values) || (size_t)count > (size_t)INT32_MAX / ((size_t)width * 4))
 		return node_failed(writer);
 	const size_t size    = (size_t)count * (size_t)width * 4;
@@ -241,8 +242,9 @@ opt_wnode_t opt_w_face_grouping(opt_writer_t* writer, const float* inverse_dista
 	return add_node(writer, NODE_FACE_GROUPING, NULL, lods, count, count, payload, (uint32_t)count * 4);
 }
 
-opt_wnode_t opt_w_texture(opt_writer_t* writer, const char* name, int width, int height, const uint8_t* mip_chain,
-						  int chain_bytes, const uint16_t* rgb565_16x256, uint32_t texture_id) {
+opt_wnode_t opt_w_texture(opt_writer_t* writer, const char* name, int width, int height,
+						  const uint8_t* mip_chain, int chain_bytes, const uint16_t* rgb565_16x256,
+						  uint32_t texture_id) {
 	if (!writer || !name || width <= 0 || height <= 0 || width > 16384 || height > 16384 || !mip_chain ||
 		chain_bytes < width * height || !rgb565_16x256)
 		return node_failed(writer);
@@ -329,9 +331,10 @@ int opt_writer_finish(opt_writer_t* writer, const opt_wnode_t* roots, int root_c
 	if (writer->failed)
 		return fail(error, error_size, "OPT writer node construction failed");
 	for (uint32_t index = 0; index < writer->count; ++index) {
-		const int32_t type = writer->nodes[index].type;
+		const int32_t type          = writer->nodes[index].type;
 		writer->nodes[index].placed = false;
-		if (writer->profile == OPT_WRITE_PROFILE_V2 && (type == NODE_ENGINE_GLOW || type == NODE_TEXTURE_ALPHA))
+		if (writer->profile == OPT_WRITE_PROFILE_V2 &&
+			(type == NODE_ENGINE_GLOW || type == NODE_TEXTURE_ALPHA))
 			return fail(error, error_size, "node type not allowed by the V2 profile");
 	}
 	uint64_t cursor = CONTAINER_BYTES + (uint64_t)root_count * 4;

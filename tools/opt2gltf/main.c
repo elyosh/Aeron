@@ -203,10 +203,10 @@ static int xwau_find(const XwauContext* x, const char* rel, char* out, size_t ca
 }
 
 typedef struct XwauNormalMap {
-	char        key[1100]; /* resolved path + group + image */
-	char        name[160]; /* file-name label: <datbase>_<group>_<image> */
+	char         key[1100]; /* resolved path + group + image */
+	char         name[160]; /* file-name label: <datbase>_<group>_<image> */
 	XwauDatImage image;
-	int         ok;
+	int          ok;
 } XwauNormalMap;
 
 /* Load (once per OPT) the image a NormalMap value names: "<path>.dat-G-I".
@@ -321,7 +321,7 @@ static int convert_xwau(opt_file_t* opt, const char* out_dir, const char* basena
 		XwauMat_Free(mat);
 		return 0;
 	}
-	size_t normal_textures = 0;
+	size_t normal_textures           = 0;
 	bool   ignored[MAX_LIT_TEXTURES] = { false };
 	for (int32_t i = 0; i < opt->texture_count; ++i) {
 		const XwauMatParams* p = mat ? XwauMat_Find(mat, opt->textures[i].name) : &x->global;
@@ -335,7 +335,7 @@ static int convert_xwau(opt_file_t* opt, const char* out_dir, const char* basena
 		}
 		XwauAnimScreen screen = XWAU_ANIM_SCREEN_NONE;
 		if (screens && screens[i].present)
-			screen = screens[i].hologram           ? XWAU_ANIM_SCREEN_HOLOGRAM
+			screen = screens[i].hologram          ? XWAU_ANIM_SCREEN_HOLOGRAM
 					 : screens[i].cover_base.rgba ? XWAU_ANIM_SCREEN_COVER
 												  : XWAU_ANIM_SCREEN_NO_COVER;
 		if (!XwauAnim_Texture(anim, mat, &opt->textures[i], OptGltf_XwauUnlit(&materials[i]), screen,
@@ -422,7 +422,7 @@ static int apply_cockpit_eye(opt_file_t* opt, const int eye[3]) {
 	const int32_t owner_index = main_hull_mesh(opt);
 	if (owner_index < 0)
 		return 0;
-	opt_mesh_t* owner = &opt->meshes[owner_index];
+	opt_mesh_t*      owner = &opt->meshes[owner_index];
 	opt_hardpoint_t* grown =
 		(opt_hardpoint_t*)realloc(owner->hardpoints, (size_t)(owner->hardpoint_count + 1) * sizeof *grown);
 	if (!grown)

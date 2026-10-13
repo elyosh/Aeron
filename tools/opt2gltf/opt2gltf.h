@@ -144,7 +144,7 @@ typedef struct OptGltfXwauMaterial {
 	bool  alpha_to_bloom;
 	/* Baked as a plain lit surface: no unlit weight and no glass, whatever
 	 * Shadeless, Ambient or AlphaToBloom say. */
-	bool  lit;
+	bool lit;
 	/* Tangent-space normal map: R, G, B = X, Y, Z encoded 0..1 (+Y toward
 	 * the first row), rows in UV order, alpha ignored; rgba NULL when the
 	 * texture has none. normal_map_name labels its baked image file and must
@@ -288,11 +288,11 @@ typedef struct OptGltfBuildOptions {
 	/* When positive, every material is fully self-lit: black base color
 	 * (alpha kept), the base texture as emissiveTexture, and this
 	 * KHR_materials_emissive_strength. Supersedes `emissive`. */
-	float                              fullbright_strength;
-	const struct OptGltfAlphaOverride* alpha_overrides;
-	size_t                             alpha_override_count;
-	const OptGltfComponentTag*         component_tags;
-	size_t                             component_tag_count;
+	float                               fullbright_strength;
+	const struct OptGltfAlphaOverride*  alpha_overrides;
+	size_t                              alpha_override_count;
+	const OptGltfComponentTag*          component_tags;
+	size_t                              component_tag_count;
 	const OptGltfComponentArticulation* component_articulations;
 	size_t                              component_articulation_count;
 	const OptGltfArticulationSetting*   articulation_settings;

@@ -363,7 +363,6 @@ static bool print_flipbook(XwauAnim* a, Text* t, const char* state, int layer, c
 	return true;
 }
 
-
 static const XwauSequence* find_instance(const XwauMatSequences* list, const char* event, size_t nth) {
 	for (size_t i = 0; i < list->count; ++i) {
 		if (list->items[i].instance && strcmp(list->items[i].event, event) == 0) {
@@ -530,11 +529,11 @@ bool XwauAnim_Texture(XwauAnim* a, const XwauMatFile* mat, const opt_texture_t* 
 	   effect. */
 	if (screen != XWAU_ANIM_SCREEN_NONE) {
 		for (size_t s = 0; s < EVENT_STATE_COUNT; ++s) {
-			const bool keep = screen == XWAU_ANIM_SCREEN_COVER ||
-							  (screen == XWAU_ANIM_SCREEN_NO_COVER &&
-							   strncmp(kEventStates[s].state, "broken.", 7) == 0);
-			a->skipped_on_screens += (chosen[XWAU_SEQ_ILLUMINATION][s] != NULL) +
-									 (!keep && chosen[XWAU_SEQ_COLOUR][s] != NULL);
+			const bool keep =
+				screen == XWAU_ANIM_SCREEN_COVER ||
+				(screen == XWAU_ANIM_SCREEN_NO_COVER && strncmp(kEventStates[s].state, "broken.", 7) == 0);
+			a->skipped_on_screens +=
+				(chosen[XWAU_SEQ_ILLUMINATION][s] != NULL) + (!keep && chosen[XWAU_SEQ_COLOUR][s] != NULL);
 			chosen[XWAU_SEQ_ILLUMINATION][s] = NULL;
 			if (!keep)
 				chosen[XWAU_SEQ_COLOUR][s] = NULL;
@@ -692,7 +691,8 @@ void XwauAnim_Report(const XwauAnim* a) {
 				"(XWAU's screen shader shows none)\n",
 				a->label, a->skipped_on_screens);
 	if (a->skipped_unsupported)
-		fprintf(stderr, "opt2gltf: %s: %zu sequence(s) with an unsupported event, layer or UV mapping skipped\n",
+		fprintf(stderr,
+				"opt2gltf: %s: %zu sequence(s) with an unsupported event, layer or UV mapping skipped\n",
 				a->label, a->skipped_unsupported);
 	if (a->unknown_events)
 		fprintf(stderr, "opt2gltf: %s: %zu sequence(s) with an unknown event (played as EVT_NONE)\n",
