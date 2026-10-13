@@ -389,7 +389,7 @@ def build(root, active, settings):
                 if projectiles.is_weapon(hardpoint_type):
                     # The projectile it fires, leaving it along the model's -Y,
                     # or else an arrow in that direction.
-                    parts = (projectiles.model(bpy.context, hardpoint_type)
+                    parts = (projectiles.model(bpy.context, root, hardpoint_type)
                              if settings.overlay_projectiles else None)
                     turn = root.matrix_world.to_3x3()
                     if parts:
@@ -546,27 +546,38 @@ def _draw_glows(context, settings, scale_ui):
 
 
 def _projectile_batches(geometry):
-    """One batch per projectile texture, with every copy placed in world space."""
+    """One batch per projectile image, with every copy placed in world space."""
     shader = gpu.shader.from_builtin('IMAGE')
     groups = {}
     for parts, matrix in geometry.projectiles:
         turn = numpy.array(matrix.to_3x3(), dtype=numpy.float32)
         offset = numpy.array(matrix.translation, dtype=numpy.float32)
         for part in parts:
-            if part.image_path:
-                groups.setdefault(part.image_path, []).append((part.positions @ turn.T + offset, part))
+            groups.setdefault(id(part.rgba), (part.rgba, []))[1].append((part.positions @ turn.T + offset, part))
     batches = []
-    for path, copies in groups.items():
+    for rgba, copies in groups.values():
         positions, uvs, triangles, start = [], [], [], 0
         for placed, part in copies:
             positions.append(placed)
             uvs.append(part.uvs)
             triangles.append(part.triangles + start)
             start += len(placed)
-        batches.append((path, batch_for_shader(shader, 'TRIS', {
+        batches.append((_texture(rgba), batch_for_shader(shader, 'TRIS', {
             "pos": numpy.concatenate(positions), "texCoord": numpy.concatenate(uvs)},
             indices=numpy.concatenate(triangles))))
     return shader, batches
+
+
+_textures = {}  # id of a projectile image: (image, GPU texture)
+
+
+def _texture(rgba):
+    entry = _textures.get(id(rgba))
+    if entry is None or entry[0] is not rgba:
+        height, width = rgba.shape[:2]
+        data = gpu.types.Buffer('FLOAT', width * height * 4, rgba.ravel().tolist())
+        entry = _textures[id(rgba)] = (rgba, gpu.types.GPUTexture((width, height), format='RGBA16F', data=data))
+    return entry[1]
 
 
 def _draw_projectiles(geometry):
@@ -578,13 +589,8 @@ def _draw_projectiles(geometry):
     gpu.state.depth_test_set('LESS_EQUAL')
     gpu.state.depth_mask_set(False)
     gpu.state.blend_set('ALPHA')
-    for path, batch in batches:
-        image = projectiles.image(path)
-        if image is None:  # removed, for example by Purge: loaded again
-            if projectiles.missing_images():
-                _Cache.dirty = True
-            continue
-        shader.uniform_sampler("image", gpu.texture.from_image(image))
+    for texture, batch in batches:
+        shader.uniform_sampler("image", texture)
         batch.draw(shader)
 
 
@@ -662,4 +668,5 @@ def unregister():
     _handlers.clear()
     _Cache.key, _Cache.dirty, _Cache.geometry, _Cache.batches, _Cache.glows = None, True, None, None, None
     _Cache.projectiles = None
+    _textures.clear()
     projectiles.clear()

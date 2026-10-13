@@ -164,9 +164,11 @@ toggle and do not change the model.
   hardpoint. The pilot eye has a small view frustum.
   With **Projectiles**, each weapon hardpoint shows the projectile it fires,
   at its real size, leaving the hardpoint toward the front of the model.
-  The projectiles are converted once from the game folder set in the
-  preferences (**XWA Upgrade Folder**), as the original game draws them.
-  Without that folder, or with **Projectiles** off, an arrow shows the
+  The projectile is the project's model with the same name as the game's
+  (for example `models/laserrebel/`), drawn unlit. When the project does
+  not have it, it is converted once from the game folder set in the
+  preferences (**XWA Upgrade Folder**), as the original game draws it.
+  Without either, or with **Projectiles** off, an arrow shows the
   direction of fire.
 - **Bounds**: the bounds box of each component, aligned with the
   model. A box that the game computes from the collision mesh (or else the

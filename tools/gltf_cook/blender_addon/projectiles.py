@@ -3,16 +3,16 @@
 #
 # The game turns hardpoint type t into projectile object type 279 + t, and each
 # of these object types names a row of FlightModels/Equipment0.LST: row n is the
-# n-th non-empty line of the file, counting from 0. opt2gltf converts each
-# projectile once, from the OPT of the game folder set in the preferences, into
-# the add-on's cache folder. It converts it as the original game draws it,
-# self-lit with the texture's alpha, which an image can show. An XWA Upgrade
-# conversion gets its look from glass materials instead.
+# n-th non-empty line of the file, counting from 0. The model of a row is the
+# project's models/<key>/<key>.gltf, where the key is the name in lower case,
+# as for any model that replaces an OPT. When the project does not have it,
+# opt2gltf converts it once from the OPT of the game folder set in the
+# preferences, into the add-on's user folder.
 #
 # Blender's glTF importer is not used: it would add undo steps and change the
-# selection. A small reader takes the geometry of opt2gltf's output, and the
-# textures are Blender images that nothing in the file uses, so they are not
-# saved in the .blend. Loading runs from a timer, never during a redraw.
+# selection. A small reader takes the geometry, and the material becomes one
+# RGBA image per primitive (see _material_rgba). Loading runs from a timer,
+# never during a redraw.
 
 import hashlib
 import os
@@ -27,7 +27,8 @@ from . import preferences, sources
 # The Equipment0.LST row of each weapon hardpoint type.
 WEAPON_ROWS = {1: 17, 2: 18, 3: 19, 4: 20, 5: 22, 6: 23, 7: 24, 8: 25, 9: 18, 10: 20, 11: 23, 12: 24, 13: 25,
                14: 26, 15: 27, 16: 28, 17: 28, 18: 18}
-# The models of these rows in the original game's list, for a game folder without Equipment0.LST.
+# The models of these rows in the original game's list, when no game folder
+# gives its own list.
 _ORIGINAL_NAMES = {17: "LaserRebel", 18: "LaserRebelTurbo", 19: "LaserImp", 20: "LaserImpTurbo", 22: "LaserIon",
                    23: "LaserIonTurbo", 24: "ProtonTorpedo", 25: "ConcussionMissile", 26: "SpaceBomb",
                    27: "HeavyRocket", 28: "MagPulse"}
@@ -40,11 +41,11 @@ class Part:
     """One primitive of a projectile model, in Blender's axes, with its tail at
     the origin and its nose along -Y."""
 
-    def __init__(self, positions, uvs, triangles, image_path):
+    def __init__(self, positions, uvs, triangles, rgba):
         self.positions = positions  # (N, 3) float32
-        self.uvs = uvs  # (N, 2) float32, Blender's image orientation
+        self.uvs = uvs  # (N, 2) float32, with V going up
         self.triangles = triangles  # (M, 3) int32
-        self.image_path = image_path  # the PNG drawn on it, or ""
+        self.rgba = rgba  # (H, W, 4) float32, rows from the bottom: what the overlay draws
 
 
 _models = {}  # .gltf path: list of Part, or None when it cannot be read
@@ -67,7 +68,8 @@ def _entry(directory, name):
 
 
 def _row_names(folder):
-    """{row: model name} of the game folder's Equipment0.LST."""
+    """{row: model name} of the game folder's Equipment0.LST, or the original
+    game's names without one."""
     if folder not in _names:
         names = {}
         path = _entry(_entry(folder, "FlightModels"), "Equipment0.LST") if folder else ""
@@ -91,33 +93,53 @@ def _cache_folder(folder):
     return os.path.join(base, key)
 
 
-def model(context, hardpoint_type):
+def _source(context, root, hardpoint_type):
+    """The .gltf of the projectile, and the OPT to convert it from when it
+    does not exist yet (or "")."""
+    row = WEAPON_ROWS.get(hardpoint_type)
+    if row is None:
+        return "", ""
+    folder = _game_folder(context)
+    name = _row_names(folder).get(row)
+    if not name:
+        return "", ""
+    key = name.lower()
+    project = sources.model_project(bpy.path.abspath(root.aeron_flight.source_path))
+    gltf = os.path.join(project, "models", key, key + ".gltf") if project else ""
+    if gltf and os.path.isfile(gltf):
+        return gltf, ""
+    opt = _entry(_entry(folder, "FlightModels"), name + ".opt") if folder else ""
+    if not opt:
+        return "", ""
+    out = os.path.join(_cache_folder(folder), key)
+    return os.path.join(out, os.path.splitext(os.path.basename(opt))[0] + ".gltf"), opt
+
+
+def model(context, root, hardpoint_type):
     """The parts of the projectile that a weapon hardpoint fires, or None
     while the model is not ready or when there is none. A model that is
     missing is converted or loaded in the background."""
-    row = WEAPON_ROWS.get(hardpoint_type)
-    folder = _game_folder(context)
-    name = _row_names(folder).get(row) if row is not None and folder else ""
-    opt = _entry(_entry(folder, "FlightModels"), name + ".opt") if name else ""
-    if not opt:
+    gltf, opt = _source(context, root, hardpoint_type)
+    if not gltf:
         return None
-    out = os.path.join(_cache_folder(folder), name.lower())
-    gltf = os.path.join(out, os.path.splitext(os.path.basename(opt))[0] + ".gltf")
-    if not os.path.isfile(gltf) and gltf not in _converting and gltf not in _models:
-        _convert(context, opt, out, gltf)
     if gltf in _models:
         return _models[gltf]
-    if gltf not in _converting:
+    if gltf in _converting:
+        return None
+    if os.path.isfile(gltf):
         _to_load.add(gltf)
         _start()
+    elif opt:
+        _convert(context, opt, gltf)
     return None
 
 
-def _convert(context, opt, out, gltf):
+def _convert(context, opt, gltf):
     opt2gltf = preferences.opt2gltf_path(context)
     if not opt2gltf:
         _models[gltf] = None
         return
+    out = os.path.dirname(gltf)
     os.makedirs(out, exist_ok=True)
     try:
         _converting[gltf] = subprocess.Popen([opt2gltf, "--stock", opt, out], stdout=subprocess.DEVNULL,
@@ -156,12 +178,89 @@ def _node_matrix(node):
     return matrix
 
 
+def _pixels(path, cache):
+    """The pixels of a PNG as (H, W, 4) float32, rows from the bottom, or None.
+    Blender decodes it; the image is removed right after."""
+    if path not in cache:
+        pixels = None
+        if os.path.isfile(path):
+            image = bpy.data.images.load(path)
+            try:
+                width, height = image.size
+                pixels = numpy.empty(width * height * 4, dtype=numpy.float32)
+                image.pixels.foreach_get(pixels)
+                pixels = pixels.reshape(height, width, 4)
+            finally:
+                bpy.data.images.remove(image)
+        cache[path] = pixels
+    return cache[path]
+
+
+def _texture(document, folder, info, cache):
+    if not info:
+        return None
+    texture = document["textures"][info["index"]]
+    return _pixels(os.path.join(folder, document["images"][texture["source"]].get("uri", "")), cache)
+
+
+def _resized(pixels, shape):
+    """`pixels` sampled to (H, W), nearest texel."""
+    if pixels.shape[:2] == shape:
+        return pixels
+    rows = (numpy.arange(shape[0]) * pixels.shape[0] // shape[0])
+    columns = (numpy.arange(shape[1]) * pixels.shape[1] // shape[1])
+    return pixels[rows][:, columns]
+
+
+def _material_rgba(document, folder, material, cache):
+    """What the overlay draws for a material, as one RGBA image, unlit. The
+    color is the base color (texture times factor) plus the emissive color
+    (texture times factor). A projectile converted as the original game draws
+    it has a black base color factor, so only its emissive shows. The alpha is
+    the base color alpha (1 for an opaque material), times 1 - transmission
+    when the material uses KHR_materials_transmission (the red channel of its
+    texture times its factor)."""
+    pbr = material.get("pbrMetallicRoughness", {})
+    base_factor = numpy.array(pbr.get("baseColorFactor", (1.0, 1.0, 1.0, 1.0)), dtype=numpy.float32)
+    base = _texture(document, folder, pbr.get("baseColorTexture"), cache)
+    emissive = _texture(document, folder, material.get("emissiveTexture"), cache)
+    emissive_factor = numpy.array(material.get("emissiveFactor", (0.0, 0.0, 0.0)), dtype=numpy.float32)
+    transmission = (material.get("extensions") or {}).get("KHR_materials_transmission")
+    transmission_map = _texture(document, folder, (transmission or {}).get("transmissionTexture"), cache)
+    textures = [texture for texture in (emissive, base, transmission_map) if texture is not None]
+    shape = textures[0].shape[:2] if textures else (1, 1)
+
+    color = (_resized(base, shape)[..., :3] if base is not None else
+             numpy.ones(shape + (3,), dtype=numpy.float32)) * base_factor[:3]
+    if emissive_factor.any():
+        color = color + (_resized(emissive, shape)[..., :3] if emissive is not None else
+                         numpy.ones(shape + (3,), dtype=numpy.float32)) * emissive_factor
+    if material.get("alphaMode", "OPAQUE") == 'OPAQUE':
+        alpha = numpy.ones(shape, dtype=numpy.float32)
+    else:
+        alpha = (_resized(base, shape)[..., 3] if base is not None else
+                 numpy.ones(shape, dtype=numpy.float32)) * base_factor[3]
+        if material.get("alphaMode") == 'MASK':
+            alpha = (alpha >= material.get("alphaCutoff", 0.5)).astype(numpy.float32)
+    if transmission:
+        amount = numpy.float32(transmission.get("transmissionFactor", 0.0))
+        if transmission_map is not None:
+            amount = amount * _resized(transmission_map, shape)[..., 0]
+        alpha = alpha * (1.0 - amount)
+    rgba = numpy.empty(shape + (4,), dtype=numpy.float32)
+    rgba[..., :3] = numpy.clip(color, 0.0, 1.0)
+    rgba[..., 3] = numpy.clip(alpha, 0.0, 1.0)
+    return rgba
+
+
 def read(gltf):
-    """Reads the parts of a projectile .gltf written by opt2gltf."""
+    """Reads the parts of a projectile .gltf."""
     folder = os.path.dirname(gltf)
     document = sources.read_document(gltf)
     with open(os.path.join(folder, document["buffers"][0]["uri"]), "rb") as stream:
         data = stream.read()
+    images = {}
+    materials = {}
     parts = []
 
     def visit(index, parent):
@@ -183,15 +282,11 @@ def read(gltf):
                     triangles = _accessor(document, data, primitive["indices"]).astype(numpy.int32).reshape(-1, 3)
                 else:
                     triangles = numpy.arange(len(positions), dtype=numpy.int32).reshape(-1, 3)
-                image_path = ""
-                material = document.get("materials", [])[primitive["material"]] if "material" in primitive else {}
-                # Projectiles are self-lit: the emissive texture is what the game shows.
-                texture = (material.get("emissiveTexture") or
-                           material.get("pbrMetallicRoughness", {}).get("baseColorTexture"))
-                if texture is not None:
-                    image = document["images"][document["textures"][texture["index"]]["source"]]
-                    image_path = os.path.join(folder, image.get("uri", ""))
-                parts.append(Part(positions, uvs, triangles, image_path))
+                material = primitive.get("material", -1)
+                if material not in materials:
+                    materials[material] = _material_rgba(
+                        document, folder, document["materials"][material] if material >= 0 else {}, images)
+                parts.append(Part(positions, uvs, triangles, materials[material]))
         for child in node.get("children", []):
             visit(child, matrix)
 
@@ -205,24 +300,12 @@ def read(gltf):
     return parts
 
 
-def image(path):
-    """The Blender image of a projectile texture, or None while it is not loaded."""
-    path = os.path.normpath(path)
-    return next((image for image in bpy.data.images
-                 if image.filepath and os.path.normpath(bpy.path.abspath(image.filepath)) == path), None)
-
-
 def _load(gltf):
     try:
-        parts = read(gltf)
-    except (OSError, ValueError, KeyError, IndexError) as error:
+        _models[gltf] = read(gltf)
+    except (OSError, ValueError, KeyError, IndexError, RuntimeError) as error:
         print("Aeron: cannot read the projectile model {}: {}".format(gltf, error))
         _models[gltf] = None
-        return
-    for part in parts:
-        if part.image_path and image(part.image_path) is None and os.path.isfile(part.image_path):
-            bpy.data.images.load(part.image_path, check_existing=True)
-    _models[gltf] = parts
 
 
 def _work():
@@ -250,17 +333,6 @@ def _start():
         bpy.app.timers.register(_work, first_interval=0.0)
 
 
-def missing_images():
-    """Whether a loaded model lost an image, for example to Purge. Its model
-    is then loaded again."""
-    for gltf, parts in list(_models.items()):
-        if parts and any(part.image_path and image(part.image_path) is None and os.path.isfile(part.image_path)
-                         for part in parts):
-            del _models[gltf]
-            return True
-    return False
-
-
 def clear():
     _models.clear()
     _names.clear()
@@ -274,4 +346,3 @@ def clear():
 
 def is_weapon(hardpoint_type):
     return hardpoint_type in WEAPON_ROWS
-
