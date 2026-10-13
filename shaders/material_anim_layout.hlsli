@@ -31,7 +31,7 @@
  *             AERON_ANIM_NO_LAYER: no damage at that stage), then
  *             x asuint(scale min), y asuint(scale max), z has scale,
  *             w offset mode (AERON_ANIM_OFFSET_*), then
- *             asuint of the offset range x0, y0, x1, y1.
+ *             asuint of the offset range min x, min y, max x, max y.
  *   A material's alternatives are consecutive.
  */
 
@@ -74,8 +74,8 @@
 
 #define AERON_ANIM_DAMAGE_RECORDS 5u
 #define AERON_ANIM_DAMAGE_STAGES 3u
-#define AERON_ANIM_OFFSET_FIXED 0u  /* FIXED_LOC */
-#define AERON_ANIM_OFFSET_INSIDE 1u /* RAND_LOC */
-#define AERON_ANIM_OFFSET_RANGE 2u  /* RAND_LOC=(x0,y0,x1,y1) and the default */
+#define AERON_ANIM_OFFSET_FIXED 0u  /* centred */
+#define AERON_ANIM_OFFSET_INSIDE 1u /* anywhere within the texture */
+#define AERON_ANIM_OFFSET_RANGE 2u  /* min + (max - min)·r per axis */
 
 #endif /* AERON_SCENE_MATERIAL_ANIM_LAYOUT_H */

@@ -3,23 +3,22 @@
  *
  * Usage: aeron_gltf_cook <in.gltf> --out <out.glb> [options]
  *        aeron_gltf_cook --library <library>.yaml --out <effects dir>
- *        aeron_gltf_cook --animations-json <model>.anim.yaml
  *        aeron_gltf_cook --library-json <library>.yaml
- *        aeron_gltf_cook --animations-from-json <in.json> <model>.anim.yaml
  *        aeron_gltf_cook --library-from-json <in.json> <library>.yaml
  *
- * Cooks an artist-authored .gltf into a runtime-ready .glb with
- * KHR_texture_basisu / KHR_texture_transform per-channel atlases. An
+ * Cooks an artist-authored .gltf into a runtime-ready .glb with per-channel
+ * KTX2 atlases (tools/extensions/AERON_flight_model, "Textures and
+ * images"), after checking its materials' animations and screens. An
  * AERON_flight_model asset also gets cooked simulation and render data, and
  * the result is loaded back the way a game loads it before it is written.
  * --library builds an effect library (animated_materials.md).
  */
 
-#include "animations.h"
 #include "effect_files.h"
 #include "effect_library.h"
 #include "flight_data.h"
 #include "gltf_cook.h"
+#include "material_checks.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -30,17 +29,17 @@
 static void usage(void) {
 	fprintf(stderr, "Usage: aeron_gltf_cook <in.gltf> --out <out.glb> [options]\n"
 					"       aeron_gltf_cook --library <library>.yaml --out <effects dir>\n"
-					"       aeron_gltf_cook --animations-json <model>.anim.yaml\n"
-					"       aeron_gltf_cook --animations-from-json <in.json> <model>.anim.yaml\n"
 					"       aeron_gltf_cook --library-from-json <in.json> <library>.yaml\n"
 					"       aeron_gltf_cook --library-json <library>.yaml\n"
 					"\n"
 					"Cooks an artist-authored .gltf (PNG textures, optional\n"
-					"KHR_materials_variants) into one .glb file with four compressed\n"
-					"KTX2 atlas arrays (base_color / normal / metallic_roughness / emissive)\n"
-					"referenced via KHR_texture_basisu. Each material's texture\n"
-					"bindings carry a KHR_texture_transform mapping its UVs into the\n"
-					"appropriate sub-rect of each atlas.\n"
+					"KHR_materials_variants) into one .glb file with compressed KTX2\n"
+					"atlas arrays (base_color / normal / metallic_roughness / emissive),\n"
+					"which its textures name through AERON_flight_model. Each\n"
+					"material's texture bindings carry a KHR_texture_transform mapping\n"
+					"its UVs into the appropriate sub-rect of its atlas. It first\n"
+					"checks the materials' AERON_flight_model objects (animations,\n"
+					"screens).\n"
 					"\n"
 					"For an AERON_flight_model asset it also adds cooked simulation data\n"
 					"(per-component collision BVH) and render data (render BVH), then\n"
@@ -61,14 +60,11 @@ static void usage(void) {
 					"  --no-zstd             Skip zstd supercompression on KTX2 payloads.\n"
 					"  --zstd-level <N>      zstd level, 1 to 22 (default 9; 19 is about\n"
 					"                        14x slower for ~6%% smaller payloads).\n"
-					"  --animations <file>   Merge a model animation file (<model>.anim.yaml:\n"
-					"                        materials' flipbooks, damage and energy)\n"
-					"                        into the materials first.\n"
-					"  --effects-dir <dir>   With --animations, check every image key\n"
-					"                        against the libraries in <dir>.\n"
+					"  --effects-dir <dir>   Check every frame and damage stage the\n"
+					"                        materials name against the libraries in <dir>.\n"
 					"  --library-sources <dir>\n"
 					"                        With --effects-dir, first build each library\n"
-					"                        the animations name that <dir> holds, as\n"
+					"                        the materials name that <dir> holds, as\n"
 					"                        <dir>/<library>/<library>.yaml, into the\n"
 					"                        effects directory (as --library does).\n"
 					"  --verbose             Print per-channel cook progress.\n"
@@ -79,15 +75,12 @@ static void usage(void) {
 					"index there records the same inputs (the file, its images and the\n"
 					"baking version) is left as it is.\n"
 					"\n"
-					"--animations-json checks a model animation file as --animations\n"
-					"does and prints it as JSON (for tools without a YAML reader).\n"
-					"--library-json does the same for an effect library file, with the\n"
-					"checks --library applies before reading its images.\n"
-					"\n"
-					"--animations-from-json and --library-from-json are their inverses:\n"
-					"they read such JSON (<in.json>, or - for stdin), check it the same\n"
-					"way and write the file in its canonical form, keeping the leading\n"
-					"comment lines of the file they replace.\n");
+					"--library-json prints an effect library file as JSON (for tools\n"
+					"without a YAML reader), with the checks --library applies before\n"
+					"reading its images. --library-from-json is its inverse: it reads\n"
+					"such JSON (<in.json>, or - for stdin), checks it the same way and\n"
+					"writes the file in its canonical form, keeping the leading comment\n"
+					"lines of the file it replaces.\n");
 	exit(2);
 }
 
@@ -186,11 +179,6 @@ int main(int argc, char** argv) {
 		usage();
 	if (strcmp(argv[1], "-h") == 0 || strcmp(argv[1], "--help") == 0)
 		usage();
-	if (strcmp(argv[1], "--animations-json") == 0) {
-		if (argc != 3)
-			usage();
-		return aeron_gltf_cook_print_animations(argv[2]) ? 0 : 1;
-	}
 	if (strcmp(argv[1], "--library") == 0) {
 		if (argc != 5 || strcmp(argv[3], "--out") != 0)
 			usage();
@@ -201,14 +189,6 @@ int main(int argc, char** argv) {
 			usage();
 		return print_library(argv[2]) ? 0 : 1;
 	}
-	if (strcmp(argv[1], "--animations-from-json") == 0) {
-		if (argc != 4)
-			usage();
-		cJSON*     file = read_json(argv[2]);
-		const bool ok   = file && aeron_gltf_cook_write_animations(argv[2], file, argv[3]);
-		cJSON_Delete(file);
-		return ok ? 0 : 1;
-	}
 	if (strcmp(argv[1], "--library-from-json") == 0) {
 		if (argc != 4)
 			usage();
@@ -217,7 +197,6 @@ int main(int argc, char** argv) {
 
 	const char* in_path     = argv[1];
 	const char* out_path    = NULL;
-	const char* animations  = NULL;
 	const char* effects_dir = NULL;
 	const char* library_sources = NULL;
 
@@ -250,8 +229,6 @@ int main(int argc, char** argv) {
 			opts.zstd_supercompress = false;
 		} else if (strcmp(a, "--zstd-level") == 0 && i + 1 < argc) {
 			opts.zstd_level = atoi(argv[++i]);
-		} else if (strcmp(a, "--animations") == 0 && i + 1 < argc) {
-			animations = argv[++i];
 		} else if (strcmp(a, "--effects-dir") == 0 && i + 1 < argc) {
 			effects_dir = argv[++i];
 		} else if (strcmp(a, "--library-sources") == 0 && i + 1 < argc) {
@@ -289,30 +266,13 @@ int main(int argc, char** argv) {
 		return 2;
 	}
 
-	if (effects_dir && !animations) {
-		fprintf(stderr, "[aeron_gltf_cook] --effects-dir needs --animations\n");
-		return 2;
-	}
 	if (library_sources && !effects_dir) {
 		fprintf(stderr, "[aeron_gltf_cook] --library-sources needs --effects-dir\n");
 		return 2;
 	}
 
-	/* The animation file merged into a copy of the input, next to it so its
-	 * buffer and image URIs still resolve. */
-	char merged[1024];
-	if (animations) {
-		snprintf(merged, sizeof merged, "%s.animations.gltf", in_path);
-		if (!aeron_gltf_cook_merge_animations(in_path, animations, effects_dir, library_sources, merged)) {
-			remove(merged);
-			return 1;
-		}
-		in_path = merged;
-	}
-	const bool cooked = aeron_gltf_cook(in_path, out_path, &opts);
-	if (animations)
-		remove(merged);
-	if (!cooked)
+	if (!aeron_gltf_cook_check_materials(in_path, effects_dir, library_sources) ||
+		!aeron_gltf_cook(in_path, out_path, &opts))
 		return 1;
 	return add_flight_data(out_path) ? 0 : 1;
 }

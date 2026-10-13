@@ -93,7 +93,30 @@
     1,
     1,
     1
-   ]
+   ],
+   "extensions": {
+    "AERON_flight_model": {
+     "flipbooks": [
+      {
+       "state": "always",
+       "layer": "emissive",
+       "mode": "loop",
+       "library": "examplepanel",
+       "emissiveStrength": 3,
+       "frames": [
+        [
+         "lights_0",
+         0.5
+        ],
+        [
+         "lights_1",
+         0.5
+        ]
+       ]
+      }
+     ]
+    }
+   }
   },
   {
    "name": "Screen",
@@ -104,6 +127,28 @@
     },
     "metallicFactor": 0,
     "roughnessFactor": 0.6
+   },
+   "extensions": {
+    "AERON_flight_model": {
+     "flipbooks": [
+      {
+       "state": "target",
+       "layer": "baseColor",
+       "mode": "loop",
+       "library": "examplepanel",
+       "frames": [
+        [
+         "screen_a",
+         0.5
+        ],
+        [
+         "screen_b",
+         0.5
+        ]
+       ]
+      }
+     ]
+    }
    }
   }
  ],

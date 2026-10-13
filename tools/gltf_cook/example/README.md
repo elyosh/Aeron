@@ -6,11 +6,10 @@ presets of `scene_capture`.
 
 | File | Role |
 |-|-|
-| `panel.gltf`, `panel.bin`, `textures/` | The model: two panels. `Lights` has a dark base colour and a dim static emissive map; `Screen` a grey bezel and black glass. The root and component nodes carry the minimal `AERON_flight_model` roles the game needs. |
+| `panel.gltf`, `panel.bin`, `textures/` | The model: two panels. `Lights` has a dark base colour and a dim static emissive map; `Screen` a grey bezel and black glass. The root and component nodes carry the minimal `AERON_flight_model` roles the game needs, and each material's `AERON_flight_model` object its flipbooks. |
 | `frames/` | The animation frames, PNGs in the materials' UV layout. |
 | `examplepanel.yaml` | The effect library: its frames. |
-| `panel.anim.yaml` | The model's animations: each material's flipbooks. |
-| `build.sh` | Builds the library with `aeron_gltf_cook --library` and cooks the model with `--animations`. |
+| `build.sh` | Builds the library with `aeron_gltf_cook --library` and cooks the model, checking its frames against the library with `--effects-dir`. |
 
 ```sh
 aeron/tools/gltf_cook/example/build.sh cmake-build-release captures/anim-example-assets

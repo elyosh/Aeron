@@ -9,4 +9,4 @@ out=$2
 mkdir -p "$out/remaster/effects" "$out/remaster/models"
 "$build/aeron_gltf_cook" --library "$here/examplepanel.yaml" --out "$out/remaster/effects"
 "$build/aeron_gltf_cook" "$here/panel.gltf" --out "$out/remaster/models/panel.glb" \
-	--animations "$here/panel.anim.yaml" --effects-dir "$out/remaster/effects"
+	--effects-dir "$out/remaster/effects"

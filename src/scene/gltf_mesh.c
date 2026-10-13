@@ -58,17 +58,6 @@ static inline void gltf_to_aeron_tangent(const float in[4], float out[4]) {
 	out[3] = -in[3];
 }
 
-static bool json_object_string_equals(const char* json, const char* key, const char* expected) {
-	if (!json || !key || !expected)
-		return false;
-	cJSON*       object = cJSON_ParseWithOpts(json, NULL, true);
-	const cJSON* value  = cJSON_IsObject(object) ? cJSON_GetObjectItemCaseSensitive(object, key) : NULL;
-	const bool   matches =
-		cJSON_IsString(value) && value->valuestring && strcmp(value->valuestring, expected) == 0;
-	cJSON_Delete(object);
-	return matches;
-}
-
 static void transform_point(const float matrix[16], const float in[3], float out[3]) {
 	out[0] = matrix[0] * in[0] + matrix[4] * in[1] + matrix[8] * in[2] + matrix[12];
 	out[1] = matrix[1] * in[0] + matrix[5] * in[1] + matrix[9] * in[2] + matrix[13];
@@ -119,62 +108,23 @@ static const cgltf_accessor* prim_attr(const cgltf_primitive* p, cgltf_attribute
 	return NULL;
 }
 
-/* ===== Channel KTX2 extraction =====================================
+/* ===== The extension's objects ======================================
  *
- * aeron_gltf_cook names each atlas image `atlas_<channel>` with mimeType
- * `image/ktx2` and stores the KTX2 bytes in a buffer_view. We match by
- * name and copy the bytes out of the GLB BIN chunk into a
- * AeronGltfChannelKtx2-owned buffer so the SDL_GPU side has a stable
- * pointer after cgltf_free.
- *
- * Returns NULL when no image carries the expected name; caller decides
- * whether that's fatal. */
-static const cgltf_image* find_atlas_image(const cgltf_data* data, const char* atlas_name) {
-	for (cgltf_size i = 0; i < data->images_count; i++) {
-		const cgltf_image* im = &data->images[i];
-		if (im->name && strcmp(im->name, atlas_name) == 0)
-			return im;
-	}
+ * A material's and a texture's AERON_flight_model object
+ * (tools/extensions/AERON_flight_model), parsed (owned), or NULL without
+ * one. */
+static cJSON* flight_model_object(const cgltf_extension* extensions, cgltf_size count) {
+	for (cgltf_size e = 0; e < count; e++)
+		if (extensions[e].name && extensions[e].data &&
+			strcmp(extensions[e].name, AERON_FLIGHT_MODEL_EXTENSION) == 0)
+			return cJSON_Parse(extensions[e].data);
 	return NULL;
 }
 
-static bool copy_channel_ktx2(const cgltf_data* data, const char* atlas_name, AeronGltfChannelKtx2* out) {
-	const cgltf_image* im = find_atlas_image(data, atlas_name);
-	if (!im) {
-		SDL_Log("[flight_gltf] missing atlas image '%s'", atlas_name);
-		return false;
-	}
-	if (!im->buffer_view || !im->buffer_view->buffer || !im->buffer_view->buffer->data) {
-		SDL_Log("[flight_gltf] atlas '%s' has no buffer_view data", atlas_name);
-		return false;
-	}
-	const uint8_t* src  = (const uint8_t*)im->buffer_view->buffer->data + im->buffer_view->offset;
-	size_t         size = im->buffer_view->size;
-	uint8_t*       copy = (uint8_t*)malloc(size);
-	if (!copy)
-		return false;
-	memcpy(copy, src, size);
-	out->data = copy;
-	out->size = size;
-	return true;
-}
-
-/* The cooker's atlas image names, by AERON_GLTF_CHANNEL_*; a variant group
- * names its channel without the prefix. */
-static const char* kAtlasNames[AERON_GLTF_CHANNEL_COUNT] = {
-	"atlas_base_color",
-	"atlas_normal",
-	"atlas_metallic_roughness",
-	"atlas_emissive",
-};
-
-/* ===== Variants, the markings list and the variant groups ===========
+/* ===== Variants and the markings list ===============================
  *
  * The model root's AERON_flight_model `markings`: [variant name or null,
- * ...], at most 256 entries. The asset extras of a cooked model with
- * variant textures (aeron_gltf_cook):
- *   "aeronVariantGroups": [{"bufferView": b, "layers": l, "variants": [...]}]
- * The groups' KTX2 blocks are copied like the core atlases. */
+ * ...], at most 256 entries. */
 static char* copy_string(const char* s) {
 	const size_t n    = strlen(s) + 1;
 	char*        copy = (char*)malloc(n);
@@ -242,84 +192,7 @@ static bool read_variants(const cgltf_data* data, const char* source_label, Aero
 				return false;
 		}
 	}
-	if (!read_markings(data, source_label, out))
-		return false;
-	const cgltf_extras* extras = &data->asset.extras;
-	cJSON*              root   = NULL;
-	if (extras->data)
-		root = cJSON_Parse(extras->data);
-	else if (data->json && extras->end_offset > extras->start_offset)
-		root = cJSON_ParseWithLength(data->json + extras->start_offset,
-									 (size_t)(extras->end_offset - extras->start_offset));
-	if (!root)
-		return true;
-	/* A model from before the markings list: its looks would change. */
-	if (cJSON_GetObjectItemCaseSensitive(root, "aeronAssetVariants") ||
-		cJSON_GetObjectItemCaseSensitive(root, "aeronSkinMarkings")) {
-		SDL_Log("[flight_gltf] '%s' gives its looks by aeronAssetVariants or aeronSkinMarkings, which "
-				"the markings list replaced; convert it again",
-				source_label);
-		cJSON_Delete(root);
-		return false;
-	}
-	bool         ok     = true;
-	const cJSON* groups = cJSON_GetObjectItemCaseSensitive(root, "aeronVariantGroups");
-	if (ok && cJSON_IsArray(groups)) {
-		out->group_count = (uint32_t)cJSON_GetArraySize(groups);
-		out->groups =
-			(AeronGltfVariantGroup*)calloc(out->group_count ? out->group_count : 1, sizeof *out->groups);
-		ok                 = out->groups != NULL;
-		uint32_t     g     = 0;
-		const cJSON* entry = NULL;
-		cJSON_ArrayForEach(entry, groups) {
-			if (!ok)
-				break;
-			AeronGltfVariantGroup* group    = &out->groups[g++];
-			const cJSON*           channel  = cJSON_GetObjectItemCaseSensitive(entry, "channel");
-			const cJSON*           view     = cJSON_GetObjectItemCaseSensitive(entry, "bufferView");
-			const cJSON*           layers   = cJSON_GetObjectItemCaseSensitive(entry, "layers");
-			const cJSON*           variants = cJSON_GetObjectItemCaseSensitive(entry, "variants");
-			ok = cJSON_IsNumber(view) && view->valuedouble >= 0 &&
-				 view->valuedouble < (double)data->buffer_views_count && cJSON_IsNumber(layers) &&
-				 layers->valuedouble >= 1 && layers->valuedouble <= AERON_GLTF_ATLAS_MAX_PAGE &&
-				 cJSON_IsArray(variants) && cJSON_GetArraySize(variants) > 0;
-			/* The channel, base colour when absent. */
-			group->channel = AERON_GLTF_CHANNEL_BASE_COLOR;
-			if (ok && channel) {
-				ok = false;
-				for (int c = 0; c < AERON_GLTF_CHANNEL_COUNT && cJSON_IsString(channel); c++) {
-					if (strcmp(channel->valuestring, kAtlasNames[c] + strlen("atlas_")) == 0) {
-						group->channel = (uint32_t)c;
-						ok             = true;
-					}
-				}
-			}
-			if (!ok)
-				break;
-			const cgltf_buffer_view* bv = &data->buffer_views[(size_t)view->valuedouble];
-			group->layers               = (uint32_t)layers->valuedouble;
-			group->variant_count        = (uint32_t)cJSON_GetArraySize(variants);
-			group->variants             = (uint32_t*)calloc(group->variant_count, sizeof *group->variants);
-			group->ktx2.data            = (uint8_t*)malloc(bv->size ? bv->size : 1);
-			ok = group->variants && group->ktx2.data && bv->buffer && bv->buffer->data && bv->size > 0;
-			if (!ok)
-				break;
-			memcpy(group->ktx2.data, (const uint8_t*)bv->buffer->data + bv->offset, bv->size);
-			group->ktx2.size  = bv->size;
-			uint32_t     v    = 0;
-			const cJSON* item = NULL;
-			cJSON_ArrayForEach(item, variants) {
-				ok = ok && cJSON_IsNumber(item) && item->valuedouble >= 0 &&
-					 item->valuedouble < out->variant_count;
-				if (ok)
-					group->variants[v++] = (uint32_t)item->valuedouble;
-			}
-		}
-	}
-	cJSON_Delete(root);
-	if (!ok)
-		SDL_Log("[flight_gltf] '%s' has invalid variant groups in its asset extras", source_label);
-	return ok;
+	return read_markings(data, source_label, out);
 }
 
 /* ===== Per-material read ============================================
@@ -343,35 +216,181 @@ static const cgltf_texture_view* material_channel_view(const cgltf_material* m, 
 	}
 }
 
-/* The cooker names atlas textures `tex_<channel>_p<page>_l<max_lod>`. A name
- * without that suffix keeps page 0 and no LOD limit; a malformed or
- * out-of-range suffix rejects the material. */
-static bool parse_atlas_texture_name(const char* name, uint32_t* page, uint32_t* max_lod) {
-	const char* lod = name ? strrchr(name, '_') : NULL;
-	if (!lod || lod[1] != 'l' || lod == name)
-		return true;
-	const char* p = lod - 1;
-	while (p > name && *p != '_')
-		p--;
-	if (*p != '_' || p[1] != 'p')
-		return true;
-	char*               end         = NULL;
-	const unsigned long parsed_page = strtoul(p + 2, &end, 10);
-	if (end == p + 2 || end != lod)
-		return true;
-	const unsigned long parsed_lod = strtoul(lod + 2, &end, 10);
-	if (end == lod + 2 || *end != '\0')
-		return true;
-	if (parsed_page > AERON_GLTF_ATLAS_MAX_PAGE || parsed_lod > AERON_GLTF_ATLAS_UNCLAMPED_LOD) {
-		SDL_Log("[flight_gltf] atlas texture '%s' is out of range", name);
-		return false;
+/* ===== Atlas images ==================================================
+ *
+ * A cooked texture names its image, a KTX2 array of one channel's atlas
+ * pages, and its page through its AERON_flight_model object; an image's
+ * channel is the material slot referencing it. A channel's core image is
+ * the one the primitives' own materials reference or, in a channel no own
+ * material uses, its only image. The channel's other images are variant
+ * groups (AeronGltfVariantGroup), of the variants whose materials reference
+ * them, in image order. */
+typedef struct AtlasTexture {
+	uint32_t image;
+	uint32_t layer;
+	uint32_t max_lod;
+} AtlasTexture;
+
+/* Texture `texture`'s image, page and mip limit; false without a valid
+ * AERON_flight_model object. */
+static bool read_atlas_texture(const cgltf_data* data, const cgltf_texture* texture, AtlasTexture* out) {
+	cJSON*       object  = texture ? flight_model_object(texture->extensions, texture->extensions_count) : NULL;
+	const cJSON* source  = cJSON_GetObjectItemCaseSensitive(object, "source");
+	const cJSON* layer   = cJSON_GetObjectItemCaseSensitive(object, "layer");
+	const cJSON* max_lod = cJSON_GetObjectItemCaseSensitive(object, "maxLod");
+	const bool   ok =
+		cJSON_IsNumber(source) && source->valuedouble >= 0.0 && source->valuedouble < (double)data->images_count &&
+		source->valuedouble == floor(source->valuedouble) && cJSON_IsNumber(layer) && layer->valuedouble >= 0.0 &&
+		layer->valuedouble <= AERON_GLTF_ATLAS_MAX_PAGE && layer->valuedouble == floor(layer->valuedouble) &&
+		(!max_lod || (cJSON_IsNumber(max_lod) && max_lod->valuedouble >= 0.0 &&
+					  max_lod->valuedouble < AERON_GLTF_ATLAS_UNCLAMPED_LOD &&
+					  max_lod->valuedouble == floor(max_lod->valuedouble)));
+	if (ok) {
+		out->image   = (uint32_t)source->valuedouble;
+		out->layer   = (uint32_t)layer->valuedouble;
+		out->max_lod = max_lod ? (uint32_t)max_lod->valuedouble : AERON_GLTF_ATLAS_UNCLAMPED_LOD;
 	}
-	*page    = (uint32_t)parsed_page;
-	*max_lod = (uint32_t)parsed_lod;
+	cJSON_Delete(object);
+	return ok;
+}
+
+/* Copies image `image`'s KTX2 bytes into `out`, with its layer count. */
+static bool copy_image_ktx2(const cgltf_image* image, AeronGltfChannelKtx2* out, uint32_t* layers) {
+	static const uint8_t kIdentifier[12] = { 0xAB, 'K', 'T', 'X', ' ', '2', '0', 0xBB, '\r', '\n', 0x1A, '\n' };
+	const cgltf_buffer_view* view = image->buffer_view;
+	if (!view || !view->buffer || !view->buffer->data || view->size < 48)
+		return false;
+	const uint8_t* src = (const uint8_t*)view->buffer->data + view->offset;
+	if (memcmp(src, kIdentifier, sizeof kIdentifier) != 0)
+		return false;
+	uint32_t count;
+	memcpy(&count, src + 32, sizeof count); /* layerCount, little-endian */
+	out->data = (uint8_t*)malloc(view->size);
+	if (!out->data)
+		return false;
+	memcpy(out->data, src, view->size);
+	out->size = view->size;
+	*layers   = count ? count : 1u;
 	return true;
 }
 
-static bool read_material(const cgltf_material* m, AeronGltfMaterial* out) {
+/* Per image: its channel (-1 when no material references it) and the first
+ * page it takes among its channel's (core, then groups). */
+typedef struct AtlasImages {
+	int32_t*  channel;
+	uint32_t* page_base;
+} AtlasImages;
+
+static void atlas_images_free(AtlasImages* atlas) {
+	free(atlas->channel);
+	free(atlas->page_base);
+	memset(atlas, 0, sizeof *atlas);
+}
+
+/* Marks the images material `m` references, for its own primitives
+ * (`own`) or variant `variant` (`uses`, images × variants). */
+static bool mark_atlas_images(const cgltf_data* data, const cgltf_material* m, AtlasImages* atlas, bool* own,
+							  uint8_t* uses, size_t variant, bool is_own, const char* source_label) {
+	for (int c = 0; m && c < AERON_GLTF_CHANNEL_COUNT; c++) {
+		const cgltf_texture_view* tv = material_channel_view(m, c);
+		AtlasTexture              texture;
+		if (!tv || !tv->texture)
+			continue;
+		if (!read_atlas_texture(data, tv->texture, &texture)) {
+			SDL_Log("[flight_gltf] '%s': a texture has no AERON_flight_model image and page (not a cooked model)",
+					source_label);
+			return false;
+		}
+		if (atlas->channel[texture.image] >= 0 && atlas->channel[texture.image] != c) {
+			SDL_Log("[flight_gltf] '%s': image %u serves two channels", source_label, texture.image);
+			return false;
+		}
+		atlas->channel[texture.image] = c;
+		if (is_own)
+			own[texture.image] = true;
+		else
+			uses[(size_t)texture.image * data->variants_count + variant] = 1;
+	}
+	return true;
+}
+
+/* Fills the model's core images and variant groups, and `atlas`, from the
+ * images the materials reference. */
+static bool read_atlases(const cgltf_data* data, const char* source_label, AeronGltfModel* out,
+						 AtlasImages* atlas) {
+	const size_t images   = data->images_count ? data->images_count : 1;
+	const size_t variants = data->variants_count;
+	atlas->channel        = (int32_t*)malloc(images * sizeof *atlas->channel);
+	atlas->page_base      = (uint32_t*)calloc(images, sizeof *atlas->page_base);
+	bool*    own          = (bool*)calloc(images, sizeof *own);
+	uint8_t* uses         = (uint8_t*)calloc(images * (variants ? variants : 1), 1);
+	bool     ok           = atlas->channel && atlas->page_base && own && uses;
+	for (size_t i = 0; ok && i < data->images_count; i++)
+		atlas->channel[i] = -1;
+	for (size_t mi = 0; ok && mi < data->meshes_count; mi++) {
+		for (size_t pi = 0; ok && pi < data->meshes[mi].primitives_count; pi++) {
+			const cgltf_primitive* p = &data->meshes[mi].primitives[pi];
+			ok = mark_atlas_images(data, p->material, atlas, own, uses, 0, true, source_label);
+			for (size_t k = 0; ok && k < p->mappings_count; k++)
+				ok = p->mappings[k].variant >= variants ||
+					 mark_atlas_images(data, p->mappings[k].material, atlas, own, uses, p->mappings[k].variant,
+									   false, source_label);
+		}
+	}
+	bool own_channel[AERON_GLTF_CHANNEL_COUNT] = { false };
+	for (size_t i = 0; ok && i < data->images_count; i++)
+		if (own[i])
+			own_channel[atlas->channel[i]] = true;
+	/* Core images. */
+	uint32_t core_layers[AERON_GLTF_CHANNEL_COUNT] = { 0 };
+	for (size_t i = 0; ok && i < data->images_count; i++) {
+		const int32_t c = atlas->channel[i];
+		if (c < 0 || (!own[i] && own_channel[c]))
+			continue;
+		if (out->channels[c].data) {
+			SDL_Log("[flight_gltf] '%s': channel %d has two core images", source_label, c);
+			ok = false;
+		} else if (!copy_image_ktx2(&data->images[i], &out->channels[c], &core_layers[c])) {
+			SDL_Log("[flight_gltf] '%s': image %zu is not a KTX2 in a buffer view", source_label, i);
+			ok = false;
+		}
+	}
+	/* Variant groups, each image's pages after the core's and the earlier
+	 * groups' of its channel. */
+	uint32_t next_page[AERON_GLTF_CHANNEL_COUNT];
+	memcpy(next_page, core_layers, sizeof next_page);
+	for (size_t i = 0; ok && i < data->images_count; i++) {
+		const int32_t c = atlas->channel[i];
+		if (c < 0 || own[i] || !own_channel[c])
+			continue;
+		AeronGltfVariantGroup* grown =
+			(AeronGltfVariantGroup*)realloc(out->groups, (out->group_count + 1u) * sizeof *grown);
+		if (!grown) {
+			ok = false;
+			break;
+		}
+		out->groups              = grown;
+		AeronGltfVariantGroup* g = &out->groups[out->group_count];
+		memset(g, 0, sizeof *g);
+		g->channel = (uint32_t)c;
+		g->variants = (uint32_t*)malloc((variants ? variants : 1) * sizeof *g->variants);
+		ok          = g->variants && copy_image_ktx2(&data->images[i], &g->ktx2, &g->layers);
+		out->group_count++;
+		for (size_t v = 0; ok && v < variants; v++)
+			if (uses[i * variants + v])
+				g->variants[g->variant_count++] = (uint32_t)v;
+		atlas->page_base[i] = next_page[c];
+		next_page[c] += g->layers;
+		if (!ok)
+			SDL_Log("[flight_gltf] '%s': image %zu is not a KTX2 in a buffer view", source_label, i);
+	}
+	free(own);
+	free(uses);
+	return ok;
+}
+
+static bool read_material(const cgltf_data* data, const AtlasImages* atlas, const cgltf_material* m,
+						  AeronGltfMaterial* out) {
 	/* Factor defaults per glTF spec. */
 	out->base_color_factor[0] = 1.0f;
 	out->base_color_factor[1] = 1.0f;
@@ -386,7 +405,6 @@ static bool read_material(const cgltf_material* m, AeronGltfMaterial* out) {
 	out->double_sided         = 0u;
 	out->alpha_mode           = AERON_GLTF_ALPHA_OPAQUE;
 	out->alpha_cutoff         = 0.5f;
-	out->emissive_mode        = AERON_GLTF_EMISSIVE_ADDITIVE;
 	/* uv_xform sentinel zero = "channel not authored" — FS falls back
 	 * to factor. Overwritten below for channels that do bind. */
 	memset(out->uv_xform, 0, sizeof out->uv_xform);
@@ -420,10 +438,6 @@ static bool read_material(const cgltf_material* m, AeronGltfMaterial* out) {
 		default:
 			return false;
 	}
-	if (json_object_string_equals(m->extras.data, "aeronEmissiveMode", "legacy_srgb_srcalpha")) {
-		out->emissive_mode = AERON_GLTF_EMISSIVE_LEGACY_SRGB_SRCALPHA;
-	}
-
 	if (m->has_pbr_metallic_roughness) {
 		const cgltf_pbr_metallic_roughness* pbr = &m->pbr_metallic_roughness;
 		memcpy(out->base_color_factor, pbr->base_color_factor, sizeof out->base_color_factor);
@@ -463,8 +477,17 @@ static bool read_material(const cgltf_material* m, AeronGltfMaterial* out) {
 		out->uv_xform[c][1] = tv->transform.offset[1];
 		out->uv_xform[c][2] = tv->transform.scale[0];
 		out->uv_xform[c][3] = tv->transform.scale[1];
-		if (!parse_atlas_texture_name(tv->texture->name, &out->atlas_page[c], &out->atlas_max_lod[c]))
+		AtlasTexture texture;
+		if (!read_atlas_texture(data, tv->texture, &texture))
 			return false;
+		/* An image no primitive's material references is not loaded: a
+		 * material no primitive uses samples nothing. */
+		if (atlas->channel[texture.image] < 0) {
+			memset(out->uv_xform[c], 0, sizeof out->uv_xform[c]);
+			continue;
+		}
+		out->atlas_page[c]    = atlas->page_base[texture.image] + texture.layer;
+		out->atlas_max_lod[c] = texture.max_lod;
 	}
 	return true;
 }
@@ -514,24 +537,20 @@ static bool read_screen_rect(const cJSON* json, AeronGltfScreenRect* r) {
 	return true;
 }
 
-/* Reads a material's `aeronScreen` extras into `out` and the model's
- * rectangle array. A malformed screen is reported and dropped: the material
- * stays an ordinary one. Returns false only when memory runs out. */
-static bool read_screen(const cgltf_material* m, AeronGltfModel* model, uint32_t* rect_capacity,
+/* Reads a material's `screen` into `out` and the model's rectangle array. A
+ * malformed screen is reported and dropped: the material stays an ordinary
+ * one. Returns false only when memory runs out. */
+static bool read_screen(const cJSON* screen, AeronGltfModel* model, uint32_t* rect_capacity,
 						AeronGltfMaterial* out, const char* source_label, uint32_t material_index) {
 	out->screen_first = out->screen_count = out->screen_flags = 0;
-	if (!m || !m->extras.data || !strstr(m->extras.data, "aeronScreen"))
+	if (!screen)
 		return true;
-	cJSON*       root   = cJSON_ParseWithOpts(m->extras.data, NULL, true);
-	const cJSON* screen = cJSON_IsObject(root) ? cJSON_GetObjectItemCaseSensitive(root, "aeronScreen") : NULL;
-	const cJSON* rects  = screen ? cJSON_GetObjectItemCaseSensitive(screen, "rects") : NULL;
+	const cJSON* rects = cJSON_GetObjectItemCaseSensitive(screen, "rects");
 	uint32_t     hide   = 0;
 	const int    count  = cJSON_IsArray(rects) ? cJSON_GetArraySize(rects) : -1;
 	if (!cJSON_IsObject(screen) || !json_uint(screen, "hide", UINT32_MAX, &hide) || count < 0 ||
 		count > (int)AERON_GLTF_SCREEN_MAX_RECTS_PER_MATERIAL) {
-		SDL_Log("[flight_gltf] '%s' material %u: malformed aeronScreen ignored", source_label,
-				material_index);
-		cJSON_Delete(root);
+		SDL_Log("[flight_gltf] '%s' material %u: malformed screen ignored", source_label, material_index);
 		return true;
 	}
 	if (model->screen_rect_count + (uint32_t)count > *rect_capacity) {
@@ -540,19 +559,16 @@ static bool read_screen(const cgltf_material* m, AeronGltfModel* model, uint32_t
 			capacity *= 2u;
 		AeronGltfScreenRect* grown =
 			(AeronGltfScreenRect*)realloc(model->screen_rects, capacity * sizeof *model->screen_rects);
-		if (!grown) {
-			cJSON_Delete(root);
+		if (!grown)
 			return false;
-		}
 		model->screen_rects = grown;
 		*rect_capacity      = capacity;
 	}
 	const uint32_t first = model->screen_rect_count;
 	for (int i = 0; i < count; i++) {
 		if (!read_screen_rect(cJSON_GetArrayItem(rects, i), &model->screen_rects[first + (uint32_t)i])) {
-			SDL_Log("[flight_gltf] '%s' material %u: malformed aeronScreen rectangle %d ignored",
-					source_label, material_index, i);
-			cJSON_Delete(root);
+			SDL_Log("[flight_gltf] '%s' material %u: malformed screen rectangle %d ignored", source_label,
+					material_index, i);
 			return true;
 		}
 	}
@@ -567,7 +583,6 @@ static bool read_screen(const cgltf_material* m, AeronGltfModel* model, uint32_t
 							(json_bool(screen, "hologram") ? AERON_GLTF_SCREEN_HOLOGRAM : 0u) |
 							(json_bool(screen, "noisy") ? AERON_GLTF_SCREEN_NOISY : 0u);
 	}
-	cJSON_Delete(root);
 	return true;
 }
 
@@ -646,7 +661,7 @@ static bool read_flipbook(const cJSON* json, AeronGltfModel* model, FlipbookCapa
 	const cJSON*             library  = cJSON_GetObjectItemCaseSensitive(json, "library");
 	const cJSON*             strength = cJSON_GetObjectItemCaseSensitive(json, "emissiveStrength");
 	const cJSON*             unlit    = cJSON_GetObjectItemCaseSensitive(json, "unlit");
-	static const char* const layers[] = { "colour", "illumination" };
+	static const char* const layers[] = { "baseColor", "emissive" }; /* AERON_ANIM_LAYER_* */
 	static const char* const modes[]  = { "loop", "once" };
 	AeronGltfFlipbook        fb       = { 0 };
 	const int                count    = cJSON_IsArray(frames) ? cJSON_GetArraySize(frames) : -1;
@@ -742,21 +757,20 @@ static bool read_damage_alternative(const cJSON* json, const char* library, Aero
 			return false;
 		out->offset_mode = AERON_ANIM_OFFSET_INSIDE;
 	} else if (offset) {
-		if (!json_floats(offset, out->offset, 4))
+		if (!cJSON_IsObject(offset) || !json_floats(cJSON_GetObjectItemCaseSensitive(offset, "min"), out->offset, 2) ||
+			!json_floats(cJSON_GetObjectItemCaseSensitive(offset, "max"), out->offset + 2, 2))
 			return false;
 		out->offset_mode = AERON_ANIM_OFFSET_RANGE;
 	}
 	return true;
 }
 
-/* A material's `aeronDamage`: appended to the model's alternatives. A
- * malformed one is reported and dropped. Returns false only on OOM. */
-static bool read_damage(const cgltf_material* m, AeronGltfModel* model, FlipbookCapacity* cap,
+/* A material's `damage`: appended to the model's alternatives. A malformed
+ * one is reported and dropped. Returns false only on OOM. */
+static bool read_damage(const cJSON* damage, AeronGltfModel* model, FlipbookCapacity* cap,
 						AeronGltfMaterial* out, const char* source_label, uint32_t material_index) {
-	if (!m || !m->extras.data || !strstr(m->extras.data, "aeronDamage"))
+	if (!damage)
 		return true;
-	cJSON*         root    = cJSON_ParseWithOpts(m->extras.data, NULL, true);
-	const cJSON*   damage  = cJSON_GetObjectItemCaseSensitive(root, "aeronDamage");
 	const cJSON*   library = cJSON_GetObjectItemCaseSensitive(damage, "library");
 	const cJSON*   alts    = cJSON_GetObjectItemCaseSensitive(damage, "alternatives");
 	const int      count   = cJSON_IsArray(alts) ? cJSON_GetArraySize(alts) : -1;
@@ -767,10 +781,8 @@ static bool read_damage(const cgltf_material* m, AeronGltfModel* model, Flipbook
 						   json_uint(damage, "placement", 0xFFFu, &placement);
 	const uint32_t first = model->damage_count;
 	if (valid &&
-		!grow((void**)&model->damages, &cap->damages, first + (uint32_t)count, sizeof *model->damages)) {
-		cJSON_Delete(root);
+		!grow((void**)&model->damages, &cap->damages, first + (uint32_t)count, sizeof *model->damages))
 		return false;
-	}
 	for (int i = 0; valid && i < count; i++) {
 		valid = read_damage_alternative(cJSON_GetArrayItem(alts, i), library->valuestring,
 										&model->damages[model->damage_count], &oom);
@@ -779,14 +791,12 @@ static bool read_damage(const cgltf_material* m, AeronGltfModel* model, Flipbook
 		else
 			free_damage(&model->damages[model->damage_count]);
 	}
-	cJSON_Delete(root);
 	if (!valid) {
 		while (model->damage_count > first)
 			free_damage(&model->damages[--model->damage_count]);
 		if (oom)
 			return false;
-		SDL_Log("[flight_gltf] '%s' material %u: malformed aeronDamage ignored", source_label,
-				material_index);
+		SDL_Log("[flight_gltf] '%s' material %u: malformed damage ignored", source_label, material_index);
 		return true;
 	}
 	out->damage_first     = first;
@@ -796,46 +806,47 @@ static bool read_damage(const cgltf_material* m, AeronGltfModel* model, Flipbook
 	return true;
 }
 
-/* A material's `aeronEnergy` into its energy mask; unknown names are
+/* The AERON_EFFECT_ENERGY_* bits of an `energy` list; unknown names are
  * reported and ignored. */
-static void read_energy(const cgltf_material* m, AeronGltfMaterial* out, const char* source_label,
-						uint32_t material_index) {
-	out->energy_mask = 0;
-	if (!m || !m->extras.data || !strstr(m->extras.data, "aeronEnergy"))
-		return;
+static uint32_t energy_mask(const cJSON* energy, const char* source_label, const char* owner) {
 	static const char* const names[] = { "shields", "tractor", "jamming" };
-	cJSON*                   root    = cJSON_ParseWithOpts(m->extras.data, NULL, true);
-	const cJSON*             energy  = cJSON_GetObjectItemCaseSensitive(root, "aeronEnergy");
+	uint32_t                 mask    = 0;
 	const cJSON*             item;
 	cJSON_ArrayForEach(item, energy) {
 		uint32_t e = 0;
 		while (e < 3 && !(cJSON_IsString(item) && strcmp(item->valuestring, names[e]) == 0))
 			e++;
 		if (e < 3)
-			out->energy_mask |= 1u << e;
+			mask |= 1u << e;
 		else
-			SDL_Log("[flight_gltf] '%s' material %u: unknown aeronEnergy entry ignored", source_label,
-					material_index);
+			SDL_Log("[flight_gltf] '%s' %s: unknown energy entry ignored", source_label, owner);
 	}
-	cJSON_Delete(root);
+	return mask;
 }
 
-/* Reads a material's `aeronFlipbooks` extras. A malformed entry is reported
- * and the material keeps no animation. Returns false only when memory runs
- * out. */
-static bool read_animation(const cgltf_material* m, AeronGltfModel* model, FlipbookCapacity* cap,
+/* The model root's `energy`, the default of materials without their own:
+ * its bits in *mask, false when the model gives none. */
+static bool read_energy_default(const cgltf_data* data, const char* source_label, uint32_t* mask) {
+	const cgltf_node* root   = data->scene && data->scene->nodes_count ? data->scene->nodes[0] : NULL;
+	cJSON*            object = root ? flight_model_object(root->extensions, root->extensions_count) : NULL;
+	const cJSON*      energy = cJSON_GetObjectItemCaseSensitive(object, "energy");
+	*mask                    = energy ? energy_mask(energy, source_label, "model root") : 0u;
+	cJSON_Delete(object);
+	return energy != NULL;
+}
+
+/* Reads a material's `flipbooks`. A malformed entry is reported and the
+ * material keeps no animation. Returns false only when memory runs out. */
+static bool read_animation(const cJSON* books, AeronGltfModel* model, FlipbookCapacity* cap,
 						   AeronGltfMaterial* out, const char* source_label, uint32_t material_index) {
-	if (!m || !m->extras.data || !strstr(m->extras.data, "aeronFlipbooks"))
+	if (!books)
 		return true;
-	cJSON*       root  = cJSON_ParseWithOpts(m->extras.data, NULL, true);
-	const cJSON* books = cJSON_GetObjectItemCaseSensitive(root, "aeronFlipbooks");
 	const int    count = cJSON_IsArray(books) ? cJSON_GetArraySize(books) : -1;
 	bool         valid = count >= 0;
 	const uint32_t first_book = model->flipbook_count, first_frame = model->flipbook_frame_count;
 	bool           oom = false;
 	for (int i = 0; valid && i < count; i++)
 		valid = read_flipbook(cJSON_GetArrayItem(books, i), model, cap, &oom);
-	cJSON_Delete(root);
 	if (!valid) {
 		for (uint32_t b = first_book; b < model->flipbook_count; b++)
 			free(model->flipbooks[b].library);
@@ -845,8 +856,7 @@ static bool read_animation(const cgltf_material* m, AeronGltfModel* model, Flipb
 		model->flipbook_frame_count = first_frame;
 		if (oom)
 			return false;
-		SDL_Log("[flight_gltf] '%s' material %u: malformed aeronFlipbooks ignored", source_label,
-				material_index);
+		SDL_Log("[flight_gltf] '%s' material %u: malformed flipbooks ignored", source_label, material_index);
 		return true;
 	}
 	out->flipbook_first = first_book;
@@ -981,15 +991,12 @@ bool Aeron_GltfMeshBuildData(const cgltf_data* data, const char* source_label, A
 
 	NodePlan* plans = NULL;
 
-	/* ---- Channel KTX2 atlases ------------------------------------- */
-	for (int c = 0; c < AERON_GLTF_CHANNEL_COUNT; c++) {
-		if (!copy_channel_ktx2(data, kAtlasNames[c], &out->channels[c]))
-			goto cleanup;
-	}
-
-	/* ---- Variants ------------------------------------------------- */
-	if (!read_variants(data, source_label, out))
+	/* ---- Variants, then the atlas images the materials reference --- */
+	AtlasImages atlas = { 0 };
+	if (!read_variants(data, source_label, out) || !read_atlases(data, source_label, out, &atlas))
 		goto cleanup;
+	uint32_t   energy_default       = 0;
+	const bool has_energy_default   = read_energy_default(data, source_label, &energy_default);
 
 	/* ---- Materials (factors + per-channel UV transform) ----------- */
 	if (data->materials_count > AERON_GLTF_MAX_MATERIALS) {
@@ -1005,18 +1012,27 @@ bool Aeron_GltfMeshBuildData(const cgltf_data* data, const char* source_label, A
 		uint32_t         screen_rect_capacity = 0;
 		FlipbookCapacity flipbook_capacity    = { 0 };
 		for (uint32_t i = 0; i < out->material_count; i++) {
-			if (!read_material(&data->materials[i], &out->materials[i])) {
-				SDL_Log("[flight_gltf] '%s' material %u has invalid alpha state", source_label, i);
+			const cgltf_material* m = &data->materials[i];
+			if (!read_material(data, &atlas, m, &out->materials[i])) {
+				SDL_Log("[flight_gltf] '%s' material %u has an invalid alpha state or texture", source_label, i);
 				goto cleanup;
 			}
-			if (!read_screen(&data->materials[i], out, &screen_rect_capacity, &out->materials[i],
-							 source_label, i) ||
-				!read_animation(&data->materials[i], out, &flipbook_capacity, &out->materials[i],
-								source_label, i) ||
-				!read_damage(&data->materials[i], out, &flipbook_capacity, &out->materials[i], source_label,
-							 i))
+			cJSON*       object = flight_model_object(m->extensions, m->extensions_count);
+			const cJSON* energy = cJSON_GetObjectItemCaseSensitive(object, "energy");
+			char         owner[32];
+			snprintf(owner, sizeof owner, "material %u", i);
+			out->materials[i].energy_mask = energy ? energy_mask(energy, source_label, owner)
+												   : (has_energy_default ? energy_default : 0u);
+			const bool read =
+				read_screen(cJSON_GetObjectItemCaseSensitive(object, "screen"), out, &screen_rect_capacity,
+							&out->materials[i], source_label, i) &&
+				read_animation(cJSON_GetObjectItemCaseSensitive(object, "flipbooks"), out, &flipbook_capacity,
+							   &out->materials[i], source_label, i) &&
+				read_damage(cJSON_GetObjectItemCaseSensitive(object, "damage"), out, &flipbook_capacity,
+							&out->materials[i], source_label, i);
+			cJSON_Delete(object);
+			if (!read)
 				goto cleanup;
-			read_energy(&data->materials[i], &out->materials[i], source_label, i);
 			/* Holograms and transparent screens blend over the scene, and
 			 * the PBR shader leaves them transparent when hidden: only the
 			 * blend range can draw them. */
@@ -1222,6 +1238,7 @@ bool Aeron_GltfMeshBuildData(const cgltf_data* data, const char* source_label, A
 
 cleanup:
 	free(plans);
+	atlas_images_free(&atlas);
 	if (!succeeded)
 		Aeron_GltfMeshFree(out);
 	return succeeded;

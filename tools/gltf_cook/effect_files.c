@@ -1,6 +1,5 @@
 /*
- * The canonical written form of the model animation and effect library
- * files (effect_files.h).
+ * The canonical written form of the effect library files (effect_files.h).
  */
 #include "effect_files.h"
 
@@ -13,16 +12,9 @@
 #include "cJSON.h"
 
 /* The members of an entry, in the format's order (animated_materials.md):
- * a file's, a material's, a flipbook's, the damage entry's, an
- * alternative's and a library image's. Other members follow, by name. */
-static const char* const kOrder[] = {
-	"version",   "state",    "layer",     "mode",         "library",          "kind",
-	"baseColor", "emissive", "factor",    "frames",       "emissiveStrength", "unlit",
-	"maxSize",   "crop",     "images",    "materials",    "flipbooks",        "damage",
-	"energy",    "choice",   "placement", "alternatives", "stages",           "scale",
-	"offset"
-};
-static const char* const kEnergies[] = { "shields", "tractor", "jamming" };
+ * a file's and an image's. Other members follow, by name. */
+static const char* const kOrder[] = { "version",  "library", "kind",    "baseColor", "emissive",
+									  "factor",   "maxSize", "crop",    "images" };
 
 #define COUNT(a) (sizeof(a) / sizeof((a)[0]))
 
@@ -123,22 +115,8 @@ static int order_of(const char* name) {
 	return (int)COUNT(kOrder);
 }
 
-static int energy_of(const cJSON* item) {
-	for (size_t i = 0; cJSON_IsString(item) && i < COUNT(kEnergies); ++i)
-		if (strcmp(item->valuestring, kEnergies[i]) == 0)
-			return (int)i;
-	return (int)COUNT(kEnergies);
-}
-
-/* Members at their default, which the canonical form leaves out. */
-static bool is_default(const cJSON* member) {
-	return cJSON_IsNumber(member) &&
-		   ((strcmp(member->string, "emissiveStrength") == 0 && (float)member->valuedouble == 1.0f) ||
-			(strcmp(member->string, "unlit") == 0 && (float)member->valuedouble == 0.0f));
-}
-
-/* Members sorted by name (`by_name`, a map of materials or images) or in
- * the format's order. */
+/* Members sorted by name (`by_name`, the map of images) or in the format's
+ * order. */
 static bool g_by_name;
 
 static int member_compare(const void* a, const void* b) {
@@ -150,11 +128,6 @@ static int member_compare(const void* a, const void* b) {
 			return ox < oy ? -1 : 1;
 	}
 	return strcmp(x->string, y->string);
-}
-
-static int energy_compare(const void* a, const void* b) {
-	const int x = energy_of(*(const cJSON* const*)a), y = energy_of(*(const cJSON* const*)b);
-	return (x > y) - (x < y);
 }
 
 /* `parent`'s children, sorted with `compare` (stable: ties by position). */
@@ -192,8 +165,6 @@ static void put_members(Text* t, const cJSON* object, bool by_name) {
 	}
 	bool first = true;
 	for (size_t i = 0; i < n; ++i) {
-		if (!by_name && is_default(items[i]))
-			continue;
 		put_text(t, first ? "{ " : ", ");
 		first = false;
 		put_string(t, items[i]->string);
@@ -208,9 +179,8 @@ static void put_value(Text* t, const cJSON* v, bool by_name) {
 	if (cJSON_IsObject(v)) {
 		put_members(t, v, by_name);
 	} else if (cJSON_IsArray(v)) {
-		const bool    energy = v->string && strcmp(v->string, "energy") == 0;
 		size_t        n;
-		const cJSON** items = sorted_children(v, energy ? energy_compare : NULL, false, &n);
+		const cJSON** items = sorted_children(v, NULL, false, &n);
 		if (!items) {
 			t->failed = true;
 			return;
@@ -233,7 +203,7 @@ static void put_value(Text* t, const cJSON* v, bool by_name) {
 	}
 }
 
-/* `map` (materials or images) one entry per line, in key order. */
+/* `map` (the images) one entry per line, in key order. */
 static void put_map(Text* t, const char* name, const cJSON* map) {
 	size_t        n;
 	const cJSON** items = sorted_children(map, member_compare, true, &n);
@@ -254,32 +224,19 @@ static void put_map(Text* t, const char* name, const cJSON* map) {
 }
 
 char* EffectFiles_Format(const cJSON* file, const char* header) {
-	const cJSON* version   = cJSON_GetObjectItemCaseSensitive(file, "version");
-	const cJSON* materials = cJSON_GetObjectItemCaseSensitive(file, "materials");
-	const cJSON* library   = cJSON_GetObjectItemCaseSensitive(file, "library");
-	const cJSON* images    = cJSON_GetObjectItemCaseSensitive(file, "images");
-	if (!cJSON_IsObject(file) || !cJSON_IsNumber(version) ||
-		!(cJSON_IsObject(materials) || (cJSON_IsString(library) && cJSON_IsObject(images))))
+	const cJSON* version = cJSON_GetObjectItemCaseSensitive(file, "version");
+	const cJSON* library = cJSON_GetObjectItemCaseSensitive(file, "library");
+	const cJSON* images  = cJSON_GetObjectItemCaseSensitive(file, "images");
+	if (!cJSON_IsObject(file) || !cJSON_IsNumber(version) || !cJSON_IsString(library) || !cJSON_IsObject(images))
 		return NULL;
 	Text t = { 0 };
 	put_text(&t, header ? header : "");
 	put_text(&t, "version: ");
 	put_number(&t, version->valuedouble);
+	put_text(&t, "\nlibrary: ");
+	put_string(&t, library->valuestring);
 	put_text(&t, "\n");
-	if (cJSON_IsObject(materials)) {
-		const cJSON* energy = cJSON_GetObjectItemCaseSensitive(file, "energy");
-		if (energy) {
-			put_text(&t, "energy: ");
-			put_value(&t, energy, false);
-			put_text(&t, "\n");
-		}
-		put_map(&t, "materials", materials);
-	} else {
-		put_text(&t, "library: ");
-		put_string(&t, library->valuestring);
-		put_text(&t, "\n");
-		put_map(&t, "images", images);
-	}
+	put_map(&t, "images", images);
 	if (t.failed) {
 		free(t.s);
 		return NULL;

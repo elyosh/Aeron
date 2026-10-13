@@ -606,8 +606,23 @@ static void cgltf_write_buffer(cgltf_write_context* context, const cgltf_buffer*
 	cgltf_write_line(context, "}");
 }
 
+/* Aeron: the AERON_flight_model extension among an object's unprocessed
+ * extensions, written back as it was parsed (or set). */
+static const cgltf_extension* cgltf_aeron_flight_model(const cgltf_extension* extensions, cgltf_size count)
+{
+	for (cgltf_size i = 0; i < count; ++i)
+	{
+		if (extensions[i].name && extensions[i].data && strcmp(extensions[i].name, "AERON_flight_model") == 0)
+		{
+			return &extensions[i];
+		}
+	}
+	return NULL;
+}
+
 static void cgltf_write_material(cgltf_write_context* context, const cgltf_material* material)
 {
+	const cgltf_extension* aeron_flight_model = cgltf_aeron_flight_model(material->extensions, material->extensions_count);
 	cgltf_write_line(context, "{");
 	cgltf_write_strprop(context, "name", material->name);
 	if (material->alpha_mode == cgltf_alpha_mode_mask)
@@ -697,7 +712,7 @@ static void cgltf_write_material(cgltf_write_context* context, const cgltf_mater
 		cgltf_write_line(context, "}");
 	}
 
-	if (material->unlit || material->has_pbr_specular_glossiness || material->has_clearcoat || material->has_ior || material->has_specular || material->has_transmission || material->has_sheen || material->has_volume || material->has_emissive_strength || material->has_iridescence || material->has_anisotropy || material->has_dispersion || material->has_diffuse_transmission)
+	if (material->unlit || material->has_pbr_specular_glossiness || material->has_clearcoat || material->has_ior || material->has_specular || material->has_transmission || material->has_sheen || material->has_volume || material->has_emissive_strength || material->has_iridescence || material->has_anisotropy || material->has_dispersion || material->has_diffuse_transmission || aeron_flight_model)
 	{
 		cgltf_write_line(context, "\"extensions\": {");
 		if (material->has_clearcoat)
@@ -837,6 +852,10 @@ static void cgltf_write_material(cgltf_write_context* context, const cgltf_mater
 			cgltf_write_floatprop(context, "dispersion", params->dispersion, 0.f);
 			cgltf_write_line(context, "}");
 		}
+		if (aeron_flight_model)
+		{
+			cgltf_write_rawprop(context, "AERON_flight_model", aeron_flight_model->data);
+		}
 		cgltf_write_line(context, "}");
 	}
 
@@ -865,12 +884,13 @@ static void cgltf_write_image(cgltf_write_context* context, const cgltf_image* i
 
 static void cgltf_write_texture(cgltf_write_context* context, const cgltf_texture* texture)
 {
+	const cgltf_extension* aeron_flight_model = cgltf_aeron_flight_model(texture->extensions, texture->extensions_count);
 	cgltf_write_line(context, "{");
 	cgltf_write_strprop(context, "name", texture->name);
 	CGLTF_WRITE_IDXPROP("source", texture->image, context->data->images);
 	CGLTF_WRITE_IDXPROP("sampler", texture->sampler, context->data->samplers);
 
-	if (texture->has_basisu || texture->has_webp)
+	if (texture->has_basisu || texture->has_webp || aeron_flight_model)
 	{
 		cgltf_write_line(context, "\"extensions\": {");
 		if (texture->has_basisu)
@@ -886,6 +906,10 @@ static void cgltf_write_texture(cgltf_write_context* context, const cgltf_textur
 			cgltf_write_line(context, "\"EXT_texture_webp\": {");
 			CGLTF_WRITE_IDXPROP("source", texture->webp_image, context->data->images);
 			cgltf_write_line(context, "}");
+		}
+		if (aeron_flight_model)
+		{
+			cgltf_write_rawprop(context, "AERON_flight_model", aeron_flight_model->data);
 		}
 		cgltf_write_line(context, "}");
 	}
@@ -1551,6 +1575,15 @@ cgltf_size cgltf_write(const cgltf_options* options, char* buffer, cgltf_size si
 			break;
 		}
 	}
+	bool requires_aeron_flight_model = false;
+	for (cgltf_size i = 0; i < data->extensions_required_count; ++i)
+	{
+		if (data->extensions_required[i] && strcmp(data->extensions_required[i], "AERON_flight_model") == 0)
+		{
+			requires_aeron_flight_model = uses_aeron_flight_model = true;
+			break;
+		}
+	}
 	if (context->extension_flags != 0 || uses_aeron_flight_model)
 	{
 		cgltf_write_line(context, "\"extensionsUsed\": [");
@@ -1562,10 +1595,14 @@ cgltf_size cgltf_write(const cgltf_options* options, char* buffer, cgltf_size si
 		cgltf_write_line(context, "]");
 	}
 
-	if (context->required_extension_flags != 0)
+	if (context->required_extension_flags != 0 || requires_aeron_flight_model)
 	{
 		cgltf_write_line(context, "\"extensionsRequired\": [");
 		cgltf_write_extensions(context, context->required_extension_flags);
+		if (requires_aeron_flight_model)
+		{
+			cgltf_write_stritem(context, "AERON_flight_model");
+		}
 		cgltf_write_line(context, "]");
 	}
 

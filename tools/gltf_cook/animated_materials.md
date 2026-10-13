@@ -1,18 +1,18 @@
 # Animated materials
 
 A model's materials can play animated frames: flipbooks driven by game
-states, hull damage and energy effects. Two files describe them:
+states, hull damage and energy effects. Two places describe them:
 
 - an **effect library** (`<library>.yaml`): a set of frames, shared by any
   models. `aeron_gltf_cook --library` builds it.
-- a **model's animations** (`<model>.anim.yaml`): which frames of which
-  libraries each material plays, and when. `aeron_gltf_cook --animations`
-  merges them into the model.
+- the **model's materials**: each material's `AERON_flight_model` object
+  says which frames of which libraries it plays, and when
+  ([the extension](../extensions/AERON_flight_model/README.md#materials)).
 
 ```sh
 aeron_gltf_cook --library mylibrary.yaml --out <asset root>/remaster/effects
 aeron_gltf_cook model.gltf --out <asset root>/remaster/models/model.glb \
-    --animations model.anim.yaml --effects-dir <asset root>/remaster/effects
+    --effects-dir <asset root>/remaster/effects
 ```
 
 Build the libraries first: with `--effects-dir`, the cooker checks that
@@ -31,7 +31,8 @@ that file exists.
 2. **Frames.** Paint each frame's images as sRGB PNGs with the material
    texture's UV layout.
 3. **Effect library.** List the frames and their images.
-4. **Model animations.** Say which frames each material plays.
+4. **Model animations.** Say which frames each material plays, in its
+   `AERON_flight_model` object (the Blender add-on edits them).
 5. **Build** with the commands above. The game loads models from
    `remaster/models/` and the libraries they name from `remaster/effects/`.
 
@@ -89,20 +90,18 @@ kind changed, one line each (`removed "<key>"`, `"<key>" changed kind from
 
 ## Model animations
 
-```yaml
-version: 1
-energy: [shields, tractor, jamming]   # every material without its own
-materials:                      # glTF material names
-  PanelLights:
-    flipbooks:
-      - { state: always, layer: emissive, mode: loop, library: mycockpit, emissiveStrength: 2,
-          frames: [[lights_0, 0.5], [lights_1, 0.5]] }
-  Screen:
-    flipbooks:
-      - { state: target, layer: baseColor, mode: loop, library: mycockpit, frames: [[screen_a, 1]] }
+```json
+"materials": [
+  { "name": "PanelLights", "extensions": { "AERON_flight_model": { "flipbooks": [
+    { "state": "always", "layer": "emissive", "mode": "loop", "library": "mycockpit",
+      "emissiveStrength": 2, "frames": [["lights_0", 0.5], ["lights_1", 0.5]] } ] } } },
+  { "name": "Screen", "extensions": { "AERON_flight_model": { "flipbooks": [
+    { "state": "target", "layer": "baseColor", "mode": "loop", "library": "mycockpit",
+      "frames": [["screen_a", 1]] } ] } } }
+]
 ```
 
-A material lists any of:
+A material's object gives any of:
 
 **`flipbooks`**: an ordered list. Per layer, the first flipbook whose state
 is active plays, so a base colour and an emissive flipbook can play
@@ -132,10 +131,10 @@ player's craft and cockpit.
 
 **`damage`**: hull damage, as images of kind `damage`.
 
-```yaml
-damage: { library: mycockpit, choice: 0, placement: 0, alternatives: [
-  { stages: [dmg_75, dmg_50, dmg_25], scale: [0.2, 0.5], offset: inside },
-  { stages: [null, null, null] } ] }
+```json
+"damage": { "library": "mycockpit", "choice": 0, "placement": 0, "alternatives": [
+  { "stages": ["dmg_75", "dmg_50", "dmg_25"], "scale": [0.2, 0.5], "offset": "inside" },
+  { "stages": [null, null, null] } ] }
 ```
 
 - Each object picks one alternative; materials with the same `choice`
@@ -144,33 +143,30 @@ damage: { library: mycockpit, choice: 0, placement: 0, alternatives: [
 - `scale` (optional) is the `[min, max]` side of a square placed at
   random, as a fraction of the texture; without it, the whole texture.
 - `offset` (optional) moves that square: `inside` anywhere within the
-  texture; `[x0, y0, x1, y1]` by `(x1 − x0)·r − x0` per axis, `r` random
-  in [0, 1); without it, centred. Materials with the same `placement`
-  share the random placement.
+  texture; `{ "min": [x, y], "max": [x, y] }` by `min + (max − min)·r` per
+  axis, `r` random in [0, 1); without it, centred. Materials with the same
+  `placement` share the random placement.
 
 **`energy`**: the energy effects the material shows, any of `shields`,
 `tractor` and `jamming`; `[]` for none.
 
-The file's own `energy` is the default of every material of the model that
-gives none, listed in the file or not: energy effects are usually the whole
-model's, with a few exceptions (a cockpit's screens). Without it, a material
-without `energy` keeps what its glTF material says, usually none.
+The model root node's `AERON_flight_model` `energy` is the default of every
+material without its own: energy effects are usually the whole model's,
+with a few exceptions (a cockpit's screens). Without it, such a material
+shows none.
 
 ## Canonical form
 
-Either file may be written by hand, in any YAML. The tools write them in
+A library file may be written by hand, in any YAML. The tools write it in
 one canonical form, so that the same values are always written the same
-way: the file's leading comment lines, then one material or image per line
-in flow style (`lights_0: { kind: emissive, emissive: frames/lights_0.png }`),
-materials and images in key order, strings quoted only when they need it,
-each number as the shortest decimal that reads back as the same 32-bit
-float, the energy default after `version`, and `emissiveStrength: 1` and
-`unlit: 0` left out. A tool rewriting
-a file keeps its leading comments only. `aeron_gltf_cook
---animations-json` and `--library-json` print a file as JSON;
-`--animations-from-json` and `--library-from-json` check such JSON and write
-the file in this form, keeping the leading comments of the file they
-replace.
+way: the file's leading comment lines, then one image per line in flow
+style (`lights_0: { kind: emissive, emissive: frames/lights_0.png }`),
+images in key order, strings quoted only when they need it, and each number
+as the shortest decimal that reads back as the same 32-bit float. A tool
+rewriting a file keeps its leading comments only. `aeron_gltf_cook
+--library-json` prints a library file as JSON; `--library-from-json` checks
+such JSON and writes the file in this form, keeping the leading comments of
+the file it replaces.
 
 ## How a frame changes the material
 
@@ -189,7 +185,7 @@ base colour and emissive changed:
    flipbook with `unlit` u above 0, the base colour c of step 1 is split:
    c·(1 − u) is lit and c·u replaces the material's emissive. Otherwise
    the material's own emissive shows.
-4. Screen (a material with `aeronScreen`, whose display is drawn live): a
+4. Screen (a material with a `screen`, whose display is drawn live): a
    `baseColor` frame covers the display by its coverage where the cover's
    window shows it, and replaces the display of a screen without a cover.
 

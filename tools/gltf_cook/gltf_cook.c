@@ -2,10 +2,10 @@
  * aeron_gltf_cook — cooking orchestration.
  *
  * Read source .gltf via cgltf, decode every referenced PNG via imgbake's
- * png_read, build 4 per-channel atlases (KHR_texture_basisu /
- * KTX2-payload images embedded in the GLB BIN), repoint material
- * texture bindings to the atlas textures with KHR_texture_transform
- * sub-rects, write a single .glb via cgltf_write.
+ * png_read, build the per-channel atlases (KTX2 images embedded in the GLB
+ * BIN), repoint material texture bindings to the atlas textures, which name
+ * their image and page through AERON_flight_model, with
+ * KHR_texture_transform sub-rects, write a single .glb via cgltf_write.
  */
 
 #include "gltf_cook.h"
@@ -152,27 +152,43 @@ static bool validate_material_textures(const cgltf_data* data) {
 	return true;
 }
 
-/* The texture of one (channel, page, LOD limit), all on the channel's atlas
- * image. The runtime reads the page and LOD limit back from the name
- * `tex_<channel>_p<page>_l<max_lod>`. Appended to `textures` when new;
+/* The texture of one (image, page, LOD limit): its AERON_flight_model
+ * object names them (tools/extensions/AERON_flight_model, "Textures and
+ * images"); it has no source of its own. Appended to `textures` when new;
  * the caller sized the array for every rect. */
-static cgltf_texture* atlas_texture(cgltf_texture* textures, size_t* count, cgltf_image* image,
-									cgltf_sampler* sampler, int channel, const ChannelRect* rect) {
-	char name[64];
-	snprintf(name, sizeof name, "tex_%s_p%d_l%d", kChannels[channel].name, rect->page, rect->max_lod);
+static cgltf_texture* atlas_texture(cgltf_texture* textures, size_t* count, size_t image, cgltf_sampler* sampler,
+									const ChannelRect* rect) {
+	char object[96];
+	if (rect->max_lod < CHANNEL_ATLAS_UNCLAMPED_LOD)
+		snprintf(object, sizeof object, "{\"source\":%zu,\"layer\":%d,\"maxLod\":%d}", image, rect->page,
+				 rect->max_lod);
+	else
+		snprintf(object, sizeof object, "{\"source\":%zu,\"layer\":%d}", image, rect->page);
 	for (size_t i = 0; i < *count; i++)
-		if (strcmp(textures[i].name, name) == 0)
+		if (strcmp(textures[i].extensions[0].data, object) == 0)
 			return &textures[i];
 	cgltf_texture* texture = &textures[*count];
 	memset(texture, 0, sizeof *texture);
-	texture->name = cook_strdup(name);
-	if (!texture->name)
+	texture->extensions = (cgltf_extension*)calloc(1, sizeof *texture->extensions);
+	if (!texture->extensions)
 		return NULL;
-	texture->sampler      = sampler;
-	texture->has_basisu   = 1;
-	texture->basisu_image = image;
+	texture->extensions_count   = 1;
+	texture->extensions[0].name = cook_strdup("AERON_flight_model");
+	texture->extensions[0].data = cook_strdup(object);
+	texture->sampler            = sampler;
 	(*count)++;
-	return texture;
+	return texture->extensions[0].name && texture->extensions[0].data ? texture : NULL;
+}
+
+static void free_atlas_textures(cgltf_texture* textures, size_t count) {
+	for (size_t i = 0; textures && i < count; i++) {
+		if (textures[i].extensions) {
+			free(textures[i].extensions[0].name);
+			free(textures[i].extensions[0].data);
+			free(textures[i].extensions);
+		}
+	}
+	free(textures);
 }
 
 /* ---------- source-image cache --------------------------------------
@@ -274,73 +290,33 @@ static const CachedImage* load_or_cache_image(ImageCache* cache, const char* glt
  * groups, each its own KTX2 block, so a runtime loads only the groups of
  * the variants it shows. An image is core when a primitive's own material
  * uses it, or it is in a channel no own material uses; otherwise it belongs
- * to the variants whose mapped materials use it. A group's pages have its channel's core atlas size: they join that
- * array after the core pages, in group order. The asset extras
- * `aeronVariantGroups` lists them:
- *   [{"channel": c, "bufferView": b, "layers": l, "variants": [v, ...]}, ...] */
+ * to the variants whose mapped materials use it. A group's pages have its
+ * channel's core atlas size, and its own image after the core images: a
+ * runtime finds its variants through the materials that reference it. */
 
 typedef struct CookGroup {
 	int          channel;  /* AeronGltfCookChannel */
 	char*        variants; /* its variant indices, printed as a JSON array */
 	ChannelAtlas atlas;
-	int          page_base; /* pages of the channel's earlier groups */
 	uint8_t*     ktx2;
 	size_t       ktx2_size;
 } CookGroup;
 
-/* An object's extras as a JSON string (owned), or NULL without extras. */
-static char* extras_json(const cgltf_data* data, const cgltf_extras* extras) {
-	if (extras->data)
-		return cook_strdup(extras->data);
-	if (!data->json || extras->end_offset <= extras->start_offset)
-		return NULL;
-	const size_t length = (size_t)(extras->end_offset - extras->start_offset);
-	char*        copy   = (char*)malloc(length + 1);
-	if (copy) {
-		memcpy(copy, data->json + extras->start_offset, length);
-		copy[length] = '\0';
-	}
-	return copy;
-}
-
-/* The asset extras with `aeronVariantGroups` added (owned), or NULL. */
-static char* asset_extras_with_groups(const cgltf_data* data, const CookGroup* groups, int group_count,
-									  size_t first_view) {
-	char*  json = extras_json(data, &data->asset.extras);
-	cJSON* root = json ? cJSON_Parse(json) : cJSON_CreateObject();
-	free(json);
-	if (!cJSON_IsObject(root)) {
-		cJSON_Delete(root);
-		return NULL;
-	}
-	cJSON_DeleteItemFromObjectCaseSensitive(root, "aeronVariantGroups");
-	cJSON* list = cJSON_AddArrayToObject(root, "aeronVariantGroups");
-	for (int g = 0; list && g < group_count; g++) {
-		cJSON* entry = cJSON_CreateObject();
-		cJSON_AddItemToArray(list, entry);
-		cJSON_AddStringToObject(entry, "channel", kChannels[groups[g].channel].name);
-		cJSON_AddNumberToObject(entry, "bufferView", (double)(first_view + (size_t)g));
-		cJSON_AddNumberToObject(entry, "layers", groups[g].atlas.page_count);
-		cJSON_AddItemToObject(entry, "variants", cJSON_Parse(groups[g].variants));
-	}
-	char* printed = list ? cJSON_PrintUnformatted(root) : NULL;
-	cJSON_Delete(root);
-	return printed;
-}
-
-/* The rect of material `mi`'s channel `c` binding with its final page (a
- * group's pages follow the core's); false when not bound. */
+/* The rect of material `mi`'s channel `c` binding, its page one of its
+ * image's (the core's or its group's), and that image's index; false when
+ * not bound. */
 static bool binding_rect(const ChannelAtlas* atlases, const CookGroup* groups, int* const* group_of,
-						 int* const* rect_of, int c, size_t mi, ChannelRect* out) {
+						 int* const* rect_of, const int* core_image, size_t first_group_image, int c, size_t mi,
+						 ChannelRect* out, size_t* image) {
 	if (rect_of[c][mi] < 0)
 		return false;
 	if (group_of[c][mi] >= 0) {
-		const CookGroup* group = &groups[group_of[c][mi]];
-		*out                   = group->atlas.rects[rect_of[c][mi]];
-		out->page += atlases[c].page_count + group->page_base;
+		*out   = groups[group_of[c][mi]].atlas.rects[rect_of[c][mi]];
+		*image = first_group_image + (size_t)group_of[c][mi];
 		return true;
 	}
-	*out = atlases[c].rects[rect_of[c][mi]];
+	*out   = atlases[c].rects[rect_of[c][mi]];
+	*image = (size_t)core_image[c];
 	return true;
 }
 
@@ -429,21 +405,6 @@ static char** derive_image_variants(const cgltf_data* data) {
 		return NULL;
 	}
 	return out;
-}
-
-/* Whether the asset extras give looks the markings list replaced; such a
- * model must be converted again. */
-static bool has_replaced_extras(const cgltf_data* data) {
-	char*  json     = extras_json(data, &data->asset.extras);
-	cJSON* root     = json ? cJSON_Parse(json) : NULL;
-	const bool found = cJSON_GetObjectItemCaseSensitive(root, "aeronAssetVariants") ||
-					   cJSON_GetObjectItemCaseSensitive(root, "aeronSkinMarkings");
-	free(json);
-	cJSON_Delete(root);
-	if (found)
-		fprintf(stderr, "[aeron_gltf_cook] the asset extras give looks by aeronAssetVariants or "
-						"aeronSkinMarkings, which the markings list replaced; convert the model again\n");
-	return found;
 }
 
 /* The atlas of channel `c` that `variants_of` goes to: the group of its
@@ -714,7 +675,7 @@ bool aeron_gltf_cook_data(cgltf_data* data, const char* source_label,
 	int*       group_of[AERON_GLTF_COOK_CHANNEL_COUNT] = { 0 };
 
 	char** image_variants = derive_image_variants(data);
-	bool   ok             = !has_replaced_extras(data) && validate_material_textures(data) && image_variants;
+	bool   ok             = validate_material_textures(data) && image_variants;
 	for (int c = 0; c < AERON_GLTF_COOK_CHANNEL_COUNT && ok; c++) {
 		group_of[c] = (int*)malloc((data->materials_count ? data->materials_count : 1) * sizeof *group_of[c]);
 		ok          = group_of[c] != NULL;
@@ -774,23 +735,7 @@ bool aeron_gltf_cook_data(cgltf_data* data, const char* source_label,
 			break;
 		}
 		if (ca->rect_count == 0) {
-			/* No materials author this channel — emit a 4×4 stub
-			 * KTX2 anyway so the runtime always finds 4 atlases.
-			 * Materials with `scale==0` UV transform skip the
-			 * sample in the FS. */
-			uint8_t stub[4 * 4 * 4] = { 0 };
-			if (!encode_channel_ktx2(&kChannels[c], 4, 4, 1, stub, opts.encoding,
-									 (Ktx2Bc7Quality)opts.bc7_quality, opts.zstd_supercompress, ca->mip_count,
-									 &ktx2_bufs[c], &ktx2_sizes[c])) {
-				ok = false;
-				break;
-			}
-			if (opts.verbose) {
-				fprintf(stderr,
-						"[aeron_gltf_cook] channel %s: stub 4×4 "
-						"(%zu B)\n",
-						kChannels[c].name, ktx2_sizes[c]);
-			}
+			/* No material binds this channel: it has no image. */
 			continue;
 		}
 		/* Groups: pages of the core's size, and one mip count for all. */
@@ -832,7 +777,6 @@ bool aeron_gltf_cook_data(cgltf_data* data, const char* source_label,
 					continue;
 				groups[g].atlas.fixed_width  = ca->width;
 				groups[g].atlas.fixed_height = ca->height;
-				groups[g].page_base          = pages;
 				ok = channel_atlas_pack(&groups[g].atlas, ca->page, opts.mip_min_subrect);
 				pages += groups[g].atlas.page_count;
 				if (ok && groups[g].atlas.mip_count > ca->mip_count)
@@ -929,7 +873,8 @@ bool aeron_gltf_cook_data(cgltf_data* data, const char* source_label,
 		size_t end = ktx2_offsets[c] + ktx2_sizes[c];
 		if (c + 1 < AERON_GLTF_COOK_CHANNEL_COUNT && end < ktx2_offsets[c + 1])
 			memset(bytes + end, 0, ktx2_offsets[c + 1] - end);
-		memcpy(bytes + ktx2_offsets[c], ktx2_bufs[c], ktx2_sizes[c]);
+		if (ktx2_sizes[c])
+			memcpy(bytes + ktx2_offsets[c], ktx2_bufs[c], ktx2_sizes[c]);
 	}
 	size_t written =
 		ktx2_offsets[AERON_GLTF_COOK_CHANNEL_COUNT - 1] + ktx2_sizes[AERON_GLTF_COOK_CHANNEL_COUNT - 1];
@@ -942,116 +887,25 @@ bool aeron_gltf_cook_data(cgltf_data* data, const char* source_label,
 	/* ---- Stage D: build out-arrays (buffer_views / images / textures
 	 *               / samplers / materials) and write GLB ---- */
 
-	/* New buffer_views: original count + 4 atlas KTX2 views + one per
-	 * variant group. */
-	size_t             old_bv   = data->buffer_views_count;
-	const size_t       new_bv_n = old_bv + AERON_GLTF_COOK_CHANNEL_COUNT + (size_t)group_count;
-	cgltf_buffer_view* new_bvs  = (cgltf_buffer_view*)calloc(new_bv_n, sizeof *new_bvs);
-	if (!new_bvs) {
-		free(group_offsets);
-		ok = false;
-		goto cleanup;
-	}
-	for (size_t i = 0; i < old_bv; i++)
-		new_bvs[i] = data->buffer_views[i];
-	/* Re-point copied buffer_view->buffer at our (same) src_buf — the
-	 * underlying pointer didn't change because realloc may have moved
-	 * the .data block but `data->buffers[0]` itself is still at the
-	 * same address. cgltf_write doesn't follow ->buffer beyond
-	 * identifying which buffer index; it just emits `"buffer": N`. */
-	cgltf_buffer_view* atlas_bvs[AERON_GLTF_COOK_CHANNEL_COUNT] = { 0 };
-	for (int c = 0; c < AERON_GLTF_COOK_CHANNEL_COUNT; c++) {
-		cgltf_buffer_view* bv = &new_bvs[old_bv + c];
-		memset(bv, 0, sizeof *bv);
-		bv->buffer   = src_buf;
-		bv->offset   = ktx2_offsets[c];
-		bv->size     = ktx2_sizes[c];
-		bv->stride   = 0;
-		bv->type     = cgltf_buffer_view_type_invalid;
-		atlas_bvs[c] = bv;
-	}
-	for (int g = 0; g < group_count; g++) {
-		cgltf_buffer_view* bv = &new_bvs[old_bv + AERON_GLTF_COOK_CHANNEL_COUNT + (size_t)g];
-		bv->buffer            = src_buf;
-		bv->offset            = group_offsets[g];
-		bv->size              = groups[g].ktx2_size;
-		bv->type              = cgltf_buffer_view_type_invalid;
-	}
-	free(group_offsets);
-
-	/* New images: 4 KTX2-backed atlas images. We OWN this array and
-	 * the strings inside it. Source data->images entries are not
-	 * carried over — every binding gets re-pointed below. */
-	cgltf_image* new_imgs = (cgltf_image*)calloc(AERON_GLTF_COOK_CHANNEL_COUNT, sizeof *new_imgs);
-	if (!new_imgs) {
-		free(new_bvs);
-		ok = false;
-		goto cleanup;
-	}
-	for (int c = 0; c < AERON_GLTF_COOK_CHANNEL_COUNT; c++) {
-		char nm[64];
-		snprintf(nm, sizeof nm, "atlas_%s", kChannels[c].name);
-		new_imgs[c].name        = cook_strdup(nm);
-		new_imgs[c].uri         = NULL;
-		new_imgs[c].buffer_view = atlas_bvs[c];
-		new_imgs[c].mime_type   = cook_strdup("image/ktx2");
-	}
-
-	/* New sampler: linear+linear with mipmaps, repeat-wrap. REPEAT is
-	 * exact inside a sub-rect because the runtime wraps UVs into the rect
-	 * and every footprint is filled by REPEAT. */
-	cgltf_sampler* new_smp = (cgltf_sampler*)calloc(1, sizeof *new_smp);
-	if (!new_smp) {
-		free(new_bvs);
-		for (int c = 0; c < AERON_GLTF_COOK_CHANNEL_COUNT; c++) {
-			free(new_imgs[c].name);
-			free(new_imgs[c].mime_type);
-		}
-		free(new_imgs);
-		ok = false;
-		goto cleanup;
-	}
-	new_smp[0].name       = cook_strdup("atlas_sampler");
-	new_smp[0].mag_filter = cgltf_filter_type_linear;
-	new_smp[0].min_filter = cgltf_filter_type_linear_mipmap_linear;
-	new_smp[0].wrap_s     = cgltf_wrap_mode_repeat;
-	new_smp[0].wrap_t     = cgltf_wrap_mode_repeat;
-
-	/* New textures: one per (channel, page, LOD limit) that a binding
-	 * uses, with has_basisu=1 and basisu_image pointing at the channel's
-	 * new_imgs entry. */
-	size_t texture_capacity = 1;
+	/* The images: one per channel with an atlas, then one per variant group,
+	 * each a KTX2 in a new buffer view after the source's. */
+	int    core_image[AERON_GLTF_COOK_CHANNEL_COUNT];
+	size_t core_images = 0;
+	for (int c = 0; c < AERON_GLTF_COOK_CHANNEL_COUNT; c++)
+		core_image[c] = ktx2_sizes[c] ? (int)core_images++ : -1;
+	const size_t       image_count = core_images + (size_t)group_count;
+	size_t             old_bv      = data->buffer_views_count;
+	const size_t       new_bv_n    = old_bv + image_count;
+	cgltf_buffer_view* new_bvs     = (cgltf_buffer_view*)calloc(new_bv_n ? new_bv_n : 1, sizeof *new_bvs);
+	cgltf_image*       new_imgs    = (cgltf_image*)calloc(image_count ? image_count : 1, sizeof *new_imgs);
+	cgltf_sampler*     new_smp     = (cgltf_sampler*)calloc(1, sizeof *new_smp);
+	size_t             texture_capacity = 1;
 	for (int c = 0; c < AERON_GLTF_COOK_CHANNEL_COUNT; c++)
 		texture_capacity += (size_t)atlases[c].rect_count;
 	for (int g = 0; g < group_count; g++)
 		texture_capacity += (size_t)groups[g].atlas.rect_count;
 	size_t         new_tex_count = 0;
 	cgltf_texture* new_texs      = (cgltf_texture*)calloc(texture_capacity, sizeof *new_texs);
-	bool           textures_ok   = new_texs != NULL;
-	for (size_t mi = 0; mi < data->materials_count && textures_ok; mi++) {
-		for (int c = 0; c < AERON_GLTF_COOK_CHANNEL_COUNT && textures_ok; c++) {
-			ChannelRect rect;
-			if (binding_rect(atlases, groups, group_of, rect_of, c, mi, &rect))
-				textures_ok =
-					atlas_texture(new_texs, &new_tex_count, &new_imgs[c], &new_smp[0], c, &rect) != NULL;
-		}
-	}
-	if (!textures_ok) {
-		for (size_t i = 0; new_texs && i < new_tex_count; i++)
-			free(new_texs[i].name);
-		free(new_texs);
-		free(new_bvs);
-		free(new_smp[0].name);
-		free(new_smp);
-		for (int c = 0; c < AERON_GLTF_COOK_CHANNEL_COUNT; c++) {
-			free(new_imgs[c].name);
-			free(new_imgs[c].mime_type);
-		}
-		free(new_imgs);
-		ok = false;
-		goto cleanup;
-	}
-
 	/* Preserve material bindings so the memory API can restore the caller's
 	 * graph after the consumer returns. */
 	const size_t        saved_view_count = data->materials_count * AERON_GLTF_COOK_CHANNEL_COUNT;
@@ -1061,23 +915,76 @@ bool aeron_gltf_cook_data(cgltf_data* data, const char* source_label,
 	 * colour's alpha. */
 	cgltf_texture_view* saved_transmission = (cgltf_texture_view*)calloc(
 		data->materials_count ? data->materials_count : 1, sizeof *saved_transmission);
-	if (!saved_views || !saved_transmission) {
+	/* The cooked file requires AERON_flight_model: its textures are found
+	 * only through it. */
+	char*  required_name      = cook_strdup("AERON_flight_model");
+	char** cooked_required    = (char**)calloc(data->extensions_required_count + 1, sizeof *cooked_required);
+	char** cooked_used        = (char**)calloc(data->extensions_used_count + 1, sizeof *cooked_used);
+	bool   arrays_ok          = new_bvs && new_imgs && new_smp && new_texs && saved_views && saved_transmission &&
+					   required_name && cooked_required && cooked_used;
+	for (size_t i = 0; arrays_ok && i < old_bv; i++)
+		new_bvs[i] = data->buffer_views[i];
+	for (int c = 0; arrays_ok && c < AERON_GLTF_COOK_CHANNEL_COUNT; c++) {
+		if (core_image[c] < 0)
+			continue;
+		cgltf_buffer_view* bv = &new_bvs[old_bv + (size_t)core_image[c]];
+		bv->buffer            = src_buf;
+		bv->offset            = ktx2_offsets[c];
+		bv->size              = ktx2_sizes[c];
+		bv->type              = cgltf_buffer_view_type_invalid;
+	}
+	for (int g = 0; arrays_ok && g < group_count; g++) {
+		cgltf_buffer_view* bv = &new_bvs[old_bv + core_images + (size_t)g];
+		bv->buffer            = src_buf;
+		bv->offset            = group_offsets[g];
+		bv->size              = groups[g].ktx2_size;
+		bv->type              = cgltf_buffer_view_type_invalid;
+	}
+	free(group_offsets);
+	for (size_t i = 0; arrays_ok && i < image_count; i++) {
+		new_imgs[i].buffer_view = &new_bvs[old_bv + i];
+		new_imgs[i].mime_type   = cook_strdup("image/ktx2");
+		arrays_ok               = new_imgs[i].mime_type != NULL;
+	}
+
+	/* New sampler: linear+linear with mipmaps, repeat-wrap. REPEAT is
+	 * exact inside a sub-rect because the runtime wraps UVs into the rect
+	 * and every footprint is filled by REPEAT. */
+	if (arrays_ok) {
+		new_smp[0].name       = cook_strdup("atlas_sampler");
+		new_smp[0].mag_filter = cgltf_filter_type_linear;
+		new_smp[0].min_filter = cgltf_filter_type_linear_mipmap_linear;
+		new_smp[0].wrap_s     = cgltf_wrap_mode_repeat;
+		new_smp[0].wrap_t     = cgltf_wrap_mode_repeat;
+	}
+
+	/* New textures: one per (image, page, LOD limit) that a binding uses. */
+	for (size_t mi = 0; mi < data->materials_count && arrays_ok; mi++) {
+		for (int c = 0; c < AERON_GLTF_COOK_CHANNEL_COUNT && arrays_ok; c++) {
+			ChannelRect rect;
+			size_t      image;
+			if (binding_rect(atlases, groups, group_of, rect_of, core_image, core_images, c, mi, &rect, &image))
+				arrays_ok = atlas_texture(new_texs, &new_tex_count, image, &new_smp[0], &rect) != NULL;
+		}
+	}
+	if (!arrays_ok) {
+		free(new_bvs);
+		for (size_t i = 0; new_imgs && i < image_count; i++)
+			free(new_imgs[i].mime_type);
+		free(new_imgs);
+		if (new_smp)
+			free(new_smp[0].name);
+		free(new_smp);
+		free_atlas_textures(new_texs, new_tex_count);
 		free(saved_views);
 		free(saved_transmission);
-		free(new_bvs);
-		free(new_smp[0].name);
-		free(new_smp);
-		for (int c = 0; c < AERON_GLTF_COOK_CHANNEL_COUNT; c++) {
-			free(new_imgs[c].name);
-			free(new_imgs[c].mime_type);
-		}
-		for (size_t i = 0; i < new_tex_count; i++)
-			free(new_texs[i].name);
-		free(new_imgs);
-		free(new_texs);
+		free(required_name);
+		free(cooked_required);
+		free(cooked_used);
 		ok = false;
 		goto cleanup;
 	}
+
 	for (size_t mi = 0; mi < data->materials_count; mi++) {
 		for (int c = 0; c < AERON_GLTF_COOK_CHANNEL_COUNT; c++) {
 			cgltf_texture_view* tv = material_channel_view(&data->materials[mi], c);
@@ -1099,11 +1006,9 @@ bool aeron_gltf_cook_data(cgltf_data* data, const char* source_label,
 			cgltf_texture_view* tv = material_channel_view(m, c);
 			if (!tv)
 				continue;
-			ChannelRect        rect;
-			const ChannelRect* match =
-				binding_rect(atlases, groups, group_of, rect_of, c, mi, &rect) ? &rect : NULL;
-			const ChannelAtlas* ca = group_of[c][mi] >= 0 ? &groups[group_of[c][mi]].atlas : &atlases[c];
-			if (!match) {
+			ChannelRect rect;
+			size_t      image;
+			if (!binding_rect(atlases, groups, group_of, rect_of, core_image, core_images, c, mi, &rect, &image)) {
 				/* This material doesn't author this channel — clear
 				 * the binding entirely so cgltf_write emits no
 				 * texture reference. The FS falls back to the
@@ -1113,11 +1018,12 @@ bool aeron_gltf_cook_data(cgltf_data* data, const char* source_label,
 				memset(&tv->transform, 0, sizeof tv->transform);
 				continue;
 			}
-			float off[2], scl[2];
-			channel_atlas_rect_uv_transform(ca, match, off, scl);
-			tv->texture       = atlas_texture(new_texs, &new_tex_count, &new_imgs[c], &new_smp[0], c, match);
-			tv->texcoord      = 0;
-			tv->has_transform = 1;
+			const ChannelAtlas* ca = group_of[c][mi] >= 0 ? &groups[group_of[c][mi]].atlas : &atlases[c];
+			float               off[2], scl[2];
+			channel_atlas_rect_uv_transform(ca, &rect, off, scl);
+			tv->texture                = atlas_texture(new_texs, &new_tex_count, image, &new_smp[0], &rect);
+			tv->texcoord               = 0;
+			tv->has_transform          = 1;
 			tv->transform.offset[0]    = off[0];
 			tv->transform.offset[1]    = off[1];
 			tv->transform.scale[0]     = scl[0];
@@ -1131,31 +1037,41 @@ bool aeron_gltf_cook_data(cgltf_data* data, const char* source_label,
 	/* Swap in the new arrays. The originals are released by
 	 * cgltf_free(data) below — we leak nothing, the new arrays we
 	 * own are freed at the cleanup label. */
-	cgltf_buffer_view* orig_bvs        = data->buffer_views;
-	cgltf_image*       orig_imgs       = data->images;
-	cgltf_texture*     orig_texs       = data->textures;
-	cgltf_sampler*     orig_smps       = data->samplers;
-	size_t             orig_bvs_count  = data->buffer_views_count;
-	size_t             orig_imgs_count = data->images_count;
-	size_t             orig_texs_count = data->textures_count;
-	size_t             orig_smps_count = data->samplers_count;
-	(void)orig_bvs;
-	(void)orig_imgs;
-	(void)orig_texs;
-	(void)orig_smps;
-	(void)orig_bvs_count;
-	(void)orig_imgs_count;
-	(void)orig_texs_count;
-	(void)orig_smps_count;
+	cgltf_buffer_view* orig_bvs             = data->buffer_views;
+	cgltf_image*       orig_imgs            = data->images;
+	cgltf_texture*     orig_texs            = data->textures;
+	cgltf_sampler*     orig_smps            = data->samplers;
+	size_t             orig_bvs_count       = data->buffer_views_count;
+	size_t             orig_imgs_count      = data->images_count;
+	size_t             orig_texs_count      = data->textures_count;
+	size_t             orig_smps_count      = data->samplers_count;
+	char**             orig_required        = data->extensions_required;
+	size_t             orig_required_count  = data->extensions_required_count;
+	char**             orig_used            = data->extensions_used;
+	size_t             orig_used_count      = data->extensions_used_count;
 
 	data->buffer_views       = new_bvs;
 	data->buffer_views_count = new_bv_n;
 	data->images             = new_imgs;
-	data->images_count       = AERON_GLTF_COOK_CHANNEL_COUNT;
+	data->images_count       = image_count;
 	data->textures           = new_texs;
 	data->textures_count     = new_tex_count;
 	data->samplers           = new_smp;
 	data->samplers_count     = 1;
+	size_t required_count    = 0;
+	for (size_t i = 0; i < orig_required_count; i++)
+		if (strcmp(orig_required[i], required_name) != 0)
+			cooked_required[required_count++] = orig_required[i];
+	cooked_required[required_count++] = required_name;
+	size_t used_count                 = 0;
+	for (size_t i = 0; i < orig_used_count; i++)
+		if (strcmp(orig_used[i], required_name) != 0)
+			cooked_used[used_count++] = orig_used[i];
+	cooked_used[used_count++]       = required_name;
+	data->extensions_required       = cooked_required;
+	data->extensions_required_count = required_count;
+	data->extensions_used           = cooked_used;
+	data->extensions_used_count     = used_count;
 
 	/* Existing material primitives' accessors -> buffer_view pointers
 	 * still target slots in `orig_bvs`; we copied those entries into
@@ -1179,22 +1095,13 @@ bool aeron_gltf_cook_data(cgltf_data* data, const char* source_label,
 	 * embedded buffer must have NO uri — cgltf_write would otherwise
 	 * emit a "uri" property that contradicts the GLB BIN chunk
 	 * convention. Save + clear both before write, restore after. */
-	const void*  orig_bin      = data->bin;
-	cgltf_size   orig_bin_size = data->bin_size;
-	char*        orig_buf0_uri = src_buf->uri;
-	cgltf_extras orig_extras   = data->asset.extras;
-	char*        group_extras = group_count ? asset_extras_with_groups(data, groups, group_count,
-																	   old_bv + AERON_GLTF_COOK_CHANNEL_COUNT)
-											: NULL;
+	const void* orig_bin      = data->bin;
+	cgltf_size  orig_bin_size = data->bin_size;
+	char*       orig_buf0_uri = src_buf->uri;
 	data->bin                 = src_buf->data;
 	data->bin_size            = src_buf->size;
 	src_buf->uri              = NULL;
-	if (group_extras)
-		data->asset.extras.data = group_extras;
-	ok = (!group_count || group_extras) && consumer(consumer_context, data);
-
-	data->asset.extras = orig_extras;
-	free(group_extras);
+	ok                        = consumer(consumer_context, data);
 
 	data->bin      = orig_bin;
 	data->bin_size = orig_bin_size;
@@ -1203,14 +1110,18 @@ bool aeron_gltf_cook_data(cgltf_data* data, const char* source_label,
 
 	/* Restore the original arrays so cgltf_free can release them
 	 * without confusing our owned arrays. */
-	data->buffer_views       = orig_bvs;
-	data->buffer_views_count = orig_bvs_count;
-	data->images             = orig_imgs;
-	data->images_count       = orig_imgs_count;
-	data->textures           = orig_texs;
-	data->textures_count     = orig_texs_count;
-	data->samplers           = orig_smps;
-	data->samplers_count     = orig_smps_count;
+	data->buffer_views              = orig_bvs;
+	data->buffer_views_count        = orig_bvs_count;
+	data->images                    = orig_imgs;
+	data->images_count              = orig_imgs_count;
+	data->textures                  = orig_texs;
+	data->textures_count            = orig_texs_count;
+	data->samplers                  = orig_smps;
+	data->samplers_count            = orig_smps_count;
+	data->extensions_required       = orig_required;
+	data->extensions_required_count = orig_required_count;
+	data->extensions_used           = orig_used;
+	data->extensions_used_count     = orig_used_count;
 
 	/* Repoint accessor->buffer_view back at the original array. */
 	for (size_t ai = 0; ai < data->accessors_count; ai++) {
@@ -1234,16 +1145,15 @@ bool aeron_gltf_cook_data(cgltf_data* data, const char* source_label,
 	free(saved_views);
 	free(saved_transmission);
 	free(new_bvs);
-	for (int c = 0; c < AERON_GLTF_COOK_CHANNEL_COUNT; c++) {
-		free(new_imgs[c].name);
-		free(new_imgs[c].mime_type);
-	}
-	for (size_t i = 0; i < new_tex_count; i++)
-		free(new_texs[i].name);
+	for (size_t i = 0; i < image_count; i++)
+		free(new_imgs[i].mime_type);
 	free(new_imgs);
-	free(new_texs);
+	free_atlas_textures(new_texs, new_tex_count);
 	free(new_smp[0].name);
 	free(new_smp);
+	free(required_name);
+	free(cooked_required);
+	free(cooked_used);
 
 cleanup:
 	if (grown_src_buf)

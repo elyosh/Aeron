@@ -125,7 +125,7 @@ AERON_ANIM_FN uint material_anim_damage_alternative(uint first, uint count, uint
  * (`seed`), with random values per (object, section `placement`): r_s for
  * the size, r per axis for the offset. Without a scale it is the whole
  * texture; an "inside" offset keeps it within the texture, a range offset
- * moves it by (x1 - x0)·r - x0 per axis. */
+ * moves it by min + (max - min)·r per axis. */
 AERON_ANIM_FN MaterialAnimRect material_anim_damage_rect(uint alternative, uint seed, uint placement)
 {
 	uint  scale_min_bits = AERON_ANIM_RECORD(alternative + 3u).x;
@@ -156,10 +156,10 @@ AERON_ANIM_FN MaterialAnimRect material_anim_damage_rect(uint alternative, uint 
 		ofs_x = (rect.x0 + (1.0f - rect.x1)) * r_x - rect.x0;
 		ofs_y = (rect.y0 + (1.0f - rect.y1)) * r_y - rect.y0;
 	} else if (mode == AERON_ANIM_OFFSET_RANGE) {
-		float x0 = material_anim_asfloat(AERON_ANIM_RECORD(alternative + 4u).x);
-		float y0 = material_anim_asfloat(AERON_ANIM_RECORD(alternative + 4u).y);
-		ofs_x = (material_anim_asfloat(AERON_ANIM_RECORD(alternative + 4u).z) - x0) * r_x - x0;
-		ofs_y = (material_anim_asfloat(AERON_ANIM_RECORD(alternative + 4u).w) - y0) * r_y - y0;
+		float min_x = material_anim_asfloat(AERON_ANIM_RECORD(alternative + 4u).x);
+		float min_y = material_anim_asfloat(AERON_ANIM_RECORD(alternative + 4u).y);
+		ofs_x       = min_x + (material_anim_asfloat(AERON_ANIM_RECORD(alternative + 4u).z) - min_x) * r_x;
+		ofs_y       = min_y + (material_anim_asfloat(AERON_ANIM_RECORD(alternative + 4u).w) - min_y) * r_y;
 	}
 	rect.x0 += ofs_x;
 	rect.y0 += ofs_y;

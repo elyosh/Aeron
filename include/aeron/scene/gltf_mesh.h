@@ -22,9 +22,9 @@
  *   - `KHR_materials_variants` declares the asset-level variant list
  *     and per-primitive (variant_idx, material_idx) mappings. The game
  *     selects the variant per instance (AeronSceneMeshInstance.variant).
- *   - Four KTX2-payload atlas images, one per channel, named
- *     `atlas_base_color`, `atlas_normal`, `atlas_metallic_roughness` and
- *     `atlas_emissive`.
+ *   - KTX2-payload atlas images, each one channel's pages for one set of
+ *     variants, which the textures name with their page through
+ *     AERON_flight_model (tools/extensions/AERON_flight_model).
  *
  * Flight files use glTF +Y up / +Z front. The loader converts them to
  * Aeron's +X right / -Y forward / +Z up frame.
@@ -81,16 +81,17 @@ typedef struct AeronGltfVertex {
 #define AERON_GLTF_MAX_MATERIALS 4096
 #define AERON_GLTF_NO_MATERIAL 0xFFFFFFFFu
 
-/* Deepest mip level a channel binding may sample: the cooker names each
- * atlas texture `tex_<channel>_p<page>_l<max_lod>`; a binding whose texture
- * name carries no such suffix samples page 0 without a LOD limit. */
+/* Deepest mip level a channel binding may sample: a cooked texture's
+ * AERON_flight_model `maxLod`, this value without it (no limit). Its
+ * `layer`, the page of its image, is at most AERON_GLTF_ATLAS_MAX_PAGE. */
 #define AERON_GLTF_ATLAS_UNCLAMPED_LOD 15u
 #define AERON_GLTF_ATLAS_MAX_PAGE 4095u
 
 /* ===== Channel KTX2 payload =========================================
  *
- * One KTX2 2D-array image per channel, copied out of the cooked graph's BIN
- * data.
+ * A cooked image: a KTX2 2D array of one channel's atlas pages, copied out
+ * of the cooked graph's BIN data. A channel's core image is the one the
+ * primitives' own materials use.
  * Shipped GLBs normally use BC5/BC7; runtime OPT conversion uses RGBA8.
  * The SDL_GPU side feeds these bytes to ktx2_open_mem at upload time,
  * creates the corresponding GPU texture, and uploads every mip. Bytes
@@ -102,12 +103,12 @@ typedef struct AeronGltfChannelKtx2 {
 
 /* ===== Variant groups ===============================================
  *
- * Atlas pages only some variants use (base colour, emissive,
- * metallic-roughness), cooked as separate KTX2 blocks and listed in the
- * asset extras `aeronVariantGroups`. A group's pages follow its channel's
- * core pages, in the order of that channel's groups; a mesh uploads
- * only the groups of the variants it shows (AeronScene_MeshCreateWithVariants).
- * The pages the primitives' own materials use are core. */
+ * The images only some variants use: those no primitive's own material
+ * references, in a channel some own material uses. Each is the group of the
+ * variants whose materials reference it, in image order. A group's pages
+ * follow its channel's core pages, in the order of that channel's groups; a
+ * mesh uploads only the groups of the variants it shows
+ * (AeronScene_MeshCreateWithVariants). */
 #define AERON_GLTF_NO_VARIANT 0xFFFFFFFFu
 
 typedef struct AeronGltfVariantGroup {
@@ -117,14 +118,6 @@ typedef struct AeronGltfVariantGroup {
 	uint32_t*            variants; /* the variants using it */
 	uint32_t             variant_count;
 } AeronGltfVariantGroup;
-
-typedef enum AeronGltfEmissiveMode {
-	/* Standard glTF behavior: emissive RGB is added to the lit material. */
-	AERON_GLTF_EMISSIVE_ADDITIVE = 0,
-	/* Emissive alpha is coverage. Reconstruct legacy fixed-function sRGB
-	 * filtering and SRCALPHA composition in the linear-HDR shader. */
-	AERON_GLTF_EMISSIVE_LEGACY_SRGB_SRCALPHA = 1,
-} AeronGltfEmissiveMode;
 
 typedef enum AeronGltfAlphaMode {
 	AERON_GLTF_ALPHA_OPAQUE = 0,
@@ -152,10 +145,9 @@ typedef struct AeronGltfMaterial {
 	uint32_t           double_sided;         /* bool */
 	AeronGltfAlphaMode alpha_mode;
 	float              alpha_cutoff; /* glTF MASK cutoff; default 0.5 */
-	/* Material extras `aeronEmissiveMode`; AeronGltfEmissiveMode. */
-	uint32_t emissive_mode;
-	float    uv_xform[AERON_GLTF_CHANNEL_COUNT][4];
-	/* Atlas layer and deepest sampled mip level of each channel binding. */
+	float              uv_xform[AERON_GLTF_CHANNEL_COUNT][4];
+	/* Atlas layer (core pages, then the channel's groups') and deepest
+	 * sampled mip level of each channel binding. */
 	uint32_t atlas_page[AERON_GLTF_CHANNEL_COUNT];
 	uint32_t atlas_max_lod[AERON_GLTF_CHANNEL_COUNT];
 	/* KHR_materials_specular factors; defaults (1, (1,1,1)). */
@@ -170,49 +162,53 @@ typedef struct AeronGltfMaterial {
 	 * base-colour factor's alpha is unused. Its
 	 * primitives' variant materials must then be BLEND or transmissive. */
 	float transmission_factor;
-	/* Screen surface (material extras `aeronScreen`): rectangles
+	/* Screen surface (the material's AERON_flight_model `screen`): rectangles
 	 * [screen_first, screen_first + screen_count) of the model's
 	 * screen_rects and AERON_GLTF_SCREEN_* flags. All zero otherwise. */
 	uint32_t screen_first;
 	uint32_t screen_count;
 	uint32_t screen_flags;
-	/* Animation (material extras, "Material animation" below): the
+	/* Animation (`flipbooks`, "Material animation" below): the
 	 * material's flipbooks [flipbook_first, flipbook_first +
 	 * flipbook_count) of the model's. */
 	uint32_t flipbook_first;
 	uint32_t flipbook_count;
-	/* Hull damage (`aeronDamage`): alternatives [damage_first, damage_first
+	/* Hull damage (`damage`): alternatives [damage_first, damage_first
 	 * + damage_count) of the model's, and the sections whose random choice
 	 * and placement apply. */
 	uint32_t damage_first;
 	uint32_t damage_count;
 	uint32_t damage_choice;
 	uint32_t damage_placement;
-	/* Energy effects the material receives (`aeronEnergy`): bit per
-	 * AERON_EFFECT_ENERGY_* (shields 0, tractor 1, jamming 2). */
+	/* Energy effects the material receives (its `energy`, or the model
+	 * root's): bit per AERON_EFFECT_ENERGY_* (shields 0, tractor 1,
+	 * jamming 2). */
 	uint32_t energy_mask;
 } AeronGltfMaterial;
 
 /* ===== Material animation ===========================================
  *
- * Animated materials, as material extras (cooked by aeron_gltf_cook):
+ * A material's AERON_flight_model object (tools/extensions/AERON_flight_model):
  *
- *   "aeronFlipbooks": [ { "state", "layer": "colour" | "illumination",
- *                         "mode": "loop" | "once", "library",
- *                         "frames": [ [key, seconds], ... ],
- *                         "emissiveStrength": s, "unlit": u } ]
+ *   "flipbooks": [ { "state", "layer": "baseColor" | "emissive",
+ *                    "mode": "loop" | "once", "library",
+ *                    "frames": [ [key, seconds], ... ],
+ *                    "emissiveStrength": s, "unlit": u } ]
+ *   "damage": { "library", "choice", "placement",
+ *               "alternatives": [ { "stages": [key | null] x 3,
+ *                                   "scale": [min, max],
+ *                                   "offset": "inside" |
+ *                                             { "min": [x, y], "max": [x, y] } } ] }
+ *   "energy": [ "shields" | "tractor" | "jamming" ]
  *
- *   "aeronDamage": { "library", "choice", "placement",
- *                    "alternatives": [ { "stages": [key | null] x 3,
- *                                        "scale": [min, max],
- *                                        "offset": [x0, y0, x1, y1] | "inside" } ] }
- *   "aeronEnergy": [ "shields" | "tractor" | "jamming" ]
- *
- * Frames and damage stages name images of an effect library
- * (aeron/scene/effect_atlas.h). `unlit` (0..1, default 0), for a colour
- * flipbook, is the part of its frames drawn unlit: while one plays without
- * an illumination frame, its colour c becomes base c·(1 − u) and emission
- * c·u, replacing the material's emission (0 keeps the material's emission). */
+ * The model root's `energy` applies to materials without their own. Frames
+ * and damage stages name images of an effect library
+ * (aeron/scene/effect_atlas.h). The `baseColor` layer is the renderer's
+ * colour layer, `emissive` its illumination layer. `unlit` (0..1, default
+ * 0), for a colour flipbook, is the part of its frames drawn unlit: while
+ * one plays without an illumination frame, its colour c becomes base
+ * c·(1 − u) and emission c·u, replacing the material's emission (0 keeps
+ * the material's emission). */
 typedef struct AeronGltfFlipbookFrame {
 	char* key;
 	float seconds;
@@ -226,7 +222,7 @@ typedef struct AeronGltfDamage {
 	bool     has_scale;
 	float    scale[2];    /* RAND_SCALE min, max */
 	uint32_t offset_mode; /* AERON_ANIM_OFFSET_* */
-	float    offset[4];   /* range: x0, y0, x1, y1 */
+	float    offset[4];   /* range: min x, min y, max x, max y */
 } AeronGltfDamage;
 
 typedef struct AeronGltfFlipbook {
@@ -244,10 +240,10 @@ typedef struct AeronGltfFlipbook {
  *
  * A screen material shows a game-provided texture pair (graphics, text)
  * through rectangles of its TEXCOORD_0 space, sampled at per-frame source
- * rectangles (AeronScene_SetScreenSources). The converter writes them as
- * material extras:
+ * rectangles (AeronScene_SetScreenSources), the material's AERON_flight_model
+ * `screen`:
  *
- *   "aeronScreen": { "cover", "transparent", "alwaysVisible", "hologram",
+ *   "screen": { "cover", "transparent", "alwaysVisible", "hologram",
  *                    "noisy": bool, "hide": uint,
  *                    "rects": [ { "source": uint, "dst": [u0, v0, u1, v1],
  *                                 "bg", "highlight", "lock": linear RGB,

@@ -21,7 +21,6 @@ static const uint GLTF_MATERIAL_HAS_NORMAL = 0x1u;
 static const uint GLTF_MATERIAL_HAS_METALLIC_ROUGHNESS = 0x2u;
 static const uint GLTF_MATERIAL_HAS_EMISSIVE = 0x4u;
 static const uint GLTF_MATERIAL_ALPHA_BLEND = 0x8u;
-static const uint GLTF_MATERIAL_LEGACY_EMISSIVE = 0x10u;
 static const uint GLTF_MATERIAL_ALPHA_MASK = 0x20u;
 static const uint GLTF_MATERIAL_TRANSMISSION = 0x40u;
 

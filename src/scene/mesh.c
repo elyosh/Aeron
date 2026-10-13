@@ -186,9 +186,6 @@ static uint32_t populate_material_entries(AeronPbrMaterialEntry* entries, const 
 		if (m->alpha_mode == AERON_GLTF_ALPHA_BLEND) {
 			flags |= 0x8u; /* FS: alpha = tex.a * factor.a (blend prims) */
 		}
-		if (m->emissive_mode == AERON_GLTF_EMISSIVE_LEGACY_SRGB_SRCALPHA) {
-			flags |= 0x10u; /* FS: legacy sRGB filtering + SRCALPHA composition */
-		}
 		if (m->alpha_mode == AERON_GLTF_ALPHA_MASK) {
 			flags |= 0x20u; /* FS: discard base alpha below metal_rough.z */
 		}
@@ -676,23 +673,11 @@ static AeronSceneMesh* mesh_create(AeronCommandBuffer* cmd, const AeronFlightMod
 		return NULL;
 	}
 	Ktx2* channel_payloads[AERON_GLTF_CHANNEL_COUNT] = { 0 };
-	int   have_any_channel                           = 0;
-	for (int c = 0; c < AERON_GLTF_CHANNEL_COUNT; ++c) {
-		if (model->channels[c].data && model->channels[c].size) {
-			have_any_channel = 1;
-		}
-	}
 	for (int c = 0; c < AERON_GLTF_CHANNEL_COUNT; ++c) {
 		const AeronGltfChannelKtx2* blob = &model->channels[c];
+		/* A channel no material samples has no atlas; the renderer binds a
+		 * white texture in its place. */
 		if (!blob->data || blob->size == 0) {
-			if (have_any_channel) {
-				Aeron_LogError("aeron.scene", "%s: missing %s atlas", name, channel_name(c));
-				if (status) {
-					*status = AERON_SCENE_MESH_CREATE_INVALID_SOURCE;
-				}
-				close_channel_payloads(channel_payloads);
-				return NULL;
-			}
 			continue;
 		}
 		char label[96];
@@ -838,9 +823,9 @@ static AeronSceneMesh* mesh_create(AeronCommandBuffer* cmd, const AeronFlightMod
 		s->light_count = flight_model->light_count;
 	}
 
-	/* ---- Channel atlases (4 BC7 KTX2 blobs from the GLB BIN chunk) ----
-	 * A mesh with no channel blobs is a legitimate factor-only asset. A
-	 * partial or malformed authored set was rejected before GPU work began. */
+	/* ---- Channel atlases (KTX2 blobs from the GLB BIN chunk) ----
+	 * A channel without one is sampled by no material. A malformed atlas
+	 * was rejected before GPU work began. */
 	for (int c = 0; c < AERON_GLTF_CHANNEL_COUNT; c++) {
 		if (!channel_payloads[c]) {
 			continue;

@@ -652,10 +652,7 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
      * emission that is not authored in the material (XWA runtime-OPT
      * projectiles). It replaces lighting and material emission while
      * retaining the base texture's alpha-blended soft edge below.
-     *
-     * Otherwise, materials using the legacy sRGB/SRCALPHA mode carry
-     * glow coverage in alpha. Untagged glTF materials retain standard
-     * additive emissive composition. */
+     * Otherwise the material's emission adds to the lit surface. */
     if (isolate == 0 && i.base_color_emissive_strength > 0.0f) {
         lit = albedo * (i.base_color_emissive_strength * fs_emission.x);
 #if AERON_PBR_ANIM
@@ -664,39 +661,11 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
 #endif
     } else {
         float3 emissive = g_materials[mat].emissive_packed.rgb;
-        float emissive_coverage = 0.0f;
         if ((g_materials[mat].flags & GLTF_MATERIAL_HAS_EMISSIVE) != 0u) {
-            float4 emissive_tex = pbr_sample_channel(g_emissive, g_em_sampler, g_materials[mat],
-                                                     GLTF_ATLAS_EMISSIVE,
-                                                     g_materials[mat].emissive_rect, i.uv);
-            emissive_coverage = emissive_tex.a;
-
-            float3 emissive_rgb = emissive_tex.rgb;
-            if ((g_materials[mat].flags & GLTF_MATERIAL_LEGACY_EMISSIVE) != 0u) {
-                /* Against transparent black, the sRGB hardware sample is
-                 * approximately coverage * linear(glow_rgb). Recover the
-                 * glow colour and reproduce both classic operations in
-                 * encoded space: bilinear RGB coverage, followed by the
-                 * SRCALPHA source-blend multiplication. Then return to
-                 * linear HDR space. */
-                if (emissive_coverage > 1.0e-5f) {
-                    float3 glow_linear = saturate(emissive_rgb / emissive_coverage);
-                    float3 glow_srgb = AeronLinearToSrgb(glow_linear);
-                    float coverage = saturate(emissive_coverage);
-                    emissive_rgb = AeronSrgbToLinear(glow_srgb * coverage * coverage);
-                } else {
-                    emissive_rgb = 0.0f;
-                }
-            }
-            emissive *= emissive_rgb;
+            emissive *= pbr_sample_channel(g_emissive, g_em_sampler, g_materials[mat], GLTF_ATLAS_EMISSIVE,
+                                           g_materials[mat].emissive_rect, i.uv).rgb;
         }
-        float emissive_mul = i.emissive_mul;
-        emissive *= g_materials[mat].emissive_packed.a * emissive_mul * fs_emission.x;
-        if ((g_materials[mat].flags & GLTF_MATERIAL_LEGACY_EMISSIVE) != 0u) {
-            lit = emissive + lit * (1.0f - saturate(emissive_coverage * emissive_mul));
-        } else {
-            lit += emissive;
-        }
+        lit += emissive * (g_materials[mat].emissive_packed.a * i.emissive_mul * fs_emission.x);
     }
 
 #if AERON_PBR_ANIM

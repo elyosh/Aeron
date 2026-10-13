@@ -2,21 +2,23 @@
  * aeron_gltf_cook — cook an artist-authored .gltf into Aeron's runtime-ready
  * .glb dialect.
  *
- * Input: a .gltf produced by opt2gltf and (optionally) edited by an
- * artist. Materials carry external PNG textures via image.uri; the
- * file may use extensions such as KHR_materials_variants and arbitrary
- * application-specific extras; the cooker preserves both unchanged.
+ * Input: a .gltf produced by opt2gltf or another tool, and (optionally)
+ * edited by an artist. Materials carry external PNG textures via
+ * image.uri; the file may use extensions such as KHR_materials_variants,
+ * which the cooker preserves, and AERON_flight_model on nodes and
+ * materials (tools/extensions/AERON_flight_model), which it preserves (the
+ * aeron_gltf_cook tool checks the materials' first, animations.h).
  *
  * Output: a single .glb file that consolidates every material's
- * textures into 4 per-channel atlases (base_color /
- * normal / metallic_roughness / emissive), each a KTX2 texture array
- * embedded in the GLB BIN chunk and referenced via
- * KHR_texture_basisu. Each material's texture bindings then point at
- * a texture `tex_<channel>_p<page>_l<max_lod>` of the corresponding
- * atlas, naming the array layer and the deepest mip level to sample,
- * and carry a KHR_texture_transform that remaps material-local UVs
- * into the material's sub-rect of that layer. Materials binding the
- * same image share one sub-rect.
+ * textures into per-channel atlases (base_color / normal /
+ * metallic_roughness / emissive): KTX2 texture arrays embedded in the GLB
+ * BIN chunk, one image per channel and set of variants using its pages (the
+ * core atlas, the pages only some variants use apart). Each material's
+ * texture bindings then point at a texture whose AERON_flight_model object
+ * names its image, page and deepest mip level to sample, and carry a
+ * KHR_texture_transform that remaps material-local UVs into the material's
+ * sub-rect of that page. Materials binding the same image share one
+ * sub-rect. The output lists AERON_flight_model in extensionsRequired.
  *
  * Games then load the cooked .glb with Aeron_FlightModelBuildMemory — no PNG
  * decode, software atlas packing, or runtime mip generation.
