@@ -664,8 +664,10 @@ static AeronSceneMesh* mesh_create(AeronCommandBuffer* cmd, const AeronFlightMod
 		model->opaque_index_count % 3u != 0u || model->mask_index_offset % 3u != 0u ||
 		model->mask_index_count % 3u != 0u || model->blend_index_offset % 3u != 0u ||
 		model->blend_index_count % 3u != 0u || model->opaque_screen_index_count > model->opaque_index_count ||
+		model->mask_screen_index_count > model->mask_index_count ||
 		model->blend_screen_index_count > model->blend_index_count ||
-		model->opaque_screen_index_count % 3u != 0u || model->blend_screen_index_count % 3u != 0u) {
+		model->opaque_screen_index_count % 3u != 0u || model->mask_screen_index_count % 3u != 0u ||
+		model->blend_screen_index_count % 3u != 0u) {
 		Aeron_LogError("aeron.scene", "%s: invalid opaque/mask/blend index ranges", name);
 		if (status) {
 			*status = AERON_SCENE_MESH_CREATE_INVALID_SOURCE;
@@ -765,6 +767,7 @@ static AeronSceneMesh* mesh_create(AeronCommandBuffer* cmd, const AeronFlightMod
 		s->blend_index_offset = model->blend_index_offset;
 		s->blend_index_count  = model->blend_index_count;
 		s->opaque_screen_index_count = model->opaque_screen_index_count;
+		s->mask_screen_index_count   = model->mask_screen_index_count;
 		s->blend_screen_index_count  = model->blend_screen_index_count;
 
 		s->cpu_vertices =

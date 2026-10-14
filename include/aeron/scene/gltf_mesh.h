@@ -306,6 +306,7 @@ typedef struct AeronGltfModel {
 	uint32_t         blend_index_offset;
 	uint32_t         blend_index_count;
 	uint32_t         opaque_screen_index_count;
+	uint32_t         mask_screen_index_count;
 	uint32_t         blend_screen_index_count;
 
 	/* Per-channel cooked KTX2 atlases (4): BC5/BC7 or RGBA8. */

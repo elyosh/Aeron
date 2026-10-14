@@ -6,7 +6,7 @@ presets of `scene_capture`.
 
 | File | Role |
 |-|-|
-| `panel.gltf`, `panel.bin`, `textures/` | The model: two panels. `Lights` has a dark base colour and a dim static emissive map; `Screen` a grey bezel and black glass. The root and component nodes carry the minimal `AERON_flight_model` roles the game needs, and each material's `AERON_flight_model` object its flipbooks. |
+| `panel.gltf`, `panel.bin`, `textures/` | The model: three panels. `Lights` has a dark base colour and a dim static emissive map; `Screen` a grey bezel and black glass; `MaskedScreen` a cockpit display (`screen`) behind an alpha-masked grille. The root and component nodes carry the minimal `AERON_flight_model` roles the game needs, and the animated materials' `AERON_flight_model` objects their flipbooks. |
 | `frames/` | The animation frames, PNGs in the materials' UV layout. |
 | `examplepanel.yaml` | The effect library: its frames. |
 | `build.sh` | Builds the library with `aeron_gltf_cook --library` and cooks the model, checking its frames against the library with `--effects-dir`. |
@@ -27,6 +27,8 @@ What the captures show, at 0.25 s and 0.75 s:
 - `Screen`: a base colour flipbook on the `target` state. Without it the black
   glass shows; with it (`anim-example-target`) the glass is blue, then red.
   The frames' alpha covers the glass only, so the bezel keeps its colour.
+- `MaskedScreen` (not animated): the display's test image on the grille's
+  bars, its holes cut out. It checks that masked screens draw as screens.
 
 In the game the model goes to `remaster/models/` and the library files to
 `remaster/effects/`.

@@ -60,6 +60,8 @@ enum {
 	AERON_PBR_PIPE_FORWARD_SCREEN,
 	AERON_PBR_PIPE_MESH_BLEND_SCREEN,
 	AERON_PBR_PIPE_FORWARD_BLEND_SCREEN,
+	AERON_PBR_PIPE_MESH_MASK_SCREEN,
+	AERON_PBR_PIPE_FORWARD_MASK_SCREEN,
 	AERON_PBR_PIPE_PREPASS_STAMP_SCREEN, /* velocity stamp of a blend range's screens */
 	AERON_PBR_PIPE_KIND_COUNT
 };
@@ -557,12 +559,14 @@ struct AeronScene3D {
 	AeronShader*  pbr_mask_fs;
 	AeronShader*  pbr_blend_fs;
 	AeronShader*  pbr_screen_fs;
+	AeronShader*  pbr_mask_screen_fs;
 	/* The colour shaders with image-based lighting, used while an
 	 * environment is selected (pbr_environment_set). */
 	AeronShader*  pbr_ibl_fs;
 	AeronShader*  pbr_mask_ibl_fs;
 	AeronShader*  pbr_blend_ibl_fs;
 	AeronShader*  pbr_screen_ibl_fs;
+	AeronShader*  pbr_mask_screen_ibl_fs;
 #ifdef AERON_DEBUG_UI
 	int          pbr_debug_tried;
 	AeronShader* pbr_debug_fs;
@@ -585,13 +589,14 @@ struct AeronScene3D {
 #endif
 	/* Material animation (AeronScene_SetEffectAtlas): the atlas, the
 	 * animation time, and the colour shaders with animation, loaded on
-	 * first use, by [image-based lighting][plain, mask, blend, screen], and
+	 * first use, by [image-based lighting][plain, mask, blend, screen,
+	 * mask screen], and
 	 * their pipelines by [image-based lighting][kind][cull]. */
 	AeronEffectAtlas*      effect_atlas;
 	float                  animation_time;
 	int                    pbr_anim_tried;
 	AeronShader*           pbr_anim_vs;
-	AeronShader*           pbr_anim_fs[2][4];
+	AeronShader*           pbr_anim_fs[2][5];
 	AeronGraphicsPipeline* pbr_anim_pipes[2][AERON_PBR_PIPE_KIND_COUNT][3];
 };
 

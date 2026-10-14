@@ -16,7 +16,8 @@
    "name": "Panel",
    "children": [
     1,
-    2
+    2,
+    3
    ],
    "extensions": {
     "AERON_flight_model": {
@@ -37,6 +38,21 @@
   {
    "mesh": 1,
    "name": "ScreenPanel",
+   "extensions": {
+    "AERON_flight_model": {
+     "role": "component",
+     "meshType": 0
+    }
+   }
+  },
+  {
+   "mesh": 2,
+   "name": "MaskedScreenPanel",
+   "translation": [
+    1.2,
+    -1.2,
+    0
+   ],
    "extensions": {
     "AERON_flight_model": {
      "role": "component",
@@ -71,6 +87,20 @@
      },
      "indices": 7,
      "material": 1
+    }
+   ]
+  },
+  {
+   "name": "MaskedScreenPanel",
+   "primitives": [
+    {
+     "attributes": {
+      "POSITION": 4,
+      "NORMAL": 5,
+      "TEXCOORD_0": 6
+     },
+     "indices": 7,
+     "material": 2
     }
    ]
   }
@@ -150,6 +180,54 @@
      ]
     }
    }
+  },
+  {
+   "name": "MaskedScreen",
+   "doubleSided": true,
+   "alphaMode": "MASK",
+   "alphaCutoff": 0.5,
+   "pbrMetallicRoughness": {
+    "baseColorTexture": {
+     "index": 3
+    },
+    "metallicFactor": 0,
+    "roughnessFactor": 0.6
+   },
+   "extensions": {
+    "AERON_flight_model": {
+     "screen": {
+      "hide": 0,
+      "rects": [
+       {
+        "source": 0,
+        "dst": [
+         0,
+         1,
+         1,
+         0
+        ],
+        "bg": [
+         0,
+         0,
+         0
+        ],
+        "highlight": [
+         0,
+         0,
+         0
+        ],
+        "lock": [
+         0,
+         0,
+         0
+        ],
+        "gain": 1,
+        "layers": 3
+       }
+      ]
+     }
+    }
+   }
   }
  ],
  "samplers": [
@@ -173,6 +251,11 @@
    "name": "screen_base",
    "uri": "textures/screen_base.png",
    "mimeType": "image/png"
+  },
+  {
+   "name": "grille_base",
+   "uri": "textures/grille_base.png",
+   "mimeType": "image/png"
   }
  ],
  "textures": [
@@ -186,6 +269,10 @@
   },
   {
    "source": 2,
+   "sampler": 0
+  },
+  {
+   "source": 3,
    "sampler": 0
   }
  ],

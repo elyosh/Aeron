@@ -180,6 +180,10 @@ static int pbr_screen_base_kind(int kind) {
 			return AERON_PBR_PIPE_MESH_BLEND;
 		case AERON_PBR_PIPE_FORWARD_BLEND_SCREEN:
 			return AERON_PBR_PIPE_FORWARD_BLEND;
+		case AERON_PBR_PIPE_MESH_MASK_SCREEN:
+			return AERON_PBR_PIPE_MESH_MASK;
+		case AERON_PBR_PIPE_FORWARD_MASK_SCREEN:
+			return AERON_PBR_PIPE_FORWARD_MASK;
 		default:
 			return -1;
 	}
@@ -204,6 +208,10 @@ static int pbr_screen_kind(int kind) {
 			return AERON_PBR_PIPE_MESH_BLEND_SCREEN;
 		case AERON_PBR_PIPE_FORWARD_BLEND:
 			return AERON_PBR_PIPE_FORWARD_BLEND_SCREEN;
+		case AERON_PBR_PIPE_MESH_MASK:
+			return AERON_PBR_PIPE_MESH_MASK_SCREEN;
+		case AERON_PBR_PIPE_FORWARD_MASK:
+			return AERON_PBR_PIPE_FORWARD_MASK_SCREEN;
 		default:
 			return -1;
 	}
@@ -334,10 +342,11 @@ static int pbr_color_kind(int kind) {
 		   pbr_screen_base_kind(kind) >= 0;
 }
 
-/* Index of a colour kind's shader in pbr_anim_fs[ibl]: plain, mask, blend, screen. */
+/* Index of a colour kind's shader in pbr_anim_fs[ibl]: plain, mask, blend,
+ * screen, mask screen. */
 static int pbr_color_variant(int kind) {
 	if (pbr_screen_base_kind(kind) >= 0)
-		return 3;
+		return pbr_mask_color_kind(pbr_screen_base_kind(kind)) ? 4 : 3;
 	if (kind == AERON_PBR_PIPE_MESH_BLEND || kind == AERON_PBR_PIPE_FORWARD_BLEND)
 		return 2;
 	return pbr_mask_color_kind(kind) ? 1 : 0;
@@ -346,12 +355,14 @@ static int pbr_color_variant(int kind) {
 static AeronShader* pbr_color_shader(struct AeronScene3D* s, int kind, int debug, int ibl) {
 #ifdef AERON_DEBUG_UI
 	if (debug) {
-		return pbr_mask_color_kind(kind) ? s->pbr_mask_debug_fs : s->pbr_debug_fs;
+		return pbr_mask_color_kind(pbr_state_kind(kind)) ? s->pbr_mask_debug_fs : s->pbr_debug_fs;
 	}
 #else
 	(void)debug;
 #endif
 	if (pbr_screen_base_kind(kind) >= 0) {
+		if (pbr_mask_color_kind(pbr_screen_base_kind(kind)))
+			return ibl ? s->pbr_mask_screen_ibl_fs : s->pbr_mask_screen_fs;
 		return ibl ? s->pbr_screen_ibl_fs : s->pbr_screen_fs;
 	}
 	if (kind == AERON_PBR_PIPE_MESH_BLEND || kind == AERON_PBR_PIPE_FORWARD_BLEND) {
@@ -391,17 +402,18 @@ AeronGraphicsPipeline* AeronScenePbr_Pipeline(struct AeronScene3D* s, int kind, 
 /* The colour kind's pipeline with material animation; NULL when its
  * shaders do not load. */
 static AeronGraphicsPipeline* pbr_anim_pipeline(struct AeronScene3D* s, int kind, AeronCullMode cull) {
-	static const char* const names[2][4] = {
+	static const char* const names[2][5] = {
 		{ "scene_pbr_mesh_anim.frag", "scene_pbr_mesh_mask_anim.frag", "scene_pbr_mesh_blend_anim.frag",
-		  "scene_pbr_mesh_screen_anim.frag" },
+		  "scene_pbr_mesh_screen_anim.frag", "scene_pbr_mesh_mask_screen_anim.frag" },
 		{ "scene_pbr_mesh_ibl_anim.frag", "scene_pbr_mesh_mask_ibl_anim.frag",
-		  "scene_pbr_mesh_blend_ibl_anim.frag", "scene_pbr_mesh_screen_ibl_anim.frag" },
+		  "scene_pbr_mesh_blend_ibl_anim.frag", "scene_pbr_mesh_screen_ibl_anim.frag",
+		  "scene_pbr_mesh_mask_screen_ibl_anim.frag" },
 	};
 	if (!s->pbr_anim_tried) {
 		s->pbr_anim_tried = 1;
 		s->pbr_anim_vs    = pbr_shader("scene_pbr_mesh_anim.vert", AERON_SHADER_STAGE_VERTEX, 0, 1, 1);
 		for (int ibl = 0; ibl < 2; ++ibl)
-			for (int v = 0; v < 4; ++v)
+			for (int v = 0; v < 5; ++v)
 				s->pbr_anim_fs[ibl][v] = pbr_shader(names[ibl][v], AERON_SHADER_STAGE_FRAGMENT, 14, 4, 8);
 	}
 	const int    ibl    = s->pbr_environment_set;
@@ -490,10 +502,14 @@ int AeronScenePbr_Ensure(struct AeronScene3D* s) {
 	s->pbr_mask_fs          = pbr_shader("scene_pbr_mesh_mask.frag", AERON_SHADER_STAGE_FRAGMENT, 12, 3, 7);
 	s->pbr_blend_fs         = pbr_shader("scene_pbr_mesh_blend.frag", AERON_SHADER_STAGE_FRAGMENT, 12, 3, 7);
 	s->pbr_screen_fs        = pbr_shader("scene_pbr_mesh_screen.frag", AERON_SHADER_STAGE_FRAGMENT, 12, 3, 7);
+	s->pbr_mask_screen_fs =
+		pbr_shader("scene_pbr_mesh_mask_screen.frag", AERON_SHADER_STAGE_FRAGMENT, 12, 3, 7);
 	s->pbr_ibl_fs           = pbr_shader("scene_pbr_mesh_ibl.frag", AERON_SHADER_STAGE_FRAGMENT, 12, 3, 7);
 	s->pbr_mask_ibl_fs      = pbr_shader("scene_pbr_mesh_mask_ibl.frag", AERON_SHADER_STAGE_FRAGMENT, 12, 3, 7);
 	s->pbr_blend_ibl_fs     = pbr_shader("scene_pbr_mesh_blend_ibl.frag", AERON_SHADER_STAGE_FRAGMENT, 12, 3, 7);
 	s->pbr_screen_ibl_fs    = pbr_shader("scene_pbr_mesh_screen_ibl.frag", AERON_SHADER_STAGE_FRAGMENT, 12, 3, 7);
+	s->pbr_mask_screen_ibl_fs =
+		pbr_shader("scene_pbr_mesh_mask_screen_ibl.frag", AERON_SHADER_STAGE_FRAGMENT, 12, 3, 7);
 	s->pbr_prepass_fs       = pbr_shader("scene_pbr_prepass.frag", AERON_SHADER_STAGE_FRAGMENT, 0, 0, 0);
 	s->pbr_prepass_mask_fs  = pbr_shader("scene_pbr_prepass_mask.frag", AERON_SHADER_STAGE_FRAGMENT, 1, 0, 2);
 	s->pbr_backface_vs      = pbr_shader("scene_pbr_backface.vert", AERON_SHADER_STAGE_VERTEX, 0, 1, 1);
@@ -503,8 +519,9 @@ int AeronScenePbr_Ensure(struct AeronScene3D* s) {
 		pbr_shader("scene_pbr_prepass_stamp.frag", AERON_SHADER_STAGE_FRAGMENT, 1, 0, 2);
 	s->pbr_prepass_stamp_screen_fs =
 		pbr_shader("scene_pbr_prepass_stamp_screen.frag", AERON_SHADER_STAGE_FRAGMENT, 3, 0, 4);
-	if (!s->pbr_vs || !s->pbr_fs || !s->pbr_mask_fs || !s->pbr_blend_fs || !s->pbr_screen_fs || !s->pbr_ibl_fs ||
-		!s->pbr_mask_ibl_fs || !s->pbr_blend_ibl_fs || !s->pbr_screen_ibl_fs || !AeronSceneInternal_WhiteCubeTexture() ||
+	if (!s->pbr_vs || !s->pbr_fs || !s->pbr_mask_fs || !s->pbr_blend_fs || !s->pbr_screen_fs ||
+		!s->pbr_mask_screen_fs || !s->pbr_ibl_fs || !s->pbr_mask_ibl_fs || !s->pbr_blend_ibl_fs ||
+		!s->pbr_screen_ibl_fs || !s->pbr_mask_screen_ibl_fs || !AeronSceneInternal_WhiteCubeTexture() ||
 		!AeronSceneInternal_BrdfLutTexture() || !s->pbr_prepass_mask_vs || !s->pbr_prepass_mask_fs) {
 		return 0;
 	}
@@ -559,6 +576,8 @@ void AeronScenePbr_Release(struct AeronScene3D* s) {
 		Aeron_DestroyShader(s->pbr_blend_fs);
 	if (s->pbr_screen_fs)
 		Aeron_DestroyShader(s->pbr_screen_fs);
+	if (s->pbr_mask_screen_fs)
+		Aeron_DestroyShader(s->pbr_mask_screen_fs);
 	if (s->pbr_ibl_fs)
 		Aeron_DestroyShader(s->pbr_ibl_fs);
 	if (s->pbr_mask_ibl_fs)
@@ -567,6 +586,8 @@ void AeronScenePbr_Release(struct AeronScene3D* s) {
 		Aeron_DestroyShader(s->pbr_blend_ibl_fs);
 	if (s->pbr_screen_ibl_fs)
 		Aeron_DestroyShader(s->pbr_screen_ibl_fs);
+	if (s->pbr_mask_screen_ibl_fs)
+		Aeron_DestroyShader(s->pbr_mask_screen_ibl_fs);
 	if (s->pbr_prepass_fs)
 		Aeron_DestroyShader(s->pbr_prepass_fs);
 	if (s->pbr_prepass_mask_fs)
@@ -587,7 +608,7 @@ void AeronScenePbr_Release(struct AeronScene3D* s) {
 				s->pbr_anim_pipes[ibl][kind][cull] = NULL;
 			}
 		}
-		for (int v = 0; v < 4; ++v) {
+		for (int v = 0; v < 5; ++v) {
 			if (s->pbr_anim_fs[ibl][v])
 				Aeron_DestroyShader(s->pbr_anim_fs[ibl][v]);
 			s->pbr_anim_fs[ibl][v] = NULL;
@@ -875,8 +896,10 @@ int AeronScenePbr_DrawInstances(struct AeronScene3D* s, AeronCommandBuffer* cmd,
 	}
 
 	/* Masked geometry is opaque after its material cutoff, but requires base
-	 * alpha and variant lookup in every depth/color pass. */
-	const int mask_kind = pbr_mask_kind(pipe_kind);
+	 * alpha and variant lookup in every depth/color pass. Colour passes draw
+	 * the screen tail with the mask-screen pipeline. */
+	const int mask_kind        = pbr_mask_kind(pipe_kind);
+	const int mask_screen_kind = depth_only || mask_kind < 0 ? -1 : pbr_screen_kind(mask_kind);
 	if (mask_kind >= 0) {
 		bound_mesh = NULL;
 		for (int k = 0; k < s->camera_order_count; ++k) {
@@ -894,7 +917,11 @@ int AeronScenePbr_DrawInstances(struct AeronScene3D* s, AeronCommandBuffer* cmd,
 					bound_receiver_local_shadow = receiver_local_shadow;
 				}
 			}
-			if (!pbr_bind_pipeline(s, pass, mask_kind, (AeronCullMode)in->cull_mode, m, &bound)) {
+			const AeronCullMode cull         = (AeronCullMode)in->cull_mode;
+			const uint32_t      screen_count = mask_screen_kind >= 0 ? m->mask_screen_index_count : 0u;
+			const uint32_t      plain_count  = m->mask_index_count - screen_count;
+			if (!pbr_bind_pipeline(s, pass, plain_count != 0 ? mask_kind : mask_screen_kind, cull, m,
+								   &bound)) {
 				return 0;
 			}
 			if (m != bound_mesh) {
@@ -905,7 +932,15 @@ int AeronScenePbr_DrawInstances(struct AeronScene3D* s, AeronCommandBuffer* cmd,
 			}
 			pbr_push_instance_uniforms(s, pass, in, m, &s->prepared_instances[i], velocity, depth_only,
 									   screen_shadow);
-			Aeron_DrawIndexed(pass, m->mask_index_count, m->mask_index_offset, 0);
+			if (plain_count != 0) {
+				Aeron_DrawIndexed(pass, plain_count, m->mask_index_offset, 0);
+			}
+			if (screen_count != 0) {
+				if (!pbr_bind_pipeline(s, pass, mask_screen_kind, cull, m, &bound)) {
+					return 0;
+				}
+				Aeron_DrawIndexed(pass, screen_count, m->mask_index_offset + plain_count, 0);
+			}
 		}
 	}
 
