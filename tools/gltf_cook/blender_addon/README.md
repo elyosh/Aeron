@@ -28,10 +28,11 @@ tools), unless they are on the `PATH`. Paths set in the preferences are
 used instead of the packaged tools. The hangar lighting bake also needs
 `environment_bake`, which the packages don't include yet.
 
-If you also set **Game Effects Folder** in the preferences to the game's
-`remaster/effects` folder, Export for Game checks every animation frame
-against its library. Before that, it rebuilds in that folder the project
-libraries that the model uses and that have changed.
+If you also set **Game Folder** in the preferences to the game's
+`remaster` folder, Export for Game checks every animation frame against its
+library in `remaster/effects`. Before that, it rebuilds in that folder the
+project libraries that the model uses and that have changed. The hangar
+lighting bake also writes to the Game Folder.
 
 Tests (run each one with `--help` for its options):
 - `tests/roundtrip.py`: models import and save without changes.
@@ -424,10 +425,11 @@ most near the camera. A light on a hidden (destroyed) component is dark.
 ## Hangar lighting
 
 In the game, a hangar has an environment package: its light on the ships
-and their reflections of the hangar. To bake it, import the hangar model,
-place the 3D cursor where ships stand, and use **Add Environment Probe**
-(Aeron tab). The probe is a sphere under the model root. Only its position
-matters, so its rotation is locked. **Bake Hangar Lighting** in its panel
+and their reflections of the hangar. To bake it, import the hangar model and
+use **Add Environment Probe** (Aeron tab). The probe is a sphere under the
+model root, 3 m above the model's InsideHangar hardpoint (type 25), where
+the game parks the ship and puts the floor. Without that hardpoint, it is at
+the 3D cursor. Only its position matters, so its rotation is locked. **Bake Hangar Lighting** in its panel
 renders the hangar from the probe with Cycles and bakes the package.
 
 The bake renders what the scene renders, so props that you import and place
@@ -436,30 +438,31 @@ camera icon in the Outliner) of anything to leave out, such as a ship
 imported for reference. Nothing comes from outside the hangar: the World
 is black during the bake.
 
-The package holds all of the hangar's light except the game's ceiling key
-light, which the game adds itself because it casts the shadows:
-- the light objects of the hangar are baked, both their light on the walls
-  and the lights themselves, which ships reflect. The game no longer adds
-  them while it uses the package;
-- the bake adds the key light as a Sun lamp, so that the walls receive it;
-- emissive surfaces are baked.
-
-The light levels are the game's: the bake reads them from `config.yaml` in
-the `remaster` folder (`hangar_lighting`, `lighting.sun_illuminance_scale`,
-`lighting.emissive_scale` and `point_lights.model_light_intensity`). If they
-change later, adjust the package's `intensity` (live in the game's
-Environment debug tool). Bake again only to restore the balance between the
-key light and the emitters when just one of them changed, or after a change
-of the key light's direction or color.
+The panorama is the scene as Cycles renders it, with the lights and
+emissive materials as you set them in Blender. The game no longer adds the
+hangar model's own lights while it uses the package, since their light is
+in it. Set the package's `intensity` to adjust its level in the game (live
+in the game's Environment debug tool).
 
 One probe gives every ship the same light and reflections, as seen from
 the probe. Reflections are only approximate away from it, mostly on large
 flat surfaces.
 
-The bake writes into the game's `remaster` folder (the parent of the Game
-Effects Folder setting, or else a folder you choose), in
+The bake writes into the game's `remaster` folder (the Game Folder
+setting, or else a folder you choose), in
 `flight/environments/hangars/<model key>/`: `diffuse.ktx2`,
-`specular.ktx2`, `package.yaml` and `mapping.yaml`. Merge the last two
-into the environment manifest (`flight/environments/environments.yaml`)
-to use the package for that hangar model. Save to Project keeps the probe
+`specular.ktx2`, `package.yaml`, `mapping.yaml` and `panorama.hdr`. Merge
+`package.yaml` and `mapping.yaml` into the environment manifest
+(`flight/environments/environments.yaml`) to use the package for that
+hangar model. The game doesn't use `panorama.hdr`: it is the render the
+cubes are made from, which you can open in Blender's Image Editor.
+
+To review the bake in Blender, click **Preview Lighting** in the probe
+panel. It shows the panorama as the World, turned as in the game, so a
+ship placed in the scene shows its light and reflections in Material
+Preview or Rendered view. This is only an approximation: the game uses the
+filtered cubes, and the World is seen from everywhere as if from the
+probe. Click it again to put the previous World back. To check the result
+in the game, use the Environment debug tool: it shows whether the cubes
+loaded, and its Reload button loads them again after a new bake. Save to Project keeps the probe
 and its settings in the model's `.gltf`.

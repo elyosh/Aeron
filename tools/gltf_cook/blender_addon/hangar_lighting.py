@@ -10,29 +10,13 @@
 # angles. A camera's local axes match the cube's when it looks toward -Y,
 # with +Z up and its right toward -X.
 #
-# The panorama holds all of the hangar's light except the game's ceiling
-# key light, which the game adds directly because it casts shadows. A Sun
-# lamp stands in for it so that the walls receive it, and a Sun lamp is
-# never seen by the camera. The hangar's light objects are seen by the probe:
-# their light is baked, and the game no longer adds them.
-#
-# Shadows are the game's: the hangar model casts none (the key light stands
-# for a ceiling source, which the game does not let the hangar block), and
-# light objects cast none. Other models, such as placed props, do.
-#
-# The light levels come from the game's remaster/config.yaml at bake time,
-# so that a bake follows the game's current calibration: the key light
-# (hangar_lighting) has the illuminance intensity x
-# lighting.sun_illuminance_scale, emission is scaled by
-# lighting.emissive_scale, and light objects by
-# point_lights.model_light_intensity x 683 (the game's candela to Blender's
-# watts).
+# The panorama is the scene as Blender renders it, with a black world. The
+# package's intensity sets its level in the game.
 
 import math
 import os
 import re
 import subprocess
-import tempfile
 
 import bpy
 import mathutils
@@ -43,57 +27,50 @@ from . import common, libraries, preferences, ui
 
 PANORAMA_SIZE = (2048, 1024)  # pi x 512 px specular faces, rounded up
 CUBE_ROTATION = mathutils.Euler((math.pi / 2.0, 0.0, math.pi))
+# A panorama camera with this rotation (looking toward +X, +Z up) renders
+# what a World's environment texture shows with no mapping.
+WORLD_CAMERA = mathutils.Matrix(((0.0, 0.0, -1.0), (-1.0, 0.0, 0.0), (0.0, 1.0, 0.0)))
+PREVIEW_TAG = "aeron_lighting_preview"
 PACKAGE_NAME = re.compile(r"^[a-z0-9._]{1,63}$")
+# The game parks the ship and puts the hangar floor at this hardpoint.
+INSIDE_HANGAR_HARDPOINT = 25
+PROBE_HEIGHT = 3.0  # metres above it
 
 
 class AeronProbeProperties(PropertyGroup):
     samples: IntProperty(name="Samples", default=256, min=16, max=4096,
                          description="Cycles samples per pixel of the panorama. It is denoised")
-
-
-# The game's config entries that the bake reads.
-CONFIG_KEYS = (
-    "hangar_lighting.enabled", "hangar_lighting.direction_x", "hangar_lighting.direction_y",
-    "hangar_lighting.direction_z", "hangar_lighting.intensity", "hangar_lighting.color_r",
-    "hangar_lighting.color_g", "hangar_lighting.color_b", "lighting.sun_illuminance_scale",
-    "lighting.emissive_scale", "point_lights.model_light_intensity",
-)
-
-
-def read_config(path):
-    """The CONFIG_KEYS entries of the game's config.yaml, as numbers (booleans
-    as 0 or 1). It reads plain `section:` / `  key: value` lines, which is
-    all these entries use. Raises ValueError when one is missing."""
-    values, section, indent = {}, "", None
-    with open(path) as stream:
-        for line in stream:
-            text = line.split("#", 1)[0].rstrip()
-            if not text.strip() or ":" not in text:
-                continue
-            key, value = (part.strip() for part in text.split(":", 1))
-            depth = len(text) - len(text.lstrip())
-            if depth == 0:
-                section, indent = key, None
-                continue
-            indent = depth if indent is None else indent
-            name = section + "." + key
-            if depth == indent and name in CONFIG_KEYS:
-                values[name] = {"true": 1.0, "false": 0.0}.get(value.lower()) if value.lower() in {
-                    "true", "false"} else float(value)
-    missing = [key for key in CONFIG_KEYS if key not in values]
-    if missing:
-        raise ValueError("{} has no {}".format(path, ", ".join(missing)))
-    return values
+    panorama: StringProperty(subtype='FILE_PATH', options={'HIDDEN'})  # written by the last bake
 
 
 def probe_of(root):
     return next((child for child in root.children if common.role(child) == 'environmentProbe'), None)
 
 
+def default_location(root):
+    """PROBE_HEIGHT above the model's InsideHangar hardpoint, or None."""
+    for component in common.components(root):
+        for child in common.ordered_children(component, ('hardpoint',)):
+            if int(child.aeron_flight.hardpoint_type) == INSIDE_HANGAR_HARDPOINT:
+                up = root.matrix_world.to_quaternion() @ mathutils.Vector((0.0, 0.0, PROBE_HEIGHT))
+                return child.matrix_world.translation + up
+    return None
+
+
+def _display_size(root):
+    """1% of the model's largest dimension, at least 1 m, so that the probe shows at hangar scale."""
+    corners = [component.matrix_world @ mathutils.Vector(corner)
+               for component in common.components(root) for corner in component.bound_box]
+    if not corners:
+        return 1.0
+    size = max(max(c[axis] for c in corners) - min(c[axis] for c in corners) for axis in range(3))
+    return max(1.0, 0.01 * size)
+
+
 def _new_probe(root, location):
     probe = bpy.data.objects.new(root.name + " Probe", None)
     probe.empty_display_type = 'SPHERE'
-    probe.empty_display_size = 0.5
+    probe.empty_display_size = _display_size(root)
     probe.lock_rotation = (True, True, True)
     probe.aeron_flight.role = 'environmentProbe'
     for collection in root.users_collection:
@@ -132,17 +109,17 @@ def check(problems, root):
 
 # ---- bake --------------------------------------------------------------------------------
 
-def _srgb_to_linear(c):
-    return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
+def _camera_rotation(probe):
+    """The rotation of the panorama camera: the cube frame in the hangar model's frame."""
+    return (probe.parent.matrix_world.to_quaternion() @ CUBE_ROTATION.to_quaternion()).to_matrix()
 
 
 class _BakeScene:
     """Sets the scene up for the panorama, and puts everything back after."""
 
-    def __init__(self, scene, probe, config):
+    def __init__(self, scene, probe):
         self.scene = scene
         self.probe = probe
-        self.config = config
         self.saved = []
         self.added = []
 
@@ -151,8 +128,7 @@ class _BakeScene:
         setattr(owner, name, value)
 
     def __enter__(self):
-        scene, settings, config = self.scene, self.probe.aeron_probe, self.config
-        root = self.probe.parent
+        scene, settings = self.scene, self.probe.aeron_probe
         render = scene.render
         self._set(render, "engine", 'CYCLES')
         self._set(render, "resolution_x", PANORAMA_SIZE[0])
@@ -185,39 +161,10 @@ class _BakeScene:
         camera_data.clip_end = 100000.0
         camera = bpy.data.objects.new("Aeron Probe Camera", camera_data)
         camera.matrix_world = (mathutils.Matrix.Translation(self.probe.matrix_world.translation) @
-                               (root.matrix_world.to_quaternion() @ CUBE_ROTATION.to_quaternion()).to_matrix().to_4x4())
+                               _camera_rotation(self.probe).to_4x4())
         scene.collection.objects.link(camera)
         self.added += [camera, camera_data]
         self._set(scene, "camera", camera)
-
-        light_scale = config["point_lights.model_light_intensity"] * common.WATTS_TO_LUMENS
-        for obj in scene.objects:
-            if obj.type == 'LIGHT' and not obj.hide_render:
-                self._set(obj, "visible_camera", True)
-                self._set(obj.data, "energy", obj.data.energy * light_scale)
-                self._set(obj.data, "use_shadow", False)
-        for component in common.components(root):
-            self._set(component, "visible_shadow", False)
-        materials = {slot.material for obj in scene.objects if obj.type == 'MESH' and not obj.hide_render
-                     for slot in obj.material_slots if slot.material and slot.material.node_tree}
-        for material in materials:
-            for node in material.node_tree.nodes:
-                name = {'BSDF_PRINCIPLED': "Emission Strength", 'EMISSION': "Strength"}.get(node.type)
-                if name and not node.inputs[name].is_linked:
-                    socket = node.inputs[name]
-                    self._set(socket, "default_value", socket.default_value * config["lighting.emissive_scale"])
-        if config["hangar_lighting.enabled"]:
-            sun_data = bpy.data.lights.new("Aeron Key Light", 'SUN')
-            sun_data.energy = config["hangar_lighting.intensity"] * config["lighting.sun_illuminance_scale"]
-            sun_data.color = [_srgb_to_linear(config["hangar_lighting.color_" + c]) for c in "rgb"]
-            sun_data.angle = 0.0
-            sun = bpy.data.objects.new("Aeron Key Light", sun_data)
-            wx, wy, wz = (config["hangar_lighting.direction_" + c] for c in "xyz")
-            toward = root.matrix_world.to_quaternion() @ mathutils.Vector((-wx, -wy, wz))
-            if toward.length > 0.0:
-                sun.rotation_euler = toward.to_track_quat('Z', 'Y').to_euler()
-            scene.collection.objects.link(sun)
-            self.added += [sun, sun_data]
         return self
 
     def __exit__(self, *exc):
@@ -228,25 +175,16 @@ class _BakeScene:
                 bpy.data.objects.remove(block)
             elif isinstance(block, bpy.types.Camera):
                 bpy.data.cameras.remove(block)
-            elif isinstance(block, bpy.types.Light):
-                bpy.data.lights.remove(block)
             elif isinstance(block, bpy.types.World):
                 bpy.data.worlds.remove(block)
         return False
 
 
-def render_panorama(scene, probe, config, path):
-    """Renders the panorama of the hangar from `probe` to a Radiance file at
-    `path`, with the light levels of the game's config (read_config)."""
-    with _BakeScene(scene, probe, config):
+def render_panorama(scene, probe, path):
+    """Renders the panorama of the hangar from `probe` to a Radiance file at `path`."""
+    with _BakeScene(scene, probe):
         bpy.ops.render.render(scene=scene.name)
         bpy.data.images["Render Result"].save_render(path, scene=scene)
-
-
-def remaster_dir(context):
-    """The game's remaster folder: the parent of the Game Effects Folder setting, or ""."""
-    effects = preferences.get(context).effects_dir
-    return os.path.dirname(os.path.normpath(bpy.path.abspath(effects))) if effects else ""
 
 
 def write_mapping(path, key, package):
@@ -256,7 +194,8 @@ def write_mapping(path, key, package):
 
 
 class AERON_OT_add_probe(Operator):
-    """Add the environment probe of the hangar lighting bake at the 3D cursor, where ships stand"""
+    """Add the environment probe of the hangar lighting bake, where the game parks the ship (above the \
+InsideHangar hardpoint), or else at the 3D cursor"""
 
     bl_idname = "aeron.add_probe"
     bl_label = "Add Environment Probe"
@@ -270,13 +209,21 @@ class AERON_OT_add_probe(Operator):
         root = common.model_root(context.active_object)
         probe = probe_of(root)
         if probe is None:
-            probe = _new_probe(root, context.scene.cursor.location)
+            location = default_location(root)
+            if location is None:
+                self.report({'INFO'}, "No InsideHangar hardpoint: the probe is at the 3D cursor")
+            probe = _new_probe(root, location if location is not None else context.scene.cursor.location)
         else:
             self.report({'INFO'}, "{} already has a probe".format(root.name))
         for obj in context.view_layer.objects:
             obj.select_set(False)
         probe.select_set(True)
         context.view_layer.objects.active = probe
+        for area in (context.screen.areas if context.screen else ()):
+            if area.type == 'VIEW_3D':
+                region = next(region for region in area.regions if region.type == 'WINDOW')
+                with context.temp_override(area=area, region=region):
+                    bpy.ops.view3d.view_selected()
         return {'FINISHED'}
 
 
@@ -295,7 +242,7 @@ game's remaster folder"""
         return common.role(context.object) == 'environmentProbe' and common.model_root(context.object) is not None
 
     def invoke(self, context, event):
-        self.directory = remaster_dir(context)
+        self.directory = preferences.game_dir(context)
         if self.directory:
             return self.execute(context)
         context.window_manager.fileselect_add(self)
@@ -319,31 +266,80 @@ game's remaster folder"""
         if not baker:
             self.report({'ERROR'}, "Set the environment_bake path in the add-on preferences")
             return {'CANCELLED'}
-        remaster = bpy.path.abspath(self.directory or remaster_dir(context))
+        remaster = bpy.path.abspath(self.directory or preferences.game_dir(context))
         if not remaster or not os.path.isdir(remaster):
             self.report({'ERROR'}, "Choose the game's remaster folder")
             return {'CANCELLED'}
-        try:
-            config = read_config(os.path.join(remaster, "config.yaml"))
-        except (OSError, ValueError) as error:
-            self.report({'ERROR'}, "Cannot read the game's config: {}".format(error))
-            return {'CANCELLED'}
         out = os.path.join(remaster, "flight", "environments", "hangars", key)
         os.makedirs(out, exist_ok=True)
-        with tempfile.TemporaryDirectory(prefix="aeron_probe_") as scratch:
-            panorama = os.path.join(scratch, "panorama.hdr")
-            render_panorama(context.scene, probe, config, panorama)
-            completed = subprocess.run(
-                [baker, "--input", panorama, "--kind", "lighting", "--name", package,
-                 "--diffuse-out", os.path.join(out, "diffuse.ktx2"),
-                 "--specular-out", os.path.join(out, "specular.ktx2"),
-                 "--package-out", os.path.join(out, "package.yaml"), "--manifest-root", remaster],
-                capture_output=True, text=True)
+        panorama = os.path.join(out, "panorama.hdr")
+        render_panorama(context.scene, probe, panorama)
+        probe.aeron_probe.panorama = panorama
+        for image in bpy.data.images:  # a preview shows the new panorama
+            if image.filepath and os.path.normpath(bpy.path.abspath(image.filepath)) == os.path.normpath(panorama):
+                image.reload()
+        completed = subprocess.run(
+            [baker, "--input", panorama, "--kind", "lighting", "--name", package,
+             "--diffuse-out", os.path.join(out, "diffuse.ktx2"),
+             "--specular-out", os.path.join(out, "specular.ktx2"),
+             "--package-out", os.path.join(out, "package.yaml"), "--manifest-root", remaster],
+            capture_output=True, text=True)
         if completed.returncode != 0:
             self.report({'ERROR'}, "environment_bake failed: " + (completed.stderr.strip().splitlines() or ["?"])[-1])
             return {'CANCELLED'}
         write_mapping(os.path.join(out, "mapping.yaml"), key, package)
         self.report({'INFO'}, "Baked {}. Merge its package.yaml and mapping.yaml into the manifest".format(out))
+        return {'FINISHED'}
+
+
+def _preview_world(scene):
+    return scene.world if scene.world is not None and scene.world.get(PREVIEW_TAG) else None
+
+
+class AERON_OT_preview_hangar_lighting(Operator):
+    """Show the last baked panorama as the World, turned as in the game, to see its light and reflections on \
+models in Material Preview or Rendered view. Click again to put the previous World back"""
+
+    bl_idname = "aeron.preview_hangar_lighting"
+    bl_label = "Preview Lighting"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        return common.role(context.object) == 'environmentProbe' and common.model_root(context.object) is not None
+
+    def execute(self, context):
+        scene = context.scene
+        world = _preview_world(scene)
+        if world is not None:
+            scene.world = world.get("previous")
+            bpy.data.worlds.remove(world)
+            return {'FINISHED'}
+        probe = context.object
+        path = bpy.path.abspath(probe.aeron_probe.panorama)
+        if not probe.aeron_probe.panorama or not os.path.isfile(path):
+            self.report({'ERROR'}, "Bake the hangar lighting first")
+            return {'CANCELLED'}
+        world = bpy.data.worlds.new("Aeron Lighting Preview")
+        world[PREVIEW_TAG] = True
+        if scene.world is not None:
+            world["previous"] = scene.world
+        tree = world.node_tree
+        tree.nodes.clear()
+        coordinates = tree.nodes.new('ShaderNodeTexCoord')
+        mapping = tree.nodes.new('ShaderNodeMapping')
+        mapping.vector_type = 'VECTOR'
+        # World direction -> the panorama camera's frame -> the texture's.
+        mapping.inputs["Rotation"].default_value = (WORLD_CAMERA @ _camera_rotation(probe).inverted()).to_euler()
+        texture = tree.nodes.new('ShaderNodeTexEnvironment')
+        texture.image = bpy.data.images.load(path, check_existing=True)
+        background = tree.nodes.new('ShaderNodeBackground')
+        output = tree.nodes.new('ShaderNodeOutputWorld')
+        tree.links.new(coordinates.outputs["Generated"], mapping.inputs["Vector"])
+        tree.links.new(mapping.outputs["Vector"], texture.inputs["Vector"])
+        tree.links.new(texture.outputs["Color"], background.inputs["Color"])
+        tree.links.new(background.outputs["Background"], output.inputs["Surface"])
+        scene.world = world
         return {'FINISHED'}
 
 
@@ -355,11 +351,12 @@ class OBJECT_PT_aeron_probe(ui._RolePanel, Panel):
         layout = self.layout
         layout.use_property_split = True
         layout.prop(context.object.aeron_probe, "samples")
-        layout.label(text="Light levels: the game's remaster/config.yaml")
         layout.operator("aeron.bake_hangar_lighting", icon='RENDER_STILL')
+        layout.operator("aeron.preview_hangar_lighting", icon='WORLD', depress=_preview_world(context.scene) is not None)
 
 
-classes = (AeronProbeProperties, AERON_OT_add_probe, AERON_OT_bake_hangar_lighting, OBJECT_PT_aeron_probe)
+classes = (AeronProbeProperties, AERON_OT_add_probe, AERON_OT_bake_hangar_lighting, AERON_OT_preview_hangar_lighting,
+           OBJECT_PT_aeron_probe)
 
 
 def register():

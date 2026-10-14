@@ -54,10 +54,14 @@ class AeronFlightModelPreferences(AddonPreferences):
                     "for an OPT outside an installation, and sets it when the OPT is inside one")
     recent_projects: CollectionProperty(type=AeronRecentProject, options={'HIDDEN'},
                                         description="The projects of the last OPT imports, most recent first")
-    effects_dir: StringProperty(
-        name="Game Effects Folder", subtype='DIR_PATH',
-        description="The game's remaster/effects directory. When set, Export for Game rebuilds the project's "
-                    "changed effect libraries in it, and checks each animation frame against its library")
+    game_dir: StringProperty(
+        name="Game Folder", subtype='DIR_PATH',
+        description="The game's remaster folder. Export for Game rebuilds the project's changed effect "
+                    "libraries in its effects folder and checks each animation frame against them. Bake Hangar "
+                    "Lighting writes there")
+    # Before Game Folder: the game's remaster/effects folder. Its parent is
+    # the Game Folder when that is not set.
+    effects_dir: StringProperty(subtype='DIR_PATH', options={'HIDDEN'})
 
     def draw(self, context):
         layout = self.layout
@@ -77,7 +81,7 @@ class AeronFlightModelPreferences(AddonPreferences):
         row.prop(self, "mip_min_subrect")
         row.prop(self, "bc7_quality")
         layout.prop(self, "zstd")
-        layout.prop(self, "effects_dir")
+        layout.prop(self, "game_dir")
         layout.prop(self, "xwau_folder")
         from . import opt_import  # opt_import imports this module
         if self.xwau_folder and not opt_import.has_xwau(bpy.path.abspath(self.xwau_folder)):
@@ -119,6 +123,22 @@ def opt2gltf_path(context):
 
 def environment_bake_path(context):
     return _tool_path(get(context).environment_bake, "environment_bake")
+
+
+def game_dir(context):
+    """The game's remaster folder (Game Folder), or ""."""
+    prefs = get(context)
+    if prefs.game_dir:
+        return os.path.normpath(bpy.path.abspath(prefs.game_dir))
+    if prefs.effects_dir:
+        return os.path.dirname(os.path.normpath(bpy.path.abspath(prefs.effects_dir)))
+    return ""
+
+
+def game_effects_dir(context):
+    """The game's effects folder, or ""."""
+    root = game_dir(context)
+    return os.path.join(root, "effects") if root else ""
 
 
 classes = (AeronRecentProject, AeronFlightModelPreferences)

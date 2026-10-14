@@ -103,7 +103,7 @@ def blender_main(cooker, project, effects, paint, scratch):
 
     addon_utils.enable(MODULE, default_set=True, handle_error=None)
     prefs = bpy.context.preferences.addons[MODULE].preferences
-    prefs.cooker, prefs.effects_dir = cooker, effects
+    prefs.cooker, prefs.game_dir = cooker, os.path.dirname(effects)
     from bl_ext.user_default.aeron_flight_model import animation, libraries, sources, validation
 
     failures = []

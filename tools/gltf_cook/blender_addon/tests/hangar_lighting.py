@@ -6,11 +6,13 @@ Checks that:
 - the panorama has the baker's layout: emissive spheres at the six cube
   directions around the probe are where the baker expects them (forward at
   the centre, +X at three quarters of the width, +Y at the top), with
-  their linear values times the emissive scale, and a light object is seen
-  by the probe;
-- the probe's position goes to the glTF and back;
-- the bake reads the light levels from the game's config.yaml, writes the
-  package files and restores the scene.
+  their linear values;
+- Preview Lighting shows the panorama as the World, turned so that a
+  camera with the probe's rotation sees the same panorama, also on a
+  rotated model; a second click puts the World back;
+- the probe is added above the InsideHangar hardpoint; its position goes to
+  the glTF and back;
+- the bake writes the package files, with the panorama, and restores the scene.
 """
 
 import argparse
@@ -91,13 +93,6 @@ def blender_main(baker, scratch):
         sphere = bpy.data.objects.new(name, mesh)
         sphere.location = b
         scene.collection.objects.link(sphere)
-    # A point light between +X and +Y, seen by the probe.
-    light = bpy.data.objects.new("lamp", bpy.data.lights.new("lamp", 'POINT'))
-    light.data.shadow_soft_size = 0.5
-    light.data.energy = 5000.0
-    light.location = mathutils.Vector((-1.0, 0.0, 1.0)).normalized() * 10.0
-    scene.collection.objects.link(light)
-
     with bpy.context.temp_override(active_object=root, object=root):
         bpy.ops.aeron.add_probe()
     probe = hangar_lighting.probe_of(root)
@@ -105,42 +100,95 @@ def blender_main(baker, scratch):
     probe.aeron_probe.samples = 16
     remaster = os.path.join(scratch, "remaster")
     os.makedirs(remaster)
-    with open(os.path.join(remaster, "config.yaml"), "w") as stream:
-        stream.write("hangar_lighting:\n  enabled: false\n  direction_x: 0.0\n  direction_y: 0.0\n"
-                     "  direction_z: 1.0\n  intensity: 0.8\n  color_r: 1.0\n  color_g: 1.0\n  color_b: 1.0\n"
-                     "point_lights:\n  model_light_intensity: 0.0014641288 # 1/683\n"
-                     "lighting:\n  sun_illuminance_scale: 2.5\n  emissive_scale: 3.0\n")
-    config = hangar_lighting.read_config(os.path.join(remaster, "config.yaml"))
 
     # The layout, on a small panorama.
     hangar_lighting.PANORAMA_SIZE = (256, 128)
     path = os.path.join(scratch, "panorama.hdr")
-    hangar_lighting.render_panorama(scene, probe, config, path)
-    image = bpy.data.images.load(path)
-    width, height = image.size
-    pixels = list(image.pixels)
-    bpy.data.images.remove(image)
+    hangar_lighting.render_panorama(scene, probe, path)
 
-    def pixel(u, v):  # v from the top
-        x = min(int(u * width), width - 1) % width
-        y = height - 1 - min(int(v * height), height - 1)  # Blender rows start at the bottom
-        i = (y * width + x) * 4
-        return pixels[i:i + 3]
+    def check_layout(path, what, reference=None):
+        """Checks the spheres' colors, or the `reference` layout's, and returns them."""
+        out = {}
+        image = bpy.data.images.load(path)
+        width, height = image.size
+        pixels = list(image.pixels)
+        bpy.data.images.remove(image)
+        for name, (c, color) in DIRECTIONS.items():
+            u, v = expected_uv(c)
+            u = min(max(u, 0.01), 0.99)  # +Z is on the seam
+            if name == "+Y":
+                v = 0.02
+            elif name == "-Y":
+                v = 0.98
+            x = min(int(u * width), width - 1)
+            y = height - 1 - min(int(v * height), height - 1)  # Blender rows start at the bottom
+            got = pixels[(y * width + x) * 4:(y * width + x) * 4 + 3]
+            out[name] = got
+            if reference:
+                color = reference[name]
+            # 16 samples and denoising leave a few percent of noise.
+            check(all(abs(g - e) < 0.15 * max(e, 1.0) for g, e in zip(got, color)),
+                  "{}: {} is at the place and level expected: {} at ({:.2f}, {:.2f})".format(
+                      what, name, [round(g, 2) for g in got], u, v))
+        return out
 
-    for name, (c, color) in DIRECTIONS.items():
-        u, v = expected_uv(c)
-        u = min(max(u, 0.01), 0.99)  # +Z is on the seam
-        if name == "+Y":
-            v = 0.02
-        elif name == "-Y":
-            v = 0.98
-        got = pixel(u, v)
-        # Emissive scale 3; 16 samples and denoising leave a few percent of noise.
-        check(all(abs(g - 3.0 * e) < 0.15 * max(3.0 * e, 1.0) for g, e in zip(got, color)),
-              "{} is at the baker's place, linear, x 3: {} at ({:.2f}, {:.2f})".format(
-                  name, [round(g, 2) for g in got], u, v))
-    u, v = expected_uv((math.sqrt(0.5), math.sqrt(0.5), 0.0))
-    check(sum(pixel(u, v)) > 1.0, "the probe sees the light object: {}".format(pixel(u, v)))
+    layout = check_layout(path, "panorama")
+
+    # The preview, seen by a camera with the probe's rotation, on a rotated model.
+    root.rotation_euler = (0.3, 0.5, 1.1)
+    bpy.context.view_layer.update()
+    probe.aeron_probe.panorama = path
+    previous = scene.world
+    with bpy.context.temp_override(active_object=probe, object=probe):
+        bpy.ops.aeron.preview_hangar_lighting()
+    for name in DIRECTIONS:
+        bpy.data.objects[name].hide_render = True
+    camera_data = bpy.data.cameras.new("view")
+    camera_data.type = 'PANO'
+    camera_data.panorama_type = 'EQUIRECTANGULAR'
+    camera = bpy.data.objects.new("view", camera_data)
+    camera.matrix_world = hangar_lighting._camera_rotation(probe).to_4x4()
+    scene.collection.objects.link(camera)
+    scene.camera = camera
+    scene.render.engine = 'CYCLES'
+    scene.cycles.samples = 16
+    scene.render.resolution_x, scene.render.resolution_y = hangar_lighting.PANORAMA_SIZE
+    scene.render.resolution_percentage = 100
+    scene.view_settings.view_transform = 'Standard'
+    scene.render.image_settings.file_format = 'HDR'
+    bpy.ops.render.render()
+    preview = os.path.join(scratch, "preview.hdr")
+    bpy.data.images["Render Result"].save_render(preview, scene=scene)
+    check_layout(preview, "preview", layout)
+    with bpy.context.temp_override(active_object=probe, object=probe):
+        bpy.ops.aeron.preview_hangar_lighting()
+    check(scene.world == previous and not any(w.get(hangar_lighting.PREVIEW_TAG) for w in bpy.data.worlds),
+          "a second click puts the World back")
+    for name in DIRECTIONS:
+        bpy.data.objects[name].hide_render = False
+    bpy.data.objects.remove(camera)
+    scene.camera = None
+    root.rotation_euler = (0.0, 0.0, 0.0)
+
+    # Added above the InsideHangar hardpoint.
+    hangar = bpy.data.objects.new("hangar", bpy.data.meshes.new("hangar"))
+    scene.collection.objects.link(hangar)
+    hangar.parent = root
+    hangar.aeron_flight.role = 'component'
+    mark = bpy.data.objects.new("inside", None)
+    scene.collection.objects.link(mark)
+    mark.parent = hangar
+    mark.location = (1.0, 2.0, -4.0)
+    mark.aeron_flight.role = 'hardpoint'
+    mark.aeron_flight.hardpoint_type = '25'
+    bpy.context.view_layer.update()
+    bpy.data.objects.remove(probe)
+    with bpy.context.temp_override(active_object=root, object=root):
+        bpy.ops.aeron.add_probe()
+    probe = hangar_lighting.probe_of(root)
+    probe.aeron_probe.samples = 16
+    check((probe.matrix_world.translation - mathutils.Vector((1.0, 2.0, -1.0))).length < 1e-6,
+          "the probe is 3 m above the InsideHangar hardpoint: {}".format(probe.matrix_world.translation))
 
     # The probe in the glTF.
     probe.location = (1.0, 2.0, 3.0)
@@ -164,7 +212,7 @@ def blender_main(baker, scratch):
         result = bpy.ops.aeron.bake_hangar_lighting(directory=remaster)
     out = os.path.join(remaster, "flight", "environments", "hangars", "testhangar")
     files = sorted(os.listdir(out)) if os.path.isdir(out) else []
-    check('FINISHED' in result and files == ["diffuse.ktx2", "mapping.yaml", "package.yaml", "specular.ktx2"],
+    check('FINISHED' in result and files == ["diffuse.ktx2", "mapping.yaml", "package.yaml", "panorama.hdr", "specular.ktx2"],
           "the bake writes the package files: {}".format(files))
     check(scene.render.engine == engine and len(bpy.data.objects) == objects and scene.camera is None,
           "the bake restores the scene")

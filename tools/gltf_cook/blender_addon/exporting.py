@@ -403,8 +403,8 @@ class EXPORT_OT_aeron_flight_model(Operator, ExportHelper):
             return {'CANCELLED'}
         # The cooker checks the frames that the materials name against the
         # effect libraries. It first builds them from the project's libraries.
-        if prefs.effects_dir:
-            argv += ["--effects-dir", bpy.path.abspath(prefs.effects_dir)]
+        if preferences.game_effects_dir(context):
+            argv += ["--effects-dir", preferences.game_effects_dir(context)]
             if effects:
                 argv += ["--project", os.path.dirname(effects)]
         try:
