@@ -464,9 +464,9 @@ the whole model, and validation warns when it doesn't reach the far side of
 the probe's parallax volume.
 
 **Bake Probes** renders a panorama from each reflection probe (Samples
-per pixel, denoised) and from each grid point (256 samples) with Cycles,
-on the GPU when Cycles has one, and environment_bake makes the package. It
-shows its progress; Esc cancels. Grid points inside geometry (most of
+per pixel, denoised) and from each grid point (256 x 128 pixels at 16
+samples) with Cycles, on the GPU when Cycles has one, and environment_bake
+makes the package. It shows its progress; Esc cancels. Grid points inside geometry (most of
 their rays hit back faces) are left out and take their neighbours' light.
 The bake renders what the scene renders: the World is black, so nothing
 comes from outside the model. To leave an object out of the probes or the
@@ -475,7 +475,7 @@ Visibility): Sphere for the reflection probes, Volume for the grid. Turn
 off the render visibility of anything to leave out of both.
 
 Bake times, on an Apple M4 Pro: about 3.5 s per reflection probe, and
-0.05 s per grid point on the GPU (0.15 s on the CPU).
+0.05 s per grid point on the GPU (0.13 s on the CPU).
 
 The model's lights inside the grid's box are baked into it: they are
 exported with `baked`, and the game leaves them out while it uses the
