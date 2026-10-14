@@ -402,6 +402,11 @@ class _BakeScene:
                 node.inputs["Strength"].default_value = 0.0
         self.added.append(world)
         self._set(scene, "world", world)
+        # Cycles' camera rays do not see lights by default: the panoramas
+        # would miss the light they give directly, which the grid holds.
+        for obj in scene.objects:
+            if obj.type == 'LIGHT':
+                self._set(obj, "visible_camera", True)
 
         camera_data = bpy.data.cameras.new("Aeron Probe Camera")
         camera_data.type = 'PANO'

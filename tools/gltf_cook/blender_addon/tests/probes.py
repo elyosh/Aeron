@@ -344,6 +344,12 @@ def blender_main(baker, scratch):
     # The bake.
     remaster = os.path.join(scratch, "remaster")
     os.makedirs(remaster)
+    lamp = bpy.data.objects.new("lamp", bpy.data.lights.new("lamp", 'POINT'))
+    scene.collection.objects.link(lamp)
+    lamp.parent = hangar
+    lamp.location = (-1.0, 0.0, 3.0)
+    lamp.data.energy = 5000.0
+    lamp.data.shadow_soft_size = 1.0
     engine, device, objects = scene.render.engine, scene.cycles.device, len(bpy.data.objects)
     persistent = scene.render.use_persistent_data
     with bpy.context.temp_override(active_object=probe, object=probe):
@@ -358,7 +364,9 @@ def blender_main(baker, scratch):
           "the package names the model's probes and grid")
     check(scene.render.engine == engine and scene.cycles.device == device and
           scene.render.use_persistent_data == persistent and len(bpy.data.objects) == objects and
-          scene.camera is None, "the bake restores the scene")
+          scene.camera is None and not lamp.visible_camera, "the bake restores the scene")
+    pixels = bpy.data.images.load(os.path.join(out, "panorama_0.hdr")).pixels[:] if files else [0.0]
+    check(max(pixels) > 100.0, "the panorama sees the lamp itself: {:.1f}".format(max(pixels)))
     sys.exit(1 if failures else 0)
 
 
