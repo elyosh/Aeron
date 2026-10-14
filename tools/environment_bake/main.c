@@ -5,11 +5,14 @@
  * optional light list become three BC6H KTX2 cubes (radiance with box
  * mips, Lambert irradiance / pi, GGX roughness mips) and a `packages:`
  * entry. With `--kind lighting`, the panorama is an enclosed space (a
- * hangar) and only the diffuse and specular cubes are written. Diagnostic mode writes a labelled cube for checking orientation.
+ * hangar) and only the diffuse and specular cubes are written.
+ * Diagnostic mode writes a labelled cube for checking orientation.
  * Sprite mode converts an HDR image to a KTX2 sun sprite. Capture mode
  * bakes a capture directory written by the game (six cube faces, sun
  * images, capture.yaml) into a package under the remaster bake root, with
- * the `packages:` and `xwa:` snippets to merge into the manifest.
+ * the `packages:` and `xwa:` snippets to merge into the manifest. Probes
+ * mode bakes a model's reflection probes and irradiance grid, rendered as
+ * panoramas by the Blender add-on, into a `probes` package.
  *
  * See envmap.h for the cube face and panorama conventions. Output is
  * deterministic for identical inputs and does not depend on --jobs.
@@ -47,12 +50,16 @@ typedef struct BakeOptions {
 	const char* sprite_format;
 	const char* capture_dir;
 	const char* bake_root;
+	const char* probes_input;
+	const char* cubes_out;
+	const char* grid_out;
 	int         radiance_size;
 	int         diffuse_size;
 	int         specular_size;
 	int         specular_samples;
 	int         sprite_size;
 	int         jobs;
+	bool        specular_size_given; /* probes mode defaults to 256 */
 } BakeOptions;
 
 static void usage(void) {
@@ -71,13 +78,19 @@ static void usage(void) {
 		"                   [--sprite-format bc6h|rgba16f] [--jobs 8]\n"
 		"  environment_bake --capture DIR --bake-root DIR [--radiance-size 2048] [--diffuse-size 32]\n"
 		"                   [--specular-size 512] [--specular-samples 1024] [--sprite-size 256] [--jobs 8]\n"
+		"  environment_bake --probes job.yaml --name NAME --cubes-out P --grid-out P [--package-out FILE]\n"
+		"                   [--manifest-root DIR] [--specular-size 256] [--specular-samples 1024]\n"
+		"                   [--jobs 8]\n"
 		"\n"
 		"The sky is an equirectangular panorama (2:1) without suns, in the authored\n"
 		"frame: +X right, +Y up, -Z forward at the image centre. The light list is a\n"
 		"YAML map with a `directional_lights` sequence in the package light schema.\n"
 		"Package entry paths are written relative to --manifest-root when given.\n"
 		"A capture is baked into <bake root>/flight/environments/captured/<mission>/region_<n>/;\n"
-		"its package.yaml and mapping.yaml are merged into the manifest by hand.\n");
+		"its package.yaml and mapping.yaml are merged into the manifest by hand.\n"
+		"A probes job holds the package's `probes`, `grid_box` and `grid_resolution`, and\n"
+		"`probe_panoramas`, `grid_panoramas` (x fastest, then y, then z) and `grid_invalid`\n"
+		"(indices of points inside geometry), panorama paths relative to the job file.\n");
 }
 
 static bool is_power_of_two(int v) { return v > 0 && (v & (v - 1)) == 0; }
@@ -135,6 +148,12 @@ static bool parse_args(int argc, char** argv, BakeOptions* o) {
 			text = &o->capture_dir;
 		else if (strcmp(arg, "--bake-root") == 0)
 			text = &o->bake_root;
+		else if (strcmp(arg, "--probes") == 0)
+			text = &o->probes_input;
+		else if (strcmp(arg, "--cubes-out") == 0)
+			text = &o->cubes_out;
+		else if (strcmp(arg, "--grid-out") == 0)
+			text = &o->grid_out;
 		else if (strcmp(arg, "--radiance-size") == 0)
 			number = &o->radiance_size;
 		else if (strcmp(arg, "--diffuse-size") == 0)
@@ -155,6 +174,8 @@ static bool parse_args(int argc, char** argv, BakeOptions* o) {
 			fprintf(stderr, "environment_bake: '%s' needs a value\n", arg);
 			return false;
 		}
+		if (number == &o->specular_size)
+			o->specular_size_given = true;
 		if (text) {
 			*text = value;
 		} else if (!parse_int(value, number)) {
@@ -203,7 +224,7 @@ static uint16_t float_to_half(float value) {
 }
 
 typedef struct EncodeTask {
-	const float* const* images; /* [level * face_count + face], RGB */
+	const float* const* images; /* [level * face_count + face], RGB; faces of every layer */
 	const int*          sizes;  /* per level, square */
 	int                 face_count;
 	int                 level_count;
@@ -229,9 +250,11 @@ static void encode_bc6h_task(void* context, int index) {
 								   BC6H_QUALITY_UBER);
 }
 
-/* Writes square RGB float images as BC6H (format "bc6h") or RGBA16F KTX2. */
+/* Writes square RGB float images as BC6H (format "bc6h") or RGBA16F KTX2.
+ * `face_count` counts every slice of a level: 6 per cube of a cube array
+ * of `layer_count` cubes (0 for one image). */
 static bool write_levels(const char* path, const char* format, const float* const* images, const int* sizes,
-						 int face_count, int level_count, int jobs) {
+						 int face_count, int layer_count, int level_count, int jobs) {
 	const bool     bc6h                          = strcmp(format, "bc6h") == 0;
 	uint8_t*       blobs[ENVMAP_MAX_LEVELS]      = { 0 };
 	size_t         face_bytes[ENVMAP_MAX_LEVELS] = { 0 };
@@ -290,8 +313,9 @@ static bool write_levels(const char* path, const char* format, const float* cons
 		levels[level].size   = face_bytes[level] * (size_t)face_count;
 	}
 	if (ok) {
-		ok = bc6h ? write_ktx2_bc6h_levels(path, face_count, 0, levels, level_count, true)
-				  : write_ktx2_rgba16f_levels(path, face_count, 0, levels, level_count, true);
+		const int faces = layer_count > 0 ? face_count / layer_count : face_count;
+		ok = bc6h ? write_ktx2_bc6h_levels(path, faces, layer_count, levels, level_count, true)
+				  : write_ktx2_rgba16f_levels(path, faces, layer_count, levels, level_count, true);
 		if (!ok)
 			fprintf(stderr, "environment_bake: cannot write %s\n", path);
 	}
@@ -308,7 +332,7 @@ static bool write_cube(const char* path, const EnvCube* cube, int jobs) {
 		for (int face = 0; face < 6; ++face)
 			images[level * 6 + face] = cube->faces[level][face];
 	}
-	return write_levels(path, "bc6h", images, sizes, 6, cube->level_count, jobs);
+	return write_levels(path, "bc6h", images, sizes, 6, 0, cube->level_count, jobs);
 }
 
 static double file_size_mib(const char* path) {
@@ -707,6 +731,376 @@ static int run_bake(const BakeOptions* o) {
 	return 0;
 }
 
+/* ---- probes ------------------------------------------------------------- */
+
+#define PROBE_GRID_CUBE_SIZE 32
+#define PROBE_PATH_MAX 1024
+
+typedef struct ProbeJob {
+	AeronEnvironmentDefinition* def; /* probes and grid */
+	char (*probe_panoramas)[PROBE_PATH_MAX];
+	char (*grid_panoramas)[PROBE_PATH_MAX];
+	uint8_t* invalid; /* per grid point */
+	uint32_t point_count;
+} ProbeJob;
+
+static void probe_job_free(ProbeJob* job) {
+	free(job->def);
+	free(job->probe_panoramas);
+	free(job->grid_panoramas);
+	free(job->invalid);
+	memset(job, 0, sizeof *job);
+}
+
+/* A panorama path from the job: relative to the job file's folder. */
+static bool job_path(const char* job, const AeronConfigNode* node, char out[PROBE_PATH_MAX]) {
+	const char* name =
+		AeronConfigNode_Type(node) == AERON_CONFIG_STRING ? AeronConfigNode_String(node, "") : "";
+	if (!name[0])
+		return false;
+	const char* slash = strrchr(job, '/');
+	const int   n     = name[0] == '/' || !slash
+							? snprintf(out, PROBE_PATH_MAX, "%s", name)
+							: snprintf(out, PROBE_PATH_MAX, "%.*s/%s", (int)(slash - job), job, name);
+	return n > 0 && n < PROBE_PATH_MAX;
+}
+
+/* Reads a probes job; prints why and returns false when it is wrong. */
+static bool load_probe_job(const char* path, ProbeJob* job) {
+	static const char* const fields[] = { "probes",          "probe_panoramas", "grid_box",
+										  "grid_resolution", "grid_panoramas",  "grid_invalid" };
+	memset(job, 0, sizeof *job);
+	AeronVfs*        vfs    = NULL;
+	AeronConfigFile* config = load_yaml(path, &vfs);
+	if (!config)
+		return false;
+	const AeronConfigNode* root = AeronConfigFile_Root(config);
+	bool                   ok   = AeronConfigNode_Type(root) == AERON_CONFIG_MAP;
+	for (size_t i = 0; ok && i < AeronConfigNode_MapCount(root); ++i) {
+		bool known = false;
+		for (size_t f = 0; f < sizeof fields / sizeof fields[0]; ++f)
+			known = known || strcmp(AeronConfigNode_MapKeyAt(root, i), fields[f]) == 0;
+		if (!known) {
+			fprintf(stderr, "environment_bake: %s: unknown field '%s'\n", path,
+					AeronConfigNode_MapKeyAt(root, i));
+			ok = false;
+		}
+	}
+	AeronConfigError error;
+	memset(&error, 0, sizeof error);
+	job->def = (AeronEnvironmentDefinition*)calloc(1, sizeof *job->def);
+	ok       = ok && job->def;
+	if (ok && !AeronEnvironment_ParseProbeSet(root, "probes job", job->def, &error)) {
+		fprintf(stderr, "environment_bake: %s:%d: %s\n", path, error.line, error.message);
+		ok = false;
+	}
+
+	const AeronConfigNode* probes = AeronConfigNode_MapGet(root, "probe_panoramas");
+	if (ok && (AeronConfigNode_Type(probes) != AERON_CONFIG_SEQUENCE ||
+			   AeronConfigNode_SequenceCount(probes) != job->def->probe_count)) {
+		fprintf(stderr, "environment_bake: %s: 'probe_panoramas' must list one panorama per probe\n", path);
+		ok = false;
+	}
+	if (ok) {
+		job->probe_panoramas = calloc(job->def->probe_count, sizeof *job->probe_panoramas);
+		ok                   = job->probe_panoramas != NULL;
+	}
+	for (uint32_t i = 0; ok && i < job->def->probe_count; ++i) {
+		if (!job_path(path, AeronConfigNode_SequenceGet(probes, i), job->probe_panoramas[i])) {
+			fprintf(stderr, "environment_bake: %s: probe panorama %u must be a file name\n", path, i);
+			ok = false;
+		}
+	}
+
+	if (ok)
+		job->point_count =
+			job->def->grid_resolution[0] * job->def->grid_resolution[1] * job->def->grid_resolution[2];
+	const AeronConfigNode* points = AeronConfigNode_MapGet(root, "grid_panoramas");
+	if (ok && (AeronConfigNode_Type(points) != AERON_CONFIG_SEQUENCE ||
+			   AeronConfigNode_SequenceCount(points) != job->point_count)) {
+		fprintf(stderr, "environment_bake: %s: 'grid_panoramas' must list one panorama per grid point (%u)\n",
+				path, job->point_count);
+		ok = false;
+	}
+	if (ok) {
+		job->grid_panoramas = calloc(job->point_count, sizeof *job->grid_panoramas);
+		job->invalid        = calloc(job->point_count, 1);
+		ok                  = job->grid_panoramas && job->invalid;
+	}
+	for (uint32_t i = 0; ok && i < job->point_count; ++i) {
+		if (!job_path(path, AeronConfigNode_SequenceGet(points, i), job->grid_panoramas[i])) {
+			fprintf(stderr, "environment_bake: %s: grid panorama %u must be a file name\n", path, i);
+			ok = false;
+		}
+	}
+	const AeronConfigNode* invalid = AeronConfigNode_MapGet(root, "grid_invalid");
+	if (ok && invalid && AeronConfigNode_Type(invalid) != AERON_CONFIG_SEQUENCE) {
+		fprintf(stderr, "environment_bake: %s: 'grid_invalid' must be a sequence of point indices\n", path);
+		ok = false;
+	}
+	for (size_t i = 0; ok && invalid && i < AeronConfigNode_SequenceCount(invalid); ++i) {
+		const AeronConfigNode* node  = AeronConfigNode_SequenceGet(invalid, i);
+		const int64_t          index = AeronConfigNode_Int(node, -1);
+		if (AeronConfigNode_Type(node) != AERON_CONFIG_INT || index < 0 ||
+			index >= (int64_t)job->point_count) {
+			fprintf(stderr, "environment_bake: %s: 'grid_invalid' holds point indices below %u\n", path,
+					job->point_count);
+			ok = false;
+		} else {
+			job->invalid[index] = 1;
+		}
+	}
+	AeronConfigFile_Destroy(config);
+	AeronVfs_Destroy(vfs);
+	if (!ok)
+		probe_job_free(job);
+	return ok;
+}
+
+/* Reads a 2:1 panorama of finite, non-negative pixels. */
+static bool read_panorama(const char* path, float** rgb, int* w, int* h) {
+	char err[512];
+	if (!read_hdr_rgb(path, rgb, w, h, err, sizeof err)) {
+		fprintf(stderr, "environment_bake: %s\n", err);
+		return false;
+	}
+	if (*w != 2 * *h || !check_pixels(path, *rgb, (size_t)*w * *h)) {
+		if (*w != 2 * *h)
+			fprintf(stderr, "environment_bake: %s is %dx%d; a panorama is 2:1\n", path, *w, *h);
+		free(*rgb);
+		*rgb = NULL;
+		return false;
+	}
+	return true;
+}
+
+/* Bakes each probe's panorama into GGX-prefiltered cubes and writes them
+ * as one cube array, probe k in layer k. */
+static bool bake_probe_cubes(const BakeOptions* o, const ProbeJob* job, int size) {
+	const uint32_t count  = job->def->probe_count;
+	const int      levels = envmap_mip_count(size);
+	EnvCube*       cubes  = (EnvCube*)calloc(count, sizeof *cubes);
+	const float**  images = (const float**)malloc((size_t)levels * 6u * count * sizeof *images);
+	int            sizes[ENVMAP_MAX_LEVELS];
+	bool           ok = cubes && images;
+	for (uint32_t p = 0; ok && p < count; ++p) {
+		float*  pano = NULL;
+		int     w = 0, h = 0;
+		EnvCube radiance;
+		memset(&radiance, 0, sizeof radiance);
+		ok = read_panorama(job->probe_panoramas[p], &pano, &w, &h) &&
+			 envmap_cube_alloc(&radiance, size, levels) && envmap_cube_alloc(&cubes[p], size, levels);
+		if (ok) {
+			if ((double)w < BAKE_PI * (double)size)
+				fprintf(stderr,
+						"environment_bake: warning: %s is below pi x %d wide; its reflections will be soft\n",
+						job->probe_panoramas[p], size);
+			envmap_from_equirect(&radiance, pano, w, h, o->jobs);
+			envmap_build_box_mips(&radiance);
+			envmap_ggx_prefilter(&cubes[p], &radiance, o->specular_samples, o->jobs);
+			printf("probe %u %s: %dx%d\n", p, job->probe_panoramas[p], w, h);
+		}
+		free(pano);
+		envmap_cube_free(&radiance);
+	}
+	if (ok) {
+		for (int level = 0; level < levels; ++level) {
+			sizes[level] = envmap_level_size(&cubes[0], level);
+			for (uint32_t p = 0; p < count; ++p)
+				for (int face = 0; face < 6; ++face)
+					images[((size_t)level * count + p) * 6u + face] = cubes[p].faces[level][face];
+		}
+		ok = write_levels(o->cubes_out, "bc6h", images, sizes, 6 * (int)count, (int)count, levels, o->jobs);
+		if (ok)
+			printf("cubes %s: %u probes, %d px, %d roughness levels, %d samples, %.2f MiB\n", o->cubes_out,
+				   count, size, levels, o->specular_samples, file_size_mib(o->cubes_out));
+	}
+	for (uint32_t p = 0; cubes && p < count; ++p)
+		envmap_cube_free(&cubes[p]);
+	free(cubes);
+	free(images);
+	return ok;
+}
+
+typedef struct GridTask {
+	const ProbeJob* job;
+	float (*sh)[4][3]; /* per point */
+	uint8_t* failed;
+} GridTask;
+
+static void grid_point_task(void* context, int index) {
+	GridTask* t = (GridTask*)context;
+	if (t->job->invalid[index])
+		return;
+	float*  pano = NULL;
+	int     w = 0, h = 0;
+	EnvCube cube;
+	memset(&cube, 0, sizeof cube);
+	if (!read_panorama(t->job->grid_panoramas[index], &pano, &w, &h) ||
+		!envmap_cube_alloc(&cube, PROBE_GRID_CUBE_SIZE, 1)) {
+		t->failed[index] = 1;
+	} else {
+		envmap_from_equirect(&cube, pano, w, h, 1);
+		envmap_project_sh_l1(&cube, t->sh[index]);
+	}
+	free(pano);
+	envmap_cube_free(&cube);
+}
+
+/* Signed, for the L1 coefficients. */
+static uint16_t float_to_half_signed(float value) {
+	return value < 0.0f ? (uint16_t)(float_to_half(-value) | 0x8000u) : float_to_half(value);
+}
+
+/* Projects every valid grid point to L1 SH, gives each invalid point the
+ * average of the valid ones within 1, then 2 points, else zero, and writes
+ * the grid: a 2D RGBA16F image 4 rx wide and ry rz high, point (x, y, z) at
+ * column 4 x, row y + ry z; texel c (R, G, B) holds that channel's four
+ * coefficients, texel 3 is zero. */
+static bool bake_probe_grid(const BakeOptions* o, const ProbeJob* job) {
+	const uint32_t* r      = job->def->grid_resolution;
+	const uint32_t  points = job->point_count;
+	GridTask        t      = { job, calloc(points, sizeof *t.sh), calloc(points, 1) };
+	const int       width = 4 * (int)r[0], height = (int)(r[1] * r[2]);
+	uint16_t*       texels = (uint16_t*)calloc((size_t)width * height * 4u, sizeof *texels);
+	bool            ok     = t.sh && t.failed && texels;
+	if (ok)
+		envmap_parallel_for((int)points, o->jobs, grid_point_task, &t);
+	for (uint32_t i = 0; ok && i < points; ++i)
+		if (t.failed[i]) {
+			fprintf(stderr, "environment_bake: grid point %u: cannot use %s\n", i, job->grid_panoramas[i]);
+			ok = false;
+		}
+	uint32_t invalid = 0, unfilled = 0;
+	for (uint32_t i = 0; ok && i < points; ++i) {
+		if (!job->invalid[i])
+			continue;
+		++invalid;
+		const int x = (int)(i % r[0]), y = (int)(i / r[0] % r[1]), z = (int)(i / (r[0] * r[1]));
+		int       used = 0;
+		for (int radius = 1; radius <= 2 && used == 0; ++radius) {
+			for (int dz = -radius; dz <= radius; ++dz)
+				for (int dy = -radius; dy <= radius; ++dy)
+					for (int dx = -radius; dx <= radius; ++dx) {
+						const int nx = x + dx, ny = y + dy, nz = z + dz;
+						if (nx < 0 || ny < 0 || nz < 0 || nx >= (int)r[0] || ny >= (int)r[1] ||
+							nz >= (int)r[2])
+							continue;
+						const uint32_t n = (uint32_t)nx + r[0] * ((uint32_t)ny + r[1] * (uint32_t)nz);
+						if (job->invalid[n])
+							continue;
+						for (int b = 0; b < 4; ++b)
+							for (int c = 0; c < 3; ++c)
+								t.sh[i][b][c] += t.sh[n][b][c];
+						++used;
+					}
+		}
+		for (int b = 0; b < 4; ++b)
+			for (int c = 0; c < 3; ++c)
+				t.sh[i][b][c] = used ? t.sh[i][b][c] / (float)used : 0.0f;
+		unfilled += used == 0;
+	}
+	for (uint32_t i = 0; ok && i < points; ++i) {
+		const uint32_t x = i % r[0], row = i / r[0];
+		for (int c = 0; c < 3; ++c)
+			for (int b = 0; b < 4; ++b)
+				texels[((size_t)row * width + 4u * x + (uint32_t)c) * 4u + (uint32_t)b] =
+					float_to_half_signed(t.sh[i][b][c]);
+	}
+	if (ok) {
+		const Ktx2WriteLevel level = { width, height, (const uint8_t*)texels,
+									   (size_t)width * height * 4u * sizeof *texels };
+		ok                         = write_ktx2_rgba16f_levels(o->grid_out, 1, 0, &level, 1, true);
+		if (!ok)
+			fprintf(stderr, "environment_bake: cannot write %s\n", o->grid_out);
+	}
+	if (ok) {
+		printf("grid %s: %ux%ux%u points, %u inside geometry", o->grid_out, r[0], r[1], r[2], invalid);
+		if (unfilled)
+			printf(" (%u with no valid neighbour, left dark)", unfilled);
+		printf(", %.2f MiB\n", file_size_mib(o->grid_out));
+	}
+	free(t.sh);
+	free(t.failed);
+	free(texels);
+	return ok;
+}
+
+static int run_probes(const BakeOptions* o) {
+	if (!o->name || !o->cubes_out || !o->grid_out) {
+		usage();
+		return 2;
+	}
+	if (!AeronEnvironment_IsValidName(o->name)) {
+		fprintf(stderr, "environment_bake: --name must be 1 to 63 lower-case letters, digits, '.' and '_'\n");
+		return 2;
+	}
+	const int size = o->specular_size_given ? o->specular_size : 256;
+	if (!check_size("--specular-size", size, 16, 2048))
+		return 2;
+	if (o->specular_samples < 16 || o->specular_samples > 65536) {
+		fprintf(stderr, "environment_bake: --specular-samples must be 16 to 65536\n");
+		return 2;
+	}
+	ProbeJob job;
+	if (!load_probe_job(o->probes_input, &job))
+		return 2;
+	AeronEnvironmentDefinition* d = job.def;
+	snprintf(d->name, sizeof d->name, "%s", o->name);
+	d->kind              = AERON_ENV_KIND_PROBES;
+	d->intensity         = 1.0f;
+	d->diffuse_strength  = 1.0f;
+	d->specular_strength = 1.0f;
+	if (!package_path(o->cubes_out, o->manifest_root, d->cubes_path, sizeof d->cubes_path) ||
+		!package_path(o->grid_out, o->manifest_root, d->grid_path, sizeof d->grid_path)) {
+		probe_job_free(&job);
+		return 2;
+	}
+
+	AeronEnvironmentProbeCells cells;
+	if (!AeronEnvironment_BuildProbeCells(d, &cells)) {
+		fprintf(stderr, "environment_bake: out of memory\n");
+		probe_job_free(&job);
+		return 1;
+	}
+	printf("cells: %ux%ux%u of %.3g m, at most %u probes in one\n", cells.dims[0], cells.dims[1],
+		   cells.dims[2], (double)cells.cell_size, cells.most_probes);
+	if (cells.overflow_cells)
+		fprintf(stderr,
+				"environment_bake: warning: %u cells overlap more than %d probes; the %d smallest are used "
+				"there\n",
+				cells.overflow_cells, AERON_ENV_PROBE_CELL_PROBES, AERON_ENV_PROBE_CELL_PROBES);
+	AeronEnvironment_FreeProbeCells(&cells);
+
+	if (!bake_probe_cubes(o, &job, size) || !bake_probe_grid(o, &job)) {
+		probe_job_free(&job);
+		return 1;
+	}
+	const size_t length = AeronEnvironment_FormatPackageYaml(d, NULL, 0);
+	char*        text   = (char*)malloc(length + 1);
+	FILE*        f      = o->package_out ? fopen(o->package_out, "wb") : stdout;
+	bool         ok     = text && f;
+	if (ok) {
+		AeronEnvironment_FormatPackageYaml(d, text, length + 1);
+		ok = fwrite(text, 1, length, f) == length;
+	}
+	if (f && o->package_out)
+		fclose(f);
+	free(text);
+	probe_job_free(&job);
+	if (!ok) {
+		fprintf(stderr, "environment_bake: cannot write %s\n",
+				o->package_out ? o->package_out : "the package");
+		return 1;
+	}
+	if (o->package_out) {
+		if (!validate_package_file(o->package_out))
+			return 1;
+		printf("package %s: %s\n", o->name, o->package_out);
+	}
+	return 0;
+}
+
 /* ---- diagnostic cube ------------------------------------------------------- */
 
 /* 5x7 glyphs, rows top to bottom, bit 4 = leftmost column. */
@@ -905,7 +1299,7 @@ static bool bake_sprite(const char* input, const char* output, int size, const c
 			if (dn >= 4)
 				zero_border(images[level], dn, 1);
 		}
-		ok = write_levels(output, format, (const float* const*)images, sizes, 1, levels, jobs);
+		ok = write_levels(output, format, (const float* const*)images, sizes, 1, 0, levels, jobs);
 	}
 	for (int level = 0; level < levels; ++level)
 		free(images[level]);
@@ -1316,11 +1710,12 @@ int main(int argc, char** argv) {
 		usage();
 		return 2;
 	}
-	const int modes =
-		(o.input != NULL) + (o.diagnostic_out != NULL) + (o.sprite_input != NULL) + (o.capture_dir != NULL);
+	const int modes = (o.input != NULL) + (o.diagnostic_out != NULL) + (o.sprite_input != NULL) +
+					  (o.capture_dir != NULL) + (o.probes_input != NULL);
 	if (modes != 1) {
 		fprintf(stderr,
-				"environment_bake: give exactly one of --input, --diagnostic-faces, --sprite or --capture\n");
+				"environment_bake: give exactly one of --input, --diagnostic-faces, --sprite, --capture "
+				"or --probes\n");
 		usage();
 		return 2;
 	}
@@ -1330,5 +1725,7 @@ int main(int argc, char** argv) {
 		return run_sprite(&o);
 	if (o.capture_dir)
 		return run_capture(&o);
+	if (o.probes_input)
+		return run_probes(&o);
 	return run_bake(&o);
 }

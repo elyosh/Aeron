@@ -205,10 +205,12 @@ static bool parse_probe(const AeronConfigNode* map, const char* owner, size_t in
 	return true;
 }
 
-/* A probes package: its textures, grid and probes; no rotation, ambient or
- * lights. */
-static bool parse_probes_package(const AeronConfigNode* map, const char* what,
-								 AeronEnvironmentDefinition* def, AeronConfigError* error) {
+bool AeronEnvironment_ParseProbeSet(const AeronConfigNode* map, const char* what,
+									AeronEnvironmentDefinition* def, AeronConfigError* error) {
+	if (!what)
+		what = "probes";
+	if (!map || !def || AeronConfigNode_Type(map) != AERON_CONFIG_MAP)
+		return env_error(error, map, "%s must be a map", what);
 	const AeronConfigNode* box = require_field(map, what, "grid_box", error);
 	if (!box)
 		return false;
@@ -461,7 +463,7 @@ static bool parse_package(const char* name, const AeronConfigNode* map, AeronEnv
 			   read_number(map, what, "specular_strength", true, 0.0, 4.0, &def->specular_strength, error) &&
 			   read_path(map, what, "cubes", def->cubes_path, sizeof def->cubes_path, error) &&
 			   read_path(map, what, "grid", def->grid_path, sizeof def->grid_path, error) &&
-			   parse_probes_package(map, what, def, error);
+			   AeronEnvironment_ParseProbeSet(map, what, def, error);
 	} else {
 		return env_error(error, kind, "%s: 'kind' must be 'full', 'lighting' or 'probes'", what);
 	}

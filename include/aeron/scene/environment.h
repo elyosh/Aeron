@@ -152,6 +152,13 @@ bool AeronEnvironment_ParseLights(const AeronConfigNode* lights, const char* own
 								  AeronEnvironmentLightDefinition out[AERON_ENV_MAX_LIGHTS],
 								  uint32_t* out_count, int32_t* out_primary, AeronConfigError* error);
 
+/* Reads the `grid_box`, `grid_resolution` and `probes` fields of a map with
+ * the probes package schema into `def`, leaving its other fields (also used
+ * by tools whose map holds other fields; the caller checks those). `what`
+ * names the map in error messages. */
+bool AeronEnvironment_ParseProbeSet(const AeronConfigNode* map, const char* what,
+									AeronEnvironmentDefinition* def, AeronConfigError* error);
+
 /* Package and light names: 1 to 63 characters of lower-case ASCII letters,
  * digits, '.' and '_'. */
 bool AeronEnvironment_IsValidName(const char* name);

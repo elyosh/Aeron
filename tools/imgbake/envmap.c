@@ -402,6 +402,34 @@ void envmap_irradiance(EnvCube* out, const EnvCube* src, int jobs) {
 	free(rad);
 }
 
+void envmap_project_sh_l1(const EnvCube* src, float out[4][3]) {
+	/* Real SH basis: Y00 = 1 / (2 sqrt(pi)), Y1m = sqrt(3) / (2 sqrt(pi)) *
+	 * (y, z, x). The lobe gives A0 / pi = 1 and A1 / pi = 2 / 3, and the
+	 * evaluation multiplies by the basis again. */
+	const double y0 = 0.28209479177387814, y1 = 0.4886025119029199;
+	const double k[4]      = { y0 * y0, y1 * y1 * 2.0 / 3.0, y1 * y1 * 2.0 / 3.0, y1 * y1 * 2.0 / 3.0 };
+	double       sum[4][3] = { { 0.0 } };
+	const int    n         = src->size;
+	for (int face = 0; face < 6; ++face) {
+		const float* px = src->faces[0][face];
+		for (int y = 0; y < n; ++y) {
+			for (int x = 0; x < n; ++x) {
+				float d[3];
+				envmap_texel_direction(face, x, y, n, d);
+				const double omega    = envmap_texel_solid_angle(x, y, n);
+				const double basis[4] = { 1.0, d[1], d[2], d[0] };
+				const float* l        = px + ((size_t)y * n + x) * 3u;
+				for (int b = 0; b < 4; ++b)
+					for (int c = 0; c < 3; ++c)
+						sum[b][c] += (double)l[c] * basis[b] * omega;
+			}
+		}
+	}
+	for (int b = 0; b < 4; ++b)
+		for (int c = 0; c < 3; ++c)
+			out[b][c] = (float)(sum[b][c] * k[b]);
+}
+
 /* ---- GGX prefiltering ------------------------------------------------ */
 
 typedef struct GgxSample {
