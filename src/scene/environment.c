@@ -155,6 +155,104 @@ static bool read_ambient_fill(const AeronConfigNode* map, const char* what, floa
 	return true;
 }
 
+/* A three-number size, each above zero. */
+static bool read_size(const AeronConfigNode* map, const char* what, const char* key, float out[3],
+					  AeronConfigError* error) {
+	const AeronConfigNode* node = NULL;
+	if (!read_vec3(map, what, key, out, &node, error))
+		return false;
+	for (int i = 0; i < 3; ++i)
+		if (!(out[i] > 0.0f))
+			return env_error(error, node, "%s: '%s' values must be above 0", what, key);
+	return true;
+}
+
+static bool read_shape(const AeronConfigNode* map, const char* what, const char* key,
+					   AeronEnvironmentProbeShape* out, AeronConfigError* error) {
+	const AeronConfigNode* node = require_field(map, what, key, error);
+	if (!node)
+		return false;
+	const char* shape = AeronConfigNode_String(node, NULL);
+	if (shape && strcmp(shape, "box") == 0)
+		*out = AERON_ENV_PROBE_BOX;
+	else if (shape && strcmp(shape, "ellipsoid") == 0)
+		*out = AERON_ENV_PROBE_ELLIPSOID;
+	else
+		return env_error(error, node, "%s: '%s' must be 'box' or 'ellipsoid'", what, key);
+	return true;
+}
+
+static bool parse_probe(const AeronConfigNode* map, const char* owner, size_t index,
+						AeronEnvironmentProbeDefinition* probe, AeronConfigError* error) {
+	static const char* const fields[] = { "center",  "size",          "shape",
+										  "falloff", "parallax_size", "parallax_shape" };
+	char                     what[160];
+	snprintf(what, sizeof what, "%s probe %zu", owner, index);
+	if (AeronConfigNode_Type(map) != AERON_CONFIG_MAP)
+		return env_error(error, map, "%s must be a map", what);
+	if (!check_fields(map, what, fields, sizeof fields / sizeof fields[0], error))
+		return false;
+	const AeronConfigNode* falloff = AeronConfigNode_MapGet(map, "falloff");
+	if (!read_vec3(map, what, "center", probe->center, NULL, error) ||
+		!read_size(map, what, "size", probe->size, error) ||
+		!read_shape(map, what, "shape", &probe->shape, error) ||
+		!read_number(map, what, "falloff", true, 0.0, 1.0, &probe->falloff, error) ||
+		!read_size(map, what, "parallax_size", probe->parallax_size, error) ||
+		!read_shape(map, what, "parallax_shape", &probe->parallax_shape, error))
+		return false;
+	if (!(probe->falloff > 0.0f))
+		return env_error(error, falloff, "%s: 'falloff' must be above 0", what);
+	return true;
+}
+
+/* A probes package: its textures, grid and probes; no rotation, ambient or
+ * lights. */
+static bool parse_probes_package(const AeronConfigNode* map, const char* what,
+								 AeronEnvironmentDefinition* def, AeronConfigError* error) {
+	const AeronConfigNode* box = require_field(map, what, "grid_box", error);
+	if (!box)
+		return false;
+	char box_what[192];
+	snprintf(box_what, sizeof box_what, "%s grid_box", what);
+	static const char* const box_fields[] = { "center", "size" };
+	if (AeronConfigNode_Type(box) != AERON_CONFIG_MAP)
+		return env_error(error, box, "%s must be a map", box_what);
+	if (!check_fields(box, box_what, box_fields, 2, error) ||
+		!read_vec3(box, box_what, "center", def->grid_center, NULL, error) ||
+		!read_size(box, box_what, "size", def->grid_size, error))
+		return false;
+
+	const AeronConfigNode* resolution = require_field(map, what, "grid_resolution", error);
+	if (!resolution)
+		return false;
+	if (AeronConfigNode_Type(resolution) != AERON_CONFIG_SEQUENCE ||
+		AeronConfigNode_SequenceCount(resolution) != 3)
+		return env_error(error, resolution, "%s: 'grid_resolution' must be a sequence of three integers",
+						 what);
+	for (size_t i = 0; i < 3; ++i) {
+		const AeronConfigNode* axis  = AeronConfigNode_SequenceGet(resolution, i);
+		const int64_t          value = AeronConfigNode_Int(axis, 0);
+		if (AeronConfigNode_Type(axis) != AERON_CONFIG_INT || value < AERON_ENV_PROBE_GRID_MIN ||
+			value > AERON_ENV_PROBE_GRID_MAX)
+			return env_error(error, resolution, "%s: 'grid_resolution' values must be integers from %d to %d",
+							 what, AERON_ENV_PROBE_GRID_MIN, AERON_ENV_PROBE_GRID_MAX);
+		def->grid_resolution[i] = (uint32_t)value;
+	}
+
+	const AeronConfigNode* probes = require_field(map, what, "probes", error);
+	if (!probes)
+		return false;
+	const size_t count = AeronConfigNode_SequenceCount(probes);
+	if (AeronConfigNode_Type(probes) != AERON_CONFIG_SEQUENCE || count < 1 || count > AERON_ENV_MAX_PROBES)
+		return env_error(error, probes, "%s: 'probes' must be a sequence of 1 to %d probes", what,
+						 AERON_ENV_MAX_PROBES);
+	for (size_t i = 0; i < count; ++i)
+		if (!parse_probe(AeronConfigNode_SequenceGet(probes, i), what, i, &def->probes[i], error))
+			return false;
+	def->probe_count = (uint32_t)count;
+	return true;
+}
+
 float AeronEnvironment_NormalizeDegrees(float degrees) {
 	float value = fmodf(degrees, 360.0f);
 	if (value < 0.0f)
@@ -328,6 +426,10 @@ static bool parse_package(const char* name, const AeronConfigNode* map, AeronEnv
 		"kind",         "intensity",        "diffuse",  "diffuse_strength",
 		"ambient_fill", "rotation_degrees", "specular", "specular_strength",
 	};
+	static const char* const probes_fields[] = {
+		"kind",     "intensity",       "diffuse_strength", "specular_strength", "cubes", "grid",
+		"grid_box", "grid_resolution", "probes",
+	};
 
 	char what[160];
 	snprintf(what, sizeof what, "package '%s'", name);
@@ -350,8 +452,18 @@ static bool parse_package(const char* name, const AeronConfigNode* map, AeronEnv
 		if (!check_fields(map, what, lighting_fields, sizeof lighting_fields / sizeof lighting_fields[0],
 						  error))
 			return false;
+	} else if (kind_name && strcmp(kind_name, "probes") == 0) {
+		def->kind = AERON_ENV_KIND_PROBES;
+		return check_fields(map, what, probes_fields, sizeof probes_fields / sizeof probes_fields[0],
+							error) &&
+			   read_number(map, what, "intensity", true, 0.0, 16.0, &def->intensity, error) &&
+			   read_number(map, what, "diffuse_strength", true, 0.0, 4.0, &def->diffuse_strength, error) &&
+			   read_number(map, what, "specular_strength", true, 0.0, 4.0, &def->specular_strength, error) &&
+			   read_path(map, what, "cubes", def->cubes_path, sizeof def->cubes_path, error) &&
+			   read_path(map, what, "grid", def->grid_path, sizeof def->grid_path, error) &&
+			   parse_probes_package(map, what, def, error);
 	} else {
-		return env_error(error, kind, "%s: 'kind' must be 'full' or 'lighting'", what);
+		return env_error(error, kind, "%s: 'kind' must be 'full', 'lighting' or 'probes'", what);
 	}
 
 	if (!read_number(map, what, "intensity", true, 0.0, 16.0, &def->intensity, error) ||
@@ -481,14 +593,49 @@ static void yaml_vec3(YamlOut* y, const float v[3]) {
 	yaml_printf(y, "[%.9g, %.9g, %.9g]", (double)v[0], (double)v[1], (double)v[2]);
 }
 
+static const char* yaml_shape(AeronEnvironmentProbeShape shape) {
+	return shape == AERON_ENV_PROBE_ELLIPSOID ? "ellipsoid" : "box";
+}
+
+/* The rest of a probes package, after its kind and intensity. */
+static void format_probes(YamlOut* y, const AeronEnvironmentDefinition* d) {
+	yaml_printf(y, "    diffuse_strength: %.9g\n    specular_strength: %.9g\n    cubes: ",
+				(double)d->diffuse_strength, (double)d->specular_strength);
+	yaml_string(y, d->cubes_path);
+	yaml_printf(y, "\n    grid: ");
+	yaml_string(y, d->grid_path);
+	yaml_printf(y, "\n    grid_box: {center: ");
+	yaml_vec3(y, d->grid_center);
+	yaml_printf(y, ", size: ");
+	yaml_vec3(y, d->grid_size);
+	yaml_printf(y, "}\n    grid_resolution: [%u, %u, %u]\n    probes:\n", d->grid_resolution[0],
+				d->grid_resolution[1], d->grid_resolution[2]);
+	for (uint32_t i = 0; i < d->probe_count; ++i) {
+		const AeronEnvironmentProbeDefinition* p = &d->probes[i];
+		yaml_printf(y, "      - {center: ");
+		yaml_vec3(y, p->center);
+		yaml_printf(y, ", size: ");
+		yaml_vec3(y, p->size);
+		yaml_printf(y, ", shape: %s, falloff: %.9g,\n         parallax_size: ", yaml_shape(p->shape),
+					(double)p->falloff);
+		yaml_vec3(y, p->parallax_size);
+		yaml_printf(y, ", parallax_shape: %s}\n", yaml_shape(p->parallax_shape));
+	}
+}
+
 size_t AeronEnvironment_FormatPackageYaml(const AeronEnvironmentDefinition* d, char* out, size_t size) {
 	YamlOut y = { out, out ? size : 0, 0 };
 	if (out && size)
 		out[0] = '\0';
 	if (!d)
 		return 0;
-	yaml_printf(&y, "packages:\n  %s:\n    kind: %s\n    intensity: %.9g\n", d->name,
-				d->kind == AERON_ENV_KIND_FULL ? "full" : "lighting", (double)d->intensity);
+	static const char* const kinds[] = { "full", "lighting", "probes" };
+	yaml_printf(&y, "packages:\n  %s:\n    kind: %s\n    intensity: %.9g\n", d->name, kinds[d->kind],
+				(double)d->intensity);
+	if (d->kind == AERON_ENV_KIND_PROBES) {
+		format_probes(&y, d);
+		return y.length;
+	}
 	if (d->kind == AERON_ENV_KIND_FULL) {
 		yaml_printf(&y, "    radiance: ");
 		yaml_string(&y, d->radiance_path);
@@ -542,4 +689,84 @@ size_t AeronEnvironment_FormatPackageYaml(const AeronEnvironmentDefinition* d, c
 		}
 	}
 	return y.length;
+}
+
+/* ---- probe cells ------------------------------------------------------ */
+
+static float probe_volume(const AeronEnvironmentProbeDefinition* p) {
+	const float box = p->size[0] * p->size[1] * p->size[2];
+	return p->shape == AERON_ENV_PROBE_ELLIPSOID ? box * 0.5235988f : box; /* pi / 6 */
+}
+
+bool AeronEnvironment_BuildProbeCells(const AeronEnvironmentDefinition* d, AeronEnvironmentProbeCells* out) {
+	if (!out)
+		return false;
+	memset(out, 0, sizeof *out);
+	if (!d || d->kind != AERON_ENV_KIND_PROBES || d->probe_count == 0 ||
+		d->probe_count > AERON_ENV_MAX_PROBES)
+		return false;
+
+	/* Influence boxes, their union, and the probes smallest first (ties
+	 * by index). */
+	float    lo[AERON_ENV_MAX_PROBES][3], hi[AERON_ENV_MAX_PROBES][3], max[3];
+	uint32_t order[AERON_ENV_MAX_PROBES];
+	for (uint32_t i = 0; i < d->probe_count; ++i) {
+		for (int a = 0; a < 3; ++a) {
+			lo[i][a]    = d->probes[i].center[a] - 0.5f * d->probes[i].size[a];
+			hi[i][a]    = d->probes[i].center[a] + 0.5f * d->probes[i].size[a];
+			out->min[a] = i == 0 ? lo[i][a] : fminf(out->min[a], lo[i][a]);
+			max[a]      = i == 0 ? hi[i][a] : fmaxf(max[a], hi[i][a]);
+		}
+		uint32_t at = i;
+		for (; at > 0 && probe_volume(&d->probes[order[at - 1]]) > probe_volume(&d->probes[i]); --at)
+			order[at] = order[at - 1];
+		order[at] = i;
+	}
+	const float largest = fmaxf(max[0] - out->min[0], fmaxf(max[1] - out->min[1], max[2] - out->min[2]));
+	out->cell_size      = fmaxf(AERON_ENV_PROBE_CELL_MIN_SIZE, largest / AERON_ENV_PROBE_CELL_MAX_AXIS);
+	size_t cell_count   = 1;
+	for (int a = 0; a < 3; ++a) {
+		const float cells = ceilf((max[a] - out->min[a]) / out->cell_size);
+		out->dims[a]      = cells < 1.0f                            ? 1u
+							: cells > AERON_ENV_PROBE_CELL_MAX_AXIS ? AERON_ENV_PROBE_CELL_MAX_AXIS
+																	: (uint32_t)cells;
+		cell_count *= out->dims[a];
+	}
+	out->words = calloc(cell_count, sizeof *out->words);
+	if (!out->words)
+		return false;
+
+	for (uint32_t z = 0; z < out->dims[2]; ++z)
+		for (uint32_t y = 0; y < out->dims[1]; ++y)
+			for (uint32_t x = 0; x < out->dims[0]; ++x) {
+				const uint32_t cell[3] = { x, y, z };
+				float          cell_lo[3], cell_hi[3];
+				for (int a = 0; a < 3; ++a) {
+					cell_lo[a] = out->min[a] + (float)cell[a] * out->cell_size;
+					cell_hi[a] = cell_lo[a] + out->cell_size;
+				}
+				uint32_t word = 0, count = 0;
+				for (uint32_t k = 0; k < d->probe_count; ++k) {
+					const uint32_t i = order[k];
+					if (lo[i][0] >= cell_hi[0] || hi[i][0] <= cell_lo[0] || lo[i][1] >= cell_hi[1] ||
+						hi[i][1] <= cell_lo[1] || lo[i][2] >= cell_hi[2] || hi[i][2] <= cell_lo[2])
+						continue;
+					if (count < AERON_ENV_PROBE_CELL_PROBES)
+						word |= (i + 1u) << (8u * count);
+					++count;
+				}
+				out->words[((size_t)z * out->dims[1] + y) * out->dims[0] + x] = word;
+				if (count > out->most_probes)
+					out->most_probes = count;
+				if (count > AERON_ENV_PROBE_CELL_PROBES)
+					++out->overflow_cells;
+			}
+	return true;
+}
+
+void AeronEnvironment_FreeProbeCells(AeronEnvironmentProbeCells* cells) {
+	if (!cells)
+		return;
+	free(cells->words);
+	memset(cells, 0, sizeof *cells);
 }

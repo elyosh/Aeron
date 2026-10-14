@@ -8,8 +8,11 @@
  * package owns a visible sky (radiance cube), diffuse and specular
  * image-based lighting cubes, and up to four analytical directional lights,
  * each drawn as a visible sun. A `lighting` package only lights an enclosed
- * space with a diffuse cube. Texture paths are kept as written; the game
- * decides which VFS root and prefix they resolve against.
+ * space with a diffuse cube. A `probes` package belongs to a model: its
+ * reflection probes (a cube array) and its irradiance grid, placed in the
+ * model's frame, blended with the scene's environment where they do not
+ * apply. Texture paths are kept as written; the game decides which VFS
+ * root and prefix they resolve against.
  *
  * Cube-local directions use the authored cubemap frame: +X right, +Y up,
  * -Z forward. `rotation_degrees` is (yaw, pitch, roll) in that frame,
@@ -42,13 +45,20 @@ extern "C" {
 enum {
 	AERON_ENV_MAX_LIGHTS   = 4,
 	AERON_ENV_MAX_PACKAGES = 256,
-	AERON_ENV_NAME_MAX     = 64, /* includes the terminator */
-	AERON_ENV_PATH_MAX     = 256 /* includes the terminator */
+	AERON_ENV_NAME_MAX     = 64,  /* includes the terminator */
+	AERON_ENV_PATH_MAX     = 256, /* includes the terminator */
+	/* A probes package's cube array: 6 layers per probe, within the 256
+	 * array layers every Vulkan device has. */
+	AERON_ENV_MAX_PROBES = 42,
+	/* Irradiance grid points per axis. */
+	AERON_ENV_PROBE_GRID_MIN = 2,
+	AERON_ENV_PROBE_GRID_MAX = 64
 };
 
 typedef enum AeronEnvironmentKind {
 	AERON_ENV_KIND_FULL,
 	AERON_ENV_KIND_LIGHTING,
+	AERON_ENV_KIND_PROBES,
 } AeronEnvironmentKind;
 
 typedef enum AeronEnvironmentSunVisual {
@@ -74,6 +84,24 @@ typedef struct AeronEnvironmentLightDefinition {
 	float                     sprite_strength;                 /* sprite */
 } AeronEnvironmentLightDefinition;
 
+typedef enum AeronEnvironmentProbeShape {
+	AERON_ENV_PROBE_BOX,
+	AERON_ENV_PROBE_ELLIPSOID,
+} AeronEnvironmentProbeShape;
+
+/* A reflection probe, in the model frame (aeron axes), metres. `size` is
+ * the full extent (an ellipsoid's axes). Its weight falls from 1 to 0 over
+ * the outer `falloff` fraction of the influence. Reflections are projected
+ * onto the parallax volume, around the same centre. */
+typedef struct AeronEnvironmentProbeDefinition {
+	float                      center[3];
+	float                      size[3];
+	AeronEnvironmentProbeShape shape;
+	float                      falloff; /* (0, 1] */
+	float                      parallax_size[3];
+	AeronEnvironmentProbeShape parallax_shape;
+} AeronEnvironmentProbeDefinition;
+
 typedef struct AeronEnvironmentDefinition {
 	char                            name[AERON_ENV_NAME_MAX];
 	AeronEnvironmentKind            kind;
@@ -88,6 +116,16 @@ typedef struct AeronEnvironmentDefinition {
 	AeronEnvironmentLightDefinition lights[AERON_ENV_MAX_LIGHTS];
 	uint32_t                        light_count;
 	int32_t                         primary_light_index; /* -1 when none */
+	/* Probes packages: layer k of the cube array is probe k; the grid is
+	 * an axis-aligned box of resolution points, sampled as Blender's
+	 * volume probe (point i at (i + 1) / (resolution + 1) of the box). */
+	char                            cubes_path[AERON_ENV_PATH_MAX];
+	char                            grid_path[AERON_ENV_PATH_MAX];
+	float                           grid_center[3];
+	float                           grid_size[3];
+	uint32_t                        grid_resolution[3];
+	AeronEnvironmentProbeDefinition probes[AERON_ENV_MAX_PROBES];
+	uint32_t                        probe_count; /* 1 to AERON_ENV_MAX_PROBES */
 } AeronEnvironmentDefinition;
 
 /* Immutable set of parsed package definitions. */
@@ -135,6 +173,37 @@ float AeronEnvironment_NormalizeDegrees(float degrees);
  * output is truncated to `size`. */
 size_t AeronEnvironment_FormatPackageYaml(const AeronEnvironmentDefinition* definition, char* out,
 										  size_t size);
+
+/* ---- probe cells ------------------------------------------------------ */
+
+enum {
+	AERON_ENV_PROBE_CELL_PROBES   = 4,  /* probes kept per cell */
+	AERON_ENV_PROBE_CELL_MAX_AXIS = 64, /* cells per axis */
+};
+
+#define AERON_ENV_PROBE_CELL_MIN_SIZE 2.0f /* metres */
+
+/* Which probes a point may use, precomputed so a pixel tests at most
+ * AERON_ENV_PROBE_CELL_PROBES whatever the probe count. The cells cover
+ * the union of the probes' influence boxes (an ellipsoid counts as its
+ * box) with cubes of max(AERON_ENV_PROBE_CELL_MIN_SIZE, largest extent /
+ * AERON_ENV_PROBE_CELL_MAX_AXIS). A cell lists the probes whose influence
+ * box overlaps it, smallest volume first, at most four, in one word: byte k
+ * holds the k-th probe's index + 1, 0 when none. */
+typedef struct AeronEnvironmentProbeCells {
+	float     min[3];    /* model frame, metres */
+	float     cell_size; /* metres */
+	uint32_t  dims[3];
+	uint32_t* words;          /* dims[0] * dims[1] * dims[2]; x fastest, then y, then z */
+	uint32_t  most_probes;    /* most influence boxes overlapping one cell */
+	uint32_t  overflow_cells; /* cells overlapped by more than four (the four smallest kept) */
+} AeronEnvironmentProbeCells;
+
+/* Builds the cells of a probes package; false when it has no probes or
+ * memory runs out. Free with AeronEnvironment_FreeProbeCells. */
+bool AeronEnvironment_BuildProbeCells(const AeronEnvironmentDefinition* definition,
+									  AeronEnvironmentProbeCells*       out);
+void AeronEnvironment_FreeProbeCells(AeronEnvironmentProbeCells* cells);
 
 /* ---- package library ------------------------------------------------- */
 
