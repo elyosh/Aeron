@@ -140,7 +140,7 @@ not these.
     "roomParallax": true, "filled": true, "clipStart": 0.8, "clipEnd": 40.0 }
 ],
 "lightGrid": { "position": [0.0, 4.0, -10.0], "size": [40.0, 12.0, 60.0], "spacing": 4.0,
-               "resolution": [9, 2, 14] }
+               "resolution": [9, 2, 14], "keyLightShadow": 0.7 }
 ```
 
 In the model's frame, in metres, axis-aligned with it:
@@ -155,8 +155,11 @@ In the model's frame, in metres, axis-aligned with it:
   clipping);
 - the light grid: `position`, `size` (the zone it lights fully; its light
   fades out within one point spacing outside), `spacing` (about how far
-  apart its points are) and `resolution` (the points per axis that follow,
-  placed at (i + 1) / (resolution + 1) of the box).
+  apart its points are), `resolution` (the points per axis that follow,
+  placed at (i + 1) / (resolution + 1) of the box) and `keyLightShadow`
+  (when the scene's key light is in the bake, such as a hangar's ceiling
+  light: the part of the probe light its shadow removes, 0 to 1, default
+  0.7).
 
 Lights inside the grid's box are baked into the package and carry
 `baked` (see [Lights](#lights)).

@@ -255,8 +255,9 @@ bool AeronEnvironment_ParseProbeSet(const AeronConfigNode* map, const char* what
 	for (size_t i = 0; i < count; ++i)
 		if (!parse_probe(AeronConfigNode_SequenceGet(probes, i), what, i, &def->probes[i], error))
 			return false;
-	def->probe_count = (uint32_t)count;
-	return true;
+	def->probe_count      = (uint32_t)count;
+	def->key_light_shadow = 0.7f;
+	return read_number(map, what, "key_light_shadow", false, 0.0, 1.0, &def->key_light_shadow, error);
 }
 
 float AeronEnvironment_NormalizeDegrees(float degrees) {
@@ -434,7 +435,7 @@ static bool parse_package(const char* name, const AeronConfigNode* map, AeronEnv
 	};
 	static const char* const probes_fields[] = {
 		"kind",     "intensity",       "diffuse_strength", "specular_strength", "cubes", "grid",
-		"grid_box", "grid_resolution", "probes",
+		"grid_box", "grid_resolution", "probes",           "key_light_shadow",
 	};
 
 	char what[160];
@@ -645,6 +646,7 @@ static void format_probes(YamlOut* y, const AeronEnvironmentDefinition* d) {
 		yaml_vec3(y, p->parallax_size);
 		yaml_printf(y, ", parallax_shape: %s}\n", yaml_shape(p->parallax_shape));
 	}
+	yaml_printf(y, "    key_light_shadow: %.9g\n", (double)d->key_light_shadow);
 }
 
 size_t AeronEnvironment_FormatPackageYaml(const AeronEnvironmentDefinition* d, char* out, size_t size) {

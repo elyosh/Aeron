@@ -315,6 +315,7 @@ def blender_main(baker, scratch):
     other.aeron_flight.role = 'model'
     probe.aeron_probe.room_parallax = True
     probe.aeron_probe.filled = True
+    grid.aeron_probe.key_light_shadow = 0.4
     extension = probes.export_json(root)
     probes.restore(other, dict(extension, environmentProbe={"position": [1.0, 3.0, -2.0]}))
     bpy.context.view_layer.update()
@@ -324,6 +325,7 @@ def blender_main(baker, scratch):
           close(back["reflectionProbes"][1]["position"], extension["reflectionProbes"][0]["position"]) and
           close(back["reflectionProbes"][1]["size"], extension["reflectionProbes"][0]["size"]) and
           back["lightGrid"] == extension["lightGrid"] and back["lightGrid"]["spacing"] == 1.5 and
+          abs(back["lightGrid"]["keyLightShadow"] - 0.4) < 1e-6 and
           back["reflectionProbes"][1].get("roomParallax") and back["reflectionProbes"][1].get("filled") and
           any((p.matrix_world.translation - mathutils.Vector((1.0, 2.0, 3.0))).length < 1e-5 for p in restored),
           "probes, grid and an old environmentProbe go to the glTF and back: {} -> {}".format(extension, back))

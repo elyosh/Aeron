@@ -51,6 +51,7 @@ MAX_PROBES = 42  # one cube array within 256 array layers
 MAX_GRID_POINTS = 8192  # about 7 min of bake on a GPU
 GRID_RESOLUTION = (2, 64)
 GRID_SPACING = 4.0  # default metres between grid points
+KEY_LIGHT_SHADOW = 0.7  # the runtime's default
 FILL_TILE = 25.0  # Fill with Probes' target probe size, metres
 FILL_MAX_PROBES = 16
 FILL_FALLOFF = 0.2
@@ -87,6 +88,10 @@ class AeronProbeProperties(PropertyGroup):
         name="Spacing", default=GRID_SPACING, min=0.25, max=1000.0, subtype='DISTANCE', update=_spacing_update,
         description="About how far apart the light grid's points are. The points per axis follow from the "
                     "box's size, within {} points".format(8192))
+    key_light_shadow: FloatProperty(
+        name="Key Light Shadow", default=KEY_LIGHT_SHADOW, min=0.0, max=1.0, subtype='FACTOR',
+        description="When the scene's key light is in the bake (a hangar's ceiling light): the part of the "
+                    "probe light its shadow removes. The bake writes it to the package")
 
 
 # ---- the model's probes ------------------------------------------------------------
@@ -353,8 +358,9 @@ def restore(root, extension):
         probe.aeron_probe.filled = bool(item.get("filled", False))
     item = extension.get("lightGrid")
     if isinstance(item, dict):
-        _new_light_grid(root, root.matrix_world @ mathutils.Vector(common.from_gltf(item["position"])),
-                        common.extent_from_gltf(item["size"]), item.get("spacing", GRID_SPACING))
+        grid = _new_light_grid(root, root.matrix_world @ mathutils.Vector(common.from_gltf(item["position"])),
+                               common.extent_from_gltf(item["size"]), item.get("spacing", GRID_SPACING))
+        grid.aeron_probe.key_light_shadow = item.get("keyLightShadow", KEY_LIGHT_SHADOW)
 
 
 def export_json(root):
@@ -385,7 +391,8 @@ def export_json(root):
         r = grid_resolution(grid)
         out["lightGrid"] = {"position": common.to_gltf(relative.translation),
                             "size": common.extent_to_gltf([2.0 * abs(s) for s in relative.to_scale()]),
-                            "spacing": grid.aeron_probe.grid_spacing, "resolution": [r[0], r[2], r[1]]}
+                            "spacing": grid.aeron_probe.grid_spacing, "resolution": [r[0], r[2], r[1]],
+                            "keyLightShadow": grid.aeron_probe.key_light_shadow}
     return out
 
 
@@ -551,6 +558,7 @@ def write_job(path, root, probes, grid, probe_names, grid_names, invalid):
             _vec(item["center"]), _vec(item["size"]), ", ".join(str(r) for r in item["resolution"])))
         stream.write("grid_panoramas: [{}]\n".format(", ".join(grid_names)))
         stream.write("grid_invalid: [{}]\n".format(", ".join(str(i) for i in invalid)))
+        stream.write("key_light_shadow: {:.9g}\n".format(grid.aeron_probe.key_light_shadow))
 
 
 def write_mapping(path, key, package):
@@ -925,6 +933,7 @@ class OBJECT_PT_aeron_probe(Panel):
             r = grid_resolution(obj)
             layout.label(text="{} x {} x {} = {} points (at most {})".format(r[0], r[1], r[2], r[0] * r[1] * r[2],
                                                                           MAX_GRID_POINTS))
+            layout.prop(obj.aeron_probe, "key_light_shadow")
             layout.operator("aeron.fill_probes", icon='LIGHTPROBE_SPHERE')
         device = 'GPU' if _gpu_available(context) else 'CPU'
         layout.label(text="Bake: about {:.0f} min on the {}".format(math.ceil(bake_seconds(root, device) / 60.0),

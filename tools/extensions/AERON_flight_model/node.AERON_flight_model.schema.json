@@ -176,7 +176,8 @@
             "position": { "$ref": "#/$defs/vec3", "description": "In the model's frame, in metres." },
             "size": { "$ref": "#/$defs/vec3", "description": "The zone the grid lights fully, its full extent in metres." },
             "spacing": { "$ref": "#/$defs/positive", "description": "About how far apart its points are, in metres." },
-            "resolution": { "type": "array", "items": { "type": "integer", "minimum": 2, "maximum": 64 }, "minItems": 3, "maxItems": 3 }
+            "resolution": { "type": "array", "items": { "type": "integer", "minimum": 2, "maximum": 64 }, "minItems": 3, "maxItems": 3 },
+            "keyLightShadow": { "type": "number", "minimum": 0, "maximum": 1, "default": 0.7, "description": "When the scene's key light is in the bake (a hangar's ceiling light): the part of the probe light its shadow removes." }
           }
         }
       }

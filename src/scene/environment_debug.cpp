@@ -128,6 +128,11 @@ void slot_editor(AeronEnvironmentLibrary* library, EnvSlot* slot) {
 			ImGui::SliderFloat("Specular strength (relative)", &s->specular_strength, 0.0f, 4.0f, "%.3f");
 	if (s->kind == AERON_ENV_KIND_PROBES) {
 		/* Probes have no rotation, fill or lights. */
+		changed |= ImGui::SliderFloat("Key light shadow", &s->key_light_shadow, 0.0f, 1.0f, "%.2f");
+		if (ImGui::IsItemHovered())
+			ImGui::SetTooltip(
+				"When the scene's key light is in the bake (a hangar's ceiling light): the part "
+				"of the probe light its shadow removes");
 	} else if (ImGui::ColorEdit3("Ambient fill (linear)", s->ambient_fill,
 								 ImGuiColorEditFlags_Float | ImGuiColorEditFlags_HDR)) {
 		for (int c = 0; c < 3; ++c)

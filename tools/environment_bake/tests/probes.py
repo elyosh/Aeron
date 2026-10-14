@@ -101,7 +101,7 @@ def main():
             stream.write("probe_panoramas: [%s]\n" % ", ".join("probe_%d.hdr" % i for i in range(len(probes))))
             stream.write("grid_box: {center: [0, 0, 0], size: [20, 10, 10]}\ngrid_resolution: [3, 2, 2]\n")
             stream.write("grid_panoramas: [%s]\n" % ", ".join("grid_%d.hdr" % i for i in range(12)))
-            stream.write("grid_invalid: [4]\n")
+            stream.write("grid_invalid: [4]\nkey_light_shadow: 0.5\n")
 
         out = os.path.join(scratch, "flight", "environments", "models", "test")
         os.makedirs(out)
@@ -133,7 +133,8 @@ def main():
                     failures.append("invalid point not filled from its neighbours: %s" % filled)
             entry = open(os.path.join(out, "package.yaml")).read()
             for expected in ("kind: probes", 'cubes: "flight/environments/models/test/probes.ktx2"',
-                             'grid: "flight/environments/models/test/grid.ktx2"', "grid_resolution: [3, 2, 2]"):
+                             'grid: "flight/environments/models/test/grid.ktx2"', "grid_resolution: [3, 2, 2]",
+                             "key_light_shadow: 0.5"):
                 if expected not in entry:
                     failures.append("package.yaml lacks %r:\n%s" % (expected, entry))
             if "at most 4 probes in one" not in run.stdout:

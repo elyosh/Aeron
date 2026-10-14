@@ -768,7 +768,8 @@ static bool job_path(const char* job, const AeronConfigNode* node, char out[PROB
 /* Reads a probes job; prints why and returns false when it is wrong. */
 static bool load_probe_job(const char* path, ProbeJob* job) {
 	static const char* const fields[] = { "probes",          "probe_panoramas", "grid_box",
-										  "grid_resolution", "grid_panoramas",  "grid_invalid" };
+										  "grid_resolution", "grid_panoramas",  "grid_invalid",
+										  "key_light_shadow" };
 	memset(job, 0, sizeof *job);
 	AeronVfs*        vfs    = NULL;
 	AeronConfigFile* config = load_yaml(path, &vfs);

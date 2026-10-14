@@ -129,6 +129,9 @@ typedef struct AeronEnvironmentDefinition {
 	uint32_t                        grid_resolution[3];
 	AeronEnvironmentProbeDefinition probes[AERON_ENV_MAX_PROBES];
 	uint32_t                        probe_count; /* 1 to AERON_ENV_MAX_PROBES */
+	/* When the scene's key light is in the bake (a hangar's ceiling light),
+	 * the part of the probe light its shadow removes, 0-1 (default 0.7). */
+	float                           key_light_shadow;
 } AeronEnvironmentDefinition;
 
 /* A set of parsed package definitions, fixed once in use. */
@@ -161,10 +164,10 @@ bool AeronEnvironment_ParseLights(const AeronConfigNode* lights, const char* own
 								  AeronEnvironmentLightDefinition out[AERON_ENV_MAX_LIGHTS],
 								  uint32_t* out_count, int32_t* out_primary, AeronConfigError* error);
 
-/* Reads the `grid_box`, `grid_resolution` and `probes` fields of a map with
- * the probes package schema into `def`, leaving its other fields (also used
- * by tools whose map holds other fields; the caller checks those). `what`
- * names the map in error messages. */
+/* Reads the `grid_box`, `grid_resolution`, `probes` and `key_light_shadow`
+ * fields of a map with the probes package schema into `def`, leaving its
+ * other fields (also used by tools whose map holds other fields; the caller
+ * checks those). `what` names the map in error messages. */
 bool AeronEnvironment_ParseProbeSet(const AeronConfigNode* map, const char* what,
 									AeronEnvironmentDefinition* def, AeronConfigError* error);
 
