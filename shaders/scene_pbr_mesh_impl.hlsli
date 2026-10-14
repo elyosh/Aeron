@@ -653,8 +653,20 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
     float3 ao_b = -4.7951f * albedo + 0.6417f;
     float3 ao_c = 2.7552f * albedo + 0.6903f;
     float3 ao_ambient = max(ao, ((ao * ao_a + ao_b) * ao + ao_c) * ao);
+    /* A key light already in the probes' bake lights only outside their
+     * grid. Inside, its shadow darkens the probe light coming from its side
+     * (N.L), as an object between that light and the surface would. */
+    float3 key_color = sun_color;
+#if AERON_PBR_PROBES
+    float key_occlusion = 1.0f;
+    if (key_in_probes != 0.0f) {
+        key_color *= 1.0f - grid_weight;
+        key_occlusion = 1.0f - key_probe_shadow * grid_weight * saturate(dot(N, L)) * (1.0f - shadow_visibility);
+        environment_diffuse_rgb *= key_occlusion;
+    }
+#endif
     float3 base_rgb = albedo *
-        ((sun_color * lambert_term * shadow_visibility + extra_rgb) * ao_direct + ambient_rgb * ao_ambient);
+        ((key_color * lambert_term * shadow_visibility + extra_rgb) * ao_direct + ambient_rgb * ao_ambient);
 
     /* ===== Metallic-roughness ==================================== */
     PbrMaterialParams mp;
@@ -739,6 +751,7 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
     float3 probe_radiance;
     float  probe_coverage = probe_specular(probe_point, probe_model_direction(R_ibl), mp.roughness, grid_basis,
                                            grid_luminance, grid_weight, probe_radiance);
+    probe_radiance *= key_occlusion;
     bool   environment_specular = fs_environment_params.y > 0.0f && fs_environment_params.z >= 1.0f;
     if (probe_coverage > 0.0f || environment_specular) {
         float  ndotv_ibl = saturate(dot(N_spec, V));
@@ -780,7 +793,7 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
     float  G_term;
     float3 spec_brdf = cook_torrance_spec(N_spec, V, L, mp, G_term);
     float3 spec_rgb  = spec_brdf
-                     * (sun_color * mp.spec_intensity)
+                     * (key_color * mp.spec_intensity)
                      * shadow_visibility;
 
     /* Clustered punctual lights (laser bolts, explosions, engine

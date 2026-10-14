@@ -24,7 +24,7 @@ typedef struct CaptureBenchmarkConfig {
 /* game_scene instance roles: a lit ship, the cockpit at the screen_test eye
  * (its own receiver-local shadow, casts none), or the craft's exterior at
  * the same place, hidden and casting only (as in the game's cockpit view). */
-enum { CAPTURE_ROLE_SHIP, CAPTURE_ROLE_COCKPIT, CAPTURE_ROLE_EXTERIOR };
+enum { CAPTURE_ROLE_SHIP, CAPTURE_ROLE_COCKPIT, CAPTURE_ROLE_EXTERIOR, CAPTURE_ROLE_HANGAR };
 
 /* Highest game_scene instance markings value. */
 #define CAPTURE_MAX_MARKINGS 255
@@ -66,6 +66,9 @@ typedef struct CaptureGameScene {
 	/* Scene illuminance per lux of the models' authored lights (candela;
 	 * 0 = off), as point_lights.model_light_intensity in the game. */
 	float                    model_light_intensity;
+	/* >= 0: the sun is in the probe sets' bake and its shadow removes this
+	 * share of the probe light (the game's hangar ceiling light); < 0: off. */
+	float key_probe_shadow;
 	/* FSR temporal upscaling, as the game's temporal_upscaling settings;
 	 * benchmarks only (output depends on frame history), without MSAA. */
 	AeronTemporalMode        temporal_mode;

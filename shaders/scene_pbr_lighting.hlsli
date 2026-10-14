@@ -35,8 +35,11 @@ struct PbrMaterialParams
  * Pushed once per pass by the host. */
 cbuffer PbrLightFS : register(AERON_PBR_LIGHT_UNIFORM_REGISTER, space3)
 {
-    float reserved_sun_gain; /* formerly the sun's diffuse gain */
-    float reserved_spec_mul; /* formerly the specular multiplier */
+    /* Nonzero: the key light is in the probe sets' bake (a hangar's
+     * ceiling light). Inside a probe grid it then lights nothing and its
+     * shadow removes `key_probe_shadow` (0-1) of the probe light. */
+    float key_in_probes;
+    float key_probe_shadow;
     float debug_isolate_term;
     float reserved_wrap;     /* formerly the wrap-lighting amount */
     float reserved_xvt; /* formerly the XvT flat-shading switch */

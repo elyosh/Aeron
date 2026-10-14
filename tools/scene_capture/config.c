@@ -303,14 +303,17 @@ static int load_game_instances(const AeronConfigNode* list, CaptureConfig* confi
 		}
 		const AeronConfigNode* role_node = AeronConfigNode_MapGet(item, "role");
 		const char*            role      = role_node ? AeronConfigNode_String(role_node, NULL) : "ship";
-		if (!role || (strcmp(role, "ship") && strcmp(role, "cockpit") && strcmp(role, "exterior"))) {
-			fprintf(stderr, "game_scene.instances[%zu].role must be ship, cockpit or exterior\n", i);
+		if (!role || (strcmp(role, "ship") && strcmp(role, "hangar") && strcmp(role, "cockpit") &&
+					  strcmp(role, "exterior"))) {
+			fprintf(stderr, "game_scene.instances[%zu].role must be ship, hangar, cockpit or exterior\n", i);
 			return 0;
 		}
-		out->role = !strcmp(role, "cockpit")	 ? CAPTURE_ROLE_COCKPIT
+		out->role = !strcmp(role, "cockpit")    ? CAPTURE_ROLE_COCKPIT
 					: !strcmp(role, "exterior") ? CAPTURE_ROLE_EXTERIOR
+					: !strcmp(role, "hangar")   ? CAPTURE_ROLE_HANGAR
 												: CAPTURE_ROLE_SHIP;
-		if (out->role != CAPTURE_ROLE_SHIP && !config->screen_test) {
+		if ((out->role == CAPTURE_ROLE_COCKPIT || out->role == CAPTURE_ROLE_EXTERIOR) &&
+			!config->screen_test) {
 			fprintf(stderr, "game_scene cockpit and exterior instances need screen_test's eye\n");
 			return 0;
 		}
@@ -336,10 +339,13 @@ static int load_game_instances(const AeronConfigNode* list, CaptureConfig* confi
 		}
 		const AeronConfigNode* position = AeronConfigNode_MapGet(item, "position");
 		const AeronConfigNode* rotation = AeronConfigNode_MapGet(item, "rotation_degrees");
-		if ((out->role == CAPTURE_ROLE_SHIP && !vec3(position, out->position)) ||
+		if (((out->role == CAPTURE_ROLE_SHIP || out->role == CAPTURE_ROLE_HANGAR) &&
+			 !vec3(position, out->position)) ||
 			(rotation && !vec3(rotation, out->rotation))) {
-			fprintf(stderr, "game_scene.instances[%zu]: a ship needs position: [x, y, z]; "
-							"rotation_degrees is [yaw, pitch, roll]\n", i);
+			fprintf(stderr,
+					"game_scene.instances[%zu]: a ship or hangar needs position: [x, y, z]; "
+					"rotation_degrees is [yaw, pitch, roll]\n",
+					i);
 			return 0;
 		}
 	}
@@ -394,6 +400,7 @@ static int load_game_scene(AeronVfs* vfs, const AeronConfigFile* yaml, CaptureCo
 										"instances",
 										"cockpit_follows_camera",
 										"model_light_intensity",
+										"key_probe_shadow",
 										"temporal_upscaling",
 										"cluster_debug",
 										"environment" };
@@ -453,6 +460,16 @@ static int load_game_scene(AeronVfs* vfs, const AeronConfigFile* yaml, CaptureCo
 			return 0;
 		}
 		game->model_light_intensity = (float)value;
+	}
+	game->key_probe_shadow                  = -1.0f;
+	const AeronConfigNode* key_probe_shadow = AeronConfigNode_MapGet(node, "key_probe_shadow");
+	if (key_probe_shadow) {
+		const double value = AeronConfigNode_Float(key_probe_shadow, NAN);
+		if (!isfinite(value) || value < 0 || value > 1) {
+			fprintf(stderr, "game_scene.key_probe_shadow must be 0..1\n");
+			return 0;
+		}
+		game->key_probe_shadow = (float)value;
 	}
 	if (!game_bool(node, "ssao", 1, &ssao) || !game_bool(node, "shadows", 1, &shadows))
 		return 0;

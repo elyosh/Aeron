@@ -600,7 +600,8 @@ static void add_game_instances(AeronScene3D* scene, const Fixture* f, const Aero
 			.cull_mode = (AeronCullMode)f->config.cull_mode,
 			.variant   = in->markings > 0 ? (uint32_t)in->markings : 0u,
 		};
-		if (in->role == CAPTURE_ROLE_SHIP)
+		const int placed = in->role == CAPTURE_ROLE_SHIP || in->role == CAPTURE_ROLE_HANGAR;
+		if (placed)
 			place_ship(instance.transform, in);
 		else
 			place_screen_test_model(instance.transform, &f->config);
@@ -608,10 +609,14 @@ static void add_game_instances(AeronScene3D* scene, const Fixture* f, const Aero
 		memcpy(instance.prev_transform, instance.transform, sizeof instance.transform);
 		/* When the craft turns, the cockpit and the hidden exterior turn
 		 * with the view; when the pilot looks around, they stay put. */
-		if (in->role != CAPTURE_ROLE_SHIP && f->config.game.cockpit_follows_camera) {
+		if (!placed && f->config.game.cockpit_follows_camera) {
 			attach_to_camera(instance.transform, camera);
 			attach_to_camera(instance.prev_transform, previous_camera);
 		}
+		/* As flight.c submits the hangar: it receives the ships' shadows but
+		 * does not cast into its ceiling light. */
+		if (in->role == CAPTURE_ROLE_HANGAR)
+			instance.shadow_flags = AERON_SCENE_INSTANCE_NO_CAST_SHADOW;
 		/* As flight.c submits the cockpit view's cockpit and hidden exterior. */
 		if (in->role == CAPTURE_ROLE_EXTERIOR) {
 			instance.shadow_flags = AERON_SCENE_INSTANCE_EXCLUDE_FROM_RECEIVER_LOCAL_SHADOW;
@@ -665,8 +670,9 @@ static void add_game_instances(AeronScene3D* scene, const Fixture* f, const Aero
 static void set_game_lighting(AeronScene3D* scene, const CaptureConfig* config) {
 	const CaptureGameScene* game = &config->game;
 	float                   light[23][4] = {
+		[0] = { game->key_probe_shadow >= 0 ? 1.0f : 0.0f, fmaxf(game->key_probe_shadow, 0.0f), 0, 0 },
 		[1] = { 0, game->ssao.ssao_intensity, game->ssao.ssao_power, 0 }, /* reserved, AO, reserved */
-		[2] = { 0, game->ssao.ssao_direct, 1, 0 },                      /* reserved, AO, spec_geom_adapt */
+		[2] = { 0, game->ssao.ssao_direct, 1, 0 },                        /* reserved, AO, spec_geom_adapt */
 	};
 	for (int k = 0; k < 3; ++k) {
 		light[4][k] = game->sun_direction[k];
