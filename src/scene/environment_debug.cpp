@@ -34,7 +34,13 @@ void texture_row(const AeronEnvironmentLibrary* library, const char* label, cons
 	if (!path[0])
 		return;
 	const EnvTexture* e = find_texture(library, path);
-	if (e && e->texture)
+	if (e && e->texture && e->kind == ENV_TEXTURE_GRID)
+		ImGui::Text("%s: %s (%ux%ux%u points, %.1f MiB)", label, path, e->grid[0], e->grid[1], e->grid[2],
+					(double)e->bytes / (1024.0 * 1024.0));
+	else if (e && e->texture && e->kind == ENV_TEXTURE_CUBE_ARRAY)
+		ImGui::Text("%s: %s (%d cubes, %d px, %d levels, %.1f MiB)", label, path, e->layers, e->size,
+					e->level_count, (double)e->bytes / (1024.0 * 1024.0));
+	else if (e && e->texture)
 		ImGui::Text("%s: %s (%d px, %d levels, %.1f MiB)", label, path, e->size, e->level_count,
 					(double)e->bytes / (1024.0 * 1024.0));
 	else
@@ -117,19 +123,23 @@ void slot_editor(AeronEnvironmentLibrary* library, EnvSlot* slot) {
 	 * are relative adjustments, 1 = physically consistent. */
 	changed |= ImGui::SliderFloat("Intensity", &s->intensity, 0.0f, 16.0f, "%.3f");
 	changed |= ImGui::SliderFloat("Diffuse strength (relative)", &s->diffuse_strength, 0.0f, 4.0f, "%.3f");
-	if (s->specular_path[0])
+	if (s->specular_path[0] || s->kind == AERON_ENV_KIND_PROBES)
 		changed |=
 			ImGui::SliderFloat("Specular strength (relative)", &s->specular_strength, 0.0f, 4.0f, "%.3f");
-	if (ImGui::ColorEdit3("Ambient fill (linear)", s->ambient_fill,
-						  ImGuiColorEditFlags_Float | ImGuiColorEditFlags_HDR)) {
+	if (s->kind == AERON_ENV_KIND_PROBES) {
+		/* Probes have no rotation, fill or lights. */
+	} else if (ImGui::ColorEdit3("Ambient fill (linear)", s->ambient_fill,
+								 ImGuiColorEditFlags_Float | ImGuiColorEditFlags_HDR)) {
 		for (int c = 0; c < 3; ++c)
 			s->ambient_fill[c] =
 				s->ambient_fill[c] < 0.0f ? 0.0f : (s->ambient_fill[c] > 4.0f ? 4.0f : s->ambient_fill[c]);
 		changed = true;
 	}
-	changed |= ImGui::SliderFloat("Yaw", &s->rotation_degrees[0], 0.0f, 360.0f, "%.1f deg");
-	changed |= ImGui::SliderFloat("Pitch", &s->rotation_degrees[1], 0.0f, 360.0f, "%.1f deg");
-	changed |= ImGui::SliderFloat("Roll", &s->rotation_degrees[2], 0.0f, 360.0f, "%.1f deg");
+	if (s->kind != AERON_ENV_KIND_PROBES) {
+		changed |= ImGui::SliderFloat("Yaw", &s->rotation_degrees[0], 0.0f, 360.0f, "%.1f deg");
+		changed |= ImGui::SliderFloat("Pitch", &s->rotation_degrees[1], 0.0f, 360.0f, "%.1f deg");
+		changed |= ImGui::SliderFloat("Roll", &s->rotation_degrees[2], 0.0f, 360.0f, "%.1f deg");
+	}
 	for (uint32_t i = 0; i < s->light_count; ++i)
 		changed |= light_editor(slot, i);
 	if (changed) {
@@ -198,10 +208,17 @@ void draw_tool(int* open, void* user) {
 			continue;
 		}
 		const AeronEnvironmentDefinition* d = slot->package.definition;
-		ImGui::Text("Kind: %s", d->kind == AERON_ENV_KIND_FULL ? "full" : "lighting");
+		static const char* const          kinds[] = { "full", "lighting", "probes" };
+		ImGui::Text("Kind: %s", kinds[d->kind]);
 		texture_row(library, "Radiance", d->radiance_path);
 		texture_row(library, "Diffuse", d->diffuse_path);
 		texture_row(library, "Specular", d->specular_path);
+		texture_row(library, "Probes", d->cubes_path);
+		texture_row(library, "Grid", d->grid_path);
+		if (d->kind == AERON_ENV_KIND_PROBES)
+			ImGui::Text("%u probes, buffer %.1f KiB, %u cells over %d probes", d->probe_count,
+						(double)slot->probe_buffer_bytes / 1024.0, slot->probe_overflow_cells,
+						AERON_ENV_PROBE_CELL_PROBES);
 		if (slot->reference.has_rotation)
 			ImGui::Text("Reference rotation: %.1f %.1f %.1f", (double)slot->reference.rotation_degrees[0],
 						(double)slot->reference.rotation_degrees[1],

@@ -249,7 +249,35 @@ typedef struct AeronEnvironmentPackage {
 	AeronEnvironmentLight      lights[AERON_ENV_MAX_LIGHTS];
 	uint32_t                   light_count;
 	int32_t                    primary_light_index; /* -1 when none */
+	/* Probes packages (NULL otherwise): the probes' cube array (probe k in
+	 * layer k), the irradiance grid as a 3D RGBA16F texture of rx x ry x
+	 * 3 rz texels (slab c, z from c rz, holds colour channel c's four L1
+	 * coefficients), and the set buffer below. */
+	AeronTexture* probe_cubes;
+	AeronTexture* probe_grid;
+	AeronBuffer*  probe_buffer;
+	uint32_t      probe_mip_count;
+	/* The set's extent in the model frame, metres: its probes' influence
+	 * boxes and its grid box. */
+	float probe_bounds_min[3];
+	float probe_bounds_max[3];
 } AeronEnvironmentPackage;
+
+/* The set buffer of a probes package, uint4 elements (floats as bits):
+ *   [0]            cells min xyz (model frame, metres), 1 / cell size
+ *   [1]            cell dims xyz, probe count (uints)
+ *   [2 + 3k]       probe k: centre xyz, 1 / falloff
+ *   [2 + 3k + 1]   probe k: 1 / half size xyz, cube array layer (uint)
+ *   [2 + 3k + 2]   probe k: parallax half size xyz, shapes (uint: bit 0
+ *                  influence ellipsoid, bit 1 parallax ellipsoid)
+ *   [2 + 3N ...]   the cell words (AeronEnvironmentProbeCells), four per
+ *                  element, x fastest, then y, then z. */
+enum { AERON_ENV_PROBE_BUFFER_HEADER = 2, AERON_ENV_PROBE_BUFFER_RECORD = 3 };
+
+/* Prepared probes packages (textures and buffers) above this size are
+ * logged as a warning: probes cost about 450 KB each, so many probe-owning
+ * models add up. */
+#define AERON_ENV_WARN_BYTES ((uint64_t)256 << 20)
 
 typedef struct AeronEnvironmentLibrary AeronEnvironmentLibrary;
 
