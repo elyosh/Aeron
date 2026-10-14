@@ -1061,6 +1061,14 @@ endif()
 
 if(AERON_BUILD_TOOLS)
     add_subdirectory(tools/environment_bake)
+
+    # Tests cube arrays and 3D textures: KTX2 round trip, uploads, readback.
+    add_executable(aeron_texture_layers_test tests/texture_layers_test.c)
+    target_link_libraries(aeron_texture_layers_test PRIVATE aeron_scene imgbake)
+    set_target_properties(aeron_texture_layers_test PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
+    file(RELATIVE_PATH TEXTURE_TEST_SHADER_DIR "${CMAKE_BINARY_DIR}" "${AERON_SHADER_OUTPUT_DIR}")
+    target_compile_definitions(aeron_texture_layers_test PRIVATE TEST_SHADER_DIR="${TEXTURE_TEST_SHADER_DIR}")
 endif()
 
 if(AERON_BUILD_TOOLS OR AERON_BUILD_SCENE_CAPTURE)

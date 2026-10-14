@@ -126,7 +126,7 @@ bool write_ktx2_bc6h_cubemap_with_generated_mips(const char* path, int face_size
 	}
 
 	if (ok) {
-		ok = write_ktx2_bc6h_levels(path, 6, levels, n, zstd);
+		ok = write_ktx2_bc6h_levels(path, 6, 0, levels, n, zstd);
 	}
 
 	for (int i = 0; i < n; ++i) {

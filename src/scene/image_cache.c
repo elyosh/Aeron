@@ -213,7 +213,7 @@ void Aeron_ImageCacheClearOverrides(AeronImageCache* cache) {
 /* `as_array` creates a 2D array texture of the layers of every part, in
  * order (one layer for a part that is not a KTX2 array); the parts must
  * agree in size, format and level count. Otherwise the single part's
- * texture, of which a KTX2 array is rejected. */
+ * texture: 2D, cube or cube array; a KTX2 2D array is rejected. */
 static AeronTexture* upload_ktx2(AeronCommandBuffer* cmd, const Ktx2* const* parts, uint32_t part_count,
 								 bool as_array, const char* debug_name) {
 	if (!cmd || !parts || !part_count || !parts[0] || (!as_array && part_count != 1))
@@ -234,8 +234,10 @@ static AeronTexture* upload_ktx2(AeronCommandBuffer* cmd, const Ktx2* const* par
 		}
 		layers += ktx2_layer_count(part) > 0 ? ktx2_layer_count(part) : (as_array ? 1 : 0);
 	}
-	if (w <= 0 || h <= 0 || nl <= 0 || (layers > 0 && !as_array) || (as_array && faces != 1))
+	if (w <= 0 || h <= 0 || nl <= 0 || (layers > 0 && !as_array && faces != 6) || (as_array && faces != 1))
 		return NULL;
+	/* Slices per level: the array's layers, or each cube's faces. */
+	const int slices = as_array ? layers : faces * (layers > 0 ? layers : 1);
 
 	AeronTexture* tex = Aeron_CreateTexture(&(AeronTextureDesc) {
 		.width       = w,
@@ -244,7 +246,7 @@ static AeronTexture* upload_ktx2(AeronCommandBuffer* cmd, const Ktx2* const* par
 		.format      = ktx2_format(ktx),
 		.usage       = AERON_TEXTURE_USAGE_SAMPLED | AERON_TEXTURE_USAGE_TRANSFER_DST,
 		.cube        = !as_array && faces == 6,
-		.layer_count = as_array ? layers : 0,
+		.layer_count = layers,
 		.debug_name  = debug_name,
 	});
 	if (!tex) {
@@ -254,7 +256,7 @@ static AeronTexture* upload_ktx2(AeronCommandBuffer* cmd, const Ktx2* const* par
 	}
 
 	/* Arrays walk each part's layers like faces. */
-	const uint64_t upload_count64 = (uint64_t)nl * (uint64_t)(as_array ? layers : faces);
+	const uint64_t upload_count64 = (uint64_t)nl * (uint64_t)slices;
 	if (upload_count64 == 0 || upload_count64 > UINT32_MAX ||
 		upload_count64 > SIZE_MAX / sizeof(AeronTextureUploadDesc)) {
 		Aeron_LogError("aeron.scene", "invalid KTX2 mip/face count (%s)",
@@ -273,7 +275,7 @@ static AeronTexture* upload_ktx2(AeronCommandBuffer* cmd, const Ktx2* const* par
 	int      first_layer  = 0;
 	for (uint32_t p = 0; p < part_count; p++) {
 		const int part_faces =
-			as_array ? (ktx2_layer_count(parts[p]) > 0 ? ktx2_layer_count(parts[p]) : 1) : faces;
+			as_array ? (ktx2_layer_count(parts[p]) > 0 ? ktx2_layer_count(parts[p]) : 1) : slices;
 		for (int i = 0; i < nl; i++) {
 			for (int f = 0; f < part_faces; f++) {
 				Ktx2Level lv = ktx2_level_face(parts[p], i, f);

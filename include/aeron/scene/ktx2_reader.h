@@ -10,7 +10,8 @@
  *   - 2D textures (faceCount == 1, layerCount == 0, pixelDepth in {0,1})
  *   - 2D arrays (faceCount == 1, layerCount >= 1). Layers in each KTX2
  *     level are stored back-to-back; ktx2_level_face() lifts one layer.
- *   - Cube maps (faceCount == 6, layerCount in {0,1}, pixelDepth in {0,1}).
+ *   - Cube maps (faceCount == 6, layerCount 0) and cube arrays
+ *     (faceCount == 6, layerCount >= 1), pixelDepth in {0,1}.
  *   - Every level's (uncompressed) size must equal the block math for its
  *     dimensions, faces and layers.
  *     Cube faces in each KTX2 level are stored back-to-back in the
@@ -91,7 +92,7 @@ int ktx2_level_count(const Ktx2* k);
 int ktx2_face_count(const Ktx2* k);
 
 /* Header layerCount: 0 for a non-array texture, otherwise the number of
- * 2D-array layers. */
+ * 2D-array layers or of cubes in a cube array. */
 int ktx2_layer_count(const Ktx2* k);
 
 /* Returns the level's data view. For cube maps, this is the full
@@ -100,14 +101,12 @@ int ktx2_layer_count(const Ktx2* k);
  * indices are progressively smaller mips. */
 Ktx2Level ktx2_level(const Ktx2* k, int level);
 
-/* Returns one cube face of `level`, or one layer of a 2D array.
- * `face` ∈ [0, ktx2_face_count()), or [0, ktx2_layer_count()) for arrays.
- * The returned `data` points into the same blob ktx2_level returns;
- * face data is stored contiguously level-by-level, so face 0..5 of
- * level 0 land back-to-back, then face 0..5 of level 1, etc.
- * For non-cube textures (face_count == 1), face=0 is equivalent to
- * ktx2_level. */
-Ktx2Level ktx2_level_face(const Ktx2* k, int level, int face);
+/* Returns one slice of `level`: slice = layer * ktx2_face_count() + face,
+ * so a cube face, a 2D-array layer, or a face of a cube-array layer. The
+ * returned `data` points into the same blob ktx2_level returns; a level's
+ * slices are stored back-to-back (faces 0..5 of layer 0, then of layer
+ * 1, ...). For a plain 2D texture, slice 0 is the whole level. */
+Ktx2Level ktx2_level_face(const Ktx2* k, int level, int slice);
 
 /* True when the format is a block-compressed BC family (BC1..7).
  * Used by callers to choose the upload path's row stride math

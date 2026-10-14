@@ -6,7 +6,8 @@
  *
  * Subset emitted (matches what the runtime reader accepts):
  *   - 2D (faceCount=1) or cubemap (faceCount=6), single layer; the
- *     cooker's buffer writers also emit 2D arrays (layerCount ≥ 1).
+ *     cooker's buffer writers also emit 2D arrays (layerCount ≥ 1), and
+ *     the explicit-level writers cube arrays.
  *   - supercompressionScheme=0 (raw) or 2 (zstd).
  *   - vkFormat in { 37 R8G8B8A8_UNORM, 43 R8G8B8A8_SRGB,
  *                  97 R16G16B16A16_SFLOAT, 141 BC5_UNORM_BLOCK,
@@ -83,15 +84,17 @@ bool write_ktx2_rgba_mips(const char* path, const Ktx2WriteLevel* levels, int le
 						  bool zstd);
 
 /* Write explicit levels, for content whose mips are not a box chain
- * (prefiltered environment cubes). `face_count` is 1 or 6; each level's
- * `data` holds its faces back to back in KTX2 face order.
+ * (prefiltered environment cubes). `face_count` is 1 or 6; `layer_count`
+ * 0 for one image, else the number of layers (a cube array with 6 faces).
+ * Each level's `data` holds its slices back to back: the faces of layer 0
+ * in KTX2 face order, then of layer 1, and so on.
  *   - bc6h: BC6H unsigned-float blocks (16 bytes per 4×4), from
  *     bc6h_codec_encode_image.
  *   - rgba16f: IEEE half-float RGBA, 8 bytes per pixel. */
-bool write_ktx2_bc6h_levels(const char* path, int face_count, const Ktx2WriteLevel* levels, int level_count,
-							bool zstd);
-bool write_ktx2_rgba16f_levels(const char* path, int face_count, const Ktx2WriteLevel* levels, int level_count,
-							   bool zstd);
+bool write_ktx2_bc6h_levels(const char* path, int face_count, int layer_count, const Ktx2WriteLevel* levels,
+							int level_count, bool zstd);
+bool write_ktx2_rgba16f_levels(const char* path, int face_count, int layer_count,
+							   const Ktx2WriteLevel* levels, int level_count, bool zstd);
 
 /* Write a BC7-compressed KTX2. Each level's `data` must already be
  * a packed BC7 block stream (16 bytes per 4×4 block, ceil(w/4) ×

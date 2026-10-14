@@ -2716,6 +2716,25 @@ int Aeron_UploadBufferBatchCmd(AeronCommandBuffer* command_buffer, const AeronBu
 	return 1;
 }
 
+/* The SDL texture type `desc` creates and its layer count or depth (cube
+ * arrays: 6 per cube). Returns 0 for a 3D texture with cube faces or
+ * layers. */
+static int Aeron_TextureDescType(const AeronTextureDesc* desc, SDL_GPUTextureType* type, uint32_t* layers) {
+	if (desc->depth > 0) {
+		*type   = SDL_GPU_TEXTURETYPE_3D;
+		*layers = (uint32_t)desc->depth;
+		return !desc->cube && desc->layer_count <= 0;
+	}
+	if (desc->cube) {
+		*type   = desc->layer_count > 0 ? SDL_GPU_TEXTURETYPE_CUBE_ARRAY : SDL_GPU_TEXTURETYPE_CUBE;
+		*layers = desc->layer_count > 0 ? 6u * (uint32_t)desc->layer_count : 6u;
+		return desc->layer_count <= INT_MAX / 6;
+	}
+	*type   = desc->layer_count > 0 ? SDL_GPU_TEXTURETYPE_2D_ARRAY : SDL_GPU_TEXTURETYPE_2D;
+	*layers = desc->layer_count > 0 ? (uint32_t)desc->layer_count : 1u;
+	return 1;
+}
+
 AeronTexture* Aeron_CreateTexture(const AeronTextureDesc* desc) {
 	SDL_GPUTextureCreateInfo texture_info;
 	SDL_GPUTextureFormat     format;
@@ -2750,15 +2769,17 @@ AeronTexture* Aeron_CreateTexture(const AeronTextureDesc* desc) {
 	}
 
 	SDL_zero(texture_info);
-	const int layer_count             = desc->cube ? 6 : (desc->layer_count > 0 ? desc->layer_count : 1);
-	texture_info.type                 = desc->cube              ? SDL_GPU_TEXTURETYPE_CUBE
-										: desc->layer_count > 0 ? SDL_GPU_TEXTURETYPE_2D_ARRAY
-																: SDL_GPU_TEXTURETYPE_2D;
+	uint32_t layers_or_depth;
+	if (!Aeron_TextureDescType(desc, &texture_info.type, &layers_or_depth)) {
+		Aeron_SetRenderError("A 3D texture cannot have cube faces or layers");
+		SDL_free(texture);
+		return NULL;
+	}
 	texture_info.format               = format;
 	texture_info.usage                = usage;
 	texture_info.width                = (uint32_t)desc->width;
 	texture_info.height               = (uint32_t)desc->height;
-	texture_info.layer_count_or_depth = (uint32_t)layer_count;
+	texture_info.layer_count_or_depth = layers_or_depth;
 	texture_info.num_levels           = (uint32_t)mip_count;
 	texture_info.sample_count         = SDL_GPU_SAMPLECOUNT_1;
 
@@ -2777,7 +2798,8 @@ AeronTexture* Aeron_CreateTexture(const AeronTextureDesc* desc) {
 	texture->width        = desc->width;
 	texture->height       = desc->height;
 	texture->mip_count    = mip_count;
-	texture->layer_count  = layer_count;
+	texture->layer_count  = desc->depth > 0 ? 1 : (int)layers_or_depth;
+	texture->depth        = desc->depth > 0 ? desc->depth : 0;
 	texture->format       = desc->format;
 	texture->usage        = desc->usage;
 	texture->sample_count = AERON_SAMPLE_COUNT_1;
@@ -2832,6 +2854,21 @@ static int Aeron_ValidateTextureUpload(const AeronTextureUploadDesc* desc, uint3
 	}
 	if (desc->x > mip_width || desc->width > mip_width - desc->x || desc->y > mip_height ||
 		desc->height > mip_height - desc->y) {
+		return 0;
+	}
+	/* 3D slices: z..z+slices within the mip's depth, raw bytes for more
+	 * than one; other textures take one slice at z 0. */
+	const int slices = desc->depth > 0 ? desc->depth : 1;
+	if (desc->texture->depth > 0) {
+		int mip_depth = desc->texture->depth >> desc->mip_level;
+		if (mip_depth < 1) {
+			mip_depth = 1;
+		}
+		if (desc->z < 0 || desc->z > mip_depth || slices > mip_depth - desc->z ||
+			(slices > 1 && !desc->raw_data)) {
+			return 0;
+		}
+	} else if (desc->z != 0 || slices != 1) {
 		return 0;
 	}
 
@@ -2951,9 +2988,10 @@ int Aeron_UploadTextureBatchCmd(AeronCommandBuffer* command_buffer, const AeronT
 		destination.layer     = (uint32_t)upload->layer;
 		destination.x         = (uint32_t)upload->x;
 		destination.y         = (uint32_t)upload->y;
+		destination.z         = (uint32_t)upload->z;
 		destination.w         = (uint32_t)upload->width;
 		destination.h         = (uint32_t)upload->height;
-		destination.d         = 1;
+		destination.d         = upload->depth > 0 ? (uint32_t)upload->depth : 1u;
 		int cycle;
 		if (!Aeron_CommandBufferResolveCycle(command_buffer, upload->texture, 1, upload->cycle != 0,
 											 &cycle)) {
@@ -3455,36 +3493,29 @@ AeronTexture* Aeron_RenderTargetGetTexture(AeronRenderTarget* target) {
 	return &target->color;
 }
 
-int Aeron_ReadRenderTargetRawPixels(AeronRenderTarget* target, void* dst, size_t capacity, size_t pitch) {
-	if (!g_aeron.gpu_device || !target || !target->color.texture || !dst ||
-		target->color.sample_count != AERON_SAMPLE_COUNT_1) {
-		Aeron_SetRenderError("Invalid raw render-target readback");
-		return 0;
-	}
-	uint32_t bytes_per_pixel;
-	switch (target->color.format) {
+/* Bytes per pixel of the formats the raw readbacks accept; 0 otherwise. */
+static uint32_t Aeron_RawReadbackBytesPerPixel(AeronTextureFormat format) {
+	switch (format) {
 		case AERON_TEXTURE_FORMAT_RGBA8_UNORM:
 		case AERON_TEXTURE_FORMAT_RGBA8_SRGB:
 		case AERON_TEXTURE_FORMAT_BGRA8_UNORM:
 		case AERON_TEXTURE_FORMAT_BGRA8_SRGB:
-			bytes_per_pixel = 4;
-			break;
+			return 4;
 		case AERON_TEXTURE_FORMAT_RGBA16_FLOAT:
-			bytes_per_pixel = 8;
-			break;
+			return 8;
 		default:
-			Aeron_SetRenderError("Unsupported raw readback format");
 			return 0;
 	}
-	const int      width = target->color.width, height = target->color.height;
-	const uint64_t row_bytes   = (uint64_t)width * bytes_per_pixel;
-	const uint64_t total_bytes = row_bytes * (uint64_t)height;
-	if (width <= 0 || height <= 0 || total_bytes > UINT32_MAX || pitch < row_bytes || capacity < row_bytes ||
-		(size_t)(height - 1) > (capacity - (size_t)row_bytes) / pitch) {
-		Aeron_SetRenderError("Invalid raw readback capacity or pitch");
-		return 0;
-	}
-	SDL_GPUTransferBuffer* transfer = SDL_CreateGPUTransferBuffer(
+}
+
+/* Downloads one width x height slice of `source` (its region, d = 1) into
+ * `dst` rows of `pitch` bytes. Blocks on a GPU fence. */
+static int Aeron_DownloadTextureSlice(const SDL_GPUTextureRegion* source, uint32_t bytes_per_pixel, void* dst,
+									  size_t pitch) {
+	const int              width = (int)source->w, height = (int)source->h;
+	const uint64_t         row_bytes   = (uint64_t)width * bytes_per_pixel;
+	const uint64_t         total_bytes = row_bytes * (uint64_t)height;
+	SDL_GPUTransferBuffer* transfer    = SDL_CreateGPUTransferBuffer(
 		g_aeron.gpu_device,
 		&(SDL_GPUTransferBufferCreateInfo) { .usage = SDL_GPU_TRANSFERBUFFERUSAGE_DOWNLOAD,
 											 .size  = (uint32_t)total_bytes });
@@ -3501,13 +3532,10 @@ int Aeron_ReadRenderTargetRawPixels(AeronRenderTarget* target, void* dst, size_t
 		SDL_ReleaseGPUTransferBuffer(g_aeron.gpu_device, transfer);
 		return 0;
 	}
-	SDL_GPUTextureRegion source = {
-		.texture = target->color.texture, .w = (uint32_t)width, .h = (uint32_t)height, .d = 1
-	};
 	SDL_GPUTextureTransferInfo destination = { .transfer_buffer = transfer,
 											   .pixels_per_row  = (uint32_t)width,
 											   .rows_per_layer  = (uint32_t)height };
-	SDL_DownloadFromGPUTexture(copy, &source, &destination);
+	SDL_DownloadFromGPUTexture(copy, source, &destination);
 	SDL_EndGPUCopyPass(copy);
 	SDL_GPUFence* fence = SDL_SubmitGPUCommandBufferAndAcquireFence(cmd);
 	int           ok    = fence && SDL_WaitForGPUFences(g_aeron.gpu_device, true, &fence, 1);
@@ -3529,6 +3557,59 @@ int Aeron_ReadRenderTargetRawPixels(AeronRenderTarget* target, void* dst, size_t
 	SDL_UnmapGPUTransferBuffer(g_aeron.gpu_device, transfer);
 	SDL_ReleaseGPUTransferBuffer(g_aeron.gpu_device, transfer);
 	return 1;
+}
+
+int Aeron_ReadRenderTargetRawPixels(AeronRenderTarget* target, void* dst, size_t capacity, size_t pitch) {
+	if (!g_aeron.gpu_device || !target || !target->color.texture || !dst ||
+		target->color.sample_count != AERON_SAMPLE_COUNT_1) {
+		Aeron_SetRenderError("Invalid raw render-target readback");
+		return 0;
+	}
+	const uint32_t bytes_per_pixel = Aeron_RawReadbackBytesPerPixel(target->color.format);
+	if (!bytes_per_pixel) {
+		Aeron_SetRenderError("Unsupported raw readback format");
+		return 0;
+	}
+	const int      width = target->color.width, height = target->color.height;
+	const uint64_t row_bytes   = (uint64_t)width * bytes_per_pixel;
+	const uint64_t total_bytes = row_bytes * (uint64_t)height;
+	if (width <= 0 || height <= 0 || total_bytes > UINT32_MAX || pitch < row_bytes || capacity < row_bytes ||
+		(size_t)(height - 1) > (capacity - (size_t)row_bytes) / pitch) {
+		Aeron_SetRenderError("Invalid raw readback capacity or pitch");
+		return 0;
+	}
+	SDL_GPUTextureRegion source = {
+		.texture = target->color.texture, .w = (uint32_t)width, .h = (uint32_t)height, .d = 1
+	};
+	return Aeron_DownloadTextureSlice(&source, bytes_per_pixel, dst, pitch);
+}
+
+int Aeron_ReadTextureRawPixels(AeronTexture* texture, int mip_level, int layer, int z, void* dst,
+							   size_t capacity) {
+	if (!g_aeron.gpu_device || !texture || !texture->texture || !dst || mip_level < 0 ||
+		mip_level >= texture->mip_count || layer < 0 || layer >= texture->layer_count || z < 0 ||
+		texture->sample_count != AERON_SAMPLE_COUNT_1) {
+		Aeron_SetRenderError("Invalid raw texture readback");
+		return 0;
+	}
+	const uint32_t bytes_per_pixel = Aeron_RawReadbackBytesPerPixel(texture->format);
+	const int      width           = (texture->width >> mip_level) > 0 ? (texture->width >> mip_level) : 1;
+	const int      height          = (texture->height >> mip_level) > 0 ? (texture->height >> mip_level) : 1;
+	const int      depth           = (texture->depth >> mip_level) > 0 ? (texture->depth >> mip_level) : 1;
+	const uint64_t row_bytes       = (uint64_t)width * bytes_per_pixel;
+	if (!bytes_per_pixel || z >= depth || row_bytes * (uint64_t)height > UINT32_MAX ||
+		capacity < row_bytes * (uint64_t)height) {
+		Aeron_SetRenderError("Unsupported raw texture readback format or capacity");
+		return 0;
+	}
+	SDL_GPUTextureRegion source = { .texture   = texture->texture,
+									.mip_level = (uint32_t)mip_level,
+									.layer     = (uint32_t)layer,
+									.z         = (uint32_t)z,
+									.w         = (uint32_t)width,
+									.h         = (uint32_t)height,
+									.d         = 1 };
+	return Aeron_DownloadTextureSlice(&source, bytes_per_pixel, dst, (size_t)row_bytes);
 }
 
 int Aeron_ReadRenderTargetPixels(AeronRenderTarget* target, void* dst, int pitch, AeronPixelFormat format) {
@@ -4234,7 +4315,8 @@ void Aeron_BindStorageBuffer(AeronRenderPass* pass, AeronShaderStage stage, uint
 	g_aeron.render_data_stats.storage_buffer_bind_count++;
 }
 
-int Aeron_TextureFormatSupported(AeronTextureFormat format, uint32_t usage) {
+static int Aeron_TextureFormatSupportedForType(AeronTextureFormat format, SDL_GPUTextureType type,
+											   uint32_t usage) {
 	SDL_GPUTextureFormat     sdl_format;
 	SDL_GPUTextureUsageFlags sdl_usage;
 
@@ -4248,9 +4330,18 @@ int Aeron_TextureFormatSupported(AeronTextureFormat format, uint32_t usage) {
 		return 0;
 	}
 
-	return SDL_GPUTextureSupportsFormat(g_aeron.gpu_device, sdl_format, SDL_GPU_TEXTURETYPE_2D, sdl_usage)
-			   ? 1
-			   : 0;
+	return SDL_GPUTextureSupportsFormat(g_aeron.gpu_device, sdl_format, type, sdl_usage) ? 1 : 0;
+}
+
+int Aeron_TextureFormatSupported(AeronTextureFormat format, uint32_t usage) {
+	return Aeron_TextureFormatSupportedForType(format, SDL_GPU_TEXTURETYPE_2D, usage);
+}
+
+int Aeron_TextureDescSupported(const AeronTextureDesc* desc) {
+	SDL_GPUTextureType type;
+	uint32_t           layers;
+	return desc && Aeron_TextureDescType(desc, &type, &layers) &&
+		   Aeron_TextureFormatSupportedForType(desc->format, type, desc->usage);
 }
 
 int Aeron_TextureFormatSupportsSampleCount(AeronTextureFormat format, AeronSampleCount sample_count) {

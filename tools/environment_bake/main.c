@@ -290,8 +290,8 @@ static bool write_levels(const char* path, const char* format, const float* cons
 		levels[level].size   = face_bytes[level] * (size_t)face_count;
 	}
 	if (ok) {
-		ok = bc6h ? write_ktx2_bc6h_levels(path, face_count, levels, level_count, true)
-				  : write_ktx2_rgba16f_levels(path, face_count, levels, level_count, true);
+		ok = bc6h ? write_ktx2_bc6h_levels(path, face_count, 0, levels, level_count, true)
+				  : write_ktx2_rgba16f_levels(path, face_count, 0, levels, level_count, true);
 		if (!ok)
 			fprintf(stderr, "environment_bake: cannot write %s\n", path);
 	}

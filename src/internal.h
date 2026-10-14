@@ -41,7 +41,8 @@ struct AeronTexture {
 	int                width;
 	int                height;
 	int                mip_count;
-	int                layer_count;
+	int                layer_count; /* cube arrays: 6 per cube */
+	int                depth;       /* 3D textures; 0 otherwise */
 	AeronTextureFormat format;
 	uint32_t           usage;
 	AeronSampleCount   sample_count;

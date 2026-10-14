@@ -232,10 +232,9 @@ static Ktx2* ktx2_parse_bytes(const uint8_t* bytes, size_t blob_size, const char
 			free(blob);
 		return NULL;
 	}
-	/* 2D arrays are supported; cube arrays and 3D textures are not. */
-	if ((faceCount != 1 && faceCount != 6) || (faceCount == 6 && layerCount > 1) || layerCount > 2048 ||
-		(pixelDepth > 1)) {
-		ktx2_log("[ktx2] %s: only 2D, 2D-array or cubemap textures supported "
+	/* 2D, 2D arrays, cubes and cube arrays; no 3D textures. */
+	if ((faceCount != 1 && faceCount != 6) || layerCount > 2048 || (pixelDepth > 1)) {
+		ktx2_log("[ktx2] %s: only 2D, 2D-array, cube or cube-array textures supported "
 				 "(faces=%u layers=%u depth=%u)",
 				 path, faceCount, layerCount, pixelDepth);
 		if (own_bytes)
@@ -457,19 +456,18 @@ Ktx2Level ktx2_level(const Ktx2* k, int level) {
 	return k->levels[level];
 }
 
-Ktx2Level ktx2_level_face(const Ktx2* k, int level, int face) {
+Ktx2Level ktx2_level_face(const Ktx2* k, int level, int slice) {
 	Ktx2Level lvl = ktx2_level(k, level);
-	/* Faces, or the layers of a 2D array, are the level's equal slices. */
-	const int slices = k && k->layer_count > 0 ? k->layer_count : (k ? k->face_count : 0);
-	if (!lvl.data || slices <= 0 || face < 0 || face >= slices)
+	/* The level's equal slices: each layer's faces, layer by layer. */
+	const int slices = k ? (k->layer_count > 0 ? k->layer_count : 1) * k->face_count : 0;
+	if (!lvl.data || slices <= 0 || slice < 0 || slice >= slices)
 		return (Ktx2Level) { .data = NULL, .size = 0, .width = 0, .height = 0 };
-	/* KTX2 stores face (or layer) data contiguously within a level; the
-	 * spec guarantees equal sizes across the slices of a given level, so
-	 * face_size = level.size / slices. */
-	size_t face_size = lvl.size / (size_t)slices;
+	/* KTX2 stores the slices contiguously within a level, all the same
+	 * size, so slice_size = level.size / slices. */
+	size_t slice_size = lvl.size / (size_t)slices;
 	return (Ktx2Level) {
-		.data   = lvl.data + (size_t)face * face_size,
-		.size   = face_size,
+		.data   = lvl.data + (size_t)slice * slice_size,
+		.size   = slice_size,
 		.width  = lvl.width,
 		.height = lvl.height,
 	};

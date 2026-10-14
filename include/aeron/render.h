@@ -406,12 +406,15 @@ typedef struct AeronTextureDesc {
 	AeronTextureFormat format;
 	uint32_t           usage;
 	/* Nonzero creates a cube texture (6 layers); uploads select the face via
-	 * AeronTextureUploadDesc.layer. */
+	 * AeronTextureUploadDesc.layer. With layer_count, a cube array of that
+	 * many cubes: uploads select layer cube * 6 + face. */
 	int cube;
 	/* Nonzero creates a 2D array texture with this many layers (1 is a valid
-	 * array); uploads select the layer via AeronTextureUploadDesc.layer.
-	 * Ignored for cube textures. */
+	 * array); uploads select the layer via AeronTextureUploadDesc.layer. */
 	int layer_count;
+	/* Nonzero creates a 3D texture this many slices deep (no cube or
+	 * layers); uploads select slices via AeronTextureUploadDesc.z/depth. */
+	int depth;
 	/* Optional name shown by GPU capture and debugging tools. */
 	const char* debug_name;
 } AeronTextureDesc;
@@ -445,6 +448,10 @@ typedef struct AeronTextureUploadDesc {
 	uint32_t    raw_size;
 	/* Destination array layer / cube face (0 for plain 2D textures). */
 	int layer;
+	/* 3D textures: the first destination slice and the slice count (0 is
+	 * 1). More than one slice needs raw_data. */
+	int z;
+	int depth;
 } AeronTextureUploadDesc;
 
 /* Description for sampler filtering and address modes. */
@@ -782,6 +789,13 @@ int Aeron_ReadRenderTargetPixels(AeronRenderTarget* target, void* dst, int pitch
  * GPU fence; intended for captures, not the ordinary presentation loop. */
 int Aeron_ReadRenderTargetRawPixels(AeronRenderTarget* target, void* dst, size_t capacity, size_t pitch);
 
+/* Diagnostic readback of one 2D slice of an RGBA8/BGRA8 or RGBA16_FLOAT
+ * texture: mip `mip_level`, array layer or cube face `layer` (cube arrays:
+ * cube * 6 + face), 3D slice `z`. Rows are top-to-bottom and tightly
+ * packed. Submit all writes first. Blocks on a GPU fence; for tests. */
+int Aeron_ReadTextureRawPixels(AeronTexture* texture, int mip_level, int layer, int z, void* dst,
+							   size_t capacity);
+
 /* Creates an Aeron-owned depth target for GPU render passes. */
 AeronDepthTarget* Aeron_CreateDepthTarget(const AeronDepthTargetDesc* desc);
 
@@ -800,6 +814,9 @@ AeronTexture* Aeron_DepthTargetGetTexture(AeronDepthTarget* target);
 /* Returns nonzero when the backend supports `format` for all the requested
  * AeronTextureUsage bits on 2D textures. */
 int Aeron_TextureFormatSupported(AeronTextureFormat format, uint32_t usage);
+/* As Aeron_TextureFormatSupported, for the texture type `desc` creates
+ * (2D, array, cube, cube array or 3D) with its format and usage. */
+int Aeron_TextureDescSupported(const AeronTextureDesc* desc);
 /* Returns nonzero when an exact render-target sample count is supported for
  * the format. This does not silently downgrade the request. */
 int Aeron_TextureFormatSupportsSampleCount(AeronTextureFormat format, AeronSampleCount sample_count);

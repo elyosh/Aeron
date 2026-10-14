@@ -157,8 +157,8 @@ static uint8_t* build_ktx2_buf(uint32_t vkFormat, int face_count, int layer_coun
 		return NULL;
 	if (face_count != 1 && face_count != 6)
 		return NULL;
-	/* Zero is a non-array texture; arrays of cubes are not supported. */
-	if (layer_count < 0 || (layer_count > 0 && face_count != 1))
+	/* Zero is a non-array texture; with faces, a cube array. */
+	if (layer_count < 0)
 		return NULL;
 
 	/* Validate per-level uncompressed size: layers × faces × per-face bytes. */
@@ -282,12 +282,12 @@ static uint8_t* build_ktx2_buf(uint32_t vkFormat, int face_count, int layer_coun
 }
 
 /* Thin wrapper: build the KTX2 image in memory, fwrite it to disk. */
-static bool write_ktx2_levels(const char* path, uint32_t vkFormat, int face_count,
+static bool write_ktx2_levels(const char* path, uint32_t vkFormat, int face_count, int layer_count,
 							  const Ktx2WriteLevel* levels, int level_count, bool zstd) {
 	if (!path)
 		return false;
 	size_t   total_size = 0;
-	uint8_t* buf        = build_ktx2_buf(vkFormat, face_count, 0, levels, level_count, zstd, &total_size);
+	uint8_t* buf = build_ktx2_buf(vkFormat, face_count, layer_count, levels, level_count, zstd, &total_size);
 	if (!buf)
 		return false;
 	FILE* f = fopen(path, "wb");
@@ -312,23 +312,25 @@ static bool write_ktx2_levels(const char* path, uint32_t vkFormat, int face_coun
 bool write_ktx2_rgba_mips(const char* path, const Ktx2WriteLevel* levels, int level_count, Ktx2TransferFn tf,
 						  bool zstd) {
 	uint32_t vk = (tf == KTX2_TF_SRGB) ? VK_FORMAT_R8G8B8A8_SRGB : VK_FORMAT_R8G8B8A8_UNORM;
-	return write_ktx2_levels(path, vk, 1, levels, level_count, zstd);
+	return write_ktx2_levels(path, vk, 1, 0, levels, level_count, zstd);
 }
 
-bool write_ktx2_bc6h_levels(const char* path, int face_count, const Ktx2WriteLevel* levels, int level_count,
-							bool zstd) {
-	return write_ktx2_levels(path, VK_FORMAT_BC6H_UFLOAT_BLOCK, face_count, levels, level_count, zstd);
+bool write_ktx2_bc6h_levels(const char* path, int face_count, int layer_count, const Ktx2WriteLevel* levels,
+							int level_count, bool zstd) {
+	return write_ktx2_levels(path, VK_FORMAT_BC6H_UFLOAT_BLOCK, face_count, layer_count, levels, level_count,
+							 zstd);
 }
 
-bool write_ktx2_rgba16f_levels(const char* path, int face_count, const Ktx2WriteLevel* levels, int level_count,
-							   bool zstd) {
-	return write_ktx2_levels(path, VK_FORMAT_R16G16B16A16_SFLOAT, face_count, levels, level_count, zstd);
+bool write_ktx2_rgba16f_levels(const char* path, int face_count, int layer_count,
+							   const Ktx2WriteLevel* levels, int level_count, bool zstd) {
+	return write_ktx2_levels(path, VK_FORMAT_R16G16B16A16_SFLOAT, face_count, layer_count, levels,
+							 level_count, zstd);
 }
 
 bool write_ktx2_bc7_mips(const char* path, const Ktx2WriteLevel* levels, int level_count, Ktx2TransferFn tf,
 						 bool zstd) {
 	uint32_t vk = (tf == KTX2_TF_SRGB) ? VK_FORMAT_BC7_SRGB_BLOCK : VK_FORMAT_BC7_UNORM_BLOCK;
-	return write_ktx2_levels(path, vk, 1, levels, level_count, zstd);
+	return write_ktx2_levels(path, vk, 1, 0, levels, level_count, zstd);
 }
 
 /* ---------- mip-chain generator ----------
@@ -676,7 +678,7 @@ bool write_ktx2_bc7_cubemap_with_generated_mips(const char* path, int face_size,
 
 	if (ok) {
 		uint32_t vk = (tf == KTX2_TF_SRGB) ? VK_FORMAT_BC7_SRGB_BLOCK : VK_FORMAT_BC7_UNORM_BLOCK;
-		ok          = write_ktx2_levels(path, vk, 6, levels, n, zstd);
+		ok          = write_ktx2_levels(path, vk, 6, 0, levels, n, zstd);
 	}
 
 	/* rgba_owned[0][*] is NULL (level 0 aliases the caller's buffers),

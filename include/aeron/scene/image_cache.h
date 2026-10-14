@@ -59,7 +59,8 @@ void Aeron_ImageCacheClearOverride(AeronImageCache* cache, const char* path);
 void Aeron_ImageCacheClearOverrides(AeronImageCache* cache);
 
 /* One-shot KTX2 → mip-chain AeronTexture upload through `cmd` (no
- * caching; the caller owns the returned texture). `debug_name` labels
+ * caching; the caller owns the returned texture): a 2D texture, cube or
+ * cube array; KTX2 2D arrays use Aeron_ImageUploadKtx2Array. `debug_name` labels
  * failure logs. Shared by the cache's load path and by consumers with
  * their own keying (per-species atlas slots, cockpit assets). */
 struct Ktx2;
