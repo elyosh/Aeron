@@ -269,16 +269,18 @@ typedef struct AeronEnvironmentPackage {
 /* The set buffer of a probes package, uint4 elements (floats as bits):
  *   [0]            cells min xyz (model frame, metres), 1 / cell size
  *   [1]            cell dims xyz, probe count (uints)
- *   [2 + 4k]       probe k: centre xyz, 1 / falloff
- *   [2 + 4k + 1]   probe k: 1 / half size xyz, cube array layer (uint)
- *   [2 + 4k + 2]   probe k: parallax half size xyz, shapes (uint: bit 0
+ *   [2 + 5k]       probe k: centre xyz, 1 / falloff
+ *   [2 + 5k + 1]   probe k: 1 / half size xyz, cube array layer (uint)
+ *   [2 + 5k + 2]   probe k: parallax half size xyz, shapes (uint: bit 0
  *                  influence ellipsoid, bit 1 parallax ellipsoid)
- *   [2 + 4k + 3]   probe k: parallax centre xyz, 0
- *   [2 + 4N ...]   the cell words (AeronEnvironmentProbeCells), four per
+ *   [2 + 5k + 3]   probe k: parallax centre xyz, 0
+ *   [2 + 5k + 4]   probe k: the grid's light at its centre, luminance L1
+ *                  coefficients (0 when the centre is outside the grid)
+ *   [2 + 5N ...]   the cell words (AeronEnvironmentProbeCells), four per
  *                  element, x fastest, then y, then z.
  * The grid weighs 1 inside its box and falls to 0 one point spacing
  * outside it, so the set's extent includes that margin. */
-enum { AERON_ENV_PROBE_BUFFER_HEADER = 2, AERON_ENV_PROBE_BUFFER_RECORD = 4 };
+enum { AERON_ENV_PROBE_BUFFER_HEADER = 2, AERON_ENV_PROBE_BUFFER_RECORD = 5 };
 
 /* Prepared probes packages (textures and buffers) above this size are
  * logged as a warning: probes cost about 450 KB each, so many probe-owning

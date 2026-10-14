@@ -236,6 +236,16 @@ uint anim_layer_frame(uint4 anim, uint layer, out uint flipbook)
 #endif
 
 
+/* Where to read prefiltered radiance for a surface of `roughness`: the
+ * mirror direction R pulled toward the normal as roughness grows, since most
+ * of a rough surface's reflected light comes from around its normal
+ * (Lagarde and de Rousiers 2014, "Moving Frostbite to PBR"). */
+float3 specular_dominant_direction(float3 N, float3 R, float roughness)
+{
+    float a = roughness * roughness;
+    return lerp(N, R, (1.0f - a) * (sqrt(1.0f - a) + a));
+}
+
 #if AERON_PBR_PROBES
 /* ===== Probe set ======================================================
  * The object's reflection probes (a cube array, probe k in layer k), its
@@ -266,9 +276,13 @@ float3 probe_model_direction(float3 world_direction)
 /* Irradiance / pi from the grid at model point `pm` for the model normal
  * `nm`, and in `weight` how much it applies: 1 inside the grid's box,
  * falling to 0 one point spacing outside it (the outer points' light holds
- * up to the box). */
-float3 probe_grid_diffuse(float3 pm, float3 nm, out float weight)
+ * up to the box). Also gives the L1 basis of `nm` and the luminance the
+ * probes' reflections are scaled by (probe_specular). */
+float3 probe_grid_diffuse(float3 pm, float3 nm, out float weight, out float4 basis, out float luminance)
 {
+    basis = float4(1.0f, nm.z, nm.y, nm.x);
+    luminance = 0.0f;
+    float3 average = float3(0.0f, 0.0f, 0.0f);
     float3 r = float3(fs_probe_params.zw, fs_grid_scale.w);
     float3 g = pm * fs_grid_scale.xyz + fs_grid_offset.xyz;
     float3 w = saturate(min(g + 1.5f, r + 1.5f - g));
@@ -277,15 +291,19 @@ float3 probe_grid_diffuse(float3 pm, float3 nm, out float weight)
     /* Within a slab: filtering never mixes channels. */
     float2 uv = g.xy / r.xy;
     float  z  = clamp(g.z, 0.5f, r.z - 0.5f);
-    float3 n  = float3(nm.x, nm.z, nm.y);
-    float4 basis = float4(1.0f, n.y, n.z, n.x);
     float3 e;
     [unroll] for (int c = 0; c < 3; ++c) {
         float4 sh = g_probe_grid.SampleLevel(g_probe_grid_sampler,
                                              float3(uv, ((float)c * r.z + z) / (3.0f * r.z)), 0.0f);
         e[c] = dot(sh, basis);
+        average[c] = sh.x;
     }
-    return max(e, 0.0f) * fs_probe_strengths.x;
+    e = max(e, 0.0f);
+    /* The light toward the normal plus the average light: steadier than
+     * the first alone where both are small. The probe records hold the
+     * same at the probes' centres. */
+    luminance = dot(e + max(average, 0.0f), float3(0.2126f, 0.7152f, 0.0722f));
+    return e * fs_probe_strengths.x;
 }
 
 /* The far hit of the ray o + t d (o inside) with a box or ellipsoid of
@@ -306,8 +324,12 @@ float3 probe_parallax(float3 o, float3 d, float3 half, bool ellipsoid)
 
 /* Prefiltered radiance from the probes of the cell holding `pm`, smallest
  * first, each taking the coverage the smaller ones left; returns the
- * coverage, which the environment's cube completes. */
-float probe_specular(float3 pm, float3 rm, float roughness, out float3 radiance)
+ * coverage, which the environment's cube completes. A probe's reflection
+ * darkens where the grid's light (`grid_luminance` for the normal `basis`)
+ * is darker than at the probe's centre, where it was captured: a probe
+ * sees the room from the middle, not from a dark corner. */
+float probe_specular(float3 pm, float3 rm, float roughness, float4 basis, float grid_luminance,
+                     float grid_weight, out float3 radiance)
 {
     radiance = float3(0.0f, 0.0f, 0.0f);
     uint4  dims = g_probe_set[1];
@@ -315,26 +337,31 @@ float probe_specular(float3 pm, float3 rm, float roughness, out float3 radiance)
     int3   cell = (int3)floor((pm - head.xyz) * head.w);
     if (any(cell < 0) || any(cell >= (int3)dims.xyz)) return 0.0f;
     uint index = ((uint)cell.z * dims.y + (uint)cell.y) * dims.x + (uint)cell.x;
-    uint word  = g_probe_set[2u + 4u * dims.w + (index >> 2u)][index & 3u];
+    uint word  = g_probe_set[2u + 5u * dims.w + (index >> 2u)][index & 3u];
     float coverage = 0.0f;
     float lod      = roughness * (fs_probe_params.y - 1.0f);
     [loop] for (uint k = 0u; k < 4u && coverage < 1.0f; ++k) {
         uint probe = (word >> (8u * k)) & 0xFFu;
         if (probe == 0u) break;
-        uint   base     = 2u + 4u * (probe - 1u);
+        uint   base     = 2u + 5u * (probe - 1u);
         float4 center   = asfloat(g_probe_set[base]);
         uint4  shape    = g_probe_set[base + 1u];
         uint4  parallax = g_probe_set[base + 2u];
         float3 room     = asfloat(g_probe_set[base + 3u].xyz);
         float3 l = (pm - center.xyz) * asfloat(shape.xyz);
         float  g = (parallax.w & 1u) != 0u ? length(l) : max(max(abs(l.x), abs(l.y)), abs(l.z));
-        float  share = max(saturate((1.0f - g) * center.w) - coverage, 0.0f);
+        float  w = saturate((1.0f - g) * center.w);
+        w = w * w * (3.0f - 2.0f * w);  /* no kink where probes meet */
+        float  share = max(w - coverage, 0.0f);
         if (share <= 0.0f) continue;
         /* The ray from the point to the parallax volume, seen from where
          * the cube was captured. */
         float3 d = probe_parallax(pm - room, rm, asfloat(parallax.xyz), (parallax.w & 2u) != 0u) + room -
                    center.xyz;
-        radiance += share * g_probe_cubes.SampleLevel(g_probe_cubes_sampler,
+        float4 capture  = asfloat(g_probe_set[base + 4u]);
+        float  captured = max(dot(capture, basis), 0.0f) + max(capture.x, 0.0f);
+        float  scale    = captured > 1.0e-5f ? lerp(1.0f, saturate(grid_luminance / captured), grid_weight) : 1.0f;
+        radiance += share * scale * g_probe_cubes.SampleLevel(g_probe_cubes_sampler,
                                                       float4(d.x, d.z, d.y, (float)shape.w), lod).rgb;
         coverage += share;
     }
@@ -558,8 +585,10 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
      * world ambient, which it already holds; they fade back in at its
      * border. */
     float3 probe_point = probe_model_point(i.world_pos);
-    float  grid_weight;
-    float3 grid_rgb = probe_grid_diffuse(probe_point, probe_model_direction(N), grid_weight);
+    float  grid_weight, grid_luminance;
+    float4 grid_basis;
+    float3 grid_rgb = probe_grid_diffuse(probe_point, probe_model_direction(N), grid_weight, grid_basis,
+                                         grid_luminance);
     environment_diffuse_rgb = lerp(environment_diffuse_rgb, grid_rgb, grid_weight);
     ambient_rgb *= 1.0f - grid_weight;
 #endif
@@ -604,9 +633,10 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
         }
     }
 
-    /* AO occludes ambient fully; it occludes the direct diffuse only by
-     * `ssao_direct` (0 = physically correct ambient-only, 1 = direct
-     * fully occluded). Specular / emissive / local lights are untouched. */
+    /* AO occludes ambient (with the multi-bounce fit below); it occludes
+     * the direct diffuse only by `ssao_direct` (0 = physically correct
+     * ambient-only, 1 = direct fully occluded). Specular / emissive / local
+     * lights are untouched. */
     float ao_direct = lerp(1.0f, ao, ssao_direct);
     /* Additional directionals: plain Lambert, diffuse only (the XWA
      * classic sums max(0, N.L) * color per light with no wrap and no
@@ -615,8 +645,16 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
     [unroll] for (int ed = 0; ed < 3; ed++) {
         extra_rgb += saturate(dot(N, fs_extra_dir[ed].xyz)) * inv_pi * fs_extra_col[ed].rgb;
     }
+    /* Ambient light keeps more of itself in creases on bright surfaces,
+     * which reflect light back into them: the multi-bounce fit of Jimenez
+     * et al. 2016 ("Practical Real-Time Strategies for Accurate Indirect
+     * Occlusion"), per channel with the albedo. */
+    float3 ao_a = 2.0404f * albedo - 0.3324f;
+    float3 ao_b = -4.7951f * albedo + 0.6417f;
+    float3 ao_c = 2.7552f * albedo + 0.6903f;
+    float3 ao_ambient = max(ao, ((ao * ao_a + ao_b) * ao + ao_c) * ao);
     float3 base_rgb = albedo *
-        ((sun_color * lambert_term * shadow_visibility + extra_rgb) * ao_direct + ambient_rgb * ao);
+        ((sun_color * lambert_term * shadow_visibility + extra_rgb) * ao_direct + ambient_rgb * ao_ambient);
 
     /* ===== Metallic-roughness ==================================== */
     PbrMaterialParams mp;
@@ -684,8 +722,9 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
      * without a redundant smoothstep on the terminator. */
     /* ===== Image-based lighting ================================
      * Split-sum specular from the GGX-prefiltered cube (mip = roughness
-     * x (mips - 1)) and the BRDF table, occluded by SSAO with Lagarde's
-     * N.V-dependent approximation so creases do not reflect the open sky.
+     * x (mips - 1)), read in the dominant direction, and the BRDF table,
+     * occluded by SSAO with Lagarde's N.V-dependent approximation so
+     * creases do not reflect the open sky.
      * The diffuse environment keeps the energy specular does not take.
      * Not shadowed: the directional shadow covers the analytic light only.
      * Without a specular cube both terms are as before. */
@@ -694,10 +733,12 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
 #if AERON_PBR_PROBES
     /* The probes cover what they can; the environment's cube, when there
      * is one, the rest. */
-    float3 R_ibl = reflect(-V, N_spec);
+    float3 R_ibl = specular_dominant_direction(N_spec, reflect(-V, N_spec), mp.roughness);
+    /* Reflections pointing into the surface fade out. */
+    float horizon = min(1.0f + dot(R_ibl, N_face), 1.0f);
     float3 probe_radiance;
-    float  probe_coverage = probe_specular(probe_point, probe_model_direction(R_ibl), mp.roughness,
-                                           probe_radiance);
+    float  probe_coverage = probe_specular(probe_point, probe_model_direction(R_ibl), mp.roughness, grid_basis,
+                                           grid_luminance, grid_weight, probe_radiance);
     bool   environment_specular = fs_environment_params.y > 0.0f && fs_environment_params.z >= 1.0f;
     if (probe_coverage > 0.0f || environment_specular) {
         float  ndotv_ibl = saturate(dot(N_spec, V));
@@ -712,13 +753,14 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
         float3 F_ss = mp.F0 * split.x + mp.F90 * split.y;
         float  specular_occlusion =
             saturate(pow(ndotv_ibl + ao, exp2(-16.0f * mp.roughness - 1.0f)) - 1.0f + ao);
-        spec_ibl_rgb = prefiltered * F_ss * specular_occlusion;
+        spec_ibl_rgb = prefiltered * F_ss * specular_occlusion * horizon * horizon;
         environment_diffuse_weight = 1.0f - F_ss;
     }
 #else
     if (AERON_PBR_ENVIRONMENT && fs_environment_params.y > 0.0f && fs_environment_params.z >= 1.0f) {
         float  ndotv_ibl = saturate(dot(N_spec, V));
-        float3 R = reflect(-V, N_spec);
+        float3 R = specular_dominant_direction(N_spec, reflect(-V, N_spec), mp.roughness);
+        float horizon = min(1.0f + dot(R, N_face), 1.0f);
         float3 prefiltered = g_specular_environment.SampleLevel(
             g_specular_environment_sampler, normalize(environment_local(R)),
             mp.roughness * (fs_environment_params.z - 1.0f)).rgb;
@@ -726,12 +768,13 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
         float3 F_ss = mp.F0 * split.x + mp.F90 * split.y;
         float  specular_occlusion =
             saturate(pow(ndotv_ibl + ao, exp2(-16.0f * mp.roughness - 1.0f)) - 1.0f + ao);
-        spec_ibl_rgb = max(prefiltered, 0.0f) * F_ss * fs_environment_params.y * specular_occlusion;
+        spec_ibl_rgb = max(prefiltered, 0.0f) * F_ss * fs_environment_params.y * specular_occlusion * horizon *
+                       horizon;
         environment_diffuse_weight = 1.0f - F_ss;
     }
 #endif
     float3 environment_diffuse_term =
-        albedo * (1.0f - metallic) * environment_diffuse_rgb * environment_diffuse_weight * ao;
+        albedo * (1.0f - metallic) * environment_diffuse_rgb * environment_diffuse_weight * ao_ambient;
     base_rgb += environment_diffuse_term;
 
     float  G_term;

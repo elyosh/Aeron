@@ -282,9 +282,90 @@ static bool same_reference(const AeronEnvironmentReference* a, const AeronEnviro
 			memcmp(a->rotation_degrees, b->rotation_degrees, sizeof a->rotation_degrees) == 0);
 }
 
+static float half_to_float(uint16_t h) {
+	const uint32_t sign = (uint32_t)(h & 0x8000u) << 16, exponent = (h >> 10) & 0x1Fu, mantissa = h & 0x3FFu;
+	uint32_t       bits;
+	if (exponent == 0) {
+		const float value = ldexpf((float)mantissa, -24);
+		return sign ? -value : value;
+	}
+	bits = sign | (exponent == 31 ? 0x7F800000u | mantissa << 13 : (exponent + 112u) << 23 | mantissa << 13);
+	float f;
+	memcpy(&f, &bits, sizeof f);
+	return f;
+}
+
+/* The luminance of the grid's light at each probe's centre, as four L1
+ * coefficients (the shader's basis), so the shader can compare the light
+ * where a pixel is with the light where the probe was captured. Sampled
+ * trilinearly, as the shader does. Zero for a probe whose centre does not
+ * get the grid's full weight, and for all of them when the grid file cannot
+ * be read again (it is small: up to 8192 points of 24 bytes). */
+static void probe_capture_light(AeronEnvironmentLibrary* library, const AeronEnvironmentDefinition* def,
+								float out[][4]) {
+	memset(out, 0, sizeof(float[4]) * def->probe_count);
+	char full[AERON_ENV_PATH_MAX * 2];
+	snprintf(full, sizeof full, "%s%s", library->path_prefix, def->grid_path);
+	uint8_t* bytes = NULL;
+	size_t   size  = 0;
+	if (!AeronVfs_ReadAll(library->vfs, library->root, full, ENV_MAX_FILE_BYTES, &bytes, &size))
+		return;
+	Ktx2* ktx = ktx2_open_mem(bytes, size, full);
+	if (!ktx) {
+		free(bytes);
+		return;
+	}
+	const Ktx2Level level  = ktx2_level(ktx, 0);
+	const uint16_t* texels = (const uint16_t*)level.data;
+	const uint32_t* r      = def->grid_resolution;
+	if (ktx2_format(ktx) != AERON_TEXTURE_FORMAT_RGBA16_FLOAT ||
+		level.size < (size_t)r[0] * r[1] * r[2] * 3u * 4u * sizeof(uint16_t)) {
+		ktx2_close(ktx);
+		free(bytes);
+		return;
+	}
+	static const float luminance[3] = { 0.2126f, 0.7152f, 0.0722f };
+	for (uint32_t k = 0; k < def->probe_count; ++k) {
+		/* Texel coordinates (point i at i + 0.5); the shader's weight is 1
+		 * from -0.5 to r + 0.5. Then point coordinates, clamped. */
+		float g[3];
+		bool  inside = true;
+		for (int a = 0; a < 3; ++a) {
+			const float s = ((float)r[a] + 1.0f) / def->grid_size[a];
+			g[a] = (def->probes[k].center[a] - def->grid_center[a]) * s + 0.5f * ((float)r[a] + 1.0f) - 0.5f;
+			inside = inside && g[a] >= -0.5f && g[a] <= (float)r[a] + 0.5f;
+			g[a]   = fminf(fmaxf(g[a] - 0.5f, 0.0f), (float)r[a] - 1.0f);
+		}
+		if (!inside)
+			continue;
+		uint32_t i0[3], i1[3];
+		float    t[3];
+		for (int a = 0; a < 3; ++a) {
+			i0[a] = (uint32_t)g[a];
+			i1[a] = i0[a] + 1u < r[a] ? i0[a] + 1u : i0[a];
+			t[a]  = g[a] - (float)i0[a];
+		}
+		for (int corner = 0; corner < 8; ++corner) {
+			const uint32_t x = corner & 1 ? i1[0] : i0[0], y = corner & 2 ? i1[1] : i0[1],
+						   z = corner & 4 ? i1[2] : i0[2];
+			const float    w = (corner & 1 ? t[0] : 1.0f - t[0]) * (corner & 2 ? t[1] : 1.0f - t[1]) *
+							   (corner & 4 ? t[2] : 1.0f - t[2]);
+			for (int c = 0; c < 3; ++c) {
+				/* Point (x, y, z), channel c: texel 4 x + c of row y + ry z. */
+				const uint16_t* texel = texels + (((size_t)(y + r[1] * z) * 4u * r[0]) + 4u * x + c) * 4u;
+				for (int j = 0; j < 4; ++j)
+					out[k][j] += w * luminance[c] * half_to_float(texel[j]);
+			}
+		}
+	}
+	ktx2_close(ktx);
+	free(bytes);
+}
+
 /* The set buffer of a probes package (AeronEnvironmentPackage); NULL on
  * failure. */
-static AeronBuffer* build_probe_buffer(AeronCommandBuffer* cmd, const AeronEnvironmentDefinition* def,
+static AeronBuffer* build_probe_buffer(AeronEnvironmentLibrary* library, AeronCommandBuffer* cmd,
+									   const AeronEnvironmentDefinition* def,
 									   const AeronEnvironmentProbeCells* cells, uint32_t* out_bytes) {
 	const size_t cell_count = (size_t)cells->dims[0] * cells->dims[1] * cells->dims[2];
 	const size_t elements = AERON_ENV_PROBE_BUFFER_HEADER + AERON_ENV_PROBE_BUFFER_RECORD * def->probe_count +
@@ -300,6 +381,8 @@ static AeronBuffer* build_probe_buffer(AeronCommandBuffer* cmd, const AeronEnvir
 	}
 	f[3]     = 1.0f / cells->cell_size;
 	words[7] = def->probe_count;
+	float capture[AERON_ENV_MAX_PROBES][4];
+	probe_capture_light(library, def, capture);
 	for (uint32_t k = 0; k < def->probe_count; ++k) {
 		const AeronEnvironmentProbeDefinition* p = &def->probes[k];
 		uint32_t* record = words + 4u * (AERON_ENV_PROBE_BUFFER_HEADER + AERON_ENV_PROBE_BUFFER_RECORD * k);
@@ -310,6 +393,7 @@ static AeronBuffer* build_probe_buffer(AeronCommandBuffer* cmd, const AeronEnvir
 			r[8 + a]  = 0.5f * p->parallax_size[a];
 			r[12 + a] = p->parallax_center[a];
 		}
+		memcpy(r + 16, capture[k], sizeof capture[k]);
 		r[3]       = 1.0f / p->falloff;
 		record[7]  = k;
 		record[11] = (p->shape == AERON_ENV_PROBE_ELLIPSOID ? 1u : 0u) |
@@ -368,7 +452,7 @@ static bool build_probes_slot(AeronEnvironmentLibrary* library, AeronCommandBuff
 		return false;
 	}
 	AeronEnvironmentPackage* pkg = &slot->package;
-	pkg->probe_buffer            = build_probe_buffer(cmd, def, &cells, &slot->probe_buffer_bytes);
+	pkg->probe_buffer            = build_probe_buffer(library, cmd, def, &cells, &slot->probe_buffer_bytes);
 	slot->probe_overflow_cells   = cells.overflow_cells;
 	if (cells.overflow_cells)
 		Aeron_LogWarn(
