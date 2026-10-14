@@ -16,7 +16,7 @@ from bpy.types import Operator
 from bpy_extras.io_utils import ImportHelper
 from mathutils import Vector
 
-from . import animation, common, hangar_lighting, operators, skins, sources, variants
+from . import animation, common, operators, probes, skins, sources, variants
 
 # Results of the running import, or None outside this add-on's imports.
 _state = None
@@ -167,7 +167,7 @@ def restore(gltf):
         for name in extension.get("markings", []):
             props.markings.add().variant = name or ""
         animation.set_energy_default(root, extension.get("energy"))
-        hangar_lighting.restore(root, extension)
+        probes.restore(root, extension)
 
 
 class glTF2ImportUserExtension:

@@ -264,13 +264,14 @@ float3 probe_model_direction(float3 world_direction)
 }
 
 /* Irradiance / pi from the grid at model point `pm` for the model normal
- * `nm`, and in `weight` how much it applies: 1 inside the grid, falling
- * to 0 between the outer points and the grid box. */
+ * `nm`, and in `weight` how much it applies: 1 inside the grid's box,
+ * falling to 0 one point spacing outside it (the outer points' light holds
+ * up to the box). */
 float3 probe_grid_diffuse(float3 pm, float3 nm, out float weight)
 {
     float3 r = float3(fs_probe_params.zw, fs_grid_scale.w);
     float3 g = pm * fs_grid_scale.xyz + fs_grid_offset.xyz;
-    float3 w = saturate(min(g + 0.5f, r + 0.5f - g));
+    float3 w = saturate(min(g + 1.5f, r + 1.5f - g));
     weight   = w.x * w.y * w.z;
     if (weight <= 0.0f) return float3(0.0f, 0.0f, 0.0f);
     /* Within a slab: filtering never mixes channels. */
@@ -288,14 +289,15 @@ float3 probe_grid_diffuse(float3 pm, float3 nm, out float weight)
 }
 
 /* The far hit of the ray o + t d (o inside) with a box or ellipsoid of
- * half extent `half` around the origin; d itself when it misses. */
+ * half extent `half` around the origin; a point far along d when it misses,
+ * which keeps the direction d. */
 float3 probe_parallax(float3 o, float3 d, float3 half, bool ellipsoid)
 {
     if (ellipsoid) {
         float3 os = o / half, ds = d / half;
         float  a = dot(ds, ds), b = dot(os, ds), c = dot(os, os) - 1.0f;
         float  disc = b * b - a * c;
-        if (disc < 0.0f) return d;
+        if (disc < 0.0f) return o + d * 1.0e4f;
         return o + d * ((-b + sqrt(disc)) / a);
     }
     float3 t = max((half - o) / d, (-half - o) / d);
@@ -313,21 +315,25 @@ float probe_specular(float3 pm, float3 rm, float roughness, out float3 radiance)
     int3   cell = (int3)floor((pm - head.xyz) * head.w);
     if (any(cell < 0) || any(cell >= (int3)dims.xyz)) return 0.0f;
     uint index = ((uint)cell.z * dims.y + (uint)cell.y) * dims.x + (uint)cell.x;
-    uint word  = g_probe_set[2u + 3u * dims.w + (index >> 2u)][index & 3u];
+    uint word  = g_probe_set[2u + 4u * dims.w + (index >> 2u)][index & 3u];
     float coverage = 0.0f;
     float lod      = roughness * (fs_probe_params.y - 1.0f);
     [loop] for (uint k = 0u; k < 4u && coverage < 1.0f; ++k) {
         uint probe = (word >> (8u * k)) & 0xFFu;
         if (probe == 0u) break;
-        uint   base     = 2u + 3u * (probe - 1u);
+        uint   base     = 2u + 4u * (probe - 1u);
         float4 center   = asfloat(g_probe_set[base]);
         uint4  shape    = g_probe_set[base + 1u];
         uint4  parallax = g_probe_set[base + 2u];
+        float3 room     = asfloat(g_probe_set[base + 3u].xyz);
         float3 l = (pm - center.xyz) * asfloat(shape.xyz);
         float  g = (parallax.w & 1u) != 0u ? length(l) : max(max(abs(l.x), abs(l.y)), abs(l.z));
         float  share = max(saturate((1.0f - g) * center.w) - coverage, 0.0f);
         if (share <= 0.0f) continue;
-        float3 d = probe_parallax(pm - center.xyz, rm, asfloat(parallax.xyz), (parallax.w & 2u) != 0u);
+        /* The ray from the point to the parallax volume, seen from where
+         * the cube was captured. */
+        float3 d = probe_parallax(pm - room, rm, asfloat(parallax.xyz), (parallax.w & 2u) != 0u) + room -
+                   center.xyz;
         radiance += share * g_probe_cubes.SampleLevel(g_probe_cubes_sampler,
                                                       float4(d.x, d.z, d.y, (float)shape.w), lod).rgb;
         coverage += share;

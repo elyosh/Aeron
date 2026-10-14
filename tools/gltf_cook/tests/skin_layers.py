@@ -79,6 +79,10 @@ def build(folder, layer_size=SIZE):
 
     path = os.path.join(folder, "panel.gltf")
     doc = json.load(open(path))
+    # The example's masked screen panel (its third material, mesh and node) takes no part here.
+    doc["materials"], doc["meshes"] = doc["materials"][:2], doc["meshes"][:2]
+    doc["nodes"] = doc["nodes"][:3]
+    doc["nodes"][0]["children"] = [1, 2]
     first = len(doc["images"])
     for k, name in enumerate(files):
         doc["images"].append({"name": name, "uri": "textures/skins/%s.png" % name, "mimeType": "image/png"})

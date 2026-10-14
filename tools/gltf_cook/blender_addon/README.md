@@ -25,7 +25,7 @@ For development, link this folder as
 `<extensions>/user_default/aeron_flight_model`. In the add-on preferences,
 set the paths of `aeron_gltf_cook` and `opt2gltf` (built with the Aeron
 tools), unless they are on the `PATH`. Paths set in the preferences are
-used instead of the packaged tools. The hangar lighting bake also needs
+used instead of the packaged tools. The probes bake also needs
 `environment_bake`, which the packages don't include yet.
 
 If you also set **Game Folder** in the preferences to the game's
@@ -422,47 +422,74 @@ light where it becomes negligible.
 Each frame, the game ranks all its lights and keeps the 256 that matter
 most near the camera. A light on a hidden (destroyed) component is dark.
 
-## Hangar lighting
+## Probes
 
-In the game, a hangar has an environment package: its light on the ships
-and their reflections of the hangar. To bake it, import the hangar model and
-use **Add Environment Probe** (Aeron tab). The probe is a sphere under the
-model root, 3 m above the model's InsideHangar hardpoint (type 25), where
-the game parks the ship and puts the floor. Without that hardpoint, it is at
-the 3D cursor. Only its position matters, so its rotation is locked. **Bake Hangar Lighting** in its panel
-renders the hangar from the probe with Cycles and bakes the package.
+Probes give a model's inside its own light and reflections in the game: a
+hangar, or a capital ship's bays and the areas ships fly into. The game
+uses them for the model and for every object that reaches them, and
+blends them with the scene's environment where they do not apply. They
+are Blender light probes under the model root:
 
-The bake renders what the scene renders, so props that you import and place
-(shuttle, droids, crane) are baked too. Turn off the render visibility (the
-camera icon in the Outliner) of anything to leave out, such as a ship
-imported for reference. Nothing comes from outside the hangar: the World
-is black during the bake.
+- **The light grid** (one Volume light probe): a box around the zone you
+  care about, such as a hangar's interior or a bay. Its points hold the
+  light that reaches each place, which lights the model and the ships
+  inside; the box is what it lights fully, and its light fades out within
+  one point spacing outside it. **Add Light Grid** (Aeron tab) puts a
+  60 x 60 x 20 m box on the floor of a hangar (its InsideHangar hardpoint,
+  type 25), else a 50 m box at the 3D cursor: size it to the zone. Its
+  **Spacing** (default 4 m) sets how far apart its points are, within 8192
+  points.
+- **Reflection probes** (Sphere light probes, up to 42): each reflects the
+  area around it. **Fill with Probes** in the grid's panel fills its box
+  with probes about 25 m wide, at most 16, each with **Room Parallax**:
+  their reflections are projected on the grid's box, so that all of them
+  show the room's walls in place. Running it again replaces the probes it
+  made (those with **Filled** checked; uncheck it to keep one). **Add
+  Reflection Probe** adds a 10 m box, the model's first one 3 m above its
+  InsideHangar hardpoint, else at the 3D cursor, for a spot that needs its
+  own probe, such as a shiny feature. A probe's influence (box or
+  ellipsoid, with its Falloff) is where it applies; without Room
+  Parallax, its custom parallax is the volume its reflections are
+  projected on. Where probes overlap, the smallest wins; the game uses at
+  most 4 in one place.
 
-The panorama is the scene as Cycles renders it, with the lights and
-emissive materials as you set them in Blender. The game no longer adds the
-hangar model's own lights while it uses the package, since their light is
-in it. Set the package's `intensity` to adjust its level in the game (live
-in the game's Environment debug tool).
+Probes cannot be rotated relative to the model root: only their position
+and size count. The panel of a probe shows Blender's probe settings, which
+Blender itself shows only under EEVEE, and an estimate of the bake time.
 
-One probe gives every ship the same light and reflections, as seen from
-the probe. Reflections are only approximate away from it, mostly on large
-flat surfaces.
+**Bake Probes** renders a panorama from each reflection probe (Samples
+per pixel, denoised) and from each grid point (256 samples) with Cycles,
+on the GPU when Cycles has one, and environment_bake makes the package. It
+shows its progress; Esc cancels. Grid points inside geometry (most of
+their rays hit back faces) are left out and take their neighbours' light.
+The bake renders what the scene renders: the World is black, so nothing
+comes from outside the model. To leave an object out of the probes or the
+grid only, use its Light Probes visibility (Object Properties >
+Visibility): Sphere for the reflection probes, Volume for the grid. Turn
+off the render visibility of anything to leave out of both.
+
+Bake times, on an Apple M4 Pro: about 3.5 s per reflection probe, and
+0.05 s per grid point on the GPU (0.15 s on the CPU).
+
+The model's lights inside the grid's box are baked into it: they are
+exported with `baked`, and the game leaves them out while it uses the
+probes, so their light is not counted twice. Lights outside it, such as
+running lights, stay live.
 
 The bake writes into the game's `remaster` folder (the Game Folder
 setting, or else a folder you choose), in
-`flight/environments/hangars/<model key>/`: `diffuse.ktx2`,
-`specular.ktx2`, `package.yaml`, `mapping.yaml` and `panorama.hdr`. Merge
-`package.yaml` and `mapping.yaml` into the environment manifest
-(`flight/environments/environments.yaml`) to use the package for that
-hangar model. The game doesn't use `panorama.hdr`: it is the render the
-cubes are made from, which you can open in Blender's Image Editor.
+`flight/environments/models/<model key>/`: `probes.ktx2`, `grid.ktx2`,
+`package.yaml`, `mapping.yaml` and a `panorama_<n>.hdr` per reflection
+probe. Merge `package.yaml` and `mapping.yaml` into the environment
+manifest (`flight/environments/environments.yaml`) to use the probes for
+that model. The panoramas are the renders the reflections are made from;
+the game doesn't use them.
 
-To review the bake in Blender, click **Preview Lighting** in the probe
-panel. It shows the panorama as the World, turned as in the game, so a
-ship placed in the scene shows its light and reflections in Material
-Preview or Rendered view. This is only an approximation: the game uses the
-filtered cubes, and the World is seen from everywhere as if from the
-probe. Click it again to put the previous World back. To check the result
-in the game, use the Environment debug tool: it shows whether the cubes
-loaded, and its Reload button loads them again after a new bake. Save to Project keeps the probe
-and its settings in the model's `.gltf`.
+To review a reflection probe in Blender, click **Preview Lighting** in its
+panel. It shows the probe's panorama as the World, turned as in the game,
+so a ship placed in the scene shows that probe's light and reflections in
+Material Preview or Rendered view. Click it again to put the previous
+World back. In the game, the Environment debug tool shows the package
+(its probes, grid and memory), and its Reload button loads it again after
+a new bake. Save to Project keeps the probes and the grid in the model's
+`.gltf`.

@@ -9,7 +9,7 @@ direction shows too. Packages:
 
 - probes.hangar4, probes.hangar16, probes.hangar42: 2x2, 4x4 and 7x6 probes
   tiling the calamaricruisernewhangar interior (one ellipsoid in the first),
-  with an 8x12x4 grid;
+  reflecting onto the interior's box, with an 8x12x4 grid over it;
 - probes.isd: four probes, the quadrants of imperialstardestroyer and the
   space above it, with an 8x12x4 grid;
 - test.hangar: a dim neutral `lighting` environment, to check probes over an
@@ -64,7 +64,7 @@ def vec(v):
     return "[%s]" % ", ".join("%g" % c for c in v)
 
 
-def bake_probes(baker, out, name, boxes, grid_lo, grid_hi, resolution, jobs_dir, ellipsoid=()):
+def bake_probes(baker, out, name, boxes, grid_lo, grid_hi, resolution, jobs_dir, ellipsoid=(), room=None):
     job_dir = os.path.join(jobs_dir, name)
     os.makedirs(job_dir)
     for k in range(len(boxes)):
@@ -78,8 +78,11 @@ def bake_probes(baker, out, name, boxes, grid_lo, grid_hi, resolution, jobs_dir,
         stream.write("probes:\n")
         for k, (centre, size) in enumerate(boxes):
             shape = "ellipsoid" if k in ellipsoid else "box"
-            stream.write("  - {center: %s, size: %s, shape: %s, falloff: 0.2, parallax_size: %s, "
-                         "parallax_shape: %s}\n" % (vec(centre), vec(size), shape, vec(size), shape))
+            # The room's box as the parallax volume, as Fill with Probes does; else the probe's own.
+            parallax = "parallax_center: %s, parallax_size: %s, parallax_shape: box" % room if room else \
+                "parallax_size: %s, parallax_shape: %s" % (vec(size), shape)
+            stream.write("  - {center: %s, size: %s, shape: %s, falloff: 0.2, %s}\n" % (
+                vec(centre), vec(size), shape, parallax))
         stream.write("probe_panoramas: [%s]\n" % ", ".join("probe_%d.hdr" % k for k in range(len(boxes))))
         centre = [(a + b) / 2 for a, b in zip(grid_lo, grid_hi)]
         size = [b - a for a, b in zip(grid_lo, grid_hi)]
@@ -110,19 +113,17 @@ def main():
     os.makedirs(jobs_dir)
     packages = []
 
-    # The hangar interior, model frame (metres): floor to ceiling, the open
-    # side to the back wall. The grid reaches one point spacing beyond the
-    # surfaces: its light fades out between its outer points and its box.
-    lo, hi = (-48.0, 0.0, -21.0), (48.0, 138.0, 13.0)
-    grid_lo, grid_hi = (-70.0, -20.0, -32.0), (70.0, 160.0, 22.0)
+    # The hangar interior, model frame (metres): wall to wall, floor to
+    # ceiling, the open side to the back wall. The grid's box is the zone it
+    # lights; the probes reflect onto it as a room.
+    lo, hi = (-60.0, 0.0, -21.0), (60.0, 138.0, 13.0)
+    room = (vec([(a + b) / 2 for a, b in zip(lo, hi)]), vec([b - a for a, b in zip(lo, hi)]))
     for name, nx, ny in (("probes.hangar4", 2, 2), ("probes.hangar16", 4, 4), ("probes.hangar42", 7, 6)):
-        packages.append(bake_probes(baker, out, name, tiles(lo, hi, nx, ny), grid_lo, grid_hi, (8, 12, 4),
-                                    jobs_dir, ellipsoid=(3,) if nx == 2 else ()))
+        packages.append(bake_probes(baker, out, name, tiles(lo, hi, nx, ny), lo, hi, (8, 12, 4), jobs_dir,
+                                    ellipsoid=(3,) if nx == 2 else (), room=room))
     # The Star Destroyer and 100 m of space above it.
     lo, hi = (-460.0, -840.0, -120.0), (460.0, 780.0, 420.0)
-    grid_lo, grid_hi = (-560.0, -965.0, -230.0), (560.0, 905.0, 530.0)
-    packages.append(bake_probes(baker, out, "probes.isd", tiles(lo, hi, 2, 2), grid_lo, grid_hi, (8, 12, 4),
-                                jobs_dir))
+    packages.append(bake_probes(baker, out, "probes.isd", tiles(lo, hi, 2, 2), lo, hi, (8, 12, 4), jobs_dir))
 
     # A dim neutral environment, brighter above.
     pano = os.path.join(jobs_dir, "environment.hdr")

@@ -184,8 +184,8 @@ static bool read_shape(const AeronConfigNode* map, const char* what, const char*
 
 static bool parse_probe(const AeronConfigNode* map, const char* owner, size_t index,
 						AeronEnvironmentProbeDefinition* probe, AeronConfigError* error) {
-	static const char* const fields[] = { "center",  "size",          "shape",
-										  "falloff", "parallax_size", "parallax_shape" };
+	static const char* const fields[] = { "center",          "size",          "shape",         "falloff",
+										  "parallax_center", "parallax_size", "parallax_shape" };
 	char                     what[160];
 	snprintf(what, sizeof what, "%s probe %zu", owner, index);
 	if (AeronConfigNode_Type(map) != AERON_CONFIG_MAP)
@@ -199,6 +199,10 @@ static bool parse_probe(const AeronConfigNode* map, const char* owner, size_t in
 		!read_number(map, what, "falloff", true, 0.0, 1.0, &probe->falloff, error) ||
 		!read_size(map, what, "parallax_size", probe->parallax_size, error) ||
 		!read_shape(map, what, "parallax_shape", &probe->parallax_shape, error))
+		return false;
+	memcpy(probe->parallax_center, probe->center, sizeof probe->parallax_center);
+	if (AeronConfigNode_MapGet(map, "parallax_center") &&
+		!read_vec3(map, what, "parallax_center", probe->parallax_center, NULL, error))
 		return false;
 	if (!(probe->falloff > 0.0f))
 		return env_error(error, falloff, "%s: 'falloff' must be above 0", what);
@@ -618,8 +622,13 @@ static void format_probes(YamlOut* y, const AeronEnvironmentDefinition* d) {
 		yaml_vec3(y, p->center);
 		yaml_printf(y, ", size: ");
 		yaml_vec3(y, p->size);
-		yaml_printf(y, ", shape: %s, falloff: %.9g,\n         parallax_size: ", yaml_shape(p->shape),
-					(double)p->falloff);
+		yaml_printf(y, ", shape: %s, falloff: %.9g,\n         ", yaml_shape(p->shape), (double)p->falloff);
+		if (memcmp(p->parallax_center, p->center, sizeof p->center) != 0) {
+			yaml_printf(y, "parallax_center: ");
+			yaml_vec3(y, p->parallax_center);
+			yaml_printf(y, ", ");
+		}
+		yaml_printf(y, "parallax_size: ");
 		yaml_vec3(y, p->parallax_size);
 		yaml_printf(y, ", parallax_shape: %s}\n", yaml_shape(p->parallax_shape));
 	}

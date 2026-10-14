@@ -20,7 +20,7 @@ from bpy.types import Operator
 from bpy_extras.io_utils import ExportHelper
 from mathutils import Matrix
 
-from . import (animation, common, display, flipbook_preview, hangar_lighting, libraries, skins, sources, validation,
+from . import (animation, common, display, flipbook_preview, libraries, probes, skins, sources, validation,
                variants)
 
 # Blender (x, y, z) -> glTF (x, z, -y).
@@ -58,9 +58,7 @@ def _model_extension(root, ordinals):
         extension["skinVariants"] = skin_variants
     if len(props.markings):
         extension["markings"] = [entry.variant or None for entry in props.markings]
-    probe = hangar_lighting.probe_json(root)
-    if probe:
-        extension["environmentProbe"] = probe
+    extension.update(probes.export_json(root))
     energy = animation.energy_default(root)
     if energy is not None:
         extension["energy"] = energy
@@ -153,6 +151,8 @@ class _ExportState:
                     self.rank[child.name] = (2, child.name)
                     extension = {"role": "light"}
                     extension.update(common.light_shape(child, common.local_matrix(child).to_scale()))
+                    if probes.light_baked(root, child):
+                        extension["baked"] = True
                     self.extensions[child.name] = extension
                     self.lights[child.name] = common.light_punctual(child, child.matrix_world)
 

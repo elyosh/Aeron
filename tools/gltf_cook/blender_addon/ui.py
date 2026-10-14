@@ -199,10 +199,6 @@ def _status(obj):
         return "{} of {}".format(_child_labels(obj.parent).get(obj.name, ""), obj.parent.name), 'INFO'
     if role == 'collision':
         return "Collision mesh of {} (never rendered)".format(obj.parent.name), 'INFO'
-    if role == 'environmentProbe':
-        if common.role(obj.parent) != 'model':
-            return "Not under a model root: not exported", 'ERROR'
-        return "Environment probe of {}".format(obj.parent.name), 'INFO'
     return None, None
 
 
@@ -588,7 +584,9 @@ class VIEW3D_PT_aeron(Panel):
                 sum(1 for c in children if common.role(c) == 'hardpoint'),
                 sum(1 for c in children if common.role(c) == 'engineGlow')))
             layout.operator("aeron.view_pilot_eye", icon='HIDE_OFF')
-            layout.operator("aeron.add_probe", icon='LIGHTPROBE_SPHERE')
+            row = layout.row(align=True)
+            row.operator("aeron.add_reflection_probe", text="Reflection Probe", icon='LIGHTPROBE_SPHERE')
+            row.operator("aeron.add_light_grid", text="Light Grid", icon='LIGHTPROBE_VOLUME')
         layout.operator("aeron.make_flight_model", icon='OUTLINER_OB_EMPTY')
         layout.label(text="Add to active component at cursor:")
         draw_add_buttons(layout)

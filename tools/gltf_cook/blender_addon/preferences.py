@@ -46,7 +46,7 @@ class AeronFlightModelPreferences(AddonPreferences):
                     "the add-on is used, or else the one on the PATH")
     environment_bake: StringProperty(
         name="environment_bake", subtype='FILE_PATH',
-        description="The environment_bake executable, which bakes hangar lighting. If empty, the one packaged "
+        description="The environment_bake executable, which bakes probes. If empty, the one packaged "
                     "with the add-on is used, or else the one on the PATH")
     xwau_folder: StringProperty(
         name="XWA Upgrade Folder", subtype='DIR_PATH',

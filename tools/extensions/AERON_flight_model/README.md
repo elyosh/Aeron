@@ -32,7 +32,7 @@ and positive uniform scale.
 
 - `model`: `{ "role": "model" }`; optionally carries `articulations`,
   `articulationSettings`, `componentSets`, `markings`, `energy`,
-  `skinVariants` and `environmentProbe`
+  `skinVariants`, `reflectionProbes` and `lightGrid`
 - `component`: requires `meshType` in `0..31`; optionally carries
   `explosionFlags`, `targetId`, `target`, descriptor geometry, `rotation`
   and `tags`
@@ -126,18 +126,40 @@ Here markings 0 shows the model as modelled, 1 shows `Red`, and 2 and above
 markings value. Aeron loads a texture that only variants use when a
 markings value in use shows one of them.
 
-## Environment probe
+## Probes
 
-A hangar model's root may carry `environmentProbe`, the point from which
-an authoring tool bakes the hangar's environment package (its lighting and
-reflections). The game ignores it.
+A model's root may carry the reflection probes and the light grid from
+which an authoring tool bakes the model's probes package: the light and
+reflections of a hangar or of a capital ship's bays, which the game uses
+for the model and the objects inside them. The game reads the package,
+not these.
 
 ```json
-"environmentProbe": { "position": [0.0, 1.2, -4.5], "samples": 256 }
+"reflectionProbes": [
+  { "position": [0.0, 1.2, -4.5], "size": [20.0, 8.0, 30.0], "shape": "box", "falloff": 0.2,
+    "roomParallax": true, "filled": true, "clipStart": 0.8, "clipEnd": 40.0 }
+],
+"lightGrid": { "position": [0.0, 4.0, -10.0], "size": [40.0, 12.0, 60.0], "spacing": 4.0,
+               "resolution": [9, 2, 14] }
 ```
 
-- `position`: required, in the model's frame, in metres;
-- `samples`: render samples per pixel.
+In the model's frame, in metres, axis-aligned with it:
+
+- a reflection probe: `position`, `size` (full extent; an ellipsoid's
+  axes), `shape` (`box` or `ellipsoid`), `falloff` (the outer fraction
+  over which its weight falls to 0), optional `parallaxSize` and
+  `parallaxShape` (the volume its reflections are projected on, default
+  the influence), or `roomParallax` (projected on the light grid's box,
+  which several probes of a room share), `filled` (made by the tool's
+  fill, which replaces it), `clipStart` and `clipEnd` (its render's
+  clipping);
+- the light grid: `position`, `size` (the zone it lights fully; its light
+  fades out within one point spacing outside), `spacing` (about how far
+  apart its points are) and `resolution` (the points per axis that follow,
+  placed at (i + 1) / (resolution + 1) of the box).
+
+Lights inside the grid's box are baked into the package and carry
+`baked` (see [Lights](#lights)).
 
 ## Skins
 

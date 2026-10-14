@@ -137,8 +137,6 @@ class AeronFlightProperties(PropertyGroup):
             ('hardpoint', "Hardpoint", "A weapon or attachment point on its component"),
             ('engineGlow', "Engine Glow", "An engine glow on its component"),
             ('collision', "Collision", "The collision mesh of its component, never rendered"),
-            ('environmentProbe', "Environment Probe",
-             "Where the hangar lighting bake sees the hangar from, under the model root"),
         ],
         default='none',
         update=_role_update,

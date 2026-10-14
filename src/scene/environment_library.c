@@ -307,7 +307,8 @@ static AeronBuffer* build_probe_buffer(AeronCommandBuffer* cmd, const AeronEnvir
 		for (int a = 0; a < 3; ++a) {
 			r[a]     = p->center[a];
 			r[4 + a] = 2.0f / p->size[a];
-			r[8 + a] = 0.5f * p->parallax_size[a];
+			r[8 + a]  = 0.5f * p->parallax_size[a];
+			r[12 + a] = p->parallax_center[a];
 		}
 		r[3]       = 1.0f / p->falloff;
 		record[7]  = k;
@@ -384,8 +385,10 @@ static bool build_probes_slot(AeronEnvironmentLibrary* library, AeronCommandBuff
 	pkg->probe_mip_count = (uint32_t)c->level_count;
 	pkg->sampler         = library->sampler;
 	for (int a = 0; a < 3; ++a) {
-		pkg->probe_bounds_min[a] = def->grid_center[a] - 0.5f * def->grid_size[a];
-		pkg->probe_bounds_max[a] = def->grid_center[a] + 0.5f * def->grid_size[a];
+		/* The grid's light reaches one point spacing beyond its box. */
+		const float reach        = def->grid_size[a] * (0.5f + 1.0f / (float)(def->grid_resolution[a] + 1u));
+		pkg->probe_bounds_min[a] = def->grid_center[a] - reach;
+		pkg->probe_bounds_max[a] = def->grid_center[a] + reach;
 		for (uint32_t k = 0; k < def->probe_count; ++k) {
 			const AeronEnvironmentProbeDefinition* p = &def->probes[k];
 			pkg->probe_bounds_min[a] = fminf(pkg->probe_bounds_min[a], p->center[a] - 0.5f * p->size[a]);

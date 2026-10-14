@@ -89,15 +89,18 @@ typedef enum AeronEnvironmentProbeShape {
 	AERON_ENV_PROBE_ELLIPSOID,
 } AeronEnvironmentProbeShape;
 
-/* A reflection probe, in the model frame (aeron axes), metres. `size` is
- * the full extent (an ellipsoid's axes). Its weight falls from 1 to 0 over
- * the outer `falloff` fraction of the influence. Reflections are projected
- * onto the parallax volume, around the same centre. */
+/* A reflection probe, in the model frame (aeron axes), metres. `center` is
+ * where its cube was captured and the centre of its influence; `size` the
+ * influence's full extent (an ellipsoid's axes). Its weight falls from 1 to
+ * 0 over the outer `falloff` fraction of the influence. Reflections are
+ * projected onto the parallax volume, around `parallax_center` (by default
+ * `center`: several probes in a room can share the room's box). */
 typedef struct AeronEnvironmentProbeDefinition {
 	float                      center[3];
 	float                      size[3];
 	AeronEnvironmentProbeShape shape;
 	float                      falloff; /* (0, 1] */
+	float                      parallax_center[3];
 	float                      parallax_size[3];
 	AeronEnvironmentProbeShape parallax_shape;
 } AeronEnvironmentProbeDefinition;
@@ -258,7 +261,7 @@ typedef struct AeronEnvironmentPackage {
 	AeronBuffer*  probe_buffer;
 	uint32_t      probe_mip_count;
 	/* The set's extent in the model frame, metres: its probes' influence
-	 * boxes and its grid box. */
+	 * boxes and its grid box with the grid's fade. */
 	float probe_bounds_min[3];
 	float probe_bounds_max[3];
 } AeronEnvironmentPackage;
@@ -266,13 +269,16 @@ typedef struct AeronEnvironmentPackage {
 /* The set buffer of a probes package, uint4 elements (floats as bits):
  *   [0]            cells min xyz (model frame, metres), 1 / cell size
  *   [1]            cell dims xyz, probe count (uints)
- *   [2 + 3k]       probe k: centre xyz, 1 / falloff
- *   [2 + 3k + 1]   probe k: 1 / half size xyz, cube array layer (uint)
- *   [2 + 3k + 2]   probe k: parallax half size xyz, shapes (uint: bit 0
+ *   [2 + 4k]       probe k: centre xyz, 1 / falloff
+ *   [2 + 4k + 1]   probe k: 1 / half size xyz, cube array layer (uint)
+ *   [2 + 4k + 2]   probe k: parallax half size xyz, shapes (uint: bit 0
  *                  influence ellipsoid, bit 1 parallax ellipsoid)
- *   [2 + 3N ...]   the cell words (AeronEnvironmentProbeCells), four per
- *                  element, x fastest, then y, then z. */
-enum { AERON_ENV_PROBE_BUFFER_HEADER = 2, AERON_ENV_PROBE_BUFFER_RECORD = 3 };
+ *   [2 + 4k + 3]   probe k: parallax centre xyz, 0
+ *   [2 + 4N ...]   the cell words (AeronEnvironmentProbeCells), four per
+ *                  element, x fastest, then y, then z.
+ * The grid weighs 1 inside its box and falls to 0 one point spacing
+ * outside it, so the set's extent includes that margin. */
+enum { AERON_ENV_PROBE_BUFFER_HEADER = 2, AERON_ENV_PROBE_BUFFER_RECORD = 4 };
 
 /* Prepared probes packages (textures and buffers) above this size are
  * logged as a warning: probes cost about 450 KB each, so many probe-owning

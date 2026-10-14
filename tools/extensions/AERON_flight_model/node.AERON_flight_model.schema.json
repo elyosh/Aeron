@@ -145,14 +145,38 @@
           "$ref": "#/$defs/energy",
           "description": "The energy effects of every material without its own. Without it, such materials show none."
         },
-        "environmentProbe": {
-          "title": "Environment probe",
-          "description": "Where an authoring tool bakes a hangar's environment package from. The game ignores it.",
+        "reflectionProbes": {
+          "title": "Reflection probes",
+          "description": "Where an authoring tool bakes the model's probes package from. The game reads the package, not these.",
+          "type": "array",
+          "maxItems": 42,
+          "items": {
+            "type": "object",
+            "required": ["position", "size"],
+            "properties": {
+              "position": { "$ref": "#/$defs/vec3", "description": "In the model's frame, in metres." },
+              "size": { "$ref": "#/$defs/vec3", "description": "The influence's full extent (an ellipsoid's axes), in metres." },
+              "shape": { "enum": ["box", "ellipsoid"], "default": "box" },
+              "falloff": { "type": "number", "exclusiveMinimum": 0, "maximum": 1, "description": "The outer fraction of the influence over which its weight falls to 0." },
+              "parallaxSize": { "$ref": "#/$defs/vec3", "description": "The volume reflections are projected on; default the influence." },
+              "parallaxShape": { "enum": ["box", "ellipsoid"] },
+              "roomParallax": { "type": "boolean", "description": "Projected on the light grid's box instead, which several probes of a room share." },
+              "filled": { "type": "boolean", "description": "Made by the authoring tool's fill, which replaces it." },
+              "clipStart": { "$ref": "#/$defs/positive" },
+              "clipEnd": { "$ref": "#/$defs/positive" }
+            }
+          }
+        },
+        "lightGrid": {
+          "title": "Light grid",
+          "description": "The irradiance grid an authoring tool bakes the model's probes package from.",
           "type": "object",
-          "required": ["position"],
+          "required": ["position", "size", "resolution"],
           "properties": {
             "position": { "$ref": "#/$defs/vec3", "description": "In the model's frame, in metres." },
-            "samples": { "title": "Samples", "description": "Render samples per pixel.", "type": "integer", "minimum": 1 }
+            "size": { "$ref": "#/$defs/vec3", "description": "The zone the grid lights fully, its full extent in metres." },
+            "spacing": { "$ref": "#/$defs/positive", "description": "About how far apart its points are, in metres." },
+            "resolution": { "type": "array", "items": { "type": "integer", "minimum": 2, "maximum": 64 }, "minItems": 3, "maxItems": 3 }
           }
         }
       }
