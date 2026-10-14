@@ -191,6 +191,8 @@ void draw_tool(int* open, void* user) {
 	if (ImGui::Button(library->reload_requested ? "Reload pending" : "Reload"))
 		AeronEnvironmentLibrary_RequestReload(library);
 	ImGui::EndDisabled();
+	if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+		ImGui::SetTooltip("Reads the packages' files again, after a new bake");
 
 	for (uint32_t i = 0; i < library->slot_count; ++i) {
 		EnvSlot*   slot   = &library->slots[i];

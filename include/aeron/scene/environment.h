@@ -296,7 +296,8 @@ enum { AERON_ENV_PROBE_BUFFER_HEADER = 2, AERON_ENV_PROBE_BUFFER_RECORD = 5 };
 typedef struct AeronEnvironmentLibrary AeronEnvironmentLibrary;
 
 typedef struct AeronEnvironmentLibraryDesc {
-	/* Borrowed; must outlive the library. */
+	/* Borrowed; must outlive the library, or AeronEnvironmentLibrary_SetDefinitions's
+	 * next preparation. */
 	const AeronEnvironmentDefinitionSet* definitions;
 	/* Package texture paths resolve to `path_prefix` + path under `root`. */
 	AeronVfs*    vfs;
@@ -323,7 +324,8 @@ void AeronEnvironmentLibrary_Destroy(AeronEnvironmentLibrary* library);
  * references[i]) and releases the textures it no longer carries. A reference
  * whose package is unknown, or whose textures fail to load, upload or are
  * unsupported by the device, is unavailable; the others are usable. Debug
- * overrides carry over to an identical reference. Returns false only when
+ * overrides carry over to an identical reference whose definition has not
+ * changed. Returns false only when
  * the set could not be built at all; the previous set then stays published. */
 bool AeronEnvironmentLibrary_Prepare(AeronEnvironmentLibrary* library, AeronCommandBuffer* cmd,
 									 const AeronEnvironmentReference* references, uint32_t count);
@@ -342,6 +344,12 @@ AeronSampler* AeronEnvironmentLibrary_Sampler(const AeronEnvironmentLibrary* lib
  * preparation point. The current set stays published until the reloaded one
  * replaces it. ServiceReload returns true when it ran. */
 void AeronEnvironmentLibrary_RequestReload(AeronEnvironmentLibrary* library);
+/* Replaces the borrowed definitions, for a game that reads them again on a
+ * reload. The next Prepare or ServiceReload resolves references against
+ * `definitions`; keep the previous set until that call returns, since the
+ * published packages point into it until then. */
+void AeronEnvironmentLibrary_SetDefinitions(AeronEnvironmentLibrary*             library,
+											const AeronEnvironmentDefinitionSet* definitions);
 bool AeronEnvironmentLibrary_ReloadRequested(const AeronEnvironmentLibrary* library);
 bool AeronEnvironmentLibrary_ServiceReload(AeronEnvironmentLibrary* library, AeronCommandBuffer* cmd);
 

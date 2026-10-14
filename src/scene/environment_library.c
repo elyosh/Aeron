@@ -613,9 +613,14 @@ static bool prepare_set(AeronEnvironmentLibrary* library, AeronCommandBuffer* cm
 			continue;
 		}
 		++available;
+		/* Edits carry over unless the definition changed (a reload that read
+		 * it again): an edited copy of the old one would not match the new
+		 * textures. */
 		const EnvSlot* previous = NULL;
 		for (uint32_t j = 0; j < old_slots_n && !previous; ++j)
-			if (old_slots[j].overridden && same_reference(&old_slots[j].reference, &slot->reference))
+			if (old_slots[j].overridden && same_reference(&old_slots[j].reference, &slot->reference) &&
+				memcmp(old_slots[j].package.definition, slot->package.definition,
+					   sizeof *slot->package.definition) == 0)
 				previous = &old_slots[j];
 		if (previous) {
 			slot->package.settings = previous->package.settings;
@@ -737,6 +742,12 @@ AeronSampler* AeronEnvironmentLibrary_Sampler(const AeronEnvironmentLibrary* lib
 void AeronEnvironmentLibrary_RequestReload(AeronEnvironmentLibrary* library) {
 	if (library)
 		library->reload_requested = true;
+}
+
+void AeronEnvironmentLibrary_SetDefinitions(AeronEnvironmentLibrary*             library,
+											const AeronEnvironmentDefinitionSet* definitions) {
+	if (library && definitions)
+		library->definitions = definitions;
 }
 
 bool AeronEnvironmentLibrary_ReloadRequested(const AeronEnvironmentLibrary* library) {
