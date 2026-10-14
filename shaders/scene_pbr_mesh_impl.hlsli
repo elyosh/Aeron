@@ -49,7 +49,10 @@
  * moves every storage register up by two. AERON_PBR_SCREENS 0 drops the screen code, which the renderer
  * draws with its own pipeline (a mesh's screen primitives). AERON_PBR_ALPHA_BLEND
  * 1 is the variant for blended materials. AERON_PBR_ENVIRONMENT 0 drops the
- * image-based lighting, for scenes without an environment. All keep this
+ * image-based lighting, for scenes without an environment. AERON_PBR_PROBES 1
+ * (screenless) adds the drawn object's probe set: reflection probes and an
+ * irradiance grid in place of the screen textures (t10, t11) and its set
+ * buffer at storage slot 4. All keep this
  * shader's cost for ordinary materials down: code chosen by a uniform costs
  * time even where it does not run. */
 #ifndef AERON_PBR_SCREENS
@@ -64,6 +67,9 @@
 #ifndef AERON_PBR_ANIM
 #define AERON_PBR_ANIM 0
 #endif
+#ifndef AERON_PBR_PROBES
+#define AERON_PBR_PROBES 0
+#endif
 
 #define AERON_DIRECTIONAL_SHADOW_UNIFORM_REGISTER b0
 #define AERON_PBR_LIGHT_UNIFORM_REGISTER b1
@@ -72,7 +78,7 @@
 #define AERON_PBR_VARIANT_REGISTER t15
 #define AERON_PBR_POINT_LIGHT_REGISTER t16
 #define AERON_CLUSTER_DATA_REGISTER t17
-/* t18 (storage slot 4) is free. */
+#define AERON_PBR_PROBE_SET_REGISTER t18
 #define AERON_PBR_SCREEN_RECT_REGISTER t19
 #define AERON_PBR_SCREEN_FRAME_REGISTER t20
 #define AERON_PBR_ANIM_RECORD_REGISTER t21
@@ -81,7 +87,7 @@
 #define AERON_PBR_VARIANT_REGISTER t13
 #define AERON_PBR_POINT_LIGHT_REGISTER t14
 #define AERON_CLUSTER_DATA_REGISTER t15
-/* t16 (storage slot 4) is free. */
+#define AERON_PBR_PROBE_SET_REGISTER t16
 #define AERON_PBR_SCREEN_RECT_REGISTER t17
 #define AERON_PBR_SCREEN_FRAME_REGISTER t18
 #endif
@@ -90,7 +96,9 @@
 #include "scene_pbr_vsout.hlsli"
 #include "srgb.hlsli"
 #include "scene_pbr_material_alpha.hlsli"
+#if !AERON_PBR_PROBES
 #include "scene_pbr_screen.hlsli"
+#endif
 
 Texture2DArray g_normal     : register(t1, space2);
 SamplerState g_normal_sampler : register(s1, space2);
@@ -224,6 +232,108 @@ uint anim_layer_frame(uint4 anim, uint layer, out uint flipbook)
     float onset = state == AERON_ANIM_STATE_ALWAYS ? 0.0f : fs_anim_onset[state >> 2u][state & 3u];
     uint frame = flipbook != 0u ? material_anim_frame(flipbook, fs_anim.x - onset) : 0u;
     return frame != 0u && (g_anim_records[frame].x & 0xFFFu) != AERON_ANIM_NO_LAYER ? frame : 0u;
+}
+#endif
+
+
+#if AERON_PBR_PROBES
+/* ===== Probe set ======================================================
+ * The object's reflection probes (a cube array, probe k in layer k), its
+ * irradiance grid (3D, slab c holds colour channel c's L1 coefficients)
+ * and its set buffer: header, probe records, cell words
+ * (AeronEnvironmentPackage in environment.h). Probes and grid live in the
+ * model frame (metres); a cube direction is (d.x, d.z, d.y) of a model
+ * direction. */
+TextureCubeArray<float4> g_probe_cubes : register(t10, space2);
+SamplerState g_probe_cubes_sampler : register(s10, space2);
+Texture3D<float4> g_probe_grid : register(t11, space2);
+SamplerState g_probe_grid_sampler : register(s11, space2);
+StructuredBuffer<uint4> g_probe_set : register(AERON_PBR_PROBE_SET_REGISTER, space2);
+
+float3 probe_model_point(float3 world_pos)
+{
+    float4 p = float4(world_pos, 1.0f);
+    return float3(dot(fs_world_to_model[0], p), dot(fs_world_to_model[1], p), dot(fs_world_to_model[2], p));
+}
+
+float3 probe_model_direction(float3 world_direction)
+{
+    return normalize(float3(dot(fs_world_to_model[0].xyz, world_direction),
+                            dot(fs_world_to_model[1].xyz, world_direction),
+                            dot(fs_world_to_model[2].xyz, world_direction)));
+}
+
+/* Irradiance / pi from the grid at model point `pm` for the model normal
+ * `nm`, and in `weight` how much it applies: 1 inside the grid, falling
+ * to 0 between the outer points and the grid box. */
+float3 probe_grid_diffuse(float3 pm, float3 nm, out float weight)
+{
+    float3 r = float3(fs_probe_params.zw, fs_grid_scale.w);
+    float3 g = pm * fs_grid_scale.xyz + fs_grid_offset.xyz;
+    float3 w = saturate(min(g + 0.5f, r + 0.5f - g));
+    weight   = w.x * w.y * w.z;
+    if (weight <= 0.0f) return float3(0.0f, 0.0f, 0.0f);
+    /* Within a slab: filtering never mixes channels. */
+    float2 uv = g.xy / r.xy;
+    float  z  = clamp(g.z, 0.5f, r.z - 0.5f);
+    float3 n  = float3(nm.x, nm.z, nm.y);
+    float4 basis = float4(1.0f, n.y, n.z, n.x);
+    float3 e;
+    [unroll] for (int c = 0; c < 3; ++c) {
+        float4 sh = g_probe_grid.SampleLevel(g_probe_grid_sampler,
+                                             float3(uv, ((float)c * r.z + z) / (3.0f * r.z)), 0.0f);
+        e[c] = dot(sh, basis);
+    }
+    return max(e, 0.0f) * fs_probe_strengths.x;
+}
+
+/* The far hit of the ray o + t d (o inside) with a box or ellipsoid of
+ * half extent `half` around the origin; d itself when it misses. */
+float3 probe_parallax(float3 o, float3 d, float3 half, bool ellipsoid)
+{
+    if (ellipsoid) {
+        float3 os = o / half, ds = d / half;
+        float  a = dot(ds, ds), b = dot(os, ds), c = dot(os, os) - 1.0f;
+        float  disc = b * b - a * c;
+        if (disc < 0.0f) return d;
+        return o + d * ((-b + sqrt(disc)) / a);
+    }
+    float3 t = max((half - o) / d, (-half - o) / d);
+    return o + d * min(min(t.x, t.y), t.z);
+}
+
+/* Prefiltered radiance from the probes of the cell holding `pm`, smallest
+ * first, each taking the coverage the smaller ones left; returns the
+ * coverage, which the environment's cube completes. */
+float probe_specular(float3 pm, float3 rm, float roughness, out float3 radiance)
+{
+    radiance = float3(0.0f, 0.0f, 0.0f);
+    uint4  dims = g_probe_set[1];
+    float4 head = asfloat(g_probe_set[0]);
+    int3   cell = (int3)floor((pm - head.xyz) * head.w);
+    if (any(cell < 0) || any(cell >= (int3)dims.xyz)) return 0.0f;
+    uint index = ((uint)cell.z * dims.y + (uint)cell.y) * dims.x + (uint)cell.x;
+    uint word  = g_probe_set[2u + 3u * dims.w + (index >> 2u)][index & 3u];
+    float coverage = 0.0f;
+    float lod      = roughness * (fs_probe_params.y - 1.0f);
+    [loop] for (uint k = 0u; k < 4u && coverage < 1.0f; ++k) {
+        uint probe = (word >> (8u * k)) & 0xFFu;
+        if (probe == 0u) break;
+        uint   base     = 2u + 3u * (probe - 1u);
+        float4 center   = asfloat(g_probe_set[base]);
+        uint4  shape    = g_probe_set[base + 1u];
+        uint4  parallax = g_probe_set[base + 2u];
+        float3 l = (pm - center.xyz) * asfloat(shape.xyz);
+        float  g = (parallax.w & 1u) != 0u ? length(l) : max(max(abs(l.x), abs(l.y)), abs(l.z));
+        float  share = max(saturate((1.0f - g) * center.w) - coverage, 0.0f);
+        if (share <= 0.0f) continue;
+        float3 d = probe_parallax(pm - center.xyz, rm, asfloat(parallax.xyz), (parallax.w & 2u) != 0u);
+        radiance += share * g_probe_cubes.SampleLevel(g_probe_cubes_sampler,
+                                                      float4(d.x, d.z, d.y, (float)shape.w), lod).rgb;
+        coverage += share;
+    }
+    radiance = max(radiance, 0.0f) * fs_probe_strengths.y;
+    return coverage;
 }
 #endif
 
@@ -437,6 +547,16 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
 #else
     float3 environment_diffuse_rgb = float3(0.0f, 0.0f, 0.0f);
 #endif
+#if AERON_PBR_PROBES
+    /* Inside the grid, its baked light replaces the environment and the
+     * world ambient, which it already holds; they fade back in at its
+     * border. */
+    float3 probe_point = probe_model_point(i.world_pos);
+    float  grid_weight;
+    float3 grid_rgb = probe_grid_diffuse(probe_point, probe_model_direction(N), grid_weight);
+    environment_diffuse_rgb = lerp(environment_diffuse_rgb, grid_rgb, grid_weight);
+    ambient_rgb *= 1.0f - grid_weight;
+#endif
     uint shadow_cascade = 4u;
     float shadow_cascade_blend = 0.0f;
     float shadow_coverage = 0.0f;
@@ -565,6 +685,31 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
      * Without a specular cube both terms are as before. */
     float3 spec_ibl_rgb = float3(0.0f, 0.0f, 0.0f);
     float3 environment_diffuse_weight = float3(1.0f, 1.0f, 1.0f);
+#if AERON_PBR_PROBES
+    /* The probes cover what they can; the environment's cube, when there
+     * is one, the rest. */
+    float3 R_ibl = reflect(-V, N_spec);
+    float3 probe_radiance;
+    float  probe_coverage = probe_specular(probe_point, probe_model_direction(R_ibl), mp.roughness,
+                                           probe_radiance);
+    bool   environment_specular = fs_environment_params.y > 0.0f && fs_environment_params.z >= 1.0f;
+    if (probe_coverage > 0.0f || environment_specular) {
+        float  ndotv_ibl = saturate(dot(N_spec, V));
+        float3 prefiltered = probe_radiance;
+        if (environment_specular && probe_coverage < 1.0f) {
+            prefiltered += (1.0f - probe_coverage) * fs_environment_params.y *
+                           max(g_specular_environment.SampleLevel(
+                                   g_specular_environment_sampler, normalize(environment_local(R_ibl)),
+                                   mp.roughness * (fs_environment_params.z - 1.0f)).rgb, 0.0f);
+        }
+        float2 split = g_brdf_lut.SampleLevel(g_brdf_lut_sampler, float2(ndotv_ibl, mp.roughness), 0.0f);
+        float3 F_ss = mp.F0 * split.x + mp.F90 * split.y;
+        float  specular_occlusion =
+            saturate(pow(ndotv_ibl + ao, exp2(-16.0f * mp.roughness - 1.0f)) - 1.0f + ao);
+        spec_ibl_rgb = prefiltered * F_ss * specular_occlusion;
+        environment_diffuse_weight = 1.0f - F_ss;
+    }
+#else
     if (AERON_PBR_ENVIRONMENT && fs_environment_params.y > 0.0f && fs_environment_params.z >= 1.0f) {
         float  ndotv_ibl = saturate(dot(N_spec, V));
         float3 R = reflect(-V, N_spec);
@@ -578,6 +723,7 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
         spec_ibl_rgb = max(prefiltered, 0.0f) * F_ss * fs_environment_params.y * specular_occlusion;
         environment_diffuse_weight = 1.0f - F_ss;
     }
+#endif
     float3 environment_diffuse_term =
         albedo * (1.0f - metallic) * environment_diffuse_rgb * environment_diffuse_weight * ao;
     base_rgb += environment_diffuse_term;

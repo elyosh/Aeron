@@ -134,7 +134,21 @@ typedef struct AeronScenePreparedInstance {
 	/* The bound intersects the camera frustum; camera passes skip the
 	 * instance otherwise (shadow passes cull per cascade). */
 	uint32_t camera_visible;
+	/* The probe set the instance's colour draws use; -1 for none. */
+	int32_t probe_set;
 } AeronScenePreparedInstance;
+
+/* A probe set placed for the frame (AeronScene_AddProbeSet). */
+typedef struct AeronSceneProbeSet {
+	const struct AeronEnvironmentPackage* package;
+	float                                 world_to_model[12]; /* rows: scene units to model metres */
+	float                                 metres_per_unit;    /* the largest scale of world_to_model */
+	/* The lighting block's probe fields (AeronSceneLightingUniformGPU). */
+	float params[4];
+	float strengths[4];
+	float grid_scale[4];
+	float grid_offset[4];
+} AeronSceneProbeSet;
 
 typedef struct AeronScenePointLightGPU {
 	/* xyz: the position, w: the inverse square of the range. */
@@ -200,13 +214,19 @@ typedef struct AeronSceneLightingUniformGPU {
 	float                       debug_material[4];       /* enabled, metallic, roughness, 0 */
 	float                       emission[4];             /* emissive scale, 0, 0, 0 */
 	float                       render_size[4];          /* width, height, 1 / width, 1 / height */
+	/* The drawn object's probe set, read by the probe variants only. */
+	float probe_params[4];      /* probe count, cube mip count, grid points along x, y */
+	float probe_strengths[4];   /* diffuse, specular, 0, 0 */
+	float world_to_model[3][4]; /* rows: scene units to model metres */
+	float grid_scale[4];        /* model metres to grid texels; w: grid points along z */
+	float grid_offset[4];
 } AeronSceneLightingUniformGPU;
 
 /* Layout checks against the HLSL blocks (ClusteredLightUniform, 112 bytes;
- * with the environment, the debug material, the emission and the render
- * size, 224 bytes). */
+ * with the environment, the debug material, the emission, the render size
+ * and the probe set, 336 bytes). */
 typedef char AeronSceneClusterUniformSizeCheck[sizeof(AeronSceneClusterUniformGPU) == 112 ? 1 : -1];
-typedef char AeronSceneLightingUniformSizeCheck[sizeof(AeronSceneLightingUniformGPU) == 224 ? 1 : -1];
+typedef char AeronSceneLightingUniformSizeCheck[sizeof(AeronSceneLightingUniformGPU) == 336 ? 1 : -1];
 
 enum {
 	AERON_SCENE_CLUSTER_ENABLED    = 1u << 0,
@@ -295,6 +315,11 @@ struct AeronScene3D {
 	/* Image-based lighting environment for this frame; textures borrowed. */
 	AeronScenePbrEnvironment pbr_environment;
 	int                      pbr_environment_set;
+	/* The frame's probe sets, and the lighting block the colour passes
+	 * bind, which probe draws push again with their set's fields. */
+	AeronSceneProbeSet           probe_sets[AERON_SCENE_MAX_PROBE_SETS];
+	int                          probe_set_count;
+	AeronSceneLightingUniformGPU lighting_uniform;
 
 	/* Stabilized cascaded shadow map for the key directional light. */
 	AeronSceneDirectionalShadowDesc    directional_shadow;
@@ -598,6 +623,11 @@ struct AeronScene3D {
 	AeronShader*           pbr_anim_vs;
 	AeronShader*           pbr_anim_fs[2][5];
 	AeronGraphicsPipeline* pbr_anim_pipes[2][AERON_PBR_PIPE_KIND_COUNT][3];
+	/* Probe variants by [animation][plain, mask, blend], loaded on first
+	 * use, and their pipelines by [animation][kind][cull]. */
+	int                    pbr_probe_tried;
+	AeronShader*           pbr_probe_fs[2][3];
+	AeronGraphicsPipeline* pbr_probe_pipes[2][AERON_PBR_PIPE_KIND_COUNT][3];
 };
 
 /* Shared small helpers (util.c). */

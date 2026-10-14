@@ -1,5 +1,7 @@
 #include "capture.h"
 
+#include "aeron/scene/environment.h"
+
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
@@ -282,7 +284,9 @@ static int load_game_instances(const AeronConfigNode* list, CaptureConfig* confi
 		fprintf(stderr, "game_scene.instances must list 1-%d instances\n", CAPTURE_MAX_INSTANCES);
 		return 0;
 	}
-	static const char* const keys[] = { "model", "role", "position", "rotation_degrees", "markings" };
+	static const char* const keys[] = {
+		"model", "role", "position", "rotation_degrees", "markings", "probes"
+	};
 	for (size_t i = 0; i < count; ++i) {
 		const AeronConfigNode* item = AeronConfigNode_SequenceGet(list, i);
 		CaptureInstance*       out  = &game->instances[i];
@@ -316,6 +320,19 @@ static int load_game_instances(const AeronConfigNode* list, CaptureConfig* confi
 						 out->markings > CAPTURE_MAX_MARKINGS)) {
 			fprintf(stderr, "game_scene.instances[%zu].markings must be 0..%d\n", i, CAPTURE_MAX_MARKINGS);
 			return 0;
+		}
+		const AeronConfigNode* probes = AeronConfigNode_MapGet(item, "probes");
+		if (probes && (AeronConfigNode_Type(probes) != AERON_CONFIG_STRING ||
+					   !AeronEnvironment_IsValidName(AeronConfigNode_String(probes, NULL)))) {
+			fprintf(stderr, "game_scene.instances[%zu].probes must be a package name\n", i);
+			return 0;
+		}
+		if (probes) {
+			if (!config->game.environment_manifest[0]) {
+				fprintf(stderr, "game_scene.instances[%zu].probes needs game_scene.environment\n", i);
+				return 0;
+			}
+			snprintf(out->probes, sizeof out->probes, "%s", AeronConfigNode_String(probes, ""));
 		}
 		const AeronConfigNode* position = AeronConfigNode_MapGet(item, "position");
 		const AeronConfigNode* rotation = AeronConfigNode_MapGet(item, "rotation_degrees");
@@ -367,10 +384,19 @@ static int load_game_scene(AeronVfs* vfs, const AeronConfigFile* yaml, CaptureCo
 	const AeronConfigNode* node = AeronConfigFile_GetNode(yaml, "game_scene");
 	if (!node)
 		return 1;
-	static const char* const keys[] = { "defaults", "ssao",    "shadows",      "sun_direction",
-										"sun_color", "ambient", "point_lights", "instances",
-										"cockpit_follows_camera", "model_light_intensity",
-										"temporal_upscaling", "cluster_debug" };
+	static const char* const keys[] = { "defaults",
+										"ssao",
+										"shadows",
+										"sun_direction",
+										"sun_color",
+										"ambient",
+										"point_lights",
+										"instances",
+										"cockpit_follows_camera",
+										"model_light_intensity",
+										"temporal_upscaling",
+										"cluster_debug",
+										"environment" };
 	CaptureGameScene*        game   = &config->game;
 	if (!only_keys(node, "game_scene", keys, sizeof keys / sizeof keys[0]))
 		return 0;
@@ -463,6 +489,24 @@ static int load_game_scene(AeronVfs* vfs, const AeronConfigFile* yaml, CaptureCo
 			return 0;
 		}
 		game->ambient = (float)value;
+	}
+	const AeronConfigNode* environment = AeronConfigNode_MapGet(node, "environment");
+	if (environment) {
+		static const char* const environment_keys[] = { "folder", "manifest", "package" };
+		const char* manifest = AeronConfigNode_String(AeronConfigNode_MapGet(environment, "manifest"), NULL);
+		const char* package  = AeronConfigNode_String(AeronConfigNode_MapGet(environment, "package"), "");
+		const char* folder   = AeronConfigNode_String(AeronConfigNode_MapGet(environment, "folder"), "");
+		if (AeronConfigNode_Type(environment) != AERON_CONFIG_MAP ||
+			!only_keys(environment, "game_scene.environment", environment_keys,
+					   sizeof environment_keys / sizeof environment_keys[0]) ||
+			!manifest || !manifest[0] || (package[0] && !AeronEnvironment_IsValidName(package))) {
+			fprintf(stderr, "game_scene.environment needs manifest (a file in folder), and takes folder "
+							"(default: asset_root) and package (the environment)\n");
+			return 0;
+		}
+		snprintf(game->environment_folder, sizeof game->environment_folder, "%s", folder);
+		snprintf(game->environment_manifest, sizeof game->environment_manifest, "%s", manifest);
+		snprintf(game->environment_package, sizeof game->environment_package, "%s", package);
 	}
 	const AeronConfigNode* lights = AeronConfigNode_MapGet(node, "point_lights");
 	if ((lights && !load_game_lights(lights, game)) ||

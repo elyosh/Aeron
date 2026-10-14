@@ -46,6 +46,17 @@ cbuffer ClusteredLightUniform : AERON_CLUSTER_UNIFORM_BINDING {
 	float4 fs_emission;
 	/* xy = render-target size in pixels, zw = its inverse. */
 	float4 fs_render_size;
+	/* The drawn object's probe set (AeronScene_AddProbeSet), read by the
+	 * probe variants only: x = probe count, y = cube array mip count,
+	 * zw = grid points along x and y; the diffuse and specular strengths;
+	 * the rows of the world-to-model matrix (scene units to model metres);
+	 * and the grid mapping g = p * scale + offset in grid texel units,
+	 * scale.w = grid points along z. */
+	float4 fs_probe_params;
+	float4 fs_probe_strengths;
+	float4 fs_world_to_model[3];
+	float4 fs_grid_scale;
+	float4 fs_grid_offset;
 #endif
 };
 

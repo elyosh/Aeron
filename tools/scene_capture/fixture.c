@@ -1,5 +1,7 @@
 #include "aeron/asset/flight_model.h"
 #include "aeron/asset/opt_model.h"
+#include "aeron/config_file.h"
+#include "aeron/scene/environment.h"
 #include "aeron/scene/image_cache.h"
 #include "aeron/scene/mesh_overlay.h"
 #include "capture.h"
@@ -84,7 +86,10 @@ static AeronSceneMesh* create_mesh(AeronCommandBuffer* cmd, const Fixture* f, in
 }
 
 static int load_models(Fixture* f, AeronCommandBuffer* cmd) {
-	AeronVfs* vfs = f->vfs = AeronVfs_Create(&(AeronVfsConfig) { .asset_root = f->config.asset_root });
+	/* An environment folder is the resource root. */
+	const char* folder = f->config.game.environment_folder;
+	AeronVfs*   vfs = f->vfs = AeronVfs_Create(
+		&(AeronVfsConfig) { .asset_root = f->config.asset_root, .resource_root = folder[0] ? folder : NULL });
 	if (!vfs)
 		return 0;
 	if (f->config.effect_dir[0]) {
@@ -137,6 +142,68 @@ static int load_models(Fixture* f, AeronCommandBuffer* cmd) {
 	return ok;
 }
 
+/* game_scene.environment: parses the manifest's packages and prepares the
+ * environment and the instances' probes packages with `cmd`. */
+static int prepare_environment(Fixture* f, AeronCommandBuffer* cmd) {
+	const CaptureGameScene* game = &f->config.game;
+	f->environment_reference     = -1;
+	for (int i = 0; i < CAPTURE_MAX_INSTANCES; ++i)
+		f->probes_reference[i] = -1;
+	if (!game->environment_manifest[0])
+		return 1;
+	const AeronVfsRoot root = game->environment_folder[0] ? AERON_VFS_ROOT_RESOURCE : AERON_VFS_ROOT_ASSET;
+	AeronConfigError   error;
+	memset(&error, 0, sizeof error);
+	if (!AeronConfigFile_LoadYamlEx(f->vfs, root, game->environment_manifest, &f->environment_file, &error) ||
+		!AeronEnvironment_ParsePackages(
+			AeronConfigNode_MapGet(AeronConfigFile_Root(f->environment_file), "packages"),
+			&f->environment_definitions, &error)) {
+		Aeron_LogError("scene_capture", "game_scene.environment: %s:%d: %s", game->environment_manifest,
+					   error.line, error.message);
+		return 0;
+	}
+	/* Scene world (+X right, +Y down, +Z forward) to the cube frame (+X
+	 * right, +Y up, -Z forward). */
+	f->environment_library = AeronEnvironmentLibrary_Create(&(AeronEnvironmentLibraryDesc) {
+		.definitions        = f->environment_definitions,
+		.vfs                = f->vfs,
+		.root               = root,
+		.base_world_to_cube = { 1, 0, 0, 0, -1, 0, 0, 0, -1 },
+	});
+	if (!f->environment_library)
+		return 0;
+	/* One reference per distinct package. */
+	AeronEnvironmentReference references[1 + CAPTURE_MAX_INSTANCES];
+	uint32_t                  count = 0;
+	memset(references, 0, sizeof references);
+	if (game->environment_package[0]) {
+		f->environment_reference = (int)count;
+		snprintf(references[count++].package, AERON_ENV_NAME_MAX, "%s", game->environment_package);
+	}
+	for (int i = 0; i < game->instance_count; ++i) {
+		const char* name = game->instances[i].probes;
+		if (!name[0])
+			continue;
+		for (uint32_t r = 0; r < count && f->probes_reference[i] < 0; ++r)
+			if (strcmp(references[r].package, name) == 0)
+				f->probes_reference[i] = (int)r;
+		if (f->probes_reference[i] < 0) {
+			f->probes_reference[i] = (int)count;
+			snprintf(references[count++].package, AERON_ENV_NAME_MAX, "%s", name);
+		}
+	}
+	if (!AeronEnvironmentLibrary_Prepare(f->environment_library, cmd, references, count))
+		return 0;
+	for (uint32_t r = 0; r < count; ++r) {
+		if (!AeronEnvironmentLibrary_Find(f->environment_library, r)) {
+			Aeron_LogError("scene_capture", "game_scene.environment: package '%s': %s", references[r].package,
+						   AeronEnvironmentLibrary_FailureReason(f->environment_library, r));
+			return 0;
+		}
+	}
+	return 1;
+}
+
 int Fixture_Create(Fixture* f, const CaptureConfig* config) {
 	memset(f, 0, sizeof *f);
 	f->config = *config;
@@ -166,6 +233,8 @@ int Fixture_Create(Fixture* f, const CaptureConfig* config) {
 	}
 	if (loaded && config->screen_test)
 		loaded = create_screen_textures(f, cmd);
+	if (loaded && config->game.enabled)
+		loaded = prepare_environment(f, cmd);
 	if (!loaded) {
 		Aeron_CancelCommandBuffer(cmd);
 		Fixture_Destroy(f);
@@ -296,6 +365,9 @@ void Fixture_Destroy(Fixture* f) {
 	Aeron_DestroyRenderTarget(f->chart_rt);
 	AeronScene_Destroy(f->scene);
 	AeronScene_Destroy(f->reference_scene);
+	AeronEnvironmentLibrary_Destroy(f->environment_library);
+	AeronEnvironmentDefinitionSet_Destroy(f->environment_definitions);
+	AeronConfigFile_Destroy(f->environment_file);
 	for (int i = 0; i < CAPTURE_MAX_MODELS; ++i)
 		AeronScene_MeshDestroy(f->meshes[i].mesh);
 	AeronEffectData_Destroy(f->effect_data);
@@ -560,6 +632,12 @@ static void add_game_instances(AeronScene3D* scene, const Fixture* f, const Aero
 				AeronScene_AddLight(scene, &light);
 		}
 		instance.anim = instance_anim(f, (int)i);
+		if (f->probes_reference[i] >= 0) {
+			const int set = AeronScene_AddProbeSet(
+				scene, AeronEnvironmentLibrary_Find(f->environment_library, (uint32_t)f->probes_reference[i]),
+				instance.transform);
+			instance.probe_set_owner = set >= 0 ? (uint8_t)(set + 1) : 0u;
+		}
 		AeronScene_AddMeshInstance(scene, &instance);
 	}
 	/* As XwaRemasterShip_ScenePointLight: 0.25 m spheres ending under
@@ -668,6 +746,10 @@ AeronRenderTarget* Fixture_Record(Fixture* f, double time, int blur, AeronComman
 		AeronScene_SetMotionContext(scene, previous_matrix, 1);
 		AeronScene_SetBackfaceFill(scene, f->config.backface_fill);
 		set_game_lighting(scene, &f->config);
+		if (f->environment_reference >= 0)
+			AeronScene_SetPbrEnvironmentPackage(
+				scene,
+				AeronEnvironmentLibrary_Find(f->environment_library, (uint32_t)f->environment_reference));
 		if (f->config.screen_test)
 			set_screen_sources(scene, f, time);
 		add_game_instances(scene, f, &current, &previous);

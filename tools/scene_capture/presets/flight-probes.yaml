@@ -1,0 +1,55 @@
+# A capital ship in flight with the test probes packages of probe_packages.py:
+# the Star Destroyer owns probes.isd (four flat-coloured probes, its
+# quadrants, and a grid lit from its +X side) and turns 30 degrees, so the
+# colours and the grid's light must turn with it. The fighters above its hull
+# use the set too; there is no environment. Build the packages first with
+# `probe_packages.py --baker <build dir>/environment_bake --out captures/probe-assets`.
+width: 2560
+height: 1440
+frames: 30
+fps: 60
+pan_degrees_per_second: 0
+pan_direction_degrees: 0
+shutter: 0.5
+quality: 0
+reference_samples: 0
+msaa_samples: 2
+# The game's back-face culling: game_scene places the models (left-handed
+# OPT frames) mirrored, as the game does.
+cull: back
+bloom:
+  intensity: 0.2
+  kernel: 4
+tonemap: agx
+output_dir: captures/flight-probes
+# Set this to the game-data directory containing remaster/models (converted
+# XWAU models). Relative paths are resolved from the working directory.
+asset_root: .
+models:
+  - remaster/models/imperialstardestroyer.glb
+  - remaster/models/xwing.glb
+  - remaster/models/tiefighter.glb
+  - remaster/models/awing.glb
+game_scene:
+  # The Scene3D defaults the game loads (aeron/config/scene3d_defaults.yaml);
+  # from a standalone Aeron checkout, config/scene3d_defaults.yaml.
+  defaults: aeron/config/scene3d_defaults.yaml
+  # Surface to sun, camera axes (+X right, +Y down, +Z forward).
+  sun_direction: [-0.4, -0.7, -0.6]
+  sun_color: [2.513, 2.513, 2.513]
+  ambient: 0.08
+  # The packages' folder and manifest; no environment package.
+  environment: { folder: captures/probe-assets, manifest: probe_tests.yaml }
+  # Ships: position in metres, camera axes; rotation_degrees [yaw, pitch, roll].
+  instances:
+    - { model: remaster/models/imperialstardestroyer.glb, position: [0, 300, 1100], rotation_degrees: [30, 0, 0],
+        probes: probes.isd }
+    - { model: remaster/models/xwing.glb, position: [150, 150, 600], rotation_degrees: [20, 0, 0] }
+    - { model: remaster/models/tiefighter.glb, position: [230, 140, 700], rotation_degrees: [200, 0, 0] }
+    - { model: remaster/models/awing.glb, position: [190, 170, 500], rotation_degrees: [10, 0, 0] }
+benchmark:
+  warmup_seconds: 2
+  sample_seconds: 1
+  samples: 7
+  min_frames: 120
+  frames_in_flight: 2

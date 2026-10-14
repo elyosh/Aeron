@@ -1,0 +1,87 @@
+# hangar-lights.yaml with the test probes packages of probe_packages.py: the
+# hangar owns probes.hangar4 (four flat-coloured probes, one an ellipsoid,
+# and a grid lit from the hangar's +X side, screen left) over the test.hangar
+# environment. Build the packages first with
+# `probe_packages.py --baker <build dir>/environment_bake --out captures/probe-assets`.
+# Swap the package for probes.hangar16 or probes.hangar42 to compare costs.
+width: 2560
+height: 1440
+frames: 30
+fps: 60
+pan_degrees_per_second: 0
+pan_direction_degrees: 0
+shutter: 0.5
+quality: 0
+reference_samples: 0
+msaa_samples: 2
+# The game's back-face culling: game_scene places the models (left-handed
+# OPT frames) mirrored, as the game does.
+cull: back
+bloom:
+  intensity: 0.2
+  kernel: 4
+tonemap: agx
+output_dir: captures/hangar-probes
+# Set this to the game-data directory containing remaster/models (converted
+# XWAU models). Relative paths are resolved from the working directory.
+asset_root: .
+models:
+  - remaster/models/calamaricruisernewhangar.glb
+  - remaster/models/xwing.glb
+  - remaster/models/ywing.glb
+  - remaster/models/awing.glb
+game_scene:
+  # The Scene3D defaults the game loads (aeron/config/scene3d_defaults.yaml);
+  # from a standalone Aeron checkout, config/scene3d_defaults.yaml.
+  defaults: aeron/config/scene3d_defaults.yaml
+  # Indoors: no sun, so the scene is lit by the point lights and a dim fill.
+  shadows: false
+  sun_color: [0, 0, 0]
+  ambient: 0.02
+  # Camera axes, metres: +X right, +Y down, +Z forward. The hangar's floor
+  # is 7.5 m below the camera, its ceiling 24.6 to 26.7 m above it, and its
+  # back wall 153 m ahead. The ceiling's emissive panels run toward the back
+  # wall in five rows, at X 0, +-17.25 and +-34.5; each light stands 1 m
+  # under one row, for a 45 m section of it.
+  point_lights:
+    - { position: [-34.5, -24.9, 25], intensity: [300, 300, 300] }
+    - { position: [-17.25, -24.9, 25], intensity: [300, 300, 300] }
+    - { position: [0, -24.9, 25], intensity: [300, 300, 300] }
+    - { position: [17.25, -24.9, 25], intensity: [300, 300, 300] }
+    - { position: [34.5, -24.9, 25], intensity: [300, 300, 300] }
+    - { position: [-34.5, -24.9, 70], intensity: [300, 300, 300] }
+    - { position: [-17.25, -24.9, 70], intensity: [300, 300, 300] }
+    - { position: [0, -24.9, 70], intensity: [300, 300, 300] }
+    - { position: [17.25, -24.9, 70], intensity: [300, 300, 300] }
+    - { position: [34.5, -24.9, 70], intensity: [300, 300, 300] }
+    - { position: [-34.5, -24.9, 115], intensity: [300, 300, 300] }
+    - { position: [-17.25, -24.9, 115], intensity: [300, 300, 300] }
+    - { position: [0, -24.9, 115], intensity: [300, 300, 300] }
+    - { position: [17.25, -24.9, 115], intensity: [300, 300, 300] }
+    - { position: [34.5, -24.9, 115], intensity: [300, 300, 300] }
+  # The packages' folder and manifest, and the environment around the probes.
+  environment: { folder: captures/probe-assets, manifest: probe_tests.yaml, package: test.hangar }
+  instances:
+    - { model: remaster/models/calamaricruisernewhangar.glb, position: [0, -13.4, 15], rotation_degrees: [180, 0, 0],
+        probes: probes.hangar4 }
+    - { model: remaster/models/xwing.glb, position: [-22, 5.47, 26], rotation_degrees: [180, 0, 0] }
+    - { model: remaster/models/ywing.glb, position: [0, 6.37, 26], rotation_degrees: [176, 0, 0] }
+    - { model: remaster/models/awing.glb, position: [22, 6.36, 26], rotation_degrees: [184, 0, 0] }
+    - { model: remaster/models/ywing.glb, position: [-22, 6.37, 44], rotation_degrees: [186, 0, 0] }
+    - { model: remaster/models/awing.glb, position: [0, 6.36, 44], rotation_degrees: [180, 0, 0] }
+    - { model: remaster/models/xwing.glb, position: [22, 5.47, 44], rotation_degrees: [172, 0, 0] }
+    - { model: remaster/models/awing.glb, position: [-22, 6.36, 62], rotation_degrees: [174, 0, 0] }
+    - { model: remaster/models/xwing.glb, position: [0, 5.47, 62], rotation_degrees: [184, 0, 0] }
+    - { model: remaster/models/ywing.glb, position: [22, 6.37, 62], rotation_degrees: [180, 0, 0] }
+    - { model: remaster/models/xwing.glb, position: [-22, 5.47, 80], rotation_degrees: [180, 0, 0] }
+    - { model: remaster/models/ywing.glb, position: [0, 6.37, 80], rotation_degrees: [188, 0, 0] }
+    - { model: remaster/models/awing.glb, position: [22, 6.36, 80], rotation_degrees: [176, 0, 0] }
+    - { model: remaster/models/ywing.glb, position: [-22, 6.37, 98], rotation_degrees: [178, 0, 0] }
+    - { model: remaster/models/awing.glb, position: [0, 6.36, 98], rotation_degrees: [186, 0, 0] }
+    - { model: remaster/models/xwing.glb, position: [22, 5.47, 98], rotation_degrees: [182, 0, 0] }
+benchmark:
+  warmup_seconds: 2
+  sample_seconds: 1
+  samples: 7
+  min_frames: 120
+  frames_in_flight: 2

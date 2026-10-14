@@ -33,6 +33,7 @@ typedef struct CaptureInstance {
 	int   model, role;
 	int   markings;                 /* XWAU markings value (variant index), -1 when not given */
 	float position[3], rotation[3]; /* metres, camera axes; yaw/pitch/roll degrees */
+	char  probes[64];               /* the probes package it owns; empty for none */
 } CaptureInstance;
 
 /* A game light: position in metres and intensity (the linear illuminance
@@ -56,6 +57,12 @@ typedef struct CaptureGameScene {
 	int                      cockpit_follows_camera;
 	/* The clustered lights' occupancy view (AeronSceneClusteredLightDesc). */
 	int                      cluster_debug;
+	/* game_scene.environment: the folder holding the manifest and the files
+	 * its packages name (empty: asset_root), the manifest in it, and the
+	 * environment package (empty for none). */
+	char environment_folder[1024];
+	char environment_manifest[1024];
+	char environment_package[64];
 	/* Scene illuminance per lux of the models' authored lights (candela;
 	 * 0 = off), as point_lights.model_light_intensity in the game. */
 	float                    model_light_intensity;
@@ -107,9 +114,21 @@ typedef struct CaptureMesh {
 	float           center[3], extent;
 } CaptureMesh;
 
+struct AeronConfigFile;
+struct AeronEnvironmentDefinitionSet;
+struct AeronEnvironmentLibrary;
+
 typedef struct Fixture {
 	AeronScene3D *     scene, *reference_scene;
 	AeronVfs*          vfs;
+	/* game_scene.environment: the manifest's packages, prepared; the
+	 * environment's reference and each instance's probes reference, -1 for
+	 * none. */
+	struct AeronConfigFile*               environment_file;
+	struct AeronEnvironmentDefinitionSet* environment_definitions;
+	struct AeronEnvironmentLibrary*       environment_library;
+	int                                   environment_reference;
+	int                                   probes_reference[CAPTURE_MAX_INSTANCES];
 	AeronEffectAtlas*  effect_atlas;
 	AeronEffectData*   effect_data;
 	CaptureMesh        meshes[CAPTURE_MAX_MODELS];

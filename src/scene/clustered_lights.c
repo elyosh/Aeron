@@ -276,6 +276,7 @@ void AeronSceneClusteredLights_Bind(AeronScene3D* s, AeronRenderPass* pass) {
 	 * parameters followed by the image-based lighting environment. */
 	AeronSceneLightingUniformGPU lighting;
 	memset(&lighting, 0, sizeof lighting);
+	/* Kept: probe draws push it again with their set's fields. */
 	lighting.cluster = s->cluster_uniform;
 	if (s->pbr_environment_set) {
 		const AeronScenePbrEnvironment* e = &s->pbr_environment;
@@ -292,6 +293,7 @@ void AeronSceneClusteredLights_Bind(AeronScene3D* s, AeronRenderPass* pass) {
 	lighting.render_size[1] = (float)s->render_h;
 	lighting.render_size[2] = 1.0f / (float)s->render_w;
 	lighting.render_size[3] = 1.0f / (float)s->render_h;
+	s->lighting_uniform     = lighting;
 	Aeron_BindUniformData(pass, AERON_SHADER_STAGE_FRAGMENT, 2, &lighting, sizeof lighting);
 }
 

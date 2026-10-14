@@ -467,6 +467,7 @@ int AeronScene_Begin(AeronScene3D* s, const AeronSceneCamera* camera) {
 	s->frame_uniform_count = 0;
 	memset(&s->pbr_environment, 0, sizeof s->pbr_environment);
 	s->pbr_environment_set = 0;
+	s->probe_set_count     = 0;
 	s->pbr_debug_views     = 0;
 	memset(s->pbr_debug_material, 0, sizeof s->pbr_debug_material);
 	AeronScene_SetScreenSources(s, NULL, NULL, NULL);
@@ -1269,6 +1270,90 @@ void AeronScene_SetPbrEnvironmentPackage(AeronScene3D* s, const AeronEnvironment
 	AeronScene_SetPbrEnvironment(s, &environment);
 }
 
+int AeronScene_AddProbeSet(AeronScene3D* s, const AeronEnvironmentPackage* package, const float m[12]) {
+	if (!s || !package || !m || !package->probe_cubes || !package->probe_grid || !package->probe_buffer ||
+		s->probe_set_count >= AERON_SCENE_MAX_PROBE_SETS) {
+		return -1;
+	}
+	/* World to model: the inverse of the affine model-to-world. */
+	const float a[9] = { m[0], m[1], m[2], m[4], m[5], m[6], m[8], m[9], m[10] };
+	const float c0 = a[4] * a[8] - a[5] * a[7], c1 = a[5] * a[6] - a[3] * a[8],
+				c2  = a[3] * a[7] - a[4] * a[6];
+	const float det = a[0] * c0 + a[1] * c1 + a[2] * c2;
+	if (!(fabsf(det) > 1e-20f) || !isfinite(det)) {
+		return -1;
+	}
+	const float inv[9] = { c0 / det, (a[2] * a[7] - a[1] * a[8]) / det, (a[1] * a[5] - a[2] * a[4]) / det,
+						   c1 / det, (a[0] * a[8] - a[2] * a[6]) / det, (a[2] * a[3] - a[0] * a[5]) / det,
+						   c2 / det, (a[1] * a[6] - a[0] * a[7]) / det, (a[0] * a[4] - a[1] * a[3]) / det };
+	AeronSceneProbeSet* set = &s->probe_sets[s->probe_set_count];
+	memset(set, 0, sizeof *set);
+	set->package = package;
+	for (int row = 0; row < 3; ++row) {
+		float length_sq = 0.0f;
+		for (int col = 0; col < 3; ++col) {
+			set->world_to_model[row * 4 + col] = inv[row * 3 + col];
+			length_sq += inv[row * 3 + col] * inv[row * 3 + col];
+		}
+		set->world_to_model[row * 4 + 3] =
+			-(inv[row * 3 + 0] * m[3] + inv[row * 3 + 1] * m[7] + inv[row * 3 + 2] * m[11]);
+		set->metres_per_unit = fmaxf(set->metres_per_unit, sqrtf(length_sq));
+	}
+	const AeronEnvironmentDefinition* d = &package->settings;
+	set->params[0]                      = (float)d->probe_count;
+	set->params[1]                      = (float)package->probe_mip_count;
+	set->params[2]                      = (float)d->grid_resolution[0];
+	set->params[3]                      = (float)d->grid_resolution[1];
+	set->strengths[0]                   = d->intensity * d->diffuse_strength;
+	set->strengths[1]                   = d->intensity * d->specular_strength;
+	/* Grid texel coordinates: point i of r at i + 0.5, Blender's volume
+	 * probe placing it at (i + 1) / (r + 1) of the box. */
+	for (int axis = 0; axis < 3; ++axis) {
+		const float r          = (float)d->grid_resolution[axis];
+		set->grid_scale[axis]  = (r + 1.0f) / d->grid_size[axis];
+		set->grid_offset[axis] = (0.5f - d->grid_center[axis] / d->grid_size[axis]) * (r + 1.0f) - 0.5f;
+	}
+	set->grid_scale[3] = (float)d->grid_resolution[2];
+	return s->probe_set_count++;
+}
+
+/* The probe set an instance uses: the one it owns, else the first whose
+ * extent its bounding sphere overlaps; -1 for none. */
+static int32_t scene_instance_probe_set(const AeronScene3D* s, const AeronSceneMeshInstance* instance) {
+	if (s->probe_set_count == 0) {
+		return -1;
+	}
+	if (instance->probe_set_owner) {
+		return instance->probe_set_owner <= s->probe_set_count ? (int32_t)instance->probe_set_owner - 1 : -1;
+	}
+	static const float    world_axes[3][3] = { { 1.0f, 0.0f, 0.0f },
+											   { 0.0f, 1.0f, 0.0f },
+											   { 0.0f, 0.0f, 1.0f } };
+	AeronSceneInstanceBox box;
+	if (!AeronSceneInternal_InstanceBox(instance, world_axes[0], world_axes[1], world_axes[2], &box)) {
+		return -1;
+	}
+	const float radius =
+		sqrtf(box.half[0] * box.half[0] + box.half[1] * box.half[1] + box.half[2] * box.half[2]);
+	for (int k = 0; k < s->probe_set_count; ++k) {
+		const AeronSceneProbeSet*      set         = &s->probe_sets[k];
+		const AeronEnvironmentPackage* pkg         = set->package;
+		float                          distance_sq = 0.0f;
+		for (int row = 0; row < 3; ++row) {
+			const float* w = &set->world_to_model[row * 4];
+			const float  p = w[0] * box.center[0] + w[1] * box.center[1] + w[2] * box.center[2] + w[3];
+			const float  outside =
+				fmaxf(fmaxf(pkg->probe_bounds_min[row] - p, p - pkg->probe_bounds_max[row]), 0.0f);
+			distance_sq += outside * outside;
+		}
+		const float reach = radius * set->metres_per_unit;
+		if (distance_sq <= reach * reach) {
+			return k;
+		}
+	}
+	return -1;
+}
+
 void AeronScene_SetFrameUniformData(AeronScene3D* s, AeronShaderStage stage, uint32_t slot, const void* data,
 									uint32_t size) {
 	if (!s || !data || size == 0 || size > AERON_SCENE_FRAME_UNIFORM_CAP) {
@@ -1583,6 +1668,7 @@ int AeronSceneStorage_Prepare(AeronScene3D* s, AeronCommandBuffer* cmd) {
 		memset(prepared, 0, sizeof *prepared);
 		SceneOrderKey key;
 		prepared->camera_visible = (uint32_t)scene_instance_in_frustum(s, instance, frustum, &key);
+		prepared->probe_set      = prepared->camera_visible ? scene_instance_probe_set(s, instance) : -1;
 		if (prepared->camera_visible) {
 			key.index                          = (uint16_t)i;
 			order_keys[s->camera_order_count++] = key;

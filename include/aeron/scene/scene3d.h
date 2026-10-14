@@ -30,6 +30,7 @@ typedef struct AeronScene3D AeronScene3D;
 enum {
 	AERON_SCENE_POINT_LIGHT_CAPACITY   = 256,
 	AERON_SCENE_CLUSTER_LIGHT_CAPACITY = 32,
+	AERON_SCENE_MAX_PROBE_SETS         = 8,
 };
 
 /* Per-component payload packed into the scene's per-frame storage
@@ -169,6 +170,10 @@ typedef struct AeronSceneMeshInstance {
 	/* Material animation state, borrowed for the frame; NULL for none
 	 * (AeronScene_SetEffectAtlas). */
 	const AeronSceneMaterialAnim* anim;
+	/* The probe set this instance owns (AeronScene_AddProbeSet), as its
+	 * index + 1; 0 lets the scene choose the first set whose extent its
+	 * bounds overlap, if any. */
+	uint8_t probe_set_owner;
 } AeronSceneMeshInstance;
 
 typedef void (*AeronSceneAfterMeshesFn)(AeronCommandBuffer* cmd, AeronRenderPass* pass,
@@ -490,6 +495,16 @@ void AeronScene_SetPbrEnvironment(AeronScene3D* scene, const AeronScenePbrEnviro
 /* Selects a prepared package's diffuse cube, diffuse strength and
  * world-to-cube matrix. NULL clears the selection. */
 void AeronScene_SetPbrEnvironmentPackage(AeronScene3D* scene, const struct AeronEnvironmentPackage* package);
+
+/* Places a prepared `probes` package for this frame: `model_to_world` is
+ * its owner's row-major 3x4 matrix from model metres to scene units (the
+ * owner instance's transform). Instances using the set are lit by its
+ * probes and grid, blended with the environment where those do not apply;
+ * screens never use probes. Returns the set's index, or -1 when the
+ * package has no probes or AERON_SCENE_MAX_PROBE_SETS are placed. Begin
+ * clears the sets; the package is borrowed through Render. */
+int AeronScene_AddProbeSet(AeronScene3D* scene, const struct AeronEnvironmentPackage* package,
+						   const float model_to_world[12]);
 
 /* Queue a per-frame uniform blob (copied; reset by Begin) that the
  * scene binds to (stage, slot) in the color pass AFTER the
