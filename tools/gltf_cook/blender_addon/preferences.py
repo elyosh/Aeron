@@ -57,8 +57,8 @@ class AeronFlightModelPreferences(AddonPreferences):
     game_dir: StringProperty(
         name="Game Folder", subtype='DIR_PATH',
         description="The game's remaster folder. Export for Game rebuilds the project's changed effect "
-                    "libraries in its effects folder and checks each animation frame against them. Bake Hangar "
-                    "Lighting writes there")
+                    "libraries in its effects folder and checks each animation frame against them. Bake Probes "
+                    "writes there")
     # Before Game Folder: the game's remaster/effects folder. Its parent is
     # the Game Folder when that is not set.
     effects_dir: StringProperty(subtype='DIR_PATH', options={'HIDDEN'})

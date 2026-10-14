@@ -25,14 +25,15 @@ For development, link this folder as
 `<extensions>/user_default/aeron_flight_model`. In the add-on preferences,
 set the paths of `aeron_gltf_cook` and `opt2gltf` (built with the Aeron
 tools), unless they are on the `PATH`. Paths set in the preferences are
-used instead of the packaged tools. The probes bake also needs
-`environment_bake`, which the packages don't include yet.
+used instead of the packaged tools. Bake Probes also needs
+`environment_bake`, which a package includes when it is built with
+`--environment-bake`.
 
 If you also set **Game Folder** in the preferences to the game's
 `remaster` folder, Export for Game checks every animation frame against its
 library in `remaster/effects`. Before that, it rebuilds in that folder the
-project libraries that the model uses and that have changed. The hangar
-lighting bake also writes to the Game Folder.
+project libraries that the model uses and that have changed. Bake Probes
+also writes to the Game Folder.
 
 Tests (run each one with `--help` for its options):
 - `tests/roundtrip.py`: models import and save without changes.
@@ -40,6 +41,7 @@ Tests (run each one with `--help` for its options):
   operators.
 - `tests/flipbook_preview.py`: the flipbook preview.
 - `tests/opt_import.py`: the OPT import.
+- `tests/probes.py`: probes authoring, their glTF round trip and the bake.
 
 ## Workflow
 
@@ -482,14 +484,28 @@ setting, or else a folder you choose), in
 `package.yaml`, `mapping.yaml` and a `panorama_<n>.hdr` per reflection
 probe. Merge `package.yaml` and `mapping.yaml` into the environment
 manifest (`flight/environments/environments.yaml`) to use the probes for
-that model. The panoramas are the renders the reflections are made from;
-the game doesn't use them.
+that model: `mapping.yaml` adds the model under `xwa.probes`. The
+panoramas are the renders the reflections are made from; the game doesn't
+use them. Each frame, the game uses the probes of the 8 models nearest to
+the camera that have them.
+
+Limits:
+- The World is black during the bake, so light from the sky through open
+  hangar or bay doors is missing. Add lights near the doors if that area
+  needs more light.
+- Light can leak through a wall thinner than the point spacing. Reduce
+  the Spacing if it does.
+- The grid's light is soft: it gives no sharp shadows.
+- The probes reflect the Blender scene as it was baked. The ships that the
+  game places in the hangar don't show in the reflections.
 
 To review a reflection probe in Blender, click **Preview Lighting** in its
 panel. It shows the probe's panorama as the World, turned as in the game,
 so a ship placed in the scene shows that probe's light and reflections in
 Material Preview or Rendered view. Click it again to put the previous
 World back. In the game, the Environment debug tool shows the package
-(its probes, grid and memory), and its Reload button loads it again after
-a new bake. Save to Project keeps the probes and the grid in the model's
-`.gltf`.
+(its probes, grid and memory) and the frame's probe sets, and its Reload
+button loads it again after a new bake. Its **Show probes** checkbox draws
+each probe's influence, the grid's box and the grid points near the
+camera, to check that they sit where they do in Blender. Save to
+Project keeps the probes and the grid in the model's `.gltf`.

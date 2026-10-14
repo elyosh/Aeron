@@ -86,8 +86,8 @@ def main():
     parser.add_argument("--platform", required=True, choices=sorted(PLATFORMS))
     parser.add_argument("--cooker", required=True, help="the aeron_gltf_cook built for the platform")
     parser.add_argument("--opt2gltf", required=True, help="the opt2gltf built for the platform")
-    parser.add_argument("--environment-bake", help="the environment_bake built for the platform, for the hangar "
-                                                   "lighting bake")
+    parser.add_argument("--environment-bake", help="the environment_bake built for the platform, for "
+                                                   "Bake Probes")
     parser.add_argument("--out", required=True, help="the directory the package is written to")
     parser.add_argument("--license", action="append", default=[], metavar="NAME=FILE",
                         help="another license of what the tools link (repeatable)")
