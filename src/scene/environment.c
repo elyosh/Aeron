@@ -501,29 +501,43 @@ bool AeronEnvironment_ParsePackages(const AeronConfigNode* packages, AeronEnviro
 	if (!out_set)
 		return env_error(error, NULL, "no output set");
 	*out_set = NULL;
+	AeronEnvironmentDefinitionSet* set = calloc(1, sizeof *set);
+	if (!set)
+		return env_error(error, packages, "out of memory");
+	if (!AeronEnvironment_AddPackages(packages, set, error)) {
+		AeronEnvironmentDefinitionSet_Destroy(set);
+		return false;
+	}
+	*out_set = set;
+	return true;
+}
+
+bool AeronEnvironment_AddPackages(const AeronConfigNode* packages, AeronEnvironmentDefinitionSet* set,
+								  AeronConfigError* error) {
+	if (!set)
+		return env_error(error, NULL, "no set");
 	if (!packages)
 		return env_error(error, NULL, "missing 'packages' map");
 	if (AeronConfigNode_Type(packages) != AERON_CONFIG_MAP)
 		return env_error(error, packages, "'packages' must be a map");
 	const size_t count = AeronConfigNode_MapCount(packages);
-	if (count > AERON_ENV_MAX_PACKAGES)
+	if (set->count + count > AERON_ENV_MAX_PACKAGES)
 		return env_error(error, packages, "at most %d packages are allowed", AERON_ENV_MAX_PACKAGES);
-
-	AeronEnvironmentDefinitionSet* set = calloc(1, sizeof *set);
-	if (!set)
+	if (count == 0)
+		return true;
+	AeronEnvironmentDefinition* definitions =
+		realloc(set->definitions, (set->count + count) * sizeof *set->definitions);
+	if (!definitions)
 		return env_error(error, packages, "out of memory");
-	if (count > 0) {
-		set->definitions = calloc(count, sizeof *set->definitions);
-		if (!set->definitions) {
-			free(set);
-			return env_error(error, packages, "out of memory");
-		}
-	}
+	set->definitions = definitions;
 
+	const uint32_t first = set->count;
 	for (size_t i = 0; i < count; ++i) {
-		const char*            name = AeronConfigNode_MapKeyAt(packages, i);
-		const AeronConfigNode* node = AeronConfigNode_MapValueAt(packages, i);
-		bool                   ok   = true;
+		const char*                 name       = AeronConfigNode_MapKeyAt(packages, i);
+		const AeronConfigNode*      node       = AeronConfigNode_MapValueAt(packages, i);
+		AeronEnvironmentDefinition* definition = &set->definitions[set->count];
+		memset(definition, 0, sizeof *definition);
+		bool ok = true;
 		if (!AeronEnvironment_IsValidName(name)) {
 			ok = env_error(
 				error, node,
@@ -532,15 +546,14 @@ bool AeronEnvironment_ParsePackages(const AeronConfigNode* packages, AeronEnviro
 		} else if (AeronEnvironmentDefinitionSet_Find(set, name)) {
 			ok = env_error(error, node, "duplicate package name '%s'", name);
 		} else {
-			ok = parse_package(name, node, &set->definitions[i], error);
+			ok = parse_package(name, node, definition, error);
 		}
 		if (!ok) {
-			AeronEnvironmentDefinitionSet_Destroy(set);
+			set->count = first;
 			return false;
 		}
-		set->count = (uint32_t)i + 1;
+		set->count++;
 	}
-	*out_set = set;
 	return true;
 }
 

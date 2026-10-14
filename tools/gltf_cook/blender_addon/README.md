@@ -486,11 +486,11 @@ The bake writes into the game's `remaster` folder (the Game Folder
 setting, or else a folder you choose), in
 `flight/environments/models/<model key>/`: `probes.ktx2`, `grid.ktx2`,
 `package.yaml`, `mapping.yaml` and a `panorama_<n>.hdr` per reflection
-probe. Merge `package.yaml` and `mapping.yaml` into the environment
-manifest (`flight/environments/environments.yaml`) to use the probes for
-that model: `mapping.yaml` adds the model under `xwa.probes`. The
-panoramas are the renders the reflections are made from; the game doesn't
-use them. Each frame, the game uses the probes of the 8 models nearest to
+probe. The game reads `package.yaml` from that folder. After a model's
+first bake, add the line from `mapping.yaml` under `xwa.probes` in the
+environment manifest (`flight/environments/environments.yaml`); later
+bakes need nothing more. The panoramas are the renders the reflections are
+made from; the game doesn't use them. Each frame, the game uses the probes of the 8 models nearest to
 the camera that have them.
 
 Limits:

@@ -44,6 +44,8 @@ CUBE_ROTATION = mathutils.Euler((math.pi / 2.0, 0.0, math.pi))
 # what a World's environment texture shows with no mapping.
 WORLD_CAMERA = mathutils.Matrix(((0.0, 0.0, -1.0), (-1.0, 0.0, 0.0), (0.0, 1.0, 0.0)))
 PREVIEW_TAG = "aeron_lighting_preview"
+# The game reads package.yaml from the model's folder; only a first bake needs the manifest.
+BAKED_MESSAGE = "Baked {}. After a model's first bake, add the line in its mapping.yaml to the manifest's xwa.probes"
 PACKAGE_NAME = re.compile(r"^[a-z0-9._]{1,63}$")
 MAX_PROBES = 42  # one cube array within 256 array layers
 MAX_GRID_POINTS = 8192  # about 7 min of bake on a GPU
@@ -553,7 +555,7 @@ def write_job(path, root, probes, grid, probe_names, grid_names, invalid):
 
 def write_mapping(path, key, package):
     with open(path, "w") as stream:
-        stream.write("# Mapping for the model: merge under the manifest's xwa section.\n"
+        stream.write("# For the model's first bake: add this under the manifest's xwa section.\n"
                      "xwa:\n  probes:\n    {}: {}\n".format(key, package))
 
 
@@ -795,7 +797,7 @@ game's remaster folder. Esc cancels"""
             done, total = next(self._steps)
         except StopIteration:
             self._end(context)
-            self.report({'INFO'}, "Baked {}. Merge its package.yaml and mapping.yaml into the manifest".format(
+            self.report({'INFO'}, BAKED_MESSAGE.format(
                 self._result.get("out", "")))
             return {'FINISHED'}
         except BakeError as error:
@@ -818,7 +820,7 @@ game's remaster folder. Esc cancels"""
         except BakeError as error:
             self.report({'ERROR'}, str(error))
             return {'CANCELLED'}
-        self.report({'INFO'}, "Baked {}. Merge its package.yaml and mapping.yaml into the manifest".format(
+        self.report({'INFO'}, BAKED_MESSAGE.format(
             result.get("out", "")))
         return {'FINISHED'}
 

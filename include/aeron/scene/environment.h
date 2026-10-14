@@ -131,7 +131,7 @@ typedef struct AeronEnvironmentDefinition {
 	uint32_t                        probe_count; /* 1 to AERON_ENV_MAX_PROBES */
 } AeronEnvironmentDefinition;
 
-/* Immutable set of parsed package definitions. */
+/* A set of parsed package definitions, fixed once in use. */
 typedef struct AeronEnvironmentDefinitionSet AeronEnvironmentDefinitionSet;
 
 /* Parses a `packages:` map node. On failure returns false, leaves *out_set
@@ -139,6 +139,12 @@ typedef struct AeronEnvironmentDefinitionSet AeronEnvironmentDefinitionSet;
  * a message. An empty map yields an empty set. */
 bool AeronEnvironment_ParsePackages(const AeronConfigNode* packages, AeronEnvironmentDefinitionSet** out_set,
 									AeronConfigError* error);
+/* Adds the packages of another `packages:` map to `set`, for packages kept
+ * in their own files. Names must stay unique across the set. Call it before
+ * the set is used: it may move the definitions. On failure the set is
+ * unchanged and `error` is filled as above. */
+bool AeronEnvironment_AddPackages(const AeronConfigNode* packages, AeronEnvironmentDefinitionSet* set,
+								  AeronConfigError* error);
 void AeronEnvironmentDefinitionSet_Destroy(AeronEnvironmentDefinitionSet* set);
 
 uint32_t AeronEnvironmentDefinitionSet_Count(const AeronEnvironmentDefinitionSet* set);
