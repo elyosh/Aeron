@@ -14,8 +14,9 @@ struct ClusterLight {
 };
 
 StructuredBuffer<ClusterLight> g_lights : register(t0, space0);
-RWStructuredBuffer<uint2>      g_headers : register(u0, space1);
-RWStructuredBuffer<uint>       g_indices : register(u1, space1);
+/* Per cluster two header words, then every cluster's indices
+ * (scene_clustered_lights.hlsli). */
+RWStructuredBuffer<uint>       g_data : register(u0, space1);
 
 groupshared uint   s_candidate_count;
 groupshared uint   s_candidate_lights[AERON_CLUSTER_MAX_SCENE_LIGHTS];
@@ -169,9 +170,10 @@ bool candidate_better(float score, uint index, float best_score, uint best_index
 	uint cluster_index = (group_id.z * fs_cluster_grid_y + group_id.y) * fs_cluster_grid_x + group_id.x;
 	if (group_index == 0u) {
 		/* The header's high half counts the tubes. */
-		g_headers[cluster_index] = uint2(retained_count | (s_tube_count << 16u), candidate_count);
+		g_data[AERON_CLUSTER_HEADER_WORDS * cluster_index]      = retained_count | (s_tube_count << 16u);
+		g_data[AERON_CLUSTER_HEADER_WORDS * cluster_index + 1u] = candidate_count;
 	}
-	uint base = cluster_index * AERON_CLUSTER_MAX_LIGHTS;
+	uint base = clustered_light_index_base(cluster_index);
 	for (uint i = group_index; i < retained_count; i += AERON_CLUSTER_THREADS)
-		g_indices[base + i] = s_selected[i];
+		g_data[base + i] = s_selected[i];
 }

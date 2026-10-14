@@ -99,6 +99,7 @@ positions stay in metres.
 | `ssao`, `shadows` | `true` (default) or `false`, to turn either off. |
 | `temporal_upscaling` | Optional `{ mode, sharpness }` as the game's settings: `mode` is `off` (default), `native_aa`, `quality`, `balanced` or `performance`; `sharpness` 0–1 enables RCAS above 0. Benchmarks only, since temporal output depends on frame history, and needs `msaa_samples: 1` as in the game. The history resets when the pose sequence restarts. |
 | `model_light_intensity` | Scene illuminance per lux of the lights authored in the models (in candela), as the game's `point_lights.model_light_intensity`: default 1/683, 0 to 1, 0 turns them off. Every drawn instance submits its model's lights. |
+| `cluster_debug` | `false` (default) or `true`: the clustered lights' occupancy view (lights per cluster as colours) in place of the lit scene, as the game's Point Lights debug tool. |
 | `cockpit_follows_camera` | `false` (default) or `true`. With a panning camera, `false` keeps the cockpit and exterior in place (the pilot looks around); `true` turns them with the camera (the craft turns), as the game carries its cockpit. |
 | `sun_direction`, `sun_color` | Surface-to-sun direction in camera axes (+X right, +Y down, +Z forward) and linear RGB illuminance; default white 2.513, the game's white classic sun of intensity 1 at its default `lighting.sun_illuminance_scale`. |
 | `ambient` | Linear ambient fill, default 0.08. |

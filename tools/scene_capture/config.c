@@ -370,7 +370,7 @@ static int load_game_scene(AeronVfs* vfs, const AeronConfigFile* yaml, CaptureCo
 	static const char* const keys[] = { "defaults", "ssao",    "shadows",      "sun_direction",
 										"sun_color", "ambient", "point_lights", "instances",
 										"cockpit_follows_camera", "model_light_intensity",
-										"temporal_upscaling" };
+										"temporal_upscaling", "cluster_debug" };
 	CaptureGameScene*        game   = &config->game;
 	if (!only_keys(node, "game_scene", keys, sizeof keys / sizeof keys[0]))
 		return 0;
@@ -393,7 +393,8 @@ static int load_game_scene(AeronVfs* vfs, const AeronConfigFile* yaml, CaptureCo
 	}
 	AeronConfigFile_Destroy(file);
 	int ssao, shadows;
-	if (!game_bool(node, "cockpit_follows_camera", 0, &game->cockpit_follows_camera))
+	if (!game_bool(node, "cockpit_follows_camera", 0, &game->cockpit_follows_camera) ||
+		!game_bool(node, "cluster_debug", 0, &game->cluster_debug))
 		return 0;
 	const AeronConfigNode* temporal = AeronConfigNode_MapGet(node, "temporal_upscaling");
 	if (temporal) {

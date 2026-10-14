@@ -157,10 +157,10 @@ typedef struct AeronSceneClusterLightGPU {
 	float    _pad;
 } AeronSceneClusterLightGPU;
 
-typedef struct AeronSceneClusterHeaderGPU {
-	uint32_t count;
-	uint32_t candidate_count;
-} AeronSceneClusterHeaderGPU;
+/* The cluster build's output, one uint buffer: per cluster two header
+ * words (retained count | tube count << 16, candidate count), then per
+ * cluster AERON_SCENE_CLUSTER_MAX_LIGHTS light indices. */
+#define AERON_SCENE_CLUSTER_HEADER_WORDS 2u
 
 typedef struct AeronSceneClusterUniformGPU {
 	float    camera_position[3];
@@ -366,10 +366,8 @@ struct AeronScene3D {
 	/* Clustered-forward point-light allocation. */
 	AeronSceneClusteredLightDesc cluster_desc;
 	AeronSceneClusterUniformGPU  cluster_uniform;
-	AeronBuffer*                 cluster_header_buffer;
-	uint32_t                     cluster_header_buffer_cap;
-	AeronBuffer*                 cluster_index_buffer;
-	uint32_t                     cluster_index_buffer_cap;
+	AeronBuffer*                 cluster_data_buffer;
+	uint32_t                     cluster_data_buffer_cap;
 	AeronComputePipeline*        cluster_build_pipeline;
 	float                        cluster_far_z;
 	float                        cluster_near_z;

@@ -705,13 +705,13 @@ float3 accumulate_point_lights(float3 N, float3 N_spec, float3 V, float3 world_p
                                                         cluster_index);
         uint count   = min(header.x & 0xffffu, AERON_CLUSTER_MAX_LIGHTS);
         uint spheres = count - min(header.x >> 16u, count);
-        uint base    = cluster_index * AERON_CLUSTER_MAX_LIGHTS;
+        uint base    = clustered_light_index_base(cluster_index);
         for (uint pi = 0u; pi < spheres; ++pi) {
-            accumulate_point_light(fs_cluster_indices[base + pi], N, N_spec, V, world_pos,
+            accumulate_point_light(fs_cluster_data[base + pi], N, N_spec, V, world_pos,
                                    mp, diff, spec_out);
         }
         for (uint pt = spheres; pt < count; ++pt) {
-            accumulate_tube_light(fs_cluster_indices[base + pt], N, N_spec, V, R, world_pos,
+            accumulate_tube_light(fs_cluster_data[base + pt], N, N_spec, V, R, world_pos,
                                   mp, diff, spec_out);
         }
     } else {

@@ -19,7 +19,6 @@
 
 typedef char AeronScenePointLightGPUSizeCheck[sizeof(AeronScenePointLightGPU) == 64 ? 1 : -1];
 typedef char AeronSceneClusterLightGPUSizeCheck[sizeof(AeronSceneClusterLightGPU) == 32 ? 1 : -1];
-typedef char AeronSceneClusterHeaderGPUSizeCheck[sizeof(AeronSceneClusterHeaderGPU) == 8 ? 1 : -1];
 typedef char AeronSceneClusterUniformGPUSizeCheck[sizeof(AeronSceneClusterUniformGPU) == 112 ? 1 : -1];
 
 /* struct AeronScene3D lives in internal.h (shared with
@@ -682,8 +681,7 @@ void AeronScene_GetClusteredLightStats(const AeronScene3D* s, AeronSceneClustere
 	out->cluster_count         = s->cluster_count;
 	out->global_light_count    = s->cluster_global_count;
 	out->clustered_active      = (uint32_t)(s->cluster_active != 0);
-	out->allocated_buffer_bytes =
-		(uint64_t)s->cluster_light_buffer_cap + s->cluster_header_buffer_cap + s->cluster_index_buffer_cap;
+	out->allocated_buffer_bytes = (uint64_t)s->cluster_light_buffer_cap + s->cluster_data_buffer_cap;
 }
 
 void AeronScene_SetDirectionalShadow(AeronScene3D* s, const AeronSceneDirectionalShadowDesc* shadow) {

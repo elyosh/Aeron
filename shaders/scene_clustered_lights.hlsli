@@ -54,15 +54,21 @@ cbuffer ClusteredLightUniform : AERON_CLUSTER_UNIFORM_BINDING {
 #define fs_cluster_global_count ((fs_cluster_flags >> 8u) & 0xffu)
 #define fs_cluster_local_count ((fs_cluster_flags >> 16u) & 0xffffu)
 
+/* The cluster build's output buffer: per cluster AERON_CLUSTER_HEADER_WORDS
+ * header words (retained count | tube count << 16, candidate count), then
+ * per cluster AERON_CLUSTER_MAX_LIGHTS light indices. */
+#define AERON_CLUSTER_HEADER_WORDS 2u
+
+uint clustered_light_index_base(uint cluster_index) {
+	return AERON_CLUSTER_HEADER_WORDS * fs_cluster_grid_x * fs_cluster_grid_y * fs_cluster_grid_z +
+		   cluster_index * AERON_CLUSTER_MAX_LIGHTS;
+}
+
 #ifndef AERON_CLUSTER_NO_FRAGMENT_BUFFERS
-#ifndef AERON_CLUSTER_HEADER_REGISTER
-#define AERON_CLUSTER_HEADER_REGISTER t10
+#ifndef AERON_CLUSTER_DATA_REGISTER
+#define AERON_CLUSTER_DATA_REGISTER t10
 #endif
-#ifndef AERON_CLUSTER_INDEX_REGISTER
-#define AERON_CLUSTER_INDEX_REGISTER t11
-#endif
-StructuredBuffer<uint2> fs_cluster_headers : register(AERON_CLUSTER_HEADER_REGISTER, space2);
-StructuredBuffer<uint>  fs_cluster_indices : register(AERON_CLUSTER_INDEX_REGISTER, space2);
+StructuredBuffer<uint> fs_cluster_data : register(AERON_CLUSTER_DATA_REGISTER, space2);
 
 uint clustered_light_depth_slice(float view_depth) {
 	float depth       = max(view_depth, fs_cluster_near_z);
@@ -87,7 +93,8 @@ uint2 clustered_light_fragment_header(float2 screen_position, float3 world_posit
 		return uint2(0u, 0u);
 	}
 	cluster_index = clustered_light_fragment_index(screen_position, world_position);
-	return fs_cluster_headers[cluster_index];
+	return uint2(fs_cluster_data[AERON_CLUSTER_HEADER_WORDS * cluster_index],
+				 fs_cluster_data[AERON_CLUSTER_HEADER_WORDS * cluster_index + 1u]);
 }
 
 float3 clustered_light_debug_color(float2 screen_position, float3 world_position) {

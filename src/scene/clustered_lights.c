@@ -195,7 +195,7 @@ int AeronSceneClusteredLights_Ensure(AeronScene3D* s) {
 		s->cluster_build_pipeline = Aeron_CreateComputePipeline(&(AeronComputePipelineDesc) {
 			.name                           = "scene_clustered_lights.comp",
 			.readonly_storage_buffer_count  = 1,
-			.readwrite_storage_buffer_count = 2,
+			.readwrite_storage_buffer_count = 1,
 			.uniform_buffer_count           = 1,
 			.thread_count_x                 = AERON_SCENE_CLUSTER_THREADS,
 			.thread_count_y                 = 1,
@@ -204,12 +204,10 @@ int AeronSceneClusteredLights_Ensure(AeronScene3D* s) {
 	}
 	const uint32_t output_usage = AERON_BUFFER_USAGE_STORAGE | AERON_BUFFER_USAGE_COMPUTE_STORAGE_WRITE;
 	return s->cluster_build_pipeline &&
-		   cluster_ensure_buffer(&s->cluster_header_buffer, &s->cluster_header_buffer_cap,
-								 (uint32_t)sizeof(AeronSceneClusterHeaderGPU), output_usage,
-								 "scene.cluster_headers") &&
-		   cluster_ensure_buffer(&s->cluster_index_buffer, &s->cluster_index_buffer_cap,
-								 AERON_SCENE_CLUSTER_MAX_LIGHTS * (uint32_t)sizeof(uint32_t), output_usage,
-								 "scene.cluster_indices");
+		   cluster_ensure_buffer(&s->cluster_data_buffer, &s->cluster_data_buffer_cap,
+								 (AERON_SCENE_CLUSTER_HEADER_WORDS + AERON_SCENE_CLUSTER_MAX_LIGHTS) *
+									 (uint32_t)sizeof(uint32_t),
+								 output_usage, "scene.cluster_data");
 }
 
 int AeronSceneClusteredLights_Build(AeronScene3D* s, AeronCommandBuffer* cmd) {
@@ -229,18 +227,17 @@ int AeronSceneClusteredLights_Build(AeronScene3D* s, AeronCommandBuffer* cmd) {
 		s->cluster_ready = 1;
 		return 1;
 	}
-	const uint64_t header_bytes = cluster_count * sizeof(AeronSceneClusterHeaderGPU);
-	const uint64_t index_bytes  = cluster_count * AERON_SCENE_CLUSTER_MAX_LIGHTS * sizeof(uint32_t);
-	if (header_bytes > UINT32_MAX || index_bytes > UINT32_MAX) {
-		Aeron_LogError("aeron.scene", "cluster buffers are too large (%llu clusters)",
+	const uint64_t data_bytes = cluster_count *
+								(AERON_SCENE_CLUSTER_HEADER_WORDS + AERON_SCENE_CLUSTER_MAX_LIGHTS) *
+								sizeof(uint32_t);
+	if (data_bytes > UINT32_MAX) {
+		Aeron_LogError("aeron.scene", "cluster buffer is too large (%llu clusters)",
 					   (unsigned long long)cluster_count);
 		return 0;
 	}
 	const uint32_t output_usage = AERON_BUFFER_USAGE_STORAGE | AERON_BUFFER_USAGE_COMPUTE_STORAGE_WRITE;
-	if (!cluster_ensure_buffer(&s->cluster_header_buffer, &s->cluster_header_buffer_cap,
-							   (uint32_t)header_bytes, output_usage, "scene.cluster_headers") ||
-		!cluster_ensure_buffer(&s->cluster_index_buffer, &s->cluster_index_buffer_cap, (uint32_t)index_bytes,
-							   output_usage, "scene.cluster_indices")) {
+	if (!cluster_ensure_buffer(&s->cluster_data_buffer, &s->cluster_data_buffer_cap, (uint32_t)data_bytes,
+							   output_usage, "scene.cluster_data")) {
 		return 0;
 	}
 	s->cluster_ready = 1;
@@ -248,14 +245,11 @@ int AeronSceneClusteredLights_Build(AeronScene3D* s, AeronCommandBuffer* cmd) {
 		return 0;
 	}
 
-	AeronComputeBufferBinding outputs[2] = {
-		{ s->cluster_header_buffer, 1 },
-		{ s->cluster_index_buffer, 1 },
-	};
-	AeronComputePass* build = Aeron_BeginComputePass(&(AeronComputePassDesc) {
+	AeronComputeBufferBinding output = { s->cluster_data_buffer, 1 };
+	AeronComputePass*         build  = Aeron_BeginComputePass(&(AeronComputePassDesc) {
 		.command_buffer     = cmd,
-		.write_buffers      = outputs,
-		.write_buffer_count = 2,
+		.write_buffers      = &output,
+		.write_buffer_count = 1,
 		.debug_label        = "Clustered lights build",
 	});
 	if (!build) {
@@ -274,8 +268,10 @@ void AeronSceneClusteredLights_Bind(AeronScene3D* s, AeronRenderPass* pass) {
 	if (!s || !pass || !s->cluster_ready) {
 		return;
 	}
-	Aeron_BindStorageBuffer(pass, AERON_SHADER_STAGE_FRAGMENT, 3, s->cluster_header_buffer);
-	Aeron_BindStorageBuffer(pass, AERON_SHADER_STAGE_FRAGMENT, 4, s->cluster_index_buffer);
+	Aeron_BindStorageBuffer(pass, AERON_SHADER_STAGE_FRAGMENT, 3, s->cluster_data_buffer);
+	/* Slot 4 is read by no colour shader; SDL wants every declared slot
+	 * bound, so it holds the same buffer. */
+	Aeron_BindStorageBuffer(pass, AERON_SHADER_STAGE_FRAGMENT, 4, s->cluster_data_buffer);
 	/* The fragment b2 block is the scene lighting block: the cluster
 	 * parameters followed by the image-based lighting environment. */
 	AeronSceneLightingUniformGPU lighting;
@@ -304,11 +300,9 @@ void AeronSceneClusteredLights_Release(AeronScene3D* s) {
 		return;
 	}
 	Aeron_DestroyComputePipeline(s->cluster_build_pipeline);
-	Aeron_DestroyBuffer(s->cluster_header_buffer);
-	Aeron_DestroyBuffer(s->cluster_index_buffer);
+	Aeron_DestroyBuffer(s->cluster_data_buffer);
 	s->cluster_build_pipeline = NULL;
-	s->cluster_header_buffer  = NULL;
-	s->cluster_index_buffer   = NULL;
+	s->cluster_data_buffer    = NULL;
 	s->cluster_global_count   = 0;
 	s->cluster_light_count    = 0;
 	s->cluster_active         = 0;

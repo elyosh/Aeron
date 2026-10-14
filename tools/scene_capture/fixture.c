@@ -189,7 +189,9 @@ int Fixture_Create(Fixture* f, const CaptureConfig* config) {
 	AeronScene_SetClearColor(f->reference_scene, clear);
 	if (config->game.enabled && config->game.light_count) {
 		/* resources/remaster/config.yaml's point_lights defaults. */
-		const AeronSceneClusteredLightDesc lights = { .enabled = 1, .depth_slices = 24 };
+		const AeronSceneClusteredLightDesc lights = { .enabled      = 1,
+													  .depth_slices = 24,
+													  .debug_view   = config->game.cluster_debug };
 		if (!AeronScene_SetClusteredLights(f->scene, &lights) ||
 			(f->reference_scene && !AeronScene_SetClusteredLights(f->reference_scene, &lights))) {
 			Fixture_Destroy(f);
