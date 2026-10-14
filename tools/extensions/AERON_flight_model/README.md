@@ -214,7 +214,11 @@ gives the shape:
   one-sided. A one-sided light emits only toward the node's local -Z, as a
   glTF spot light points, with a Lambertian (cosine) falloff;
 - `radius`: optional for a point or a tube, its sphere radius or thickness
-  in metres (default 0.1).
+  in metres (default 0.1);
+- `baked`: optional, default false. The light is in the model's probes
+  package, which the authoring tool bakes for the lights inside the
+  model's light grid; games leave it out while those probes light the
+  scene, so it is not counted twice.
 
 Fields that do not apply to the shape are invalid. Lengths take the node's
 scale and its parents'. The intensity is the light straight ahead for a

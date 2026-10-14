@@ -910,7 +910,7 @@ static void transform_vector(const float matrix[16], const float vector[3], floa
 
 /* Lights on "light" children: the node's KHR_lights_punctual point light
  * gives colour, intensity (candela) and range, its AERON_flight_model object
- * the shape (parse_light_shape). The node's rotation and uniform scale orient
+ * the shape (parse_light_shape) and whether it is `baked`. The node's rotation and uniform scale orient
  * and scale it: a tube lies along its local +X, a panel spans its local X and
  * Y, and one-sided lights emit along its local -Z. Other light types are
  * skipped with a warning; malformed values reject the model. */
@@ -936,8 +936,11 @@ static bool append_lights(const cgltf_node* node, uint32_t component_index, Aero
 		AeronFlightLightShape shape;
 		float                 length = 0.0f, size[2] = { 0.0f, 0.0f }, radius;
 		bool                  one_sided;
-		const bool            valid =
-			extension && parse_light_shape(extension, &shape, &length, size, &one_sided, &radius);
+		const cJSON*          baked = extension ? cJSON_GetObjectItemCaseSensitive(extension, "baked") : NULL;
+		const bool valid    = extension &&
+							  parse_light_shape(extension, &shape, &length, size, &one_sided, &radius) &&
+							  (!baked || cJSON_IsBool(baked));
+		const bool is_baked = cJSON_IsTrue(baked);
 		cJSON_Delete(extension);
 		if (!valid)
 			return false;
@@ -958,6 +961,7 @@ static bool append_lights(const cgltf_node* node, uint32_t component_index, Aero
 		out->range           = light->range;
 		out->component_index = component_index;
 		out->shape           = shape;
+		out->baked           = is_baked;
 		/* Lengths take the node's and its parents' scale. */
 		const float local_x[3] = { 0.5f * (shape == AERON_FLIGHT_LIGHT_TUBE ? length : size[0]), 0.0f, 0.0f };
 		const float local_y[3] = { 0.0f, 0.5f * size[1], 0.0f };
