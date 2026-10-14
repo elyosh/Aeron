@@ -133,6 +133,32 @@ def probe_definition(root, probe):
             "parallax_center": parallax_center, "parallax_size": parallax, "parallax_shape": parallax_shape}
 
 
+def _model_diagonal(root):
+    """The length of the diagonal of the model's meshes' bounding box, in Blender units."""
+    corners = [obj.matrix_world @ mathutils.Vector(c) for obj in root.children_recursive if obj.type == 'MESH'
+               for c in obj.bound_box]
+    if not corners:
+        return 0.0
+    return (mathutils.Vector([max(c[a] for c in corners) for a in range(3)]) -
+            mathutils.Vector([min(c[a] for c in corners) for a in range(3)])).length
+
+
+def parallax_reach(root, probe):
+    """How far the probe's parallax volume reaches from the probe (to the far corner of its box), in
+    Blender units. The probe's render must reach that far: what lies beyond its Clip End is black in its
+    reflections."""
+    item = probe_definition(root, probe)
+    far = mathutils.Vector([abs(p - c) + s / 2.0 for c, p, s in
+                            zip(item["center"], item["parallax_center"], item["parallax_size"])])
+    return far.length * max(abs(s) for s in root.matrix_world.to_scale())
+
+
+def _set_clip_end(root, probe):
+    """Makes the probe's render reach the whole model and its parallax volume."""
+    bpy.context.view_layer.update()  # the probe's matrix
+    probe.data.clip_end = max(probe.data.clip_end, _model_diagonal(root), 1.1 * parallax_reach(root, probe))
+
+
 def _grid_size(grid):
     """The grid box's full size (Blender's -1..1 cube), in the model root's frame."""
     root = common.model_root(grid)
@@ -246,6 +272,10 @@ def check(problems, root):
     for probe in probes:
         if probe.aeron_probe.room_parallax and not grids:
             problems.error(probe, "Room Parallax uses the light grid's box: add a light grid")
+        elif probe.data.clip_end < parallax_reach(root, probe):
+            problems.warning(probe, "its Clip End ({:.0f} m) does not reach the far side of its parallax volume "
+                             "({:.0f} m): what lies beyond is black in its reflections".format(
+                                 probe.data.clip_end, parallax_reach(root, probe)))
     boxes = []
     for probe in probes:
         item = probe_definition(root, probe)
@@ -595,7 +625,7 @@ def bake_steps(context, root, remaster, result):
 
 class AERON_OT_add_reflection_probe(Operator):
     """Add a reflection probe to the model: a 10 m box, above the InsideHangar hardpoint for the model's \
-first probe, else at the 3D cursor"""
+first probe, else at the 3D cursor. Its Clip End reaches the whole model"""
 
     bl_idname = "aeron.add_reflection_probe"
     bl_label = "Add Reflection Probe"
@@ -610,6 +640,7 @@ first probe, else at the 3D cursor"""
         location = default_location(root) if not reflection_probes(root) else None
         probe = _new_reflection_probe(root, location if location is not None else context.scene.cursor.location,
                                       (PROBE_SIZE,) * 3)
+        _set_clip_end(root, probe)
         _select(context, probe)
         return {'FINISHED'}
 
@@ -662,7 +693,7 @@ class AERON_OT_add_light_grid(Operator):
 
 
 class AERON_OT_fill_probes(Operator):
-    """Fill the light grid's box with reflection probes: about 25 m wide across its floor plan, the box's height, at most 16, each reflecting onto the box (Room Parallax). Replaces the probes it made before"""
+    """Fill the light grid's box with reflection probes: about 25 m wide across its floor plan, the box's height, at most 16, each reflecting onto the box (Room Parallax), their Clip End reaching the whole model and the box. Replaces the probes it made before"""
 
     bl_idname = "aeron.fill_probes"
     bl_label = "Fill with Probes"
@@ -698,6 +729,8 @@ class AERON_OT_fill_probes(Operator):
                 probe.aeron_probe.room_parallax = True
                 probe.aeron_probe.filled = True
                 made.append(probe)
+        for probe in made:
+            _set_clip_end(root, probe)
         self.report({'INFO'}, "{} reflection probes fill the light grid's box".format(len(made)))
         return {'FINISHED'}
 

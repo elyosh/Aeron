@@ -458,6 +458,10 @@ are Blender light probes under the model root:
 Probes cannot be rotated relative to the model root: only their position
 and size count. The panel of a probe shows Blender's probe settings, which
 Blender itself shows only under EEVEE, and an estimate of the bake time.
+A probe's Clip End is how far its render sees: anything farther is black in
+its reflections. Add Reflection Probe and Fill with Probes set it to reach
+the whole model, and validation warns when it doesn't reach the far side of
+the probe's parallax volume.
 
 **Bake Probes** renders a panorama from each reflection probe (Samples
 per pixel, denoised) and from each grid point (256 samples) with Cycles,

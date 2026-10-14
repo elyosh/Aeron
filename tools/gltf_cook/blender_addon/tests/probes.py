@@ -17,6 +17,8 @@ Checks that:
   model's bounds;
 - a probe and the grid get the package's coordinates (model frame: -x, y, z),
   and the grid points Blender's positions, model x first;
+- the probes that Add Reflection Probe and Fill with Probes make render as far as their parallax
+  volume, and validation warns about a probe whose Clip End stops short of it;
 - validation refuses a grid over 8192 points and a rotated probe;
 - probes, grid and an old environmentProbe go to the glTF and back, and a
   light inside the grid is baked;
@@ -256,6 +258,15 @@ def blender_main(baker, scratch):
           all(close(d["size"], (37.5, 37.5, 25.0)) and close(d["parallax_center"], (-1.0, 2.0, 6.0)) and
               close(d["parallax_size"], (60.0, 60.0, 20.0)) for d in definitions),
           "Fill with Probes tiles the zone, reflecting onto it, and replaces its probes: {}".format(centres))
+    # The zone's far corner is 64 m from each probe: past Blender's default 40 m.
+    reach = [probes.parallax_reach(root, p) for p in filled]
+    check(all(p.data.clip_end >= r > 60.0 for p, r in zip(filled, reach)) and
+          probe.data.clip_end >= probes._model_diagonal(root) > 40.0,
+          "the probes' renders reach their parallax volume and the model: {} / {}".format(
+              [round(p.data.clip_end, 1) for p in filled], [round(r, 1) for r in reach]))
+    filled[0].data.clip_end = 40.0
+    warned = [o for o, message, warning in validation.validate(root).items if warning and "Clip End" in message]
+    check(warned == [filled[0]], "validation warns about a probe whose Clip End is too short: {}".format(warned))
     for obj in filled:
         bpy.data.objects.remove(obj)
 
