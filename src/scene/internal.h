@@ -63,6 +63,10 @@ enum {
 	AERON_PBR_PIPE_MESH_MASK_SCREEN,
 	AERON_PBR_PIPE_FORWARD_MASK_SCREEN,
 	AERON_PBR_PIPE_PREPASS_STAMP_SCREEN, /* velocity stamp of a blend range's screens */
+	/* The floor's mirrored view (planar_reflection.c): MESH and MESH_MASK
+	 * into its half-resolution target, single-sampled. */
+	AERON_PBR_PIPE_PLANAR,
+	AERON_PBR_PIPE_PLANAR_MASK,
 	AERON_PBR_PIPE_KIND_COUNT
 };
 
@@ -164,6 +168,33 @@ typedef struct AeronSceneOccluder {
 	float                        lo[3];  /* bounds, model metres */
 	float                        hi[3];
 } AeronSceneOccluder;
+
+/* The floor's reflection (planar_reflection.c): what stands above the first
+ * probe set's reflection plane, drawn mirrored across it at half
+ * resolution, then its mips, which the floor reads. */
+typedef struct AeronScenePlanarReflection {
+	AeronRenderTarget*    color;
+	AeronDepthTarget*     depth;
+	AeronTexture*         image;   /* 2 layers: colour x coverage, coverage; distance x coverage */
+	AeronTexture*         staging; /* the mips above the first, for their copies */
+	AeronTexture*         placeholder;
+	AeronComputePipeline* resolve;
+	AeronComputePipeline* downsample;
+	AeronSampler*         sampler;
+	int                   width, height;
+	int                   failed;
+	/* This frame: the image holds the instances in `order`, drawn through
+	 * `view_proj` from `eye` (world); `drawing` while the mirrored pass
+	 * records, so the PBR draws take these. */
+	int      active;
+	int      drawing;
+	float    view_proj[16];
+	float    eye[3];
+	uint16_t order[AERON_SCENE_MAX_INSTANCES];
+	int      order_count;
+	/* Where the floor reads it: x0, y0, x1, y1 in half-resolution texels. */
+	float screen[4];
+} AeronScenePlanarReflection;
 
 typedef struct AeronSceneProbeOcclusion {
 	/* The probe set the grids describe, and where it was placed. */
@@ -274,13 +305,23 @@ typedef struct AeronSceneLightingUniformGPU {
 	 * in metres. */
 	float occlusion_origin[4];
 	float occlusion_dims[4];
+	/* The reflecting floor (planar_reflection.c), in model metres: its
+	 * centre and half size along x and y; its height, how far from it a
+	 * surface takes its reflection, 1 while the drawn instance takes it, and
+	 * the reflection's mip count. While the mirrored view draws, `eye` is
+	 * its camera position (w = 1). `screen`: where the floor reads the
+	 * reflection, x0, y0, x1, y1 in half-resolution texels. */
+	float planar_rect[4];
+	float planar_params[4];
+	float planar_eye[4];
+	float planar_screen[4];
 } AeronSceneLightingUniformGPU;
 
 /* Layout checks against the HLSL blocks (ClusteredLightUniform, 112 bytes;
  * with the environment, the debug material, the emission, the render size,
- * the probe set and its occlusion grid, 368 bytes). */
+ * the probe set, its occlusion grid and the reflecting floor, 432 bytes). */
 typedef char AeronSceneClusterUniformSizeCheck[sizeof(AeronSceneClusterUniformGPU) == 112 ? 1 : -1];
-typedef char AeronSceneLightingUniformSizeCheck[sizeof(AeronSceneLightingUniformGPU) == 368 ? 1 : -1];
+typedef char AeronSceneLightingUniformSizeCheck[sizeof(AeronSceneLightingUniformGPU) == 432 ? 1 : -1];
 
 enum {
 	AERON_SCENE_CLUSTER_ENABLED    = 1u << 0,
@@ -378,8 +419,12 @@ struct AeronScene3D {
 	/* AeronScene_SetProbeOcclusion, and its grids (probe_occlusion.c). */
 	int                          probe_occlusion_enabled;
 	AeronSceneProbeOcclusion     probe_occlusion;
-	/* pbr.c: the colour pass's t12 holds the occlusion grid, not the
-	 * `_anim` shaders' effect texture. */
+	/* AeronScene_SetPlanarReflection, and the floor's mirrored view
+	 * (planar_reflection.c). */
+	int                          planar_reflection_enabled;
+	AeronScenePlanarReflection   planar_reflection;
+	/* pbr.c: the colour pass's t12 and t13 hold the occlusion grid and the
+	 * floor's reflection, not the `_anim` shaders' effect textures. */
 	int                          pbr_occlusion_in_effect_slot;
 	AeronSceneLightingUniformGPU lighting_uniform;
 
@@ -741,6 +786,20 @@ void          AeronSceneProbeOcclusion_OccupancyMapping(const struct AeronScene3
 														float dims[4],
 														float boxes[AERON_SCENE_OCCLUSION_CONE_BOXES * 2][4]);
 
+/* The floor's reflection (planar_reflection.c). Render draws the mirrored
+ * view and its mips, before the visibility pass; it switches the feature
+ * off rather than fail the frame. */
+void          AeronScenePlanarReflection_Render(struct AeronScene3D* s, AeronCommandBuffer* cmd);
+void          AeronScenePlanarReflection_Release(struct AeronScene3D* s);
+/* The reflection the floor reads (a placeholder while inactive), and the
+ * lighting block's floor fields for probe set `set` drawing an instance
+ * that is (`receiver`) or is not its owner. */
+AeronTexture* AeronScenePlanarReflection_Image(struct AeronScene3D* s);
+AeronSampler* AeronScenePlanarReflection_Sampler(struct AeronScene3D* s);
+void          AeronScenePlanarReflection_LightingFields(const struct AeronScene3D* s, int set, int receiver,
+														float rect[4], float params[4], float eye[4],
+														float screen[4]);
+
 /* pbr.c */
 int  AeronScenePbr_Ensure(struct AeronScene3D* s);
 void AeronScenePbr_Release(struct AeronScene3D* s);
@@ -853,5 +912,13 @@ typedef struct AeronSceneInstanceBox {
 
 int AeronSceneInternal_InstanceBox(const AeronSceneMeshInstance* instance, const float x_axis[3],
 								   const float y_axis[3], const float z_axis[3], AeronSceneInstanceBox* out);
+/* Binds the frame uniforms the host set (AeronScene_SetFrameUniformData). */
+void AeronSceneInternal_BindFrameUniforms(struct AeronScene3D* s, AeronRenderPass* pass);
+/* The probe set an instance's colour draws use; -1 for none. */
+int32_t AeronSceneInternal_InstanceProbeSet(const struct AeronScene3D*    s,
+											const AeronSceneMeshInstance* instance);
+/* The culling planes (left, right, bottom, top, near; inward, normalized)
+ * of a view-projection over a viewport, widened by the culling margin. */
+void AeronSceneInternal_FrustumPlanes(const float view_proj[16], int width, int height, float planes[5][4]);
 
 #endif /* AERON_SCENE_INTERNAL_H */

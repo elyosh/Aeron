@@ -74,19 +74,21 @@
 #define AERON_DIRECTIONAL_SHADOW_UNIFORM_REGISTER b0
 #define AERON_PBR_LIGHT_UNIFORM_REGISTER b1
 /* Samplers first, then storage buffers: the probe variants' occlusion grid
- * follows the material (and `_anim` effect) textures and moves the buffers
- * up one. */
+ * and floor reflection follow the material (and `_anim` effect) textures
+ * and move the buffers up two. */
 #if AERON_PBR_ANIM && AERON_PBR_PROBES
 #define AERON_PBR_OCCLUSION_TEXTURE_REGISTER t14
 #define AERON_PBR_OCCLUSION_SAMPLER_REGISTER s14
-#define AERON_PBR_MATERIAL_REGISTER t15
-#define AERON_PBR_VARIANT_REGISTER t16
-#define AERON_PBR_POINT_LIGHT_REGISTER t17
-#define AERON_CLUSTER_DATA_REGISTER t18
-#define AERON_PBR_PROBE_SET_REGISTER t19
-#define AERON_PBR_SCREEN_RECT_REGISTER t20
-#define AERON_PBR_SCREEN_FRAME_REGISTER t21
-#define AERON_PBR_ANIM_RECORD_REGISTER t22
+#define AERON_PBR_PLANAR_TEXTURE_REGISTER t15
+#define AERON_PBR_PLANAR_SAMPLER_REGISTER s15
+#define AERON_PBR_MATERIAL_REGISTER t16
+#define AERON_PBR_VARIANT_REGISTER t17
+#define AERON_PBR_POINT_LIGHT_REGISTER t18
+#define AERON_CLUSTER_DATA_REGISTER t19
+#define AERON_PBR_PROBE_SET_REGISTER t20
+#define AERON_PBR_SCREEN_RECT_REGISTER t21
+#define AERON_PBR_SCREEN_FRAME_REGISTER t22
+#define AERON_PBR_ANIM_RECORD_REGISTER t23
 #elif AERON_PBR_ANIM
 #define AERON_PBR_MATERIAL_REGISTER t14
 #define AERON_PBR_VARIANT_REGISTER t15
@@ -99,13 +101,15 @@
 #elif AERON_PBR_PROBES
 #define AERON_PBR_OCCLUSION_TEXTURE_REGISTER t12
 #define AERON_PBR_OCCLUSION_SAMPLER_REGISTER s12
-#define AERON_PBR_MATERIAL_REGISTER t13
-#define AERON_PBR_VARIANT_REGISTER t14
-#define AERON_PBR_POINT_LIGHT_REGISTER t15
-#define AERON_CLUSTER_DATA_REGISTER t16
-#define AERON_PBR_PROBE_SET_REGISTER t17
-#define AERON_PBR_SCREEN_RECT_REGISTER t18
-#define AERON_PBR_SCREEN_FRAME_REGISTER t19
+#define AERON_PBR_PLANAR_TEXTURE_REGISTER t13
+#define AERON_PBR_PLANAR_SAMPLER_REGISTER s13
+#define AERON_PBR_MATERIAL_REGISTER t14
+#define AERON_PBR_VARIANT_REGISTER t15
+#define AERON_PBR_POINT_LIGHT_REGISTER t16
+#define AERON_CLUSTER_DATA_REGISTER t17
+#define AERON_PBR_PROBE_SET_REGISTER t18
+#define AERON_PBR_SCREEN_RECT_REGISTER t19
+#define AERON_PBR_SCREEN_FRAME_REGISTER t20
 #else
 #define AERON_PBR_MATERIAL_REGISTER t12
 #define AERON_PBR_VARIANT_REGISTER t13
@@ -288,6 +292,83 @@ StructuredBuffer<uint4> g_probe_set : register(AERON_PBR_PROBE_SET_REGISTER, spa
  * cell the L1 of the probe radiance past the occluders, then without them. */
 Texture3D<float4> g_probe_occlusion : register(AERON_PBR_OCCLUSION_TEXTURE_REGISTER, space2);
 SamplerState g_probe_occlusion_sampler : register(AERON_PBR_OCCLUSION_SAMPLER_REGISTER, space2);
+/* The floor's reflection (planar_reflection.c) at half resolution, with
+ * mips: the mirrored view's colour times its coverage and the coverage on
+ * the left; the reflected point's height above the floor in metres times
+ * the coverage, and the coverage, on the right. */
+Texture2D<float4> g_planar_reflection : register(AERON_PBR_PLANAR_TEXTURE_REGISTER, space2);
+SamplerState g_planar_reflection_sampler : register(AERON_PBR_PLANAR_SAMPLER_REGISTER, space2);
+
+/* Level `level` of the floor's reflection around `t` (first-level texels of
+ * its left half; plus `offset` for the right), as a cubic B-spline from
+ * four bilinear taps, so a coarse level magnified stays smooth; x stays
+ * inside the half. */
+float4 planar_bspline(float2 t, float level, float offset, float2 dims)
+{
+    float  scale = exp2(level);
+    float2 p     = t / scale - 0.5f;
+    float2 i     = floor(p);
+    float2 f     = p - i;
+    float2 w0    = (1.0f - f) * (1.0f - f) * (1.0f - f) / 6.0f;
+    float2 w1    = (4.0f - 6.0f * f * f + 3.0f * f * f * f) / 6.0f;
+    float2 w3    = f * f * f / 6.0f;
+    float2 g0    = w0 + w1;
+    float2 g1    = 1.0f - g0;
+    float2 h0    = (i - 0.5f + w1 / g0) * scale;
+    float2 h1    = (i + 1.5f + w3 / g1) * scale;
+    float  lo    = 0.5f * scale;
+    float  hi    = 0.5f * dims.x - 0.5f * scale;
+    h0.x         = clamp(h0.x, lo, hi) + offset;
+    h1.x         = clamp(h1.x, lo, hi) + offset;
+    return g0.y * (g0.x * g_planar_reflection.SampleLevel(g_planar_reflection_sampler, h0 / dims, level) +
+                   g1.x * g_planar_reflection.SampleLevel(g_planar_reflection_sampler, float2(h1.x, h0.y) / dims,
+                                                          level)) +
+           g1.y * (g0.x * g_planar_reflection.SampleLevel(g_planar_reflection_sampler, float2(h0.x, h1.y) / dims,
+                                                          level) +
+                   g1.x * g_planar_reflection.SampleLevel(g_planar_reflection_sampler, h1 / dims, level));
+}
+
+/* What the floor at model point `pm` (geometric model normal `nm`, `view`
+ * metres from the eye) reflects of what stands on it, at screen position
+ * `pixel`: radiance times coverage, and the coverage. Nothing off the
+ * floor. The level widens with the GGX lobe (about 1.3 alpha either side of
+ * the mirror direction) as seen from the eye: alpha times the reflected
+ * point's height over the length of the path to it. */
+float4 planar_reflection(float2 pixel, float3 pm, float3 nm, float view, float roughness)
+{
+    if (fs_planar_params.z == 0.0f || nm.z < 0.9f || abs(pm.z - fs_planar_params.x) > fs_planar_params.y ||
+        any(abs(pm.xy - fs_planar_rect.xy) > fs_planar_rect.zw))
+        return float4(0.0f, 0.0f, 0.0f, 0.0f);
+    float2 t = pixel * 0.5f; /* half-resolution texels */
+    if (any(t < fs_planar_screen.xy) || any(t > fs_planar_screen.zw))
+        return float4(0.0f, 0.0f, 0.0f, 0.0f);
+    float width, height, levels;
+    g_planar_reflection.GetDimensions(0, width, height, levels);
+    float2 dims       = float2(width, height);
+    float  half_width = 0.5f * width;
+    /* The mean height of what the pixel reflects: smooth, a coarse tap.
+     * What it leaves uncovered takes the coarsest level's, which reaches as
+     * far as the widest blur, so the blur fades out instead of being cut. */
+    float2 h = g_planar_reflection.SampleLevel(g_planar_reflection_sampler,
+                                               float2(clamp(t.x, 1.0f, half_width - 1.0f) + half_width, t.y) / dims,
+                                               1.0f).rg;
+    float2 wide = planar_bspline(t, fs_planar_params.w - 1.0f, half_width, dims).rg;
+    if (wide.y <= 1.0e-4f)
+        return float4(0.0f, 0.0f, 0.0f, 0.0f);
+    float rise        = h.x + (1.0f - h.y) * wide.x / wide.y;
+    float alpha       = roughness * roughness;
+    float angle       = 1.3f * alpha * rise / max(view + rise, 1.0e-3f);
+    float texel_angle = 4.0f * fs_cluster_tan_v_half / fs_render_size.y;
+    float lod         = clamp(log2(max(2.0f * angle / texel_angle, 1.0f)), 0.0f, fs_planar_params.w - 1.0f);
+    /* The first level as it is, sharp; the coarser ones smooth. */
+    float  level = floor(lod);
+    float4 a     = level < 0.5f ? g_planar_reflection.SampleLevel(g_planar_reflection_sampler,
+                                                                   float2(clamp(t.x, 0.5f, half_width - 0.5f), t.y) / dims, 0.0f)
+                                : planar_bspline(t, level, 0.0f, dims);
+    if (lod - level <= 0.0f)
+        return a;
+    return lerp(a, planar_bspline(t, level + 1.0f, 0.0f, dims), lod - level);
+}
 
 /* The share of the probe irradiance for model normal `nm` that reaches model
  * point `pm` past the occluders: the ratio of the two grids' irradiance, one
@@ -618,7 +699,14 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
     }
 
     /* ===== View + light ========================================== */
-    float3 V = normalize(fs_camera_pos_world - i.world_pos);
+#if AERON_PBR_PROBES
+    /* The floor's mirrored view (planar_reflection.c) looks from its own
+     * camera. */
+    float3 eye = fs_planar_eye.w != 0.0f ? fs_planar_eye.xyz : fs_camera_pos_world;
+#else
+    float3 eye = fs_camera_pos_world;
+#endif
+    float3 V = normalize(eye - i.world_pos);
     float3 L = fs_directional_dir;
     float  ndotl = saturate(dot(N, L));
 
@@ -856,6 +944,12 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
         }
         probe_radiance *= reflection;
     }
+    /* On the reflecting floor, what stands on it in place of the probes
+     * where it covers them. */
+    float4 planar = planar_reflection(i.position.xy, probe_point, probe_model_direction(N_face),
+                                      length(probe_model_point(eye) - probe_point), mp.roughness);
+    probe_radiance = probe_radiance * (1.0f - planar.a) + planar.rgb;
+    probe_coverage = lerp(probe_coverage, 1.0f, planar.a);
     bool   environment_specular = fs_environment_params.y > 0.0f && fs_environment_params.z >= 1.0f;
     if (probe_coverage > 0.0f || environment_specular) {
         float  ndotv_ibl = saturate(dot(N_spec, V));

@@ -15,15 +15,18 @@ Checks that:
 - Add Reflection Probe puts the first probe above the InsideHangar
   hardpoint; Add Light Grid covers the model with its outer points on the
   model's bounds;
-- a probe and the grid get the package's coordinates (model frame: -x, y, z),
-  and the grid points Blender's positions, model x first;
+- a probe, the grid and a reflection plane get the package's coordinates
+  (model frame: -x, y, z), and the grid points Blender's positions, model x
+  first;
 - the probes that Add Reflection Probe and Fill with Probes make render as far as their parallax
   volume, and validation warns about a probe whose Clip End stops short of it;
-- validation refuses a grid over 8192 points and a rotated probe;
-- probes, grid and an old environmentProbe go to the glTF and back, and a
-  light inside the grid is baked;
+- validation refuses a grid over 8192 points, a rotated probe and a second
+  reflection plane;
+- probes, grid, reflection plane and an old environmentProbe go to the glTF
+  and back, and a light inside the grid is baked;
 - a grid point inside a closed box is invalid;
-- the bake writes the package files and restores the scene.
+- the bake writes the package files, the reflection plane in the package, and
+  restores the scene.
 """
 
 import argparse
@@ -293,6 +296,11 @@ def blender_main(baker, scratch):
           close(points[0], (7.0, -1.0 / 3.0, -1.0 / 3.0)) and close(points[1], (5.0, -1.0 / 3.0, -1.0 / 3.0)),
           "the grid's package box and Blender's point positions, model x first: {} {}".format(
               item, [tuple(round(v, 3) for v in p) for p in points[:2]]))
+    plane = probes._new_reflection_plane(root, mathutils.Vector((6.0, 2.0, 0.5)), (8.0, 6.0), 0.2)
+    bpy.context.view_layer.update()
+    item = probes.plane_definition(root, plane)
+    check(close(item["center"], (-1.0, 2.0, 0.5)) and close(item["size"], (8.0, 6.0)) and
+          abs(item["distance"] - 0.2) < 1e-6, "the reflection plane's package coordinates: {}".format(item))
     root.location = (0.0, 0.0, 0.0)
     bpy.context.view_layer.update()
 
@@ -307,6 +315,11 @@ def blender_main(baker, scratch):
     probe.rotation_euler = (0.0, 0.0, 0.0)
     bpy.context.view_layer.update()
     check(not problems_of(probe) and not problems_of(grid), "the probe and grid validate")
+    second = probes._new_reflection_plane(root, mathutils.Vector((0.0, 0.0, 0.0)), (2.0, 2.0), 0.1)
+    bpy.context.view_layer.update()
+    check(not problems_of(plane) and any("another reflection plane" in message for message in problems_of(second)),
+          "validation refuses a second reflection plane")
+    bpy.data.objects.remove(second)
 
     # The glTF and back; a light inside the grid is baked, one outside is not.
     extension = probes.export_json(root)
@@ -325,6 +338,9 @@ def blender_main(baker, scratch):
           close(back["reflectionProbes"][1]["position"], extension["reflectionProbes"][0]["position"]) and
           close(back["reflectionProbes"][1]["size"], extension["reflectionProbes"][0]["size"]) and
           back["lightGrid"] == extension["lightGrid"] and back["lightGrid"]["spacing"] == 1.5 and
+          close(back["reflectionPlane"]["position"], extension["reflectionPlane"]["position"]) and
+          close(back["reflectionPlane"]["size"], extension["reflectionPlane"]["size"]) and
+          abs(back["reflectionPlane"]["distance"] - extension["reflectionPlane"]["distance"]) < 1e-6 and
           abs(back["lightGrid"]["keyLightShadow"] - 0.4) < 1e-6 and
           back["reflectionProbes"][1].get("roomParallax") and back["reflectionProbes"][1].get("filled") and
           any((p.matrix_world.translation - mathutils.Vector((1.0, 2.0, 3.0))).length < 1e-5 for p in restored),
@@ -375,6 +391,8 @@ def blender_main(baker, scratch):
     package = open(os.path.join(out, "package.yaml")).read() if files else ""
     check("probes.testhangar:" in package and "grid_resolution: [3, 2, 2]" in package,
           "the package names the model's probes and grid")
+    check("reflection_plane: {center: [-1, 2, 0.5], size: [8, 6], distance:" in package,
+          "the package has the reflection plane: {}".format(package))
     check(scene.render.engine == engine and scene.cycles.device == device and
           scene.render.use_persistent_data == persistent and len(bpy.data.objects) == objects and
           scene.camera is None and not lamp.visible_camera, "the bake restores the scene")

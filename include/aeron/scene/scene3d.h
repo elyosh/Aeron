@@ -522,6 +522,12 @@ void AeronScene_SetProbeKeyShadow(AeronScene3D* scene, int enabled);
  * shadow's cut of the probe light. Reset by Begin. */
 void AeronScene_SetProbeOcclusion(AeronScene3D* scene, int enabled);
 
+/* When the first probe set's package has a reflection plane (a hangar's
+ * floor), the instances inside its grid other than its owner are drawn
+ * mirrored across it, and the owner's surfaces on the plane reflect them in
+ * place of the probes' reflection. Reset by Begin. */
+void AeronScene_SetPlanarReflection(AeronScene3D* scene, int enabled);
+
 /* Queue a per-frame uniform blob (copied; reset by Begin) that the
  * scene binds to (stage, slot) in the color pass AFTER the
  * BEFORE_OPAQUE hook and before the sky billboards / instance walk —

@@ -382,6 +382,7 @@ void AeronScene_Destroy(AeronScene3D* s) {
 	AeronSceneDirectionalShadow_Release(s);
 	AeronSceneClusteredLights_Release(s);
 	AeronSceneProbeOcclusion_Release(s);
+	AeronScenePlanarReflection_Release(s);
 	AeronSceneStorage_Release(s);
 	AeronScenePbr_Release(s);
 	AeronSceneTemporal_Release(s);
@@ -471,6 +472,7 @@ int AeronScene_Begin(AeronScene3D* s, const AeronSceneCamera* camera) {
 	s->probe_set_count     = 0;
 	s->probe_key_shadow    = 0;
 	s->probe_occlusion_enabled = 0;
+	s->planar_reflection_enabled = 0;
 	s->pbr_debug_views     = 0;
 	memset(s->pbr_debug_material, 0, sizeof s->pbr_debug_material);
 	AeronScene_SetScreenSources(s, NULL, NULL, NULL);
@@ -1285,6 +1287,12 @@ void AeronScene_SetProbeOcclusion(AeronScene3D* s, int enabled) {
 	}
 }
 
+void AeronScene_SetPlanarReflection(AeronScene3D* s, int enabled) {
+	if (s) {
+		s->planar_reflection_enabled = enabled != 0;
+	}
+}
+
 int AeronScene_AddProbeSet(AeronScene3D* s, const AeronEnvironmentPackage* package, const float m[12]) {
 	if (!s || !package || !m || !package->probe_cubes || !package->probe_grid || !package->probe_buffer ||
 		s->probe_set_count >= AERON_SCENE_MAX_PROBE_SETS) {
@@ -1369,6 +1377,10 @@ static int32_t scene_instance_probe_set(const AeronScene3D* s, const AeronSceneM
 	return -1;
 }
 
+int32_t AeronSceneInternal_InstanceProbeSet(const AeronScene3D* s, const AeronSceneMeshInstance* instance) {
+	return scene_instance_probe_set(s, instance);
+}
+
 void AeronScene_SetFrameUniformData(AeronScene3D* s, AeronShaderStage stage, uint32_t slot, const void* data,
 									uint32_t size) {
 	if (!s || !data || size == 0 || size > AERON_SCENE_FRAME_UNIFORM_CAP) {
@@ -1392,7 +1404,7 @@ void AeronScene_SetFrameUniformData(AeronScene3D* s, AeronShaderStage stage, uin
 /* Bind the queued frame-uniform blobs — in the color pass, after the
  * BEFORE_OPAQUE hook (hook-side pushes to the same slots must not
  * survive into the instance walk). */
-static void scene_bind_frame_uniforms(AeronScene3D* s, AeronRenderPass* pass) {
+void AeronSceneInternal_BindFrameUniforms(AeronScene3D* s, AeronRenderPass* pass) {
 	for (int i = 0; i < s->frame_uniform_count; i++) {
 		const AeronSceneFrameUniform* u = &s->frame_uniforms[i];
 		Aeron_BindUniformData(pass, (AeronShaderStage)u->stage, u->slot, u->data, u->size);
@@ -1581,10 +1593,11 @@ static void scene_storage_report_failure(AeronScene3D* s, const char* resource, 
  * distance, positive inside. */
 #define SCENE_CULL_MARGIN_PX 2.0f
 
-static void scene_camera_frustum(const AeronScene3D* s, float planes[5][4]) {
-	const float* m        = s->unjittered_view_proj;
-	const float  width    = s->camera.viewport.width > 0 ? (float)s->camera.viewport.width : 1.0f;
-	const float  height   = s->camera.viewport.height > 0 ? (float)s->camera.viewport.height : 1.0f;
+void AeronSceneInternal_FrustumPlanes(const float view_proj[16], int viewport_width, int viewport_height,
+									  float planes[5][4]) {
+	const float* m        = view_proj;
+	const float  width    = viewport_width > 0 ? (float)viewport_width : 1.0f;
+	const float  height   = viewport_height > 0 ? (float)viewport_height : 1.0f;
 	const float  widen_x  = 1.0f + 2.0f * SCENE_CULL_MARGIN_PX / width;
 	const float  widen_y  = 1.0f + 2.0f * SCENE_CULL_MARGIN_PX / height;
 	for (int k = 0; k < 4; k++) {
@@ -1603,6 +1616,11 @@ static void scene_camera_frustum(const AeronScene3D* s, float planes[5][4]) {
 			planes[p][k] *= inverse;
 		}
 	}
+}
+
+static void scene_camera_frustum(const AeronScene3D* s, float planes[5][4]) {
+	AeronSceneInternal_FrustumPlanes(s->unjittered_view_proj, s->camera.viewport.width,
+									 s->camera.viewport.height, planes);
 }
 
 /* Draw-order key of a camera-visible instance: the distance from the camera
@@ -2046,9 +2064,11 @@ int AeronScene_Render(AeronScene3D* s, AeronCommandBuffer* cmd) {
 	if (pbr_required && !AeronSceneClusteredLights_Build(s, cmd)) {
 		return scene_render_failure(s, cmd, "Scene clustered-light preparation failed");
 	}
-	/* Before the visibility pass and the colour passes, which read it. */
+	/* Before the visibility pass and the colour passes, which read them;
+	 * the mirrored view's ships take the occlusion grid's light. */
 	if (pbr_required) {
 		AeronSceneProbeOcclusion_Update(s, cmd);
+		AeronScenePlanarReflection_Render(s, cmd);
 	}
 	s->temporal_active = temporal_requested;
 	if (temporal_requested &&
@@ -2207,7 +2227,7 @@ int AeronScene_Render(AeronScene3D* s, AeronCommandBuffer* cmd) {
 			return scene_render_failure(s, cmd, "Scene sky recording failed");
 		}
 		run_hook(s, AERON_SCENE_HOOK_BEFORE_OPAQUE, cmd, pass);
-		scene_bind_frame_uniforms(s, pass);
+		AeronSceneInternal_BindFrameUniforms(s, pass);
 		Aeron_GpuDebugMarker(cmd, "Sky billboards");
 		AeronSceneBb3d_DrawStage(s, pass, AERON_SCENE_BILLBOARD_STAGE_SKY);
 		Aeron_GpuDebugMarker(cmd, "PBR forward instances");
@@ -2296,7 +2316,7 @@ int AeronScene_Render(AeronScene3D* s, AeronCommandBuffer* cmd) {
 			return scene_render_failure(s, cmd, "Scene sky recording failed");
 		}
 		run_hook(s, AERON_SCENE_HOOK_BEFORE_OPAQUE, cmd, pass);
-		scene_bind_frame_uniforms(s, pass);
+		AeronSceneInternal_BindFrameUniforms(s, pass);
 		Aeron_GpuDebugMarker(cmd, "Sky billboards");
 		AeronSceneBb3d_DrawStage(s, pass, AERON_SCENE_BILLBOARD_STAGE_SKY);
 		if (pbr_ok) {

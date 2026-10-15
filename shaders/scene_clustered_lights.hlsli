@@ -61,6 +61,16 @@ cbuffer ClusteredLightUniform : AERON_CLUSTER_UNIFORM_BINDING {
 	 * while it applies; its cells along x, y, z, w = their size in metres. */
 	float4 fs_occlusion_origin;
 	float4 fs_occlusion_dims;
+	/* The reflecting floor (planar_reflection.c), in model metres: its
+	 * centre and half size along x and y; its height, how far from it a
+	 * surface takes its reflection, 1 while the drawn instance takes it, and
+	 * the reflection's mip count. While the mirrored view draws, its camera
+	 * position (w = 1). Where the floor reads the reflection: x0, y0, x1,
+	 * y1 in half-resolution texels. */
+	float4 fs_planar_rect;
+	float4 fs_planar_params;
+	float4 fs_planar_eye;
+	float4 fs_planar_screen;
 #endif
 };
 

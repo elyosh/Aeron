@@ -32,7 +32,7 @@ and positive uniform scale.
 
 - `model`: `{ "role": "model" }`; optionally carries `articulations`,
   `articulationSettings`, `componentSets`, `markings`, `energy`,
-  `skinVariants`, `reflectionProbes` and `lightGrid`
+  `skinVariants`, `reflectionProbes`, `lightGrid` and `reflectionPlane`
 - `component`: requires `meshType` in `0..31`; optionally carries
   `explosionFlags`, `targetId`, `target`, descriptor geometry, `rotation`
   and `tags`
@@ -140,7 +140,8 @@ not these.
     "roomParallax": true, "filled": true, "clipStart": 0.8, "clipEnd": 40.0 }
 ],
 "lightGrid": { "position": [0.0, 4.0, -10.0], "size": [40.0, 12.0, 60.0], "spacing": 4.0,
-               "resolution": [9, 2, 14], "keyLightShadow": 0.7 }
+               "resolution": [9, 2, 14], "keyLightShadow": 0.7 },
+"reflectionPlane": { "position": [0.0, 0.0, -10.0], "size": [40.0, 60.0], "distance": 0.1 }
 ```
 
 In the model's frame, in metres, axis-aligned with it:
@@ -159,7 +160,11 @@ In the model's frame, in metres, axis-aligned with it:
   placed at (i + 1) / (resolution + 1) of the box) and `keyLightShadow`
   (when the scene's key light is in the bake, such as a hangar's ceiling
   light: the part of the probe light its shadow removes, 0 to 1, default
-  0.7).
+  0.7);
+- the reflection plane, a hangar's floor: `position`, `size` (its full
+  extent along x and z; it faces +y) and `distance` (how far from it a
+  surface takes its reflection, 0 to 10). The game reflects in it what
+  stands on it. It needs the light grid.
 
 Lights inside the grid's box are baked into the package and carry
 `baked` (see [Lights](#lights)).

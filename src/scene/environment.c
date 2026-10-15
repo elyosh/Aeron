@@ -209,6 +209,36 @@ static bool parse_probe(const AeronConfigNode* map, const char* owner, size_t in
 	return true;
 }
 
+/* The optional `reflection_plane: {center: [x, y, z], size: [x, y], distance}`. */
+static bool read_reflection_plane(const AeronConfigNode* map, const char* what,
+								  AeronEnvironmentDefinition* def, AeronConfigError* error) {
+	const AeronConfigNode* plane = AeronConfigNode_MapGet(map, "reflection_plane");
+	def->has_reflection_plane    = plane != NULL;
+	if (!plane)
+		return true;
+	char plane_what[192];
+	snprintf(plane_what, sizeof plane_what, "%s reflection_plane", what);
+	static const char* const fields[] = { "center", "size", "distance" };
+	if (AeronConfigNode_Type(plane) != AERON_CONFIG_MAP)
+		return env_error(error, plane, "%s must be a map", plane_what);
+	if (!check_fields(plane, plane_what, fields, 3, error) ||
+		!read_vec3(plane, plane_what, "center", def->reflection_plane_center, NULL, error) ||
+		!read_number(plane, plane_what, "distance", true, 0.0, 10.0, &def->reflection_plane_distance, error))
+		return false;
+	const AeronConfigNode* size = require_field(plane, plane_what, "size", error);
+	if (!size)
+		return false;
+	if (AeronConfigNode_Type(size) != AERON_CONFIG_SEQUENCE || AeronConfigNode_SequenceCount(size) != 2)
+		return env_error(error, size, "%s: 'size' must be a sequence of two numbers", plane_what);
+	for (size_t i = 0; i < 2; ++i) {
+		double value = 0.0;
+		if (!node_number(AeronConfigNode_SequenceGet(size, i), &value) || !(value > 0.0))
+			return env_error(error, size, "%s: 'size' values must be above 0", plane_what);
+		def->reflection_plane_size[i] = (float)value;
+	}
+	return true;
+}
+
 bool AeronEnvironment_ParseProbeSet(const AeronConfigNode* map, const char* what,
 									AeronEnvironmentDefinition* def, AeronConfigError* error) {
 	if (!what)
@@ -257,7 +287,9 @@ bool AeronEnvironment_ParseProbeSet(const AeronConfigNode* map, const char* what
 			return false;
 	def->probe_count      = (uint32_t)count;
 	def->key_light_shadow = 0.7f;
-	return read_number(map, what, "key_light_shadow", false, 0.0, 1.0, &def->key_light_shadow, error);
+	if (!read_number(map, what, "key_light_shadow", false, 0.0, 1.0, &def->key_light_shadow, error))
+		return false;
+	return read_reflection_plane(map, what, def, error);
 }
 
 float AeronEnvironment_NormalizeDegrees(float degrees) {
@@ -434,8 +466,17 @@ static bool parse_package(const char* name, const AeronConfigNode* map, AeronEnv
 		"ambient_fill", "rotation_degrees", "specular", "specular_strength",
 	};
 	static const char* const probes_fields[] = {
-		"kind",     "intensity",       "diffuse_strength", "specular_strength", "cubes", "grid",
-		"grid_box", "grid_resolution", "probes",           "key_light_shadow",
+		"kind",
+		"intensity",
+		"diffuse_strength",
+		"specular_strength",
+		"cubes",
+		"grid",
+		"grid_box",
+		"grid_resolution",
+		"probes",
+		"key_light_shadow",
+		"reflection_plane",
 	};
 
 	char what[160];
@@ -647,6 +688,12 @@ static void format_probes(YamlOut* y, const AeronEnvironmentDefinition* d) {
 		yaml_printf(y, ", parallax_shape: %s}\n", yaml_shape(p->parallax_shape));
 	}
 	yaml_printf(y, "    key_light_shadow: %.9g\n", (double)d->key_light_shadow);
+	if (d->has_reflection_plane) {
+		yaml_printf(y, "    reflection_plane: {center: ");
+		yaml_vec3(y, d->reflection_plane_center);
+		yaml_printf(y, ", size: [%.9g, %.9g], distance: %.9g}\n", (double)d->reflection_plane_size[0],
+					(double)d->reflection_plane_size[1], (double)d->reflection_plane_distance);
+	}
 }
 
 size_t AeronEnvironment_FormatPackageYaml(const AeronEnvironmentDefinition* d, char* out, size_t size) {

@@ -454,9 +454,14 @@ are Blender light probes under the model root:
   Parallax, its custom parallax is the volume its reflections are
   projected on. Where probes overlap, the smallest wins; the game uses at
   most 4 in one place.
+- **The reflection plane** (one Plane light probe, optional): a hangar's
+  floor. In the game it reflects the ships standing on it, which the
+  probes cannot show. Place it at the floor's height, facing up, over the
+  floor's area (its scale sets the size); its **Distance** (Blender's
+  Influence Distance) is how far from it a surface counts as the floor.
 
-Probes cannot be rotated relative to the model root: only their position
-and size count. The panel of a probe shows Blender's probe settings, which
+Probes and the plane cannot be rotated relative to the model root: only
+their position and size count. The panel of a probe shows Blender's probe settings, which
 Blender itself shows only under EEVEE, and an estimate of the bake time.
 A probe's Clip End is how far its render sees: anything farther is black in
 its reflections. Add Reflection Probe and Fill with Probes set it to reach
@@ -501,7 +506,9 @@ Limits:
   the Spacing if it does.
 - The grid's light is soft: it gives no sharp shadows.
 - The probes reflect the Blender scene as it was baked. The ships that the
-  game places in the hangar don't show in the reflections.
+  game places in the hangar don't show in their reflections; only the
+  reflection plane shows them, on the floor. Keep ships out of the bake:
+  the probes would show them in the wrong place.
 
 To review a reflection probe in Blender, click **Preview Lighting** in its
 panel. It shows the probe's panorama as the World, turned as in the game,
@@ -512,4 +519,4 @@ World back. In the game, the Environment debug tool shows the package
 button loads it again after a new bake. Its **Show probes** checkbox draws
 each probe's influence, the grid's box and the grid points near the
 camera, to check that they sit where they do in Blender. Save to
-Project keeps the probes and the grid in the model's `.gltf`.
+Project keeps the probes, the grid and the plane in the model's `.gltf`.

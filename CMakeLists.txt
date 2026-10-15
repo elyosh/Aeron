@@ -252,6 +252,8 @@ set(AERON_SHADER_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_probe_occlusion_grid.comp.hlsl
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_probe_occupancy_compose.comp.hlsl
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_probe_occupancy_downsample.comp.hlsl
+    ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_planar_reflection_resolve.comp.hlsl
+    ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_planar_reflection_downsample.comp.hlsl
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_directional_shadow.vert.hlsl
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_directional_shadow.frag.hlsl
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_directional_shadow_mask.vert.hlsl
@@ -895,6 +897,7 @@ add_library(aeron_scene STATIC
     src/scene/scene3d.c
     src/scene/clustered_lights.c
     src/scene/probe_occlusion.c
+    src/scene/planar_reflection.c
     src/scene/world.c
     src/scene/settings.c
     src/scene/environment.c

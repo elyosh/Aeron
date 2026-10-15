@@ -4,6 +4,7 @@
         --asset-root ROOT --model OBJECT=GLB [--model OBJECT=GLB ...] --hangar OBJECT
         --package PACKAGE_YAML --bake-root BAKE_ROOT --defaults SCENE3D_DEFAULTS
         [--probes NAME] [--camera NAME] [--width 1920] [--height 1080] [--probe-occlusion]
+        [--planar-reflection]
 
 SCENE.blend holds each model under its own root object (as the glTF importer
 leaves it) and a camera; it is opened read-only and never saved. OBJECT names
@@ -23,7 +24,9 @@ Writes, under DIR, which is scene_capture's working directory for these runs:
 - scene.json: the camera and the other models' footprint on the floor, for
   cycles_render.py and cycles_compare.py.
 
-With --probe-occlusion, the configs turn on scene_capture's probe_occlusion.
+With --probe-occlusion and --planar-reflection, the configs turn on
+scene_capture's probe_occlusion and planar_reflection; the latter needs the
+package's reflection_plane.
 
 scene_capture's camera has a 60 degree vertical field of view; the .blend's
 camera gives the position and direction only."""
@@ -65,6 +68,7 @@ def parse_args():
     parser.add_argument("--width", type=int, default=1920)
     parser.add_argument("--height", type=int, default=1080)
     parser.add_argument("--probe-occlusion", action="store_true")
+    parser.add_argument("--planar-reflection", action="store_true")
     return parser.parse_args(sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else [])
 
 
@@ -222,7 +226,7 @@ def probes_packages(text):
 
 
 def capture_config(name, width, height, models, instances, sun_direction, key_probe_shadow, manifest,
-                   probe_occlusion):
+                   probe_occlusion, planar_reflection):
     lines = [
         f"# {name}: written by cycles_match.py; run scene_capture from this folder.",
         f"width: {width}", f"height: {height}", "frames: 1", "fps: 60",
@@ -241,6 +245,7 @@ def capture_config(name, width, height, models, instances, sun_direction, key_pr
         "  ambient: 0.02",
         f"  key_probe_shadow: {key_probe_shadow:g}",
         f"  probe_occlusion: {'true' if probe_occlusion else 'false'}",
+        f"  planar_reflection: {'true' if planar_reflection else 'false'}",
         f"  environment: {{ folder: env, manifest: {manifest} }}",
         "  instances:",
         *[f"    - {i}" for i in instances],
@@ -310,7 +315,8 @@ def main():
                            ("reflect", "manifest_reflect.yaml")):
         with open(os.path.join(out, f"{name}.yaml"), "w") as stream:
             stream.write(capture_config(name, args.width, args.height, model_paths, instances, sun_direction,
-                                        key_probe_shadow, manifest, args.probe_occlusion))
+                                        key_probe_shadow, manifest, args.probe_occlusion,
+                                        args.planar_reflection))
 
     others = [root for root, _ in models if root.name != args.hangar]
     scene = {"camera": camera.name, "width": args.width, "height": args.height, "vertical_fov_degrees": 60.0,

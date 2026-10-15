@@ -684,6 +684,7 @@ static void set_game_lighting(AeronScene3D* scene, const CaptureConfig* config) 
 	AeronScene_SetFrameUniformData(scene, AERON_SHADER_STAGE_FRAGMENT, 1, light, sizeof light);
 	AeronScene_SetProbeKeyShadow(scene, game->key_probe_shadow >= 0.0f && game->key_shadow_all_sides);
 	AeronScene_SetProbeOcclusion(scene, game->probe_occlusion);
+	AeronScene_SetPlanarReflection(scene, game->planar_reflection);
 }
 
 static void set_game_effects(AeronScene3D* scene, const CaptureConfig* config, int blur) {

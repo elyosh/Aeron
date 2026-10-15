@@ -75,6 +75,9 @@ typedef struct CaptureGameScene {
 	/* The instances inside the first probe set's grid occlude its light
 	 * (AeronScene_SetProbeOcclusion), in place of the sun's cut. */
 	int probe_occlusion;
+	/* The first probe set's reflection plane reflects the instances above
+	 * it (AeronScene_SetPlanarReflection). */
+	int planar_reflection;
 	/* FSR temporal upscaling, as the game's temporal_upscaling settings;
 	 * benchmarks only (output depends on frame history), without MSAA. */
 	AeronTemporalMode        temporal_mode;

@@ -179,6 +179,17 @@
             "resolution": { "type": "array", "items": { "type": "integer", "minimum": 2, "maximum": 64 }, "minItems": 3, "maxItems": 3 },
             "keyLightShadow": { "type": "number", "minimum": 0, "maximum": 1, "default": 0.7, "description": "When the scene's key light is in the bake (a hangar's ceiling light): the part of the probe light its shadow removes." }
           }
+        },
+        "reflectionPlane": {
+          "title": "Reflection plane",
+          "description": "A floor facing +y (a hangar's) that reflects what stands on it. It needs the light grid.",
+          "type": "object",
+          "required": ["position", "size"],
+          "properties": {
+            "position": { "$ref": "#/$defs/vec3", "description": "In the model's frame, in metres." },
+            "size": { "type": "array", "items": { "$ref": "#/$defs/positive" }, "minItems": 2, "maxItems": 2, "description": "Its full extent along x and z, in metres." },
+            "distance": { "type": "number", "minimum": 0, "maximum": 10, "default": 0.1, "description": "How far from it a surface takes its reflection, in metres." }
+          }
         }
       }
     },

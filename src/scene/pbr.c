@@ -228,6 +228,7 @@ static AeronGraphicsPipeline* pbr_pipeline_create(struct AeronScene3D* s, int ki
 	const PbrTargetDesc vel_rw    = { AERON_TEXTURE_FORMAT_R16G16_FLOAT, 0xF };
 	const PbrTargetDesc depth_rw  = { AERON_TEXTURE_FORMAT_R32_FLOAT, 0x1 };
 	const PbrTargetDesc color_rw  = { s->color_format, 0xF };
+	const PbrTargetDesc planar_rw = { AERON_TEXTURE_FORMAT_RGBA16_FLOAT, 0xF };
 	const PbrTargetDesc pre1[1]   = { normal_rw };
 	const PbrTargetDesc pre2[2]   = { normal_rw, vel_rw };
 	const PbrTargetDesc pre3[3]   = { normal_rw, vel_rw, depth_rw };
@@ -244,6 +245,10 @@ static AeronGraphicsPipeline* pbr_pipeline_create(struct AeronScene3D* s, int ki
 		case AERON_PBR_PIPE_MESH_MASK:
 			return pbr_pipeline(color_vs, color_fs, &color_rw, 1, 1, 1, AERON_COMPARE_GREATER_EQUAL, cull, 0,
 								s->sample_count);
+		case AERON_PBR_PIPE_PLANAR:
+		case AERON_PBR_PIPE_PLANAR_MASK:
+			return pbr_pipeline(color_vs, color_fs, &planar_rw, 1, 1, 1, AERON_COMPARE_GREATER_EQUAL, cull, 0,
+								AERON_SAMPLE_COUNT_1);
 		case AERON_PBR_PIPE_FORWARD_MASK:
 			return pbr_pipeline(color_vs, color_fs, &color_rw, 1, 1, s->sample_count != AERON_SAMPLE_COUNT_1,
 								s->sample_count != AERON_SAMPLE_COUNT_1 ? AERON_COMPARE_GREATER_EQUAL
@@ -332,7 +337,8 @@ static AeronGraphicsPipeline* pbr_pipeline_create(struct AeronScene3D* s, int ki
 }
 
 static int pbr_mask_color_kind(int kind) {
-	return kind == AERON_PBR_PIPE_MESH_MASK || kind == AERON_PBR_PIPE_FORWARD_MASK;
+	return kind == AERON_PBR_PIPE_MESH_MASK || kind == AERON_PBR_PIPE_FORWARD_MASK ||
+		   kind == AERON_PBR_PIPE_PLANAR_MASK;
 }
 
 /* Kinds shaded by the mesh colour shader, which has the debug and
@@ -341,6 +347,7 @@ static int pbr_color_kind(int kind) {
 	return kind == AERON_PBR_PIPE_MESH || kind == AERON_PBR_PIPE_FORWARD ||
 		   kind == AERON_PBR_PIPE_MESH_MASK || kind == AERON_PBR_PIPE_FORWARD_MASK ||
 		   kind == AERON_PBR_PIPE_MESH_BLEND || kind == AERON_PBR_PIPE_FORWARD_BLEND ||
+		   kind == AERON_PBR_PIPE_PLANAR || kind == AERON_PBR_PIPE_PLANAR_MASK ||
 		   pbr_screen_base_kind(kind) >= 0;
 }
 
@@ -451,8 +458,8 @@ static AeronGraphicsPipeline* pbr_probe_pipeline(struct AeronScene3D* s, int kin
 		if (!s->pbr_anim_vs)
 			s->pbr_anim_vs = pbr_shader("scene_pbr_mesh_anim.vert", AERON_SHADER_STAGE_VERTEX, 0, 1, 1);
 		for (int v = 0; v < 3; ++v) {
-			s->pbr_probe_fs[0][v] = pbr_shader(names[0][v], AERON_SHADER_STAGE_FRAGMENT, 13, 3, 7);
-			s->pbr_probe_fs[1][v] = pbr_shader(names[1][v], AERON_SHADER_STAGE_FRAGMENT, 15, 4, 8);
+			s->pbr_probe_fs[0][v] = pbr_shader(names[0][v], AERON_SHADER_STAGE_FRAGMENT, 14, 3, 7);
+			s->pbr_probe_fs[1][v] = pbr_shader(names[1][v], AERON_SHADER_STAGE_FRAGMENT, 16, 4, 8);
 		}
 	}
 	AeronShader* vs     = anim ? s->pbr_anim_vs : s->pbr_vs;
@@ -710,11 +717,15 @@ static void pbr_push_instance_uniforms(struct AeronScene3D* s, AeronRenderPass* 
 	const int            vel = velocity && !in->zero_velocity;
 	AeronScenePbrVsBlock vsb;
 	memset(&vsb, 0, sizeof vsb);
-	memcpy(vsb.view_proj, s->jittered_view_proj, sizeof vsb.view_proj);
-	memcpy(vsb.unjittered_view_proj, s->unjittered_view_proj, sizeof vsb.unjittered_view_proj);
+	/* The floor's mirrored view draws through its own camera. */
+	const float* view_proj =
+		s->planar_reflection.drawing ? s->planar_reflection.view_proj : s->jittered_view_proj;
+	const float* unjittered =
+		s->planar_reflection.drawing ? s->planar_reflection.view_proj : s->unjittered_view_proj;
+	memcpy(vsb.view_proj, view_proj, sizeof vsb.view_proj);
+	memcpy(vsb.unjittered_view_proj, unjittered, sizeof vsb.unjittered_view_proj);
 	memcpy(vsb.model_to_world, in->transform, sizeof vsb.model_to_world);
-	memcpy(vsb.prev_view_proj, vel ? s->mb_prev_view_proj : s->unjittered_view_proj,
-		   sizeof vsb.prev_view_proj);
+	memcpy(vsb.prev_view_proj, vel ? s->mb_prev_view_proj : unjittered, sizeof vsb.prev_view_proj);
 	memcpy(vsb.prev_model_to_world, vel ? in->prev_transform : in->transform, sizeof vsb.prev_model_to_world);
 	uint32_t variant = in->variant;
 	if (variant >= m->variant_rows) {
@@ -773,6 +784,8 @@ static int pbr_mask_kind(int pipe_kind) {
 			return AERON_PBR_PIPE_MESH_MASK;
 		case AERON_PBR_PIPE_FORWARD:
 			return AERON_PBR_PIPE_FORWARD_MASK;
+		case AERON_PBR_PIPE_PLANAR:
+			return AERON_PBR_PIPE_PLANAR_MASK;
 		case AERON_PBR_PIPE_PREPASS:
 			return AERON_PBR_PIPE_PREPASS_MASK;
 		case AERON_PBR_PIPE_PREPASS_VEL:
@@ -877,15 +890,31 @@ static int pbr_bind_pipeline(struct AeronScene3D* s, AeronRenderPass* pass, int 
 	return 1;
 }
 
-/* Binds a colour draw's pipeline. An instance with a probe set (`set` >= 0)
- * draws with the probe variant, its set bound in place of the screen
- * textures (t10, t11), its buffer at storage slot 4 and the lighting block
- * with its fields; `bound_set` tracks the set bound, -1 for the screen
- * textures, which screen draws get back. Debug views draw without probes. */
+/* The probe-set key of instance `i`'s colour draws (pbr_bind_draw): -1
+ * without a set, else the set times 2, plus 1 when the instance is the
+ * owner of the first set and takes the floor's reflection. */
+static int pbr_set_key(const struct AeronScene3D* s, int i) {
+	const int set = s->prepared_instances[i].probe_set;
+	if (set < 0) {
+		return -1;
+	}
+	const int receiver = set == 0 && s->instances[i].probe_set_owner == 1 && s->planar_reflection.active &&
+						 !s->planar_reflection.drawing;
+	return set * 2 + receiver;
+}
+
+/* Binds a colour draw's pipeline. An instance with a probe set (`set_key`
+ * >= 0, pbr_set_key) draws with the probe variant, its set bound in place
+ * of the screen textures (t10, t11), its buffer at storage slot 4 and the
+ * lighting block with its fields; `bound_set` tracks the key bound, -1 for
+ * the screen textures, which screen draws get back. Debug views draw
+ * without probes. */
 static int pbr_bind_draw(struct AeronScene3D* s, AeronRenderPass* pass, int kind, AeronCullMode cull,
-						 const AeronSceneMesh* mesh, int set, AeronGraphicsPipeline** bound, int* bound_set) {
+						 const AeronSceneMesh* mesh, int set_key, AeronGraphicsPipeline** bound,
+						 int* bound_set) {
 	AeronGraphicsPipeline* probe = NULL;
 	const int              anim  = mesh && mesh->anim_buffer && s->effect_atlas;
+	const int              set   = set_key >= 0 ? set_key >> 1 : -1;
 	if (set >= 0) {
 #ifdef AERON_DEBUG_UI
 		if (!pbr_debug_pipeline(s, kind, cull))
@@ -905,17 +934,20 @@ static int pbr_bind_draw(struct AeronScene3D* s, AeronRenderPass* pass, int kind
 	if (probe != *bound) {
 		Aeron_BindGraphicsPipeline(pass, probe);
 		*bound = probe;
-		/* The probe occlusion grid follows the material and effect
-		 * textures: t12, or t14 in the `_anim` shaders, whose effect texture
-		 * at t12 it displaces until an `_anim` draw binds it again. */
+		/* The probe occlusion grid and the floor's reflection follow the
+		 * material and effect textures: t12 and t13, or t14 and t15 in the
+		 * `_anim` shaders, whose effect textures at t12 and t13 they
+		 * displace until an `_anim` draw binds them again. */
 		if (anim && s->pbr_occlusion_in_effect_slot) {
 			pbr_bind_effect_textures(s, pass);
 		}
 		Aeron_BindTextureSampler(pass, AERON_SHADER_STAGE_FRAGMENT, anim ? 14u : 12u,
 								 AeronSceneProbeOcclusion_Grid(s), AeronSceneProbeOcclusion_Sampler(s));
+		Aeron_BindTextureSampler(pass, AERON_SHADER_STAGE_FRAGMENT, anim ? 15u : 13u,
+								 AeronScenePlanarReflection_Image(s), AeronScenePlanarReflection_Sampler(s));
 		s->pbr_occlusion_in_effect_slot |= !anim;
 	}
-	if (set != *bound_set) {
+	if (set_key != *bound_set) {
 		const AeronSceneProbeSet*      p   = &s->probe_sets[set];
 		const AeronEnvironmentPackage* pkg = p->package;
 		Aeron_BindTextureSampler(pass, AERON_SHADER_STAGE_FRAGMENT, 10, pkg->probe_cubes, pkg->sampler);
@@ -928,8 +960,16 @@ static int pbr_bind_draw(struct AeronScene3D* s, AeronRenderPass* pass, int kind
 		memcpy(lighting.grid_scale, p->grid_scale, sizeof lighting.grid_scale);
 		memcpy(lighting.grid_offset, p->grid_offset, sizeof lighting.grid_offset);
 		AeronSceneProbeOcclusion_LightingFields(s, set, lighting.occlusion_origin, lighting.occlusion_dims);
+		AeronScenePlanarReflection_LightingFields(s, set, set_key & 1, lighting.planar_rect,
+												  lighting.planar_params, lighting.planar_eye,
+												  lighting.planar_screen);
+		if (s->planar_reflection.drawing) {
+			/* The mirrored view lights its instances without the main view's
+			 * light clusters. */
+			lighting.cluster.flags = 0u;
+		}
 		Aeron_BindUniformData(pass, AERON_SHADER_STAGE_FRAGMENT, 2, &lighting, sizeof lighting);
-		*bound_set = set;
+		*bound_set = set_key;
 	}
 	return 1;
 }
@@ -964,8 +1004,12 @@ int AeronScenePbr_DrawInstances(struct AeronScene3D* s, AeronCommandBuffer* cmd,
 	const AeronSceneMesh* bound_mesh                  = NULL;
 	int                   bound_receiver_local_shadow = 0;
 	int                   bound_set                   = -1;
-	for (int k = 0; k < s->camera_order_count; ++k) {
-		const int                     i  = s->camera_order[k];
+	/* The floor's mirrored view draws its own instances. */
+	const uint16_t* order = s->planar_reflection.drawing ? s->planar_reflection.order : s->camera_order;
+	const int       order_count =
+		s->planar_reflection.drawing ? s->planar_reflection.order_count : s->camera_order_count;
+	for (int k = 0; k < order_count; ++k) {
+		const int                     i  = order[k];
 		const AeronSceneMeshInstance* in = &s->instances[i];
 		const AeronSceneMesh*         m  = in->mesh;
 		if (!m || !m->vbo || !m->ibo || m->index_count == 0) {
@@ -982,7 +1026,7 @@ int AeronScenePbr_DrawInstances(struct AeronScene3D* s, AeronCommandBuffer* cmd,
 
 		/* Per-instance cull variant. */
 		const AeronCullMode cull = (AeronCullMode)in->cull_mode;
-		const int           set  = depth_only ? -1 : s->prepared_instances[i].probe_set;
+		const int           set  = depth_only ? -1 : pbr_set_key(s, i);
 		if (!pbr_bind_draw(s, pass, pipe_kind, cull, m, set, &bound, &bound_set)) {
 			return 0;
 		}
@@ -1024,8 +1068,8 @@ int AeronScenePbr_DrawInstances(struct AeronScene3D* s, AeronCommandBuffer* cmd,
 	const int mask_screen_kind = depth_only || mask_kind < 0 ? -1 : pbr_screen_kind(mask_kind);
 	if (mask_kind >= 0) {
 		bound_mesh = NULL;
-		for (int k = 0; k < s->camera_order_count; ++k) {
-			const int                     i  = s->camera_order[k];
+		for (int k = 0; k < order_count; ++k) {
+			const int                     i  = order[k];
 			const AeronSceneMeshInstance* in = &s->instances[i];
 			const AeronSceneMesh*         m  = in->mesh;
 			if (!m || !m->vbo || !m->ibo || m->mask_index_count == 0) {
@@ -1042,7 +1086,7 @@ int AeronScenePbr_DrawInstances(struct AeronScene3D* s, AeronCommandBuffer* cmd,
 			const AeronCullMode cull         = (AeronCullMode)in->cull_mode;
 			const uint32_t      screen_count = mask_screen_kind >= 0 ? m->mask_screen_index_count : 0u;
 			const uint32_t      plain_count  = m->mask_index_count - screen_count;
-			const int           set          = depth_only ? -1 : s->prepared_instances[i].probe_set;
+			const int           set          = depth_only ? -1 : pbr_set_key(s, i);
 			if (!pbr_bind_draw(s, pass, plain_count != 0 ? mask_kind : mask_screen_kind, cull, m, set, &bound,
 							   &bound_set)) {
 				return 0;
@@ -1074,8 +1118,8 @@ int AeronScenePbr_DrawInstances(struct AeronScene3D* s, AeronCommandBuffer* cmd,
 	 * and normal stay untouched. */
 	if (depth_only && velocity) {
 		bound_mesh = NULL;
-		for (int k = 0; k < s->camera_order_count; ++k) {
-			const int                     i  = s->camera_order[k];
+		for (int k = 0; k < order_count; ++k) {
+			const int                     i  = order[k];
 			const AeronSceneMeshInstance* in = &s->instances[i];
 			const AeronSceneMesh*         m  = in->mesh;
 			if (!m || !m->vbo || !m->ibo || m->blend_index_count == 0) {
@@ -1174,8 +1218,7 @@ int AeronScenePbr_DrawTransparentInstances(struct AeronScene3D* s, AeronRenderPa
 			bound_receiver_local_shadow = receiver_local_shadow;
 		}
 		const AeronCullMode cull = (AeronCullMode)in->cull_mode;
-		if (!pbr_bind_draw(s, pass, blend_kind, cull, m, s->prepared_instances[i].probe_set, &bound,
-						   &bound_set)) {
+		if (!pbr_bind_draw(s, pass, blend_kind, cull, m, pbr_set_key(s, i), &bound, &bound_set)) {
 			return 0;
 		}
 		if (m != bound_mesh) {

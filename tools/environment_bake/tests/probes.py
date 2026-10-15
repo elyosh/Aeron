@@ -7,7 +7,8 @@ a 3x2x2 grid whose panoramas are constant, except one point lit from above
 and one marked inside geometry. Checks the cube array and grid headers, the
 grid's spherical harmonics (a constant radiance c gives (c, 0, 0, 0); light
 from the upper half gives (0.5, 0.5, 0, 0)), the invalid point filled from
-its neighbours, the cell report, and that wrong jobs exit 2. The baker
+its neighbours, the cell report, the reflection plane carried to the package,
+and that wrong jobs exit 2. The baker
 re-reads the package with the runtime parser, so a zero exit also means the
 game accepts it.
 """
@@ -102,6 +103,7 @@ def main():
             stream.write("grid_box: {center: [0, 0, 0], size: [20, 10, 10]}\ngrid_resolution: [3, 2, 2]\n")
             stream.write("grid_panoramas: [%s]\n" % ", ".join("grid_%d.hdr" % i for i in range(12)))
             stream.write("grid_invalid: [4]\nkey_light_shadow: 0.5\n")
+            stream.write("reflection_plane: {center: [0, 0, -5], size: [20, 10], distance: 0.25}\n")
 
         out = os.path.join(scratch, "flight", "environments", "models", "test")
         os.makedirs(out)
@@ -134,7 +136,8 @@ def main():
             entry = open(os.path.join(out, "package.yaml")).read()
             for expected in ("kind: probes", 'cubes: "flight/environments/models/test/probes.ktx2"',
                              'grid: "flight/environments/models/test/grid.ktx2"', "grid_resolution: [3, 2, 2]",
-                             "key_light_shadow: 0.5"):
+                             "key_light_shadow: 0.5",
+                             "reflection_plane: {center: [0, 0, -5], size: [20, 10], distance: 0.25}"):
                 if expected not in entry:
                     failures.append("package.yaml lacks %r:\n%s" % (expected, entry))
             if "at most 4 probes in one" not in run.stdout:
@@ -160,7 +163,8 @@ def main():
         # Wrong jobs.
         for name, change in (("unknown field", lambda t: t + "extra: 1\n"),
                              ("panorama count", lambda t: t.replace("probe_panoramas: [", "probe_panoramas: [x, ")),
-                             ("invalid index", lambda t: t.replace("grid_invalid: [4]", "grid_invalid: [12]"))):
+                             ("invalid index", lambda t: t.replace("grid_invalid: [4]", "grid_invalid: [12]")),
+                             ("plane size", lambda t: t.replace("size: [20, 10]", "size: [20, 0]"))):
             wrong = os.path.join(job_dir, "wrong.yaml")
             with open(wrong, "w") as stream:
                 stream.write(change(text))

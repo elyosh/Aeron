@@ -1,6 +1,7 @@
 # Environment probes: a model's reflection probes (Blender Sphere light
-# probes) and its light grid (a Volume light probe) under its root, and their
-# bake into the model's probes package. The bake renders a panorama from
+# probes), its light grid (a Volume light probe) and its reflection plane (a
+# Plane light probe, a hangar's floor) under its root, and their bake into
+# the model's probes package. The bake renders a panorama from
 # each probe and from each grid point with Cycles, and environment_bake
 # turns them into a cube array and an irradiance grid. In the game, the
 # package lights the model and the objects that reach it (a hangar's ships,
@@ -52,6 +53,7 @@ MAX_GRID_POINTS = 8192  # about 7 min of bake on a GPU
 GRID_RESOLUTION = (2, 64)
 GRID_SPACING = 4.0  # default metres between grid points
 KEY_LIGHT_SHADOW = 0.7  # the runtime's default
+MAX_PLANE_DISTANCE = 10.0  # the runtime's limit, metres
 FILL_TILE = 25.0  # Fill with Probes' target probe size, metres
 FILL_MAX_PROBES = 16
 FILL_FALLOFF = 0.2
@@ -109,6 +111,26 @@ def light_grids(root):
 def light_grid(root):
     grids = light_grids(root)
     return grids[0] if grids else None
+
+
+def reflection_planes(root):
+    return sorted((c for c in root.children if c.type == 'LIGHT_PROBE' and c.data.type == 'PLANE'),
+                  key=lambda obj: obj.name)
+
+
+def reflection_plane(root):
+    planes = reflection_planes(root)
+    return planes[0] if planes else None
+
+
+def plane_definition(root, plane):
+    """The reflection plane in the package's terms: its centre in the model frame, its size along
+    the model's x and y (Blender's -1..1 square), and how far from it a surface takes its reflection,
+    metres."""
+    scale = _relative(root, plane).to_scale()
+    return {"center": list(_model_point(root, plane.matrix_world.translation)),
+            "size": [2.0 * abs(scale.x), 2.0 * abs(scale.y)],
+            "distance": plane.data.influence_distance * abs(scale.z)}
 
 
 def _relative(root, obj):
@@ -258,10 +280,14 @@ def _boxes_overlap_count(boxes):
 
 
 def check(problems, root):
-    probes, grids = reflection_probes(root), light_grids(root)
-    for obj in root.children:
-        if obj.type == 'LIGHT_PROBE' and obj.data.type == 'PLANE':
-            problems.warning(obj, "plane probes are not exported; use sphere probes")
+    probes, grids, planes = reflection_probes(root), light_grids(root), reflection_planes(root)
+    for plane in planes[1:]:
+        problems.error(plane, "the model has another reflection plane")
+    for plane in planes[:1]:
+        if not grids:
+            problems.error(plane, "the reflection plane belongs to the probes: add a light grid")
+        elif plane_definition(root, plane)["distance"] > MAX_PLANE_DISTANCE:
+            problems.error(plane, "its influence distance is over {:g} m".format(MAX_PLANE_DISTANCE))
     if len(probes) > MAX_PROBES:
         problems.error(root, "the model has {} reflection probes, more than the limit of {}".format(
             len(probes), MAX_PROBES))
@@ -271,7 +297,7 @@ def check(problems, root):
         problems.error(probes[0], "the reflection probes need a light grid (Add Light Grid)")
     if grids and not probes:
         problems.error(grids[0], "the light grid needs at least one reflection probe")
-    for obj in probes + grids:
+    for obj in probes + grids + planes:
         relative = _relative(root, obj)
         if relative.to_quaternion().angle > 1e-4:
             problems.error(obj, "a probe cannot be rotated relative to the model root")
@@ -321,6 +347,18 @@ def _new_reflection_probe(root, location, size):
     return probe
 
 
+def _new_reflection_plane(root, location, size, distance):
+    """A plane at a world `location`, of full `size` along the root's x and y, metres."""
+    data = bpy.data.lightprobes.new(root.name + " Reflection Plane", 'PLANE')
+    data.influence_distance = distance
+    plane = bpy.data.objects.new(data.name, data)
+    _link(root, plane)
+    plane.matrix_world = root.matrix_world @ mathutils.Matrix.Translation(
+        root.matrix_world.inverted() @ location)
+    plane.scale = (size[0] / 2.0, size[1] / 2.0, 1.0)
+    return plane
+
+
 def _new_light_grid(root, location, size, spacing):
     data = bpy.data.lightprobes.new(root.name + " Light Grid", 'VOLUME')
     grid = bpy.data.objects.new(data.name, data)
@@ -361,10 +399,15 @@ def restore(root, extension):
         grid = _new_light_grid(root, root.matrix_world @ mathutils.Vector(common.from_gltf(item["position"])),
                                common.extent_from_gltf(item["size"]), item.get("spacing", GRID_SPACING))
         grid.aeron_probe.key_light_shadow = item.get("keyLightShadow", KEY_LIGHT_SHADOW)
+    item = extension.get("reflectionPlane")
+    if isinstance(item, dict):
+        _new_reflection_plane(root, root.matrix_world @ mathutils.Vector(common.from_gltf(item["position"])),
+                              item["size"], item.get("distance", 0.1))
 
 
 def export_json(root):
-    """The root extension's `reflectionProbes` and `lightGrid`, in glTF axes and metres."""
+    """The root extension's `reflectionProbes`, `lightGrid` and `reflectionPlane`, in glTF axes and
+    metres (the plane's size along the model's x and y)."""
     out = {}
     probes = []
     for probe in reflection_probes(root):
@@ -393,6 +436,11 @@ def export_json(root):
                             "size": common.extent_to_gltf([2.0 * abs(s) for s in relative.to_scale()]),
                             "spacing": grid.aeron_probe.grid_spacing, "resolution": [r[0], r[2], r[1]],
                             "keyLightShadow": grid.aeron_probe.key_light_shadow}
+    plane = reflection_plane(root)
+    if plane is not None:
+        item = plane_definition(root, plane)
+        out["reflectionPlane"] = {"position": common.to_gltf(_relative(root, plane).translation),
+                                  "size": item["size"], "distance": item["distance"]}
     return out
 
 
@@ -559,6 +607,11 @@ def write_job(path, root, probes, grid, probe_names, grid_names, invalid):
         stream.write("grid_panoramas: [{}]\n".format(", ".join(grid_names)))
         stream.write("grid_invalid: [{}]\n".format(", ".join(str(i) for i in invalid)))
         stream.write("key_light_shadow: {:.9g}\n".format(grid.aeron_probe.key_light_shadow))
+        plane = reflection_plane(root)
+        if plane is not None:
+            item = plane_definition(root, plane)
+            stream.write("reflection_plane: {{center: {}, size: [{:.9g}, {:.9g}], distance: {:.9g}}}\n".format(
+                _vec(item["center"]), item["size"][0], item["size"][1], item["distance"]))
 
 
 def write_mapping(path, key, package):
@@ -896,8 +949,8 @@ class OBJECT_PT_aeron_probe(Panel):
     @classmethod
     def poll(cls, context):
         obj = context.object
-        return (obj is not None and obj.type == 'LIGHT_PROBE' and obj.data.type in {'SPHERE', 'VOLUME'} and
-                common.model_root(obj) is not None)
+        return (obj is not None and obj.type == 'LIGHT_PROBE' and obj.data.type in {'SPHERE', 'VOLUME', 'PLANE'}
+                and common.model_root(obj) is not None)
 
     def draw(self, context):
         layout = self.layout
@@ -907,6 +960,11 @@ class OBJECT_PT_aeron_probe(Panel):
         data = obj.data
         if obj.parent != root:
             layout.label(text="Not directly under the model root: not exported", icon='ERROR')
+            return
+        if data.type == 'PLANE':
+            layout.label(text="Reflection plane of {}".format(root.name), icon='LIGHTPROBE_PLANE')
+            layout.label(text="The floor reflects what stands on it in the game")
+            layout.prop(data, "influence_distance", text="Distance")
             return
         if data.type == 'SPHERE':
             layout.label(text="Reflection probe {} of {}".format(reflection_probes(root).index(obj) + 1, root.name),

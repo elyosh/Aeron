@@ -132,6 +132,13 @@ typedef struct AeronEnvironmentDefinition {
 	/* When the scene's key light is in the bake (a hangar's ceiling light),
 	 * the part of the probe light its shadow removes, 0-1 (default 0.7). */
 	float                           key_light_shadow;
+	/* The floor that reflects what stands on it (a hangar's): a horizontal
+	 * rectangle facing up, its centre and size along x and y; the owner's
+	 * surfaces within `distance` of it take its reflection. */
+	bool                            has_reflection_plane;
+	float                           reflection_plane_center[3];
+	float                           reflection_plane_size[2];
+	float                           reflection_plane_distance;
 } AeronEnvironmentDefinition;
 
 /* A set of parsed package definitions, fixed once in use. */
@@ -164,8 +171,8 @@ bool AeronEnvironment_ParseLights(const AeronConfigNode* lights, const char* own
 								  AeronEnvironmentLightDefinition out[AERON_ENV_MAX_LIGHTS],
 								  uint32_t* out_count, int32_t* out_primary, AeronConfigError* error);
 
-/* Reads the `grid_box`, `grid_resolution`, `probes` and `key_light_shadow`
- * fields of a map with the probes package schema into `def`, leaving its
+/* Reads the `grid_box`, `grid_resolution`, `probes`, `key_light_shadow` and
+ * `reflection_plane` fields of a map with the probes package schema into `def`, leaving its
  * other fields (also used by tools whose map holds other fields; the caller
  * checks those). `what` names the map in error messages. */
 bool AeronEnvironment_ParseProbeSet(const AeronConfigNode* map, const char* what,
