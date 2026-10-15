@@ -4220,12 +4220,14 @@ int Aeron_CopyTextureCmd(AeronCommandBuffer* command_buffer, const AeronTextureC
 	source.layer     = desc->source_layer;
 	source.x         = desc->source_x;
 	source.y         = desc->source_y;
+	source.z         = desc->source_z;
 	SDL_zero(destination);
 	destination.texture   = desc->destination->texture;
 	destination.mip_level = desc->destination_mip_level;
 	destination.layer     = desc->destination_layer;
 	destination.x         = desc->destination_x;
 	destination.y         = desc->destination_y;
+	destination.z         = desc->destination_z;
 
 	copy_pass = SDL_BeginGPUCopyPass(command_buffer->command_buffer);
 	if (!copy_pass) {
@@ -4233,8 +4235,8 @@ int Aeron_CopyTextureCmd(AeronCommandBuffer* command_buffer, const AeronTextureC
 		Aeron_CommandBufferMarkFailed(command_buffer);
 		return 0;
 	}
-	SDL_CopyGPUTextureToTexture(copy_pass, &source, &destination, desc->width, desc->height, 1,
-								desc->cycle != 0);
+	SDL_CopyGPUTextureToTexture(copy_pass, &source, &destination, desc->width, desc->height,
+								desc->depth ? desc->depth : 1u, desc->cycle != 0);
 	SDL_EndGPUCopyPass(copy_pass);
 	return 1;
 }

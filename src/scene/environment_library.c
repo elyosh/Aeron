@@ -403,7 +403,7 @@ static AeronBuffer* build_probe_buffer(AeronEnvironmentLibrary* library, AeronCo
 		   cells->words, cell_count * sizeof *cells->words);
 	AeronBuffer* buffer = Aeron_CreateBuffer(&(AeronBufferDesc) {
 		.size         = bytes,
-		.usage        = AERON_BUFFER_USAGE_STORAGE,
+		.usage        = AERON_BUFFER_USAGE_STORAGE | AERON_BUFFER_USAGE_COMPUTE_STORAGE_READ,
 		.memory_usage = AERON_MEMORY_USAGE_GPU_ONLY,
 		.debug_name   = "scene.environment_probes",
 	});

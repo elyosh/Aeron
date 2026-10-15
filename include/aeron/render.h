@@ -604,7 +604,8 @@ typedef struct AeronComputePassDesc {
 	const char*                       debug_label;
 } AeronComputePassDesc;
 
-/* One GPU texture-to-texture copy. Formats must be copy-compatible. */
+/* One GPU texture-to-texture copy. Formats must be copy-compatible. For 3D
+ * textures, the z offsets and `depth` (0 is 1) select the slices. */
 typedef struct AeronTextureCopyDesc {
 	AeronTexture* source;
 	uint32_t      source_mip_level;
@@ -619,6 +620,9 @@ typedef struct AeronTextureCopyDesc {
 	uint32_t      width;
 	uint32_t      height;
 	int           cycle;
+	uint32_t      source_z;
+	uint32_t      destination_z;
+	uint32_t      depth;
 } AeronTextureCopyDesc;
 
 /* Description for an Aeron color render target. */

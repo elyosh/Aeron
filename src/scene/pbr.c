@@ -451,8 +451,8 @@ static AeronGraphicsPipeline* pbr_probe_pipeline(struct AeronScene3D* s, int kin
 		if (!s->pbr_anim_vs)
 			s->pbr_anim_vs = pbr_shader("scene_pbr_mesh_anim.vert", AERON_SHADER_STAGE_VERTEX, 0, 1, 1);
 		for (int v = 0; v < 3; ++v) {
-			s->pbr_probe_fs[0][v] = pbr_shader(names[0][v], AERON_SHADER_STAGE_FRAGMENT, 12, 3, 7);
-			s->pbr_probe_fs[1][v] = pbr_shader(names[1][v], AERON_SHADER_STAGE_FRAGMENT, 14, 4, 8);
+			s->pbr_probe_fs[0][v] = pbr_shader(names[0][v], AERON_SHADER_STAGE_FRAGMENT, 13, 3, 7);
+			s->pbr_probe_fs[1][v] = pbr_shader(names[1][v], AERON_SHADER_STAGE_FRAGMENT, 15, 4, 8);
 		}
 	}
 	AeronShader* vs     = anim ? s->pbr_anim_vs : s->pbr_vs;
@@ -796,6 +796,20 @@ static void pbr_bind_screen_textures(const struct AeronScene3D* s, AeronRenderPa
 							 screen_sampler);
 }
 
+/* Material animation: the effect atlas (samplers 12, 13), read by the
+ * `_anim` shaders only. */
+static void pbr_bind_effect_textures(struct AeronScene3D* s, AeronRenderPass* pass) {
+	s->pbr_occlusion_in_effect_slot = 0;
+	if (s->effect_atlas) {
+		AeronSampler* sampler = s->mesh_sampler ? s->mesh_sampler : s->pbr_sampler;
+		for (int which = 0; which < 2; ++which) {
+			AeronTexture* texture = AeronEffectAtlas_Texture(s->effect_atlas, which);
+			Aeron_BindTextureSampler(pass, AERON_SHADER_STAGE_FRAGMENT, 12u + (uint32_t)which,
+									 texture ? texture : AeronSceneInternal_WhiteArrayTexture(), sampler);
+		}
+	}
+}
+
 static void pbr_bind_ao(struct AeronScene3D* s, AeronRenderPass* pass, AeronTexture* ao_tex) {
 	AeronTexture* ao = ao_tex ? ao_tex : AeronSceneInternal_WhiteTexture();
 	if (ao) {
@@ -821,16 +835,7 @@ static void pbr_bind_ao(struct AeronScene3D* s, AeronRenderPass* pass, AeronText
 	 * frame's sources (storage 6). */
 	pbr_bind_screen_textures(s, pass);
 	Aeron_BindStorageBuffer(pass, AERON_SHADER_STAGE_FRAGMENT, 6, s->screen_frame_buffer);
-	/* Material animation: the effect atlas (samplers 12, 13), read by the
-	 * `_anim` shaders only. */
-	if (s->effect_atlas) {
-		AeronSampler* sampler = s->mesh_sampler ? s->mesh_sampler : s->pbr_sampler;
-		for (int which = 0; which < 2; ++which) {
-			AeronTexture* texture = AeronEffectAtlas_Texture(s->effect_atlas, which);
-			Aeron_BindTextureSampler(pass, AERON_SHADER_STAGE_FRAGMENT, 12u + (uint32_t)which,
-									 texture ? texture : AeronSceneInternal_WhiteArrayTexture(), sampler);
-		}
-	}
+	pbr_bind_effect_textures(s, pass);
 }
 
 static void pbr_bind_material_resources(const struct AeronScene3D* s, AeronRenderPass* pass,
@@ -880,22 +885,35 @@ static int pbr_bind_pipeline(struct AeronScene3D* s, AeronRenderPass* pass, int 
 static int pbr_bind_draw(struct AeronScene3D* s, AeronRenderPass* pass, int kind, AeronCullMode cull,
 						 const AeronSceneMesh* mesh, int set, AeronGraphicsPipeline** bound, int* bound_set) {
 	AeronGraphicsPipeline* probe = NULL;
+	const int              anim  = mesh && mesh->anim_buffer && s->effect_atlas;
 	if (set >= 0) {
 #ifdef AERON_DEBUG_UI
 		if (!pbr_debug_pipeline(s, kind, cull))
 #endif
-			probe = pbr_probe_pipeline(s, kind, cull, mesh && mesh->anim_buffer && s->effect_atlas);
+			probe = pbr_probe_pipeline(s, kind, cull, anim);
 	}
 	if (!probe) {
 		if (pbr_screen_base_kind(kind) >= 0 && *bound_set >= 0) {
 			pbr_bind_screen_textures(s, pass);
 			*bound_set = -1;
 		}
+		if (anim && s->pbr_occlusion_in_effect_slot) {
+			pbr_bind_effect_textures(s, pass);
+		}
 		return pbr_bind_pipeline(s, pass, kind, cull, mesh, bound);
 	}
 	if (probe != *bound) {
 		Aeron_BindGraphicsPipeline(pass, probe);
 		*bound = probe;
+		/* The probe occlusion grid follows the material and effect
+		 * textures: t12, or t14 in the `_anim` shaders, whose effect texture
+		 * at t12 it displaces until an `_anim` draw binds it again. */
+		if (anim && s->pbr_occlusion_in_effect_slot) {
+			pbr_bind_effect_textures(s, pass);
+		}
+		Aeron_BindTextureSampler(pass, AERON_SHADER_STAGE_FRAGMENT, anim ? 14u : 12u,
+								 AeronSceneProbeOcclusion_Grid(s), AeronSceneProbeOcclusion_Sampler(s));
+		s->pbr_occlusion_in_effect_slot |= !anim;
 	}
 	if (set != *bound_set) {
 		const AeronSceneProbeSet*      p   = &s->probe_sets[set];
@@ -909,6 +927,7 @@ static int pbr_bind_draw(struct AeronScene3D* s, AeronRenderPass* pass, int kind
 		memcpy(lighting.world_to_model, p->world_to_model, sizeof lighting.world_to_model);
 		memcpy(lighting.grid_scale, p->grid_scale, sizeof lighting.grid_scale);
 		memcpy(lighting.grid_offset, p->grid_offset, sizeof lighting.grid_offset);
+		AeronSceneProbeOcclusion_LightingFields(s, set, lighting.occlusion_origin, lighting.occlusion_dims);
 		Aeron_BindUniformData(pass, AERON_SHADER_STAGE_FRAGMENT, 2, &lighting, sizeof lighting);
 		*bound_set = set;
 	}

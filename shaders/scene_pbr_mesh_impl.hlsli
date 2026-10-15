@@ -73,7 +73,21 @@
 
 #define AERON_DIRECTIONAL_SHADOW_UNIFORM_REGISTER b0
 #define AERON_PBR_LIGHT_UNIFORM_REGISTER b1
-#if AERON_PBR_ANIM
+/* Samplers first, then storage buffers: the probe variants' occlusion grid
+ * follows the material (and `_anim` effect) textures and moves the buffers
+ * up one. */
+#if AERON_PBR_ANIM && AERON_PBR_PROBES
+#define AERON_PBR_OCCLUSION_TEXTURE_REGISTER t14
+#define AERON_PBR_OCCLUSION_SAMPLER_REGISTER s14
+#define AERON_PBR_MATERIAL_REGISTER t15
+#define AERON_PBR_VARIANT_REGISTER t16
+#define AERON_PBR_POINT_LIGHT_REGISTER t17
+#define AERON_CLUSTER_DATA_REGISTER t18
+#define AERON_PBR_PROBE_SET_REGISTER t19
+#define AERON_PBR_SCREEN_RECT_REGISTER t20
+#define AERON_PBR_SCREEN_FRAME_REGISTER t21
+#define AERON_PBR_ANIM_RECORD_REGISTER t22
+#elif AERON_PBR_ANIM
 #define AERON_PBR_MATERIAL_REGISTER t14
 #define AERON_PBR_VARIANT_REGISTER t15
 #define AERON_PBR_POINT_LIGHT_REGISTER t16
@@ -82,6 +96,16 @@
 #define AERON_PBR_SCREEN_RECT_REGISTER t19
 #define AERON_PBR_SCREEN_FRAME_REGISTER t20
 #define AERON_PBR_ANIM_RECORD_REGISTER t21
+#elif AERON_PBR_PROBES
+#define AERON_PBR_OCCLUSION_TEXTURE_REGISTER t12
+#define AERON_PBR_OCCLUSION_SAMPLER_REGISTER s12
+#define AERON_PBR_MATERIAL_REGISTER t13
+#define AERON_PBR_VARIANT_REGISTER t14
+#define AERON_PBR_POINT_LIGHT_REGISTER t15
+#define AERON_CLUSTER_DATA_REGISTER t16
+#define AERON_PBR_PROBE_SET_REGISTER t17
+#define AERON_PBR_SCREEN_RECT_REGISTER t18
+#define AERON_PBR_SCREEN_FRAME_REGISTER t19
 #else
 #define AERON_PBR_MATERIAL_REGISTER t12
 #define AERON_PBR_VARIANT_REGISTER t13
@@ -260,6 +284,26 @@ SamplerState g_probe_cubes_sampler : register(s10, space2);
 Texture3D<float4> g_probe_grid : register(t11, space2);
 SamplerState g_probe_grid_sampler : register(s11, space2);
 StructuredBuffer<uint4> g_probe_set : register(AERON_PBR_PROBE_SET_REGISTER, space2);
+/* The probe occlusion grid (probe_occlusion.c): two grids side by side, per
+ * cell the L1 of the probe radiance past the occluders, then without them. */
+Texture3D<float4> g_probe_occlusion : register(AERON_PBR_OCCLUSION_TEXTURE_REGISTER, space2);
+SamplerState g_probe_occlusion_sampler : register(AERON_PBR_OCCLUSION_SAMPLER_REGISTER, space2);
+
+/* The share of the probe irradiance for model normal `nm` that reaches model
+ * point `pm` past the occluders: the ratio of the two grids' irradiance, one
+ * cell out along the normal, where the cells the filter blends lie outside
+ * the occluder the surface belongs to. */
+float probe_occlusion_diffuse(float3 pm, float3 nm)
+{
+    float3 dims = fs_occlusion_dims.xyz;
+    float3 t    = clamp((pm - fs_occlusion_origin.xyz) / fs_occlusion_dims.w + nm, 0.5f, dims - 0.5f);
+    float3 uvw  = float3(t.x / (2.0f * dims.x), t.y / dims.y, t.z / dims.z);
+    float4 seen  = g_probe_occlusion.SampleLevel(g_probe_occlusion_sampler, uvw, 0.0f);
+    float4 whole = g_probe_occlusion.SampleLevel(g_probe_occlusion_sampler, uvw + float3(0.5f, 0.0f, 0.0f), 0.0f);
+    float  e_seen  = seen.x + (2.0f / 3.0f) * dot(seen.yzw, nm);
+    float  e_whole = whole.x + (2.0f / 3.0f) * dot(whole.yzw, nm);
+    return saturate(e_seen / max(e_whole, 1.0e-4f));
+}
 
 float3 probe_model_point(float3 world_pos)
 {
@@ -601,7 +645,12 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
     float3 grid_rgb = probe_grid_diffuse(probe_point, probe_model_direction(N),
                                          probe_model_direction(fs_directional_dir), grid_weight, grid_basis,
                                          grid_luminance, grid_light);
-    environment_diffuse_rgb = lerp(environment_diffuse_rgb, grid_rgb, grid_weight);
+    /* Ship occlusion (AeronScene_SetProbeOcclusion): the probe light the
+     * occluders inside the grid leave this point. */
+    bool  probe_occlusion = fs_occlusion_origin.w != 0.0f;
+    float occlusion_diffuse =
+        probe_occlusion ? probe_occlusion_diffuse(probe_point, probe_model_direction(N)) : 1.0f;
+    environment_diffuse_rgb = lerp(environment_diffuse_rgb, grid_rgb * occlusion_diffuse, grid_weight);
     ambient_rgb *= 1.0f - grid_weight;
 #endif
     uint shadow_cascade = 4u;
@@ -614,8 +663,15 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
      * the depth layer it describes: no lookup. */
     float ao = 1.0f;
     float screen_shadow_visibility = 1.0f;
+    /* B: the key light's shadow 1 m out, or with probe occlusion what the
+     * mirror direction's cone meets (scene_ssao.hlsli). */
     float screen_key_visibility = 1.0f;
-    if (!AERON_PBR_ALPHA_BLEND && (ssao_intensity > 0.0f || i.screen_shadow != 0u)) {
+#if AERON_PBR_PROBES
+    bool read_visibility = ssao_intensity > 0.0f || i.screen_shadow != 0u || probe_occlusion;
+#else
+    bool read_visibility = ssao_intensity > 0.0f || i.screen_shadow != 0u;
+#endif
+    if (!AERON_PBR_ALPHA_BLEND && read_visibility) {
         float4 visibility = g_ao.Sample(g_ao_sampler, i.position.xy * fs_render_size.zw);
         screen_shadow_visibility = visibility.y;
         screen_key_visibility = visibility.z;
@@ -683,6 +739,9 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
     float key_occlusion = 1.0f;
     if (key_in_probes != 0.0f) {
         key_color *= 1.0f - grid_weight;
+    }
+    /* Ship occlusion replaces the key light shadow's cut. */
+    if (key_in_probes != 0.0f && !probe_occlusion) {
         float key_visibility = shadow_visibility;
         float facing         = saturate(dot(N, L) * 2.5f - 0.75f); /* 0 below N.L 0.3, 1 above 0.7 */
         if (key_shadow_facing == 0.0f && !AERON_PBR_ALPHA_BLEND && i.screen_shadow != 0u) {
@@ -783,6 +842,20 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
     float  probe_coverage = probe_specular(probe_point, probe_model_direction(R_ibl), mp.roughness, grid_basis,
                                            grid_luminance, grid_weight, probe_radiance);
     probe_radiance *= key_occlusion;
+    if (probe_occlusion) {
+        /* Glossy surfaces see what the visibility pass's cone along the
+         * mirror direction meets (its B), rough ones the diffuse occlusion,
+         * weighed by the lobe's width (roughness squared). Toward the floor,
+         * the cubes show it lit as if the occluders were not there: it
+         * takes the floor's own occlusion where the ray meets it. */
+        float3 rm         = probe_model_direction(R_ibl);
+        float  reflection = lerp(screen_key_visibility, occlusion_diffuse, saturate(mp.roughness * mp.roughness));
+        if (rm.z < -0.05f) {
+            float3 hit = probe_point + rm * max((fs_occlusion_origin.z - probe_point.z) / rm.z, 0.0f);
+            reflection *= probe_occlusion_diffuse(hit, float3(0.0f, 0.0f, 1.0f));
+        }
+        probe_radiance *= reflection;
+    }
     bool   environment_specular = fs_environment_params.y > 0.0f && fs_environment_params.z >= 1.0f;
     if (probe_coverage > 0.0f || environment_specular) {
         float  ndotv_ibl = saturate(dot(N_spec, V));

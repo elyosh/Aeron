@@ -514,6 +514,14 @@ int AeronScene_AddProbeSet(AeronScene3D* scene, const struct AeronEnvironmentPac
  * Begin. */
 void AeronScene_SetProbeKeyShadow(AeronScene3D* scene, int enabled);
 
+/* The instances inside the first probe set's grid box that cast shadows,
+ * other than the set's owner (whose model the probes were baked in), take
+ * its light from what they cover: the probe shaders' diffuse light and
+ * reflections lose what they hide (a hangar's ceiling light under a parked
+ * ship). Their occupancy is rebuilt where one moved. Replaces the key light
+ * shadow's cut of the probe light. Reset by Begin. */
+void AeronScene_SetProbeOcclusion(AeronScene3D* scene, int enabled);
+
 /* Queue a per-frame uniform blob (copied; reset by Begin) that the
  * scene binds to (stage, slot) in the color pass AFTER the
  * BEFORE_OPAQUE hook and before the sky billboards / instance walk —

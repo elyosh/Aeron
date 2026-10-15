@@ -150,6 +150,55 @@ typedef struct AeronSceneProbeSet {
 	float grid_offset[4];
 } AeronSceneProbeSet;
 
+/* Occlusion of the first probe set's light by the instances inside its grid
+ * box (probe_occlusion.c). */
+#define AERON_SCENE_OCCLUSION_MAX_OCCLUDERS 64
+#define AERON_SCENE_OCCUPANCY_MIPS          5     /* 0.25 m to 4 m */
+#define AERON_SCENE_OCCUPANCY_CELL          0.25f /* metres */
+#define AERON_SCENE_OCCLUSION_GRID_CELL     1.0f  /* metres */
+
+typedef struct AeronSceneOccluder {
+	const struct AeronSceneMesh* mesh;
+	uint16_t                     caster; /* as the shadow lists encode it */
+	uint64_t                     hash;   /* placement, articulation and visibility */
+	float                        lo[3];  /* bounds, model metres */
+	float                        hi[3];
+} AeronSceneOccluder;
+
+typedef struct AeronSceneProbeOcclusion {
+	/* The probe set the grids describe, and where it was placed. */
+	const struct AeronEnvironmentPackage* package;
+	float                                 world_to_model[12];
+	float                                 origin[3]; /* the grid box's low corner, model metres */
+	int                                   occupancy_dims[3];
+	int                                   grid_dims[3];
+	/* 1: the GPU builds the occupancy from depth views of the occluders;
+	 * 0: the CPU voxelizes them into `cells`, mip 0 of the occupancy, x
+	 * fastest (255 inside an occluder), where compute cannot write it. */
+	int                   gpu;
+	uint8_t*              cells;
+	AeronDepthTarget*     views;   /* the occluders' depth views */
+	AeronTexture*         staging; /* the occupancy's mips 1 to 4 before their copy */
+	AeronBuffer*          records; /* the views' boxes and tiles */
+	AeronComputePipeline* compose;
+	AeronComputePipeline* downsample;
+	AeronTexture*         occupancy; /* R8, AERON_SCENE_OCCUPANCY_MIPS mips */
+	/* RGBA16F, two grids side by side, 2 * grid_dims[0] wide: per cell the
+	 * L1 (mean, 3 * the mean of radiance times direction) of the probe
+	 * radiance past the occluders, then of the radiance without them. */
+	AeronTexture*         grid;
+	AeronTexture*         placeholder; /* 1x1x1, bound while off */
+	AeronSampler*         sampler;
+	AeronComputePipeline* pipeline;
+	AeronSceneOccluder    occluders[AERON_SCENE_OCCLUSION_MAX_OCCLUDERS];
+	int                   occluder_count;
+	int                   valid;  /* the grids hold `occluders` */
+	int                   failed; /* resources could not be created: off */
+	int                   active; /* this frame: the shaders read the grids */
+	int                   frames_since_build;
+	int                   dropped_warned;
+} AeronSceneProbeOcclusion;
+
 typedef struct AeronScenePointLightGPU {
 	/* xyz: the position, w: the inverse square of the range. */
 	float position_range[4];
@@ -220,13 +269,18 @@ typedef struct AeronSceneLightingUniformGPU {
 	float world_to_model[3][4]; /* rows: scene units to model metres */
 	float grid_scale[4];        /* model metres to grid texels; w: grid points along z */
 	float grid_offset[4];
+	/* The probe occlusion grid (probe_occlusion.c): its low corner in model
+	 * metres and 1 while it applies; its cells along x, y, z and their size
+	 * in metres. */
+	float occlusion_origin[4];
+	float occlusion_dims[4];
 } AeronSceneLightingUniformGPU;
 
 /* Layout checks against the HLSL blocks (ClusteredLightUniform, 112 bytes;
- * with the environment, the debug material, the emission, the render size
- * and the probe set, 336 bytes). */
+ * with the environment, the debug material, the emission, the render size,
+ * the probe set and its occlusion grid, 368 bytes). */
 typedef char AeronSceneClusterUniformSizeCheck[sizeof(AeronSceneClusterUniformGPU) == 112 ? 1 : -1];
-typedef char AeronSceneLightingUniformSizeCheck[sizeof(AeronSceneLightingUniformGPU) == 336 ? 1 : -1];
+typedef char AeronSceneLightingUniformSizeCheck[sizeof(AeronSceneLightingUniformGPU) == 368 ? 1 : -1];
 
 enum {
 	AERON_SCENE_CLUSTER_ENABLED    = 1u << 0,
@@ -321,6 +375,12 @@ struct AeronScene3D {
 	int                          probe_set_count;
 	/* AeronScene_SetProbeKeyShadow: the visibility pass's B. */
 	int                          probe_key_shadow;
+	/* AeronScene_SetProbeOcclusion, and its grids (probe_occlusion.c). */
+	int                          probe_occlusion_enabled;
+	AeronSceneProbeOcclusion     probe_occlusion;
+	/* pbr.c: the colour pass's t12 holds the occlusion grid, not the
+	 * `_anim` shaders' effect texture. */
+	int                          pbr_occlusion_in_effect_slot;
 	AeronSceneLightingUniformGPU lighting_uniform;
 
 	/* Stabilized cascaded shadow map for the key directional light. */
@@ -658,6 +718,29 @@ int  AeronSceneClusteredLights_Build(struct AeronScene3D* s, AeronCommandBuffer*
 void AeronSceneClusteredLights_Bind(struct AeronScene3D* s, AeronRenderPass* pass);
 void AeronSceneClusteredLights_Release(struct AeronScene3D* s);
 
+/* Probe occlusion (probe_occlusion.c). Update rebuilds the grids where an
+ * occluder changed, before the visibility pass and the colour passes read
+ * them; it switches the feature off rather than fail the frame. */
+void          AeronSceneProbeOcclusion_Update(struct AeronScene3D* s, AeronCommandBuffer* cmd);
+void          AeronSceneProbeOcclusion_Release(struct AeronScene3D* s);
+/* The occupancy (the visibility pass's cone) and the grid (the probe
+ * shaders); a 1x1x1 placeholder while inactive. */
+AeronTexture* AeronSceneProbeOcclusion_Occupancy(struct AeronScene3D* s);
+AeronTexture* AeronSceneProbeOcclusion_Grid(struct AeronScene3D* s);
+AeronSampler* AeronSceneProbeOcclusion_Sampler(struct AeronScene3D* s);
+/* The lighting block's occlusion fields for probe set `set` (only the first
+ * has a grid). */
+void          AeronSceneProbeOcclusion_LightingFields(const struct AeronScene3D* s, int set, float origin[4],
+													  float dims[4]);
+/* World to occupancy cells (rows), the occupancy's cells along x, y, z
+ * (w = 1 while active) and, for the visibility pass's cone, up to
+ * AERON_SCENE_OCCLUSION_CONE_BOXES boxes in cells holding the occluders
+ * grown by a coarse cell (lo, hi; lo.w = 1 when used). */
+#define AERON_SCENE_OCCLUSION_CONE_BOXES 4
+void          AeronSceneProbeOcclusion_OccupancyMapping(const struct AeronScene3D* s, float rows[3][4],
+														float dims[4],
+														float boxes[AERON_SCENE_OCCLUSION_CONE_BOXES * 2][4]);
+
 /* pbr.c */
 int  AeronScenePbr_Ensure(struct AeronScene3D* s);
 void AeronScenePbr_Release(struct AeronScene3D* s);
@@ -681,6 +764,12 @@ int AeronScenePbr_DrawBackfaceFill(struct AeronScene3D* s, AeronRenderPass* pass
 /* directional_shadow.c */
 int  AeronSceneDirectionalShadow_Prepare(struct AeronScene3D* scene);
 int  AeronSceneDirectionalShadow_Render(struct AeronScene3D* scene, AeronCommandBuffer* command_buffer);
+/* Draws the casters' depth (encoded as the shadow lists: an instance index,
+ * or AERON_SCENE_MAX_INSTANCES plus a shadow-only index) with `view_proj`
+ * into the current depth pass, both faces: what is nearest whichever way it
+ * faces (probe_occlusion.c's views). 0 when the caster shaders do not load. */
+int  AeronSceneDirectionalShadow_DrawDepth(struct AeronScene3D* scene, AeronRenderPass* pass,
+										   const float view_proj[16], const uint16_t* casters, uint16_t caster_count);
 void AeronSceneDirectionalShadow_Bind(struct AeronScene3D* scene, AeronRenderPass* render_pass);
 void AeronSceneDirectionalShadow_BindForInstance(struct AeronScene3D* scene, AeronRenderPass* render_pass,
 												 uint8_t shadow_flags);

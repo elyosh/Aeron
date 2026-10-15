@@ -35,7 +35,14 @@ typedef struct SsaoUniforms {
 	 * their shadow), 1 m in scene units while the key light is in the
 	 * probes (0 = off), reserved. */
 	float visibility_params[4];
-} SsaoUniforms; /* 112 B */
+	/* Probe occlusion: world to occupancy cells; the occupancy's cells along
+	 * x, y, z, w = 1 while it applies (B). */
+	float occupancy_rows[3][4];
+	float occupancy_dims[4];
+	/* Up to four boxes in occupancy cells holding the occluders (lo, hi;
+	 * lo.w = 1 when used): the cone runs only through them. */
+	float occupancy_boxes[8][4];
+} SsaoUniforms; /* 304 B */
 
 typedef struct SsaoBlurUniforms {
 	float direction_uv[2];
@@ -251,7 +258,7 @@ int AeronScenePost_EnsureSsao(struct AeronScene3D* s) {
 		return 0;
 	}
 
-	s->ssao_ps = AeronSceneInternal_CompileShader("scene_ssao.frag", AERON_SHADER_STAGE_FRAGMENT, 4, 2, 0);
+	s->ssao_ps = AeronSceneInternal_CompileShader("scene_ssao.frag", AERON_SHADER_STAGE_FRAGMENT, 5, 2, 0);
 	s->ssao_receiver_local_ps =
 		AeronSceneInternal_CompileShader("scene_ssao_receiver_local.frag", AERON_SHADER_STAGE_FRAGMENT, 4, 2, 0);
 	s->ssao_blur_ps =
@@ -604,6 +611,8 @@ int AeronScenePost_RunSsao(struct AeronScene3D* s, AeronCommandBuffer* cmd, int 
 			s->probe_key_shadow && s->probe_set_count > 0 && s->probe_sets[0].metres_per_unit > 0.0f
 				? 1.0f / s->probe_sets[0].metres_per_unit
 				: 0.0f;
+		AeronSceneProbeOcclusion_OccupancyMapping(s, su.occupancy_rows, su.occupancy_dims,
+												  su.occupancy_boxes);
 		float view_rot[9];
 		AeronSceneInternal_QuatToMat3(s->camera.ori, view_rot);
 		for (int row = 0; row < 3; row++) {
@@ -625,6 +634,8 @@ int AeronScenePost_RunSsao(struct AeronScene3D* s, AeronCommandBuffer* cmd, int 
 			Aeron_BindTextureSampler(pass, AERON_SHADER_STAGE_FRAGMENT, i, texs[i], smps[i]);
 		}
 		AeronSceneDirectionalShadow_BindScreen(s, pass);
+		Aeron_BindTextureSampler(pass, AERON_SHADER_STAGE_FRAGMENT, 4, AeronSceneProbeOcclusion_Occupancy(s),
+								 AeronSceneProbeOcclusion_Sampler(s));
 		Aeron_BindUniformData(pass, AERON_SHADER_STAGE_FRAGMENT, 0, &su, sizeof su);
 		Aeron_Draw(pass, 4, 0);
 		Aeron_EndRenderPass(pass);

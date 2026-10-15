@@ -428,10 +428,8 @@ static int shadow_ensure_debug_pipeline(struct AeronScene3D* scene) {
 	return scene->shadow_debug_pipe != NULL;
 }
 
-static int shadow_ensure_resources(struct AeronScene3D* scene, uint32_t atlas_size) {
-	if (!shadow_ensure_common(scene)) {
-		return 0;
-	}
+/* The caster shaders and pipelines; 0 when they do not load. */
+static int shadow_ensure_draw(struct AeronScene3D* scene) {
 	if (!scene->shadow_tried) {
 		scene->shadow_tried   = 1;
 		scene->shadow_vs      = AeronSceneInternal_CompileShader("scene_directional_shadow.vert",
@@ -443,8 +441,12 @@ static int shadow_ensure_resources(struct AeronScene3D* scene, uint32_t atlas_si
 		scene->shadow_mask_fs = AeronSceneInternal_CompileShader("scene_directional_shadow_mask.frag",
 																 AERON_SHADER_STAGE_FRAGMENT, 1, 0, 2);
 	}
-	if (!scene->shadow_vs || !scene->shadow_fs || !scene->shadow_mask_vs || !scene->shadow_mask_fs ||
-		!shadow_ensure_pipelines(scene)) {
+	return scene->shadow_vs && scene->shadow_fs && scene->shadow_mask_vs && scene->shadow_mask_fs &&
+		   shadow_ensure_pipelines(scene);
+}
+
+static int shadow_ensure_resources(struct AeronScene3D* scene, uint32_t atlas_size) {
+	if (!shadow_ensure_common(scene) || !shadow_ensure_draw(scene)) {
 		return 0;
 	}
 	if (!scene->shadow_atlas || scene->shadow_resource_atlas_size != atlas_size) {
@@ -1159,7 +1161,7 @@ int AeronSceneDirectionalShadow_Prepare(struct AeronScene3D* scene) {
 }
 
 static void shadow_draw_class(struct AeronScene3D* scene, AeronRenderPass* pass, const float view_proj[16],
-							  const uint16_t* casters, uint16_t caster_count, int masked,
+							  const uint16_t* casters, uint16_t caster_count, int masked, int both_faces,
 							  uint32_t* triangle_count) {
 	const AeronSceneMesh*  bound_mesh     = NULL;
 	AeronGraphicsPipeline* bound_pipeline = NULL;
@@ -1174,10 +1176,11 @@ static void shadow_draw_class(struct AeronScene3D* scene, AeronRenderPass* pass,
 		if (index_count == 0) {
 			continue;
 		}
-		AeronCullMode cull = (instance->shadow_flags & AERON_SCENE_INSTANCE_SHADOW_DOUBLE_SIDED) == 0 &&
-									 instance->cull_mode <= AERON_CULL_BACK
-								 ? (AeronCullMode)instance->cull_mode
-								 : AERON_CULL_NONE;
+		AeronCullMode cull =
+			!both_faces && (instance->shadow_flags & AERON_SCENE_INSTANCE_SHADOW_DOUBLE_SIDED) == 0 &&
+					instance->cull_mode <= AERON_CULL_BACK
+				? (AeronCullMode)instance->cull_mode
+				: AERON_CULL_NONE;
 		AeronGraphicsPipeline* pipeline = masked ? scene->shadow_mask_pipes[cull] : scene->shadow_pipes[cull];
 		if (!pipeline) {
 			pipeline =
@@ -1221,8 +1224,21 @@ static void shadow_draw_class(struct AeronScene3D* scene, AeronRenderPass* pass,
 static void shadow_draw_list(struct AeronScene3D* scene, AeronRenderPass* pass, const float view_proj[16],
 							 const uint16_t* casters, uint16_t caster_count, uint32_t* triangle_count) {
 	Aeron_BindStorageBuffer(pass, AERON_SHADER_STAGE_VERTEX, 0, scene->mesh_table_buffer);
-	shadow_draw_class(scene, pass, view_proj, casters, caster_count, 0, triangle_count);
-	shadow_draw_class(scene, pass, view_proj, casters, caster_count, 1, triangle_count);
+	shadow_draw_class(scene, pass, view_proj, casters, caster_count, 0, 0, triangle_count);
+	shadow_draw_class(scene, pass, view_proj, casters, caster_count, 1, 0, triangle_count);
+}
+
+int AeronSceneDirectionalShadow_DrawDepth(struct AeronScene3D* scene, AeronRenderPass* pass,
+										  const float view_proj[16], const uint16_t* casters,
+										  uint16_t caster_count) {
+	if (!scene || !pass || !shadow_ensure_draw(scene)) {
+		return 0;
+	}
+	uint32_t triangles = 0;
+	Aeron_BindStorageBuffer(pass, AERON_SHADER_STAGE_VERTEX, 0, scene->mesh_table_buffer);
+	shadow_draw_class(scene, pass, view_proj, casters, caster_count, 0, 1, &triangles);
+	shadow_draw_class(scene, pass, view_proj, casters, caster_count, 1, 1, &triangles);
+	return 1;
 }
 
 static int shadow_render_atlas(struct AeronScene3D* scene, AeronCommandBuffer* command_buffer) {

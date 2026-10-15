@@ -381,6 +381,7 @@ void AeronScene_Destroy(AeronScene3D* s) {
 	AeronSceneMeshOverlay_Release(s);
 	AeronSceneDirectionalShadow_Release(s);
 	AeronSceneClusteredLights_Release(s);
+	AeronSceneProbeOcclusion_Release(s);
 	AeronSceneStorage_Release(s);
 	AeronScenePbr_Release(s);
 	AeronSceneTemporal_Release(s);
@@ -469,6 +470,7 @@ int AeronScene_Begin(AeronScene3D* s, const AeronSceneCamera* camera) {
 	s->pbr_environment_set = 0;
 	s->probe_set_count     = 0;
 	s->probe_key_shadow    = 0;
+	s->probe_occlusion_enabled = 0;
 	s->pbr_debug_views     = 0;
 	memset(s->pbr_debug_material, 0, sizeof s->pbr_debug_material);
 	AeronScene_SetScreenSources(s, NULL, NULL, NULL);
@@ -1277,6 +1279,12 @@ void AeronScene_SetProbeKeyShadow(AeronScene3D* s, int enabled) {
 	}
 }
 
+void AeronScene_SetProbeOcclusion(AeronScene3D* s, int enabled) {
+	if (s) {
+		s->probe_occlusion_enabled = enabled != 0;
+	}
+}
+
 int AeronScene_AddProbeSet(AeronScene3D* s, const AeronEnvironmentPackage* package, const float m[12]) {
 	if (!s || !package || !m || !package->probe_cubes || !package->probe_grid || !package->probe_buffer ||
 		s->probe_set_count >= AERON_SCENE_MAX_PROBE_SETS) {
@@ -2037,6 +2045,10 @@ int AeronScene_Render(AeronScene3D* s, AeronCommandBuffer* cmd) {
 	}
 	if (pbr_required && !AeronSceneClusteredLights_Build(s, cmd)) {
 		return scene_render_failure(s, cmd, "Scene clustered-light preparation failed");
+	}
+	/* Before the visibility pass and the colour passes, which read it. */
+	if (pbr_required) {
+		AeronSceneProbeOcclusion_Update(s, cmd);
 	}
 	s->temporal_active = temporal_requested;
 	if (temporal_requested &&

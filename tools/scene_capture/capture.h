@@ -72,6 +72,9 @@ typedef struct CaptureGameScene {
 	/* With key_probe_shadow: its shadow takes the probe light from its side
 	 * whichever way surfaces face (else only as they face it, N.L). */
 	int key_shadow_all_sides;
+	/* The instances inside the first probe set's grid occlude its light
+	 * (AeronScene_SetProbeOcclusion), in place of the sun's cut. */
+	int probe_occlusion;
 	/* FSR temporal upscaling, as the game's temporal_upscaling settings;
 	 * benchmarks only (output depends on frame history), without MSAA. */
 	AeronTemporalMode        temporal_mode;

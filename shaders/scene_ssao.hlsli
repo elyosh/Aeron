@@ -21,10 +21,12 @@
  *
  * Output:
  *   RGBA8 visibility in [0, 1]. R is ambient occlusion; G is main
- *   directional-shadow visibility for opaque forward shading; B, while the
- *   key light is in the probes (visibility_params.z, the distance of 1 m),
- *   its shadow 1 m out along the normal, for surfaces in shadow turning
- *   away from it, else G (scene_pbr_mesh_impl.hlsli's probe light).
+ *   directional-shadow visibility for opaque forward shading; B, with probe
+ *   occlusion (occupancy_dims.w), what a cone along the mirror direction
+ *   meets in the occupancy; else, while the key light is in the probes
+ *   (visibility_params.z, the distance of 1 m), its shadow 1 m out along
+ *   the normal, for surfaces in shadow turning away from it; else G
+ *   (scene_pbr_mesh_impl.hlsli's probe light).
  *
  * Coordinate space: works in view space ("eye space") using
  * mat4_perspective_reverse_z_xy's projection. The G-buffer normal is
@@ -94,6 +96,13 @@ cbuffer SSAOUniforms : register(b0, space3)
      * second pass writes their shadow), z = 1 m in scene units while the
      * key light is in the probes (B), else 0, w reserved. */
     float4 visibility_params;
+    /* Probe occlusion (probe_occlusion.c): world to occupancy cells, and the
+     * occupancy's cells along x, y, z, w = 1 while it applies (B). */
+    float4 occupancy_rows[3];
+    float4 occupancy_dims;
+    /* Up to four boxes in occupancy cells holding the occluders (lo, hi;
+     * lo.w = 1 when used): the cone runs only through them. */
+    float4 occupancy_boxes[8];
 };
 
 Texture2D    g_depth   : register(t0, space2);
@@ -244,6 +253,57 @@ float key_shadow(float3 world_pos, float3 world_normal, float shadow, uint2 sour
                                          shadow_coverage);
 }
 
+#if !AERON_SSAO_RECEIVER_LOCAL_PASS
+Texture3D<float> g_occupancy : register(t4, space2);
+SamplerState g_occupancy_sampler : register(s4, space2);
+
+/* What a cone of 8 degrees along the mirror direction meets in the probe
+ * occlusion's occupancy (cells of 0.25 m): 16 steps from 0.45 m to 40 m,
+ * growing with the distance and the cone's width, each reading the mip as
+ * wide as the cone. 1: nothing in the way. */
+float occlusion_cone(float3 world_pos, float3 world_normal)
+{
+    float3 R  = reflect(normalize(world_pos - shadow_camera_pos.xyz), world_normal);
+    float4 wp = float4(world_pos, 1.0f);
+    float3 p0 = float3(dot(occupancy_rows[0], wp), dot(occupancy_rows[1], wp), dot(occupancy_rows[2], wp));
+    float3 d  = normalize(float3(dot(occupancy_rows[0].xyz, R), dot(occupancy_rows[1].xyz, R),
+                                 dot(occupancy_rows[2].xyz, R)));
+    float3 n  = normalize(float3(dot(occupancy_rows[0].xyz, world_normal), dot(occupancy_rows[1].xyz, world_normal),
+                                 dot(occupancy_rows[2].xyz, world_normal)));
+    p0 += n * 0.2f; /* 5 cm off the surface */
+    /* Only across the occluders' boxes the ray passes. */
+    float3 inv   = 1.0f / select(abs(d) > 1.0e-6f, d, select(d >= 0.0f, 1.0e-6f, -1.0e-6f));
+    float  enter = 1.0e30f;
+    float  leave = -1.0e30f;
+    [unroll] for (uint b = 0u; b < 4u; ++b) {
+        if (occupancy_boxes[2u * b].w == 0.0f) continue;
+        float3 ta = (occupancy_boxes[2u * b].xyz - p0) * inv;
+        float3 tb = (occupancy_boxes[2u * b + 1u].xyz - p0) * inv;
+        float  e  = max(max(min(ta.x, tb.x), min(ta.y, tb.y)), min(ta.z, tb.z));
+        float  l  = min(min(max(ta.x, tb.x), max(ta.y, tb.y)), max(ta.z, tb.z));
+        if (l >= max(e, 1.8f) && e <= 160.0f) {
+            enter = min(enter, e);
+            leave = max(leave, l);
+        }
+    }
+    if (leave < 0.0f) return 1.0f;
+    const float tan_half = 0.1405f;
+    const float growth   = pow(160.0f / 1.8f, 1.0f / 15.0f);
+    float       t        = max(enter, 1.8f);
+    float       alpha    = 0.0f;
+    [loop] for (uint k = 0u; k < 16u; ++k) {
+        float  width = max(2.0f * t * tan_half, 1.0f);
+        float3 p     = p0 + d * t;
+        if (t > leave || any(p < 0.0f) || any(p > occupancy_dims.xyz)) break;
+        float occupied = g_occupancy.SampleLevel(g_occupancy_sampler, p / occupancy_dims.xyz, min(log2(width), 4.0f));
+        alpha += (1.0f - alpha) * occupied;
+        if (alpha > 0.99f) break;
+        t = max(t + 0.75f * width, t * growth);
+    }
+    return 1.0f - alpha;
+}
+#endif
+
 float4 main(VSOut i) : SV_Target0
 {
     /* A half-resolution pixel centre lies between full-resolution G-buffer
@@ -285,7 +345,8 @@ float4 main(VSOut i) : SV_Target0
     if (!receiver_local || visibility_params.y == 0.0f) {
         shadow = receiver_shadow(world_pos, world_pos_dx, world_pos_dy, world_normal, source_pixel);
     }
-    float key = key_shadow(world_pos, world_normal, shadow, source_pixel);
+    float key = occupancy_dims.w != 0.0f ? occlusion_cone(world_pos, world_normal)
+                                         : key_shadow(world_pos, world_normal, shadow, source_pixel);
     if (visibility_params.x == 0.0f) return float4(1.0f, shadow, key, 1.0f);
     float3 view_normal;
     view_normal.x = dot(view_rot[0].xyz, world_normal);

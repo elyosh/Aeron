@@ -57,6 +57,10 @@ cbuffer ClusteredLightUniform : AERON_CLUSTER_UNIFORM_BINDING {
 	float4 fs_world_to_model[3];
 	float4 fs_grid_scale;
 	float4 fs_grid_offset;
+	/* The probe occlusion grid: its low corner in model metres, w = 1
+	 * while it applies; its cells along x, y, z, w = their size in metres. */
+	float4 fs_occlusion_origin;
+	float4 fs_occlusion_dims;
 #endif
 };
 

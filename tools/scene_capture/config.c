@@ -402,6 +402,7 @@ static int load_game_scene(AeronVfs* vfs, const AeronConfigFile* yaml, CaptureCo
 										"model_light_intensity",
 										"key_probe_shadow",
 										"key_shadow_all_sides",
+										"probe_occlusion",
 										"temporal_upscaling",
 										"cluster_debug",
 										"environment" };
@@ -473,7 +474,8 @@ static int load_game_scene(AeronVfs* vfs, const AeronConfigFile* yaml, CaptureCo
 		game->key_probe_shadow = (float)value;
 	}
 	if (!game_bool(node, "ssao", 1, &ssao) || !game_bool(node, "shadows", 1, &shadows) ||
-		!game_bool(node, "key_shadow_all_sides", 1, &game->key_shadow_all_sides))
+		!game_bool(node, "key_shadow_all_sides", 1, &game->key_shadow_all_sides) ||
+		!game_bool(node, "probe_occlusion", 0, &game->probe_occlusion))
 		return 0;
 	if (!ssao)
 		game->ssao.ssao_quality = 0;
