@@ -149,6 +149,44 @@ and texture precision can change energy between resolutions.
 Zero-denominator ratios are `null`; zero-energy centroids/spreads are undefined
 and reported as zero.
 
+## Compare with a Cycles reference
+
+Three scripts render a game scene with `scene_capture` and the same scene in
+Blender's Cycles, then compare them term by term. They run in Blender
+(tested with 5.1), whose Python brings numpy and OpenImageIO. The scene is a
+.blend holding each model under its own root object (as the glTF importer
+leaves it), a camera, and the lights and emission the hangar's probes were
+baked from. The .blend is never saved.
+
+```sh
+blender -b scene.blend --python cycles_match.py -- --out DIR \
+    --asset-root GAME_DATA --hangar OPT_HANGAR \
+    --model OPT_HANGAR=remaster/models/hangar.glb --model OPT_SHIP=remaster/models/ship.glb \
+    --package BAKE_ROOT/flight/environments/models/hangar/package.yaml \
+    --bake-root BAKE_ROOT --defaults aeron/config/scene3d_defaults.yaml
+(cd DIR && for c in full diffuse reflect; do SCENE_CAPTURE $c.yaml; done)
+blender -b scene.blend --python cycles_render.py -- DIR
+blender -b --python cycles_compare.py -- DIR [--box NAME X0 Y0 X1 Y1]
+```
+
+- `cycles_match.py` places the models as in the .blend, seen from its camera,
+  and writes three configs: the whole scene, the probes' diffuse light only,
+  and their reflections only. A model whose parts are posed differently in
+  the .blend (landing gear, a ramp) is copied with them posed as there. The
+  hangar's ceiling light points up the hangar's axis, and `key_probe_shadow`
+  is the package's `key_light_shadow`.
+- `cycles_render.py` renders the reference with its light passes: no light
+  from outside the model, as the probes bake, and `scene_capture`'s 60 degree
+  vertical field of view. 1920 x 1080 at 1024 samples takes about two minutes
+  on an M4 Pro GPU.
+- `cycles_compare.py` writes `DIR/compare`: both renders per term at one
+  exposure, the game-to-Cycles ratio per term, an edge overlay to check the
+  views line up (yellow where they do), and `regions.txt`, the mean of each
+  term on the floor (open, under the models, in each `--box`) and on the
+  models' surfaces.
+
+Captures never overwrite: remove `DIR/captures` before running them again.
+
 ## Compare bloom across resolutions
 
 Copy the bloom preset for 720p, 1080p, 1440p and 4K, using distinct output
