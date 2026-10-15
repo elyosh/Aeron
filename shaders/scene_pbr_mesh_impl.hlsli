@@ -294,8 +294,9 @@ SamplerState g_probe_cubes_sampler : register(s10, space2);
 Texture3D<float4> g_probe_grid : register(t11, space2);
 SamplerState g_probe_grid_sampler : register(s11, space2);
 StructuredBuffer<uint4> g_probe_set : register(AERON_PBR_PROBE_SET_REGISTER, space2);
-/* The probe occlusion grid (probe_occlusion.c): two grids side by side, per
- * cell the L1 of the probe radiance past the occluders, then without them. */
+/* The probe occlusion grid (probe_occlusion.c): per cell, the share of the
+ * probe irradiance past the occluders on the faces toward +x, -x, +y, -y,
+ * then in the right half toward +z, -z. */
 Texture3D<float4> g_probe_occlusion : register(AERON_PBR_OCCLUSION_TEXTURE_REGISTER, space2);
 SamplerState g_probe_occlusion_sampler : register(AERON_PBR_OCCLUSION_SAMPLER_REGISTER, space2);
 /* The floor's reflection (planar_reflection.c) at half resolution, with
@@ -377,19 +378,20 @@ float4 planar_reflection(float2 pixel, float3 pm, float3 nm, float view, float r
 }
 
 /* The share of the probe irradiance for model normal `nm` that reaches model
- * point `pm` past the occluders: the ratio of the two grids' irradiance, one
- * cell out along the normal, where the cells the filter blends lie outside
- * the occluder the surface belongs to. */
+ * point `pm` past the occluders: the grid's faces toward the normal,
+ * weighted by its squared components, one cell out along the normal, where
+ * the cells the filter blends lie outside the occluder the surface belongs
+ * to. */
 float probe_occlusion_diffuse(float3 pm, float3 nm)
 {
     float3 dims = fs_occlusion_dims.xyz;
     float3 t    = clamp((pm - fs_occlusion_origin.xyz) / fs_occlusion_dims.w + nm, 0.5f, dims - 0.5f);
     float3 uvw  = float3(t.x / (2.0f * dims.x), t.y / dims.y, t.z / dims.z);
-    float4 seen  = g_probe_occlusion.SampleLevel(g_probe_occlusion_sampler, uvw, 0.0f);
-    float4 whole = g_probe_occlusion.SampleLevel(g_probe_occlusion_sampler, uvw + float3(0.5f, 0.0f, 0.0f), 0.0f);
-    float  e_seen  = seen.x + (2.0f / 3.0f) * dot(seen.yzw, nm);
-    float  e_whole = whole.x + (2.0f / 3.0f) * dot(whole.yzw, nm);
-    return saturate(e_seen / max(e_whole, 1.0e-4f));
+    float4 xy   = g_probe_occlusion.SampleLevel(g_probe_occlusion_sampler, uvw, 0.0f);
+    float2 z    = g_probe_occlusion.SampleLevel(g_probe_occlusion_sampler, uvw + float3(0.5f, 0.0f, 0.0f), 0.0f).xy;
+    float3 w    = nm * nm;
+    return saturate(w.x * (nm.x >= 0.0f ? xy.x : xy.y) + w.y * (nm.y >= 0.0f ? xy.z : xy.w) +
+                    w.z * (nm.z >= 0.0f ? z.x : z.y));
 }
 
 float3 probe_model_point(float3 world_pos)

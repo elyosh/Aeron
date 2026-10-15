@@ -9,10 +9,10 @@
  * both sides, and a compute pass fills the cells between the first and the
  * last surface along all three. Where compute cannot write the grid, the CPU
  * voxelizes the occluders instead. A compute pass then gives each 1 m cell
- * of the box the L1 of the probe radiance it still receives, along 32 rays
- * through the occupancy, and the L1 of the radiance it would receive without
- * the occluders: the probe shaders scale their diffuse light by the two's
- * ratio. The visibility pass traces a cone through the occupancy's mips for
+ * of the box, for the faces of an axis-aligned cube, the share of the probe
+ * irradiance that still reaches them along 32 rays through the occupancy:
+ * the probe shaders scale their diffuse light by it, blending the faces
+ * toward their normal. The visibility pass traces a cone through the occupancy's mips for
  * their reflections. Both grids are rebuilt only where an occluder changed:
  * parked ships cost nothing. */
 #include "internal.h"

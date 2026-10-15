@@ -212,9 +212,9 @@ typedef struct AeronSceneProbeOcclusion {
 	AeronComputePipeline* compose;
 	AeronComputePipeline* downsample;
 	AeronTexture*         occupancy; /* R8, AERON_SCENE_OCCUPANCY_MIPS mips */
-	/* RGBA16F, two grids side by side, 2 * grid_dims[0] wide: per cell the
-	 * L1 (mean, 3 * the mean of radiance times direction) of the probe
-	 * radiance past the occluders, then of the radiance without them. */
+	/* RGBA16F, 2 * grid_dims[0] wide: per cell, the share of the probe
+	 * irradiance past the occluders on the faces toward +x, -x, +y, -y,
+	 * then in the right half toward +z, -z. */
 	AeronTexture*         grid;
 	AeronTexture*         placeholder; /* 1x1x1, bound while off */
 	AeronSampler*         sampler;

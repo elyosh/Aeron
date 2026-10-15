@@ -4,12 +4,14 @@
  * the cell's centre, read from the cube of the probe covering it at a low
  * mip, is kept where a ray of 16 steps (0.45 m to 40 m apart, growing
  * geometrically) meets no occupied cell; it only samples within the boxes
- * holding the occupied cells. The cell stores, in the grid's
- * left half, the L1 of that radiance (its mean, and 3 times the mean of
- * radiance times direction) and in the right half the L1 of the radiance
- * without the occluders. The probe shaders take the ratio of the two's
- * irradiance for a normal, so the cube's level does not matter. Cells
- * farther than the reach from every occluder skip the rays. When the build
+ * holding the occupied cells. The cell stores, for the six faces of an
+ * axis-aligned cube, the share of their irradiance that the kept radiance
+ * gives: toward +x, -x, +y, -y in the grid's left half, toward +z, -z in
+ * the right. Unlike a spherical harmonic summary, a face facing away from
+ * the light that still reaches the cell, such as the floor under a hull lit
+ * only from near the horizon, takes none of it. A ratio, so the cube's
+ * level does not matter. Cells farther than the reach from every occluder
+ * skip the rays. When the build
  * follows a change, a cell none of whose rays meets what changed would
  * come out the same: it is left as it is. */
 
@@ -124,8 +126,12 @@ void main(uint3 id : SV_DispatchThreadID)
     }
     float  layer     = probe_layer(pm);
 
-    float4 seen  = float4(0.0f, 0.0f, 0.0f, 0.0f);
-    float4 whole = float4(0.0f, 0.0f, 0.0f, 0.0f);
+    /* Each face's irradiance, toward + and - along each axis, past the
+     * occluders and without them. */
+    float3 seen_pos  = float3(0.0f, 0.0f, 0.0f);
+    float3 seen_neg  = float3(0.0f, 0.0f, 0.0f);
+    float3 whole_pos = float3(0.0f, 0.0f, 0.0f);
+    float3 whole_neg = float3(0.0f, 0.0f, 0.0f);
     [loop] for (uint k = 0u; k < DIRECTIONS; ++k) {
         float3 d        = direction(k);
         float  radiance = 1.0f;
@@ -134,12 +140,19 @@ void main(uint3 id : SV_DispatchThreadID)
                                                    occluders_hi.w).rgb;
             radiance = max(dot(rgb, float3(0.2126f, 0.7152f, 0.0722f)), 0.0f);
         }
-        float4 term = radiance * float4(1.0f, 3.0f * d);
-        whole += term;
-        if (!near || !blocked(pm, d)) seen += term;
+        float3 pos = radiance * max(d, 0.0f);
+        float3 neg = radiance * max(-d, 0.0f);
+        whole_pos += pos;
+        whole_neg += neg;
+        if (!near || !blocked(pm, d)) {
+            seen_pos += pos;
+            seen_neg += neg;
+        }
     }
-    seen  /= (float)DIRECTIONS;
-    whole /= (float)DIRECTIONS;
-    g_grid[uint3(cell)]                                  = seen;
-    g_grid[uint3(cell) + uint3(grid_dims.x, 0u, 0u)] = whole;
+    /* A face no light reaches keeps it all. */
+    float  least = 1.0e-4f * dot(whole_pos + whole_neg, float3(1.0f, 1.0f, 1.0f));
+    float3 pos   = select(whole_pos > least, seen_pos / max(whole_pos, 1.0e-30f), 1.0f);
+    float3 neg   = select(whole_neg > least, seen_neg / max(whole_neg, 1.0e-30f), 1.0f);
+    g_grid[uint3(cell)]                              = float4(pos.x, neg.x, pos.y, neg.y);
+    g_grid[uint3(cell) + uint3(grid_dims.x, 0u, 0u)] = float4(pos.z, neg.z, 0.0f, 0.0f);
 }
