@@ -444,11 +444,12 @@ static AeronGraphicsPipeline* pbr_anim_pipeline(struct AeronScene3D* s, int kind
  * not load. */
 static AeronGraphicsPipeline* pbr_probe_pipeline(struct AeronScene3D* s, int kind, AeronCullMode cull,
 												 int anim) {
-	static const char* const names[2][3] = {
-		{ "scene_pbr_mesh_probes.frag", "scene_pbr_mesh_mask_probes.frag",
-		  "scene_pbr_mesh_blend_probes.frag" },
+	static const char* const names[2][5] = {
+		{ "scene_pbr_mesh_probes.frag", "scene_pbr_mesh_mask_probes.frag", "scene_pbr_mesh_blend_probes.frag",
+		  "scene_pbr_mesh_mirror.frag", "scene_pbr_mesh_mask_mirror.frag" },
 		{ "scene_pbr_mesh_probes_anim.frag", "scene_pbr_mesh_mask_probes_anim.frag",
-		  "scene_pbr_mesh_blend_probes_anim.frag" },
+		  "scene_pbr_mesh_blend_probes_anim.frag", "scene_pbr_mesh_mirror_anim.frag",
+		  "scene_pbr_mesh_mask_mirror_anim.frag" },
 	};
 	if (!pbr_color_kind(kind) || pbr_screen_base_kind(kind) >= 0) {
 		return NULL;
@@ -457,13 +458,17 @@ static AeronGraphicsPipeline* pbr_probe_pipeline(struct AeronScene3D* s, int kin
 		s->pbr_probe_tried = 1;
 		if (!s->pbr_anim_vs)
 			s->pbr_anim_vs = pbr_shader("scene_pbr_mesh_anim.vert", AERON_SHADER_STAGE_VERTEX, 0, 1, 1);
-		for (int v = 0; v < 3; ++v) {
+		for (int v = 0; v < 5; ++v) {
 			s->pbr_probe_fs[0][v] = pbr_shader(names[0][v], AERON_SHADER_STAGE_FRAGMENT, 14, 3, 7);
 			s->pbr_probe_fs[1][v] = pbr_shader(names[1][v], AERON_SHADER_STAGE_FRAGMENT, 16, 4, 8);
 		}
 	}
 	AeronShader* vs     = anim ? s->pbr_anim_vs : s->pbr_vs;
-	AeronShader* shader = s->pbr_probe_fs[anim ? 1 : 0][pbr_color_variant(kind)];
+	/* The floor's mirrored view takes its own, lighter variants. */
+	const int    variant = kind == AERON_PBR_PIPE_PLANAR        ? 3
+						   : kind == AERON_PBR_PIPE_PLANAR_MASK ? 4
+																: pbr_color_variant(kind);
+	AeronShader* shader  = s->pbr_probe_fs[anim ? 1 : 0][variant];
 	if (!vs || !shader) {
 		return NULL;
 	}
@@ -667,7 +672,7 @@ void AeronScenePbr_Release(struct AeronScene3D* s) {
 				s->pbr_probe_pipes[ibl][kind][cull] = NULL;
 			}
 		}
-		for (int v = 0; v < 3; ++v) {
+		for (int v = 0; v < 5; ++v) {
 			if (s->pbr_probe_fs[ibl][v])
 				Aeron_DestroyShader(s->pbr_probe_fs[ibl][v]);
 			s->pbr_probe_fs[ibl][v] = NULL;

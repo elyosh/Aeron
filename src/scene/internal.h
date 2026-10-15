@@ -730,10 +730,11 @@ struct AeronScene3D {
 	AeronShader*           pbr_anim_vs;
 	AeronShader*           pbr_anim_fs[2][5];
 	AeronGraphicsPipeline* pbr_anim_pipes[2][AERON_PBR_PIPE_KIND_COUNT][3];
-	/* Probe variants by [animation][plain, mask, blend], loaded on first
-	 * use, and their pipelines by [animation][kind][cull]. */
+	/* Probe variants by [animation][plain, mask, blend, then the floor's
+	 * mirrored view's plain and mask], loaded on first use, and their
+	 * pipelines by [animation][kind][cull]. */
 	int                    pbr_probe_tried;
-	AeronShader*           pbr_probe_fs[2][3];
+	AeronShader*           pbr_probe_fs[2][5];
 	AeronGraphicsPipeline* pbr_probe_pipes[2][AERON_PBR_PIPE_KIND_COUNT][3];
 };
 

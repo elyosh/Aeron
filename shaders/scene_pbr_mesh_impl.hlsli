@@ -52,7 +52,10 @@
  * image-based lighting, for scenes without an environment. AERON_PBR_PROBES 1
  * (screenless) adds the drawn object's probe set: reflection probes and an
  * irradiance grid in place of the screen textures (t10, t11) and its set
- * buffer at storage slot 4. All keep this
+ * buffer at storage slot 4. AERON_PBR_MIRROR 1 (with the probes) shades the
+ * floor's mirrored view (planar_reflection.c), which the floor blurs: no
+ * visibility pass, floor reflection or point lights, and the probe light
+ * the surface takes in place of the probes' reflection. All keep this
  * shader's cost for ordinary materials down: code chosen by a uniform costs
  * time even where it does not run. */
 #ifndef AERON_PBR_SCREENS
@@ -69,6 +72,9 @@
 #endif
 #ifndef AERON_PBR_PROBES
 #define AERON_PBR_PROBES 0
+#endif
+#ifndef AERON_PBR_MIRROR
+#define AERON_PBR_MIRROR 0
 #endif
 
 #define AERON_DIRECTIONAL_SHADOW_UNIFORM_REGISTER b0
@@ -754,7 +760,10 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
     /* B: the key light's shadow 1 m out, or with probe occlusion what the
      * mirror direction's cone meets (scene_ssao.hlsli). */
     float screen_key_visibility = 1.0f;
-#if AERON_PBR_PROBES
+#if AERON_PBR_MIRROR
+    /* The mirrored view has no visibility pass of its own. */
+    bool read_visibility = false;
+#elif AERON_PBR_PROBES
     bool read_visibility = ssao_intensity > 0.0f || i.screen_shadow != 0u || probe_occlusion;
 #else
     bool read_visibility = ssao_intensity > 0.0f || i.screen_shadow != 0u;
@@ -926,6 +935,13 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
     float3 R_ibl = specular_dominant_direction(N_spec, reflect(-V, N_spec), mp.roughness);
     /* Reflections pointing into the surface fade out. */
     float horizon = min(1.0f + dot(R_ibl, N_face), 1.0f);
+#if AERON_PBR_MIRROR
+    /* Blurred in the floor, the probes' reflection is not worth its cost:
+     * the light the surface takes from the grid (and outside it, the
+     * environment) stands in for it. */
+    float3 probe_radiance = environment_diffuse_rgb;
+    float  probe_coverage = 1.0f;
+#else
     float3 probe_radiance;
     float  probe_coverage = probe_specular(probe_point, probe_model_direction(R_ibl), mp.roughness, grid_basis,
                                            grid_luminance, grid_weight, probe_radiance);
@@ -950,6 +966,7 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
                                       length(probe_model_point(eye) - probe_point), mp.roughness);
     probe_radiance = probe_radiance * (1.0f - planar.a) + planar.rgb;
     probe_coverage = lerp(probe_coverage, 1.0f, planar.a);
+#endif
     bool   environment_specular = fs_environment_params.y > 0.0f && fs_environment_params.z >= 1.0f;
     if (probe_coverage > 0.0f || environment_specular) {
         float  ndotv_ibl = saturate(dot(N_spec, V));
@@ -997,11 +1014,13 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
     /* Clustered punctual lights (laser bolts, explosions, engine
      * glows): windowed inverse-square spheres and tubes, Lambert diffuse
      * and per-light specular. Untouched by AO. */
+#if !AERON_PBR_MIRROR
     if (fs_cluster_point_count > 0u) {
         float3 point_diff = accumulate_point_lights(N, N_spec, V, i.world_pos,
                                                     i.position.xy, mp, spec_rgb);
         base_rgb += albedo * (1.0f - metallic) * inv_pi * point_diff;
     }
+#endif
 
     float3 lit = base_rgb + spec_rgb + spec_ibl_rgb;
 

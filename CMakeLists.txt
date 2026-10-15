@@ -239,6 +239,10 @@ set(AERON_SHADER_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_pbr_mesh_probes_anim.frag.hlsl
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_pbr_mesh_mask_probes_anim.frag.hlsl
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_pbr_mesh_blend_probes_anim.frag.hlsl
+    ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_pbr_mesh_mirror.frag.hlsl
+    ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_pbr_mesh_mask_mirror.frag.hlsl
+    ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_pbr_mesh_mirror_anim.frag.hlsl
+    ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_pbr_mesh_mask_mirror_anim.frag.hlsl
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_pbr_prepass.vert.hlsl
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_pbr_prepass.frag.hlsl
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_pbr_backface.vert.hlsl
