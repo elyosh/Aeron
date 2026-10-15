@@ -5,8 +5,9 @@
 Bakes a small job (needs Python 3.14 for compression.zstd): five probes over
 a 3x2x2 grid whose panoramas are constant, except one point lit from above
 and one marked inside geometry. Checks the cube array and grid headers, the
-grid's spherical harmonics (a constant radiance c gives (c, 0, 0, 0); light
-from the upper half gives (0.5, 0.5, 0, 0)), the invalid point filled from
+grid's light on the faces of a cube (a constant radiance c gives c on every
+face; radiance 1 from the upper half gives 1 up, 0 down, 0.5 on the sides,
+and a mean of 0.5), the invalid point filled from
 its neighbours, the cell report, the reflection plane carried to the package,
 and that wrong jobs exit 2. The baker
 re-reads the package with the runtime parser, so a zero exit also means the
@@ -58,9 +59,10 @@ def ktx2(path):
 
 
 def grid_point(level0, width, x, row):
-    """The four coefficients of each channel of the point at (x, row)."""
+    """The point at (x, row): its texels toward +x, -x, +y, -y, +z, -z, each
+    RGB and the mean's luminance."""
     values = struct.unpack_from("<%de" % (width * 4), level0, row * width * 8)
-    return [values[(4 * x + c) * 4:(4 * x + c) * 4 + 4] for c in range(3)]
+    return [values[(6 * x + f) * 4:(6 * x + f) * 4 + 4] for f in range(6)]
 
 
 def close(a, b, tolerance=0.03):
@@ -120,18 +122,19 @@ def main():
             if (cubes["faces"], cubes["layers"], cubes["levels"], cubes["width"]) != (6, 5, 5, 16):
                 failures.append("cube array header: %s" % cubes)
             grid, level0 = ktx2(os.path.join(out, "grid.ktx2"))
-            if (grid["width"], grid["height"], grid["faces"], grid["layers"]) != (12, 4, 1, 0):
+            if (grid["width"], grid["height"], grid["faces"], grid["layers"]) != (18, 4, 1, 0):
                 failures.append("grid header: %s" % grid)
             else:
-                constant = grid_point(level0, 12, 0, 0)
-                if not all(close(c, (2, 0, 0, 0)) for c in constant):
+                constant = grid_point(level0, 18, 0, 0)
+                if not all(close(f, (2, 2, 2, 2)) for f in constant):
                     failures.append("constant point: %s" % constant)
-                above = grid_point(level0, 12, 1, 0)
-                if not all(close(c, (0.5, 0.5, 0, 0)) for c in above):
+                above = grid_point(level0, 18, 1, 0)
+                expected = [0.5, 0.5, 0.5, 0.5, 1, 0]
+                if not all(close(f, (e, e, e, 0.5)) for f, e in zip(above, expected)):
                     failures.append("point lit from above: %s" % above)
                 # Point 4 is (1, 1, 0); its neighbours within 1 include point 1.
-                filled = grid_point(level0, 12, 1, 1)
-                if not all(0 < c[1] < 0.5 and 1.0 < c[0] < 2.0 for c in filled):
+                filled = grid_point(level0, 18, 1, 1)
+                if not all(1.0 < filled[5][c] < filled[4][c] < 2.0 for c in range(3)):
                     failures.append("invalid point not filled from its neighbours: %s" % filled)
             entry = open(os.path.join(out, "package.yaml")).read()
             for expected in ("kind: probes", 'cubes: "flight/environments/models/test/probes.ktx2"',

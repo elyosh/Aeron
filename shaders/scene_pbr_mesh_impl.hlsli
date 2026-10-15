@@ -284,8 +284,8 @@ float3 specular_dominant_direction(float3 N, float3 R, float roughness)
 #if AERON_PBR_PROBES
 /* ===== Probe set ======================================================
  * The object's reflection probes (a cube array, probe k in layer k), its
- * irradiance grid (3D, slab c holds colour channel c's L1 coefficients)
- * and its set buffer: header, probe records, cell words
+ * irradiance grid (3D, slab f holds the light toward +x, -x, +y, -y, +z,
+ * -z for f = 0 to 5) and its set buffer: header, probe records, cell words
  * (AeronEnvironmentPackage in environment.h). Probes and grid live in the
  * model frame (metres); a cube direction is (d.x, d.z, d.y) of a model
  * direction. */
@@ -407,46 +407,65 @@ float3 probe_model_direction(float3 world_direction)
                             dot(fs_world_to_model[2].xyz, world_direction)));
 }
 
-/* Irradiance / pi from the grid at model point `pm` for the model normal
- * `nm`, and in `weight` how much it applies: 1 inside the grid's box,
- * falling to 0 one point spacing outside it (the outer points' light holds
- * up to the box). Also gives the L1 basis of `nm`, the luminance the
- * probes' reflections are scaled by (probe_specular), and in `light` the
- * luminances of the irradiance for `nm` and for a normal facing away from
- * the model direction `lm` (the light the grid holds from that side). */
-float3 probe_grid_diffuse(float3 pm, float3 nm, float3 lm, out float weight, out float4 basis, out float luminance,
-                          out float2 light)
+/* The grid at model point `pm`: its texture coordinates within a slab and
+ * how much it applies, 1 inside the grid's box, falling to 0 one point
+ * spacing outside it (the outer points' light holds up to the box). */
+float probe_grid_point(float3 pm, out float2 uv, out float z)
 {
-    basis = float4(1.0f, nm.z, nm.y, nm.x);
-    float4 away = float4(1.0f, -lm.z, -lm.y, -lm.x);
-    luminance = 0.0f;
-    light     = float2(0.0f, 0.0f);
-    float3 average = float3(0.0f, 0.0f, 0.0f);
-    float3 opposite = float3(0.0f, 0.0f, 0.0f);
     float3 r = float3(fs_probe_params.zw, fs_grid_scale.w);
     float3 g = pm * fs_grid_scale.xyz + fs_grid_offset.xyz;
     float3 w = saturate(min(g + 1.5f, r + 1.5f - g));
-    weight   = w.x * w.y * w.z;
+    uv       = g.xy / r.xy;
+    z        = clamp(g.z, 0.5f, r.z - 0.5f);
+    return w.x * w.y * w.z;
+}
+
+/* The grid's irradiance / pi for the model normal `nm` at (uv, z), from the
+ * faces toward it weighted by its squared components; in `mean`, the
+ * luminance of the mean radiance. Within a slab: filtering never mixes
+ * faces. */
+float3 probe_grid_light(float2 uv, float z, float3 nm, out float mean)
+{
+    float  rz     = fs_grid_scale.w;
+    float3 slab   = select(nm >= 0.0f, float3(0.0f, 2.0f, 4.0f), float3(1.0f, 3.0f, 5.0f));
+    float3 w      = nm * nm;
+    float4 face_x = g_probe_grid.SampleLevel(g_probe_grid_sampler, float3(uv, (slab.x * rz + z) / (6.0f * rz)), 0.0f);
+    float4 face_y = g_probe_grid.SampleLevel(g_probe_grid_sampler, float3(uv, (slab.y * rz + z) / (6.0f * rz)), 0.0f);
+    float4 face_z = g_probe_grid.SampleLevel(g_probe_grid_sampler, float3(uv, (slab.z * rz + z) / (6.0f * rz)), 0.0f);
+    mean          = face_x.a;
+    return w.x * face_x.rgb + w.y * face_y.rgb + w.z * face_z.rgb;
+}
+
+/* Irradiance / pi from the grid at model point `pm` for the model normal
+ * `nm`, and in `weight` how much it applies. Also gives the luminance the
+ * probes' reflections are scaled by (probe_specular), and in `light` the
+ * luminance of the irradiance alone. */
+float3 probe_grid_diffuse(float3 pm, float3 nm, out float weight, out float luminance, out float light)
+{
+    luminance = 0.0f;
+    light     = 0.0f;
+    float2 uv;
+    float  z;
+    weight = probe_grid_point(pm, uv, z);
     if (weight <= 0.0f) return float3(0.0f, 0.0f, 0.0f);
-    /* Within a slab: filtering never mixes channels. */
-    float2 uv = g.xy / r.xy;
-    float  z  = clamp(g.z, 0.5f, r.z - 0.5f);
-    float3 e;
-    [unroll] for (int c = 0; c < 3; ++c) {
-        float4 sh = g_probe_grid.SampleLevel(g_probe_grid_sampler,
-                                             float3(uv, ((float)c * r.z + z) / (3.0f * r.z)), 0.0f);
-        e[c] = dot(sh, basis);
-        average[c] = sh.x;
-        opposite[c] = dot(sh, away);
-    }
-    e = max(e, 0.0f);
-    light = float2(dot(e, float3(0.2126f, 0.7152f, 0.0722f)),
-                   dot(max(opposite, 0.0f), float3(0.2126f, 0.7152f, 0.0722f)));
-    /* The light toward the normal plus the average light: steadier than
-     * the first alone where both are small. The probe records hold the
-     * same at the probes' centres. */
-    luminance = dot(e + max(average, 0.0f), float3(0.2126f, 0.7152f, 0.0722f));
+    float  mean;
+    float3 e = max(probe_grid_light(uv, z, nm, mean), 0.0f);
+    light    = dot(e, float3(0.2126f, 0.7152f, 0.0722f));
+    /* The light toward the normal plus the mean light: steadier than the
+     * first alone where both are small. The probe records hold the same at
+     * the probes' centres. */
+    luminance = light + max(mean, 0.0f);
     return e * fs_probe_strengths.x;
+}
+
+/* The luminance of the grid's irradiance / pi at model point `pm` for the
+ * model normal `nm`. */
+float probe_grid_luminance(float3 pm, float3 nm)
+{
+    float2 uv;
+    float  z, mean;
+    if (probe_grid_point(pm, uv, z) <= 0.0f) return 0.0f;
+    return dot(max(probe_grid_light(uv, z, nm, mean), 0.0f), float3(0.2126f, 0.7152f, 0.0722f));
 }
 
 /* The far hit of the ray o + t d (o inside) with a box or ellipsoid of
@@ -468,10 +487,10 @@ float3 probe_parallax(float3 o, float3 d, float3 half, bool ellipsoid)
 /* Prefiltered radiance from the probes of the cell holding `pm`, smallest
  * first, each taking the coverage the smaller ones left; returns the
  * coverage, which the environment's cube completes. A probe's reflection
- * darkens where the grid's light (`grid_luminance` for the normal `basis`)
- * is darker than at the probe's centre, where it was captured: a probe
- * sees the room from the middle, not from a dark corner. */
-float probe_specular(float3 pm, float3 rm, float roughness, float4 basis, float grid_luminance,
+ * darkens where the grid's light (`grid_luminance` for the model normal
+ * `nm`) is darker than at the probe's centre, where it was captured: a
+ * probe sees the room from the middle, not from a dark corner. */
+float probe_specular(float3 pm, float3 rm, float roughness, float3 nm, float grid_luminance,
                      float grid_weight, out float3 radiance)
 {
     radiance = float3(0.0f, 0.0f, 0.0f);
@@ -480,13 +499,14 @@ float probe_specular(float3 pm, float3 rm, float roughness, float4 basis, float 
     int3   cell = (int3)floor((pm - head.xyz) * head.w);
     if (any(cell < 0) || any(cell >= (int3)dims.xyz)) return 0.0f;
     uint index = ((uint)cell.z * dims.y + (uint)cell.y) * dims.x + (uint)cell.x;
-    uint word  = g_probe_set[2u + 5u * dims.w + (index >> 2u)][index & 3u];
+    uint word  = g_probe_set[2u + 6u * dims.w + (index >> 2u)][index & 3u];
+    float3 w_nm = nm * nm;
     float coverage = 0.0f;
     float lod      = roughness * (fs_probe_params.y - 1.0f);
     [loop] for (uint k = 0u; k < 4u && coverage < 1.0f; ++k) {
         uint probe = (word >> (8u * k)) & 0xFFu;
         if (probe == 0u) break;
-        uint   base     = 2u + 5u * (probe - 1u);
+        uint   base     = 2u + 6u * (probe - 1u);
         float4 center   = asfloat(g_probe_set[base]);
         uint4  shape    = g_probe_set[base + 1u];
         uint4  parallax = g_probe_set[base + 2u];
@@ -501,8 +521,11 @@ float probe_specular(float3 pm, float3 rm, float roughness, float4 basis, float 
          * the cube was captured. */
         float3 d = probe_parallax(pm - room, rm, asfloat(parallax.xyz), (parallax.w & 2u) != 0u) + room -
                    center.xyz;
-        float4 capture  = asfloat(g_probe_set[base + 4u]);
-        float  captured = max(dot(capture, basis), 0.0f) + max(capture.x, 0.0f);
+        float4 capture  = asfloat(g_probe_set[base + 4u]); /* +x, -x, +y, -y */
+        float4 vertical = asfloat(g_probe_set[base + 5u]); /* +z, -z, the mean */
+        float  captured = w_nm.x * (nm.x >= 0.0f ? capture.x : capture.y) +
+                         w_nm.y * (nm.y >= 0.0f ? capture.z : capture.w) +
+                         w_nm.z * (nm.z >= 0.0f ? vertical.x : vertical.y) + max(vertical.z, 0.0f);
         float  scale    = captured > 1.0e-5f ? lerp(1.0f, saturate(grid_luminance / captured), grid_weight) : 1.0f;
         radiance += share * scale * g_probe_cubes.SampleLevel(g_probe_cubes_sampler,
                                                       float4(d.x, d.z, d.y, (float)shape.w), lod).rgb;
@@ -735,12 +758,9 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
      * world ambient, which it already holds; they fade back in at its
      * border. */
     float3 probe_point = probe_model_point(i.world_pos);
-    float  grid_weight, grid_luminance;
-    float4 grid_basis;
-    float2 grid_light;
-    float3 grid_rgb = probe_grid_diffuse(probe_point, probe_model_direction(N),
-                                         probe_model_direction(fs_directional_dir), grid_weight, grid_basis,
-                                         grid_luminance, grid_light);
+    float  grid_weight, grid_luminance, grid_light;
+    float3 grid_rgb = probe_grid_diffuse(probe_point, probe_model_direction(N), grid_weight, grid_luminance,
+                                         grid_light);
     /* Ship occlusion (AeronScene_SetProbeOcclusion): the probe light the
      * occluders inside the grid leave this point. */
     bool  probe_occlusion = fs_occlusion_origin.w != 0.0f;
@@ -846,10 +866,13 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
         if (key_shadow_facing == 0.0f && !AERON_PBR_ALPHA_BLEND && i.screen_shadow != 0u) {
             key_visibility = lerp(screen_key_visibility, shadow_visibility, facing);
         }
-        float from_key_side =
-            key_shadow_facing != 0.0f
-                ? saturate(dot(N, L))
-                : saturate(1.0f - grid_light.y * 0.5f * (1.0f - dot(N, L)) / max(grid_light.x, 1.0e-4f));
+        /* Without its shadow facing, the key light's share of the grid's
+         * light: what the grid holds from the side away from the light. */
+        float from_key_side = saturate(dot(N, L));
+        if (key_shadow_facing == 0.0f) {
+            float away    = probe_grid_luminance(probe_point, -probe_model_direction(fs_directional_dir));
+            from_key_side = saturate(1.0f - away * 0.5f * (1.0f - dot(N, L)) / max(grid_light, 1.0e-4f));
+        }
         key_occlusion = 1.0f - key_probe_shadow * grid_weight * (1.0f - key_visibility) * from_key_side;
         environment_diffuse_rgb *= key_occlusion;
     }
@@ -945,8 +968,8 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
     float  probe_coverage = 1.0f;
 #else
     float3 probe_radiance;
-    float  probe_coverage = probe_specular(probe_point, probe_model_direction(R_ibl), mp.roughness, grid_basis,
-                                           grid_luminance, grid_weight, probe_radiance);
+    float  probe_coverage = probe_specular(probe_point, probe_model_direction(R_ibl), mp.roughness,
+                                           probe_model_direction(N), grid_luminance, grid_weight, probe_radiance);
     probe_radiance *= key_occlusion;
     if (probe_occlusion) {
         /* Glossy surfaces see what the visibility pass's cone along the

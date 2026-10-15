@@ -33,11 +33,11 @@ from bpy.types import Operator, Panel, PropertyGroup
 from . import common, libraries, preferences
 
 PROBE_PANORAMA_SIZE = (1024, 512)  # pi x 256 px faces, rounded up
-# A grid point keeps only four SH coefficients, so its noise depends on the
-# light paths it traces (pixels x samples), not on its resolution. A GPU
-# renders many pixels at a few samples much faster than few pixels at many
-# samples: 256 x 128 at 16 samples is as accurate as 64 x 32 at 256, 2.6x
-# faster.
+# A grid point keeps only its irradiance on six faces, integrals over the
+# panorama, so its noise depends on the light paths it traces (pixels x
+# samples), not on its resolution. A GPU renders many pixels at a few
+# samples much faster than few pixels at many samples: 256 x 128 at 16
+# samples is as accurate as 64 x 32 at 256, 2.6x faster.
 GRID_PANORAMA_SIZE = (256, 128)
 GRID_SAMPLES = 16
 CUBE_ROTATION = mathutils.Euler((math.pi / 2.0, 0.0, math.pi))

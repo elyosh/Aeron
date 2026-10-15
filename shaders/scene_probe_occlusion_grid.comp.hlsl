@@ -11,16 +11,22 @@
  * the light that still reaches the cell, such as the floor under a hull lit
  * only from near the horizon, takes none of it. A ratio, so the cube's
  * level does not matter. Cells farther than the reach from every occluder
- * skip the rays. When the build
- * follows a change, a cell none of whose rays meets what changed would
- * come out the same: it is left as it is. */
+ * skip the rays.
+ *
+ * The cubes show the floor lit as if the occluders were not there, while
+ * the floor under a hull is in its shadow and sends little light up. So
+ * the grid is built twice: the second pass reads the first, and a ray that
+ * reaches the floor takes the floor's own share of its light there (its +z
+ * face). When the build follows a change, a cell none of whose rays meets
+ * what changed, or the floor within the reach of it, would come out the
+ * same: it is left as it is. */
 
 cbuffer ProbeOcclusionGrid : register(b0, space2)
 {
     float4 origin_cell;    /* the box's low corner (model metres); w: occupancy cell size */
     uint4  occupancy_dims;
     uint4  grid_dims;      /* w: the grid cell size in metres, as float bits */
-    int4   region;         /* the first grid cell of this dispatch */
+    int4   region;         /* the first grid cell of this dispatch; w: 1 in the pass that shades the floor */
     float4 occluders_lo;   /* the occluders' bounds (model metres); w: reach */
     float4 occluders_hi;   /* w: the probe cube mip to read */
     float4 boxes[8];       /* lo, hi pairs (model metres); lo.w: 1 when used */
@@ -31,7 +37,9 @@ Texture3D<float>         g_occupancy           : register(t0, space0);
 SamplerState             g_occupancy_sampler   : register(s0, space0);
 TextureCubeArray<float4> g_probe_cubes         : register(t1, space0);
 SamplerState             g_probe_cubes_sampler : register(s1, space0);
-StructuredBuffer<uint4>  g_probe_set           : register(t2, space0);
+Texture3D<float4>        g_unshaded            : register(t2, space0); /* the first pass's grid */
+SamplerState             g_unshaded_sampler    : register(s2, space0);
+StructuredBuffer<uint4>  g_probe_set           : register(t3, space0);
 RWTexture3D<float4>      g_grid                : register(u0, space1);
 
 #define DIRECTIONS 32u
@@ -46,10 +54,10 @@ float probe_layer(float3 pm)
     int3   cell = (int3)floor((pm - head.xyz) * head.w);
     if (any(cell < 0) || any(cell >= (int3)dims.xyz)) return -1.0f;
     uint index = ((uint)cell.z * dims.y + (uint)cell.y) * dims.x + (uint)cell.x;
-    uint word  = g_probe_set[2u + 5u * dims.w + (index >> 2u)][index & 3u];
+    uint word  = g_probe_set[2u + 6u * dims.w + (index >> 2u)][index & 3u];
     uint probe = word & 0xFFu;
     if (probe == 0u) return -1.0f;
-    return (float)g_probe_set[2u + 5u * (probe - 1u) + 1u].w;
+    return (float)g_probe_set[2u + 6u * (probe - 1u) + 1u].w;
 }
 
 /* Ray `k` of the DIRECTIONS spread over the sphere. */
@@ -74,6 +82,41 @@ bool meets_change(float3 pm, float3 d)
         float  e  = max(max(min(ta.x, tb.x), min(ta.y, tb.y)), min(ta.z, tb.z));
         float  l  = min(min(max(ta.x, tb.x), max(ta.y, tb.y)), max(ta.z, tb.z));
         if (l >= max(e, 0.45f) && e <= 40.0f) return true;
+    }
+    return false;
+}
+
+/* The share of the floor's light past the occluders at model point `hit`
+ * on it: the first pass's +z face, one cell up as the probe shaders read
+ * it. The floor is the box's bottom, as for the probe shaders' reflections
+ * of it. */
+float floor_visibility(float3 hit)
+{
+    float3 dims = (float3)grid_dims.xyz;
+    float3 t    = clamp((hit - origin_cell.xyz) / asfloat(grid_dims.w) + float3(0.0f, 0.0f, 1.0f), 0.5f, dims - 0.5f);
+    float3 uvw  = float3(t.x / (2.0f * dims.x), t.y / dims.y, t.z / dims.z);
+    return saturate(g_unshaded.SampleLevel(g_unshaded_sampler, uvw + float3(0.5f, 0.0f, 0.0f), 0.0f).x);
+}
+
+/* Where the ray from `pm` along `d` meets the floor; false when it does not
+ * within the box. */
+bool floor_hit(float3 pm, float3 d, out float3 hit)
+{
+    hit = pm + d * ((origin_cell.z - pm.z) / min(d.z, -1.0e-6f));
+    float3 hi = origin_cell.xyz + (float3)grid_dims.xyz * asfloat(grid_dims.w);
+    return d.z < -1.0e-3f && all(hit.xy >= origin_cell.xy) && all(hit.xy <= hi.xy);
+}
+
+/* Whether the ray from `pm` along `d` meets the floor within the reach of
+ * a change: where the first pass's floor may have changed. */
+bool meets_floor_change(float3 pm, float3 d)
+{
+    float3 hit;
+    if (!floor_hit(pm, d, hit)) return false;
+    float reach = occluders_lo.w;
+    [unroll] for (uint b = 0u; b < 4u; ++b) {
+        if (changes[2u * b].w == 0.0f) continue;
+        if (all(hit.xy >= changes[2u * b].xy - reach) && all(hit.xy <= changes[2u * b + 1u].xy + reach)) return true;
     }
     return false;
 }
@@ -120,7 +163,7 @@ void main(uint3 id : SV_DispatchThreadID)
     if (near && changes[0].w != 0.0f) {
         bool changed = false;
         [loop] for (uint k = 0u; k < DIRECTIONS && !changed; ++k) {
-            changed = meets_change(pm, direction(k));
+            changed = meets_change(pm, direction(k)) || (region.w != 0 && meets_floor_change(pm, direction(k)));
         }
         if (!changed) return;
     }
@@ -145,8 +188,12 @@ void main(uint3 id : SV_DispatchThreadID)
         whole_pos += pos;
         whole_neg += neg;
         if (!near || !blocked(pm, d)) {
-            seen_pos += pos;
-            seen_neg += neg;
+            /* When shading the floor, the floor a ray meets takes its own
+             * share of its light. */
+            float3 hit;
+            float  shade = region.w != 0 && floor_hit(pm, d, hit) ? floor_visibility(hit) : 1.0f;
+            seen_pos += shade * pos;
+            seen_neg += shade * neg;
         }
     }
     /* A face no light reaches keeps it all. */

@@ -923,9 +923,13 @@ static bool bake_probe_cubes(const BakeOptions* o, const ProbeJob* job, int size
 	return ok;
 }
 
+/* A grid point's light in the model frame: irradiance / pi toward +x, -x,
+ * +y, -y, +z, -z, then the mean radiance, per RGB channel. */
+enum { GRID_FACES = 6, GRID_TERMS = 7 };
+
 typedef struct GridTask {
 	const ProbeJob* job;
-	float (*sh)[4][3]; /* per point */
+	float (*light)[GRID_TERMS][3]; /* per point */
 	uint8_t* failed;
 } GridTask;
 
@@ -942,29 +946,30 @@ static void grid_point_task(void* context, int index) {
 		t->failed[index] = 1;
 	} else {
 		envmap_from_equirect(&cube, pano, w, h, 1);
-		envmap_project_sh_l1(&cube, t->sh[index]);
+		/* The cube's y is the model's z (up), its z the model's y. */
+		static const int model_term[GRID_TERMS] = { 0, 1, 4, 5, 2, 3, 6 };
+		float            cube_light[GRID_TERMS][3];
+		envmap_axis_irradiance(&cube, cube_light);
+		for (int f = 0; f < GRID_TERMS; ++f)
+			memcpy(t->light[index][model_term[f]], cube_light[f], sizeof cube_light[f]);
 	}
 	free(pano);
 	envmap_cube_free(&cube);
 }
 
-/* Signed, for the L1 coefficients. */
-static uint16_t float_to_half_signed(float value) {
-	return value < 0.0f ? (uint16_t)(float_to_half(-value) | 0x8000u) : float_to_half(value);
-}
-
-/* Projects every valid grid point to L1 SH, gives each invalid point the
- * average of the valid ones within 1, then 2 points, else zero, and writes
- * the grid: a 2D RGBA16F image 4 rx wide and ry rz high, point (x, y, z) at
- * column 4 x, row y + ry z; texel c (R, G, B) holds that channel's four
- * coefficients, texel 3 is zero. */
+/* Gives every valid grid point its light on the faces of an axis-aligned
+ * cube, each invalid point the average of the valid ones within 1, then 2
+ * points, else zero, and writes the grid: a 2D RGBA16F image 6 rx wide and
+ * ry rz high, point (x, y, z) at column 6 x, row y + ry z; texel f holds
+ * the irradiance / pi toward +x, -x, +y, -y, +z, -z (model frame) in RGB,
+ * and the luminance of the mean radiance in A. */
 static bool bake_probe_grid(const BakeOptions* o, const ProbeJob* job) {
 	const uint32_t* r      = job->def->grid_resolution;
 	const uint32_t  points = job->point_count;
-	GridTask        t      = { job, calloc(points, sizeof *t.sh), calloc(points, 1) };
-	const int       width = 4 * (int)r[0], height = (int)(r[1] * r[2]);
+	GridTask        t      = { job, calloc(points, sizeof *t.light), calloc(points, 1) };
+	const int       width = GRID_FACES * (int)r[0], height = (int)(r[1] * r[2]);
 	uint16_t*       texels = (uint16_t*)calloc((size_t)width * height * 4u, sizeof *texels);
-	bool            ok     = t.sh && t.failed && texels;
+	bool            ok     = t.light && t.failed && texels;
 	if (ok)
 		envmap_parallel_for((int)points, o->jobs, grid_point_task, &t);
 	for (uint32_t i = 0; ok && i < points; ++i)
@@ -990,23 +995,26 @@ static bool bake_probe_grid(const BakeOptions* o, const ProbeJob* job) {
 						const uint32_t n = (uint32_t)nx + r[0] * ((uint32_t)ny + r[1] * (uint32_t)nz);
 						if (job->invalid[n])
 							continue;
-						for (int b = 0; b < 4; ++b)
+						for (int f = 0; f < GRID_TERMS; ++f)
 							for (int c = 0; c < 3; ++c)
-								t.sh[i][b][c] += t.sh[n][b][c];
+								t.light[i][f][c] += t.light[n][f][c];
 						++used;
 					}
 		}
-		for (int b = 0; b < 4; ++b)
+		for (int f = 0; f < GRID_TERMS; ++f)
 			for (int c = 0; c < 3; ++c)
-				t.sh[i][b][c] = used ? t.sh[i][b][c] / (float)used : 0.0f;
+				t.light[i][f][c] = used ? t.light[i][f][c] / (float)used : 0.0f;
 		unfilled += used == 0;
 	}
 	for (uint32_t i = 0; ok && i < points; ++i) {
 		const uint32_t x = i % r[0], row = i / r[0];
-		for (int c = 0; c < 3; ++c)
-			for (int b = 0; b < 4; ++b)
-				texels[((size_t)row * width + 4u * x + (uint32_t)c) * 4u + (uint32_t)b] =
-					float_to_half_signed(t.sh[i][b][c]);
+		const uint16_t mean = float_to_half(luminance(t.light[i][GRID_FACES]));
+		for (int f = 0; f < GRID_FACES; ++f) {
+			uint16_t* texel = texels + ((size_t)row * width + (size_t)GRID_FACES * x + (uint32_t)f) * 4u;
+			for (int c = 0; c < 3; ++c)
+				texel[c] = float_to_half(t.light[i][f][c]);
+			texel[3] = mean;
+		}
 	}
 	if (ok) {
 		const Ktx2WriteLevel level = { width, height, (const uint8_t*)texels,
@@ -1021,7 +1029,7 @@ static bool bake_probe_grid(const BakeOptions* o, const ProbeJob* job) {
 			printf(" (%u with no valid neighbour, left dark)", unfilled);
 		printf(", %.2f MiB\n", file_size_mib(o->grid_out));
 	}
-	free(t.sh);
+	free(t.light);
 	free(t.failed);
 	free(texels);
 	return ok;

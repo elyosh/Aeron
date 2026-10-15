@@ -270,8 +270,9 @@ typedef struct AeronEnvironmentPackage {
 	int32_t                    primary_light_index; /* -1 when none */
 	/* Probes packages (NULL otherwise): the probes' cube array (probe k in
 	 * layer k), the irradiance grid as a 3D RGBA16F texture of rx x ry x
-	 * 3 rz texels (slab c, z from c rz, holds colour channel c's four L1
-	 * coefficients), and the set buffer below. */
+	 * 6 rz texels (slab f, z from f rz, holds the irradiance / pi toward
+	 * +x, -x, +y, -y, +z, -z for f = 0 to 5 in RGB, and the luminance of
+	 * the mean radiance in A), and the set buffer below. */
 	AeronTexture* probe_cubes;
 	AeronTexture* probe_grid;
 	AeronBuffer*  probe_buffer;
@@ -285,18 +286,20 @@ typedef struct AeronEnvironmentPackage {
 /* The set buffer of a probes package, uint4 elements (floats as bits):
  *   [0]            cells min xyz (model frame, metres), 1 / cell size
  *   [1]            cell dims xyz, probe count (uints)
- *   [2 + 5k]       probe k: centre xyz, 1 / falloff
- *   [2 + 5k + 1]   probe k: 1 / half size xyz, cube array layer (uint)
- *   [2 + 5k + 2]   probe k: parallax half size xyz, shapes (uint: bit 0
+ *   [2 + 6k]       probe k: centre xyz, 1 / falloff
+ *   [2 + 6k + 1]   probe k: 1 / half size xyz, cube array layer (uint)
+ *   [2 + 6k + 2]   probe k: parallax half size xyz, shapes (uint: bit 0
  *                  influence ellipsoid, bit 1 parallax ellipsoid)
- *   [2 + 5k + 3]   probe k: parallax centre xyz, 0
- *   [2 + 5k + 4]   probe k: the grid's light at its centre, luminance L1
- *                  coefficients (0 when the centre is outside the grid)
- *   [2 + 5N ...]   the cell words (AeronEnvironmentProbeCells), four per
+ *   [2 + 6k + 3]   probe k: parallax centre xyz, 0
+ *   [2 + 6k + 4]   probe k: the grid's light at its centre, as luminance:
+ *                  toward +x, -x, +y, -y
+ *   [2 + 6k + 5]   probe k: toward +z, -z, the mean, 0 (all 0 when the
+ *                  centre is outside the grid)
+ *   [2 + 6N ...]   the cell words (AeronEnvironmentProbeCells), four per
  *                  element, x fastest, then y, then z.
  * The grid weighs 1 inside its box and falls to 0 one point spacing
  * outside it, so the set's extent includes that margin. */
-enum { AERON_ENV_PROBE_BUFFER_HEADER = 2, AERON_ENV_PROBE_BUFFER_RECORD = 5 };
+enum { AERON_ENV_PROBE_BUFFER_HEADER = 2, AERON_ENV_PROBE_BUFFER_RECORD = 6 };
 
 /* Prepared probes packages (textures and buffers) above this size are
  * logged as a warning: probes cost about 450 KB each, so many probe-owning

@@ -72,12 +72,12 @@ void envmap_from_equirect(EnvCube* cube, const float* rgb, int w, int h, int job
  * 64 pixels) using texel solid angles. Requires `src` box mips. */
 void envmap_irradiance(EnvCube* out, const EnvCube* src, int jobs);
 
-/* L1 spherical harmonics of level 0's irradiance / pi, ready to evaluate:
- * at unit normal n, irradiance / pi = out[0] + out[1] n.y + out[2] n.z +
- * out[3] n.x, per RGB channel (the basis constants and the cosine lobe,
- * A0 = pi and A1 = 2 pi / 3, are folded in). A constant radiance c gives
- * (c, 0, 0, 0). */
-void envmap_project_sh_l1(const EnvCube* src, float out[4][3]);
+/* Level 0's irradiance / pi on the faces of an axis-aligned cube, per RGB
+ * channel: out[0] to out[5] toward +x, -x, +y, -y, +z, -z (the cube's
+ * directions), and out[6] the mean radiance. A constant radiance c gives c
+ * everywhere; radiance 1 over the +y half gives 1 toward +y, 0 toward -y,
+ * 0.5 toward the others, and a mean of 0.5. */
+void envmap_axis_irradiance(const EnvCube* src, float out[7][3]);
 
 /* Every level of `out`: level m of M is GGX-prefiltered for perceptual
  * roughness m / (M - 1) under N = V = R, with `samples` Hammersley

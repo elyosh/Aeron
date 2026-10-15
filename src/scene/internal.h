@@ -216,6 +216,7 @@ typedef struct AeronSceneProbeOcclusion {
 	 * irradiance past the occluders on the faces toward +x, -x, +y, -y,
 	 * then in the right half toward +z, -z. */
 	AeronTexture*         grid;
+	AeronTexture*         unshaded;    /* the same before the floor's shading (its first pass) */
 	AeronTexture*         placeholder; /* 1x1x1, bound while off */
 	AeronSampler*         sampler;
 	AeronComputePipeline* pipeline;

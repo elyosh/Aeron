@@ -12,7 +12,9 @@
  * of the box, for the faces of an axis-aligned cube, the share of the probe
  * irradiance that still reaches them along 32 rays through the occupancy:
  * the probe shaders scale their diffuse light by it, blending the faces
- * toward their normal. The visibility pass traces a cone through the occupancy's mips for
+ * toward their normal. A second pass darkens what the rays see of the floor
+ * by the floor's own share there: under a hull, the floor sends up little
+ * light. The visibility pass traces a cone through the occupancy's mips for
  * their reflections. Both grids are rebuilt only where an occluder changed:
  * parked ships cost nothing. */
 #include "internal.h"
@@ -399,12 +401,14 @@ static int voxelize(AeronSceneProbeOcclusion* o, const AeronSceneMeshInstance* i
 static void release_grids(AeronSceneProbeOcclusion* o) {
 	Aeron_DestroyTexture(o->occupancy);
 	Aeron_DestroyTexture(o->grid);
+	Aeron_DestroyTexture(o->unshaded);
 	Aeron_DestroyTexture(o->staging);
 	Aeron_DestroyDepthTarget(o->views);
 	Aeron_DestroyBuffer(o->records);
 	free(o->cells);
 	o->occupancy      = NULL;
 	o->grid           = NULL;
+	o->unshaded       = NULL;
 	o->staging        = NULL;
 	o->views          = NULL;
 	o->records        = NULL;
@@ -612,6 +616,7 @@ static int ensure_grids(AeronSceneProbeOcclusion* o, const AeronSceneProbeSet* s
 	}
 	o->occupancy = Aeron_CreateTexture(&occupancy);
 	o->grid      = Aeron_CreateTexture(&grid);
+	o->unshaded  = Aeron_CreateTexture(&grid);
 	if (o->gpu) {
 		o->staging = Aeron_CreateTexture(&staging);
 		o->views   = Aeron_CreateDepthTarget(&(AeronDepthTargetDesc) {
@@ -633,7 +638,8 @@ static int ensure_grids(AeronSceneProbeOcclusion* o, const AeronSceneProbeSet* s
 		o->cells =
 			(uint8_t*)calloc((size_t)o->occupancy_dims[0] * o->occupancy_dims[1] * o->occupancy_dims[2], 1);
 	}
-	if (!o->occupancy || !o->grid || (o->gpu ? !o->staging || !o->views || !o->records : !o->cells)) {
+	if (!o->occupancy || !o->grid || !o->unshaded ||
+		(o->gpu ? !o->staging || !o->views || !o->records : !o->cells)) {
 		release_grids(o);
 		return 0;
 	}
@@ -764,7 +770,7 @@ static int ensure_pipeline(AeronSceneProbeOcclusion* o) {
 	if (!o->pipeline) {
 		o->pipeline = Aeron_CreateComputePipeline(&(AeronComputePipelineDesc) {
 			.name                            = "scene_probe_occlusion_grid.comp",
-			.sampler_count                   = 2,
+			.sampler_count                   = 3,
 			.readonly_storage_buffer_count   = 1,
 			.readwrite_storage_texture_count = 1,
 			.uniform_buffer_count            = 1,
@@ -778,10 +784,11 @@ static int ensure_pipeline(AeronSceneProbeOcclusion* o) {
 
 /* Rebuilds the grid's cells within the model-metre box [lo, hi] whose rays
  * meet one of the `change_count` boxes [change_lo, change_hi] (every cell
- * without any). */
+ * without any): into `unshaded`, or with `shade_floor`, into the grid with
+ * the floor darkened from `unshaded`. */
 static int build_grid(AeronScene3D* s, AeronCommandBuffer* cmd, const AeronSceneProbeSet* set,
 					  const float lo[3], const float   hi[3], const float (*change_lo)[3],
-					  const float (*change_hi)[3], int change_count) {
+					  const float (*change_hi)[3], int change_count, int shade_floor) {
 	AeronSceneProbeOcclusion*      o   = &s->probe_occlusion;
 	const AeronEnvironmentPackage* pkg = set->package;
 	OcclusionGridUniform           u   = { 0 };
@@ -805,6 +812,7 @@ static int build_grid(AeronScene3D* s, AeronCommandBuffer* cmd, const AeronScene
 	for (int i = 0; i < o->occluder_count; ++i) {
 		grow_box(u.occluders_lo, u.occluders_hi, o->occluders[i].lo, o->occluders[i].hi);
 	}
+	u.region[3]           = shade_floor;
 	const float grid_cell = AERON_SCENE_OCCLUSION_GRID_CELL;
 	memcpy(&u.grid_dims[3], &grid_cell, sizeof grid_cell);
 	u.origin_cell[3]  = AERON_SCENE_OCCUPANCY_CELL;
@@ -826,7 +834,7 @@ static int build_grid(AeronScene3D* s, AeronCommandBuffer* cmd, const AeronScene
 		u.changes[2 * b][3] = 1.0f;
 	}
 
-	AeronComputeTextureBinding output = { o->grid, 0, 0, 0 };
+	AeronComputeTextureBinding output = { shade_floor ? o->grid : o->unshaded, 0, 0, 0 };
 	AeronComputePass*          pass   = Aeron_BeginComputePass(&(AeronComputePassDesc) {
 		.command_buffer      = cmd,
 		.write_textures      = &output,
@@ -839,6 +847,9 @@ static int build_grid(AeronScene3D* s, AeronCommandBuffer* cmd, const AeronScene
 	Aeron_BindComputePipeline(pass, o->pipeline);
 	Aeron_BindComputeTextureSampler(pass, 0, o->occupancy, AeronSceneProbeOcclusion_Sampler(s));
 	Aeron_BindComputeTextureSampler(pass, 1, pkg->probe_cubes, pkg->sampler);
+	/* Unread in the first pass, which writes `unshaded`. */
+	Aeron_BindComputeTextureSampler(pass, 2, shade_floor ? o->unshaded : o->grid,
+									AeronSceneProbeOcclusion_Sampler(s));
 	Aeron_BindComputeStorageBuffer(pass, 0, pkg->probe_buffer);
 	Aeron_BindComputeUniformData(pass, 0, &u, sizeof u);
 	Aeron_DispatchCompute(pass, (uint32_t)(count[0] + GRID_THREADS - 1) / GRID_THREADS,
@@ -1328,11 +1339,14 @@ void AeronSceneProbeOcclusion_Update(AeronScene3D* s, AeronCommandBuffer* cmd) {
 		}
 		change_count = merge_boxes(change_lo, change_hi, change_count);
 	}
-	for (int g = 0; g < grids.count; ++g) {
-		if (!build_grid(s, cmd, set, grids.lo[g], grids.hi[g], (const float (*)[3])change_lo,
-						(const float (*)[3])change_hi, change_count)) {
-			disable(o, "the grid build failed");
-			return;
+	/* All of the first pass, then the second, which reads its floor. */
+	for (int shade_floor = 0; shade_floor < 2; ++shade_floor) {
+		for (int g = 0; g < grids.count; ++g) {
+			if (!build_grid(s, cmd, set, grids.lo[g], grids.hi[g], (const float (*)[3])change_lo,
+							(const float (*)[3])change_hi, change_count, shade_floor)) {
+				disable(o, "the grid build failed");
+				return;
+			}
 		}
 	}
 	o->valid  = 1;
