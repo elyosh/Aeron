@@ -12,13 +12,14 @@
  *     variance-reduction strength without biasing either direction.
  *
  * Inputs:
- *   t0 — visibility RT to read (RG8: AO, directional shadow)
+ *   t0 — visibility RT to read (RGBA8: AO, directional shadow, key shadow)
  *   t1 — depth RT (full-res; nearest-sampled at the half-res AO uv)
  *   s0 — NEAREST + CLAMP_TO_EDGE (shared)
  *
- * Output: RG8 visibility. AO uses the complete nine-tap footprint; shadow
- * visibility uses the already-fetched centre and immediate neighbours so
- * contact shadows are denoised without inheriting AO's broad blur.
+ * Output: RGBA8 visibility. AO and the key light's shadow 1 m out use the
+ * complete nine-tap footprint; shadow visibility uses the already-fetched
+ * centre and immediate neighbours so contact shadows are denoised without
+ * inheriting AO's broad blur.
  */
 
 cbuffer SSAOBlurUniforms : register(b0, space3)
@@ -32,7 +33,7 @@ cbuffer SSAOBlurUniforms : register(b0, space3)
     float2 _pad1;
 };
 
-Texture2D<float2> g_visibility : register(t0, space2);
+Texture2D<float4> g_visibility : register(t0, space2);
 Texture2D    g_depth   : register(t1, space2);
 SamplerState g_visibility_sampler : register(s0, space2);
 SamplerState g_depth_sampler      : register(s1, space2);
@@ -43,7 +44,7 @@ struct VSOut
     float2 uv       : TEXCOORD0;
 };
 
-float2 main(VSOut i) : SV_Target0
+float4 main(VSOut i) : SV_Target0
 {
     uint visibility_w, visibility_h;
     uint depth_w, depth_h;
@@ -72,7 +73,7 @@ float2 main(VSOut i) : SV_Target0
      * endpoints. Gather first so the depth slope can be estimated before
      * weighting. */
     float zk [9];
-    float2 visibility[9];
+    float4 visibility[9];
     bool  okk[9];
     [unroll] for (int g = 0; g < 9; g++) {
         int    k  = g - 4;
@@ -102,6 +103,7 @@ float2 main(VSOut i) : SV_Target0
 
     float ao_sum     = 0.0f;
     float weight_sum = 0.0f;
+    float key_sum    = 0.0f;
     float shadow_sum = 0.0f;
     float shadow_weight_sum = 0.0f;
     [unroll] for (int t = 0; t < 9; t++) {
@@ -114,6 +116,7 @@ float2 main(VSOut i) : SV_Target0
         float w = endpoint_weight * exp(-normalized_error);
         ao_sum     += visibility[t].x * w;
         weight_sum += w;
+        key_sum    += visibility[t].z * w;
 
         int offset = t - 4;
         if (abs(offset) <= 1) {
@@ -128,5 +131,7 @@ float2 main(VSOut i) : SV_Target0
     float shadow = shadow_weight_sum > 0.0f
         ? shadow_sum / shadow_weight_sum
         : visibility[4].y;
-    return float2(ao, shadow);
+    /* The key light's shadow 1 m out (B) takes AO's whole footprint. */
+    float key = weight_sum > 0.0f ? key_sum / weight_sum : visibility[4].z;
+    return float4(ao, shadow, key, 1.0f);
 }

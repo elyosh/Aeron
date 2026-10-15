@@ -106,10 +106,11 @@ Texture2DArray g_mr         : register(t2, space2);
 SamplerState g_mr_sampler   : register(s2, space2);
 Texture2DArray g_emissive   : register(t3, space2);
 SamplerState g_em_sampler   : register(s3, space2);
-/* Half-res RG8 visibility: R = SSAO, G = denoised main directional
- * shadow. A 1×1 white placeholder keeps both effects unoccluded when the
- * joint visibility pass is unavailable. */
-Texture2D<float2> g_ao      : register(t4, space2);
+/* Half-res RGBA8 visibility: R = SSAO, G = denoised main directional
+ * shadow, B = the key light's shadow 1 m out (scene_ssao.hlsli). A 1×1
+ * white placeholder keeps all unoccluded when the joint visibility pass is
+ * unavailable. */
+Texture2D<float4> g_ao      : register(t4, space2);
 SamplerState g_ao_sampler   : register(s4, space2);
 TextureCube<float4> g_environment : register(t7, space2);
 SamplerState g_environment_sampler : register(s7, space2);
@@ -276,13 +277,19 @@ float3 probe_model_direction(float3 world_direction)
 /* Irradiance / pi from the grid at model point `pm` for the model normal
  * `nm`, and in `weight` how much it applies: 1 inside the grid's box,
  * falling to 0 one point spacing outside it (the outer points' light holds
- * up to the box). Also gives the L1 basis of `nm` and the luminance the
- * probes' reflections are scaled by (probe_specular). */
-float3 probe_grid_diffuse(float3 pm, float3 nm, out float weight, out float4 basis, out float luminance)
+ * up to the box). Also gives the L1 basis of `nm`, the luminance the
+ * probes' reflections are scaled by (probe_specular), and in `light` the
+ * luminances of the irradiance for `nm` and for a normal facing away from
+ * the model direction `lm` (the light the grid holds from that side). */
+float3 probe_grid_diffuse(float3 pm, float3 nm, float3 lm, out float weight, out float4 basis, out float luminance,
+                          out float2 light)
 {
     basis = float4(1.0f, nm.z, nm.y, nm.x);
+    float4 away = float4(1.0f, -lm.z, -lm.y, -lm.x);
     luminance = 0.0f;
+    light     = float2(0.0f, 0.0f);
     float3 average = float3(0.0f, 0.0f, 0.0f);
+    float3 opposite = float3(0.0f, 0.0f, 0.0f);
     float3 r = float3(fs_probe_params.zw, fs_grid_scale.w);
     float3 g = pm * fs_grid_scale.xyz + fs_grid_offset.xyz;
     float3 w = saturate(min(g + 1.5f, r + 1.5f - g));
@@ -297,8 +304,11 @@ float3 probe_grid_diffuse(float3 pm, float3 nm, out float weight, out float4 bas
                                              float3(uv, ((float)c * r.z + z) / (3.0f * r.z)), 0.0f);
         e[c] = dot(sh, basis);
         average[c] = sh.x;
+        opposite[c] = dot(sh, away);
     }
     e = max(e, 0.0f);
+    light = float2(dot(e, float3(0.2126f, 0.7152f, 0.0722f)),
+                   dot(max(opposite, 0.0f), float3(0.2126f, 0.7152f, 0.0722f)));
     /* The light toward the normal plus the average light: steadier than
      * the first alone where both are small. The probe records hold the
      * same at the probes' centres. */
@@ -587,8 +597,10 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
     float3 probe_point = probe_model_point(i.world_pos);
     float  grid_weight, grid_luminance;
     float4 grid_basis;
-    float3 grid_rgb = probe_grid_diffuse(probe_point, probe_model_direction(N), grid_weight, grid_basis,
-                                         grid_luminance);
+    float2 grid_light;
+    float3 grid_rgb = probe_grid_diffuse(probe_point, probe_model_direction(N),
+                                         probe_model_direction(fs_directional_dir), grid_weight, grid_basis,
+                                         grid_luminance, grid_light);
     environment_diffuse_rgb = lerp(environment_diffuse_rgb, grid_rgb, grid_weight);
     ambient_rgb *= 1.0f - grid_weight;
 #endif
@@ -602,9 +614,11 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
      * the depth layer it describes: no lookup. */
     float ao = 1.0f;
     float screen_shadow_visibility = 1.0f;
+    float screen_key_visibility = 1.0f;
     if (!AERON_PBR_ALPHA_BLEND && (ssao_intensity > 0.0f || i.screen_shadow != 0u)) {
-        float2 visibility = g_ao.Sample(g_ao_sampler, i.position.xy * fs_render_size.zw);
+        float4 visibility = g_ao.Sample(g_ao_sampler, i.position.xy * fs_render_size.zw);
         screen_shadow_visibility = visibility.y;
+        screen_key_visibility = visibility.z;
         if (ssao_intensity > 0.0f) {
             ao = lerp(1.0f, pow(visibility.x, ssao_power), ssao_intensity);
         }
@@ -654,14 +668,31 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
     float3 ao_c = 2.7552f * albedo + 0.6903f;
     float3 ao_ambient = max(ao, ((ao * ao_a + ao_b) * ao + ao_c) * ao);
     /* A key light already in the probes' bake lights only outside their
-     * grid. Inside, its shadow darkens the probe light coming from its side
-     * (N.L), as an object between that light and the surface would. */
+     * grid. Inside, its shadow means an object between that light's side
+     * (a hangar's ceiling) and the surface: it takes `key_probe_shadow` of
+     * the probe light coming from that side, whichever way the surface
+     * faces. That is all its light but what the grid holds from the
+     * opposite side (the floor), of which a surface gets the share
+     * (1 - N.L) / 2 of its view. Its reflections lose as much. A surface
+     * turning away from the light takes the shadow 1 m out along its normal
+     * (the visibility pass's B, AeronScene_SetProbeKeyShadow): what covers
+     * the space in front of it, not its own curve, which hides nothing of
+     * its view (no hard line where a hull turns away from the light). */
     float3 key_color = sun_color;
 #if AERON_PBR_PROBES
     float key_occlusion = 1.0f;
     if (key_in_probes != 0.0f) {
         key_color *= 1.0f - grid_weight;
-        key_occlusion = 1.0f - key_probe_shadow * grid_weight * saturate(dot(N, L)) * (1.0f - shadow_visibility);
+        float key_visibility = shadow_visibility;
+        float facing         = saturate(dot(N, L) * 2.5f - 0.75f); /* 0 below N.L 0.3, 1 above 0.7 */
+        if (key_shadow_facing == 0.0f && !AERON_PBR_ALPHA_BLEND && i.screen_shadow != 0u) {
+            key_visibility = lerp(screen_key_visibility, shadow_visibility, facing);
+        }
+        float from_key_side =
+            key_shadow_facing != 0.0f
+                ? saturate(dot(N, L))
+                : saturate(1.0f - grid_light.y * 0.5f * (1.0f - dot(N, L)) / max(grid_light.x, 1.0e-4f));
+        key_occlusion = 1.0f - key_probe_shadow * grid_weight * (1.0f - key_visibility) * from_key_side;
         environment_diffuse_rgb *= key_occlusion;
     }
 #endif

@@ -319,6 +319,8 @@ struct AeronScene3D {
 	 * bind, which probe draws push again with their set's fields. */
 	AeronSceneProbeSet           probe_sets[AERON_SCENE_MAX_PROBE_SETS];
 	int                          probe_set_count;
+	/* AeronScene_SetProbeKeyShadow: the visibility pass's B. */
+	int                          probe_key_shadow;
 	AeronSceneLightingUniformGPU lighting_uniform;
 
 	/* Stabilized cascaded shadow map for the key directional light. */

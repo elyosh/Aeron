@@ -670,7 +670,8 @@ static void add_game_instances(AeronScene3D* scene, const Fixture* f, const Aero
 static void set_game_lighting(AeronScene3D* scene, const CaptureConfig* config) {
 	const CaptureGameScene* game = &config->game;
 	float                   light[23][4] = {
-		[0] = { game->key_probe_shadow >= 0 ? 1.0f : 0.0f, fmaxf(game->key_probe_shadow, 0.0f), 0, 0 },
+		[0] = { game->key_probe_shadow >= 0 ? 1.0f : 0.0f, fmaxf(game->key_probe_shadow, 0.0f), 0,
+				game->key_shadow_all_sides ? 0.0f : 1.0f },
 		[1] = { 0, game->ssao.ssao_intensity, game->ssao.ssao_power, 0 }, /* reserved, AO, reserved */
 		[2] = { 0, game->ssao.ssao_direct, 1, 0 },                        /* reserved, AO, spec_geom_adapt */
 	};
@@ -681,6 +682,7 @@ static void set_game_lighting(AeronScene3D* scene, const CaptureConfig* config) 
 			light[row][k] = game->ambient;
 	}
 	AeronScene_SetFrameUniformData(scene, AERON_SHADER_STAGE_FRAGMENT, 1, light, sizeof light);
+	AeronScene_SetProbeKeyShadow(scene, game->key_probe_shadow >= 0.0f && game->key_shadow_all_sides);
 }
 
 static void set_game_effects(AeronScene3D* scene, const CaptureConfig* config, int blur) {

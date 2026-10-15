@@ -468,6 +468,7 @@ int AeronScene_Begin(AeronScene3D* s, const AeronSceneCamera* camera) {
 	memset(&s->pbr_environment, 0, sizeof s->pbr_environment);
 	s->pbr_environment_set = 0;
 	s->probe_set_count     = 0;
+	s->probe_key_shadow    = 0;
 	s->pbr_debug_views     = 0;
 	memset(s->pbr_debug_material, 0, sizeof s->pbr_debug_material);
 	AeronScene_SetScreenSources(s, NULL, NULL, NULL);
@@ -1268,6 +1269,12 @@ void AeronScene_SetPbrEnvironmentPackage(AeronScene3D* s, const AeronEnvironment
 	environment.specular_strength = package->settings.intensity * package->settings.specular_strength;
 	memcpy(environment.world_to_local, package->world_to_cube, sizeof environment.world_to_local);
 	AeronScene_SetPbrEnvironment(s, &environment);
+}
+
+void AeronScene_SetProbeKeyShadow(AeronScene3D* s, int enabled) {
+	if (s) {
+		s->probe_key_shadow = enabled != 0;
+	}
 }
 
 int AeronScene_AddProbeSet(AeronScene3D* s, const AeronEnvironmentPackage* package, const float m[12]) {

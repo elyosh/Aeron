@@ -506,6 +506,14 @@ void AeronScene_SetPbrEnvironmentPackage(AeronScene3D* scene, const struct Aeron
 int AeronScene_AddProbeSet(AeronScene3D* scene, const struct AeronEnvironmentPackage* package,
 						   const float model_to_world[12]);
 
+/* The key light is in the probe sets' bake (a hangar's ceiling light), and
+ * the probe shaders take its shadow from every side (PbrLightFS
+ * key_shadow_facing 0): the half-resolution visibility pass then also reads
+ * that shadow 1 m out along the normals of surfaces in shadow turning away
+ * from the light, so that a hull's own curve does not shadow it. Reset by
+ * Begin. */
+void AeronScene_SetProbeKeyShadow(AeronScene3D* scene, int enabled);
+
 /* Queue a per-frame uniform blob (copied; reset by Begin) that the
  * scene binds to (stage, slot) in the color pass AFTER the
  * BEFORE_OPAQUE hook and before the sky billboards / instance walk —

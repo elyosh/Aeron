@@ -20,8 +20,11 @@
  *        receiver-local map in the second
  *
  * Output:
- *   RG8 visibility in [0, 1]. R is ambient occlusion; G is main
- *   directional-shadow visibility for opaque forward shading.
+ *   RGBA8 visibility in [0, 1]. R is ambient occlusion; G is main
+ *   directional-shadow visibility for opaque forward shading; B, while the
+ *   key light is in the probes (visibility_params.z, the distance of 1 m),
+ *   its shadow 1 m out along the normal, for surfaces in shadow turning
+ *   away from it, else G (scene_pbr_mesh_impl.hlsli's probe light).
  *
  * Coordinate space: works in view space ("eye space") using
  * mat4_perspective_reverse_z_xy's projection. The G-buffer normal is
@@ -88,7 +91,8 @@ cbuffer SSAOUniforms : register(b0, space3)
      * Transforms the G-buffer world normal into view space. */
     float4 view_rot[3];
     /* x = AO enabled (else R is 1), y = receiver-local pixels skipped (the
-     * second pass writes their shadow), zw reserved. */
+     * second pass writes their shadow), z = 1 m in scene units while the
+     * key light is in the probes (B), else 0, w reserved. */
     float4 visibility_params;
 };
 
@@ -224,7 +228,23 @@ float receiver_shadow(float3 world_pos, float3 world_pos_dx, float3 world_pos_dy
         float2(source_pixel) + 0.5f, false, cascade, cascade_blend, shadow_coverage);
 }
 
-float2 main(VSOut i) : SV_Target0
+/* The key light's shadow 1 m out along the normal, for a surface in its
+ * shadow turning away from it: what covers the space in front of the
+ * surface, not its own curve. One comparison; the blur softens it. */
+float key_shadow(float3 world_pos, float3 world_normal, float shadow, uint2 source_pixel)
+{
+    if (visibility_params.z <= 0.0f || shadow >= 1.0f || dot(world_normal, shadow_light_dir.xyz) >= 0.7f)
+        return shadow;
+    uint  cascade;
+    float cascade_blend;
+    float shadow_coverage;
+    return directional_shadow_visibility(world_pos + world_normal * visibility_params.z, shadow_light_dir.xyz,
+                                         1.0f, float3(0.0f, 0.0f, 0.0f), float3(0.0f, 0.0f, 0.0f),
+                                         float2(source_pixel) + 0.5f, true, cascade, cascade_blend,
+                                         shadow_coverage);
+}
+
+float4 main(VSOut i) : SV_Target0
 {
     /* A half-resolution pixel centre lies between full-resolution G-buffer
      * pixel centres. Select one concrete pixel from its 2x2 footprint and
@@ -240,7 +260,7 @@ float2 main(VSOut i) : SV_Target0
     float2 receiver_uv = (float2(source_pixel) + 0.5f) / float2(depth_size);
 
     float depth = g_depth.SampleLevel(g_depth_sampler, receiver_uv, 0.0f).r;
-    if (depth <= 0.0f) return float2(1.0f, 1.0f); /* sky never occludes */
+    if (depth <= 0.0f) return float4(1.0f, 1.0f, 1.0f, 1.0f); /* sky never occludes */
 
     float3 view_pos = view_pos_from(receiver_uv, depth);
 
@@ -258,13 +278,15 @@ float2 main(VSOut i) : SV_Target0
     float3 world_pos_dy = ddy(world_pos);
 #if AERON_SSAO_RECEIVER_LOCAL_PASS
     if (!receiver_local) discard;
-    return float2(0.0f, receiver_shadow(world_pos, world_pos_dx, world_pos_dy, world_normal, source_pixel));
+    return float4(0.0f, receiver_shadow(world_pos, world_pos_dx, world_pos_dy, world_normal, source_pixel), 0.0f,
+                  0.0f);
 #else
     float shadow = 1.0f;
     if (!receiver_local || visibility_params.y == 0.0f) {
         shadow = receiver_shadow(world_pos, world_pos_dx, world_pos_dy, world_normal, source_pixel);
     }
-    if (visibility_params.x == 0.0f) return float2(1.0f, shadow);
+    float key = key_shadow(world_pos, world_normal, shadow, source_pixel);
+    if (visibility_params.x == 0.0f) return float4(1.0f, shadow, key, 1.0f);
     float3 view_normal;
     view_normal.x = dot(view_rot[0].xyz, world_normal);
     view_normal.y = dot(view_rot[1].xyz, world_normal);
@@ -357,6 +379,6 @@ float2 main(VSOut i) : SV_Target0
     }
 
     float ao = 1.0f - (occlusion / (float)taps) * intensity;
-    return saturate(float2(ao, shadow));
+    return saturate(float4(ao, shadow, key, 1.0f));
 #endif
 }

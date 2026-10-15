@@ -37,11 +37,14 @@ cbuffer PbrLightFS : register(AERON_PBR_LIGHT_UNIFORM_REGISTER, space3)
 {
     /* Nonzero: the key light is in the probe sets' bake (a hangar's
      * ceiling light). Inside a probe grid it then lights nothing and its
-     * shadow removes `key_probe_shadow` (0-1) of the probe light. */
+     * shadow removes `key_probe_shadow` (0-1) of the probe light: the
+     * light from its side whichever way the surface faces, or with
+     * `key_shadow_facing` nonzero only as the surface faces it (N.L), for
+     * comparison. */
     float key_in_probes;
     float key_probe_shadow;
     float debug_isolate_term;
-    float reserved_wrap;     /* formerly the wrap-lighting amount */
+    float key_shadow_facing;
     float reserved_xvt; /* formerly the XvT flat-shading switch */
     float ssao_intensity;
     float ssao_power;

@@ -32,7 +32,8 @@ typedef struct SsaoUniforms {
 	float sample_jitter; /* per-pixel radius jitter [0,1] */
 	float view_rot[3][4];
 	/* AO enabled, receiver-local pixels skipped (a second pass writes
-	 * their shadow), reserved, reserved. */
+	 * their shadow), 1 m in scene units while the key light is in the
+	 * probes (0 = off), reserved. */
 	float visibility_params[4];
 } SsaoUniforms; /* 112 B */
 
@@ -257,12 +258,12 @@ int AeronScenePost_EnsureSsao(struct AeronScene3D* s) {
 		AeronSceneInternal_CompileShader("scene_ssao_blur.frag", AERON_SHADER_STAGE_FRAGMENT, 2, 1, 0);
 	s->ssao_blur_lq_ps =
 		AeronSceneInternal_CompileShader("scene_ssao_blur_lq.frag", AERON_SHADER_STAGE_FRAGMENT, 2, 1, 0);
-	const PostTarget ao = { AERON_TEXTURE_FORMAT_R8G8_UNORM, 0xF };
+	const PostTarget ao = { AERON_TEXTURE_FORMAT_RGBA8_UNORM, 0xF };
 	if (s->ssao_ps) {
 		s->ssao_pipeline = post_pipeline(s->fullscreen_vs, s->ssao_ps, &ao, 1, 0);
 	}
 	if (s->ssao_receiver_local_ps) {
-		const PostTarget shadow_only = { AERON_TEXTURE_FORMAT_R8G8_UNORM, 0x2 };
+		const PostTarget shadow_only = { AERON_TEXTURE_FORMAT_RGBA8_UNORM, 0x2 };
 		s->ssao_receiver_local_pipeline =
 			post_pipeline(s->fullscreen_vs, s->ssao_receiver_local_ps, &shadow_only, 1, 0);
 	}
@@ -276,9 +277,9 @@ int AeronScenePost_EnsureSsao(struct AeronScene3D* s) {
 	/* Half-resolution AO/directional-shadow visibility + ping-pong blur target. */
 	s->ao_rt_w    = (s->render_w + 1) / 2;
 	s->ao_rt_h    = (s->render_h + 1) / 2;
-	s->ao_rt      = AeronSceneInternal_CreateColorRt(AERON_TEXTURE_FORMAT_R8G8_UNORM, s->ao_rt_w, s->ao_rt_h,
+	s->ao_rt      = AeronSceneInternal_CreateColorRt(AERON_TEXTURE_FORMAT_RGBA8_UNORM, s->ao_rt_w, s->ao_rt_h,
 													 "scene.visibility");
-	s->ao_blur_rt = AeronSceneInternal_CreateColorRt(AERON_TEXTURE_FORMAT_R8G8_UNORM, s->ao_rt_w, s->ao_rt_h,
+	s->ao_blur_rt = AeronSceneInternal_CreateColorRt(AERON_TEXTURE_FORMAT_RGBA8_UNORM, s->ao_rt_w, s->ao_rt_h,
 													 "scene.visibility_blur");
 
 	if (!s->ssao_pipeline || !s->ssao_receiver_local_pipeline || !s->ao_rt || !s->ao_blur_rt) {
@@ -598,6 +599,11 @@ int AeronScenePost_RunSsao(struct AeronScene3D* s, AeronCommandBuffer* cmd, int 
 		su.visibility_params[0] = ao_enabled ? 1.0f : 0.0f;
 		su.visibility_params[1] =
 			receiver_local_pass || receiver_local_mode == AERON_SHADOW_RECEIVER_LOCAL_UNSHADOWED ? 1.0f : 0.0f;
+		/* The key light's shadow 1 m out, in the first probe set's scale. */
+		su.visibility_params[2] =
+			s->probe_key_shadow && s->probe_set_count > 0 && s->probe_sets[0].metres_per_unit > 0.0f
+				? 1.0f / s->probe_sets[0].metres_per_unit
+				: 0.0f;
 		float view_rot[9];
 		AeronSceneInternal_QuatToMat3(s->camera.ori, view_rot);
 		for (int row = 0; row < 3; row++) {

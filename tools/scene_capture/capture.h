@@ -69,6 +69,9 @@ typedef struct CaptureGameScene {
 	/* >= 0: the sun is in the probe sets' bake and its shadow removes this
 	 * share of the probe light (the game's hangar ceiling light); < 0: off. */
 	float key_probe_shadow;
+	/* With key_probe_shadow: its shadow takes the probe light from its side
+	 * whichever way surfaces face (else only as they face it, N.L). */
+	int key_shadow_all_sides;
 	/* FSR temporal upscaling, as the game's temporal_upscaling settings;
 	 * benchmarks only (output depends on frame history), without MSAA. */
 	AeronTemporalMode        temporal_mode;
