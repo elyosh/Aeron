@@ -257,7 +257,6 @@ set(AERON_SHADER_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_probe_occupancy_compose.comp.hlsl
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_probe_occupancy_downsample.comp.hlsl
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_planar_reflection_resolve.comp.hlsl
-    ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_planar_reflection_downsample.comp.hlsl
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_directional_shadow.vert.hlsl
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_directional_shadow.frag.hlsl
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_directional_shadow_mask.vert.hlsl

@@ -41,12 +41,6 @@ typedef struct ResolveUniform {
 	int32_t region[4];   /* the texels to write: x0, y0, x1, y1 (left half) */
 } ResolveUniform;
 
-/* Mirrors scene_planar_reflection_downsample.comp.hlsl. */
-typedef struct DownsampleUniform {
-	int32_t region[4]; /* the level's texels to write: x0, y0, x1, y1 (left half) */
-	int32_t params[4]; /* x: the level's half width; y: the level read, one finer */
-} DownsampleUniform;
-
 static int align_up(int v, int a) { return (v + a - 1) / a * a; }
 
 static void mat4_mul(float out[16], const float a[16], const float b[16]) {
@@ -138,13 +132,11 @@ static void release_targets(AeronScenePlanarReflection* p) {
 	Aeron_DestroyRenderTarget(p->color);
 	Aeron_DestroyDepthTarget(p->depth);
 	Aeron_DestroyTexture(p->image);
-	Aeron_DestroyTexture(p->staging);
-	p->color   = NULL;
-	p->depth   = NULL;
-	p->image   = NULL;
-	p->staging = NULL;
-	p->width   = 0;
-	p->height  = 0;
+	p->color  = NULL;
+	p->depth  = NULL;
+	p->image  = NULL;
+	p->width  = 0;
+	p->height = 0;
 }
 
 void AeronScenePlanarReflection_Release(AeronScene3D* s) {
@@ -154,7 +146,6 @@ void AeronScenePlanarReflection_Release(AeronScene3D* s) {
 	AeronScenePlanarReflection* p = &s->planar_reflection;
 	release_targets(p);
 	Aeron_DestroyComputePipeline(p->resolve);
-	Aeron_DestroyComputePipeline(p->downsample);
 	Aeron_DestroySampler(p->sampler);
 	memset(p, 0, sizeof *p);
 }
@@ -230,19 +221,10 @@ static int ensure_targets(AeronScene3D* s) {
 		.height     = height,
 		.mip_count  = PLANAR_MIPS,
 		.format     = AERON_TEXTURE_FORMAT_RGBA16_FLOAT,
-		.usage      = AERON_TEXTURE_USAGE_SAMPLED | AERON_TEXTURE_USAGE_TRANSFER_DST |
-					  AERON_TEXTURE_USAGE_COMPUTE_STORAGE_WRITE,
+		.usage      = AERON_TEXTURE_USAGE_SAMPLED | AERON_TEXTURE_USAGE_COMPUTE_STORAGE_WRITE,
 		.debug_name = "scene.planar_reflection",
 	});
-	p->staging = Aeron_CreateTexture(&(AeronTextureDesc) {
-		.width      = half,
-		.height     = height / 2,
-		.mip_count  = PLANAR_MIPS - 1,
-		.format     = AERON_TEXTURE_FORMAT_RGBA16_FLOAT,
-		.usage      = AERON_TEXTURE_USAGE_COMPUTE_STORAGE_WRITE,
-		.debug_name = "scene.planar_reflection_staging",
-	});
-	if (!p->color || !p->depth || !p->image || !p->staging) {
+	if (!p->color || !p->depth || !p->image) {
 		release_targets(p);
 		return 0;
 	}
@@ -256,25 +238,14 @@ static int ensure_pipelines(AeronScenePlanarReflection* p) {
 		p->resolve = Aeron_CreateComputePipeline(&(AeronComputePipelineDesc) {
 			.name                            = "scene_planar_reflection_resolve.comp",
 			.sampler_count                   = 2,
-			.readwrite_storage_texture_count = 1,
+			.readwrite_storage_texture_count = PLANAR_MIPS,
 			.uniform_buffer_count            = 1,
 			.thread_count_x                  = PLANAR_THREADS,
 			.thread_count_y                  = PLANAR_THREADS,
 			.thread_count_z                  = 1,
 		});
 	}
-	if (!p->downsample) {
-		p->downsample = Aeron_CreateComputePipeline(&(AeronComputePipelineDesc) {
-			.name                            = "scene_planar_reflection_downsample.comp",
-			.sampler_count                   = 1,
-			.readwrite_storage_texture_count = 1,
-			.uniform_buffer_count            = 1,
-			.thread_count_x                  = PLANAR_THREADS,
-			.thread_count_y                  = PLANAR_THREADS,
-			.thread_count_z                  = 1,
-		});
-	}
-	return p->resolve && p->downsample;
+	return p->resolve != NULL;
 }
 
 static void disable(AeronScenePlanarReflection* p, const char* why) {
@@ -503,13 +474,17 @@ void AeronScenePlanarReflection_Render(AeronScene3D* s, AeronCommandBuffer* cmd)
 	p->screen[2] = hi[0] + PLANAR_READ;
 	p->screen[3] = hi[1] + PLANAR_READ;
 
-	/* A fresh image each frame: the last frame's floor, maybe still in
-	 * flight, reads the last one. The floor reads only the region written. */
-	AeronComputeTextureBinding level0  = { p->image, 0, 0, 1 };
-	AeronComputePass*          resolve = Aeron_BeginComputePass(&(AeronComputePassDesc) {
+	/* The image and its mips, each written by its own binding. A fresh
+	 * image each frame: the last frame's floor, maybe still in flight, reads
+	 * the last one. The floor reads only the region written. */
+	AeronComputeTextureBinding levels[PLANAR_MIPS];
+	for (int level = 0; level < PLANAR_MIPS; ++level) {
+		levels[level] = (AeronComputeTextureBinding) { p->image, (uint32_t)level, 0, level == 0 };
+	}
+	AeronComputePass* resolve = Aeron_BeginComputePass(&(AeronComputePassDesc) {
 		.command_buffer      = cmd,
-		.write_textures      = &level0,
-		.write_texture_count = 1,
+		.write_textures      = levels,
+		.write_texture_count = PLANAR_MIPS,
 		.debug_label         = "Planar reflection resolve",
 	});
 	if (!resolve) {
@@ -526,46 +501,5 @@ void AeronScenePlanarReflection_Render(AeronScene3D* s, AeronCommandBuffer* cmd)
 						  (uint32_t)(region[3] - region[1] + PLANAR_THREADS - 1) / PLANAR_THREADS, 1);
 	Aeron_EndComputePass(resolve);
 
-	for (int level = 1; level < PLANAR_MIPS; ++level) {
-		const int half_level = half >> level;
-		const int r[4] = { region[0] >> level, region[1] >> level, region[2] >> level, region[3] >> level };
-		AeronComputeTextureBinding out   = { p->staging, (uint32_t)(level - 1), 0, level == 1 };
-		AeronComputePass*          mpass = Aeron_BeginComputePass(&(AeronComputePassDesc) {
-			.command_buffer      = cmd,
-			.write_textures      = &out,
-			.write_texture_count = 1,
-			.debug_label         = "Planar reflection mip",
-		});
-		if (!mpass) {
-			disable(p, "its compute pass failed");
-			return;
-		}
-		DownsampleUniform du = { { r[0], r[1], r[2], r[3] }, { half_level, level - 1, 0, 0 } };
-		Aeron_BindComputePipeline(mpass, p->downsample);
-		Aeron_BindComputeTextureSampler(mpass, 0, p->image, AeronScenePlanarReflection_Sampler(s));
-		Aeron_BindComputeUniformData(mpass, 0, &du, sizeof du);
-		Aeron_DispatchCompute(mpass, (uint32_t)(r[2] - r[0] + PLANAR_THREADS - 1) / PLANAR_THREADS,
-							  (uint32_t)(r[3] - r[1] + PLANAR_THREADS - 1) / PLANAR_THREADS, 1);
-		Aeron_EndComputePass(mpass);
-		for (int side = 0; side < 2; ++side) {
-			const uint32_t x = (uint32_t)(r[0] + side * half_level);
-			if (!Aeron_CopyTextureCmd(cmd, &(AeronTextureCopyDesc) {
-											   .source                = p->staging,
-											   .source_mip_level      = (uint32_t)(level - 1),
-											   .source_x              = x,
-											   .source_y              = (uint32_t)r[1],
-											   .destination           = p->image,
-											   .destination_mip_level = (uint32_t)level,
-											   .destination_x         = x,
-											   .destination_y         = (uint32_t)r[1],
-											   .width                 = (uint32_t)(r[2] - r[0]),
-											   .height                = (uint32_t)(r[3] - r[1]),
-											   .depth                 = 1,
-										   })) {
-				disable(p, "its mip copy failed");
-				return;
-			}
-		}
-	}
 	p->active = 1;
 }

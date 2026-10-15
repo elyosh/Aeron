@@ -175,11 +175,9 @@ typedef struct AeronSceneOccluder {
 typedef struct AeronScenePlanarReflection {
 	AeronRenderTarget*    color;
 	AeronDepthTarget*     depth;
-	AeronTexture*         image;   /* 2 layers: colour x coverage, coverage; distance x coverage */
-	AeronTexture*         staging; /* the mips above the first, for their copies */
+	AeronTexture*         image; /* 2 layers: colour x coverage, coverage; distance x coverage */
 	AeronTexture*         placeholder;
-	AeronComputePipeline* resolve;
-	AeronComputePipeline* downsample;
+	AeronComputePipeline* resolve; /* the image and its mips, in one pass */
 	AeronSampler*         sampler;
 	int                   width, height;
 	int                   failed;
