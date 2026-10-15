@@ -9,7 +9,9 @@
  * radiance times direction) and in the right half the L1 of the radiance
  * without the occluders. The probe shaders take the ratio of the two's
  * irradiance for a normal, so the cube's level does not matter. Cells
- * farther than the reach from every occluder skip the rays. */
+ * farther than the reach from every occluder skip the rays. When the build
+ * follows a change, a cell none of whose rays meets what changed would
+ * come out the same: it is left as it is. */
 
 cbuffer ProbeOcclusionGrid : register(b0, space2)
 {
@@ -20,6 +22,7 @@ cbuffer ProbeOcclusionGrid : register(b0, space2)
     float4 occluders_lo;   /* the occluders' bounds (model metres); w: reach */
     float4 occluders_hi;   /* w: the probe cube mip to read */
     float4 boxes[8];       /* lo, hi pairs (model metres); lo.w: 1 when used */
+    float4 changes[8];     /* what changed, as boxes; none: every cell is built */
 };
 
 Texture3D<float>         g_occupancy           : register(t0, space0);
@@ -45,6 +48,32 @@ float probe_layer(float3 pm)
     uint probe = word & 0xFFu;
     if (probe == 0u) return -1.0f;
     return (float)g_probe_set[2u + 5u * (probe - 1u) + 1u].w;
+}
+
+/* Ray `k` of the DIRECTIONS spread over the sphere. */
+float3 direction(uint k)
+{
+    float h   = ((float)k + 0.5f) / (float)DIRECTIONS;
+    float z   = 1.0f - 2.0f * h;
+    float r   = sqrt(saturate(1.0f - z * z));
+    float phi = 3.14159265f * (1.0f + sqrt(5.0f)) * ((float)k + 0.5f);
+    return float3(r * cos(phi), r * sin(phi), z);
+}
+
+/* Whether the ray from `pm` along `d`, over the length blocked() reads,
+ * meets one of `changes`. */
+bool meets_change(float3 pm, float3 d)
+{
+    float3 inv = 1.0f / select(abs(d) > 1.0e-6f, d, select(d >= 0.0f, 1.0e-6f, -1.0e-6f));
+    [unroll] for (uint b = 0u; b < 4u; ++b) {
+        if (changes[2u * b].w == 0.0f) continue;
+        float3 ta = (changes[2u * b].xyz - pm) * inv;
+        float3 tb = (changes[2u * b + 1u].xyz - pm) * inv;
+        float  e  = max(max(min(ta.x, tb.x), min(ta.y, tb.y)), min(ta.z, tb.z));
+        float  l  = min(min(max(ta.x, tb.x), max(ta.y, tb.y)), max(ta.z, tb.z));
+        if (l >= max(e, 0.45f) && e <= 40.0f) return true;
+    }
+    return false;
 }
 
 /* Whether the ray from `pm` along `d` meets an occupied cell. */
@@ -86,16 +115,19 @@ void main(uint3 id : SV_DispatchThreadID)
     float3 pm        = origin_cell.xyz + ((float3)cell + 0.5f) * grid_cell;
     float  reach     = occluders_lo.w;
     bool   near      = all(pm >= occluders_lo.xyz - reach) && all(pm <= occluders_hi.xyz + reach);
+    if (near && changes[0].w != 0.0f) {
+        bool changed = false;
+        [loop] for (uint k = 0u; k < DIRECTIONS && !changed; ++k) {
+            changed = meets_change(pm, direction(k));
+        }
+        if (!changed) return;
+    }
     float  layer     = probe_layer(pm);
 
     float4 seen  = float4(0.0f, 0.0f, 0.0f, 0.0f);
     float4 whole = float4(0.0f, 0.0f, 0.0f, 0.0f);
     [loop] for (uint k = 0u; k < DIRECTIONS; ++k) {
-        float  h   = ((float)k + 0.5f) / (float)DIRECTIONS;
-        float  z   = 1.0f - 2.0f * h;
-        float  r   = sqrt(saturate(1.0f - z * z));
-        float  phi = 3.14159265f * (1.0f + sqrt(5.0f)) * ((float)k + 0.5f);
-        float3 d   = float3(r * cos(phi), r * sin(phi), z);
+        float3 d        = direction(k);
         float  radiance = 1.0f;
         if (layer >= 0.0f) {
             float3 rgb = g_probe_cubes.SampleLevel(g_probe_cubes_sampler, float4(d.x, d.z, d.y, layer),

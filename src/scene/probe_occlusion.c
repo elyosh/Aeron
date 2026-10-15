@@ -70,6 +70,9 @@ typedef struct OcclusionGridUniform {
 	float    occluders_lo[4];                             /* the occluders' bounds (model metres); w: reach */
 	float    occluders_hi[4];                             /* w: the probe cube mip to read */
 	float boxes[AERON_SCENE_OCCLUSION_CONE_BOXES * 2][4]; /* lo, hi pairs (model metres); lo.w: 1 when used */
+	/* What changed since the cells were built, as `boxes`: a cell none of
+	 * whose rays meets them keeps its value. None: every cell is built. */
+	float changes[AERON_SCENE_OCCLUSION_CONE_BOXES * 2][4];
 } OcclusionGridUniform;
 
 typedef struct Crossing {
@@ -483,19 +486,9 @@ static float box_volume(const float lo[3], const float hi[3]) {
 	return (hi[0] - lo[0]) * (hi[1] - lo[1]) * (hi[2] - lo[2]);
 }
 
-/* The occluders' bounds grown by `grow` metres, the two whose union adds the
- * least volume merged until AERON_SCENE_OCCLUSION_CONE_BOXES remain; their
- * count. */
-static int merged_boxes(const AeronSceneProbeOcclusion* o, float grow,
-						float lo[AERON_SCENE_OCCLUSION_MAX_OCCLUDERS][3],
-						float hi[AERON_SCENE_OCCLUSION_MAX_OCCLUDERS][3]) {
-	int count = o->occluder_count;
-	for (int i = 0; i < count; ++i) {
-		for (int k = 0; k < 3; ++k) {
-			lo[i][k] = o->occluders[i].lo[k] - grow;
-			hi[i][k] = o->occluders[i].hi[k] + grow;
-		}
-	}
+/* The boxes [lo, hi), the two whose union adds the least volume merged
+ * until AERON_SCENE_OCCLUSION_CONE_BOXES remain; their count. */
+static int merge_boxes(float (*lo)[3], float (*hi)[3], int count) {
 	while (count > AERON_SCENE_OCCLUSION_CONE_BOXES) {
 		int   best_a = 0, best_b = 1;
 		float best = FLT_MAX;
@@ -520,6 +513,19 @@ static int merged_boxes(const AeronSceneProbeOcclusion* o, float grow,
 		memcpy(hi[best_b], hi[count], sizeof hi[best_b]);
 	}
 	return count;
+}
+
+/* The occluders' bounds grown by `grow` metres, merged (merge_boxes). */
+static int merged_boxes(const AeronSceneProbeOcclusion* o, float grow,
+						float lo[AERON_SCENE_OCCLUSION_MAX_OCCLUDERS][3],
+						float hi[AERON_SCENE_OCCLUSION_MAX_OCCLUDERS][3]) {
+	for (int i = 0; i < o->occluder_count; ++i) {
+		for (int k = 0; k < 3; ++k) {
+			lo[i][k] = o->occluders[i].lo[k] - grow;
+			hi[i][k] = o->occluders[i].hi[k] + grow;
+		}
+	}
+	return merge_boxes(lo, hi, o->occluder_count);
 }
 
 void AeronSceneProbeOcclusion_OccupancyMapping(const AeronScene3D* s, float rows[3][4], float dims[4],
@@ -770,9 +776,12 @@ static int ensure_pipeline(AeronSceneProbeOcclusion* o) {
 	return o->pipeline != NULL;
 }
 
-/* Rebuilds the grid's cells within the model-metre box [lo, hi]. */
+/* Rebuilds the grid's cells within the model-metre box [lo, hi] whose rays
+ * meet one of the `change_count` boxes [change_lo, change_hi] (every cell
+ * without any). */
 static int build_grid(AeronScene3D* s, AeronCommandBuffer* cmd, const AeronSceneProbeSet* set,
-					  const float lo[3], const float hi[3]) {
+					  const float lo[3], const float   hi[3], const float (*change_lo)[3],
+					  const float (*change_hi)[3], int change_count) {
 	AeronSceneProbeOcclusion*      o   = &s->probe_occlusion;
 	const AeronEnvironmentPackage* pkg = set->package;
 	OcclusionGridUniform           u   = { 0 };
@@ -810,6 +819,11 @@ static int build_grid(AeronScene3D* s, AeronCommandBuffer* cmd, const AeronScene
 		memcpy(u.boxes[2 * b], blo[b], sizeof blo[b]);
 		memcpy(u.boxes[2 * b + 1], bhi[b], sizeof bhi[b]);
 		u.boxes[2 * b][3] = 1.0f;
+	}
+	for (int b = 0; b < change_count; ++b) {
+		memcpy(u.changes[2 * b], change_lo[b], sizeof change_lo[b]);
+		memcpy(u.changes[2 * b + 1], change_hi[b], sizeof change_hi[b]);
+		u.changes[2 * b][3] = 1.0f;
 	}
 
 	AeronComputeTextureBinding output = { o->grid, 0, 0, 0 };
@@ -1291,8 +1305,32 @@ void AeronSceneProbeOcclusion_Update(AeronScene3D* s, AeronCommandBuffer* cmd) {
 		}
 		box_list_add(&grids, glo, ghi);
 	}
+	/* What changed: the cells of the removed and changed occluders, which
+	 * reach two cells past their bounds. A cell none of whose rays meets
+	 * them would come out the same. */
+	float change_lo[2 * AERON_SCENE_OCCLUSION_MAX_OCCLUDERS + 1][3];
+	float change_hi[2 * AERON_SCENE_OCCLUSION_MAX_OCCLUDERS + 1][3];
+	int   change_count = 0;
+	if (o->valid) {
+		const float grow = 2.0f * AERON_SCENE_OCCUPANCY_CELL;
+		for (int c = 0; c < clears.count + count; ++c) {
+			const int    cleared = c < clears.count;
+			const float* blo     = cleared ? clears.lo[c] : current[c - clears.count].lo;
+			const float* bhi     = cleared ? clears.hi[c] : current[c - clears.count].hi;
+			if (!cleared && !changed[c - clears.count]) {
+				continue;
+			}
+			for (int k = 0; k < 3; ++k) {
+				change_lo[change_count][k] = blo[k] - grow;
+				change_hi[change_count][k] = bhi[k] + grow;
+			}
+			++change_count;
+		}
+		change_count = merge_boxes(change_lo, change_hi, change_count);
+	}
 	for (int g = 0; g < grids.count; ++g) {
-		if (!build_grid(s, cmd, set, grids.lo[g], grids.hi[g])) {
+		if (!build_grid(s, cmd, set, grids.lo[g], grids.hi[g], (const float (*)[3])change_lo,
+						(const float (*)[3])change_hi, change_count)) {
 			disable(o, "the grid build failed");
 			return;
 		}
