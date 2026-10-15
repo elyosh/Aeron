@@ -503,7 +503,9 @@ void AeronScenePlanarReflection_Render(AeronScene3D* s, AeronCommandBuffer* cmd)
 	p->screen[2] = hi[0] + PLANAR_READ;
 	p->screen[3] = hi[1] + PLANAR_READ;
 
-	AeronComputeTextureBinding level0  = { p->image, 0, 0, 0 };
+	/* A fresh image each frame: the last frame's floor, maybe still in
+	 * flight, reads the last one. The floor reads only the region written. */
+	AeronComputeTextureBinding level0  = { p->image, 0, 0, 1 };
 	AeronComputePass*          resolve = Aeron_BeginComputePass(&(AeronComputePassDesc) {
 		.command_buffer      = cmd,
 		.write_textures      = &level0,
@@ -527,7 +529,7 @@ void AeronScenePlanarReflection_Render(AeronScene3D* s, AeronCommandBuffer* cmd)
 	for (int level = 1; level < PLANAR_MIPS; ++level) {
 		const int half_level = half >> level;
 		const int r[4] = { region[0] >> level, region[1] >> level, region[2] >> level, region[3] >> level };
-		AeronComputeTextureBinding out   = { p->staging, (uint32_t)(level - 1), 0, 0 };
+		AeronComputeTextureBinding out   = { p->staging, (uint32_t)(level - 1), 0, level == 1 };
 		AeronComputePass*          mpass = Aeron_BeginComputePass(&(AeronComputePassDesc) {
 			.command_buffer      = cmd,
 			.write_textures      = &out,

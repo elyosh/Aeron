@@ -615,10 +615,12 @@ static int ensure_grids(AeronSceneProbeOcclusion* o, const AeronSceneProbeSet* s
 			.sampled    = 1,
 			.debug_name = "scene.probe_occupancy_views",
 		});
+		/* Dynamic: each build uploads to a fresh buffer, as a frame still in
+		 * flight may be reading the last build's. */
 		o->records = Aeron_CreateBuffer(&(AeronBufferDesc) {
 			.size         = AERON_SCENE_OCCLUSION_MAX_OCCLUDERS * (uint32_t)sizeof(ViewRecord),
 			.usage        = AERON_BUFFER_USAGE_COMPUTE_STORAGE_READ,
-			.memory_usage = AERON_MEMORY_USAGE_GPU_ONLY,
+			.memory_usage = AERON_MEMORY_USAGE_DYNAMIC,
 			.debug_name   = "scene.probe_occupancy_views",
 		});
 	} else {
@@ -896,6 +898,16 @@ static void cell_box(const AeronSceneProbeOcclusion* o, const int lo[3], const i
 	}
 }
 
+/* The occupancy cells [lo, hi) of a box cell_box gave: cell_range would
+ * widen it again, past the occluders drawn for it. */
+static void box_cells(const AeronSceneProbeOcclusion* o, const float blo[3], const float bhi[3], int lo[3],
+					  int hi[3]) {
+	for (int k = 0; k < 3; ++k) {
+		lo[k] = (int)lroundf((blo[k] - o->origin[k]) / AERON_SCENE_OCCUPANCY_CELL);
+		hi[k] = (int)lroundf((bhi[k] - o->origin[k]) / AERON_SCENE_OCCUPANCY_CELL);
+	}
+}
+
 /* The view along axis `a` from its high side (keeping the last surface
  * along it) or its low side (the first) of the model box [lo, hi]: world to
  * clip, row-major, depth 1 at the side it looks from, as the shadow views. */
@@ -1057,9 +1069,7 @@ static int gpu_build(AeronScene3D* s, AeronCommandBuffer* cmd, const AeronSceneP
 									AeronSceneProbeOcclusion_Sampler(s));
 	Aeron_BindComputeStorageBuffer(compose, 0, o->records);
 	for (int r = 0; r < regions.count; ++r) {
-		if (!cell_range(o, regions.lo[r], regions.hi[r], span, lo, hi)) {
-			continue;
-		}
+		box_cells(o, regions.lo[r], regions.hi[r], lo, hi);
 		ComposeUniform u = { { o->origin[0], o->origin[1], o->origin[2], cell },
 							 { lo[0], lo[1], lo[2], 0 },
 							 { hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2], count },
@@ -1079,7 +1089,9 @@ static int gpu_build(AeronScene3D* s, AeronCommandBuffer* cmd, const AeronSceneP
 			dims[k]   = o->occupancy_dims[k] >> level > 0 ? o->occupancy_dims[k] >> level : 1;
 			source[k] = o->occupancy_dims[k] >> (level - 1) > 0 ? o->occupancy_dims[k] >> (level - 1) : 1;
 		}
-		AeronComputeTextureBinding out  = { o->staging, (uint32_t)(level - 1), 0, 0 };
+		/* A frame still in flight may be copying the last build's levels:
+		 * the first level starts on a fresh staging texture. */
+		AeronComputeTextureBinding out  = { o->staging, (uint32_t)(level - 1), 0, level == 1 };
 		AeronComputePass*          pass = Aeron_BeginComputePass(&(AeronComputePassDesc) {
 			.command_buffer      = cmd,
 			.write_textures      = &out,
@@ -1092,10 +1104,7 @@ static int gpu_build(AeronScene3D* s, AeronCommandBuffer* cmd, const AeronSceneP
 		Aeron_BindComputePipeline(pass, o->downsample);
 		Aeron_BindComputeTextureSampler(pass, 0, o->occupancy, AeronSceneProbeOcclusion_Sampler(s));
 		for (int r = 0; r < regions.count; ++r) {
-			region_hi[r][0] = 0;
-			if (!cell_range(o, regions.lo[r], regions.hi[r], span, lo, hi)) {
-				continue;
-			}
+			box_cells(o, regions.lo[r], regions.hi[r], lo, hi);
 			for (int k = 0; k < 3; ++k) {
 				region_lo[r][k] = lo[k] >> level;
 				region_hi[r][k] = (hi[k] + (1 << level) - 1) >> level;
@@ -1114,9 +1123,6 @@ static int gpu_build(AeronScene3D* s, AeronCommandBuffer* cmd, const AeronSceneP
 		}
 		Aeron_EndComputePass(pass);
 		for (int r = 0; r < regions.count; ++r) {
-			if (region_hi[r][0] <= 0) {
-				continue;
-			}
 			if (!Aeron_CopyTextureCmd(cmd, &(AeronTextureCopyDesc) {
 											   .source                = o->staging,
 											   .source_mip_level      = (uint32_t)(level - 1),
