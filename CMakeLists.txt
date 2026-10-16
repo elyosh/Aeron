@@ -981,6 +981,7 @@ endif()
 add_subdirectory(tools/imgbake)
 add_subdirectory(tools/gltf_cook)
 add_subdirectory(tools/fontbake)
+add_subdirectory(tools/brdf_lut_gen)
 
 add_library(aeron_asset STATIC
     src/asset/opt_model.c
