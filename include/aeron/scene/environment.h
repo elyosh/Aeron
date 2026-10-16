@@ -7,11 +7,12 @@
  * A package is a named definition in a `packages:` YAML map. A `full`
  * package owns a visible sky (radiance cube), diffuse and specular
  * image-based lighting cubes, and up to four analytical directional lights,
- * each drawn as a visible sun. A `lighting` package only lights an enclosed
- * space with a diffuse cube. A `probes` package belongs to a model: its
- * reflection probes (a cube array) and its irradiance grid, placed in the
- * model's frame, blended with the scene's environment where they do not
- * apply. Texture paths are kept as written; the game decides which VFS
+ * each drawn as a visible sun. A `lighting` package lights a space without
+ * drawing a sky: an ambient fill, optional diffuse and specular cubes, and
+ * optional directional lights that replace the game's own, none drawn as a
+ * sun. A `probes` package belongs to a model: its reflection probes (a cube
+ * array) and its irradiance grid, placed in the model's frame, blended with
+ * the scene's environment where they do not apply. Texture paths are kept as written; the game decides which VFS
  * root and prefix they resolve against.
  *
  * Cube-local directions use the authored cubemap frame: +X right, +Y up,
@@ -109,16 +110,20 @@ typedef struct AeronEnvironmentDefinition {
 	char                            name[AERON_ENV_NAME_MAX];
 	AeronEnvironmentKind            kind;
 	char                            radiance_path[AERON_ENV_PATH_MAX]; /* empty for lighting packages */
-	char                            diffuse_path[AERON_ENV_PATH_MAX];
+	char                            diffuse_path[AERON_ENV_PATH_MAX];  /* empty: no diffuse cube (lighting) */
 	char                            specular_path[AERON_ENV_PATH_MAX]; /* empty: no reflections (lighting) */
 	float                           intensity; /* scales the sky, diffuse and specular together */
-	float                           diffuse_strength;
+	float                           diffuse_strength;  /* 0 without a diffuse cube */
 	float                           specular_strength; /* 0 without a specular cube */
 	float                           ambient_fill[3];   /* linear radiance from every direction */
 	float                           rotation_degrees[3]; /* yaw, pitch, roll; each in [0, 360) */
 	AeronEnvironmentLightDefinition lights[AERON_ENV_MAX_LIGHTS];
 	uint32_t                        light_count;
 	int32_t                         primary_light_index; /* -1 when none */
+	/* The package gives `directional_lights` (always for full packages): its
+	 * lights, possibly none, replace the game's. A lighting package without
+	 * the field keeps the game's lights. */
+	bool                            has_directional_lights;
 	/* Probes packages: layer k of the cube array is probe k; the grid is
 	 * an axis-aligned box of resolution points, sampled as Blender's
 	 * volume probe (point i at (i + 1) / (resolution + 1) of the box). */
@@ -260,8 +265,8 @@ typedef struct AeronEnvironmentPackage {
 	 * debug overrides. Texture paths are those of the definition. */
 	AeronEnvironmentDefinition settings;
 	AeronTexture*              radiance; /* NULL for lighting packages */
-	AeronTexture*              diffuse;
-	AeronTexture*              specular; /* NULL for lighting packages */
+	AeronTexture*              diffuse;  /* NULL for a lighting package without one */
+	AeronTexture*              specular; /* NULL for a lighting package without one */
 	uint32_t                   specular_mip_count;
 	AeronSampler*              sampler;          /* the library's environment sampler */
 	float                      world_to_cube[9]; /* row-major: Q^T * B */

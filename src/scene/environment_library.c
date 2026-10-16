@@ -501,9 +501,12 @@ static bool build_slot(AeronEnvironmentLibrary* library, AeronCommandBuffer* cmd
 	EnvTextureKind kinds[3 + AERON_ENV_MAX_LIGHTS];
 	int32_t        indices[3 + AERON_ENV_MAX_LIGHTS];
 	int            count = 0;
-	paths[count]         = def->diffuse_path;
-	kinds[count++]       = ENV_TEXTURE_CUBE;
-	int specular = -1, radiance = -1;
+	int            diffuse = -1, specular = -1, radiance = -1;
+	if (def->diffuse_path[0]) {
+		diffuse        = count;
+		paths[count]   = def->diffuse_path;
+		kinds[count++] = ENV_TEXTURE_CUBE;
+	}
 	if (def->specular_path[0]) {
 		specular       = count;
 		paths[count]   = def->specular_path;
@@ -539,7 +542,8 @@ static bool build_slot(AeronEnvironmentLibrary* library, AeronCommandBuffer* cmd
 	}
 	if (!available)
 		return false;
-	slot->package.diffuse = list->items[indices[0]].texture;
+	if (diffuse >= 0)
+		slot->package.diffuse = list->items[indices[diffuse]].texture;
 	slot->package.sampler = library->sampler;
 	if (specular >= 0) {
 		slot->package.specular           = list->items[indices[specular]].texture;

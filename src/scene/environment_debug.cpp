@@ -122,7 +122,9 @@ void slot_editor(AeronEnvironmentLibrary* library, EnvSlot* slot) {
 	/* One scale for everything derived from the sky image; the strengths
 	 * are relative adjustments, 1 = physically consistent. */
 	changed |= ImGui::SliderFloat("Intensity", &s->intensity, 0.0f, 16.0f, "%.3f");
-	changed |= ImGui::SliderFloat("Diffuse strength (relative)", &s->diffuse_strength, 0.0f, 4.0f, "%.3f");
+	if (s->diffuse_path[0] || s->kind == AERON_ENV_KIND_PROBES)
+		changed |=
+			ImGui::SliderFloat("Diffuse strength (relative)", &s->diffuse_strength, 0.0f, 4.0f, "%.3f");
 	if (s->specular_path[0] || s->kind == AERON_ENV_KIND_PROBES)
 		changed |=
 			ImGui::SliderFloat("Specular strength (relative)", &s->specular_strength, 0.0f, 4.0f, "%.3f");
@@ -217,6 +219,8 @@ void draw_tool(int* open, void* user) {
 		const AeronEnvironmentDefinition* d = slot->package.definition;
 		static const char* const          kinds[] = { "full", "lighting", "probes" };
 		ImGui::Text("Kind: %s", kinds[d->kind]);
+		if (d->kind == AERON_ENV_KIND_LIGHTING)
+			ImGui::Text("Directional lights: %s", d->has_directional_lights ? "the package's" : "the game's");
 		texture_row(library, "Radiance", d->radiance_path);
 		texture_row(library, "Diffuse", d->diffuse_path);
 		texture_row(library, "Specular", d->specular_path);
