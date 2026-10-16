@@ -47,6 +47,9 @@ int  AeronDx5_IsClassicFlightRenderingSuppressed(void);
  * it. A suppressed frame presented when suppression lifts then shows the
  * clear colour without that frame's software draws. */
 void AeronDx5_SetClassicFlightFrameActive(int active);
+/* Whether the current classic flight frame will never be shown: inside the
+ * marked flight render while classic rendering is suppressed. */
+int AeronDx5_IsClassicFlightFrameDiscarded(void);
 
 /* Forces submission of the final retained classic frame, including while normal
  * classic presentation is suppressed. Does not advance the flip chain. */

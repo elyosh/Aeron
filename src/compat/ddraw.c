@@ -129,6 +129,8 @@ static int DDShim_InDiscardedFlightFrame(void) {
 	return g_ddClassicFlightRenderingSuppressed && g_ddClassicFlightFrameActive;
 }
 
+int AeronDx5_IsClassicFlightFrameDiscarded(void) { return DDShim_InDiscardedFlightFrame(); }
+
 /* Applies the clear DDShim_ClearRenderTargetColor recorded, unless the
  * staging is still used only by a suppressed flight frame. */
 static int DDShim_ApplyRecordedStagingClear(DDrawSurfaceShim* s) {
