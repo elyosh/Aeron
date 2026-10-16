@@ -968,6 +968,10 @@ static AeronSceneMesh* mesh_create(AeronCommandBuffer* cmd, const AeronFlightMod
 		s->component_bound_max[i][0] = component->bounds.max.x;
 		s->component_bound_max[i][1] = component->bounds.max.y;
 		s->component_bound_max[i][2] = component->bounds.max.z;
+		for (int k = 0; k < 3; k++) {
+			s->component_bound_center[i][k] = 0.5f * (s->component_bound_min[i][k] + s->component_bound_max[i][k]);
+			s->component_bound_half[i][k]   = 0.5f * (s->component_bound_max[i][k] - s->component_bound_min[i][k]);
+		}
 	}
 	for (uint32_t i = 0; i < s->component_count; i++) {
 		if (s->component_rot[i].has_rotation) {

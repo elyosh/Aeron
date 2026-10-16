@@ -208,32 +208,6 @@ static void instance_box_reach(const float model[3][4], const float* const axes[
 	}
 }
 
-/* Widens lo/hi along each axis to hold one component's box. */
-static void instance_box_add(const AeronSceneMesh* mesh, uint32_t component, const float model[3][4],
-							 const float reach[3][3], const float* const axes[3], float lo[3], float hi[3]) {
-	float local_center[3];
-	float local_half[3];
-	for (int k = 0; k < 3; k++) {
-		local_center[k] = 0.5f * (mesh->component_bound_min[component][k] + mesh->component_bound_max[component][k]);
-		local_half[k]   = 0.5f * (mesh->component_bound_max[component][k] - mesh->component_bound_min[component][k]);
-	}
-	float world_center[3];
-	for (int r = 0; r < 3; r++) {
-		world_center[r] = model[r][0] * local_center[0] + model[r][1] * local_center[1] +
-						  model[r][2] * local_center[2] + model[r][3];
-	}
-	for (int axis = 0; axis < 3; axis++) {
-		const float* a      = axes[axis];
-		const float  center = world_center[0] * a[0] + world_center[1] * a[1] + world_center[2] * a[2];
-		float        half   = 0.0f;
-		for (int k = 0; k < 3; k++) {
-			half += reach[axis][k] * local_half[k];
-		}
-		lo[axis] = fminf(lo[axis], center - half);
-		hi[axis] = fmaxf(hi[axis], center + half);
-	}
-}
-
 int AeronSceneInternal_InstanceBox(const AeronSceneMeshInstance* instance, const float x_axis[3],
 								   const float y_axis[3], const float z_axis[3], AeronSceneInstanceBox* out) {
 	const AeronSceneMesh* mesh = instance ? instance->mesh : NULL;
@@ -259,15 +233,33 @@ int AeronSceneInternal_InstanceBox(const AeronSceneMeshInstance* instance, const
 		if (table && table->visibility_packed[row >> 2][row & 3] < 0.5f) {
 			continue;
 		}
-		if (!table || memcmp(table->rows[row], instance_box_identity_row, sizeof instance_box_identity_row) == 0) {
-			instance_box_add(mesh, component, shared_model, shared_reach, axes, lo, hi);
-			continue;
+		const float(*model)[4] = shared_model;
+		const float(*reach)[3] = shared_reach;
+		float own_model[3][4];
+		float own_reach[3][3];
+		if (table && memcmp(table->rows[row], instance_box_identity_row, sizeof instance_box_identity_row) != 0) {
+			instance_box_model(instance->transform, (const float(*)[4])table->rows[row], own_model);
+			instance_box_reach(own_model, axes, own_reach);
+			model = own_model;
+			reach = own_reach;
 		}
-		float model[3][4];
-		float reach[3][3];
-		instance_box_model(instance->transform, (const float (*)[4])table->rows[row], model);
-		instance_box_reach(model, axes, reach);
-		instance_box_add(mesh, component, model, reach, axes, lo, hi);
+		const float* local_center = mesh->component_bound_center[component];
+		const float* local_half   = mesh->component_bound_half[component];
+		float        world_center[3];
+		for (int r = 0; r < 3; r++) {
+			world_center[r] = model[r][0] * local_center[0] + model[r][1] * local_center[1] +
+							  model[r][2] * local_center[2] + model[r][3];
+		}
+		for (int axis = 0; axis < 3; axis++) {
+			const float* a      = axes[axis];
+			const float  center = world_center[0] * a[0] + world_center[1] * a[1] + world_center[2] * a[2];
+			float        half   = 0.0f;
+			for (int k = 0; k < 3; k++) {
+				half += reach[axis][k] * local_half[k];
+			}
+			lo[axis] = fminf(lo[axis], center - half);
+			hi[axis] = fmaxf(hi[axis], center + half);
+		}
 	}
 	if (!(lo[0] <= hi[0] && lo[1] <= hi[1] && lo[2] <= hi[2])) {
 		return 0;

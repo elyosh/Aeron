@@ -129,6 +129,10 @@ typedef struct AeronSceneMesh {
 	 * (before its mesh-table row); the model bounds are their union. */
 	float component_bound_min[AERON_MAX_MESH_COMPONENTS][3];
 	float component_bound_max[AERON_MAX_MESH_COMPONENTS][3];
+	/* The same boxes as centre and half size, computed once for the
+	 * per-frame instance boxes (AeronSceneInternal_InstanceBox). */
+	float component_bound_center[AERON_MAX_MESH_COMPONENTS][3];
+	float component_bound_half[AERON_MAX_MESH_COMPONENTS][3];
 	/* Engine glows copied from the source flight model (owned). */
 	AeronFlightEngineGlow* engine_glows;
 	uint32_t               engine_glow_count;
