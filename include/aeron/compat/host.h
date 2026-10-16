@@ -40,6 +40,14 @@ void AeronDx5_ResetPresentationState(void);
 void AeronDx5_SetClassicFlightRenderingSuppressed(int suppressed);
 int  AeronDx5_IsClassicFlightRenderingSuppressed(void);
 
+/* Marks the recovered per-frame flight render: 1 before it, 0 after it.
+ * While classic rendering is suppressed, that frame is never shown, so a
+ * render-target clear inside it only records the fill. The CPU copy of the
+ * surface is cleared later, and only if something outside such a frame uses
+ * it. A suppressed frame presented when suppression lifts then shows the
+ * clear colour without that frame's software draws. */
+void AeronDx5_SetClassicFlightFrameActive(int active);
+
 /* Forces submission of the final retained classic frame, including while normal
  * classic presentation is suppressed. Does not advance the flip chain. */
 void AeronDx5_ForceSubmitRetainedFrame(void);

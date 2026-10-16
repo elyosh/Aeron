@@ -69,6 +69,11 @@ typedef struct DDrawSurfaceShim {
 	AeronDepthTarget*        depth;
 	int                      cpu_dirty;
 	int                      gpu_dirty;
+	/* A clear of the CPU staging recorded during a suppressed classic flight
+	 * frame, applied before anything outside such a frame uses the staging
+	 * (DDShim_ClearRenderTargetColor). */
+	int                      staging_clear_pending;
+	uint32_t                 staging_clear_fill;
 	int                      pending_depth_clear;       /* DDBLT_DEPTHFILL -> next BeginScene */
 	float                    pending_depth_clear_value; /* normalized depth clear value */
 	uint8_t*                 pending_depth_upload_data; /* packed D16 CPU depth rectangle */

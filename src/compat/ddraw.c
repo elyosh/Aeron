@@ -84,11 +84,13 @@ typedef enum DDShimPresentKind {
 static DDrawSurfaceShim* g_ddLastPresented;
 static AeronSurface*     g_ddRetainedCpuPresentation;
 static int               g_ddClassicFlightRenderingSuppressed;
+static int               g_ddClassicFlightFrameActive;
 static int               g_ddSuppressedPresentPending;
 static DDShimPresentKind g_ddSuppressedPresentKind;
 static uint64_t          g_ddClassicFlightFrameSerial;
 static uint64_t          g_ddPaletteRevision;
 
+static int DDShim_CreateRenderTargetStaging(DDrawSurfaceShim* s);
 static int DDShim_EnsureRenderTargetStaging(DDrawSurfaceShim* s);
 
 /* SetEntries updates the shared object; SDL surfaces cache separate copies. */
@@ -119,6 +121,24 @@ void AeronDx5_SetClassicFlightRenderingSuppressed(int suppressed) {
 
 int AeronDx5_IsClassicFlightRenderingSuppressed(void) { return g_ddClassicFlightRenderingSuppressed; }
 
+void AeronDx5_SetClassicFlightFrameActive(int active) { g_ddClassicFlightFrameActive = active ? 1 : 0; }
+
+/* Inside a suppressed flight frame nothing shows the CPU staging, so its
+ * clear can wait: the software draws there land on the old pixels. */
+static int DDShim_InDiscardedFlightFrame(void) {
+	return g_ddClassicFlightRenderingSuppressed && g_ddClassicFlightFrameActive;
+}
+
+/* Applies the clear DDShim_ClearRenderTargetColor recorded, unless the
+ * staging is still used only by a suppressed flight frame. */
+static int DDShim_ApplyRecordedStagingClear(DDrawSurfaceShim* s) {
+	if (!s->staging_clear_pending || DDShim_InDiscardedFlightFrame()) {
+		return 1;
+	}
+	s->staging_clear_pending = 0;
+	return AeronSurface_Clear(s->cpu, s->staging_clear_fill);
+}
+
 static AeronRectI DDShim_ClassicPresentationRect(const DDrawSurfaceShim* frame) {
 	return AeronDx5_PresentationRect(frame ? frame->width : 0, frame ? frame->height : 0);
 }
@@ -127,7 +147,7 @@ static int DDShim_RetainCpuPresentation(DDrawSurfaceShim* frame) {
 	AeronPixelFrameView view;
 	AeronSurface*       replacement;
 
-	if (!frame || !frame->cpu)
+	if (!frame || !frame->cpu || !DDShim_ApplyRecordedStagingClear(frame))
 		return 0;
 	DDShim_ApplyPrimaryPalette(frame);
 	if (!AeronSurface_GetFrameView(frame->cpu, &view))
@@ -310,6 +330,7 @@ uint64_t AeronDx5_GetClassicFlightFrameSerial(void) { return g_ddClassicFlightFr
 void AeronDx5_ResetPresentationState(void) {
 	g_ddLastPresented                    = NULL;
 	g_ddClassicFlightRenderingSuppressed = 0;
+	g_ddClassicFlightFrameActive         = 0;
 	g_ddSuppressedPresentPending         = 0;
 	g_ddSuppressedPresentKind            = DDSHIM_PRESENT_BLT;
 	g_ddClassicFlightFrameSerial         = 0;
@@ -333,6 +354,9 @@ static int DDShim_ComposeOntoRenderTarget(DDrawSurfaceShim* dst, DDrawSurfaceShi
 	int                 bytesPerPixel;
 
 	if (!dst->rt || !src || !src->cpu) {
+		return 0;
+	}
+	if (src->kind == DDSHIM_RENDER_TARGET && !DDShim_ApplyRecordedStagingClear(src)) {
 		return 0;
 	}
 	if (g_ddClassicFlightRenderingSuppressed) {
@@ -456,7 +480,19 @@ static int DDShim_ClearRenderTargetColor(DDrawSurfaceShim* s, uint32_t fill) {
 	if (!s->rt) {
 		return 0;
 	}
-	staging_cleared = DDShim_EnsureRenderTargetStaging(s) && AeronSurface_Clear(s->cpu, fill);
+	if (DDShim_InDiscardedFlightFrame() && DDShim_CreateRenderTargetStaging(s)) {
+		/* Deviation: the original fills the back buffer here. Nothing shows a
+		 * suppressed flight frame, so the fill is recorded and applied only if
+		 * something outside such a frame uses the staging. */
+		s->staging_clear_pending = 1;
+		s->staging_clear_fill    = fill;
+		s->cpu_dirty             = 1;
+		s->gpu_dirty             = 0;
+		return 1;
+	}
+	/* The clear below replaces any recorded one. */
+	s->staging_clear_pending = 0;
+	staging_cleared = DDShim_CreateRenderTargetStaging(s) && AeronSurface_Clear(s->cpu, fill);
 	if (g_ddClassicFlightRenderingSuppressed) {
 		if (staging_cleared) {
 			s->cpu_dirty = 1;
@@ -499,6 +535,10 @@ static int DDShim_ClearPrimaryColor(DDrawSurfaceShim* primary, uint32_t fill) {
 
 void DDShim_WritebackRenderTarget(DDrawSurfaceShim* s) {
 	if (g_ddClassicFlightRenderingSuppressed || !s || !s->rt || !s->cpu || !s->cpu_dirty) {
+		return;
+	}
+	if (!DDShim_ApplyRecordedStagingClear(s)) {
+		Aeron_RequestFatalRendererError("DirectDraw render-target staging clear");
 		return;
 	}
 	/* The staging holds the newest pixels (a software overlay drew into it after a
@@ -559,7 +599,7 @@ int AeronDx5_ComposeSurfaceOverRenderTarget(IDirectDrawSurface* dst, int dst_x, 
 /* Lazily creates the 16bpp CPU staging surface a render target uses for known
  * clears and readback/writeback when a software overlay locks it (Model B).
  * Render targets that are neither cleared nor CPU-locked pay nothing. */
-static int DDShim_EnsureRenderTargetStaging(DDrawSurfaceShim* s) {
+static int DDShim_CreateRenderTargetStaging(DDrawSurfaceShim* s) {
 	if (s->cpu) {
 		return 1;
 	}
@@ -571,6 +611,11 @@ static int DDShim_EnsureRenderTargetStaging(DDrawSurfaceShim* s) {
 		AeronSurface_SetColorKey(s->cpu, 1, s->colorkey);
 	}
 	return 1;
+}
+
+/* The staging, created if needed, with any recorded clear applied. */
+static int DDShim_EnsureRenderTargetStaging(DDrawSurfaceShim* s) {
+	return DDShim_CreateRenderTargetStaging(s) && DDShim_ApplyRecordedStagingClear(s);
 }
 
 static int DDShim_ReadbackRenderTarget(DDrawSurfaceShim* s) {
