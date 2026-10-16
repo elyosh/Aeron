@@ -134,7 +134,8 @@ bool AeronFaceBvh_ReorderToLeafOrder(AeronFaceBvh* bvh, void* items, size_t item
  * scratch->indices, unique and ascending, and returns their count. A node
  * passes when the segment meets its box expanded by
  * plane_tolerance * max_inv_dominant + AERON_FACE_BVH_ABSOLUTE_SLACK + q,
- * q = 2^-10 * max(|start|, |end|). Returns UINT32_MAX on allocation failure. */
+ * q = 2^-15 * the largest coordinate of start, end and the root box (see
+ * face_bvh.c). Returns UINT32_MAX on allocation failure. */
 #define AERON_FACE_BVH_ABSOLUTE_SLACK 1.0 /* in the tree's units after scaling; sized for OPT units */
 uint32_t AeronFaceBvh_Collect(const AeronFaceBvh* bvh, const float start[3], const float end[3],
 							  float plane_tolerance, AeronFaceBvhScratch* scratch);

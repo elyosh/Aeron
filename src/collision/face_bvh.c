@@ -709,7 +709,7 @@ typedef struct SegmentQuery {
 	double  inv_delta[3]; /* 1 / (end - start); unused on flat axes */
 	uint8_t flat[3];      /* end == start on this axis */
 	double  tolerance;
-	double  q; /* 2^-10 * max(|start|, |end|) */
+	double  q; /* 2^AERON_FACE_BVH_ROUNDING_SCALE * the largest coordinate; see AeronFaceBvh_Collect */
 } SegmentQuery;
 
 /* Slack on the parameter comparisons. Multiplying by the reciprocal rounds
@@ -869,10 +869,32 @@ static uint32_t run_query(const AeronFaceBvh* bvh, const Query* query, AeronFace
 	return scratch->count;
 }
 
+/* The margin q covers rounding in the game's float face test, which grows
+ * with the size of the coordinates. Let M be the largest coordinate of the
+ * segment ends and the face vertices, and u = 2^-24 the float rounding unit.
+ * Bounding each operation of the test gives:
+ * - the plane distances of the two ends are off by at most 14 u M;
+ * - so the computed hit point is within 30 u M of the face plane, which is
+ *   at most 52 u M along the projection axis (1 / |n_dominant| <= 1.74);
+ * - the computed hit point is off the exact segment by at most 5 u M.
+ * A face that passes the test therefore meets the segment within about
+ * 57 u M (about 2^-18 M) of its box, plus the plane epsilon term. q is
+ * 2^-15 M, 9 times that bound. M uses the root box for the vertices, so it
+ * holds for very large models too. Rounding that does not grow with the
+ * coordinates (the 2D edge tests, the bounds scaling) stays in
+ * AERON_FACE_BVH_ABSOLUTE_SLACK. */
+#define AERON_FACE_BVH_ROUNDING_SCALE (-15)
+
 uint32_t AeronFaceBvh_Collect(const AeronFaceBvh* bvh, const float start[3], const float end[3],
 							  float plane_tolerance, AeronFaceBvhScratch* scratch) {
 	SegmentQuery segment = { .tolerance = (double)plane_tolerance };
 	double       largest = 0.0;
+	if (bvh && bvh->node_count) {
+		for (int axis = 0; axis < 3; ++axis) {
+			largest = fmax(largest, fabs((double)bvh->nodes[0].min[axis]));
+			largest = fmax(largest, fabs((double)bvh->nodes[0].max[axis]));
+		}
+	}
 	for (int axis = 0; axis < 3; ++axis) {
 		const double from  = (double)start[axis];
 		const double to    = (double)end[axis];
@@ -885,7 +907,7 @@ uint32_t AeronFaceBvh_Collect(const AeronFaceBvh* bvh, const float start[3], con
 		if (fabs(to) > largest)
 			largest = fabs(to);
 	}
-	segment.q         = ldexp(largest, -10);
+	segment.q         = ldexp(largest, AERON_FACE_BVH_ROUNDING_SCALE);
 	const Query query = { .segment = &segment };
 	return run_query(bvh, &query, scratch);
 }
