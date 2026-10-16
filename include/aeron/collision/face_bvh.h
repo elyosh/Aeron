@@ -57,6 +57,10 @@ typedef struct AeronFaceBvh {
 	AeronFaceBvhNode* nodes; /* node 0 is the root; children follow their parent */
 	uint32_t          face_count;
 	uint32_t*         face_order;
+	/* Set by AeronFaceBvh_ReorderToLeafOrder: face_order is the identity and
+	 * a depth-first walk, left child first, meets the leaves in ascending
+	 * face order, so queries need not sort. */
+	bool              leaf_ordered;
 } AeronFaceBvh;
 
 /* Caller-owned query scratch; zero-initialize before first use. */
@@ -100,7 +104,8 @@ bool AeronFaceBvh_WriteCooked(const AeronFaceBvh* bvh, uint32_t unique_vertex_co
 
 /* Verifies cooked simulation data against the geometry it describes and
  * loads it. Checks the exact layout size, version and counts, the topology
- * hash, the tree structure, and that every bound contains its triangles and
+ * hash, the tree structure, that every leaf lists its triangles in ascending
+ * order (queries rely on it), and that every bound contains its triangles and
  * children (conservativeness). On success the caller owns *out_bvh and
  * *out_sample (free()). */
 bool AeronFaceBvh_LoadCooked(const uint8_t* bytes, size_t size, uint64_t expected_topology_hash,
@@ -114,6 +119,16 @@ bool AeronFaceBvh_LoadCookedBoxes(const uint8_t* bytes, size_t size, uint64_t ex
 
 /* Scales every bound, e.g. from metres to game units. */
 void AeronFaceBvh_ScaleBounds(AeronFaceBvh* bvh, double scale);
+
+/* Renumbers the triangles in leaf order: the leaves, met depth-first with the
+ * left child first, get consecutive face ranges, `items` (face_count entries
+ * of item_size bytes, indexed by triangle) is permuted to match, and
+ * face_order becomes the identity. Queries then return each leaf as one
+ * ascending range, with no sorting. The caller keeps its own per-triangle
+ * data in the new order; `old_to_new` (face_count entries, or NULL) receives
+ * each former triangle index's new index. Returns false on allocation
+ * failure, leaving the tree and `items` as they were. */
+bool AeronFaceBvh_ReorderToLeafOrder(AeronFaceBvh* bvh, void* items, size_t item_size, uint32_t* old_to_new);
 
 /* Collects the candidate triangles for segment start->end into
  * scratch->indices, unique and ascending, and returns their count. A node

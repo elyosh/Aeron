@@ -44,6 +44,9 @@ typedef struct AeronOptSimMesh {
 	AeronOptEngineGlow*    glows;
 	AeronFaceBvh*          bvh; /* OPT units; cooked or built at load; NULL without faces */
 	bool                   bvh_cooked;
+	/* After Aeron_OptSimModelReorderFacesToLeafOrder: authored face a is
+	 * faces[authored_order[a]]. NULL while faces are in authored order. */
+	uint32_t*              authored_order;
 } AeronOptSimMesh;
 
 typedef struct AeronOptSimModel {
@@ -97,7 +100,15 @@ bool Aeron_OptSimModelWriteImage(const AeronOptSimModel* model, const AeronOptIm
 								 uint8_t** payload, int* payload_size, uint32_t* stub_face_data_offsets,
 								 char* error, size_t error_size);
 
-/* Frees everything except each mesh's faces and BVH. */
+/* Renumbers each mesh's faces into its BVH's leaf order
+ * (AeronFaceBvh_ReorderToLeafOrder), so face queries need not sort, and fills
+ * each mesh's authored_order for scans that walk every face. A game whose
+ * per-face test keeps the first face among exact ties then breaks those ties
+ * in leaf order on BVH queries; no other result changes. Returns false on
+ * allocation failure; meshes already renumbered stay renumbered. */
+bool Aeron_OptSimModelReorderFacesToLeafOrder(AeronOptSimModel* model);
+
+/* Frees everything except each mesh's faces, BVH and authored order. */
 void Aeron_OptSimModelTrimToFaces(AeronOptSimModel* model);
 void Aeron_OptSimModelFree(AeronOptSimModel* model);
 

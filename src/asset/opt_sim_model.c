@@ -172,6 +172,7 @@ static void free_mesh(AeronOptSimMesh* mesh) {
 	free(mesh->faces);
 	free(mesh->hardpoints);
 	free(mesh->glows);
+	free(mesh->authored_order);
 	AeronFaceBvh_Free(mesh->bvh);
 	memset(mesh, 0, sizeof *mesh);
 }
@@ -431,6 +432,24 @@ bool Aeron_OptSimModelBuild(const AeronFlightModel* model, const AeronOptSimOpti
 			Aeron_OptSimModelFree(out);
 			return false;
 		}
+	}
+	return true;
+}
+
+bool Aeron_OptSimModelReorderFacesToLeafOrder(AeronOptSimModel* model) {
+	if (!model)
+		return false;
+	for (uint32_t index = 0; index < model->mesh_count; ++index) {
+		AeronOptSimMesh* mesh = &model->meshes[index];
+		if (!mesh->bvh || mesh->authored_order)
+			continue;
+		uint32_t* authored_order = malloc((size_t)mesh->face_count * sizeof *authored_order);
+		if (!authored_order ||
+			!AeronFaceBvh_ReorderToLeafOrder(mesh->bvh, mesh->faces, sizeof *mesh->faces, authored_order)) {
+			free(authored_order);
+			return false;
+		}
+		mesh->authored_order = authored_order;
 	}
 	return true;
 }

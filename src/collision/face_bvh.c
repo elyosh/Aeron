@@ -274,8 +274,9 @@ AeronFaceBvh* AeronFaceBvh_Clone(const AeronFaceBvh* bvh) {
 	AeronFaceBvh* copy = calloc(1, sizeof *copy);
 	if (!copy)
 		return NULL;
-	copy->node_count = bvh->node_count;
-	copy->face_count = bvh->face_count;
+	copy->node_count   = bvh->node_count;
+	copy->face_count   = bvh->face_count;
+	copy->leaf_ordered = bvh->leaf_ordered;
 	copy->nodes      = malloc((size_t)bvh->node_count * sizeof *copy->nodes);
 	copy->face_order = malloc((size_t)bvh->face_count * sizeof *copy->face_order);
 	if (!copy->nodes || !copy->face_order) {
@@ -481,6 +482,10 @@ static bool verify_tree(const AeronFaceBvh* bvh, const AeronFaceBvhGeometry* geo
 				load_error(error, error_size, "cooked BVH face order is not a permutation");
 				goto done;
 			}
+			if (entry > 0 && face <= bvh->face_order[node->first_or_child + entry - 1]) {
+				load_error(error, error_size, "cooked BVH leaf does not list its triangles in ascending order");
+				goto done;
+			}
 			face_seen[face] = 1;
 			++seen;
 			if (!face_bounds(geometry, face, face_min, face_max) ||
@@ -626,6 +631,58 @@ void AeronFaceBvh_ScaleBounds(AeronFaceBvh* bvh, double scale) {
 	}
 }
 
+bool AeronFaceBvh_ReorderToLeafOrder(AeronFaceBvh* bvh, void* items, size_t item_size, uint32_t* old_to_new) {
+	if (!bvh || !items || !item_size || bvh->face_count > SIZE_MAX / item_size)
+		return false;
+	if (bvh->leaf_ordered) {
+		if (old_to_new)
+			for (uint32_t index = 0; index < bvh->face_count; ++index)
+				old_to_new[index] = index;
+		return true;
+	}
+	uint8_t*  reordered = malloc((size_t)bvh->face_count * item_size);
+	uint32_t* starts    = malloc((size_t)bvh->node_count * sizeof *starts);
+	uint32_t* stack     = malloc((size_t)bvh->node_count * sizeof *stack);
+	if (!reordered || !starts || !stack) {
+		free(reordered);
+		free(starts);
+		free(stack);
+		return false;
+	}
+	/* Every node is pushed once, so node_count bounds the stack. */
+	uint32_t depth = 0, next = 0;
+	stack[depth++] = 0;
+	while (depth) {
+		const uint32_t          node_index = stack[--depth];
+		const AeronFaceBvhNode* node       = &bvh->nodes[node_index];
+		if (node->count == 0) {
+			stack[depth++] = node->first_or_child + 1;
+			stack[depth++] = node->first_or_child;
+			continue;
+		}
+		for (uint32_t entry = 0; entry < node->count; ++entry) {
+			const uint32_t face = bvh->face_order[node->first_or_child + entry];
+			memcpy(reordered + (size_t)(next + entry) * item_size, (const uint8_t*)items + (size_t)face * item_size,
+				   item_size);
+			if (old_to_new)
+				old_to_new[face] = next + entry;
+		}
+		starts[node_index] = next;
+		next += node->count;
+	}
+	for (uint32_t index = 0; index < bvh->node_count; ++index)
+		if (bvh->nodes[index].count != 0)
+			bvh->nodes[index].first_or_child = starts[index];
+	for (uint32_t index = 0; index < bvh->face_count; ++index)
+		bvh->face_order[index] = index;
+	memcpy(items, reordered, (size_t)bvh->face_count * item_size);
+	bvh->leaf_ordered = true;
+	free(reordered);
+	free(starts);
+	free(stack);
+	return true;
+}
+
 /* ===== Queries ======================================================= */
 
 static bool scratch_reserve(uint32_t** items, uint32_t* capacity, uint32_t needed) {
@@ -645,21 +702,39 @@ static bool scratch_reserve(uint32_t** items, uint32_t* capacity, uint32_t neede
 	return true;
 }
 
-/* Closed slab test of segment start->end against [min - margin, max + margin]. */
-static bool segment_meets_box(const double start[3], const double end[3], const AeronFaceBvhNode* node,
-							  double margin) {
-	double t_min = 0.0, t_max = 1.0;
+/* A segment query, set up once: the reciprocal direction replaces a division
+ * per axis and node. */
+typedef struct SegmentQuery {
+	double  start[3];
+	double  inv_delta[3]; /* 1 / (end - start); unused on flat axes */
+	uint8_t flat[3];      /* end == start on this axis */
+	double  tolerance;
+	double  q; /* 2^-10 * max(|start|, |end|) */
+} SegmentQuery;
+
+/* Slack on the parameter comparisons. Multiplying by the reciprocal rounds
+ * differently from dividing, by a few ulps of parameters near [0, 1]; this
+ * keeps the test from rejecting a box an exact test accepts. Accepting a few
+ * more boxes only adds candidates. */
+#define SEGMENT_T_SLACK 1.0e-9
+
+/* Closed slab test of the segment against the node box expanded by
+ * tolerance * max_inv_dominant + AERON_FACE_BVH_ABSOLUTE_SLACK + q. */
+static bool segment_meets_node(const SegmentQuery* query, const AeronFaceBvhNode* node) {
+	const double margin =
+		query->tolerance * (double)node->max_inv_dominant + AERON_FACE_BVH_ABSOLUTE_SLACK + query->q;
+	double       t_min  = 0.0;
+	double       t_max  = 1.0;
 	for (int axis = 0; axis < 3; ++axis) {
-		const double lo    = (double)node->min[axis] - margin;
-		const double hi    = (double)node->max[axis] + margin;
-		const double delta = end[axis] - start[axis];
-		if (delta == 0.0) {
-			if (start[axis] < lo || start[axis] > hi)
+		const double lo = (double)node->min[axis] - margin;
+		const double hi = (double)node->max[axis] + margin;
+		if (query->flat[axis]) {
+			if (query->start[axis] < lo || query->start[axis] > hi)
 				return false;
 			continue;
 		}
-		double t0 = (lo - start[axis]) / delta;
-		double t1 = (hi - start[axis]) / delta;
+		double t0 = (lo - query->start[axis]) * query->inv_delta[axis];
+		double t1 = (hi - query->start[axis]) * query->inv_delta[axis];
 		if (t0 > t1) {
 			const double swap = t0;
 			t0                = t1;
@@ -669,7 +744,7 @@ static bool segment_meets_box(const double start[3], const double end[3], const 
 			t_min = t0;
 		if (t1 < t_max)
 			t_max = t1;
-		if (t_min > t_max)
+		if (t_min > t_max + SEGMENT_T_SLACK)
 			return false;
 	}
 	return true;
@@ -693,23 +768,70 @@ static bool node_meets_slabs(const AeronFaceBvhNode* node, const AeronFaceBvhSla
 	return true;
 }
 
-typedef enum QueryKind { QUERY_SEGMENT, QUERY_SLABS } QueryKind;
-
 typedef struct Query {
-	QueryKind               kind;
-	double                  start[3];
-	double                  end[3];
-	double                  tolerance;
-	double                  q;
+	const SegmentQuery*     segment; /* NULL for a slab query */
 	const AeronFaceBvhSlab* slabs;
 	uint32_t                slab_count;
 } Query;
 
+static bool query_meets_node(const Query* query, const AeronFaceBvhNode* node) {
+	return query->segment ? segment_meets_node(query->segment, node)
+						  : node_meets_slabs(node, query->slabs, query->slab_count);
+}
+
+/* Merges the ascending runs a[0..a_count) and b[0..b_count) into out. */
+static void merge_runs(const uint32_t* a, uint32_t a_count, const uint32_t* b, uint32_t b_count, uint32_t* out) {
+	uint32_t i = 0, j = 0, k = 0;
+	while (i < a_count && j < b_count)
+		out[k++] = a[i] < b[j] ? a[i++] : b[j++];
+	while (i < a_count)
+		out[k++] = a[i++];
+	while (j < b_count)
+		out[k++] = b[j++];
+}
+
+/* Leaves list their faces ascending (built trees sort them, cooked trees are
+ * verified), so the candidates are a few ascending runs, one or more leaves
+ * each. A natural merge sort orders them in O(count * log runs); leaves
+ * partition the faces, so the result is also unique. `items` has room for
+ * 2 * count entries, the upper half being the merge buffer. */
+static void sort_runs(uint32_t* items, uint32_t count) {
+	uint32_t* from = items;
+	uint32_t* to   = items + count;
+	for (;;) {
+		uint32_t start = 0;
+		while (start < count) {
+			uint32_t middle = start + 1;
+			while (middle < count && from[middle - 1] < from[middle])
+				++middle;
+			if (middle == count) {
+				if (start == 0) {
+					if (from != items)
+						memcpy(items, from, (size_t)count * sizeof *items);
+					return;
+				}
+				memcpy(to + start, from + start, (size_t)(count - start) * sizeof *items);
+				break;
+			}
+			uint32_t end = middle + 1;
+			while (end < count && from[end - 1] < from[end])
+				++end;
+			merge_runs(from + start, middle - start, from + middle, end - middle, to + start);
+			start = end;
+		}
+		uint32_t* swap = from;
+		from           = to;
+		to             = swap;
+	}
+}
+
+/* Depth-first walk, left child first; a child is tested before it is
+ * pushed. In a leaf-ordered tree the leaves come out in ascending face order. */
 static uint32_t run_query(const AeronFaceBvh* bvh, const Query* query, AeronFaceBvhScratch* scratch) {
 	if (!scratch)
 		return UINT32_MAX;
 	scratch->count = 0;
-	if (!bvh || !bvh->node_count)
+	if (!bvh || !bvh->node_count || !query_meets_node(query, &bvh->nodes[0]))
 		return 0;
 	uint32_t depth = 0;
 	if (!scratch_reserve(&scratch->stack, &scratch->stack_capacity, 1))
@@ -717,51 +839,60 @@ static uint32_t run_query(const AeronFaceBvh* bvh, const Query* query, AeronFace
 	scratch->stack[depth++] = 0;
 	while (depth) {
 		const AeronFaceBvhNode* node = &bvh->nodes[scratch->stack[--depth]];
-		const bool              meets =
-			query->kind == QUERY_SEGMENT
-							 ? segment_meets_box(query->start, query->end, node,
-												 query->tolerance * (double)node->max_inv_dominant +
-													 AERON_FACE_BVH_ABSOLUTE_SLACK + query->q)
-							 : node_meets_slabs(node, query->slabs, query->slab_count);
-		if (!meets)
-			continue;
-		if (node->count == 0) {
-			if (!scratch_reserve(&scratch->stack, &scratch->stack_capacity, depth + 2))
+		if (node->count != 0) {
+			if (!scratch_reserve(&scratch->indices, &scratch->capacity, scratch->count + node->count))
 				return UINT32_MAX;
-			scratch->stack[depth++] = node->first_or_child;
-			scratch->stack[depth++] = node->first_or_child + 1;
+			uint32_t* out = scratch->indices + scratch->count;
+			if (bvh->leaf_ordered) {
+				for (uint32_t entry = 0; entry < node->count; ++entry)
+					out[entry] = node->first_or_child + entry;
+			} else {
+				memcpy(out, bvh->face_order + node->first_or_child, (size_t)node->count * sizeof *out);
+			}
+			scratch->count += node->count;
 			continue;
 		}
-		if (!scratch_reserve(&scratch->indices, &scratch->capacity, scratch->count + node->count))
+		if (!scratch_reserve(&scratch->stack, &scratch->stack_capacity, depth + 2))
 			return UINT32_MAX;
-		memcpy(scratch->indices + scratch->count, bvh->face_order + node->first_or_child,
-			   (size_t)node->count * sizeof *scratch->indices);
-		scratch->count += node->count;
+		const uint32_t left = node->first_or_child;
+		if (query_meets_node(query, &bvh->nodes[left + 1]))
+			scratch->stack[depth++] = left + 1;
+		if (query_meets_node(query, &bvh->nodes[left]))
+			scratch->stack[depth++] = left;
 	}
-	/* Leaves partition the faces, so the candidates are already unique. */
-	qsort(scratch->indices, scratch->count, sizeof *scratch->indices, compare_u32);
+	if (!bvh->leaf_ordered && scratch->count > 1) {
+		if (scratch->count > UINT32_MAX / 2 ||
+			!scratch_reserve(&scratch->indices, &scratch->capacity, 2 * scratch->count))
+			return UINT32_MAX;
+		sort_runs(scratch->indices, scratch->count);
+	}
 	return scratch->count;
 }
 
 uint32_t AeronFaceBvh_Collect(const AeronFaceBvh* bvh, const float start[3], const float end[3],
 							  float plane_tolerance, AeronFaceBvhScratch* scratch) {
-	Query  query   = { .kind = QUERY_SEGMENT, .tolerance = (double)plane_tolerance };
-	double largest = 0.0;
+	SegmentQuery segment = { .tolerance = (double)plane_tolerance };
+	double       largest = 0.0;
 	for (int axis = 0; axis < 3; ++axis) {
-		query.start[axis] = (double)start[axis];
-		query.end[axis]   = (double)end[axis];
-		if (fabs(query.start[axis]) > largest)
-			largest = fabs(query.start[axis]);
-		if (fabs(query.end[axis]) > largest)
-			largest = fabs(query.end[axis]);
+		const double from  = (double)start[axis];
+		const double to    = (double)end[axis];
+		const double delta = to - from;
+		segment.start[axis]     = from;
+		segment.flat[axis]      = delta == 0.0;
+		segment.inv_delta[axis] = delta == 0.0 ? 0.0 : 1.0 / delta;
+		if (fabs(from) > largest)
+			largest = fabs(from);
+		if (fabs(to) > largest)
+			largest = fabs(to);
 	}
-	query.q = ldexp(largest, -10);
+	segment.q         = ldexp(largest, -10);
+	const Query query = { .segment = &segment };
 	return run_query(bvh, &query, scratch);
 }
 
 uint32_t AeronFaceBvh_CollectSlabs(const AeronFaceBvh* bvh, const AeronFaceBvhSlab* slabs, uint32_t slab_count,
 								   AeronFaceBvhScratch* scratch) {
-	const Query query = { .kind = QUERY_SLABS, .slabs = slabs, .slab_count = slab_count };
+	const Query query = { .slabs = slabs, .slab_count = slab_count };
 	return run_query(bvh, &query, scratch);
 }
 
