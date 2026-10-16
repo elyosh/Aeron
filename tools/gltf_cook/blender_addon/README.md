@@ -398,7 +398,7 @@ no variant uses, and skin images of the wrong size.
 Every point or area light under a component is a model light, unless its
 **Exclude from Model** box is checked. The game draws lights without
 shadows. The **Game-Like Lights** toggle turns off the shadows of model
-lights.
+lights, and their Soft Falloff (see below), which stays off afterwards.
 
 | Blender light | Game light |
 |-|-|
@@ -409,6 +409,14 @@ lights.
 The light panel shows what the game draws. A panel at least three times
 longer than it is wide becomes a one-sided tube. A squarer panel becomes a
 one-sided sphere with the same area. Spot and sun lights are not supported.
+
+A point light lights like a glowing ball of its Radius, as Blender does with
+**Soft Falloff** off. Soft Falloff dims the light within a few radii of its
+source, in Blender only, so the lights the add-on creates or imports have it
+off, and the checks warn when it is on. Keep the ball inside the open space:
+in Blender the walls hide the part of the ball behind them, and a ball larger
+than the room leaves the room dark. For soft light over a large area, use a
+panel or a tube.
 
 Intensity is exported in candela, converted the same way as Blender's glTF
 exporter (683 lm/W). A point light or an all-around tube gives its power x

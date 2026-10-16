@@ -64,6 +64,7 @@ def _restore_light(obj, extension, punctual):
     light = obj.data
     if shape == "point":
         light.shadow_soft_size = extension.get("radius", common.DEFAULT_LIGHT_RADIUS)
+        light.use_soft_falloff = False
     else:
         light.shape = 'RECTANGLE'
         if shape == "tube":

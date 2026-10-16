@@ -126,6 +126,9 @@ def _check_light(problems, obj):
         problems.error(obj, "the light's size must be positive")
     if light.use_custom_distance and not light.cutoff_distance > 0.0:
         problems.error(obj, "the custom distance (range) must be positive")
+    if light.type == 'POINT' and light.use_soft_falloff:
+        problems.warning(obj, "Soft Falloff is on: it dims the light near its source in Blender, "
+                              "but not in the game. Turn it off in the Light tab")
 
 
 def validate(root):

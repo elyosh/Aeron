@@ -111,7 +111,9 @@ class AERON_OT_add(Operator):
         else:
             light = bpy.data.lights.new(self.kind + "_light", 'POINT' if self.kind == 'point' else 'AREA')
             light.energy = 100.0
-            if self.kind != 'point':
+            if self.kind == 'point':
+                light.use_soft_falloff = False
+            else:
                 light.shape = 'RECTANGLE'
                 light.size, light.size_y = (1.0, 1.0) if self.kind == 'panel' else (2.0, 0.1)
             obj = bpy.data.objects.new(light.name, light)

@@ -250,6 +250,10 @@ def draw_light(layout, obj):
         row.prop(props, "light_tube")
         if props.light_tube:
             row.prop(props, "light_one_sided")
+    if light.type == 'POINT' and light.use_soft_falloff:
+        row = layout.row()
+        row.label(text="The game has no soft falloff", icon='ERROR')
+        row.prop(light, "use_soft_falloff")
     column = layout.column(align=True)
     column.label(text="In Game: " + common.light_game_shape(obj))
     column.label(text="Intensity: {:.5g} cd".format(common.light_punctual(obj, obj.matrix_world)["intensity"]))

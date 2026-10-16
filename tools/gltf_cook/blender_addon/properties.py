@@ -276,9 +276,12 @@ class AeronProblem(PropertyGroup):
 
 
 def _game_preview_update(self, context):
+    # Soft Falloff stays off when the preview ends: the game has none.
     for obj in context.scene.objects:
         if common.is_model_light(obj):
             obj.data.use_shadow = not self.game_preview
+            if self.game_preview and obj.data.type == 'POINT':
+                obj.data.use_soft_falloff = False
 
 
 class AeronSceneProperties(PropertyGroup):
@@ -289,7 +292,8 @@ class AeronSceneProperties(PropertyGroup):
         description="Project that Import XWA OPT uses by default in this file")
     game_preview: BoolProperty(
         name="Game-Like Lights", default=False, update=_game_preview_update,
-        description="Turn off the shadows of model lights, as the game draws them without shadows")
+        description="Turn off the shadows and the Soft Falloff of model lights, as the game draws them "
+                    "without either")
     # The game states active in the flipbook preview (flipbook_preview.py).
     flipbook_states: PointerProperty(type=flipbook_preview.AeronFlipbookStates)
 
