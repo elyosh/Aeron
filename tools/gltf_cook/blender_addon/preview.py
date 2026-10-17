@@ -40,15 +40,27 @@ def hinge_matrix(component, turns):
     """Returns the rotation by `turns` about the component's hinge, in its
     local space. The renderer turns a component by -angle about its axis in
     the game's frame. That frame mirrors Blender's X axis, so here the
-    rotation is +angle, right-handed. A zero axis does not turn, as in the
-    renderer."""
+    rotation is +angle, right-handed. Like the game, it does not normalize
+    the axis: an axis of length s turns the component by about s times the
+    angle."""
     props = component.aeron_flight
-    axis = Vector(props.rotation_axis)
-    if not props.has_rotation or turns == 0.0 or axis.length < 1e-4:
+    if not props.has_rotation or turns == 0.0:
         return Matrix.Identity(4)
     pivot = Vector(props.pivot)
-    return (Matrix.Translation(pivot) @ Matrix.Rotation(2.0 * math.pi * turns, 4, axis.normalized()) @
-            Matrix.Translation(-pivot))
+    return Matrix.Translation(pivot) @ axis_angle_matrix(Vector(props.rotation_axis), 2.0 * math.pi * turns) @ \
+        Matrix.Translation(-pivot)
+
+
+def axis_angle_matrix(axis, angle):
+    """The game's axis-angle rotation (Math3D_BuildAxisAngleMatrix) as a 4x4
+    matrix. It is the usual rotation when the axis has length 1."""
+    x, y, z = axis
+    c, s = math.cos(angle), math.sin(angle)
+    t = 1.0 - c
+    return Matrix(((t * x * x + c, t * x * y - s * z, t * x * z + s * y, 0.0),
+                   (t * x * y + s * z, t * y * y + c, t * y * z - s * x, 0.0),
+                   (t * x * z - s * y, t * y * z + s * x, t * z * z + c, 0.0),
+                   (0.0, 0.0, 0.0, 1.0)))
 
 
 def component_turns(root, component):

@@ -264,6 +264,9 @@ def _hinge(geometry, root, component, size, labelled):
     rotation_axis = axes[0]
     if rotation_axis.length == 0.0:
         return
+    # The game does not normalize the axis, so an axis of length s turns
+    # the component by about s times the angle. The arcs show that turn.
+    scale = Vector(props.rotation_axis).length
     rotation_axis = rotation_axis.normalized()
     geometry.arrow(pivot - rotation_axis * size, pivot + rotation_axis * size, _AXIS_COLORS[0])
     for vector, color in zip(axes[1:], _AXIS_COLORS[1:]):
@@ -281,8 +284,9 @@ def _hinge(geometry, root, component, size, labelled):
     for articulation in root.aeron_flight.articulations:
         if articulation.component != component:
             continue
+        angle = 2.0 * math.pi * articulation.angle / 256.0
         end = geometry.circle(pivot, rotation_axis, radius, _PIVOT_COLOR, start=start,
-                              angle=2.0 * math.pi * articulation.angle / 256.0)
+                              angle=math.atan2(scale * math.sin(angle), math.cos(angle)))
         geometry.line(pivot, end, _PIVOT_COLOR)
         if labelled:
             geometry.labels.append((end, "{} {}".format(articulation.group or "(no group)", articulation.angle),

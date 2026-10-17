@@ -57,7 +57,9 @@ transforms:
 
 A component's `rotation` needs `pivot`, `rotationAxis`, `directionAxis` and
 `upAxis`. The vectors are kept as written: they are not normalized or made
-orthogonal. `target` is required when `targetId` is not 0.
+orthogonal. As in the original game, the length of `rotationAxis` scales the
+turn: an axis of length s turns the component by about s times the angle.
+`target` is required when `targetId` is not 0.
 
 The descriptor geometry is `span`, `center`, `boundsMin` and `boundsMax`:
 the part's size, centre and bounds as the original model gives them. The

@@ -194,7 +194,7 @@
       "required": ["pivot", "rotationAxis", "directionAxis", "upAxis"],
       "properties": {
         "pivot": { "$ref": "#/$defs/vec3", "description": "The point it turns about, in the component's space." },
-        "rotationAxis": { "$ref": "#/$defs/vec3", "description": "The axis it turns about." },
+        "rotationAxis": { "$ref": "#/$defs/vec3", "description": "The axis it turns about. An axis of length s turns it by about s times the angle." },
         "directionAxis": { "$ref": "#/$defs/vec3", "description": "Its forward direction." },
         "upAxis": { "$ref": "#/$defs/vec3", "description": "Its up direction." }
       }

@@ -192,7 +192,7 @@ class AERON_OT_from_cursor(Operator):
     field: EnumProperty(items=[
         ('pivot', "Pivot", "Put the hinge pivot at the 3D cursor"),
         ('axes', "Axes", "Set the hinge axes from the 3D cursor rotation. Its Y is the rotation axis, "
-                         "Z the direction axis and X the up axis"),
+                         "Z the direction axis and X the up axis. The axes keep their lengths"),
         ('target', "Target", "Put the target point at the 3D cursor"),
     ])
 
@@ -207,8 +207,11 @@ class AERON_OT_from_cursor(Operator):
         cursor = context.scene.cursor
         if self.field == 'axes':
             basis = to_local.to_3x3() @ cursor.matrix.to_3x3()
+            # The length of the rotation axis scales the turn, so keep the
+            # lengths. An axis of length 0 gets length 1.
+            old = [Vector(props.up_axis), Vector(props.rotation_axis), Vector(props.direction_axis)]
             props.up_axis, props.rotation_axis, props.direction_axis = (
-                basis.col[axis].normalized() for axis in range(3))
+                basis.col[axis].normalized() * (old[axis].length or 1.0) for axis in range(3))
         else:
             setattr(props, self.field, to_local @ cursor.location)
         return {'FINISHED'}
