@@ -218,7 +218,7 @@ def probes_packages(text):
         block = re.match(r"^  (\S+):\s*$", line)
         if block:
             current = block.group(1)
-        elif current and re.match(r"^    kind:\s*probes\s*$", line):
+        elif current and re.match(r"^    cubes:", line):
             names[current] = None
         elif current in names and re.match(r"^    key_light_shadow:", line):
             names[current] = float(line.split(":", 1)[1])

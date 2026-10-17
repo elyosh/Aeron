@@ -387,7 +387,8 @@ struct AeronEnvironmentLight;
  *   - sprite: the light's sprite, angular_size_degrees wide, times
  *     sprite_strength, as an additive SKY billboard. A sun follows its own
  *     light only, not the environment's intensity.
- * The sprite texture is borrowed through Render. */
+ * A light without a visual draws nothing. The sprite texture is borrowed
+ * through Render. */
 void AeronScene_AddSkySun(AeronScene3D* scene, const struct AeronEnvironmentLight* light);
 
 void AeronScene_SetPassHook(AeronScene3D* scene, AeronScenePassSlot slot, AeronScenePassHookFn fn,

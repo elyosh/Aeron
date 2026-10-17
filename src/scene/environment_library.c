@@ -495,7 +495,7 @@ static bool build_slot(AeronEnvironmentLibrary* library, AeronCommandBuffer* cmd
 		return false;
 	}
 	slot->package.definition = def;
-	if (def->kind == AERON_ENV_KIND_PROBES)
+	if (AeronEnvironment_IsProbeSet(def))
 		return build_probes_slot(library, cmd, list, slot, reload, out_of_memory);
 	const char*    paths[3 + AERON_ENV_MAX_LIGHTS];
 	EnvTextureKind kinds[3 + AERON_ENV_MAX_LIGHTS];
@@ -512,15 +512,15 @@ static bool build_slot(AeronEnvironmentLibrary* library, AeronCommandBuffer* cmd
 		paths[count]   = def->specular_path;
 		kinds[count++] = ENV_TEXTURE_CUBE;
 	}
-	if (def->kind == AERON_ENV_KIND_FULL) {
+	if (def->radiance_path[0]) {
 		radiance       = count;
 		paths[count]   = def->radiance_path;
 		kinds[count++] = ENV_TEXTURE_CUBE;
-		for (uint32_t i = 0; i < def->light_count; ++i) {
-			if (def->lights[i].visual == AERON_ENV_SUN_SPRITE) {
-				paths[count]   = def->lights[i].sprite_path;
-				kinds[count++] = ENV_TEXTURE_2D;
-			}
+	}
+	for (uint32_t i = 0; i < def->light_count; ++i) {
+		if (def->lights[i].visual == AERON_ENV_SUN_SPRITE) {
+			paths[count]   = def->lights[i].sprite_path;
+			kinds[count++] = ENV_TEXTURE_2D;
 		}
 	}
 	bool available = true;

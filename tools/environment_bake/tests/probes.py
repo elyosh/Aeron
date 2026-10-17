@@ -137,7 +137,7 @@ def main():
                 if not all(1.0 < filled[5][c] < filled[4][c] < 2.0 for c in range(3)):
                     failures.append("invalid point not filled from its neighbours: %s" % filled)
             entry = open(os.path.join(out, "package.yaml")).read()
-            for expected in ("kind: probes", 'cubes: "flight/environments/models/test/probes.ktx2"',
+            for expected in ('cubes: "flight/environments/models/test/probes.ktx2"',
                              'grid: "flight/environments/models/test/grid.ktx2"', "grid_resolution: [3, 2, 2]",
                              "key_light_shadow: 0.5",
                              "reflection_plane: {center: [0, 0, -5], size: [20, 10], distance: 0.25}"):

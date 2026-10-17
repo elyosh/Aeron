@@ -1,12 +1,13 @@
-"""Checks environment_bake --kind lighting.
+"""Checks environment_bake without a sky (no --radiance-out).
 
     python3 lighting.py --baker ENVIRONMENT_BAKE
 
 Bakes a small panorama of an enclosed space (bright above, dim below) and
 checks that the baker writes the diffuse and specular cubes, no radiance
-cube, and a `kind: lighting` entry with reflections and no fill. The baker
-re-reads the entry with the runtime parser, so a zero exit also means the
-game accepts it.
+cube, and an entry with reflections, no fill and no lights (the game keeps
+its own). With a light list whose light has no visual, the entry gives that
+light. The baker re-reads the entry with the runtime parser, so a zero exit
+also means the game accepts it.
 """
 
 import argparse
@@ -50,12 +51,15 @@ def main():
         write_hdr(pano, 256, 128, lambda x, y: (4.0, 4.0, 3.5) if y < 32 else (0.3, 0.3, 0.3))
         out = os.path.join(scratch, "flight", "environments", "hangars", "test")
         os.makedirs(out)
-        run = subprocess.run([os.path.abspath(args.baker), "--input", pano, "--kind", "lighting",
-                              "--name", "hangar.test", "--diffuse-out", os.path.join(out, "diffuse.ktx2"),
-                              "--specular-out", os.path.join(out, "specular.ktx2"),
-                              "--package-out", os.path.join(out, "package.yaml"), "--manifest-root", scratch,
-                              "--specular-size", "64", "--specular-samples", "64", "--jobs", "2"],
-                             capture_output=True, text=True)
+        def bake(extra):
+            return subprocess.run([os.path.abspath(args.baker), "--input", pano, "--name", "hangar.test",
+                                   "--diffuse-out", os.path.join(out, "diffuse.ktx2"),
+                                   "--specular-out", os.path.join(out, "specular.ktx2"),
+                                   "--package-out", os.path.join(out, "package.yaml"),
+                                   "--manifest-root", scratch, "--specular-size", "64",
+                                   "--specular-samples", "64", "--jobs", "2"] + extra,
+                                  capture_output=True, text=True)
+        run = bake([])
         if run.returncode:
             failures.append("bake failed: " + run.stderr.strip()[-300:])
         else:
@@ -63,17 +67,25 @@ def main():
             if files != ["diffuse.ktx2", "package.yaml", "specular.ktx2"]:
                 failures.append("files: %s" % files)
             entry = open(os.path.join(out, "package.yaml")).read()
-            for expected in ("kind: lighting", 'specular: "flight/environments/hangars/test/specular.ktx2"',
+            for expected in ('specular: "flight/environments/hangars/test/specular.ktx2"',
                              "specular_strength: 1", "ambient_fill: [0, 0, 0]"):
                 if expected not in entry:
                     failures.append("package.yaml lacks %r:\n%s" % (expected, entry))
-            if "radiance" in entry:
-                failures.append("package.yaml has a radiance cube")
-        refused = subprocess.run([os.path.abspath(args.baker), "--input", pano, "--kind", "lighting",
-                                  "--name", "hangar.test", "--radiance-out", "x", "--diffuse-out", "y",
-                                  "--specular-out", "z"], capture_output=True, text=True)
-        if refused.returncode != 2:
-            failures.append("--radiance-out with --kind lighting was not refused")
+            for unexpected in ("kind", "radiance", "directional_lights"):
+                if unexpected in entry:
+                    failures.append("package.yaml has %r:\n%s" % (unexpected, entry))
+        lights = os.path.join(scratch, "lights.yaml")
+        with open(lights, "w") as stream:
+            stream.write("directional_lights:\n"
+                         "  - {name: ceiling, direction_cube: [0, 1, 0], color_linear: [1, 1, 1], intensity: 1,\n"
+                         "     primary: true, casts_shadows: true, angular_radius_degrees: 1, lens_flare: false}\n")
+        run = bake(["--lights-input", lights])
+        if run.returncode:
+            failures.append("bake with a light list failed: " + run.stderr.strip()[-300:])
+        else:
+            entry = open(os.path.join(out, "package.yaml")).read()
+            if "name: ceiling" not in entry or "visual" in entry or "radiance" in entry:
+                failures.append("package.yaml with a light list:\n%s" % entry)
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
     for failure in failures:

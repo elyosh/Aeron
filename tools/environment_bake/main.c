@@ -1,11 +1,12 @@
 /*
  * environment_bake — offline HDR environment package baker.
  *
- * Bake mode: an equirectangular Radiance .hdr sky without suns and an
- * optional light list become three BC6H KTX2 cubes (radiance with box
- * mips, Lambert irradiance / pi, GGX roughness mips) and a `packages:`
- * entry. With `--kind lighting`, the panorama is an enclosed space (a
- * hangar) and only the diffuse and specular cubes are written.
+ * Bake mode: an equirectangular Radiance .hdr panorama and an optional
+ * light list become BC6H KTX2 cubes and a `packages:` entry. With
+ * --radiance-out the panorama is a sky without suns, written as a radiance
+ * cube with box mips; without it, the panorama only lights the package (an
+ * enclosed space, such as a hangar). Both write the Lambert irradiance / pi
+ * and the GGX roughness mips cubes.
  * Diagnostic mode writes a labelled cube for checking orientation.
  * Sprite mode converts an HDR image to a KTX2 sun sprite. Capture mode
  * bakes a capture directory written by the game (six cube faces, sun
@@ -36,7 +37,6 @@
 
 typedef struct BakeOptions {
 	const char* input;
-	const char* kind;
 	const char* lights_input;
 	const char* name;
 	const char* radiance_out;
@@ -70,9 +70,9 @@ static void usage(void) {
 		"                   [--lights-input lights.yaml] [--package-out FILE] [--manifest-root DIR]\n"
 		"                   [--radiance-size 2048] [--diffuse-size 32] [--specular-size 512]\n"
 		"                   [--specular-samples 1024] [--jobs 8]\n"
-		"  environment_bake --input space.hdr --kind lighting --name NAME --diffuse-out P --specular-out P\n"
-		"                   [--package-out FILE] [--manifest-root DIR] [--diffuse-size 32]\n"
-		"                   [--specular-size 512] [--specular-samples 1024] [--jobs 8]\n"
+		"  environment_bake --input space.hdr --name NAME --diffuse-out P --specular-out P\n"
+		"                   [--lights-input lights.yaml] [--package-out FILE] [--manifest-root DIR]\n"
+		"                   [--diffuse-size 32] [--specular-size 512] [--specular-samples 1024] [--jobs 8]\n"
 		"  environment_bake --diagnostic-faces out.ktx2 [--radiance-size 2048] [--jobs 8]\n"
 		"  environment_bake --sprite in.hdr --sprite-out out.ktx2 [--sprite-size 256]\n"
 		"                   [--sprite-format bc6h|rgba16f] [--jobs 8]\n"
@@ -120,8 +120,6 @@ static bool parse_args(int argc, char** argv, BakeOptions* o) {
 		int*         number = NULL;
 		if (strcmp(arg, "--input") == 0)
 			text = &o->input;
-		else if (strcmp(arg, "--kind") == 0)
-			text = &o->kind;
 		else if (strcmp(arg, "--lights-input") == 0)
 			text = &o->lights_input;
 		else if (strcmp(arg, "--name") == 0)
@@ -442,18 +440,19 @@ static bool package_path(const char* path, const char* root, char* out, size_t s
 	return true;
 }
 
-/* Writes the baked package as a `packages:` document. Strengths, floor and
- * rotation are starting values to calibrate per package. A lighting package
- * (no `radiance`) has no fill: its cube holds all of the space's light,
- * where a sky's fill stands for light the panorama misses. */
+/* Writes the baked package as a `packages:` document. Strengths, fill and
+ * rotation are starting values to calibrate per package; the fill starts at
+ * 0. A sky (`radiance`) always gives its lights, [] without a light list;
+ * without a sky, the package gives lights only with a light list
+ * (`has_lights`), and otherwise keeps the game's. */
 static bool write_package_entry(FILE* f, const char* name, const char* radiance, const char* diffuse,
-								const char* specular, const AeronEnvironmentLightDefinition* lights,
-								uint32_t light_count, int32_t primary) {
+								const char* specular, bool has_lights,
+								const AeronEnvironmentLightDefinition* lights, uint32_t light_count,
+								int32_t primary) {
 	AeronEnvironmentDefinition* d = (AeronEnvironmentDefinition*)calloc(1, sizeof *d);
 	if (!d)
 		return false;
 	snprintf(d->name, sizeof d->name, "%s", name);
-	d->kind = radiance ? AERON_ENV_KIND_FULL : AERON_ENV_KIND_LIGHTING;
 	if (radiance)
 		snprintf(d->radiance_path, sizeof d->radiance_path, "%s", radiance);
 	snprintf(d->diffuse_path, sizeof d->diffuse_path, "%s", diffuse);
@@ -461,7 +460,7 @@ static bool write_package_entry(FILE* f, const char* name, const char* radiance,
 	d->intensity         = 1.0f;
 	d->diffuse_strength  = 1.0f;
 	d->specular_strength = 1.0f;
-	d->ambient_fill[0] = d->ambient_fill[1] = d->ambient_fill[2] = radiance ? 0.02f : 0.0f;
+	d->has_directional_lights = radiance != NULL || has_lights;
 	memcpy(d->lights, lights, sizeof d->lights);
 	d->light_count         = light_count;
 	d->primary_light_index = primary;
@@ -631,22 +630,14 @@ static bool check_pixels(const char* path, const float* rgb, size_t pixel_count)
 }
 
 static int run_bake(const BakeOptions* o) {
-	const bool lighting = o->kind && strcmp(o->kind, "lighting") == 0;
-	if (o->kind && !lighting && strcmp(o->kind, "full") != 0) {
-		fprintf(stderr, "environment_bake: --kind must be full or lighting\n");
-		return 2;
-	}
-	if (lighting && (o->radiance_out || o->lights_input)) {
-		fprintf(stderr, "environment_bake: a lighting package has no --radiance-out or --lights-input\n");
-		return 2;
-	}
-	if (!o->name || (!lighting && !o->radiance_out) || !o->diffuse_out || !o->specular_out) {
+	const bool sky = o->radiance_out != NULL;
+	if (!o->name || !o->diffuse_out || !o->specular_out) {
 		usage();
 		return 2;
 	}
-	/* A lighting package draws no sky: its radiance cube is only the
-	 * filters' source, at the specular size. */
-	const int radiance_size = lighting ? o->specular_size : o->radiance_size;
+	/* Without a sky the radiance cube is only the filters' source, at the
+	 * specular size. */
+	const int radiance_size = sky ? o->radiance_size : o->specular_size;
 	if (!AeronEnvironment_IsValidName(o->name)) {
 		fprintf(stderr, "environment_bake: --name must be 1 to 63 lower-case letters, digits, '.' and '_'\n");
 		return 2;
@@ -664,7 +655,7 @@ static int run_bake(const BakeOptions* o) {
 		return 2;
 	}
 	char radiance_path[256], diffuse_path[256], specular_path[256];
-	if ((!lighting && !package_path(o->radiance_out, o->manifest_root, radiance_path, sizeof radiance_path)) ||
+	if ((sky && !package_path(o->radiance_out, o->manifest_root, radiance_path, sizeof radiance_path)) ||
 		!package_path(o->diffuse_out, o->manifest_root, diffuse_path, sizeof diffuse_path) ||
 		!package_path(o->specular_out, o->manifest_root, specular_path, sizeof specular_path))
 		return 2;
@@ -696,7 +687,7 @@ static int run_bake(const BakeOptions* o) {
 	if ((double)w < BAKE_PI * (double)radiance_size)
 		fprintf(stderr,
 				"environment_bake: warning: %dx%d panorama is below pi x %d wide; the %s will be soft\n", w, h,
-				radiance_size, lighting ? "reflections" : "sky");
+				radiance_size, sky ? "sky" : "reflections");
 
 	EnvCube radiance;
 	if (!envmap_cube_alloc(&radiance, radiance_size, envmap_mip_count(radiance_size))) {
@@ -707,7 +698,7 @@ static int run_bake(const BakeOptions* o) {
 	printf("input %s: %dx%d\n", o->input, w, h);
 	envmap_from_equirect(&radiance, pano, w, h, o->jobs);
 	free(pano);
-	if (!bake_cubes(o, &radiance, o->specular_size, lights, light_count, lighting ? NULL : o->radiance_out,
+	if (!bake_cubes(o, &radiance, o->specular_size, lights, light_count, sky ? o->radiance_out : NULL,
 					o->diffuse_out, o->specular_out))
 		return 1;
 
@@ -716,8 +707,9 @@ static int run_bake(const BakeOptions* o) {
 		fprintf(stderr, "environment_bake: cannot write %s\n", o->package_out);
 		return 1;
 	}
-	const bool written = write_package_entry(f, o->name, lighting ? NULL : radiance_path, diffuse_path,
-											 specular_path, lights, light_count, primary);
+	const bool written = write_package_entry(f, o->name, sky ? radiance_path : NULL, diffuse_path,
+											 specular_path, o->lights_input != NULL, lights, light_count,
+											 primary);
 	if (o->package_out) {
 		fclose(f);
 		if (!written) {
@@ -1056,7 +1048,6 @@ static int run_probes(const BakeOptions* o) {
 		return 2;
 	AeronEnvironmentDefinition* d = job.def;
 	snprintf(d->name, sizeof d->name, "%s", o->name);
-	d->kind              = AERON_ENV_KIND_PROBES;
 	d->intensity         = 1.0f;
 	d->diffuse_strength  = 1.0f;
 	d->specular_strength = 1.0f;
@@ -1697,7 +1688,7 @@ static int run_capture(const BakeOptions* o) {
 
 	if (status == 0) {
 		FILE* f = fopen(package_out, "wb");
-		if (!f || !write_package_entry(f, c->package, sky_path, diffuse_path, specular_path, c->lights,
+		if (!f || !write_package_entry(f, c->package, sky_path, diffuse_path, specular_path, true, c->lights,
 									   c->light_count, c->primary)) {
 			fprintf(stderr, "environment_bake: cannot write %s\n", package_out);
 			status = 1;

@@ -306,9 +306,11 @@ static bool parse_visual(const AeronConfigNode* light_map, const char* what,
 	static const char* const sprite_fields[] = { "kind", "sprite", "angular_size_degrees",
 												 "sprite_strength" };
 
-	const AeronConfigNode* visual = require_field(light_map, what, "visual", error);
-	if (!visual)
-		return false;
+	const AeronConfigNode* visual = AeronConfigNode_MapGet(light_map, "visual");
+	if (!visual) {
+		light->visual = AERON_ENV_SUN_NONE;
+		return true;
+	}
 	if (AeronConfigNode_Type(visual) != AERON_CONFIG_MAP)
 		return env_error(error, visual, "%s: 'visual' must be a map", what);
 	const AeronConfigNode* kind = require_field(visual, what, "kind", error);
@@ -449,31 +451,18 @@ static bool parse_lights(const AeronConfigNode* package_map, AeronEnvironmentDef
 
 static bool parse_package(const char* name, const AeronConfigNode* map, AeronEnvironmentDefinition* def,
 						  AeronConfigError* error) {
-	static const char* const full_fields[] = {
-		"kind",
+	static const char* const fields[] = {
 		"radiance",
 		"diffuse",
-		"specular",
-		"intensity",
 		"diffuse_strength",
-		"specular_strength",
-		"ambient_fill",
-		"rotation_degrees",
-		"directional_lights",
-	};
-	static const char* const lighting_fields[] = {
-		"kind",
-		"intensity",
-		"diffuse",
-		"diffuse_strength",
-		"ambient_fill",
-		"rotation_degrees",
 		"specular",
 		"specular_strength",
+		"intensity",
+		"ambient_fill",
+		"rotation_degrees",
 		"directional_lights",
 	};
 	static const char* const probes_fields[] = {
-		"kind",
 		"intensity",
 		"diffuse_strength",
 		"specular_strength",
@@ -494,21 +483,10 @@ static bool parse_package(const char* name, const AeronConfigNode* map, AeronEnv
 
 	if (AeronConfigNode_Type(map) != AERON_CONFIG_MAP)
 		return env_error(error, map, "%s must be a map", what);
-	const AeronConfigNode* kind = require_field(map, what, "kind", error);
-	if (!kind)
-		return false;
-	const char* kind_name = AeronConfigNode_String(kind, NULL);
-	if (kind_name && strcmp(kind_name, "full") == 0) {
-		def->kind = AERON_ENV_KIND_FULL;
-		if (!check_fields(map, what, full_fields, sizeof full_fields / sizeof full_fields[0], error))
-			return false;
-	} else if (kind_name && strcmp(kind_name, "lighting") == 0) {
-		def->kind = AERON_ENV_KIND_LIGHTING;
-		if (!check_fields(map, what, lighting_fields, sizeof lighting_fields / sizeof lighting_fields[0],
-						  error))
-			return false;
-	} else if (kind_name && strcmp(kind_name, "probes") == 0) {
-		def->kind = AERON_ENV_KIND_PROBES;
+	const AeronConfigNode* kind = AeronConfigNode_MapGet(map, "kind");
+	if (kind)
+		return env_error(error, kind, "%s: remove 'kind': a package's fields say what it does", what);
+	if (AeronConfigNode_MapGet(map, "cubes") || AeronConfigNode_MapGet(map, "grid"))
 		return check_fields(map, what, probes_fields, sizeof probes_fields / sizeof probes_fields[0],
 							error) &&
 			   read_number(map, what, "intensity", true, 0.0, 16.0, &def->intensity, error) &&
@@ -517,46 +495,50 @@ static bool parse_package(const char* name, const AeronConfigNode* map, AeronEnv
 			   read_path(map, what, "cubes", def->cubes_path, sizeof def->cubes_path, error) &&
 			   read_path(map, what, "grid", def->grid_path, sizeof def->grid_path, error) &&
 			   AeronEnvironment_ParseProbeSet(map, what, def, error);
-	} else {
-		return env_error(error, kind, "%s: 'kind' must be 'full', 'lighting' or 'probes'", what);
-	}
 
-	if (!read_number(map, what, "intensity", true, 0.0, 16.0, &def->intensity, error) ||
-		!read_ambient_fill(map, what, def->ambient_fill, error) ||
-		!read_vec3(map, what, "rotation_degrees", def->rotation_degrees, NULL, error))
+	if (!check_fields(map, what, fields, sizeof fields / sizeof fields[0], error) ||
+		!read_number(map, what, "intensity", true, 0.0, 16.0, &def->intensity, error) ||
+		(AeronConfigNode_MapGet(map, "ambient_fill") &&
+		 !read_ambient_fill(map, what, def->ambient_fill, error)) ||
+		(AeronConfigNode_MapGet(map, "rotation_degrees") &&
+		 !read_vec3(map, what, "rotation_degrees", def->rotation_degrees, NULL, error)))
 		return false;
 	for (int i = 0; i < 3; ++i)
 		def->rotation_degrees[i] = AeronEnvironment_NormalizeDegrees(def->rotation_degrees[i]);
 
-	if (def->kind == AERON_ENV_KIND_LIGHTING) {
-		/* The cubes are optional, each with its strength: both fields or
-		 * neither. Without a diffuse cube the fill is the only ambient.
-		 * Lights are optional too: without the field the game keeps its
-		 * own. */
-		const bool has_diffuse  = AeronConfigNode_MapGet(map, "diffuse") != NULL;
-		const bool has_specular = AeronConfigNode_MapGet(map, "specular") != NULL;
-		if (has_diffuse != (AeronConfigNode_MapGet(map, "diffuse_strength") != NULL))
-			return env_error(error, map, "%s: give both 'diffuse' and 'diffuse_strength', or neither", what);
-		if (has_specular != (AeronConfigNode_MapGet(map, "specular_strength") != NULL))
-			return env_error(error, map, "%s: give both 'specular' and 'specular_strength', or neither", what);
-		def->has_directional_lights = AeronConfigNode_MapGet(map, "directional_lights") != NULL;
-		return (!has_diffuse ||
-				(read_path(map, what, "diffuse", def->diffuse_path, sizeof def->diffuse_path, error) &&
-				 read_number(map, what, "diffuse_strength", true, 0.0, 4.0, &def->diffuse_strength,
-							 error))) &&
-			   (!has_specular ||
-				(read_path(map, what, "specular", def->specular_path, sizeof def->specular_path, error) &&
-				 read_number(map, what, "specular_strength", true, 0.0, 4.0, &def->specular_strength,
-							 error))) &&
-			   (!def->has_directional_lights || parse_lights(map, def, error));
-	}
-	def->has_directional_lights = true;
-	return read_path(map, what, "radiance", def->radiance_path, sizeof def->radiance_path, error) &&
-		   read_path(map, what, "diffuse", def->diffuse_path, sizeof def->diffuse_path, error) &&
-		   read_number(map, what, "diffuse_strength", true, 0.0, 4.0, &def->diffuse_strength, error) &&
-		   read_path(map, what, "specular", def->specular_path, sizeof def->specular_path, error) &&
-		   read_number(map, what, "specular_strength", true, 0.0, 4.0, &def->specular_strength, error) &&
-		   parse_lights(map, def, error);
+	/* Each cube comes with its strength: both fields or neither. Without a
+	 * diffuse cube the fill is the only ambient, and the scene binds no
+	 * reflections (AeronScene_SetPbrEnvironment). A sky's suns are its
+	 * lights: it gives them, [] for none. */
+	const bool has_radiance = AeronConfigNode_MapGet(map, "radiance") != NULL;
+	const bool has_diffuse  = AeronConfigNode_MapGet(map, "diffuse") != NULL;
+	const bool has_specular = AeronConfigNode_MapGet(map, "specular") != NULL;
+	if (has_diffuse != (AeronConfigNode_MapGet(map, "diffuse_strength") != NULL))
+		return env_error(error, map, "%s: give both 'diffuse' and 'diffuse_strength', or neither", what);
+	if (has_specular != (AeronConfigNode_MapGet(map, "specular_strength") != NULL))
+		return env_error(error, map, "%s: give both 'specular' and 'specular_strength', or neither", what);
+	if (has_specular && !has_diffuse)
+		return env_error(error, map, "%s: 'specular' requires 'diffuse'", what);
+	def->has_directional_lights = AeronConfigNode_MapGet(map, "directional_lights") != NULL;
+	if (has_radiance && !def->has_directional_lights)
+		return env_error(error, map,
+						 "%s: 'radiance' requires 'directional_lights' ([] for a sky without suns)", what);
+	if ((has_radiance &&
+		 !read_path(map, what, "radiance", def->radiance_path, sizeof def->radiance_path, error)) ||
+		(has_diffuse &&
+		 (!read_path(map, what, "diffuse", def->diffuse_path, sizeof def->diffuse_path, error) ||
+		  !read_number(map, what, "diffuse_strength", true, 0.0, 4.0, &def->diffuse_strength, error))) ||
+		(has_specular &&
+		 (!read_path(map, what, "specular", def->specular_path, sizeof def->specular_path, error) ||
+		  !read_number(map, what, "specular_strength", true, 0.0, 4.0, &def->specular_strength, error))) ||
+		(def->has_directional_lights && !parse_lights(map, def, error)))
+		return false;
+	for (uint32_t i = 0; has_radiance && i < def->light_count; ++i)
+		if (def->lights[i].visual == AERON_ENV_SUN_NONE)
+			return env_error(error, AeronConfigNode_MapGet(map, "directional_lights"),
+							 "%s light '%s': 'visual' is required with 'radiance'", what,
+							 def->lights[i].name);
+	return true;
 }
 
 bool AeronEnvironment_ParsePackages(const AeronConfigNode* packages, AeronEnvironmentDefinitionSet** out_set,
@@ -679,7 +661,7 @@ static const char* yaml_shape(AeronEnvironmentProbeShape shape) {
 	return shape == AERON_ENV_PROBE_ELLIPSOID ? "ellipsoid" : "box";
 }
 
-/* The rest of a probes package, after its kind and intensity. */
+/* The rest of a probes package, after its intensity. */
 static void format_probes(YamlOut* y, const AeronEnvironmentDefinition* d) {
 	yaml_printf(y, "    diffuse_strength: %.9g\n    specular_strength: %.9g\n    cubes: ",
 				(double)d->diffuse_strength, (double)d->specular_strength);
@@ -723,14 +705,12 @@ size_t AeronEnvironment_FormatPackageYaml(const AeronEnvironmentDefinition* d, c
 		out[0] = '\0';
 	if (!d)
 		return 0;
-	static const char* const kinds[] = { "full", "lighting", "probes" };
-	yaml_printf(&y, "packages:\n  %s:\n    kind: %s\n    intensity: %.9g\n", d->name, kinds[d->kind],
-				(double)d->intensity);
-	if (d->kind == AERON_ENV_KIND_PROBES) {
+	yaml_printf(&y, "packages:\n  %s:\n    intensity: %.9g\n", d->name, (double)d->intensity);
+	if (AeronEnvironment_IsProbeSet(d)) {
 		format_probes(&y, d);
 		return y.length;
 	}
-	if (d->kind == AERON_ENV_KIND_FULL) {
+	if (d->radiance_path[0]) {
 		yaml_printf(&y, "    radiance: ");
 		yaml_string(&y, d->radiance_path);
 		yaml_printf(&y, "\n");
@@ -754,7 +734,7 @@ size_t AeronEnvironment_FormatPackageYaml(const AeronEnvironmentDefinition* d, c
 	yaml_printf(&y, "\n    rotation_degrees: ");
 	yaml_vec3(&y, d->rotation_degrees);
 	yaml_printf(&y, "\n");
-	if (d->kind != AERON_ENV_KIND_FULL && !d->has_directional_lights)
+	if (!d->has_directional_lights)
 		return y.length;
 	if (d->light_count == 0) {
 		yaml_printf(&y, "    directional_lights: []\n");
@@ -769,17 +749,17 @@ size_t AeronEnvironment_FormatPackageYaml(const AeronEnvironmentDefinition* d, c
 		yaml_vec3(&y, l->color_linear);
 		yaml_printf(&y,
 					"\n        intensity: %.9g\n        primary: %s\n        casts_shadows: %s\n"
-					"        angular_radius_degrees: %.9g\n        lens_flare: %s\n        visual:\n",
+					"        angular_radius_degrees: %.9g\n        lens_flare: %s\n",
 					(double)l->intensity, l->primary ? "true" : "false", l->casts_shadows ? "true" : "false",
 					(double)l->angular_radius_degrees, l->lens_flare ? "true" : "false");
 		if (l->visual == AERON_ENV_SUN_DISC) {
 			yaml_printf(
 				&y,
-				"          kind: disc\n          radiance_scale: %.9g\n          glow_radius_degrees: %.9g\n"
+				"        visual:\n          kind: disc\n          radiance_scale: %.9g\n          glow_radius_degrees: %.9g\n"
 				"          glow_strength: %.9g\n",
 				(double)l->radiance_scale, (double)l->glow_radius_degrees, (double)l->glow_strength);
-		} else {
-			yaml_printf(&y, "          kind: sprite\n          sprite: ");
+		} else if (l->visual == AERON_ENV_SUN_SPRITE) {
+			yaml_printf(&y, "        visual:\n          kind: sprite\n          sprite: ");
 			yaml_string(&y, l->sprite_path);
 			yaml_printf(&y, "\n          angular_size_degrees: %.9g\n          sprite_strength: %.9g\n",
 						(double)l->angular_size_degrees, (double)l->sprite_strength);
@@ -799,8 +779,7 @@ bool AeronEnvironment_BuildProbeCells(const AeronEnvironmentDefinition* d, Aeron
 	if (!out)
 		return false;
 	memset(out, 0, sizeof *out);
-	if (!d || d->kind != AERON_ENV_KIND_PROBES || d->probe_count == 0 ||
-		d->probe_count > AERON_ENV_MAX_PROBES)
+	if (!d || d->probe_count == 0 || d->probe_count > AERON_ENV_MAX_PROBES)
 		return false;
 
 	/* Influence boxes, their union, and the probes smallest first (ties

@@ -4,15 +4,21 @@
 /*
  * Authored HDR environment packages.
  *
- * A package is a named definition in a `packages:` YAML map. A `full`
- * package owns a visible sky (radiance cube), diffuse and specular
- * image-based lighting cubes, and up to four analytical directional lights,
- * each drawn as a visible sun. A `lighting` package lights a space without
- * drawing a sky: an ambient fill, optional diffuse and specular cubes, and
- * optional directional lights that replace the game's own, none drawn as a
- * sun. A `probes` package belongs to a model: its reflection probes (a cube
- * array) and its irradiance grid, placed in the model's frame, blended with
- * the scene's environment where they do not apply. Texture paths are kept as written; the game decides which VFS
+ * A package is a named definition in a `packages:` YAML map. Its fields
+ * say what it does:
+ *   - `radiance`: a visible sky (radiance cube). It requires
+ *     `directional_lights` ([] for a sky without suns), each drawn as a sun
+ *     with its `visual`;
+ *   - `diffuse` and `specular`: image-based lighting cubes, each with its
+ *     strength; `specular` requires `diffuse`;
+ *   - `directional_lights`: up to four analytical lights that replace the
+ *     game's own; without the field the game keeps its lights;
+ *   - `ambient_fill`: radiance added from every direction (default 0).
+ * A package with `cubes` and `grid` is a probes package instead: it belongs
+ * to a model, with its reflection probes (a cube array) and its irradiance
+ * grid, placed in the model's frame, blended with the scene's environment
+ * where they do not apply; it has none of the fields above but the
+ * strengths. Texture paths are kept as written; the game decides which VFS
  * root and prefix they resolve against.
  *
  * Cube-local directions use the authored cubemap frame: +X right, +Y up,
@@ -56,15 +62,10 @@ enum {
 	AERON_ENV_PROBE_GRID_MAX = 64
 };
 
-typedef enum AeronEnvironmentKind {
-	AERON_ENV_KIND_FULL,
-	AERON_ENV_KIND_LIGHTING,
-	AERON_ENV_KIND_PROBES,
-} AeronEnvironmentKind;
-
 typedef enum AeronEnvironmentSunVisual {
 	AERON_ENV_SUN_DISC,
 	AERON_ENV_SUN_SPRITE,
+	AERON_ENV_SUN_NONE, /* no `visual`: a light of a package without a sky */
 } AeronEnvironmentSunVisual;
 
 typedef struct AeronEnvironmentLightDefinition {
@@ -108,10 +109,9 @@ typedef struct AeronEnvironmentProbeDefinition {
 
 typedef struct AeronEnvironmentDefinition {
 	char                            name[AERON_ENV_NAME_MAX];
-	AeronEnvironmentKind            kind;
-	char                            radiance_path[AERON_ENV_PATH_MAX]; /* empty for lighting packages */
-	char                            diffuse_path[AERON_ENV_PATH_MAX];  /* empty: no diffuse cube (lighting) */
-	char                            specular_path[AERON_ENV_PATH_MAX]; /* empty: no reflections (lighting) */
+	char                            radiance_path[AERON_ENV_PATH_MAX]; /* empty: no sky */
+	char                            diffuse_path[AERON_ENV_PATH_MAX];  /* empty: no diffuse cube */
+	char                            specular_path[AERON_ENV_PATH_MAX]; /* empty: no reflections */
 	float                           intensity; /* scales the sky, diffuse and specular together */
 	float                           diffuse_strength;  /* 0 without a diffuse cube */
 	float                           specular_strength; /* 0 without a specular cube */
@@ -120,20 +120,21 @@ typedef struct AeronEnvironmentDefinition {
 	AeronEnvironmentLightDefinition lights[AERON_ENV_MAX_LIGHTS];
 	uint32_t                        light_count;
 	int32_t                         primary_light_index; /* -1 when none */
-	/* The package gives `directional_lights` (always for full packages): its
-	 * lights, possibly none, replace the game's. A lighting package without
-	 * the field keeps the game's lights. */
+	/* The package gives `directional_lights` (always with a sky): its
+	 * lights, possibly none, replace the game's. Without the field the game
+	 * keeps its lights. */
 	bool                            has_directional_lights;
-	/* Probes packages: layer k of the cube array is probe k; the grid is
-	 * an axis-aligned box of resolution points, sampled as Blender's
-	 * volume probe (point i at (i + 1) / (resolution + 1) of the box). */
+	/* Probes packages (`cubes` and `grid`): layer k of the cube array is
+	 * probe k; the grid is an axis-aligned box of resolution points, sampled
+	 * as Blender's volume probe (point i at (i + 1) / (resolution + 1) of
+	 * the box). */
 	char                            cubes_path[AERON_ENV_PATH_MAX];
 	char                            grid_path[AERON_ENV_PATH_MAX];
 	float                           grid_center[3];
 	float                           grid_size[3];
 	uint32_t                        grid_resolution[3];
 	AeronEnvironmentProbeDefinition probes[AERON_ENV_MAX_PROBES];
-	uint32_t                        probe_count; /* 1 to AERON_ENV_MAX_PROBES */
+	uint32_t                        probe_count; /* 1 to AERON_ENV_MAX_PROBES; 0: not a probes package */
 	/* When the scene's key light is in the bake (a hangar's ceiling light),
 	 * the part of the probe light its shadow removes, 0-1 (default 0.7). */
 	float                           key_light_shadow;
@@ -145,6 +146,11 @@ typedef struct AeronEnvironmentDefinition {
 	float                           reflection_plane_size[2];
 	float                           reflection_plane_distance;
 } AeronEnvironmentDefinition;
+
+/* A probes package: a model's probes, not a sky or lighting package. */
+static inline bool AeronEnvironment_IsProbeSet(const AeronEnvironmentDefinition* definition) {
+	return definition->probe_count != 0;
+}
 
 /* A set of parsed package definitions, fixed once in use. */
 typedef struct AeronEnvironmentDefinitionSet AeronEnvironmentDefinitionSet;
@@ -171,7 +177,8 @@ const AeronEnvironmentDefinition* AeronEnvironmentDefinitionSet_Find(const Aeron
 
 /* Parses a `directional_lights` sequence with the package light schema
  * (also used by tools that take a light list on its own). `owner` names
- * the list in error messages. */
+ * the list in error messages. A light's `visual` is optional here
+ * (AERON_ENV_SUN_NONE without it); a package with a sky requires it. */
 bool AeronEnvironment_ParseLights(const AeronConfigNode* lights, const char* owner,
 								  AeronEnvironmentLightDefinition out[AERON_ENV_MAX_LIGHTS],
 								  uint32_t* out_count, int32_t* out_primary, AeronConfigError* error);
@@ -264,9 +271,9 @@ typedef struct AeronEnvironmentPackage {
 	/* Effective values: the definition, the reference's rotation and any
 	 * debug overrides. Texture paths are those of the definition. */
 	AeronEnvironmentDefinition settings;
-	AeronTexture*              radiance; /* NULL for lighting packages */
-	AeronTexture*              diffuse;  /* NULL for a lighting package without one */
-	AeronTexture*              specular; /* NULL for a lighting package without one */
+	AeronTexture*              radiance; /* NULL without a sky */
+	AeronTexture*              diffuse;  /* NULL without one */
+	AeronTexture*              specular; /* NULL without one */
 	uint32_t                   specular_mip_count;
 	AeronSampler*              sampler;          /* the library's environment sampler */
 	float                      world_to_cube[9]; /* row-major: Q^T * B */

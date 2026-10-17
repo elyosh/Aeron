@@ -931,7 +931,7 @@ static void sky_sun_basis(const AeronScene3D* s, const float dir[3], float t0[3]
 static float sky_sun_max3(const float v[3]) { return fmaxf(v[0], fmaxf(v[1], v[2])); }
 
 void AeronScene_AddSkySun(AeronScene3D* s, const AeronEnvironmentLight* light) {
-	if (!s || !light)
+	if (!s || !light || light->visual == AERON_ENV_SUN_NONE)
 		return;
 	float       dir[3] = { light->direction_world[0], light->direction_world[1], light->direction_world[2] };
 	const float length = sqrtf(dir[0] * dir[0] + dir[1] * dir[1] + dir[2] * dir[2]);

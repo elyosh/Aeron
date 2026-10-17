@@ -12,8 +12,8 @@ direction shows too. Packages:
   reflecting onto the interior's box, with an 8x12x4 grid over it;
 - probes.isd: four probes, the quadrants of imperialstardestroyer and the
   space above it, with an 8x12x4 grid;
-- test.hangar: a dim neutral `lighting` environment, to check probes over an
-  environment.
+- test.hangar: a dim neutral environment without a sky, to check probes over
+  an environment.
 """
 
 import argparse
@@ -131,7 +131,7 @@ def main():
     target = os.path.join(out, "environments", "test_hangar")
     os.makedirs(target)
     package = os.path.join(target, "package.yaml")
-    run = subprocess.run([baker, "--input", pano, "--kind", "lighting", "--name", "test.hangar",
+    run = subprocess.run([baker, "--input", pano, "--name", "test.hangar",
                           "--diffuse-out", os.path.join(target, "diffuse.ktx2"),
                           "--specular-out", os.path.join(target, "specular.ktx2"), "--package-out", package,
                           "--manifest-root", out, "--specular-size", "64", "--specular-samples", "64"],

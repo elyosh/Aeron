@@ -105,10 +105,12 @@ bool light_editor(EnvSlot* slot, uint32_t index) {
 			changed |= ImGui::SliderFloat("Radiance scale", &d->radiance_scale, 0.0f, 16.0f, "%.3f");
 			changed |= ImGui::SliderFloat("Glow radius", &d->glow_radius_degrees, 0.0f, 30.0f, "%.2f deg");
 			changed |= ImGui::SliderFloat("Glow strength", &d->glow_strength, 0.0f, 16.0f, "%.3f");
-		} else {
+		} else if (d->visual == AERON_ENV_SUN_SPRITE) {
 			ImGui::Text("Visual: sprite %s%s", d->sprite_path, l->sprite ? "" : " (not loaded)");
 			changed |= ImGui::SliderFloat("Angular size", &d->angular_size_degrees, 0.01f, 60.0f, "%.2f deg");
 			changed |= ImGui::SliderFloat("Sprite strength", &d->sprite_strength, 0.0f, 16.0f, "%.3f");
+		} else {
+			ImGui::TextUnformatted("Visual: none");
 		}
 		ImGui::TreePop();
 	}
@@ -122,13 +124,14 @@ void slot_editor(AeronEnvironmentLibrary* library, EnvSlot* slot) {
 	/* One scale for everything derived from the sky image; the strengths
 	 * are relative adjustments, 1 = physically consistent. */
 	changed |= ImGui::SliderFloat("Intensity", &s->intensity, 0.0f, 16.0f, "%.3f");
-	if (s->diffuse_path[0] || s->kind == AERON_ENV_KIND_PROBES)
+	const bool probes = AeronEnvironment_IsProbeSet(s);
+	if (s->diffuse_path[0] || probes)
 		changed |=
 			ImGui::SliderFloat("Diffuse strength (relative)", &s->diffuse_strength, 0.0f, 4.0f, "%.3f");
-	if (s->specular_path[0] || s->kind == AERON_ENV_KIND_PROBES)
+	if (s->specular_path[0] || probes)
 		changed |=
 			ImGui::SliderFloat("Specular strength (relative)", &s->specular_strength, 0.0f, 4.0f, "%.3f");
-	if (s->kind == AERON_ENV_KIND_PROBES) {
+	if (probes) {
 		/* Probes have no rotation, fill or lights. */
 		changed |= ImGui::SliderFloat("Key light shadow", &s->key_light_shadow, 0.0f, 1.0f, "%.2f");
 		if (ImGui::IsItemHovered())
@@ -142,7 +145,7 @@ void slot_editor(AeronEnvironmentLibrary* library, EnvSlot* slot) {
 				s->ambient_fill[c] < 0.0f ? 0.0f : (s->ambient_fill[c] > 4.0f ? 4.0f : s->ambient_fill[c]);
 		changed = true;
 	}
-	if (s->kind != AERON_ENV_KIND_PROBES) {
+	if (!probes) {
 		changed |= ImGui::SliderFloat("Yaw", &s->rotation_degrees[0], 0.0f, 360.0f, "%.1f deg");
 		changed |= ImGui::SliderFloat("Pitch", &s->rotation_degrees[1], 0.0f, 360.0f, "%.1f deg");
 		changed |= ImGui::SliderFloat("Roll", &s->rotation_degrees[2], 0.0f, 360.0f, "%.1f deg");
@@ -217,16 +220,16 @@ void draw_tool(int* open, void* user) {
 			continue;
 		}
 		const AeronEnvironmentDefinition* d = slot->package.definition;
-		static const char* const          kinds[] = { "full", "lighting", "probes" };
-		ImGui::Text("Kind: %s", kinds[d->kind]);
-		if (d->kind == AERON_ENV_KIND_LIGHTING)
+		if (!AeronEnvironment_IsProbeSet(d)) {
+			ImGui::Text("Sky: %s", d->radiance_path[0] ? "the package's" : "the game's");
 			ImGui::Text("Directional lights: %s", d->has_directional_lights ? "the package's" : "the game's");
+		}
 		texture_row(library, "Radiance", d->radiance_path);
 		texture_row(library, "Diffuse", d->diffuse_path);
 		texture_row(library, "Specular", d->specular_path);
 		texture_row(library, "Probes", d->cubes_path);
 		texture_row(library, "Grid", d->grid_path);
-		if (d->kind == AERON_ENV_KIND_PROBES)
+		if (AeronEnvironment_IsProbeSet(d))
 			ImGui::Text("%u probes, buffer %.1f KiB, %u cells over %d probes", d->probe_count,
 						(double)slot->probe_buffer_bytes / 1024.0, slot->probe_overflow_cells,
 						AERON_ENV_PROBE_CELL_PROBES);
