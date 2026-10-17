@@ -1,9 +1,10 @@
 /*
  * environment_bake — offline HDR environment baker.
  *
- * Bake mode converts an equirectangular Radiance .hdr panorama and an
- * optional light list into BC6H KTX2 cubes and an `environments:` entry. With
- * --radiance-out, the panorama is a sky without suns and is also written as
+ * Bake mode converts an equirectangular Radiance .hdr panorama, or the six
+ * faces of an XWA Upgrade skybox folder (xwau_faces.h), and an optional
+ * light list into BC6H KTX2 cubes and an `environments:` entry. With
+ * --radiance-out, the input is a sky without suns and is also written as
  * a radiance cube with box mips. Without it, the panorama is only used for
  * lighting (an enclosed space, such as a hangar). In both cases the baker
  * writes the Lambert irradiance / pi cube and the GGX cube with roughness
@@ -32,6 +33,7 @@
 #include "envmap.h"
 #include "hdr_read.h"
 #include "ktx2_writer.h"
+#include "xwau_faces.h"
 
 #include <math.h>
 #include <stdint.h>
@@ -43,6 +45,7 @@
 
 typedef struct BakeOptions {
 	const char* input;
+	const char* faces_dir;
 	const char* lights_input;
 	const char* name;
 	const char* radiance_out;
@@ -77,6 +80,8 @@ static void usage(void) {
 		"                   [--lights-input lights.yaml] [--environment-out FILE] [--manifest-root DIR]\n"
 		"                   [--radiance-size 2048] [--diffuse-size 32] [--specular-size 512]\n"
 		"                   [--specular-samples 1024] [--jobs 8]\n"
+		"  environment_bake --faces DIR --name NAME --radiance-out P --diffuse-out P --specular-out P\n"
+		"                   [same options as --input]\n"
 		"  environment_bake --input space.hdr --name NAME --diffuse-out P --specular-out P\n"
 		"                   [--lights-input lights.yaml] [--environment-out FILE] [--manifest-root DIR]\n"
 		"                   [--diffuse-size 32] [--specular-size 512] [--specular-samples 1024] [--jobs 8]\n"
@@ -89,7 +94,11 @@ static void usage(void) {
 		"                   [--specular-size 256] [--specular-samples 1024] [--jobs 8]\n"
 		"\n"
 		"The sky is an equirectangular panorama (2:1) without suns, in the authored\n"
-		"frame: +X right, +Y up, -Z forward at the image centre. The light list is a\n"
+		"frame: +X right, +Y up, -Z forward at the image centre. --faces reads an XWA\n"
+		"Upgrade skybox folder (Effects/CubeMaps/<name>): six PNG or JPEG faces, the\n"
+		"digit before the extension giving the face (0 Right, 1 Left, 2 Top, 3 Bottom,\n"
+		"4 Front, 5 Back). They are sRGB, and are turned to OpenXWA's cube frame.\n"
+		"The light list is a\n"
 		"YAML map with a `directional_lights` sequence in the environment light schema.\n"
 		"Texture paths in the environment entry are relative to --manifest-root when given.\n"
 		"A capture is baked into <bake root>/flight/environments/captured/<mission>/region_<n>/;\n"
@@ -128,6 +137,8 @@ static bool parse_args(int argc, char** argv, BakeOptions* o) {
 		int*         number = NULL;
 		if (strcmp(arg, "--input") == 0)
 			text = &o->input;
+		else if (strcmp(arg, "--faces") == 0)
+			text = &o->faces_dir;
 		else if (strcmp(arg, "--lights-input") == 0)
 			text = &o->lights_input;
 		else if (strcmp(arg, "--name") == 0)
@@ -640,6 +651,60 @@ static bool check_pixels(const char* path, const float* rgb, size_t pixel_count)
 	return true;
 }
 
+/* Fills level 0 of a new `size` radiance cube from the --input panorama. */
+static bool load_panorama(const BakeOptions* o, int size, EnvCube* radiance) {
+	float* pano = NULL;
+	int    w = 0, h = 0;
+	char   err[512];
+	if (!read_hdr_rgb(o->input, &pano, &w, &h, err, sizeof err)) {
+		fprintf(stderr, "environment_bake: %s\n", err);
+		return false;
+	}
+	if (w != 2 * h) {
+		fprintf(stderr, "environment_bake: %s is %dx%d; an equirectangular panorama is 2:1\n", o->input, w,
+				h);
+		free(pano);
+		return false;
+	}
+	if (!check_pixels(o->input, pano, (size_t)w * h)) {
+		free(pano);
+		return false;
+	}
+	if ((double)w < BAKE_PI * (double)size)
+		fprintf(stderr,
+				"environment_bake: warning: %dx%d panorama is below pi x %d wide; the %s will be soft\n", w,
+				h, size, o->radiance_out ? "sky" : "reflections");
+
+	if (!envmap_cube_alloc(radiance, size, envmap_mip_count(size))) {
+		fprintf(stderr, "environment_bake: out of memory\n");
+		free(pano);
+		return false;
+	}
+	printf("input %s: %dx%d\n", o->input, w, h);
+	envmap_from_equirect(radiance, pano, w, h, o->jobs);
+	free(pano);
+	return true;
+}
+
+/* Fills level 0 of a new `size` radiance cube from the --faces folder. */
+static bool load_faces(const BakeOptions* o, int size, EnvCube* radiance) {
+	XwauFaces faces;
+	char      err[512];
+	if (!xwau_faces_load(o->faces_dir, size, &faces, err, sizeof err)) {
+		fprintf(stderr, "environment_bake: %s\n", err);
+		return false;
+	}
+	if (!envmap_cube_alloc(radiance, size, envmap_mip_count(size))) {
+		fprintf(stderr, "environment_bake: out of memory\n");
+		xwau_faces_free(&faces);
+		return false;
+	}
+	printf("input %s: six %d px faces\n", o->faces_dir, faces.source_size);
+	xwau_faces_to_cube(&faces, radiance, true);
+	xwau_faces_free(&faces);
+	return true;
+}
+
 static int run_bake(const BakeOptions* o) {
 	const bool sky = o->radiance_out != NULL;
 	if (!o->name || !o->diffuse_out || !o->specular_out) {
@@ -678,37 +743,13 @@ static int run_bake(const BakeOptions* o) {
 	if (o->lights_input && !load_lights(o->lights_input, lights, &light_count, &primary))
 		return 1;
 
-	float* pano = NULL;
-	int    w = 0, h = 0;
-	char   err[512];
-	if (!read_hdr_rgb(o->input, &pano, &w, &h, err, sizeof err)) {
-		fprintf(stderr, "environment_bake: %s\n", err);
-		return 1;
-	}
-	if (w != 2 * h) {
-		fprintf(stderr, "environment_bake: %s is %dx%d; an equirectangular panorama is 2:1\n", o->input, w,
-				h);
-		free(pano);
-		return 1;
-	}
-	if (!check_pixels(o->input, pano, (size_t)w * h)) {
-		free(pano);
-		return 1;
-	}
-	if ((double)w < BAKE_PI * (double)radiance_size)
-		fprintf(stderr,
-				"environment_bake: warning: %dx%d panorama is below pi x %d wide; the %s will be soft\n", w, h,
-				radiance_size, sky ? "sky" : "reflections");
-
 	EnvCube radiance;
-	if (!envmap_cube_alloc(&radiance, radiance_size, envmap_mip_count(radiance_size))) {
-		fprintf(stderr, "environment_bake: out of memory\n");
-		free(pano);
+	if (o->faces_dir) {
+		if (!load_faces(o, radiance_size, &radiance))
+			return 1;
+	} else if (!load_panorama(o, radiance_size, &radiance)) {
 		return 1;
 	}
-	printf("input %s: %dx%d\n", o->input, w, h);
-	envmap_from_equirect(&radiance, pano, w, h, o->jobs);
-	free(pano);
 	if (!bake_cubes(o, &radiance, o->specular_size, lights, light_count, sky ? o->radiance_out : NULL,
 					o->diffuse_out, o->specular_out))
 		return 1;
@@ -1716,12 +1757,12 @@ int main(int argc, char** argv) {
 		usage();
 		return 2;
 	}
-	const int modes = (o.input != NULL) + (o.diagnostic_out != NULL) + (o.sprite_input != NULL) +
-					  (o.capture_dir != NULL) + (o.probes_input != NULL);
+	const int modes = (o.input != NULL) + (o.faces_dir != NULL) + (o.diagnostic_out != NULL) +
+					  (o.sprite_input != NULL) + (o.capture_dir != NULL) + (o.probes_input != NULL);
 	if (modes != 1) {
 		fprintf(stderr,
-				"environment_bake: give exactly one of --input, --diagnostic-faces, --sprite, --capture "
-				"or --probes\n");
+				"environment_bake: give exactly one of --input, --faces, --diagnostic-faces, --sprite, "
+				"--capture or --probes\n");
 		usage();
 		return 2;
 	}

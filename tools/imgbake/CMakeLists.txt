@@ -1,7 +1,7 @@
 # imgbake — shared encoder backend for replacement assets.
 #
 # Provides HD upscaling, atlas packing, KTX2 (BC7/BC6H/BC5/RGBA16F + zstd)
-# encoding, PNG and Radiance HDR I/O, environment-cube filtering, palette
+# encoding, PNG, JPEG and Radiance HDR I/O, environment-cube filtering, palette
 # helpers, and TTF/glyph font-atlas baking.
 #
 # Image containers (Image8/AnimImage) come from delt.h/anim.h as TYPES
@@ -74,6 +74,7 @@ add_library(imgbake STATIC
     png_write.c
     png_write_atomic.c
     png_read.c
+    ldr_read.c
     hdr_read.c
     envmap.c
     palette.c
