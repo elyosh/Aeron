@@ -383,7 +383,8 @@ static bool image_flipbook(Text* y, const char* name, const XwauMatFile* mat, in
 			n = 1;
 		frames = (XwauSeqFrame*)malloc((n ? n : 1) * sizeof *frames);
 		for (size_t i = 0; frames && i < n; ++i)
-			frames[i] = (XwauSeqFrame) { q->group, ids[i], q->fps > 0.0f ? 1.0f / q->fps : 1.0f };
+			frames[i] =
+				(XwauSeqFrame) { q->group, ids[i], q->fps > 0.0f ? 1.0f / q->fps : 1.0f, q->intensity };
 		count = frames ? n : 0;
 	} else {
 		frames = (XwauSeqFrame*)malloc((q->frame_count ? q->frame_count : 1) * sizeof *frames);

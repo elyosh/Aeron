@@ -116,7 +116,7 @@ together.
 | `layer` | `baseColor` or `emissive`: the kind of its frames |
 | `mode` | `loop`, or `once` (holds the last frame) |
 | `library` | The library of its frames |
-| `frames` | `[key, seconds]` pairs: images of the layer's kind |
+| `frames` | `[key, seconds]` pairs: images of the layer's kind. An emissive frame can also have a strength, `[key, seconds, strength]`, that multiplies `emissiveStrength` (default 1) |
 | `emissiveStrength` | Optional, default 1: brightness of emissive frames |
 | `unlit` | Optional, 0 to 1, default 0, base colour flipbooks: the part of the frames drawn unlit, as emission in place of the material's (for screens whose material is unlit) |
 

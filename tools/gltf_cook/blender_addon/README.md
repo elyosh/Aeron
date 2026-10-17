@@ -249,8 +249,9 @@ in Material properties > Aeron Animation. The exports write it to the
 - **Flipbooks**: a list that you can reorder. On each layer, the first
   flipbook whose state is active plays. Each flipbook has a state, a layer,
   a mode, a library, a strength or unlit amount, and frames (image, seconds
-  and thumbnail). **Add by Prefix…** adds every image of the library whose
-  name starts with a given prefix. **Add Recent…** adds the images last
+  and thumbnail). Emissive frames also have a strength that multiplies the
+  flipbook's strength. **Add by Prefix…** adds every image of the library
+  whose name starts with a given prefix. **Add Recent…** adds the images last
   added to a library. **Set Duration…** gives all frames the same duration.
 - **Hull Damage**: its library, **Pick Group** and **Square Group**, and
   alternatives with three stages each (75%, 50% and 25% hull). Each

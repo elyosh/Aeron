@@ -493,8 +493,8 @@ static int build_anim_records(AeronSceneMesh* s, AeronCommandBuffer* cmd, const 
 			for (uint32_t f = 0; ok && f < fb->frame_count; f++) {
 				const AeronGltfFlipbookFrame* frame = &model->flipbook_frames[fb->frame_first + f];
 				end += frame->seconds;
-				ok = anim_frame(r, s->effect_atlas, library, fb->layer, frame->key, end, fb->emissive_strength,
-								&missing);
+				ok = anim_frame(r, s->effect_atlas, library, fb->layer, frame->key, end,
+								fb->emissive_strength * frame->strength, &missing);
 			}
 			r->items[book][3] = float_bits(end);
 			frames += fb->frame_count;

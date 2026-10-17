@@ -208,10 +208,12 @@ typedef struct AeronGltfMaterial {
  * 0), for a colour flipbook, is the part of its frames drawn unlit: while
  * one plays without an illumination frame, its colour c becomes base
  * c·(1 − u) and emission c·u, replacing the material's emission (0 keeps
- * the material's emission). */
+ * the material's emission). On illumination frames, the optional
+ * `strength` (default 1) multiplies the flipbook's `emissiveStrength`. */
 typedef struct AeronGltfFlipbookFrame {
 	char* key;
 	float seconds;
+	float strength; /* multiplies emissive_strength on illumination frames (1) */
 } AeronGltfFlipbookFrame;
 
 /* One hull-damage alternative: the `multiply` images of the 75, 50 and 25 %

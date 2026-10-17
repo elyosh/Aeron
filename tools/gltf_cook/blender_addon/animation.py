@@ -107,6 +107,8 @@ class AeronFrame(PropertyGroup):
                         description="Image of the flipbook library that the frame shows")
     seconds: FloatProperty(name="Seconds", default=0.1, min=0.0, precision=3, step=1, update=_preview_update,
                            description="How long the frame shows")
+    strength: FloatProperty(name="Strength", default=1.0, min=0.0, soft_max=20.0, update=_preview_update,
+                            description="Multiplies the flipbook's strength for this frame")
 
 
 class AeronFlipbook(PropertyGroup):
@@ -225,10 +227,11 @@ def set_entry(material, entry):
             item.library = book.get("library", "")
             item.emissive_strength = book.get("emissiveStrength", 1.0)
             item.unlit = book.get("unlit", 0.0)
-            for key, seconds in book.get("frames", []):
+            for key, seconds, *strength in book.get("frames", []):
                 frame = item.frames.add()
                 frame.key = key
                 frame.seconds = seconds
+                frame.strength = strength[0] if strength else 1.0
     if "damage" in entry:
         damage = entry["damage"]
         props.has_damage = True
@@ -261,7 +264,9 @@ def entry(material):
             out = {"state": book.state, "layer": book.layer, "mode": book.mode}
             if book.library or len(book.frames):
                 out["library"] = book.library
-            out["frames"] = [[frame.key, frame.seconds] for frame in book.frames]
+            out["frames"] = [[frame.key, frame.seconds] + ([frame.strength] if book.layer == "emissive" and
+                                                            frame.strength != 1.0 else [])
+                             for frame in book.frames]
             out["emissiveStrength"] = book.emissive_strength
             out["unlit"] = book.unlit
             books.append(out)

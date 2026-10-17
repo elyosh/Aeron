@@ -243,7 +243,8 @@ static bool sequence_frames(XwauAnim* a, const XwauSequence* q, const OpenDat* d
 	if (!out->items)
 		return false;
 	for (size_t i = 0; i < count; ++i)
-		out->items[i] = (XwauSeqFrame) { q->group, ids[i], q->fps > 0.0f ? 1.0f / q->fps : 1.0f };
+		out->items[i] =
+			(XwauSeqFrame) { q->group, ids[i], q->fps > 0.0f ? 1.0f / q->fps : 1.0f, q->intensity };
 	out->count = count;
 	return own(a, out->items);
 }
@@ -297,6 +298,13 @@ typedef struct Flipbook {
 	Frames              frames;
 } Flipbook;
 
+/* Converts the XWAU intensity of an illumination frame to an emission
+ * strength. XWAU multiplies the frame's bloom by the intensity, and 1 gives
+ * the same bloom as a static light map. Our bloom comes from the emission,
+ * so we scale the emission instead. In XWAU, intensity 0 only removes the
+ * bloom and the frame still glows, so we use 1. */
+static float frame_strength(float intensity) { return intensity > 0.0f ? intensity : 1.0f; }
+
 /* Adds the entry of a flipbook to `list`. Returns false when out of memory. */
 static bool flipbook_json(cJSON* list, const char* state, int layer, const Flipbook* fb, float unlit) {
 	const XwauSequence* q = fb->seq;
@@ -315,9 +323,12 @@ static bool flipbook_json(cJSON* list, const char* state, int layer, const Flipb
 		const XwauSeqFrame* f = &fb->frames.items[i];
 		char                key[96];
 		XwauFx_Key(key, sizeof key, f->group, f->image, kind, q->tint, q->alpha_mode);
-		cJSON* frame = OptJson_AddArray(frames, NULL);
-		ok           = OptJson_Add(frame, NULL, cJSON_CreateString(key)) &&
-					   OptJson_Add(frame, NULL, OptJson_Float(f->seconds));
+		cJSON*      frame    = OptJson_AddArray(frames, NULL);
+		const float strength = frame_strength(f->intensity);
+		ok                   = OptJson_Add(frame, NULL, cJSON_CreateString(key)) &&
+							   OptJson_Add(frame, NULL, OptJson_Float(f->seconds));
+		if (ok && layer && strength != 1.0f)
+			ok = OptJson_Add(frame, NULL, OptJson_Float(strength));
 	}
 	/* A colour frame replaces the texture, so it gets the same unlit weight
 	   as the baked texture. XWAU's animation shader ignores Shadeless, so this

@@ -81,6 +81,7 @@ typedef enum XwauSeqLoc {
 typedef struct XwauSeqFrame {
 	int   group, image;
 	float seconds;
+	float intensity; /* XWAU bloom multiplier */
 } XwauSeqFrame;
 
 typedef struct XwauSequence {
@@ -105,6 +106,7 @@ typedef struct XwauSequence {
 	bool          group_frames;
 	int           group, image;
 	float         fps;
+	float         intensity; /* used by all the group's frames */
 	XwauSeqFrame* frames; /* listed frames */
 	size_t        frame_count;
 	int           section; /* 0 for [Default], otherwise the 1-based order of the section */

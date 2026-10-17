@@ -331,11 +331,11 @@ static void remove_parentheses(const char* in, char* out, size_t cap) {
 	out[j] = 0;
 }
 
-static bool push_frame(XwauSequence* q, int group, int image, float seconds) {
+static bool push_frame(XwauSequence* q, int group, int image, float seconds, float intensity) {
 	XwauSeqFrame* frame = ARRAY_PUSH(q->frames, q->frame_count);
 	if (!frame)
 		return false;
-	*frame = (XwauSeqFrame) { group, image, seconds };
+	*frame = (XwauSeqFrame) { group, image, seconds, intensity };
 	return true;
 }
 
@@ -418,7 +418,9 @@ static bool parse_listed(const char* line, XwauSequence* q) {
 		SKIP_SPACES(s);
 	}
 	int   prev_group = -1, prev_image = -1;
-	float prev_seconds = 0.0f;
+	float prev_seconds = 0.0f, prev_intensity = 1.0f;
+	/* As in XWAU, a frame without a readable intensity uses the previous one. */
+	float intensity = 1.0f;
 	while (*s) {
 		char name[80];
 		if (!take_to_comma(&s, token, sizeof token))
@@ -443,12 +445,12 @@ static bool parse_listed(const char* line, XwauSequence* q) {
 		t = s;
 		while (*t && *t != ',')
 			t++;
-		/* The intensity only affects bloom and is not converted. */
+		sscanf(s, "%f", &intensity);
 		int group = -1, image = -1;
 		if (!dat_file || sscanf(name, "%d-%d", &group, &image) < 2)
 			return false;
 		if (!ellipsis) {
-			if (!push_frame(q, group, image, seconds))
+			if (!push_frame(q, group, image, seconds, intensity))
 				return false;
 		} else if (image != prev_image && prev_image >= 0) {
 			/* InterpolateTexSequence: adds the images after the previous image up
@@ -458,15 +460,18 @@ static bool parse_listed(const char* line, XwauSequence* q) {
 			for (int cur = prev_image + step;; cur += step) {
 				const float sec =
 					seconds * (float)(cur - prev_image) / size + prev_seconds * (float)(image - cur) / size;
-				if (!push_frame(q, prev_group, cur, sec))
+				const float in = intensity * (float)(cur - prev_image) / size +
+								 prev_intensity * (float)(image - cur) / size;
+				if (!push_frame(q, prev_group, cur, sec, in))
 					return false;
 				if (cur == image)
 					break;
 			}
 		}
-		prev_group   = group;
-		prev_image   = image;
-		prev_seconds = seconds;
+		prev_group     = group;
+		prev_image     = image;
+		prev_seconds   = seconds;
+		prev_intensity = intensity;
 		if (!*t)
 			break;
 		s = t + 1;
@@ -510,7 +515,8 @@ static bool parse_frames(const char* line, XwauSequence* q) {
 	int       lightmap = 0, raw_alpha = 0, clamp = 0;
 	const int n = sscanf(s, "%f, %d, %f, %d; [%f, %f, %f], %f, %f, %f, %d", &fps, &lightmap, &intensity,
 						 &raw_alpha, &rgb[0], &rgb[1], &rgb[2], &aspect, &ofs[0], &ofs[1], &clamp);
-	(void)intensity;
+	/* All frames of the group use this intensity. */
+	q->intensity  = intensity;
 	q->fps        = fps;
 	q->layer      = lightmap ? XWAU_SEQ_ILLUMINATION : XWAU_SEQ_COLOUR;
 	q->alpha_mode = n >= 4 && (raw_alpha == 1 || raw_alpha == 2) ? raw_alpha : 0;

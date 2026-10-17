@@ -688,11 +688,15 @@ static bool read_flipbook(const cJSON* json, AeronGltfModel* model, FlipbookCapa
 		fb.unlit = (float)unlit->valuedouble;
 	}
 	for (int i = 0; i < count; i++) {
-		const cJSON* frame   = cJSON_GetArrayItem(frames, i);
-		const cJSON* key     = cJSON_GetArrayItem(frame, 0);
-		const cJSON* seconds = cJSON_GetArrayItem(frame, 1);
-		if (cJSON_GetArraySize(frame) != 2 || !cJSON_IsString(key) || !cJSON_IsNumber(seconds) ||
-			!isfinite(seconds->valuedouble) || seconds->valuedouble < 0.0)
+		const cJSON* frame    = cJSON_GetArrayItem(frames, i);
+		const cJSON* key      = cJSON_GetArrayItem(frame, 0);
+		const cJSON* seconds  = cJSON_GetArrayItem(frame, 1);
+		const cJSON* strength = cJSON_GetArrayItem(frame, 2);
+		const int    size     = cJSON_GetArraySize(frame);
+		if ((size != 2 && size != 3) || !cJSON_IsString(key) || !cJSON_IsNumber(seconds) ||
+			!isfinite(seconds->valuedouble) || seconds->valuedouble < 0.0 ||
+			(strength &&
+			 (!cJSON_IsNumber(strength) || !isfinite(strength->valuedouble) || strength->valuedouble < 0.0)))
 			return false;
 	}
 	if (!grow((void**)&model->flipbooks, &cap->flipbooks, model->flipbook_count + 1u,
@@ -713,6 +717,8 @@ static bool read_flipbook(const cJSON* json, AeronGltfModel* model, FlipbookCapa
 		AeronGltfFlipbookFrame* out   = &model->flipbook_frames[model->flipbook_frame_count];
 		out->key                      = copy_string(cJSON_GetArrayItem(frame, 0)->valuestring);
 		out->seconds                  = (float)cJSON_GetArrayItem(frame, 1)->valuedouble;
+		out->strength =
+			cJSON_GetArraySize(frame) == 3 ? (float)cJSON_GetArrayItem(frame, 2)->valuedouble : 1.0f;
 		if (!out->key) {
 			*oom = true;
 			free(fb.library);

@@ -80,7 +80,7 @@ def frame_index(durations, t):
 
 def playing(material, states, t):
     """The frames that `material` shows at `t` seconds with `states` active, as
-    {layer: (flipbook, key)}. Each layer uses its first flipbook whose state is
+    {layer: (flipbook, key, frame strength)}. Each layer uses its first flipbook whose state is
     active. A layer whose flipbook has no frames shows nothing."""
     result = {}
     for book in material.aeron_flight.flipbooks:
@@ -91,7 +91,8 @@ def playing(material, states, t):
             result[book.layer] = None
             continue
         durations = [frame.seconds for frame in frames]
-        result[book.layer] = (book, frames[frame_index(durations, local_time(book.mode, sum(durations), t))].key)
+        frame = frames[frame_index(durations, local_time(book.mode, sum(durations), t))]
+        result[book.layer] = (book, frame.key, frame.strength)
     return {layer: value for layer, value in result.items() if value is not None}
 
 
@@ -341,10 +342,10 @@ def _show(material, loaded, states, t):
     now = playing(material, states, t)
     colour = lit = lit_base = None
     if "baseColor" in now:
-        book, key = now["baseColor"]
+        book, key, _ = now["baseColor"]
         colour = _frame_image(loaded, book.library, key, "baseColor", "baseColor")
     if "emissive" in now:
-        book, key = now["emissive"]
+        book, key, strength = now["emissive"]
         lit = _frame_image(loaded, book.library, key, "emissive", "emissive")
         lit_base = _frame_image(loaded, book.library, key, "emissive", "baseColor") if lit else None
     unlit = round(now["baseColor"][0].unlit * 255.0) / 255.0 if colour and not lit else 0.0
@@ -353,7 +354,7 @@ def _show(material, loaded, states, t):
             _set(nodes[IMAGE_NODES[role]], "image", image)
     for name, value in (("Frame On", 1.0 if colour else 0.0), ("Unlit", unlit),
                         ("Lit Base On", 1.0 if lit_base else 0.0),
-                        ("Lit Strength", now["emissive"][0].emissive_strength if lit else 0.0),
+                        ("Lit Strength", book.emissive_strength * strength if lit else 0.0),
                         ("Replace", 1.0 if lit or unlit > 0.0 else 0.0)):
         _set(group.inputs[name], "default_value", value)
 

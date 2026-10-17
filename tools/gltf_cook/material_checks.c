@@ -216,11 +216,19 @@ static bool check_flipbook(Check* c, const cJSON* in) {
 		return false;
 	const cJSON* frame;
 	cJSON_ArrayForEach(frame, frames) {
-		const cJSON* key     = cJSON_GetArrayItem(frame, 0);
-		const cJSON* seconds = cJSON_GetArrayItem(frame, 1);
-		if (cJSON_GetArraySize(frame) != 2 || !cJSON_IsString(key) || !cJSON_IsNumber(seconds) ||
+		const cJSON* key       = cJSON_GetArrayItem(frame, 0);
+		const cJSON* seconds   = cJSON_GetArrayItem(frame, 1);
+		const cJSON* fstrength = cJSON_GetArrayItem(frame, 2);
+		const int    size      = cJSON_GetArraySize(frame);
+		if ((size != 2 && size != 3) || !cJSON_IsString(key) || !cJSON_IsNumber(seconds) ||
 			!isfinite(seconds->valuedouble) || seconds->valuedouble < 0.0)
-			return fail(c, "frames are [image, seconds] pairs");
+			return fail(c, "frames are [image, seconds] or [image, seconds, strength]");
+		if (fstrength &&
+			(!cJSON_IsNumber(fstrength) || !isfinite(fstrength->valuedouble) || fstrength->valuedouble < 0.0))
+			return fail(c, "a frame strength must be a number >= 0");
+		/* The strength scales the emission, so only emissive frames can have one. */
+		if (fstrength && strcmp(layer->valuestring, "emissive") != 0)
+			return fail(c, "only emissive frames can have a strength");
 		/* A flipbook's frames are images of its layer's kind. */
 		if (!key_known(c, library, key->valuestring, layer->valuestring))
 			return false;

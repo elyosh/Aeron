@@ -51,6 +51,8 @@ class AERON_UL_frames(UIList):
         _thumbnail(row, context, data.library, item.key)
         row.prop(item, "key", text="", emboss=False)
         row.prop(item, "seconds", text="")
+        if data.layer == "emissive":
+            row.prop(item, "strength", text="")
 
 
 class AERON_UL_damage_alternatives(UIList):

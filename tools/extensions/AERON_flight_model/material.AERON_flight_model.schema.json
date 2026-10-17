@@ -111,17 +111,18 @@
         "library": { "$ref": "#/$defs/library", "description": "The effect library of the frames; required with frames." },
         "frames": {
           "title": "Frames",
-          "description": "The frames in order, each [image key, seconds shown].",
+          "description": "The frames in order, each [image key, seconds shown] or [image key, seconds shown, strength].",
           "type": "array",
           "maxItems": 65535,
           "items": {
             "type": "array",
             "prefixItems": [
               { "$ref": "#/$defs/key" },
-              { "title": "Seconds", "description": "How long the frame shows.", "type": "number", "minimum": 0 }
+              { "title": "Seconds", "description": "How long the frame shows.", "type": "number", "minimum": 0 },
+              { "title": "Strength", "description": "Multiplies emissiveStrength for this frame. Only for emissive frames.", "type": "number", "minimum": 0, "default": 1 }
             ],
             "minItems": 2,
-            "maxItems": 2
+            "maxItems": 3
           }
         },
         "emissiveStrength": {

@@ -326,7 +326,9 @@ together. A flipbook has:
   (frames replacing the emissive);
 - `mode`: `loop`, or `once` (holds its last frame);
 - `library`: the effect library of its frames, required with frames;
-- `frames`: `[key, seconds]` pairs, images of the layer's kind;
+- `frames`: `[key, seconds]` pairs, images of the layer's kind. An emissive
+  frame can have a third number, `[key, seconds, strength]`, that multiplies
+  `emissiveStrength` for that frame (default 1);
 - `emissiveStrength`: optional, default 1, the brightness of emissive
   frames;
 - `unlit`: optional, 0 to 1, default 0: the part of base colour frames drawn
