@@ -68,42 +68,6 @@ static bool hdr_format(AeronTextureFormat format) {
 		   format == AERON_TEXTURE_FORMAT_RGBA16_FLOAT;
 }
 
-/* The 3D grid texture from the grid file's level 0: point (x, y, z) at
- * column 6 x + f, row y + ry z for face f goes to texel (x, y, f rz + z). */
-static AeronTexture* upload_grid(AeronCommandBuffer* cmd, const Ktx2Level* level, const uint32_t r[3],
-								 const char* name) {
-	const size_t texel = 4u * sizeof(uint16_t);
-	const size_t slice = (size_t)r[0] * r[1] * texel;
-	uint8_t*     data  = (uint8_t*)malloc(slice * 6u * r[2]);
-	if (!data)
-		return NULL;
-	for (uint32_t f = 0; f < 6; ++f)
-		for (uint32_t z = 0; z < r[2]; ++z)
-			for (uint32_t y = 0; y < r[1]; ++y)
-				for (uint32_t x = 0; x < r[0]; ++x)
-					memcpy(data + slice * (f * r[2] + z) + ((size_t)y * r[0] + x) * texel,
-						   level->data + (((size_t)(y + r[1] * z) * 6u * r[0]) + 6u * x + f) * texel, texel);
-	const AeronTextureDesc desc = { .width  = (int)r[0],
-									.height = (int)r[1],
-									.format = AERON_TEXTURE_FORMAT_RGBA16_FLOAT,
-									.usage  = AERON_TEXTURE_USAGE_SAMPLED | AERON_TEXTURE_USAGE_TRANSFER_DST,
-									.depth  = (int)(6u * r[2]),
-									.debug_name = name };
-	AeronTexture*          texture      = Aeron_CreateTexture(&desc);
-	const AeronTextureUploadDesc upload = { .texture  = texture,
-											.width    = (int)r[0],
-											.height   = (int)r[1],
-											.raw_data = data,
-											.raw_size = (uint32_t)(slice * 6u * r[2]),
-											.depth    = (int)(6u * r[2]) };
-	if (texture && !Aeron_UploadTextureDataCmd(cmd, &upload)) {
-		Aeron_DestroyTexture(texture);
-		texture = NULL;
-	}
-	free(data);
-	return texture;
-}
-
 static bool env_load_texture(AeronEnvironmentLibrary* library, AeronCommandBuffer* cmd, EnvTexture* e) {
 	char full[AERON_ENV_PATH_MAX * 2];
 	snprintf(full, sizeof full, "%s%s", library->path_prefix, e->path);
@@ -119,26 +83,15 @@ static bool env_load_texture(AeronEnvironmentLibrary* library, AeronCommandBuffe
 		snprintf(e->failure, sizeof e->failure, "not a supported KTX2 file");
 		return false;
 	}
-	static const char* const kinds[] = { "2D texture", "cube map", "cube array", "2D grid image" };
-	const bool               cube    = e->kind == ENV_TEXTURE_CUBE || e->kind == ENV_TEXTURE_CUBE_ARRAY;
-	const bool               array   = e->kind == ENV_TEXTURE_CUBE_ARRAY;
-	const uint32_t*          r       = e->grid;
+	static const char* const kinds[] = { "2D texture", "cube map" };
+	const bool               cube    = e->kind == ENV_TEXTURE_CUBE;
 	e->format                        = ktx2_format(ktx);
 	e->size                          = ktx2_width(ktx);
 	e->level_count                   = ktx2_level_count(ktx);
-	e->layers                        = ktx2_layer_count(ktx);
 	bool ok                          = true;
-	if (ktx2_face_count(ktx) != (cube ? 6 : 1) || (ktx2_layer_count(ktx) > 0) != array) {
+	if (ktx2_face_count(ktx) != (cube ? 6 : 1) || ktx2_layer_count(ktx) > 0) {
 		snprintf(e->failure, sizeof e->failure, "expected a %s", kinds[e->kind]);
 		ok = false;
-	} else if (e->kind == ENV_TEXTURE_GRID) {
-		if (e->format != AERON_TEXTURE_FORMAT_RGBA16_FLOAT || e->level_count != 1 ||
-			(uint32_t)e->size != 6u * r[0] || (uint32_t)ktx2_height(ktx) != r[1] * r[2]) {
-			snprintf(e->failure, sizeof e->failure,
-					 "expected one RGBA16F level of %ux%u for a %ux%ux%u grid (bake it again)", 6u * r[0],
-					 r[1] * r[2], r[0], r[1], r[2]);
-			ok = false;
-		}
 	} else if (ktx2_height(ktx) != e->size) {
 		snprintf(e->failure, sizeof e->failure, "faces must be square");
 		ok = false;
@@ -155,15 +108,7 @@ static bool env_load_texture(AeronEnvironmentLibrary* library, AeronCommandBuffe
 		}
 		ok = false;
 	}
-	if (ok && e->kind == ENV_TEXTURE_GRID) {
-		const Ktx2Level level = ktx2_level(ktx, 0);
-		e->bytes              = (uint64_t)r[0] * r[1] * 6u * r[2] * 8u;
-		e->texture            = upload_grid(cmd, &level, r, full);
-		if (!e->texture) {
-			snprintf(e->failure, sizeof e->failure, "upload failed");
-			ok = false;
-		}
-	} else if (ok) {
+	if (ok) {
 		for (int level = 0; level < e->level_count; ++level)
 			e->bytes += ktx2_level(ktx, level).size;
 		e->texture = Aeron_ImageUploadKtx2(cmd, ktx, full);
@@ -187,7 +132,7 @@ typedef struct TextureList {
  * the published set; -1 on allocation failure. A failed load is recorded
  * (texture NULL) so it is attempted once per preparation. */
 static int32_t acquire_texture(AeronEnvironmentLibrary* library, AeronCommandBuffer* cmd, TextureList* list,
-							   const char* path, EnvTextureKind kind, const uint32_t grid[3], bool reload) {
+							   const char* path, EnvTextureKind kind, bool reload) {
 	const EnvTexture* known = find_texture(list->items, list->count, path);
 	if (known)
 		return (int32_t)(known - list->items);
@@ -203,11 +148,8 @@ static int32_t acquire_texture(AeronEnvironmentLibrary* library, AeronCommandBuf
 	memset(e, 0, sizeof *e);
 	snprintf(e->path, sizeof e->path, "%s", path);
 	e->kind = kind;
-	if (grid)
-		memcpy(e->grid, grid, sizeof e->grid);
 	const EnvTexture* shared = reload ? NULL : find_texture(library->textures, library->texture_count, path);
-	if (shared && shared->texture && shared->kind == kind &&
-		(kind != ENV_TEXTURE_GRID || memcmp(shared->grid, e->grid, sizeof e->grid) == 0)) {
+	if (shared && shared->texture && shared->kind == kind) {
 		*e = *shared;
 	} else if (!env_load_texture(library, cmd, e)) {
 		Aeron_LogError("aeron.scene", "environment texture %s%s: %s", library->path_prefix, path, e->failure);
@@ -283,208 +225,6 @@ static bool same_reference(const AeronEnvironmentReference* a, const AeronEnviro
 			memcmp(a->rotation_degrees, b->rotation_degrees, sizeof a->rotation_degrees) == 0);
 }
 
-static float half_to_float(uint16_t h) {
-	const uint32_t sign = (uint32_t)(h & 0x8000u) << 16, exponent = (h >> 10) & 0x1Fu, mantissa = h & 0x3FFu;
-	uint32_t       bits;
-	if (exponent == 0) {
-		const float value = ldexpf((float)mantissa, -24);
-		return sign ? -value : value;
-	}
-	bits = sign | (exponent == 31 ? 0x7F800000u | mantissa << 13 : (exponent + 112u) << 23 | mantissa << 13);
-	float f;
-	memcpy(&f, &bits, sizeof f);
-	return f;
-}
-
-/* The luminance of the grid's light at each probe's centre, toward +x, -x,
- * +y, -y, +z, -z and the mean, so the shader can compare the light where a
- * pixel is with the light where the probe was captured. Sampled
- * trilinearly, as the shader does. Zero for a probe whose centre does not
- * get the grid's full weight, and for all of them when the grid file cannot
- * be read again (it is small: up to 8192 points of 48 bytes). */
-static void probe_capture_light(AeronEnvironmentLibrary* library, const AeronEnvironmentDefinition* def,
-								float out[][8]) {
-	memset(out, 0, sizeof(float[8]) * def->probe_count);
-	char full[AERON_ENV_PATH_MAX * 2];
-	snprintf(full, sizeof full, "%s%s", library->path_prefix, def->grid_path);
-	uint8_t* bytes = NULL;
-	size_t   size  = 0;
-	if (!AeronVfs_ReadAll(library->vfs, library->root, full, ENV_MAX_FILE_BYTES, &bytes, &size))
-		return;
-	Ktx2* ktx = ktx2_open_mem(bytes, size, full);
-	if (!ktx) {
-		free(bytes);
-		return;
-	}
-	const Ktx2Level level  = ktx2_level(ktx, 0);
-	const uint16_t* texels = (const uint16_t*)level.data;
-	const uint32_t* r      = def->grid_resolution;
-	if (ktx2_format(ktx) != AERON_TEXTURE_FORMAT_RGBA16_FLOAT ||
-		level.size < (size_t)r[0] * r[1] * r[2] * 6u * 4u * sizeof(uint16_t)) {
-		ktx2_close(ktx);
-		free(bytes);
-		return;
-	}
-	static const float luminance[3] = { 0.2126f, 0.7152f, 0.0722f };
-	for (uint32_t k = 0; k < def->probe_count; ++k) {
-		/* Texel coordinates (point i at i + 0.5); the shader's weight is 1
-		 * from -0.5 to r + 0.5. Then point coordinates, clamped. */
-		float g[3];
-		bool  inside = true;
-		for (int a = 0; a < 3; ++a) {
-			const float s = ((float)r[a] + 1.0f) / def->grid_size[a];
-			g[a] = (def->probes[k].center[a] - def->grid_center[a]) * s + 0.5f * ((float)r[a] + 1.0f) - 0.5f;
-			inside = inside && g[a] >= -0.5f && g[a] <= (float)r[a] + 0.5f;
-			g[a]   = fminf(fmaxf(g[a] - 0.5f, 0.0f), (float)r[a] - 1.0f);
-		}
-		if (!inside)
-			continue;
-		uint32_t i0[3], i1[3];
-		float    t[3];
-		for (int a = 0; a < 3; ++a) {
-			i0[a] = (uint32_t)g[a];
-			i1[a] = i0[a] + 1u < r[a] ? i0[a] + 1u : i0[a];
-			t[a]  = g[a] - (float)i0[a];
-		}
-		for (int corner = 0; corner < 8; ++corner) {
-			const uint32_t x = corner & 1 ? i1[0] : i0[0], y = corner & 2 ? i1[1] : i0[1],
-						   z = corner & 4 ? i1[2] : i0[2];
-			const float    w = (corner & 1 ? t[0] : 1.0f - t[0]) * (corner & 2 ? t[1] : 1.0f - t[1]) *
-							   (corner & 4 ? t[2] : 1.0f - t[2]);
-			for (int f = 0; f < 6; ++f) {
-				/* Point (x, y, z), face f: texel 6 x + f of row y + ry z. */
-				const uint16_t* texel = texels + (((size_t)(y + r[1] * z) * 6u * r[0]) + 6u * x + f) * 4u;
-				for (int c = 0; c < 3; ++c)
-					out[k][f] += w * luminance[c] * half_to_float(texel[c]);
-				if (f == 0)
-					out[k][6] += w * half_to_float(texel[3]);
-			}
-		}
-	}
-	ktx2_close(ktx);
-	free(bytes);
-}
-
-/* The set buffer of a probes package (AeronEnvironmentPackage); NULL on
- * failure. */
-static AeronBuffer* build_probe_buffer(AeronEnvironmentLibrary* library, AeronCommandBuffer* cmd,
-									   const AeronEnvironmentDefinition* def,
-									   const AeronEnvironmentProbeCells* cells, uint32_t* out_bytes) {
-	const size_t cell_count = (size_t)cells->dims[0] * cells->dims[1] * cells->dims[2];
-	const size_t elements = AERON_ENV_PROBE_BUFFER_HEADER + AERON_ENV_PROBE_BUFFER_RECORD * def->probe_count +
-							(cell_count + 3u) / 4u;
-	const uint32_t bytes  = (uint32_t)(elements * 16u);
-	uint32_t*      words  = (uint32_t*)calloc(elements, 16u);
-	if (!words)
-		return NULL;
-	float* f = (float*)words; /* same storage: floats where the layout has floats */
-	for (int a = 0; a < 3; ++a) {
-		f[a]         = cells->min[a];
-		words[4 + a] = cells->dims[a];
-	}
-	f[3]     = 1.0f / cells->cell_size;
-	words[7] = def->probe_count;
-	float capture[AERON_ENV_MAX_PROBES][8];
-	probe_capture_light(library, def, capture);
-	for (uint32_t k = 0; k < def->probe_count; ++k) {
-		const AeronEnvironmentProbeDefinition* p = &def->probes[k];
-		uint32_t* record = words + 4u * (AERON_ENV_PROBE_BUFFER_HEADER + AERON_ENV_PROBE_BUFFER_RECORD * k);
-		float*    r      = (float*)record;
-		for (int a = 0; a < 3; ++a) {
-			r[a]     = p->center[a];
-			r[4 + a] = 2.0f / p->size[a];
-			r[8 + a]  = 0.5f * p->parallax_size[a];
-			r[12 + a] = p->parallax_center[a];
-		}
-		memcpy(r + 16, capture[k], sizeof capture[k]); /* elements 4 and 5 */
-		r[3]       = 1.0f / p->falloff;
-		record[7]  = k;
-		record[11] = (p->shape == AERON_ENV_PROBE_ELLIPSOID ? 1u : 0u) |
-					 (p->parallax_shape == AERON_ENV_PROBE_ELLIPSOID ? 2u : 0u);
-	}
-	memcpy(words + 4u * (AERON_ENV_PROBE_BUFFER_HEADER + AERON_ENV_PROBE_BUFFER_RECORD * def->probe_count),
-		   cells->words, cell_count * sizeof *cells->words);
-	AeronBuffer* buffer = Aeron_CreateBuffer(&(AeronBufferDesc) {
-		.size         = bytes,
-		.usage        = AERON_BUFFER_USAGE_STORAGE | AERON_BUFFER_USAGE_COMPUTE_STORAGE_READ,
-		.memory_usage = AERON_MEMORY_USAGE_GPU_ONLY,
-		.debug_name   = "scene.environment_probes",
-	});
-	if (buffer && !Aeron_UploadBufferDataCmd(cmd, buffer, 0, words, bytes)) {
-		Aeron_DestroyBuffer(buffer);
-		buffer = NULL;
-	}
-	free(words);
-	*out_bytes = buffer ? bytes : 0;
-	return buffer;
-}
-
-/* A probes package: its cube array, grid and set buffer. */
-static bool build_probes_slot(AeronEnvironmentLibrary* library, AeronCommandBuffer* cmd, TextureList* list,
-							  EnvSlot* slot, bool reload, bool* out_of_memory) {
-	const AeronEnvironmentDefinition* def = slot->package.definition;
-	const int32_t                     cubes =
-		acquire_texture(library, cmd, list, def->cubes_path, ENV_TEXTURE_CUBE_ARRAY, NULL, reload);
-	const int32_t grid = cubes < 0 ? -1
-								   : acquire_texture(library, cmd, list, def->grid_path, ENV_TEXTURE_GRID,
-													 def->grid_resolution, reload);
-	if (cubes < 0 || grid < 0) {
-		*out_of_memory = true;
-		return false;
-	}
-	const EnvTexture* c = &list->items[cubes];
-	const EnvTexture* g = &list->items[grid];
-	for (int i = 0; i < 2; ++i) {
-		const EnvTexture* e = i ? g : c;
-		if (!e->texture) {
-			snprintf(slot->failure, sizeof slot->failure, "%s: %s", e->path,
-					 e->failure[0] ? e->failure : "unavailable");
-			return false;
-		}
-	}
-	if (c->kind != ENV_TEXTURE_CUBE_ARRAY || c->layers != (int)def->probe_count ||
-		g->kind != ENV_TEXTURE_GRID || memcmp(g->grid, def->grid_resolution, sizeof g->grid) != 0) {
-		snprintf(slot->failure, sizeof slot->failure, "%s holds %d probes for %u, or %s is used another way",
-				 c->path, c->layers, def->probe_count, g->path);
-		return false;
-	}
-
-	AeronEnvironmentProbeCells cells;
-	if (!AeronEnvironment_BuildProbeCells(def, &cells)) {
-		*out_of_memory = true;
-		return false;
-	}
-	AeronEnvironmentPackage* pkg = &slot->package;
-	pkg->probe_buffer            = build_probe_buffer(library, cmd, def, &cells, &slot->probe_buffer_bytes);
-	slot->probe_overflow_cells   = cells.overflow_cells;
-	if (cells.overflow_cells)
-		Aeron_LogWarn(
-			"aeron.scene",
-			"environment package '%s': %u cells overlap more than %d probes; the smallest are used there",
-			def->name, cells.overflow_cells, AERON_ENV_PROBE_CELL_PROBES);
-	AeronEnvironment_FreeProbeCells(&cells);
-	if (!pkg->probe_buffer) {
-		snprintf(slot->failure, sizeof slot->failure, "probe buffer upload failed");
-		return false;
-	}
-	pkg->probe_cubes     = c->texture;
-	pkg->probe_grid      = g->texture;
-	pkg->probe_mip_count = (uint32_t)c->level_count;
-	pkg->sampler         = library->sampler;
-	for (int a = 0; a < 3; ++a) {
-		/* The grid's light reaches one point spacing beyond its box. */
-		const float reach        = def->grid_size[a] * (0.5f + 1.0f / (float)(def->grid_resolution[a] + 1u));
-		pkg->probe_bounds_min[a] = def->grid_center[a] - reach;
-		pkg->probe_bounds_max[a] = def->grid_center[a] + reach;
-		for (uint32_t k = 0; k < def->probe_count; ++k) {
-			const AeronEnvironmentProbeDefinition* p = &def->probes[k];
-			pkg->probe_bounds_min[a] = fminf(pkg->probe_bounds_min[a], p->center[a] - 0.5f * p->size[a]);
-			pkg->probe_bounds_max[a] = fmaxf(pkg->probe_bounds_max[a], p->center[a] + 0.5f * p->size[a]);
-		}
-	}
-	return true;
-}
-
 /* Builds one slot's package from textures in `list`; false when unavailable. */
 static bool build_slot(AeronEnvironmentLibrary* library, AeronCommandBuffer* cmd, TextureList* list,
 					   EnvSlot* slot, bool reload, bool* out_of_memory) {
@@ -495,8 +235,6 @@ static bool build_slot(AeronEnvironmentLibrary* library, AeronCommandBuffer* cmd
 		return false;
 	}
 	slot->package.definition = def;
-	if (AeronEnvironment_IsProbeSet(def))
-		return build_probes_slot(library, cmd, list, slot, reload, out_of_memory);
 	const char*    paths[3 + AERON_ENV_MAX_LIGHTS];
 	EnvTextureKind kinds[3 + AERON_ENV_MAX_LIGHTS];
 	int32_t        indices[3 + AERON_ENV_MAX_LIGHTS];
@@ -525,7 +263,7 @@ static bool build_slot(AeronEnvironmentLibrary* library, AeronCommandBuffer* cmd
 	}
 	bool available = true;
 	for (int i = 0; i < count; ++i) {
-		indices[i] = acquire_texture(library, cmd, list, paths[i], kinds[i], NULL, reload);
+		indices[i] = acquire_texture(library, cmd, list, paths[i], kinds[i], reload);
 		if (indices[i] < 0) {
 			*out_of_memory = true;
 			return false;
@@ -552,13 +290,6 @@ static bool build_slot(AeronEnvironmentLibrary* library, AeronCommandBuffer* cmd
 	if (radiance >= 0)
 		slot->package.radiance = list->items[indices[radiance]].texture;
 	return true;
-}
-
-/* Releases the slots' probe buffers and the slots. */
-static void free_slots(EnvSlot* slots, uint32_t count) {
-	for (uint32_t i = 0; slots && i < count; ++i)
-		Aeron_DestroyBuffer(slots[i].package.probe_buffer);
-	free(slots);
 }
 
 static bool prepare_set(AeronEnvironmentLibrary* library, AeronCommandBuffer* cmd,
@@ -595,7 +326,7 @@ static bool prepare_set(AeronEnvironmentLibrary* library, AeronCommandBuffer* cm
 				Aeron_DestroyTexture(list.items[i].texture);
 		}
 		free(list.items);
-		free_slots(slots, count);
+		free(slots);
 		Aeron_LogError("aeron.scene", "environment library: out of memory preparing %u references", count);
 		return false;
 	}
@@ -646,28 +377,18 @@ static bool prepare_set(AeronEnvironmentLibrary* library, AeronCommandBuffer* cm
 			Aeron_DestroyTexture(texture);
 	}
 	free(old_textures);
-	free_slots(old_slots, old_slots_n);
+	free(old_slots);
 
-	uint64_t bytes = 0, probe_bytes = 0;
+	uint64_t bytes  = 0;
 	uint32_t loaded = 0;
 	for (uint32_t i = 0; i < list.count; ++i) {
 		if (list.items[i].texture) {
 			bytes += list.items[i].bytes;
 			++loaded;
-			if (list.items[i].kind == ENV_TEXTURE_CUBE_ARRAY || list.items[i].kind == ENV_TEXTURE_GRID)
-				probe_bytes += list.items[i].bytes;
 		}
-	}
-	for (uint32_t i = 0; i < count; ++i) {
-		bytes += slots[i].probe_buffer_bytes;
-		probe_bytes += slots[i].probe_buffer_bytes;
 	}
 	Aeron_LogInfo("aeron.scene", "environment library: %u/%u references available, %u textures, %.1f MiB%s",
 				  available, count, loaded, (double)bytes / (1024.0 * 1024.0), reload ? " (reloaded)" : "");
-	if (probe_bytes > AERON_ENV_WARN_BYTES)
-		Aeron_LogWarn("aeron.scene", "environment library: probes take %.1f MiB, above %.0f MiB",
-					  (double)probe_bytes / (1024.0 * 1024.0),
-					  (double)AERON_ENV_WARN_BYTES / (1024.0 * 1024.0));
 	return true;
 }
 
@@ -716,7 +437,7 @@ void AeronEnvironmentLibrary_Destroy(AeronEnvironmentLibrary* library) {
 			Aeron_DestroyTexture(library->textures[i].texture);
 	Aeron_DestroySampler(library->sampler);
 	free(library->textures);
-	free_slots(library->slots, library->slot_count);
+	free(library->slots);
 	free(library);
 }
 

@@ -393,6 +393,10 @@ class EXPORT_OT_aeron_flight_model(Operator, ExportHelper):
                 "--mip-min-subrect", prefs.mip_min_subrect, "--quality", prefs.bc7_quality]
         if not prefs.zstd:
             argv.append("--no-zstd")
+        # The model's probes bake goes in the .glb.
+        bake, bake_warnings = probes.export_bake(root)
+        if bake:
+            argv += ["--probes", bake]
         effects = sources.project_effects(bpy.path.abspath(root.aeron_flight.source_path))
         unsaved = sorted(image.name for image in bpy.data.images
                          if image.is_dirty and image.filepath and effects and
@@ -425,6 +429,8 @@ class EXPORT_OT_aeron_flight_model(Operator, ExportHelper):
         built = sources.built_libraries(completed.stderr)
         rebuilt = " (libraries rebuilt: {})".format(", ".join(built)) if built else ""
         self.report({'INFO'}, "Wrote {}{}{}".format(out_glb, rebuilt, _warnings(self.warnings)))
+        for warning in bake_warnings:
+            self.report({'WARNING'}, warning)
         broken = _broken_models(cooker, effects, libraries.model_key(root), completed.stderr)
         if broken:
             self.report({'WARNING'}, "Other models use frames that the rebuilt libraries removed or changed. "

@@ -1,22 +1,24 @@
-"""Bakes the test probes packages of the hangar-probes and flight-probes presets.
+"""Bakes the test probes of the hangar-probes and flight-probes presets.
 
     python3 probe_packages.py --baker ENVIRONMENT_BAKE --out DIR
 
-Writes DIR/probe_tests.yaml and the packages it names, under DIR. Each probe
-reflects one flat colour, so the captures show which probe applies where;
-every grid point sees light from the model's +X side, so the grid's lighting
-direction shows too. Packages:
+Writes a probes bake folder (bake.json, probes.ktx2, grid.ktx2) per test set
+under DIR/probes/, which an instance's `probes` names, and DIR/probe_tests.yaml
+with the environment package. Each probe reflects one flat colour, so the
+captures show which probe applies where; every grid point sees light from the
+model's +X side, so the grid's lighting direction shows too. Sets:
 
-- probes.hangar4, probes.hangar16, probes.hangar42: 2x2, 4x4 and 7x6 probes
+- hangar4, hangar16, hangar42: 2x2, 4x4 and 7x6 probes
   tiling the calamaricruisernewhangar interior (one ellipsoid in the first),
   reflecting onto the interior's box, with an 8x12x4 grid over it;
-- probes.isd: four probes, the quadrants of imperialstardestroyer and the
+- isd: four probes, the quadrants of imperialstardestroyer and the
   space above it, with an 8x12x4 grid;
 - test.hangar: a dim neutral environment without a sky, to check probes over
   an environment.
 """
 
 import argparse
+import json
 import math
 import os
 import shutil
@@ -60,8 +62,8 @@ def tiles(lo, hi, nx, ny):
     return out
 
 
-def vec(v):
-    return "[%s]" % ", ".join("%g" % c for c in v)
+def box(lo, hi):
+    return [(a + b) / 2 for a, b in zip(lo, hi)], [b - a for a, b in zip(lo, hi)]
 
 
 def bake_probes(baker, out, name, boxes, grid_lo, grid_hi, resolution, jobs_dir, ellipsoid=(), room=None):
@@ -74,32 +76,29 @@ def bake_probes(baker, out, name, boxes, grid_lo, grid_hi, resolution, jobs_dir,
     write_hdr(os.path.join(job_dir, "grid.hdr"), 64, 32,
               lambda x, y: (0.03 + 0.5 * max(0.0, direction(x, y, 64, 32)[0]),) * 3)
     points = resolution[0] * resolution[1] * resolution[2]
-    with open(os.path.join(job_dir, "job.yaml"), "w") as stream:
-        stream.write("probes:\n")
-        for k, (centre, size) in enumerate(boxes):
-            shape = "ellipsoid" if k in ellipsoid else "box"
-            # The room's box as the parallax volume, as Fill with Probes does; else the probe's own.
-            parallax = "parallax_center: %s, parallax_size: %s, parallax_shape: box" % room if room else \
-                "parallax_size: %s, parallax_shape: %s" % (vec(size), shape)
-            stream.write("  - {center: %s, size: %s, shape: %s, falloff: 0.2, %s}\n" % (
-                vec(centre), vec(size), shape, parallax))
-        stream.write("probe_panoramas: [%s]\n" % ", ".join("probe_%d.hdr" % k for k in range(len(boxes))))
-        centre = [(a + b) / 2 for a, b in zip(grid_lo, grid_hi)]
-        size = [b - a for a, b in zip(grid_lo, grid_hi)]
-        stream.write("grid_box: {center: %s, size: %s}\ngrid_resolution: %s\n" % (vec(centre), vec(size),
-                                                                                  vec(resolution)))
-        stream.write("grid_panoramas: [%s]\n" % ", ".join(["grid.hdr"] * points))
-    target = os.path.join(out, "models", name)
+    probes = []
+    for k, (centre, size) in enumerate(boxes):
+        shape = "ellipsoid" if k in ellipsoid else "box"
+        probe = {"center": list(centre), "size": list(size), "shape": shape, "falloff": 0.2,
+                 "parallaxSize": list(size), "parallaxShape": shape}
+        if room:  # the room's box as the parallax volume, as Fill with Probes does
+            probe.update(parallaxCenter=room[0], parallaxSize=room[1], parallaxShape="box")
+        probes.append(probe)
+    centre, size = box(grid_lo, grid_hi)
+    job = {"probes": probes, "probePanoramas": ["probe_%d.hdr" % k for k in range(len(boxes))],
+           "gridBox": {"center": centre, "size": size}, "gridResolution": list(resolution),
+           "gridPanoramas": ["grid.hdr"] * points}
+    with open(os.path.join(job_dir, "job.json"), "w") as stream:
+        json.dump(job, stream)
+    target = os.path.join(out, "probes", name)
     os.makedirs(target)
-    package = os.path.join(target, "package.yaml")
-    run = subprocess.run([baker, "--probes", os.path.join(job_dir, "job.yaml"), "--name", name,
+    run = subprocess.run([baker, "--probes", os.path.join(job_dir, "job.json"),
                           "--cubes-out", os.path.join(target, "probes.ktx2"),
-                          "--grid-out", os.path.join(target, "grid.ktx2"), "--package-out", package,
-                          "--manifest-root", out, "--specular-samples", "64"],
+                          "--grid-out", os.path.join(target, "grid.ktx2"),
+                          "--bake-out", os.path.join(target, "bake.json"), "--specular-samples", "64"],
                          capture_output=True, text=True)
     if run.returncode:
         sys.exit("%s: %s" % (name, run.stderr.strip()))
-    return package
 
 
 def main():
@@ -111,19 +110,18 @@ def main():
     out = os.path.abspath(args.out)
     jobs_dir = os.path.join(out, "jobs")
     os.makedirs(jobs_dir)
-    packages = []
 
     # The hangar interior, model frame (metres): wall to wall, floor to
     # ceiling, the open side to the back wall. The grid's box is the zone it
     # lights; the probes reflect onto it as a room.
     lo, hi = (-60.0, 0.0, -21.0), (60.0, 138.0, 13.0)
-    room = (vec([(a + b) / 2 for a, b in zip(lo, hi)]), vec([b - a for a, b in zip(lo, hi)]))
-    for name, nx, ny in (("probes.hangar4", 2, 2), ("probes.hangar16", 4, 4), ("probes.hangar42", 7, 6)):
-        packages.append(bake_probes(baker, out, name, tiles(lo, hi, nx, ny), lo, hi, (8, 12, 4), jobs_dir,
-                                    ellipsoid=(3,) if nx == 2 else (), room=room))
+    room = box(lo, hi)
+    for name, nx, ny in (("hangar4", 2, 2), ("hangar16", 4, 4), ("hangar42", 7, 6)):
+        bake_probes(baker, out, name, tiles(lo, hi, nx, ny), lo, hi, (8, 12, 4), jobs_dir,
+                    ellipsoid=(3,) if nx == 2 else (), room=room)
     # The Star Destroyer and 100 m of space above it.
     lo, hi = (-460.0, -840.0, -120.0), (460.0, 780.0, 420.0)
-    packages.append(bake_probes(baker, out, "probes.isd", tiles(lo, hi, 2, 2), lo, hi, (8, 12, 4), jobs_dir))
+    bake_probes(baker, out, "isd", tiles(lo, hi, 2, 2), lo, hi, (8, 12, 4), jobs_dir)
 
     # A dim neutral environment, brighter above.
     pano = os.path.join(jobs_dir, "environment.hdr")
@@ -138,12 +136,9 @@ def main():
                          capture_output=True, text=True)
     if run.returncode:
         sys.exit("test.hangar: %s" % run.stderr.strip())
-    packages.append(package)
 
     with open(os.path.join(out, "probe_tests.yaml"), "w") as stream:
-        stream.write("packages:\n")
-        for path in packages:
-            stream.write(open(path).read().split("\n", 1)[1])
+        stream.write(open(package).read())
     shutil.rmtree(jobs_dir)
     print("wrote %s" % os.path.join(out, "probe_tests.yaml"))
 

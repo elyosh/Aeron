@@ -13,15 +13,20 @@
  * images, capture.yaml) into a package under the remaster bake root, with
  * the `packages:` and `xwa:` snippets to merge into the manifest. Probes
  * mode bakes a model's reflection probes and irradiance grid, rendered as
- * panoramas by the Blender add-on, into a `probes` package.
+ * panoramas by the Blender add-on, into their two KTX2 images and the
+ * layout they were baked for (bake.json), which aeron_gltf_cook embeds in
+ * the model's GLB.
  *
  * See envmap.h for the cube face and panorama conventions. Output is
  * deterministic for identical inputs and does not depend on --jobs.
  */
 
+#include "aeron/asset/flight_model.h"
 #include "aeron/config_file.h"
 #include "aeron/scene/environment.h"
+#include "aeron/scene/probe_set.h"
 #include "aeron/vfs.h"
+#include "cJSON.h"
 #include "bc6h_codec.h"
 #include "envmap.h"
 #include "hdr_read.h"
@@ -53,6 +58,7 @@ typedef struct BakeOptions {
 	const char* probes_input;
 	const char* cubes_out;
 	const char* grid_out;
+	const char* bake_out;
 	int         radiance_size;
 	int         diffuse_size;
 	int         specular_size;
@@ -78,9 +84,8 @@ static void usage(void) {
 		"                   [--sprite-format bc6h|rgba16f] [--jobs 8]\n"
 		"  environment_bake --capture DIR --bake-root DIR [--radiance-size 2048] [--diffuse-size 32]\n"
 		"                   [--specular-size 512] [--specular-samples 1024] [--sprite-size 256] [--jobs 8]\n"
-		"  environment_bake --probes job.yaml --name NAME --cubes-out P --grid-out P [--package-out FILE]\n"
-		"                   [--manifest-root DIR] [--specular-size 256] [--specular-samples 1024]\n"
-		"                   [--jobs 8]\n"
+		"  environment_bake --probes job.json --cubes-out P --grid-out P --bake-out bake.json\n"
+		"                   [--specular-size 256] [--specular-samples 1024] [--jobs 8]\n"
 		"\n"
 		"The sky is an equirectangular panorama (2:1) without suns, in the authored\n"
 		"frame: +X right, +Y up, -Z forward at the image centre. The light list is a\n"
@@ -88,9 +93,11 @@ static void usage(void) {
 		"Package entry paths are written relative to --manifest-root when given.\n"
 		"A capture is baked into <bake root>/flight/environments/captured/<mission>/region_<n>/;\n"
 		"its package.yaml and mapping.yaml are merged into the manifest by hand.\n"
-		"A probes job holds the package's `probes`, `grid_box` and `grid_resolution`, and\n"
-		"`probe_panoramas`, `grid_panoramas` (x fastest, then y, then z) and `grid_invalid`\n"
-		"(indices of points inside geometry), panorama paths relative to the job file.\n");
+		"A probes job is a JSON object with the probe layout's fields (the AERON_flight_model\n"
+		"probeData fields but its images), and `probePanoramas`, `gridPanoramas` (x fastest,\n"
+		"then y, then z) and `gridInvalid` (indices of points inside geometry), panorama\n"
+		"paths relative to the job file. --bake-out writes the layout the images were baked\n"
+		"for, which aeron_gltf_cook --probes embeds with them.\n");
 }
 
 static bool is_power_of_two(int v) { return v > 0 && (v & (v - 1)) == 0; }
@@ -152,6 +159,8 @@ static bool parse_args(int argc, char** argv, BakeOptions* o) {
 			text = &o->cubes_out;
 		else if (strcmp(arg, "--grid-out") == 0)
 			text = &o->grid_out;
+		else if (strcmp(arg, "--bake-out") == 0)
+			text = &o->bake_out;
 		else if (strcmp(arg, "--radiance-size") == 0)
 			number = &o->radiance_size;
 		else if (strcmp(arg, "--diffuse-size") == 0)
@@ -729,7 +738,7 @@ static int run_bake(const BakeOptions* o) {
 #define PROBE_PATH_MAX 1024
 
 typedef struct ProbeJob {
-	AeronEnvironmentDefinition* def; /* probes and grid */
+	AeronFlightProbeLayout layout; /* probes and grid */
 	char (*probe_panoramas)[PROBE_PATH_MAX];
 	char (*grid_panoramas)[PROBE_PATH_MAX];
 	uint8_t* invalid; /* per grid point */
@@ -737,7 +746,6 @@ typedef struct ProbeJob {
 } ProbeJob;
 
 static void probe_job_free(ProbeJob* job) {
-	free(job->def);
 	free(job->probe_panoramas);
 	free(job->grid_panoramas);
 	free(job->invalid);
@@ -745,9 +753,8 @@ static void probe_job_free(ProbeJob* job) {
 }
 
 /* A panorama path from the job: relative to the job file's folder. */
-static bool job_path(const char* job, const AeronConfigNode* node, char out[PROBE_PATH_MAX]) {
-	const char* name =
-		AeronConfigNode_Type(node) == AERON_CONFIG_STRING ? AeronConfigNode_String(node, "") : "";
+static bool job_path(const char* job, const cJSON* node, char out[PROBE_PATH_MAX]) {
+	const char* name = cJSON_IsString(node) && node->valuestring ? node->valuestring : "";
 	if (!name[0])
 		return false;
 	const char* slash = strrchr(job, '/');
@@ -757,61 +764,69 @@ static bool job_path(const char* job, const AeronConfigNode* node, char out[PROB
 	return n > 0 && n < PROBE_PATH_MAX;
 }
 
-/* Reads a probes job; prints why and returns false when it is wrong. */
-static bool load_probe_job(const char* path, ProbeJob* job) {
-	static const char* const fields[] = { "probes",           "probe_panoramas", "grid_box",
-										  "grid_resolution",  "grid_panoramas",  "grid_invalid",
-										  "key_light_shadow", "reflection_plane" };
-	memset(job, 0, sizeof *job);
-	AeronVfs*        vfs    = NULL;
-	AeronConfigFile* config = load_yaml(path, &vfs);
-	if (!config)
-		return false;
-	const AeronConfigNode* root = AeronConfigFile_Root(config);
-	bool                   ok   = AeronConfigNode_Type(root) == AERON_CONFIG_MAP;
-	for (size_t i = 0; ok && i < AeronConfigNode_MapCount(root); ++i) {
-		bool known = false;
-		for (size_t f = 0; f < sizeof fields / sizeof fields[0]; ++f)
-			known = known || strcmp(AeronConfigNode_MapKeyAt(root, i), fields[f]) == 0;
-		if (!known) {
-			fprintf(stderr, "environment_bake: %s: unknown field '%s'\n", path,
-					AeronConfigNode_MapKeyAt(root, i));
-			ok = false;
-		}
+/* Reads a whole file; NULL when it cannot. */
+static char* read_text(const char* path, size_t* size) {
+	FILE* f = fopen(path, "rb");
+	if (!f)
+		return NULL;
+	long length = -1;
+	if (fseek(f, 0, SEEK_END) == 0)
+		length = ftell(f);
+	rewind(f);
+	char* text = length >= 0 ? (char*)malloc((size_t)length + 1) : NULL;
+	if (text && fread(text, 1, (size_t)length, f) != (size_t)length) {
+		free(text);
+		text = NULL;
 	}
-	AeronConfigError error;
-	memset(&error, 0, sizeof error);
-	job->def = (AeronEnvironmentDefinition*)calloc(1, sizeof *job->def);
-	ok       = ok && job->def;
-	if (ok && !AeronEnvironment_ParseProbeSet(root, "probes job", job->def, &error)) {
-		fprintf(stderr, "environment_bake: %s:%d: %s\n", path, error.line, error.message);
-		ok = false;
+	fclose(f);
+	if (text) {
+		text[length] = '\0';
+		*size        = (size_t)length;
 	}
+	return text;
+}
 
-	const AeronConfigNode* probes = AeronConfigNode_MapGet(root, "probe_panoramas");
-	if (ok && (AeronConfigNode_Type(probes) != AERON_CONFIG_SEQUENCE ||
-			   AeronConfigNode_SequenceCount(probes) != job->def->probe_count)) {
-		fprintf(stderr, "environment_bake: %s: 'probe_panoramas' must list one panorama per probe\n", path);
+/* Reads a probes job: a JSON object with the probe layout's fields
+ * (AeronFlightProbeLayout) and `probePanoramas`, `gridPanoramas` (x
+ * fastest, then y, then z) and `gridInvalid` (indices of points inside
+ * geometry). Prints why and returns false when it is wrong. */
+static bool load_probe_job(const char* path, ProbeJob* job) {
+	memset(job, 0, sizeof *job);
+	size_t size = 0;
+	char*  text = read_text(path, &size);
+	if (!text) {
+		fprintf(stderr, "environment_bake: cannot read %s\n", path);
+		return false;
+	}
+	char error[256] = "";
+	bool ok         = Aeron_FlightProbeLayoutParse(text, size, &job->layout, error, sizeof error);
+	if (!ok)
+		fprintf(stderr, "environment_bake: %s: %s\n", path, error);
+	cJSON* root = ok ? cJSON_ParseWithLength(text, size) : NULL;
+	free(text);
+	ok = ok && root;
+
+	const cJSON* probes = cJSON_GetObjectItemCaseSensitive(root, "probePanoramas");
+	if (ok && (!cJSON_IsArray(probes) || (uint32_t)cJSON_GetArraySize(probes) != job->layout.probe_count)) {
+		fprintf(stderr, "environment_bake: %s: 'probePanoramas' must list one panorama per probe\n", path);
 		ok = false;
 	}
 	if (ok) {
-		job->probe_panoramas = calloc(job->def->probe_count, sizeof *job->probe_panoramas);
+		job->probe_panoramas = calloc(job->layout.probe_count, sizeof *job->probe_panoramas);
 		ok                   = job->probe_panoramas != NULL;
 	}
-	for (uint32_t i = 0; ok && i < job->def->probe_count; ++i) {
-		if (!job_path(path, AeronConfigNode_SequenceGet(probes, i), job->probe_panoramas[i])) {
+	for (uint32_t i = 0; ok && i < job->layout.probe_count; ++i) {
+		if (!job_path(path, cJSON_GetArrayItem(probes, (int)i), job->probe_panoramas[i])) {
 			fprintf(stderr, "environment_bake: %s: probe panorama %u must be a file name\n", path, i);
 			ok = false;
 		}
 	}
 
-	if (ok)
-		job->point_count =
-			job->def->grid_resolution[0] * job->def->grid_resolution[1] * job->def->grid_resolution[2];
-	const AeronConfigNode* points = AeronConfigNode_MapGet(root, "grid_panoramas");
-	if (ok && (AeronConfigNode_Type(points) != AERON_CONFIG_SEQUENCE ||
-			   AeronConfigNode_SequenceCount(points) != job->point_count)) {
-		fprintf(stderr, "environment_bake: %s: 'grid_panoramas' must list one panorama per grid point (%u)\n",
+	const uint32_t* r = job->layout.grid_resolution;
+	job->point_count  = r[0] * r[1] * r[2];
+	const cJSON* points = cJSON_GetObjectItemCaseSensitive(root, "gridPanoramas");
+	if (ok && (!cJSON_IsArray(points) || (uint32_t)cJSON_GetArraySize(points) != job->point_count)) {
+		fprintf(stderr, "environment_bake: %s: 'gridPanoramas' must list one panorama per grid point (%u)\n",
 				path, job->point_count);
 		ok = false;
 	}
@@ -821,30 +836,29 @@ static bool load_probe_job(const char* path, ProbeJob* job) {
 		ok                  = job->grid_panoramas && job->invalid;
 	}
 	for (uint32_t i = 0; ok && i < job->point_count; ++i) {
-		if (!job_path(path, AeronConfigNode_SequenceGet(points, i), job->grid_panoramas[i])) {
+		if (!job_path(path, cJSON_GetArrayItem(points, (int)i), job->grid_panoramas[i])) {
 			fprintf(stderr, "environment_bake: %s: grid panorama %u must be a file name\n", path, i);
 			ok = false;
 		}
 	}
-	const AeronConfigNode* invalid = AeronConfigNode_MapGet(root, "grid_invalid");
-	if (ok && invalid && AeronConfigNode_Type(invalid) != AERON_CONFIG_SEQUENCE) {
-		fprintf(stderr, "environment_bake: %s: 'grid_invalid' must be a sequence of point indices\n", path);
+	const cJSON* invalid = cJSON_GetObjectItemCaseSensitive(root, "gridInvalid");
+	if (ok && invalid && !cJSON_IsArray(invalid)) {
+		fprintf(stderr, "environment_bake: %s: 'gridInvalid' must be an array of point indices\n", path);
 		ok = false;
 	}
-	for (size_t i = 0; ok && invalid && i < AeronConfigNode_SequenceCount(invalid); ++i) {
-		const AeronConfigNode* node  = AeronConfigNode_SequenceGet(invalid, i);
-		const int64_t          index = AeronConfigNode_Int(node, -1);
-		if (AeronConfigNode_Type(node) != AERON_CONFIG_INT || index < 0 ||
-			index >= (int64_t)job->point_count) {
-			fprintf(stderr, "environment_bake: %s: 'grid_invalid' holds point indices below %u\n", path,
+	const cJSON* indices = ok ? invalid : NULL;
+	const cJSON* item    = NULL;
+	cJSON_ArrayForEach(item, indices) {
+		if (!cJSON_IsNumber(item) || item->valuedouble < 0 || item->valuedouble >= job->point_count ||
+			(double)(uint32_t)item->valuedouble != item->valuedouble) {
+			fprintf(stderr, "environment_bake: %s: 'gridInvalid' holds point indices below %u\n", path,
 					job->point_count);
 			ok = false;
-		} else {
-			job->invalid[index] = 1;
+			break;
 		}
+		job->invalid[(uint32_t)item->valuedouble] = 1;
 	}
-	AeronConfigFile_Destroy(config);
-	AeronVfs_Destroy(vfs);
+	cJSON_Delete(root);
 	if (!ok)
 		probe_job_free(job);
 	return ok;
@@ -870,7 +884,7 @@ static bool read_panorama(const char* path, float** rgb, int* w, int* h) {
 /* Bakes each probe's panorama into GGX-prefiltered cubes and writes them
  * as one cube array, probe k in layer k. */
 static bool bake_probe_cubes(const BakeOptions* o, const ProbeJob* job, int size) {
-	const uint32_t count  = job->def->probe_count;
+	const uint32_t count  = job->layout.probe_count;
 	const int      levels = envmap_mip_count(size);
 	EnvCube*       cubes  = (EnvCube*)calloc(count, sizeof *cubes);
 	const float**  images = (const float**)malloc((size_t)levels * 6u * count * sizeof *images);
@@ -956,7 +970,7 @@ static void grid_point_task(void* context, int index) {
  * the irradiance / pi toward +x, -x, +y, -y, +z, -z (model frame) in RGB,
  * and the luminance of the mean radiance in A. */
 static bool bake_probe_grid(const BakeOptions* o, const ProbeJob* job) {
-	const uint32_t* r      = job->def->grid_resolution;
+	const uint32_t* r      = job->layout.grid_resolution;
 	const uint32_t  points = job->point_count;
 	GridTask        t      = { job, calloc(points, sizeof *t.light), calloc(points, 1) };
 	const int       width = GRID_FACES * (int)r[0], height = (int)(r[1] * r[2]);
@@ -1028,12 +1042,8 @@ static bool bake_probe_grid(const BakeOptions* o, const ProbeJob* job) {
 }
 
 static int run_probes(const BakeOptions* o) {
-	if (!o->name || !o->cubes_out || !o->grid_out) {
+	if (!o->cubes_out || !o->grid_out || !o->bake_out) {
 		usage();
-		return 2;
-	}
-	if (!AeronEnvironment_IsValidName(o->name)) {
-		fprintf(stderr, "environment_bake: --name must be 1 to 63 lower-case letters, digits, '.' and '_'\n");
 		return 2;
 	}
 	const int size = o->specular_size_given ? o->specular_size : 256;
@@ -1046,19 +1056,9 @@ static int run_probes(const BakeOptions* o) {
 	ProbeJob job;
 	if (!load_probe_job(o->probes_input, &job))
 		return 2;
-	AeronEnvironmentDefinition* d = job.def;
-	snprintf(d->name, sizeof d->name, "%s", o->name);
-	d->intensity         = 1.0f;
-	d->diffuse_strength  = 1.0f;
-	d->specular_strength = 1.0f;
-	if (!package_path(o->cubes_out, o->manifest_root, d->cubes_path, sizeof d->cubes_path) ||
-		!package_path(o->grid_out, o->manifest_root, d->grid_path, sizeof d->grid_path)) {
-		probe_job_free(&job);
-		return 2;
-	}
 
-	AeronEnvironmentProbeCells cells;
-	if (!AeronEnvironment_BuildProbeCells(d, &cells)) {
+	AeronProbeCells cells;
+	if (!AeronProbeCells_Build(&job.layout, &cells)) {
 		fprintf(stderr, "environment_bake: out of memory\n");
 		probe_job_free(&job);
 		return 1;
@@ -1069,35 +1069,38 @@ static int run_probes(const BakeOptions* o) {
 		fprintf(stderr,
 				"environment_bake: warning: %u cells overlap more than %d probes; the %d smallest are used "
 				"there\n",
-				cells.overflow_cells, AERON_ENV_PROBE_CELL_PROBES, AERON_ENV_PROBE_CELL_PROBES);
-	AeronEnvironment_FreeProbeCells(&cells);
+				cells.overflow_cells, AERON_PROBE_CELL_PROBES, AERON_PROBE_CELL_PROBES);
+	AeronProbeCells_Free(&cells);
 
 	if (!bake_probe_cubes(o, &job, size) || !bake_probe_grid(o, &job)) {
 		probe_job_free(&job);
 		return 1;
 	}
-	const size_t length = AeronEnvironment_FormatPackageYaml(d, NULL, 0);
+	/* The layout the images were baked for, which the cooker embeds with
+	 * them; read back as the cooker and the game read it. */
+	const size_t length = Aeron_FlightProbeLayoutFormat(&job.layout, NULL, 0);
 	char*        text   = (char*)malloc(length + 1);
-	FILE*        f      = o->package_out ? fopen(o->package_out, "wb") : stdout;
+	FILE*        f      = fopen(o->bake_out, "wb");
 	bool         ok     = text && f;
 	if (ok) {
-		AeronEnvironment_FormatPackageYaml(d, text, length + 1);
+		Aeron_FlightProbeLayoutFormat(&job.layout, text, length + 1);
 		ok = fwrite(text, 1, length, f) == length;
 	}
-	if (f && o->package_out)
-		fclose(f);
+	if (f && fclose(f) != 0)
+		ok = false;
+	AeronFlightProbeLayout check;
+	char                   error[256] = "";
+	if (ok && !Aeron_FlightProbeLayoutParse(text, length, &check, error, sizeof error)) {
+		fprintf(stderr, "environment_bake: written %s: %s\n", o->bake_out, error);
+		ok = false;
+	} else if (!ok) {
+		fprintf(stderr, "environment_bake: cannot write %s\n", o->bake_out);
+	}
 	free(text);
 	probe_job_free(&job);
-	if (!ok) {
-		fprintf(stderr, "environment_bake: cannot write %s\n",
-				o->package_out ? o->package_out : "the package");
+	if (!ok)
 		return 1;
-	}
-	if (o->package_out) {
-		if (!validate_package_file(o->package_out))
-			return 1;
-		printf("package %s: %s\n", o->name, o->package_out);
-	}
+	printf("layout %s\n", o->bake_out);
 	return 0;
 }
 

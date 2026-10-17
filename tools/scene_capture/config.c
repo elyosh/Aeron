@@ -325,18 +325,13 @@ static int load_game_instances(const AeronConfigNode* list, CaptureConfig* confi
 			return 0;
 		}
 		const AeronConfigNode* probes = AeronConfigNode_MapGet(item, "probes");
-		if (probes && (AeronConfigNode_Type(probes) != AERON_CONFIG_STRING ||
-					   !AeronEnvironment_IsValidName(AeronConfigNode_String(probes, NULL)))) {
-			fprintf(stderr, "game_scene.instances[%zu].probes must be a package name\n", i);
+		const char*            folder = AeronConfigNode_String(probes, "");
+		if (probes && (AeronConfigNode_Type(probes) != AERON_CONFIG_STRING || !folder[0] ||
+					   strlen(folder) >= sizeof out->probes)) {
+			fprintf(stderr, "game_scene.instances[%zu].probes must be a probes bake folder\n", i);
 			return 0;
 		}
-		if (probes) {
-			if (!config->game.environment_manifest[0]) {
-				fprintf(stderr, "game_scene.instances[%zu].probes needs game_scene.environment\n", i);
-				return 0;
-			}
-			snprintf(out->probes, sizeof out->probes, "%s", AeronConfigNode_String(probes, ""));
-		}
+		snprintf(out->probes, sizeof out->probes, "%s", folder);
 		const AeronConfigNode* position = AeronConfigNode_MapGet(item, "position");
 		const AeronConfigNode* rotation = AeronConfigNode_MapGet(item, "rotation_degrees");
 		if (((out->role == CAPTURE_ROLE_SHIP || out->role == CAPTURE_ROLE_HANGAR) &&

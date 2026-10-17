@@ -7,6 +7,7 @@
 #include "aeron/log.h"
 #include "aeron/scene/billboard.h"
 #include "aeron/scene/mesh_overlay.h"
+#include "aeron/scene/probe_set.h"
 #include "aeron/scene/scene3d.h"
 
 #define AERON_SCENE_BLOOM_REFERENCE_HEIGHT 2160
@@ -144,9 +145,9 @@ typedef struct AeronScenePreparedInstance {
 
 /* A probe set placed for the frame (AeronScene_AddProbeSet). */
 typedef struct AeronSceneProbeSet {
-	const struct AeronEnvironmentPackage* package;
-	float                                 world_to_model[12]; /* rows: scene units to model metres */
-	float                                 metres_per_unit;    /* the largest scale of world_to_model */
+	const AeronProbeSet* probes;
+	float                world_to_model[12]; /* rows: scene units to model metres */
+	float                metres_per_unit;    /* the largest scale of world_to_model */
 	/* The lighting block's probe fields (AeronSceneLightingUniformGPU). */
 	float params[4];
 	float strengths[4];
@@ -196,9 +197,9 @@ typedef struct AeronScenePlanarReflection {
 
 typedef struct AeronSceneProbeOcclusion {
 	/* The probe set the grids describe, and where it was placed. */
-	const struct AeronEnvironmentPackage* package;
-	float                                 world_to_model[12];
-	float                                 origin[3]; /* the grid box's low corner, model metres */
+	const AeronProbeSet* probes;
+	float                world_to_model[12];
+	float                origin[3]; /* the grid box's low corner, model metres */
 	int                                   occupancy_dims[3];
 	int                                   grid_dims[3];
 	/* 1: the GPU builds the occupancy from depth views of the occluders;

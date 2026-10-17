@@ -953,11 +953,11 @@ static int pbr_bind_draw(struct AeronScene3D* s, AeronRenderPass* pass, int kind
 		s->pbr_occlusion_in_effect_slot |= !anim;
 	}
 	if (set_key != *bound_set) {
-		const AeronSceneProbeSet*      p   = &s->probe_sets[set];
-		const AeronEnvironmentPackage* pkg = p->package;
-		Aeron_BindTextureSampler(pass, AERON_SHADER_STAGE_FRAGMENT, 10, pkg->probe_cubes, pkg->sampler);
-		Aeron_BindTextureSampler(pass, AERON_SHADER_STAGE_FRAGMENT, 11, pkg->probe_grid, pkg->sampler);
-		Aeron_BindStorageBuffer(pass, AERON_SHADER_STAGE_FRAGMENT, 4, pkg->probe_buffer);
+		const AeronSceneProbeSet* p      = &s->probe_sets[set];
+		const AeronProbeSet*      probes = p->probes;
+		Aeron_BindTextureSampler(pass, AERON_SHADER_STAGE_FRAGMENT, 10, probes->cubes, probes->sampler);
+		Aeron_BindTextureSampler(pass, AERON_SHADER_STAGE_FRAGMENT, 11, probes->grid, probes->sampler);
+		Aeron_BindStorageBuffer(pass, AERON_SHADER_STAGE_FRAGMENT, 4, probes->buffer);
 		AeronSceneLightingUniformGPU lighting = s->lighting_uniform;
 		memcpy(lighting.probe_params, p->params, sizeof lighting.probe_params);
 		memcpy(lighting.probe_strengths, p->strengths, sizeof lighting.probe_strengths);

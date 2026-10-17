@@ -8,6 +8,7 @@
 #include "aeron/log.h"
 #include "aeron/scene/image_cache.h"
 #include "aeron/scene/ktx2_reader.h"
+#include "aeron/scene/probe_set.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -56,6 +57,7 @@ void AeronScene_MeshDestroy(AeronSceneMesh* m) {
 	}
 	free(m->engine_glows);
 	free(m->lights);
+	AeronProbeSet_Destroy(m->probes);
 	free(m->cpu_vertices);
 	free(m->cpu_indices);
 	AeronFaceBvh_Free(m->render_bvh);
@@ -824,6 +826,12 @@ static AeronSceneMesh* mesh_create(AeronCommandBuffer* cmd, const AeronFlightMod
 		}
 		memcpy(s->lights, flight_model->lights, flight_model->light_count * sizeof *s->lights);
 		s->light_count = flight_model->light_count;
+	}
+
+	/* ---- Probes: without them (a device that cannot sample them) the
+	 * model is lit by the scene's environment. ---- */
+	if (flight_model->probes) {
+		s->probes = AeronProbeSet_Create(cmd, flight_model->probes, name);
 	}
 
 	/* ---- Channel atlases (KTX2 blobs from the GLB BIN chunk) ----

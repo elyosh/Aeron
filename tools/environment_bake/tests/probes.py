@@ -8,13 +8,13 @@ and one marked inside geometry. Checks the cube array and grid headers, the
 grid's light on the faces of a cube (a constant radiance c gives c on every
 face; radiance 1 from the upper half gives 1 up, 0 down, 0.5 on the sides,
 and a mean of 0.5), the invalid point filled from
-its neighbours, the cell report, the reflection plane carried to the package,
-and that wrong jobs exit 2. The baker
-re-reads the package with the runtime parser, so a zero exit also means the
-game accepts it.
+its neighbours, the cell report, the layout written to bake.json, and that
+wrong jobs exit 2. The baker re-reads bake.json with the runtime parser, so a
+zero exit also means the game accepts it.
 """
 
 import argparse
+import json
 import os
 import shutil
 import struct
@@ -70,8 +70,8 @@ def close(a, b, tolerance=0.03):
 
 
 def probe(center, size):
-    return "  - {center: %s, size: [%g, %g, %g], shape: box, falloff: 0.2,\n" \
-           "     parallax_size: [%g, %g, %g], parallax_shape: box}\n" % (center, size, size, size, size, size, size)
+    return {"center": center, "size": [size] * 3, "shape": "box", "falloff": 0.2, "parallaxSize": [size] * 3,
+            "parallaxShape": "box"}
 
 
 def main():
@@ -85,8 +85,7 @@ def main():
         job_dir = os.path.join(scratch, "job")
         os.makedirs(job_dir)
         # Probes: two side by side, three more nested over the first.
-        probes = [("[-5, 0, 0]", 10), ("[5, 0, 0]", 10), ("[-5, 0, 0]", 6), ("[-5, 0, 0]", 4),
-                  ("[-5, 0, 0]", 2)]
+        probes = [([-5, 0, 0], 10), ([5, 0, 0], 10), ([-5, 0, 0], 6), ([-5, 0, 0], 4), ([-5, 0, 0], 2)]
         for i in range(len(probes)):
             write_hdr(os.path.join(job_dir, "probe_%d.hdr" % i), 64, 32, lambda x, y, i=i: (i + 1.0, 1.0, 0.5))
         # Grid points: constant 2, except point 1 lit from above (upper half
@@ -98,21 +97,25 @@ def main():
                 pixel = lambda x, y: (2.0, 2.0, 2.0)
             if i != 4:
                 write_hdr(os.path.join(job_dir, "grid_%d.hdr" % i), 64, 32, pixel)
-        job = os.path.join(job_dir, "job.yaml")
-        with open(job, "w") as stream:
-            stream.write("probes:\n" + "".join(probe(c, s) for c, s in probes))
-            stream.write("probe_panoramas: [%s]\n" % ", ".join("probe_%d.hdr" % i for i in range(len(probes))))
-            stream.write("grid_box: {center: [0, 0, 0], size: [20, 10, 10]}\ngrid_resolution: [3, 2, 2]\n")
-            stream.write("grid_panoramas: [%s]\n" % ", ".join("grid_%d.hdr" % i for i in range(12)))
-            stream.write("grid_invalid: [4]\nkey_light_shadow: 0.5\n")
-            stream.write("reflection_plane: {center: [0, 0, -5], size: [20, 10], distance: 0.25}\n")
+        base = {"probes": [probe(c, s) for c, s in probes],
+                "probePanoramas": ["probe_%d.hdr" % i for i in range(len(probes))],
+                "gridBox": {"center": [0, 0, 0], "size": [20, 10, 10]}, "gridResolution": [3, 2, 2],
+                "gridPanoramas": ["grid_%d.hdr" % i for i in range(12)], "gridInvalid": [4],
+                "keyLightShadow": 0.5,
+                "reflectionPlane": {"center": [0, 0, -5], "size": [20, 10], "distance": 0.25}}
 
-        out = os.path.join(scratch, "flight", "environments", "models", "test")
+        def write_job(name, item):
+            path = os.path.join(job_dir, name)
+            with open(path, "w") as stream:
+                json.dump(item, stream)
+            return path
+        job = write_job("job.json", base)
+
+        out = os.path.join(scratch, "bake")
         os.makedirs(out)
-        run = subprocess.run([baker, "--probes", job, "--name", "probes.test",
-                              "--cubes-out", os.path.join(out, "probes.ktx2"),
+        run = subprocess.run([baker, "--probes", job, "--cubes-out", os.path.join(out, "probes.ktx2"),
                               "--grid-out", os.path.join(out, "grid.ktx2"),
-                              "--package-out", os.path.join(out, "package.yaml"), "--manifest-root", scratch,
+                              "--bake-out", os.path.join(out, "bake.json"),
                               "--specular-size", "16", "--specular-samples", "16", "--jobs", "2"],
                              capture_output=True, text=True)
         if run.returncode:
@@ -136,13 +139,13 @@ def main():
                 filled = grid_point(level0, 18, 1, 1)
                 if not all(1.0 < filled[5][c] < filled[4][c] < 2.0 for c in range(3)):
                     failures.append("invalid point not filled from its neighbours: %s" % filled)
-            entry = open(os.path.join(out, "package.yaml")).read()
-            for expected in ('cubes: "flight/environments/models/test/probes.ktx2"',
-                             'grid: "flight/environments/models/test/grid.ktx2"', "grid_resolution: [3, 2, 2]",
-                             "key_light_shadow: 0.5",
-                             "reflection_plane: {center: [0, 0, -5], size: [20, 10], distance: 0.25}"):
-                if expected not in entry:
-                    failures.append("package.yaml lacks %r:\n%s" % (expected, entry))
+            with open(os.path.join(out, "bake.json")) as stream:
+                layout = json.load(stream)
+            if (layout["gridResolution"] != [3, 2, 2] or layout["keyLightShadow"] != 0.5 or
+                    len(layout["probes"]) != len(probes) or
+                    layout["reflectionPlane"] != {"center": [0, 0, -5], "size": [20, 10], "distance": 0.25} or
+                    "probePanoramas" in layout):
+                failures.append("bake.json: %s" % layout)
             if "at most 4 probes in one" not in run.stdout:
                 failures.append("cell report: %s" % run.stdout)
             if "warning" in run.stderr:
@@ -150,29 +153,23 @@ def main():
 
         # A sixth probe inside the nested ones: the cell around them holds five
         # (the probe at +5 does not reach it).
-        with open(job) as stream:
-            text = stream.read()
-        crowded = os.path.join(job_dir, "crowded.yaml")
-        with open(crowded, "w") as stream:
-            stream.write(text.replace("probes:\n", "probes:\n" + probe("[-5, 0, 0]", 1), 1)
-                         .replace("probe_panoramas: [", "probe_panoramas: [probe_0.hdr, "))
-        run = subprocess.run([baker, "--probes", crowded, "--name", "probes.test",
-                              "--cubes-out", os.path.join(scratch, "c.ktx2"), "--grid-out",
-                              os.path.join(scratch, "g.ktx2"), "--specular-size", "16", "--specular-samples", "16"],
+        crowded = write_job("crowded.json", dict(base, probes=[probe([-5, 0, 0], 1)] + base["probes"],
+                                                 probePanoramas=["probe_0.hdr"] + base["probePanoramas"]))
+        run = subprocess.run([baker, "--probes", crowded, "--cubes-out", os.path.join(scratch, "c.ktx2"),
+                              "--grid-out", os.path.join(scratch, "g.ktx2"), "--bake-out",
+                              os.path.join(scratch, "b.json"), "--specular-size", "16", "--specular-samples", "16"],
                              capture_output=True, text=True)
         if run.returncode or "at most 5 probes in one" not in run.stdout or "overlap more than 4" not in run.stderr:
             failures.append("crowded cells not reported: %s %s" % (run.stdout, run.stderr))
 
         # Wrong jobs.
-        for name, change in (("unknown field", lambda t: t + "extra: 1\n"),
-                             ("panorama count", lambda t: t.replace("probe_panoramas: [", "probe_panoramas: [x, ")),
-                             ("invalid index", lambda t: t.replace("grid_invalid: [4]", "grid_invalid: [12]")),
-                             ("plane size", lambda t: t.replace("size: [20, 10]", "size: [20, 0]"))):
-            wrong = os.path.join(job_dir, "wrong.yaml")
-            with open(wrong, "w") as stream:
-                stream.write(change(text))
-            run = subprocess.run([baker, "--probes", wrong, "--name", "probes.test", "--cubes-out", "c",
-                                  "--grid-out", "g"], capture_output=True, text=True)
+        for name, change in (("panorama count", {"probePanoramas": ["x"] + base["probePanoramas"]}),
+                             ("invalid index", {"gridInvalid": [12]}),
+                             ("plane size", {"reflectionPlane": {"center": [0, 0, -5], "size": [20, 0],
+                                                                 "distance": 0.25}})):
+            wrong = write_job("wrong.json", dict(base, **change))
+            run = subprocess.run([baker, "--probes", wrong, "--cubes-out", "c", "--grid-out", "g",
+                                  "--bake-out", "b"], capture_output=True, text=True)
             if run.returncode != 2:
                 failures.append("%s: exit %d, expected 2" % (name, run.returncode))
     finally:

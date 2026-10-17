@@ -1,5 +1,7 @@
 #include "aeron/asset/flight_model.h"
 
+#include "flight_probes.h"
+
 #include "cJSON.h"
 #include "cgltf.h"
 
@@ -1051,6 +1053,18 @@ static bool build_semantics(const cgltf_data* data, AeronFlightModel* model) {
 	return true;
 }
 
+/* The model root's cooked probes (`probeData`), when it has them. */
+static bool build_model_probes(const cgltf_data* data, AeronFlightModel* model, const char* source_label) {
+	cJSON*     extension  = parse_flight_extension(data->scene->nodes[0]);
+	char       error[256] = "malformed extension";
+	const bool ok =
+		extension && Aeron_FlightProbesFromExtension(data, extension, &model->probes, error, sizeof error);
+	if (!ok)
+		SDL_Log("[flight_model] '%s' has invalid probeData: %s", source_label, error);
+	cJSON_Delete(extension);
+	return ok;
+}
+
 /* Loads the cooked render BVH, or builds one for an uncooked model. */
 static bool build_render_bvh(AeronFlightModel* model, const char* source_label) {
 	const AeronGltfModel* render = &model->render;
@@ -1088,7 +1102,8 @@ bool Aeron_FlightModelBuildData(const cgltf_data* data, const char* source_label
 		Aeron_FlightModelFree(out);
 		return false;
 	}
-	if (!build_render_bvh(out, source_label ? source_label : "<memory glTF>")) {
+	if (!build_render_bvh(out, source_label ? source_label : "<memory glTF>") ||
+		!build_model_probes(data, out, source_label ? source_label : "<memory glTF>")) {
 		Aeron_FlightModelFree(out);
 		return false;
 	}
@@ -1151,6 +1166,9 @@ void Aeron_FlightModelReleaseRenderData(AeronFlightModel* model) {
 	Aeron_GltfMeshFree(&model->render);
 	AeronFaceBvh_Free(model->render_bvh);
 	model->render_bvh = NULL;
+	Aeron_FlightProbesFree(model->probes);
+	free(model->probes);
+	model->probes = NULL;
 }
 
 void Aeron_FlightModelReleaseSimulationData(AeronFlightModel* model) {
@@ -1213,11 +1231,13 @@ void Aeron_FlightModelFreeSemantics(AeronFlightModel* model) {
 	free(model->lights);
 	free(model->render_data);
 	/* Render data has its own release path; leave it untouched. */
-	const AeronGltfModel render     = model->render;
-	AeronFaceBvh* const  render_bvh = model->render_bvh;
+	const AeronGltfModel     render     = model->render;
+	AeronFaceBvh* const      render_bvh = model->render_bvh;
+	AeronFlightProbes* const probes     = model->probes;
 	memset(model, 0, sizeof *model);
 	model->render     = render;
 	model->render_bvh = render_bvh;
+	model->probes     = probes;
 }
 
 uint32_t Aeron_FlightModelCountTag(const AeronFlightModel* model, const char* tag) {

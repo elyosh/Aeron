@@ -32,8 +32,7 @@ used instead of the packaged tools. Bake Probes also needs
 If you also set **Game Folder** in the preferences to the game's
 `remaster` folder, Export for Game checks every animation frame against its
 library in `remaster/effects`. Before that, it rebuilds in that folder the
-project libraries that the model uses and that have changed. Bake Probes
-also writes to the Game Folder.
+project libraries that the model uses and that have changed.
 
 Tests (run each one with `--help` for its options):
 - `tests/roundtrip.py`: models import and save without changes.
@@ -479,7 +478,7 @@ the probe's parallax volume.
 **Bake Probes** renders a panorama from each reflection probe (Samples
 per pixel, denoised) and from each grid point (256 x 128 pixels at 16
 samples) with Cycles, on the GPU when Cycles has one, and environment_bake
-makes the package. It shows its progress; Esc cancels. Grid points inside geometry (most of
+bakes them. It shows its progress; Esc cancels. Grid points inside geometry (most of
 their rays hit back faces) are left out and take their neighbours' light.
 The bake renders what the scene renders: the World is black, so nothing
 comes from outside the model. To leave an object out of the probes or the
@@ -495,16 +494,16 @@ exported with `baked`, and the game leaves them out while it uses the
 probes, so their light is not counted twice. Lights outside it, such as
 running lights, stay live.
 
-The bake writes into the game's `remaster` folder (the Game Folder
-setting, or else a folder you choose), in
-`flight/environments/models/<model key>/`: `probes.ktx2`, `grid.ktx2`,
-`package.yaml`, `mapping.yaml` and a `panorama_<n>.hdr` per reflection
-probe. The game reads `package.yaml` from that folder. After a model's
-first bake, add the line from `mapping.yaml` under `xwa.probes` in the
-environment manifest (`flight/environments/environments.yaml`); later
-bakes need nothing more. The panoramas are the renders the reflections are
-made from; the game doesn't use them. Each frame, the game uses the probes of the 8 models nearest to
-the camera that have them.
+The bake writes into the `bake/probes` folder of the model's project:
+`probes.ktx2`, `grid.ktx2`, `bake.json` (the layout they were baked for),
+`authoring.json` and a `panorama_<n>.hdr` per reflection probe. Export for
+Game puts the first three in the model's .glb, so the game needs nothing
+else. It warns, and still exports, when the model has probes but no bake,
+when the probes were moved, resized, added or removed since the bake
+(`authoring.json` holds what was baked), and when the bake is older than
+the .blend. The panoramas are the renders the reflections are made from;
+the game doesn't use them. Each frame, the game uses the probes of the 8
+models nearest to the camera that have them.
 
 Limits:
 - The World is black during the bake, so light from the sky through open
@@ -522,9 +521,10 @@ To review a reflection probe in Blender, click **Preview Lighting** in its
 panel. It shows the probe's panorama as the World, turned as in the game,
 so a ship placed in the scene shows that probe's light and reflections in
 Material Preview or Rendered view. Click it again to put the previous
-World back. In the game, the Environment debug tool shows the package
-(its probes, grid and memory) and the frame's probe sets, and its Reload
-button loads it again after a new bake. Its **Show probes** checkbox draws
+World back. In the game, the Environment debug tool shows the frame's
+probe sets (their probes, grid and memory) and edits their strengths; after
+a new bake, export the model again and restart the mission. Its **Show
+probes** checkbox draws
 each probe's influence, the grid's box and the grid points near the
 camera, to check that they sit where they do in Blender. Save to
 Project keeps the probes, the grid and the plane in the model's `.gltf`.

@@ -68,6 +68,8 @@ static void usage(void) {
 					"                        the materials name that the project <dir>\n"
 					"                        holds, as <dir>/effects/<library>/<library>.yaml,\n"
 					"                        into the effects directory (as --library does).\n"
+					"  --probes <dir>        Embed the probes bake in <dir> (bake.json,\n"
+					"                        probes.ktx2, grid.ktx2) as the model's probeData.\n"
 					"  --verbose             Print per-channel cook progress.\n"
 					"  -h, --help            Show this help.\n"
 					"\n"
@@ -134,7 +136,7 @@ static bool write_library(const char* in, const char* out) {
 }
 
 /* Rewrites the cooked GLB with cooked AERON_flight_model data. */
-static bool add_flight_data(const char* path) {
+static bool add_flight_data(const char* path, const char* probes_dir) {
 	FILE* file = fopen(path, "rb");
 	if (!file) {
 		fprintf(stderr, "[aeron_gltf_cook] cannot reopen %s\n", path);
@@ -155,8 +157,8 @@ static bool add_flight_data(const char* path) {
 	size_t   cooked_size = 0;
 	bool     applied     = false;
 	char     error[256]  = { 0 };
-	const bool ok = aeron_gltf_cook_flight_data(bytes, (size_t)length, &cooked, &cooked_size, &applied, error,
-												sizeof error);
+	const bool ok = aeron_gltf_cook_flight_data(bytes, (size_t)length, probes_dir, &cooked, &cooked_size, &applied,
+												error, sizeof error);
 	free(bytes);
 	if (!ok) {
 		fprintf(stderr, "[aeron_gltf_cook] flight data: %s\n", error);
@@ -200,6 +202,7 @@ int main(int argc, char** argv) {
 	const char* out_path    = NULL;
 	const char* effects_dir = NULL;
 	const char* project     = NULL;
+	const char* probes_dir  = NULL;
 
 	AeronGltfCookOptions opts;
 	aeron_gltf_cook_default_options(&opts);
@@ -234,6 +237,8 @@ int main(int argc, char** argv) {
 			effects_dir = argv[++i];
 		} else if (strcmp(a, "--project") == 0 && i + 1 < argc) {
 			project = argv[++i];
+		} else if (strcmp(a, "--probes") == 0 && i + 1 < argc) {
+			probes_dir = argv[++i];
 		} else if (strcmp(a, "--verbose") == 0) {
 			opts.verbose = true;
 		} else if (strcmp(a, "-h") == 0 || strcmp(a, "--help") == 0) {
@@ -275,5 +280,5 @@ int main(int argc, char** argv) {
 	if (!aeron_gltf_cook_check_materials(in_path, effects_dir, project) ||
 		!aeron_gltf_cook(in_path, out_path, &opts))
 		return 1;
-	return add_flight_data(out_path) ? 0 : 1;
+	return add_flight_data(out_path, probes_dir) ? 0 : 1;
 }

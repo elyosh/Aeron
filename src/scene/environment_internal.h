@@ -10,10 +10,8 @@ extern "C" {
 #endif
 
 typedef enum EnvTextureKind {
-	ENV_TEXTURE_2D,         /* sun sprites */
-	ENV_TEXTURE_CUBE,       /* sky and lighting cubes */
-	ENV_TEXTURE_CUBE_ARRAY, /* reflection probes */
-	ENV_TEXTURE_GRID,       /* irradiance grid, repacked into a 3D texture */
+	ENV_TEXTURE_2D,   /* sun sprites */
+	ENV_TEXTURE_CUBE, /* sky and lighting cubes */
 } EnvTextureKind;
 
 /* One texture held by the published set, keyed by package path. */
@@ -24,9 +22,7 @@ typedef struct EnvTexture {
 	int                size; /* level-0 width */
 	int                level_count;
 	EnvTextureKind     kind;
-	int                layers;  /* cube arrays */
-	uint32_t           grid[3]; /* grids: points per axis */
-	uint64_t           bytes;   /* uploaded payload */
+	uint64_t           bytes; /* uploaded payload */
 	char               failure[128];
 } EnvTexture;
 
@@ -37,8 +33,6 @@ typedef struct EnvSlot {
 	bool                      available;
 	bool                      overridden; /* package.settings edited in the debug tool */
 	char                      failure[160];
-	uint32_t                  probe_buffer_bytes;
-	uint32_t                  probe_overflow_cells; /* cells overlapped by more than four probes */
 } EnvSlot;
 
 struct AeronEnvironmentLibrary {

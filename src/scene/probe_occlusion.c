@@ -413,7 +413,7 @@ static void release_grids(AeronSceneProbeOcclusion* o) {
 	o->views          = NULL;
 	o->records        = NULL;
 	o->cells          = NULL;
-	o->package        = NULL;
+	o->probes         = NULL;
 	o->occluder_count = 0;
 	o->valid          = 0;
 }
@@ -561,12 +561,12 @@ void AeronSceneProbeOcclusion_OccupancyMapping(const AeronScene3D* s, float rows
 
 /* (Re)creates the grids for the probe set's box; 0 on failure. */
 static int ensure_grids(AeronSceneProbeOcclusion* o, const AeronSceneProbeSet* set) {
-	if (o->package == set->package && o->occupancy &&
+	if (o->probes == set->probes && o->occupancy &&
 		memcmp(o->world_to_model, set->world_to_model, sizeof o->world_to_model) == 0) {
 		return 1;
 	}
 	release_grids(o);
-	const AeronEnvironmentDefinition* d = &set->package->settings;
+	const AeronFlightProbeLayout* d = &set->probes->settings;
 	for (int k = 0; k < 3; ++k) {
 		o->origin[k]         = d->grid_center[k] - 0.5f * d->grid_size[k];
 		o->occupancy_dims[k] = (int)ceilf(d->grid_size[k] / AERON_SCENE_OCCUPANCY_CELL);
@@ -643,7 +643,7 @@ static int ensure_grids(AeronSceneProbeOcclusion* o, const AeronSceneProbeSet* s
 		release_grids(o);
 		return 0;
 	}
-	o->package = set->package;
+	o->probes = set->probes;
 	memcpy(o->world_to_model, set->world_to_model, sizeof o->world_to_model);
 	return 1;
 }
@@ -789,10 +789,10 @@ static int ensure_pipeline(AeronSceneProbeOcclusion* o) {
 static int build_grid(AeronScene3D* s, AeronCommandBuffer* cmd, const AeronSceneProbeSet* set,
 					  const float lo[3], const float   hi[3], const float (*change_lo)[3],
 					  const float (*change_hi)[3], int change_count, int shade_floor) {
-	AeronSceneProbeOcclusion*      o   = &s->probe_occlusion;
-	const AeronEnvironmentPackage* pkg = set->package;
-	OcclusionGridUniform           u   = { 0 };
-	int                            first[3], count[3];
+	AeronSceneProbeOcclusion* o      = &s->probe_occlusion;
+	const AeronProbeSet*      probes = set->probes;
+	OcclusionGridUniform      u      = { 0 };
+	int                       first[3], count[3];
 	for (int k = 0; k < 3; ++k) {
 		first[k] = (int)floorf((lo[k] - o->origin[k]) / AERON_SCENE_OCCLUSION_GRID_CELL);
 		first[k] = first[k] < 0 ? 0 : first[k];
@@ -818,7 +818,7 @@ static int build_grid(AeronScene3D* s, AeronCommandBuffer* cmd, const AeronScene
 	u.origin_cell[3]  = AERON_SCENE_OCCUPANCY_CELL;
 	u.occluders_lo[3] = OCCLUSION_REACH;
 	/* A cube mip of about 8 x 8 texels a face: the light's broad layout. */
-	u.occluders_hi[3] = fmaxf((float)pkg->probe_mip_count - 4.0f, 0.0f);
+	u.occluders_hi[3] = fmaxf((float)probes->mip_count - 4.0f, 0.0f);
 	/* The boxes holding every occupied cell: the views reach two cells past
 	 * an occluder's bounds. */
 	float     blo[AERON_SCENE_OCCLUSION_MAX_OCCLUDERS][3], bhi[AERON_SCENE_OCCLUSION_MAX_OCCLUDERS][3];
@@ -846,11 +846,11 @@ static int build_grid(AeronScene3D* s, AeronCommandBuffer* cmd, const AeronScene
 	}
 	Aeron_BindComputePipeline(pass, o->pipeline);
 	Aeron_BindComputeTextureSampler(pass, 0, o->occupancy, AeronSceneProbeOcclusion_Sampler(s));
-	Aeron_BindComputeTextureSampler(pass, 1, pkg->probe_cubes, pkg->sampler);
+	Aeron_BindComputeTextureSampler(pass, 1, probes->cubes, probes->sampler);
 	/* Unread in the first pass, which writes `unshaded`. */
 	Aeron_BindComputeTextureSampler(pass, 2, shade_floor ? o->unshaded : o->grid,
 									AeronSceneProbeOcclusion_Sampler(s));
-	Aeron_BindComputeStorageBuffer(pass, 0, pkg->probe_buffer);
+	Aeron_BindComputeStorageBuffer(pass, 0, probes->buffer);
 	Aeron_BindComputeUniformData(pass, 0, &u, sizeof u);
 	Aeron_DispatchCompute(pass, (uint32_t)(count[0] + GRID_THREADS - 1) / GRID_THREADS,
 						  (uint32_t)(count[1] + GRID_THREADS - 1) / GRID_THREADS,
@@ -1177,7 +1177,7 @@ void AeronSceneProbeOcclusion_Update(AeronScene3D* s, AeronCommandBuffer* cmd) {
 		return;
 	}
 	const AeronSceneProbeSet* set = &s->probe_sets[0];
-	if (!set->package || !set->package->probe_buffer || !set->package->probe_cubes) {
+	if (!set->probes) {
 		return;
 	}
 	if (!ensure_grids(o, set)) {
@@ -1191,7 +1191,7 @@ void AeronSceneProbeOcclusion_Update(AeronScene3D* s, AeronCommandBuffer* cmd) {
 	float box_lo[3], box_hi[3];
 	for (int k = 0; k < 3; ++k) {
 		box_lo[k] = o->origin[k];
-		box_hi[k] = o->origin[k] + set->package->settings.grid_size[k];
+		box_hi[k] = o->origin[k] + set->probes->settings.grid_size[k];
 	}
 
 	AeronSceneOccluder            current[AERON_SCENE_OCCLUSION_MAX_OCCLUDERS];

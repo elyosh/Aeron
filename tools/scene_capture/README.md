@@ -45,7 +45,7 @@ run.
 | [hangar-lights.yaml](presets/hangar-lights.yaml) | An indoor `game_scene`: a converted XWAU hangar with fifteen parked fighters, lit only by point lights under its ceiling panels, for comparing local-light models; configure `asset_root` first. |
 | [hangar-tubes.yaml](presets/hangar-tubes.yaml) | `hangar-lights.yaml` with one tube light per ceiling row in place of its point lights. |
 | [hangar-one-sided.yaml](presets/hangar-one-sided.yaml) | `hangar-tubes.yaml` with one-sided tubes emitting downward, as the ceiling strips. |
-| [hangar-probes.yaml](presets/hangar-probes.yaml) | `hangar-lights.yaml` with environment probes: the hangar owns four flat-coloured probes and a grid lit from one side, over a dim environment. Build the test packages first with `probe_packages.py --baker <build dir>/environment_bake --out captures/probe-assets`. |
+| [hangar-probes.yaml](presets/hangar-probes.yaml) | `hangar-lights.yaml` with environment probes: the hangar owns four flat-coloured probes and a grid lit from one side, over a dim environment. Build the test probes first with `probe_packages.py --baker <build dir>/environment_bake --out captures/probe-assets`. |
 | [flight-probes.yaml](presets/flight-probes.yaml) | A turned Star Destroyer owning four flat-coloured probes and a grid, fighters above its hull, no environment; same test packages. |
 | [anim-example.yaml](presets/anim-example.yaml), [anim-example-target.yaml](presets/anim-example-target.yaml) | The authored animated-material example of `tools/gltf_cook/example` at two times, without and with the `target` state. Build its assets first with `tools/gltf_cook/example/build.sh <build dir> captures/anim-example-assets`. |
 
@@ -101,7 +101,7 @@ positions stay in metres.
 | `ssao`, `shadows` | `true` (default) or `false`, to turn either off. |
 | `temporal_upscaling` | Optional `{ mode, sharpness }` as the game's settings: `mode` is `off` (default), `native_aa`, `quality`, `balanced` or `performance`; `sharpness` 0–1 enables RCAS above 0. Benchmarks only, since temporal output depends on frame history, and needs `msaa_samples: 1` as in the game. The history resets when the pose sequence restarts. |
 | `model_light_intensity` | Scene illuminance per lux of the lights authored in the models (in candela), as the game's `point_lights.model_light_intensity`: default 1/683, 0 to 1, 0 turns them off. Every drawn instance submits its model's lights. |
-| `environment` | Optional `{ folder, manifest, package }`: `manifest` holds `packages:` as the game's environment manifest does, in `folder` (default: `asset_root`) with the files its packages name; `package` (optional) is the environment the scene uses. Instances name the `probes` packages they own. |
+| `environment` | Optional `{ folder, manifest, package }`: `manifest` holds `packages:` as the game's environment manifest does, in `folder` (default: `asset_root`) with the files its packages name; `package` (optional) is the environment the scene uses. `folder` is also where instances' `probes` bake folders are. |
 | `cluster_debug` | `false` (default) or `true`: the clustered lights' occupancy view (lights per cluster as colours) in place of the lit scene, as the game's Point Lights debug tool. |
 | `cockpit_follows_camera` | `false` (default) or `true`. With a panning camera, `false` keeps the cockpit and exterior in place (the pilot looks around); `true` turns them with the camera (the craft turns), as the game carries its cockpit. |
 | `key_probe_shadow` | Optional, 0 to 1: the sun is in the probe sets' bake, as the game's hangar ceiling light is, and its shadow removes this share of the probe light inside a probe grid. Off by default. Inside a grid no directional light lights, with or without it: a probe set is sealed. |
@@ -111,7 +111,7 @@ positions stay in metres.
 | `sun_direction`, `sun_color` | Surface-to-sun direction in camera axes (+X right, +Y down, +Z forward) and linear RGB illuminance; default white 2.513, the game's white classic sun of intensity 1 at its default `lighting.sun_illuminance_scale`. |
 | `ambient` | Linear ambient fill, default 0.08. |
 | `point_lights` | Up to 256 `{ position, intensity, half_axis, direction }` lights: position in metres and linear RGB intensity, the illuminance 1 m away. Drawn as the game's point lights: 0.25 m inverse-square spheres through clustered lighting. At the game's default `point_lights.match_distance_m` (27.5), its classic intensity `I` is about `1.05 × I` here. An optional `half_axis` (metres, camera axes) makes a tube along `position ± half_axis` with the same total intensity, as the game's laser streaks (a fighter laser is 17 m long). An optional `direction` (camera axes) makes the light one-sided, like a ceiling panel: `intensity × cos θ` around that direction and nothing behind it; a tube's direction is made perpendicular to its axis (a flat strip). |
-| `instances` | Required, up to 1024 `{ model, role, position, rotation_degrees, markings, probes }` entries; `model` is one of `models`. `probes` (optional) names a `probes` package of `environment`'s manifest the instance owns; other instances whose bounds reach it use it too. `markings` (0-255, optional) shows the look the model's markings list gives that markings value: the model's mesh then has one variant index per markings value up to the highest given, a given value showing its list entry and loading only that variant's textures. A model no instance gives markings shows its whole markings list. `role: ship` (default) places it at `position` with `[yaw, pitch, roll]`. `hangar` places it the same way, receiving shadows without casting them, as the game draws its hangar under the ceiling light. `cockpit` places it at `screen_test`'s eye with the game cockpit's flags (its own shadow map, which it casts into with both faces). `exterior` places it there too but only casts shadows, like the player's hidden exterior in cockpit view. |
+| `instances` | Required, up to 1024 `{ model, role, position, rotation_degrees, markings, probes }` entries; `model` is one of `models`. An instance owns its model's probes (the GLB's `probeData`), or with `probes` (optional) those of a probes bake folder (bake.json, probes.ktx2, grid.ktx2) in `environment`'s folder, else `asset_root`; other instances whose bounds reach them use them too. `markings` (0-255, optional) shows the look the model's markings list gives that markings value: the model's mesh then has one variant index per markings value up to the highest given, a given value showing its list entry and loading only that variant's textures. A model no instance gives markings shows its whole markings list. `role: ship` (default) places it at `position` with `[yaw, pitch, roll]`. `hangar` places it the same way, receiving shadows without casting them, as the game draws its hangar under the ceiling light. `cockpit` places it at `screen_test`'s eye with the game cockpit's flags (its own shadow map, which it casts into with both faces). `exterior` places it there too but only casts shadows, like the player's hidden exterior in cockpit view. |
 
 Models are placed mirrored from their left-handed OPT frames, as the game places
 them, so `cull: back` matches the game's culling (the default fixture's `front`
@@ -164,8 +164,7 @@ baked from. The .blend is never saved.
 blender -b scene.blend --python cycles_match.py -- --out DIR \
     --asset-root GAME_DATA --hangar OPT_HANGAR \
     --model OPT_HANGAR=remaster/models/hangar.glb --model OPT_SHIP=remaster/models/ship.glb \
-    --package BAKE_ROOT/flight/environments/models/hangar/package.yaml \
-    --bake-root BAKE_ROOT --defaults aeron/config/scene3d_defaults.yaml
+    --probes PROJECT/hangar/bake/probes --defaults aeron/config/scene3d_defaults.yaml
 (cd DIR && for c in full diffuse reflect; do SCENE_CAPTURE $c.yaml; done)
 blender -b scene.blend --python cycles_render.py -- DIR
 blender -b --python cycles_compare.py -- DIR [--box NAME X0 Y0 X1 Y1]
@@ -176,7 +175,7 @@ blender -b --python cycles_compare.py -- DIR [--box NAME X0 Y0 X1 Y1]
   and their reflections only. A model whose parts are posed differently in
   the .blend (landing gear, a ramp) is copied with them posed as there. The
   hangar's ceiling light points up the hangar's axis, and `key_probe_shadow`
-  is the package's `key_light_shadow`.
+  is the bake's `keyLightShadow`.
 - `cycles_render.py` renders the reference with its light passes: no light
   from outside the model, as the probes bake, and `scene_capture`'s 60 degree
   vertical field of view. 1920 x 1080 at 1024 samples takes about two minutes

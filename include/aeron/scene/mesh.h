@@ -139,6 +139,9 @@ typedef struct AeronSceneMesh {
 	/* Point lights copied from the source flight model (owned). */
 	AeronFlightLight* lights;
 	uint32_t          light_count;
+	/* The source flight model's probes on the GPU (owned); NULL without
+	 * them, or when the device cannot sample them. */
+	struct AeronProbeSet* probes;
 
 	/* Material animation records (material_anim_layout.hlsli), NULL when
 	 * no material animates, and the effect libraries they hold. */

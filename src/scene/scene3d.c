@@ -1293,9 +1293,8 @@ void AeronScene_SetPlanarReflection(AeronScene3D* s, int enabled) {
 	}
 }
 
-int AeronScene_AddProbeSet(AeronScene3D* s, const AeronEnvironmentPackage* package, const float m[12]) {
-	if (!s || !package || !m || !package->probe_cubes || !package->probe_grid || !package->probe_buffer ||
-		s->probe_set_count >= AERON_SCENE_MAX_PROBE_SETS) {
+int AeronScene_AddProbeSet(AeronScene3D* s, const AeronProbeSet* probes, const float m[12]) {
+	if (!s || !probes || !m || s->probe_set_count >= AERON_SCENE_MAX_PROBE_SETS) {
 		return -1;
 	}
 	/* World to model: the inverse of the affine model-to-world. */
@@ -1311,7 +1310,7 @@ int AeronScene_AddProbeSet(AeronScene3D* s, const AeronEnvironmentPackage* packa
 						   c2 / det, (a[1] * a[6] - a[0] * a[7]) / det, (a[0] * a[4] - a[1] * a[3]) / det };
 	AeronSceneProbeSet* set = &s->probe_sets[s->probe_set_count];
 	memset(set, 0, sizeof *set);
-	set->package = package;
+	set->probes = probes;
 	for (int row = 0; row < 3; ++row) {
 		float length_sq = 0.0f;
 		for (int col = 0; col < 3; ++col) {
@@ -1322,9 +1321,9 @@ int AeronScene_AddProbeSet(AeronScene3D* s, const AeronEnvironmentPackage* packa
 			-(inv[row * 3 + 0] * m[3] + inv[row * 3 + 1] * m[7] + inv[row * 3 + 2] * m[11]);
 		set->metres_per_unit = fmaxf(set->metres_per_unit, sqrtf(length_sq));
 	}
-	const AeronEnvironmentDefinition* d = &package->settings;
-	set->params[0]                      = (float)d->probe_count;
-	set->params[1]                      = (float)package->probe_mip_count;
+	const AeronFlightProbeLayout* d = &probes->settings;
+	set->params[0]                  = (float)d->probe_count;
+	set->params[1]                  = (float)probes->mip_count;
 	set->params[2]                      = (float)d->grid_resolution[0];
 	set->params[3]                      = (float)d->grid_resolution[1];
 	set->strengths[0]                   = d->intensity * d->diffuse_strength;
@@ -1359,14 +1358,14 @@ static int32_t scene_instance_probe_set(const AeronScene3D* s, const AeronSceneM
 	const float radius =
 		sqrtf(box.half[0] * box.half[0] + box.half[1] * box.half[1] + box.half[2] * box.half[2]);
 	for (int k = 0; k < s->probe_set_count; ++k) {
-		const AeronSceneProbeSet*      set         = &s->probe_sets[k];
-		const AeronEnvironmentPackage* pkg         = set->package;
-		float                          distance_sq = 0.0f;
+		const AeronSceneProbeSet* set         = &s->probe_sets[k];
+		const AeronProbeSet*      probes      = set->probes;
+		float                     distance_sq = 0.0f;
 		for (int row = 0; row < 3; ++row) {
 			const float* w = &set->world_to_model[row * 4];
 			const float  p = w[0] * box.center[0] + w[1] * box.center[1] + w[2] * box.center[2] + w[3];
 			const float  outside =
-				fmaxf(fmaxf(pkg->probe_bounds_min[row] - p, p - pkg->probe_bounds_max[row]), 0.0f);
+				fmaxf(fmaxf(probes->bounds_min[row] - p, p - probes->bounds_max[row]), 0.0f);
 			distance_sq += outside * outside;
 		}
 		const float reach = radius * set->metres_per_unit;

@@ -2,15 +2,14 @@
 
     blender -b SCENE.blend --python cycles_match.py -- --out DIR
         --asset-root ROOT --model OBJECT=GLB [--model OBJECT=GLB ...] --hangar OBJECT
-        --package PACKAGE_YAML --bake-root BAKE_ROOT --defaults SCENE3D_DEFAULTS
-        [--probes NAME] [--camera NAME] [--width 1920] [--height 1080] [--probe-occlusion]
-        [--planar-reflection]
+        --probes BAKE_DIR --defaults SCENE3D_DEFAULTS [--camera NAME] [--width 1920]
+        [--height 1080] [--probe-occlusion] [--planar-reflection]
 
 SCENE.blend holds each model under its own root object (as the glTF importer
 leaves it) and a camera; it is opened read-only and never saved. OBJECT names
 a model's root, GLB its cooked file relative to ROOT. The hangar model owns
-the probes package of PACKAGE_YAML (a `packages:` file whose paths are
-relative to BAKE_ROOT, as a probes bake writes it).
+the probes of BAKE_DIR, a probes bake folder (bake.json, probes.ktx2,
+grid.ktx2), in place of its GLB's.
 
 Writes, under DIR, which is scene_capture's working directory for these runs:
 - full.yaml, diffuse.yaml, reflect.yaml: the scene from the .blend's camera,
@@ -19,14 +18,15 @@ Writes, under DIR, which is scene_capture's working directory for these runs:
 - assets/: links to the models; a model whose parts are posed differently in
   the .blend (an articulation such as landing gear) is a copy with those
   parts posed as there, without its cooked BVH, which the loader then builds.
-- env/: links to BAKE_ROOT's entries, and the package as the manifest
-  (manifest.yaml, manifest_diffuse.yaml, manifest_reflect.yaml).
+- assets/probes_full, probes_diffuse, probes_reflect: links to BAKE_DIR's
+  images, with its bake.json as is, then with the specular strength at 0,
+  then with the diffuse strength at 0.
 - scene.json: the camera and the other models' footprint on the floor, for
   cycles_render.py and cycles_compare.py.
 
 With --probe-occlusion and --planar-reflection, the configs turn on
 scene_capture's probe_occlusion and planar_reflection; the latter needs the
-package's reflection_plane.
+bake's reflectionPlane.
 
 scene_capture's camera has a 60 degree vertical field of view; the .blend's
 camera gives the position and direction only."""
@@ -60,10 +60,8 @@ def parse_args():
     parser.add_argument("--asset-root", required=True)
     parser.add_argument("--model", action="append", required=True, metavar="OBJECT=GLB")
     parser.add_argument("--hangar", required=True)
-    parser.add_argument("--package", required=True)
-    parser.add_argument("--bake-root", required=True)
+    parser.add_argument("--probes", required=True)
     parser.add_argument("--defaults", required=True)
-    parser.add_argument("--probes")
     parser.add_argument("--camera")
     parser.add_argument("--width", type=int, default=1920)
     parser.add_argument("--height", type=int, default=1080)
@@ -193,40 +191,23 @@ def footprint(roots, out_path):
     return {"file": os.path.basename(out_path), "origin": [float(lo[0]), float(lo[1])], "cell": FOOTPRINT_CELL}
 
 
-def package_variants(text, probes):
-    """The package text with the probes package's specular, then diffuse, strength at 0."""
-    def with_strength(key):
-        out, current, done = [], None, False
-        for line in text.splitlines():
-            block = re.match(r"^  (\S+):\s*$", line)
-            if block:
-                if current == probes and not done:
-                    sys.exit(f"cycles_match.py: {probes} has no {key}")
-                current, done = block.group(1), False
-            if current == probes and re.match(rf"^    {key}:", line):
-                line, done = f"    {key}: 0", True
-            out.append(line)
-        if current == probes and not done:
-            sys.exit(f"cycles_match.py: {probes} has no {key}")
-        return "\n".join(out) + "\n"
-    return with_strength("specular_strength"), with_strength("diffuse_strength")
+def write_probe_variants(bake_dir, assets):
+    """The bake's variants under `assets`: as is, without reflections, without diffuse light. Returns its
+    key light shadow."""
+    with open(os.path.join(bake_dir, "bake.json")) as stream:
+        layout = json.load(stream)
+    for name, changes in (("full", {}), ("diffuse", {"specularStrength": 0}), ("reflect", {"diffuseStrength": 0})):
+        folder = os.path.join(assets, "probes_" + name)
+        os.makedirs(folder, exist_ok=True)
+        for image in ("probes.ktx2", "grid.ktx2"):
+            link(os.path.join(bake_dir, image), os.path.join(folder, image))
+        with open(os.path.join(folder, "bake.json"), "w") as stream:
+            json.dump(dict(layout, **changes), stream, indent=1)
+    return layout.get("keyLightShadow", 0.7)  # the engine's default
 
 
-def probes_packages(text):
-    names, current = {}, None
-    for line in text.splitlines():
-        block = re.match(r"^  (\S+):\s*$", line)
-        if block:
-            current = block.group(1)
-        elif current and re.match(r"^    cubes:", line):
-            names[current] = None
-        elif current in names and re.match(r"^    key_light_shadow:", line):
-            names[current] = float(line.split(":", 1)[1])
-    return names
-
-
-def capture_config(name, width, height, models, instances, sun_direction, key_probe_shadow, manifest,
-                   probe_occlusion, planar_reflection):
+def capture_config(name, width, height, models, instances, sun_direction, key_probe_shadow, probe_occlusion,
+                   planar_reflection):
     lines = [
         f"# {name}: written by cycles_match.py; run scene_capture from this folder.",
         f"width: {width}", f"height: {height}", "frames: 1", "fps: 60",
@@ -246,9 +227,8 @@ def capture_config(name, width, height, models, instances, sun_direction, key_pr
         f"  key_probe_shadow: {key_probe_shadow:g}",
         f"  probe_occlusion: {'true' if probe_occlusion else 'false'}",
         f"  planar_reflection: {'true' if planar_reflection else 'false'}",
-        f"  environment: {{ folder: env, manifest: {manifest} }}",
         "  instances:",
-        *[f"    - {i}" for i in instances],
+        *[f"    - {i.replace('{PROBES}', 'probes_' + name)}" for i in instances],
     ]
     return "\n".join(lines) + "\n"
 
@@ -257,7 +237,6 @@ def main():
     args = parse_args()
     out = os.path.abspath(args.out)
     os.makedirs(os.path.join(out, "assets"), exist_ok=True)
-    os.makedirs(os.path.join(out, "env"), exist_ok=True)
     camera = bpy.data.objects[args.camera] if args.camera else bpy.context.scene.camera
     if camera is None or camera.type != 'CAMERA':
         sys.exit("cycles_match.py: no camera; name one with --camera")
@@ -270,18 +249,7 @@ def main():
     if args.hangar not in [root.name for root, _ in models]:
         sys.exit("cycles_match.py: --hangar must name one of the --model objects")
 
-    text = open(args.package).read()
-    packages = probes_packages(text)
-    probes = args.probes or (next(iter(packages)) if len(packages) == 1 else None)
-    if probes not in packages:
-        sys.exit(f"cycles_match.py: choose the probes package with --probes ({', '.join(packages) or 'none found'})")
-    diffuse_text, reflect_text = package_variants(text, probes)
-    for name, body in (("manifest.yaml", text), ("manifest_diffuse.yaml", diffuse_text),
-                       ("manifest_reflect.yaml", reflect_text)):
-        open(os.path.join(out, "env", name), "w").write(body)
-    for entry in os.listdir(args.bake_root):
-        if not entry.startswith("."):
-            link(os.path.join(args.bake_root, entry), os.path.join(out, "env", entry))
+    key_probe_shadow = write_probe_variants(args.probes, os.path.join(out, "assets"))
     link(args.defaults, os.path.join(out, "scene3d_defaults.yaml"))
 
     world = camera.matrix_world
@@ -306,17 +274,13 @@ def main():
         fields = (f"model: {path}, " + ("role: hangar, " if root.name == args.hangar else "") +
                   "position: [%.6f, %.6f, %.6f], rotation_degrees: [%.6f, %.6f, %.6f]" % (*position, *rotation))
         if root.name == args.hangar:
-            fields += f", probes: {probes}"
+            fields += ", probes: {PROBES}"
             sun_direction = list(matrix @ mathutils.Vector((0, 0, 1)))
         instances.append("{ " + fields + " }")
-    key_probe_shadow = packages[probes] if packages[probes] is not None else 0.7  # the engine's default
-
-    for name, manifest in (("full", "manifest.yaml"), ("diffuse", "manifest_diffuse.yaml"),
-                           ("reflect", "manifest_reflect.yaml")):
+    for name in ("full", "diffuse", "reflect"):
         with open(os.path.join(out, f"{name}.yaml"), "w") as stream:
             stream.write(capture_config(name, args.width, args.height, model_paths, instances, sun_direction,
-                                        key_probe_shadow, manifest, args.probe_occlusion,
-                                        args.planar_reflection))
+                                        key_probe_shadow, args.probe_occlusion, args.planar_reflection))
 
     others = [root for root, _ in models if root.name != args.hangar]
     scene = {"camera": camera.name, "width": args.width, "height": args.height, "vertical_fov_degrees": 60.0,

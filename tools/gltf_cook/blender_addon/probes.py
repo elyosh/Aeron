@@ -17,9 +17,9 @@
 # Panoramas are the scene as Blender renders it, with a black World. The
 # package's intensity sets its level in the game.
 
+import json
 import math
 import os
-import re
 import shutil
 import subprocess
 import tempfile
@@ -31,7 +31,7 @@ from bpy.app.handlers import persistent
 from bpy.props import BoolProperty, FloatProperty, IntProperty, StringProperty
 from bpy.types import Operator, Panel, PropertyGroup
 
-from . import common, libraries, preferences
+from . import common, preferences
 
 PROBE_PANORAMA_SIZE = (1024, 512)  # pi x 256 px faces, rounded up
 # A grid point keeps only its irradiance on six faces, integrals over the
@@ -46,9 +46,11 @@ CUBE_ROTATION = mathutils.Euler((math.pi / 2.0, 0.0, math.pi))
 # what a World's environment texture shows with no mapping.
 WORLD_CAMERA = mathutils.Matrix(((0.0, 0.0, -1.0), (-1.0, 0.0, 0.0), (0.0, 1.0, 0.0)))
 PREVIEW_TAG = "aeron_lighting_preview"
-# The game reads package.yaml from the model's folder; only a first bake needs the manifest.
-BAKED_MESSAGE = "Baked {}. After a model's first bake, add the line in its mapping.yaml to the manifest's xwa.probes"
-PACKAGE_NAME = re.compile(r"^[a-z0-9._]{1,63}$")
+BAKED_MESSAGE = "Baked {}. Export for Game puts the probes in the model's .glb"
+# The bake's files in the project's bake/probes folder: the cooker embeds the first three; the
+# authoring block the bake was made from tells Export for Game whether the layout changed since.
+BAKE_FILES = ("bake.json", "probes.ktx2", "grid.ktx2")
+BAKE_AUTHORING = "authoring.json"
 MAX_PROBES = 42  # one cube array within 256 array layers
 MAX_GRID_POINTS = 8192  # about 7 min of bake on a GPU
 GRID_RESOLUTION = (2, 64)
@@ -125,7 +127,7 @@ def reflection_plane(root):
 
 
 def plane_definition(root, plane):
-    """The reflection plane in the package's terms: its centre in the model frame, its size along
+    """The reflection plane in the bake's terms: its centre in the model frame, its size along
     the model's x and y (Blender's -1..1 square), and how far from it a surface takes its reflection,
     metres."""
     scale = _relative(root, plane).to_scale()
@@ -149,7 +151,7 @@ def _shape(influence_type):
 
 
 def probe_definition(root, probe):
-    """A reflection probe in the package's terms: model frame, metres, full sizes."""
+    """A reflection probe in the bake's terms: model frame, metres, full sizes."""
     data = probe.data
     scale = _relative(root, probe).to_scale()
     size = [2.0 * data.influence_distance * abs(s) for s in scale]
@@ -165,7 +167,7 @@ def probe_definition(root, probe):
     else:
         parallax_center, parallax, parallax_shape = center, list(size), _shape(data.influence_type)
     return {"center": center, "size": size, "shape": _shape(data.influence_type), "falloff": data.falloff,
-            "parallax_center": parallax_center, "parallax_size": parallax, "parallax_shape": parallax_shape}
+            "parallaxCenter": parallax_center, "parallaxSize": parallax, "parallaxShape": parallax_shape}
 
 
 def _model_diagonal(root):
@@ -184,7 +186,7 @@ def parallax_reach(root, probe):
     reflections."""
     item = probe_definition(root, probe)
     far = mathutils.Vector([abs(p - c) + s / 2.0 for c, p, s in
-                            zip(item["center"], item["parallax_center"], item["parallax_size"])])
+                            zip(item["center"], item["parallaxCenter"], item["parallaxSize"])])
     return far.length * max(abs(s) for s in root.matrix_world.to_scale())
 
 
@@ -233,7 +235,7 @@ def _on_depsgraph_update(_scene, depsgraph):
 
 
 def grid_definition(root, grid):
-    """The light grid in the package's terms: its box (Blender's -1..1 cube) and resolution."""
+    """The light grid in the bake's terms: its box (Blender's -1..1 cube) and resolution."""
     return {"center": list(_model_point(root, grid.matrix_world.translation)), "size": _grid_size(grid),
             "resolution": grid_resolution(grid)}
 
@@ -388,12 +390,7 @@ def _new_light_grid(root, location, size, spacing):
 
 
 def restore(root, extension):
-    """Creates the probes and light grid of the model root's extension. An old `environmentProbe`
-    becomes one reflection probe at its position."""
-    old = extension.get("environmentProbe")
-    if isinstance(old, dict):
-        position = root.matrix_world @ mathutils.Vector(common.from_gltf(old.get("position", (0, 0, 0))))
-        _new_reflection_probe(root, position, (PROBE_SIZE,) * 3)
+    """Creates the probes and light grid of the model root's extension."""
     for item in extension.get("reflectionProbes", []):
         size = common.extent_from_gltf(item["size"])
         probe = _new_reflection_probe(root, root.matrix_world @ mathutils.Vector(common.from_gltf(item["position"])),
@@ -601,56 +598,60 @@ def invalid_points(context, points):
     return out
 
 
-def _vec(v):
-    return "[{}]".format(", ".join("{:.9g}".format(c) for c in v))
-
-
 def write_job(path, root, probes, grid, probe_names, grid_names, invalid):
-    """environment_bake's probes job: the package's probe and grid fields, and the panoramas."""
+    """environment_bake's probes job: the probe layout and the panoramas."""
+    item = grid_definition(root, grid)
+    job = {"probes": [probe_definition(root, probe) for probe in probes], "probePanoramas": probe_names,
+           "gridBox": {"center": item["center"], "size": item["size"]}, "gridResolution": item["resolution"],
+           "gridPanoramas": grid_names, "gridInvalid": invalid,
+           "keyLightShadow": grid.aeron_probe.key_light_shadow}
+    plane = reflection_plane(root)
+    if plane is not None:
+        job["reflectionPlane"] = plane_definition(root, plane)
     with open(path, "w") as stream:
-        stream.write("probes:\n")
-        for probe in probes:
-            item = probe_definition(root, probe)
-            stream.write("  - {{center: {}, size: {}, shape: {}, falloff: {:.9g}, parallax_center: {}, "
-                         "parallax_size: {}, parallax_shape: {}}}\n".format(
-                             _vec(item["center"]), _vec(item["size"]), item["shape"], item["falloff"],
-                             _vec(item["parallax_center"]), _vec(item["parallax_size"]), item["parallax_shape"]))
-        stream.write("probe_panoramas: [{}]\n".format(", ".join(probe_names)))
-        item = grid_definition(root, grid)
-        stream.write("grid_box: {{center: {}, size: {}}}\ngrid_resolution: [{}]\n".format(
-            _vec(item["center"]), _vec(item["size"]), ", ".join(str(r) for r in item["resolution"])))
-        stream.write("grid_panoramas: [{}]\n".format(", ".join(grid_names)))
-        stream.write("grid_invalid: [{}]\n".format(", ".join(str(i) for i in invalid)))
-        stream.write("key_light_shadow: {:.9g}\n".format(grid.aeron_probe.key_light_shadow))
-        plane = reflection_plane(root)
-        if plane is not None:
-            item = plane_definition(root, plane)
-            stream.write("reflection_plane: {{center: {}, size: [{:.9g}, {:.9g}], distance: {:.9g}}}\n".format(
-                _vec(item["center"]), item["size"][0], item["size"][1], item["distance"]))
+        json.dump(job, stream)
 
 
-def write_mapping(path, key, package):
-    with open(path, "w") as stream:
-        stream.write("# For the model's first bake: add this under the manifest's xwa section.\n"
-                     "xwa:\n  probes:\n    {}: {}\n".format(key, package))
+def bake_dir(root):
+    """The model's probes bake folder: bake/probes in its project folder."""
+    return os.path.join(os.path.dirname(bpy.path.abspath(root.aeron_flight.source_path)), "bake", "probes")
 
 
-def bake_steps(context, root, remaster, result):
-    """Bakes the model's probes package, one render per step, and sets result["out"] to its folder.
-    Yields (done, total); raises BakeError."""
+def _authoring_text(root):
+    return json.dumps(export_json(root), sort_keys=True)
+
+
+def export_bake(root):
+    """The bake folder Export for Game embeds, or None, and the warnings about it."""
+    if not reflection_probes(root) or light_grid(root) is None:
+        return None, []
+    folder = bake_dir(root) if root.aeron_flight.source_path else ""
+    if not folder or not all(os.path.isfile(os.path.join(folder, name)) for name in BAKE_FILES):
+        return None, ["The model has probes but no bake: Bake Probes, then export again"]
+    warnings = []
+    try:
+        with open(os.path.join(folder, BAKE_AUTHORING)) as stream:
+            baked = stream.read()
+    except OSError:
+        baked = ""
+    if baked != _authoring_text(root):
+        warnings.append("The probes were baked for another layout: bake them again")
+    blend = bpy.data.filepath
+    if blend and os.path.getmtime(os.path.join(folder, BAKE_FILES[0])) < os.path.getmtime(blend):
+        warnings.append("The probes bake is older than the .blend: bake again if the model changed")
+    return folder, warnings
+
+
+def bake_steps(context, root, result):
+    """Bakes the model's probes into its project's bake/probes folder, one render per step, and sets
+    result["out"] to that folder. Yields (done, total); raises BakeError."""
     if not root.aeron_flight.source_path:
-        raise BakeError("Save the model to its project first: its folder name is its key")
-    key = libraries.model_key(root).lower()
-    package = "probes." + key
-    if not PACKAGE_NAME.match(package):
-        raise BakeError("The model key {!r} must be lower-case letters, digits, '.' and '_'".format(key))
+        raise BakeError("Save the model to its project first: the bake goes in its folder")
     if bpy.data.colorspace.working_space != 'Linear Rec.709':
         raise BakeError("The bake needs the Linear Rec.709 working color space")
     baker = preferences.environment_bake_path(context)
     if not baker:
         raise BakeError("Set the environment_bake path in the add-on preferences")
-    if not remaster or not os.path.isdir(remaster):
-        raise BakeError("Choose the game's remaster folder")
     from . import validation
     problems = [message for obj, message, warning in validation.validate(root).items
                 if not warning and (obj is None or obj == root or obj.type == 'LIGHT_PROBE')]
@@ -682,15 +683,15 @@ def bake_steps(context, root, remaster, result):
                 yield done, total
         # Invalid points take their neighbours' light: the baker reads no panorama for them.
         grid_names = ["grid_{}.hdr".format(i) if i not in invalid else "none.hdr" for i in range(len(points))]
-        job = os.path.join(work, "job.yaml")
+        job = os.path.join(work, "job.json")
         write_job(job, root, probes, grid, ["probe_{}.hdr".format(k) for k in range(len(probes))], grid_names,
                   sorted(invalid))
-        out = os.path.join(remaster, "flight", "environments", "models", key)
+        out = bake_dir(root)
         os.makedirs(out, exist_ok=True)
         completed = subprocess.run(
-            [baker, "--probes", job, "--name", package, "--cubes-out", os.path.join(out, "probes.ktx2"),
-             "--grid-out", os.path.join(out, "grid.ktx2"), "--package-out", os.path.join(out, "package.yaml"),
-             "--manifest-root", remaster], capture_output=True, text=True)
+            [baker, "--probes", job, "--cubes-out", os.path.join(out, "probes.ktx2"),
+             "--grid-out", os.path.join(out, "grid.ktx2"), "--bake-out", os.path.join(out, "bake.json")],
+            capture_output=True, text=True)
         if completed.returncode != 0:
             raise BakeError("environment_bake failed: " + (completed.stderr.strip().splitlines() or ["?"])[-1])
         for k, probe in enumerate(probes):
@@ -700,7 +701,8 @@ def bake_steps(context, root, remaster, result):
             for image in bpy.data.images:  # a preview shows the new panorama
                 if image.filepath and os.path.normpath(bpy.path.abspath(image.filepath)) == os.path.normpath(panorama):
                     image.reload()
-        write_mapping(os.path.join(out, "mapping.yaml"), key, package)
+        with open(os.path.join(out, BAKE_AUTHORING), "w") as stream:
+            stream.write(_authoring_text(root))
         result["out"] = out
     finally:
         shutil.rmtree(work, ignore_errors=True)
@@ -826,14 +828,11 @@ def _select(context, obj):
 
 
 class AERON_OT_bake_probes(Operator):
-    """Render the model's reflection probes and light grid with Cycles and bake its probes package into the \
-game's remaster folder. Esc cancels"""
+    """Render the model's reflection probes and light grid with Cycles and bake them into the bake/probes \
+folder of its project, which Export for Game puts in its .glb. Esc cancels"""
 
     bl_idname = "aeron.bake_probes"
     bl_label = "Bake Probes"
-
-    directory: StringProperty(name="Remaster Folder", subtype='DIR_PATH',
-                              description="The game's remaster folder")
 
     @classmethod
     def poll(cls, context):
@@ -841,16 +840,11 @@ game's remaster folder. Esc cancels"""
         return root is not None and bool(reflection_probes(root)) and light_grid(root) is not None
 
     def invoke(self, context, event):
-        self.directory = preferences.game_dir(context)
-        if not self.directory:
-            context.window_manager.fileselect_add(self)
-            return {'RUNNING_MODAL'}
         return self._start(context)
 
     def _start(self, context):
         self._result = {}
-        self._steps = bake_steps(context, common.model_root(context.object), bpy.path.abspath(self.directory),
-                                 self._result)
+        self._steps = bake_steps(context, common.model_root(context.object), self._result)
         self._timer = context.window_manager.event_timer_add(0.01, window=context.window)
         context.window_manager.modal_handler_add(self)
         context.window_manager.progress_begin(0, 1)
@@ -890,8 +884,7 @@ game's remaster folder. Esc cancels"""
             return self._start(context)
         result = {}
         try:
-            for _ in bake_steps(context, common.model_root(context.object),
-                                bpy.path.abspath(self.directory or preferences.game_dir(context)), result):
+            for _ in bake_steps(context, common.model_root(context.object), result):
                 pass
         except BakeError as error:
             self.report({'ERROR'}, str(error))

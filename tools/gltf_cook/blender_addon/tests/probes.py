@@ -15,21 +15,23 @@ Checks that:
 - Add Reflection Probe puts the first probe above the InsideHangar
   hardpoint; Add Light Grid covers the model with its outer points on the
   model's bounds;
-- a probe, the grid and a reflection plane get the package's coordinates
+- a probe, the grid and a reflection plane get the bake's coordinates
   (model frame: -x, y, z), and the grid points Blender's positions, model x
   first;
 - the probes that Add Reflection Probe and Fill with Probes make render as far as their parallax
   volume, and validation warns about a probe whose Clip End stops short of it;
 - validation refuses a grid over 8192 points, a rotated probe and a second
   reflection plane;
-- probes, grid, reflection plane and an old environmentProbe go to the glTF
-  and back, and a light inside the grid is baked;
+- probes, grid and reflection plane go to the glTF and back, and a light
+  inside the grid is baked;
 - a grid point inside a closed box is invalid;
-- the bake writes the package files, the reflection plane in the package, and
-  restores the scene.
+- the bake writes its files in the project's bake/probes folder, the
+  reflection plane in bake.json, and restores the scene; Export for Game
+  then finds the bake, and warns once a probe moves.
 """
 
 import argparse
+import json
 import math
 import os
 import shutil
@@ -258,8 +260,8 @@ def blender_main(baker, scratch):
     centres = sorted(tuple(round(c, 3) for c in d["center"]) for d in definitions)
     check(len(filled) == 4 and len(probes.reflection_probes(root)) == 5 and
           centres == [(-16.0, -13.0, 6.0), (-16.0, 17.0, 6.0), (14.0, -13.0, 6.0), (14.0, 17.0, 6.0)] and
-          all(close(d["size"], (37.5, 37.5, 25.0)) and close(d["parallax_center"], (-1.0, 2.0, 6.0)) and
-              close(d["parallax_size"], (60.0, 60.0, 20.0)) for d in definitions),
+          all(close(d["size"], (37.5, 37.5, 25.0)) and close(d["parallaxCenter"], (-1.0, 2.0, 6.0)) and
+              close(d["parallaxSize"], (60.0, 60.0, 20.0)) for d in definitions),
           "Fill with Probes tiles the zone, reflecting onto it, and replaces its probes: {}".format(centres))
     # The zone's far corner is 64 m from each probe: past Blender's default 40 m.
     reach = [probes.parallax_reach(root, p) for p in filled]
@@ -287,7 +289,7 @@ def blender_main(baker, scratch):
     item = probes.probe_definition(root, probe)
     check(close(item["center"], (-1.0, 2.0, 3.0)) and close(item["size"], (4.0, 6.0, 8.0)) and
           item["shape"] == "box" and abs(item["falloff"] - 0.25) < 1e-6 and
-          close(item["parallax_center"], item["center"]),
+          close(item["parallaxCenter"], item["center"]),
           "a probe's package coordinates: {}".format(item))
     item = probes.grid_definition(root, grid)
     points = probes.grid_points(grid)
@@ -330,21 +332,19 @@ def blender_main(baker, scratch):
     probe.aeron_probe.filled = True
     grid.aeron_probe.key_light_shadow = 0.4
     extension = probes.export_json(root)
-    probes.restore(other, dict(extension, environmentProbe={"position": [1.0, 3.0, -2.0]}))
+    probes.restore(other, extension)
     bpy.context.view_layer.update()
     back = probes.export_json(other)
-    restored = probes.reflection_probes(other)
-    check(len(back["reflectionProbes"]) == 2 and
-          close(back["reflectionProbes"][1]["position"], extension["reflectionProbes"][0]["position"]) and
-          close(back["reflectionProbes"][1]["size"], extension["reflectionProbes"][0]["size"]) and
+    check(len(back["reflectionProbes"]) == 1 and
+          close(back["reflectionProbes"][0]["position"], extension["reflectionProbes"][0]["position"]) and
+          close(back["reflectionProbes"][0]["size"], extension["reflectionProbes"][0]["size"]) and
           back["lightGrid"] == extension["lightGrid"] and back["lightGrid"]["spacing"] == 1.5 and
           close(back["reflectionPlane"]["position"], extension["reflectionPlane"]["position"]) and
           close(back["reflectionPlane"]["size"], extension["reflectionPlane"]["size"]) and
           abs(back["reflectionPlane"]["distance"] - extension["reflectionPlane"]["distance"]) < 1e-6 and
           abs(back["lightGrid"]["keyLightShadow"] - 0.4) < 1e-6 and
-          back["reflectionProbes"][1].get("roomParallax") and back["reflectionProbes"][1].get("filled") and
-          any((p.matrix_world.translation - mathutils.Vector((1.0, 2.0, 3.0))).length < 1e-5 for p in restored),
-          "probes, grid and an old environmentProbe go to the glTF and back: {} -> {}".format(extension, back))
+          back["reflectionProbes"][0].get("roomParallax") and back["reflectionProbes"][0].get("filled"),
+          "probes, grid and reflection plane go to the glTF and back: {} -> {}".format(extension, back))
     for obj in list(other.children):
         bpy.data.objects.remove(obj)
     bpy.data.objects.remove(other)
@@ -371,8 +371,6 @@ def blender_main(baker, scratch):
     bpy.data.objects.remove(box)
 
     # The bake.
-    remaster = os.path.join(scratch, "remaster")
-    os.makedirs(remaster)
     lamp = bpy.data.objects.new("lamp", bpy.data.lights.new("lamp", 'POINT'))
     scene.collection.objects.link(lamp)
     lamp.parent = hangar
@@ -382,17 +380,28 @@ def blender_main(baker, scratch):
     engine, device, objects = scene.render.engine, scene.cycles.device, len(bpy.data.objects)
     persistent = scene.render.use_persistent_data
     with bpy.context.temp_override(active_object=probe, object=probe):
-        result = bpy.ops.aeron.bake_probes(directory=remaster)
-    out = os.path.join(remaster, "flight", "environments", "models", "testhangar")
+        result = bpy.ops.aeron.bake_probes()
+    out = os.path.join(project, "bake", "probes")
     files = sorted(os.listdir(out)) if os.path.isdir(out) else []
-    check('FINISHED' in result and files == ["grid.ktx2", "mapping.yaml", "package.yaml", "panorama_0.hdr",
+    check('FINISHED' in result and files == ["authoring.json", "bake.json", "grid.ktx2", "panorama_0.hdr",
                                             "probes.ktx2"],
-          "the bake writes the package files: {}".format(files))
-    package = open(os.path.join(out, "package.yaml")).read() if files else ""
-    check("probes.testhangar:" in package and "grid_resolution: [3, 2, 2]" in package,
-          "the package names the model's probes and grid")
-    check("reflection_plane: {center: [-1, 2, 0.5], size: [8, 6], distance:" in package,
-          "the package has the reflection plane: {}".format(package))
+          "the bake writes its files in the project: {}".format(files))
+    layout = json.load(open(os.path.join(out, "bake.json"))) if files else {}
+    check(layout.get("gridResolution") == [3, 2, 2] and len(layout.get("probes", [])) == 1,
+          "bake.json has the probes and the grid: {}".format(layout))
+    plane = layout.get("reflectionPlane", {})
+    check(plane and close(plane["center"], (-1.0, 2.0, 0.5)) and close(plane["size"], (8.0, 6.0)),
+          "bake.json has the reflection plane: {}".format(plane))
+    bake, warnings = probes.export_bake(root)
+    check(bake == out and not [w for w in warnings if "layout" in w],
+          "Export for Game finds the bake: {} {}".format(bake, warnings))
+    probe.location.x += 1.0
+    bpy.context.view_layer.update()
+    bake, warnings = probes.export_bake(root)
+    check(bake == out and any("layout" in w for w in warnings),
+          "Export for Game warns once a probe moved: {}".format(warnings))
+    probe.location.x -= 1.0
+    bpy.context.view_layer.update()
     check(scene.render.engine == engine and scene.cycles.device == device and
           scene.render.use_persistent_data == persistent and len(bpy.data.objects) == objects and
           scene.camera is None and not lamp.visible_camera, "the bake restores the scene")

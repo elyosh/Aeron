@@ -171,6 +171,88 @@ typedef struct AeronFlightComponent {
 	uint64_t              simulation_topology_hash;
 } AeronFlightComponent;
 
+/* ---- probes -------------------------------------------------------------
+ *
+ * A model's baked environment probes (`probeData` on the model root): its
+ * reflection probes (a cube array, probe k in layer k) and its irradiance
+ * grid, in the model frame (aeron axes), metres. The same layout is the
+ * probes bake's output (bake.json) and its job's input, as JSON with the
+ * fields of `probeData` (AERON_flight_model README, "Cooked data"). */
+
+#define AERON_FLIGHT_MAX_PROBES      42 /* 6 cube layers each within 256 array layers */
+#define AERON_FLIGHT_PROBE_GRID_MIN  2  /* grid points per axis */
+#define AERON_FLIGHT_PROBE_GRID_MAX  64
+#define AERON_FLIGHT_KEY_LIGHT_SHADOW 0.7f
+
+typedef enum AeronFlightProbeShape {
+	AERON_FLIGHT_PROBE_BOX,
+	AERON_FLIGHT_PROBE_ELLIPSOID,
+} AeronFlightProbeShape;
+
+/* A reflection probe. `center` is where its cube was captured and the
+ * centre of its influence; `size` the influence's full extent (an
+ * ellipsoid's axes). Its weight falls from 1 to 0 over the outer `falloff`
+ * fraction of the influence. Reflections are projected onto the parallax
+ * volume around `parallax_center` (several probes of a room can share the
+ * room's box). */
+typedef struct AeronFlightProbe {
+	float                 center[3];
+	float                 size[3];
+	AeronFlightProbeShape shape;
+	float                 falloff; /* (0, 1] */
+	float                 parallax_center[3];
+	float                 parallax_size[3];
+	AeronFlightProbeShape parallax_shape;
+} AeronFlightProbe;
+
+typedef struct AeronFlightProbeLayout {
+	float intensity; /* scales the probes' light; with the strengths, 1 by default */
+	float diffuse_strength;
+	float specular_strength;
+	/* The grid: an axis-aligned box of resolution points, sampled as
+	 * Blender's volume probe (point i at (i + 1) / (resolution + 1) of the
+	 * box). */
+	float            grid_center[3];
+	float            grid_size[3];
+	uint32_t         grid_resolution[3];
+	AeronFlightProbe probes[AERON_FLIGHT_MAX_PROBES];
+	uint32_t         probe_count; /* 1 to AERON_FLIGHT_MAX_PROBES */
+	/* When the scene's key light is in the bake (a hangar's ceiling light),
+	 * the part of the probe light its shadow removes, 0-1. */
+	float key_light_shadow;
+	/* The floor that reflects what stands on it (a hangar's): a horizontal
+	 * rectangle facing up, its centre and size along x and y; surfaces
+	 * within `distance` of it take its reflection. */
+	bool  has_reflection_plane;
+	float reflection_plane_center[3];
+	float reflection_plane_size[2];
+	float reflection_plane_distance;
+} AeronFlightProbeLayout;
+
+/* The layout and owned copies of its two KTX2 images: the BC6H (or RGBA16F)
+ * cube array and the RGBA16F grid (point (x, y, z) at column 6 x + f, row
+ * y + ry z, for f = +x, -x, +y, -y, +z, -z). */
+typedef struct AeronFlightProbes {
+	AeronFlightProbeLayout layout;
+	uint8_t*               cubes;
+	size_t                 cubes_size;
+	uint8_t*               grid;
+	size_t                 grid_size;
+} AeronFlightProbes;
+
+/* Parses a probe layout from a JSON object's text; unknown fields are
+ * ignored. On failure returns false with the reason in `error`. */
+bool Aeron_FlightProbeLayoutParse(const char* json, size_t size, AeronFlightProbeLayout* out, char* error,
+								  size_t error_size);
+/* Formats a layout as a JSON object; returns the full length like snprintf. */
+size_t Aeron_FlightProbeLayoutFormat(const AeronFlightProbeLayout* layout, char* out, size_t size);
+/* Builds probes from a layout's JSON text and the two KTX2 images (copied),
+ * checking that the images hold the layout's probes and grid. */
+bool Aeron_FlightProbesBuild(const char* layout_json, size_t layout_size, const uint8_t* cubes,
+							 size_t cubes_size, const uint8_t* grid, size_t grid_size, AeronFlightProbes* out,
+							 char* error, size_t error_size);
+void Aeron_FlightProbesFree(AeronFlightProbes* probes);
+
 typedef struct AeronFlightModel {
 	AeronGltfModel         render;
 	uint32_t               component_count;
@@ -199,6 +281,9 @@ typedef struct AeronFlightModel {
 	 * present, otherwise built at load. NULL for semantic-only builds. Freed
 	 * with the render data. */
 	AeronFaceBvh*          render_bvh;
+	/* The cooked probes (`probeData` on the model root), or NULL. Filled by
+	 * the render-including builds; freed with the render data. */
+	AeronFlightProbes*     probes;
 } AeronFlightModel;
 
 bool Aeron_FlightModelBuildData(const struct cgltf_data* data, const char* source_label,

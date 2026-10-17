@@ -98,11 +98,11 @@ static int mat4_invert(float out[16], const float m[16]) {
 }
 
 /* The first probe set's reflection plane; NULL when it has none. */
-static const AeronEnvironmentDefinition* plane_definition(const AeronScene3D* s) {
-	if (s->probe_set_count == 0 || !s->probe_sets[0].package) {
+static const AeronFlightProbeLayout* plane_definition(const AeronScene3D* s) {
+	if (s->probe_set_count == 0 || !s->probe_sets[0].probes) {
 		return NULL;
 	}
-	const AeronEnvironmentDefinition* d = &s->probe_sets[0].package->settings;
+	const AeronFlightProbeLayout* d = &s->probe_sets[0].probes->settings;
 	return d->has_reflection_plane ? d : NULL;
 }
 
@@ -176,7 +176,7 @@ AeronTexture* AeronScenePlanarReflection_Image(AeronScene3D* s) {
 void AeronScenePlanarReflection_LightingFields(const AeronScene3D* s, int set, int receiver, float rect[4],
 											   float params[4], float eye[4], float screen[4]) {
 	const AeronScenePlanarReflection* p = &s->planar_reflection;
-	const AeronEnvironmentDefinition* d = set == 0 ? plane_definition(s) : NULL;
+	const AeronFlightProbeLayout* d = set == 0 ? plane_definition(s) : NULL;
 	memset(rect, 0, 4 * sizeof(float));
 	memset(params, 0, 4 * sizeof(float));
 	memset(eye, 0, 4 * sizeof(float));
@@ -281,7 +281,7 @@ void AeronScenePlanarReflection_Render(AeronScene3D* s, AeronCommandBuffer* cmd)
 	p->active                           = 0;
 	p->drawing                          = 0;
 	p->order_count                      = 0;
-	const AeronEnvironmentDefinition* d = s->planar_reflection_enabled ? plane_definition(s) : NULL;
+	const AeronFlightProbeLayout* d = s->planar_reflection_enabled ? plane_definition(s) : NULL;
 	if (!d || p->failed) {
 		return;
 	}

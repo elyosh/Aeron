@@ -83,6 +83,57 @@
         "meshHash": { "$ref": "#/$defs/hash", "description": "The hash of the merged render triangles the data was built from." }
       }
     },
+    "probeData": {
+      "title": "Probe data",
+      "description": "Written by aeron_gltf_cook --probes, in cooked files only: the model's baked probes, with the layout they were baked for, in the Aeron frame and metres. Images that do not match the layout fail the load.",
+      "type": "object",
+      "required": ["version", "cubes", "grid", "gridBox", "gridResolution", "probes"],
+      "properties": {
+        "version": { "title": "Version", "description": "The data layout's version.", "const": 1 },
+        "cubes": { "title": "Cubes", "description": "The buffer view of a KTX2 array of square BC6H or RGBA16F cube maps with roughness mips, probe k in layer k.", "type": "integer", "minimum": 0 },
+        "grid": { "title": "Grid", "description": "The buffer view of a KTX2 image of one RGBA16F level, 6 rx by ry rz texels: point (x, y, z) at column 6 x + f, row y + ry z, the irradiance / pi toward +x, -x, +y, -y, +z, -z in RGB, the mean radiance's luminance in A.", "type": "integer", "minimum": 0 },
+        "intensity": { "type": "number", "minimum": 0, "maximum": 16, "default": 1 },
+        "diffuseStrength": { "type": "number", "minimum": 0, "maximum": 4, "default": 1 },
+        "specularStrength": { "type": "number", "minimum": 0, "maximum": 4, "default": 1 },
+        "gridBox": {
+          "type": "object",
+          "required": ["center", "size"],
+          "properties": {
+            "center": { "$ref": "#/$defs/vec3" },
+            "size": { "type": "array", "items": { "$ref": "#/$defs/positive" }, "minItems": 3, "maxItems": 3, "description": "The zone the grid lights fully, its full extent." }
+          }
+        },
+        "gridResolution": { "type": "array", "items": { "type": "integer", "minimum": 2, "maximum": 64 }, "minItems": 3, "maxItems": 3, "description": "Points per axis, at (i + 1) / (resolution + 1) of the box." },
+        "keyLightShadow": { "type": "number", "minimum": 0, "maximum": 1, "default": 0.7 },
+        "probes": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 42,
+          "items": {
+            "type": "object",
+            "required": ["center", "size", "shape", "falloff", "parallaxSize", "parallaxShape"],
+            "properties": {
+              "center": { "$ref": "#/$defs/vec3" },
+              "size": { "type": "array", "items": { "$ref": "#/$defs/positive" }, "minItems": 3, "maxItems": 3 },
+              "shape": { "enum": ["box", "ellipsoid"] },
+              "falloff": { "type": "number", "exclusiveMinimum": 0, "maximum": 1 },
+              "parallaxCenter": { "$ref": "#/$defs/vec3", "description": "Default: center." },
+              "parallaxSize": { "type": "array", "items": { "$ref": "#/$defs/positive" }, "minItems": 3, "maxItems": 3 },
+              "parallaxShape": { "enum": ["box", "ellipsoid"] }
+            }
+          }
+        },
+        "reflectionPlane": {
+          "type": "object",
+          "required": ["center", "size", "distance"],
+          "properties": {
+            "center": { "$ref": "#/$defs/vec3" },
+            "size": { "type": "array", "items": { "$ref": "#/$defs/positive" }, "minItems": 2, "maxItems": 2 },
+            "distance": { "type": "number", "minimum": 0, "maximum": 10 }
+          }
+        }
+      }
+    },
     "articulation": {
       "title": "Articulation",
       "description": "A component the game turns about its rotation hinge. Aeron stores articulations without interpreting them; each game documents the groups and behaviors it reads.",
@@ -105,6 +156,7 @@
       "properties": {
         "role": { "title": "Role", "description": "The model root.", "const": "model" },
         "renderData": { "$ref": "#/$defs/renderData" },
+        "probeData": { "$ref": "#/$defs/probeData" },
         "articulations": {
           "title": "Articulations",
           "description": "The components the game turns.",
@@ -147,7 +199,7 @@
         },
         "reflectionProbes": {
           "title": "Reflection probes",
-          "description": "Where an authoring tool bakes the model's probes package from. The game reads the package, not these.",
+          "description": "Where an authoring tool bakes the model's probes from. The game reads probeData, not these.",
           "type": "array",
           "maxItems": 42,
           "items": {
@@ -169,7 +221,7 @@
         },
         "lightGrid": {
           "title": "Light grid",
-          "description": "The irradiance grid an authoring tool bakes the model's probes package from.",
+          "description": "The irradiance grid an authoring tool bakes the model's probes from.",
           "type": "object",
           "required": ["position", "size", "resolution"],
           "properties": {
@@ -314,7 +366,7 @@
         },
         "oneSided": { "title": "One-sided", "description": "Emits only toward local -Z, with a cosine falloff. Optional for a tube (default false); a panel is always one-sided.", "type": "boolean" },
         "radius": { "$ref": "#/$defs/positive", "title": "Radius", "description": "A point's sphere radius or a tube's thickness, in metres; default 0.1." },
-        "baked": { "title": "Baked", "description": "In the model's probes package: games leave it out while those probes light the scene. Written by the authoring tool for lights inside the model's light grid.", "type": "boolean", "default": false }
+        "baked": { "title": "Baked", "description": "In the model's probes: games leave it out while those probes light the scene. Written by the authoring tool for lights inside the model's light grid.", "type": "boolean", "default": false }
       },
       "allOf": [
         {

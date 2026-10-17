@@ -497,14 +497,15 @@ void AeronScene_SetPbrEnvironment(AeronScene3D* scene, const AeronScenePbrEnviro
  * world-to-cube matrix. NULL clears the selection. */
 void AeronScene_SetPbrEnvironmentPackage(AeronScene3D* scene, const struct AeronEnvironmentPackage* package);
 
-/* Places a prepared `probes` package for this frame: `model_to_world` is
- * its owner's row-major 3x4 matrix from model metres to scene units (the
- * owner instance's transform). Instances using the set are lit by its
- * probes and grid, blended with the environment where those do not apply;
- * screens never use probes. Returns the set's index, or -1 when the
- * package has no probes or AERON_SCENE_MAX_PROBE_SETS are placed. Begin
- * clears the sets; the package is borrowed through Render. */
-int AeronScene_AddProbeSet(AeronScene3D* scene, const struct AeronEnvironmentPackage* package,
+/* Places a model's probe set (AeronSceneMesh.probes) for this frame:
+ * `model_to_world` is its owner's row-major 3x4 matrix from model metres to
+ * scene units (the owner instance's transform). Instances using the set are
+ * lit by its probes and grid, blended with the environment where those do
+ * not apply; no directional light lights inside its grid (a set is sealed);
+ * screens never use probes. Returns the set's index, or -1 when
+ * AERON_SCENE_MAX_PROBE_SETS are placed. Begin clears the sets; the set is
+ * borrowed through Render. */
+int AeronScene_AddProbeSet(AeronScene3D* scene, const struct AeronProbeSet* probes,
 						   const float model_to_world[12]);
 
 /* The key light is in the probe sets' bake (a hangar's ceiling light), and

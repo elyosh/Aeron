@@ -4,9 +4,10 @@
  * Runs on the cooked GLB. For each component it writes `simulationData` (the
  * face BVH and the 256-entry farthest-point vertex sample over the simulation
  * topology), and for the model root `renderData` (a box-only BVH over the
- * merged render triangles). The data is appended to the GLB's binary chunk as
- * new buffer views; existing references are replaced. The result is reloaded
- * and verified exactly as a game loads it.
+ * merged render triangles), and with a probes bake the model root's
+ * `probeData` (its layout and its two KTX2 images). The data is appended to
+ * the GLB's binary chunk as new buffer views; existing references are
+ * replaced. The result is reloaded and verified exactly as a game loads it.
  */
 
 #include "flight_data.h"
@@ -216,6 +217,7 @@ static void strip_cooked_references(cJSON* json) {
 															 AERON_FLIGHT_MODEL_EXTENSION);
 		cJSON_DeleteItemFromObjectCaseSensitive(extension, "simulationData");
 		cJSON_DeleteItemFromObjectCaseSensitive(extension, "renderData");
+		cJSON_DeleteItemFromObjectCaseSensitive(extension, "probeData");
 	}
 }
 
@@ -234,6 +236,80 @@ static bool add_reference(cJSON* extension, const char* field, const char* hash_
 }
 
 /* ===== Cooked data =================================================== */
+
+static bool read_file(const char* dir, const char* name, uint8_t** bytes, size_t* size) {
+	char path[2048];
+	snprintf(path, sizeof path, "%s/%s", dir, name);
+	FILE* file = fopen(path, "rb");
+	*bytes     = NULL;
+	if (!file)
+		return false;
+	long length = -1;
+	if (fseek(file, 0, SEEK_END) == 0)
+		length = ftell(file);
+	rewind(file);
+	*bytes = length > 0 ? malloc((size_t)length) : NULL;
+	const bool ok = *bytes && fread(*bytes, 1, (size_t)length, file) == (size_t)length;
+	fclose(file);
+	if (!ok) {
+		free(*bytes);
+		*bytes = NULL;
+		return false;
+	}
+	*size = (size_t)length;
+	return true;
+}
+
+/* The probes bake in `dir` as the root extension's `probeData`: its layout,
+ * checked against its images, and the images as buffer views. */
+static bool add_probes(Glb* glb, cJSON* extension, const char* dir, char* error, size_t error_size) {
+	static const char* const names[3] = { "bake.json", "probes.ktx2", "grid.ktx2" };
+	uint8_t*                 bytes[3] = { NULL, NULL, NULL };
+	size_t                   sizes[3] = { 0, 0, 0 };
+	AeronFlightProbes        probes;
+	cJSON*                   probe_data = NULL;
+	uint32_t                 views[2];
+	bool                     ok = extension != NULL;
+	memset(&probes, 0, sizeof probes);
+	for (int i = 0; ok && i < 3; ++i)
+		if (!read_file(dir, names[i], &bytes[i], &sizes[i])) {
+			char message[2304];
+			snprintf(message, sizeof message, "cannot read %s/%s", dir, names[i]);
+			ok = cook_error(error, error_size, message);
+		}
+	if (ok) {
+		char detail[256];
+		ok = Aeron_FlightProbesBuild((const char*)bytes[0], sizes[0], bytes[1], sizes[1], bytes[2], sizes[2],
+									 &probes, detail, sizeof detail);
+		if (!ok) {
+			char message[2400];
+			snprintf(message, sizeof message, "probes bake %s: %s", dir, detail);
+			cook_error(error, error_size, message);
+		}
+	}
+	if (ok) {
+		probe_data = cJSON_ParseWithLength((const char*)bytes[0], sizes[0]);
+		ok         = probe_data && glb_append_view(glb, bytes[1], sizes[1], &views[0]) &&
+			 glb_append_view(glb, bytes[2], sizes[2], &views[1]);
+		if (ok) {
+			cJSON_DeleteItemFromObjectCaseSensitive(probe_data, "version");
+			cJSON_DeleteItemFromObjectCaseSensitive(probe_data, "cubes");
+			cJSON_DeleteItemFromObjectCaseSensitive(probe_data, "grid");
+			cJSON_AddNumberToObject(probe_data, "version", 1);
+			cJSON_AddNumberToObject(probe_data, "cubes", views[0]);
+			cJSON_AddNumberToObject(probe_data, "grid", views[1]);
+			cJSON_AddItemToObject(extension, "probeData", probe_data);
+			probe_data = NULL;
+		} else {
+			cook_error(error, error_size, "adding the probes failed");
+		}
+	}
+	cJSON_Delete(probe_data);
+	Aeron_FlightProbesFree(&probes);
+	for (int i = 0; i < 3; ++i)
+		free(bytes[i]);
+	return ok;
+}
 
 static bool cook_component(const AeronFlightComponent* component, uint8_t** bytes, size_t* size, uint64_t* hash) {
 	const AeronFlightTopology* topology = &component->topology;
@@ -304,7 +380,8 @@ static bool load_uncooked(const uint8_t* bytes, size_t size, AeronFlightModel* m
 
 /* Loads the result the way a game does; every BVH must come from cooked
  * data. */
-static bool verify(const uint8_t* bytes, size_t size, bool expect_render_data, char* error, size_t error_size) {
+static bool verify(const uint8_t* bytes, size_t size, bool expect_render_data, bool expect_probes, char* error,
+				   size_t error_size) {
 	AeronFlightModel model;
 	if (!Aeron_FlightModelBuildMemory(bytes, size, "cooked flight data", &model))
 		return cook_error(error, error_size, "cooked GLB failed to load");
@@ -319,14 +396,16 @@ static bool verify(const uint8_t* bytes, size_t size, bool expect_render_data, c
 			ok = cook_error(error, error_size, "a component still loads without cooked simulation data");
 	if (ok && expect_render_data && (!model.has_render_data || !model.render_bvh))
 		ok = cook_error(error, error_size, "the model still loads without cooked render data");
+	if (ok && expect_probes && !model.probes)
+		ok = cook_error(error, error_size, "the model loads without its probes");
 	if (sim.meshes)
 		Aeron_OptSimModelFree(&sim);
 	Aeron_FlightModelFree(&model);
 	return ok;
 }
 
-bool aeron_gltf_cook_flight_data(const uint8_t* in, size_t in_size, uint8_t** out, size_t* out_size, bool* applied,
-								 char* error, size_t error_size) {
+bool aeron_gltf_cook_flight_data(const uint8_t* in, size_t in_size, const char* probes_dir, uint8_t** out,
+								 size_t* out_size, bool* applied, char* error, size_t error_size) {
 	Glb              glb        = { 0 };
 	int*             components = NULL;
 	uint8_t*         stripped   = NULL;
@@ -339,7 +418,8 @@ bool aeron_gltf_cook_flight_data(const uint8_t* in, size_t in_size, uint8_t** ou
 		return cook_error(error, error_size, "output is not a valid GLB");
 	if (!uses_flight_extension(glb.json)) {
 		glb_free(&glb);
-		return true;
+		return probes_dir ? cook_error(error, error_size, "--probes needs an AERON_flight_model asset")
+						  : true;
 	}
 	/* Drop stale references before loading: re-cooking a cooked asset carries
 	 * old bufferView indices through. */
@@ -392,11 +472,13 @@ bool aeron_gltf_cook_flight_data(const uint8_t* in, size_t in_size, uint8_t** ou
 			goto done;
 		}
 	}
+	if (probes_dir && !add_probes(&glb, node_flight_extension(glb.json, root), probes_dir, error, error_size))
+		goto done;
 	if (!glb_serialize(&glb, out, out_size)) {
 		cook_error(error, error_size, "out of memory serializing GLB");
 		goto done;
 	}
-	if (!verify(*out, *out_size, has_render, error, error_size)) {
+	if (!verify(*out, *out_size, has_render, probes_dir != NULL, error, error_size)) {
 		free(*out);
 		*out = NULL;
 		goto done;

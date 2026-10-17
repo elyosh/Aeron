@@ -4,6 +4,7 @@
 #include "aeron/scene/environment.h"
 #include "aeron/scene/image_cache.h"
 #include "aeron/scene/mesh_overlay.h"
+#include "aeron/scene/probe_set.h"
 #include "capture.h"
 
 #include <SDL3/SDL.h>
@@ -142,17 +143,46 @@ static int load_models(Fixture* f, AeronCommandBuffer* cmd) {
 	return ok;
 }
 
+/* An instance's probes from a bake folder (bake.json and its two images),
+ * with `cmd`; NULL on failure, logged. */
+static AeronProbeSet* load_probes(Fixture* f, AeronCommandBuffer* cmd, AeronVfsRoot root,
+								  const char* folder) {
+	static const char* const names[3]   = { "bake.json", "probes.ktx2", "grid.ktx2" };
+	uint8_t*                 bytes[3]   = { NULL, NULL, NULL };
+	size_t                   sizes[3]   = { 0, 0, 0 };
+	char                     error[256] = "cannot read its files";
+	bool                     ok         = true;
+	for (int i = 0; ok && i < 3; ++i) {
+		char path[1100];
+		snprintf(path, sizeof path, "%s/%s", folder, names[i]);
+		ok = AeronVfs_ReadAll(f->vfs, root, path, 0, &bytes[i], &sizes[i]);
+	}
+	AeronFlightProbes probes;
+	memset(&probes, 0, sizeof probes);
+	ok = ok && Aeron_FlightProbesBuild((const char*)bytes[0], sizes[0], bytes[1], sizes[1], bytes[2],
+									   sizes[2], &probes, error, sizeof error);
+	AeronProbeSet* set = ok ? AeronProbeSet_Create(cmd, &probes, folder) : NULL;
+	if (!ok)
+		Aeron_LogError("scene_capture", "probes %s: %s", folder, error);
+	Aeron_FlightProbesFree(&probes);
+	for (int i = 0; i < 3; ++i)
+		free(bytes[i]);
+	return set;
+}
+
 /* game_scene.environment: parses the manifest's packages and prepares the
- * environment and the instances' probes packages with `cmd`. */
+ * environment with `cmd`, and loads the instances' probes bake folders. */
 static int prepare_environment(Fixture* f, AeronCommandBuffer* cmd) {
 	const CaptureGameScene* game = &f->config.game;
-	f->environment_reference     = -1;
-	for (int i = 0; i < CAPTURE_MAX_INSTANCES; ++i)
-		f->probes_reference[i] = -1;
+	const AeronVfsRoot root  = game->environment_folder[0] ? AERON_VFS_ROOT_RESOURCE : AERON_VFS_ROOT_ASSET;
+	f->environment_reference = -1;
+	for (int i = 0; i < game->instance_count; ++i)
+		if (game->instances[i].probes[0] &&
+			!(f->probes[i] = load_probes(f, cmd, root, game->instances[i].probes)))
+			return 0;
 	if (!game->environment_manifest[0])
 		return 1;
-	const AeronVfsRoot root = game->environment_folder[0] ? AERON_VFS_ROOT_RESOURCE : AERON_VFS_ROOT_ASSET;
-	AeronConfigError   error;
+	AeronConfigError error;
 	memset(&error, 0, sizeof error);
 	if (!AeronConfigFile_LoadYamlEx(f->vfs, root, game->environment_manifest, &f->environment_file, &error) ||
 		!AeronEnvironment_ParsePackages(
@@ -172,25 +202,12 @@ static int prepare_environment(Fixture* f, AeronCommandBuffer* cmd) {
 	});
 	if (!f->environment_library)
 		return 0;
-	/* One reference per distinct package. */
-	AeronEnvironmentReference references[1 + CAPTURE_MAX_INSTANCES];
+	AeronEnvironmentReference references[1];
 	uint32_t                  count = 0;
 	memset(references, 0, sizeof references);
 	if (game->environment_package[0]) {
 		f->environment_reference = (int)count;
 		snprintf(references[count++].package, AERON_ENV_NAME_MAX, "%s", game->environment_package);
-	}
-	for (int i = 0; i < game->instance_count; ++i) {
-		const char* name = game->instances[i].probes;
-		if (!name[0])
-			continue;
-		for (uint32_t r = 0; r < count && f->probes_reference[i] < 0; ++r)
-			if (strcmp(references[r].package, name) == 0)
-				f->probes_reference[i] = (int)r;
-		if (f->probes_reference[i] < 0) {
-			f->probes_reference[i] = (int)count;
-			snprintf(references[count++].package, AERON_ENV_NAME_MAX, "%s", name);
-		}
 	}
 	if (!AeronEnvironmentLibrary_Prepare(f->environment_library, cmd, references, count))
 		return 0;
@@ -367,6 +384,8 @@ void Fixture_Destroy(Fixture* f) {
 	AeronScene_Destroy(f->reference_scene);
 	AeronEnvironmentLibrary_Destroy(f->environment_library);
 	AeronEnvironmentDefinitionSet_Destroy(f->environment_definitions);
+	for (int i = 0; i < CAPTURE_MAX_INSTANCES; ++i)
+		AeronProbeSet_Destroy(f->probes[i]);
 	AeronConfigFile_Destroy(f->environment_file);
 	for (int i = 0; i < CAPTURE_MAX_MODELS; ++i)
 		AeronScene_MeshDestroy(f->meshes[i].mesh);
@@ -637,10 +656,10 @@ static void add_game_instances(AeronScene3D* scene, const Fixture* f, const Aero
 				AeronScene_AddLight(scene, &light);
 		}
 		instance.anim = instance_anim(f, (int)i);
-		if (f->probes_reference[i] >= 0) {
-			const int set = AeronScene_AddProbeSet(
-				scene, AeronEnvironmentLibrary_Find(f->environment_library, (uint32_t)f->probes_reference[i]),
-				instance.transform);
+		/* Its probes: a bake folder's, else its model's own. */
+		const AeronProbeSet* probes = f->probes[i] ? f->probes[i] : instance.mesh->probes;
+		if (probes) {
+			const int set            = AeronScene_AddProbeSet(scene, probes, instance.transform);
 			instance.probe_set_owner = set >= 0 ? (uint8_t)(set + 1) : 0u;
 		}
 		AeronScene_AddMeshInstance(scene, &instance);

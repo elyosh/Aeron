@@ -1,9 +1,9 @@
-# hangar-lights.yaml with the test probes packages of probe_packages.py: the
-# hangar owns probes.hangar4 (four flat-coloured probes, one an ellipsoid,
+# hangar-lights.yaml with the test probes of probe_packages.py: the hangar
+# owns probes/hangar4 (four flat-coloured probes, one an ellipsoid,
 # and a grid lit from the hangar's +X side, screen left) over the test.hangar
-# environment. Build the packages first with
+# environment. Build them first with
 # `probe_packages.py --baker <build dir>/environment_bake --out captures/probe-assets`.
-# Swap the package for probes.hangar16 or probes.hangar42 to compare costs.
+# Swap them for probes/hangar16 or probes/hangar42 to compare costs.
 width: 2560
 height: 1440
 frames: 30
@@ -63,7 +63,7 @@ game_scene:
   environment: { folder: captures/probe-assets, manifest: probe_tests.yaml, package: test.hangar }
   instances:
     - { model: remaster/models/calamaricruisernewhangar.glb, position: [0, -13.4, 15], rotation_degrees: [180, 0, 0],
-        probes: probes.hangar4 }
+        probes: probes/hangar4 }
     - { model: remaster/models/xwing.glb, position: [-22, 5.47, 26], rotation_degrees: [180, 0, 0] }
     - { model: remaster/models/ywing.glb, position: [0, 6.37, 26], rotation_degrees: [176, 0, 0] }
     - { model: remaster/models/awing.glb, position: [22, 6.36, 26], rotation_degrees: [184, 0, 0] }

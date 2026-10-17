@@ -129,10 +129,11 @@ markings value in use shows one of them.
 ## Probes
 
 A model's root may carry the reflection probes and the light grid from
-which an authoring tool bakes the model's probes package: the light and
+which an authoring tool bakes the model's probes: the light and
 reflections of a hangar or of a capital ship's bays, which the game uses
-for the model and the objects inside them. The game reads the package,
-not these.
+for the model and the objects inside them. The cooker puts the bake in a
+cooked file as `probeData` (see [Cooked data](#cooked-data)), which the
+game reads, not these.
 
 ```json
 "reflectionProbes": [
@@ -166,8 +167,8 @@ In the model's frame, in metres, axis-aligned with it:
   surface takes its reflection, 0 to 10). The game reflects in it what
   stands on it. It needs the light grid.
 
-Lights inside the grid's box are baked into the package and carry
-`baked` (see [Lights](#lights)).
+Lights inside the grid's box are baked into the probes and carry `baked`
+(see [Lights](#lights)).
 
 ## Skins
 
@@ -245,10 +246,10 @@ gives the shape:
   glTF spot light points, with a Lambertian (cosine) falloff;
 - `radius`: optional for a point or a tube, its sphere radius or thickness
   in metres (default 0.1);
-- `baked`: optional, default false. The light is in the model's probes
-  package, which the authoring tool bakes for the lights inside the
-  model's light grid; games leave it out while those probes light the
-  scene, so it is not counted twice.
+- `baked`: optional, default false. The light is in the model's probes,
+  which the authoring tool bakes for the lights inside the model's light
+  grid; games leave it out while those probes light the scene, so it is not
+  counted twice.
 
 Fields that do not apply to the shape are invalid. Lengths take the node's
 scale and its parents'. The intensity is the light straight ahead for a
@@ -380,6 +381,8 @@ Malformed or stale data fails the load.
 - Model-root `renderData`: `{ "version": 1, "bufferView": N, "meshHash":
   "<16 lower-case hex digits>" }`. It covers the merged render triangles in
   final index order (opaque, mask, blend).
+- Model-root `probeData`: the model's baked probes, which loaders do not
+  build themselves (see below).
 
 `topologyHash` is XXH64 (seed 0) of these little-endian values:
 `position_count` (u32), every position (3 x f32), `triangle_count` (u32),
@@ -411,6 +414,54 @@ deduplicated by bitwise equality, first occurrence kept. The sample is up to
 lexicographically smallest position, and each step takes the largest minimum
 squared distance, lowest index on ties. A game needing fewer samples takes a
 prefix.
+
+### probeData
+
+`probeData` holds the probes an authoring tool baked, with the layout they
+were baked for, so the images and the layout always agree. `aeron_gltf_cook
+--probes <dir>` writes it from a probes bake folder (`bake.json`, the layout;
+`probes.ktx2` and `grid.ktx2`, the images).
+
+```json
+"probeData": {
+  "version": 1, "cubes": 12, "grid": 13,
+  "intensity": 1, "diffuseStrength": 1, "specularStrength": 1,
+  "gridBox": { "center": [0, 173.7, -115.3], "size": [133.3, 86.3, 21.3] },
+  "gridResolution": [32, 21, 4],
+  "keyLightShadow": 0.7,
+  "probes": [
+    { "center": [53.4, 144.9, -115.3], "size": [33.3, 36.0, 26.6], "shape": "box", "falloff": 0.2,
+      "parallaxCenter": [0.1, 173.7, -115.3], "parallaxSize": [133.3, 86.3, 21.3], "parallaxShape": "box" }
+  ],
+  "reflectionPlane": { "center": [0, 173.5, -125.9], "size": [130.8, 86.0], "distance": 0.05 }
+}
+```
+
+Positions and sizes are in the Aeron frame (the model frame: x, y, z of
+the game's model axes) and metres, axis-aligned with it:
+
+- `cubes`: the buffer view of a KTX2 array of square BC6H or RGBA16F cube
+  maps, one per probe (layer k: probe k), with mips for roughness;
+- `grid`: the buffer view of a KTX2 image of one RGBA16F level, 6 rx by
+  ry rz texels: point (x, y, z) at column 6 x + f, row y + ry z holds the
+  irradiance / pi toward +x, -x, +y, -y, +z, -z (f = 0 to 5) in RGB and the
+  luminance of the mean radiance in A;
+- `intensity` (0 to 16), `diffuseStrength` and `specularStrength` (0 to
+  4): optional, default 1, the probes' light;
+- `gridBox`: `center` and `size` (full extent) of the box the grid lights
+  fully; its light fades out within one point spacing outside;
+- `gridResolution`: points per axis, 2 to 64, placed at (i + 1) /
+  (resolution + 1) of the box;
+- `keyLightShadow`: optional, 0 to 1, default 0.7 (see Probes);
+- `probes`: 1 to 42 probes: `center`, `size` (full extent; an ellipsoid's
+  axes), `shape` (`box` or `ellipsoid`), `falloff` (above 0, at most 1: the
+  outer fraction of the influence over which its weight falls to 0),
+  `parallaxSize` and `parallaxShape` (the volume its reflections are
+  projected on) and optional `parallaxCenter` (default `center`);
+- `reflectionPlane`: optional, `center`, `size` (along x and z) and
+  `distance` (0 to 10), as in Probes.
+
+Images that do not match the layout fail the load.
 
 Unknown fields are ignored. Unknown roles are invalid. Nothing is read from
 `extras`.
