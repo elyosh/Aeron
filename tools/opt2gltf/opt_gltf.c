@@ -855,30 +855,9 @@ static bool engine_glow_node(Build* b, cgltf_node* node, cgltf_node* parent, con
 	return opt_gltf_set_extension(b->gb, node, extension);
 }
 
-/* Builds point light `li` and its node. */
-static bool light_node(Build* b, cgltf_node* node, cgltf_node* parent, size_t li) {
-	const OptGltfLight* source = &b->options->model.lights[li];
-	cgltf_light*        light  = &b->gb->lights[li];
-	light->name                = opt_gltf_keep_string(b->gb, xprintf_dup("light_%zu", li));
-	light->type                = cgltf_light_type_point;
-	memcpy(light->color, source->color, sizeof light->color);
-	light->intensity          = source->intensity;
-	light->range              = source->range;
-	node->name                = light->name;
-	node->light               = light;
-	const opt_vec3_t position = { source->position[0], source->position[1], source->position[2] };
-	child_node(node, parent, &position);
-	cJSON* extension = cJSON_CreateObject();
-	if (!OptJson_Add(extension, "role", cJSON_CreateString("light"))) {
-		cJSON_Delete(extension);
-		return false;
-	}
-	return opt_gltf_set_extension(b->gb, node, extension);
-}
-
 /* Builds the node of mesh `mi` and its child nodes, taken from *next_child.
- * The children are the hardpoints, then the engine glows, then the lights.
- * They are empties, so that Blender and other tools show them. */
+ * The children are the hardpoints, then the engine glows. They are empties,
+ * so that Blender and other tools show them. */
 static bool mesh_node(Build* b, int32_t mi, cgltf_node* node, cgltf_node** next_child) {
 	const opt_mesh_t* m    = &b->opt->meshes[mi];
 	cgltf_node*       root = &b->gb->nodes[0];
@@ -889,11 +868,7 @@ static bool mesh_node(Build* b, int32_t mi, cgltf_node* node, cgltf_node** next_
 	if (!opt_gltf_set_extension(b->gb, node, component_extension(b, mi)))
 		return false;
 
-	const size_t light_count = b->options->model.light_count;
-	int          mesh_lights = 0;
-	for (size_t li = 0; li < light_count; ++li)
-		mesh_lights += b->options->model.lights[li].mesh == mi;
-	const int child_total = m->hardpoint_count + m->engine_glow_count + mesh_lights;
+	const int child_total = m->hardpoint_count + m->engine_glow_count;
 	if (child_total == 0)
 		return true;
 	cgltf_node** children = (cgltf_node**)calloc(child_total, sizeof *children);
@@ -912,13 +887,6 @@ static bool mesh_node(Build* b, int32_t mi, cgltf_node* node, cgltf_node** next_
 		if (!engine_glow_node(b, children[ci++], node, &m->engine_glows[e], e))
 			return false;
 	}
-	for (size_t li = 0; li < light_count; ++li) {
-		if (b->options->model.lights[li].mesh != mi)
-			continue;
-		children[ci] = (*next_child)++;
-		if (!light_node(b, children[ci++], node, li))
-			return false;
-	}
 	return true;
 }
 
@@ -931,17 +899,7 @@ static bool build_nodes(Build* b) {
 	size_t                     children_total = 0;
 	for (int32_t mi = 0; mi < opt->mesh_count; ++mi)
 		children_total += (size_t)opt->meshes[mi].hardpoint_count + (size_t)opt->meshes[mi].engine_glow_count;
-	for (size_t li = 0; li < o->model.light_count; ++li)
-		if (o->model.lights[li].mesh < 0 || o->model.lights[li].mesh >= opt->mesh_count)
-			return opt_gltf_build_fail(b, "light %zu is on OPT mesh %d, but the OPT has %d meshes", li,
-									   (int)o->model.lights[li].mesh, (int)opt->mesh_count);
-	if (o->model.light_count) {
-		gb->lights = (cgltf_light*)calloc(o->model.light_count, sizeof *gb->lights);
-		if (!gb->lights)
-			return false;
-		gb->lights_count = o->model.light_count;
-	}
-	const size_t total = 1 + (size_t)opt->mesh_count + children_total + o->model.light_count;
+	const size_t total = 1 + (size_t)opt->mesh_count + children_total;
 	gb->nodes          = (cgltf_node*)calloc(total, sizeof *gb->nodes);
 	if (!gb->nodes)
 		return opt_gltf_build_fail(b, "out of memory");
@@ -1013,8 +971,6 @@ static bool finish_document(Build* b) {
 	data->scene              = &document->scene;
 	data->variants           = gb->variants;
 	data->variants_count     = gb->variants_count;
-	data->lights             = gb->lights;
-	data->lights_count       = gb->lights_count;
 	/* AERON_flight_model, plus KHR_materials_variants when there are
 	 * variants. */
 	const size_t extension_count = gb->variants_count > 0 ? 2u : 1u;

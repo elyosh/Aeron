@@ -447,14 +447,6 @@ bool XwauModel_Read(const char* game, const XwauMissions* missions, const char* 
 					const char* label) {
 	memset(out, 0, sizeof *out);
 	out->has_eye = XwauModel_Eye(game, model, out->eye, label);
-	/* A cockpit model uses the same frame as its craft, so it also gets the
-	 * eye of its craft. */
-	const size_t len = strlen(model);
-	if (len > 7 && strcasecmp(model + len - 7, "cockpit") == 0) {
-		char craft[256];
-		snprintf(craft, sizeof craft, "%.*s", (int)(len - 7), model);
-		out->has_craft_eye = XwauModel_Eye(game, craft, out->craft_eye, label);
-	}
 	char rel[512];
 	if (!PathFormat(rel, sizeof rel, "DynamicCockpit/%s.dc", model))
 		return false;

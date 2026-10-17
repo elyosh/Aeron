@@ -246,14 +246,6 @@ static int32_t main_hull_mesh(const opt_file_t* opt) {
 	return opt->mesh_count > 0 ? 0 : -1;
 }
 
-/* The interior light of a cockpit model. It is white and placed at the pilot
- * eye of its craft. It is dim, so it lights the interior softly from the
- * viewpoint, where its shadows would be hidden anyway. The intensity is that
- * of a 100 W Blender point light, converted to candela as Blender's glTF
- * exporter does (683 lm/W over 4 pi sr). */
-#define COCKPIT_LIGHT_INTENSITY (100.0f * 683.0f / (4.0f * 3.14159265f))
-#define COCKPIT_LIGHT_RANGE 3.0f
-
 /* Replaces the Cockpit hardpoints (type 31) of the OPT with one hardpoint at
  * the pilot eye. The eye is in craft-table units (CockpitPovX/Y/Z).
  * ModelMesh_GetHardpoint returns (x, -y, z), so the hardpoint's y is the
@@ -299,9 +291,7 @@ static int32_t weapon_hardpoints(const opt_file_t* opt) {
 /* The build options of one OPT and the data they point to. */
 typedef struct Conversion {
 	OptGltfBuildOptions options;
-	const int*          cockpit_eye;   /* craft-table units, or NULL */
-	const int*          cockpit_light; /* craft-table units, or NULL */
-	OptGltfLight        light;
+	const int*          cockpit_eye; /* craft-table units, or NULL */
 
 	/* Stock mode. */
 	StockTags stock;
@@ -359,7 +349,6 @@ static bool prepare_xwau(Conversion* c, const ModelConversion* mc, const opt_fil
 		c->options.model.settings           = c->model->settings;
 		c->options.model.setting_count      = c->model->setting_count;
 		c->cockpit_eye                      = c->model->has_eye ? c->model->eye : NULL;
-		c->cockpit_light                    = c->model->has_craft_eye ? c->model->craft_eye : NULL;
 	}
 	const char* listed = ModelTables_LitTextures(basename);
 	if (listed)
@@ -378,27 +367,12 @@ static bool prepare_xwau(Conversion* c, const ModelConversion* mc, const opt_fil
 	return read && XwauSkins_Resolve(mc->game, mc->missions, basename, opt, label, &c->skins);
 }
 
-/* Adds the pilot eye hardpoint and, for a cockpit model, the interior light. */
+/* Adds the pilot eye hardpoint. */
 static bool place_cockpit(Conversion* c, opt_file_t* opt, const char* label) {
 	if (c->cockpit_eye && !apply_cockpit_eye(opt, c->cockpit_eye)) {
 		Report(label, "cannot add the cockpit eye hardpoint");
 		return false;
 	}
-	if (!c->cockpit_light)
-		return true;
-	c->light = (OptGltfLight) {
-		.mesh      = main_hull_mesh(opt),
-		.position  = { (float)c->cockpit_light[0], (float)-c->cockpit_light[1], (float)c->cockpit_light[2] },
-		.color     = { 1.0f, 1.0f, 1.0f },
-		.intensity = COCKPIT_LIGHT_INTENSITY,
-		.range     = COCKPIT_LIGHT_RANGE,
-	};
-	if (c->light.mesh < 0) {
-		Report(label, "no mesh for the cockpit light");
-		return false;
-	}
-	c->options.model.lights      = &c->light;
-	c->options.model.light_count = 1;
 	return true;
 }
 

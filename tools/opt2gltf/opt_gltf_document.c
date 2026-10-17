@@ -330,7 +330,6 @@ void OptGltf_Free(OptGltfDocument* document) {
 	free(gb->views);
 	free(gb->accessors);
 	free(gb->nodes);
-	free(gb->lights);
 	free(gb->buffer.data ? gb->buffer.data : gb->bin);
 	free(document->data.extensions_used);
 

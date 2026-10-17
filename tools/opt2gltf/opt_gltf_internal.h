@@ -98,8 +98,6 @@ typedef struct {
 	size_t                  nodes_count, nodes_cap;
 	cgltf_node**            root_children;
 	size_t                  root_children_count;
-	cgltf_light*            lights;
-	size_t                  lights_count;
 
 	/* Strings used in the JSON. cgltf does not copy them when it writes, so
 	 * the build owns them. */

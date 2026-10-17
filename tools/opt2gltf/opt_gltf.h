@@ -265,17 +265,6 @@ typedef struct OptGltfScreen {
 	float            cover_emissive_strength; /* KHR_materials_emissive_strength of the lit cover texels */
 } OptGltfScreen;
 
-/* A point light (KHR_lights_punctual) on the component built from OPT mesh
- * `mesh`. The position is in OPT units, the colour is linear, the intensity
- * is in candela and the range is in metres (0 means no range). */
-typedef struct OptGltfLight {
-	int32_t mesh;
-	float   position[3];
-	float   color[3];
-	float   intensity;
-	float   range;
-} OptGltfLight;
-
 /* How vertex normals are made. */
 typedef enum OptGltfNormals {
 	/* The stored normals, as the classic renderer draws them (the default).
@@ -343,7 +332,7 @@ typedef struct OptGltfMaterialOptions {
 	size_t                             alpha_override_count;
 } OptGltfMaterialOptions;
 
-/* The model's AERON_flight_model data and lights. */
+/* The model's AERON_flight_model data. */
 typedef struct OptGltfModelOptions {
 	const OptGltfComponentTag*          tags;
 	size_t                              tag_count;
@@ -353,8 +342,6 @@ typedef struct OptGltfModelOptions {
 	size_t                              setting_count;
 	const OptGltfComponentSet*          sets;
 	size_t                              set_count;
-	const OptGltfLight*                 lights; /* each on an existing OPT mesh */
-	size_t                              light_count;
 } OptGltfModelOptions;
 
 /* Conversion options. Zero-initialized options give the defaults. */

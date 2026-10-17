@@ -46,10 +46,7 @@
  *     crew.update_all = 1. The variants from the missions are added last
  *     (xwau_missions.h).
  *
- *   - the Dynamic Cockpit file DynamicCockpit/<Model>.dc;
- *
- *   - for a cockpit model (<Craft>Cockpit), the pilot eye of its craft. An
- *     interior light is placed there.
+ *   - the Dynamic Cockpit file DynamicCockpit/<Model>.dc.
  *
  * Problems go to stderr.
  */
@@ -68,8 +65,6 @@
 typedef struct XwauModel {
 	bool                         has_eye;
 	int                          eye[3];
-	bool                         has_craft_eye; /* for a cockpit model, the eye of its craft */
-	int                          craft_eye[3];
 	OptGltfComponentSet          sets[XWAU_MODEL_MAX_SETS];
 	size_t                       set_count;
 	OptGltfComponentArticulation articulations[XWAU_MODEL_MAX_ARTICULATIONS];

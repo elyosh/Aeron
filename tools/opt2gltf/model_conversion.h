@@ -62,9 +62,9 @@
  *     NMIntensity baked in and MikkTSpace tangents;
  *   - its image sequences become material animations (xwau_anim.h);
  *   - the files next to the OPT give the pilot eye, object profiles,
- *     articulations, Dynamic Cockpit screens and, for a cockpit model, an
- *     interior light (xwau_model.h). The skins become material variants
- *     (xwau_skins.h). The missions add their own selections (xwau_missions.h);
+ *     articulations and Dynamic Cockpit screens (xwau_model.h). The skins
+ *     become material variants (xwau_skins.h). The missions add their own
+ *     selections (xwau_missions.h);
  *   - the crew and glass textures listed in model_tables.h are shaded as lit
  *     surfaces, even though their material makes them Shadeless;
  *   - more than 120 weapon hardpoints are reported, because the game keeps
