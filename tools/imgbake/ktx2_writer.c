@@ -327,6 +327,12 @@ bool write_ktx2_rgba16f_levels(const char* path, int face_count, int layer_count
 							 level_count, zstd);
 }
 
+bool write_ktx2_bc7_levels(const char* path, int face_count, int layer_count, const Ktx2WriteLevel* levels,
+						   int level_count, Ktx2TransferFn tf, bool zstd) {
+	const uint32_t vk = (tf == KTX2_TF_SRGB) ? VK_FORMAT_BC7_SRGB_BLOCK : VK_FORMAT_BC7_UNORM_BLOCK;
+	return write_ktx2_levels(path, vk, face_count, layer_count, levels, level_count, zstd);
+}
+
 bool write_ktx2_bc7_mips(const char* path, const Ktx2WriteLevel* levels, int level_count, Ktx2TransferFn tf,
 						 bool zstd) {
 	uint32_t vk = (tf == KTX2_TF_SRGB) ? VK_FORMAT_BC7_SRGB_BLOCK : VK_FORMAT_BC7_UNORM_BLOCK;

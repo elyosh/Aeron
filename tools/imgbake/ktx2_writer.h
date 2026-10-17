@@ -95,6 +95,9 @@ bool write_ktx2_bc6h_levels(const char* path, int face_count, int layer_count, c
 							int level_count, bool zstd);
 bool write_ktx2_rgba16f_levels(const char* path, int face_count, int layer_count,
 							   const Ktx2WriteLevel* levels, int level_count, bool zstd);
+/*   - bc7: BC7 blocks (16 bytes per 4×4), from bc7_codec_encode_image. */
+bool write_ktx2_bc7_levels(const char* path, int face_count, int layer_count, const Ktx2WriteLevel* levels,
+						   int level_count, Ktx2TransferFn tf, bool zstd);
 
 /* Write a BC7-compressed KTX2. Each level's `data` must already be
  * a packed BC7 block stream (16 bytes per 4×4 block, ceil(w/4) ×

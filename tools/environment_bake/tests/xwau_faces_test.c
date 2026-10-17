@@ -64,7 +64,7 @@ static int check(const char* what, const XwauFaces* faces) {
 }
 
 static int check_generated(void) {
-	XwauFaces faces = { .size = 16, .source_size = 16 };
+	XwauFaces faces = { .size = 16, .source_size = 16, .channels = 3 };
 	for (int face = 0; face < 6; ++face) {
 		faces.faces[face] = (float*)malloc((size_t)faces.size * faces.size * 3u * sizeof(float));
 		if (!faces.faces[face]) {
@@ -85,7 +85,7 @@ int main(int argc, char** argv) {
 	for (int i = 1; i < argc; ++i) {
 		XwauFaces faces;
 		char      err[512];
-		if (!xwau_faces_load(argv[i], FOLDER_SIZE, &faces, err, sizeof err)) {
+		if (!xwau_faces_load(argv[i], FOLDER_SIZE, false, &faces, err, sizeof err)) {
 			printf("FAILED %s\n", err);
 			++failures;
 			continue;

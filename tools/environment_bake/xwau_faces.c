@@ -90,11 +90,13 @@ static float span_weight(const Span* s, int i, int n, int m) {
 	return (float)m / (float)n;
 }
 
-/* Resamples an `n`-pixel RGBA8 sRGB face to `m` linear RGB pixels (m <= n)
- * by area averaging: rows first, then columns. */
-static float* resample_face(const uint8_t* rgba, int n, int m) {
-	float* rows = (float*)malloc((size_t)n * m * 3u * sizeof(float));
-	float* out  = (float*)malloc((size_t)m * m * 3u * sizeof(float));
+/* Resamples an `n`-pixel RGBA8 sRGB face to `m` linear pixels (m <= n) by
+ * area averaging: rows first, then columns. With 4 channels, the colour is
+ * premultiplied by alpha before averaging. */
+static float* resample_face(const uint8_t* rgba, int n, int m, int channels) {
+	const size_t k    = (size_t)channels;
+	float*       rows = (float*)malloc((size_t)n * m * k * sizeof(float));
+	float*       out  = (float*)malloc((size_t)m * m * k * sizeof(float));
 	if (!rows || !out) {
 		free(rows);
 		free(out);
@@ -102,28 +104,30 @@ static float* resample_face(const uint8_t* rgba, int n, int m) {
 	}
 	for (int y = 0; y < n; ++y) {
 		const uint8_t* src = rgba + (size_t)y * n * 4u;
-		float*         dst = rows + (size_t)y * m * 3u;
+		float*         dst = rows + (size_t)y * m * k;
 		for (int x = 0; x < m; ++x) {
 			const Span s      = span_of(x, n, m);
-			float      sum[3] = { 0.0f, 0.0f, 0.0f };
+			float      sum[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
 			for (int i = 0; i < s.count; ++i) {
 				const float    w = span_weight(&s, i, n, m);
 				const uint8_t* p = src + (size_t)(s.first + i) * 4u;
+				const float    a = channels == 4 ? p[3] / 255.0f : 1.0f;
 				for (int c = 0; c < 3; ++c)
-					sum[c] += w * s_srgb_to_linear[p[c]];
+					sum[c] += w * a * s_srgb_to_linear[p[c]];
+				sum[3] += w * a;
 			}
-			memcpy(dst + (size_t)x * 3u, sum, sizeof sum);
+			memcpy(dst + (size_t)x * k, sum, k * sizeof(float));
 		}
 	}
 	for (int y = 0; y < m; ++y) {
 		const Span s   = span_of(y, n, m);
-		float*     dst = out + (size_t)y * m * 3u;
-		memset(dst, 0, (size_t)m * 3u * sizeof(float));
+		float*     dst = out + (size_t)y * m * k;
+		memset(dst, 0, (size_t)m * k * sizeof(float));
 		for (int i = 0; i < s.count; ++i) {
 			const float  w   = span_weight(&s, i, n, m);
-			const float* src = rows + (size_t)(s.first + i) * m * 3u;
-			for (int k = 0; k < m * 3; ++k)
-				dst[k] += w * src[k];
+			const float* src = rows + (size_t)(s.first + i) * m * k;
+			for (size_t j = 0; j < (size_t)m * k; ++j)
+				dst[j] += w * src[j];
 		}
 	}
 	free(rows);
@@ -140,8 +144,9 @@ static bool fail(char* err, size_t errsz, const char* format, ...) {
 	return false;
 }
 
-bool xwau_faces_load(const char* dir, int size, XwauFaces* out, char* err, size_t errsz) {
+bool xwau_faces_load(const char* dir, int size, bool alpha, XwauFaces* out, char* err, size_t errsz) {
 	memset(out, 0, sizeof *out);
+	out->channels = alpha ? 4 : 3;
 	init_srgb_table();
 	FileList   list = { .count = 0 };
 	AeronVfs*  vfs  = AeronVfs_Create(NULL);
@@ -189,7 +194,7 @@ bool xwau_faces_load(const char* dir, int size, XwauFaces* out, char* err, size_
 						  out->size);
 		}
 		if (ok) {
-			out->faces[face] = resample_face(rgba, w, out->size);
+			out->faces[face] = resample_face(rgba, w, out->size, out->channels);
 			if (!out->faces[face])
 				ok = fail(err, errsz, "%s: out of memory", dir);
 		}
@@ -209,20 +214,23 @@ void xwau_faces_free(XwauFaces* faces) {
 	}
 }
 
-void xwau_faces_to_cube(const XwauFaces* faces, EnvCube* cube, bool remap) {
-	const int n = faces->size;
-	for (int face = 0; face < 6; ++face) {
-		const int    source   = remap ? k_remap[face].source : face;
-		const bool   mirror_x = remap && k_remap[face].mirror_x;
-		const bool   flip_y   = remap && k_remap[face].flip_y;
-		const float* src      = faces->faces[source];
-		float*       dst      = cube->faces[0][face];
-		for (int y = 0; y < n; ++y) {
-			const int sy = flip_y ? n - 1 - y : y;
-			for (int x = 0; x < n; ++x) {
-				const int sx = mirror_x ? n - 1 - x : x;
-				memcpy(dst + ((size_t)y * n + x) * 3u, src + ((size_t)sy * n + sx) * 3u, 3u * sizeof(float));
-			}
+void xwau_faces_face(const XwauFaces* faces, int face, bool remap, float* out) {
+	const int    n        = faces->size;
+	const size_t k        = (size_t)faces->channels;
+	const int    source   = remap ? k_remap[face].source : face;
+	const bool   mirror_x = remap && k_remap[face].mirror_x;
+	const bool   flip_y   = remap && k_remap[face].flip_y;
+	const float* src      = faces->faces[source];
+	for (int y = 0; y < n; ++y) {
+		const int sy = flip_y ? n - 1 - y : y;
+		for (int x = 0; x < n; ++x) {
+			const int sx = mirror_x ? n - 1 - x : x;
+			memcpy(out + ((size_t)y * n + x) * k, src + ((size_t)sy * n + sx) * k, k * sizeof(float));
 		}
 	}
+}
+
+void xwau_faces_to_cube(const XwauFaces* faces, EnvCube* cube, bool remap) {
+	for (int face = 0; face < 6; ++face)
+		xwau_faces_face(faces, face, remap, cube->faces[0][face]);
 }

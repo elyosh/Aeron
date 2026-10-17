@@ -9,6 +9,9 @@
  * lighting (an enclosed space, such as a hangar). In both cases the baker
  * writes the Lambert irradiance / pi cube and the GGX cube with roughness
  * mips.
+ * Overlay mode converts an XWA Upgrade overlay folder (six faces with
+ * alpha) into a BC7 sRGB cube whose colour is premultiplied by alpha, for
+ * an environment's `overlay`.
  * Diagnostic mode writes a labelled cube for checking orientation.
  * Sprite mode converts an HDR image to a KTX2 sun sprite. Capture mode
  * bakes a capture directory written by the game (six cube faces, sun
@@ -30,6 +33,7 @@
 #include "aeron/vfs.h"
 #include "cJSON.h"
 #include "bc6h_codec.h"
+#include "bc7_codec.h"
 #include "envmap.h"
 #include "hdr_read.h"
 #include "ktx2_writer.h"
@@ -46,6 +50,8 @@
 typedef struct BakeOptions {
 	const char* input;
 	const char* faces_dir;
+	const char* overlay_faces_dir;
+	const char* overlay_out;
 	const char* lights_input;
 	const char* name;
 	const char* radiance_out;
@@ -82,6 +88,7 @@ static void usage(void) {
 		"                   [--specular-samples 1024] [--jobs 8]\n"
 		"  environment_bake --faces DIR --name NAME --radiance-out P --diffuse-out P --specular-out P\n"
 		"                   [same options as --input]\n"
+		"  environment_bake --overlay-faces DIR --overlay-out P [--radiance-size 2048]\n"
 		"  environment_bake --input space.hdr --name NAME --diffuse-out P --specular-out P\n"
 		"                   [--lights-input lights.yaml] [--environment-out FILE] [--manifest-root DIR]\n"
 		"                   [--diffuse-size 32] [--specular-size 512] [--specular-samples 1024] [--jobs 8]\n"
@@ -98,6 +105,7 @@ static void usage(void) {
 		"Upgrade skybox folder (Effects/CubeMaps/<name>): six PNG or JPEG faces, the\n"
 		"digit before the extension giving the face (0 Right, 1 Left, 2 Top, 3 Bottom,\n"
 		"4 Front, 5 Back). They are sRGB, and are turned to OpenXWA's cube frame.\n"
+		"--overlay-faces reads an overlay folder, the same six faces with alpha.\n"
 		"The light list is a\n"
 		"YAML map with a `directional_lights` sequence in the environment light schema.\n"
 		"Texture paths in the environment entry are relative to --manifest-root when given.\n"
@@ -139,6 +147,10 @@ static bool parse_args(int argc, char** argv, BakeOptions* o) {
 			text = &o->input;
 		else if (strcmp(arg, "--faces") == 0)
 			text = &o->faces_dir;
+		else if (strcmp(arg, "--overlay-faces") == 0)
+			text = &o->overlay_faces_dir;
+		else if (strcmp(arg, "--overlay-out") == 0)
+			text = &o->overlay_out;
 		else if (strcmp(arg, "--lights-input") == 0)
 			text = &o->lights_input;
 		else if (strcmp(arg, "--name") == 0)
@@ -690,7 +702,7 @@ static bool load_panorama(const BakeOptions* o, int size, EnvCube* radiance) {
 static bool load_faces(const BakeOptions* o, int size, EnvCube* radiance) {
 	XwauFaces faces;
 	char      err[512];
-	if (!xwau_faces_load(o->faces_dir, size, &faces, err, sizeof err)) {
+	if (!xwau_faces_load(o->faces_dir, size, false, &faces, err, sizeof err)) {
 		fprintf(stderr, "environment_bake: %s\n", err);
 		return false;
 	}
@@ -773,6 +785,101 @@ static int run_bake(const BakeOptions* o) {
 		printf("environment %s: %s\n", o->name, o->environment_out);
 	}
 	return 0;
+}
+
+/* ---- overlays ----------------------------------------------------------- */
+
+static uint8_t to_byte(float value) {
+	value = value < 0.0f ? 0.0f : (value > 1.0f ? 1.0f : value);
+	return (uint8_t)(value * 255.0f + 0.5f);
+}
+
+static float linear_to_srgb(float c) {
+	return c <= 0.0031308f ? c * 12.92f : 1.055f * powf(c, 1.0f / 2.4f) - 0.055f;
+}
+
+/* Halves an `n`-pixel premultiplied RGBA face by averaging 2x2 pixels. */
+static void halve_face(const float* src, int n, float* dst) {
+	const int m = n / 2;
+	for (int y = 0; y < m; ++y)
+		for (int x = 0; x < m; ++x)
+			for (int c = 0; c < 4; ++c) {
+				const float* p = src + ((size_t)(2 * y) * n + 2 * x) * 4u + c;
+				dst[((size_t)y * m + x) * 4u + c] =
+					0.25f * (p[0] + p[4] + p[(size_t)n * 4u] + p[(size_t)n * 4u + 4u]);
+			}
+}
+
+/* The mips are averaged in linear premultiplied colour. Each texel is
+ * stored as sRGB, which the GPU decodes to linear before filtering, so the
+ * edges of the overlay filter without dark or light fringes. */
+static int run_overlay(const BakeOptions* o) {
+	if (!o->overlay_out) {
+		usage();
+		return 2;
+	}
+	if (!check_size("--radiance-size", o->radiance_size, 16, 4096))
+		return 2;
+	XwauFaces faces;
+	char      err[512];
+	if (!xwau_faces_load(o->overlay_faces_dir, o->radiance_size, true, &faces, err, sizeof err)) {
+		fprintf(stderr, "environment_bake: %s\n", err);
+		return 1;
+	}
+	printf("input %s: six %d px faces with alpha\n", o->overlay_faces_dir, faces.source_size);
+
+	const int      size         = faces.size;
+	const int      level_count  = envmap_mip_count(size);
+	const size_t   face_floats  = (size_t)size * size * 4u;
+	float*         level[6]     = { NULL };
+	float*         next         = (float*)malloc(face_floats / 4u * sizeof(float));
+	uint8_t*       rgba         = (uint8_t*)malloc(face_floats);
+	uint8_t*       blobs[16]    = { NULL };
+	Ktx2WriteLevel levels[16]   = { { 0 } };
+	bool           ok           = next && rgba && level_count <= 16;
+	for (int face = 0; face < 6 && ok; ++face) {
+		level[face] = (float*)malloc(face_floats * sizeof(float));
+		ok          = level[face] != NULL;
+		if (ok)
+			xwau_faces_face(&faces, face, true, level[face]);
+	}
+	xwau_faces_free(&faces);
+
+	bc7_codec_init();
+	for (int l = 0, n = size; l < level_count && ok; ++l, n /= 2) {
+		const size_t face_bytes = bc7_codec_image_size(n, n);
+		blobs[l]                = (uint8_t*)malloc(face_bytes * 6u);
+		ok                      = blobs[l] != NULL;
+		for (int face = 0; face < 6 && ok; ++face) {
+			const float* src = level[face];
+			for (size_t i = 0; i < (size_t)n * n; ++i) {
+				for (int c = 0; c < 3; ++c)
+					rgba[i * 4u + c] = to_byte(linear_to_srgb(src[i * 4u + c]));
+				rgba[i * 4u + 3] = to_byte(src[i * 4u + 3]);
+			}
+			ok = bc7_codec_encode_image(blobs[l] + (size_t)face * face_bytes, face_bytes, rgba, n, n,
+										BC7_QUALITY_MED) == face_bytes;
+			if (ok && n > 1) {
+				halve_face(level[face], n, next);
+				memcpy(level[face], next, (size_t)(n / 2) * (n / 2) * 4u * sizeof(float));
+			}
+		}
+		levels[l] = (Ktx2WriteLevel) { .width = n, .height = n, .data = blobs[l], .size = face_bytes * 6u };
+	}
+	if (!ok)
+		fprintf(stderr, "environment_bake: out of memory\n");
+	else if (!(ok = write_ktx2_bc7_levels(o->overlay_out, 6, 0, levels, level_count, KTX2_TF_SRGB, true)))
+		fprintf(stderr, "environment_bake: cannot write %s\n", o->overlay_out);
+	else
+		printf("overlay %s: %d px BC7 sRGB cube, %d levels\n", o->overlay_out, size, level_count);
+
+	for (int face = 0; face < 6; ++face)
+		free(level[face]);
+	for (int l = 0; l < 16; ++l)
+		free(blobs[l]);
+	free(next);
+	free(rgba);
+	return ok ? 0 : 1;
 }
 
 /* ---- probes ------------------------------------------------------------- */
@@ -1757,15 +1864,18 @@ int main(int argc, char** argv) {
 		usage();
 		return 2;
 	}
-	const int modes = (o.input != NULL) + (o.faces_dir != NULL) + (o.diagnostic_out != NULL) +
-					  (o.sprite_input != NULL) + (o.capture_dir != NULL) + (o.probes_input != NULL);
+	const int modes = (o.input != NULL) + (o.faces_dir != NULL) + (o.overlay_faces_dir != NULL) +
+					  (o.diagnostic_out != NULL) + (o.sprite_input != NULL) + (o.capture_dir != NULL) +
+					  (o.probes_input != NULL);
 	if (modes != 1) {
 		fprintf(stderr,
-				"environment_bake: give exactly one of --input, --faces, --diagnostic-faces, --sprite, "
-				"--capture or --probes\n");
+				"environment_bake: give exactly one of --input, --faces, --overlay-faces, --diagnostic-faces, "
+				"--sprite, --capture or --probes\n");
 		usage();
 		return 2;
 	}
+	if (o.overlay_faces_dir)
+		return run_overlay(&o);
 	if (o.diagnostic_out)
 		return run_diagnostic(&o);
 	if (o.sprite_input)
