@@ -27,6 +27,7 @@ import time
 
 import bpy
 import mathutils
+from bpy.app.handlers import persistent
 from bpy.props import BoolProperty, FloatProperty, IntProperty, StringProperty
 from bpy.types import Operator, Panel, PropertyGroup
 
@@ -214,7 +215,21 @@ def grid_resolution(grid):
 
 def sync_grid(grid):
     """Gives Blender's volume probe the grid's points, so that EEVEE shows them too."""
-    grid.data.resolution_x, grid.data.resolution_y, grid.data.resolution_z = grid_resolution(grid)
+    r = tuple(grid_resolution(grid))
+    data = grid.data
+    # Only on a change: the write is a depsgraph update of its own.
+    if (data.resolution_x, data.resolution_y, data.resolution_z) != r:
+        data.resolution_x, data.resolution_y, data.resolution_z = r
+
+
+@persistent
+def _on_depsgraph_update(_scene, depsgraph):
+    """Keeps a model's light grid points in step with its box when it is resized."""
+    for update in depsgraph.updates:
+        obj = update.id.original if update.is_updated_transform else None
+        if (isinstance(obj, bpy.types.Object) and obj.type == 'LIGHT_PROBE' and obj.data.type == 'VOLUME'
+                and common.model_root(obj) is not None):
+            sync_grid(obj)
 
 
 def grid_definition(root, grid):
@@ -1007,6 +1022,7 @@ def register():
     for cls in classes:
         bpy.utils.register_class(cls)
     bpy.types.Object.aeron_probe = bpy.props.PointerProperty(type=AeronProbeProperties)
+    bpy.app.handlers.depsgraph_update_post.append(_on_depsgraph_update)
     bpy.types.Scene.aeron_probe_samples = IntProperty(
         name="Samples", default=128, min=16, max=4096,
         description="Cycles samples per pixel of the reflection probes' panoramas, denoised. The light grid's "
@@ -1015,6 +1031,8 @@ def register():
 
 
 def unregister():
+    if _on_depsgraph_update in bpy.app.handlers.depsgraph_update_post:
+        bpy.app.handlers.depsgraph_update_post.remove(_on_depsgraph_update)
     del bpy.types.Scene.aeron_probe_samples
     del bpy.types.Object.aeron_probe
     for cls in reversed(classes):
