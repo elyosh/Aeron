@@ -102,7 +102,7 @@ static const AeronFlightProbeLayout* plane_definition(const AeronScene3D* s) {
 	if (s->probe_set_count == 0 || !s->probe_sets[0].probes) {
 		return NULL;
 	}
-	const AeronFlightProbeLayout* d = &s->probe_sets[0].probes->settings;
+	const AeronFlightProbeLayout* d = &s->probe_sets[0].probes->layout;
 	return d->has_reflection_plane ? d : NULL;
 }
 

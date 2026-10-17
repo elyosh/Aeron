@@ -71,8 +71,7 @@ void AeronProbeCells_Free(AeronProbeCells* cells);
 enum { AERON_PROBE_BUFFER_HEADER = 2, AERON_PROBE_BUFFER_RECORD = 6 };
 
 typedef struct AeronProbeSet {
-	AeronFlightProbeLayout layout;   /* as loaded */
-	AeronFlightProbeLayout settings; /* the layout with the debug edits (strengths, key light shadow) */
+	AeronFlightProbeLayout layout;
 	/* The probes' cube array (probe k in layer k), the irradiance grid as a
 	 * 3D RGBA16F texture of rx x ry x 6 rz texels (slab f, z from f rz,
 	 * holds the irradiance / pi toward +x, -x, +y, -y, +z, -z for f = 0 to

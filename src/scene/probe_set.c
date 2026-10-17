@@ -271,7 +271,6 @@ AeronProbeSet* AeronProbeSet_Create(AeronCommandBuffer* cmd, const AeronFlightPr
 		const Ktx2Level level        = ktx2_level(grid, 0);
 		uint32_t        buffer_bytes = 0;
 		set->layout                  = probes->layout;
-		set->settings                = probes->layout;
 		set->cubes                   = Aeron_ImageUploadKtx2(cmd, cubes, label);
 		set->grid                    = upload_grid(cmd, &level, probes->layout.grid_resolution, label);
 		set->buffer         = build_probe_buffer(cmd, &probes->layout, &cells, &level, &buffer_bytes);

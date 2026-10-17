@@ -522,8 +522,8 @@ panel. It shows the probe's panorama as the World, turned as in the game,
 so a ship placed in the scene shows that probe's light and reflections in
 Material Preview or Rendered view. Click it again to put the previous
 World back. In the game, the Environment debug tool shows the frame's
-probe sets (their probes, grid and memory) and edits their strengths; after
-a new bake, export the model again and restart the mission. Its **Show
+probe sets (their probes, grid and memory); after a new bake, export the
+model again and restart the mission. Its **Show
 probes** checkbox draws
 each probe's influence, the grid's box and the grid points near the
 camera, to check that they sit where they do in Blender. Save to

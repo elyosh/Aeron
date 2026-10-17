@@ -199,7 +199,7 @@
         },
         "reflectionProbes": {
           "title": "Reflection probes",
-          "description": "Where an authoring tool bakes the model's probes from. The game reads probeData, not these.",
+          "description": "Where an authoring tool bakes the model's probes from. Source files only: a cooked file has probeData instead.",
           "type": "array",
           "maxItems": 42,
           "items": {
@@ -221,7 +221,7 @@
         },
         "lightGrid": {
           "title": "Light grid",
-          "description": "The irradiance grid an authoring tool bakes the model's probes from.",
+          "description": "The irradiance grid an authoring tool bakes the model's probes from. Source files only.",
           "type": "object",
           "required": ["position", "size", "resolution"],
           "properties": {
@@ -234,7 +234,7 @@
         },
         "reflectionPlane": {
           "title": "Reflection plane",
-          "description": "A floor facing +y (a hangar's) that reflects what stands on it. It needs the light grid.",
+          "description": "A floor facing +y (a hangar's) that reflects what stands on it. It needs the light grid. Source files only.",
           "type": "object",
           "required": ["position", "size"],
           "properties": {

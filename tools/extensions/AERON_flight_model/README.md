@@ -133,7 +133,8 @@ which an authoring tool bakes the model's probes: the light and
 reflections of a hangar or of a capital ship's bays, which the game uses
 for the model and the objects inside them. The cooker puts the bake in a
 cooked file as `probeData` (see [Cooked data](#cooked-data)), which the
-game reads, not these.
+game reads; a cooked file has no `reflectionProbes`, `lightGrid` or
+`reflectionPlane`.
 
 ```json
 "reflectionProbes": [

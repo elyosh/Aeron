@@ -566,7 +566,7 @@ static int ensure_grids(AeronSceneProbeOcclusion* o, const AeronSceneProbeSet* s
 		return 1;
 	}
 	release_grids(o);
-	const AeronFlightProbeLayout* d = &set->probes->settings;
+	const AeronFlightProbeLayout* d = &set->probes->layout;
 	for (int k = 0; k < 3; ++k) {
 		o->origin[k]         = d->grid_center[k] - 0.5f * d->grid_size[k];
 		o->occupancy_dims[k] = (int)ceilf(d->grid_size[k] / AERON_SCENE_OCCUPANCY_CELL);
@@ -1191,7 +1191,7 @@ void AeronSceneProbeOcclusion_Update(AeronScene3D* s, AeronCommandBuffer* cmd) {
 	float box_lo[3], box_hi[3];
 	for (int k = 0; k < 3; ++k) {
 		box_lo[k] = o->origin[k];
-		box_hi[k] = o->origin[k] + set->probes->settings.grid_size[k];
+		box_hi[k] = o->origin[k] + set->probes->layout.grid_size[k];
 	}
 
 	AeronSceneOccluder            current[AERON_SCENE_OCCLUSION_MAX_OCCLUDERS];

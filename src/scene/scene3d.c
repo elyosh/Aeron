@@ -1321,7 +1321,7 @@ int AeronScene_AddProbeSet(AeronScene3D* s, const AeronProbeSet* probes, const f
 			-(inv[row * 3 + 0] * m[3] + inv[row * 3 + 1] * m[7] + inv[row * 3 + 2] * m[11]);
 		set->metres_per_unit = fmaxf(set->metres_per_unit, sqrtf(length_sq));
 	}
-	const AeronFlightProbeLayout* d = &probes->settings;
+	const AeronFlightProbeLayout* d = &probes->layout;
 	set->params[0]                  = (float)d->probe_count;
 	set->params[1]                  = (float)probes->mip_count;
 	set->params[2]                      = (float)d->grid_resolution[0];

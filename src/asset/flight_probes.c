@@ -169,8 +169,40 @@ static void json_printf(JsonOut* j, const char* format, ...) {
 		j->length += (size_t)written;
 }
 
-static void json_vec3(JsonOut* j, const float v[3]) {
-	json_printf(j, "[%.9g, %.9g, %.9g]", (double)v[0], (double)v[1], (double)v[2]);
+/* The shortest decimal that reads back as `value`: 0.7 for 0.7f, not
+ * 0.699999988; with an exponent only when the value needs one (120, not
+ * 1.2e+02). */
+static void json_float(JsonOut* j, float value) {
+	char full[32], text[32];
+	snprintf(full, sizeof full, "%.9g", (double)value);
+	const bool exponent = strchr(full, 'e') != NULL;
+	snprintf(text, sizeof text, "%s", full);
+	for (int digits = 1; digits < 9; ++digits) {
+		char shorter[32];
+		snprintf(shorter, sizeof shorter, "%.*g", digits, (double)value);
+		if (strtof(shorter, NULL) == value && (exponent || !strchr(shorter, 'e'))) {
+			snprintf(text, sizeof text, "%s", shorter);
+			break;
+		}
+	}
+	json_printf(j, "%s", text);
+}
+
+/* Floats from `values`, comma-separated in brackets. */
+static void json_floats_out(JsonOut* j, const float* values, int count) {
+	json_printf(j, "[");
+	for (int i = 0; i < count; ++i) {
+		json_printf(j, i ? ", " : "");
+		json_float(j, values[i]);
+	}
+	json_printf(j, "]");
+}
+
+/* `"name": value` and a separator. */
+static void json_field(JsonOut* j, const char* name, float value, const char* after) {
+	json_printf(j, "\"%s\": ", name);
+	json_float(j, value);
+	json_printf(j, "%s", after);
 }
 
 static const char* shape_name(AeronFlightProbeShape shape) {
@@ -183,36 +215,39 @@ size_t Aeron_FlightProbeLayoutFormat(const AeronFlightProbeLayout* l, char* out,
 		out[0] = '\0';
 	if (!l)
 		return 0;
-	json_printf(&j,
-				"{\n  \"intensity\": %.9g,\n  \"diffuseStrength\": %.9g,\n  \"specularStrength\": %.9g,\n",
-				(double)l->intensity, (double)l->diffuse_strength, (double)l->specular_strength);
-	json_printf(&j, "  \"gridBox\": {\"center\": ");
-	json_vec3(&j, l->grid_center);
+	json_printf(&j, "{\n  ");
+	json_field(&j, "intensity", l->intensity, ",\n  ");
+	json_field(&j, "diffuseStrength", l->diffuse_strength, ",\n  ");
+	json_field(&j, "specularStrength", l->specular_strength, ",\n  ");
+	json_printf(&j, "\"gridBox\": {\"center\": ");
+	json_floats_out(&j, l->grid_center, 3);
 	json_printf(&j, ", \"size\": ");
-	json_vec3(&j, l->grid_size);
-	json_printf(&j, "},\n  \"gridResolution\": [%u, %u, %u],\n  \"keyLightShadow\": %.9g,\n  \"probes\": [\n",
-				l->grid_resolution[0], l->grid_resolution[1], l->grid_resolution[2],
-				(double)l->key_light_shadow);
+	json_floats_out(&j, l->grid_size, 3);
+	json_printf(&j, "},\n  \"gridResolution\": [%u, %u, %u],\n  ", l->grid_resolution[0],
+				l->grid_resolution[1], l->grid_resolution[2]);
+	json_field(&j, "keyLightShadow", l->key_light_shadow, ",\n  \"probes\": [\n");
 	for (uint32_t k = 0; k < l->probe_count; ++k) {
 		const AeronFlightProbe* p = &l->probes[k];
 		json_printf(&j, "    {\"center\": ");
-		json_vec3(&j, p->center);
+		json_floats_out(&j, p->center, 3);
 		json_printf(&j, ", \"size\": ");
-		json_vec3(&j, p->size);
-		json_printf(&j, ", \"shape\": \"%s\", \"falloff\": %.9g,\n     \"parallaxCenter\": ",
-					shape_name(p->shape), (double)p->falloff);
-		json_vec3(&j, p->parallax_center);
+		json_floats_out(&j, p->size, 3);
+		json_printf(&j, ", \"shape\": \"%s\", ", shape_name(p->shape));
+		json_field(&j, "falloff", p->falloff, ",\n     \"parallaxCenter\": ");
+		json_floats_out(&j, p->parallax_center, 3);
 		json_printf(&j, ", \"parallaxSize\": ");
-		json_vec3(&j, p->parallax_size);
+		json_floats_out(&j, p->parallax_size, 3);
 		json_printf(&j, ", \"parallaxShape\": \"%s\"}%s\n", shape_name(p->parallax_shape),
 					k + 1 < l->probe_count ? "," : "");
 	}
 	json_printf(&j, "  ]");
 	if (l->has_reflection_plane) {
 		json_printf(&j, ",\n  \"reflectionPlane\": {\"center\": ");
-		json_vec3(&j, l->reflection_plane_center);
-		json_printf(&j, ", \"size\": [%.9g, %.9g], \"distance\": %.9g}", (double)l->reflection_plane_size[0],
-					(double)l->reflection_plane_size[1], (double)l->reflection_plane_distance);
+		json_floats_out(&j, l->reflection_plane_center, 3);
+		json_printf(&j, ", \"size\": ");
+		json_floats_out(&j, l->reflection_plane_size, 2);
+		json_printf(&j, ", ");
+		json_field(&j, "distance", l->reflection_plane_distance, "}");
 	}
 	json_printf(&j, "\n}\n");
 	return j.length;

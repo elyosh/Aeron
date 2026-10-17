@@ -5,7 +5,8 @@
  * face BVH and the 256-entry farthest-point vertex sample over the simulation
  * topology), and for the model root `renderData` (a box-only BVH over the
  * merged render triangles), and with a probes bake the model root's
- * `probeData` (its layout and its two KTX2 images). The data is appended to
+ * `probeData` (its layout and its two KTX2 images). The probes' authoring
+ * fields, which only the bake reads, are dropped. The data is appended to
  * the GLB's binary chunk as new buffer views; existing references are
  * replaced. The result is reloaded and verified exactly as a game loads it.
  */
@@ -207,6 +208,19 @@ static bool uses_flight_extension(const cJSON* json) {
 			return true;
 	}
 	return false;
+}
+
+/* The probes' authoring fields: the bake's input, which a cooked file
+ * replaces with `probeData`. */
+static void strip_probe_authoring(cJSON* json) {
+	cJSON* node = NULL;
+	cJSON_ArrayForEach(node, cJSON_GetObjectItemCaseSensitive(json, "nodes")) {
+		cJSON* extension = cJSON_GetObjectItemCaseSensitive(cJSON_GetObjectItemCaseSensitive(node, "extensions"),
+															 AERON_FLIGHT_MODEL_EXTENSION);
+		cJSON_DeleteItemFromObjectCaseSensitive(extension, "reflectionProbes");
+		cJSON_DeleteItemFromObjectCaseSensitive(extension, "lightGrid");
+		cJSON_DeleteItemFromObjectCaseSensitive(extension, "reflectionPlane");
+	}
 }
 
 static void strip_cooked_references(cJSON* json) {
@@ -474,6 +488,7 @@ bool aeron_gltf_cook_flight_data(const uint8_t* in, size_t in_size, const char* 
 	}
 	if (probes_dir && !add_probes(&glb, node_flight_extension(glb.json, root), probes_dir, error, error_size))
 		goto done;
+	strip_probe_authoring(glb.json);
 	if (!glb_serialize(&glb, out, out_size)) {
 		cook_error(error, error_size, "out of memory serializing GLB");
 		goto done;
