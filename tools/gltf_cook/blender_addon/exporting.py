@@ -393,7 +393,7 @@ class EXPORT_OT_aeron_flight_model(Operator, ExportHelper):
                 "--mip-min-subrect", prefs.mip_min_subrect, "--quality", prefs.bc7_quality]
         if not prefs.zstd:
             argv.append("--no-zstd")
-        # The model's probes bake goes in the .glb.
+        # Add the model's probes bake to the .glb.
         bake, bake_warnings = probes.export_bake(root)
         if bake:
             argv += ["--probes", bake]

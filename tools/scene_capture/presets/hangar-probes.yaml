@@ -1,9 +1,9 @@
-# hangar-lights.yaml with the test probes of probe_packages.py: the hangar
-# owns probes/hangar4 (four flat-coloured probes, one an ellipsoid,
-# and a grid lit from the hangar's +X side, screen left) over the test.hangar
-# environment. Build them first with
+# hangar-lights.yaml with the test probes from probe_packages.py. The hangar
+# owns probes/hangar4 (four flat-coloured probes, one of them an ellipsoid,
+# and a grid lit from the hangar's +X side, which is screen left). The
+# environment is test.hangar. Build the probes first with
 # `probe_packages.py --baker <build dir>/environment_bake --out captures/probe-assets`.
-# Swap them for probes/hangar16 or probes/hangar42 to compare costs.
+# Replace probes/hangar4 with probes/hangar16 or probes/hangar42 to compare costs.
 width: 2560
 height: 1440
 frames: 30

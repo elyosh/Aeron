@@ -9,7 +9,7 @@ SCENE.blend holds each model under its own root object (as the glTF importer
 leaves it) and a camera; it is opened read-only and never saved. OBJECT names
 a model's root, GLB its cooked file relative to ROOT. The hangar model owns
 the probes of BAKE_DIR, a probes bake folder (bake.json, probes.ktx2,
-grid.ktx2), in place of its GLB's.
+grid.ktx2), instead of the probes in its GLB.
 
 Writes, under DIR, which is scene_capture's working directory for these runs:
 - full.yaml, diffuse.yaml, reflect.yaml: the scene from the .blend's camera,
@@ -19,14 +19,15 @@ Writes, under DIR, which is scene_capture's working directory for these runs:
   the .blend (an articulation such as landing gear) is a copy with those
   parts posed as there, without its cooked BVH, which the loader then builds.
 - assets/probes_full, probes_diffuse, probes_reflect: links to BAKE_DIR's
-  images, with its bake.json as is, then with the specular strength at 0,
-  then with the diffuse strength at 0.
+  images and a copy of its bake.json. The copy is unchanged in probes_full,
+  has the specular strength set to 0 in probes_diffuse, and has the diffuse
+  strength set to 0 in probes_reflect.
 - scene.json: the camera and the other models' footprint on the floor, for
   cycles_render.py and cycles_compare.py.
 
 With --probe-occlusion and --planar-reflection, the configs turn on
-scene_capture's probe_occlusion and planar_reflection; the latter needs the
-bake's reflectionPlane.
+scene_capture's probe_occlusion and planar_reflection. planar_reflection
+needs the bake's reflectionPlane.
 
 scene_capture's camera has a 60 degree vertical field of view; the .blend's
 camera gives the position and direction only."""
@@ -191,8 +192,8 @@ def footprint(roots, out_path):
 
 
 def write_probe_variants(bake_dir, assets):
-    """The bake's variants under `assets`: as is, without reflections, without diffuse light. Returns its
-    key light shadow."""
+    """Writes three variants of the bake under `assets`: unchanged, without reflections and without
+    diffuse light. Returns the bake's key light shadow."""
     with open(os.path.join(bake_dir, "bake.json")) as stream:
         layout = json.load(stream)
     for name, changes in (("full", {}), ("diffuse", {"specularStrength": 0}), ("reflect", {"diffuseStrength": 0})):

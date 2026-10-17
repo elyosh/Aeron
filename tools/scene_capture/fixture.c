@@ -143,14 +143,14 @@ static int load_models(Fixture* f, AeronCommandBuffer* cmd) {
 	return ok;
 }
 
-/* An instance's probes from a bake folder (bake.json and its two images),
- * with `cmd`; NULL on failure, logged. */
+/* Loads an instance's probes from a bake folder (bake.json and its two
+ * images) with `cmd`. Logs an error and returns NULL on failure. */
 static AeronProbeSet* load_probes(Fixture* f, AeronCommandBuffer* cmd, AeronVfsRoot root,
 								  const char* folder) {
 	static const char* const names[3]   = { "bake.json", "probes.ktx2", "grid.ktx2" };
 	uint8_t*                 bytes[3]   = { NULL, NULL, NULL };
 	size_t                   sizes[3]   = { 0, 0, 0 };
-	char                     error[256] = "cannot read its files";
+	char                     error[256] = "cannot read the bake files";
 	bool                     ok         = true;
 	for (int i = 0; ok && i < 3; ++i) {
 		char path[1100];
@@ -170,8 +170,8 @@ static AeronProbeSet* load_probes(Fixture* f, AeronCommandBuffer* cmd, AeronVfsR
 	return set;
 }
 
-/* game_scene.environment: parses the manifest's packages and prepares the
- * environment with `cmd`, and loads the instances' probes bake folders. */
+/* game_scene.environment: loads the instances' probes bake folders, then
+ * parses the manifest's packages and prepares the environment with `cmd`. */
 static int prepare_environment(Fixture* f, AeronCommandBuffer* cmd) {
 	const CaptureGameScene* game = &f->config.game;
 	const AeronVfsRoot root  = game->environment_folder[0] ? AERON_VFS_ROOT_RESOURCE : AERON_VFS_ROOT_ASSET;
@@ -656,7 +656,7 @@ static void add_game_instances(AeronScene3D* scene, const Fixture* f, const Aero
 				AeronScene_AddLight(scene, &light);
 		}
 		instance.anim = instance_anim(f, (int)i);
-		/* Its probes: a bake folder's, else its model's own. */
+		/* Use the probes from the bake folder, or else the model's own. */
 		const AeronProbeSet* probes = f->probes[i] ? f->probes[i] : instance.mesh->probes;
 		if (probes) {
 			const int set            = AeronScene_AddProbeSet(scene, probes, instance.transform);

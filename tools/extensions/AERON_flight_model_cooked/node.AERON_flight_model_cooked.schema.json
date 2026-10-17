@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "AERON_flight_model_cooked node extension",
-  "description": "Written by aeron_gltf_cook, in cooked files only: what it computes for a node of an AERON_flight_model asset. The model root carries renderData and probeData, a component simulationData. Unknown fields are ignored.",
+  "description": "Data that aeron_gltf_cook computes for a node of an AERON_flight_model asset. Only cooked files contain it. The model root has renderData and probeData, and each component has simulationData. Unknown fields are ignored.",
   "type": "object",
   "properties": {
     "renderData": { "$ref": "#/$defs/renderData" },
@@ -11,7 +11,7 @@
   "$defs": {
     "vec3": {
       "title": "Vector",
-      "description": "A vector in the Aeron frame (the model frame), in metres for positions.",
+      "description": "A vector in the Aeron frame (the model frame). Positions are in metres.",
       "type": "array",
       "items": { "type": "number" },
       "minItems": 3,
@@ -29,35 +29,35 @@
     },
     "simulationData": {
       "title": "Simulation data",
-      "description": "Written by aeron_gltf_cook: the component's collision bounding volume hierarchy. A loader without it builds it, with a warning; stale or malformed data fails the load.",
+      "description": "The bounding volume hierarchy used for the component's collision, written by aeron_gltf_cook. When it is missing, the loader builds it and prints a warning. Stale or malformed data fails the load.",
       "type": "object",
       "required": ["version", "bufferView", "topologyHash"],
       "properties": {
         "version": { "title": "Version", "description": "The data layout's version.", "const": 1 },
         "bufferView": { "title": "Buffer view", "description": "The buffer view holding the data.", "type": "integer", "minimum": 0 },
-        "topologyHash": { "$ref": "#/$defs/hash", "description": "The hash of the simulation topology the data was built from (the collision child's mesh, otherwise the render mesh)." }
+        "topologyHash": { "$ref": "#/$defs/hash", "description": "The hash of the simulation topology that the data was built from (the collision child's mesh, otherwise the render mesh)." }
       }
     },
     "renderData": {
       "title": "Render data",
-      "description": "Written by aeron_gltf_cook: the bounding volume hierarchy of the merged render triangles. A loader without it builds it, with a warning; stale or malformed data fails the load.",
+      "description": "The bounding volume hierarchy of the merged render triangles, written by aeron_gltf_cook. When it is missing, the loader builds it and prints a warning. Stale or malformed data fails the load.",
       "type": "object",
       "required": ["version", "bufferView", "meshHash"],
       "properties": {
         "version": { "title": "Version", "description": "The data layout's version.", "const": 1 },
         "bufferView": { "title": "Buffer view", "description": "The buffer view holding the data.", "type": "integer", "minimum": 0 },
-        "meshHash": { "$ref": "#/$defs/hash", "description": "The hash of the merged render triangles the data was built from." }
+        "meshHash": { "$ref": "#/$defs/hash", "description": "The hash of the merged render triangles that the data was built from." }
       }
     },
     "probeData": {
       "title": "Probe data",
-      "description": "Written by aeron_gltf_cook --probes, in cooked files only: the model's baked probes, with the layout they were baked for, in the Aeron frame and metres. Images that do not match the layout fail the load.",
+      "description": "The model's baked probes and the layout used for the bake, written by aeron_gltf_cook --probes. Only cooked files contain it. Positions and sizes are in metres in the Aeron frame. Images that do not match the layout fail the load.",
       "type": "object",
       "required": ["version", "cubes", "grid", "gridBox", "gridResolution", "probes"],
       "properties": {
         "version": { "title": "Version", "description": "The data layout's version.", "const": 1 },
-        "cubes": { "title": "Cubes", "description": "The buffer view of a KTX2 array of square BC6H or RGBA16F cube maps with roughness mips, probe k in layer k.", "type": "integer", "minimum": 0 },
-        "grid": { "title": "Grid", "description": "The buffer view of a KTX2 image of one RGBA16F level, 6 rx by ry rz texels: point (x, y, z) at column 6 x + f, row y + ry z, the irradiance / pi toward +x, -x, +y, -y, +z, -z in RGB, the mean radiance's luminance in A.", "type": "integer", "minimum": 0 },
+        "cubes": { "title": "Cubes", "description": "The buffer view of a KTX2 array of square BC6H or RGBA16F cube maps with roughness mips. Layer k holds probe k.", "type": "integer", "minimum": 0 },
+        "grid": { "title": "Grid", "description": "The buffer view of a KTX2 image with one RGBA16F level of 6 rx by ry rz texels. Point (x, y, z) uses column 6 x + f and row y + ry z, for f = 0 to 5. RGB is the irradiance / pi toward +x, -x, +y, -y, +z, -z, and A is the luminance of the mean radiance.", "type": "integer", "minimum": 0 },
         "intensity": { "type": "number", "minimum": 0, "maximum": 16, "default": 1 },
         "diffuseStrength": { "type": "number", "minimum": 0, "maximum": 4, "default": 1 },
         "specularStrength": { "type": "number", "minimum": 0, "maximum": 4, "default": 1 },
@@ -66,10 +66,10 @@
           "required": ["center", "size"],
           "properties": {
             "center": { "$ref": "#/$defs/vec3" },
-            "size": { "type": "array", "items": { "$ref": "#/$defs/positive" }, "minItems": 3, "maxItems": 3, "description": "The zone the grid lights fully, its full extent." }
+            "size": { "type": "array", "items": { "$ref": "#/$defs/positive" }, "minItems": 3, "maxItems": 3, "description": "The full extent of the box that the grid lights fully." }
           }
         },
-        "gridResolution": { "type": "array", "items": { "type": "integer", "minimum": 2, "maximum": 64 }, "minItems": 3, "maxItems": 3, "description": "Points per axis, at (i + 1) / (resolution + 1) of the box." },
+        "gridResolution": { "type": "array", "items": { "type": "integer", "minimum": 2, "maximum": 64 }, "minItems": 3, "maxItems": 3, "description": "Points per axis, placed at (i + 1) / (resolution + 1) of the box." },
         "keyLightShadow": { "type": "number", "minimum": 0, "maximum": 1, "default": 0.7 },
         "probes": {
           "type": "array",

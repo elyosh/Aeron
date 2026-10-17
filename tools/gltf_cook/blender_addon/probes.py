@@ -1,12 +1,13 @@
-# Environment probes: a model's reflection probes (Blender Sphere light
-# probes), its light grid (a Volume light probe) and its reflection plane (a
-# Plane light probe, a hangar's floor) under its root, and their bake into
-# the model's probes package. The bake renders a panorama from
-# each probe and from each grid point with Cycles, and environment_bake
-# turns them into a cube array and an irradiance grid. In the game, the
-# package lights the model and the objects that reach it (a hangar's ships,
-# a capital ship's fighters in its bays), blended with the scene's
-# environment where it does not apply.
+# Environment probes. A model can have reflection probes (Blender Sphere
+# light probes), a light grid (a Volume light probe) and a reflection plane
+# (a Plane light probe, such as a hangar's floor) under its root.
+#
+# Bake Probes renders a panorama with Cycles from each probe and each grid
+# point. environment_bake turns them into a cube array and an irradiance
+# grid in the project's bake folder, and Export for Game adds them to the
+# model's .glb. In the game, the probes light the model and the objects
+# inside it (ships in a hangar, fighters in a capital ship's bays). Outside
+# the probes, the scene's environment lights them.
 #
 # The model frame is the game's: from Blender, (-x, y, z) relative to the
 # root, in metres. The cube frame (+X right, +Y up, -Z forward) is fixed in
@@ -14,8 +15,8 @@
 # match the cube's when it looks toward -Y, with +Z up and its right toward
 # -X.
 #
-# Panoramas are the scene as Blender renders it, with a black World. The
-# package's intensity sets its level in the game.
+# Panoramas show the scene as Blender renders it, with a black World. The
+# probes' intensity sets their brightness in the game.
 
 import json
 import math
@@ -46,9 +47,9 @@ CUBE_ROTATION = mathutils.Euler((math.pi / 2.0, 0.0, math.pi))
 # what a World's environment texture shows with no mapping.
 WORLD_CAMERA = mathutils.Matrix(((0.0, 0.0, -1.0), (-1.0, 0.0, 0.0), (0.0, 1.0, 0.0)))
 PREVIEW_TAG = "aeron_lighting_preview"
-BAKED_MESSAGE = "Baked {}. Export for Game puts the probes in the model's .glb"
-# The bake's files in the project's bake/probes folder: the cooker embeds the first three; the
-# authoring block the bake was made from tells Export for Game whether the layout changed since.
+BAKED_MESSAGE = "Baked {}. Export for Game adds the probes to the model's .glb"
+# Files in the project's bake/probes folder. The cooker embeds BAKE_FILES. BAKE_AUTHORING holds the
+# authoring block used for the bake, so Export for Game can tell if the layout changed since then.
 BAKE_FILES = ("bake.json", "probes.ktx2", "grid.ktx2")
 BAKE_AUTHORING = "authoring.json"
 MAX_PROBES = 42  # one cube array within 256 array layers
@@ -96,7 +97,7 @@ class AeronProbeProperties(PropertyGroup):
     key_light_shadow: FloatProperty(
         name="Key Light Shadow", default=KEY_LIGHT_SHADOW, min=0.0, max=1.0, subtype='FACTOR',
         description="When the scene's key light is in the bake (a hangar's ceiling light): the part of the "
-                    "probe light its shadow removes. The bake writes it to the package")
+                    "probe light its shadow removes. The bake saves it with the probes")
 
 
 # ---- the model's probes ------------------------------------------------------------
@@ -127,9 +128,9 @@ def reflection_plane(root):
 
 
 def plane_definition(root, plane):
-    """The reflection plane in the bake's terms: its centre in the model frame, its size along
-    the model's x and y (Blender's -1..1 square), and how far from it a surface takes its reflection,
-    metres."""
+    """The reflection plane for the bake: its centre in the model frame, its size along the model's
+    x and y (Blender's -1..1 square), and the distance from the plane, in metres, within which a
+    surface takes its reflection."""
     scale = _relative(root, plane).to_scale()
     return {"center": list(_model_point(root, plane.matrix_world.translation)),
             "size": [2.0 * abs(scale.x), 2.0 * abs(scale.y)],
@@ -151,7 +152,7 @@ def _shape(influence_type):
 
 
 def probe_definition(root, probe):
-    """A reflection probe in the bake's terms: model frame, metres, full sizes."""
+    """A reflection probe for the bake: model frame, metres, full sizes."""
     data = probe.data
     scale = _relative(root, probe).to_scale()
     size = [2.0 * data.influence_distance * abs(s) for s in scale]
@@ -235,14 +236,14 @@ def _on_depsgraph_update(_scene, depsgraph):
 
 
 def grid_definition(root, grid):
-    """The light grid in the bake's terms: its box (Blender's -1..1 cube) and resolution."""
+    """The light grid for the bake: its box (Blender's -1..1 cube) and resolution."""
     return {"center": list(_model_point(root, grid.matrix_world.translation)), "size": _grid_size(grid),
             "resolution": grid_resolution(grid)}
 
 
 def grid_points(grid):
     """World positions of the grid's points, as Blender's volume probe places them, in the
-    package's order: model x fastest, then y, then z. Model x runs along Blender's -x."""
+    grid's order: model x fastest, then y, then z. Model x runs along Blender's -x."""
     r = grid_resolution(grid)
     points = []
     for iz in range(r[2]):
@@ -599,7 +600,7 @@ def invalid_points(context, points):
 
 
 def write_job(path, root, probes, grid, probe_names, grid_names, invalid):
-    """environment_bake's probes job: the probe layout and the panoramas."""
+    """Writes environment_bake's probes job: the probe layout and the panoramas."""
     item = grid_definition(root, grid)
     job = {"probes": [probe_definition(root, probe) for probe in probes], "probePanoramas": probe_names,
            "gridBox": {"center": item["center"], "size": item["size"]}, "gridResolution": item["resolution"],
@@ -622,12 +623,12 @@ def _authoring_text(root):
 
 
 def export_bake(root):
-    """The bake folder Export for Game embeds, or None, and the warnings about it."""
+    """Returns the bake folder that Export for Game embeds (or None) and a list of warnings about it."""
     if not reflection_probes(root) or light_grid(root) is None:
         return None, []
     folder = bake_dir(root) if root.aeron_flight.source_path else ""
     if not folder or not all(os.path.isfile(os.path.join(folder, name)) for name in BAKE_FILES):
-        return None, ["The model has probes but no bake: Bake Probes, then export again"]
+        return None, ["The model has probes but no bake. Run Bake Probes, then export again"]
     warnings = []
     try:
         with open(os.path.join(folder, BAKE_AUTHORING)) as stream:
@@ -635,18 +636,18 @@ def export_bake(root):
     except OSError:
         baked = ""
     if baked != _authoring_text(root):
-        warnings.append("The probes were baked for another layout: bake them again")
+        warnings.append("The probes layout changed since the bake. Bake them again")
     blend = bpy.data.filepath
     if blend and os.path.getmtime(os.path.join(folder, BAKE_FILES[0])) < os.path.getmtime(blend):
-        warnings.append("The probes bake is older than the .blend: bake again if the model changed")
+        warnings.append("The probes bake is older than the .blend. Bake again if the model changed")
     return folder, warnings
 
 
 def bake_steps(context, root, result):
     """Bakes the model's probes into its project's bake/probes folder, one render per step, and sets
-    result["out"] to that folder. Yields (done, total); raises BakeError."""
+    result["out"] to that folder. Yields (done, total). Raises BakeError."""
     if not root.aeron_flight.source_path:
-        raise BakeError("Save the model to its project first: the bake goes in its folder")
+        raise BakeError("Save the model to its project first. The bake is written to the project folder")
     if bpy.data.colorspace.working_space != 'Linear Rec.709':
         raise BakeError("The bake needs the Linear Rec.709 working color space")
     baker = preferences.environment_bake_path(context)
@@ -828,8 +829,8 @@ def _select(context, obj):
 
 
 class AERON_OT_bake_probes(Operator):
-    """Render the model's reflection probes and light grid with Cycles and bake them into the bake/probes \
-folder of its project, which Export for Game puts in its .glb. Esc cancels"""
+    """Render the model's reflection probes and light grid with Cycles and bake them into the project's \
+bake/probes folder. Export for Game adds the bake to the model's .glb. Esc cancels"""
 
     bl_idname = "aeron.bake_probes"
     bl_label = "Bake Probes"

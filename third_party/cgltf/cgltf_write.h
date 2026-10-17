@@ -606,9 +606,10 @@ static void cgltf_write_buffer(cgltf_write_context* context, const cgltf_buffer*
 	cgltf_write_line(context, "}");
 }
 
-/* Aeron: its extensions among an object's unprocessed extensions, written
- * back as they were parsed (or set), and listed when the document uses or
- * requires them. */
+/* Aeron extensions. cgltf keeps them in an object's unprocessed extensions.
+ * The writer writes them back as they were parsed (or set). It lists each
+ * one in extensionsUsed when the document uses or requires it, and in
+ * extensionsRequired when the document requires it. */
 static const char* const cgltf_aeron_extension_names[] = { "AERON_flight_model", "AERON_flight_model_cooked" };
 #define CGLTF_AERON_EXTENSION_COUNT (sizeof cgltf_aeron_extension_names / sizeof cgltf_aeron_extension_names[0])
 

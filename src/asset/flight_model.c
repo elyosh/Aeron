@@ -35,8 +35,9 @@ static const char* node_extension(const cgltf_node* node, const char* name) {
 	return NULL;
 }
 
-/* The node's AERON_flight_model_cooked object in *out, NULL without one;
- * false when it is not an object. */
+/* Parses the node's AERON_flight_model_cooked extension into *out, or sets
+ * *out to NULL when the node has none. Returns false when the extension is
+ * not a JSON object. */
 static bool parse_cooked_extension(const cgltf_node* node, cJSON** out) {
 	const char* extension = node_extension(node, AERON_FLIGHT_MODEL_COOKED_EXTENSION);
 	*out                  = extension ? cJSON_ParseWithOpts(extension, NULL, true) : NULL;
@@ -1073,7 +1074,7 @@ static bool build_semantics(const cgltf_data* data, AeronFlightModel* model) {
 	return true;
 }
 
-/* The model root's cooked probes (`probeData`), when it has them. */
+/* Loads the cooked probes (`probeData`) of the model root, if present. */
 static bool build_model_probes(const cgltf_data* data, AeronFlightModel* model, const char* source_label) {
 	cJSON*     extension  = NULL;
 	char       error[256] = "malformed " AERON_FLIGHT_MODEL_COOKED_EXTENSION;

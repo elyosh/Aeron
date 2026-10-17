@@ -1,21 +1,22 @@
 /*
  * environment_bake — offline HDR environment package baker.
  *
- * Bake mode: an equirectangular Radiance .hdr panorama and an optional
- * light list become BC6H KTX2 cubes and a `packages:` entry. With
- * --radiance-out the panorama is a sky without suns, written as a radiance
- * cube with box mips; without it, the panorama only lights the package (an
- * enclosed space, such as a hangar). Both write the Lambert irradiance / pi
- * and the GGX roughness mips cubes.
+ * Bake mode converts an equirectangular Radiance .hdr panorama and an
+ * optional light list into BC6H KTX2 cubes and a `packages:` entry. With
+ * --radiance-out, the panorama is a sky without suns and is also written as
+ * a radiance cube with box mips. Without it, the panorama is only used for
+ * lighting (an enclosed space, such as a hangar). In both cases the baker
+ * writes the Lambert irradiance / pi cube and the GGX cube with roughness
+ * mips.
  * Diagnostic mode writes a labelled cube for checking orientation.
  * Sprite mode converts an HDR image to a KTX2 sun sprite. Capture mode
  * bakes a capture directory written by the game (six cube faces, sun
  * images, capture.yaml) into a package under the remaster bake root, with
  * the `packages:` and `xwa:` snippets to merge into the manifest. Probes
- * mode bakes a model's reflection probes and irradiance grid, rendered as
- * panoramas by the Blender add-on, into their two KTX2 images and the
- * layout they were baked for (bake.json), which aeron_gltf_cook embeds in
- * the model's GLB.
+ * mode bakes the panoramas that the Blender add-on renders for a model's
+ * reflection probes and irradiance grid. It writes two KTX2 images and the
+ * probe layout used for the bake (bake.json). aeron_gltf_cook embeds them
+ * in the model's GLB.
  *
  * See envmap.h for the cube face and panorama conventions. Output is
  * deterministic for identical inputs and does not depend on --jobs.
@@ -93,11 +94,11 @@ static void usage(void) {
 		"Package entry paths are written relative to --manifest-root when given.\n"
 		"A capture is baked into <bake root>/flight/environments/captured/<mission>/region_<n>/;\n"
 		"its package.yaml and mapping.yaml are merged into the manifest by hand.\n"
-		"A probes job is a JSON object with the probe layout's fields (the AERON_flight_model\n"
-		"probeData fields but its images), and `probePanoramas`, `gridPanoramas` (x fastest,\n"
-		"then y, then z) and `gridInvalid` (indices of points inside geometry), panorama\n"
-		"paths relative to the job file. --bake-out writes the layout the images were baked\n"
-		"for, which aeron_gltf_cook --probes embeds with them.\n");
+		"A probes job is a JSON object with the probe layout fields (the AERON_flight_model\n"
+		"probeData fields, except the images), plus `probePanoramas`, `gridPanoramas`\n"
+		"(x fastest, then y, then z) and `gridInvalid` (indices of points inside geometry).\n"
+		"Panorama paths are relative to the job file. --bake-out writes the probe layout\n"
+		"used for the bake. aeron_gltf_cook --probes embeds it with the images.\n");
 }
 
 static bool is_power_of_two(int v) { return v > 0 && (v & (v - 1)) == 0; }
@@ -450,10 +451,10 @@ static bool package_path(const char* path, const char* root, char* out, size_t s
 }
 
 /* Writes the baked package as a `packages:` document. Strengths, fill and
- * rotation are starting values to calibrate per package; the fill starts at
- * 0. A sky (`radiance`) always gives its lights, [] without a light list;
- * without a sky, the package gives lights only with a light list
- * (`has_lights`), and otherwise keeps the game's. */
+ * rotation are starting values to calibrate per package. The fill starts at
+ * 0. A package with a sky (`radiance`) always lists its lights, as [] when
+ * there is no light list. A package without a sky lists lights only when it
+ * has a light list (`has_lights`). Otherwise the game keeps its own lights. */
 static bool write_package_entry(FILE* f, const char* name, const char* radiance, const char* diffuse,
 								const char* specular, bool has_lights,
 								const AeronEnvironmentLightDefinition* lights, uint32_t light_count,
@@ -644,8 +645,8 @@ static int run_bake(const BakeOptions* o) {
 		usage();
 		return 2;
 	}
-	/* Without a sky the radiance cube is only the filters' source, at the
-	 * specular size. */
+	/* Without a sky, the radiance cube is only the input of the filters, so
+	 * it uses the specular size. */
 	const int radiance_size = sky ? o->radiance_size : o->specular_size;
 	if (!AeronEnvironment_IsValidName(o->name)) {
 		fprintf(stderr, "environment_bake: --name must be 1 to 63 lower-case letters, digits, '.' and '_'\n");
@@ -764,7 +765,7 @@ static bool job_path(const char* job, const cJSON* node, char out[PROBE_PATH_MAX
 	return n > 0 && n < PROBE_PATH_MAX;
 }
 
-/* Reads a whole file; NULL when it cannot. */
+/* Reads a whole file. Returns NULL on failure. */
 static char* read_text(const char* path, size_t* size) {
 	FILE* f = fopen(path, "rb");
 	if (!f)
@@ -786,10 +787,10 @@ static char* read_text(const char* path, size_t* size) {
 	return text;
 }
 
-/* Reads a probes job: a JSON object with the probe layout's fields
- * (AeronFlightProbeLayout) and `probePanoramas`, `gridPanoramas` (x
+/* Reads a probes job. The job is a JSON object with the probe layout
+ * fields (AeronFlightProbeLayout) and `probePanoramas`, `gridPanoramas` (x
  * fastest, then y, then z) and `gridInvalid` (indices of points inside
- * geometry). Prints why and returns false when it is wrong. */
+ * geometry). On error, prints the reason and returns false. */
 static bool load_probe_job(const char* path, ProbeJob* job) {
 	memset(job, 0, sizeof *job);
 	size_t size = 0;
@@ -851,8 +852,8 @@ static bool load_probe_job(const char* path, ProbeJob* job) {
 	cJSON_ArrayForEach(item, indices) {
 		if (!cJSON_IsNumber(item) || item->valuedouble < 0 || item->valuedouble >= job->point_count ||
 			(double)(uint32_t)item->valuedouble != item->valuedouble) {
-			fprintf(stderr, "environment_bake: %s: 'gridInvalid' holds point indices below %u\n", path,
-					job->point_count);
+			fprintf(stderr, "environment_bake: %s: 'gridInvalid' must only hold point indices below %u\n",
+					path, job->point_count);
 			ok = false;
 			break;
 		}
@@ -1067,8 +1068,8 @@ static int run_probes(const BakeOptions* o) {
 		   cells.dims[2], (double)cells.cell_size, cells.most_probes);
 	if (cells.overflow_cells)
 		fprintf(stderr,
-				"environment_bake: warning: %u cells overlap more than %d probes; the %d smallest are used "
-				"there\n",
+				"environment_bake: warning: %u cells overlap more than %d probes. Those cells use only the %d "
+				"smallest\n",
 				cells.overflow_cells, AERON_PROBE_CELL_PROBES, AERON_PROBE_CELL_PROBES);
 	AeronProbeCells_Free(&cells);
 
@@ -1076,8 +1077,9 @@ static int run_probes(const BakeOptions* o) {
 		probe_job_free(&job);
 		return 1;
 	}
-	/* The layout the images were baked for, which the cooker embeds with
-	 * them; read back as the cooker and the game read it. */
+	/* Write the probe layout used for the bake. The cooker embeds it with
+	 * the images. The written text is parsed again with the parser that the
+	 * cooker and the game use. */
 	const size_t length = Aeron_FlightProbeLayoutFormat(&job.layout, NULL, 0);
 	char*        text   = (char*)malloc(length + 1);
 	FILE*        f      = fopen(o->bake_out, "wb");
@@ -1091,7 +1093,7 @@ static int run_probes(const BakeOptions* o) {
 	AeronFlightProbeLayout check;
 	char                   error[256] = "";
 	if (ok && !Aeron_FlightProbeLayoutParse(text, length, &check, error, sizeof error)) {
-		fprintf(stderr, "environment_bake: written %s: %s\n", o->bake_out, error);
+		fprintf(stderr, "environment_bake: written %s is invalid: %s\n", o->bake_out, error);
 		ok = false;
 	} else if (!ok) {
 		fprintf(stderr, "environment_bake: cannot write %s\n", o->bake_out);

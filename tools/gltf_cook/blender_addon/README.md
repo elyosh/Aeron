@@ -494,16 +494,19 @@ exported with `baked`, and the game leaves them out while it uses the
 probes, so their light is not counted twice. Lights outside it, such as
 running lights, stay live.
 
-The bake writes into the `bake/probes` folder of the model's project:
-`probes.ktx2`, `grid.ktx2`, `bake.json` (the layout they were baked for),
-`authoring.json` and a `panorama_<n>.hdr` per reflection probe. Export for
-Game puts the first three in the model's .glb, so the game needs nothing
-else. It warns, and still exports, when the model has probes but no bake,
-when the probes were moved, resized, added or removed since the bake
-(`authoring.json` holds what was baked), and when the bake is older than
-the .blend. The panoramas are the renders the reflections are made from;
-the game doesn't use them. Each frame, the game uses the probes of the 8
-models nearest to the camera that have them.
+The bake writes these files to the `bake/probes` folder of the model's
+project: `probes.ktx2`, `grid.ktx2`, `bake.json` (the probe layout used for
+the bake), `authoring.json` and one `panorama_<n>.hdr` per reflection probe.
+Export for Game adds the first three to the model's .glb, so the game needs
+no other file. Export for Game shows a warning, but still exports, when:
+- the model has probes but no bake;
+- the probes were moved, resized, added or removed since the bake
+  (`authoring.json` records what was baked);
+- the bake is older than the .blend.
+
+The panoramas are the renders that the reflections are made from. The game
+doesn't use them. Each frame, the game uses the probes of the 8 models
+nearest to the camera that have them.
 
 Limits:
 - The World is black during the bake, so light from the sky through open
@@ -522,9 +525,8 @@ panel. It shows the probe's panorama as the World, turned as in the game,
 so a ship placed in the scene shows that probe's light and reflections in
 Material Preview or Rendered view. Click it again to put the previous
 World back. In the game, the Environment debug tool shows the frame's
-probe sets (their probes, grid and memory); after a new bake, export the
-model again and restart the mission. Its **Show
-probes** checkbox draws
-each probe's influence, the grid's box and the grid points near the
-camera, to check that they sit where they do in Blender. Save to
+probe sets (their probes, grid and memory). Its **Show probes** checkbox
+draws each probe's influence, the grid's box and the grid points near the
+camera, to check that they sit where they do in Blender. After a new bake,
+export the model again and restart the mission to see it. Save to
 Project keeps the probes, the grid and the plane in the model's `.gltf`.

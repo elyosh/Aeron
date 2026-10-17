@@ -13,8 +13,9 @@ extern "C" {
 #endif
 
 #define AERON_FLIGHT_MODEL_EXTENSION "AERON_flight_model"
-/* What aeron_gltf_cook adds: simulation, render and probe data, and the
- * textures' atlas pages (tools/extensions/AERON_flight_model_cooked). */
+/* Extension added by aeron_gltf_cook. It holds the simulation, render and
+ * probe data and the texture atlas pages. See
+ * tools/extensions/AERON_flight_model_cooked. */
 #define AERON_FLIGHT_MODEL_COOKED_EXTENSION "AERON_flight_model_cooked"
 
 typedef struct AeronFlightVec3 {
@@ -176,13 +177,14 @@ typedef struct AeronFlightComponent {
 
 /* ---- probes -------------------------------------------------------------
  *
- * A model's baked environment probes (`probeData` on the model root): its
- * reflection probes (a cube array, probe k in layer k) and its irradiance
- * grid, in the model frame (aeron axes), metres. The same layout is the
- * probes bake's output (bake.json) and its job's input, as JSON with the
- * fields of `probeData` (tools/extensions/AERON_flight_model_cooked). */
+ * Baked environment probes of a model, stored in `probeData` on the model
+ * root. They are reflection probes (a cube array, probe k in layer k) and an
+ * irradiance grid, in the model frame (aeron axes), in metres. The probe
+ * bake uses the same layout for its job input and its output (bake.json),
+ * as JSON with the fields of `probeData`. See
+ * tools/extensions/AERON_flight_model_cooked. */
 
-#define AERON_FLIGHT_MAX_PROBES      42 /* 6 cube layers each within 256 array layers */
+#define AERON_FLIGHT_MAX_PROBES      42 /* 6 array layers per cube, 256 array layers at most */
 #define AERON_FLIGHT_PROBE_GRID_MIN  2  /* grid points per axis */
 #define AERON_FLIGHT_PROBE_GRID_MAX  64
 #define AERON_FLIGHT_KEY_LIGHT_SHADOW 0.7f
@@ -192,12 +194,13 @@ typedef enum AeronFlightProbeShape {
 	AERON_FLIGHT_PROBE_ELLIPSOID,
 } AeronFlightProbeShape;
 
-/* A reflection probe. `center` is where its cube was captured and the
- * centre of its influence; `size` the influence's full extent (an
- * ellipsoid's axes). Its weight falls from 1 to 0 over the outer `falloff`
- * fraction of the influence. Reflections are projected onto the parallax
- * volume around `parallax_center` (several probes of a room can share the
- * room's box). */
+/* A reflection probe. `center` is the point where the cube was captured and
+ * the centre of the influence volume. `size` is the full extent of the
+ * influence volume (the axes for an ellipsoid). The probe weight falls from
+ * 1 to 0 over the outer `falloff` fraction of the influence volume.
+ * Reflections are projected onto the parallax volume around
+ * `parallax_center`. Several probes in a room can use the room's box as
+ * their parallax volume. */
 typedef struct AeronFlightProbe {
 	float                 center[3];
 	float                 size[3];
@@ -209,32 +212,34 @@ typedef struct AeronFlightProbe {
 } AeronFlightProbe;
 
 typedef struct AeronFlightProbeLayout {
-	float intensity; /* scales the probes' light; with the strengths, 1 by default */
+	float intensity; /* scales all probe light; this and the two strengths default to 1 */
 	float diffuse_strength;
 	float specular_strength;
-	/* The grid: an axis-aligned box of resolution points, sampled as
-	 * Blender's volume probe (point i at (i + 1) / (resolution + 1) of the
-	 * box). */
+	/* Irradiance grid: an axis-aligned box with grid_resolution points per
+	 * axis. Points are placed like in Blender's volume probe: point i is at
+	 * (i + 1) / (resolution + 1) of the box. */
 	float            grid_center[3];
 	float            grid_size[3];
 	uint32_t         grid_resolution[3];
 	AeronFlightProbe probes[AERON_FLIGHT_MAX_PROBES];
 	uint32_t         probe_count; /* 1 to AERON_FLIGHT_MAX_PROBES */
-	/* When the scene's key light is in the bake (a hangar's ceiling light),
-	 * the part of the probe light its shadow removes, 0-1. */
+	/* Fraction of the probe light (0-1) that the key light's shadow removes,
+	 * used when the bake includes the scene's key light (for example a
+	 * hangar ceiling light). */
 	float key_light_shadow;
-	/* The floor that reflects what stands on it (a hangar's): a horizontal
-	 * rectangle facing up, its centre and size along x and y; surfaces
-	 * within `distance` of it take its reflection. */
+	/* Reflective floor, such as a hangar floor. It is a horizontal rectangle
+	 * facing up, given by its centre and its size along x and y. Surfaces
+	 * within `reflection_plane_distance` of it show its reflection. */
 	bool  has_reflection_plane;
 	float reflection_plane_center[3];
 	float reflection_plane_size[2];
 	float reflection_plane_distance;
 } AeronFlightProbeLayout;
 
-/* The layout and owned copies of its two KTX2 images: the BC6H (or RGBA16F)
- * cube array and the RGBA16F grid (point (x, y, z) at column 6 x + f, row
- * y + ry z, for f = +x, -x, +y, -y, +z, -z). */
+/* A probe layout with owned copies of its two KTX2 images: the cube array
+ * (BC6H or RGBA16F) and the grid (RGBA16F). In the grid image, direction f
+ * of point (x, y, z) is at column 6 x + f and row y + ry z, with f in the
+ * order +x, -x, +y, -y, +z, -z and ry the grid resolution along y. */
 typedef struct AeronFlightProbes {
 	AeronFlightProbeLayout layout;
 	uint8_t*               cubes;
@@ -243,14 +248,14 @@ typedef struct AeronFlightProbes {
 	size_t                 grid_size;
 } AeronFlightProbes;
 
-/* Parses a probe layout from a JSON object's text; unknown fields are
- * ignored. On failure returns false with the reason in `error`. */
+/* Parses a probe layout from the text of a JSON object. Unknown fields are
+ * ignored. On failure, returns false and writes the reason to `error`. */
 bool Aeron_FlightProbeLayoutParse(const char* json, size_t size, AeronFlightProbeLayout* out, char* error,
 								  size_t error_size);
-/* Formats a layout as a JSON object; returns the full length like snprintf. */
+/* Writes a layout as a JSON object. Returns the full length, like snprintf. */
 size_t Aeron_FlightProbeLayoutFormat(const AeronFlightProbeLayout* layout, char* out, size_t size);
-/* Builds probes from a layout's JSON text and the two KTX2 images (copied),
- * checking that the images hold the layout's probes and grid. */
+/* Builds probes from layout JSON text and the two KTX2 images, which are
+ * copied. Checks that the images match the layout's probes and grid. */
 bool Aeron_FlightProbesBuild(const char* layout_json, size_t layout_size, const uint8_t* cubes,
 							 size_t cubes_size, const uint8_t* grid, size_t grid_size, AeronFlightProbes* out,
 							 char* error, size_t error_size);
@@ -284,8 +289,8 @@ typedef struct AeronFlightModel {
 	 * present, otherwise built at load. NULL for semantic-only builds. Freed
 	 * with the render data. */
 	AeronFaceBvh*          render_bvh;
-	/* The cooked probes (`probeData` on the model root), or NULL. Filled by
-	 * the render-including builds; freed with the render data. */
+	/* Cooked probes from `probeData` on the model root, or NULL. Set by the
+	 * builds that include render data and freed with the render data. */
 	AeronFlightProbes*     probes;
 } AeronFlightModel;
 

@@ -1,7 +1,7 @@
 /*
- * A model's environment probes on the GPU: the cell table, the cube array,
- * the grid repacked into a 3D texture and the set buffer, from a flight
- * model's cooked probes.
+ * Builds the GPU probe set of a model from a flight model's cooked probes:
+ * the cell table, the cube array, the grid repacked into a 3D texture, and
+ * the set buffer.
  */
 
 #include "aeron/scene/probe_set.h"
@@ -29,8 +29,8 @@ bool AeronProbeCells_Build(const AeronFlightProbeLayout* d, AeronProbeCells* out
 	if (!d || d->probe_count == 0 || d->probe_count > AERON_FLIGHT_MAX_PROBES)
 		return false;
 
-	/* Influence boxes, their union, and the probes smallest first (ties
-	 * by index). */
+	/* Computes the influence boxes, their union, and the probe order by
+	 * volume, smallest first (equal volumes keep index order). */
 	float    lo[AERON_FLIGHT_MAX_PROBES][3], hi[AERON_FLIGHT_MAX_PROBES][3], max[3];
 	uint32_t order[AERON_FLIGHT_MAX_PROBES];
 	for (uint32_t i = 0; i < d->probe_count; ++i) {
@@ -96,8 +96,9 @@ void AeronProbeCells_Free(AeronProbeCells* cells) {
 
 /* ---- probe sets ------------------------------------------------------- */
 
-/* The 3D grid texture from the grid image's level 0: point (x, y, z) at
- * column 6 x + f, row y + ry z for face f goes to texel (x, y, f rz + z). */
+/* Creates the 3D grid texture from level 0 of the grid image. Face f of
+ * point (x, y, z), at column 6 x + f and row y + ry z in the image, goes to
+ * texel (x, y, f rz + z). */
 static AeronTexture* upload_grid(AeronCommandBuffer* cmd, const Ktx2Level* level, const uint32_t r[3],
 								 const char* name) {
 	const size_t texel = 4u * sizeof(uint16_t);
@@ -145,19 +146,19 @@ static float half_to_float(uint16_t h) {
 	return f;
 }
 
-/* The luminance of the grid's light at each probe's centre, toward +x, -x,
- * +y, -y, +z, -z and the mean, so the shader can compare the light where a
- * pixel is with the light where the probe was captured. Sampled
- * trilinearly, as the shader does. Zero for a probe whose centre does not
- * get the grid's full weight. */
+/* Computes the grid luminance at each probe centre toward +x, -x, +y, -y,
+ * +z, -z, and the mean luminance. The shader uses it to compare the light
+ * at a pixel with the light where the probe was captured. The grid is
+ * sampled trilinearly, like in the shader. The values are zero for a probe
+ * whose centre does not get the full grid weight. */
 static void probe_capture_light(const AeronFlightProbeLayout* def, const Ktx2Level* level, float out[][8]) {
 	memset(out, 0, sizeof(float[8]) * def->probe_count);
 	const uint16_t*    texels       = (const uint16_t*)level->data;
 	const uint32_t*    r            = def->grid_resolution;
 	static const float luminance[3] = { 0.2126f, 0.7152f, 0.0722f };
 	for (uint32_t k = 0; k < def->probe_count; ++k) {
-		/* Texel coordinates (point i at i + 0.5); the shader's weight is 1
-		 * from -0.5 to r + 0.5. Then point coordinates, clamped. */
+		/* Texel coordinates, with point i at i + 0.5. The shader's grid
+		 * weight is 1 from -0.5 to r + 0.5. Then clamped point coordinates. */
 		float g[3];
 		bool  inside = true;
 		for (int a = 0; a < 3; ++a) {
@@ -181,7 +182,7 @@ static void probe_capture_light(const AeronFlightProbeLayout* def, const Ktx2Lev
 			const float    w = (corner & 1 ? t[0] : 1.0f - t[0]) * (corner & 2 ? t[1] : 1.0f - t[1]) *
 							   (corner & 4 ? t[2] : 1.0f - t[2]);
 			for (int f = 0; f < 6; ++f) {
-				/* Point (x, y, z), face f: texel 6 x + f of row y + ry z. */
+				/* Face f of point (x, y, z) is texel 6 x + f of row y + ry z. */
 				const uint16_t* texel = texels + (((size_t)(y + r[1] * z) * 6u * r[0]) + 6u * x + f) * 4u;
 				for (int c = 0; c < 3; ++c)
 					out[k][f] += w * luminance[c] * half_to_float(texel[c]);
@@ -192,7 +193,7 @@ static void probe_capture_light(const AeronFlightProbeLayout* def, const Ktx2Lev
 	}
 }
 
-/* The set buffer; NULL on failure. */
+/* Builds and uploads the set buffer. Returns NULL on failure. */
 static AeronBuffer* build_probe_buffer(AeronCommandBuffer* cmd, const AeronFlightProbeLayout* def,
 									   const AeronProbeCells* cells, const Ktx2Level* grid,
 									   uint32_t* out_bytes) {
@@ -203,7 +204,7 @@ static AeronBuffer* build_probe_buffer(AeronCommandBuffer* cmd, const AeronFligh
 	uint32_t*      words = (uint32_t*)calloc(elements, 16u);
 	if (!words)
 		return NULL;
-	float* f = (float*)words; /* same storage: floats where the layout has floats */
+	float* f = (float*)words; /* same memory as `words`, for the float fields */
 	for (int a = 0; a < 3; ++a) {
 		f[a]         = cells->min[a];
 		words[4 + a] = cells->dims[a];
@@ -266,7 +267,7 @@ AeronProbeSet* AeronProbeSet_Create(AeronCommandBuffer* cmd, const AeronFlightPr
 	} else if (!Aeron_TextureFormatSupported(ktx2_format(cubes), AERON_TEXTURE_USAGE_SAMPLED) ||
 			   !Aeron_TextureFormatSupported(AERON_TEXTURE_FORMAT_RGBA16_FLOAT,
 											 AERON_TEXTURE_USAGE_SAMPLED)) {
-		failure = "this device cannot sample their formats";
+		failure = "the device cannot sample the image formats";
 	} else {
 		const Ktx2Level level        = ktx2_level(grid, 0);
 		uint32_t        buffer_bytes = 0;
@@ -294,8 +295,8 @@ AeronProbeSet* AeronProbeSet_Create(AeronCommandBuffer* cmd, const AeronFlightPr
 	}
 	if (!failure && cells.overflow_cells)
 		Aeron_LogWarn("aeron.scene",
-					  "%s probes: %u cells overlap more than %d probes; the smallest are used there", name,
-					  cells.overflow_cells, AERON_PROBE_CELL_PROBES);
+					  "%s probes: %u cells overlap more than %d probes. Those cells use only the smallest",
+					  name, cells.overflow_cells, AERON_PROBE_CELL_PROBES);
 	AeronProbeCells_Free(&cells);
 	ktx2_close(cubes);
 	ktx2_close(grid);
@@ -306,7 +307,7 @@ AeronProbeSet* AeronProbeSet_Create(AeronCommandBuffer* cmd, const AeronFlightPr
 	}
 	const AeronFlightProbeLayout* d = &set->layout;
 	for (int a = 0; a < 3; ++a) {
-		/* The grid's light reaches one point spacing beyond its box. */
+		/* The grid light reaches one point spacing beyond the grid box. */
 		const float reach  = d->grid_size[a] * (0.5f + 1.0f / (float)(d->grid_resolution[a] + 1u));
 		set->bounds_min[a] = d->grid_center[a] - reach;
 		set->bounds_max[a] = d->grid_center[a] + reach;

@@ -25,9 +25,9 @@ Checks that:
 - probes, grid and reflection plane go to the glTF and back, and a light
   inside the grid is baked;
 - a grid point inside a closed box is invalid;
-- the bake writes its files in the project's bake/probes folder, the
-  reflection plane in bake.json, and restores the scene; Export for Game
-  then finds the bake, and warns once a probe moves.
+- the bake writes its files to the project's bake/probes folder, writes the
+  reflection plane to bake.json, and restores the scene. Export for Game then
+  finds the bake, and warns after a probe moves.
 """
 
 import argparse
@@ -399,7 +399,7 @@ def blender_main(baker, scratch):
     bpy.context.view_layer.update()
     bake, warnings = probes.export_bake(root)
     check(bake == out and any("layout" in w for w in warnings),
-          "Export for Game warns once a probe moved: {}".format(warnings))
+          "Export for Game warns after a probe moves: {}".format(warnings))
     probe.location.x -= 1.0
     bpy.context.view_layer.update()
     check(scene.render.engine == engine and scene.cycles.device == device and

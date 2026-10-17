@@ -153,10 +153,11 @@ static bool validate_material_textures(const cgltf_data* data) {
 	return true;
 }
 
-/* The texture of one (image, page, LOD limit): its AERON_flight_model_cooked
- * object names them (tools/extensions/AERON_flight_model_cooked, "Textures
- * and images"); it has no source of its own. Appended to `textures` when new;
- * the caller sized the array for every rect. */
+/* Returns the texture for one (image, page, LOD limit). The texture has no
+ * source of its own. Its AERON_flight_model_cooked object holds these three
+ * values (tools/extensions/AERON_flight_model_cooked, "Textures and
+ * images"). A new texture is appended to `textures`; the caller sized the
+ * array for every rect. */
 static cgltf_texture* atlas_texture(cgltf_texture* textures, size_t* count, size_t image, cgltf_sampler* sampler,
 									const ChannelRect* rect) {
 	char object[96];
@@ -916,8 +917,8 @@ bool aeron_gltf_cook_data(cgltf_data* data, const char* source_label,
 	 * colour's alpha. */
 	cgltf_texture_view* saved_transmission = (cgltf_texture_view*)calloc(
 		data->materials_count ? data->materials_count : 1, sizeof *saved_transmission);
-	/* The cooked file requires AERON_flight_model_cooked: its textures are
-	 * found only through it. */
+	/* The cooked file requires AERON_flight_model_cooked because its
+	 * textures can only be found through it. */
 	char*  required_name      = cook_strdup("AERON_flight_model_cooked");
 	char** cooked_required    = (char**)calloc(data->extensions_required_count + 1, sizeof *cooked_required);
 	char** cooked_used        = (char**)calloc(data->extensions_used_count + 1, sizeof *cooked_used);

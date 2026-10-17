@@ -4,19 +4,19 @@
 /*
  * Authored HDR environment packages.
  *
- * A package is a named definition in a `packages:` YAML map. Its fields
- * say what it does:
+ * A package is a named definition in a `packages:` YAML map. It can have
+ * these fields:
  *   - `radiance`: a visible sky (radiance cube). It requires
- *     `directional_lights` ([] for a sky without suns), each drawn as a sun
- *     with its `visual`;
- *   - `diffuse` and `specular`: image-based lighting cubes, each with its
- *     strength; `specular` requires `diffuse`;
+ *     `directional_lights` (use [] for a sky without suns). Each light is
+ *     drawn as a sun using its `visual`.
+ *   - `diffuse` and `specular`: image-based lighting cubes, each with a
+ *     strength. `specular` requires `diffuse`.
  *   - `directional_lights`: up to four analytical lights that replace the
- *     game's own; without the field the game keeps its lights;
+ *     game's lights. Without this field, the game keeps its own lights.
  *   - `ambient_fill`: radiance added from every direction (default 0).
- * A model's probes are not packages: they are cooked into its GLB
- * (aeron/scene/probe_set.h). Texture paths are kept as written; the game
- * decides which VFS root and prefix they resolve against.
+ * Model probes are not part of packages. They are cooked into the model's
+ * GLB (see aeron/scene/probe_set.h). Texture paths are stored as written.
+ * The game decides which VFS root and prefix they are resolved against.
  *
  * Cube-local directions use the authored cubemap frame: +X right, +Y up,
  * -Z forward. `rotation_degrees` is (yaw, pitch, roll) in that frame,
@@ -56,7 +56,7 @@ enum {
 typedef enum AeronEnvironmentSunVisual {
 	AERON_ENV_SUN_DISC,
 	AERON_ENV_SUN_SPRITE,
-	AERON_ENV_SUN_NONE, /* no `visual`: a light of a package without a sky */
+	AERON_ENV_SUN_NONE, /* no `visual`; only allowed in a package without a sky */
 } AeronEnvironmentSunVisual;
 
 typedef struct AeronEnvironmentLightDefinition {
@@ -90,9 +90,9 @@ typedef struct AeronEnvironmentDefinition {
 	AeronEnvironmentLightDefinition lights[AERON_ENV_MAX_LIGHTS];
 	uint32_t                        light_count;
 	int32_t                         primary_light_index; /* -1 when none */
-	/* The package gives `directional_lights` (always with a sky): its
-	 * lights, possibly none, replace the game's. Without the field the game
-	 * keeps its lights. */
+	/* True when the package has `directional_lights`, which is always the
+	 * case with a sky. Its lights replace the game's lights, even when the
+	 * list is empty. Without the field, the game keeps its own lights. */
 	bool                            has_directional_lights;
 } AeronEnvironmentDefinition;
 
@@ -121,8 +121,8 @@ const AeronEnvironmentDefinition* AeronEnvironmentDefinitionSet_Find(const Aeron
 
 /* Parses a `directional_lights` sequence with the package light schema
  * (also used by tools that take a light list on its own). `owner` names
- * the list in error messages. A light's `visual` is optional here
- * (AERON_ENV_SUN_NONE without it); a package with a sky requires it. */
+ * the list in error messages. A light's `visual` is optional here and
+ * defaults to AERON_ENV_SUN_NONE. A package with a sky requires it. */
 bool AeronEnvironment_ParseLights(const AeronConfigNode* lights, const char* owner,
 								  AeronEnvironmentLightDefinition out[AERON_ENV_MAX_LIGHTS],
 								  uint32_t* out_count, int32_t* out_primary, AeronConfigError* error);
@@ -178,8 +178,8 @@ typedef struct AeronEnvironmentPackage {
 	 * debug overrides. Texture paths are those of the definition. */
 	AeronEnvironmentDefinition settings;
 	AeronTexture*              radiance; /* NULL without a sky */
-	AeronTexture*              diffuse;  /* NULL without one */
-	AeronTexture*              specular; /* NULL without one */
+	AeronTexture*              diffuse;  /* NULL without a diffuse cube */
+	AeronTexture*              specular; /* NULL without a specular cube */
 	uint32_t                   specular_mip_count;
 	AeronSampler*              sampler;          /* the library's environment sampler */
 	float                      world_to_cube[9]; /* row-major: Q^T * B */

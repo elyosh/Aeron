@@ -288,8 +288,8 @@ class IMPORT_OT_aeron_flight_model(Operator, ImportHelper):
             self.report({'ERROR'}, "Cannot read {}: {}".format(self.filepath, error))
             return {'CANCELLED'}
         if common.COOKED_EXTENSION_NAME in (document.get("extensionsRequired") or []):
-            self.report({'ERROR'}, "This .glb is cooked for the game: Blender cannot read its textures, and "
-                                   "the cooker dropped its source data. Import the model's .gltf instead")
+            self.report({'ERROR'}, "This .glb is cooked for the game. Blender cannot read its textures, and "
+                                   "the cooker removed its source data. Import the model's .gltf instead")
             return {'CANCELLED'}
         _state = {"roots": [], "components": 0, "lights": 0, "error": None, "animated": set()}
         variants_before = [variant.name for variant in _variant_list() or ()]

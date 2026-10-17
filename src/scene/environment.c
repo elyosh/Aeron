@@ -336,7 +336,8 @@ static bool parse_package(const char* name, const AeronConfigNode* map, AeronEnv
 		return env_error(error, map, "%s must be a map", what);
 	const AeronConfigNode* kind = AeronConfigNode_MapGet(map, "kind");
 	if (kind)
-		return env_error(error, kind, "%s: remove 'kind': a package's fields say what it does", what);
+		return env_error(error, kind,
+						 "%s: remove 'kind'. The other fields define what a package does", what);
 	if (!check_fields(map, what, fields, sizeof fields / sizeof fields[0], error) ||
 		!read_number(map, what, "intensity", true, 0.0, 16.0, &def->intensity, error) ||
 		(AeronConfigNode_MapGet(map, "ambient_fill") &&
@@ -347,10 +348,10 @@ static bool parse_package(const char* name, const AeronConfigNode* map, AeronEnv
 	for (int i = 0; i < 3; ++i)
 		def->rotation_degrees[i] = AeronEnvironment_NormalizeDegrees(def->rotation_degrees[i]);
 
-	/* Each cube comes with its strength: both fields or neither. Without a
-	 * diffuse cube the fill is the only ambient, and the scene binds no
-	 * reflections (AeronScene_SetPbrEnvironment). A sky's suns are its
-	 * lights: it gives them, [] for none. */
+	/* A cube and its strength must be given together. Without a diffuse
+	 * cube, the ambient fill is the only ambient light and the scene binds
+	 * no reflections (AeronScene_SetPbrEnvironment). A sky must list its
+	 * suns in `directional_lights`, with [] for none. */
 	const bool has_radiance = AeronConfigNode_MapGet(map, "radiance") != NULL;
 	const bool has_diffuse  = AeronConfigNode_MapGet(map, "diffuse") != NULL;
 	const bool has_specular = AeronConfigNode_MapGet(map, "specular") != NULL;

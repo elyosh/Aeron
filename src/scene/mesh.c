@@ -828,8 +828,9 @@ static AeronSceneMesh* mesh_create(AeronCommandBuffer* cmd, const AeronFlightMod
 		s->light_count = flight_model->light_count;
 	}
 
-	/* ---- Probes: without them (a device that cannot sample them) the
-	 * model is lit by the scene's environment. ---- */
+	/* ---- Probes ----
+	 * Without a probe set (for example when the device cannot sample it),
+	 * the scene's environment lights the model. */
 	if (flight_model->probes) {
 		s->probes = AeronProbeSet_Create(cmd, flight_model->probes, name);
 	}

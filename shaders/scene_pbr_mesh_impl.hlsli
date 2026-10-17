@@ -842,20 +842,21 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
     float3 ao_b = -4.7951f * albedo + 0.6417f;
     float3 ao_c = 2.7552f * albedo + 0.6903f;
     float3 ao_ambient = max(ao, ((ao * ao_a + ao_b) * ao + ao_c) * ao);
-    /* A probe set is sealed: inside its grid the probes hold the light (a
-     * hangar's, a bay's), so the directional lights fade out with the
-     * grid's weight. When the key light is in the probes' bake
-     * (`key_shadow_in_probes`), its shadow inside the grid means an object
-     * between that light's side (a hangar's ceiling) and the surface: it
-     * takes `key_probe_shadow` of the probe light coming from that side,
-     * whichever way the surface faces. That is all its light but what the
-     * grid holds from the opposite side (the floor), of which a surface
-     * gets the share (1 - N.L) / 2 of its view. Its reflections lose as
-     * much. A surface turning away from the light takes the shadow 1 m out
-     * along its normal (the visibility pass's B,
-     * AeronScene_SetProbeKeyShadow): what covers the space in front of it,
-     * not its own curve, which hides nothing of its view (no hard line where
-     * a hull turns away from the light). */
+    /* A probe set is treated as sealed. Inside its grid, the probes contain
+     * all the light (of a hangar or a bay), so the directional lights fade
+     * out with the grid weight. When the key light is in the probes' bake
+     * (`key_shadow_in_probes`), a key light shadow inside the grid means
+     * that an object is between the light's side (a hangar ceiling) and the
+     * surface. The shadow removes `key_probe_shadow` of the probe light that
+     * comes from that side, whichever way the surface faces. That light is
+     * the surface's whole grid light minus the light from the opposite side
+     * (the floor), of which the surface sees the share (1 - N.L) / 2.
+     * Reflections are reduced by the same amount. For a surface that faces
+     * away from the light, the shadow is read 1 m out along its normal (the
+     * visibility pass's B, see AeronScene_SetProbeKeyShadow). This measures
+     * what covers the space in front of the surface, not the surface's own
+     * curve, which does not block its view. It avoids a hard line where a
+     * hull turns away from the light. */
     float3 key_color = sun_color;
 #if AERON_PBR_PROBES
     key_color *= 1.0f - grid_weight;

@@ -5,8 +5,8 @@
 Bakes a small panorama of an enclosed space (bright above, dim below) and
 checks that the baker writes the diffuse and specular cubes, no radiance
 cube, and an entry with reflections, no fill and no lights (the game keeps
-its own). With a light list whose light has no visual, the entry gives that
-light. The baker re-reads the entry with the runtime parser, so a zero exit
+its own lights). With a light list that holds one light without a visual,
+the entry lists that light. The baker re-reads the entry with the runtime parser, so a zero exit
 also means the game accepts it.
 """
 

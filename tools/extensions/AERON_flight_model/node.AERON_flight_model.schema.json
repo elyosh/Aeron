@@ -118,7 +118,7 @@
         },
         "reflectionProbes": {
           "title": "Reflection probes",
-          "description": "Where an authoring tool bakes the model's probes from. Source files only: a cooked file has probeData instead.",
+          "description": "The probes that an authoring tool bakes for the model. Source files only: cooked files contain probeData instead.",
           "type": "array",
           "maxItems": 42,
           "items": {
@@ -140,7 +140,7 @@
         },
         "lightGrid": {
           "title": "Light grid",
-          "description": "The irradiance grid an authoring tool bakes the model's probes from. Source files only.",
+          "description": "The irradiance grid that an authoring tool uses to bake the model's probes. Source files only.",
           "type": "object",
           "required": ["position", "size", "resolution"],
           "properties": {
@@ -153,7 +153,7 @@
         },
         "reflectionPlane": {
           "title": "Reflection plane",
-          "description": "A floor facing +y (a hangar's) that reflects what stands on it. It needs the light grid. Source files only.",
+          "description": "A floor facing +y, such as a hangar floor, that reflects the objects standing on it. Requires the light grid. Source files only.",
           "type": "object",
           "required": ["position", "size"],
           "properties": {
@@ -284,7 +284,7 @@
         },
         "oneSided": { "title": "One-sided", "description": "Emits only toward local -Z, with a cosine falloff. Optional for a tube (default false); a panel is always one-sided.", "type": "boolean" },
         "radius": { "$ref": "#/$defs/positive", "title": "Radius", "description": "A point's sphere radius or a tube's thickness, in metres; default 0.1." },
-        "baked": { "title": "Baked", "description": "In the model's probes: games leave it out while those probes light the scene. Written by the authoring tool for lights inside the model's light grid.", "type": "boolean", "default": false }
+        "baked": { "title": "Baked", "description": "True when the light is baked into the model's probes. Games skip the light while those probes light the scene. The authoring tool sets it on lights inside the model's light grid.", "type": "boolean", "default": false }
       },
       "allOf": [
         {

@@ -1,14 +1,14 @@
 /*
- * aeron_gltf_cook — cooked AERON_flight_model data, in each node's
+ * aeron_gltf_cook — cooked AERON_flight_model data, stored in each node's
  * AERON_flight_model_cooked object.
  *
  * Runs on the cooked GLB. For each component it writes `simulationData` (the
  * face BVH and the 256-entry farthest-point vertex sample over the simulation
- * topology), and for the model root `renderData` (a box-only BVH over the
- * merged render triangles), and with a probes bake the model root's
- * `probeData` (its layout and its two KTX2 images). The probes' authoring
- * fields, which only the bake reads, are dropped. The data is appended to
- * the GLB's binary chunk as new buffer views; existing references are
+ * topology). For the model root it writes `renderData` (a box-only BVH over
+ * the merged render triangles) and, when given a probes bake, `probeData`
+ * (the bake layout and its two KTX2 images). The probe authoring fields are
+ * only input to the bake, so they are removed. The data is appended to the
+ * GLB's binary chunk as new buffer views, and existing references are
  * replaced. The result is reloaded and verified exactly as a game loads it.
  */
 
@@ -170,8 +170,8 @@ static bool glb_serialize(const Glb* glb, uint8_t** out, size_t* out_size) {
 
 /* ===== Flight-model hierarchy ======================================== */
 
-/* The node's AERON_flight_model_cooked object, created when missing; NULL
- * without the node or memory. */
+/* Returns the node's AERON_flight_model_cooked object and creates it if
+ * missing. Returns NULL if the node does not exist or memory runs out. */
 static cJSON* node_cooked_extension(cJSON* json, int node_index) {
 	cJSON* node = cJSON_GetArrayItem(cJSON_GetObjectItemCaseSensitive(json, "nodes"), node_index);
 	if (!cJSON_IsObject(node))
@@ -218,8 +218,8 @@ static bool uses_flight_extension(const cJSON* json) {
 	return false;
 }
 
-/* The probes' authoring fields: the bake's input, which a cooked file
- * replaces with `probeData`. */
+/* Removes the probe authoring fields. They are only input to the bake, and
+ * a cooked file uses `probeData` instead. */
 static void strip_probe_authoring(cJSON* json) {
 	cJSON* node = NULL;
 	cJSON_ArrayForEach(node, cJSON_GetObjectItemCaseSensitive(json, "nodes")) {
@@ -231,7 +231,8 @@ static void strip_probe_authoring(cJSON* json) {
 	}
 }
 
-/* The nodes' cooked data: re-cooking a cooked file writes it again. */
+/* Removes the nodes' cooked data, so that cooking a cooked file writes it
+ * again. */
 static void strip_cooked_references(cJSON* json) {
 	cJSON* nodes = cJSON_GetObjectItemCaseSensitive(json, "nodes");
 	cJSON* node  = NULL;
@@ -282,8 +283,9 @@ static bool read_file(const char* dir, const char* name, uint8_t** bytes, size_t
 	return true;
 }
 
-/* The probes bake in `dir` as the root extension's `probeData`: its layout,
- * checked against its images, and the images as buffer views. */
+/* Adds the probes bake in `dir` to the root extension as `probeData`. The
+ * layout is checked against the images, and the images are appended as
+ * buffer views. */
 static bool add_probes(Glb* glb, cJSON* extension, const char* dir, char* error, size_t error_size) {
 	static const char* const names[3] = { "bake.json", "probes.ktx2", "grid.ktx2" };
 	uint8_t*                 bytes[3] = { NULL, NULL, NULL };

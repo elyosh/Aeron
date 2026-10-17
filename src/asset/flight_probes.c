@@ -1,7 +1,8 @@
 /*
- * A flight model's baked environment probes: the layout's JSON form (the
- * model root's `probeData`, the probes bake's bake.json and its job) and the
- * checks that its two KTX2 images hold what it says.
+ * Baked environment probes of a flight model. Parses and writes the probe
+ * layout JSON, which `probeData` on the model root, the probe bake's job
+ * and its bake.json all use. Checks that the two KTX2 images match the
+ * layout.
  */
 
 #include "flight_probes.h"
@@ -34,7 +35,8 @@ static bool json_finite(const cJSON* value, double min, double max, float* out) 
 	return true;
 }
 
-/* An optional number in [min, max]; `fallback` when absent. */
+/* Reads an optional number in [min, max]. Uses `fallback` when the field is
+ * missing. */
 static bool json_optional(const cJSON* object, const char* field, double min, double max, float fallback,
 						  float* out) {
 	const cJSON* value = cJSON_GetObjectItemCaseSensitive(object, field);
@@ -169,9 +171,9 @@ static void json_printf(JsonOut* j, const char* format, ...) {
 		j->length += (size_t)written;
 }
 
-/* The shortest decimal that reads back as `value`: 0.7 for 0.7f, not
- * 0.699999988; with an exponent only when the value needs one (120, not
- * 1.2e+02). */
+/* Writes the shortest decimal that reads back as `value`, for example 0.7
+ * for 0.7f instead of 0.699999988. Uses an exponent only when the value
+ * needs one (120, not 1.2e+02). */
 static void json_float(JsonOut* j, float value) {
 	char full[32], text[32];
 	snprintf(full, sizeof full, "%.9g", (double)value);
@@ -188,7 +190,7 @@ static void json_float(JsonOut* j, float value) {
 	json_printf(j, "%s", text);
 }
 
-/* Floats from `values`, comma-separated in brackets. */
+/* Writes `values` as a JSON array. */
 static void json_floats_out(JsonOut* j, const float* values, int count) {
 	json_printf(j, "[");
 	for (int i = 0; i < count; ++i) {
@@ -198,7 +200,7 @@ static void json_floats_out(JsonOut* j, const float* values, int count) {
 	json_printf(j, "]");
 }
 
-/* `"name": value` and a separator. */
+/* Writes `"name": value` followed by `after`. */
 static void json_field(JsonOut* j, const char* name, float value, const char* after) {
 	json_printf(j, "\"%s\": ", name);
 	json_float(j, value);
@@ -285,8 +287,9 @@ static bool ktx2_header(const uint8_t* bytes, size_t size, Ktx2Header* out) {
 	return true;
 }
 
-/* The cube array holds the layout's probes, square HDR faces; the grid one
- * RGBA16F level of 6 rx by ry rz texels. */
+/* Checks that the cube array has one cube per probe with square BC6H or
+ * RGBA16F faces, and that the grid is one RGBA16F level of 6 rx by ry rz
+ * texels. */
 static bool check_images(const AeronFlightProbeLayout* l, const uint8_t* cubes, size_t cubes_size,
 						 const uint8_t* grid, size_t grid_size, char* error, size_t error_size) {
 	Ktx2Header c, g;
@@ -346,7 +349,8 @@ void Aeron_FlightProbesFree(AeronFlightProbes* probes) {
 
 /* ---- probeData --------------------------------------------------------------- */
 
-/* A buffer view's bytes, or NULL when it is out of its buffer. */
+/* Returns a buffer view's bytes, or NULL when the index is invalid, the view
+ * is empty or it does not fit in its buffer. */
 static const uint8_t* view_bytes(const cgltf_data* data, const cJSON* index, size_t* size) {
 	if (!cJSON_IsNumber(index) || index->valuedouble < 0 || trunc(index->valuedouble) != index->valuedouble ||
 		index->valuedouble >= (double)data->buffer_views_count)

@@ -33,8 +33,9 @@ typedef struct CaptureInstance {
 	int   model, role;
 	int   markings;                 /* XWAU markings value (variant index), -1 when not given */
 	float position[3], rotation[3]; /* metres, camera axes; yaw/pitch/roll degrees */
-	/* A probes bake folder (bake.json, probes.ktx2, grid.ktx2) whose probes
-	 * it owns in place of its model's; empty for its model's own. */
+	/* A probes bake folder (bake.json, probes.ktx2, grid.ktx2). The instance
+	 * owns these probes instead of its model's. Empty to use the model's own
+	 * probes. */
 	char probes[1024];
 } CaptureInstance;
 
@@ -136,9 +137,10 @@ struct AeronProbeSet;
 typedef struct Fixture {
 	AeronScene3D *     scene, *reference_scene;
 	AeronVfs*          vfs;
-	/* game_scene.environment: the manifest's packages, prepared, and the
-	 * environment's reference, -1 for none. Each instance's probes from a
-	 * bake folder, NULL for its model's own. */
+	/* game_scene.environment: the manifest's prepared packages and the
+	 * environment's reference (-1 for none). `probes` holds each instance's
+	 * probes loaded from a bake folder, or NULL when the instance uses its
+	 * model's own probes. */
 	struct AeronConfigFile*               environment_file;
 	struct AeronEnvironmentDefinitionSet* environment_definitions;
 	struct AeronEnvironmentLibrary*       environment_library;

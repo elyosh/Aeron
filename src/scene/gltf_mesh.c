@@ -108,11 +108,12 @@ static const cgltf_accessor* prim_attr(const cgltf_primitive* p, cgltf_attribute
 	return NULL;
 }
 
-/* ===== The extensions' objects =====================================
+/* ===== Extension objects ===========================================
  *
- * An object's extension `name` (tools/extensions/AERON_flight_model, or
- * AERON_flight_model_cooked on cooked textures), parsed (owned), or NULL
- * without one. */
+ * Returns the parsed extension `name` of an object (owned by the caller),
+ * or NULL when the object does not have it. See
+ * tools/extensions/AERON_flight_model, and AERON_flight_model_cooked for
+ * cooked textures. */
 static cJSON* extension_object(const cgltf_extension* extensions, cgltf_size count, const char* name) {
 	for (cgltf_size e = 0; e < count; e++)
 		if (extensions[e].name && extensions[e].data && strcmp(extensions[e].name, name) == 0)
@@ -221,9 +222,9 @@ static const cgltf_texture_view* material_channel_view(const cgltf_material* m, 
 
 /* ===== Atlas images ==================================================
  *
- * A cooked texture names its image, a KTX2 array of one channel's atlas
- * pages, and its page through its AERON_flight_model_cooked object; an image's
- * channel is the material slot referencing it. A channel's core image is
+ * A cooked texture's AERON_flight_model_cooked object names its image (a
+ * KTX2 array of one channel's atlas pages) and its page in that image. An
+ * image's channel is the material slot that references it. A channel's core image is
  * the one the primitives' own materials reference or, in a channel no own
  * material uses, its only image. The channel's other images are variant
  * groups (AeronGltfVariantGroup), of the variants whose materials reference
@@ -234,8 +235,8 @@ typedef struct AtlasTexture {
 	uint32_t max_lod;
 } AtlasTexture;
 
-/* Texture `texture`'s image, page and mip limit; false without a valid
- * AERON_flight_model_cooked object. */
+/* Reads the image, page and mip limit of `texture`. Returns false when it
+ * has no valid AERON_flight_model_cooked object. */
 static bool read_atlas_texture(const cgltf_data* data, const cgltf_texture* texture, AtlasTexture* out) {
 	cJSON*       object  = texture ? extension_object(texture->extensions, texture->extensions_count,
 													  AERON_FLIGHT_MODEL_COOKED_EXTENSION)

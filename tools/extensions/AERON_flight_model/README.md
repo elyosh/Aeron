@@ -1,14 +1,14 @@
 # AERON_flight_model
 
-`AERON_flight_model` describes an Aeron flight asset as it is authored:
-the simulation-facing hierarchy of its nodes and what its materials
-animate or show live. It extends nodes and materials, and it is listed in
-`extensionsUsed` only, so that any glTF viewer shows the model as a
-standard glTF. What the cooker adds for the game is in
+`AERON_flight_model` describes an Aeron flight asset as the artist authors
+it: the node hierarchy that the simulation uses, and what the materials
+animate or display live. It extends nodes and materials. Files list it in
+`extensionsUsed` only, so any glTF viewer can show the model as standard
+glTF. The data that the cooker adds for the game is described in
 [AERON_flight_model_cooked](../AERON_flight_model_cooked/README.md) (see
 [Cooked files](#cooked-files)).
 
-Each object has its schema, with a description of every field:
+Each object has a schema that describes every field:
 [node](node.AERON_flight_model.schema.json) and
 [material](material.AERON_flight_model.schema.json).
 
@@ -64,7 +64,7 @@ collision child's mesh when present, otherwise the render mesh.
 
 A component whose simulation triangles are all degenerate has no collision
 faces: nothing collides with it, and its positions still give its bounds.
-Such a component carries no cooked `simulationData`.
+Such a component has no cooked `simulationData`.
 
 ## Component tags
 
@@ -127,14 +127,14 @@ markings value in use shows one of them.
 
 ## Probes
 
-A model's root may carry the reflection probes and the light grid from
-which an authoring tool bakes the model's probes: the light and
-reflections of a hangar or of a capital ship's bays, which the game uses
-for the model and the objects inside them. The cooker puts the bake in a
-cooked file as `probeData`
-([AERON_flight_model_cooked](../AERON_flight_model_cooked/README.md)),
-which the game reads; a cooked file has no `reflectionProbes`, `lightGrid`
-or `reflectionPlane`.
+The model root may carry reflection probes and a light grid. An authoring
+tool uses them to bake the model's probes, which hold the light and
+reflections of a hangar or of a capital ship's bays. The game uses the
+probes to light the model and the objects inside it. The cooker stores the
+bake in the cooked file as `probeData`
+([AERON_flight_model_cooked](../AERON_flight_model_cooked/README.md)), and
+the game reads that. Cooked files do not contain `reflectionProbes`,
+`lightGrid` or `reflectionPlane`.
 
 ```json
 "reflectionProbes": [
@@ -168,8 +168,8 @@ In the model's frame, in metres, axis-aligned with it:
   surface takes its reflection, 0 to 10). The game reflects in it what
   stands on it. It needs the light grid.
 
-Lights inside the grid's box are baked into the probes and carry `baked`
-(see [Lights](#lights)).
+Lights inside the grid's box are baked into the probes and have `baked`
+set (see [Lights](#lights)).
 
 ## Skins
 
@@ -247,10 +247,10 @@ gives the shape:
   glTF spot light points, with a Lambertian (cosine) falloff;
 - `radius`: optional for a point or a tube, its sphere radius or thickness
   in metres (default 0.1);
-- `baked`: optional, default false. The light is in the model's probes,
-  which the authoring tool bakes for the lights inside the model's light
-  grid; games leave it out while those probes light the scene, so it is not
-  counted twice.
+- `baked`: optional, default false. True when the light is baked into the
+  model's probes. The authoring tool sets it on the lights inside the
+  model's light grid. Games skip the light while those probes light the
+  scene, so it is not counted twice.
 
 Fields that do not apply to the shape are invalid. Lengths take the node's
 scale and its parents'. The intensity is the light straight ahead for a
@@ -346,10 +346,11 @@ The flags are booleans, false when absent. A rectangle has:
 
 ## Cooked files
 
-`aeron_gltf_cook` turns a source file into a cooked file for the game: it
-consumes the source-only fields (`skins`, `skinVariants`,
-`reflectionProbes`, `lightGrid`, `reflectionPlane`) and adds what it
-computes, the textures' atlas pages, simulation, render and probe data, in
+`aeron_gltf_cook` turns a source file into a cooked file for the game. The
+source-only fields (`skins`, `skinVariants`, `reflectionProbes`,
+`lightGrid`, `reflectionPlane`) are not copied to the cooked file. The
+cooker adds the data it computes: texture atlas pages, simulation data,
+render data and probe data. That data is described in
 [AERON_flight_model_cooked](../AERON_flight_model_cooked/README.md).
 
 Unknown fields are ignored. Unknown roles are invalid. Nothing is read from

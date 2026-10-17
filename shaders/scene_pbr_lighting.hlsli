@@ -35,12 +35,14 @@ struct PbrMaterialParams
  * Pushed once per pass by the host. */
 cbuffer PbrLightFS : register(AERON_PBR_LIGHT_UNIFORM_REGISTER, space3)
 {
-    /* Inside a probe grid no directional light lights (the set is
-     * sealed). Nonzero: the key light is in the probe sets' bake (a
-     * hangar's ceiling light), and its shadow there removes
-     * `key_probe_shadow` (0-1) of the probe light: the light from its side
-     * whichever way the surface faces, or with `key_shadow_facing` nonzero
-     * only as the surface faces it (N.L), for comparison. */
+    /* Directional lights do not light anything inside a probe grid,
+     * because a probe set is treated as sealed. Nonzero when the key light
+     * is in the probe sets' bake (for example a hangar ceiling light). Its
+     * shadow inside the grid then removes `key_probe_shadow` (0-1) of the
+     * probe light that comes from the light's side, whichever way the
+     * surface faces. When `key_shadow_facing` is nonzero, the shadow
+     * instead applies only as much as the surface faces the light (N.L),
+     * for comparison. */
     float key_shadow_in_probes;
     float key_probe_shadow;
     float debug_isolate_term;

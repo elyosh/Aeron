@@ -1,26 +1,26 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "AERON_flight_model_cooked texture extension",
-  "description": "Written by aeron_gltf_cook, in cooked files only: the atlas page a texture uses. A cooked texture has no source of its own; KHR_texture_transform on the material's texture info places the texture within its page. Unknown fields are ignored.",
+  "description": "The atlas page that a texture uses, written by aeron_gltf_cook. Only cooked files contain it. A cooked texture has no source of its own. KHR_texture_transform on the material's texture info places the texture within its page. Unknown fields are ignored.",
   "type": "object",
   "required": ["source", "layer"],
   "properties": {
     "source": {
       "title": "Image",
-      "description": "The image: a KTX2 array of atlas pages, in a buffer view, of the channel of the material slots that reference it.",
+      "description": "The image index. The image is a KTX2 array of atlas pages stored in a buffer view. Its channel is set by the material slots that reference it.",
       "type": "integer",
       "minimum": 0
     },
     "layer": {
       "title": "Page",
-      "description": "The page of the image the texture uses.",
+      "description": "The page of the image that the texture uses.",
       "type": "integer",
       "minimum": 0,
       "maximum": 4095
     },
     "maxLod": {
       "title": "Mip limit",
-      "description": "The mip levels the texture may sample: a texture packed on a shared page stops there, before its neighbours bleed into it. Without it, no limit.",
+      "description": "The deepest mip level that the texture may sample. A texture packed on a shared page stops at this level, so its neighbours do not bleed into it. Without it, there is no limit.",
       "type": "integer",
       "minimum": 0,
       "maximum": 14

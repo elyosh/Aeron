@@ -387,8 +387,8 @@ struct AeronEnvironmentLight;
  *   - sprite: the light's sprite, angular_size_degrees wide, times
  *     sprite_strength, as an additive SKY billboard. A sun follows its own
  *     light only, not the environment's intensity.
- * A light without a visual draws nothing. The sprite texture is borrowed
- * through Render. */
+ * A light without a visual draws nothing. The sprite texture must stay
+ * valid until Render. */
 void AeronScene_AddSkySun(AeronScene3D* scene, const struct AeronEnvironmentLight* light);
 
 void AeronScene_SetPassHook(AeronScene3D* scene, AeronScenePassSlot slot, AeronScenePassHookFn fn,
@@ -497,14 +497,15 @@ void AeronScene_SetPbrEnvironment(AeronScene3D* scene, const AeronScenePbrEnviro
  * world-to-cube matrix. NULL clears the selection. */
 void AeronScene_SetPbrEnvironmentPackage(AeronScene3D* scene, const struct AeronEnvironmentPackage* package);
 
-/* Places a model's probe set (AeronSceneMesh.probes) for this frame:
- * `model_to_world` is its owner's row-major 3x4 matrix from model metres to
- * scene units (the owner instance's transform). Instances using the set are
- * lit by its probes and grid, blended with the environment where those do
- * not apply; no directional light lights inside its grid (a set is sealed);
- * screens never use probes. Returns the set's index, or -1 when
- * AERON_SCENE_MAX_PROBE_SETS are placed. Begin clears the sets; the set is
- * borrowed through Render. */
+/* Places a model's probe set (AeronSceneMesh.probes) for this frame.
+ * `model_to_world` is the transform of the instance that owns the set, a
+ * row-major 3x4 matrix from model metres to scene units. Instances that use
+ * the set are lit by its probes and grid, blended with the environment
+ * where those do not apply. Directional lights do not light anything inside
+ * the grid, because a set is treated as sealed. Screens never use probes.
+ * Returns the set's index, or -1 when AERON_SCENE_MAX_PROBE_SETS sets are
+ * already placed. Begin clears the sets. The set must stay valid until
+ * Render. */
 int AeronScene_AddProbeSet(AeronScene3D* scene, const struct AeronProbeSet* probes,
 						   const float model_to_world[12]);
 

@@ -2,11 +2,12 @@
 
     python3 probe_packages.py --baker ENVIRONMENT_BAKE --out DIR
 
-Writes a probes bake folder (bake.json, probes.ktx2, grid.ktx2) per test set
-under DIR/probes/, which an instance's `probes` names, and DIR/probe_tests.yaml
-with the environment package. Each probe reflects one flat colour, so the
-captures show which probe applies where; every grid point sees light from the
-model's +X side, so the grid's lighting direction shows too. Sets:
+Writes one probes bake folder (bake.json, probes.ktx2, grid.ktx2) per test
+set under DIR/probes/. An instance's `probes` field names one of these
+folders. Also writes DIR/probe_tests.yaml with the environment package. Each
+probe reflects one flat colour, so the captures show which probe applies
+where. Every grid point sees light from the model's +X side, so the grid's
+lighting direction shows too. Sets:
 
 - hangar4, hangar16, hangar42: 2x2, 4x4 and 7x6 probes
   tiling the calamaricruisernewhangar interior (one ellipsoid in the first),
@@ -81,7 +82,7 @@ def bake_probes(baker, out, name, boxes, grid_lo, grid_hi, resolution, jobs_dir,
         shape = "ellipsoid" if k in ellipsoid else "box"
         probe = {"center": list(centre), "size": list(size), "shape": shape, "falloff": 0.2,
                  "parallaxSize": list(size), "parallaxShape": shape}
-        if room:  # the room's box as the parallax volume, as Fill with Probes does
+        if room:  # use the room's box as the parallax volume, like Fill with Probes does
             probe.update(parallaxCenter=room[0], parallaxSize=room[1], parallaxShape="box")
         probes.append(probe)
     centre, size = box(grid_lo, grid_hi)
