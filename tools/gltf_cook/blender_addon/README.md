@@ -14,33 +14,14 @@ Each game release comes with a package for each platform
 Preferences > Get Extensions > Install from Disk. Use the add-on that
 matches the game version you play, because the `.glb` files it builds must
 match the game. The package includes its own `aeron_gltf_cook`, which builds
-`.glb` files and reads and writes effect library files, and `opt2gltf`,
-which converts OPT models.
+`.glb` files and effect libraries, and `opt2gltf`, which converts OPT
+models. Bake Probes also needs `environment_bake`. Some packages include
+it; otherwise, set its path in the add-on preferences.
 
-To build a package, run `aeron/tools/gltf_cook/package_addon.py --help`.
-Build the tools with `AERON_GLTF_COOK_STANDALONE` first, so that they do not
-depend on libraries of the build machine.
-
-For development, link this folder as
-`<extensions>/user_default/aeron_flight_model`. In the add-on preferences,
-set the paths of `aeron_gltf_cook` and `opt2gltf` (built with the Aeron
-tools), unless they are on the `PATH`. Paths set in the preferences are
-used instead of the packaged tools. Bake Probes also needs
-`environment_bake`, which a package includes when it is built with
-`--environment-bake`.
-
-If you also set **Game Folder** in the preferences to the game's
-`remaster` folder, Export for Game checks every animation frame against its
-library in `remaster/effects`. Before that, it rebuilds in that folder the
-project libraries that the model uses and that have changed.
-
-Tests (run each one with `--help` for its options):
-- `tests/roundtrip.py`: models import and save without changes.
-- `tests/animation_editor.py`: the animation editor and the library
-  operators.
-- `tests/flipbook_preview.py`: the flipbook preview.
-- `tests/opt_import.py`: the OPT import.
-- `tests/probes.py`: probes authoring, their glTF round trip and the bake.
+Set **Game Folder** in the preferences to the game's `remaster` folder.
+Export for Game then rebuilds the changed effect libraries that the model
+uses into `remaster/effects`, and checks every animation frame against
+them.
 
 ## Workflow
 
@@ -150,6 +131,12 @@ They become the components of a new model root, or of the active one.
   glows. Hardpoints are numbered per component, and engine glows across the
   whole model.
 - Objects without a role are not exported, and a warning lists them.
+
+Components and collision meshes need a positive uniform scale, and nothing
+may be mirrored or animated. Vectors (target, hinge pivot and axes,
+custom bounds) are in the local space of the component. The buttons next to
+them set them from the 3D cursor. Without custom bounds, the game computes
+the bounds from the collision mesh (or else the render mesh).
 
 ## Overlays
 
@@ -293,9 +280,8 @@ before the timeline loops back. The preview shows only flipbooks, not hull
 damage or energy effects. It needs the model to be in a project, because it
 loads the project's libraries. A material is shown if it is a Principled
 BSDF whose base color is a texture or a value. For other materials, the
-panel says why they are not shown. The preview adds a node group and image
-nodes to the materials. It removes them when it stops, during the exports
-and while the file is saved, so they never reach your files.
+panel says why they are not shown. The preview never changes the exported
+model or the saved `.blend`.
 
 **Effect libraries.** For a model in a project (`<project>/models/<key>/`),
 **Load Libraries** in the Effect Libraries sub-panel loads the project's
@@ -329,12 +315,6 @@ keeps XWAU's look in both its base color and transmission textures, so
 retouch them together. EEVEE shows what is behind glass when Raytracing is
 on (Render properties). The import turns on raytraced transmission in the
 materials.
-
-Components and collision meshes need a positive uniform scale, and nothing
-may be mirrored or animated. Vectors (target, hinge pivot and axes,
-custom bounds) are in the local space of the component. The buttons next to
-them set them from the 3D cursor. Without custom bounds, the game computes
-the bounds from the collision mesh (or else the render mesh).
 
 ## Variants and skins
 
@@ -385,19 +365,19 @@ and so on. Converted XWAU skins become skins and variants.
 Renaming a variant updates the markings rows and bases of the model that
 use the name. Missions that use the old name break.
 
-The exports write replaced materials as glTF material variants, and layers
-and bases as skin variants with the same name. Export for Game composites
-the skins into the .glb. Save to Project keeps the skin images under
-`textures/skins/<skin>/`. Check Model reports variants that change nothing,
-bases that replace nothing, layers whose skin no material has, skins that
-no variant uses, and skin images of the wrong size.
+Export for Game paints the skins into the textures of the `.glb`. Save to
+Project keeps the skin images in `textures/skins/<skin>/`. Check Model
+reports variants that change nothing, bases that replace nothing, layers
+whose skin no material has, skins that no variant uses, and skin images of
+the wrong size.
 
 ## Lights
 
 Every point or area light under a component is a model light, unless its
 **Exclude from Model** box is checked. The game draws lights without
-shadows. The **Game-Like Lights** toggle turns off the shadows of model
-lights, and their Soft Falloff (see below), which stays off afterwards.
+shadows. To preview that, turn on **Game-Like Lights**: it turns off the
+shadows of model lights. It also turns off their Soft Falloff (see below),
+which stays off when you turn the toggle off again.
 
 | Blender light | Game light |
 |-|-|
@@ -421,102 +401,144 @@ Intensity is exported in candela, converted the same way as Blender's glTF
 exporter (683 lm/W). A point light or an all-around tube gives its power x
 683 / 4pi. A panel or one-sided tube gives its power x 683 / pi, straight
 ahead. Exposure, temperature and, with Normalize off, the area are taken
-into account. The game converts candela into its own lighting with
-`point_lights.model_light_intensity`. With the current value, a Blender sun
-of strength 2.5 matches the game's white sun, so preview with such a sun to
-keep the game's balance. The **Custom Distance** of a light is its range,
-and the light fades out just before it. Without one, the game ends the
-light where it becomes negligible.
+into account. The game converts candela into its own lighting units: a
+Blender sun of strength 2.5 matches the game's white sun. Preview with such
+a sun to keep the game's balance. The **Custom Distance** of a light is
+its range, and the light fades out just before it. Without one, the game
+ends the light where it becomes negligible.
 
 Each frame, the game ranks all its lights and keeps the 256 that matter
 most near the camera. A light on a hidden (destroyed) component is dark.
 
 ## Probes
 
-Probes give a model's inside its own light and reflections in the game: a
-hangar, or a capital ship's bays and the areas ships fly into. The game
-uses them for the model and for every object that reaches them, and
-blends them with the scene's environment where they do not apply. They
-are Blender light probes under the model root:
+Probes give the inside of a model its own light and reflections in the
+game: a hangar, or a capital ship's bays and the areas ships fly into. The
+game lights the model and every object inside the probes with them.
+Outside the probes, the scene's environment lights these objects. Probes
+are Blender light probes directly under the model root, and the Aeron tab
+adds them.
 
-- **The light grid** (one Volume light probe): a box around the zone you
-  care about, such as a hangar's interior or a bay. Its points hold the
-  light that reaches each place, which lights the model and the ships
-  inside; the box is what it lights fully, and its light fades out within
-  one point spacing outside it. **Add Light Grid** (Aeron tab) puts a
-  60 x 60 x 20 m box on the floor of a hangar (its InsideHangar hardpoint,
-  type 25), else a 50 m box at the 3D cursor: size it to the zone. Its
-  **Spacing** (default 4 m) sets how far apart its points are, within 8192
-  points.
-- **Reflection probes** (Sphere light probes, up to 42): each reflects the
-  area around it. **Fill with Probes** in the grid's panel fills its box
-  with probes about 25 m wide, at most 16, each with **Room Parallax**:
-  their reflections are projected on the grid's box, so that all of them
-  show the room's walls in place. Running it again replaces the probes it
-  made (those with **Filled** checked; uncheck it to keep one). **Add
-  Reflection Probe** adds a 10 m box, the model's first one 3 m above its
-  InsideHangar hardpoint, else at the 3D cursor, for a spot that needs its
-  own probe, such as a shiny feature. A probe's influence (box or
-  ellipsoid, with its Falloff) is where it applies; without Room
-  Parallax, its custom parallax is the volume its reflections are
-  projected on. Where probes overlap, the smallest wins; the game uses at
-  most 4 in one place.
-- **The reflection plane** (one Plane light probe, optional): a hangar's
-  floor. In the game it reflects the ships standing on it, which the
-  probes cannot show. **Add Reflection Plane** (Aeron tab) puts it on the
-  floor at the InsideHangar hardpoint (the floor can be a little above or
-  below the hardpoint), over the light grid's floor plan, with a 0.1 m
-  Distance. Check that it lies on the floor and covers it: its outline is
-  the area that reflects (its scale sets the size). Its **Distance**
-  (Blender's Influence Distance) is how far from it a surface counts as
-  the floor; raise it for a floor that is not flat. The floor shows the
-  reflection only as much as its material reflects: a fully rough floor
-  shows almost nothing. The plane is not part of the bake: Export for Game
-  writes it to the model as it is in Blender, so moving it only needs a
-  new export. The game uses it only with the model's probes.
+### The light grid
 
-Probes and the plane cannot be rotated relative to the model root: only
-their position and size count. The panel of a probe shows Blender's probe settings, which
-Blender itself shows only under EEVEE, and an estimate of the bake time.
-A probe's Clip End is how far its render sees: anything farther is black in
-its reflections. Add Reflection Probe and Fill with Probes set it to reach
-the whole model, and validation warns when it doesn't reach the far side of
-the probe's parallax volume.
+One Volume light probe. Its box covers the zone you care about, such as a
+hangar's interior or a bay. Its points record the light at each place, and
+the game lights the model and the ships inside from them. The box is lit
+fully, and its light fades out within one point spacing outside it.
 
-**Bake Probes** renders a panorama from each reflection probe (Samples
-per pixel, denoised) and from each grid point (256 x 128 pixels at 16
-samples) with Cycles, on the GPU when Cycles has one, and environment_bake
-bakes them. It shows its progress; Esc cancels. Grid points inside geometry (most of
-their rays hit back faces) are left out and take their neighbours' light.
-The bake renders what the scene renders: the World is black, so nothing
-comes from outside the model. To leave an object out of the probes or the
-grid only, use its Light Probes visibility (Object Properties >
-Visibility): Sphere for the reflection probes, Volume for the grid. Turn
-off the render visibility of anything to leave out of both.
+**Add Light Grid** puts a 60 x 60 x 20 m box on the floor of a hangar, at
+its InsideHangar hardpoint (type 25). Without that hardpoint, it puts a
+50 m box at the 3D cursor. Resize the box to fit the zone. **Spacing**
+(default 4 m) sets the distance between points. A grid has at most 8192
+points.
 
-Bake times, on an Apple M4 Pro: about 3.5 s per reflection probe, and
-0.05 s per grid point on the GPU (0.13 s on the CPU).
+**Key Light Shadow** (0 to 1, default 0.7) is used in hangars. The game's
+hangar ceiling light casts the ships' shadows on the floor, and the probes
+already hold that light. Inside the grid, the shadow removes this share of
+the probes' light. Raise it for darker shadows under the ships.
 
-The model's lights inside the grid's box are baked into it: they are
-exported with `baked`, and the game leaves them out while it uses the
-probes, so their light is not counted twice. Lights outside it, such as
-running lights, stay live.
+### Reflection probes
 
-The bake writes these files to the `bake/probes` folder of the model's
-project: `probes.ktx2`, `grid.ktx2`, `bake.json` (the probe layout used for
-the bake), `authoring.json` and one `panorama_<n>.hdr` per reflection probe.
-Export for Game adds the first three to the model's .glb, so the game needs
-no other file. Export for Game shows a warning, but still exports, when:
+Sphere light probes, up to 42. Each one reflects the area around it.
+
+- **Fill with Probes** (in the light grid's panel) fills the grid's box
+  with probes about 25 m wide, at most 16. They have **Room Parallax** on:
+  their reflections are projected on the grid's box, so all of them show
+  the room's walls in the same place. Running it again replaces the probes
+  it made, the ones with **Filled** checked. Uncheck Filled to keep a
+  probe.
+- **Add Reflection Probe** adds one 10 m box probe, for a spot that needs
+  its own probe, such as a shiny feature. The model's first probe goes 3 m
+  above the InsideHangar hardpoint, and the others go at the 3D cursor.
+  Without that hardpoint, every probe goes at the 3D cursor.
+
+A probe applies within its influence, a box or an ellipsoid, with its
+Falloff. Without Room Parallax, its reflections are projected on its
+custom parallax volume. Where probes overlap, the smallest one wins. The
+game uses at most 4 probes at any point.
+
+A probe's **Clip End** is how far its render sees. Anything farther is
+black in its reflections. Add Reflection Probe and Fill with Probes set
+Clip End to reach the whole model, and Check Model warns when it doesn't
+reach the far side of the probe's parallax volume.
+
+### The reflection plane
+
+One Plane light probe, optional: a hangar's floor. In the game, it reflects
+the ships standing on it, which the probes cannot show.
+
+**Add Reflection Plane** puts it on the floor at the InsideHangar
+hardpoint (the floor can be a little above or below the hardpoint), over
+the light grid's floor plan, with a 0.1 m Distance. Check that it lies on
+the floor and covers it: its outline is the area that reflects, and its
+scale sets its size. **Distance** is how far from the plane a surface
+counts as the floor. Raise it for a floor that isn't flat.
+
+The floor shows the reflection only as much as its material reflects: a
+fully rough floor shows almost nothing. The plane isn't part of the bake,
+so moving it only needs a new Export for Game. The game uses it only with
+the model's probes.
+
+Probes and the plane can't be rotated relative to the model root: only
+their position and size count. The panel of a probe shows Blender's probe
+settings (Blender itself shows them only under EEVEE) and an estimate of
+the bake time.
+
+### Baking
+
+**Bake Probes** renders a panorama with Cycles from each reflection probe
+and from each grid point, and `environment_bake` turns them into the
+probes' images. It uses the GPU when Cycles has one. It shows its
+progress, and Esc cancels it. Before baking:
+
+- save the model to its project with Save to Project, because the bake is
+  written to the project;
+- set the working color space to Linear Rec.709 (Render properties >
+  Color Management > Working Space);
+- make sure Blender can find `environment_bake` (see Install).
+
+**Samples**, in a reflection probe's panel, sets the Cycles samples per
+pixel of the probes' panoramas (default 128, denoised). More samples give
+cleaner reflections and a longer bake. Grid points always use 256 x 128
+pixels at 16 samples. On an Apple M4 Pro, a reflection probe takes about
+3.5 s, and a grid point 0.05 s on the GPU (0.13 s on the CPU).
+
+The bake renders what the scene renders, with a black World, so no light
+comes from outside the model. To leave an object out of the reflection
+probes or out of the grid only, use its Light Probes visibility (Object
+properties > Visibility): Sphere for the reflection probes, Volume for the
+grid. To leave it out of both, turn off its render visibility. Grid points
+inside geometry (most of their rays hit back faces) are left out and take
+their neighbours' light.
+
+The model's lights inside the grid's box are baked into the probes. The
+game leaves them out while it uses the probes, so their light isn't
+counted twice. Lights outside the box, such as running lights, stay live.
+
+The bake writes its files to the `bake/probes` folder of the model's
+project. Export for Game adds the bake to the model's `.glb`, so the game
+needs no other file. It shows a warning, but still exports, when:
+
 - the model has probes but no bake;
-- the probes were moved, resized, added or removed since the bake
-  (`authoring.json` records what was baked);
-- the bake is older than the .blend.
+- probes were moved, resized, added or removed since the bake;
+- the bake is older than the `.blend`.
 
-The panoramas are the renders that the reflections are made from. The game
-doesn't use them. Each frame, the game uses the probes of the 8 models
-nearest to the camera that have them.
+### Checking the result
 
-Limits:
+To review a reflection probe in Blender, click **Preview Lighting** in its
+panel. It shows the probe's panorama as the World, turned as in the game,
+so a ship placed in the scene shows that probe's light and reflections in
+Material Preview or Rendered view. Click it again to put the previous
+World back.
+
+In the game, the Environment debug tool lists the probe sets of the frame,
+with their probes, grid and memory. Its **Show probes** checkbox draws
+each probe's influence, the grid's box and the grid points near the
+camera, to check that they sit where they do in Blender. After a new bake,
+export the model again and restart the mission to see it.
+
+### Limits
+
 - The World is black during the bake, so light from the sky through open
   hangar or bay doors is missing. Add lights near the doors if that area
   needs more light.
@@ -527,14 +549,26 @@ Limits:
   game places in the hangar don't show in their reflections; only the
   reflection plane shows them, on the floor. Keep ships out of the bake:
   the probes would show them in the wrong place.
+- Each frame, the game uses the probes of the 8 models nearest to the
+  camera that have them.
 
-To review a reflection probe in Blender, click **Preview Lighting** in its
-panel. It shows the probe's panorama as the World, turned as in the game,
-so a ship placed in the scene shows that probe's light and reflections in
-Material Preview or Rendered view. Click it again to put the previous
-World back. In the game, the Environment debug tool shows the frame's
-probe sets (their probes, grid and memory). Its **Show probes** checkbox
-draws each probe's influence, the grid's box and the grid points near the
-camera, to check that they sit where they do in Blender. After a new bake,
-export the model again and restart the mission to see it. Save to
-Project keeps the probes, the grid and the plane in the model's `.gltf`.
+## Development
+
+To build a package, run `aeron/tools/gltf_cook/package_addon.py --help`.
+Build the tools with `AERON_GLTF_COOK_STANDALONE` first, so that they don't
+depend on the build machine's libraries. Add `--environment-bake` to
+include `environment_bake`.
+
+To work on the add-on, link this folder as
+`<extensions>/user_default/aeron_flight_model`. In the add-on preferences,
+set the paths of `aeron_gltf_cook`, `opt2gltf` and `environment_bake`
+(built with the Aeron tools), unless they are on the `PATH`. Paths set in
+the preferences are used instead of the packaged tools.
+
+Tests (run each one with `--help` for its options):
+- `tests/roundtrip.py`: models import and save without changes.
+- `tests/animation_editor.py`: the animation editor and the library
+  operators.
+- `tests/flipbook_preview.py`: the flipbook preview.
+- `tests/opt_import.py`: the OPT import.
+- `tests/probes.py`: probes authoring, their glTF round trip and the bake.

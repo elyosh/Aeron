@@ -100,7 +100,7 @@
         "state": { "$ref": "#/$defs/state" },
         "layer": {
           "title": "Layer",
-          "description": "What the frames change: baseColor frames are painted over the base colour by their alpha; emissive frames replace the material's emissive (an optional base colour of the frame painted over). The frames are library images of the same kind.",
+          "description": "What the frames change. baseColor frames are painted over the base colour by their alpha. emissive frames replace the material's emissive, and a frame's optional base colour is painted over the base colour. The frames are library images of the same kind.",
           "enum": ["baseColor", "emissive"]
         },
         "mode": {

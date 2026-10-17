@@ -132,7 +132,7 @@
               "parallaxSize": { "$ref": "#/$defs/vec3", "description": "The volume reflections are projected on; default the influence." },
               "parallaxShape": { "enum": ["box", "ellipsoid"] },
               "roomParallax": { "type": "boolean", "description": "Projected on the light grid's box instead, which several probes of a room share." },
-              "filled": { "type": "boolean", "description": "Made by the authoring tool's fill, which replaces it." },
+              "filled": { "type": "boolean", "description": "Set on probes that the authoring tool's fill made. The next fill replaces them." },
               "clipStart": { "$ref": "#/$defs/positive" },
               "clipEnd": { "$ref": "#/$defs/positive" }
             }
@@ -148,7 +148,7 @@
             "size": { "$ref": "#/$defs/vec3", "description": "The zone the grid lights fully, its full extent in metres." },
             "spacing": { "$ref": "#/$defs/positive", "description": "About how far apart its points are, in metres." },
             "resolution": { "type": "array", "items": { "type": "integer", "minimum": 2, "maximum": 64 }, "minItems": 3, "maxItems": 3 },
-            "keyLightShadow": { "type": "number", "minimum": 0, "maximum": 1, "default": 0.7, "description": "When the scene's key light is in the bake (a hangar's ceiling light): the part of the probe light its shadow removes." }
+            "keyLightShadow": { "type": "number", "minimum": 0, "maximum": 1, "default": 0.7, "description": "When the scene's key light, such as a hangar's ceiling light, is in the bake, its shadow removes this share of the probes' light." }
           }
         },
         "reflectionPlane": {
@@ -267,7 +267,7 @@
     },
     "light": {
       "title": "Light",
-      "description": "An empty node with a KHR_lights_punctual point light, which gives its colour, intensity (candela) and range; a direct child of a component, it lights the scene while the component shows. This object gives its shape. Fields that do not apply to the shape are invalid.",
+      "description": "An empty node with a KHR_lights_punctual point light, a direct child of a component. The KHR light gives its colour, intensity (candela) and range. The light lights the scene while its component is shown. This object gives its shape. Fields that do not apply to the shape are invalid.",
       "type": "object",
       "required": ["role"],
       "properties": {

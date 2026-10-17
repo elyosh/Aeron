@@ -12,69 +12,76 @@ Each object has a schema that describes every field:
 [node](node.AERON_flight_model.schema.json) and
 [material](material.AERON_flight_model.schema.json).
 
-The default scene contains one model-role root. Its ordered direct children
-are 1 to 255 component-role mesh nodes. A component's ordered children are hardpoint-,
-engine-glow- or light-role empty nodes, plus at most one collision-role mesh node.
-Child order defines component, hardpoint and flattened engine-glow ordinals;
-collision and light nodes do not take part in any ordinal.
+The default scene has one root node with the `model` role. Its direct
+children, in order, are 1 to 255 mesh nodes with the `component` role. A
+component's children, in order, are empty nodes with the `hardpoint`,
+`engineGlow` or `light` role, plus at most one mesh node with the
+`collision` role. The order of the children gives the component numbers,
+the hardpoint numbers (per component) and the engine glow numbers (across
+the model). Collision and light nodes are not numbered.
 
-Files use standard glTF right-handed coordinates and meters. Omitted TRS
-members use the glTF defaults: zero translation, identity rotation and unit
-scale. Model and component transforms are TRS with positive uniform scale.
-Hardpoints permit translation only; explicitly serialized rotation and scale
-must be identity. Engine glows permit translation, quaternion rotation and
-scale: local +X is right, +Y is up and +Z is look; X/Y scale are positive full
-sizes and Z is signed depth. Lights permit translation, quaternion rotation
-and positive uniform scale.
+Files use standard glTF coordinates (right-handed, +Y up) and metres. An
+omitted translation, rotation or scale takes the glTF default. Node
+transforms:
+
+- model and component: translation, rotation and scale (not a matrix), with
+  a positive uniform scale;
+- hardpoint: translation only. A rotation or scale written in the file must
+  be the identity;
+- engine glow: translation, rotation and scale. Local +X is right, +Y is up
+  and +Z is the direction the glow looks. The X and Y scale are its full
+  width and height, and must be positive. The Z scale is its depth and can
+  be negative;
+- light: translation, rotation and a positive uniform scale.
 
 ## Roles
 
-- `model`: `{ "role": "model" }`; optionally carries `articulations`,
+- `model`: `{ "role": "model" }`. Optional fields: `articulations`,
   `articulationSettings`, `componentSets`, `markings`, `energy`,
-  `skinVariants`, `reflectionProbes`, `lightGrid` and `reflectionPlane`
-- `component`: requires `meshType` in `0..31`; optionally carries
-  `explosionFlags`, `targetId`, `target`, descriptor geometry, `rotation`
-  and `tags`
-- `hardpoint`: requires raw hardpoint `type` in `0..39`
+  `skinVariants`, `reflectionProbes`, `lightGrid` and `reflectionPlane`.
+- `component`: requires `meshType`, 0 to 31. Optional fields:
+  `explosionFlags`, `targetId`, `target`, the descriptor geometry,
+  `rotation` and `tags`.
+- `hardpoint`: requires `type`, the game's hardpoint type, 0 to 39.
 - `engineGlow`: requires `coreColor` and `outerColor`, RGBA as 8-bit sRGB
-  values over 255 (the game draws the glow with them, alpha included);
-  `enabled` defaults to true
-- `collision`: `{ "role": "collision" }` on a mesh node that is a direct child
-  of a component. At most one per component. It must have a triangle mesh, no
-  children, no skin, no morph targets and a TRS transform with positive
-  uniform scale. When present, its mesh is the component's simulation
-  topology (collision) instead of the component's render mesh. It is never
-  rendered, and its materials are ignored.
+  values divided by 255. The game draws the glow with them, alpha
+  included. `enabled` is optional and defaults to true.
+- `collision`: `{ "role": "collision" }` on a mesh node that is a direct
+  child of a component, at most one per component. Its mesh is made of
+  triangles. The node has no children, no skin and no morph targets, and a
+  translation, rotation and positive uniform scale. Its mesh replaces the
+  render mesh as the component's simulation topology (collision). It is
+  never rendered, and its materials are ignored.
 - `light`: on an empty node with a `KHR_lights_punctual` light, a direct
-  child of a component; see [Lights](#lights)
+  child of a component. See [Lights](#lights).
 
-Component `rotation` requires `pivot`, `rotationAxis`, `directionAxis`, and
-`upAxis`. These vectors are retained independently and are not normalized or
-orthogonalized. `target` is required when `targetId` is nonzero.
+A component's `rotation` needs `pivot`, `rotationAxis`, `directionAxis` and
+`upAxis`. The vectors are kept as written: they are not normalized or made
+orthogonal. `target` is required when `targetId` is not 0.
 
-Descriptor geometry consists of `span`, `center`, `boundsMin`, and `boundsMax`.
-The four fields must be present together. `span` is kept signed as authored,
-because stock OPT descriptors include negative span components that the games
-read as stored; under a rotated node transform its components combine through
-the absolute rotation coefficients. They preserve authored simulation
-metadata independently from bounds calculated from rendered vertices. Assets
-that omit them remain valid and use calculated geometry as a compatibility
-fallback. That fallback is computed from the simulation topology: the
-collision child's mesh when present, otherwise the render mesh.
+The descriptor geometry is `span`, `center`, `boundsMin` and `boundsMax`:
+the part's size, centre and bounds as the original model gives them. The
+four fields go together. `span` keeps its sign, because stock OPT
+descriptors have negative span values that the games read as they are.
+When the node is rotated, the span is transformed with the absolute values
+of the rotation's entries. The descriptor is kept separate from the bounds
+of the rendered vertices. Without it, the loader computes it from the
+simulation topology: the collision child's mesh when there is one,
+otherwise the render mesh.
 
-A component whose simulation triangles are all degenerate has no collision
-faces: nothing collides with it, and its positions still give its bounds.
+A component whose simulation triangles all have zero area has no collision
+faces: nothing collides with it, but its positions still give its bounds.
 Such a component has no cooked `simulationData`.
 
 ## Component tags
 
-A component may carry `tags`, an array of game-defined strings. Each tag is 1
-to 63 characters of lower-case ASCII letters, digits, `.` and `_`; malformed
-tags are invalid and duplicates within one component are ignored. A tag binds
-a component to a role that game code identifies by name instead of by
-ordinal, for example `hangarcrane.arm`. Aeron stores tags without interpreting them;
-each game documents the tags it reads and which must be unique in a model.
-Games ignore tags they do not read.
+A component may carry `tags`, an array of game-defined names. A tag is 1 to
+63 lower-case ASCII letters, digits, `.` and `_`. A malformed tag is
+invalid, and a tag repeated in one component counts once. A tag gives a
+component a role that the game finds by name instead of by number, such as
+`hangarcrane.arm`. Aeron stores tags as they are. Each game documents the
+tags it reads, and which ones must be unique in a model. Games ignore the
+tags they don't read.
 
 ## Articulations
 
@@ -151,27 +158,43 @@ without probes.
 "reflectionPlane": { "position": [0.0, 0.0, -10.0], "size": [40.0, 60.0], "distance": 0.1 }
 ```
 
-In the model's frame, in metres, axis-aligned with it:
+Positions and sizes are in the model's frame, in metres, and boxes are
+aligned with its axes.
 
-- a reflection probe: `position`, `size` (full extent; an ellipsoid's
-  axes), `shape` (`box` or `ellipsoid`), `falloff` (the outer fraction
-  over which its weight falls to 0), optional `parallaxSize` and
-  `parallaxShape` (the volume its reflections are projected on, default
-  the influence), or `roomParallax` (projected on the light grid's box,
-  which several probes of a room share), `filled` (made by the tool's
-  fill, which replaces it), `clipStart` and `clipEnd` (its render's
-  clipping);
-- the light grid: `position`, `size` (the zone it lights fully; its light
-  fades out within one point spacing outside), `spacing` (about how far
-  apart its points are), `resolution` (the points per axis that follow,
-  placed at (i + 1) / (resolution + 1) of the box) and `keyLightShadow`
-  (when the scene's key light is in the bake, such as a hangar's ceiling
-  light: the part of the probe light its shadow removes, 0 to 1, default
-  0.7);
-- the reflection plane, a hangar's floor: `position`, `size` (its full
-  extent along x and z; it faces +y) and `distance` (how far from it the
-  model's surfaces show the reflection, 0 to 10, default 0.1). The game
-  shows in it the objects inside the probes' grid.
+A reflection probe has:
+
+- `position` and `size`: the centre and full extent of its influence (an
+  ellipsoid's axes);
+- `shape`: `box` or `ellipsoid`;
+- `falloff`: the outer fraction of the influence over which its weight
+  falls to 0;
+- `parallaxSize` and `parallaxShape`: optional, the volume its reflections
+  are projected on. Default: the influence;
+- `roomParallax`: optional. Its reflections are projected on the light
+  grid's box instead, which several probes of one room can share;
+- `clipStart` and `clipEnd`: the near and far distances of its render;
+- `filled`: optional, set on probes that the authoring tool's fill made.
+  The next fill replaces them.
+
+The light grid has:
+
+- `position` and `size`: the centre and full extent of the box it lights
+  fully. Its light fades out within one point spacing outside the box;
+- `spacing`: the approximate distance between its points;
+- `resolution`: the number of points along each axis, which follows from
+  `size` and `spacing`. Point i is at (i + 1) / (resolution + 1) of the box;
+- `keyLightShadow`: optional, 0 to 1, default 0.7. When the scene's key
+  light, such as a hangar's ceiling light, is in the bake, its shadow
+  removes this share of the probes' light.
+
+The reflection plane is a hangar's floor. It faces +y and has:
+
+- `position`: its centre;
+- `size`: its full extent along x and z;
+- `distance`: optional, 0 to 10, default 0.1. Surfaces of the model within
+  this distance of the plane show the reflection.
+
+The game shows in the plane the objects inside the probes' grid.
 
 Lights inside the grid's box are baked into the probes and have `baked`
 set (see [Lights](#lights)).
@@ -215,24 +238,26 @@ The model root may carry `skinVariants`, an array of variants made of skins:
   `KHR_materials_variants` variant.
 
 On a primitive whose material has at least one of the variant's skins, the
-variant shows a composite of that material: each channel that a layer has
-is the material's own image (or, without one, its factor as a uniform
-image, the composite then using factor 1) with the layers painted over it
-in order, as `dst · (1 − a) + layer · a` on the stored values, where `a` is
-the coverage times the opacity. The composite keeps the material's alpha.
-Emissive layers whose strength differs from the composite's (the
-material's, else the first emissive layer's) are scaled in linear light
-first. Any other primitive shows the material that the
-`KHR_materials_variants` variant of the same name gives it, else the `base`
-variant's, else its own. Layers always paint the primitive's own material,
-not a variant's.
+variant shows a composite of that material. For each channel that a layer
+has, the composite starts from the material's own image. When the material
+has no image for that channel, it starts from the material's factor as a
+uniform image, and the composite uses a factor of 1. The layers are painted
+over it in order, as `dst · (1 − a) + layer · a` on the stored values, where
+`a` is the coverage times the opacity. The composite keeps the material's
+alpha. The composite's emissive strength is the material's, or else the
+first emissive layer's. An emissive layer with another strength is scaled
+in linear light before it is painted.
+
+On any other primitive, the variant shows the material that the
+`KHR_materials_variants` variant of the same name gives it, else the
+`base` variant's material, else its own. Layers always paint the
+primitive's own material, not a variant's.
 
 The cooker turns skins into `KHR_materials_variants`, with one material per
-distinct (material, layers) composite. A skin variant with the same name as
-a file variant changes that variant. The others are added after the file's
-variants. A cooked file has no `skins` or
-`skinVariants`. A viewer without this extension shows the materials
-without skins.
+distinct composite of a material and its layers. A skin variant with the
+same name as a file variant changes that variant. The others are added
+after the file's variants. A cooked file has no `skins` or `skinVariants`.
+A viewer without this extension shows the materials without skins.
 
 ## Lights
 
