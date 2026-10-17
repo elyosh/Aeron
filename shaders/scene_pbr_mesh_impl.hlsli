@@ -286,7 +286,7 @@ float3 specular_dominant_direction(float3 N, float3 R, float roughness)
  * The object's reflection probes (a cube array, probe k in layer k), its
  * irradiance grid (3D, slab f holds the light toward +x, -x, +y, -y, +z,
  * -z for f = 0 to 5) and its set buffer: header, probe records, cell words
- * (AeronEnvironmentPackage in environment.h). Probes and grid live in the
+ * (AeronProbeSet in probe_set.h). Probes and grid live in the
  * model frame (metres); a cube direction is (d.x, d.z, d.y) of a model
  * direction. */
 TextureCubeArray<float4> g_probe_cubes : register(t10, space2);

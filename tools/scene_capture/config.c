@@ -510,21 +510,21 @@ static int load_game_scene(AeronVfs* vfs, const AeronConfigFile* yaml, CaptureCo
 	}
 	const AeronConfigNode* environment = AeronConfigNode_MapGet(node, "environment");
 	if (environment) {
-		static const char* const environment_keys[] = { "folder", "manifest", "package" };
+		static const char* const environment_keys[] = { "folder", "manifest", "name" };
 		const char* manifest = AeronConfigNode_String(AeronConfigNode_MapGet(environment, "manifest"), NULL);
-		const char* package  = AeronConfigNode_String(AeronConfigNode_MapGet(environment, "package"), "");
+		const char* name     = AeronConfigNode_String(AeronConfigNode_MapGet(environment, "name"), "");
 		const char* folder   = AeronConfigNode_String(AeronConfigNode_MapGet(environment, "folder"), "");
 		if (AeronConfigNode_Type(environment) != AERON_CONFIG_MAP ||
 			!only_keys(environment, "game_scene.environment", environment_keys,
 					   sizeof environment_keys / sizeof environment_keys[0]) ||
-			!manifest || !manifest[0] || (package[0] && !AeronEnvironment_IsValidName(package))) {
+			!manifest || !manifest[0] || (name[0] && !AeronEnvironment_IsValidName(name))) {
 			fprintf(stderr, "game_scene.environment needs manifest (a file in folder), and takes folder "
-							"(default: asset_root) and package (the environment)\n");
+							"(default: asset_root) and name (the environment the scene uses)\n");
 			return 0;
 		}
 		snprintf(game->environment_folder, sizeof game->environment_folder, "%s", folder);
 		snprintf(game->environment_manifest, sizeof game->environment_manifest, "%s", manifest);
-		snprintf(game->environment_package, sizeof game->environment_package, "%s", package);
+		snprintf(game->environment_name, sizeof game->environment_name, "%s", name);
 	}
 	const AeronConfigNode* lights = AeronConfigNode_MapGet(node, "point_lights");
 	if ((lights && !load_game_lights(lights, game)) ||

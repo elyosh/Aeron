@@ -51,7 +51,7 @@ static bool key_allowed(const char* key, const char* const* allowed, size_t coun
 	return false;
 }
 
-/* `what` names the map in messages, e.g. "package 'red_nebula'". */
+/* `what` names the map in messages, e.g. "environment 'red_nebula'". */
 static bool check_fields(const AeronConfigNode* map, const char* what, const char* const* allowed,
 						 size_t count, AeronConfigError* error) {
 	for (size_t i = 0; i < AeronConfigNode_MapCount(map); ++i) {
@@ -303,17 +303,17 @@ bool AeronEnvironment_ParseLights(const AeronConfigNode* lights, const char* own
 	return true;
 }
 
-static bool parse_lights(const AeronConfigNode* package_map, AeronEnvironmentDefinition* def,
+static bool parse_lights(const AeronConfigNode* environment_map, AeronEnvironmentDefinition* def,
 						 AeronConfigError* error) {
 	char what[160];
-	snprintf(what, sizeof what, "package '%s'", def->name);
-	const AeronConfigNode* lights = require_field(package_map, what, "directional_lights", error);
+	snprintf(what, sizeof what, "environment '%s'", def->name);
+	const AeronConfigNode* lights = require_field(environment_map, what, "directional_lights", error);
 	return lights && AeronEnvironment_ParseLights(lights, what, def->lights, &def->light_count,
 												  &def->primary_light_index, error);
 }
 
-static bool parse_package(const char* name, const AeronConfigNode* map, AeronEnvironmentDefinition* def,
-						  AeronConfigError* error) {
+static bool parse_definition(const char* name, const AeronConfigNode* map, AeronEnvironmentDefinition* def,
+							 AeronConfigError* error) {
 	static const char* const fields[] = {
 		"radiance",
 		"diffuse",
@@ -327,7 +327,7 @@ static bool parse_package(const char* name, const AeronConfigNode* map, AeronEnv
 	};
 
 	char what[160];
-	snprintf(what, sizeof what, "package '%s'", name);
+	snprintf(what, sizeof what, "environment '%s'", name);
 	memset(def, 0, sizeof *def);
 	snprintf(def->name, sizeof def->name, "%s", name);
 	def->primary_light_index = -1;
@@ -336,8 +336,8 @@ static bool parse_package(const char* name, const AeronConfigNode* map, AeronEnv
 		return env_error(error, map, "%s must be a map", what);
 	const AeronConfigNode* kind = AeronConfigNode_MapGet(map, "kind");
 	if (kind)
-		return env_error(error, kind,
-						 "%s: remove 'kind'. The other fields define what a package does", what);
+		return env_error(error, kind, "%s: remove 'kind'. The other fields define what an environment does",
+						 what);
 	if (!check_fields(map, what, fields, sizeof fields / sizeof fields[0], error) ||
 		!read_number(map, what, "intensity", true, 0.0, 16.0, &def->intensity, error) ||
 		(AeronConfigNode_MapGet(map, "ambient_fill") &&
@@ -383,15 +383,15 @@ static bool parse_package(const char* name, const AeronConfigNode* map, AeronEnv
 	return true;
 }
 
-bool AeronEnvironment_ParsePackages(const AeronConfigNode* packages, AeronEnvironmentDefinitionSet** out_set,
-									AeronConfigError* error) {
+bool AeronEnvironment_ParseDefinitions(const AeronConfigNode*          environments,
+									   AeronEnvironmentDefinitionSet** out_set, AeronConfigError* error) {
 	if (!out_set)
 		return env_error(error, NULL, "no output set");
 	*out_set = NULL;
 	AeronEnvironmentDefinitionSet* set = calloc(1, sizeof *set);
 	if (!set)
-		return env_error(error, packages, "out of memory");
-	if (!AeronEnvironment_AddPackages(packages, set, error)) {
+		return env_error(error, environments, "out of memory");
+	if (!AeronEnvironment_AddDefinitions(environments, set, error)) {
 		AeronEnvironmentDefinitionSet_Destroy(set);
 		return false;
 	}
@@ -399,41 +399,42 @@ bool AeronEnvironment_ParsePackages(const AeronConfigNode* packages, AeronEnviro
 	return true;
 }
 
-bool AeronEnvironment_AddPackages(const AeronConfigNode* packages, AeronEnvironmentDefinitionSet* set,
-								  AeronConfigError* error) {
+bool AeronEnvironment_AddDefinitions(const AeronConfigNode* environments, AeronEnvironmentDefinitionSet* set,
+									 AeronConfigError* error) {
 	if (!set)
 		return env_error(error, NULL, "no set");
-	if (!packages)
-		return env_error(error, NULL, "missing 'packages' map");
-	if (AeronConfigNode_Type(packages) != AERON_CONFIG_MAP)
-		return env_error(error, packages, "'packages' must be a map");
-	const size_t count = AeronConfigNode_MapCount(packages);
-	if (set->count + count > AERON_ENV_MAX_PACKAGES)
-		return env_error(error, packages, "at most %d packages are allowed", AERON_ENV_MAX_PACKAGES);
+	if (!environments)
+		return env_error(error, NULL, "missing 'environments' map");
+	if (AeronConfigNode_Type(environments) != AERON_CONFIG_MAP)
+		return env_error(error, environments, "'environments' must be a map");
+	const size_t count = AeronConfigNode_MapCount(environments);
+	if (set->count + count > AERON_ENV_MAX_DEFINITIONS)
+		return env_error(error, environments, "at most %d environments are allowed",
+						 AERON_ENV_MAX_DEFINITIONS);
 	if (count == 0)
 		return true;
 	AeronEnvironmentDefinition* definitions =
 		realloc(set->definitions, (set->count + count) * sizeof *set->definitions);
 	if (!definitions)
-		return env_error(error, packages, "out of memory");
+		return env_error(error, environments, "out of memory");
 	set->definitions = definitions;
 
 	const uint32_t first = set->count;
 	for (size_t i = 0; i < count; ++i) {
-		const char*                 name       = AeronConfigNode_MapKeyAt(packages, i);
-		const AeronConfigNode*      node       = AeronConfigNode_MapValueAt(packages, i);
+		const char*                 name       = AeronConfigNode_MapKeyAt(environments, i);
+		const AeronConfigNode*      node       = AeronConfigNode_MapValueAt(environments, i);
 		AeronEnvironmentDefinition* definition = &set->definitions[set->count];
 		memset(definition, 0, sizeof *definition);
 		bool ok = true;
 		if (!AeronEnvironment_IsValidName(name)) {
 			ok = env_error(
 				error, node,
-				"package name '%s' must be 1 to 63 characters of lower-case letters, digits, '.' and '_'",
+				"environment name '%s' must be 1 to 63 characters of lower-case letters, digits, '.' and '_'",
 				name ? name : "");
 		} else if (AeronEnvironmentDefinitionSet_Find(set, name)) {
-			ok = env_error(error, node, "duplicate package name '%s'", name);
+			ok = env_error(error, node, "duplicate environment name '%s'", name);
 		} else {
-			ok = parse_package(name, node, definition, error);
+			ok = parse_definition(name, node, definition, error);
 		}
 		if (!ok) {
 			set->count = first;
@@ -499,13 +500,13 @@ static void yaml_vec3(YamlOut* y, const float v[3]) {
 	yaml_printf(y, "[%.9g, %.9g, %.9g]", (double)v[0], (double)v[1], (double)v[2]);
 }
 
-size_t AeronEnvironment_FormatPackageYaml(const AeronEnvironmentDefinition* d, char* out, size_t size) {
+size_t AeronEnvironment_FormatDefinitionYaml(const AeronEnvironmentDefinition* d, char* out, size_t size) {
 	YamlOut y = { out, out ? size : 0, 0 };
 	if (out && size)
 		out[0] = '\0';
 	if (!d)
 		return 0;
-	yaml_printf(&y, "packages:\n  %s:\n    intensity: %.9g\n", d->name, (double)d->intensity);
+	yaml_printf(&y, "environments:\n  %s:\n    intensity: %.9g\n", d->name, (double)d->intensity);
 	if (d->radiance_path[0]) {
 		yaml_printf(&y, "    radiance: ");
 		yaml_string(&y, d->radiance_path);

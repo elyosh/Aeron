@@ -1,7 +1,7 @@
 #ifndef AERON_SCENE_ENVIRONMENT_INTERNAL_H
 #define AERON_SCENE_ENVIRONMENT_INTERNAL_H
 
-/* Package library internals shared with the Environment debug tool. */
+/* Environment library internals shared with the Environment debug tool. */
 
 #include "aeron/scene/environment.h"
 
@@ -14,7 +14,7 @@ typedef enum EnvTextureKind {
 	ENV_TEXTURE_CUBE, /* sky and lighting cubes */
 } EnvTextureKind;
 
-/* One texture held by the published set, keyed by package path. */
+/* One texture held by the published set, keyed by its path. */
 typedef struct EnvTexture {
 	char               path[AERON_ENV_PATH_MAX];
 	AeronTexture*      texture; /* NULL when loading failed */
@@ -29,9 +29,9 @@ typedef struct EnvTexture {
 /* One prepared reference. */
 typedef struct EnvSlot {
 	AeronEnvironmentReference reference;
-	AeronEnvironmentPackage   package;
+	AeronPreparedEnvironment  prepared;
 	bool                      available;
-	bool                      overridden; /* package.settings edited in the debug tool */
+	bool                      overridden; /* prepared.settings edited in the debug tool */
 	char                      failure[160];
 } EnvSlot;
 
@@ -54,7 +54,7 @@ struct AeronEnvironmentLibrary {
 	void*                                debug_rows_user;
 };
 
-/* Recomputes a slot's matrix and world-space lights from package.settings. */
+/* Recomputes a slot's matrix and world-space lights from prepared.settings. */
 void env_library_apply(AeronEnvironmentLibrary* library, EnvSlot* slot);
 /* Drops a slot's debug overrides. */
 void env_library_reset(AeronEnvironmentLibrary* library, EnvSlot* slot);

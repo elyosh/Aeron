@@ -49,13 +49,13 @@ def main():
     try:
         pano = os.path.join(scratch, "space.hdr")
         write_hdr(pano, 256, 128, lambda x, y: (4.0, 4.0, 3.5) if y < 32 else (0.3, 0.3, 0.3))
-        out = os.path.join(scratch, "flight", "environments", "hangars", "test")
+        out = os.path.join(scratch, "flight", "environments", "interior")
         os.makedirs(out)
         def bake(extra):
-            return subprocess.run([os.path.abspath(args.baker), "--input", pano, "--name", "hangar.test",
+            return subprocess.run([os.path.abspath(args.baker), "--input", pano, "--name", "test.interior",
                                    "--diffuse-out", os.path.join(out, "diffuse.ktx2"),
                                    "--specular-out", os.path.join(out, "specular.ktx2"),
-                                   "--package-out", os.path.join(out, "package.yaml"),
+                                   "--environment-out", os.path.join(out, "environment.yaml"),
                                    "--manifest-root", scratch, "--specular-size", "64",
                                    "--specular-samples", "64", "--jobs", "2"] + extra,
                                   capture_output=True, text=True)
@@ -64,16 +64,16 @@ def main():
             failures.append("bake failed: " + run.stderr.strip()[-300:])
         else:
             files = sorted(os.listdir(out))
-            if files != ["diffuse.ktx2", "package.yaml", "specular.ktx2"]:
+            if files != ["diffuse.ktx2", "environment.yaml", "specular.ktx2"]:
                 failures.append("files: %s" % files)
-            entry = open(os.path.join(out, "package.yaml")).read()
-            for expected in ('specular: "flight/environments/hangars/test/specular.ktx2"',
+            entry = open(os.path.join(out, "environment.yaml")).read()
+            for expected in ('specular: "flight/environments/interior/specular.ktx2"',
                              "specular_strength: 1", "ambient_fill: [0, 0, 0]"):
                 if expected not in entry:
-                    failures.append("package.yaml lacks %r:\n%s" % (expected, entry))
+                    failures.append("environment.yaml lacks %r:\n%s" % (expected, entry))
             for unexpected in ("kind", "radiance", "directional_lights"):
                 if unexpected in entry:
-                    failures.append("package.yaml has %r:\n%s" % (unexpected, entry))
+                    failures.append("environment.yaml has %r:\n%s" % (unexpected, entry))
         lights = os.path.join(scratch, "lights.yaml")
         with open(lights, "w") as stream:
             stream.write("directional_lights:\n"
@@ -83,9 +83,9 @@ def main():
         if run.returncode:
             failures.append("bake with a light list failed: " + run.stderr.strip()[-300:])
         else:
-            entry = open(os.path.join(out, "package.yaml")).read()
+            entry = open(os.path.join(out, "environment.yaml")).read()
             if "name: ceiling" not in entry or "visual" in entry or "radiance" in entry:
-                failures.append("package.yaml with a light list:\n%s" % entry)
+                failures.append("environment.yaml with a light list:\n%s" % entry)
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
     for failure in failures:

@@ -1,8 +1,8 @@
 /*
- * environment_bake — offline HDR environment package baker.
+ * environment_bake — offline HDR environment baker.
  *
  * Bake mode converts an equirectangular Radiance .hdr panorama and an
- * optional light list into BC6H KTX2 cubes and a `packages:` entry. With
+ * optional light list into BC6H KTX2 cubes and an `environments:` entry. With
  * --radiance-out, the panorama is a sky without suns and is also written as
  * a radiance cube with box mips. Without it, the panorama is only used for
  * lighting (an enclosed space, such as a hangar). In both cases the baker
@@ -11,8 +11,8 @@
  * Diagnostic mode writes a labelled cube for checking orientation.
  * Sprite mode converts an HDR image to a KTX2 sun sprite. Capture mode
  * bakes a capture directory written by the game (six cube faces, sun
- * images, capture.yaml) into a package under the remaster bake root, with
- * the `packages:` and `xwa:` snippets to merge into the manifest. Probes
+ * images, capture.yaml) into an environment under the remaster bake root,
+ * with the `environments:` and `xwa:` snippets to merge into the manifest. Probes
  * mode bakes the panoramas that the Blender add-on renders for a model's
  * reflection probes and irradiance grid. It writes two KTX2 images and the
  * probe layout used for the bake (bake.json). aeron_gltf_cook embeds them
@@ -48,7 +48,7 @@ typedef struct BakeOptions {
 	const char* radiance_out;
 	const char* diffuse_out;
 	const char* specular_out;
-	const char* package_out;
+	const char* environment_out;
 	const char* manifest_root;
 	const char* diagnostic_out;
 	const char* sprite_input;
@@ -74,11 +74,11 @@ static void usage(void) {
 		stderr,
 		"usage:\n"
 		"  environment_bake --input sky.hdr --name NAME --radiance-out P --diffuse-out P --specular-out P\n"
-		"                   [--lights-input lights.yaml] [--package-out FILE] [--manifest-root DIR]\n"
+		"                   [--lights-input lights.yaml] [--environment-out FILE] [--manifest-root DIR]\n"
 		"                   [--radiance-size 2048] [--diffuse-size 32] [--specular-size 512]\n"
 		"                   [--specular-samples 1024] [--jobs 8]\n"
 		"  environment_bake --input space.hdr --name NAME --diffuse-out P --specular-out P\n"
-		"                   [--lights-input lights.yaml] [--package-out FILE] [--manifest-root DIR]\n"
+		"                   [--lights-input lights.yaml] [--environment-out FILE] [--manifest-root DIR]\n"
 		"                   [--diffuse-size 32] [--specular-size 512] [--specular-samples 1024] [--jobs 8]\n"
 		"  environment_bake --diagnostic-faces out.ktx2 [--radiance-size 2048] [--jobs 8]\n"
 		"  environment_bake --sprite in.hdr --sprite-out out.ktx2 [--sprite-size 256]\n"
@@ -90,10 +90,10 @@ static void usage(void) {
 		"\n"
 		"The sky is an equirectangular panorama (2:1) without suns, in the authored\n"
 		"frame: +X right, +Y up, -Z forward at the image centre. The light list is a\n"
-		"YAML map with a `directional_lights` sequence in the package light schema.\n"
-		"Package entry paths are written relative to --manifest-root when given.\n"
+		"YAML map with a `directional_lights` sequence in the environment light schema.\n"
+		"Texture paths in the environment entry are relative to --manifest-root when given.\n"
 		"A capture is baked into <bake root>/flight/environments/captured/<mission>/region_<n>/;\n"
-		"its package.yaml and mapping.yaml are merged into the manifest by hand.\n"
+		"its environment.yaml and mapping.yaml are merged into the manifest by hand.\n"
 		"A probes job is a JSON object with the probe layout fields (the AERON_flight_model\n"
 		"probeData fields, except the images), plus `probePanoramas`, `gridPanoramas`\n"
 		"(x fastest, then y, then z) and `gridInvalid` (indices of points inside geometry).\n"
@@ -138,8 +138,8 @@ static bool parse_args(int argc, char** argv, BakeOptions* o) {
 			text = &o->diffuse_out;
 		else if (strcmp(arg, "--specular-out") == 0)
 			text = &o->specular_out;
-		else if (strcmp(arg, "--package-out") == 0)
-			text = &o->package_out;
+		else if (strcmp(arg, "--environment-out") == 0)
+			text = &o->environment_out;
 		else if (strcmp(arg, "--manifest-root") == 0)
 			text = &o->manifest_root;
 		else if (strcmp(arg, "--diagnostic-faces") == 0)
@@ -417,9 +417,9 @@ static bool load_lights(const char* path, AeronEnvironmentLightDefinition lights
 	return ok;
 }
 
-/* Output path as written in the package: relative to the manifest root,
+/* Output path as written in the manifest: relative to the manifest root,
  * with forward slashes. */
-static bool package_path(const char* path, const char* root, char* out, size_t size) {
+static bool manifest_path(const char* path, const char* root, char* out, size_t size) {
 	/* Leading "./" components are not part of either path. */
 	while (path[0] == '.' && (path[1] == '/' || path[1] == '\\'))
 		path += 2;
@@ -440,7 +440,7 @@ static bool package_path(const char* path, const char* root, char* out, size_t s
 		}
 	}
 	if (strlen(relative) >= size || strlen(relative) >= AERON_ENV_PATH_MAX) {
-		fprintf(stderr, "environment_bake: package path %s is too long\n", relative);
+		fprintf(stderr, "environment_bake: texture path %s is too long\n", relative);
 		return false;
 	}
 	snprintf(out, size, "%s", relative);
@@ -450,15 +450,16 @@ static bool package_path(const char* path, const char* root, char* out, size_t s
 	return true;
 }
 
-/* Writes the baked package as a `packages:` document. Strengths, fill and
- * rotation are starting values to calibrate per package. The fill starts at
- * 0. A package with a sky (`radiance`) always lists its lights, as [] when
- * there is no light list. A package without a sky lists lights only when it
- * has a light list (`has_lights`). Otherwise the game keeps its own lights. */
-static bool write_package_entry(FILE* f, const char* name, const char* radiance, const char* diffuse,
-								const char* specular, bool has_lights,
-								const AeronEnvironmentLightDefinition* lights, uint32_t light_count,
-								int32_t primary) {
+/* Writes the baked environment as an `environments:` document. Strengths,
+ * fill and rotation are starting values to calibrate per environment. The
+ * fill starts at 0. An environment with a sky (`radiance`) always lists its
+ * lights, as [] when there is no light list. An environment without a sky
+ * lists lights only when it has a light list (`has_lights`). Otherwise the
+ * game keeps its own lights. */
+static bool write_environment_entry(FILE* f, const char* name, const char* radiance, const char* diffuse,
+									const char* specular, bool has_lights,
+									const AeronEnvironmentLightDefinition* lights, uint32_t light_count,
+									int32_t primary) {
 	AeronEnvironmentDefinition* d = (AeronEnvironmentDefinition*)calloc(1, sizeof *d);
 	if (!d)
 		return false;
@@ -474,11 +475,11 @@ static bool write_package_entry(FILE* f, const char* name, const char* radiance,
 	memcpy(d->lights, lights, sizeof d->lights);
 	d->light_count         = light_count;
 	d->primary_light_index = primary;
-	const size_t length    = AeronEnvironment_FormatPackageYaml(d, NULL, 0);
+	const size_t length    = AeronEnvironment_FormatDefinitionYaml(d, NULL, 0);
 	char*        text      = (char*)malloc(length + 1);
 	bool         ok        = text != NULL;
 	if (ok) {
-		AeronEnvironment_FormatPackageYaml(d, text, length + 1);
+		AeronEnvironment_FormatDefinitionYaml(d, text, length + 1);
 		ok = fwrite(text, 1, length, f) == length;
 	}
 	free(text);
@@ -486,8 +487,8 @@ static bool write_package_entry(FILE* f, const char* name, const char* radiance,
 	return ok;
 }
 
-/* Re-parses a written package file with the runtime parser. */
-static bool validate_package_file(const char* path) {
+/* Re-parses a written environment file with the runtime parser. */
+static bool validate_environment_file(const char* path) {
 	AeronVfs*        vfs    = NULL;
 	AeronConfigFile* config = load_yaml(path, &vfs);
 	if (!config)
@@ -495,10 +496,10 @@ static bool validate_package_file(const char* path) {
 	AeronEnvironmentDefinitionSet* set = NULL;
 	AeronConfigError               error;
 	memset(&error, 0, sizeof error);
-	const bool ok = AeronEnvironment_ParsePackages(
-		AeronConfigNode_MapGet(AeronConfigFile_Root(config), "packages"), &set, &error);
+	const bool ok = AeronEnvironment_ParseDefinitions(
+		AeronConfigNode_MapGet(AeronConfigFile_Root(config), "environments"), &set, &error);
 	if (!ok)
-		fprintf(stderr, "environment_bake: written package %s:%d: %s\n", path, error.line, error.message);
+		fprintf(stderr, "environment_bake: written environment %s:%d: %s\n", path, error.line, error.message);
 	AeronEnvironmentDefinitionSet_Destroy(set);
 	AeronConfigFile_Destroy(config);
 	AeronVfs_Destroy(vfs);
@@ -665,9 +666,9 @@ static int run_bake(const BakeOptions* o) {
 		return 2;
 	}
 	char radiance_path[256], diffuse_path[256], specular_path[256];
-	if ((sky && !package_path(o->radiance_out, o->manifest_root, radiance_path, sizeof radiance_path)) ||
-		!package_path(o->diffuse_out, o->manifest_root, diffuse_path, sizeof diffuse_path) ||
-		!package_path(o->specular_out, o->manifest_root, specular_path, sizeof specular_path))
+	if ((sky && !manifest_path(o->radiance_out, o->manifest_root, radiance_path, sizeof radiance_path)) ||
+		!manifest_path(o->diffuse_out, o->manifest_root, diffuse_path, sizeof diffuse_path) ||
+		!manifest_path(o->specular_out, o->manifest_root, specular_path, sizeof specular_path))
 		return 2;
 
 	AeronEnvironmentLightDefinition lights[AERON_ENV_MAX_LIGHTS];
@@ -712,23 +713,23 @@ static int run_bake(const BakeOptions* o) {
 					o->diffuse_out, o->specular_out))
 		return 1;
 
-	FILE* f = o->package_out ? fopen(o->package_out, "wb") : stdout;
+	FILE* f = o->environment_out ? fopen(o->environment_out, "wb") : stdout;
 	if (!f) {
-		fprintf(stderr, "environment_bake: cannot write %s\n", o->package_out);
+		fprintf(stderr, "environment_bake: cannot write %s\n", o->environment_out);
 		return 1;
 	}
-	const bool written = write_package_entry(f, o->name, sky ? radiance_path : NULL, diffuse_path,
-											 specular_path, o->lights_input != NULL, lights, light_count,
-											 primary);
-	if (o->package_out) {
+	const bool written =
+		write_environment_entry(f, o->name, sky ? radiance_path : NULL, diffuse_path, specular_path,
+								o->lights_input != NULL, lights, light_count, primary);
+	if (o->environment_out) {
 		fclose(f);
 		if (!written) {
-			fprintf(stderr, "environment_bake: cannot write %s\n", o->package_out);
+			fprintf(stderr, "environment_bake: cannot write %s\n", o->environment_out);
 			return 1;
 		}
-		if (!validate_package_file(o->package_out))
+		if (!validate_environment_file(o->environment_out))
 			return 1;
-		printf("package %s: %s\n", o->name, o->package_out);
+		printf("environment %s: %s\n", o->name, o->environment_out);
 	}
 	return 0;
 }
@@ -1377,7 +1378,7 @@ static bool join_path(char* out, size_t size, const char* dir, const char* name)
 }
 
 typedef struct CaptureDescription {
-	char                            package[AERON_ENV_NAME_MAX];
+	char                            environment[AERON_ENV_NAME_MAX];
 	char                            mission[128];
 	int                             region;
 	int                             face_size;
@@ -1430,8 +1431,8 @@ static bool load_capture(const char* path, CaptureDescription* c) {
 	if (!config)
 		return false;
 	static const char* const fields[] = {
-		"version",         "package", "mission", "region", "face_size", "sky_faces", "directional_lights",
-		"capture_settings"
+		"version",   "environment",        "mission",         "region", "face_size",
+		"sky_faces", "directional_lights", "capture_settings"
 	};
 	const AeronConfigNode* root = AeronConfigFile_Root(config);
 	bool                   ok   = AeronConfigNode_Type(root) == AERON_CONFIG_MAP;
@@ -1450,14 +1451,14 @@ static bool load_capture(const char* path, CaptureDescription* c) {
 	}
 	int version = 0;
 	ok          = ok && capture_int(path, root, "version", 1, 1, &version) &&
-				  capture_string(path, root, "package", c->package, sizeof c->package) &&
+				  capture_string(path, root, "environment", c->environment, sizeof c->environment) &&
 				  capture_string(path, root, "mission", c->mission, sizeof c->mission) &&
 				  capture_int(path, root, "region", 0, 3, &c->region) &&
 				  capture_int(path, root, "face_size", 16, 8192, &c->face_size) &&
 				  capture_string(path, root, "sky_faces", c->sky_faces, sizeof c->sky_faces);
-	if (ok && !AeronEnvironment_IsValidName(c->package))
-		ok = capture_error(path, AeronConfigNode_MapGet(root, "package"),
-						   "'package' must be 1 to 63 lower-case letters, digits, '.' and '_'");
+	if (ok && !AeronEnvironment_IsValidName(c->environment))
+		ok = capture_error(path, AeronConfigNode_MapGet(root, "environment"),
+						   "'environment' must be 1 to 63 lower-case letters, digits, '.' and '_'");
 	if (ok && !is_mission_key(c->mission))
 		ok = capture_error(path, AeronConfigNode_MapGet(root, "mission"),
 						   "'mission' must be a normalized mission key");
@@ -1541,7 +1542,7 @@ static bool write_mapping(const char* path, const CaptureDescription* c) {
 							"    \"%s\":\n"
 							"      regions:\n"
 							"        \"%d\": %s\n",
-							c->mission, c->region, c->package) > 0;
+							c->mission, c->region, c->environment) > 0;
 	if (fclose(f) != 0 || !ok) {
 		fprintf(stderr, "environment_bake: cannot write %s\n", path);
 		return false;
@@ -1609,7 +1610,7 @@ static int run_capture(const BakeOptions* o) {
 		fprintf(stderr, "environment_bake: warning: %d px capture faces limit the sky to %d px\n",
 				c->face_size, radiance_size);
 
-	/* Output directory, relative to the bake root as package paths are. */
+	/* Output directory, relative to the bake root as manifest paths are. */
 	char mission_dir[128];
 	snprintf(mission_dir, sizeof mission_dir, "%s", c->mission);
 	for (char* p = mission_dir; *p; ++p)
@@ -1675,11 +1676,11 @@ static int run_capture(const BakeOptions* o) {
 	snprintf(sky_path, sizeof sky_path, "%s/sky.ktx2", relative_dir);
 	snprintf(diffuse_path, sizeof diffuse_path, "%s/diffuse.ktx2", relative_dir);
 	snprintf(specular_path, sizeof specular_path, "%s/specular.ktx2", relative_dir);
-	char sky_out[1024], diffuse_out[1024], specular_out[1024], package_out[1024], mapping_out[1024];
+	char sky_out[1024], diffuse_out[1024], specular_out[1024], environment_out[1024], mapping_out[1024];
 	if (status == 0 && (!join_path(sky_out, sizeof sky_out, output_dir, "sky.ktx2") ||
 						!join_path(diffuse_out, sizeof diffuse_out, output_dir, "diffuse.ktx2") ||
 						!join_path(specular_out, sizeof specular_out, output_dir, "specular.ktx2") ||
-						!join_path(package_out, sizeof package_out, output_dir, "package.yaml") ||
+						!join_path(environment_out, sizeof environment_out, output_dir, "environment.yaml") ||
 						!join_path(mapping_out, sizeof mapping_out, output_dir, "mapping.yaml")))
 		status = 1;
 	if (status == 0) {
@@ -1692,19 +1693,19 @@ static int run_capture(const BakeOptions* o) {
 	}
 
 	if (status == 0) {
-		FILE* f = fopen(package_out, "wb");
-		if (!f || !write_package_entry(f, c->package, sky_path, diffuse_path, specular_path, true, c->lights,
-									   c->light_count, c->primary)) {
-			fprintf(stderr, "environment_bake: cannot write %s\n", package_out);
+		FILE* f = fopen(environment_out, "wb");
+		if (!f || !write_environment_entry(f, c->environment, sky_path, diffuse_path, specular_path, true,
+										   c->lights, c->light_count, c->primary)) {
+			fprintf(stderr, "environment_bake: cannot write %s\n", environment_out);
 			status = 1;
 		}
 		if (f && fclose(f) != 0)
 			status = 1;
 	}
-	if (status == 0 && (!validate_package_file(package_out) || !write_mapping(mapping_out, c)))
+	if (status == 0 && (!validate_environment_file(environment_out) || !write_mapping(mapping_out, c)))
 		status = 1;
 	if (status == 0)
-		printf("package %s: %s\nmapping: %s\n", c->package, package_out, mapping_out);
+		printf("environment %s: %s\nmapping: %s\n", c->environment, environment_out, mapping_out);
 	free(c);
 	return status;
 }

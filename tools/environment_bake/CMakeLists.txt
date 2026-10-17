@@ -1,5 +1,5 @@
-# environment_bake — offline HDR environment package baker. It writes
-# radiance, diffuse irradiance and GGX specular cubes, sun sprites, package
+# environment_bake — offline HDR environment baker. It writes radiance,
+# diffuse irradiance and GGX specular cubes, sun sprites, environment
 # entries, and probe cube arrays and irradiance grids with their layout.
 
 add_executable(environment_bake main.c)

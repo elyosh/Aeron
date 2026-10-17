@@ -486,16 +486,18 @@ typedef struct AeronScenePbrEnvironment {
 	float         world_to_local[9];
 } AeronScenePbrEnvironment;
 
-struct AeronEnvironmentPackage;
+struct AeronPreparedEnvironment;
 
 /* Selects the environment for the current frame (copied; textures borrowed
  * through Render). NULL, a missing diffuse cube or sampler, or a zero
  * diffuse strength clears it. Begin clears the selection. The raw form
- * serves producers that are not packages, such as a procedural tunnel. */
+ * serves producers that are not authored environments, such as a procedural
+ * tunnel. */
 void AeronScene_SetPbrEnvironment(AeronScene3D* scene, const AeronScenePbrEnvironment* environment);
-/* Selects a prepared package's diffuse cube, diffuse strength and
+/* Selects a prepared environment's diffuse cube, diffuse strength and
  * world-to-cube matrix. NULL clears the selection. */
-void AeronScene_SetPbrEnvironmentPackage(AeronScene3D* scene, const struct AeronEnvironmentPackage* package);
+void AeronScene_SetPbrPreparedEnvironment(AeronScene3D*                          scene,
+										  const struct AeronPreparedEnvironment* environment);
 
 /* Places a model's probe set (AeronSceneMesh.probes) for this frame.
  * `model_to_world` is the transform of the instance that owns the set, a
@@ -525,10 +527,10 @@ void AeronScene_SetProbeKeyShadow(AeronScene3D* scene, int enabled);
  * shadow's cut of the probe light. Reset by Begin. */
 void AeronScene_SetProbeOcclusion(AeronScene3D* scene, int enabled);
 
-/* When the first probe set's package has a reflection plane (a hangar's
- * floor), the instances inside its grid other than its owner are drawn
- * mirrored across it, and the owner's surfaces on the plane reflect them in
- * place of the probes' reflection. Reset by Begin. */
+/* When the first probe set has a reflection plane (a hangar's floor), the
+ * instances inside its grid other than its owner are drawn mirrored across
+ * it, and the owner's surfaces on the plane reflect them in place of the
+ * probes' reflection. Reset by Begin. */
 void AeronScene_SetPlanarReflection(AeronScene3D* scene, int enabled);
 
 /* Queue a per-frame uniform blob (copied; reset by Begin) that the

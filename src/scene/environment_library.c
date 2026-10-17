@@ -1,5 +1,5 @@
 /*
- * Environment package library: texture loading and sharing by path,
+ * Environment library: texture loading and sharing by path,
  * rotation and light preparation, publication and retirement.
  */
 
@@ -43,7 +43,7 @@ static void mat3_transpose(const float a[9], float out[9]) {
 }
 
 /* Q = Ry(yaw) * Rx(pitch) * Rz(roll), right-handed, in the cube frame. */
-static void package_rotation(const float degrees[3], float out[9]) {
+static void environment_rotation(const float degrees[3], float out[9]) {
 	const float y = (float)(degrees[0] * ENV_PI / 180.0), p = (float)(degrees[1] * ENV_PI / 180.0),
 				r     = (float)(degrees[2] * ENV_PI / 180.0);
 	const float ry[9] = { cosf(y), 0.0f, sinf(y), 0.0f, 1.0f, 0.0f, -sinf(y), 0.0f, cosf(y) };
@@ -157,24 +157,24 @@ static int32_t acquire_texture(AeronEnvironmentLibrary* library, AeronCommandBuf
 	return (int32_t)list->count++;
 }
 
-/* ---- packages -------------------------------------------------------------- */
+/* ---- prepared environments ------------------------------------------------- */
 
 void env_library_apply(AeronEnvironmentLibrary* library, EnvSlot* slot) {
-	AeronEnvironmentPackage*    pkg = &slot->package;
-	AeronEnvironmentDefinition* s   = &pkg->settings;
+	AeronPreparedEnvironment*   env = &slot->prepared;
+	AeronEnvironmentDefinition* s   = &env->settings;
 	float                       q[9], qt[9], bt[9], light_basis[9];
-	package_rotation(s->rotation_degrees, q);
+	environment_rotation(s->rotation_degrees, q);
 	mat3_transpose(q, qt);
-	mat3_mul(qt, library->base, pkg->world_to_cube);
+	mat3_mul(qt, library->base, env->world_to_cube);
 	/* A feature at cube direction d appears at world direction B^T Q d. */
 	mat3_transpose(library->base, bt);
 	mat3_mul(bt, q, light_basis);
 
-	pkg->light_count         = s->light_count;
-	pkg->primary_light_index = -1;
+	env->light_count         = s->light_count;
+	env->primary_light_index = -1;
 	for (uint32_t i = 0; i < s->light_count; ++i) {
 		AeronEnvironmentLightDefinition* d = &s->lights[i];
-		AeronEnvironmentLight*           l = &pkg->lights[i];
+		AeronEnvironmentLight*           l = &env->lights[i];
 		const float                      length =
 			sqrtf(d->direction_cube[0] * d->direction_cube[0] + d->direction_cube[1] * d->direction_cube[1] +
 				  d->direction_cube[2] * d->direction_cube[2]);
@@ -205,36 +205,38 @@ void env_library_apply(AeronEnvironmentLibrary* library, EnvSlot* slot) {
 				find_texture(library->textures, library->texture_count, d->sprite_path);
 			l->sprite = sprite ? sprite->texture : NULL;
 		}
-		if (d->primary && pkg->primary_light_index < 0)
-			pkg->primary_light_index = (int32_t)i;
+		if (d->primary && env->primary_light_index < 0)
+			env->primary_light_index = (int32_t)i;
 	}
 }
 
 void env_library_reset(AeronEnvironmentLibrary* library, EnvSlot* slot) {
-	slot->package.settings = *slot->package.definition;
+	slot->prepared.settings = *slot->prepared.definition;
 	if (slot->reference.has_rotation)
-		memcpy(slot->package.settings.rotation_degrees, slot->reference.rotation_degrees,
+		memcpy(slot->prepared.settings.rotation_degrees, slot->reference.rotation_degrees,
 			   sizeof slot->reference.rotation_degrees);
 	slot->overridden = false;
 	env_library_apply(library, slot);
 }
 
 static bool same_reference(const AeronEnvironmentReference* a, const AeronEnvironmentReference* b) {
-	return strcmp(a->package, b->package) == 0 && a->has_rotation == b->has_rotation &&
+	return strcmp(a->environment, b->environment) == 0 && a->has_rotation == b->has_rotation &&
 		   (!a->has_rotation ||
 			memcmp(a->rotation_degrees, b->rotation_degrees, sizeof a->rotation_degrees) == 0);
 }
 
-/* Builds one slot's package from textures in `list`; false when unavailable. */
+/* Builds one slot's prepared environment from textures in `list`; false when
+ * unavailable. */
 static bool build_slot(AeronEnvironmentLibrary* library, AeronCommandBuffer* cmd, TextureList* list,
 					   EnvSlot* slot, bool reload, bool* out_of_memory) {
 	const AeronEnvironmentDefinition* def =
-		AeronEnvironmentDefinitionSet_Find(library->definitions, slot->reference.package);
+		AeronEnvironmentDefinitionSet_Find(library->definitions, slot->reference.environment);
 	if (!def) {
-		snprintf(slot->failure, sizeof slot->failure, "unknown package '%s'", slot->reference.package);
+		snprintf(slot->failure, sizeof slot->failure, "unknown environment '%s'",
+				 slot->reference.environment);
 		return false;
 	}
-	slot->package.definition = def;
+	slot->prepared.definition = def;
 	const char*    paths[3 + AERON_ENV_MAX_LIGHTS];
 	EnvTextureKind kinds[3 + AERON_ENV_MAX_LIGHTS];
 	int32_t        indices[3 + AERON_ENV_MAX_LIGHTS];
@@ -281,14 +283,14 @@ static bool build_slot(AeronEnvironmentLibrary* library, AeronCommandBuffer* cmd
 	if (!available)
 		return false;
 	if (diffuse >= 0)
-		slot->package.diffuse = list->items[indices[diffuse]].texture;
-	slot->package.sampler = library->sampler;
+		slot->prepared.diffuse = list->items[indices[diffuse]].texture;
+	slot->prepared.sampler = library->sampler;
 	if (specular >= 0) {
-		slot->package.specular           = list->items[indices[specular]].texture;
-		slot->package.specular_mip_count = (uint32_t)list->items[indices[specular]].level_count;
+		slot->prepared.specular           = list->items[indices[specular]].texture;
+		slot->prepared.specular_mip_count = (uint32_t)list->items[indices[specular]].level_count;
 	}
 	if (radiance >= 0)
-		slot->package.radiance = list->items[indices[radiance]].texture;
+		slot->prepared.radiance = list->items[indices[radiance]].texture;
 	return true;
 }
 
@@ -300,7 +302,7 @@ static bool prepare(AeronEnvironmentLibrary* library, AeronCommandBuffer* cmd,
 	if (!library || !cmd || (count > 0 && !references))
 		return false;
 	/* Texture uploads for the whole set, as one group in GPU captures. */
-	Aeron_GpuDebugPush(cmd, reload ? "Environment package reload" : "Environment package preparation");
+	Aeron_GpuDebugPush(cmd, reload ? "Environment reload" : "Environment preparation");
 	const bool built = prepare_set(library, cmd, references, count, reload);
 	Aeron_GpuDebugPop(cmd);
 	return built;
@@ -346,7 +348,7 @@ static bool prepare_set(AeronEnvironmentLibrary* library, AeronCommandBuffer* cm
 	for (uint32_t i = 0; i < count; ++i) {
 		EnvSlot* slot = &slots[i];
 		if (!slot->available) {
-			Aeron_LogWarn("aeron.scene", "environment package '%s' unavailable: %s", slot->reference.package,
+			Aeron_LogWarn("aeron.scene", "environment '%s' unavailable: %s", slot->reference.environment,
 						  slot->failure);
 			continue;
 		}
@@ -357,11 +359,11 @@ static bool prepare_set(AeronEnvironmentLibrary* library, AeronCommandBuffer* cm
 		const EnvSlot* previous = NULL;
 		for (uint32_t j = 0; j < old_slots_n && !previous; ++j)
 			if (old_slots[j].overridden && same_reference(&old_slots[j].reference, &slot->reference) &&
-				memcmp(old_slots[j].package.definition, slot->package.definition,
-					   sizeof *slot->package.definition) == 0)
+				memcmp(old_slots[j].prepared.definition, slot->prepared.definition,
+					   sizeof *slot->prepared.definition) == 0)
 				previous = &old_slots[j];
 		if (previous) {
-			slot->package.settings = previous->package.settings;
+			slot->prepared.settings = previous->prepared.settings;
 			slot->overridden       = true;
 			env_library_apply(library, slot);
 		} else {
@@ -450,11 +452,11 @@ uint32_t AeronEnvironmentLibrary_ReferenceCount(const AeronEnvironmentLibrary* l
 	return library ? library->slot_count : 0;
 }
 
-const AeronEnvironmentPackage* AeronEnvironmentLibrary_Find(const AeronEnvironmentLibrary* library,
-															uint32_t                       index) {
+const AeronPreparedEnvironment* AeronEnvironmentLibrary_Find(const AeronEnvironmentLibrary* library,
+															 uint32_t                       index) {
 	if (!library || index >= library->slot_count || !library->slots[index].available)
 		return NULL;
-	return &library->slots[index].package;
+	return &library->slots[index].prepared;
 }
 
 const char* AeronEnvironmentLibrary_FailureReason(const AeronEnvironmentLibrary* library, uint32_t index) {

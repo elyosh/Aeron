@@ -1256,22 +1256,22 @@ void AeronScene_SetPbrEnvironment(AeronScene3D* s, const AeronScenePbrEnvironmen
 	s->pbr_environment_set = 1;
 }
 
-void AeronScene_SetPbrEnvironmentPackage(AeronScene3D* s, const AeronEnvironmentPackage* package) {
-	if (!package) {
+void AeronScene_SetPbrPreparedEnvironment(AeronScene3D* s, const AeronPreparedEnvironment* prepared) {
+	if (!prepared) {
 		AeronScene_SetPbrEnvironment(s, NULL);
 		return;
 	}
 	AeronScenePbrEnvironment environment;
 	memset(&environment, 0, sizeof environment);
-	environment.diffuse            = package->diffuse;
-	environment.specular           = package->specular;
-	environment.sampler            = package->sampler;
-	environment.specular_mip_count = package->specular_mip_count;
-	/* The package intensity scales everything derived from the sky image;
-	 * the strengths are relative adjustments on top. */
-	environment.diffuse_strength  = package->settings.intensity * package->settings.diffuse_strength;
-	environment.specular_strength = package->settings.intensity * package->settings.specular_strength;
-	memcpy(environment.world_to_local, package->world_to_cube, sizeof environment.world_to_local);
+	environment.diffuse            = prepared->diffuse;
+	environment.specular           = prepared->specular;
+	environment.sampler            = prepared->sampler;
+	environment.specular_mip_count = prepared->specular_mip_count;
+	/* The environment's intensity scales everything derived from the sky
+	 * image; the strengths are relative adjustments on top. */
+	environment.diffuse_strength  = prepared->settings.intensity * prepared->settings.diffuse_strength;
+	environment.specular_strength = prepared->settings.intensity * prepared->settings.specular_strength;
+	memcpy(environment.world_to_local, prepared->world_to_cube, sizeof environment.world_to_local);
 	AeronScene_SetPbrEnvironment(s, &environment);
 }
 

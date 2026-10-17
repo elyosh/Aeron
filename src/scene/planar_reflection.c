@@ -2,8 +2,8 @@
  *
  * A probe set's reflection cubes were captured without the ships standing
  * in its grid, and project what they hold onto the room's box, so a floor
- * cannot reflect the ships from them. When the first probe set's package
- * has a reflection plane (a hangar's floor, authored with its probes), the
+ * cannot reflect the ships from them. When the first probe set has a
+ * reflection plane (a hangar's floor, authored with its probes), the
  * instances that take that set's light, other than its owner, are drawn
  * mirrored across the plane at half resolution with the probe shaders,
  * whose lighting does not depend on the screen. A compute pass then keeps,

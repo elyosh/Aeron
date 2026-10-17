@@ -171,7 +171,8 @@ static AeronProbeSet* load_probes(Fixture* f, AeronCommandBuffer* cmd, AeronVfsR
 }
 
 /* game_scene.environment: loads the instances' probes bake folders, then
- * parses the manifest's packages and prepares the environment with `cmd`. */
+ * parses the manifest's environments and prepares the scene's environment
+ * with `cmd`. */
 static int prepare_environment(Fixture* f, AeronCommandBuffer* cmd) {
 	const CaptureGameScene* game = &f->config.game;
 	const AeronVfsRoot root  = game->environment_folder[0] ? AERON_VFS_ROOT_RESOURCE : AERON_VFS_ROOT_ASSET;
@@ -185,8 +186,8 @@ static int prepare_environment(Fixture* f, AeronCommandBuffer* cmd) {
 	AeronConfigError error;
 	memset(&error, 0, sizeof error);
 	if (!AeronConfigFile_LoadYamlEx(f->vfs, root, game->environment_manifest, &f->environment_file, &error) ||
-		!AeronEnvironment_ParsePackages(
-			AeronConfigNode_MapGet(AeronConfigFile_Root(f->environment_file), "packages"),
+		!AeronEnvironment_ParseDefinitions(
+			AeronConfigNode_MapGet(AeronConfigFile_Root(f->environment_file), "environments"),
 			&f->environment_definitions, &error)) {
 		Aeron_LogError("scene_capture", "game_scene.environment: %s:%d: %s", game->environment_manifest,
 					   error.line, error.message);
@@ -205,15 +206,16 @@ static int prepare_environment(Fixture* f, AeronCommandBuffer* cmd) {
 	AeronEnvironmentReference references[1];
 	uint32_t                  count = 0;
 	memset(references, 0, sizeof references);
-	if (game->environment_package[0]) {
+	if (game->environment_name[0]) {
 		f->environment_reference = (int)count;
-		snprintf(references[count++].package, AERON_ENV_NAME_MAX, "%s", game->environment_package);
+		snprintf(references[count++].environment, AERON_ENV_NAME_MAX, "%s", game->environment_name);
 	}
 	if (!AeronEnvironmentLibrary_Prepare(f->environment_library, cmd, references, count))
 		return 0;
 	for (uint32_t r = 0; r < count; ++r) {
 		if (!AeronEnvironmentLibrary_Find(f->environment_library, r)) {
-			Aeron_LogError("scene_capture", "game_scene.environment: package '%s': %s", references[r].package,
+			Aeron_LogError("scene_capture", "game_scene.environment: environment '%s': %s",
+						   references[r].environment,
 						   AeronEnvironmentLibrary_FailureReason(f->environment_library, r));
 			return 0;
 		}
@@ -776,7 +778,7 @@ AeronRenderTarget* Fixture_Record(Fixture* f, double time, int blur, AeronComman
 		AeronScene_SetBackfaceFill(scene, f->config.backface_fill);
 		set_game_lighting(scene, &f->config);
 		if (f->environment_reference >= 0)
-			AeronScene_SetPbrEnvironmentPackage(
+			AeronScene_SetPbrPreparedEnvironment(
 				scene,
 				AeronEnvironmentLibrary_Find(f->environment_library, (uint32_t)f->environment_reference));
 		if (f->config.screen_test)

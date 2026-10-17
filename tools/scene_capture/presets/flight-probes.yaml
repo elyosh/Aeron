@@ -1,9 +1,9 @@
-# A capital ship in flight with the test probes from probe_packages.py. The
+# A capital ship in flight with the test probes from probe_bakes.py. The
 # Star Destroyer owns probes/isd (four flat-coloured probes, one per
 # quadrant, and a grid lit from its +X side). It is turned 30 degrees, so the
 # colours and the grid's light must turn with it. The fighters above its hull
 # use the same probe set. There is no environment. Build the probes first with
-# `probe_packages.py --baker <build dir>/environment_bake --out captures/probe-assets`.
+# `probe_bakes.py --baker <build dir>/environment_bake --out captures/probe-assets`.
 width: 2560
 height: 1440
 frames: 30
@@ -38,7 +38,7 @@ game_scene:
   sun_direction: [-0.4, -0.7, -0.6]
   sun_color: [2.513, 2.513, 2.513]
   ambient: 0.08
-  # Folder with the probes and the manifest. No environment package is used.
+  # Folder with the probes and the manifest. No environment is used.
   environment: { folder: captures/probe-assets, manifest: probe_tests.yaml }
   # Ships: position in metres, camera axes; rotation_degrees [yaw, pitch, roll].
   instances:

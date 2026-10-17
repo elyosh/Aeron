@@ -61,11 +61,11 @@ typedef struct CaptureGameScene {
 	/* The clustered lights' occupancy view (AeronSceneClusteredLightDesc). */
 	int                      cluster_debug;
 	/* game_scene.environment: the folder holding the manifest and the files
-	 * its packages name (empty: asset_root), the manifest in it, and the
-	 * environment package (empty for none). */
+	 * its environments name (empty: asset_root), the manifest in it, and the
+	 * name of the environment the scene uses (empty for none). */
 	char environment_folder[1024];
 	char environment_manifest[1024];
-	char environment_package[64];
+	char environment_name[64];
 	/* Scene illuminance per lux of the models' authored lights (candela;
 	 * 0 = off), as point_lights.model_light_intensity in the game. */
 	float                    model_light_intensity;
@@ -137,8 +137,8 @@ struct AeronProbeSet;
 typedef struct Fixture {
 	AeronScene3D *     scene, *reference_scene;
 	AeronVfs*          vfs;
-	/* game_scene.environment: the manifest's prepared packages and the
-	 * environment's reference (-1 for none). `probes` holds each instance's
+	/* game_scene.environment: the manifest's prepared environments and the
+	 * scene environment's reference (-1 for none). `probes` holds each instance's
 	 * probes loaded from a bake folder, or NULL when the instance uses its
 	 * model's own probes. */
 	struct AeronConfigFile*               environment_file;

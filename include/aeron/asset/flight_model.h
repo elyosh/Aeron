@@ -100,7 +100,7 @@ typedef struct AeronFlightLight {
 	AeronFlightVec3       half_y;
 	AeronFlightVec3       direction;
 	float                 source_radius;
-	/* Baked into the model's probes package: the game leaves the light out
+	/* Baked into the model's probes: the game leaves the light out
 	 * while the model's probes light the scene. */
 	bool baked;
 } AeronFlightLight;

@@ -1,5 +1,5 @@
 /*
- * Environment debug tool: the library's prepared set, the active package,
+ * Environment debug tool: the library's prepared set, the active environment,
  * and live overrides of intensity, strengths, ambient fill, rotation and
  * lights. Built only with AERON_DEBUG_UI. The overlay is built in
  * Aeron_Present, after the game recorded its frame, so edits apply between
@@ -46,18 +46,19 @@ void copy_yaml(const EnvSlot* slot) {
 		static_cast<AeronEnvironmentDefinition*>(malloc(sizeof(AeronEnvironmentDefinition)));
 	if (!d)
 		return;
-	*d = slot->package.settings;
+	*d = slot->prepared.settings;
 	/* A rotation that came from the reference belongs in the game's mapping. */
 	if (slot->reference.has_rotation)
-		memcpy(d->rotation_degrees, slot->package.definition->rotation_degrees, sizeof d->rotation_degrees);
-	const size_t length = AeronEnvironment_FormatPackageYaml(d, nullptr, 0);
+		memcpy(d->rotation_degrees, slot->prepared.definition->rotation_degrees, sizeof d->rotation_degrees);
+	const size_t length = AeronEnvironment_FormatDefinitionYaml(d, nullptr, 0);
 	char*        text   = static_cast<char*>(malloc(length + 256));
 	if (text) {
-		AeronEnvironment_FormatPackageYaml(d, text, length + 1);
+		AeronEnvironment_FormatDefinitionYaml(d, text, length + 1);
 		if (slot->reference.has_rotation) {
-			const float* r = slot->package.settings.rotation_degrees;
-			snprintf(text + length, 256, "# reference\npackage: %s\nrotation_degrees: [%.9g, %.9g, %.9g]\n",
-					 slot->reference.package, (double)r[0], (double)r[1], (double)r[2]);
+			const float* r = slot->prepared.settings.rotation_degrees;
+			snprintf(text + length, 256,
+					 "# reference\nenvironment: %s\nrotation_degrees: [%.9g, %.9g, %.9g]\n",
+					 slot->reference.environment, (double)r[0], (double)r[1], (double)r[2]);
 		}
 		ImGui::SetClipboardText(text);
 		free(text);
@@ -66,9 +67,9 @@ void copy_yaml(const EnvSlot* slot) {
 }
 
 bool light_editor(EnvSlot* slot, uint32_t index) {
-	AeronEnvironmentDefinition*      s       = &slot->package.settings;
+	AeronEnvironmentDefinition*      s       = &slot->prepared.settings;
 	AeronEnvironmentLightDefinition* d       = &s->lights[index];
-	const AeronEnvironmentLight*     l       = &slot->package.lights[index];
+	const AeronEnvironmentLight*     l       = &slot->prepared.lights[index];
 	bool                             changed = false;
 	ImGui::PushID(static_cast<int>(index));
 	if (ImGui::TreeNodeEx("light", ImGuiTreeNodeFlags_DefaultOpen, "%s%s", d->name,
@@ -113,7 +114,7 @@ bool light_editor(EnvSlot* slot, uint32_t index) {
 }
 
 void slot_editor(AeronEnvironmentLibrary* library, EnvSlot* slot) {
-	AeronEnvironmentDefinition* s       = &slot->package.settings;
+	AeronEnvironmentDefinition* s       = &slot->prepared.settings;
 	bool                        changed = false;
 	/* One scale for everything derived from the sky image; the strengths
 	 * are relative adjustments, 1 = physically consistent. */
@@ -186,13 +187,13 @@ void draw_tool(int* open, void* user) {
 		AeronEnvironmentLibrary_RequestReload(library);
 	ImGui::EndDisabled();
 	if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-		ImGui::SetTooltip("Reads the packages' files again, after a new bake");
+		ImGui::SetTooltip("Reads the environments' files again, after a new bake");
 
 	for (uint32_t i = 0; i < library->slot_count; ++i) {
 		EnvSlot*   slot   = &library->slots[i];
 		const bool active = library->active == static_cast<int32_t>(i);
 		char       header[160];
-		snprintf(header, sizeof header, "%u: %s%s%s%s###slot%u", i, slot->reference.package,
+		snprintf(header, sizeof header, "%u: %s%s%s%s###slot%u", i, slot->reference.environment,
 				 slot->reference.has_rotation ? " (rotated)" : "", active ? " [active]" : "",
 				 !slot->available ? " [unavailable]" : (slot->overridden ? " [edited]" : ""), i);
 		if (!ImGui::CollapsingHeader(header, active ? ImGuiTreeNodeFlags_DefaultOpen : 0))
@@ -203,9 +204,9 @@ void draw_tool(int* open, void* user) {
 			ImGui::PopID();
 			continue;
 		}
-		const AeronEnvironmentDefinition* d = slot->package.definition;
-		ImGui::Text("Sky: %s", d->radiance_path[0] ? "the package's" : "the game's");
-		ImGui::Text("Directional lights: %s", d->has_directional_lights ? "the package's" : "the game's");
+		const AeronEnvironmentDefinition* d = slot->prepared.definition;
+		ImGui::Text("Sky: %s", d->radiance_path[0] ? "the environment's" : "the game's");
+		ImGui::Text("Directional lights: %s", d->has_directional_lights ? "the environment's" : "the game's");
 		texture_row(library, "Radiance", d->radiance_path);
 		texture_row(library, "Diffuse", d->diffuse_path);
 		texture_row(library, "Specular", d->specular_path);

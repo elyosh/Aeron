@@ -1,10 +1,10 @@
 """Bakes the test probes of the hangar-probes and flight-probes presets.
 
-    python3 probe_packages.py --baker ENVIRONMENT_BAKE --out DIR
+    python3 probe_bakes.py --baker ENVIRONMENT_BAKE --out DIR
 
 Writes one probes bake folder (bake.json, probes.ktx2, grid.ktx2) per test
 set under DIR/probes/. An instance's `probes` field names one of these
-folders. Also writes DIR/probe_tests.yaml with the environment package. Each
+folders. Also writes DIR/probe_tests.yaml with a test environment. Each
 probe reflects one flat colour, so the captures show which probe applies
 where. Every grid point sees light from the model's +X side, so the grid's
 lighting direction shows too. Sets:
@@ -14,8 +14,8 @@ lighting direction shows too. Sets:
   reflecting onto the interior's box, with an 8x12x4 grid over it;
 - isd: four probes, the quadrants of imperialstardestroyer and the
   space above it, with an 8x12x4 grid;
-- test.hangar: a dim neutral environment without a sky, to check probes over
-  an environment.
+- test.dim (in probe_tests.yaml): a dim neutral environment without a sky,
+  to check probes over an environment.
 """
 
 import argparse
@@ -127,19 +127,19 @@ def main():
     # A dim neutral environment, brighter above.
     pano = os.path.join(jobs_dir, "environment.hdr")
     write_hdr(pano, 256, 128, lambda x, y: (0.04, 0.04, 0.05) if y < 64 else (0.015, 0.015, 0.015))
-    target = os.path.join(out, "environments", "test_hangar")
+    target = os.path.join(out, "environments", "test_dim")
     os.makedirs(target)
-    package = os.path.join(target, "package.yaml")
-    run = subprocess.run([baker, "--input", pano, "--name", "test.hangar",
+    entry = os.path.join(target, "environment.yaml")
+    run = subprocess.run([baker, "--input", pano, "--name", "test.dim",
                           "--diffuse-out", os.path.join(target, "diffuse.ktx2"),
-                          "--specular-out", os.path.join(target, "specular.ktx2"), "--package-out", package,
+                          "--specular-out", os.path.join(target, "specular.ktx2"), "--environment-out", entry,
                           "--manifest-root", out, "--specular-size", "64", "--specular-samples", "64"],
                          capture_output=True, text=True)
     if run.returncode:
-        sys.exit("test.hangar: %s" % run.stderr.strip())
+        sys.exit("test.dim: %s" % run.stderr.strip())
 
     with open(os.path.join(out, "probe_tests.yaml"), "w") as stream:
-        stream.write(open(package).read())
+        stream.write(open(entry).read())
     shutil.rmtree(jobs_dir)
     print("wrote %s" % os.path.join(out, "probe_tests.yaml"))
 
