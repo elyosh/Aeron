@@ -368,6 +368,10 @@ class EXPORT_OT_aeron_flight_model(Operator, ExportHelper):
         if not cooker:
             self.report({'ERROR'}, "Set the aeron_gltf_cook path in the add-on preferences")
             return {'CANCELLED'}
+        mod = preferences.game_dir(context)
+        if mod and not os.path.isdir(mod):
+            self.report({'ERROR'}, "Mod Folder not found: {}. Set it in the add-on preferences".format(mod))
+            return {'CANCELLED'}
         root = _check(self, context)
         if root is None:
             return {'CANCELLED'}
@@ -408,6 +412,12 @@ class EXPORT_OT_aeron_flight_model(Operator, ExportHelper):
         # The cooker checks the frames that the materials name against the
         # effect libraries. It first builds them from the project's libraries.
         if preferences.game_effects_dir(context):
+            # A new mod folder has no flight/effects folder yet.
+            try:
+                os.makedirs(preferences.game_effects_dir(context), exist_ok=True)
+            except OSError as error:
+                self.report({'ERROR'}, "Cannot create {}: {}".format(preferences.game_effects_dir(context), error))
+                return {'CANCELLED'}
             argv += ["--effects-dir", preferences.game_effects_dir(context)]
             if effects:
                 argv += ["--project", os.path.dirname(effects)]

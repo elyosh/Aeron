@@ -270,13 +270,15 @@ static bool check_damage(Check* c, const cJSON* in) {
 				  offset_ok;
 		const cJSON* stage;
 		const cJSON* stage_list = ok ? stages : NULL;
-		cJSON_ArrayForEach(stage, stage_list) {
-			ok = ok && (cJSON_IsNull(stage) ||
-						(cJSON_IsString(stage) && key_known(c, library, stage->valuestring, "damage")));
-		}
+		cJSON_ArrayForEach(stage, stage_list) { ok = ok && (cJSON_IsNull(stage) || cJSON_IsString(stage)); }
 		if (!ok)
 			return fail(c, "a damage alternative is { stages: [image | null] x 3, scale: [min, max], offset: "
 						   "inside | { min: [x, y], max: [x, y] } }");
+		/* key_known prints why a stage is not found. */
+		cJSON_ArrayForEach(stage, stages) {
+			if (cJSON_IsString(stage) && !key_known(c, library, stage->valuestring, "damage"))
+				return false;
+		}
 	}
 	return true;
 }

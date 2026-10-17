@@ -32,15 +32,19 @@ static void yaml_rect(FILE* f, const char* name, const ChannelAtlas* ca, int ind
 			r->max_lod);
 }
 
-static bool encode(const ChannelAtlas* ca, const char* path) {
-	uint8_t* buf  = NULL;
-	size_t   size = 0;
-	bool     ok   = write_ktx2_bc7_with_generated_mips_to_buffer_limited_alpha(
-						ca->width, ca->height, ca->page_count, ca->rgba, KTX2_BC7_QUALITY_MED, KTX2_TF_SRGB, true,
-						ca->mip_count, KTX2_ALPHA_INDEPENDENT, &buf, &size) &&
-					write_file(path, buf, size);
+static bool encode(const char* tool, const char* name, const ChannelAtlas* ca, const char* path) {
+	uint8_t*   buf     = NULL;
+	size_t     size    = 0;
+	const bool encoded = write_ktx2_bc7_with_generated_mips_to_buffer_limited_alpha(
+		ca->width, ca->height, ca->page_count, ca->rgba, KTX2_BC7_QUALITY_MED, KTX2_TF_SRGB, true,
+		ca->mip_count, KTX2_ALPHA_INDEPENDENT, &buf, &size);
+	const bool written = encoded && write_file(path, buf, size);
 	free(buf);
-	return ok;
+	if (!encoded)
+		fprintf(stderr, "%s: %s: cannot encode %s\n", tool, name, path);
+	else if (!written)
+		fprintf(stderr, "%s: %s: cannot write %s\n", tool, name, path);
+	return written;
 }
 
 static const EffectLibraryImage* g_sort_images;
@@ -89,10 +93,12 @@ bool EffectLibrary_Write(const char* tool, const char* out_dir, const char* name
 			continue;
 		atlases[a]->fixed_width = atlases[a]->fixed_height = EFFECT_LIBRARY_PAGE_SIZE;
 		ok = channel_atlas_pack(atlases[a], PACK_SIZE, GUTTER) && channel_atlas_materialize(atlases[a]);
+		if (!ok) {
+			fprintf(stderr, "%s: %s: cannot pack the %s pages\n", tool, name, suffix[a]);
+			break;
+		}
 		snprintf(path, sizeof path, "%s/%s.%s.ktx2", out_dir, name, suffix[a]);
-		ok = ok && encode(atlases[a], path);
-		if (!ok)
-			fprintf(stderr, "%s: %s: cannot pack or write the %s pages\n", tool, name, suffix[a]);
+		ok = encode(tool, name, atlases[a], path);
 	}
 	const int layer_pages    = layer.rect_count ? layer.page_count : 0;
 	const int emissive_pages = emissive.rect_count ? emissive.page_count : 0;

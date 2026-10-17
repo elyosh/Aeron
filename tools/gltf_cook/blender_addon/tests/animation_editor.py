@@ -18,7 +18,9 @@ in a headless Blender with this add-on, it:
   materials back, and exports it for the game, which builds `newlib` from
   the project;
 - removes `extra` from `examplepanel` and exports the .glb again. The
-  export must warn that `panel2` uses it.
+  export must warn that `panel2` uses it;
+- exports with a Mod Folder that does not exist. The export must stop and
+  say so.
 Then it checks the files: Screen plays the frames of newlib in the saved
 model and in the game model, and newlib is built.
 """
@@ -204,6 +206,15 @@ def blender_main(cooker, project, effects, paint, scratch):
         check(libraries.selected_image(bpy.context) == "extra", "select extra")
         check('FINISHED' in bpy.ops.aeron.library_remove_image(), "remove extra")
         check('FINISHED' in bpy.ops.export_scene.aeron_flight_model(filepath=glb), ".glb export after removal")
+        mod = prefs.game_dir
+        prefs.game_dir = os.path.join(scratch, "missing")
+        try:
+            bpy.ops.export_scene.aeron_flight_model(filepath=glb)
+            message = ""
+        except RuntimeError as error:
+            message = str(error)
+        prefs.game_dir = mod
+        check("Mod Folder not found" in message, "the .glb export stops when the Mod Folder is missing")
     sys.exit(1 if failures else 0)
 
 

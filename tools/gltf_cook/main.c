@@ -24,6 +24,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 
 #include "cJSON.h"
 
@@ -276,6 +277,15 @@ int main(int argc, char** argv) {
 
 	if (project && !effects_dir) {
 		fprintf(stderr, "[aeron_gltf_cook] --project needs --effects-dir\n");
+		return 2;
+	}
+	struct stat st;
+	if (effects_dir && (stat(effects_dir, &st) != 0 || !S_ISDIR(st.st_mode))) {
+		fprintf(stderr, "[aeron_gltf_cook] effects folder not found: %s\n", effects_dir);
+		return 2;
+	}
+	if (project && (stat(project, &st) != 0 || !S_ISDIR(st.st_mode))) {
+		fprintf(stderr, "[aeron_gltf_cook] project folder not found: %s\n", project);
 		return 2;
 	}
 

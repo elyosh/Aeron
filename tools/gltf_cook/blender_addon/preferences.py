@@ -81,6 +81,8 @@ class AeronFlightModelPreferences(AddonPreferences):
         row.prop(self, "bc7_quality")
         layout.prop(self, "zstd")
         layout.prop(self, "game_dir")
+        if game_dir(context) and not os.path.isdir(game_dir(context)):
+            layout.label(text="Mod Folder not found", icon='ERROR')
         layout.prop(self, "xwau_folder")
         from . import opt_import  # opt_import imports this module
         if self.xwau_folder and not opt_import.has_xwau(bpy.path.abspath(self.xwau_folder)):
