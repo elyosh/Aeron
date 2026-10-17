@@ -842,25 +842,27 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
     float3 ao_b = -4.7951f * albedo + 0.6417f;
     float3 ao_c = 2.7552f * albedo + 0.6903f;
     float3 ao_ambient = max(ao, ((ao * ao_a + ao_b) * ao + ao_c) * ao);
-    /* A key light already in the probes' bake lights only outside their
-     * grid. Inside, its shadow means an object between that light's side
-     * (a hangar's ceiling) and the surface: it takes `key_probe_shadow` of
-     * the probe light coming from that side, whichever way the surface
-     * faces. That is all its light but what the grid holds from the
-     * opposite side (the floor), of which a surface gets the share
-     * (1 - N.L) / 2 of its view. Its reflections lose as much. A surface
-     * turning away from the light takes the shadow 1 m out along its normal
-     * (the visibility pass's B, AeronScene_SetProbeKeyShadow): what covers
-     * the space in front of it, not its own curve, which hides nothing of
-     * its view (no hard line where a hull turns away from the light). */
+    /* A probe set is sealed: inside its grid the probes hold the light (a
+     * hangar's, a bay's), so the directional lights fade out with the
+     * grid's weight. When the key light is in the probes' bake
+     * (`key_shadow_in_probes`), its shadow inside the grid means an object
+     * between that light's side (a hangar's ceiling) and the surface: it
+     * takes `key_probe_shadow` of the probe light coming from that side,
+     * whichever way the surface faces. That is all its light but what the
+     * grid holds from the opposite side (the floor), of which a surface
+     * gets the share (1 - N.L) / 2 of its view. Its reflections lose as
+     * much. A surface turning away from the light takes the shadow 1 m out
+     * along its normal (the visibility pass's B,
+     * AeronScene_SetProbeKeyShadow): what covers the space in front of it,
+     * not its own curve, which hides nothing of its view (no hard line where
+     * a hull turns away from the light). */
     float3 key_color = sun_color;
 #if AERON_PBR_PROBES
+    key_color *= 1.0f - grid_weight;
+    extra_rgb *= 1.0f - grid_weight;
     float key_occlusion = 1.0f;
-    if (key_in_probes != 0.0f) {
-        key_color *= 1.0f - grid_weight;
-    }
     /* Ship occlusion replaces the key light shadow's cut. */
-    if (key_in_probes != 0.0f && !probe_occlusion) {
+    if (key_shadow_in_probes != 0.0f && !probe_occlusion) {
         float key_visibility = shadow_visibility;
         float facing         = saturate(dot(N, L) * 2.5f - 0.75f); /* 0 below N.L 0.3, 1 above 0.7 */
         if (key_shadow_facing == 0.0f && !AERON_PBR_ALPHA_BLEND && i.screen_shadow != 0u) {
