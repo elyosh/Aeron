@@ -293,6 +293,29 @@ static void make_cube_folder(const char* root, const char* name, int files) {
 	}
 }
 
+/* Whether the environment `name` of `manifest` holds `text`. */
+static bool definition_has(const char* manifest, const char* name, const char* text) {
+	char header[128];
+	snprintf(header, sizeof header, "\n  %s:\n", name);
+	const char* entry = strstr(manifest, header);
+	if (!entry)
+		return false;
+	const char* next = strstr(entry + strlen(header), "\n  xwau.");
+	const char* end  = strstr(entry, "\nxwa:");
+	return in_entry(entry, next && (!end || next < end) ? next : end, text);
+}
+
+/* The overlay lines of a definition whose overlay has XWAU angles `xyz`. */
+static void overlay_lines(const char* folder, const float xyz[3], char* out, size_t size) {
+	int written = snprintf(out, size, "    overlay:\n      cube: \"flight/environments/xwau/%s/overlay.ktx2\"\n", folder);
+	if (xyz[0] != 0.0f || xyz[1] != 0.0f || xyz[2] != 0.0f) {
+		float ypr[3];
+		XwauSkyboxes_Rotation(xyz, true, ypr);
+		snprintf(out + written, size - (size_t)written, "      rotation_degrees: [%g, %g, %g]\n", (double)ypr[0],
+				 (double)ypr[1], (double)ypr[2]);
+	}
+}
+
 static void test_skyboxes(const char* scratch) {
 	char game[1024], stock[1024], dir[1200], path[1300];
 	snprintf(game, sizeof game, "%s/sky_game", scratch);
@@ -300,6 +323,9 @@ static void test_skyboxes(const char* scratch) {
 	make_cube_folder(game, "Alpha", 6);
 	make_cube_folder(game, "Beta", 6);
 	make_cube_folder(game, "Gamma", 5); /* does not load */
+	make_cube_folder(game, "Delta", 6);
+	make_cube_folder(game, "Delta_overlay", 6);
+	make_cube_folder(game, "Rocks", 6);
 	snprintf(dir, sizeof dir, "%s/Missions", game);
 	MakeDirs(dir);
 	snprintf(dir, sizeof dir, "%s/Missions", stock);
@@ -312,6 +338,14 @@ static void test_skyboxes(const char* scratch) {
 		{ "m2", "[SkyBoxes]\nAllRegions = Effects\\CubeMaps\\Gamma\n" },
 		{ "m3", "[SkyBoxes]\nEnabledBackdrops = all\nAllRegions = Effects\\CubeMaps\\Alpha\n"
 				"AllRegionsAmbientInt = 0.3\n" },
+		/* Regions 0 and 3 use AllRegions and its default overlay Delta_overlay;
+		 * region 3's own overlay is not tried without Region3. Region 1 has
+		 * its own overlay, region 2 the AllRegions one with its own angles. */
+		{ "m4", "[SkyBoxes]\nAllRegions = Effects\\CubeMaps\\Delta\nAllRegionsRotationX = 10\n"
+				"Region1 = Effects\\CubeMaps\\Beta\nRegion1Overlay = Effects\\CubeMaps\\Rocks\n"
+				"Region1RotationZ = 20\nRegion1OverlayRotationY = 30\nRegion2 = Effects\\CubeMaps\\Beta\n"
+				"Region3Overlay = Effects\\CubeMaps\\Rocks\n" },
+		{ "m5", "[SkyBoxes]\nRegion0 = Effects\\CubeMaps\\Gamma\nRegion0Overlay = Effects\\CubeMaps\\Rocks\n" },
 	};
 	for (size_t m = 0; m < sizeof kMissions / sizeof kMissions[0]; ++m) {
 		snprintf(path, sizeof path, "%s/Missions/%s.ini", game, kMissions[m][0]);
@@ -329,8 +363,30 @@ static void test_skyboxes(const char* scratch) {
 	const char* m1   = text ? strstr(text, "\"missions/m1.tie\"") : NULL;
 	const char* m2   = text ? strstr(text, "\"missions/m2.tie\"") : NULL;
 	const char* m3   = text ? strstr(text, "\"missions/m3.tie\"") : NULL;
-	check(m1 && m2 && m3, "skyboxes: one entry per mission");
-	if (m1 && m2 && m3) {
+	const char* m4   = text ? strstr(text, "\"missions/m4.tie\"") : NULL;
+	const char* m5   = text ? strstr(text, "\"missions/m5.tie\"") : NULL;
+	check(m1 && m2 && m3 && m4 && m5, "skyboxes: one entry per mission");
+	if (m4 && m5) {
+		char              lines[256];
+		static const float kAll[3] = { 10, 0, 0 }, kRegion1[3] = { 0, 30, 20 }, kNone[3] = { 0, 0, 0 };
+		overlay_lines("delta_overlay", kAll, lines, sizeof lines);
+		check(definition_has(text, "xwau.delta.delta_overlay", lines) &&
+				  strstr(m4, "\"0\":\n          environment: xwau.delta.delta_overlay\n") &&
+				  strstr(m4, "\"3\":\n          environment: xwau.delta.delta_overlay\n"),
+			  "skyboxes: AllRegions has its default overlay, with the AllRegions angles");
+		overlay_lines("rocks", kRegion1, lines, sizeof lines);
+		check(definition_has(text, "xwau.beta.rocks", lines) &&
+				  strstr(m4, "\"1\":\n          environment: xwau.beta.rocks\n"),
+			  "skyboxes: a region's own overlay, with angles defaulting to the region's");
+		overlay_lines("delta_overlay", kNone, lines, sizeof lines);
+		check(definition_has(text, "xwau.beta.delta_overlay", lines) &&
+				  !definition_has(text, "xwau.beta.delta_overlay", "      rotation_degrees") &&
+				  strstr(m4, "\"2\":\n          environment: xwau.beta.delta_overlay\n") &&
+				  !definition_has(text, "xwau.beta", "overlay:"),
+			  "skyboxes: a region with its own cube takes the AllRegions overlay with its own angles");
+		check(strstr(m5, "\"0\": none\n") != NULL, "skyboxes: an overlay without a cube is left out");
+	}
+	if (m1 && m2 && m3 && m4) {
 		check(strstr(text, "  xwau.beta:\n") && strstr(text, "diffuse_strength: 0.15\n") &&
 				  strstr(text, "ambient_fill: [0.05, 0.05, 0.05]"),
 			  "skyboxes: a region with its own folder takes the region defaults");
@@ -345,12 +401,16 @@ static void test_skyboxes(const char* scratch) {
 				  !in_entry(m1, m2, "show_backdrops"),
 			  "skyboxes: hidden images are the starfield ones and DisabledBackdrops, 'All' is ignored");
 		check(strstr(m2, "\"0\": none\n        \"1\": none") != NULL, "skyboxes: no folder loads, no sky");
-		check(strstr(m3, "show_backdrops: all") && !strstr(m3, "hide_backdrops"),
+		check(in_entry(m3, m4, "show_backdrops: all") && !in_entry(m3, m4, "hide_backdrops"),
 			  "skyboxes: EnabledBackdrops = all turns hiding off");
 	}
-	check(list && strstr(list, "\txwau.alpha\tflight/environments/xwau/alpha\n") &&
-			  strstr(list, "\txwau.beta\t") && !strstr(list, "gamma"),
-		  "skyboxes: the folder list names the folders that load");
+	check(list && strstr(list, "/Effects/CubeMaps/Alpha\txwau.alpha\tflight/environments/xwau/alpha\n") &&
+			  strncmp(list, "sky\t", 4) == 0 && strstr(list, "\nsky\t") && strstr(list, "\txwau.beta\t") &&
+			  !strstr(list, "gamma") &&
+			  strstr(list, "\noverlay\t") &&
+			  strstr(list, "/Effects/CubeMaps/Rocks\t-\tflight/environments/xwau/rocks\n") &&
+			  !strstr(list, "\txwau.rocks"),
+		  "skyboxes: the folder list names the sky and overlay folders that load");
 	free(text);
 	free(list);
 }

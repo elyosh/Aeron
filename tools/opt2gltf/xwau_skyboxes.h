@@ -15,6 +15,11 @@
  *     (AmbientInt 0.15, AmbientMin 0.01). Otherwise it uses the AllRegions
  *     folder when it loads, with the AllRegions* values (AmbientInt 0.50,
  *     AmbientMin 0.01). Otherwise it has no cube.
+ *   - A region's overlay is its Region<N>Overlay folder (default
+ *     <folder>_overlay) when it loads, else the AllRegions one. Its angles
+ *     follow the cube: Region<N>OverlayRotation* (default the region's
+ *     angles) with the region's own cube, else AllRegionsOverlayRotation*
+ *     (default the AllRegions angles).
  *   - Numbers are read as std::stof reads them: the leading number of the
  *     value, or the default when there is none.
  *   - DisabledBackdrops and EnabledBackdrops list "group-image" images
@@ -22,22 +27,25 @@
  *     means every image and ends the list.
  *
  * The manifest holds:
- *   - one environment per cube folder and set of values, named
- *     xwau.<folder> for the first set and xwau.<folder>.2, .3 and so on for
- *     the others. AmbientInt becomes diffuse_strength and AmbientMin the
- *     ambient_fill. Its textures are
+ *   - one environment per cube folder, set of values and overlay, named
+ *     xwau.<folder>, or xwau.<folder>.<overlay folder> with an overlay, for
+ *     the first one and the same name with .2, .3 and so on for the others.
+ *     AmbientInt becomes diffuse_strength and AmbientMin the ambient_fill.
+ *     Its textures are
  *     flight/environments/xwau/<folder>/{sky,diffuse,specular}.ktx2, which
- *     `environment_bake --faces` writes;
+ *     `environment_bake --faces` writes, and
+ *     flight/environments/xwau/<overlay folder>/overlay.ktx2, which
+ *     `environment_bake --overlay-faces` writes;
  *   - an `xwa.missions` entry for each original mission with [SkyBoxes],
  *     with its four regions. A region with a cube keeps its backdrops, and
  *     gets its rotation (XwauSkyboxes_Rotation) and its hide and show lists:
  *     the ddraw wrapper's starfield images and DisabledBackdrops are hidden,
  *     and EnabledBackdrops are shown. A region without a cube is `none`.
- * Overlays are not written yet: the regions that have one get their sky
- * alone, and are reported.
+ * A region with an overlay but no cube gets no overlay, and is reported.
  *
- * The folder list has one line per cube folder:
- * "<folder path>\t<environment name>\t<texture folder in the mod folder>".
+ * The folder list has one line per sky folder and one per overlay folder:
+ * "sky\t<folder path>\t<environment name>\t<texture folder in the mod folder>"
+ * or "overlay\t<folder path>\t-\t<texture folder in the mod folder>".
  *
  * <folder> is the folder name in lower case, encoded with Xwau_EncodeName.
  */

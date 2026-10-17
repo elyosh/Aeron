@@ -86,18 +86,21 @@ void XwauSkyboxes_Rotation(const float xyz_degrees[3], bool overlay, float out_d
 typedef struct SkyFolder {
 	char path[1024]; /* the folder found in the game folder */
 	char key[128];   /* lower-case encoded name */
+	bool sky, overlay; /* how the folder is used */
 } SkyFolder;
 
 typedef struct SkyDefinition {
 	size_t folder;
 	float  ambient_int, ambient_min;
+	long   overlay;             /* overlay folder, or -1 */
+	float  overlay_rotation[3]; /* XWAU angles */
 	char   name[64];
 } SkyDefinition;
 
 typedef struct SkyRegion {
 	long  definition; /* -1: no cube */
 	float rotation[3];
-	bool  overlay;
+	bool  overlay_without_sky;
 } SkyRegion;
 
 typedef struct SkyList {
@@ -247,13 +250,17 @@ static void report_unknown_keys(const XwauLines* lines, const char* base) {
 /* Results of folder_index and definition_index besides an index. */
 enum { SKY_LEFT_OUT = -1, SKY_NO_MEMORY = -2 };
 
-/* The index of the cube folder `found`, added when new. A folder whose name
- * cannot be encoded, or that has the name of another folder, is reported and
- * left out. */
-static long folder_index(SkyState* st, const char* found, const char* base) {
-	for (size_t i = 0; i < st->folder_count; ++i)
-		if (strcmp(st->folders[i].path, found) == 0)
+/* The index of the cube folder `found`, added when new, and marked as used
+ * as a sky or an overlay. A folder whose name cannot be encoded, or that has
+ * the name of another folder, is reported and left out. */
+static long folder_index(SkyState* st, const char* found, bool overlay, const char* base) {
+	for (size_t i = 0; i < st->folder_count; ++i) {
+		if (strcmp(st->folders[i].path, found) == 0) {
+			st->folders[i].sky |= !overlay;
+			st->folders[i].overlay |= overlay;
 			return (long)i;
+		}
+	}
 	const char* slash = strrchr(found, '/');
 	const char* name  = slash ? slash + 1 : found;
 	char        key[128];
@@ -270,28 +277,34 @@ static long folder_index(SkyState* st, const char* found, const char* base) {
 	if (!ArrayGrow((void**)&st->folders, st->folder_count, sizeof *st->folders))
 		return SKY_NO_MEMORY;
 	SkyFolder* f = &st->folders[st->folder_count];
+	memset(f, 0, sizeof *f);
 	snprintf(f->path, sizeof f->path, "%s", found);
 	snprintf(f->key, sizeof f->key, "%s", key);
+	f->sky     = !overlay;
+	f->overlay = overlay;
 	return (long)st->folder_count++;
 }
 
-/* The index of the environment for a cube folder and its values, added when
- * new: xwau.<folder> for the first values, then xwau.<folder>.2 and so on. */
-static long definition_index(SkyState* st, size_t folder, float ambient_int, float ambient_min,
-							 const char* base) {
-	size_t same_folder = 0;
+/* The index of the environment for a cube folder, its values and its
+ * overlay, added when new: xwau.<folder>, or xwau.<folder>.<overlay> with an
+ * overlay, for the first ones, then the same name with .2, .3 and so on. */
+static long definition_index(SkyState* st, size_t folder, float ambient_int, float ambient_min, long overlay,
+							 const float overlay_rotation[3], const char* base) {
+	size_t same_name = 0;
 	for (size_t i = 0; i < st->definition_count; ++i) {
 		const SkyDefinition* d = &st->definitions[i];
-		if (d->folder != folder)
+		if (d->folder != folder || d->overlay != overlay)
 			continue;
-		if (d->ambient_int == ambient_int && d->ambient_min == ambient_min)
+		if (d->ambient_int == ambient_int && d->ambient_min == ambient_min &&
+			(overlay < 0 || memcmp(d->overlay_rotation, overlay_rotation, sizeof d->overlay_rotation) == 0))
 			return (long)i;
-		++same_folder;
+		++same_name;
 	}
-	char      name[64];
-	const int length =
-		same_folder ? snprintf(name, sizeof name, "xwau.%s.%zu", st->folders[folder].key, same_folder + 1)
-					: snprintf(name, sizeof name, "xwau.%s", st->folders[folder].key);
+	char base_name[300], name[64];
+	snprintf(base_name, sizeof base_name, overlay < 0 ? "xwau.%s" : "xwau.%s.%s", st->folders[folder].key,
+			 overlay < 0 ? "" : st->folders[overlay].key);
+	const int length = same_name ? snprintf(name, sizeof name, "%s.%zu", base_name, same_name + 1)
+								 : snprintf(name, sizeof name, "%s", base_name);
 	if (length >= (int)sizeof name) {
 		Report(base, "[SkyBoxes]: the environment name for %s is too long; it is left out",
 			   st->folders[folder].path);
@@ -303,48 +316,77 @@ static long definition_index(SkyState* st, size_t folder, float ambient_int, flo
 	d->folder        = folder;
 	d->ambient_int   = ambient_int;
 	d->ambient_min   = ambient_min;
+	d->overlay       = overlay;
+	memcpy(d->overlay_rotation, overlay_rotation, sizeof d->overlay_rotation);
 	snprintf(d->name, sizeof d->name, "%s", name);
 	return (long)st->definition_count++;
 }
 
+/* The AllRegions values that a region without its own cube uses. */
+typedef struct SkyAllRegions {
+	const char* found;               /* the cube folder, or NULL when it does not load */
+	const char* overlay_found;       /* the overlay folder, or NULL */
+	float       angles[3];           /* RotationX, Y and Z */
+	float       overlay_angles[3];   /* OverlayRotationX, Y and Z */
+} SkyAllRegions;
+
 /* Reads region `r`: its own cube folder when it loads, else the AllRegions
- * one. Returns false when out of memory. */
-static bool read_region(SkyState* st, const XwauLines* lines, int r, const char* all_found,
-						const float all_angles[3], bool all_overlay, const char* base, SkyRegion* region) {
+ * one. The overlay is the region's own when it loads, else the AllRegions
+ * one; its angles follow the cube, as in PrimarySurface.cpp. Returns false
+ * when out of memory. */
+static bool read_region(SkyState* st, const XwauLines* lines, int r, const SkyAllRegions* all, const char* base,
+						SkyRegion* region) {
 	region->definition = -1;
-	char key[16], written[512], found[1024];
+	char key[16], written[512], found[1024], name[64];
 	snprintf(key, sizeof key, "Region%d", r);
 	XwauLines_Value(lines, key, XWAU_RULES_CPP, written, sizeof written);
 	const bool own = folder_loads(st->game, written, found, sizeof found);
 	if (written[0] && !own)
 		Report(base, "[SkyBoxes]: %s folder %s does not load (it needs exactly six files)", key, written);
-	if (!own && !all_found)
-		return true;
-	const char* prefix = own ? key : "AllRegions";
-	char        name[64];
-	snprintf(name, sizeof name, "%sAmbientInt", prefix);
-	const float ambient_int = sky_float(lines, name, own ? 0.15f : 0.50f);
-	snprintf(name, sizeof name, "%sAmbientMin", prefix);
-	const float ambient_min = sky_float(lines, name, 0.01f);
-	const long  folder      = folder_index(st, own ? found : all_found, base);
-	const long  definition =
-		folder < 0 ? folder : definition_index(st, (size_t)folder, ambient_int, ambient_min, base);
-	if (definition == SKY_NO_MEMORY)
-		return false;
-	if (definition < 0)
-		return true;
-	region->definition = definition;
-	for (int axis = 0; axis < 3; ++axis) {
-		snprintf(name, sizeof name, "%sRotation%c", key, 'X' + axis);
-		region->rotation[axis] = own ? sky_float(lines, name, 0.0f) : all_angles[axis];
-	}
-	/* The region's own overlay when it loads, else the AllRegions one. */
-	char overlay[600], overlay_found[1024];
+
+	/* The wrapper tries the region's overlay only when Region<N> or
+	 * Region<N>Illum is set. */
+	char overlay[600], illum[600], own_overlay_found[1024];
+	snprintf(name, sizeof name, "%sIllum", key);
+	XwauLines_Value(lines, name, XWAU_RULES_CPP, illum, sizeof illum);
 	snprintf(name, sizeof name, "%sOverlay", key);
 	XwauLines_Value(lines, name, XWAU_RULES_CPP, overlay, sizeof overlay);
 	if (!overlay[0] && written[0])
 		snprintf(overlay, sizeof overlay, "%s_overlay", written);
-	region->overlay = folder_loads(st->game, overlay, overlay_found, sizeof overlay_found) || all_overlay;
+	const bool  own_overlay = (written[0] || illum[0]) &&
+							  folder_loads(st->game, overlay, own_overlay_found, sizeof own_overlay_found);
+	const char* overlay_found = own_overlay ? own_overlay_found : all->overlay_found;
+
+	if (!own && !all->found) {
+		region->overlay_without_sky = overlay_found != NULL;
+		return true;
+	}
+	const char* prefix = own ? key : "AllRegions";
+	snprintf(name, sizeof name, "%sAmbientInt", prefix);
+	const float ambient_int = sky_float(lines, name, own ? 0.15f : 0.50f);
+	snprintf(name, sizeof name, "%sAmbientMin", prefix);
+	const float ambient_min = sky_float(lines, name, 0.01f);
+	for (int axis = 0; axis < 3; ++axis) {
+		snprintf(name, sizeof name, "%sRotation%c", key, 'X' + axis);
+		region->rotation[axis] = own ? sky_float(lines, name, 0.0f) : all->angles[axis];
+	}
+	float overlay_rotation[3] = { 0.0f, 0.0f, 0.0f };
+	for (int axis = 0; overlay_found && axis < 3; ++axis) {
+		snprintf(name, sizeof name, "%sOverlayRotation%c", key, 'X' + axis);
+		overlay_rotation[axis] = own ? sky_float(lines, name, region->rotation[axis]) : all->overlay_angles[axis];
+	}
+	const long folder = folder_index(st, own ? found : all->found, false, base);
+	const long overlay_folder =
+		folder < 0 || !overlay_found ? SKY_LEFT_OUT : folder_index(st, overlay_found, true, base);
+	if (folder == SKY_NO_MEMORY || overlay_folder == SKY_NO_MEMORY)
+		return false;
+	const long definition = folder < 0 ? folder
+									   : definition_index(st, (size_t)folder, ambient_int, ambient_min,
+														  overlay_folder, overlay_rotation, base);
+	if (definition == SKY_NO_MEMORY)
+		return false;
+	if (definition >= 0)
+		region->definition = definition;
 	return true;
 }
 
@@ -381,14 +423,21 @@ static bool read_mission(SkyState* st, const char* dir, const char* name, SkyMis
 	XwauLines_Value(&lines, "AllRegionsOverlay", XWAU_RULES_CPP, overlay, sizeof overlay);
 	if (!overlay[0] && all_written[0])
 		snprintf(overlay, sizeof overlay, "%s_overlay", all_written);
-	const bool  all_overlay   = folder_loads(st->game, overlay, overlay_found, sizeof overlay_found);
-	const float all_angles[3] = { sky_float(&lines, "AllRegionsRotationX", 0.0f),
-								  sky_float(&lines, "AllRegionsRotationY", 0.0f),
-								  sky_float(&lines, "AllRegionsRotationZ", 0.0f) };
-	bool        ok            = true;
+	SkyAllRegions all = {
+		.found         = all_loads ? all_found : NULL,
+		.overlay_found = folder_loads(st->game, overlay, overlay_found, sizeof overlay_found) ? overlay_found
+																							   : NULL,
+	};
+	for (int axis = 0; axis < 3; ++axis) {
+		char name[64];
+		snprintf(name, sizeof name, "AllRegionsRotation%c", 'X' + axis);
+		all.angles[axis] = sky_float(&lines, name, 0.0f);
+		snprintf(name, sizeof name, "AllRegionsOverlayRotation%c", 'X' + axis);
+		all.overlay_angles[axis] = sky_float(&lines, name, all.angles[axis]);
+	}
+	bool ok = true;
 	for (int r = 0; ok && r < SKY_REGIONS; ++r)
-		ok = read_region(st, &lines, r, all_loads ? all_found : NULL, all_angles, all_overlay, base,
-						 &out->regions[r]);
+		ok = read_region(st, &lines, r, &all, base, &out->regions[r]);
 	XwauLines_Free(&lines);
 	return ok;
 }
@@ -452,6 +501,16 @@ static bool write_manifest(const SkyState* st, const char* path) {
 				"    rotation_degrees: [0, 0, 0]\n"
 				"    directional_lights: []\n",
 				d->name, key, key, (double)diffuse, key, (double)fill, (double)fill, (double)fill);
+		if (d->overlay < 0)
+			continue;
+		fprintf(f, "    overlay:\n      cube: \"flight/environments/xwau/%s/overlay.ktx2\"\n",
+				st->folders[d->overlay].key);
+		if (d->overlay_rotation[0] != 0.0f || d->overlay_rotation[1] != 0.0f || d->overlay_rotation[2] != 0.0f) {
+			float degrees[3];
+			XwauSkyboxes_Rotation(d->overlay_rotation, true, degrees);
+			fprintf(f, "      rotation_degrees: [%g, %g, %g]\n", (double)degrees[0], (double)degrees[1],
+					(double)degrees[2]);
+		}
 	}
 	fprintf(f, "\nxwa:\n  missions:\n");
 	for (size_t m = 0; m < st->mission_count; ++m) {
@@ -505,9 +564,13 @@ static bool write_folders(const SkyState* st, const char* path) {
 		Report(path, "cannot write");
 		return false;
 	}
-	for (size_t i = 0; i < st->folder_count; ++i)
-		fprintf(f, "%s\txwau.%s\tflight/environments/xwau/%s\n", st->folders[i].path, st->folders[i].key,
-				st->folders[i].key);
+	for (size_t i = 0; i < st->folder_count; ++i) {
+		const SkyFolder* folder = &st->folders[i];
+		if (folder->sky)
+			fprintf(f, "sky\t%s\txwau.%s\tflight/environments/xwau/%s\n", folder->path, folder->key, folder->key);
+		if (folder->overlay)
+			fprintf(f, "overlay\t%s\t-\tflight/environments/xwau/%s\n", folder->path, folder->key);
+	}
 	const bool ok = !ferror(f);
 	if (fclose(f) != 0 || !ok) {
 		Report(path, "cannot write");
@@ -548,7 +611,12 @@ bool XwauSkyboxes_Write(const char* game, const char* stock_game, const char* ma
 			const SkyRegion* region = &st.missions[m].regions[r];
 			with_sky += region->definition >= 0;
 			without += region->definition < 0;
-			overlays += region->definition >= 0 && region->overlay;
+			overlays += region->definition >= 0 && st.definitions[region->definition].overlay >= 0;
+			if (region->overlay_without_sky)
+				Report(st.missions[m].key,
+					   "[SkyBoxes]: region %d has an overlay but no cube; an overlay needs a sky, so it is "
+					   "left out",
+					   r);
 		}
 	}
 	if (!ok)
@@ -560,8 +628,7 @@ bool XwauSkyboxes_Write(const char* game, const char* stock_game, const char* ma
 			   "cube folders",
 			   manifest, st.mission_count, with_sky, without, st.definition_count, st.folder_count);
 		if (overlays)
-			Report(NULL, "%zu regions have an overlay, which is not converted yet; they get their sky alone",
-				   overlays);
+			Report(NULL, "%zu regions have an overlay", overlays);
 		if (not_original)
 			Report(NULL, "%zu missions with [SkyBoxes] are not in the original game", not_original);
 	}
