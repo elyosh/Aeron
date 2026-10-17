@@ -22,14 +22,14 @@ bloom:
   kernel: 4
 tonemap: agx
 output_dir: captures/flight-probes
-# Set this to the game-data directory containing remaster/models (converted
+# Set this to the game-data directory containing mod/models (converted
 # XWAU models). Relative paths are resolved from the working directory.
 asset_root: .
 models:
-  - remaster/models/imperialstardestroyer.glb
-  - remaster/models/xwing.glb
-  - remaster/models/tiefighter.glb
-  - remaster/models/awing.glb
+  - mod/models/imperialstardestroyer.glb
+  - mod/models/xwing.glb
+  - mod/models/tiefighter.glb
+  - mod/models/awing.glb
 game_scene:
   # The Scene3D defaults the game loads (aeron/config/scene3d_defaults.yaml);
   # from a standalone Aeron checkout, config/scene3d_defaults.yaml.
@@ -42,11 +42,11 @@ game_scene:
   environment: { folder: captures/probe-assets, manifest: probe_tests.yaml }
   # Ships: position in metres, camera axes; rotation_degrees [yaw, pitch, roll].
   instances:
-    - { model: remaster/models/imperialstardestroyer.glb, position: [0, 300, 1100], rotation_degrees: [30, 0, 0],
+    - { model: mod/models/imperialstardestroyer.glb, position: [0, 300, 1100], rotation_degrees: [30, 0, 0],
         probes: probes/isd }
-    - { model: remaster/models/xwing.glb, position: [150, 150, 600], rotation_degrees: [20, 0, 0] }
-    - { model: remaster/models/tiefighter.glb, position: [230, 140, 700], rotation_degrees: [200, 0, 0] }
-    - { model: remaster/models/awing.glb, position: [190, 170, 500], rotation_degrees: [10, 0, 0] }
+    - { model: mod/models/xwing.glb, position: [150, 150, 600], rotation_degrees: [20, 0, 0] }
+    - { model: mod/models/tiefighter.glb, position: [230, 140, 700], rotation_degrees: [200, 0, 0] }
+    - { model: mod/models/awing.glb, position: [190, 170, 500], rotation_degrees: [10, 0, 0] }
 benchmark:
   warmup_seconds: 2
   sample_seconds: 1

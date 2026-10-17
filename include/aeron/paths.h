@@ -13,6 +13,8 @@ const char* Aeron_UserPath(void);
 const char* Aeron_AssetRoot(void);
 /* Returns the initialized application-resource root path. */
 const char* Aeron_ResourceRoot(void);
+/* Returns the mod root path, or an empty string when none is set. */
+const char* Aeron_ModRoot(void);
 /* Builds a path relative to the application executable or bundle resources. */
 int Aeron_ApplicationPath(const char* relative_path, char* out, size_t capacity);
 

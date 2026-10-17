@@ -61,7 +61,7 @@ Start from a preset; unknown keys are rejected. The main settings are:
 | `reference_samples` | Temporal reference samples; 0 disables it, maximum 256. |
 | `fixture` | `shapes` (default) or `bloom_chart`. |
 | `models`, `asset_root` | Optional OPT or cooked `.glb` paths and their VFS root; replaces the cuboids. |
-| `effect_dir`, `time` | Optional material animation: the effect libraries' directory under `asset_root` (`remaster/effects`) and the animation time of frame 0 in seconds (default 0), which advances with the frames. Without `effect_dir`, animated materials show their static look. |
+| `effect_dir`, `time` | Optional material animation: the effect libraries' directory under `asset_root` (`mod/effects`) and the animation time of frame 0 in seconds (default 0), which advances with the frames. Without `effect_dir`, animated materials show their static look. |
 | `anim` | Optional `{ damage_stage, energy, state_mask, seed, energy_start, onset: [...] }`: the material animation state of every instance (`AeronSceneMaterialAnim`), instance `i` taking seed `seed + i`, so their damage alternatives and placements differ. Needs `effect_dir`. |
 | `blast_mark` | Optional `{ image: "3050-1", center: [x, y, z], size }`: draws that `effects.yaml` image's frame at the animation time as an animated blast mark on the first model's first instance, as the game does: the classic mark square, centred at `center` (model metres) in the model's XY plane and `size` metres wide, shows the image's crop, and the image spreads around it over a square three times as wide (not with `game_scene`). Needs `effect_dir`. |
 | `msaa_samples` | 1, 2, 4 or 8; default 2. |
@@ -163,7 +163,7 @@ baked from. The .blend is never saved.
 ```sh
 blender -b scene.blend --python cycles_match.py -- --out DIR \
     --asset-root GAME_DATA --hangar OPT_HANGAR \
-    --model OPT_HANGAR=remaster/models/hangar.glb --model OPT_SHIP=remaster/models/ship.glb \
+    --model OPT_HANGAR=mod/models/hangar.glb --model OPT_SHIP=mod/models/ship.glb \
     --probes PROJECT/hangar/bake/probes --defaults aeron/config/scene3d_defaults.yaml
 (cd DIR && for c in full diffuse reflect; do SCENE_CAPTURE $c.yaml; done)
 blender -b scene.blend --python cycles_render.py -- DIR

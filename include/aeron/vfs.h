@@ -8,7 +8,7 @@
 extern "C" {
 #endif
 
-/* Opaque virtual filesystem instance with asset, resource, user, and temp roots.
+/* Opaque virtual filesystem instance with asset, resource, user, temp, and mod roots.
  * Instances and their file handles are owner-thread confined: do not perform
  * concurrent operations, or reconfigure/destroy an instance during an operation.
  * A file handle may be moved to another thread while no operation is active;
@@ -32,6 +32,9 @@ typedef enum AeronVfsRoot {
 	AERON_VFS_ROOT_USER,
 	AERON_VFS_ROOT_TEMP,
 	AERON_VFS_ROOT_RESOURCE,
+	/* Optional files that replace or add to the game's assets. It has no path
+	 * until AeronVfs_SetRoot sets one, and until then nothing is found in it. */
+	AERON_VFS_ROOT_MOD,
 	AERON_VFS_ROOT_COUNT
 } AeronVfsRoot;
 
@@ -83,7 +86,7 @@ typedef int (*AeronVfsGlobCallback)(void* userdata, const AeronVfsEntry* entry);
 
 /* Initializes existing VFS storage, normally runtime-owned, with configured or default roots. */
 void AeronVfs_Init(AeronVfs* vfs, const AeronVfsConfig* config);
-/* Replaces an initialized asset or resource root. User/temp roots are fixed
+/* Sets the asset, resource or mod root. User/temp roots are fixed
  * for the VFS lifetime. The path is copied and normalized. */
 int AeronVfs_SetRoot(AeronVfs* vfs, AeronVfsRoot root, const char* path);
 /* Replaces an asset or resource root with a read-only ISO9660 disc image.

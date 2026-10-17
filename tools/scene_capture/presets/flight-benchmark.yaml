@@ -19,16 +19,16 @@ bloom:
   kernel: 4
 tonemap: agx
 output_dir: captures/flight-benchmark
-# Set this to the game-data directory containing remaster/models (converted
+# Set this to the game-data directory containing mod/models (converted
 # XWAU models). Relative paths are resolved from the working directory.
 asset_root: .
 models:
-  - remaster/models/awingcockpit.glb
-  - remaster/models/awing.glb
-  - remaster/models/imperialstardestroyer.glb
-  - remaster/models/corelliantransport2.glb
-  - remaster/models/tiefighter.glb
-  - remaster/models/xwing.glb
+  - mod/models/awingcockpit.glb
+  - mod/models/awing.glb
+  - mod/models/imperialstardestroyer.glb
+  - mod/models/corelliantransport2.glb
+  - mod/models/tiefighter.glb
+  - mod/models/xwing.glb
 # The pilot eye in the cockpit model (metres) and the view direction.
 screen_test:
   eye: [0, -0.049, 0.757]
@@ -48,12 +48,12 @@ game_scene:
     - { position: [0, 1, 6], intensity: [0.575, 0.0383, 0.0383] }
   # Ships: position in metres, camera axes; rotation_degrees [yaw, pitch, roll].
   instances:
-    - { model: remaster/models/awingcockpit.glb, role: cockpit }
-    - { model: remaster/models/awing.glb, role: exterior }
-    - { model: remaster/models/imperialstardestroyer.glb, position: [-250, -120, 1500], rotation_degrees: [30, 0, 0] }
-    - { model: remaster/models/corelliantransport2.glb, position: [60, 15, 160], rotation_degrees: [-40, 10, 0] }
-    - { model: remaster/models/tiefighter.glb, position: [-12, 4, 35], rotation_degrees: [150, 0, 0] }
-    - { model: remaster/models/xwing.glb, position: [5, 0, -60] }
+    - { model: mod/models/awingcockpit.glb, role: cockpit }
+    - { model: mod/models/awing.glb, role: exterior }
+    - { model: mod/models/imperialstardestroyer.glb, position: [-250, -120, 1500], rotation_degrees: [30, 0, 0] }
+    - { model: mod/models/corelliantransport2.glb, position: [60, 15, 160], rotation_degrees: [-40, 10, 0] }
+    - { model: mod/models/tiefighter.glb, position: [-12, 4, 35], rotation_degrees: [150, 0, 0] }
+    - { model: mod/models/xwing.glb, position: [5, 0, -60] }
 benchmark:
   warmup_seconds: 2
   sample_seconds: 1

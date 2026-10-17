@@ -11,7 +11,7 @@
  * Diagnostic mode writes a labelled cube for checking orientation.
  * Sprite mode converts an HDR image to a KTX2 sun sprite. Capture mode
  * bakes a capture directory written by the game (six cube faces, sun
- * images, capture.yaml) into an environment under the remaster bake root,
+ * images, capture.yaml) into an environment under the game's mod folder,
  * with the `environments:` and `xwa:` snippets to merge into the manifest. Probes
  * mode bakes the panoramas that the Blender add-on renders for a model's
  * reflection probes and irradiance grid. It writes two KTX2 images and the

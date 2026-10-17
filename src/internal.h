@@ -25,6 +25,7 @@ struct AeronVfs {
 	char                   resource_root[AERON_MAX_PATH];
 	char                   user_root[AERON_MAX_PATH];
 	char                   temp_root[AERON_MAX_PATH];
+	char                   mod_root[AERON_MAX_PATH];
 	uint32_t               root_options[AERON_VFS_ROOT_COUNT];
 	AeronVfsCaseDirectory* case_directories[AERON_VFS_ROOT_COUNT];
 	struct AeronIso9660*   iso_roots[AERON_VFS_ROOT_COUNT];

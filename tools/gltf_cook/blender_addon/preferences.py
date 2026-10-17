@@ -55,12 +55,12 @@ class AeronFlightModelPreferences(AddonPreferences):
     recent_projects: CollectionProperty(type=AeronRecentProject, options={'HIDDEN'},
                                         description="The projects of the last OPT imports, most recent first")
     game_dir: StringProperty(
-        name="Game Folder", subtype='DIR_PATH',
-        description="The game's remaster folder. Export for Game rebuilds the project's changed effect "
+        name="Mod Folder", subtype='DIR_PATH',
+        description="The game's mod folder. Export for Game rebuilds the project's changed effect "
                     "libraries in its effects folder and checks each animation frame against them. Bake Probes "
                     "writes there")
-    # Before Game Folder: the game's remaster/effects folder. Its parent is
-    # the Game Folder when that is not set.
+    # Before Mod Folder: the mod folder's effects folder. Its parent is the
+    # Mod Folder when that is not set.
     effects_dir: StringProperty(subtype='DIR_PATH', options={'HIDDEN'})
 
     def draw(self, context):
@@ -126,7 +126,7 @@ def environment_bake_path(context):
 
 
 def game_dir(context):
-    """The game's remaster folder (Game Folder), or ""."""
+    """The game's mod folder (Mod Folder), or ""."""
     prefs = get(context)
     if prefs.game_dir:
         return os.path.normpath(bpy.path.abspath(prefs.game_dir))

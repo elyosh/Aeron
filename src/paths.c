@@ -6,6 +6,8 @@ const char* Aeron_AssetRoot(void) { return g_aeron.vfs.asset_root; }
 
 const char* Aeron_ResourceRoot(void) { return g_aeron.vfs.resource_root; }
 
+const char* Aeron_ModRoot(void) { return g_aeron.vfs.mod_root; }
+
 int Aeron_ApplicationPath(const char* relative_path, char* out, size_t capacity) {
 	const char* base_path;
 	int         length;

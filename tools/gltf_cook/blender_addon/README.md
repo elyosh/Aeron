@@ -18,10 +18,9 @@ match the game. The package includes its own `aeron_gltf_cook`, which builds
 models. Bake Probes also needs `environment_bake`. Some packages include
 it; otherwise, set its path in the add-on preferences.
 
-Set **Game Folder** in the preferences to the game's `remaster` folder.
-Export for Game then rebuilds the changed effect libraries that the model
-uses into `remaster/effects`, and checks every animation frame against
-them.
+Set **Mod Folder** in the preferences to the game's mod folder. Export for
+Game then rebuilds the changed effect libraries that the model uses into
+its `effects` folder, and checks every animation frame against them.
 
 ## Workflow
 
@@ -52,8 +51,8 @@ including the material animations ([format](../animated_materials.md)).
    other folders, or images that exist only in Blender, are copied into
    `textures/` as PNG. Nothing else in the folder is changed or removed.
 5. Try the model in the game with **Export for Game** (or File > Export >
-   Aeron Flight Model for Game (.glb)). It builds a `.glb` for the game's
-   `remaster/models/` folder. When the game effects folder is set, it first
+   Aeron Flight Model for Game (.glb)). It builds a `.glb` for the `models`
+   folder of the game's mod folder. When **Mod Folder** is set, it first
    rebuilds the effect libraries whose frames changed, and lists them.
 
 Both exports check the model first. Aeron > Problems lists every problem,

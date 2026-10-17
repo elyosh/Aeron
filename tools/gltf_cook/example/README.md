@@ -30,5 +30,5 @@ What the captures show, at 0.25 s and 0.75 s:
 - `MaskedScreen` (not animated): the display's test image on the grille's
   bars, its holes cut out. It checks that masked screens draw as screens.
 
-In the game the model goes to `remaster/models/` and the library files to
-`remaster/effects/`.
+In the game the model goes to `models/` in the mod folder and the library
+files to `effects/`.

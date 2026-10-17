@@ -15,8 +15,8 @@ msaa_samples: 4
 output_dir: captures/anim-example
 asset_root: captures/anim-example-assets
 models:
-  - remaster/models/panel.glb
-effect_dir: remaster/effects
+  - mod/models/panel.glb
+effect_dir: mod/effects
 time: 0.25
 screen_test:
   eye: [0, 0, 0]

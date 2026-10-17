@@ -293,6 +293,7 @@ void AeronVfs_Init(AeronVfs* vfs, const AeronVfsConfig* config) {
 	memset(vfs->root_options, 0, sizeof(vfs->root_options));
 	memset(vfs->case_directories, 0, sizeof(vfs->case_directories));
 	memset(vfs->iso_roots, 0, sizeof(vfs->iso_roots));
+	vfs->mod_root[0] = '\0';
 
 	Aeron_SetDefaultPath(vfs->asset_root, sizeof(vfs->asset_root), config ? config->asset_root : NULL);
 	Aeron_NormalizePath(vfs->asset_root);
@@ -336,6 +337,10 @@ int AeronVfs_SetRoot(AeronVfs* vfs, AeronVfsRoot root, const char* path) {
 		case AERON_VFS_ROOT_RESOURCE:
 			destination = vfs->resource_root;
 			capacity    = sizeof vfs->resource_root;
+			break;
+		case AERON_VFS_ROOT_MOD:
+			destination = vfs->mod_root;
+			capacity    = sizeof vfs->mod_root;
 			break;
 		default:
 			return 0;
@@ -431,6 +436,8 @@ static const char* Aeron_VfsRootPath(AeronVfs* vfs, AeronVfsRoot root) {
 			return vfs->temp_root;
 		case AERON_VFS_ROOT_RESOURCE:
 			return vfs->resource_root;
+		case AERON_VFS_ROOT_MOD:
+			return vfs->mod_root;
 		default:
 			return NULL;
 	}
