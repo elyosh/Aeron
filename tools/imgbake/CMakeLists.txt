@@ -1,4 +1,4 @@
-# imgbake — shared remaster-asset encoder backend.
+# imgbake — shared encoder backend for replacement assets.
 #
 # Provides HD upscaling, atlas packing, KTX2 (BC7/BC6H/BC5/RGBA16F + zstd)
 # encoding, PNG and Radiance HDR I/O, environment-cube filtering, palette

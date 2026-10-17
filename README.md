@@ -55,7 +55,7 @@ same layer compositor as the rest of the application.
 
 ### Asset pipeline
 
-Aeron includes shared tools and libraries for preparing original and remastered
+Aeron includes shared tools and libraries for preparing original and replacement
 assets:
 
 - `opt2gltf` converts LucasArts OPT models to glTF flight models
