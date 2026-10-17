@@ -396,6 +396,12 @@ void AeronScene_Destroy(AeronScene3D* s) {
 	if (s->sky_sun_fs) {
 		Aeron_DestroyShader(s->sky_sun_fs);
 	}
+	if (s->sky_overlay_pipe) {
+		Aeron_DestroyGraphicsPipeline(s->sky_overlay_pipe);
+	}
+	if (s->sky_overlay_fs) {
+		Aeron_DestroyShader(s->sky_overlay_fs);
+	}
 	if (s->sky_pipe) {
 		Aeron_DestroyGraphicsPipeline(s->sky_pipe);
 	}
@@ -482,6 +488,7 @@ int AeronScene_Begin(AeronScene3D* s, const AeronSceneCamera* camera) {
 	s->shadow_only_count    = 0;
 	s->shadow_only_dropped  = 0;
 	s->sky_cube             = NULL;
+	s->sky_overlay          = NULL;
 	s->sky_sun_count        = 0;
 	s->bb_count             = 0;
 	s->bb_dropped           = 0;
@@ -827,10 +834,13 @@ void AeronScene_SetSkyEnvironment(AeronScene3D* s, const AeronPreparedEnvironmen
 	if (!s) {
 		return;
 	}
-	s->sky_cube = environment ? environment->radiance : NULL;
+	s->sky_cube    = environment ? environment->radiance : NULL;
+	s->sky_overlay = s->sky_cube ? environment->overlay : NULL;
 	if (s->sky_cube) {
 		s->sky_exposure = environment->settings.intensity;
 		memcpy(s->sky_world_to_cube, environment->world_to_cube, sizeof s->sky_world_to_cube);
+		memcpy(s->sky_overlay_world_to_cube, environment->overlay_world_to_cube,
+			   sizeof s->sky_overlay_world_to_cube);
 	}
 }
 
@@ -843,10 +853,10 @@ void AeronScene_SetSkyEnvironment(AeronScene3D* s, const AeronPreparedEnvironmen
  * pass, and against the prepass-laid depth of the forward pass (mesh
  * pixels carry z > 0 and reject the sky). */
 
-static AeronGraphicsPipeline* scene_sky_pipeline(AeronScene3D* s, AeronShader* fs) {
+static AeronGraphicsPipeline* scene_sky_pipeline(AeronScene3D* s, AeronShader* fs, AeronBlendStateDesc blend) {
 	AeronColorTargetStateDesc cts[1] = { 0 };
 	cts[0].format                    = s->color_format;
-	cts[0].blend                     = AeronSceneInternal_BlendOpaque();
+	cts[0].blend                     = blend;
 	return Aeron_CreateGraphicsPipeline(&(AeronGraphicsPipelineDesc) {
 		.vertex_shader      = s->sky_vs,
 		.fragment_shader    = fs,
@@ -872,7 +882,7 @@ static int scene_sky_ensure(AeronScene3D* s) {
 
 /* Cube-sky VS uniforms: eye→cube rotation (pre-multiplied basis × camera
  * world→eye transpose) + unprojection. */
-static void scene_sky_bind_vs(AeronScene3D* s, AeronRenderPass* pass) {
+static void scene_sky_bind_vs(AeronScene3D* s, AeronRenderPass* pass, const float world_to_cube[9]) {
 	float r3[9];
 	AeronSceneInternal_QuatToMat3(s->camera.ori, r3); /* world->eye */
 
@@ -884,9 +894,8 @@ static void scene_sky_bind_vs(AeronScene3D* s, AeronRenderPass* pass) {
 	memset(&vsu, 0, sizeof vsu);
 	for (int r = 0; r < 3; ++r) {
 		for (int c = 0; c < 3; ++c) {
-			vsu.rot[r][c] = s->sky_world_to_cube[r * 3 + 0] * r3[c * 3 + 0] +
-							s->sky_world_to_cube[r * 3 + 1] * r3[c * 3 + 1] +
-							s->sky_world_to_cube[r * 3 + 2] * r3[c * 3 + 2];
+			vsu.rot[r][c] = world_to_cube[r * 3 + 0] * r3[c * 3 + 0] + world_to_cube[r * 3 + 1] * r3[c * 3 + 1] +
+							world_to_cube[r * 3 + 2] * r3[c * 3 + 2];
 		}
 	}
 	vsu.unproj[0] = tanf(s->camera.h_half_rad);
@@ -1123,7 +1132,7 @@ static int scene_draw_sky_cube(AeronScene3D* s, AeronRenderPass* pass) {
 		return 0;
 	}
 	if (!s->sky_pipe) {
-		s->sky_pipe = scene_sky_pipeline(s, s->sky_fs);
+		s->sky_pipe = scene_sky_pipeline(s, s->sky_fs, AeronSceneInternal_BlendOpaque());
 		if (!s->sky_pipe) {
 			return 0;
 		}
@@ -1135,12 +1144,55 @@ static int scene_draw_sky_cube(AeronScene3D* s, AeronRenderPass* pass) {
 	 * (orthogonal inverse) of the camera's world→eye rotation. Pushed
 	 * pre-multiplied so the VS stays a single mul(). Row-major float3x3
 	 * cbuffer packing: three float4-aligned rows. */
-	scene_sky_bind_vs(s, pass);
+	scene_sky_bind_vs(s, pass, s->sky_world_to_cube);
 
 	float psu[4] = { s->sky_exposure > 0.0f ? s->sky_exposure : 1.0f, 0.0f, 0.0f, 0.0f };
 	Aeron_BindUniformData(pass, AERON_SHADER_STAGE_FRAGMENT, 0, psu, sizeof psu);
 
 	Aeron_Draw(pass, 3, 0);
+	return 1;
+}
+
+/* ---- sky overlay (AeronPreparedEnvironment.overlay) ----
+ *
+ * The overlay cube of the sky's environment, drawn over the SKY billboards
+ * and under the meshes, with the sky's vertex shader and depth state, so
+ * meshes cover it in both pass shapes. Its colour is premultiplied by
+ * alpha: target = overlay.rgb * intensity + target * (1 - overlay.a).
+ * Overwrites the stage-0 uniforms, so the caller binds the frame uniforms
+ * again. */
+static int scene_draw_sky_overlay(AeronScene3D* s, AeronCommandBuffer* cmd, AeronRenderPass* pass) {
+	if (!scene_sky_ensure(s)) {
+		return 0;
+	}
+	if (!s->sky_overlay_tried) {
+		s->sky_overlay_tried = 1;
+		s->sky_overlay_fs =
+			AeronSceneInternal_CompileShader("scene_sky_overlay.frag", AERON_SHADER_STAGE_FRAGMENT, 1, 1, 0);
+		if (s->sky_overlay_fs) {
+			const AeronBlendStateDesc blend = {
+				.enabled   = 1,
+				.src_color = AERON_BLEND_ONE,
+				.dst_color = AERON_BLEND_ONE_MINUS_SRC_ALPHA,
+				.color_op  = AERON_BLEND_OP_ADD,
+				.src_alpha = AERON_BLEND_ZERO,
+				.dst_alpha = AERON_BLEND_ONE,
+				.alpha_op  = AERON_BLEND_OP_ADD,
+			};
+			s->sky_overlay_pipe = scene_sky_pipeline(s, s->sky_overlay_fs, blend);
+		}
+	}
+	if (!s->sky_overlay_pipe) {
+		return 0;
+	}
+	Aeron_GpuDebugPush(cmd, "Sky overlay");
+	Aeron_BindGraphicsPipeline(pass, s->sky_overlay_pipe);
+	Aeron_BindTextureSampler(pass, AERON_SHADER_STAGE_FRAGMENT, 0, s->sky_overlay, s->pbr_sampler);
+	scene_sky_bind_vs(s, pass, s->sky_overlay_world_to_cube);
+	float psu[4] = { s->sky_exposure > 0.0f ? s->sky_exposure : 1.0f, 0.0f, 0.0f, 0.0f };
+	Aeron_BindUniformData(pass, AERON_SHADER_STAGE_FRAGMENT, 0, psu, sizeof psu);
+	Aeron_Draw(pass, 3, 0);
+	Aeron_GpuDebugPop(cmd);
 	return 1;
 }
 
@@ -2225,6 +2277,13 @@ int AeronScene_Render(AeronScene3D* s, AeronCommandBuffer* cmd) {
 		AeronSceneInternal_BindFrameUniforms(s, pass);
 		Aeron_GpuDebugMarker(cmd, "Sky billboards");
 		AeronSceneBb3d_DrawStage(s, pass, AERON_SCENE_BILLBOARD_STAGE_SKY);
+		if (s->sky_overlay) {
+			if (!scene_draw_sky_overlay(s, cmd, pass)) {
+				Aeron_EndRenderPass(pass);
+				return scene_render_failure(s, cmd, "Scene sky overlay recording failed");
+			}
+			AeronSceneInternal_BindFrameUniforms(s, pass);
+		}
 		Aeron_GpuDebugMarker(cmd, "PBR forward instances");
 		if (!AeronScenePbr_DrawInstances(s, cmd, pass, AERON_PBR_PIPE_FORWARD, /*depth_only=*/0,
 										 /*velocity=*/0,
@@ -2314,6 +2373,13 @@ int AeronScene_Render(AeronScene3D* s, AeronCommandBuffer* cmd) {
 		AeronSceneInternal_BindFrameUniforms(s, pass);
 		Aeron_GpuDebugMarker(cmd, "Sky billboards");
 		AeronSceneBb3d_DrawStage(s, pass, AERON_SCENE_BILLBOARD_STAGE_SKY);
+		if (s->sky_overlay) {
+			if (!scene_draw_sky_overlay(s, cmd, pass)) {
+				Aeron_EndRenderPass(pass);
+				return scene_render_failure(s, cmd, "Scene sky overlay recording failed");
+			}
+			AeronSceneInternal_BindFrameUniforms(s, pass);
+		}
 		if (pbr_ok) {
 			Aeron_GpuDebugMarker(cmd, "PBR instances");
 			if (!AeronScenePbr_DrawInstances(s, cmd, pass, AERON_PBR_PIPE_MESH,

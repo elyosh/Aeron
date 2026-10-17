@@ -367,9 +367,10 @@ struct AeronPreparedEnvironment;
  * it, so without a call there is no sky. An environment without a sky
  * (no radiance) draws nothing. The sky is the first draw of the color
  * pass, under the BEFORE_OPAQUE hook, SKY billboards and all meshes, at
- * the reversed-Z far plane (depth GE test, no write). The environment
- * must stay prepared until Render() completes. Its suns are not drawn;
- * queue them with AeronScene_AddSkySun. */
+ * the reversed-Z far plane (depth GE test, no write). The environment's
+ * overlay, when it has one, is drawn over the SKY billboards and under the
+ * meshes. The environment must stay prepared until Render() completes.
+ * Its suns are not drawn; queue them with AeronScene_AddSkySun. */
 void AeronScene_SetSkyEnvironment(AeronScene3D* scene, const struct AeronPreparedEnvironment* environment);
 
 /* Queue one visible sun for this frame (reset by Begin), drawn on the sky

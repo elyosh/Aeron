@@ -14,6 +14,12 @@
  *   - `directional_lights`: up to four analytical lights that replace the
  *     game's lights. Without this field, the game keeps its own lights.
  *   - `ambient_fill`: radiance added from every direction (default 0).
+ *   - `overlay`: a cube with alpha drawn over the sky and the game's sky
+ *     billboards, and under everything else. It is a map with `cube`, a BC7
+ *     sRGB cube whose colour is premultiplied by alpha, and an optional
+ *     `rotation_degrees`. The overlay has its own rotation: a reference's
+ *     rotation turns the sky only. It requires `radiance`, does not light
+ *     anything, and is scaled by `intensity` like the sky.
  * Model probes are not part of environments. They are cooked into the
  * model's GLB (see aeron/scene/probe_set.h). Texture paths are stored as written.
  * The game decides which VFS root and prefix they are resolved against.
@@ -87,6 +93,8 @@ typedef struct AeronEnvironmentDefinition {
 	float                           specular_strength; /* 0 without a specular cube */
 	float                           ambient_fill[3];   /* linear radiance from every direction */
 	float                           rotation_degrees[3]; /* yaw, pitch, roll; each in [0, 360) */
+	char                            overlay_path[AERON_ENV_PATH_MAX]; /* empty: no overlay */
+	float                           overlay_rotation_degrees[3];      /* as rotation_degrees */
 	AeronEnvironmentLightDefinition lights[AERON_ENV_MAX_LIGHTS];
 	uint32_t                        light_count;
 	int32_t                         primary_light_index; /* -1 when none */
@@ -181,9 +189,11 @@ typedef struct AeronPreparedEnvironment {
 	AeronTexture*              radiance; /* NULL without a sky */
 	AeronTexture*              diffuse;  /* NULL without a diffuse cube */
 	AeronTexture*              specular; /* NULL without a specular cube */
+	AeronTexture*              overlay;  /* NULL without an overlay */
 	uint32_t                   specular_mip_count;
 	AeronSampler*              sampler;          /* the library's environment sampler */
 	float                      world_to_cube[9]; /* row-major: Q^T * B */
+	float                      overlay_world_to_cube[9]; /* the same with the overlay's rotation */
 	AeronEnvironmentLight      lights[AERON_ENV_MAX_LIGHTS];
 	uint32_t                   light_count;
 	int32_t                    primary_light_index; /* -1 when none */

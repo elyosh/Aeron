@@ -135,6 +135,12 @@ void slot_editor(AeronEnvironmentLibrary* library, EnvSlot* slot) {
 	changed |= ImGui::SliderFloat("Yaw", &s->rotation_degrees[0], 0.0f, 360.0f, "%.1f deg");
 	changed |= ImGui::SliderFloat("Pitch", &s->rotation_degrees[1], 0.0f, 360.0f, "%.1f deg");
 	changed |= ImGui::SliderFloat("Roll", &s->rotation_degrees[2], 0.0f, 360.0f, "%.1f deg");
+	if (s->overlay_path[0]) {
+		changed |= ImGui::SliderFloat("Overlay yaw", &s->overlay_rotation_degrees[0], 0.0f, 360.0f, "%.1f deg");
+		changed |=
+			ImGui::SliderFloat("Overlay pitch", &s->overlay_rotation_degrees[1], 0.0f, 360.0f, "%.1f deg");
+		changed |= ImGui::SliderFloat("Overlay roll", &s->overlay_rotation_degrees[2], 0.0f, 360.0f, "%.1f deg");
+	}
 	for (uint32_t i = 0; i < s->light_count; ++i)
 		changed |= light_editor(slot, i);
 	if (changed) {
@@ -210,6 +216,8 @@ void draw_tool(int* open, void* user) {
 		texture_row(library, "Radiance", d->radiance_path);
 		texture_row(library, "Diffuse", d->diffuse_path);
 		texture_row(library, "Specular", d->specular_path);
+		if (d->overlay_path[0])
+			texture_row(library, "Overlay", d->overlay_path);
 		if (slot->reference.has_rotation)
 			ImGui::Text("Reference rotation: %.1f %.1f %.1f", (double)slot->reference.rotation_degrees[0],
 						(double)slot->reference.rotation_degrees[1],

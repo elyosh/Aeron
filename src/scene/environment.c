@@ -312,6 +312,29 @@ static bool parse_lights(const AeronConfigNode* environment_map, AeronEnvironmen
 												  &def->primary_light_index, error);
 }
 
+static bool parse_overlay(const AeronConfigNode* map, const char* what, AeronEnvironmentDefinition* def,
+						  AeronConfigError* error) {
+	static const char* const fields[] = { "cube", "rotation_degrees" };
+
+	const AeronConfigNode* overlay = AeronConfigNode_MapGet(map, "overlay");
+	if (!overlay)
+		return true;
+	if (AeronConfigNode_Type(overlay) != AERON_CONFIG_MAP)
+		return env_error(error, overlay, "%s: 'overlay' must be a map", what);
+	if (!AeronConfigNode_MapGet(map, "radiance"))
+		return env_error(error, overlay, "%s: 'overlay' requires 'radiance'", what);
+	char overlay_what[180];
+	snprintf(overlay_what, sizeof overlay_what, "%s overlay", what);
+	if (!check_fields(overlay, overlay_what, fields, sizeof fields / sizeof fields[0], error) ||
+		!read_path(overlay, overlay_what, "cube", def->overlay_path, sizeof def->overlay_path, error) ||
+		(AeronConfigNode_MapGet(overlay, "rotation_degrees") &&
+		 !read_vec3(overlay, overlay_what, "rotation_degrees", def->overlay_rotation_degrees, NULL, error)))
+		return false;
+	for (int i = 0; i < 3; ++i)
+		def->overlay_rotation_degrees[i] = AeronEnvironment_NormalizeDegrees(def->overlay_rotation_degrees[i]);
+	return true;
+}
+
 static bool parse_definition(const char* name, const AeronConfigNode* map, AeronEnvironmentDefinition* def,
 							 AeronConfigError* error) {
 	static const char* const fields[] = {
@@ -324,6 +347,7 @@ static bool parse_definition(const char* name, const AeronConfigNode* map, Aeron
 		"ambient_fill",
 		"rotation_degrees",
 		"directional_lights",
+		"overlay",
 	};
 
 	char what[160];
@@ -373,7 +397,7 @@ static bool parse_definition(const char* name, const AeronConfigNode* map, Aeron
 		(has_specular &&
 		 (!read_path(map, what, "specular", def->specular_path, sizeof def->specular_path, error) ||
 		  !read_number(map, what, "specular_strength", true, 0.0, 4.0, &def->specular_strength, error))) ||
-		(def->has_directional_lights && !parse_lights(map, def, error)))
+		(def->has_directional_lights && !parse_lights(map, def, error)) || !parse_overlay(map, what, def, error))
 		return false;
 	for (uint32_t i = 0; has_radiance && i < def->light_count; ++i)
 		if (def->lights[i].visual == AERON_ENV_SUN_NONE)
@@ -531,6 +555,13 @@ size_t AeronEnvironment_FormatDefinitionYaml(const AeronEnvironmentDefinition* d
 	yaml_printf(&y, "\n    rotation_degrees: ");
 	yaml_vec3(&y, d->rotation_degrees);
 	yaml_printf(&y, "\n");
+	if (d->overlay_path[0]) {
+		yaml_printf(&y, "    overlay:\n      cube: ");
+		yaml_string(&y, d->overlay_path);
+		yaml_printf(&y, "\n      rotation_degrees: ");
+		yaml_vec3(&y, d->overlay_rotation_degrees);
+		yaml_printf(&y, "\n");
+	}
 	if (!d->has_directional_lights)
 		return y.length;
 	if (d->light_count == 0) {

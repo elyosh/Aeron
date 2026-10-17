@@ -12,6 +12,7 @@ extern "C" {
 typedef enum EnvTextureKind {
 	ENV_TEXTURE_2D,   /* sun sprites */
 	ENV_TEXTURE_CUBE, /* sky and lighting cubes */
+	ENV_TEXTURE_OVERLAY, /* overlay cubes, with alpha */
 } EnvTextureKind;
 
 /* One texture held by the published set, keyed by its path. */
@@ -48,7 +49,7 @@ struct AeronEnvironmentLibrary {
 	EnvSlot*                             slots;
 	uint32_t                             slot_count;
 	bool                                 reload_requested;
-	bool                                 bc6h_reported;
+	bool                                 format_reported; /* an unsupported format was logged */
 	int32_t                              active;
 	AeronEnvironmentDebugRowsFn          debug_rows;
 	void*                                debug_rows_user;

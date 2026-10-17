@@ -647,6 +647,14 @@ struct AeronScene3D {
 	AeronShader*           sky_vs;
 	AeronShader*           sky_fs;
 	AeronGraphicsPipeline* sky_pipe;
+	/* Overlay cube of the sky's environment, drawn after the SKY
+	 * billboards; per frame like sky_cube. Its shader and pipeline are
+	 * built the first time an overlay is drawn. */
+	AeronTexture*          sky_overlay; /* borrowed for the frame; NULL = no overlay */
+	float                  sky_overlay_world_to_cube[9];
+	int                    sky_overlay_tried;
+	AeronShader*           sky_overlay_fs;
+	AeronGraphicsPipeline* sky_overlay_pipe;
 
 	/* Sky-sun discs (AeronScene_AddSkySun); reset by Begin. Sprite suns
 	 * go through the SKY billboards instead. */

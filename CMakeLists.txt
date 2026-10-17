@@ -270,6 +270,7 @@ set(AERON_SHADER_SOURCES
     # shell (flight_skybox.*).
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_sky_cube.vert.hlsl
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_sky_cube.frag.hlsl
+    ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_sky_overlay.frag.hlsl
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_sky_sun.vert.hlsl
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_sky_sun.frag.hlsl
     # aeron_scene bloom chain + the shared fullscreen-quad VS.

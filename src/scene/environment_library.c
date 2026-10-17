@@ -68,6 +68,17 @@ static bool hdr_format(AeronTextureFormat format) {
 		   format == AERON_TEXTURE_FORMAT_RGBA16_FLOAT;
 }
 
+static const char* format_name(AeronTextureFormat format) {
+	switch (format) {
+		case AERON_TEXTURE_FORMAT_RGBA16_FLOAT:
+			return "RGBA16F";
+		case AERON_TEXTURE_FORMAT_BC7_RGBA_SRGB:
+			return "BC7";
+		default:
+			return "BC6H";
+	}
+}
+
 static bool env_load_texture(AeronEnvironmentLibrary* library, AeronCommandBuffer* cmd, EnvTexture* e) {
 	char full[AERON_ENV_PATH_MAX * 2];
 	snprintf(full, sizeof full, "%s%s", library->path_prefix, e->path);
@@ -83,8 +94,8 @@ static bool env_load_texture(AeronEnvironmentLibrary* library, AeronCommandBuffe
 		snprintf(e->failure, sizeof e->failure, "not a supported KTX2 file");
 		return false;
 	}
-	static const char* const kinds[] = { "2D texture", "cube map" };
-	const bool               cube    = e->kind == ENV_TEXTURE_CUBE;
+	static const char* const kinds[] = { "2D texture", "cube map", "cube map" };
+	const bool               cube    = e->kind != ENV_TEXTURE_2D;
 	e->format                        = ktx2_format(ktx);
 	e->size                          = ktx2_width(ktx);
 	e->level_count                   = ktx2_level_count(ktx);
@@ -95,16 +106,18 @@ static bool env_load_texture(AeronEnvironmentLibrary* library, AeronCommandBuffe
 	} else if (ktx2_height(ktx) != e->size) {
 		snprintf(e->failure, sizeof e->failure, "faces must be square");
 		ok = false;
-	} else if (!hdr_format(e->format)) {
+	} else if (e->kind == ENV_TEXTURE_OVERLAY && e->format != AERON_TEXTURE_FORMAT_BC7_RGBA_SRGB) {
+		snprintf(e->failure, sizeof e->failure, "an overlay's format must be BC7 sRGB");
+		ok = false;
+	} else if (e->kind != ENV_TEXTURE_OVERLAY && !hdr_format(e->format)) {
 		snprintf(e->failure, sizeof e->failure, "format must be BC6H or RGBA16F");
 		ok = false;
 	} else if (!Aeron_TextureFormatSupported(e->format, AERON_TEXTURE_USAGE_SAMPLED)) {
-		snprintf(e->failure, sizeof e->failure, "%s is not supported by this device",
-				 e->format == AERON_TEXTURE_FORMAT_RGBA16_FLOAT ? "RGBA16F" : "BC6H");
-		if (!library->bc6h_reported) {
-			library->bc6h_reported = true;
+		snprintf(e->failure, sizeof e->failure, "%s is not supported by this device", format_name(e->format));
+		if (!library->format_reported) {
+			library->format_reported = true;
 			Aeron_LogWarn("aeron.scene", "environment maps: %s sampling is unavailable on this device",
-						  e->format == AERON_TEXTURE_FORMAT_RGBA16_FLOAT ? "RGBA16F" : "BC6H");
+						  format_name(e->format));
 		}
 		ok = false;
 	}
@@ -163,6 +176,9 @@ void env_library_apply(AeronEnvironmentLibrary* library, EnvSlot* slot) {
 	AeronPreparedEnvironment*   env = &slot->prepared;
 	AeronEnvironmentDefinition* s   = &env->settings;
 	float                       q[9], qt[9], bt[9], light_basis[9];
+	environment_rotation(s->overlay_rotation_degrees, q);
+	mat3_transpose(q, qt);
+	mat3_mul(qt, library->base, env->overlay_world_to_cube);
 	environment_rotation(s->rotation_degrees, q);
 	mat3_transpose(q, qt);
 	mat3_mul(qt, library->base, env->world_to_cube);
@@ -237,11 +253,11 @@ static bool build_slot(AeronEnvironmentLibrary* library, AeronCommandBuffer* cmd
 		return false;
 	}
 	slot->prepared.definition = def;
-	const char*    paths[3 + AERON_ENV_MAX_LIGHTS];
-	EnvTextureKind kinds[3 + AERON_ENV_MAX_LIGHTS];
-	int32_t        indices[3 + AERON_ENV_MAX_LIGHTS];
+	const char*    paths[4 + AERON_ENV_MAX_LIGHTS];
+	EnvTextureKind kinds[4 + AERON_ENV_MAX_LIGHTS];
+	int32_t        indices[4 + AERON_ENV_MAX_LIGHTS];
 	int            count = 0;
-	int            diffuse = -1, specular = -1, radiance = -1;
+	int            diffuse = -1, specular = -1, radiance = -1, overlay = -1;
 	if (def->diffuse_path[0]) {
 		diffuse        = count;
 		paths[count]   = def->diffuse_path;
@@ -256,6 +272,11 @@ static bool build_slot(AeronEnvironmentLibrary* library, AeronCommandBuffer* cmd
 		radiance       = count;
 		paths[count]   = def->radiance_path;
 		kinds[count++] = ENV_TEXTURE_CUBE;
+	}
+	if (def->overlay_path[0]) {
+		overlay        = count;
+		paths[count]   = def->overlay_path;
+		kinds[count++] = ENV_TEXTURE_OVERLAY;
 	}
 	for (uint32_t i = 0; i < def->light_count; ++i) {
 		if (def->lights[i].visual == AERON_ENV_SUN_SPRITE) {
@@ -291,6 +312,8 @@ static bool build_slot(AeronEnvironmentLibrary* library, AeronCommandBuffer* cmd
 	}
 	if (radiance >= 0)
 		slot->prepared.radiance = list->items[indices[radiance]].texture;
+	if (overlay >= 0)
+		slot->prepared.overlay = list->items[indices[overlay]].texture;
 	return true;
 }
 
