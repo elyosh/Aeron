@@ -218,8 +218,9 @@ static bool uses_flight_extension(const cJSON* json) {
 	return false;
 }
 
-/* Removes the probe authoring fields. They are only input to the bake, and
- * a cooked file uses `probeData` instead. */
+/* Removes the reflection probes and the light grid. They are only input to
+ * the bake, and a cooked file uses `probeData` instead. The reflection plane
+ * is kept because the game reads it. */
 static void strip_probe_authoring(cJSON* json) {
 	cJSON* node = NULL;
 	cJSON_ArrayForEach(node, cJSON_GetObjectItemCaseSensitive(json, "nodes")) {
@@ -227,7 +228,6 @@ static void strip_probe_authoring(cJSON* json) {
 															 AERON_FLIGHT_MODEL_EXTENSION);
 		cJSON_DeleteItemFromObjectCaseSensitive(extension, "reflectionProbes");
 		cJSON_DeleteItemFromObjectCaseSensitive(extension, "lightGrid");
-		cJSON_DeleteItemFromObjectCaseSensitive(extension, "reflectionPlane");
 	}
 }
 

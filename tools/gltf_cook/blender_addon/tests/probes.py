@@ -13,10 +13,11 @@ Checks that:
 - an object with hide_probe_sphere is left out of a probe's panorama, not out
   of a grid point's;
 - Add Reflection Probe puts the first probe above the InsideHangar
-  hardpoint; Add Light Grid covers the model with its outer points on the
-  model's bounds;
-- a probe, the grid and a reflection plane get the bake's coordinates
-  (model frame: -x, y, z), and the grid points Blender's positions, model x
+  hardpoint, Add Light Grid puts a zone on the floor at that hardpoint, and
+  Add Reflection Plane puts the plane on the floor found above or below
+  that hardpoint, over the grid's floor plan;
+- a probe, the grid and a reflection plane get their model-frame
+  coordinates (-x, y, z), and the grid points Blender's positions, model x
   first;
 - the probes that Add Reflection Probe and Fill with Probes make render as far as their parallax
   volume, and validation warns about a probe whose Clip End stops short of it;
@@ -25,9 +26,10 @@ Checks that:
 - probes, grid and reflection plane go to the glTF and back, and a light
   inside the grid is baked;
 - a grid point inside a closed box is invalid;
-- the bake writes its files to the project's bake/probes folder, writes the
-  reflection plane to bake.json, and restores the scene. Export for Game then
-  finds the bake, and warns after a probe moves.
+- the bake writes its files to the project's bake/probes folder, leaves the
+  reflection plane out of bake.json, and restores the scene. Export for Game
+  then finds the bake, warns after a probe moves, and does not warn after
+  the reflection plane moves.
 """
 
 import argparse
@@ -246,6 +248,19 @@ def blender_main(baker, scratch):
           item["resolution"] == [14, 14, 4] and
           [grid.data.resolution_x, grid.data.resolution_y, grid.data.resolution_z] == [14, 14, 4],
           "Add Light Grid: a zone from the floor up, its points from its spacing: {}".format(item))
+    # A hardpoint 0.3 m below the floor (z -4): the plane goes on the floor.
+    mark.location.z = -4.3
+    bpy.context.view_layer.update()
+    with bpy.context.temp_override(active_object=root, object=root):
+        bpy.ops.aeron.add_reflection_plane()
+    mark.location.z = -4.0
+    bpy.context.view_layer.update()
+    item = probes.plane_definition(root, probes.reflection_plane(root))
+    check(close(item["center"], (-1.0, 2.0, -4.0)) and close(item["size"], (60.0, 60.0)) and
+          abs(item["distance"] - probes.PLANE_DISTANCE) < 1e-6,
+          "Add Reflection Plane: on the floor above the hardpoint, over the light grid's floor plan: {}".format(
+              item))
+    bpy.data.objects.remove(probes.reflection_plane(root))
     grid.aeron_probe.grid_spacing = 0.25
     check(probes.grid_point_count(grid) <= probes.MAX_GRID_POINTS and grid.data.resolution_x < 64,
           "a small spacing stays within 8192 points: {}".format(probes.grid_resolution(grid)))
@@ -290,19 +305,19 @@ def blender_main(baker, scratch):
     check(close(item["center"], (-1.0, 2.0, 3.0)) and close(item["size"], (4.0, 6.0, 8.0)) and
           item["shape"] == "box" and abs(item["falloff"] - 0.25) < 1e-6 and
           close(item["parallaxCenter"], item["center"]),
-          "a probe's bake coordinates: {}".format(item))
+          "a probe's model-frame coordinates: {}".format(item))
     item = probes.grid_definition(root, grid)
     points = probes.grid_points(grid)
     # Blender's x = 1 + 3 (2 (i + 1) / 3 - 1) = 0 or 2 (+5 for the root); model x = -x, first.
     check(close(item["center"], (-1.0, 0.0, 0.0)) and close(item["size"], (6.0, 2.0, 2.0)) and
           close(points[0], (7.0, -1.0 / 3.0, -1.0 / 3.0)) and close(points[1], (5.0, -1.0 / 3.0, -1.0 / 3.0)),
-          "the grid's bake box and Blender's point positions, model x first: {} {}".format(
+          "the grid's model-frame box and Blender's point positions, model x first: {} {}".format(
               item, [tuple(round(v, 3) for v in p) for p in points[:2]]))
     plane = probes._new_reflection_plane(root, mathutils.Vector((6.0, 2.0, 0.5)), (8.0, 6.0), 0.2)
     bpy.context.view_layer.update()
     item = probes.plane_definition(root, plane)
     check(close(item["center"], (-1.0, 2.0, 0.5)) and close(item["size"], (8.0, 6.0)) and
-          abs(item["distance"] - 0.2) < 1e-6, "the reflection plane's bake coordinates: {}".format(item))
+          abs(item["distance"] - 0.2) < 1e-6, "the reflection plane's model-frame coordinates: {}".format(item))
     root.location = (0.0, 0.0, 0.0)
     bpy.context.view_layer.update()
 
@@ -389,9 +404,8 @@ def blender_main(baker, scratch):
     layout = json.load(open(os.path.join(out, "bake.json"))) if files else {}
     check(layout.get("gridResolution") == [3, 2, 2] and len(layout.get("probes", [])) == 1,
           "bake.json has the probes and the grid: {}".format(layout))
-    plane = layout.get("reflectionPlane", {})
-    check(plane and close(plane["center"], (-1.0, 2.0, 0.5)) and close(plane["size"], (8.0, 6.0)),
-          "bake.json has the reflection plane: {}".format(plane))
+    check(probes.reflection_plane(root) is not None and "reflectionPlane" not in layout,
+          "bake.json leaves the reflection plane out: {}".format(sorted(layout)))
     bake, warnings = probes.export_bake(root)
     check(bake == out and not [w for w in warnings if "layout" in w],
           "Export for Game finds the bake: {} {}".format(bake, warnings))
@@ -401,6 +415,12 @@ def blender_main(baker, scratch):
     check(bake == out and any("layout" in w for w in warnings),
           "Export for Game warns after a probe moves: {}".format(warnings))
     probe.location.x -= 1.0
+    probes.reflection_plane(root).location.z += 1.0
+    bpy.context.view_layer.update()
+    bake, warnings = probes.export_bake(root)
+    check(bake == out and not [w for w in warnings if "layout" in w],
+          "Export for Game needs no new bake after the reflection plane moves: {}".format(warnings))
+    probes.reflection_plane(root).location.z -= 1.0
     bpy.context.view_layer.update()
     check(scene.render.engine == engine and scene.cycles.device == device and
           scene.render.use_persistent_data == persistent and len(bpy.data.objects) == objects and

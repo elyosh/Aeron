@@ -591,6 +591,7 @@ class VIEW3D_PT_aeron(Panel):
             row = layout.row(align=True)
             row.operator("aeron.add_reflection_probe", text="Reflection Probe", icon='LIGHTPROBE_SPHERE')
             row.operator("aeron.add_light_grid", text="Light Grid", icon='LIGHTPROBE_VOLUME')
+            row.operator("aeron.add_reflection_plane", text="Reflection Plane", icon='LIGHTPROBE_PLANE')
         layout.operator("aeron.make_flight_model", icon='OUTLINER_OB_EMPTY')
         layout.label(text="Add to active component at cursor:")
         draw_add_buttons(layout)

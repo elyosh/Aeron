@@ -90,12 +90,17 @@ typedef struct AeronProbeSet {
 	float    bounds_max[3];
 	uint64_t bytes; /* total size of the textures and the buffer */
 	uint32_t overflow_cells;
+	/* The model's reflective floor, which reflects the objects inside the
+	 * grid (AeronScene_SetPlanarReflection). */
+	bool                       has_reflection_plane;
+	AeronFlightReflectionPlane reflection_plane;
 } AeronProbeSet;
 
-/* Uploads `probes` with `cmd`. Returns NULL on failure, for example when the
- * device cannot sample BC6H or RGBA16F, and logs the failure with `name`. */
+/* Uploads `probes` with `cmd`, with the model's reflection plane (NULL for
+ * none). Returns NULL on failure, for example when the device cannot sample
+ * BC6H or RGBA16F, and logs the failure with `name`. */
 AeronProbeSet* AeronProbeSet_Create(AeronCommandBuffer* cmd, const AeronFlightProbes* probes,
-									const char* name);
+									const AeronFlightReflectionPlane* reflection_plane, const char* name);
 void           AeronProbeSet_Destroy(AeronProbeSet* set);
 
 #ifdef __cplusplus

@@ -128,19 +128,6 @@ static bool parse_layout(const cJSON* object, AeronFlightProbeLayout* out, char*
 						 error_size))
 			return false;
 	out->probe_count = (uint32_t)count;
-
-	const cJSON* plane        = cJSON_GetObjectItemCaseSensitive(object, "reflectionPlane");
-	out->has_reflection_plane = plane != NULL;
-	if (plane &&
-		(!cJSON_IsObject(plane) ||
-		 !json_floats(cJSON_GetObjectItemCaseSensitive(plane, "center"), out->reflection_plane_center, 3,
-					  false) ||
-		 !json_floats(cJSON_GetObjectItemCaseSensitive(plane, "size"), out->reflection_plane_size, 2, true) ||
-		 !json_finite(cJSON_GetObjectItemCaseSensitive(plane, "distance"), 0.0, 10.0,
-					  &out->reflection_plane_distance)))
-		return probes_error(error, error_size,
-							"reflectionPlane needs center, size (two numbers above 0) and "
-							"distance (0 to 10)");
 	return true;
 }
 
@@ -242,16 +229,7 @@ size_t Aeron_FlightProbeLayoutFormat(const AeronFlightProbeLayout* l, char* out,
 		json_printf(&j, ", \"parallaxShape\": \"%s\"}%s\n", shape_name(p->parallax_shape),
 					k + 1 < l->probe_count ? "," : "");
 	}
-	json_printf(&j, "  ]");
-	if (l->has_reflection_plane) {
-		json_printf(&j, ",\n  \"reflectionPlane\": {\"center\": ");
-		json_floats_out(&j, l->reflection_plane_center, 3);
-		json_printf(&j, ", \"size\": ");
-		json_floats_out(&j, l->reflection_plane_size, 2);
-		json_printf(&j, ", ");
-		json_field(&j, "distance", l->reflection_plane_distance, "}");
-	}
-	json_printf(&j, "\n}\n");
+	json_printf(&j, "  ]\n}\n");
 	return j.length;
 }
 

@@ -227,13 +227,6 @@ typedef struct AeronFlightProbeLayout {
 	 * used when the bake includes the scene's key light (for example a
 	 * hangar ceiling light). */
 	float key_light_shadow;
-	/* Reflective floor, such as a hangar floor. It is a horizontal rectangle
-	 * facing up, given by its centre and its size along x and y. Surfaces
-	 * within `reflection_plane_distance` of it show its reflection. */
-	bool  has_reflection_plane;
-	float reflection_plane_center[3];
-	float reflection_plane_size[2];
-	float reflection_plane_distance;
 } AeronFlightProbeLayout;
 
 /* A probe layout with owned copies of its two KTX2 images: the cube array
@@ -261,6 +254,17 @@ bool Aeron_FlightProbesBuild(const char* layout_json, size_t layout_size, const 
 							 char* error, size_t error_size);
 void Aeron_FlightProbesFree(AeronFlightProbes* probes);
 
+/* A reflective floor, such as a hangar floor (`reflectionPlane` on the model
+ * root). It is a horizontal rectangle facing up, in the model frame like the
+ * probes, in metres: its centre and its size along x and y. The upward-facing
+ * surfaces of the model within `distance` of it show the reflection of the
+ * objects inside the model's probe grid, so it is used only with probes. */
+typedef struct AeronFlightReflectionPlane {
+	float center[3];
+	float size[2];
+	float distance;
+} AeronFlightReflectionPlane;
+
 typedef struct AeronFlightModel {
 	AeronGltfModel         render;
 	uint32_t               component_count;
@@ -278,6 +282,8 @@ typedef struct AeronFlightModel {
 	AeronFlightArticulationSetting* articulation_settings;
 	uint32_t                        component_set_count;
 	AeronFlightComponentSet*        component_sets;
+	bool                            has_reflection_plane;
+	AeronFlightReflectionPlane      reflection_plane;
 	/* Cooked render data (`renderData` on the model root): an owned copy of
 	 * its buffer view, verified against the merged render arrays. */
 	bool                   has_render_data;

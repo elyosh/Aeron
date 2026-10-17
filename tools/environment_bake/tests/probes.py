@@ -101,8 +101,7 @@ def main():
                 "probePanoramas": ["probe_%d.hdr" % i for i in range(len(probes))],
                 "gridBox": {"center": [0, 0, 0], "size": [20, 10, 10]}, "gridResolution": [3, 2, 2],
                 "gridPanoramas": ["grid_%d.hdr" % i for i in range(12)], "gridInvalid": [4],
-                "keyLightShadow": 0.5,
-                "reflectionPlane": {"center": [0, 0, -5], "size": [20, 10], "distance": 0.25}}
+                "keyLightShadow": 0.5}
 
         def write_job(name, item):
             path = os.path.join(job_dir, name)
@@ -142,9 +141,7 @@ def main():
             with open(os.path.join(out, "bake.json")) as stream:
                 layout = json.load(stream)
             if (layout["gridResolution"] != [3, 2, 2] or layout["keyLightShadow"] != 0.5 or
-                    len(layout["probes"]) != len(probes) or
-                    layout["reflectionPlane"] != {"center": [0, 0, -5], "size": [20, 10], "distance": 0.25} or
-                    "probePanoramas" in layout):
+                    len(layout["probes"]) != len(probes) or "probePanoramas" in layout):
                 failures.append("bake.json: %s" % layout)
             if "at most 4 probes in one" not in run.stdout:
                 failures.append("cell report: %s" % run.stdout)
@@ -164,9 +161,7 @@ def main():
 
         # Wrong jobs.
         for name, change in (("panorama count", {"probePanoramas": ["x"] + base["probePanoramas"]}),
-                             ("invalid index", {"gridInvalid": [12]}),
-                             ("plane size", {"reflectionPlane": {"center": [0, 0, -5], "size": [20, 0],
-                                                                 "distance": 0.25}})):
+                             ("invalid index", {"gridInvalid": [12]})):
             wrong = write_job("wrong.json", dict(base, **change))
             run = subprocess.run([baker, "--probes", wrong, "--cubes-out", "c", "--grid-out", "g",
                                   "--bake-out", "b"], capture_output=True, text=True)

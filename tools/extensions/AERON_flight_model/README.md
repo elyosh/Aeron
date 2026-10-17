@@ -133,8 +133,13 @@ reflections of a hangar or of a capital ship's bays. The game uses the
 probes to light the model and the objects inside it. The cooker stores the
 bake in the cooked file as `probeData`
 ([AERON_flight_model_cooked](../AERON_flight_model_cooked/README.md)), and
-the game reads that. Cooked files do not contain `reflectionProbes`,
-`lightGrid` or `reflectionPlane`.
+the game reads that. Cooked files do not contain `reflectionProbes` or
+`lightGrid`.
+
+The model root may also carry a reflection plane, a floor that reflects
+what stands on it. Cooked files keep it, and the game reads it from there.
+The game uses it only with the model's probes, and ignores it in a model
+without probes.
 
 ```json
 "reflectionProbes": [
@@ -164,9 +169,9 @@ In the model's frame, in metres, axis-aligned with it:
   light: the part of the probe light its shadow removes, 0 to 1, default
   0.7);
 - the reflection plane, a hangar's floor: `position`, `size` (its full
-  extent along x and z; it faces +y) and `distance` (how far from it a
-  surface takes its reflection, 0 to 10). The game reflects in it what
-  stands on it. It needs the light grid.
+  extent along x and z; it faces +y) and `distance` (how far from it the
+  model's surfaces show the reflection, 0 to 10, default 0.1). The game
+  shows in it the objects inside the probes' grid.
 
 Lights inside the grid's box are baked into the probes and have `baked`
 set (see [Lights](#lights)).
@@ -348,7 +353,7 @@ The flags are booleans, false when absent. A rectangle has:
 
 `aeron_gltf_cook` turns a source file into a cooked file for the game. The
 source-only fields (`skins`, `skinVariants`, `reflectionProbes`,
-`lightGrid`, `reflectionPlane`) are not copied to the cooked file. The
+`lightGrid`) are not copied to the cooked file. The
 cooker adds the data it computes: texture atlas pages, simulation data,
 render data and probe data. That data is described in
 [AERON_flight_model_cooked](../AERON_flight_model_cooked/README.md).

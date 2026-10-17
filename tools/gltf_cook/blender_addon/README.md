@@ -463,9 +463,17 @@ are Blender light probes under the model root:
   most 4 in one place.
 - **The reflection plane** (one Plane light probe, optional): a hangar's
   floor. In the game it reflects the ships standing on it, which the
-  probes cannot show. Place it at the floor's height, facing up, over the
-  floor's area (its scale sets the size); its **Distance** (Blender's
-  Influence Distance) is how far from it a surface counts as the floor.
+  probes cannot show. **Add Reflection Plane** (Aeron tab) puts it on the
+  floor at the InsideHangar hardpoint (the floor can be a little above or
+  below the hardpoint), over the light grid's floor plan, with a 0.1 m
+  Distance. Check that it lies on the floor and covers it: its outline is
+  the area that reflects (its scale sets the size). Its **Distance**
+  (Blender's Influence Distance) is how far from it a surface counts as
+  the floor; raise it for a floor that is not flat. The floor shows the
+  reflection only as much as its material reflects: a fully rough floor
+  shows almost nothing. The plane is not part of the bake: Export for Game
+  writes it to the model as it is in Blender, so moving it only needs a
+  new export. The game uses it only with the model's probes.
 
 Probes and the plane cannot be rotated relative to the model root: only
 their position and size count. The panel of a probe shows Blender's probe settings, which

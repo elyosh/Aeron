@@ -98,12 +98,12 @@ static int mat4_invert(float out[16], const float m[16]) {
 }
 
 /* The first probe set's reflection plane; NULL when it has none. */
-static const AeronFlightProbeLayout* plane_definition(const AeronScene3D* s) {
-	if (s->probe_set_count == 0 || !s->probe_sets[0].probes) {
+static const AeronFlightReflectionPlane* plane_definition(const AeronScene3D* s) {
+	if (s->probe_set_count == 0 || !s->probe_sets[0].probes ||
+		!s->probe_sets[0].probes->has_reflection_plane) {
 		return NULL;
 	}
-	const AeronFlightProbeLayout* d = &s->probe_sets[0].probes->layout;
-	return d->has_reflection_plane ? d : NULL;
+	return &s->probe_sets[0].probes->reflection_plane;
 }
 
 /* The plane n.p = h in scene units, from the model's z = `height`. */
@@ -176,18 +176,18 @@ AeronTexture* AeronScenePlanarReflection_Image(AeronScene3D* s) {
 void AeronScenePlanarReflection_LightingFields(const AeronScene3D* s, int set, int receiver, float rect[4],
 											   float params[4], float eye[4], float screen[4]) {
 	const AeronScenePlanarReflection* p = &s->planar_reflection;
-	const AeronFlightProbeLayout* d = set == 0 ? plane_definition(s) : NULL;
+	const AeronFlightReflectionPlane* d = set == 0 ? plane_definition(s) : NULL;
 	memset(rect, 0, 4 * sizeof(float));
 	memset(params, 0, 4 * sizeof(float));
 	memset(eye, 0, 4 * sizeof(float));
 	memcpy(screen, p->screen, sizeof p->screen);
 	if (d) {
-		rect[0]   = d->reflection_plane_center[0];
-		rect[1]   = d->reflection_plane_center[1];
-		rect[2]   = 0.5f * d->reflection_plane_size[0];
-		rect[3]   = 0.5f * d->reflection_plane_size[1];
-		params[0] = d->reflection_plane_center[2];
-		params[1] = d->reflection_plane_distance;
+		rect[0]   = d->center[0];
+		rect[1]   = d->center[1];
+		rect[2]   = 0.5f * d->size[0];
+		rect[3]   = 0.5f * d->size[1];
+		params[0] = d->center[2];
+		params[1] = d->distance;
 		params[2] = receiver && p->active ? 1.0f : 0.0f;
 		params[3] = (float)PLANAR_MIPS;
 	}
@@ -281,13 +281,13 @@ void AeronScenePlanarReflection_Render(AeronScene3D* s, AeronCommandBuffer* cmd)
 	p->active                           = 0;
 	p->drawing                          = 0;
 	p->order_count                      = 0;
-	const AeronFlightProbeLayout* d = s->planar_reflection_enabled ? plane_definition(s) : NULL;
+	const AeronFlightReflectionPlane* d = s->planar_reflection_enabled ? plane_definition(s) : NULL;
 	if (!d || p->failed) {
 		return;
 	}
 	const AeronSceneProbeSet* set = &s->probe_sets[0];
 	float                     n[3], h, m2w[16];
-	if (!world_plane(set, d->reflection_plane_center[2], n, &h) || !model_to_world(set, m2w)) {
+	if (!world_plane(set, d->center[2], n, &h) || !model_to_world(set, m2w)) {
 		return;
 	}
 	/* Nothing to see from below the floor. */
@@ -362,9 +362,9 @@ void AeronScenePlanarReflection_Render(AeronScene3D* s, AeronCommandBuffer* cmd)
 	int   floor_in_view = 1;
 	for (int c = 0; c < 4 && floor_in_view; ++c) {
 		const float model[3] = {
-			d->reflection_plane_center[0] + ((c & 1) ? 0.5f : -0.5f) * d->reflection_plane_size[0],
-			d->reflection_plane_center[1] + ((c & 2) ? 0.5f : -0.5f) * d->reflection_plane_size[1],
-			d->reflection_plane_center[2],
+			d->center[0] + ((c & 1) ? 0.5f : -0.5f) * d->size[0],
+			d->center[1] + ((c & 2) ? 0.5f : -0.5f) * d->size[1],
+			d->center[2],
 		};
 		float world[3];
 		for (int r = 0; r < 3; ++r) {
@@ -455,7 +455,7 @@ void AeronScenePlanarReflection_Render(AeronScene3D* s, AeronCommandBuffer* cmd)
 	u.viewport[1] = (float)viewport.y;
 	u.viewport[2] = (float)viewport.width;
 	u.viewport[3] = (float)viewport.height;
-	u.plane[0]    = d->reflection_plane_center[2];
+	u.plane[0]    = d->center[2];
 	u.dims[0]     = half;
 	u.dims[1]     = height;
 	u.dims[2]     = p->width;

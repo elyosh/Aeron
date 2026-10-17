@@ -144,9 +144,10 @@ static int load_models(Fixture* f, AeronCommandBuffer* cmd) {
 }
 
 /* Loads an instance's probes from a bake folder (bake.json and its two
- * images) with `cmd`. Logs an error and returns NULL on failure. */
-static AeronProbeSet* load_probes(Fixture* f, AeronCommandBuffer* cmd, AeronVfsRoot root,
-								  const char* folder) {
+ * images) with `cmd`, with the reflection plane of the instance's model.
+ * Logs an error and returns NULL on failure. */
+static AeronProbeSet* load_probes(Fixture* f, AeronCommandBuffer* cmd, AeronVfsRoot root, const char* folder,
+								  const AeronSceneMesh* mesh) {
 	static const char* const names[3]   = { "bake.json", "probes.ktx2", "grid.ktx2" };
 	uint8_t*                 bytes[3]   = { NULL, NULL, NULL };
 	size_t                   sizes[3]   = { 0, 0, 0 };
@@ -161,7 +162,10 @@ static AeronProbeSet* load_probes(Fixture* f, AeronCommandBuffer* cmd, AeronVfsR
 	memset(&probes, 0, sizeof probes);
 	ok = ok && Aeron_FlightProbesBuild((const char*)bytes[0], sizes[0], bytes[1], sizes[1], bytes[2],
 									   sizes[2], &probes, error, sizeof error);
-	AeronProbeSet* set = ok ? AeronProbeSet_Create(cmd, &probes, folder) : NULL;
+	AeronProbeSet* set =
+		ok ? AeronProbeSet_Create(cmd, &probes, mesh->has_reflection_plane ? &mesh->reflection_plane : NULL,
+								  folder)
+		   : NULL;
 	if (!ok)
 		Aeron_LogError("scene_capture", "probes %s: %s", folder, error);
 	Aeron_FlightProbesFree(&probes);
@@ -179,7 +183,8 @@ static int prepare_environment(Fixture* f, AeronCommandBuffer* cmd) {
 	f->environment_reference = -1;
 	for (int i = 0; i < game->instance_count; ++i)
 		if (game->instances[i].probes[0] &&
-			!(f->probes[i] = load_probes(f, cmd, root, game->instances[i].probes)))
+			!(f->probes[i] = load_probes(f, cmd, root, game->instances[i].probes,
+										 f->meshes[game->instances[i].model].mesh)))
 			return 0;
 	if (!game->environment_manifest[0])
 		return 1;

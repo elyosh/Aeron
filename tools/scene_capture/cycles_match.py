@@ -27,7 +27,7 @@ Writes, under DIR, which is scene_capture's working directory for these runs:
 
 With --probe-occlusion and --planar-reflection, the configs turn on
 scene_capture's probe_occlusion and planar_reflection. planar_reflection
-needs the bake's reflectionPlane.
+needs a reflection plane in the hangar model's GLB.
 
 scene_capture's camera has a 60 degree vertical field of view; the .blend's
 camera gives the position and direction only."""

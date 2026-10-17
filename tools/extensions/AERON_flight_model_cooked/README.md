@@ -107,8 +107,7 @@ images.
   "probes": [
     { "center": [53.4, 144.9, -115.3], "size": [33.3, 36.0, 26.6], "shape": "box", "falloff": 0.2,
       "parallaxCenter": [0.1, 173.7, -115.3], "parallaxSize": [133.3, 86.3, 21.3], "parallaxShape": "box" }
-  ],
-  "reflectionPlane": { "center": [0, 173.5, -125.9], "size": [130.8, 86.0], "distance": 0.05 }
+  ]
 }
 ```
 
@@ -137,11 +136,7 @@ x, y, z along the game's model axes). Boxes are aligned with the frame's axes.
   0, at most 1: the outer fraction of the influence volume over which the
   probe's weight falls to 0), `parallaxSize` and `parallaxShape` (the
   volume that its reflections are projected on), and optional
-  `parallaxCenter` (default `center`);
-- `reflectionPlane`: optional, an upward-facing floor (such as a hangar
-  floor) that reflects the objects standing on it. It has `center`, `size`
-  (along x and y) and `distance` (0 to 10, how far from the plane a surface
-  can be and still get its reflection).
+  `parallaxCenter` (default `center`).
 
 Images that do not match the layout fail the load.
 

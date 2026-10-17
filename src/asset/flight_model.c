@@ -613,16 +613,45 @@ static bool build_component_simulation_data(const cgltf_data* data, const cgltf_
 	return ok;
 }
 
+/* Parses the optional model-root `reflectionPlane`: `position` in glTF axes,
+ * `size` along glTF x and z, and `distance` (0 to 10, default 0.1). */
+static bool build_model_reflection_plane(const cJSON* extension, AeronFlightModel* model) {
+	const cJSON* plane = cJSON_GetObjectItemCaseSensitive(extension, "reflectionPlane");
+	if (!plane)
+		return true;
+	const cJSON* distance = cJSON_GetObjectItemCaseSensitive(plane, "distance");
+	float        position[3], size[2];
+	if (!cJSON_IsObject(plane) ||
+		!json_vector(cJSON_GetObjectItemCaseSensitive(plane, "position"), position, 3) ||
+		!json_vector(cJSON_GetObjectItemCaseSensitive(plane, "size"), size, 2) || !(size[0] > 0.0f) ||
+		!(size[1] > 0.0f) ||
+		(distance &&
+		 (!cJSON_IsNumber(distance) || !(distance->valuedouble >= 0.0) || !(distance->valuedouble <= 10.0))))
+		return false;
+	AeronFlightVec3 center;
+	gltf_to_aeron(position, &center);
+	AeronFlightReflectionPlane* out = &model->reflection_plane;
+	out->center[0]                  = center.x;
+	out->center[1]                  = center.y;
+	out->center[2]                  = center.z;
+	out->size[0]                    = size[0];
+	out->size[1]                    = size[1];
+	out->distance                   = distance ? (float)distance->valuedouble : 0.1f;
+	model->has_reflection_plane     = true;
+	return true;
+}
+
 static bool build_model_render_data(const cgltf_data* data, const cgltf_node* root, AeronFlightModel* model) {
 	cJSON* extension = parse_flight_extension(root);
 	cJSON* cooked    = NULL;
 	if (!extension)
 		return false;
-	const bool ok = parse_cooked_extension(root, &cooked) &&
-					parse_cooked_reference(data, cooked, "renderData", "meshHash", &model->has_render_data,
-										   &model->render_data, &model->render_data_size, &model->render_mesh_hash) &&
-					build_model_articulations(extension, model) && build_model_articulation_settings(extension, model) &&
-					build_model_component_sets(extension, model);
+	const bool ok =
+		parse_cooked_extension(root, &cooked) &&
+		parse_cooked_reference(data, cooked, "renderData", "meshHash", &model->has_render_data,
+							   &model->render_data, &model->render_data_size, &model->render_mesh_hash) &&
+		build_model_articulations(extension, model) && build_model_articulation_settings(extension, model) &&
+		build_model_component_sets(extension, model) && build_model_reflection_plane(extension, model);
 	cJSON_Delete(cooked);
 	cJSON_Delete(extension);
 	return ok;

@@ -153,13 +153,13 @@
         },
         "reflectionPlane": {
           "title": "Reflection plane",
-          "description": "A floor facing +y, such as a hangar floor, that reflects the objects standing on it. Requires the light grid. Source files only.",
+          "description": "A floor facing +y, such as a hangar floor, that reflects the objects standing on it. Cooked files keep it, and the game reads it. The game uses it only with the model's probes.",
           "type": "object",
           "required": ["position", "size"],
           "properties": {
             "position": { "$ref": "#/$defs/vec3", "description": "In the model's frame, in metres." },
             "size": { "type": "array", "items": { "$ref": "#/$defs/positive" }, "minItems": 2, "maxItems": 2, "description": "Its full extent along x and z, in metres." },
-            "distance": { "type": "number", "minimum": 0, "maximum": 10, "default": 0.1, "description": "How far from it a surface takes its reflection, in metres." }
+            "distance": { "type": "number", "minimum": 0, "maximum": 10, "default": 0.1, "description": "How far from it the model's surfaces show the reflection, in metres." }
           }
         }
       }

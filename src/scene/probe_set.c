@@ -247,7 +247,7 @@ static AeronBuffer* build_probe_buffer(AeronCommandBuffer* cmd, const AeronFligh
 }
 
 AeronProbeSet* AeronProbeSet_Create(AeronCommandBuffer* cmd, const AeronFlightProbes* probes,
-									const char* name) {
+									const AeronFlightReflectionPlane* reflection_plane, const char* name) {
 	if (!cmd || !probes || !probes->cubes || !probes->grid)
 		return NULL;
 	if (!name)
@@ -272,6 +272,9 @@ AeronProbeSet* AeronProbeSet_Create(AeronCommandBuffer* cmd, const AeronFlightPr
 		const Ktx2Level level        = ktx2_level(grid, 0);
 		uint32_t        buffer_bytes = 0;
 		set->layout                  = probes->layout;
+		set->has_reflection_plane    = reflection_plane != NULL;
+		if (reflection_plane)
+			set->reflection_plane = *reflection_plane;
 		set->cubes                   = Aeron_ImageUploadKtx2(cmd, cubes, label);
 		set->grid                    = upload_grid(cmd, &level, probes->layout.grid_resolution, label);
 		set->buffer         = build_probe_buffer(cmd, &probes->layout, &cells, &level, &buffer_bytes);

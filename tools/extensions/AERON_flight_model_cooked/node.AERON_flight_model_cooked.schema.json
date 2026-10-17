@@ -88,15 +88,6 @@
               "parallaxShape": { "enum": ["box", "ellipsoid"] }
             }
           }
-        },
-        "reflectionPlane": {
-          "type": "object",
-          "required": ["center", "size", "distance"],
-          "properties": {
-            "center": { "$ref": "#/$defs/vec3" },
-            "size": { "type": "array", "items": { "$ref": "#/$defs/positive" }, "minItems": 2, "maxItems": 2 },
-            "distance": { "type": "number", "minimum": 0, "maximum": 10 }
-          }
         }
       }
     }

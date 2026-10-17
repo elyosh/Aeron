@@ -831,8 +831,12 @@ static AeronSceneMesh* mesh_create(AeronCommandBuffer* cmd, const AeronFlightMod
 	/* ---- Probes ----
 	 * Without a probe set (for example when the device cannot sample it),
 	 * the scene's environment lights the model. */
+	s->has_reflection_plane = flight_model->has_reflection_plane;
+	s->reflection_plane     = flight_model->reflection_plane;
 	if (flight_model->probes) {
-		s->probes = AeronProbeSet_Create(cmd, flight_model->probes, name);
+		s->probes = AeronProbeSet_Create(
+			cmd, flight_model->probes,
+			flight_model->has_reflection_plane ? &flight_model->reflection_plane : NULL, name);
 	}
 
 	/* ---- Channel atlases (KTX2 blobs from the GLB BIN chunk) ----

@@ -58,6 +58,8 @@ GRID_RESOLUTION = (2, 64)
 GRID_SPACING = 4.0  # default metres between grid points
 KEY_LIGHT_SHADOW = 0.7  # the runtime's default
 MAX_PLANE_DISTANCE = 10.0  # the runtime's limit, metres
+PLANE_DISTANCE = 0.1  # Add Reflection Plane's distance, metres: the floor's own unevenness
+FLOOR_SEARCH = 2.0  # metres above and below the InsideHangar hardpoint where Add Reflection Plane finds the floor
 FILL_TILE = 25.0  # Fill with Probes' target probe size, metres
 FILL_MAX_PROBES = 16
 FILL_FALLOFF = 0.2
@@ -68,7 +70,8 @@ INVALID_BACK_FACES = 0.3
 INSIDE_HANGAR_HARDPOINT = 25
 PROBE_HEIGHT = 3.0  # metres above it
 PROBE_SIZE = 10.0  # Add Reflection Probe's box
-HANGAR_ZONE = (60.0, 60.0, 20.0)  # Add Light Grid's box above an InsideHangar hardpoint
+HANGAR_ZONE = (60.0, 60.0, 20.0)  # Add Light Grid's box above an InsideHangar hardpoint, and
+                                  # Add Reflection Plane's floor without a light grid
 BAY_ZONE = (50.0, 50.0, 50.0)  # else at the 3D cursor
 # Bake estimate, seconds (measured on an Apple M4 Pro, Blender 5.1).
 SECONDS_PER_PROBE = 3.5
@@ -128,9 +131,9 @@ def reflection_plane(root):
 
 
 def plane_definition(root, plane):
-    """The reflection plane for the bake: its centre in the model frame, its size along the model's
-    x and y (Blender's -1..1 square), and the distance from the plane, in metres, within which a
-    surface takes its reflection."""
+    """The reflection plane in the model frame: its centre, its size along the model's x and y
+    (Blender's -1..1 square), and the distance from the plane, in metres, within which a surface
+    takes its reflection."""
     scale = _relative(root, plane).to_scale()
     return {"center": list(_model_point(root, plane.matrix_world.translation)),
             "size": [2.0 * abs(scale.x), 2.0 * abs(scale.y)],
@@ -303,7 +306,7 @@ def check(problems, root):
         problems.error(plane, "the model has another reflection plane")
     for plane in planes[:1]:
         if not grids:
-            problems.error(plane, "the reflection plane belongs to the probes: add a light grid")
+            problems.error(plane, "the game uses the reflection plane only with the probes: add a light grid")
         elif plane_definition(root, plane)["distance"] > MAX_PLANE_DISTANCE:
             problems.error(plane, "its influence distance is over {:g} m".format(MAX_PLANE_DISTANCE))
     if len(probes) > MAX_PROBES:
@@ -606,9 +609,6 @@ def write_job(path, root, probes, grid, probe_names, grid_names, invalid):
            "gridBox": {"center": item["center"], "size": item["size"]}, "gridResolution": item["resolution"],
            "gridPanoramas": grid_names, "gridInvalid": invalid,
            "keyLightShadow": grid.aeron_probe.key_light_shadow}
-    plane = reflection_plane(root)
-    if plane is not None:
-        job["reflectionPlane"] = plane_definition(root, plane)
     with open(path, "w") as stream:
         json.dump(job, stream)
 
@@ -619,7 +619,11 @@ def bake_dir(root):
 
 
 def _authoring_text(root):
-    return json.dumps(export_json(root), sort_keys=True)
+    """What the bake depends on: the probes and the light grid. The reflection plane goes to the game
+    with the model, so moving it needs no new bake."""
+    authoring = export_json(root)
+    authoring.pop("reflectionPlane", None)
+    return json.dumps(authoring, sort_keys=True)
 
 
 def export_bake(root):
@@ -731,14 +735,62 @@ first probe, else at the 3D cursor. Its Clip End reaches the whole model"""
         return {'FINISHED'}
 
 
-def default_location(root):
-    """PROBE_HEIGHT above the model's InsideHangar hardpoint, or None."""
+def hangar_floor(root):
+    """The world position of the model's InsideHangar hardpoint, on the hangar's floor, or None."""
     for component in common.components(root):
         for child in common.ordered_children(component, ('hardpoint',)):
             if int(child.aeron_flight.hardpoint_type) == INSIDE_HANGAR_HARDPOINT:
-                up = root.matrix_world.to_quaternion() @ mathutils.Vector((0.0, 0.0, PROBE_HEIGHT))
-                return child.matrix_world.translation + up
+                return child.matrix_world.translation.copy()
     return None
+
+
+def default_location(root):
+    """PROBE_HEIGHT above the model's InsideHangar hardpoint, or None."""
+    floor = hangar_floor(root)
+    if floor is None:
+        return None
+    return floor + root.matrix_world.to_quaternion() @ mathutils.Vector((0.0, 0.0, PROBE_HEIGHT))
+
+
+def floor_below(context, root, point):
+    """The first surface of the model's components straight below a point FLOOR_SEARCH above
+    `point`, down to FLOOR_SEARCH below it, as a world point; `point` when there is none. A hangar's
+    floor can lie a little above or below its InsideHangar hardpoint."""
+    depsgraph = context.evaluated_depsgraph_get()
+    up = root.matrix_world.to_quaternion() @ mathutils.Vector((0.0, 0.0, 1.0))
+    start = point + up * FLOOR_SEARCH
+    best, best_drop = point, None
+    for component in common.components(root):
+        if component.type != 'MESH':
+            continue
+        inverse = component.matrix_world.inverted()
+        hit, location, _, _ = component.ray_cast(inverse @ start, (inverse.to_3x3() @ -up).normalized(),
+                                                 depsgraph=depsgraph)
+        if not hit:
+            continue
+        world = component.matrix_world @ location
+        drop = (start - world).dot(up)
+        if 0.0 <= drop <= 2.0 * FLOOR_SEARCH and (best_drop is None or drop < best_drop):
+            best, best_drop = world, drop
+    return best
+
+
+def plane_placement(context, root):
+    """Where Add Reflection Plane puts the plane: its world location and its full size along the
+    root's x and y. It lies on the floor at the InsideHangar hardpoint, else at the bottom of the
+    light grid, else at the 3D cursor. It covers the light grid's floor plan, else a HANGAR_ZONE
+    floor."""
+    floor = hangar_floor(root)
+    if floor is not None:
+        floor = floor_below(context, root, floor)
+    grid = light_grid(root)
+    if grid is None:
+        return (floor if floor is not None else context.scene.cursor.location.copy()), HANGAR_ZONE[:2]
+    box = _relative(root, grid)
+    scale = box.to_scale()
+    height = (root.matrix_world.inverted() @ floor).z if floor is not None else box.translation.z - abs(scale.z)
+    location = root.matrix_world @ mathutils.Vector((box.translation.x, box.translation.y, height))
+    return location, (2.0 * abs(scale.x), 2.0 * abs(scale.y))
 
 
 def zone_tiles(size):
@@ -766,15 +818,40 @@ class AERON_OT_add_light_grid(Operator):
 
     def execute(self, context):
         root = common.model_root(context.active_object)
-        floor = default_location(root)
+        floor = hangar_floor(root)
         if floor is not None:
-            # From the floor (PROBE_HEIGHT below the probes' default) up.
+            # From the floor up.
             up = root.matrix_world.to_quaternion() @ mathutils.Vector((0.0, 0.0, 1.0))
-            centre, size = floor + up * (HANGAR_ZONE[2] / 2.0 - PROBE_HEIGHT), HANGAR_ZONE
+            centre, size = floor + up * (HANGAR_ZONE[2] / 2.0), HANGAR_ZONE
         else:
             centre, size = context.scene.cursor.location.copy(), BAY_ZONE
         grid = _new_light_grid(root, centre, size, GRID_SPACING)
         _select(context, grid)
+        return {'FINISHED'}
+
+
+class AERON_OT_add_reflection_plane(Operator):
+    """Add the model's reflection plane, the hangar floor that reflects the ships standing on it in the \
+game: on the floor at the InsideHangar hardpoint, over the light grid's floor plan. Check that it lies on \
+the floor and covers it"""
+
+    bl_idname = "aeron.add_reflection_plane"
+    bl_label = "Add Reflection Plane"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        root = common.model_root(context.active_object)
+        return root is not None and reflection_plane(root) is None
+
+    def execute(self, context):
+        root = common.model_root(context.active_object)
+        location, size = plane_placement(context, root)
+        plane = _new_reflection_plane(root, location, size, PLANE_DISTANCE)
+        _select(context, plane)
+        if light_grid(root) is None:
+            self.report({'WARNING'}, "The game uses the reflection plane only with the model's probes: "
+                                     "add a light grid")
         return {'FINISHED'}
 
 
@@ -1008,8 +1085,9 @@ class OBJECT_PT_aeron_probe(Panel):
         layout.operator("aeron.bake_probes", icon='RENDER_STILL')
 
 
-classes = (AeronProbeProperties, AERON_OT_add_reflection_probe, AERON_OT_add_light_grid, AERON_OT_fill_probes,
-           AERON_OT_bake_probes, AERON_OT_preview_probe, OBJECT_PT_aeron_probe)
+classes = (AeronProbeProperties, AERON_OT_add_reflection_probe, AERON_OT_add_light_grid,
+           AERON_OT_add_reflection_plane, AERON_OT_fill_probes, AERON_OT_bake_probes, AERON_OT_preview_probe,
+           OBJECT_PT_aeron_probe)
 
 
 def register():
