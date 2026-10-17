@@ -367,39 +367,3 @@ AeronTexture* Aeron_ImageUploadRgba8(AeronCommandBuffer* cmd, const uint8_t* rgb
 	return aeron_scene_upload_rgba8(cmd, rgba, width, height, pitch, format, color_space, alpha_mode,
 									generate_mips, debug_name);
 }
-
-AeronTexture* Aeron_ImageLoadCubemapKtx2(AeronCommandBuffer* cmd, const char* path) {
-	if (!cmd || !path || !path[0])
-		return NULL;
-	Ktx2* k = ktx2_open(path);
-	if (!k)
-		return NULL;
-	AeronTexture* tex = NULL;
-	if (ktx2_face_count(k) != 6) {
-		Aeron_LogError("aeron.scene", "%s: expected KTX2 cube map (faces=%d)", path, ktx2_face_count(k));
-	} else {
-		tex = Aeron_ImageUploadKtx2(cmd, k, path);
-	}
-	ktx2_close(k);
-	return tex;
-}
-
-AeronTexture* Aeron_ImageLoadCubemapKtx2Vfs(AeronCommandBuffer* cmd, AeronVfs* vfs, AeronVfsRoot root,
-											const char* path, size_t max_size) {
-	if (!cmd || !vfs || !path || !path[0])
-		return NULL;
-	uint8_t* bytes = NULL;
-	size_t   size  = 0;
-	if (!AeronVfs_ReadAll(vfs, root, path, max_size, &bytes, &size))
-		return NULL;
-	Ktx2*         ktx     = ktx2_open_mem(bytes, size, path);
-	AeronTexture* texture = NULL;
-	if (ktx && ktx2_face_count(ktx) == 6)
-		texture = Aeron_ImageUploadKtx2(cmd, ktx, path);
-	else
-		Aeron_LogError("aeron.scene", "%s: expected a KTX2 cube map", path);
-	if (ktx)
-		ktx2_close(ktx);
-	free(bytes);
-	return texture;
-}

@@ -635,7 +635,7 @@ struct AeronScene3D {
 	AeronSampler*          bb_depth_sampler; /* NEAREST clamp */
 	int                    bb_frame_has_lens;
 
-	/* Sky cube (AeronScene_SetSkyCube). Cube pointer + basis + exposure
+	/* Sky cube (AeronScene_SetSkyEnvironment). Cube pointer + basis + exposure
 	 * are per-frame (reset by Begin); shaders/pipelines are lazily
 	 * created on the first Render with a sky and kept. Two pipeline
 	 * variants mirror the color-pass RT layouts (normal RT riding along

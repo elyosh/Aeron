@@ -1,5 +1,5 @@
 /*
- * Scene sky-cube vertex shader (AeronScene_SetSkyCube).
+ * Scene sky-cube vertex shader (AeronScene_SetSkyEnvironment).
  *
  * Draws a fullscreen triangle from SV_VertexID; the rasterizer
  * interpolates a cube-space ray direction the fragment shader uses to

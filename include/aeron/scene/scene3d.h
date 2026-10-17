@@ -359,19 +359,18 @@ void AeronScene_GetDirectionalShadowStats(const AeronScene3D* scene, AeronSceneD
 /* Clear color of the scene pass (linear HDR). Deep-space default. */
 void AeronScene_SetClearColor(AeronScene3D* scene, const float rgba[4]);
 
-/* Per-frame sky cube map (reset by Begin; no call = no sky draw, which
- * expresses game-side gating directly). Drawn as the first draw of the
- * color pass — under the BEFORE_OPAQUE hook, SKY billboards, and all
- * meshes — at the reversed-Z far plane (depth GE test, no write). The
- * cube texture is borrowed until Render() completes (load one via
- * Aeron_ImageLoadCubemapKtx2). `world_to_cube` is the game's row-major
- * world-axes → cube-sampling-basis rotation (cube convention: +X right,
- * +Y up, -Z forward); NULL = identity. `exposure` scales the sample —
- * 1.0 for LDR cubes, calibrated >1 for dim HDR sources. */
-void AeronScene_SetSkyCube(AeronScene3D* scene, AeronTexture* cube, const float world_to_cube[9],
-						   float exposure);
-
 struct AeronEnvironmentLight;
+struct AeronPreparedEnvironment;
+
+/* Draws the sky of a prepared environment this frame: its radiance cube,
+ * rotated by its world_to_cube and scaled by its intensity. Begin resets
+ * it, so without a call there is no sky. An environment without a sky
+ * (no radiance) draws nothing. The sky is the first draw of the color
+ * pass, under the BEFORE_OPAQUE hook, SKY billboards and all meshes, at
+ * the reversed-Z far plane (depth GE test, no write). The environment
+ * must stay prepared until Render() completes. Its suns are not drawn;
+ * queue them with AeronScene_AddSkySun. */
+void AeronScene_SetSkyEnvironment(AeronScene3D* scene, const struct AeronPreparedEnvironment* environment);
 
 /* Queue one visible sun for this frame (reset by Begin), drawn on the sky
  * at infinity along the light's world direction, after the sky cube and

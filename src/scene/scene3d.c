@@ -823,22 +823,18 @@ void AeronScene_SetClearColor(AeronScene3D* s, const float rgba[4]) {
 	}
 }
 
-void AeronScene_SetSkyCube(AeronScene3D* s, AeronTexture* cube, const float world_to_cube[9],
-						   float exposure) {
+void AeronScene_SetSkyEnvironment(AeronScene3D* s, const AeronPreparedEnvironment* environment) {
 	if (!s) {
 		return;
 	}
-	s->sky_cube     = cube;
-	s->sky_exposure = exposure;
-	if (world_to_cube) {
-		memcpy(s->sky_world_to_cube, world_to_cube, sizeof s->sky_world_to_cube);
-	} else {
-		static const float ident[9] = { 1, 0, 0, 0, 1, 0, 0, 0, 1 };
-		memcpy(s->sky_world_to_cube, ident, sizeof s->sky_world_to_cube);
+	s->sky_cube = environment ? environment->radiance : NULL;
+	if (s->sky_cube) {
+		s->sky_exposure = environment->settings.intensity;
+		memcpy(s->sky_world_to_cube, environment->world_to_cube, sizeof s->sky_world_to_cube);
 	}
 }
 
-/* ---- sky cube (AeronScene_SetSkyCube) ----
+/* ---- sky cube (AeronScene_SetSkyEnvironment) ----
  *
  * Fullscreen-triangle cube-map sky, first draw of the color pass.
  * No vertex buffer (the VS synthesizes the triangle from SV_VertexID);

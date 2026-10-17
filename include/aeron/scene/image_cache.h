@@ -90,15 +90,6 @@ AeronTexture* Aeron_ImageUploadRgba8(AeronCommandBuffer* cmd, const uint8_t* rgb
 									 AeronImageAlphaMode alpha_mode, bool generate_mips,
 									 const char* debug_name);
 
-/* One-shot cube-map load: open `path`, require faceCount == 6, upload
- * every mip x face through `cmd` (which must have no open pass), close.
- * The caller owns the returned texture; NULL on any error (missing
- * file, not a cube, upload failure) with a diagnostic on stderr.
- * Feeds AeronScene_SetSkyCube. */
-AeronTexture* Aeron_ImageLoadCubemapKtx2(AeronCommandBuffer* cmd, const char* path);
-AeronTexture* Aeron_ImageLoadCubemapKtx2Vfs(AeronCommandBuffer* cmd, AeronVfs* vfs, AeronVfsRoot root,
-											const char* path, size_t max_size);
-
 #ifdef __cplusplus
 }
 #endif
