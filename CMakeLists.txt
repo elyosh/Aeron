@@ -1039,6 +1039,7 @@ if(AERON_BUILD_TOOLS)
         tools/opt2gltf/xwau_missions.c
         tools/opt2gltf/xwau_model.c
         tools/opt2gltf/xwau_skins.c
+        tools/opt2gltf/xwau_skyboxes.c
         third_party/lzma/LzmaDec.c)
     target_include_directories(opt2gltf_tool
         PUBLIC

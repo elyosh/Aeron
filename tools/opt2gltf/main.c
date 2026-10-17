@@ -6,7 +6,8 @@
  *   opt2gltf (--stock | --xwau-root DIR) [--smooth-angle DEG]
  *            (--project DIR [--replace] FILE.opt | FILE.opt <output_dir>)
  *   opt2gltf effects --xwau-root DIR --project DIR <project|model.gltf>...
- *   opt2gltf missions --xwau-root DIR --stock-game DIR <output_dir>
+ *   opt2gltf missions --xwau-root DIR --stock-game DIR
+ *                     [--skyboxes FILE --skybox-folders FILE] <output_dir>
  *
  * The model is written into <output_dir>, or into a project with --project.
  * A project is a folder that holds models (models/<key>/) and their effect
@@ -23,7 +24,10 @@
  *
  * `missions` writes the selections of XWAU's missions for the missions of the
  * original game, installed in --stock-game. Each mission gets a file
- * <output_dir>/<dir>/<mission>.yaml (xwau_mission_files.h).
+ * <output_dir>/<dir>/<mission>.yaml (xwau_mission_files.h). With --skyboxes,
+ * it also writes the environments of the missions' [SkyBoxes] sections into
+ * FILE, and the cube folders to convert with `environment_bake --faces` into
+ * the --skybox-folders file (xwau_skyboxes.h).
  *
  * Replacement workflow (both tools are built with AERON_BUILD_TOOLS):
  *
@@ -48,6 +52,7 @@
 #include "xwau_library.h"
 #include "xwau_mission_files.h"
 #include "xwau_missions.h"
+#include "xwau_skyboxes.h"
 
 /* Converts the OPT into models/<key>/ in the project. In XWAU mode, it then
  * adds the library images that the model names. */
@@ -93,7 +98,8 @@ static int usage(void) {
 	fprintf(stderr, "usage: opt2gltf (--stock | --xwau-root DIR) [--smooth-angle DEG]\n"
 					"                (--project DIR [--replace] FILE.opt | FILE.opt <output_dir>)\n"
 					"       opt2gltf effects --xwau-root DIR --project DIR <project|model.gltf>...\n"
-					"       opt2gltf missions --xwau-root DIR --stock-game DIR <output_dir>\n");
+					"       opt2gltf missions --xwau-root DIR --stock-game DIR\n"
+					"                         [--skyboxes FILE --skybox-folders FILE] <output_dir>\n");
 	return 2;
 }
 
@@ -106,6 +112,8 @@ enum {
 	FLAG_PROJECT      = 1 << 3,
 	FLAG_REPLACE      = 1 << 4,
 	FLAG_STOCK_GAME   = 1 << 5,
+	FLAG_SKYBOXES     = 1 << 6,
+	FLAG_SKY_FOLDERS  = 1 << 7,
 };
 
 static const struct {
@@ -119,6 +127,8 @@ static const struct {
 	{ "--project", FLAG_PROJECT, true },
 	{ "--replace", FLAG_REPLACE, false },
 	{ "--stock-game", FLAG_STOCK_GAME, true },
+	{ "--skyboxes", FLAG_SKYBOXES, true },
+	{ "--skybox-folders", FLAG_SKY_FOLDERS, true },
 };
 
 typedef struct Args {
@@ -128,6 +138,8 @@ typedef struct Args {
 	const char* project;
 	bool        replace;
 	const char* stock_game;
+	const char* skyboxes;
+	const char* skybox_folders;
 	char**      inputs; /* the arguments after the flags */
 	int         input_count;
 } Args;
@@ -181,6 +193,12 @@ static bool parse_args(int argc, char** argv, unsigned allowed, Args* out) {
 				break;
 			case FLAG_STOCK_GAME:
 				out->stock_game = value;
+				break;
+			case FLAG_SKYBOXES:
+				out->skyboxes = value;
+				break;
+			case FLAG_SKY_FOLDERS:
+				out->skybox_folders = value;
 				break;
 		}
 	}
@@ -258,13 +276,18 @@ static int run_effects(int argc, char** argv) {
 			   : 1;
 }
 
-/* opt2gltf missions --xwau-root DIR --stock-game DIR <output_dir> */
+/* opt2gltf missions --xwau-root DIR --stock-game DIR
+ *                   [--skyboxes FILE --skybox-folders FILE] <output_dir> */
 static int run_missions(int argc, char** argv) {
 	Args a;
-	if (!parse_args(argc, argv, FLAG_XWAU_ROOT | FLAG_STOCK_GAME, &a))
+	if (!parse_args(argc, argv, FLAG_XWAU_ROOT | FLAG_STOCK_GAME | FLAG_SKYBOXES | FLAG_SKY_FOLDERS, &a))
 		return 2;
 	if (!a.xwau_root || !a.stock_game || a.input_count != 1) {
 		Report(NULL, "missions needs --xwau-root, --stock-game and an output folder");
+		return 2;
+	}
+	if (!a.skyboxes != !a.skybox_folders) {
+		Report(NULL, "--skyboxes and --skybox-folders go together");
 		return 2;
 	}
 	XwauMissions* missions = XwauMissions_Load(a.xwau_root, true);
@@ -272,8 +295,10 @@ static int run_missions(int argc, char** argv) {
 		Report(NULL, "out of memory (missions)");
 		return 1;
 	}
-	const bool ok = XwauMissionFiles_Write(a.xwau_root, missions, a.stock_game, a.inputs[0]);
+	bool ok = XwauMissionFiles_Write(a.xwau_root, missions, a.stock_game, a.inputs[0]);
 	XwauMissions_Free(missions);
+	if (ok && a.skyboxes)
+		ok = XwauSkyboxes_Write(a.xwau_root, a.stock_game, a.skyboxes, a.skybox_folders);
 	return ok ? 0 : 1;
 }
 

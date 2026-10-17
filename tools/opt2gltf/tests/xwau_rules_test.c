@@ -1,11 +1,12 @@
 /*
- * Tests the hook file rules that opt2gltf reproduces (xwau_config.h) and its
- * skin selection (xwau_skins.h). The inputs are fixed texts and skin folders
- * written to a scratch folder. The test is built with the tools as
- * opt2gltf_xwau_test. It prints each check and exits with a non-zero status
- * when a check fails.
+ * Tests the hook file rules that opt2gltf reproduces (xwau_config.h), its
+ * skin selection (xwau_skins.h) and its skybox conversion (xwau_skyboxes.h). The inputs are fixed texts and
+ * skin folders written to a scratch folder. The test is built with the tools as opt2gltf_xwau_test. It prints
+ * each check and exits with a non-zero status when a check fails.
  */
 
+#include <math.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -15,6 +16,7 @@
 #include "xwau_config.h"
 #include "xwau_missions.h"
 #include "xwau_skins.h"
+#include "xwau_skyboxes.h"
 
 static int g_failures;
 
@@ -220,6 +222,139 @@ static void test_skins(const char* scratch) {
 	}
 }
 
+/* ---- Skyboxes ---------------------------------------------------------------- */
+
+static void mat_mul(const double a[9], const double b[9], double out[9]) {
+	for (int r = 0; r < 3; ++r)
+		for (int c = 0; c < 3; ++c)
+			out[r * 3 + c] = a[r * 3] * b[c] + a[r * 3 + 1] * b[3 + c] + a[r * 3 + 2] * b[6 + c];
+}
+
+static void rotation(int axis, double degrees, double out[9]) {
+	const double a = degrees * 3.14159265358979323846 / 180.0, c = cos(a), s = sin(a);
+	const double m[3][9] = { { 1, 0, 0, 0, c, -s, 0, s, c },
+							 { c, 0, s, 0, 1, 0, -s, 0, c },
+							 { c, -s, 0, s, c, 0, 0, 0, 1 } };
+	memcpy(out, m[axis], sizeof m[axis]);
+}
+
+/* The converted [yaw, pitch, roll] must give XWAU's M Rot^T M as
+ * Ry(yaw) Rx(pitch) Rz(roll), with Rot = Rz Ry Rx for a sky and Rx Ry Rz for
+ * an overlay (xwau_skyboxes_plan.md, 4.2). */
+static void test_skybox_rotation(void) {
+	uint32_t seed  = 7;
+	double   worst = 0.0;
+	for (int i = 0; i < 2000; ++i) {
+		float xyz[3];
+		for (int k = 0; k < 3; ++k) {
+			seed   = seed * 1664525u + 1013904223u;
+			xyz[k] = (float)(seed >> 8) / (float)(1u << 24) * 720.0f - 360.0f;
+		}
+		if (i < 4) /* pitch +-90 */
+			xyz[0] = i < 2 ? 90.0f : -90.0f;
+		const bool overlay = i % 2 != 0;
+		double     rx[9], ry[9], rz[9], t[9], rot[9];
+		rotation(0, xyz[0], rx);
+		rotation(1, xyz[1], ry);
+		rotation(2, xyz[2], rz);
+		mat_mul(overlay ? rx : rz, ry, t);
+		mat_mul(t, overlay ? rz : rx, rot);
+		const double m[3] = { 1.0, 1.0, -1.0 };
+		float        ypr[3];
+		XwauSkyboxes_Rotation(xyz, overlay, ypr);
+		double y[9], x[9], z[9], q[9];
+		rotation(1, ypr[0], y);
+		rotation(0, ypr[1], x);
+		rotation(2, ypr[2], z);
+		mat_mul(y, x, t);
+		mat_mul(t, z, q);
+		for (int r = 0; r < 3; ++r)
+			for (int c = 0; c < 3; ++c)
+				worst = fmax(worst, fabs(q[r * 3 + c] - m[r] * m[c] * rot[c * 3 + r]));
+	}
+	printf("skybox rotation: largest difference %.3g\n", worst);
+	check(worst < 1e-4, "skybox rotations give XWAU's cube orientation");
+}
+
+/* Whether `text` occurs in the mission entry that starts at `entry` and ends
+ * at `next`. */
+static bool in_entry(const char* entry, const char* next, const char* text) {
+	const char* found = strstr(entry, text);
+	return found && found < next;
+}
+
+static void make_cube_folder(const char* root, const char* name, int files) {
+	char dir[1200], path[1400];
+	snprintf(dir, sizeof dir, "%s/Effects/CubeMaps/%s", root, name);
+	MakeDirs(dir);
+	for (int f = 0; f < files; ++f) {
+		snprintf(path, sizeof path, "%s/%s.%d.jpg", dir, name, f);
+		write_file(path, "");
+	}
+}
+
+static void test_skyboxes(const char* scratch) {
+	char game[1024], stock[1024], dir[1200], path[1300];
+	snprintf(game, sizeof game, "%s/sky_game", scratch);
+	snprintf(stock, sizeof stock, "%s/sky_stock", scratch);
+	make_cube_folder(game, "Alpha", 6);
+	make_cube_folder(game, "Beta", 6);
+	make_cube_folder(game, "Gamma", 5); /* does not load */
+	snprintf(dir, sizeof dir, "%s/Missions", game);
+	MakeDirs(dir);
+	snprintf(dir, sizeof dir, "%s/Missions", stock);
+	MakeDirs(dir);
+	static const char* const kMissions[][2] = {
+		{ "m1",
+		  "[SkyBoxes]\nDisabledBackdrops = 9001-1100;All;6025-1\nAllRegions = Effects\\CubeMaps\\Alpha\n"
+		  "AllRegionsAmbientInt = 0.3abc\nAllRegionsRotationY = 5\nRegion0 = Effects\\CubeMaps\\Beta\n"
+		  "Region0AmbientMin = 0.05\nRegion1 = Effects\\CubeMaps\\Gamma\nAllRegionsTypo = 1\n" },
+		{ "m2", "[SkyBoxes]\nAllRegions = Effects\\CubeMaps\\Gamma\n" },
+		{ "m3", "[SkyBoxes]\nEnabledBackdrops = all\nAllRegions = Effects\\CubeMaps\\Alpha\n"
+				"AllRegionsAmbientInt = 0.3\n" },
+	};
+	for (size_t m = 0; m < sizeof kMissions / sizeof kMissions[0]; ++m) {
+		snprintf(path, sizeof path, "%s/Missions/%s.ini", game, kMissions[m][0]);
+		write_file(path, kMissions[m][1]);
+		snprintf(path, sizeof path, "%s/Missions/%s.tie", stock, kMissions[m][0]);
+		write_file(path, "");
+	}
+	char manifest[1200], folders[1200];
+	snprintf(manifest, sizeof manifest, "%s/sky.yaml", scratch);
+	snprintf(folders, sizeof folders, "%s/sky_folders.txt", scratch);
+	check(XwauSkyboxes_Write(game, stock, manifest, folders), "skyboxes written");
+	size_t      size = 0;
+	char*       text = ReadWholeFile(manifest, &size);
+	char*       list = ReadWholeFile(folders, &size);
+	const char* m1   = text ? strstr(text, "\"missions/m1.tie\"") : NULL;
+	const char* m2   = text ? strstr(text, "\"missions/m2.tie\"") : NULL;
+	const char* m3   = text ? strstr(text, "\"missions/m3.tie\"") : NULL;
+	check(m1 && m2 && m3, "skyboxes: one entry per mission");
+	if (m1 && m2 && m3) {
+		check(strstr(text, "  xwau.beta:\n") && strstr(text, "diffuse_strength: 0.15\n") &&
+				  strstr(text, "ambient_fill: [0.05, 0.05, 0.05]"),
+			  "skyboxes: a region with its own folder takes the region defaults");
+		check(strstr(text, "  xwau.alpha:\n") && strstr(text, "diffuse_strength: 0.3\n") &&
+				  !strstr(text, "xwau.alpha.2"),
+			  "skyboxes: AllRegions values read as stof reads them, one environment for equal values");
+		check(
+			strstr(m1, "\"1\":\n          environment: xwau.alpha\n          rotation_degrees: [5, 0, 0]") &&
+				strstr(m1, "\"0\":\n          environment: xwau.beta\n          backdrops: keep"),
+			"skyboxes: a region whose folder does not load uses AllRegions, with its rotation");
+		check(strstr(m1, "\"6104-0\"") && strstr(m1, "\"9001-1100\"") && strstr(m1, "\"6025-1\"") &&
+				  !in_entry(m1, m2, "show_backdrops"),
+			  "skyboxes: hidden images are the starfield ones and DisabledBackdrops, 'All' is ignored");
+		check(strstr(m2, "\"0\": none\n        \"1\": none") != NULL, "skyboxes: no folder loads, no sky");
+		check(strstr(m3, "show_backdrops: all") && !strstr(m3, "hide_backdrops"),
+			  "skyboxes: EnabledBackdrops = all turns hiding off");
+	}
+	check(list && strstr(list, "\txwau.alpha\tflight/environments/xwau/alpha\n") &&
+			  strstr(list, "\txwau.beta\t") && !strstr(list, "gamma"),
+		  "skyboxes: the folder list names the folders that load");
+	free(text);
+	free(list);
+}
+
 int main(void) {
 	char        scratch[1024];
 	const char* tmp = getenv("TMPDIR");
@@ -228,6 +363,8 @@ int main(void) {
 	MakeDirs(scratch);
 	test_rules(scratch);
 	test_skins(scratch);
+	test_skybox_rotation();
+	test_skyboxes(scratch);
 	RemoveTree(scratch);
 	printf("%s\n", g_failures ? "FAILED" : "passed");
 	return g_failures ? 1 : 0;
