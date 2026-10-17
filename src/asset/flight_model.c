@@ -24,19 +24,32 @@ typedef enum FlightNodeRole {
 	FLIGHT_ROLE_INVALID,
 } FlightNodeRole;
 
-static const char* flight_extension(const cgltf_node* node) {
+static const char* node_extension(const cgltf_node* node, const char* name) {
 	if (!node)
 		return NULL;
 	for (cgltf_size index = 0; index < node->extensions_count; ++index) {
 		const cgltf_extension* extension = &node->extensions[index];
-		if (extension->name && extension->data && strcmp(extension->name, AERON_FLIGHT_MODEL_EXTENSION) == 0)
+		if (extension->name && extension->data && strcmp(extension->name, name) == 0)
 			return extension->data;
 	}
 	return NULL;
 }
 
+/* The node's AERON_flight_model_cooked object in *out, NULL without one;
+ * false when it is not an object. */
+static bool parse_cooked_extension(const cgltf_node* node, cJSON** out) {
+	const char* extension = node_extension(node, AERON_FLIGHT_MODEL_COOKED_EXTENSION);
+	*out                  = extension ? cJSON_ParseWithOpts(extension, NULL, true) : NULL;
+	if (extension && !cJSON_IsObject(*out)) {
+		cJSON_Delete(*out);
+		*out = NULL;
+		return false;
+	}
+	return true;
+}
+
 static cJSON* parse_flight_extension(const cgltf_node* node) {
-	const char* extension = flight_extension(node);
+	const char* extension = node_extension(node, AERON_FLIGHT_MODEL_EXTENSION);
 	if (!extension)
 		return NULL;
 	cJSON* object = cJSON_ParseWithOpts(extension, NULL, true);
@@ -96,7 +109,7 @@ static bool json_vector(const cJSON* value, float* out, int count) {
 }
 
 static FlightNodeRole node_role(const cgltf_node* node) {
-	if (!flight_extension(node))
+	if (!node_extension(node, AERON_FLIGHT_MODEL_EXTENSION))
 		return FLIGHT_ROLE_NONE;
 	cJSON* object = parse_flight_extension(node);
 	if (!object)
@@ -588,21 +601,28 @@ static bool parse_cooked_reference(const cgltf_data* data, const cJSON* extensio
 	return true;
 }
 
-static bool build_component_simulation_data(const cgltf_data* data, const cJSON* extension,
+static bool build_component_simulation_data(const cgltf_data* data, const cgltf_node* node,
 											AeronFlightComponent* component) {
-	return parse_cooked_reference(data, extension, "simulationData", "topologyHash",
-								  &component->has_simulation_data, &component->simulation_data,
-								  &component->simulation_data_size, &component->simulation_topology_hash);
+	cJSON*     cooked = NULL;
+	const bool ok     = parse_cooked_extension(node, &cooked) &&
+					parse_cooked_reference(data, cooked, "simulationData", "topologyHash",
+										   &component->has_simulation_data, &component->simulation_data,
+										   &component->simulation_data_size, &component->simulation_topology_hash);
+	cJSON_Delete(cooked);
+	return ok;
 }
 
 static bool build_model_render_data(const cgltf_data* data, const cgltf_node* root, AeronFlightModel* model) {
 	cJSON* extension = parse_flight_extension(root);
+	cJSON* cooked    = NULL;
 	if (!extension)
 		return false;
-	const bool ok = parse_cooked_reference(data, extension, "renderData", "meshHash", &model->has_render_data,
+	const bool ok = parse_cooked_extension(root, &cooked) &&
+					parse_cooked_reference(data, cooked, "renderData", "meshHash", &model->has_render_data,
 										   &model->render_data, &model->render_data_size, &model->render_mesh_hash) &&
 					build_model_articulations(extension, model) && build_model_articulation_settings(extension, model) &&
 					build_model_component_sets(extension, model);
+	cJSON_Delete(cooked);
 	cJSON_Delete(extension);
 	return ok;
 }
@@ -695,7 +715,7 @@ static bool build_component_semantics(const cgltf_data* data, const cgltf_node* 
 		return false;
 	}
 	if (!build_component_tags(extension, component) ||
-		!build_component_simulation_data(data, extension, component)) {
+		!build_component_simulation_data(data, node, component)) {
 		cJSON_Delete(extension);
 		return false;
 	}
@@ -1055,10 +1075,11 @@ static bool build_semantics(const cgltf_data* data, AeronFlightModel* model) {
 
 /* The model root's cooked probes (`probeData`), when it has them. */
 static bool build_model_probes(const cgltf_data* data, AeronFlightModel* model, const char* source_label) {
-	cJSON*     extension  = parse_flight_extension(data->scene->nodes[0]);
-	char       error[256] = "malformed extension";
-	const bool ok =
-		extension && Aeron_FlightProbesFromExtension(data, extension, &model->probes, error, sizeof error);
+	cJSON*     extension  = NULL;
+	char       error[256] = "malformed " AERON_FLIGHT_MODEL_COOKED_EXTENSION;
+	const bool ok         = parse_cooked_extension(data->scene->nodes[0], &extension) &&
+					(!extension ||
+					 Aeron_FlightProbesFromExtension(data, extension, &model->probes, error, sizeof error));
 	if (!ok)
 		SDL_Log("[flight_model] '%s' has invalid probeData: %s", source_label, error);
 	cJSON_Delete(extension);

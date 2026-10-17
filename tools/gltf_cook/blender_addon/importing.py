@@ -192,7 +192,6 @@ class glTF2ImportUserExtension:
     def gather_import_scene_after_nodes_hook(self, gltf_scene, blender_scene, gltf):
         if _state is None:
             return
-        _state["cooked"] = common.EXTENSION_NAME in (gltf.data.extensions_required or [])
         try:
             restore(gltf)
         except Exception as error:  # the importer would only log it
@@ -288,7 +287,11 @@ class IMPORT_OT_aeron_flight_model(Operator, ImportHelper):
         except (OSError, ValueError) as error:
             self.report({'ERROR'}, "Cannot read {}: {}".format(self.filepath, error))
             return {'CANCELLED'}
-        _state = {"roots": [], "components": 0, "lights": 0, "cooked": False, "error": None, "animated": set()}
+        if common.COOKED_EXTENSION_NAME in (document.get("extensionsRequired") or []):
+            self.report({'ERROR'}, "This .glb is cooked for the game: Blender cannot read its textures, and "
+                                   "the cooker dropped its source data. Import the model's .gltf instead")
+            return {'CANCELLED'}
+        _state = {"roots": [], "components": 0, "lights": 0, "error": None, "animated": set()}
         variants_before = [variant.name for variant in _variant_list() or ()]
         try:
             result = bpy.ops.import_scene.gltf(
@@ -327,11 +330,7 @@ class IMPORT_OT_aeron_flight_model(Operator, ImportHelper):
         message = "Imported {} component(s), {} light(s)".format(state["components"], state["lights"])
         if state["animated"]:
             message += ", {} animated material(s)".format(len(state["animated"]))
-        if state["cooked"]:
-            self.report({'WARNING'}, message + ". This .glb for the game has textures that Blender cannot "
-                                               "read. Import the model's .gltf instead")
-        else:
-            self.report({'INFO'}, message)
+        self.report({'INFO'}, message)
         return {'FINISHED'}
 
 

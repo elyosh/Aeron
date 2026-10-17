@@ -7,10 +7,11 @@
  *        aeron_gltf_cook --library-from-json <in.json> <library>.yaml
  *
  * Cooks an artist-authored .gltf into a runtime-ready .glb with per-channel
- * KTX2 atlases (tools/extensions/AERON_flight_model, "Textures and
+ * KTX2 atlases (tools/extensions/AERON_flight_model_cooked, "Textures and
  * images"), after checking its materials' animations and screens. An
- * AERON_flight_model asset also gets cooked simulation and render data, and
- * the result is loaded back the way a game loads it before it is written.
+ * AERON_flight_model asset also gets cooked simulation and render data (and
+ * probe data with --probes), and the result is loaded back the way a game
+ * loads it before it is written.
  * --library builds an effect library (animated_materials.md).
  */
 
@@ -36,15 +37,16 @@ static void usage(void) {
 					"Cooks an artist-authored .gltf (PNG textures, optional\n"
 					"KHR_materials_variants) into one .glb file with compressed KTX2\n"
 					"atlas arrays (base_color / normal / metallic_roughness / emissive),\n"
-					"which its textures name through AERON_flight_model. Each\n"
+					"which its textures name through AERON_flight_model_cooked. Each\n"
 					"material's texture bindings carry a KHR_texture_transform mapping\n"
 					"its UVs into the appropriate sub-rect of its atlas. It first\n"
 					"checks the materials' AERON_flight_model objects (animations,\n"
 					"screens). Skin layers (`skins`, `skinVariants`) become material\n"
 					"variants, composited while cooking.\n"
 					"\n"
-					"For an AERON_flight_model asset it also adds cooked simulation data\n"
-					"(per-component collision BVH) and render data (render BVH), then\n"
+					"For an AERON_flight_model asset it also adds, in\n"
+					"AERON_flight_model_cooked, simulation data (per-component collision\n"
+					"BVH) and render data (render BVH), then\n"
 					"loads the result as a game would and fails if it does not load.\n"
 					"\n"
 					"Options:\n"

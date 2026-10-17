@@ -8,6 +8,8 @@ import math
 import re
 
 EXTENSION_NAME = "AERON_flight_model"
+# What aeron_gltf_cook adds; a file that requires it is cooked for the game.
+COOKED_EXTENSION_NAME = "AERON_flight_model_cooked"
 LIGHTS_EXTENSION_NAME = "KHR_lights_punctual"
 TAG_PATTERN = re.compile(r"^[a-z0-9._]{1,63}$")
 MAX_COMPONENTS = 255

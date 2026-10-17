@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "AERON_flight_model texture extension",
+  "title": "AERON_flight_model_cooked texture extension",
   "description": "Written by aeron_gltf_cook, in cooked files only: the atlas page a texture uses. A cooked texture has no source of its own; KHR_texture_transform on the material's texture info places the texture within its page. Unknown fields are ignored.",
   "type": "object",
   "required": ["source", "layer"],

@@ -13,6 +13,9 @@ extern "C" {
 #endif
 
 #define AERON_FLIGHT_MODEL_EXTENSION "AERON_flight_model"
+/* What aeron_gltf_cook adds: simulation, render and probe data, and the
+ * textures' atlas pages (tools/extensions/AERON_flight_model_cooked). */
+#define AERON_FLIGHT_MODEL_COOKED_EXTENSION "AERON_flight_model_cooked"
 
 typedef struct AeronFlightVec3 {
 	float x;
@@ -177,7 +180,7 @@ typedef struct AeronFlightComponent {
  * reflection probes (a cube array, probe k in layer k) and its irradiance
  * grid, in the model frame (aeron axes), metres. The same layout is the
  * probes bake's output (bake.json) and its job's input, as JSON with the
- * fields of `probeData` (AERON_flight_model README, "Cooked data"). */
+ * fields of `probeData` (tools/extensions/AERON_flight_model_cooked). */
 
 #define AERON_FLIGHT_MAX_PROBES      42 /* 6 cube layers each within 256 array layers */
 #define AERON_FLIGHT_PROBE_GRID_MIN  2  /* grid points per axis */

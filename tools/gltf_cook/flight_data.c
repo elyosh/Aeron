@@ -1,5 +1,6 @@
 /*
- * aeron_gltf_cook — cooked AERON_flight_model data.
+ * aeron_gltf_cook — cooked AERON_flight_model data, in each node's
+ * AERON_flight_model_cooked object.
  *
  * Runs on the cooked GLB. For each component it writes `simulationData` (the
  * face BVH and the 256-entry farthest-point vertex sample over the simulation
@@ -169,10 +170,17 @@ static bool glb_serialize(const Glb* glb, uint8_t** out, size_t* out_size) {
 
 /* ===== Flight-model hierarchy ======================================== */
 
-static cJSON* node_flight_extension(cJSON* json, int node_index) {
+/* The node's AERON_flight_model_cooked object, created when missing; NULL
+ * without the node or memory. */
+static cJSON* node_cooked_extension(cJSON* json, int node_index) {
 	cJSON* node = cJSON_GetArrayItem(cJSON_GetObjectItemCaseSensitive(json, "nodes"), node_index);
-	return cJSON_GetObjectItemCaseSensitive(cJSON_GetObjectItemCaseSensitive(node, "extensions"),
-											AERON_FLIGHT_MODEL_EXTENSION);
+	if (!cJSON_IsObject(node))
+		return NULL;
+	cJSON* extensions = cJSON_GetObjectItemCaseSensitive(node, "extensions");
+	if (!extensions)
+		extensions = cJSON_AddObjectToObject(node, "extensions");
+	cJSON* cooked = cJSON_GetObjectItemCaseSensitive(extensions, AERON_FLIGHT_MODEL_COOKED_EXTENSION);
+	return cooked ? cooked : cJSON_AddObjectToObject(extensions, AERON_FLIGHT_MODEL_COOKED_EXTENSION);
 }
 
 /* Resolves the model root and its ordered component node indices. */
@@ -223,15 +231,15 @@ static void strip_probe_authoring(cJSON* json) {
 	}
 }
 
+/* The nodes' cooked data: re-cooking a cooked file writes it again. */
 static void strip_cooked_references(cJSON* json) {
 	cJSON* nodes = cJSON_GetObjectItemCaseSensitive(json, "nodes");
 	cJSON* node  = NULL;
 	cJSON_ArrayForEach(node, nodes) {
-		cJSON* extension = cJSON_GetObjectItemCaseSensitive(cJSON_GetObjectItemCaseSensitive(node, "extensions"),
-															 AERON_FLIGHT_MODEL_EXTENSION);
-		cJSON_DeleteItemFromObjectCaseSensitive(extension, "simulationData");
-		cJSON_DeleteItemFromObjectCaseSensitive(extension, "renderData");
-		cJSON_DeleteItemFromObjectCaseSensitive(extension, "probeData");
+		cJSON* extensions = cJSON_GetObjectItemCaseSensitive(node, "extensions");
+		cJSON_DeleteItemFromObjectCaseSensitive(extensions, AERON_FLIGHT_MODEL_COOKED_EXTENSION);
+		if (extensions && !extensions->child)
+			cJSON_DeleteItemFromObjectCaseSensitive(node, "extensions");
 	}
 }
 
@@ -463,7 +471,7 @@ bool aeron_gltf_cook_flight_data(const uint8_t* in, size_t in_size, const char* 
 			continue;
 		const bool added = cook_component(&model.components[index], &bytes, &size, &hash) &&
 						   glb_append_view(&glb, bytes, size, &view) &&
-						   add_reference(node_flight_extension(glb.json, components[index]), "simulationData",
+						   add_reference(node_cooked_extension(glb.json, components[index]), "simulationData",
 										 "topologyHash", view, hash);
 		free(bytes);
 		if (!added) {
@@ -479,14 +487,14 @@ bool aeron_gltf_cook_flight_data(const uint8_t* in, size_t in_size, const char* 
 		uint32_t view  = 0;
 		const bool added = cook_render(&model.render, &bytes, &size, &hash) &&
 						   glb_append_view(&glb, bytes, size, &view) &&
-						   add_reference(node_flight_extension(glb.json, root), "renderData", "meshHash", view, hash);
+						   add_reference(node_cooked_extension(glb.json, root), "renderData", "meshHash", view, hash);
 		free(bytes);
 		if (!added) {
 			cook_error(error, error_size, "cooking render data failed");
 			goto done;
 		}
 	}
-	if (probes_dir && !add_probes(&glb, node_flight_extension(glb.json, root), probes_dir, error, error_size))
+	if (probes_dir && !add_probes(&glb, node_cooked_extension(glb.json, root), probes_dir, error, error_size))
 		goto done;
 	strip_probe_authoring(glb.json);
 	if (!glb_serialize(&glb, out, out_size)) {

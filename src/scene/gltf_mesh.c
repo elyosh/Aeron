@@ -108,17 +108,20 @@ static const cgltf_accessor* prim_attr(const cgltf_primitive* p, cgltf_attribute
 	return NULL;
 }
 
-/* ===== The extension's objects ======================================
+/* ===== The extensions' objects =====================================
  *
- * A material's and a texture's AERON_flight_model object
- * (tools/extensions/AERON_flight_model), parsed (owned), or NULL without
- * one. */
-static cJSON* flight_model_object(const cgltf_extension* extensions, cgltf_size count) {
+ * An object's extension `name` (tools/extensions/AERON_flight_model, or
+ * AERON_flight_model_cooked on cooked textures), parsed (owned), or NULL
+ * without one. */
+static cJSON* extension_object(const cgltf_extension* extensions, cgltf_size count, const char* name) {
 	for (cgltf_size e = 0; e < count; e++)
-		if (extensions[e].name && extensions[e].data &&
-			strcmp(extensions[e].name, AERON_FLIGHT_MODEL_EXTENSION) == 0)
+		if (extensions[e].name && extensions[e].data && strcmp(extensions[e].name, name) == 0)
 			return cJSON_Parse(extensions[e].data);
 	return NULL;
+}
+
+static cJSON* flight_model_object(const cgltf_extension* extensions, cgltf_size count) {
+	return extension_object(extensions, count, AERON_FLIGHT_MODEL_EXTENSION);
 }
 
 /* ===== Variants and the markings list ===============================
@@ -219,7 +222,7 @@ static const cgltf_texture_view* material_channel_view(const cgltf_material* m, 
 /* ===== Atlas images ==================================================
  *
  * A cooked texture names its image, a KTX2 array of one channel's atlas
- * pages, and its page through its AERON_flight_model object; an image's
+ * pages, and its page through its AERON_flight_model_cooked object; an image's
  * channel is the material slot referencing it. A channel's core image is
  * the one the primitives' own materials reference or, in a channel no own
  * material uses, its only image. The channel's other images are variant
@@ -232,9 +235,11 @@ typedef struct AtlasTexture {
 } AtlasTexture;
 
 /* Texture `texture`'s image, page and mip limit; false without a valid
- * AERON_flight_model object. */
+ * AERON_flight_model_cooked object. */
 static bool read_atlas_texture(const cgltf_data* data, const cgltf_texture* texture, AtlasTexture* out) {
-	cJSON*       object  = texture ? flight_model_object(texture->extensions, texture->extensions_count) : NULL;
+	cJSON*       object  = texture ? extension_object(texture->extensions, texture->extensions_count,
+													  AERON_FLIGHT_MODEL_COOKED_EXTENSION)
+								   : NULL;
 	const cJSON* source  = cJSON_GetObjectItemCaseSensitive(object, "source");
 	const cJSON* layer   = cJSON_GetObjectItemCaseSensitive(object, "layer");
 	const cJSON* max_lod = cJSON_GetObjectItemCaseSensitive(object, "maxLod");
@@ -297,7 +302,7 @@ static bool mark_atlas_images(const cgltf_data* data, const cgltf_material* m, A
 		if (!tv || !tv->texture)
 			continue;
 		if (!read_atlas_texture(data, tv->texture, &texture)) {
-			SDL_Log("[flight_gltf] '%s': a texture has no AERON_flight_model image and page (not a cooked model)",
+			SDL_Log("[flight_gltf] '%s': a texture has no AERON_flight_model_cooked image and page (not a cooked model)",
 					source_label);
 			return false;
 		}

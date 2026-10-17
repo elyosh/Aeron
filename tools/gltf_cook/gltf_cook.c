@@ -153,9 +153,9 @@ static bool validate_material_textures(const cgltf_data* data) {
 	return true;
 }
 
-/* The texture of one (image, page, LOD limit): its AERON_flight_model
- * object names them (tools/extensions/AERON_flight_model, "Textures and
- * images"); it has no source of its own. Appended to `textures` when new;
+/* The texture of one (image, page, LOD limit): its AERON_flight_model_cooked
+ * object names them (tools/extensions/AERON_flight_model_cooked, "Textures
+ * and images"); it has no source of its own. Appended to `textures` when new;
  * the caller sized the array for every rect. */
 static cgltf_texture* atlas_texture(cgltf_texture* textures, size_t* count, size_t image, cgltf_sampler* sampler,
 									const ChannelRect* rect) {
@@ -174,7 +174,7 @@ static cgltf_texture* atlas_texture(cgltf_texture* textures, size_t* count, size
 	if (!texture->extensions)
 		return NULL;
 	texture->extensions_count   = 1;
-	texture->extensions[0].name = cook_strdup("AERON_flight_model");
+	texture->extensions[0].name = cook_strdup("AERON_flight_model_cooked");
 	texture->extensions[0].data = cook_strdup(object);
 	texture->sampler            = sampler;
 	(*count)++;
@@ -916,9 +916,9 @@ bool aeron_gltf_cook_data(cgltf_data* data, const char* source_label,
 	 * colour's alpha. */
 	cgltf_texture_view* saved_transmission = (cgltf_texture_view*)calloc(
 		data->materials_count ? data->materials_count : 1, sizeof *saved_transmission);
-	/* The cooked file requires AERON_flight_model: its textures are found
-	 * only through it. */
-	char*  required_name      = cook_strdup("AERON_flight_model");
+	/* The cooked file requires AERON_flight_model_cooked: its textures are
+	 * found only through it. */
+	char*  required_name      = cook_strdup("AERON_flight_model_cooked");
 	char** cooked_required    = (char**)calloc(data->extensions_required_count + 1, sizeof *cooked_required);
 	char** cooked_used        = (char**)calloc(data->extensions_used_count + 1, sizeof *cooked_used);
 	bool   arrays_ok          = new_bvs && new_imgs && new_smp && new_texs && saved_views && saved_transmission &&

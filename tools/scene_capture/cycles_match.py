@@ -130,11 +130,10 @@ def posed_model(root, glb_path, out_path):
     if not posed:
         return posed
     for node in document["nodes"]:
-        extension = node.get("extensions", {}).get("AERON_flight_model", {})
-        if extension.get("role") == "model":
+        extensions = node.get("extensions", {})
+        if extensions.get("AERON_flight_model", {}).get("role") == "model":
             # The cooked BVH hashes the rest pose.
-            extension.pop("renderData", None)
-            extension.pop("meshHash", None)
+            extensions.get("AERON_flight_model_cooked", {}).pop("renderData", None)
     write_glb(out_path, magic, version, json_type, document, rest)
     return posed
 
