@@ -303,7 +303,7 @@ beyond its glTF definition. It may hold:
 - `skins`: its skin layers (see Skins).
 
 Frames and damage stages are image keys of effect libraries, files the
-models share and the game loads from `effects/` in its mod folder.
+models share and the game loads from `flight/effects/` in its mod folder.
 [animated_materials.md](../../gltf_cook/animated_materials.md) describes the
 libraries, the game states and how a frame changes the material.
 

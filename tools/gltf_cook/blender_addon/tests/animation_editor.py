@@ -103,7 +103,8 @@ def blender_main(cooker, project, effects, paint, scratch):
 
     addon_utils.enable(MODULE, default_set=True, handle_error=None)
     prefs = bpy.context.preferences.addons[MODULE].preferences
-    prefs.cooker, prefs.game_dir = cooker, os.path.dirname(effects)
+    # effects is <mod folder>/flight/effects.
+    prefs.cooker, prefs.game_dir = cooker, os.path.dirname(os.path.dirname(effects))
     from bl_ext.user_default.aeron_flight_model import animation, libraries, sources, validation
 
     failures = []
@@ -248,7 +249,8 @@ def main():
         return
 
     scratch = tempfile.mkdtemp(prefix="aeron_animation_editor_")
-    project, effects, paint = (os.path.join(scratch, name) for name in ("project", "effects", "paint"))
+    project, paint = (os.path.join(scratch, name) for name in ("project", "paint"))
+    effects = os.path.join(scratch, "mod", "flight", "effects")
     os.makedirs(effects)
     os.makedirs(paint)
     # The project has the example's library with one more image, `extra`,

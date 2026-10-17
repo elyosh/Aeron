@@ -57,8 +57,7 @@ class AeronFlightModelPreferences(AddonPreferences):
     game_dir: StringProperty(
         name="Mod Folder", subtype='DIR_PATH',
         description="The game's mod folder. Export for Game rebuilds the project's changed effect "
-                    "libraries in its effects folder and checks each animation frame against them. Bake Probes "
-                    "writes there")
+                    "libraries in its flight/effects folder and checks each animation frame against them")
     # Before Mod Folder: the mod folder's effects folder. Its parent is the
     # Mod Folder when that is not set.
     effects_dir: StringProperty(subtype='DIR_PATH', options={'HIDDEN'})
@@ -136,9 +135,9 @@ def game_dir(context):
 
 
 def game_effects_dir(context):
-    """The game's effects folder, or ""."""
+    """The mod folder's flight/effects folder, or ""."""
     root = game_dir(context)
-    return os.path.join(root, "effects") if root else ""
+    return os.path.join(root, "flight", "effects") if root else ""
 
 
 classes = (AeronRecentProject, AeronFlightModelPreferences)

@@ -10,9 +10,9 @@ states, hull damage and energy effects. Two places describe them:
   ([the extension](../extensions/AERON_flight_model/README.md#materials)).
 
 ```sh
-aeron_gltf_cook --library mylibrary.yaml --out <mod folder>/effects
-aeron_gltf_cook model.gltf --out <mod folder>/models/model.glb \
-    --effects-dir <mod folder>/effects
+aeron_gltf_cook --library mylibrary.yaml --out <mod folder>/flight/effects
+aeron_gltf_cook model.gltf --out <mod folder>/flight/models/model.glb \
+    --effects-dir <mod folder>/flight/effects
 ```
 
 Build the libraries first: with `--effects-dir`, the cooker checks that
@@ -35,7 +35,8 @@ their libraries (`effects/<library>/`).
 4. **Model animations.** Say which frames each material plays, in its
    `AERON_flight_model` object (the Blender add-on edits them).
 5. **Build** with the commands above. The game loads models from
-   `models/` in its mod folder and the libraries they name from `effects/`.
+   `flight/models/` in its mod folder and the libraries they name from
+   `flight/effects/`.
 
 The material's own textures show when no flipbook plays, and in any glTF
 viewer: make them the animation's rest look.
@@ -69,7 +70,7 @@ layout.
 | `energy` | `emissive` (RGBA; alpha: intensity) | Energy effects (shields, tractor, jamming), added as emission |
 
 `mark` and `energy` images are the game's own effects, which
-`effects/effects.yaml` in the mod folder names; materials do not
+`flight/effects/effects.yaml` in the mod folder names; materials do not
 reference them.
 
 All inputs of one image have the same size. Images are capped at 1024

@@ -28,7 +28,7 @@
  * Replacement workflow (both tools are built with AERON_BUILD_TOOLS):
  *
  *   opt2gltf --stock FLIGHTMODELS/XWING.OPT out
- *   aeron_gltf_cook out/XWING.gltf --out <mod folder>/models/xwing.glb
+ *   aeron_gltf_cook out/XWING.gltf --out <mod folder>/flight/models/xwing.glb
  *
  * The cooked GLB replaces the OPT that has the same base name in lower case.
  * --stock converts an OPT of the original game the way the game draws it.

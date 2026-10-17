@@ -20,7 +20,7 @@ it; otherwise, set its path in the add-on preferences.
 
 Set **Mod Folder** in the preferences to the game's mod folder. Export for
 Game then rebuilds the changed effect libraries that the model uses into
-its `effects` folder, and checks every animation frame against them.
+its `flight/effects` folder, and checks every animation frame against them.
 
 ## Workflow
 
@@ -51,9 +51,10 @@ including the material animations ([format](../animated_materials.md)).
    other folders, or images that exist only in Blender, are copied into
    `textures/` as PNG. Nothing else in the folder is changed or removed.
 5. Try the model in the game with **Export for Game** (or File > Export >
-   Aeron Flight Model for Game (.glb)). It builds a `.glb` for the `models`
-   folder of the game's mod folder. When **Mod Folder** is set, it first
-   rebuilds the effect libraries whose frames changed, and lists them.
+   Aeron Flight Model for Game (.glb)). It builds a `.glb` for the
+   `flight/models` folder of the game's mod folder. When **Mod Folder** is
+   set, it first rebuilds the effect libraries whose frames changed, and
+   lists them.
 
 Both exports check the model first. Aeron > Problems lists every problem,
 with a button that selects the object at fault. Save to Project also stops

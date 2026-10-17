@@ -34,7 +34,7 @@ const char* EffectLibrary_ImageInput(EffectLibraryKind kind, int optional) {
 	return kInputs[kind][optional != 0];
 }
 
-/* Library names are file names in the mod folder's effects folder: lower-case letters,
+/* Library names are file names in the mod folder's flight/effects folder: lower-case letters,
  * digits, '_' and '-'. */
 static bool valid_name(const char* s) {
 	if (!*s)

@@ -22,14 +22,14 @@ bloom:
   kernel: 4
 tonemap: agx
 output_dir: captures/hangar-probes
-# Set this to the game-data directory containing mod/models (converted
+# Set this to the game-data directory containing mod/flight/models (converted
 # XWAU models). Relative paths are resolved from the working directory.
 asset_root: .
 models:
-  - mod/models/calamaricruisernewhangar.glb
-  - mod/models/xwing.glb
-  - mod/models/ywing.glb
-  - mod/models/awing.glb
+  - mod/flight/models/calamaricruisernewhangar.glb
+  - mod/flight/models/xwing.glb
+  - mod/flight/models/ywing.glb
+  - mod/flight/models/awing.glb
 game_scene:
   # The Scene3D defaults the game loads (aeron/config/scene3d_defaults.yaml);
   # from a standalone Aeron checkout, config/scene3d_defaults.yaml.
@@ -63,23 +63,23 @@ game_scene:
   # the probes.
   environment: { folder: captures/probe-assets, manifest: probe_tests.yaml, name: test.dim }
   instances:
-    - { model: mod/models/calamaricruisernewhangar.glb, position: [0, -13.4, 15], rotation_degrees: [180, 0, 0],
+    - { model: mod/flight/models/calamaricruisernewhangar.glb, position: [0, -13.4, 15], rotation_degrees: [180, 0, 0],
         probes: probes/hangar4 }
-    - { model: mod/models/xwing.glb, position: [-22, 5.47, 26], rotation_degrees: [180, 0, 0] }
-    - { model: mod/models/ywing.glb, position: [0, 6.37, 26], rotation_degrees: [176, 0, 0] }
-    - { model: mod/models/awing.glb, position: [22, 6.36, 26], rotation_degrees: [184, 0, 0] }
-    - { model: mod/models/ywing.glb, position: [-22, 6.37, 44], rotation_degrees: [186, 0, 0] }
-    - { model: mod/models/awing.glb, position: [0, 6.36, 44], rotation_degrees: [180, 0, 0] }
-    - { model: mod/models/xwing.glb, position: [22, 5.47, 44], rotation_degrees: [172, 0, 0] }
-    - { model: mod/models/awing.glb, position: [-22, 6.36, 62], rotation_degrees: [174, 0, 0] }
-    - { model: mod/models/xwing.glb, position: [0, 5.47, 62], rotation_degrees: [184, 0, 0] }
-    - { model: mod/models/ywing.glb, position: [22, 6.37, 62], rotation_degrees: [180, 0, 0] }
-    - { model: mod/models/xwing.glb, position: [-22, 5.47, 80], rotation_degrees: [180, 0, 0] }
-    - { model: mod/models/ywing.glb, position: [0, 6.37, 80], rotation_degrees: [188, 0, 0] }
-    - { model: mod/models/awing.glb, position: [22, 6.36, 80], rotation_degrees: [176, 0, 0] }
-    - { model: mod/models/ywing.glb, position: [-22, 6.37, 98], rotation_degrees: [178, 0, 0] }
-    - { model: mod/models/awing.glb, position: [0, 6.36, 98], rotation_degrees: [186, 0, 0] }
-    - { model: mod/models/xwing.glb, position: [22, 5.47, 98], rotation_degrees: [182, 0, 0] }
+    - { model: mod/flight/models/xwing.glb, position: [-22, 5.47, 26], rotation_degrees: [180, 0, 0] }
+    - { model: mod/flight/models/ywing.glb, position: [0, 6.37, 26], rotation_degrees: [176, 0, 0] }
+    - { model: mod/flight/models/awing.glb, position: [22, 6.36, 26], rotation_degrees: [184, 0, 0] }
+    - { model: mod/flight/models/ywing.glb, position: [-22, 6.37, 44], rotation_degrees: [186, 0, 0] }
+    - { model: mod/flight/models/awing.glb, position: [0, 6.36, 44], rotation_degrees: [180, 0, 0] }
+    - { model: mod/flight/models/xwing.glb, position: [22, 5.47, 44], rotation_degrees: [172, 0, 0] }
+    - { model: mod/flight/models/awing.glb, position: [-22, 6.36, 62], rotation_degrees: [174, 0, 0] }
+    - { model: mod/flight/models/xwing.glb, position: [0, 5.47, 62], rotation_degrees: [184, 0, 0] }
+    - { model: mod/flight/models/ywing.glb, position: [22, 6.37, 62], rotation_degrees: [180, 0, 0] }
+    - { model: mod/flight/models/xwing.glb, position: [-22, 5.47, 80], rotation_degrees: [180, 0, 0] }
+    - { model: mod/flight/models/ywing.glb, position: [0, 6.37, 80], rotation_degrees: [188, 0, 0] }
+    - { model: mod/flight/models/awing.glb, position: [22, 6.36, 80], rotation_degrees: [176, 0, 0] }
+    - { model: mod/flight/models/ywing.glb, position: [-22, 6.37, 98], rotation_degrees: [178, 0, 0] }
+    - { model: mod/flight/models/awing.glb, position: [0, 6.36, 98], rotation_degrees: [186, 0, 0] }
+    - { model: mod/flight/models/xwing.glb, position: [22, 5.47, 98], rotation_degrees: [182, 0, 0] }
 benchmark:
   warmup_seconds: 2
   sample_seconds: 1
