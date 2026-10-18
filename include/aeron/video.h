@@ -78,6 +78,7 @@ typedef struct AeronVideoStats {
 	uint64_t video_frames_dropped;
 	uint64_t audio_underruns;
 	uint64_t audio_frames_trimmed;
+	uint64_t packets_skipped; /* invalid data the decoders rejected and skipped */
 	uint32_t queued_video_frames;
 	uint64_t queued_audio_frames;
 	int64_t  position_us;

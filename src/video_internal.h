@@ -21,6 +21,7 @@ enum {
 	AERON_VIDEO_PATH_SIZE               = 1024,
 	AERON_VIDEO_AUDIO_RATE              = 48000,
 	AERON_VIDEO_AUDIO_CHANNELS          = 2,
+	AERON_VIDEO_MAX_DECODE_THREADS      = 8,
 };
 
 #define AERON_VIDEO_DEFAULT_MAX_FRAME_BYTES ((size_t)256 * 1024u * 1024u)
@@ -95,6 +96,7 @@ struct AeronVideoPlayer {
 	uint64_t video_frames_decoded;
 	uint64_t video_frames_presented;
 	uint64_t video_frames_dropped;
+	uint64_t packets_skipped;
 };
 
 void AeronVideo_SetError(AeronVideoPlayer* player, const char* fmt, ...);

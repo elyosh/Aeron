@@ -42,6 +42,7 @@ typedef struct AeronVideoDecodeContext {
 	int64_t            fallback_frame_duration_us;
 	uint64_t           next_video_index;
 	uint64_t           reported_audio_frames_trimmed;
+	uint64_t           packets_skipped;
 	int                rotation_degrees;
 	int                source_width;
 	int                source_height;
@@ -73,6 +74,13 @@ static AVCodecContext* AeronVideo_OpenCodec(AVFormatContext* format, int stream_
 	if (!context) {
 		return NULL;
 	}
+	/* High-bitrate 1440p H.264 does not decode in real time on one thread.
+	 * Each frame thread holds its own frames, about 12 MB at 1440p, so the
+	 * count stops at AERON_VIDEO_MAX_DECODE_THREADS, which still decodes the
+	 * heaviest movies several times faster than they play. Decoders without
+	 * thread support ignore this. */
+	context->thread_count = SDL_min(SDL_GetNumLogicalCPUCores(), AERON_VIDEO_MAX_DECODE_THREADS);
+	context->thread_type  = FF_THREAD_FRAME | FF_THREAD_SLICE;
 	if (avcodec_parameters_to_context(context, stream->codecpar) < 0 ||
 		avcodec_open2(context, codec, NULL) < 0) {
 		avcodec_free_context(&context);
@@ -449,11 +457,32 @@ static int AeronVideo_QueueAudioFrame(AeronVideoDecodeContext* decode, AVFrame* 
 	return converted > 0 ? AeronVideo_QueueConvertedAudio(decode, output, (size_t)converted, pts_us) : 0;
 }
 
+/* Skips data that a decoder rejects as invalid, as FFmpeg's own tools do, so
+ * that one damaged packet does not end the movie. The first skip of a movie
+ * is logged. Returns 0 for a skipped packet, otherwise `result`. */
+static int AeronVideo_SkipInvalidData(AeronVideoDecodeContext* decode, int result, int video) {
+	AeronVideoPlayer* player = decode->player;
+	if (result != AVERROR_INVALIDDATA) {
+		return result;
+	}
+	if (decode->packets_skipped++ == 0) {
+		Aeron_LogWarn("aeron.video", "%s: skipped invalid %s data", player->path, video ? "video" : "audio");
+	}
+	SDL_LockMutex(player->lock);
+	player->packets_skipped = decode->packets_skipped;
+	SDL_UnlockMutex(player->lock);
+	return 0;
+}
+
 static int AeronVideo_DrainVideo(AeronVideoDecodeContext* decode) {
 	for (;;) {
 		int result = avcodec_receive_frame(decode->video_codec, decode->frame);
 		if (result == AVERROR(EAGAIN) || result == AVERROR_EOF) {
 			return 0;
+		}
+		if (result == AVERROR_INVALIDDATA) {
+			(void)AeronVideo_SkipInvalidData(decode, result, 1);
+			continue;
 		}
 		if (result < 0) {
 			return result;
@@ -471,6 +500,10 @@ static int AeronVideo_DrainAudio(AeronVideoDecodeContext* decode) {
 		int result = avcodec_receive_frame(decode->audio_codec, decode->frame);
 		if (result == AVERROR(EAGAIN) || result == AVERROR_EOF) {
 			return 0;
+		}
+		if (result == AVERROR_INVALIDDATA) {
+			(void)AeronVideo_SkipInvalidData(decode, result, 0);
+			continue;
 		}
 		if (result < 0) {
 			return result;
@@ -495,6 +528,7 @@ static int AeronVideo_SendPacket(AeronVideoDecodeContext* decode, AVCodecContext
 		}
 		result = avcodec_send_packet(codec, packet);
 	}
+	result = AeronVideo_SkipInvalidData(decode, result, video);
 	if (result < 0 && result != AVERROR_EOF) {
 		return result;
 	}

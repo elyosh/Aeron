@@ -636,6 +636,7 @@ int Aeron_VideoGetStats(const AeronVideoPlayer* player, AeronVideoStats* out_sta
 	out_stats->video_frames_presented   = player->video_frames_presented;
 	out_stats->video_frames_dropped     = player->video_frames_dropped;
 	out_stats->audio_frames_trimmed     = player->audio_frames_trimmed;
+	out_stats->packets_skipped          = player->packets_skipped;
 	out_stats->queued_video_frames      = player->frame_count;
 	out_stats->position_us              = player->position_us;
 	out_stats->duration_us              = player->info.duration_us;
