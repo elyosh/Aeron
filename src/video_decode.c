@@ -33,8 +33,8 @@ typedef struct AeronVideoDecodeContext {
 	AVPacket*         packet;
 	AVFrame*          frame;
 	/* WebM alpha: a second decoder for the alpha stream in each packet's
-	 * BlockAdditional, its decoded frames in decode order, and the one that
-	 * matches the colour frame being converted. */
+	 * BlockAdditional, a ring of its decoded frames in decode order, and the
+	 * frame that matches the colour frame being converted. */
 	AVCodecContext*    alpha_codec;
 	AVPacket*          alpha_packet;
 	AVFrame*           alpha_pending[AERON_VIDEO_ALPHA_PENDING];
@@ -220,9 +220,9 @@ static void AeronVideo_ClearAlphaFrames(AeronVideoDecodeContext* decode) {
 	}
 }
 
-/* Receives one alpha frame into the pending list. When the list is full, the
- * oldest frame, which no colour frame matched, makes room. Returns 1 when a
- * frame was received. */
+/* Receives one alpha frame into the pending ring. When the ring is full, it
+ * drops the oldest frame, which no colour frame matched. Returns 1 when it
+ * received a frame. */
 static int AeronVideo_ReceiveAlphaFrame(AeronVideoDecodeContext* decode) {
 	for (;;) {
 		AVFrame* slot;
@@ -246,9 +246,10 @@ static int AeronVideo_ReceiveAlphaFrame(AeronVideoDecodeContext* decode) {
 	}
 }
 
-/* Sends the alpha stream of a colour packet to the alpha decoder: the
- * BlockAdditional side data with id 1, after its 8-byte big-endian id. It goes
- * first, so the alpha frame is ready when its colour frame comes out. */
+/* Sends a colour packet's alpha data to the alpha decoder. The alpha data is
+ * the BlockAdditional side data with id 1, after the 8-byte big-endian id.
+ * This runs before the colour packet is sent, so the alpha frame is ready
+ * when its colour frame comes out. */
 static void AeronVideo_SendAlphaPacket(AeronVideoDecodeContext* decode, const AVPacket* packet) {
 	size_t         size;
 	const uint8_t* side;
@@ -272,13 +273,14 @@ static void AeronVideo_SendAlphaPacket(AeronVideoDecodeContext* decode, const AV
 	if (result < 0 && result != AVERROR(EAGAIN)) {
 		(void)AeronVideo_SkipInvalidData(decode, result, 1);
 	}
-	/* The packet doesn't own its data, so the decoder has copied it. */
+	/* The packet doesn't own its data, so avcodec_send_packet copied it. */
 	decode->alpha_packet->data = NULL;
 	decode->alpha_packet->size = 0;
 }
 
-/* Returns the alpha frame with the colour frame's timestamp, or NULL when the
- * colour frame has none. Older alpha frames are dropped. */
+/* Returns the alpha frame with the same timestamp as `colour`, or NULL when
+ * there is none. Drops older alpha frames. When either timestamp is missing,
+ * the next alpha frame matches. */
 static const AVFrame* AeronVideo_TakeAlphaFrame(AeronVideoDecodeContext* decode, const AVFrame* colour) {
 	const int64_t pts = AeronVideo_RawFrameTimestamp(colour);
 
@@ -362,8 +364,8 @@ static int AeronVideo_QueueVideoFrame(AeronVideoDecodeContext* decode, AVFrame* 
 	int64_t                 pts_us;
 	int64_t                 duration_us;
 
-	/* Every colour frame takes its alpha frame, also when it is dropped
-	 * below, so the two streams stay in step. */
+	/* Take the alpha frame even when the colour frame is dropped below, so
+	 * the two streams stay in step. */
 	if (decode->alpha_codec) {
 		alpha = AeronVideo_TakeAlphaFrame(decode, source);
 		if (alpha && (alpha->width != source->width || alpha->height != source->height ||
@@ -372,7 +374,7 @@ static int AeronVideo_QueueVideoFrame(AeronVideoDecodeContext* decode, AVFrame* 
 		}
 		if (!alpha && !decode->alpha_missing_logged) {
 			decode->alpha_missing_logged = 1;
-			Aeron_LogWarn("aeron.video", "%s: a video frame has no alpha; it is drawn opaque", player->path);
+			Aeron_LogWarn("aeron.video", "%s: video frame has no alpha, drawing it opaque", player->path);
 		}
 	}
 	for (int plane = 0; plane < 4; ++plane) {
@@ -777,8 +779,8 @@ static int AeronVideo_InitStreams(AeronVideoDecodeContext* decode) {
 		if (player->alpha != AERON_VIDEO_ALPHA_NONE &&
 			(decode->video_stream->codecpar->codec_id == AV_CODEC_ID_VP9 ||
 			 decode->video_stream->codecpar->codec_id == AV_CODEC_ID_VP8)) {
-			/* Same parameters and threads as the colour decoder, so both give
-			 * their frames after the same number of packets. */
+			/* Same parameters and thread count as the colour decoder, so both
+			 * output frames after the same number of packets. */
 			decode->alpha_codec =
 				AeronVideo_OpenCodec(decode->format, decode->video_stream_index, player->max_decode_threads);
 			decode->alpha_packet  = av_packet_alloc();
@@ -882,6 +884,11 @@ static int AeronVideo_InitDecoder(AeronVideoDecodeContext* decode) {
 	SDL_snprintf(player->info.container, sizeof(player->info.container), "%s",
 				 decode->format->iformat && decode->format->iformat->name ? decode->format->iformat->name
 																		  : "unknown");
+	if (player->frame_rate > 0.0 && !player->audio_stream && player->info.frame_rate_num > 0 &&
+		player->info.frame_rate_den > 0) {
+		player->speed =
+			player->frame_rate * (double)player->info.frame_rate_den / (double)player->info.frame_rate_num;
+	}
 	player->worker_ready = 1;
 	player->state        = player->desired_playing ? AERON_VIDEO_BUFFERING : AERON_VIDEO_PAUSED;
 	SDL_BroadcastCondition(player->condition);
@@ -992,7 +999,8 @@ static int AeronVideo_DrainResampler(AeronVideoDecodeContext* decode) {
 static int AeronVideo_FlushDecoders(AeronVideoDecodeContext* decode) {
 	int result;
 	if (decode->alpha_codec) {
-		/* The last alpha frames come out as the colour decoder drains. */
+		/* Start draining the alpha decoder. AeronVideo_TakeAlphaFrame
+		 * receives its last frames while the colour decoder drains. */
 		(void)avcodec_send_packet(decode->alpha_codec, NULL);
 	}
 	if (decode->video_codec) {

@@ -121,13 +121,16 @@ AeronVideoPlayer* Aeron_VideoOpen(const AeronVideoOpenDesc* desc) {
 		desc->max_frame_bytes ? desc->max_frame_bytes : AERON_VIDEO_DEFAULT_MAX_FRAME_BYTES;
 	player->max_decode_threads = desc->max_decode_threads;
 	player->no_audio           = desc->no_audio != 0;
+	player->frame_rate         = desc->frame_rate;
+	player->speed              = 1.0;
 	player->alpha              = desc->alpha;
 	player->serial             = 1;
 	SDL_snprintf(player->path, sizeof(player->path), "%s", desc->path);
 
 	if (player->queue_capacity < 2 || player->queue_capacity > 64 ||
 		player->audio_buffer_ms > AERON_VIDEO_MAX_AUDIO_BUFFER_MS || player->max_decode_threads < 0 ||
-		player->alpha < AERON_VIDEO_ALPHA_NONE || player->alpha > AERON_VIDEO_ALPHA_PREMULTIPLIED ||
+		!(player->frame_rate >= 0.0) || player->alpha < AERON_VIDEO_ALPHA_NONE ||
+		player->alpha > AERON_VIDEO_ALPHA_PREMULTIPLIED ||
 		!AeronVfs_Open(desc->vfs, desc->root, desc->path, AERON_VFS_READ, &player->file)) {
 		SDL_free(player);
 		return NULL;
@@ -265,8 +268,8 @@ void Aeron_VideoStop(AeronVideoPlayer* player) {
 	SDL_UnlockMutex(player->lock);
 }
 
-/* With `keep_frame`, the current frame stays until the first frame after the
- * seek is due, so a loop shows no empty frame. */
+/* With `keep_frame`, the current frame stays on screen until the first frame
+ * after the seek is due. Looping uses this to avoid an empty frame. */
 static int AeronVideo_SeekInternal(AeronVideoPlayer* player, int64_t position_us, int keep_frame) {
 	AeronAudioStream audio_stream;
 	if (!player) {
@@ -354,7 +357,8 @@ static int64_t AeronVideo_MediaPosition(AeronVideoPlayer* player, uint64_t now_u
 			return audio_position;
 		}
 	}
-	return player->wall_start_position_us + (int64_t)(now_us - player->wall_start_us);
+	return player->wall_start_position_us +
+		   (int64_t)((double)(now_us - player->wall_start_us) * player->speed);
 }
 
 static void AeronVideo_PromoteDueFramesLocked(AeronVideoPlayer* player, int64_t position_us) {
@@ -438,8 +442,8 @@ void Aeron_VideoUpdate(AeronVideoPlayer* player) {
 		player->playback_started      = 0;
 		player->audio_prebuffer_ready = 0;
 		pause_audio                   = 1;
-		/* Wake a worker that waits for video queue space: while buffering it
-		 * drops later frames instead, so it can reach the audio it needs. */
+		/* Wake a worker that waits for video queue space. While buffering, it
+		 * drops later video frames instead, so it can read on to the audio. */
 		SDL_BroadcastCondition(player->condition);
 	}
 	player->last_audio_underruns = underruns;
@@ -480,7 +484,7 @@ void Aeron_VideoUpdate(AeronVideoPlayer* player) {
 	if (player->state == AERON_VIDEO_PLAYING && player->frame_count > 0) {
 		const AeronDecodedVideoFrame* next  = &player->frames[player->frame_head];
 		const int64_t                 delay = next->pts_us - player->position_us;
-		player->next_wake_us                = delay > 0 ? now_us + (uint64_t)delay : now_us;
+		player->next_wake_us = delay > 0 ? now_us + (uint64_t)((double)delay / player->speed) : now_us;
 	} else if (player->state == AERON_VIDEO_BUFFERING) {
 		player->next_wake_us = now_us + 10000u;
 	} else {
@@ -611,8 +615,8 @@ AeronTexture* Aeron_VideoTexture(AeronVideoPlayer* player, AeronCommandBuffer* c
 		}
 		player->texture_generation = 0;
 	}
-	/* Only Aeron_VideoUpdate replaces the current pixels, on this thread, so
-	 * they stay valid while the upload copies them. */
+	/* Only Aeron_VideoUpdate replaces the current pixels, and it runs on this
+	 * thread, so the pixels stay valid during the upload. */
 	if (generation != player->texture_generation) {
 		const AeronTextureUploadDesc upload = {
 			.texture      = player->texture,

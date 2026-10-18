@@ -60,9 +60,9 @@ typedef enum {
  * (color-fade effects). The trapezoid fields are top-edge horizontal
  * insets in PIXELS plus projective w; all-zero means a plain rect.
  * `scissor` in target pixels; zero width/height = none.
- * `monochrome` 1 draws the texture as a single colour: each texel's
- * largest channel times `tint`, as old games draw tinted icons. 0 keeps
- * the per-channel multiply. */
+ * `monochrome` 1 draws the texture in a single colour: each texel's
+ * largest channel times `tint`, the way old games draw tinted icons. 0
+ * multiplies each channel by `tint`. */
 typedef struct AeronDrawList2DSprite {
 	AeronTexture*     texture;
 	float             src_u0, src_v0, src_u1, src_v1; /* UV, v=0 top */
@@ -93,7 +93,7 @@ typedef struct AeronDrawList2DQuad4 {
 	AeronBlit2DFilter filter;
 	int               depth_test;
 	AeronRectI        scissor;
-	float             monochrome; /* as for sprites */
+	float             monochrome; /* same as in AeronDrawList2DSprite */
 } AeronDrawList2DQuad4;
 
 /* Analytic rounded-rect (scene_ui_rect shader pair) — the themed-surface

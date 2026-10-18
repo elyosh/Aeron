@@ -30,13 +30,13 @@ typedef enum AeronVideoScaleMode {
 
 typedef enum AeronVideoFilter { AERON_VIDEO_FILTER_LINEAR, AERON_VIDEO_FILTER_NEAREST } AeronVideoFilter;
 
-/* What a player does with a WebM alpha channel: a VP8 or VP9 alpha stream
- * stored in the Matroska BlockAdditional of each block. Other files, and
- * frames without alpha, decode as opaque. */
+/* How a player handles a WebM alpha channel, which is a VP8 or VP9 alpha
+ * stream in the Matroska BlockAdditional of each block. Other files and
+ * frames without alpha are opaque. */
 typedef enum AeronVideoAlpha {
-	AERON_VIDEO_ALPHA_NONE,         /* frames are opaque */
-	AERON_VIDEO_ALPHA_STRAIGHT,     /* frames keep the alpha as decoded */
-	AERON_VIDEO_ALPHA_PREMULTIPLIED /* frames are premultiplied by their alpha */
+	AERON_VIDEO_ALPHA_NONE,         /* ignore alpha, frames are opaque */
+	AERON_VIDEO_ALPHA_STRAIGHT,     /* straight alpha, as decoded */
+	AERON_VIDEO_ALPHA_PREMULTIPLIED /* RGB premultiplied by alpha */
 } AeronVideoAlpha;
 
 typedef struct AeronVideoOpenDesc {
@@ -44,8 +44,8 @@ typedef struct AeronVideoOpenDesc {
 	AeronVfsRoot root;
 	const char*  path;
 	int          autoplay;
-	/* Nonzero restarts at the end. Without audio, the last frame stays until
-	 * the first frame of the next pass is ready, so no frame is empty. */
+	/* Nonzero restarts at the end. Without audio, the last frame stays on
+	 * screen until the first frame of the next loop is ready. */
 	int             loop;
 	float           gain;
 	uint32_t        video_queue_frames; /* zero selects the engine default */
@@ -54,10 +54,13 @@ typedef struct AeronVideoOpenDesc {
 	int             max_height;         /* zero selects the engine default */
 	size_t          max_frame_bytes;    /* zero selects the engine default */
 	AeronVideoAlpha alpha;
-	/* Nonzero ignores the audio streams: no audio stream is opened, and
-	 * playback follows the wall clock. */
+	/* Nonzero skips the audio streams. Playback then follows the wall clock. */
 	int no_audio;
 	int max_decode_threads; /* zero selects the engine default */
+	/* Frames per second to play at instead of the file's rate. Used only
+	 * without audio and when the file has a frame rate. Zero keeps the
+	 * file's rate. */
+	double frame_rate;
 } AeronVideoOpenDesc;
 
 typedef struct AeronVideoPresentDesc {
@@ -117,11 +120,12 @@ void Aeron_VideoSetGain(AeronVideoPlayer* player, float gain);
 void Aeron_VideoUpdate(AeronVideoPlayer* player);
 /* Queues the current frame as an Aeron layer. Returns zero when no frame is ready. */
 int Aeron_VideoSubmit(AeronVideoPlayer* player, const AeronVideoPresentDesc* desc);
-/* Returns a texture that holds the current frame, for drawing it yourself.
- * When the frame has changed, it records the upload on `command_buffer`,
- * which must have no open pass. The texture is RGBA8 sRGB, owned by the
- * player, and stays valid until Aeron_VideoClose. Returns NULL when no frame
- * is ready. Call it on the main thread, like Aeron_VideoUpdate. */
+/* Returns the current frame as a texture, for callers that draw it
+ * themselves. When the frame has changed, records its upload on
+ * `command_buffer`, which must not have an open pass. The texture is RGBA8
+ * sRGB and owned by the player. It stays valid until Aeron_VideoClose.
+ * Returns NULL when no frame is ready. Call it on the main thread, like
+ * Aeron_VideoUpdate. */
 AeronTexture* Aeron_VideoTexture(AeronVideoPlayer* player, AeronCommandBuffer* command_buffer);
 
 AeronVideoState Aeron_VideoGetState(const AeronVideoPlayer* player);

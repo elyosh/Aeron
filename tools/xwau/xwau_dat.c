@@ -130,9 +130,9 @@ static bool decode_indexed(const char* path, uint32_t w, uint32_t h, const uint8
 	return true;
 }
 
-/* Stock formats 7 and 23: each row is a run count, then runs. A run's token
- * holds its length and its mode: skipped texels, opaque palette indices, or
- * pairs of an alpha code and a palette index. Format 7 has 7-bit lengths and
+/* Stock formats 7 and 23: each row is a run count, then the runs. Each run
+ * starts with a token that holds its length and mode: transparent texels to
+ * skip, opaque palette indices, or (alpha code, palette index) pairs. Format 7 has 7-bit lengths and
  * no alpha pairs (Xwa2d_DecodeDatSprite in src/xwa_formats/xwa_2d/xwa_dat.c). */
 static bool decode_rle(const char* path, uint16_t format, uint32_t w, uint32_t h, const uint8_t* payload,
 					   size_t size, XwauDatImage* out, char* error, size_t error_size) {

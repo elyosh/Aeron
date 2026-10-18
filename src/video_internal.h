@@ -22,8 +22,9 @@ enum {
 	AERON_VIDEO_AUDIO_RATE              = 48000,
 	AERON_VIDEO_AUDIO_CHANNELS          = 2,
 	AERON_VIDEO_MAX_DECODE_THREADS      = 8,
-	/* Decoded alpha frames waiting for their colour frame. Both decoders get
-	 * the same packets and threads, so they are in step and few wait. */
+	/* Maximum decoded alpha frames waiting for their colour frame. Both
+	 * decoders get the same packets and thread count, so they stay in step
+	 * and only a few frames wait. */
 	AERON_VIDEO_ALPHA_PENDING = 16,
 };
 
@@ -59,6 +60,8 @@ struct AeronVideoPlayer {
 	size_t   max_frame_bytes;
 	int      max_decode_threads;
 	int      no_audio;
+	double   frame_rate; /* requested frames per second, or 0 */
+	double   speed;      /* clock rate: frame_rate / the file's rate, or 1 */
 
 	AeronVideoAlpha alpha;
 

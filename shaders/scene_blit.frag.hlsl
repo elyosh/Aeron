@@ -35,8 +35,9 @@ float4 main(VSOut input) : SV_Target
     float4 s = g_tex.Sample(g_smp, input.uv);
     if (s.a > 0.97f) s.a = 1.0f;
 
-    /* Monochrome: the texel's largest channel, so the tint gives a single
-     * colour at the texel's brightness. Premultiplied, like s.rgb. */
+    /* Monochrome replaces RGB with the largest channel, so the tint sets
+     * the colour and the texel only sets the brightness. The result stays
+     * premultiplied, like s.rgb. */
     float3 src = lerp(s.rgb, max(s.r, max(s.g, s.b)).xxx, input.monochrome);
     float3 rgb = src * input.tint.rgb + input.bias.rgb * s.a;
     /* bias.a is an additive alpha bias (default 0 = no effect).

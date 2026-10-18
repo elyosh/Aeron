@@ -1,7 +1,7 @@
 /*
- * Image readers on the VFS. stb_image is compiled static here, as
- * stb_image_write is in image_write.c, so the libraries and host tools that
- * define its implementation do not see duplicate symbols.
+ * Reads images from the VFS. stb_image is compiled as static functions here,
+ * like stb_image_write in image_write.c, so it doesn't clash with other
+ * libraries and host tools that also include its implementation.
  */
 
 #include "aeron/image.h"
@@ -10,8 +10,8 @@
 #define STB_IMAGE_IMPLEMENTATION
 #define STBI_ONLY_PNG
 #define STBI_NO_STDIO
-/* Unused functions are reported at the end of the file, so the warning
- * stays disabled to the end. */
+/* The compiler reports unused static functions at the end of the file, so
+ * the warning has to stay off until then. */
 #if defined(_MSC_VER)
 #pragma warning(disable : 4505) /* unreferenced function with internal linkage */
 #elif defined(__GNUC__) || defined(__clang__)

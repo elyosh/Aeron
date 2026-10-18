@@ -431,8 +431,8 @@ target_include_directories(aeron
     PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
-# stb_image and stb_image_write, compiled static by src/image_read.c and
-# src/image_write.c only.
+# stb_image and stb_image_write. Only src/image_read.c and src/image_write.c
+# use them, and compile them as static functions.
 set_source_files_properties(src/image_read.c src/image_write.c PROPERTIES
     INCLUDE_DIRECTORIES ${CMAKE_CURRENT_SOURCE_DIR}/third_party/stb)
 
