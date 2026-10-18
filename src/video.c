@@ -427,6 +427,9 @@ void Aeron_VideoUpdate(AeronVideoPlayer* player) {
 		player->playback_started      = 0;
 		player->audio_prebuffer_ready = 0;
 		pause_audio                   = 1;
+		/* Wake a worker that waits for video queue space: while buffering it
+		 * drops later frames instead, so it can reach the audio it needs. */
+		SDL_BroadcastCondition(player->condition);
 	}
 	player->last_audio_underruns = underruns;
 
