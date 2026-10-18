@@ -119,11 +119,15 @@ AeronVideoPlayer* Aeron_VideoOpen(const AeronVideoOpenDesc* desc) {
 	player->max_height = desc->max_height > 0 ? desc->max_height : AERON_VIDEO_DEFAULT_MAX_HEIGHT;
 	player->max_frame_bytes =
 		desc->max_frame_bytes ? desc->max_frame_bytes : AERON_VIDEO_DEFAULT_MAX_FRAME_BYTES;
-	player->serial = 1;
+	player->max_decode_threads = desc->max_decode_threads;
+	player->no_audio           = desc->no_audio != 0;
+	player->alpha              = desc->alpha;
+	player->serial             = 1;
 	SDL_snprintf(player->path, sizeof(player->path), "%s", desc->path);
 
 	if (player->queue_capacity < 2 || player->queue_capacity > 64 ||
-		player->audio_buffer_ms > AERON_VIDEO_MAX_AUDIO_BUFFER_MS ||
+		player->audio_buffer_ms > AERON_VIDEO_MAX_AUDIO_BUFFER_MS || player->max_decode_threads < 0 ||
+		player->alpha < AERON_VIDEO_ALPHA_NONE || player->alpha > AERON_VIDEO_ALPHA_PREMULTIPLIED ||
 		!AeronVfs_Open(desc->vfs, desc->root, desc->path, AERON_VFS_READ, &player->file)) {
 		SDL_free(player);
 		return NULL;
@@ -188,6 +192,7 @@ void Aeron_VideoClose(AeronVideoPlayer* player) {
 		player->file = NULL;
 	}
 	AeronVideo_FreeFrames(player);
+	Aeron_DestroyTexture(player->texture);
 	SDL_DestroyCondition(player->condition);
 	SDL_DestroyMutex(player->lock);
 	SDL_free(player);
@@ -260,13 +265,15 @@ void Aeron_VideoStop(AeronVideoPlayer* player) {
 	SDL_UnlockMutex(player->lock);
 }
 
-int Aeron_VideoSeek(AeronVideoPlayer* player, int64_t position_us) {
+/* With `keep_frame`, the current frame stays until the first frame after the
+ * seek is due, so a loop shows no empty frame. */
+static int AeronVideo_SeekInternal(AeronVideoPlayer* player, int64_t position_us, int keep_frame) {
 	AeronAudioStream audio_stream;
 	if (!player) {
 		return 0;
 	}
 	position_us = AeronVideo_ClampPosition(player, position_us);
-	if (player->render_submission) {
+	if (player->render_submission && !keep_frame) {
 		Aeron_CancelRenderSubmission(player->render_submission);
 		player->render_submission = 0;
 	}
@@ -292,7 +299,7 @@ int Aeron_VideoSeek(AeronVideoPlayer* player, int64_t position_us) {
 	player->playback_started       = 0;
 	player->position_us            = position_us;
 	player->wall_start_position_us = position_us;
-	player->current_valid          = 0;
+	player->current_valid          = player->current_valid && keep_frame;
 	player->audio_draining         = 0;
 	player->audio_clock_exhausted  = 0;
 	player->last_audio_underruns   = 0;
@@ -302,6 +309,10 @@ int Aeron_VideoSeek(AeronVideoPlayer* player, int64_t position_us) {
 	SDL_BroadcastCondition(player->condition);
 	SDL_UnlockMutex(player->lock);
 	return 1;
+}
+
+int Aeron_VideoSeek(AeronVideoPlayer* player, int64_t position_us) {
+	return AeronVideo_SeekInternal(player, position_us, 0);
 }
 
 void Aeron_VideoSetGain(AeronVideoPlayer* player, float gain) {
@@ -443,7 +454,7 @@ void Aeron_VideoUpdate(AeronVideoPlayer* player) {
 			if (!player->audio_stream) {
 				if (player->loop && player->desired_playing) {
 					SDL_UnlockMutex(player->lock);
-					(void)Aeron_VideoSeek(player, 0);
+					(void)AeronVideo_SeekInternal(player, 0, 1);
 					return;
 				}
 				player->state            = AERON_VIDEO_ENDED;
@@ -455,7 +466,7 @@ void Aeron_VideoUpdate(AeronVideoPlayer* player) {
 			} else if (now_us - player->audio_drain_started_us >= 200000u) {
 				if (player->loop && player->desired_playing) {
 					SDL_UnlockMutex(player->lock);
-					(void)Aeron_VideoSeek(player, 0);
+					(void)AeronVideo_SeekInternal(player, 0, 1);
 					return;
 				}
 				player->state            = AERON_VIDEO_ENDED;
@@ -566,6 +577,62 @@ int Aeron_VideoSubmit(AeronVideoPlayer* player, const AeronVideoPresentDesc* des
 		SDL_UnlockMutex(player->lock);
 	}
 	return player->render_submission != 0;
+}
+
+AeronTexture* Aeron_VideoTexture(AeronVideoPlayer* player, AeronCommandBuffer* command_buffer) {
+	const uint8_t* pixels;
+	uint32_t       generation;
+	int            width;
+	int            height;
+
+	if (!player || !command_buffer) {
+		return NULL;
+	}
+	SDL_LockMutex(player->lock);
+	pixels     = player->current_valid ? player->current_pixels : NULL;
+	generation = player->current_generation;
+	width      = player->info.width;
+	height     = player->info.height;
+	SDL_UnlockMutex(player->lock);
+	if (!pixels) {
+		return NULL;
+	}
+
+	if (!player->texture) {
+		player->texture = Aeron_CreateTexture(&(AeronTextureDesc) {
+			.width      = width,
+			.height     = height,
+			.format     = AERON_TEXTURE_FORMAT_RGBA8_SRGB,
+			.usage      = AERON_TEXTURE_USAGE_SAMPLED | AERON_TEXTURE_USAGE_TRANSFER_DST,
+			.debug_name = "aeron.video.frame",
+		});
+		if (!player->texture) {
+			return NULL;
+		}
+		player->texture_generation = 0;
+	}
+	/* Only Aeron_VideoUpdate replaces the current pixels, on this thread, so
+	 * they stay valid while the upload copies them. */
+	if (generation != player->texture_generation) {
+		const AeronTextureUploadDesc upload = {
+			.texture      = player->texture,
+			.width        = width,
+			.height       = height,
+			.pixels       = pixels,
+			.pitch        = width * 4,
+			.pixel_format = AERON_PIXEL_FORMAT_RGBA8888,
+			.color_space  = AERON_COLOR_SPACE_SRGB,
+			.cycle        = 1,
+		};
+		if (!Aeron_UploadTextureDataCmd(command_buffer, &upload)) {
+			return player->texture_generation ? player->texture : NULL;
+		}
+		player->texture_generation = generation;
+		SDL_LockMutex(player->lock);
+		++player->video_frames_presented;
+		SDL_UnlockMutex(player->lock);
+	}
+	return player->texture;
 }
 
 AeronVideoState Aeron_VideoGetState(const AeronVideoPlayer* player) {

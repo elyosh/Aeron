@@ -1,3 +1,4 @@
+#include "aeron/image.h"
 #include "ffmpeg_vfs_io.h"
 #include "video_internal.h"
 
@@ -8,6 +9,7 @@
 #include <libavutil/display.h>
 #include <libavutil/error.h>
 #include <libavutil/imgutils.h>
+#include <libavutil/intreadwrite.h>
 #include <libavutil/mathematics.h>
 #include <libavutil/mem.h>
 #include <libavutil/pixfmt.h>
@@ -19,17 +21,27 @@
 #include <string.h>
 
 typedef struct AeronVideoDecodeContext {
-	AeronVideoPlayer*  player;
-	AVFormatContext*   format;
-	AVIOContext*       avio;
-	AVCodecContext*    video_codec;
-	AVCodecContext*    audio_codec;
-	AVStream*          video_stream;
-	AVStream*          audio_stream;
-	int                video_stream_index;
-	int                audio_stream_index;
-	AVPacket*          packet;
-	AVFrame*           frame;
+	AeronVideoPlayer* player;
+	AVFormatContext*  format;
+	AVIOContext*      avio;
+	AVCodecContext*   video_codec;
+	AVCodecContext*   audio_codec;
+	AVStream*         video_stream;
+	AVStream*         audio_stream;
+	int               video_stream_index;
+	int               audio_stream_index;
+	AVPacket*         packet;
+	AVFrame*          frame;
+	/* WebM alpha: a second decoder for the alpha stream in each packet's
+	 * BlockAdditional, its decoded frames in decode order, and the one that
+	 * matches the colour frame being converted. */
+	AVCodecContext*    alpha_codec;
+	AVPacket*          alpha_packet;
+	AVFrame*           alpha_pending[AERON_VIDEO_ALPHA_PENDING];
+	uint32_t           alpha_pending_head;
+	uint32_t           alpha_pending_count;
+	AVFrame*           alpha_current;
+	int                alpha_missing_logged;
 	struct SwsContext* scaler;
 	SwrContext*        resampler;
 	uint8_t*           rgba_temp;
@@ -63,7 +75,7 @@ static int AeronVideo_ShouldInterrupt(void* opaque) {
 	return interrupted;
 }
 
-static AVCodecContext* AeronVideo_OpenCodec(AVFormatContext* format, int stream_index) {
+static AVCodecContext* AeronVideo_OpenCodec(AVFormatContext* format, int stream_index, int max_threads) {
 	AVStream*       stream = format->streams[stream_index];
 	const AVCodec*  codec  = avcodec_find_decoder(stream->codecpar->codec_id);
 	AVCodecContext* context;
@@ -77,9 +89,11 @@ static AVCodecContext* AeronVideo_OpenCodec(AVFormatContext* format, int stream_
 	/* High-bitrate 1440p H.264 does not decode in real time on one thread.
 	 * Each frame thread holds its own frames, about 12 MB at 1440p, so the
 	 * count stops at AERON_VIDEO_MAX_DECODE_THREADS, which still decodes the
-	 * heaviest movies several times faster than they play. Decoders without
-	 * thread support ignore this. */
-	context->thread_count = SDL_min(SDL_GetNumLogicalCPUCores(), AERON_VIDEO_MAX_DECODE_THREADS);
+	 * heaviest movies several times faster than they play. A player can ask
+	 * for fewer. Decoders without thread support ignore this. */
+	context->thread_count = SDL_min(SDL_GetNumLogicalCPUCores(),
+									max_threads > 0 ? SDL_min(max_threads, AERON_VIDEO_MAX_DECODE_THREADS)
+													: AERON_VIDEO_MAX_DECODE_THREADS);
 	context->thread_type  = FF_THREAD_FRAME | FF_THREAD_SLICE;
 	if (avcodec_parameters_to_context(context, stream->codecpar) < 0 ||
 		avcodec_open2(context, codec, NULL) < 0) {
@@ -173,6 +187,137 @@ static int AeronVideo_ConfigureColorConversion(AeronVideoDecodeContext* decode, 
 			   : AVERROR(EINVAL);
 }
 
+/* Skips data that a decoder rejects as invalid, as FFmpeg's own tools do, so
+ * that one damaged packet does not end the movie. The first skip of a movie
+ * is logged. Returns 0 for a skipped packet, otherwise `result`. */
+static int AeronVideo_SkipInvalidData(AeronVideoDecodeContext* decode, int result, int video) {
+	AeronVideoPlayer* player = decode->player;
+	if (result != AVERROR_INVALIDDATA) {
+		return result;
+	}
+	if (decode->packets_skipped++ == 0) {
+		Aeron_LogWarn("aeron.video", "%s: skipped invalid %s data", player->path, video ? "video" : "audio");
+	}
+	SDL_LockMutex(player->lock);
+	player->packets_skipped = decode->packets_skipped;
+	SDL_UnlockMutex(player->lock);
+	return 0;
+}
+
+static int64_t AeronVideo_RawFrameTimestamp(const AVFrame* frame) {
+	return frame->best_effort_timestamp != AV_NOPTS_VALUE ? frame->best_effort_timestamp : frame->pts;
+}
+
+static void AeronVideo_ClearAlphaFrames(AeronVideoDecodeContext* decode) {
+	while (decode->alpha_pending_count > 0) {
+		av_frame_unref(decode->alpha_pending[decode->alpha_pending_head]);
+		decode->alpha_pending_head = (decode->alpha_pending_head + 1u) % AERON_VIDEO_ALPHA_PENDING;
+		--decode->alpha_pending_count;
+	}
+	decode->alpha_pending_head = 0;
+	if (decode->alpha_current) {
+		av_frame_unref(decode->alpha_current);
+	}
+}
+
+/* Receives one alpha frame into the pending list. When the list is full, the
+ * oldest frame, which no colour frame matched, makes room. Returns 1 when a
+ * frame was received. */
+static int AeronVideo_ReceiveAlphaFrame(AeronVideoDecodeContext* decode) {
+	for (;;) {
+		AVFrame* slot;
+		int      result;
+		if (decode->alpha_pending_count == AERON_VIDEO_ALPHA_PENDING) {
+			av_frame_unref(decode->alpha_pending[decode->alpha_pending_head]);
+			decode->alpha_pending_head = (decode->alpha_pending_head + 1u) % AERON_VIDEO_ALPHA_PENDING;
+			--decode->alpha_pending_count;
+		}
+		slot   = decode->alpha_pending[(decode->alpha_pending_head + decode->alpha_pending_count) %
+									   AERON_VIDEO_ALPHA_PENDING];
+		result = avcodec_receive_frame(decode->alpha_codec, slot);
+		if (result == AVERROR_INVALIDDATA) {
+			continue;
+		}
+		if (result < 0) {
+			return 0;
+		}
+		++decode->alpha_pending_count;
+		return 1;
+	}
+}
+
+/* Sends the alpha stream of a colour packet to the alpha decoder: the
+ * BlockAdditional side data with id 1, after its 8-byte big-endian id. It goes
+ * first, so the alpha frame is ready when its colour frame comes out. */
+static void AeronVideo_SendAlphaPacket(AeronVideoDecodeContext* decode, const AVPacket* packet) {
+	size_t         size;
+	const uint8_t* side;
+	int            result;
+
+	side = av_packet_get_side_data(packet, AV_PKT_DATA_MATROSKA_BLOCKADDITIONAL, &size);
+	if (!side || size <= 8 || AV_RB64(side) != 1) {
+		return;
+	}
+	av_packet_unref(decode->alpha_packet);
+	decode->alpha_packet->data     = (uint8_t*)side + 8;
+	decode->alpha_packet->size     = (int)(size - 8);
+	decode->alpha_packet->pts      = packet->pts;
+	decode->alpha_packet->dts      = packet->dts;
+	decode->alpha_packet->duration = packet->duration;
+	decode->alpha_packet->flags    = packet->flags;
+	result                         = avcodec_send_packet(decode->alpha_codec, decode->alpha_packet);
+	while (result == AVERROR(EAGAIN) && AeronVideo_ReceiveAlphaFrame(decode)) {
+		result = avcodec_send_packet(decode->alpha_codec, decode->alpha_packet);
+	}
+	if (result < 0 && result != AVERROR(EAGAIN)) {
+		(void)AeronVideo_SkipInvalidData(decode, result, 1);
+	}
+	/* The packet doesn't own its data, so the decoder has copied it. */
+	decode->alpha_packet->data = NULL;
+	decode->alpha_packet->size = 0;
+}
+
+/* Returns the alpha frame with the colour frame's timestamp, or NULL when the
+ * colour frame has none. Older alpha frames are dropped. */
+static const AVFrame* AeronVideo_TakeAlphaFrame(AeronVideoDecodeContext* decode, const AVFrame* colour) {
+	const int64_t pts = AeronVideo_RawFrameTimestamp(colour);
+
+	av_frame_unref(decode->alpha_current);
+	for (;;) {
+		while (decode->alpha_pending_count > 0) {
+			AVFrame*      front     = decode->alpha_pending[decode->alpha_pending_head];
+			const int64_t alpha_pts = AeronVideo_RawFrameTimestamp(front);
+			if (pts != AV_NOPTS_VALUE && alpha_pts != AV_NOPTS_VALUE && alpha_pts > pts) {
+				return NULL;
+			}
+			decode->alpha_pending_head = (decode->alpha_pending_head + 1u) % AERON_VIDEO_ALPHA_PENDING;
+			--decode->alpha_pending_count;
+			if (pts == AV_NOPTS_VALUE || alpha_pts == AV_NOPTS_VALUE || alpha_pts == pts) {
+				av_frame_move_ref(decode->alpha_current, front);
+				return decode->alpha_current;
+			}
+			av_frame_unref(front);
+		}
+		if (!AeronVideo_ReceiveAlphaFrame(decode)) {
+			return NULL;
+		}
+	}
+}
+
+/* The planar YUV format with alpha that matches `format`, or AV_PIX_FMT_NONE. */
+static enum AVPixelFormat AeronVideo_AlphaFormat(enum AVPixelFormat format) {
+	switch (format) {
+		case AV_PIX_FMT_YUV420P:
+			return AV_PIX_FMT_YUVA420P;
+		case AV_PIX_FMT_YUV422P:
+			return AV_PIX_FMT_YUVA422P;
+		case AV_PIX_FMT_YUV444P:
+			return AV_PIX_FMT_YUVA444P;
+		default:
+			return AV_PIX_FMT_NONE;
+	}
+}
+
 static int AeronVideo_ReserveFrame(AeronVideoDecodeContext* decode, uint32_t* out_index,
 								   uint32_t* out_serial) {
 	AeronVideoPlayer* player = decode->player;
@@ -209,9 +354,36 @@ static int AeronVideo_QueueVideoFrame(AeronVideoDecodeContext* decode, AVFrame* 
 	uint8_t*                conversion_target;
 	uint8_t*                planes[4]  = { NULL, NULL, NULL, NULL };
 	int                     strides[4] = { 0, 0, 0, 0 };
+	const uint8_t*          source_planes[4];
+	int                     source_strides[4];
+	enum AVPixelFormat      source_format = (enum AVPixelFormat)source->format;
+	const AVFrame*          alpha         = NULL;
 	int                     result;
 	int64_t                 pts_us;
 	int64_t                 duration_us;
+
+	/* Every colour frame takes its alpha frame, also when it is dropped
+	 * below, so the two streams stay in step. */
+	if (decode->alpha_codec) {
+		alpha = AeronVideo_TakeAlphaFrame(decode, source);
+		if (alpha && (alpha->width != source->width || alpha->height != source->height ||
+					  AeronVideo_AlphaFormat(source_format) == AV_PIX_FMT_NONE)) {
+			alpha = NULL;
+		}
+		if (!alpha && !decode->alpha_missing_logged) {
+			decode->alpha_missing_logged = 1;
+			Aeron_LogWarn("aeron.video", "%s: a video frame has no alpha; it is drawn opaque", player->path);
+		}
+	}
+	for (int plane = 0; plane < 4; ++plane) {
+		source_planes[plane]  = source->data[plane];
+		source_strides[plane] = source->linesize[plane];
+	}
+	if (alpha) {
+		source_format     = AeronVideo_AlphaFormat(source_format);
+		source_planes[3]  = alpha->data[0];
+		source_strides[3] = alpha->linesize[0];
+	}
 
 	{
 		const int reserve_result = AeronVideo_ReserveFrame(decode, &index, &serial);
@@ -225,9 +397,9 @@ static int AeronVideo_QueueVideoFrame(AeronVideoDecodeContext* decode, AVFrame* 
 	queued            = &player->frames[index];
 	conversion_target = decode->rotation_degrees ? decode->rgba_temp : queued->pixels;
 
-	decode->scaler = sws_getCachedContext(
-		decode->scaler, source->width, source->height, (enum AVPixelFormat)source->format,
-		decode->source_width, decode->source_height, AV_PIX_FMT_RGBA, SWS_BILINEAR, NULL, NULL, NULL);
+	decode->scaler = sws_getCachedContext(decode->scaler, source->width, source->height, source_format,
+										  decode->source_width, decode->source_height, AV_PIX_FMT_RGBA,
+										  SWS_BILINEAR, NULL, NULL, NULL);
 	if (!decode->scaler) {
 		return AVERROR(EINVAL);
 	}
@@ -237,13 +409,17 @@ static int AeronVideo_QueueVideoFrame(AeronVideoDecodeContext* decode, AVFrame* 
 	}
 	planes[0]  = conversion_target;
 	strides[0] = decode->source_width * 4;
-	if (sws_scale(decode->scaler, (const uint8_t* const*)source->data, source->linesize, 0, source->height,
-				  planes, strides) != decode->source_height) {
+	if (sws_scale(decode->scaler, source_planes, source_strides, 0, source->height, planes, strides) !=
+		decode->source_height) {
 		return AVERROR(EIO);
 	}
 	if (decode->rotation_degrees) {
 		AeronVideo_RotateRgba(queued->pixels, decode->rgba_temp, decode->source_width, decode->source_height,
 							  decode->rotation_degrees);
+	}
+	if (alpha && player->alpha == AERON_VIDEO_ALPHA_PREMULTIPLIED) {
+		Aeron_ImagePremultiplyRgba8(queued->pixels,
+									(size_t)decode->output_width * (size_t)decode->output_height);
 	}
 
 	pts_us = AeronVideo_FrameTimestampUs(decode, source, decode->video_stream);
@@ -457,23 +633,6 @@ static int AeronVideo_QueueAudioFrame(AeronVideoDecodeContext* decode, AVFrame* 
 	return converted > 0 ? AeronVideo_QueueConvertedAudio(decode, output, (size_t)converted, pts_us) : 0;
 }
 
-/* Skips data that a decoder rejects as invalid, as FFmpeg's own tools do, so
- * that one damaged packet does not end the movie. The first skip of a movie
- * is logged. Returns 0 for a skipped packet, otherwise `result`. */
-static int AeronVideo_SkipInvalidData(AeronVideoDecodeContext* decode, int result, int video) {
-	AeronVideoPlayer* player = decode->player;
-	if (result != AVERROR_INVALIDDATA) {
-		return result;
-	}
-	if (decode->packets_skipped++ == 0) {
-		Aeron_LogWarn("aeron.video", "%s: skipped invalid %s data", player->path, video ? "video" : "audio");
-	}
-	SDL_LockMutex(player->lock);
-	player->packets_skipped = decode->packets_skipped;
-	SDL_UnlockMutex(player->lock);
-	return 0;
-}
-
 static int AeronVideo_DrainVideo(AeronVideoDecodeContext* decode) {
 	for (;;) {
 		int result = avcodec_receive_frame(decode->video_codec, decode->frame);
@@ -569,14 +728,16 @@ static int AeronVideo_InitStreams(AeronVideoDecodeContext* decode) {
 	int64_t           frame_bytes;
 
 	decode->video_stream_index = av_find_best_stream(decode->format, AVMEDIA_TYPE_VIDEO, -1, -1, NULL, 0);
-	decode->audio_stream_index = av_find_best_stream(decode->format, AVMEDIA_TYPE_AUDIO, -1, -1, NULL, 0);
+	decode->audio_stream_index =
+		player->no_audio ? -1 : av_find_best_stream(decode->format, AVMEDIA_TYPE_AUDIO, -1, -1, NULL, 0);
 	if (decode->video_stream_index < 0 && decode->audio_stream_index < 0) {
 		return 0;
 	}
 
 	if (decode->video_stream_index >= 0) {
 		decode->video_stream = decode->format->streams[decode->video_stream_index];
-		decode->video_codec  = AeronVideo_OpenCodec(decode->format, decode->video_stream_index);
+		decode->video_codec =
+			AeronVideo_OpenCodec(decode->format, decode->video_stream_index, player->max_decode_threads);
 		if (!decode->video_codec || decode->video_codec->width <= 0 || decode->video_codec->height <= 0 ||
 			decode->video_codec->width > player->max_width ||
 			decode->video_codec->height > player->max_height) {
@@ -613,9 +774,28 @@ static int AeronVideo_InitStreams(AeronVideoDecodeContext* decode) {
 			player->info.display_height = decode->source_height;
 		}
 		player->info.rotation_degrees = decode->rotation_degrees;
-		player->info.has_video        = 1;
-		player->info.frame_rate_num   = decode->video_stream->avg_frame_rate.num;
-		player->info.frame_rate_den   = decode->video_stream->avg_frame_rate.den;
+		if (player->alpha != AERON_VIDEO_ALPHA_NONE &&
+			(decode->video_stream->codecpar->codec_id == AV_CODEC_ID_VP9 ||
+			 decode->video_stream->codecpar->codec_id == AV_CODEC_ID_VP8)) {
+			/* Same parameters and threads as the colour decoder, so both give
+			 * their frames after the same number of packets. */
+			decode->alpha_codec =
+				AeronVideo_OpenCodec(decode->format, decode->video_stream_index, player->max_decode_threads);
+			decode->alpha_packet  = av_packet_alloc();
+			decode->alpha_current = av_frame_alloc();
+			for (int i = 0; i < AERON_VIDEO_ALPHA_PENDING; ++i) {
+				decode->alpha_pending[i] = av_frame_alloc();
+				if (!decode->alpha_pending[i]) {
+					return 0;
+				}
+			}
+			if (!decode->alpha_codec || !decode->alpha_packet || !decode->alpha_current) {
+				return 0;
+			}
+		}
+		player->info.has_video      = 1;
+		player->info.frame_rate_num = decode->video_stream->avg_frame_rate.num;
+		player->info.frame_rate_den = decode->video_stream->avg_frame_rate.den;
 		SDL_snprintf(player->info.video_codec, sizeof(player->info.video_codec), "%s",
 					 decode->video_codec->codec->name);
 		if (decode->video_stream->avg_frame_rate.num > 0 && decode->video_stream->avg_frame_rate.den > 0) {
@@ -630,7 +810,8 @@ static int AeronVideo_InitStreams(AeronVideoDecodeContext* decode) {
 		AVChannelLayout output_layout = AV_CHANNEL_LAYOUT_STEREO;
 		size_t          capacity_frames;
 		decode->audio_stream = decode->format->streams[decode->audio_stream_index];
-		decode->audio_codec  = AeronVideo_OpenCodec(decode->format, decode->audio_stream_index);
+		decode->audio_codec =
+			AeronVideo_OpenCodec(decode->format, decode->audio_stream_index, player->max_decode_threads);
 		if (!decode->audio_codec || decode->audio_codec->sample_rate <= 0 ||
 			decode->audio_codec->ch_layout.nb_channels <= 0) {
 			return 0;
@@ -749,6 +930,10 @@ static int AeronVideo_HandleControl(AeronVideoDecodeContext* decode) {
 		if (decode->video_codec) {
 			avcodec_flush_buffers(decode->video_codec);
 		}
+		if (decode->alpha_codec) {
+			avcodec_flush_buffers(decode->alpha_codec);
+			AeronVideo_ClearAlphaFrames(decode);
+		}
 		if (decode->audio_codec) {
 			avcodec_flush_buffers(decode->audio_codec);
 		}
@@ -806,6 +991,10 @@ static int AeronVideo_DrainResampler(AeronVideoDecodeContext* decode) {
 
 static int AeronVideo_FlushDecoders(AeronVideoDecodeContext* decode) {
 	int result;
+	if (decode->alpha_codec) {
+		/* The last alpha frames come out as the colour decoder drains. */
+		(void)avcodec_send_packet(decode->alpha_codec, NULL);
+	}
 	if (decode->video_codec) {
 		result = AeronVideo_SendPacket(decode, decode->video_codec, NULL, 1);
 		if (result < 0) {
@@ -829,6 +1018,12 @@ static void AeronVideo_CleanupDecoder(AeronVideoDecodeContext* decode) {
 	swr_free(&decode->resampler);
 	avcodec_free_context(&decode->video_codec);
 	avcodec_free_context(&decode->audio_codec);
+	avcodec_free_context(&decode->alpha_codec);
+	av_packet_free(&decode->alpha_packet);
+	av_frame_free(&decode->alpha_current);
+	for (int i = 0; i < AERON_VIDEO_ALPHA_PENDING; ++i) {
+		av_frame_free(&decode->alpha_pending[i]);
+	}
 	avformat_close_input(&decode->format);
 	AeronFfmpegVfs_DestroyIo(&decode->avio);
 	av_free(decode->rgba_temp);
@@ -920,6 +1115,9 @@ int AeronVideo_WorkerMain(void* userdata) {
 		}
 
 		if (decode.packet->stream_index == decode.video_stream_index) {
+			if (decode.alpha_codec) {
+				AeronVideo_SendAlphaPacket(&decode, decode.packet);
+			}
 			result = AeronVideo_SendPacket(&decode, decode.video_codec, decode.packet, 1);
 		} else if (decode.packet->stream_index == decode.audio_stream_index) {
 			result = AeronVideo_SendPacket(&decode, decode.audio_codec, decode.packet, 0);
