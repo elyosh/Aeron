@@ -12,6 +12,8 @@
 #include "util.h"
 
 #define XWAU_DAT_SIGNATURE 0x5602235657062357ull
+#define XWAU_DAT_FORMAT_RLE_7BIT 7
+#define XWAU_DAT_FORMAT_RLE 23
 #define XWAU_DAT_FORMAT_8BPP_ALPHA 24
 #define XWAU_DAT_FORMAT_32BPP 25
 #define XWAU_DAT_IMAGE_HEADER_BYTES 0x2C
@@ -128,12 +130,78 @@ static bool decode_indexed(const char* path, uint32_t w, uint32_t h, const uint8
 	return true;
 }
 
+/* Stock formats 7 and 23: each row is a run count, then runs. A run's token
+ * holds its length and its mode: skipped texels, opaque palette indices, or
+ * pairs of an alpha code and a palette index. Format 7 has 7-bit lengths and
+ * no alpha pairs (Xwa2d_DecodeDatSprite in src/xwa_formats/xwa_2d/xwa_dat.c). */
+static bool decode_rle(const char* path, uint16_t format, uint32_t w, uint32_t h, const uint8_t* payload,
+					   size_t size, XwauDatImage* out, char* error, size_t error_size) {
+	const uint32_t color_offset = rd32(payload + 4);
+	const uint32_t rows_offset  = rd32(payload + 8);
+	const uint32_t color_count  = rd32(payload + XWAU_DAT_IMAGE_COLORS_OFFSET);
+	if (!color_count || color_count > 256 || color_offset > size ||
+		3u * (size_t)color_count > size - color_offset || rows_offset >= size) {
+		set_error(error, error_size, path, "invalid run-length image");
+		return false;
+	}
+	out->rgba = (uint8_t*)calloc((size_t)w * h, 4);
+	if (!out->rgba) {
+		set_error(error, error_size, path, "out of memory");
+		return false;
+	}
+	out->width            = w;
+	out->height           = h;
+	out->encoding         = XWAU_DAT_ENCODING_RLE;
+	const uint8_t* colors = payload + color_offset;
+	const uint8_t* p      = payload + rows_offset;
+	const uint8_t* end    = payload + size;
+	for (uint32_t y = 0; y < h; ++y) {
+		if (p >= end)
+			goto malformed;
+		int      run_count = *p++;
+		uint32_t x         = 0;
+		while (run_count-- > 0) {
+			if (p >= end)
+				goto malformed;
+			const uint8_t token  = *p++;
+			const int     length = format == XWAU_DAT_FORMAT_RLE_7BIT ? token & 0x7f : token & 0x3f;
+			const int mode = format == XWAU_DAT_FORMAT_RLE_7BIT ? (token & 0x80 ? 0xc0 : 0) : token & 0xc0;
+			if (mode == 0xc0) {
+				x += (uint32_t)length;
+				continue;
+			}
+			const int bytes_per_texel = mode == 0 ? 1 : 2;
+			if ((size_t)(end - p) < (size_t)length * bytes_per_texel)
+				goto malformed;
+			for (int i = 0; i < length; ++i) {
+				const uint8_t alpha_code = mode == 0 ? 0xff : p[2 * i];
+				const uint8_t index      = p[bytes_per_texel * i + bytes_per_texel - 1];
+				if (x + (uint32_t)i >= w || index >= color_count || alpha_code < 0x20)
+					continue;
+				uint8_t* d = out->rgba + ((size_t)y * w + x + (uint32_t)i) * 4;
+				memcpy(d, &colors[3u * index], 3);
+				d[3] = alpha_code == 0xff ? 0xff : (uint8_t)(((alpha_code >> 5) * 255u) / 8u);
+			}
+			p += (size_t)length * bytes_per_texel;
+			x += (uint32_t)length;
+		}
+	}
+	return true;
+malformed:
+	set_error(error, error_size, path, "malformed run-length image");
+	XwauDat_FreeImage(out);
+	return false;
+}
+
 static bool decode_image(const char* path, uint16_t format, uint32_t w, uint32_t h, int32_t colors,
 						 const uint8_t* data, size_t size, XwauDatImage* out, char* error,
 						 size_t error_size) {
 	if (format == XWAU_DAT_FORMAT_8BPP_ALPHA)
 		return decode_indexed(path, w, h, data - XWAU_DAT_IMAGE_HEADER_BYTES,
 							  size + XWAU_DAT_IMAGE_HEADER_BYTES, out, error, error_size);
+	if (format == XWAU_DAT_FORMAT_RLE || format == XWAU_DAT_FORMAT_RLE_7BIT)
+		return decode_rle(path, format, w, h, data - XWAU_DAT_IMAGE_HEADER_BYTES,
+						  size + XWAU_DAT_IMAGE_HEADER_BYTES, out, error, error_size);
 	if (format != XWAU_DAT_FORMAT_32BPP) {
 		char msg[64];
 		snprintf(msg, sizeof msg, "unsupported DAT image format %u", (unsigned)format);
@@ -297,6 +365,34 @@ size_t XwauDat_ListGroup(const XwauDat* dat, int group, const int** images) {
 			dat->ids[n++] = dat->entries[i].image;
 	*images = dat->ids;
 	return n;
+}
+
+size_t XwauDat_ListGroups(const XwauDat* dat, const int** groups) {
+	size_t n = 0;
+	for (size_t i = 0; i < dat->count; ++i) {
+		size_t k = 0;
+		while (k < n && dat->ids[k] != dat->entries[i].group)
+			++k;
+		if (k == n)
+			dat->ids[n++] = dat->entries[i].group;
+	}
+	*groups = dat->ids;
+	return n;
+}
+
+bool XwauDat_GetImageInfo(const XwauDat* dat, int group, int image, XwauDatImageInfo* out) {
+	for (size_t i = 0; i < dat->count; ++i) {
+		const XwauDatEntry* e = &dat->entries[i];
+		if (e->group != group || e->image != image)
+			continue;
+		out->format   = e->format;
+		out->width    = e->width;
+		out->height   = e->height;
+		out->offset_x = (int32_t)rd32(dat->file + e->offset + 24);
+		out->offset_y = (int32_t)rd32(dat->file + e->offset + 28);
+		return true;
+	}
+	return false;
 }
 
 bool XwauDat_LoadImageFrom(const XwauDat* dat, int group, int image, XwauDatImage* out, char* error,
