@@ -51,6 +51,12 @@ uint8_t* Aeron_ImageDownsampleStraightAlphaRgba8(const uint8_t* source, int widt
 bool Aeron_ImageWriteHdr(AeronVfs* vfs, AeronVfsRoot root, const char* path, int width, int height,
 						 const float* rgb);
 
+/* Reads a PNG from the VFS as RGBA8, top row first, with straight alpha.
+ * Returns NULL when the file is missing or isn't a PNG. The caller releases
+ * the pixels with free(). */
+uint8_t* Aeron_ImageReadPngRgba8(AeronVfs* vfs, AeronVfsRoot root, const char* path, int* out_width,
+								 int* out_height);
+
 #ifdef __cplusplus
 }
 #endif

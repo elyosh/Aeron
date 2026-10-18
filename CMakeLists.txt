@@ -402,6 +402,7 @@ set(AERON_SOURCES
     src/events.c
     src/gamepad.c
     src/image.c
+    src/image_read.c
     src/image_write.c
     src/input.c
     src/log.c
@@ -430,8 +431,9 @@ target_include_directories(aeron
     PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
-# stb_image_write, compiled static by src/image_write.c only.
-set_source_files_properties(src/image_write.c PROPERTIES
+# stb_image and stb_image_write, compiled static by src/image_read.c and
+# src/image_write.c only.
+set_source_files_properties(src/image_read.c src/image_write.c PROPERTIES
     INCLUDE_DIRECTORIES ${CMAKE_CURRENT_SOURCE_DIR}/third_party/stb)
 
 foreach(format IN LISTS AERON_SHADER_FORMATS)
