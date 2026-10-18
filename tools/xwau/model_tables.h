@@ -1,5 +1,5 @@
-#ifndef AERON_OPT2GLTF_MODEL_TABLES_H
-#define AERON_OPT2GLTF_MODEL_TABLES_H
+#ifndef AERON_XWAU_MODEL_TABLES_H
+#define AERON_XWAU_MODEL_TABLES_H
 
 /*
  * Data that the conversion needs but that no file next to an OPT contains.
@@ -37,4 +37,4 @@ bool ModelTables_IsProjectile(const char* model);
  * separated by spaces. Returns NULL when there are none. */
 const char* ModelTables_LitTextures(const char* model);
 
-#endif /* AERON_OPT2GLTF_MODEL_TABLES_H */
+#endif /* AERON_XWAU_MODEL_TABLES_H */

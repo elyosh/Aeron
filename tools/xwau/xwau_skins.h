@@ -1,5 +1,5 @@
-#ifndef AERON_OPT2GLTF_XWAU_SKINS_H
-#define AERON_OPT2GLTF_XWAU_SKINS_H
+#ifndef AERON_XWAU_SKINS_H
+#define AERON_XWAU_SKINS_H
 
 /*
  * Converts the XWAU skins of one OPT (hook_32bpp: ReadOptFunction,
@@ -122,4 +122,4 @@ typedef struct XwauMarkings {
 bool XwauSkins_Markings(const XwauLines* lines, const char* model, int states, const XwauSkinSet* skins,
 						XwauMarkings* out, size_t* count);
 
-#endif /* AERON_OPT2GLTF_XWAU_SKINS_H */
+#endif /* AERON_XWAU_SKINS_H */

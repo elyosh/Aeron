@@ -1,9 +1,9 @@
-#ifndef AERON_OPT2GLTF_UTIL_H
-#define AERON_OPT2GLTF_UTIL_H
+#ifndef AERON_XWAU_UTIL_H
+#define AERON_XWAU_UTIL_H
 
 /*
- * Helpers shared by the converter's modules: reporting, strings, files,
- * folders, paths and growing arrays.
+ * Helpers shared by opt2gltf, xwau_import and the XWAU readers: reporting,
+ * strings, files, folders, paths and growing arrays.
  */
 
 #include <stdarg.h>
@@ -18,8 +18,12 @@
 
 /* ---- Reporting ---------------------------------------------------------- */
 
-/* Prints a problem or a summary to stderr as "opt2gltf: <label>: <message>",
- * or as "opt2gltf: <message>" when `label` is NULL. */
+/* Sets the program name that starts each report. Each program's main sets it
+ * once. Reports have no program name until it is set. */
+void SetReportProgram(const char* name);
+
+/* Prints a problem or a summary to stderr as "<program>: <label>: <message>",
+ * or as "<program>: <message>" when `label` is NULL. */
 UTIL_PRINTF(2, 3) void Report(const char* label, const char* format, ...);
 void ReportV(const char* label, const char* format, va_list args);
 
@@ -86,4 +90,4 @@ bool ArrayGrow(void** items, size_t count, size_t size);
 #define ARRAY_PUSH(items, count)                                                                             \
 	(ArrayGrow((void**)&(items), (size_t)(count), sizeof *(items)) ? &(items)[(count)++] : NULL)
 
-#endif /* AERON_OPT2GLTF_UTIL_H */
+#endif /* AERON_XWAU_UTIL_H */

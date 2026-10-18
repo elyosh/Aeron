@@ -1,5 +1,5 @@
-#ifndef AERON_OPT2GLTF_XWAU_MODEL_H
-#define AERON_OPT2GLTF_XWAU_MODEL_H
+#ifndef AERON_XWAU_MODEL_H
+#define AERON_XWAU_MODEL_H
 
 /*
  * Reads what XWAU's hooks read for one model from the files next to its OPT,
@@ -99,4 +99,4 @@ typedef struct XwauMeshLine {
 bool XwauModel_MeshLines(const XwauLines* lines, XwauMeshLine** out, size_t* count, const char* label,
 						 const char* where);
 
-#endif /* AERON_OPT2GLTF_XWAU_MODEL_H */
+#endif /* AERON_XWAU_MODEL_H */

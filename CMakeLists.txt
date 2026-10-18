@@ -1024,39 +1024,71 @@ set_target_properties(aeron_asset PROPERTIES
 )
 
 if(AERON_BUILD_TOOLS)
+    # The readers of the X-Wing Alliance Upgrade files (tools/xwau), with the
+    # model tables and the tools' utilities. They fill the data types of
+    # opt_gltf.h, but they call no conversion code. opt2gltf and xwau_import
+    # link this library.
+    add_library(xwau_files STATIC
+        tools/xwau/util.c
+        tools/xwau/model_tables.c
+        tools/xwau/xwau_config.c
+        tools/xwau/xwau_dat.c
+        tools/xwau/xwau_mat.c
+        tools/xwau/xwau_missions.c
+        tools/xwau/xwau_model.c
+        tools/xwau/xwau_skins.c
+        third_party/lzma/LzmaDec.c)
+    target_include_directories(xwau_files
+        PUBLIC
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/xwau
+        PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/third_party/stb
+            ${CMAKE_CURRENT_SOURCE_DIR}/third_party/lzma
+            ${CMAKE_CURRENT_SOURCE_DIR}/third_party/bcdec)
+    target_link_libraries(xwau_files PUBLIC aeron_opt aeron_cgltf)
+    if(NOT MSVC)
+        target_link_libraries(xwau_files PUBLIC m)
+    endif()
+
+    # The XWAU imports that are not models: the mission files and the
+    # skyboxes. xwau_import and its test link this library.
+    add_library(xwau_import_lib STATIC
+        tools/xwau/xwau_mission_files.c
+        tools/xwau/xwau_skyboxes.c)
+    target_link_libraries(xwau_import_lib PUBLIC xwau_files)
+
+    add_executable(xwau_import tools/xwau/main.c)
+    target_link_libraries(xwau_import PRIVATE xwau_import_lib)
+    set_target_properties(xwau_import PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
+
+    # Tests the hook file rules, the skin selection and the skybox rotations
+    # on fixed texts.
+    add_executable(xwau_rules_test tools/xwau/tests/xwau_rules_test.c)
+    target_link_libraries(xwau_rules_test PRIVATE xwau_import_lib)
+    set_target_properties(xwau_rules_test PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
+
     # The parts used only by the command-line converter: file writing, the
-    # readers of the X-Wing Alliance Upgrade files, the effect library writer
-    # and the model tables. They pass resolved materials to opt2gltf_lib.
-    # opt2gltf and its test link this library.
+    # XWAU materials, skins, animations and Dynamic Cockpit screens, and the
+    # effect library writer. They pass resolved materials to opt2gltf_lib.
+    # opt2gltf links this library.
     add_library(opt2gltf_tool STATIC
         tools/opt2gltf/opt_gltf_write.c
-        tools/opt2gltf/util.c
-        tools/opt2gltf/model_tables.c
         tools/opt2gltf/xwau_anim.c
-        tools/opt2gltf/xwau_config.c
-        tools/opt2gltf/xwau_dat.c
         tools/opt2gltf/xwau_dynamic_cockpit.c
         tools/opt2gltf/xwau_effect_bake.c
         tools/opt2gltf/xwau_gltf_material.c
         tools/opt2gltf/xwau_gltf_skins.c
-        tools/opt2gltf/xwau_library.c
-        tools/opt2gltf/xwau_mat.c
-        tools/opt2gltf/xwau_mission_files.c
-        tools/opt2gltf/xwau_missions.c
-        tools/opt2gltf/xwau_model.c
-        tools/opt2gltf/xwau_skins.c
-        tools/opt2gltf/xwau_skyboxes.c
-        third_party/lzma/LzmaDec.c)
+        tools/opt2gltf/xwau_library.c)
     target_include_directories(opt2gltf_tool
         PUBLIC
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/opt2gltf
         PRIVATE
             ${CMAKE_CURRENT_SOURCE_DIR}/third_party/cgltf
-            ${CMAKE_CURRENT_SOURCE_DIR}/third_party/stb
-            ${CMAKE_CURRENT_SOURCE_DIR}/third_party/lzma
-            ${CMAKE_CURRENT_SOURCE_DIR}/third_party/bcdec)
+            ${CMAKE_CURRENT_SOURCE_DIR}/third_party/stb)
     target_link_libraries(opt2gltf_tool
-        PUBLIC opt2gltf_lib
+        PUBLIC opt2gltf_lib xwau_files
         PRIVATE imgbake aeron_yaml_json aeron_effect_files aeron_cjson)
     if(NOT MSVC)
         target_link_libraries(opt2gltf_tool PUBLIC m)
@@ -1076,12 +1108,6 @@ if(AERON_BUILD_TOOLS)
         target_link_options(opt2gltf PRIVATE -static)
     endif()
     set_target_properties(opt2gltf PROPERTIES
-        RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
-
-    # Tests the hook file rules and the skin selection on fixed texts.
-    add_executable(opt2gltf_xwau_test tools/opt2gltf/tests/xwau_rules_test.c)
-    target_link_libraries(opt2gltf_xwau_test PRIVATE opt2gltf_tool)
-    set_target_properties(opt2gltf_xwau_test PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
 endif()
 

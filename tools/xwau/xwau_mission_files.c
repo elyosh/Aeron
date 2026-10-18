@@ -365,7 +365,7 @@ static bool write_mission(const char* path, const char* base, const Profile* pro
 		Report(NULL, "cannot write %s", path);
 		return false;
 	}
-	fprintf(f, "# Imported from XWAU's %s selections by opt2gltf.\nversion: 1\n", base);
+	fprintf(f, "# Imported from XWAU's %s selections by xwau_import.\nversion: 1\n", base);
 	size_t* order = by_target(profile_targets, profile_count);
 	bool    any   = false;
 	for (size_t k = 0; order && k < profile_count; ++k) {

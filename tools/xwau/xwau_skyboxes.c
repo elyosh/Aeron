@@ -484,7 +484,7 @@ static bool write_manifest(const SkyState* st, const char* path) {
 		Report(path, "cannot write");
 		return false;
 	}
-	fprintf(f, "# Written by opt2gltf missions from the [SkyBoxes] sections of XWAU's\n"
+	fprintf(f, "# Written by xwau_import missions from the [SkyBoxes] sections of XWAU's\n"
 			   "# missions. Merge it into environments.yaml.\n"
 			   "version: 1\n\nenvironments:\n");
 	for (size_t i = 0; i < st->definition_count; ++i) {

@@ -1,5 +1,5 @@
-#ifndef AERON_OPT2GLTF_XWAU_CONFIG_H
-#define AERON_OPT2GLTF_XWAU_CONFIG_H
+#ifndef AERON_XWAU_CONFIG_H
+#define AERON_XWAU_CONFIG_H
 
 /*
  * Reads XWA Upgrade (XWAU) data and the configuration files of the hooks.
@@ -91,4 +91,4 @@ bool Xwau_DatNames(const char* written, char* rel, size_t rel_cap, char* library
  * in `cap`. */
 bool Xwau_EncodeName(const char* name, char* out, size_t cap);
 
-#endif /* AERON_OPT2GLTF_XWAU_CONFIG_H */
+#endif /* AERON_XWAU_CONFIG_H */

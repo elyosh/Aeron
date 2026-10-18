@@ -14,11 +14,15 @@
 
 /* ---- Reporting ---------------------------------------------------------- */
 
+static const char* g_report_program;
+
+void SetReportProgram(const char* name) { g_report_program = name; }
+
 void ReportV(const char* label, const char* format, va_list args) {
+	if (g_report_program)
+		fprintf(stderr, "%s: ", g_report_program);
 	if (label)
-		fprintf(stderr, "opt2gltf: %s: ", label);
-	else
-		fputs("opt2gltf: ", stderr);
+		fprintf(stderr, "%s: ", label);
 	vfprintf(stderr, format, args);
 	fputc('\n', stderr);
 }

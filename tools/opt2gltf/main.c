@@ -1,13 +1,13 @@
 /*
  * opt2gltf converts an OPT model to glTF 2.0 (a .gltf file, a .bin file and PNG
- * textures). It also writes the batch outputs of an XWA Upgrade conversion.
+ * textures). It also writes the effect libraries of XWA Upgrade models.
+ * xwau_import (tools/xwau) writes the parts of an XWAU conversion that are
+ * not models.
  *
  * Usage:
  *   opt2gltf (--stock | --xwau-root DIR) [--smooth-angle DEG]
  *            (--project DIR [--replace] FILE.opt | FILE.opt <output_dir>)
  *   opt2gltf effects --xwau-root DIR --project DIR <project|model.gltf>...
- *   opt2gltf missions --xwau-root DIR --stock-game DIR
- *                     [--skyboxes FILE --skybox-folders FILE] <output_dir>
  *
  * The model is written into <output_dir>, or into a project with --project.
  * A project is a folder that holds models (models/<key>/) and their effect
@@ -21,13 +21,6 @@
  * effects/ folder of --project, replacing them, together with the game's
  * effects.yaml (xwau_library.h). Each input is a model .gltf or a project, which
  * stands for all its models.
- *
- * `missions` writes the selections of XWAU's missions for the missions of the
- * original game, installed in --stock-game. Each mission gets a file
- * <output_dir>/<dir>/<mission>.yaml (xwau_mission_files.h). With --skyboxes,
- * it also writes the environments of the missions' [SkyBoxes] sections into
- * FILE, and the sky and overlay folders that environment_bake converts into
- * the --skybox-folders file (xwau_skyboxes.h).
  *
  * Replacement workflow (both tools are built with AERON_BUILD_TOOLS):
  *
@@ -50,9 +43,6 @@
 #include "util.h"
 #include "xwau_config.h"
 #include "xwau_library.h"
-#include "xwau_mission_files.h"
-#include "xwau_missions.h"
-#include "xwau_skyboxes.h"
 
 /* Converts the OPT into models/<key>/ in the project. In XWAU mode, it then
  * adds the library images that the model names. */
@@ -97,9 +87,7 @@ static bool convert_into_project(const ModelConversion* mc, const char* opt_path
 static int usage(void) {
 	fprintf(stderr, "usage: opt2gltf (--stock | --xwau-root DIR) [--smooth-angle DEG]\n"
 					"                (--project DIR [--replace] FILE.opt | FILE.opt <output_dir>)\n"
-					"       opt2gltf effects --xwau-root DIR --project DIR <project|model.gltf>...\n"
-					"       opt2gltf missions --xwau-root DIR --stock-game DIR\n"
-					"                         [--skyboxes FILE --skybox-folders FILE] <output_dir>\n");
+					"       opt2gltf effects --xwau-root DIR --project DIR <project|model.gltf>...\n");
 	return 2;
 }
 
@@ -111,9 +99,6 @@ enum {
 	FLAG_SMOOTH_ANGLE = 1 << 2,
 	FLAG_PROJECT      = 1 << 3,
 	FLAG_REPLACE      = 1 << 4,
-	FLAG_STOCK_GAME   = 1 << 5,
-	FLAG_SKYBOXES     = 1 << 6,
-	FLAG_SKY_FOLDERS  = 1 << 7,
 };
 
 static const struct {
@@ -126,9 +111,6 @@ static const struct {
 	{ "--smooth-angle", FLAG_SMOOTH_ANGLE, true },
 	{ "--project", FLAG_PROJECT, true },
 	{ "--replace", FLAG_REPLACE, false },
-	{ "--stock-game", FLAG_STOCK_GAME, true },
-	{ "--skyboxes", FLAG_SKYBOXES, true },
-	{ "--skybox-folders", FLAG_SKY_FOLDERS, true },
 };
 
 typedef struct Args {
@@ -137,9 +119,6 @@ typedef struct Args {
 	float       smooth_angle; /* negative when not given */
 	const char* project;
 	bool        replace;
-	const char* stock_game;
-	const char* skyboxes;
-	const char* skybox_folders;
 	char**      inputs; /* the arguments after the flags */
 	int         input_count;
 } Args;
@@ -190,15 +169,6 @@ static bool parse_args(int argc, char** argv, unsigned allowed, Args* out) {
 				break;
 			case FLAG_REPLACE:
 				out->replace = true;
-				break;
-			case FLAG_STOCK_GAME:
-				out->stock_game = value;
-				break;
-			case FLAG_SKYBOXES:
-				out->skyboxes = value;
-				break;
-			case FLAG_SKY_FOLDERS:
-				out->skybox_folders = value;
 				break;
 		}
 	}
@@ -276,36 +246,9 @@ static int run_effects(int argc, char** argv) {
 			   : 1;
 }
 
-/* opt2gltf missions --xwau-root DIR --stock-game DIR
- *                   [--skyboxes FILE --skybox-folders FILE] <output_dir> */
-static int run_missions(int argc, char** argv) {
-	Args a;
-	if (!parse_args(argc, argv, FLAG_XWAU_ROOT | FLAG_STOCK_GAME | FLAG_SKYBOXES | FLAG_SKY_FOLDERS, &a))
-		return 2;
-	if (!a.xwau_root || !a.stock_game || a.input_count != 1) {
-		Report(NULL, "missions needs --xwau-root, --stock-game and an output folder");
-		return 2;
-	}
-	if (!a.skyboxes != !a.skybox_folders) {
-		Report(NULL, "--skyboxes and --skybox-folders go together");
-		return 2;
-	}
-	XwauMissions* missions = XwauMissions_Load(a.xwau_root, true);
-	if (!missions) {
-		Report(NULL, "out of memory (missions)");
-		return 1;
-	}
-	bool ok = XwauMissionFiles_Write(a.xwau_root, missions, a.stock_game, a.inputs[0]);
-	XwauMissions_Free(missions);
-	if (ok && a.skyboxes)
-		ok = XwauSkyboxes_Write(a.xwau_root, a.stock_game, a.skyboxes, a.skybox_folders);
-	return ok ? 0 : 1;
-}
-
 int main(int argc, char** argv) {
+	SetReportProgram("opt2gltf");
 	if (argc > 1 && strcmp(argv[1], "effects") == 0)
 		return run_effects(argc - 2, argv + 2);
-	if (argc > 1 && strcmp(argv[1], "missions") == 0)
-		return run_missions(argc - 2, argv + 2);
 	return run_convert(argc - 1, argv + 1);
 }

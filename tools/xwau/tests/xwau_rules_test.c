@@ -1,9 +1,9 @@
 /*
- * Tests the hook file rules that opt2gltf reproduces (xwau_config.h), its
- * skin selection (xwau_skins.h) and its skybox conversion (xwau_skyboxes.h).
- * The inputs are fixed texts and folders written to a scratch folder. The
- * test is built with the tools as opt2gltf_xwau_test. It prints each check
- * and exits with a non-zero status when a check fails.
+ * Tests the hook file rules that the XWAU readers reproduce (xwau_config.h),
+ * the skin selection (xwau_skins.h) and the skybox conversion
+ * (xwau_skyboxes.h). The inputs are fixed texts and folders written to a
+ * scratch folder. The test is built with the tools as xwau_rules_test. It
+ * prints each check and exits with a non-zero status when a check fails.
  */
 
 #include <math.h>
@@ -419,7 +419,7 @@ static void test_skyboxes(const char* scratch) {
 int main(void) {
 	char        scratch[1024];
 	const char* tmp = getenv("TMPDIR");
-	snprintf(scratch, sizeof scratch, "%s/opt2gltf_xwau_test", tmp && tmp[0] ? tmp : "/tmp");
+	snprintf(scratch, sizeof scratch, "%s/xwau_rules_test", tmp && tmp[0] ? tmp : "/tmp");
 	RemoveTree(scratch);
 	MakeDirs(scratch);
 	test_rules(scratch);

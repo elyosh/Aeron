@@ -1,5 +1,5 @@
-#ifndef AERON_OPT2GLTF_XWAU_SKYBOXES_H
-#define AERON_OPT2GLTF_XWAU_SKYBOXES_H
+#ifndef AERON_XWAU_SKYBOXES_H
+#define AERON_XWAU_SKYBOXES_H
 
 /*
  * Converts the [SkyBoxes] sections of XWAU's missions (the cube maps of the
@@ -63,4 +63,4 @@ void XwauSkyboxes_Rotation(const float xyz_degrees[3], bool overlay, float out_d
  * Returns false on an error. */
 bool XwauSkyboxes_Write(const char* game, const char* stock_game, const char* manifest, const char* folders);
 
-#endif /* AERON_OPT2GLTF_XWAU_SKYBOXES_H */
+#endif /* AERON_XWAU_SKYBOXES_H */

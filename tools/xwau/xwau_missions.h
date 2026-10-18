@@ -1,5 +1,5 @@
-#ifndef AERON_OPT2GLTF_XWAU_MISSIONS_H
-#define AERON_OPT2GLTF_XWAU_MISSIONS_H
+#ifndef AERON_XWAU_MISSIONS_H
+#define AERON_XWAU_MISSIONS_H
 
 /*
  * Reads what the XWAU missions (in Missions/ and Melee/) give to the models.
@@ -92,4 +92,4 @@ typedef struct XwauTieFlightGroup {
  * cannot be read. */
 XwauTieFlightGroup* XwauTie_FlightGroups(const char* path, size_t* count);
 
-#endif /* AERON_OPT2GLTF_XWAU_MISSIONS_H */
+#endif /* AERON_XWAU_MISSIONS_H */

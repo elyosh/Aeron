@@ -1,5 +1,5 @@
-#ifndef AERON_OPT2GLTF_XWAU_MISSION_FILES_H
-#define AERON_OPT2GLTF_XWAU_MISSION_FILES_H
+#ifndef AERON_XWAU_MISSION_FILES_H
+#define AERON_XWAU_MISSION_FILES_H
 
 /*
  * Writes the selections of XWAU's missions for the original game's missions.
@@ -66,4 +66,4 @@
 bool XwauMissionFiles_Write(const char* game, const XwauMissions* missions, const char* stock_game,
 							const char* out);
 
-#endif /* AERON_OPT2GLTF_XWAU_MISSION_FILES_H */
+#endif /* AERON_XWAU_MISSION_FILES_H */
