@@ -1,7 +1,7 @@
 #include "ldr_read.h"
 
-/* Keep stb_image implementation symbols translation-unit-local so this
- * loader can coexist with the other private stb_image copies. */
+/* Make stb_image's functions static, so this copy can be linked with the
+ * other stb_image copies. */
 #define STB_IMAGE_IMPLEMENTATION
 #define STB_IMAGE_STATIC
 #define STBI_ONLY_PNG

@@ -26,7 +26,7 @@
  * original game, installed in --stock-game. Each mission gets a file
  * <output_dir>/<dir>/<mission>.yaml (xwau_mission_files.h). With --skyboxes,
  * it also writes the environments of the missions' [SkyBoxes] sections into
- * FILE, and the cube folders to convert with `environment_bake --faces` into
+ * FILE, and the sky and overlay folders that environment_bake converts into
  * the --skybox-folders file (xwau_skyboxes.h).
  *
  * Replacement workflow (both tools are built with AERON_BUILD_TOOLS):

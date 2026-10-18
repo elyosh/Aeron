@@ -18,7 +18,7 @@
 
 static const char* const kMissionDirs[] = { "Missions", "Melee" };
 
-/* The ddraw wrapper's starfield images, hidden under a cube
+/* The starfield images that the ddraw wrapper hides under a cube
  * (EffectsRenderer.cpp). */
 static const uint16_t kStarfieldImages[][2] = {
 	{ 6104, 0 }, { 6104, 5 }, { 6079, 2 }, { 6079, 3 }, { 6079, 4 }, { 6079, 5 }, { 6079, 6 }, { 6034, 3 },
@@ -137,8 +137,8 @@ static float sky_float(const XwauLines* lines, const char* key, float fallback) 
 	return end == value || errno == ERANGE ? fallback : f;
 }
 
-/* Whether the ddraw wrapper loads the cube folder `written`: it holds
- * exactly six files. */
+/* Whether the ddraw wrapper loads the cube folder `written`. It does when
+ * the folder holds exactly six files. */
 static bool folder_loads(const char* game, const char* written, char* found, size_t cap) {
 	if (!written[0] || !Xwau_FindDir(game, written, found, cap))
 		return false;
@@ -171,9 +171,9 @@ static void list_add(SkyList* list, uint32_t image, const char* what, const char
 	list->images[list->count++] = image;
 }
 
-/* Reads DisabledBackdrops or EnabledBackdrops as PopulateBackdropsMap does:
- * ';'-separated tokens, a token with '-' is an image read with atoi on each
- * side, and ALL or all ends the list with every image. */
+/* Reads DisabledBackdrops or EnabledBackdrops the way PopulateBackdropsMap
+ * does. Tokens are separated by ';'. A token with '-' is an image, with each
+ * side read by atoi. ALL or all means every image and ends the list. */
 static void read_list(const XwauLines* lines, const char* key, const char* base, SkyList* out) {
 	char value[2048];
 	XwauLines_Value(lines, key, XWAU_RULES_CPP, value, sizeof value);
@@ -247,12 +247,13 @@ static void report_unknown_keys(const XwauLines* lines, const char* base) {
 	}
 }
 
-/* Results of folder_index and definition_index besides an index. */
+/* Return values of folder_index and definition_index that are not an index. */
 enum { SKY_LEFT_OUT = -1, SKY_NO_MEMORY = -2 };
 
-/* The index of the cube folder `found`, added when new, and marked as used
- * as a sky or an overlay. A folder whose name cannot be encoded, or that has
- * the name of another folder, is reported and left out. */
+/* Returns the index of the cube folder `found`, adds it when it is new, and
+ * marks it as used for a sky or an overlay. A folder whose name cannot be
+ * encoded, or has the same name as another folder, is reported and left
+ * out. */
 static long folder_index(SkyState* st, const char* found, bool overlay, const char* base) {
 	for (size_t i = 0; i < st->folder_count; ++i) {
 		if (strcmp(st->folders[i].path, found) == 0) {
@@ -285,9 +286,10 @@ static long folder_index(SkyState* st, const char* found, bool overlay, const ch
 	return (long)st->folder_count++;
 }
 
-/* The index of the environment for a cube folder, its values and its
- * overlay, added when new: xwau.<folder>, or xwau.<folder>.<overlay> with an
- * overlay, for the first ones, then the same name with .2, .3 and so on. */
+/* Returns the index of the environment for a cube folder, its values and
+ * its overlay, and adds it when it is new. The first one is named
+ * xwau.<folder>, or xwau.<folder>.<overlay> with an overlay. The next ones
+ * with the same name get .2, .3 and so on. */
 static long definition_index(SkyState* st, size_t folder, float ambient_int, float ambient_min, long overlay,
 							 const float overlay_rotation[3], const char* base) {
 	size_t same_name = 0;
@@ -330,10 +332,11 @@ typedef struct SkyAllRegions {
 	float       overlay_angles[3];   /* OverlayRotationX, Y and Z */
 } SkyAllRegions;
 
-/* Reads region `r`: its own cube folder when it loads, else the AllRegions
- * one. The overlay is the region's own when it loads, else the AllRegions
- * one; its angles follow the cube, as in PrimarySurface.cpp. Returns false
- * when out of memory. */
+/* Reads region `r`. The region uses its own cube folder when it loads,
+ * otherwise the AllRegions one. The overlay follows the same rule. The
+ * overlay angles are the region's when the region has its own cube, and the
+ * AllRegions ones otherwise, as in PrimarySurface.cpp. Returns false when
+ * out of memory. */
 static bool read_region(SkyState* st, const XwauLines* lines, int r, const SkyAllRegions* all, const char* base,
 						SkyRegion* region) {
 	region->definition = -1;

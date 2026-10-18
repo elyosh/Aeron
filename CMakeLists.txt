@@ -257,6 +257,10 @@ set(AERON_SHADER_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_probe_occupancy_compose.comp.hlsl
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_probe_occupancy_downsample.comp.hlsl
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_planar_reflection_resolve.comp.hlsl
+    ${CMAKE_CURRENT_SOURCE_DIR}/shaders/env_build_store_face.comp.hlsl
+    ${CMAKE_CURRENT_SOURCE_DIR}/shaders/env_build_downsample.comp.hlsl
+    ${CMAKE_CURRENT_SOURCE_DIR}/shaders/env_build_irradiance.comp.hlsl
+    ${CMAKE_CURRENT_SOURCE_DIR}/shaders/env_build_ggx.comp.hlsl
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_directional_shadow.vert.hlsl
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_directional_shadow.frag.hlsl
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_directional_shadow_mask.vert.hlsl
@@ -908,6 +912,7 @@ add_library(aeron_scene STATIC
     src/scene/environment.c
     src/scene/probe_set.c
     src/scene/environment_library.c
+    src/scene/environment_builder.c
     src/scene/billboards3d.c
     src/scene/mesh.c
     src/scene/effect_atlas.c

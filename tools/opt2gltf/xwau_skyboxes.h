@@ -15,11 +15,11 @@
  *     (AmbientInt 0.15, AmbientMin 0.01). Otherwise it uses the AllRegions
  *     folder when it loads, with the AllRegions* values (AmbientInt 0.50,
  *     AmbientMin 0.01). Otherwise it has no cube.
- *   - A region's overlay is its Region<N>Overlay folder (default
- *     <folder>_overlay) when it loads, else the AllRegions one. Its angles
- *     follow the cube: Region<N>OverlayRotation* (default the region's
- *     angles) with the region's own cube, else AllRegionsOverlayRotation*
- *     (default the AllRegions angles).
+ *   - A region uses its Region<N>Overlay folder (default <folder>_overlay)
+ *     when it loads, otherwise the AllRegions overlay. With its own cube,
+ *     the region's overlay angles are Region<N>OverlayRotation*, which
+ *     default to the region's angles. Otherwise they are
+ *     AllRegionsOverlayRotation*, which default to the AllRegions angles.
  *   - Numbers are read as std::stof reads them: the leading number of the
  *     value, or the default when there is none.
  *   - DisabledBackdrops and EnabledBackdrops list "group-image" images
@@ -27,11 +27,10 @@
  *     means every image and ends the list.
  *
  * The manifest holds:
- *   - one environment per cube folder, set of values and overlay, named
- *     xwau.<folder>, or xwau.<folder>.<overlay folder> with an overlay, for
- *     the first one and the same name with .2, .3 and so on for the others.
- *     AmbientInt becomes diffuse_strength and AmbientMin the ambient_fill.
- *     Its textures are
+ *   - one environment per cube folder, set of values and overlay. The first
+ *     one is named xwau.<folder>, or xwau.<folder>.<overlay folder> with an
+ *     overlay; the next ones get .2, .3 and so on. AmbientInt becomes
+ *     diffuse_strength and AmbientMin the ambient_fill. Its textures are
  *     flight/environments/xwau/<folder>/{sky,diffuse,specular}.ktx2, which
  *     `environment_bake --faces` writes, and
  *     flight/environments/xwau/<overlay folder>/overlay.ktx2, which

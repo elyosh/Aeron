@@ -1,8 +1,9 @@
 /*
  * Tests the hook file rules that opt2gltf reproduces (xwau_config.h), its
- * skin selection (xwau_skins.h) and its skybox conversion (xwau_skyboxes.h). The inputs are fixed texts and
- * skin folders written to a scratch folder. The test is built with the tools as opt2gltf_xwau_test. It prints
- * each check and exits with a non-zero status when a check fails.
+ * skin selection (xwau_skins.h) and its skybox conversion (xwau_skyboxes.h).
+ * The inputs are fixed texts and folders written to a scratch folder. The
+ * test is built with the tools as opt2gltf_xwau_test. It prints each check
+ * and exits with a non-zero status when a check fails.
  */
 
 #include <math.h>
