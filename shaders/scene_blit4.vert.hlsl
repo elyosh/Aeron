@@ -26,6 +26,7 @@ struct Blit4Uniforms
     float4 depth;  /* per-corner NDC depth; zero for ordinary 2D */
     float4 tint;
     float4 bias;
+    float4 mode;   /* x = monochrome weight */
 };
 
 cbuffer Blit4 : register(b0, space1)
@@ -35,10 +36,11 @@ cbuffer Blit4 : register(b0, space1)
 
 struct VSOut
 {
-    float4 position : SV_Position;
-    float2 uv       : TEXCOORD0;
-    float4 tint     : TEXCOORD1;
-    float4 bias     : TEXCOORD2;
+    float4 position   : SV_Position;
+    float2 uv         : TEXCOORD0;
+    float4 tint       : TEXCOORD1;
+    float4 bias       : TEXCOORD2;
+    float  monochrome : TEXCOORD3;
 };
 
 VSOut main(uint vid : SV_VertexID)
@@ -59,5 +61,6 @@ VSOut main(uint vid : SV_VertexID)
     o.uv       = float2(cv.z, cv.w);
     o.tint     = u.tint;
     o.bias     = u.bias;
+    o.monochrome = u.mode.x;
     return o;
 }

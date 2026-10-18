@@ -274,7 +274,7 @@ typedef struct Blit2DInstance {
 	float src_u0, src_v0, src_u1, src_v1;
 	float tint_r, tint_g, tint_b, tint_a;
 	float bias_r, bias_g, bias_b, bias_a;
-	float trap_top_dx_left, trap_top_dx_right, trap_top_w, _trap_pad;
+	float trap_top_dx_left, trap_top_dx_right, trap_top_w, monochrome;
 } Blit2DInstance;
 
 typedef struct Blit2DQuad4Uniform {
@@ -283,6 +283,7 @@ typedef struct Blit2DQuad4Uniform {
 	float ndc_depth[4];
 	float tint_r, tint_g, tint_b, tint_a;
 	float bias_r, bias_g, bias_b, bias_a;
+	float monochrome, _mode_pad[3];
 } Blit2DQuad4Uniform;
 
 typedef struct Blit2DRunUniform {
@@ -303,7 +304,7 @@ typedef struct Blit2DRRectInstance {
 } Blit2DRRectInstance;
 
 typedef char Blit2DInstanceSizeCheck[sizeof(Blit2DInstance) == 80 ? 1 : -1];
-typedef char Blit2DQuad4UniformSizeCheck[sizeof(Blit2DQuad4Uniform) == 128 ? 1 : -1];
+typedef char Blit2DQuad4UniformSizeCheck[sizeof(Blit2DQuad4Uniform) == 144 ? 1 : -1];
 typedef char Blit2DRunUniformSizeCheck[sizeof(Blit2DRunUniform) == 16 ? 1 : -1];
 typedef char Blit2DRRectInstanceSizeCheck[sizeof(Blit2DRRectInstance) == 112 ? 1 : -1];
 
@@ -480,6 +481,7 @@ void AeronDrawList_AddSprite(AeronDrawList2D* l, const AeronDrawList2DSprite* s)
 	q->trap_top_dx_left  = s->trap_top_dx_left_px;
 	q->trap_top_dx_right = s->trap_top_dx_right_px;
 	q->trap_top_w        = s->trap_top_w;
+	q->monochrome        = s->monochrome;
 }
 
 void AeronDrawList_AddQuad4(AeronDrawList2D* l, const AeronDrawList2DQuad4* in) {
@@ -512,7 +514,8 @@ void AeronDrawList_AddQuad4(AeronDrawList2D* l, const AeronDrawList2DQuad4* in) 
 	q->bias_r = in->bias[0];
 	q->bias_g = in->bias[1];
 	q->bias_b = in->bias[2];
-	q->bias_a = in->bias[3];
+	q->bias_a     = in->bias[3];
+	q->monochrome = in->monochrome;
 }
 
 void AeronDrawList_AddRRect(AeronDrawList2D* l, const AeronDrawList2DRRect* in) {

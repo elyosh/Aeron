@@ -23,10 +23,11 @@ SamplerState      g_smp : register(s0, space2);
 
 struct VSOut
 {
-    float4 position : SV_Position;
-    float2 uv       : TEXCOORD0;
-    float4 tint     : TEXCOORD1;
-    float4 bias     : TEXCOORD2;
+    float4 position   : SV_Position;
+    float2 uv         : TEXCOORD0;
+    float4 tint       : TEXCOORD1;
+    float4 bias       : TEXCOORD2;
+    float  monochrome : TEXCOORD3;
 };
 
 float4 main(VSOut input) : SV_Target
@@ -34,7 +35,10 @@ float4 main(VSOut input) : SV_Target
     float4 s = g_tex.Sample(g_smp, input.uv);
     if (s.a > 0.97f) s.a = 1.0f;
 
-    float3 rgb = s.rgb * input.tint.rgb + input.bias.rgb * s.a;
+    /* Monochrome: the texel's largest channel, so the tint gives a single
+     * colour at the texel's brightness. Premultiplied, like s.rgb. */
+    float3 src = lerp(s.rgb, max(s.r, max(s.g, s.b)).xxx, input.monochrome);
+    float3 rgb = src * input.tint.rgb + input.bias.rgb * s.a;
     /* bias.a is an additive alpha bias (default 0 = no effect).
      * Callers reproducing color-key-blind OPAQUE blits pass 1 so
      * keyed-out (alpha-0) texels still land opaque — a layer beneath

@@ -9,10 +9,11 @@
  *   src_rect : (u0, v0, u1, v1)    texture UV
  *   tint     : (r, g, b, a)        multiplier
  *   bias     : (r, g, b, a)        additive (alpha-weighted)
- *   trap     : (top_dx_left, top_dx_right, top_w, _)
+ *   trap     : (top_dx_left, top_dx_right, top_w, monochrome)
  *                                  pixel-space top-edge horizontal
  *                                  inset + per-corner projective w
- *                                  for hyperbolic UV interpolation
+ *                                  for hyperbolic UV interpolation,
+ *                                  and the monochrome weight
  */
 
 struct BlitUniforms
@@ -35,10 +36,11 @@ cbuffer BlitRun : register(b0, space1)
 
 struct VSOut
 {
-    float4 position : SV_Position;
-    float2 uv       : TEXCOORD0;
-    float4 tint     : TEXCOORD1;
-    float4 bias     : TEXCOORD2;
+    float4 position   : SV_Position;
+    float2 uv         : TEXCOORD0;
+    float4 tint       : TEXCOORD1;
+    float4 bias       : TEXCOORD2;
+    float  monochrome : TEXCOORD3;
 };
 
 VSOut main(uint vid : SV_VertexID, uint iid : SV_InstanceID)
@@ -80,5 +82,6 @@ VSOut main(uint vid : SV_VertexID, uint iid : SV_InstanceID)
     o.uv       = uv;
     o.tint     = float4(u.tint.rgb * output_rgb_scale, u.tint.a);
     o.bias     = float4(u.bias.rgb * output_rgb_scale, u.bias.a);
+    o.monochrome = u.trap.w;
     return o;
 }
