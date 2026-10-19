@@ -22,6 +22,8 @@ typedef struct AeronRenderDataStats {
 	uint64_t upload_staged_bytes;
 	uint64_t upload_reserved_bytes;
 	uint32_t upload_chunk_count;
+	/* Upload chunks created instead of reused from the pool. Zero in steady state. */
+	uint32_t upload_chunk_create_count;
 	uint32_t buffer_copy_count;
 	uint32_t texture_copy_count;
 	uint32_t upload_copy_pass_count;

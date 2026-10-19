@@ -16,6 +16,11 @@
 #define AERON_MAX_COMPUTE_WRITE_BUFFERS 64
 #define AERON_UPLOAD_CHUNK_MIN_BYTES (64u * 1024u)
 #define AERON_UPLOAD_CHUNK_TARGET_BYTES (16u * 1024u * 1024u)
+/* Limits of the pool of upload chunks kept between command buffers. Larger
+ * chunks, usually from asset loading, are released after use. */
+#define AERON_UPLOAD_CHUNK_POOL_MAX 16
+#define AERON_UPLOAD_CHUNK_POOL_MAX_CHUNK_BYTES (4u * 1024u * 1024u)
+#define AERON_UPLOAD_CHUNK_POOL_MAX_BYTES (16u * 1024u * 1024u)
 
 typedef struct AeronVfsCaseDirectory AeronVfsCaseDirectory;
 struct AeronIso9660;
@@ -107,10 +112,11 @@ typedef struct AeronUploadCycleState {
 	uint8_t     cycled;
 } AeronUploadCycleState;
 
-/* Explicit command buffer wrapper. Upload chunks are retained until
- * submission/cancel; individual uploads suballocate them instead of creating
- * one transfer allocation per region. Compute-pass state is embedded so pass
- * encoding does not allocate in steady state. */
+/* Explicit command buffer wrapper. The command buffer owns its upload chunks
+ * until it is submitted or canceled, then returns them to the pool in
+ * g_aeron. Individual uploads suballocate the chunks instead of creating one
+ * transfer buffer per region. Compute-pass state is embedded so pass encoding
+ * does not allocate in steady state. */
 struct AeronCommandBuffer {
 	SDL_GPUCommandBuffer*  command_buffer;
 	AeronUploadChunk*      upload_chunks;
@@ -237,6 +243,11 @@ typedef struct AeronRuntime {
 	AeronPixelLayerUpload composition_pixel_upload;
 	int                   render_layer_count;
 	int                   pixel_layer_upload_count;
+	/* Upload chunks that no command buffer owns. They are mapped with cycling
+	 * when reused, so SDL picks a copy the GPU no longer reads. */
+	AeronUploadChunk      upload_chunk_pool[AERON_UPLOAD_CHUNK_POOL_MAX];
+	uint32_t              upload_chunk_pool_count;
+	uint64_t              upload_chunk_pool_bytes;
 	int                   logical_width;
 	int                   logical_height;
 	int                   window_aspect_width;

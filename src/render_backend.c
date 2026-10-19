@@ -177,6 +177,7 @@ static int Aeron_LoadBuiltinShaders(void) {
 }
 
 static AeronTextureFormat Aeron_FromSdlTextureFormat(SDL_GPUTextureFormat format);
+static void               Aeron_ReleaseUploadChunkPool(void);
 
 /* Applies the best available swapchain composition for the requested output
  * mode: HDR extended-linear when hdr is nonzero (no silent SDR fallback — the
@@ -1546,6 +1547,7 @@ int Aeron_RenderBackendInit(void) {
 void Aeron_RenderBackendShutdown(void) {
 	if (g_aeron.gpu_device) {
 		Aeron_ReleasePixelLayerUploads();
+		Aeron_ReleaseUploadChunkPool();
 
 		for (int i = 0; i < g_aeron.fullscreen_pipeline_count; ++i) {
 			if (g_aeron.fullscreen_pipelines[i].pipeline) {
@@ -2162,15 +2164,30 @@ static void Aeron_CommandBufferMarkFailed(AeronCommandBuffer* command_buffer) {
 	Aeron_CommandBufferFail(command_buffer, "GPU command buffer recording failed");
 }
 
-static void Aeron_ReleaseUploadChunks(AeronCommandBuffer* command_buffer) {
+/* Moves the command buffer's upload chunks to the pool, so that later command
+ * buffers reuse them instead of creating new transfer buffers. Releases the
+ * chunks that are too large or that don't fit in the pool. */
+static void Aeron_ReturnUploadChunks(AeronCommandBuffer* command_buffer) {
 	uint32_t i;
 
 	if (!command_buffer) {
 		return;
 	}
 	for (i = 0; i < command_buffer->upload_chunk_count; ++i) {
-		if (command_buffer->upload_chunks[i].transfer) {
-			SDL_ReleaseGPUTransferBuffer(g_aeron.gpu_device, command_buffer->upload_chunks[i].transfer);
+		const AeronUploadChunk* chunk = &command_buffer->upload_chunks[i];
+		if (!chunk->transfer) {
+			continue;
+		}
+		if (chunk->capacity <= AERON_UPLOAD_CHUNK_POOL_MAX_CHUNK_BYTES &&
+			g_aeron.upload_chunk_pool_count < AERON_UPLOAD_CHUNK_POOL_MAX &&
+			g_aeron.upload_chunk_pool_bytes + chunk->capacity <= AERON_UPLOAD_CHUNK_POOL_MAX_BYTES) {
+			AeronUploadChunk* pooled = &g_aeron.upload_chunk_pool[g_aeron.upload_chunk_pool_count++];
+			pooled->transfer         = chunk->transfer;
+			pooled->capacity         = chunk->capacity;
+			pooled->used             = 0;
+			g_aeron.upload_chunk_pool_bytes += chunk->capacity;
+		} else {
+			SDL_ReleaseGPUTransferBuffer(g_aeron.gpu_device, chunk->transfer);
 		}
 	}
 	SDL_free(command_buffer->upload_chunks);
@@ -2275,6 +2292,41 @@ static uint32_t Aeron_NextUploadChunkCapacity(AeronCommandBuffer* command_buffer
 	return capacity;
 }
 
+/* Takes the smallest pooled chunk that holds `required` bytes. Picking the
+ * smallest one lets each frame reuse the same chunks for the same uploads.
+ * Returns 0 if no pooled chunk is large enough. */
+static int Aeron_TakePooledUploadChunk(uint32_t required, AeronUploadChunk* out) {
+	uint32_t best = UINT32_MAX;
+	uint32_t i;
+
+	for (i = 0; i < g_aeron.upload_chunk_pool_count; ++i) {
+		const uint32_t capacity = g_aeron.upload_chunk_pool[i].capacity;
+		if (capacity >= required &&
+			(best == UINT32_MAX || capacity < g_aeron.upload_chunk_pool[best].capacity)) {
+			best = i;
+		}
+	}
+	if (best == UINT32_MAX) {
+		return 0;
+	}
+	*out = g_aeron.upload_chunk_pool[best];
+	g_aeron.upload_chunk_pool_bytes -= out->capacity;
+	g_aeron.upload_chunk_pool[best] = g_aeron.upload_chunk_pool[--g_aeron.upload_chunk_pool_count];
+	SDL_zero(g_aeron.upload_chunk_pool[g_aeron.upload_chunk_pool_count]);
+	return 1;
+}
+
+static void Aeron_ReleaseUploadChunkPool(void) {
+	uint32_t i;
+
+	for (i = 0; i < g_aeron.upload_chunk_pool_count; ++i) {
+		SDL_ReleaseGPUTransferBuffer(g_aeron.gpu_device, g_aeron.upload_chunk_pool[i].transfer);
+	}
+	SDL_zeroa(g_aeron.upload_chunk_pool);
+	g_aeron.upload_chunk_pool_count = 0;
+	g_aeron.upload_chunk_pool_bytes = 0;
+}
+
 static AeronUploadChunk* Aeron_CommandBufferAddUploadChunk(AeronCommandBuffer* command_buffer,
 														   uint32_t            required) {
 	SDL_GPUTransferBufferCreateInfo transfer_info;
@@ -2284,12 +2336,6 @@ static AeronUploadChunk* Aeron_CommandBufferAddUploadChunk(AeronCommandBuffer* c
 	uint32_t                        new_capacity;
 
 	if (!command_buffer || command_buffer->failed || !command_buffer->owns_wrapper) {
-		return NULL;
-	}
-	capacity = Aeron_NextUploadChunkCapacity(command_buffer, required);
-	if (capacity == 0) {
-		Aeron_LogError("aeron", "GPU upload chunk size overflow for %u bytes", required);
-		Aeron_CommandBufferMarkFailed(command_buffer);
 		return NULL;
 	}
 	if (command_buffer->upload_chunk_count == command_buffer->upload_chunk_capacity) {
@@ -2312,24 +2358,33 @@ static AeronUploadChunk* Aeron_CommandBufferAddUploadChunk(AeronCommandBuffer* c
 		command_buffer->upload_chunk_capacity = new_capacity;
 	}
 
-	SDL_zero(transfer_info);
-	transfer_info.usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD;
-	transfer_info.size  = capacity;
-	SDL_ClearError();
 	chunk = &command_buffer->upload_chunks[command_buffer->upload_chunk_count];
 	SDL_zero(*chunk);
-	chunk->transfer = SDL_CreateGPUTransferBuffer(g_aeron.gpu_device, &transfer_info);
-	if (!chunk->transfer) {
-		const char* error = SDL_GetError();
-		Aeron_CommandBufferFail(command_buffer,
-								"SDL_CreateGPUTransferBuffer failed for %u-byte upload chunk: %s", capacity,
-								error && error[0] ? error : "<no SDL error provided>");
-		return NULL;
+	if (!Aeron_TakePooledUploadChunk(required, chunk)) {
+		capacity = Aeron_NextUploadChunkCapacity(command_buffer, required);
+		if (capacity == 0) {
+			Aeron_LogError("aeron", "GPU upload chunk size overflow for %u bytes", required);
+			Aeron_CommandBufferMarkFailed(command_buffer);
+			return NULL;
+		}
+		SDL_zero(transfer_info);
+		transfer_info.usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD;
+		transfer_info.size  = capacity;
+		SDL_ClearError();
+		chunk->transfer = SDL_CreateGPUTransferBuffer(g_aeron.gpu_device, &transfer_info);
+		if (!chunk->transfer) {
+			const char* error = SDL_GetError();
+			Aeron_CommandBufferFail(command_buffer,
+									"SDL_CreateGPUTransferBuffer failed for %u-byte upload chunk: %s",
+									capacity, error && error[0] ? error : "<no SDL error provided>");
+			return NULL;
+		}
+		chunk->capacity = capacity;
+		g_aeron.render_data_stats.upload_chunk_create_count++;
 	}
-	chunk->capacity = capacity;
 	command_buffer->upload_chunk_count++;
-	command_buffer->upload_reserved_bytes += capacity;
-	g_aeron.render_data_stats.upload_reserved_bytes += capacity;
+	command_buffer->upload_reserved_bytes += chunk->capacity;
+	g_aeron.render_data_stats.upload_reserved_bytes += chunk->capacity;
 	g_aeron.render_data_stats.upload_chunk_count++;
 	return chunk;
 }
@@ -2365,8 +2420,11 @@ static int Aeron_CommandBufferBeginUploadSlice(AeronCommandBuffer* command_buffe
 		}
 	}
 
+	/* The first slice of a chunk in this command buffer cycles it: a pooled
+	 * chunk may still be read by a command buffer in flight. Later slices
+	 * keep the same copy, which already holds this command buffer's data. */
 	SDL_ClearError();
-	mapped = SDL_MapGPUTransferBuffer(g_aeron.gpu_device, chunk->transfer, false);
+	mapped = SDL_MapGPUTransferBuffer(g_aeron.gpu_device, chunk->transfer, chunk->used == 0);
 	if (!mapped) {
 		const char* error = SDL_GetError();
 		Aeron_CommandBufferFail(command_buffer,
@@ -2438,7 +2496,7 @@ static int Aeron_SubmitCommandBufferInternal(AeronCommandBuffer* command_buffer,
 			g_aeron.render_data_stats.immediate_upload_submission_count++;
 		}
 	}
-	Aeron_ReleaseUploadChunks(command_buffer);
+	Aeron_ReturnUploadChunks(command_buffer);
 	SDL_free(command_buffer);
 	return ok;
 }
@@ -2506,7 +2564,7 @@ void Aeron_CancelCommandBuffer(AeronCommandBuffer* command_buffer) {
 	if (command_buffer->command_buffer) {
 		SDL_CancelGPUCommandBuffer(command_buffer->command_buffer);
 	}
-	Aeron_ReleaseUploadChunks(command_buffer);
+	Aeron_ReturnUploadChunks(command_buffer);
 	SDL_free(command_buffer);
 }
 
