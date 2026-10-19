@@ -65,7 +65,7 @@ typedef struct MbReconstructUniforms {
 	uint32_t low_quality;
 	float    output_size[2];
 	float    _pad1[2];
-	uint32_t velocity_size[2];
+	uint32_t _pad2[2];
 	uint32_t direct_velocity;
 	uint32_t direct_gather;
 } MbReconstructUniforms;
@@ -958,18 +958,20 @@ int AeronScenePost_MbResolve(struct AeronScene3D* s, AeronCommandBuffer* cmd, Ae
 	/* The scene depth classifies taps in front of or behind each pixel. */
 	AeronTexture* texs[5]   = { Aeron_RenderTargetGetTexture(color), velocity, gather, s->ssao_noise_tex,
 								Aeron_DepthTargetGetTexture(s->depth_rt) };
-	AeronSampler* smps[5]   = { s->post_linear_sampler, s->post_linear_sampler, s->post_linear_sampler,
-								s->post_point_sampler, s->post_point_sampler };
+	/* FSR's render-resolution motion is read at the nearest texel. */
+	const int     direct_gather = direct_fsr_motion && !high;
+	AeronSampler* smps[5]       = { s->post_linear_sampler,
+									direct_fsr_motion ? s->post_point_sampler : s->post_linear_sampler,
+									direct_gather ? s->post_point_sampler : s->post_linear_sampler,
+									s->post_point_sampler, s->post_point_sampler };
 	MbReconstructUniforms u = {
 		.shutter_scale     = s->post.mb_shutter,
 		.tap_count         = high ? fmaxf(24.0f, 32.0f * resolution_scale) : 16.0f * resolution_scale,
 		.low_quality       = high ? 0u : 1u,
 		.max_length_pixels = max_length_pixels,
 		.output_size       = { (float)s->output_w, (float)s->output_h },
-		.velocity_size     = { (uint32_t)Aeron_TextureGetWidth(velocity),
-							   (uint32_t)Aeron_TextureGetHeight(velocity) },
 		.direct_velocity   = direct_fsr_motion ? 1u : 0u,
-		.direct_gather     = direct_fsr_motion && !high ? 1u : 0u,
+		.direct_gather     = direct_gather ? 1u : 0u,
 	};
 	return AeronScenePost_Fullscreen(cmd, s->mb_reconstruct_pipeline, s->mb_rt, texs, smps, 5, &u, sizeof u,
 									 "Motion blur reconstruct");

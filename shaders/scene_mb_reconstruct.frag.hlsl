@@ -31,6 +31,9 @@
  *   t0 color_rt, t1 velocity_rt (per-tap), t2 gather velocity, t3 noise,
  *   t4 scene depth (reverse-Z, render resolution; sampled by UV).
  * Velocity textures store UV displacement; lengths use output pixels.
+ * FSR's motion (direct_velocity, direct_gather) is at render resolution
+ * and negated; the host binds a point sampler for it, which picks the
+ * texel under each output pixel without per-tap integer arithmetic.
  * All inputs have one mip level; explicit LOD retains the sampler filtering
  * without requesting implicit derivatives inside the adaptive gather loops.
  */
@@ -43,7 +46,7 @@ cbuffer MbReconstructUniforms : register(b0, space3)
     uint low_quality;
     float2 output_size;
     float2 _pad1;
-    uint2 velocity_size;
+    uint2 _pad2;
     uint direct_velocity;
     uint direct_gather;
 };
@@ -72,23 +75,16 @@ static float cone(float dist, float vlen)
     return saturate(1.0f - dist / max(vlen, 1e-5f));
 }
 
-static int2 velocity_texel(float2 uv)
-{
-    return int2(min(uint2(saturate(uv) * float2(velocity_size)), velocity_size - 1u));
-}
-
 static float2 load_velocity(float2 uv)
 {
-    if (direct_velocity != 0u)
-        return -g_velocity.Load(int3(velocity_texel(uv), 0)).rg;
-    return g_velocity.SampleLevel(g_vel_s, uv, 0.0f).rg;
+    float2 v = g_velocity.SampleLevel(g_vel_s, uv, 0.0f).rg;
+    return direct_velocity != 0u ? -v : v;
 }
 
 static float2 load_gather(float2 uv)
 {
-    if (direct_gather != 0u)
-        return -g_gather.Load(int3(velocity_texel(uv), 0)).rg;
-    return g_gather.SampleLevel(g_gath_s, uv, 0.0f).rg;
+    float2 v = g_gather.SampleLevel(g_gath_s, uv, 0.0f).rg;
+    return direct_gather != 0u ? -v : v;
 }
 
 /* Relative depth band over which a tap goes from in front of the pixel to
