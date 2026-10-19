@@ -30,6 +30,10 @@ typedef struct AeronFontGlyph {
 	uint16_t atlas_x, atlas_y; /* top-left in atlas pixels */
 	uint16_t atlas_w, atlas_h; /* sub-rect dims in atlas pixels */
 	uint16_t advance;          /* horizontal advance in atlas pixels */
+	/* The rectangle's top-left corner from the pen position on the baseline,
+	 * in atlas pixels. 0 in TFNT files, whose glyphs are placed by their
+	 * cell. */
+	int16_t offset_x, offset_y;
 } AeronFontGlyph;
 
 typedef struct AeronFontAtlas {

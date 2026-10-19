@@ -928,6 +928,7 @@ add_library(aeron_scene STATIC
     src/scene/temporal.c
     src/scene/draw_list2d.c
     src/scene/font_atlas.c
+    src/scene/font_face.c
     src/scene/rgba_upload.c
     src/scene/runtime_atlas.c
     src/scene/text2d.c
