@@ -12,8 +12,8 @@
  *   FS storage 0: per-mesh material entries (t8)
  *   FS storage 1: per-mesh packed variant map (t9)
  *   FS storage 2: frame point lights (t10)
- *   FS storage 3: clustered-light headers (t11)
- *   FS storage 4: clustered-light indices (t12)
+ *   FS storage 3: clustered-light depth bins and tile masks (t11)
+ *   FS storage 4: unused, the same buffer as storage 3 (t12)
  *   FS b0 space3: AeronSceneDirectionalShadowUniform
  *   FS b1 space3: fixed PBR environment and tuning
  *   FS b2 space3: clustered-light grid and camera data
@@ -968,11 +968,6 @@ static int pbr_bind_draw(struct AeronScene3D* s, AeronRenderPass* pass, int kind
 		AeronScenePlanarReflection_LightingFields(s, set, set_key & 1, lighting.planar_rect,
 												  lighting.planar_params, lighting.planar_eye,
 												  lighting.planar_screen);
-		if (s->planar_reflection.drawing) {
-			/* The mirrored view lights its instances without the main view's
-			 * light clusters. */
-			lighting.cluster.flags = 0u;
-		}
 		Aeron_BindUniformData(pass, AERON_SHADER_STAGE_FRAGMENT, 2, &lighting, sizeof lighting);
 		*bound_set = set_key;
 	}

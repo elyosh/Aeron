@@ -14,13 +14,10 @@
 
 #define AERON_SCENE_MAX_INSTANCES 2048
 #define AERON_SCENE_MAX_LIGHTS AERON_SCENE_POINT_LIGHT_CAPACITY
-#define AERON_SCENE_CLUSTER_MAX_LIGHTS AERON_SCENE_CLUSTER_LIGHT_CAPACITY
-#define AERON_SCENE_CLUSTER_MAX_GLOBAL_LIGHTS 4u
 #define AERON_SCENE_CLUSTER_DEFAULT_TILE_SIZE 32u
 #define AERON_SCENE_CLUSTER_MAX_TILE_SIZE 64u
 #define AERON_SCENE_CLUSTER_TILE_ALIGNMENT 8u
 #define AERON_SCENE_CLUSTER_REFERENCE_HEIGHT 1080u
-#define AERON_SCENE_CLUSTER_BRUTE_FORCE_MAX_LIGHTS 16u
 #define AERON_SCENE_CLUSTER_DEFAULT_DEPTH_SLICES 24u
 #define AERON_SCENE_CLUSTER_THREADS 64u
 #define AERON_SCENE_MAX_BILLBOARDS 2304
@@ -244,19 +241,17 @@ typedef struct AeronScenePointLightGPU {
 	float direction[4];
 } AeronScenePointLightGPU;
 
+/* A point light in view space, in the point light order. w bounds the
+ * whole light: its range plus a tube's half length. */
 typedef struct AeronSceneClusterLightGPU {
-	/* w bounds the whole light: its range plus a tube's half length. */
-	float    view_position_range[4];
-	uint32_t point_light_index;
-	float    luminance;
-	float    source_radius;
-	float    _pad;
+	float view_position_range[4];
 } AeronSceneClusterLightGPU;
 
-/* The cluster build's output, one uint buffer: per cluster two header
- * words (retained count | tube count << 16, candidate count), then per
- * cluster AERON_SCENE_CLUSTER_MAX_LIGHTS light indices. */
-#define AERON_SCENE_CLUSTER_HEADER_WORDS 2u
+/* The cluster build's output, one uint buffer (scene_clustered_lights.hlsli):
+ * per depth bin two words, the index ranges of the spheres and of the tubes
+ * that reach it, then per screen tile a bitmask of the lights that reach
+ * it, mask_words words long. */
+#define AERON_SCENE_CLUSTER_BIN_WORDS 2u
 
 typedef struct AeronSceneClusterUniformGPU {
 	float    camera_position[3];
@@ -275,13 +270,11 @@ typedef struct AeronSceneClusterUniformGPU {
 	uint32_t grid_y;
 	uint32_t grid_z;
 	uint32_t point_light_count;
-	/* Point lights from tube_start on are tubes; the first
-	 * global_sphere_count global lights are spheres. */
+	/* Point lights from tube_start on are tubes. */
 	uint32_t tube_start;
-	uint32_t global_sphere_count;
+	uint32_t mask_words;
 	uint32_t tile_size;
 	uint32_t flags;
-	uint32_t global_light_indices[AERON_SCENE_CLUSTER_MAX_GLOBAL_LIGHTS];
 } AeronSceneClusterUniformGPU;
 
 /* Fragment b2: the scene lighting block. Mirrors ClusteredLightUniform
@@ -317,15 +310,14 @@ typedef struct AeronSceneLightingUniformGPU {
 	float planar_screen[4];
 } AeronSceneLightingUniformGPU;
 
-/* Layout checks against the HLSL blocks (ClusteredLightUniform, 112 bytes;
+/* Layout checks against the HLSL blocks (ClusteredLightUniform, 96 bytes;
  * with the environment, the debug material, the emission, the render size,
- * the probe set, its occlusion grid and the reflecting floor, 432 bytes). */
-typedef char AeronSceneClusterUniformSizeCheck[sizeof(AeronSceneClusterUniformGPU) == 112 ? 1 : -1];
-typedef char AeronSceneLightingUniformSizeCheck[sizeof(AeronSceneLightingUniformGPU) == 432 ? 1 : -1];
+ * the probe set, its occlusion grid and the reflecting floor, 416 bytes). */
+typedef char AeronSceneClusterUniformSizeCheck[sizeof(AeronSceneClusterUniformGPU) == 96 ? 1 : -1];
+typedef char AeronSceneLightingUniformSizeCheck[sizeof(AeronSceneLightingUniformGPU) == 416 ? 1 : -1];
 
 enum {
-	AERON_SCENE_CLUSTER_ENABLED    = 1u << 0,
-	AERON_SCENE_CLUSTER_DEBUG_VIEW = 1u << 1,
+	AERON_SCENE_CLUSTER_DEBUG_VIEW = 1u << 0,
 };
 
 /* FS b1, shared by the scene shadow module and the PBR draw path. */
@@ -507,9 +499,6 @@ struct AeronScene3D {
 	float                        cluster_near_z;
 	uint32_t                     cluster_far_shrink_frames;
 	uint32_t                     cluster_count;
-	uint32_t                     cluster_global_count;
-	uint32_t                     cluster_global_indices[AERON_SCENE_CLUSTER_MAX_GLOBAL_LIGHTS];
-	uint32_t                     cluster_light_count;
 	int                          cluster_active;
 	int                          cluster_tried;
 	int                          cluster_ready;
@@ -766,7 +755,6 @@ uint32_t AeronSceneStorage_ShadowTableBase(const struct AeronScene3D* s, uint16_
 										   uint32_t* component_count);
 
 /* clustered_lights.c */
-void AeronSceneClusteredLights_Classify(struct AeronScene3D* s);
 int  AeronSceneClusteredLights_Ensure(struct AeronScene3D* s);
 int  AeronSceneClusteredLights_Build(struct AeronScene3D* s, AeronCommandBuffer* cmd);
 void AeronSceneClusteredLights_Bind(struct AeronScene3D* s, AeronRenderPass* pass);

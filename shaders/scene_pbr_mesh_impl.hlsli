@@ -24,8 +24,8 @@
  *   t12 space2 — material storage (after twelve sampled textures)
  *   t13 space2 — packed variant-map storage
  *   t14 space2 — scene point-light storage
- *   t15 space2 — cluster headers
- *   t16 space2 — cluster light indices
+ *   t15 space2 — cluster depth bins and tile masks
+ *   t16 space2 — unused (the same buffer as t15)
  *   t17 space2 — mesh screen rectangles (scene_pbr_screen.hlsli)
  *   t18 space2 — scene screen frame
  *
@@ -1053,7 +1053,7 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
     float3 lit = base_rgb + spec_rgb + spec_ibl_rgb;
 
 #if AERON_PBR_DEBUG_VIEWS
-    if (fs_cluster_debug_view != 0u && fs_cluster_enabled != 0u) {
+    if (fs_cluster_debug_view != 0u) {
         _out.color = float4(clustered_light_debug_color(i.position.xy, i.world_pos), 1.0f);
         return _out;
     }

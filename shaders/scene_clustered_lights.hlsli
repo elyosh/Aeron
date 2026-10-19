@@ -1,9 +1,6 @@
 #ifndef AERON_SCENE_CLUSTERED_LIGHTS_INCLUDED
 #define AERON_SCENE_CLUSTERED_LIGHTS_INCLUDED
 
-#define AERON_CLUSTER_MAX_LIGHTS 32u
-#define AERON_CLUSTER_MAX_GLOBAL_LIGHTS 4u
-
 #ifndef AERON_CLUSTER_UNIFORM_BINDING
 #define AERON_CLUSTER_UNIFORM_BINDING register(b2, space3)
 #endif
@@ -25,13 +22,11 @@ cbuffer ClusteredLightUniform : AERON_CLUSTER_UNIFORM_BINDING {
 	uint   fs_cluster_grid_y;
 	uint   fs_cluster_grid_z;
 	uint   fs_cluster_point_count;
-	/* The point lights from this index on are tubes, after the spheres;
-	 * the first global_sphere_count global lights are spheres. */
+	/* The point lights from this index on are tubes, after the spheres. */
 	uint   fs_cluster_tube_start;
-	uint   fs_cluster_global_sphere_count;
+	uint   fs_cluster_mask_words;
 	uint   fs_cluster_tile_size;
 	uint   fs_cluster_flags;
-	uint4  fs_cluster_global_indices;
 #ifdef AERON_SCENE_LIGHTING_ENVIRONMENT
 	/* Image-based lighting environment (AeronScenePbrEnvironment):
 	 * x = diffuse strength (0 = no diffuse cube), y = specular strength,
@@ -74,19 +69,30 @@ cbuffer ClusteredLightUniform : AERON_CLUSTER_UNIFORM_BINDING {
 #endif
 };
 
-#define fs_cluster_enabled (fs_cluster_flags & 1u)
-#define fs_cluster_debug_view ((fs_cluster_flags >> 1u) & 1u)
-#define fs_cluster_global_count ((fs_cluster_flags >> 8u) & 0xffu)
-#define fs_cluster_local_count ((fs_cluster_flags >> 16u) & 0xffffu)
+#define fs_cluster_debug_view (fs_cluster_flags & 1u)
 
-/* The cluster build's output buffer: per cluster AERON_CLUSTER_HEADER_WORDS
- * header words (retained count | tube count << 16, candidate count), then
- * per cluster AERON_CLUSTER_MAX_LIGHTS light indices. */
-#define AERON_CLUSTER_HEADER_WORDS 2u
+/* The cluster build's output buffer. Lights are sorted by view depth
+ * within the spheres and within the tubes. First, per depth bin, two
+ * words: the index range of the spheres that reach the bin, then that of
+ * the tubes, each first | last << 16 (first > last when empty). Then, per
+ * screen tile, a bitmask of the lights that reach the tile,
+ * fs_cluster_mask_words words long. A light reaches a fragment if it is in
+ * both its tile's mask and its bin's range. */
+#define AERON_CLUSTER_BIN_WORDS 2u
+#define AERON_CLUSTER_EMPTY_RANGE 0xffffu
 
-uint clustered_light_index_base(uint cluster_index) {
-	return AERON_CLUSTER_HEADER_WORDS * fs_cluster_grid_x * fs_cluster_grid_y * fs_cluster_grid_z +
-		   cluster_index * AERON_CLUSTER_MAX_LIGHTS;
+uint clustered_light_mask_base(uint tile_index) {
+	return AERON_CLUSTER_BIN_WORDS * fs_cluster_grid_z + tile_index * fs_cluster_mask_words;
+}
+
+/* The bits of a mask word that hold the lights first to last. */
+uint clustered_light_range_bits(uint word, uint first, uint last) {
+	uint word_first = word << 5u;
+	uint lo         = first > word_first ? first - word_first : 0u;
+	uint hi         = last + 1u > word_first ? last + 1u - word_first : 0u;
+	uint below_hi   = hi >= 32u ? 0xffffffffu : (1u << hi) - 1u;
+	uint below_lo   = lo >= 32u ? 0xffffffffu : (1u << lo) - 1u;
+	return below_hi & ~below_lo;
 }
 
 #ifndef AERON_CLUSTER_NO_FRAGMENT_BUFFERS
@@ -101,42 +107,48 @@ uint clustered_light_depth_slice(float view_depth) {
 	return min((uint)max(floor(slice_value), 0.0f), fs_cluster_grid_z - 1u);
 }
 
-uint clustered_light_fragment_index(float2 screen_position, float3 world_position) {
-	float2 viewport_position = screen_position - float2(fs_cluster_viewport_x, fs_cluster_viewport_y);
-	uint   tile_x            = min((uint)viewport_position.x / fs_cluster_tile_size, fs_cluster_grid_x - 1u);
-	uint   tile_y            = min((uint)viewport_position.y / fs_cluster_tile_size, fs_cluster_grid_y - 1u);
-	float  view_depth        = dot(world_position - fs_cluster_camera_position, fs_cluster_camera_forward);
-	uint   tile_z            = clustered_light_depth_slice(view_depth);
-	return (tile_z * fs_cluster_grid_y + tile_y) * fs_cluster_grid_x + tile_x;
-}
-
-uint2 clustered_light_fragment_header(float2 screen_position, float3 world_position, out uint cluster_index) {
+/* The fragment's lights: returns its tile's mask base, and its bin's
+ * sphere and tube ranges in `ranges`. */
+uint clustered_light_fragment(float2 screen_position, float3 world_position, out uint2 ranges) {
 	float2 viewport_position = screen_position - float2(fs_cluster_viewport_x, fs_cluster_viewport_y);
 	if (any(viewport_position < 0.0f.xx) ||
 		any(viewport_position >= float2(fs_cluster_viewport_width, fs_cluster_viewport_height))) {
-		cluster_index = 0u;
-		return uint2(0u, 0u);
+		ranges = uint2(AERON_CLUSTER_EMPTY_RANGE, AERON_CLUSTER_EMPTY_RANGE);
+		return 0u;
 	}
-	cluster_index = clustered_light_fragment_index(screen_position, world_position);
-	return uint2(fs_cluster_data[AERON_CLUSTER_HEADER_WORDS * cluster_index],
-				 fs_cluster_data[AERON_CLUSTER_HEADER_WORDS * cluster_index + 1u]);
+	uint  tile_x     = min((uint)viewport_position.x / fs_cluster_tile_size, fs_cluster_grid_x - 1u);
+	uint  tile_y     = min((uint)viewport_position.y / fs_cluster_tile_size, fs_cluster_grid_y - 1u);
+	float view_depth = dot(world_position - fs_cluster_camera_position, fs_cluster_camera_forward);
+	uint  bin        = clustered_light_depth_slice(view_depth);
+	ranges = uint2(fs_cluster_data[AERON_CLUSTER_BIN_WORDS * bin], fs_cluster_data[AERON_CLUSTER_BIN_WORDS * bin + 1u]);
+	return clustered_light_mask_base(tile_y * fs_cluster_grid_x + tile_x);
+}
+
+uint clustered_light_range_count(uint range, uint mask_base) {
+	uint first = range & 0xffffu;
+	uint last  = range >> 16u;
+	uint count = 0u;
+	for (uint word = first >> 5u; first <= last && word <= (last >> 5u); ++word) {
+		count += countbits(fs_cluster_data[mask_base + word] & clustered_light_range_bits(word, first, last));
+	}
+	return count;
 }
 
 float3 clustered_light_debug_color(float2 screen_position, float3 world_position) {
 	if (fs_cluster_point_count == 0u)
 		return 0.0f.xxx;
-	uint  cluster_index;
-	uint2 header     = clustered_light_fragment_header(screen_position, world_position, cluster_index);
-	uint  candidates = header.y;
-	if (candidates > AERON_CLUSTER_MAX_LIGHTS)
+	uint2 ranges;
+	uint  mask_base = clustered_light_fragment(screen_position, world_position, ranges);
+	uint  count     = clustered_light_range_count(ranges.x, mask_base) + clustered_light_range_count(ranges.y, mask_base);
+	if (count > 32u)
 		return float3(1.0f, 0.0f, 0.0f);
-	if (candidates > 16u)
+	if (count > 16u)
 		return float3(1.0f, 0.35f, 0.0f);
-	if (candidates > 8u)
+	if (count > 8u)
 		return float3(1.0f, 0.9f, 0.0f);
-	if (candidates > 4u)
+	if (count > 4u)
 		return float3(0.1f, 1.0f, 0.1f);
-	if (candidates > 0u)
+	if (count > 0u)
 		return float3(0.1f, 0.35f, 1.0f);
 	return 0.0f.xxx;
 }

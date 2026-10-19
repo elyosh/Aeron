@@ -18,8 +18,8 @@
 #include <string.h>
 
 typedef char AeronScenePointLightGPUSizeCheck[sizeof(AeronScenePointLightGPU) == 64 ? 1 : -1];
-typedef char AeronSceneClusterLightGPUSizeCheck[sizeof(AeronSceneClusterLightGPU) == 32 ? 1 : -1];
-typedef char AeronSceneClusterUniformGPUSizeCheck[sizeof(AeronSceneClusterUniformGPU) == 112 ? 1 : -1];
+typedef char AeronSceneClusterLightGPUSizeCheck[sizeof(AeronSceneClusterLightGPU) == 16 ? 1 : -1];
+typedef char AeronSceneClusterUniformGPUSizeCheck[sizeof(AeronSceneClusterUniformGPU) == 96 ? 1 : -1];
 
 /* struct AeronScene3D lives in internal.h (shared with
  * the material-class translation units). */
@@ -355,7 +355,6 @@ AeronScene3D* AeronScene_Create(const AeronScene3DDesc* desc) {
 	s->clear_rgba[1]             = 0.015f;
 	s->clear_rgba[2]             = 0.03f;
 	s->clear_rgba[3]             = 1.0f;
-	s->cluster_desc.enabled      = 1;
 	s->cluster_desc.depth_slices = AERON_SCENE_CLUSTER_DEFAULT_DEPTH_SLICES;
 
 	if (!scene_create_targets(s)) {
@@ -530,6 +529,26 @@ static int scene_light_is_tube(const AeronSceneLight* light) {
 	return length_sq > 0.0f && isfinite(length_sq);
 }
 
+/* A light's place in the point light order: spheres, then tubes, each by
+ * view depth, so the lights reaching a depth bin have nearby indices. */
+typedef struct SceneLightOrder {
+	uint32_t tube;
+	float    depth;
+	uint32_t light;
+} SceneLightOrder;
+
+static int scene_light_order_compare(const void* a, const void* b) {
+	const SceneLightOrder* x = (const SceneLightOrder*)a;
+	const SceneLightOrder* y = (const SceneLightOrder*)b;
+	if (x->tube != y->tube) {
+		return x->tube < y->tube ? -1 : 1;
+	}
+	if (x->depth != y->depth) {
+		return x->depth < y->depth ? -1 : 1;
+	}
+	return x->light < y->light ? -1 : (x->light > y->light ? 1 : 0);
+}
+
 /* The unit direction of a one-sided light into `out`, returning one, or
  * zero for a light emitting all around (`out` untouched). A tube's
  * direction loses its part along the axis. */
@@ -672,7 +691,6 @@ int AeronScene_SetClusteredLights(AeronScene3D* s, const AeronSceneClusteredLigh
 		return 0;
 	}
 	s->cluster_desc            = *desc;
-	s->cluster_desc.enabled    = desc->enabled != 0;
 	s->cluster_desc.debug_view = desc->debug_view != 0;
 	return 1;
 }
@@ -692,7 +710,6 @@ void AeronScene_GetClusteredLightStats(const AeronScene3D* s, AeronSceneClustere
 	out->grid_z                = s->cluster_uniform.grid_z;
 	out->effective_tile_size   = s->cluster_uniform.tile_size;
 	out->cluster_count         = s->cluster_count;
-	out->global_light_count    = s->cluster_global_count;
 	out->clustered_active      = (uint32_t)(s->cluster_active != 0);
 	out->allocated_buffer_bytes = (uint64_t)s->cluster_light_buffer_cap + s->cluster_data_buffer_cap;
 }
@@ -1811,14 +1828,21 @@ int AeronSceneStorage_Prepare(AeronScene3D* s, AeronCommandBuffer* cmd) {
 	float view_rotation[9];
 	AeronSceneInternal_QuatToMat3(s->camera.ori, view_rotation);
 	/* Spheres first, then tubes, so the shader takes each in its own loop. */
-	uint32_t tube_start = 0;
-	for (uint32_t i = 0; i < point_count; ++i) {
-		tube_start += scene_light_is_tube(&s->lights[i]) ? 0u : 1u;
-	}
-	uint32_t next_sphere = 0, next_tube = tube_start;
+	SceneLightOrder order[AERON_SCENE_MAX_LIGHTS];
+	uint32_t        tube_start = 0;
 	for (uint32_t light = 0; light < point_count; ++light) {
-		const AeronSceneLight*     source      = &s->lights[light];
-		const uint32_t             i           = scene_light_is_tube(source) ? next_tube++ : next_sphere++;
+		const AeronSceneLight* source = &s->lights[light];
+		const float            dx     = source->pos[0] - s->camera.pos[0];
+		const float            dy     = source->pos[1] - s->camera.pos[1];
+		const float            dz     = source->pos[2] - s->camera.pos[2];
+		const float depth = view_rotation[6] * dx + view_rotation[7] * dy + view_rotation[8] * dz;
+		order[light]      = (SceneLightOrder) { (uint32_t)scene_light_is_tube(source),
+                                                isfinite(depth) ? depth : 0.0f, light };
+		tube_start += order[light].tube ? 0u : 1u;
+	}
+	qsort(order, point_count, sizeof order[0], scene_light_order_compare);
+	for (uint32_t i = 0; i < point_count; ++i) {
+		const AeronSceneLight*     source      = &s->lights[order[i].light];
 		AeronScenePointLightGPU*   destination = &s->point_light_staging[i];
 		AeronSceneClusterLightGPU* cluster     = &s->cluster_light_staging[i];
 		destination->position_range[0]         = source->pos[0];
@@ -1856,15 +1880,9 @@ int AeronSceneStorage_Prepare(AeronScene3D* s, AeronCommandBuffer* cmd) {
 												view_rotation[row * 3 + 2] * dz;
 		}
 		cluster->view_position_range[3] = source->radius + half_length;
-		cluster->point_light_index      = i;
-		cluster->luminance =
-			0.2126f * source->color[0] + 0.7152f * source->color[1] + 0.0722f * source->color[2];
-		cluster->source_radius               = source_radius;
-		cluster->_pad                        = 0.0f;
 	}
 	s->point_light_count = point_count;
 	s->point_tube_start  = tube_start;
-	AeronSceneClusteredLights_Classify(s);
 
 	if (s->point_light_count == 0) {
 		if (!scene_storage_reserve((void**)&s->point_light_staging, &s->point_light_staging_cap, 1u,
@@ -1879,9 +1897,7 @@ int AeronSceneStorage_Prepare(AeronScene3D* s, AeronCommandBuffer* cmd) {
 	const uint32_t table_bytes = s->mesh_table_vec4_count * (uint32_t)sizeof *s->mesh_table_staging;
 	const uint32_t point_bytes =
 		(s->point_light_count ? s->point_light_count : 1u) * (uint32_t)sizeof *s->point_light_staging;
-	const uint32_t cluster_light_bytes =
-		(s->cluster_light_count ? s->cluster_light_count : (s->point_light_count ? 1u : 0u)) *
-		(uint32_t)sizeof *s->cluster_light_staging;
+	const uint32_t cluster_light_bytes = s->point_light_count * (uint32_t)sizeof *s->cluster_light_staging;
 	if (!scene_storage_ensure_buffer(&s->mesh_table_buffer, &s->mesh_table_buffer_cap, table_bytes,
 									 "scene.mesh_tables")) {
 		scene_storage_report_failure(s, "scene.mesh_tables", table_bytes);

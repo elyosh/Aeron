@@ -689,50 +689,40 @@ void accumulate_tube_light(uint light_index, float3 N, float3 N_spec, float3 V, 
                 (spec_scale * mp.spec_intensity);
 }
 
+/* The lights of one kind in a fragment's range (first | last << 16) that
+ * its tile's mask holds. */
+void accumulate_light_range(uint range, uint mask_base, bool tubes, float3 N, float3 N_spec, float3 V,
+                            float3 R, float3 world_pos, PbrMaterialParams mp,
+                            inout float3 diff, inout float3 spec_out)
+{
+    uint first = range & 0xffffu;
+    uint last  = range >> 16u;
+    if (first > last)
+        return;
+    for (uint word = first >> 5u; word <= (last >> 5u); ++word) {
+        uint mask = fs_cluster_data[mask_base + word] & clustered_light_range_bits(word, first, last);
+        while (mask != 0u) {
+            uint light_index = (word << 5u) + firstbitlow(mask);
+            mask &= mask - 1u;
+            if (tubes)
+                accumulate_tube_light(light_index, N, N_spec, V, R, world_pos, mp, diff, spec_out);
+            else
+                accumulate_point_light(light_index, N, N_spec, V, world_pos, mp, diff, spec_out);
+        }
+    }
+}
+
 float3 accumulate_point_lights(float3 N, float3 N_spec, float3 V, float3 world_pos,
                                float2 screen_position,
                                PbrMaterialParams mp,
                                inout float3 spec_out)
 {
-    /* Each light list holds its spheres, then its tubes. */
     float3 diff = float3(0.0f, 0.0f, 0.0f);
     float3 R    = reflect(-V, N_spec);
-    if (fs_cluster_enabled != 0u) {
-        uint global_count  = min(fs_cluster_global_count, AERON_CLUSTER_MAX_GLOBAL_LIGHTS);
-        uint global_sphere = min(fs_cluster_global_sphere_count, global_count);
-        for (uint gi = 0u; gi < global_sphere; ++gi) {
-            accumulate_point_light(fs_cluster_global_indices[gi], N, N_spec, V, world_pos,
-                                   mp, diff, spec_out);
-        }
-        for (uint gt = global_sphere; gt < global_count; ++gt) {
-            accumulate_tube_light(fs_cluster_global_indices[gt], N, N_spec, V, R, world_pos,
-                                  mp, diff, spec_out);
-        }
-        uint cluster_index;
-        uint2 header = clustered_light_fragment_header(screen_position, world_pos,
-                                                        cluster_index);
-        uint count   = min(header.x & 0xffffu, AERON_CLUSTER_MAX_LIGHTS);
-        uint spheres = count - min(header.x >> 16u, count);
-        uint base    = clustered_light_index_base(cluster_index);
-        for (uint pi = 0u; pi < spheres; ++pi) {
-            accumulate_point_light(fs_cluster_data[base + pi], N, N_spec, V, world_pos,
-                                   mp, diff, spec_out);
-        }
-        for (uint pt = spheres; pt < count; ++pt) {
-            accumulate_tube_light(fs_cluster_data[base + pt], N, N_spec, V, R, world_pos,
-                                  mp, diff, spec_out);
-        }
-    } else {
-        uint tube_start = min(fs_cluster_tube_start, fs_cluster_point_count);
-        for (uint light_index = 0u; light_index < tube_start; ++light_index) {
-            accumulate_point_light(light_index, N, N_spec, V, world_pos,
-                                   mp, diff, spec_out);
-        }
-        for (uint tube_index = tube_start; tube_index < fs_cluster_point_count; ++tube_index) {
-            accumulate_tube_light(tube_index, N, N_spec, V, R, world_pos,
-                                  mp, diff, spec_out);
-        }
-    }
+    uint2  ranges;
+    uint   mask_base = clustered_light_fragment(screen_position, world_pos, ranges);
+    accumulate_light_range(ranges.x, mask_base, false, N, N_spec, V, R, world_pos, mp, diff, spec_out);
+    accumulate_light_range(ranges.y, mask_base, true, N, N_spec, V, R, world_pos, mp, diff, spec_out);
     return diff;
 }
 #endif

@@ -28,9 +28,8 @@ extern "C" {
 typedef struct AeronScene3D AeronScene3D;
 
 enum {
-	AERON_SCENE_POINT_LIGHT_CAPACITY   = 256,
-	AERON_SCENE_CLUSTER_LIGHT_CAPACITY = 32,
-	AERON_SCENE_MAX_PROBE_SETS         = 8,
+	AERON_SCENE_POINT_LIGHT_CAPACITY = 256,
+	AERON_SCENE_MAX_PROBE_SETS       = 8,
 };
 
 /* Per-component payload packed into the scene's per-frame storage
@@ -73,7 +72,6 @@ typedef struct AeronSceneLight {
 } AeronSceneLight;
 
 typedef struct AeronSceneClusteredLightDesc {
-	int      enabled;
 	uint32_t depth_slices;
 	/* Cluster occupancy view, drawn by the debug shader variant
 	 * (AERON_DEBUG_UI builds only). */
@@ -88,7 +86,6 @@ typedef struct AeronSceneClusteredLightStats {
 	uint32_t grid_z;
 	uint32_t effective_tile_size;
 	uint32_t cluster_count;
-	uint32_t global_light_count;
 	uint32_t clustered_active;
 	uint64_t allocated_buffer_bytes;
 } AeronSceneClusteredLightStats;
@@ -344,8 +341,8 @@ int AeronScene_MeshLight(const AeronSceneMesh* mesh, uint32_t index, const float
 						 float units_per_meter, const AeronSceneMeshTable* table, float intensity_scale,
 						 AeronSceneLight* out);
 
-/* Persistent clustered-forward point-light configuration. Tile size and the
- * low-light brute-force fallback are selected automatically per frame. */
+/* Persistent clustered-forward point-light configuration. The tile size is
+ * selected automatically per frame. */
 int  AeronScene_SetClusteredLights(AeronScene3D* scene, const AeronSceneClusteredLightDesc* desc);
 void AeronScene_GetClusteredLightStats(const AeronScene3D* scene, AeronSceneClusteredLightStats* out);
 

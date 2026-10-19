@@ -7,9 +7,6 @@
 #include <string.h>
 
 #define AERON_CLUSTER_FAR_SHRINK_FRAMES 120u
-#define AERON_CLUSTER_GLOBAL_SCREEN_COVERAGE 0.25f
-#define AERON_CLUSTER_GLOBAL_COUNT_SHIFT 8u
-#define AERON_CLUSTER_LOCAL_COUNT_SHIFT 16u
 
 static int cluster_ensure_buffer(AeronBuffer** buffer, uint32_t* capacity, uint32_t required, uint32_t usage,
 								 const char* name) {
@@ -61,71 +58,10 @@ static uint32_t cluster_effective_tile_size(uint32_t viewport_height) {
 	return tile_size;
 }
 
-static int cluster_large_screen_light(const AeronScene3D* s, const AeronSceneClusterLightGPU* light) {
-	const float* p = light->view_position_range;
-	const float  r = p[3];
-	if (!(r > 0.0f) || !isfinite(r) || !isfinite(p[0]) || !isfinite(p[1]) || !isfinite(p[2])) {
-		return 0;
-	}
-	const float near_z = s->camera.near_z > 0.0f ? s->camera.near_z : 0.001f;
-	if (p[2] + r < near_z) {
-		return 0;
-	}
-	const float tan_h = tanf(s->camera.h_half_rad);
-	const float tan_v = tanf(s->camera.v_half_rad);
-	if (!(tan_h > 0.0f) || !(tan_v > 0.0f)) {
-		return 0;
-	}
-	const float left   = (-1.0f - s->camera.proj_x_offset) * tan_h;
-	const float right  = (1.0f - s->camera.proj_x_offset) * tan_h;
-	const float top    = (s->camera.proj_y_offset - 1.0f) * tan_v;
-	const float bottom = (s->camera.proj_y_offset + 1.0f) * tan_v;
-	if (p[0] - left * p[2] < -r * hypotf(1.0f, left) || right * p[2] - p[0] < -r * hypotf(1.0f, right) ||
-		p[1] - top * p[2] < -r * hypotf(1.0f, top) || bottom * p[2] - p[1] < -r * hypotf(1.0f, bottom)) {
-		return 0;
-	}
-
-	const float nearest_z = p[2] - r;
-	if (nearest_z <= near_z) {
-		return 1;
-	}
-	const float ndc_left   = (p[0] - r) / (nearest_z * tan_h) + s->camera.proj_x_offset;
-	const float ndc_right  = (p[0] + r) / (nearest_z * tan_h) + s->camera.proj_x_offset;
-	const float ndc_top    = s->camera.proj_y_offset - (p[1] + r) / (nearest_z * tan_v);
-	const float ndc_bottom = s->camera.proj_y_offset - (p[1] - r) / (nearest_z * tan_v);
-	const float width      = fmaxf(fminf(ndc_right, 1.0f) - fmaxf(ndc_left, -1.0f), 0.0f);
-	const float height     = fmaxf(fminf(ndc_bottom, 1.0f) - fmaxf(ndc_top, -1.0f), 0.0f);
-	return width * height * 0.25f >= AERON_CLUSTER_GLOBAL_SCREEN_COVERAGE;
-}
-
-void AeronSceneClusteredLights_Classify(AeronScene3D* s) {
-	if (!s) {
-		return;
-	}
-	s->cluster_global_count = 0;
-	s->cluster_light_count  = 0;
-	s->cluster_active =
-		s->cluster_desc.enabled &&
-		(s->cluster_desc.debug_view || s->point_light_count > AERON_SCENE_CLUSTER_BRUTE_FORCE_MAX_LIGHTS);
-	memset(s->cluster_global_indices, 0, sizeof s->cluster_global_indices);
-	for (uint32_t i = 0; i < s->point_light_count; ++i) {
-		if (s->cluster_active && s->cluster_global_count < AERON_SCENE_CLUSTER_MAX_GLOBAL_LIGHTS &&
-			cluster_large_screen_light(s, &s->cluster_light_staging[i])) {
-			s->cluster_global_indices[s->cluster_global_count++] = i;
-		} else {
-			AeronSceneClusterLightGPU light                    = s->cluster_light_staging[i];
-			light.point_light_index                            = i;
-			s->cluster_light_staging[s->cluster_light_count++] = light;
-		}
-	}
-	if (s->point_light_count > 0 && s->cluster_light_count == 0) {
-		memset(&s->cluster_light_staging[0], 0, sizeof s->cluster_light_staging[0]);
-	}
-}
-
 static void cluster_prepare_uniform(AeronScene3D* s) {
 	AeronSceneClusterUniformGPU* u = &s->cluster_uniform;
 	memset(u, 0, sizeof *u);
+	s->cluster_active = s->point_light_count > 0;
 	memcpy(u->camera_position, s->camera.pos, sizeof u->camera_position);
 	u->near_z = s->camera.near_z > 0.0f ? s->camera.near_z : 0.001f;
 	float view_rotation[9];
@@ -133,7 +69,7 @@ static void cluster_prepare_uniform(AeronScene3D* s) {
 	memcpy(u->camera_forward, &view_rotation[6], sizeof u->camera_forward);
 
 	float desired_far = u->near_z * 2.0f;
-	for (uint32_t i = 0; i < s->cluster_light_count; ++i) {
+	for (uint32_t i = 0; i < s->point_light_count; ++i) {
 		const AeronSceneClusterLightGPU* light = &s->cluster_light_staging[i];
 		const float                      end = light->view_position_range[2] + light->view_position_range[3];
 		if (isfinite(end) && end > desired_far) {
@@ -173,17 +109,14 @@ static void cluster_prepare_uniform(AeronScene3D* s) {
 	u->grid_y                 = (u->viewport_height + u->tile_size - 1u) / u->tile_size;
 	u->grid_z                 = s->cluster_desc.depth_slices;
 	u->point_light_count      = s->point_light_count;
-	u->flags                  = s->cluster_active ? AERON_SCENE_CLUSTER_ENABLED : 0u;
-	u->flags |= s->cluster_desc.debug_view ? AERON_SCENE_CLUSTER_DEBUG_VIEW : 0u;
-	u->flags |= s->cluster_global_count << AERON_CLUSTER_GLOBAL_COUNT_SHIFT;
-	u->flags |= s->cluster_light_count << AERON_CLUSTER_LOCAL_COUNT_SHIFT;
-	memcpy(u->global_light_indices, s->cluster_global_indices, sizeof u->global_light_indices);
-	/* Global lights are classified in index order, so their spheres lead. */
-	u->tube_start          = s->point_tube_start;
-	u->global_sphere_count = 0;
-	for (uint32_t i = 0; i < s->cluster_global_count; ++i) {
-		u->global_sphere_count += s->cluster_global_indices[i] < s->point_tube_start ? 1u : 0u;
-	}
+	u->tube_start             = s->point_tube_start;
+	u->mask_words             = (s->point_light_count + 31u) / 32u;
+	u->flags                  = s->cluster_desc.debug_view ? AERON_SCENE_CLUSTER_DEBUG_VIEW : 0u;
+}
+
+static uint64_t cluster_data_words(const AeronSceneClusterUniformGPU* u) {
+	return (uint64_t)AERON_SCENE_CLUSTER_BIN_WORDS * u->grid_z +
+		   (uint64_t)u->grid_x * u->grid_y * u->mask_words;
 }
 
 int AeronSceneClusteredLights_Ensure(AeronScene3D* s) {
@@ -205,9 +138,8 @@ int AeronSceneClusteredLights_Ensure(AeronScene3D* s) {
 	const uint32_t output_usage = AERON_BUFFER_USAGE_STORAGE | AERON_BUFFER_USAGE_COMPUTE_STORAGE_WRITE;
 	return s->cluster_build_pipeline &&
 		   cluster_ensure_buffer(&s->cluster_data_buffer, &s->cluster_data_buffer_cap,
-								 (AERON_SCENE_CLUSTER_HEADER_WORDS + AERON_SCENE_CLUSTER_MAX_LIGHTS) *
-									 (uint32_t)sizeof(uint32_t),
-								 output_usage, "scene.cluster_data");
+								 AERON_SCENE_CLUSTER_BIN_WORDS * (uint32_t)sizeof(uint32_t), output_usage,
+								 "scene.cluster_data");
 }
 
 int AeronSceneClusteredLights_Build(AeronScene3D* s, AeronCommandBuffer* cmd) {
@@ -215,24 +147,16 @@ int AeronSceneClusteredLights_Build(AeronScene3D* s, AeronCommandBuffer* cmd) {
 		return 0;
 	}
 	cluster_prepare_uniform(s);
-	const uint64_t cluster_count =
-		(uint64_t)s->cluster_uniform.grid_x * s->cluster_uniform.grid_y * s->cluster_uniform.grid_z;
-	if (cluster_count == 0 || cluster_count > UINT32_MAX) {
-		Aeron_LogError("aeron.scene", "cluster grid is too large (%llu clusters)",
-					   (unsigned long long)cluster_count);
-		return 0;
-	}
-	s->cluster_count = (uint32_t)cluster_count;
+	const AeronSceneClusterUniformGPU* u          = &s->cluster_uniform;
+	const uint64_t                     tile_count = (uint64_t)u->grid_x * u->grid_y;
+	s->cluster_count = (uint32_t)(tile_count * u->grid_z);
 	if (!s->cluster_active) {
 		s->cluster_ready = 1;
 		return 1;
 	}
-	const uint64_t data_bytes = cluster_count *
-								(AERON_SCENE_CLUSTER_HEADER_WORDS + AERON_SCENE_CLUSTER_MAX_LIGHTS) *
-								sizeof(uint32_t);
-	if (data_bytes > UINT32_MAX) {
-		Aeron_LogError("aeron.scene", "cluster buffer is too large (%llu clusters)",
-					   (unsigned long long)cluster_count);
+	const uint64_t data_bytes = cluster_data_words(u) * sizeof(uint32_t);
+	if (tile_count == 0 || data_bytes > UINT32_MAX) {
+		Aeron_LogError("aeron.scene", "cluster grid is too large (%llu tiles)", (unsigned long long)tile_count);
 		return 0;
 	}
 	const uint32_t output_usage = AERON_BUFFER_USAGE_STORAGE | AERON_BUFFER_USAGE_COMPUTE_STORAGE_WRITE;
@@ -245,6 +169,8 @@ int AeronSceneClusteredLights_Build(AeronScene3D* s, AeronCommandBuffer* cmd) {
 		return 0;
 	}
 
+	/* One thread per tile, then one per depth bin. */
+	const uint32_t thread_count = (uint32_t)tile_count + u->grid_z;
 	AeronComputeBufferBinding output = { s->cluster_data_buffer, 1 };
 	AeronComputePass*         build  = Aeron_BeginComputePass(&(AeronComputePassDesc) {
 		.command_buffer     = cmd,
@@ -257,9 +183,9 @@ int AeronSceneClusteredLights_Build(AeronScene3D* s, AeronCommandBuffer* cmd) {
 	}
 	Aeron_BindComputePipeline(build, s->cluster_build_pipeline);
 	Aeron_BindComputeStorageBuffer(build, 0, s->cluster_light_buffer);
-	Aeron_BindComputeUniformData(build, 0, &s->cluster_uniform, sizeof s->cluster_uniform);
-	Aeron_DispatchCompute(build, s->cluster_uniform.grid_x, s->cluster_uniform.grid_y,
-						  s->cluster_uniform.grid_z);
+	Aeron_BindComputeUniformData(build, 0, u, sizeof *u);
+	Aeron_DispatchCompute(build, (thread_count + AERON_SCENE_CLUSTER_THREADS - 1u) / AERON_SCENE_CLUSTER_THREADS, 1,
+						  1);
 	Aeron_EndComputePass(build);
 	return 1;
 }
@@ -305,8 +231,6 @@ void AeronSceneClusteredLights_Release(AeronScene3D* s) {
 	Aeron_DestroyBuffer(s->cluster_data_buffer);
 	s->cluster_build_pipeline = NULL;
 	s->cluster_data_buffer    = NULL;
-	s->cluster_global_count   = 0;
-	s->cluster_light_count    = 0;
 	s->cluster_active         = 0;
 	s->cluster_tried          = 0;
 	s->cluster_ready          = 0;
