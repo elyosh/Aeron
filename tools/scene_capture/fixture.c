@@ -616,7 +616,7 @@ static void attach_to_camera(float transform[16], const AeronSceneCamera* camera
 								   rotation[r][2] * local[2 * 4 + c];
 }
 
-static void add_game_instances(AeronScene3D* scene, const Fixture* f, const AeronSceneCamera* camera,
+static void add_game_instances(AeronScene3D* scene, const Fixture* f, double time, const AeronSceneCamera* camera,
 							   const AeronSceneCamera* previous_camera) {
 	for (int i = 0; i < f->config.game.instance_count; ++i) {
 		const CaptureInstance* in       = &f->config.game.instances[i];
@@ -626,12 +626,22 @@ static void add_game_instances(AeronScene3D* scene, const Fixture* f, const Aero
 			.variant   = in->markings > 0 ? (uint32_t)in->markings : 0u,
 		};
 		const int placed = in->role == CAPTURE_ROLE_SHIP || in->role == CAPTURE_ROLE_HANGAR;
-		if (placed)
-			place_ship(instance.transform, in);
-		else
+		if (placed) {
+			/* A moving ship is where its velocity takes it by this time and
+			 * by the previous frame's. */
+			CaptureInstance at = *in;
+			for (int axis = 0; axis < 3; ++axis)
+				at.position[axis] = in->position[axis] + in->velocity[axis] * (float)time;
+			place_ship(instance.transform, &at);
+			for (int axis = 0; axis < 3; ++axis)
+				at.position[axis] = in->position[axis] + in->velocity[axis] * (float)(time - 1.0 / f->config.fps);
+			place_ship(instance.prev_transform, &at);
+		} else {
 			place_screen_test_model(instance.transform, &f->config);
+			memcpy(instance.prev_transform, instance.transform, sizeof instance.transform);
+		}
 		scale_transform(instance.transform, GAME_UNITS_PER_METER);
-		memcpy(instance.prev_transform, instance.transform, sizeof instance.transform);
+		scale_transform(instance.prev_transform, GAME_UNITS_PER_METER);
 		/* When the craft turns, the cockpit and the hidden exterior turn
 		 * with the view; when the pilot looks around, they stay put. */
 		if (!placed && f->config.game.cockpit_follows_camera) {
@@ -787,7 +797,7 @@ AeronRenderTarget* Fixture_Record(Fixture* f, double time, int blur, AeronComman
 				AeronEnvironmentLibrary_Find(f->environment_library, (uint32_t)f->environment_reference));
 		if (f->config.screen_test)
 			set_screen_sources(scene, f, time);
-		add_game_instances(scene, f, &current, &previous);
+		add_game_instances(scene, f, time, &current, &previous);
 		return AeronScene_Render(scene, cmd) ? AeronScene_SceneRt(scene) : NULL;
 	}
 	AeronScene_SetPost(

@@ -285,7 +285,7 @@ static int load_game_instances(const AeronConfigNode* list, CaptureConfig* confi
 		return 0;
 	}
 	static const char* const keys[] = {
-		"model", "role", "position", "rotation_degrees", "markings", "probes"
+		"model", "role", "position", "rotation_degrees", "markings", "probes", "velocity"
 	};
 	for (size_t i = 0; i < count; ++i) {
 		const AeronConfigNode* item = AeronConfigNode_SequenceGet(list, i);
@@ -334,12 +334,13 @@ static int load_game_instances(const AeronConfigNode* list, CaptureConfig* confi
 		snprintf(out->probes, sizeof out->probes, "%s", folder);
 		const AeronConfigNode* position = AeronConfigNode_MapGet(item, "position");
 		const AeronConfigNode* rotation = AeronConfigNode_MapGet(item, "rotation_degrees");
+		const AeronConfigNode* velocity = AeronConfigNode_MapGet(item, "velocity");
 		if (((out->role == CAPTURE_ROLE_SHIP || out->role == CAPTURE_ROLE_HANGAR) &&
 			 !vec3(position, out->position)) ||
-			(rotation && !vec3(rotation, out->rotation))) {
+			(rotation && !vec3(rotation, out->rotation)) || (velocity && !vec3(velocity, out->velocity))) {
 			fprintf(stderr,
 					"game_scene.instances[%zu]: a ship or hangar needs position: [x, y, z]; "
-					"rotation_degrees is [yaw, pitch, roll]\n",
+					"rotation_degrees is [yaw, pitch, roll]; velocity is [x, y, z]\n",
 					i);
 			return 0;
 		}

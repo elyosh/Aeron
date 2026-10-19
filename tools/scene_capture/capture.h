@@ -33,6 +33,7 @@ typedef struct CaptureInstance {
 	int   model, role;
 	int   markings;                 /* XWAU markings value (variant index), -1 when not given */
 	float position[3], rotation[3]; /* metres, camera axes; yaw/pitch/roll degrees */
+	float velocity[3];              /* metres per second, the same axes */
 	/* A probes bake folder (bake.json, probes.ktx2, grid.ktx2). The instance
 	 * owns these probes instead of its model's. Empty to use the model's own
 	 * probes. */
