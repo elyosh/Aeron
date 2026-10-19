@@ -959,13 +959,17 @@ static AeronSceneMesh* mesh_create(AeronCommandBuffer* cmd, const AeronFlightMod
 	s->component_count = flight_model->component_count < AERON_MAX_MESH_COMPONENTS
 							 ? flight_model->component_count
 							 : AERON_MAX_MESH_COMPONENTS;
+	/* A model without components is one component that covers the whole
+	 * model and doesn't rotate. */
+	AeronFlightComponent whole_model = { .bounds = flight_model->bounds };
 	if (s->component_count == 0) {
 		s->component_count = 1;
 	}
 	for (uint32_t i = 0; i < s->component_count; ++i) {
-		const AeronFlightComponent* component = &flight_model->components[i];
-		AeronMeshRot*               rotation  = &s->component_rot[i];
-		rotation->mesh_type                   = (uint8_t)component->mesh_type;
+		const AeronFlightComponent* component =
+			flight_model->component_count ? &flight_model->components[i] : &whole_model;
+		AeronMeshRot* rotation = &s->component_rot[i];
+		rotation->mesh_type    = (uint8_t)component->mesh_type;
 		if (component->has_rotation) {
 			rotation->has_rotation = 1;
 			rotation->pivot[0]     = component->rotation.pivot.x;
