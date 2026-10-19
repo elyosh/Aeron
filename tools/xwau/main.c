@@ -5,6 +5,7 @@
  * Usage:
  *   xwau_import missions --xwau-root DIR --stock-game DIR
  *                        [--skyboxes FILE --skybox-folders FILE] <output_dir>
+ *   xwau_import craft --xwau-root DIR <output_dir>
  *
  * `missions` writes the selections of XWAU's missions for the missions of the
  * original game, installed in --stock-game. Each mission gets a file
@@ -12,6 +13,9 @@
  * it also writes the environments of the missions' [SkyBoxes] sections into
  * FILE, and the sky and overlay folders that environment_bake converts into
  * the --skybox-folders file (xwau_skyboxes.h).
+ *
+ * `craft` writes the settings of each craft into <output_dir>/craft and the
+ * hull and map icon lists into <output_dir>/hud.yaml (xwau_craft.h).
  */
 
 #include <stdbool.h>
@@ -19,13 +23,15 @@
 #include <string.h>
 
 #include "util.h"
+#include "xwau_craft.h"
 #include "xwau_mission_files.h"
 #include "xwau_missions.h"
 #include "xwau_skyboxes.h"
 
 static int usage(void) {
 	fprintf(stderr, "usage: xwau_import missions --xwau-root DIR --stock-game DIR\n"
-					"                            [--skyboxes FILE --skybox-folders FILE] <output_dir>\n");
+					"                            [--skyboxes FILE --skybox-folders FILE] <output_dir>\n"
+					"       xwau_import craft --xwau-root DIR <output_dir>\n");
 	return 2;
 }
 
@@ -77,9 +83,20 @@ static int run_missions(int argc, char** argv) {
 	return ok ? 0 : 1;
 }
 
+/* xwau_import craft --xwau-root DIR <output_dir> */
+static int run_craft(int argc, char** argv) {
+	if (argc != 3 || strcmp(argv[0], "--xwau-root") != 0) {
+		Report(NULL, "craft needs --xwau-root and an output folder");
+		return 2;
+	}
+	return XwauCraft_Write(argv[1], argv[2]) ? 0 : 1;
+}
+
 int main(int argc, char** argv) {
 	SetReportProgram("xwau_import");
 	if (argc > 1 && strcmp(argv[1], "missions") == 0)
 		return run_missions(argc - 2, argv + 2);
+	if (argc > 1 && strcmp(argv[1], "craft") == 0)
+		return run_craft(argc - 2, argv + 2);
 	return usage();
 }

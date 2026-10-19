@@ -1,7 +1,7 @@
 /*
  * Tests the hook file rules that the XWAU readers reproduce (xwau_config.h),
- * the skin selection (xwau_skins.h) and the skybox conversion
- * (xwau_skyboxes.h). The inputs are fixed texts and folders written to a
+ * the skin selection (xwau_skins.h), the skybox conversion (xwau_skyboxes.h)
+ * and the craft settings (xwau_craft.h). The inputs are fixed texts and folders written to a
  * scratch folder. The test is built with the tools as xwau_rules_test. It
  * prints each check and exits with a non-zero status when a check fails.
  */
@@ -15,6 +15,7 @@
 #include "opt.h"
 #include "util.h"
 #include "xwau_config.h"
+#include "xwau_craft.h"
 #include "xwau_missions.h"
 #include "xwau_skins.h"
 #include "xwau_skyboxes.h"
@@ -416,6 +417,77 @@ static void test_skyboxes(const char* scratch) {
 	free(list);
 }
 
+/* ---- Craft settings ----------------------------------------------------------- */
+
+static void test_craft(const char* scratch) {
+	check(XwauCraft_HudColor(0.1f, 0.1f, 0.5f) == 0xff19197fu && XwauCraft_HudColor(1.0f, 0.0f, 0.36f) == 0xffff005bu,
+		  "HUD colours: 0.1 becomes 0x19, and the products are truncated");
+
+	char path[1024], txt[1024];
+	XwauCraftHud hud;
+	snprintf(path, sizeof path, "%s/colors.ini", scratch);
+	write_file(path, "[HUDColor]\n;HUDInnerColor = 0.1, 0.1, 0.1\nHUDBorderColor = 0.2, 0.2\n"
+					 "[hudcolor]\nHUDInnerColor = 0.3, 0.3, 0.3\n");
+	memset(&hud, 0, sizeof hud);
+	XwauCraft_ReadHudColors(path, &hud);
+	check(!hud.has_inner && !hud.has_border,
+		  "HUD colours: commented lines, two numbers and a lower-case [hudcolor] set nothing");
+	write_file(path, "[Size]\n[HUDColor]  ; colours\nHUDInnerColor = 0.1, 0.1, 0.1\n"
+					 "hudinnercolor = 1, 1, 1\nHUDBorderColor=0.5, 0.5, 0.5\n");
+	memset(&hud, 0, sizeof hud);
+	XwauCraft_ReadHudColors(path, &hud);
+	check(hud.has_inner && hud.inner == 0xffffffffu && !hud.has_border,
+		  "HUD colours: the last value wins, keys in any case, and key=value without spaces is ignored");
+
+	snprintf(path, sizeof path, "%s/Model.ini", scratch);
+	snprintf(txt, sizeof txt, "%s/ModelReticle.txt", scratch);
+	write_file(path, "[Reticle]\nReticle_5 = 9\nReticle_6 = 136 ;lock\nReticle_7 = -1\nReticle_8 = x\n");
+	memset(&hud, 0, sizeof hud);
+	XwauCraft_ReadReticle(NULL, path, &hud);
+	check(hud.has_reticle[5] && hud.reticle[5] == 9 && hud.has_reticle[6] && hud.reticle[6] == 136 &&
+			  !hud.has_reticle[7] && !hud.has_reticle[8] && !hud.has_reticle[9],
+		  "reticle: a comment after the value, -1 and a value that isn't a number");
+	write_file(txt, "; comment\nReticle_5 = 7\n");
+	memset(&hud, 0, sizeof hud);
+	XwauCraft_ReadReticle(txt, path, &hud);
+	check(hud.has_reticle[5] && hud.reticle[5] == 7 && !hud.has_reticle[6],
+		  "reticle: <model>Reticle.txt is read instead of the [Reticle] section");
+
+	uint16_t* list = NULL;
+	size_t count = 0;
+	snprintf(path, sizeof path, "%s/IconList.txt", scratch);
+	write_file(path, "0\n; comment\n\n100\t\t;X-wing\n  200\n");
+	check(XwauCraft_ReadIconList(path, &list, &count) && count == 3 && list[1] == 100 && list[2] == 200,
+		  "icon lists: comment and empty lines aren't counted");
+	free(list);
+
+	char root[1024], out[1024], models[1100];
+	snprintf(root, sizeof root, "%s/xwau", scratch);
+	snprintf(models, sizeof models, "%s/FlightModels", root);
+	snprintf(out, sizeof out, "%s/out", scratch);
+	MakeDirs(models);
+	snprintf(path, sizeof path, "%s/Awing.ini", models);
+	write_file(path, "[Reticle]\nReticle_5 = 135\n[HUDColor]\nHUDInnerColor = 0.1, 0.1, 0.5\n");
+	snprintf(path, sizeof path, "%s/Empty.ini", models);
+	write_file(path, "[Size]\nX = 1\n");
+	snprintf(path, sizeof path, "%s/HullIconList.txt", root);
+	write_file(path, "0\n100\n");
+	check(XwauCraft_Write(root, out), "craft: the files are written");
+	size_t size = 0;
+	snprintf(path, sizeof path, "%s/craft/awing.yaml", out);
+	char* text = ReadWholeFile(path, &size);
+	check(text && strstr(text, "reticle: {5: 135}") && strstr(text, "colors: {inner: 0xff19197f}"),
+		  "craft: awing.yaml has the reticle and the inner colour");
+	free(text);
+	snprintf(path, sizeof path, "%s/craft/empty.yaml", out);
+	check(!IsFile(path), "craft: no file for a model without settings");
+	snprintf(path, sizeof path, "%s/hud.yaml", out);
+	text = ReadWholeFile(path, &size);
+	check(text && strstr(text, "hull_icons: [\n  0, 100]") && !strstr(text, "map_icons"),
+		  "craft: hud.yaml has the hull icon list, and no map icon list without its file");
+	free(text);
+}
+
 int main(void) {
 	char        scratch[1024];
 	const char* tmp = getenv("TMPDIR");
@@ -426,6 +498,7 @@ int main(void) {
 	test_skins(scratch);
 	test_skybox_rotation();
 	test_skyboxes(scratch);
+	test_craft(scratch);
 	RemoveTree(scratch);
 	printf("%s\n", g_failures ? "FAILED" : "passed");
 	return g_failures ? 1 : 0;

@@ -1051,9 +1051,11 @@ if(AERON_BUILD_TOOLS)
         target_link_libraries(xwau_files PUBLIC m)
     endif()
 
-    # The XWAU imports that are not models: the mission files and the
-    # skyboxes. xwau_import and its test link this library.
+    # The XWAU imports that are not models: the mission files, the
+    # skyboxes and the craft settings. xwau_import and its test link this
+    # library.
     add_library(xwau_import_lib STATIC
+        tools/xwau/xwau_craft.c
         tools/xwau/xwau_mission_files.c
         tools/xwau/xwau_skyboxes.c)
     target_link_libraries(xwau_import_lib PUBLIC xwau_files)
