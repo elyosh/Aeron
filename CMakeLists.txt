@@ -291,8 +291,6 @@ set(AERON_SHADER_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_ssao_blur_lq.frag.hlsl
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_mb_camera_fill.frag.hlsl
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_mb_velocity_viz.frag.hlsl
-    ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_mb_temporal_velocity.frag.hlsl
-    ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_mb_temporal_tilemax.comp.hlsl
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_mb_fsr_tilemax.comp.hlsl
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_mb_tilemax.comp.hlsl
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_mb_reconstruct.frag.hlsl

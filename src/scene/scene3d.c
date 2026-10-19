@@ -753,20 +753,10 @@ void AeronScene_SetPost(AeronScene3D* s, const AeronScenePostDesc* post) {
 	if (!s) {
 		return;
 	}
-	const int previous_fsr_direct_motion = s->post.mb_fsr_direct_motion;
 	if (post) {
 		s->post = *post;
 	} else {
 		memset(&s->post, 0, sizeof s->post);
-	}
-	if (s->post.mb_fsr_direct_motion != previous_fsr_direct_motion) {
-		AeronSceneTemporal_Release(s);
-		AeronScenePost_Release(s);
-		s->temporal.reset_history    = 1;
-		s->mb_temporal_motion_valid  = 0;
-		s->mb_temporal_motion_direct = 0;
-		s->mb_tile_valid             = 0;
-		s->mb_neighbor_valid         = 0;
 	}
 }
 
@@ -793,18 +783,16 @@ void AeronScene_SetTemporal(AeronScene3D* s, const AeronSceneTemporalDesc* tempo
 			s->temporal_phase         = 0;
 		}
 		if (s->temporal.reset_history) {
-			s->mb_temporal_motion_valid  = 0;
-			s->mb_temporal_motion_direct = 0;
-			s->mb_tile_valid             = 0;
-			s->mb_neighbor_valid         = 0;
+			s->mb_temporal_motion_valid = 0;
+			s->mb_tile_valid            = 0;
+			s->mb_neighbor_valid        = 0;
 		}
 	} else {
 		memset(&s->temporal, 0, sizeof s->temporal);
-		s->temporal_phase            = 0;
-		s->mb_temporal_motion_valid  = 0;
-		s->mb_temporal_motion_direct = 0;
-		s->mb_tile_valid             = 0;
-		s->mb_neighbor_valid         = 0;
+		s->temporal_phase           = 0;
+		s->mb_temporal_motion_valid = 0;
+		s->mb_tile_valid            = 0;
+		s->mb_neighbor_valid        = 0;
 	}
 }
 
@@ -824,11 +812,10 @@ void AeronScene_SetMotionContext(AeronScene3D* s, const float prev_view_proj[16]
 		memcpy(s->mb_prev_view_proj, prev_view_proj, sizeof s->mb_prev_view_proj);
 	} else {
 		memcpy(s->mb_prev_view_proj, s->unjittered_view_proj, sizeof s->mb_prev_view_proj);
-		s->mb_velocity_valid         = 0;
-		s->mb_temporal_motion_valid  = 0;
-		s->mb_temporal_motion_direct = 0;
-		s->mb_tile_valid             = 0;
-		s->mb_neighbor_valid         = 0;
+		s->mb_velocity_valid        = 0;
+		s->mb_temporal_motion_valid = 0;
+		s->mb_tile_valid            = 0;
+		s->mb_neighbor_valid        = 0;
 		AeronTemporalUpscaler_InvalidateRetainedMotionVectors(s->temporal_upscaler);
 	}
 	s->mb_velocity_regen = velocity_regen ? 1 : 0;
@@ -1999,7 +1986,7 @@ static int scene_finalize_output(AeronScene3D* s, AeronCommandBuffer* cmd, int m
 		char label[64];
 		snprintf(label, sizeof label, "FSR 3.1.4 %s", AeronTemporal_ModeName(s->temporal_active_mode));
 		Aeron_GpuDebugPush(cmd, label);
-		if (AeronSceneTemporal_Dispatch(s, cmd, mb_regen && s->post.mb_fsr_direct_motion)) {
+		if (AeronSceneTemporal_Dispatch(s, cmd, mb_regen)) {
 			temporal_dispatch_ok = 1;
 			s->temporal_phase++;
 			s->temporal.reset_history = 0;
@@ -2019,22 +2006,18 @@ static int scene_finalize_output(AeronScene3D* s, AeronCommandBuffer* cmd, int m
 				return scene_render_failure(s, cmd, "Temporal motion preparation failed");
 			}
 		}
+		/* FSR's render-resolution motion, retained from its dispatch. */
 		AeronTexture* temporal_motion =
-			s->mb_temporal_motion_direct
-				? AeronTemporalUpscaler_RetainedDilatedMotionVectors(s->temporal_upscaler)
-				: (s->mb_temporal_velocity_rt ? Aeron_RenderTargetGetTexture(s->mb_temporal_velocity_rt)
-											  : NULL);
+			AeronTemporalUpscaler_RetainedDilatedMotionVectors(s->temporal_upscaler);
 		if (s->post.mb_velocity_viz) {
 			if (s->mb_temporal_motion_valid && temporal_motion &&
 				(!AeronSceneTemporal_EnsureMutableOutput(s, cmd) ||
-				 !AeronScenePost_MbVisualizeTemporal(s, cmd, temporal_motion,
-													 s->mb_temporal_motion_direct))) {
+				 !AeronScenePost_MbVisualizeTemporal(s, cmd, temporal_motion, 1))) {
 				Aeron_GpuDebugPop(cmd);
 				return scene_render_failure(s, cmd, "Temporal motion visualization failed");
 			}
 		} else if (s->post.mb_shutter > 0.0f && s->mb_temporal_motion_valid && temporal_motion) {
-			if (!AeronScenePost_MbResolve(s, cmd, s->scene_rt_out, temporal_motion,
-										  s->mb_temporal_motion_direct)) {
+			if (!AeronScenePost_MbResolve(s, cmd, s->scene_rt_out, temporal_motion, 1)) {
 				Aeron_GpuDebugPop(cmd);
 				return scene_render_failure(s, cmd, "Temporal motion-blur resolve failed");
 			}

@@ -570,22 +570,17 @@ struct AeronScene3D {
 	/* Motion blur */
 	AeronShader*           mb_camera_fill_ps;
 	AeronShader*           mb_velocity_viz_ps;
-	AeronShader*           mb_temporal_velocity_ps;
 	AeronShader*           mb_reconstruct_ps;
 	AeronShader*           mb_neighbormax_ps;
 	AeronGraphicsPipeline* mb_camera_fill_pipeline;
 	AeronGraphicsPipeline* mb_velocity_viz_pipeline;
 	AeronGraphicsPipeline* mb_velocity_viz_output_pipeline;
-	AeronGraphicsPipeline* mb_temporal_velocity_pipeline;
-	AeronComputePipeline*  mb_temporal_tilemax_pipeline;
 	AeronComputePipeline*  mb_fsr_tilemax_pipeline;
 	AeronComputePipeline*  mb_tilemax_compute_pipeline;
 	AeronGraphicsPipeline* mb_reconstruct_pipeline;
 	AeronGraphicsPipeline* mb_neighbormax_pipeline;
 	AeronRenderTarget*     velocity_rt;
-	AeronRenderTarget*     mb_temporal_velocity_rt;
 	int                    mb_temporal_motion_valid;
-	int                    mb_temporal_motion_direct;
 	/* Reductions remain valid while the retained motion field is unchanged. */
 	int                mb_tile_valid;
 	int                mb_neighbor_valid;

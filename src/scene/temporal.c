@@ -70,12 +70,13 @@ int AeronSceneTemporal_Ensure(AeronScene3D* s) {
 	}
 	s->temporal_tried    = 1;
 	s->temporal_upscaler = AeronTemporalUpscaler_Create(&(AeronTemporalUpscalerDesc) {
-		.max_render_width      = (uint32_t)s->render_w,
-		.max_render_height     = (uint32_t)s->render_h,
-		.max_output_width      = (uint32_t)s->output_w,
-		.max_output_height     = (uint32_t)s->output_h,
-		.output_format         = s->color_format,
-		.retain_motion_vectors = s->post.mb_fsr_direct_motion,
+		.max_render_width  = (uint32_t)s->render_w,
+		.max_render_height = (uint32_t)s->render_h,
+		.max_output_width  = (uint32_t)s->output_w,
+		.max_output_height = (uint32_t)s->output_h,
+		.output_format     = s->color_format,
+		/* Motion blur reads FSR's motion after the dispatch. */
+		.retain_motion_vectors = 1,
 		.debug_checking        = 1,
 	});
 	s->temporal_depth_rt = Aeron_CreateRenderTarget(&(AeronRenderTargetDesc) {

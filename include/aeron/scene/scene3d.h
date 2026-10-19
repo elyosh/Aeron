@@ -573,9 +573,6 @@ typedef struct AeronScenePostDesc {
 	float mb_shutter;
 	int   mb_camera_blur;
 	int   mb_velocity_viz;
-	/* Consume retained render-resolution FSR motion without materializing an
-	 * output-resolution velocity texture. */
-	int mb_fsr_direct_motion;
 } AeronScenePostDesc;
 
 void AeronScene_SetPost(AeronScene3D* scene, const AeronScenePostDesc* post);

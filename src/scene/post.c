@@ -76,20 +76,6 @@ typedef struct MbVelocityVizUniforms {
 	uint32_t velocity_size[2];
 } MbVelocityVizUniforms;
 
-typedef struct MbTemporalVelocityUniforms {
-	float source_texel[2];
-	float native_resolution;
-	float _pad;
-} MbTemporalVelocityUniforms;
-
-typedef struct MbTemporalTileMaxUniforms {
-	float    source_texel[2];
-	uint32_t output_size[2];
-	uint32_t native_resolution;
-	uint32_t tile_size;
-	uint32_t _pad[2];
-} MbTemporalTileMaxUniforms;
-
 typedef struct MbTileMaxComputeUniforms {
 	uint32_t output_size[2];
 	uint32_t tile_size;
@@ -320,13 +306,12 @@ static int ensure_ssao_debug_pipeline(struct AeronScene3D* s) {
 
 int AeronScenePost_EnsureMb(struct AeronScene3D* s) {
 	if (s->post_mb_tried) {
-		const int temporal_ok = s->temporal_active_mode == AERON_TEMPORAL_OFF ||
-								(s->mb_temporal_velocity_pipeline && s->mb_velocity_viz_output_pipeline);
-		const int high_ok =
-			s->post.mb_quality != 2 || (s->mb_tilemax_compute_pipeline && s->mb_neighbormax_pipeline &&
-										s->mb_tile_rt && s->mb_neighbor_rt &&
-										(s->temporal_active_mode == AERON_TEMPORAL_OFF ||
-										 (s->mb_temporal_tilemax_pipeline && s->mb_fsr_tilemax_pipeline)));
+		const int temporal_ok =
+			s->temporal_active_mode == AERON_TEMPORAL_OFF || s->mb_velocity_viz_output_pipeline;
+		const int high_ok = s->post.mb_quality != 2 ||
+							(s->mb_tilemax_compute_pipeline && s->mb_neighbormax_pipeline && s->mb_tile_rt &&
+							 s->mb_neighbor_rt &&
+							 (s->temporal_active_mode == AERON_TEMPORAL_OFF || s->mb_fsr_tilemax_pipeline));
 		return s->mb_reconstruct_pipeline && s->velocity_rt && s->mb_rt && temporal_ok && high_ok;
 	}
 	s->post_mb_tried = 1;
@@ -339,18 +324,7 @@ int AeronScenePost_EnsureMb(struct AeronScene3D* s) {
 	s->mb_velocity_viz_ps =
 		AeronSceneInternal_CompileShader("scene_mb_velocity_viz.frag", AERON_SHADER_STAGE_FRAGMENT, 1, 1, 0);
 	if (s->temporal_active_mode != AERON_TEMPORAL_OFF) {
-		s->mb_temporal_velocity_ps = AeronSceneInternal_CompileShader("scene_mb_temporal_velocity.frag",
-																	  AERON_SHADER_STAGE_FRAGMENT, 2, 1, 0);
-		s->mb_temporal_tilemax_pipeline = Aeron_CreateComputePipeline(&(AeronComputePipelineDesc) {
-			.name                            = "scene_mb_temporal_tilemax.comp",
-			.sampler_count                   = 2,
-			.readwrite_storage_texture_count = 2,
-			.uniform_buffer_count            = 1,
-			.thread_count_x                  = 8,
-			.thread_count_y                  = 8,
-			.thread_count_z                  = 1,
-		});
-		s->mb_fsr_tilemax_pipeline      = Aeron_CreateComputePipeline(&(AeronComputePipelineDesc) {
+		s->mb_fsr_tilemax_pipeline = Aeron_CreateComputePipeline(&(AeronComputePipelineDesc) {
 			.name                            = "scene_mb_fsr_tilemax.comp",
 			.readonly_storage_texture_count  = 1,
 			.readwrite_storage_texture_count = 1,
@@ -388,10 +362,6 @@ int AeronScenePost_EnsureMb(struct AeronScene3D* s) {
 		s->mb_velocity_viz_output_pipeline =
 			post_pipeline(s->fullscreen_vs, s->mb_velocity_viz_ps, &color_rw, 1, 0);
 	}
-	if (s->mb_temporal_velocity_ps) {
-		s->mb_temporal_velocity_pipeline =
-			post_pipeline(s->fullscreen_vs, s->mb_temporal_velocity_ps, &velocity_rw, 1, 0);
-	}
 	if (s->mb_reconstruct_ps) {
 		s->mb_reconstruct_pipeline = post_pipeline(s->fullscreen_vs, s->mb_reconstruct_ps, &color_rw, 1, 0);
 	}
@@ -403,15 +373,6 @@ int AeronScenePost_EnsureMb(struct AeronScene3D* s) {
 	if (!s->velocity_rt) {
 		s->velocity_rt = AeronSceneInternal_CreateColorRt(AERON_TEXTURE_FORMAT_R16G16_FLOAT, s->render_w,
 														  s->render_h, "scene.velocity");
-	}
-	if (s->temporal_active_mode != AERON_TEMPORAL_OFF && !s->post.mb_fsr_direct_motion) {
-		s->mb_temporal_velocity_rt = Aeron_CreateRenderTarget(&(AeronRenderTargetDesc) {
-			.width      = s->output_w,
-			.height     = s->output_h,
-			.format     = AERON_TEXTURE_FORMAT_R16G16_FLOAT,
-			.usage      = AERON_TEXTURE_USAGE_COMPUTE_STORAGE_WRITE,
-			.debug_name = "scene.mb_temporal_velocity",
-		});
 	}
 	s->mb_rt =
 		AeronSceneInternal_CreateColorRt(s->color_format, s->output_w, s->output_h, "scene.motion_blur");
@@ -430,14 +391,12 @@ int AeronScenePost_EnsureMb(struct AeronScene3D* s) {
 	s->mb_neighbor_rt = AeronSceneInternal_CreateColorRt(AERON_TEXTURE_FORMAT_R16G16_FLOAT, s->mb_tile_w,
 														 s->mb_tile_h, "scene.mb_neighbor");
 
-	const int temporal_ok = s->temporal_active_mode == AERON_TEMPORAL_OFF ||
-							(s->mb_temporal_velocity_ps && s->mb_temporal_velocity_pipeline &&
-							 s->mb_velocity_viz_output_pipeline);
+	const int temporal_ok =
+		s->temporal_active_mode == AERON_TEMPORAL_OFF || s->mb_velocity_viz_output_pipeline;
 	const int high_ok =
 		s->post.mb_quality != 2 ||
 		(s->mb_tilemax_compute_pipeline && s->mb_neighbormax_pipeline && s->mb_tile_rt && s->mb_neighbor_rt &&
-		 (s->temporal_active_mode == AERON_TEMPORAL_OFF ||
-		  (s->mb_temporal_tilemax_pipeline && s->mb_fsr_tilemax_pipeline)));
+		 (s->temporal_active_mode == AERON_TEMPORAL_OFF || s->mb_fsr_tilemax_pipeline));
 	if (!s->mb_reconstruct_pipeline || !s->velocity_rt || !s->mb_rt || !temporal_ok || !high_ok) {
 		Aeron_LogError("aeron.scene", "motion-blur initialization failed");
 		return 0;
@@ -480,10 +439,6 @@ void AeronScenePost_Release(struct AeronScene3D* s) {
 		Aeron_DestroyGraphicsPipeline(s->mb_velocity_viz_pipeline);
 	if (s->mb_velocity_viz_output_pipeline)
 		Aeron_DestroyGraphicsPipeline(s->mb_velocity_viz_output_pipeline);
-	if (s->mb_temporal_velocity_pipeline)
-		Aeron_DestroyGraphicsPipeline(s->mb_temporal_velocity_pipeline);
-	if (s->mb_temporal_tilemax_pipeline)
-		Aeron_DestroyComputePipeline(s->mb_temporal_tilemax_pipeline);
 	if (s->mb_fsr_tilemax_pipeline)
 		Aeron_DestroyComputePipeline(s->mb_fsr_tilemax_pipeline);
 	if (s->mb_tilemax_compute_pipeline)
@@ -496,16 +451,12 @@ void AeronScenePost_Release(struct AeronScene3D* s) {
 		Aeron_DestroyShader(s->mb_camera_fill_ps);
 	if (s->mb_velocity_viz_ps)
 		Aeron_DestroyShader(s->mb_velocity_viz_ps);
-	if (s->mb_temporal_velocity_ps)
-		Aeron_DestroyShader(s->mb_temporal_velocity_ps);
 	if (s->mb_reconstruct_ps)
 		Aeron_DestroyShader(s->mb_reconstruct_ps);
 	if (s->mb_neighbormax_ps)
 		Aeron_DestroyShader(s->mb_neighbormax_ps);
 	if (s->velocity_rt)
 		Aeron_DestroyRenderTarget(s->velocity_rt);
-	if (s->mb_temporal_velocity_rt)
-		Aeron_DestroyRenderTarget(s->mb_temporal_velocity_rt);
 	if (s->mb_rt)
 		Aeron_DestroyRenderTarget(s->mb_rt);
 	if (s->mb_tile_rt)
@@ -543,20 +494,16 @@ void AeronScenePost_Release(struct AeronScene3D* s) {
 #endif
 	s->mb_camera_fill_ps               = NULL;
 	s->mb_velocity_viz_ps              = NULL;
-	s->mb_temporal_velocity_ps         = NULL;
 	s->mb_reconstruct_ps               = NULL;
 	s->mb_neighbormax_ps               = NULL;
 	s->mb_camera_fill_pipeline         = NULL;
 	s->mb_velocity_viz_pipeline        = NULL;
 	s->mb_velocity_viz_output_pipeline = NULL;
-	s->mb_temporal_velocity_pipeline   = NULL;
-	s->mb_temporal_tilemax_pipeline    = NULL;
 	s->mb_fsr_tilemax_pipeline         = NULL;
 	s->mb_tilemax_compute_pipeline     = NULL;
 	s->mb_reconstruct_pipeline         = NULL;
 	s->mb_neighbormax_pipeline         = NULL;
 	s->velocity_rt                     = NULL;
-	s->mb_temporal_velocity_rt         = NULL;
 	s->mb_rt                           = NULL;
 	s->mb_tile_rt                      = NULL;
 	s->mb_neighbor_rt                  = NULL;
@@ -565,7 +512,6 @@ void AeronScenePost_Release(struct AeronScene3D* s) {
 	s->mb_tile_size                    = 0;
 	s->mb_velocity_valid               = 0;
 	s->mb_temporal_motion_valid        = 0;
-	s->mb_temporal_motion_direct       = 0;
 	s->mb_tile_valid                   = 0;
 	s->mb_neighbor_valid               = 0;
 }
@@ -749,53 +695,6 @@ static int mb_tile_pass(struct AeronScene3D* s, AeronCommandBuffer* cmd, AeronGr
 	return AeronScenePost_Fullscreen(cmd, pipe, dst, &tex, &smp, 1, u, sizeof *u, label);
 }
 
-static int mb_ensure_temporal_velocity_target(struct AeronScene3D* s) {
-	if (s->mb_temporal_velocity_rt) {
-		return 1;
-	}
-	s->mb_temporal_velocity_rt = Aeron_CreateRenderTarget(&(AeronRenderTargetDesc) {
-		.width      = s->output_w,
-		.height     = s->output_h,
-		.format     = AERON_TEXTURE_FORMAT_R16G16_FLOAT,
-		.usage      = AERON_TEXTURE_USAGE_COMPUTE_STORAGE_WRITE,
-		.debug_name = "scene.mb_temporal_velocity",
-	});
-	return s->mb_temporal_velocity_rt != NULL;
-}
-
-static int mb_prepare_temporal_velocity_tilemax(struct AeronScene3D* s, AeronCommandBuffer* cmd,
-												AeronTexture* depth, AeronTexture* motion) {
-	if (!s->mb_temporal_tilemax_pipeline || !s->mb_temporal_velocity_rt || !s->mb_tile_rt) {
-		return 0;
-	}
-	AeronComputeTextureBinding outputs[2] = {
-		{ .texture = Aeron_RenderTargetGetTexture(s->mb_temporal_velocity_rt) },
-		{ .texture = Aeron_RenderTargetGetTexture(s->mb_tile_rt) },
-	};
-	AeronComputePass* pass = Aeron_BeginComputePass(&(AeronComputePassDesc) {
-		.command_buffer      = cmd,
-		.write_textures      = outputs,
-		.write_texture_count = 2,
-		.debug_label         = "Motion blur reconstruct velocity + TileMax",
-	});
-	if (!pass) {
-		return 0;
-	}
-	const MbTemporalTileMaxUniforms uniforms = {
-		.source_texel      = { 1.0f / (float)s->render_w, 1.0f / (float)s->render_h },
-		.output_size       = { (uint32_t)s->output_w, (uint32_t)s->output_h },
-		.native_resolution = s->render_w == s->output_w && s->render_h == s->output_h ? 1u : 0u,
-		.tile_size         = (uint32_t)s->mb_tile_size,
-	};
-	Aeron_BindComputePipeline(pass, s->mb_temporal_tilemax_pipeline);
-	Aeron_BindComputeTextureSampler(pass, 0, depth, s->post_point_sampler);
-	Aeron_BindComputeTextureSampler(pass, 1, motion, s->post_point_sampler);
-	Aeron_BindComputeUniformData(pass, 0, &uniforms, sizeof uniforms);
-	Aeron_DispatchCompute(pass, (uint32_t)s->mb_tile_w, (uint32_t)s->mb_tile_h, 1);
-	Aeron_EndComputePass(pass);
-	return 1;
-}
-
 static int mb_prepare_tilemax(struct AeronScene3D* s, AeronCommandBuffer* cmd, AeronTexture* velocity) {
 	if (!s->mb_tilemax_compute_pipeline || !s->mb_tile_rt || !velocity) {
 		return 0;
@@ -857,47 +756,16 @@ int AeronScenePost_MbPrepareTemporalMotion(struct AeronScene3D* s, AeronCommandB
 	if (!s || !cmd || !s->temporal_upscaler || s->render_w <= 0 || s->render_h <= 0) {
 		return 0;
 	}
-	s->mb_tile_valid             = 0;
-	s->mb_neighbor_valid         = 0;
-	s->mb_temporal_motion_direct = 0;
-	if (s->post.mb_fsr_direct_motion) {
-		AeronTexture* retained = AeronTemporalUpscaler_RetainedDilatedMotionVectors(s->temporal_upscaler);
-		if (retained) {
-			s->mb_temporal_motion_direct = 1;
-			if (s->post.mb_quality != 2 || mb_prepare_fsr_tilemax(s, cmd, retained)) {
-				s->mb_tile_valid = s->post.mb_quality == 2;
-				return 1;
-			}
-			s->mb_temporal_motion_direct = 0;
-		}
-	}
-	if (!mb_ensure_temporal_velocity_target(s)) {
+	s->mb_tile_valid     = 0;
+	s->mb_neighbor_valid = 0;
+	/* Motion blur reads FSR's render-resolution motion as it is. Without it
+	 * (the dispatch failed), the frame has no blur. */
+	AeronTexture* retained = AeronTemporalUpscaler_RetainedDilatedMotionVectors(s->temporal_upscaler);
+	if (!retained || (s->post.mb_quality == 2 && !mb_prepare_fsr_tilemax(s, cmd, retained))) {
 		return 0;
 	}
-	AeronTexture* depth  = AeronTemporalUpscaler_DilatedDepth(s->temporal_upscaler);
-	AeronTexture* motion = AeronTemporalUpscaler_DilatedMotionVectors(s->temporal_upscaler);
-	if (!depth || !motion) {
-		return 0;
-	}
-	if (s->post.mb_quality == 2) {
-		if (!mb_prepare_temporal_velocity_tilemax(s, cmd, depth, motion)) {
-			return 0;
-		}
-		s->mb_tile_valid = 1;
-		return 1;
-	}
-	if (!s->mb_temporal_velocity_pipeline) {
-		return 0;
-	}
-	AeronTexture*                    textures[2] = { depth, motion };
-	AeronSampler*                    samplers[2] = { s->post_point_sampler, s->post_point_sampler };
-	const MbTemporalVelocityUniforms uniforms    = {
-		.source_texel      = { 1.0f / (float)s->render_w, 1.0f / (float)s->render_h },
-		.native_resolution = s->render_w == s->output_w && s->render_h == s->output_h ? 1.0f : 0.0f,
-	};
-	return AeronScenePost_Fullscreen(cmd, s->mb_temporal_velocity_pipeline, s->mb_temporal_velocity_rt,
-									 textures, samplers, 2, &uniforms, sizeof uniforms,
-									 "Motion blur reconstruct temporal velocity");
+	s->mb_tile_valid = s->post.mb_quality == 2;
+	return 1;
 }
 
 int AeronScenePost_MbVisualizeTemporal(struct AeronScene3D* s, AeronCommandBuffer* cmd, AeronTexture* motion,

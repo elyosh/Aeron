@@ -1,6 +1,6 @@
-/* Reduce each resolution-scaled velocity tile to its maximum-magnitude vector. This path
- * handles non-temporal high-quality blur and retained temporal velocities that
- * do not have a tile result from the fused reconstruction dispatch. */
+/* Reduce each resolution-scaled velocity tile to its maximum-magnitude
+ * vector, for the high-quality blur without temporal upscaling (with it,
+ * scene_mb_fsr_tilemax.comp.hlsl reads FSR's motion). */
 
 #define MB_GROUP_SIZE 8u
 #define MB_GROUP_THREADS (MB_GROUP_SIZE * MB_GROUP_SIZE)

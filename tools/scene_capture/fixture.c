@@ -737,8 +737,6 @@ static void set_game_effects(AeronScene3D* scene, const CaptureConfig* config, i
 								  .mb_quality           = blur ? config->quality : 0,
 								  .mb_shutter           = (float)(config->shutter * .032 * config->fps),
 								  .mb_camera_blur       = 1,
-								  /* As the game ships (motion_blur.fsr_direct_motion). */
-								  .mb_fsr_direct_motion = config->game.temporal_mode != AERON_TEMPORAL_OFF,
 							  });
 	const AeronSceneShadowSettings* shadows = &config->game.shadows;
 	if (!shadows->enabled)
