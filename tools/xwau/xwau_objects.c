@@ -74,10 +74,10 @@ static const Field g_fields[] = {
 };
 
 /* The keys of a `lasers` entry: laserGroupWeaponType, laserGroupSlotCount,
-   laserGroupMountType, laserGroupFireRange, laserGroupFireCooldownTicks. */
+   laserGroupWeaponKind, laserGroupFireRange, laserGroupFireCooldownTicks. */
 static const Field g_laserFields[] = {
 	{ "type", 306, 2, FIELD_UNSIGNED },     { "count", 318, 1, FIELD_UNSIGNED },
-	{ "mount", 321, 1, FIELD_UNSIGNED },    { "range", 324, 4, FIELD_SIGNED },
+	{ "kind", 321, 1, FIELD_UNSIGNED },    { "range", 324, 4, FIELD_SIGNED },
 	{ "cooldown", 336, 2, FIELD_UNSIGNED },
 };
 

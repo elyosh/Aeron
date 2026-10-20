@@ -28,7 +28,7 @@
  *   craft_record:
  *     hull: 16590
  *     lasers:
- *       - {type: 281, count: 2, mount: 4, range: 65536, cooldown: 236}
+ *       - {type: 281, count: 2, kind: 4, range: 65536, cooldown: 236}
  *   sounds_like: 5
  *   beam_allowed: true
  *   names: {short: 'QF/Cr', long: 'Quasar Fire Carrier', plural: '...', gender: m}

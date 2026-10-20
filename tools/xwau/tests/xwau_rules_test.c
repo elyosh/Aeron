@@ -747,7 +747,7 @@ static void test_objects(const char* scratch) {
 	char* text = ReadWholeFile(path, &size);
 	check(text && strstr(text, "object_type: 2\nmodel: tieadvancedx1\n"),
 		  "objects: a row that the mod renames gives `model`");
-	check(text && strstr(text, "    - {type: 282, count: 2, mount: 0, range: 0, cooldown: 0}\n") &&
+	check(text && strstr(text, "    - {type: 282, count: 2, kind: 0, range: 0, cooldown: 0}\n") &&
 			  strstr(text, "  cockpit_name: 'TieAdvancedX1'\n") && strstr(text, "sounds_like: 5\n"),
 		  "objects: the laser groups, the cockpit name and the engine sound case");
 	check(text && strstr(text, "names: {long: 'TIE Advanced x1', gender: m}\n"),
