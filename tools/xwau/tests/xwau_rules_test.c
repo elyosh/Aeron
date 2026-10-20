@@ -4,7 +4,8 @@
  * the model settings (xwau_craft.h), the text overrides (xwau_text.h), the
  * object type and craft type files (xwau_objects.h), the files copied into
  * the mod folder's game/ folder (xwau_game_files.h), the mission files
- * (xwau_mission_files.h) and the flight settings (xwau_flight_settings.h). The inputs are fixed
+ * (xwau_mission_files.h), the flight settings (xwau_flight_settings.h) and
+ * the [mission_tie] lines (xwau_mission_tie.h). The inputs are fixed
  * texts and folders written to a scratch folder. The test is built with the
  * tools as xwau_rules_test. It prints each check and exits with a non-zero
  * status when a check fails.
@@ -23,6 +24,7 @@
 #include "xwau_flight_settings.h"
 #include "xwau_game_files.h"
 #include "xwau_mission_files.h"
+#include "xwau_mission_tie.h"
 #include "xwau_missions.h"
 #include "xwau_objects.h"
 #include "xwau_skins.h"
@@ -1002,6 +1004,77 @@ static void test_mission_files(const char* scratch) {
 	free(b);
 }
 
+static void test_mission_tie(const char* scratch) {
+	char game[1024], stock[1024], out[1024], path[1300];
+	snprintf(game, sizeof game, "%s/tie_game", scratch);
+	snprintf(stock, sizeof stock, "%s/tie_stock", scratch);
+	snprintf(out, sizeof out, "%s/tie_out", scratch);
+	snprintf(path, sizeof path, "%s/Missions", game);
+	MakeDirs(path);
+	snprintf(path, sizeof path, "%s/MISSIONS", stock);
+	MakeDirs(path);
+	/* The .txt file wins over the .ini. */
+	snprintf(path, sizeof path, "%s/Missions/t.ini", game);
+	write_file(path, "[mission_tie]\nfg, 1, markings, 9\n");
+	snprintf(path, sizeof path, "%s/Missions/t.txt", game);
+	write_file(path, "fg, 3 markings, 6\n"
+					 "fg, 3 markings, 6			;Grey 5\n"
+					 "fg; 1; markings; 4\n"
+					 "fg, 1, markings, 5\n"
+					 "// fg, 1, markings, 8\n"
+					 "fg, 2, iff, 2 // trailing comment\n"
+					 "fg, 2, pilotvoice, Rebel_Pilot3\n"
+					 "fg, 0, index, 1, markings, 7\n"
+					 "fg, 0, index, 1, markings, 8\n"
+					 "fg, 4, markings, abc\n"
+					 "fg, 0, open_LandingGears, 1\n"
+					 "fg, 0, close_SFoils, 1\n"
+					 "fg, 59, markings, 1\n"
+					 "craft, 5, name, Debris\n"
+					 "SkipHyperspacedMessages = 1\n");
+	XwauMissionTie tie;
+	check(XwauMissionTie_Read(game, "Missions/t", true, &tie), "mission_tie: read");
+	const XwauMissionTieFlightGroup* fg0 = XwauMissionTie_FlightGroup(&tie, 0);
+	const XwauMissionTieFlightGroup* fg1 = XwauMissionTie_FlightGroup(&tie, 1);
+	const XwauMissionTieFlightGroup* fg2 = XwauMissionTie_FlightGroup(&tie, 2);
+	check(fg1 && fg1->has_markings && fg1->markings == 5,
+		  "mission_tie: ';' splits words too, the last line wins, and comment lines are skipped");
+	check(!XwauMissionTie_FlightGroup(&tie, 3) && !XwauMissionTie_FlightGroup(&tie, 4),
+		  "mission_tie: a line with fewer than 4 words and a value that isn't a number are skipped");
+	check(fg2 && fg2->has_iff && fg2->iff == 2 && fg2->has_pilot_voice &&
+			  strcmp(fg2->pilot_voice, "Rebel_Pilot3") == 0 && !fg2->has_markings,
+		  "mission_tie: a number is read as std::stoi reads it, so a trailing comment is ignored");
+	check(tie.craft_marking_count == 1 && tie.craft_markings[0].fg == 0 && tie.craft_markings[0].craft == 1 &&
+			  tie.craft_markings[0].markings == 8,
+		  "mission_tie: the markings of one craft, the last line winning");
+	check(fg0 && fg0->open_landing_gear && fg0->close_sfoils && fg0->open_landing_gear < fg0->close_sfoils,
+		  "mission_tie: the start lines keep their order");
+	check(tie.craft_lines.count == 1 && tie.settings.count == 1,
+		  "mission_tie: craft lines and settings are kept for their readers");
+	XwauMissionTie_Free(&tie);
+
+	/* The mission file: values by position in the mod's .TIE, which has 3
+	   flight groups, so flight group 59 is dropped. */
+	static const char* const kNames[]  = { "Red", "Blue", "Gold" };
+	static const int         kCrafts[] = { 1, 2, 3 };
+	snprintf(path, sizeof path, "%s/Missions/t.tie", game);
+	write_tie(path, 3, kNames, kCrafts);
+	XwauMissions* missions = XwauMissions_Load(game, false);
+	check(missions && XwauMissionFiles_Write(game, missions, stock, out),
+		  "mission_tie: mission file written");
+	XwauMissions_Free(missions);
+	size_t size = 0;
+	snprintf(path, sizeof path, "%s/missions/t.yaml", out);
+	char* text = ReadWholeFile(path, &size);
+	check(text &&
+			  strstr(text, "flight_groups:\n  1: { name: \"Blue\", craft: 2, markings: 5 }\n"
+						   "  2: { name: \"Gold\", craft: 3, iff: 2, pilot_voice: \"Rebel_Pilot3\" }\n") &&
+			  !strstr(text, "59:") && strstr(text, "start: [landing_gear, sfoils]"),
+		  "mission_tie: the values are written by position, without the flight groups that the .TIE doesn't "
+		  "have, and the start lines keep their order");
+	free(text);
+}
+
 static void test_flight_settings(const char* scratch) {
 	char game[1024], path[1300], settings[1300];
 	snprintf(game, sizeof game, "%s/fs_game", scratch);
@@ -1036,6 +1109,7 @@ int main(void) {
 	test_game_files(scratch);
 	test_mission_files(scratch);
 	test_flight_settings(scratch);
+	test_mission_tie(scratch);
 	RemoveTree(scratch);
 	printf("%s\n", g_failures ? "FAILED" : "passed");
 	return g_failures ? 1 : 0;

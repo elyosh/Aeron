@@ -7,6 +7,7 @@
 
 #include "opt.h"
 #include "util.h"
+#include "xwau_mission_tie.h"
 #include "xwau_skins.h"
 
 static const char* const kMissionDirs[] = { "Missions", "Melee", "Combat" };
@@ -288,11 +289,94 @@ static bool resdata_names(const char* game, const char* base, XwauLines* out) {
 	return ok;
 }
 
-/* ---- Mission files -------------------------------------------------------- */
+/* ---- Flight-group values -------------------------------------------------- */
 
 typedef struct Totals {
-	size_t files, profiles, profiles_dropped, skins, articulations, articulations_dropped, resdata;
+	size_t files, profiles, profiles_dropped, skins, articulations, articulations_dropped, resdata, values,
+		values_dropped;
 } Totals;
+
+/* Whether the flight group values of `entry` set anything. */
+static bool has_values(const XwauMissionTieFlightGroup* entry) {
+	return entry->has_markings || entry->has_iff || entry->has_pilot_voice;
+}
+
+/* Whether `name` holds a byte of 0x80 or more. The game compares the bytes of
+ * the .TIE, and the file is written in UTF-8, so such a name can't be
+ * checked. */
+static bool non_ascii(const char* name) {
+	for (const unsigned char* c = (const unsigned char*)name; *c; ++c)
+		if (*c >= 0x80)
+			return true;
+	return false;
+}
+
+/* Drops, with a report, the values of the flight groups that the .TIE that
+ * plays doesn't have, and the values that XWAU cuts to one byte. Returns the
+ * number of flight groups with values. */
+static size_t check_values(XwauMissionTie* values, const Tie* tie, const char* base, Totals* totals) {
+	size_t kept = 0;
+	for (size_t i = 0; i < values->fg_count; ++i) {
+		XwauMissionTieFlightGroup* entry = &values->fgs[i];
+		if (!has_values(entry))
+			continue;
+		/* XWAU only reads flight groups 0 to 191. */
+		if (entry->fg < 0 || entry->fg >= 192 || (size_t)entry->fg >= tie->count) {
+			if (entry->fg >= 0 && entry->fg < 192)
+				Report(base, "mission_tie: the mission has no flight group %d, so its values are dropped",
+					   entry->fg);
+			entry->has_markings = entry->has_iff = entry->has_pilot_voice = false;
+			++totals->values_dropped;
+			continue;
+		}
+		if (entry->has_markings && (entry->markings < 0 || entry->markings > 255)) {
+			Report(base, "mission_tie: flight group %d: markings %d don't fit in a byte; XWAU keeps %d",
+				   entry->fg, entry->markings, entry->markings & 0xFF);
+			entry->markings &= 0xFF;
+		}
+		if (entry->has_iff && (entry->iff < 0 || entry->iff > 255)) {
+			Report(base, "mission_tie: flight group %d: iff %d doesn't fit in a byte; XWAU keeps %d",
+				   entry->fg, entry->iff, entry->iff & 0xFF);
+			entry->iff &= 0xFF;
+		}
+		++kept;
+	}
+	return kept;
+}
+
+/* Writes the `flight_groups` of the checked values. */
+static void write_values(FILE* f, const XwauMissionTie* values, const Tie* tie, const char* base) {
+	bool any = false;
+	for (size_t i = 0; i < values->fg_count; ++i) {
+		const XwauMissionTieFlightGroup* entry = &values->fgs[i];
+		if (!has_values(entry))
+			continue;
+		const XwauTieFlightGroup* fg = &tie->groups[entry->fg];
+		if (!any)
+			fputs("flight_groups:\n", f);
+		any = true;
+		fprintf(f, "  %d: { ", entry->fg);
+		if (non_ascii(fg->name)) {
+			Report(base, "flight group %d: its name isn't ASCII, so its entry has no name check", entry->fg);
+		} else {
+			fputs("name: ", f);
+			write_string(f, fg->name);
+			fputs(", ", f);
+		}
+		fprintf(f, "craft: %d", fg->craft);
+		if (entry->has_markings)
+			fprintf(f, ", markings: %d", entry->markings);
+		if (entry->has_iff)
+			fprintf(f, ", iff: %d", entry->iff);
+		if (entry->has_pilot_voice) {
+			fputs(", pilot_voice: ", f);
+			write_string(f, entry->pilot_voice);
+		}
+		fputs(" }\n", f);
+	}
+}
+
+/* ---- Mission files -------------------------------------------------------- */
 
 /* Returns the flight group of each selection, or -1 when the mission has no
  * such flight group or when an earlier selection has it. Those selections are
@@ -332,7 +416,8 @@ static size_t* by_target(const int* targets, size_t count) {
 static bool write_mission(const char* path, const char* base, const Profile* profile_list,
 						  const int* profile_targets, size_t profile_count, const SkinModels* skin_models,
 						  const SkinChoice* skins, size_t skin_count, const XwauFlightGroupArticulation* fgs,
-						  const int* fg_targets, size_t fg_count, const Tie* tie, const XwauLines* resdata) {
+						  const int* fg_targets, size_t fg_count, const Tie* tie, const XwauLines* resdata,
+						  const XwauMissionTie* values) {
 	FILE* f = fopen(path, "wb");
 	if (!f) {
 		Report(NULL, "cannot write %s", path);
@@ -345,6 +430,7 @@ static bool write_mission(const char* path, const char* base, const Profile* pro
 	}
 	if (resdata->count)
 		fputs("]\n", f);
+	write_values(f, values, tie, base);
 	size_t* order = by_target(profile_targets, profile_count);
 	bool    any   = false;
 	for (size_t k = 0; order && k < profile_count; ++k) {
@@ -431,12 +517,18 @@ static bool import_mission(const char* game, const XwauMissions* missions, const
 	size_t                             skinned_models = 0;
 	for (size_t i = 0; i < skin_count; ++i)
 		skinned_models += i == 0 || skins[i].model != skins[i - 1].model;
-	XwauLines resdata = { 0 };
-	ok                = ok && resdata_names(game, base, &resdata);
-	if (!ok || (!profile_count && !skin_count && !fg_count && !resdata.count)) {
+	XwauLines      resdata = { 0 };
+	XwauMissionTie values  = { 0 };
+	/* XwauMissions_Load already reports the problems of these lines. */
+	ok = ok && resdata_names(game, base, &resdata) && XwauMissionTie_Read(game, base, false, &values);
+	bool any_values = false;
+	for (size_t i = 0; i < values.fg_count; ++i)
+		any_values |= has_values(&values.fgs[i]);
+	if (!ok || (!profile_count && !skin_count && !fg_count && !resdata.count && !any_values)) {
 		free_profiles(profile_list, profile_count);
 		free(skins);
 		XwauLines_Free(&resdata);
+		XwauMissionTie_Free(&values);
 		return ok;
 	}
 
@@ -457,6 +549,7 @@ static bool import_mission(const char* game, const XwauMissions* missions, const
 		free_profiles(profile_list, profile_count);
 		free(skins);
 		XwauLines_Free(&resdata);
+		XwauMissionTie_Free(&values);
 		return true;
 	}
 	long long*   profile_fgs = (long long*)malloc((profile_count ? profile_count : 1) * sizeof *profile_fgs);
@@ -484,20 +577,22 @@ static bool import_mission(const char* game, const XwauMissions* missions, const
 		profiles_kept += profile_targets[i] >= 0;
 	for (size_t i = 0; fg_targets && i < fg_count; ++i)
 		fgs_kept += fg_targets[i] >= 0;
-	ok = profile_targets && fg_targets;
-	if (ok && (profiles_kept || skin_count || fgs_kept || resdata.count)) {
+	ok                       = profile_targets && fg_targets;
+	const size_t values_kept = check_values(&values, &tie, base, totals);
+	if (ok && (profiles_kept || skin_count || fgs_kept || resdata.count || values_kept)) {
 		char dir_path[1200], lower_dir[64], path[1400];
 		LowerCopy(lower_dir, sizeof lower_dir, dir);
 		ok = PathFormat(dir_path, sizeof dir_path, "%s/%s", out, lower_dir) &&
 			 PathFormat(path, sizeof path, "%s/%s.yaml", dir_path, name) && MakeDirs(dir_path) &&
 			 write_mission(path, base, profile_list, profile_targets, profile_count, skin_models, skins,
-						   skin_count, fgs, fg_targets, fg_count, &tie, &resdata);
+						   skin_count, fgs, fg_targets, fg_count, &tie, &resdata, &values);
 		if (ok) {
 			++totals->files;
 			totals->profiles += profiles_kept;
 			totals->skins += skin_count;
 			totals->articulations += fgs_kept;
 			totals->resdata += resdata.count != 0;
+			totals->values += values_kept;
 		}
 	}
 	free(profile_targets);
@@ -506,6 +601,7 @@ static bool import_mission(const char* game, const XwauMissions* missions, const
 	free(skins);
 	free(tie.groups);
 	XwauLines_Free(&resdata);
+	XwauMissionTie_Free(&values);
 	return ok;
 }
 
@@ -528,9 +624,9 @@ bool XwauMissionFiles_Write(const char* game, const XwauMissions* missions, cons
 		return false;
 	Report(NULL,
 		   "wrote %zu mission files with %zu object profile selections (%zu dropped), %zu skin "
-		   "selections, %zu flight groups with articulations (%zu dropped) and the art files of %zu "
-		   "missions",
+		   "selections, %zu flight groups with articulations (%zu dropped), %zu flight groups with "
+		   "[mission_tie] values (%zu dropped) and the art files of %zu missions",
 		   totals.files, totals.profiles, totals.profiles_dropped, totals.skins, totals.articulations,
-		   totals.articulations_dropped, totals.resdata);
+		   totals.articulations_dropped, totals.values, totals.values_dropped, totals.resdata);
 	return true;
 }

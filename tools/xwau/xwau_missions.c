@@ -9,6 +9,7 @@
 
 #include "util.h"
 #include "xwau_game_tables.h"
+#include "xwau_mission_tie.h"
 #include "xwau_model.h"
 
 #define TAG_MAX 63
@@ -331,54 +332,33 @@ static FlightGroupLists* flight_group_lists(FlightGroupLists** fgs, size_t* coun
 	return entry;
 }
 
-static const struct {
-	const char* element;
-	const char* group;
-} kStartElements[] = { { "close_SFoils", "sfoils" }, { "open_LandingGears", "landing_gear" } };
-
-/* Reads the start lines "fg, N, close_SFoils, 1" and
- * "fg, N, open_LandingGears, 1" of mission `base`. They come from
- * <mission>.txt, or else from the [mission_tie] section of <mission>.ini. */
+/* Adds the start lines "fg, N, close_SFoils, 1" and
+ * "fg, N, open_LandingGears, 1" of mission `base` (xwau_mission_tie.h), in
+ * the order of their lines. */
 static bool start_lines(const char* game, const XwauMissions* m, const char* base, FlightGroupLists** fgs,
 						size_t* count) {
-	char      rel[1100], path[1024];
-	XwauLines lines;
-	if (!PathFormat(rel, sizeof rel, "%s.txt", base) ||
-		!XwauLines_Read(Xwau_FindFile(game, rel, path, sizeof path) ? path : NULL, "", XWAU_RULES_CPP,
-						&lines))
+	XwauMissionTie tie;
+	if (!XwauMissionTie_Read(game, base, m->report, &tie))
 		return false;
 	bool ok = true;
-	if (!lines.count) {
-		ok = PathFormat(rel, sizeof rel, "%s.ini", base) &&
-			 XwauLines_Read(Xwau_FindFile(game, rel, path, sizeof path) ? path : NULL, "mission_tie",
-							XWAU_RULES_CPP, &lines);
-	}
-	for (size_t i = 0; ok && i < lines.count; ++i) {
-		XwauLines tokens;
-		if (!(ok = Xwau_Tokenize(lines.items[i], XWAU_RULES_CPP, &tokens)))
+	for (size_t i = 0; ok && i < tie.fg_count; ++i) {
+		const XwauMissionTieFlightGroup* values = &tie.fgs[i];
+		if (values->fg < 0 || values->fg > FLIGHT_GROUP_MAX ||
+			(!values->close_sfoils && !values->open_landing_gear))
+			continue;
+		FlightGroupLists* entry = flight_group_lists(fgs, count, values->fg);
+		if (!(ok = entry != NULL))
 			break;
-		int element = -1;
-		for (int e = 0; tokens.count >= 4 && Xwau_SameName(tokens.items[0], "fg") && e < 2; ++e)
-			if (Xwau_SameName(tokens.items[2], kStartElements[e].element))
-				element = e;
-		long long  fg = 0, value = 0;
-		const bool numbers =
-			element >= 0 && Xwau_Stoi(tokens.items[1], &fg) && Xwau_Stoi(tokens.items[3], &value);
-		if (element >= 0 && !numbers)
-			report(m, base, "mission_tie: line '%s' skipped: not a number (XWAU would fail)", lines.items[i]);
-		if (numbers && fg >= 0 && fg <= FLIGHT_GROUP_MAX && value == 1) {
-			FlightGroupLists* entry = flight_group_lists(fgs, count, (int)fg);
-			const char*       group = kStartElements[element].group;
-			bool              found = false;
-			ok                      = entry != NULL;
-			for (size_t k = 0; ok && k < entry->start_count; ++k)
-				found |= entry->start[k] == group;
-			if (ok && !found)
-				entry->start[entry->start_count++] = group;
-		}
-		XwauLines_Free(&tokens);
+		const bool sfoils_first = values->close_sfoils && (!values->open_landing_gear ||
+														   values->close_sfoils < values->open_landing_gear);
+		if (values->close_sfoils && sfoils_first)
+			entry->start[entry->start_count++] = "sfoils";
+		if (values->open_landing_gear)
+			entry->start[entry->start_count++] = "landing_gear";
+		if (values->close_sfoils && !sfoils_first)
+			entry->start[entry->start_count++] = "sfoils";
 	}
-	XwauLines_Free(&lines);
+	XwauMissionTie_Free(&tie);
 	return ok;
 }
 
