@@ -293,7 +293,7 @@ static bool resdata_names(const char* game, const char* base, XwauLines* out) {
 
 typedef struct Totals {
 	size_t files, profiles, profiles_dropped, skins, articulations, articulations_dropped, resdata, values,
-		values_dropped;
+		values_dropped, craft_markings, craft_markings_dropped;
 } Totals;
 
 /* Whether the flight group values of `entry` set anything. */
@@ -311,17 +311,28 @@ static bool non_ascii(const char* name) {
 	return false;
 }
 
+/* Whether the .TIE that plays has flight group `fg`. XWAU only reads flight
+ * groups 0 to 191. */
+static bool tie_has(const Tie* tie, int fg) { return fg >= 0 && fg < 192 && (size_t)fg < tie->count; }
+
+static int compare_craft_markings(const void* a, const void* b) {
+	const XwauMissionTieCraftMarkings* x = (const XwauMissionTieCraftMarkings*)a;
+	const XwauMissionTieCraftMarkings* y = (const XwauMissionTieCraftMarkings*)b;
+	if (x->fg != y->fg)
+		return (x->fg > y->fg) - (x->fg < y->fg);
+	return (x->craft > y->craft) - (x->craft < y->craft);
+}
+
 /* Drops, with a report, the values of the flight groups that the .TIE that
- * plays doesn't have, and the values that XWAU cuts to one byte. Returns the
- * number of flight groups with values. */
+ * plays doesn't have, and cuts the values that XWAU cuts to one byte. The
+ * markings of one craft are sorted by flight group and craft, and the dropped
+ * ones get flight group -1. Returns the number of flight groups with values. */
 static size_t check_values(XwauMissionTie* values, const Tie* tie, const char* base, Totals* totals) {
-	size_t kept = 0;
 	for (size_t i = 0; i < values->fg_count; ++i) {
 		XwauMissionTieFlightGroup* entry = &values->fgs[i];
 		if (!has_values(entry))
 			continue;
-		/* XWAU only reads flight groups 0 to 191. */
-		if (entry->fg < 0 || entry->fg >= 192 || (size_t)entry->fg >= tie->count) {
+		if (!tie_has(tie, entry->fg)) {
 			if (entry->fg >= 0 && entry->fg < 192)
 				Report(base, "mission_tie: the mission has no flight group %d, so its values are dropped",
 					   entry->fg);
@@ -339,40 +350,93 @@ static size_t check_values(XwauMissionTie* values, const Tie* tie, const char* b
 				   entry->fg, entry->iff, entry->iff & 0xFF);
 			entry->iff &= 0xFF;
 		}
-		++kept;
+	}
+	for (size_t i = 0; i < values->craft_marking_count; ++i) {
+		XwauMissionTieCraftMarkings* entry = &values->craft_markings[i];
+		if (!tie_has(tie, entry->fg)) {
+			if (entry->fg >= 0 && entry->fg < 192)
+				Report(base,
+					   "mission_tie: the mission has no flight group %d, so the markings of its craft %d "
+					   "are dropped",
+					   entry->fg, entry->craft);
+			entry->fg = -1;
+			++totals->craft_markings_dropped;
+			continue;
+		}
+		/* The craft's number in its wave is never negative, nor more than 255
+		   in the game. */
+		if (entry->craft < 0 || entry->craft > 255) {
+			Report(base, "mission_tie: flight group %d has no craft %d, so its markings are dropped",
+				   entry->fg, entry->craft);
+			entry->fg = -1;
+			++totals->craft_markings_dropped;
+			continue;
+		}
+		/* Kept: a skirmish can give the flight group more craft. */
+		if (entry->craft >= tie->groups[entry->fg].craft_count)
+			Report(base,
+				   "mission_tie: flight group %d has %d craft in each wave, so the markings of its craft %d "
+				   "do nothing unless it gets more",
+				   entry->fg, tie->groups[entry->fg].craft_count, entry->craft);
+		if (entry->markings < 0 || entry->markings > 255) {
+			Report(base,
+				   "mission_tie: flight group %d, craft %d: markings %d don't fit in a byte; XWAU keeps %d",
+				   entry->fg, entry->craft, entry->markings, entry->markings & 0xFF);
+			entry->markings &= 0xFF;
+		}
+	}
+	if (values->craft_marking_count > 1)
+		qsort(values->craft_markings, values->craft_marking_count, sizeof *values->craft_markings,
+			  compare_craft_markings);
+	size_t kept = 0;
+	for (int fg = 0; (size_t)fg < tie->count; ++fg) {
+		const XwauMissionTieFlightGroup* entry = XwauMissionTie_FlightGroup(values, fg);
+		bool                             any   = entry && has_values(entry);
+		for (size_t i = 0; !any && i < values->craft_marking_count; ++i)
+			any = values->craft_markings[i].fg == fg;
+		kept += any;
 	}
 	return kept;
 }
 
 /* Writes the `flight_groups` of the checked values. */
 static void write_values(FILE* f, const XwauMissionTie* values, const Tie* tie, const char* base) {
-	bool any = false;
-	for (size_t i = 0; i < values->fg_count; ++i) {
-		const XwauMissionTieFlightGroup* entry = &values->fgs[i];
-		if (!has_values(entry))
+	bool   any   = false;
+	size_t craft = 0; /* the next markings of one craft */
+	while (craft < values->craft_marking_count && values->craft_markings[craft].fg < 0)
+		++craft;
+	for (int i = 0; (size_t)i < tie->count; ++i) {
+		const XwauMissionTieFlightGroup* entry = XwauMissionTie_FlightGroup(values, i);
+		const bool                       set   = entry && has_values(entry);
+		const bool by_craft = craft < values->craft_marking_count && values->craft_markings[craft].fg == i;
+		if (!set && !by_craft)
 			continue;
-		const XwauTieFlightGroup* fg = &tie->groups[entry->fg];
+		const XwauTieFlightGroup* fg = &tie->groups[i];
 		if (!any)
 			fputs("flight_groups:\n", f);
 		any = true;
-		fprintf(f, "  %d: { ", entry->fg);
+		fprintf(f, "  %d: { ", i);
 		if (non_ascii(fg->name)) {
-			Report(base, "flight group %d: its name isn't ASCII, so its entry has no name check", entry->fg);
+			Report(base, "flight group %d: its name isn't ASCII, so its entry has no name check", i);
 		} else {
 			fputs("name: ", f);
 			write_string(f, fg->name);
 			fputs(", ", f);
 		}
 		fprintf(f, "craft: %d", fg->craft);
-		if (entry->has_markings)
+		if (set && entry->has_markings)
 			fprintf(f, ", markings: %d", entry->markings);
-		if (entry->has_iff)
+		if (set && entry->has_iff)
 			fprintf(f, ", iff: %d", entry->iff);
-		if (entry->has_pilot_voice) {
+		if (set && entry->has_pilot_voice) {
 			fputs(", pilot_voice: ", f);
 			write_string(f, entry->pilot_voice);
 		}
-		fputs(" }\n", f);
+		for (bool first = true; craft < values->craft_marking_count && values->craft_markings[craft].fg == i;
+			 ++craft, first = false)
+			fprintf(f, "%s%d: %d", first ? ", craft_markings: { " : ", ", values->craft_markings[craft].craft,
+					values->craft_markings[craft].markings);
+		fputs(by_craft ? " } }\n" : " }\n", f);
 	}
 }
 
@@ -521,7 +585,7 @@ static bool import_mission(const char* game, const XwauMissions* missions, const
 	XwauMissionTie values  = { 0 };
 	/* XwauMissions_Load already reports the problems of these lines. */
 	ok = ok && resdata_names(game, base, &resdata) && XwauMissionTie_Read(game, base, false, &values);
-	bool any_values = false;
+	bool any_values = values.craft_marking_count != 0;
 	for (size_t i = 0; i < values.fg_count; ++i)
 		any_values |= has_values(&values.fgs[i]);
 	if (!ok || (!profile_count && !skin_count && !fg_count && !resdata.count && !any_values)) {
@@ -593,6 +657,8 @@ static bool import_mission(const char* game, const XwauMissions* missions, const
 			totals->articulations += fgs_kept;
 			totals->resdata += resdata.count != 0;
 			totals->values += values_kept;
+			for (size_t i = 0; i < values.craft_marking_count; ++i)
+				totals->craft_markings += values.craft_markings[i].fg >= 0;
 		}
 	}
 	free(profile_targets);
@@ -625,8 +691,10 @@ bool XwauMissionFiles_Write(const char* game, const XwauMissions* missions, cons
 	Report(NULL,
 		   "wrote %zu mission files with %zu object profile selections (%zu dropped), %zu skin "
 		   "selections, %zu flight groups with articulations (%zu dropped), %zu flight groups with "
-		   "[mission_tie] values (%zu dropped) and the art files of %zu missions",
+		   "[mission_tie] values (%zu dropped), the markings of %zu craft (%zu dropped) and the art files "
+		   "of %zu missions",
 		   totals.files, totals.profiles, totals.profiles_dropped, totals.skins, totals.articulations,
-		   totals.articulations_dropped, totals.values, totals.values_dropped, totals.resdata);
+		   totals.articulations_dropped, totals.values, totals.values_dropped, totals.craft_markings,
+		   totals.craft_markings_dropped, totals.resdata);
 	return true;
 }

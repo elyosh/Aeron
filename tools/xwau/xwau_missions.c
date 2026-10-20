@@ -21,6 +21,7 @@
 #define TIE_FLIGHT_GROUP_SIZE 0xE3E
 #define TIE_FLIGHT_GROUP_NAME 20
 #define TIE_FLIGHT_GROUP_CRAFT 0x6B
+#define TIE_FLIGHT_GROUP_CRAFT_COUNT 0x6C
 #define TIE_FLIGHT_GROUP_MARKINGS 0x73
 
 static const char* const kMissionDirs[] = { "Missions", "Melee", "Combat" };
@@ -512,6 +513,7 @@ XwauTieFlightGroup* XwauTie_FlightGroups(const char* path, size_t* count) {
 		memcpy(g->name, record, TIE_FLIGHT_GROUP_NAME);
 		g->name[TIE_FLIGHT_GROUP_NAME] = 0;
 		g->craft                       = record[TIE_FLIGHT_GROUP_CRAFT];
+		g->craft_count                 = record[TIE_FLIGHT_GROUP_CRAFT_COUNT];
 		g->markings                    = record[TIE_FLIGHT_GROUP_MARKINGS];
 	}
 	fclose(f);

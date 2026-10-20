@@ -921,9 +921,9 @@ static void test_game_files(const char* scratch) {
 }
 
 /* Writes a .TIE file with `count` flight groups, named `names`, of craft
- * types `crafts`. */
+ * types `crafts`, with 2 craft in each wave. */
 static void write_tie(const char* path, size_t count, const char* const* names, const int* crafts) {
-	enum { kHeader = 0x23F0, kFlightGroup = 0xE3E, kCraft = 0x6B };
+	enum { kHeader = 0x23F0, kFlightGroup = 0xE3E, kCraft = 0x6B, kCraftCount = 0x6C };
 
 	const size_t   size = kHeader + count * kFlightGroup;
 	unsigned char* data = (unsigned char*)calloc(1, size);
@@ -932,7 +932,8 @@ static void write_tie(const char* path, size_t count, const char* const* names, 
 	data[2] = (unsigned char)count;
 	for (size_t i = 0; i < count; ++i) {
 		memcpy(data + kHeader + i * kFlightGroup, names[i], strlen(names[i]));
-		data[kHeader + i * kFlightGroup + kCraft] = (unsigned char)crafts[i];
+		data[kHeader + i * kFlightGroup + kCraft]      = (unsigned char)crafts[i];
+		data[kHeader + i * kFlightGroup + kCraftCount] = 2;
 	}
 	WriteWholeFile(path, data, size);
 	free(data);
@@ -1026,6 +1027,10 @@ static void test_mission_tie(const char* scratch) {
 					 "fg, 2, pilotvoice, Rebel_Pilot3\n"
 					 "fg, 0, index, 1, markings, 7\n"
 					 "fg, 0, index, 1, markings, 8\n"
+					 "fg, 1, index, 3, markings, 300\n"
+					 "fg, 1, index, 0, markings, 2\n"
+					 "fg, 1, index, -1, markings, 2\n"
+					 "fg, 9, index, 0, markings, 2\n"
 					 "fg, 4, markings, abc\n"
 					 "fg, 0, open_LandingGears, 1\n"
 					 "fg, 0, close_SFoils, 1\n"
@@ -1044,7 +1049,7 @@ static void test_mission_tie(const char* scratch) {
 	check(fg2 && fg2->has_iff && fg2->iff == 2 && fg2->has_pilot_voice &&
 			  strcmp(fg2->pilot_voice, "Rebel_Pilot3") == 0 && !fg2->has_markings,
 		  "mission_tie: a number is read as std::stoi reads it, so a trailing comment is ignored");
-	check(tie.craft_marking_count == 1 && tie.craft_markings[0].fg == 0 && tie.craft_markings[0].craft == 1 &&
+	check(tie.craft_marking_count == 5 && tie.craft_markings[0].fg == 0 && tie.craft_markings[0].craft == 1 &&
 			  tie.craft_markings[0].markings == 8,
 		  "mission_tie: the markings of one craft, the last line winning");
 	check(fg0 && fg0->open_landing_gear && fg0->close_sfoils && fg0->open_landing_gear < fg0->close_sfoils,
@@ -1067,11 +1072,14 @@ static void test_mission_tie(const char* scratch) {
 	snprintf(path, sizeof path, "%s/missions/t.yaml", out);
 	char* text = ReadWholeFile(path, &size);
 	check(text &&
-			  strstr(text, "flight_groups:\n  1: { name: \"Blue\", craft: 2, markings: 5 }\n"
+			  strstr(text, "flight_groups:\n  0: { name: \"Red\", craft: 1, craft_markings: { 1: 8 } }\n"
+						   "  1: { name: \"Blue\", craft: 2, markings: 5, craft_markings: { 0: 2, 3: 44 } }\n"
 						   "  2: { name: \"Gold\", craft: 3, iff: 2, pilot_voice: \"Rebel_Pilot3\" }\n") &&
-			  !strstr(text, "59:") && strstr(text, "start: [landing_gear, sfoils]"),
-		  "mission_tie: the values are written by position, without the flight groups that the .TIE doesn't "
-		  "have, and the start lines keep their order");
+			  !strstr(text, "59:") && !strstr(text, "9:") && !strstr(text, "-1") &&
+			  strstr(text, "start: [landing_gear, sfoils]"),
+		  "mission_tie: the values are written by position, the markings of each craft by its number, cut to "
+		  "a byte, without the flight groups that the .TIE doesn't have and negative craft numbers, and the "
+		  "start lines keep their order");
 	free(text);
 }
 

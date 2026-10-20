@@ -83,8 +83,9 @@ size_t XwauMissions_FlightGroupArticulations(const XwauMissions* missions, const
 
 /* A flight group of an XWA .TIE. */
 typedef struct XwauTieFlightGroup {
-	char name[21]; /* ISO-8859-1 */
-	int  craft;    /* craft type */
+	char name[21];    /* ISO-8859-1 */
+	int  craft;       /* craft type */
+	int  craft_count; /* the number of craft in each wave */
 	int  markings;
 } XwauTieFlightGroup;
 

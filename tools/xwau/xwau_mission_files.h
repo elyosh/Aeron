@@ -10,6 +10,7 @@
  *     resdata: ["planet2", "planetcustom", "backdrop_special"]
  *     flight_groups:
  *       1: { name: "Red 1", craft: 1, markings: 4 }
+ *       26: { name: "Red", craft: 1, craft_markings: { 0: 0, 1: 1 } }
  *     object_profiles:
  *       flight_groups:
  *         32: { profile: "Aeron", name: "Aeron", craft: 14 }
@@ -45,9 +46,12 @@
  * Flight-group values (hook_mission_tie): `flight_groups` holds the
  * markings, IFF and pilot voice that the mission's [mission_tie] lines set
  * (xwau_mission_tie.h), by position, as `markings`, `iff` and `pilot_voice`.
- * A value that doesn't fit in a byte is cut to one, as XWAU does. A flight
- * group whose name isn't ASCII gets no `name` check, since the game compares
- * the .TIE's bytes and the file is UTF-8.
+ * `craft_markings` holds the markings of single craft, keyed by the craft's
+ * number in its wave, from 0. A value that doesn't fit in a byte is cut to
+ * one, as XWAU does. A craft number past the flight group's craft count is
+ * reported but kept, since a skirmish can add craft. A flight group whose
+ * name isn't ASCII gets no `name` check, since the game compares the .TIE's
+ * bytes and the file is UTF-8.
  *
  * Art (hook_backdrops): `resdata` lists the DATs that the mission adds, in
  * its order: the lines of <mission>_Resdata.txt, or else of the [Resdata]
