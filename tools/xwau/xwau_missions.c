@@ -22,7 +22,7 @@
 #define TIE_FLIGHT_GROUP_CRAFT 0x6B
 #define TIE_FLIGHT_GROUP_MARKINGS 0x73
 
-static const char* const kMissionDirs[] = { "Missions", "Melee" };
+static const char* const kMissionDirs[] = { "Missions", "Melee", "Combat" };
 
 typedef struct MeshEntry {
 	int mesh, angle, speed, speed_back;
@@ -114,7 +114,7 @@ static bool skin_missions(const char* game, XwauLines* out) {
 	memset(out, 0, sizeof *out);
 	XwauLines keys = { 0 };
 	bool      ok   = true;
-	for (size_t d = 0; ok && d < 2; ++d) {
+	for (size_t d = 0; ok && d < sizeof kMissionDirs / sizeof kMissionDirs[0]; ++d) {
 		char dir[1024];
 		if (Xwau_FindDir(game, kMissionDirs[d], dir, sizeof dir)) {
 			size_t count   = 0;
@@ -578,7 +578,7 @@ static bool load_variants(const char* game, XwauMissions* m) {
 	XwauGameTables* tables       = NULL;
 	bool            tables_tried = false;
 	bool            ok           = true;
-	for (size_t d = 0; ok && d < 2; ++d) {
+	for (size_t d = 0; ok && d < sizeof kMissionDirs / sizeof kMissionDirs[0]; ++d) {
 		XwauLines names;
 		ok = XwauMissions_Names(game, kMissionDirs[d], &names);
 		for (size_t n = 0; ok && n < names.count; ++n) {

@@ -1,8 +1,10 @@
 /*
  * Tests the hook file rules that the XWAU readers reproduce (xwau_config.h),
  * the skin selection (xwau_skins.h), the skybox conversion (xwau_skyboxes.h),
- * the model settings (xwau_craft.h), the text overrides (xwau_text.h) and the
- * object type and craft type files (xwau_objects.h). The inputs are fixed
+ * the model settings (xwau_craft.h), the text overrides (xwau_text.h), the
+ * object type and craft type files (xwau_objects.h), the files copied into
+ * the mod folder's game/ folder (xwau_game_files.h) and the mission files
+ * (xwau_mission_files.h). The inputs are fixed
  * texts and folders written to a scratch folder. The test is built with the
  * tools as xwau_rules_test. It prints each check and exits with a non-zero
  * status when a check fails.
@@ -18,6 +20,8 @@
 #include "util.h"
 #include "xwau_config.h"
 #include "xwau_craft.h"
+#include "xwau_game_files.h"
+#include "xwau_mission_files.h"
 #include "xwau_missions.h"
 #include "xwau_objects.h"
 #include "xwau_skins.h"
@@ -361,6 +365,13 @@ static void test_skyboxes(const char* scratch) {
 		snprintf(path, sizeof path, "%s/Missions/%s.tie", stock, kMissions[m][0]);
 		write_file(path, "");
 	}
+	/* m6 is only in the mod, and m7 is in neither. */
+	snprintf(path, sizeof path, "%s/Missions/m6.ini", game);
+	write_file(path, "[SkyBoxes]\nAllRegions = Effects\\CubeMaps\\Alpha\nAllRegionsAmbientInt = 0.3\n");
+	snprintf(path, sizeof path, "%s/Missions/m6.tie", game);
+	write_file(path, "");
+	snprintf(path, sizeof path, "%s/Missions/m7.ini", game);
+	write_file(path, "[SkyBoxes]\nAllRegions = Effects\\CubeMaps\\Alpha\n");
 	char manifest[1200], folders[1200];
 	snprintf(manifest, sizeof manifest, "%s/sky.yaml", scratch);
 	snprintf(folders, sizeof folders, "%s/sky_folders.txt", scratch);
@@ -374,6 +385,8 @@ static void test_skyboxes(const char* scratch) {
 	const char* m4   = text ? strstr(text, "\"missions/m4.tie\"") : NULL;
 	const char* m5   = text ? strstr(text, "\"missions/m5.tie\"") : NULL;
 	check(m1 && m2 && m3 && m4 && m5, "skyboxes: one entry per mission");
+	check(text && strstr(text, "\"missions/m6.tie\"") && !strstr(text, "\"missions/m7.tie\""),
+		  "skyboxes: a mission that only the mod has is kept, one that neither has is left out");
 	if (m4 && m5) {
 		char               lines[256];
 		static const float kAll[3] = { 10, 0, 0 }, kRegion1[3] = { 0, 30, 20 }, kNone[3] = { 0, 0, 0 };
@@ -834,6 +847,138 @@ static void test_objects(const char* scratch) {
 	XwauTextIds_Free(&moved);
 }
 
+/* ---- Game files and mission files ----------------------------------------------- */
+
+static bool same_file(const char* path, const char* text) {
+	size_t     size = 0;
+	char*      data = ReadWholeFile(path, &size);
+	const bool same = data && size == strlen(text) && memcmp(data, text, size) == 0;
+	free(data);
+	return same;
+}
+
+static void test_game_files(const char* scratch) {
+	char game[1024], stock[1024], out[1024], path[1300];
+	snprintf(game, sizeof game, "%s/files_game", scratch);
+	snprintf(stock, sizeof stock, "%s/files_stock", scratch);
+	snprintf(out, sizeof out, "%s/files_out", scratch);
+	static const char* const kDirs[] = { "files_game/Missions",           "files_game/Combat",
+										 "files_game/Wave/FRONTEND/B1M1", "files_game/Wave/Other",
+										 "files_game/FRONTRES/Cutscene",  "files_stock/MISSIONS",
+										 "files_stock/WAVE/FRONTEND",     "files_stock/FrontRes/CUTSCENE" };
+	for (size_t i = 0; i < sizeof kDirs / sizeof kDirs[0]; ++i) {
+		snprintf(path, sizeof path, "%s/%s", scratch, kDirs[i]);
+		MakeDirs(path);
+	}
+	static const char* const kFiles[][2] = {
+		{ "files_game/Missions/a.tie", "mod a" },
+		{ "files_game/Missions/MISSION.LST", "same list" },
+		{ "files_game/Missions/Email.txt", "mod email" },
+		{ "files_game/Missions/a.ini", "settings" },
+		{ "files_game/Combat/c.TIE", "mod c" },
+		{ "files_game/Wave/FRONTEND/same.wav", "same voice" },
+		{ "files_game/Wave/FRONTEND/B1M1/new.wav", "new voice" },
+		{ "files_game/Wave/FRONTEND/changed.wav", "mod voice" },
+		{ "files_game/Wave/Other/x.wav", "other sound" },
+		{ "files_game/FRONTRES/Cutscene/cutscene.txt", "same table" },
+		{ "files_stock/MISSIONS/A.TIE", "stock a" },
+		{ "files_stock/MISSIONS/mission.lst", "same list" },
+		{ "files_stock/MISSIONS/EMAIL.TXT", "stock email" },
+		{ "files_stock/WAVE/FRONTEND/SAME.WAV", "same voice" },
+		{ "files_stock/WAVE/FRONTEND/CHANGED.WAV", "stock voice" },
+		{ "files_stock/FrontRes/CUTSCENE/CUTSCENE.TXT", "same table" },
+	};
+	for (size_t i = 0; i < sizeof kFiles / sizeof kFiles[0]; ++i) {
+		snprintf(path, sizeof path, "%s/%s", scratch, kFiles[i][0]);
+		write_file(path, kFiles[i][1]);
+	}
+	check(XwauGameFiles_Copy(game, stock, out), "game files: copied");
+	snprintf(path, sizeof path, "%s/Missions/a.tie", out);
+	const bool tie = same_file(path, "mod a");
+	snprintf(path, sizeof path, "%s/Combat/c.TIE", out);
+	check(tie && same_file(path, "mod c"), "game files: every .tie is copied, from each mission folder");
+	snprintf(path, sizeof path, "%s/Missions/Email.txt", out);
+	const bool email = same_file(path, "mod email");
+	snprintf(path, sizeof path, "%s/Missions/MISSION.LST", out);
+	const bool list = IsFile(path);
+	snprintf(path, sizeof path, "%s/FRONTRES/Cutscene/cutscene.txt", out);
+	check(email && !list && !IsFile(path),
+		  "game files: a list is copied only when it differs from the stock one");
+	snprintf(path, sizeof path, "%s/Missions/a.ini", out);
+	check(!IsFile(path), "game files: the mission settings aren't copied");
+	snprintf(path, sizeof path, "%s/Wave/FRONTEND/B1M1/new.wav", out);
+	const bool added = same_file(path, "new voice");
+	snprintf(path, sizeof path, "%s/Wave/FRONTEND/changed.wav", out);
+	const bool changed = same_file(path, "mod voice");
+	snprintf(path, sizeof path, "%s/Wave/FRONTEND/same.wav", out);
+	const bool same = IsFile(path);
+	snprintf(path, sizeof path, "%s/Wave/Other/x.wav", out);
+	check(added && changed && !same && !IsFile(path),
+		  "game files: only the voices that are new or changed are copied, and no other sounds");
+}
+
+/* Writes a .TIE file with `count` flight groups, named `names`, of craft
+ * types `crafts`. */
+static void write_tie(const char* path, size_t count, const char* const* names, const int* crafts) {
+	enum { kHeader = 0x23F0, kFlightGroup = 0xE3E, kCraft = 0x6B };
+
+	const size_t   size = kHeader + count * kFlightGroup;
+	unsigned char* data = (unsigned char*)calloc(1, size);
+	if (!data)
+		return;
+	data[2] = (unsigned char)count;
+	for (size_t i = 0; i < count; ++i) {
+		memcpy(data + kHeader + i * kFlightGroup, names[i], strlen(names[i]));
+		data[kHeader + i * kFlightGroup + kCraft] = (unsigned char)crafts[i];
+	}
+	WriteWholeFile(path, data, size);
+	free(data);
+}
+
+static void test_mission_files(const char* scratch) {
+	char game[1024], stock[1024], out[1024], path[1300];
+	snprintf(game, sizeof game, "%s/mf_game", scratch);
+	snprintf(stock, sizeof stock, "%s/mf_stock", scratch);
+	snprintf(out, sizeof out, "%s/mf_out", scratch);
+	snprintf(path, sizeof path, "%s/Missions", game);
+	MakeDirs(path);
+	snprintf(path, sizeof path, "%s/MISSIONS", stock);
+	MakeDirs(path);
+	/* Mission a has its own .TIE, b uses the stock one, and c has none. */
+	static const char* const kModNames[]    = { "Red", "Blue", "Gold" };
+	static const int         kModCrafts[]   = { 1, 2, 3 };
+	static const char* const kStockNames[]  = { "Other", "Red" };
+	static const int         kStockCrafts[] = { 9, 1 };
+	snprintf(path, sizeof path, "%s/Missions/a.tie", game);
+	write_tie(path, 3, kModNames, kModCrafts);
+	snprintf(path, sizeof path, "%s/MISSIONS/A.TIE", stock);
+	write_tie(path, 2, kStockNames, kStockCrafts);
+	snprintf(path, sizeof path, "%s/MISSIONS/B.TIE", stock);
+	write_tie(path, 2, kStockNames, kStockCrafts);
+	snprintf(path, sizeof path, "%s/Missions/a.ini", game);
+	write_file(path, "[Objects]\nObjectProfile_fg_1 = Ace\nObjectProfile_fg_5 = Lost\n");
+	snprintf(path, sizeof path, "%s/Missions/b.ini", game);
+	write_file(path, "[Objects]\nObjectProfile_fg_1 = Stock\n");
+	snprintf(path, sizeof path, "%s/Missions/c.ini", game);
+	write_file(path, "[Objects]\nObjectProfile_fg_0 = None\n");
+	XwauMissions* missions = XwauMissions_Load(game, false);
+	check(missions && XwauMissionFiles_Write(game, missions, stock, out), "mission files: written");
+	XwauMissions_Free(missions);
+	size_t size = 0;
+	snprintf(path, sizeof path, "%s/missions/a.yaml", out);
+	char* a = ReadWholeFile(path, &size);
+	check(a && strstr(a, "    1: { profile: \"Ace\", name: \"Blue\", craft: 2 }\n") && !strstr(a, "Lost"),
+		  "mission files: a selection keeps its position in the mod's .TIE, and one past its end is dropped");
+	snprintf(path, sizeof path, "%s/missions/b.yaml", out);
+	char* b = ReadWholeFile(path, &size);
+	check(b && strstr(b, "    1: { profile: \"Stock\", name: \"Red\", craft: 1 }\n"),
+		  "mission files: a mission without its own .TIE uses the game's");
+	snprintf(path, sizeof path, "%s/missions/c.yaml", out);
+	check(!IsFile(path), "mission files: a mission without a .TIE gets no file");
+	free(a);
+	free(b);
+}
+
 int main(void) {
 	char        scratch[1024];
 	const char* tmp = getenv("TMPDIR");
@@ -847,6 +992,8 @@ int main(void) {
 	test_craft(scratch);
 	test_text(scratch);
 	test_objects(scratch);
+	test_game_files(scratch);
+	test_mission_files(scratch);
 	RemoveTree(scratch);
 	printf("%s\n", g_failures ? "FAILED" : "passed");
 	return g_failures ? 1 : 0;

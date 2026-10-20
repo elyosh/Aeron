@@ -16,7 +16,7 @@
 #define SKY_LIST_MAX 64
 #define SKY_PI 3.14159265358979323846
 
-static const char* const kMissionDirs[] = { "Missions", "Melee" };
+static const char* const kMissionDirs[] = { "Missions", "Melee", "Combat" };
 
 /* The starfield images that the ddraw wrapper hides under a cube
  * (EffectsRenderer.cpp). */
@@ -84,8 +84,8 @@ void XwauSkyboxes_Rotation(const float xyz_degrees[3], bool overlay, float out_d
 /* ===== Reading [SkyBoxes] ================================================ */
 
 typedef struct SkyFolder {
-	char path[1024]; /* the folder found in the game folder */
-	char key[128];   /* lower-case encoded name */
+	char path[1024];   /* the folder found in the game folder */
+	char key[128];     /* lower-case encoded name */
 	bool sky, overlay; /* how the folder is used */
 } SkyFolder;
 
@@ -117,6 +117,8 @@ typedef struct SkyMission {
 
 typedef struct SkyState {
 	const char*    game;
+	const char*    stock_game;
+	size_t         not_found; /* missions with [SkyBoxes] that neither has */
 	SkyFolder*     folders;
 	size_t         folder_count;
 	SkyDefinition* definitions;
@@ -326,10 +328,10 @@ static long definition_index(SkyState* st, size_t folder, float ambient_int, flo
 
 /* The AllRegions values that a region without its own cube uses. */
 typedef struct SkyAllRegions {
-	const char* found;               /* the cube folder, or NULL when it does not load */
-	const char* overlay_found;       /* the overlay folder, or NULL */
-	float       angles[3];           /* RotationX, Y and Z */
-	float       overlay_angles[3];   /* OverlayRotationX, Y and Z */
+	const char* found;             /* the cube folder, or NULL when it does not load */
+	const char* overlay_found;     /* the overlay folder, or NULL */
+	float       angles[3];         /* RotationX, Y and Z */
+	float       overlay_angles[3]; /* OverlayRotationX, Y and Z */
 } SkyAllRegions;
 
 /* Reads region `r`. The region uses its own cube folder when it loads,
@@ -337,8 +339,8 @@ typedef struct SkyAllRegions {
  * overlay angles are the region's when the region has its own cube, and the
  * AllRegions ones otherwise, as in PrimarySurface.cpp. Returns false when
  * out of memory. */
-static bool read_region(SkyState* st, const XwauLines* lines, int r, const SkyAllRegions* all, const char* base,
-						SkyRegion* region) {
+static bool read_region(SkyState* st, const XwauLines* lines, int r, const SkyAllRegions* all,
+						const char* base, SkyRegion* region) {
 	region->definition = -1;
 	char key[16], written[512], found[1024], name[64];
 	snprintf(key, sizeof key, "Region%d", r);
@@ -356,8 +358,8 @@ static bool read_region(SkyState* st, const XwauLines* lines, int r, const SkyAl
 	XwauLines_Value(lines, name, XWAU_RULES_CPP, overlay, sizeof overlay);
 	if (!overlay[0] && written[0])
 		snprintf(overlay, sizeof overlay, "%s_overlay", written);
-	const bool  own_overlay = (written[0] || illum[0]) &&
-							  folder_loads(st->game, overlay, own_overlay_found, sizeof own_overlay_found);
+	const bool  own_overlay   = (written[0] || illum[0]) &&
+								folder_loads(st->game, overlay, own_overlay_found, sizeof own_overlay_found);
 	const char* overlay_found = own_overlay ? own_overlay_found : all->overlay_found;
 
 	if (!own && !all->found) {
@@ -376,7 +378,8 @@ static bool read_region(SkyState* st, const XwauLines* lines, int r, const SkyAl
 	float overlay_rotation[3] = { 0.0f, 0.0f, 0.0f };
 	for (int axis = 0; overlay_found && axis < 3; ++axis) {
 		snprintf(name, sizeof name, "%sOverlayRotation%c", key, 'X' + axis);
-		overlay_rotation[axis] = own ? sky_float(lines, name, region->rotation[axis]) : all->overlay_angles[axis];
+		overlay_rotation[axis] =
+			own ? sky_float(lines, name, region->rotation[axis]) : all->overlay_angles[axis];
 	}
 	const long folder = folder_index(st, own ? found : all->found, false, base);
 	const long overlay_folder =
@@ -408,6 +411,17 @@ static bool read_mission(SkyState* st, const char* dir, const char* name, SkyMis
 		XwauLines_Free(&lines);
 		return true;
 	}
+	/* Leave out a mission that neither the mod nor the game has, before its
+	   environments and folders are added. */
+	char tie_rel[300], tie[1024];
+	if (!PathFormat(tie_rel, sizeof tie_rel, "%s.tie", base) ||
+		(!Xwau_FindFile(st->game, tie_rel, tie, sizeof tie) &&
+		 !Xwau_FindFile(st->stock_game, tie_rel, tie, sizeof tie))) {
+		Report(tie_rel, "[SkyBoxes]: neither the mod nor the game has this mission; it is left out");
+		++st->not_found;
+		XwauLines_Free(&lines);
+		return true;
+	}
 	*found = true;
 	memset(out, 0, sizeof *out);
 	char lower_dir[64];
@@ -427,9 +441,9 @@ static bool read_mission(SkyState* st, const char* dir, const char* name, SkyMis
 	if (!overlay[0] && all_written[0])
 		snprintf(overlay, sizeof overlay, "%s_overlay", all_written);
 	SkyAllRegions all = {
-		.found         = all_loads ? all_found : NULL,
-		.overlay_found = folder_loads(st->game, overlay, overlay_found, sizeof overlay_found) ? overlay_found
-																							   : NULL,
+		.found = all_loads ? all_found : NULL,
+		.overlay_found =
+			folder_loads(st->game, overlay, overlay_found, sizeof overlay_found) ? overlay_found : NULL,
 	};
 	for (int axis = 0; axis < 3; ++axis) {
 		char name[64];
@@ -508,7 +522,8 @@ static bool write_manifest(const SkyState* st, const char* path) {
 			continue;
 		fprintf(f, "    overlay:\n      cube: \"flight/environments/xwau/%s/overlay.ktx2\"\n",
 				st->folders[d->overlay].key);
-		if (d->overlay_rotation[0] != 0.0f || d->overlay_rotation[1] != 0.0f || d->overlay_rotation[2] != 0.0f) {
+		if (d->overlay_rotation[0] != 0.0f || d->overlay_rotation[1] != 0.0f ||
+			d->overlay_rotation[2] != 0.0f) {
 			float degrees[3];
 			XwauSkyboxes_Rotation(d->overlay_rotation, true, degrees);
 			fprintf(f, "      rotation_degrees: [%g, %g, %g]\n", (double)degrees[0], (double)degrees[1],
@@ -570,7 +585,8 @@ static bool write_folders(const SkyState* st, const char* path) {
 	for (size_t i = 0; i < st->folder_count; ++i) {
 		const SkyFolder* folder = &st->folders[i];
 		if (folder->sky)
-			fprintf(f, "sky\t%s\txwau.%s\tflight/environments/xwau/%s\n", folder->path, folder->key, folder->key);
+			fprintf(f, "sky\t%s\txwau.%s\tflight/environments/xwau/%s\n", folder->path, folder->key,
+					folder->key);
 		if (folder->overlay)
 			fprintf(f, "overlay\t%s\t-\tflight/environments/xwau/%s\n", folder->path, folder->key);
 	}
@@ -583,9 +599,8 @@ static bool write_folders(const SkyState* st, const char* path) {
 }
 
 bool XwauSkyboxes_Write(const char* game, const char* stock_game, const char* manifest, const char* folders) {
-	SkyState st           = { .game = game };
-	bool     ok           = true;
-	size_t   not_original = 0;
+	SkyState st = { .game = game, .stock_game = stock_game };
+	bool     ok = true;
 	for (size_t d = 0; ok && d < sizeof kMissionDirs / sizeof kMissionDirs[0]; ++d) {
 		XwauLines names;
 		ok = XwauMissions_Names(game, kMissionDirs[d], &names);
@@ -595,13 +610,6 @@ bool XwauSkyboxes_Write(const char* game, const char* stock_game, const char* ma
 			ok               = read_mission(&st, kMissionDirs[d], names.items[n], &mission, &found);
 			if (!ok || !found)
 				continue;
-			char rel[300], stock[1024];
-			if (!PathFormat(rel, sizeof rel, "%s/%s.tie", kMissionDirs[d], names.items[n]) ||
-				!Xwau_FindFile(stock_game, rel, stock, sizeof stock)) {
-				Report(rel, "[SkyBoxes]: the original game has no such mission; it is left out");
-				++not_original;
-				continue;
-			}
 			ok = ArrayGrow((void**)&st.missions, st.mission_count, sizeof *st.missions);
 			if (ok)
 				st.missions[st.mission_count++] = mission;
@@ -632,8 +640,8 @@ bool XwauSkyboxes_Write(const char* game, const char* stock_game, const char* ma
 			   manifest, st.mission_count, with_sky, without, st.definition_count, st.folder_count);
 		if (overlays)
 			Report(NULL, "%zu regions have an overlay", overlays);
-		if (not_original)
-			Report(NULL, "%zu missions with [SkyBoxes] are not in the original game", not_original);
+		if (st.not_found)
+			Report(NULL, "%zu missions with [SkyBoxes] are neither in the mod nor in the game", st.not_found);
 	}
 	free(st.folders);
 	free(st.definitions);

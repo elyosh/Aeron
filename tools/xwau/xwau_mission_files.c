@@ -9,7 +9,7 @@
 #include "util.h"
 #include "xwau_skins.h"
 
-static const char* const kMissionDirs[] = { "Missions", "Melee" };
+static const char* const kMissionDirs[] = { "Missions", "Melee", "Combat" };
 
 /* Writes ISO-8859-1 `text` as a quoted YAML string, in UTF-8. */
 static void write_string(FILE* f, const char* text) {
@@ -28,58 +28,10 @@ static void write_string(FILE* f, const char* text) {
 	fputc('"', f);
 }
 
-/* ---- Flight groups -------------------------------------------------------- */
-
-/* The length of a flight group's name without its trailing white space. */
-static size_t name_length(const char* name) {
-	size_t n = strlen(name);
-	while (n && strchr(" \t\n\r\v\f\x1c\x1d\x1e\x1f\x85\xa0", name[n - 1]))
-		--n;
-	return n;
-}
-
-static bool same_flight_group(const XwauTieFlightGroup* a, const XwauTieFlightGroup* b) {
-	const size_t n = name_length(a->name);
-	return a->craft == b->craft && name_length(b->name) == n && memcmp(a->name, b->name, n) == 0;
-}
-
 typedef struct Tie {
 	XwauTieFlightGroup* groups;
 	size_t              count;
 } Tie;
-
-/* Returns the original mission's flight group that matches XWAU's flight
- * group `index`, or -1. A match has the same name and craft type. It is the
- * flight group at the same index if that one matches. Otherwise it is the
- * only match, when XWAU's mission also has only one. */
-static int stock_index(long long index, const Tie* xwau, const Tie* stock) {
-	if (index < 0 || (size_t)index >= xwau->count)
-		return -1;
-	const XwauTieFlightGroup* wanted = &xwau->groups[index];
-	if ((size_t)index < stock->count && same_flight_group(&stock->groups[index], wanted))
-		return (int)index;
-	int    match         = -1;
-	size_t stock_matches = 0, xwau_matches = 0;
-	for (size_t i = 0; i < stock->count; ++i) {
-		if (same_flight_group(&stock->groups[i], wanted)) {
-			match = (int)i;
-			++stock_matches;
-		}
-	}
-	for (size_t i = 0; i < xwau->count; ++i)
-		xwau_matches += same_flight_group(&xwau->groups[i], wanted);
-	return stock_matches == 1 && xwau_matches == 1 ? match : -1;
-}
-
-/* Writes why XWAU's flight group `index` has no original match, for a report. */
-static void why_dropped(const Tie* xwau, long long index, char* out, size_t cap) {
-	if (index >= 0 && (size_t)index < xwau->count)
-		snprintf(out, cap, "XWAU's '%.*s' (craft %d) has no unique match in the original mission",
-				 (int)name_length(xwau->groups[index].name), xwau->groups[index].name,
-				 xwau->groups[index].craft);
-	else
-		snprintf(out, cap, "XWAU's mission has no such flight group");
-}
 
 /* ---- Object profiles ------------------------------------------------------ */
 
@@ -296,55 +248,30 @@ typedef struct Totals {
 	size_t files, profiles, profiles_dropped, skins, articulations, articulations_dropped;
 } Totals;
 
-/* Returns the original flight group of each selection, or -1 when the
- * selection is dropped (and reported). */
-static int* match_profiles(const Profile* list, size_t count, const Tie* xwau, const Tie* stock,
-						   const char* base, Totals* totals) {
+/* Returns the flight group of each selection, or -1 when the mission has no
+ * such flight group or when an earlier selection has it. Those selections are
+ * dropped and reported. */
+static int* check_flight_groups(const long long* fgs, const char* const* labels, size_t count, const Tie* tie,
+								const char* base, const char* what, size_t* dropped) {
 	int* targets = (int*)malloc((count ? count : 1) * sizeof *targets);
 	for (size_t i = 0; targets && i < count; ++i) {
-		int target = stock_index(list[i].fg, xwau, stock);
-		for (size_t k = 0; target >= 0 && k < i; ++k)
-			if (targets[k] == target)
-				target = -1;
-		targets[i] = target;
-		char why[128];
-		if (target < 0) {
-			why_dropped(xwau, list[i].fg, why, sizeof why);
-			Report(base, "flight group %lld (%s) is dropped because %s", list[i].fg, list[i].profile, why);
-			++totals->profiles_dropped;
-		} else if (target != list[i].fg) {
-			Report(base, "flight group %lld (%s) is flight group %d in the original mission", list[i].fg,
-				   list[i].profile, target);
+		const bool exists = fgs[i] >= 0 && (size_t)fgs[i] < tie->count;
+		bool       twice  = false;
+		for (size_t k = 0; exists && k < i; ++k)
+			twice = twice || fgs[k] == fgs[i];
+		targets[i] = exists && !twice ? (int)fgs[i] : -1;
+		if (targets[i] < 0) {
+			Report(base, "%s flight group %lld, so its %s%s%s%s dropped",
+				   exists ? "an earlier line already sets" : "the mission has no", fgs[i], what,
+				   labels ? " '" : "", labels ? labels[i] : "", labels ? "' is" : " are");
+			++*dropped;
 		}
 	}
 	return targets;
 }
 
-static int* match_articulations(const XwauFlightGroupArticulation* fgs, size_t count, const Tie* xwau,
-								const Tie* stock, const char* base, Totals* totals) {
-	int* targets = (int*)malloc((count ? count : 1) * sizeof *targets);
-	for (size_t i = 0; targets && i < count; ++i) {
-		int target = stock_index(fgs[i].flight_group, xwau, stock);
-		for (size_t k = 0; target >= 0 && k < i; ++k)
-			if (targets[k] == target)
-				target = -1;
-		targets[i] = target;
-		char why[128];
-		if (target < 0) {
-			why_dropped(xwau, fgs[i].flight_group, why, sizeof why);
-			Report(base, "the articulations of flight group %d are dropped because %s", fgs[i].flight_group,
-				   why);
-			++totals->articulations_dropped;
-		} else if (target != fgs[i].flight_group) {
-			Report(base, "the articulations of flight group %d go to flight group %d in the original mission",
-				   fgs[i].flight_group, target);
-		}
-	}
-	return targets;
-}
-
-/* Returns the indices of `targets` sorted by original flight group. The
- * dropped ones (-1) come first, and the caller skips them. */
+/* Returns the indices of `targets` sorted by flight group. The dropped ones
+ * (-1) come first, and the caller skips them. */
 static size_t* by_target(const int* targets, size_t count) {
 	size_t* order = (size_t*)malloc((count ? count : 1) * sizeof *order);
 	for (size_t i = 0; order && i < count; ++i) {
@@ -359,7 +286,7 @@ static size_t* by_target(const int* targets, size_t count) {
 static bool write_mission(const char* path, const char* base, const Profile* profile_list,
 						  const int* profile_targets, size_t profile_count, const SkinModels* skin_models,
 						  const SkinChoice* skins, size_t skin_count, const XwauFlightGroupArticulation* fgs,
-						  const int* fg_targets, size_t fg_count, const Tie* stock) {
+						  const int* fg_targets, size_t fg_count, const Tie* tie) {
 	FILE* f = fopen(path, "wb");
 	if (!f) {
 		Report(NULL, "cannot write %s", path);
@@ -375,7 +302,7 @@ static bool write_mission(const char* path, const char* base, const Profile* pro
 		if (!any)
 			fputs("object_profiles:\n  flight_groups:\n", f);
 		any                          = true;
-		const XwauTieFlightGroup* fg = &stock->groups[profile_targets[i]];
+		const XwauTieFlightGroup* fg = &tie->groups[profile_targets[i]];
 		fprintf(f, "    %d: { profile: ", profile_targets[i]);
 		write_string(f, profile_list[i].profile);
 		fputs(", name: ", f);
@@ -407,7 +334,7 @@ static bool write_mission(const char* path, const char* base, const Profile* pro
 		if (!any)
 			fputs("articulations:\n  flight_groups:\n", f);
 		any                          = true;
-		const XwauTieFlightGroup* fg = &stock->groups[fg_targets[i]];
+		const XwauTieFlightGroup* fg = &tie->groups[fg_targets[i]];
 		fprintf(f, "    %d: { name: ", fg_targets[i]);
 		write_string(f, fg->name);
 		fprintf(f, ", craft: %d", fg->craft);
@@ -458,41 +385,44 @@ static bool import_mission(const char* game, const XwauMissions* missions, const
 		return ok;
 	}
 
-	char       rel[1200], xwau_path[1024], stock_path[1024];
-	const bool named     = PathFormat(rel, sizeof rel, "%s.tie", base);
-	const bool has_xwau  = named && Xwau_FindFile(game, rel, xwau_path, sizeof xwau_path);
-	const bool has_stock = named && Xwau_FindFile(stock_game, rel, stock_path, sizeof stock_path);
-	Tie        xwau = { 0 }, stock = { 0 };
-	if (has_xwau)
-		xwau.groups = XwauTie_FlightGroups(xwau_path, &xwau.count);
-	if (has_stock)
-		stock.groups = XwauTie_FlightGroups(stock_path, &stock.count);
-	if (!xwau.groups || !stock.groups) {
+	/* The .TIE that plays: the mod's, else the game's. */
+	char rel[1200], tie_path[1024];
+	Tie  tie = { 0 };
+	if (PathFormat(rel, sizeof rel, "%s.tie", base) &&
+		(Xwau_FindFile(game, rel, tie_path, sizeof tie_path) ||
+		 Xwau_FindFile(stock_game, rel, tie_path, sizeof tie_path)))
+		tie.groups = XwauTie_FlightGroups(tie_path, &tie.count);
+	if (!tie.groups) {
 		Report(base,
 			   "%zu object profile selections, %zu skinned models and %zu flight groups with "
-			   "articulations are dropped because there is no %s .TIE",
-			   profile_count, skinned_models, fg_count, xwau.groups ? "original" : "XWAU");
+			   "articulations are dropped because neither the mod nor the game has a .TIE for it",
+			   profile_count, skinned_models, fg_count);
 		totals->profiles_dropped += profile_count;
 		totals->articulations_dropped += fg_count;
 		free_profiles(profile_list, profile_count);
 		free(skins);
-		free(xwau.groups);
-		free(stock.groups);
 		return true;
 	}
-	int* profile_targets = match_profiles(profile_list, profile_count, &xwau, &stock, base, totals);
-	if (skin_count) {
-		for (size_t i = 0; i < xwau.count; ++i) {
-			const int target = stock_index((long long)i, &xwau, &stock);
-			if (target >= 0 && xwau.groups[i].markings != stock.groups[target].markings)
-				Report(base,
-					   "flight group %zu '%.*s' has markings %d in XWAU's mission but %d in the "
-					   "original one",
-					   i, (int)name_length(xwau.groups[i].name), xwau.groups[i].name, xwau.groups[i].markings,
-					   stock.groups[target].markings);
-		}
+	long long*   profile_fgs = (long long*)malloc((profile_count ? profile_count : 1) * sizeof *profile_fgs);
+	const char** profile_labels =
+		(const char**)malloc((profile_count ? profile_count : 1) * sizeof *profile_labels);
+	long long* articulated = (long long*)malloc((fg_count ? fg_count : 1) * sizeof *articulated);
+	for (size_t i = 0; profile_fgs && profile_labels && i < profile_count; ++i) {
+		profile_fgs[i]    = profile_list[i].fg;
+		profile_labels[i] = profile_list[i].profile;
 	}
-	int*   fg_targets    = match_articulations(fgs, fg_count, &xwau, &stock, base, totals);
+	for (size_t i = 0; articulated && i < fg_count; ++i)
+		articulated[i] = fgs[i].flight_group;
+	int* profile_targets = profile_fgs && profile_labels
+							   ? check_flight_groups(profile_fgs, profile_labels, profile_count, &tie, base,
+													 "object profile", &totals->profiles_dropped)
+							   : NULL;
+	int* fg_targets      = articulated ? check_flight_groups(articulated, NULL, fg_count, &tie, base,
+															 "articulations", &totals->articulations_dropped)
+									   : NULL;
+	free(profile_fgs);
+	free(profile_labels);
+	free(articulated);
 	size_t profiles_kept = 0, fgs_kept = 0;
 	for (size_t i = 0; profile_targets && i < profile_count; ++i)
 		profiles_kept += profile_targets[i] >= 0;
@@ -505,7 +435,7 @@ static bool import_mission(const char* game, const XwauMissions* missions, const
 		ok = PathFormat(dir_path, sizeof dir_path, "%s/%s", out, lower_dir) &&
 			 PathFormat(path, sizeof path, "%s/%s.yaml", dir_path, name) && MakeDirs(dir_path) &&
 			 write_mission(path, base, profile_list, profile_targets, profile_count, skin_models, skins,
-						   skin_count, fgs, fg_targets, fg_count, &stock);
+						   skin_count, fgs, fg_targets, fg_count, &tie);
 		if (ok) {
 			++totals->files;
 			totals->profiles += profiles_kept;
@@ -517,8 +447,7 @@ static bool import_mission(const char* game, const XwauMissions* missions, const
 	free(fg_targets);
 	free_profiles(profile_list, profile_count);
 	free(skins);
-	free(xwau.groups);
-	free(stock.groups);
+	free(tie.groups);
 	return ok;
 }
 
@@ -528,7 +457,7 @@ bool XwauMissionFiles_Write(const char* game, const XwauMissions* missions, cons
 	bool       skins_loaded = false;
 	Totals     totals       = { 0 };
 	bool       ok           = true;
-	for (size_t d = 0; ok && d < 2; ++d) {
+	for (size_t d = 0; ok && d < sizeof kMissionDirs / sizeof kMissionDirs[0]; ++d) {
 		XwauLines names;
 		ok = XwauMissions_Names(game, kMissionDirs[d], &names);
 		for (size_t n = 0; ok && n < names.count; ++n)

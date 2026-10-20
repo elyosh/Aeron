@@ -3,14 +3,17 @@
  * models. opt2gltf converts the models and their effect libraries.
  *
  * Usage:
- *   xwau_import missions --xwau-root DIR --stock-game DIR
+ *   xwau_import missions --xwau-root DIR --stock-game DIR --game-files DIR
  *                        [--skyboxes FILE --skybox-folders FILE] <output_dir>
  *   xwau_import craft --xwau-root DIR [--stock-game DIR [--strings FILE]] <output_dir>
  *
- * `missions` writes the selections of XWAU's missions for the missions of the
- * original game, installed in --stock-game. Each mission gets a file
- * <output_dir>/<dir>/<mission>.yaml (xwau_mission_files.h). With --skyboxes,
- * it also writes the environments of the missions' [SkyBoxes] sections into
+ * `missions` copies the files that come with the installation's missions into
+ * the --game-files folder, the mod folder's game/ folder (xwau_game_files.h).
+ * It then writes the selections of the installation's missions: each
+ * mission gets a file <output_dir>/<dir>/<mission>.yaml
+ * (xwau_mission_files.h). A mission without its own .TIE in the installation
+ * uses the one in --stock-game, the stock game's folder. With --skyboxes, it
+ * also writes the environments of the missions' [SkyBoxes] sections into
  * FILE, and the sky and overlay folders that environment_bake converts into
  * the --skybox-folders file (xwau_skyboxes.h).
  *
@@ -29,6 +32,7 @@
 
 #include "util.h"
 #include "xwau_craft.h"
+#include "xwau_game_files.h"
 #include "xwau_mission_files.h"
 #include "xwau_missions.h"
 #include "xwau_objects.h"
@@ -37,25 +41,27 @@
 
 static int usage(void) {
 	fprintf(stderr,
-			"usage: xwau_import missions --xwau-root DIR --stock-game DIR\n"
+			"usage: xwau_import missions --xwau-root DIR --stock-game DIR --game-files DIR\n"
 			"                            [--skyboxes FILE --skybox-folders FILE] <output_dir>\n"
 			"       xwau_import craft --xwau-root DIR [--stock-game DIR [--strings FILE]] <output_dir>\n");
 	return 2;
 }
 
-/* xwau_import missions --xwau-root DIR --stock-game DIR
+/* xwau_import missions --xwau-root DIR --stock-game DIR --game-files DIR
  *                      [--skyboxes FILE --skybox-folders FILE] <output_dir> */
 static int run_missions(int argc, char** argv) {
 	const char* xwau_root      = NULL;
 	const char* stock_game     = NULL;
 	const char* skyboxes       = NULL;
 	const char* skybox_folders = NULL;
+	const char* game_files     = NULL;
 	int         ai             = 0;
 	for (; ai < argc && strncmp(argv[ai], "--", 2) == 0; ai += 2) {
 		const char** value = strcmp(argv[ai], "--xwau-root") == 0        ? &xwau_root
 							 : strcmp(argv[ai], "--stock-game") == 0     ? &stock_game
 							 : strcmp(argv[ai], "--skyboxes") == 0       ? &skyboxes
 							 : strcmp(argv[ai], "--skybox-folders") == 0 ? &skybox_folders
+							 : strcmp(argv[ai], "--game-files") == 0     ? &game_files
 																		 : NULL;
 		if (!value) {
 			Report(NULL, "unknown option '%s'", argv[ai]);
@@ -71,14 +77,16 @@ static int run_missions(int argc, char** argv) {
 		}
 		*value = argv[ai + 1];
 	}
-	if (!xwau_root || !stock_game || argc - ai != 1) {
-		Report(NULL, "missions needs --xwau-root, --stock-game and an output folder");
+	if (!xwau_root || !stock_game || !game_files || argc - ai != 1) {
+		Report(NULL, "missions needs --xwau-root, --stock-game, --game-files and an output folder");
 		return 2;
 	}
 	if (!skyboxes != !skybox_folders) {
 		Report(NULL, "--skyboxes and --skybox-folders go together");
 		return 2;
 	}
+	if (!XwauGameFiles_Copy(xwau_root, stock_game, game_files))
+		return 1;
 	XwauMissions* missions = XwauMissions_Load(xwau_root, true);
 	if (!missions) {
 		Report(NULL, "out of memory (missions)");

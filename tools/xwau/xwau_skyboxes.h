@@ -59,7 +59,7 @@
 void XwauSkyboxes_Rotation(const float xyz_degrees[3], bool overlay, float out_degrees[3]);
 
 /* Writes the manifest `manifest` and the folder list `folders` for the
- * missions of `game` that are also in the original game `stock_game`.
+ * missions of `game` that the mod or the stock game `stock_game` has.
  * Returns false on an error. */
 bool XwauSkyboxes_Write(const char* game, const char* stock_game, const char* manifest, const char* folders);
 

@@ -2,8 +2,8 @@
 #define AERON_XWAU_MISSIONS_H
 
 /*
- * Reads what the XWAU missions (in Missions/ and Melee/) give to the models.
- * The missions are read once for all the converted models:
+ * Reads what the XWAU missions (in Missions/, Melee/ and Combat/) give to the
+ * models. The missions are read once for all the converted models:
  *
  *   - Skin lines (hook_32bpp), read with the C# rules. The global context
  *     comes from FlightModels/Skins.txt, or else from the [Skins] section of
@@ -21,7 +21,7 @@
  *     (FlightModels/Spacecraft0.LST). Each distinct set of lists for a model
  *     is a variant. The variant is named after the first flight group that
  *     uses it ("1b0m7fw_fg13"), with the missions in lower-case name order,
- *     first Missions/ then Melee/. Its articulation groups are
+ *     first Missions/, then Melee/ and Combat/. Its articulation groups are
  *     `variant.<variant>.<group>`, and the mission selects them. When a mesh
  *     is listed twice, the first line is used.
  *
@@ -46,10 +46,10 @@ typedef struct XwauMissions XwauMissions;
 XwauMissions* XwauMissions_Load(const char* game, bool report_problems);
 void          XwauMissions_Free(XwauMissions* missions);
 
-/* Lists the missions in folder `dir` (Missions or Melee) that have a .ini,
- * _Objects.txt, _Skins.txt or _SFoils*.txt file, or a .txt file next to
- * their .TIE. The names are in lower case and sorted. Returns false when out
- * of memory. */
+/* Lists the missions in folder `dir` (Missions, Melee or Combat) that have a
+ * .ini, _Objects.txt, _Skins.txt or _SFoils*.txt file, or a .txt file next
+ * to their .TIE. The names are in lower case and sorted. Returns false when
+ * out of memory. */
 bool XwauMissions_Names(const char* game, const char* dir, XwauLines* out);
 
 /* Reads the skin lines of mission `base` ("<dir>/<name>") from

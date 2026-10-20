@@ -2,10 +2,9 @@
 #define AERON_XWAU_MISSION_FILES_H
 
 /*
- * Writes the selections of XWAU's missions for the original game's missions.
- * Each mission with at least one selection gets a file
- * <out>/<dir>/<mission>.yaml (lower case). The game reads it when it loads
- * the mission:
+ * Writes the selections of a mod's missions. Each mission with at least one
+ * selection gets a file <out>/<dir>/<mission>.yaml (lower case). The game
+ * reads it when it loads the mission:
  *
  *     version: 1
  *     object_profiles:
@@ -18,7 +17,8 @@
  *       flight_groups:
  *         13: { name: "Red", craft: 1, variant: "1b0m7fw_fg13", start: [sfoils] }
  *
- * The missions come from XwauMissions_Names, first Missions/ then Melee/.
+ * The missions come from XwauMissions_Names, in Missions/, Melee/ and
+ * Combat/.
  *
  * Object profiles (hook_mission_objects): a line
  * `ObjectProfile_fg_<N> = <profile>` sets the profile of flight group N.
@@ -34,23 +34,17 @@
  * conversion (xwau_skins.h). A markings value is written only when its
  * variant is not the model's default one, which comes from the global
  * context. It goes under the model's name in lower case. The value is the
- * variant, or `~` for the model as modelled. Skin lines do not need flight
- * group matching, but they assume that a flight group keeps its markings.
- * Flight groups whose markings differ between XWAU's mission and the
- * original one are reported.
+ * variant, or `~` for the model as modelled.
  *
  * Articulations (hook_sfoils): the start lines and variants of the flight
  * groups (xwau_missions.h).
  *
- * XWAU's missions add, remove, rename flight groups and change their craft,
- * so XWAU's flight group indices can differ from the original mission's.
- * A selection is written for the original flight group with the same name
- * (ignoring trailing white space) and the same craft type. This is the
- * flight group at the same index if it matches. Otherwise it is the only
- * matching flight group, when XWAU's mission also has only one. Other
- * selections are reported and dropped. The key is the original flight
- * group's index. `name` and `craft` are the original flight group's
- * values, and the game checks them again.
+ * The selections name flight groups by their position in the mission's .TIE,
+ * and they are written with the same position. The .TIE is the one that
+ * plays: the mod's own when it has one (xwau_game_files.h copies it into the
+ * mod folder), else the game's. `name` and `craft` are that flight group's
+ * values, and the game checks them again. A selection for a flight group that
+ * the .TIE doesn't have is reported and dropped, as XWAU ignores it.
  *
  * Text is written as UTF-8. Problems go to stderr.
  */
@@ -60,9 +54,9 @@
 #include "xwau_config.h"
 #include "xwau_missions.h"
 
-/* Writes the mission files under `out`. `stock_game` is the original game
- * installation, whose Missions/ and Melee/ .TIE files give the original
- * flight groups. Returns false on an error. */
+/* Writes the mission files under `out`. `stock_game` is the stock game's
+ * folder, which has the .TIE of the missions that the mod doesn't bring.
+ * Returns false on an error. */
 bool XwauMissionFiles_Write(const char* game, const XwauMissions* missions, const char* stock_game,
 							const char* out);
 
