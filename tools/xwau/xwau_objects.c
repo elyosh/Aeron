@@ -82,7 +82,7 @@ static const Field g_laserFields[] = {
 };
 
 /* The keys of a `warheads` entry: warheadLauncherType, warheadLauncherSlotCount,
-   warheadLauncherValue. */
+   warheadLauncherCapacity. */
 static const Field g_warheadFields[] = {
 	{ "type", 342, 2, FIELD_UNSIGNED },
 	{ "count", 350, 1, FIELD_UNSIGNED },
