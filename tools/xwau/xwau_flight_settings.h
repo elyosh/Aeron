@@ -18,6 +18,12 @@
  *       warhead_collision_damage: false
  *       damage_through_shields_on_hard: true
  *       interdiction_regions: [1]
+ *     headlights:
+ *       position_m: [0, 0, 20]
+ *       color: [0.944, 0.944, 1]
+ *       power_w: 17671
+ *       angle_degrees: 25
+ *       auto_turn_on: true
  *
  * `extra_planets` is written when the mod installs XWAU's backdrop hook,
  * hook_backdrops.dll. With it, a mission's backdrop id N from 104 to 255
@@ -30,6 +36,17 @@
  * changes these two things in every mission. `mission_settings` holds the
  * defaults that the global settings of hook_mission_tie and
  * hook_engine_sound give every mission (xwau_mission_settings.h).
+ *
+ * `headlights` is written when the mod has XWAU's ddraw.dll and its SSAO.cfg
+ * sets `ssao_enabled = 1`: ddraw draws the headlights only then. It comes
+ * from the `headlights_*` keys of SSAO.cfg. The light is a one-sided light
+ * along the craft's nose, with a colour and a power in watts as a Blender
+ * area light has them (xwau_flight_settings.c says how ddraw's values are
+ * converted). `position_m` is from the craft's eye, with Z forward.
+ * `angle_degrees` is the width of ddraw's cone, for when the game has cone
+ * lights. `auto_turn_on` turns them on in the missions without a global
+ * light. A mission turns them on with `headlights: true` in its mission file
+ * (xwau_mission_files.h).
  *
  * Without any of these hooks, the file only has its version, and the game
  * plays as stock.

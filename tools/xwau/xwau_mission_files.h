@@ -16,6 +16,7 @@
  *       containerbrick: { ship_list: "Imperial II Star Destroyer 70", short_name: "ISD" }
  *     concourse:
  *       front_planet: { x: 319, y: 78, image: 15010 }
+ *     headlights: true
  *     flight_groups:
  *       1: { name: "Red 1", craft: 1, markings: 4 }
  *       26: { name: "Red", craft: 1, craft_markings: { 0: 0, 1: 1 } }
@@ -95,6 +96,10 @@
  * position that the mission sets (xwau_concourse.h). An image group that no
  * DAT of RESDATA.TXT has is reported but kept: the concourse then shows no
  * planet, as in XWAU.
+ *
+ * Headlights (ddraw): `headlights: true` when `Enabled` of the mission's
+ * [Headlights] section isn't 0. The light itself is in the `headlights`
+ * section of flight/flight.yaml (xwau_flight_settings.h).
  *
  * The selections name flight groups by their position in the mission's .TIE,
  * and they are written with the same position. The .TIE is the one that

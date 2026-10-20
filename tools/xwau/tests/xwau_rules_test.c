@@ -1341,6 +1341,63 @@ static void test_flight_settings(const char* scratch) {
 				  "# Made by xwau_import missions.\nversion: 1\nbackdrops:\n  extra_planets:\n    - { ids: "
 				  "[104, 255], first_group: 6304 }\n"),
 		  "flight settings: the backdrop hook makes backdrop ids 104 to 255 planets");
+	remove(path);
+	snprintf(path, sizeof path, "%s/ddraw.dll", game);
+	write_file(path, "");
+	snprintf(path, sizeof path, "%s/SSAO.cfg", game);
+	write_file(path, "ssao_enabled = 1\n;headlights_angle = 40\n headlights_col = 0.85, 0.85, 0.9\n"
+					 "HEADLIGHTS_ANGLE = 25\nheadlights_pos = 1, 2\n");
+	check(XwauFlightSettings_Write(game, settings) &&
+			  same_file(settings,
+						"# Made by xwau_import missions.\nversion: 1\nheadlights:\n  position_m: [0, 0, "
+						"20]\n  color: [0.944, 0.944, 1]\n  power_w: 17671\n  angle_degrees: 25\n"
+						"  auto_turn_on: true\n"),
+		  "flight settings: the headlights of SSAO.cfg, as a tint and a power in watts that gives ddraw's "
+		  "light at 50 m");
+	write_file(path, "headlights_col = 0.85, 0.85, 0.9\n");
+	check(XwauFlightSettings_Write(game, settings) &&
+			  same_file(settings, "# Made by xwau_import missions.\nversion: 1\n"),
+		  "flight settings: no headlights without ssao_enabled");
+}
+
+static void test_headlights(const char* scratch) {
+	char game[1024], stock[1024], out[1024], path[1300];
+	snprintf(game, sizeof game, "%s/hl_game", scratch);
+	snprintf(stock, sizeof stock, "%s/hl_stock", scratch);
+	snprintf(out, sizeof out, "%s/hl_mod/flight/missions", scratch);
+	snprintf(path, sizeof path, "%s/Missions", game);
+	MakeDirs(path);
+	MakeDirs(stock);
+	const char* const files[][2] = {
+		{ "ddraw.dll", "" },
+		{ "Missions/a.ini", "[Headlights]\nenabled = 0x1\n" },
+		{ "Missions/b.ini", "[Headlights]\nEnabled = 0\n" },
+		{ "Missions/c_Headlights.txt", "Enabled = 1\n" },
+	};
+	for (size_t i = 0; i < sizeof files / sizeof files[0]; ++i) {
+		snprintf(path, sizeof path, "%s/%s", game, files[i][0]);
+		write_file(path, files[i][1]);
+	}
+	static const char* const kNames[]  = { "Red" };
+	static const int         kCrafts[] = { 1 };
+	for (const char* m = "abc"; *m; ++m) {
+		snprintf(path, sizeof path, "%s/Missions/%c.tie", game, *m);
+		write_tie(path, 1, kNames, kCrafts);
+	}
+	XwauMissions* missions = XwauMissions_Load(game, false);
+	check(missions && XwauMissionFiles_Write(game, missions, stock, out),
+		  "headlights: mission files written");
+	XwauMissions_Free(missions);
+	size_t size = 0;
+	snprintf(path, sizeof path, "%s/missions/a.yaml", out);
+	char* text = ReadWholeFile(path, &size);
+	check(text && strstr(text, "\nheadlights: true\n"),
+		  "headlights: [Headlights] Enabled, in any case and base 0");
+	free(text);
+	snprintf(path, sizeof path, "%s/missions/b.yaml", out);
+	check(!IsFile(path), "headlights: Enabled = 0 writes nothing");
+	snprintf(path, sizeof path, "%s/missions/c.yaml", out);
+	check(!IsFile(path), "headlights: ddraw reads only the .ini");
 }
 
 int main(void) {
@@ -1363,6 +1420,7 @@ int main(void) {
 	test_model_swaps(scratch);
 	test_craft_names(scratch);
 	test_front_planet(scratch);
+	test_headlights(scratch);
 	test_mission_tie(scratch);
 	RemoveTree(scratch);
 	printf("%s\n", g_failures ? "FAILED" : "passed");
