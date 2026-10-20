@@ -119,10 +119,37 @@ static int compare_entries(const void* a, const void* b) {
 	return strcasecmp(((const StockEntry*)a)->id, ((const StockEntry*)b)->id);
 }
 
+bool XwauTextIds_Add(XwauTextIds* ids, const char* id) {
+	if (XwauTextIds_Has(ids, id))
+		return true;
+	char** item = ARRAY_PUSH(ids->ids, ids->count);
+	if (!item)
+		return false;
+	*item = StrDup(id);
+	if (!*item) {
+		ids->count--;
+		return false;
+	}
+	return true;
+}
+
+bool XwauTextIds_Has(const XwauTextIds* ids, const char* id) {
+	for (size_t i = 0; ids && i < ids->count; ++i)
+		if (strcasecmp(ids->ids[i], id) == 0)
+			return true;
+	return false;
+}
+
+void XwauTextIds_Free(XwauTextIds* ids) {
+	FreeList(ids->ids, ids->count);
+	ids->ids   = NULL;
+	ids->count = 0;
+}
+
 /* Writes the texts of the mod's file `name` that are different from the
- * stock file, and adds their count to `*written`. */
+ * stock file and that aren't in `moved`, and adds their count to `*written`. */
 static bool write_file_texts(FILE* f, const char* name, const char* mod_path, const char* stock_path,
-							 int* written) {
+							 const XwauTextIds* moved, int* written) {
 	XwauTextFile mod, stock;
 	if (!XwauText_ReadFile(stock_path, &stock)) {
 		Report(stock_path, "can't be read");
@@ -147,7 +174,7 @@ static bool write_file_texts(FILE* f, const char* name, const char* mod_path, co
 		entries[i] = (StockEntry) { stock.records[i].id, i };
 	qsort(entries, stock.count, sizeof *entries, compare_entries);
 
-	int    changed = 0, skipped = 0, missing = 0, free_count = 0;
+	int    changed = 0, skipped = 0, missing = 0, free_count = 0, in_objects = 0;
 	size_t last_line                         = 0;
 	bool   in_order                          = true;
 	bool   free_types[XWAU_TEXT_CRAFT_TYPES] = { false };
@@ -172,6 +199,10 @@ static bool write_file_texts(FILE* f, const char* name, const char* mod_path, co
 		seen[found->line] = true;
 		if (strcmp(record->text, stock.records[found->line].text) == 0)
 			continue;
+		if (XwauTextIds_Has(moved, record->id)) {
+			in_objects++;
+			continue;
+		}
 		const int craft_type = craft_type_of_id(record->id);
 		if (craft_type >= 0 && is_free_craft_type(craft_type)) {
 			free_count += !free_types[craft_type];
@@ -212,6 +243,8 @@ static bool write_file_texts(FILE* f, const char* name, const char* mod_path, co
 	if (!in_order)
 		Report(mod_path, "has its lines in a different order from the stock file. The game still reads "
 						 "the lines in the stock order, and each line gets the mod's text for its ID");
+	if (in_objects)
+		Report(NULL, "%s: %d texts are in the object files instead", name, in_objects);
 	if (skipped)
 		Report(NULL, "%s: %d texts are different from the stock file, and %d lines are skipped", name,
 			   changed, skipped);
@@ -225,7 +258,8 @@ static bool write_file_texts(FILE* f, const char* name, const char* mod_path, co
 	return true;
 }
 
-bool XwauText_Write(const char* mod_root, const char* stock_game, const char* output_file) {
+bool XwauText_Write(const char* mod_root, const char* stock_game, const char* output_file,
+					const XwauTextIds* moved) {
 	char        dir[1024];
 	const char* slash = strrchr(output_file, '/');
 	if (slash &&
@@ -248,7 +282,7 @@ bool XwauText_Write(const char* mod_root, const char* stock_game, const char* ou
 		} else if (!Xwau_FindFile(mod_root, g_textFiles[i], mod_path, sizeof mod_path)) {
 			Report(mod_root, "has no %s; it is skipped", g_textFiles[i]);
 		} else {
-			ok = write_file_texts(f, g_textFiles[i], mod_path, stock_path, &written);
+			ok = write_file_texts(f, g_textFiles[i], mod_path, stock_path, moved, &written);
 		}
 	}
 	if (written == 0)

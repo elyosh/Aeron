@@ -5,7 +5,7 @@
  * Usage:
  *   xwau_import missions --xwau-root DIR --stock-game DIR
  *                        [--skyboxes FILE --skybox-folders FILE] <output_dir>
- *   xwau_import craft --xwau-root DIR [--stock-game DIR --strings FILE] <output_dir>
+ *   xwau_import craft --xwau-root DIR [--stock-game DIR [--strings FILE]] <output_dir>
  *
  * `missions` writes the selections of XWAU's missions for the missions of the
  * original game, installed in --stock-game. Each mission gets a file
@@ -16,9 +16,10 @@
  *
  * `craft` writes the settings of each craft into <output_dir>/craft and the
  * hull and map icon lists into <output_dir>/hud.yaml (xwau_craft.h). With
- * --strings, it also writes into FILE the texts that the installation changes
- * in the game's text files. It compares them with the stock game, installed
- * in --stock-game (xwau_text.h).
+ * --stock-game, the stock game's folder, it also writes into
+ * <output_dir>/objects what the installation changes about the stock craft
+ * (xwau_objects.h). With --strings, it writes into FILE the other texts that
+ * the installation changes in the game's text files (xwau_text.h).
  */
 
 #include <stdbool.h>
@@ -29,6 +30,7 @@
 #include "xwau_craft.h"
 #include "xwau_mission_files.h"
 #include "xwau_missions.h"
+#include "xwau_objects.h"
 #include "xwau_skyboxes.h"
 #include "xwau_text.h"
 
@@ -36,7 +38,7 @@ static int usage(void) {
 	fprintf(stderr,
 			"usage: xwau_import missions --xwau-root DIR --stock-game DIR\n"
 			"                            [--skyboxes FILE --skybox-folders FILE] <output_dir>\n"
-			"       xwau_import craft --xwau-root DIR [--stock-game DIR --strings FILE] <output_dir>\n");
+			"       xwau_import craft --xwau-root DIR [--stock-game DIR [--strings FILE]] <output_dir>\n");
 	return 2;
 }
 
@@ -88,7 +90,7 @@ static int run_missions(int argc, char** argv) {
 	return ok ? 0 : 1;
 }
 
-/* xwau_import craft --xwau-root DIR [--stock-game DIR --strings FILE] <output_dir> */
+/* xwau_import craft --xwau-root DIR [--stock-game DIR [--strings FILE]] <output_dir> */
 static int run_craft(int argc, char** argv) {
 	const char* xwau_root  = NULL;
 	const char* stock_game = NULL;
@@ -117,13 +119,17 @@ static int run_craft(int argc, char** argv) {
 		Report(NULL, "craft needs --xwau-root and an output folder");
 		return 2;
 	}
-	if (!stock_game != !strings) {
-		Report(NULL, "--stock-game and --strings go together");
+	if (strings && !stock_game) {
+		Report(NULL, "--strings needs --stock-game");
 		return 2;
 	}
-	bool ok = XwauCraft_Write(xwau_root, argv[ai]);
+	bool        ok    = XwauCraft_Write(xwau_root, argv[ai]);
+	XwauTextIds moved = { 0 };
+	if (stock_game)
+		ok = XwauObjects_Write(xwau_root, stock_game, argv[ai], &moved) && ok;
 	if (strings)
-		ok = XwauText_Write(xwau_root, stock_game, strings) && ok;
+		ok = XwauText_Write(xwau_root, stock_game, strings, &moved) && ok;
+	XwauTextIds_Free(&moved);
 	return ok ? 0 : 1;
 }
 

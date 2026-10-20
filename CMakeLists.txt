@@ -1057,6 +1057,7 @@ if(AERON_BUILD_TOOLS)
     add_library(xwau_import_lib STATIC
         tools/xwau/xwau_craft.c
         tools/xwau/xwau_mission_files.c
+        tools/xwau/xwau_objects.c
         tools/xwau/xwau_skyboxes.c
         tools/xwau/xwau_text.c)
     target_link_libraries(xwau_import_lib PUBLIC xwau_files)

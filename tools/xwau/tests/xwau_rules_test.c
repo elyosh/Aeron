@@ -1,10 +1,10 @@
 /*
  * Tests the hook file rules that the XWAU readers reproduce (xwau_config.h),
  * the skin selection (xwau_skins.h), the skybox conversion (xwau_skyboxes.h),
- * the craft settings (xwau_craft.h) and the text overrides (xwau_text.h). The
- * inputs are fixed texts and folders written to a scratch folder. The test is
- * built with the tools as xwau_rules_test. It prints each check and exits
- * with a non-zero status when a check fails.
+ * the craft settings (xwau_craft.h), the text overrides (xwau_text.h) and the
+ * object files (xwau_objects.h). The inputs are fixed texts and folders written
+ * to a scratch folder. The test is built with the tools as xwau_rules_test. It
+ * prints each check and exits with a non-zero status when a check fails.
  */
 
 #include <math.h>
@@ -18,6 +18,7 @@
 #include "xwau_config.h"
 #include "xwau_craft.h"
 #include "xwau_missions.h"
+#include "xwau_objects.h"
 #include "xwau_skins.h"
 #include "xwau_skyboxes.h"
 #include "xwau_text.h"
@@ -515,7 +516,7 @@ static void test_text(const char* scratch) {
 	snprintf(path, sizeof path, "%s/SPECDESC.TXT", mod);
 	write_file(path, "!SPEC_1_NAME!X-wing\n!SPEC_186_NAME!U-Wing\n!SPEC_183_NAME!New\n");
 
-	check(XwauText_Write(mod, stock, out), "text: strings.yaml is written without FRONTTXT.TXT");
+	check(XwauText_Write(mod, stock, out, NULL), "text: strings.yaml is written without FRONTTXT.TXT");
 	size_t size = 0;
 	char* text = ReadWholeFile(out, &size);
 	check(text && strstr(text, "  msg_armed: '\\03Primary cannons armed'\n"),
@@ -532,7 +533,228 @@ static void test_text(const char* scratch) {
 
 	snprintf(path, sizeof path, "%s/STRINGS.TXT", stock);
 	remove(path);
-	check(!XwauText_Write(mod, stock, out) && !IsFile(out), "text: nothing is written when a stock file is missing");
+	check(!XwauText_Write(mod, stock, out, NULL) && !IsFile(out),
+		  "text: nothing is written when a stock file is missing");
+}
+
+/* ---- Object files ------------------------------------------------------------ */
+
+/* A small XWINGALLIANCE.EXE: a PE file whose four sections hold the addresses
+   that the object files read, and nothing else. */
+typedef struct FakeExe {
+	unsigned char* data;
+	size_t size;
+} FakeExe;
+
+static const struct {
+	unsigned address, size;
+} g_fakeSections[] = {
+	{ 0x41C000, 0x1000 },  /* the beam test */
+	{ 0x43D000, 0x1000 },  /* three sound switches */
+	{ 0x458000, 0x2000 },  /* the hangar launch switch */
+	{ 0x5B0000, 0x50000 }, /* the craft type table, the craft records and the object type table */
+};
+
+static unsigned char* fake_at(FakeExe* exe, unsigned address) {
+	size_t raw = 0x400;
+	for (size_t i = 0; i < 4; ++i) {
+		if (address >= g_fakeSections[i].address && address < g_fakeSections[i].address + g_fakeSections[i].size)
+			return exe->data + raw + (address - g_fakeSections[i].address);
+		raw += g_fakeSections[i].size;
+	}
+	return NULL;
+}
+
+static void put16(unsigned char* p, unsigned value) {
+	p[0] = (unsigned char)value;
+	p[1] = (unsigned char)(value >> 8);
+}
+
+static void put32(unsigned char* p, unsigned value) {
+	put16(p, value & 0xFFFF);
+	put16(p + 2, value >> 16);
+}
+
+static void fake_exe_init(FakeExe* exe) {
+	exe->size = 0x400;
+	for (size_t i = 0; i < 4; ++i)
+		exe->size += g_fakeSections[i].size;
+	exe->data = calloc(1, exe->size);
+	unsigned char* d = exe->data;
+	d[0] = 'M';
+	d[1] = 'Z';
+	put32(d + 0x3C, 0x40);
+	memcpy(d + 0x40, "PE\0\0", 4);
+	put16(d + 0x40 + 6, 4);
+	put16(d + 0x40 + 20, 224);
+	put32(d + 0x40 + 24 + 28, 0x400000);
+	size_t raw = 0x400;
+	for (size_t i = 0; i < 4; ++i) {
+		unsigned char* section = d + 0x40 + 24 + 224 + 40 * i;
+		put32(section + 8, g_fakeSections[i].size);
+		put32(section + 12, g_fakeSections[i].address - 0x400000);
+		put32(section + 16, g_fakeSections[i].size);
+		put32(section + 20, (unsigned)raw);
+		raw += g_fakeSections[i].size;
+	}
+	/* The sound switches: `jmp [table + case * 4]`, every object type on case 9
+	   and the TIE Fighter (5) on case 4. */
+	static const unsigned cases[4] = { 0x43D458, 0x43D4F8, 0x43DCC4, 0x459678 };
+	static const unsigned jumps[4] = { 0x43D117, 0x43D359, 0x43DA0C, 0x458E81 };
+	static const unsigned jump_tables[4] = { 0x43D800, 0x43D840, 0x43D880, 0x459800 };
+	for (int s = 0; s < 4; ++s) {
+		unsigned char* jump = fake_at(exe, jumps[s]);
+		jump[0] = 0xFF;
+		jump[1] = 0x24;
+		jump[2] = 0x85;
+		put32(jump + 3, jump_tables[s]);
+		memset(fake_at(exe, cases[s]), 9, 65);
+		fake_at(exe, cases[s])[5 - 1] = 4;
+	}
+	/* The stock beam test's `jz`. */
+	fake_at(exe, 0x41C6BF)[0] = 0x74;
+	fake_at(exe, 0x41C6BF)[1] = 0x1E;
+	/* Every object type has no list row. */
+	for (int t = 0; t < 557; ++t)
+		put16(fake_at(exe, 0x5FB240 + 24 * t + 20), 0xFFFF);
+}
+
+/* Gives object type `t` row `row` of Spacecraft0.LST and craft record `record`. */
+static void fake_type(FakeExe* exe, int t, int row, int record) {
+	unsigned char* type = fake_at(exe, 0x5FB240 + 24 * t);
+	type[0] = 0x02;
+	put16(type + 18, (unsigned)record);
+	put16(type + 20, 0);
+	put16(type + 22, (unsigned)row);
+}
+
+static void fake_exe_write(FakeExe* exe, const char* root) {
+	char path[1100];
+	snprintf(path, sizeof path, "%s/XWINGALLIANCE.EXE", root);
+	WriteWholeFile(path, exe->data, exe->size);
+	free(exe->data);
+}
+
+/* Writes STRINGS.TXT with the three species tables, and `long_1` as the long
+   name of species record 1. */
+static void write_strings(const char* root, const char* long_1) {
+	char path[1100], line[128];
+	snprintf(path, sizeof path, "%s/STRINGS.TXT", root);
+	FILE* f = fopen(path, "wb");
+	fputs("// species\r\n!KLASTBUOYSTRING!Buoy\r\n", f);
+	static const char* const suffixes[3] = { "", "_PLURAL", "_SHORT" };
+	for (int table = 0; table < 3; ++table)
+		for (int i = 0; i < 221; ++i) {
+			if (i == 0)
+				snprintf(line, sizeof line, "!KSPECXW%s!%sX-wing", suffixes[table], table ? "" : "m:");
+			else if (i == 1 && table == 0)
+				snprintf(line, sizeof line, "!KSPEC%d!%s", i, long_1);
+			else
+				snprintf(line, sizeof line, "!KSPEC%d%s!%sCraft %d", i, suffixes[table], table ? "" : "m:", i);
+			fprintf(f, "%s\r\n", line);
+		}
+	fclose(f);
+}
+
+static void test_objects(const char* scratch) {
+	char stock[1024], mod[1024], path[1100], out[1100];
+	snprintf(stock, sizeof stock, "%s/objects_stock", scratch);
+	snprintf(mod, sizeof mod, "%s/objects_mod", scratch);
+	snprintf(out, sizeof out, "%s/objects_out", scratch);
+	const char* roots[2] = { stock, mod };
+	for (int i = 0; i < 2; ++i) {
+		snprintf(path, sizeof path, "%s/FlightModels", roots[i]);
+		MakeDirs(path);
+		snprintf(path, sizeof path, "%s/FlightModels/Equipment0.LST", roots[i]);
+		write_file(path, "FlightModels\\Laser.opt\r\n");
+	}
+	snprintf(path, sizeof path, "%s/FlightModels/Spacecraft0.LST", stock);
+	write_file(path, "FlightModels\\XWING.opt\r\n\r\nFlightModels\\Booster.opt\r\nFlightModels\\CorvetteExplode.opt\r\n"
+					 "FlightModels\\Bwing.opt\r\n");
+	snprintf(path, sizeof path, "%s/FlightModels/Spacecraft0.LST", mod);
+	write_file(path, "FlightModels\\Xwing.opt\r\nFlightModels\\TieAdvancedx1.opt\r\n"
+					 "FlightModels\\CalamariHomeOne.opt\r\nFlightModels\\Bwing.opt\r\n");
+
+	FakeExe exes[2];
+	for (int i = 0; i < 2; ++i) {
+		fake_exe_init(&exes[i]);
+		/* Object types 1 and 2 are on the beam test; 70 and 71 aren't. */
+		fake_type(&exes[i], 1, 0, 0);  /* X-wing */
+		fake_type(&exes[i], 2, 1, 1);  /* Booster, then TIE Advanced x1 */
+		fake_type(&exes[i], 70, 2, 2); /* CorvetteExplode */
+		fake_type(&exes[i], 71, 3, 3); /* B-wing */
+		put16(fake_at(&exes[i], 0x5B0F70 + 2 * 7), 2);
+		put16(fake_at(&exes[i], 0x5B0F70 + 2 * 9), 70);
+	}
+	FakeExe* m = &exes[1];
+	fake_type(m, 33, 2, 32);                         /* a new craft in a reserved slot, on the renamed row */
+	put32(fake_at(m, 0x5BB480 + 987 * 0 + 21), 999); /* the X-wing's hull */
+	put16(fake_at(m, 0x5FB240 + 24 * 71 + 16), 0x843);
+	put16(fake_at(m, 0x5BB480 + 987 * 1 + 306), 282); /* the TIE Advanced x1's first laser group */
+	fake_at(m, 0x5BB480 + 987 * 1 + 318)[0] = 2;
+	memcpy(fake_at(m, 0x5BB480 + 987 * 1 + 50), "TieAdvancedX1", 13);
+	static const unsigned cases[4] = { 0x43D458, 0x43D4F8, 0x43DCC4, 0x459678 };
+	for (int s = 0; s < 4; ++s)
+		fake_at(m, cases[s])[2 - 1] = 4; /* object type 2 sounds like the TIE Fighter */
+	fake_at(m, 0x41C6BF)[0] = 0xEB;
+	fake_at(m, 0x41C6BF)[1] = 0x29;
+	fake_exe_write(&exes[0], stock);
+	fake_exe_write(&exes[1], mod);
+
+	write_strings(stock, "m:Craft 1");
+	write_strings(mod, "m:TIE Advanced x1");
+	snprintf(path, sizeof path, "%s/SHIPLIST.TXT", stock);
+	write_file(path, "!SPECIES_7!*Booster,Fighter,Nonflyable,Unknown,NoSkirmish,\t\t1,2,3,4,5,6,7,8\r\n"
+					 "!SPECIES_9!B-wing,Fighter,Flyable,Known,Skirmish,\t\t1,2,3,4,5,6,7,8\r\n");
+	snprintf(path, sizeof path, "%s/SHIPLIST.TXT", mod);
+	write_file(path, "!SPECIES_7!TIE Advanced x1,Fighter,GunnerFlyable,Known,Skirmish,\t\t1,2,3,4, 651, 246,681,279\r\n"
+					 "!SPECIES_9!B-wing A,Fighter,Flyable,Known,Skirmish,\t\t1,2,3,4,5,6,7,8\r\n");
+	snprintf(path, sizeof path, "%s/SPECDESC.TXT", stock);
+	write_file(path, "!SPEC_7_NAME!Booster\r\n!SPEC_7_CREW!0\r\n");
+	snprintf(path, sizeof path, "%s/SPECDESC.TXT", mod);
+	write_file(path, "!SPEC_7_NAME!TIE Advanced x1\r\n!SPEC_7_CREW!0\r\n");
+	snprintf(path, sizeof path, "%s/FRONTTXT.TXT", stock);
+	write_file(path, "!STR_A!A\r\n");
+
+	XwauTextIds moved = { 0 };
+	char strings[1200];
+	snprintf(strings, sizeof strings, "%s/strings.yaml", out);
+	check(XwauObjects_Write(mod, stock, out, &moved) && XwauText_Write(mod, stock, strings, &moved),
+		  "objects: the object files and strings.yaml are written");
+
+	size_t size = 0;
+	snprintf(path, sizeof path, "%s/objects/tieadvancedx1.yaml", out);
+	char* text = ReadWholeFile(path, &size);
+	check(text && strstr(text, "object_type: 2\nmodel: tieadvancedx1\n"),
+		  "objects: a row that the mod renames gives `model`");
+	check(text && strstr(text, "    - {type: 282, count: 2, mount: 0, range: 0, cooldown: 0}\n") &&
+			  strstr(text, "  cockpit_name: 'TieAdvancedX1'\n") && strstr(text, "sounds_like: 5\n"),
+		  "objects: the laser groups, the cockpit name and the engine sound case");
+	check(text && strstr(text, "names: {long: 'TIE Advanced x1', gender: m}\n"),
+		  "objects: the species name of the craft record goes into `names`");
+	check(text && strstr(text, "  7:\n    ship_list: {name: 'TIE Advanced x1', category: 'Fighter', flyable: gunner, "
+							   "known: true, skirmish: true, hidden: false, icon: [651, 246, 681, 279]}\n") &&
+			  strstr(text, "    tech_room: {name: 'TIE Advanced x1'}\n"),
+		  "objects: the ship list line and the tech room text of the craft type");
+	free(text);
+	snprintf(path, sizeof path, "%s/objects/xwing.yaml", out);
+	text = ReadWholeFile(path, &size);
+	check(text && !strstr(text, "model:") && strstr(text, "  hull: 999\n") && strstr(text, "beam_allowed: true\n"),
+		  "objects: a change of case isn't a new model; the hull and the beam");
+	free(text);
+	snprintf(path, sizeof path, "%s/objects/bwing.yaml", out);
+	text = ReadWholeFile(path, &size);
+	check(text && strstr(text, "model_type: {flags: 0x843}\n") && !strstr(text, "craft_record"),
+		  "objects: the model type flags");
+	free(text);
+	snprintf(path, sizeof path, "%s/objects/corvetteexplode.yaml", out);
+	check(!IsFile(path), "objects: a row renamed for a new craft keeps the stock model, and the type gets no file");
+	text = ReadWholeFile(strings, &size);
+	check(text && strstr(text, "SPECIES_9:") && !strstr(text, "SPECIES_7") && !strstr(text, "SPEC_7_") &&
+			  !strstr(text, "KSPEC1:"),
+		  "objects: the texts in the object files aren't in strings.yaml, and the others are");
+	free(text);
+	XwauTextIds_Free(&moved);
 }
 
 int main(void) {
@@ -547,6 +769,7 @@ int main(void) {
 	test_skyboxes(scratch);
 	test_craft(scratch);
 	test_text(scratch);
+	test_objects(scratch);
 	RemoveTree(scratch);
 	printf("%s\n", g_failures ? "FAILED" : "passed");
 	return g_failures ? 1 : 0;

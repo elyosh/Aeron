@@ -63,9 +63,23 @@ void XwauText_FreeFile(XwauTextFile* file);
  * tab. */
 bool XwauText_WriteQuoted(FILE* f, const char* text);
 
+/* A set of text IDs. Upper and lower case don't matter. */
+typedef struct XwauTextIds {
+	char** ids;
+	size_t count;
+} XwauTextIds;
+
+/* Adds `id`. Returns false when out of memory. */
+bool XwauTextIds_Add(XwauTextIds* ids, const char* id);
+bool XwauTextIds_Has(const XwauTextIds* ids, const char* id);
+void XwauTextIds_Free(XwauTextIds* ids);
+
 /* Writes `output_file` from the text files of the mod at `mod_root` and of
- * the stock game at `stock_game`. Returns false when a stock file is missing
- * or can't be read, or when the file can't be written. */
-bool XwauText_Write(const char* mod_root, const char* stock_game, const char* output_file);
+ * the stock game at `stock_game`. The IDs of `moved` (it can be NULL) are left
+ * out, because the object files carry their texts (xwau_objects.h). Returns
+ * false when a stock file is missing or can't be read, or when the file can't
+ * be written. */
+bool XwauText_Write(const char* mod_root, const char* stock_game, const char* output_file,
+					const XwauTextIds* moved);
 
 #endif /* AERON_XWAU_TEXT_H */

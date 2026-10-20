@@ -104,8 +104,10 @@ bool ModelTables_StockEye(const char* model, int eye[3]) {
 
 /* The craft list row of each craft type in the original game. The craft type
  * gives an object type (craftTypeToObjectType), the object type gives a row of
- * the model table, and that row gives the craft list row. XWAU changes the
- * rows of the list, but not this table. */
+ * the model table, and that row gives the craft list row. XWAU changes both:
+ * its executable gives some object types other rows (object type 149 moves
+ * from row 92 to 143), and its list renames rows. This table is the original
+ * game's only. */
 static const short kCraftListRows[] = {
 	-1,  0,   1,   2,   3,   4,   5,   6,   7,   8,   9,   10,  11,  12,  13,  14,  15,  37,  38,  42,  43,
 	39,  40,  41,  32,  33,  53,  54,  55,  56,  34,  35,  68,  69,  70,  71,  72,  44,  45,  46,  80,  81,
