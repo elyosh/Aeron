@@ -268,7 +268,7 @@ typedef struct AeronScene3DDesc {
 /* Per-frame camera. World-space position + world→eye rotation
  * quaternion (w, x, y, z — scene_quat_to_mat3's order), half-FOV
  * angles in radians, reversed-Z
- * near plane, and optional NDC X/Y offsets baked into the projection
+ * near plane, and optional NDC X/Y offsets included in the projection
  * for off-center classic projections (TIE's reticle alignment uses Y;
  * XWA's viewport center uses both; 0 for none). The viewport rect
  * selects the sub-rect of the scene RT the 3D view renders into —

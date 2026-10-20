@@ -992,7 +992,7 @@ static void test_mission_files(const char* scratch) {
 	snprintf(path, sizeof path, "%s/missions/c.yaml", out);
 	check(!IsFile(path), "mission files: a mission without a .TIE gets no file");
 	check(a && strstr(a, "\nresdata: [\"planet2\", \"backdrop_special\"]\n"),
-		  "mission files: resdata lists the art files that exist, once, by their set names");
+		  "mission files: resdata lists the art files that exist, once, by their mission art names");
 	snprintf(path, sizeof path, "%s/missions/d.yaml", out);
 	char* d = ReadWholeFile(path, &size);
 	check(d && strstr(d, "\nresdata: [\"backdrop_special\"]\n") && !strstr(d, "object_profiles"),

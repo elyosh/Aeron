@@ -246,9 +246,9 @@ static bool skin_choices(const SkinModels* s, const XwauLines* lines, const char
 
 /* Reads the DATs that mission `base` adds (hook_backdrops): the lines of
  * <base>_Resdata.txt, else of the [Resdata] section of <base>.ini. Each one
- * that exists is written as the game names its set (resdata_sets.h): its
- * file name without the extension, in lower case, with any character other
- * than a letter, a digit, '_' or '-' made '_'. A name is listed once. */
+ * that exists is written as the game names its mission art (mission_art.h):
+ * its file name without the extension, in lower case, with any character
+ * other than a letter, a digit, '_' or '-' made '_'. A name is listed once. */
 static bool resdata_names(const char* game, const char* base, XwauLines* out) {
 	memset(out, 0, sizeof *out);
 	char      rel[1200], path[1024];

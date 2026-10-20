@@ -43,10 +43,11 @@
  * Art (hook_backdrops): `resdata` lists the DATs that the mission adds, in
  * its order: the lines of <mission>_Resdata.txt, or else of the [Resdata]
  * section of <mission>.ini. A DAT that doesn't exist is left out, as XWAU
- * skips it. Each one is written as the game names its set: its file name
- * without the extension, in lower case, with any character other than a
- * letter, a digit, '_' or '-' made '_'. The bake decides which of them are
- * sets (resdata/sets/<name>); the game uses those and ignores the others.
+ * skips it. Each one is written as the game names its mission art: its file
+ * name without the extension, in lower case, with any character other than a
+ * letter, a digit, '_' or '-' made '_'. The bake decides which of them get
+ * their own mission art (resdata/mission_art/<name>); the game uses those
+ * and ignores the others, which are in the shared atlases.
  *
  * The selections name flight groups by their position in the mission's .TIE,
  * and they are written with the same position. The .TIE is the one that
