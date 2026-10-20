@@ -393,7 +393,7 @@ static void remove_old_files(const char* dir) {
 }
 
 typedef struct Counts {
-	int files, models, modelTypes, records, sounds, beams, names, craftTypes, remaps;
+	int files, models, typeFields, records, sounds, beams, names, craftTypes, remaps;
 } Counts;
 
 static void write_quoted_or_empty(FILE* f, const char* text) {
@@ -633,26 +633,15 @@ static bool write_object_file(const char* path, const Change* change, const Xwau
 			fputs("list: equipment\n", f);
 		counts->models++;
 	}
-	if (change->genus || change->family || change->flags || change->recordIndexChanged) {
-		fputs("model_type: {", f);
-		bool first = true;
-		if (change->genus) {
-			fprintf(f, "genus: %u", m.genus);
-			first = false;
-		}
-		if (change->family) {
-			fprintf(f, "%sfamily: %u", first ? "" : ", ", m.family);
-			first = false;
-		}
-		if (change->flags) {
-			fprintf(f, "%sflags: 0x%X", first ? "" : ", ", m.flags);
-			first = false;
-		}
-		if (change->recordIndexChanged)
-			fprintf(f, "%scraft_record_index: %d", first ? "" : ", ", m.record);
-		fputs("}\n", f);
-		counts->modelTypes++;
-	}
+	if (change->genus)
+		fprintf(f, "genus: %u\n", m.genus);
+	if (change->family)
+		fprintf(f, "family: %u\n", m.family);
+	if (change->flags)
+		fprintf(f, "flags: 0x%X\n", m.flags);
+	if (change->recordIndexChanged)
+		fprintf(f, "craft_record_index: %d\n", m.record);
+	counts->typeFields += change->genus || change->family || change->flags || change->recordIndexChanged;
 	if (change->ownsRecord && change->recordChanged) {
 		write_craft_record(f, stock->records[change->recordIndex], mod->records[change->recordIndex]);
 		counts->records++;
@@ -824,11 +813,12 @@ bool XwauObjects_Write(const char* mod_root, const char* stock_game, const char*
 	ok = ok && write_craft_types(craft_dir, stock, mod, models, &texts, moved, &counts);
 	free_texts(&texts);
 	if (ok) {
-		Report(NULL,
-			   "object types: %d files: %d with a model, %d with model type changes, %d with craft record "
-			   "changes, %d with sounds_like, %d with beam_allowed, %d with names",
-			   counts.files, counts.models, counts.modelTypes, counts.records, counts.sounds, counts.beams,
-			   counts.names);
+		Report(
+			NULL,
+			"object types: %d files: %d with a model, %d with a new genus, family, flags or craft record "
+			"index, %d with craft record changes, %d with sounds_like, %d with beam_allowed, %d with names",
+			counts.files, counts.models, counts.typeFields, counts.records, counts.sounds, counts.beams,
+			counts.names);
 		Report(NULL, "craft types: %d files, %d of them linked to another object type", counts.craftTypes,
 			   counts.remaps);
 		Report(NULL, "object types: %d new craft in reserved slots and %d in placeholders", new_slots,

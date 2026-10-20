@@ -789,8 +789,8 @@ static void test_objects(const char* scratch) {
 	free(text);
 	snprintf(path, sizeof path, "%s/object_types/bwing.yaml", out);
 	text = ReadWholeFile(path, &size);
-	check(text && strstr(text, "model_type: {flags: 0x843}\n") && !strstr(text, "craft_record"),
-		  "objects: the model type flags");
+	check(text && strstr(text, "object_type: 71\nflags: 0x843\n") && !strstr(text, "craft_record"),
+		  "objects: the object type's flags");
 	free(text);
 	snprintf(path, sizeof path, "%s/object_types/corvetteexplode.yaml", out);
 	check(!IsFile(path),

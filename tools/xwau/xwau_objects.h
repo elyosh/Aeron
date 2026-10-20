@@ -29,7 +29,10 @@
  *   version: 1
  *   object_type: 138
  *   model: victorystardestroyer
- *   model_type: {genus: 4, family: 0, flags: 0x843, craft_record_index: 140}
+ *   genus: 4
+ *   family: 0
+ *   flags: 0x843
+ *   craft_record_index: 140
  *   craft_record:
  *     hull: 16590
  *     lasers:
@@ -46,7 +49,8 @@
  *               skirmish: true, hidden: false, icon: [82, 10, 89, 18]}
  *   tech_room: {name: '...', description: '...'}
  *
- * `model_type` and `craft_record` hold only the keys that change. The
+ * The file holds only the keys that change, and `craft_record` only the
+ * fields that change. The
  * craft record is compared with the stock record that the object type uses
  * after its `craft_record_index`. `lasers` lists the three laser groups when
  * one of them changes, `warheads` the two launchers and `turrets` the two
