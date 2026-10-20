@@ -11,6 +11,13 @@
  *     backdrops:
  *       extra_planets:
  *         - { ids: [104, 255], first_group: 6304 }
+ *     rules:
+ *       reset_combat_music_at_mission_load: true
+ *       hangar_red_alert_any_mothership: true
+ *     mission_settings:
+ *       warhead_collision_damage: false
+ *       damage_through_shields_on_hard: true
+ *       interdiction_regions: [1]
  *
  * `extra_planets` is written when the mod installs XWAU's backdrop hook,
  * hook_backdrops.dll. With it, a mission's backdrop id N from 104 to 255
@@ -18,6 +25,11 @@
  * use these ids (mission_backdrops.h in the game). XWAU's hook loader loads
  * every hook_*.dll of the game folder, and this hook has no setting that
  * turns this off.
+ *
+ * `rules` is written when the mod installs hook_mission_tie.dll, which
+ * changes these two things in every mission. `mission_settings` holds the
+ * defaults that the global settings of hook_mission_tie and
+ * hook_engine_sound give every mission (xwau_mission_settings.h).
  *
  * Without any of these hooks, the file only has its version, and the game
  * plays as stock.

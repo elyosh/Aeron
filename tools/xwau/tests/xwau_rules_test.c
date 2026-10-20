@@ -57,8 +57,11 @@ static void test_rules(const char* scratch) {
 		  "stoi(text, 0, 0): hexadecimal, octal");
 
 	XwauLines tokens;
-	Xwau_Tokenize(" 1, ;2 ;", XWAU_RULES_CPP, &tokens);
-	check(tokens.count == 2 && strcmp(tokens.items[1], "2") == 0, "C++ tokens: empty ones dropped");
+	Xwau_Tokenize(" 1, ;2 ;,,3", XWAU_RULES_CPP, &tokens);
+	check(tokens.count == 4 && strcmp(tokens.items[1], "") == 0 && strcmp(tokens.items[2], "2") == 0 &&
+			  strcmp(tokens.items[3], "3") == 0,
+		  "C++ tokens: a token of spaces is kept as an empty one, and empty text between separators is "
+		  "skipped");
 	XwauLines_Free(&tokens);
 	Xwau_Tokenize("Ace;", XWAU_RULES_CS, &tokens);
 	check(tokens.count == 2 && tokens.items[1][0] == 0, "C# tokens: empty ones kept");
@@ -1083,6 +1086,82 @@ static void test_mission_tie(const char* scratch) {
 	free(text);
 }
 
+static void test_mission_settings(const char* scratch) {
+	char game[1024], stock[1024], out[1024], path[1300], settings[1300];
+	snprintf(game, sizeof game, "%s/ms_game", scratch);
+	snprintf(stock, sizeof stock, "%s/ms_stock", scratch);
+	snprintf(out, sizeof out, "%s/ms_out", scratch);
+	snprintf(path, sizeof path, "%s/Missions", game);
+	MakeDirs(path);
+	snprintf(path, sizeof path, "%s/FlightModels", game);
+	MakeDirs(path);
+	snprintf(path, sizeof path, "%s/MISSIONS", stock);
+	MakeDirs(path);
+	static const char* const kNames[]   = { "Red", "Blue" };
+	static const int         kCrafts[]  = { 1, 2 };
+	const char* const        files[][2] = {
+		{ "hook_mission_tie.dll", "" },
+		{ "hook_engine_sound.dll", "" },
+		/* The .cfg wins over Hooks.ini. */
+		{ "Hook_Mission_Tie.cfg", "IsWarheadCollisionDamagesEnabled = 0\nTargetCraftKeyMethod = 1\n" },
+		{ "Hooks.ini", "[hook_mission_tie]\nCanShootThroughtShieldOnHardDifficulty = 1\n" },
+		{ "FlightModels/default.ini", "[Interdiction]\nRegion = 3\n" },
+		{ "Missions/MISSION.LST", "//\n!BATTLE_0!"
+								  "[Battle]\n//\n1\n* m1.tie\n!D1!Desc\n49\n* m49.tie\n"
+								  "!D49!Desc\n50\nm50.tie\n!D50!Desc\n" },
+		{ "Missions/m1.txt", "IsRedAlertEnabled = 1\nSkipObjectsMessagesIff = 255\n"
+							 "ForcePlayerInTurretSeconds = 12\nKEY_O_TargetCraftFGs = 0x1, 5, abc\n"
+							 "CampaignCraftsListLines = A, ,B\nCampaignCraftsListLinesTop = 140\t\t;top\n"
+							 "isredalertenabled = 0\n" },
+		{ "Missions/m1_Interdiction.txt", "Region = 1;2\n" },
+	};
+	for (size_t i = 0; i < sizeof files / sizeof files[0]; ++i) {
+		snprintf(path, sizeof path, "%s/%s", game, files[i][0]);
+		write_file(path, files[i][1]);
+	}
+	snprintf(path, sizeof path, "%s/Missions/m1.tie", game);
+	write_tie(path, 2, kNames, kCrafts);
+	snprintf(path, sizeof path, "%s/Missions/m50.tie", game);
+	write_tie(path, 2, kNames, kCrafts);
+	/* m49 isn't in the mod, only in its list. */
+	snprintf(path, sizeof path, "%s/MISSIONS/m49.tie", stock);
+	write_tie(path, 2, kNames, kCrafts);
+
+	snprintf(settings, sizeof settings, "%s/flight.yaml", scratch);
+	check(XwauFlightSettings_Write(game, settings) &&
+			  same_file(settings, "# Made by xwau_import missions.\nversion: 1\nrules:\n"
+								  "  reset_combat_music_at_mission_load: true\n"
+								  "  hangar_red_alert_any_mothership: true\nmission_settings:\n"
+								  "  warhead_collision_damage: false\n  interdiction_regions: [3]\n"),
+		  "mission settings: the hook's rules, and the global settings as defaults");
+
+	XwauMissions* missions = XwauMissions_Load(game, false);
+	check(missions && XwauMissionFiles_Write(game, missions, stock, out), "mission settings: files written");
+	XwauMissions_Free(missions);
+	size_t size = 0;
+	snprintf(path, sizeof path, "%s/missions/m1.yaml", out);
+	char* m1 = ReadWholeFile(path, &size);
+	snprintf(path, sizeof path, "%s/missions/m49.yaml", out);
+	char* m49 = ReadWholeFile(path, &size);
+	snprintf(path, sizeof path, "%s/missions/m50.yaml", out);
+	char* m50 = ReadWholeFile(path, &size);
+	check(m1 && strstr(m1, "settings:\n  red_alert: true\n  skip_arrival_messages_iff: all\n"
+						   "  force_player_in_turret: \"0:00:12\"\n"
+						   "  target_key: { flight_groups: [1], method: cycle, only_not_inspected: false }\n"
+						   "  order_of_battle:\n    lines:\n      - \"A\"\n      - \"\"\n      - \"B\"\n"
+						   "    top: 140\n  interdiction_regions: [1, 2]\n"),
+		  "mission settings: the first line wins, numbers are read as std::stoi reads them, a word of "
+		  "spaces is an empty line, and flight groups that the .TIE doesn't have are left out");
+	check(m49 && strstr(m49, "settings:\n  skip_hyperspaced_messages: true\n"),
+		  "mission settings: mission 49 skips the \"entering area\" messages too, even when the mod doesn't "
+		  "change it");
+	check(m50 && strstr(m50, "settings:\n  damage_through_shields_on_hard: true\n"),
+		  "mission settings: in mission 50, shots damage components through the shields on Hard");
+	free(m1);
+	free(m49);
+	free(m50);
+}
+
 static void test_flight_settings(const char* scratch) {
 	char game[1024], path[1300], settings[1300];
 	snprintf(game, sizeof game, "%s/fs_game", scratch);
@@ -1117,6 +1196,7 @@ int main(void) {
 	test_game_files(scratch);
 	test_mission_files(scratch);
 	test_flight_settings(scratch);
+	test_mission_settings(scratch);
 	test_mission_tie(scratch);
 	RemoveTree(scratch);
 	printf("%s\n", g_failures ? "FAILED" : "passed");

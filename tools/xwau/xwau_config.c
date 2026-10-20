@@ -168,6 +168,22 @@ void XwauLines_Value(const XwauLines* lines, const char* key, XwauRules rules, c
 	}
 }
 
+void Xwau_WriteString(FILE* f, const char* text) {
+	fputc('"', f);
+	for (const unsigned char* c = (const unsigned char*)text; *c; ++c) {
+		if (*c == '"' || *c == '\\') {
+			fputc('\\', f);
+			fputc(*c, f);
+		} else if (*c < 0x80) {
+			fputc(*c, f);
+		} else {
+			fputc(0xC0 | (*c >> 6), f);
+			fputc(0x80 | (*c & 0x3F), f);
+		}
+	}
+	fputc('"', f);
+}
+
 bool Xwau_Tokenize(const char* value, XwauRules rules, XwauLines* out) {
 	memset(out, 0, sizeof *out);
 	char* copy = StrNDup(value, strlen(value));
@@ -181,8 +197,11 @@ bool Xwau_Tokenize(const char* value, XwauRules rules, XwauLines* out) {
 			const bool last = !sep;
 			if (sep)
 				*sep = 0;
+			/* The C++ hooks skip the empty text between two separators, but
+			   keep a word of spaces, as an empty word. */
+			const bool empty = !at[0];
 			Xwau_Trim(at, rules);
-			if (at[0] || rules == XWAU_RULES_CS)
+			if (!empty || rules == XWAU_RULES_CS)
 				ok = ok && XwauLines_Add(out, at, strlen(at));
 			if (last)
 				break;

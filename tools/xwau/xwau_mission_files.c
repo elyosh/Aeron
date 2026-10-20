@@ -7,27 +7,11 @@
 
 #include "opt.h"
 #include "util.h"
+#include "xwau_mission_settings.h"
 #include "xwau_mission_tie.h"
 #include "xwau_skins.h"
 
 static const char* const kMissionDirs[] = { "Missions", "Melee", "Combat" };
-
-/* Writes ISO-8859-1 `text` as a quoted YAML string, in UTF-8. */
-static void write_string(FILE* f, const char* text) {
-	fputc('"', f);
-	for (const unsigned char* c = (const unsigned char*)text; *c; ++c) {
-		if (*c == '"' || *c == '\\') {
-			fputc('\\', f);
-			fputc(*c, f);
-		} else if (*c < 0x80) {
-			fputc(*c, f);
-		} else {
-			fputc(0xC0 | (*c >> 6), f);
-			fputc(0x80 | (*c & 0x3F), f);
-		}
-	}
-	fputc('"', f);
-}
 
 typedef struct Tie {
 	XwauTieFlightGroup* groups;
@@ -293,7 +277,7 @@ static bool resdata_names(const char* game, const char* base, XwauLines* out) {
 
 typedef struct Totals {
 	size_t files, profiles, profiles_dropped, skins, articulations, articulations_dropped, resdata, values,
-		values_dropped, craft_markings, craft_markings_dropped;
+		values_dropped, craft_markings, craft_markings_dropped, settings;
 } Totals;
 
 /* Whether the flight group values of `entry` set anything. */
@@ -420,7 +404,7 @@ static void write_values(FILE* f, const XwauMissionTie* values, const Tie* tie, 
 			Report(base, "flight group %d: its name isn't ASCII, so its entry has no name check", i);
 		} else {
 			fputs("name: ", f);
-			write_string(f, fg->name);
+			Xwau_WriteString(f, fg->name);
 			fputs(", ", f);
 		}
 		fprintf(f, "craft: %d", fg->craft);
@@ -430,7 +414,7 @@ static void write_values(FILE* f, const XwauMissionTie* values, const Tie* tie, 
 			fprintf(f, ", iff: %d", entry->iff);
 		if (set && entry->has_pilot_voice) {
 			fputs(", pilot_voice: ", f);
-			write_string(f, entry->pilot_voice);
+			Xwau_WriteString(f, entry->pilot_voice);
 		}
 		for (bool first = true; craft < values->craft_marking_count && values->craft_markings[craft].fg == i;
 			 ++craft, first = false)
@@ -481,7 +465,7 @@ static bool write_mission(const char* path, const char* base, const Profile* pro
 						  const int* profile_targets, size_t profile_count, const SkinModels* skin_models,
 						  const SkinChoice* skins, size_t skin_count, const XwauFlightGroupArticulation* fgs,
 						  const int* fg_targets, size_t fg_count, const Tie* tie, const XwauLines* resdata,
-						  const XwauMissionTie* values) {
+						  const XwauMissionTie* values, const XwauMissionSettings* settings) {
 	FILE* f = fopen(path, "wb");
 	if (!f) {
 		Report(NULL, "cannot write %s", path);
@@ -490,10 +474,11 @@ static bool write_mission(const char* path, const char* base, const Profile* pro
 	fprintf(f, "# Imported from XWAU's %s selections by xwau_import.\nversion: 1\n", base);
 	for (size_t i = 0; i < resdata->count; ++i) {
 		fputs(i ? ", " : "resdata: [", f);
-		write_string(f, resdata->items[i]);
+		Xwau_WriteString(f, resdata->items[i]);
 	}
 	if (resdata->count)
 		fputs("]\n", f);
+	XwauMissionSettings_Write(f, settings);
 	write_values(f, values, tie, base);
 	size_t* order = by_target(profile_targets, profile_count);
 	bool    any   = false;
@@ -506,9 +491,9 @@ static bool write_mission(const char* path, const char* base, const Profile* pro
 		any                          = true;
 		const XwauTieFlightGroup* fg = &tie->groups[profile_targets[i]];
 		fprintf(f, "    %d: { profile: ", profile_targets[i]);
-		write_string(f, profile_list[i].profile);
+		Xwau_WriteString(f, profile_list[i].profile);
 		fputs(", name: ", f);
-		write_string(f, fg->name);
+		Xwau_WriteString(f, fg->name);
 		fprintf(f, ", craft: %d }\n", fg->craft);
 	}
 	free(order);
@@ -517,12 +502,12 @@ static bool write_mission(const char* path, const char* base, const Profile* pro
 			fputs("skins:\n", f);
 		if (i == 0 || skins[i].model != skins[i - 1].model) {
 			fputs("  ", f);
-			write_string(f, skin_models->models[skins[i].model].key);
+			Xwau_WriteString(f, skin_models->models[skins[i].model].key);
 			fputs(":\n", f);
 		}
 		fprintf(f, "    %zu: ", skins[i].markings);
 		if (skins[i].variant[0])
-			write_string(f, skins[i].variant);
+			Xwau_WriteString(f, skins[i].variant);
 		else
 			fputc('~', f);
 		fputc('\n', f);
@@ -538,11 +523,11 @@ static bool write_mission(const char* path, const char* base, const Profile* pro
 		any                          = true;
 		const XwauTieFlightGroup* fg = &tie->groups[fg_targets[i]];
 		fprintf(f, "    %d: { name: ", fg_targets[i]);
-		write_string(f, fg->name);
+		Xwau_WriteString(f, fg->name);
 		fprintf(f, ", craft: %d", fg->craft);
 		if (fgs[i].variant[0]) {
 			fputs(", variant: ", f);
-			write_string(f, fgs[i].variant);
+			Xwau_WriteString(f, fgs[i].variant);
 		}
 		for (size_t s = 0; s < fgs[i].start_count; ++s)
 			fprintf(f, "%s%s", s ? ", " : ", start: [", fgs[i].start[s]);
@@ -559,7 +544,8 @@ static bool write_mission(const char* path, const char* base, const Profile* pro
  * file when it has some. */
 static bool import_mission(const char* game, const XwauMissions* missions, const char* stock_game,
 						   const char* dir, const char* name, const char* out, SkinModels* skin_models,
-						   bool* skins_loaded, Totals* totals) {
+						   bool* skins_loaded, const XwauSettingsConfig* config,
+						   const XwauMissionNumbers* numbers, Totals* totals) {
 	char base[1100];
 	if (!PathFormat(base, sizeof base, "%s/%s", dir, name))
 		return false;
@@ -585,14 +571,19 @@ static bool import_mission(const char* game, const XwauMissions* missions, const
 	XwauMissionTie values  = { 0 };
 	/* XwauMissions_Load already reports the problems of these lines. */
 	ok = ok && resdata_names(game, base, &resdata) && XwauMissionTie_Read(game, base, false, &values);
+	XwauMissionSettings settings = { 0 };
+	ok              = ok && XwauMissionSettings_Read(game, base, XwauMissionNumbers_Find(numbers, dir, name),
+													 &values.settings, config, &settings);
 	bool any_values = values.craft_marking_count != 0;
 	for (size_t i = 0; i < values.fg_count; ++i)
 		any_values |= has_values(&values.fgs[i]);
-	if (!ok || (!profile_count && !skin_count && !fg_count && !resdata.count && !any_values)) {
+	if (!ok || (!profile_count && !skin_count && !fg_count && !resdata.count && !any_values &&
+				!XwauMissionSettings_Any(&settings))) {
 		free_profiles(profile_list, profile_count);
 		free(skins);
 		XwauLines_Free(&resdata);
 		XwauMissionTie_Free(&values);
+		XwauMissionSettings_Free(&settings);
 		return ok;
 	}
 
@@ -614,6 +605,7 @@ static bool import_mission(const char* game, const XwauMissions* missions, const
 		free(skins);
 		XwauLines_Free(&resdata);
 		XwauMissionTie_Free(&values);
+		XwauMissionSettings_Free(&settings);
 		return true;
 	}
 	long long*   profile_fgs = (long long*)malloc((profile_count ? profile_count : 1) * sizeof *profile_fgs);
@@ -643,13 +635,15 @@ static bool import_mission(const char* game, const XwauMissions* missions, const
 		fgs_kept += fg_targets[i] >= 0;
 	ok                       = profile_targets && fg_targets;
 	const size_t values_kept = check_values(&values, &tie, base, totals);
-	if (ok && (profiles_kept || skin_count || fgs_kept || resdata.count || values_kept)) {
+	XwauMissionSettings_CheckFlightGroups(&settings, tie.count, base);
+	const bool any_settings = XwauMissionSettings_Any(&settings);
+	if (ok && (profiles_kept || skin_count || fgs_kept || resdata.count || values_kept || any_settings)) {
 		char dir_path[1200], lower_dir[64], path[1400];
 		LowerCopy(lower_dir, sizeof lower_dir, dir);
 		ok = PathFormat(dir_path, sizeof dir_path, "%s/%s", out, lower_dir) &&
 			 PathFormat(path, sizeof path, "%s/%s.yaml", dir_path, name) && MakeDirs(dir_path) &&
 			 write_mission(path, base, profile_list, profile_targets, profile_count, skin_models, skins,
-						   skin_count, fgs, fg_targets, fg_count, &tie, &resdata, &values);
+						   skin_count, fgs, fg_targets, fg_count, &tie, &resdata, &values, &settings);
 		if (ok) {
 			++totals->files;
 			totals->profiles += profiles_kept;
@@ -657,6 +651,7 @@ static bool import_mission(const char* game, const XwauMissions* missions, const
 			totals->articulations += fgs_kept;
 			totals->resdata += resdata.count != 0;
 			totals->values += values_kept;
+			totals->settings += any_settings;
 			for (size_t i = 0; i < values.craft_marking_count; ++i)
 				totals->craft_markings += values.craft_markings[i].fg >= 0;
 		}
@@ -668,33 +663,47 @@ static bool import_mission(const char* game, const XwauMissions* missions, const
 	free(tie.groups);
 	XwauLines_Free(&resdata);
 	XwauMissionTie_Free(&values);
+	XwauMissionSettings_Free(&settings);
 	return ok;
 }
 
 bool XwauMissionFiles_Write(const char* game, const XwauMissions* missions, const char* stock_game,
 							const char* out) {
-	SkinModels skin_models  = { 0 };
-	bool       skins_loaded = false;
-	Totals     totals       = { 0 };
-	bool       ok           = true;
+	SkinModels         skin_models  = { 0 };
+	bool               skins_loaded = false;
+	Totals             totals       = { 0 };
+	XwauSettingsConfig config       = { 0 };
+	XwauMissionNumbers numbers      = { 0 };
+	bool ok = XwauSettingsConfig_Read(game, &config) && XwauMissionNumbers_Read(game, stock_game, &numbers);
 	for (size_t d = 0; ok && d < sizeof kMissionDirs / sizeof kMissionDirs[0]; ++d) {
 		XwauLines names;
 		ok = XwauMissions_Names(game, kMissionDirs[d], &names);
+		/* The missions of the lists too: some settings have defaults by
+		   mission number, also for missions that the mod doesn't change. */
+		for (size_t i = 0; ok && config.mission_tie && i < numbers.count; ++i) {
+			bool seen = strcasecmp(numbers.items[i].dir, kMissionDirs[d]) != 0;
+			for (size_t n = 0; !seen && n < names.count; ++n)
+				seen = strcmp(names.items[n], numbers.items[i].name) == 0;
+			if (!seen)
+				ok = XwauLines_Add(&names, numbers.items[i].name, strlen(numbers.items[i].name));
+		}
 		for (size_t n = 0; ok && n < names.count; ++n)
 			ok = import_mission(game, missions, stock_game, kMissionDirs[d], names.items[n], out,
-								&skin_models, &skins_loaded, &totals);
+								&skin_models, &skins_loaded, &config, &numbers, &totals);
 		XwauLines_Free(&names);
 	}
 	free_skin_models(&skin_models);
+	XwauSettingsConfig_Free(&config);
+	XwauMissionNumbers_Free(&numbers);
 	if (!ok)
 		return false;
 	Report(NULL,
 		   "wrote %zu mission files with %zu object profile selections (%zu dropped), %zu skin "
 		   "selections, %zu flight groups with articulations (%zu dropped), %zu flight groups with "
-		   "[mission_tie] values (%zu dropped), the markings of %zu craft (%zu dropped) and the art files "
-		   "of %zu missions",
+		   "[mission_tie] values (%zu dropped), the markings of %zu craft (%zu dropped), the settings of "
+		   "%zu missions and the art files of %zu missions",
 		   totals.files, totals.profiles, totals.profiles_dropped, totals.skins, totals.articulations,
 		   totals.articulations_dropped, totals.values, totals.values_dropped, totals.craft_markings,
-		   totals.craft_markings_dropped, totals.resdata);
+		   totals.craft_markings_dropped, totals.settings, totals.resdata);
 	return true;
 }

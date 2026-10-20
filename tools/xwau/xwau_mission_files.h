@@ -8,6 +8,8 @@
  *
  *     version: 1
  *     resdata: ["planet2", "planetcustom", "backdrop_special"]
+ *     settings:
+ *       skip_hyperspaced_messages: true
  *     flight_groups:
  *       1: { name: "Red 1", craft: 1, markings: 4 }
  *       26: { name: "Red", craft: 1, craft_markings: { 0: 0, 1: 1 } }
@@ -22,7 +24,8 @@
  *         13: { name: "Red", craft: 1, variant: "1b0m7fw_fg13", start: [sfoils] }
  *
  * The missions come from XwauMissions_Names, in Missions/, Melee/ and
- * Combat/.
+ * Combat/, and from their MISSION.LST files, since some settings have
+ * defaults by mission number.
  *
  * Object profiles (hook_mission_objects): a line
  * `ObjectProfile_fg_<N> = <profile>` sets the profile of flight group N.
@@ -61,6 +64,10 @@
  * letter, a digit, '_' or '-' made '_'. The bake decides which of them get
  * their own mission art (resdata/mission_art/<name>); the game uses those
  * and ignores the others, which are in the shared atlases.
+ *
+ * Settings (hook_mission_tie, and hook_engine_sound's [Interdiction]):
+ * `settings` holds the values that apply in the mission and that differ from
+ * what the game does without them (xwau_mission_settings.h).
  *
  * The selections name flight groups by their position in the mission's .TIE,
  * and they are written with the same position. The .TIE is the one that

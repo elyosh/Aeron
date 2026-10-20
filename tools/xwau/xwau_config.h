@@ -24,6 +24,7 @@
 
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdio.h>
 
 /* Finds the file at `rel` in the installation `game`. Returns false when
  * there is none. */
@@ -54,7 +55,13 @@ bool XwauLines_Add(XwauLines* lines, const char* text, size_t len);
  * is none. The value is truncated to `cap`. */
 void XwauLines_Value(const XwauLines* lines, const char* key, XwauRules rules, char* out, size_t cap);
 
-/* Splits `value` into tokens. Returns false when out of memory. */
+/* Writes ISO-8859-1 `text` as a quoted YAML string, in UTF-8. */
+void Xwau_WriteString(FILE* f, const char* text);
+
+/* Splits `value` into tokens at ',' and ';', and trims each one. With
+ * XWAU_RULES_CPP, the empty text between two separators is skipped, but a
+ * token of spaces is kept, as an empty token: "a,,b" gives "a" and "b", and
+ * "a, ,b" gives "a", "" and "b". Returns false when out of memory. */
 bool Xwau_Tokenize(const char* value, XwauRules rules, XwauLines* out);
 
 /* Returns whether two strings are equal, comparing ISO-8859-1 letters in
