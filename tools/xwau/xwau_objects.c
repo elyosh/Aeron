@@ -46,8 +46,8 @@ static const struct {
    A-wing, B-wing, TIE Fighter and Z-95. */
 static const int g_beamTestTypes[] = { 1, 2, 3, 4, 5, 14 };
 
-/* The stock placeholders that load the X-wing's row, which mods fill with new
-   craft (step 3 of craft_definitions_plan.md). */
+/* The stock placeholders that load the X-wing's row, which mods can fill
+   with new craft, as TFTC does. */
 static const int g_placeholders[] = { 103, 104, 108, 109, 112, 113, 114 };
 
 static const char* const g_listNames[2] = { "Spacecraft0.LST", "Equipment0.LST" };
@@ -56,6 +56,9 @@ struct XwauGameTables {
 	uint8_t  types[OBJECT_TYPE_COUNT][OBJECT_TYPE_SIZE];
 	uint8_t  records[RECORD_COUNT][RECORD_SIZE];
 	uint16_t craft[CRAFT_TYPE_COUNT];
+	/* The word after the table, which XWAU writes as craft type 232
+	   (craft_definitions_plan.md 4.4). */
+	uint16_t craftPastEnd;
 	uint8_t  soundCases[SOUND_SWITCH_COUNT][SOUND_CASE_COUNT];
 	uint8_t* soundJumps[SOUND_SWITCH_COUNT];
 	size_t   soundJumpSize[SOUND_SWITCH_COUNT];
@@ -194,16 +197,18 @@ XwauGameTables* XwauGameTables_Load(const char* root) {
 		Report(exe, "isn't a Windows executable");
 		ok = false;
 	}
-	uint8_t craft[2 * CRAFT_TYPE_COUNT];
+	uint8_t craft[2 * CRAFT_TYPE_COUNT + 2];
 	ok = ok && read_table(&image, exe, OBJECT_TYPE_TABLE, tables->types, sizeof tables->types) &&
 		 read_table(&image, exe, RECORD_TABLE, tables->records, sizeof tables->records) &&
 		 read_table(&image, exe, CRAFT_TYPE_TABLE, craft, sizeof craft) &&
 		 read_table(&image, exe, BEAM_TEST, tables->beam, sizeof tables->beam);
 	for (int i = 0; ok && i < SOUND_SWITCH_COUNT; ++i)
 		ok = read_sound_switch(&image, exe, i, tables);
-	if (ok)
+	if (ok) {
 		for (int i = 0; i < CRAFT_TYPE_COUNT; ++i)
 			tables->craft[i] = read_u16(craft + 2 * i);
+		tables->craftPastEnd = read_u16(craft + 2 * CRAFT_TYPE_COUNT);
+	}
 	for (int list = 0; ok && list < 2; ++list) {
 		char rel[64], path[1100];
 		snprintf(rel, sizeof rel, "FlightModels/%s", g_listNames[list]);
@@ -850,7 +855,8 @@ bool XwauObjects_Write(const char* mod_root, const char* stock_game, const char*
 			record_users[m.record]++;
 	}
 
-	int  later_slots = 0, later_placeholders = 0, later_equipment = 0, kept_models = 0, empty = 0;
+	int  new_slots = 0, new_placeholders = 0, empty_slots = 0, empty_placeholders = 0;
+	int  later_equipment = 0, kept_models = 0, empty = 0;
 	int  unkeyed[UNKEYED_COUNT]     = { 0 };
 	bool record_owned[RECORD_COUNT] = { false };
 	int  change_count               = 0;
@@ -863,16 +869,28 @@ bool XwauObjects_Write(const char* mod_root, const char* stock_game, const char*
 			strcmp(stock_model, mod_model) != 0 ||
 			(valid_record(m.record) && record_differs(stock->records[m.record], mod->records[m.record]));
 		if (!has_row(&s)) {
-			later_slots += has_row(&m) && mod_model[0];
-			continue;
-		}
-		if (s.list != 0) {
+			/* A reserved slot: the mod fills it with a new craft when it gives
+			   it a row with a model. */
+			if (!has_row(&m) || !mod_model[0]) {
+				empty_slots += type_changed;
+				continue;
+			}
+			if (m.list != 0) {
+				later_equipment++;
+				continue;
+			}
+			new_slots++;
+		} else if (s.list != 0) {
 			later_equipment += type_changed;
 			continue;
-		}
-		if (is_placeholder(t)) {
-			later_placeholders += type_changed;
-			continue;
+		} else if (is_placeholder(t)) {
+			/* A placeholder loads the X-wing's row in stock. The mod fills it
+			   when it gives it another model. */
+			if (!mod_model[0]) {
+				empty_placeholders += type_changed;
+				continue;
+			}
+			new_placeholders += strcasecmp(stock_model, mod_model) != 0;
 		}
 		if (!mod_model[0]) {
 			if (type_changed) {
@@ -961,10 +979,25 @@ bool XwauObjects_Write(const char* mod_root, const char* stock_game, const char*
 			   "with sounds_like, %d with beam_allowed, %d with names, %d craft types (%d remapped)",
 			   counts.files, counts.models, counts.modelTypes, counts.records, counts.sounds, counts.beams,
 			   counts.names, counts.craftTypes, counts.remaps);
-		Report(NULL,
-			   "objects: left for later: %d new craft in reserved slots, %d changed placeholders, %d changed "
-			   "equipment types; %d stock models kept, %d types that load nothing in the mod",
-			   later_slots, later_placeholders, later_equipment, kept_models, empty);
+		Report(NULL, "objects: %d new craft in reserved slots and %d in placeholders", new_slots,
+			   new_placeholders);
+		if (empty_slots || empty_placeholders)
+			Report(NULL,
+				   "objects: %d reserved slots and %d placeholders that the mod gives an empty row are left "
+				   "out, "
+				   "with their craft types: they load nothing in the mod",
+				   empty_slots, empty_placeholders);
+		Report(
+			NULL,
+			"objects: left for later: %d changed equipment types; %d stock models kept, %d types that load "
+			"nothing in the mod",
+			later_equipment, kept_models, empty);
+		if (mod->craftPastEnd != stock->craftPastEnd)
+			Report(
+				mod_root,
+				"also maps craft type %d to object type %u, past the end of the craft type table; the game's "
+				"table has %d entries, so it is skipped",
+				CRAFT_TYPE_COUNT, mod->craftPastEnd, CRAFT_TYPE_COUNT);
 	}
 	free(new_craft_rows[0]);
 	free(new_craft_rows[1]);

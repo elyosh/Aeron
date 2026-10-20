@@ -31,9 +31,10 @@
  *   - a text with a control character other than a tab is skipped, because
  *     YAML can't hold it in single quotes.
  * The ship list and tech room texts (SPECIES_<n> and SPEC_<n>_*) of craft
- * types 184 to 227 and 231 are also skipped. The stock game has no craft for
- * these craft types, and mods put their new craft there. Until the game has
- * these craft, their texts would list craft that it can't load.
+ * types 184 to 227 and 231 are also skipped, unless an object file carries
+ * them. The stock game has no craft for these craft types, and mods put their
+ * new craft there. Without an object file, such a craft type still has no
+ * craft, and its texts would list a craft that the game can't load.
  * A text file that the mod doesn't have is skipped.
  */
 

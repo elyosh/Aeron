@@ -688,6 +688,9 @@ static void test_objects(const char* scratch) {
 	}
 	FakeExe* m = &exes[1];
 	fake_type(m, 33, 2, 32);                         /* a new craft in a reserved slot, on the renamed row */
+	fake_type(m, 34, 4, 33);                         /* a reserved slot on a row that the list doesn't have */
+	put16(fake_at(m, 0x5B0F70 + 2 * 200), 33);
+	put16(fake_at(m, 0x5B0F70 + 2 * 201), 34);
 	put32(fake_at(m, 0x5BB480 + 987 * 0 + 21), 999); /* the X-wing's hull */
 	put16(fake_at(m, 0x5FB240 + 24 * 71 + 16), 0x843);
 	put16(fake_at(m, 0x5BB480 + 987 * 1 + 306), 282); /* the TIE Advanced x1's first laser group */
@@ -705,10 +708,14 @@ static void test_objects(const char* scratch) {
 	write_strings(mod, "m:TIE Advanced x1");
 	snprintf(path, sizeof path, "%s/SHIPLIST.TXT", stock);
 	write_file(path, "!SPECIES_7!*Booster,Fighter,Nonflyable,Unknown,NoSkirmish,\t\t1,2,3,4,5,6,7,8\r\n"
-					 "!SPECIES_9!B-wing,Fighter,Flyable,Known,Skirmish,\t\t1,2,3,4,5,6,7,8\r\n");
+					 "!SPECIES_9!B-wing,Fighter,Flyable,Known,Skirmish,\t\t1,2,3,4,5,6,7,8\r\n"
+					 "!SPECIES_200!*DontUseMe,Planet/asteroid,Nonflyable,Known,NoSkirmish,\t1,2,3,4,5,6,7,8\r\n"
+					 "!SPECIES_201!*DontUseMe,Planet/asteroid,Nonflyable,Known,NoSkirmish,\t1,2,3,4,5,6,7,8\r\n");
 	snprintf(path, sizeof path, "%s/SHIPLIST.TXT", mod);
 	write_file(path, "!SPECIES_7!TIE Advanced x1,Fighter,GunnerFlyable,Known,Skirmish,\t\t1,2,3,4, 651, 246,681,279\r\n"
-					 "!SPECIES_9!B-wing A,Fighter,Flyable,Known,Skirmish,\t\t1,2,3,4,5,6,7,8\r\n");
+					 "!SPECIES_9!B-wing A,Fighter,Flyable,Known,Skirmish,\t\t1,2,3,4,5,6,7,8\r\n"
+					 "!SPECIES_200!Home One,Starship,Nonflyable,Known,Skirmish,\t1,2,3,4,5,6,7,8\r\n"
+					 "!SPECIES_201!Nothing,Starship,Nonflyable,Known,Skirmish,\t1,2,3,4,5,6,7,8\r\n");
 	snprintf(path, sizeof path, "%s/SPECDESC.TXT", stock);
 	write_file(path, "!SPEC_7_NAME!Booster\r\n!SPEC_7_CREW!0\r\n");
 	snprintf(path, sizeof path, "%s/SPECDESC.TXT", mod);
@@ -749,10 +756,22 @@ static void test_objects(const char* scratch) {
 	free(text);
 	snprintf(path, sizeof path, "%s/objects/corvetteexplode.yaml", out);
 	check(!IsFile(path), "objects: a row renamed for a new craft keeps the stock model, and the type gets no file");
+	snprintf(path, sizeof path, "%s/objects/calamarihomeone.yaml", out);
+	text = ReadWholeFile(path, &size);
+	check(text && strstr(text, "object_type: 33\nmodel: calamarihomeone\n") &&
+			  strstr(text, "  200:\n    ship_list: {name: 'Home One', category: 'Starship', flyable: false"),
+		  "objects: a reserved slot that the mod fills gets its model, its craft type and its ship list line");
+	free(text);
+	snprintf(path, sizeof path, "%s/objects", out);
+	size_t count = 0;
+	char** names = ListDir(path, true, &count);
+	check(count == 4, "objects: a reserved slot that the mod gives an empty row gets no file");
+	FreeList(names, count);
 	text = ReadWholeFile(strings, &size);
 	check(text && strstr(text, "SPECIES_9:") && !strstr(text, "SPECIES_7") && !strstr(text, "SPEC_7_") &&
-			  !strstr(text, "KSPEC1:"),
-		  "objects: the texts in the object files aren't in strings.yaml, and the others are");
+			  !strstr(text, "KSPEC1:") && !strstr(text, "SPECIES_200") && !strstr(text, "SPECIES_201"),
+		  "objects: the texts in the object files aren't in strings.yaml, and the others are, except the texts "
+		  "of a craft type without a craft");
 	free(text);
 	XwauTextIds_Free(&moved);
 }

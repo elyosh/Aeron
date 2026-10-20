@@ -3,9 +3,9 @@
 
 /*
  * Writes the object files of a mod (xwau_import craft --stock-game DIR):
- * <output_dir>/objects/<model>.yaml, one for each stock object type that the
- * mod changes. The importer compares the mod's XWINGALLIANCE.EXE and lists
- * with the stock game's:
+ * <output_dir>/objects/<model>.yaml, one for each object type that the mod
+ * changes or fills with a new craft. The importer compares the mod's
+ * XWINGALLIANCE.EXE and lists with the stock game's:
  *   - the object type table (0x5FB240, 557 entries of 24 bytes), the craft
  *     type table (0x5B0F70, 232 entries) and the craft records (0x5BB480,
  *     265 records of 987 bytes, packed, with 4-byte pointers);
@@ -53,10 +53,13 @@
  * when the mod changes them and the object type has a file. These texts then
  * aren't in text/strings.yaml (the `moved` IDs of XwauObjects_Write).
  *
- * Only the stock object types of Spacecraft0.LST are written. The reserved
- * slots, the placeholders 103 to 114 and the equipment are reported and left
- * out. Files that an earlier run wrote (they start with "# Written by
- * xwau_import craft") are removed first.
+ * The object types of Spacecraft0.LST are written: the stock ones, the
+ * reserved slots that the mod fills with a new craft, and the placeholders
+ * 103 to 114 that it gives another model. A slot or a placeholder that the
+ * mod gives an empty row loads nothing, so it and its craft types are left
+ * out, and the text import keeps skipping their texts. The equipment is
+ * reported and left out. Files that an earlier run wrote (they start with
+ * "# Written by xwau_import craft") are removed first.
  */
 
 #include <stdbool.h>
