@@ -102,29 +102,6 @@ bool ModelTables_StockEye(const char* model, int eye[3]) {
 	return find_eye(kStockEyes, COUNT(kStockEyes), model, eye);
 }
 
-/* The craft list row of each craft type in the original game. The craft type
- * gives an object type (craftTypeToObjectType), the object type gives a row of
- * the model table, and that row gives the craft list row. XWAU changes both:
- * its executable gives some object types other rows (object type 149 moves
- * from row 92 to 143), and its list renames rows. This table is the original
- * game's only. */
-static const short kCraftListRows[] = {
-	-1,  0,   1,   2,   3,   4,   5,   6,   7,   8,   9,   10,  11,  12,  13,  14,  15,  37,  38,  42,  43,
-	39,  40,  41,  32,  33,  53,  54,  55,  56,  34,  35,  68,  69,  70,  71,  72,  44,  45,  46,  80,  81,
-	82,  83,  84,  85,  86,  87,  88,  89,  90,  91,  92,  93,  94,  57,  58,  59,  60,  61,  102, 103, 104,
-	105, 106, 107, 108, 133, 134, 109, -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,
-	-1,  -1,  -1,  -1,  -1,  62,  110, 111, 95,  96,  97,  98,  99,  48,  49,  100, 73,  101, 50,  51,  74,
-	75,  76,  77,  78,  79,  52,  47,  -1,  16,  17,  18,  19,  20,  21,  22,  23,  24,  25,  26,  -1,  28,
-	29,  30,  31,  112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 126, 127, 128, 129,
-	130, 131, 132, 36,  63,  64,  65,  66,  67,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  136, 137, 138, -1,
-	-1,  139, 140, -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,
-	-1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,
-	-1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  135, 92,  -1,
-};
-
-int ModelTables_CraftListRow(int craft_type) {
-	return craft_type >= 0 && (size_t)craft_type < COUNT(kCraftListRows) ? kCraftListRows[craft_type] : -1;
-}
 
 typedef struct Entry {
 	const char* model;

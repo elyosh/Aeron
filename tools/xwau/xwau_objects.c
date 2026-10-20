@@ -7,39 +7,18 @@
 
 #include "util.h"
 #include "xwau_config.h"
+#include "xwau_game_tables.h"
 
 enum {
-	OBJECT_TYPE_COUNT  = 557,
-	OBJECT_TYPE_SIZE   = 24,
-	CRAFT_TYPE_COUNT   = 232,
-	RECORD_COUNT       = 265,
-	RECORD_SIZE        = 987,
-	SOUND_SWITCH_COUNT = 4,
-	SOUND_CASE_COUNT   = 65, /* object types 1 to 65; the others take the default case */
+	OBJECT_TYPE_COUNT  = XWAU_GAME_OBJECT_TYPES,
+	OBJECT_TYPE_SIZE   = XWAU_GAME_OBJECT_TYPE_SIZE,
+	CRAFT_TYPE_COUNT   = XWAU_GAME_CRAFT_TYPES,
+	RECORD_COUNT       = XWAU_GAME_RECORDS,
+	SOUND_SWITCH_COUNT = XWAU_GAME_SOUND_SWITCHES,
+	SOUND_CASE_COUNT   = XWAU_GAME_SOUND_CASES,
 	SPECIES_COUNT      = 221,
 	SPECIES_WITH_OWN_RECORD =
 		218, /* species records 0 to 217 belong to the craft record of the same number */
-};
-
-#define IMAGE_BASE 0x400000u
-#define OBJECT_TYPE_TABLE 0x5FB240u
-#define CRAFT_TYPE_TABLE 0x5B0F70u
-#define RECORD_TABLE 0x5BB480u
-/* The `jz` of the first object type test that takes the beam away from six
-   craft (mission.c:6624-6627). XWAU replaces it with a jump past the test. */
-#define BEAM_TEST 0x41C6BFu
-#define BEAM_TEST_END 0x41C6EAu
-
-/* Each switch reads its case number from a table of 65 bytes, by object type
-   minus 1, then jumps through a table of addresses (`jmp [table + case * 4]`). */
-static const struct {
-	uint32_t cases;
-	uint32_t jump;
-} g_soundSwitches[SOUND_SWITCH_COUNT] = {
-	{ 0x43D458u, 0x43D117u }, /* the player's engine loop, fsfx.c:1923 */
-	{ 0x43D4F8u, 0x43D359u }, /* the player's engine loop in the map view, fsfx.c:2061 */
-	{ 0x43DCC4u, 0x43DA0Cu }, /* the flight sounds of other craft, fsfx.c:2411 */
-	{ 0x459678u, 0x458E81u }, /* the hangar launch, hangar.c:2534 */
 };
 
 /* The craft whose beam the stock test takes away: the X-wing, Y-wing,
@@ -50,220 +29,11 @@ static const int g_beamTestTypes[] = { 1, 2, 3, 4, 5, 14 };
    with new craft, as TFTC does. */
 static const int g_placeholders[] = { 103, 104, 108, 109, 112, 113, 114 };
 
-static const char* const g_listNames[2] = { "Spacecraft0.LST", "Equipment0.LST" };
-
-struct XwauGameTables {
-	uint8_t  types[OBJECT_TYPE_COUNT][OBJECT_TYPE_SIZE];
-	uint8_t  records[RECORD_COUNT][RECORD_SIZE];
-	uint16_t craft[CRAFT_TYPE_COUNT];
-	/* The word after the table, which XWAU writes as craft type 232
-	   (craft_definitions_plan.md 4.4). */
-	uint16_t craftPastEnd;
-	uint8_t  soundCases[SOUND_SWITCH_COUNT][SOUND_CASE_COUNT];
-	uint8_t* soundJumps[SOUND_SWITCH_COUNT];
-	size_t   soundJumpSize[SOUND_SWITCH_COUNT];
-	uint8_t  beam[2];
-	char**   rows[2];
-	size_t   rowCount[2];
-};
-
-/* ---- Executable --------------------------------------------------------- */
-
-typedef struct Image {
-	const uint8_t* data;
-	size_t         size;
-	uint32_t       base;
-	size_t         sectionTable;
-	unsigned       sectionCount;
-} Image;
-
 static uint32_t read_u32(const uint8_t* p) {
 	return (uint32_t)p[0] | (uint32_t)p[1] << 8 | (uint32_t)p[2] << 16 | (uint32_t)p[3] << 24;
 }
 
 static uint16_t read_u16(const uint8_t* p) { return (uint16_t)(p[0] | p[1] << 8); }
-
-static bool image_open(const uint8_t* data, size_t size, Image* image) {
-	if (size < 0x40 || data[0] != 'M' || data[1] != 'Z')
-		return false;
-	const uint32_t pe = read_u32(data + 0x3C);
-	if (pe > size - 24 || memcmp(data + pe, "PE\0\0", 4) != 0)
-		return false;
-	const unsigned optional_size = read_u16(data + pe + 20);
-	image->data                  = data;
-	image->size                  = size;
-	image->sectionCount          = read_u16(data + pe + 6);
-	image->sectionTable          = pe + 24 + optional_size;
-	image->base                  = optional_size >= 32 ? read_u32(data + pe + 24 + 28) : IMAGE_BASE;
-	return image->sectionTable + 40 * (size_t)image->sectionCount <= size;
-}
-
-/* The bytes of the file at address `address`, or NULL when they aren't in a
-   section's data. */
-static const uint8_t* image_at(const Image* image, uint32_t address, size_t size) {
-	if (address < image->base)
-		return NULL;
-	const uint32_t rva = address - image->base;
-	for (unsigned i = 0; i < image->sectionCount; ++i) {
-		const uint8_t* section  = image->data + image->sectionTable + 40 * (size_t)i;
-		const uint32_t start    = read_u32(section + 12);
-		const uint32_t raw_size = read_u32(section + 16);
-		const uint32_t raw      = read_u32(section + 20);
-		if (rva >= start && rva - start + size <= raw_size &&
-			(size_t)raw + (rva - start) + size <= image->size)
-			return image->data + raw + (rva - start);
-	}
-	return NULL;
-}
-
-/* ---- Lists --------------------------------------------------------------- */
-
-/* Reads a FlightModels list the way the game does: lines end at '\r' or
-   '\n', empty lines are skipped, and rows count from 0. Each row becomes its
-   file's name, in lower case, without the folder and the extension. */
-static bool read_list(const char* path, char*** rows, size_t* count) {
-	size_t size = 0;
-	char*  data = ReadWholeFile(path, &size);
-	*rows       = NULL;
-	*count      = 0;
-	if (!data)
-		return false;
-	bool ok = true;
-	for (char* line = data; ok && line < data + size;) {
-		size_t length = strcspn(line, "\r\n");
-		char*  next   = line + length;
-		while (next < data + size && (*next == '\r' || *next == '\n'))
-			++next;
-		line[length] = '\0';
-		if (length > 0) {
-			const char* base = line;
-			for (const char* c = line; *c; ++c)
-				if (*c == '\\' || *c == '/')
-					base = c + 1;
-			const char* dot = strrchr(base, '.');
-			char**      row = ARRAY_PUSH(*rows, *count);
-			ok              = row && (*row = StrNDup(base, dot ? (size_t)(dot - base) : strlen(base)));
-			if (ok)
-				LowerInPlace(*row);
-		}
-		line = next;
-	}
-	free(data);
-	return ok;
-}
-
-/* ---- Tables -------------------------------------------------------------- */
-
-static bool read_table(const Image* image, const char* exe, uint32_t address, void* out, size_t size) {
-	const uint8_t* bytes = image_at(image, address, size);
-	if (!bytes) {
-		Report(exe, "has no data at 0x%X; it isn't an XWA 2.02 executable", (unsigned)address);
-		return false;
-	}
-	memcpy(out, bytes, size);
-	return true;
-}
-
-static bool read_sound_switch(const Image* image, const char* exe, int index, XwauGameTables* tables) {
-	if (!read_table(image, exe, g_soundSwitches[index].cases, tables->soundCases[index], SOUND_CASE_COUNT))
-		return false;
-	const uint8_t* jump = image_at(image, g_soundSwitches[index].jump, 7);
-	if (!jump || jump[0] != 0xFF || jump[1] != 0x24) {
-		Report(exe, "has no switch jump at 0x%X", (unsigned)g_soundSwitches[index].jump);
-		return false;
-	}
-	unsigned cases = 0;
-	for (int i = 0; i < SOUND_CASE_COUNT; ++i)
-		if (tables->soundCases[index][i] + 1u > cases)
-			cases = tables->soundCases[index][i] + 1u;
-	tables->soundJumpSize[index] = 4 * (size_t)cases;
-	tables->soundJumps[index]    = malloc(tables->soundJumpSize[index]);
-	return tables->soundJumps[index] && read_table(image, exe, read_u32(jump + 3), tables->soundJumps[index],
-												   tables->soundJumpSize[index]);
-}
-
-XwauGameTables* XwauGameTables_Load(const char* root) {
-	char exe[1100];
-	if (!Xwau_FindFile(root, "XWINGALLIANCE.EXE", exe, sizeof exe)) {
-		Report(root, "has no XWINGALLIANCE.EXE");
-		return NULL;
-	}
-	XwauGameTables* tables = calloc(1, sizeof *tables);
-	size_t          size   = 0;
-	uint8_t*        data   = (uint8_t*)ReadWholeFile(exe, &size);
-	Image           image;
-	bool            ok = tables && data;
-	if (ok && !image_open(data, size, &image)) {
-		Report(exe, "isn't a Windows executable");
-		ok = false;
-	}
-	uint8_t craft[2 * CRAFT_TYPE_COUNT + 2];
-	ok = ok && read_table(&image, exe, OBJECT_TYPE_TABLE, tables->types, sizeof tables->types) &&
-		 read_table(&image, exe, RECORD_TABLE, tables->records, sizeof tables->records) &&
-		 read_table(&image, exe, CRAFT_TYPE_TABLE, craft, sizeof craft) &&
-		 read_table(&image, exe, BEAM_TEST, tables->beam, sizeof tables->beam);
-	for (int i = 0; ok && i < SOUND_SWITCH_COUNT; ++i)
-		ok = read_sound_switch(&image, exe, i, tables);
-	if (ok) {
-		for (int i = 0; i < CRAFT_TYPE_COUNT; ++i)
-			tables->craft[i] = read_u16(craft + 2 * i);
-		tables->craftPastEnd = read_u16(craft + 2 * CRAFT_TYPE_COUNT);
-	}
-	for (int list = 0; ok && list < 2; ++list) {
-		char rel[64], path[1100];
-		snprintf(rel, sizeof rel, "FlightModels/%s", g_listNames[list]);
-		if (!Xwau_FindFile(root, rel, path, sizeof path) ||
-			!read_list(path, &tables->rows[list], &tables->rowCount[list])) {
-			Report(root, "has no readable %s", rel);
-			ok = false;
-		}
-	}
-	free(data);
-	if (!ok) {
-		XwauGameTables_Free(tables);
-		return NULL;
-	}
-	return tables;
-}
-
-void XwauGameTables_Free(XwauGameTables* tables) {
-	if (!tables)
-		return;
-	for (int i = 0; i < SOUND_SWITCH_COUNT; ++i)
-		free(tables->soundJumps[i]);
-	for (int list = 0; list < 2; ++list)
-		FreeList(tables->rows[list], tables->rowCount[list]);
-	free(tables);
-}
-
-/* The fields of an entry of the object type table. */
-typedef struct TypeInfo {
-	uint8_t  recordFlags, assetFlags, family, genus;
-	uint16_t flags;
-	int16_t  record;
-	uint16_t list, row;
-} TypeInfo;
-
-static TypeInfo type_info(const XwauGameTables* tables, int object_type) {
-	const uint8_t* b = tables->types[object_type];
-	return (TypeInfo) { b[0],
-						b[1],
-						b[2],
-						b[3],
-						read_u16(b + 16),
-						(int16_t)read_u16(b + 18),
-						read_u16(b + 20),
-						read_u16(b + 22) };
-}
-
-static bool has_row(const TypeInfo* info) { return (info->recordFlags & 0x02) != 0 && info->list < 2; }
-
-const char* XwauGameTables_Model(const XwauGameTables* tables, int object_type) {
-	const TypeInfo info = type_info(tables, object_type);
-	if (!has_row(&info) || info.row >= tables->rowCount[info.list])
-		return "";
-	return tables->rows[info.list][info.row];
-}
 
 static bool valid_record(int record) { return record >= 0 && record < RECORD_COUNT; }
 
@@ -589,16 +359,16 @@ static bool sound_jumps_match(const XwauGameTables* stock, const XwauGameTables*
 }
 
 /* Whether the mod's code jumps past the beam test, as XWAU's does: `jmp` from
-   BEAM_TEST to BEAM_TEST_END instead of the stock `jz`. */
+   XWAU_GAME_BEAM_TEST to XWAU_GAME_BEAM_TEST_END instead of the stock `jz`. */
 static int beam_test_skipped(const XwauGameTables* stock, const XwauGameTables* mod, const char* mod_root) {
 	if (memcmp(stock->beam, mod->beam, 2) == 0)
 		return 0;
-	if (mod->beam[0] == 0xEB && BEAM_TEST + 2 + mod->beam[1] == BEAM_TEST_END)
+	if (mod->beam[0] == 0xEB && XWAU_GAME_BEAM_TEST + 2 + mod->beam[1] == XWAU_GAME_BEAM_TEST_END)
 		return 1;
 	Report(mod_root,
 		   "changes the beam test at 0x%X in a way the import doesn't know (%02X %02X); no beam_allowed "
 		   "is written",
-		   (unsigned)BEAM_TEST, mod->beam[0], mod->beam[1]);
+		   (unsigned)XWAU_GAME_BEAM_TEST, mod->beam[0], mod->beam[1]);
 	return 0;
 }
 
@@ -778,7 +548,7 @@ static bool write_object_file(const char* path, const Change* change, const Xwau
 		Report(path, "can't be written");
 		return false;
 	}
-	const TypeInfo m = type_info(mod, change->objectType);
+	const XwauGameType m = XwauGameTables_Type(mod, change->objectType);
 	fprintf(f, "# Written by xwau_import craft: what the mod changes about object type %d.\n",
 			change->objectType);
 	fprintf(f, "version: 1\nobject_type: %d\n", change->objectType);
@@ -851,8 +621,8 @@ bool XwauObjects_Write(const char* mod_root, const char* stock_game, const char*
 	int*    record_users      = calloc(RECORD_COUNT, sizeof *record_users);
 	bool    ok                = new_craft_rows[0] && new_craft_rows[1] && changes && record_users;
 	for (int t = 0; ok && t < OBJECT_TYPE_COUNT; ++t) {
-		const TypeInfo s = type_info(stock, t), m = type_info(mod, t);
-		if (!has_row(&s) && has_row(&m) && m.row < mod->rowCount[m.list])
+		const XwauGameType s = XwauGameTables_Type(stock, t), m = XwauGameTables_Type(mod, t);
+		if (!XwauGameType_HasRow(&s) && XwauGameType_HasRow(&m) && m.row < mod->rowCount[m.list])
 			new_craft_rows[m.list][m.row] = true;
 		if ((m.recordFlags & 0x02) && valid_record(m.record))
 			record_users[m.record]++;
@@ -864,17 +634,17 @@ bool XwauObjects_Write(const char* mod_root, const char* stock_game, const char*
 	bool record_owned[RECORD_COUNT] = { false };
 	int  change_count               = 0;
 	for (int t = 0; ok && t < OBJECT_TYPE_COUNT; ++t) {
-		const TypeInfo s = type_info(stock, t), m = type_info(mod, t);
-		const char*    stock_model = XwauGameTables_Model(stock, t);
-		const char*    mod_model   = XwauGameTables_Model(mod, t);
-		const bool     type_changed =
+		const XwauGameType s = XwauGameTables_Type(stock, t), m = XwauGameTables_Type(mod, t);
+		const char*        stock_model = XwauGameTables_Model(stock, t);
+		const char*        mod_model   = XwauGameTables_Model(mod, t);
+		const bool         type_changed =
 			memcmp(stock->types[t], mod->types[t], OBJECT_TYPE_SIZE) != 0 ||
 			strcmp(stock_model, mod_model) != 0 ||
 			(valid_record(m.record) && record_differs(stock->records[m.record], mod->records[m.record]));
-		if (!has_row(&s)) {
+		if (!XwauGameType_HasRow(&s)) {
 			/* A reserved slot: the mod fills it with a new craft when it gives
 			   it a row with a model. */
-			if (!has_row(&m) || !mod_model[0]) {
+			if (!XwauGameType_HasRow(&m) || !mod_model[0]) {
 				empty_slots += type_changed;
 				continue;
 			}
@@ -953,7 +723,8 @@ bool XwauObjects_Write(const char* mod_root, const char* stock_game, const char*
 		remove_old_files(dir);
 	Texts texts;
 	load_texts(mod_root, stock_game, &texts);
-	Counts counts = { 0 };
+	Counts counts       = { 0 };
+	int    missing_glbs = 0;
 	for (int i = 0; ok && i < change_count; ++i) {
 		Change* change = &changes[i];
 		int     same   = 0;
@@ -967,6 +738,12 @@ bool XwauObjects_Write(const char* mod_root, const char* stock_game, const char*
 			snprintf(change->fileName, sizeof change->fileName, "%s.yaml", change->model);
 		ok = PathFormat(path, sizeof path, "%s/%s", dir, change->fileName) &&
 			 write_object_file(path, change, stock, mod, &texts, moved, &counts);
+		char glb[1300];
+		if (ok && change->writeModel &&
+			PathFormat(glb, sizeof glb, "%s/models/%s.glb", output_dir, change->model) && !IsFile(glb)) {
+			Report(glb, "doesn't exist, so the game skips %s until the model is converted", change->fileName);
+			missing_glbs++;
+		}
 	}
 	free_texts(&texts);
 	if (ok) {
@@ -988,6 +765,9 @@ bool XwauObjects_Write(const char* mod_root, const char* stock_game, const char*
 			   "objects: %d files for object types of Equipment0.LST; %d stock models kept, %d types that "
 			   "load nothing in the mod",
 			   equipment, kept_models, empty);
+		if (missing_glbs)
+			Report(NULL, "objects: %d files name a model that has no GLB in %s/models", missing_glbs,
+				   output_dir);
 		if (mod->craftPastEnd != stock->craftPastEnd)
 			Report(
 				mod_root,

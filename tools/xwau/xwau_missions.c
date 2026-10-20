@@ -7,8 +7,8 @@
 #include <string.h>
 #include <strings.h>
 
-#include "model_tables.h"
 #include "util.h"
+#include "xwau_game_tables.h"
 #include "xwau_model.h"
 
 #define TAG_MAX 63
@@ -513,40 +513,6 @@ static bool same_lists(const Lists* a, const Lists* b) {
 	return true;
 }
 
-/* Reads the rows of the craft list FlightModels/Spacecraft0.LST as
- * lower-case model names. */
-static bool craft_list(const char* game, XwauLines* rows) {
-	memset(rows, 0, sizeof *rows);
-	char      path[1024];
-	XwauLines lines;
-	if (!Xwau_FindFile(game, "FlightModels/Spacecraft0.LST", path, sizeof path))
-		return true;
-	FILE* f = fopen(path, "rb");
-	if (!f)
-		return true;
-	char line[1024];
-	bool ok = true;
-	(void)lines;
-	while (ok && fgets(line, sizeof line, f)) {
-		Xwau_Trim(line, XWAU_RULES_CS);
-		if (!line[0])
-			continue;
-		const char* name = line;
-		for (const char* c = line; *c; ++c)
-			if (*c == '/' || *c == '\\')
-				name = c + 1;
-		char  key[512];
-		char* dot = NULL;
-		LowerCopy(key, sizeof key, name);
-		dot = strrchr(key, '.');
-		if (dot)
-			*dot = 0;
-		ok = XwauLines_Add(rows, key, strlen(key));
-	}
-	fclose(f);
-	return ok;
-}
-
 XwauTieFlightGroup* XwauTie_FlightGroups(const char* path, size_t* count) {
 	*count  = 0;
 	FILE* f = fopen(path, "rb");
@@ -606,10 +572,12 @@ static XwauFlightGroupArticulation* add_articulation(XwauMissions* m, const char
 }
 
 static bool load_variants(const char* game, XwauMissions* m) {
-	XwauLines rows;
-	if (!craft_list(game, &rows))
-		return false;
-	bool ok = true;
+	/* The installation's own tables give each flight group's model, as
+	   XWAU's hooks get it: craft type, then object type, then list row. They
+	   are read when a flight group first needs them. */
+	XwauGameTables* tables       = NULL;
+	bool            tables_tried = false;
+	bool            ok           = true;
 	for (size_t d = 0; ok && d < 2; ++d) {
 		XwauLines names;
 		ok = XwauMissions_Names(game, kMissionDirs[d], &names);
@@ -630,17 +598,21 @@ static bool load_variants(const char* game, XwauMissions* m) {
 			for (size_t i = 0; ok && i < count; ++i) {
 				char variant[128] = "";
 				if (fgs[i].lists.count) {
-					const int      row   = (size_t)fgs[i].fg < group_count
-											   ? ModelTables_CraftListRow(groups[fgs[i].fg].craft)
-											   : -1;
+					const char* name = "";
+					if ((size_t)fgs[i].fg < group_count && !tables_tried) {
+						tables       = XwauGameTables_Load(game);
+						tables_tried = true;
+					}
+					if ((size_t)fgs[i].fg < group_count && tables)
+						name = XwauGameTables_CraftModel(tables, groups[fgs[i].fg].craft);
 					ModelVariants* model = NULL;
-					if (row < 0 || (size_t)row >= rows.count)
+					if (!name[0])
 						report(m, base,
 							   "flight group %d: the articulation lists are dropped because its craft type "
 							   "has no model",
 							   fgs[i].fg);
 					else
-						ok = (model = model_variants(m, rows.items[row], true)) != NULL;
+						ok = (model = model_variants(m, name, true)) != NULL;
 					for (size_t v = 0; ok && model && !variant[0] && v < model->count; ++v)
 						if (same_lists(&model->variants[v].lists, &fgs[i].lists))
 							snprintf(variant, sizeof variant, "%s", model->variants[v].name);
@@ -677,7 +649,7 @@ static bool load_variants(const char* game, XwauMissions* m) {
 		}
 		XwauLines_Free(&names);
 	}
-	XwauLines_Free(&rows);
+	XwauGameTables_Free(tables);
 	return ok;
 }
 

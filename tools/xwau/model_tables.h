@@ -20,10 +20,6 @@ bool ModelTables_XwauEye(const char* model, int eye[3]);
  * craft that use this model. */
 bool ModelTables_StockEye(const char* model, int eye[3]);
 
-/* The row in the craft list (FlightModels/Spacecraft0.LST) for a flight
- * group's craft type, or -1. */
-int ModelTables_CraftListRow(int craft_type);
-
 /* The component tags and articulations of a model in the original game, as
  * space-separated entries N=TAG and N=GROUP:ANGLE:SPEED[:SPEED_BACK][:BEHAVIOR],
  * where N is the component. Returns NULL when the model has none. */

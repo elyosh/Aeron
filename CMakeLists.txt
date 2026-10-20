@@ -1034,6 +1034,7 @@ if(AERON_BUILD_TOOLS)
         tools/xwau/model_tables.c
         tools/xwau/xwau_config.c
         tools/xwau/xwau_dat.c
+        tools/xwau/xwau_game_tables.c
         tools/xwau/xwau_mat.c
         tools/xwau/xwau_missions.c
         tools/xwau/xwau_model.c

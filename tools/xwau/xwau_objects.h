@@ -68,18 +68,6 @@
 
 #include "xwau_text.h"
 
-/* The tables of one game that the object files compare. */
-typedef struct XwauGameTables XwauGameTables;
-
-/* Reads XWINGALLIANCE.EXE and the two lists of the game at `root`. Returns
- * NULL, with a report, when a file is missing or can't be read. */
-XwauGameTables* XwauGameTables_Load(const char* root);
-void            XwauGameTables_Free(XwauGameTables* tables);
-
-/* The name of the list row that `object_type` loads, in lower case, or "" when
- * it has none. */
-const char* XwauGameTables_Model(const XwauGameTables* tables, int object_type);
-
 /* Writes the object files of the mod at `mod_root` into `output_dir`/objects,
  * and adds to `moved` the text IDs that they carry. Returns false when a file
  * can't be read or written. */
