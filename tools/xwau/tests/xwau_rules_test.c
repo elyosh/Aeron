@@ -3,8 +3,8 @@
  * the skin selection (xwau_skins.h), the skybox conversion (xwau_skyboxes.h),
  * the model settings (xwau_craft.h), the text overrides (xwau_text.h), the
  * object type and craft type files (xwau_objects.h), the files copied into
- * the mod folder's game/ folder (xwau_game_files.h) and the mission files
- * (xwau_mission_files.h). The inputs are fixed
+ * the mod folder's game/ folder (xwau_game_files.h), the mission files
+ * (xwau_mission_files.h) and the flight settings (xwau_flight_settings.h). The inputs are fixed
  * texts and folders written to a scratch folder. The test is built with the
  * tools as xwau_rules_test. It prints each check and exits with a non-zero
  * status when a check fails.
@@ -20,6 +20,7 @@
 #include "util.h"
 #include "xwau_config.h"
 #include "xwau_craft.h"
+#include "xwau_flight_settings.h"
 #include "xwau_game_files.h"
 #include "xwau_mission_files.h"
 #include "xwau_missions.h"
@@ -979,6 +980,24 @@ static void test_mission_files(const char* scratch) {
 	free(b);
 }
 
+static void test_flight_settings(const char* scratch) {
+	char game[1024], path[1300], settings[1300];
+	snprintf(game, sizeof game, "%s/fs_game", scratch);
+	MakeDirs(game);
+	snprintf(settings, sizeof settings, "%s/flight.yaml", scratch);
+	check(XwauFlightSettings_Write(game, settings) &&
+			  same_file(settings, "# Made by xwau_import missions.\nversion: 1\n"),
+		  "flight settings: without the backdrop hook, only the version");
+	snprintf(path, sizeof path, "%s/Hook_Backdrops.dll", game);
+	write_file(path, "");
+	check(XwauFlightSettings_Write(game, settings) &&
+			  same_file(
+				  settings,
+				  "# Made by xwau_import missions.\nversion: 1\nbackdrops:\n  extra_planets:\n    - { ids: "
+				  "[104, 255], first_group: 6304 }\n"),
+		  "flight settings: the backdrop hook makes backdrop ids 104 to 255 planets");
+}
+
 int main(void) {
 	char        scratch[1024];
 	const char* tmp = getenv("TMPDIR");
@@ -994,6 +1013,7 @@ int main(void) {
 	test_objects(scratch);
 	test_game_files(scratch);
 	test_mission_files(scratch);
+	test_flight_settings(scratch);
 	RemoveTree(scratch);
 	printf("%s\n", g_failures ? "FAILED" : "passed");
 	return g_failures ? 1 : 0;
