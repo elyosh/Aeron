@@ -12,6 +12,8 @@
  *       skip_hyperspaced_messages: true
  *     model_swaps:
  *       superstardestroyer: superstardestroyerrecentered
+ *     craft_names:
+ *       containerbrick: { ship_list: "Imperial II Star Destroyer 70", short_name: "ISD" }
  *     flight_groups:
  *       1: { name: "Red 1", craft: 1, markings: 4 }
  *       26: { name: "Red", craft: 1, craft_markings: { 0: 0, 1: 1 } }
@@ -74,6 +76,14 @@
  * B doesn't exist is dropped. OpenXWA also needs B's GLB in the mod folder,
  * next to the output folder (<out>/../models/<b>.glb): a swap without it is
  * reported and dropped. Both are written as model keys.
+ *
+ * Craft names (hook_mission_tie): the lines `craft, N, <key>, <value>` of
+ * the [mission_tie] lines rename the craft of record N for the mission:
+ * `name` (the ship list name), `specname`, `shortname`, `pluralname` and
+ * `mapicon`, written as `ship_list`, `name`, `short_name`, `plural` and
+ * `map_icon`. The last line for a value wins, as in the hook's flight. They
+ * are written by model: the list row of the first object type that uses
+ * record N in XWAU's tables. A model that no flight group uses is reported.
  *
  * Settings (hook_mission_tie, and hook_engine_sound's [Interdiction]):
  * `settings` holds the values that apply in the mission and that differ from

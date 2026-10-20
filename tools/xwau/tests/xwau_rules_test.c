@@ -1213,6 +1213,60 @@ static void test_model_swaps(const char* scratch) {
 	free(text);
 }
 
+static void test_craft_names(const char* scratch) {
+	char game[1024], stock[1024], out[1024], path[1300];
+	snprintf(game, sizeof game, "%s/cn_game", scratch);
+	snprintf(stock, sizeof stock, "%s/cn_stock", scratch);
+	snprintf(out, sizeof out, "%s/cn_mod/flight/missions", scratch);
+	snprintf(path, sizeof path, "%s/Missions", game);
+	MakeDirs(path);
+	snprintf(path, sizeof path, "%s/FlightModels", game);
+	MakeDirs(path);
+	MakeDirs(stock);
+	/* Records 70 and 71 have the models of rows 0 and 1, and craft type 26 is
+	   object type 10, record 70. Record 72 has no object type. */
+	FakeExe exe;
+	fake_exe_init(&exe);
+	fake_type(&exe, 10, 0, 70);
+	fake_type(&exe, 11, 1, 71);
+	put16(fake_at(&exe, 0x5B0F70 + 2 * 26), 10);
+	fake_exe_write(&exe, game);
+	const char* const files[][2] = {
+		{ "FlightModels/Spacecraft0.LST",
+		  "FlightModels\\ContainerBrick.opt\r\nFlightModels\\ContainerHexBox.opt\r\n" },
+		{ "FlightModels/Equipment0.LST", "" },
+		{ "Missions/c.ini", "[mission_tie]\ncraft, 70, name, ISD A\ncraft, 70, name, ISD B\n"
+							"craft, 70, shortname, ISD\ncraft, 70, mapicon, 1, 2, 3, 4\n"
+							"craft, 71, specname, Spec\ncraft, 72, name, Nothing\ncraft, 300, name, Far\n"
+							"craft, 70, bogus, 5\n" },
+	};
+	for (size_t i = 0; i < sizeof files / sizeof files[0]; ++i) {
+		snprintf(path, sizeof path, "%s/%s", game, files[i][0]);
+		write_file(path, files[i][1]);
+	}
+	static const char* const kNames[]  = { "Brick" };
+	static const int         kCrafts[] = { 26 };
+	snprintf(path, sizeof path, "%s/Missions/c.tie", game);
+	write_tie(path, 1, kNames, kCrafts);
+	XwauMissions* missions = XwauMissions_Load(game, false);
+	check(missions && XwauMissionFiles_Write(game, missions, stock, out),
+		  "craft names: mission file written");
+	XwauMissions_Free(missions);
+	size_t size = 0;
+	snprintf(path, sizeof path, "%s/missions/c.yaml", out);
+	char* text = ReadWholeFile(path, &size);
+	check(
+		text &&
+			strstr(text,
+				   "craft_names:\n"
+				   "  containerbrick: { ship_list: \"ISD B\", short_name: \"ISD\", map_icon: [1, 2, 3, 4] }\n"
+				   "  containerhexbox: { name: \"Spec\" }\n") &&
+			!strstr(text, "Nothing") && !strstr(text, "Far"),
+		"craft names: by model, the last line winning, without records that no object type uses or that "
+		"XWAU ignores");
+	free(text);
+}
+
 static void test_flight_settings(const char* scratch) {
 	char game[1024], path[1300], settings[1300];
 	snprintf(game, sizeof game, "%s/fs_game", scratch);
@@ -1249,6 +1303,7 @@ int main(void) {
 	test_flight_settings(scratch);
 	test_mission_settings(scratch);
 	test_model_swaps(scratch);
+	test_craft_names(scratch);
 	test_mission_tie(scratch);
 	RemoveTree(scratch);
 	printf("%s\n", g_failures ? "FAILED" : "passed");

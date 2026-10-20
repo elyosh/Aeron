@@ -7,6 +7,7 @@
 
 #include "opt.h"
 #include "util.h"
+#include "xwau_game_tables.h"
 #include "xwau_mission_settings.h"
 #include "xwau_mission_tie.h"
 #include "xwau_skins.h"
@@ -208,6 +209,194 @@ static bool swaps(const char* game, const char* base, const char* models, const 
 	return ok;
 }
 
+/* ---- Craft names ---------------------------------------------------------- */
+
+/* hook_mission_tie keeps 218 craft records. */
+#define CRAFT_NAME_RECORDS 218
+
+/* The names of craft record `record`, from the "craft, N, key, value"
+ * lines. NULL is "not set". */
+typedef struct CraftName {
+	int       record;
+	char      model[256];
+	char *    ship_list, *first_ship_list, *name, *short_name, *plural;
+	bool      has_icon;
+	long long icon[4];
+} CraftName;
+
+static void free_craft_names(CraftName* list, size_t count) {
+	for (size_t i = 0; i < count; ++i) {
+		free(list[i].ship_list);
+		free(list[i].first_ship_list);
+		free(list[i].name);
+		free(list[i].short_name);
+		free(list[i].plural);
+	}
+	free(list);
+}
+
+/* Replaces `*field` with a copy of `value`. Returns false when out of
+ * memory. */
+static bool set_text(char** field, const char* value) {
+	char* copy = StrDup(value);
+	if (!copy)
+		return false;
+	free(*field);
+	*field = copy;
+	return true;
+}
+
+/* Reads the craft lines of mission `base`, as hook_mission_tie applies
+ * them: in their order, so the last line for a value wins, for records 0
+ * to 217. Each record is then given its model: the list row of the first
+ * object type of XWAU's tables that uses it. */
+static bool craft_names(const XwauLines* lines, const XwauGameTables* tables, const Tie* tie,
+						const char* base, CraftName** out, size_t* count) {
+	*out    = NULL;
+	*count  = 0;
+	bool ok = true;
+	for (size_t i = 0; ok && i < lines->count; ++i) {
+		XwauLines words;
+		if (!(ok = Xwau_Tokenize(lines->items[i], XWAU_RULES_CPP, &words)))
+			break;
+		long long   record = 0;
+		const char* key    = words.count >= 4 ? words.items[2] : "";
+		const bool  icon   = Xwau_SameName(key, "mapicon");
+		if (words.count < 4 || !Xwau_Stoi(words.items[1], &record) || record < 0 ||
+			record >= CRAFT_NAME_RECORDS || (icon && words.count < 7)) {
+			Report(base, "mission_tie: XWAU ignores or fails on the line '%s'", lines->items[i]);
+			XwauLines_Free(&words);
+			continue;
+		}
+		CraftName* entry = NULL;
+		for (size_t k = 0; !entry && k < *count; ++k)
+			if ((*out)[k].record == (int)record)
+				entry = &(*out)[k];
+		if (!entry && (entry = ARRAY_PUSH(*out, *count)) != NULL)
+			entry->record = (int)record;
+		const char* value = words.items[3];
+		if (!entry) {
+			ok = false;
+		} else if (Xwau_SameName(key, "name")) {
+			/* The briefing reads the first name line, the flight the last. */
+			ok = (entry->first_ship_list || set_text(&entry->first_ship_list, value)) &&
+				 set_text(&entry->ship_list, value);
+		} else if (Xwau_SameName(key, "specname")) {
+			ok = set_text(&entry->name, value);
+		} else if (Xwau_SameName(key, "shortname")) {
+			ok = set_text(&entry->short_name, value);
+		} else if (Xwau_SameName(key, "pluralname")) {
+			ok = set_text(&entry->plural, value);
+		} else if (icon) {
+			bool numbers = true;
+			for (int k = 0; k < 4; ++k)
+				numbers = numbers && Xwau_Stoi(words.items[3 + k], &entry->icon[k]);
+			if (numbers)
+				entry->has_icon = true;
+			else
+				Report(base, "mission_tie: '%s' has a value that isn't a number, which XWAU would fail on",
+					   lines->items[i]);
+		}
+		XwauLines_Free(&words);
+	}
+	size_t kept = 0;
+	for (size_t i = 0; ok && i < *count; ++i) {
+		CraftName* entry = &(*out)[i];
+		int        type  = -1;
+		for (int t = 0; type < 0 && tables && t < XWAU_GAME_OBJECT_TYPES; ++t)
+			if (XwauGameTables_Type(tables, t).record == entry->record)
+				type = t;
+		const char* model = type >= 0 ? XwauGameTables_Model(tables, type) : "";
+		bool        twice = false;
+		for (size_t k = 0; !twice && k < kept; ++k)
+			twice = strcmp((*out)[k].model, model) == 0;
+		if (!model[0] || twice) {
+			Report(base,
+				   model[0]
+					   ? "mission_tie: craft record %d has the model of an earlier one, %s; its names are "
+						 "dropped"
+					   : "mission_tie: no object type with a model uses craft record %d; its names are "
+						 "dropped",
+				   entry->record, model);
+			continue;
+		}
+		snprintf(entry->model, sizeof entry->model, "%s", model);
+		bool used = false;
+		for (size_t g = 0; !used && g < tie->count; ++g) {
+			const int craft = tie->groups[g].craft;
+			used            = craft >= 0 && craft < XWAU_GAME_CRAFT_TYPES &&
+							  XwauGameTables_Type(tables, tables->craft[craft]).record == entry->record;
+		}
+		if (!used)
+			Report(base, "mission_tie: no flight group uses %s, so its names don't show", model);
+		const char* const texts[] = { entry->ship_list, entry->name, entry->short_name, entry->plural };
+		for (size_t t = 0; t < sizeof texts / sizeof texts[0]; ++t) {
+			bool ascii = true;
+			for (const unsigned char* c = (const unsigned char*)(texts[t] ? texts[t] : ""); *c; ++c)
+				ascii = ascii && *c < 0x80;
+			if (!ascii)
+				Report(base,
+					   "mission_tie: the name '%s' of %s isn't ASCII, so the game may show it differently",
+					   texts[t], model);
+		}
+		if (entry->first_ship_list && strcmp(entry->first_ship_list, entry->ship_list) != 0)
+			Report(base,
+				   "mission_tie: %s has two names; the briefing shows '%s' in XWAU and the game '%s', which "
+				   "OpenXWA shows in both",
+				   model, entry->first_ship_list, entry->ship_list);
+		if (kept != i) {
+			CraftName moved = *entry;
+			(*out)[i]       = (*out)[kept];
+			(*out)[kept]    = moved;
+		}
+		++kept;
+	}
+	if (!ok) {
+		free_craft_names(*out, *count);
+		*out   = NULL;
+		*count = 0;
+		return false;
+	}
+	/* The dropped ones are after `kept`. */
+	for (size_t i = kept; i < *count; ++i) {
+		free((*out)[i].ship_list);
+		free((*out)[i].first_ship_list);
+		free((*out)[i].name);
+		free((*out)[i].short_name);
+		free((*out)[i].plural);
+	}
+	*count = kept;
+	return true;
+}
+
+static void write_craft_names(FILE* f, const CraftName* list, size_t count) {
+	for (size_t i = 0; i < count; ++i) {
+		const CraftName* entry = &list[i];
+		fprintf(f, "%s  %s: {", i ? "" : "craft_names:\n", entry->model);
+		const char* sep = " ";
+
+		const struct {
+			const char* key;
+			const char* value;
+		} texts[] = { { "ship_list", entry->ship_list },
+					  { "name", entry->name },
+					  { "short_name", entry->short_name },
+					  { "plural", entry->plural } };
+
+		for (size_t t = 0; t < sizeof texts / sizeof texts[0]; ++t) {
+			if (!texts[t].value)
+				continue;
+			fprintf(f, "%s%s: ", sep, texts[t].key);
+			Xwau_WriteString(f, texts[t].value);
+			sep = ", ";
+		}
+		if (entry->has_icon)
+			fprintf(f, "%smap_icon: [%lld, %lld, %lld, %lld]", sep, entry->icon[0], entry->icon[1],
+					entry->icon[2], entry->icon[3]);
+		fputs(" }\n", f);
+	}
+}
+
 /* ---- Skins ---------------------------------------------------------------- */
 
 typedef struct SkinModel {
@@ -389,7 +578,7 @@ static bool resdata_names(const char* game, const char* base, XwauLines* out) {
 
 typedef struct Totals {
 	size_t files, profiles, profiles_dropped, skins, articulations, articulations_dropped, resdata, values,
-		values_dropped, craft_markings, craft_markings_dropped, settings, swaps;
+		values_dropped, craft_markings, craft_markings_dropped, settings, swaps, craft_names;
 } Totals;
 
 /* Whether the flight group values of `entry` set anything. */
@@ -578,7 +767,8 @@ static bool write_mission(const char* path, const char* base, const Profile* pro
 						  const SkinChoice* skins, size_t skin_count, const XwauFlightGroupArticulation* fgs,
 						  const int* fg_targets, size_t fg_count, const Tie* tie, const XwauLines* resdata,
 						  const XwauMissionTie* values, const XwauMissionSettings* settings,
-						  const Swap* swap_list, size_t swap_count) {
+						  const Swap* swap_list, size_t swap_count, const CraftName* names,
+						  size_t name_count) {
 	FILE* f = fopen(path, "wb");
 	if (!f) {
 		Report(NULL, "cannot write %s", path);
@@ -594,6 +784,7 @@ static bool write_mission(const char* path, const char* base, const Profile* pro
 	XwauMissionSettings_Write(f, settings);
 	for (size_t i = 0; i < swap_count; ++i)
 		fprintf(f, "%s  %s: %s\n", i ? "" : "model_swaps:\n", swap_list[i].source, swap_list[i].target);
+	write_craft_names(f, names, name_count);
 	write_values(f, values, tie, base);
 	size_t* order = by_target(profile_targets, profile_count);
 	bool    any   = false;
@@ -661,7 +852,7 @@ static bool import_mission(const char* game, const XwauMissions* missions, const
 						   const char* dir, const char* name, const char* out, SkinModels* skin_models,
 						   bool* skins_loaded, const XwauSettingsConfig* config,
 						   const XwauMissionNumbers* numbers, const char* models, const XwauLines* keys,
-						   Totals* totals) {
+						   const XwauGameTables* tables, Totals* totals) {
 	char base[1100];
 	if (!PathFormat(base, sizeof base, "%s/%s", dir, name))
 		return false;
@@ -697,7 +888,7 @@ static bool import_mission(const char* game, const XwauMissions* missions, const
 	for (size_t i = 0; i < values.fg_count; ++i)
 		any_values |= has_values(&values.fgs[i]);
 	if (!ok || (!profile_count && !skin_count && !fg_count && !resdata.count && !any_values &&
-				!XwauMissionSettings_Any(&settings) && !swap_count)) {
+				!XwauMissionSettings_Any(&settings) && !swap_count && !values.craft_lines.count)) {
 		free_profiles(profile_list, profile_count);
 		free(skins);
 		XwauLines_Free(&resdata);
@@ -758,15 +949,18 @@ static bool import_mission(const char* game, const XwauMissions* missions, const
 	const size_t values_kept = check_values(&values, &tie, base, totals);
 	XwauMissionSettings_CheckFlightGroups(&settings, tie.count, base);
 	const bool any_settings = XwauMissionSettings_Any(&settings);
+	CraftName* names        = NULL;
+	size_t     name_count   = 0;
+	ok                      = ok && craft_names(&values.craft_lines, tables, &tie, base, &names, &name_count);
 	if (ok && (profiles_kept || skin_count || fgs_kept || resdata.count || values_kept || any_settings ||
-			   swap_count)) {
+			   swap_count || name_count)) {
 		char dir_path[1200], lower_dir[64], path[1400];
 		LowerCopy(lower_dir, sizeof lower_dir, dir);
 		ok = PathFormat(dir_path, sizeof dir_path, "%s/%s", out, lower_dir) &&
 			 PathFormat(path, sizeof path, "%s/%s.yaml", dir_path, name) && MakeDirs(dir_path) &&
 			 write_mission(path, base, profile_list, profile_targets, profile_count, skin_models, skins,
 						   skin_count, fgs, fg_targets, fg_count, &tie, &resdata, &values, &settings,
-						   swap_list, swap_count);
+						   swap_list, swap_count, names, name_count);
 		if (ok) {
 			++totals->files;
 			totals->profiles += profiles_kept;
@@ -776,10 +970,12 @@ static bool import_mission(const char* game, const XwauMissions* missions, const
 			totals->values += values_kept;
 			totals->settings += any_settings;
 			totals->swaps += swap_count;
+			totals->craft_names += name_count;
 			for (size_t i = 0; i < values.craft_marking_count; ++i)
 				totals->craft_markings += values.craft_markings[i].fg >= 0;
 		}
 	}
+	free_craft_names(names, name_count);
 	free(profile_targets);
 	free(fg_targets);
 	free_profiles(profile_list, profile_count);
@@ -807,6 +1003,9 @@ bool XwauMissionFiles_Write(const char* game, const XwauMissions* missions, cons
 	bool ok = PathFormat(models, sizeof models, "%.*smodels", slash ? (int)(slash + 1 - out) : 0, out) &&
 			  XwauSettingsConfig_Read(game, &config) && XwauMissionNumbers_Read(game, stock_game, &numbers) &&
 			  list_keys(game, &keys);
+	/* For the craft names: which model each craft record has. Without the
+	   tables (reported), the names are dropped. */
+	XwauGameTables* tables = ok ? XwauGameTables_Load(game) : NULL;
 	for (size_t d = 0; ok && d < sizeof kMissionDirs / sizeof kMissionDirs[0]; ++d) {
 		XwauLines names;
 		ok = XwauMissions_Names(game, kMissionDirs[d], &names);
@@ -820,23 +1019,25 @@ bool XwauMissionFiles_Write(const char* game, const XwauMissions* missions, cons
 				ok = XwauLines_Add(&names, numbers.items[i].name, strlen(numbers.items[i].name));
 		}
 		for (size_t n = 0; ok && n < names.count; ++n)
-			ok = import_mission(game, missions, stock_game, kMissionDirs[d], names.items[n], out,
-								&skin_models, &skins_loaded, &config, &numbers, models, &keys, &totals);
+			ok =
+				import_mission(game, missions, stock_game, kMissionDirs[d], names.items[n], out, &skin_models,
+							   &skins_loaded, &config, &numbers, models, &keys, tables, &totals);
 		XwauLines_Free(&names);
 	}
 	free_skin_models(&skin_models);
 	XwauSettingsConfig_Free(&config);
 	XwauMissionNumbers_Free(&numbers);
 	XwauLines_Free(&keys);
+	XwauGameTables_Free(tables);
 	if (!ok)
 		return false;
 	Report(NULL,
 		   "wrote %zu mission files with %zu object profile selections (%zu dropped), %zu skin "
 		   "selections, %zu flight groups with articulations (%zu dropped), %zu flight groups with "
 		   "[mission_tie] values (%zu dropped), the markings of %zu craft (%zu dropped), the settings of "
-		   "%zu missions, %zu model swaps and the art files of %zu missions",
+		   "%zu missions, %zu model swaps, the names of %zu models and the art files of %zu missions",
 		   totals.files, totals.profiles, totals.profiles_dropped, totals.skins, totals.articulations,
 		   totals.articulations_dropped, totals.values, totals.values_dropped, totals.craft_markings,
-		   totals.craft_markings_dropped, totals.settings, totals.swaps, totals.resdata);
+		   totals.craft_markings_dropped, totals.settings, totals.swaps, totals.craft_names, totals.resdata);
 	return true;
 }
