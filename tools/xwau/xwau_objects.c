@@ -91,7 +91,7 @@ static const Field g_warheadFields[] = {
 
 /* The keys of a `turrets` entry, one for each of the two turret seats:
    turretSeatPosX, turretSeatPosY, turretSeatPosZ, turretMountAngleA,
-   turretMountAngleB, turretModelIndex (the object type of the seat's model),
+   turretMountAngleB, turretObjectType (the object type of the seat's model),
    turretAimLimitA, turretAimLimitB. */
 static const Field g_turretFields[] = {
 	{ "x", 582, 2, FIELD_SIGNED },
