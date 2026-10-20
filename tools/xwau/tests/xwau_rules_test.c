@@ -957,7 +957,22 @@ static void test_mission_files(const char* scratch) {
 	snprintf(path, sizeof path, "%s/MISSIONS/B.TIE", stock);
 	write_tie(path, 2, kStockNames, kStockCrafts);
 	snprintf(path, sizeof path, "%s/Missions/a.ini", game);
-	write_file(path, "[Objects]\nObjectProfile_fg_1 = Ace\nObjectProfile_fg_5 = Lost\n");
+	write_file(path, "[Objects]\nObjectProfile_fg_1 = Ace\nObjectProfile_fg_5 = Lost\n[Resdata]\n"
+					 "Resdata\\Planet2.dat\nResdata\\Missing.dat\nResdata\\BACKDROP_Special.DAT\n"
+					 "resdata\\planet2.DAT\n");
+	/* Mission d only adds art, from its own file. */
+	snprintf(path, sizeof path, "%s/Resdata", game);
+	MakeDirs(path);
+	snprintf(path, sizeof path, "%s/Resdata/Planet2.dat", game);
+	write_file(path, "");
+	snprintf(path, sizeof path, "%s/Resdata/BACKDROP_Special.DAT", game);
+	write_file(path, "");
+	snprintf(path, sizeof path, "%s/Missions/d.ini", game);
+	write_file(path, "[Resdata]\nResdata\\Planet2.dat\n");
+	snprintf(path, sizeof path, "%s/Missions/d_Resdata.txt", game);
+	write_file(path, "Resdata\\BACKDROP_Special.DAT\n");
+	snprintf(path, sizeof path, "%s/MISSIONS/D.TIE", stock);
+	write_tie(path, 2, kStockNames, kStockCrafts);
 	snprintf(path, sizeof path, "%s/Missions/b.ini", game);
 	write_file(path, "[Objects]\nObjectProfile_fg_1 = Stock\n");
 	snprintf(path, sizeof path, "%s/Missions/c.ini", game);
@@ -976,6 +991,13 @@ static void test_mission_files(const char* scratch) {
 		  "mission files: a mission without its own .TIE uses the game's");
 	snprintf(path, sizeof path, "%s/missions/c.yaml", out);
 	check(!IsFile(path), "mission files: a mission without a .TIE gets no file");
+	check(a && strstr(a, "\nresdata: [\"planet2\", \"backdrop_special\"]\n"),
+		  "mission files: resdata lists the art files that exist, once, by their set names");
+	snprintf(path, sizeof path, "%s/missions/d.yaml", out);
+	char* d = ReadWholeFile(path, &size);
+	check(d && strstr(d, "\nresdata: [\"backdrop_special\"]\n") && !strstr(d, "object_profiles"),
+		  "mission files: <mission>_Resdata.txt wins over the .ini, and a mission with only art gets a file");
+	free(d);
 	free(a);
 	free(b);
 }

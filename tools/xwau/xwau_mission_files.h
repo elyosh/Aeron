@@ -7,6 +7,7 @@
  * reads it when it loads the mission:
  *
  *     version: 1
+ *     resdata: ["planet2", "planetcustom", "backdrop_special"]
  *     object_profiles:
  *       flight_groups:
  *         32: { profile: "Aeron", name: "Aeron", craft: 14 }
@@ -38,6 +39,14 @@
  *
  * Articulations (hook_sfoils): the start lines and variants of the flight
  * groups (xwau_missions.h).
+ *
+ * Art (hook_backdrops): `resdata` lists the DATs that the mission adds, in
+ * its order: the lines of <mission>_Resdata.txt, or else of the [Resdata]
+ * section of <mission>.ini. A DAT that doesn't exist is left out, as XWAU
+ * skips it. Each one is written as the game names its set: its file name
+ * without the extension, in lower case, with any character other than a
+ * letter, a digit, '_' or '-' made '_'. The bake decides which of them are
+ * sets (resdata/sets/<name>); the game uses those and ignores the others.
  *
  * The selections name flight groups by their position in the mission's .TIE,
  * and they are written with the same position. The .TIE is the one that

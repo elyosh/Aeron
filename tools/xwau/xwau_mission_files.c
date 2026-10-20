@@ -242,10 +242,56 @@ static bool skin_choices(const SkinModels* s, const XwauLines* lines, const char
 	return ok;
 }
 
+/* ---- Art ------------------------------------------------------------------ */
+
+/* Reads the DATs that mission `base` adds (hook_backdrops): the lines of
+ * <base>_Resdata.txt, else of the [Resdata] section of <base>.ini. Each one
+ * that exists is written as the game names its set (resdata_sets.h): its
+ * file name without the extension, in lower case, with any character other
+ * than a letter, a digit, '_' or '-' made '_'. A name is listed once. */
+static bool resdata_names(const char* game, const char* base, XwauLines* out) {
+	memset(out, 0, sizeof *out);
+	char      rel[1200], path[1024];
+	XwauLines lines = { 0 };
+	bool      ok =
+		PathFormat(rel, sizeof rel, "%s_Resdata.txt", base) &&
+		XwauLines_Read(Xwau_FindFile(game, rel, path, sizeof path) ? path : NULL, "", XWAU_RULES_CPP, &lines);
+	if (ok && !lines.count) {
+		XwauLines_Free(&lines);
+		ok = PathFormat(rel, sizeof rel, "%s.ini", base) &&
+			 XwauLines_Read(Xwau_FindFile(game, rel, path, sizeof path) ? path : NULL, "Resdata",
+							XWAU_RULES_CPP, &lines);
+	}
+	for (size_t i = 0; ok && i < lines.count; ++i) {
+		char line[512], found[1024], name[64];
+		snprintf(line, sizeof line, "%s", lines.items[i]);
+		const char* dat = Xwau_Trim(line, XWAU_RULES_CPP);
+		if (!dat[0] || !Xwau_FindFile(game, dat, found, sizeof found))
+			continue;
+		const char* file = strrchr(found, '/');
+		const char* dot  = strrchr(file ? file + 1 : found, '.');
+		size_t      n    = 0;
+		for (const char* c = file ? file + 1 : found; *c && c != dot && n + 1 < sizeof name; ++c) {
+			const char lower = Xwau_Lower(*c);
+			name[n++] = (lower >= 'a' && lower <= 'z') || (lower >= '0' && lower <= '9') || lower == '-'
+							? lower
+							: '_';
+		}
+		name[n]   = 0;
+		bool seen = false;
+		for (size_t k = 0; !seen && k < out->count; ++k)
+			seen = strcmp(out->items[k], name) == 0;
+		if (!seen && n)
+			ok = XwauLines_Add(out, name, n);
+	}
+	XwauLines_Free(&lines);
+	return ok;
+}
+
 /* ---- Mission files -------------------------------------------------------- */
 
 typedef struct Totals {
-	size_t files, profiles, profiles_dropped, skins, articulations, articulations_dropped;
+	size_t files, profiles, profiles_dropped, skins, articulations, articulations_dropped, resdata;
 } Totals;
 
 /* Returns the flight group of each selection, or -1 when the mission has no
@@ -286,13 +332,19 @@ static size_t* by_target(const int* targets, size_t count) {
 static bool write_mission(const char* path, const char* base, const Profile* profile_list,
 						  const int* profile_targets, size_t profile_count, const SkinModels* skin_models,
 						  const SkinChoice* skins, size_t skin_count, const XwauFlightGroupArticulation* fgs,
-						  const int* fg_targets, size_t fg_count, const Tie* tie) {
+						  const int* fg_targets, size_t fg_count, const Tie* tie, const XwauLines* resdata) {
 	FILE* f = fopen(path, "wb");
 	if (!f) {
 		Report(NULL, "cannot write %s", path);
 		return false;
 	}
 	fprintf(f, "# Imported from XWAU's %s selections by xwau_import.\nversion: 1\n", base);
+	for (size_t i = 0; i < resdata->count; ++i) {
+		fputs(i ? ", " : "resdata: [", f);
+		write_string(f, resdata->items[i]);
+	}
+	if (resdata->count)
+		fputs("]\n", f);
 	size_t* order = by_target(profile_targets, profile_count);
 	bool    any   = false;
 	for (size_t k = 0; order && k < profile_count; ++k) {
@@ -379,9 +431,12 @@ static bool import_mission(const char* game, const XwauMissions* missions, const
 	size_t                             skinned_models = 0;
 	for (size_t i = 0; i < skin_count; ++i)
 		skinned_models += i == 0 || skins[i].model != skins[i - 1].model;
-	if (!ok || (!profile_count && !skin_count && !fg_count)) {
+	XwauLines resdata = { 0 };
+	ok                = ok && resdata_names(game, base, &resdata);
+	if (!ok || (!profile_count && !skin_count && !fg_count && !resdata.count)) {
 		free_profiles(profile_list, profile_count);
 		free(skins);
+		XwauLines_Free(&resdata);
 		return ok;
 	}
 
@@ -401,6 +456,7 @@ static bool import_mission(const char* game, const XwauMissions* missions, const
 		totals->articulations_dropped += fg_count;
 		free_profiles(profile_list, profile_count);
 		free(skins);
+		XwauLines_Free(&resdata);
 		return true;
 	}
 	long long*   profile_fgs = (long long*)malloc((profile_count ? profile_count : 1) * sizeof *profile_fgs);
@@ -429,18 +485,19 @@ static bool import_mission(const char* game, const XwauMissions* missions, const
 	for (size_t i = 0; fg_targets && i < fg_count; ++i)
 		fgs_kept += fg_targets[i] >= 0;
 	ok = profile_targets && fg_targets;
-	if (ok && (profiles_kept || skin_count || fgs_kept)) {
+	if (ok && (profiles_kept || skin_count || fgs_kept || resdata.count)) {
 		char dir_path[1200], lower_dir[64], path[1400];
 		LowerCopy(lower_dir, sizeof lower_dir, dir);
 		ok = PathFormat(dir_path, sizeof dir_path, "%s/%s", out, lower_dir) &&
 			 PathFormat(path, sizeof path, "%s/%s.yaml", dir_path, name) && MakeDirs(dir_path) &&
 			 write_mission(path, base, profile_list, profile_targets, profile_count, skin_models, skins,
-						   skin_count, fgs, fg_targets, fg_count, &tie);
+						   skin_count, fgs, fg_targets, fg_count, &tie, &resdata);
 		if (ok) {
 			++totals->files;
 			totals->profiles += profiles_kept;
 			totals->skins += skin_count;
 			totals->articulations += fgs_kept;
+			totals->resdata += resdata.count != 0;
 		}
 	}
 	free(profile_targets);
@@ -448,6 +505,7 @@ static bool import_mission(const char* game, const XwauMissions* missions, const
 	free_profiles(profile_list, profile_count);
 	free(skins);
 	free(tie.groups);
+	XwauLines_Free(&resdata);
 	return ok;
 }
 
@@ -470,8 +528,9 @@ bool XwauMissionFiles_Write(const char* game, const XwauMissions* missions, cons
 		return false;
 	Report(NULL,
 		   "wrote %zu mission files with %zu object profile selections (%zu dropped), %zu skin "
-		   "selections and %zu flight groups with articulations (%zu dropped)",
+		   "selections, %zu flight groups with articulations (%zu dropped) and the art files of %zu "
+		   "missions",
 		   totals.files, totals.profiles, totals.profiles_dropped, totals.skins, totals.articulations,
-		   totals.articulations_dropped);
+		   totals.articulations_dropped, totals.resdata);
 	return true;
 }
