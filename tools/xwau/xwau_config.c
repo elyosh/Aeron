@@ -168,6 +168,21 @@ void XwauLines_Value(const XwauLines* lines, const char* key, XwauRules rules, c
 	}
 }
 
+bool Xwau_ModelKey(const char* path, char* out, size_t cap) {
+	const char* base = path;
+	for (const char* c = path; *c; ++c)
+		if (*c == '\\' || *c == '/')
+			base = c + 1;
+	const char*  dot = strrchr(base, '.');
+	const size_t len = dot ? (size_t)(dot - base) : strlen(base);
+	if (!len || len >= cap)
+		return false;
+	for (size_t i = 0; i < len; ++i)
+		out[i] = Xwau_Lower(base[i]);
+	out[len] = 0;
+	return true;
+}
+
 void Xwau_WriteString(FILE* f, const char* text) {
 	fputc('"', f);
 	for (const unsigned char* c = (const unsigned char*)text; *c; ++c) {

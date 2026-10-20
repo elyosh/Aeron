@@ -1162,6 +1162,57 @@ static void test_mission_settings(const char* scratch) {
 	free(m50);
 }
 
+static void test_model_swaps(const char* scratch) {
+	char game[1024], stock[1024], out[1024], path[1300];
+	snprintf(game, sizeof game, "%s/sw_game", scratch);
+	snprintf(stock, sizeof stock, "%s/sw_stock", scratch);
+	snprintf(out, sizeof out, "%s/sw_mod/flight/missions", scratch);
+	snprintf(path, sizeof path, "%s/Missions", game);
+	MakeDirs(path);
+	snprintf(path, sizeof path, "%s/FlightModels", game);
+	MakeDirs(path);
+	snprintf(path, sizeof path, "%s/sw_mod/flight/models", scratch);
+	MakeDirs(path);
+	MakeDirs(stock);
+	const char* const files[][2] = {
+		{ "FlightModels/Spacecraft0.LST", "FlightModels\\SuperStarDestroyer.opt\nFlightModels\\Tug.opt\n" },
+		{ "FlightModels/SuperStarDestroyerRecentered.opt", "" },
+		{ "FlightModels/OnlyOpt.opt", "" },
+		{ "Missions/s.ini",
+		  "[Objects]\nObjectProfile_fg_1 = Aeron\n"
+		  "FlightModels\\SuperStarDestroyer.opt = FlightModels\\SuperStarDestroyerRecentered.opt\n"
+		  "flightmodels\\superstardestroyer.OPT = FlightModels\\OnlyOpt.opt\n"
+		  "FlightModels\\Unknown.opt = FlightModels\\SuperStarDestroyerRecentered.opt\n"
+		  "FlightModels\\Tug.opt = FlightModels\\OnlyOpt.opt\n"
+		  "FlightModels\\TugCockpit.opt = FlightModels\\Missing.opt\n"
+		  "Models/X.opt = FlightModels\\SuperStarDestroyerRecentered.opt\n" },
+	};
+	for (size_t i = 0; i < sizeof files / sizeof files[0]; ++i) {
+		snprintf(path, sizeof path, "%s/%s", game, files[i][0]);
+		write_file(path, files[i][1]);
+	}
+	snprintf(path, sizeof path, "%s/sw_mod/flight/models/superstardestroyerrecentered.glb", scratch);
+	write_file(path, "");
+	static const char* const kNames[]  = { "Red", "Blue" };
+	static const int         kCrafts[] = { 1, 2 };
+	snprintf(path, sizeof path, "%s/Missions/s.tie", game);
+	write_tie(path, 2, kNames, kCrafts);
+	XwauMissions* missions = XwauMissions_Load(game, false);
+	check(missions && XwauMissionFiles_Write(game, missions, stock, out),
+		  "model swaps: mission file written");
+	XwauMissions_Free(missions);
+	size_t size = 0;
+	snprintf(path, sizeof path, "%s/missions/s.yaml", out);
+	char* text = ReadWholeFile(path, &size);
+	check(text &&
+			  strstr(text, "model_swaps:\n  superstardestroyer: superstardestroyerrecentered\n"
+						   "  unknown: superstardestroyerrecentered\n") &&
+			  !strstr(text, "tug"),
+		  "model swaps: the first line for a model wins, in any case, and swaps whose target doesn't exist "
+		  "or has no GLB, or whose source the game never loads, are dropped");
+	free(text);
+}
+
 static void test_flight_settings(const char* scratch) {
 	char game[1024], path[1300], settings[1300];
 	snprintf(game, sizeof game, "%s/fs_game", scratch);
@@ -1197,6 +1248,7 @@ int main(void) {
 	test_mission_files(scratch);
 	test_flight_settings(scratch);
 	test_mission_settings(scratch);
+	test_model_swaps(scratch);
 	test_mission_tie(scratch);
 	RemoveTree(scratch);
 	printf("%s\n", g_failures ? "FAILED" : "passed");

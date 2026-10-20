@@ -10,6 +10,8 @@
  *     resdata: ["planet2", "planetcustom", "backdrop_special"]
  *     settings:
  *       skip_hyperspaced_messages: true
+ *     model_swaps:
+ *       superstardestroyer: superstardestroyerrecentered
  *     flight_groups:
  *       1: { name: "Red 1", craft: 1, markings: 4 }
  *       26: { name: "Red", craft: 1, craft_markings: { 0: 0, 1: 1 } }
@@ -64,6 +66,14 @@
  * letter, a digit, '_' or '-' made '_'. The bake decides which of them get
  * their own mission art (resdata/mission_art/<name>); the game uses those
  * and ignores the others, which are in the shared atlases.
+ *
+ * Model swaps (hook_mission_objects): a line
+ * `FlightModels\<A>.opt = FlightModels\<B>.opt` of the [Objects] lines
+ * loads model B wherever the game loads A, in flight and in the briefing. As
+ * in the hook, the first line for a path wins, in any case, and a swap whose
+ * B doesn't exist is dropped. OpenXWA also needs B's GLB in the mod folder,
+ * next to the output folder (<out>/../models/<b>.glb): a swap without it is
+ * reported and dropped. Both are written as model keys.
  *
  * Settings (hook_mission_tie, and hook_engine_sound's [Interdiction]):
  * `settings` holds the values that apply in the mission and that differ from

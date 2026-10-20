@@ -55,6 +55,11 @@ bool XwauLines_Add(XwauLines* lines, const char* text, size_t len);
  * is none. The value is truncated to `cap`. */
 void XwauLines_Value(const XwauLines* lines, const char* key, XwauRules rules, char* out, size_t cap);
 
+/* Writes the model key of `path` ("FlightModels\\XWing.opt" gives
+ * "xwing"): its file name, in lower case, without the folder and the
+ * extension. Returns false when the key is empty or doesn't fit in `cap`. */
+bool Xwau_ModelKey(const char* path, char* out, size_t cap);
+
 /* Writes ISO-8859-1 `text` as a quoted YAML string, in UTF-8. */
 void Xwau_WriteString(FILE* f, const char* text);
 

@@ -30,23 +30,28 @@ static int compare_profiles(const void* a, const void* b) {
 	return x < y ? -1 : x > y;
 }
 
+/* Reads the [Objects] lines of mission `base`: <mission>_Objects.txt, or
+ * else the [Objects] section of <mission>.ini. Returns false when out of
+ * memory. */
+static bool object_lines(const char* game, const char* base, XwauLines* lines) {
+	char rel[1100], path[1024];
+	if (!PathFormat(rel, sizeof rel, "%s_Objects.txt", base) ||
+		!XwauLines_Read(Xwau_FindFile(game, rel, path, sizeof path) ? path : NULL, "", XWAU_RULES_CPP, lines))
+		return false;
+	if (lines->count)
+		return true;
+	return PathFormat(rel, sizeof rel, "%s.ini", base) &&
+		   XwauLines_Read(Xwau_FindFile(game, rel, path, sizeof path) ? path : NULL, "Objects",
+						  XWAU_RULES_CPP, lines);
+}
+
 /* Reads the `ObjectProfile_fg_<N> = <profile>` lines of mission `base`,
  * sorted by flight group. */
 static bool profiles(const char* game, const char* base, Profile** out, size_t* count) {
 	*out   = NULL;
 	*count = 0;
-	char      rel[1100], path[1024];
-	XwauLines lines;
-	if (!PathFormat(rel, sizeof rel, "%s_Objects.txt", base) ||
-		!XwauLines_Read(Xwau_FindFile(game, rel, path, sizeof path) ? path : NULL, "", XWAU_RULES_CPP,
-						&lines))
-		return false;
-	bool ok = true;
-	if (!lines.count) {
-		ok = PathFormat(rel, sizeof rel, "%s.ini", base) &&
-			 XwauLines_Read(Xwau_FindFile(game, rel, path, sizeof path) ? path : NULL, "Objects",
-							XWAU_RULES_CPP, &lines);
-	}
+	XwauLines         lines;
+	bool              ok        = object_lines(game, base, &lines);
 	static const char kPrefix[] = "objectprofile_", kFgPrefix[] = "objectprofile_fg_";
 	for (size_t i = 0; ok && i < lines.count; ++i) {
 		char  line[4096];
@@ -94,6 +99,113 @@ static void free_profiles(Profile* list, size_t count) {
 	for (size_t i = 0; i < count; ++i)
 		free(list[i].profile);
 	free(list);
+}
+
+/* ---- Model swaps ---------------------------------------------------------- */
+
+typedef struct Swap {
+	char source[256], target[256]; /* model keys */
+} Swap;
+
+/* The model keys that the game loads: the rows of XWAU's FlightModels/
+ * Spacecraft0.LST and Equipment0.LST, and the cockpit and exterior of each. */
+static bool list_keys(const char* game, XwauLines* out) {
+	memset(out, 0, sizeof *out);
+	static const char* const kLists[]    = { "FlightModels/Spacecraft0.LST", "FlightModels/Equipment0.LST" };
+	static const char* const kSuffixes[] = { "", "cockpit", "exterior" };
+	bool                     ok          = true;
+	for (size_t l = 0; ok && l < 2; ++l) {
+		char      path[1024];
+		XwauLines rows;
+		if (!XwauLines_Read(Xwau_FindFile(game, kLists[l], path, sizeof path) ? path : NULL, "",
+							XWAU_RULES_CPP, &rows))
+			return false;
+		for (size_t i = 0; ok && i < rows.count; ++i) {
+			char key[256];
+			if (!Xwau_ModelKey(rows.items[i], key, sizeof key))
+				continue;
+			for (size_t s = 0; ok && s < 3; ++s) {
+				char full[300];
+				snprintf(full, sizeof full, "%s%s", key, kSuffixes[s]);
+				ok = XwauLines_Add(out, full, strlen(full));
+			}
+		}
+		XwauLines_Free(&rows);
+	}
+	if (!ok)
+		XwauLines_Free(out);
+	return ok;
+}
+
+/* Reads the `FlightModels\<A>.opt = FlightModels\<B>.opt` lines of mission
+ * `base`, as hook_mission_objects reads them: the game passes the path of
+ * each model it loads, the first line with that path wins, in any case, and
+ * the model is swapped when <B> exists. A swap is kept only when `models`
+ * has <b>.glb. A source that the game doesn't load is reported, and kept. */
+static bool swaps(const char* game, const char* base, const char* models, const XwauLines* keys, Swap** out,
+				  size_t* count) {
+	*out   = NULL;
+	*count = 0;
+	XwauLines lines, seen_paths = { 0 };
+	bool      ok = object_lines(game, base, &lines);
+	for (size_t i = 0; ok && i < lines.count; ++i) {
+		char  line[4096];
+		char* equals;
+		snprintf(line, sizeof line, "%s", lines.items[i]);
+		if (!(equals = strchr(line, '=')))
+			continue;
+		*equals           = 0;
+		const char* key   = Xwau_Trim(line, XWAU_RULES_CPP);
+		const char* value = Xwau_Trim(equals + 1, XWAU_RULES_CPP);
+		if (!EndsWithNoCase(key, ".opt"))
+			continue;
+		/* The first line with this path wins, even when it is dropped. */
+		bool seen = false;
+		for (size_t k = 0; !seen && k < seen_paths.count; ++k)
+			seen = Xwau_SameName(seen_paths.items[k], key);
+		if (seen)
+			continue;
+		if (!(ok = XwauLines_Add(&seen_paths, key, strlen(key))))
+			break;
+		Swap swap;
+		if (strncasecmp(key, "FlightModels\\", 13) != 0 ||
+			!Xwau_ModelKey(key, swap.source, sizeof swap.source)) {
+			Report(base, "[Objects]: the game never loads '%s', so its swap does nothing", key);
+			continue;
+		}
+		char rel[1024], path[1300];
+		snprintf(rel, sizeof rel, "%s", value);
+		for (char* c = rel; *c; ++c)
+			if (*c == '\\')
+				*c = '/';
+		if (!*value || !Xwau_FindFile(game, rel, path, sizeof path)) {
+			Report(base, "[Objects]: '%s' doesn't exist, so XWAU keeps %s", value, key);
+			continue;
+		}
+		if (!Xwau_ModelKey(value, swap.target, sizeof swap.target))
+			continue;
+		if (!PathFormat(path, sizeof path, "%s/%s.glb", models, swap.target) || !IsFile(path)) {
+			Report(base, "[Objects]: %s has no GLB in the mod folder, so the swap of %s is dropped",
+				   swap.target, swap.source);
+			continue;
+		}
+		bool known = false;
+		for (size_t k = 0; !known && k < keys->count; ++k)
+			known = strcmp(keys->items[k], swap.source) == 0;
+		if (!known)
+			Report(base, "[Objects]: %s isn't a model of the lists, so its swap may do nothing", swap.source);
+		Swap* added = ARRAY_PUSH(*out, *count);
+		if ((ok = added != NULL))
+			*added = swap;
+	}
+	XwauLines_Free(&lines);
+	XwauLines_Free(&seen_paths);
+	if (!ok) {
+		free(*out);
+		*out   = NULL;
+		*count = 0;
+	}
+	return ok;
 }
 
 /* ---- Skins ---------------------------------------------------------------- */
@@ -277,7 +389,7 @@ static bool resdata_names(const char* game, const char* base, XwauLines* out) {
 
 typedef struct Totals {
 	size_t files, profiles, profiles_dropped, skins, articulations, articulations_dropped, resdata, values,
-		values_dropped, craft_markings, craft_markings_dropped, settings;
+		values_dropped, craft_markings, craft_markings_dropped, settings, swaps;
 } Totals;
 
 /* Whether the flight group values of `entry` set anything. */
@@ -465,7 +577,8 @@ static bool write_mission(const char* path, const char* base, const Profile* pro
 						  const int* profile_targets, size_t profile_count, const SkinModels* skin_models,
 						  const SkinChoice* skins, size_t skin_count, const XwauFlightGroupArticulation* fgs,
 						  const int* fg_targets, size_t fg_count, const Tie* tie, const XwauLines* resdata,
-						  const XwauMissionTie* values, const XwauMissionSettings* settings) {
+						  const XwauMissionTie* values, const XwauMissionSettings* settings,
+						  const Swap* swap_list, size_t swap_count) {
 	FILE* f = fopen(path, "wb");
 	if (!f) {
 		Report(NULL, "cannot write %s", path);
@@ -479,6 +592,8 @@ static bool write_mission(const char* path, const char* base, const Profile* pro
 	if (resdata->count)
 		fputs("]\n", f);
 	XwauMissionSettings_Write(f, settings);
+	for (size_t i = 0; i < swap_count; ++i)
+		fprintf(f, "%s  %s: %s\n", i ? "" : "model_swaps:\n", swap_list[i].source, swap_list[i].target);
 	write_values(f, values, tie, base);
 	size_t* order = by_target(profile_targets, profile_count);
 	bool    any   = false;
@@ -545,7 +660,8 @@ static bool write_mission(const char* path, const char* base, const Profile* pro
 static bool import_mission(const char* game, const XwauMissions* missions, const char* stock_game,
 						   const char* dir, const char* name, const char* out, SkinModels* skin_models,
 						   bool* skins_loaded, const XwauSettingsConfig* config,
-						   const XwauMissionNumbers* numbers, Totals* totals) {
+						   const XwauMissionNumbers* numbers, const char* models, const XwauLines* keys,
+						   Totals* totals) {
 	char base[1100];
 	if (!PathFormat(base, sizeof base, "%s/%s", dir, name))
 		return false;
@@ -572,18 +688,22 @@ static bool import_mission(const char* game, const XwauMissions* missions, const
 	/* XwauMissions_Load already reports the problems of these lines. */
 	ok = ok && resdata_names(game, base, &resdata) && XwauMissionTie_Read(game, base, false, &values);
 	XwauMissionSettings settings = { 0 };
-	ok              = ok && XwauMissionSettings_Read(game, base, XwauMissionNumbers_Find(numbers, dir, name),
-													 &values.settings, config, &settings);
-	bool any_values = values.craft_marking_count != 0;
+	ok               = ok && XwauMissionSettings_Read(game, base, XwauMissionNumbers_Find(numbers, dir, name),
+													  &values.settings, config, &settings);
+	Swap*  swap_list = NULL;
+	size_t swap_count = 0;
+	ok                = ok && swaps(game, base, models, keys, &swap_list, &swap_count);
+	bool any_values   = values.craft_marking_count != 0;
 	for (size_t i = 0; i < values.fg_count; ++i)
 		any_values |= has_values(&values.fgs[i]);
 	if (!ok || (!profile_count && !skin_count && !fg_count && !resdata.count && !any_values &&
-				!XwauMissionSettings_Any(&settings))) {
+				!XwauMissionSettings_Any(&settings) && !swap_count)) {
 		free_profiles(profile_list, profile_count);
 		free(skins);
 		XwauLines_Free(&resdata);
 		XwauMissionTie_Free(&values);
 		XwauMissionSettings_Free(&settings);
+		free(swap_list);
 		return ok;
 	}
 
@@ -606,6 +726,7 @@ static bool import_mission(const char* game, const XwauMissions* missions, const
 		XwauLines_Free(&resdata);
 		XwauMissionTie_Free(&values);
 		XwauMissionSettings_Free(&settings);
+		free(swap_list);
 		return true;
 	}
 	long long*   profile_fgs = (long long*)malloc((profile_count ? profile_count : 1) * sizeof *profile_fgs);
@@ -637,13 +758,15 @@ static bool import_mission(const char* game, const XwauMissions* missions, const
 	const size_t values_kept = check_values(&values, &tie, base, totals);
 	XwauMissionSettings_CheckFlightGroups(&settings, tie.count, base);
 	const bool any_settings = XwauMissionSettings_Any(&settings);
-	if (ok && (profiles_kept || skin_count || fgs_kept || resdata.count || values_kept || any_settings)) {
+	if (ok && (profiles_kept || skin_count || fgs_kept || resdata.count || values_kept || any_settings ||
+			   swap_count)) {
 		char dir_path[1200], lower_dir[64], path[1400];
 		LowerCopy(lower_dir, sizeof lower_dir, dir);
 		ok = PathFormat(dir_path, sizeof dir_path, "%s/%s", out, lower_dir) &&
 			 PathFormat(path, sizeof path, "%s/%s.yaml", dir_path, name) && MakeDirs(dir_path) &&
 			 write_mission(path, base, profile_list, profile_targets, profile_count, skin_models, skins,
-						   skin_count, fgs, fg_targets, fg_count, &tie, &resdata, &values, &settings);
+						   skin_count, fgs, fg_targets, fg_count, &tie, &resdata, &values, &settings,
+						   swap_list, swap_count);
 		if (ok) {
 			++totals->files;
 			totals->profiles += profiles_kept;
@@ -652,6 +775,7 @@ static bool import_mission(const char* game, const XwauMissions* missions, const
 			totals->resdata += resdata.count != 0;
 			totals->values += values_kept;
 			totals->settings += any_settings;
+			totals->swaps += swap_count;
 			for (size_t i = 0; i < values.craft_marking_count; ++i)
 				totals->craft_markings += values.craft_markings[i].fg >= 0;
 		}
@@ -664,6 +788,7 @@ static bool import_mission(const char* game, const XwauMissions* missions, const
 	XwauLines_Free(&resdata);
 	XwauMissionTie_Free(&values);
 	XwauMissionSettings_Free(&settings);
+	free(swap_list);
 	return ok;
 }
 
@@ -674,7 +799,14 @@ bool XwauMissionFiles_Write(const char* game, const XwauMissions* missions, cons
 	Totals             totals       = { 0 };
 	XwauSettingsConfig config       = { 0 };
 	XwauMissionNumbers numbers      = { 0 };
-	bool ok = XwauSettingsConfig_Read(game, &config) && XwauMissionNumbers_Read(game, stock_game, &numbers);
+	XwauLines          keys         = { 0 };
+	/* The swaps' GLBs: the mission files go into <mod>/flight/missions, and
+	   the models into <mod>/flight/models, next to it. */
+	char        models[1100];
+	const char* slash = strrchr(out, '/');
+	bool ok = PathFormat(models, sizeof models, "%.*smodels", slash ? (int)(slash + 1 - out) : 0, out) &&
+			  XwauSettingsConfig_Read(game, &config) && XwauMissionNumbers_Read(game, stock_game, &numbers) &&
+			  list_keys(game, &keys);
 	for (size_t d = 0; ok && d < sizeof kMissionDirs / sizeof kMissionDirs[0]; ++d) {
 		XwauLines names;
 		ok = XwauMissions_Names(game, kMissionDirs[d], &names);
@@ -689,21 +821,22 @@ bool XwauMissionFiles_Write(const char* game, const XwauMissions* missions, cons
 		}
 		for (size_t n = 0; ok && n < names.count; ++n)
 			ok = import_mission(game, missions, stock_game, kMissionDirs[d], names.items[n], out,
-								&skin_models, &skins_loaded, &config, &numbers, &totals);
+								&skin_models, &skins_loaded, &config, &numbers, models, &keys, &totals);
 		XwauLines_Free(&names);
 	}
 	free_skin_models(&skin_models);
 	XwauSettingsConfig_Free(&config);
 	XwauMissionNumbers_Free(&numbers);
+	XwauLines_Free(&keys);
 	if (!ok)
 		return false;
 	Report(NULL,
 		   "wrote %zu mission files with %zu object profile selections (%zu dropped), %zu skin "
 		   "selections, %zu flight groups with articulations (%zu dropped), %zu flight groups with "
 		   "[mission_tie] values (%zu dropped), the markings of %zu craft (%zu dropped), the settings of "
-		   "%zu missions and the art files of %zu missions",
+		   "%zu missions, %zu model swaps and the art files of %zu missions",
 		   totals.files, totals.profiles, totals.profiles_dropped, totals.skins, totals.articulations,
 		   totals.articulations_dropped, totals.values, totals.values_dropped, totals.craft_markings,
-		   totals.craft_markings_dropped, totals.settings, totals.resdata);
+		   totals.craft_markings_dropped, totals.settings, totals.swaps, totals.resdata);
 	return true;
 }
