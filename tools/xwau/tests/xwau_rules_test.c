@@ -1,9 +1,10 @@
 /*
  * Tests the hook file rules that the XWAU readers reproduce (xwau_config.h),
- * the skin selection (xwau_skins.h), the skybox conversion (xwau_skyboxes.h)
- * and the craft settings (xwau_craft.h). The inputs are fixed texts and folders written to a
- * scratch folder. The test is built with the tools as xwau_rules_test. It
- * prints each check and exits with a non-zero status when a check fails.
+ * the skin selection (xwau_skins.h), the skybox conversion (xwau_skyboxes.h),
+ * the craft settings (xwau_craft.h) and the text overrides (xwau_text.h). The
+ * inputs are fixed texts and folders written to a scratch folder. The test is
+ * built with the tools as xwau_rules_test. It prints each check and exits
+ * with a non-zero status when a check fails.
  */
 
 #include <math.h>
@@ -19,6 +20,7 @@
 #include "xwau_missions.h"
 #include "xwau_skins.h"
 #include "xwau_skyboxes.h"
+#include "xwau_text.h"
 
 static int g_failures;
 
@@ -488,6 +490,51 @@ static void test_craft(const char* scratch) {
 	free(text);
 }
 
+/* ---- Text overrides ----------------------------------------------------------- */
+
+static void test_text(const char* scratch) {
+	char stock[1024], mod[1024], path[1100], out[1100];
+	snprintf(stock, sizeof stock, "%s/text_stock", scratch);
+	snprintf(mod, sizeof mod, "%s/text_mod", scratch);
+	snprintf(out, sizeof out, "%s/text_out/strings.yaml", scratch);
+	MakeDirs(stock);
+	MakeDirs(mod);
+	snprintf(path, sizeof path, "%s/STRINGS.TXT", stock);
+	write_file(path, "// comment\r\n!MSG_ARMED!\\03Lasers armed\r\n!KSPEC_A!m:A-wing\r\n!SAME!Same\r\n");
+	snprintf(path, sizeof path, "%s/Strings.txt", mod);
+	write_file(path, "// other comment\r\n!msg_armed!\\03Primary cannons armed\r\n!KSPEC_A!m:Pilot's \xe9 A\r\n"
+					 "!SAME!Same\r\n!EXTRA!Extra\r\n");
+	snprintf(path, sizeof path, "%s/SHIPLIST.TXT", stock);
+	write_file(path, "!SPECIES_1!Xwing,Fighter,\t\t6 ,9 \r\n!SPECIES_2!Ywing\r\n");
+	snprintf(path, sizeof path, "%s/SHIPLIST.TXT", mod);
+	write_file(path, "!SPECIES_2!Ywing\r\n!SPECIES_1!X-wing,Fighter,\t\t6, 9 \r\n");
+	snprintf(path, sizeof path, "%s/FRONTTXT.TXT", stock);
+	write_file(path, "!STR_STATS!Pilot Statistics\n");
+	snprintf(path, sizeof path, "%s/SPECDESC.TXT", stock);
+	write_file(path, "!SPEC_1_NAME!X-wing\n!SPEC_186_NAME!*Sullust\n!SPEC_183_NAME!*Old\n");
+	snprintf(path, sizeof path, "%s/SPECDESC.TXT", mod);
+	write_file(path, "!SPEC_1_NAME!X-wing\n!SPEC_186_NAME!U-Wing\n!SPEC_183_NAME!New\n");
+
+	check(XwauText_Write(mod, stock, out), "text: strings.yaml is written without FRONTTXT.TXT");
+	size_t size = 0;
+	char* text = ReadWholeFile(out, &size);
+	check(text && strstr(text, "  msg_armed: '\\03Primary cannons armed'\n"),
+		  "text: IDs match in upper or lower case, and backslashes stay as they are");
+	check(text && strstr(text, "  KSPEC_A: 'm:Pilot''s \xc3\xa9 A'\n"),
+		  "text: quotes are doubled, and Latin-1 is written as UTF-8");
+	check(text && !strstr(text, "SAME") && !strstr(text, "EXTRA"),
+		  "text: no entry for a text that didn't change, or for an ID that only the mod has");
+	check(text && strstr(text, "  SPECIES_1: 'X-wing,Fighter,\t\t6, 9 '\n"),
+		  "text: tabs and the spaces at the end are kept");
+	check(text && strstr(text, "  SPEC_183_NAME: 'New'\n") && !strstr(text, "SPEC_186"),
+		  "text: no tech room text for a craft type that the stock game has no craft for");
+	free(text);
+
+	snprintf(path, sizeof path, "%s/STRINGS.TXT", stock);
+	remove(path);
+	check(!XwauText_Write(mod, stock, out) && !IsFile(out), "text: nothing is written when a stock file is missing");
+}
+
 int main(void) {
 	char        scratch[1024];
 	const char* tmp = getenv("TMPDIR");
@@ -499,6 +546,7 @@ int main(void) {
 	test_skybox_rotation();
 	test_skyboxes(scratch);
 	test_craft(scratch);
+	test_text(scratch);
 	RemoveTree(scratch);
 	printf("%s\n", g_failures ? "FAILED" : "passed");
 	return g_failures ? 1 : 0;
