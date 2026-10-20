@@ -164,7 +164,9 @@ static int load_effects(const AeronConfigFile* yaml, CaptureConfig* config) {
 		fprintf(stderr, "cull must be none, front or back\n");
 		return 0;
 	}
-	config->cull_mode = !strcmp(cull, "back") ? AERON_CULL_BACK : !strcmp(cull, "front") ? AERON_CULL_FRONT : AERON_CULL_NONE;
+	config->cull_mode                = !strcmp(cull, "back")    ? AERON_CULL_BACK
+									   : !strcmp(cull, "front") ? AERON_CULL_FRONT
+																: AERON_CULL_NONE;
 	const AeronConfigNode* fill_node = AeronConfigFile_GetNode(yaml, "backface_fill");
 	if (fill_node && AeronConfigNode_Type(fill_node) != AERON_CONFIG_BOOL) {
 		fprintf(stderr, "backface_fill must be true or false\n");
@@ -241,7 +243,8 @@ static int vec3(const AeronConfigNode* node, float out[3]) {
 	for (size_t k = 0; k < 3; ++k) {
 		const AeronConfigNode* item = AeronConfigNode_SequenceGet(node, k);
 		const double           v    = AeronConfigNode_Float(item, NAN);
-		if ((AeronConfigNode_Type(item) != AERON_CONFIG_INT && AeronConfigNode_Type(item) != AERON_CONFIG_FLOAT) ||
+		if ((AeronConfigNode_Type(item) != AERON_CONFIG_INT &&
+			 AeronConfigNode_Type(item) != AERON_CONFIG_FLOAT) ||
 			!isfinite(v))
 			return 0;
 		out[k] = (float)v;
@@ -284,9 +287,8 @@ static int load_game_instances(const AeronConfigNode* list, CaptureConfig* confi
 		fprintf(stderr, "game_scene.instances must list 1-%d instances\n", CAPTURE_MAX_INSTANCES);
 		return 0;
 	}
-	static const char* const keys[] = {
-		"model", "role", "position", "rotation_degrees", "markings", "probes", "velocity"
-	};
+	static const char* const keys[] = { "model",    "role",   "position", "rotation_degrees",
+										"markings", "probes", "velocity" };
 	for (size_t i = 0; i < count; ++i) {
 		const AeronConfigNode* item = AeronConfigNode_SequenceGet(list, i);
 		CaptureInstance*       out  = &game->instances[i];
@@ -484,7 +486,7 @@ static int load_game_scene(AeronVfs* vfs, const AeronConfigFile* yaml, CaptureCo
 	const float default_direction[3] = { -.5f, -.6f, .62f };
 	memcpy(game->sun_direction, default_direction, sizeof default_direction);
 	game->sun_color[0] = game->sun_color[1] = game->sun_color[2] = 2.513f;
-	game->ambient                                            = .08f;
+	game->ambient                                                = .08f;
 	const AeronConfigNode* direction = AeronConfigNode_MapGet(node, "sun_direction");
 	const AeronConfigNode* color     = AeronConfigNode_MapGet(node, "sun_color");
 	const AeronConfigNode* ambient   = AeronConfigNode_MapGet(node, "ambient");

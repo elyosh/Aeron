@@ -152,9 +152,9 @@ struct AeronRenderPass {
 	int                   debug_group_open;
 	/* Attachment size, which every scissor is clamped to. A scissor that
 	 * falls entirely outside it skips draws until the next one. */
-	int                   width;
-	int                   height;
-	int                   scissor_empty;
+	int width;
+	int height;
+	int scissor_empty;
 };
 
 typedef struct AeronPixelLayerUpload {

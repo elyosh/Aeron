@@ -58,9 +58,9 @@ typedef struct CaptureGameScene {
 	float                    sun_direction[3], sun_color[3], ambient;
 	/* The cockpit and exterior turn with the panning camera (the craft
 	 * turns) instead of staying put (the pilot looks around). */
-	int                      cockpit_follows_camera;
+	int cockpit_follows_camera;
 	/* The clustered lights' occupancy view (AeronSceneClusteredLightDesc). */
-	int                      cluster_debug;
+	int cluster_debug;
 	/* game_scene.environment: the folder holding the manifest and the files
 	 * its environments name (empty: asset_root), the manifest in it, and the
 	 * name of the environment the scene uses (empty for none). */
@@ -69,7 +69,7 @@ typedef struct CaptureGameScene {
 	char environment_name[64];
 	/* Scene illuminance per lux of the models' authored lights (candela;
 	 * 0 = off), as point_lights.model_light_intensity in the game. */
-	float                    model_light_intensity;
+	float model_light_intensity;
 	/* >= 0: the sun is in the probe sets' bake and its shadow removes this
 	 * share of the probe light (the game's hangar ceiling light); < 0: off. */
 	float key_probe_shadow;
@@ -84,31 +84,31 @@ typedef struct CaptureGameScene {
 	int planar_reflection;
 	/* FSR temporal upscaling, as the game's temporal_upscaling settings;
 	 * benchmarks only (output depends on frame history), without MSAA. */
-	AeronTemporalMode        temporal_mode;
-	float                    temporal_sharpness;
-	CaptureInstance          instances[CAPTURE_MAX_INSTANCES];
-	int                      instance_count;
-	CaptureLight             lights[CAPTURE_MAX_LIGHTS];
-	int                      light_count;
+	AeronTemporalMode temporal_mode;
+	float             temporal_sharpness;
+	CaptureInstance   instances[CAPTURE_MAX_INSTANCES];
+	int               instance_count;
+	CaptureLight      lights[CAPTURE_MAX_LIGHTS];
+	int               light_count;
 } CaptureGameScene;
 
 typedef struct CaptureConfig {
-	int                    width, height, frames, reference_samples, quality;
-	double                 fps, pan_speed, pan_direction, shutter;
-	char                   output_dir[1024];
-	char                   asset_root[1024];
-	char                   models[CAPTURE_MAX_MODELS][1024];
-	int                    model_count;
+	int    width, height, frames, reference_samples, quality;
+	double fps, pan_speed, pan_direction, shutter;
+	char   output_dir[1024];
+	char   asset_root[1024];
+	char   models[CAPTURE_MAX_MODELS][1024];
+	int    model_count;
 	/* Material animation: the effect libraries' directory under asset_root
 	 * ("" for none: static materials) and the animation time of frame 0,
 	 * which advances with the capture time. */
-	char                   effect_dir[1024];
-	double                 animation_time;
+	char   effect_dir[1024];
+	double animation_time;
 	/* blast_mark: an effects.yaml image ("G-I", "" for none) drawn as a
 	 * PMA overlay square on the first model's first instance, centred at
 	 * `center` (model metres) in the model's XY plane, `size` metres wide. */
-	char                   blast_image[32];
-	float                  blast_center[3], blast_size;
+	char  blast_image[32];
+	float blast_center[3], blast_size;
 	/* anim: the material animation state of every instance, each with
 	 * seed = its index + anim.seed. */
 	int                    anim_enabled;
@@ -136,8 +136,8 @@ struct AeronEnvironmentLibrary;
 struct AeronProbeSet;
 
 typedef struct Fixture {
-	AeronScene3D *     scene, *reference_scene;
-	AeronVfs*          vfs;
+	AeronScene3D *scene, *reference_scene;
+	AeronVfs*     vfs;
 	/* game_scene.environment: the manifest's prepared environments and the
 	 * scene environment's reference (-1 for none). `probes` holds each instance's
 	 * probes loaded from a bake folder, or NULL when the instance uses its
@@ -147,13 +147,13 @@ typedef struct Fixture {
 	struct AeronEnvironmentLibrary*       environment_library;
 	int                                   environment_reference;
 	struct AeronProbeSet*                 probes[CAPTURE_MAX_INSTANCES];
-	AeronEffectAtlas*  effect_atlas;
-	AeronEffectData*   effect_data;
-	CaptureMesh        meshes[CAPTURE_MAX_MODELS];
-	CaptureConfig      config;
-	AeronRenderTarget* chart_rt;
-	AeronDrawList2D*   chart_draws;
-	AeronTexture *     screen_graphics, *screen_text;
+	AeronEffectAtlas*                     effect_atlas;
+	AeronEffectData*                      effect_data;
+	CaptureMesh                           meshes[CAPTURE_MAX_MODELS];
+	CaptureConfig                         config;
+	AeronRenderTarget*                    chart_rt;
+	AeronDrawList2D*                      chart_draws;
+	AeronTexture *                        screen_graphics, *screen_text;
 } Fixture;
 
 typedef struct CaptureBloom {

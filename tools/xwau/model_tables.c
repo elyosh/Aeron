@@ -102,7 +102,6 @@ bool ModelTables_StockEye(const char* model, int eye[3]) {
 	return find_eye(kStockEyes, COUNT(kStockEyes), model, eye);
 }
 
-
 typedef struct Entry {
 	const char* model;
 	const char* values;

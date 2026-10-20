@@ -473,12 +473,12 @@ int AeronScene_Begin(AeronScene3D* s, const AeronSceneCamera* camera) {
 	s->cluster_ready       = 0;
 	s->frame_uniform_count = 0;
 	memset(&s->pbr_environment, 0, sizeof s->pbr_environment);
-	s->pbr_environment_set = 0;
-	s->probe_set_count     = 0;
-	s->probe_key_shadow    = 0;
-	s->probe_occlusion_enabled = 0;
+	s->pbr_environment_set       = 0;
+	s->probe_set_count           = 0;
+	s->probe_key_shadow          = 0;
+	s->probe_occlusion_enabled   = 0;
 	s->planar_reflection_enabled = 0;
-	s->pbr_debug_views     = 0;
+	s->pbr_debug_views           = 0;
 	memset(s->pbr_debug_material, 0, sizeof s->pbr_debug_material);
 	AeronScene_SetScreenSources(s, NULL, NULL, NULL);
 	memset(&s->directional_shadow, 0, sizeof s->directional_shadow);
@@ -524,7 +524,8 @@ void AeronScene_AddMeshInstance(AeronScene3D* s, const AeronSceneMeshInstance* i
 
 /* A light with a finite, non-zero half axis. */
 static int scene_light_is_tube(const AeronSceneLight* light) {
-	const float length_sq = light->half_axis[0] * light->half_axis[0] + light->half_axis[1] * light->half_axis[1] +
+	const float length_sq = light->half_axis[0] * light->half_axis[0] +
+							light->half_axis[1] * light->half_axis[1] +
 							light->half_axis[2] * light->half_axis[2];
 	return length_sq > 0.0f && isfinite(length_sq);
 }
@@ -556,7 +557,8 @@ static int scene_light_direction(const AeronSceneLight* light, int is_tube, floa
 	float d[3] = { light->direction[0], light->direction[1], light->direction[2] };
 	if (is_tube) {
 		const float axis_sq = light->half_axis[0] * light->half_axis[0] +
-							  light->half_axis[1] * light->half_axis[1] + light->half_axis[2] * light->half_axis[2];
+							  light->half_axis[1] * light->half_axis[1] +
+							  light->half_axis[2] * light->half_axis[2];
 		const float along =
 			(d[0] * light->half_axis[0] + d[1] * light->half_axis[1] + d[2] * light->half_axis[2]) / axis_sq;
 		for (int k = 0; k < 3; ++k) {
@@ -564,8 +566,9 @@ static int scene_light_direction(const AeronSceneLight* light, int is_tube, floa
 		}
 	}
 	const float length = sqrtf(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
-	const float input  = sqrtf(light->direction[0] * light->direction[0] +
-							   light->direction[1] * light->direction[1] + light->direction[2] * light->direction[2]);
+	const float input =
+		sqrtf(light->direction[0] * light->direction[0] + light->direction[1] * light->direction[1] +
+			  light->direction[2] * light->direction[2]);
 	if (!(length > 1e-3f * input) || !isfinite(length)) {
 		return 0;
 	}
@@ -598,8 +601,8 @@ int AeronScene_AddLight(AeronScene3D* s, const AeronSceneLight* light) {
 
 /* `v` through the component's articulation rows, then the instance
  * transform, both without translation. */
-static void scene_mesh_light_vector(const float (*rows)[4], const float transform[16], const AeronFlightVec3* v,
-									float out[3]) {
+static void scene_mesh_light_vector(const float (*rows)[4], const float transform[16],
+									const AeronFlightVec3* v, float out[3]) {
 	float local[3] = { v->x, v->y, v->z };
 	if (rows) {
 		float articulated[3];
@@ -609,13 +612,12 @@ static void scene_mesh_light_vector(const float (*rows)[4], const float transfor
 		memcpy(local, articulated, sizeof local);
 	}
 	for (int r = 0; r < 3; ++r) {
-		out[r] = transform[r * 4 + 0] * local[0] + transform[r * 4 + 1] * local[1] + transform[r * 4 + 2] * local[2];
+		out[r] = transform[r * 4 + 0] * local[0] + transform[r * 4 + 1] * local[1] +
+				 transform[r * 4 + 2] * local[2];
 	}
 }
 
-static float scene_vec3_length(const float v[3]) {
-	return sqrtf(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
-}
+static float scene_vec3_length(const float v[3]) { return sqrtf(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]); }
 
 int AeronScene_MeshLight(const AeronSceneMesh* mesh, uint32_t index, const float transform[16],
 						 float units_per_meter, const AeronSceneMeshTable* table, float intensity_scale,
@@ -623,10 +625,10 @@ int AeronScene_MeshLight(const AeronSceneMesh* mesh, uint32_t index, const float
 	if (!mesh || index >= mesh->light_count || !transform || !(units_per_meter > 0.0f) || !out) {
 		return 0;
 	}
-	const AeronFlightLight* light = &mesh->lights[index];
-	float                   p[3]  = { light->position.x, light->position.y, light->position.z };
+	const AeronFlightLight* light      = &mesh->lights[index];
+	float                   p[3]       = { light->position.x, light->position.y, light->position.z };
 	const uint32_t          components = mesh->component_count ? mesh->component_count : 1u;
-	const float(*rows)[4]          = NULL;
+	const float (*rows)[4]             = NULL;
 	if (table && light->component_index < components) {
 		const uint32_t c = light->component_index;
 		/* A hidden component (destroyed, or hidden by a profile) is dark. */
@@ -642,11 +644,12 @@ int AeronScene_MeshLight(const AeronSceneMesh* mesh, uint32_t index, const float
 	}
 	memset(out, 0, sizeof *out);
 	for (int r = 0; r < 3; ++r) {
-		out->pos[r] = transform[r * 4 + 0] * p[0] + transform[r * 4 + 1] * p[1] + transform[r * 4 + 2] * p[2] +
-					  transform[r * 4 + 3];
+		out->pos[r] = transform[r * 4 + 0] * p[0] + transform[r * 4 + 1] * p[1] +
+					  transform[r * 4 + 2] * p[2] + transform[r * 4 + 3];
 	}
 	/* The shape, in world units. */
-	float source_radius = light->source_radius > 0.0f ? light->source_radius : AERON_FLIGHT_LIGHT_DEFAULT_RADIUS;
+	float source_radius =
+		light->source_radius > 0.0f ? light->source_radius : AERON_FLIGHT_LIGHT_DEFAULT_RADIUS;
 	source_radius *= units_per_meter;
 	if (light->shape == AERON_FLIGHT_LIGHT_TUBE) {
 		scene_mesh_light_vector(rows, transform, &light->half_x, out->half_axis);
@@ -703,14 +706,14 @@ void AeronScene_GetClusteredLightStats(const AeronScene3D* s, AeronSceneClustere
 	if (!s) {
 		return;
 	}
-	out->submitted_light_count = s->light_count > 0 ? (uint32_t)s->light_count : 0u;
-	out->dropped_light_count   = s->lights_dropped > 0 ? (uint32_t)s->lights_dropped : 0u;
-	out->grid_x                = s->cluster_uniform.grid_x;
-	out->grid_y                = s->cluster_uniform.grid_y;
-	out->grid_z                = s->cluster_uniform.grid_z;
-	out->effective_tile_size   = s->cluster_uniform.tile_size;
-	out->cluster_count         = s->cluster_count;
-	out->clustered_active      = (uint32_t)(s->cluster_active != 0);
+	out->submitted_light_count  = s->light_count > 0 ? (uint32_t)s->light_count : 0u;
+	out->dropped_light_count    = s->lights_dropped > 0 ? (uint32_t)s->lights_dropped : 0u;
+	out->grid_x                 = s->cluster_uniform.grid_x;
+	out->grid_y                 = s->cluster_uniform.grid_y;
+	out->grid_z                 = s->cluster_uniform.grid_z;
+	out->effective_tile_size    = s->cluster_uniform.tile_size;
+	out->cluster_count          = s->cluster_count;
+	out->clustered_active       = (uint32_t)(s->cluster_active != 0);
 	out->allocated_buffer_bytes = (uint64_t)s->cluster_light_buffer_cap + s->cluster_data_buffer_cap;
 }
 
@@ -857,7 +860,8 @@ void AeronScene_SetSkyEnvironment(AeronScene3D* s, const AeronPreparedEnvironmen
  * pass, and against the prepass-laid depth of the forward pass (mesh
  * pixels carry z > 0 and reject the sky). */
 
-static AeronGraphicsPipeline* scene_sky_pipeline(AeronScene3D* s, AeronShader* fs, AeronBlendStateDesc blend) {
+static AeronGraphicsPipeline* scene_sky_pipeline(AeronScene3D* s, AeronShader* fs,
+												 AeronBlendStateDesc blend) {
 	AeronColorTargetStateDesc cts[1] = { 0 };
 	cts[0].format                    = s->color_format;
 	cts[0].blend                     = blend;
@@ -898,7 +902,8 @@ static void scene_sky_bind_vs(AeronScene3D* s, AeronRenderPass* pass, const floa
 	memset(&vsu, 0, sizeof vsu);
 	for (int r = 0; r < 3; ++r) {
 		for (int c = 0; c < 3; ++c) {
-			vsu.rot[r][c] = world_to_cube[r * 3 + 0] * r3[c * 3 + 0] + world_to_cube[r * 3 + 1] * r3[c * 3 + 1] +
+			vsu.rot[r][c] = world_to_cube[r * 3 + 0] * r3[c * 3 + 0] +
+							world_to_cube[r * 3 + 1] * r3[c * 3 + 1] +
 							world_to_cube[r * 3 + 2] * r3[c * 3 + 2];
 		}
 	}
@@ -1376,10 +1381,10 @@ int AeronScene_AddProbeSet(AeronScene3D* s, const AeronProbeSet* probes, const f
 	const AeronFlightProbeLayout* d = &probes->layout;
 	set->params[0]                  = (float)d->probe_count;
 	set->params[1]                  = (float)probes->mip_count;
-	set->params[2]                      = (float)d->grid_resolution[0];
-	set->params[3]                      = (float)d->grid_resolution[1];
-	set->strengths[0]                   = d->intensity * d->diffuse_strength;
-	set->strengths[1]                   = d->intensity * d->specular_strength;
+	set->params[2]                  = (float)d->grid_resolution[0];
+	set->params[3]                  = (float)d->grid_resolution[1];
+	set->strengths[0]               = d->intensity * d->diffuse_strength;
+	set->strengths[1]               = d->intensity * d->specular_strength;
 	/* Grid texel coordinates: point i of r at i + 0.5, Blender's volume
 	 * probe placing it at (i + 1) / (r + 1) of the box. */
 	for (int axis = 0; axis < 3; ++axis) {
@@ -1580,8 +1585,8 @@ static uint32_t scene_register_mesh_table(AeronScene3D* s, const AeronSceneMeshT
 			memcpy(out + AERON_MESH_LANE_EMISSIVE * lanes, table->emissive_packed, lanes * sizeof *out);
 			s->mesh_table_count++;
 			s->mesh_table_vec4_count += AERON_MESH_TABLE_VEC4(n);
-			s->mesh_table_keys[slot]   = table;
-			s->mesh_table_values[slot] = base;
+			s->mesh_table_keys[slot]             = table;
+			s->mesh_table_values[slot]           = base;
 			s->mesh_table_component_counts[slot] = n;
 			*out_component_count                 = n;
 			return base;
@@ -1646,11 +1651,11 @@ static void scene_storage_report_failure(AeronScene3D* s, const char* resource, 
 
 void AeronSceneInternal_FrustumPlanes(const float view_proj[16], int viewport_width, int viewport_height,
 									  float planes[5][4]) {
-	const float* m        = view_proj;
-	const float  width    = viewport_width > 0 ? (float)viewport_width : 1.0f;
-	const float  height   = viewport_height > 0 ? (float)viewport_height : 1.0f;
-	const float  widen_x  = 1.0f + 2.0f * SCENE_CULL_MARGIN_PX / width;
-	const float  widen_y  = 1.0f + 2.0f * SCENE_CULL_MARGIN_PX / height;
+	const float* m       = view_proj;
+	const float  width   = viewport_width > 0 ? (float)viewport_width : 1.0f;
+	const float  height  = viewport_height > 0 ? (float)viewport_height : 1.0f;
+	const float  widen_x = 1.0f + 2.0f * SCENE_CULL_MARGIN_PX / width;
+	const float  widen_y = 1.0f + 2.0f * SCENE_CULL_MARGIN_PX / height;
 	for (int k = 0; k < 4; k++) {
 		const float w = m[12 + k];
 		planes[0][k]  = w * widen_x + m[0 + k]; /* left: x >= -w */
@@ -1734,7 +1739,7 @@ int AeronSceneStorage_Prepare(AeronScene3D* s, AeronCommandBuffer* cmd) {
 	s->storage_ready         = 0;
 	s->mesh_table_count      = 0;
 	s->mesh_table_vec4_count = 0;
-	s->point_light_count = 0;
+	s->point_light_count     = 0;
 	memset(s->mesh_table_keys, 0, sizeof s->mesh_table_keys);
 
 	uint32_t identity_components = 0;
@@ -1754,7 +1759,7 @@ int AeronSceneStorage_Prepare(AeronScene3D* s, AeronCommandBuffer* cmd) {
 		prepared->camera_visible = (uint32_t)scene_instance_in_frustum(s, instance, frustum, &key);
 		prepared->probe_set      = prepared->camera_visible ? scene_instance_probe_set(s, instance) : -1;
 		if (prepared->camera_visible) {
-			key.index                          = (uint16_t)i;
+			key.index                           = (uint16_t)i;
 			order_keys[s->camera_order_count++] = key;
 		}
 		prepared->current_table_base =
@@ -1822,9 +1827,9 @@ int AeronSceneStorage_Prepare(AeronScene3D* s, AeronCommandBuffer* cmd) {
 		const float            dx     = source->pos[0] - s->camera.pos[0];
 		const float            dy     = source->pos[1] - s->camera.pos[1];
 		const float            dz     = source->pos[2] - s->camera.pos[2];
-		const float depth = view_rotation[6] * dx + view_rotation[7] * dy + view_rotation[8] * dz;
-		order[light]      = (SceneLightOrder) { (uint32_t)scene_light_is_tube(source),
-                                                isfinite(depth) ? depth : 0.0f, light };
+		const float            depth  = view_rotation[6] * dx + view_rotation[7] * dy + view_rotation[8] * dz;
+		order[light]                  = (SceneLightOrder) { (uint32_t)scene_light_is_tube(source),
+															isfinite(depth) ? depth : 0.0f, light };
 		tube_start += order[light].tube ? 0u : 1u;
 	}
 	qsort(order, point_count, sizeof order[0], scene_light_order_compare);
@@ -1839,9 +1844,9 @@ int AeronSceneStorage_Prepare(AeronScene3D* s, AeronCommandBuffer* cmd) {
 		 * out of range. */
 		destination->position_range[3] =
 			source->radius > 0.0f ? 1.0f / (source->radius * source->radius) : INFINITY;
-		destination->color[0]                  = source->color[0];
-		destination->color[1]                  = source->color[1];
-		destination->color[2]                  = source->color[2];
+		destination->color[0]     = source->color[0];
+		destination->color[1]     = source->color[1];
+		destination->color[2]     = source->color[2];
 		const float source_radius = source->source_radius > 1e-3f ? source->source_radius : 1e-3f;
 		/* A tube's segment; clusters bound it with a sphere around its
 		 * centre. */
@@ -1858,9 +1863,9 @@ int AeronSceneStorage_Prepare(AeronScene3D* s, AeronCommandBuffer* cmd) {
 		destination->direction[3] = is_tube ? 1.0f / half_length : 0.0f;
 		/* w: the sphere radius, negative for a one-sided light. */
 		destination->color[3] = one_sided ? -source_radius : source_radius;
-		const float dx                         = source->pos[0] - s->camera.pos[0];
-		const float dy                         = source->pos[1] - s->camera.pos[1];
-		const float dz                         = source->pos[2] - s->camera.pos[2];
+		const float dx        = source->pos[0] - s->camera.pos[0];
+		const float dy        = source->pos[1] - s->camera.pos[1];
+		const float dz        = source->pos[2] - s->camera.pos[2];
 		for (int row = 0; row < 3; ++row) {
 			cluster->view_position_range[row] = view_rotation[row * 3 + 0] * dx +
 												view_rotation[row * 3 + 1] * dy +
@@ -2136,7 +2141,8 @@ int AeronScene_Render(AeronScene3D* s, AeronCommandBuffer* cmd) {
 	const int screen_shadow_wanted =
 		s->shadow_stats.active && !s->directional_shadow.debug_cascades && s->instance_count > 0;
 	if (screen_shadow_wanted && !s->normal_rt && !s->screen_shadow_warned) {
-		Aeron_LogWarn("aeron.scene", "directional shadows without a normal render target take one comparison");
+		Aeron_LogWarn("aeron.scene",
+					  "directional shadows without a normal render target take one comparison");
 		s->screen_shadow_warned = 1;
 	}
 	const int screen_shadow_active = screen_shadow_wanted && s->normal_rt;
@@ -2146,7 +2152,7 @@ int AeronScene_Render(AeronScene3D* s, AeronCommandBuffer* cmd) {
 		return scene_render_failure(s, cmd, "Scene shadow visibility resource preparation failed");
 	}
 	const int visibility_active = ssao_active || screen_shadow_active;
-	const int mb_active = mb_requested;
+	const int mb_active         = mb_requested;
 	if (mb_requested && (!s->normal_rt || !s->pbr_pipes[AERON_PBR_PIPE_PREPASS_VEL][AERON_CULL_NONE] ||
 						 !s->pbr_pipes[AERON_PBR_PIPE_FORWARD][AERON_CULL_NONE] ||
 						 !AeronScenePost_EnsureMb(s) || !s->mb_camera_fill_pipeline)) {

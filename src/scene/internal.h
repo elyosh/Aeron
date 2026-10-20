@@ -155,9 +155,9 @@ typedef struct AeronSceneProbeSet {
 /* Occlusion of the first probe set's light by the instances inside its grid
  * box (probe_occlusion.c). */
 #define AERON_SCENE_OCCLUSION_MAX_OCCLUDERS 64
-#define AERON_SCENE_OCCUPANCY_MIPS          5     /* 0.25 m to 4 m */
-#define AERON_SCENE_OCCUPANCY_CELL          0.25f /* metres */
-#define AERON_SCENE_OCCLUSION_GRID_CELL     1.0f  /* metres */
+#define AERON_SCENE_OCCUPANCY_MIPS 5         /* 0.25 m to 4 m */
+#define AERON_SCENE_OCCUPANCY_CELL 0.25f     /* metres */
+#define AERON_SCENE_OCCLUSION_GRID_CELL 1.0f /* metres */
 
 typedef struct AeronSceneOccluder {
 	const struct AeronSceneMesh* mesh;
@@ -197,8 +197,8 @@ typedef struct AeronSceneProbeOcclusion {
 	const AeronProbeSet* probes;
 	float                world_to_model[12];
 	float                origin[3]; /* the grid box's low corner, model metres */
-	int                                   occupancy_dims[3];
-	int                                   grid_dims[3];
+	int                  occupancy_dims[3];
+	int                  grid_dims[3];
 	/* 1: the GPU builds the occupancy from depth views of the occluders;
 	 * 0: the CPU voxelizes them into `cells`, mip 0 of the occupancy, x
 	 * fastest (255 inside an occluder), where compute cannot write it. */
@@ -391,30 +391,30 @@ struct AeronScene3D {
 	/* Camera-visible instances, nearest first (AeronSceneStorage_Prepare):
 	 * opaque passes draw in this order so depth testing rejects what the
 	 * nearer instances hide, and blending walks it backwards. */
-	uint16_t camera_order[AERON_SCENE_MAX_INSTANCES];
-	int      camera_order_count;
-	int                        instances_dropped;
-	AeronSceneLight            lights[AERON_SCENE_MAX_LIGHTS];
-	int                        light_count;
-	int                        lights_dropped;
-	AeronSceneFrameUniform     frame_uniforms[AERON_SCENE_MAX_FRAME_UNIFORMS];
-	int                        frame_uniform_count;
+	uint16_t               camera_order[AERON_SCENE_MAX_INSTANCES];
+	int                    camera_order_count;
+	int                    instances_dropped;
+	AeronSceneLight        lights[AERON_SCENE_MAX_LIGHTS];
+	int                    light_count;
+	int                    lights_dropped;
+	AeronSceneFrameUniform frame_uniforms[AERON_SCENE_MAX_FRAME_UNIFORMS];
+	int                    frame_uniform_count;
 	/* Image-based lighting environment for this frame; textures borrowed. */
 	AeronScenePbrEnvironment pbr_environment;
 	int                      pbr_environment_set;
 	/* The frame's probe sets, and the lighting block the colour passes
 	 * bind, which probe draws push again with their set's fields. */
-	AeronSceneProbeSet           probe_sets[AERON_SCENE_MAX_PROBE_SETS];
-	int                          probe_set_count;
+	AeronSceneProbeSet probe_sets[AERON_SCENE_MAX_PROBE_SETS];
+	int                probe_set_count;
 	/* AeronScene_SetProbeKeyShadow: the visibility pass's B. */
-	int                          probe_key_shadow;
+	int probe_key_shadow;
 	/* AeronScene_SetProbeOcclusion, and its grids (probe_occlusion.c). */
-	int                          probe_occlusion_enabled;
-	AeronSceneProbeOcclusion     probe_occlusion;
+	int                      probe_occlusion_enabled;
+	AeronSceneProbeOcclusion probe_occlusion;
 	/* AeronScene_SetPlanarReflection, and the floor's mirrored view
 	 * (planar_reflection.c). */
-	int                          planar_reflection_enabled;
-	AeronScenePlanarReflection   planar_reflection;
+	int                        planar_reflection_enabled;
+	AeronScenePlanarReflection planar_reflection;
 	/* pbr.c: the colour pass's t12 and t13 hold the occlusion grid and the
 	 * floor's reflection, not the `_anim` shaders' effect textures. */
 	int                          pbr_occlusion_in_effect_slot;
@@ -440,27 +440,27 @@ struct AeronScene3D {
 	/* The receiver-local map serves the USE_RECEIVER_LOCAL instances this
 	 * frame (they leave the cascades' receivers); when it has no casters it
 	 * is not rendered and they sample no shadow. */
-	uint8_t                            receiver_local_owned;
-	uint8_t                            receiver_local_empty;
+	uint8_t receiver_local_owned;
+	uint8_t receiver_local_empty;
 	/* No cascade has a caster: the atlas is not rendered and sampling it
 	 * binds the disabled uniform (an empty map is fully lit). */
-	uint8_t                            shadow_atlas_empty;
-	int                                shadow_tried;
-	uint32_t                           shadow_resource_atlas_size;
-	AeronDepthTarget*                  shadow_atlas;
-	AeronDepthTarget*                  shadow_fallback;
-	AeronSampler*                      shadow_sampler;
-	AeronSampler*                      shadow_depth_sampler;
-	AeronShader*                       shadow_vs;
-	AeronShader*                       shadow_fs;
-	AeronGraphicsPipeline*             shadow_pipes[3];
-	AeronShader*                       shadow_mask_vs;
-	AeronShader*                       shadow_mask_fs;
-	AeronGraphicsPipeline*             shadow_mask_pipes[3];
-	int                                shadow_debug_tried;
-	AeronShader*                       shadow_debug_vs;
-	AeronShader*                       shadow_debug_fs;
-	AeronGraphicsPipeline*             shadow_debug_pipe;
+	uint8_t                shadow_atlas_empty;
+	int                    shadow_tried;
+	uint32_t               shadow_resource_atlas_size;
+	AeronDepthTarget*      shadow_atlas;
+	AeronDepthTarget*      shadow_fallback;
+	AeronSampler*          shadow_sampler;
+	AeronSampler*          shadow_depth_sampler;
+	AeronShader*           shadow_vs;
+	AeronShader*           shadow_fs;
+	AeronGraphicsPipeline* shadow_pipes[3];
+	AeronShader*           shadow_mask_vs;
+	AeronShader*           shadow_mask_fs;
+	AeronGraphicsPipeline* shadow_mask_pipes[3];
+	int                    shadow_debug_tried;
+	AeronShader*           shadow_debug_vs;
+	AeronShader*           shadow_debug_fs;
+	AeronGraphicsPipeline* shadow_debug_pipe;
 
 	/* One pre-pass upload shared by PBR, shadows, and overlays. Mesh tables
 	 * are deduplicated by borrowed pointer; local and point lights are packed. */
@@ -468,13 +468,13 @@ struct AeronScene3D {
 	uint32_t                   mesh_table_values[AERON_SCENE_MESH_TABLE_HASH_CAP]; /* float4 base */
 	uint32_t mesh_table_component_counts[AERON_SCENE_MESH_TABLE_HASH_CAP]; /* packed component counts */
 	float (*mesh_table_staging)[4]; /* variable-length tables, float4 units */
-	uint32_t                   mesh_table_count;
-	uint32_t                   mesh_table_vec4_count;
-	uint32_t                   mesh_table_staging_cap;
-	AeronScenePointLightGPU*   point_light_staging;
-	uint32_t                   point_light_count;
+	uint32_t                 mesh_table_count;
+	uint32_t                 mesh_table_vec4_count;
+	uint32_t                 mesh_table_staging_cap;
+	AeronScenePointLightGPU* point_light_staging;
+	uint32_t                 point_light_count;
 	/* Directional shadows ran without a normal render target (logged once). */
-	int                        screen_shadow_warned;
+	int screen_shadow_warned;
 	/* Spheres are packed first; point lights from here on are tubes. */
 	uint32_t                   point_tube_start;
 	uint32_t                   point_light_staging_cap;
@@ -686,11 +686,11 @@ struct AeronScene3D {
 	AeronShader*  pbr_mask_screen_fs;
 	/* The colour shaders with image-based lighting, used while an
 	 * environment is selected (pbr_environment_set). */
-	AeronShader*  pbr_ibl_fs;
-	AeronShader*  pbr_mask_ibl_fs;
-	AeronShader*  pbr_blend_ibl_fs;
-	AeronShader*  pbr_screen_ibl_fs;
-	AeronShader*  pbr_mask_screen_ibl_fs;
+	AeronShader* pbr_ibl_fs;
+	AeronShader* pbr_mask_ibl_fs;
+	AeronShader* pbr_blend_ibl_fs;
+	AeronShader* pbr_screen_ibl_fs;
+	AeronShader* pbr_mask_screen_ibl_fs;
 #ifdef AERON_DEBUG_UI
 	int          pbr_debug_tried;
 	AeronShader* pbr_debug_fs;
@@ -733,12 +733,12 @@ struct AeronScene3D {
 /* Shared small helpers (util.c). */
 AeronShader* AeronSceneInternal_CompileShader(const char* name, AeronShaderStage stage, uint32_t samplers,
 											  uint32_t ubs, uint32_t sbs);
-AeronRenderTarget*         AeronSceneInternal_CreateColorRt(AeronTextureFormat fmt, int w, int h,
-															const char* debug_name);
-AeronBlendStateDesc        AeronSceneInternal_BlendOpaque(void);
-AeronTexture*              AeronSceneInternal_WhiteTexture(void);
-AeronTexture*              AeronSceneInternal_WhiteCubeTexture(void);
-AeronTexture*              AeronSceneInternal_WhiteArrayTexture(void);
+AeronRenderTarget*  AeronSceneInternal_CreateColorRt(AeronTextureFormat fmt, int w, int h,
+													 const char* debug_name);
+AeronBlendStateDesc AeronSceneInternal_BlendOpaque(void);
+AeronTexture*       AeronSceneInternal_WhiteTexture(void);
+AeronTexture*       AeronSceneInternal_WhiteCubeTexture(void);
+AeronTexture*       AeronSceneInternal_WhiteArrayTexture(void);
 /* Process-shared split-sum BRDF table: 64x64 RG16F, u = N.V, v = perceptual
  * roughness, (A, B) with F = F0 * A + B. Generated once on the CPU. */
 AeronTexture*              AeronSceneInternal_BrdfLutTexture(void);
@@ -758,8 +758,8 @@ void AeronSceneClusteredLights_Release(struct AeronScene3D* s);
 /* Probe occlusion (probe_occlusion.c). Update rebuilds the grids where an
  * occluder changed, before the visibility pass and the colour passes read
  * them; it switches the feature off rather than fail the frame. */
-void          AeronSceneProbeOcclusion_Update(struct AeronScene3D* s, AeronCommandBuffer* cmd);
-void          AeronSceneProbeOcclusion_Release(struct AeronScene3D* s);
+void AeronSceneProbeOcclusion_Update(struct AeronScene3D* s, AeronCommandBuffer* cmd);
+void AeronSceneProbeOcclusion_Release(struct AeronScene3D* s);
 /* The occupancy (the visibility pass's cone) and the grid (the probe
  * shaders); a 1x1x1 placeholder while inactive. */
 AeronTexture* AeronSceneProbeOcclusion_Occupancy(struct AeronScene3D* s);
@@ -767,30 +767,28 @@ AeronTexture* AeronSceneProbeOcclusion_Grid(struct AeronScene3D* s);
 AeronSampler* AeronSceneProbeOcclusion_Sampler(struct AeronScene3D* s);
 /* The lighting block's occlusion fields for probe set `set` (only the first
  * has a grid). */
-void          AeronSceneProbeOcclusion_LightingFields(const struct AeronScene3D* s, int set, float origin[4],
-													  float dims[4]);
+void AeronSceneProbeOcclusion_LightingFields(const struct AeronScene3D* s, int set, float origin[4],
+											 float dims[4]);
 /* World to occupancy cells (rows), the occupancy's cells along x, y, z
  * (w = 1 while active) and, for the visibility pass's cone, up to
  * AERON_SCENE_OCCLUSION_CONE_BOXES boxes in cells holding the occluders
  * grown by a coarse cell (lo, hi; lo.w = 1 when used). */
 #define AERON_SCENE_OCCLUSION_CONE_BOXES 4
-void          AeronSceneProbeOcclusion_OccupancyMapping(const struct AeronScene3D* s, float rows[3][4],
-														float dims[4],
-														float boxes[AERON_SCENE_OCCLUSION_CONE_BOXES * 2][4]);
+void AeronSceneProbeOcclusion_OccupancyMapping(const struct AeronScene3D* s, float rows[3][4], float dims[4],
+											   float boxes[AERON_SCENE_OCCLUSION_CONE_BOXES * 2][4]);
 
 /* The floor's reflection (planar_reflection.c). Render draws the mirrored
  * view and its mips, before the visibility pass; it switches the feature
  * off rather than fail the frame. */
-void          AeronScenePlanarReflection_Render(struct AeronScene3D* s, AeronCommandBuffer* cmd);
-void          AeronScenePlanarReflection_Release(struct AeronScene3D* s);
+void AeronScenePlanarReflection_Render(struct AeronScene3D* s, AeronCommandBuffer* cmd);
+void AeronScenePlanarReflection_Release(struct AeronScene3D* s);
 /* The reflection the floor reads (a placeholder while inactive), and the
  * lighting block's floor fields for probe set `set` drawing an instance
  * that is (`receiver`) or is not its owner. */
 AeronTexture* AeronScenePlanarReflection_Image(struct AeronScene3D* s);
 AeronSampler* AeronScenePlanarReflection_Sampler(struct AeronScene3D* s);
-void          AeronScenePlanarReflection_LightingFields(const struct AeronScene3D* s, int set, int receiver,
-														float rect[4], float params[4], float eye[4],
-														float screen[4]);
+void AeronScenePlanarReflection_LightingFields(const struct AeronScene3D* s, int set, int receiver,
+											   float rect[4], float params[4], float eye[4], float screen[4]);
 
 /* pbr.c */
 int  AeronScenePbr_Ensure(struct AeronScene3D* s);
@@ -813,18 +811,20 @@ int AeronScenePbr_DrawTransparentInstances(struct AeronScene3D* s, AeronRenderPa
 int AeronScenePbr_DrawBackfaceFill(struct AeronScene3D* s, AeronRenderPass* pass);
 
 /* directional_shadow.c */
-int  AeronSceneDirectionalShadow_Prepare(struct AeronScene3D* scene);
-int  AeronSceneDirectionalShadow_Render(struct AeronScene3D* scene, AeronCommandBuffer* command_buffer);
+int AeronSceneDirectionalShadow_Prepare(struct AeronScene3D* scene);
+int AeronSceneDirectionalShadow_Render(struct AeronScene3D* scene, AeronCommandBuffer* command_buffer);
 /* Draws the casters' depth (encoded as the shadow lists: an instance index,
  * or AERON_SCENE_MAX_INSTANCES plus a shadow-only index) with `view_proj`
  * into the current depth pass, both faces: what is nearest whichever way it
  * faces (probe_occlusion.c's views). 0 when the caster shaders do not load. */
 int  AeronSceneDirectionalShadow_DrawDepth(struct AeronScene3D* scene, AeronRenderPass* pass,
-										   const float view_proj[16], const uint16_t* casters, uint16_t caster_count);
+										   const float view_proj[16], const uint16_t* casters,
+										   uint16_t caster_count);
 void AeronSceneDirectionalShadow_Bind(struct AeronScene3D* scene, AeronRenderPass* render_pass);
 void AeronSceneDirectionalShadow_BindForInstance(struct AeronScene3D* scene, AeronRenderPass* render_pass,
 												 uint8_t shadow_flags);
 void AeronSceneDirectionalShadow_BindScreen(struct AeronScene3D* scene, AeronRenderPass* render_pass);
+
 /* How the screen pass shades receiver-local pixels: from the cascades
  * (the map is unused), from their own map (bound by
  * BindScreenReceiverLocal for a second pass), or unshadowed (the map is
@@ -834,8 +834,10 @@ enum {
 	AERON_SHADOW_RECEIVER_LOCAL_MAP,
 	AERON_SHADOW_RECEIVER_LOCAL_UNSHADOWED,
 };
+
 int  AeronSceneDirectionalShadow_ReceiverLocalMode(const struct AeronScene3D* scene);
-void AeronSceneDirectionalShadow_BindScreenReceiverLocal(struct AeronScene3D* scene, AeronRenderPass* render_pass);
+void AeronSceneDirectionalShadow_BindScreenReceiverLocal(struct AeronScene3D* scene,
+														 AeronRenderPass*     render_pass);
 void AeronSceneDirectionalShadow_BindDisabled(struct AeronScene3D* scene, AeronRenderPass* render_pass);
 int  AeronSceneDirectionalShadow_DebugVisualize(struct AeronScene3D* scene,
 												AeronCommandBuffer*  command_buffer);

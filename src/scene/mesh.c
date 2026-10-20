@@ -214,7 +214,8 @@ static int build_material_storage(AeronSceneMesh* s, const AeronGltfModel* model
 								  AeronPbrMaterialEntry** out_entries, uint32_t* out_bytes) {
 	/* The mesh's materials, then the default one. */
 	const uint32_t allocation_count =
-		(model->material_count > AERON_GLTF_MAX_MATERIALS ? AERON_GLTF_MAX_MATERIALS : model->material_count) +
+		(model->material_count > AERON_GLTF_MAX_MATERIALS ? AERON_GLTF_MAX_MATERIALS
+														  : model->material_count) +
 		1u;
 	if (!out_entries || !out_bytes) {
 		return 0;
@@ -245,8 +246,8 @@ static int build_material_storage(AeronSceneMesh* s, const AeronGltfModel* model
 /* Screen rectangles in their shader record; NULL storage without any. */
 static int build_screen_storage(AeronSceneMesh* s, const AeronGltfModel* model, const char* name,
 								AeronPbrScreenRect** out_rects, uint32_t* out_bytes) {
-	*out_rects          = NULL;
-	*out_bytes          = 0;
+	*out_rects            = NULL;
+	*out_bytes            = 0;
 	s->screen_hide_mask   = model->screen_hide_mask;
 	s->screen_source_mask = 0;
 	if (model->screen_rect_count == 0) {
@@ -461,7 +462,7 @@ static int build_anim_records(AeronSceneMesh* s, AeronCommandBuffer* cmd, const 
 	const char** names              = (const char**)calloc(library_capacity, sizeof *names);
 	const char** failed             = (const char**)calloc(library_capacity, sizeof *failed);
 	s->effect_libraries             = (uint32_t*)calloc(library_capacity, sizeof *s->effect_libraries);
-	int      ok           = anim && names && failed && s->effect_libraries && anim_record(r);
+	int      ok                     = anim && names && failed && s->effect_libraries && anim_record(r);
 	uint32_t failed_count = 0, missing = 0, frames = 0;
 	if (ok && energy_mask)
 		ok = anim_energy(r, effect_data, extent, &missing);
@@ -541,7 +542,7 @@ static int build_variant_storage(AeronSceneMesh* s, const AeronGltfModel* model,
 	if (!out_values || !out_bytes) {
 		return 0;
 	}
-	*out_values = NULL;
+	*out_values                = NULL;
 	*out_bytes                 = 0;
 	const uint32_t groups      = primitive_count > 0 ? (primitive_count + 3u) / 4u : 1u;
 	const uint32_t rows        = variant_index_count(model, set);
@@ -636,8 +637,8 @@ static AeronSceneMesh* mesh_create(AeronCommandBuffer* cmd, const AeronFlightMod
 	if (!cmd || !flight_model) {
 		return NULL;
 	}
-	const AeronGltfModel* model = &flight_model->render;
-	const char*           name  = debug_name ? debug_name : "<mesh>";
+	const AeronGltfModel*        model        = &flight_model->render;
+	const char*                  name         = debug_name ? debug_name : "<mesh>";
 	const AeronSceneMeshVariants own_markings = { model->markings, model->markings_count };
 	if (!set && model->markings_count)
 		set = &own_markings;
@@ -761,13 +762,13 @@ static AeronSceneMesh* mesh_create(AeronCommandBuffer* cmd, const AeronFlightMod
 			AeronScene_MeshDestroy(s);
 			return NULL;
 		}
-		s->vertex_count       = model->vertex_count;
-		s->index_count        = model->index_count;
-		s->opaque_index_count = model->opaque_index_count;
-		s->mask_index_offset  = model->mask_index_offset;
-		s->mask_index_count   = model->mask_index_count;
-		s->blend_index_offset = model->blend_index_offset;
-		s->blend_index_count  = model->blend_index_count;
+		s->vertex_count              = model->vertex_count;
+		s->index_count               = model->index_count;
+		s->opaque_index_count        = model->opaque_index_count;
+		s->mask_index_offset         = model->mask_index_offset;
+		s->mask_index_count          = model->mask_index_count;
+		s->blend_index_offset        = model->blend_index_offset;
+		s->blend_index_count         = model->blend_index_count;
 		s->opaque_screen_index_count = model->opaque_screen_index_count;
 		s->mask_screen_index_count   = model->mask_screen_index_count;
 		s->blend_screen_index_count  = model->blend_screen_index_count;
@@ -986,8 +987,10 @@ static AeronSceneMesh* mesh_create(AeronCommandBuffer* cmd, const AeronFlightMod
 		s->component_bound_max[i][1] = component->bounds.max.y;
 		s->component_bound_max[i][2] = component->bounds.max.z;
 		for (int k = 0; k < 3; k++) {
-			s->component_bound_center[i][k] = 0.5f * (s->component_bound_min[i][k] + s->component_bound_max[i][k]);
-			s->component_bound_half[i][k]   = 0.5f * (s->component_bound_max[i][k] - s->component_bound_min[i][k]);
+			s->component_bound_center[i][k] =
+				0.5f * (s->component_bound_min[i][k] + s->component_bound_max[i][k]);
+			s->component_bound_half[i][k] =
+				0.5f * (s->component_bound_max[i][k] - s->component_bound_min[i][k]);
 		}
 	}
 	for (uint32_t i = 0; i < s->component_count; i++) {

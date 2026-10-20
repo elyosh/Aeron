@@ -116,10 +116,11 @@ typedef struct PbrTargetDesc {
 } PbrTargetDesc;
 
 static AeronGraphicsPipeline* pbr_pipeline_rasterized(AeronShader* vs, AeronShader* ps,
-													   const PbrTargetDesc* targets, uint32_t num_targets,
-													   int depth_test, int depth_write, AeronCompareOp compare,
-													   AeronCullMode cull, int blend, AeronSampleCount sample_count,
-													   const AeronRasterizerStateDesc* rasterizer) {
+													  const PbrTargetDesc* targets, uint32_t num_targets,
+													  int depth_test, int depth_write, AeronCompareOp compare,
+													  AeronCullMode cull, int blend,
+													  AeronSampleCount                sample_count,
+													  const AeronRasterizerStateDesc* rasterizer) {
 	AeronVertexAttributeDesc    attrs[6];
 	AeronVertexBufferLayoutDesc vbd;
 	pbr_vertex_input(attrs, &vbd);
@@ -167,8 +168,8 @@ static AeronGraphicsPipeline* pbr_pipeline(AeronShader* vs, AeronShader* ps, con
 										   AeronCompareOp compare, AeronCullMode cull, int blend,
 										   AeronSampleCount sample_count) {
 	const AeronRasterizerStateDesc rasterizer = { 0 };
-	return pbr_pipeline_rasterized(vs, ps, targets, num_targets, depth_test, depth_write, compare, cull, blend,
-								   sample_count, &rasterizer);
+	return pbr_pipeline_rasterized(vs, ps, targets, num_targets, depth_test, depth_write, compare, cull,
+								   blend, sample_count, &rasterizer);
 }
 
 /* Colour kind of a screen kind: the same pipeline state. */
@@ -463,7 +464,7 @@ static AeronGraphicsPipeline* pbr_probe_pipeline(struct AeronScene3D* s, int kin
 			s->pbr_probe_fs[1][v] = pbr_shader(names[1][v], AERON_SHADER_STAGE_FRAGMENT, 16, 4, 8);
 		}
 	}
-	AeronShader* vs     = anim ? s->pbr_anim_vs : s->pbr_vs;
+	AeronShader* vs = anim ? s->pbr_anim_vs : s->pbr_vs;
 	/* The floor's mirrored view takes its own, lighter variants. */
 	const int    variant = kind == AERON_PBR_PIPE_PLANAR        ? 3
 						   : kind == AERON_PBR_PIPE_PLANAR_MASK ? 4
@@ -556,16 +557,17 @@ int AeronScenePbr_Ensure(struct AeronScene3D* s) {
 	s->pbr_screen_fs        = pbr_shader("scene_pbr_mesh_screen.frag", AERON_SHADER_STAGE_FRAGMENT, 12, 3, 7);
 	s->pbr_mask_screen_fs =
 		pbr_shader("scene_pbr_mesh_mask_screen.frag", AERON_SHADER_STAGE_FRAGMENT, 12, 3, 7);
-	s->pbr_ibl_fs           = pbr_shader("scene_pbr_mesh_ibl.frag", AERON_SHADER_STAGE_FRAGMENT, 12, 3, 7);
-	s->pbr_mask_ibl_fs      = pbr_shader("scene_pbr_mesh_mask_ibl.frag", AERON_SHADER_STAGE_FRAGMENT, 12, 3, 7);
-	s->pbr_blend_ibl_fs     = pbr_shader("scene_pbr_mesh_blend_ibl.frag", AERON_SHADER_STAGE_FRAGMENT, 12, 3, 7);
-	s->pbr_screen_ibl_fs    = pbr_shader("scene_pbr_mesh_screen_ibl.frag", AERON_SHADER_STAGE_FRAGMENT, 12, 3, 7);
+	s->pbr_ibl_fs       = pbr_shader("scene_pbr_mesh_ibl.frag", AERON_SHADER_STAGE_FRAGMENT, 12, 3, 7);
+	s->pbr_mask_ibl_fs  = pbr_shader("scene_pbr_mesh_mask_ibl.frag", AERON_SHADER_STAGE_FRAGMENT, 12, 3, 7);
+	s->pbr_blend_ibl_fs = pbr_shader("scene_pbr_mesh_blend_ibl.frag", AERON_SHADER_STAGE_FRAGMENT, 12, 3, 7);
+	s->pbr_screen_ibl_fs =
+		pbr_shader("scene_pbr_mesh_screen_ibl.frag", AERON_SHADER_STAGE_FRAGMENT, 12, 3, 7);
 	s->pbr_mask_screen_ibl_fs =
 		pbr_shader("scene_pbr_mesh_mask_screen_ibl.frag", AERON_SHADER_STAGE_FRAGMENT, 12, 3, 7);
-	s->pbr_prepass_fs       = pbr_shader("scene_pbr_prepass.frag", AERON_SHADER_STAGE_FRAGMENT, 0, 0, 0);
-	s->pbr_prepass_mask_fs  = pbr_shader("scene_pbr_prepass_mask.frag", AERON_SHADER_STAGE_FRAGMENT, 1, 0, 2);
-	s->pbr_backface_vs      = pbr_shader("scene_pbr_backface.vert", AERON_SHADER_STAGE_VERTEX, 0, 1, 1);
-	s->pbr_backface_fs      = pbr_shader("scene_pbr_backface.frag", AERON_SHADER_STAGE_FRAGMENT, 0, 0, 0);
+	s->pbr_prepass_fs      = pbr_shader("scene_pbr_prepass.frag", AERON_SHADER_STAGE_FRAGMENT, 0, 0, 0);
+	s->pbr_prepass_mask_fs = pbr_shader("scene_pbr_prepass_mask.frag", AERON_SHADER_STAGE_FRAGMENT, 1, 0, 2);
+	s->pbr_backface_vs     = pbr_shader("scene_pbr_backface.vert", AERON_SHADER_STAGE_VERTEX, 0, 1, 1);
+	s->pbr_backface_fs     = pbr_shader("scene_pbr_backface.frag", AERON_SHADER_STAGE_FRAGMENT, 0, 0, 0);
 	/* Velocity stamping reads the same mesh-owned material resources. */
 	s->pbr_prepass_stamp_fs =
 		pbr_shader("scene_pbr_prepass_stamp.frag", AERON_SHADER_STAGE_FRAGMENT, 1, 0, 2);
@@ -747,9 +749,9 @@ static void pbr_push_instance_uniforms(struct AeronScene3D* s, AeronRenderPass* 
 	 * receiver-local pixels from their own map by the prepass's flag. */
 	vsb.screen_shadow         = screen_shadow && vsb.receive_shadow ? 1u : 0u;
 	vsb.receiver_local_shadow = vsb.receive_shadow && receiver_local ? 1u : 0u;
-	vsb.current_table_base           = prepared->current_table_base;
-	vsb.previous_table_base          = vel ? prepared->previous_table_base : prepared->current_table_base;
-	vsb.table_component_count        = prepared->table_component_count;
+	vsb.current_table_base    = prepared->current_table_base;
+	vsb.previous_table_base   = vel ? prepared->previous_table_base : prepared->current_table_base;
+	vsb.table_component_count = prepared->table_component_count;
 	Aeron_BindUniformData(pass, AERON_SHADER_STAGE_VERTEX, 0, &vsb, sizeof vsb);
 
 	/* The `_anim` colour shaders' animation block: the instance's state. */
@@ -1138,9 +1140,11 @@ int AeronScenePbr_DrawInstances(struct AeronScene3D* s, AeronCommandBuffer* cmd,
 				Aeron_BindTextureSampler(pass, AERON_SHADER_STAGE_FRAGMENT, 0,
 										 m->atlas[0] ? m->atlas[0] : AeronSceneInternal_WhiteArrayTexture(),
 										 atlas_sampler);
-				AeronSampler* screen_sampler = s->post_linear_sampler ? s->post_linear_sampler : s->pbr_sampler;
+				AeronSampler* screen_sampler =
+					s->post_linear_sampler ? s->post_linear_sampler : s->pbr_sampler;
 				Aeron_BindTextureSampler(pass, AERON_SHADER_STAGE_FRAGMENT, 1,
-										 s->screen_graphics ? s->screen_graphics : AeronSceneInternal_WhiteTexture(),
+										 s->screen_graphics ? s->screen_graphics
+															: AeronSceneInternal_WhiteTexture(),
 										 screen_sampler);
 				Aeron_BindTextureSampler(pass, AERON_SHADER_STAGE_FRAGMENT, 2,
 										 s->screen_text ? s->screen_text : AeronSceneInternal_WhiteTexture(),
@@ -1148,13 +1152,15 @@ int AeronScenePbr_DrawInstances(struct AeronScene3D* s, AeronCommandBuffer* cmd,
 				Aeron_BindStorageBuffer(pass, AERON_SHADER_STAGE_FRAGMENT, 0, m->material_buffer);
 				Aeron_BindStorageBuffer(pass, AERON_SHADER_STAGE_FRAGMENT, 1, m->variant_buffer);
 				Aeron_BindStorageBuffer(pass, AERON_SHADER_STAGE_FRAGMENT, 2,
-										m->screen_rect_buffer ? m->screen_rect_buffer : s->screen_frame_buffer);
+										m->screen_rect_buffer ? m->screen_rect_buffer
+															  : s->screen_frame_buffer);
 				Aeron_BindStorageBuffer(pass, AERON_SHADER_STAGE_FRAGMENT, 3, s->screen_frame_buffer);
 				pbr_push_instance_uniforms(s, pass, in, m, &s->prepared_instances[i],
 										   /*velocity=*/1, /*depth_only=*/1,
 										   /*screen_shadow=*/0);
 				Aeron_DrawIndexed(pass, m->blend_screen_index_count,
-								  m->blend_index_offset + m->blend_index_count - m->blend_screen_index_count, 0);
+								  m->blend_index_offset + m->blend_index_count - m->blend_screen_index_count,
+								  0);
 				continue;
 			}
 			if (!in->velocity_stamp) {

@@ -245,8 +245,8 @@ int AeronScenePost_EnsureSsao(struct AeronScene3D* s) {
 	}
 
 	s->ssao_ps = AeronSceneInternal_CompileShader("scene_ssao.frag", AERON_SHADER_STAGE_FRAGMENT, 5, 2, 0);
-	s->ssao_receiver_local_ps =
-		AeronSceneInternal_CompileShader("scene_ssao_receiver_local.frag", AERON_SHADER_STAGE_FRAGMENT, 4, 2, 0);
+	s->ssao_receiver_local_ps = AeronSceneInternal_CompileShader("scene_ssao_receiver_local.frag",
+																 AERON_SHADER_STAGE_FRAGMENT, 4, 2, 0);
 	s->ssao_blur_ps =
 		AeronSceneInternal_CompileShader("scene_ssao_blur.frag", AERON_SHADER_STAGE_FRAGMENT, 2, 1, 0);
 	s->ssao_blur_lq_ps =
@@ -469,24 +469,24 @@ void AeronScenePost_Release(struct AeronScene3D* s) {
 		Aeron_DestroySampler(s->post_point_sampler);
 	if (s->post_linear_sampler)
 		Aeron_DestroySampler(s->post_linear_sampler);
-	s->post_ssao_tried       = 0;
-	s->post_mb_tried         = 0;
-	s->fullscreen_vs         = NULL;
-	s->post_point_sampler    = NULL;
-	s->post_linear_sampler   = NULL;
-	s->ssao_ps               = NULL;
-	s->ssao_receiver_local_ps = NULL;
+	s->post_ssao_tried              = 0;
+	s->post_mb_tried                = 0;
+	s->fullscreen_vs                = NULL;
+	s->post_point_sampler           = NULL;
+	s->post_linear_sampler          = NULL;
+	s->ssao_ps                      = NULL;
+	s->ssao_receiver_local_ps       = NULL;
 	s->ssao_receiver_local_pipeline = NULL;
-	s->ssao_blur_ps          = NULL;
-	s->ssao_blur_lq_ps       = NULL;
-	s->ssao_pipeline         = NULL;
-	s->ssao_blur_pipeline    = NULL;
-	s->ssao_blur_lq_pipeline = NULL;
-	s->ao_rt                 = NULL;
-	s->ao_blur_rt            = NULL;
-	s->ao_rt_w               = 0;
-	s->ao_rt_h               = 0;
-	s->ssao_noise_tex        = NULL;
+	s->ssao_blur_ps                 = NULL;
+	s->ssao_blur_lq_ps              = NULL;
+	s->ssao_pipeline                = NULL;
+	s->ssao_blur_pipeline           = NULL;
+	s->ssao_blur_lq_pipeline        = NULL;
+	s->ao_rt                        = NULL;
+	s->ao_blur_rt                   = NULL;
+	s->ao_rt_w                      = 0;
+	s->ao_rt_h                      = 0;
+	s->ssao_noise_tex               = NULL;
 #ifdef AERON_DEBUG_UI
 	s->post_ssao_debug_tried = 0;
 	s->ssao_debug_ps         = NULL;
@@ -520,7 +520,7 @@ void AeronScenePost_Release(struct AeronScene3D* s) {
 
 int AeronScenePost_RunSsao(struct AeronScene3D* s, AeronCommandBuffer* cmd, int ao_enabled) {
 	/* Without AO, the shadow takes High's blur. */
-	const int low = ao_enabled && s->post.ssao_quality == 1;
+	const int low                 = ao_enabled && s->post.ssao_quality == 1;
 	const int receiver_local_mode = AeronSceneDirectionalShadow_ReceiverLocalMode(s);
 	const int receiver_local_pass = receiver_local_mode == AERON_SHADOW_RECEIVER_LOCAL_MAP &&
 									!s->directional_shadow.debug_cascades && !s->post.ssao_debug_viz;
@@ -544,14 +544,15 @@ int AeronScenePost_RunSsao(struct AeronScene3D* s, AeronCommandBuffer* cmd, int 
 		su.radius_view = s->post.ssao_radius_view;
 		su.bias_view   = s->post.ssao_bias_view;
 		/* Forward FS scales by its own intensity; kernel scale = 1. */
-		su.intensity       = 1.0f;
-		su.low_quality     = low ? 1.0f : 0.0f;
-		su.min_screen_frac = s->post.ssao_min_screen_frac;
-		su.max_screen_frac = s->post.ssao_max_screen_frac;
-		su.sample_jitter   = s->post.ssao_sample_jitter;
+		su.intensity            = 1.0f;
+		su.low_quality          = low ? 1.0f : 0.0f;
+		su.min_screen_frac      = s->post.ssao_min_screen_frac;
+		su.max_screen_frac      = s->post.ssao_max_screen_frac;
+		su.sample_jitter        = s->post.ssao_sample_jitter;
 		su.visibility_params[0] = ao_enabled ? 1.0f : 0.0f;
 		su.visibility_params[1] =
-			receiver_local_pass || receiver_local_mode == AERON_SHADOW_RECEIVER_LOCAL_UNSHADOWED ? 1.0f : 0.0f;
+			receiver_local_pass || receiver_local_mode == AERON_SHADOW_RECEIVER_LOCAL_UNSHADOWED ? 1.0f
+																								 : 0.0f;
 		/* The key light's shadow 1 m out, in the first probe set's scale. */
 		su.visibility_params[2] =
 			s->probe_key_shadow && s->probe_set_count > 0 && s->probe_sets[0].metres_per_unit > 0.0f
@@ -824,15 +825,15 @@ int AeronScenePost_MbResolve(struct AeronScene3D* s, AeronCommandBuffer* cmd, Ae
 	}
 
 	/* The scene depth classifies taps in front of or behind each pixel. */
-	AeronTexture* texs[5]   = { Aeron_RenderTargetGetTexture(color), velocity, gather, s->ssao_noise_tex,
-								Aeron_DepthTargetGetTexture(s->depth_rt) };
+	AeronTexture* texs[5] = { Aeron_RenderTargetGetTexture(color), velocity, gather, s->ssao_noise_tex,
+							  Aeron_DepthTargetGetTexture(s->depth_rt) };
 	/* FSR's render-resolution motion is read at the nearest texel. */
-	const int     direct_gather = direct_fsr_motion && !high;
-	AeronSampler* smps[5]       = { s->post_linear_sampler,
-									direct_fsr_motion ? s->post_point_sampler : s->post_linear_sampler,
-									direct_gather ? s->post_point_sampler : s->post_linear_sampler,
-									s->post_point_sampler, s->post_point_sampler };
-	MbReconstructUniforms u = {
+	const int             direct_gather = direct_fsr_motion && !high;
+	AeronSampler*         smps[5] = { s->post_linear_sampler,
+									  direct_fsr_motion ? s->post_point_sampler : s->post_linear_sampler,
+									  direct_gather ? s->post_point_sampler : s->post_linear_sampler,
+									  s->post_point_sampler, s->post_point_sampler };
+	MbReconstructUniforms u       = {
 		.shutter_scale     = s->post.mb_shutter,
 		.tap_count         = high ? fmaxf(24.0f, 32.0f * resolution_scale) : 16.0f * resolution_scale,
 		.low_quality       = high ? 0u : 1u,

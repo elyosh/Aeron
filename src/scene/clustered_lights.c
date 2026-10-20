@@ -100,18 +100,18 @@ static void cluster_prepare_uniform(AeronScene3D* s) {
 		u->proj_x_offset += 2.0f * s->temporal_jitter[0] / (float)s->camera.viewport.width;
 		u->proj_y_offset -= 2.0f * s->temporal_jitter[1] / (float)s->camera.viewport.height;
 	}
-	u->viewport_x             = (uint32_t)s->camera.viewport.x;
-	u->viewport_y             = (uint32_t)s->camera.viewport.y;
-	u->viewport_width         = (uint32_t)s->camera.viewport.width;
-	u->viewport_height        = (uint32_t)s->camera.viewport.height;
-	u->tile_size              = cluster_effective_tile_size(u->viewport_height);
-	u->grid_x                 = (u->viewport_width + u->tile_size - 1u) / u->tile_size;
-	u->grid_y                 = (u->viewport_height + u->tile_size - 1u) / u->tile_size;
-	u->grid_z                 = s->cluster_desc.depth_slices;
-	u->point_light_count      = s->point_light_count;
-	u->tube_start             = s->point_tube_start;
-	u->mask_words             = (s->point_light_count + 31u) / 32u;
-	u->flags                  = s->cluster_desc.debug_view ? AERON_SCENE_CLUSTER_DEBUG_VIEW : 0u;
+	u->viewport_x        = (uint32_t)s->camera.viewport.x;
+	u->viewport_y        = (uint32_t)s->camera.viewport.y;
+	u->viewport_width    = (uint32_t)s->camera.viewport.width;
+	u->viewport_height   = (uint32_t)s->camera.viewport.height;
+	u->tile_size         = cluster_effective_tile_size(u->viewport_height);
+	u->grid_x            = (u->viewport_width + u->tile_size - 1u) / u->tile_size;
+	u->grid_y            = (u->viewport_height + u->tile_size - 1u) / u->tile_size;
+	u->grid_z            = s->cluster_desc.depth_slices;
+	u->point_light_count = s->point_light_count;
+	u->tube_start        = s->point_tube_start;
+	u->mask_words        = (s->point_light_count + 31u) / 32u;
+	u->flags             = s->cluster_desc.debug_view ? AERON_SCENE_CLUSTER_DEBUG_VIEW : 0u;
 }
 
 static uint64_t cluster_data_words(const AeronSceneClusterUniformGPU* u) {
@@ -149,14 +149,15 @@ int AeronSceneClusteredLights_Build(AeronScene3D* s, AeronCommandBuffer* cmd) {
 	cluster_prepare_uniform(s);
 	const AeronSceneClusterUniformGPU* u          = &s->cluster_uniform;
 	const uint64_t                     tile_count = (uint64_t)u->grid_x * u->grid_y;
-	s->cluster_count = (uint32_t)(tile_count * u->grid_z);
+	s->cluster_count                              = (uint32_t)(tile_count * u->grid_z);
 	if (!s->cluster_active) {
 		s->cluster_ready = 1;
 		return 1;
 	}
 	const uint64_t data_bytes = cluster_data_words(u) * sizeof(uint32_t);
 	if (tile_count == 0 || data_bytes > UINT32_MAX) {
-		Aeron_LogError("aeron.scene", "cluster grid is too large (%llu tiles)", (unsigned long long)tile_count);
+		Aeron_LogError("aeron.scene", "cluster grid is too large (%llu tiles)",
+					   (unsigned long long)tile_count);
 		return 0;
 	}
 	const uint32_t output_usage = AERON_BUFFER_USAGE_STORAGE | AERON_BUFFER_USAGE_COMPUTE_STORAGE_WRITE;
@@ -170,9 +171,9 @@ int AeronSceneClusteredLights_Build(AeronScene3D* s, AeronCommandBuffer* cmd) {
 	}
 
 	/* One thread per tile, then one per depth bin. */
-	const uint32_t thread_count = (uint32_t)tile_count + u->grid_z;
-	AeronComputeBufferBinding output = { s->cluster_data_buffer, 1 };
-	AeronComputePass*         build  = Aeron_BeginComputePass(&(AeronComputePassDesc) {
+	const uint32_t            thread_count = (uint32_t)tile_count + u->grid_z;
+	AeronComputeBufferBinding output       = { s->cluster_data_buffer, 1 };
+	AeronComputePass*         build        = Aeron_BeginComputePass(&(AeronComputePassDesc) {
 		.command_buffer     = cmd,
 		.write_buffers      = &output,
 		.write_buffer_count = 1,
@@ -184,8 +185,8 @@ int AeronSceneClusteredLights_Build(AeronScene3D* s, AeronCommandBuffer* cmd) {
 	Aeron_BindComputePipeline(build, s->cluster_build_pipeline);
 	Aeron_BindComputeStorageBuffer(build, 0, s->cluster_light_buffer);
 	Aeron_BindComputeUniformData(build, 0, u, sizeof *u);
-	Aeron_DispatchCompute(build, (thread_count + AERON_SCENE_CLUSTER_THREADS - 1u) / AERON_SCENE_CLUSTER_THREADS, 1,
-						  1);
+	Aeron_DispatchCompute(
+		build, (thread_count + AERON_SCENE_CLUSTER_THREADS - 1u) / AERON_SCENE_CLUSTER_THREADS, 1, 1);
 	Aeron_EndComputePass(build);
 	return 1;
 }

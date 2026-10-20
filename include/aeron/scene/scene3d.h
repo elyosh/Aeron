@@ -43,10 +43,10 @@ enum {
 typedef struct AeronSceneMeshTable {
 	uint32_t component_count;
 	float    rows[AERON_MAX_MESH_COMPONENTS][3][4];
-	float visibility_packed[AERON_MESH_PACKED_LANES][4];
-	float highlight_packed[AERON_MESH_PACKED_LANES][4];
-	float markings_packed[AERON_MESH_PACKED_LANES][4];
-	float emissive_packed[AERON_MESH_PACKED_LANES][4];
+	float    visibility_packed[AERON_MESH_PACKED_LANES][4];
+	float    highlight_packed[AERON_MESH_PACKED_LANES][4];
+	float    markings_packed[AERON_MESH_PACKED_LANES][4];
+	float    emissive_packed[AERON_MESH_PACKED_LANES][4];
 } AeronSceneMeshTable;
 
 /* One physical point light for this frame: a sphere of `source_radius`
@@ -75,7 +75,7 @@ typedef struct AeronSceneClusteredLightDesc {
 	uint32_t depth_slices;
 	/* Cluster occupancy view, drawn by the debug shader variant
 	 * (AERON_DEBUG_UI builds only). */
-	int      debug_view;
+	int debug_view;
 } AeronSceneClusteredLightDesc;
 
 typedef struct AeronSceneClusteredLightStats {
@@ -204,14 +204,14 @@ typedef struct AeronSceneDirectionalShadowDesc {
 	/* Shadows are filtered with contact-hardening PCSS: a 16-tap blocker
 	 * search, then 16 comparison taps over a penumbra sized by the light's
 	 * angular radius, between the minimum and maximum radius. */
-	float    light_angular_radius_degrees; /* source half-angle */
-	float    max_filter_radius;            /* atlas texels */
-	float    pcss_min_filter_radius;       /* atlas texels */
-	float    normal_bias_texels;           /* lateral receiver offset at grazing incidence */
-	float    depth_bias_texels;            /* receiver comparison offset along the light */
-	float    transition_fraction;
-	float    distance_fade_fraction;
-	int      debug_cascades;
+	float light_angular_radius_degrees; /* source half-angle */
+	float max_filter_radius;            /* atlas texels */
+	float pcss_min_filter_radius;       /* atlas texels */
+	float normal_bias_texels;           /* lateral receiver offset at grazing incidence */
+	float depth_bias_texels;            /* receiver comparison offset along the light */
+	float transition_fraction;
+	float distance_fade_fraction;
+	int   debug_cascades;
 	/* Camera distance (world units) that the receiver-local map serves with
 	 * an extra, finer tile, where its texels are largest on screen; 0 = one
 	 * tile for the whole receivers. */
