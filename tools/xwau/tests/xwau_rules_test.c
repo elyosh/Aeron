@@ -628,6 +628,12 @@ static void fake_type(FakeExe* exe, int t, int row, int record) {
 	put16(type + 22, (unsigned)row);
 }
 
+/* Gives object type `t` row `row` of Equipment0.LST and no craft record. */
+static void fake_equipment(FakeExe* exe, int t, int row) {
+	fake_type(exe, t, row, 0xFFFF);
+	put16(fake_at(exe, 0x5FB240 + 24 * t + 20), 1);
+}
+
 static void fake_exe_write(FakeExe* exe, const char* root) {
 	char path[1100];
 	snprintf(path, sizeof path, "%s/XWINGALLIANCE.EXE", root);
@@ -666,7 +672,9 @@ static void test_objects(const char* scratch) {
 		snprintf(path, sizeof path, "%s/FlightModels", roots[i]);
 		MakeDirs(path);
 		snprintf(path, sizeof path, "%s/FlightModels/Equipment0.LST", roots[i]);
-		write_file(path, "FlightModels\\Laser.opt\r\n");
+		write_file(path, i == 0 ? "FlightModels\\Laser.opt\r\nFlightModels\\LaserRebelTurbo.opt\r\n"
+								: "FlightModels\\Laser.opt\r\nFlightModels\\LaserRebelTurbo.opt\r\n"
+								  "FlightModels\\RebelTurboShort.opt\r\n");
 	}
 	snprintf(path, sizeof path, "%s/FlightModels/Spacecraft0.LST", stock);
 	write_file(path, "FlightModels\\XWING.opt\r\n\r\nFlightModels\\Booster.opt\r\nFlightModels\\CorvetteExplode.opt\r\n"
@@ -685,8 +693,13 @@ static void test_objects(const char* scratch) {
 		fake_type(&exes[i], 71, 3, 3); /* B-wing */
 		put16(fake_at(&exes[i], 0x5B0F70 + 2 * 7), 2);
 		put16(fake_at(&exes[i], 0x5B0F70 + 2 * 9), 70);
+		fake_equipment(&exes[i], 288, 1); /* two turbolasers on the same row */
+		fake_equipment(&exes[i], 297, 1);
+		fake_equipment(&exes[i], 280, 0); /* a laser that the mod doesn't change */
 	}
 	FakeExe* m = &exes[1];
+	fake_equipment(m, 288, 2); /* both move to a new row */
+	fake_equipment(m, 297, 2);
 	fake_type(m, 33, 2, 32);                         /* a new craft in a reserved slot, on the renamed row */
 	fake_type(m, 34, 4, 33);                         /* a reserved slot on a row that the list doesn't have */
 	put16(fake_at(m, 0x5B0F70 + 2 * 200), 33);
@@ -762,10 +775,17 @@ static void test_objects(const char* scratch) {
 			  strstr(text, "  200:\n    ship_list: {name: 'Home One', category: 'Starship', flyable: false"),
 		  "objects: a reserved slot that the mod fills gets its model, its craft type and its ship list line");
 	free(text);
+	snprintf(path, sizeof path, "%s/objects/rebelturboshort_297.yaml", out);
+	text = ReadWholeFile(path, &size);
+	check(text && strstr(text, "object_type: 297\nmodel: rebelturboshort\nlist: equipment\n"),
+		  "objects: an equipment type that the mod moves to another model gets `model` and `list: equipment`, "
+		  "and two types with one model get a file each");
+	free(text);
 	snprintf(path, sizeof path, "%s/objects", out);
 	size_t count = 0;
 	char** names = ListDir(path, true, &count);
-	check(count == 4, "objects: a reserved slot that the mod gives an empty row gets no file");
+	check(count == 6, "objects: a reserved slot that the mod gives an empty row gets no file, and neither does "
+					  "an equipment type that the mod doesn't change");
 	FreeList(names, count);
 	text = ReadWholeFile(strings, &size);
 	check(text && strstr(text, "SPECIES_9:") && !strstr(text, "SPECIES_7") && !strstr(text, "SPEC_7_") &&

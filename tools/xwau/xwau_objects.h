@@ -53,13 +53,13 @@
  * when the mod changes them and the object type has a file. These texts then
  * aren't in text/strings.yaml (the `moved` IDs of XwauObjects_Write).
  *
- * The object types of Spacecraft0.LST are written: the stock ones, the
- * reserved slots that the mod fills with a new craft, and the placeholders
- * 103 to 114 that it gives another model. A slot or a placeholder that the
- * mod gives an empty row loads nothing, so it and its craft types are left
- * out, and the text import keeps skipping their texts. The equipment is
- * reported and left out. Files that an earlier run wrote (they start with
- * "# Written by xwau_import craft") are removed first.
+ * The files are for the stock object types of both lists, the reserved
+ * slots that the mod fills with a new craft, and the placeholders 103 to 114
+ * that it gives another model. When the type's row is in Equipment0.LST,
+ * `model` comes with `list: equipment`. A slot or a placeholder that the mod
+ * gives an empty row loads nothing, so it and its craft types are left out,
+ * and the text import keeps skipping their texts. Files that an earlier run
+ * wrote (they start with "# Written by xwau_import craft") are removed first.
  */
 
 #include <stdbool.h>

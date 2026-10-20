@@ -541,6 +541,7 @@ static const struct {
 typedef struct Change {
 	int         objectType;
 	const char* model; /* the mod's model, for the file name */
+	int         list;  /* the list of the mod's row: 0 Spacecraft0.LST, 1 Equipment0.LST */
 	bool        writeModel;
 	bool        genus, family, flags, recordIndexChanged;
 	int         recordIndex; /* the craft record that the type uses in the mod */
@@ -783,6 +784,8 @@ static bool write_object_file(const char* path, const Change* change, const Xwau
 	fprintf(f, "version: 1\nobject_type: %d\n", change->objectType);
 	if (change->writeModel) {
 		fprintf(f, "model: %s\n", change->model);
+		if (change->list == 1)
+			fputs("list: equipment\n", f);
 		counts->models++;
 	}
 	if (change->genus || change->family || change->flags || change->recordIndexChanged) {
@@ -856,7 +859,7 @@ bool XwauObjects_Write(const char* mod_root, const char* stock_game, const char*
 	}
 
 	int  new_slots = 0, new_placeholders = 0, empty_slots = 0, empty_placeholders = 0;
-	int  later_equipment = 0, kept_models = 0, empty = 0;
+	int  equipment = 0, kept_models = 0, empty = 0;
 	int  unkeyed[UNKEYED_COUNT]     = { 0 };
 	bool record_owned[RECORD_COUNT] = { false };
 	int  change_count               = 0;
@@ -875,14 +878,7 @@ bool XwauObjects_Write(const char* mod_root, const char* stock_game, const char*
 				empty_slots += type_changed;
 				continue;
 			}
-			if (m.list != 0) {
-				later_equipment++;
-				continue;
-			}
 			new_slots++;
-		} else if (s.list != 0) {
-			later_equipment += type_changed;
-			continue;
 		} else if (is_placeholder(t)) {
 			/* A placeholder loads the X-wing's row in stock. The mod fills it
 			   when it gives it another model. */
@@ -899,8 +895,8 @@ bool XwauObjects_Write(const char* mod_root, const char* stock_game, const char*
 			}
 			continue;
 		}
-		Change change     = { .objectType = t, .model = mod_model, .recordIndex = m.record };
-		change.writeModel = strcasecmp(stock_model, mod_model) != 0;
+		Change change     = { .objectType = t, .model = mod_model, .list = m.list, .recordIndex = m.record };
+		change.writeModel = strcasecmp(stock_model, mod_model) != 0 || m.list != s.list;
 		if (change.writeModel && m.list == s.list && m.row == s.row && new_craft_rows[m.list][m.row]) {
 			Report(mod_root, "object type %d keeps its model '%s': the mod renames its row for a new craft",
 				   t, stock_model);
@@ -943,6 +939,7 @@ bool XwauObjects_Write(const char* mod_root, const char* stock_game, const char*
 				unkeyed[i] +=
 					memcmp(stock->records[m.record] + g_unkeyedFields[i].offset,
 						   mod->records[m.record] + g_unkeyedFields[i].offset, g_unkeyedFields[i].size) != 0;
+		equipment += change.list == 1;
 		changes[change_count++] = change;
 	}
 	for (size_t i = 0; i < UNKEYED_COUNT; ++i)
@@ -987,11 +984,10 @@ bool XwauObjects_Write(const char* mod_root, const char* stock_game, const char*
 				   "out, "
 				   "with their craft types: they load nothing in the mod",
 				   empty_slots, empty_placeholders);
-		Report(
-			NULL,
-			"objects: left for later: %d changed equipment types; %d stock models kept, %d types that load "
-			"nothing in the mod",
-			later_equipment, kept_models, empty);
+		Report(NULL,
+			   "objects: %d files for object types of Equipment0.LST; %d stock models kept, %d types that "
+			   "load nothing in the mod",
+			   equipment, kept_models, empty);
 		if (mod->craftPastEnd != stock->craftPastEnd)
 			Report(
 				mod_root,
