@@ -1267,6 +1267,64 @@ static void test_craft_names(const char* scratch) {
 	free(text);
 }
 
+static void test_front_planet(const char* scratch) {
+	char game[1024], stock[1024], out[1024], path[1300];
+	snprintf(game, sizeof game, "%s/fp_game", scratch);
+	snprintf(stock, sizeof stock, "%s/fp_stock", scratch);
+	snprintf(out, sizeof out, "%s/fp_mod/flight/missions", scratch);
+	snprintf(path, sizeof path, "%s/Missions", game);
+	MakeDirs(path);
+	snprintf(path, sizeof path, "%s/Resdata", game);
+	MakeDirs(path);
+	MakeDirs(stock);
+	const char* const files[][2] = {
+		{ "hook_concourse.dll", "" },
+		{ "RESDATA.TXT", "Resdata\\FrontPlanet.dat\nResdata\\Missing.dat\n" },
+		{ "Missions/a.ini",
+		  "[concourse]\nfrontplanetindex = 15010\nFrontPlanetPositionX = -150\nFrontPlanetPositionY = 0x4E\n"
+		  "FrontPlanetPositionY = 5\n" },
+		{ "Missions/b_concourse.txt", "FrontPlanetIndex = 15115\n" },
+		{ "Missions/b.ini", "[concourse]\nFrontPlanetPositionX = 5\n" },
+		{ "Missions/c.ini", "[concourse]\nFrontPlanetIndex = -1\nFrontPlanetPositionX = abc\n" },
+	};
+	for (size_t i = 0; i < sizeof files / sizeof files[0]; ++i) {
+		snprintf(path, sizeof path, "%s/%s", game, files[i][0]);
+		write_file(path, files[i][1]);
+	}
+	/* A DAT with groups 15010 (one image) and 15011 (none): the file header,
+	   4 bytes, then a 12-byte header for each group. */
+	uint8_t dat[22 + 2 * 12] = { 0x57, 0x23, 0x06, 0x57, 0x56, 0x23, 0x02, 0x56, 0, 0, 2 };
+	put16(dat + 22, 15010);
+	put16(dat + 24, 1);
+	put16(dat + 34, 15011);
+	snprintf(path, sizeof path, "%s/Resdata/FrontPlanet.dat", game);
+	FILE* f = fopen(path, "wb");
+	check(f && fwrite(dat, 1, sizeof dat, f) == sizeof dat && fclose(f) == 0, "front planet: DAT written");
+	static const char* const kNames[]  = { "Red" };
+	static const int         kCrafts[] = { 1 };
+	for (const char* m = "abc"; *m; ++m) {
+		snprintf(path, sizeof path, "%s/Missions/%c.tie", game, *m);
+		write_tie(path, 1, kNames, kCrafts);
+	}
+	XwauMissions* missions = XwauMissions_Load(game, false);
+	check(missions && XwauMissionFiles_Write(game, missions, stock, out),
+		  "front planet: mission files written");
+	XwauMissions_Free(missions);
+	size_t size = 0;
+	snprintf(path, sizeof path, "%s/missions/a.yaml", out);
+	char* text = ReadWholeFile(path, &size);
+	check(text && strstr(text, "concourse:\n  front_planet: { x: -150, y: 78, image: 15010 }\n"),
+		  "front planet: the keys are found in any case, the first line wins and numbers are read in base 0");
+	free(text);
+	snprintf(path, sizeof path, "%s/missions/b.yaml", out);
+	text = ReadWholeFile(path, &size);
+	check(text && strstr(text, "concourse:\n  front_planet: { image: 15115 }\n"),
+		  "front planet: <mission>_concourse.txt wins over the .ini, and a group that no DAT has is kept");
+	free(text);
+	snprintf(path, sizeof path, "%s/missions/c.yaml", out);
+	check(!IsFile(path), "front planet: -1 and values that aren't numbers aren't written");
+}
+
 static void test_flight_settings(const char* scratch) {
 	char game[1024], path[1300], settings[1300];
 	snprintf(game, sizeof game, "%s/fs_game", scratch);
@@ -1304,6 +1362,7 @@ int main(void) {
 	test_mission_settings(scratch);
 	test_model_swaps(scratch);
 	test_craft_names(scratch);
+	test_front_planet(scratch);
 	test_mission_tie(scratch);
 	RemoveTree(scratch);
 	printf("%s\n", g_failures ? "FAILED" : "passed");

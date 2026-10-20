@@ -73,6 +73,11 @@ size_t XwauDat_ListGroup(const XwauDat* dat, int group, const int** images);
  * XwauDat_ListGroups or XwauDat_ListGroup overwrites them. */
 size_t XwauDat_ListGroups(const XwauDat* dat, const int** groups);
 
+/* Reads only the group directory at the start of the DAT file at `path`,
+ * and sets `ids` (free it) to the ids of the groups that have images, in
+ * file order. Returns false and sets `error` on failure. */
+bool XwauDat_ReadGroupIds(const char* path, int** ids, size_t* count, char* error, size_t error_size);
+
 /* Reads the header of the image (group, image). Returns false when the file
  * has no such image. */
 bool XwauDat_GetImageInfo(const XwauDat* dat, int group, int image, XwauDatImageInfo* out);

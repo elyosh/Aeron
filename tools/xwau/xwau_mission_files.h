@@ -14,6 +14,8 @@
  *       superstardestroyer: superstardestroyerrecentered
  *     craft_names:
  *       containerbrick: { ship_list: "Imperial II Star Destroyer 70", short_name: "ISD" }
+ *     concourse:
+ *       front_planet: { x: 319, y: 78, image: 15010 }
  *     flight_groups:
  *       1: { name: "Red 1", craft: 1, markings: 4 }
  *       26: { name: "Red", craft: 1, craft_markings: { 0: 0, 1: 1 } }
@@ -88,6 +90,11 @@
  * Settings (hook_mission_tie, and hook_engine_sound's [Interdiction]):
  * `settings` holds the values that apply in the mission and that differ from
  * what the game does without them (xwau_mission_settings.h).
+ *
+ * Concourse planet (hook_concourse): `concourse` holds the planet image and
+ * position that the mission sets (xwau_concourse.h). An image group that no
+ * DAT of RESDATA.TXT has is reported but kept: the concourse then shows no
+ * planet, as in XWAU.
  *
  * The selections name flight groups by their position in the mission's .TIE,
  * and they are written with the same position. The .TIE is the one that

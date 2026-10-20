@@ -348,6 +348,47 @@ truncated:
 	return NULL;
 }
 
+bool XwauDat_ReadGroupIds(const char* path, int** ids, size_t* count, char* error, size_t error_size) {
+	*ids    = NULL;
+	*count  = 0;
+	FILE* f = fopen(path, "rb");
+	if (!f) {
+		set_error(error, error_size, path, "cannot read file");
+		return false;
+	}
+	/* The same file header and group headers as in XwauDat_Open. */
+	uint8_t        header[18], group[24];
+	bool           ok           = fread(header, 1, sizeof header, f) == sizeof header &&
+								  (rd32(header) | ((uint64_t)rd32(header + 4) << 32)) == XWAU_DAT_SIGNATURE;
+	const uint16_t group_format = ok ? rd16(header + 8) : 0;
+	const uint16_t group_count  = ok ? rd16(header + 10) : 0;
+	const size_t   group_bytes  = 8 + (group_format ? 12 : 0) + 4;
+	if (ok && fseek(f, (long)(18 + (group_format ? 12 : 0) + 4), SEEK_SET) != 0)
+		ok = false;
+	if (!ok)
+		set_error(error, error_size, path, "not a DAT file");
+	*ids = ok ? (int*)malloc((group_count ? group_count : 1) * sizeof **ids) : NULL;
+	if (ok && !*ids) {
+		set_error(error, error_size, path, "out of memory");
+		ok = false;
+	}
+	for (uint16_t g = 0; ok && g < group_count; ++g) {
+		if (fread(group, 1, group_bytes, f) != group_bytes) {
+			set_error(error, error_size, path, "truncated DAT file");
+			ok = false;
+		} else if (rd16(group + 2) != 0) {
+			(*ids)[(*count)++] = (int16_t)rd16(group);
+		}
+	}
+	fclose(f);
+	if (!ok) {
+		free(*ids);
+		*ids   = NULL;
+		*count = 0;
+	}
+	return ok;
+}
+
 void XwauDat_Close(XwauDat* dat) {
 	if (!dat)
 		return;

@@ -1032,6 +1032,7 @@ if(AERON_BUILD_TOOLS)
     add_library(xwau_files STATIC
         tools/xwau/util.c
         tools/xwau/model_tables.c
+        tools/xwau/xwau_concourse.c
         tools/xwau/xwau_config.c
         tools/xwau/xwau_dat.c
         tools/xwau/xwau_game_tables.c

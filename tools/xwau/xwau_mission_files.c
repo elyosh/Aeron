@@ -7,6 +7,7 @@
 
 #include "opt.h"
 #include "util.h"
+#include "xwau_concourse.h"
 #include "xwau_game_tables.h"
 #include "xwau_mission_settings.h"
 #include "xwau_mission_tie.h"
@@ -578,7 +579,7 @@ static bool resdata_names(const char* game, const char* base, XwauLines* out) {
 
 typedef struct Totals {
 	size_t files, profiles, profiles_dropped, skins, articulations, articulations_dropped, resdata, values,
-		values_dropped, craft_markings, craft_markings_dropped, settings, swaps, craft_names;
+		values_dropped, craft_markings, craft_markings_dropped, settings, swaps, craft_names, front_planets;
 } Totals;
 
 /* Whether the flight group values of `entry` set anything. */
@@ -767,8 +768,8 @@ static bool write_mission(const char* path, const char* base, const Profile* pro
 						  const SkinChoice* skins, size_t skin_count, const XwauFlightGroupArticulation* fgs,
 						  const int* fg_targets, size_t fg_count, const Tie* tie, const XwauLines* resdata,
 						  const XwauMissionTie* values, const XwauMissionSettings* settings,
-						  const Swap* swap_list, size_t swap_count, const CraftName* names,
-						  size_t name_count) {
+						  const Swap* swap_list, size_t swap_count, const CraftName* names, size_t name_count,
+						  const XwauFrontPlanet* planet) {
 	FILE* f = fopen(path, "wb");
 	if (!f) {
 		Report(NULL, "cannot write %s", path);
@@ -782,6 +783,7 @@ static bool write_mission(const char* path, const char* base, const Profile* pro
 	if (resdata->count)
 		fputs("]\n", f);
 	XwauMissionSettings_Write(f, settings);
+	XwauFrontPlanet_Write(f, planet);
 	for (size_t i = 0; i < swap_count; ++i)
 		fprintf(f, "%s  %s: %s\n", i ? "" : "model_swaps:\n", swap_list[i].source, swap_list[i].target);
 	write_craft_names(f, names, name_count);
@@ -852,7 +854,8 @@ static bool import_mission(const char* game, const XwauMissions* missions, const
 						   const char* dir, const char* name, const char* out, SkinModels* skin_models,
 						   bool* skins_loaded, const XwauSettingsConfig* config,
 						   const XwauMissionNumbers* numbers, const char* models, const XwauLines* keys,
-						   const XwauGameTables* tables, Totals* totals) {
+						   const XwauGameTables* tables, XwauDatGroups* dat_groups, bool* dat_groups_loaded,
+						   Totals* totals) {
 	char base[1100];
 	if (!PathFormat(base, sizeof base, "%s/%s", dir, name))
 		return false;
@@ -884,11 +887,21 @@ static bool import_mission(const char* game, const XwauMissions* missions, const
 	Swap*  swap_list = NULL;
 	size_t swap_count = 0;
 	ok                = ok && swaps(game, base, models, keys, &swap_list, &swap_count);
-	bool any_values   = values.craft_marking_count != 0;
+	XwauFrontPlanet planet;
+	ok = ok && XwauFrontPlanet_Read(game, base, &planet);
+	if (ok && planet.image != -1 && !*dat_groups_loaded) {
+		ok                 = XwauDatGroups_Read(game, stock_game, dat_groups);
+		*dat_groups_loaded = true;
+	}
+	if (ok && planet.image != -1 && dat_groups->count && !XwauDatGroups_Has(dat_groups, planet.image))
+		Report(base, "[concourse]: no DAT of RESDATA.TXT has group %d, so the concourse shows no planet",
+			   planet.image);
+	bool any_values = values.craft_marking_count != 0;
 	for (size_t i = 0; i < values.fg_count; ++i)
 		any_values |= has_values(&values.fgs[i]);
 	if (!ok || (!profile_count && !skin_count && !fg_count && !resdata.count && !any_values &&
-				!XwauMissionSettings_Any(&settings) && !swap_count && !values.craft_lines.count)) {
+				!XwauMissionSettings_Any(&settings) && !swap_count && !values.craft_lines.count &&
+				!XwauFrontPlanet_Any(&planet))) {
 		free_profiles(profile_list, profile_count);
 		free(skins);
 		XwauLines_Free(&resdata);
@@ -953,14 +966,14 @@ static bool import_mission(const char* game, const XwauMissions* missions, const
 	size_t     name_count   = 0;
 	ok                      = ok && craft_names(&values.craft_lines, tables, &tie, base, &names, &name_count);
 	if (ok && (profiles_kept || skin_count || fgs_kept || resdata.count || values_kept || any_settings ||
-			   swap_count || name_count)) {
+			   swap_count || name_count || XwauFrontPlanet_Any(&planet))) {
 		char dir_path[1200], lower_dir[64], path[1400];
 		LowerCopy(lower_dir, sizeof lower_dir, dir);
 		ok = PathFormat(dir_path, sizeof dir_path, "%s/%s", out, lower_dir) &&
 			 PathFormat(path, sizeof path, "%s/%s.yaml", dir_path, name) && MakeDirs(dir_path) &&
 			 write_mission(path, base, profile_list, profile_targets, profile_count, skin_models, skins,
 						   skin_count, fgs, fg_targets, fg_count, &tie, &resdata, &values, &settings,
-						   swap_list, swap_count, names, name_count);
+						   swap_list, swap_count, names, name_count, &planet);
 		if (ok) {
 			++totals->files;
 			totals->profiles += profiles_kept;
@@ -971,6 +984,7 @@ static bool import_mission(const char* game, const XwauMissions* missions, const
 			totals->settings += any_settings;
 			totals->swaps += swap_count;
 			totals->craft_names += name_count;
+			totals->front_planets += XwauFrontPlanet_Any(&planet);
 			for (size_t i = 0; i < values.craft_marking_count; ++i)
 				totals->craft_markings += values.craft_markings[i].fg >= 0;
 		}
@@ -1006,6 +1020,10 @@ bool XwauMissionFiles_Write(const char* game, const XwauMissions* missions, cons
 	/* For the craft names: which model each craft record has. Without the
 	   tables (reported), the names are dropped. */
 	XwauGameTables* tables = ok ? XwauGameTables_Load(game) : NULL;
+	/* For the concourse planets: the image groups of the DATs, read when a
+	   mission sets one. */
+	XwauDatGroups dat_groups        = { 0 };
+	bool          dat_groups_loaded = false;
 	for (size_t d = 0; ok && d < sizeof kMissionDirs / sizeof kMissionDirs[0]; ++d) {
 		XwauLines names;
 		ok = XwauMissions_Names(game, kMissionDirs[d], &names);
@@ -1019,9 +1037,9 @@ bool XwauMissionFiles_Write(const char* game, const XwauMissions* missions, cons
 				ok = XwauLines_Add(&names, numbers.items[i].name, strlen(numbers.items[i].name));
 		}
 		for (size_t n = 0; ok && n < names.count; ++n)
-			ok =
-				import_mission(game, missions, stock_game, kMissionDirs[d], names.items[n], out, &skin_models,
-							   &skins_loaded, &config, &numbers, models, &keys, tables, &totals);
+			ok = import_mission(game, missions, stock_game, kMissionDirs[d], names.items[n], out,
+								&skin_models, &skins_loaded, &config, &numbers, models, &keys, tables,
+								&dat_groups, &dat_groups_loaded, &totals);
 		XwauLines_Free(&names);
 	}
 	free_skin_models(&skin_models);
@@ -1029,15 +1047,19 @@ bool XwauMissionFiles_Write(const char* game, const XwauMissions* missions, cons
 	XwauMissionNumbers_Free(&numbers);
 	XwauLines_Free(&keys);
 	XwauGameTables_Free(tables);
+	XwauDatGroups_Free(&dat_groups);
 	if (!ok)
 		return false;
-	Report(NULL,
-		   "wrote %zu mission files with %zu object profile selections (%zu dropped), %zu skin "
-		   "selections, %zu flight groups with articulations (%zu dropped), %zu flight groups with "
-		   "[mission_tie] values (%zu dropped), the markings of %zu craft (%zu dropped), the settings of "
-		   "%zu missions, %zu model swaps, the names of %zu models and the art files of %zu missions",
-		   totals.files, totals.profiles, totals.profiles_dropped, totals.skins, totals.articulations,
-		   totals.articulations_dropped, totals.values, totals.values_dropped, totals.craft_markings,
-		   totals.craft_markings_dropped, totals.settings, totals.swaps, totals.craft_names, totals.resdata);
+	Report(
+		NULL,
+		"wrote %zu mission files with %zu object profile selections (%zu dropped), %zu skin "
+		"selections, %zu flight groups with articulations (%zu dropped), %zu flight groups with "
+		"[mission_tie] values (%zu dropped), the markings of %zu craft (%zu dropped), the settings of "
+		"%zu missions, %zu model swaps, the names of %zu models, the concourse planets of %zu missions and "
+		"the art files of %zu missions",
+		totals.files, totals.profiles, totals.profiles_dropped, totals.skins, totals.articulations,
+		totals.articulations_dropped, totals.values, totals.values_dropped, totals.craft_markings,
+		totals.craft_markings_dropped, totals.settings, totals.swaps, totals.craft_names,
+		totals.front_planets, totals.resdata);
 	return true;
 }
