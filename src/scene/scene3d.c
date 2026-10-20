@@ -619,23 +619,13 @@ static void scene_mesh_light_vector(const float (*rows)[4], const float transfor
 
 static float scene_vec3_length(const float v[3]) { return sqrtf(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]); }
 
-int AeronScene_MeshLight(const AeronSceneMesh* mesh, uint32_t index, const float transform[16],
-						 float units_per_meter, const AeronSceneMeshTable* table, float intensity_scale,
-						 AeronSceneLight* out) {
-	if (!mesh || index >= mesh->light_count || !transform || !(units_per_meter > 0.0f) || !out) {
-		return 0;
-	}
-	const AeronFlightLight* light      = &mesh->lights[index];
-	float                   p[3]       = { light->position.x, light->position.y, light->position.z };
-	const uint32_t          components = mesh->component_count ? mesh->component_count : 1u;
-	const float (*rows)[4]             = NULL;
-	if (table && light->component_index < components) {
-		const uint32_t c = light->component_index;
-		/* A hidden component (destroyed, or hidden by a profile) is dark. */
-		if (table->visibility_packed[c >> 2][c & 3] == 0.0f) {
-			return 0;
-		}
-		rows = table->rows[c];
+/* `light` through the articulation rows `rows` (optional), then the
+ * instance transform. */
+static int scene_flight_light(const AeronFlightLight* light, const float (*rows)[4],
+							  const float transform[16], float units_per_meter, float intensity_scale,
+							  AeronSceneLight* out) {
+	float p[3] = { light->position.x, light->position.y, light->position.z };
+	if (rows) {
 		float articulated[3];
 		for (int r = 0; r < 3; ++r) {
 			articulated[r] = rows[r][0] * p[0] + rows[r][1] * p[1] + rows[r][2] * p[2] + rows[r][3];
@@ -687,6 +677,34 @@ int AeronScene_MeshLight(const AeronSceneMesh* mesh, uint32_t index, const float
 	out->radius         = range_m * units_per_meter;
 	out->source_radius  = source_radius;
 	return 1;
+}
+
+int AeronScene_FlightLight(const AeronFlightLight* light, const float transform[16], float units_per_meter,
+						   float intensity_scale, AeronSceneLight* out) {
+	if (!light || !transform || !(units_per_meter > 0.0f) || !out) {
+		return 0;
+	}
+	return scene_flight_light(light, NULL, transform, units_per_meter, intensity_scale, out);
+}
+
+int AeronScene_MeshLight(const AeronSceneMesh* mesh, uint32_t index, const float transform[16],
+						 float units_per_meter, const AeronSceneMeshTable* table, float intensity_scale,
+						 AeronSceneLight* out) {
+	if (!mesh || index >= mesh->light_count || !transform || !(units_per_meter > 0.0f) || !out) {
+		return 0;
+	}
+	const AeronFlightLight* light      = &mesh->lights[index];
+	const uint32_t          components = mesh->component_count ? mesh->component_count : 1u;
+	const float (*rows)[4]             = NULL;
+	if (table && light->component_index < components) {
+		const uint32_t c = light->component_index;
+		/* A hidden component (destroyed, or hidden by a profile) is dark. */
+		if (table->visibility_packed[c >> 2][c & 3] == 0.0f) {
+			return 0;
+		}
+		rows = table->rows[c];
+	}
+	return scene_flight_light(light, rows, transform, units_per_meter, intensity_scale, out);
 }
 
 int AeronScene_SetClusteredLights(AeronScene3D* s, const AeronSceneClusteredLightDesc* desc) {

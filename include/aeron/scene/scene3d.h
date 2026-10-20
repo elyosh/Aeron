@@ -340,6 +340,11 @@ int AeronScene_AddLight(AeronScene3D* scene, const AeronSceneLight* light);
 int AeronScene_MeshLight(const AeronSceneMesh* mesh, uint32_t index, const float transform[16],
 						 float units_per_meter, const AeronSceneMeshTable* table, float intensity_scale,
 						 AeronSceneLight* out);
+/* World-space light for a light that no mesh holds, such as a craft's
+ * headlight, converted as AeronScene_MeshLight converts a model light:
+ * `transform` places it, in world units per metre. */
+int AeronScene_FlightLight(const AeronFlightLight* light, const float transform[16], float units_per_meter,
+						   float intensity_scale, AeronSceneLight* out);
 
 /* Persistent clustered-forward point-light configuration. The tile size is
  * selected automatically per frame. */
