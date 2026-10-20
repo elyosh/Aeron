@@ -77,7 +77,7 @@ static const Field g_fields[] = {
    laserGroupWeaponKind, laserGroupFireRange, laserGroupFireCooldownTicks. */
 static const Field g_laserFields[] = {
 	{ "type", 306, 2, FIELD_UNSIGNED },     { "count", 318, 1, FIELD_UNSIGNED },
-	{ "kind", 321, 1, FIELD_UNSIGNED },    { "range", 324, 4, FIELD_SIGNED },
+	{ "kind", 321, 1, FIELD_UNSIGNED },     { "range", 324, 4, FIELD_SIGNED },
 	{ "cooldown", 336, 2, FIELD_UNSIGNED },
 };
 
@@ -443,67 +443,142 @@ static bool write_names(FILE* f, const Change* change, const Texts* texts, XwauT
 	return true;
 }
 
-/* Writes `craft_types` for the craft types that the mod maps to the object
-   type and that are remapped or have changed texts. */
-static void write_craft_types(FILE* f, const Change* change, const XwauGameTables* stock,
-							  const XwauGameTables* mod, const Texts* texts, XwauTextIds* moved,
-							  Counts* counts) {
-	bool header = false;
-	for (int c = 1; c < CRAFT_TYPE_COUNT; ++c) {
-		if (mod->craft[c] != change->objectType)
-			continue;
-		const bool remap = stock->craft[c] != change->objectType;
-		char       id[64];
-		snprintf(id, sizeof id, "SPECIES_%d", c);
-		const char* line = text_changed(texts, TEXT_SHIPLIST, id);
-		ShipLine    ship;
-		if (line && !parse_ship_line(line, &ship)) {
-			Report(NULL, "craft type %d: its ship list line has too few fields; it stays in strings.yaml", c);
-			line = NULL;
-		}
-		const char* tech[5];
-		bool        any_tech = false;
-		for (int i = 0; i < 5; ++i) {
-			char tech_id[64];
-			snprintf(tech_id, sizeof tech_id, "SPEC_%d_%s", c, g_techRoomFields[i].suffix);
-			tech[i] = text_changed(texts, TEXT_SPECDESC, tech_id);
-			any_tech |= tech[i] != NULL;
-		}
-		if (!remap && !line && !any_tech)
-			continue;
-		if (!header) {
-			fputs("craft_types:\n", f);
-			header = true;
-		}
-		fprintf(f, "  %d:%s\n", c, line || any_tech ? "" : " {}");
-		counts->remaps += remap;
-		counts->craftTypes++;
-		if (line) {
-			fputs("    ship_list: {name: ", f);
-			write_quoted_or_empty(f, ship.name);
-			fputs(", category: ", f);
-			write_quoted_or_empty(f, ship.category);
-			fprintf(f, ", flyable: %s, known: %s, skirmish: %s, hidden: %s, icon: [%d, %d, %d, %d]}\n",
-					ship.flyable, ship.known ? "true" : "false", ship.skirmish ? "true" : "false",
-					ship.hidden ? "true" : "false", ship.icon[0], ship.icon[1], ship.icon[2], ship.icon[3]);
-			XwauTextIds_Add(moved, id);
-		}
-		if (any_tech) {
-			fputs("    tech_room: {", f);
-			bool first = true;
-			for (int i = 0; i < 5; ++i) {
-				if (!tech[i])
-					continue;
-				char tech_id[64];
-				snprintf(tech_id, sizeof tech_id, "SPEC_%d_%s", c, g_techRoomFields[i].suffix);
-				fprintf(f, "%s%s: ", first ? "" : ", ", g_techRoomFields[i].key);
-				write_quoted_or_empty(f, tech[i]);
-				XwauTextIds_Add(moved, tech_id);
-				first = false;
-			}
-			fputs("}\n", f);
-		}
+/* ---- Craft type files ------------------------------------------------------ */
+
+/* What the mod changes about one craft type. */
+typedef struct CraftTypeChange {
+	bool        remap; /* the mod links it to another object type */
+	const char* line;  /* the changed SHIPLIST.TXT line, or NULL */
+	ShipLine    ship;
+	const char* tech[5]; /* the changed SPECDESC.TXT texts, or NULL */
+	char        name[128];
+} CraftTypeChange;
+
+/* Finds what the mod changes about craft type `c`. Returns false when it
+   changes nothing. */
+static bool craft_type_change(int c, const XwauGameTables* stock, const XwauGameTables* mod,
+							  const Texts* texts, CraftTypeChange* out) {
+	memset(out, 0, sizeof *out);
+	out->remap = stock->craft[c] != mod->craft[c];
+	char id[64];
+	snprintf(id, sizeof id, "SPECIES_%d", c);
+	out->line = text_changed(texts, TEXT_SHIPLIST, id);
+	if (out->line && !parse_ship_line(out->line, &out->ship)) {
+		Report(NULL, "craft type %d: its ship list line has too few fields; it stays in strings.yaml", c);
+		out->line = NULL;
 	}
+	bool any_tech = false;
+	for (int i = 0; i < 5; ++i) {
+		char tech_id[64];
+		snprintf(tech_id, sizeof tech_id, "SPEC_%d_%s", c, g_techRoomFields[i].suffix);
+		out->tech[i] = text_changed(texts, TEXT_SPECDESC, tech_id);
+		any_tech |= out->tech[i] != NULL;
+	}
+	return out->remap || out->line || any_tech;
+}
+
+/* The file name of a craft type: its ship list name in the mod, in lower case
+   with '_' between words, or "" when it has none. */
+static void craft_type_name(int c, const Texts* texts, char* name, size_t size) {
+	char id[64];
+	snprintf(id, sizeof id, "SPECIES_%d", c);
+	const char* line = texts->loaded[TEXT_SHIPLIST] ? text_find(&texts->mod[TEXT_SHIPLIST], id) : NULL;
+	ShipLine    ship;
+	size_t      length = 0;
+	name[0]            = '\0';
+	if (!line || !parse_ship_line(line, &ship))
+		return;
+	for (const char* p = ship.name; *p && length + 1 < size; ++p) {
+		const char ch = *p >= 'A' && *p <= 'Z' ? (char)(*p - 'A' + 'a') : *p;
+		if ((ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9'))
+			name[length++] = ch;
+		else if (length > 0 && name[length - 1] != '_')
+			name[length++] = '_';
+	}
+	while (length > 0 && name[length - 1] == '_')
+		length--;
+	name[length] = '\0';
+}
+
+static bool write_craft_type_file(const char* path, int c, int object_type, const char* model,
+								  const CraftTypeChange* change, XwauTextIds* moved) {
+	FILE* f = fopen(path, "wb");
+	if (!f) {
+		Report(path, "can't be written");
+		return false;
+	}
+	fprintf(f, "# Written by xwau_import craft: what the mod changes about craft type %d.\n", c);
+	fprintf(f, "version: 1\ncraft_type: %d\nobject_type: %d  # %s\n", c, object_type, model);
+	if (change->line) {
+		const ShipLine* ship = &change->ship;
+		fputs("ship_list: {name: ", f);
+		write_quoted_or_empty(f, ship->name);
+		fputs(", category: ", f);
+		write_quoted_or_empty(f, ship->category);
+		fprintf(f, ", flyable: %s, known: %s, skirmish: %s, hidden: %s, icon: [%d, %d, %d, %d]}\n",
+				ship->flyable, ship->known ? "true" : "false", ship->skirmish ? "true" : "false",
+				ship->hidden ? "true" : "false", ship->icon[0], ship->icon[1], ship->icon[2], ship->icon[3]);
+		char id[64];
+		snprintf(id, sizeof id, "SPECIES_%d", c);
+		XwauTextIds_Add(moved, id);
+	}
+	bool first = true;
+	for (int i = 0; i < 5; ++i) {
+		if (!change->tech[i])
+			continue;
+		char tech_id[64];
+		snprintf(tech_id, sizeof tech_id, "SPEC_%d_%s", c, g_techRoomFields[i].suffix);
+		fprintf(f, "%s%s: ", first ? "tech_room: {" : ", ", g_techRoomFields[i].key);
+		write_quoted_or_empty(f, change->tech[i]);
+		XwauTextIds_Add(moved, tech_id);
+		first = false;
+	}
+	if (!first)
+		fputs("}\n", f);
+	if (fclose(f) != 0) {
+		Report(path, "can't be written");
+		return false;
+	}
+	return true;
+}
+
+/* Writes a file for each craft type that the mod links to another object
+   type or whose texts it changes, when its object type loads a model in the
+   mod (`models[object type]`, NULL when it loads nothing). */
+static bool write_craft_types(const char* dir, const XwauGameTables* stock, const XwauGameTables* mod,
+							  const char* const* models, const Texts* texts, XwauTextIds* moved,
+							  Counts* counts) {
+	CraftTypeChange* changes = calloc(CRAFT_TYPE_COUNT, sizeof *changes);
+	bool*            writes  = calloc(CRAFT_TYPE_COUNT, sizeof *writes);
+	bool             ok      = changes && writes;
+	for (int c = 1; ok && c < CRAFT_TYPE_COUNT; ++c) {
+		const int t = mod->craft[c];
+		writes[c] =
+			t < OBJECT_TYPE_COUNT && models[t] && craft_type_change(c, stock, mod, texts, &changes[c]);
+		if (writes[c])
+			craft_type_name(c, texts, changes[c].name, sizeof changes[c].name);
+	}
+	for (int c = 1; ok && c < CRAFT_TYPE_COUNT; ++c) {
+		if (!writes[c])
+			continue;
+		int same = 0;
+		for (int other = 1; other < CRAFT_TYPE_COUNT; ++other)
+			same += writes[other] && strcmp(changes[other].name, changes[c].name) == 0;
+		char file_name[200], path[1300];
+		if (!changes[c].name[0])
+			snprintf(file_name, sizeof file_name, "craft_type_%d.yaml", c);
+		else if (same > 1)
+			snprintf(file_name, sizeof file_name, "%s_%d.yaml", changes[c].name, c);
+		else
+			snprintf(file_name, sizeof file_name, "%s.yaml", changes[c].name);
+		ok = PathFormat(path, sizeof path, "%s/%s", dir, file_name) &&
+			 write_craft_type_file(path, c, mod->craft[c], models[mod->craft[c]], &changes[c], moved);
+		counts->craftTypes++;
+		counts->remaps += changes[c].remap;
+	}
+	free(changes);
+	free(writes);
+	return ok;
 }
 
 static void write_craft_record(FILE* f, const uint8_t* stock, const uint8_t* mod) {
@@ -591,7 +666,6 @@ static bool write_object_file(const char* path, const Change* change, const Xwau
 		counts->beams++;
 	}
 	counts->names += write_names(f, change, texts, moved);
-	write_craft_types(f, change, stock, mod, texts, moved, counts);
 	if (fclose(f) != 0) {
 		Report(path, "can't be written");
 		return false;
@@ -619,7 +693,9 @@ bool XwauObjects_Write(const char* mod_root, const char* stock_game, const char*
 	bool*   new_craft_rows[2] = { calloc(mod->rowCount[0] + 1, 1), calloc(mod->rowCount[1] + 1, 1) };
 	Change* changes           = calloc(OBJECT_TYPE_COUNT, sizeof *changes);
 	int*    record_users      = calloc(RECORD_COUNT, sizeof *record_users);
-	bool    ok                = new_craft_rows[0] && new_craft_rows[1] && changes && record_users;
+	/* The model that each object type loads in the mod, or NULL. */
+	const char** models = calloc(OBJECT_TYPE_COUNT, sizeof *models);
+	bool         ok     = new_craft_rows[0] && new_craft_rows[1] && changes && record_users && models;
 	for (int t = 0; ok && t < OBJECT_TYPE_COUNT; ++t) {
 		const XwauGameType s = XwauGameTables_Type(stock, t), m = XwauGameTables_Type(mod, t);
 		if (!XwauGameType_HasRow(&s) && XwauGameType_HasRow(&m) && m.row < mod->rowCount[m.list])
@@ -674,6 +750,7 @@ bool XwauObjects_Write(const char* mod_root, const char* stock_game, const char*
 			change.model      = stock_model;
 			kept_models++;
 		}
+		models[t]                 = change.model;
 		change.genus              = s.genus != m.genus;
 		change.family             = s.family != m.family;
 		change.flags              = s.flags != m.flags;
@@ -688,12 +765,8 @@ bool XwauObjects_Write(const char* mod_root, const char* stock_game, const char*
 		}
 		for (size_t i = 0; beam && i < sizeof g_beamTestTypes / sizeof g_beamTestTypes[0]; ++i)
 			change.beamAllowed |= g_beamTestTypes[i] == t;
-		bool remapped = false;
-		for (int c = 1; c < CRAFT_TYPE_COUNT; ++c)
-			remapped |= mod->craft[c] == t && stock->craft[c] != t;
 		if (!(change.writeModel || change.genus || change.family || change.flags ||
-			  change.recordIndexChanged || change.recordChanged || change.soundsLike || change.beamAllowed ||
-			  remapped))
+			  change.recordIndexChanged || change.recordChanged || change.soundsLike || change.beamAllowed))
 			continue;
 		if (valid_record(m.record) && !record_owned[m.record]) {
 			change.ownsRecord      = true;
@@ -717,10 +790,13 @@ bool XwauObjects_Write(const char* mod_root, const char* stock_game, const char*
 			Report(mod_root, "%s changes in %d craft records, and no key sets it; it isn't written",
 				   g_unkeyedFields[i].name, unkeyed[i]);
 
-	char dir[1100];
-	ok = ok && PathFormat(dir, sizeof dir, "%s/objects", output_dir) && MakeDirs(dir);
-	if (ok)
+	char dir[1100], craft_dir[1100];
+	ok = ok && PathFormat(dir, sizeof dir, "%s/object_types", output_dir) && MakeDirs(dir) &&
+		 PathFormat(craft_dir, sizeof craft_dir, "%s/craft_types", output_dir) && MakeDirs(craft_dir);
+	if (ok) {
 		remove_old_files(dir);
+		remove_old_files(craft_dir);
+	}
 	Texts texts;
 	load_texts(mod_root, stock_game, &texts);
 	Counts counts       = { 0 };
@@ -745,28 +821,29 @@ bool XwauObjects_Write(const char* mod_root, const char* stock_game, const char*
 			missing_glbs++;
 		}
 	}
+	ok = ok && write_craft_types(craft_dir, stock, mod, models, &texts, moved, &counts);
 	free_texts(&texts);
 	if (ok) {
 		Report(NULL,
-			   "objects: %d files: %d with a model, %d with model type changes, %d with craft record "
-			   "changes, %d "
-			   "with sounds_like, %d with beam_allowed, %d with names, %d craft types (%d remapped)",
+			   "object types: %d files: %d with a model, %d with model type changes, %d with craft record "
+			   "changes, %d with sounds_like, %d with beam_allowed, %d with names",
 			   counts.files, counts.models, counts.modelTypes, counts.records, counts.sounds, counts.beams,
-			   counts.names, counts.craftTypes, counts.remaps);
-		Report(NULL, "objects: %d new craft in reserved slots and %d in placeholders", new_slots,
+			   counts.names);
+		Report(NULL, "craft types: %d files, %d of them linked to another object type", counts.craftTypes,
+			   counts.remaps);
+		Report(NULL, "object types: %d new craft in reserved slots and %d in placeholders", new_slots,
 			   new_placeholders);
 		if (empty_slots || empty_placeholders)
 			Report(NULL,
-				   "objects: %d reserved slots and %d placeholders that the mod gives an empty row are left "
-				   "out, "
-				   "with their craft types: they load nothing in the mod",
+				   "object types: %d reserved slots and %d placeholders that the mod gives an empty row are "
+				   "left out, with their craft types: they load nothing in the mod",
 				   empty_slots, empty_placeholders);
 		Report(NULL,
-			   "objects: %d files for object types of Equipment0.LST; %d stock models kept, %d types that "
-			   "load nothing in the mod",
+			   "object types: %d files for object types of Equipment0.LST; %d stock models kept, %d types "
+			   "that load nothing in the mod",
 			   equipment, kept_models, empty);
 		if (missing_glbs)
-			Report(NULL, "objects: %d files name a model that has no GLB in %s/models", missing_glbs,
+			Report(NULL, "object types: %d files name a model that has no GLB in %s/models", missing_glbs,
 				   output_dir);
 		if (mod->craftPastEnd != stock->craftPastEnd)
 			Report(
@@ -779,6 +856,7 @@ bool XwauObjects_Write(const char* mod_root, const char* stock_game, const char*
 	free(new_craft_rows[1]);
 	free(changes);
 	free(record_users);
+	free(models);
 	XwauGameTables_Free(stock);
 	XwauGameTables_Free(mod);
 	return ok;

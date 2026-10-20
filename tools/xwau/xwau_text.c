@@ -244,7 +244,7 @@ static bool write_file_texts(FILE* f, const char* name, const char* mod_path, co
 		Report(mod_path, "has its lines in a different order from the stock file. The game still reads "
 						 "the lines in the stock order, and each line gets the mod's text for its ID");
 	if (in_objects)
-		Report(NULL, "%s: %d texts are in the object files instead", name, in_objects);
+		Report(NULL, "%s: %d texts are in the object type and craft type files instead", name, in_objects);
 	if (skipped)
 		Report(NULL, "%s: %d texts are different from the stock file, and %d lines are skipped", name,
 			   changed, skipped);

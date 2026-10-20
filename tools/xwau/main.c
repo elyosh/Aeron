@@ -14,10 +14,11 @@
  * FILE, and the sky and overlay folders that environment_bake converts into
  * the --skybox-folders file (xwau_skyboxes.h).
  *
- * `craft` writes the settings of each craft into <output_dir>/craft and the
+ * `craft` writes the settings of each model into <output_dir>/models and the
  * hull and map icon lists into <output_dir>/hud.yaml (xwau_craft.h). With
  * --stock-game, the stock game's folder, it also writes into
- * <output_dir>/objects what the installation changes about the stock craft
+ * <output_dir>/object_types and <output_dir>/craft_types what the
+ * installation changes about the stock craft and the craft it adds
  * (xwau_objects.h). With --strings, it writes into FILE the other texts that
  * the installation changes in the game's text files (xwau_text.h).
  */

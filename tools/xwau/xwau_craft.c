@@ -16,7 +16,7 @@ uint32_t XwauCraft_HudColor(float r, float g, float b) {
 }
 
 void XwauCraft_ReadReticle(const char* reticle_txt, const char* ini, XwauCraftHud* hud) {
-	XwauLines lines = { 0 };
+	XwauLines   lines  = { 0 };
 	const char* source = reticle_txt;
 	if (reticle_txt)
 		XwauLines_Read(reticle_txt, "", XWAU_RULES_CPP, &lines);
@@ -28,7 +28,7 @@ void XwauCraft_ReadReticle(const char* reticle_txt, const char* ini, XwauCraftHu
 	}
 	for (size_t i = 0; i < sizeof g_reticleSlots / sizeof g_reticleSlots[0]; ++i) {
 		const int slot = g_reticleSlots[i];
-		char key[32], value[64];
+		char      key[32], value[64];
 		long long number;
 		snprintf(key, sizeof key, "Reticle_%d", slot);
 		XwauLines_Value(&lines, key, XWAU_RULES_CPP, value, sizeof value);
@@ -43,7 +43,7 @@ void XwauCraft_ReadReticle(const char* reticle_txt, const char* ini, XwauCraftHu
 		if (number == -1)
 			continue;
 		hud->has_reticle[slot] = true;
-		hud->reticle[slot] = (int)number;
+		hud->reticle[slot]     = (int)number;
 	}
 	XwauLines_Free(&lines);
 }
@@ -52,7 +52,7 @@ void XwauCraft_ReadReticle(const char* reticle_txt, const char* ini, XwauCraftHu
  * the '='. */
 static bool read_hud_color(const char* ini, const char* line, const char* key, uint32_t* out) {
 	const char* equals = strchr(line, '=');
-	float rgb[3];
+	float       rgb[3];
 	if (!equals || sscanf(equals + 1, "%f, %f, %f", &rgb[0], &rgb[1], &rgb[2]) < 3) {
 		Report(ini, "%s needs three numbers; it is ignored", key);
 		return false;
@@ -84,10 +84,10 @@ void XwauCraft_ReadHudColors(const char* ini, XwauCraftHud* hud) {
 		uint32_t color;
 		if (strcasecmp(param, "HUDBorderColor") == 0 && read_hud_color(ini, line, param, &color)) {
 			hud->has_border = true;
-			hud->border = color;
+			hud->border     = color;
 		} else if (strcasecmp(param, "HUDInnerColor") == 0 && read_hud_color(ini, line, param, &color)) {
 			hud->has_inner = true;
-			hud->inner = color;
+			hud->inner     = color;
 		}
 	}
 	fclose(f);
@@ -95,14 +95,14 @@ void XwauCraft_ReadHudColors(const char* ini, XwauCraftHud* hud) {
 
 bool XwauCraft_ReadIconList(const char* path, uint16_t** values, size_t* count) {
 	XwauLines lines = { 0 };
-	*values = NULL;
-	*count = 0;
+	*values         = NULL;
+	*count          = 0;
 	if (!XwauLines_Read(path, "", XWAU_RULES_CPP, &lines)) {
 		Report(path, "out of memory");
 		return false;
 	}
 	uint16_t* list = (uint16_t*)calloc(lines.count ? lines.count : 1, sizeof *list);
-	bool ok = list != NULL;
+	bool      ok   = list != NULL;
 	for (size_t i = 0; ok && i < lines.count; ++i) {
 		long long number;
 		/* The hook reads each line with std::stoi, base 10. */
@@ -114,7 +114,7 @@ bool XwauCraft_ReadIconList(const char* path, uint16_t** values, size_t* count) 
 	}
 	if (ok) {
 		*values = list;
-		*count = lines.count;
+		*count  = lines.count;
 	} else {
 		free(list);
 	}
@@ -170,25 +170,26 @@ static void write_list(FILE* f, const char* key, const uint16_t* values, size_t 
 }
 
 static bool write_icon_lists(const char* xwau_root, const char* output_dir) {
-	char hull_path[1024], map_path[1024], path[1024];
+	char       hull_path[1024], map_path[1024], path[1024];
 	const bool has_hull = Xwau_FindFile(xwau_root, "HullIconList.txt", hull_path, sizeof hull_path);
-	const bool has_map = Xwau_FindFile(xwau_root, "MapIconList.txt", map_path, sizeof map_path);
+	const bool has_map  = Xwau_FindFile(xwau_root, "MapIconList.txt", map_path, sizeof map_path);
 	if (!has_hull && !has_map)
 		return true;
-	uint16_t* hull = NULL;
-	uint16_t* map = NULL;
-	size_t hull_count = 0, map_count = 0;
-	bool ok = (!has_hull || XwauCraft_ReadIconList(hull_path, &hull, &hull_count)) &&
-			  (!has_map || XwauCraft_ReadIconList(map_path, &map, &map_count)) &&
-			  PathFormat(path, sizeof path, "%s/hud.yaml", output_dir) && MakeDirs(output_dir);
-	FILE* f = ok ? fopen(path, "wb") : NULL;
+	uint16_t* hull       = NULL;
+	uint16_t* map        = NULL;
+	size_t    hull_count = 0, map_count = 0;
+	bool      ok = (!has_hull || XwauCraft_ReadIconList(hull_path, &hull, &hull_count)) &&
+				   (!has_map || XwauCraft_ReadIconList(map_path, &map, &map_count)) &&
+				   PathFormat(path, sizeof path, "%s/hud.yaml", output_dir) && MakeDirs(output_dir);
+	FILE*     f  = ok ? fopen(path, "wb") : NULL;
 	if (ok && !f) {
 		Report(path, "can't be written");
 		ok = false;
 	}
 	if (f) {
-		fprintf(f, "# Written by xwau_import craft from %s%s%s.\n"
-				   "# Each list gives the image id for each object type.\nversion: 1\n",
+		fprintf(f,
+				"# Written by xwau_import craft from %s%s%s.\n"
+				"# Each list gives the image id for each object type.\nversion: 1\n",
 				has_hull ? "HullIconList.txt" : "", has_hull && has_map ? " and " : "",
 				has_map ? "MapIconList.txt" : "");
 		if (has_hull)
@@ -230,20 +231,20 @@ bool XwauCraft_Write(const char* xwau_root, const char* output_dir) {
 		Report(xwau_root, "has no FlightModels folder");
 		return false;
 	}
-	if (!PathFormat(craft_dir, sizeof craft_dir, "%s/craft", output_dir))
+	if (!PathFormat(craft_dir, sizeof craft_dir, "%s/models", output_dir))
 		return false;
-	size_t count = 0;
-	char** names = ListDir(models_dir, true, &count);
-	bool ok = true;
-	int written = 0, reticles = 0, colors = 0;
+	size_t count   = 0;
+	char** names   = ListDir(models_dir, true, &count);
+	bool   ok      = true;
+	int    written = 0, reticles = 0, colors = 0;
 	for (size_t i = 0; i < count; ++i) {
-		char model[256], ini[1100], txt_name[300], txt[1100], key[256], path[1100], sources[700];
-		const size_t length = strlen(names[i]);
-		bool has_ini = false;
+		char         model[256], ini[1100], txt_name[300], txt[1100], key[256], path[1100], sources[700];
+		const size_t length  = strlen(names[i]);
+		bool         has_ini = false;
 		if (EndsWithNoCase(names[i], ".ini") && length > 4 && length - 4 < sizeof model) {
 			memcpy(model, names[i], length - 4);
 			model[length - 4] = '\0';
-			has_ini = true;
+			has_ini           = true;
 		} else if (!reticle_file_without_ini(names, count, names[i], model, sizeof model)) {
 			continue;
 		}
@@ -276,6 +277,7 @@ bool XwauCraft_Write(const char* xwau_root, const char* output_dir) {
 		colors += has_colors(&hud);
 	}
 	FreeList(names, count);
-	Report(NULL, "craft: %d files, %d with a reticle, %d with HUD colours", written, reticles, colors);
+	Report(NULL, "model settings: %d files, %d with a reticle, %d with HUD colours", written, reticles,
+		   colors);
 	return write_icon_lists(xwau_root, output_dir) && ok;
 }

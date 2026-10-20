@@ -1,10 +1,11 @@
 /*
  * Tests the hook file rules that the XWAU readers reproduce (xwau_config.h),
  * the skin selection (xwau_skins.h), the skybox conversion (xwau_skyboxes.h),
- * the craft settings (xwau_craft.h), the text overrides (xwau_text.h) and the
- * object files (xwau_objects.h). The inputs are fixed texts and folders written
- * to a scratch folder. The test is built with the tools as xwau_rules_test. It
- * prints each check and exits with a non-zero status when a check fails.
+ * the model settings (xwau_craft.h), the text overrides (xwau_text.h) and the
+ * object type and craft type files (xwau_objects.h). The inputs are fixed
+ * texts and folders written to a scratch folder. The test is built with the
+ * tools as xwau_rules_test. It prints each check and exits with a non-zero
+ * status when a check fails.
  */
 
 #include <math.h>
@@ -312,12 +313,13 @@ static bool definition_has(const char* manifest, const char* name, const char* t
 
 /* The overlay lines of a definition whose overlay has XWAU angles `xyz`. */
 static void overlay_lines(const char* folder, const float xyz[3], char* out, size_t size) {
-	int written = snprintf(out, size, "    overlay:\n      cube: \"flight/environments/xwau/%s/overlay.ktx2\"\n", folder);
+	int written = snprintf(
+		out, size, "    overlay:\n      cube: \"flight/environments/xwau/%s/overlay.ktx2\"\n", folder);
 	if (xyz[0] != 0.0f || xyz[1] != 0.0f || xyz[2] != 0.0f) {
 		float ypr[3];
 		XwauSkyboxes_Rotation(xyz, true, ypr);
-		snprintf(out + written, size - (size_t)written, "      rotation_degrees: [%g, %g, %g]\n", (double)ypr[0],
-				 (double)ypr[1], (double)ypr[2]);
+		snprintf(out + written, size - (size_t)written, "      rotation_degrees: [%g, %g, %g]\n",
+				 (double)ypr[0], (double)ypr[1], (double)ypr[2]);
 	}
 }
 
@@ -350,7 +352,8 @@ static void test_skyboxes(const char* scratch) {
 				"Region1 = Effects\\CubeMaps\\Beta\nRegion1Overlay = Effects\\CubeMaps\\Rocks\n"
 				"Region1RotationZ = 20\nRegion1OverlayRotationY = 30\nRegion2 = Effects\\CubeMaps\\Beta\n"
 				"Region3Overlay = Effects\\CubeMaps\\Rocks\n" },
-		{ "m5", "[SkyBoxes]\nRegion0 = Effects\\CubeMaps\\Gamma\nRegion0Overlay = Effects\\CubeMaps\\Rocks\n" },
+		{ "m5",
+		  "[SkyBoxes]\nRegion0 = Effects\\CubeMaps\\Gamma\nRegion0Overlay = Effects\\CubeMaps\\Rocks\n" },
 	};
 	for (size_t m = 0; m < sizeof kMissions / sizeof kMissions[0]; ++m) {
 		snprintf(path, sizeof path, "%s/Missions/%s.ini", game, kMissions[m][0]);
@@ -372,7 +375,7 @@ static void test_skyboxes(const char* scratch) {
 	const char* m5   = text ? strstr(text, "\"missions/m5.tie\"") : NULL;
 	check(m1 && m2 && m3 && m4 && m5, "skyboxes: one entry per mission");
 	if (m4 && m5) {
-		char              lines[256];
+		char               lines[256];
 		static const float kAll[3] = { 10, 0, 0 }, kRegion1[3] = { 0, 30, 20 }, kNone[3] = { 0, 0, 0 };
 		overlay_lines("delta_overlay", kAll, lines, sizeof lines);
 		check(definition_has(text, "xwau.delta.delta_overlay", lines) &&
@@ -411,8 +414,7 @@ static void test_skyboxes(const char* scratch) {
 	}
 	check(list && strstr(list, "/Effects/CubeMaps/Alpha\txwau.alpha\tflight/environments/xwau/alpha\n") &&
 			  strncmp(list, "sky\t", 4) == 0 && strstr(list, "\nsky\t") && strstr(list, "\txwau.beta\t") &&
-			  !strstr(list, "gamma") &&
-			  strstr(list, "\noverlay\t") &&
+			  !strstr(list, "gamma") && strstr(list, "\noverlay\t") &&
 			  strstr(list, "/Effects/CubeMaps/Rocks\t-\tflight/environments/xwau/rocks\n") &&
 			  !strstr(list, "\txwau.rocks"),
 		  "skyboxes: the folder list names the sky and overlay folders that load");
@@ -423,10 +425,11 @@ static void test_skyboxes(const char* scratch) {
 /* ---- Craft settings ----------------------------------------------------------- */
 
 static void test_craft(const char* scratch) {
-	check(XwauCraft_HudColor(0.1f, 0.1f, 0.5f) == 0xff19197fu && XwauCraft_HudColor(1.0f, 0.0f, 0.36f) == 0xffff005bu,
+	check(XwauCraft_HudColor(0.1f, 0.1f, 0.5f) == 0xff19197fu &&
+			  XwauCraft_HudColor(1.0f, 0.0f, 0.36f) == 0xffff005bu,
 		  "HUD colours: 0.1 becomes 0x19, and the products are truncated");
 
-	char path[1024], txt[1024];
+	char         path[1024], txt[1024];
 	XwauCraftHud hud;
 	snprintf(path, sizeof path, "%s/colors.ini", scratch);
 	write_file(path, "[HUDColor]\n;HUDInnerColor = 0.1, 0.1, 0.1\nHUDBorderColor = 0.2, 0.2\n"
@@ -456,8 +459,8 @@ static void test_craft(const char* scratch) {
 	check(hud.has_reticle[5] && hud.reticle[5] == 7 && !hud.has_reticle[6],
 		  "reticle: <model>Reticle.txt is read instead of the [Reticle] section");
 
-	uint16_t* list = NULL;
-	size_t count = 0;
+	uint16_t* list  = NULL;
+	size_t    count = 0;
 	snprintf(path, sizeof path, "%s/IconList.txt", scratch);
 	write_file(path, "0\n; comment\n\n100\t\t;X-wing\n  200\n");
 	check(XwauCraft_ReadIconList(path, &list, &count) && count == 3 && list[1] == 100 && list[2] == 200,
@@ -477,12 +480,12 @@ static void test_craft(const char* scratch) {
 	write_file(path, "0\n100\n");
 	check(XwauCraft_Write(root, out), "craft: the files are written");
 	size_t size = 0;
-	snprintf(path, sizeof path, "%s/craft/awing.yaml", out);
+	snprintf(path, sizeof path, "%s/models/awing.yaml", out);
 	char* text = ReadWholeFile(path, &size);
 	check(text && strstr(text, "reticle: {5: 135}") && strstr(text, "colors: {inner: 0xff19197f}"),
 		  "craft: awing.yaml has the reticle and the inner colour");
 	free(text);
-	snprintf(path, sizeof path, "%s/craft/empty.yaml", out);
+	snprintf(path, sizeof path, "%s/models/empty.yaml", out);
 	check(!IsFile(path), "craft: no file for a model without settings");
 	snprintf(path, sizeof path, "%s/hud.yaml", out);
 	text = ReadWholeFile(path, &size);
@@ -503,8 +506,9 @@ static void test_text(const char* scratch) {
 	snprintf(path, sizeof path, "%s/STRINGS.TXT", stock);
 	write_file(path, "// comment\r\n!MSG_ARMED!\\03Lasers armed\r\n!KSPEC_A!m:A-wing\r\n!SAME!Same\r\n");
 	snprintf(path, sizeof path, "%s/Strings.txt", mod);
-	write_file(path, "// other comment\r\n!msg_armed!\\03Primary cannons armed\r\n!KSPEC_A!m:Pilot's \xe9 A\r\n"
-					 "!SAME!Same\r\n!EXTRA!Extra\r\n");
+	write_file(path,
+			   "// other comment\r\n!msg_armed!\\03Primary cannons armed\r\n!KSPEC_A!m:Pilot's \xe9 A\r\n"
+			   "!SAME!Same\r\n!EXTRA!Extra\r\n");
 	snprintf(path, sizeof path, "%s/SHIPLIST.TXT", stock);
 	write_file(path, "!SPECIES_1!Xwing,Fighter,\t\t6 ,9 \r\n!SPECIES_2!Ywing\r\n");
 	snprintf(path, sizeof path, "%s/SHIPLIST.TXT", mod);
@@ -518,7 +522,7 @@ static void test_text(const char* scratch) {
 
 	check(XwauText_Write(mod, stock, out, NULL), "text: strings.yaml is written without FRONTTXT.TXT");
 	size_t size = 0;
-	char* text = ReadWholeFile(out, &size);
+	char*  text = ReadWholeFile(out, &size);
 	check(text && strstr(text, "  msg_armed: '\\03Primary cannons armed'\n"),
 		  "text: IDs match in upper or lower case, and backslashes stay as they are");
 	check(text && strstr(text, "  KSPEC_A: 'm:Pilot''s \xc3\xa9 A'\n"),
@@ -543,7 +547,7 @@ static void test_text(const char* scratch) {
    that the object files read, and nothing else. */
 typedef struct FakeExe {
 	unsigned char* data;
-	size_t size;
+	size_t         size;
 } FakeExe;
 
 static const struct {
@@ -558,7 +562,8 @@ static const struct {
 static unsigned char* fake_at(FakeExe* exe, unsigned address) {
 	size_t raw = 0x400;
 	for (size_t i = 0; i < 4; ++i) {
-		if (address >= g_fakeSections[i].address && address < g_fakeSections[i].address + g_fakeSections[i].size)
+		if (address >= g_fakeSections[i].address &&
+			address < g_fakeSections[i].address + g_fakeSections[i].size)
 			return exe->data + raw + (address - g_fakeSections[i].address);
 		raw += g_fakeSections[i].size;
 	}
@@ -579,10 +584,10 @@ static void fake_exe_init(FakeExe* exe) {
 	exe->size = 0x400;
 	for (size_t i = 0; i < 4; ++i)
 		exe->size += g_fakeSections[i].size;
-	exe->data = calloc(1, exe->size);
+	exe->data        = calloc(1, exe->size);
 	unsigned char* d = exe->data;
-	d[0] = 'M';
-	d[1] = 'Z';
+	d[0]             = 'M';
+	d[1]             = 'Z';
 	put32(d + 0x3C, 0x40);
 	memcpy(d + 0x40, "PE\0\0", 4);
 	put16(d + 0x40 + 6, 4);
@@ -599,14 +604,14 @@ static void fake_exe_init(FakeExe* exe) {
 	}
 	/* The sound switches: `jmp [table + case * 4]`, every object type on case 9
 	   and the TIE Fighter (5) on case 4. */
-	static const unsigned cases[4] = { 0x43D458, 0x43D4F8, 0x43DCC4, 0x459678 };
-	static const unsigned jumps[4] = { 0x43D117, 0x43D359, 0x43DA0C, 0x458E81 };
+	static const unsigned cases[4]       = { 0x43D458, 0x43D4F8, 0x43DCC4, 0x459678 };
+	static const unsigned jumps[4]       = { 0x43D117, 0x43D359, 0x43DA0C, 0x458E81 };
 	static const unsigned jump_tables[4] = { 0x43D800, 0x43D840, 0x43D880, 0x459800 };
 	for (int s = 0; s < 4; ++s) {
 		unsigned char* jump = fake_at(exe, jumps[s]);
-		jump[0] = 0xFF;
-		jump[1] = 0x24;
-		jump[2] = 0x85;
+		jump[0]             = 0xFF;
+		jump[1]             = 0x24;
+		jump[2]             = 0x85;
 		put32(jump + 3, jump_tables[s]);
 		memset(fake_at(exe, cases[s]), 9, 65);
 		fake_at(exe, cases[s])[5 - 1] = 4;
@@ -622,7 +627,7 @@ static void fake_exe_init(FakeExe* exe) {
 /* Gives object type `t` row `row` of Spacecraft0.LST and craft record `record`. */
 static void fake_type(FakeExe* exe, int t, int row, int record) {
 	unsigned char* type = fake_at(exe, 0x5FB240 + 24 * t);
-	type[0] = 0x02;
+	type[0]             = 0x02;
 	put16(type + 18, (unsigned)record);
 	put16(type + 20, 0);
 	put16(type + 22, (unsigned)row);
@@ -656,7 +661,8 @@ static void write_strings(const char* root, const char* long_1) {
 			else if (i == 1 && table == 0)
 				snprintf(line, sizeof line, "!KSPEC%d!%s", i, long_1);
 			else
-				snprintf(line, sizeof line, "!KSPEC%d%s!%sCraft %d", i, suffixes[table], table ? "" : "m:", i);
+				snprintf(line, sizeof line, "!KSPEC%d%s!%sCraft %d", i, suffixes[table],
+						 table ? "" : "m:", i);
 			fprintf(f, "%s\r\n", line);
 		}
 	fclose(f);
@@ -677,8 +683,10 @@ static void test_objects(const char* scratch) {
 								  "FlightModels\\RebelTurboShort.opt\r\n");
 	}
 	snprintf(path, sizeof path, "%s/FlightModels/Spacecraft0.LST", stock);
-	write_file(path, "FlightModels\\XWING.opt\r\n\r\nFlightModels\\Booster.opt\r\nFlightModels\\CorvetteExplode.opt\r\n"
-					 "FlightModels\\Bwing.opt\r\n");
+	write_file(
+		path,
+		"FlightModels\\XWING.opt\r\n\r\nFlightModels\\Booster.opt\r\nFlightModels\\CorvetteExplode.opt\r\n"
+		"FlightModels\\Bwing.opt\r\n");
 	snprintf(path, sizeof path, "%s/FlightModels/Spacecraft0.LST", mod);
 	write_file(path, "FlightModels\\Xwing.opt\r\nFlightModels\\TieAdvancedx1.opt\r\n"
 					 "FlightModels\\CalamariHomeOne.opt\r\nFlightModels\\Bwing.opt\r\n");
@@ -700,8 +708,8 @@ static void test_objects(const char* scratch) {
 	FakeExe* m = &exes[1];
 	fake_equipment(m, 288, 2); /* both move to a new row */
 	fake_equipment(m, 297, 2);
-	fake_type(m, 33, 2, 32);                         /* a new craft in a reserved slot, on the renamed row */
-	fake_type(m, 34, 4, 33);                         /* a reserved slot on a row that the list doesn't have */
+	fake_type(m, 33, 2, 32); /* a new craft in a reserved slot, on the renamed row */
+	fake_type(m, 34, 4, 33); /* a reserved slot on a row that the list doesn't have */
 	put16(fake_at(m, 0x5B0F70 + 2 * 200), 33);
 	put16(fake_at(m, 0x5B0F70 + 2 * 201), 34);
 	put32(fake_at(m, 0x5BB480 + 987 * 0 + 21), 999); /* the X-wing's hull */
@@ -720,15 +728,18 @@ static void test_objects(const char* scratch) {
 	write_strings(stock, "m:Craft 1");
 	write_strings(mod, "m:TIE Advanced x1");
 	snprintf(path, sizeof path, "%s/SHIPLIST.TXT", stock);
-	write_file(path, "!SPECIES_7!*Booster,Fighter,Nonflyable,Unknown,NoSkirmish,\t\t1,2,3,4,5,6,7,8\r\n"
-					 "!SPECIES_9!B-wing,Fighter,Flyable,Known,Skirmish,\t\t1,2,3,4,5,6,7,8\r\n"
-					 "!SPECIES_200!*DontUseMe,Planet/asteroid,Nonflyable,Known,NoSkirmish,\t1,2,3,4,5,6,7,8\r\n"
-					 "!SPECIES_201!*DontUseMe,Planet/asteroid,Nonflyable,Known,NoSkirmish,\t1,2,3,4,5,6,7,8\r\n");
+	write_file(path,
+			   "!SPECIES_7!*Booster,Fighter,Nonflyable,Unknown,NoSkirmish,\t\t1,2,3,4,5,6,7,8\r\n"
+			   "!SPECIES_9!B-wing,Fighter,Flyable,Known,Skirmish,\t\t1,2,3,4,5,6,7,8\r\n"
+			   "!SPECIES_200!*DontUseMe,Planet/asteroid,Nonflyable,Known,NoSkirmish,\t1,2,3,4,5,6,7,8\r\n"
+			   "!SPECIES_201!*DontUseMe,Planet/asteroid,Nonflyable,Known,NoSkirmish,\t1,2,3,4,5,6,7,8\r\n");
 	snprintf(path, sizeof path, "%s/SHIPLIST.TXT", mod);
-	write_file(path, "!SPECIES_7!TIE Advanced x1,Fighter,GunnerFlyable,Known,Skirmish,\t\t1,2,3,4, 651, 246,681,279\r\n"
-					 "!SPECIES_9!B-wing A,Fighter,Flyable,Known,Skirmish,\t\t1,2,3,4,5,6,7,8\r\n"
-					 "!SPECIES_200!Home One,Starship,Nonflyable,Known,Skirmish,\t1,2,3,4,5,6,7,8\r\n"
-					 "!SPECIES_201!Nothing,Starship,Nonflyable,Known,Skirmish,\t1,2,3,4,5,6,7,8\r\n");
+	write_file(
+		path,
+		"!SPECIES_7!TIE Advanced x1,Fighter,GunnerFlyable,Known,Skirmish,\t\t1,2,3,4, 651, 246,681,279\r\n"
+		"!SPECIES_9!B-wing A,Fighter,Flyable,Known,Skirmish,\t\t1,2,3,4,5,6,7,8\r\n"
+		"!SPECIES_200!Home One,Starship,Nonflyable,Known,Skirmish,\t1,2,3,4,5,6,7,8\r\n"
+		"!SPECIES_201!Nothing,Starship,Nonflyable,Known,Skirmish,\t1,2,3,4,5,6,7,8\r\n");
 	snprintf(path, sizeof path, "%s/SPECDESC.TXT", stock);
 	write_file(path, "!SPEC_7_NAME!Booster\r\n!SPEC_7_CREW!0\r\n");
 	snprintf(path, sizeof path, "%s/SPECDESC.TXT", mod);
@@ -737,61 +748,88 @@ static void test_objects(const char* scratch) {
 	write_file(path, "!STR_A!A\r\n");
 
 	XwauTextIds moved = { 0 };
-	char strings[1200];
+	char        strings[1200];
 	snprintf(strings, sizeof strings, "%s/strings.yaml", out);
 	check(XwauObjects_Write(mod, stock, out, &moved) && XwauText_Write(mod, stock, strings, &moved),
-		  "objects: the object files and strings.yaml are written");
+		  "objects: the object type files, the craft type files and strings.yaml are written");
 
 	size_t size = 0;
-	snprintf(path, sizeof path, "%s/objects/tieadvancedx1.yaml", out);
+	snprintf(path, sizeof path, "%s/object_types/tieadvancedx1.yaml", out);
 	char* text = ReadWholeFile(path, &size);
 	check(text && strstr(text, "object_type: 2\nmodel: tieadvancedx1\n"),
 		  "objects: a row that the mod renames gives `model`");
 	check(text && strstr(text, "    - {type: 282, count: 2, kind: 0, range: 0, cooldown: 0}\n") &&
 			  strstr(text, "  cockpit_name: 'TieAdvancedX1'\n") && strstr(text, "sounds_like: 5\n"),
 		  "objects: the laser groups, the cockpit name and the engine sound case");
-	check(text && strstr(text, "names: {long: 'TIE Advanced x1', gender: m}\n"),
-		  "objects: the species name of the craft record goes into `names`");
-	check(text && strstr(text, "  7:\n    ship_list: {name: 'TIE Advanced x1', category: 'Fighter', flyable: gunner, "
-							   "known: true, skirmish: true, hidden: false, icon: [651, 246, 681, 279]}\n") &&
-			  strstr(text, "    tech_room: {name: 'TIE Advanced x1'}\n"),
-		  "objects: the ship list line and the tech room text of the craft type");
+	check(text && strstr(text, "names: {long: 'TIE Advanced x1', gender: m}\n") && !strstr(text, "ship_list"),
+		  "objects: the species name of the craft record goes into `names`, and the craft type's texts don't "
+		  "go into the object type file");
 	free(text);
-	snprintf(path, sizeof path, "%s/objects/xwing.yaml", out);
+	snprintf(path, sizeof path, "%s/craft_types/tie_advanced_x1.yaml", out);
 	text = ReadWholeFile(path, &size);
-	check(text && !strstr(text, "model:") && strstr(text, "  hull: 999\n") && strstr(text, "beam_allowed: true\n"),
+	check(text && strstr(text, "craft_type: 7\nobject_type: 2  # tieadvancedx1\n") &&
+			  strstr(text, "ship_list: {name: 'TIE Advanced x1', category: 'Fighter', flyable: gunner, "
+						   "known: true, skirmish: true, hidden: false, icon: [651, 246, 681, 279]}\n") &&
+			  strstr(text, "tech_room: {name: 'TIE Advanced x1'}\n"),
+		  "objects: the craft type file has the object type with its model, the ship list line and the tech "
+		  "room text, and is named after the ship list name");
+	free(text);
+	snprintf(path, sizeof path, "%s/craft_types/b_wing_a.yaml", out);
+	text = ReadWholeFile(path, &size);
+	check(
+		text &&
+			strstr(text, "craft_type: 9\nobject_type: 70  # corvetteexplode\nship_list: {name: 'B-wing A'"),
+		"objects: a craft type gets a file for a changed ship list line even when its object type has none");
+	free(text);
+	snprintf(path, sizeof path, "%s/object_types/xwing.yaml", out);
+	text = ReadWholeFile(path, &size);
+	check(text && !strstr(text, "model:") && strstr(text, "  hull: 999\n") &&
+			  strstr(text, "beam_allowed: true\n"),
 		  "objects: a change of case isn't a new model; the hull and the beam");
 	free(text);
-	snprintf(path, sizeof path, "%s/objects/bwing.yaml", out);
+	snprintf(path, sizeof path, "%s/object_types/bwing.yaml", out);
 	text = ReadWholeFile(path, &size);
 	check(text && strstr(text, "model_type: {flags: 0x843}\n") && !strstr(text, "craft_record"),
 		  "objects: the model type flags");
 	free(text);
-	snprintf(path, sizeof path, "%s/objects/corvetteexplode.yaml", out);
-	check(!IsFile(path), "objects: a row renamed for a new craft keeps the stock model, and the type gets no file");
-	snprintf(path, sizeof path, "%s/objects/calamarihomeone.yaml", out);
+	snprintf(path, sizeof path, "%s/object_types/corvetteexplode.yaml", out);
+	check(!IsFile(path),
+		  "objects: a row renamed for a new craft keeps the stock model, and the type gets no file");
+	snprintf(path, sizeof path, "%s/object_types/calamarihomeone.yaml", out);
 	text = ReadWholeFile(path, &size);
-	check(text && strstr(text, "object_type: 33\nmodel: calamarihomeone\n") &&
-			  strstr(text, "  200:\n    ship_list: {name: 'Home One', category: 'Starship', flyable: false"),
-		  "objects: a reserved slot that the mod fills gets its model, its craft type and its ship list line");
+	check(text && strstr(text, "object_type: 33\nmodel: calamarihomeone\n"),
+		  "objects: a reserved slot that the mod fills gets its model");
 	free(text);
-	snprintf(path, sizeof path, "%s/objects/rebelturboshort_297.yaml", out);
+	snprintf(path, sizeof path, "%s/craft_types/home_one.yaml", out);
 	text = ReadWholeFile(path, &size);
-	check(text && strstr(text, "object_type: 297\nmodel: rebelturboshort\nlist: equipment\n"),
-		  "objects: an equipment type that the mod moves to another model gets `model` and `list: equipment`, "
-		  "and two types with one model get a file each");
+	check(text && strstr(text, "craft_type: 200\nobject_type: 33  # calamarihomeone\n") &&
+			  strstr(text, "ship_list: {name: 'Home One', category: 'Starship', flyable: false"),
+		  "objects: the craft type of a new craft gets a file with its object type and its ship list line");
 	free(text);
-	snprintf(path, sizeof path, "%s/objects", out);
+	snprintf(path, sizeof path, "%s/object_types/rebelturboshort_297.yaml", out);
+	text = ReadWholeFile(path, &size);
+	check(
+		text && strstr(text, "object_type: 297\nmodel: rebelturboshort\nlist: equipment\n"),
+		"objects: an equipment type that the mod moves to another model gets `model` and `list: equipment`, "
+		"and two types with one model get a file each");
+	free(text);
+	snprintf(path, sizeof path, "%s/object_types", out);
 	size_t count = 0;
 	char** names = ListDir(path, true, &count);
-	check(count == 6, "objects: a reserved slot that the mod gives an empty row gets no file, and neither does "
-					  "an equipment type that the mod doesn't change");
+	check(count == 6,
+		  "objects: a reserved slot that the mod gives an empty row gets no file, and neither does "
+		  "an equipment type that the mod doesn't change");
+	FreeList(names, count);
+	snprintf(path, sizeof path, "%s/craft_types", out);
+	names = ListDir(path, true, &count);
+	check(count == 3, "objects: a craft type whose object type loads nothing gets no file");
 	FreeList(names, count);
 	text = ReadWholeFile(strings, &size);
-	check(text && strstr(text, "SPECIES_9:") && !strstr(text, "SPECIES_7") && !strstr(text, "SPEC_7_") &&
-			  !strstr(text, "KSPEC1:") && !strstr(text, "SPECIES_200") && !strstr(text, "SPECIES_201"),
-		  "objects: the texts in the object files aren't in strings.yaml, and the others are, except the texts "
-		  "of a craft type without a craft");
+	check(
+		text && !strstr(text, "SPECIES_9") && !strstr(text, "SPECIES_7") && !strstr(text, "SPEC_7_") &&
+			!strstr(text, "KSPEC1:") && !strstr(text, "SPECIES_200") && !strstr(text, "SPECIES_201"),
+		"objects: the texts in the object type and craft type files aren't in strings.yaml, and neither are "
+		"the texts of a craft type without a craft");
 	free(text);
 	XwauTextIds_Free(&moved);
 }

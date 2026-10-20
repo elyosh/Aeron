@@ -2,13 +2,14 @@
 #define AERON_XWAU_CRAFT_H
 
 /*
- * Writes the craft settings of an XWAU installation (xwau_import craft):
- *   <output_dir>/craft/<model key>.yaml  the settings of one craft
- *   <output_dir>/hud.yaml                the hull and map icon lists
+ * Writes the model settings of an XWAU installation (xwau_import craft):
+ *   <output_dir>/models/<model key>.yaml  the settings of one model, next to
+ *                                         its GLB
+ *   <output_dir>/hud.yaml                 the hull and map icon lists
  *
  * A model's key is its INI file's name in lower case, without the extension:
- * FlightModels/Awing.ini gives craft/awing.yaml. A craft file is written only
- * for a model that has a setting. Today the settings are the HUD's:
+ * FlightModels/Awing.ini gives models/awing.yaml. A settings file is written
+ * only for a model that has a setting. Today the settings are the HUD's:
  *
  *   hud:
  *     reticle: {5: 135, 6: 136, ...}                 # image position for each slot
@@ -40,10 +41,10 @@
 #define XWAU_CRAFT_RETICLE_SLOTS 23
 
 typedef struct XwauCraftHud {
-	bool has_reticle[XWAU_CRAFT_RETICLE_SLOTS];
-	int reticle[XWAU_CRAFT_RETICLE_SLOTS]; /* the image position, counted from 1 */
-	bool has_inner;
-	bool has_border;
+	bool     has_reticle[XWAU_CRAFT_RETICLE_SLOTS];
+	int      reticle[XWAU_CRAFT_RETICLE_SLOTS]; /* the image position, counted from 1 */
+	bool     has_inner;
+	bool     has_border;
 	uint32_t inner; /* ARGB */
 	uint32_t border;
 } XwauCraftHud;

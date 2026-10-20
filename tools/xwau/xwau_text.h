@@ -31,9 +31,9 @@
  *   - a text with a control character other than a tab is skipped, because
  *     YAML can't hold it in single quotes.
  * The ship list and tech room texts (SPECIES_<n> and SPEC_<n>_*) of craft
- * types 184 to 227 and 231 are also skipped, unless an object file carries
+ * types 184 to 227 and 231 are also skipped, unless a craft type file carries
  * them. The stock game has no craft for these craft types, and mods put their
- * new craft there. Without an object file, such a craft type still has no
+ * new craft there. Without a craft type file, such a craft type still has no
  * craft, and its texts would list a craft that the game can't load.
  * A text file that the mod doesn't have is skipped.
  */
@@ -77,7 +77,8 @@ void XwauTextIds_Free(XwauTextIds* ids);
 
 /* Writes `output_file` from the text files of the mod at `mod_root` and of
  * the stock game at `stock_game`. The IDs of `moved` (it can be NULL) are left
- * out, because the object files carry their texts (xwau_objects.h). Returns
+ * out, because the object type and craft type files carry their texts
+ * (xwau_objects.h). Returns
  * false when a stock file is missing or can't be read, or when the file can't
  * be written. */
 bool XwauText_Write(const char* mod_root, const char* stock_game, const char* output_file,
