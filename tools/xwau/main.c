@@ -6,7 +6,8 @@
  *   xwau_import missions --xwau-root DIR --stock-game DIR --game-files DIR
  *                        --flight-settings FILE
  *                        [--skyboxes FILE --skybox-folders FILE] <output_dir>
- *   xwau_import craft --xwau-root DIR [--stock-game DIR [--strings FILE]] <output_dir>
+ *   xwau_import craft --xwau-root DIR [--stock-game DIR [--strings FILE]]
+ *                     [--game-files DIR] <output_dir>
  *
  * `missions` copies the files that come with the installation's missions into
  * the --game-files folder, the mod folder's game/ folder (xwau_game_files.h).
@@ -28,7 +29,10 @@
  * <output_dir>/object_types and <output_dir>/craft_types what the
  * installation changes about the stock craft and the craft it adds
  * (xwau_objects.h). With --strings, it writes into FILE the other texts that
- * the installation changes in the game's text files (xwau_text.h).
+ * the installation changes in the game's text files (xwau_text.h). With
+ * --game-files, the mod folder's game/ folder, it writes the sound banks into
+ * <output_dir>/sounds.yaml and copies their files into DIR
+ * (xwau_sound_banks.h).
  */
 
 #include <stdbool.h>
@@ -43,14 +47,15 @@
 #include "xwau_missions.h"
 #include "xwau_objects.h"
 #include "xwau_skyboxes.h"
+#include "xwau_sound_banks.h"
 #include "xwau_text.h"
 
 static int usage(void) {
-	fprintf(stderr,
-			"usage: xwau_import missions --xwau-root DIR --stock-game DIR --game-files DIR\n"
-			"                            --flight-settings FILE\n"
-			"                            [--skyboxes FILE --skybox-folders FILE] <output_dir>\n"
-			"       xwau_import craft --xwau-root DIR [--stock-game DIR [--strings FILE]] <output_dir>\n");
+	fprintf(stderr, "usage: xwau_import missions --xwau-root DIR --stock-game DIR --game-files DIR\n"
+					"                            --flight-settings FILE\n"
+					"                            [--skyboxes FILE --skybox-folders FILE] <output_dir>\n"
+					"       xwau_import craft --xwau-root DIR [--stock-game DIR [--strings FILE]]\n"
+					"                         [--game-files DIR] <output_dir>\n");
 	return 2;
 }
 
@@ -111,16 +116,19 @@ static int run_missions(int argc, char** argv) {
 	return ok ? 0 : 1;
 }
 
-/* xwau_import craft --xwau-root DIR [--stock-game DIR [--strings FILE]] <output_dir> */
+/* xwau_import craft --xwau-root DIR [--stock-game DIR [--strings FILE]] [--game-files DIR]
+ *                   <output_dir> */
 static int run_craft(int argc, char** argv) {
 	const char* xwau_root  = NULL;
 	const char* stock_game = NULL;
 	const char* strings    = NULL;
+	const char* game_files = NULL;
 	int         ai         = 0;
 	for (; ai < argc && strncmp(argv[ai], "--", 2) == 0; ai += 2) {
 		const char** value = strcmp(argv[ai], "--xwau-root") == 0    ? &xwau_root
 							 : strcmp(argv[ai], "--stock-game") == 0 ? &stock_game
 							 : strcmp(argv[ai], "--strings") == 0    ? &strings
+							 : strcmp(argv[ai], "--game-files") == 0 ? &game_files
 																	 : NULL;
 		if (!value) {
 			Report(NULL, "unknown option '%s'", argv[ai]);
@@ -150,6 +158,8 @@ static int run_craft(int argc, char** argv) {
 		ok = XwauObjects_Write(xwau_root, stock_game, argv[ai], &moved) && ok;
 	if (strings)
 		ok = XwauText_Write(xwau_root, stock_game, strings, &moved) && ok;
+	if (game_files)
+		ok = XwauSoundBanks_Write(xwau_root, argv[ai], game_files) && ok;
 	XwauTextIds_Free(&moved);
 	return ok ? 0 : 1;
 }

@@ -1065,6 +1065,7 @@ if(AERON_BUILD_TOOLS)
         tools/xwau/xwau_mission_files.c
         tools/xwau/xwau_objects.c
         tools/xwau/xwau_skyboxes.c
+        tools/xwau/xwau_sound_banks.c
         tools/xwau/xwau_stats_profiles.c
         tools/xwau/xwau_text.c)
     target_link_libraries(xwau_import_lib PUBLIC xwau_files)

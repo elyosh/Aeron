@@ -30,6 +30,7 @@
 #include "xwau_objects.h"
 #include "xwau_skins.h"
 #include "xwau_skyboxes.h"
+#include "xwau_sound_banks.h"
 #include "xwau_stats_profiles.h"
 #include "xwau_text.h"
 
@@ -1829,6 +1830,173 @@ static void test_stats_profiles(const char* scratch) {
 		  "weapon rates: FlightModels/WeaponRate.txt wins over default.ini");
 }
 
+/* ---- Sound banks ----------------------------------------------------------- */
+
+/* A WAV file: a fmt chunk of `fmt_size` bytes and a data chunk. */
+static size_t make_wav(uint8_t* out, const uint8_t* fmt, size_t fmt_size, const void* data, size_t size) {
+	const size_t total = 12 + 8 + fmt_size + 8 + size;
+	memcpy(out, "RIFF", 4);
+	const uint32_t riff = (uint32_t)(total - 8), f = (uint32_t)fmt_size, d = (uint32_t)size;
+	memcpy(out + 4, &riff, 4);
+	memcpy(out + 8, "WAVEfmt ", 8);
+	memcpy(out + 16, &f, 4);
+	memcpy(out + 20, fmt, fmt_size);
+	memcpy(out + 20 + fmt_size, "data", 4);
+	memcpy(out + 24 + fmt_size, &d, 4);
+	memcpy(out + 28 + fmt_size, data, size);
+	return total;
+}
+
+/* A fmt chunk: tag, channels, rate, block align and bits. */
+static void make_fmt(uint8_t* fmt, uint16_t tag, uint16_t channels, uint16_t align, uint16_t bits) {
+	const uint32_t rate = 22050, bytes = rate * align;
+	memcpy(fmt, &tag, 2);
+	memcpy(fmt + 2, &channels, 2);
+	memcpy(fmt + 4, &rate, 4);
+	memcpy(fmt + 8, &bytes, 4);
+	memcpy(fmt + 12, &align, 2);
+	memcpy(fmt + 14, &bits, 2);
+}
+
+/* The 16-bit samples of a converted file. */
+static bool wav_samples(const uint8_t* wav, size_t size, uint16_t channels, const int16_t* expected,
+						size_t count) {
+	uint16_t tag, wav_channels, bits;
+	memcpy(&tag, wav + 20, 2);
+	memcpy(&wav_channels, wav + 22, 2);
+	memcpy(&bits, wav + 34, 2);
+	if (size != 44 + count * 2 || tag != 1 || wav_channels != channels || bits != 16)
+		return false;
+	for (size_t i = 0; i < count; ++i) {
+		int16_t sample;
+		memcpy(&sample, wav + 44 + i * 2, 2);
+		if (sample != expected[i])
+			return false;
+	}
+	return true;
+}
+
+static void test_sound_banks(const char* scratch) {
+	XwauSoundLine line;
+	check(XwauSoundBanks_ParseLine("Unused\t\t\t76 2000 ; Unused\r\n", &line) &&
+			  strcmp(line.name, "Unused") == 0 && line.volume == 76 && line.distance == 8192,
+		  "sound banks: a line's file name, decimal volume and hex distance, cut at ';'");
+	check(XwauSoundBanks_ParseLine("CanopyOpen.wav\r\n", &line) && strcmp(line.name, "CanopyOpen.wav") == 0 &&
+			  line.volume == 127 && line.distance == 8192,
+		  "sound banks: a line without a volume or a distance takes 127 and 8192");
+	check(XwauSoundBanks_ParseLine("a.wav  300\t1F0a", &line) && line.volume == 44 &&
+			  line.distance == 0x1f0a && XwauSoundBanks_ParseLine("a.wav 90 1E00", &line) &&
+			  line.distance == 1,
+		  "sound banks: the volume keeps its low byte, and the hex reader stops at A to E");
+	check(XwauSoundBanks_ParseLine("a.wav ; comment", &line) && line.volume == 0 && line.distance == 8192,
+		  "sound banks: a space before ';' gives the volume 0, as in XWAU");
+	check(!XwauSoundBanks_ParseLine("", &line) && !XwauSoundBanks_ParseLine("\r\n", &line) &&
+			  !XwauSoundBanks_ParseLine("  a.wav 10", &line) && !XwauSoundBanks_ParseLine("; a.wav", &line) &&
+			  XwauSoundBanks_ParseLine("NoExtension 10", &line) && strcmp(line.name, "NoExtension") == 0,
+		  "sound banks: a line without a file name takes no slot; a name needs no extension");
+
+	/* The WAV files. */
+	uint8_t fmt[64], wav[512], *out = NULL;
+	size_t  out_size = 0;
+	uint8_t pcm24[]  = { 0x00, 0x34, 0x12, 0xff, 0xff, 0xff };
+	uint8_t quad[16];
+	int16_t quad_samples[4] = { 100, 200, 300, 400 };
+	memcpy(quad, quad_samples, 8);
+	memcpy(quad + 8, quad_samples, 8);
+	make_fmt(fmt, 1, 1, 2, 16);
+	check(XwauSoundBanks_ConvertWav(wav, make_wav(wav, fmt, 16, pcm24, 4), &out, &out_size) ==
+				  XWAU_WAV_PLAYABLE &&
+			  !out,
+		  "sound banks: a 16-bit PCM file is copied as it is");
+	make_fmt(fmt, 1, 2, 6, 24);
+	const int16_t stereo[] = { 0x1234, -1 };
+	check(XwauSoundBanks_ConvertWav(wav, make_wav(wav, fmt, 16, pcm24, 6), &out, &out_size) ==
+				  XWAU_WAV_CONVERTED &&
+			  wav_samples(out, out_size, 2, stereo, 2),
+		  "sound banks: a 24-bit file is converted to 16 bits");
+	free(out);
+	make_fmt(fmt, 1, 4, 8, 16);
+	const int16_t mixed[] = { 200, 300, 200, 300 };
+	check(XwauSoundBanks_ConvertWav(wav, make_wav(wav, fmt, 16, quad, 16), &out, &out_size) ==
+				  XWAU_WAV_CONVERTED &&
+			  wav_samples(out, out_size, 2, mixed, 4),
+		  "sound banks: channels past the second are mixed into the first two");
+	free(out);
+	/* MS ADPCM, mono: 4 samples by block, the first coefficient pair. */
+	make_fmt(fmt, 2, 1, 8, 4);
+	const uint16_t extra[] = {
+		32, 4, 7, 256, 0, 512, (uint16_t)-256, 0, 0, 192, 64, 240, 0, 460, (uint16_t)-208, 392, (uint16_t)-232
+	};
+	memcpy(fmt + 16, extra, sizeof extra);
+	const uint8_t adpcm[]   = { 0, 16, 0, 100, 0, 50, 0, 0x10 };
+	const int16_t decoded[] = { 50, 100, 116, 116 };
+	check(XwauSoundBanks_ConvertWav(wav, make_wav(wav, fmt, 16 + sizeof extra, adpcm, sizeof adpcm), &out,
+									&out_size) == XWAU_WAV_CONVERTED &&
+			  wav_samples(out, out_size, 1, decoded, 4),
+		  "sound banks: an MS ADPCM file is decoded");
+	free(out);
+
+	/* An installation with two banks. */
+	char game[1024], path[1200], files[1024], flight[1024];
+	snprintf(game, sizeof game, "%s/banks", scratch);
+	snprintf(files, sizeof files, "%s/banks_game", scratch);
+	snprintf(flight, sizeof flight, "%s/banks_flight", scratch);
+	snprintf(path, sizeof path, "%s/Wave/Sfx_Interior", game);
+	MakeDirs(path);
+	snprintf(path, sizeof path, "%s/Wave/Sfx_Interior.lst", game);
+	write_file(path,
+			   "Unused\t76 2000\r\n\r\nEngine.wav 76 2000 ; X-wing\r\nMissing.wav\r\nDeep.WAV\r\n   \r\n");
+	make_fmt(fmt, 1, 1, 2, 16);
+	const size_t engine_size = make_wav(wav, fmt, 16, pcm24, 4);
+	snprintf(path, sizeof path, "%s/Wave/Sfx_Interior/ENGINE.wav", game);
+	WriteWholeFile(path, wav, engine_size);
+	make_fmt(fmt, 1, 1, 3, 24);
+	snprintf(path, sizeof path, "%s/Wave/Sfx_Interior/deep.wav", game);
+	WriteWholeFile(path, wav, make_wav(wav, fmt, 16, pcm24, 6));
+	snprintf(path, sizeof path, "%s/Wave/Sfx_Interior/Unused.wav", game);
+	write_file(path, "not referenced");
+	snprintf(path, sizeof path, "%s/Wave/Sfx_Weapon", game);
+	MakeDirs(path);
+	snprintf(path, sizeof path, "%s/Wave/Sfx_Weapon/Laser.wav", game);
+	make_fmt(fmt, 1, 1, 2, 16);
+	WriteWholeFile(path, wav, make_wav(wav, fmt, 16, pcm24, 4));
+	snprintf(path, sizeof path, "%s/Wave/Sfx_Weapon.lst", game);
+	write_file(path, "Unused\nUnused\nUnused\nUnused\nUnused\nUnused\nUnused\nUnused\nUnused\nUnused\n\n"
+					 "Unused\nLaser.wav 70 2800\n");
+	snprintf(path, sizeof path, "%s/Wave/Sfx_Other.lst", game);
+	write_file(path, "Laser.wav\n");
+	check(XwauSoundBanks_Write(game, flight, files) && !IsFile(flight),
+		  "sound banks: nothing is written without hook_sounds_count.dll");
+	snprintf(path, sizeof path, "%s/hook_sounds_count.dll", game);
+	write_file(path, "");
+	snprintf(path, sizeof path, "%s/sounds.yaml", flight);
+	size_t size = 0;
+	char*  text = XwauSoundBanks_Write(game, flight, files) ? ReadWholeFile(path, &size) : NULL;
+	check(text &&
+			  strstr(text,
+					 "  interior: # Wave/Sfx_Interior.lst, by object type\n    count: 4\n    sounds:\n"
+					 "      1: {file: \"Wave\\\\Sfx_Interior\\\\Engine.wav\", volume: 76, distance: 8192}\n"
+					 "      3: {file: \"Wave\\\\Sfx_Interior\\\\Deep.WAV\", volume: 127, distance: 8192}\n"),
+		  "sound banks: blank lines take no slot; Unused and missing files are silent; count is XWAU's line "
+		  "count");
+	check(text &&
+			  strstr(text, "  weapon: # Wave/Sfx_Weapon.lst, 10 by object type\n    count: 12\n    sounds:\n"
+						   "      1:\n        1: {file: \"Wave\\\\Sfx_Weapon\\\\Laser.wav\", volume: 70, "
+						   "distance: 10240}\n") &&
+			  !strstr(text, "other"),
+		  "sound banks: 10 entries by object type; a bank that no hook reads is left out");
+	free(text);
+	snprintf(path, sizeof path, "%s/Wave/Sfx_Interior/ENGINE.wav", files);
+	const bool engine = IsFile(path);
+	snprintf(path, sizeof path, "%s/Wave/Sfx_Interior/deep.wav", files);
+	text = ReadWholeFile(path, &size);
+	check(engine && text && size == 44 + 4 && text[34] == 16,
+		  "sound banks: the files keep their own names; a 24-bit file is converted");
+	free(text);
+	snprintf(path, sizeof path, "%s/Wave/Sfx_Interior/Unused.wav", files);
+	check(!IsFile(path), "sound banks: only the files that entries use are copied");
+}
+
 int main(void) {
 	char        scratch[1024];
 	const char* tmp = getenv("TMPDIR");
@@ -1853,6 +2021,7 @@ int main(void) {
 	test_headlights(scratch);
 	test_mission_tie(scratch);
 	test_stats_profiles(scratch);
+	test_sound_banks(scratch);
 	RemoveTree(scratch);
 	printf("%s\n", g_failures ? "FAILED" : "passed");
 	return g_failures ? 1 : 0;
