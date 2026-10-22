@@ -86,18 +86,48 @@
  *
  * The laser rates come from FlightModels/<model>WeaponRate.txt, or else from
  * the [WeaponRate] section of the model's INI. They are read the way XWAU's
- * hook_weapon_rate reads them. DechargeRate, RechargeRate,
- * CooldownTimeFactor, DechargeRatePercent and RechargeRatePercent become
- * `decharge`, `recharge`, `cooldown`, `decharge_percent` and
- * `recharge_percent`. -1 means not set; other values below 0 are reported and
- * left out.
+ * hook_weapon_rate reads them, and go into groups of `weapons`:
+ *
+ *   rates: {decharge: 2, recharge: 3, cooldown: 47}
+ *       DechargeRate, RechargeRate, CooldownTimeFactor, DechargeRatePercent
+ *       and RechargeRatePercent (decharge_percent, recharge_percent)
+ *   energy_transfer: {rate: 32}
+ *       EnergyTransferRate, EnergyTransferRatePenalty (penalty),
+ *       EnergyTransferWeaponLimit (laser_limit), EnergyTransferShieldLimit
+ *       (shield_limit)
+ *   ai_torpedoes: {per_pass: 2, per_target: 6}
+ *       MaxTorpedoCountPerPass, MaxTorpedoCountPerTarget
+ *   impact_spin: {enabled: false, speed_percent: 25, angle_percent: 25}
+ *       IsImpactSpinningEnabled, ImpactSpinningSpeedFactorPercent,
+ *       ImpactSpinningAngleFactorPercent
+ *   system_damage: {max: 1000, 284: 1, 285: 2, 290: 4, 296: 30}
+ *       MaxSystemDamages, Weapon284_LaserIon_Damages,
+ *       Weapon285_LaserIonTurbo_Damages, Weapon290_LaserIonTurbo_Damages,
+ *       Weapon296_MagPulse_Damages
+ *
+ * -1 means not set; other values below 0 are reported and left out. Any
+ * IsImpactSpinningEnabled but 0 turns the spin on.
  *
  * The hook only reads a model's section when the global section has no
- * lines. The global section is FlightModels/WeaponRate.txt, or else the
+ * lines, except for the energy transfer keys, which it reads from the model
+ * first. The global section is FlightModels/WeaponRate.txt, or else the
  * [WeaponRate] section of FlightModels/default.ini. The importer writes the
- * model's rates anyway, and the game uses them instead of the global ones.
- * The report counts the models whose rates XWAU ignores. The global rates go
- * in flight/flight.yaml (xwau_flight_settings.h).
+ * model's values anyway, and the game uses them instead of the global ones.
+ * The report counts the models whose values XWAU ignores. The global values
+ * go in flight/flight.yaml (xwau_flight_settings.h).
+ *
+ * The component strength comes from FlightModels/<model>
+ * SubcomponentsStrength.txt, or else from the [SubcomponentsStrength]
+ * section of the model's INI, if the installation has hook_opt_limit.dll
+ * with that feature. Each line is the strength of one mesh type, in the
+ * order of the game's mesh types, and -1 keeps the game's strength:
+ *
+ *   component_strength: {gun_turret: 18, small_gun: 18, shield_generator: 36}
+ *
+ * The hook reads each line as a number, and a line that isn't one would
+ * crash XWAU: such a section is reported and left out. Lines past the 32nd
+ * aren't used. A strength above 255 doesn't fit in the game's component
+ * health, so it is reported and left out.
  *
  * The sounds come from FlightModels/<model>Sound.txt, or else from the
  * [Sound] section of the model's INI. They are read the way XWAU's
@@ -203,7 +233,13 @@ typedef struct XwauCraftShield {
 
 /* The laser rates of a [WeaponRate] section, in the order of the keys
  * above. -1 means not set. */
-enum { XWAU_CRAFT_WEAPON_RATES = 5 };
+/* The [WeaponRate] keys, in the order of xwau_craft.c's table. */
+enum {
+	XWAU_CRAFT_TORPEDOES_PER_PASS   = 9,
+	XWAU_CRAFT_TORPEDOES_PER_TARGET = 10,
+	XWAU_CRAFT_IMPACT_SPIN          = 11,
+	XWAU_CRAFT_WEAPON_RATES         = 19
+};
 
 typedef struct XwauCraftWeaponRates {
 	int value[XWAU_CRAFT_WEAPON_RATES];
@@ -248,6 +284,20 @@ void XwauCraft_ReadWeapons(const char* weapons_txt, const char* ini, XwauCraftWe
  * NULL. */
 void XwauCraft_ReadShield(const char* shield_txt, const char* ini, XwauCraftShield* shield);
 
+enum { XWAU_CRAFT_MESH_TYPES = 32 };
+
+/* The [SubcomponentsStrength] section of a model. -1 keeps the game's
+ * strength. */
+typedef struct XwauCraftComponents {
+	bool has;
+	int  strength[XWAU_CRAFT_MESH_TYPES];
+} XwauCraftComponents;
+
+/* Reads the [SubcomponentsStrength] section of a model:
+ * `strength_txt` (<model>SubcomponentsStrength.txt) when it has lines, else
+ * the section of `ini`. Either path can be NULL. */
+void XwauCraft_ReadComponents(const char* strength_txt, const char* ini, XwauCraftComponents* components);
+
 /* Reads the laser rates of a model: `rate_txt` (<model>WeaponRate.txt)
  * when it has lines, else the [WeaponRate] section of `ini`. Either path
  * can be NULL. */
@@ -259,11 +309,16 @@ void XwauCraft_ReadWeaponRates(const char* rate_txt, const char* ini, XwauCraftW
  * which case hook_weapon_rate ignores the models' own sections. */
 bool XwauCraft_ReadGlobalWeaponRates(const char* game, XwauCraftWeaponRates* rates);
 
-/* Whether `rates` sets a rate. */
+/* Whether `rates` sets a value. */
 bool XwauCraft_HasWeaponRates(const XwauCraftWeaponRates* rates);
 
-/* Writes `rates` as a YAML map: "{decharge: 2, recharge: 3}". */
-void XwauCraft_WriteWeaponRates(FILE* f, const XwauCraftWeaponRates* rates);
+/* Whether `rates` sets a value that hook_weapon_rate ignores when the global
+ * section has lines: any key but the energy transfer ones. */
+bool XwauCraft_HasDefaultFirstRates(const XwauCraftWeaponRates* rates);
+
+/* Writes `rates` as the groups of a `weapons` map, one line each, at
+ * `indent`: "  rates: {decharge: 2, recharge: 3}". */
+void XwauCraft_WriteWeaponRates(FILE* f, const char* indent, const XwauCraftWeaponRates* rates);
 
 /* The [Sound] section of a model. */
 typedef struct XwauCraftSound {

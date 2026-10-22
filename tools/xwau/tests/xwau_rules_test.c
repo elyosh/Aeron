@@ -34,6 +34,7 @@
 #include "xwau_sound_banks.h"
 #include "xwau_stats_profiles.h"
 #include "xwau_text.h"
+#include "xwau_warhead_pools.h"
 
 static int g_failures;
 
@@ -1362,6 +1363,68 @@ static void test_mission_tie(const char* scratch) {
 	free(text);
 }
 
+static void test_warhead_pools(const char* scratch) {
+	char game[1024], stock[1024], out[1024], path[1300];
+	snprintf(game, sizeof game, "%s/pool_game", scratch);
+	snprintf(stock, sizeof stock, "%s/pool_stock", scratch);
+	snprintf(out, sizeof out, "%s/pool_out", scratch);
+	snprintf(path, sizeof path, "%s/Missions", game);
+	MakeDirs(path);
+	snprintf(path, sizeof path, "%s/FlightModels", game);
+	MakeDirs(path);
+	snprintf(path, sizeof path, "%s/MISSIONS", stock);
+	MakeDirs(path);
+	snprintf(path, sizeof path, "%s/Missions/w.ini", game);
+	write_file(path, "[WarheadTypeCount]\n"
+					 "WarheadTypeCount_fg_0_Missiles = 80\n"
+					 "warheadtypecount_FG_0_missiles = 5\n"
+					 "WarheadTypeCount_fg_0_ProtonTorpedos = 0 ;none\n"
+					 "WarheadTypeCount_fg_0_SpaceBombs = -1\n"
+					 "WarheadTypeCount_fg_1_HeavyRockets = -5\n"
+					 "WarheadTypeCount_fg_1_MagPulseCount = -1\n"
+					 "WarheadTypeCount_fg_01_Missiles = 3\n"
+					 "WarheadTypeCount_fg_7_Missiles = 4\n");
+	XwauWarheadPools pools;
+	check(XwauWarheadPools_Read(game, "Missions/w", false, &pools) && pools.count == 0,
+		  "warhead pools: not read without hook_weapon_rate");
+	snprintf(path, sizeof path, "%s/hook_weapon_rate.dll", game);
+	write_file(path, "MZ WarheadTypeCount_fg_");
+	check(XwauWarheadPools_Read(game, "Missions/w", true, &pools), "warhead pools: read");
+	const XwauWarheadPool* fg0 = XwauWarheadPools_Find(&pools, 0);
+	const XwauWarheadPool* fg1 = XwauWarheadPools_Find(&pools, 1);
+	check(fg0 && fg0->count[2] == 80 && fg0->count[3] == 0 && fg0->count[0] == -1 && fg1 &&
+			  !XwauWarheadPools_Any(fg1) && !XwauWarheadPools_Find(&pools, 2),
+		  "warhead pools: keys in any case, the first line wins, -1 and other negative values are left out, "
+		  "and a flight group with a leading 0 is never read");
+	XwauWarheadPools_Free(&pools);
+	snprintf(path, sizeof path, "%s/FlightModels/default.ini", game);
+	write_file(path, "[WarheadTypeCount]\nWarheadTypeCount_fg_2_IonPulse = 3\n");
+	check(XwauWarheadPools_Read(game, "Missions/v", false, &pools) && pools.count == 1 &&
+			  pools.items[0].fg == 2 && pools.items[0].count[7] == 3,
+		  "warhead pools: a mission without lines uses the global ones");
+	XwauWarheadPools_Free(&pools);
+	write_file(path, "");
+
+	static const char* const kNames[]  = { "Red", "Blue", "Gold" };
+	static const int         kCrafts[] = { 1, 2, 3 };
+	snprintf(path, sizeof path, "%s/Missions/w.tie", game);
+	write_tie(path, 3, kNames, kCrafts);
+	XwauMissions* missions = XwauMissions_Load(game, false);
+	check(missions && XwauMissionFiles_Write(game, missions, stock, out),
+		  "warhead pools: mission file written");
+	XwauMissions_Free(missions);
+	size_t size = 0;
+	snprintf(path, sizeof path, "%s/missions/w.yaml", out);
+	char* text = ReadWholeFile(path, &size);
+	check(text &&
+			  strstr(text, "flight_groups:\n  0: { name: \"Red\", craft: 1, warheads: { missiles: 80, "
+						   "torpedoes: 0 } }\n") &&
+			  !strstr(text, "  1: {") && !strstr(text, "  7: {"),
+		  "warhead pools: written in the flight group's entry, without the flight groups that the .TIE "
+		  "doesn't have");
+	free(text);
+}
+
 static void test_mission_settings(const char* scratch) {
 	char game[1024], stock[1024], out[1024], path[1300], settings[1300];
 	snprintf(game, sizeof game, "%s/ms_game", scratch);
@@ -1844,10 +1907,10 @@ static void test_stats_profiles(const char* scratch) {
 	XwauCraft_ReadWeaponRates(NULL, path, &rates);
 	snprintf(out, sizeof out, "%s/wr_model.yaml", scratch);
 	f = fopen(out, "wb");
-	XwauCraft_WriteWeaponRates(f, &rates);
+	XwauCraft_WriteWeaponRates(f, "", &rates);
 	fclose(f);
 	check(
-		same_file(out, "{decharge: 2, recharge: 3, cooldown: 94}"),
+		same_file(out, "rates: {decharge: 2, recharge: 3, cooldown: 94}\n"),
 		"weapon rates: the model's keys; the first line wins, and -1 and other negative values are left out");
 	snprintf(txt, sizeof txt, "%s/FlightModels/FrigateWeaponRate.txt", game);
 	write_file(txt, "RechargeRatePercent = 50\n");
@@ -1857,11 +1920,39 @@ static void test_stats_profiles(const char* scratch) {
 	write_file(path, "[Size]\nX = 1\n");
 	XwauCraft_ReadWeaponRates(NULL, path, &rates);
 	check(!XwauCraft_HasWeaponRates(&rates), "weapon rates: no section, no rates");
+	write_file(path,
+			   "[WeaponRate]\nEnergyTransferRate = 32\nIsImpactSpinningEnabled = 2\nMaxSystemDamages = 500\n"
+			   "Weapon296_MagPulse_Damages = 10\nMaxTorpedoCountPerPass = -3\n");
+	XwauCraft_ReadWeaponRates(NULL, path, &rates);
+	f = fopen(out, "wb");
+	XwauCraft_WriteWeaponRates(f, "  ", &rates);
+	fclose(f);
+	check(same_file(out, "  energy_transfer: {rate: 32}\n  impact_spin: {enabled: true}\n"
+						 "  system_damage: {max: 500, 296: 10}\n"),
+		  "weapon rates: the other keys go into their groups, and any spin value but 0 turns it on");
+	write_file(path, "[WeaponRate]\nEnergyTransferRate = 32\n");
+	XwauCraft_ReadWeaponRates(NULL, path, &rates);
+	check(XwauCraft_HasWeaponRates(&rates) && !XwauCraft_HasDefaultFirstRates(&rates),
+		  "weapon rates: XWAU reads the energy transfer keys of a model first");
+
+	XwauCraftComponents components;
+	write_file(path,
+			   "[SubcomponentsStrength]\n;All 32 lines\n-1 ;Default\n-1\n-1\n-1\n18 ;GunTurret\n300\n0\n");
+	XwauCraft_ReadComponents(NULL, path, &components);
+	check(
+		components.has && components.strength[0] == -1 && components.strength[4] == 18 &&
+			components.strength[5] == -1 && components.strength[6] == 0,
+		"component strength: one line by mesh type; -1 keeps the game's value, and a value past 255 is left "
+		"out");
+	write_file(path, "[SubcomponentsStrength]\n18\nGunTurret = 4\n");
+	XwauCraft_ReadComponents(NULL, path, &components);
+	check(!components.has, "component strength: a line that isn't a number leaves out the section");
 
 	snprintf(path, sizeof path, "%s/FlightModels/default.ini", game);
-	write_file(path, "[WeaponRate]\nIsImpactSpinningEnabled = 0\n");
-	check(XwauCraft_ReadGlobalWeaponRates(game, &rates) && !XwauCraft_HasWeaponRates(&rates),
-		  "weapon rates: a global section without rates still has lines, so XWAU ignores the models' rates");
+	write_file(path, "[WeaponRate]\nIsWarheadLockHookEnabled = 0\n");
+	check(
+		XwauCraft_ReadGlobalWeaponRates(game, &rates) && !XwauCraft_HasWeaponRates(&rates),
+		"weapon rates: a global section without values still has lines, so XWAU ignores the models' values");
 	write_file(path, "[WeaponRate]\nDechargeRate = 3\n");
 	snprintf(path, sizeof path, "%s/hook_weapon_rate.dll", game);
 	write_file(path, "MZ DechargeRatePercent _EnergyLowHighSeparation Craft_Offset_292");
@@ -1873,6 +1964,19 @@ static void test_stats_profiles(const char* scratch) {
 		text && strstr(text, "  rates: {decharge: 3}\n  decharge_percent: 50\n  recharge_percent: 100\n") &&
 			strstr(text, "  fire_needs_decharge_rate: true\n  no_starship_fire_from_destroyed_racks: true\n"),
 		"weapon rates: the global rates, hook_weapon_rate's percents from Hooks.ini, and its two rules");
+	free(text);
+	snprintf(path, sizeof path, "%s/FlightModels/default.ini", game);
+	write_file(path, "[WeaponRate]\nDechargeRate = 3\nMaxTorpedoCountPerTarget = 9\n");
+	snprintf(path, sizeof path, "%s/hook_weapon_rate.dll", game);
+	write_file(path, "MZ MaxTorpedoCountPerPass MaxTorpedoCountPerTarget WarheadTypeCount_fg_");
+	snprintf(path, sizeof path, "%s/Hooks.ini", game);
+	write_file(path, "[hook_weapon_rate]\nMaxTorpedoCountPerPass = 2\nMaxTorpedoCountPerTarget = 6\n");
+	text = XwauFlightSettings_Write(game, settings) ? ReadWholeFile(settings, &size) : NULL;
+	check(text && strstr(text, "  rates: {decharge: 3}\n  ai_torpedoes: {per_pass: 2, per_target: 9}\n") &&
+			  strstr(text, "  no_player_warhead_slot_cap: true\n") &&
+			  !strstr(text, "fire_needs_decharge_rate"),
+		  "weapon rates: the hook's torpedo limits when the global [WeaponRate] doesn't set them, and the "
+		  "rule of the warhead pools");
 	free(text);
 	snprintf(path, sizeof path, "%s/FlightModels/WeaponRate.txt", game);
 	write_file(path, "CooldownTimeFactor = 30\n");
@@ -2173,6 +2277,7 @@ int main(void) {
 	test_front_planet(scratch);
 	test_headlights(scratch);
 	test_mission_tie(scratch);
+	test_warhead_pools(scratch);
 	test_stats_profiles(scratch);
 	test_sound_banks(scratch);
 	RemoveTree(scratch);

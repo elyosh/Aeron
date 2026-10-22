@@ -81,6 +81,7 @@ bool XwauSettingsConfig_Read(const char* game, XwauSettingsConfig* out) {
 	if (Xwau_FindFile(game, "hook_weapon_rate.dll", path, sizeof path)) {
 		out->weapon_rate_fire_check = Xwau_FileHasText(path, "_EnergyLowHighSeparation");
 		out->weapon_rate_rack_check = Xwau_FileHasText(path, "Craft_Offset_292");
+		out->weapon_rate_slot_cap   = Xwau_FileHasText(path, "WarheadTypeCount_fg_");
 	}
 	XwauLines lines;
 	if (out->engine_sound && Xwau_FindFile(game, "hook_engine_sound.dll", path, sizeof path) &&
@@ -133,7 +134,8 @@ static void write_ints(FILE* f, const int* values, size_t count) {
 bool XwauMissionSettings_WriteDefaults(FILE* f, const XwauSettingsConfig* config) {
 	const bool rules = config->mission_tie || config->opt_limit_engine_glows || config->weapon_switch ||
 					   config->mission_tie_stats || config->weapon_rate_fire_check ||
-					   config->weapon_rate_rack_check || config->starship_ambient;
+					   config->weapon_rate_rack_check || config->starship_ambient ||
+					   config->weapon_rate_slot_cap;
 	if (rules)
 		fputs("rules:\n", f);
 	if (config->mission_tie)
@@ -150,6 +152,8 @@ bool XwauMissionSettings_WriteDefaults(FILE* f, const XwauSettingsConfig* config
 		fputs("  no_starship_fire_from_destroyed_racks: true\n", f);
 	if (config->starship_ambient)
 		fputs("  starship_ambient_sounds: true\n", f);
+	if (config->weapon_rate_slot_cap)
+		fputs("  no_player_warhead_slot_cap: true\n", f);
 	const bool warheads     = config->mission_tie && !config->warhead_collision_damage;
 	const bool shields      = config->mission_tie && config->damage_through_shields;
 	const bool interdiction = config->engine_sound && config->interdiction_count;

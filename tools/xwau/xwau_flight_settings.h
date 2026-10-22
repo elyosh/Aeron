@@ -20,6 +20,7 @@
  *       fire_needs_decharge_rate: true
  *       no_starship_fire_from_destroyed_racks: true
  *       starship_ambient_sounds: true
+ *       no_player_warhead_slot_cap: true
  *     mission_settings:
  *       warhead_collision_damage: false
  *       damage_through_shields_on_hard: true
@@ -33,6 +34,9 @@
  *     weapons:
  *       impact: {280: 0xff0000, 281: 0xff0000, ...}
  *       rates: {decharge: 4, cooldown: 47}
+ *       energy_transfer: {rate: 8}
+ *       ai_torpedoes: {per_pass: 2, per_target: 6}
+ *       impact_spin: {enabled: false}
  *       decharge_percent: 100
  *       recharge_percent: 100
  *     shield_recharge:
@@ -63,7 +67,10 @@
  * its decharge rate. The DLL gives no_starship_fire_from_destroyed_racks if
  * it reads the craft's mesh states (it contains "Craft_Offset_292"). With
  * this rule, a freighter, starship, platform or satellite doesn't fire from
- * a rack whose mesh is destroyed. hook_engine_sound.dll gives
+ * a rack whose mesh is destroyed. The DLL gives no_player_warhead_slot_cap
+ * if it has warhead pools (it contains "WarheadTypeCount_fg_"): the hook then
+ * lets a player's warhead rack hold more than 9 warheads, with or without
+ * pools. hook_engine_sound.dll gives
  * starship_ambient_sounds if it has ambient sounds (it contains
  * "AreStarshipAmbientEnabled") and that setting isn't 0. With this rule,
  * starships play their ambient sounds from the StarshipAmbient bank.
@@ -93,7 +100,12 @@
  * `weapons.rates` holds the rates for every craft. They come from
  * FlightModels/WeaponRate.txt, or else from the [WeaponRate] section of
  * FlightModels/default.ini (XwauCraft_ReadGlobalWeaponRates). If they set
- * no rate, `rates` is left out. `decharge_percent` and `recharge_percent`
+ * no rate, `rates` is left out. The other keys of that section go into
+ * `energy_transfer`, `ai_torpedoes`, `impact_spin` and `system_damage`
+ * (xwau_craft.h). When the section doesn't set MaxTorpedoCountPerPass or
+ * MaxTorpedoCountPerTarget, the hook uses its own settings, from
+ * hook_weapon_rate.cfg, or else from the [hook_weapon_rate] section of
+ * Hooks.ini; the importer writes those. `decharge_percent` and `recharge_percent`
  * scale the rates of every craft. They come from hook_weapon_rate.cfg, or
  * else from the [hook_weapon_rate] section of Hooks.ini, and default to 100.
  * They are only written if the DLL contains the text "DechargeRatePercent".

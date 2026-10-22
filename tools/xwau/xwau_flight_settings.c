@@ -184,20 +184,28 @@ static void write_weapons(FILE* f, const char* game, bool* impact, bool* rates) 
 		return;
 	XwauCraftWeaponRates defaults;
 	XwauCraft_ReadGlobalWeaponRates(game, &defaults);
-	if (XwauCraft_HasWeaponRates(&defaults)) {
-		fputs("  rates: ", f);
-		XwauCraft_WriteWeaponRates(f, &defaults);
-		fputc('\n', f);
+	XwauLines lines;
+	char      source[64];
+	hook_lines(game, "hook_weapon_rate", &lines, source, sizeof source);
+	/* The hook's settings give the AI torpedo limits that the global
+	   [WeaponRate] doesn't set. */
+	static const char* const torpedo_keys[] = { "MaxTorpedoCountPerPass", "MaxTorpedoCountPerTarget" };
+	for (int i = 0; i < 2; ++i) {
+		const int key = i ? XWAU_CRAFT_TORPEDOES_PER_TARGET : XWAU_CRAFT_TORPEDOES_PER_PASS;
+		if (defaults.value[key] >= 0 || !Xwau_FileHasText(path, torpedo_keys[i]))
+			continue;
+		const long long value = hook_value(&lines, source, torpedo_keys[i], -1);
+		if (value < -1 || value > INT32_MAX)
+			Report(source, "%s = %lld isn't imported", torpedo_keys[i], value);
+		else
+			defaults.value[key] = (int)value;
 	}
-	if (Xwau_FileHasText(path, "DechargeRatePercent")) {
-		XwauLines lines;
-		char      source[64];
-		hook_lines(game, "hook_weapon_rate", &lines, source, sizeof source);
+	XwauCraft_WriteWeaponRates(f, "  ", &defaults);
+	if (Xwau_FileHasText(path, "DechargeRatePercent"))
 		fprintf(f, "  decharge_percent: %lld\n  recharge_percent: %lld\n",
 				rate_percent(&lines, source, "DechargeRatePercent"),
 				rate_percent(&lines, source, "RechargeRatePercent"));
-		XwauLines_Free(&lines);
-	}
+	XwauLines_Free(&lines);
 }
 
 /* Writes the `shield_recharge` section, when the mod installs hook_shield:

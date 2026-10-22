@@ -367,6 +367,92 @@ void XwauCraft_ReadShield(const char* shield_txt, const char* ini, XwauCraftShie
 	XwauLines_Free(&lines);
 }
 
+/* The mesh types, in the game's order, as the model file names them. */
+static const char* const g_meshTypeNames[XWAU_CRAFT_MESH_TYPES] = {
+	"default",
+	"main_hull",
+	"wing",
+	"fuselage",
+	"gun_turret",
+	"small_gun",
+	"engine",
+	"bridge",
+	"shield_generator",
+	"energy_generator",
+	"launcher",
+	"communication_system",
+	"beam_system",
+	"command_system",
+	"docking_platform",
+	"landing_platform",
+	"hangar",
+	"cargo_pod",
+	"misc_hull",
+	"antenna",
+	"rotary_wing",
+	"rotary_gun_turret",
+	"rotary_launcher",
+	"rotary_comm_system",
+	"rotary_beam_system",
+	"rotary_command_system",
+	"hatch",
+	"custom",
+	"weapon_system_1",
+	"weapon_system_2",
+	"power_regenerator",
+	"reactor",
+};
+
+void XwauCraft_ReadComponents(const char* strength_txt, const char* ini, XwauCraftComponents* components) {
+	XwauLines   lines  = { 0 };
+	const char* source = strength_txt;
+	memset(components, 0, sizeof *components);
+	memset(components->strength, 0xff, sizeof components->strength);
+	if (strength_txt)
+		XwauLines_Read(strength_txt, "", XWAU_RULES_CPP, &lines);
+	if (lines.count == 0) {
+		XwauLines_Free(&lines);
+		source = ini;
+		if (ini)
+			XwauLines_Read(ini, "SubcomponentsStrength", XWAU_RULES_CPP, &lines);
+	}
+	for (size_t i = 0; i < lines.count; ++i) {
+		long long value;
+		if (!Xwau_Stoi(lines.items[i], &value)) {
+			Report(source,
+				   "[SubcomponentsStrength]: \"%s\" isn't a number, which would crash XWAU; the section is "
+				   "left out",
+				   lines.items[i]);
+			memset(components->strength, 0xff, sizeof components->strength);
+			break;
+		}
+		if (i >= XWAU_CRAFT_MESH_TYPES || value < 0)
+			continue;
+		if (value > 255) {
+			Report(source,
+				   "[SubcomponentsStrength]: %s = %lld doesn't fit in a component's health; it is left out",
+				   g_meshTypeNames[i], value);
+			continue;
+		}
+		components->strength[i] = (int)value;
+	}
+	for (int type = 0; type < XWAU_CRAFT_MESH_TYPES; ++type)
+		components->has = components->has || components->strength[type] >= 0;
+	XwauLines_Free(&lines);
+}
+
+static void write_components(FILE* f, const XwauCraftComponents* components) {
+	bool first = true;
+	fputs("component_strength: {", f);
+	for (int type = 0; type < XWAU_CRAFT_MESH_TYPES; ++type) {
+		if (components->strength[type] < 0)
+			continue;
+		fprintf(f, "%s%s: %d", first ? "" : ", ", g_meshTypeNames[type], components->strength[type]);
+		first = false;
+	}
+	fputs("}\n", f);
+}
+
 static const char* const g_engineSoundNames[] = { "xwing",   "ywing",     "awing",  "tie",
 												  "gunboat", "corellian", "falcon", "slave" };
 static const char* const g_washNames[]        = { "normal", "starship" };
@@ -554,19 +640,45 @@ static void write_shield(FILE* f, const XwauCraftShield* shield) {
 	fputs("}\n", f);
 }
 
-/* The [WeaponRate] keys, and their names in the model and flight files. */
-static const char* const g_rateKeys[XWAU_CRAFT_WEAPON_RATES]  = { "DechargeRate", "RechargeRate",
-																  "CooldownTimeFactor", "DechargeRatePercent",
-																  "RechargeRatePercent" };
-static const char* const g_rateNames[XWAU_CRAFT_WEAPON_RATES] = { "decharge", "recharge", "cooldown",
-																  "decharge_percent", "recharge_percent" };
+/* The [WeaponRate] keys, and their groups and names in the model and flight
+ * files. `ship_first` marks the keys that hook_weapon_rate reads from the
+ * model's section first, also when the global section has lines. */
+static const struct {
+	const char* key;
+	const char* group;
+	const char* name;
+	bool        ship_first;
+} g_rateKeys[XWAU_CRAFT_WEAPON_RATES] = {
+	{ "DechargeRate", "rates", "decharge", false },
+	{ "RechargeRate", "rates", "recharge", false },
+	{ "CooldownTimeFactor", "rates", "cooldown", false },
+	{ "DechargeRatePercent", "rates", "decharge_percent", false },
+	{ "RechargeRatePercent", "rates", "recharge_percent", false },
+	{ "EnergyTransferRate", "energy_transfer", "rate", true },
+	{ "EnergyTransferRatePenalty", "energy_transfer", "penalty", true },
+	{ "EnergyTransferWeaponLimit", "energy_transfer", "laser_limit", true },
+	{ "EnergyTransferShieldLimit", "energy_transfer", "shield_limit", true },
+	{ "MaxTorpedoCountPerPass", "ai_torpedoes", "per_pass", false },
+	{ "MaxTorpedoCountPerTarget", "ai_torpedoes", "per_target", false },
+	{ "IsImpactSpinningEnabled", "impact_spin", "enabled", false },
+	{ "ImpactSpinningSpeedFactorPercent", "impact_spin", "speed_percent", false },
+	{ "ImpactSpinningAngleFactorPercent", "impact_spin", "angle_percent", false },
+	{ "MaxSystemDamages", "system_damage", "max", false },
+	{ "Weapon284_LaserIon_Damages", "system_damage", "284", false },
+	{ "Weapon285_LaserIonTurbo_Damages", "system_damage", "285", false },
+	{ "Weapon290_LaserIonTurbo_Damages", "system_damage", "290", false },
+	{ "Weapon296_MagPulse_Damages", "system_damage", "296", false },
+};
 
 /* Reads the rates of `lines`. */
 static void read_weapon_rates(const XwauLines* lines, const char* source, XwauCraftWeaponRates* rates) {
 	for (int key = 0; key < XWAU_CRAFT_WEAPON_RATES; ++key) {
-		rates->value[key] = int_key(lines, source, g_rateKeys[key], -1);
+		rates->value[key] = int_key(lines, source, g_rateKeys[key].key, -1);
+		/* The hook turns the spin on for any value but 0. */
+		if (key == XWAU_CRAFT_IMPACT_SPIN && rates->value[key] != -1)
+			rates->value[key] = rates->value[key] != 0;
 		if (rates->value[key] < -1) {
-			Report(source, "%s = %d: a value below 0 isn't imported", g_rateKeys[key], rates->value[key]);
+			Report(source, "%s = %d: a value below 0 isn't imported", g_rateKeys[key].key, rates->value[key]);
 			rates->value[key] = -1;
 		}
 	}
@@ -615,16 +727,36 @@ bool XwauCraft_HasWeaponRates(const XwauCraftWeaponRates* rates) {
 	return false;
 }
 
-void XwauCraft_WriteWeaponRates(FILE* f, const XwauCraftWeaponRates* rates) {
-	bool first = true;
-	fputc('{', f);
+bool XwauCraft_HasDefaultFirstRates(const XwauCraftWeaponRates* rates) {
 	for (int key = 0; key < XWAU_CRAFT_WEAPON_RATES; ++key) {
+		if (rates->value[key] >= 0 && !g_rateKeys[key].ship_first)
+			return true;
+	}
+	return false;
+}
+
+void XwauCraft_WriteWeaponRates(FILE* f, const char* indent, const XwauCraftWeaponRates* rates) {
+	bool open = false;
+	for (int key = 0; key < XWAU_CRAFT_WEAPON_RATES; ++key) {
+		/* The keys of a group follow each other in the table. */
+		if (open && strcmp(g_rateKeys[key - 1].group, g_rateKeys[key].group) != 0) {
+			fputs("}\n", f);
+			open = false;
+		}
 		if (rates->value[key] < 0)
 			continue;
-		fprintf(f, "%s%s: %d", first ? "" : ", ", g_rateNames[key], rates->value[key]);
-		first = false;
+		if (open)
+			fputs(", ", f);
+		else
+			fprintf(f, "%s%s: {", indent, g_rateKeys[key].group);
+		open = true;
+		if (key == XWAU_CRAFT_IMPACT_SPIN)
+			fprintf(f, "%s: %s", g_rateKeys[key].name, rates->value[key] ? "true" : "false");
+		else
+			fprintf(f, "%s: %d", g_rateKeys[key].name, rates->value[key]);
 	}
-	fputc('}', f);
+	if (open)
+		fputs("}\n", f);
 }
 
 bool XwauCraft_ReadGlobalImpactColors(const char* game, uint32_t colors[XWAU_CRAFT_WEAPONS]) {
@@ -821,11 +953,7 @@ static void write_weapons(FILE* f, const XwauCraftWeapons* weapons) {
 	fprintf(f, "weapons:\n");
 	if (weapons->switch_by_iff >= 0)
 		fprintf(f, "  switch_by_iff: %s\n", weapons->switch_by_iff ? "true" : "false");
-	if (XwauCraft_HasWeaponRates(&weapons->rates)) {
-		fputs("  rates: ", f);
-		XwauCraft_WriteWeaponRates(f, &weapons->rates);
-		fputc('\n', f);
-	}
+	XwauCraft_WriteWeaponRates(f, "  ", &weapons->rates);
 	if (has_weapon_colors(&weapons->colors)) {
 		fprintf(f, "  colors:\n");
 		write_weapon_colors(f, "    ", &weapons->colors);
@@ -845,7 +973,7 @@ static void write_weapons(FILE* f, const XwauCraftWeapons* weapons) {
 static bool write_craft_file(const char* path, const char* sources, const XwauCraftHud* hud,
 							 const XwauCraftEngineGlows* glows, const XwauCraftWeapons* weapons,
 							 const XwauStatsProfiles* stats, const XwauCraftShield* shield,
-							 const XwauCraftSound* sound) {
+							 const XwauCraftSound* sound, const XwauCraftComponents* components) {
 	FILE* f = fopen(path, "wb");
 	if (!f) {
 		Report(path, "can't be written");
@@ -863,6 +991,8 @@ static bool write_craft_file(const char* path, const char* sources, const XwauCr
 		write_shield(f, shield);
 	if (XwauCraft_HasSound(sound))
 		write_sound(f, sound);
+	if (components->has)
+		write_components(f, components);
 	const bool ok = fclose(f) == 0;
 	if (!ok)
 		Report(path, "can't be written");
@@ -945,8 +1075,10 @@ static bool has_side_file(char* const* names, size_t count, const char* model, c
 
 /* The files that can give a model's settings beside its INI file, as
  * <model><suffix>. */
-static const char* const g_sideFiles[] = { "Reticle.txt", "EngineGlows.txt", "WeaponColor.txt",
-										   "Shield.txt",  "WeaponRate.txt",  "Sound.txt" };
+static const char* const g_sideFiles[] = {
+	"Reticle.txt",    "EngineGlows.txt", "WeaponColor.txt",          "Shield.txt",
+	"WeaponRate.txt", "Sound.txt",       "SubcomponentsStrength.txt"
+};
 
 enum {
 	SIDE_RETICLE,
@@ -955,6 +1087,7 @@ enum {
 	SIDE_SHIELD,
 	SIDE_WEAPON_RATE,
 	SIDE_SOUND,
+	SIDE_SUBCOMPONENTS,
 	SIDE_FILES
 };
 
@@ -993,7 +1126,12 @@ bool XwauCraft_Write(const char* xwau_root, const char* output_dir) {
 	char** names   = ListDir(models_dir, true, &count);
 	bool   ok      = true;
 	int    written = 0, reticles = 0, colors = 0, engine_glows = 0, weapon_colors = 0, light_colors = 0;
-	int    stats_profiles = 0, shields = 0, weapon_rates = 0, sounds = 0, engine_slowing = 0;
+	int    stats_profiles = 0, shields = 0, weapon_rates = 0, sounds = 0, engine_slowing = 0, components = 0;
+	/* hook_opt_limit reads the [SubcomponentsStrength] sections. */
+	char       opt_limit_dll[1024];
+	const bool strength =
+		Xwau_FindFile(xwau_root, "hook_opt_limit.dll", opt_limit_dll, sizeof opt_limit_dll) &&
+		Xwau_FileHasText(opt_limit_dll, "SubcomponentsStrength");
 	/* hook_engine_sound reads the [Sound] sections. */
 	char       engine_sound_dll[1024];
 	const bool engine_sound =
@@ -1063,6 +1201,9 @@ bool XwauCraft_Write(const char* xwau_root, const char* output_dir) {
 		XwauCraft_ReadSound(engine_sound ? side_path[SIDE_SOUND] : NULL, engine_sound && has_ini ? ini : NULL,
 							range_bank, &sound);
 		engine_slowing += sound.engine_slowing;
+		XwauCraftComponents strengths;
+		XwauCraft_ReadComponents(strength ? side_path[SIDE_SUBCOMPONENTS] : NULL,
+								 strength && has_ini ? ini : NULL, &strengths);
 		XwauStatsProfiles stats;
 		LowerCopy(key, sizeof key, model);
 		if (!XwauStatsProfiles_Read(xwau_root, model, names, count, XwauStatsGenus_Find(&genus, key),
@@ -1072,7 +1213,7 @@ bool XwauCraft_Write(const char* xwau_root, const char* output_dir) {
 		}
 		disabled_profiles += stats.disabled;
 		if (!has_reticle(&hud) && !has_colors(&hud) && !has_engine_glows(&glows) && !has_weapons(weapons) &&
-			!stats.count && !shield.has && !XwauCraft_HasSound(&sound)) {
+			!stats.count && !shield.has && !XwauCraft_HasSound(&sound) && !strengths.has) {
 			XwauStatsProfiles_Free(&stats);
 			continue;
 		}
@@ -1088,7 +1229,7 @@ bool XwauCraft_Write(const char* xwau_root, const char* output_dir) {
 			add_source(sources, sizeof sources, ini_name);
 		}
 		if (!PathFormat(path, sizeof path, "%s/%s.yaml", craft_dir, key) || !MakeDirs(craft_dir) ||
-			!write_craft_file(path, sources, &hud, &glows, weapons, &stats, &shield, &sound)) {
+			!write_craft_file(path, sources, &hud, &glows, weapons, &stats, &shield, &sound, &strengths)) {
 			XwauStatsProfiles_Free(&stats);
 			ok = false;
 			continue;
@@ -1096,21 +1237,24 @@ bool XwauCraft_Write(const char* xwau_root, const char* output_dir) {
 		stats_profiles += stats.count != 0;
 		shields += shield.has;
 		sounds += XwauCraft_HasSound(&sound);
+		components += strengths.has;
 		XwauStatsProfiles_Free(&stats);
 		written++;
 		reticles += has_reticle(&hud);
 		colors += has_colors(&hud);
 		engine_glows += has_engine_glows(&glows);
 		weapon_colors += has_weapons(weapons);
-		weapon_rates += XwauCraft_HasWeaponRates(&weapons->rates);
+		weapon_rates += XwauCraft_HasDefaultFirstRates(&weapons->rates);
 	}
 	free(weapons);
 	XwauStatsGenus_Free(&genus);
 	FreeList(names, count);
 	Report(NULL,
 		   "model settings: %d files, %d with a reticle, %d with HUD colours, %d with engine glows, %d with "
-		   "weapon settings, %d with stats profiles, %d with a shield recharge rate, %d with sounds",
-		   written, reticles, colors, engine_glows, weapon_colors, stats_profiles, shields, sounds);
+		   "weapon settings, %d with stats profiles, %d with a shield recharge rate, %d with sounds, %d with "
+		   "component strengths",
+		   written, reticles, colors, engine_glows, weapon_colors, stats_profiles, shields, sounds,
+		   components);
 	if (engine_slowing)
 		Report(NULL, "%d models set EngineSlowing in [Sound], which no hook reads", engine_slowing);
 	if (engine_sound) {
@@ -1138,8 +1282,8 @@ bool XwauCraft_Write(const char* xwau_root, const char* output_dir) {
 			   disabled_profiles);
 	if (weapon_rates && global_rate_lines)
 		Report(NULL,
-			   "%d models have laser rates, which XWAU ignores because the global [WeaponRate] has lines; "
-			   "OpenXWA uses them",
+			   "%d models have [WeaponRate] values, which XWAU ignores because the global [WeaponRate] has "
+			   "lines; OpenXWA uses them",
 			   weapon_rates);
 	if (light_colors)
 		Report(NULL,

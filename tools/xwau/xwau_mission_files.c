@@ -15,6 +15,7 @@
 #include "xwau_objects.h"
 #include "xwau_skins.h"
 #include "xwau_stats_profiles.h"
+#include "xwau_warhead_pools.h"
 
 static const char* const kMissionDirs[] = { "Missions", "Melee", "Combat" };
 
@@ -643,7 +644,7 @@ static bool report_weapon_rates(const char* game, const char* base) {
 typedef struct Totals {
 	size_t files, profiles, profiles_dropped, skins, articulations, articulations_dropped, resdata, values,
 		values_dropped, craft_markings, craft_markings_dropped, settings, swaps, craft_names, front_planets,
-		headlights, stats_profiles, sounds;
+		headlights, stats_profiles, sounds, warhead_pools, warhead_pools_dropped;
 } Totals;
 
 /* Whether the flight group values of `entry` set anything. */
@@ -749,8 +750,29 @@ static size_t check_values(XwauMissionTie* values, const Tie* tie, const char* b
 	return kept;
 }
 
-/* Writes the `flight_groups` of the checked values. */
-static void write_values(FILE* f, const XwauMissionTie* values, const Tie* tie, const char* base) {
+/* Drops, with a report, the warhead pools of the flight groups that the .TIE
+ * that plays doesn't have. Returns the number of flight groups with pools. */
+static size_t check_pools(XwauWarheadPools* pools, const Tie* tie, const char* base, Totals* totals) {
+	size_t kept = 0;
+	for (size_t i = 0; i < pools->count; ++i) {
+		XwauWarheadPool* pool = &pools->items[i];
+		if (!XwauWarheadPools_Any(pool))
+			continue;
+		if (!tie_has(tie, pool->fg)) {
+			Report(base, "[WarheadTypeCount]: the mission has no flight group %d, so its pools are dropped",
+				   pool->fg);
+			memset(pool->count, 0xff, sizeof pool->count);
+			++totals->warhead_pools_dropped;
+			continue;
+		}
+		++kept;
+	}
+	return kept;
+}
+
+/* Writes the `flight_groups` of the checked values and warhead pools. */
+static void write_values(FILE* f, const XwauMissionTie* values, const XwauWarheadPools* pools, const Tie* tie,
+						 const char* base) {
 	bool   any   = false;
 	size_t craft = 0; /* the next markings of one craft */
 	while (craft < values->craft_marking_count && values->craft_markings[craft].fg < 0)
@@ -758,8 +780,9 @@ static void write_values(FILE* f, const XwauMissionTie* values, const Tie* tie, 
 	for (int i = 0; (size_t)i < tie->count; ++i) {
 		const XwauMissionTieFlightGroup* entry = XwauMissionTie_FlightGroup(values, i);
 		const bool                       set   = entry && has_values(entry);
+		const XwauWarheadPool*           pool  = XwauWarheadPools_Find(pools, i);
 		const bool by_craft = craft < values->craft_marking_count && values->craft_markings[craft].fg == i;
-		if (!set && !by_craft)
+		if (!set && !by_craft && !XwauWarheadPools_Any(pool))
 			continue;
 		const XwauTieFlightGroup* fg = &tie->groups[i];
 		if (!any)
@@ -782,6 +805,7 @@ static void write_values(FILE* f, const XwauMissionTie* values, const Tie* tie, 
 			fputs(", pilot_voice: ", f);
 			Xwau_WriteString(f, entry->pilot_voice);
 		}
+		XwauWarheadPools_Write(f, pool);
 		for (bool first = true; craft < values->craft_marking_count && values->craft_markings[craft].fg == i;
 			 ++craft, first = false)
 			fprintf(f, "%s%d: %d", first ? ", craft_markings: { " : ", ", values->craft_markings[craft].craft,
@@ -834,7 +858,7 @@ static bool write_mission(const char* path, const char* base, const Profile* pro
 						  const XwauMissionTie* values, const XwauMissionSettings* settings,
 						  const Swap* swap_list, size_t swap_count, const CraftName* names, size_t name_count,
 						  const XwauFrontPlanet* planet, bool lights, const XwauMissionStats* stats,
-						  const XwauMissionSounds* sounds) {
+						  const XwauMissionSounds* sounds, const XwauWarheadPools* pools) {
 	FILE* f = fopen(path, "wb");
 	if (!f) {
 		Report(NULL, "cannot write %s", path);
@@ -856,7 +880,7 @@ static bool write_mission(const char* path, const char* base, const Profile* pro
 	for (size_t i = 0; i < swap_count; ++i)
 		fprintf(f, "%s  %s: %s\n", i ? "" : "model_swaps:\n", swap_list[i].source, swap_list[i].target);
 	write_craft_names(f, names, name_count);
-	write_values(f, values, tie, base);
+	write_values(f, values, pools, tie, base);
 	size_t* order = by_target(profile_targets, profile_count);
 	bool    any   = false;
 	for (size_t k = 0; order && k < profile_count; ++k) {
@@ -964,6 +988,8 @@ static bool import_mission(const char* game, const XwauMissions* missions, const
 	ok                     = ok && XwauMissionStats_Read(game, base, &stats);
 	XwauMissionSounds sounds = { 0 };
 	ok                       = ok && XwauMissionSounds_Read(game, stock_game, base, true, &sounds);
+	XwauWarheadPools pools   = { 0 };
+	ok                       = ok && XwauWarheadPools_Read(game, base, true, &pools);
 	const bool any_stats   = XwauMissionStats_Any(&stats);
 	if (ok && planet.image != -1 && !*dat_groups_loaded) {
 		ok                 = XwauDatGroups_Read(game, stock_game, dat_groups);
@@ -975,9 +1001,12 @@ static bool import_mission(const char* game, const XwauMissions* missions, const
 	bool any_values = values.craft_marking_count != 0;
 	for (size_t i = 0; i < values.fg_count; ++i)
 		any_values |= has_values(&values.fgs[i]);
+	for (size_t i = 0; i < pools.count; ++i)
+		any_values |= XwauWarheadPools_Any(&pools.items[i]);
 	if (!ok || (!profile_count && !skin_count && !fg_count && !resdata.count && !any_values &&
 				!XwauMissionSettings_Any(&settings) && !swap_count && !values.craft_lines.count &&
 				!XwauFrontPlanet_Any(&planet) && !lights && !any_stats && !sounds.count)) {
+		XwauWarheadPools_Free(&pools);
 		XwauMissionSounds_Free(&sounds);
 		XwauMissionStats_Free(&stats);
 		free_profiles(profile_list, profile_count);
@@ -1003,6 +1032,7 @@ static bool import_mission(const char* game, const XwauMissions* missions, const
 			   profile_count, skinned_models, fg_count);
 		totals->profiles_dropped += profile_count;
 		totals->articulations_dropped += fg_count;
+		XwauWarheadPools_Free(&pools);
 		XwauMissionSounds_Free(&sounds);
 		XwauMissionStats_Free(&stats);
 		free_profiles(profile_list, profile_count);
@@ -1040,21 +1070,23 @@ static bool import_mission(const char* game, const XwauMissions* missions, const
 		fgs_kept += fg_targets[i] >= 0;
 	ok                       = profile_targets && fg_targets;
 	const size_t values_kept = check_values(&values, &tie, base, totals);
+	const size_t pools_kept  = check_pools(&pools, &tie, base, totals);
 	XwauMissionSettings_CheckFlightGroups(&settings, tie.count, base);
 	const bool any_settings = XwauMissionSettings_Any(&settings);
 	CraftName* names        = NULL;
 	size_t     name_count   = 0;
 	ok                      = ok && craft_names(&values.craft_lines, tables, &tie, base, &names, &name_count);
-	if (ok &&
-		(profiles_kept || skin_count || fgs_kept || resdata.count || values_kept || any_settings ||
-		 swap_count || name_count || XwauFrontPlanet_Any(&planet) || lights || any_stats || sounds.count)) {
+	if (ok && (profiles_kept || skin_count || fgs_kept || resdata.count || values_kept || pools_kept ||
+			   any_settings || swap_count || name_count || XwauFrontPlanet_Any(&planet) || lights ||
+			   any_stats || sounds.count)) {
 		char dir_path[1200], lower_dir[64], path[1400];
 		LowerCopy(lower_dir, sizeof lower_dir, dir);
-		ok = PathFormat(dir_path, sizeof dir_path, "%s/%s", out, lower_dir) &&
-			 PathFormat(path, sizeof path, "%s/%s.yaml", dir_path, name) && MakeDirs(dir_path) &&
-			 write_mission(path, base, profile_list, profile_targets, profile_count, skin_models, skins,
-						   skin_count, fgs, fg_targets, fg_count, &tie, &resdata, &values, &settings,
-						   swap_list, swap_count, names, name_count, &planet, lights, &stats, &sounds);
+		ok =
+			PathFormat(dir_path, sizeof dir_path, "%s/%s", out, lower_dir) &&
+			PathFormat(path, sizeof path, "%s/%s.yaml", dir_path, name) && MakeDirs(dir_path) &&
+			write_mission(path, base, profile_list, profile_targets, profile_count, skin_models, skins,
+						  skin_count, fgs, fg_targets, fg_count, &tie, &resdata, &values, &settings,
+						  swap_list, swap_count, names, name_count, &planet, lights, &stats, &sounds, &pools);
 		if (ok) {
 			++totals->files;
 			totals->profiles += profiles_kept;
@@ -1069,11 +1101,13 @@ static bool import_mission(const char* game, const XwauMissions* missions, const
 			totals->headlights += lights;
 			totals->stats_profiles += any_stats;
 			totals->sounds += sounds.count != 0;
+			totals->warhead_pools += pools_kept;
 			for (size_t i = 0; i < values.craft_marking_count; ++i)
 				totals->craft_markings += values.craft_markings[i].fg >= 0;
 		}
 	}
 	free_craft_names(names, name_count);
+	XwauWarheadPools_Free(&pools);
 	XwauMissionSounds_Free(&sounds);
 	XwauMissionStats_Free(&stats);
 	free(profile_targets);
@@ -1143,10 +1177,11 @@ bool XwauMissionFiles_Write(const char* game, const XwauMissions* missions, cons
 		"[mission_tie] values (%zu dropped), the markings of %zu craft (%zu dropped), the settings of "
 		"%zu missions, %zu model swaps, the names of %zu models, the concourse planets of %zu missions, "
 		"the headlights of %zu missions, the stats profiles of %zu missions, the sound replacements of %zu "
-		"missions and the art files of %zu missions",
+		"missions, the warhead pools of %zu flight groups (%zu dropped) and the art files of %zu missions",
 		totals.files, totals.profiles, totals.profiles_dropped, totals.skins, totals.articulations,
 		totals.articulations_dropped, totals.values, totals.values_dropped, totals.craft_markings,
 		totals.craft_markings_dropped, totals.settings, totals.swaps, totals.craft_names,
-		totals.front_planets, totals.headlights, totals.stats_profiles, totals.sounds, totals.resdata);
+		totals.front_planets, totals.headlights, totals.stats_profiles, totals.sounds, totals.warhead_pools,
+		totals.warhead_pools_dropped, totals.resdata);
 	return true;
 }

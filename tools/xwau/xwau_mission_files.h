@@ -21,7 +21,7 @@
  *       models:
  *         escorttransport: { markings: { 0: "etrmod" } }
  *     flight_groups:
- *       1: { name: "Red 1", craft: 1, markings: 4 }
+ *       1: { name: "Red 1", craft: 1, markings: 4, warheads: { missiles: 80 } }
  *       26: { name: "Red", craft: 1, craft_markings: { 0: 0, 1: 1 } }
  *     object_profiles:
  *       flight_groups:
@@ -65,6 +65,11 @@
  * reported but kept, since a skirmish can add craft. A flight group whose
  * name isn't ASCII gets no `name` check, since the game compares the .TIE's
  * bytes and the file is UTF-8.
+ *
+ * Warhead pools (hook_weapon_rate): `warheads` in a flight group's entry
+ * holds the warheads that the flight group has in its hangar
+ * (xwau_warhead_pools.h). The pools of a flight group that the .TIE doesn't
+ * have are reported and dropped.
  *
  * Art (hook_backdrops): `resdata` lists the DATs that the mission adds, in
  * its order: the lines of <mission>_Resdata.txt, or else of the [Resdata]
