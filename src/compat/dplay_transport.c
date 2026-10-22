@@ -51,6 +51,12 @@ void DpWriteGuid(uint8_t* data, const GUID* value) {
 
 uint64_t DpNow(void) { return Aeron_NowUs() / 1000; }
 
+static void DpHeard(DpPeer* peer) {
+	peer->last_seen = DpNow();
+	if (peer->silent_since && !peer->resumed_at)
+		peer->resumed_at = peer->last_seen;
+}
+
 int DpFindPeer(DPID id) {
 	for (int i = 0; i < DP_PEERS; ++i)
 		if (id && g_dp.peers[i].id == id)
@@ -263,7 +269,7 @@ static void DpIngress(DpLink link, const uint8_t* packet, unsigned received) {
 			!g_dp.peers[recipient].active)
 			return;
 		if (g_dp.host && to != g_dp.local_id) {
-			g_dp.peers[peer].last_seen = DpNow();
+			DpHeard(&g_dp.peers[peer]);
 			DpSend(g_dp.peers[recipient].link, DP_GAME, request, from, to, packet + DP_HEADER, size);
 			return;
 		}
@@ -272,7 +278,7 @@ static void DpIngress(DpLink link, const uint8_t* packet, unsigned received) {
 		/* On clients only the physical host link determines peer liveness. */
 		int physical = g_dp.host ? peer : DpFindPeer(g_dp.host_id);
 		if (physical >= 0)
-			g_dp.peers[physical].last_seen = DpNow();
+			DpHeard(&g_dp.peers[physical]);
 		DpPacket* queued = &g_dp.gameplay[(g_dp.game_read + g_dp.game_count++) % DP_GAME_QUEUE];
 		queued->order    = ++g_dp.delivery_order;
 		queued->from     = from;
@@ -287,7 +293,7 @@ static void DpIngress(DpLink link, const uint8_t* packet, unsigned received) {
 		return;
 	if ((kind == DP_RESULT || kind == DP_SNAPSHOT) && g_dp.host)
 		return;
-	g_dp.peers[peer].last_seen = DpNow();
+	DpHeard(&g_dp.peers[peer]);
 	DpHandleControl(link, kind, request, from, to, packet + DP_HEADER, size);
 }
 
@@ -304,7 +310,33 @@ void DpPumpIncoming(void) {
 	}
 }
 
+/* Reports local stalls, receive-queue drops and peer silences before they become timeouts. */
+static void DpReportPeer(DpPeer* peer, uint64_t now, int stalled) {
+	unsigned dropped = DpIce_TakeDropped(peer->link);
+	if (dropped)
+		Aeron_LogWarn("compat.dplay", "player %u: receive queue full, dropped %u datagrams",
+					  (unsigned)peer->id, dropped);
+	if (peer->silent_since && peer->resumed_at) {
+		Aeron_LogInfo("compat.dplay", "player %u: packets resumed after %llu ms of silence",
+					  (unsigned)peer->id, (unsigned long long)(peer->resumed_at - peer->silent_since));
+		peer->silent_since = peer->resumed_at = 0;
+	}
+	/* After a local stall every peer looks silent until its queued packets are pumped. */
+	if (!stalled && !peer->silent_since && now >= peer->last_seen + DP_SILENCE_WARN_MS) {
+		peer->silent_since = peer->last_seen;
+		Aeron_LogWarn("compat.dplay", "player %u: no packet for %llu ms", (unsigned)peer->id,
+					  (unsigned long long)(now - peer->last_seen));
+	}
+}
+
 void AeronDplay_Update(void) {
+	static uint64_t previous_update;
+	uint64_t        entered = DpNow();
+	int             stalled = g_dp.open && previous_update && entered - previous_update >= DP_STALL_WARN_MS;
+	if (stalled)
+		Aeron_LogWarn("compat.dplay", "network update stalled for %llu ms",
+					  (unsigned long long)(entered - previous_update));
+	previous_update = entered;
 	DpDirectory_Update();
 	DpIce_Update();
 	uint64_t now = DpNow();
@@ -315,6 +347,7 @@ void AeronDplay_Update(void) {
 			DpPeer* peer = &g_dp.peers[i];
 			if (!peer->id || peer->id == g_dp.local_id || (!g_dp.host && peer->id != g_dp.host_id))
 				continue;
+			DpReportPeer(peer, now, stalled);
 			DpSend(peer->link, DP_KEEPALIVE, 0, g_dp.local_id, peer->id, NULL, 0);
 			/* Packets pumped above can stamp last_seen after now was sampled. */
 			if (now >= peer->last_seen + DP_PEER_TIMEOUT_MS) {

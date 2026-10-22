@@ -7,6 +7,8 @@
 typedef uint64_t DpLink;
 void             DpIce_Update(void);
 int              DpIce_Receive(DpLink* link, void* data, unsigned* size);
+/* Returns and clears the count of datagrams discarded because the link's receive queue was full. */
+unsigned DpIce_TakeDropped(DpLink link);
 /* 1: sent, 0: would block/not connected, -1: failed. */
 int    DpIce_Send(DpLink link, const void* data, unsigned size);
 int    DpIce_Matches(DpLink link, const GUID* application, const GUID* room);

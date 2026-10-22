@@ -20,6 +20,8 @@ enum {
 	DP_ROSTER_TIMEOUT_MS     = 10000,
 	DP_KEEPALIVE_INTERVAL_MS = 1000,
 	DP_PEER_TIMEOUT_MS       = 30000,
+	DP_SILENCE_WARN_MS       = 3000,
+	DP_STALL_WARN_MS         = 500,
 	DP_CANCEL_RETENTION_MS   = 30000,
 	DP_CLOSE_RETRY_MS        = 50,
 	DP_CLOSE_DRAIN_MS        = 250
@@ -34,6 +36,8 @@ typedef struct DpPeer {
 	uint32_t active, groups;
 	char     short_name[DP_SHORT_NAME_CAPACITY], long_name[DP_LONG_NAME_CAPACITY];
 	uint64_t last_seen;
+	/* Diagnostics: last packet before a reported silence, and the first one after it. */
+	uint64_t silent_since, resumed_at;
 	uint32_t request;
 	uint32_t open_request, open_version;
 	HRESULT  result;

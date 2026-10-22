@@ -4,7 +4,9 @@
 #include "dplay_internal.h"
 #include <juice/juice.h>
 
-enum { ICE_LINKS = DP_PEERS, ICE_DATAGRAMS = 64, ICE_EVENTS = 16 };
+/* A stalled application thread leaves datagrams queued here; 512 covers about two
+ * seconds of a busy star-topology link. */
+enum { ICE_LINKS = DP_PEERS, ICE_DATAGRAMS = 512, ICE_EVENTS = 16 };
 
 enum { ICE_GATHER_DONE = 100, ICE_RELAY_READY };
 
@@ -19,10 +21,10 @@ typedef struct IceLink {
 	uint64_t                     generation, deadline, started, gather_until;
 	juice_agent_t*               agent;
 	AeronMutex*                  mutex;
-	/* Callbacks touch only these queues and the overflow flag, under mutex. */
+	/* Callbacks touch only these queues, the overflow flags and the drop count, under mutex. */
 	IceDatagram datagrams[ICE_DATAGRAMS];
-	unsigned    read, count, event_read, event_count;
-	int         events[ICE_EVENTS], overflow;
+	unsigned    read, count, event_read, event_count, dropped;
+	int         events[ICE_EVENTS], overflow, control_overflow;
 	/* Remaining state belongs exclusively to the application thread. */
 	int host, seen, remote, published, gathered, relay_ready, connected, failed, reported, retiring, owned,
 		admitted;
@@ -85,15 +87,40 @@ static void IceCandidate(juice_agent_t* agent, const char* candidate, void* user
 		IceEvent(user, ICE_RELAY_READY);
 }
 
+static unsigned char IceKind(const uint8_t* data) { return data[offsetof(DpWireHeader, kind)]; }
+
+/* Discards the newest queued game datagram, keeping later control datagrams in order. */
+static int IceDropNewestGame(IceLink* link) {
+	for (unsigned n = link->count; n-- > 0;) {
+		if (IceKind(link->datagrams[(link->read + n) % ICE_DATAGRAMS].data) != DP_GAME)
+			continue;
+		for (unsigned j = n + 1; j < link->count; ++j)
+			link->datagrams[(link->read + j - 1) % ICE_DATAGRAMS] =
+				link->datagrams[(link->read + j) % ICE_DATAGRAMS];
+		--link->count;
+		return 1;
+	}
+	return 0;
+}
+
 static void IceReceive(juice_agent_t* agent, const char* data, size_t size, void* user) {
-	IceLink* link = user;
+	IceLink*      link = user;
+	unsigned char kind;
 	(void)agent;
 	if (size < DP_HEADER || size > DP_MAX_DATAGRAM)
 		return;
+	kind = IceKind((const uint8_t*)data);
 	Aeron_MutexLock(link->mutex);
+	/* A full queue means the application thread is behind, not that the peer is
+	 * gone. Game traffic has its own recovery and keepalives are redundant, so
+	 * only control datagrams displace queued game datagrams. */
+	if (link->count == ICE_DATAGRAMS && kind != DP_GAME && kind != DP_KEEPALIVE && IceDropNewestGame(link))
+		++link->dropped;
 	if (link->count == ICE_DATAGRAMS) {
-		if ((unsigned char)data[offsetof(DpWireHeader, kind)] != DP_GAME)
-			link->overflow = 1;
+		if (kind == DP_GAME)
+			++link->dropped;
+		else if (kind != DP_KEEPALIVE)
+			link->control_overflow = 1;
 	} else {
 		IceDatagram* packet = &link->datagrams[(link->read + link->count++) % ICE_DATAGRAMS];
 		packet->size        = (unsigned)size;
@@ -183,6 +210,8 @@ static void IceApplyEvents(IceLink* link) {
 	Aeron_MutexLock(link->mutex);
 	if (link->overflow)
 		IceFail(link, "event queue overflow");
+	if (link->control_overflow)
+		IceFail(link, "receive queue full of control datagrams");
 	count = link->event_count;
 	for (unsigned i = 0; i < count; ++i)
 		events[i] = link->events[(link->event_read + i) % ICE_EVENTS];
@@ -339,6 +368,18 @@ void DpIce_Update(void) {
 			IceDestroy(link);
 		}
 	}
+}
+
+unsigned DpIce_TakeDropped(DpLink id) {
+	IceLink* link = IceFind(id);
+	unsigned dropped;
+	if (!link)
+		return 0;
+	Aeron_MutexLock(link->mutex);
+	dropped       = link->dropped;
+	link->dropped = 0;
+	Aeron_MutexUnlock(link->mutex);
+	return dropped;
 }
 
 int DpIce_Receive(DpLink* id, void* data, unsigned* size) {
