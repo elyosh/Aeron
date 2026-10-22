@@ -54,6 +54,17 @@ bool Xwau_FindDir(const char* game, const char* rel, char* out, size_t cap) {
 	return resolve(game, rel, out, cap) && IsDir(out);
 }
 
+bool Xwau_FileHasText(const char* path, const char* text) {
+	size_t       size   = 0;
+	char*        data   = ReadWholeFile(path, &size);
+	const size_t length = strlen(text);
+	bool         found  = false;
+	for (size_t i = 0; data && length && !found && i + length <= size; ++i)
+		found = memcmp(data + i, text, length) == 0;
+	free(data);
+	return found;
+}
+
 /* ---- Text ------------------------------------------------------------------ */
 
 char Xwau_Lower(char c) {

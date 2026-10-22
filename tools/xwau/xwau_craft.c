@@ -1,5 +1,6 @@
 #include "xwau_craft.h"
 
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -93,6 +94,63 @@ void XwauCraft_ReadHudColors(const char* ini, XwauCraftHud* hud) {
 	fclose(f);
 }
 
+/* The largest MGLT limit that the file holds. XWAU's limit is mglt * 2.25
+ * in raw speed units, and a speed is at most 65535, so a larger limit hides
+ * the glow all the same. */
+#define XWAU_CRAFT_MAX_MGLT 100000000
+
+/* Reads one line of engine glows. Returns false, with a report, when a value
+ * isn't a number that fits in an int. */
+static bool read_engine_glow(const char* source, const char* line, XwauCraftEngineGlows* glows) {
+	XwauLines tokens = { 0 };
+	long long values[3];
+	bool      ok = true;
+	if (!Xwau_Tokenize(line, XWAU_RULES_CPP, &tokens)) {
+		Report(source, "out of memory");
+		return false;
+	}
+	if (tokens.count < 3) {
+		XwauLines_Free(&tokens);
+		return true;
+	}
+	for (int i = 0; ok && i < 3; ++i)
+		ok = Xwau_StoiAuto(tokens.items[i], &values[i]) && values[i] >= INT_MIN && values[i] <= INT_MAX;
+	XwauLines_Free(&tokens);
+	if (!ok) {
+		/* The hook reads the values with std::stoi(value, 0, 0), which throws. */
+		Report(source, "engine glow line '%s' has a value that isn't a number; it is ignored", line);
+		return false;
+	}
+	if (values[0] < 0 || values[0] >= XWAU_CRAFT_ENGINE_GLOWS) {
+		Report(source, "engine glow line '%s' names a glow outside 0 to 255; it is ignored", line);
+		return false;
+	}
+	const int glow = (int)values[0];
+	if (glows->has[glow])
+		return true;
+	glows->has[glow]         = true;
+	glows->min_percent[glow] = values[1] > 0 ? (int)values[1] : 0;
+	glows->min_mglt[glow] =
+		values[2] > 0 ? (int)(values[2] < XWAU_CRAFT_MAX_MGLT ? values[2] : XWAU_CRAFT_MAX_MGLT) : 0;
+	return true;
+}
+
+void XwauCraft_ReadEngineGlows(const char* glows_txt, const char* ini, XwauCraftEngineGlows* glows) {
+	XwauLines   lines  = { 0 };
+	const char* source = glows_txt;
+	if (glows_txt)
+		XwauLines_Read(glows_txt, "", XWAU_RULES_CPP, &lines);
+	if (lines.count == 0) {
+		XwauLines_Free(&lines);
+		source = ini;
+		if (ini)
+			XwauLines_Read(ini, "EngineGlows", XWAU_RULES_CPP, &lines);
+	}
+	for (size_t i = 0; i < lines.count; ++i)
+		read_engine_glow(source, lines.items[i], glows);
+	XwauLines_Free(&lines);
+}
+
 bool XwauCraft_ReadIconList(const char* path, uint16_t** values, size_t* count) {
 	XwauLines lines = { 0 };
 	*values         = NULL;
@@ -132,13 +190,20 @@ static bool has_reticle(const XwauCraftHud* hud) {
 
 static bool has_colors(const XwauCraftHud* hud) { return hud->has_inner || hud->has_border; }
 
-static bool write_craft_file(const char* path, const char* sources, const XwauCraftHud* hud) {
-	FILE* f = fopen(path, "wb");
-	if (!f) {
-		Report(path, "can't be written");
-		return false;
+static bool has_glow_limit(const XwauCraftEngineGlows* glows, int glow) {
+	return glows->min_percent[glow] > 0 || glows->min_mglt[glow] > 0;
+}
+
+static bool has_engine_glows(const XwauCraftEngineGlows* glows) {
+	for (int glow = 0; glow < XWAU_CRAFT_ENGINE_GLOWS; ++glow) {
+		if (has_glow_limit(glows, glow))
+			return true;
 	}
-	fprintf(f, "# Written by xwau_import craft from %s.\nversion: 1\nhud:\n", sources);
+	return false;
+}
+
+static void write_hud(FILE* f, const XwauCraftHud* hud) {
+	fprintf(f, "hud:\n");
 	bool first = true;
 	for (int slot = 0; slot < XWAU_CRAFT_RETICLE_SLOTS; ++slot) {
 		if (!hud->has_reticle[slot])
@@ -156,6 +221,35 @@ static bool write_craft_file(const char* path, const char* sources, const XwauCr
 			fprintf(f, "%sborder: 0x%08x", hud->has_inner ? ", " : "", hud->border);
 		fprintf(f, "}\n");
 	}
+}
+
+static void write_engine_glows(FILE* f, const XwauCraftEngineGlows* glows) {
+	fprintf(f, "engine_glows:\n");
+	for (int glow = 0; glow < XWAU_CRAFT_ENGINE_GLOWS; ++glow) {
+		if (!has_glow_limit(glows, glow))
+			continue;
+		fprintf(f, "  %d: {", glow);
+		if (glows->min_percent[glow] > 0)
+			fprintf(f, "min_speed_percent: %d", glows->min_percent[glow]);
+		if (glows->min_mglt[glow] > 0)
+			fprintf(f, "%smin_speed_mglt: %d", glows->min_percent[glow] > 0 ? ", " : "",
+					glows->min_mglt[glow]);
+		fprintf(f, "}\n");
+	}
+}
+
+static bool write_craft_file(const char* path, const char* sources, const XwauCraftHud* hud,
+							 const XwauCraftEngineGlows* glows) {
+	FILE* f = fopen(path, "wb");
+	if (!f) {
+		Report(path, "can't be written");
+		return false;
+	}
+	fprintf(f, "# Written by xwau_import craft from %s.\nversion: 1\n", sources);
+	if (has_reticle(hud) || has_colors(hud))
+		write_hud(f, hud);
+	if (has_engine_glows(glows))
+		write_engine_glows(f, glows);
 	const bool ok = fclose(f) == 0;
 	if (!ok)
 		Report(path, "can't be written");
@@ -207,22 +301,39 @@ static bool write_icon_lists(const char* xwau_root, const char* output_dir) {
 	return ok;
 }
 
-/* Whether `name` is "<model>Reticle.txt" for a model that has no INI file,
- * in which case `model` gets the model's name. */
-static bool reticle_file_without_ini(char* const* names, size_t count, const char* name, char* model,
-									 size_t cap) {
-	const size_t length = strlen(name);
-	if (length <= 11 || !EndsWithNoCase(name, "Reticle.txt") || length - 11 >= cap)
+/* Whether `name` is "<model><suffix>" for a model that has no INI file, in
+ * which case `model` gets the model's name. */
+static bool side_file_without_ini(char* const* names, size_t count, const char* name, const char* suffix,
+								  char* model, size_t cap) {
+	const size_t length        = strlen(name);
+	const size_t suffix_length = strlen(suffix);
+	if (length <= suffix_length || !EndsWithNoCase(name, suffix) || length - suffix_length >= cap)
 		return false;
-	memcpy(model, name, length - 11);
-	model[length - 11] = '\0';
+	memcpy(model, name, length - suffix_length);
+	model[length - suffix_length] = '\0';
 	for (size_t i = 0; i < count; ++i) {
 		const size_t other = strlen(names[i]);
-		if (other == length - 11 + 4 && EndsWithNoCase(names[i], ".ini") &&
-			strncasecmp(names[i], model, length - 11) == 0)
+		if (other == length - suffix_length + 4 && EndsWithNoCase(names[i], ".ini") &&
+			strncasecmp(names[i], model, length - suffix_length) == 0)
 			return false;
 	}
 	return true;
+}
+
+/* Whether the folder has "<model><suffix>". */
+static bool has_side_file(char* const* names, size_t count, const char* model, const char* suffix) {
+	const size_t length = strlen(model);
+	for (size_t i = 0; i < count; ++i) {
+		if (strncasecmp(names[i], model, length) == 0 && Xwau_SameName(names[i] + length, suffix))
+			return true;
+	}
+	return false;
+}
+
+/* Appends `name` to the list of source files. */
+static void add_source(char* sources, size_t cap, const char* name) {
+	const size_t length = strlen(sources);
+	snprintf(sources + length, cap - length, "%s%s", length ? " and " : "", name);
 }
 
 bool XwauCraft_Write(const char* xwau_root, const char* output_dir) {
@@ -236,48 +347,61 @@ bool XwauCraft_Write(const char* xwau_root, const char* output_dir) {
 	size_t count   = 0;
 	char** names   = ListDir(models_dir, true, &count);
 	bool   ok      = true;
-	int    written = 0, reticles = 0, colors = 0;
+	int    written = 0, reticles = 0, colors = 0, engine_glows = 0;
 	for (size_t i = 0; i < count; ++i) {
-		char         model[256], ini[1100], txt_name[300], txt[1100], key[256], path[1100], sources[700];
+		char model[256], ini[1100], reticle_name[300], reticle_txt[1100], glows_name[300], glows_txt[1100],
+			key[256], path[1100], sources[1000];
 		const size_t length  = strlen(names[i]);
 		bool         has_ini = false;
 		if (EndsWithNoCase(names[i], ".ini") && length > 4 && length - 4 < sizeof model) {
 			memcpy(model, names[i], length - 4);
 			model[length - 4] = '\0';
 			has_ini           = true;
-		} else if (!reticle_file_without_ini(names, count, names[i], model, sizeof model)) {
+		} else if (!side_file_without_ini(names, count, names[i], "Reticle.txt", model, sizeof model) &&
+				   !(side_file_without_ini(names, count, names[i], "EngineGlows.txt", model, sizeof model) &&
+					 !has_side_file(names, count, model, "Reticle.txt"))) {
 			continue;
 		}
 		snprintf(ini, sizeof ini, "%s/%s.ini", models_dir, model);
-		snprintf(txt_name, sizeof txt_name, "FlightModels/%sReticle.txt", model);
-		const bool has_txt = Xwau_FindFile(xwau_root, txt_name, txt, sizeof txt);
+		snprintf(reticle_name, sizeof reticle_name, "FlightModels/%sReticle.txt", model);
+		snprintf(glows_name, sizeof glows_name, "FlightModels/%sEngineGlows.txt", model);
+		const bool has_reticle_txt = Xwau_FindFile(xwau_root, reticle_name, reticle_txt, sizeof reticle_txt);
+		const bool has_glows_txt   = Xwau_FindFile(xwau_root, glows_name, glows_txt, sizeof glows_txt);
 
-		XwauCraftHud hud;
+		XwauCraftHud         hud;
+		XwauCraftEngineGlows glows;
 		memset(&hud, 0, sizeof hud);
-		XwauCraft_ReadReticle(has_txt ? txt : NULL, has_ini ? ini : NULL, &hud);
+		memset(&glows, 0, sizeof glows);
+		XwauCraft_ReadReticle(has_reticle_txt ? reticle_txt : NULL, has_ini ? ini : NULL, &hud);
 		if (has_ini)
 			XwauCraft_ReadHudColors(ini, &hud);
-		if (!has_reticle(&hud) && !has_colors(&hud))
+		XwauCraft_ReadEngineGlows(has_glows_txt ? glows_txt : NULL, has_ini ? ini : NULL, &glows);
+		if (!has_reticle(&hud) && !has_colors(&hud) && !has_engine_glows(&glows))
 			continue;
 
 		LowerCopy(key, sizeof key, model);
-		if (has_txt && has_ini)
-			snprintf(sources, sizeof sources, "%s and FlightModels/%s.ini", txt_name, model);
-		else if (has_txt)
-			snprintf(sources, sizeof sources, "%s", txt_name);
-		else
-			snprintf(sources, sizeof sources, "FlightModels/%s.ini", model);
+		sources[0] = '\0';
+		if (has_reticle_txt)
+			add_source(sources, sizeof sources, reticle_name);
+		if (has_glows_txt)
+			add_source(sources, sizeof sources, glows_name);
+		if (has_ini) {
+			char ini_name[300];
+			snprintf(ini_name, sizeof ini_name, "FlightModels/%s.ini", model);
+			add_source(sources, sizeof sources, ini_name);
+		}
 		if (!PathFormat(path, sizeof path, "%s/%s.yaml", craft_dir, key) || !MakeDirs(craft_dir) ||
-			!write_craft_file(path, sources, &hud)) {
+			!write_craft_file(path, sources, &hud, &glows)) {
 			ok = false;
 			continue;
 		}
 		written++;
 		reticles += has_reticle(&hud);
 		colors += has_colors(&hud);
+		engine_glows += has_engine_glows(&glows);
 	}
 	FreeList(names, count);
-	Report(NULL, "model settings: %d files, %d with a reticle, %d with HUD colours", written, reticles,
-		   colors);
+	Report(NULL, "model settings: %d files, %d with a reticle, %d with HUD colours, %d with engine glows",
+		   written, reticles, colors, engine_glows);
 	return write_icon_lists(xwau_root, output_dir) && ok;
 }

@@ -36,8 +36,11 @@
 
 /* The global settings of the mod's hooks. */
 typedef struct XwauSettingsConfig {
-	bool      mission_tie;  /* hook_mission_tie.dll */
-	bool      engine_sound; /* hook_engine_sound.dll */
+	bool mission_tie;  /* hook_mission_tie.dll */
+	bool engine_sound; /* hook_engine_sound.dll */
+	/* hook_opt_limit.dll, with its [EngineGlows] feature: the hook also
+	 * hides the glows of destroyed meshes. */
+	bool      opt_limit_engine_glows;
 	bool      warhead_collision_damage;
 	bool      damage_through_shields;
 	long long target_method;
@@ -54,7 +57,8 @@ bool XwauSettingsConfig_Read(const char* game, XwauSettingsConfig* out);
 void XwauSettingsConfig_Free(XwauSettingsConfig* config);
 
 /* Writes the `rules` and `mission_settings` sections of flight/flight.yaml.
- * Returns whether it wrote anything. */
+ * The rules are hook_mission_tie's and hook_opt_limit's
+ * classic_hide_destroyed_engine_glows. Returns whether it wrote anything. */
 bool XwauMissionSettings_WriteDefaults(FILE* f, const XwauSettingsConfig* config);
 
 /* The numbers of the missions of MISSION.LST in Missions/, Melee/ and

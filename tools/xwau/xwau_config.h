@@ -34,6 +34,11 @@ bool Xwau_FindFile(const char* game, const char* rel, char* out, size_t cap);
  * there is none. */
 bool Xwau_FindDir(const char* game, const char* rel, char* out, size_t cap);
 
+/* Returns whether the file at `path` holds the bytes of `text`. The
+ * importer uses it to find the features of a hook DLL from its strings,
+ * since the mods don't ship the same hook versions. */
+bool Xwau_FileHasText(const char* path, const char* text);
+
 typedef enum XwauRules { XWAU_RULES_CPP, XWAU_RULES_CS } XwauRules;
 
 typedef struct XwauLines {

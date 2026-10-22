@@ -9,11 +9,14 @@
  *
  * A model's key is its INI file's name in lower case, without the extension:
  * FlightModels/Awing.ini gives models/awing.yaml. A settings file is written
- * only for a model that has a setting. Today the settings are the HUD's:
+ * only for a model that has a setting:
  *
  *   hud:
  *     reticle: {5: 135, 6: 136, ...}                 # image position for each slot
  *     colors: {inner: 0xff5b5b5b, border: 0xffe5e5e5} # ARGB
+ *   engine_glows:
+ *     0: {min_speed_percent: 1}                      # by glow, in the model's order
+ *     6: {min_speed_mglt: 40}
  *
  * The reticle comes from FlightModels/<model>Reticle.txt, else the [Reticle]
  * section of FlightModels/<model>.ini, read like XWAU's reticle hook: the
@@ -23,6 +26,14 @@
  * Effects.cpp): a section counts when its header line contains "[HUDColor]"
  * in this case, the last value of a key wins, and each colour needs three
  * numbers from 0 to 1.
+ *
+ * The engine glows come from FlightModels/<model>EngineGlows.txt, else the
+ * [EngineGlows] section of the model's INI, read like XWAU's hook_opt_limit:
+ * each line is "glow, percent, mglt", a line with fewer than 3 values is
+ * skipped, and the first line of a glow wins. A glow is hidden while the
+ * craft's speed is below `min_speed_percent` of its top speed, or below
+ * `min_speed_mglt`. The hook's -1 means no limit, and so does any value of 0
+ * or less, since a speed is never below it; such a limit isn't written.
  *
  * hud.yaml holds `hull_icons` and `map_icons`, from HullIconList.txt and
  * MapIconList.txt, read like XWAU's hull icon hook: the value at position N
@@ -49,6 +60,15 @@ typedef struct XwauCraftHud {
 	uint32_t border;
 } XwauCraftHud;
 
+/* The engine glows of a model: XWAU reads glows 0 to 255. */
+#define XWAU_CRAFT_ENGINE_GLOWS 256
+
+typedef struct XwauCraftEngineGlows {
+	bool has[XWAU_CRAFT_ENGINE_GLOWS];         /* a line for the glow, even without a limit */
+	int  min_percent[XWAU_CRAFT_ENGINE_GLOWS]; /* 0: no limit */
+	int  min_mglt[XWAU_CRAFT_ENGINE_GLOWS];    /* 0: no limit */
+} XwauCraftEngineGlows;
+
 /* The ARGB colour that XWAU's wrapper makes from red, green and blue values
  * from 0 to 1: 0xff << 24 | uint32_t(r * 255) << 16 | uint32_t(g * 255) << 8 |
  * uint32_t(b * 255). The products are truncated, not rounded. */
@@ -61,6 +81,12 @@ void XwauCraft_ReadReticle(const char* reticle_txt, const char* ini, XwauCraftHu
 
 /* Reads the [HUDColor] section of `ini`. */
 void XwauCraft_ReadHudColors(const char* ini, XwauCraftHud* hud);
+
+/* Reads the engine glows of a model: `glows_txt` (<model>EngineGlows.txt)
+ * when it has lines, else the [EngineGlows] section of `ini`. Either path
+ * can be NULL. A line with a value that isn't a number, or with a glow
+ * outside 0 to 255, is reported and skipped. */
+void XwauCraft_ReadEngineGlows(const char* glows_txt, const char* ini, XwauCraftEngineGlows* glows);
 
 /* Reads an icon list file into `*values` (malloc'd) and `*count`. Returns
  * false, with a report, when a line isn't a number. */

@@ -479,6 +479,25 @@ static void test_craft(const char* scratch) {
 	check(hud.has_reticle[5] && hud.reticle[5] == 7 && !hud.has_reticle[6],
 		  "reticle: <model>Reticle.txt is read instead of the [Reticle] section");
 
+	XwauCraftEngineGlows glows;
+	write_file(path, "[EngineGlows]\n0, 1, -1\n1;100;-1\n2, 5\n0, 50, -1\n3, -1, 40\n4, x, 1\n"
+					 "300, 1, 1\n5, 0, 0\n0x6, 1, 1\n");
+	memset(&glows, 0, sizeof glows);
+	XwauCraft_ReadEngineGlows(NULL, path, &glows);
+	check(glows.has[0] && glows.min_percent[0] == 1 && glows.min_mglt[0] == 0 && glows.min_percent[1] == 100,
+		  "engine glows: ',' and ';' separate the values, -1 is no limit, and the first line of a glow wins");
+	check(!glows.has[2] && glows.min_mglt[3] == 40 && glows.min_percent[3] == 0 && !glows.has[4],
+		  "engine glows: a short line and a value that isn't a number are skipped");
+	check(glows.has[5] && glows.min_percent[5] == 0 && glows.min_mglt[5] == 0 && glows.min_percent[6] == 1 &&
+			  glows.min_mglt[6] == 1,
+		  "engine glows: 0 is no limit, and a hexadecimal glow is read");
+	snprintf(txt, sizeof txt, "%s/ModelEngineGlows.txt", scratch);
+	write_file(txt, "; comment\n2, 1, -1\n");
+	memset(&glows, 0, sizeof glows);
+	XwauCraft_ReadEngineGlows(txt, path, &glows);
+	check(glows.has[2] && !glows.has[0],
+		  "engine glows: <model>EngineGlows.txt is read instead of the section");
+
 	uint16_t* list  = NULL;
 	size_t    count = 0;
 	snprintf(path, sizeof path, "%s/IconList.txt", scratch);
@@ -496,6 +515,10 @@ static void test_craft(const char* scratch) {
 	write_file(path, "[Reticle]\nReticle_5 = 135\n[HUDColor]\nHUDInnerColor = 0.1, 0.1, 0.5\n");
 	snprintf(path, sizeof path, "%s/Empty.ini", models);
 	write_file(path, "[Size]\nX = 1\n");
+	snprintf(path, sizeof path, "%s/Isd.ini", models);
+	write_file(path, "[EngineGlows]\n0, 1, -1\n6, 100, 30\n7, -1, -1\n");
+	snprintf(path, sizeof path, "%s/NoIniEngineGlows.txt", models);
+	write_file(path, "1, -1, 20\n");
 	snprintf(path, sizeof path, "%s/HullIconList.txt", root);
 	write_file(path, "0\n100\n");
 	check(XwauCraft_Write(root, out), "craft: the files are written");
@@ -504,6 +527,19 @@ static void test_craft(const char* scratch) {
 	char* text = ReadWholeFile(path, &size);
 	check(text && strstr(text, "reticle: {5: 135}") && strstr(text, "colors: {inner: 0xff19197f}"),
 		  "craft: awing.yaml has the reticle and the inner colour");
+	free(text);
+	snprintf(path, sizeof path, "%s/models/isd.yaml", out);
+	text = ReadWholeFile(path, &size);
+	check(text && !strstr(text, "hud:") &&
+			  strstr(text, "engine_glows:\n  0: {min_speed_percent: 1}\n"
+						   "  6: {min_speed_percent: 100, min_speed_mglt: 30}\n") &&
+			  !strstr(text, "  7:"),
+		  "craft: isd.yaml has the engine glows with a limit, and no hud group");
+	free(text);
+	snprintf(path, sizeof path, "%s/models/noini.yaml", out);
+	text = ReadWholeFile(path, &size);
+	check(text && strstr(text, "  1: {min_speed_mglt: 20}"),
+		  "craft: <model>EngineGlows.txt counts for a model without an INI file");
 	free(text);
 	snprintf(path, sizeof path, "%s/models/empty.yaml", out);
 	check(!IsFile(path), "craft: no file for a model without settings");
@@ -1441,6 +1477,17 @@ static void test_flight_settings(const char* scratch) {
 	check(XwauFlightSettings_Write(game, settings) &&
 			  same_file(settings, "# Made by xwau_import missions.\nversion: 1\n"),
 		  "flight settings: no headlights without ssao_enabled");
+	snprintf(path, sizeof path, "%s/hook_opt_limit.dll", game);
+	write_file(path, "MZ");
+	check(XwauFlightSettings_Write(game, settings) &&
+			  same_file(settings, "# Made by xwau_import missions.\nversion: 1\n"),
+		  "flight settings: no engine glow rule from a hook_opt_limit.dll without the feature");
+	write_file(path, "MZ EngineGlows.txt");
+	check(XwauFlightSettings_Write(game, settings) &&
+			  same_file(settings, "# Made by xwau_import missions.\nversion: 1\nrules:\n"
+								  "  classic_hide_destroyed_engine_glows: true\n"),
+		  "flight settings: hook_opt_limit.dll with [EngineGlows] hides the glows of destroyed meshes");
+	remove(path);
 }
 
 static void test_headlights(const char* scratch) {
