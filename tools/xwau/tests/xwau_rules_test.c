@@ -1965,9 +1965,13 @@ static void test_sound_banks(const char* scratch) {
 					 "Unused\nLaser.wav 70 2800\n");
 	snprintf(path, sizeof path, "%s/Wave/Sfx_Other.lst", game);
 	write_file(path, "Laser.wav\n");
+	snprintf(path, sizeof path, "%s/Wave/Sfx_SFoil.lst", game);
+	write_file(path, "Laser.wav\n");
 	check(XwauSoundBanks_Write(game, flight, files) && !IsFile(flight),
 		  "sound banks: nothing is written without hook_sounds_count.dll");
 	snprintf(path, sizeof path, "%s/hook_sounds_count.dll", game);
+	write_file(path, "");
+	snprintf(path, sizeof path, "%s/hook_engine_sound.dll", game);
 	write_file(path, "");
 	snprintf(path, sizeof path, "%s/sounds.yaml", flight);
 	size_t size = 0;
@@ -1983,8 +1987,10 @@ static void test_sound_banks(const char* scratch) {
 			  strstr(text, "  weapon: # Wave/Sfx_Weapon.lst, 10 by object type\n    count: 12\n    sounds:\n"
 						   "      1:\n        1: {file: \"Wave\\\\Sfx_Weapon\\\\Laser.wav\", volume: 70, "
 						   "distance: 10240}\n") &&
-			  !strstr(text, "other"),
-		  "sound banks: 10 entries by object type; a bank that no hook reads is left out");
+			  !strstr(text, "other") && !strstr(text, "s_foil"),
+		  "sound banks: 10 entries by object type; a bank that no hook reads, or whose hook isn't installed, "
+		  "is "
+		  "left out");
 	free(text);
 	snprintf(path, sizeof path, "%s/Wave/Sfx_Interior/ENGINE.wav", files);
 	const bool engine = IsFile(path);
@@ -1995,6 +2001,61 @@ static void test_sound_banks(const char* scratch) {
 	free(text);
 	snprintf(path, sizeof path, "%s/Wave/Sfx_Interior/Unused.wav", files);
 	check(!IsFile(path), "sound banks: only the files that entries use are copied");
+
+	/* A model's [Sound] section. */
+	XwauCraftSound sound;
+	char           sound_txt[1100];
+	snprintf(path, sizeof path, "%s/Sound.ini", scratch);
+	write_file(path, "[Sound]\nEngineSoundInterior = 3\t\t\t\nEngineSoundFlyBy = 28\nEngineSoundWash = 5\n"
+					 "EngineSoundTakeOff = 2\nWeaponSoundBehavior = 0\nHyperSoundBehavior = 0\n"
+					 "WeaponSoundRangeStart_283 = 2\nWeaponSoundRangeCount_283 = 3\n"
+					 "WeaponSoundRangeStart_289 = 10\nWeaponSoundRangeCount_289 = 3\n"
+					 "WeaponSoundRangeStart_290 = 0\nWeaponSoundRangeCount_290 = 0\n"
+					 "WeaponSoundRangeStart_303 = 1\nEngineSlowing = 0\n");
+	XwauCraft_ReadSound(NULL, path, 12, &sound);
+	check(sound.interior == 3 && sound.fly_by == 8 && sound.fly_by_mode == 2 && sound.wash == 1 &&
+			  sound.take_off == 2 && sound.weapons == 0 && sound.hyper == 0 && sound.engine_slowing,
+		  "craft sounds: the engine types, a 3D fly-by, WeaponSoundBehavior 0 as plain and "
+		  "HyperSoundBehavior 0");
+	check(sound.range_first[3] == 2 && sound.range_count[3] == 3 && sound.range_count[9] == 0 &&
+			  sound.range_count[10] == 0 && sound.range_count[23] == 0,
+		  "craft sounds: a range past the bank, a count of 0 and a range without its count are left out");
+	snprintf(sound_txt, sizeof sound_txt, "%s/SoundSound.txt", scratch);
+	write_file(sound_txt, "; comment\nEngineSoundInterior = 0\nWeaponSoundBehavior = TieFighterWithIon\n"
+						  "HyperSoundBehavior = -1\n");
+	XwauCraft_ReadSound(sound_txt, path, 12, &sound);
+	check(sound.interior == 0 && sound.fly_by == 0 && sound.weapons == 3 && sound.hyper == -1 &&
+			  XwauCraft_HasSound(&sound),
+		  "craft sounds: <model>Sound.txt wins; 0 and -1 mean the bank");
+	write_file(sound_txt, "; only a comment\n");
+	write_file(path, "[Sound]\n; EngineSoundInterior = 3\n[Other]\nEngineSoundInterior = 3\n");
+	XwauCraft_ReadSound(sound_txt, path, 12, &sound);
+	check(!XwauCraft_HasSound(&sound), "craft sounds: a section with only comments sets nothing");
+
+	/* The model file of an installation with hook_engine_sound.dll. */
+	snprintf(path, sizeof path, "%s/Wave/Sfx_WeaponRange.lst", game);
+	write_file(path, "a.wav\nb.wav\n\nc.wav\n");
+	check(XwauSoundBanks_LineCount(game, "WeaponRange") == 3 &&
+			  XwauSoundBanks_LineCount(game, "Missing") == 0,
+		  "craft sounds: the WeaponRange bank's count");
+	snprintf(path, sizeof path, "%s/FlightModels", game);
+	MakeDirs(path);
+	snprintf(path, sizeof path, "%s/FlightModels/Tug.ini", game);
+	write_file(path, "[Sound]\nEngineSoundInterior = 9\nWeaponSoundBehavior = Empire\n"
+					 "WeaponSoundRangeStart_283 = 1\nWeaponSoundRangeCount_283 = 2\n");
+	snprintf(path, sizeof path, "%s/hook_engine_sound.dll", game);
+	remove(path);
+	snprintf(path, sizeof path, "%s/models/tug.yaml", flight);
+	check(XwauCraft_Write(game, flight) && !IsFile(path),
+		  "craft sounds: nothing without hook_engine_sound.dll");
+	snprintf(path, sizeof path, "%s/hook_engine_sound.dll", game);
+	write_file(path, "");
+	snprintf(path, sizeof path, "%s/models/tug.yaml", flight);
+	text = XwauCraft_Write(game, flight) ? ReadWholeFile(path, &size) : NULL;
+	check(text && strstr(text, "sound:\n  weapons: empire\n  weapon_ranges: {283: {first: 1, count: 2}}\n") &&
+			  !strstr(text, "interior"),
+		  "craft sounds: the model file's sound group; an interior type that plays nothing is left out");
+	free(text);
 }
 
 int main(void) {

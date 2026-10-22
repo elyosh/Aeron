@@ -19,32 +19,33 @@ typedef struct BankInfo {
 	const char* name; /* Wave/Sfx_<name>.lst */
 	const char* key;  /* the key in sounds.yaml */
 	int         layout;
+	const char* hook; /* the hook DLL that reads the bank */
 } BankInfo;
 
 /* The banks that XWAU's hooks read. */
 static const BankInfo g_banks[] = {
-	{ "CanopyOpening", "canopy_opening", BANK_BY_TYPE },
-	{ "EngineSlowing", "engine_slowing", BANK_BY_TYPE },
-	{ "EngineWash", "engine_wash", BANK_BY_TYPE },
-	{ "EnterHyperspace", "enter_hyperspace", BANK_BY_TYPE },
-	{ "ExitHyperspace", "exit_hyperspace", BANK_BY_TYPE },
-	{ "FlyBy", "fly_by", BANK_BY_TYPE },
-	{ "HangarAmbient", "hangar_ambient", 10 },
-	{ "HyperAbort", "hyper_abort", BANK_BY_TYPE },
-	{ "HyperEnd", "hyper_end", BANK_BY_TYPE },
-	{ "HyperStart", "hyper_start", BANK_BY_TYPE },
-	{ "HyperZoom", "hyper_zoom", BANK_BY_TYPE },
-	{ "Interior", "interior", BANK_BY_TYPE },
-	{ "SFoil", "s_foil", BANK_BY_TYPE },
-	{ "ShuttleBlastOff", "shuttle_blast_off", BANK_BY_TYPE },
-	{ "ShuttleShutDown", "shuttle_shut_down", BANK_BY_TYPE },
-	{ "ShuttleTakeOff", "shuttle_take_off", BANK_BY_TYPE },
-	{ "Sounds", "sounds", BANK_BY_NAME },
-	{ "StarshipAmbient", "starship_ambient", BANK_BY_TYPE },
-	{ "TakeOff", "take_off", BANK_BY_TYPE },
-	{ "Weapon", "weapon", 10 },
-	{ "WeaponExplosion", "weapon_explosion", 8 },
-	{ "WeaponRange", "weapon_range", BANK_BY_POSITION },
+	{ "CanopyOpening", "canopy_opening", BANK_BY_TYPE, "hook_engine_sound.dll" },
+	{ "EngineSlowing", "engine_slowing", BANK_BY_TYPE, "hook_engine_sound.dll" },
+	{ "EngineWash", "engine_wash", BANK_BY_TYPE, "hook_engine_sound.dll" },
+	{ "EnterHyperspace", "enter_hyperspace", BANK_BY_TYPE, "hook_hyperspace.dll" },
+	{ "ExitHyperspace", "exit_hyperspace", BANK_BY_TYPE, "hook_hyperspace.dll" },
+	{ "FlyBy", "fly_by", BANK_BY_TYPE, "hook_engine_sound.dll" },
+	{ "HangarAmbient", "hangar_ambient", 10, "hook_hangars.dll" },
+	{ "HyperAbort", "hyper_abort", BANK_BY_TYPE, "hook_engine_sound.dll" },
+	{ "HyperEnd", "hyper_end", BANK_BY_TYPE, "hook_engine_sound.dll" },
+	{ "HyperStart", "hyper_start", BANK_BY_TYPE, "hook_engine_sound.dll" },
+	{ "HyperZoom", "hyper_zoom", BANK_BY_TYPE, "hook_engine_sound.dll" },
+	{ "Interior", "interior", BANK_BY_TYPE, "hook_engine_sound.dll" },
+	{ "SFoil", "s_foil", BANK_BY_TYPE, "hook_sfoils.dll" },
+	{ "ShuttleBlastOff", "shuttle_blast_off", BANK_BY_TYPE, "hook_engine_sound.dll" },
+	{ "ShuttleShutDown", "shuttle_shut_down", BANK_BY_TYPE, "hook_engine_sound.dll" },
+	{ "ShuttleTakeOff", "shuttle_take_off", BANK_BY_TYPE, "hook_engine_sound.dll" },
+	{ "Sounds", "sounds", BANK_BY_NAME, "hook_engine_sound.dll" },
+	{ "StarshipAmbient", "starship_ambient", BANK_BY_TYPE, "hook_engine_sound.dll" },
+	{ "TakeOff", "take_off", BANK_BY_TYPE, "hook_engine_sound.dll" },
+	{ "Weapon", "weapon", 10, "hook_engine_sound.dll" },
+	{ "WeaponExplosion", "weapon_explosion", 8, "hook_engine_sound.dll" },
+	{ "WeaponRange", "weapon_range", BANK_BY_POSITION, "hook_engine_sound.dll" },
 };
 
 /* The entries of the Sounds bank, in hook_engine_sound's order. */
@@ -523,6 +524,19 @@ static bool import_bank(Import* im, FILE* f, const BankInfo* bank, const char* l
 	return !error;
 }
 
+int XwauSoundBanks_LineCount(const char* game, const char* name) {
+	char hook[1024], rel[300], path[1024];
+	snprintf(rel, sizeof rel, "Wave/Sfx_%s.lst", name);
+	if (!Xwau_FindFile(game, "hook_sounds_count.dll", hook, sizeof hook) ||
+		!Xwau_FindFile(game, rel, path, sizeof path))
+		return 0;
+	size_t size  = 0;
+	char*  text  = ReadWholeFile(path, &size);
+	int    count = text ? xwau_line_count(text) : 0;
+	free(text);
+	return count;
+}
+
 bool XwauSoundBanks_Write(const char* game, const char* output_dir, const char* game_files) {
 	char hook[1024], wave[1024];
 	if (!Xwau_FindFile(game, "hook_sounds_count.dll", hook, sizeof hook) ||
@@ -554,8 +568,16 @@ bool XwauSoundBanks_Write(const char* game, const char* output_dir, const char* 
 		for (size_t b = 0; !bank && b < sizeof g_banks / sizeof g_banks[0]; ++b)
 			if (strcasecmp(stem + 4, g_banks[b].name) == 0)
 				bank = &g_banks[b];
+		char dll[1024];
 		if (!bank) {
 			Report(NULL, "Wave/%s: no hook reads this sound bank, so it isn't imported", names[i]);
+			continue;
+		}
+		if (!Xwau_FindFile(game, bank->hook, dll, sizeof dll)) {
+			Report(NULL,
+				   "Wave/%s: %s reads this sound bank, and the installation doesn't have it, so it "
+				   "isn't imported",
+				   names[i], bank->hook);
 			continue;
 		}
 		ok = import_bank(&im, f, bank, list_path, stem, &entries);

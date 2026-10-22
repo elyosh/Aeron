@@ -9,6 +9,7 @@
 #include "util.h"
 #include "xwau_config.h"
 #include "xwau_game_tables.h"
+#include "xwau_sound_banks.h"
 #include "xwau_stats_profiles.h"
 
 /* The slots of XWAU's reticle hook (g_imageIndices in reticle.cpp). */
@@ -366,6 +367,140 @@ void XwauCraft_ReadShield(const char* shield_txt, const char* ini, XwauCraftShie
 	XwauLines_Free(&lines);
 }
 
+static const char* const g_engineSoundNames[] = { "xwing",   "ywing",     "awing",  "tie",
+												  "gunboat", "corellian", "falcon", "slave" };
+static const char* const g_washNames[]        = { "normal", "starship" };
+static const char* const g_takeOffNames[]     = { "gear", "falcon" };
+static const char* const g_hyperNames[]       = { "rebel", "imperial", "imperial_zoom" };
+/* hook_engine_sound's weapon behaviours and their names in the model file.
+ * The first is `plain`, for any other value. */
+static const char* const g_behaviorKeys[] = {
+	"",       "CorellianTransport", "TieFighter", "TieFighterWithIon", "Rebel", "RebelTurbo",
+	"Empire", "EmpireTurbo",        "Falcon",     "FalconTurbo",       "Ion",   "IonTurbo"
+};
+static const char* const g_behaviorNames[] = {
+	"plain",  "corellian_transport", "tie_fighter", "tie_fighter_with_ion", "rebel", "rebel_turbo",
+	"empire", "empire_turbo",        "falcon",      "falcon_turbo",         "ion",   "ion_turbo"
+};
+
+void XwauCraft_ReadSound(const char* sound_txt, const char* ini, int range_bank, XwauCraftSound* sound) {
+	XwauLines   lines  = { 0 };
+	const char* source = sound_txt;
+	memset(sound, 0, sizeof *sound);
+	sound->hyper   = -1;
+	sound->weapons = -1;
+	if (sound_txt)
+		XwauLines_Read(sound_txt, "", XWAU_RULES_CPP, &lines);
+	if (lines.count == 0) {
+		XwauLines_Free(&lines);
+		source = ini;
+		if (ini)
+			XwauLines_Read(ini, "Sound", XWAU_RULES_CPP, &lines);
+	}
+	if (lines.count == 0) {
+		XwauLines_Free(&lines);
+		return;
+	}
+	int value = int_key(&lines, source, "EngineSoundInterior", 0);
+	if (value >= 1 && value <= 7)
+		sound->interior = value;
+	else if (value)
+		Report(source, "EngineSoundInterior = %d plays nothing in XWAU; it is left out", value);
+	value = int_key(&lines, source, "EngineSoundFlyBy", 0);
+	if (value % 10 >= 1 && value % 10 <= 8 && value / 10 <= 2 && value > 0) {
+		sound->fly_by      = value % 10;
+		sound->fly_by_mode = value / 10;
+	} else if (value) {
+		Report(source, "EngineSoundFlyBy = %d plays nothing in XWAU; it is left out", value);
+	}
+	value = int_key(&lines, source, "EngineSoundWash", 0);
+	if (value)
+		sound->wash = value == 2 ? 2 : 1;
+	value = int_key(&lines, source, "EngineSoundTakeOff", 0);
+	if (value)
+		sound->take_off = value == 2 ? 2 : 1;
+	value = int_key(&lines, source, "HyperSoundBehavior", -1);
+	if (value >= 0 && value <= 2)
+		sound->hyper = value;
+	else if (value != -1)
+		Report(source, "HyperSoundBehavior = %d plays no start sound in XWAU; it is left out", value);
+	char text[256];
+	XwauLines_Value(&lines, "WeaponSoundBehavior", XWAU_RULES_CPP, text, sizeof text);
+	if (text[0]) {
+		sound->weapons = 0;
+		for (int i = 1; i < (int)(sizeof g_behaviorKeys / sizeof g_behaviorKeys[0]); ++i)
+			if (strcmp(text, g_behaviorKeys[i]) == 0)
+				sound->weapons = i;
+		if (sound->weapons == 0 && strcmp(text, "0") != 0)
+			Report(source, "WeaponSoundBehavior = %s names no behaviour; it plays the weapons' own sounds",
+				   text);
+	}
+	char past[256] = "";
+	for (int weapon = 0; weapon < XWAU_CRAFT_WEAPONS; ++weapon) {
+		char start_key[64], count_key[64];
+		snprintf(start_key, sizeof start_key, "WeaponSoundRangeStart_%d", XWAU_CRAFT_FIRST_WEAPON + weapon);
+		snprintf(count_key, sizeof count_key, "WeaponSoundRangeCount_%d", XWAU_CRAFT_FIRST_WEAPON + weapon);
+		const int first = int_key(&lines, source, start_key, -1);
+		const int count = int_key(&lines, source, count_key, -1);
+		if (first < 0 || count < 0)
+			continue;
+		if (count == 0)
+			Report(source, "%s = 0 would crash XWAU; the range is left out", count_key);
+		else if (first + count > range_bank)
+			snprintf(past + strlen(past), sizeof past - strlen(past), "%s%d", past[0] ? ", " : "",
+					 XWAU_CRAFT_FIRST_WEAPON + weapon);
+		else {
+			sound->range_first[weapon] = first;
+			sound->range_count[weapon] = count;
+		}
+	}
+	if (past[0])
+		Report(
+			source,
+			"the weapon sound ranges of weapon types %s are past the %d sounds of the WeaponRange bank; XWAU "
+			"drops them, and so does the import",
+			past, range_bank);
+	XwauLines_Value(&lines, "EngineSlowing", XWAU_RULES_CPP, text, sizeof text);
+	sound->engine_slowing = text[0] != 0;
+	XwauLines_Free(&lines);
+}
+
+bool XwauCraft_HasSound(const XwauCraftSound* sound) {
+	bool ranges = false;
+	for (int weapon = 0; weapon < XWAU_CRAFT_WEAPONS; ++weapon)
+		ranges = ranges || sound->range_count[weapon];
+	return sound->interior || sound->fly_by || sound->wash || sound->take_off || sound->hyper >= 0 ||
+		   sound->weapons >= 0 || ranges;
+}
+
+static void write_sound(FILE* f, const XwauCraftSound* sound) {
+	fputs("sound:\n", f);
+	if (sound->interior)
+		fprintf(f, "  interior: %s\n", g_engineSoundNames[sound->interior - 1]);
+	if (sound->fly_by)
+		fprintf(f, "  fly_by: %s\n", g_engineSoundNames[sound->fly_by - 1]);
+	if (sound->fly_by && sound->fly_by_mode)
+		fprintf(f, "  fly_by_mode: %s\n", sound->fly_by_mode == 1 ? "2d" : "3d");
+	if (sound->wash)
+		fprintf(f, "  engine_wash: %s\n", g_washNames[sound->wash - 1]);
+	if (sound->take_off)
+		fprintf(f, "  take_off: %s\n", g_takeOffNames[sound->take_off - 1]);
+	if (sound->weapons >= 0)
+		fprintf(f, "  weapons: %s\n", g_behaviorNames[sound->weapons]);
+	bool open = false;
+	for (int weapon = 0; weapon < XWAU_CRAFT_WEAPONS; ++weapon) {
+		if (!sound->range_count[weapon])
+			continue;
+		fprintf(f, "%s%d: {first: %d, count: %d}", open ? ", " : "  weapon_ranges: {",
+				XWAU_CRAFT_FIRST_WEAPON + weapon, sound->range_first[weapon], sound->range_count[weapon]);
+		open = true;
+	}
+	if (open)
+		fputs("}\n", f);
+	if (sound->hyper >= 0)
+		fprintf(f, "  hyper: %s\n", g_hyperNames[sound->hyper]);
+}
+
 static void write_shield(FILE* f, const XwauCraftShield* shield) {
 	fprintf(f, "shield: {%s: %lld", shield->per_generator ? "per_generator_rate" : "rate", shield->rate);
 	if (shield->player_rate)
@@ -665,7 +800,8 @@ static void write_weapons(FILE* f, const XwauCraftWeapons* weapons) {
 
 static bool write_craft_file(const char* path, const char* sources, const XwauCraftHud* hud,
 							 const XwauCraftEngineGlows* glows, const XwauCraftWeapons* weapons,
-							 const XwauStatsProfiles* stats, const XwauCraftShield* shield) {
+							 const XwauStatsProfiles* stats, const XwauCraftShield* shield,
+							 const XwauCraftSound* sound) {
 	FILE* f = fopen(path, "wb");
 	if (!f) {
 		Report(path, "can't be written");
@@ -681,6 +817,8 @@ static bool write_craft_file(const char* path, const char* sources, const XwauCr
 	XwauStatsProfiles_Write(f, stats);
 	if (shield->has)
 		write_shield(f, shield);
+	if (XwauCraft_HasSound(sound))
+		write_sound(f, sound);
 	const bool ok = fclose(f) == 0;
 	if (!ok)
 		Report(path, "can't be written");
@@ -763,10 +901,18 @@ static bool has_side_file(char* const* names, size_t count, const char* model, c
 
 /* The files that can give a model's settings beside its INI file, as
  * <model><suffix>. */
-static const char* const g_sideFiles[] = { "Reticle.txt", "EngineGlows.txt", "WeaponColor.txt", "Shield.txt",
-										   "WeaponRate.txt" };
+static const char* const g_sideFiles[] = { "Reticle.txt", "EngineGlows.txt", "WeaponColor.txt",
+										   "Shield.txt",  "WeaponRate.txt",  "Sound.txt" };
 
-enum { SIDE_RETICLE, SIDE_ENGINE_GLOWS, SIDE_WEAPON_COLOR, SIDE_SHIELD, SIDE_WEAPON_RATE, SIDE_FILES };
+enum {
+	SIDE_RETICLE,
+	SIDE_ENGINE_GLOWS,
+	SIDE_WEAPON_COLOR,
+	SIDE_SHIELD,
+	SIDE_WEAPON_RATE,
+	SIDE_SOUND,
+	SIDE_FILES
+};
 
 /* Whether `name` is the first side file of a model that has no INI file, in
  * which case `model` gets the model's name. A model with several side files
@@ -803,7 +949,12 @@ bool XwauCraft_Write(const char* xwau_root, const char* output_dir) {
 	char** names   = ListDir(models_dir, true, &count);
 	bool   ok      = true;
 	int    written = 0, reticles = 0, colors = 0, engine_glows = 0, weapon_colors = 0, light_colors = 0;
-	int    stats_profiles = 0, shields = 0, weapon_rates = 0;
+	int    stats_profiles = 0, shields = 0, weapon_rates = 0, sounds = 0, engine_slowing = 0;
+	/* hook_engine_sound reads the [Sound] sections. */
+	char       engine_sound_dll[1024];
+	const bool engine_sound =
+		Xwau_FindFile(xwau_root, "hook_engine_sound.dll", engine_sound_dll, sizeof engine_sound_dll);
+	const int range_bank = XwauSoundBanks_LineCount(xwau_root, "WeaponRange");
 	/* hook_weapon_rate reads no model's rates when the global ones have
 	   lines. */
 	XwauCraftWeaponRates global_rates;
@@ -864,6 +1015,10 @@ bool XwauCraft_Write(const char* xwau_root, const char* output_dir) {
 		light_colors += weapons->light_colors;
 		XwauCraftShield shield;
 		XwauCraft_ReadShield(side_path[SIDE_SHIELD], has_ini ? ini : NULL, &shield);
+		XwauCraftSound sound;
+		XwauCraft_ReadSound(engine_sound ? side_path[SIDE_SOUND] : NULL, engine_sound && has_ini ? ini : NULL,
+							range_bank, &sound);
+		engine_slowing += sound.engine_slowing;
 		XwauStatsProfiles stats;
 		LowerCopy(key, sizeof key, model);
 		if (!XwauStatsProfiles_Read(xwau_root, model, names, count, XwauStatsGenus_Find(&genus, key),
@@ -873,7 +1028,7 @@ bool XwauCraft_Write(const char* xwau_root, const char* output_dir) {
 		}
 		disabled_profiles += stats.disabled;
 		if (!has_reticle(&hud) && !has_colors(&hud) && !has_engine_glows(&glows) && !has_weapons(weapons) &&
-			!stats.count && !shield.has) {
+			!stats.count && !shield.has && !XwauCraft_HasSound(&sound)) {
 			XwauStatsProfiles_Free(&stats);
 			continue;
 		}
@@ -889,13 +1044,14 @@ bool XwauCraft_Write(const char* xwau_root, const char* output_dir) {
 			add_source(sources, sizeof sources, ini_name);
 		}
 		if (!PathFormat(path, sizeof path, "%s/%s.yaml", craft_dir, key) || !MakeDirs(craft_dir) ||
-			!write_craft_file(path, sources, &hud, &glows, weapons, &stats, &shield)) {
+			!write_craft_file(path, sources, &hud, &glows, weapons, &stats, &shield, &sound)) {
 			XwauStatsProfiles_Free(&stats);
 			ok = false;
 			continue;
 		}
 		stats_profiles += stats.count != 0;
 		shields += shield.has;
+		sounds += XwauCraft_HasSound(&sound);
 		XwauStatsProfiles_Free(&stats);
 		written++;
 		reticles += has_reticle(&hud);
@@ -909,8 +1065,10 @@ bool XwauCraft_Write(const char* xwau_root, const char* output_dir) {
 	FreeList(names, count);
 	Report(NULL,
 		   "model settings: %d files, %d with a reticle, %d with HUD colours, %d with engine glows, %d with "
-		   "weapon settings, %d with stats profiles, %d with a shield recharge rate",
-		   written, reticles, colors, engine_glows, weapon_colors, stats_profiles, shields);
+		   "weapon settings, %d with stats profiles, %d with a shield recharge rate, %d with sounds",
+		   written, reticles, colors, engine_glows, weapon_colors, stats_profiles, shields, sounds);
+	if (engine_slowing)
+		Report(NULL, "%d models set EngineSlowing in [Sound], which no hook reads", engine_slowing);
 	if (disabled_profiles)
 		Report(NULL,
 			   "%zu sections such as [StatsProfile_Default;] or [;StatsProfile_Default], which XWAU never "

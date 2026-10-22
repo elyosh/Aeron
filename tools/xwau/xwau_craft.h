@@ -97,6 +97,29 @@
  * report. The global rates go in flight/flight.yaml
  * (xwau_flight_settings.h).
  *
+ * The sounds come from FlightModels/<model>Sound.txt, else the [Sound]
+ * section of the model's INI, read like XWAU's hook_engine_sound, when the
+ * installation has hook_engine_sound.dll:
+ *
+ *   sound:
+ *     interior: awing            # EngineSoundInterior 1 to 7
+ *     fly_by: slave              # EngineSoundFlyBy 1 to 8, 11 to 18, 21 to 28
+ *     fly_by_mode: 3d            # 2d for 11 to 18, 3d for 21 to 28
+ *     engine_wash: starship      # EngineSoundWash: 2 starship, else normal
+ *     take_off: falcon           # EngineSoundTakeOff: 2 falcon, else gear
+ *     weapons: empire            # WeaponSoundBehavior
+ *     weapon_ranges: {283: {first: 2, count: 3}}  # WeaponSoundRange*_283
+ *     hyper: rebel               # HyperSoundBehavior 0 to 2
+ *
+ * An engine sound of 0, a HyperSoundBehavior of -1 and an empty
+ * WeaponSoundBehavior mean the sound bank, and aren't written. A
+ * WeaponSoundBehavior that names no behaviour, such as 0, gives `plain`: the
+ * hook then plays each weapon type's own sound. A range needs both keys; a
+ * count of 0, which would crash XWAU, and a range past the WeaponRange bank,
+ * which the hook drops, are reported and left out. Other values that XWAU
+ * plays nothing for are reported and left out. EngineSlowing is read by no
+ * hook.
+ *
  * hud.yaml holds `hull_icons` and `map_icons`, from HullIconList.txt and
  * MapIconList.txt, read like XWAU's hull icon hook: the value at position N
  * is the image id for object type N, counting the lines that the hook reads
@@ -229,6 +252,28 @@ bool XwauCraft_HasWeaponRates(const XwauCraftWeaponRates* rates);
 
 /* Writes `rates` as a YAML map: "{decharge: 2, recharge: 3}". */
 void XwauCraft_WriteWeaponRates(FILE* f, const XwauCraftWeaponRates* rates);
+
+/* The [Sound] section of a model. */
+typedef struct XwauCraftSound {
+	int  interior;    /* 0: not set, else 1 to 7 */
+	int  fly_by;      /* 0: not set, else 1 to 8 */
+	int  fly_by_mode; /* 0: either, 1: 2D, 2: 3D */
+	int  wash;        /* 0: not set, 1: normal, 2: starship */
+	int  take_off;    /* 0: not set, 1: gear, 2: falcon */
+	int  hyper;       /* -1: not set, else 0 to 2 */
+	int  weapons;     /* -1: not set, else a behaviour, 0 for plain */
+	int  range_first[XWAU_CRAFT_WEAPONS];
+	int  range_count[XWAU_CRAFT_WEAPONS]; /* 0: no range */
+	bool engine_slowing;                  /* the section sets EngineSlowing */
+} XwauCraftSound;
+
+/* Reads the [Sound] section of a model: `sound_txt` (<model>Sound.txt) when
+ * it has lines, else the [Sound] section of `ini`. Either path can be NULL.
+ * `range_bank` is the number of entries of the WeaponRange bank. */
+void XwauCraft_ReadSound(const char* sound_txt, const char* ini, int range_bank, XwauCraftSound* sound);
+
+/* Whether `sound` sets a sound. */
+bool XwauCraft_HasSound(const XwauCraftSound* sound);
 
 /* The impact colour that XWAU shows for an ARGB value: its RGB, or 0 (the
  * stock white mark) when its RGB565 value is 0. */

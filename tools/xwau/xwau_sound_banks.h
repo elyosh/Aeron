@@ -8,6 +8,7 @@
  * object type: hook_engine_sound, hook_hyperspace, hook_sfoils and
  * hook_hangars.
  *
+ * A bank is imported only when the installation has the hook that reads it.
  * The importer writes the banks into <output_dir>/sounds.yaml:
  *
  *   version: 1
@@ -64,6 +65,10 @@ typedef enum XwauWavResult {
 /* Checks the WAV file in `data`. When the game can't play it, writes a
  * 16-bit PCM copy into `*out` (to free) and `*out_size`. */
 XwauWavResult XwauSoundBanks_ConvertWav(const uint8_t* data, size_t size, uint8_t** out, size_t* out_size);
+
+/* Returns the number of lines that XWAU counts in the bank list
+ * Wave/Sfx_<name>.lst, or 0 when the installation doesn't load that bank. */
+int XwauSoundBanks_LineCount(const char* game, const char* name);
 
 /* Writes <output_dir>/sounds.yaml and copies the files into `game_files`,
  * when the installation `game` has hook_sounds_count.dll. Returns false on
