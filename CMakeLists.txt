@@ -1063,6 +1063,7 @@ if(AERON_BUILD_TOOLS)
         tools/xwau/xwau_flight_settings.c
         tools/xwau/xwau_game_files.c
         tools/xwau/xwau_mission_files.c
+        tools/xwau/xwau_mission_sounds.c
         tools/xwau/xwau_objects.c
         tools/xwau/xwau_skyboxes.c
         tools/xwau/xwau_sound_banks.c

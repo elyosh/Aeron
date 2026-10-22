@@ -24,6 +24,7 @@
 #include "xwau_flight_settings.h"
 #include "xwau_game_files.h"
 #include "xwau_mission_files.h"
+#include "xwau_mission_sounds.h"
 #include "xwau_mission_tie.h"
 #include "xwau_missions.h"
 #include "xwau_model.h"
@@ -1097,7 +1098,9 @@ static void test_game_files(const char* scratch) {
 	static const char* const kDirs[] = { "files_game/Missions",           "files_game/Combat",
 										 "files_game/Wave/FRONTEND/B1M1", "files_game/Wave/Other",
 										 "files_game/FRONTRES/Cutscene",  "files_stock/MISSIONS",
-										 "files_stock/WAVE/FRONTEND",     "files_stock/FrontRes/CUTSCENE" };
+										 "files_stock/WAVE/FRONTEND",     "files_stock/FrontRes/CUTSCENE",
+										 "files_game/Wave/FE_HIGH_RES",   "files_stock/WAVE/FE_HIGH_RES",
+										 "files_game/Wave/Custom" };
 	for (size_t i = 0; i < sizeof kDirs / sizeof kDirs[0]; ++i) {
 		snprintf(path, sizeof path, "%s/%s", scratch, kDirs[i]);
 		MakeDirs(path);
@@ -1119,6 +1122,16 @@ static void test_game_files(const char* scratch) {
 		{ "files_stock/WAVE/FRONTEND/SAME.WAV", "same voice" },
 		{ "files_stock/WAVE/FRONTEND/CHANGED.WAV", "stock voice" },
 		{ "files_stock/FrontRes/CUTSCENE/CUTSCENE.TXT", "same table" },
+		{ "files_game/Wave/SfxBlastNew.lst", "mod list" },
+		{ "files_stock/WAVE/SFXBLASTNEW.LST", "stock list" },
+		{ "files_game/Wave/OverDrive.lst", "new list" },
+		{ "files_game/Wave/FE_HIGH_RES/Alarm.wav", "mod sound" },
+		{ "files_stock/WAVE/FE_HIGH_RES/ALARM.WAV", "stock sound" },
+		{ "files_game/hook_engine_sound.dll", "" },
+		{ "files_game/Missions/b.ini",
+		  "[Sounds]\nWave\\FE_High_Res\\Alarm.wav = Wave\\Custom\\Evacuate.wav\n" },
+		{ "files_game/Wave/Custom/Evacuate.wav", "evacuate" },
+		{ "files_game/Wave/Custom/Unused.wav", "not loaded" },
 	};
 	for (size_t i = 0; i < sizeof kFiles / sizeof kFiles[0]; ++i) {
 		snprintf(path, sizeof path, "%s/%s", scratch, kFiles[i][0]);
@@ -1146,7 +1159,44 @@ static void test_game_files(const char* scratch) {
 	const bool same = IsFile(path);
 	snprintf(path, sizeof path, "%s/Wave/Other/x.wav", out);
 	check(added && changed && !same && !IsFile(path),
-		  "game files: only the voices that are new or changed are copied, and no other sounds");
+		  "game files: only the voices that are new or changed are copied, and no folder the game lacks");
+	snprintf(path, sizeof path, "%s/Wave/SfxBlastNew.lst", out);
+	const bool blast = same_file(path, "mod list");
+	snprintf(path, sizeof path, "%s/Wave/FE_HIGH_RES/Alarm.wav", out);
+	const bool alarm = same_file(path, "mod sound");
+	snprintf(path, sizeof path, "%s/Wave/OverDrive.lst", out);
+	check(blast && alarm && !IsFile(path),
+		  "game files: the changed stock sounds and lists are copied, and no file the game lacks");
+	snprintf(path, sizeof path, "%s/Wave/Custom/Evacuate.wav", out);
+	const bool target = same_file(path, "evacuate");
+	snprintf(path, sizeof path, "%s/Wave/Custom/Unused.wav", out);
+	check(target && !IsFile(path), "game files: the files of the missions' sound replacements are copied");
+
+	/* A mission's sound replacements. */
+	snprintf(path, sizeof path, "%s/WAVE/HANGARVOICESFX.LST", stock);
+	write_file(path, "Rebel_Pilot8/G4P8001.wav\r\nRebel_Pilot8/G4P8024.wav\r\n");
+	snprintf(path, sizeof path, "%s/Missions/b.ini", game);
+	write_file(path, "[Sounds]\n; comment\nWave\\FE_High_Res\\Alarm.wav = Wave\\Custom\\Evacuate.wav\n"
+					 "wave\\fe_high_res\\ALARM.WAV = Wave\\Custom\\Unused.wav\n"
+					 "Wave\\FE_High_Res\\Other.wav = Wave\\Custom\\Missing.wav\n"
+					 "Wave\\Rebel_Pilot8\\G4P8024.wav = Wave\\Custom\\Evacuate.wav\n");
+	XwauMissionSounds sounds;
+	check(XwauMissionSounds_Read(game, stock, "Missions/b", true, &sounds) && sounds.count == 1 &&
+			  strcmp(sounds.items[0].to, "Wave\\Custom\\Evacuate.wav") == 0,
+		  "mission sounds: the first line of a path wins; a missing file and a hangar voice are left out");
+	snprintf(path, sizeof path, "%s/mission_sounds.yaml", scratch);
+	FILE* f = fopen(path, "wb");
+	if (f) {
+		XwauMissionSounds_Write(f, &sounds);
+		fclose(f);
+	}
+	size_t size = 0;
+	char*  text = ReadWholeFile(path, &size);
+	check(text && strcmp(text, "sounds:\n  - [\"Wave\\\\FE_High_Res\\\\Alarm.wav\", "
+							   "\"Wave\\\\Custom\\\\Evacuate.wav\"]\n") == 0,
+		  "mission sounds: the mission file's list");
+	free(text);
+	XwauMissionSounds_Free(&sounds);
 }
 
 /* Writes a .TIE file with `count` flight groups, named `names`, of craft
