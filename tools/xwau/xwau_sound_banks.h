@@ -2,13 +2,13 @@
 #define AERON_XWAU_SOUND_BANKS_H
 
 /*
- * Imports XWAU's sound banks (xwau_import craft --game-files DIR). An
- * installation with hook_sounds_count.dll loads each Wave/Sfx_<Bank>.lst as a
- * bank of sounds, from Wave/Sfx_<Bank>/. Other hooks pick a bank's sound by
- * object type: hook_engine_sound, hook_hyperspace, hook_sfoils and
- * hook_hangars.
+ * Imports XWAU's sound banks (xwau_import craft --game-files DIR). When an
+ * installation has hook_sounds_count.dll, XWAU loads each
+ * Wave/Sfx_<Bank>.lst as a bank of sounds, with the files in
+ * Wave/Sfx_<Bank>/. Other hooks then pick a sound from a bank by object type:
+ * hook_engine_sound, hook_hyperspace, hook_sfoils and hook_hangars.
  *
- * A bank is imported only when the installation has the hook that reads it.
+ * A bank is imported only if the installation has the hook that reads it.
  * The importer writes the banks into <output_dir>/sounds.yaml:
  *
  *   version: 1
@@ -23,22 +23,22 @@
  *         1:
  *           0: {file: ...}
  *
- * `count` is the number of lines that XWAU counts in the list: the hooks
- * use a bank entry only below it. An entry without a sound is silent: a line
- * such as "Unused", or a file that the installation doesn't have. The banks
- * by object type are listed in xwau_sound_banks.c.
+ * `count` is the number of lines that XWAU counts in the list. The hooks only
+ * use the entries below it. Some entries have no sound and stay silent: lines
+ * such as "Unused", and files that the installation doesn't have.
+ * xwau_sound_banks.c lists the banks and how their entries are numbered.
  *
- * A list line is read as the game reads it, after XWAU cuts it at ';': the
- * file name ends at the first space or tab, then come the volume in decimal
- * (127 without it) and the distance in hex (8192 without it). The hex reader
- * only knows the digits 0-9, a-f and F, as in the game. A line without a
- * file name takes no slot.
+ * Each list line is read the way the game reads it, after XWAU cuts it at
+ * ';'. The file name ends at the first space or tab. Then come the volume in
+ * decimal (127 if missing) and the distance in hex (8192 if missing). Like
+ * the game, the hex reader only accepts the digits 0-9, a-f and F. A line
+ * without a file name doesn't use a slot.
  *
- * The WAV files of the entries go into DIR, with their path in the
- * installation (Wave/Sfx_Interior/EngineIntXW.wav). The game finds them in
- * any case. Files that the game can't play are converted to 16-bit PCM:
- * 24-bit, float, WAVE_FORMAT_EXTENSIBLE and MS ADPCM files, and files with
- * more than 2 channels.
+ * The WAV files go into DIR, with the same path as in the installation
+ * (Wave/Sfx_Interior/EngineIntXW.wav). The game finds them whatever the
+ * case of the path. Files that the game can't play are converted to 16-bit
+ * PCM: 24-bit, float, WAVE_FORMAT_EXTENSIBLE and MS ADPCM files, and files
+ * with more than 2 channels.
  */
 
 #include <stdbool.h>

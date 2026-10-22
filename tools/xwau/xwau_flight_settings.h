@@ -19,6 +19,7 @@
  *       ai_attack_uses_max_speed_cache: true
  *       fire_needs_decharge_rate: true
  *       no_starship_fire_from_destroyed_racks: true
+ *       starship_ambient_sounds: true
  *     mission_settings:
  *       warhead_collision_damage: false
  *       damage_through_shields_on_hard: true
@@ -56,12 +57,16 @@
  * (xwau_craft.h). hook_mission_tie.dll with stats profiles gives
  * ai_attack_uses_max_speed_cache: a craft under attack compares its own top
  * speed and its attacker's, which their stats profiles can change.
- * hook_weapon_rate.dll gives fire_needs_decharge_rate when it has weapon
- * profiles (the text "_EnergyLowHighSeparation"): a craft fires a base
- * laser only when the rack's charge is at least its decharge rate. It gives
- * no_starship_fire_from_destroyed_racks when it reads the craft's mesh
- * states (the text "Craft_Offset_292"): a freighter, starship, platform or
- * satellite doesn't fire from a rack whose mesh is destroyed.
+ * hook_weapon_rate.dll gives fire_needs_decharge_rate if it has weapon
+ * profiles (it contains the text "_EnergyLowHighSeparation"). With this
+ * rule, a craft only fires a base laser when the rack's charge is at least
+ * its decharge rate. The DLL gives no_starship_fire_from_destroyed_racks if
+ * it reads the craft's mesh states (it contains "Craft_Offset_292"). With
+ * this rule, a freighter, starship, platform or satellite doesn't fire from
+ * a rack whose mesh is destroyed. hook_engine_sound.dll gives
+ * starship_ambient_sounds if it has ambient sounds (it contains
+ * "AreStarshipAmbientEnabled") and that setting isn't 0. With this rule,
+ * starships play their ambient sounds from the StarshipAmbient bank.
  * `mission_settings` holds the defaults that the global settings of
  * hook_mission_tie and hook_engine_sound give every mission
  * (xwau_mission_settings.h).
@@ -85,15 +90,16 @@
  * from the hook's five group colours (XwauCraft_ReadGlobalImpactColors).
  *
  * The laser rates are written when the mod installs hook_weapon_rate.dll.
- * `weapons.rates` holds every craft's rates, from FlightModels/WeaponRate.txt,
- * else the [WeaponRate] section of FlightModels/default.ini
- * (XwauCraft_ReadGlobalWeaponRates); it is left out when they set none.
- * `decharge_percent` and `recharge_percent` scale every craft's rates. They
- * come from hook_weapon_rate.cfg, else the [hook_weapon_rate] section of
- * Hooks.ini, with 100 as the default, and are written when the DLL has the
- * text "DechargeRatePercent". The rules are in weapon_rates.h in the game.
- * The hook's per-mission rates by flight group ([WeaponRates]) aren't
- * imported; xwau_import missions reports the missions that have them.
+ * `weapons.rates` holds the rates for every craft. They come from
+ * FlightModels/WeaponRate.txt, or else from the [WeaponRate] section of
+ * FlightModels/default.ini (XwauCraft_ReadGlobalWeaponRates). If they set
+ * no rate, `rates` is left out. `decharge_percent` and `recharge_percent`
+ * scale the rates of every craft. They come from hook_weapon_rate.cfg, or
+ * else from the [hook_weapon_rate] section of Hooks.ini, and default to 100.
+ * They are only written if the DLL contains the text "DechargeRatePercent".
+ * The hook can also set rates by flight group for each mission
+ * ([WeaponRates]). These aren't imported; xwau_import missions reports the
+ * missions that have them.
  *
  * `shield_recharge` is written when the mod installs hook_shield.dll. Its
  * values come from hook_shield.cfg, else the [hook_shield] section of

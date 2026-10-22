@@ -12,7 +12,7 @@
 enum {
 	BANK_BY_NAME     = -1, /* fixed names, g_soundNames */
 	BANK_BY_POSITION = 0,  /* the line's position */
-	BANK_BY_TYPE     = 1   /* object type; more for several entries by type */
+	BANK_BY_TYPE     = 1   /* object type, or the number of entries for each type */
 };
 
 typedef struct BankInfo {
@@ -269,8 +269,8 @@ XwauWavResult XwauSoundBanks_ConvertWav(const uint8_t* data, size_t size, uint8_
 	if (!extensible && tag == 1 && (bits == 8 || bits == 16) && channels <= 2)
 		return XWAU_WAV_PLAYABLE;
 
-	/* A channel beyond the second is mixed into the first or the second
-	   channel, by its parity. */
+	/* Channels past the second are mixed into the first channel (even
+	   channels) or the second channel (odd channels). */
 	const unsigned out_channels = channels > 2 ? 2 : channels;
 	const size_t   frames       = sample_bytes / align;
 	uint8_t*       wav          = new_wav(out_channels, rate, frames, out_size);
@@ -311,8 +311,8 @@ typedef struct Import {
 	int         files, converted, missing;
 } Import;
 
-/* The number of lines that XWAU counts in a list: the lines that aren't
- * blank. */
+/* Returns the number of lines that XWAU counts in a list, which is the
+ * number of lines that aren't blank. */
 static int xwau_line_count(const char* text) {
 	int count = 0;
 	for (const char* line = text; *line;) {
@@ -345,9 +345,10 @@ static void add_known(Import* im, const char* rel, bool playable) {
 		free(copy);
 }
 
-/* Copies the file at `path`, at `rel` in the installation, into the game
- * files folder, converted when the game can't play it. Returns false when
- * the file isn't a WAV file the game can play: the entry is then silent. */
+/* Copies the file at `path` (`rel` in the installation) into the game files
+ * folder. If the game can't play the file, the copy is converted. Returns
+ * false if the file isn't a WAV file that the game can play; the entry is
+ * then silent. */
 static bool copy_sound(Import* im, const char* path, const char* rel, const char* list, bool* error) {
 	const Known* known = find_known(im, rel);
 	if (known)
@@ -368,7 +369,7 @@ static bool copy_sound(Import* im, const char* path, const char* rel, const char
 	}
 	const XwauWavResult result = XwauSoundBanks_ConvertWav(data, size, &out, &out_size);
 	if (result == XWAU_WAV_BAD) {
-		Report(list, "%s isn't a WAV file that can be played; its entries are silent", rel);
+		Report(list, "%s isn't a WAV file that the game can play, so its entries are silent", rel);
 		add_known(im, rel, false);
 		free(data);
 		return false;

@@ -2056,6 +2056,48 @@ static void test_sound_banks(const char* scratch) {
 			  !strstr(text, "interior"),
 		  "craft sounds: the model file's sound group; an interior type that plays nothing is left out");
 	free(text);
+
+	/* The ambient sound. */
+	snprintf(path, sizeof path, "%s/FlightModels/Tug.ini", game);
+	write_file(path,
+			   "[Sound]\nAmbientSoundOffsetX = 0\nAmbientSoundOffsetY = 300\nAmbientSoundDistance = 1000\n");
+	snprintf(path, sizeof path, "%s/models/tug.yaml", flight);
+	text = XwauCraft_Write(game, flight) ? ReadWholeFile(path, &size) : NULL;
+	check(text && strstr(text, "  ambient: {offset_m: [0, 300, 0], distance_m: 1000}\n"),
+		  "ambient sounds: the offset (right, up, forward) and one distance");
+	free(text);
+	snprintf(path, sizeof path, "%s/FlightModels/Tug.ini", game);
+	write_file(path, "[Sound]\nAmbientSoundDistanceX = 4000\nAmbientSoundDistanceY = 11000\n"
+					 "AmbientSoundDistanceZ = 0\n");
+	snprintf(path, sizeof path, "%s/models/tug.yaml", flight);
+	text = XwauCraft_Write(game, flight) ? ReadWholeFile(path, &size) : NULL;
+	check(text && strstr(text, "  ambient: {distance_m: [4000, null, 11000]}\n") && !strstr(text, "offset_m"),
+		  "ambient sounds: DistanceX, Z and Y are right, up and forward; a distance of 0 without "
+		  "AmbientSoundDistance is the craft's size");
+	free(text);
+	snprintf(path, sizeof path, "%s/FlightModels/Tug.ini", game);
+	write_file(path, "[Sound]\nAmbientSoundDistance = 0\nAmbientSoundDistanceY = 500\n");
+	snprintf(path, sizeof path, "%s/models/tug.yaml", flight);
+	text = XwauCraft_Write(game, flight) ? ReadWholeFile(path, &size) : NULL;
+	check(text && strstr(text, "  ambient: {distance_m: [1, 1, 500]}\n"),
+		  "ambient sounds: an AmbientSoundDistance of 0 is 1, and the other axes take it");
+	free(text);
+
+	/* The starship_ambient_sounds rule. */
+	char settings[1100];
+	snprintf(settings, sizeof settings, "%s/ambient_flight.yaml", scratch);
+	snprintf(path, sizeof path, "%s/hook_engine_sound.dll", game);
+	write_file(path, "AreStarshipAmbientEnabled");
+	text = XwauFlightSettings_Write(game, settings) ? ReadWholeFile(settings, &size) : NULL;
+	check(text && strstr(text, "  starship_ambient_sounds: true\n"),
+		  "ambient sounds: hook_engine_sound.dll with them gives the rule");
+	free(text);
+	snprintf(path, sizeof path, "%s/Hooks.ini", game);
+	write_file(path, "[hook_engine_sound]\nAreStarshipAmbientEnabled = 0\n");
+	text = XwauFlightSettings_Write(game, settings) ? ReadWholeFile(settings, &size) : NULL;
+	check(!text || !strstr(text, "starship_ambient_sounds"),
+		  "ambient sounds: AreStarshipAmbientEnabled = 0 in Hooks.ini turns the rule off");
+	free(text);
 }
 
 int main(void) {

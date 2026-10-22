@@ -54,6 +54,9 @@ typedef struct XwauSettingsConfig {
 	/* hook_weapon_rate.dll that reads mesh states: starships don't fire
 	 * from destroyed racks. */
 	bool      weapon_rate_rack_check;
+	/* hook_engine_sound.dll with starship ambient sounds, and its
+	 * AreStarshipAmbientEnabled setting. */
+	bool      starship_ambient;
 	bool      warhead_collision_damage;
 	bool      damage_through_shields;
 	long long target_method;
@@ -74,7 +77,8 @@ void XwauSettingsConfig_Free(XwauSettingsConfig* config);
  * classic_hide_destroyed_engine_glows, hook_weapon_color's
  * weapon_iff_swap, hook_mission_tie's ai_attack_uses_max_speed_cache and
  * hook_weapon_rate's fire_needs_decharge_rate and
- * no_starship_fire_from_destroyed_racks. Returns whether it wrote anything.
+ * no_starship_fire_from_destroyed_racks, and hook_engine_sound's
+ * starship_ambient_sounds. Returns whether it wrote anything.
  */
 bool XwauMissionSettings_WriteDefaults(FILE* f, const XwauSettingsConfig* config);
 

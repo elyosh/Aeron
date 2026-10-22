@@ -83,6 +83,17 @@ bool XwauSettingsConfig_Read(const char* game, XwauSettingsConfig* out) {
 		out->weapon_rate_rack_check = Xwau_FileHasText(path, "Craft_Offset_292");
 	}
 	XwauLines lines;
+	if (out->engine_sound && Xwau_FindFile(game, "hook_engine_sound.dll", path, sizeof path) &&
+		Xwau_FileHasText(path, "AreStarshipAmbientEnabled")) {
+		if (!XwauLines_Read(Xwau_FindFile(game, "hook_engine_sound.cfg", path, sizeof path) ? path : NULL, "",
+							XWAU_RULES_CPP, &lines))
+			return false;
+		if (!lines.count && !XwauLines_Read(Xwau_FindFile(game, "Hooks.ini", path, sizeof path) ? path : NULL,
+											"hook_engine_sound", XWAU_RULES_CPP, &lines))
+			return false;
+		out->starship_ambient = int_value(&lines, "AreStarshipAmbientEnabled", 1, NULL) != 0;
+		XwauLines_Free(&lines);
+	}
 	if (!XwauLines_Read(Xwau_FindFile(game, "hook_mission_tie.cfg", path, sizeof path) ? path : NULL, "",
 						XWAU_RULES_CPP, &lines))
 		return false;
@@ -122,7 +133,7 @@ static void write_ints(FILE* f, const int* values, size_t count) {
 bool XwauMissionSettings_WriteDefaults(FILE* f, const XwauSettingsConfig* config) {
 	const bool rules = config->mission_tie || config->opt_limit_engine_glows || config->weapon_switch ||
 					   config->mission_tie_stats || config->weapon_rate_fire_check ||
-					   config->weapon_rate_rack_check;
+					   config->weapon_rate_rack_check || config->starship_ambient;
 	if (rules)
 		fputs("rules:\n", f);
 	if (config->mission_tie)
@@ -137,6 +148,8 @@ bool XwauMissionSettings_WriteDefaults(FILE* f, const XwauSettingsConfig* config
 		fputs("  fire_needs_decharge_rate: true\n", f);
 	if (config->weapon_rate_rack_check)
 		fputs("  no_starship_fire_from_destroyed_racks: true\n", f);
+	if (config->starship_ambient)
+		fputs("  starship_ambient_sounds: true\n", f);
 	const bool warheads     = config->mission_tie && !config->warhead_collision_damage;
 	const bool shields      = config->mission_tie && config->damage_through_shields;
 	const bool interdiction = config->engine_sound && config->interdiction_count;

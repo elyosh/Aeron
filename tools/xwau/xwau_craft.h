@@ -84,22 +84,25 @@
  * hook treats 0 as not set. A model without the section gets no `shield`
  * group, and the game uses its default rate (shield_recharge.h).
  *
- * The laser rates come from FlightModels/<model>WeaponRate.txt, else the
- * [WeaponRate] section of the model's INI, read like XWAU's
- * hook_weapon_rate: DechargeRate, RechargeRate, CooldownTimeFactor,
- * DechargeRatePercent and RechargeRatePercent give `decharge`, `recharge`,
- * `cooldown`, `decharge_percent` and `recharge_percent`. -1 means not set,
- * and other values below 0 are reported and left out. The hook reads a
- * model's section only when the global one (FlightModels/WeaponRate.txt,
- * else the [WeaponRate] section of FlightModels/default.ini) has no lines.
- * The importer writes the model's rates anyway, and the game uses them over
- * the global ones; the models whose rates XWAU ignores are counted in the
- * report. The global rates go in flight/flight.yaml
- * (xwau_flight_settings.h).
+ * The laser rates come from FlightModels/<model>WeaponRate.txt, or else from
+ * the [WeaponRate] section of the model's INI. They are read the way XWAU's
+ * hook_weapon_rate reads them. DechargeRate, RechargeRate,
+ * CooldownTimeFactor, DechargeRatePercent and RechargeRatePercent become
+ * `decharge`, `recharge`, `cooldown`, `decharge_percent` and
+ * `recharge_percent`. -1 means not set; other values below 0 are reported and
+ * left out.
  *
- * The sounds come from FlightModels/<model>Sound.txt, else the [Sound]
- * section of the model's INI, read like XWAU's hook_engine_sound, when the
- * installation has hook_engine_sound.dll:
+ * The hook only reads a model's section when the global section has no
+ * lines. The global section is FlightModels/WeaponRate.txt, or else the
+ * [WeaponRate] section of FlightModels/default.ini. The importer writes the
+ * model's rates anyway, and the game uses them instead of the global ones.
+ * The report counts the models whose rates XWAU ignores. The global rates go
+ * in flight/flight.yaml (xwau_flight_settings.h).
+ *
+ * The sounds come from FlightModels/<model>Sound.txt, or else from the
+ * [Sound] section of the model's INI. They are read the way XWAU's
+ * hook_engine_sound reads them, and only if the installation has
+ * hook_engine_sound.dll:
  *
  *   sound:
  *     interior: awing            # EngineSoundInterior 1 to 7
@@ -110,15 +113,24 @@
  *     weapons: empire            # WeaponSoundBehavior
  *     weapon_ranges: {283: {first: 2, count: 3}}  # WeaponSoundRange*_283
  *     hyper: rebel               # HyperSoundBehavior 0 to 2
+ *     ambient: {offset_m: [0, 300, 0], distance_m: 1000}
  *
  * An engine sound of 0, a HyperSoundBehavior of -1 and an empty
- * WeaponSoundBehavior mean the sound bank, and aren't written. A
- * WeaponSoundBehavior that names no behaviour, such as 0, gives `plain`: the
- * hook then plays each weapon type's own sound. A range needs both keys; a
- * count of 0, which would crash XWAU, and a range past the WeaponRange bank,
- * which the hook drops, are reported and left out. Other values that XWAU
- * plays nothing for are reported and left out. EngineSlowing is read by no
- * hook.
+ * WeaponSoundBehavior all mean "use the sound bank", so they aren't written.
+ * A WeaponSoundBehavior that isn't a known behaviour, such as 0, becomes
+ * `plain`: the hook then plays each weapon type's own sound. A weapon range
+ * needs both keys. A range with a count of 0 would crash XWAU, and the hook
+ * drops a range that goes past the WeaponRange bank; both are reported and
+ * left out. Other values that make XWAU play nothing are also reported and
+ * left out. No hook reads EngineSlowing.
+ *
+ * `ambient` places the starship ambient sound. AmbientSoundOffsetX, Y and Z
+ * become `offset_m` (right, up, forward). AmbientSoundDistance, or
+ * AmbientSoundDistanceX, Z and Y, become `distance_m` (right, up, forward):
+ * this is how the hook reads the distances for a craft that flies level. If
+ * an axis distance is 0, it uses AmbientSoundDistance instead, and an
+ * AmbientSoundDistance of 0 counts as 1. An axis with no distance is written
+ * as null, and the game then uses the craft's size.
  *
  * hud.yaml holds `hull_icons` and `map_icons`, from HullIconList.txt and
  * MapIconList.txt, read like XWAU's hull icon hook: the value at position N
@@ -265,6 +277,10 @@ typedef struct XwauCraftSound {
 	int  range_first[XWAU_CRAFT_WEAPONS];
 	int  range_count[XWAU_CRAFT_WEAPONS]; /* 0: no range */
 	bool engine_slowing;                  /* the section sets EngineSlowing */
+	/* The ambient sound, in metres, by axis: right, up and forward. */
+	int  ambient_offset[3];
+	bool has_ambient_distance[3];
+	int  ambient_distance[3];
 } XwauCraftSound;
 
 /* Reads the [Sound] section of a model: `sound_txt` (<model>Sound.txt) when

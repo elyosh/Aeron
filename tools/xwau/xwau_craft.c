@@ -372,8 +372,8 @@ static const char* const g_engineSoundNames[] = { "xwing",   "ywing",     "awing
 static const char* const g_washNames[]        = { "normal", "starship" };
 static const char* const g_takeOffNames[]     = { "gear", "falcon" };
 static const char* const g_hyperNames[]       = { "rebel", "imperial", "imperial_zoom" };
-/* hook_engine_sound's weapon behaviours and their names in the model file.
- * The first is `plain`, for any other value. */
+/* The weapon behaviours of hook_engine_sound, and their names in the model
+ * file. The first one, `plain`, is for any value that isn't in the list. */
 static const char* const g_behaviorKeys[] = {
 	"",       "CorellianTransport", "TieFighter", "TieFighterWithIon", "Rebel", "RebelTurbo",
 	"Empire", "EmpireTurbo",        "Falcon",     "FalconTurbo",       "Ion",   "IonTurbo"
@@ -432,7 +432,9 @@ void XwauCraft_ReadSound(const char* sound_txt, const char* ini, int range_bank,
 			if (strcmp(text, g_behaviorKeys[i]) == 0)
 				sound->weapons = i;
 		if (sound->weapons == 0 && strcmp(text, "0") != 0)
-			Report(source, "WeaponSoundBehavior = %s names no behaviour; it plays the weapons' own sounds",
+			Report(source,
+				   "WeaponSoundBehavior = %s isn't a behaviour that XWAU knows, so each weapon plays its own "
+				   "sound",
 				   text);
 	}
 	char past[256] = "";
@@ -462,15 +464,35 @@ void XwauCraft_ReadSound(const char* sound_txt, const char* ini, int range_bank,
 			past, range_bank);
 	XwauLines_Value(&lines, "EngineSlowing", XWAU_RULES_CPP, text, sizeof text);
 	sound->engine_slowing = text[0] != 0;
+	static const char* const offset_keys[3]   = { "AmbientSoundOffsetX", "AmbientSoundOffsetY",
+												  "AmbientSoundOffsetZ" };
+	static const char* const distance_keys[3] = { "AmbientSoundDistanceX", "AmbientSoundDistanceZ",
+												  "AmbientSoundDistanceY" };
+	for (int axis = 0; axis < 3; ++axis)
+		sound->ambient_offset[axis] = int_key(&lines, source, offset_keys[axis], 0);
+	const int  distance     = int_key(&lines, source, "AmbientSoundDistance", INT_MIN);
+	const bool has_distance = distance != INT_MIN;
+	for (int axis = 0; axis < 3; ++axis) {
+		const int value = int_key(&lines, source, distance_keys[axis], 0);
+		if (value != 0) {
+			sound->has_ambient_distance[axis] = true;
+			sound->ambient_distance[axis]     = value;
+		} else if (has_distance) {
+			sound->has_ambient_distance[axis] = true;
+			sound->ambient_distance[axis]     = distance != 0 ? distance : 1;
+		}
+	}
 	XwauLines_Free(&lines);
 }
 
 bool XwauCraft_HasSound(const XwauCraftSound* sound) {
-	bool ranges = false;
+	bool set = sound->interior || sound->fly_by || sound->wash || sound->take_off || sound->hyper >= 0 ||
+			   sound->weapons >= 0;
 	for (int weapon = 0; weapon < XWAU_CRAFT_WEAPONS; ++weapon)
-		ranges = ranges || sound->range_count[weapon];
-	return sound->interior || sound->fly_by || sound->wash || sound->take_off || sound->hyper >= 0 ||
-		   sound->weapons >= 0 || ranges;
+		set = set || sound->range_count[weapon];
+	for (int axis = 0; axis < 3; ++axis)
+		set = set || sound->ambient_offset[axis] || sound->has_ambient_distance[axis];
+	return set;
 }
 
 static void write_sound(FILE* f, const XwauCraftSound* sound) {
@@ -499,6 +521,28 @@ static void write_sound(FILE* f, const XwauCraftSound* sound) {
 		fputs("}\n", f);
 	if (sound->hyper >= 0)
 		fprintf(f, "  hyper: %s\n", g_hyperNames[sound->hyper]);
+	const int*  offset     = sound->ambient_offset;
+	const int*  distance   = sound->ambient_distance;
+	const bool* has        = sound->has_ambient_distance;
+	const bool  has_offset = offset[0] || offset[1] || offset[2];
+	if (!has_offset && !has[0] && !has[1] && !has[2])
+		return;
+	fputs("  ambient: {", f);
+	if (has_offset)
+		fprintf(f, "offset_m: [%d, %d, %d]", offset[0], offset[1], offset[2]);
+	if (has[0] && has[1] && has[2] && distance[0] == distance[1] && distance[1] == distance[2]) {
+		fprintf(f, "%sdistance_m: %d", has_offset ? ", " : "", distance[0]);
+	} else if (has[0] || has[1] || has[2]) {
+		fprintf(f, "%sdistance_m: [", has_offset ? ", " : "");
+		for (int axis = 0; axis < 3; ++axis) {
+			if (has[axis])
+				fprintf(f, "%s%d", axis ? ", " : "", distance[axis]);
+			else
+				fprintf(f, "%snull", axis ? ", " : "");
+		}
+		fputc(']', f);
+	}
+	fputs("}\n", f);
 }
 
 static void write_shield(FILE* f, const XwauCraftShield* shield) {
@@ -955,8 +999,8 @@ bool XwauCraft_Write(const char* xwau_root, const char* output_dir) {
 	const bool engine_sound =
 		Xwau_FindFile(xwau_root, "hook_engine_sound.dll", engine_sound_dll, sizeof engine_sound_dll);
 	const int range_bank = XwauSoundBanks_LineCount(xwau_root, "WeaponRange");
-	/* hook_weapon_rate reads no model's rates when the global ones have
-	   lines. */
+	/* If the global rates have lines, hook_weapon_rate ignores the models'
+	   rates. */
 	XwauCraftWeaponRates global_rates;
 	const bool           global_rate_lines = XwauCraft_ReadGlobalWeaponRates(xwau_root, &global_rates);
 	size_t disabled_profiles = 0;
@@ -1069,6 +1113,24 @@ bool XwauCraft_Write(const char* xwau_root, const char* output_dir) {
 		   written, reticles, colors, engine_glows, weapon_colors, stats_profiles, shields, sounds);
 	if (engine_slowing)
 		Report(NULL, "%d models set EngineSlowing in [Sound], which no hook reads", engine_slowing);
+	if (engine_sound) {
+		/* The default ambient distance of hook_engine_sound. */
+		XwauLines global = { 0 };
+		char      global_path[1024], value[256];
+		if (Xwau_FindFile(xwau_root, "FlightModels/Sound.txt", global_path, sizeof global_path))
+			XwauLines_Read(global_path, "", XWAU_RULES_CPP, &global);
+		if (!global.count &&
+			Xwau_FindFile(xwau_root, "FlightModels/default.ini", global_path, sizeof global_path))
+			XwauLines_Read(global_path, "Sound", XWAU_RULES_CPP, &global);
+		XwauLines_Value(&global, "AmbientSoundDistance", XWAU_RULES_CPP, value, sizeof value);
+		if (value[0])
+			Report(
+				NULL,
+				"the global AmbientSoundDistance = %s isn't imported: a starship's ambient sound reaches its "
+				"size, or its model's distance",
+				value);
+		XwauLines_Free(&global);
+	}
 	if (disabled_profiles)
 		Report(NULL,
 			   "%zu sections such as [StatsProfile_Default;] or [;StatsProfile_Default], which XWAU never "
