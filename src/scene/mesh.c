@@ -57,6 +57,7 @@ void AeronScene_MeshDestroy(AeronSceneMesh* m) {
 	}
 	free(m->engine_glows);
 	free(m->lights);
+	free(m->light_variant_masks);
 	AeronProbeSet_Destroy(m->probes);
 	free(m->cpu_vertices);
 	free(m->cpu_indices);
@@ -627,6 +628,39 @@ static AeronTexture* upload_channel_groups(AeronCommandBuffer* cmd, const AeronG
 	return texture;
 }
 
+/* Works out which variant indices each light of `s` shines with, from the
+ * variants that the light names (AeronFlightLight.variant_mask) and the
+ * variant each index shows. Without lights that name variants, every light
+ * shines with every index. Returns false when out of memory. */
+static bool mesh_light_variants(AeronSceneMesh* s, const AeronSceneMeshVariants* set) {
+	bool any = false;
+	for (uint32_t i = 0; i < s->light_count; ++i)
+		any = any || s->lights[i].has_variants;
+	if (!any)
+		return true;
+	uint32_t count = set ? set->count : 1u;
+	if (count > AERON_SCENE_MESH_LIGHT_VARIANT_INDICES)
+		count = AERON_SCENE_MESH_LIGHT_VARIANT_INDICES;
+	s->light_variant_masks =
+		(uint32_t*)calloc((size_t)s->light_count * AERON_SCENE_MESH_LIGHT_VARIANT_WORDS, sizeof(uint32_t));
+	if (!s->light_variant_masks)
+		return false;
+	s->light_variant_index_count = count;
+	for (uint32_t i = 0; i < s->light_count; ++i) {
+		const AeronFlightLight* light = &s->lights[i];
+		uint32_t* mask = &s->light_variant_masks[(size_t)i * AERON_SCENE_MESH_LIGHT_VARIANT_WORDS];
+		for (uint32_t index = 0; index < count; ++index) {
+			const uint32_t variant = set ? set->variants[index] : AERON_GLTF_NO_VARIANT;
+			const uint32_t bit =
+				variant == AERON_GLTF_NO_VARIANT ? AERON_FLIGHT_LIGHT_OWN_MATERIALS : variant;
+			if (!light->has_variants || (bit <= AERON_FLIGHT_LIGHT_OWN_MATERIALS &&
+										 (light->variant_mask[bit / 32] & (1u << (bit % 32)))))
+				mask[index / 32] |= 1u << (index % 32);
+		}
+	}
+	return true;
+}
+
 static AeronSceneMesh* mesh_create(AeronCommandBuffer* cmd, const AeronFlightModel* flight_model,
 								   const char* debug_name, const AeronSceneMeshVariants* set,
 								   AeronEffectAtlas* effect_atlas, const AeronEffectData* effect_data,
@@ -827,6 +861,12 @@ static AeronSceneMesh* mesh_create(AeronCommandBuffer* cmd, const AeronFlightMod
 		}
 		memcpy(s->lights, flight_model->lights, flight_model->light_count * sizeof *s->lights);
 		s->light_count = flight_model->light_count;
+		if (!mesh_light_variants(s, set)) {
+			Aeron_LogError("aeron.scene", "%s: light allocation failed", name);
+			close_channel_payloads(channel_payloads);
+			AeronScene_MeshDestroy(s);
+			return NULL;
+		}
 	}
 
 	/* ---- Probes ----

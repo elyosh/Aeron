@@ -14,6 +14,7 @@
  *     rules:
  *       reset_combat_music_at_mission_load: true
  *       hangar_red_alert_any_mothership: true
+ *       classic_hide_destroyed_engine_glows: true
  *     mission_settings:
  *       warhead_collision_damage: false
  *       damage_through_shields_on_hard: true
@@ -24,6 +25,8 @@
  *       power_w: 17671
  *       angle_degrees: 25
  *       auto_turn_on: true
+ *     weapons:
+ *       impact: {280: 0xff0000, 281: 0xff0000, ...}
  *
  * `extra_planets` is written when the mod installs XWAU's backdrop hook,
  * hook_backdrops.dll. With it, a mission's backdrop id N from 104 to 255
@@ -32,8 +35,9 @@
  * every hook_*.dll of the game folder, and this hook has no setting that
  * turns this off.
  *
- * `rules` is written when the mod installs hook_mission_tie.dll, which
- * changes these two things in every mission. `mission_settings` holds the
+ * `rules` holds the rules that hooks change in every mission:
+ * hook_mission_tie.dll's two, and hook_opt_limit.dll's engine glow rule
+ * (xwau_mission_settings.h). `mission_settings` holds the
  * defaults that the global settings of hook_mission_tie and
  * hook_engine_sound give every mission (xwau_mission_settings.h).
  *
@@ -50,6 +54,10 @@
  *
  * Without any of these hooks, the file only has its version, and the game
  * plays as stock.
+ *
+ * `weapons.impact` is written when the mod installs hook_weapon_color.dll,
+ * which tints every impact mark: the colour of each weapon type 280 to 307,
+ * from the hook's five group colours (XwauCraft_ReadGlobalImpactColors).
  */
 
 #include <stdbool.h>

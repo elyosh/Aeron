@@ -88,7 +88,15 @@ typedef enum AeronFlightLightShape {
  *   - `source_radius`: a point's sphere radius or a tube's thickness; zero
  *     for a panel.
  * A one-sided light's intensity is the intensity straight ahead; a tube
- * emits the total of a point light of its intensity. */
+ * emits the total of a point light of its intensity.
+ *
+ * A light with `has_variants` shines only while the model shows one of the
+ * variants of `variant_mask`: bit v (word v / 32) for KHR_materials_variants
+ * variant v, bit AERON_FLIGHT_LIGHT_OWN_MATERIALS for the model's own
+ * materials. Without it, the light shines with every variant. */
+#define AERON_FLIGHT_LIGHT_VARIANT_WORDS 8
+#define AERON_FLIGHT_LIGHT_OWN_MATERIALS 255u
+
 typedef struct AeronFlightLight {
 	AeronFlightVec3       position;
 	float                 color[3];
@@ -103,6 +111,8 @@ typedef struct AeronFlightLight {
 	/* Baked into the model's probes: the game leaves the light out
 	 * while the model's probes light the scene. */
 	bool baked;
+	bool     has_variants;
+	uint32_t variant_mask[AERON_FLIGHT_LIGHT_VARIANT_WORDS];
 } AeronFlightLight;
 
 /* Game-defined component tag: lower-case ASCII letters, digits, '.' and '_'. */

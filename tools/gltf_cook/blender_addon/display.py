@@ -114,7 +114,23 @@ def apply_skin(root, markings=None):
                             (base is not None and variants.slot_material(component, index, base)) or modeled)
             if slot.material != material:
                 slot.material = material
+    _show_variant_lights(root, name if previewing(root) else None)
     skins.remove_unused()
+
+
+def _show_variant_lights(root, name):
+    """Shows the lights that shine with variant `name` ("" for the materials
+    as modeled) and hides the other lights that name variants. With None,
+    every light shows."""
+    for component in common.components(root):
+        for child in component.children:
+            if child.type != 'LIGHT' or not len(child.aeron_flight.light_variants):
+                continue
+            shown = name is None or name in {entry.variant for entry in child.aeron_flight.light_variants}
+            try:
+                child.hide_set(not shown)
+            except RuntimeError:  # not in the view layer
+                pass
 
 
 def models_showing_skins():

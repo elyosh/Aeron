@@ -6,9 +6,9 @@
  * renderer: Materials/<OptName>.mat and Materials/DefaultGlobalMaterial.mat.
  * The files are parsed the same way as in that renderer, xwa_ddraw_d3d11
  * (LoadIndividualMATParams, ReadMaterialLine and FindMaterial in
- * Materials.cpp). Only the keys that drive surface shading and the image
- * sequences (below) are read. The files that XWAU ships rely on quirks of the
- * parser, so these quirks are reproduced:
+ * Materials.cpp). Only the keys that drive surface shading, the light of a
+ * light-emitting texture and the image sequences (below) are read. The files that XWAU ships rely on quirks
+ * of the parser, so these quirks are reproduced:
  *   - A comment starts with ';' or '#' in column 0 only. A value is the first
  *     token after " = " and ends at white space, so any text after it is
  *     ignored.
@@ -43,6 +43,11 @@ typedef struct XwauMatParams {
 	bool  alpha_to_bloom;
 	bool  no_color_alpha;
 	char  normal_map[XWAU_MAT_PATH_MAX]; /* NormalMap value, "" when unset */
+	/* Light = r, g, b (LoadLightColor): the colour of the light the renderer
+	 * puts on the texture's faces, scaled by its brightness. A line with
+	 * fewer than three numbers sets no light. */
+	bool  has_light;
+	float light[3];
 } XwauMatParams;
 
 /*

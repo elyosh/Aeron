@@ -151,6 +151,195 @@ void XwauCraft_ReadEngineGlows(const char* glows_txt, const char* ini, XwauCraft
 	XwauLines_Free(&lines);
 }
 
+/* The impact colour group of each weapon type 280 to 307 (hook_weapon_color,
+ * GetWeaponImpactColor): 0 is 3100 (blue) to 4, 3500 (yellow). */
+static const uint8_t     g_impactGroups[XWAU_CRAFT_WEAPONS] = { 1, 1, 2, 2, 0, 0, 4, 4, 1, 2, 0, 4, 4, 4,
+																4, 3, 0, 1, 3, 4, 4, 1, 1, 2, 2, 2, 2, 4 };
+static const char* const g_impactGroupKeys[5] = { "WeaponImpactColor_3100", "WeaponImpactColor_3200",
+												  "WeaponImpactColor_3300", "WeaponImpactColor_3400",
+												  "WeaponImpactColor_3500" };
+/* The hook's colours when its settings don't set a group. */
+static const uint32_t    g_impactGroupDefaults[5]   = { 0xff0000ffu, 0xffff0000u, 0xff00ff00u, 0xffff00ffu,
+														0xffffff00u };
+static const char* const g_barKeys[XWAU_CRAFT_BARS] = { "EnergyBarColorLaserHigh", "EnergyBarColorLaserLow",
+														"EnergyBarColorIonHigh", "EnergyBarColorIonLow" };
+
+int XwauCraft_ImpactGroup(int weapon) { return g_impactGroups[weapon]; }
+
+uint32_t XwauCraft_ImpactColor(uint32_t argb) {
+	const uint32_t r = argb >> 16 & 0xff, g = argb >> 8 & 0xff, b = argb & 0xff;
+	/* The hook stores the colour as RGB565, rounded, and keeps the stock
+	 * mark when that is 0. */
+	if ((r * 62 + 255) / 510 == 0 && (g * 126 + 255) / 510 == 0 && (b * 62 + 255) / 510 == 0)
+		return 0;
+	return argb & 0xffffff;
+}
+
+/* Writes the hook's key for markings `markings` (GetMarkingsKey): `key`, or
+ * `key`_fg<markings>_. */
+static void markings_key(char* out, size_t cap, const char* key, int markings) {
+	if (markings < 0)
+		snprintf(out, cap, "%s", key);
+	else
+		snprintf(out, cap, "%s_fg%d_", key, markings);
+}
+
+/* Reads a markings key as GetFileKeyValueInt does. Returns -1 when the key
+ * is missing, or when its value isn't a number, which is reported. */
+static int markings_value(const XwauLines* lines, const char* source, const char* key) {
+	char      value[256];
+	long long number;
+	XwauLines_Value(lines, key, XWAU_RULES_CPP, value, sizeof value);
+	if (!value[0])
+		return -1;
+	if (!Xwau_StoiAuto(value, &number) || number < INT_MIN || number > INT_MAX) {
+		Report(source, "%s = %s isn't a number; it is ignored", key, value);
+		return -1;
+	}
+	return (int)number;
+}
+
+/* Reads a colour key as GetFileKeyValueUnsignedInt does. Returns false when
+ * the key is missing, or when its value isn't a number, which is
+ * reported. */
+static bool color_value(const XwauLines* lines, const char* source, const char* key, uint32_t* out) {
+	char value[256];
+	XwauLines_Value(lines, key, XWAU_RULES_CPP, value, sizeof value);
+	if (!value[0])
+		return false;
+	if (!Xwau_StoulHex(value, out)) {
+		Report(source, "%s = %s isn't a hexadecimal number; it is ignored", key, value);
+		return false;
+	}
+	return true;
+}
+
+static void set_impact_group(XwauCraftWeaponColors* colors, int group, uint32_t argb) {
+	for (int weapon = 0; weapon < XWAU_CRAFT_WEAPONS; ++weapon) {
+		if (g_impactGroups[weapon] == group) {
+			colors->has_impact[weapon] = true;
+			colors->impact[weapon]     = XwauCraft_ImpactColor(argb);
+		}
+	}
+}
+
+/* Reads the keys of markings `markings`, or the keys without _fg when it is
+ * -1. Returns whether a key sets something. */
+static bool read_weapon_colors(const XwauLines* lines, const char* source, int markings,
+							   XwauCraftWeaponColors* colors) {
+	char     prefix[64], key[96];
+	bool     any = false;
+	uint32_t color;
+	markings_key(prefix, sizeof prefix, "WeaponColor", markings);
+	int variant = markings_value(lines, source, prefix);
+	if (variant != -1) {
+		colors->has_default     = true;
+		colors->default_variant = (uint8_t)variant;
+		any                     = true;
+	}
+	for (int weapon = 0; weapon < XWAU_CRAFT_WEAPONS; ++weapon) {
+		snprintf(key, sizeof key, "%s%d", prefix, XWAU_CRAFT_FIRST_WEAPON + weapon);
+		variant = markings_value(lines, source, key);
+		if (variant != -1) {
+			colors->has_variant[weapon] = true;
+			colors->variant[weapon]     = (uint8_t)variant;
+			any                         = true;
+		}
+	}
+	for (int group = 0; group < 5; ++group) {
+		markings_key(key, sizeof key, g_impactGroupKeys[group], markings);
+		/* Without _fg, a group key replaces the global colour, even with 0. */
+		if (color_value(lines, source, key, &color) && (markings < 0 || color != 0)) {
+			set_impact_group(colors, group, color);
+			any = true;
+		}
+	}
+	markings_key(prefix, sizeof prefix, "WeaponImpactColor", markings);
+	for (int weapon = 0; weapon < XWAU_CRAFT_WEAPONS; ++weapon) {
+		snprintf(key, sizeof key, "%s%d", prefix, XWAU_CRAFT_FIRST_WEAPON + weapon);
+		if (color_value(lines, source, key, &color) && color != 0) {
+			colors->has_impact[weapon] = true;
+			colors->impact[weapon]     = XwauCraft_ImpactColor(color);
+			any                        = true;
+		}
+	}
+	for (int bar = 0; bar < XWAU_CRAFT_BARS; ++bar) {
+		markings_key(key, sizeof key, g_barKeys[bar], markings);
+		if (color_value(lines, source, key, &color) && color != 0) {
+			colors->has_bar[bar] = true;
+			colors->bar[bar]     = color;
+			any                  = true;
+		}
+	}
+	return any;
+}
+
+/* Returns the markings value m of a line whose key has "_fg<m>_", written
+ * as the hook writes it, or -1. */
+static int line_markings(const char* line) {
+	const char* equals = strchr(line, '=');
+	for (const char* fg = line; (fg = strstr(fg, "_fg")) != NULL && (!equals || fg < equals); ++fg) {
+		const char* digit = fg + 3;
+		int         value = 0, count = 0;
+		for (; *digit >= '0' && *digit <= '9' && count < 4; ++digit, ++count)
+			value = value * 10 + (*digit - '0');
+		if (count && *digit == '_' && (count == 1 || fg[3] != '0') && value <= 255)
+			return value;
+	}
+	return -1;
+}
+
+void XwauCraft_ReadWeapons(const char* weapons_txt, const char* ini, XwauCraftWeapons* weapons) {
+	XwauLines   lines  = { 0 };
+	const char* source = weapons_txt;
+	if (weapons_txt)
+		XwauLines_Read(weapons_txt, "", XWAU_RULES_CPP, &lines);
+	if (lines.count == 0) {
+		XwauLines_Free(&lines);
+		source = ini;
+		if (ini)
+			XwauLines_Read(ini, "WeaponColor", XWAU_RULES_CPP, &lines);
+	}
+	read_weapon_colors(&lines, source, -1, &weapons->colors);
+	for (size_t i = 0; i < lines.count; ++i) {
+		const int markings = line_markings(lines.items[i]);
+		if (markings >= 0 && !weapons->has_markings[markings])
+			weapons->has_markings[markings] =
+				read_weapon_colors(&lines, source, markings, &weapons->by_markings[markings]);
+		const char* key = lines.items[i];
+		while (*key == ' ' || *key == '\t')
+			++key;
+		if (strncasecmp(key, "WeaponLightColor", 16) == 0)
+			weapons->light_colors = true;
+	}
+	XwauLines_Free(&lines);
+}
+
+bool XwauCraft_ReadGlobalImpactColors(const char* game, uint32_t colors[XWAU_CRAFT_WEAPONS]) {
+	char path[1024];
+	if (!Xwau_FindFile(game, "hook_weapon_color.dll", path, sizeof path))
+		return false;
+	XwauLines   lines  = { 0 };
+	const char* source = "hook_weapon_color.cfg";
+	if (Xwau_FindFile(game, "hook_weapon_color.cfg", path, sizeof path))
+		XwauLines_Read(path, "", XWAU_RULES_CPP, &lines);
+	if (lines.count == 0) {
+		XwauLines_Free(&lines);
+		source = "Hooks.ini";
+		if (Xwau_FindFile(game, "Hooks.ini", path, sizeof path))
+			XwauLines_Read(path, "hook_weapon_color", XWAU_RULES_CPP, &lines);
+	}
+	uint32_t groups[5];
+	for (int group = 0; group < 5; ++group) {
+		if (!color_value(&lines, source, g_impactGroupKeys[group], &groups[group]))
+			groups[group] = g_impactGroupDefaults[group];
+	}
+	for (int weapon = 0; weapon < XWAU_CRAFT_WEAPONS; ++weapon)
+		colors[weapon] = XwauCraft_ImpactColor(groups[g_impactGroups[weapon]]);
+	XwauLines_Free(&lines);
+	return true;
+}
+
 bool XwauCraft_ReadIconList(const char* path, uint16_t** values, size_t* count) {
 	XwauLines lines = { 0 };
 	*values         = NULL;
@@ -238,8 +427,99 @@ static void write_engine_glows(FILE* f, const XwauCraftEngineGlows* glows) {
 	}
 }
 
+static bool has_weapon_colors(const XwauCraftWeaponColors* colors) {
+	if (colors->has_default)
+		return true;
+	for (int weapon = 0; weapon < XWAU_CRAFT_WEAPONS; ++weapon) {
+		if (colors->has_variant[weapon] || colors->has_impact[weapon])
+			return true;
+	}
+	for (int bar = 0; bar < XWAU_CRAFT_BARS; ++bar) {
+		if (colors->has_bar[bar])
+			return true;
+	}
+	return false;
+}
+
+static bool has_weapons(const XwauCraftWeapons* weapons) {
+	if (has_weapon_colors(&weapons->colors))
+		return true;
+	for (int markings = 0; markings < 256; ++markings) {
+		if (weapons->has_markings[markings])
+			return true;
+	}
+	return false;
+}
+
+static const char* const g_barNames[XWAU_CRAFT_BARS] = { "laser_high", "laser_low", "ion_high", "ion_low" };
+
+/* Starts the flow map `name` before its first entry, or separates two
+ * entries. */
+static void map_entry(FILE* f, const char* indent, const char* name, bool* open) {
+	if (*open)
+		fputs(", ", f);
+	else
+		fprintf(f, "%s%s: {", indent, name);
+	*open = true;
+}
+
+static void map_end(FILE* f, bool open) {
+	if (open)
+		fputs("}\n", f);
+}
+
+/* Writes the keys of `colors` at `indent`. */
+static void write_weapon_colors(FILE* f, const char* indent, const XwauCraftWeaponColors* colors) {
+	bool open = false;
+	if (colors->has_default) {
+		map_entry(f, indent, "variant", &open);
+		fprintf(f, "default: %u", colors->default_variant);
+	}
+	for (int weapon = 0; weapon < XWAU_CRAFT_WEAPONS; ++weapon) {
+		if (colors->has_variant[weapon]) {
+			map_entry(f, indent, "variant", &open);
+			fprintf(f, "%d: %u", XWAU_CRAFT_FIRST_WEAPON + weapon, colors->variant[weapon]);
+		}
+	}
+	map_end(f, open);
+	open = false;
+	for (int weapon = 0; weapon < XWAU_CRAFT_WEAPONS; ++weapon) {
+		if (colors->has_impact[weapon]) {
+			map_entry(f, indent, "impact", &open);
+			fprintf(f, "%d: 0x%06x", XWAU_CRAFT_FIRST_WEAPON + weapon, colors->impact[weapon]);
+		}
+	}
+	map_end(f, open);
+	open = false;
+	for (int bar = 0; bar < XWAU_CRAFT_BARS; ++bar) {
+		if (colors->has_bar[bar]) {
+			map_entry(f, indent, "energy_bars", &open);
+			fprintf(f, "%s: 0x%08x", g_barNames[bar], colors->bar[bar]);
+		}
+	}
+	map_end(f, open);
+}
+
+static void write_weapons(FILE* f, const XwauCraftWeapons* weapons) {
+	fprintf(f, "weapons:\n");
+	if (has_weapon_colors(&weapons->colors)) {
+		fprintf(f, "  colors:\n");
+		write_weapon_colors(f, "    ", &weapons->colors);
+	}
+	bool first = true;
+	for (int markings = 0; markings < 256; ++markings) {
+		if (!weapons->has_markings[markings])
+			continue;
+		if (first)
+			fprintf(f, "  by_markings:\n");
+		first = false;
+		fprintf(f, "    %d:\n", markings);
+		write_weapon_colors(f, "      ", &weapons->by_markings[markings]);
+	}
+}
+
 static bool write_craft_file(const char* path, const char* sources, const XwauCraftHud* hud,
-							 const XwauCraftEngineGlows* glows) {
+							 const XwauCraftEngineGlows* glows, const XwauCraftWeapons* weapons) {
 	FILE* f = fopen(path, "wb");
 	if (!f) {
 		Report(path, "can't be written");
@@ -250,6 +530,8 @@ static bool write_craft_file(const char* path, const char* sources, const XwauCr
 		write_hud(f, hud);
 	if (has_engine_glows(glows))
 		write_engine_glows(f, glows);
+	if (has_weapons(weapons))
+		write_weapons(f, weapons);
 	const bool ok = fclose(f) == 0;
 	if (!ok)
 		Report(path, "can't be written");
@@ -330,6 +612,29 @@ static bool has_side_file(char* const* names, size_t count, const char* model, c
 	return false;
 }
 
+/* The files that can give a model's settings beside its INI file, as
+ * <model><suffix>. */
+static const char* const g_sideFiles[] = { "Reticle.txt", "EngineGlows.txt", "WeaponColor.txt" };
+
+enum { SIDE_RETICLE, SIDE_ENGINE_GLOWS, SIDE_WEAPON_COLOR, SIDE_FILES };
+
+/* Whether `name` is the first side file of a model that has no INI file, in
+ * which case `model` gets the model's name. A model with several side files
+ * is then read once. */
+static bool first_side_file_without_ini(char* const* names, size_t count, const char* name, char* model,
+										size_t cap) {
+	for (int side = 0; side < SIDE_FILES; ++side) {
+		if (!side_file_without_ini(names, count, name, g_sideFiles[side], model, cap))
+			continue;
+		for (int earlier = 0; earlier < side; ++earlier) {
+			if (has_side_file(names, count, model, g_sideFiles[earlier]))
+				return false;
+		}
+		return true;
+	}
+	return false;
+}
+
 /* Appends `name` to the list of source files. */
 static void add_source(char* sources, size_t cap, const char* name) {
 	const size_t length = strlen(sources);
@@ -347,51 +652,64 @@ bool XwauCraft_Write(const char* xwau_root, const char* output_dir) {
 	size_t count   = 0;
 	char** names   = ListDir(models_dir, true, &count);
 	bool   ok      = true;
-	int    written = 0, reticles = 0, colors = 0, engine_glows = 0;
+	int    written = 0, reticles = 0, colors = 0, engine_glows = 0, weapon_colors = 0, light_colors = 0;
+	XwauCraftWeapons* weapons = (XwauCraftWeapons*)malloc(sizeof *weapons);
+	if (!weapons) {
+		FreeList(names, count);
+		Report(NULL, "out of memory");
+		return false;
+	}
 	for (size_t i = 0; i < count; ++i) {
-		char model[256], ini[1100], reticle_name[300], reticle_txt[1100], glows_name[300], glows_txt[1100],
-			key[256], path[1100], sources[1000];
+		char model[256], ini[1100], side_names[SIDE_FILES][300], side_paths[SIDE_FILES][1100], key[256],
+			path[1100], sources[1400];
+		bool         has_side[SIDE_FILES];
 		const size_t length  = strlen(names[i]);
 		bool         has_ini = false;
 		if (EndsWithNoCase(names[i], ".ini") && length > 4 && length - 4 < sizeof model) {
 			memcpy(model, names[i], length - 4);
 			model[length - 4] = '\0';
 			has_ini           = true;
-		} else if (!side_file_without_ini(names, count, names[i], "Reticle.txt", model, sizeof model) &&
-				   !(side_file_without_ini(names, count, names[i], "EngineGlows.txt", model, sizeof model) &&
-					 !has_side_file(names, count, model, "Reticle.txt"))) {
+		} else if (!first_side_file_without_ini(names, count, names[i], model, sizeof model)) {
 			continue;
 		}
 		snprintf(ini, sizeof ini, "%s/%s.ini", models_dir, model);
-		snprintf(reticle_name, sizeof reticle_name, "FlightModels/%sReticle.txt", model);
-		snprintf(glows_name, sizeof glows_name, "FlightModels/%sEngineGlows.txt", model);
-		const bool has_reticle_txt = Xwau_FindFile(xwau_root, reticle_name, reticle_txt, sizeof reticle_txt);
-		const bool has_glows_txt   = Xwau_FindFile(xwau_root, glows_name, glows_txt, sizeof glows_txt);
+		for (int side = 0; side < SIDE_FILES; ++side) {
+			snprintf(side_names[side], sizeof side_names[side], "FlightModels/%s%s", model,
+					 g_sideFiles[side]);
+			has_side[side] =
+				Xwau_FindFile(xwau_root, side_names[side], side_paths[side], sizeof side_paths[side]);
+		}
+		const char* side_path[SIDE_FILES];
+		for (int side = 0; side < SIDE_FILES; ++side)
+			side_path[side] = has_side[side] ? side_paths[side] : NULL;
 
 		XwauCraftHud         hud;
 		XwauCraftEngineGlows glows;
 		memset(&hud, 0, sizeof hud);
 		memset(&glows, 0, sizeof glows);
-		XwauCraft_ReadReticle(has_reticle_txt ? reticle_txt : NULL, has_ini ? ini : NULL, &hud);
+		memset(weapons, 0, sizeof *weapons);
+		XwauCraft_ReadReticle(side_path[SIDE_RETICLE], has_ini ? ini : NULL, &hud);
 		if (has_ini)
 			XwauCraft_ReadHudColors(ini, &hud);
-		XwauCraft_ReadEngineGlows(has_glows_txt ? glows_txt : NULL, has_ini ? ini : NULL, &glows);
-		if (!has_reticle(&hud) && !has_colors(&hud) && !has_engine_glows(&glows))
+		XwauCraft_ReadEngineGlows(side_path[SIDE_ENGINE_GLOWS], has_ini ? ini : NULL, &glows);
+		XwauCraft_ReadWeapons(side_path[SIDE_WEAPON_COLOR], has_ini ? ini : NULL, weapons);
+		light_colors += weapons->light_colors;
+		if (!has_reticle(&hud) && !has_colors(&hud) && !has_engine_glows(&glows) && !has_weapons(weapons))
 			continue;
 
 		LowerCopy(key, sizeof key, model);
 		sources[0] = '\0';
-		if (has_reticle_txt)
-			add_source(sources, sizeof sources, reticle_name);
-		if (has_glows_txt)
-			add_source(sources, sizeof sources, glows_name);
+		for (int side = 0; side < SIDE_FILES; ++side) {
+			if (has_side[side])
+				add_source(sources, sizeof sources, side_names[side]);
+		}
 		if (has_ini) {
 			char ini_name[300];
 			snprintf(ini_name, sizeof ini_name, "FlightModels/%s.ini", model);
 			add_source(sources, sizeof sources, ini_name);
 		}
 		if (!PathFormat(path, sizeof path, "%s/%s.yaml", craft_dir, key) || !MakeDirs(craft_dir) ||
-			!write_craft_file(path, sources, &hud, &glows)) {
+			!write_craft_file(path, sources, &hud, &glows, weapons)) {
 			ok = false;
 			continue;
 		}
@@ -399,9 +717,17 @@ bool XwauCraft_Write(const char* xwau_root, const char* output_dir) {
 		reticles += has_reticle(&hud);
 		colors += has_colors(&hud);
 		engine_glows += has_engine_glows(&glows);
+		weapon_colors += has_weapons(weapons);
 	}
+	free(weapons);
 	FreeList(names, count);
-	Report(NULL, "model settings: %d files, %d with a reticle, %d with HUD colours, %d with engine glows",
-		   written, reticles, colors, engine_glows);
+	Report(NULL,
+		   "model settings: %d files, %d with a reticle, %d with HUD colours, %d with engine glows, %d with "
+		   "weapon colours",
+		   written, reticles, colors, engine_glows, weapon_colors);
+	if (light_colors)
+		Report(NULL,
+			   "%d models set WeaponLightColor, which isn't imported: a bolt's light comes from its model",
+			   light_colors);
 	return write_icon_lists(xwau_root, output_dir) && ok;
 }

@@ -671,7 +671,7 @@ static void add_game_instances(AeronScene3D* scene, const Fixture* f, double tim
 			 ++li) {
 			AeronSceneLight light;
 			if (AeronScene_MeshLight(instance.mesh, li, instance.transform, GAME_UNITS_PER_METER, NULL,
-									 f->config.game.model_light_intensity, &light))
+									 instance.variant, f->config.game.model_light_intensity, &light))
 				AeronScene_AddLight(scene, &light);
 		}
 		instance.anim = instance_anim(f, (int)i);

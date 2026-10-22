@@ -108,6 +108,24 @@ class AeronMarkingsEntry(PropertyGroup):
         description="Variant shown for this markings value. Empty shows the materials as modeled")
 
 
+def _search_light_variants(self, context, edit_text):
+    root = common.model_root(self.id_data)
+    names = variants.names(root) if root is not None else []
+    return [name for name in names if edit_text.lower() in name.lower()]
+
+
+def _light_variant_update(self, context):
+    root = common.model_root(self.id_data)
+    if root is not None:
+        display.apply_skin(root)
+
+
+class AeronLightVariant(PropertyGroup):
+    variant: StringProperty(
+        name="Variant", update=_light_variant_update, search=_search_light_variants,
+        description="A variant the light shines with. Empty is the materials as modeled")
+
+
 def _role_update(self, context):
     obj = self.id_data
     if self.role in {'component', 'hardpoint', 'engineGlow'} and obj.parent is not None:
@@ -217,6 +235,9 @@ class AeronFlightProperties(PropertyGroup):
     light_tube: BoolProperty(name="Tube", default=False,
                              description="Export this area light as a tube. Its X size is the length "
                                          "and its Y size the thickness")
+    # The variants the light shines with; all when empty.
+    light_variants: CollectionProperty(type=AeronLightVariant)
+    active_light_variant: IntProperty()
     light_one_sided: BoolProperty(name="One-Sided", default=False,
                                   description="The tube emits only toward the light's -Z, like a strip")
 
@@ -338,6 +359,7 @@ classes = (
     AeronPreviewGroup,
     AeronComponentSet,
     AeronMarkingsEntry,
+    AeronLightVariant,
     AeronFlightProperties,
     AeronMaterialProperties,
     AeronProblem,

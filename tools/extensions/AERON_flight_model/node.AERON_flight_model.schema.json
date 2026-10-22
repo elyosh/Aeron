@@ -284,7 +284,15 @@
         },
         "oneSided": { "title": "One-sided", "description": "Emits only toward local -Z, with a cosine falloff. Optional for a tube (default false); a panel is always one-sided.", "type": "boolean" },
         "radius": { "$ref": "#/$defs/positive", "title": "Radius", "description": "A point's sphere radius or a tube's thickness, in metres; default 0.1." },
-        "baked": { "title": "Baked", "description": "True when the light is baked into the model's probes. Games skip the light while those probes light the scene. The authoring tool sets it on lights inside the model's light grid.", "type": "boolean", "default": false }
+        "baked": { "title": "Baked", "description": "True when the light is baked into the model's probes. Games skip the light while those probes light the scene. The authoring tool sets it on lights inside the model's light grid.", "type": "boolean", "default": false },
+        "variants": {
+          "title": "Variants",
+          "description": "The variants the light shines with: names of the file's KHR_materials_variants variants, and null for the model's own materials. Without it, the light shines with every variant.",
+          "type": "array",
+          "items": { "type": ["string", "null"] },
+          "minItems": 1,
+          "uniqueItems": true
+        }
       },
       "allOf": [
         {

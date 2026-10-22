@@ -305,6 +305,17 @@ bool Xwau_StoiAuto(const char* text, long long* out) {
 	return true;
 }
 
+bool Xwau_StoulHex(const char* text, uint32_t* out) {
+	const int sign = sign_of(&text);
+	if (text[0] == '0' && (text[1] == 'x' || text[1] == 'X') && digit_value(text[2]) < 16)
+		text += 2;
+	long long value;
+	if (!digits(text, 16, &value) || value > 0xffffffffLL)
+		return false;
+	*out = (uint32_t)(sign * value);
+	return true;
+}
+
 bool Xwau_DatNames(const char* written, char* rel, size_t rel_cap, char* library, size_t lib_cap) {
 	if (!PathFormat(rel, rel_cap, "%s", written))
 		return false;

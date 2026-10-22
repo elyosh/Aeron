@@ -316,6 +316,9 @@ typedef struct Conversion {
 	size_t            map_count;
 	XwauGltfMaterials baked;
 	bool              has_baked;
+	/* The lights of a bolt model. */
+	OptGltfLight* lights;
+	size_t        light_count;
 } Conversion;
 
 /* Sets the options of stock mode, as the original game draws the model. */
@@ -386,6 +389,71 @@ static bool load_dynamic_cockpit(Conversion* c, const ModelConversion* mc, opt_f
 		Report(label, "cannot apply %s", dynamic);
 		return false;
 	}
+	return true;
+}
+
+/* The candela of a bolt light per unit of its .mat Light. The game's stock
+ * laser light (classic intensity 200, as bright as the classic law at the
+ * game's match distance of 27.5 m) gives about 1.44e5 cd with the game's
+ * model light scale (0.0014641288 scene units per lux), so that XWAU's laser
+ * value, 0.7, is about as bright as the stock light. */
+#define XWAU_BOLT_LIGHT_CANDELA 2.06e5f
+
+static float srgb_to_linear(float c) {
+	return c <= 0.04045f ? c / 12.92f : powf((c + 0.055f) / 1.055f, 2.4f);
+}
+
+/* Whether XWAU's renderer treats the model as a laser or a turbolaser
+ * (is_Laser and is_TurboLaser in XwaTextureData.cpp): its name has "Laser",
+ * but not "LaserBat", or "Turbo". The renderer compares the name that the
+ * game's model list gives, in its case. The files can have another case
+ * (LASERREBEL.OPT for LaserRebel.opt), so the name is compared in any case. */
+static bool xwau_is_laser(const char* basename) {
+	char name[256];
+	LowerCopy(name, sizeof name, basename);
+	return (strstr(name, "laser") && !strstr(name, "laserbat")) || strstr(name, "turbo");
+}
+
+/* XWAU's renderer lights a bolt with the Light of the material of the
+ * texture it shows (EffectsRenderer::AddLaserLights), so a bolt model gets a
+ * light for each state of its face groups: the light of the first face group
+ * of its mesh whose texture has one. A face group without states gives a
+ * light for every variant. Without the model's .mat, a bolt has no light, as
+ * in XWAU. */
+static bool xwau_bolt_lights(Conversion* c, const opt_file_t* opt) {
+	for (int32_t mi = 0; c->mat && mi < opt->mesh_count; ++mi) {
+		const opt_mesh_t* m = &opt->meshes[mi];
+		for (int32_t g = 0; m->lod_count > 0 && g < m->lods[0].group_count; ++g) {
+			const opt_face_group_t* group  = &m->lods[0].groups[g];
+			const int32_t           states = group->state_count > 1 ? group->state_count : 1;
+			for (int32_t s = 0; s < states; ++s) {
+				const int32_t texture =
+					group->state_count > 1 ? group->state_textures[s] : group->texture_index;
+				const int32_t state = group->state_count > 1 ? s : -1;
+				if (texture < 0 || texture >= opt->texture_count)
+					continue;
+				const XwauMatParams* p    = XwauMat_Find(c->mat, opt->textures[texture].name);
+				const float          peak = fmaxf(p->light[0], fmaxf(p->light[1], p->light[2]));
+				bool                 seen = false;
+				for (size_t i = 0; i < c->light_count; ++i)
+					seen |= c->lights[i].mesh_index == (uint32_t)mi && c->lights[i].state == state;
+				if (!p->has_light || !(peak > 0.0f) || seen)
+					continue;
+				OptGltfLight* grown = (OptGltfLight*)realloc(c->lights, (c->light_count + 1) * sizeof *grown);
+				if (!grown)
+					return false;
+				c->lights           = grown;
+				OptGltfLight* light = &grown[c->light_count++];
+				light->mesh_index   = (uint32_t)mi;
+				light->state        = state;
+				for (int k = 0; k < 3; ++k)
+					light->color[k] = srgb_to_linear(fmaxf(p->light[k], 0.0f) / peak);
+				light->intensity = peak * XWAU_BOLT_LIGHT_CANDELA;
+			}
+		}
+	}
+	c->options.model.lights      = c->lights;
+	c->options.model.light_count = c->light_count;
 	return true;
 }
 
@@ -465,6 +533,12 @@ static bool bake_xwau(Conversion* c, const ModelConversion* mc, const opt_file_t
 	/* XWAU's renderer uses the stored normal of each corner, without
 	 * remapping or repairing it. */
 	c->options.geometry.normals = OPT_GLTF_NORMALS_STORED;
+	if (xwau_is_laser(basename) && !xwau_bolt_lights(c, opt)) {
+		Report(label, "out of memory (lights)");
+		return false;
+	}
+	if (c->light_count)
+		Report(label, "%zu bolt lights", c->light_count);
 	return true;
 }
 
@@ -478,6 +552,7 @@ static void conversion_free(Conversion* c, const opt_file_t* opt) {
 	free(c->maps);
 	free(c->materials);
 	free(c->anims);
+	free(c->lights);
 	XwauAnim_End(c->anim);
 	XwauMat_Free(c->mat);
 	XwauDynamicCockpit_Free(&c->dc);

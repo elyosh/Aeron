@@ -960,13 +960,45 @@ static void transform_vector(const float matrix[16], const float vector[3], floa
 		out[row] = matrix[row] * vector[0] + matrix[4 + row] * vector[1] + matrix[8 + row] * vector[2];
 }
 
+/* Reads a light's `variants` into `out`: the names of the
+ * KHR_materials_variants variants it shines with, and null for the model's
+ * own materials. A name must be one of the first 255 variants. */
+static bool parse_light_variants(const cJSON* extension, const cgltf_data* data, AeronFlightLight* out) {
+	const cJSON* variants = cJSON_GetObjectItemCaseSensitive(extension, "variants");
+	if (!variants)
+		return true;
+	if (!cJSON_IsArray(variants) || cJSON_GetArraySize(variants) == 0)
+		return false;
+	out->has_variants  = true;
+	const cJSON* entry = NULL;
+	cJSON_ArrayForEach(entry, variants) {
+		uint32_t bit = AERON_FLIGHT_LIGHT_OWN_MATERIALS;
+		if (cJSON_IsString(entry)) {
+			bit = UINT32_MAX;
+			for (cgltf_size v = 0; v < data->variants_count && v < AERON_FLIGHT_LIGHT_OWN_MATERIALS; ++v)
+				if (data->variants[v].name && strcmp(data->variants[v].name, entry->valuestring) == 0)
+					bit = (uint32_t)v;
+			if (bit == UINT32_MAX) {
+				SDL_Log("[flight_model] a light names no variant '%s'", entry->valuestring);
+				return false;
+			}
+		} else if (!cJSON_IsNull(entry)) {
+			return false;
+		}
+		out->variant_mask[bit / 32] |= 1u << (bit % 32);
+	}
+	return true;
+}
+
 /* Lights on "light" children: the node's KHR_lights_punctual point light
  * gives colour, intensity (candela) and range, its AERON_flight_model object
- * the shape (parse_light_shape) and whether it is `baked`. The node's rotation and uniform scale orient
+ * the shape (parse_light_shape), whether it is `baked` and its `variants`
+ * (parse_light_variants). The node's rotation and uniform scale orient
  * and scale it: a tube lies along its local +X, a panel spans its local X and
  * Y, and one-sided lights emit along its local -Z. Other light types are
  * skipped with a warning; malformed values reject the model. */
-static bool append_lights(const cgltf_node* node, uint32_t component_index, AeronFlightModel* model) {
+static bool append_lights(const cgltf_data* data, const cgltf_node* node, uint32_t component_index,
+						  AeronFlightModel* model) {
 	for (cgltf_size index = 0; index < node->children_count; ++index) {
 		const cgltf_node* child = node->children[index];
 		if (node_role(child) != FLIGHT_ROLE_LIGHT)
@@ -993,8 +1025,11 @@ static bool append_lights(const cgltf_node* node, uint32_t component_index, Aero
 							  parse_light_shape(extension, &shape, &length, size, &one_sided, &radius) &&
 							  (!baked || cJSON_IsBool(baked));
 		const bool is_baked = cJSON_IsTrue(baked);
+		AeronFlightLight light_variants;
+		memset(&light_variants, 0, sizeof light_variants);
+		const bool variants_valid = valid && parse_light_variants(extension, data, &light_variants);
 		cJSON_Delete(extension);
-		if (!valid)
+		if (!variants_valid)
 			return false;
 		AeronFlightLight* grown = realloc(model->lights, (size_t)(model->light_count + 1) * sizeof *model->lights);
 		if (!grown)
@@ -1002,6 +1037,8 @@ static bool append_lights(const cgltf_node* node, uint32_t component_index, Aero
 		model->lights        = grown;
 		AeronFlightLight* out = &grown[model->light_count++];
 		memset(out, 0, sizeof *out);
+		out->has_variants = light_variants.has_variants;
+		memcpy(out->variant_mask, light_variants.variant_mask, sizeof out->variant_mask);
 		float matrix[16];
 		float origin[3] = { 0.0f, 0.0f, 0.0f };
 		float transformed[3];
@@ -1075,7 +1112,7 @@ static bool build_semantics(const cgltf_data* data, AeronFlightModel* model) {
 				return false;
 		}
 		if (!build_component_semantics(data, node, component) || !build_hardpoints(node, component) ||
-			!append_engine_glows(node, index, component, model) || !append_lights(node, index, model))
+			!append_engine_glows(node, index, component, model) || !append_lights(data, node, index, model))
 			return false;
 		if (component->mesh_type == 7 && model->bridge_component < 0)
 			model->bridge_component = (int32_t)index;

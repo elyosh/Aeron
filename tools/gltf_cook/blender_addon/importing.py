@@ -141,6 +141,8 @@ def restore(gltf):
                         common.LIGHTS_EXTENSION_NAME, {}).get("light")
                     if light_index is not None and light_index < len(lights):
                         _restore_light(child, extension, lights[light_index])
+                        for name in extension.get("variants", []):
+                            child.aeron_flight.light_variants.add().variant = name or ""
                         _state["lights"] += 1
         _state["components"] += len(parts)
 

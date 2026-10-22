@@ -24,6 +24,7 @@
 
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdint.h>
 #include <stdio.h>
 
 /* Finds the file at `rel` in the installation `game`. Returns false when
@@ -94,6 +95,13 @@ bool Xwau_Stoi(const char* text, long long* out);
  * 0x, an octal number with a leading 0, or a decimal number. Returns false
  * when there are no digits. */
 bool Xwau_StoiAuto(const char* text, long long* out);
+
+/* Parses `text` as std::stoul(text, 0, 16) does with a 32-bit unsigned
+ * long: leading white space, an optional sign, an optional 0x, then hex
+ * digits up to the first other character. A negative value wraps around.
+ * Returns false where stoul would throw, which is when there are no digits
+ * or the value doesn't fit in 32 bits. */
+bool Xwau_StoulHex(const char* text, uint32_t* out);
 
 /* Converts a DAT path written in XWAU's files ("Effects\\GenericDamage.dat")
  * into a lower-case relative path ("effects/genericdamage.dat") and a

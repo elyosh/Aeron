@@ -96,6 +96,8 @@ typedef struct {
 	size_t                  variants_count;
 	cgltf_node*             nodes;
 	size_t                  nodes_count, nodes_cap;
+	cgltf_light*            lights;
+	size_t                  lights_count;
 	cgltf_node**            root_children;
 	size_t                  root_children_count;
 

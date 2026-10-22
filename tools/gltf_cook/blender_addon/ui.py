@@ -137,6 +137,16 @@ class AERON_UL_markings(UIList):
                      emboss=False).markings = index
 
 
+class AERON_UL_light_variants(UIList):
+    """The variants a light shines with."""
+
+    def draw_item(self, context, layout, data, item, icon, active_data, active_propname, index):
+        row = layout.row(align=True)
+        row.prop(item, "variant", text="")  # searches glTF and skin variants
+        if not item.variant:
+            row.label(text="As modeled")
+
+
 class AERON_UL_problems(UIList):
     def draw_item(self, context, layout, data, item, icon, active_data, active_propname, index):
         row = layout.row(align=True)
@@ -254,6 +264,11 @@ def draw_light(layout, obj):
         row = layout.row()
         row.label(text="The game has no soft falloff", icon='ERROR')
         row.prop(light, "use_soft_falloff")
+    layout.label(text="Shines with these variants (every one when empty):")
+    row = layout.row()
+    row.template_list("AERON_UL_light_variants", "", props, "light_variants", props, "active_light_variant",
+                      rows=2)
+    _list_buttons(row, 'light_variants')
     column = layout.column(align=True)
     column.label(text="In Game: " + common.light_game_shape(obj))
     column.label(text="Intensity: {:.5g} cd".format(common.light_punctual(obj, obj.matrix_world)["intensity"]))
@@ -675,6 +690,7 @@ classes = (
     AERON_UL_references,
     AERON_UL_named,
     AERON_UL_markings,
+    AERON_UL_light_variants,
     AERON_UL_problems,
     OBJECT_PT_aeron,
     OBJECT_PT_aeron_components,

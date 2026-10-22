@@ -74,6 +74,10 @@ typedef struct AeronSceneMeshCpuVertex {
 	float component;
 } AeronSceneMeshCpuVertex;
 
+/* The variant indices whose lights a mesh tells apart. */
+#define AERON_SCENE_MESH_LIGHT_VARIANT_INDICES 256u
+#define AERON_SCENE_MESH_LIGHT_VARIANT_WORDS (AERON_SCENE_MESH_LIGHT_VARIANT_INDICES / 32u)
+
 typedef struct AeronSceneMesh {
 	AeronBuffer* vbo; /* merged AeronGltfVertex stream */
 	AeronBuffer* ibo; /* uint32 indices */
@@ -139,6 +143,12 @@ typedef struct AeronSceneMesh {
 	/* Point lights copied from the source flight model (owned). */
 	AeronFlightLight* lights;
 	uint32_t          light_count;
+	/* The variant indices each light shines with: bit i (word i / 32) of
+	 * row l, AERON_SCENE_MESH_LIGHT_VARIANT_WORDS words per light, for
+	 * variant index i (AeronSceneMeshInstance.variant). An index past the
+	 * last uses the last. NULL when every light shines with every index. */
+	uint32_t* light_variant_masks;
+	uint32_t  light_variant_index_count;
 	/* GPU copy of the source flight model's probes (owned), with its
 	 * reflection plane. NULL when the model has no probes or the device
 	 * cannot sample them. */

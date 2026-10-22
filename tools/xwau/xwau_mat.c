@@ -116,6 +116,15 @@ static void read_material_line(const char* line, XwauMatParams* m) {
 		m->no_color_alpha = f != 0.0f;
 	else if (ascii_casecmp(param, "NormalMap") == 0)
 		snprintf(m->normal_map, sizeof m->normal_map, "%s", value);
+	else if (ascii_casecmp(param, "Light") == 0) {
+		/* LoadLightColor reads the three numbers after the '='. */
+		const char* equals = strchr(line, '=');
+		float       rgb[3];
+		if (equals && sscanf(equals + 1, "%f, %f, %f", &rgb[0], &rgb[1], &rgb[2]) == 3) {
+			m->has_light = true;
+			memcpy(m->light, rgb, sizeof rgb);
+		}
+	}
 }
 
 bool XwauMat_ReadGlobalDefault(const char* path, XwauMatParams* io) {

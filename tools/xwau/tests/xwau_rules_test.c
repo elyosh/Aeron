@@ -498,6 +498,45 @@ static void test_craft(const char* scratch) {
 	check(glows.has[2] && !glows.has[0],
 		  "engine glows: <model>EngineGlows.txt is read instead of the section");
 
+	uint32_t hex = 0;
+	check(Xwau_StoulHex(" 0x1F;x", &hex) && hex == 0x1f && Xwau_StoulHex("-1", &hex) && hex == 0xffffffffu &&
+			  !Xwau_StoulHex("1FFFFFFFF", &hex) && !Xwau_StoulHex("z", &hex),
+		  "colours: std::stoul in base 16, with 0x, a sign and 32 bits");
+	check(XwauCraft_ImpactColor(0x80ff0000u) == 0xff0000 && XwauCraft_ImpactColor(0xff040204u) == 0 &&
+			  XwauCraft_ImpactColor(0xff050000u) == 0x050000,
+		  "impact colours: the alpha is dropped, and 0 when the RGB565 value is 0");
+	XwauCraftWeapons* weapons = (XwauCraftWeapons*)calloc(1, sizeof *weapons);
+	write_file(path, "[WeaponColor]\n//FLIGHTGROUP 0 = RED\nWeaponColor = 0\t\t;0 = Default\n"
+					 "WeaponColor282 = 1\nweaponcolor282 = 5\nWeaponColor284 = -1\nWeaponColor285 = 0x2\n"
+					 "WeaponImpactColor_3100 = BF5FD6FF\t\t;Light Blue\nWeaponImpactColor_3200 = 0\n"
+					 "WeaponImpactColor280 = 0x80FF0000\nWeaponImpactColor281 = 0\n"
+					 "WeaponImpactColor283 = 00000003\nEnergyBarColorLaserHigh = FFFF0000\n"
+					 "EnergyBarColorIonLow = zz\nWeaponColor_fg1_ = 3\nWeaponColor_fg1_284 = 1\n"
+					 "WeaponImpactColor_3300_fg1_ = 0\nWeaponImpactColor_fg1_280 = BFFFE700\n"
+					 "EnergyBarColorLaserHigh_fg1_ = FFFFFF00\nWeaponLightColor280 = FF0000\n"
+					 "WeaponLightColor_fg2_280 = FFE700\nWeaponColor_fg07_ = 4\n");
+	XwauCraft_ReadWeapons(NULL, path, weapons);
+	const XwauCraftWeaponColors* colors = &weapons->colors;
+	check(colors->has_default && colors->default_variant == 0 && colors->variant[2] == 1 &&
+			  !colors->has_variant[4] && colors->variant[5] == 2,
+		  "weapon colours: WeaponColor = 0 is a value, the first key wins, and -1 isn't set");
+	check(colors->impact[4] == 0x5fd6ff && colors->impact[16] == 0x5fd6ff && colors->impact[0] == 0xff0000 &&
+			  colors->has_impact[1] && colors->impact[1] == 0 && colors->has_impact[3] &&
+			  colors->impact[3] == 0 && !colors->has_impact[2],
+		  "weapon colours: the groups are expanded, a group set to 0 is the stock mark, and a weapon's own "
+		  "colour wins");
+	check(colors->has_bar[XWAU_CRAFT_LASER_HIGH] && colors->bar[XWAU_CRAFT_LASER_HIGH] == 0xffff0000u &&
+			  !colors->has_bar[XWAU_CRAFT_ION_LOW],
+		  "weapon colours: the energy bars, and a value that isn't a number");
+	const XwauCraftWeaponColors* fg1 = &weapons->by_markings[1];
+	check(weapons->has_markings[1] && fg1->default_variant == 3 && fg1->variant[4] == 1 &&
+			  fg1->impact[0] == 0xffe700 && !fg1->has_impact[2] &&
+			  fg1->bar[XWAU_CRAFT_LASER_HIGH] == 0xffffff00u,
+		  "weapon colours: the _fg1_ keys, where a group set to 0 isn't set");
+	check(!weapons->has_markings[2] && !weapons->has_markings[7] && weapons->light_colors,
+		  "weapon colours: markings with only light colours, _fg07_, and the WeaponLightColor keys");
+	free(weapons);
+
 	uint16_t* list  = NULL;
 	size_t    count = 0;
 	snprintf(path, sizeof path, "%s/IconList.txt", scratch);
@@ -517,6 +556,9 @@ static void test_craft(const char* scratch) {
 	write_file(path, "[Size]\nX = 1\n");
 	snprintf(path, sizeof path, "%s/Isd.ini", models);
 	write_file(path, "[EngineGlows]\n0, 1, -1\n6, 100, 30\n7, -1, -1\n");
+	snprintf(path, sizeof path, "%s/Slave.ini", models);
+	write_file(path, "[WeaponColor]\nWeaponColor = 0\nWeaponColor282 = 1\nWeaponImpactColor280 = FF0000\n"
+					 "WeaponColor_fg1_ = 3\nEnergyBarColorIonHigh_fg1_ = FF0000FF\n");
 	snprintf(path, sizeof path, "%s/NoIniEngineGlows.txt", models);
 	write_file(path, "1, -1, 20\n");
 	snprintf(path, sizeof path, "%s/HullIconList.txt", root);
@@ -535,6 +577,13 @@ static void test_craft(const char* scratch) {
 						   "  6: {min_speed_percent: 100, min_speed_mglt: 30}\n") &&
 			  !strstr(text, "  7:"),
 		  "craft: isd.yaml has the engine glows with a limit, and no hud group");
+	free(text);
+	snprintf(path, sizeof path, "%s/models/slave.yaml", out);
+	text = ReadWholeFile(path, &size);
+	check(text && strstr(text, "weapons:\n  colors:\n    variant: {default: 0, 282: 1}\n"
+							   "    impact: {280: 0xff0000}\n  by_markings:\n    1:\n"
+							   "      variant: {default: 3}\n      energy_bars: {ion_high: 0xff0000ff}\n"),
+		  "craft: slave.yaml has the weapon colours and the changes for markings 1");
 	free(text);
 	snprintf(path, sizeof path, "%s/models/noini.yaml", out);
 	text = ReadWholeFile(path, &size);
@@ -1488,6 +1537,19 @@ static void test_flight_settings(const char* scratch) {
 								  "  classic_hide_destroyed_engine_glows: true\n"),
 		  "flight settings: hook_opt_limit.dll with [EngineGlows] hides the glows of destroyed meshes");
 	remove(path);
+	char hooks[1300];
+	snprintf(path, sizeof path, "%s/hook_weapon_color.dll", game);
+	write_file(path, "");
+	snprintf(hooks, sizeof hooks, "%s/Hooks.ini", game);
+	write_file(hooks, "[hook_weapon_color]\nWeaponImpactColor_3100 = 0xFF112233\n");
+	size_t size = 0;
+	char*  text = XwauFlightSettings_Write(game, settings) ? ReadWholeFile(settings, &size) : NULL;
+	check(text && strstr(text, "weapons:\n  impact: {280: 0xff0000, 281: 0xff0000, 282: 0x00ff00, ") &&
+			  strstr(text, "284: 0x112233") && strstr(text, "307: 0xffff00}\n"),
+		  "flight settings: hook_weapon_color tints every impact, with the hook's defaults and Hooks.ini");
+	free(text);
+	remove(path);
+	remove(hooks);
 }
 
 static void test_headlights(const char* scratch) {

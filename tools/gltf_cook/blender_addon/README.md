@@ -411,6 +411,13 @@ ends the light where it becomes negligible.
 Each frame, the game ranks all its lights and keeps the 256 that matter
 most near the camera. A light on a hidden (destroyed) component is dark.
 
+A light can shine with some variants only: list them under **Shines with
+these variants**. An empty entry is the materials as modeled. A light
+without the list shines with every variant. A bolt model, for example, has
+one light for each colour, each listed with its colour's variant. When the
+viewport shows a markings value or a variant, the lights that don't shine
+with it are hidden.
+
 ## Probes
 
 Probes give the inside of a model its own light and reflections in the

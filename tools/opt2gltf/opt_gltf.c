@@ -179,6 +179,15 @@ static bool validate_options(Build* b) {
 			(o->model.sets[i].members[7] & 0x80000000u))
 			return opt_gltf_build_fail(b, "invalid or repeated component set %s", o->model.sets[i].name);
 	}
+	for (size_t i = 0; i < o->model.light_count; ++i) {
+		const OptGltfLight* light = &o->model.lights[i];
+		bool                valid = light->mesh_index < (uint32_t)opt->mesh_count && light->state >= -1 &&
+									isfinite(light->intensity) && light->intensity >= 0.0f;
+		for (int channel = 0; channel < 3; ++channel)
+			valid = valid && isfinite(light->color[channel]) && light->color[channel] >= 0.0f;
+		if (!valid)
+			return opt_gltf_build_fail(b, "invalid light %zu", i);
+	}
 	for (size_t i = 0; i < o->model.setting_count; ++i) {
 		bool duplicate = false;
 		for (size_t previous = 0; previous < i; ++previous)
@@ -855,9 +864,89 @@ static bool engine_glow_node(Build* b, cgltf_node* node, cgltf_node* parent, con
 	return opt_gltf_set_extension(b->gb, node, extension);
 }
 
+static float cross_component(const float a[3], const float b[3], int axis) {
+	const int next = (axis + 1) % 3, last = (axis + 2) % 3;
+	return a[next] * b[last] - a[last] * b[next];
+}
+
+/* Light `index` of the model options (OptGltfLight), as a child of the
+ * node of its mesh. */
+static bool light_node(Build* b, cgltf_node* node, cgltf_node* parent, size_t index) {
+	const OptGltfLight* light = &b->options->model.lights[index];
+	const opt_mesh_t*   m     = &b->opt->meshes[light->mesh_index];
+	if (light->state > 0 && light->state >= b->max_state_count)
+		return opt_gltf_build_fail(b, "light %zu: there is no variant State %d", index, (int)light->state);
+	opt_vec3_t low = { 0.0f, 0.0f, 0.0f }, high = low;
+	for (int32_t v = 0; v < m->vertex_count; ++v) {
+		const opt_vec3_t* p = &m->vertices[v];
+		low.x               = v == 0 || p->x < low.x ? p->x : low.x;
+		low.y               = v == 0 || p->y < low.y ? p->y : low.y;
+		low.z               = v == 0 || p->z < low.z ? p->z : low.z;
+		high.x              = v == 0 || p->x > high.x ? p->x : high.x;
+		high.y              = v == 0 || p->y > high.y ? p->y : high.y;
+		high.z              = v == 0 || p->z > high.z ? p->z : high.z;
+	}
+	const opt_vec3_t centre  = { 0.5f * (low.x + high.x), 0.5f * (low.y + high.y), 0.5f * (low.z + high.z) };
+	const float      size[3] = { high.x - low.x, high.y - low.y, high.z - low.z };
+	int              axis    = 0;
+	for (int k = 1; k < 3; ++k)
+		axis = size[k] > size[axis] ? k : axis;
+	const float length = size[axis] * OPT_METERS_PER_UNIT;
+	node->name         = opt_gltf_keep_string(b->gb, xprintf_dup("light_%zu", index));
+	child_node(node, parent, &centre);
+	if (length > 0.0f) {
+		/* The tube lies along the node's local +X. */
+		const opt_vec3_t along = { axis == 0 ? 1.0f : 0.0f, axis == 1 ? 1.0f : 0.0f,
+								   axis == 2 ? 1.0f : 0.0f };
+		float            right[3], up[3] = { 0.0f, 1.0f, 0.0f }, look[3], rotation[4];
+		swap_axis_v3(&along, right);
+		if (fabsf(right[1]) > 0.5f)
+			set_color(up, 0.0f, 0.0f, 1.0f);
+		for (int k = 0; k < 3; ++k)
+			look[k] = cross_component(right, up, k);
+		for (int k = 0; k < 3; ++k)
+			up[k] = cross_component(look, right, k);
+		quaternion_from_axes(right, up, look, rotation);
+		node->has_rotation = 1;
+		memcpy(node->rotation, rotation, sizeof rotation);
+	}
+	cgltf_light* gltf_light = &b->gb->lights[index];
+	gltf_light->name        = node->name;
+	gltf_light->type        = cgltf_light_type_point;
+	memcpy(gltf_light->color, light->color, sizeof gltf_light->color);
+	gltf_light->intensity = light->intensity;
+	node->light           = gltf_light;
+	cJSON* extension      = cJSON_CreateObject();
+	bool   ok             = OptJson_Add(extension, "role", cJSON_CreateString("light"));
+	if (ok && length > 0.0f)
+		ok = OptJson_Add(extension, "shape", cJSON_CreateString("tube")) &&
+			 OptJson_Add(extension, "length", cJSON_CreateNumber(length));
+	if (ok && light->state >= 0) {
+		/* State 0 is the model's own materials. */
+		char state[32];
+		snprintf(state, sizeof state, "State %d", (int)light->state);
+		cJSON* variants = OptJson_AddArray(extension, "variants");
+		ok = variants &&
+			 OptJson_Add(variants, NULL, light->state == 0 ? cJSON_CreateNull() : cJSON_CreateString(state));
+	}
+	if (!ok) {
+		cJSON_Delete(extension);
+		return opt_gltf_build_fail(b, "out of memory");
+	}
+	return opt_gltf_set_extension(b->gb, node, extension);
+}
+
+/* The number of given lights of mesh `mi`. */
+static int mesh_light_count(const Build* b, int32_t mi) {
+	int count = 0;
+	for (size_t i = 0; i < b->options->model.light_count; ++i)
+		count += b->options->model.lights[i].mesh_index == (uint32_t)mi;
+	return count;
+}
+
 /* Builds the node of mesh `mi` and its child nodes, taken from *next_child.
- * The children are the hardpoints, then the engine glows. They are empties,
- * so that Blender and other tools show them. */
+ * The children are the hardpoints, then the engine glows, then the lights.
+ * They are empties, so that Blender and other tools show them. */
 static bool mesh_node(Build* b, int32_t mi, cgltf_node* node, cgltf_node** next_child) {
 	const opt_mesh_t* m    = &b->opt->meshes[mi];
 	cgltf_node*       root = &b->gb->nodes[0];
@@ -868,7 +957,7 @@ static bool mesh_node(Build* b, int32_t mi, cgltf_node* node, cgltf_node** next_
 	if (!opt_gltf_set_extension(b->gb, node, component_extension(b, mi)))
 		return false;
 
-	const int child_total = m->hardpoint_count + m->engine_glow_count;
+	const int child_total = m->hardpoint_count + m->engine_glow_count + mesh_light_count(b, mi);
 	if (child_total == 0)
 		return true;
 	cgltf_node** children = (cgltf_node**)calloc(child_total, sizeof *children);
@@ -887,6 +976,13 @@ static bool mesh_node(Build* b, int32_t mi, cgltf_node* node, cgltf_node** next_
 		if (!engine_glow_node(b, children[ci++], node, &m->engine_glows[e], e))
 			return false;
 	}
+	for (size_t i = 0; i < b->options->model.light_count; ++i) {
+		if (b->options->model.lights[i].mesh_index != (uint32_t)mi)
+			continue;
+		children[ci] = (*next_child)++;
+		if (!light_node(b, children[ci++], node, i))
+			return false;
+	}
 	return true;
 }
 
@@ -899,6 +995,13 @@ static bool build_nodes(Build* b) {
 	size_t                     children_total = 0;
 	for (int32_t mi = 0; mi < opt->mesh_count; ++mi)
 		children_total += (size_t)opt->meshes[mi].hardpoint_count + (size_t)opt->meshes[mi].engine_glow_count;
+	children_total += o->model.light_count;
+	if (o->model.light_count) {
+		gb->lights = (cgltf_light*)calloc(o->model.light_count, sizeof *gb->lights);
+		if (!gb->lights)
+			return opt_gltf_build_fail(b, "out of memory");
+		gb->lights_count = o->model.light_count;
+	}
 	const size_t total = 1 + (size_t)opt->mesh_count + children_total;
 	gb->nodes          = (cgltf_node*)calloc(total, sizeof *gb->nodes);
 	if (!gb->nodes)
@@ -971,6 +1074,8 @@ static bool finish_document(Build* b) {
 	data->scene              = &document->scene;
 	data->variants           = gb->variants;
 	data->variants_count     = gb->variants_count;
+	data->lights             = gb->lights;
+	data->lights_count       = gb->lights_count;
 	/* AERON_flight_model, plus KHR_materials_variants when there are
 	 * variants. */
 	const size_t extension_count = gb->variants_count > 0 ? 2u : 1u;

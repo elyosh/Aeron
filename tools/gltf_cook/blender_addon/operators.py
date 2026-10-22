@@ -354,15 +354,19 @@ class AERON_OT_list_edit(Operator):
         ('component_sets', "Component Set", ""),
         ('members', "Member", ""),
         ('markings', "Markings Value", ""),
+        ('light_variants', "Light Variant", ""),
     ])
     action: EnumProperty(items=[('ADD', "Add", ""), ('REMOVE', "Remove", ""), ('ADD_SELECTED', "Add Selected", "")])
 
     @classmethod
     def poll(cls, context):
-        return common.role(context.object) == 'model'
+        return context.object is not None and (common.role(context.object) == 'model' or
+                                               context.object.type == 'LIGHT')
 
     def execute(self, context):
         props = context.object.aeron_flight
+        if (self.target == 'light_variants') != (context.object.type == 'LIGHT'):
+            return {'CANCELLED'}
         if self.target == 'members':
             if not 0 <= props.active_set < len(props.component_sets):
                 return {'CANCELLED'}
@@ -371,7 +375,8 @@ class AERON_OT_list_edit(Operator):
         else:
             owner, items = props, getattr(props, self.target)
             active = {'articulations': "active_articulation", 'articulation_settings': "active_setting",
-                      'component_sets': "active_set", 'markings': "active_markings"}[self.target]
+                      'component_sets': "active_set", 'markings': "active_markings",
+                      'light_variants': "active_light_variant"}[self.target]
         if self.action == 'ADD':
             item = items.add()
             if self.target in {'articulation_settings', 'component_sets'}:
@@ -400,6 +405,8 @@ class AERON_OT_list_edit(Operator):
             display.apply_sets(context.object)
         elif self.target == 'markings':
             display.apply_skin(context.object)
+        elif self.target == 'light_variants' and common.model_root(context.object) is not None:
+            display.apply_skin(common.model_root(context.object))
         return {'FINISHED'}
 
 

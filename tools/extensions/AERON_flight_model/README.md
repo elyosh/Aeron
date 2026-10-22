@@ -282,7 +282,16 @@ gives the shape:
 - `baked`: optional, default false. True when the light is baked into the
   model's probes. The authoring tool sets it on the lights inside the
   model's light grid. Games skip the light while those probes light the
-  scene, so it is not counted twice.
+  scene, so it is not counted twice;
+- `variants`: optional, the variants the light shines with: names of
+  `KHR_materials_variants` variants (see Markings), and `null` for the
+  model's own materials. A model shows a variant for each object, so a light
+  can shine for some looks only, such as a light of each colour of a bolt.
+  Without the list, the light shines with every variant.
+
+```json
+"AERON_flight_model": { "role": "light", "shape": "tube", "length": 3.2, "variants": ["Red"] }
+```
 
 Fields that do not apply to the shape are invalid. Lengths take the node's
 scale and its parents'. The intensity is the light straight ahead for a

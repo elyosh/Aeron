@@ -335,11 +335,14 @@ int AeronScene_AddLight(AeronScene3D* scene, const AeronSceneLight* light);
  * where it falls under 1/1000 of a unit of scene illuminance. A point is a
  * sphere and a tube a tube; a panel is a one-sided tube along its length
  * when it is at least three times longer than wide, else a one-sided sphere
- * of its area. Returns zero for an invalid index, a light that emits
- * nothing, or a light on a component the table hides. */
+ * of its area. `variant` is the instance's variant index
+ * (AeronSceneMeshInstance.variant): a light that names variants shines only
+ * with them. Returns zero for an invalid index, a light that emits
+ * nothing, a light on a component the table hides, or a light that doesn't
+ * shine with the variant. */
 int AeronScene_MeshLight(const AeronSceneMesh* mesh, uint32_t index, const float transform[16],
-						 float units_per_meter, const AeronSceneMeshTable* table, float intensity_scale,
-						 AeronSceneLight* out);
+						 float units_per_meter, const AeronSceneMeshTable* table, uint32_t variant,
+						 float intensity_scale, AeronSceneLight* out);
 /* World-space light for a light that no mesh holds, such as a craft's
  * headlight, converted as AeronScene_MeshLight converts a model light:
  * `transform` places it, in world units per metre. */

@@ -688,10 +688,19 @@ int AeronScene_FlightLight(const AeronFlightLight* light, const float transform[
 }
 
 int AeronScene_MeshLight(const AeronSceneMesh* mesh, uint32_t index, const float transform[16],
-						 float units_per_meter, const AeronSceneMeshTable* table, float intensity_scale,
-						 AeronSceneLight* out) {
+						 float units_per_meter, const AeronSceneMeshTable* table, uint32_t variant,
+						 float intensity_scale, AeronSceneLight* out) {
 	if (!mesh || index >= mesh->light_count || !transform || !(units_per_meter > 0.0f) || !out) {
 		return 0;
+	}
+	if (mesh->light_variant_masks) {
+		const uint32_t  last = mesh->light_variant_index_count - 1u;
+		const uint32_t  i    = variant < last ? variant : last;
+		const uint32_t* mask =
+			&mesh->light_variant_masks[(size_t)index * AERON_SCENE_MESH_LIGHT_VARIANT_WORDS];
+		if (!(mask[i / 32] & (1u << (i % 32)))) {
+			return 0;
+		}
 	}
 	const AeronFlightLight* light      = &mesh->lights[index];
 	const uint32_t          components = mesh->component_count ? mesh->component_count : 1u;

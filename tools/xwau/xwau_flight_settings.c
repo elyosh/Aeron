@@ -9,6 +9,7 @@
 
 #include "util.h"
 #include "xwau_config.h"
+#include "xwau_craft.h"
 #include "xwau_mission_settings.h"
 
 /* The illuminance of the game's white sun, in W/m^2: the strength of the
@@ -120,6 +121,18 @@ static bool write_headlights(FILE* f, const char* game) {
 	return true;
 }
 
+/* Writes the `weapons` section, when the mod installs hook_weapon_color. */
+static bool write_weapons(FILE* f, const char* game) {
+	uint32_t colors[XWAU_CRAFT_WEAPONS];
+	if (!XwauCraft_ReadGlobalImpactColors(game, colors))
+		return false;
+	fputs("weapons:\n  impact: {", f);
+	for (int weapon = 0; weapon < XWAU_CRAFT_WEAPONS; ++weapon)
+		fprintf(f, "%s%d: 0x%06x", weapon ? ", " : "", XWAU_CRAFT_FIRST_WEAPON + weapon, colors[weapon]);
+	fputs("}\n", f);
+	return true;
+}
+
 bool XwauFlightSettings_Write(const char* game, const char* path) {
 	char               found[1024];
 	const bool         extra_planets = Xwau_FindFile(game, "hook_backdrops.dll", found, sizeof found);
@@ -139,15 +152,23 @@ bool XwauFlightSettings_Write(const char* game, const char* path) {
 		fputs("backdrops:\n  extra_planets:\n    - { ids: [104, 255], first_group: 6304 }\n", f);
 	const bool settings   = XwauMissionSettings_WriteDefaults(f, &config);
 	const bool headlights = write_headlights(f, game);
+	const bool weapons    = write_weapons(f, game);
 	XwauSettingsConfig_Free(&config);
-	const bool ok = !ferror(f) && fclose(f) == 0;
+	const bool        ok        = !ferror(f) && fclose(f) == 0;
+	char              what[300] = "";
+	const char* const parts[]   = { extra_planets ? "backdrop ids 104 to 255 are planets" : NULL,
+									settings ? "the mission rules and defaults" : NULL,
+									headlights ? "the headlights" : NULL,
+									weapons ? "the impact colours" : NULL };
+	for (size_t i = 0; i < sizeof parts / sizeof parts[0]; ++i) {
+		if (parts[i])
+			snprintf(what + strlen(what), sizeof what - strlen(what), "%s%s", what[0] ? ", " : "", parts[i]);
+	}
 	if (!ok)
 		Report(NULL, "cannot write %s", path);
+	else if (what[0])
+		Report(NULL, "wrote %s: %s", path, what);
 	else
-		Report(NULL, "wrote %s: %s%s%s%s%s", path, extra_planets ? "backdrop ids 104 to 255 are planets" : "",
-			   extra_planets && settings ? ", " : "", settings ? "the mission rules and defaults" : "",
-			   (extra_planets || settings) && headlights ? ", " : "", headlights ? "the headlights" : "");
-	if (ok && !extra_planets && !settings && !headlights)
 		Report(NULL, "%s has no flight settings", path);
 	return ok;
 }

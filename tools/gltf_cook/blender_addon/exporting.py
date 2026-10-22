@@ -153,6 +153,9 @@ class _ExportState:
                     extension.update(common.light_shape(child, common.local_matrix(child).to_scale()))
                     if probes.light_baked(root, child):
                         extension["baked"] = True
+                    names = [entry.variant or None for entry in child.aeron_flight.light_variants]
+                    if names:
+                        extension["variants"] = list(dict.fromkeys(names))
                     self.extensions[child.name] = extension
                     self.lights[child.name] = common.light_punctual(child, child.matrix_world)
 
