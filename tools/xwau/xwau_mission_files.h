@@ -78,7 +78,9 @@
  * in the hook, the first line for a path wins, in any case, and a swap whose
  * B doesn't exist is dropped. OpenXWA also needs B's GLB in the mod folder,
  * next to the output folder (<out>/../models/<b>.glb): a swap without it is
- * reported and dropped. Both are written as model keys.
+ * reported and dropped. Both are written as model keys. A swap to or from a
+ * model with [ExeCraftValues] is reported: XWAU then gives the craft other
+ * values in that mission, and the object type files can't (xwau_objects.h).
  *
  * Craft names (hook_mission_tie): the lines `craft, N, <key>, <value>` of
  * the [mission_tie] lines rename the craft of record N for the mission:

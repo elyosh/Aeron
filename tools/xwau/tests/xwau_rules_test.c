@@ -945,6 +945,8 @@ static void test_objects(const char* scratch) {
 	put16(fake_at(m, 0x5B0F70 + 2 * 201), 34);
 	put32(fake_at(m, 0x5BB480 + 987 * 0 + 21), 999); /* the X-wing's hull */
 	put16(fake_at(m, 0x5FB240 + 24 * 71 + 16), 0x843);
+	put16(fake_at(m, 0x5BB480 + 987 * 3 + 306), 280); /* the B-wing's first laser group */
+	put32(fake_at(m, 0x5BB480 + 987 * 3 + 324), 1000);
 	put16(fake_at(m, 0x5BB480 + 987 * 1 + 306), 282); /* the TIE Advanced x1's first laser group */
 	fake_at(m, 0x5BB480 + 987 * 1 + 318)[0] = 2;
 	memcpy(fake_at(m, 0x5BB480 + 987 * 1 + 50), "TieAdvancedX1", 13);
@@ -956,6 +958,10 @@ static void test_objects(const char* scratch) {
 	fake_exe_write(&exes[0], stock);
 	fake_exe_write(&exes[1], mod);
 
+	snprintf(path, sizeof path, "%s/FlightModels/BWING.ini", mod);
+	write_file(path, "[Size]\nX = 1\n[ExeCraftValues]\nGameOptions_IsHardpointsMirroring = 0\n"
+					 "LaserTypeId1 = 283\nLaserSequence1 = 0x5\t; hexadecimal\nWarheadTypeId0 = 286\n"
+					 "CounterMeasuresCount = x\nAIHitsTakenToEvade = 3\n");
 	write_strings(stock, "m:Craft 1");
 	write_strings(mod, "m:TIE Advanced x1");
 	snprintf(path, sizeof path, "%s/SHIPLIST.TXT", stock);
@@ -1020,8 +1026,14 @@ static void test_objects(const char* scratch) {
 	free(text);
 	snprintf(path, sizeof path, "%s/object_types/bwing.yaml", out);
 	text = ReadWholeFile(path, &size);
-	check(text && strstr(text, "object_type: 71\nflags: 0x843\n") && !strstr(text, "craft_record"),
-		  "objects: the object type's flags");
+	check(text && strstr(text, "object_type: 71\nflags: 0x43\n"),
+		  "objects: [ExeCraftValues] sets the object type's flags");
+	check(text && strstr(text, "  ai_hits_to_evade: 3\n") && !strstr(text, "countermeasures") &&
+			  strstr(text, "  lasers:\n    - {type: 280, count: 0, kind: 0, range: 1000, cooldown: 0}\n"
+						   "    - {type: 283, count: 0, kind: 5, range: 0, cooldown: 0}\n") &&
+			  strstr(text, "  warheads:\n    - {type: 286, count: 0, capacity: 0}\n"),
+		  "objects: [ExeCraftValues] sets the craft record; missing keys and values that aren't numbers keep "
+		  "the record's values");
 	free(text);
 	snprintf(path, sizeof path, "%s/object_types/corvetteexplode.yaml", out);
 	check(!IsFile(path),

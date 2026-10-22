@@ -11,6 +11,7 @@
 #include "xwau_game_tables.h"
 #include "xwau_mission_settings.h"
 #include "xwau_mission_tie.h"
+#include "xwau_objects.h"
 #include "xwau_skins.h"
 
 static const char* const kMissionDirs[] = { "Missions", "Melee", "Combat" };
@@ -196,6 +197,12 @@ static bool swaps(const char* game, const char* base, const char* models, const 
 			known = strcmp(keys->items[k], swap.source) == 0;
 		if (!known)
 			Report(base, "[Objects]: %s isn't a model of the lists, so its swap may do nothing", swap.source);
+		if (XwauObjects_HasExeCraftValues(game, swap.source) ||
+			XwauObjects_HasExeCraftValues(game, swap.target))
+			Report(base,
+				   "[Objects]: %s or %s has [ExeCraftValues], so XWAU gives the craft other values in this "
+				   "mission; the object type files keep the values of the list's model",
+				   swap.source, swap.target);
 		Swap* added = ARRAY_PUSH(*out, *count);
 		if ((ok = added != NULL))
 			*added = swap;

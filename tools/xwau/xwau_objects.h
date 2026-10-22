@@ -18,6 +18,29 @@
  *   - the four sound switches that pick an engine or launch sound case by
  *     object type, and the test that takes the beam away from six craft.
  *
+ * The mod's tables first get the [ExeCraftValues] sections of its models, as
+ * hook_mission_tie applies them at each mission load. For each object type
+ * below 219 with a craft record below 218, the section of the model that
+ * the type loads (FlightModels/<model>ExeCraftValues.txt, else the section
+ * of FlightModels/<model>.ini) sets:
+ *   - GameOptions_IsHardpointsMirroring and GameOptions_IsAxisAligned: the
+ *     type's flags 0x800 and 0x1000;
+ *   - LaserTypeId0-2, LaserSequence0-2, LaserRange0-2 and LaserFireRatio0-2:
+ *     the type, kind, range and cooldown of the laser groups;
+ *   - WarheadTypeId0-1 and WarheadCapacity0-1: the type and capacity of the
+ *     warhead launchers;
+ *   - CounterMeasuresCount and AIHitsTakenToEvade.
+ * A missing key keeps the value of the table. Values are read with
+ * std::stoi(value, 0, 0) and cut to the field's size, as the hook does. The
+ * comparison below then writes what changes. XWAU changes the tables only
+ * during missions, so the tech room now sees the new weapons too. The
+ * importer reports two object types that share a record and both have the
+ * section (the last one wins, as in XWAU), a weapon type that the model has
+ * no hardpoint for, and a model with the section that no object type
+ * loads. A mission that swaps to or from such a model would change the
+ * values for that mission only; the mission import reports it
+ * (xwau_mission_files.h).
+ *
  * An object type's model, in each game, is the name of its list row, in
  * lower case and without the folder and the extension. When the mod's model
  * has another name, the file gets `model`. One exception: a row that the mod
@@ -93,6 +116,10 @@
  * `output_dir`/object_types and `output_dir`/craft_types, and adds to `moved`
  * the text IDs that they carry. Returns false when a file can't be read or
  * written. */
+/* Whether model `model` (a model key) of the installation `game` has an
+ * [ExeCraftValues] section. */
+bool XwauObjects_HasExeCraftValues(const char* game, const char* model);
+
 bool XwauObjects_Write(const char* mod_root, const char* stock_game, const char* output_dir,
 					   XwauTextIds* moved);
 

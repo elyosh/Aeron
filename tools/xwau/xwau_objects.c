@@ -1,10 +1,12 @@
 #include "xwau_objects.h"
 
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
 
+#include "opt.h"
 #include "util.h"
 #include "xwau_config.h"
 #include "xwau_game_tables.h"
@@ -198,6 +200,243 @@ static bool record_differs(const uint8_t* stock, const uint8_t* mod) {
 		   group_differs(stock, mod, g_warheadFields, 3, 2) ||
 		   group_differs(stock, mod, g_turretFields, 8, 2) || eye_differs(stock, mod) ||
 		   name_differs(stock, mod) || mesh_attach_differs(stock, mod);
+}
+
+/* ---- [ExeCraftValues] ----------------------------------------------------- */
+
+/* hook_mission_tie changes object types 0 to 218 whose craft record is below
+   218. */
+enum { EXE_VALUES_TYPES = 219, EXE_VALUES_RECORDS = 218 };
+
+/* The object type flags that the section sets. */
+#define FLAG_HARDPOINTS_MIRRORING 0x800
+#define FLAG_AXIS_ALIGNED 0x1000
+
+static const char kExeValuesSuffix[] = "ExeCraftValues.txt";
+
+/* Reads the [ExeCraftValues] lines of model `model`:
+   FlightModels/<model>ExeCraftValues.txt, else the section of
+   FlightModels/<model>.ini. Writes the file's path to `source`. Returns
+   false when out of memory. */
+static bool exe_values_lines(const char* game, const char* model, XwauLines* lines, char* source,
+							 size_t cap) {
+	char rel[400], path[1024];
+	snprintf(rel, sizeof rel, "FlightModels/%s%s", model, kExeValuesSuffix);
+	snprintf(source, cap, "%s", rel);
+	if (!XwauLines_Read(Xwau_FindFile(game, rel, path, sizeof path) ? path : NULL, "", XWAU_RULES_CPP, lines))
+		return false;
+	if (lines->count)
+		return true;
+	snprintf(rel, sizeof rel, "FlightModels/%s.ini", model);
+	snprintf(source, cap, "%s", rel);
+	return XwauLines_Read(Xwau_FindFile(game, rel, path, sizeof path) ? path : NULL, "ExeCraftValues",
+						  XWAU_RULES_CPP, lines);
+}
+
+bool XwauObjects_HasExeCraftValues(const char* game, const char* model) {
+	XwauLines  lines;
+	char       source[400];
+	const bool has = exe_values_lines(game, model, &lines, source, sizeof source) && lines.count;
+	XwauLines_Free(&lines);
+	return has;
+}
+
+/* The value of `key` as GetFileKeyValueInt reads it, or `fallback` when
+   the key is missing. A value that isn't a number stops XWAU (std::stoi
+   throws); it is reported, and `fallback` is used. */
+static long long exe_value(const XwauLines* lines, const char* source, const char* key, long long fallback) {
+	char      text[256];
+	long long value = 0;
+	XwauLines_Value(lines, key, XWAU_RULES_CPP, text, sizeof text);
+	if (!text[0])
+		return fallback;
+	if (!Xwau_StoiAuto(text, &value) || value < INT_MIN || value > INT_MAX) {
+		Report(source, "%s = %s isn't a number, which XWAU would fail on; the record's value is kept", key,
+			   text);
+		return fallback;
+	}
+	return value;
+}
+
+/* Writes `value` into a field, cut to its size as the hook's casts do. */
+static void set_field(uint8_t* record, const Field* field, unsigned element, long long value) {
+	uint8_t* p = record + field->offset + element * field->size;
+	for (unsigned i = 0; i < field->size; ++i)
+		p[i] = (uint8_t)((unsigned long long)value >> (8 * i));
+}
+
+/* The OPT hardpoint type of weapon type `weapon`: weapon - 279 in the game.
+   hook_weapon_rate, with its WeaponHardpointTypes feature, gives weapons
+   301 to 305 types 33 to 37 and weapon 307 type 38
+   (ConvertWeaponModelIndexToHardpointType). */
+static long long hardpoint_type(long long weapon, bool weapon_rate) {
+	if (weapon_rate && weapon >= 301 && weapon <= 305)
+		return 33 + weapon - 301;
+	if (weapon_rate && weapon == 307)
+		return 38;
+	return weapon - 279;
+}
+
+/* Reports the weapon types of `record` that model `model` has no hardpoint
+   for: the game finds a group's slots from the hardpoints of its type, so
+   such a group keeps the record's slots. */
+static void check_hardpoints(const char* game, const char* model, const uint8_t* record, bool weapon_rate) {
+	char rel[400], path[1024];
+	snprintf(rel, sizeof rel, "FlightModels/%s.opt", model);
+	if (!Xwau_FindFile(game, rel, path, sizeof path)) {
+		Report(rel, "doesn't exist, so the hardpoints of its [ExeCraftValues] weapons aren't checked");
+		return;
+	}
+	opt_error_t err;
+	opt_file_t* opt = opt_load_file(path, &err);
+	if (!opt) {
+		Report(rel, "can't be read, so the hardpoints of its [ExeCraftValues] weapons aren't checked");
+		return;
+	}
+	for (int g = 0; g < 5; ++g) {
+		const bool      laser = g < 3;
+		const long long type  = laser ? field_value(record, &g_laserFields[0], (unsigned)g)
+									  : field_value(record, &g_warheadFields[0], (unsigned)(g - 3));
+		bool            found = type == 0;
+		for (int32_t m = 0; !found && m < opt->mesh_count; ++m)
+			for (int32_t h = 0; !found && h < opt->meshes[m].hardpoint_count; ++h)
+				found = (long long)opt->meshes[m].hardpoints[h].type == hardpoint_type(type, weapon_rate);
+		if (!found)
+			Report(rel,
+				   "has no hardpoint for the weapon type %lld of its %s %d, so that group keeps the slots "
+				   "of the craft record",
+				   type, laser ? "laser group" : "warhead launcher", laser ? g : g - 3);
+	}
+	opt_free(opt);
+}
+
+/* The model of object type `t` as hook_mission_tie finds it: its list row,
+   without the test of recordFlags. */
+static const char* exe_values_model(const XwauGameTables* tables, int t) {
+	const XwauGameType type = XwauGameTables_Type(tables, t);
+	return type.list < 2 && type.row < tables->rowCount[type.list] ? tables->rows[type.list][type.row] : "";
+}
+
+/* Applies the [ExeCraftValues] sections of the models to `tables`, as
+   hook_mission_tie does at each mission load, and reports the cases that
+   the object type files can't express. Writes the number of object types
+   changed to `count`. Returns false when out of memory. */
+static bool apply_exe_values(const char* game, XwauGameTables* tables, int* count) {
+	*count = 0;
+	/* The lasers and warheads keep the start-up record's values; the other
+	   keys keep the current values. */
+	uint8_t (*start)[XWAU_GAME_RECORD_SIZE] = malloc(sizeof tables->records[0] * EXE_VALUES_RECORDS);
+	if (!start)
+		return false;
+	memcpy(start, tables->records, sizeof tables->records[0] * EXE_VALUES_RECORDS);
+	int        owner[EXE_VALUES_RECORDS];
+	bool       loaded_ok = true;
+	char       dll[1024];
+	const bool weapon_rate = Xwau_FindFile(game, "hook_weapon_rate.dll", dll, sizeof dll) &&
+							 Xwau_FileHasText(dll, "WeaponHardpointTypes");
+	for (int r = 0; r < EXE_VALUES_RECORDS; ++r)
+		owner[r] = -1;
+	for (int t = 0; loaded_ok && t < EXE_VALUES_TYPES; ++t) {
+		const XwauGameType type   = XwauGameTables_Type(tables, t);
+		const uint16_t     record = (uint16_t)type.record;
+		const char*        model  = exe_values_model(tables, t);
+		if (record >= EXE_VALUES_RECORDS || !model[0])
+			continue;
+		XwauLines lines;
+		char      source[400];
+		if (!(loaded_ok = exe_values_lines(game, model, &lines, source, sizeof source)))
+			break;
+		if (!lines.count) {
+			XwauLines_Free(&lines);
+			continue;
+		}
+		if (owner[record] >= 0)
+			Report(
+				source,
+				"object types %d and %d share craft record %d, and both models have [ExeCraftValues]; as in "
+				"XWAU, the values of object type %d win",
+				owner[record], t, record, t);
+		owner[record]  = t;
+		uint16_t flags = type.flags;
+		if (exe_value(&lines, source, "GameOptions_IsHardpointsMirroring",
+					  (flags & FLAG_HARDPOINTS_MIRRORING) != 0) != 0)
+			flags |= FLAG_HARDPOINTS_MIRRORING;
+		else
+			flags &= (uint16_t)~FLAG_HARDPOINTS_MIRRORING;
+		if (exe_value(&lines, source, "GameOptions_IsAxisAligned", (flags & FLAG_AXIS_ALIGNED) != 0) != 0)
+			flags |= FLAG_AXIS_ALIGNED;
+		else
+			flags &= (uint16_t)~FLAG_AXIS_ALIGNED;
+		tables->types[t][16] = (uint8_t)flags;
+		tables->types[t][17] = (uint8_t)(flags >> 8);
+		uint8_t* r           = tables->records[record];
+		/* LaserTypeId, LaserSequence, LaserRange, LaserFireRatio: the `type`,
+		   `kind`, `range` and `cooldown` of a `lasers` entry. */
+		static const char* const kLaserKeys[]   = { "LaserTypeId", "LaserSequence", "LaserRange",
+													"LaserFireRatio" };
+		static const int         kLaserFields[] = { 0, 2, 3, 4 };
+		for (unsigned g = 0; g < 3; ++g)
+			for (int k = 0; k < 4; ++k) {
+				char key[64];
+				snprintf(key, sizeof key, "%s%u", kLaserKeys[k], g);
+				const Field* field = &g_laserFields[kLaserFields[k]];
+				set_field(r, field, g, exe_value(&lines, source, key, field_value(start[record], field, g)));
+			}
+		/* WarheadTypeId and WarheadCapacity: the `type` and `capacity` of a
+		   `warheads` entry. */
+		static const char* const kWarheadKeys[]   = { "WarheadTypeId", "WarheadCapacity" };
+		static const int         kWarheadFields[] = { 0, 2 };
+		for (unsigned g = 0; g < 2; ++g)
+			for (int k = 0; k < 2; ++k) {
+				char key[64];
+				snprintf(key, sizeof key, "%s%u", kWarheadKeys[k], g);
+				const Field* field = &g_warheadFields[kWarheadFields[k]];
+				set_field(r, field, g, exe_value(&lines, source, key, field_value(start[record], field, g)));
+			}
+		for (size_t i = 0; i < sizeof g_fields / sizeof g_fields[0]; ++i) {
+			const char* key = strcmp(g_fields[i].key, "countermeasures") == 0    ? "CounterMeasuresCount"
+							  : strcmp(g_fields[i].key, "ai_hits_to_evade") == 0 ? "AIHitsTakenToEvade"
+																				 : NULL;
+			if (key)
+				set_field(r, &g_fields[i], 0,
+						  exe_value(&lines, source, key, field_value(r, &g_fields[i], 0)));
+		}
+		XwauLines_Free(&lines);
+		check_hardpoints(game, model, r, weapon_rate);
+		(*count)++;
+	}
+	free(start);
+	if (!loaded_ok)
+		return false;
+
+	/* The models with the section that no object type loads. */
+	char   dir[1024];
+	size_t names_count = 0;
+	char** names =
+		Xwau_FindDir(game, "FlightModels", dir, sizeof dir) ? ListDir(dir, true, &names_count) : NULL;
+	for (size_t i = 0; i < names_count; ++i) {
+		char         model[300];
+		const size_t length = strlen(names[i]);
+		if (EndsWithNoCase(names[i], kExeValuesSuffix) &&
+			length - (sizeof kExeValuesSuffix - 1) < sizeof model)
+			snprintf(model, sizeof model, "%.*s", (int)(length - (sizeof kExeValuesSuffix - 1)), names[i]);
+		else if (EndsWithNoCase(names[i], ".ini") && length - 4 < sizeof model)
+			snprintf(model, sizeof model, "%.*s", (int)(length - 4), names[i]);
+		else
+			continue;
+		bool used = false;
+		for (int t = 0; !used && t < EXE_VALUES_TYPES; ++t)
+			used = (uint16_t)XwauGameTables_Type(tables, t).record < EXE_VALUES_RECORDS &&
+				   Xwau_SameName(exe_values_model(tables, t), model);
+		if (used || !XwauObjects_HasExeCraftValues(game, model))
+			continue;
+		Report(NULL,
+			   "FlightModels/%s: [ExeCraftValues] is skipped: no object type below 219 with a craft "
+			   "record below 218 loads the model",
+			   names[i]);
+	}
+	FreeList(names, names_count);
+	return true;
 }
 
 /* ---- Text ------------------------------------------------------------------ */
@@ -667,8 +906,10 @@ bool XwauObjects_Write(const char* mod_root, const char* stock_game, const char*
 					   XwauTextIds* moved) {
 	XwauGameTables* stock = XwauGameTables_Load(stock_game);
 	XwauGameTables* mod   = stock ? XwauGameTables_Load(mod_root) : NULL;
-	if (!stock || !mod) {
+	int             exe_values = 0;
+	if (!stock || !mod || !apply_exe_values(mod_root, mod, &exe_values)) {
 		XwauGameTables_Free(stock);
+		XwauGameTables_Free(mod);
 		return false;
 	}
 	const bool sounds_comparable = sound_jumps_match(stock, mod);
@@ -823,6 +1064,8 @@ bool XwauObjects_Write(const char* mod_root, const char* stock_game, const char*
 			   counts.remaps);
 		Report(NULL, "object types: %d new craft in reserved slots and %d in placeholders", new_slots,
 			   new_placeholders);
+		if (exe_values)
+			Report(NULL, "object types: %d take the [ExeCraftValues] of their model", exe_values);
 		if (empty_slots || empty_placeholders)
 			Report(NULL,
 				   "object types: %d reserved slots and %d placeholders that the mod gives an empty row are "
