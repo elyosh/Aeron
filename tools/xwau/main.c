@@ -16,9 +16,11 @@
  * uses the one in --stock-game, the stock game's folder. It writes the
  * settings that apply to every mission into the --flight-settings file,
  * flight/flight.yaml (xwau_flight_settings.h). With --skyboxes, it also
- * writes the environments of the missions' [SkyBoxes] sections into FILE,
- * and the sky and overlay folders that environment_bake converts into the
- * --skybox-folders file (xwau_skyboxes.h).
+ * writes the environments of the missions' [SkyBoxes] sections into the
+ * environment manifest FILE, flight/environments/environments.yaml, keeping
+ * the file's other entries, and the sky and overlay folders that
+ * environment_bake converts into the --skybox-folders file
+ * (xwau_skyboxes.h).
  *
  * `craft` writes the settings of each model into <output_dir>/models and the
  * hull and map icon lists into <output_dir>/hud.yaml (xwau_craft.h). With

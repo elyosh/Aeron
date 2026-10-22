@@ -423,7 +423,8 @@ static void test_skyboxes(const char* scratch) {
 			  "skyboxes: AllRegions values read as stof reads them, one environment for equal values");
 		check(
 			strstr(m1, "\"1\":\n          environment: xwau.alpha\n          rotation_degrees: [5, 0, 0]") &&
-				strstr(m1, "\"0\":\n          environment: xwau.beta\n          backdrops: keep"),
+				strstr(m1, "\"0\":\n          environment: xwau.beta\n          backdrops: keep\n"
+						   "          backdrop_light_scale: 0.25\n"),
 			"skyboxes: a region whose folder does not load uses AllRegions, with its rotation");
 		check(strstr(m1, "\"6104-0\"") && strstr(m1, "\"9001-1100\"") && strstr(m1, "\"6025-1\"") &&
 				  !in_entry(m1, m2, "show_backdrops"),
@@ -440,6 +441,33 @@ static void test_skyboxes(const char* scratch) {
 		  "skyboxes: the folder list names the sky and overlay folders that load");
 	free(text);
 	free(list);
+
+	/* An existing manifest keeps its other entries and its comments, and the
+	 * importer's block between its two lines is replaced. */
+	write_file(
+		manifest,
+		"# My manifest\nversion: 1\n\nenvironments:\n  deathstar.interior:\n    intensity: 1\n"
+		"  # Begin of the entries that xwau_import missions --skyboxes writes. Each import replaces them.\n"
+		"  xwau.old:\n"
+		"    intensity: 2\n  # End of the entries that xwau_import missions --skyboxes writes.\n\n"
+		"xwa:\n  default: deathstar.interior\n  missions:\n    \"skirmish/temp.tie\":\n"
+		"      regions:\n        \"0\": deathstar.interior\n");
+	check(XwauSkyboxes_Write(game, stock, manifest, folders), "skyboxes written into an existing manifest");
+	text = ReadWholeFile(manifest, &size);
+	check(text &&
+			  strncmp(text, "# My manifest\nversion: 1\n\nenvironments:\n  deathstar.interior:\n", 62) == 0 &&
+			  strstr(text, "xwa:\n  default: deathstar.interior\n  missions:\n    \"skirmish/temp.tie\":\n"),
+		  "skyboxes: the manifest's other entries and comments are kept");
+	check(text && !strstr(text, "xwau.old") && strstr(text, "  xwau.alpha:\n") &&
+			  strstr(text, "    # Begin of the entries") && strstr(text, "    # End of the entries"),
+		  "skyboxes: the importer's block is replaced, and the mission map gets one");
+	char* first = text;
+	text        = NULL;
+	check(XwauSkyboxes_Write(game, stock, manifest, folders), "skyboxes written again");
+	text = ReadWholeFile(manifest, &size);
+	check(first && text && strcmp(first, text) == 0, "skyboxes: a second import changes nothing");
+	free(first);
+	free(text);
 }
 
 /* ---- Craft settings ----------------------------------------------------------- */

@@ -492,15 +492,9 @@ static float clamp_value(float v, float max, const char* what, const char* name)
 	return clamped;
 }
 
-static bool write_manifest(const SkyState* st, const char* path) {
-	FILE* f = fopen(path, "wb");
-	if (!f) {
-		Report(path, "cannot write");
-		return false;
-	}
-	fprintf(f, "# Written by xwau_import missions from the [SkyBoxes] sections of XWAU's\n"
-			   "# missions. Merge it into environments.yaml.\n"
-			   "version: 1\n\nenvironments:\n");
+/* Writes the importer's environments into `f`, as entries of the
+ * manifest's `environments` map. */
+static void write_environments(const SkyState* st, FILE* f) {
 	for (size_t i = 0; i < st->definition_count; ++i) {
 		const SkyDefinition* d       = &st->definitions[i];
 		const char*          key     = st->folders[d->folder].key;
@@ -530,7 +524,11 @@ static bool write_manifest(const SkyState* st, const char* path) {
 					(double)degrees[2]);
 		}
 	}
-	fprintf(f, "\nxwa:\n  missions:\n");
+}
+
+/* Writes the importer's mission entries into `f`, as entries of the
+ * manifest's `xwa.missions` map. */
+static void write_missions(const SkyState* st, FILE* f) {
 	for (size_t m = 0; m < st->mission_count; ++m) {
 		const SkyMission* mission = &st->missions[m];
 		SkyList           hide;
@@ -550,7 +548,7 @@ static bool write_manifest(const SkyState* st, const char* path) {
 				fprintf(f, "          rotation_degrees: [%g, %g, %g]\n", (double)degrees[0],
 						(double)degrees[1], (double)degrees[2]);
 			}
-			fprintf(f, "          backdrops: keep\n");
+			fprintf(f, "          backdrops: keep\n          backdrop_light_scale: 0.25\n");
 			/* EnabledBackdrops = ALL turns hiding off. */
 			if (mission->enabled.all) {
 				fprintf(f, "          show_backdrops: all\n");
@@ -568,12 +566,197 @@ static bool write_manifest(const SkyState* st, const char* path) {
 			}
 		}
 	}
-	const bool ok = !ferror(f);
-	if (fclose(f) != 0 || !ok) {
-		Report(path, "cannot write");
+}
+
+/* ===== Updating the manifest ============================================ */
+
+/* The lines around the importer's entries in each section of the manifest.
+ * Each import replaces what is between them. */
+#define SKY_BEGIN                                                                                            \
+	"# Begin of the entries that xwau_import missions --skyboxes writes. Each import replaces them."
+#define SKY_END "# End of the entries that xwau_import missions --skyboxes writes."
+
+typedef struct SkyLine {
+	const char* text;
+	size_t      length;
+} SkyLine;
+
+/* Reads back what was written into a tmpfile() stream, as a string. */
+static char* read_stream(FILE* f) {
+	if (fflush(f) != 0 || fseek(f, 0, SEEK_END) != 0)
+		return NULL;
+	const long size = ftell(f);
+	char*      text = size >= 0 ? (char*)malloc((size_t)size + 1) : NULL;
+	if (!text)
+		return NULL;
+	rewind(f);
+	if (fread(text, 1, (size_t)size, f) != (size_t)size) {
+		free(text);
+		return NULL;
+	}
+	text[size] = '\0';
+	return text;
+}
+
+/* The number of spaces that start `line`, or -1 for a blank line. */
+static int line_indent(const SkyLine* line) {
+	size_t i = 0;
+	while (i < line->length && line->text[i] == ' ')
+		++i;
+	return i == line->length || line->text[i] == '\r' ? -1 : (int)i;
+}
+
+/* Whether `line` is `text` at `indent`, followed by nothing but white space
+ * or a comment. */
+static bool line_is(const SkyLine* line, int indent, const char* text) {
+	const size_t n = strlen(text);
+	if (line_indent(line) != indent || line->length < (size_t)indent + n ||
+		memcmp(line->text + indent, text, n) != 0)
 		return false;
+	for (size_t i = (size_t)indent + n; i < line->length; ++i) {
+		if (line->text[i] == '#')
+			return true;
+		if (line->text[i] != ' ' && line->text[i] != '\t' && line->text[i] != '\r')
+			return false;
 	}
 	return true;
+}
+
+/* The line after the entry that starts at `start` with `indent`: the next
+ * line that isn't blank and has `indent` or less. */
+static size_t entry_end(const SkyLine* lines, size_t count, size_t start, int indent) {
+	size_t i = start + 1;
+	while (i < count) {
+		const int other = line_indent(&lines[i]);
+		if (other >= 0 && other <= indent)
+			break;
+		++i;
+	}
+	return i;
+}
+
+static void emit_lines(FILE* out, const SkyLine* lines, size_t from, size_t to) {
+	for (size_t i = from; i < to; ++i) {
+		fwrite(lines[i].text, 1, lines[i].length, out);
+		fputc('\n', out);
+	}
+}
+
+static void emit_block(FILE* out, int indent, const char* entries) {
+	fprintf(out, "%*s%s\n%s%*s%s\n", indent, "", SKY_BEGIN, entries, indent, "", SKY_END);
+}
+
+/* Copies the entries of a section (lines `from` to `to`) at `indent`,
+ * without the importer's block, then adds the importer's block after the last
+ * line that isn't blank. */
+static void emit_section(FILE* out, const SkyLine* lines, size_t from, size_t to, int indent,
+						 const char* entries) {
+	size_t last = to;
+	while (last > from && line_indent(&lines[last - 1]) < 0)
+		--last;
+	for (size_t i = from; i < last;) {
+		if (line_is(&lines[i], indent, SKY_BEGIN)) {
+			size_t end = i + 1;
+			while (end < last && !line_is(&lines[end], indent, SKY_END))
+				++end;
+			i = end < last ? end + 1 : last;
+			continue;
+		}
+		emit_lines(out, lines, i, i + 1);
+		++i;
+	}
+	emit_block(out, indent, entries);
+	emit_lines(out, lines, last, to);
+}
+
+/* Writes the importer's environments and mission entries into the manifest
+ * `path`, between the SKY_BEGIN and SKY_END lines of its `environments` and
+ * `xwa.missions` maps. The rest of the file is kept as it is. A file without
+ * these lines gets them at the end of each map. */
+static bool update_manifest(const char* path, const char* environments, const char* missions) {
+	size_t   size  = 0;
+	char*    old   = IsFile(path) ? ReadWholeFile(path, &size) : NULL;
+	SkyLine* lines = NULL;
+	size_t   count = 0;
+	if (IsFile(path) && !old) {
+		Report(path, "cannot read");
+		return false;
+	}
+	for (size_t start = 0; old && start < size;) {
+		const char*  newline = memchr(old + start, '\n', size - start);
+		const size_t length  = newline ? (size_t)(newline - (old + start)) : size - start;
+		if (!ArrayGrow((void**)&lines, count, sizeof *lines)) {
+			free(lines);
+			free(old);
+			Report(NULL, "out of memory");
+			return false;
+		}
+		lines[count++] = (SkyLine) { old + start, length };
+		start += length + 1;
+	}
+	const size_t none = (size_t)-1;
+	size_t       env = none, xwa = none, mission_map = none;
+	for (size_t i = 0; i < count; ++i) {
+		if (env == none && line_is(&lines[i], 0, "environments:"))
+			env = i;
+		if (xwa == none && line_is(&lines[i], 0, "xwa:"))
+			xwa = i;
+	}
+	const size_t env_end = env != none ? entry_end(lines, count, env, 0) : none;
+	const size_t xwa_end = xwa != none ? entry_end(lines, count, xwa, 0) : none;
+	for (size_t i = xwa + 1; xwa != none && i < xwa_end && mission_map == none; ++i) {
+		if (line_is(&lines[i], 2, "missions:"))
+			mission_map = i;
+	}
+	const size_t mission_end = mission_map != none ? entry_end(lines, xwa_end, mission_map, 2) : none;
+
+	FILE* out = tmpfile();
+	if (!out) {
+		free(lines);
+		free(old);
+		Report(NULL, "cannot create a temporary file");
+		return false;
+	}
+	if (!old)
+		fputs("version: 1\n", out);
+	for (size_t i = 0; i < count;) {
+		if (i == env) {
+			emit_lines(out, lines, i, i + 1);
+			emit_section(out, lines, i + 1, env_end, 2, environments);
+			i = env_end;
+		} else if (i == mission_map) {
+			emit_lines(out, lines, i, i + 1);
+			emit_section(out, lines, i + 1, mission_end, 4, missions);
+			i = mission_end;
+		} else {
+			if (xwa != none && mission_map == none && i == xwa_end) {
+				fputs("  missions:\n", out);
+				emit_block(out, 4, missions);
+			}
+			emit_lines(out, lines, i, i + 1);
+			++i;
+		}
+	}
+	if (env == none) {
+		fputs("\nenvironments:\n", out);
+		emit_block(out, 2, environments);
+	}
+	if (xwa == none) {
+		fputs("\nxwa:\n  missions:\n", out);
+		emit_block(out, 4, missions);
+	} else if (mission_map == none && xwa_end == count) {
+		fputs("  missions:\n", out);
+		emit_block(out, 4, missions);
+	}
+	char* text = read_stream(out);
+	fclose(out);
+	free(lines);
+	free(old);
+	const bool ok = text && WriteWholeFile(path, text, strlen(text));
+	if (!ok)
+		Report(path, "cannot write");
+	free(text);
+	return ok;
 }
 
 static bool write_folders(const SkyState* st, const char* path) {
@@ -632,10 +815,29 @@ bool XwauSkyboxes_Write(const char* game, const char* stock_game, const char* ma
 	}
 	if (!ok)
 		Report(NULL, "out of memory (skyboxes)");
-	ok = ok && write_manifest(&st, manifest) && write_folders(&st, folders);
+	FILE* environment_stream = ok ? tmpfile() : NULL;
+	FILE* mission_stream     = environment_stream ? tmpfile() : NULL;
+	char* environment_text   = NULL;
+	char* mission_text       = NULL;
+	if (mission_stream) {
+		write_environments(&st, environment_stream);
+		write_missions(&st, mission_stream);
+		environment_text = read_stream(environment_stream);
+		mission_text     = read_stream(mission_stream);
+	}
+	if (ok && (!environment_text || !mission_text))
+		Report(NULL, "cannot write the skyboxes into a temporary file");
+	ok = ok && environment_text && mission_text &&
+		 update_manifest(manifest, environment_text, mission_text) && write_folders(&st, folders);
+	if (environment_stream)
+		fclose(environment_stream);
+	if (mission_stream)
+		fclose(mission_stream);
+	free(environment_text);
+	free(mission_text);
 	if (ok) {
 		Report(NULL,
-			   "wrote %s: %zu missions, %zu regions with a sky and %zu without, %zu environments for %zu "
+			   "updated %s: %zu missions, %zu regions with a sky and %zu without, %zu environments for %zu "
 			   "cube folders",
 			   manifest, st.mission_count, with_sky, without, st.definition_count, st.folder_count);
 		if (overlays)
