@@ -343,6 +343,38 @@ static const char* global_weapon_lines(const char* game, XwauLines* lines) {
 	return source;
 }
 
+void XwauCraft_ReadShield(const char* shield_txt, const char* ini, XwauCraftShield* shield) {
+	XwauLines   lines  = { 0 };
+	const char* source = shield_txt;
+	memset(shield, 0, sizeof *shield);
+	if (shield_txt)
+		XwauLines_Read(shield_txt, "", XWAU_RULES_CPP, &lines);
+	if (lines.count == 0) {
+		XwauLines_Free(&lines);
+		source = ini;
+		if (ini)
+			XwauLines_Read(ini, "Shield", XWAU_RULES_CPP, &lines);
+	}
+	if (lines.count) {
+		shield->has           = true;
+		shield->per_generator = int_key(&lines, source, "UseGenerator", 0) == 1;
+		shield->rate =
+			int_key(&lines, source, shield->per_generator ? "PerGeneratorRechargeRate" : "RechargeRate", 0);
+		shield->player_rate   = int_key(&lines, source, "PlayerRechargeRate", 0);
+		shield->delay_seconds = int_key(&lines, source, "RechargeRateDelay", 0);
+	}
+	XwauLines_Free(&lines);
+}
+
+static void write_shield(FILE* f, const XwauCraftShield* shield) {
+	fprintf(f, "shield: {%s: %lld", shield->per_generator ? "per_generator_rate" : "rate", shield->rate);
+	if (shield->player_rate)
+		fprintf(f, ", player_rate: %lld", shield->player_rate);
+	if (shield->delay_seconds)
+		fprintf(f, ", delay_seconds: %lld", shield->delay_seconds);
+	fputs("}\n", f);
+}
+
 bool XwauCraft_ReadGlobalImpactColors(const char* game, uint32_t colors[XWAU_CRAFT_WEAPONS]) {
 	char path[1024];
 	if (!Xwau_FindFile(game, "hook_weapon_color.dll", path, sizeof path))
@@ -554,7 +586,7 @@ static void write_weapons(FILE* f, const XwauCraftWeapons* weapons) {
 
 static bool write_craft_file(const char* path, const char* sources, const XwauCraftHud* hud,
 							 const XwauCraftEngineGlows* glows, const XwauCraftWeapons* weapons,
-							 const XwauStatsProfiles* stats) {
+							 const XwauStatsProfiles* stats, const XwauCraftShield* shield) {
 	FILE* f = fopen(path, "wb");
 	if (!f) {
 		Report(path, "can't be written");
@@ -568,6 +600,8 @@ static bool write_craft_file(const char* path, const char* sources, const XwauCr
 	if (has_weapons(weapons))
 		write_weapons(f, weapons);
 	XwauStatsProfiles_Write(f, stats);
+	if (shield->has)
+		write_shield(f, shield);
 	const bool ok = fclose(f) == 0;
 	if (!ok)
 		Report(path, "can't be written");
@@ -650,9 +684,10 @@ static bool has_side_file(char* const* names, size_t count, const char* model, c
 
 /* The files that can give a model's settings beside its INI file, as
  * <model><suffix>. */
-static const char* const g_sideFiles[] = { "Reticle.txt", "EngineGlows.txt", "WeaponColor.txt" };
+static const char* const g_sideFiles[] = { "Reticle.txt", "EngineGlows.txt", "WeaponColor.txt",
+										   "Shield.txt" };
 
-enum { SIDE_RETICLE, SIDE_ENGINE_GLOWS, SIDE_WEAPON_COLOR, SIDE_FILES };
+enum { SIDE_RETICLE, SIDE_ENGINE_GLOWS, SIDE_WEAPON_COLOR, SIDE_SHIELD, SIDE_FILES };
 
 /* Whether `name` is the first side file of a model that has no INI file, in
  * which case `model` gets the model's name. A model with several side files
@@ -689,7 +724,7 @@ bool XwauCraft_Write(const char* xwau_root, const char* output_dir) {
 	char** names   = ListDir(models_dir, true, &count);
 	bool   ok      = true;
 	int    written = 0, reticles = 0, colors = 0, engine_glows = 0, weapon_colors = 0, light_colors = 0;
-	int    stats_profiles    = 0;
+	int    stats_profiles = 0, shields = 0;
 	size_t disabled_profiles = 0;
 	/* The genus of the object types that load each model, for the units of
 	   the stats profiles. */
@@ -739,6 +774,8 @@ bool XwauCraft_Write(const char* xwau_root, const char* output_dir) {
 		XwauCraft_ReadEngineGlows(side_path[SIDE_ENGINE_GLOWS], has_ini ? ini : NULL, &glows);
 		XwauCraft_ReadWeapons(side_path[SIDE_WEAPON_COLOR], has_ini ? ini : NULL, weapons);
 		light_colors += weapons->light_colors;
+		XwauCraftShield shield;
+		XwauCraft_ReadShield(side_path[SIDE_SHIELD], has_ini ? ini : NULL, &shield);
 		XwauStatsProfiles stats;
 		LowerCopy(key, sizeof key, model);
 		if (!XwauStatsProfiles_Read(xwau_root, model, names, count, XwauStatsGenus_Find(&genus, key),
@@ -748,7 +785,7 @@ bool XwauCraft_Write(const char* xwau_root, const char* output_dir) {
 		}
 		disabled_profiles += stats.disabled;
 		if (!has_reticle(&hud) && !has_colors(&hud) && !has_engine_glows(&glows) && !has_weapons(weapons) &&
-			!stats.count) {
+			!stats.count && !shield.has) {
 			XwauStatsProfiles_Free(&stats);
 			continue;
 		}
@@ -764,12 +801,13 @@ bool XwauCraft_Write(const char* xwau_root, const char* output_dir) {
 			add_source(sources, sizeof sources, ini_name);
 		}
 		if (!PathFormat(path, sizeof path, "%s/%s.yaml", craft_dir, key) || !MakeDirs(craft_dir) ||
-			!write_craft_file(path, sources, &hud, &glows, weapons, &stats)) {
+			!write_craft_file(path, sources, &hud, &glows, weapons, &stats, &shield)) {
 			XwauStatsProfiles_Free(&stats);
 			ok = false;
 			continue;
 		}
 		stats_profiles += stats.count != 0;
+		shields += shield.has;
 		XwauStatsProfiles_Free(&stats);
 		written++;
 		reticles += has_reticle(&hud);
@@ -782,8 +820,8 @@ bool XwauCraft_Write(const char* xwau_root, const char* output_dir) {
 	FreeList(names, count);
 	Report(NULL,
 		   "model settings: %d files, %d with a reticle, %d with HUD colours, %d with engine glows, %d with "
-		   "weapon settings, %d with stats profiles",
-		   written, reticles, colors, engine_glows, weapon_colors, stats_profiles);
+		   "weapon settings, %d with stats profiles, %d with a shield recharge rate",
+		   written, reticles, colors, engine_glows, weapon_colors, stats_profiles, shields);
 	if (disabled_profiles)
 		Report(NULL,
 			   "%zu sections such as [StatsProfile_Default;] or [;StatsProfile_Default], which XWAU never "

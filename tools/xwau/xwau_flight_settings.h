@@ -29,6 +29,11 @@
  *       auto_turn_on: true
  *     weapons:
  *       impact: {280: 0xff0000, 281: 0xff0000, ...}
+ *     shield_recharge:
+ *       starships: true
+ *       starships_on_easy: false
+ *       double_starfighter_shields: false
+ *       rate_percent: 100
  *
  * `extra_planets` is written when the mod installs XWAU's backdrop hook,
  * hook_backdrops.dll. With it, a mission's backdrop id N from 104 to 255
@@ -66,6 +71,15 @@
  * `weapons.impact` is written when the mod installs hook_weapon_color.dll,
  * which tints every impact mark: the colour of each weapon type 280 to 307,
  * from the hook's five group colours (XwauCraft_ReadGlobalImpactColors).
+ *
+ * `shield_recharge` is written when the mod installs hook_shield.dll. Its
+ * values come from hook_shield.cfg, else the [hook_shield] section of
+ * Hooks.ini: IsShieldRechargeForStarshipsEnabled (default 1),
+ * IsShieldRechargeForStarshipsOnEasyDifficultyEnabled (0),
+ * IsShieldStrengthForStarfighterDoubled (0) and RechargeRatePercent (100).
+ * The rules are in shield_recharge.h in the game. The hook's per-mission
+ * [Shield] lines (<mission>_Shield.txt), which no mod uses, aren't
+ * imported.
  */
 
 #include <stdbool.h>

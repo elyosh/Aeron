@@ -29,6 +29,7 @@
  *         variant: {default: 2}
  *   stats_profiles:                                  # xwau_stats_profiles.h
  *     default: {speed: 86, hull: 3045}
+ *   shield: {per_generator_rate: 5, player_rate: 40, delay_seconds: 30}
  *
  * The reticle comes from FlightModels/<model>Reticle.txt, else the [Reticle]
  * section of FlightModels/<model>.ini, read like XWAU's reticle hook: the
@@ -68,6 +69,15 @@
  * aren't imported: XWAU players see the light of the bolt's material
  * instead. WeaponSwitchBasedOnIff gives switch_by_iff: -1 isn't set, and
  * any other value is true when it isn't 0.
+ *
+ * The shield recharge comes from FlightModels/<model>Shield.txt, else the
+ * [Shield] section of the model's INI, read like XWAU's hook_shield. With
+ * `UseGenerator = 1`, `PerGeneratorRechargeRate` gives `per_generator_rate`;
+ * otherwise `RechargeRate` gives `rate`. Both default to 0 when the section
+ * exists. `PlayerRechargeRate` gives `player_rate` and `RechargeRateDelay`
+ * gives `delay_seconds`; they are written when they aren't 0, since the
+ * hook treats 0 as not set. A model without the section gets no `shield`
+ * group, and the game uses its default rate (shield_recharge.h).
  *
  * hud.yaml holds `hull_icons` and `map_icons`, from HullIconList.txt and
  * MapIconList.txt, read like XWAU's hull icon hook: the value at position N
@@ -128,6 +138,15 @@ typedef struct XwauCraftWeaponColors {
 	uint32_t bar[XWAU_CRAFT_BARS]; /* ARGB */
 } XwauCraftWeaponColors;
 
+/* The [Shield] section of a model. */
+typedef struct XwauCraftShield {
+	bool      has; /* the model has the section */
+	bool      per_generator;
+	long long rate; /* per live generator when per_generator */
+	long long player_rate;
+	long long delay_seconds;
+} XwauCraftShield;
+
 typedef struct XwauCraftWeapons {
 	XwauCraftWeaponColors colors;
 	bool                  has_markings[256];
@@ -160,6 +179,11 @@ void XwauCraft_ReadEngineGlows(const char* glows_txt, const char* ini, XwauCraft
  * section of `ini`. Either path can be NULL. A value that isn't a number is
  * reported and ignored. */
 void XwauCraft_ReadWeapons(const char* weapons_txt, const char* ini, XwauCraftWeapons* weapons);
+
+/* Reads the [Shield] section of a model: `shield_txt` (<model>Shield.txt)
+ * when it has lines, else the [Shield] section of `ini`. Either path can be
+ * NULL. */
+void XwauCraft_ReadShield(const char* shield_txt, const char* ini, XwauCraftShield* shield);
 
 /* The impact colour that XWAU shows for an ARGB value: its RGB, or 0 (the
  * stock white mark) when its RGB565 value is 0. */

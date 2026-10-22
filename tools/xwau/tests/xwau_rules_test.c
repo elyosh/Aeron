@@ -1718,6 +1718,26 @@ static void test_stats_profiles(const char* scratch) {
 	XwauStatsProfiles_Free(&profiles);
 	FreeList(names, count);
 
+	XwauCraftShield shield;
+	snprintf(path, sizeof path, "%s/FlightModels/Frigate.ini", game);
+	write_file(path, "[Shield]\nUseGenerator = 1\nPerGeneratorRechargeRate = 5\nRechargeRate = 40\n"
+					 "RechargeRateDelay = 30\n");
+	XwauCraft_ReadShield(NULL, path, &shield);
+	check(shield.has && shield.per_generator && shield.rate == 5 && shield.delay_seconds == 30 &&
+			  shield.player_rate == 0,
+		  "shield: UseGenerator = 1 takes the rate per generator, and the delay");
+	char txt[1300];
+	snprintf(txt, sizeof txt, "%s/FlightModels/FrigateShield.txt", game);
+	write_file(txt, "UseGenerator = 2\nRechargeRate = 40\nPlayerRechargeRate = 60\n");
+	XwauCraft_ReadShield(txt, path, &shield);
+	check(
+		shield.has && !shield.per_generator && shield.rate == 40 && shield.player_rate == 60 &&
+			shield.delay_seconds == 0,
+		"shield: <model>Shield.txt wins over the section, and UseGenerator other than 1 takes RechargeRate");
+	write_file(path, "[Size]\nX = 1\n");
+	XwauCraft_ReadShield(NULL, path, &shield);
+	check(!shield.has, "shield: no section, no rate");
+
 	snprintf(path, sizeof path, "%s/Missions/m1.ini", game);
 	write_file(path,
 			   "[StatsProfiles]\nFrigate_fgc_2 = Fast\nfrigate_FGC_2 = Default\nFrigate_fg_player = Fast\n"
@@ -1750,8 +1770,20 @@ static void test_stats_profiles(const char* scratch) {
 	snprintf(settings, sizeof settings, "%s/sp_flight.yaml", scratch);
 	size_t size = 0;
 	char*  text = XwauFlightSettings_Write(game, settings) ? ReadWholeFile(settings, &size) : NULL;
-	check(text && strstr(text, "  ai_attack_uses_max_speed_cache: true\n"),
+	check(text && strstr(text, "  ai_attack_uses_max_speed_cache: true\n") &&
+			  !strstr(text, "shield_recharge"),
 		  "stats profiles: hook_mission_tie with stats profiles compares the craft's own top speeds");
+	free(text);
+	snprintf(path, sizeof path, "%s/hook_shield.dll", game);
+	write_file(path, "MZ RechargeRatePercent");
+	snprintf(path, sizeof path, "%s/Hooks.ini", game);
+	write_file(path, "[hook_shield]\nRechargeRatePercent = 50\n");
+	snprintf(path, sizeof path, "%s/hook_shield.cfg", game);
+	write_file(path, "IsShieldRechargeForStarshipsEnabled = 0\nIsShieldStrengthForStarfighterDoubled = 1\n");
+	text = XwauFlightSettings_Write(game, settings) ? ReadWholeFile(settings, &size) : NULL;
+	check(text && strstr(text, "shield_recharge:\n  starships: false\n  starships_on_easy: false\n"
+							   "  double_starfighter_shields: true\n  rate_percent: 100\n"),
+		  "shield: hook_shield's rules, from its .cfg over Hooks.ini");
 	free(text);
 }
 
