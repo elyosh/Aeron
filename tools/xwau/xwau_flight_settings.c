@@ -121,21 +121,25 @@ static bool write_headlights(FILE* f, const char* game) {
 	return true;
 }
 
-/* Writes the `weapons` section, when the mod installs hook_weapon_color. */
-static bool write_weapons(FILE* f, const char* game) {
-	uint32_t colors[XWAU_CRAFT_WEAPONS];
-	if (!XwauCraft_ReadGlobalImpactColors(game, colors))
-		return false;
-	fputs("weapons:\n  impact: {", f);
-	for (int weapon = 0; weapon < XWAU_CRAFT_WEAPONS; ++weapon)
-		fprintf(f, "%s%d: 0x%06x", weapon ? ", " : "", XWAU_CRAFT_FIRST_WEAPON + weapon, colors[weapon]);
-	fputs("}\n", f);
-	return true;
+/* Reads the settings of `hook` ("hook_shield"): its .cfg file, else its
+ * section of Hooks.ini. Writes the name of the file into `source`, for the
+ * reports. */
+static void hook_lines(const char* game, const char* hook, XwauLines* lines, char* source, size_t cap) {
+	char path[1024];
+	memset(lines, 0, sizeof *lines);
+	snprintf(source, cap, "%s.cfg", hook);
+	if (Xwau_FindFile(game, source, path, sizeof path))
+		XwauLines_Read(path, "", XWAU_RULES_CPP, lines);
+	if (lines->count)
+		return;
+	XwauLines_Free(lines);
+	snprintf(source, cap, "Hooks.ini");
+	if (Xwau_FindFile(game, "Hooks.ini", path, sizeof path))
+		XwauLines_Read(path, hook, XWAU_RULES_CPP, lines);
 }
 
-/* Reads `key` of hook_shield's settings as GetFileKeyValueInt does. */
-static long long shield_value(const XwauLines* lines, const char* source, const char* key,
-							  long long fallback) {
+/* Reads `key` of a hook's settings as GetFileKeyValueInt does. */
+static long long hook_value(const XwauLines* lines, const char* source, const char* key, long long fallback) {
 	char      text[256];
 	long long value = 0;
 	XwauLines_Value(lines, key, XWAU_RULES_CPP, text, sizeof text);
@@ -148,6 +152,54 @@ static long long shield_value(const XwauLines* lines, const char* source, const 
 	return value;
 }
 
+/* Reads `key`, a percent of hook_weapon_rate's settings, for the
+ * `weapons` section. */
+static long long rate_percent(const XwauLines* lines, const char* source, const char* key) {
+	const long long percent = hook_value(lines, source, key, 100);
+	if (percent < 0 || percent > INT32_MAX) {
+		Report(source, "%s = %lld: the percent isn't imported; 100 is used", key, percent);
+		return 100;
+	}
+	return percent;
+}
+
+/* Writes the `weapons` section: the impact colours, when the mod installs
+ * hook_weapon_color, and the laser rates, when it installs
+ * hook_weapon_rate. */
+static void write_weapons(FILE* f, const char* game, bool* impact, bool* rates) {
+	uint32_t colors[XWAU_CRAFT_WEAPONS];
+	char     path[1024];
+	*impact = XwauCraft_ReadGlobalImpactColors(game, colors);
+	*rates  = Xwau_FindFile(game, "hook_weapon_rate.dll", path, sizeof path);
+	if (!*impact && !*rates)
+		return;
+	fputs("weapons:\n", f);
+	if (*impact) {
+		fputs("  impact: {", f);
+		for (int weapon = 0; weapon < XWAU_CRAFT_WEAPONS; ++weapon)
+			fprintf(f, "%s%d: 0x%06x", weapon ? ", " : "", XWAU_CRAFT_FIRST_WEAPON + weapon, colors[weapon]);
+		fputs("}\n", f);
+	}
+	if (!*rates)
+		return;
+	XwauCraftWeaponRates defaults;
+	XwauCraft_ReadGlobalWeaponRates(game, &defaults);
+	if (XwauCraft_HasWeaponRates(&defaults)) {
+		fputs("  rates: ", f);
+		XwauCraft_WriteWeaponRates(f, &defaults);
+		fputc('\n', f);
+	}
+	if (Xwau_FileHasText(path, "DechargeRatePercent")) {
+		XwauLines lines;
+		char      source[64];
+		hook_lines(game, "hook_weapon_rate", &lines, source, sizeof source);
+		fprintf(f, "  decharge_percent: %lld\n  recharge_percent: %lld\n",
+				rate_percent(&lines, source, "DechargeRatePercent"),
+				rate_percent(&lines, source, "RechargeRatePercent"));
+		XwauLines_Free(&lines);
+	}
+}
+
 /* Writes the `shield_recharge` section, when the mod installs hook_shield:
  * its hook_shield.cfg, else the [hook_shield] section of Hooks.ini. */
 static bool write_shield_recharge(FILE* f, const char* game) {
@@ -155,17 +207,10 @@ static bool write_shield_recharge(FILE* f, const char* game) {
 	if (!Xwau_FindFile(game, "hook_shield.dll", path, sizeof path) ||
 		!Xwau_FileHasText(path, "RechargeRatePercent"))
 		return false;
-	XwauLines   lines  = { 0 };
-	const char* source = "hook_shield.cfg";
-	if (Xwau_FindFile(game, "hook_shield.cfg", path, sizeof path))
-		XwauLines_Read(path, "", XWAU_RULES_CPP, &lines);
-	if (!lines.count) {
-		XwauLines_Free(&lines);
-		source = "Hooks.ini";
-		if (Xwau_FindFile(game, "Hooks.ini", path, sizeof path))
-			XwauLines_Read(path, "hook_shield", XWAU_RULES_CPP, &lines);
-	}
-	long long percent = shield_value(&lines, source, "RechargeRatePercent", 100);
+	XwauLines lines;
+	char      source[64];
+	hook_lines(game, "hook_shield", &lines, source, sizeof source);
+	long long percent = hook_value(&lines, source, "RechargeRatePercent", 100);
 	if (percent < 0) {
 		Report(source, "RechargeRatePercent = %lld: a negative percent isn't imported; 100 is used", percent);
 		percent = 100;
@@ -173,10 +218,10 @@ static bool write_shield_recharge(FILE* f, const char* game) {
 	fprintf(f,
 			"shield_recharge:\n  starships: %s\n  starships_on_easy: %s\n  double_starfighter_shields: %s\n"
 			"  rate_percent: %lld\n",
-			shield_value(&lines, source, "IsShieldRechargeForStarshipsEnabled", 1) ? "true" : "false",
-			shield_value(&lines, source, "IsShieldRechargeForStarshipsOnEasyDifficultyEnabled", 0) ? "true"
-																								   : "false",
-			shield_value(&lines, source, "IsShieldStrengthForStarfighterDoubled", 0) ? "true" : "false",
+			hook_value(&lines, source, "IsShieldRechargeForStarshipsEnabled", 1) ? "true" : "false",
+			hook_value(&lines, source, "IsShieldRechargeForStarshipsOnEasyDifficultyEnabled", 0) ? "true"
+																								 : "false",
+			hook_value(&lines, source, "IsShieldStrengthForStarfighterDoubled", 0) ? "true" : "false",
 			percent);
 	XwauLines_Free(&lines);
 	return true;
@@ -201,15 +246,18 @@ bool XwauFlightSettings_Write(const char* game, const char* path) {
 		fputs("backdrops:\n  extra_planets:\n    - { ids: [104, 255], first_group: 6304 }\n", f);
 	const bool settings   = XwauMissionSettings_WriteDefaults(f, &config);
 	const bool headlights = write_headlights(f, game);
-	const bool weapons    = write_weapons(f, game);
+	bool       impact, rates;
+	write_weapons(f, game, &impact, &rates);
 	const bool shields    = write_shield_recharge(f, game);
 	XwauSettingsConfig_Free(&config);
 	const bool        ok        = !ferror(f) && fclose(f) == 0;
 	char              what[300] = "";
-	const char* const parts[] = { extra_planets ? "backdrop ids 104 to 255 are planets" : NULL,
-								  settings ? "the mission rules and defaults" : NULL,
-								  headlights ? "the headlights" : NULL, weapons ? "the impact colours" : NULL,
-								  shields ? "the shield recharge rules" : NULL };
+	const char* const parts[]   = { extra_planets ? "backdrop ids 104 to 255 are planets" : NULL,
+									settings ? "the mission rules and defaults" : NULL,
+									headlights ? "the headlights" : NULL,
+									impact ? "the impact colours" : NULL,
+									rates ? "the laser rates" : NULL,
+									shields ? "the shield recharge rules" : NULL };
 	for (size_t i = 0; i < sizeof parts / sizeof parts[0]; ++i) {
 		if (parts[i])
 			snprintf(what + strlen(what), sizeof what - strlen(what), "%s%s", what[0] ? ", " : "", parts[i]);

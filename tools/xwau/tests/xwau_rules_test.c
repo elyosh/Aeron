@@ -1785,6 +1785,48 @@ static void test_stats_profiles(const char* scratch) {
 							   "  double_starfighter_shields: true\n  rate_percent: 100\n"),
 		  "shield: hook_shield's rules, from its .cfg over Hooks.ini");
 	free(text);
+
+	XwauCraftWeaponRates rates;
+	snprintf(path, sizeof path, "%s/FlightModels/Frigate.ini", game);
+	write_file(path, "[WeaponRate]\nDechargeRate = 2\nRechargeRate = 3\nCooldownTimeFactor = 94   ;47 = 1 s\n"
+					 "DechargeRatePercent = -1\nRechargeRatePercent = -5\nDechargeRate = 9\n");
+	XwauCraft_ReadWeaponRates(NULL, path, &rates);
+	snprintf(out, sizeof out, "%s/wr_model.yaml", scratch);
+	f = fopen(out, "wb");
+	XwauCraft_WriteWeaponRates(f, &rates);
+	fclose(f);
+	check(
+		same_file(out, "{decharge: 2, recharge: 3, cooldown: 94}"),
+		"weapon rates: the model's keys; the first line wins, and -1 and other negative values are left out");
+	snprintf(txt, sizeof txt, "%s/FlightModels/FrigateWeaponRate.txt", game);
+	write_file(txt, "RechargeRatePercent = 50\n");
+	XwauCraft_ReadWeaponRates(txt, path, &rates);
+	check(rates.value[0] == -1 && rates.value[4] == 50,
+		  "weapon rates: <model>WeaponRate.txt wins over the section");
+	write_file(path, "[Size]\nX = 1\n");
+	XwauCraft_ReadWeaponRates(NULL, path, &rates);
+	check(!XwauCraft_HasWeaponRates(&rates), "weapon rates: no section, no rates");
+
+	snprintf(path, sizeof path, "%s/FlightModels/default.ini", game);
+	write_file(path, "[WeaponRate]\nIsImpactSpinningEnabled = 0\n");
+	check(XwauCraft_ReadGlobalWeaponRates(game, &rates) && !XwauCraft_HasWeaponRates(&rates),
+		  "weapon rates: a global section without rates still has lines, so XWAU ignores the models' rates");
+	write_file(path, "[WeaponRate]\nDechargeRate = 3\n");
+	snprintf(path, sizeof path, "%s/hook_weapon_rate.dll", game);
+	write_file(path, "MZ DechargeRatePercent _EnergyLowHighSeparation Craft_Offset_292");
+	snprintf(path, sizeof path, "%s/Hooks.ini", game);
+	write_file(path,
+			   "[hook_shield]\nRechargeRatePercent = 50\n[hook_weapon_rate]\nDechargeRatePercent = 50\n");
+	text = XwauFlightSettings_Write(game, settings) ? ReadWholeFile(settings, &size) : NULL;
+	check(
+		text && strstr(text, "  rates: {decharge: 3}\n  decharge_percent: 50\n  recharge_percent: 100\n") &&
+			strstr(text, "  fire_needs_decharge_rate: true\n  no_starship_fire_from_destroyed_racks: true\n"),
+		"weapon rates: the global rates, hook_weapon_rate's percents from Hooks.ini, and its two rules");
+	free(text);
+	snprintf(path, sizeof path, "%s/FlightModels/WeaponRate.txt", game);
+	write_file(path, "CooldownTimeFactor = 30\n");
+	check(XwauCraft_ReadGlobalWeaponRates(game, &rates) && rates.value[0] == -1 && rates.value[2] == 30,
+		  "weapon rates: FlightModels/WeaponRate.txt wins over default.ini");
 }
 
 int main(void) {

@@ -31,6 +31,11 @@
  *     default: {speed: 86, hull: 3045}
  *   shield: {per_generator_rate: 5, player_rate: 40, delay_seconds: 30}
  *
+ * A model's laser rates go in its `weapons` group:
+ *
+ *   weapons:
+ *     rates: {decharge: 2, recharge: 3, cooldown: 47}
+ *
  * The reticle comes from FlightModels/<model>Reticle.txt, else the [Reticle]
  * section of FlightModels/<model>.ini, read like XWAU's reticle hook: the
  * slots are 5 to 10 and 15 to 22, a key is Reticle_<slot>, and a slot set
@@ -79,6 +84,19 @@
  * hook treats 0 as not set. A model without the section gets no `shield`
  * group, and the game uses its default rate (shield_recharge.h).
  *
+ * The laser rates come from FlightModels/<model>WeaponRate.txt, else the
+ * [WeaponRate] section of the model's INI, read like XWAU's
+ * hook_weapon_rate: DechargeRate, RechargeRate, CooldownTimeFactor,
+ * DechargeRatePercent and RechargeRatePercent give `decharge`, `recharge`,
+ * `cooldown`, `decharge_percent` and `recharge_percent`. -1 means not set,
+ * and other values below 0 are reported and left out. The hook reads a
+ * model's section only when the global one (FlightModels/WeaponRate.txt,
+ * else the [WeaponRate] section of FlightModels/default.ini) has no lines.
+ * The importer writes the model's rates anyway, and the game uses them over
+ * the global ones; the models whose rates XWAU ignores are counted in the
+ * report. The global rates go in flight/flight.yaml
+ * (xwau_flight_settings.h).
+ *
  * hud.yaml holds `hull_icons` and `map_icons`, from HullIconList.txt and
  * MapIconList.txt, read like XWAU's hull icon hook: the value at position N
  * is the image id for object type N, counting the lines that the hook reads
@@ -91,6 +109,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <stdio.h>
 
 /* The reticle slots of XWAU's reticle hook. */
 #define XWAU_CRAFT_RETICLE_SLOTS 23
@@ -147,8 +166,17 @@ typedef struct XwauCraftShield {
 	long long delay_seconds;
 } XwauCraftShield;
 
+/* The laser rates of a [WeaponRate] section, in the order of the keys
+ * above. -1 means not set. */
+enum { XWAU_CRAFT_WEAPON_RATES = 5 };
+
+typedef struct XwauCraftWeaponRates {
+	int value[XWAU_CRAFT_WEAPON_RATES];
+} XwauCraftWeaponRates;
+
 typedef struct XwauCraftWeapons {
 	XwauCraftWeaponColors colors;
+	XwauCraftWeaponRates  rates;
 	bool                  has_markings[256];
 	XwauCraftWeaponColors by_markings[256];
 	bool                  light_colors;  /* the model has WeaponLightColor keys */
@@ -184,6 +212,23 @@ void XwauCraft_ReadWeapons(const char* weapons_txt, const char* ini, XwauCraftWe
  * when it has lines, else the [Shield] section of `ini`. Either path can be
  * NULL. */
 void XwauCraft_ReadShield(const char* shield_txt, const char* ini, XwauCraftShield* shield);
+
+/* Reads the laser rates of a model: `rate_txt` (<model>WeaponRate.txt)
+ * when it has lines, else the [WeaponRate] section of `ini`. Either path
+ * can be NULL. */
+void XwauCraft_ReadWeaponRates(const char* rate_txt, const char* ini, XwauCraftWeaponRates* rates);
+
+/* Reads the global laser rates of the installation `game`:
+ * FlightModels/WeaponRate.txt when it has lines, else the [WeaponRate]
+ * section of FlightModels/default.ini. Returns whether they have lines, in
+ * which case hook_weapon_rate ignores the models' own sections. */
+bool XwauCraft_ReadGlobalWeaponRates(const char* game, XwauCraftWeaponRates* rates);
+
+/* Whether `rates` sets a rate. */
+bool XwauCraft_HasWeaponRates(const XwauCraftWeaponRates* rates);
+
+/* Writes `rates` as a YAML map: "{decharge: 2, recharge: 3}". */
+void XwauCraft_WriteWeaponRates(FILE* f, const XwauCraftWeaponRates* rates);
 
 /* The impact colour that XWAU shows for an ARGB value: its RGB, or 0 (the
  * stock white mark) when its RGB565 value is 0. */

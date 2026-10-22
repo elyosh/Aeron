@@ -48,6 +48,12 @@ typedef struct XwauSettingsConfig {
 	/* hook_mission_tie.dll with stats profiles: a craft under attack compares
 	 * the craft's own top speeds. */
 	bool      mission_tie_stats;
+	/* hook_weapon_rate.dll with weapon profiles: a base laser fires only
+	 * with the decharge rate. */
+	bool weapon_rate_fire_check;
+	/* hook_weapon_rate.dll that reads mesh states: starships don't fire
+	 * from destroyed racks. */
+	bool      weapon_rate_rack_check;
 	bool      warhead_collision_damage;
 	bool      damage_through_shields;
 	long long target_method;
@@ -66,7 +72,9 @@ void XwauSettingsConfig_Free(XwauSettingsConfig* config);
 /* Writes the `rules` and `mission_settings` sections of flight/flight.yaml.
  * The rules are hook_mission_tie's, hook_opt_limit's
  * classic_hide_destroyed_engine_glows, hook_weapon_color's
- * weapon_iff_swap and hook_mission_tie's ai_attack_uses_max_speed_cache. Returns whether it wrote anything.
+ * weapon_iff_swap, hook_mission_tie's ai_attack_uses_max_speed_cache and
+ * hook_weapon_rate's fire_needs_decharge_rate and
+ * no_starship_fire_from_destroyed_racks. Returns whether it wrote anything.
  */
 bool XwauMissionSettings_WriteDefaults(FILE* f, const XwauSettingsConfig* config);
 

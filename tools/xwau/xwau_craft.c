@@ -375,6 +375,79 @@ static void write_shield(FILE* f, const XwauCraftShield* shield) {
 	fputs("}\n", f);
 }
 
+/* The [WeaponRate] keys, and their names in the model and flight files. */
+static const char* const g_rateKeys[XWAU_CRAFT_WEAPON_RATES]  = { "DechargeRate", "RechargeRate",
+																  "CooldownTimeFactor", "DechargeRatePercent",
+																  "RechargeRatePercent" };
+static const char* const g_rateNames[XWAU_CRAFT_WEAPON_RATES] = { "decharge", "recharge", "cooldown",
+																  "decharge_percent", "recharge_percent" };
+
+/* Reads the rates of `lines`. */
+static void read_weapon_rates(const XwauLines* lines, const char* source, XwauCraftWeaponRates* rates) {
+	for (int key = 0; key < XWAU_CRAFT_WEAPON_RATES; ++key) {
+		rates->value[key] = int_key(lines, source, g_rateKeys[key], -1);
+		if (rates->value[key] < -1) {
+			Report(source, "%s = %d: a value below 0 isn't imported", g_rateKeys[key], rates->value[key]);
+			rates->value[key] = -1;
+		}
+	}
+}
+
+void XwauCraft_ReadWeaponRates(const char* rate_txt, const char* ini, XwauCraftWeaponRates* rates) {
+	XwauLines   lines  = { 0 };
+	const char* source = rate_txt;
+	memset(rates->value, 0xff, sizeof rates->value);
+	if (rate_txt)
+		XwauLines_Read(rate_txt, "", XWAU_RULES_CPP, &lines);
+	if (lines.count == 0) {
+		XwauLines_Free(&lines);
+		source = ini;
+		if (ini)
+			XwauLines_Read(ini, "WeaponRate", XWAU_RULES_CPP, &lines);
+	}
+	read_weapon_rates(&lines, source, rates);
+	XwauLines_Free(&lines);
+}
+
+bool XwauCraft_ReadGlobalWeaponRates(const char* game, XwauCraftWeaponRates* rates) {
+	XwauLines   lines = { 0 };
+	char        path[1024];
+	const char* source = "FlightModels/WeaponRate.txt";
+	memset(rates->value, 0xff, sizeof rates->value);
+	if (Xwau_FindFile(game, source, path, sizeof path))
+		XwauLines_Read(path, "", XWAU_RULES_CPP, &lines);
+	if (lines.count == 0) {
+		XwauLines_Free(&lines);
+		source = "FlightModels/default.ini";
+		if (Xwau_FindFile(game, source, path, sizeof path))
+			XwauLines_Read(path, "WeaponRate", XWAU_RULES_CPP, &lines);
+	}
+	read_weapon_rates(&lines, source, rates);
+	const bool has_lines = lines.count != 0;
+	XwauLines_Free(&lines);
+	return has_lines;
+}
+
+bool XwauCraft_HasWeaponRates(const XwauCraftWeaponRates* rates) {
+	for (int key = 0; key < XWAU_CRAFT_WEAPON_RATES; ++key) {
+		if (rates->value[key] >= 0)
+			return true;
+	}
+	return false;
+}
+
+void XwauCraft_WriteWeaponRates(FILE* f, const XwauCraftWeaponRates* rates) {
+	bool first = true;
+	fputc('{', f);
+	for (int key = 0; key < XWAU_CRAFT_WEAPON_RATES; ++key) {
+		if (rates->value[key] < 0)
+			continue;
+		fprintf(f, "%s%s: %d", first ? "" : ", ", g_rateNames[key], rates->value[key]);
+		first = false;
+	}
+	fputc('}', f);
+}
+
 bool XwauCraft_ReadGlobalImpactColors(const char* game, uint32_t colors[XWAU_CRAFT_WEAPONS]) {
 	char path[1024];
 	if (!Xwau_FindFile(game, "hook_weapon_color.dll", path, sizeof path))
@@ -506,7 +579,8 @@ static bool has_weapon_colors(const XwauCraftWeaponColors* colors) {
 }
 
 static bool has_weapons(const XwauCraftWeapons* weapons) {
-	if (weapons->switch_by_iff >= 0 || has_weapon_colors(&weapons->colors))
+	if (weapons->switch_by_iff >= 0 || has_weapon_colors(&weapons->colors) ||
+		XwauCraft_HasWeaponRates(&weapons->rates))
 		return true;
 	for (int markings = 0; markings < 256; ++markings) {
 		if (weapons->has_markings[markings])
@@ -568,6 +642,11 @@ static void write_weapons(FILE* f, const XwauCraftWeapons* weapons) {
 	fprintf(f, "weapons:\n");
 	if (weapons->switch_by_iff >= 0)
 		fprintf(f, "  switch_by_iff: %s\n", weapons->switch_by_iff ? "true" : "false");
+	if (XwauCraft_HasWeaponRates(&weapons->rates)) {
+		fputs("  rates: ", f);
+		XwauCraft_WriteWeaponRates(f, &weapons->rates);
+		fputc('\n', f);
+	}
 	if (has_weapon_colors(&weapons->colors)) {
 		fprintf(f, "  colors:\n");
 		write_weapon_colors(f, "    ", &weapons->colors);
@@ -684,10 +763,10 @@ static bool has_side_file(char* const* names, size_t count, const char* model, c
 
 /* The files that can give a model's settings beside its INI file, as
  * <model><suffix>. */
-static const char* const g_sideFiles[] = { "Reticle.txt", "EngineGlows.txt", "WeaponColor.txt",
-										   "Shield.txt" };
+static const char* const g_sideFiles[] = { "Reticle.txt", "EngineGlows.txt", "WeaponColor.txt", "Shield.txt",
+										   "WeaponRate.txt" };
 
-enum { SIDE_RETICLE, SIDE_ENGINE_GLOWS, SIDE_WEAPON_COLOR, SIDE_SHIELD, SIDE_FILES };
+enum { SIDE_RETICLE, SIDE_ENGINE_GLOWS, SIDE_WEAPON_COLOR, SIDE_SHIELD, SIDE_WEAPON_RATE, SIDE_FILES };
 
 /* Whether `name` is the first side file of a model that has no INI file, in
  * which case `model` gets the model's name. A model with several side files
@@ -724,7 +803,11 @@ bool XwauCraft_Write(const char* xwau_root, const char* output_dir) {
 	char** names   = ListDir(models_dir, true, &count);
 	bool   ok      = true;
 	int    written = 0, reticles = 0, colors = 0, engine_glows = 0, weapon_colors = 0, light_colors = 0;
-	int    stats_profiles = 0, shields = 0;
+	int    stats_profiles = 0, shields = 0, weapon_rates = 0;
+	/* hook_weapon_rate reads no model's rates when the global ones have
+	   lines. */
+	XwauCraftWeaponRates global_rates;
+	const bool           global_rate_lines = XwauCraft_ReadGlobalWeaponRates(xwau_root, &global_rates);
 	size_t disabled_profiles = 0;
 	/* The genus of the object types that load each model, for the units of
 	   the stats profiles. */
@@ -773,6 +856,11 @@ bool XwauCraft_Write(const char* xwau_root, const char* output_dir) {
 			XwauCraft_ReadHudColors(ini, &hud);
 		XwauCraft_ReadEngineGlows(side_path[SIDE_ENGINE_GLOWS], has_ini ? ini : NULL, &glows);
 		XwauCraft_ReadWeapons(side_path[SIDE_WEAPON_COLOR], has_ini ? ini : NULL, weapons);
+		/* default.ini's section holds the global rates. */
+		if (strcasecmp(model, "default") != 0)
+			XwauCraft_ReadWeaponRates(side_path[SIDE_WEAPON_RATE], has_ini ? ini : NULL, &weapons->rates);
+		else
+			memset(weapons->rates.value, 0xff, sizeof weapons->rates.value);
 		light_colors += weapons->light_colors;
 		XwauCraftShield shield;
 		XwauCraft_ReadShield(side_path[SIDE_SHIELD], has_ini ? ini : NULL, &shield);
@@ -814,6 +902,7 @@ bool XwauCraft_Write(const char* xwau_root, const char* output_dir) {
 		colors += has_colors(&hud);
 		engine_glows += has_engine_glows(&glows);
 		weapon_colors += has_weapons(weapons);
+		weapon_rates += XwauCraft_HasWeaponRates(&weapons->rates);
 	}
 	free(weapons);
 	XwauStatsGenus_Free(&genus);
@@ -827,6 +916,11 @@ bool XwauCraft_Write(const char* xwau_root, const char* output_dir) {
 			   "%zu sections such as [StatsProfile_Default;] or [;StatsProfile_Default], which XWAU never "
 			   "reads, are left out",
 			   disabled_profiles);
+	if (weapon_rates && global_rate_lines)
+		Report(NULL,
+			   "%d models have laser rates, which XWAU ignores because the global [WeaponRate] has lines; "
+			   "OpenXWA uses them",
+			   weapon_rates);
 	if (light_colors)
 		Report(NULL,
 			   "%d models set WeaponLightColor, which isn't imported: a bolt's light comes from its model",

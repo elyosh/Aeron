@@ -17,6 +17,8 @@
  *       classic_hide_destroyed_engine_glows: true
  *       weapon_iff_swap: false
  *       ai_attack_uses_max_speed_cache: true
+ *       fire_needs_decharge_rate: true
+ *       no_starship_fire_from_destroyed_racks: true
  *     mission_settings:
  *       warhead_collision_damage: false
  *       damage_through_shields_on_hard: true
@@ -29,6 +31,9 @@
  *       auto_turn_on: true
  *     weapons:
  *       impact: {280: 0xff0000, 281: 0xff0000, ...}
+ *       rates: {decharge: 4, cooldown: 47}
+ *       decharge_percent: 100
+ *       recharge_percent: 100
  *     shield_recharge:
  *       starships: true
  *       starships_on_easy: false
@@ -50,9 +55,16 @@
  * model's switch_by_iff turns the swap to its side's weapons on
  * (xwau_craft.h). hook_mission_tie.dll with stats profiles gives
  * ai_attack_uses_max_speed_cache: a craft under attack compares its own top
- * speed and its attacker's, which their stats profiles can change. `mission_settings` holds the
- * defaults that the global settings of hook_mission_tie and
- * hook_engine_sound give every mission (xwau_mission_settings.h).
+ * speed and its attacker's, which their stats profiles can change.
+ * hook_weapon_rate.dll gives fire_needs_decharge_rate when it has weapon
+ * profiles (the text "_EnergyLowHighSeparation"): a craft fires a base
+ * laser only when the rack's charge is at least its decharge rate. It gives
+ * no_starship_fire_from_destroyed_racks when it reads the craft's mesh
+ * states (the text "Craft_Offset_292"): a freighter, starship, platform or
+ * satellite doesn't fire from a rack whose mesh is destroyed.
+ * `mission_settings` holds the defaults that the global settings of
+ * hook_mission_tie and hook_engine_sound give every mission
+ * (xwau_mission_settings.h).
  *
  * `headlights` is written when the mod has XWAU's ddraw.dll and its SSAO.cfg
  * sets `ssao_enabled = 1`: ddraw draws the headlights only then. It comes
@@ -71,6 +83,17 @@
  * `weapons.impact` is written when the mod installs hook_weapon_color.dll,
  * which tints every impact mark: the colour of each weapon type 280 to 307,
  * from the hook's five group colours (XwauCraft_ReadGlobalImpactColors).
+ *
+ * The laser rates are written when the mod installs hook_weapon_rate.dll.
+ * `weapons.rates` holds every craft's rates, from FlightModels/WeaponRate.txt,
+ * else the [WeaponRate] section of FlightModels/default.ini
+ * (XwauCraft_ReadGlobalWeaponRates); it is left out when they set none.
+ * `decharge_percent` and `recharge_percent` scale every craft's rates. They
+ * come from hook_weapon_rate.cfg, else the [hook_weapon_rate] section of
+ * Hooks.ini, with 100 as the default, and are written when the DLL has the
+ * text "DechargeRatePercent". The rules are in weapon_rates.h in the game.
+ * The hook's per-mission rates by flight group ([WeaponRates]) aren't
+ * imported; xwau_import missions reports the missions that have them.
  *
  * `shield_recharge` is written when the mod installs hook_shield.dll. Its
  * values come from hook_shield.cfg, else the [hook_shield] section of

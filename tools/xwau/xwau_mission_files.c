@@ -611,6 +611,32 @@ static bool headlights(const char* game, const char* base, bool* out) {
 	return true;
 }
 
+/* Reports the laser rates by flight group of hook_weapon_rate
+ * (<mission>_WeaponRates.txt, else the [WeaponRates] section of
+ * <mission>.ini), which aren't imported. Returns false when out of
+ * memory. */
+static bool report_weapon_rates(const char* game, const char* base) {
+	char rel[1100], path[1024];
+	if (!Xwau_FindFile(game, "hook_weapon_rate.dll", path, sizeof path))
+		return true;
+	XwauLines lines;
+	if (!PathFormat(rel, sizeof rel, "%s_WeaponRates.txt", base) ||
+		!XwauLines_Read(Xwau_FindFile(game, rel, path, sizeof path) ? path : NULL, "", XWAU_RULES_CPP,
+						&lines))
+		return false;
+	if (!lines.count) {
+		XwauLines_Free(&lines);
+		if (!PathFormat(rel, sizeof rel, "%s.ini", base) ||
+			!XwauLines_Read(Xwau_FindFile(game, rel, path, sizeof path) ? path : NULL, "WeaponRates",
+							XWAU_RULES_CPP, &lines))
+			return false;
+	}
+	if (lines.count)
+		Report(base, "[WeaponRates]: the laser rates by flight group aren't imported");
+	XwauLines_Free(&lines);
+	return true;
+}
+
 /* ---- Flight-group values -------------------------------------------------- */
 
 typedef struct Totals {
@@ -930,7 +956,7 @@ static bool import_mission(const char* game, const XwauMissions* missions, const
 	XwauFrontPlanet planet;
 	ok          = ok && XwauFrontPlanet_Read(game, base, &planet);
 	bool lights = false;
-	ok          = ok && headlights(game, base, &lights);
+	ok                     = ok && headlights(game, base, &lights) && report_weapon_rates(game, base);
 	XwauMissionStats stats = { 0 };
 	ok                     = ok && XwauMissionStats_Read(game, base, &stats);
 	const bool any_stats   = XwauMissionStats_Any(&stats);
