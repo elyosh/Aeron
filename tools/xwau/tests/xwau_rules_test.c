@@ -4,11 +4,11 @@
  * the model settings (xwau_craft.h), the text overrides (xwau_text.h), the
  * object type and craft type files (xwau_objects.h), the files copied into
  * the mod folder's game/ folder (xwau_game_files.h), the mission files
- * (xwau_mission_files.h), the flight settings (xwau_flight_settings.h) and
- * the [mission_tie] lines (xwau_mission_tie.h). The inputs are fixed
- * texts and folders written to a scratch folder. The test is built with the
- * tools as xwau_rules_test. It prints each check and exits with a non-zero
- * status when a check fails.
+ * (xwau_mission_files.h), the flight settings (xwau_flight_settings.h), the
+ * [mission_tie] lines (xwau_mission_tie.h) and the model files
+ * (xwau_model.h). The inputs are fixed texts and folders written to a
+ * scratch folder. The test is built with the tools as xwau_rules_test. It
+ * prints each check and exits with a non-zero status when a check fails.
  */
 
 #include <math.h>
@@ -26,6 +26,7 @@
 #include "xwau_mission_files.h"
 #include "xwau_mission_tie.h"
 #include "xwau_missions.h"
+#include "xwau_model.h"
 #include "xwau_objects.h"
 #include "xwau_skins.h"
 #include "xwau_skyboxes.h"
@@ -511,6 +512,88 @@ static void test_craft(const char* scratch) {
 	check(text && strstr(text, "hull_icons: [\n  0, 100]") && !strstr(text, "map_icons"),
 		  "craft: hud.yaml has the hull icon list, and no map icon list without its file");
 	free(text);
+}
+
+/* ---- Model files ------------------------------------------------------------ */
+
+/* Returns the members of set `name`, or NULL when the model has no such set. */
+static const uint32_t* model_set(const XwauModel* model, const char* name) {
+	for (size_t i = 0; i < model->set_count; ++i)
+		if (strcmp(model->sets[i].name, name) == 0)
+			return model->sets[i].members;
+	return NULL;
+}
+
+/* Returns whether `members` holds exactly the meshes of `meshes`. */
+static bool set_is(const uint32_t* members, const int* meshes, size_t count) {
+	uint32_t expected[8] = { 0 };
+	for (size_t i = 0; i < count; ++i)
+		expected[meshes[i] / 32] |= 1u << (meshes[i] % 32);
+	return members && memcmp(members, expected, sizeof expected) == 0;
+}
+
+static void test_model(const char* scratch) {
+	char game[1024], models[1100], path[1200];
+	snprintf(game, sizeof game, "%s/model_game", scratch);
+	snprintf(models, sizeof models, "%s/FlightModels", game);
+	MakeDirs(models);
+	snprintf(path, sizeof path, "%s/Fields.ini", models);
+	write_file(path, "[MeshesCollisions]\nMeshCollision_3 = 0 ;Hangar Forcefield\nMeshCollision_3 = 1\n"
+					 "MeshCollision_7 = 0x0\nMeshCollision_8 = x\n;MeshCollision_9 = 0\n"
+					 "[ObjectProfiles]\nDefault = 1\nTargetableMeshes = 0; 3,4 , x, 300, 5\n"
+					 "TargetableMeshes = 9\n");
+	snprintf(path, sizeof path, "%s/AllOff.ini", models);
+	write_file(path, "[MeshesCollisions]\nMeshCollision = 0\nMeshCollision_5 = 1\n");
+	snprintf(path, sizeof path, "%s/Text.ini", models);
+	write_file(path,
+			   "[MeshesCollisions]\nMeshCollision_4 = 0\n[ObjectProfiles]\nTargetableMeshes = 300, x\n");
+	snprintf(path, sizeof path, "%s/TextMeshesCollisions.txt", models);
+	write_file(path, "MeshCollision_2 = 0\n");
+	snprintf(path, sizeof path, "%s/Plain.ini", models);
+	write_file(path, "[Size]\nX = 1\n[ObjectProfiles]\nTargetableMeshes =\n");
+
+	XwauMissions* missions = XwauMissions_Load(game, false);
+	XwauModel*    model    = (XwauModel*)malloc(sizeof *model);
+	check(missions && model, "models: setup");
+	if (!missions || !model) {
+		XwauMissions_Free(missions);
+		free(model);
+		return;
+	}
+
+	check(XwauModel_Read(game, missions, "Fields", model, NULL), "models: Fields is read");
+	const int fields_off[] = { 3, 7 };
+	check(set_is(model_set(model, "collision.off"), fields_off, 2),
+		  "collisions: the first MeshCollision_3 wins, 0x0 is 0, and a commented line or a value that "
+		  "isn't a number changes nothing");
+	const int fields_target[] = { 0, 3, 4, 5 };
+	check(set_is(model_set(model, "targetable"), fields_target, 4),
+		  "targetable: tokens are split on ',' and ';', the first key wins, and bad tokens are dropped");
+	const int fields_profile[] = { 1 };
+	check(set_is(model_set(model, "hidden_by_profile.default"), fields_profile, 1),
+		  "targetable: TargetableMeshes isn't a profile");
+
+	check(XwauModel_Read(game, missions, "AllOff", model, NULL), "models: AllOff is read");
+	int    all_off[254];
+	size_t all_count = 0;
+	for (int mesh = 0; mesh <= 254; ++mesh)
+		if (mesh != 5)
+			all_off[all_count++] = mesh;
+	check(set_is(model_set(model, "collision.off"), all_off, all_count),
+		  "collisions: MeshCollision is the default of every mesh");
+
+	check(XwauModel_Read(game, missions, "Text", model, NULL), "models: Text is read");
+	const int text_off[] = { 2 };
+	check(set_is(model_set(model, "collision.off"), text_off, 1),
+		  "collisions: <model>MeshesCollisions.txt is read instead of the section");
+	check(!model_set(model, "targetable"), "targetable: no set when no listed mesh can be used");
+
+	check(XwauModel_Read(game, missions, "Plain", model, NULL), "models: Plain is read");
+	check(!model_set(model, "collision.off") && !model_set(model, "targetable"),
+		  "models: no sets without the sections, or with an empty TargetableMeshes");
+
+	XwauMissions_Free(missions);
+	free(model);
 }
 
 /* ---- Text overrides ----------------------------------------------------------- */
@@ -1411,6 +1494,7 @@ int main(void) {
 	test_skybox_rotation();
 	test_skyboxes(scratch);
 	test_craft(scratch);
+	test_model(scratch);
 	test_text(scratch);
 	test_objects(scratch);
 	test_game_files(scratch);

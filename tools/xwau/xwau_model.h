@@ -24,6 +24,17 @@
  *     Meshes above 254 are dropped. A profile that hides nothing creates no
  *     set, and the game then uses the Default profile, as XWAU does.
  *
+ *   - mesh collisions (hook_opt_limit): in MeshesCollisions, MeshCollision
+ *     is the default of every mesh and MeshCollision_<N> sets mesh N, read
+ *     with std::stoi(value, 0, 0). The meshes whose value is 0 have no
+ *     collision and become the component set collision.off.
+ *
+ *   - targetable meshes (hook_mission_objects): the first TargetableMeshes
+ *     key of ObjectProfiles lists the meshes that the player can target.
+ *     Tokens are split on ',' and ';' and read with std::stoi. The meshes
+ *     become the component set targetable. Tokens that aren't numbers, and
+ *     meshes outside 0..254, are reported and dropped.
+ *
  *   - mesh rotations (hook_sfoils, hook_pilot) become articulations. The
  *     sections SFoils, SFoilsLandingGears, SFoilsHangarDoors, SFoilsHatches
  *     and SFoilsWarheadsBay have lines "mesh, angle, speed, speed back", for

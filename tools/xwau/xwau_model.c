@@ -188,6 +188,96 @@ static bool read_profiles(const char* game, const char* model, XwauModel* out, c
 	return ok;
 }
 
+/* ---- Collisions and targeting ------------------------------------------------ */
+
+static bool add_set(XwauModel* out, const char* name, const uint32_t members[8]) {
+	if (out->set_count == XWAU_MODEL_MAX_SETS)
+		return false;
+	OptGltfComponentSet* entry = &out->sets[out->set_count++];
+	snprintf(entry->name, sizeof entry->name, "%s", name);
+	memcpy(entry->members, members, sizeof entry->members);
+	return true;
+}
+
+/* Reads an integer key as hook GetFileKeyValueInt does: `fallback` when the
+ * key is missing or empty, else std::stoi(value, 0, 0). A value that isn't a
+ * number would stop XWAU; it is reported and gives `fallback`. */
+static long long int_key(const XwauLines* lines, const char* key, long long fallback, const char* label,
+						 const char* where) {
+	char      value[256];
+	long long number;
+	XwauLines_Value(lines, key, XWAU_RULES_CPP, value, sizeof value);
+	if (!value[0])
+		return fallback;
+	if (!Xwau_StoiAuto(value, &number)) {
+		Report(label, "%s: %s = %s isn't a number; it is ignored", where, key, value);
+		return fallback;
+	}
+	return number;
+}
+
+/* MeshesCollisions (hook_opt_limit): MeshCollision sets the default of every
+ * mesh, MeshCollision_<N> sets mesh N, and 0 turns its collision off. The
+ * meshes whose collision is off become the set collision.off. A model has at
+ * most 255 meshes, so meshes 0 to 254 are read. */
+static bool read_collisions(const char* game, const char* model, XwauModel* out, const char* label) {
+	XwauLines lines;
+	if (!section_lines(game, model, "MeshesCollisions", &lines))
+		return false;
+	const long long fallback   = int_key(&lines, "MeshCollision", 1, label, "MeshesCollisions");
+	uint32_t        members[8] = { 0 };
+	bool            any        = false;
+	for (int mesh = 0; lines.count && mesh <= COMPONENT_MAX; ++mesh) {
+		char key[32];
+		snprintf(key, sizeof key, "MeshCollision_%d", mesh);
+		if (int_key(&lines, key, fallback, label, "MeshesCollisions") == 0) {
+			members[mesh / 32] |= 1u << (mesh % 32);
+			any = true;
+		}
+	}
+	XwauLines_Free(&lines);
+	return !any || add_set(out, "collision.off", members);
+}
+
+/* TargetableMeshes (hook_mission_objects): the first TargetableMeshes key of
+ * ObjectProfiles lists the meshes that the player can target. Tokens are
+ * split on ',' and ';' and read with std::stoi. The meshes become the set
+ * targetable. Without the key, or with an empty value, every mesh can be
+ * targeted and no set is written. */
+static bool read_targetable(const char* game, const char* model, XwauModel* out, const char* label) {
+	XwauLines lines;
+	char      value[4096];
+	if (!section_lines(game, model, "ObjectProfiles", &lines))
+		return false;
+	XwauLines_Value(&lines, "TargetableMeshes", XWAU_RULES_CPP, value, sizeof value);
+	XwauLines_Free(&lines);
+	if (!value[0])
+		return true;
+	XwauLines tokens;
+	if (!Xwau_Tokenize(value, XWAU_RULES_CPP, &tokens))
+		return false;
+	uint32_t members[8] = { 0 };
+	bool     any        = false;
+	for (size_t t = 0; t < tokens.count; ++t) {
+		long long mesh;
+		if (!Xwau_Stoi(tokens.items[t], &mesh)) {
+			Report(label, "TargetableMeshes: '%s' isn't a mesh number; it is ignored", tokens.items[t]);
+		} else if (mesh < 0 || mesh > COMPONENT_MAX) {
+			Report(label, "TargetableMeshes: mesh %lld is outside 0 to %d; it is ignored", mesh,
+				   COMPONENT_MAX);
+		} else {
+			members[mesh / 32] |= 1u << (mesh % 32);
+			any = true;
+		}
+	}
+	XwauLines_Free(&tokens);
+	if (!any) {
+		Report(label, "TargetableMeshes lists no usable mesh; every mesh can be targeted");
+		return true;
+	}
+	return add_set(out, "targetable", members);
+}
+
 /* ---- Mesh rotations ---------------------------------------------------------- */
 
 bool XwauModel_SectionGroup(const char* section, char* group, size_t cap) {
@@ -452,5 +542,6 @@ bool XwauModel_Read(const char* game, const XwauMissions* missions, const char* 
 		return false;
 	if (!Xwau_FindFile(game, rel, out->dynamic_cockpit, sizeof out->dynamic_cockpit))
 		out->dynamic_cockpit[0] = 0;
-	return read_profiles(game, model, out, label) && read_rotations(game, missions, model, out, label);
+	return read_profiles(game, model, out, label) && read_collisions(game, model, out, label) &&
+		   read_targetable(game, model, out, label) && read_rotations(game, missions, model, out, label);
 }
