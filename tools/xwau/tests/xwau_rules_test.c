@@ -563,6 +563,15 @@ static void test_craft(const char* scratch) {
 		  "weapon colours: the _fg1_ keys, where a group set to 0 isn't set");
 	check(!weapons->has_markings[2] && !weapons->has_markings[7] && weapons->light_colors,
 		  "weapon colours: markings with only light colours, _fg07_, and the WeaponLightColor keys");
+	check(weapons->switch_by_iff == -1, "weapon switch: not set without WeaponSwitchBasedOnIff");
+	write_file(path, "[WeaponColor]\nWeaponSwitchBasedOnIff = 2\t;1 = Based on IFF color\n");
+	memset(weapons, 0, sizeof *weapons);
+	XwauCraft_ReadWeapons(NULL, path, weapons);
+	check(weapons->switch_by_iff == 1, "weapon switch: a value other than 0 and -1 turns it on");
+	write_file(path, "[WeaponColor]\nWeaponSwitchBasedOnIff = -1\n");
+	memset(weapons, 0, sizeof *weapons);
+	XwauCraft_ReadWeapons(NULL, path, weapons);
+	check(weapons->switch_by_iff == -1, "weapon switch: -1 is the global value");
 	free(weapons);
 
 	uint16_t* list  = NULL;
@@ -587,6 +596,8 @@ static void test_craft(const char* scratch) {
 	snprintf(path, sizeof path, "%s/Slave.ini", models);
 	write_file(path, "[WeaponColor]\nWeaponColor = 0\nWeaponColor282 = 1\nWeaponImpactColor280 = FF0000\n"
 					 "WeaponColor_fg1_ = 3\nEnergyBarColorIonHigh_fg1_ = FF0000FF\n");
+	snprintf(path, sizeof path, "%s/Corvette.ini", models);
+	write_file(path, "[WeaponColor]\nWeaponSwitchBasedOnIff = 0\n");
 	snprintf(path, sizeof path, "%s/NoIniEngineGlows.txt", models);
 	write_file(path, "1, -1, 20\n");
 	snprintf(path, sizeof path, "%s/HullIconList.txt", root);
@@ -612,6 +623,11 @@ static void test_craft(const char* scratch) {
 							   "    impact: {280: 0xff0000}\n  by_markings:\n    1:\n"
 							   "      variant: {default: 3}\n      energy_bars: {ion_high: 0xff0000ff}\n"),
 		  "craft: slave.yaml has the weapon colours and the changes for markings 1");
+	free(text);
+	snprintf(path, sizeof path, "%s/models/corvette.yaml", out);
+	text = ReadWholeFile(path, &size);
+	check(text && strstr(text, "weapons:\n  switch_by_iff: false\n") && !strstr(text, "colors"),
+		  "craft: corvette.yaml has the weapon switch alone");
 	free(text);
 	snprintf(path, sizeof path, "%s/models/noini.yaml", out);
 	text = ReadWholeFile(path, &size);
@@ -1575,6 +1591,18 @@ static void test_flight_settings(const char* scratch) {
 	check(text && strstr(text, "weapons:\n  impact: {280: 0xff0000, 281: 0xff0000, 282: 0x00ff00, ") &&
 			  strstr(text, "284: 0x112233") && strstr(text, "307: 0xffff00}\n"),
 		  "flight settings: hook_weapon_color tints every impact, with the hook's defaults and Hooks.ini");
+	check(text && !strstr(text, "weapon_iff_swap"),
+		  "flight settings: no weapon switch rule from a hook_weapon_color.dll without the feature");
+	free(text);
+	write_file(path, "MZ WeaponSwitchBasedOnIff");
+	text = XwauFlightSettings_Write(game, settings) ? ReadWholeFile(settings, &size) : NULL;
+	check(text && strstr(text, "rules:\n  weapon_iff_swap: false\n"),
+		  "flight settings: hook_weapon_color turns the weapon switch off by default");
+	free(text);
+	write_file(hooks, "[hook_weapon_color]\nWeaponSwitchBasedOnIff = 1\n");
+	text = XwauFlightSettings_Write(game, settings) ? ReadWholeFile(settings, &size) : NULL;
+	check(text && strstr(text, "rules:\n  weapon_iff_swap: true\n"),
+		  "flight settings: WeaponSwitchBasedOnIff = 1 in Hooks.ini swaps every shot");
 	free(text);
 	remove(path);
 	remove(hooks);

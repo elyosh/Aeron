@@ -15,6 +15,7 @@
  *       reset_combat_music_at_mission_load: true
  *       hangar_red_alert_any_mothership: true
  *       classic_hide_destroyed_engine_glows: true
+ *       weapon_iff_swap: false
  *     mission_settings:
  *       warhead_collision_damage: false
  *       damage_through_shields_on_hard: true
@@ -36,8 +37,12 @@
  * turns this off.
  *
  * `rules` holds the rules that hooks change in every mission:
- * hook_mission_tie.dll's two, and hook_opt_limit.dll's engine glow rule
- * (xwau_mission_settings.h). `mission_settings` holds the
+ * hook_mission_tie.dll's two, hook_opt_limit.dll's engine glow rule
+ * (xwau_mission_settings.h), and hook_weapon_color.dll's weapon_iff_swap,
+ * its global WeaponSwitchBasedOnIff. With the hook, a starship fires the
+ * weapons of its craft record, whatever its IFF, unless the setting or its
+ * model's switch_by_iff turns the swap to its side's weapons on
+ * (xwau_craft.h). `mission_settings` holds the
  * defaults that the global settings of hook_mission_tie and
  * hook_engine_sound give every mission (xwau_mission_settings.h).
  *

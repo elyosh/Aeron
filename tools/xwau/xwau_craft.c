@@ -184,19 +184,25 @@ static void markings_key(char* out, size_t cap, const char* key, int markings) {
 		snprintf(out, cap, "%s_fg%d_", key, markings);
 }
 
-/* Reads a markings key as GetFileKeyValueInt does. Returns -1 when the key
- * is missing, or when its value isn't a number, which is reported. */
-static int markings_value(const XwauLines* lines, const char* source, const char* key) {
+/* Reads a number key as GetFileKeyValueInt does. Returns `fallback` when
+ * the key is missing, or when its value isn't a number, which is
+ * reported. */
+static int int_key(const XwauLines* lines, const char* source, const char* key, int fallback) {
 	char      value[256];
 	long long number;
 	XwauLines_Value(lines, key, XWAU_RULES_CPP, value, sizeof value);
 	if (!value[0])
-		return -1;
+		return fallback;
 	if (!Xwau_StoiAuto(value, &number) || number < INT_MIN || number > INT_MAX) {
 		Report(source, "%s = %s isn't a number; it is ignored", key, value);
-		return -1;
+		return fallback;
 	}
 	return (int)number;
+}
+
+/* Reads a markings key. Returns -1 when it isn't set. */
+static int markings_value(const XwauLines* lines, const char* source, const char* key) {
+	return int_key(lines, source, key, -1);
 }
 
 /* Reads a colour key as GetFileKeyValueUnsignedInt does. Returns false when
@@ -301,6 +307,8 @@ void XwauCraft_ReadWeapons(const char* weapons_txt, const char* ini, XwauCraftWe
 			XwauLines_Read(ini, "WeaponColor", XWAU_RULES_CPP, &lines);
 	}
 	read_weapon_colors(&lines, source, -1, &weapons->colors);
+	const int switch_by_iff = int_key(&lines, source, "WeaponSwitchBasedOnIff", -1);
+	weapons->switch_by_iff  = switch_by_iff == -1 ? -1 : switch_by_iff != 0;
 	for (size_t i = 0; i < lines.count; ++i) {
 		const int markings = line_markings(lines.items[i]);
 		if (markings >= 0 && !weapons->has_markings[markings])
@@ -315,27 +323,49 @@ void XwauCraft_ReadWeapons(const char* weapons_txt, const char* ini, XwauCraftWe
 	XwauLines_Free(&lines);
 }
 
+/* Reads the global settings of hook_weapon_color: its hook_weapon_color.cfg,
+ * else the [hook_weapon_color] section of Hooks.ini. Returns their file's
+ * name. */
+static const char* global_weapon_lines(const char* game, XwauLines* lines) {
+	char        path[1024];
+	const char* source = "hook_weapon_color.cfg";
+	memset(lines, 0, sizeof *lines);
+	if (Xwau_FindFile(game, "hook_weapon_color.cfg", path, sizeof path))
+		XwauLines_Read(path, "", XWAU_RULES_CPP, lines);
+	if (lines->count == 0) {
+		XwauLines_Free(lines);
+		source = "Hooks.ini";
+		if (Xwau_FindFile(game, "Hooks.ini", path, sizeof path))
+			XwauLines_Read(path, "hook_weapon_color", XWAU_RULES_CPP, lines);
+	}
+	return source;
+}
+
 bool XwauCraft_ReadGlobalImpactColors(const char* game, uint32_t colors[XWAU_CRAFT_WEAPONS]) {
 	char path[1024];
 	if (!Xwau_FindFile(game, "hook_weapon_color.dll", path, sizeof path))
 		return false;
-	XwauLines   lines  = { 0 };
-	const char* source = "hook_weapon_color.cfg";
-	if (Xwau_FindFile(game, "hook_weapon_color.cfg", path, sizeof path))
-		XwauLines_Read(path, "", XWAU_RULES_CPP, &lines);
-	if (lines.count == 0) {
-		XwauLines_Free(&lines);
-		source = "Hooks.ini";
-		if (Xwau_FindFile(game, "Hooks.ini", path, sizeof path))
-			XwauLines_Read(path, "hook_weapon_color", XWAU_RULES_CPP, &lines);
-	}
-	uint32_t groups[5];
+	XwauLines         lines;
+	const char* const source = global_weapon_lines(game, &lines);
+	uint32_t          groups[5];
 	for (int group = 0; group < 5; ++group) {
 		if (!color_value(&lines, source, g_impactGroupKeys[group], &groups[group]))
 			groups[group] = g_impactGroupDefaults[group];
 	}
 	for (int weapon = 0; weapon < XWAU_CRAFT_WEAPONS; ++weapon)
 		colors[weapon] = XwauCraft_ImpactColor(groups[g_impactGroups[weapon]]);
+	XwauLines_Free(&lines);
+	return true;
+}
+
+bool XwauCraft_ReadGlobalSwitchByIff(const char* game, bool* on) {
+	char path[1024];
+	if (!Xwau_FindFile(game, "hook_weapon_color.dll", path, sizeof path) ||
+		!Xwau_FileHasText(path, "WeaponSwitchBasedOnIff"))
+		return false;
+	XwauLines         lines;
+	const char* const source = global_weapon_lines(game, &lines);
+	*on                      = int_key(&lines, source, "WeaponSwitchBasedOnIff", 0) != 0;
 	XwauLines_Free(&lines);
 	return true;
 }
@@ -442,7 +472,7 @@ static bool has_weapon_colors(const XwauCraftWeaponColors* colors) {
 }
 
 static bool has_weapons(const XwauCraftWeapons* weapons) {
-	if (has_weapon_colors(&weapons->colors))
+	if (weapons->switch_by_iff >= 0 || has_weapon_colors(&weapons->colors))
 		return true;
 	for (int markings = 0; markings < 256; ++markings) {
 		if (weapons->has_markings[markings])
@@ -502,6 +532,8 @@ static void write_weapon_colors(FILE* f, const char* indent, const XwauCraftWeap
 
 static void write_weapons(FILE* f, const XwauCraftWeapons* weapons) {
 	fprintf(f, "weapons:\n");
+	if (weapons->switch_by_iff >= 0)
+		fprintf(f, "  switch_by_iff: %s\n", weapons->switch_by_iff ? "true" : "false");
 	if (has_weapon_colors(&weapons->colors)) {
 		fprintf(f, "  colors:\n");
 		write_weapon_colors(f, "    ", &weapons->colors);
@@ -723,7 +755,7 @@ bool XwauCraft_Write(const char* xwau_root, const char* output_dir) {
 	FreeList(names, count);
 	Report(NULL,
 		   "model settings: %d files, %d with a reticle, %d with HUD colours, %d with engine glows, %d with "
-		   "weapon colours",
+		   "weapon settings",
 		   written, reticles, colors, engine_glows, weapon_colors);
 	if (light_colors)
 		Report(NULL,

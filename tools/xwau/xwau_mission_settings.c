@@ -4,6 +4,7 @@
 #include <string.h>
 
 #include "util.h"
+#include "xwau_craft.h"
 
 static const char* const kListDirs[] = { "Missions", "Melee", "Combat" };
 
@@ -74,6 +75,7 @@ bool XwauSettingsConfig_Read(const char* game, XwauSettingsConfig* out) {
 	out->engine_sound = Xwau_FindFile(game, "hook_engine_sound.dll", path, sizeof path);
 	out->opt_limit_engine_glows =
 		Xwau_FindFile(game, "hook_opt_limit.dll", path, sizeof path) && Xwau_FileHasText(path, "EngineGlows");
+	out->weapon_switch = XwauCraft_ReadGlobalSwitchByIff(game, &out->weapon_switch_by_iff);
 	XwauLines lines;
 	if (!XwauLines_Read(Xwau_FindFile(game, "hook_mission_tie.cfg", path, sizeof path) ? path : NULL, "",
 						XWAU_RULES_CPP, &lines))
@@ -112,12 +114,15 @@ static void write_ints(FILE* f, const int* values, size_t count) {
 }
 
 bool XwauMissionSettings_WriteDefaults(FILE* f, const XwauSettingsConfig* config) {
-	if (config->mission_tie || config->opt_limit_engine_glows)
+	const bool rules = config->mission_tie || config->opt_limit_engine_glows || config->weapon_switch;
+	if (rules)
 		fputs("rules:\n", f);
 	if (config->mission_tie)
 		fputs("  reset_combat_music_at_mission_load: true\n  hangar_red_alert_any_mothership: true\n", f);
 	if (config->opt_limit_engine_glows)
 		fputs("  classic_hide_destroyed_engine_glows: true\n", f);
+	if (config->weapon_switch)
+		fprintf(f, "  weapon_iff_swap: %s\n", config->weapon_switch_by_iff ? "true" : "false");
 	const bool warheads     = config->mission_tie && !config->warhead_collision_damage;
 	const bool shields      = config->mission_tie && config->damage_through_shields;
 	const bool interdiction = config->engine_sound && config->interdiction_count;
@@ -132,7 +137,7 @@ bool XwauMissionSettings_WriteDefaults(FILE* f, const XwauSettingsConfig* config
 		write_ints(f, config->interdiction, config->interdiction_count);
 		fputc('\n', f);
 	}
-	return config->mission_tie || config->opt_limit_engine_glows || interdiction;
+	return rules || interdiction;
 }
 
 /* ---- Mission numbers --------------------------------------------------------- */

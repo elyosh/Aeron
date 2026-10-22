@@ -19,6 +19,7 @@
  *     6: {min_speed_mglt: 40}
  *
  *   weapons:
+ *     switch_by_iff: true                            # fire the weapons of the craft's side
  *     colors:                                        # any markings
  *       variant: {default: 3, 284: 1}                # the bolt's markings, by weapon type
  *       impact: {280: 0xff0000, 282: 0}              # RGB; 0 keeps the stock white mark
@@ -63,7 +64,8 @@
  * impact colour loses its alpha, as in XWAU, and one whose RGB565 value is 0
  * becomes 0, since XWAU then keeps the stock mark. WeaponLightColor keys
  * aren't imported: XWAU players see the light of the bolt's material
- * instead. WeaponSwitchBasedOnIff is step 5 of the model INI plan.
+ * instead. WeaponSwitchBasedOnIff gives switch_by_iff: -1 isn't set, and
+ * any other value is true when it isn't 0.
  *
  * hud.yaml holds `hull_icons` and `map_icons`, from HullIconList.txt and
  * MapIconList.txt, read like XWAU's hull icon hook: the value at position N
@@ -128,7 +130,8 @@ typedef struct XwauCraftWeapons {
 	XwauCraftWeaponColors colors;
 	bool                  has_markings[256];
 	XwauCraftWeaponColors by_markings[256];
-	bool                  light_colors; /* the model has WeaponLightColor keys */
+	bool                  light_colors;  /* the model has WeaponLightColor keys */
+	int                   switch_by_iff; /* WeaponSwitchBasedOnIff: 1 or 0, -1 when not set */
 } XwauCraftWeapons;
 
 /* The ARGB colour that XWAU's wrapper makes from red, green and blue values
@@ -170,6 +173,12 @@ int XwauCraft_ImpactGroup(int weapon);
  * colours by weapon type. Returns false when the installation `game` has no
  * hook_weapon_color.dll. */
 bool XwauCraft_ReadGlobalImpactColors(const char* game, uint32_t colors[XWAU_CRAFT_WEAPONS]);
+
+/* Reads the global WeaponSwitchBasedOnIff of hook_weapon_color, from the
+ * same files as the impact colours, into `on`: false without the key.
+ * Returns false when the installation `game` has no hook_weapon_color.dll,
+ * or when its DLL doesn't have the setting. */
+bool XwauCraft_ReadGlobalSwitchByIff(const char* game, bool* on);
 
 /* Reads an icon list file into `*values` (malloc'd) and `*count`. Returns
  * false, with a report, when a line isn't a number. */
