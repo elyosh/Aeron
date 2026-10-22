@@ -48,7 +48,7 @@ static uint32_t AERON_DXAPI DpAddRef1(IDirectPlay* self) {
 
 static uint32_t DpRelease(void) {
 	if (g_references && !--g_references)
-		DpClose();
+		DpClose("last interface released");
 	return g_references;
 }
 
@@ -64,7 +64,7 @@ static uint32_t AERON_DXAPI DpRelease1(IDirectPlay* self) {
 
 static HRESULT AERON_DXAPI DpClose2(IDirectPlay2A* self) {
 	(void)self;
-	return DpClose();
+	return DpClose("Close");
 }
 
 static HRESULT AERON_DXAPI DpOpen2(IDirectPlay2A* self, DPSESSIONDESC2* desc, uint32_t flags) {
@@ -117,7 +117,7 @@ static HRESULT AERON_DXAPI DpDeleteGroup(IDirectPlay2A* self, DPID group, DPID p
 static HRESULT AERON_DXAPI DpDestroyPlayer(IDirectPlay2A* self, DPID player) {
 	(void)self;
 	if (player == g_dp.local_id)
-		return DpClose();
+		return DpClose("local player destroyed");
 	return DpLocalControl(DP_DESTROY_PLAYER, player, 0, NULL, NULL);
 }
 

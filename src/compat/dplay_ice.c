@@ -235,7 +235,8 @@ static void IceApplyEvents(IceLink* link) {
 			}
 			link->connected = 1;
 		} else if (events[i] == JUICE_STATE_FAILED)
-			IceFail(link, "connectivity checks failed");
+			IceFail(link, link->connected ? "connectivity lost after the link was established"
+										  : "connectivity checks failed");
 		else if (events[i] == JUICE_STATE_DISCONNECTED && link->connected)
 			IceFail(link, "peer stopped answering connectivity checks");
 	}

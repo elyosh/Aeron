@@ -4,7 +4,7 @@
 #include <stdio.h>
 
 /* Previous session logs (<app>-<date>-<time>.log) kept beside the current one. */
-#define AERON_LOG_FILE_HISTORY 4
+#define AERON_LOG_FILE_HISTORY 20
 /* Distinct SDL warnings logged per session. Later ones are dropped. */
 #define AERON_LOG_SDL_WARNING_LIMIT 128
 

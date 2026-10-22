@@ -124,5 +124,6 @@ int     DpOperationWaiting(void);
 HRESULT DpLocalControl(unsigned kind, DPID id, DPID group, const DPNAME* name, DPID* created);
 void    DpResetSession(void);
 HRESULT DpOpen(DPSESSIONDESC2* desc, uint32_t flags);
-HRESULT DpClose(void);
+/* trigger names the caller in the log: the game closed, released or destroyed its player. */
+HRESULT DpClose(const char* trigger);
 #endif

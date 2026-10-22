@@ -196,11 +196,16 @@ HRESULT DpOpen(DPSESSIONDESC2* desc, uint32_t flags) {
 	return DpBeginOperation(DP_OPEN, NULL, 0, NULL);
 }
 
-HRESULT DpClose(void) {
+HRESULT DpClose(const char* trigger) {
 	if (g_dp.closing)
 		return DPERR_PENDING;
 	if (!g_dp.open && !g_dp.operation.kind)
 		return 0;
+	unsigned others = 0;
+	for (int i = 0; i < DP_PEERS; ++i)
+		others += g_dp.peers[i].id && g_dp.peers[i].active && g_dp.peers[i].id != g_dp.local_id;
+	Aeron_LogInfo("compat.dplay", "closing the %s session (%s) with %u other players",
+				  g_dp.host ? "hosted" : "joined", trigger, others);
 	if (g_dp.host)
 		AeronDplayDirectory_StopHosting();
 	g_dp.closing             = 1;

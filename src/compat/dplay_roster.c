@@ -317,6 +317,7 @@ void DpHandleControl(DpLink link, unsigned kind, uint32_t request, DPID from, DP
 			DpWireResult reply = { 0 };
 			if (DpLocalControl(DP_DESTROY_PLAYER, from, 0, NULL, NULL) == DPERR_BUSY)
 				return;
+			Aeron_LogInfo("compat.dplay", "player %u left the session", (unsigned)from);
 			DpSend(link, DP_RESULT, request, g_dp.local_id, from, &reply, sizeof(reply));
 		} else if (from == g_dp.host_id)
 			DpLoseSession("host left the session");
