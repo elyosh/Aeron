@@ -16,6 +16,7 @@
  *       hangar_red_alert_any_mothership: true
  *       classic_hide_destroyed_engine_glows: true
  *       weapon_iff_swap: false
+ *       ai_attack_uses_max_speed_cache: true
  *     mission_settings:
  *       warhead_collision_damage: false
  *       damage_through_shields_on_hard: true
@@ -42,7 +43,9 @@
  * its global WeaponSwitchBasedOnIff. With the hook, a starship fires the
  * weapons of its craft record, whatever its IFF, unless the setting or its
  * model's switch_by_iff turns the swap to its side's weapons on
- * (xwau_craft.h). `mission_settings` holds the
+ * (xwau_craft.h). hook_mission_tie.dll with stats profiles gives
+ * ai_attack_uses_max_speed_cache: a craft under attack compares its own top
+ * speed and its attacker's, which their stats profiles can change. `mission_settings` holds the
  * defaults that the global settings of hook_mission_tie and
  * hook_engine_sound give every mission (xwau_mission_settings.h).
  *

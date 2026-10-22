@@ -76,6 +76,8 @@ bool XwauSettingsConfig_Read(const char* game, XwauSettingsConfig* out) {
 	out->opt_limit_engine_glows =
 		Xwau_FindFile(game, "hook_opt_limit.dll", path, sizeof path) && Xwau_FileHasText(path, "EngineGlows");
 	out->weapon_switch = XwauCraft_ReadGlobalSwitchByIff(game, &out->weapon_switch_by_iff);
+	out->mission_tie_stats = Xwau_FindFile(game, "hook_mission_tie.dll", path, sizeof path) &&
+							 Xwau_FileHasText(path, "StatsProfile");
 	XwauLines lines;
 	if (!XwauLines_Read(Xwau_FindFile(game, "hook_mission_tie.cfg", path, sizeof path) ? path : NULL, "",
 						XWAU_RULES_CPP, &lines))
@@ -114,7 +116,8 @@ static void write_ints(FILE* f, const int* values, size_t count) {
 }
 
 bool XwauMissionSettings_WriteDefaults(FILE* f, const XwauSettingsConfig* config) {
-	const bool rules = config->mission_tie || config->opt_limit_engine_glows || config->weapon_switch;
+	const bool rules = config->mission_tie || config->opt_limit_engine_glows || config->weapon_switch ||
+					   config->mission_tie_stats;
 	if (rules)
 		fputs("rules:\n", f);
 	if (config->mission_tie)
@@ -123,6 +126,8 @@ bool XwauMissionSettings_WriteDefaults(FILE* f, const XwauSettingsConfig* config
 		fputs("  classic_hide_destroyed_engine_glows: true\n", f);
 	if (config->weapon_switch)
 		fprintf(f, "  weapon_iff_swap: %s\n", config->weapon_switch_by_iff ? "true" : "false");
+	if (config->mission_tie_stats)
+		fputs("  ai_attack_uses_max_speed_cache: true\n", f);
 	const bool warheads     = config->mission_tie && !config->warhead_collision_damage;
 	const bool shields      = config->mission_tie && config->damage_through_shields;
 	const bool interdiction = config->engine_sound && config->interdiction_count;

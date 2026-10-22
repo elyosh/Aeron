@@ -30,6 +30,7 @@
 #include "xwau_objects.h"
 #include "xwau_skins.h"
 #include "xwau_skyboxes.h"
+#include "xwau_stats_profiles.h"
 #include "xwau_text.h"
 
 static int g_failures;
@@ -1660,6 +1661,100 @@ static void test_headlights(const char* scratch) {
 	check(!IsFile(path), "headlights: ddraw reads only the .ini");
 }
 
+static void test_stats_profiles(const char* scratch) {
+	char game[1024], path[1300];
+	snprintf(game, sizeof game, "%s/sp_game", scratch);
+	snprintf(path, sizeof path, "%s/FlightModels", game);
+	MakeDirs(path);
+	snprintf(path, sizeof path, "%s/Missions", game);
+	MakeDirs(path);
+	snprintf(path, sizeof path, "%s/FlightModels/Frigate.ini", game);
+	write_file(path,
+			   "[StatsProfile_Default;]\nSpeed = 99\n[;StatsProfile_Default]\nSpeed = 99\n"
+			   "[STATSPROFILE_Default]\nSpeed = 38\nAcceleration = 4\nPitch = 2\nExplosionStrength = 10\n"
+			   "HullStrength = 29\nShieldStrength = 60\nSystemStrength = 60\nHasShieldGenerator = 2\n"
+			   "HasHyperdrive = 0\nIsWarheadCollisionDamagesEnabled = 0\nSpeed = 50\nTurbo = 1\n"
+			   "[StatsProfile_Default_Easy]\nHullStrength = 10\n"
+			   "[StatsProfile_Fast]\nSpeed = 99\n[StatsModifiers]\nSpeed = 2\n");
+	snprintf(path, sizeof path, "%s/FlightModels/FrigateStatsProfile_Fast.txt", game);
+	write_file(path, "Speed = 55\n");
+	size_t count = 0;
+	snprintf(path, sizeof path, "%s/FlightModels", game);
+	char**            names = ListDir(path, true, &count);
+	XwauStatsProfiles profiles;
+	check(XwauStatsProfiles_Read(game, "Frigate", names, count, 0, &profiles) && profiles.count == 3 &&
+			  profiles.disabled == 2,
+		  "stats profiles: three profiles, and the two disabled sections are counted");
+	const XwauStatsProfile* d = &profiles.items[0];
+	check(!strcmp(d->name, "default") && d->value[0] == 86 && d->value[1] == 9 && d->value[3] == 512 &&
+			  d->value[6] == 1050 && d->value[7] == 3045 && d->value[9] == 3000 && d->value[8] == 60 &&
+			  d->value[12] == 1 && d->value[13] == 0 && d->set[14] && d->value[14] == 0 && !d->set[10],
+		  "stats profiles: the units of genus class 0, ExplosionStrength, the first line of a key, and the "
+		  "flags");
+	check(!strcmp(profiles.items[1].name, "default_easy") && profiles.items[1].set[7] &&
+			  !profiles.items[1].set[0],
+		  "stats profiles: a variant is a whole profile");
+	check(!strcmp(profiles.items[2].name, "fast") && profiles.items[2].value[0] == 124,
+		  "stats profiles: the .txt file wins over the section");
+	XwauStatsProfiles_Free(&profiles);
+	check(XwauStatsProfiles_Read(game, "Frigate", names, count, 2, &profiles) && profiles.count == 3 &&
+			  profiles.items[0].value[7] == 190 && profiles.items[0].value[9] == 187 &&
+			  profiles.items[0].value[6] == 65,
+		  "stats profiles: hull, shields and the threshold / 16 for starships");
+	XwauStatsProfiles_Free(&profiles);
+	check(XwauStatsProfiles_Read(game, "Frigate", names, count, 1, &profiles) &&
+			  profiles.items[0].value[7] == 761,
+		  "stats profiles: / 4 for freighters");
+	XwauStatsProfiles_Free(&profiles);
+	check(XwauStatsProfiles_Read(game, "Frigate", names, count, -1, &profiles) && profiles.count == 1 &&
+			  !strcmp(profiles.items[0].name, "fast"),
+		  "stats profiles: without a genus, only the profiles without hull or shields are kept");
+	char out[1300];
+	snprintf(out, sizeof out, "%s/sp_model.yaml", scratch);
+	FILE* f = fopen(out, "wb");
+	XwauStatsProfiles_Write(f, &profiles);
+	fclose(f);
+	check(same_file(out, "stats_profiles:\n  \"fast\": {speed: 124}\n"), "stats profiles: the model group");
+	XwauStatsProfiles_Free(&profiles);
+	FreeList(names, count);
+
+	snprintf(path, sizeof path, "%s/Missions/m1.ini", game);
+	write_file(path,
+			   "[StatsProfiles]\nFrigate_fgc_2 = Fast\nfrigate_FGC_2 = Default\nFrigate_fg_player = Fast\n"
+			   "Frigate = Missing\t;comment\nFrigate_fg_0 = Fast\nFrigate_fgc_02 = Fast\n"
+			   "ExplosionStrengthPercent = 50\nPlayerHullStrengthPercent = 400\nSpeedPercent = -5\n");
+	XwauMissionStats stats;
+	check(XwauMissionStats_Read(game, "Missions/m1", &stats) && stats.model_count == 1 &&
+			  !strcmp(stats.models[0].key, "frigate") && stats.models[0].has_markings[2] &&
+			  !strcmp(stats.models[0].markings[2], "fast") && !strcmp(stats.models[0].player, "fast") &&
+			  !strcmp(stats.models[0].all, "missing ;comment") && !stats.models[0].has_markings[0],
+		  "stats profiles: _fgc_N, _fg_player and the model's line; the first line of a key wins, and _fg_0, "
+		  "_fgc_02 and a name with no profile");
+	check(stats.percent[6] == 50 && stats.player_percent[7] == 400 && stats.percent[0] == -1,
+		  "stats profiles: the percents, ExplosionStrengthPercent, and a negative percent left out");
+	snprintf(out, sizeof out, "%s/sp_mission.yaml", scratch);
+	f = fopen(out, "wb");
+	XwauMissionStats_Write(f, &stats);
+	fclose(f);
+	check(
+		same_file(out,
+				  "stats_profiles:\n  models:\n    frigate: {player: \"fast\", markings: {2: \"fast\"}, all: "
+				  "\"missing ;comment\"}\n  percent: {system_damage_hull_threshold: 50}\n"
+				  "  player_percent: {hull: 400}\n"),
+		"stats profiles: the mission section");
+	XwauMissionStats_Free(&stats);
+
+	char settings[1300];
+	snprintf(path, sizeof path, "%s/hook_mission_tie.dll", game);
+	write_file(path, "MZ StatsProfiles");
+	snprintf(settings, sizeof settings, "%s/sp_flight.yaml", scratch);
+	size_t size = 0;
+	char*  text = XwauFlightSettings_Write(game, settings) ? ReadWholeFile(settings, &size) : NULL;
+	check(text && strstr(text, "  ai_attack_uses_max_speed_cache: true\n"),
+		  "stats profiles: hook_mission_tie with stats profiles compares the craft's own top speeds");
+	free(text);
+}
+
 int main(void) {
 	char        scratch[1024];
 	const char* tmp = getenv("TMPDIR");
@@ -1683,6 +1778,7 @@ int main(void) {
 	test_front_planet(scratch);
 	test_headlights(scratch);
 	test_mission_tie(scratch);
+	test_stats_profiles(scratch);
 	RemoveTree(scratch);
 	printf("%s\n", g_failures ? "FAILED" : "passed");
 	return g_failures ? 1 : 0;

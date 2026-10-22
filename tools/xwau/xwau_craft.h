@@ -27,6 +27,8 @@
  *     by_markings:                                   # the changes for one markings value
  *       1:
  *         variant: {default: 2}
+ *   stats_profiles:                                  # xwau_stats_profiles.h
+ *     default: {speed: 86, hull: 3045}
  *
  * The reticle comes from FlightModels/<model>Reticle.txt, else the [Reticle]
  * section of FlightModels/<model>.ini, read like XWAU's reticle hook: the

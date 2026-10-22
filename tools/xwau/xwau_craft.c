@@ -8,6 +8,8 @@
 
 #include "util.h"
 #include "xwau_config.h"
+#include "xwau_game_tables.h"
+#include "xwau_stats_profiles.h"
 
 /* The slots of XWAU's reticle hook (g_imageIndices in reticle.cpp). */
 static const int g_reticleSlots[] = { 5, 6, 7, 8, 9, 10, 15, 16, 17, 18, 19, 20, 21, 22 };
@@ -551,7 +553,8 @@ static void write_weapons(FILE* f, const XwauCraftWeapons* weapons) {
 }
 
 static bool write_craft_file(const char* path, const char* sources, const XwauCraftHud* hud,
-							 const XwauCraftEngineGlows* glows, const XwauCraftWeapons* weapons) {
+							 const XwauCraftEngineGlows* glows, const XwauCraftWeapons* weapons,
+							 const XwauStatsProfiles* stats) {
 	FILE* f = fopen(path, "wb");
 	if (!f) {
 		Report(path, "can't be written");
@@ -564,6 +567,7 @@ static bool write_craft_file(const char* path, const char* sources, const XwauCr
 		write_engine_glows(f, glows);
 	if (has_weapons(weapons))
 		write_weapons(f, weapons);
+	XwauStatsProfiles_Write(f, stats);
 	const bool ok = fclose(f) == 0;
 	if (!ok)
 		Report(path, "can't be written");
@@ -685,8 +689,17 @@ bool XwauCraft_Write(const char* xwau_root, const char* output_dir) {
 	char** names   = ListDir(models_dir, true, &count);
 	bool   ok      = true;
 	int    written = 0, reticles = 0, colors = 0, engine_glows = 0, weapon_colors = 0, light_colors = 0;
+	int    stats_profiles    = 0;
+	size_t disabled_profiles = 0;
+	/* The genus of the object types that load each model, for the units of
+	   the stats profiles. */
+	XwauGameTables* tables = XwauGameTables_Load(xwau_root);
+	XwauStatsGenus  genus;
+	ok = XwauStatsGenus_Read(xwau_root, tables, &genus);
+	XwauGameTables_Free(tables);
 	XwauCraftWeapons* weapons = (XwauCraftWeapons*)malloc(sizeof *weapons);
 	if (!weapons) {
+		XwauStatsGenus_Free(&genus);
 		FreeList(names, count);
 		Report(NULL, "out of memory");
 		return false;
@@ -726,10 +739,20 @@ bool XwauCraft_Write(const char* xwau_root, const char* output_dir) {
 		XwauCraft_ReadEngineGlows(side_path[SIDE_ENGINE_GLOWS], has_ini ? ini : NULL, &glows);
 		XwauCraft_ReadWeapons(side_path[SIDE_WEAPON_COLOR], has_ini ? ini : NULL, weapons);
 		light_colors += weapons->light_colors;
-		if (!has_reticle(&hud) && !has_colors(&hud) && !has_engine_glows(&glows) && !has_weapons(weapons))
-			continue;
-
+		XwauStatsProfiles stats;
 		LowerCopy(key, sizeof key, model);
+		if (!XwauStatsProfiles_Read(xwau_root, model, names, count, XwauStatsGenus_Find(&genus, key),
+									&stats)) {
+			ok = false;
+			break;
+		}
+		disabled_profiles += stats.disabled;
+		if (!has_reticle(&hud) && !has_colors(&hud) && !has_engine_glows(&glows) && !has_weapons(weapons) &&
+			!stats.count) {
+			XwauStatsProfiles_Free(&stats);
+			continue;
+		}
+
 		sources[0] = '\0';
 		for (int side = 0; side < SIDE_FILES; ++side) {
 			if (has_side[side])
@@ -741,10 +764,13 @@ bool XwauCraft_Write(const char* xwau_root, const char* output_dir) {
 			add_source(sources, sizeof sources, ini_name);
 		}
 		if (!PathFormat(path, sizeof path, "%s/%s.yaml", craft_dir, key) || !MakeDirs(craft_dir) ||
-			!write_craft_file(path, sources, &hud, &glows, weapons)) {
+			!write_craft_file(path, sources, &hud, &glows, weapons, &stats)) {
+			XwauStatsProfiles_Free(&stats);
 			ok = false;
 			continue;
 		}
+		stats_profiles += stats.count != 0;
+		XwauStatsProfiles_Free(&stats);
 		written++;
 		reticles += has_reticle(&hud);
 		colors += has_colors(&hud);
@@ -752,11 +778,17 @@ bool XwauCraft_Write(const char* xwau_root, const char* output_dir) {
 		weapon_colors += has_weapons(weapons);
 	}
 	free(weapons);
+	XwauStatsGenus_Free(&genus);
 	FreeList(names, count);
 	Report(NULL,
 		   "model settings: %d files, %d with a reticle, %d with HUD colours, %d with engine glows, %d with "
-		   "weapon settings",
-		   written, reticles, colors, engine_glows, weapon_colors);
+		   "weapon settings, %d with stats profiles",
+		   written, reticles, colors, engine_glows, weapon_colors, stats_profiles);
+	if (disabled_profiles)
+		Report(NULL,
+			   "%zu sections such as [StatsProfile_Default;] or [;StatsProfile_Default], which XWAU never "
+			   "reads, are left out",
+			   disabled_profiles);
 	if (light_colors)
 		Report(NULL,
 			   "%d models set WeaponLightColor, which isn't imported: a bolt's light comes from its model",

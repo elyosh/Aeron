@@ -17,6 +17,9 @@
  *     concourse:
  *       front_planet: { x: 319, y: 78, image: 15010 }
  *     headlights: true
+ *     stats_profiles:
+ *       models:
+ *         escorttransport: { markings: { 0: "etrmod" } }
  *     flight_groups:
  *       1: { name: "Red 1", craft: 1, markings: 4 }
  *       26: { name: "Red", craft: 1, craft_markings: { 0: 0, 1: 1 } }
@@ -102,6 +105,9 @@
  * Headlights (ddraw): `headlights: true` when `Enabled` of the mission's
  * [Headlights] section isn't 0. The light itself is in the `headlights`
  * section of flight/flight.yaml (xwau_flight_settings.h).
+ *
+ * Stats profiles (hook_mission_tie): the [StatsProfiles] lines, which pick
+ * the profiles of the mission's craft by model (xwau_stats_profiles.h).
  *
  * The selections name flight groups by their position in the mission's .TIE,
  * and they are written with the same position. The .TIE is the one that
