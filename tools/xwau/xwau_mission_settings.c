@@ -83,6 +83,22 @@ bool XwauSettingsConfig_Read(const char* game, XwauSettingsConfig* out) {
 		out->weapon_rate_rack_check = Xwau_FileHasText(path, "Craft_Offset_292");
 		out->weapon_rate_slot_cap   = Xwau_FileHasText(path, "WarheadTypeCount_fg_");
 	}
+	if (Xwau_FindFile(game, "hook_mission_objects.dll", path, sizeof path) &&
+		Xwau_FileHasText(path, "Turrets.txt")) {
+		const bool unlimited = Xwau_FileHasText(path, "UnlimitedTurretLaser");
+		XwauLines  turret_lines;
+		out->gunner_seats = true;
+		if (!XwauLines_Read(Xwau_FindFile(game, "hook_mission_objects.cfg", path, sizeof path) ? path : NULL,
+							"", XWAU_RULES_CPP, &turret_lines))
+			return false;
+		if (!turret_lines.count &&
+			!XwauLines_Read(Xwau_FindFile(game, "Hooks.ini", path, sizeof path) ? path : NULL,
+							"hook_mission_objects", XWAU_RULES_CPP, &turret_lines))
+			return false;
+		out->gunner_selected_group =
+			unlimited && int_value(&turret_lines, "UnlimitedTurretLaser", 1, NULL) != 0;
+		XwauLines_Free(&turret_lines);
+	}
 	XwauLines lines;
 	if (out->engine_sound && Xwau_FindFile(game, "hook_engine_sound.dll", path, sizeof path) &&
 		Xwau_FileHasText(path, "AreStarshipAmbientEnabled")) {
@@ -135,7 +151,7 @@ bool XwauMissionSettings_WriteDefaults(FILE* f, const XwauSettingsConfig* config
 	const bool rules = config->mission_tie || config->opt_limit_engine_glows || config->weapon_switch ||
 					   config->mission_tie_stats || config->weapon_rate_fire_check ||
 					   config->weapon_rate_rack_check || config->starship_ambient ||
-					   config->weapon_rate_slot_cap;
+					   config->weapon_rate_slot_cap || config->gunner_seats;
 	if (rules)
 		fputs("rules:\n", f);
 	if (config->mission_tie)
@@ -154,6 +170,10 @@ bool XwauMissionSettings_WriteDefaults(FILE* f, const XwauSettingsConfig* config
 		fputs("  starship_ambient_sounds: true\n", f);
 	if (config->weapon_rate_slot_cap)
 		fputs("  no_player_warhead_slot_cap: true\n", f);
+	if (config->gunner_seats)
+		fputs("  gunner_weapon_select_in_seat: true\n  gunner_fires_warheads: true\n", f);
+	if (config->gunner_selected_group)
+		fputs("  gunner_fires_selected_group: true\n", f);
 	const bool warheads     = config->mission_tie && !config->warhead_collision_damage;
 	const bool shields      = config->mission_tie && config->damage_through_shields;
 	const bool interdiction = config->engine_sound && config->interdiction_count;

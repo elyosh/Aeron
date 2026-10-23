@@ -43,6 +43,7 @@
 #include "xwau_craft.h"
 #include "xwau_flight_settings.h"
 #include "xwau_game_files.h"
+#include "xwau_gunner_seats.h"
 #include "xwau_mission_files.h"
 #include "xwau_missions.h"
 #include "xwau_objects.h"
@@ -152,10 +153,15 @@ static int run_craft(int argc, char** argv) {
 		Report(NULL, "--strings needs --stock-game");
 		return 2;
 	}
-	bool        ok    = XwauCraft_Write(xwau_root, argv[ai]);
-	XwauTextIds moved = { 0 };
+	XwauLines   cockpits = { 0 };
+	bool        ok       = XwauCraft_Write(xwau_root, argv[ai], &cockpits);
+	XwauTextIds moved    = { 0 };
 	if (stock_game)
-		ok = XwauObjects_Write(xwau_root, stock_game, argv[ai], &moved) && ok;
+		ok = XwauObjects_Write(xwau_root, stock_game, argv[ai], &moved) &&
+			 XwauGunnerSeats_WriteCockpits(xwau_root, stock_game, argv[ai], &cockpits) && ok;
+	else if (cockpits.count)
+		Report(NULL, "the gunner cockpits need --stock-game to get their object types");
+	XwauLines_Free(&cockpits);
 	if (strings)
 		ok = XwauText_Write(xwau_root, stock_game, strings, &moved) && ok;
 	if (game_files)

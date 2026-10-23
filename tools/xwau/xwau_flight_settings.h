@@ -21,6 +21,9 @@
  *       no_starship_fire_from_destroyed_racks: true
  *       starship_ambient_sounds: true
  *       no_player_warhead_slot_cap: true
+ *       gunner_weapon_select_in_seat: true
+ *       gunner_fires_warheads: true
+ *       gunner_fires_selected_group: true
  *     mission_settings:
  *       warhead_collision_damage: false
  *       damage_through_shields_on_hard: true
@@ -70,7 +73,13 @@
  * a rack whose mesh is destroyed. The DLL gives no_player_warhead_slot_cap
  * if it has warhead pools (it contains "WarheadTypeCount_fg_"): the hook then
  * lets a player's warhead rack hold more than 9 warheads, with or without
- * pools. hook_engine_sound.dll gives
+ * pools. hook_mission_objects.dll gives gunner_weapon_select_in_seat and
+ * gunner_fires_warheads if it has gunner seats (it contains "Turrets.txt"),
+ * and gunner_fires_selected_group when its UnlimitedTurretLaser setting
+ * isn't 0 (hook_mission_objects.cfg, else Hooks.ini; 1 by default). With
+ * these rules, the weapon key works in a seat, a seat fires warheads when
+ * its cockpit has a warhead hardpoint, and a seat fires one laser group.
+ * hook_engine_sound.dll gives
  * starship_ambient_sounds if it has ambient sounds (it contains
  * "AreStarshipAmbientEnabled") and that setting isn't 0. With this rule,
  * starships play their ambient sounds from the StarshipAmbient bank.

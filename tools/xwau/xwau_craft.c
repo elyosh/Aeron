@@ -9,6 +9,7 @@
 #include "util.h"
 #include "xwau_config.h"
 #include "xwau_game_tables.h"
+#include "xwau_gunner_seats.h"
 #include "xwau_sound_banks.h"
 #include "xwau_stats_profiles.h"
 
@@ -973,7 +974,8 @@ static void write_weapons(FILE* f, const XwauCraftWeapons* weapons) {
 static bool write_craft_file(const char* path, const char* sources, const XwauCraftHud* hud,
 							 const XwauCraftEngineGlows* glows, const XwauCraftWeapons* weapons,
 							 const XwauStatsProfiles* stats, const XwauCraftShield* shield,
-							 const XwauCraftSound* sound, const XwauCraftComponents* components) {
+							 const XwauCraftSound* sound, const XwauCraftComponents* components,
+							 const XwauGunnerSeats* gunner, XwauLines* cockpits) {
 	FILE* f = fopen(path, "wb");
 	if (!f) {
 		Report(path, "can't be written");
@@ -993,7 +995,10 @@ static bool write_craft_file(const char* path, const char* sources, const XwauCr
 		write_sound(f, sound);
 	if (components->has)
 		write_components(f, components);
-	const bool ok = fclose(f) == 0;
+	bool ok = XwauGunnerSeats_Write(f, gunner, cockpits);
+	if (!ok)
+		Report(NULL, "out of memory");
+	ok = fclose(f) == 0 && ok;
 	if (!ok)
 		Report(path, "can't be written");
 	return ok;
@@ -1076,8 +1081,8 @@ static bool has_side_file(char* const* names, size_t count, const char* model, c
 /* The files that can give a model's settings beside its INI file, as
  * <model><suffix>. */
 static const char* const g_sideFiles[] = {
-	"Reticle.txt",    "EngineGlows.txt", "WeaponColor.txt",          "Shield.txt",
-	"WeaponRate.txt", "Sound.txt",       "SubcomponentsStrength.txt"
+	"Reticle.txt",    "EngineGlows.txt", "WeaponColor.txt",           "Shield.txt",
+	"WeaponRate.txt", "Sound.txt",       "SubcomponentsStrength.txt", "Turrets.txt"
 };
 
 enum {
@@ -1088,6 +1093,7 @@ enum {
 	SIDE_WEAPON_RATE,
 	SIDE_SOUND,
 	SIDE_SUBCOMPONENTS,
+	SIDE_TURRETS,
 	SIDE_FILES
 };
 
@@ -1114,7 +1120,7 @@ static void add_source(char* sources, size_t cap, const char* name) {
 	snprintf(sources + length, cap - length, "%s%s", length ? " and " : "", name);
 }
 
-bool XwauCraft_Write(const char* xwau_root, const char* output_dir) {
+bool XwauCraft_Write(const char* xwau_root, const char* output_dir, XwauLines* cockpits) {
 	char models_dir[1024], craft_dir[1024];
 	if (!Xwau_FindDir(xwau_root, "FlightModels", models_dir, sizeof models_dir)) {
 		Report(xwau_root, "has no FlightModels folder");
@@ -1147,10 +1153,16 @@ bool XwauCraft_Write(const char* xwau_root, const char* output_dir) {
 	XwauGameTables* tables = XwauGameTables_Load(xwau_root);
 	XwauStatsGenus  genus;
 	ok = XwauStatsGenus_Read(xwau_root, tables, &genus);
-	XwauGameTables_Free(tables);
+	/* hook_mission_objects reads the [Turrets] sections. */
+	char              mission_objects_dll[1024];
+	const bool        turrets      = Xwau_FindFile(xwau_root, "hook_mission_objects.dll", mission_objects_dll,
+												   sizeof mission_objects_dll) &&
+									 Xwau_FileHasText(mission_objects_dll, "Turrets.txt");
+	int               gunner_seats = 0;
 	XwauCraftWeapons* weapons = (XwauCraftWeapons*)malloc(sizeof *weapons);
 	if (!weapons) {
 		XwauStatsGenus_Free(&genus);
+		XwauGameTables_Free(tables);
 		FreeList(names, count);
 		Report(NULL, "out of memory");
 		return false;
@@ -1204,6 +1216,11 @@ bool XwauCraft_Write(const char* xwau_root, const char* output_dir) {
 		XwauCraftComponents strengths;
 		XwauCraft_ReadComponents(strength ? side_path[SIDE_SUBCOMPONENTS] : NULL,
 								 strength && has_ini ? ini : NULL, &strengths);
+		XwauGunnerSeats gunner;
+		memset(&gunner, 0, sizeof gunner);
+		if (turrets)
+			XwauGunnerSeats_Read(xwau_root, tables, model, side_path[SIDE_TURRETS], has_ini ? ini : NULL,
+								 &gunner);
 		XwauStatsProfiles stats;
 		LowerCopy(key, sizeof key, model);
 		if (!XwauStatsProfiles_Read(xwau_root, model, names, count, XwauStatsGenus_Find(&genus, key),
@@ -1213,7 +1230,7 @@ bool XwauCraft_Write(const char* xwau_root, const char* output_dir) {
 		}
 		disabled_profiles += stats.disabled;
 		if (!has_reticle(&hud) && !has_colors(&hud) && !has_engine_glows(&glows) && !has_weapons(weapons) &&
-			!stats.count && !shield.has && !XwauCraft_HasSound(&sound) && !strengths.has) {
+			!stats.count && !shield.has && !XwauCraft_HasSound(&sound) && !strengths.has && !gunner.has) {
 			XwauStatsProfiles_Free(&stats);
 			continue;
 		}
@@ -1229,7 +1246,8 @@ bool XwauCraft_Write(const char* xwau_root, const char* output_dir) {
 			add_source(sources, sizeof sources, ini_name);
 		}
 		if (!PathFormat(path, sizeof path, "%s/%s.yaml", craft_dir, key) || !MakeDirs(craft_dir) ||
-			!write_craft_file(path, sources, &hud, &glows, weapons, &stats, &shield, &sound, &strengths)) {
+			!write_craft_file(path, sources, &hud, &glows, weapons, &stats, &shield, &sound, &strengths,
+							  &gunner, cockpits)) {
 			XwauStatsProfiles_Free(&stats);
 			ok = false;
 			continue;
@@ -1238,6 +1256,7 @@ bool XwauCraft_Write(const char* xwau_root, const char* output_dir) {
 		shields += shield.has;
 		sounds += XwauCraft_HasSound(&sound);
 		components += strengths.has;
+		gunner_seats += gunner.has;
 		XwauStatsProfiles_Free(&stats);
 		written++;
 		reticles += has_reticle(&hud);
@@ -1248,13 +1267,14 @@ bool XwauCraft_Write(const char* xwau_root, const char* output_dir) {
 	}
 	free(weapons);
 	XwauStatsGenus_Free(&genus);
+	XwauGameTables_Free(tables);
 	FreeList(names, count);
 	Report(NULL,
 		   "model settings: %d files, %d with a reticle, %d with HUD colours, %d with engine glows, %d with "
 		   "weapon settings, %d with stats profiles, %d with a shield recharge rate, %d with sounds, %d with "
-		   "component strengths",
+		   "component strengths, %d with gunner seats",
 		   written, reticles, colors, engine_glows, weapon_colors, stats_profiles, shields, sounds,
-		   components);
+		   components, gunner_seats);
 	if (engine_slowing)
 		Report(NULL, "%d models set EngineSlowing in [Sound], which no hook reads", engine_slowing);
 	if (engine_sound) {

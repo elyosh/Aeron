@@ -129,6 +129,10 @@
  * aren't used. A strength above 255 doesn't fit in the game's component
  * health, so it is reported and left out.
  *
+ * The gunner seats come from FlightModels/<model>Turrets.txt, or else from
+ * the [Turrets] section of the model's INI, if the installation has
+ * hook_mission_objects.dll (xwau_gunner_seats.h).
+ *
  * The sounds come from FlightModels/<model>Sound.txt, or else from the
  * [Sound] section of the model's INI. They are read the way XWAU's
  * hook_engine_sound reads them, and only if the installation has
@@ -175,6 +179,8 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
+
+#include "xwau_config.h"
 
 /* The reticle slots of XWAU's reticle hook. */
 #define XWAU_CRAFT_RETICLE_SLOTS 23
@@ -372,8 +378,9 @@ bool XwauCraft_ReadGlobalSwitchByIff(const char* game, bool* on);
 bool XwauCraft_ReadIconList(const char* path, uint16_t** values, size_t* count);
 
 /* Writes the craft files and hud.yaml of the installation `xwau_root` into
- * `output_dir`. Returns false when a file can't be written or a list can't
- * be read. */
-bool XwauCraft_Write(const char* xwau_root, const char* output_dir);
+ * `output_dir`, and adds to `cockpits`, when it isn't NULL, the gunner
+ * cockpits that the files name (XwauGunnerSeats_WriteCockpits). Returns false when a file can't be
+ * written or a list can't be read. */
+bool XwauCraft_Write(const char* xwau_root, const char* output_dir, XwauLines* cockpits);
 
 #endif /* AERON_XWAU_CRAFT_H */

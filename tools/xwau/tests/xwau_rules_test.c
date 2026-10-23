@@ -23,6 +23,7 @@
 #include "xwau_craft.h"
 #include "xwau_flight_settings.h"
 #include "xwau_game_files.h"
+#include "xwau_gunner_seats.h"
 #include "xwau_mission_files.h"
 #include "xwau_mission_sounds.h"
 #include "xwau_mission_tie.h"
@@ -606,7 +607,7 @@ static void test_craft(const char* scratch) {
 	write_file(path, "1, -1, 20\n");
 	snprintf(path, sizeof path, "%s/HullIconList.txt", root);
 	write_file(path, "0\n100\n");
-	check(XwauCraft_Write(root, out), "craft: the files are written");
+	check(XwauCraft_Write(root, out, NULL), "craft: the files are written");
 	size_t size = 0;
 	snprintf(path, sizeof path, "%s/models/awing.yaml", out);
 	char* text = ReadWholeFile(path, &size);
@@ -1361,6 +1362,56 @@ static void test_mission_tie(const char* scratch) {
 		  "a byte, without the flight groups that the .TIE doesn't have and negative craft numbers, and the "
 		  "start lines keep their order");
 	free(text);
+}
+
+static void test_gunner_seats(const char* scratch) {
+	char game[1024], path[1300], txt[1300], out[1300];
+	snprintf(game, sizeof game, "%s/gunner_game", scratch);
+	snprintf(path, sizeof path, "%s/FlightModels", game);
+	MakeDirs(path);
+	snprintf(path, sizeof path, "%s/FlightModels/FalconGunner.opt", game);
+	write_file(path, "");
+	snprintf(path, sizeof path, "%s/FlightModels/Falcon.ini", game);
+	write_file(path, "[Turrets]\n"
+					 "0, 19, 250, -16384, 16384, 12040, 17308, FalconGunner, 0\n"
+					 "0; 19; 250; 16384; -16384; 12040; 17308; MissingGunner; 1\n"
+					 "1, 2, 3\n"
+					 "x, 19, 250, 0, 0, 1, 1, FalconGunner, 0\n"
+					 "0, 0, 0, 0, 0, 0, 0, FalconGunner, 0\n"
+					 "TurretForwardFire = 0\n");
+	XwauGunnerSeats seats;
+	XwauGunnerSeats_Read(game, NULL, "Falcon", NULL, path, &seats);
+	check(seats.has && !seats.forward_fire && seats.count == 2 && seats.seats[0].x == 19 &&
+			  seats.seats[0].y == 0 && seats.seats[0].z == 250 && seats.seats[0].mount_angle_a == 16384 &&
+			  seats.seats[0].mount_angle_b == -16384 && seats.seats[0].aim_limit_a == 12040 &&
+			  seats.seats[0].aim_limit_b == 17308 && strcmp(seats.seats[0].cockpit, "FalconGunner") == 0 &&
+			  !seats.seats[0].inverted && seats.seats[1].inverted &&
+			  strcmp(seats.seats[1].cockpit, "CorellianTransportGunner") == 0,
+		  "gunner seats: the hook's field order, ';' splits too, short lines and lines with words are left "
+		  "out, "
+		  "a missing cockpit is the stock one, and the third seat doesn't fit");
+	snprintf(out, sizeof out, "%s/gunner.yaml", scratch);
+	XwauLines cockpits = { 0 };
+	FILE*     f        = fopen(out, "wb");
+	XwauGunnerSeats_Write(f, &seats, &cockpits);
+	fclose(f);
+	check(same_file(out,
+					"gunner_seats:\n  forward_fire: false\n  seats:\n"
+					"    - {x: 19, y: 0, z: 250, mount_angle_a: 16384, mount_angle_b: -16384, aim_limit_a: "
+					"12040, aim_limit_b: 17308, cockpit: falcongunner, inverted: false}\n"
+					"    - {x: 19, y: 0, z: 250, mount_angle_a: -16384, mount_angle_b: 16384, aim_limit_a: "
+					"12040, aim_limit_b: 17308, cockpit: corelliantransportgunner, inverted: true}\n") &&
+			  cockpits.count == 2,
+		  "gunner seats: the group and its cockpits");
+	XwauLines_Free(&cockpits);
+	snprintf(txt, sizeof txt, "%s/FlightModels/FalconTurrets.txt", game);
+	write_file(txt, "TurretForwardFire = 1\n");
+	XwauGunnerSeats_Read(game, NULL, "Falcon", txt, path, &seats);
+	check(seats.has && seats.forward_fire && seats.count == 0,
+		  "gunner seats: <model>Turrets.txt wins, and a section without seat lines gives no seat");
+	write_file(path, "[Size]\nX = 1\n");
+	XwauGunnerSeats_Read(game, NULL, "Falcon", NULL, path, &seats);
+	check(!seats.has, "gunner seats: no section and no record, no group");
 }
 
 static void test_warhead_pools(const char* scratch) {
@@ -2200,12 +2251,12 @@ static void test_sound_banks(const char* scratch) {
 	snprintf(path, sizeof path, "%s/hook_engine_sound.dll", game);
 	remove(path);
 	snprintf(path, sizeof path, "%s/models/tug.yaml", flight);
-	check(XwauCraft_Write(game, flight) && !IsFile(path),
+	check(XwauCraft_Write(game, flight, NULL) && !IsFile(path),
 		  "craft sounds: nothing without hook_engine_sound.dll");
 	snprintf(path, sizeof path, "%s/hook_engine_sound.dll", game);
 	write_file(path, "");
 	snprintf(path, sizeof path, "%s/models/tug.yaml", flight);
-	text = XwauCraft_Write(game, flight) ? ReadWholeFile(path, &size) : NULL;
+	text = XwauCraft_Write(game, flight, NULL) ? ReadWholeFile(path, &size) : NULL;
 	check(text && strstr(text, "sound:\n  weapons: empire\n  weapon_ranges: {283: {first: 1, count: 2}}\n") &&
 			  !strstr(text, "interior"),
 		  "craft sounds: the model file's sound group; an interior type that plays nothing is left out");
@@ -2216,7 +2267,7 @@ static void test_sound_banks(const char* scratch) {
 	write_file(path,
 			   "[Sound]\nAmbientSoundOffsetX = 0\nAmbientSoundOffsetY = 300\nAmbientSoundDistance = 1000\n");
 	snprintf(path, sizeof path, "%s/models/tug.yaml", flight);
-	text = XwauCraft_Write(game, flight) ? ReadWholeFile(path, &size) : NULL;
+	text = XwauCraft_Write(game, flight, NULL) ? ReadWholeFile(path, &size) : NULL;
 	check(text && strstr(text, "  ambient: {offset_m: [0, 300, 0], distance_m: 1000}\n"),
 		  "ambient sounds: the offset (right, up, forward) and one distance");
 	free(text);
@@ -2224,7 +2275,7 @@ static void test_sound_banks(const char* scratch) {
 	write_file(path, "[Sound]\nAmbientSoundDistanceX = 4000\nAmbientSoundDistanceY = 11000\n"
 					 "AmbientSoundDistanceZ = 0\n");
 	snprintf(path, sizeof path, "%s/models/tug.yaml", flight);
-	text = XwauCraft_Write(game, flight) ? ReadWholeFile(path, &size) : NULL;
+	text = XwauCraft_Write(game, flight, NULL) ? ReadWholeFile(path, &size) : NULL;
 	check(text && strstr(text, "  ambient: {distance_m: [4000, null, 11000]}\n") && !strstr(text, "offset_m"),
 		  "ambient sounds: DistanceX, Z and Y are right, up and forward; a distance of 0 without "
 		  "AmbientSoundDistance is the craft's size");
@@ -2232,7 +2283,7 @@ static void test_sound_banks(const char* scratch) {
 	snprintf(path, sizeof path, "%s/FlightModels/Tug.ini", game);
 	write_file(path, "[Sound]\nAmbientSoundDistance = 0\nAmbientSoundDistanceY = 500\n");
 	snprintf(path, sizeof path, "%s/models/tug.yaml", flight);
-	text = XwauCraft_Write(game, flight) ? ReadWholeFile(path, &size) : NULL;
+	text = XwauCraft_Write(game, flight, NULL) ? ReadWholeFile(path, &size) : NULL;
 	check(text && strstr(text, "  ambient: {distance_m: [1, 1, 500]}\n"),
 		  "ambient sounds: an AmbientSoundDistance of 0 is 1, and the other axes take it");
 	free(text);
@@ -2278,6 +2329,7 @@ int main(void) {
 	test_headlights(scratch);
 	test_mission_tie(scratch);
 	test_warhead_pools(scratch);
+	test_gunner_seats(scratch);
 	test_stats_profiles(scratch);
 	test_sound_banks(scratch);
 	RemoveTree(scratch);
