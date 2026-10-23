@@ -454,6 +454,105 @@ static void write_components(FILE* f, const XwauCraftComponents* components) {
 	fputs("}\n", f);
 }
 
+/* The keys of [WarheadLock], their limits, and where each one goes in the
+ * model file. */
+static const struct {
+	const char* key;
+	long long   min, max;
+	const char* group; /* NULL for a key outside a map */
+	const char* name;
+} g_warheadLockKeys[XWAU_CRAFT_WARHEAD_LOCK_KEYS] = {
+	{ "LockDistance0", 0, INT_MAX, "lock_range", "small" },
+	{ "LockDistance1", 0, INT_MAX, "lock_range", "big" },
+	{ "LockDistance2", 0, INT_MAX, "lock_range", "transport" },
+	/* The HUD divides by LockTime / 200, and the lock ticks are 16-bit. */
+	{ "LockTime", 200, 32767, NULL, "lock_ticks" },
+	/* The game divides by it. */
+	{ "LockStrengthDivisor", 1, 32767, NULL, "ticks_per_homing_level" },
+	{ "AILockDistance0", 0, INT_MAX, "ai_lock_range", "small" },
+	{ "AILockDistance1", 0, INT_MAX, "ai_lock_range", "big" },
+	{ "AILockDistance2", 0, INT_MAX, "ai_lock_range", "big_top_tier" },
+	{ "AILockTimeFactor", 0, 65535, NULL, "ai_lock_ticks_per_tier" },
+};
+
+enum { WARHEAD_LOCK_TIME = 3 };
+
+void XwauCraft_ReadWarheadLock(const char* lock_txt, const char* ini, XwauCraftWarheadLock* lock) {
+	XwauLines   lines  = { 0 };
+	const char* source = lock_txt;
+	memset(lock, 0, sizeof *lock);
+	memset(lock->value, 0xff, sizeof lock->value);
+	if (lock_txt)
+		XwauLines_Read(lock_txt, "", XWAU_RULES_CPP, &lines);
+	if (lines.count == 0) {
+		XwauLines_Free(&lines);
+		source = ini;
+		if (ini)
+			XwauLines_Read(ini, "WarheadLock", XWAU_RULES_CPP, &lines);
+	}
+	lock->has = lines.count != 0;
+	for (int i = 0; i < XWAU_CRAFT_WARHEAD_LOCK_KEYS; ++i) {
+		char      value[256];
+		long long number;
+		XwauLines_Value(&lines, g_warheadLockKeys[i].key, XWAU_RULES_CPP, value, sizeof value);
+		if (!value[0])
+			continue;
+		if (!Xwau_StoiAuto(value, &number)) {
+			Report(source, "[WarheadLock]: %s = %s isn't a number, which would crash XWAU; it is left out",
+				   g_warheadLockKeys[i].key, value);
+			continue;
+		}
+		if (number < g_warheadLockKeys[i].min || number > g_warheadLockKeys[i].max) {
+			Report(source, "[WarheadLock]: %s = %lld isn't from %lld to %lld; it is left out",
+				   g_warheadLockKeys[i].key, number, g_warheadLockKeys[i].min, g_warheadLockKeys[i].max);
+			continue;
+		}
+		lock->value[i] = (int)number;
+	}
+	if (lock->has && lock->value[WARHEAD_LOCK_TIME] < 0)
+		lock->value[WARHEAD_LOCK_TIME] = 708;
+	for (size_t i = 0; i < lines.count; ++i) {
+		const char* equals = strchr(lines.items[i], '=');
+		char        key[256];
+		int         known = 0;
+		if (!equals)
+			continue;
+		snprintf(key, sizeof key, "%.*s", (int)(equals - lines.items[i]), lines.items[i]);
+		Xwau_Trim(key, XWAU_RULES_CPP);
+		for (int k = 0; k < XWAU_CRAFT_WARHEAD_LOCK_KEYS && !known; ++k)
+			known = Xwau_SameName(key, g_warheadLockKeys[k].key);
+		if (!known)
+			Report(source, "[WarheadLock]: %s isn't imported; keys for an object profile aren't supported",
+				   key);
+	}
+	XwauLines_Free(&lines);
+}
+
+/* Writes the keys of `group` that are set, as one map. */
+static void write_warhead_lock_map(FILE* f, const XwauCraftWarheadLock* lock, const char* group) {
+	bool first = true;
+	for (int i = 0; i < XWAU_CRAFT_WARHEAD_LOCK_KEYS; ++i) {
+		if (g_warheadLockKeys[i].group != group || lock->value[i] < 0)
+			continue;
+		if (first)
+			fprintf(f, "  %s: {", group);
+		fprintf(f, "%s%s: %d", first ? "" : ", ", g_warheadLockKeys[i].name, lock->value[i]);
+		first = false;
+	}
+	if (!first)
+		fputs("}\n", f);
+}
+
+void XwauCraft_WriteWarheadLock(FILE* f, const XwauCraftWarheadLock* lock) {
+	fputs("warhead_lock:\n", f);
+	write_warhead_lock_map(f, lock, "lock_range");
+	for (int i = WARHEAD_LOCK_TIME; i < XWAU_CRAFT_WARHEAD_LOCK_KEYS; ++i) {
+		if (!g_warheadLockKeys[i].group && lock->value[i] >= 0)
+			fprintf(f, "  %s: %d\n", g_warheadLockKeys[i].name, lock->value[i]);
+	}
+	write_warhead_lock_map(f, lock, "ai_lock_range");
+}
+
 static const char* const g_engineSoundNames[] = { "xwing",   "ywing",     "awing",  "tie",
 												  "gunboat", "corellian", "falcon", "slave" };
 static const char* const g_washNames[]        = { "normal", "starship" };
@@ -976,7 +1075,8 @@ static bool write_craft_file(const char* path, const char* sources, const XwauCr
 							 const XwauCraftEngineGlows* glows, const XwauCraftWeapons* weapons,
 							 const XwauStatsProfiles* stats, const XwauCraftShield* shield,
 							 const XwauCraftSound* sound, const XwauCraftComponents* components,
-							 const XwauGunnerSeats* gunner, XwauLines* cockpits) {
+							 const XwauGunnerSeats* gunner, const XwauCraftWarheadLock* lock,
+							 XwauLines* cockpits) {
 	FILE* f = fopen(path, "wb");
 	if (!f) {
 		Report(path, "can't be written");
@@ -996,6 +1096,8 @@ static bool write_craft_file(const char* path, const char* sources, const XwauCr
 		write_sound(f, sound);
 	if (components->has)
 		write_components(f, components);
+	if (lock->has)
+		XwauCraft_WriteWarheadLock(f, lock);
 	bool ok = XwauGunnerSeats_Write(f, gunner, cockpits);
 	if (!ok)
 		Report(NULL, "out of memory");
@@ -1093,7 +1195,8 @@ static const char* const g_sideFiles[] = { "Reticle.txt",
 										   "WarheadStats.txt",
 										   "EnergyStats.txt",
 										   "LinkingStats.txt",
-										   "WeaponHardpointTypes.txt" };
+										   "WeaponHardpointTypes.txt",
+										   "WarheadLock.txt" };
 
 enum {
 	SIDE_RETICLE,
@@ -1109,6 +1212,7 @@ enum {
 	SIDE_ENERGY_STATS,
 	SIDE_LINKING_STATS,
 	SIDE_HARDPOINT_TYPES,
+	SIDE_WARHEAD_LOCK,
 	SIDE_FILES
 };
 
@@ -1148,7 +1252,11 @@ bool XwauCraft_Write(const char* xwau_root, const char* output_dir, XwauLines* c
 	bool   ok      = true;
 	int    written = 0, reticles = 0, colors = 0, engine_glows = 0, weapon_colors = 0, light_colors = 0;
 	int    stats_profiles = 0, shields = 0, weapon_rates = 0, sounds = 0, engine_slowing = 0, components = 0;
-	int    weapon_profiles = 0;
+	int    weapon_profiles = 0, warhead_locks = 0;
+	/* hook_weapon_lock reads the [WarheadLock] sections. */
+	char       weapon_lock_dll[1024];
+	const bool weapon_lock =
+		Xwau_FindFile(xwau_root, "hook_weapon_lock.dll", weapon_lock_dll, sizeof weapon_lock_dll);
 	/* hook_opt_limit reads the [SubcomponentsStrength] sections. */
 	char       opt_limit_dll[1024];
 	const bool strength =
@@ -1239,6 +1347,11 @@ bool XwauCraft_Write(const char* xwau_root, const char* output_dir, XwauLines* c
 		XwauCraftComponents strengths;
 		XwauCraft_ReadComponents(strength ? side_path[SIDE_SUBCOMPONENTS] : NULL,
 								 strength && has_ini ? ini : NULL, &strengths);
+		/* The [WarheadLock] section of default.ini holds global settings. */
+		XwauCraftWarheadLock lock;
+		const bool           model_lock = weapon_lock && strcasecmp(model, "default") != 0;
+		XwauCraft_ReadWarheadLock(model_lock ? side_path[SIDE_WARHEAD_LOCK] : NULL,
+								  model_lock && has_ini ? ini : NULL, &lock);
 		XwauGunnerSeats gunner;
 		memset(&gunner, 0, sizeof gunner);
 		if (turrets)
@@ -1254,7 +1367,8 @@ bool XwauCraft_Write(const char* xwau_root, const char* output_dir, XwauLines* c
 		}
 		disabled_profiles += stats.disabled;
 		if (!has_reticle(&hud) && !has_colors(&hud) && !has_engine_glows(&glows) && !has_weapons(weapons) &&
-			!stats.count && !shield.has && !XwauCraft_HasSound(&sound) && !strengths.has && !gunner.has) {
+			!stats.count && !shield.has && !XwauCraft_HasSound(&sound) && !strengths.has && !gunner.has &&
+			!lock.has) {
 			XwauStatsProfiles_Free(&stats);
 			XwauWeaponStats_Free(&weapons->stats);
 			continue;
@@ -1272,7 +1386,7 @@ bool XwauCraft_Write(const char* xwau_root, const char* output_dir, XwauLines* c
 		}
 		if (!PathFormat(path, sizeof path, "%s/%s.yaml", craft_dir, key) || !MakeDirs(craft_dir) ||
 			!write_craft_file(path, sources, &hud, &glows, weapons, &stats, &shield, &sound, &strengths,
-							  &gunner, cockpits)) {
+							  &gunner, &lock, cockpits)) {
 			XwauStatsProfiles_Free(&stats);
 			XwauWeaponStats_Free(&weapons->stats);
 			ok = false;
@@ -1285,6 +1399,7 @@ bool XwauCraft_Write(const char* xwau_root, const char* output_dir, XwauLines* c
 		sounds += XwauCraft_HasSound(&sound);
 		components += strengths.has;
 		gunner_seats += gunner.has;
+		warhead_locks += lock.has;
 		XwauStatsProfiles_Free(&stats);
 		written++;
 		reticles += has_reticle(&hud);
@@ -1301,9 +1416,25 @@ bool XwauCraft_Write(const char* xwau_root, const char* output_dir, XwauLines* c
 		NULL,
 		"model settings: %d files, %d with a reticle, %d with HUD colours, %d with engine glows, %d with "
 		"weapon settings, %d with weapon profiles, %d with stats profiles, %d with a shield recharge rate, "
-		"%d with sounds, %d with component strengths, %d with gunner seats",
+		"%d with sounds, %d with component strengths, %d with gunner seats, %d with warhead lock settings",
 		written, reticles, colors, engine_glows, weapon_colors, weapon_profiles, stats_profiles, shields,
-		sounds, components, gunner_seats);
+		sounds, components, gunner_seats, warhead_locks);
+	if (weapon_lock) {
+		/* The global section only sets the AI's ranges by the category of
+		   the AI's craft. */
+		XwauLines global = { 0 };
+		char      global_path[1024];
+		if (Xwau_FindFile(xwau_root, "FlightModels/WarheadLock.txt", global_path, sizeof global_path))
+			XwauLines_Read(global_path, "", XWAU_RULES_CPP, &global);
+		if (!global.count &&
+			Xwau_FindFile(xwau_root, "FlightModels/default.ini", global_path, sizeof global_path))
+			XwauLines_Read(global_path, "WarheadLock", XWAU_RULES_CPP, &global);
+		if (global.count)
+			Report(global_path,
+				   "the global [WarheadLock] isn't imported: no mod sets the AI's lock ranges by "
+				   "craft category");
+		XwauLines_Free(&global);
+	}
 	if (engine_slowing)
 		Report(NULL, "%d models set EngineSlowing in [Sound], which no hook reads", engine_slowing);
 	if (engine_sound) {

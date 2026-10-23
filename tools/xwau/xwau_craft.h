@@ -136,6 +136,22 @@
  * the [Turrets] section of the model's INI, if the installation has
  * hook_mission_objects.dll (xwau_gunner_seats.h).
  *
+ * The warhead lock settings come from FlightModels/<model>WarheadLock.txt,
+ * or else from the [WarheadLock] section of the model's INI, if the
+ * installation has hook_weapon_lock.dll:
+ *
+ *   warhead_lock:
+ *     lock_range: {small: 102400, big: 244332, transport: 101805}
+ *     lock_ticks: 354                  # LockTime
+ *     ticks_per_homing_level: 118      # LockStrengthDivisor
+ *     ai_lock_ticks_per_tier: 472      # AILockTimeFactor
+ *     ai_lock_range: {small: 102400, big: 244332, big_top_tier: 101805}
+ *
+ * lock_range comes from LockDistance0 to 2, and ai_lock_range from
+ * AILockDistance0 to 2. The global [WarheadLock] section of default.ini, or
+ * FlightModels/WarheadLock.txt, sets the AI's ranges by the category of the
+ * AI's craft. No mod has it, so it isn't imported, and it is reported.
+ *
  * The sounds come from FlightModels/<model>Sound.txt, or else from the
  * [Sound] section of the model's INI. They are read the way XWAU's
  * hook_engine_sound reads them, and only if the installation has
@@ -308,6 +324,27 @@ typedef struct XwauCraftComponents {
  * `strength_txt` (<model>SubcomponentsStrength.txt) when it has lines, else
  * the section of `ini`. Either path can be NULL. */
 void XwauCraft_ReadComponents(const char* strength_txt, const char* ini, XwauCraftComponents* components);
+
+/* The keys of [WarheadLock], in this order: LockDistance0 to 2, LockTime,
+ * LockStrengthDivisor, AILockDistance0 to 2 and AILockTimeFactor. */
+enum { XWAU_CRAFT_WARHEAD_LOCK_KEYS = 9 };
+
+/* The [WarheadLock] section of a model. -1 keeps the game's value. */
+typedef struct XwauCraftWarheadLock {
+	bool has;
+	int  value[XWAU_CRAFT_WARHEAD_LOCK_KEYS];
+} XwauCraftWarheadLock;
+
+/* Reads the [WarheadLock] section of a model: `lock_txt`
+ * (<model>WarheadLock.txt) when it has lines, else the section of `ini`.
+ * Either path can be NULL. When the section has lines, hook_weapon_lock
+ * uses 708 for a LockTime that the section doesn't set, even for the
+ * Missile Boat, whose stock value is 354. So LockTime is then always set.
+ * The keys with a profile name, such as LockTime_<profile>, aren't
+ * imported, and are reported. So are values that would crash XWAU. */
+void XwauCraft_ReadWarheadLock(const char* lock_txt, const char* ini, XwauCraftWarheadLock* lock);
+/* Writes the `warhead_lock` group of `lock`. */
+void XwauCraft_WriteWarheadLock(FILE* f, const XwauCraftWarheadLock* lock);
 
 /* Reads the laser rates of a model: `rate_txt` (<model>WeaponRate.txt)
  * when it has lines, else the [WeaponRate] section of `ini`. Either path

@@ -2090,6 +2090,37 @@ static void test_stats_profiles(const char* scratch) {
 	XwauCraft_ReadComponents(NULL, path, &components);
 	check(!components.has, "component strength: a line that isn't a number leaves out the section");
 
+	XwauCraftWarheadLock lock;
+	write_file(path, "[WarheadLock]\n;Lock time\nLockTime = 354\t\t;1.5 seconds\nLockStrengthDivisor = 118\n"
+					 "//Player range\nlockdistance0 = 102400 ;2.5km\nLockDistance2 = 0x18DAD\n"
+					 "AILockDistance2 = 101805\nAILockTimeFactor = 400\n");
+	XwauCraft_ReadWarheadLock(NULL, path, &lock);
+	check(lock.has && lock.value[0] == 102400 && lock.value[1] == -1 && lock.value[2] == 101805 &&
+			  lock.value[3] == 354 && lock.value[4] == 118 && lock.value[5] == -1 &&
+			  lock.value[7] == 101805 && lock.value[8] == 400,
+		  "warhead lock: each key, in any case, with comments after the values");
+	f = fopen(out, "wb");
+	XwauCraft_WriteWarheadLock(f, &lock);
+	fclose(f);
+	check(same_file(out,
+					"warhead_lock:\n  lock_range: {small: 102400, transport: 101805}\n  lock_ticks: 354\n"
+					"  ticks_per_homing_level: 118\n  ai_lock_ticks_per_tier: 400\n"
+					"  ai_lock_range: {big_top_tier: 101805}\n"),
+		  "warhead lock: the keys go into the warhead_lock group");
+	write_file(path, "[WarheadLock]\nLockDistance0 = 90000\nLockStrengthDivisor = 0\nLockTime = 150\n"
+					 "LockTime_Fast = 300\n");
+	XwauCraft_ReadWarheadLock(NULL, path, &lock);
+	check(lock.has && lock.value[0] == 90000 && lock.value[3] == 708 && lock.value[4] == -1,
+		  "warhead lock: values that would crash XWAU are left out, and a section without a usable LockTime "
+		  "gets 708, even for the Missile Boat");
+	write_file(path, "[Shield]\nRechargeRate = 3\n");
+	XwauCraft_ReadWarheadLock(NULL, path, &lock);
+	check(!lock.has && lock.value[3] == -1, "warhead lock: no section keeps the game's values");
+	write_file(txt, "LockStrengthDivisor = 59\n");
+	XwauCraft_ReadWarheadLock(txt, path, &lock);
+	check(lock.has && lock.value[4] == 59 && lock.value[3] == 708,
+		  "warhead lock: <model>WarheadLock.txt wins over the section");
+
 	snprintf(path, sizeof path, "%s/FlightModels/default.ini", game);
 	write_file(path, "[WeaponRate]\nIsWarheadLockHookEnabled = 0\n");
 	check(
