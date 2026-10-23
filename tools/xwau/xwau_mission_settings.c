@@ -82,6 +82,20 @@ bool XwauSettingsConfig_Read(const char* game, XwauSettingsConfig* out) {
 		out->weapon_rate_fire_check = Xwau_FileHasText(path, "_EnergyLowHighSeparation");
 		out->weapon_rate_rack_check = Xwau_FileHasText(path, "Craft_Offset_292");
 		out->weapon_rate_slot_cap   = Xwau_FileHasText(path, "WarheadTypeCount_fg_");
+		out->weapon_rate_hardpoint_types = Xwau_FileHasText(path, "WeaponHardpointTypes");
+		out->weapon_rate_rearm_statuses  = Xwau_FileHasText(path, "WarheadCapacity_00460904_Hook");
+		if (Xwau_FileHasText(path, "EnableFireMeshFilter")) {
+			XwauLines rate_lines;
+			if (!XwauLines_Read(Xwau_FindFile(game, "hook_weapon_rate.cfg", path, sizeof path) ? path : NULL,
+								"", XWAU_RULES_CPP, &rate_lines))
+				return false;
+			if (!rate_lines.count &&
+				!XwauLines_Read(Xwau_FindFile(game, "Hooks.ini", path, sizeof path) ? path : NULL,
+								"hook_weapon_rate", XWAU_RULES_CPP, &rate_lines))
+				return false;
+			out->weapon_rate_mesh_filter = int_value(&rate_lines, "EnableFireMeshFilter", 1, NULL) != 0;
+			XwauLines_Free(&rate_lines);
+		}
 	}
 	if (Xwau_FindFile(game, "hook_mission_objects.dll", path, sizeof path) &&
 		Xwau_FileHasText(path, "Turrets.txt")) {
@@ -151,7 +165,9 @@ bool XwauMissionSettings_WriteDefaults(FILE* f, const XwauSettingsConfig* config
 	const bool rules = config->mission_tie || config->opt_limit_engine_glows || config->weapon_switch ||
 					   config->mission_tie_stats || config->weapon_rate_fire_check ||
 					   config->weapon_rate_rack_check || config->starship_ambient ||
-					   config->weapon_rate_slot_cap || config->gunner_seats;
+					   config->weapon_rate_slot_cap || config->gunner_seats ||
+					   config->weapon_rate_mesh_filter || config->weapon_rate_hardpoint_types ||
+					   config->weapon_rate_rearm_statuses;
 	if (rules)
 		fputs("rules:\n", f);
 	if (config->mission_tie)
@@ -163,7 +179,16 @@ bool XwauMissionSettings_WriteDefaults(FILE* f, const XwauSettingsConfig* config
 	if (config->mission_tie_stats)
 		fputs("  ai_attack_uses_max_speed_cache: true\n", f);
 	if (config->weapon_rate_fire_check)
-		fputs("  fire_needs_decharge_rate: true\n", f);
+		fputs("  fire_needs_decharge_rate: true\n  tie_fighter_energy_step_always_high: true\n"
+			  "  player_decharge_lasers_only: true\n  warhead_collision_bonus_any_target: true\n"
+			  "  gun_turret_hardpoints: true\n",
+			  f);
+	if (config->weapon_rate_mesh_filter)
+		fputs("  no_fire_from_destroyed_hardpoints: true\n", f);
+	if (config->weapon_rate_hardpoint_types)
+		fputs("  turbolaser_hardpoint_types: true\n", f);
+	if (config->weapon_rate_rearm_statuses)
+		fputs("  rearm_follows_both_statuses: true\n", f);
 	if (config->weapon_rate_rack_check)
 		fputs("  no_starship_fire_from_destroyed_racks: true\n", f);
 	if (config->starship_ambient)

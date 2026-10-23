@@ -1070,7 +1070,8 @@ if(AERON_BUILD_TOOLS)
         tools/xwau/xwau_skyboxes.c
         tools/xwau/xwau_sound_banks.c
         tools/xwau/xwau_stats_profiles.c
-        tools/xwau/xwau_text.c)
+        tools/xwau/xwau_text.c
+        tools/xwau/xwau_weapon_stats.c)
     target_link_libraries(xwau_import_lib PUBLIC xwau_files)
 
     add_executable(xwau_import tools/xwau/main.c)

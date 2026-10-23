@@ -36,6 +36,7 @@
 #include "xwau_stats_profiles.h"
 #include "xwau_text.h"
 #include "xwau_warhead_pools.h"
+#include "xwau_weapon_stats.h"
 
 static int g_failures;
 
@@ -1414,6 +1415,96 @@ static void test_gunner_seats(const char* scratch) {
 	check(!seats.has, "gunner seats: no section and no record, no group");
 }
 
+static void test_weapon_stats(const char* scratch) {
+	char game[1024], path[1300], out[1300];
+	snprintf(game, sizeof game, "%s/weapon_stats_game", scratch);
+	snprintf(path, sizeof path, "%s/FlightModels", game);
+	MakeDirs(path);
+	snprintf(path, sizeof path, "%s/Missions", game);
+	MakeDirs(path);
+	snprintf(path, sizeof path, "%s/hook_weapon_rate.dll", game);
+	write_file(path, "");
+	snprintf(path, sizeof path, "%s/FlightModels/default.ini", game);
+	write_file(path, "[WeaponHardpointTypes]\n1\n1\n[WeaponStats]\nWeapon280_Range = 65536\n");
+	snprintf(path, sizeof path, "%s/FlightModels/Model.ini", game);
+	write_file(path, "[WeaponStats]\n"
+					 "My_Profile_Weapon282_Power = 900\n"
+					 "Weapon282_FireRate = 47\n"
+					 "Weapon282_Player_Easy_FireRate = 39\n"
+					 "weapon282_player_easy_power = 350\n"
+					 "Weapon282_FireRate = 50\n"
+					 "Weapon282_Speed = -1\n"
+					 "Weapon289_IsPrecise = 0\n"
+					 "Weapon289_DegreeOfSpreadMask = 63\n"
+					 "Default_Weapon280_Power = 5\n"
+					 "Weapon280_Side = 1\n"
+					 "Weapon280_Foo = 1\n"
+					 "[WarheadStats]\n"
+					 "Warhead1_CapacityPercent = 50\n"
+					 "Warhead2_CapacityPercent = -5\n"
+					 "[EnergyStats]\n"
+					 "SpeedFactorForPlayer = 12\n"
+					 "[LinkingStats]\n"
+					 "LaserLink = 2\n"
+					 "PreventPlayerLinkedLasersIon = 1\n"
+					 "[WeaponHardpointTypes]\n0\n1\n2\n");
+	XwauWeaponStats stats;
+	check(XwauWeaponStats_Read(game, "Model", &stats) && XwauWeaponStats_Any(&stats),
+		  "weapon profiles: a model's sections are read");
+	snprintf(out, sizeof out, "%s/weapon_stats.yaml", scratch);
+	FILE* f = fopen(out, "wb");
+	XwauWeaponStats_Write(f, "  ", &stats);
+	fclose(f);
+	check(
+		same_file(out, "  stats:\n"
+					   "    \"my_profile\":\n"
+					   "      282: {power: 900}\n"
+					   "    default:\n"
+					   "      282: {fire_rate: 47, player_easy: {power: 350, fire_rate: 39}}\n"
+					   "      289: {precise: false, spread_mask: 63}\n"
+					   "  warhead_capacity_percent:\n"
+					   "    default: {1: 50, 2: 0}\n"
+					   "  energy_speed_q16:\n"
+					   "    default: {player: 7864}\n"
+					   "  linking:\n"
+					   "    default: {laser_link: 2, prevent_player_linked_lasers_ion: true}\n"
+					   "  hardpoint_kinds: [0, 1, 2, 1, 1]\n"),
+		"weapon profiles: profile names with '_', the player and difficulty forms, the first of two keys, "
+		"-1, Default and other keys left out, the energy in Q16, and the model's hardpoint kinds before the "
+		"global ones");
+	XwauWeaponStats_Free(&stats);
+	check(XwauWeaponStats_Read(game, NULL, &stats) && stats.count == 1 && stats.items[0].index == 280 &&
+			  stats.hardpoint_kind_count == 2,
+		  "weapon profiles: the global sections");
+	XwauWeaponStats_Free(&stats);
+	snprintf(path, sizeof path, "%s/Missions/m1.ini", game);
+	write_file(path, "[WeaponProfiles]\n"
+					 "WeaponProfile_fg_1 = My_Profile\n"
+					 "WeaponProfile_fg_1 = Other\n"
+					 "WeaponProfile_fg_2 = Default\n"
+					 "WeaponProfile_fg_03 = X\n"
+					 "[EnergyProfiles]\n"
+					 "EnergyProfile_fg_2 = Fast\n");
+	XwauWeaponProfileChoices choices;
+	snprintf(path, sizeof path, "Missions/m1");
+	check(XwauWeaponStats_ReadChoices(game, path, &choices) && choices.count == 2 &&
+			  strcmp(XwauWeaponStats_FindChoice(&choices, 1)->name[XWAU_WEAPON_STATS_STATS], "my_profile") ==
+				  0 &&
+			  !XwauWeaponStats_FindChoice(&choices, 2)->name[XWAU_WEAPON_STATS_STATS][0] &&
+			  strcmp(XwauWeaponStats_FindChoice(&choices, 2)->name[XWAU_WEAPON_STATS_ENERGY], "fast") == 0 &&
+			  !XwauWeaponStats_FindChoice(&choices, 3),
+		  "weapon profiles: a mission's choices, the first of two lines, Default and keys the hook doesn't "
+		  "read");
+	check(XwauWeaponStats_HasProfile(game, "Model", XWAU_WEAPON_STATS_STATS, "my_profile") &&
+			  !XwauWeaponStats_HasProfile(game, "Model", XWAU_WEAPON_STATS_ENERGY, "fast"),
+		  "weapon profiles: the profiles that a model defines");
+	f = fopen(out, "wb");
+	XwauWeaponStats_WriteChoice(f, XwauWeaponStats_FindChoice(&choices, 2));
+	fclose(f);
+	check(same_file(out, ", energy_profile: \"fast\""), "weapon profiles: a flight group's choices");
+	XwauWeaponStats_FreeChoices(&choices);
+}
+
 static void test_warhead_pools(const char* scratch) {
 	char game[1024], stock[1024], out[1024], path[1300];
 	snprintf(game, sizeof game, "%s/pool_game", scratch);
@@ -2011,10 +2102,30 @@ static void test_stats_profiles(const char* scratch) {
 	write_file(path,
 			   "[hook_shield]\nRechargeRatePercent = 50\n[hook_weapon_rate]\nDechargeRatePercent = 50\n");
 	text = XwauFlightSettings_Write(game, settings) ? ReadWholeFile(settings, &size) : NULL;
-	check(
-		text && strstr(text, "  rates: {decharge: 3}\n  decharge_percent: 50\n  recharge_percent: 100\n") &&
-			strstr(text, "  fire_needs_decharge_rate: true\n  no_starship_fire_from_destroyed_racks: true\n"),
-		"weapon rates: the global rates, hook_weapon_rate's percents from Hooks.ini, and its two rules");
+	check(text && strstr(text, "  rates: {decharge: 3}\n  decharge_percent: 50\n  recharge_percent: 100\n") &&
+			  strstr(text,
+					 "  fire_needs_decharge_rate: true\n  tie_fighter_energy_step_always_high: true\n"
+					 "  player_decharge_lasers_only: true\n  warhead_collision_bonus_any_target: true\n"
+					 "  gun_turret_hardpoints: true\n  no_starship_fire_from_destroyed_racks: true\n") &&
+			  !strstr(text, "no_fire_from_destroyed_hardpoints") && !strstr(text, "fire_ratio_by_rank"),
+		  "weapon rates: the global rates, hook_weapon_rate's percents from Hooks.ini, and its rules");
+	free(text);
+	snprintf(path, sizeof path, "%s/hook_weapon_rate.dll", game);
+	write_file(path, "MZ _EnergyLowHighSeparation EnableFireMeshFilter WeaponHardpointTypes "
+					 "WarheadCapacity_00460904_Hook NoviceRankFireratioMultiplicator "
+					 "DamagesMultiplicatorForDifficulty0 PreventAILasersIonWhenDisabling "
+					 "PreventAIIonWhenNotDisabling PreventPlayerLinkedLasersIon");
+	snprintf(path, sizeof path, "%s/Hooks.ini", game);
+	write_file(path,
+			   "[hook_weapon_rate]\nEnableFireMeshFilter = 0\nNoviceRankFireratioMultiplicator = 2.5 ;x\n"
+			   "DamagesMultiplicatorForDifficulty2 = 0.15\nPreventAIIonWhenNotDisabling = 1\n");
+	text = XwauFlightSettings_Write(game, settings) ? ReadWholeFile(settings, &size) : NULL;
+	check(text && !strstr(text, "no_fire_from_destroyed_hardpoints") &&
+			  strstr(text, "  turbolaser_hardpoint_types: true\n  rearm_follows_both_statuses: true\n") &&
+			  strstr(text, "  fire_ratio_by_rank: [2.5, 3, 2, 2, 1, 1]\n"
+						   "  damage_by_difficulty: [0.5, 0.25, 0.150000006]\n"
+						   "  linking_rules: {prevent_ai_ion_when_not_disabling: true}\n"),
+		  "weapon profiles: the hook's rules and settings, with the float32 factors");
 	free(text);
 	snprintf(path, sizeof path, "%s/FlightModels/default.ini", game);
 	write_file(path, "[WeaponRate]\nDechargeRate = 3\nMaxTorpedoCountPerTarget = 9\n");
@@ -2330,6 +2441,7 @@ int main(void) {
 	test_mission_tie(scratch);
 	test_warhead_pools(scratch);
 	test_gunner_seats(scratch);
+	test_weapon_stats(scratch);
 	test_stats_profiles(scratch);
 	test_sound_banks(scratch);
 	RemoveTree(scratch);

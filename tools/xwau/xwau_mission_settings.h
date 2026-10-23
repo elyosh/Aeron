@@ -57,6 +57,15 @@ typedef struct XwauSettingsConfig {
 	/* hook_weapon_rate.dll with warhead pools, which also lifts the cap of 9
 	 * warheads in a player's rack. */
 	bool weapon_rate_slot_cap;
+	/* hook_weapon_rate.dll with its EnableFireMeshFilter setting: no craft
+	 * fires from a destroyed mesh. */
+	bool weapon_rate_mesh_filter;
+	/* hook_weapon_rate.dll with hardpoint types: hardpoint types 33 to 38 are
+	 * turbolasers. */
+	bool weapon_rate_hardpoint_types;
+	/* hook_weapon_rate.dll that reads both warhead statuses when a craft is
+	 * rearmed. */
+	bool weapon_rate_rearm_statuses;
 	/* hook_mission_objects.dll with gunner seats, and its
 	 * UnlimitedTurretLaser setting. */
 	bool gunner_seats;
@@ -83,8 +92,9 @@ void XwauSettingsConfig_Free(XwauSettingsConfig* config);
  * The rules are hook_mission_tie's, hook_opt_limit's
  * classic_hide_destroyed_engine_glows, hook_weapon_color's
  * weapon_iff_swap, hook_mission_tie's ai_attack_uses_max_speed_cache and
- * hook_weapon_rate's fire_needs_decharge_rate and
- * no_starship_fire_from_destroyed_racks and no_player_warhead_slot_cap,
+ * hook_weapon_rate's fire_needs_decharge_rate,
+ * no_starship_fire_from_destroyed_racks, no_player_warhead_slot_cap and
+ * weapon rules,
  * hook_engine_sound's starship_ambient_sounds, and hook_mission_objects'
  * gunner_weapon_select_in_seat, gunner_fires_warheads and, with
  * UnlimitedTurretLaser = 1, gunner_fires_selected_group. Returns whether it

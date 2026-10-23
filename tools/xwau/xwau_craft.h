@@ -115,6 +115,9 @@
  * model's values anyway, and the game uses them instead of the global ones.
  * The report counts the models whose values XWAU ignores. The global values
  * go in flight/flight.yaml (xwau_flight_settings.h).
+ * The weapon profiles in the model's [WeaponStats], [WarheadStats],
+ * [EnergyStats], [LinkingStats] and [WeaponHardpointTypes] go into the same
+ * `weapons` group.
  *
  * The component strength comes from FlightModels/<model>
  * SubcomponentsStrength.txt, or else from the [SubcomponentsStrength]
@@ -181,6 +184,7 @@
 #include <stdio.h>
 
 #include "xwau_config.h"
+#include "xwau_weapon_stats.h"
 
 /* The reticle slots of XWAU's reticle hook. */
 #define XWAU_CRAFT_RETICLE_SLOTS 23
@@ -258,6 +262,7 @@ typedef struct XwauCraftWeapons {
 	XwauCraftWeaponColors by_markings[256];
 	bool                  light_colors;  /* the model has WeaponLightColor keys */
 	int                   switch_by_iff; /* WeaponSwitchBasedOnIff: 1 or 0, -1 when not set */
+	XwauWeaponStats       stats;         /* the weapon profiles */
 } XwauCraftWeapons;
 
 /* The ARGB colour that XWAU's wrapper makes from red, green and blue values

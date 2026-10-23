@@ -70,6 +70,11 @@
  * holds the warheads that the flight group has in its hangar
  * (xwau_warhead_pools.h). The pools of a flight group that the .TIE doesn't
  * have are reported and dropped.
+ * Weapon profiles (hook_weapon_rate): `weapon_profile`, `warhead_profile`,
+ * `energy_profile` and `linking_profile` in a flight group's entry pick the
+ * flight group's profiles. When the model of the flight group's craft
+ * doesn't have the profile, after the mission's swaps, it is reported and
+ * kept.
  *
  * Art (hook_backdrops): `resdata` lists the DATs that the mission adds, in
  * its order: the lines of <mission>_Resdata.txt, or else of the [Resdata]

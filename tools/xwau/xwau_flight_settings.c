@@ -163,6 +163,78 @@ static long long rate_percent(const XwauLines* lines, const char* source, const 
 	return percent;
 }
 
+/* Reads the float `key` of hook_weapon_rate's settings, like the hook's
+ * GetFileKeyValueFloat. Returns `fallback` when the key isn't set. */
+static float hook_float(const XwauLines* lines, const char* source, const char* key, float fallback) {
+	char  text[256];
+	float value = fallback;
+	XwauLines_Value(lines, key, XWAU_RULES_CPP, text, sizeof text);
+	if (text[0] && !XwauWeaponStats_Stof(text, &value)) {
+		Report(source, "%s = %s isn't a number, which XWAU would fail on; the default is used", key, text);
+		value = fallback;
+	}
+	return value;
+}
+
+/* Writes the hook's factors `keys` as the list `name`, when the DLL `dll`
+ * reads them. */
+static void write_factors(FILE* f, const char* dll, const XwauLines* lines, const char* source,
+						  const char* name, const char* const* keys, const float* defaults, int count) {
+	if (!Xwau_FileHasText(dll, keys[0]))
+		return;
+	fprintf(f, "  %s: [", name);
+	for (int i = 0; i < count; ++i)
+		fprintf(f, "%s%.9g", i ? ", " : "", (double)hook_float(lines, source, keys[i], defaults[i]));
+	fputs("]\n", f);
+}
+
+/* Writes the global weapon profiles of hook_weapon_rate and the hook's settings
+   for them. */
+static void write_weapon_profile_settings(FILE* f, const char* game, const char* dll, const XwauLines* lines,
+										  const char* source) {
+	XwauWeaponStats global;
+	if (XwauWeaponStats_Read(game, NULL, &global)) {
+		XwauWeaponStats_Write(f, "  ", &global);
+		XwauWeaponStats_Free(&global);
+	}
+	static const char* const rank_keys[] = {
+		"NoviceRankFireratioMultiplicator",  "OfficerRankFireratioMultiplicator",
+		"VeteranRankFireratioMultiplicator", "AceRankFireratioMultiplicator",
+		"TopAceRankFireratioMultiplicator",  "SuperAceRankFireratioMultiplicator"
+	};
+	static const float rank_defaults[] = { 4.0f, 3.0f, 2.0f, 2.0f, 1.0f, 1.0f };
+	write_factors(f, dll, lines, source, "fire_ratio_by_rank", rank_keys, rank_defaults, 6);
+	static const char* const difficulty_keys[]     = { "DamagesMultiplicatorForDifficulty0",
+													   "DamagesMultiplicatorForDifficulty1",
+													   "DamagesMultiplicatorForDifficulty2" };
+	static const float       difficulty_defaults[] = { 0.5f, 0.25f, 1.0f };
+	write_factors(f, dll, lines, source, "damage_by_difficulty", difficulty_keys, difficulty_defaults, 3);
+	if (Xwau_FileHasText(dll, "LimitLinkedWarheadFireRate") &&
+		hook_value(lines, source, "LimitLinkedWarheadFireRate", 0) != 0)
+		fputs("  limit_linked_warhead_fire_rate: true\n", f);
+	static const char* const linking_keys[]  = { "PreventAILasersIonWhenDisabling",
+												 "PreventAIIonWhenNotDisabling",
+												 "PreventPlayerLinkedLasersIon" };
+	static const char* const linking_names[] = { "prevent_ai_lasers_ion_when_disabling",
+												 "prevent_ai_ion_when_not_disabling",
+												 "prevent_player_linked_lasers_ion" };
+	bool                     open            = false;
+	for (int i = 0; i < 3 && Xwau_FileHasText(dll, linking_keys[i]); ++i) {
+		if (hook_value(lines, source, linking_keys[i], 0) == 0)
+			continue;
+		fprintf(f, "%s%s: true", open ? ", " : "  linking_rules: {", linking_names[i]);
+		open = true;
+	}
+	if (open)
+		fputs("}\n", f);
+	const long long count = hook_value(lines, source, "WeaponsCount", 12);
+	if (Xwau_FileHasText(dll, "WeaponsCount") && count != 12)
+		Report(source, "WeaponsCount = %lld isn't imported: a player keeps 12 projectile slots", count);
+	if (Xwau_FileHasText(dll, "IsLaserLinksFixEnabled") &&
+		hook_value(lines, source, "IsLaserLinksFixEnabled", 0))
+		Report(source, "IsLaserLinksFixEnabled isn't imported: no mod's model turns it on");
+}
+
 /* Writes the `weapons` section: the impact colours, when the mod installs
  * hook_weapon_color, and the laser rates, when it installs
  * hook_weapon_rate. */
@@ -205,6 +277,7 @@ static void write_weapons(FILE* f, const char* game, bool* impact, bool* rates) 
 		fprintf(f, "  decharge_percent: %lld\n  recharge_percent: %lld\n",
 				rate_percent(&lines, source, "DechargeRatePercent"),
 				rate_percent(&lines, source, "RechargeRatePercent"));
+	write_weapon_profile_settings(f, game, path, &lines, source);
 	XwauLines_Free(&lines);
 }
 

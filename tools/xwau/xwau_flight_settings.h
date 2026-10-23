@@ -121,6 +121,32 @@
  * The hook can also set rates by flight group for each mission
  * ([WeaponRates]). These aren't imported; xwau_import missions reports the
  * missions that have them.
+ * The global weapon profiles of hook_weapon_rate also go into `weapons`.
+ * They come from the [WeaponStats], [WarheadStats], [EnergyStats],
+ * [LinkingStats] and [WeaponHardpointTypes] sections of
+ * FlightModels/default.ini. The hook's settings for them come from
+ * hook_weapon_rate.cfg, or else from Hooks.ini:
+ *   - fire_ratio_by_rank, from NoviceRankFireratioMultiplicator to
+ *     SuperAceRankFireratioMultiplicator (4, 3, 2, 2, 1, 1 by default),
+ *     when the DLL reads them;
+ *   - damage_by_difficulty, from DamagesMultiplicatorForDifficulty0 to 2
+ *     (0.5, 0.25, 1), when the DLL reads them;
+ *   - limit_linked_warhead_fire_rate, when LimitLinkedWarheadFireRate isn't
+ *     0;
+ *   - linking_rules, for each of PreventAILasersIonWhenDisabling,
+ *     PreventAIIonWhenNotDisabling and PreventPlayerLinkedLasersIon that
+ *     isn't 0.
+ * The factors are float32 values. They are written with enough digits to
+ * get the exact value back. WeaponsCount and IsLaserLinksFixEnabled aren't
+ * imported. They are reported when they would change something.
+ * When hook_weapon_rate.dll has weapon profiles, it also changes some rules
+ * with no data. The importer writes tie_fighter_energy_step_always_high,
+ * player_decharge_lasers_only, warhead_collision_bonus_any_target and
+ * gun_turret_hardpoints. It writes no_fire_from_destroyed_hardpoints when
+ * the hook's EnableFireMeshFilter isn't 0 (1 by default),
+ * turbolaser_hardpoint_types when the DLL contains "WeaponHardpointTypes",
+ * and rearm_follows_both_statuses when it contains
+ * "WarheadCapacity_00460904_Hook", which only TFTC's build does.
  *
  * `shield_recharge` is written when the mod installs hook_shield.dll. Its
  * values come from hook_shield.cfg, else the [hook_shield] section of
