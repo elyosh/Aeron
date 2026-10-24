@@ -114,6 +114,10 @@ bool XwauSettingsConfig_Read(const char* game, XwauSettingsConfig* out) {
 		XwauLines_Free(&turret_lines);
 	}
 	XwauLines lines;
+	if (Xwau_FindFile(game, "hook_weapon_type.dll", path, sizeof path)) {
+		out->weapon_type          = true;
+		out->weapon_type_missiles = Xwau_FileHasText(path, "To call the hook that fixes missile count");
+	}
 	if (Xwau_FindFile(game, "hook_jamming.dll", path, sizeof path)) {
 		out->jamming = true;
 		if (!XwauLines_Read(Xwau_FindFile(game, "hook_jamming.cfg", path, sizeof path) ? path : NULL, "",
@@ -178,7 +182,7 @@ bool XwauMissionSettings_WriteDefaults(FILE* f, const XwauSettingsConfig* config
 					   config->weapon_rate_rack_check || config->starship_ambient ||
 					   config->weapon_rate_slot_cap || config->gunner_seats ||
 					   config->weapon_rate_mesh_filter || config->weapon_rate_hardpoint_types ||
-					   config->weapon_rate_rearm_statuses || config->jamming;
+					   config->weapon_rate_rearm_statuses || config->jamming || config->weapon_type;
 	if (rules)
 		fputs("rules:\n", f);
 	if (config->mission_tie)
@@ -214,6 +218,10 @@ bool XwauMissionSettings_WriteDefaults(FILE* f, const XwauSettingsConfig* config
 		fputs("  hangar_jamming: false\n", f);
 	else if (config->jamming)
 		fputs("  super_star_destroyer_jamming: true\n", f);
+	if (config->weapon_type)
+		fputs("  two_launcher_fixes: true\n", f);
+	if (config->weapon_type_missiles)
+		fputs("  starship_missile_defense_any_warhead: true\n  weapon_rack_count_from_record: true\n", f);
 	const bool warheads     = config->mission_tie && !config->warhead_collision_damage;
 	const bool shields      = config->mission_tie && config->damage_through_shields;
 	const bool interdiction = config->engine_sound && config->interdiction_count;

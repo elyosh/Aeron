@@ -76,6 +76,10 @@ typedef struct XwauSettingsConfig {
 	/* hook_jamming.dll, and its IsJammingEnabled setting. */
 	bool      jamming;
 	bool      jamming_enabled;
+	/* hook_weapon_type.dll, and whether its build also changes the missile
+	 * defense and the rack count. */
+	bool      weapon_type;
+	bool      weapon_type_missiles;
 	bool      warhead_collision_damage;
 	bool      damage_through_shields;
 	long long target_method;

@@ -1889,6 +1889,20 @@ static void test_flight_settings(const char* scratch) {
 		  "flight settings: IsJammingEnabled = 0 turns jamming off");
 	remove(path);
 	remove(hooks);
+	snprintf(path, sizeof path, "%s/hook_weapon_type.dll", game);
+	write_file(path, "MZ To call the hook that sets the warhead menu");
+	check(XwauFlightSettings_Write(game, settings) &&
+			  same_file(settings, "# Made by xwau_import missions.\nversion: 1\nrules:\n"
+								  "  two_launcher_fixes: true\n"),
+		  "flight settings: hook_weapon_type fixes craft with two warhead launchers");
+	write_file(path,
+			   "MZ To call the hook that sets the warhead menu To call the hook that fixes missile count");
+	check(XwauFlightSettings_Write(game, settings) &&
+			  same_file(settings, "# Made by xwau_import missions.\nversion: 1\nrules:\n"
+								  "  two_launcher_fixes: true\n  starship_missile_defense_any_warhead: true\n"
+								  "  weapon_rack_count_from_record: true\n"),
+		  "flight settings: TFTC's hook_weapon_type also changes the missile defense and the rack count");
+	remove(path);
 }
 
 static void test_headlights(const char* scratch) {

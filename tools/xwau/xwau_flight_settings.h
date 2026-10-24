@@ -25,6 +25,9 @@
  *       gunner_fires_warheads: true
  *       gunner_fires_selected_group: true
  *       super_star_destroyer_jamming: true
+ *       two_launcher_fixes: true
+ *       starship_missile_defense_any_warhead: true
+ *       weapon_rack_count_from_record: true
  *     mission_settings:
  *       warhead_collision_damage: false
  *       damage_through_shields_on_hard: true
@@ -89,6 +92,10 @@
  * stock game. When the hook's IsJammingEnabled setting is 0
  * (hook_jamming.cfg, else Hooks.ini; 1 by default), it gives
  * hangar_jamming: false instead, which turns jamming off.
+ * hook_weapon_type.dll gives two_launcher_fixes: its fixes for craft with two
+ * warhead launchers. When the DLL also contains "To call the hook that fixes
+ * missile count", which only TFTC's build does, it gives
+ * starship_missile_defense_any_warhead and weapon_rack_count_from_record.
  * `mission_settings` holds the defaults that the global settings of
  * hook_mission_tie and hook_engine_sound give every mission
  * (xwau_mission_settings.h).
