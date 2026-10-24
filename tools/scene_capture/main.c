@@ -56,6 +56,11 @@ int main(int argc, char** argv) {
 	/* Captures use a fixed SDR presentation transform, independent of the desktop. */
 	Aeron_SetOutputHdr(0);
 	AeronScenePresent_SetTonemapOp(c.tonemap);
+	if (c.agx_highlight) {
+		AeronScenePresent_SetAgxHighlightSaturation(c.agx_highlight_saturation);
+		AeronScenePresent_SetAgxHighlightRange(c.agx_highlight_ev_start, c.agx_highlight_ev_end);
+		AeronScenePresent_SetAgxHighlightHue(c.agx_highlight_hue);
+	}
 	AeronScenePresent_SetBloomKernel(c.bloom_kernel);
 	Fixture fixture;
 	int     ok = Fixture_Create(&fixture, &c);

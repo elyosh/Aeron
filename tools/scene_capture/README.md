@@ -59,6 +59,7 @@ Presets that use game models need `asset_root` set to your game data.
 | `emissive_scale` | Emission multiplier (default 1). |
 | `bloom` | `{ intensity, kernel }` (kernel 1 or 4). Omit to disable bloom. |
 | `tonemap` | `agx` (default) or `aces`. |
+| `agx_highlight` | `{ saturation, ev_start, ev_end, hue }`: the AgX saturation of very bright pixels, reached at `ev_end` EV of scene luminance (0 = white), from the punchy saturation at `ev_start`; `hue` (0 to 1, default 0) is how much of them keeps its hue over the same ramp. Omit it to keep the renderer's default. |
 | `output_dir` | Where images and reports go. |
 | `game_scene` | Renders like the game; see below. |
 

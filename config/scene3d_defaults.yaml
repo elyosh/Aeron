@@ -39,4 +39,15 @@ tonemap:
   agx_eotf_exponent: 2.2
   agx_punchy_power: 1.1
   agx_punchy_saturation: 1.3
+  # The Punchy saturation of very bright pixels (emitters such as laser
+  # bolts, explosions and engine glows), which AgX takes toward white. It
+  # ramps from agx_punchy_saturation to agx_highlight_saturation between
+  # these EV of scene luminance (0 = white).
+  agx_highlight_saturation: 2.5
+  agx_highlight_ev_start: -2.0
+  agx_highlight_ev_end: 2.0
+  # How much of these pixels keeps its hue (0 to 1), reached at
+  # agx_highlight_ev_end over the same ramp: the brightest channel goes
+  # through the AgX curve, and the others keep their ratio to it.
+  agx_highlight_hue: 0.6
   aces_pre_exposure: 1.6

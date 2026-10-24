@@ -162,16 +162,21 @@ int Capture_SaveConfig(const CaptureConfig* c) {
 		return 0;
 	int ok = SDL_WriteIO(stream, text, strlen(text)) == strlen(text);
 	if (ok && (c->bloom_enabled || c->benchmark_mode)) {
+		float highlight_start, highlight_end;
+		AeronScenePresent_AgxHighlightRange(&highlight_start, &highlight_end);
 		snprintf(text, sizeof text,
 				 "bloom:\n  intensity: %.9g\n  kernel: %d\n"
 				 "bloom_capture: native_size_linear_RGB_before_present\n"
 				 "present_capture: production_SDR_tonemap_with_dithering\n"
 				 "tonemap: %s\nagx_look: punchy\nagx_eotf_exponent: %.9g\n"
-				 "agx_punchy_power: %.9g\nagx_punchy_saturation: %.9g\naces_pre_exposure: %.9g\n",
+				 "agx_punchy_power: %.9g\nagx_punchy_saturation: %.9g\nagx_highlight_saturation: %.9g\n"
+				 "agx_highlight_ev_start: %.9g\nagx_highlight_ev_end: %.9g\nagx_highlight_hue: %.9g\n"
+				 "aces_pre_exposure: %.9g\n",
 				 c->bloom_intensity, c->bloom_kernel == AERON_SCENE_BLOOM_KERNEL_1_TAP ? 1 : 4,
 				 c->tonemap == AERON_SCENE_TONEMAP_ACES ? "aces" : "agx", AeronScenePresent_EotfExponent(),
 				 AeronScenePresent_AgxPunchyPower(), AeronScenePresent_AgxPunchySaturation(),
-				 AeronScenePresent_AcesExposure());
+				 AeronScenePresent_AgxHighlightSaturation(), highlight_start, highlight_end,
+				 AeronScenePresent_AgxHighlightHue(), AeronScenePresent_AcesExposure());
 		ok = SDL_WriteIO(stream, text, strlen(text)) == strlen(text);
 	}
 	if (ok) {

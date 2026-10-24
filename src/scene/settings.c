@@ -135,7 +135,12 @@ static int tonemap_valid(const AeronSceneTonemapSettings* value) {
 		   value->agx_eotf_exponent <= 2.6f && isfinite(value->agx_punchy_power) &&
 		   value->agx_punchy_power >= 0.5f && value->agx_punchy_power <= 2.0f &&
 		   isfinite(value->agx_punchy_saturation) && value->agx_punchy_saturation >= 0.0f &&
-		   value->agx_punchy_saturation <= 2.0f && isfinite(value->aces_pre_exposure) &&
+		   value->agx_punchy_saturation <= 2.0f && isfinite(value->agx_highlight_saturation) &&
+		   value->agx_highlight_saturation >= 0.0f && value->agx_highlight_saturation <= 3.0f &&
+		   isfinite(value->agx_highlight_ev_start) && isfinite(value->agx_highlight_ev_end) &&
+		   value->agx_highlight_ev_end > value->agx_highlight_ev_start + 0.1f &&
+		   isfinite(value->agx_highlight_hue) && value->agx_highlight_hue >= 0.0f &&
+		   value->agx_highlight_hue <= 1.0f && isfinite(value->aces_pre_exposure) &&
 		   value->aces_pre_exposure >= 1.0f && value->aces_pre_exposure <= 3.0f;
 }
 
@@ -252,10 +257,16 @@ static int parse_shadows(const AeronConfigNode* map, int required, AeronSceneSha
 
 static int parse_tonemap(const AeronConfigNode* map, int required, AeronSceneTonemapSettings* value,
 						 AeronConfigError* error) {
-	static const char* const keys[] = {
-		"operator",         "agx_look", "agx_eotf_exponent", "agx_punchy_power", "agx_punchy_saturation",
-		"aces_pre_exposure"
-	};
+	static const char* const keys[] = { "operator",
+										"agx_look",
+										"agx_eotf_exponent",
+										"agx_punchy_power",
+										"agx_punchy_saturation",
+										"agx_highlight_saturation",
+										"agx_highlight_ev_start",
+										"agx_highlight_ev_end",
+										"agx_highlight_hue",
+										"aces_pre_exposure" };
 	if (!check_map(map, "tonemap", keys, sizeof keys / sizeof keys[0], required, error))
 		return 0;
 	if (!map)
@@ -269,6 +280,12 @@ static int parse_tonemap(const AeronConfigNode* map, int required, AeronSceneTon
 		!read_number(map, "tonemap", "agx_punchy_power", required, &value->agx_punchy_power, error) ||
 		!read_number(map, "tonemap", "agx_punchy_saturation", required, &value->agx_punchy_saturation,
 					 error) ||
+		!read_number(map, "tonemap", "agx_highlight_saturation", required, &value->agx_highlight_saturation,
+					 error) ||
+		!read_number(map, "tonemap", "agx_highlight_ev_start", required, &value->agx_highlight_ev_start,
+					 error) ||
+		!read_number(map, "tonemap", "agx_highlight_ev_end", required, &value->agx_highlight_ev_end, error) ||
+		!read_number(map, "tonemap", "agx_highlight_hue", required, &value->agx_highlight_hue, error) ||
 		!read_number(map, "tonemap", "aces_pre_exposure", required, &value->aces_pre_exposure, error))
 		return 0;
 

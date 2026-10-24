@@ -116,6 +116,9 @@ typedef struct CaptureConfig {
 	int                    bloom_chart, bloom_enabled, bloom_kernel, msaa_samples, tonemap;
 	int                    cull_mode, backface_fill;
 	float                  bloom_intensity, emissive_scale;
+	/* agx_highlight: the AgX highlight saturation and its EV ramp, when set. */
+	int   agx_highlight;
+	float agx_highlight_saturation, agx_highlight_ev_start, agx_highlight_ev_end, agx_highlight_hue;
 	/* screen_test: the first model alone, seen from `screen_eye` (model
 	 * metres) at yaw/pitch degrees, with test screen inputs. */
 	int                    screen_test;

@@ -68,6 +68,13 @@ cbuffer TonemapPS : register(b0, space3)
      *   z = punchy saturation
      *   w = reserved. */
     float4 agx_params;
+    /* AgX highlight saturation (AeronAgxToneMap):
+     *   x = saturation of the brightest pixels
+     *   y, z = EV of scene luminance where the ramp from the punchy
+     *          saturation starts and ends
+     *   w = how much of the brightest pixels keeps its hue, over the
+     *       same ramp. */
+    float4 agx_highlight;
 };
 
 Texture2D<float4> g_flight  : register(t0, space2);
@@ -88,7 +95,7 @@ float3 tonemap_agx_hdr(float3 col, float peak_scale)
      * peak. peak_scale == 1 follows the SDR AgX transform exactly. */
     const float max_ev = AERON_AGX_MAX_EV + log2(max(peak_scale, 1.0f));
     return AeronAgxToneMap(col, max_ev, present_misc.y, agx_params.x, agx_params.y,
-                           agx_params.z) * peak_scale;
+                           agx_params.z, agx_highlight) * peak_scale;
 }
 
 /* ===== ACES (HDR-target) ============================================

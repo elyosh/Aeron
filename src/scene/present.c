@@ -79,6 +79,48 @@ void AeronScenePresent_SetAgxPunchySaturation(float v) {
 	s_agx_punchy_saturation = v;
 }
 
+static float s_agx_highlight_saturation = 2.5f;
+static float s_agx_highlight_ev_start   = -2.0f;
+static float s_agx_highlight_ev_end     = 2.0f;
+static float s_agx_highlight_hue        = 0.6f;
+
+float AeronScenePresent_AgxHighlightHue(void) { return s_agx_highlight_hue; }
+
+void AeronScenePresent_SetAgxHighlightHue(float v) {
+	if (v < 0.0f) {
+		v = 0.0f;
+	}
+	if (v > 1.0f) {
+		v = 1.0f;
+	}
+	s_agx_highlight_hue = v;
+}
+
+float AeronScenePresent_AgxHighlightSaturation(void) { return s_agx_highlight_saturation; }
+
+void AeronScenePresent_SetAgxHighlightSaturation(float v) {
+	if (v < 0.0f) {
+		v = 0.0f;
+	}
+	if (v > 3.0f) {
+		v = 3.0f;
+	}
+	s_agx_highlight_saturation = v;
+}
+
+void AeronScenePresent_AgxHighlightRange(float* start, float* end) {
+	*start = s_agx_highlight_ev_start;
+	*end   = s_agx_highlight_ev_end;
+}
+
+void AeronScenePresent_SetAgxHighlightRange(float start, float end) {
+	if (!(end > start + 0.1f)) {
+		end = start + 0.1f;
+	}
+	s_agx_highlight_ev_start = start;
+	s_agx_highlight_ev_end   = end;
+}
+
 static int s_bloom_kernel = AERON_SCENE_BLOOM_KERNEL_4_TAP;
 
 int AeronScenePresent_BloomKernel(void) { return s_bloom_kernel; }
@@ -129,6 +171,9 @@ void AeronScenePresent_ApplySettings(const AeronSceneTonemapSettings* settings) 
 	AeronScenePresent_SetEotfExponent(settings->agx_eotf_exponent);
 	AeronScenePresent_SetAgxPunchyPower(settings->agx_punchy_power);
 	AeronScenePresent_SetAgxPunchySaturation(settings->agx_punchy_saturation);
+	AeronScenePresent_SetAgxHighlightSaturation(settings->agx_highlight_saturation);
+	AeronScenePresent_SetAgxHighlightRange(settings->agx_highlight_ev_start, settings->agx_highlight_ev_end);
+	AeronScenePresent_SetAgxHighlightHue(settings->agx_highlight_hue);
 	AeronScenePresent_SetAcesExposure(settings->aces_pre_exposure);
 }
 
@@ -236,7 +281,7 @@ void AeronScenePresentChain_Draw(AeronScenePresentChain* c, AeronRenderPass* pas
 	}
 	/* Match the reference bloom's final filter in image-height units. */
 	float bloom_scale = rt_h > 0 ? (float)rt_h / AERON_SCENE_BLOOM_REFERENCE_HEIGHT : 0.0f;
-	float u[20]       = {
+	float u[24]       = {
 		bloom_tex ? bloom_intensity : 0.0f,
 		rt_w > 0 ? 2.0f * bloom_scale / (float)rt_w : 0.0f,
 		rt_h > 0 ? 2.0f / AERON_SCENE_BLOOM_REFERENCE_HEIGHT : 0.0f,
@@ -257,6 +302,10 @@ void AeronScenePresentChain_Draw(AeronScenePresentChain* c, AeronRenderPass* pas
 		AeronScenePresent_AgxPunchyPower(),
 		AeronScenePresent_AgxPunchySaturation(),
 		0.0f,
+		AeronScenePresent_AgxHighlightSaturation(),
+		s_agx_highlight_ev_start,
+		s_agx_highlight_ev_end,
+		s_agx_highlight_hue,
 	};
 	Aeron_BindUniformData(pass, AERON_SHADER_STAGE_FRAGMENT, 0, u, sizeof u);
 	Aeron_Draw(pass, 4, 0);

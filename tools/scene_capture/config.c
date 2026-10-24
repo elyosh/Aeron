@@ -199,6 +199,36 @@ static int load_effects(const AeronConfigFile* yaml, CaptureConfig* config) {
 	}
 	config->tonemap =
 		!strcmp(tonemap, "aces") ? AERON_SCENE_TONEMAP_ACES : AERON_SCENE_TONEMAP_AGX_PARAMETRIC;
+	const AeronConfigNode* highlight = AeronConfigFile_GetNode(yaml, "agx_highlight");
+	if (highlight) {
+		if (AeronConfigNode_Type(highlight) != AERON_CONFIG_MAP) {
+			fprintf(stderr, "agx_highlight must be a mapping\n");
+			return 0;
+		}
+		for (size_t i = 0; i < AeronConfigNode_MapCount(highlight); ++i) {
+			const char* key = AeronConfigNode_MapKeyAt(highlight, i);
+			if (strcmp(key, "saturation") && strcmp(key, "ev_start") && strcmp(key, "ev_end") &&
+				strcmp(key, "hue")) {
+				fprintf(stderr, "Unknown agx_highlight setting: %s\n", key);
+				return 0;
+			}
+		}
+		double saturation, start, end, hue = 0.0;
+		if ((AeronConfigNode_MapGet(highlight, "hue") && !number(yaml, "agx_highlight.hue", 0, 1, &hue)) ||
+			!number(yaml, "agx_highlight.saturation", 0, 3, &saturation) ||
+			!number(yaml, "agx_highlight.ev_start", -16, 16, &start) ||
+			!number(yaml, "agx_highlight.ev_end", -16, 16, &end))
+			return 0;
+		if (!(end > start + 0.1)) {
+			fprintf(stderr, "agx_highlight.ev_end must be above ev_start\n");
+			return 0;
+		}
+		config->agx_highlight            = 1;
+		config->agx_highlight_saturation = (float)saturation;
+		config->agx_highlight_ev_start   = (float)start;
+		config->agx_highlight_ev_end     = (float)end;
+		config->agx_highlight_hue        = (float)hue;
+	}
 	config->bloom_kernel         = AERON_SCENE_BLOOM_KERNEL_4_TAP;
 	config->bloom_intensity      = .2f;
 	const AeronConfigNode* bloom = AeronConfigFile_GetNode(yaml, "bloom");
@@ -597,6 +627,7 @@ int CaptureConfig_Load(const char* path, CaptureConfig* config) {
 									  "fixture",
 									  "msaa_samples",
 									  "tonemap",
+									  "agx_highlight",
 									  "cull",
 									  "backface_fill",
 									  "screen_test",

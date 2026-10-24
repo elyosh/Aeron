@@ -75,6 +75,13 @@ cbuffer TonemapPS : register(b0, space3)
      *   z = punchy saturation
      *   w = reserved. */
     float4 agx_params;
+    /* AgX highlight saturation (AeronAgxToneMap):
+     *   x = saturation of the brightest pixels
+     *   y, z = EV of scene luminance where the ramp from the punchy
+     *          saturation starts and ends
+     *   w = how much of the brightest pixels keeps its hue, over the
+     *       same ramp. */
+    float4 agx_highlight;
 };
 
 Texture2D<float4> g_flight  : register(t0, space2);
@@ -176,7 +183,7 @@ float4 main(VSOut input) : SV_Target
         rgb = tonemap_aces_fitted(rgb * present_misc.z);
     else
         rgb = AeronAgxToneMap(rgb, AERON_AGX_MAX_EV, present_misc.y, agx_params.x,
-                             agx_params.y, agx_params.z);
+                             agx_params.y, agx_params.z, agx_highlight);
 
     /* Perturb the encoded value by half an 8-bit code, then decode so the
      * hardware sRGB store reconstructs that value. One scalar noise sample

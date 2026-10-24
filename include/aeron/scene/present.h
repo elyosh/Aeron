@@ -29,6 +29,15 @@ typedef struct AeronSceneTonemapSettings {
 	float agx_eotf_exponent;
 	float agx_punchy_power;
 	float agx_punchy_saturation;
+	/* The Punchy saturation of very bright pixels: it ramps from
+	 * agx_punchy_saturation to agx_highlight_saturation between these EV of
+	 * scene luminance. */
+	float agx_highlight_saturation;
+	float agx_highlight_ev_start;
+	float agx_highlight_ev_end;
+	/* How much of the brightest pixels keeps its hue (0 to 1). It ramps up
+	 * from 0 over the same EV. */
+	float agx_highlight_hue;
 	float aces_pre_exposure;
 } AeronSceneTonemapSettings;
 
@@ -45,6 +54,17 @@ float AeronScenePresent_AgxPunchyPower(void);
 void  AeronScenePresent_SetAgxPunchyPower(float v);
 float AeronScenePresent_AgxPunchySaturation(void);
 void  AeronScenePresent_SetAgxPunchySaturation(float v);
+/* Punchy saturation of very bright pixels, clamped to [0.0, 3.0]; default
+ * 2.5. The ramp runs from `start` to `end` EV of scene luminance, -2 to 2 by
+ * default; `end` is kept above `start`. */
+float AeronScenePresent_AgxHighlightSaturation(void);
+void  AeronScenePresent_SetAgxHighlightSaturation(float v);
+void  AeronScenePresent_AgxHighlightRange(float* start, float* end);
+void  AeronScenePresent_SetAgxHighlightRange(float start, float end);
+/* How much of the brightest pixels keeps its hue, clamped to [0.0, 1.0];
+ * default 0.6. */
+float AeronScenePresent_AgxHighlightHue(void);
+void  AeronScenePresent_SetAgxHighlightHue(float v);
 
 /* Parametric AgX tail exponent, clamped to [1.8, 2.6]; default 2.2. */
 float AeronScenePresent_EotfExponent(void);
@@ -66,14 +86,16 @@ void AeronScenePresent_SetBloomKernel(int mode);
  * frame into). Draw picks the variant from Aeron_OutputHdrEnabled()
  * and derives the HDR peak scale from the display headroom.
  *
- * The 20-float cbuffer layout matches scene_tonemap(.hdr).frag:
+ * The 24-float cbuffer layout matches scene_tonemap(.hdr).frag:
  *   [ 0..3] bloom_params   = (intensity, filter_uv_x, filter_uv_y, bar_y_uv)
  *   [ 4..7] tonemap_params = (exposure, op, hdr_peak, sdr_to_scrgb)
  *   [ 8..11] tint          = (r, g, b, PMA coverage alpha)
  *   [12..15] misc          = (bloom_kernel, eotf_exp, aces_exp,
  *                             src_coverage)
  *   [16..19] agx_params     = (look, punchy_power, punchy_saturation,
- *                              reserved) */
+ *                              reserved)
+ *   [20..23] agx_highlight  = (highlight_saturation, ev_start, ev_end,
+ *                              highlight_hue) */
 typedef struct AeronScenePresentChain AeronScenePresentChain;
 
 AeronScenePresentChain* AeronScenePresentChain_Create(AeronTextureFormat target_format);
