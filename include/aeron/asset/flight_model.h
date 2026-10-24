@@ -322,6 +322,14 @@ bool Aeron_FlightModelBuildMemory(const void* bytes, size_t size, const char* so
 bool Aeron_FlightModelBuildSemanticsMemory(const void* bytes, size_t size, const char* source_label,
 										   AeronFlightModel* out);
 
+/* Reads the bounds of a model from the JSON chunk of its GLB alone, without
+ * its binary chunk: the union of its components' descriptor bounds (`bounds`
+ * of AeronFlightComponent's `descriptor_bounds`), in metres in the Aeron
+ * frame. Returns false when the JSON isn't a flight model, or when a
+ * component has no descriptor geometry: its bounds then come from its mesh,
+ * which needs the binary chunk. */
+bool Aeron_FlightModelReadDescriptorBounds(const void* json, size_t size, AeronFlightBounds* out);
+
 void Aeron_FlightModelReleaseRenderData(AeronFlightModel* model);
 /* Frees the data only simulation consumers read: each component's topology,
  * hardpoints, tags and cooked simulation data, the model's articulations,

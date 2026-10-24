@@ -371,3 +371,32 @@ bool Aeron_OptModelBuildMemory(const void* bytes, size_t size, const char* label
 	}
 	return true;
 }
+
+bool Aeron_OptModelReadBounds(const void* bytes, size_t size, AeronFlightBounds* out) {
+	if (!bytes || !size || !out)
+		return false;
+	opt_error_t parser_error = { { 0 } };
+	opt_file_t* source       = opt_load_memory(bytes, size, &parser_error);
+	if (!source)
+		return false;
+	bool have_bounds = false;
+	memset(out, 0, sizeof *out);
+	for (int32_t index = 0; index < source->mesh_count; ++index) {
+		const opt_mesh_t* mesh = &source->meshes[index];
+		if (mesh->has_descriptor) {
+			const opt_vec3_t* box[2] = { &mesh->descriptor.bbox_min, &mesh->descriptor.bbox_max };
+			for (int corner = 0; corner < 2; ++corner) {
+				const AeronFlightVec3 point = { box[corner]->x, box[corner]->y, box[corner]->z };
+				include_point(out, &point, &have_bounds);
+			}
+			continue;
+		}
+		for (int32_t vertex = 0; vertex < mesh->vertex_count; ++vertex) {
+			const AeronFlightVec3 point = { mesh->vertices[vertex].x, mesh->vertices[vertex].y,
+											mesh->vertices[vertex].z };
+			include_point(out, &point, &have_bounds);
+		}
+	}
+	opt_free(source);
+	return have_bounds;
+}

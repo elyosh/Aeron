@@ -37,6 +37,12 @@ bool Aeron_OptModelBuildMemory(const void* bytes, size_t size, const char* label
 							   const AeronOptModelBuildOptions* options, AeronFlightModel* out,
 							   AeronOptModelError* error);
 
+/* Reads the bounds of the OPT `bytes` as XWA's ModelBounds finds them: the
+ * union of its meshes' descriptor boxes, or of a mesh's vertices when it has
+ * no descriptor. They are in OPT units and the OPT's own axes. Returns false
+ * when the file can't be read or has no mesh. */
+bool Aeron_OptModelReadBounds(const void* bytes, size_t size, AeronFlightBounds* out);
+
 #ifdef __cplusplus
 }
 #endif

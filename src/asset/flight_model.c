@@ -1248,6 +1248,43 @@ bool Aeron_FlightModelBuildSemanticsMemory(const void* bytes, size_t size, const
 	return built;
 }
 
+bool Aeron_FlightModelReadDescriptorBounds(const void* json, size_t size, AeronFlightBounds* out) {
+	if (!json || !size || !out)
+		return false;
+	cgltf_options options = { 0 };
+	cgltf_data*   data    = NULL;
+	if (cgltf_parse(&options, json, size, &data) != cgltf_result_success)
+		return false;
+	const cgltf_node* root = data->scene && data->scene->nodes_count == 1 ? data->scene->nodes[0] : NULL;
+	bool              ok   = root && node_role(root) == FLIGHT_ROLE_MODEL && root->children_count > 0;
+	bool              have_bounds = false;
+	memset(out, 0, sizeof *out);
+	for (cgltf_size index = 0; ok && index < root->children_count; ++index) {
+		const cgltf_node*    node      = root->children[index];
+		cJSON*               extension = parse_flight_extension(node);
+		float                span[3], center[3], bounds_min[3], bounds_max[3];
+		AeronFlightComponent component;
+		ok = extension && json_role(extension) == FLIGHT_ROLE_COMPONENT &&
+			 json_vector(cJSON_GetObjectItemCaseSensitive(extension, "span"), span, 3) &&
+			 json_vector(cJSON_GetObjectItemCaseSensitive(extension, "center"), center, 3) &&
+			 json_vector(cJSON_GetObjectItemCaseSensitive(extension, "boundsMin"), bounds_min, 3) &&
+			 json_vector(cJSON_GetObjectItemCaseSensitive(extension, "boundsMax"), bounds_max, 3);
+		cJSON_Delete(extension);
+		if (!ok)
+			break;
+		float matrix[16];
+		cgltf_node_transform_world(node, matrix);
+		memset(&component, 0, sizeof component);
+		ok = transform_descriptor_geometry(matrix, span, center, bounds_min, bounds_max, &component);
+		if (ok) {
+			bounds_include(out, &component.descriptor_bounds.min, &have_bounds);
+			bounds_include(out, &component.descriptor_bounds.max, &have_bounds);
+		}
+	}
+	cgltf_free(data);
+	return ok && have_bounds;
+}
+
 void Aeron_FlightModelReleaseRenderData(AeronFlightModel* model) {
 	if (!model)
 		return;
