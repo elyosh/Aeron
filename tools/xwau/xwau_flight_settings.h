@@ -24,6 +24,7 @@
  *       gunner_weapon_select_in_seat: true
  *       gunner_fires_warheads: true
  *       gunner_fires_selected_group: true
+ *       super_star_destroyer_jamming: true
  *     mission_settings:
  *       warhead_collision_damage: false
  *       damage_through_shields_on_hard: true
@@ -83,6 +84,11 @@
  * starship_ambient_sounds if it has ambient sounds (it contains
  * "AreStarshipAmbientEnabled") and that setting isn't 0. With this rule,
  * starships play their ambient sounds from the StarshipAmbient bank.
+ * hook_jamming.dll gives super_star_destroyer_jamming: the hook makes the
+ * Super Star Destroyer jam near its hangar, which it never does in the
+ * stock game. When the hook's IsJammingEnabled setting is 0
+ * (hook_jamming.cfg, else Hooks.ini; 1 by default), it gives
+ * hangar_jamming: false instead, which turns jamming off.
  * `mission_settings` holds the defaults that the global settings of
  * hook_mission_tie and hook_engine_sound give every mission
  * (xwau_mission_settings.h).

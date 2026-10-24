@@ -553,6 +553,96 @@ void XwauCraft_WriteWarheadLock(FILE* f, const XwauCraftWarheadLock* lock) {
 	write_warhead_lock_map(f, lock, "ai_lock_range");
 }
 
+/* The values of JammingDirection and JammingBehavior, and their names in
+ * the model file. */
+static const char* const g_jammingDirections[]     = { "All", "Up", "Down" };
+static const char* const g_jammingDirectionNames[] = { "all", "up", "down" };
+static const char* const g_jammingRules[]          = { "None", "HangarMeshCenter", "InsideHangarHardpoint",
+													   "InsideHangarHardpointAndJammingPoints" };
+static const char* const g_jammingRuleNames[]      = { "none", "hangar_mesh_center", "hangar_point",
+													   "hangar_and_jamming_points" };
+
+/* The index of `value` in `values`, compared as the hook compares it, with
+ * its case. Without a match, `fallback`, and a value that isn't empty is
+ * reported. */
+static int jamming_name(const char* source, const char* key, const char* value, const char* const* values,
+						int count, int fallback) {
+	for (int i = 0; i < count; ++i) {
+		if (strcmp(value, values[i]) == 0)
+			return i;
+	}
+	if (value[0])
+		Report(source, "[Jamming]: %s = %s isn't a value the hook knows; it uses %s", key, value,
+			   values[fallback]);
+	return fallback;
+}
+
+void XwauCraft_ReadJamming(const char* jamming_txt, const char* ini, XwauCraftJamming* jamming) {
+	XwauLines   lines  = { 0 };
+	const char* source = jamming_txt;
+	char        value[256];
+	long long   number;
+	memset(jamming, 0, sizeof *jamming);
+	if (jamming_txt)
+		XwauLines_Read(jamming_txt, "", XWAU_RULES_CPP, &lines);
+	if (lines.count == 0) {
+		XwauLines_Free(&lines);
+		source = ini;
+		if (ini)
+			XwauLines_Read(ini, "Jamming", XWAU_RULES_CPP, &lines);
+	}
+	if (lines.count == 0) {
+		XwauLines_Free(&lines);
+		return;
+	}
+	jamming->has     = true;
+	jamming->enabled = true;
+	jamming->range   = -1;
+	XwauLines_Value(&lines, "HasJamming", XWAU_RULES_CPP, value, sizeof value);
+	if (value[0] && !Xwau_StoiAuto(value, &number)) {
+		Report(source,
+			   "[Jamming]: HasJamming = %s isn't a number, which would crash XWAU; the section is left out",
+			   value);
+		jamming->has = false;
+	} else if (value[0]) {
+		jamming->enabled = number != 0;
+	}
+	XwauLines_Value(&lines, "JammingDirection", XWAU_RULES_CPP, value, sizeof value);
+	jamming->direction = jamming_name(source, "JammingDirection", value, g_jammingDirections, 3, 0);
+	XwauLines_Value(&lines, "JammingDistance", XWAU_RULES_CPP, value, sizeof value);
+	if (value[0] && !Xwau_StoiAuto(value, &number)) {
+		Report(
+			source,
+			"[Jamming]: JammingDistance = %s isn't a number, which would crash XWAU; the section is left out",
+			value);
+		jamming->has = false;
+	} else if (value[0]) {
+		jamming->range = (int)number;
+	}
+	XwauLines_Value(&lines, "JammingBehavior", XWAU_RULES_CPP, value, sizeof value);
+	jamming->rule = jamming_name(source, "JammingBehavior", value, g_jammingRules, 4, 3);
+	if (jamming->has && jamming->enabled && jamming->range < -1) {
+		Report(source, "[Jamming]: JammingDistance = %d never jams; the model's jamming is turned off",
+			   jamming->range);
+		jamming->enabled = false;
+	}
+	XwauLines_Free(&lines);
+}
+
+void XwauCraft_WriteJamming(FILE* f, const XwauCraftJamming* jamming) {
+	if (!jamming->enabled) {
+		fputs("jamming: {enabled: false}\n", f);
+		return;
+	}
+	fprintf(f,
+			"jamming: {enabled: true, direction: %s, range: ", g_jammingDirectionNames[jamming->direction]);
+	if (jamming->range < 0)
+		fputs("none", f);
+	else
+		fprintf(f, "%d", jamming->range);
+	fprintf(f, ", rule: %s}\n", g_jammingRuleNames[jamming->rule]);
+}
+
 static const char* const g_engineSoundNames[] = { "xwing",   "ywing",     "awing",  "tie",
 												  "gunboat", "corellian", "falcon", "slave" };
 static const char* const g_washNames[]        = { "normal", "starship" };
@@ -1076,7 +1166,7 @@ static bool write_craft_file(const char* path, const char* sources, const XwauCr
 							 const XwauStatsProfiles* stats, const XwauCraftShield* shield,
 							 const XwauCraftSound* sound, const XwauCraftComponents* components,
 							 const XwauGunnerSeats* gunner, const XwauCraftWarheadLock* lock,
-							 XwauLines* cockpits) {
+							 const XwauCraftJamming* jamming, XwauLines* cockpits) {
 	FILE* f = fopen(path, "wb");
 	if (!f) {
 		Report(path, "can't be written");
@@ -1098,6 +1188,8 @@ static bool write_craft_file(const char* path, const char* sources, const XwauCr
 		write_components(f, components);
 	if (lock->has)
 		XwauCraft_WriteWarheadLock(f, lock);
+	if (jamming->has)
+		XwauCraft_WriteJamming(f, jamming);
 	bool ok = XwauGunnerSeats_Write(f, gunner, cockpits);
 	if (!ok)
 		Report(NULL, "out of memory");
@@ -1196,7 +1288,8 @@ static const char* const g_sideFiles[] = { "Reticle.txt",
 										   "EnergyStats.txt",
 										   "LinkingStats.txt",
 										   "WeaponHardpointTypes.txt",
-										   "WarheadLock.txt" };
+										   "WarheadLock.txt",
+										   "Jamming.txt" };
 
 enum {
 	SIDE_RETICLE,
@@ -1213,6 +1306,7 @@ enum {
 	SIDE_LINKING_STATS,
 	SIDE_HARDPOINT_TYPES,
 	SIDE_WARHEAD_LOCK,
+	SIDE_JAMMING,
 	SIDE_FILES
 };
 
@@ -1252,7 +1346,10 @@ bool XwauCraft_Write(const char* xwau_root, const char* output_dir, XwauLines* c
 	bool   ok      = true;
 	int    written = 0, reticles = 0, colors = 0, engine_glows = 0, weapon_colors = 0, light_colors = 0;
 	int    stats_profiles = 0, shields = 0, weapon_rates = 0, sounds = 0, engine_slowing = 0, components = 0;
-	int    weapon_profiles = 0, warhead_locks = 0;
+	int    weapon_profiles = 0, warhead_locks = 0, jammings = 0;
+	/* hook_jamming reads the [Jamming] sections. */
+	char       jamming_dll[1024];
+	const bool jamming_hook = Xwau_FindFile(xwau_root, "hook_jamming.dll", jamming_dll, sizeof jamming_dll);
 	/* hook_weapon_lock reads the [WarheadLock] sections. */
 	char       weapon_lock_dll[1024];
 	const bool weapon_lock =
@@ -1352,6 +1449,10 @@ bool XwauCraft_Write(const char* xwau_root, const char* output_dir, XwauLines* c
 		const bool           model_lock = weapon_lock && strcasecmp(model, "default") != 0;
 		XwauCraft_ReadWarheadLock(model_lock ? side_path[SIDE_WARHEAD_LOCK] : NULL,
 								  model_lock && has_ini ? ini : NULL, &lock);
+		XwauCraftJamming jamming;
+		const bool       model_jamming = jamming_hook && strcasecmp(model, "default") != 0;
+		XwauCraft_ReadJamming(model_jamming ? side_path[SIDE_JAMMING] : NULL,
+							  model_jamming && has_ini ? ini : NULL, &jamming);
 		XwauGunnerSeats gunner;
 		memset(&gunner, 0, sizeof gunner);
 		if (turrets)
@@ -1368,7 +1469,7 @@ bool XwauCraft_Write(const char* xwau_root, const char* output_dir, XwauLines* c
 		disabled_profiles += stats.disabled;
 		if (!has_reticle(&hud) && !has_colors(&hud) && !has_engine_glows(&glows) && !has_weapons(weapons) &&
 			!stats.count && !shield.has && !XwauCraft_HasSound(&sound) && !strengths.has && !gunner.has &&
-			!lock.has) {
+			!lock.has && !jamming.has) {
 			XwauStatsProfiles_Free(&stats);
 			XwauWeaponStats_Free(&weapons->stats);
 			continue;
@@ -1386,7 +1487,7 @@ bool XwauCraft_Write(const char* xwau_root, const char* output_dir, XwauLines* c
 		}
 		if (!PathFormat(path, sizeof path, "%s/%s.yaml", craft_dir, key) || !MakeDirs(craft_dir) ||
 			!write_craft_file(path, sources, &hud, &glows, weapons, &stats, &shield, &sound, &strengths,
-							  &gunner, &lock, cockpits)) {
+							  &gunner, &lock, &jamming, cockpits)) {
 			XwauStatsProfiles_Free(&stats);
 			XwauWeaponStats_Free(&weapons->stats);
 			ok = false;
@@ -1400,6 +1501,7 @@ bool XwauCraft_Write(const char* xwau_root, const char* output_dir, XwauLines* c
 		components += strengths.has;
 		gunner_seats += gunner.has;
 		warhead_locks += lock.has;
+		jammings += jamming.has;
 		XwauStatsProfiles_Free(&stats);
 		written++;
 		reticles += has_reticle(&hud);
@@ -1416,9 +1518,10 @@ bool XwauCraft_Write(const char* xwau_root, const char* output_dir, XwauLines* c
 		NULL,
 		"model settings: %d files, %d with a reticle, %d with HUD colours, %d with engine glows, %d with "
 		"weapon settings, %d with weapon profiles, %d with stats profiles, %d with a shield recharge rate, "
-		"%d with sounds, %d with component strengths, %d with gunner seats, %d with warhead lock settings",
+		"%d with sounds, %d with component strengths, %d with gunner seats, %d with warhead lock settings, "
+		"%d with jamming rules",
 		written, reticles, colors, engine_glows, weapon_colors, weapon_profiles, stats_profiles, shields,
-		sounds, components, gunner_seats, warhead_locks);
+		sounds, components, gunner_seats, warhead_locks, jammings);
 	if (weapon_lock) {
 		/* The global section only sets the AI's ranges by the category of
 		   the AI's craft. */

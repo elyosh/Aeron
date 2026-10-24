@@ -1875,6 +1875,20 @@ static void test_flight_settings(const char* scratch) {
 	free(text);
 	remove(path);
 	remove(hooks);
+	snprintf(path, sizeof path, "%s/hook_jamming.dll", game);
+	write_file(path, "MZ IsJammingEnabled");
+	check(XwauFlightSettings_Write(game, settings) &&
+			  same_file(settings, "# Made by xwau_import missions.\nversion: 1\nrules:\n"
+								  "  super_star_destroyer_jamming: true\n"),
+		  "flight settings: hook_jamming makes the Super Star Destroyer jam");
+	snprintf(hooks, sizeof hooks, "%s/hook_jamming.cfg", game);
+	write_file(hooks, "; IsJammingEnabled = 0 or 1\nIsJammingEnabled = 0\n");
+	check(XwauFlightSettings_Write(game, settings) &&
+			  same_file(settings, "# Made by xwau_import missions.\nversion: 1\nrules:\n"
+								  "  hangar_jamming: false\n"),
+		  "flight settings: IsJammingEnabled = 0 turns jamming off");
+	remove(path);
+	remove(hooks);
 }
 
 static void test_headlights(const char* scratch) {
@@ -2120,6 +2134,43 @@ static void test_stats_profiles(const char* scratch) {
 	XwauCraft_ReadWarheadLock(txt, path, &lock);
 	check(lock.has && lock.value[4] == 59 && lock.value[3] == 708,
 		  "warhead lock: <model>WarheadLock.txt wins over the section");
+
+	XwauCraftJamming jamming;
+	write_file(path, "[Jamming]\n;Asteroids can't jam\nHasJamming = 0\nJammingDirection = All\n"
+					 "JammingDistance = -1\nJammingBehavior = None \n");
+	XwauCraft_ReadJamming(NULL, path, &jamming);
+	f = fopen(out, "wb");
+	XwauCraft_WriteJamming(f, &jamming);
+	fclose(f);
+	check(jamming.has && !jamming.enabled && same_file(out, "jamming: {enabled: false}\n"),
+		  "jamming: HasJamming = 0 turns the model's jamming off");
+	write_file(path, "[Jamming]\njammingdirection = Down\nJammingBehavior = InsideHangarHardpoint\n");
+	XwauCraft_ReadJamming(NULL, path, &jamming);
+	f = fopen(out, "wb");
+	XwauCraft_WriteJamming(f, &jamming);
+	fclose(f);
+	check(same_file(out, "jamming: {enabled: true, direction: down, range: none, rule: hangar_point}\n"),
+		  "jamming: all four keys are written, with the hook's defaults for the missing ones");
+	write_file(path,
+			   "[Jamming]\nJammingDirection = down\nJammingDistance = 0x1000\nJammingBehavior = None ;off\n");
+	XwauCraft_ReadJamming(NULL, path, &jamming);
+	check(jamming.has && jamming.enabled && jamming.direction == 0 && jamming.range == 4096 &&
+			  jamming.rule == 3,
+		  "jamming: a name in another case, or with a comment after it, gets the hook's default, and the "
+		  "distance is read in base 0");
+	write_file(path, "[Jamming]\nJammingDistance = -2\n");
+	XwauCraft_ReadJamming(NULL, path, &jamming);
+	check(jamming.has && !jamming.enabled, "jamming: a distance below -1 never jams");
+	write_file(path, "[Jamming]\nHasJamming = yes\n");
+	XwauCraft_ReadJamming(NULL, path, &jamming);
+	check(!jamming.has, "jamming: a HasJamming that would crash XWAU leaves out the section");
+	write_file(path, "[Shield]\nRechargeRate = 3\n");
+	write_file(txt, "JammingBehavior = HangarMeshCenter\n");
+	XwauCraft_ReadJamming(txt, path, &jamming);
+	check(jamming.has && jamming.enabled && jamming.rule == 1, "jamming: <model>Jamming.txt is read first");
+	write_file(txt, "");
+	XwauCraft_ReadJamming(txt, path, &jamming);
+	check(!jamming.has, "jamming: no section keeps the game's rule");
 
 	snprintf(path, sizeof path, "%s/FlightModels/default.ini", game);
 	write_file(path, "[WeaponRate]\nIsWarheadLockHookEnabled = 0\n");

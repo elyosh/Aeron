@@ -73,6 +73,9 @@ typedef struct XwauSettingsConfig {
 	/* hook_engine_sound.dll with starship ambient sounds, and its
 	 * AreStarshipAmbientEnabled setting. */
 	bool      starship_ambient;
+	/* hook_jamming.dll, and its IsJammingEnabled setting. */
+	bool      jamming;
+	bool      jamming_enabled;
 	bool      warhead_collision_damage;
 	bool      damage_through_shields;
 	long long target_method;

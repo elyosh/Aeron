@@ -152,6 +152,22 @@
  * FlightModels/WarheadLock.txt, sets the AI's ranges by the category of the
  * AI's craft. No mod has it, so it isn't imported, and it is reported.
  *
+ * The jamming rule comes from FlightModels/<model>Jamming.txt, or else from
+ * the [Jamming] section of the model's INI, if the installation has
+ * hook_jamming.dll:
+ *
+ *   jamming: {enabled: true, direction: down, range: none, rule: hangar_point}
+ *
+ * HasJamming = 0 gives `jamming: {enabled: false}`. Otherwise all four keys
+ * are written: the hook's default for a key that the section leaves out
+ * isn't the game's stock rule for the object type. JammingDirection is All,
+ * Up or Down, and JammingBehavior is None, HangarMeshCenter,
+ * InsideHangarHardpoint or InsideHangarHardpointAndJammingPoints, in this
+ * case. The hook uses All and InsideHangarHardpointAndJammingPoints for
+ * other values, and the importer reports them. JammingDistance -1 is
+ * `range: none`. A distance below -1 never jams, so it gives
+ * `enabled: false`, and is reported.
+ *
  * The sounds come from FlightModels/<model>Sound.txt, or else from the
  * [Sound] section of the model's INI. They are read the way XWAU's
  * hook_engine_sound reads them, and only if the installation has
@@ -345,6 +361,24 @@ typedef struct XwauCraftWarheadLock {
 void XwauCraft_ReadWarheadLock(const char* lock_txt, const char* ini, XwauCraftWarheadLock* lock);
 /* Writes the `warhead_lock` group of `lock`. */
 void XwauCraft_WriteWarheadLock(FILE* f, const XwauCraftWarheadLock* lock);
+
+/* The [Jamming] section of a model. `direction` and `rule` index the names
+ * of the model file; `range` is -1 for none. */
+typedef struct XwauCraftJamming {
+	bool has;
+	bool enabled;
+	int  direction;
+	int  range;
+	int  rule;
+} XwauCraftJamming;
+
+/* Reads the [Jamming] section of a model: `jamming_txt`
+ * (<model>Jamming.txt) when it has lines, else the section of `ini`.
+ * Either path can be NULL. A HasJamming or JammingDistance that isn't a
+ * number would crash XWAU: the section is then reported and left out. */
+void XwauCraft_ReadJamming(const char* jamming_txt, const char* ini, XwauCraftJamming* jamming);
+/* Writes the `jamming` group of `jamming`. */
+void XwauCraft_WriteJamming(FILE* f, const XwauCraftJamming* jamming);
 
 /* Reads the laser rates of a model: `rate_txt` (<model>WeaponRate.txt)
  * when it has lines, else the [WeaponRate] section of `ini`. Either path
