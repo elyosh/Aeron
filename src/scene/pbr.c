@@ -754,8 +754,9 @@ static void pbr_push_instance_uniforms(struct AeronScene3D* s, AeronRenderPass* 
 	vsb.table_component_count = prepared->table_component_count;
 	Aeron_BindUniformData(pass, AERON_SHADER_STAGE_VERTEX, 0, &vsb, sizeof vsb);
 
-	/* The `_anim` colour shaders' animation block: the instance's state. */
-	if (!depth_only && s->effect_atlas) {
+	/* The `_anim` colour shaders' animation block: the instance's state.
+	 * Only a mesh with animation records draws with them. */
+	if (!depth_only && s->effect_atlas && m->anim_buffer) {
 		AeronScenePbrAnimBlock anim;
 		memset(&anim, 0, sizeof anim);
 		anim.time      = s->animation_time;
@@ -1014,7 +1015,9 @@ int AeronScenePbr_DrawInstances(struct AeronScene3D* s, AeronCommandBuffer* cmd,
 		const int                     i  = order[k];
 		const AeronSceneMeshInstance* in = &s->instances[i];
 		const AeronSceneMesh*         m  = in->mesh;
-		if (!m || !m->vbo || !m->ibo || m->index_count == 0) {
+		/* A mesh without opaque faces, such as a laser bolt, draws nothing
+		 * here. */
+		if (!m || !m->vbo || !m->ibo || m->opaque_index_count == 0) {
 			continue;
 		}
 		if (!depth_only) {
