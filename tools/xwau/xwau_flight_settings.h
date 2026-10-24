@@ -51,6 +51,12 @@
  *       starships_on_easy: false
  *       double_starfighter_shields: false
  *       rate_percent: 100
+ *     docking:
+ *       dock_to_small_sets_big: true
+ *       ai_offsets_own_dock_point: true
+ *       carried_offsets_carrier_dock_point: true
+ *       player_approach_height: true
+ *       player_snaps_to_target_orientation: true
  *
  * `extra_planets` is written when the mod installs XWAU's backdrop hook,
  * hook_backdrops.dll. With it, a mission's backdrop id N from 104 to 255
@@ -169,6 +175,12 @@
  * The rules are in shield_recharge.h in the game. The hook's per-mission
  * [Shield] lines (<mission>_Shield.txt), which no mod uses, aren't
  * imported.
+ *
+ * `docking` is written when the mod installs hook_dock.dll, which changes
+ * how craft dock with no data. The cap of the player's approach height comes
+ * from each model's [Dock] section, in the model settings files. The hook's
+ * ForceDockElevation, which replaces that cap for every model, isn't
+ * imported, and is reported when it isn't -1.
  */
 
 #include <stdbool.h>

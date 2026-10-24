@@ -643,6 +643,42 @@ void XwauCraft_WriteJamming(FILE* f, const XwauCraftJamming* jamming) {
 	fprintf(f, ", rule: %s}\n", g_jammingRuleNames[jamming->rule]);
 }
 
+void XwauCraft_ReadDock(const char* dock_txt, const char* ini, XwauCraftDock* dock) {
+	XwauLines   lines  = { 0 };
+	const char* source = dock_txt;
+	char        value[256];
+	long long   number;
+	memset(dock, 0, sizeof *dock);
+	if (dock_txt)
+		XwauLines_Read(dock_txt, "", XWAU_RULES_CPP, &lines);
+	if (lines.count == 0) {
+		XwauLines_Free(&lines);
+		source = ini;
+		if (ini)
+			XwauLines_Read(ini, "Dock", XWAU_RULES_CPP, &lines);
+	}
+	if (lines.count == 0) {
+		XwauLines_Free(&lines);
+		return;
+	}
+	dock->has             = true;
+	dock->approach_height = 932;
+	XwauLines_Value(&lines, "DockElevation", XWAU_RULES_CPP, value, sizeof value);
+	if (value[0] && !Xwau_StoiAuto(value, &number)) {
+		Report(source,
+			   "[Dock]: DockElevation = %s isn't a number, which would crash XWAU; the section is left out",
+			   value);
+		dock->has = false;
+	} else if (value[0]) {
+		dock->approach_height = (int)number;
+	}
+	XwauLines_Free(&lines);
+}
+
+void XwauCraft_WriteDock(FILE* f, const XwauCraftDock* dock) {
+	fprintf(f, "docking: {approach_height: %d}\n", dock->approach_height);
+}
+
 static const char* const g_engineSoundNames[] = { "xwing",   "ywing",     "awing",  "tie",
 												  "gunboat", "corellian", "falcon", "slave" };
 static const char* const g_washNames[]        = { "normal", "starship" };
@@ -1166,7 +1202,8 @@ static bool write_craft_file(const char* path, const char* sources, const XwauCr
 							 const XwauStatsProfiles* stats, const XwauCraftShield* shield,
 							 const XwauCraftSound* sound, const XwauCraftComponents* components,
 							 const XwauGunnerSeats* gunner, const XwauCraftWarheadLock* lock,
-							 const XwauCraftJamming* jamming, XwauLines* cockpits) {
+							 const XwauCraftJamming* jamming, const XwauCraftDock* dock,
+							 XwauLines* cockpits) {
 	FILE* f = fopen(path, "wb");
 	if (!f) {
 		Report(path, "can't be written");
@@ -1190,6 +1227,8 @@ static bool write_craft_file(const char* path, const char* sources, const XwauCr
 		XwauCraft_WriteWarheadLock(f, lock);
 	if (jamming->has)
 		XwauCraft_WriteJamming(f, jamming);
+	if (dock->has)
+		XwauCraft_WriteDock(f, dock);
 	bool ok = XwauGunnerSeats_Write(f, gunner, cockpits);
 	if (!ok)
 		Report(NULL, "out of memory");
@@ -1289,7 +1328,8 @@ static const char* const g_sideFiles[] = { "Reticle.txt",
 										   "LinkingStats.txt",
 										   "WeaponHardpointTypes.txt",
 										   "WarheadLock.txt",
-										   "Jamming.txt" };
+										   "Jamming.txt",
+										   "Dock.txt" };
 
 enum {
 	SIDE_RETICLE,
@@ -1307,6 +1347,7 @@ enum {
 	SIDE_HARDPOINT_TYPES,
 	SIDE_WARHEAD_LOCK,
 	SIDE_JAMMING,
+	SIDE_DOCK,
 	SIDE_FILES
 };
 
@@ -1346,7 +1387,10 @@ bool XwauCraft_Write(const char* xwau_root, const char* output_dir, XwauLines* c
 	bool   ok      = true;
 	int    written = 0, reticles = 0, colors = 0, engine_glows = 0, weapon_colors = 0, light_colors = 0;
 	int    stats_profiles = 0, shields = 0, weapon_rates = 0, sounds = 0, engine_slowing = 0, components = 0;
-	int    weapon_profiles = 0, warhead_locks = 0, jammings = 0;
+	int    weapon_profiles = 0, warhead_locks = 0, jammings = 0, docks = 0;
+	/* hook_dock reads the [Dock] sections. */
+	char       dock_dll[1024];
+	const bool dock_hook = Xwau_FindFile(xwau_root, "hook_dock.dll", dock_dll, sizeof dock_dll);
 	/* hook_jamming reads the [Jamming] sections. */
 	char       jamming_dll[1024];
 	const bool jamming_hook = Xwau_FindFile(xwau_root, "hook_jamming.dll", jamming_dll, sizeof jamming_dll);
@@ -1453,6 +1497,10 @@ bool XwauCraft_Write(const char* xwau_root, const char* output_dir, XwauLines* c
 		const bool       model_jamming = jamming_hook && strcasecmp(model, "default") != 0;
 		XwauCraft_ReadJamming(model_jamming ? side_path[SIDE_JAMMING] : NULL,
 							  model_jamming && has_ini ? ini : NULL, &jamming);
+		XwauCraftDock dock;
+		const bool    model_dock = dock_hook && strcasecmp(model, "default") != 0;
+		XwauCraft_ReadDock(model_dock ? side_path[SIDE_DOCK] : NULL, model_dock && has_ini ? ini : NULL,
+						   &dock);
 		XwauGunnerSeats gunner;
 		memset(&gunner, 0, sizeof gunner);
 		if (turrets)
@@ -1469,7 +1517,7 @@ bool XwauCraft_Write(const char* xwau_root, const char* output_dir, XwauLines* c
 		disabled_profiles += stats.disabled;
 		if (!has_reticle(&hud) && !has_colors(&hud) && !has_engine_glows(&glows) && !has_weapons(weapons) &&
 			!stats.count && !shield.has && !XwauCraft_HasSound(&sound) && !strengths.has && !gunner.has &&
-			!lock.has && !jamming.has) {
+			!lock.has && !jamming.has && !dock.has) {
 			XwauStatsProfiles_Free(&stats);
 			XwauWeaponStats_Free(&weapons->stats);
 			continue;
@@ -1487,7 +1535,7 @@ bool XwauCraft_Write(const char* xwau_root, const char* output_dir, XwauLines* c
 		}
 		if (!PathFormat(path, sizeof path, "%s/%s.yaml", craft_dir, key) || !MakeDirs(craft_dir) ||
 			!write_craft_file(path, sources, &hud, &glows, weapons, &stats, &shield, &sound, &strengths,
-							  &gunner, &lock, &jamming, cockpits)) {
+							  &gunner, &lock, &jamming, &dock, cockpits)) {
 			XwauStatsProfiles_Free(&stats);
 			XwauWeaponStats_Free(&weapons->stats);
 			ok = false;
@@ -1502,6 +1550,7 @@ bool XwauCraft_Write(const char* xwau_root, const char* output_dir, XwauLines* c
 		gunner_seats += gunner.has;
 		warhead_locks += lock.has;
 		jammings += jamming.has;
+		docks += dock.has;
 		XwauStatsProfiles_Free(&stats);
 		written++;
 		reticles += has_reticle(&hud);
@@ -1519,9 +1568,9 @@ bool XwauCraft_Write(const char* xwau_root, const char* output_dir, XwauLines* c
 		"model settings: %d files, %d with a reticle, %d with HUD colours, %d with engine glows, %d with "
 		"weapon settings, %d with weapon profiles, %d with stats profiles, %d with a shield recharge rate, "
 		"%d with sounds, %d with component strengths, %d with gunner seats, %d with warhead lock settings, "
-		"%d with jamming rules",
+		"%d with jamming rules, %d with a docking approach height",
 		written, reticles, colors, engine_glows, weapon_colors, weapon_profiles, stats_profiles, shields,
-		sounds, components, gunner_seats, warhead_locks, jammings);
+		sounds, components, gunner_seats, warhead_locks, jammings, docks);
 	if (weapon_lock) {
 		/* The global section only sets the AI's ranges by the category of
 		   the AI's craft. */

@@ -1903,6 +1903,16 @@ static void test_flight_settings(const char* scratch) {
 								  "  weapon_rack_count_from_record: true\n"),
 		  "flight settings: TFTC's hook_weapon_type also changes the missile defense and the rack count");
 	remove(path);
+	snprintf(path, sizeof path, "%s/hook_dock.dll", game);
+	write_file(path, "MZ");
+	check(XwauFlightSettings_Write(game, settings) &&
+			  same_file(settings,
+						"# Made by xwau_import missions.\nversion: 1\ndocking:\n"
+						"  dock_to_small_sets_big: true\n  ai_offsets_own_dock_point: true\n"
+						"  carried_offsets_carrier_dock_point: true\n  player_approach_height: true\n"
+						"  player_snaps_to_target_orientation: true\n"),
+		  "flight settings: hook_dock changes how craft dock");
+	remove(path);
 }
 
 static void test_headlights(const char* scratch) {
@@ -2185,6 +2195,24 @@ static void test_stats_profiles(const char* scratch) {
 	write_file(txt, "");
 	XwauCraft_ReadJamming(txt, path, &jamming);
 	check(!jamming.has, "jamming: no section keeps the game's rule");
+
+	XwauCraftDock dock;
+	write_file(path, "[Dock]\n;DockElevation = 500\n");
+	XwauCraft_ReadDock(NULL, path, &dock);
+	check(!dock.has, "dock: a section with only comments keeps the game's defaults");
+	write_file(path, "[Dock]\nDockElevation = 0x100 ;low\n");
+	XwauCraft_ReadDock(NULL, path, &dock);
+	f = fopen(out, "wb");
+	XwauCraft_WriteDock(f, &dock);
+	fclose(f);
+	check(dock.has && same_file(out, "docking: {approach_height: 256}\n"),
+		  "dock: DockElevation is the approach height, read in base 0");
+	write_file(path, "[Dock]\nOtherKey = 1\n");
+	XwauCraft_ReadDock(NULL, path, &dock);
+	check(dock.has && dock.approach_height == 932, "dock: a section without DockElevation gives 932");
+	write_file(path, "[Dock]\nDockElevation = high\n");
+	XwauCraft_ReadDock(NULL, path, &dock);
+	check(!dock.has, "dock: a DockElevation that would crash XWAU leaves out the section");
 
 	snprintf(path, sizeof path, "%s/FlightModels/default.ini", game);
 	write_file(path, "[WeaponRate]\nIsWarheadLockHookEnabled = 0\n");

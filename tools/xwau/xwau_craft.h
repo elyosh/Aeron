@@ -168,6 +168,15 @@
  * `range: none`. A distance below -1 never jams, so it gives
  * `enabled: false`, and is reported.
  *
+ * The cap of the player's docking approach height comes from the
+ * DockElevation key of FlightModels/<model>Dock.txt, or else of the [Dock]
+ * section of the model's INI, if the installation has hook_dock.dll:
+ *
+ *   docking: {approach_height: 0}
+ *
+ * A section without the key gives 932. Without a section, the game uses the
+ * hook's defaults: 0 for SpaceColony2, 932 for the others.
+ *
  * The sounds come from FlightModels/<model>Sound.txt, or else from the
  * [Sound] section of the model's INI. They are read the way XWAU's
  * hook_engine_sound reads them, and only if the installation has
@@ -379,6 +388,22 @@ typedef struct XwauCraftJamming {
 void XwauCraft_ReadJamming(const char* jamming_txt, const char* ini, XwauCraftJamming* jamming);
 /* Writes the `jamming` group of `jamming`. */
 void XwauCraft_WriteJamming(FILE* f, const XwauCraftJamming* jamming);
+
+/* The [Dock] section of a model: the cap of the player's docking approach
+ * height above it. */
+typedef struct XwauCraftDock {
+	bool has;
+	int  approach_height;
+} XwauCraftDock;
+
+/* Reads the [Dock] section of a model: `dock_txt` (<model>Dock.txt) when it
+ * has lines, else the section of `ini`. Either path can be NULL. When the
+ * section has lines, a missing DockElevation is 932, as in the hook. A
+ * DockElevation that isn't a number would crash XWAU: the section is then
+ * reported and left out. */
+void XwauCraft_ReadDock(const char* dock_txt, const char* ini, XwauCraftDock* dock);
+/* Writes the `docking` group of `dock`. */
+void XwauCraft_WriteDock(FILE* f, const XwauCraftDock* dock);
 
 /* Reads the laser rates of a model: `rate_txt` (<model>WeaponRate.txt)
  * when it has lines, else the [WeaponRate] section of `ini`. Either path

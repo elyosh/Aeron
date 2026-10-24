@@ -308,6 +308,27 @@ static bool write_shield_recharge(FILE* f, const char* game) {
 	return true;
 }
 
+/* Writes the `docking` section, when the mod installs hook_dock. The hook's
+ * ForceDockElevation (hook_dock.cfg, else Hooks.ini) isn't imported; it is
+ * reported when it is set. */
+static bool write_docking(FILE* f, const char* game) {
+	char path[1024];
+	if (!Xwau_FindFile(game, "hook_dock.dll", path, sizeof path))
+		return false;
+	XwauLines lines;
+	char      source[64];
+	hook_lines(game, "hook_dock", &lines, source, sizeof source);
+	const long long force = hook_value(&lines, source, "ForceDockElevation", -1);
+	if (force >= 0)
+		Report(source, "ForceDockElevation = %lld isn't imported: the models' approach heights apply", force);
+	XwauLines_Free(&lines);
+	fputs("docking:\n  dock_to_small_sets_big: true\n  ai_offsets_own_dock_point: true\n"
+		  "  carried_offsets_carrier_dock_point: true\n  player_approach_height: true\n"
+		  "  player_snaps_to_target_orientation: true\n",
+		  f);
+	return true;
+}
+
 bool XwauFlightSettings_Write(const char* game, const char* path) {
 	char               found[1024];
 	const bool         extra_planets = Xwau_FindFile(game, "hook_backdrops.dll", found, sizeof found);
@@ -330,6 +351,7 @@ bool XwauFlightSettings_Write(const char* game, const char* path) {
 	bool       impact, rates;
 	write_weapons(f, game, &impact, &rates);
 	const bool shields    = write_shield_recharge(f, game);
+	const bool docking    = write_docking(f, game);
 	XwauSettingsConfig_Free(&config);
 	const bool        ok        = !ferror(f) && fclose(f) == 0;
 	char              what[300] = "";
@@ -338,7 +360,8 @@ bool XwauFlightSettings_Write(const char* game, const char* path) {
 									headlights ? "the headlights" : NULL,
 									impact ? "the impact colours" : NULL,
 									rates ? "the laser rates" : NULL,
-									shields ? "the shield recharge rules" : NULL };
+									shields ? "the shield recharge rules" : NULL,
+									docking ? "the docking rules" : NULL };
 	for (size_t i = 0; i < sizeof parts / sizeof parts[0]; ++i) {
 		if (parts[i])
 			snprintf(what + strlen(what), sizeof what - strlen(what), "%s%s", what[0] ? ", " : "", parts[i]);
