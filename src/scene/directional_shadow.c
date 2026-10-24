@@ -99,10 +99,10 @@ static void shadow_bounds_include_box(ShadowBounds* bounds, const AeronSceneInst
 }
 
 static const AeronSceneMeshInstance* shadow_caster(const struct AeronScene3D* scene, uint16_t index) {
-	if (index < AERON_SCENE_MAX_INSTANCES) {
+	if (index < AERON_SCENE_SHADOW_ONLY_BASE) {
 		return index < (uint16_t)scene->instance_count ? &scene->instances[index] : NULL;
 	}
-	index = (uint16_t)(index - AERON_SCENE_MAX_INSTANCES);
+	index = (uint16_t)(index - AERON_SCENE_SHADOW_ONLY_BASE);
 	return index < (uint16_t)scene->shadow_only_count ? &scene->shadow_only[index] : NULL;
 }
 
@@ -662,7 +662,7 @@ static void shadow_prepare_receiver_local(struct AeronScene3D*                  
 		const uint16_t encoded =
 			candidate < scene->instance_count
 				? (uint16_t)candidate
-				: (uint16_t)(AERON_SCENE_MAX_INSTANCES + candidate - scene->instance_count);
+				: (uint16_t)(AERON_SCENE_SHADOW_ONLY_BASE + candidate - scene->instance_count);
 		const AeronSceneMeshInstance* instance = shadow_caster(scene, encoded);
 		AeronSceneInstanceBox         bound;
 		if (!instance || !instance->mesh ||
@@ -682,7 +682,7 @@ static void shadow_prepare_receiver_local(struct AeronScene3D*                  
 			excluded_caster = 1;
 			continue;
 		}
-		if (scene->receiver_local_shadow_caster_count < AERON_SCENE_MAX_SHADOW_CASTERS) {
+		if (scene->receiver_local_shadow_caster_count < combined_count) {
 			scene->receiver_local_shadow_casters[scene->receiver_local_shadow_caster_count++] = encoded;
 			caster_z_max = fmaxf(caster_z_max, bz + bound.half[2]);
 			if ((instance->shadow_flags & AERON_SCENE_INSTANCE_CAST_RECEIVER_LOCAL_ONLY) != 0) {
@@ -921,7 +921,7 @@ static void shadow_prepare_cascade(struct AeronScene3D* scene, const AeronSceneD
 			continue;
 		}
 		uint16_t* count = &scene->shadow_caster_count[cascade];
-		if (*count < AERON_SCENE_MAX_SHADOW_CASTERS) {
+		if (*count < combined_count) {
 			scene->shadow_casters[cascade][(*count)++] = object_indices[candidate];
 			caster_z_max                               = fmaxf(caster_z_max, bz + bound->half[2]);
 		}
@@ -1113,18 +1113,21 @@ int AeronSceneDirectionalShadow_Prepare(struct AeronScene3D* scene) {
 	const uint32_t tile_size      = desc.cascade_count == 1 ? desc.atlas_size : desc.atlas_size / 2;
 	const uint32_t usable_size    = tile_size - 2u * AERON_SCENE_SHADOW_GUARD_TEXELS;
 	const int      combined_count = scene->instance_count + scene->shadow_only_count;
-	AeronSceneInstanceBox object_bounds[AERON_SCENE_MAX_SHADOW_CASTERS];
-	uint16_t       object_indices[AERON_SCENE_MAX_SHADOW_CASTERS];
-	uint8_t        bound_valid[AERON_SCENE_MAX_SHADOW_CASTERS];
-	uint8_t        caster_valid[AERON_SCENE_MAX_SHADOW_CASTERS];
-	memset(bound_valid, 0, sizeof bound_valid);
-	memset(caster_valid, 0, sizeof caster_valid);
+	/* One entry per caster, in the scene: they don't fit the stack. */
+	AeronSceneInstanceBox* object_bounds  = scene->shadow_object_bounds;
+	uint16_t*              object_indices = scene->shadow_object_indices;
+	uint8_t*               bound_valid    = scene->shadow_bound_valid;
+	uint8_t*               caster_valid   = scene->shadow_caster_valid;
+	if (combined_count > 0) {
+		memset(bound_valid, 0, (size_t)combined_count);
+		memset(caster_valid, 0, (size_t)combined_count);
+	}
 	scene->shadow_stats.candidate_count = 0;
 	for (int candidate = 0; candidate < combined_count; candidate++) {
 		const uint16_t encoded =
 			candidate < scene->instance_count
 				? (uint16_t)candidate
-				: (uint16_t)(AERON_SCENE_MAX_INSTANCES + candidate - scene->instance_count);
+				: (uint16_t)(AERON_SCENE_SHADOW_ONLY_BASE + candidate - scene->instance_count);
 		const AeronSceneMeshInstance* instance = shadow_caster(scene, encoded);
 		if (!instance ||
 			!AeronSceneInternal_InstanceBox(instance, x_axis, y_axis, light_dir, &object_bounds[candidate])) {

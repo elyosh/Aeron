@@ -12,7 +12,12 @@
 
 #define AERON_SCENE_BLOOM_REFERENCE_HEIGHT 2160
 
-#define AERON_SCENE_MAX_INSTANCES 2048
+/* Instance indices are 16 bits, and the shadow lists store a shadow-only
+ * caster as AERON_SCENE_SHADOW_ONLY_BASE plus its index: so the instances
+ * and the shadow-only casters each grow up to 32,767 (scene_reserve_*). */
+#define AERON_SCENE_MAX_INSTANCES 32767
+#define AERON_SCENE_MAX_SHADOW_ONLY 32767
+#define AERON_SCENE_SHADOW_ONLY_BASE 32768u
 #define AERON_SCENE_MAX_LIGHTS AERON_SCENE_POINT_LIGHT_CAPACITY
 #define AERON_SCENE_CLUSTER_DEFAULT_TILE_SIZE 32u
 #define AERON_SCENE_CLUSTER_MAX_TILE_SIZE 64u
@@ -20,18 +25,10 @@
 #define AERON_SCENE_CLUSTER_REFERENCE_HEIGHT 1080u
 #define AERON_SCENE_CLUSTER_DEFAULT_DEPTH_SLICES 24u
 #define AERON_SCENE_CLUSTER_THREADS 64u
-#define AERON_SCENE_MAX_BILLBOARDS 2304
 #define AERON_SCENE_MAX_FRAME_UNIFORMS 4
 #define AERON_SCENE_FRAME_UNIFORM_CAP AERON_MAX_UNIFORM_DATA_SIZE
 #define AERON_SCENE_MAX_MESH_OVERLAYS 64
 #define AERON_SCENE_MAX_OVERLAY_VERTS (256u * 1024u)
-#define AERON_SCENE_MAX_SHADOW_ONLY AERON_SCENE_MAX_INSTANCES
-#define AERON_SCENE_MAX_SHADOW_CASTERS (AERON_SCENE_MAX_INSTANCES + AERON_SCENE_MAX_SHADOW_ONLY)
-#define AERON_SCENE_MAX_MESH_TABLES                                                                          \
-	(1 + AERON_SCENE_MAX_INSTANCES * 2 + AERON_SCENE_MAX_SHADOW_ONLY + AERON_SCENE_MAX_MESH_OVERLAYS)
-/* Open addressing over at most AERON_SCENE_MAX_MESH_TABLES keys: the power
- * of two above it. */
-#define AERON_SCENE_MESH_TABLE_HASH_CAP 8192
 #define AERON_SCENE_SHADOW_GUARD_TEXELS 4
 
 /* Pipeline kinds for AeronScenePbr_Pipeline / _DrawInstances. Color
@@ -182,12 +179,12 @@ typedef struct AeronScenePlanarReflection {
 	/* This frame: the image holds the instances in `order`, drawn through
 	 * `view_proj` from `eye` (world); `drawing` while the mirrored pass
 	 * records, so the PBR draws take these. */
-	int      active;
-	int      drawing;
-	float    view_proj[16];
-	float    eye[3];
-	uint16_t order[AERON_SCENE_MAX_INSTANCES];
-	int      order_count;
+	int       active;
+	int       drawing;
+	float     view_proj[16];
+	float     eye[3];
+	uint16_t* order; /* instance_capacity entries */
+	int       order_count;
 	/* Where the floor reads it: x0, y0, x1, y1 in half-resolution texels. */
 	float screen[4];
 } AeronScenePlanarReflection;
@@ -385,20 +382,24 @@ struct AeronScene3D {
 	AeronSceneAfterMeshesFn after_meshes_fn;
 	void*                   after_meshes_user;
 
-	AeronSceneMeshInstance     instances[AERON_SCENE_MAX_INSTANCES];
-	AeronScenePreparedInstance prepared_instances[AERON_SCENE_MAX_INSTANCES];
-	int                        instance_count;
+	/* The instances and the arrays with one entry per instance grow
+	 * together (scene_reserve_instances), up to AERON_SCENE_MAX_INSTANCES. */
+	AeronSceneMeshInstance*     instances;
+	AeronScenePreparedInstance* prepared_instances;
+	int                         instance_count;
+	int                         instance_capacity;
 	/* Camera-visible instances, nearest first (AeronSceneStorage_Prepare):
 	 * opaque passes draw in this order so depth testing rejects what the
 	 * nearer instances hide, and blending walks it backwards. */
-	uint16_t               camera_order[AERON_SCENE_MAX_INSTANCES];
-	int                    camera_order_count;
-	int                    instances_dropped;
-	AeronSceneLight        lights[AERON_SCENE_MAX_LIGHTS];
-	int                    light_count;
-	int                    lights_dropped;
-	AeronSceneFrameUniform frame_uniforms[AERON_SCENE_MAX_FRAME_UNIFORMS];
-	int                    frame_uniform_count;
+	uint16_t*                  camera_order;
+	struct AeronSceneOrderKey* order_keys; /* AeronSceneStorage_Prepare's sort */
+	int                        camera_order_count;
+	int                        instances_dropped;
+	AeronSceneLight            lights[AERON_SCENE_MAX_LIGHTS];
+	int                        light_count;
+	int                        lights_dropped;
+	AeronSceneFrameUniform     frame_uniforms[AERON_SCENE_MAX_FRAME_UNIFORMS];
+	int                        frame_uniform_count;
 	/* Image-based lighting environment for this frame; textures borrowed. */
 	AeronScenePbrEnvironment pbr_environment;
 	int                      pbr_environment_set;
@@ -424,15 +425,22 @@ struct AeronScene3D {
 	AeronSceneDirectionalShadowDesc    directional_shadow;
 	AeronSceneDirectionalShadowUniform shadow_uniform;
 	AeronSceneDirectionalShadowStats   shadow_stats;
-	AeronSceneMeshInstance             shadow_only[AERON_SCENE_MAX_SHADOW_ONLY];
-	AeronScenePreparedInstance         prepared_shadow_only[AERON_SCENE_MAX_SHADOW_ONLY];
+	AeronSceneMeshInstance*            shadow_only;
+	AeronScenePreparedInstance*        prepared_shadow_only;
 	int                                shadow_only_count;
+	int                                shadow_only_capacity;
 	int                                shadow_only_dropped;
-	uint16_t shadow_casters[AERON_SCENE_SHADOW_MAX_CASCADES][AERON_SCENE_MAX_SHADOW_CASTERS];
-	uint16_t shadow_caster_count[AERON_SCENE_SHADOW_MAX_CASCADES];
+	/* The caster lists and the shadow code's arrays hold
+	 * instance_capacity + shadow_only_capacity casters. */
+	uint16_t*                          shadow_casters[AERON_SCENE_SHADOW_MAX_CASCADES];
+	uint16_t                           shadow_caster_count[AERON_SCENE_SHADOW_MAX_CASCADES];
+	struct AeronSceneInstanceBox*      shadow_object_bounds;
+	uint16_t*                          shadow_object_indices;
+	uint8_t*                           shadow_bound_valid;
+	uint8_t*                           shadow_caster_valid;
 	AeronSceneShadowFitHistory         shadow_fit_history[AERON_SCENE_SHADOW_MAX_CASCADES];
 	AeronSceneDirectionalShadowUniform receiver_local_shadow_uniform;
-	uint16_t                           receiver_local_shadow_casters[AERON_SCENE_MAX_SHADOW_CASTERS];
+	uint16_t*                          receiver_local_shadow_casters;
 	uint16_t                           receiver_local_shadow_caster_count;
 	AeronDepthTarget*                  receiver_local_shadow_atlas;
 	uint32_t                           receiver_local_shadow_size;  /* tile size */
@@ -464,9 +472,13 @@ struct AeronScene3D {
 
 	/* One pre-pass upload shared by PBR, shadows, and overlays. Mesh tables
 	 * are deduplicated by borrowed pointer; local and point lights are packed. */
-	const AeronSceneMeshTable* mesh_table_keys[AERON_SCENE_MESH_TABLE_HASH_CAP];
-	uint32_t                   mesh_table_values[AERON_SCENE_MESH_TABLE_HASH_CAP]; /* float4 base */
-	uint32_t mesh_table_component_counts[AERON_SCENE_MESH_TABLE_HASH_CAP]; /* packed component counts */
+	/* Open addressing; the capacity is a power of two at least twice the
+	 * tables the frame can register (scene_reserve_mesh_table_hash). */
+	const AeronSceneMeshTable** mesh_table_keys;
+	uint32_t*                   mesh_table_values;           /* float4 base */
+	uint32_t*                   mesh_table_component_counts; /* packed component counts */
+	uint32_t                    mesh_table_hash_capacity;
+	int                         mesh_tables_dropped_logged;
 	float (*mesh_table_staging)[4]; /* variable-length tables, float4 units */
 	uint32_t                 mesh_table_count;
 	uint32_t                 mesh_table_vec4_count;
@@ -591,10 +603,11 @@ struct AeronScene3D {
 	int                mb_tile_size;
 
 	/* Batched billboards (billboards3d.c). Entry array +
-	 * CPU vertex scratch are lazily allocated on first AddBillboard;
+	 * CPU vertex scratch grow by doubling from the first AddBillboard;
 	 * pipelines/shaders on first Render with entries. */
 	AeronSceneBb3dEntry*   bb_entries;
 	int                    bb_count;
+	int                    bb_capacity; /* grows by doubling */
 	int                    bb_dropped;
 	void*                  bb_verts; /* Bb3dVert scratch, entries*12 */
 	AeronBuffer*           bb_vb;
@@ -814,7 +827,7 @@ int AeronScenePbr_DrawBackfaceFill(struct AeronScene3D* s, AeronRenderPass* pass
 int AeronSceneDirectionalShadow_Prepare(struct AeronScene3D* scene);
 int AeronSceneDirectionalShadow_Render(struct AeronScene3D* scene, AeronCommandBuffer* command_buffer);
 /* Draws the casters' depth (encoded as the shadow lists: an instance index,
- * or AERON_SCENE_MAX_INSTANCES plus a shadow-only index) with `view_proj`
+ * or AERON_SCENE_SHADOW_ONLY_BASE plus a shadow-only index) with `view_proj`
  * into the current depth pass, both faces: what is nearest whichever way it
  * faces (probe_occlusion.c's views). 0 when the caster shaders do not load. */
 int  AeronSceneDirectionalShadow_DrawDepth(struct AeronScene3D* scene, AeronRenderPass* pass,

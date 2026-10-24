@@ -198,7 +198,7 @@ static int gather_occluders(AeronScene3D* s, const AeronSceneProbeSet* set, cons
 				continue;
 			}
 			AeronSceneOccluder occluder = { in->mesh,
-											(uint16_t)(list == 0 ? i : AERON_SCENE_MAX_INSTANCES + i),
+											(uint16_t)(list == 0 ? i : AERON_SCENE_SHADOW_ONLY_BASE + i),
 											occluder_hash(in),
 											{ 0 },
 											{ 0 } };

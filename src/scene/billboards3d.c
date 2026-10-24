@@ -28,20 +28,22 @@ void AeronScene_AddBillboard(AeronScene3D* s, const AeronSceneBillboardDesc* d) 
 	if (!s || !d || !d->texture) {
 		return;
 	}
-	if (!s->bb_entries) {
-		s->bb_entries = (AeronSceneBb3dEntry*)malloc(AERON_SCENE_MAX_BILLBOARDS * sizeof *s->bb_entries);
-		s->bb_verts   = malloc((size_t)AERON_SCENE_MAX_BILLBOARDS * BB3D_VERTS_PER_ENTRY * sizeof(Bb3dVert));
-		if (!s->bb_entries || !s->bb_verts) {
-			free(s->bb_entries);
-			free(s->bb_verts);
-			s->bb_entries = NULL;
-			s->bb_verts   = NULL;
-			return;
+	if (s->bb_count >= s->bb_capacity) {
+		const int            capacity = s->bb_capacity ? s->bb_capacity * 2 : 2048;
+		AeronSceneBb3dEntry* entries  = realloc(s->bb_entries, (size_t)capacity * sizeof *entries);
+		if (entries) {
+			s->bb_entries = entries;
+		}
+		void* verts =
+			entries ? realloc(s->bb_verts, (size_t)capacity * BB3D_VERTS_PER_ENTRY * sizeof(Bb3dVert)) : NULL;
+		if (verts) {
+			s->bb_verts    = verts;
+			s->bb_capacity = capacity;
 		}
 	}
-	if (s->bb_count >= AERON_SCENE_MAX_BILLBOARDS) {
+	if (s->bb_count >= s->bb_capacity) {
 		if (!s->bb_dropped) {
-			Aeron_LogWarn("aeron.scene", "billboard cap (%d) hit; dropping", AERON_SCENE_MAX_BILLBOARDS);
+			Aeron_LogWarn("aeron.scene", "out of memory for billboards; dropping");
 		}
 		s->bb_dropped++;
 		return;
@@ -569,6 +571,7 @@ void AeronSceneBb3d_Release(struct AeronScene3D* s) {
 		Aeron_DestroyBuffer(s->bb_vb);
 	free(s->bb_entries);
 	free(s->bb_verts);
-	s->bb_entries = NULL;
-	s->bb_verts   = NULL;
+	s->bb_entries  = NULL;
+	s->bb_verts    = NULL;
+	s->bb_capacity = 0;
 }

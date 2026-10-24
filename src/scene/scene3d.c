@@ -372,11 +372,14 @@ AeronScene3D* AeronScene_Create(const AeronScene3DDesc* desc) {
 	return s;
 }
 
+static void scene_free_instances(AeronScene3D* s);
+
 void AeronScene_Destroy(AeronScene3D* s) {
 	if (!s) {
 		return;
 	}
 	AeronSceneBb3d_Release(s);
+	scene_free_instances(s);
 	AeronSceneMeshOverlay_Release(s);
 	AeronSceneDirectionalShadow_Release(s);
 	AeronSceneClusteredLights_Release(s);
@@ -508,11 +511,23 @@ int AeronScene_Begin(AeronScene3D* s, const AeronSceneCamera* camera) {
 	return 1;
 }
 
+static int scene_reserve_instances(AeronScene3D* s, int instance_capacity, int shadow_only_capacity);
+
+/* The next capacity of a list that holds `capacity` items, up to `limit`. */
+static int scene_grown_capacity(int capacity, int limit) {
+	const int grown = capacity ? capacity * 2 : 1024;
+	return grown < limit ? grown : limit;
+}
+
 void AeronScene_AddMeshInstance(AeronScene3D* s, const AeronSceneMeshInstance* instance) {
 	if (!s || !instance || !instance->mesh) {
 		return;
 	}
-	if (s->instance_count >= AERON_SCENE_MAX_INSTANCES) {
+	if (s->instance_count >= s->instance_capacity && s->instance_capacity < AERON_SCENE_MAX_INSTANCES) {
+		scene_reserve_instances(s, scene_grown_capacity(s->instance_capacity, AERON_SCENE_MAX_INSTANCES),
+								s->shadow_only_capacity);
+	}
+	if (s->instance_count >= s->instance_capacity) {
 		if (!s->instances_dropped) {
 			Aeron_LogWarn("aeron.scene", "instance cap (%d) hit; dropping", AERON_SCENE_MAX_INSTANCES);
 		}
@@ -762,7 +777,12 @@ void AeronScene_AddShadowCaster(AeronScene3D* s, const AeronSceneMeshInstance* i
 	if (instance->shadow_flags & AERON_SCENE_INSTANCE_NO_CAST_SHADOW) {
 		return;
 	}
-	if (s->shadow_only_count >= AERON_SCENE_MAX_SHADOW_ONLY) {
+	if (s->shadow_only_count >= s->shadow_only_capacity &&
+		s->shadow_only_capacity < AERON_SCENE_MAX_SHADOW_ONLY) {
+		scene_reserve_instances(s, s->instance_capacity,
+								scene_grown_capacity(s->shadow_only_capacity, AERON_SCENE_MAX_SHADOW_ONLY));
+	}
+	if (s->shadow_only_count >= s->shadow_only_capacity) {
 		if (!s->shadow_only_dropped) {
 			Aeron_LogWarn("aeron.scene", "shadow-only caster cap (%d) hit; dropping",
 						  AERON_SCENE_MAX_SHADOW_ONLY);
@@ -1579,7 +1599,7 @@ static uint32_t scene_mesh_table_hash(const AeronSceneMeshTable* table) {
 	value ^= value >> 17;
 	value *= (uintptr_t)0xed5ad4bbU;
 	value ^= value >> 11;
-	return (uint32_t)value & (AERON_SCENE_MESH_TABLE_HASH_CAP - 1u);
+	return (uint32_t)value;
 }
 
 /* Appends `table` to the frame's storage, packed at its component count (see
@@ -1590,14 +1610,15 @@ static uint32_t scene_register_mesh_table(AeronScene3D* s, const AeronSceneMeshT
 	if (!table) {
 		table = AeronScenePbr_IdentityTable();
 	}
-	uint32_t slot = scene_mesh_table_hash(table);
-	for (uint32_t probe = 0; probe < AERON_SCENE_MESH_TABLE_HASH_CAP; ++probe) {
+	const uint32_t mask = s->mesh_table_hash_capacity - 1u;
+	uint32_t       slot = scene_mesh_table_hash(table) & mask;
+	for (uint32_t probe = 0; probe < s->mesh_table_hash_capacity; ++probe) {
 		if (!s->mesh_table_keys[slot]) {
 			const uint32_t n    = table->component_count && table->component_count < AERON_MAX_MESH_COMPONENTS
 									  ? table->component_count
 									  : AERON_MAX_MESH_COMPONENTS;
 			const uint32_t base = s->mesh_table_vec4_count;
-			if (s->mesh_table_count >= AERON_SCENE_MAX_MESH_TABLES ||
+			if (s->mesh_table_count * 2u >= s->mesh_table_hash_capacity ||
 				!scene_storage_reserve((void**)&s->mesh_table_staging, &s->mesh_table_staging_cap,
 									   base + AERON_MESH_TABLE_VEC4(n), sizeof *s->mesh_table_staging)) {
 				return UINT32_MAX;
@@ -1622,7 +1643,7 @@ static uint32_t scene_register_mesh_table(AeronScene3D* s, const AeronSceneMeshT
 			*out_component_count = s->mesh_table_component_counts[slot];
 			return s->mesh_table_values[slot];
 		}
-		slot = (slot + 1u) & (AERON_SCENE_MESH_TABLE_HASH_CAP - 1u);
+		slot = (slot + 1u) & mask;
 	}
 	return UINT32_MAX;
 }
@@ -1709,11 +1730,104 @@ static void scene_camera_frustum(const AeronScene3D* s, float planes[5][4]) {
 /* Draw-order key of a camera-visible instance: the distance from the camera
  * to its bound, 0 when the bound contains the camera, then the distance to
  * the bound's centre, so the cockpit sorts before an enclosing hangar. */
-typedef struct SceneOrderKey {
+typedef struct AeronSceneOrderKey {
 	float    surface;
 	float    center;
 	uint16_t index;
 } SceneOrderKey;
+
+/* Grows the instances, the shadow-only casters and the arrays that follow
+ * their counts to the given capacities. Returns 0 when out of memory; the
+ * arrays that grew keep their new size. */
+static int scene_reserve_instances(AeronScene3D* s, int instance_capacity, int shadow_only_capacity) {
+#define SCENE_GROW(field, count)                                                                             \
+	do {                                                                                                     \
+		void* grown = realloc((field), (size_t)(count) * sizeof *(field));                                   \
+		if (!grown) {                                                                                        \
+			return 0;                                                                                        \
+		}                                                                                                    \
+		(field) = grown;                                                                                     \
+	} while (0)
+	if (instance_capacity > s->instance_capacity) {
+		SCENE_GROW(s->instances, instance_capacity);
+		SCENE_GROW(s->prepared_instances, instance_capacity);
+		SCENE_GROW(s->camera_order, instance_capacity);
+		SCENE_GROW(s->order_keys, instance_capacity);
+		SCENE_GROW(s->planar_reflection.order, instance_capacity);
+	}
+	if (shadow_only_capacity > s->shadow_only_capacity) {
+		SCENE_GROW(s->shadow_only, shadow_only_capacity);
+		SCENE_GROW(s->prepared_shadow_only, shadow_only_capacity);
+	}
+	const int casters = instance_capacity + shadow_only_capacity;
+	if (casters > s->instance_capacity + s->shadow_only_capacity) {
+		for (int cascade = 0; cascade < AERON_SCENE_SHADOW_MAX_CASCADES; cascade++) {
+			SCENE_GROW(s->shadow_casters[cascade], casters);
+		}
+		SCENE_GROW(s->receiver_local_shadow_casters, casters);
+		SCENE_GROW(s->shadow_object_bounds, casters);
+		SCENE_GROW(s->shadow_object_indices, casters);
+		SCENE_GROW(s->shadow_bound_valid, casters);
+		SCENE_GROW(s->shadow_caster_valid, casters);
+	}
+#undef SCENE_GROW
+	if (instance_capacity > s->instance_capacity) {
+		s->instance_capacity = instance_capacity;
+	}
+	if (shadow_only_capacity > s->shadow_only_capacity) {
+		s->shadow_only_capacity = shadow_only_capacity;
+	}
+	return 1;
+}
+
+static void scene_free_instances(AeronScene3D* s) {
+	free(s->instances);
+	free(s->prepared_instances);
+	free(s->camera_order);
+	free(s->order_keys);
+	free(s->planar_reflection.order);
+	free(s->shadow_only);
+	free(s->prepared_shadow_only);
+	for (int cascade = 0; cascade < AERON_SCENE_SHADOW_MAX_CASCADES; cascade++) {
+		free(s->shadow_casters[cascade]);
+	}
+	free(s->receiver_local_shadow_casters);
+	free(s->shadow_object_bounds);
+	free(s->shadow_object_indices);
+	free(s->shadow_bound_valid);
+	free(s->shadow_caster_valid);
+	free(s->mesh_table_keys);
+	free(s->mesh_table_values);
+	free(s->mesh_table_component_counts);
+}
+
+/* Makes the mesh table hash at least twice `tables`, a power of two. */
+static int scene_reserve_mesh_table_hash(AeronScene3D* s, uint32_t tables) {
+	uint32_t capacity = s->mesh_table_hash_capacity ? s->mesh_table_hash_capacity : 1024u;
+	while (capacity < 2u * tables) {
+		capacity *= 2u;
+	}
+	if (capacity == s->mesh_table_hash_capacity) {
+		return 1;
+	}
+	const AeronSceneMeshTable** keys = realloc(s->mesh_table_keys, capacity * sizeof *keys);
+	if (!keys) {
+		return 0;
+	}
+	s->mesh_table_keys = keys;
+	uint32_t* values   = realloc(s->mesh_table_values, capacity * sizeof *values);
+	if (!values) {
+		return 0;
+	}
+	s->mesh_table_values = values;
+	uint32_t* counts     = realloc(s->mesh_table_component_counts, capacity * sizeof *counts);
+	if (!counts) {
+		return 0;
+	}
+	s->mesh_table_component_counts = counts;
+	s->mesh_table_hash_capacity    = capacity;
+	return 1;
+}
 
 static int scene_order_key_compare(const void* a, const void* b) {
 	const SceneOrderKey* x = a;
@@ -1767,7 +1881,14 @@ int AeronSceneStorage_Prepare(AeronScene3D* s, AeronCommandBuffer* cmd) {
 	s->mesh_table_count      = 0;
 	s->mesh_table_vec4_count = 0;
 	s->point_light_count     = 0;
-	memset(s->mesh_table_keys, 0, sizeof s->mesh_table_keys);
+	/* The identity table, two tables per instance, one per shadow-only caster
+	 * and one per overlay. */
+	if (!scene_reserve_mesh_table_hash(s, 1u + 2u * (uint32_t)s->instance_count +
+											  (uint32_t)s->shadow_only_count + s->overlay_count)) {
+		scene_storage_report_failure(s, "scene.mesh_tables.hash", 0);
+		return 0;
+	}
+	memset(s->mesh_table_keys, 0, s->mesh_table_hash_capacity * sizeof *s->mesh_table_keys);
 
 	uint32_t identity_components = 0;
 	if (scene_register_mesh_table(s, AeronScenePbr_IdentityTable(), &identity_components) != 0u) {
@@ -1776,8 +1897,9 @@ int AeronSceneStorage_Prepare(AeronScene3D* s, AeronCommandBuffer* cmd) {
 	}
 	float frustum[5][4];
 	scene_camera_frustum(s, frustum);
-	static SceneOrderKey order_keys[AERON_SCENE_MAX_INSTANCES];
-	s->camera_order_count = 0;
+	SceneOrderKey* order_keys = s->order_keys;
+	s->camera_order_count     = 0;
+	int tables_dropped        = 0;
 	for (int i = 0; i < s->instance_count; ++i) {
 		const AeronSceneMeshInstance* instance = &s->instances[i];
 		AeronScenePreparedInstance*   prepared = &s->prepared_instances[i];
@@ -1796,9 +1918,16 @@ int AeronSceneStorage_Prepare(AeronScene3D* s, AeronCommandBuffer* cmd) {
 			instance->prev_mesh_table
 				? scene_register_mesh_table(s, instance->prev_mesh_table, &previous_components)
 				: prepared->current_table_base;
-		if (prepared->current_table_base == UINT32_MAX || prepared->previous_table_base == UINT32_MAX) {
-			scene_storage_report_failure(s, "scene.mesh_tables.cpu", (s->mesh_table_vec4_count + 1u) * 16u);
-			return 0;
+		/* A table that can't be stored shows the instance unarticulated,
+		 * rather than failing the frame. */
+		if (prepared->current_table_base == UINT32_MAX) {
+			prepared->current_table_base    = 0;
+			prepared->table_component_count = identity_components;
+			tables_dropped++;
+		}
+		if (prepared->previous_table_base == UINT32_MAX) {
+			prepared->previous_table_base = prepared->current_table_base;
+			tables_dropped++;
 		}
 		/* The shader indexes both tables with the current component range. */
 		if (instance->prev_mesh_table && previous_components < prepared->table_component_count) {
@@ -1815,8 +1944,9 @@ int AeronSceneStorage_Prepare(AeronScene3D* s, AeronCommandBuffer* cmd) {
 		prepared->current_table_base =
 			scene_register_mesh_table(s, s->shadow_only[i].mesh_table, &prepared->table_component_count);
 		if (prepared->current_table_base == UINT32_MAX) {
-			scene_storage_report_failure(s, "scene.mesh_tables.cpu", (s->mesh_table_vec4_count + 1u) * 16u);
-			return 0;
+			prepared->current_table_base    = 0;
+			prepared->table_component_count = identity_components;
+			tables_dropped++;
 		}
 		prepared->previous_table_base = prepared->current_table_base;
 	}
@@ -1824,9 +1954,15 @@ int AeronSceneStorage_Prepare(AeronScene3D* s, AeronCommandBuffer* cmd) {
 		s->overlays[i].mesh_table_base =
 			scene_register_mesh_table(s, s->overlays[i].mesh_table, &s->overlays[i].table_component_count);
 		if (s->overlays[i].mesh_table_base == UINT32_MAX) {
-			scene_storage_report_failure(s, "scene.mesh_tables.cpu", (s->mesh_table_vec4_count + 1u) * 16u);
-			return 0;
+			s->overlays[i].mesh_table_base       = 0;
+			s->overlays[i].table_component_count = identity_components;
+			tables_dropped++;
 		}
+	}
+	if (tables_dropped && !s->mesh_tables_dropped_logged) {
+		Aeron_LogWarn("aeron.scene", "%d mesh tables couldn't be stored; their instances show unarticulated",
+					  tables_dropped);
+		s->mesh_tables_dropped_logged = 1;
 	}
 
 	const uint32_t point_count = s->light_count > 0 ? (uint32_t)s->light_count : 0u;
@@ -1963,12 +2099,12 @@ uint32_t AeronSceneStorage_ShadowTableBase(const AeronScene3D* s, uint16_t encod
 										   uint32_t* component_count) {
 	const AeronScenePreparedInstance* prepared = NULL;
 	if (s && s->storage_ready) {
-		if (encoded_caster < AERON_SCENE_MAX_INSTANCES) {
+		if (encoded_caster < AERON_SCENE_SHADOW_ONLY_BASE) {
 			if (encoded_caster < (uint16_t)s->instance_count) {
 				prepared = &s->prepared_instances[encoded_caster];
 			}
 		} else {
-			const uint16_t index = (uint16_t)(encoded_caster - AERON_SCENE_MAX_INSTANCES);
+			const uint16_t index = (uint16_t)(encoded_caster - AERON_SCENE_SHADOW_ONLY_BASE);
 			if (index < (uint16_t)s->shadow_only_count) {
 				prepared = &s->prepared_shadow_only[index];
 			}
