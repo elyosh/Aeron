@@ -315,6 +315,11 @@ typedef struct OptGltfGeometryOptions {
 } OptGltfGeometryOptions;
 
 /* Where the materials come from. */
+/* The emissive strength of a converted projectile. With it, a converted
+ * projectile is as bright as the game draws a projectile OPT
+ * (models.opt_projectile_emissive_strength in the remaster's settings). */
+#define OPT_GLTF_PROJECTILE_STRENGTH 20.0f
+
 typedef enum OptGltfMaterialSource {
 	/* The colors of the textures (the default). With `emissive`, a texture
 	 * whose palette marks self-lit texels (lit windows and cockpit lights,
@@ -325,9 +330,11 @@ typedef enum OptGltfMaterialSource {
 	 * drew the glow instead of the surface there. */
 	OPT_GLTF_MATERIALS_STOCK = 0,
 	/* Every material is fully self-lit, the way the classic renderer draws
-	 * projectiles. The base color is black (alpha is kept), the base texture
-	 * becomes the emissiveTexture, and fullbright_strength (> 0) becomes
-	 * KHR_materials_emissive_strength. */
+	 * projectiles. The base color is black (alpha is kept), the specular
+	 * factor is 0, the base texture becomes the emissiveTexture, and
+	 * fullbright_strength (> 0) becomes KHR_materials_emissive_strength. A
+	 * texture with alpha gets its own emissive image instead, the colour
+	 * multiplied by the alpha, so that its faint edges stay faint. */
 	OPT_GLTF_MATERIALS_FULLBRIGHT,
 	/* Materials from the caller. `given` holds one material per OPT texture
 	 * (opt->texture_count). `untextured` is the material of untextured faces,

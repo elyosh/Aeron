@@ -74,6 +74,56 @@ static float xwau_roughness(float glossiness) {
  * keeps F90 = 1, like the Schlick term of the renderer. */
 static float xwau_specular_color(float intensity) { return 4.0f * intensity * intensity; }
 
+/* The linear value of a gamma-encoded value, with the sRGB curve extended
+ * above 1. */
+static float xwau_linear(float c) {
+	c = c < 0.0f ? 0.0f : c;
+	return c <= 0.04045f ? c / 12.92f : powf((c + 0.055f) / 1.055f, 2.4f);
+}
+
+/* The largest linear value of a projectile's unlit colour: a laser's boosted
+ * colour goes up to 2, and a warhead's illumination up to
+ * XWAU_GLTF_ILLUM_GAIN. Its emissive image holds the linear colour divided
+ * by this value, so that no channel is clipped. */
+static float xwau_projectile_range(XwauGltfProjectile projectile) {
+	return xwau_linear(projectile == XWAU_GLTF_LASER ? 2.0f : XWAU_GLTF_ILLUM_GAIN);
+}
+
+float XwauGltf_EmissiveStrength(const XwauGltfMaterial* xm) {
+	/* A projectile's brightest possible texel is 2 times
+	   OPT_GLTF_PROJECTILE_STRENGTH. Multiplied back to its linear value, a
+	   laser's boosted colour would make the bolt about 5 times brighter, and
+	   the tone mapping would whiten it. */
+	return xm->projectile ? 2.0f * OPT_GLTF_PROJECTILE_STRENGTH : XWAU_GLTF_ILLUM_GAIN;
+}
+
+/* The colour that XWAU's renderer gives a laser texel: its HSV saturation
+ * 1.5 times and its value 2 times higher, with the renderer's conversions
+ * between RGB and HSV, on gamma-encoded values. The result goes up to 2.
+ * Negative values, from a saturation above 1, become 0. */
+static void xwau_laser_colour(float c[3]) {
+	const float epsilon = 1e-10f;
+	float       p[4], q[4];
+	if (c[1] < c[2]) {
+		p[0] = c[2], p[1] = c[1], p[2] = -1.0f, p[3] = 2.0f / 3.0f;
+	} else {
+		p[0] = c[1], p[1] = c[2], p[2] = 0.0f, p[3] = -1.0f / 3.0f;
+	}
+	if (c[0] < p[0]) {
+		q[0] = p[0], q[1] = p[1], q[2] = p[3], q[3] = c[0];
+	} else {
+		q[0] = c[0], q[1] = p[1], q[2] = p[2], q[3] = p[0];
+	}
+	const float chroma = q[0] - fminf(q[3], q[1]);
+	const float h      = fabsf((q[3] - q[1]) / (6.0f * chroma + epsilon) + q[2]);
+	const float s      = chroma / (q[0] + epsilon) * 1.5f;
+	const float v      = q[0] * 2.0f;
+	const float hue[3] = { clamp01f(fabsf(h * 6.0f - 3.0f) - 1.0f), clamp01f(2.0f - fabsf(h * 6.0f - 2.0f)),
+						   clamp01f(2.0f - fabsf(h * 6.0f - 4.0f)) };
+	for (int k = 0; k < 3; ++k)
+		c[k] = fmaxf(0.0f, ((hue[k] - 1.0f) * s + 1.0f) * v);
+}
+
 /* 8bpp illumination: a texel is lit when row 4 (dim) equals row 8 (base)
  * and is not near-black. */
 static bool xwau_palette_lit(const uint8_t* palette, uint8_t index) {
@@ -96,6 +146,8 @@ void XwauGltf_BakedFree(XwauBaked* baked) {
 }
 
 float XwauGltf_Unlit(const XwauGltfMaterial* xm) {
+	if (xm->projectile)
+		return 1.0f;
 	if (xm->lit)
 		return 0.0f;
 	return (xm->shadeless || xm->alpha_to_bloom) ? 1.0f : clamp01f(xm->ambient);
@@ -184,12 +236,15 @@ bool XwauGltf_BakeRgba(const opt_texture_t* t, const XwauGltfMaterial* xm, uint8
 	/* A shadeless transparent texture (cockpit glass) returns before the
 	   illumination branch (XwaD3dPixelShader.hlsl:80). A transparent `lit`
 	   texture is treated the same way, because the `lit` override cleared
-	   its Shadeless flag. */
-	const bool  has_illum   = XwauGltf_TextureHasIllum(t) && !(transparent && (xm->shadeless || xm->lit));
-	const bool  glass       = transparent && !xm->lit && !xm->shadeless && !xm->alpha_isnt_glass &&
-							  !xm->alpha_to_bloom && !has_illum;
-	const float metallic    = xwau_metallic(xm->metallic);
-	const float roughness   = xwau_roughness(xm->glossiness);
+	   its Shadeless flag. A laser returns before it too, but a warhead
+	   doesn't. */
+	const bool  has_illum = xm->projectile
+								? xm->projectile == XWAU_GLTF_WARHEAD && XwauGltf_TextureHasIllum(t)
+								: XwauGltf_TextureHasIllum(t) && !(transparent && (xm->shadeless || xm->lit));
+	const bool  glass     = transparent && !xm->projectile && !xm->lit && !xm->shadeless &&
+							!xm->alpha_isnt_glass && !xm->alpha_to_bloom && !has_illum;
+	const float metallic  = xm->projectile ? 0.0f : xwau_metallic(xm->metallic);
+	const float roughness = xm->projectile ? 1.0f : xwau_roughness(xm->glossiness);
 	const float glass_rough = XWAU_GLASS_ROUGHNESS;
 	const float shadeless   = XwauGltf_Unlit(xm);
 
@@ -203,9 +258,11 @@ bool XwauGltf_BakeRgba(const opt_texture_t* t, const XwauGltfMaterial* xm, uint8
 	bool  any_emissive = false, any_glass = false, uniform = true;
 	float first_rough = 0.0f, first_metal = 0.0f;
 	for (size_t i = 0; i < n; ++i) {
-		uint8_t*    px   = &out->base[i * 4];
-		const float c[3] = { px[0] / 255.0f, px[1] / 255.0f, px[2] / 255.0f };
-		const float a    = px[3] / 255.0f;
+		uint8_t* px   = &out->base[i * 4];
+		float    c[3] = { px[0] / 255.0f, px[1] / 255.0f, px[2] / 255.0f };
+		if (xm->projectile == XWAU_GLTF_LASER)
+			xwau_laser_colour(c);
+		const float a = px[3] / 255.0f;
 
 		uint8_t illum = 0;
 		if (has_illum)
@@ -224,9 +281,15 @@ bool XwauGltf_BakeRgba(const opt_texture_t* t, const XwauGltfMaterial* xm, uint8
 		const float rough    = lerpf(lerpf(roughness, 1.0f, blackish), glass_rough, gl);
 		const float metal    = metallic * (1.0f - fmaxf(gl, w));
 
+		/* A projectile is fully unlit. Its emission is stored in linear values
+		   (xwau_projectile_range) and, for a transparent texture, weighted by
+		   the alpha, so that the blend applies the alpha twice. */
 		uint8_t* e = &out->emissive[i * 4];
 		for (int k = 0; k < 3; ++k) {
-			e[k]  = unorm8(c[k] * (1.0f + (XWAU_GLTF_ILLUM_GAIN - 1.0f) * w) * s / XWAU_GLTF_ILLUM_GAIN);
+			const float glow = c[k] * (1.0f + (XWAU_GLTF_ILLUM_GAIN - 1.0f) * w) * s;
+			e[k]  = xm->projectile ? unorm8(linear_to_srgb(xwau_linear(glow) * (transparent ? a : 1.0f) /
+														   xwau_projectile_range(xm->projectile)))
+								   : unorm8(glow / XWAU_GLTF_ILLUM_GAIN);
 			px[k] = unorm8(c[k] * (1.0f - s));
 		}
 		e[3]  = 255;
@@ -256,7 +319,8 @@ bool XwauGltf_BakeRgba(const opt_texture_t* t, const XwauGltfMaterial* xm, uint8
 		free(out->metal_rough);
 		out->metal_rough = NULL;
 	}
-	out->specular_color = xwau_specular_color(xm->intensity);
+	/* A projectile has no specular, so only its emission shows. */
+	out->specular_color = xm->projectile ? 0.0f : xwau_specular_color(xm->intensity);
 	if (glass && any_glass) {
 		/* Glass uses KHR_materials_transmission. It is an opaque, thin
 		 * material whose base colour B tints the light it transmits, with
@@ -380,7 +444,7 @@ static bool texture_material(struct XwauGltfBakeState* s, const opt_file_t* opt,
 	if (baked->emissive) {
 		ok &= texture_image(s, basename, i, "emissive", baked->emissive, t, &m->emissive);
 		m->emissive_factor[0] = m->emissive_factor[1] = m->emissive_factor[2] = 1.0f;
-		m->emissive_strength                                                  = XWAU_GLTF_ILLUM_GAIN;
+		m->emissive_strength = XwauGltf_EmissiveStrength(&materials[i]);
 	}
 	if (baked->metal_rough) {
 		ok &= texture_image(s, basename, i, "mr", baked->metal_rough, t, &m->metallic_roughness);
@@ -468,13 +532,16 @@ bool XwauGltf_Bake(const opt_file_t* opt, const char* basename, const XwauGltfMa
 	for (int channel = 0; ok && channel < 3; ++channel) {
 		const float grey                         = 0.6f;
 		out->untextured.base_color[channel]      = grey * (1.0f - unlit);
-		out->untextured.emissive_factor[channel] = grey * unlit / XWAU_GLTF_ILLUM_GAIN;
+		out->untextured.emissive_factor[channel] =
+			grey * unlit /
+			(untextured->projectile ? xwau_projectile_range(untextured->projectile) : XWAU_GLTF_ILLUM_GAIN);
 	}
-	out->untextured.emissive_strength = unlit > 0.0f ? XWAU_GLTF_ILLUM_GAIN : 0.0f;
-	out->untextured.metallic          = xwau_metallic(untextured->metallic);
-	out->untextured.roughness         = xwau_roughness(untextured->glossiness);
+	out->untextured.emissive_strength = unlit > 0.0f ? XwauGltf_EmissiveStrength(untextured) : 0.0f;
+	out->untextured.metallic          = untextured->projectile ? 0.0f : xwau_metallic(untextured->metallic);
+	out->untextured.roughness = untextured->projectile ? 1.0f : xwau_roughness(untextured->glossiness);
 	out->untextured.specular          = true;
-	out->untextured.specular_color    = xwau_specular_color(untextured->intensity);
+	out->untextured.specular_color =
+		untextured->projectile ? 0.0f : xwau_specular_color(untextured->intensity);
 
 	if (ok && skins && skins->skins.variant_count) {
 		s->skins = XwauGltfSkins_Build(opt, basename, &skins->skins, (const char* const*)skins->skin_names,

@@ -1103,11 +1103,16 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
     /* ===== Emissive ==============================================
      * A positive per-instance base-color override represents semantic
      * emission that is not authored in the material (XWA runtime-OPT
-     * projectiles). It replaces lighting and material emission while
-     * retaining the base texture's alpha-blended soft edge below.
+     * projectiles). It replaces lighting and material emission. On an
+     * alpha-blended material, the emission is also weighted by the alpha,
+     * so the blend applies it twice: a strong emission then fades out with
+     * the texture's soft edge instead of keeping the faint texels bright.
      * Otherwise the material's emission adds to the lit surface. */
     if (isolate == 0 && i.base_color_emissive_strength > 0.0f) {
-        lit = albedo * (i.base_color_emissive_strength * fs_emission.x);
+        const float coverage = ((g_materials[mat].flags & GLTF_MATERIAL_ALPHA_BLEND) != 0u)
+                                   ? saturate(albedo_tex.a * g_materials[mat].base_color_factor.a)
+                                   : 1.0f;
+        lit = albedo * (i.base_color_emissive_strength * fs_emission.x * coverage);
 #if AERON_PBR_ANIM
     } else if (anim_emission) {
         lit += anim_emissive * (i.emissive_mul * fs_emission.x);

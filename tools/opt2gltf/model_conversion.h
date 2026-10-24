@@ -43,7 +43,9 @@
  *     all 256 entries are self-lit;
  *   - projectiles (model_tables.h) are fully self-lit instead, as the classic
  *     renderer draws them. The base color is black with the texture's alpha
- *     kept, and the base texture becomes the emissiveTexture at strength 5;
+ *     kept, the specular factor is 0, and the base texture becomes the
+ *     emissiveTexture at strength OPT_GLTF_PROJECTILE_STRENGTH. With alpha,
+ *     the emission is multiplied by the alpha;
  *   - the component tags and articulations that the game ties to fixed
  *     component numbers are added (model_tables.h). For the player's craft,
  *     the OPT's Cockpit hardpoints (type 31) are replaced by one hardpoint at
@@ -67,6 +69,14 @@
  *     selections (xwau_missions.h);
  *   - the crew and glass textures listed in model_tables.h are shaded as lit
  *     surfaces, even though their material makes them Shadeless;
+ *   - projectiles are baked unlit, as XWAU's renderer draws them, whatever
+ *     their materials say (XwauGltfProjectile). A model is a projectile when
+ *     an object type of the player's or the AI's projectiles (genus 6 or 7)
+ *     uses it in the game's tables, as XWAU's renderer picks them. Without
+ *     the tables, the stock projectile models are used. A projectile is a
+ *     warhead when its name has Missile, Torpedo, SpaceBomb, Pulse, Rocket or
+ *     Flare, but not Boat, in any case, as XWAU's renderer tags them. The
+ *     others are lasers;
  *   - more than 120 weapon hardpoints are reported, because the game keeps
  *     only the first 120 weapon slots, as XWAU does.
  */
@@ -74,6 +84,7 @@
 #include <stdbool.h>
 
 #include "xwau_config.h"
+#include "xwau_game_tables.h"
 #include "xwau_mat.h"
 #include "xwau_missions.h"
 
@@ -84,12 +95,14 @@ typedef struct ModelConversion {
 	bool  xwau;
 	/* XWAU mode (ModelConversion_InitXwau). */
 	const char*   game;   /* the XWAU installation */
-	XwauMatParams global; /* Materials/DefaultGlobalMaterial.mat, or the built-in defaults */
-	XwauMissions* missions;
+	XwauMatParams   global; /* Materials/DefaultGlobalMaterial.mat, or the built-in defaults */
+	XwauMissions*   missions;
+	XwauGameTables* tables; /* the game's object types and model lists, or NULL when they can't be read */
 } ModelConversion;
 
-/* Sets XWAU mode for the installation `game`, and reads the global material
- * and the missions. Returns false when out of memory (reported). */
+/* Sets XWAU mode for the installation `game`, and reads the global material,
+ * the missions and the game's tables. Returns false when out of memory
+ * (reported). */
 bool ModelConversion_InitXwau(ModelConversion* mc, const char* game);
 void ModelConversion_Free(ModelConversion* mc);
 

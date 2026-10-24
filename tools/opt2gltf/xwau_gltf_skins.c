@@ -196,7 +196,7 @@ static bool layer_bake(const opt_file_t* opt, int base_shade, const XwauGltfMate
  * replace what an earlier one changed, as the composite of the baked colors
  * would. */
 static bool layers_finish(XwauGltfSkins* s, const char* basename, int32_t ti, uint32_t w, uint32_t h,
-						  LayerCandidate* candidates, size_t count, size_t* sizes) {
+						  float emissive_strength, LayerCandidate* candidates, size_t count, size_t* sizes) {
 	const size_t n            = (size_t)w * h;
 	bool         any_emissive = false, any_mr = false;
 	for (size_t c = 0; c < count; ++c) {
@@ -224,7 +224,7 @@ static bool layers_finish(XwauGltfSkins* s, const char* basename, int32_t ti, ui
 			in->emissive           = NULL;
 			out->emissive.name     = keep(s, "skin_%s_Tex%02d_emissive", skin, (int)ti);
 			out->emissive.file     = keep(s, "skins/%s/%s_Tex%02d_emissive.png", skin, basename, (int)ti);
-			out->emissive_strength = XWAU_GLTF_ILLUM_GAIN;
+			out->emissive_strength = emissive_strength;
 			ok                     = out->emissive.view.rgba && out->emissive.name && out->emissive.file;
 			s->emissive_layers++;
 		}
@@ -289,8 +289,8 @@ static bool layers_build(XwauGltfSkins* s, const opt_file_t* opt, const char* ba
 			}
 		}
 		const opt_texture_t* tex = &opt->textures[t];
-		ok = ok && layers_finish(s, basename, (int32_t)t, (uint32_t)tex->width, (uint32_t)tex->height, candidates,
-								 count, sizes);
+		ok = ok && layers_finish(s, basename, (int32_t)t, (uint32_t)tex->width, (uint32_t)tex->height,
+								 XwauGltf_EmissiveStrength(&xwau[t]), candidates, count, sizes);
 		s->texture_layers[t] = s->layer_count - s->first_layer[t];
 		for (size_t c = 0; c < count; ++c)
 			candidate_free(&candidates[c]);

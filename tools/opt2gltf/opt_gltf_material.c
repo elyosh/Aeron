@@ -484,9 +484,10 @@ bool opt_gltf_material_extensions(OptGltfDocument* document, unsigned* common_en
 /* ---- Texture preparation ------------------------------------------------ */
 
 /* With `emissive`, each texture with self-illuminated texels (flat palette
- * ramp) gets a second, emissive image. Like all images, these are counted
- * before the arrays are allocated, because cgltf points into the image and
- * texture arrays and they are never reallocated. */
+ * ramp) gets a second, emissive image. With fullbright, each texture with
+ * alpha gets one too (fullbright_emissive). Like all images, these are
+ * counted before the arrays are allocated, because cgltf points into the
+ * image and texture arrays and they are never reallocated. */
 static bool find_stock_emissive(Build* b, size_t* images) {
 	const opt_file_t* opt = b->opt;
 	b->tex_emissive = (int*)calloc(opt->texture_count ? opt->texture_count : 1, sizeof *b->tex_emissive);
@@ -500,6 +501,10 @@ static bool find_stock_emissive(Build* b, size_t* images) {
 			++*images;
 			free(em);
 		}
+	}
+	for (int32_t i = 0; b->fullbright && i < opt->texture_count; ++i) {
+		if (opt->textures[i].alpha)
+			++*images;
 	}
 	return true;
 }
@@ -696,6 +701,38 @@ static void stock_emissive(Build* b, int32_t i, cgltf_material* mat) {
 	set_color(mat->emissive_factor, 1.0f, 1.0f, 1.0f);
 }
 
+static float srgb_to_linear(float c) {
+	return c <= 0.04045f ? c / 12.92f : powf((c + 0.055f) / 1.055f, 2.4f);
+}
+
+static uint8_t linear_to_srgb8(float c) {
+	c = c < 0.0f ? 0.0f : (c > 1.0f ? 1.0f : c);
+	c = c <= 0.0031308f ? c * 12.92f : 1.055f * powf(c, 1.0f / 2.4f) - 0.055f;
+	return (uint8_t)(c * 255.0f + 0.5f);
+}
+
+/* The emission of a fullbright texture with alpha: its colour multiplied by
+ * its alpha, in linear values, so that the blend applies the alpha twice. A
+ * projectile's emission is strong, and its faint edges would stay bright
+ * otherwise. Returns false when out of memory. */
+static bool fullbright_emissive(Build* b, int32_t i, cgltf_material* mat, const uint8_t* rgba) {
+	const opt_texture_t* t  = &b->opt->textures[i];
+	const size_t         n  = (size_t)t->width * (size_t)t->height;
+	uint8_t*             em = (uint8_t*)malloc(n * 4);
+	if (!em)
+		return opt_gltf_build_fail(b, "out of memory (emissive)");
+	for (size_t k = 0; k < n; ++k) {
+		const float alpha = rgba[k * 4 + 3] / 255.0f;
+		for (int c = 0; c < 3; ++c)
+			em[k * 4 + c] = linear_to_srgb8(srgb_to_linear(rgba[k * 4 + c] / 255.0f) * alpha);
+		em[k * 4 + 3] = 255;
+	}
+	mat->emissive_texture.texture = opt_gltf_set_image(
+		b->document, b->image_slot++, em, (uint32_t)t->width, (uint32_t)t->height,
+		xprintf_dup("Tex%02d_emissive", (int)i), xprintf_dup("%s_Tex%02d_emissive.png", b->basename, (int)i));
+	return true;
+}
+
 /* Returns the texture for an image of a given material. The image is
  * written to the next slot, unless an image with the same pixels was
  * already written. */
@@ -829,12 +866,16 @@ static bool texture_material(Build* b, int32_t i) {
 	if (!material_alpha(b, i, mat, rgba))
 		return false;
 
-	/* Fullbright: the texture lights itself and the scene adds no diffuse
-	 * light, like projectiles in the classic renderer. Alpha still comes
-	 * from the base texture. */
+	/* Fullbright: the texture lights itself and the scene adds no light,
+	 * like projectiles in the classic renderer. Alpha still comes from the
+	 * base texture. */
 	if (b->fullbright) {
 		set_color(mat->pbr_metallic_roughness.base_color_factor, 0.0f, 0.0f, 0.0f);
+		mat->has_specular             = 1;
+		mat->specular.specular_factor = 0.0f;
 		mat->emissive_texture.texture = &gb->textures[i];
+		if (t->alpha && rgba && !fullbright_emissive(b, i, mat, rgba))
+			return false;
 		set_color(mat->emissive_factor, 1.0f, 1.0f, 1.0f);
 		mat->has_emissive_strength               = 1;
 		mat->emissive_strength.emissive_strength = b->fullbright_strength;
@@ -881,6 +922,8 @@ static void untextured_material(Build* b) {
 		}
 		untex->has_emissive_strength               = 1;
 		untex->emissive_strength.emissive_strength = b->fullbright_strength;
+		untex->has_specular                        = 1;
+		untex->specular.specular_factor            = 0.0f;
 	}
 	if (b->materials) {
 		/* Use the given factors. Images are ignored. */

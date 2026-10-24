@@ -328,7 +328,8 @@ static bool prepare_stock(Conversion* c, const ModelConversion* mc, const char* 
 	c->options.material.emissive             = true;
 	if (ModelTables_IsProjectile(basename))
 		c->options.material =
-			(OptGltfMaterialOptions) { .source = OPT_GLTF_MATERIALS_FULLBRIGHT, .fullbright_strength = 5.0f };
+			(OptGltfMaterialOptions) { .source              = OPT_GLTF_MATERIALS_FULLBRIGHT,
+									   .fullbright_strength = OPT_GLTF_PROJECTILE_STRENGTH };
 	if (ModelTables_StockEye(basename, c->stock_eye))
 		c->cockpit_eye = c->stock_eye;
 	const bool ok                       = stock_tags_read(&c->stock, basename, label);
@@ -457,6 +458,29 @@ static bool xwau_bolt_lights(Conversion* c, const opt_file_t* opt) {
 	return true;
 }
 
+/* How XWAU's renderer draws the model when it is a projectile (see the
+ * conversion's description). */
+static XwauGltfProjectile xwau_projectile(const ModelConversion* mc, const char* basename) {
+	bool projectile = false;
+	for (int type = 0; mc->tables && !projectile && type < XWAU_GAME_OBJECT_TYPES; ++type) {
+		const XwauGameType t = XwauGameTables_Type(mc->tables, type);
+		projectile           = (t.genus == 6 || t.genus == 7) &&
+							   strcasecmp(XwauGameTables_Model(mc->tables, type), basename) == 0;
+	}
+	if (!mc->tables)
+		projectile = ModelTables_IsProjectile(basename);
+	if (!projectile)
+		return XWAU_GLTF_NOT_PROJECTILE;
+	static const char* const kWarheads[] = { "missile", "torpedo", "spacebomb", "pulse", "rocket", "flare" };
+	char                     name[256];
+	LowerCopy(name, sizeof name, basename);
+	for (size_t i = 0; i < sizeof kWarheads / sizeof kWarheads[0]; ++i) {
+		if (strstr(name, kWarheads[i]) && !strstr(name, "boat"))
+			return XWAU_GLTF_WARHEAD;
+	}
+	return XWAU_GLTF_LASER;
+}
+
 /* Reads the XWAU material, normal map and animations of each texture, and
  * bakes them into the material options. */
 static bool bake_xwau(Conversion* c, const ModelConversion* mc, const opt_file_t* opt, const char* basename,
@@ -474,12 +498,17 @@ static bool bake_xwau(Conversion* c, const ModelConversion* mc, const opt_file_t
 	c->anim                      = XwauAnim_Begin(basename, xwau_find_file, (void*)mc, label);
 	if (!c->materials || !c->anims || !c->anim)
 		return false;
-	size_t normal_textures           = 0;
-	bool   ignored[MAX_LIT_TEXTURES] = { false };
+	size_t                   normal_textures           = 0;
+	bool                     ignored[MAX_LIT_TEXTURES] = { false };
+	const XwauGltfProjectile projectile                = xwau_projectile(mc, basename);
+	if (projectile)
+		Report(label, "%s: unlit at strength %g", projectile == XWAU_GLTF_LASER ? "laser" : "warhead",
+			   (double)XwauGltf_EmissiveStrength(&(XwauGltfMaterial) { .projectile = projectile }));
 	for (int32_t i = 0; i < opt->texture_count; ++i) {
 		XwauGltfMaterial*    material = &c->materials[i];
 		const XwauMatParams* p        = c->mat ? XwauMat_Find(c->mat, opt->textures[i].name) : &mc->global;
 		xwau_fill(material, p);
+		material->projectile = projectile;
 		for (int k = 0; k < c->lit_count; ++k) {
 			if (xwau_texture_named(opt->textures[i].name, c->lit[k])) {
 				material->shadeless = false;
@@ -515,6 +544,7 @@ static bool bake_xwau(Conversion* c, const ModelConversion* mc, const opt_file_t
 	/* Untextured faces use the material found for an empty name, which is slot 0. */
 	XwauGltfMaterial untextured;
 	xwau_fill(&untextured, c->mat ? XwauMat_Find(c->mat, "") : &mc->global);
+	untextured.projectile = projectile;
 
 	Report(label, "xwau materials %s, %zu of %d textures normal-mapped (%zu maps)",
 		   c->mat ? c->mat_path : "(default)", normal_textures, (int)opt->texture_count, c->map_count);
@@ -604,10 +634,14 @@ bool ModelConversion_InitXwau(ModelConversion* mc, const char* game) {
 		Report(NULL, "out of memory (missions)");
 		return false;
 	}
+	if (!(mc->tables = XwauGameTables_Load(mc->game)))
+		Report(NULL, "the stock projectile models are converted as projectiles");
 	return true;
 }
 
 void ModelConversion_Free(ModelConversion* mc) {
 	XwauMissions_Free(mc->missions);
 	mc->missions = NULL;
+	XwauGameTables_Free(mc->tables);
+	mc->tables = NULL;
 }

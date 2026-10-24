@@ -16,6 +16,9 @@
  * stored normal of each corner, so XWAU models are converted with the
  * stored normals. They are not remapped or repaired, and no smoothing angle
  * is used.
+ *
+ * That renderer draws projectiles unlit, whatever their materials say, so
+ * a projectile's textures are baked as emission only (XwauGltfProjectile).
  */
 
 #include <stdbool.h>
@@ -32,6 +35,28 @@ struct XwauSkins;
  * this gain as the emissive strength. */
 #define XWAU_GLTF_ILLUM_GAIN 1.25f
 
+/* How XWAU's renderer draws the texture of a projectile. It draws it unlit,
+ * with no specular and no glass, and blends it with the texture's alpha:
+ *   - a laser shows its colour with the saturation raised 1.5 times and the
+ *     value 2 times, in HSV. Its illumination isn't used;
+ *   - a warhead shows its colour, with its illumination 1.25 times
+ *     brighter, as a Shadeless texture.
+ * The emissive image holds the linear colour divided by its largest value,
+ * so that the colour above 1 isn't clipped and keeps its hue. The brightest
+ * possible texel is 2 times OPT_GLTF_PROJECTILE_STRENGTH: a laser's boost
+ * doubles its value, and a warhead's illumination makes it 1.25 times
+ * brighter. In linear values, a laser's boost makes it 4.95 times brighter,
+ * which would whiten the bolt.
+ *
+ * XWAU blends an 8-bit colour, so its faint edges stay faint. At these
+ * strengths they would stay bright, so the emission of a transparent texture
+ * is also multiplied by its alpha, and the blend applies the alpha twice. */
+typedef enum XwauGltfProjectile {
+	XWAU_GLTF_NOT_PROJECTILE = 0,
+	XWAU_GLTF_LASER,
+	XWAU_GLTF_WARHEAD,
+} XwauGltfProjectile;
+
 /* The material of one OPT texture, from the XWAU material files
  * (xwau_mat.h). */
 typedef struct XwauGltfMaterial {
@@ -47,6 +72,8 @@ typedef struct XwauGltfMaterial {
 	/* Bake as a plain lit surface, with no unlit weight and no glass,
 	 * regardless of Shadeless, Ambient or AlphaToBloom. */
 	bool lit;
+	/* Bake as a projectile, regardless of the other fields. */
+	XwauGltfProjectile projectile;
 	/* Tangent-space normal map. R, G, B hold X, Y, Z encoded as 0..1 (+Y
 	 * toward the first row). Rows are in UV order, and alpha is ignored.
 	 * rgba is NULL when the texture has no normal map. normal_map_name is
@@ -80,11 +107,17 @@ typedef struct XwauGltfAnim {
  * an 8bpp texture with at least one lit texel. */
 bool XwauGltf_TextureHasIllum(const opt_texture_t* t);
 
-/* Returns the unlit weight s of the material, 0..1. It is 0 for a `lit`
- * material, 1 for Shadeless or AlphaToBloom, and Ambient otherwise. The bake
- * stores lerp(lit, color, s) as base color color·(1 − s) plus emission
- * color·s. Colour frames are split the same way. */
+/* Returns the unlit weight s of the material, 0..1. It is 1 for a
+ * projectile, 0 for a `lit` material, 1 for Shadeless or AlphaToBloom, and
+ * Ambient otherwise. The bake stores lerp(lit, color, s) as base color
+ * color·(1 − s) plus emission color·s. Colour frames are split the same
+ * way. */
 float XwauGltf_Unlit(const XwauGltfMaterial* xm);
+
+/* Returns the emissive strength of the material's baked emissive images.
+ * They hold the colour divided by XWAU_GLTF_ILLUM_GAIN, or, for a
+ * projectile, its linear colour divided by its largest value. */
+float XwauGltf_EmissiveStrength(const XwauGltfMaterial* xm);
 
 /* The baked materials of an OPT: one per texture, the untextured one, and
  * the skin variants. This struct owns the images they use, so it must
