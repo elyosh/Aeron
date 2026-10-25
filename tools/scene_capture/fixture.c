@@ -617,6 +617,52 @@ static void attach_to_camera(float transform[16], const AeronSceneCamera* camera
 								   rotation[r][2] * local[2 * 4 + c];
 }
 
+/* The model's authored lights, of every drawn instance. */
+static void add_model_lights(AeronScene3D* scene, const Fixture* f, const AeronSceneMeshInstance* instance) {
+	for (uint32_t li = 0; li < instance->mesh->light_count && f->config.game.model_light_intensity > 0;
+		 ++li) {
+		AeronSceneLight light;
+		if (AeronScene_MeshLight(instance->mesh, li, instance->transform, GAME_UNITS_PER_METER, NULL,
+								 instance->variant, f->config.game.model_light_intensity, &light))
+			AeronScene_AddLight(scene, &light);
+	}
+}
+
+/* A number in [0, 1) from a xorshift state. */
+static float bolt_random(uint32_t* state) {
+	*state ^= *state << 13;
+	*state ^= *state >> 17;
+	*state ^= *state << 5;
+	return (float)(*state >> 8) / 16777216.0f;
+}
+
+/* As flight.c submits laser bolts: two-sided, without shadows, with their
+ * motion stamped into the velocity buffer. They stay still. */
+static void add_game_bolts(AeronScene3D* scene, const Fixture* f) {
+	const CaptureBolts* bolts = &f->config.game.bolts;
+	uint32_t            state = bolts->seed;
+	for (int i = 0; i < bolts->count; ++i) {
+		CaptureInstance at = { 0 };
+		for (int axis = 0; axis < 3; ++axis)
+			at.position[axis] =
+				bolts->center[axis] + (2.0f * bolt_random(&state) - 1.0f) * bolts->extent[axis];
+		at.rotation[0]                  = 360.0f * bolt_random(&state) - 180.0f;
+		at.rotation[1]                  = 180.0f * bolt_random(&state) - 90.0f;
+		at.rotation[2]                  = 360.0f * bolt_random(&state);
+		AeronSceneMeshInstance instance = {
+			.mesh           = f->meshes[bolts->models[i % bolts->model_count]].mesh,
+			.cull_mode      = AERON_CULL_NONE,
+			.shadow_flags   = AERON_SCENE_INSTANCE_NO_CAST_SHADOW | AERON_SCENE_INSTANCE_NO_RECEIVE_SHADOW,
+			.velocity_stamp = 1,
+		};
+		place_ship(instance.transform, &at);
+		scale_transform(instance.transform, GAME_UNITS_PER_METER);
+		memcpy(instance.prev_transform, instance.transform, sizeof instance.transform);
+		add_model_lights(scene, f, &instance);
+		AeronScene_AddMeshInstance(scene, &instance);
+	}
+}
+
 static void add_game_instances(AeronScene3D* scene, const Fixture* f, double time,
 							   const AeronSceneCamera* camera, const AeronSceneCamera* previous_camera) {
 	for (int i = 0; i < f->config.game.instance_count; ++i) {
@@ -666,14 +712,7 @@ static void add_game_instances(AeronScene3D* scene, const Fixture* f, double tim
 											  AERON_SCENE_INSTANCE_SHADOW_DOUBLE_SIDED;
 			instance.velocity_stamp_screens = 1;
 		}
-		/* The model's authored lights, of every drawn instance. */
-		for (uint32_t li = 0; li < instance.mesh->light_count && f->config.game.model_light_intensity > 0;
-			 ++li) {
-			AeronSceneLight light;
-			if (AeronScene_MeshLight(instance.mesh, li, instance.transform, GAME_UNITS_PER_METER, NULL,
-									 instance.variant, f->config.game.model_light_intensity, &light))
-				AeronScene_AddLight(scene, &light);
-		}
+		add_model_lights(scene, f, &instance);
 		instance.anim = instance_anim(f, (int)i);
 		/* Use the probes from the bake folder, or else the model's own. */
 		const AeronProbeSet* probes = f->probes[i] ? f->probes[i] : instance.mesh->probes;
@@ -799,6 +838,7 @@ AeronRenderTarget* Fixture_Record(Fixture* f, double time, int blur, AeronComman
 		if (f->config.screen_test)
 			set_screen_sources(scene, f, time);
 		add_game_instances(scene, f, time, &current, &previous);
+		add_game_bolts(scene, f);
 		return AeronScene_Render(scene, cmd) ? AeronScene_SceneRt(scene) : NULL;
 	}
 	AeronScene_SetPost(

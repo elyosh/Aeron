@@ -7,6 +7,75 @@
 #ifndef SCENE_PBR_VERTEX_COMMON_HLSLI
 #define SCENE_PBR_VERTEX_COMMON_HLSLI
 
+/* AERON_PBR_INSTANCED 1: the variants that draw a batch of instances of one
+ * mesh in one draw. Each instance's values come from its record instead of
+ * the uniforms. */
+#ifndef AERON_PBR_INSTANCED
+#define AERON_PBR_INSTANCED 0
+#endif
+
+#if AERON_PBR_INSTANCED
+/* Mirrors AeronScenePbrBatchVsBlock. */
+cbuffer PbrBatchVSUniforms : register(b0, space1) {
+	row_major float4x4 view_proj;
+	row_major float4x4 unjittered_view_proj;
+	/* The previous camera, for the instances that move. */
+	row_major float4x4 moving_prev_view_proj;
+	uint variant_group_count;
+	uint material_count;
+	uint camera_mb;
+	/* The batch's first record. SV_InstanceID starts at 0 on every backend. */
+	uint instance_base;
+};
+
+/* Mirrors AeronScenePbrInstanceRecord. The previous transform and table are
+ * the current ones for an instance without velocity. */
+struct PbrInstanceRecord {
+	float4 model_to_world[4];
+	float4 prev_model_to_world[4];
+	uint   variant_row_base;
+	uint   current_table_base;
+	uint   previous_table_base;
+	uint   table_component_count;
+	float  base_color_emissive_strength;
+	uint   receive_shadow;
+	uint   zero_velocity;
+	uint   reserved;
+};
+
+StructuredBuffer<PbrInstanceRecord> instance_records : register(t1, space0);
+
+/* The instance's values, which pbr_load_instance sets. */
+static float4x4 craft_to_world;
+static float4x4 prev_craft_to_world;
+static float4x4 prev_view_proj;
+static uint     variant_row_base;
+static float    base_color_emissive_strength;
+static uint     receive_shadow;
+static uint     current_table_base;
+static uint     previous_table_base;
+static uint     table_component_count;
+/* Batches are blended, so they don't take the screen shadow pass or the
+ * receiver-local map. */
+static const uint screen_shadow         = 0u;
+static const uint receiver_local_shadow = 0u;
+
+void pbr_load_instance(uint instance_id)
+{
+	PbrInstanceRecord record = instance_records[instance_base + instance_id];
+	craft_to_world = float4x4(record.model_to_world[0], record.model_to_world[1],
+							  record.model_to_world[2], record.model_to_world[3]);
+	prev_craft_to_world = float4x4(record.prev_model_to_world[0], record.prev_model_to_world[1],
+								   record.prev_model_to_world[2], record.prev_model_to_world[3]);
+	prev_view_proj = record.zero_velocity != 0u ? unjittered_view_proj : moving_prev_view_proj;
+	variant_row_base = record.variant_row_base;
+	base_color_emissive_strength = record.base_color_emissive_strength;
+	receive_shadow = record.receive_shadow;
+	current_table_base = record.current_table_base;
+	previous_table_base = record.previous_table_base;
+	table_component_count = record.table_component_count;
+}
+#else
 cbuffer GltfMeshVSUniforms : register(b0, space1) {
 	row_major float4x4 view_proj;
 	/* Current camera without the FSR sub-pixel jitter. Rasterization uses
@@ -37,6 +106,7 @@ cbuffer GltfMeshVSUniforms : register(b0, space1) {
 	row_major float4x4 prev_view_proj;
 	row_major float4x4 prev_craft_to_world;
 };
+#endif
 
 /* One variable-length record per unique submitted mesh table, packed at
  * its component count; layout in mesh_table_layout.hlsli. */
@@ -67,6 +137,9 @@ struct VSIn {
 	float2 uv : TEXCOORD0;
 	float  component : COLOR0;
 	uint   prim_id : COLOR1;
+#if AERON_PBR_INSTANCED
+	uint instance_id : SV_InstanceID;
+#endif
 };
 
 struct PbrCurrentVertex {
@@ -112,6 +185,10 @@ float4 pbr_mul_fma(float4x4 m, float4 v)
  */
 bool pbr_build_current_vertex(VSIn input, out PbrCurrentVertex current)
 {
+#if AERON_PBR_INSTANCED
+	/* Every vertex shader calls this first. */
+	pbr_load_instance(input.instance_id);
+#endif
 	uint component = (uint)clamp((int)round(input.component), 0,
 								  (int)table_component_count - 1);
 	float visibility = mesh_table_lane(AERON_MESH_LANE_VISIBILITY, component);

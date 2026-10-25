@@ -414,6 +414,50 @@ static int load_game_lights(const AeronConfigNode* list, CaptureGameScene* game)
 	return 1;
 }
 
+static int load_game_bolts(const AeronConfigNode* node, CaptureConfig* config) {
+	CaptureBolts*            bolts  = &config->game.bolts;
+	static const char* const keys[] = { "models", "count", "center", "extent", "seed" };
+	if (!only_keys(node, "game_scene.bolts", keys, sizeof keys / sizeof keys[0]))
+		return 0;
+	const AeronConfigNode* models      = AeronConfigNode_MapGet(node, "models");
+	const size_t           model_count = AeronConfigNode_SequenceCount(models);
+	if (AeronConfigNode_Type(models) != AERON_CONFIG_SEQUENCE || model_count == 0 ||
+		model_count > CAPTURE_MAX_BOLT_MODELS) {
+		fprintf(stderr, "game_scene.bolts.models must list 1-%d of models\n", CAPTURE_MAX_BOLT_MODELS);
+		return 0;
+	}
+	for (size_t i = 0; i < model_count; ++i) {
+		const char* model = AeronConfigNode_String(AeronConfigNode_SequenceGet(models, i), NULL);
+		bolts->models[i]  = -1;
+		for (int m = 0; model && m < config->model_count; ++m)
+			if (!strcmp(model, config->models[m]))
+				bolts->models[i] = m;
+		if (bolts->models[i] < 0) {
+			fprintf(stderr, "game_scene.bolts.models[%zu] must be one of models\n", i);
+			return 0;
+		}
+	}
+	bolts->model_count                 = (int)model_count;
+	const AeronConfigNode* count       = AeronConfigNode_MapGet(node, "count");
+	const AeronConfigNode* seed        = AeronConfigNode_MapGet(node, "seed");
+	const int64_t          count_value = count ? AeronConfigNode_Int(count, -1) : -1;
+	const int64_t          seed_value  = seed ? AeronConfigNode_Int(seed, -1) : 1;
+	if (!count || AeronConfigNode_Type(count) != AERON_CONFIG_INT || count_value < 1 ||
+		count_value > CAPTURE_MAX_BOLTS || (seed && AeronConfigNode_Type(seed) != AERON_CONFIG_INT) ||
+		seed_value < 1 || seed_value > UINT32_MAX ||
+		!vec3(AeronConfigNode_MapGet(node, "center"), bolts->center) ||
+		!vec3(AeronConfigNode_MapGet(node, "extent"), bolts->extent)) {
+		fprintf(stderr,
+				"game_scene.bolts needs count (1-%d), center: [x, y, z] and extent: [x, y, z], and takes a "
+				"seed above 0\n",
+				CAPTURE_MAX_BOLTS);
+		return 0;
+	}
+	bolts->count = (int)count_value;
+	bolts->seed  = (uint32_t)seed_value;
+	return 1;
+}
+
 static int load_game_scene(AeronVfs* vfs, const AeronConfigFile* yaml, CaptureConfig* config) {
 	const AeronConfigNode* node = AeronConfigFile_GetNode(yaml, "game_scene");
 	if (!node)
@@ -434,7 +478,8 @@ static int load_game_scene(AeronVfs* vfs, const AeronConfigFile* yaml, CaptureCo
 										"planar_reflection",
 										"temporal_upscaling",
 										"cluster_debug",
-										"environment" };
+										"environment",
+										"bolts" };
 	CaptureGameScene*        game   = &config->game;
 	if (!only_keys(node, "game_scene", keys, sizeof keys / sizeof keys[0]))
 		return 0;
@@ -560,8 +605,10 @@ static int load_game_scene(AeronVfs* vfs, const AeronConfigFile* yaml, CaptureCo
 		snprintf(game->environment_name, sizeof game->environment_name, "%s", name);
 	}
 	const AeronConfigNode* lights = AeronConfigNode_MapGet(node, "point_lights");
+	const AeronConfigNode* bolts  = AeronConfigNode_MapGet(node, "bolts");
 	if ((lights && !load_game_lights(lights, game)) ||
-		!load_game_instances(AeronConfigNode_MapGet(node, "instances"), config))
+		!load_game_instances(AeronConfigNode_MapGet(node, "instances"), config) ||
+		(bolts && !load_game_bolts(bolts, config)))
 		return 0;
 	game->enabled = 1;
 	return 1;

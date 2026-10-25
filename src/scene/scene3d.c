@@ -1873,6 +1873,107 @@ static int scene_instance_in_frustum(const AeronScene3D* s, const AeronSceneMesh
 	return 1;
 }
 
+/* Whether a batch can draw a visible instance: its mesh has only plain
+ * blended faces and no animation, and the instance has no probe set and no
+ * receiver-local shadow, which batches don't bind. */
+static int scene_instance_batchable(const AeronSceneMeshInstance*     instance,
+									const AeronScenePreparedInstance* prepared) {
+	const AeronSceneMesh* m = instance->mesh;
+	return m && m->vbo && m->ibo && m->opaque_index_count == 0 && m->mask_index_count == 0 &&
+		   m->blend_index_count != 0 && m->blend_screen_index_count == 0 && !m->anim_buffer &&
+		   prepared->probe_set < 0 && !instance->velocity_stamp_screens &&
+		   (instance->shadow_flags & AERON_SCENE_INSTANCE_USE_RECEIVER_LOCAL_SHADOW) == 0;
+}
+
+/* The batch of the instance's mesh, cull mode and velocity stamp, added when
+ * new; -1 when it can't be stored. Batches are few, one per projectile
+ * model in view. */
+static int32_t scene_instance_batch(AeronScene3D* s, const AeronSceneMeshInstance* instance) {
+	for (uint32_t b = s->pbr_batch_count; b-- > 0;) {
+		const AeronScenePbrBatch* batch = &s->pbr_batches[b];
+		if (batch->mesh == instance->mesh && batch->cull_mode == instance->cull_mode &&
+			batch->velocity_stamp == instance->velocity_stamp) {
+			return (int32_t)b;
+		}
+	}
+	if (!scene_storage_reserve((void**)&s->pbr_batches, &s->pbr_batch_cap, s->pbr_batch_count + 1u,
+							   sizeof *s->pbr_batches)) {
+		return -1;
+	}
+	s->pbr_batches[s->pbr_batch_count] = (AeronScenePbrBatch) { .mesh           = instance->mesh,
+																.cull_mode      = instance->cull_mode,
+																.velocity_stamp = instance->velocity_stamp };
+	return (int32_t)s->pbr_batch_count++;
+}
+
+/* The instance's values, as pbr_push_instance_uniforms gives them to one
+ * instance. */
+static void scene_instance_record(const AeronSceneMeshInstance*     instance,
+								  const AeronScenePreparedInstance* prepared,
+								  AeronScenePbrInstanceRecord*      out) {
+	const AeronSceneMesh* m       = instance->mesh;
+	uint32_t              variant = instance->variant;
+	if (variant >= m->variant_rows) {
+		variant = m->variant_rows ? m->variant_rows - 1u : 0u;
+	}
+	const int moving = !instance->zero_velocity;
+	memcpy(out->model_to_world, instance->transform, sizeof out->model_to_world);
+	memcpy(out->prev_model_to_world, moving ? instance->prev_transform : instance->transform,
+		   sizeof out->prev_model_to_world);
+	out->variant_row_base             = variant * m->variant_groups_per_row;
+	out->current_table_base           = prepared->current_table_base;
+	out->previous_table_base          = moving ? prepared->previous_table_base : prepared->current_table_base;
+	out->table_component_count        = prepared->table_component_count;
+	out->base_color_emissive_strength = instance->base_color_emissive_strength;
+	out->receive_shadow = (instance->shadow_flags & AERON_SCENE_INSTANCE_NO_RECEIVE_SHADOW) == 0 ? 1u : 0u;
+	out->zero_velocity  = moving ? 0u : 1u;
+	out->reserved       = 0;
+}
+
+/* Groups the batchable visible instances into batches and writes their
+ * records, from far to near. Returns the number of records; an instance
+ * whose batch can't be stored draws alone. */
+static uint32_t scene_prepare_batches(AeronScene3D* s) {
+	s->pbr_batch_count = 0;
+	uint32_t records   = 0;
+	for (int k = s->camera_order_count - 1; k >= 0; --k) {
+		const int                   i        = s->camera_order[k];
+		AeronScenePreparedInstance* prepared = &s->prepared_instances[i];
+		if (scene_instance_batchable(&s->instances[i], prepared)) {
+			prepared->batch = scene_instance_batch(s, &s->instances[i]);
+			if (prepared->batch >= 0) {
+				s->pbr_batches[prepared->batch].count++;
+				records++;
+			}
+		}
+	}
+	if (records == 0 ||
+		!scene_storage_reserve((void**)&s->instance_record_staging, &s->instance_record_staging_cap, records,
+							   sizeof *s->instance_record_staging)) {
+		for (int k = 0; k < s->camera_order_count; ++k) {
+			s->prepared_instances[s->camera_order[k]].batch = -1;
+		}
+		s->pbr_batch_count = 0;
+		return 0;
+	}
+	uint32_t first = 0;
+	for (uint32_t b = 0; b < s->pbr_batch_count; ++b) {
+		s->pbr_batches[b].first = first;
+		first += s->pbr_batches[b].count;
+		s->pbr_batches[b].count = 0;
+	}
+	for (int k = s->camera_order_count - 1; k >= 0; --k) {
+		const int                         i        = s->camera_order[k];
+		const AeronScenePreparedInstance* prepared = &s->prepared_instances[i];
+		if (prepared->batch >= 0) {
+			AeronScenePbrBatch* batch = &s->pbr_batches[prepared->batch];
+			scene_instance_record(&s->instances[i], prepared,
+								  &s->instance_record_staging[batch->first + batch->count++]);
+		}
+	}
+	return records;
+}
+
 int AeronSceneStorage_Prepare(AeronScene3D* s, AeronCommandBuffer* cmd) {
 	if (!s || !cmd) {
 		return 0;
@@ -1907,6 +2008,7 @@ int AeronSceneStorage_Prepare(AeronScene3D* s, AeronCommandBuffer* cmd) {
 		SceneOrderKey key;
 		prepared->camera_visible = (uint32_t)scene_instance_in_frustum(s, instance, frustum, &key);
 		prepared->probe_set      = prepared->camera_visible ? scene_instance_probe_set(s, instance) : -1;
+		prepared->batch          = -1;
 		if (prepared->camera_visible) {
 			key.index                           = (uint16_t)i;
 			order_keys[s->camera_order_count++] = key;
@@ -1938,6 +2040,7 @@ int AeronSceneStorage_Prepare(AeronScene3D* s, AeronCommandBuffer* cmd) {
 	for (int k = 0; k < s->camera_order_count; ++k) {
 		s->camera_order[k] = order_keys[k].index;
 	}
+	const uint32_t record_count = scene_prepare_batches(s);
 	for (int i = 0; i < s->shadow_only_count; ++i) {
 		AeronScenePreparedInstance* prepared = &s->prepared_shadow_only[i];
 		memset(prepared, 0, sizeof *prepared);
@@ -2076,7 +2179,14 @@ int AeronSceneStorage_Prepare(AeronScene3D* s, AeronCommandBuffer* cmd) {
 		scene_storage_report_failure(s, "scene.screen_frame", screen_bytes);
 		return 0;
 	}
-	AeronBufferUploadDesc uploads[4] = {
+	const uint32_t record_bytes = record_count * (uint32_t)sizeof *s->instance_record_staging;
+	if (record_bytes > 0 &&
+		!scene_storage_ensure_buffer(&s->instance_record_buffer, &s->instance_record_buffer_cap, record_bytes,
+									 "scene.instance_records")) {
+		scene_storage_report_failure(s, "scene.instance_records", record_bytes);
+		return 0;
+	}
+	AeronBufferUploadDesc uploads[5] = {
 		{ s->mesh_table_buffer, 0, s->mesh_table_staging, table_bytes },
 		{ s->point_light_buffer, 0, s->point_light_staging, point_bytes },
 		{ s->screen_frame_buffer, 0, &s->screen_frame, screen_bytes },
@@ -2085,6 +2195,10 @@ int AeronSceneStorage_Prepare(AeronScene3D* s, AeronCommandBuffer* cmd) {
 	if (cluster_light_bytes > 0) {
 		uploads[upload_count++] = (AeronBufferUploadDesc) { s->cluster_light_buffer, 0,
 															s->cluster_light_staging, cluster_light_bytes };
+	}
+	if (record_bytes > 0) {
+		uploads[upload_count++] = (AeronBufferUploadDesc) { s->instance_record_buffer, 0,
+															s->instance_record_staging, record_bytes };
 	}
 	s->storage_ready = Aeron_UploadBufferBatchCmd(cmd, uploads, upload_count);
 	if (!s->storage_ready) {
@@ -2125,6 +2239,16 @@ void AeronSceneStorage_Release(AeronScene3D* s) {
 	Aeron_DestroyBuffer(s->screen_frame_buffer);
 	s->screen_frame_buffer     = NULL;
 	s->screen_frame_buffer_cap = 0;
+	Aeron_DestroyBuffer(s->instance_record_buffer);
+	s->instance_record_buffer     = NULL;
+	s->instance_record_buffer_cap = 0;
+	free(s->instance_record_staging);
+	s->instance_record_staging     = NULL;
+	s->instance_record_staging_cap = 0;
+	free(s->pbr_batches);
+	s->pbr_batches     = NULL;
+	s->pbr_batch_count = 0;
+	s->pbr_batch_cap   = 0;
 	free(s->mesh_table_staging);
 	free(s->point_light_staging);
 	free(s->cluster_light_staging);

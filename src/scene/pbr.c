@@ -7,7 +7,6 @@
  * Shader ABI (scene_pbr_mesh, scene_pbr_prepass, and stamp variants):
  *   VS b0 space1: AeronScenePbrVsBlock (transforms + storage selection)
  *   VS storage 0: packed current/previous articulation tables
- *   VS storage 1: packed per-instance local lights
  *   FS sampler 7: optional diffuse environment cubemap
  *   FS storage 0: per-mesh material entries (t8)
  *   FS storage 1: per-mesh packed variant map (t9)
@@ -23,6 +22,10 @@
  * animation records while the scene has an effect atlas) add samplers 12
  * and 13 (effect atlas layer and emissive), storage 7 (the mesh's
  * animation records) and b3 space3 (AeronScenePbrAnimBlock).
+ *
+ * The instanced vertex shaders (`_instanced`, which draw a batch) take
+ * AeronScenePbrBatchVsBlock at b0 space1 and the batch's records
+ * (AeronScenePbrInstanceRecord) at VS storage 1.
  */
 
 #include "internal.h"
@@ -68,6 +71,23 @@ typedef struct AeronScenePbrAnimBlock {
 } AeronScenePbrAnimBlock; /* 176 B */
 
 typedef char AeronScenePbrAnimBlockSizeCheck[sizeof(AeronScenePbrAnimBlock) == 176 ? 1 : -1];
+
+/* Batch VS cbuffer (b0 space1) of the instanced vertex shaders — mirrors
+ * `cbuffer PbrBatchVSUniforms` in scene_pbr_vertex_common.hlsli. The
+ * instances' values are in their records (AeronScenePbrInstanceRecord, VS
+ * storage 1). */
+typedef struct AeronScenePbrBatchVsBlock {
+	float    view_proj[16];
+	float    unjittered_view_proj[16];
+	float    moving_prev_view_proj[16];
+	uint32_t variant_group_count;
+	uint32_t material_count;
+	uint32_t camera_mb;
+	uint32_t instance_base;
+} AeronScenePbrBatchVsBlock; /* 208 B */
+
+typedef char AeronScenePbrBatchVsBlockSizeCheck[sizeof(AeronScenePbrBatchVsBlock) == 208 ? 1 : -1];
+typedef char AeronScenePbrInstanceRecordSizeCheck[sizeof(AeronScenePbrInstanceRecord) == 160 ? 1 : -1];
 
 static AeronShader* pbr_shader(const char* name, AeronShaderStage stage, uint32_t samplers, uint32_t ubs,
 							   uint32_t sbs) {
@@ -220,12 +240,24 @@ static int pbr_screen_kind(int kind) {
 	}
 }
 
+/* Velocity stamp of alpha-BLEND ranges (instance velocity_stamp flag):
+ * 2-RT velocity-prepass layout with the normal target write-masked, depth
+ * GE test against the laid opaque depth, NO write; the FS alpha-tests the
+ * base-color atlas so only the geometry's visible texels receive motion
+ * vectors. */
+static AeronGraphicsPipeline* pbr_stamp_pipeline(AeronShader* vs, AeronShader* fs, AeronCullMode cull) {
+	const PbrTargetDesc stamp2[2] = { { AERON_TEXTURE_FORMAT_R16G16_SNORM, 0x0 },
+									  { AERON_TEXTURE_FORMAT_R16G16_FLOAT, 0xF } };
+	return vs && fs ? pbr_pipeline(vs, fs, stamp2, 2, 1, 0, AERON_COMPARE_GREATER_EQUAL, cull, 0,
+								   AERON_SAMPLE_COUNT_1)
+					: NULL;
+}
+
 /* Create the (kind, cull) variant. Kind fixes shaders, targets and
  * depth state; cull is free per variant. */
 static AeronGraphicsPipeline* pbr_pipeline_create(struct AeronScene3D* s, int kind, AeronCullMode cull,
 												  AeronShader* color_vs, AeronShader* color_fs) {
 	const PbrTargetDesc normal_rw = { AERON_TEXTURE_FORMAT_R16G16_SNORM, 0xF };
-	const PbrTargetDesc normal_wm = { AERON_TEXTURE_FORMAT_R16G16_SNORM, 0x0 };
 	const PbrTargetDesc vel_rw    = { AERON_TEXTURE_FORMAT_R16G16_FLOAT, 0xF };
 	const PbrTargetDesc depth_rw  = { AERON_TEXTURE_FORMAT_R32_FLOAT, 0x1 };
 	const PbrTargetDesc color_rw  = { s->color_format, 0xF };
@@ -276,28 +308,9 @@ static AeronGraphicsPipeline* pbr_pipeline_create(struct AeronScene3D* s, int ki
 									  AERON_COMPARE_GREATER_EQUAL, cull, 0, AERON_SAMPLE_COUNT_1)
 					   : NULL;
 		case AERON_PBR_PIPE_PREPASS_STAMP_SCREEN:
-			if (!s->pbr_prepass_stamp_vs || !s->pbr_prepass_stamp_screen_fs) {
-				return NULL;
-			}
-			{
-				const PbrTargetDesc stamp2[2] = { normal_wm, vel_rw };
-				return pbr_pipeline(s->pbr_prepass_stamp_vs, s->pbr_prepass_stamp_screen_fs, stamp2, 2, 1, 0,
-									AERON_COMPARE_GREATER_EQUAL, cull, 0, AERON_SAMPLE_COUNT_1);
-			}
+			return pbr_stamp_pipeline(s->pbr_prepass_stamp_vs, s->pbr_prepass_stamp_screen_fs, cull);
 		case AERON_PBR_PIPE_PREPASS_STAMP:
-			/* Velocity stamp of alpha-BLEND ranges (instance velocity_stamp
-			 * flag): 2-RT velocity-prepass layout with the normal target
-			 * write-masked, depth GE test against the laid opaque depth, NO
-			 * write; the FS alpha-tests the base-color atlas so only the
-			 * geometry's visible texels receive motion vectors. */
-			if (!s->pbr_prepass_stamp_vs || !s->pbr_prepass_stamp_fs) {
-				return NULL;
-			}
-			{
-				const PbrTargetDesc stamp2[2] = { normal_wm, vel_rw };
-				return pbr_pipeline(s->pbr_prepass_stamp_vs, s->pbr_prepass_stamp_fs, stamp2, 2, 1, 0,
-									AERON_COMPARE_GREATER_EQUAL, cull, 0, AERON_SAMPLE_COUNT_1);
-			}
+			return pbr_stamp_pipeline(s->pbr_prepass_stamp_vs, s->pbr_prepass_stamp_fs, cull);
 		case AERON_PBR_PIPE_PREPASS_TEMPORAL:
 			return s->pbr_prepass_vs && s->pbr_prepass_fs
 					   ? pbr_pipeline(s->pbr_prepass_vs, s->pbr_prepass_fs, pre3, 3, 1, 1,
@@ -529,6 +542,39 @@ static AeronGraphicsPipeline* pbr_draw_pipeline(struct AeronScene3D* s, int kind
 	return AeronScenePbr_Pipeline(s, kind, cull);
 }
 
+/* The batch pipeline of a blend kind or the velocity stamp, with or
+ * without IBL; created on the first call. NULL when its shaders do not
+ * load. */
+static AeronGraphicsPipeline* pbr_instanced_create(struct AeronScene3D* s, int kind, AeronCullMode cull,
+												   int ibl) {
+	if (!s->pbr_instanced_tried) {
+		s->pbr_instanced_tried = 1;
+		s->pbr_instanced_vs = pbr_shader("scene_pbr_mesh_instanced.vert", AERON_SHADER_STAGE_VERTEX, 0, 1, 2);
+		s->pbr_instanced_stamp_vs =
+			pbr_shader("scene_pbr_prepass_stamp_instanced.vert", AERON_SHADER_STAGE_VERTEX, 0, 1, 2);
+	}
+	AeronGraphicsPipeline** pipe = &s->pbr_instanced_pipes[ibl][kind][cull];
+	if (!*pipe && kind == AERON_PBR_PIPE_PREPASS_STAMP) {
+		*pipe = pbr_stamp_pipeline(s->pbr_instanced_stamp_vs, s->pbr_prepass_stamp_fs, cull);
+	} else if (!*pipe && s->pbr_instanced_vs) {
+		*pipe = pbr_pipeline_create(s, kind, cull, s->pbr_instanced_vs, pbr_color_shader(s, kind, 0, ibl));
+	}
+	return *pipe;
+}
+
+/* The pipeline that draws a batch in a blend kind or the velocity stamp;
+ * NULL when its shaders do not load, and in debug views, so that the
+ * batch's instances draw alone. */
+static AeronGraphicsPipeline* pbr_instanced_pipeline(struct AeronScene3D* s, int kind, AeronCullMode cull) {
+#ifdef AERON_DEBUG_UI
+	if (pbr_debug_pipeline(s, kind, cull)) {
+		return NULL;
+	}
+#endif
+	const int ibl = kind != AERON_PBR_PIPE_PREPASS_STAMP && s->pbr_environment_set;
+	return pbr_instanced_create(s, kind, cull, ibl);
+}
+
 static int pbr_required_pipelines_ready(const struct AeronScene3D* s) {
 	static const int required[] = {
 		AERON_PBR_PIPE_MESH,         AERON_PBR_PIPE_MESH_MASK,        AERON_PBR_PIPE_FORWARD_MASK,
@@ -588,6 +634,13 @@ int AeronScenePbr_Ensure(struct AeronScene3D* s) {
 			continue;
 		s->pbr_pipes[kind][AERON_CULL_NONE] = pbr_pipeline_create(s, pbr_state_kind(kind), AERON_CULL_NONE,
 																  s->pbr_vs, pbr_color_shader(s, kind, 0, 0));
+	}
+	/* The cull-NONE batch pipelines too, with and without IBL, so that the
+	 * first batch doesn't wait for them. */
+	pbr_instanced_create(s, AERON_PBR_PIPE_PREPASS_STAMP, AERON_CULL_NONE, 0);
+	for (int ibl = 0; ibl < 2; ++ibl) {
+		pbr_instanced_create(s, AERON_PBR_PIPE_MESH_BLEND, AERON_CULL_NONE, ibl);
+		pbr_instanced_create(s, AERON_PBR_PIPE_FORWARD_BLEND, AERON_CULL_NONE, ibl);
 	}
 	if (!pbr_required_pipelines_ready(s)) {
 		Aeron_LogError("aeron.scene", "PBR pipeline creation failed");
@@ -681,6 +734,22 @@ void AeronScenePbr_Release(struct AeronScene3D* s) {
 		}
 	}
 	s->pbr_probe_tried = 0;
+	for (int ibl = 0; ibl < 2; ++ibl) {
+		for (int kind = 0; kind < AERON_PBR_PIPE_KIND_COUNT; kind++) {
+			for (int cull = 0; cull < 3; cull++) {
+				if (s->pbr_instanced_pipes[ibl][kind][cull])
+					Aeron_DestroyGraphicsPipeline(s->pbr_instanced_pipes[ibl][kind][cull]);
+				s->pbr_instanced_pipes[ibl][kind][cull] = NULL;
+			}
+		}
+	}
+	if (s->pbr_instanced_vs)
+		Aeron_DestroyShader(s->pbr_instanced_vs);
+	if (s->pbr_instanced_stamp_vs)
+		Aeron_DestroyShader(s->pbr_instanced_stamp_vs);
+	s->pbr_instanced_vs       = NULL;
+	s->pbr_instanced_stamp_vs = NULL;
+	s->pbr_instanced_tried    = 0;
 	if (s->pbr_anim_vs)
 		Aeron_DestroyShader(s->pbr_anim_vs);
 	s->pbr_anim_vs    = NULL;
@@ -770,6 +839,35 @@ static void pbr_push_instance_uniforms(struct AeronScene3D* s, AeronRenderPass* 
 			memcpy(anim.onset, in->anim->onset, sizeof anim.onset);
 		}
 		Aeron_BindUniformData(pass, AERON_SHADER_STAGE_FRAGMENT, 3, &anim, sizeof anim);
+	}
+}
+
+/* The batch's uniforms and its records, for a draw with the instanced
+ * vertex shaders. */
+static void pbr_push_batch_uniforms(struct AeronScene3D* s, AeronRenderPass* pass,
+									const AeronScenePbrBatch* batch, int velocity) {
+	AeronScenePbrBatchVsBlock block;
+	memset(&block, 0, sizeof block);
+	const float* view_proj =
+		s->planar_reflection.drawing ? s->planar_reflection.view_proj : s->jittered_view_proj;
+	const float* unjittered =
+		s->planar_reflection.drawing ? s->planar_reflection.view_proj : s->unjittered_view_proj;
+	memcpy(block.view_proj, view_proj, sizeof block.view_proj);
+	memcpy(block.unjittered_view_proj, unjittered, sizeof block.unjittered_view_proj);
+	memcpy(block.moving_prev_view_proj, velocity ? s->mb_prev_view_proj : unjittered,
+		   sizeof block.moving_prev_view_proj);
+	block.variant_group_count = batch->mesh->variant_groups_per_row;
+	block.material_count      = batch->mesh->material_count;
+	block.camera_mb           = (velocity && (s->temporal_active || s->post.mb_camera_blur)) ? 1u : 0u;
+	block.instance_base       = batch->first;
+	Aeron_BindUniformData(pass, AERON_SHADER_STAGE_VERTEX, 0, &block, sizeof block);
+	Aeron_BindStorageBuffer(pass, AERON_SHADER_STAGE_VERTEX, 1, s->instance_record_buffer);
+}
+
+/* Clears the batches' drawn flags before a walk that draws them. */
+static void pbr_reset_batches(struct AeronScene3D* s) {
+	for (uint32_t b = 0; b < s->pbr_batch_count; ++b) {
+		s->pbr_batches[b].drawn = 0;
 	}
 }
 
@@ -1123,6 +1221,7 @@ int AeronScenePbr_DrawInstances(struct AeronScene3D* s, AeronCommandBuffer* cmd,
 	 * and normal stay untouched. */
 	if (depth_only && velocity) {
 		bound_mesh = NULL;
+		pbr_reset_batches(s);
 		for (int k = 0; k < order_count; ++k) {
 			const int                     i  = order[k];
 			const AeronSceneMeshInstance* in = &s->instances[i];
@@ -1169,8 +1268,24 @@ int AeronScenePbr_DrawInstances(struct AeronScene3D* s, AeronCommandBuffer* cmd,
 			if (!in->velocity_stamp) {
 				continue;
 			}
-			if (!pbr_bind_pipeline(s, pass, AERON_PBR_PIPE_PREPASS_STAMP, (AeronCullMode)in->cull_mode, NULL,
-								   &bound)) {
+			/* A batch draws all its instances where its first one comes. */
+			const int32_t          batch_index = s->prepared_instances[i].batch;
+			AeronScenePbrBatch*    batch       = batch_index >= 0 ? &s->pbr_batches[batch_index] : NULL;
+			AeronGraphicsPipeline* instanced   = NULL;
+			if (batch) {
+				if (batch->drawn) {
+					continue;
+				}
+				instanced =
+					pbr_instanced_pipeline(s, AERON_PBR_PIPE_PREPASS_STAMP, (AeronCullMode)in->cull_mode);
+			}
+			if (instanced) {
+				if (instanced != bound) {
+					Aeron_BindGraphicsPipeline(pass, instanced);
+					bound = instanced;
+				}
+			} else if (!pbr_bind_pipeline(s, pass, AERON_PBR_PIPE_PREPASS_STAMP, (AeronCullMode)in->cull_mode,
+										  NULL, &bound)) {
 				return 0;
 			}
 			if (m != bound_mesh) {
@@ -1182,6 +1297,13 @@ int AeronScenePbr_DrawInstances(struct AeronScene3D* s, AeronCommandBuffer* cmd,
 										 atlas_sampler);
 				Aeron_BindStorageBuffer(pass, AERON_SHADER_STAGE_FRAGMENT, 0, m->material_buffer);
 				Aeron_BindStorageBuffer(pass, AERON_SHADER_STAGE_FRAGMENT, 1, m->variant_buffer);
+			}
+			if (instanced) {
+				batch->drawn = 1;
+				pbr_push_batch_uniforms(s, pass, batch, /*velocity=*/1);
+				Aeron_DrawIndexedInstanced(pass, m->blend_index_count, batch->count, m->blend_index_offset,
+										   0);
+				continue;
 			}
 			pbr_push_instance_uniforms(s, pass, in, m, &s->prepared_instances[i],
 									   /*velocity=*/1, /*depth_only=*/1,
@@ -1212,7 +1334,10 @@ int AeronScenePbr_DrawTransparentInstances(struct AeronScene3D* s, AeronRenderPa
 	AeronGraphicsPipeline* bound                       = NULL;
 	int                    bound_receiver_local_shadow = 0;
 	int                    bound_set                   = -1;
-	/* Far to near, so overlapping transparent instances blend in order. */
+	pbr_reset_batches(s);
+	/* Far to near, so overlapping transparent instances blend in order. A
+	 * batch draws all its instances, far to near, where its farthest one
+	 * comes. */
 	for (int k = s->camera_order_count - 1; k >= 0; --k) {
 		const int                     i  = s->camera_order[k];
 		const AeronSceneMeshInstance* in = &s->instances[i];
@@ -1226,7 +1351,32 @@ int AeronScenePbr_DrawTransparentInstances(struct AeronScene3D* s, AeronRenderPa
 			AeronSceneDirectionalShadow_BindForInstance(s, pass, in->shadow_flags);
 			bound_receiver_local_shadow = receiver_local_shadow;
 		}
-		const AeronCullMode cull = (AeronCullMode)in->cull_mode;
+		const AeronCullMode cull        = (AeronCullMode)in->cull_mode;
+		const int32_t       batch_index = s->prepared_instances[i].batch;
+		if (batch_index >= 0) {
+			AeronScenePbrBatch* batch = &s->pbr_batches[batch_index];
+			if (batch->drawn) {
+				continue;
+			}
+			AeronGraphicsPipeline* instanced = pbr_instanced_pipeline(s, blend_kind, cull);
+			if (instanced) {
+				if (instanced != bound) {
+					Aeron_BindGraphicsPipeline(pass, instanced);
+					bound = instanced;
+				}
+				if (m != bound_mesh) {
+					bound_mesh = m;
+					Aeron_BindVertexBuffer(pass, 0, m->vbo, 0);
+					Aeron_BindIndexBuffer(pass, m->ibo, AERON_INDEX_FORMAT_UINT32, 0);
+					pbr_bind_material_resources(s, pass, m, atlas_sampler, 1);
+				}
+				batch->drawn = 1;
+				pbr_push_batch_uniforms(s, pass, batch, /*velocity=*/0);
+				Aeron_DrawIndexedInstanced(pass, m->blend_index_count, batch->count, m->blend_index_offset,
+										   0);
+				continue;
+			}
+		}
 		if (!pbr_bind_draw(s, pass, blend_kind, cull, m, pbr_set_key(s, i), &bound, &bound_set)) {
 			return 0;
 		}

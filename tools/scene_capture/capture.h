@@ -9,7 +9,7 @@
 #include "aeron/scene/settings.h"
 #include "aeron/temporal.h"
 
-#define CAPTURE_MAX_MODELS 8
+#define CAPTURE_MAX_MODELS 16
 /* game_scene instances; Scene3D holds up to 32767 (AERON_SCENE_MAX_INSTANCES). */
 #define CAPTURE_MAX_INSTANCES 1024
 #define CAPTURE_MAX_LIGHTS AERON_SCENE_POINT_LIGHT_CAPACITY
@@ -45,6 +45,21 @@ typedef struct CaptureInstance {
  * axis (metres) makes it a tube along position +- half_axis, as the game's
  * laser streaks, and a non-zero direction (camera axes) makes it one-sided
  * (AeronSceneLight.direction). */
+/* game_scene.bolts: `count` bolts of the `models` given (indices into
+ * models), drawn as the game draws laser bolts, at random places in the box
+ * `center` +- `extent` (metres, camera axes) with random headings. `seed`
+ * picks the places; every frame shows the same bolts. */
+#define CAPTURE_MAX_BOLTS 8192
+#define CAPTURE_MAX_BOLT_MODELS 8
+
+typedef struct CaptureBolts {
+	int      models[CAPTURE_MAX_BOLT_MODELS];
+	int      model_count;
+	int      count;
+	float    center[3], extent[3];
+	uint32_t seed;
+} CaptureBolts;
+
 typedef struct CaptureLight {
 	float position[3], intensity[3], half_axis[3], direction[3];
 } CaptureLight;
@@ -88,6 +103,7 @@ typedef struct CaptureGameScene {
 	float             temporal_sharpness;
 	CaptureInstance   instances[CAPTURE_MAX_INSTANCES];
 	int               instance_count;
+	CaptureBolts      bolts;
 	CaptureLight      lights[CAPTURE_MAX_LIGHTS];
 	int               light_count;
 } CaptureGameScene;

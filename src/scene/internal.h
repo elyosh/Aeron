@@ -135,7 +135,40 @@ typedef struct AeronScenePreparedInstance {
 	uint32_t camera_visible;
 	/* The probe set the instance's colour draws use; -1 for none. */
 	int32_t probe_set;
+	/* The batch that draws the instance (AeronScenePbrBatch); -1 when it
+	 * draws alone. */
+	int32_t batch;
 } AeronScenePreparedInstance;
+
+/* Visible instances of one mesh that has only blended faces, such as a laser
+ * bolt, drawn with one instanced draw in the transparent pass and one in the
+ * velocity stamp. Their records are `count` records from `first`, from far to
+ * near, and the batch draws where its farthest instance would. */
+typedef struct AeronScenePbrBatch {
+	const AeronSceneMesh* mesh;
+	uint32_t              first;
+	uint32_t              count;
+	uint8_t               cull_mode;
+	uint8_t               velocity_stamp;
+	/* The batch was drawn in the pass being recorded. */
+	uint8_t drawn;
+} AeronScenePbrBatch;
+
+/* One instance of a batch, read by the instanced vertex shaders (mirrors
+ * PbrInstanceRecord in scene_pbr_vertex_common.hlsli). The previous transform
+ * and table are the current ones for an instance with zero velocity. */
+typedef struct AeronScenePbrInstanceRecord {
+	float    model_to_world[16];
+	float    prev_model_to_world[16];
+	uint32_t variant_row_base;
+	uint32_t current_table_base;
+	uint32_t previous_table_base;
+	uint32_t table_component_count;
+	float    base_color_emissive_strength;
+	uint32_t receive_shadow;
+	uint32_t zero_velocity;
+	uint32_t reserved;
+} AeronScenePbrInstanceRecord; /* 160 B */
 
 /* A probe set placed for the frame (AeronScene_AddProbeSet). */
 typedef struct AeronSceneProbeSet {
@@ -498,6 +531,14 @@ struct AeronScene3D {
 	uint32_t                   point_light_buffer_cap;
 	AeronBuffer*               cluster_light_buffer;
 	uint32_t                   cluster_light_buffer_cap;
+	/* The frame's batches and their instance records. */
+	AeronScenePbrBatch*          pbr_batches;
+	uint32_t                     pbr_batch_count;
+	uint32_t                     pbr_batch_cap;
+	AeronScenePbrInstanceRecord* instance_record_staging;
+	uint32_t                     instance_record_staging_cap;
+	AeronBuffer*                 instance_record_buffer;
+	uint32_t                     instance_record_buffer_cap;
 	int                        storage_ready;
 	int                        storage_error_logged;
 
@@ -741,6 +782,13 @@ struct AeronScene3D {
 	int                    pbr_probe_tried;
 	AeronShader*           pbr_probe_fs[2][5];
 	AeronGraphicsPipeline* pbr_probe_pipes[2][AERON_PBR_PIPE_KIND_COUNT][3];
+	/* The vertex shaders that draw batches, loaded on first use, and the
+	 * pipelines of the blend kinds and the velocity stamp with them, by
+	 * [image-based lighting][kind][cull]. */
+	int                    pbr_instanced_tried;
+	AeronShader*           pbr_instanced_vs;
+	AeronShader*           pbr_instanced_stamp_vs;
+	AeronGraphicsPipeline* pbr_instanced_pipes[2][AERON_PBR_PIPE_KIND_COUNT][3];
 };
 
 /* Shared small helpers (util.c). */

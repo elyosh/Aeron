@@ -31,6 +31,7 @@ the `scene_capture` target.
 | `models.yaml` | Motion blur on OPT models. |
 | `benchmark.yaml` | Repeating 30-frame scene with timing settings. |
 | `flight-benchmark.yaml` | Cockpit view of a game flight scene. |
+| `bolts-benchmark.yaml` | The same scene with 1000 laser bolts and torpedoes. |
 | `hangar-lights.yaml` | Hangar lit by point lights; `hangar-tubes.yaml` and `hangar-one-sided.yaml` use tube lights. |
 | `hangar-probes.yaml`, `flight-probes.yaml` | Scenes with environment probes. Build the test probes first with `probe_bakes.py --baker <build dir>/environment_bake --out captures/probe-assets`. |
 | `anim-example.yaml`, `anim-example-target.yaml` | The animated-material example. Build its assets first with `tools/gltf_cook/example/build.sh <build dir> captures/anim-example-assets`. |
@@ -86,6 +87,7 @@ forward).
 | `cockpit_follows_camera` | `true` turns the cockpit with the camera; `false` (default) keeps it in place. |
 | `cluster_debug` | `true` shows the number of lights per cluster instead of the lit scene. |
 | `key_probe_shadow`, `key_shadow_all_sides`, `probe_occlusion`, `planar_reflection` | Hangar lighting options, as in the game's Hangar Lighting tool. |
+| `bolts` | `{ models, count, center, extent, seed }`: up to 8192 bolts of the `models` listed (taken in turn), drawn as the game draws laser bolts, at random places in the box `center` ± `extent` (metres, camera axes) with random headings. They don't move. `seed` (default 1) picks the places. |
 
 Each instance is `{ model, role, position, rotation_degrees, velocity, markings, probes }`:
 
