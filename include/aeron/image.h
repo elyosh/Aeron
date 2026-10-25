@@ -44,6 +44,12 @@ uint8_t* Aeron_ImageDownsampleRgba8(const uint8_t* source, int width, int height
  * filtered in associated-alpha space and stored unassociated. */
 uint8_t* Aeron_ImageDownsampleStraightAlphaRgba8(const uint8_t* source, int width, int height, int* out_width,
 												 int* out_height);
+/* Returns a malloc-owned straight-alpha image resized to `out_width` x
+ * `out_height` with a Mitchell-Netravali filter, which widens with the ratio
+ * when the image shrinks. RGB is sRGB, and is filtered in linear light and
+ * associated-alpha space. */
+uint8_t* Aeron_ImageResizeSrgbRgba8(const uint8_t* source, int width, int height, int out_width,
+									int out_height);
 
 /* Writes linear RGB floats (`width * height * 3`, top row first) as a
  * Radiance .hdr (RGBE, about 1% precision) through AeronVfs_WriteAllAtomic.
