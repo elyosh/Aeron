@@ -20,6 +20,12 @@ bool OptGltf_WriteFiles(const OptGltfDocument* document, const char* out_dir, co
 	if (!PathFormat(tex_dir, sizeof tex_dir, "%s%stextures", out_dir, sep) || !MakeDirs(tex_dir))
 		return false;
 
+	/* The textures are read once more by the cooker. Unfiltered rows at a
+	   low level write them about twice as fast as stb's defaults, which try
+	   every filter on each row, and the game's flat-coloured textures come
+	   out smaller too. */
+	stbi_write_png_compression_level = 2;
+	stbi_write_force_png_filter      = 0;
 	const cgltf_data* data = OptGltf_Data((OptGltfDocument*)document);
 	for (size_t i = 0; i < data->images_count; ++i) {
 		const cgltf_image* image = &data->images[i];

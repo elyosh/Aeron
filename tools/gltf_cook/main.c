@@ -15,6 +15,7 @@
  * --library builds an effect library (animated_materials.md).
  */
 
+#include "bc7_codec.h"
 #include "effect_files.h"
 #include "effect_library.h"
 #include "flight_data.h"
@@ -62,6 +63,9 @@ static void usage(void) {
 					"                        (default 16).\n"
 					"  --quality {fast|med|uber}\n"
 					"                        BC7 encoder preset (default med).\n"
+					"  --threads <N>         Encode textures on at most N threads (default:\n"
+					"                        one per hardware thread). Set it when several\n"
+					"                        cooks run at once.\n"
 					"  --no-zstd             Skip zstd supercompression on KTX2 payloads.\n"
 					"  --zstd-level <N>      zstd level, 1 to 22 (default 9; 19 is about\n"
 					"                        14x slower for ~6%% smaller payloads).\n"
@@ -232,6 +236,13 @@ int main(int argc, char** argv) {
 				fprintf(stderr, "[aeron_gltf_cook] unknown quality '%s'\n", q);
 				return 2;
 			}
+		} else if (strcmp(a, "--threads") == 0 && i + 1 < argc) {
+			const int threads = atoi(argv[++i]);
+			if (threads < 1) {
+				fprintf(stderr, "[aeron_gltf_cook] --threads must be 1 or more\n");
+				return 2;
+			}
+			bc7_codec_set_max_threads((unsigned)threads);
 		} else if (strcmp(a, "--no-zstd") == 0) {
 			opts.zstd_supercompress = false;
 		} else if (strcmp(a, "--zstd-level") == 0 && i + 1 < argc) {

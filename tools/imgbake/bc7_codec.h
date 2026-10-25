@@ -1,9 +1,9 @@
 /*
- * bc7_codec — C facade over the vendored bc7enc encoder.
+ * bc7_codec — C facade over the BC7 encoders: the ISPC Texture Compressor
+ * in builds that have it, else the vendored bc7enc.
  *
- * bc7enc.h itself has no include guard and uses C++ types in its
- * params struct, so we keep it confined to a single C++ TU
- * (bc7_codec.cpp) and expose a flat C API to asset tools.
+ * Both encoders are C++, so they stay confined to a single C++ TU
+ * (bc7_codec.cpp), which exposes a flat C API to asset tools.
  */
 #ifndef IMGBAKE_BC7_CODEC_H
 #define IMGBAKE_BC7_CODEC_H
@@ -16,13 +16,16 @@ extern "C" {
 #include <stddef.h>
 #include <stdint.h>
 
+/* With ISPC: its veryfast, fast and slow profiles. With bc7enc: mode 6
+ * mostly and no partition search; all modes with a moderate partition
+ * count; all modes, all 64 partitions and the maximum uber level. */
 typedef enum {
-	BC7_QUALITY_FAST = 0, /* Mode 6 only-ish, no partition search. ~ms per 4K block. */
-	BC7_QUALITY_MED  = 1, /* All modes, moderate partition count. */
-	BC7_QUALITY_UBER = 2, /* All modes, all 64 partitions, max uber level. */
+	BC7_QUALITY_FAST = 0,
+	BC7_QUALITY_MED  = 1,
+	BC7_QUALITY_UBER = 2,
 } Bc7Quality;
 
-/* Initialise bc7enc's internal lookup tables. Idempotent. Call once
+/* Initialise the encoders' internal lookup tables. Idempotent. Call once
  * at startup before any encode_* call. */
 void bc7_codec_init(void);
 
@@ -30,12 +33,18 @@ void bc7_codec_init(void);
  * block. Both buffers are caller-owned. */
 void bc7_codec_encode_block(uint8_t out_block[16], const uint8_t in_rgba_4x4[64], Bc7Quality quality);
 
+/* The most threads that bc7_codec_encode_image uses; 0, the default, uses
+ * one per hardware thread. A tool that runs in several copies at once sets
+ * it, so that the copies don't run more threads than the CPU has. */
+void bc7_codec_set_max_threads(unsigned threads);
+
 /* Encode a whole RGBA8 image (tightly-packed, R first) into a flat
  * BC7 block stream. Out buffer must be ≥ ceil(w/4)*ceil(h/4)*16
  * bytes. Pixels at the right/bottom edges that don't fill a full
  * 4×4 block are padded with the last row/col before encode. Large
- * images are encoded on all hardware threads; the output is the same
- * as a single-threaded encode. Returns the number of bytes written. */
+ * images are encoded on several threads (bc7_codec_set_max_threads);
+ * the output is the same as a single-threaded encode. Returns the number
+ * of bytes written. */
 size_t bc7_codec_encode_image(uint8_t* out_blocks, size_t out_cap, const uint8_t* rgba, int w, int h,
 							  Bc7Quality quality);
 

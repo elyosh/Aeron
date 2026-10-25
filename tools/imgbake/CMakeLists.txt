@@ -12,11 +12,12 @@ enable_language(CXX)
 
 set(IMGBAKE_TP ${CMAKE_CURRENT_SOURCE_DIR}/../../third_party)
 
-# BC6H uses the ISPC Texture Compressor (third_party/ispc_texcomp), whose
-# kernel is compiled by the ISPC compiler for the host CPU; it is
-# imgbake_bc6h, apart, so that the libraries without it need no ISPC. It is
-# host tooling only: package builds (tools off) configure without ISPC and
-# never build it, nor does the add-on's cooker (AERON_GLTF_COOK_STANDALONE).
+# BC6H, and BC7 when it is there, use the ISPC Texture Compressor
+# (third_party/ispc_texcomp), whose kernel is compiled by the ISPC compiler
+# for the host CPU; it is imgbake_ispc, apart, so that the libraries without
+# it need no ISPC. It is host tooling only: package builds (tools off)
+# configure without ISPC and never build it, nor does the add-on's cooker
+# (AERON_GLTF_COOK_STANDALONE), whose BC7 uses bc7enc.
 if(DEFINED AERON_ISPC_EXECUTABLE AND AERON_ISPC_EXECUTABLE STREQUAL "")
     unset(AERON_ISPC_EXECUTABLE CACHE)
 endif()
@@ -66,6 +67,16 @@ else()
         VERBATIM)
 endif()
 
+# The ISPC Texture Compressor: BC6H, and BC7 for imgbake when the compiler
+# is there.
+add_library(imgbake_ispc STATIC
+    ${IMGBAKE_TP}/ispc_texcomp/ispc_texcomp.cpp
+    ${IMGBAKE_ISPC_HEADER}
+    ${IMGBAKE_ISPC_OUTPUTS})
+target_include_directories(imgbake_ispc
+    PUBLIC ${IMGBAKE_TP}/ispc_texcomp       # ispc_texcomp.h
+    PRIVATE ${IMGBAKE_ISPC_DIR})            # kernel_ispc.h (generated)
+
 add_library(imgbake STATIC
     # C: agnostic image/atlas/font backend.
     upscale.c
@@ -99,6 +110,10 @@ target_include_directories(imgbake
 # Threads — the BC7 encoder splits large images across threads.
 find_package(Threads REQUIRED)
 target_link_libraries(imgbake PUBLIC aeron ${AERON_ZSTD} PRIVATE Threads::Threads)
+if(AERON_ISPC_EXECUTABLE AND IMGBAKE_ISPC_FLAGS)
+    target_link_libraries(imgbake PUBLIC imgbake_ispc)
+    set_source_files_properties(bc7_codec.cpp PROPERTIES COMPILE_DEFINITIONS IMGBAKE_HAVE_ISPC)
+endif()
 
 set_target_properties(imgbake PROPERTIES C_STANDARD 11)
 target_compile_features(imgbake PUBLIC cxx_std_17)
@@ -106,14 +121,8 @@ target_compile_features(imgbake PUBLIC cxx_std_17)
 # The BC6H encoder and the BC6H cubemap writer (environment_bake).
 add_library(imgbake_bc6h STATIC
     ktx2_writer_bc6h.c
-    bc6h_codec.cpp
-    ${IMGBAKE_TP}/ispc_texcomp/ispc_texcomp.cpp  # BC6H (bc6h_codec)
-    ${IMGBAKE_ISPC_HEADER}
-    ${IMGBAKE_ISPC_OUTPUTS})
-target_include_directories(imgbake_bc6h PRIVATE
-    ${IMGBAKE_TP}/ispc_texcomp           # ispc_texcomp.h
-    ${IMGBAKE_ISPC_DIR})                 # kernel_ispc.h (generated)
-target_link_libraries(imgbake_bc6h PUBLIC imgbake PRIVATE Threads::Threads)
+    bc6h_codec.cpp)
+target_link_libraries(imgbake_bc6h PUBLIC imgbake imgbake_ispc PRIVATE Threads::Threads)
 set_target_properties(imgbake_bc6h PROPERTIES C_STANDARD 11)
 
 # Vendored encoders trip the project's strict warnings (sign compares,

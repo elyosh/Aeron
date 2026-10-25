@@ -9,10 +9,10 @@
  * block geometry as BC7). The KTX2 vkFormat to pair this with is
  * VK_FORMAT_BC6H_UFLOAT_BLOCK (143).
  *
- * Every quality value uses the encoder's "veryslow" profile, which
- * matches the error of the DirectXTex encoder it replaced at about 45x
- * its speed. The parameter is kept for API compatibility; existing
- * callers that pass FAST relied on the exhaustive encoder.
+ * Every quality value uses the encoder's "basic" profile. Its error is
+ * within 0.1 dB of the "veryslow" profile, which matches the DirectXTex
+ * encoder that it replaced, for 12 times less CPU time. The parameter is
+ * kept for API compatibility.
  *
  * Output is deterministic and independent of how blocks are grouped
  * into calls or threads. It can differ in a few blocks between CPU

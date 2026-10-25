@@ -6,10 +6,81 @@
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
+#include <sys/stat.h>
 
 #include "util.h"
 
 /* ---- Paths ---------------------------------------------------------------- */
+
+/* The components already found: "<folder>/<name in lower case>" gives the
+ * path with the name's case on disk. A conversion looks up many files in the
+ * same folders, and reading a folder such as FlightModels for each lookup
+ * takes most of the time. A path is used again only while it still exists,
+ * and names that weren't found aren't kept, so files that come or go are
+ * still found. */
+typedef struct FoundPath {
+	char* key;
+	char* path;
+} FoundPath;
+
+static FoundPath* g_found;
+static size_t     g_found_cap, g_found_count;
+
+static size_t found_hash(const char* key) {
+	size_t hash = 14695981039346656037u;
+	for (; *key; ++key)
+		hash = (hash ^ (unsigned char)*key) * 1099511628211u;
+	return hash;
+}
+
+static const char* found_get(const char* key) {
+	if (!g_found_cap)
+		return NULL;
+	for (size_t i = found_hash(key) & (g_found_cap - 1);; i = (i + 1) & (g_found_cap - 1)) {
+		if (!g_found[i].key)
+			return NULL;
+		if (strcmp(g_found[i].key, key) == 0)
+			return g_found[i].path;
+	}
+}
+
+static void found_put(const char* key, const char* path) {
+	if (g_found_count * 2 >= g_found_cap) {
+		const size_t cap   = g_found_cap ? g_found_cap * 2 : 1024;
+		FoundPath*   table = (FoundPath*)calloc(cap, sizeof *table);
+		if (!table)
+			return;
+		for (size_t i = 0; i < g_found_cap; ++i) {
+			if (!g_found[i].key)
+				continue;
+			size_t j = found_hash(g_found[i].key) & (cap - 1);
+			while (table[j].key)
+				j = (j + 1) & (cap - 1);
+			table[j] = g_found[i];
+		}
+		free(g_found);
+		g_found     = table;
+		g_found_cap = cap;
+	}
+	size_t i = found_hash(key) & (g_found_cap - 1);
+	while (g_found[i].key && strcmp(g_found[i].key, key) != 0)
+		i = (i + 1) & (g_found_cap - 1);
+	char* new_path = strdup(path);
+	if (!new_path)
+		return;
+	if (g_found[i].key) {
+		free(g_found[i].path);
+		g_found[i].path = new_path;
+		return;
+	}
+	g_found[i].key = strdup(key);
+	if (!g_found[i].key) {
+		free(new_path);
+		return;
+	}
+	g_found[i].path = new_path;
+	g_found_count++;
+}
 
 /* Writes `base`/`rel` into `out`, matching each component of `rel` in any
  * case. Returns false when a component is missing. */
@@ -26,6 +97,17 @@ static bool resolve(const char* base, const char* rel, char* out, size_t cap) {
 			*next++ = 0;
 		if (!*part)
 			continue;
+		char key[2048];
+		if (!PathFormat(key, sizeof key, "%s/%s", out, part))
+			return false;
+		LowerInPlace(key + strlen(out) + 1);
+		const char* known = found_get(key);
+		struct stat st;
+		if (known && stat(known, &st) == 0) {
+			if (!PathFormat(out, cap, "%s", known))
+				return false;
+			continue;
+		}
 		DIR* d = opendir(out);
 		if (!d)
 			return false;
@@ -41,6 +123,7 @@ static bool resolve(const char* base, const char* rel, char* out, size_t cap) {
 		closedir(d);
 		if (!found || !fits)
 			return false;
+		found_put(key, out);
 	}
 	return true;
 }
