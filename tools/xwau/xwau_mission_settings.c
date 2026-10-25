@@ -5,6 +5,7 @@
 
 #include "util.h"
 #include "xwau_craft.h"
+#include "xwau_object_limits.h"
 
 static const char* const kListDirs[] = { "Missions", "Melee", "Combat" };
 
@@ -113,6 +114,9 @@ bool XwauSettingsConfig_Read(const char* game, XwauSettingsConfig* out) {
 			unlimited && int_value(&turret_lines, "UnlimitedTurretLaser", 1, NULL) != 0;
 		XwauLines_Free(&turret_lines);
 	}
+	out->crafts_count_sounds = XwauObjectLimits_HookEnabled(game) &&
+							   Xwau_FindFile(game, "hook_crafts_count.dll", path, sizeof path) &&
+							   Xwau_FileHasText(path, "RS's crafts count");
 	XwauLines lines;
 	if (Xwau_FindFile(game, "hook_weapon_type.dll", path, sizeof path)) {
 		out->weapon_type          = true;
@@ -182,7 +186,8 @@ bool XwauMissionSettings_WriteDefaults(FILE* f, const XwauSettingsConfig* config
 					   config->weapon_rate_rack_check || config->starship_ambient ||
 					   config->weapon_rate_slot_cap || config->gunner_seats ||
 					   config->weapon_rate_mesh_filter || config->weapon_rate_hardpoint_types ||
-					   config->weapon_rate_rearm_statuses || config->jamming || config->weapon_type;
+					   config->weapon_rate_rearm_statuses || config->jamming || config->weapon_type ||
+					   config->crafts_count_sounds;
 	if (rules)
 		fputs("rules:\n", f);
 	if (config->mission_tie)
@@ -222,6 +227,8 @@ bool XwauMissionSettings_WriteDefaults(FILE* f, const XwauSettingsConfig* config
 		fputs("  two_launcher_fixes: true\n", f);
 	if (config->weapon_type_missiles)
 		fputs("  starship_missile_defense_any_warhead: true\n  weapon_rack_count_from_record: true\n", f);
+	if (config->crafts_count_sounds)
+		fputs("  overlapping_fly_by_sounds: true\n", f);
 	const bool warheads     = config->mission_tie && !config->warhead_collision_damage;
 	const bool shields      = config->mission_tie && config->damage_through_shields;
 	const bool interdiction = config->engine_sound && config->interdiction_count;

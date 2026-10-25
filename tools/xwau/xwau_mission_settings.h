@@ -80,6 +80,9 @@ typedef struct XwauSettingsConfig {
 	 * defense and the rack count. */
 	bool      weapon_type;
 	bool      weapon_type_missiles;
+	/* hook_crafts_count.dll, turned on, with the patch that lets the fly-by
+	 * sounds of several craft play at once. */
+	bool      crafts_count_sounds;
 	bool      warhead_collision_damage;
 	bool      damage_through_shields;
 	long long target_method;
@@ -104,8 +107,9 @@ void XwauSettingsConfig_Free(XwauSettingsConfig* config);
  * weapon rules,
  * hook_engine_sound's starship_ambient_sounds, and hook_mission_objects'
  * gunner_weapon_select_in_seat, gunner_fires_warheads and, with
- * UnlimitedTurretLaser = 1, gunner_fires_selected_group. Returns whether it
- * wrote anything.
+ * UnlimitedTurretLaser = 1, gunner_fires_selected_group, and
+ * hook_crafts_count's overlapping_fly_by_sounds. Returns whether it wrote
+ * anything.
  */
 bool XwauMissionSettings_WriteDefaults(FILE* f, const XwauSettingsConfig* config);
 

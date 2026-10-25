@@ -10,6 +10,7 @@
 
 #include <SDL3/SDL.h>
 
+#include <limits.h>
 #include <math.h>
 #include <string.h>
 
@@ -428,13 +429,41 @@ void AeronDrawList_Begin(AeronDrawList2D* l, AeronRenderTarget* target, int targ
 	l->prepared = 0;
 }
 
+/* Doubles the record capacity, and the instance arrays with it. Returns 0
+ * when out of memory. */
+static int dl2d_grow(AeronDrawList2D* l) {
+	if (l->cap > INT_MAX / 2) {
+		return 0;
+	}
+	const int   cap     = l->cap * 2;
+	Dl2dRecord* records = (Dl2dRecord*)realloc(l->records, (size_t)cap * sizeof *records);
+	if (!records) {
+		return 0;
+	}
+	l->records                = records;
+	Blit2DInstance* instances = (Blit2DInstance*)realloc(l->instances, (size_t)cap * sizeof *instances);
+	if (!instances) {
+		return 0;
+	}
+	l->instances = instances;
+	if (l->rr_instances) {
+		Blit2DRRectInstance* rr = (Blit2DRRectInstance*)realloc(l->rr_instances, (size_t)cap * sizeof *rr);
+		if (!rr) {
+			return 0;
+		}
+		l->rr_instances = rr;
+	}
+	l->cap = cap;
+	return 1;
+}
+
 static Dl2dRecord* dl2d_alloc(AeronDrawList2D* l) {
 	if (!l || !l->active) {
 		return NULL;
 	}
-	if (l->count >= l->cap) {
+	if (l->count >= l->cap && !dl2d_grow(l)) {
 		if (!l->dropped) {
-			Aeron_LogWarn("aeron.scene", "drawlist2d record cap (%d) hit; dropping", l->cap);
+			Aeron_LogWarn("aeron.scene", "drawlist2d cannot grow past %d records; dropping", l->cap);
 		}
 		l->dropped++;
 		return NULL;

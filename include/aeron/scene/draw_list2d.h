@@ -119,8 +119,9 @@ typedef struct AeronDrawList2DRRect {
 
 typedef struct AeronDrawList2D AeronDrawList2D;
 
-/* record_cap 0 = default (4096). Over-capacity submissions are
- * dropped with a once-per-frame log. */
+/* record_cap is the first capacity; 0 gives 4096. The list doubles it when
+ * it is full. A record that can't fit because memory runs out is dropped,
+ * with a log once per frame. */
 AeronDrawList2D* AeronDrawList_Create(int record_cap);
 void             AeronDrawList_Destroy(AeronDrawList2D* list);
 

@@ -12,6 +12,7 @@
 #include "xwau_mission_settings.h"
 #include "xwau_mission_sounds.h"
 #include "xwau_mission_tie.h"
+#include "xwau_object_limits.h"
 #include "xwau_objects.h"
 #include "xwau_skins.h"
 #include "xwau_stats_profiles.h"
@@ -645,7 +646,7 @@ static bool report_weapon_rates(const char* game, const char* base) {
 typedef struct Totals {
 	size_t files, profiles, profiles_dropped, skins, articulations, articulations_dropped, resdata, values,
 		values_dropped, craft_markings, craft_markings_dropped, settings, swaps, craft_names, front_planets,
-		headlights, stats_profiles, sounds, warhead_pools, warhead_pools_dropped, weapon_profiles;
+		headlights, stats_profiles, sounds, warhead_pools, warhead_pools_dropped, weapon_profiles, limits;
 } Totals;
 
 /* Whether the flight group values of `entry` set anything. */
@@ -893,7 +894,7 @@ static bool write_mission(const char* path, const char* base, const Profile* pro
 						  const Swap* swap_list, size_t swap_count, const CraftName* names, size_t name_count,
 						  const XwauFrontPlanet* planet, bool lights, const XwauMissionStats* stats,
 						  const XwauMissionSounds* sounds, const XwauWarheadPools* pools,
-						  const XwauWeaponProfileChoices* choices) {
+						  const XwauWeaponProfileChoices* choices, const XwauMissionLimits* limits) {
 	FILE* f = fopen(path, "wb");
 	if (!f) {
 		Report(NULL, "cannot write %s", path);
@@ -912,6 +913,7 @@ static bool write_mission(const char* path, const char* base, const Profile* pro
 		fputs("headlights: true\n", f);
 	XwauMissionStats_Write(f, stats);
 	XwauMissionSounds_Write(f, sounds);
+	XwauObjectLimits_WriteMission(f, limits);
 	for (size_t i = 0; i < swap_count; ++i)
 		fprintf(f, "%s  %s: %s\n", i ? "" : "model_swaps:\n", swap_list[i].source, swap_list[i].target);
 	write_craft_names(f, names, name_count);
@@ -1027,6 +1029,9 @@ static bool import_mission(const char* game, const XwauMissions* missions, const
 	ok                       = ok && XwauWarheadPools_Read(game, base, true, &pools);
 	XwauWeaponProfileChoices choices = { 0 };
 	ok                               = ok && XwauWeaponStats_ReadChoices(game, base, &choices);
+	XwauMissionLimits limits         = { 0 };
+	ok                               = ok && XwauObjectLimits_ReadMission(game, base, &limits);
+	const bool any_limits            = XwauObjectLimits_Any(&limits);
 	const bool any_stats   = XwauMissionStats_Any(&stats);
 	if (ok && planet.image != -1 && !*dat_groups_loaded) {
 		ok                 = XwauDatGroups_Read(game, stock_game, dat_groups);
@@ -1044,7 +1049,7 @@ static bool import_mission(const char* game, const XwauMissions* missions, const
 		any_values |= XwauWeaponStats_AnyChoice(&choices.items[i]);
 	if (!ok || (!profile_count && !skin_count && !fg_count && !resdata.count && !any_values &&
 				!XwauMissionSettings_Any(&settings) && !swap_count && !values.craft_lines.count &&
-				!XwauFrontPlanet_Any(&planet) && !lights && !any_stats && !sounds.count)) {
+				!XwauFrontPlanet_Any(&planet) && !lights && !any_stats && !sounds.count && !any_limits)) {
 		XwauWarheadPools_Free(&pools);
 		XwauWeaponStats_FreeChoices(&choices);
 		XwauMissionSounds_Free(&sounds);
@@ -1120,7 +1125,7 @@ static bool import_mission(const char* game, const XwauMissions* missions, const
 	ok                      = ok && craft_names(&values.craft_lines, tables, &tie, base, &names, &name_count);
 	if (ok && (profiles_kept || skin_count || fgs_kept || resdata.count || values_kept || pools_kept ||
 			   choices_kept || any_settings || swap_count || name_count || XwauFrontPlanet_Any(&planet) ||
-			   lights || any_stats || sounds.count)) {
+			   lights || any_stats || sounds.count || any_limits)) {
 		char dir_path[1200], lower_dir[64], path[1400];
 		LowerCopy(lower_dir, sizeof lower_dir, dir);
 		ok = PathFormat(dir_path, sizeof dir_path, "%s/%s", out, lower_dir) &&
@@ -1128,7 +1133,7 @@ static bool import_mission(const char* game, const XwauMissions* missions, const
 			 write_mission(path, base, profile_list, profile_targets, profile_count, skin_models, skins,
 						   skin_count, fgs, fg_targets, fg_count, &tie, &resdata, &values, &settings,
 						   swap_list, swap_count, names, name_count, &planet, lights, &stats, &sounds, &pools,
-						   &choices);
+						   &choices, &limits);
 		if (ok) {
 			++totals->files;
 			totals->profiles += profiles_kept;
@@ -1145,6 +1150,7 @@ static bool import_mission(const char* game, const XwauMissions* missions, const
 			totals->sounds += sounds.count != 0;
 			totals->warhead_pools += pools_kept;
 			totals->weapon_profiles += choices_kept;
+			totals->limits += any_limits;
 			for (size_t i = 0; i < values.craft_marking_count; ++i)
 				totals->craft_markings += values.craft_markings[i].fg >= 0;
 		}
@@ -1222,11 +1228,11 @@ bool XwauMissionFiles_Write(const char* game, const XwauMissions* missions, cons
 		"%zu missions, %zu model swaps, the names of %zu models, the concourse planets of %zu missions, "
 		"the headlights of %zu missions, the stats profiles of %zu missions, the sound replacements of %zu "
 		"missions, the warhead pools of %zu flight groups (%zu dropped), the weapon profiles of %zu flight "
-		"groups and the art files of %zu missions",
+		"groups, the object counts of %zu missions and the art files of %zu missions",
 		totals.files, totals.profiles, totals.profiles_dropped, totals.skins, totals.articulations,
 		totals.articulations_dropped, totals.values, totals.values_dropped, totals.craft_markings,
 		totals.craft_markings_dropped, totals.settings, totals.swaps, totals.craft_names,
 		totals.front_planets, totals.headlights, totals.stats_profiles, totals.sounds, totals.warhead_pools,
-		totals.warhead_pools_dropped, totals.weapon_profiles, totals.resdata);
+		totals.warhead_pools_dropped, totals.weapon_profiles, totals.limits, totals.resdata);
 	return true;
 }

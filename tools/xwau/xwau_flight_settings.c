@@ -11,6 +11,7 @@
 #include "xwau_config.h"
 #include "xwau_craft.h"
 #include "xwau_mission_settings.h"
+#include "xwau_object_limits.h"
 
 /* The illuminance of the game's white sun, in W/m^2: the strength of the
  * Blender sun that matches it. */
@@ -227,9 +228,6 @@ static void write_weapon_profile_settings(FILE* f, const char* game, const char*
 	}
 	if (open)
 		fputs("}\n", f);
-	const long long count = hook_value(lines, source, "WeaponsCount", 12);
-	if (Xwau_FileHasText(dll, "WeaponsCount") && count != 12)
-		Report(source, "WeaponsCount = %lld isn't imported: a player keeps 12 projectile slots", count);
 	if (Xwau_FileHasText(dll, "IsLaserLinksFixEnabled") &&
 		hook_value(lines, source, "IsLaserLinksFixEnabled", 0))
 		Report(source, "IsLaserLinksFixEnabled isn't imported: no mod's model turns it on");
@@ -352,6 +350,7 @@ bool XwauFlightSettings_Write(const char* game, const char* path) {
 	write_weapons(f, game, &impact, &rates);
 	const bool shields    = write_shield_recharge(f, game);
 	const bool docking    = write_docking(f, game);
+	const bool limits     = XwauObjectLimits_Write(f, game);
 	XwauSettingsConfig_Free(&config);
 	const bool        ok        = !ferror(f) && fclose(f) == 0;
 	char              what[300] = "";
@@ -361,7 +360,8 @@ bool XwauFlightSettings_Write(const char* game, const char* path) {
 									impact ? "the impact colours" : NULL,
 									rates ? "the laser rates" : NULL,
 									shields ? "the shield recharge rules" : NULL,
-									docking ? "the docking rules" : NULL };
+									docking ? "the docking rules" : NULL,
+									limits ? "the object counts" : NULL };
 	for (size_t i = 0; i < sizeof parts / sizeof parts[0]; ++i) {
 		if (parts[i])
 			snprintf(what + strlen(what), sizeof what - strlen(what), "%s%s", what[0] ? ", " : "", parts[i]);

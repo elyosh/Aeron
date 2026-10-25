@@ -29,6 +29,7 @@
 #include "xwau_mission_tie.h"
 #include "xwau_missions.h"
 #include "xwau_model.h"
+#include "xwau_object_limits.h"
 #include "xwau_objects.h"
 #include "xwau_skins.h"
 #include "xwau_skyboxes.h"
@@ -1915,6 +1916,89 @@ static void test_flight_settings(const char* scratch) {
 	remove(path);
 }
 
+/* Writes the flight settings of `game` to `settings` and returns their text,
+ * or NULL. */
+static char* flight_settings_text(const char* game, const char* settings) {
+	size_t size = 0;
+	return XwauFlightSettings_Write(game, settings) ? ReadWholeFile(settings, &size) : NULL;
+}
+
+static void test_object_limits(const char* scratch) {
+	char game[1024], stock[1024], out[1024], path[1300], settings[1300], dll[1300];
+	snprintf(game, sizeof game, "%s/limits_game", scratch);
+	snprintf(stock, sizeof stock, "%s/limits_stock", scratch);
+	snprintf(out, sizeof out, "%s/limits_out", scratch);
+	snprintf(path, sizeof path, "%s/Missions", game);
+	MakeDirs(path);
+	snprintf(path, sizeof path, "%s/MISSIONS", stock);
+	MakeDirs(path);
+	snprintf(settings, sizeof settings, "%s/limits.yaml", scratch);
+	snprintf(dll, sizeof dll, "%s/hook_weapon_rate.dll", game);
+	write_file(dll, "MZ WeaponsCount");
+	snprintf(path, sizeof path, "%s/Hook_Weapon_Rate.cfg", game);
+	write_file(path, "WeaponsCount = 12\n");
+	char* text = flight_settings_text(game, settings);
+	check(text && !strstr(text, "object_limits"),
+		  "object limits: none with WeaponsCount = 12 and without hook_crafts_count");
+	free(text);
+	write_file(path, "WeaponsCount = 128\n");
+	text = flight_settings_text(game, settings);
+	check(text && strstr(text, "\nobject_limits:\n  player_projectiles: 128\n") &&
+			  !strstr(text, "craft_per_region"),
+		  "object limits: WeaponsCount gives each player's block of projectile slots");
+	free(text);
+	snprintf(dll, sizeof dll, "%s/hook_crafts_count.dll", game);
+	write_file(dll, "MZ _CraftsCount.txt To call the hook that applies RS's crafts count");
+	snprintf(path, sizeof path, "%s/Hooks.ini", game);
+	write_file(path, "[hook_crafts_count]\nIsHookEnabled = 0\nCraftsCount = 500\n");
+	text = flight_settings_text(game, settings);
+	check(text && !strstr(text, "craft_per_region") && !strstr(text, "overlapping_fly_by_sounds"),
+		  "object limits: hook_crafts_count does nothing when it is off");
+	free(text);
+	snprintf(path, sizeof path, "%s/Hook_Crafts_Count.cfg", game);
+	write_file(path, "IsHookEnabled = 1\nCraftsCount = 3072\nProjectilesCount = 32\nRadar2DItemsCount = 512\n"
+					 "ExplosionsCount = 0\n");
+	text = flight_settings_text(game, settings);
+	check(text &&
+			  strstr(text, "\nobject_limits:\n  player_projectiles: 128\n  craft_per_region: 3072\n"
+						   "  ai_projectiles_per_region: 32\n  radar_blips: 512\n") &&
+			  strstr(text, "  overlapping_fly_by_sounds: true\n"),
+		  "object limits: the hook's .cfg wins over Hooks.ini, a count of 0 is left out, and the fly-by "
+		  "sounds of several craft can play at once");
+	free(text);
+	snprintf(path, sizeof path, "%s/Missions/m.ini", game);
+	write_file(path, "[CraftsCount]\nProjectilesCount = 4096\nCraftsCount = 0\n");
+	snprintf(path, sizeof path, "%s/Missions/n_CraftsCount.txt", game);
+	write_file(path, "ExplosionsCount = 64\n");
+	snprintf(path, sizeof path, "%s/Missions/n.ini", game);
+	write_file(path, "[CraftsCount]\nCraftsCount = 100\n");
+	static const char* const kNames[]  = { "Red" };
+	static const int         kCrafts[] = { 1 };
+	snprintf(path, sizeof path, "%s/Missions/m.tie", game);
+	write_tie(path, 1, kNames, kCrafts);
+	snprintf(path, sizeof path, "%s/Missions/n.tie", game);
+	write_tie(path, 1, kNames, kCrafts);
+	XwauMissions* missions = XwauMissions_Load(game, false);
+	check(missions && XwauMissionFiles_Write(game, missions, stock, out),
+		  "object limits: mission files written");
+	XwauMissions_Free(missions);
+	size_t size = 0;
+	snprintf(path, sizeof path, "%s/missions/m.yaml", out);
+	char* m = ReadWholeFile(path, &size);
+	check(m && strstr(m, "\nobject_limits: { ai_projectiles_per_region: 4096 }\n"),
+		  "object limits: a mission's [CraftsCount], without its counts of 0");
+	snprintf(path, sizeof path, "%s/missions/n.yaml", out);
+	char* n = ReadWholeFile(path, &size);
+	check(n && strstr(n, "\nobject_limits: { explosions_per_region: 64 }\n"),
+		  "object limits: <mission>_CraftsCount.txt wins over the .ini");
+	free(m);
+	free(n);
+	write_file(dll, "MZ To call the hook that applies RS's crafts count");
+	XwauMissionLimits limits;
+	check(XwauObjectLimits_ReadMission(game, "Missions/m", &limits) && !XwauObjectLimits_Any(&limits),
+		  "object limits: no mission counts with a build of the hook that doesn't read them");
+}
+
 static void test_headlights(const char* scratch) {
 	char game[1024], stock[1024], out[1024], path[1300];
 	snprintf(game, sizeof game, "%s/hl_game", scratch);
@@ -2557,6 +2641,7 @@ int main(void) {
 	test_game_files(scratch);
 	test_mission_files(scratch);
 	test_flight_settings(scratch);
+	test_object_limits(scratch);
 	test_mission_settings(scratch);
 	test_model_swaps(scratch);
 	test_craft_names(scratch);

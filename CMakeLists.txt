@@ -1043,6 +1043,7 @@ if(AERON_BUILD_TOOLS)
         tools/xwau/xwau_mission_settings.c
         tools/xwau/xwau_missions.c
         tools/xwau/xwau_model.c
+        tools/xwau/xwau_object_limits.c
         tools/xwau/xwau_skins.c
         third_party/lzma/LzmaDec.c)
     target_include_directories(xwau_files
