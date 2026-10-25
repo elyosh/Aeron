@@ -48,6 +48,15 @@ typedef struct XwauMatParams {
 	 * fewer than three numbers sets no light. */
 	bool  has_light;
 	float light[3];
+	/* Where a face drawn with the texture gets its light: the texture
+	 * coordinates of the point (light_uv_coord_pos, LoadUVCoord; 0.1, 0.5 by
+	 * default), the falloff (light_falloff; 0, the bolts' falloff, by
+	 * default) and the cone in degrees from the face's normal (light_angle,
+	 * kept as given; `has_light_angle` false without one). */
+	float light_uv[2];
+	float light_falloff;
+	bool  has_light_angle;
+	float light_angle;
 } XwauMatParams;
 
 /*

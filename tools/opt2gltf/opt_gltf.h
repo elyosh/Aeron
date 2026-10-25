@@ -92,14 +92,21 @@ typedef struct OptGltfComponentSet {
 /* A light under the component built from OPT mesh `mesh_index`
  * (tools/extensions/AERON_flight_model, "Lights"): a tube along the longest
  * axis of the mesh's bounding box, as long as the box, at its centre. A box
- * with no length gives a point. With `state` -1 the light shines with every
- * variant, with 0 with the model's own materials, and with s with variant
- * `State s`, which must exist. */
+ * with no length gives a point. With `placed`, the light is at `position`
+ * (OPT axes and units, as the mesh's vertices) instead: a spot light along
+ * `direction` (OPT axes) that ends `spot_angle` radians from it, with full
+ * light only on the axis, or a point light when `spot_angle` is 0. With
+ * `state` -1 the light shines with every variant, with 0 with the model's
+ * own materials, and with s with variant `State s`, which must exist. */
 typedef struct OptGltfLight {
-	uint32_t mesh_index;
-	int32_t  state;
-	float    color[3];  /* linear RGB */
-	float    intensity; /* candela */
+	uint32_t   mesh_index;
+	int32_t    state;
+	float      color[3];  /* linear RGB */
+	float      intensity; /* candela */
+	bool       placed;
+	opt_vec3_t position;
+	opt_vec3_t direction;
+	float      spot_angle; /* above 0, below pi/2; 0 for a point light */
 } OptGltfLight;
 
 /* An AERON_flight_model articulation setting on the model root. `name`

@@ -40,6 +40,8 @@ void XwauMat_CodeDefaults(XwauMatParams* out) {
 	out->glossiness   = 0.02f; /* DEFAULT_GLOSSINESS */
 	out->nm_intensity = 0.5f;
 	out->specular_val = 0.0f; /* DEFAULT_SPEC_VALUE */
+	out->light_uv[0]  = 0.1f;
+	out->light_uv[1]  = 0.5f;
 }
 
 static int ascii_casecmp(const char* a, const char* b) {
@@ -124,6 +126,18 @@ static void read_material_line(const char* line, XwauMatParams* m) {
 			m->has_light = true;
 			memcpy(m->light, rgb, sizeof rgb);
 		}
+	} else if (ascii_casecmp(param, "light_uv_coord_pos") == 0) {
+		/* LoadUVCoord reads the two numbers after the '='. With fewer, it
+		 * stores values it never read, so this keeps the previous ones. */
+		const char* equals = strchr(line, '=');
+		float       uv[2];
+		if (equals && sscanf(equals + 1, "%f, %f", &uv[0], &uv[1]) == 2)
+			memcpy(m->light_uv, uv, sizeof uv);
+	} else if (ascii_casecmp(param, "light_falloff") == 0) {
+		m->light_falloff = f;
+	} else if (ascii_casecmp(param, "light_angle") == 0) {
+		m->has_light_angle = true;
+		m->light_angle     = f;
 	}
 }
 

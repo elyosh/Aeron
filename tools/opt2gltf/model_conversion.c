@@ -458,6 +458,180 @@ static bool xwau_bolt_lights(Conversion* c, const opt_file_t* opt) {
 	return true;
 }
 
+/* The candela of a light from a .mat Light key, per unit of Light ×
+ * light_falloff, tuned in game. XWAU gives 6 × Light × light_falloff / d² in
+ * its light units (laser_light_intensity 3.0, doubled). Taking its light
+ * value 1.0 as the white sun, 2.5 W/m², as for the headlights, gives
+ * 2.5 × 683 × 6 = 10245 cd, which looks too dim in game; this is about 10
+ * times that. */
+#define XWAU_MAT_LIGHT_CANDELA 100000.0f
+/* Lights of a component closer than this, in OPT units (1 cm), and in the
+ * same direction are one light. */
+#define XWAU_MAT_LIGHT_MERGE (0.01f * 65536.0f / 1600.0f)
+
+/* IsInsideTriangle of XWAU's renderer (Direct3DDevice.cpp): whether `p` is in
+ * the triangle a, b, c, with p = a + u (c - a) + v (b - a). */
+static bool xwau_inside_triangle(const opt_vec2_t* p, const opt_vec2_t* a, const opt_vec2_t* b,
+								 const opt_vec2_t* c, float* u, float* v) {
+	const float v0[2] = { c->u - a->u, c->v - a->v };
+	const float v1[2] = { b->u - a->u, b->v - a->v };
+	const float v2[2] = { p->u - a->u, p->v - a->v };
+	const float dot00 = v0[0] * v0[0] + v0[1] * v0[1], dot01 = v0[0] * v1[0] + v0[1] * v1[1];
+	const float dot02 = v0[0] * v2[0] + v0[1] * v2[1], dot11 = v1[0] * v1[0] + v1[1] * v1[1];
+	const float dot12       = v1[0] * v2[0] + v1[1] * v2[1];
+	const float denominator = dot00 * dot11 - dot01 * dot01;
+	if (denominator == 0.0f)
+		return false;
+	const float inverse = 1.0f / denominator;
+	*u                  = (dot11 * dot02 - dot01 * dot12) * inverse;
+	*v                  = (dot00 * dot12 - dot01 * dot02) * inverse;
+	return *u >= -0.000001f && *v >= -0.000001f && *u + *v < 1.000001f;
+}
+
+/* The face's outward normal: its stored normal, or the mean of its corners'
+ * normals. False when both are zero. */
+static bool xwau_face_normal(const opt_mesh_t* m, const opt_face_t* f, int corners, opt_vec3_t* out) {
+	opt_vec3_t n = f->face_normal;
+	if (n.x * n.x + n.y * n.y + n.z * n.z == 0.0f) {
+		for (int k = 0; k < corners; ++k) {
+			if (f->normals[k] >= 0 && f->normals[k] < m->normal_count) {
+				n.x += m->normals[f->normals[k]].x;
+				n.y += m->normals[f->normals[k]].y;
+				n.z += m->normals[f->normals[k]].z;
+			}
+		}
+	}
+	const float length = sqrtf(n.x * n.x + n.y * n.y + n.z * n.z);
+	if (!(length > 0.0f) || !isfinite(length))
+		return false;
+	*out = (opt_vec3_t) { n.x / length, n.y / length, n.z / length };
+	return true;
+}
+
+/* Whether `light` repeats one of the model's lights: the same component,
+ * state, colour, intensity and cone, closer than XWAU_MAT_LIGHT_MERGE and in
+ * the same direction. */
+static bool xwau_mat_light_repeats(const Conversion* c, const OptGltfLight* light) {
+	for (size_t i = 0; i < c->light_count; ++i) {
+		const OptGltfLight* other = &c->lights[i];
+		const float dx = other->position.x - light->position.x, dy = other->position.y - light->position.y,
+					dz = other->position.z - light->position.z;
+		if (other->mesh_index == light->mesh_index && other->state == light->state &&
+			memcmp(other->color, light->color, sizeof light->color) == 0 &&
+			other->intensity == light->intensity && other->spot_angle == light->spot_angle &&
+			dx * dx + dy * dy + dz * dz < XWAU_MAT_LIGHT_MERGE * XWAU_MAT_LIGHT_MERGE &&
+			other->direction.x * light->direction.x + other->direction.y * light->direction.y +
+					other->direction.z * light->direction.z >
+				0.999f)
+			return true;
+	}
+	return false;
+}
+
+/* Whether two textures' materials give the same light on a face. */
+static bool xwau_same_mat_light(const XwauMatParams* a, const XwauMatParams* b) {
+	return a->has_light == b->has_light && memcmp(a->light, b->light, sizeof a->light) == 0 &&
+		   memcmp(a->light_uv, b->light_uv, sizeof a->light_uv) == 0 &&
+		   a->light_falloff == b->light_falloff && a->has_light_angle == b->has_light_angle &&
+		   a->light_angle == b->light_angle;
+}
+
+/* XWAU's renderer puts a light on each face drawn with a texture whose
+ * material has Light (EffectsRenderer::AddLaserLights): where the face's
+ * texture coordinates hold light_uv_coord_pos, along the face's normal, as
+ * bright as light_falloff, in the cone light_angle. These become the
+ * model's own lights, found once here: for each face of LOD 0 and each
+ * state of its face group (with that state's variant, as bolt lights, or
+ * once for every variant when all its states give the same light), on the
+ * triangles that XWAU splits a quad into. A light_angle of 90° or more
+ * gives a point light, since glTF spot lights end at 90°, and so does none.
+ * Without light_falloff, XWAU gives the light the bolts' falloff, which only
+ * bolt models use, so such a texture is reported and left out. Returns the
+ * number of faces that gave a light through *found. */
+static bool xwau_mat_lights(Conversion* c, const opt_file_t* opt, const char* label, size_t* found) {
+	*found = 0;
+	for (int32_t ti = 0; c->mat && ti < opt->texture_count; ++ti) {
+		const XwauMatParams* p = XwauMat_Find(c->mat, opt->textures[ti].name);
+		if (p->has_light && !(p->light_falloff > 0.0f))
+			Report(label, "texture %s: .mat Light without light_falloff, left out", opt->textures[ti].name);
+		else if (p->has_light && p->has_light_angle && !(cosf(p->light_angle * 0.0174532925f) < 1.0f))
+			Report(label, "texture %s: .mat light_angle %g gives no cone, left out", opt->textures[ti].name,
+				   (double)p->light_angle);
+	}
+	for (int32_t mi = 0; c->mat && mi < opt->mesh_count; ++mi) {
+		const opt_mesh_t* m = &opt->meshes[mi];
+		for (int32_t g = 0; m->lod_count > 0 && g < m->lods[0].group_count; ++g) {
+			const opt_face_group_t* group     = &m->lods[0].groups[g];
+			bool                    per_state = false;
+			for (int32_t s = 1; s < group->state_count; ++s) {
+				const int32_t t0 = group->state_textures[0], ts = group->state_textures[s];
+				per_state |= t0 < 0 || t0 >= opt->texture_count || ts < 0 || ts >= opt->texture_count ||
+							 !xwau_same_mat_light(XwauMat_Find(c->mat, opt->textures[t0].name),
+												  XwauMat_Find(c->mat, opt->textures[ts].name));
+			}
+			const int32_t states = per_state ? group->state_count : 1;
+			for (int32_t s = 0; s < states; ++s) {
+				const int32_t texture = per_state ? group->state_textures[s] : group->texture_index;
+				if (texture < 0 || texture >= opt->texture_count)
+					continue;
+				const XwauMatParams* p    = XwauMat_Find(c->mat, opt->textures[texture].name);
+				const float          peak = fmaxf(p->light[0], fmaxf(p->light[1], p->light[2]));
+				/* XWAU keeps the cosine of light_angle, and a cosine of 1 or
+				 * more gives no cone. */
+				const float cosine = p->has_light_angle ? cosf(p->light_angle * 0.0174532925f) : 0.0f;
+				if (!p->has_light || !(peak > 0.0f) || !(p->light_falloff > 0.0f) || !(cosine < 1.0f))
+					continue;
+				OptGltfLight light = {
+					.mesh_index = (uint32_t)mi,
+					.state      = per_state ? s : -1,
+					.intensity  = XWAU_MAT_LIGHT_CANDELA * p->light_falloff * peak,
+					.placed     = true,
+					.spot_angle = cosine > 0.0f ? acosf(cosine) : 0.0f,
+				};
+				for (int k = 0; k < 3; ++k)
+					light.color[k] = srgb_to_linear(fmaxf(p->light[k], 0.0f) / peak);
+				const opt_vec2_t at = { p->light_uv[0], p->light_uv[1] };
+				for (int32_t fi = 0; fi < group->face_count; ++fi) {
+					const opt_face_t* f       = &group->faces[fi];
+					const int         corners = f->verts[3] == -1 ? 3 : 4;
+					bool              valid   = true;
+					for (int k = 0; k < corners; ++k)
+						valid = valid && f->verts[k] >= 0 && f->verts[k] < m->vertex_count &&
+								f->uvs[k] >= 0 && f->uvs[k] < m->uv_count;
+					/* As XWAU, the corners 0, 1, 2, then 0, 2, 3. */
+					for (int edge = 2; valid && edge < corners; ++edge) {
+						const int corner[3] = { 0, edge - 1, edge };
+						float     u, v;
+						if (!xwau_inside_triangle(&at, &m->uvs[f->uvs[corner[0]]], &m->uvs[f->uvs[corner[1]]],
+												  &m->uvs[f->uvs[corner[2]]], &u, &v))
+							continue;
+						const opt_vec3_t* a = &m->vertices[f->verts[corner[0]]];
+						const opt_vec3_t* b = &m->vertices[f->verts[corner[1]]];
+						const opt_vec3_t* d = &m->vertices[f->verts[corner[2]]];
+						light.position      = (opt_vec3_t) { a->x + u * (d->x - a->x) + v * (b->x - a->x),
+															 a->y + u * (d->y - a->y) + v * (b->y - a->y),
+															 a->z + u * (d->z - a->z) + v * (b->z - a->z) };
+						if (!xwau_face_normal(m, f, corners, &light.direction))
+							continue;
+						++*found;
+						if (xwau_mat_light_repeats(c, &light))
+							continue;
+						OptGltfLight* grown =
+							(OptGltfLight*)realloc(c->lights, (c->light_count + 1) * sizeof *grown);
+						if (!grown)
+							return false;
+						c->lights                   = grown;
+						c->lights[c->light_count++] = light;
+					}
+				}
+			}
+		}
+	}
+	c->options.model.lights      = c->lights;
+	c->options.model.light_count = c->light_count;
+	return true;
+}
+
 /* How XWAU's renderer draws the model when it is a projectile (see the
  * conversion's description). */
 static XwauGltfProjectile xwau_projectile(const ModelConversion* mc, const char* basename) {
@@ -563,12 +737,22 @@ static bool bake_xwau(Conversion* c, const ModelConversion* mc, const opt_file_t
 	/* XWAU's renderer uses the stored normal of each corner, without
 	 * remapping or repairing it. */
 	c->options.geometry.normals = OPT_GLTF_NORMALS_STORED;
-	if (xwau_is_laser(basename) && !xwau_bolt_lights(c, opt)) {
+	if (xwau_is_laser(basename)) {
+		if (!xwau_bolt_lights(c, opt)) {
+			Report(label, "out of memory (lights)");
+			return false;
+		}
+		if (c->light_count)
+			Report(label, "%zu bolt lights", c->light_count);
+		return true;
+	}
+	size_t faces = 0;
+	if (!xwau_mat_lights(c, opt, label, &faces)) {
 		Report(label, "out of memory (lights)");
 		return false;
 	}
 	if (c->light_count)
-		Report(label, "%zu bolt lights", c->light_count);
+		Report(label, "%zu .mat lights, from %zu faces", c->light_count, faces);
 	return true;
 }
 

@@ -185,6 +185,14 @@ static bool validate_options(Build* b) {
 									isfinite(light->intensity) && light->intensity >= 0.0f;
 		for (int channel = 0; channel < 3; ++channel)
 			valid = valid && isfinite(light->color[channel]) && light->color[channel] >= 0.0f;
+		if (light->placed) {
+			const opt_vec3_t* p = &light->position;
+			const opt_vec3_t* d = &light->direction;
+			valid = valid && isfinite(p->x) && isfinite(p->y) && isfinite(p->z) &&
+					isfinite(d->x * d->x + d->y * d->y + d->z * d->z) &&
+					d->x * d->x + d->y * d->y + d->z * d->z > 0.0f && light->spot_angle >= 0.0f &&
+					light->spot_angle < 1.5707963f;
+		}
 		if (!valid)
 			return opt_gltf_build_fail(b, "invalid light %zu", i);
 	}
@@ -891,10 +899,27 @@ static bool light_node(Build* b, cgltf_node* node, cgltf_node* parent, size_t in
 	int              axis    = 0;
 	for (int k = 1; k < 3; ++k)
 		axis = size[k] > size[axis] ? k : axis;
-	const float length = size[axis] * OPT_METERS_PER_UNIT;
+	const float length = light->placed ? 0.0f : size[axis] * OPT_METERS_PER_UNIT;
 	node->name         = opt_gltf_keep_string(b->gb, xprintf_dup("light_%zu", index));
-	child_node(node, parent, &centre);
-	if (length > 0.0f) {
+	child_node(node, parent, light->placed ? &light->position : &centre);
+	if (light->placed) {
+		/* The node's -Z is the light's direction. */
+		float look[3], right[3], up[3] = { 0.0f, 1.0f, 0.0f }, rotation[4];
+		swap_axis_v3(&light->direction, look);
+		for (int k = 0; k < 3; ++k)
+			look[k] = -look[k];
+		normalize3(look);
+		if (fabsf(look[1]) > 0.9f)
+			set_color(up, 0.0f, 0.0f, 1.0f);
+		for (int k = 0; k < 3; ++k)
+			right[k] = cross_component(up, look, k);
+		normalize3(right);
+		for (int k = 0; k < 3; ++k)
+			up[k] = cross_component(look, right, k);
+		quaternion_from_axes(right, up, look, rotation);
+		node->has_rotation = 1;
+		memcpy(node->rotation, rotation, sizeof rotation);
+	} else if (length > 0.0f) {
 		/* The tube lies along the node's local +X. */
 		const opt_vec3_t along = { axis == 0 ? 1.0f : 0.0f, axis == 1 ? 1.0f : 0.0f,
 								   axis == 2 ? 1.0f : 0.0f };
@@ -912,7 +937,9 @@ static bool light_node(Build* b, cgltf_node* node, cgltf_node* parent, size_t in
 	}
 	cgltf_light* gltf_light = &b->gb->lights[index];
 	gltf_light->name        = node->name;
-	gltf_light->type        = cgltf_light_type_point;
+	gltf_light->type        = light->spot_angle > 0.0f ? cgltf_light_type_spot : cgltf_light_type_point;
+	gltf_light->spot_inner_cone_angle = 0.0f;
+	gltf_light->spot_outer_cone_angle = light->spot_angle;
 	memcpy(gltf_light->color, light->color, sizeof gltf_light->color);
 	gltf_light->intensity = light->intensity;
 	node->light           = gltf_light;
