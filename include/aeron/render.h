@@ -755,22 +755,31 @@ int Aeron_SamplerGetDesc(const AeronSampler* sampler, AeronSamplerDesc* desc);
 /* Releases a sampler created by Aeron_CreateSampler. */
 void Aeron_DestroySampler(AeronSampler* sampler);
 
-/* Loads an Aeron shader from the compiled shader output directory. */
+/* Loads an Aeron shader from the compiled shader output directory. Shaders
+ * are shared: with the same name, stage and counts as a shader that is
+ * already loaded, it returns that shader. Each create needs its own
+ * destroy. */
 AeronShader* Aeron_CreateShader(const AeronShaderDesc* desc);
 
-/* Releases a shader created by Aeron_CreateShader. */
+/* Releases a shader created by Aeron_CreateShader, when every create of it
+ * has had its destroy. */
 void Aeron_DestroyShader(AeronShader* shader);
 
-/* Creates an immutable graphics pipeline from shaders, vertex layout, and render state. */
+/* Creates an immutable graphics pipeline from shaders, vertex layout, and render state.
+ * Pipelines are shared like shaders: the same description returns the same
+ * pipeline, and each create needs its own destroy. */
 AeronGraphicsPipeline* Aeron_CreateGraphicsPipeline(const AeronGraphicsPipelineDesc* desc);
 
-/* Releases a pipeline created by Aeron_CreateGraphicsPipeline. */
+/* Releases a pipeline created by Aeron_CreateGraphicsPipeline, when every
+ * create of it has had its destroy. */
 void Aeron_DestroyGraphicsPipeline(AeronGraphicsPipeline* pipeline);
 
-/* Creates an immutable compute pipeline from a compiled .comp shader. */
+/* Creates an immutable compute pipeline from a compiled .comp shader. Shared
+ * like graphics pipelines. */
 AeronComputePipeline* Aeron_CreateComputePipeline(const AeronComputePipelineDesc* desc);
 
-/* Releases a pipeline created by Aeron_CreateComputePipeline. */
+/* Releases a pipeline created by Aeron_CreateComputePipeline, when every
+ * create of it has had its destroy. */
 void Aeron_DestroyComputePipeline(AeronComputePipeline* pipeline);
 
 /* Creates an Aeron-owned color target usable as both render target and texture layer. */

@@ -67,20 +67,40 @@ struct AeronSampler {
 	AeronSamplerDesc desc;
 };
 
+/* Shaders and pipelines are shared. Creating one that already exists
+ * returns the existing one and counts one more user; destroying it removes
+ * a user, and the last one releases it. Each kind is kept in a list. */
 struct AeronShader {
 	SDL_GPUShader*   shader;
 	AeronShaderStage stage;
 	uint32_t         sampler_count;
 	uint32_t         uniform_buffer_count;
 	uint32_t         storage_buffer_count;
+	char*            name;
+	/* Never reused, so that a pipeline's key can't match a later shader
+	 * at the same address. */
+	uint64_t     serial;
+	uint32_t     users;
+	AeronShader* next;
 };
 
 struct AeronGraphicsPipeline {
 	SDL_GPUGraphicsPipeline* pipeline;
+	/* The creation values as bytes, with shader serials for the shaders. */
+	uint8_t*               key;
+	size_t                 key_size;
+	uint64_t               key_hash;
+	uint32_t               users;
+	AeronGraphicsPipeline* next;
 };
 
 struct AeronComputePipeline {
 	SDL_GPUComputePipeline* pipeline;
+	uint8_t*                key;
+	size_t                  key_size;
+	uint64_t                key_hash;
+	uint32_t                users;
+	AeronComputePipeline*   next;
 };
 
 struct AeronRenderTarget {

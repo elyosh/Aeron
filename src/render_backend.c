@@ -3162,12 +3162,46 @@ void Aeron_DestroySampler(AeronSampler* sampler) {
 	SDL_free(sampler);
 }
 
+/* The shared shaders and pipelines. Scenes create the same ones, so a new
+ * scene finds them here instead of compiling them again. */
+static AeronShader*           g_shaders;
+static AeronGraphicsPipeline* g_graphicsPipelines;
+static AeronComputePipeline*  g_computePipelines;
+static uint64_t               g_shaderSerial;
+
+/* FNV-1a. */
+static uint64_t Aeron_HashKey(const uint8_t* key, size_t size) {
+	uint64_t hash = 14695981039346656037ull;
+	for (size_t i = 0; i < size; ++i) {
+		hash = (hash ^ key[i]) * 1099511628211ull;
+	}
+	return hash;
+}
+
+/* Appends `size` bytes to a key; with a NULL key, only counts them. */
+static void Aeron_AppendKey(uint8_t* key, size_t* used, const void* data, size_t size) {
+	if (key && size) {
+		SDL_memcpy(key + *used, data, size);
+	}
+	*used += size;
+}
+
 AeronShader* Aeron_CreateShader(const AeronShaderDesc* desc) {
 	const AeronShaderFormatInfo* format_info;
 	AeronShader*                 shader;
 
 	if (!g_aeron.gpu_device || !desc || !desc->name || desc->stage == AERON_SHADER_STAGE_COMPUTE) {
 		return NULL;
+	}
+
+	for (shader = g_shaders; shader; shader = shader->next) {
+		if (shader->stage == desc->stage && shader->sampler_count == desc->sampler_count &&
+			shader->uniform_buffer_count == desc->uniform_buffer_count &&
+			shader->storage_buffer_count == desc->storage_buffer_count &&
+			SDL_strcmp(shader->name, desc->name) == 0) {
+			shader->users++;
+			return shader;
+		}
 	}
 
 	format_info = Aeron_SelectShaderFormat();
@@ -3180,11 +3214,17 @@ AeronShader* Aeron_CreateShader(const AeronShaderDesc* desc) {
 	if (!shader) {
 		return NULL;
 	}
+	shader->name = SDL_strdup(desc->name);
+	if (!shader->name) {
+		SDL_free(shader);
+		return NULL;
+	}
 
 	shader->shader =
 		Aeron_LoadShader(desc->name, Aeron_ToSdlShaderStage(desc->stage), format_info, desc->sampler_count,
 						 desc->uniform_buffer_count, desc->storage_buffer_count);
 	if (!shader->shader) {
+		SDL_free(shader->name);
 		SDL_free(shader);
 		return NULL;
 	}
@@ -3193,19 +3233,30 @@ AeronShader* Aeron_CreateShader(const AeronShaderDesc* desc) {
 	shader->sampler_count        = desc->sampler_count;
 	shader->uniform_buffer_count = desc->uniform_buffer_count;
 	shader->storage_buffer_count = desc->storage_buffer_count;
+	shader->serial               = ++g_shaderSerial;
+	shader->users                = 1;
+	shader->next                 = g_shaders;
+	g_shaders                    = shader;
 	return shader;
 }
 
 void Aeron_DestroyShader(AeronShader* shader) {
-	if (!shader) {
+	if (!shader || --shader->users > 0) {
 		return;
 	}
 
+	for (AeronShader** link = &g_shaders; *link; link = &(*link)->next) {
+		if (*link == shader) {
+			*link = shader->next;
+			break;
+		}
+	}
 	if (shader->shader) {
 		SDL_ReleaseGPUShader(g_aeron.gpu_device, shader->shader);
 		shader->shader = NULL;
 	}
 
+	SDL_free(shader->name);
 	SDL_free(shader);
 }
 
@@ -3226,17 +3277,52 @@ AeronComputePipeline* Aeron_CreateComputePipeline(const AeronComputePipelineDesc
 	if (!format_info) {
 		return NULL;
 	}
+
+	/* The key: the counts, then the name and the entry point. */
+	const uint32_t counts[9]  = { desc->sampler_count,
+								  desc->readonly_storage_texture_count,
+								  desc->readonly_storage_buffer_count,
+								  desc->readwrite_storage_texture_count,
+								  desc->readwrite_storage_buffer_count,
+								  desc->uniform_buffer_count,
+								  desc->thread_count_x,
+								  desc->thread_count_y,
+								  desc->thread_count_z };
+	const char*    entrypoint = desc->entrypoint ? desc->entrypoint : format_info->entrypoint;
+	size_t         key_size   = 0;
+	Aeron_AppendKey(NULL, &key_size, counts, sizeof counts);
+	Aeron_AppendKey(NULL, &key_size, desc->name, SDL_strlen(desc->name) + 1);
+	Aeron_AppendKey(NULL, &key_size, entrypoint, SDL_strlen(entrypoint) + 1);
+	uint8_t* key = (uint8_t*)SDL_malloc(key_size);
+	if (!key) {
+		return NULL;
+	}
+	key_size = 0;
+	Aeron_AppendKey(key, &key_size, counts, sizeof counts);
+	Aeron_AppendKey(key, &key_size, desc->name, SDL_strlen(desc->name) + 1);
+	Aeron_AppendKey(key, &key_size, entrypoint, SDL_strlen(entrypoint) + 1);
+	const uint64_t key_hash = Aeron_HashKey(key, key_size);
+	for (pipeline = g_computePipelines; pipeline; pipeline = pipeline->next) {
+		if (pipeline->key_hash == key_hash && pipeline->key_size == key_size &&
+			SDL_memcmp(pipeline->key, key, key_size) == 0) {
+			SDL_free(key);
+			pipeline->users++;
+			return pipeline;
+		}
+	}
+
 	code = Aeron_LoadShaderFile(desc->name, format_info->extension, &code_size, path, sizeof(path));
 	if (!code) {
 		Aeron_SetRenderError("Failed to load %s compute shader '%s': %s", format_info->name, path,
 							 SDL_GetError());
+		SDL_free(key);
 		return NULL;
 	}
 
 	SDL_zero(create_info);
 	create_info.code_size                     = code_size;
 	create_info.code                          = code;
-	create_info.entrypoint                    = desc->entrypoint ? desc->entrypoint : format_info->entrypoint;
+	create_info.entrypoint                     = entrypoint;
 	create_info.format                        = format_info->format;
 	create_info.num_samplers                  = desc->sampler_count;
 	create_info.num_readonly_storage_textures = desc->readonly_storage_texture_count;
@@ -3251,6 +3337,7 @@ AeronComputePipeline* Aeron_CreateComputePipeline(const AeronComputePipelineDesc
 	pipeline = (AeronComputePipeline*)SDL_calloc(1, sizeof(*pipeline));
 	if (!pipeline) {
 		SDL_free(code);
+		SDL_free(key);
 		return NULL;
 	}
 	pipeline->pipeline = SDL_CreateGPUComputePipeline(g_aeron.gpu_device, &create_info);
@@ -3258,18 +3345,32 @@ AeronComputePipeline* Aeron_CreateComputePipeline(const AeronComputePipelineDesc
 	if (!pipeline->pipeline) {
 		Aeron_SetRenderError("SDL_CreateGPUComputePipeline failed for '%s': %s", path, SDL_GetError());
 		SDL_free(pipeline);
+		SDL_free(key);
 		return NULL;
 	}
+	pipeline->key      = key;
+	pipeline->key_size = key_size;
+	pipeline->key_hash = key_hash;
+	pipeline->users    = 1;
+	pipeline->next     = g_computePipelines;
+	g_computePipelines = pipeline;
 	return pipeline;
 }
 
 void Aeron_DestroyComputePipeline(AeronComputePipeline* pipeline) {
-	if (!pipeline) {
+	if (!pipeline || --pipeline->users > 0) {
 		return;
+	}
+	for (AeronComputePipeline** link = &g_computePipelines; *link; link = &(*link)->next) {
+		if (*link == pipeline) {
+			*link = pipeline->next;
+			break;
+		}
 	}
 	if (pipeline->pipeline) {
 		SDL_ReleaseGPUComputePipeline(g_aeron.gpu_device, pipeline->pipeline);
 	}
+	SDL_free(pipeline->key);
 	SDL_free(pipeline);
 }
 
@@ -3393,13 +3494,6 @@ AeronGraphicsPipeline* Aeron_CreateGraphicsPipeline(const AeronGraphicsPipelineD
 		}
 	}
 
-	pipeline = (AeronGraphicsPipeline*)SDL_calloc(1, sizeof(*pipeline));
-	if (!pipeline) {
-		SDL_free(attributes);
-		SDL_free(vertex_buffers);
-		return NULL;
-	}
-
 	SDL_zero(pipeline_info);
 	pipeline_info.vertex_shader                                 = desc->vertex_shader->shader;
 	pipeline_info.fragment_shader                               = desc->fragment_shader->shader;
@@ -3427,28 +3521,87 @@ AeronGraphicsPipeline* Aeron_CreateGraphicsPipeline(const AeronGraphicsPipelineD
 		pipeline_info.target_info.depth_stencil_format     = depth_format;
 	}
 
+	/* The key: the SDL creation values without their pointers, the shader
+	 * serials, then the arrays. Every struct in it was zeroed before it was
+	 * filled, so its padding bytes match too. */
+	SDL_GPUGraphicsPipelineCreateInfo key_info;
+	SDL_memcpy(&key_info, &pipeline_info, sizeof key_info);
+	key_info.vertex_shader                                 = NULL;
+	key_info.fragment_shader                               = NULL;
+	key_info.vertex_input_state.vertex_buffer_descriptions = NULL;
+	key_info.vertex_input_state.vertex_attributes          = NULL;
+	key_info.target_info.color_target_descriptions         = NULL;
+	const uint64_t serials[2]   = { desc->vertex_shader->serial, desc->fragment_shader->serial };
+	const size_t   buffer_bytes = desc->vertex_buffer_count * sizeof(*vertex_buffers);
+	const size_t   attr_bytes   = desc->attribute_count * sizeof(*attributes);
+	const size_t   target_bytes = color_target_count * sizeof(color_targets[0]);
+	const size_t   key_size     = sizeof key_info + sizeof serials + buffer_bytes + attr_bytes + target_bytes;
+	uint8_t*       key          = (uint8_t*)SDL_malloc(key_size);
+	if (!key) {
+		SDL_free(attributes);
+		SDL_free(vertex_buffers);
+		return NULL;
+	}
+	size_t key_used = 0;
+	Aeron_AppendKey(key, &key_used, &key_info, sizeof key_info);
+	Aeron_AppendKey(key, &key_used, serials, sizeof serials);
+	Aeron_AppendKey(key, &key_used, vertex_buffers, buffer_bytes);
+	Aeron_AppendKey(key, &key_used, attributes, attr_bytes);
+	Aeron_AppendKey(key, &key_used, color_targets, target_bytes);
+	const uint64_t key_hash = Aeron_HashKey(key, key_size);
+	for (pipeline = g_graphicsPipelines; pipeline; pipeline = pipeline->next) {
+		if (pipeline->key_hash == key_hash && pipeline->key_size == key_size &&
+			SDL_memcmp(pipeline->key, key, key_size) == 0) {
+			SDL_free(key);
+			SDL_free(attributes);
+			SDL_free(vertex_buffers);
+			pipeline->users++;
+			return pipeline;
+		}
+	}
+
+	pipeline = (AeronGraphicsPipeline*)SDL_calloc(1, sizeof(*pipeline));
+	if (!pipeline) {
+		SDL_free(key);
+		SDL_free(attributes);
+		SDL_free(vertex_buffers);
+		return NULL;
+	}
 	pipeline->pipeline = SDL_CreateGPUGraphicsPipeline(g_aeron.gpu_device, &pipeline_info);
 	SDL_free(attributes);
 	SDL_free(vertex_buffers);
 	if (!pipeline->pipeline) {
 		Aeron_SetRenderError("SDL_CreateGPUGraphicsPipeline failed: %s", SDL_GetError());
+		SDL_free(key);
 		SDL_free(pipeline);
 		return NULL;
 	}
-
+	pipeline->key       = key;
+	pipeline->key_size  = key_size;
+	pipeline->key_hash  = key_hash;
+	pipeline->users     = 1;
+	pipeline->next      = g_graphicsPipelines;
+	g_graphicsPipelines = pipeline;
 	return pipeline;
 }
 
 void Aeron_DestroyGraphicsPipeline(AeronGraphicsPipeline* pipeline) {
-	if (!pipeline) {
+	if (!pipeline || --pipeline->users > 0) {
 		return;
 	}
 
+	for (AeronGraphicsPipeline** link = &g_graphicsPipelines; *link; link = &(*link)->next) {
+		if (*link == pipeline) {
+			*link = pipeline->next;
+			break;
+		}
+	}
 	if (pipeline->pipeline) {
 		SDL_ReleaseGPUGraphicsPipeline(g_aeron.gpu_device, pipeline->pipeline);
 		pipeline->pipeline = NULL;
 	}
 
+	SDL_free(pipeline->key);
 	SDL_free(pipeline);
 }
 
