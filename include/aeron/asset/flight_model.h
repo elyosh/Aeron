@@ -76,19 +76,25 @@ typedef enum AeronFlightLightShape {
 #define AERON_FLIGHT_LIGHT_DEFAULT_RADIUS 0.1f
 
 /* A light on a "light" node under a component: the node's KHR_lights_punctual
- * point light gives its linear colour, its intensity in candela and its
- * range (metres; 0 when the glTF light has none), the node's
- * AERON_flight_model object its shape. Model space, metres:
+ * point or spot light gives its linear colour, its intensity in candela and
+ * its range (metres; 0 when the glTF light has none), the node's
+ * AERON_flight_model object its shape. A spot light is a point. Model
+ * space, metres:
  *   - `position`: the centre;
  *   - `half_x`: a tube's half axis, or a panel's half extent along its first
  *     size; zero for a point;
  *   - `half_y`: a panel's half extent along its second size; zero otherwise;
- *   - `direction`: the unit emitting direction of a one-sided tube or a
- *     panel; zero for a light emitting all around;
+ *   - `direction`: the unit emitting direction of a one-sided tube, a
+ *     panel or a spot light; zero for a light emitting all around;
  *   - `source_radius`: a point's sphere radius or a tube's thickness; zero
- *     for a panel.
- * A one-sided light's intensity is the intensity straight ahead; a tube
- * emits the total of a point light of its intensity.
+ *     for a panel;
+ *   - `spot_inner_angle`, `spot_outer_angle`: a spot light's cone, half
+ *     angles from `direction` in radians, with 0 <= inner < outer <= pi/2.
+ *     The light is full inside the inner angle and ends at the outer one.
+ *     Both are zero for other lights.
+ * A one-sided light's intensity is the intensity straight ahead, and a spot
+ * light's the intensity inside its inner angle; a tube emits the total of
+ * a point light of its intensity.
  *
  * A light with `has_variants` shines only while the model shows one of the
  * variants of `variant_mask`: bit v (word v / 32) for KHR_materials_variants
@@ -108,6 +114,8 @@ typedef struct AeronFlightLight {
 	AeronFlightVec3       half_y;
 	AeronFlightVec3       direction;
 	float                 source_radius;
+	float                 spot_inner_angle;
+	float                 spot_outer_angle;
 	/* Baked into the model's probes: the game leaves the light out
 	 * while the model's probes light the scene. */
 	bool baked;

@@ -545,10 +545,13 @@ static int scene_light_is_tube(const AeronSceneLight* light) {
 	return length_sq > 0.0f && isfinite(length_sq);
 }
 
-/* A light's place in the point light order: spheres, then tubes, each by
- * view depth, so the lights reaching a depth bin have nearby indices. */
+/* A light's place in the point light order: spheres, then spot lights,
+ * then tubes, each by view depth, so the lights reaching a depth bin have
+ * nearby indices. */
+enum { SCENE_LIGHT_SPHERE, SCENE_LIGHT_SPOT, SCENE_LIGHT_TUBE };
+
 typedef struct SceneLightOrder {
-	uint32_t tube;
+	uint32_t kind;
 	float    depth;
 	uint32_t light;
 } SceneLightOrder;
@@ -556,8 +559,8 @@ typedef struct SceneLightOrder {
 static int scene_light_order_compare(const void* a, const void* b) {
 	const SceneLightOrder* x = (const SceneLightOrder*)a;
 	const SceneLightOrder* y = (const SceneLightOrder*)b;
-	if (x->tube != y->tube) {
-		return x->tube < y->tube ? -1 : 1;
+	if (x->kind != y->kind) {
+		return x->kind < y->kind ? -1 : 1;
 	}
 	if (x->depth != y->depth) {
 		return x->depth < y->depth ? -1 : 1;
@@ -591,6 +594,46 @@ static int scene_light_direction(const AeronSceneLight* light, int is_tube, floa
 		out[k] = d[k] / length;
 	}
 	return 1;
+}
+
+/* The cosines of a spot light's inner and outer angles, returning one, or
+ * zero for a light that isn't a spot. The outer angle is at most pi/2 and
+ * the inner one less than it. */
+static int scene_light_spot_cosines(const AeronSceneLight* light, float* cos_inner, float* cos_outer) {
+	const float outer = fminf(light->spot_outer_angle, 1.5707963267948966f);
+	if (!(outer > 0.0f) || scene_light_is_tube(light)) {
+		return 0;
+	}
+	const float inner = light->spot_inner_angle > 0.0f ? fminf(light->spot_inner_angle, outer) : 0.0f;
+	*cos_inner        = cosf(inner);
+	*cos_outer        = cosf(outer);
+	return 1;
+}
+
+void AeronScene_LightBounds(const AeronSceneLight* light, float center[3], float* radius) {
+	if (!light || !center || !radius) {
+		return;
+	}
+	const float half_length = scene_light_is_tube(light) ? sqrtf(light->half_axis[0] * light->half_axis[0] +
+																 light->half_axis[1] * light->half_axis[1] +
+																 light->half_axis[2] * light->half_axis[2])
+														 : 0.0f;
+	memcpy(center, light->pos, 3 * sizeof *center);
+	*radius = light->radius + half_length;
+	float cos_inner, cos_outer, direction[3];
+	if (!scene_light_spot_cosines(light, &cos_inner, &cos_outer) ||
+		!scene_light_direction(light, 0, direction)) {
+		return;
+	}
+	/* A narrow cone fits in the sphere through its apex and its rim; a wide
+	 * one in the sphere around its rim. */
+	const float range     = light->radius;
+	const float sin_outer = sqrtf(fmaxf(1.0f - cos_outer * cos_outer, 0.0f));
+	const float offset    = cos_outer >= sin_outer ? range / (2.0f * cos_outer) : range * cos_outer;
+	*radius               = cos_outer >= sin_outer ? offset : range * sin_outer;
+	for (int k = 0; k < 3; ++k) {
+		center[k] += direction[k] * offset;
+	}
 }
 
 int AeronScene_AddLight(AeronScene3D* s, const AeronSceneLight* light) {
@@ -676,6 +719,8 @@ static int scene_flight_light(const AeronFlightLight* light, const float (*rows)
 	if (light->direction.x != 0.0f || light->direction.y != 0.0f || light->direction.z != 0.0f) {
 		scene_mesh_light_vector(rows, transform, &light->direction, out->direction);
 	}
+	out->spot_inner_angle = light->spot_inner_angle;
+	out->spot_outer_angle = light->spot_outer_angle;
 	/* I / d_m^2 = I * k^2 / d_world^2 with k world units per metre. */
 	const float intensity = light->intensity * intensity_scale;
 	float       peak      = 0.0f;
@@ -2085,22 +2130,41 @@ int AeronSceneStorage_Prepare(AeronScene3D* s, AeronCommandBuffer* cmd) {
 	}
 	float view_rotation[9];
 	AeronSceneInternal_QuatToMat3(s->camera.ori, view_rotation);
-	/* Spheres first, then tubes, so the shader takes each in its own loop. */
+	/* Spheres, then spot lights, then tubes, so the shader takes each in its
+	 * own loop. Each kind is sorted by the depth of the lights' bounds. */
 	SceneLightOrder order[AERON_SCENE_MAX_LIGHTS];
-	uint32_t        tube_start = 0;
+	float           bounds[AERON_SCENE_MAX_LIGHTS][4];
+	uint32_t        kind_counts[3]          = { 0, 0, 0 };
+	uint32_t        spots_without_direction = 0;
 	for (uint32_t light = 0; light < point_count; ++light) {
 		const AeronSceneLight* source = &s->lights[light];
-		const float            dx     = source->pos[0] - s->camera.pos[0];
-		const float            dy     = source->pos[1] - s->camera.pos[1];
-		const float            dz     = source->pos[2] - s->camera.pos[2];
-		const float            depth  = view_rotation[6] * dx + view_rotation[7] * dy + view_rotation[8] * dz;
-		order[light]                  = (SceneLightOrder) { (uint32_t)scene_light_is_tube(source),
-															isfinite(depth) ? depth : 0.0f, light };
-		tube_start += order[light].tube ? 0u : 1u;
+		AeronScene_LightBounds(source, bounds[light], &bounds[light][3]);
+		const float dx    = bounds[light][0] - s->camera.pos[0];
+		const float dy    = bounds[light][1] - s->camera.pos[1];
+		const float dz    = bounds[light][2] - s->camera.pos[2];
+		const float depth = view_rotation[6] * dx + view_rotation[7] * dy + view_rotation[8] * dz;
+		float       cos_inner, cos_outer, direction[3];
+		uint32_t    kind = SCENE_LIGHT_SPHERE;
+		if (scene_light_is_tube(source)) {
+			kind = SCENE_LIGHT_TUBE;
+		} else if (scene_light_spot_cosines(source, &cos_inner, &cos_outer)) {
+			if (scene_light_direction(source, 0, direction)) {
+				kind = SCENE_LIGHT_SPOT;
+			} else {
+				spots_without_direction++;
+			}
+		}
+		order[light] = (SceneLightOrder) { kind, isfinite(depth) ? depth : 0.0f, light };
+		kind_counts[kind]++;
+	}
+	if (spots_without_direction) {
+		Aeron_LogWarn("aeron.scene", "%u spot lights without a direction; drawn as point lights",
+					  spots_without_direction);
 	}
 	qsort(order, point_count, sizeof order[0], scene_light_order_compare);
 	for (uint32_t i = 0; i < point_count; ++i) {
 		const AeronSceneLight*     source      = &s->lights[order[i].light];
+		const float*               bound       = bounds[order[i].light];
 		AeronScenePointLightGPU*   destination = &s->point_light_staging[i];
 		AeronSceneClusterLightGPU* cluster     = &s->cluster_light_staging[i];
 		destination->position_range[0]         = source->pos[0];
@@ -2127,20 +2191,32 @@ int AeronSceneStorage_Prepare(AeronScene3D* s, AeronCommandBuffer* cmd) {
 		memset(destination->direction, 0, sizeof destination->direction);
 		const int one_sided       = scene_light_direction(source, is_tube, destination->direction);
 		destination->direction[3] = is_tube ? 1.0f / half_length : 0.0f;
-		/* w: the sphere radius, negative for a one-sided light. */
+		/* w: the sphere radius, negative for a one-sided sphere or tube. */
 		destination->color[3] = one_sided ? -source_radius : source_radius;
-		const float dx        = source->pos[0] - s->camera.pos[0];
-		const float dy        = source->pos[1] - s->camera.pos[1];
-		const float dz        = source->pos[2] - s->camera.pos[2];
+		/* A spot light's falloff, saturate(cos * scale + offset)^2 as
+		 * KHR_lights_punctual suggests: the scale in direction.w and the
+		 * offset in the sphere's unused half axis. Its loop knows it has a
+		 * direction, so its radius stays positive. */
+		float cos_inner, cos_outer;
+		if (order[i].kind == SCENE_LIGHT_SPOT && scene_light_spot_cosines(source, &cos_inner, &cos_outer)) {
+			const float scale         = 1.0f / fmaxf(cos_inner - cos_outer, 1e-3f);
+			destination->direction[3] = scale;
+			destination->half_axis[0] = -cos_outer * scale;
+			destination->color[3]     = source_radius;
+		}
+		const float dx = bound[0] - s->camera.pos[0];
+		const float dy = bound[1] - s->camera.pos[1];
+		const float dz = bound[2] - s->camera.pos[2];
 		for (int row = 0; row < 3; ++row) {
 			cluster->view_position_range[row] = view_rotation[row * 3 + 0] * dx +
 												view_rotation[row * 3 + 1] * dy +
 												view_rotation[row * 3 + 2] * dz;
 		}
-		cluster->view_position_range[3] = source->radius + half_length;
+		cluster->view_position_range[3] = bound[3];
 	}
 	s->point_light_count = point_count;
-	s->point_tube_start  = tube_start;
+	s->point_spot_start  = kind_counts[SCENE_LIGHT_SPHERE];
+	s->point_tube_start  = kind_counts[SCENE_LIGHT_SPHERE] + kind_counts[SCENE_LIGHT_SPOT];
 
 	if (s->point_light_count == 0) {
 		if (!scene_storage_reserve((void**)&s->point_light_staging, &s->point_light_staging_cap, 1u,

@@ -44,7 +44,9 @@ typedef struct CaptureInstance {
  * 1 m away), drawn as the game's physical point lights; a non-zero half
  * axis (metres) makes it a tube along position +- half_axis, as the game's
  * laser streaks, and a non-zero direction (camera axes) makes it one-sided
- * (AeronSceneLight.direction). */
+ * (AeronSceneLight.direction). A non-zero outer cone angle makes a light
+ * with a direction a spot light: `cone_degrees` holds its inner and outer
+ * half angles in degrees. */
 /* game_scene.bolts: `count` bolts of the `models` given (indices into
  * models), drawn as the game draws laser bolts, at random places in the box
  * `center` +- `extent` (metres, camera axes) with random headings. `seed`
@@ -61,7 +63,7 @@ typedef struct CaptureBolts {
 } CaptureBolts;
 
 typedef struct CaptureLight {
-	float position[3], intensity[3], half_axis[3], direction[3];
+	float position[3], intensity[3], half_axis[3], direction[3], cone_degrees[2];
 } CaptureLight;
 
 /* game_scene: the game's Scene3D features (Scene3D defaults file), lighting

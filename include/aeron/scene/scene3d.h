@@ -61,7 +61,14 @@ typedef struct AeronSceneMeshTable {
  * such as a ceiling panel: it gives `color * cos(angle from direction)` in
  * front and nothing behind, so the light straight ahead is unchanged. A
  * tube's direction is made perpendicular to its axis (a flat strip); one
- * along the axis leaves the tube emitting all around. */
+ * along the axis leaves the tube emitting all around.
+ *
+ * A non-zero `spot_outer_angle` makes a sphere with a direction a spot
+ * light, as KHR_lights_punctual's: instead of the cosine, it gives the
+ * full `color` within `spot_inner_angle` of `direction` and nothing past
+ * `spot_outer_angle` (half angles in radians, the outer one at most pi/2),
+ * with a smooth ramp between them. A tube ignores the angles, and a spot
+ * light without a direction is drawn as a sphere, with a warning. */
 typedef struct AeronSceneLight {
 	float pos[3];
 	float radius;
@@ -69,6 +76,8 @@ typedef struct AeronSceneLight {
 	float source_radius;
 	float half_axis[3];
 	float direction[3];
+	float spot_inner_angle;
+	float spot_outer_angle;
 } AeronSceneLight;
 
 typedef struct AeronSceneClusteredLightDesc {
@@ -326,6 +335,11 @@ void AeronScene_AddMeshInstance(AeronScene3D* scene, const AeronSceneMeshInstanc
 /* Returns one when accepted. Capacity failures are counted and logged once
  * per frame rather than silently dropping a light. */
 int AeronScene_AddLight(AeronScene3D* scene, const AeronSceneLight* light);
+
+/* The sphere that holds what `light` can light (world units): a spot
+ * light's cone, else the sphere of its range around its centre, widened by
+ * a tube's half length. */
+void AeronScene_LightBounds(const AeronSceneLight* light, float center[3], float* radius);
 
 /* World-space light for the mesh's model light `index` (AeronFlightLight),
  * as placed by an instance: `transform` is the instance's row-major

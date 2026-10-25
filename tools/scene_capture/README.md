@@ -81,7 +81,7 @@ forward).
 | `temporal_upscaling` | `{ mode, sharpness }`, mode `off`, `native_aa`, `quality`, `balanced` or `performance`. Benchmarks only, with `msaa_samples: 1`. |
 | `sun_direction`, `sun_color` | Direction toward the sun and its linear RGB illuminance. |
 | `ambient` | Ambient light (default 0.08). |
-| `point_lights` | Up to 256 `{ position, intensity, half_axis, direction }`: intensity is the linear RGB illuminance 1 m away; `half_axis` makes a tube, `direction` makes it one-sided. |
+| `point_lights` | Up to 256 `{ position, intensity, half_axis, direction, cone }`: intensity is the linear RGB illuminance 1 m away; `half_axis` makes a tube, `direction` makes it one-sided. `cone: [inner, outer]` (half angles in degrees, 0 ≤ inner < outer ≤ 90, with a direction and no `half_axis`) makes it a spot light, full within the inner angle and dark past the outer one. |
 | `model_light_intensity` | Brightness of the lights built into the models (default 1/683, 0 turns them off). |
 | `environment` | `{ folder, manifest, name }`: the environment manifest and the environment to use. |
 | `cockpit_follows_camera` | `true` turns the cockpit with the camera; `false` (default) keeps it in place. |

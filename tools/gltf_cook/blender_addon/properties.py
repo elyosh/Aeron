@@ -301,7 +301,7 @@ def _game_preview_update(self, context):
     for obj in context.scene.objects:
         if common.is_model_light(obj):
             obj.data.use_shadow = not self.game_preview
-            if self.game_preview and obj.data.type == 'POINT':
+            if self.game_preview and obj.data.type in {'POINT', 'SPOT'}:
                 obj.data.use_soft_falloff = False
 
 

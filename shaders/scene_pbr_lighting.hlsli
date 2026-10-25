@@ -85,11 +85,13 @@ struct PbrPointLight
     /* xyz: the position, w: the inverse square of the range. */
     float4 position_range;
     float4 color;
-    /* xyz: a tube's half axis, w: its half length (zero for a sphere). */
+    /* xyz: a tube's half axis, w: its half length (zero for a sphere). A
+     * spot light's x: the offset of its falloff. */
     float4 half_axis;
-    /* xyz: a one-sided light's unit direction; w: the inverse of a tube's
-     * half length. A one-sided light has a negative color.w (its sphere
-     * radius), so others never load the direction. */
+    /* xyz: a one-sided or spot light's unit direction; w: the inverse of a
+     * tube's half length, or a spot light's falloff scale. A one-sided
+     * sphere has a negative color.w (its sphere radius), so spheres emitting
+     * all around never load the direction. */
     float4 direction;
 };
 #ifndef AERON_PBR_POINT_LIGHT_REGISTER
@@ -596,7 +598,10 @@ float one_sided_tube_diffuse(float3 to_center, float3 half_axis, float a, float 
  * scale by the emitter cosine toward the surface, and nothing reaches
  * surfaces behind it. A one-sided tube's diffuse is the closed form of
  * one_sided_tube_diffuse, its highlight scaled by the emitter cosine
- * toward the representative point. */
+ * toward the representative point.
+ *
+ * Spot lights are spheres in a range of their own, shaded by
+ * accumulate_spot_light, so other spheres pay nothing for them. */
 void accumulate_point_light(uint light_index, float3 N, float3 N_spec, float3 V,
                             float3 world_pos, PbrMaterialParams mp,
                             inout float3 diff, inout float3 spec_out)
@@ -621,6 +626,36 @@ void accumulate_point_light(uint light_index, float3 N, float3 N_spec, float3 V,
         }
         radiance *= emit;
     }
+    diff += radiance * saturate(dot(N, L));
+    float alpha = saturate(mp.roughness * mp.roughness + source_r / (2.0f * near_d));
+    spec_out += local_light_spec(N_spec, V, L, alpha, mp) * radiance * mp.spec_intensity;
+}
+
+/* A sphere shaded as accumulate_point_light shades it, with
+ * KHR_lights_punctual's cone falloff, saturate(cos * scale + offset)^2,
+ * where cos is the cosine from the spot's direction. */
+void accumulate_spot_light(uint light_index, float3 N, float3 N_spec, float3 V,
+                           float3 world_pos, PbrMaterialParams mp,
+                           inout float3 diff, inout float3 spec_out)
+{
+    PbrPointLight point_light = fs_point_lights[light_index];
+    float3 dv = point_light.position_range.xyz - world_pos;
+    float  d2 = dot(dv, dv);
+    float  q2 = d2 * point_light.position_range.w;
+    if (!(q2 < 1.0f)) {
+        return;
+    }
+    float  d    = sqrt(d2);
+    float3 L    = dv / max(d, 1e-3f);
+    float  cone = saturate(-dot(point_light.direction.xyz, L) * point_light.direction.w +
+                           point_light.half_axis.x);
+    if (cone <= 0.0f) {
+        return;
+    }
+    float  win      = 1.0f - q2 * q2;
+    float  source_r = point_light.color.w;
+    float  near_d   = max(d, source_r);
+    float3 radiance = point_light.color.rgb * (cone * cone * win / (near_d * near_d));
     diff += radiance * saturate(dot(N, L));
     float alpha = saturate(mp.roughness * mp.roughness + source_r / (2.0f * near_d));
     spec_out += local_light_spec(N_spec, V, L, alpha, mp) * radiance * mp.spec_intensity;
@@ -689,9 +724,13 @@ void accumulate_tube_light(uint light_index, float3 N, float3 N_spec, float3 V, 
                 (spec_scale * mp.spec_intensity);
 }
 
+#define AERON_LIGHT_KIND_SPHERE 0u
+#define AERON_LIGHT_KIND_SPOT 1u
+#define AERON_LIGHT_KIND_TUBE 2u
+
 /* The lights of one kind in a fragment's range (first | last << 16) that
  * its tile's mask holds. */
-void accumulate_light_range(uint range, uint mask_base, bool tubes, float3 N, float3 N_spec, float3 V,
+void accumulate_light_range(uint range, uint mask_base, uint kind, float3 N, float3 N_spec, float3 V,
                             float3 R, float3 world_pos, PbrMaterialParams mp,
                             inout float3 diff, inout float3 spec_out)
 {
@@ -704,8 +743,10 @@ void accumulate_light_range(uint range, uint mask_base, bool tubes, float3 N, fl
         while (mask != 0u) {
             uint light_index = (word << 5u) + firstbitlow(mask);
             mask &= mask - 1u;
-            if (tubes)
+            if (kind == AERON_LIGHT_KIND_TUBE)
                 accumulate_tube_light(light_index, N, N_spec, V, R, world_pos, mp, diff, spec_out);
+            else if (kind == AERON_LIGHT_KIND_SPOT)
+                accumulate_spot_light(light_index, N, N_spec, V, world_pos, mp, diff, spec_out);
             else
                 accumulate_point_light(light_index, N, N_spec, V, world_pos, mp, diff, spec_out);
         }
@@ -719,10 +760,14 @@ float3 accumulate_point_lights(float3 N, float3 N_spec, float3 V, float3 world_p
 {
     float3 diff = float3(0.0f, 0.0f, 0.0f);
     float3 R    = reflect(-V, N_spec);
-    uint2  ranges;
+    uint3  ranges;
     uint   mask_base = clustered_light_fragment(screen_position, world_pos, ranges);
-    accumulate_light_range(ranges.x, mask_base, false, N, N_spec, V, R, world_pos, mp, diff, spec_out);
-    accumulate_light_range(ranges.y, mask_base, true, N, N_spec, V, R, world_pos, mp, diff, spec_out);
+    accumulate_light_range(ranges.x, mask_base, AERON_LIGHT_KIND_SPHERE, N, N_spec, V, R, world_pos, mp, diff,
+                           spec_out);
+    accumulate_light_range(ranges.y, mask_base, AERON_LIGHT_KIND_SPOT, N, N_spec, V, R, world_pos, mp, diff,
+                           spec_out);
+    accumulate_light_range(ranges.z, mask_base, AERON_LIGHT_KIND_TUBE, N, N_spec, V, R, world_pos, mp, diff,
+                           spec_out);
     return diff;
 }
 #endif

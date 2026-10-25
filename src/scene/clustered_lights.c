@@ -109,7 +109,7 @@ static void cluster_prepare_uniform(AeronScene3D* s) {
 	u->grid_y            = (u->viewport_height + u->tile_size - 1u) / u->tile_size;
 	u->grid_z            = s->cluster_desc.depth_slices;
 	u->point_light_count = s->point_light_count;
-	u->tube_start        = s->point_tube_start;
+	u->kind_starts       = s->point_spot_start | s->point_tube_start << 16;
 	u->mask_words        = (s->point_light_count + 31u) / 32u;
 	u->flags             = s->cluster_desc.debug_view ? AERON_SCENE_CLUSTER_DEBUG_VIEW : 0u;
 }

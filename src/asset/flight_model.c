@@ -990,12 +990,16 @@ static bool parse_light_variants(const cJSON* extension, const cgltf_data* data,
 	return true;
 }
 
-/* Lights on "light" children: the node's KHR_lights_punctual point light
- * gives colour, intensity (candela) and range, its AERON_flight_model object
- * the shape (parse_light_shape), whether it is `baked` and its `variants`
- * (parse_light_variants). The node's rotation and uniform scale orient
- * and scale it: a tube lies along its local +X, a panel spans its local X and
- * Y, and one-sided lights emit along its local -Z. Other light types are
+/* KHR_lights_punctual's largest outer cone angle, pi/2. */
+#define FLIGHT_LIGHT_MAX_SPOT_ANGLE 1.5707963267948966f
+
+/* Lights on "light" children: the node's KHR_lights_punctual point or spot
+ * light gives colour, intensity (candela), range and a spot's cone, its
+ * AERON_flight_model object the shape (parse_light_shape), whether it is
+ * `baked` and its `variants` (parse_light_variants). The node's rotation
+ * and uniform scale orient and scale it: a tube lies along its local +X, a
+ * panel spans its local X and Y, and one-sided and spot lights emit along
+ * its local -Z. A spot light must be a point. Directional lights are
  * skipped with a warning; malformed values reject the model. */
 static bool append_lights(const cgltf_data* data, const cgltf_node* node, uint32_t component_index,
 						  AeronFlightModel* model) {
@@ -1006,10 +1010,17 @@ static bool append_lights(const cgltf_data* data, const cgltf_node* node, uint32
 		const cgltf_light* light = child->light;
 		if (child->mesh || child->children_count || !uniform_positive_transform(child) || !light)
 			return false;
-		if (light->type != cgltf_light_type_point) {
-			SDL_Log("[flight_model] light '%s' is not a point light; ignored", child->name ? child->name : "");
+		const bool spot = light->type == cgltf_light_type_spot;
+		if (light->type != cgltf_light_type_point && !spot) {
+			SDL_Log("[flight_model] light '%s' is a directional light; ignored",
+					child->name ? child->name : "");
 			continue;
 		}
+		if (spot && !(isfinite(light->spot_inner_cone_angle) && isfinite(light->spot_outer_cone_angle) &&
+					  light->spot_inner_cone_angle >= 0.0f &&
+					  light->spot_inner_cone_angle < light->spot_outer_cone_angle &&
+					  light->spot_outer_cone_angle <= FLIGHT_LIGHT_MAX_SPOT_ANGLE))
+			return false;
 		for (int channel = 0; channel < 3; ++channel)
 			if (!isfinite(light->color[channel]) || light->color[channel] < 0.0f)
 				return false;
@@ -1023,7 +1034,7 @@ static bool append_lights(const cgltf_data* data, const cgltf_node* node, uint32
 		const cJSON*          baked = extension ? cJSON_GetObjectItemCaseSensitive(extension, "baked") : NULL;
 		const bool valid    = extension &&
 							  parse_light_shape(extension, &shape, &length, size, &one_sided, &radius) &&
-							  (!baked || cJSON_IsBool(baked));
+							  (!spot || shape == AERON_FLIGHT_LIGHT_POINT) && (!baked || cJSON_IsBool(baked));
 		const bool is_baked = cJSON_IsTrue(baked);
 		AeronFlightLight light_variants;
 		memset(&light_variants, 0, sizeof light_variants);
@@ -1051,6 +1062,10 @@ static bool append_lights(const cgltf_data* data, const cgltf_node* node, uint32
 		out->component_index = component_index;
 		out->shape           = shape;
 		out->baked           = is_baked;
+		if (spot) {
+			out->spot_inner_angle = light->spot_inner_cone_angle;
+			out->spot_outer_angle = light->spot_outer_cone_angle;
+		}
 		/* Lengths take the node's and its parents' scale. */
 		const float local_x[3] = { 0.5f * (shape == AERON_FLIGHT_LIGHT_TUBE ? length : size[0]), 0.0f, 0.0f };
 		const float local_y[3] = { 0.0f, 0.5f * size[1], 0.0f };
@@ -1068,7 +1083,7 @@ static bool append_lights(const cgltf_data* data, const cgltf_node* node, uint32
 			out->source_radius =
 				sqrtf(transformed[0] * transformed[0] + transformed[1] * transformed[1] + transformed[2] * transformed[2]);
 		}
-		if (one_sided) {
+		if (one_sided || spot) {
 			transform_vector(matrix, back, transformed);
 			const float length_sq =
 				transformed[0] * transformed[0] + transformed[1] * transformed[1] + transformed[2] * transformed[2];

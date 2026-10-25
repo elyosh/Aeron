@@ -267,12 +267,12 @@
     },
     "light": {
       "title": "Light",
-      "description": "An empty node with a KHR_lights_punctual point light, a direct child of a component. The KHR light gives its colour, intensity (candela) and range. The light lights the scene while its component is shown. This object gives its shape. Fields that do not apply to the shape are invalid.",
+      "description": "An empty node with a KHR_lights_punctual point or spot light, a direct child of a component. The KHR light gives its colour, intensity (candela), range and a spot light's cone. The light lights the scene while its component is shown. This object gives its shape. Fields that do not apply to the shape are invalid, and a spot light must be a point.",
       "type": "object",
       "required": ["role"],
       "properties": {
         "role": { "title": "Role", "description": "A light of its component.", "const": "light" },
-        "shape": { "title": "Shape", "description": "point, tube (a line along local +X) or panel (a rectangle in local XY).", "enum": ["point", "tube", "panel"], "default": "point" },
+        "shape": { "title": "Shape", "description": "point, tube (a line along local +X) or panel (a rectangle in local XY). A spot light is a point.", "enum": ["point", "tube", "panel"], "default": "point" },
         "length": { "$ref": "#/$defs/positive", "title": "Length", "description": "A tube's length in metres, along local +X; required for a tube." },
         "size": {
           "title": "Size",

@@ -307,6 +307,23 @@ def _pilot_eye(geometry, root, position, color):
     geometry.line(far + up * 0.33, far + up * 0.25 + right * 0.08, color)
 
 
+def _spot_cone(geometry, light, location, direction, parent_scale, color):
+    """A spot light's cone, 1 m long: its outer edge, and the inner circle
+    within which the light is full."""
+    inner, outer = common.spot_cone(light.data)
+    length = parent_scale
+    side = direction.orthogonal().normalized()
+    other = direction.cross(side)
+    rim = []
+    for angle, alpha in ((outer, color[3]), (inner, 0.5 * color[3])):
+        center = location + direction * (length * math.cos(angle))
+        geometry.circle(center, direction, length * math.sin(angle), color[:3] + (alpha,))
+        rim.append((center, length * math.sin(angle)))
+    center, radius = rim[0]
+    for offset in (side, -side, other, -other):
+        geometry.line(location, center + offset * radius, color)
+
+
 def _light(geometry, light, settings):
     """The shape the game draws for a model light (see light_game_shape)."""
     shape = common.light_shape(light, common.local_matrix(light).to_scale())
@@ -333,6 +350,8 @@ def _light(geometry, light, settings):
     if one_sided:
         size = max(0.25, shape.get("radius", 0.0) * parent_scale * 4.0)
         geometry.arrow(location, location + basis @ Vector((0, 0, -size)), color)
+    if light.data.type == 'SPOT':
+        _spot_cone(geometry, light, location, basis @ Vector((0, 0, -1)), parent_scale, color)
     if settings.overlay_light_ranges and light.data.use_custom_distance:
         geometry.sphere(location, light.data.cutoff_distance, color[:3] + (0.3,))
 

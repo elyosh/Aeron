@@ -1,0 +1,47 @@
+# The Calamari hangar of hangar-one-sided.yaml, lowered so the camera is
+# 27.5 m above its floor, lit only by spot lights aimed down from 30.5 m
+# above the floor. In the front row, from left to right: a soft spot (inner
+# 0, outer 20 degrees), a hard one (19 and 20), one between (10 and 25) and
+# a narrow one (2 and 8). Behind them, a wide one (40 and 90). A sixth
+# lights an X-wing from 5 m above it (15 and 30).
+width: 2560
+height: 1440
+frames: 1
+fps: 60
+pan_degrees_per_second: 0
+pan_direction_degrees: 0
+shutter: 0.5
+quality: 0
+reference_samples: 0
+msaa_samples: 2
+cull: back
+bloom:
+  intensity: 0.2
+  kernel: 4
+tonemap: agx
+output_dir: captures/spot-lights
+# Set this to the game-data directory containing mod/flight/models (converted
+# XWAU models). Relative paths are resolved from the working directory.
+asset_root: .
+models:
+  - mod/flight/models/calamaricruisernewhangar.glb
+  - mod/flight/models/xwing.glb
+game_scene:
+  defaults: aeron/config/scene3d_defaults.yaml
+  shadows: false
+  sun_color: [0, 0, 0]
+  ambient: 0.02
+  # The hangar's own lights are off, so only the spots light it.
+  model_light_intensity: 0
+  # Camera axes, metres: +X right, +Y down, +Z forward. The floor is 27.5 m
+  # below the camera.
+  point_lights:
+    - { position: [-36, -3, 70], intensity: [6000, 6000, 6000], direction: [0, 1, 0], cone: [0, 20] }
+    - { position: [-12, -3, 70], intensity: [6000, 6000, 6000], direction: [0, 1, 0], cone: [19, 20] }
+    - { position: [12, -3, 70], intensity: [6000, 6000, 6000], direction: [0, 1, 0], cone: [10, 25] }
+    - { position: [36, -3, 70], intensity: [6000, 6000, 6000], direction: [0, 1, 0], cone: [2, 8] }
+    - { position: [0, -3, 120], intensity: [6000, 6000, 6000], direction: [0, 1, 0], cone: [40, 90] }
+    - { position: [0, 20.5, 50], intensity: [150, 150, 150], direction: [0, 1, 0], cone: [15, 30] }
+  instances:
+    - { model: mod/flight/models/calamaricruisernewhangar.glb, position: [0, 6.6, 15], rotation_degrees: [180, 0, 0] }
+    - { model: mod/flight/models/xwing.glb, position: [0, 25.47, 50], rotation_degrees: [180, 0, 0] }

@@ -263,11 +263,14 @@ A viewer without this extension shows the materials without skins.
 
 ## Lights
 
-A light-role node carries a `KHR_lights_punctual` point light, which gives
-its colour, its intensity in candela and its range in metres (no range: the
-game ends the light where it becomes negligible). Spot and directional
-lights are ignored with a warning. The node's `AERON_flight_model` object
-gives the shape:
+A light-role node carries a `KHR_lights_punctual` point or spot light,
+which gives its colour, its intensity in candela and its range in metres
+(no range: the game ends the light where it becomes negligible).
+Directional lights are ignored with a warning. A spot light points along
+the node's local -Z. Its cone is the glTF one: full light within
+`innerConeAngle`, none past `outerConeAngle`, with 0 ≤ inner < outer ≤ π/2.
+Its intensity is the light inside the inner angle. The node's
+`AERON_flight_model` object gives the shape:
 
 - `shape`: `point` (default), `tube` or `panel`;
 - `length`: required for a tube, its length in metres along the node's
@@ -293,7 +296,8 @@ gives the shape:
 "AERON_flight_model": { "role": "light", "shape": "tube", "length": 3.2, "variants": ["Red"] }
 ```
 
-Fields that do not apply to the shape are invalid. Lengths take the node's
+Fields that do not apply to the shape are invalid. A spot light must be a
+point, without `oneSided`. Lengths take the node's
 scale and its parents'. The intensity is the light straight ahead for a
 one-sided light; a tube emits the total of a point light of its intensity,
 spread along its length. A light lights the scene while its component is

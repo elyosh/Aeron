@@ -267,10 +267,11 @@ static int load_effects(const AeronConfigFile* yaml, CaptureConfig* config) {
 	return 1;
 }
 
-static int vec3(const AeronConfigNode* node, float out[3]) {
-	if (AeronConfigNode_Type(node) != AERON_CONFIG_SEQUENCE || AeronConfigNode_SequenceCount(node) != 3)
+/* A list of `count` finite numbers. */
+static int floats(const AeronConfigNode* node, float* out, size_t count) {
+	if (AeronConfigNode_Type(node) != AERON_CONFIG_SEQUENCE || AeronConfigNode_SequenceCount(node) != count)
 		return 0;
-	for (size_t k = 0; k < 3; ++k) {
+	for (size_t k = 0; k < count; ++k) {
 		const AeronConfigNode* item = AeronConfigNode_SequenceGet(node, k);
 		const double           v    = AeronConfigNode_Float(item, NAN);
 		if ((AeronConfigNode_Type(item) != AERON_CONFIG_INT &&
@@ -281,6 +282,8 @@ static int vec3(const AeronConfigNode* node, float out[3]) {
 	}
 	return 1;
 }
+
+static int vec3(const AeronConfigNode* node, float out[3]) { return floats(node, out, 3); }
 
 static int only_keys(const AeronConfigNode* map, const char* what, const char* const* keys, size_t count) {
 	if (AeronConfigNode_Type(map) != AERON_CONFIG_MAP) {
@@ -387,7 +390,7 @@ static int load_game_lights(const AeronConfigNode* list, CaptureGameScene* game)
 		fprintf(stderr, "game_scene.point_lights must list at most %d lights\n", CAPTURE_MAX_LIGHTS);
 		return 0;
 	}
-	static const char* const keys[] = { "position", "intensity", "half_axis", "direction" };
+	static const char* const keys[] = { "position", "intensity", "half_axis", "direction", "cone" };
 	for (size_t i = 0; i < count; ++i) {
 		const AeronConfigNode* item = AeronConfigNode_SequenceGet(list, i);
 		CaptureLight*          out  = &game->lights[i];
@@ -407,6 +410,17 @@ static int load_game_lights(const AeronConfigNode* list, CaptureGameScene* game)
 		const AeronConfigNode* direction = AeronConfigNode_MapGet(item, "direction");
 		if (direction && !vec3(direction, out->direction)) {
 			fprintf(stderr, "game_scene.point_lights[%zu].direction must be [x, y, z]\n", i);
+			return 0;
+		}
+		const AeronConfigNode* cone = AeronConfigNode_MapGet(item, "cone");
+		if (cone && (!floats(cone, out->cone_degrees, 2) || !direction || half_axis ||
+					 !(out->cone_degrees[0] >= 0 && out->cone_degrees[0] < out->cone_degrees[1] &&
+					   out->cone_degrees[1] <= 90))) {
+			fprintf(
+				stderr,
+				"game_scene.point_lights[%zu].cone must be [inner, outer] degrees, 0 <= inner < outer <= 90, "
+				"with a direction and no half_axis\n",
+				i);
 			return 0;
 		}
 	}

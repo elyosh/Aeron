@@ -8,6 +8,7 @@
 # extensions and extras are kept too (sources.py).
 
 import json
+import math
 import os
 
 import bpy
@@ -60,11 +61,18 @@ def _restore_component(obj, extension):
 def _restore_light(obj, extension, punctual):
     shape = extension.get("shape", "point")
     one_sided = shape == "panel" or extension.get("oneSided", False)
-    obj.data.type = 'POINT' if shape == "point" else 'AREA'
+    spot = punctual.get("type") == "spot"
+    obj.data.type = 'SPOT' if spot else 'POINT' if shape == "point" else 'AREA'
     light = obj.data
     if shape == "point":
         light.shadow_soft_size = extension.get("radius", common.DEFAULT_LIGHT_RADIUS)
         light.use_soft_falloff = False
+    if spot:
+        # As Blender's glTF importer, with glTF's default cone.
+        cone = punctual.get("spot", {})
+        outer = cone.get("outerConeAngle", math.pi / 4.0)
+        light.spot_size = 2.0 * outer
+        light.spot_blend = 1.0 - cone.get("innerConeAngle", 0.0) / outer
     else:
         light.shape = 'RECTANGLE'
         if shape == "tube":

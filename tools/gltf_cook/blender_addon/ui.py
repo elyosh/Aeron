@@ -252,7 +252,7 @@ def draw_light(layout, obj):
     layout.prop(props, "light_exclude")
     if props.light_exclude:
         return
-    if light.type not in {'POINT', 'AREA'}:
+    if light.type not in {'POINT', 'SPOT', 'AREA'}:
         layout.label(text="{} lights are not supported".format(light.type.capitalize()), icon='ERROR')
         return
     if light.type == 'AREA':
@@ -260,7 +260,7 @@ def draw_light(layout, obj):
         row.prop(props, "light_tube")
         if props.light_tube:
             row.prop(props, "light_one_sided")
-    if light.type == 'POINT' and light.use_soft_falloff:
+    if light.type in {'POINT', 'SPOT'} and light.use_soft_falloff:
         row = layout.row()
         row.label(text="The game has no soft falloff", icon='ERROR')
         row.prop(light, "use_soft_falloff")

@@ -727,7 +727,9 @@ static void add_game_instances(AeronScene3D* scene, const Fixture* f, double tim
 	for (int i = 0; i < f->config.game.light_count; ++i) {
 		const CaptureLight* l     = &f->config.game.lights[i];
 		AeronSceneLight     light = {
-			.source_radius = 0.25f * GAME_UNITS_PER_METER,
+			.source_radius    = 0.25f * GAME_UNITS_PER_METER,
+			.spot_inner_angle = l->cone_degrees[0] * (float)(3.14159265358979 / 180.0),
+			.spot_outer_angle = l->cone_degrees[1] * (float)(3.14159265358979 / 180.0),
 		};
 		float peak = 0;
 		for (int k = 0; k < 3; ++k) {

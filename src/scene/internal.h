@@ -261,27 +261,29 @@ typedef struct AeronScenePointLightGPU {
 	/* xyz: the position, w: the inverse square of the range. */
 	float position_range[4];
 	float color[4];
-	/* xyz: a tube's half axis, w: its half length (zero for a sphere). */
+	/* xyz: a tube's half axis, w: its half length (zero for a sphere). A
+	 * spot light's x holds the offset of its falloff instead. */
 	float half_axis[4];
-	/* xyz: a one-sided light's unit direction (zero for a light emitting
-	 * all around), w: the inverse of a tube's half length. Per-light values
-	 * the shader would otherwise derive at every fragment. A one-sided
-	 * light's color.w (its sphere radius) is negated, so lights emitting
-	 * all around never load the direction. */
+	/* xyz: a one-sided or spot light's unit direction (zero for a light
+	 * emitting all around), w: the inverse of a tube's half length, or the
+	 * scale of a spot light's falloff (zero for other spheres). Per-light
+	 * values the shader would otherwise derive at every fragment. A
+	 * one-sided or spot light's color.w (its sphere radius) is negated, so
+	 * lights emitting all around never load the direction. */
 	float direction[4];
 } AeronScenePointLightGPU;
 
-/* A point light in view space, in the point light order. w bounds the
- * whole light: its range plus a tube's half length. */
+/* A point light in view space, in the point light order: the sphere that
+ * holds what it lights (AeronScene_LightBounds). */
 typedef struct AeronSceneClusterLightGPU {
 	float view_position_range[4];
 } AeronSceneClusterLightGPU;
 
 /* The cluster build's output, one uint buffer (scene_clustered_lights.hlsli):
- * per depth bin two words, the index ranges of the spheres and of the tubes
- * that reach it, then per screen tile a bitmask of the lights that reach
- * it, mask_words words long. */
-#define AERON_SCENE_CLUSTER_BIN_WORDS 2u
+ * per depth bin three words, the index ranges of the spheres, the spot
+ * lights and the tubes that reach it, then per screen tile a bitmask of the
+ * lights that reach it, mask_words words long. */
+#define AERON_SCENE_CLUSTER_BIN_WORDS 3u
 
 typedef struct AeronSceneClusterUniformGPU {
 	float    camera_position[3];
@@ -300,8 +302,9 @@ typedef struct AeronSceneClusterUniformGPU {
 	uint32_t grid_y;
 	uint32_t grid_z;
 	uint32_t point_light_count;
-	/* Point lights from tube_start on are tubes. */
-	uint32_t tube_start;
+	/* The point lights come as spheres, spot lights, then tubes: the first
+	 * spot light's index | the first tube's << 16. */
+	uint32_t kind_starts;
 	uint32_t mask_words;
 	uint32_t tile_size;
 	uint32_t flags;
@@ -520,7 +523,9 @@ struct AeronScene3D {
 	uint32_t                 point_light_count;
 	/* Directional shadows ran without a normal render target (logged once). */
 	int screen_shadow_warned;
-	/* Spheres are packed first; point lights from here on are tubes. */
+	/* Spheres are packed first, then spot lights from point_spot_start on,
+	 * then tubes from point_tube_start on. */
+	uint32_t                   point_spot_start;
 	uint32_t                   point_tube_start;
 	uint32_t                   point_light_staging_cap;
 	AeronSceneClusterLightGPU* cluster_light_staging;

@@ -106,8 +106,8 @@ def _check_light(problems, obj):
     if obj.aeron_flight.light_exclude:
         return
     light = obj.data
-    if light.type not in {'POINT', 'AREA'}:
-        problems.error(obj, "{} lights are not supported. Use a point or area light, or exclude "
+    if light.type not in {'POINT', 'SPOT', 'AREA'}:
+        problems.error(obj, "{} lights are not supported. Use a point, spot or area light, or exclude "
                             "the light".format(light.type.capitalize()))
         return
     if obj.children:
@@ -126,7 +126,10 @@ def _check_light(problems, obj):
         problems.error(obj, "the light's size must be positive")
     if light.use_custom_distance and not light.cutoff_distance > 0.0:
         problems.error(obj, "the custom distance (range) must be positive")
-    if light.type == 'POINT' and light.use_soft_falloff:
+    if light.type == 'SPOT' and abs(scale[0] - scale[1]) > EPSILON * max(scale[0], scale[1]):
+        problems.warning(obj, "the X and Y scale make the cone oval in Blender, but the game's cone "
+                              "is round")
+    if light.type in {'POINT', 'SPOT'} and light.use_soft_falloff:
         problems.warning(obj, "Soft Falloff is on: it dims the light near its source in Blender, "
                               "but not in the game. Turn it off in the Light tab")
 

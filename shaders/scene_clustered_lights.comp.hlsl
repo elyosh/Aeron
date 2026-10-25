@@ -35,9 +35,11 @@ uint bin_range(uint begin, uint end, float near_z, float far_z) {
 void build_bin(uint bin) {
 	float near_z     = bin == 0u ? -3.402823466e+38f : cluster_slice_depth(bin);
 	float far_z      = bin + 1u >= fs_cluster_grid_z ? 3.402823466e+38f : cluster_slice_depth(bin + 1u);
-	uint  tube_start = min(fs_cluster_tube_start, fs_cluster_point_count);
-	g_data[AERON_CLUSTER_BIN_WORDS * bin]      = bin_range(0u, tube_start, near_z, far_z);
-	g_data[AERON_CLUSTER_BIN_WORDS * bin + 1u] = bin_range(tube_start, fs_cluster_point_count, near_z, far_z);
+	uint  tube_start = min(fs_cluster_kind_starts >> 16u, fs_cluster_point_count);
+	uint  spot_start = min(fs_cluster_kind_starts & 0xffffu, tube_start);
+	g_data[AERON_CLUSTER_BIN_WORDS * bin]      = bin_range(0u, spot_start, near_z, far_z);
+	g_data[AERON_CLUSTER_BIN_WORDS * bin + 1u] = bin_range(spot_start, tube_start, near_z, far_z);
+	g_data[AERON_CLUSTER_BIN_WORDS * bin + 2u] = bin_range(tube_start, fs_cluster_point_count, near_z, far_z);
 }
 
 /* A light reaches a tile if it is in front of the near plane and inside

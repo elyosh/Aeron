@@ -84,6 +84,7 @@ class AERON_OT_add(Operator):
         ('engineGlow', "Engine Glow", "An engine glow facing -Y, sized by its X and Z scale"),
         ('collision', "Collision Mesh", "A copy of the component's mesh, to simplify into its collision mesh"),
         ('point', "Point Light", "A point light"),
+        ('spot', "Spot Light", "A spot light shining toward -Z"),
         ('panel', "Panel Light", "A one-sided rectangle light, such as a ceiling panel"),
         ('tube', "Tube Light", "A tube light whose length is its X size"),
     ])
@@ -109,9 +110,10 @@ class AERON_OT_add(Operator):
             obj.display_type = 'WIRE'
             obj.hide_render = True
         else:
-            light = bpy.data.lights.new(self.kind + "_light", 'POINT' if self.kind == 'point' else 'AREA')
+            light = bpy.data.lights.new(self.kind + "_light",
+                                        {'point': 'POINT', 'spot': 'SPOT'}.get(self.kind, 'AREA'))
             light.energy = 100.0
-            if self.kind == 'point':
+            if self.kind in {'point', 'spot'}:
                 light.use_soft_falloff = False
             else:
                 light.shape = 'RECTANGLE'

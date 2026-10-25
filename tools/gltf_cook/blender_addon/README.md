@@ -171,8 +171,8 @@ toggle and do not change the model.
   (green), the up axis (blue), and an arc to the open angle of each
   articulation. The arcs are named on the active component.
 - **Light Shapes**: the sphere, tube or panel that the game makes of each
-  model light (a long panel becomes a tube), and an arrow for one-sided
-  lights. **Light Ranges** also draws the range of lights that have one.
+  model light (a long panel becomes a tube), an arrow for one-sided lights,
+  and the cone of spot lights, 1 m long, with its inner circle. **Light Ranges** also draws the range of lights that have one.
 - **Component Labels**: the number and name of each component.
 
 **In Front** draws the markers on top of the model instead of hiding them
@@ -374,7 +374,7 @@ the wrong size.
 
 ## Lights
 
-Every point or area light under a component is a model light, unless its
+Every point, spot or area light under a component is a model light, unless its
 **Exclude from Model** box is checked. The game draws lights without
 shadows. To preview that, turn on **Game-Like Lights**: it turns off the
 shadows of model lights. It also turns off their Soft Falloff (see below),
@@ -383,14 +383,24 @@ which stays off when you turn the toggle off again.
 | Blender light | Game light |
 |-|-|
 | Point | sphere with the Radius of the light |
+| Spot | spot light: a sphere with the Radius of the light, shining in a cone toward -Z. Spot Size is the cone, and Spot Blend the part of it where the light fades |
 | Area, Rectangle or Square | one-sided panel of its size (Disk and Ellipse: a panel with the same area) |
 | Area with **Tube** | tube along the X size, with the Y size as thickness. **One-Sided** makes it a strip that emits toward -Z |
 
 The light panel shows what the game draws. A panel at least three times
 longer than it is wide becomes a one-sided tube. A squarer panel becomes a
-one-sided sphere with the same area. Spot and sun lights are not supported.
+one-sided sphere with the same area. Sun lights are not supported.
 
-A point light lights like a glowing ball of its Radius, as Blender does with
+A spot light's cone comes from Blender's Spot Size and Spot Blend, as
+Blender's glTF exporter converts them: in the game, the light is full within
+Spot Size x (1 - Spot Blend) and ends at Spot Size. A Spot Blend of 0 gives a
+hard edge. Blender fades the edge differently: its light stays full further
+out, and fades over a narrower band before the same outer edge. With Spot
+Size 60° and Spot Blend 0.5, the game's light starts to fade 15° from the
+axis, and Blender's at about 22°. Keep the X and Y scale of a spot light
+equal: Blender makes the cone oval, but the game's cone is round.
+
+A point or spot light lights like a glowing ball of its Radius, as Blender does with
 **Soft Falloff** off. Soft Falloff dims the light within a few radii of its
 source, in Blender only, so the lights the add-on creates or imports have it
 off, and the checks warn when it is on. Keep the ball inside the open space:
@@ -399,8 +409,9 @@ than the room leaves the room dark. For soft light over a large area, use a
 panel or a tube.
 
 Intensity is exported in candela, converted the same way as Blender's glTF
-exporter (683 lm/W). A point light or an all-around tube gives its power x
-683 / 4pi. A panel or one-sided tube gives its power x 683 / pi, straight
+exporter (683 lm/W). A point light, a spot light or an all-around tube
+gives its power x 683 / 4pi: in Blender, a spot light has the power of a
+point light that shines all around. A panel or one-sided tube gives its power x 683 / pi, straight
 ahead. Exposure, temperature and, with Normalize off, the area are taken
 into account. The game converts candela into its own lighting units: a
 Blender sun of strength 2.5 matches the game's white sun. Preview with such

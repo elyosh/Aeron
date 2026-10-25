@@ -132,13 +132,17 @@ def local_matrix(obj):
 #
 # KHR_lights_punctual gives the intensity in candela, and Blender gives the light
 # power in watts. They are converted the way Blender's glTF exporter does in its
-# default lighting mode (683 lm/W). A point light spreads its power over 4 pi sr.
+# default lighting mode (683 lm/W). A point light spreads its power over 4 pi sr,
+# and so does a spot light, whose power is that of a point light in Blender.
 # The intensity of a one-sided emitter straight ahead is its power divided by pi.
 
 WATTS_TO_LUMENS = 683.0
 DEFAULT_LIGHT_RADIUS = 0.1   # default radius of points and tubes in the format
 PANEL_TUBE_ASPECT = 3.0      # the game draws a panel this many times longer than wide as a one-sided tube
 DISK_TO_SQUARE = math.sqrt(math.pi) / 2.0  # from a disk's diameter to the side of a square of the same area
+# glTF needs a spot's inner angle under its outer one: a Spot Blend of 0 keeps
+# this share of the cone between them, which still draws a hard edge.
+SPOT_HARD_EDGE_BLEND = 0.001
 
 
 def candela(watts, one_sided):
@@ -158,7 +162,7 @@ def light_shape(obj, scale):
     """The shape fields of the format for the model light `obj`, with its local
     `scale` baked into the sizes. Returns None for an unsupported light type."""
     light = obj.data
-    if light.type == 'POINT':
+    if light.type in {'POINT', 'SPOT'}:
         shape = {"shape": "point"}
         if light.shadow_soft_size > 0.0:
             shape["radius"] = float(light.shadow_soft_size)
@@ -179,6 +183,14 @@ def light_shape(obj, scale):
     return {"shape": "panel", "size": [float(size_x * scale[0]), float(size_y * scale[1])], "oneSided": True}
 
 
+def spot_cone(light):
+    """The inner and outer cone angles of a Blender spot light, as Blender's
+    glTF exporter gives them: the outer one is half the Spot Size, and the
+    Spot Blend is the share of it where the light fades."""
+    outer = 0.5 * light.spot_size
+    return outer * (1.0 - max(light.spot_blend, SPOT_HARD_EDGE_BLEND)), outer
+
+
 def light_punctual(obj, matrix_world):
     """The KHR_lights_punctual light of a model light."""
     light = obj.data
@@ -190,11 +202,14 @@ def light_punctual(obj, matrix_world):
     if light.use_temperature:
         color = [c * t for c, t in zip(color, light.temperature_color)]
     punctual = {
-        "type": "point",
+        "type": "spot" if light.type == 'SPOT' else "point",
         "name": obj.name,
         "color": [float(c) for c in color],
         "intensity": float(candela(power, light_one_sided(obj))),
     }
+    if light.type == 'SPOT':
+        inner, outer = spot_cone(light)
+        punctual["spot"] = {"innerConeAngle": float(inner), "outerConeAngle": float(outer)}
     if light.use_custom_distance:
         punctual["range"] = float(light.cutoff_distance)
     return punctual
@@ -205,6 +220,10 @@ def light_game_shape(obj):
     shape = light_shape(obj, local_matrix(obj).to_scale())
     if shape is None:
         return "unsupported {} light".format(obj.data.type.lower())
+    if shape["shape"] == "point" and obj.data.type == 'SPOT':
+        inner, outer = spot_cone(obj.data)
+        return "spot {:.3g}°, full within {:.3g}°, radius {:.3g} m".format(
+            math.degrees(2.0 * outer), math.degrees(2.0 * inner), shape.get("radius", DEFAULT_LIGHT_RADIUS))
     if shape["shape"] == "point":
         return "sphere, radius {:.3g} m".format(shape.get("radius", DEFAULT_LIGHT_RADIUS))
     if shape["shape"] == "tube":
