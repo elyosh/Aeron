@@ -9,6 +9,7 @@
 #include "aeron/log.h"
 #include "internal.h"
 
+#include <math.h>
 #include <stdlib.h>
 
 static const char* tonemap_op_name(int op) {
@@ -162,6 +163,10 @@ void AeronScenePresent_SetAcesExposure(float v) {
 	s_aces_exposure = v;
 }
 
+float AeronScenePresent_ExposureFromEv100(float ev100) {
+	return AERON_SCENE_LUMENS_PER_WATT / (1.2f * exp2f(ev100));
+}
+
 void AeronScenePresent_ApplySettings(const AeronSceneTonemapSettings* settings) {
 	if (!settings) {
 		return;
@@ -215,9 +220,9 @@ AeronScenePresentChain* AeronScenePresentChain_Create(AeronTextureFormat target_
 	c->target_format = target_format;
 	c->vs =
 		AeronSceneInternal_CompileShader("scene_fullscreen_quad.vert", AERON_SHADER_STAGE_VERTEX, 0, 0, 0);
-	c->ps_sdr = AeronSceneInternal_CompileShader("scene_tonemap.frag", AERON_SHADER_STAGE_FRAGMENT, 2, 1, 0);
+	c->ps_sdr = AeronSceneInternal_CompileShader("scene_tonemap.frag", AERON_SHADER_STAGE_FRAGMENT, 3, 1, 0);
 	c->ps_hdr =
-		AeronSceneInternal_CompileShader("scene_tonemap_hdr.frag", AERON_SHADER_STAGE_FRAGMENT, 2, 1, 0);
+		AeronSceneInternal_CompileShader("scene_tonemap_hdr.frag", AERON_SHADER_STAGE_FRAGMENT, 3, 1, 0);
 	if (c->vs && c->ps_sdr) {
 		c->pipeline_sdr = present_pipeline(c->vs, c->ps_sdr, target_format);
 	}
@@ -250,7 +255,8 @@ void AeronScenePresentChain_Destroy(AeronScenePresentChain* c) {
 
 void AeronScenePresentChain_Draw(AeronScenePresentChain* c, AeronRenderPass* pass, AeronTexture* scene_tex,
 								 AeronSampler* sampler, AeronTexture* bloom_tex, float bloom_intensity,
-								 int rt_w, int rt_h, float bar_y_uv, const float tint[4], int src_coverage) {
+								 float exposure, AeronTexture* exposure_tex, int rt_w, int rt_h,
+								 float bar_y_uv, const float tint[4], int src_coverage) {
 	if (!c || !pass || !scene_tex || !sampler) {
 		return;
 	}
@@ -269,6 +275,8 @@ void AeronScenePresentChain_Draw(AeronScenePresentChain* c, AeronRenderPass* pas
 	Aeron_BindTextureSampler(pass, AERON_SHADER_STAGE_FRAGMENT, 0, scene_tex, sampler);
 	Aeron_BindTextureSampler(pass, AERON_SHADER_STAGE_FRAGMENT, 1, bloom_tex ? bloom_tex : scene_tex,
 							 sampler);
+	Aeron_BindTextureSampler(pass, AERON_SHADER_STAGE_FRAGMENT, 2, exposure_tex ? exposure_tex : scene_tex,
+							 sampler);
 
 	/* HDR headroom is relative to SDR white. The render pass supplies the
 	 * platform encoding of that white when drawing directly to the swapchain. */
@@ -286,7 +294,7 @@ void AeronScenePresentChain_Draw(AeronScenePresentChain* c, AeronRenderPass* pas
 		rt_w > 0 ? 2.0f * bloom_scale / (float)rt_w : 0.0f,
 		rt_h > 0 ? 2.0f / AERON_SCENE_BLOOM_REFERENCE_HEIGHT : 0.0f,
 		bar_y_uv,
-		1.0f, /* scene exposure */
+		exposure,
 		(float)AeronScenePresent_TonemapOp(),
 		hdr_peak_scale,
 		Aeron_RenderPassOutputRgbScale(pass),
@@ -301,7 +309,7 @@ void AeronScenePresentChain_Draw(AeronScenePresentChain* c, AeronRenderPass* pas
 		(float)AeronScenePresent_AgxLook(),
 		AeronScenePresent_AgxPunchyPower(),
 		AeronScenePresent_AgxPunchySaturation(),
-		0.0f,
+		exposure_tex ? 1.0f : 0.0f,
 		AeronScenePresent_AgxHighlightSaturation(),
 		s_agx_highlight_ev_start,
 		s_agx_highlight_ev_end,

@@ -150,8 +150,9 @@ static bool read_ambient_fill(const AeronConfigNode* map, const char* what, floa
 	if (!read_vec3(map, what, "ambient_fill", out, &node, error))
 		return false;
 	for (int i = 0; i < 3; ++i)
-		if (out[i] < 0.0f || out[i] > 4.0f)
-			return env_error(error, node, "%s: 'ambient_fill' values must be between 0 and 4", what);
+		if (out[i] < 0.0f || out[i] > AERON_ENV_MAX_RADIANCE)
+			return env_error(error, node, "%s: 'ambient_fill' values must be between 0 and %g", what,
+							 (double)AERON_ENV_MAX_RADIANCE);
 	return true;
 }
 
@@ -209,8 +210,8 @@ static bool parse_visual(const AeronConfigNode* light_map, const char* what,
 						 error) &&
 			   read_number(visual, visual_what, "angular_size_degrees", true, 0.01, 60.0,
 						   &light->angular_size_degrees, error) &&
-			   read_number(visual, visual_what, "sprite_strength", true, 0.0, 16.0, &light->sprite_strength,
-						   error);
+			   read_number(visual, visual_what, "sprite_strength", true, 0.0, AERON_ENV_MAX_RADIANCE,
+						   &light->sprite_strength, error);
 	}
 	return env_error(error, kind, "%s: 'kind' must be 'disc' or 'sprite'", visual_what);
 }
@@ -256,7 +257,8 @@ static bool parse_light(const AeronConfigNode* map, const char* owner, size_t in
 		if (light->color_linear[i] < 0.0f || light->color_linear[i] > 16.0f)
 			return env_error(error, color_node, "%s: 'color_linear' values must be between 0 and 16", what);
 
-	return read_number(map, what, "intensity", true, 0.0, 16.0, &light->intensity, error) &&
+	return read_number(map, what, "intensity", true, 0.0, AERON_ENV_MAX_LIGHT_INTENSITY, &light->intensity,
+					   error) &&
 		   read_bool(map, what, "primary", &light->primary, error) &&
 		   read_bool(map, what, "casts_shadows", &light->casts_shadows, error) &&
 		   read_number(map, what, "angular_radius_degrees", true, 0.01, 5.0, &light->angular_radius_degrees,
@@ -363,7 +365,7 @@ static bool parse_definition(const char* name, const AeronConfigNode* map, Aeron
 		return env_error(error, kind, "%s: remove 'kind'. The other fields define what an environment does",
 						 what);
 	if (!check_fields(map, what, fields, sizeof fields / sizeof fields[0], error) ||
-		!read_number(map, what, "intensity", true, 0.0, 16.0, &def->intensity, error) ||
+		!read_number(map, what, "intensity", true, 0.0, AERON_ENV_MAX_RADIANCE, &def->intensity, error) ||
 		(AeronConfigNode_MapGet(map, "ambient_fill") &&
 		 !read_ambient_fill(map, what, def->ambient_fill, error)) ||
 		(AeronConfigNode_MapGet(map, "rotation_degrees") &&

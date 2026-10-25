@@ -7,6 +7,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "classic_radiance.h"
 #include "util.h"
 #include "xwau_config.h"
 #include "xwau_missions.h"
@@ -15,6 +16,11 @@
 /* The game's limit on a hide or show list (XWA_ENV_BACKDROP_LIST_MAX). */
 #define SKY_LIST_MAX 64
 #define SKY_PI 3.14159265358979323846
+/* Radiance in W/m^2/sr of a sky texel of 1. XWA Upgrade's skyboxes are sRGB
+ * images with no unit, like the classic backdrops they replace, so a texel
+ * gets the radiance of a classic backdrop texel. It is the environment's
+ * `intensity`, and AmbientMin is a fill on the same scale. */
+#define SKY_RADIANCE CLASSIC_RADIANCE
 
 static const char* const kMissionDirs[] = { "Missions", "Melee", "Combat" };
 
@@ -499,10 +505,10 @@ static void write_environments(const SkyState* st, FILE* f) {
 		const SkyDefinition* d       = &st->definitions[i];
 		const char*          key     = st->folders[d->folder].key;
 		const float          diffuse = clamp_value(d->ambient_int, 4.0f, "AmbientInt", d->name);
-		const float          fill    = clamp_value(d->ambient_min, 4.0f, "AmbientMin", d->name);
+		const float          fill = clamp_value(d->ambient_min, 4.0f, "AmbientMin", d->name) * SKY_RADIANCE;
 		fprintf(f,
 				"  %s:\n"
-				"    intensity: 1\n"
+				"    intensity: %g\n"
 				"    radiance: \"flight/environments/xwau/%s/sky.ktx2\"\n"
 				"    diffuse: \"flight/environments/xwau/%s/diffuse.ktx2\"\n"
 				"    diffuse_strength: %g\n"
@@ -511,7 +517,8 @@ static void write_environments(const SkyState* st, FILE* f) {
 				"    ambient_fill: [%g, %g, %g]\n"
 				"    rotation_degrees: [0, 0, 0]\n"
 				"    directional_lights: []\n",
-				d->name, key, key, (double)diffuse, key, (double)fill, (double)fill, (double)fill);
+				d->name, (double)SKY_RADIANCE, key, key, (double)diffuse, key, (double)fill, (double)fill,
+				(double)fill);
 		if (d->overlay < 0)
 			continue;
 		fprintf(f, "    overlay:\n      cube: \"flight/environments/xwau/%s/overlay.ktx2\"\n",

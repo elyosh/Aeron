@@ -723,7 +723,8 @@ static void add_game_instances(AeronScene3D* scene, const Fixture* f, double tim
 		AeronScene_AddMeshInstance(scene, &instance);
 	}
 	/* As XwaRemasterShip_ScenePointLight: 0.25 m spheres ending under
-	 * 1/250 of a unit of illuminance. */
+	 * 1/250 of a unit of illuminance after the exposure. */
+	const float exposure = AeronScenePresent_ExposureFromEv100(f->config.exposure_ev100);
 	for (int i = 0; i < f->config.game.light_count; ++i) {
 		const CaptureLight* l     = &f->config.game.lights[i];
 		AeronSceneLight     light = {
@@ -739,13 +740,13 @@ static void add_game_instances(AeronScene3D* scene, const Fixture* f, double tim
 			light.color[k]     = l->intensity[k] * GAME_UNITS_PER_METER * GAME_UNITS_PER_METER;
 			peak               = fmaxf(peak, l->intensity[k]);
 		}
-		light.radius = sqrtf(peak / 0.004f) * GAME_UNITS_PER_METER;
+		light.radius = sqrtf(peak * exposure / 0.004f) * GAME_UNITS_PER_METER;
 		AeronScene_AddLight(scene, &light);
 	}
 }
 
 /* The PbrLightFS block as XwaRemasterShip_SetPbrEnv fills it; sun_color is
- * the illuminance, after the game's lighting.sun_illuminance_scale. */
+ * the illuminance in W/m^2. */
 static void set_game_lighting(AeronScene3D* scene, const CaptureConfig* config) {
 	const CaptureGameScene* game         = &config->game;
 	float                   light[23][4] = {

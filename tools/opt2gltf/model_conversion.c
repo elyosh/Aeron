@@ -8,6 +8,7 @@
 #include <string.h>
 #include <strings.h>
 
+#include "classic_radiance.h"
 #include "model_tables.h"
 #include "opt.h"
 #include "opt_gltf.h"
@@ -788,11 +789,13 @@ bool ModelConversion_Convert(const ModelConversion* mc, const char* opt_path, co
 	if (ok && mc->xwau)
 		ok = prepare_xwau(c, mc, opt, basename, opt_path) && place_cockpit(c, opt, opt_path) &&
 			 load_dynamic_cockpit(c, mc, opt, basename, opt_path) &&
-			 bake_xwau(c, mc, opt, basename, opt_path) &&
-			 OptGltf_Convert(opt, out_dir, basename, &c->options, opt_path);
+			 bake_xwau(c, mc, opt, basename, opt_path);
 	else if (ok)
-		ok = prepare_stock(c, mc, basename, opt_path) && place_cockpit(c, opt, opt_path) &&
-			 OptGltf_Convert(opt, out_dir, basename, &c->options, opt_path);
+		ok = prepare_stock(c, mc, basename, opt_path) && place_cockpit(c, opt, opt_path);
+	/* The classic emission of the model, as physical radiance. */
+	if (ok)
+		c->options.material.emission_radiance = CLASSIC_RADIANCE;
+	ok = ok && OptGltf_Convert(opt, out_dir, basename, &c->options, opt_path);
 	if (ok && mc->xwau)
 		XwauGltf_ReportSkins(&c->baked, basename);
 	if (c)

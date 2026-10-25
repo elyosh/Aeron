@@ -106,6 +106,9 @@ typedef struct {
 	char** owned_strings;
 	size_t owned_strings_count, owned_strings_cap;
 
+	/* OptGltfMaterialOptions.emission_radiance, 1 when not given. */
+	float emission_radiance;
+
 	/* Set when keeping a string or growing the .bin runs out of memory. The
 	 * build then fails. */
 	bool out_of_memory;

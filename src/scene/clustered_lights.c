@@ -216,6 +216,7 @@ void AeronSceneClusteredLights_Bind(AeronScene3D* s, AeronRenderPass* pass) {
 	}
 	memcpy(lighting.debug_material, s->pbr_debug_material, sizeof lighting.debug_material);
 	lighting.emission[0]    = AeronScene_EmissiveScale();
+	lighting.emission[1]    = s->image_radiance;
 	lighting.render_size[0] = (float)s->render_w;
 	lighting.render_size[1] = (float)s->render_h;
 	lighting.render_size[2] = 1.0f / (float)s->render_w;

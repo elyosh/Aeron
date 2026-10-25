@@ -1830,6 +1830,7 @@ int Aeron_Present(void) {
 							 error && error[0] ? error : "<no SDL error provided>");
 		return 0;
 	}
+	g_aeron.presented_frames++;
 	return 1;
 }
 
@@ -2453,6 +2454,174 @@ static void Aeron_CommandBufferEndUploadSlice(AeronCommandBuffer* command_buffer
 	slice->mapped = NULL;
 }
 
+/* ===== Non-blocking buffer readback ================================= */
+
+#define AERON_READBACK_SLOTS 4
+
+enum { AERON_READBACK_IDLE, AERON_READBACK_RECORDED, AERON_READBACK_IN_FLIGHT };
+
+/* The fence of one submitted command buffer, shared by its readbacks. */
+typedef struct AeronReadbackFence {
+	SDL_GPUFence* fence;
+	uint32_t      refs;
+} AeronReadbackFence;
+
+typedef struct AeronReadbackSlot {
+	SDL_GPUTransferBuffer* transfer;
+	AeronReadbackFence*    fence;
+	uint64_t               serial;
+	uint64_t               submitted_frame; /* presented_frames at submission */
+	int                    state;
+} AeronReadbackSlot;
+
+struct AeronBufferReadback {
+	uint32_t          size;
+	AeronReadbackSlot slots[AERON_READBACK_SLOTS];
+	uint64_t          next_serial;
+	uint64_t          newest_serial;    /* the copy in `data` */
+	uint64_t          delivered_serial; /* the last one Poll gave */
+	void*             data;
+};
+
+static void Aeron_ReleaseReadbackFence(AeronReadbackFence* fence) {
+	if (fence && --fence->refs == 0) {
+		if (g_aeron.gpu_device && fence->fence)
+			SDL_ReleaseGPUFence(g_aeron.gpu_device, fence->fence);
+		SDL_free(fence);
+	}
+}
+
+/* Gives the readbacks of a command buffer the fence it was submitted with,
+ * which this takes. Without one (not submitted, or the caller took the
+ * fence), their copies are dropped. */
+static void Aeron_SettleReadbacks(AeronCommandBuffer* command_buffer, SDL_GPUFence* fence) {
+	AeronReadbackFence* shared = NULL;
+	if (fence && command_buffer->readback_slot_count) {
+		shared = (AeronReadbackFence*)SDL_calloc(1, sizeof *shared);
+		if (shared) {
+			shared->fence = fence;
+			shared->refs  = command_buffer->readback_slot_count;
+		}
+	}
+	if (fence && !shared && g_aeron.gpu_device)
+		SDL_ReleaseGPUFence(g_aeron.gpu_device, fence);
+	for (uint32_t i = 0; i < command_buffer->readback_slot_count; ++i) {
+		AeronReadbackSlot* slot = command_buffer->readback_slots[i];
+		slot->fence             = shared;
+		slot->submitted_frame   = g_aeron.presented_frames;
+		slot->state             = shared ? AERON_READBACK_IN_FLIGHT : AERON_READBACK_IDLE;
+	}
+	command_buffer->readback_slot_count = 0;
+}
+
+/* Keeps the newest finished copy and frees the slots the GPU is done with.
+ * A copy is read once two more frames have been presented since its
+ * command buffer was submitted. With one frame in flight, acquiring the
+ * second frame's swapchain image waited for the first, which the GPU ran
+ * after the copy, so the fence wait returns at once. SDL_QueryGPUFence
+ * can't be used: on Metal, SDL 3.4 returns the opposite result. */
+static void Aeron_CollectReadback(AeronBufferReadback* readback) {
+	for (int i = 0; i < AERON_READBACK_SLOTS; ++i) {
+		AeronReadbackSlot* slot = &readback->slots[i];
+		if (slot->state != AERON_READBACK_IN_FLIGHT || g_aeron.presented_frames < slot->submitted_frame + 2 ||
+			!SDL_WaitForGPUFences(g_aeron.gpu_device, true, &slot->fence->fence, 1))
+			continue;
+		if (slot->serial > readback->newest_serial) {
+			const void* mapped = SDL_MapGPUTransferBuffer(g_aeron.gpu_device, slot->transfer, false);
+			if (mapped) {
+				memcpy(readback->data, mapped, readback->size);
+				SDL_UnmapGPUTransferBuffer(g_aeron.gpu_device, slot->transfer);
+				readback->newest_serial = slot->serial;
+			}
+		}
+		Aeron_ReleaseReadbackFence(slot->fence);
+		slot->fence = NULL;
+		slot->state = AERON_READBACK_IDLE;
+	}
+}
+
+AeronBufferReadback* Aeron_CreateBufferReadback(uint32_t size) {
+	if (!g_aeron.gpu_device || size == 0)
+		return NULL;
+	AeronBufferReadback* readback = (AeronBufferReadback*)SDL_calloc(1, sizeof *readback);
+	if (readback)
+		readback->data = SDL_calloc(1, size);
+	if (!readback || !readback->data) {
+		SDL_free(readback);
+		Aeron_SetRenderError("Could not allocate a buffer readback");
+		return NULL;
+	}
+	readback->size = size;
+	return readback;
+}
+
+void Aeron_DestroyBufferReadback(AeronBufferReadback* readback) {
+	if (!readback)
+		return;
+	for (int i = 0; i < AERON_READBACK_SLOTS; ++i) {
+		AeronReadbackSlot* slot = &readback->slots[i];
+		Aeron_ReleaseReadbackFence(slot->fence);
+		if (slot->transfer && g_aeron.gpu_device)
+			SDL_ReleaseGPUTransferBuffer(g_aeron.gpu_device, slot->transfer);
+	}
+	SDL_free(readback->data);
+	SDL_free(readback);
+}
+
+int Aeron_DownloadBufferCmd(AeronCommandBuffer* command_buffer, AeronBuffer* buffer,
+							AeronBufferReadback* readback) {
+	if (!command_buffer || !command_buffer->command_buffer || !buffer || !readback ||
+		buffer->size < readback->size || command_buffer->compute_pass_active ||
+		command_buffer->render_pass_active) {
+		Aeron_SetRenderError("Invalid buffer readback");
+		return 0;
+	}
+	Aeron_CollectReadback(readback);
+	AeronReadbackSlot* slot = NULL;
+	for (int i = 0; i < AERON_READBACK_SLOTS && !slot; ++i)
+		if (readback->slots[i].state == AERON_READBACK_IDLE)
+			slot = &readback->slots[i];
+	if (!slot || command_buffer->readback_slot_count == AERON_COMMAND_READBACK_MAX)
+		return 1;
+	if (!slot->transfer) {
+		SDL_GPUTransferBufferCreateInfo info;
+		SDL_zero(info);
+		info.usage     = SDL_GPU_TRANSFERBUFFERUSAGE_DOWNLOAD;
+		info.size      = readback->size;
+		slot->transfer = SDL_CreateGPUTransferBuffer(g_aeron.gpu_device, &info);
+		if (!slot->transfer) {
+			Aeron_SetRenderError("SDL_CreateGPUTransferBuffer failed for buffer readback: %s",
+								 SDL_GetError());
+			return 0;
+		}
+	}
+	SDL_GPUCopyPass* copy_pass = SDL_BeginGPUCopyPass(command_buffer->command_buffer);
+	if (!copy_pass) {
+		Aeron_CommandBufferFail(command_buffer, "SDL_BeginGPUCopyPass failed for buffer readback: %s",
+								SDL_GetError());
+		return 0;
+	}
+	const SDL_GPUBufferRegion           source      = { .buffer = buffer->buffer, .size = readback->size };
+	const SDL_GPUTransferBufferLocation destination = { .transfer_buffer = slot->transfer };
+	SDL_DownloadFromGPUBuffer(copy_pass, &source, &destination);
+	SDL_EndGPUCopyPass(copy_pass);
+	slot->state                                                           = AERON_READBACK_RECORDED;
+	slot->serial                                                          = ++readback->next_serial;
+	command_buffer->readback_slots[command_buffer->readback_slot_count++] = slot;
+	return 1;
+}
+
+int Aeron_PollBufferReadback(AeronBufferReadback* readback, void* dst) {
+	if (!readback || !dst || !g_aeron.gpu_device)
+		return 0;
+	Aeron_CollectReadback(readback);
+	if (readback->newest_serial == readback->delivered_serial)
+		return 0;
+	memcpy(dst, readback->data, readback->size);
+	readback->delivered_serial = readback->newest_serial;
+	return 1;
+}
+
 static int Aeron_SubmitCommandBufferInternal(AeronCommandBuffer* command_buffer, SDL_GPUFence** fence) {
 	int ok;
 
@@ -2461,6 +2630,7 @@ static int Aeron_SubmitCommandBufferInternal(AeronCommandBuffer* command_buffer,
 	}
 
 	ok = command_buffer->failed == 0;
+	SDL_GPUFence* readback_fence = NULL;
 	if (command_buffer->compute_pass_active) {
 		Aeron_LogError("aeron", "Cannot submit a command buffer with an active compute pass");
 		Aeron_EndComputePass(&command_buffer->active_compute_pass);
@@ -2480,6 +2650,9 @@ static int Aeron_SubmitCommandBufferInternal(AeronCommandBuffer* command_buffer,
 		if (fence) {
 			*fence    = SDL_SubmitGPUCommandBufferAndAcquireFence(command_buffer->command_buffer);
 			submitted = *fence != NULL;
+		} else if (command_buffer->readback_slot_count) {
+			readback_fence = SDL_SubmitGPUCommandBufferAndAcquireFence(command_buffer->command_buffer);
+			submitted      = readback_fence != NULL;
 		} else {
 			submitted = SDL_SubmitGPUCommandBuffer(command_buffer->command_buffer);
 		}
@@ -2496,6 +2669,7 @@ static int Aeron_SubmitCommandBufferInternal(AeronCommandBuffer* command_buffer,
 			g_aeron.render_data_stats.immediate_upload_submission_count++;
 		}
 	}
+	Aeron_SettleReadbacks(command_buffer, readback_fence);
 	Aeron_ReturnUploadChunks(command_buffer);
 	SDL_free(command_buffer);
 	return ok;
@@ -2564,6 +2738,7 @@ void Aeron_CancelCommandBuffer(AeronCommandBuffer* command_buffer) {
 	if (command_buffer->command_buffer) {
 		SDL_CancelGPUCommandBuffer(command_buffer->command_buffer);
 	}
+	Aeron_SettleReadbacks(command_buffer, NULL);
 	Aeron_ReturnUploadChunks(command_buffer);
 	SDL_free(command_buffer);
 }

@@ -811,6 +811,31 @@ int Aeron_ReadRenderTargetRawPixels(AeronRenderTarget* target, void* dst, size_t
 int Aeron_ReadTextureRawPixels(AeronTexture* texture, int mip_level, int layer, int z, void* dst,
 							   size_t capacity);
 
+/* A readback of a GPU buffer for values the CPU can use a few frames late.
+ * Aeron_DownloadBufferCmd records a copy of the buffer on a command buffer;
+ * Aeron_PollBufferReadback gives the newest copy two presented frames
+ * later, when the GPU has finished it, so it doesn't stall. A few copies
+ * can be in flight at once. */
+typedef struct AeronBufferReadback AeronBufferReadback;
+
+/* Creates a readback of `size` bytes. */
+AeronBufferReadback* Aeron_CreateBufferReadback(uint32_t size);
+
+/* Destroys the readback. No command buffer that recorded a download into it
+ * may still be waiting to be submitted. */
+void Aeron_DestroyBufferReadback(AeronBufferReadback* readback);
+
+/* Records a copy of the readback's size from the start of `buffer`, in a
+ * copy pass on `command_buffer`, which must have no pass open. When every
+ * copy is still in flight, it records nothing. Returns 0 on failure. */
+int Aeron_DownloadBufferCmd(AeronCommandBuffer* command_buffer, AeronBuffer* buffer,
+							AeronBufferReadback* readback);
+
+/* Copies the newest copy the GPU has finished into `dst` (the readback's
+ * size) and returns 1. Returns 0, leaving `dst` as it is, when no copy has
+ * finished since the last call. */
+int Aeron_PollBufferReadback(AeronBufferReadback* readback, void* dst);
+
 /* Creates an Aeron-owned depth target for GPU render passes. */
 AeronDepthTarget* Aeron_CreateDepthTarget(const AeronDepthTargetDesc* desc);
 

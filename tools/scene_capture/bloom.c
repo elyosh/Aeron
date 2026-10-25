@@ -85,7 +85,8 @@ int CaptureBloom_Record(CaptureBloom* b, const CaptureConfig* c, AeronRenderTarg
 								 .debug_label    = "Capture production bloom and tonemap" });
 	if (!pass)
 		return 0;
-	AeronScenePresentChain_Draw(b->present, pass, scene, b->sampler, bloom, c->bloom_intensity, c->width,
+	AeronScenePresentChain_Draw(b->present, pass, scene, b->sampler, bloom, c->bloom_intensity,
+								AeronScenePresent_ExposureFromEv100(c->exposure_ev100), NULL, c->width,
 								c->height, 1, NULL, 0);
 	Aeron_EndRenderPass(pass);
 	return 1;

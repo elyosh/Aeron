@@ -59,6 +59,7 @@ Presets that use game models need `asset_root` set to your game data.
 | `screen_test` | `{ eye, yaw_degrees, pitch_degrees }`: shows the first model from that point with test images on its screens. |
 | `emissive_scale` | Emission multiplier (default 1). |
 | `bloom` | `{ intensity, kernel }` (kernel 1 or 4). Omit to disable bloom. |
+| `exposure_ev100` | Camera exposure in EV100, for scene values in W/m² at 683 lm/W (default 9.153, which shows a scene value of 1 as 1). |
 | `tonemap` | `agx` (default) or `aces`. |
 | `agx_highlight` | `{ saturation, ev_start, ev_end, hue }`: the AgX saturation of very bright pixels, reached at `ev_end` EV of scene luminance (0 = white), from the punchy saturation at `ev_start`; `hue` (0 to 1, default 0) is how much of them keeps its hue over the same ramp. Omit it to keep the renderer's default. |
 | `output_dir` | Where images and reports go. |

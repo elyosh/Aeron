@@ -582,7 +582,7 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
             return _out;
         }
         _out.color = screen_hologram(g_materials[mat], i.uv, holo_frame);
-        _out.color.rgb *= fs_emission.x;
+        _out.color.rgb *= fs_emission.x * fs_emission.y;
         return _out;
     }
 #endif
@@ -631,7 +631,8 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
             ? float((g_anim_records[colour_book].x >> AERON_ANIM_FLIPBOOK_UNLIT_SHIFT) & 0xFFu) * (1.0f / 255.0f)
             : 0.0f;
         if (lit_frame == 0u && unlit > 0.0f) {
-            anim_emissive = c * unlit;
+            /* The unlit part is an image, shown at the image radiance. */
+            anim_emissive = c * (unlit * fs_emission.y);
             anim_emission = true;
             c *= 1.0f - unlit;
         }
@@ -685,11 +686,15 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
                 glow = anim_emissive;
         }
 #endif
-        float3 color = (surface ? albedo + glow : float3(0.0f, 0.0f, 0.0f)) + screen * open;
-        /* Alpha from the unscaled display, so the scale changes brightness
-         * only. */
-        float luma = dot(AeronLinearToSrgb(saturate(color)), float3(0.333f, 0.333f, 0.333f));
-        _out.color = float4(color * fs_emission.x, saturate(4.0f * luma));
+        /* The cover and the display are images, shown at the image
+         * radiance. The glow is emission, already a radiance. */
+        float3 image      = (surface ? albedo : float3(0.0f, 0.0f, 0.0f)) + screen * open;
+        float3 glow_shown = surface ? glow : float3(0.0f, 0.0f, 0.0f);
+        /* Alpha from the display in image values, so the scales change
+         * brightness only. */
+        float3 display = image + glow_shown / max(fs_emission.y, 1e-6f);
+        float  luma    = dot(AeronLinearToSrgb(saturate(display)), float3(0.333f, 0.333f, 0.333f));
+        _out.color = float4((image * fs_emission.y + glow_shown) * fs_emission.x, saturate(4.0f * luma));
         return _out;
     }
 #endif
@@ -1136,8 +1141,8 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
 
 #if AERON_PBR_SCREENS
     /* ===== Opaque screens =========================================
-     * Unlit screen radiance, shown where the cover is transparent (all of
-     * the surface without a cover). A playing colour frame covers the
+     * The unlit screen image, at the image radiance, shown where the cover
+     * is transparent (all of the surface without a cover). A playing colour frame covers the
      * display by its coverage over a cover's window, and replaces the
      * display of a screen without a cover. */
     if (g_materials[mat].screen_count != 0u && isolate == 0) {
@@ -1148,7 +1153,7 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
         if (anim_screen_frame)
             open = cover ? open * (1.0f - anim_screen_cover) : 0.0f;
 #endif
-        lit += screen * fs_emission.x * open;
+        lit += screen * (fs_emission.x * fs_emission.y) * open;
     }
 #endif
 

@@ -220,7 +220,7 @@ def capture_config(name, width, height, models, instances, sun_direction, key_pr
         "  defaults: scene3d_defaults.yaml",
         "  # Lit by the probes only, as the .blend's lights are in their bake.",
         "  model_light_intensity: 0",
-        "  # The hangar key light: up from the hangar floor, intensity 0.8.",
+        "  # The hangar key light: up from the hangar floor, 2 W/m^2.",
         "  sun_color: [2.0, 2.0, 2.0]",
         "  sun_direction: [%.6f, %.6f, %.6f]" % tuple(sun_direction),
         "  ambient: 0.02",

@@ -132,6 +132,12 @@ typedef struct AeronUploadCycleState {
 	uint8_t     cycled;
 } AeronUploadCycleState;
 
+/* The most non-blocking readbacks (AeronBufferReadback) one command buffer
+ * can record. */
+#define AERON_COMMAND_READBACK_MAX 8
+
+struct AeronReadbackSlot;
+
 /* Explicit command buffer wrapper. The command buffer owns its upload chunks
  * until it is submitted or canceled, then returns them to the pool in
  * g_aeron. Individual uploads suballocate the chunks instead of creating one
@@ -153,6 +159,10 @@ struct AeronCommandBuffer {
 	AeronUploadCycleState* upload_cycle_states;
 	uint32_t               upload_cycle_state_count;
 	uint32_t               upload_cycle_state_capacity;
+	/* The readback copies recorded on this command buffer, which wait for
+	 * its fence once it is submitted. */
+	struct AeronReadbackSlot* readback_slots[AERON_COMMAND_READBACK_MAX];
+	uint32_t                  readback_slot_count;
 	AeronComputePass       active_compute_pass;
 	int                    compute_pass_active;
 	int                    render_pass_active;
@@ -290,6 +300,9 @@ typedef struct AeronRuntime {
 	char                  shader_root[AERON_MAX_PATH];
 	char                  render_error[512];
 	AeronRenderDataStats  render_data_stats;
+	/* Frames submitted for presentation. The buffer readbacks count them to
+	 * know when the GPU has finished an older command buffer. */
+	uint64_t              presented_frames;
 } AeronRuntime;
 
 extern AeronRuntime g_aeron;

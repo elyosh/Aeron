@@ -176,6 +176,10 @@ int AeronSceneTemporal_Dispatch(AeronScene3D* s, AeronCommandBuffer* cmd,
 	if (!direct_output && !temporal_ensure_output_target(s)) {
 		return 0;
 	}
+	if (!s->exposure_tex) {
+		Aeron_LogError("aeron.scene", "FSR exposure texture unavailable");
+		return 0;
+	}
 	AeronTexture*                   output   = Aeron_RenderTargetGetTexture(s->temporal_output_rt);
 	const AeronTemporalDispatchDesc dispatch = {
 		.command_buffer        = cmd,
@@ -194,6 +198,7 @@ int AeronSceneTemporal_Dispatch(AeronScene3D* s, AeronCommandBuffer* cmd,
 		.frame_time_delta_ms =
 			s->temporal.frame_time_delta_ms > 0.0f ? s->temporal.frame_time_delta_ms : 16.6667f,
 		.pre_exposure                   = 1.0f,
+		.exposure                       = s->exposure_tex,
 		.camera_near                    = s->camera.near_z > 0.0f ? s->camera.near_z : 0.001f,
 		.camera_vertical_fov_radians    = s->camera.v_half_rad * 2.0f,
 		.view_space_to_meters           = s->view_space_to_meters,

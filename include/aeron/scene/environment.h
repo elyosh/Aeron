@@ -59,6 +59,12 @@ enum {
 	AERON_ENV_PATH_MAX        = 256, /* includes the terminator */
 };
 
+/* Largest values in physical units: a light's intensity is illuminance in
+ * W/m^2 (ten times the sun at the Earth's distance); the sky's intensity,
+ * the ambient fill and a sprite's strength scale radiance in W/m^2/sr. */
+#define AERON_ENV_MAX_LIGHT_INTENSITY 2000.0f
+#define AERON_ENV_MAX_RADIANCE 1000.0f
+
 typedef enum AeronEnvironmentSunVisual {
 	AERON_ENV_SUN_DISC,
 	AERON_ENV_SUN_SPRITE,
@@ -173,7 +179,7 @@ typedef struct AeronEnvironmentLight {
 	float                     radiance_scale;       /* disc */
 	float                     glow_radius_degrees;  /* disc */
 	float                     glow_strength;        /* disc */
-	float                     display_max_radiance; /* disc: largest drawn radiance; 0 = no cap */
+	float                     display_max_radiance; /* disc: drawn radiance cap after exposure; 0 = none */
 	AeronTexture*             sprite;               /* sprite; borrowed from the library */
 	float                     angular_size_degrees; /* sprite */
 	float                     sprite_strength;      /* sprite */
@@ -211,11 +217,12 @@ typedef struct AeronEnvironmentLibraryDesc {
 	const char*  path_prefix; /* may be NULL */
 	/* Row-major world-to-cube matrix B for a zero environment rotation. */
 	float base_world_to_cube[9];
-	/* Largest radiance a sun disc is drawn with (its lighting is not
-	 * capped); 0 selects AERON_ENV_DEFAULT_SUN_MAX_RADIANCE. A physical
-	 * disc is tens of thousands of times brighter than the sky, which
-	 * screen-space bloom cannot resolve cleanly; the halo comes from the
-	 * authored glow instead. */
+	/* Largest radiance a sun disc is drawn with, after the scene's exposure
+	 * (its lighting is not capped); 0 selects
+	 * AERON_ENV_DEFAULT_SUN_MAX_RADIANCE. A physical disc is tens of
+	 * thousands of times brighter than the sky, which screen-space bloom
+	 * cannot resolve cleanly; the halo comes from the authored glow
+	 * instead. */
 	float sun_max_radiance;
 } AeronEnvironmentLibraryDesc;
 

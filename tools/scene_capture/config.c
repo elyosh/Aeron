@@ -141,6 +141,10 @@ static int load_effects(const AeronConfigFile* yaml, CaptureConfig* config) {
 	if (AeronConfigFile_GetNode(yaml, "emissive_scale") && !number(yaml, "emissive_scale", 0, 64, &emission))
 		return 0;
 	config->emissive_scale = (float)emission;
+	double ev100           = AERON_SCENE_UNIT_EXPOSURE_EV100;
+	if (AeronConfigFile_GetNode(yaml, "exposure_ev100") && !number(yaml, "exposure_ev100", -6, 24, &ev100))
+		return 0;
+	config->exposure_ev100 = (float)ev100;
 
 	const AeronConfigNode* fixture_node = AeronConfigFile_GetNode(yaml, "fixture");
 	const char*            fixture = fixture_node ? AeronConfigNode_String(fixture_node, NULL) : "shapes";
@@ -570,8 +574,8 @@ static int load_game_scene(AeronVfs* vfs, const AeronConfigFile* yaml, CaptureCo
 		game->ssao.ssao_quality = 0;
 	game->shadows.enabled = game->shadows.enabled && shadows;
 
-	/* Lighting as resources/remaster/config.yaml's `lighting` defaults: a
-	 * white classic sun of intensity 1 at sun_illuminance_scale 2.513. */
+	/* A white sun of 2.513 W/m^2 and an ambient of 0.08 W/m^2/sr, lit for the
+	 * default exposure (AERON_SCENE_UNIT_EXPOSURE_EV100). */
 	const float default_direction[3] = { -.5f, -.6f, .62f };
 	memcpy(game->sun_direction, default_direction, sizeof default_direction);
 	game->sun_color[0] = game->sun_color[1] = game->sun_color[2] = 2.513f;
@@ -694,6 +698,7 @@ int CaptureConfig_Load(const char* path, CaptureConfig* config) {
 									  "screen_test",
 									  "bloom",
 									  "emissive_scale",
+									  "exposure_ev100",
 									  "benchmark",
 									  "game_scene" };
 	const AeronConfigNode* root   = AeronConfigFile_Root(yaml);

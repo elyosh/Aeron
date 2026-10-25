@@ -347,6 +347,8 @@ AeronScene3D* AeronScene_Create(const AeronScene3DDesc* desc) {
 		s->temporal.sharpness = 1.0f;
 	s->temporal.reset_history = 1;
 	s->temporal_active_mode   = s->temporal.mode;
+	s->exposure               = 1.0f;
+	s->image_radiance         = 1.0f;
 	if (!scene_calculate_render_dims(s, s->temporal_active_mode, &s->render_w, &s->render_h)) {
 		free(s);
 		return NULL;
@@ -388,6 +390,7 @@ void AeronScene_Destroy(AeronScene3D* s) {
 	AeronSceneStorage_Release(s);
 	AeronScenePbr_Release(s);
 	AeronSceneTemporal_Release(s);
+	AeronSceneExposure_Release(s);
 	AeronScenePost_Release(s);
 	if (s->sky_sun_pipe) {
 		Aeron_DestroyGraphicsPipeline(s->sky_sun_pipe);
@@ -1104,9 +1107,11 @@ void AeronScene_AddSkySun(AeronScene3D* s, const AeronEnvironmentLight* light) {
 		radius = 0.75f * pixel;
 	}
 	/* Display cap: the disc keeps its size and is drawn no brighter than
-	 * the cap; only its appearance changes, not the light it casts. */
-	if (light->display_max_radiance > 0.0f && sky_sun_max3(center) > light->display_max_radiance) {
-		const float ratio = light->display_max_radiance / sky_sun_max3(center);
+	 * the cap after the exposure; only its appearance changes, not the
+	 * light it casts. */
+	const float display_max = light->display_max_radiance / s->exposure;
+	if (display_max > 0.0f && sky_sun_max3(center) > display_max) {
+		const float ratio = display_max / sky_sun_max3(center);
 		for (int i = 0; i < 3; ++i)
 			center[i] *= ratio;
 	}
@@ -1389,6 +1394,16 @@ void AeronScene_SetEffectAtlas(AeronScene3D* s, AeronEffectAtlas* atlas) {
 void AeronScene_SetAnimationTime(AeronScene3D* s, double seconds) {
 	if (s)
 		s->animation_time = (float)seconds;
+}
+
+void AeronScene_SetExposure(AeronScene3D* s, float exposure) {
+	if (s && isfinite(exposure) && exposure > 0.0f)
+		s->exposure = exposure;
+}
+
+void AeronScene_SetImageRadiance(AeronScene3D* s, float radiance) {
+	if (s && isfinite(radiance) && radiance >= 0.0f)
+		s->image_radiance = radiance;
 }
 
 void AeronScene_SetPbrEnvironment(AeronScene3D* s, const AeronScenePbrEnvironment* environment) {
@@ -2349,6 +2364,12 @@ static int scene_render_failure(AeronScene3D* s, AeronCommandBuffer* cmd, const 
 
 static int scene_finalize_output(AeronScene3D* s, AeronCommandBuffer* cmd, int mb_active, int mb_regen,
 								 int ssao_active) {
+	Aeron_GpuDebugPush(cmd, "Exposure");
+	const int exposure_ok = AeronSceneExposure_Update(s, cmd);
+	Aeron_GpuDebugPop(cmd);
+	if (!exposure_ok) {
+		return scene_render_failure(s, cmd, "Scene exposure update failed");
+	}
 	int temporal_dispatch_ok = 0;
 	if (s->temporal_active) {
 		char label[64];

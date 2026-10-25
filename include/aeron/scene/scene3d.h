@@ -356,6 +356,10 @@ void AeronScene_LightBounds(const AeronSceneLight* light, float center[3], float
  * with them. Returns zero for an invalid index, a light that emits
  * nothing, a light on a component the table hides, or a light that doesn't
  * shine with the variant. */
+/* The scene's luminous efficacy: scene values are W/m^2 at 683 lm/W, so
+ * 1 / AERON_SCENE_LUMENS_PER_WATT is the `intensity_scale` that turns candela
+ * into the scene's units. */
+#define AERON_SCENE_LUMENS_PER_WATT 683.0f
 int AeronScene_MeshLight(const AeronSceneMesh* mesh, uint32_t index, const float transform[16],
 						 float units_per_meter, const AeronSceneMeshTable* table, uint32_t variant,
 						 float intensity_scale, AeronSceneLight* out);
@@ -402,9 +406,9 @@ void AeronScene_SetSkyEnvironment(AeronScene3D* scene, const struct AeronPrepare
  *     radiance_scale, plus the optional glow (which carries
  *     glow_strength times the disc's irradiance out to its radius). A disc
  *     below a pixel is widened with its flux kept; then the light's
- *     display_max_radiance caps the drawn radiance (keeping the size), and
- *     anything still beyond a half-float target is widened with its flux
- *     kept. At most four discs per frame.
+ *     display_max_radiance caps the drawn radiance after the scene's
+ *     exposure (keeping the size), and anything still beyond a half-float
+ *     target is widened with its flux kept. At most four discs per frame.
  *   - sprite: the light's sprite, angular_size_degrees wide, times
  *     sprite_strength, as an additive SKY billboard. A sun follows its own
  *     light only, not the environment's intensity.
@@ -490,6 +494,91 @@ void AeronScene_SetScreenSources(AeronScene3D* scene, AeronTexture* graphics, Ae
  * static materials. Both persist across frames; the atlas is borrowed. */
 void AeronScene_SetEffectAtlas(AeronScene3D* scene, AeronEffectAtlas* atlas);
 void AeronScene_SetAnimationTime(AeronScene3D* scene, double seconds);
+
+/* The camera exposure the scene's image is shown at
+ * (AeronScenePresent_ExposureFromEv100). The temporal upscaler uses it to
+ * judge how bright pixels look. Persists across frames; 1 by default. While
+ * the scene meters its exposure (AeronScene_SetAutoExposure), the metered
+ * value replaces it. */
+void AeronScene_SetExposure(AeronScene3D* scene, float exposure);
+
+/* What the image meter measures in a pixel. */
+typedef enum AeronSceneExposureChannel {
+	AERON_SCENE_EXPOSURE_LUMINANCE = 0, /* Rec.709 luminance */
+	AERON_SCENE_EXPOSURE_MAX       = 1, /* the largest of r, g and b: what clips first */
+} AeronSceneExposureChannel;
+
+/* The image meter's settings. EVs are EV100. */
+typedef struct AeronSceneAutoExposure {
+	float ev100;        /* the anchor of partial metering */
+	float compensation; /* EV added to brightness */
+	float metering;     /* 0 = ev100, 1 = the metered EV */
+	float min_ev100;    /* limits of the target */
+	float max_ev100;
+	float brighten_speed; /* adaptation rate per second when the scene gets darker */
+	float darken_speed;   /* adaptation rate per second when the scene gets brighter */
+	float low_percent;    /* the darkest share of the weighted pixels left out, 0 to 100 */
+	float high_percent;   /* the brightest share starts here, above low_percent */
+	float sky_weight;     /* weight of pixels where no geometry wrote depth */
+	float near_weight;    /* weight of geometry nearer than near_distance, such as a cockpit */
+	float near_distance;  /* in metres (AeronScene3DDesc.view_space_to_meters); 0 = none */
+	float edge_weight;    /* weight at the screen's corners; 1 at the centre */
+	AeronSceneExposureChannel channel;
+	int                       freeze; /* keep the current EV */
+} AeronSceneAutoExposure;
+
+/* Meters the scene's exposure from its image, on the GPU, and adapts it
+ * over real time. Each Render measures the scene's colour after the 3D
+ * draws and before FSR: a histogram of the pixels' EV100 (reflected-light
+ * meter, K = 12.5), weighted by `edge_weight`, `sky_weight` and
+ * `near_weight`, averaged
+ * between the two percentiles. The target is
+ * lerp(ev100, metered, metering) - compensation, within the limits, and the
+ * current EV closes the gap to it as 1 - e^(-speed * t). The frame's image
+ * uses the exposure metered from that frame (AeronScene_ExposureTexture).
+ * NULL goes back to the fixed exposure of AeronScene_SetExposure. Persists
+ * across frames. The first metered frame, and the first after the settings
+ * change, take their target at once. */
+void AeronScene_SetAutoExposure(AeronScene3D* scene, const AeronSceneAutoExposure* settings);
+
+/* The next metered frame takes its target at once: a camera cut, a load. */
+void AeronScene_SnapExposure(AeronScene3D* scene);
+
+/* The 1x1 R32G32_FLOAT texture with the scene's exposure in R and its
+ * EV100 in G, written by each Render: by the meter, or from
+ * AeronScene_SetExposure. FSR reads it, and so can
+ * AeronScenePresentChain_Draw. NULL before the first Render. */
+AeronTexture* AeronScene_ExposureTexture(AeronScene3D* scene);
+
+/* The meter's histogram: half-EV bins from EV100 -8. Darker pixels are not
+ * counted; brighter ones go in the last bin. */
+#define AERON_SCENE_EXPOSURE_BINS 64
+#define AERON_SCENE_EXPOSURE_FIRST_EV100 (-8.0f)
+#define AERON_SCENE_EXPOSURE_BIN_EV 0.5f
+
+typedef struct AeronSceneExposureReadout {
+	float exposure; /* the exposure k */
+	float ev100;    /* the current EV100 */
+	float target_ev100;
+	float metered_ev100; /* the last metered value */
+	float low_ev100;     /* the range the average was taken over */
+	float high_ev100;
+	float geometry_share;                       /* geometry's share of the histogram's weight */
+	int   metered;                              /* 0 when no pixel was in the histogram's range */
+	float histogram[AERON_SCENE_EXPOSURE_BINS]; /* weights; they add up to 1 */
+} AeronSceneExposureReadout;
+
+/* The newest metering the GPU has finished, a few frames late. Returns 0
+ * before the first one and while the exposure is fixed. */
+int AeronScene_GetExposureReadout(const AeronScene3D* scene, AeronSceneExposureReadout* out);
+
+/* The radiance in W/m^2/sr of a texel of 1 in an image the scene shows
+ * unlit: cockpit screens and holograms, the unlit part of base colour
+ * flipbook frames, and the billboards outside the SKY stage that emit light
+ * (additive and premultiplied). These images have no unit of their own, so
+ * the caller decides how bright they are. Persists across frames; 1 by
+ * default. */
+void AeronScene_SetImageRadiance(AeronScene3D* scene, float radiance);
 
 /* Image-based lighting environment for the PBR shader, for the current
  * frame. `diffuse` is a Lambert irradiance / pi cube; its sample along the

@@ -65,9 +65,10 @@ void AeronScene_AddBillboard(AeronScene3D* s, const AeronSceneBillboardDesc* d) 
 		}
 	}
 	/* Additive and premultiplied sprites emit light (glows, explosions,
-	 * flares); straight-alpha sprites and the sky stay as given. */
+	 * flares): they are images shown at the scene's image radiance.
+	 * Straight-alpha sprites and the sky stay as given. */
 	if (d->stage != AERON_SCENE_BILLBOARD_STAGE_SKY && d->blend != AERON_SCENE_BILLBOARD_BLEND_ALPHA) {
-		const float scale = AeronScene_EmissiveScale();
+		const float scale = AeronScene_EmissiveScale() * s->image_radiance;
 		for (int c = 0; c < 3; c++) {
 			for (int v = 0; v < 4; v++) {
 				e->colors[v][c] *= scale;

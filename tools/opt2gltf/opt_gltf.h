@@ -361,6 +361,11 @@ typedef struct OptGltfMaterialOptions {
 	const OptGltfScreen*               screens;
 	const struct OptGltfAlphaOverride* alpha_overrides;
 	size_t                             alpha_override_count;
+	/* The radiance in W/m^2/sr of an emission strength of 1. Every emission
+	 * strength the conversion writes is multiplied by it: the materials',
+	 * the skin layers' and the emissive flipbooks'. 0 means 1, for a caller
+	 * that converts the classic values itself. */
+	float emission_radiance;
 } OptGltfMaterialOptions;
 
 /* The model's AERON_flight_model data. */

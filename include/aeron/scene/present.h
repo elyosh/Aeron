@@ -78,6 +78,14 @@ void  AeronScenePresent_SetAcesExposure(float v);
  * remain available for interactive debug tools. */
 void AeronScenePresent_ApplySettings(const AeronSceneTonemapSettings* settings);
 
+/* Camera exposure. Scene values are in W/m^2 at 683 lm/W, so a value of 1 is
+ * 683 cd/m^2. A camera at ISO 100 and exposure value `ev100` saturates at
+ * 1.2 * 2^ev100 cd/m^2, which the exposure maps to 1:
+ * 683 / (1.2 * 2^ev100). At AERON_SCENE_UNIT_EXPOSURE_EV100 the exposure
+ * is 1. */
+#define AERON_SCENE_UNIT_EXPOSURE_EV100 9.152707f
+float AeronScenePresent_ExposureFromEv100(float ev100);
+
 int  AeronScenePresent_BloomKernel(void);
 void AeronScenePresent_SetBloomKernel(int mode);
 
@@ -93,7 +101,7 @@ void AeronScenePresent_SetBloomKernel(int mode);
  *   [12..15] misc          = (bloom_kernel, eotf_exp, aces_exp,
  *                             src_coverage)
  *   [16..19] agx_params     = (look, punchy_power, punchy_saturation,
- *                              reserved)
+ *                              exposure texture bound)
  *   [20..23] agx_highlight  = (highlight_saturation, ev_start, ev_end,
  *                              highlight_hue) */
 typedef struct AeronScenePresentChain AeronScenePresentChain;
@@ -104,6 +112,10 @@ void                    AeronScenePresentChain_Destroy(AeronScenePresentChain* c
 /* Record the fullscreen tonemap draw into `pass` (opened on a target of
  * the chain's format). `bloom_tex` NULL => zero bloom contribution
  * (scene is bound in its place to satisfy the sampler slot).
+ * `exposure` multiplies the scene and its bloom before the tonemap; see
+ * AeronScenePresent_ExposureFromEv100. `exposure_tex`, when not NULL, is
+ * a 1x1 texture whose R also multiplies them: the exposure a scene meters
+ * on the GPU (AeronScene_ExposureTexture).
  * The four-tap bloom filter uses the 2160p reference footprint, scaled by
  * image height; (rt_w, rt_h) are the source dimensions.
  * `src_coverage` != 0 weights the PMA coverage by the scene texel's
@@ -111,8 +123,8 @@ void                    AeronScenePresentChain_Destroy(AeronScenePresentChain* c
  * for a full-frame present. */
 void AeronScenePresentChain_Draw(AeronScenePresentChain* chain, AeronRenderPass* pass,
 								 AeronTexture* scene_tex, AeronSampler* sampler, AeronTexture* bloom_tex,
-								 float bloom_intensity, int rt_w, int rt_h, float bar_y_uv,
-								 const float tint[4], int src_coverage);
+								 float bloom_intensity, float exposure, AeronTexture* exposure_tex, int rt_w,
+								 int rt_h, float bar_y_uv, const float tint[4], int src_coverage);
 
 #ifdef __cplusplus
 }

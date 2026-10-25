@@ -318,7 +318,7 @@ typedef struct AeronSceneLightingUniformGPU {
 	float                       environment_params[4];   /* diffuse, specular strength, specular mips, 0 */
 	float                       environment_basis[3][4]; /* world-to-local rows */
 	float                       debug_material[4];       /* enabled, metallic, roughness, 0 */
-	float                       emission[4];             /* emissive scale, 0, 0, 0 */
+	float                       emission[4];             /* emissive scale, image radiance, 0, 0 */
 	float                       render_size[4];          /* width, height, 1 / width, 1 / height */
 	/* The drawn object's probe set, read by the probe variants only. */
 	float probe_params[4];      /* probe count, cube mip count, grid points along x, y */
@@ -596,6 +596,27 @@ struct AeronScene3D {
 	AeronShader*           temporal_copy_ps;
 	AeronGraphicsPipeline* temporal_copy_pipeline;
 	AeronSampler*          temporal_copy_sampler;
+	/* The camera exposure (AeronScene_SetExposure, or the meter's newest
+	 * readout), and exposure.c's state: the 1x1 texture that holds it on
+	 * the GPU, the meter's settings, pipelines, buffers and readback. */
+	float                  exposure;
+	AeronTexture*          exposure_tex;
+	float                  exposure_uploaded;
+	int                    exposure_metered;
+	int                    exposure_snap;
+	int                    exposure_meter_failed;
+	uint64_t               exposure_last_us;
+	AeronSceneAutoExposure exposure_settings;
+	AeronComputePipeline*  exposure_histogram_pipeline;
+	AeronComputePipeline*  exposure_adapt_pipeline;
+	AeronSampler*          exposure_sampler;
+	AeronBuffer*           exposure_bins;
+	AeronBuffer*           exposure_state;
+	AeronBufferReadback*   exposure_readback;
+	AeronSceneExposureReadout exposure_readout;
+	int                    exposure_readout_valid;
+	/* AeronScene_SetImageRadiance. */
+	float                  image_radiance;
 	float                  mb_prev_view_proj[16];
 	float                  mb_prev_ori[4]; /* previous frame's camera orientation (rotation gate) */
 	int                    mb_velocity_regen;
@@ -943,6 +964,10 @@ int  AeronScenePost_MbVisualizeTemporal(struct AeronScene3D* s, AeronCommandBuff
 										int direct_fsr_motion);
 int  AeronScenePost_MbResolve(struct AeronScene3D* s, AeronCommandBuffer* cmd, AeronRenderTarget* color,
 							  AeronTexture* velocity, int direct_fsr_motion);
+/* Writes the scene's exposure texture: runs the image meter, or uploads the
+ * fixed exposure (exposure.c). Before FSR, with no pass open. */
+int  AeronSceneExposure_Update(struct AeronScene3D* s, AeronCommandBuffer* cmd);
+void AeronSceneExposure_Release(struct AeronScene3D* s);
 int  AeronSceneTemporal_Ensure(struct AeronScene3D* s);
 void AeronSceneTemporal_Release(struct AeronScene3D* s);
 int  AeronSceneTemporal_Dispatch(struct AeronScene3D* s, AeronCommandBuffer* cmd,

@@ -255,6 +255,8 @@ set(AERON_SHADER_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_pbr_prepass_stamp.frag.hlsl
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_pbr_prepass_stamp_screen.frag.hlsl
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_clustered_lights.comp.hlsl
+    ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_exposure_histogram.comp.hlsl
+    ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_exposure_adapt.comp.hlsl
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_probe_occlusion_grid.comp.hlsl
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_probe_occupancy_compose.comp.hlsl
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_probe_occupancy_downsample.comp.hlsl
@@ -924,6 +926,7 @@ add_library(aeron_scene STATIC
     src/scene/bloom.c
     src/scene/util.c
     src/scene/present.c
+    src/scene/exposure.c
     src/scene/post.c
     src/scene/temporal.c
     src/scene/draw_list2d.c

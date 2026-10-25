@@ -66,7 +66,8 @@ cbuffer TonemapPS : register(b0, space3)
      *   x = look (0 = base, 1 = punchy)
      *   y = punchy power
      *   z = punchy saturation
-     *   w = reserved. */
+     *   w = 1 when g_exposure's R holds an exposure, which then
+     *       multiplies tonemap_params.x. */
     float4 agx_params;
     /* AgX highlight saturation (AeronAgxToneMap):
      *   x = saturation of the brightest pixels
@@ -79,8 +80,10 @@ cbuffer TonemapPS : register(b0, space3)
 
 Texture2D<float4> g_flight  : register(t0, space2);
 Texture2D<float4> g_bloom   : register(t1, space2);
+Texture2D<float4> g_exposure : register(t2, space2);
 SamplerState      s_flight  : register(s0, space2);
 SamplerState      s_bloom   : register(s1, space2);
+SamplerState      s_exposure : register(s2, space2);
 
 struct VSOut
 {
@@ -239,7 +242,10 @@ float4 main(VSOut input) : SV_Target
     /* Blend in the scattered light, apply exposure, then peak-parameterised
      * tonemap. tonemap_params.z carries hdr_peak_scale; .y picks
      * operator. */
-    float3 rgb = lerp(scene, bloom, bloom_weight) * tonemap_params.x;
+    float exposure = tonemap_params.x;
+    if (agx_params.w > 0.5f)
+        exposure *= g_exposure.Load(int3(0, 0, 0)).r;
+    float3 rgb = lerp(scene, bloom, bloom_weight) * exposure;
     float  peak = tonemap_params.z;
     /* Match the host enum: 0 = ACES, 1 = AGX parametric. Both run as
      * peak-parameterised HDR implementations here. ACES gets a

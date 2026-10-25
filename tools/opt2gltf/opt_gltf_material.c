@@ -395,7 +395,8 @@ bool opt_gltf_add_energy(cJSON* object, unsigned bits) {
 
 /* Adds the material's skin layers to its AERON_flight_model object `entry`
  * as `skins`, with the indices of their textures. */
-static bool skins_json(const OptGltfDocument* document, cJSON* entry, const OptGltfMaterial* given) {
+static bool skins_json(const OptGltfDocument* document, cJSON* entry, const OptGltfMaterial* given,
+					   const cgltf_material* mat) {
 	cJSON* skins = OptJson_AddObject(entry, "skins");
 	bool   ok    = skins != NULL;
 	for (size_t l = 0; ok && l < given->skin_count; ++l) {
@@ -411,10 +412,36 @@ static bool skins_json(const OptGltfDocument* document, cJSON* entry, const OptG
 			cJSON*    info    = texture >= 0 ? OptJson_AddObject(object, keys[k]) : NULL;
 			ok                = info && OptJson_Add(info, "index", cJSON_CreateNumber(texture));
 		}
-		if (ok && layer->emissive_strength > 0.0f)
-			ok = OptJson_Add(object, "emissiveStrength", cJSON_CreateNumber(layer->emissive_strength));
+		/* A layer without a strength takes the material's, which is 1
+		 * when the material has no emission. */
+		float strength = layer->emissive_strength;
+		if (!(strength > 0.0f) && layer->emissive.view.rgba && !mat->has_emissive_strength)
+			strength = 1.0f;
+		if (ok && strength > 0.0f)
+			ok = OptJson_Add(object, "emissiveStrength",
+							 cJSON_CreateNumber(strength * document->gb.emission_radiance));
 	}
 	return ok;
+}
+
+/* Multiplies the strength of the emissive flipbooks in `entry` by the
+ * emission radiance. */
+static bool flipbooks_radiance(cJSON* entry, float radiance) {
+	if (radiance == 1.0f)
+		return true;
+	cJSON* flipbook;
+	cJSON_ArrayForEach(flipbook, cJSON_GetObjectItemCaseSensitive(entry, "flipbooks")) {
+		const cJSON* layer = cJSON_GetObjectItemCaseSensitive(flipbook, "layer");
+		if (!cJSON_IsString(layer) || strcmp(layer->valuestring, "emissive") != 0 ||
+			!cJSON_GetArraySize(cJSON_GetObjectItemCaseSensitive(flipbook, "frames")))
+			continue;
+		const cJSON* strength = cJSON_GetObjectItemCaseSensitive(flipbook, "emissiveStrength");
+		const double value    = cJSON_IsNumber(strength) ? strength->valuedouble : 1.0;
+		cJSON_DeleteItemFromObjectCaseSensitive(flipbook, "emissiveStrength");
+		if (!OptJson_Add(flipbook, "emissiveStrength", cJSON_CreateNumber(value * radiance)))
+			return false;
+	}
+	return true;
 }
 
 /* Builds the AERON_flight_model object of each material, with its animation
@@ -435,7 +462,7 @@ bool opt_gltf_material_extensions(OptGltfDocument* document, unsigned* common_en
 		const char* anim = gb->material_anim ? gb->material_anim[m] : NULL;
 		if (anim) {
 			entries[m] = cJSON_Parse(anim);
-			ok         = entries[m] != NULL;
+			ok         = entries[m] != NULL && flipbooks_radiance(entries[m], gb->emission_radiance);
 		}
 		tally[energy_bits(entries[m])]++;
 	}
@@ -458,7 +485,7 @@ bool opt_gltf_material_extensions(OptGltfDocument* document, unsigned* common_en
 			ok = OptJson_Add(entry, "screen", cJSON_Parse(screen));
 		const OptGltfMaterial* given = gb->material_given ? gb->material_given[m] : NULL;
 		if (ok && given && given->skin_count)
-			ok = skins_json(document, entry, given);
+			ok = skins_json(document, entry, given, &gb->materials[m]);
 		if (ok && entry->child) {
 			char*            printed   = cJSON_PrintUnformatted(entry);
 			cgltf_extension* extension = (cgltf_extension*)calloc(1, sizeof *extension);
@@ -968,6 +995,24 @@ static void variant_material(Build* b, size_t m) {
 	given_material(b, mat, &own);
 }
 
+/* Multiplies the emission strength of every material that emits by the
+ * emission radiance. */
+static void emission_radiance(Build* b) {
+	const float radiance     = b->options->material.emission_radiance;
+	b->gb->emission_radiance = radiance > 0.0f ? radiance : 1.0f;
+	if (b->gb->emission_radiance == 1.0f)
+		return;
+	for (size_t m = 0; m < b->gb->materials_count; ++m) {
+		cgltf_material* mat = &b->gb->materials[m];
+		if (!(mat->emissive_factor[0] > 0.0f || mat->emissive_factor[1] > 0.0f ||
+			  mat->emissive_factor[2] > 0.0f))
+			continue;
+		const float strength = mat->has_emissive_strength ? mat->emissive_strength.emissive_strength : 1.0f;
+		mat->has_emissive_strength               = 1;
+		mat->emissive_strength.emissive_strength = strength * b->gb->emission_radiance;
+	}
+}
+
 bool opt_gltf_build_materials(Build* b) {
 	for (int32_t i = 0; i < b->opt->texture_count; ++i)
 		if (!texture_material(b, i))
@@ -976,6 +1021,7 @@ bool opt_gltf_build_materials(Build* b) {
 	untextured_material(b);
 	for (size_t m = 0; b->variants && m < b->variants->material_count; ++m)
 		variant_material(b, m);
+	emission_radiance(b);
 	b->gb->images_count   = b->image_slot;
 	b->gb->textures_count = b->image_slot;
 	return true;

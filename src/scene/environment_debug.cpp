@@ -79,7 +79,8 @@ bool light_editor(EnvSlot* slot, uint32_t index) {
 					(double)l->direction_world[1], (double)l->direction_world[2]);
 		changed |= ImGui::ColorEdit3("Colour (linear)", d->color_linear,
 									 ImGuiColorEditFlags_Float | ImGuiColorEditFlags_HDR);
-		changed |= ImGui::SliderFloat("Intensity", &d->intensity, 0.0f, 16.0f, "%.3f");
+		changed |= ImGui::SliderFloat("Intensity", &d->intensity, 0.0f, AERON_ENV_MAX_LIGHT_INTENSITY,
+									  "%.3f W/m^2", ImGuiSliderFlags_Logarithmic);
 		changed |= ImGui::SliderFloat("Angular radius", &d->angular_radius_degrees, 0.01f, 5.0f, "%.3f deg");
 		if (ImGui::Checkbox("Primary", &d->primary)) {
 			changed = true;
@@ -103,7 +104,8 @@ bool light_editor(EnvSlot* slot, uint32_t index) {
 		} else if (d->visual == AERON_ENV_SUN_SPRITE) {
 			ImGui::Text("Visual: sprite %s%s", d->sprite_path, l->sprite ? "" : " (not loaded)");
 			changed |= ImGui::SliderFloat("Angular size", &d->angular_size_degrees, 0.01f, 60.0f, "%.2f deg");
-			changed |= ImGui::SliderFloat("Sprite strength", &d->sprite_strength, 0.0f, 16.0f, "%.3f");
+			changed |= ImGui::SliderFloat("Sprite strength", &d->sprite_strength, 0.0f,
+										  AERON_ENV_MAX_RADIANCE, "%.3f", ImGuiSliderFlags_Logarithmic);
 		} else {
 			ImGui::TextUnformatted("Visual: none");
 		}
@@ -118,7 +120,8 @@ void slot_editor(AeronEnvironmentLibrary* library, EnvSlot* slot) {
 	bool                        changed = false;
 	/* One scale for everything derived from the sky image; the strengths
 	 * are relative adjustments, 1 = physically consistent. */
-	changed |= ImGui::SliderFloat("Intensity", &s->intensity, 0.0f, 16.0f, "%.3f");
+	changed |= ImGui::SliderFloat("Intensity", &s->intensity, 0.0f, AERON_ENV_MAX_RADIANCE, "%.3f",
+								  ImGuiSliderFlags_Logarithmic);
 	if (s->diffuse_path[0])
 		changed |=
 			ImGui::SliderFloat("Diffuse strength (relative)", &s->diffuse_strength, 0.0f, 4.0f, "%.3f");
@@ -128,8 +131,10 @@ void slot_editor(AeronEnvironmentLibrary* library, EnvSlot* slot) {
 	if (ImGui::ColorEdit3("Ambient fill (linear)", s->ambient_fill,
 						  ImGuiColorEditFlags_Float | ImGuiColorEditFlags_HDR)) {
 		for (int c = 0; c < 3; ++c)
-			s->ambient_fill[c] =
-				s->ambient_fill[c] < 0.0f ? 0.0f : (s->ambient_fill[c] > 4.0f ? 4.0f : s->ambient_fill[c]);
+			s->ambient_fill[c] = s->ambient_fill[c] < 0.0f
+									 ? 0.0f
+									 : (s->ambient_fill[c] > AERON_ENV_MAX_RADIANCE ? AERON_ENV_MAX_RADIANCE
+																					: s->ambient_fill[c]);
 		changed = true;
 	}
 	changed |= ImGui::SliderFloat("Yaw", &s->rotation_degrees[0], 0.0f, 360.0f, "%.1f deg");

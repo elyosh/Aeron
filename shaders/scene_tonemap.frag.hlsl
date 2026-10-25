@@ -2,17 +2,14 @@
  * Flight HDR → swapchain tonemap + present.
  *
  * Fullscreen-quad fragment shader for the final present-time draw.
- * Samples the HDR flight RT (which already carries scene + cockpit +
- * HUD composited in linear HDR) plus the bloom mip0, applies exposure
- * + tonemap, multiplies by a fade tint, and emits PMA-encoded output
- * so the hardware PMA-over blend cross-fades the flight overlay onto
- * whatever is already in the swapchain (classic FB, cutscene PMA blit
- * happens after this draw).
+ * Samples the HDR scene target (the 3D scene, cockpit included) plus the
+ * bloom mip0, applies the exposure and the tonemap, multiplies by a fade
+ * tint, and emits PMA-encoded output so the hardware PMA-over blend
+ * cross-fades the flight overlay onto whatever is already in the
+ * swapchain (classic FB, cutscene PMA blit happens after this draw).
  *
- * Cockpit / HUD / PIP are drawn into the same HDR RT BEFORE bloom, so
- * bloom sees the whole diegetic frame — bright HUD elements bloom like
- * the rest of the scene. Cutscene UI stays LDR and composites on top
- * of the tonemapped flight via a separate PMA blit.
+ * The 2D HUD and the cutscene UI are drawn after this pass, so neither
+ * bloom nor the exposure changes them.
  *
  * Two operators selectable at runtime via tonemap_params.y (Cmd+T
  * cycles; debug UI has radio buttons):
@@ -73,7 +70,8 @@ cbuffer TonemapPS : register(b0, space3)
      *   x = look (0 = base, 1 = punchy)
      *   y = punchy power
      *   z = punchy saturation
-     *   w = reserved. */
+     *   w = 1 when g_exposure's R holds an exposure, which then
+     *       multiplies tonemap_params.x. */
     float4 agx_params;
     /* AgX highlight saturation (AeronAgxToneMap):
      *   x = saturation of the brightest pixels
@@ -86,8 +84,10 @@ cbuffer TonemapPS : register(b0, space3)
 
 Texture2D<float4> g_flight  : register(t0, space2);
 Texture2D<float4> g_bloom   : register(t1, space2);
+Texture2D<float4> g_exposure : register(t2, space2);
 SamplerState      s_flight  : register(s0, space2);
 SamplerState      s_bloom   : register(s1, space2);
+SamplerState      s_exposure : register(s2, space2);
 
 struct VSOut
 {
@@ -175,7 +175,10 @@ float4 main(VSOut input) : SV_Target
      * exactly one path per frame — no per-pixel divergence, no
      * measurable perf delta vs hard-coding one operator. Both branches
      * return linear display-referred values. */
-    float3 rgb = lerp(scene, bloom, bloom_weight) * tonemap_params.x;
+    float exposure = tonemap_params.x;
+    if (agx_params.w > 0.5f)
+        exposure *= g_exposure.Load(int3(0, 0, 0)).r;
+    float3 rgb = lerp(scene, bloom, bloom_weight) * exposure;
     /* Match the host enum: 0 = ACES Fitted, 1 = AGX parametric.
      * Branch is uniform across the quad. ACES gets a pre-exposure
      * boost (present_misc.z) to lift its dark toe up to AgX's. */

@@ -15,6 +15,7 @@
 #include "xwau_library.h"
 
 #include "cJSON.h"
+#include "classic_radiance.h"
 #include "effect_files.h"
 #include "png_write.h"
 #include "util.h"
@@ -270,7 +271,8 @@ static const Energy kEnergy[3] = {
 	{ "jamming", 3, 20.0f, false },
 };
 #define ENERGY_DAT "Effects\\GenericDamage.dat"
-#define ENERGY_STRENGTH 1.0f
+/* The energy effects are classic emission, like a converted model's. */
+#define ENERGY_STRENGTH CLASSIC_RADIANCE
 #define ENERGY_TILE 0.3f
 
 static const float kWhite[3] = { 1.0f, 1.0f, 1.0f };
