@@ -30,6 +30,7 @@
  */
 
 #include "scene_tonemap_agx.hlsli"
+#include "scene_tonemap_debug.hlsli"
 
 cbuffer TonemapPS : register(b0, space3)
 {
@@ -76,14 +77,24 @@ cbuffer TonemapPS : register(b0, space3)
      *   w = how much of the brightest pixels keeps its hue, over the
      *       same ramp. */
     float4 agx_highlight;
+    /* Debug view (AeronScenePresentDebug), drawn in place of the image:
+     *   x = 0 the image, 1 false colour, 2 the meter's weights
+     *   y = 1 when the meter reads the largest channel
+     *   z, w = reserved. */
+    float4 debug_view;
+    /* The meter's weights: x = edge, y = sky, z = near, w = the depth
+     * beyond which geometry is near. */
+    float4 debug_weights;
 };
 
 Texture2D<float4> g_flight  : register(t0, space2);
 Texture2D<float4> g_bloom   : register(t1, space2);
 Texture2D<float4> g_exposure : register(t2, space2);
+Texture2D<float>  g_depth    : register(t3, space2);
 SamplerState      s_flight  : register(s0, space2);
 SamplerState      s_bloom   : register(s1, space2);
 SamplerState      s_exposure : register(s2, space2);
+SamplerState      s_depth    : register(s3, space2);
 
 struct VSOut
 {
@@ -254,7 +265,12 @@ float4 main(VSOut input) : SV_Target
      * fit, so scene 1.0×exposure rides above diffuse white.
      *   < 0.5 → ACES (op 0)
      *   else  → AGX  (op 1) */
-    if (tonemap_params.y < 0.5f)
+    if (debug_view.x > 0.5f)
+        rgb = debug_view.x < 1.5f
+                  ? AeronTonemapFalseColor(rgb)
+                  : AeronTonemapMeterWeight(scene, input.uv, AeronTonemapDepthAt(g_depth, input.uv),
+                                            debug_weights, debug_view.y > 0.5f);
+    else if (tonemap_params.y < 0.5f)
         rgb = tonemap_aces_hdr(rgb * present_misc.z, peak);
     else
         rgb = tonemap_agx_hdr (rgb, peak);

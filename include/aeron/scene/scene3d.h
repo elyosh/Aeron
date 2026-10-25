@@ -572,6 +572,12 @@ typedef struct AeronSceneExposureReadout {
  * before the first one and while the exposure is fixed. */
 int AeronScene_GetExposureReadout(const AeronScene3D* scene, AeronSceneExposureReadout* out);
 
+/* Fills the scene's depth and its meter's weights into `out`, a debug
+ * view of AeronScenePresentChain_SetDebug, without changing its view.
+ * Returns 0 while the exposure is fixed. */
+struct AeronScenePresentDebug;
+int AeronScene_GetMeterDebug(AeronScene3D* scene, struct AeronScenePresentDebug* out);
+
 /* The radiance in W/m^2/sr of a texel of 1 in an image the scene shows
  * unlit: cockpit screens and holograms, the unlit part of base colour
  * flipbook frames, and the billboards outside the SKY stage that emit light

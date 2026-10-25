@@ -394,16 +394,13 @@ static bool load_dynamic_cockpit(Conversion* c, const ModelConversion* mc, opt_f
 	return true;
 }
 
-/* The candela of a bolt light per unit of its .mat Light. The game's stock
- * laser light (classic intensity 200, as bright as the classic law at the
- * game's match distance of 27.5 m) gives about 1.44e5 cd with the game's
- * model light scale (0.0014641288 scene units per lux), so that XWAU's laser
- * value, 0.7, is about as bright as the stock light. */
-#define XWAU_BOLT_LIGHT_CANDELA 2.06e5f
-
-static float srgb_to_linear(float c) {
-	return c <= 0.04045f ? c / 12.92f : powf((c + 0.055f) / 1.055f, 2.4f);
-}
+/* The candela of a bolt light per unit of its .mat Light, so that XWAU's
+ * laser value, 0.7, is about as bright as the game's stock laser light
+ * (classic intensity 200, as bright as the classic law at the game's match
+ * distance of 27.5 m). The game gives that light an intensity of
+ * 0.5 × c × D × CLASSIC_ILLUMINANCE; with pi in place of the illuminance,
+ * it was about 1.44e5 cd, or 2.06e5 cd per unit of Light. */
+#define XWAU_BOLT_LIGHT_CANDELA (2.06e5f * CLASSIC_ILLUMINANCE / 3.14159265f)
 
 /* Whether XWAU's renderer treats the model as a laser or a turbolaser
  * (is_Laser and is_TurboLaser in XwaTextureData.cpp): its name has "Laser",
@@ -448,8 +445,9 @@ static bool xwau_bolt_lights(Conversion* c, const opt_file_t* opt) {
 				OptGltfLight* light = &grown[c->light_count++];
 				light->mesh_index   = (uint32_t)mi;
 				light->state        = state;
+				/* XWAU shades with Light as a linear colour. */
 				for (int k = 0; k < 3; ++k)
-					light->color[k] = srgb_to_linear(fmaxf(p->light[k], 0.0f) / peak);
+					light->color[k] = fmaxf(p->light[k], 0.0f) / peak;
 				light->intensity = peak * XWAU_BOLT_LIGHT_CANDELA;
 			}
 		}
@@ -460,12 +458,15 @@ static bool xwau_bolt_lights(Conversion* c, const opt_file_t* opt) {
 }
 
 /* The candela of a light from a .mat Light key, per unit of Light ×
- * light_falloff, tuned in game. XWAU gives 6 × Light × light_falloff / d² in
- * its light units (laser_light_intensity 3.0, doubled). Taking its light
- * value 1.0 as the white sun, 2.5 W/m², as for the headlights, gives
- * 2.5 × 683 × 6 = 10245 cd, which looks too dim in game; this is about 10
- * times that. */
-#define XWAU_MAT_LIGHT_CANDELA 100000.0f
+ * light_falloff. XWAU's renderer lights a surface with
+ * laser_light_intensity × light_falloff / d² × Light, with d in metres, in
+ * units where the white sun of brightness 1 gives 1. laser_light_intensity
+ * is twice its setting, which XWAU ships at 3.0, so 6. With the white sun
+ * at CLASSIC_ILLUMINANCE, the light gives 6 × CLASSIC_ILLUMINANCE W/m² at
+ * 1 m: that many W/sr, times 683 lm/W in candela. In game, the Imperial Star
+ * Destroyer's lights look right 10 times brighter than that, so the factor
+ * of 10 is tuned by eye. */
+#define XWAU_MAT_LIGHT_CANDELA (10.0f * 6.0f * CLASSIC_ILLUMINANCE * 683.0f)
 /* Lights of a component closer than this, in OPT units (1 cm), and in the
  * same direction are one light. */
 #define XWAU_MAT_LIGHT_MERGE (0.01f * 65536.0f / 1600.0f)
@@ -589,8 +590,9 @@ static bool xwau_mat_lights(Conversion* c, const opt_file_t* opt, const char* la
 					.placed     = true,
 					.spot_angle = cosine > 0.0f ? acosf(cosine) : 0.0f,
 				};
+				/* XWAU shades with Light as a linear colour. */
 				for (int k = 0; k < 3; ++k)
-					light.color[k] = srgb_to_linear(fmaxf(p->light[k], 0.0f) / peak);
+					light.color[k] = fmaxf(p->light[k], 0.0f) / peak;
 				const opt_vec2_t at = { p->light_uv[0], p->light_uv[1] };
 				for (int32_t fi = 0; fi < group->face_count; ++fi) {
 					const opt_face_t* f       = &group->faces[fi];

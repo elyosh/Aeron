@@ -13,6 +13,7 @@
 #include <stdint.h>
 #include <string.h>
 
+#include "aeron/scene/present.h"
 #include "aeron/time.h"
 
 #define EXPOSURE_GROUP_SIZE 16u
@@ -187,6 +188,13 @@ static void exposure_poll(AeronScene3D* s) {
 		s->exposure = state.exposure;
 }
 
+/* The depth beyond which geometry is near: reversed-Z with an infinite far
+ * plane gives depth = near / view distance. INFINITY without a distance. */
+static float exposure_near_depth(const AeronScene3D* s) {
+	const float near_view = s->exposure_settings.near_distance / s->view_space_to_meters;
+	return near_view > 0.0f ? s->camera.near_z / near_view : INFINITY;
+}
+
 static int exposure_meter(AeronScene3D* s, AeronCommandBuffer* cmd) {
 	const AeronSceneAutoExposure* e = &s->exposure_settings;
 	exposure_poll(s);
@@ -206,14 +214,12 @@ static int exposure_meter(AeronScene3D* s, AeronCommandBuffer* cmd) {
 	});
 	if (!pass)
 		return 0;
-	/* Reversed-Z with an infinite far plane: depth = near / view distance. */
-	const float                     near_view = e->near_distance / s->view_space_to_meters;
-	const ExposureHistogramUniforms hu        = {
+	const ExposureHistogramUniforms hu = {
 		.size        = { (uint32_t)s->render_w, (uint32_t)s->render_h },
 		.edge_weight = clampf(e->edge_weight, 0.0f, 1.0f),
 		.sky_weight  = clampf(e->sky_weight, 0.0f, 1.0f),
 		.channel     = e->channel == AERON_SCENE_EXPOSURE_MAX ? 1u : 0u,
-		.near_depth  = near_view > 0.0f ? s->camera.near_z / near_view : INFINITY,
+		.near_depth  = exposure_near_depth(s),
 		.near_weight = clampf(e->near_weight, 0.0f, 1.0f),
 	};
 	Aeron_BindComputePipeline(pass, s->exposure_histogram_pipeline);
@@ -303,6 +309,19 @@ void AeronScene_SnapExposure(AeronScene3D* s) {
 }
 
 AeronTexture* AeronScene_ExposureTexture(AeronScene3D* s) { return s ? s->exposure_tex : NULL; }
+
+int AeronScene_GetMeterDebug(AeronScene3D* s, AeronScenePresentDebug* out) {
+	if (!s || !out || !s->exposure_metered)
+		return 0;
+	const AeronSceneAutoExposure* e = &s->exposure_settings;
+	out->depth                      = Aeron_DepthTargetGetTexture(s->depth_rt);
+	out->near_depth                 = exposure_near_depth(s);
+	out->edge_weight                = clampf(e->edge_weight, 0.0f, 1.0f);
+	out->sky_weight                 = clampf(e->sky_weight, 0.0f, 1.0f);
+	out->near_weight                = clampf(e->near_weight, 0.0f, 1.0f);
+	out->max_channel                = e->channel == AERON_SCENE_EXPOSURE_MAX;
+	return 1;
+}
 
 int AeronScene_GetExposureReadout(const AeronScene3D* s, AeronSceneExposureReadout* out) {
 	if (!s || !out || !s->exposure_metered || !s->exposure_readout_valid)

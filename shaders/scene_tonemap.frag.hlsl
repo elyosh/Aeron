@@ -23,6 +23,7 @@
 
 #include "srgb.hlsli"
 #include "scene_tonemap_agx.hlsli"
+#include "scene_tonemap_debug.hlsli"
 
 /* Interleaved Gradient Noise (Bart Wronski / Jorge Jimenez). Single
  * frac() formula, no LUT, perceptually-better-than-white-noise
@@ -80,14 +81,24 @@ cbuffer TonemapPS : register(b0, space3)
      *   w = how much of the brightest pixels keeps its hue, over the
      *       same ramp. */
     float4 agx_highlight;
+    /* Debug view (AeronScenePresentDebug), drawn in place of the image:
+     *   x = 0 the image, 1 false colour, 2 the meter's weights
+     *   y = 1 when the meter reads the largest channel
+     *   z, w = reserved. */
+    float4 debug_view;
+    /* The meter's weights: x = edge, y = sky, z = near, w = the depth
+     * beyond which geometry is near. */
+    float4 debug_weights;
 };
 
 Texture2D<float4> g_flight  : register(t0, space2);
 Texture2D<float4> g_bloom   : register(t1, space2);
 Texture2D<float4> g_exposure : register(t2, space2);
+Texture2D<float>  g_depth    : register(t3, space2);
 SamplerState      s_flight  : register(s0, space2);
 SamplerState      s_bloom   : register(s1, space2);
 SamplerState      s_exposure : register(s2, space2);
+SamplerState      s_depth    : register(s3, space2);
 
 struct VSOut
 {
@@ -182,7 +193,12 @@ float4 main(VSOut input) : SV_Target
     /* Match the host enum: 0 = ACES Fitted, 1 = AGX parametric.
      * Branch is uniform across the quad. ACES gets a pre-exposure
      * boost (present_misc.z) to lift its dark toe up to AgX's. */
-    if (tonemap_params.y < 0.5f)
+    if (debug_view.x > 0.5f)
+        rgb = debug_view.x < 1.5f
+                  ? AeronTonemapFalseColor(rgb)
+                  : AeronTonemapMeterWeight(scene, input.uv, AeronTonemapDepthAt(g_depth, input.uv),
+                                            debug_weights, debug_view.y > 0.5f);
+    else if (tonemap_params.y < 0.5f)
         rgb = tonemap_aces_fitted(rgb * present_misc.z);
     else
         rgb = AeronAgxToneMap(rgb, AERON_AGX_MAX_EV, present_misc.y, agx_params.x,

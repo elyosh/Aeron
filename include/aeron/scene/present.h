@@ -103,11 +103,40 @@ void AeronScenePresent_SetBloomKernel(int mode);
  *   [16..19] agx_params     = (look, punchy_power, punchy_saturation,
  *                              exposure texture bound)
  *   [20..23] agx_highlight  = (highlight_saturation, ev_start, ev_end,
- *                              highlight_hue) */
+ *                              highlight_hue)
+ *   [24..27] debug_view     = (view, max channel, reserved, reserved)
+ *   [28..31] debug_weights  = (edge, sky, near, near depth) */
 typedef struct AeronScenePresentChain AeronScenePresentChain;
+
+/* A debug view drawn in place of the image, for tuning the exposure. */
+typedef enum AeronScenePresentDebugView {
+	AERON_SCENE_PRESENT_IMAGE = 0,
+	/* The exposed luminance in stops around mid-grey (0.18), one colour per
+	 * stop, white from AgX's white up, where the image clips. */
+	AERON_SCENE_PRESENT_FALSE_COLOR = 1,
+	/* The image meter's weight of each pixel: black where it isn't counted,
+	 * blue for the sky, orange for near geometry, green for other geometry,
+	 * as bright as the weight. */
+	AERON_SCENE_PRESENT_METER_WEIGHT = 2,
+} AeronScenePresentDebugView;
+
+typedef struct AeronScenePresentDebug {
+	AeronScenePresentDebugView view;
+	/* AERON_SCENE_PRESENT_METER_WEIGHT: the scene's depth and the meter's
+	 * settings (AeronScene_GetMeterDebug). */
+	AeronTexture* depth;
+	float         near_depth; /* geometry with a greater depth is near */
+	float         edge_weight;
+	float         sky_weight;
+	float         near_weight;
+	int           max_channel;
+} AeronScenePresentDebug;
 
 AeronScenePresentChain* AeronScenePresentChain_Create(AeronTextureFormat target_format);
 void                    AeronScenePresentChain_Destroy(AeronScenePresentChain* chain);
+
+/* The debug view the chain draws from now on; NULL draws the image. */
+void AeronScenePresentChain_SetDebug(AeronScenePresentChain* chain, const AeronScenePresentDebug* debug);
 
 /* Record the fullscreen tonemap draw into `pass` (opened on a target of
  * the chain's format). `bloom_tex` NULL => zero bloom contribution
