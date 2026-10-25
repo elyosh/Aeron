@@ -24,6 +24,11 @@
  *   ... use ca.rgba, ca.width, ca.height, ca.page_count ...
  *   channel_atlas_free(&ca)
  *
+ * A source can also be added by its size alone, with
+ * channel_atlas_add_deferred_rect: channel_atlas_materialize_lazy then
+ * fetches its pixels when it fills the page, and releases them right after,
+ * so that a cook doesn't hold every source at once.
+ *
  * Source pixels are NOT copied into the atlas struct unless they had to
  * be downscaled — the caller owns them; `channel_atlas_materialize`
  * consults them in place.
@@ -53,8 +58,10 @@ typedef enum {
 typedef struct ChannelRect {
 	const void*    key; /* caller's identity for deduplication */
 	int            src_w, src_h;
-	const uint8_t* src_rgba; /* tightly-packed RGBA8, borrowed or `owned` */
+	const uint8_t* src_rgba; /* tightly-packed RGBA8, borrowed or `owned`; NULL until fetched when deferred */
 	uint8_t*       owned;    /* downscaled copy, freed by channel_atlas_free */
+	/* A deferred source's size, before any downscale; 0 otherwise. */
+	int full_w, full_h;
 	/* Output (filled by channel_atlas_pack). */
 	int  page;
 	int  x, y;      /* top-left of the source in its page; 0 for a dedicated layer */
@@ -105,6 +112,22 @@ bool channel_atlas_pack(ChannelAtlas* ca, int page_size, int gutter);
 /* Allocate ca.rgba and fill every footprint and dedicated layer. Returns
  * false on OOM. */
 bool channel_atlas_materialize(ChannelAtlas* ca);
+
+/* Append a sub-rect whose pixels come later: `src_w` x `src_h` is the
+ * source's size, and a source over `max_texture` is downscaled when it is
+ * fetched. Returns its index, or -1 on OOM. */
+int channel_atlas_add_deferred_rect(ChannelAtlas* ca, const void* key, int src_w, int src_h, int max_texture);
+
+/* Gives the pixels of the deferred source `key` (`*w` x `*h`), and releases
+ * them once they are copied. */
+typedef bool (*ChannelAtlasFetch)(void* context, const void* key, const uint8_t** rgba, int* w, int* h);
+typedef void (*ChannelAtlasRelease)(void* context, const void* key);
+
+/* channel_atlas_materialize, fetching each deferred source when it fills
+ * its footprint, and releasing it right after. Returns false on OOM, or
+ * when a source can't be fetched or has another size. */
+bool channel_atlas_materialize_lazy(ChannelAtlas* ca, ChannelAtlasFetch fetch, ChannelAtlasRelease release,
+									void* context);
 
 /* Convenience: derive normalized UV transform for a rect (offset_u,
  * offset_v, scale_u, scale_v) such that

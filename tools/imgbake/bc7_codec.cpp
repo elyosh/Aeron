@@ -27,11 +27,15 @@ extern "C" {
  * single C++ TU. */
 }
 #include "third_party/bc7enc/bc7enc.h"
+#define XXH_INLINE_ALL
+#include "xxhash.h"
 #ifdef IMGBAKE_HAVE_ISPC
 #include "ispc_texcomp.h"
 #endif
 
 #include <atomic>
+#include <mutex>
+#include <utility>
 #include <cstring>
 #include <mutex>
 #include <thread>
@@ -149,6 +153,55 @@ static void copy_4x4_padded(uint8_t out_block[64],
     }
 }
 
+/* ---- Encoded blocks --------------------------------------------------
+ *
+ * BC7 encodes each 4x4 block on its own, so a block that the process has
+ * already encoded is copied instead of encoded again. A model's skin variants
+ * repeat their base texture: in the X-wing's cook, 1 block in 10 is distinct.
+ * Blocks are found by a 128-bit hash of their 64 texel bytes. The cache is
+ * for one quality, and lasts for the process. */
+
+struct CachedBlock {
+    uint64_t lo, hi; /* hi == 0: empty */
+    uint8_t  block[16];
+};
+
+static std::mutex               s_cache_mutex;
+static std::vector<CachedBlock> s_cache;
+static size_t                   s_cache_count;
+static int                      s_cache_quality = -1;
+
+static XXH128_hash_t block_hash(const uint8_t rgba[64])
+{
+    XXH128_hash_t hash = XXH3_128bits(rgba, 64);
+    hash.high64 |= 1u; /* never 0, which marks an empty slot */
+    return hash;
+}
+
+static CachedBlock *cache_slot(std::vector<CachedBlock> &table, XXH128_hash_t hash)
+{
+    const size_t mask = table.size() - 1;
+    for (size_t i = (size_t)hash.low64 & mask;; i = (i + 1) & mask) {
+        CachedBlock &slot = table[i];
+        if (slot.hi == 0 || (slot.hi == hash.high64 && slot.lo == hash.low64))
+            return &slot;
+    }
+}
+
+static void cache_reserve(size_t more)
+{
+    if ((s_cache_count + more) * 2 <= s_cache.size())
+        return;
+    size_t size = s_cache.empty() ? 1u << 16 : s_cache.size();
+    while ((s_cache_count + more) * 2 > size)
+        size *= 2;
+    std::vector<CachedBlock> table(size);
+    for (const CachedBlock &old : s_cache)
+        if (old.hi != 0)
+            *cache_slot(table, XXH128_hash_t { old.lo, old.hi }) = old;
+    s_cache.swap(table);
+}
+
 extern "C"
 size_t bc7_codec_encode_image(uint8_t *out_blocks, size_t out_cap,
                               const uint8_t *rgba, int w, int h,
@@ -159,6 +212,60 @@ size_t bc7_codec_encode_image(uint8_t *out_blocks, size_t out_cap,
     int by = (h + 3) / 4;
     size_t need = (size_t)bx * (size_t)by * 16u;
     if (out_cap < need) return 0;
+
+    std::lock_guard<std::mutex> lock(s_cache_mutex);
+    if (s_cache_quality != (int)quality) {
+        s_cache.clear();
+        s_cache_count   = 0;
+        s_cache_quality = (int)quality;
+    }
+
+    /* The blocks to encode: the distinct blocks that the cache doesn't
+     * have. `fills` gives, for each other block of the image, the one it
+     * copies. */
+    std::vector<uint8_t>   todo;
+    std::vector<XXH128_hash_t> todo_hashes;
+    std::vector<std::pair<size_t, size_t>> fills;
+    {
+        std::vector<CachedBlock> pending(64);
+        size_t                   pending_count = 0;
+        for (int y = 0; y < by; ++y) {
+            for (int x = 0; x < bx; ++x) {
+                uint8_t block_rgba[64];
+                copy_4x4_padded(block_rgba, rgba, w, h, x, y);
+                const XXH128_hash_t hash = block_hash(block_rgba);
+                const size_t        index = (size_t)y * (size_t)bx + (size_t)x;
+                if (!s_cache.empty()) {
+                    const CachedBlock *cached = cache_slot(s_cache, hash);
+                    if (cached->hi != 0) {
+                        memcpy(out_blocks + index * 16u, cached->block, 16);
+                        continue;
+                    }
+                }
+                CachedBlock *slot = cache_slot(pending, hash);
+                if (slot->hi == 0) {
+                    slot->lo = hash.low64;
+                    slot->hi = hash.high64;
+                    /* A pending block holds its place in `todo`. */
+                    const size_t todo_index = todo_hashes.size();
+                    todo_hashes.push_back(hash);
+                    memcpy(slot->block, &todo_index, sizeof todo_index);
+                    todo.insert(todo.end(), block_rgba, block_rgba + 64);
+                    if (++pending_count * 2 > pending.size()) {
+                        std::vector<CachedBlock> grown(pending.size() * 2);
+                        for (const CachedBlock &old : pending)
+                            if (old.hi != 0)
+                                *cache_slot(grown, XXH128_hash_t { old.lo, old.hi }) = old;
+                        pending.swap(grown);
+                    }
+                    slot = cache_slot(pending, hash);
+                }
+                size_t todo_index;
+                memcpy(&todo_index, slot->block, sizeof todo_index);
+                fills.emplace_back(index, todo_index);
+            }
+        }
+    }
 
 #ifdef IMGBAKE_HAVE_ISPC
     bc7_enc_settings opaque_settings, alpha_settings;
@@ -172,67 +279,77 @@ size_t bc7_codec_encode_image(uint8_t *out_blocks, size_t out_cap,
     params_for(&params, quality);
 #endif
 
-    /* Block rows go to worker threads one at a time (block cost varies
-     * widely). Blocks are encoded independently, and the encoders only
-     * read their tables, so the output does not depend on the thread
-     * count. Small images stay on the calling thread. */
-    std::atomic<int> next_row(0);
-    auto encode_rows = [&]() {
+    /* Chunks of blocks go to worker threads one at a time (block cost
+     * varies widely). Blocks are encoded independently, and the encoders
+     * only read their tables, so the output does not depend on the thread
+     * count. */
+    const size_t         count = todo_hashes.size();
+    std::vector<uint8_t> encoded(count * 16u);
+    const size_t         chunk = 256;
+    std::atomic<size_t>  next_chunk(0);
+    auto encode_chunks = [&]() {
 #ifdef IMGBAKE_HAVE_ISPC
-        /* Each row of blocks is split in two strips: the opaque blocks,
-         * which take the faster opaque profile, and the blocks with
-         * alpha. Each strip is encoded in one call, so the kernel fills
-         * its SIMD lanes, and its blocks go back to their places. */
-        std::vector<uint8_t> strips[2] = { std::vector<uint8_t>((size_t)bx * 64u),
-                                           std::vector<uint8_t>((size_t)bx * 64u) };
-        std::vector<int> columns[2] = { std::vector<int>((size_t)bx), std::vector<int>((size_t)bx) };
-        std::vector<uint8_t> encoded((size_t)bx * 16u);
-        bc7_enc_settings *settings[2] = { &opaque_settings, &alpha_settings };
-        for (int y = next_row++; y < by; y = next_row++) {
-            int count[2] = { 0, 0 };
-            for (int x = 0; x < bx; ++x) {
-                uint8_t block_rgba[64];
-                copy_4x4_padded(block_rgba, rgba, w, h, x, y);
-                const int kind = has_alpha(block_rgba, 16) ? 1 : 0;
-                const int slot = count[kind]++;
-                columns[kind][(size_t)slot] = x;
+        /* Each chunk is split in two strips: the opaque blocks, which take
+         * the faster opaque profile, and the blocks with alpha. Each strip
+         * is encoded in one call, so the kernel fills its SIMD lanes. */
+        std::vector<uint8_t> strips[2] = { std::vector<uint8_t>(chunk * 64u),
+                                           std::vector<uint8_t>(chunk * 64u) };
+        std::vector<size_t>  blocks[2] = { std::vector<size_t>(chunk), std::vector<size_t>(chunk) };
+        std::vector<uint8_t> strip_out(chunk * 16u);
+        bc7_enc_settings    *settings[2] = { &opaque_settings, &alpha_settings };
+        for (size_t first = next_chunk++ * chunk; first < count; first = next_chunk++ * chunk) {
+            const size_t last  = first + chunk < count ? first + chunk : count;
+            size_t       n[2] = { 0, 0 };
+            for (size_t i = first; i < last; ++i) {
+                const uint8_t *block_rgba = &todo[i * 64u];
+                const int      kind       = has_alpha(block_rgba, 16) ? 1 : 0;
+                blocks[kind][n[kind]]     = i;
                 for (int r = 0; r < 4; ++r)
-                    memcpy(&strips[kind][(size_t)r * bx * 16u + (size_t)slot * 16u], block_rgba + r * 16, 16);
+                    memcpy(&strips[kind][(size_t)r * chunk * 16u + n[kind] * 16u], block_rgba + r * 16, 16);
+                ++n[kind];
             }
-            uint8_t *row_out = out_blocks + (size_t)y * (size_t)bx * 16u;
             for (int kind = 0; kind < 2; ++kind) {
-                if (count[kind] == 0)
+                if (n[kind] == 0)
                     continue;
-                rgba_surface surface = { strips[kind].data(), count[kind] * 4, 4, bx * 16 };
-                CompressBlocksBC7(&surface, encoded.data(), settings[kind]);
-                for (int i = 0; i < count[kind]; ++i)
-                    memcpy(row_out + (size_t)columns[kind][(size_t)i] * 16u, &encoded[(size_t)i * 16u], 16);
+                rgba_surface surface = { strips[kind].data(), (int)n[kind] * 4, 4, (int)(chunk * 16u) };
+                CompressBlocksBC7(&surface, strip_out.data(), settings[kind]);
+                for (size_t i = 0; i < n[kind]; ++i)
+                    memcpy(&encoded[blocks[kind][i] * 16u], &strip_out[i * 16u], 16);
             }
         }
 #else
-        for (int y = next_row++; y < by; y = next_row++) {
-            for (int x = 0; x < bx; ++x) {
-                uint8_t block_rgba[64];
-                copy_4x4_padded(block_rgba, rgba, w, h, x, y);
-                uint8_t *dst = out_blocks + ((size_t)y * (size_t)bx + (size_t)x) * 16u;
-                bc7enc_compress_block(dst, block_rgba, &params);
-            }
+        for (size_t first = next_chunk++ * chunk; first < count; first = next_chunk++ * chunk) {
+            const size_t last = first + chunk < count ? first + chunk : count;
+            for (size_t i = first; i < last; ++i)
+                bc7enc_compress_block(&encoded[i * 16u], &todo[i * 64u], &params);
         }
 #endif
     };
     unsigned threads = s_max_threads ? s_max_threads.load() : std::thread::hardware_concurrency();
-    if ((size_t)bx * (size_t)by < 4096u || threads < 2) {
-        encode_rows();
-        return need;
+    if (count < 4096u || threads < 2) {
+        encode_chunks();
+    } else {
+        const size_t chunks = (count + chunk - 1) / chunk;
+        if (threads > chunks)
+            threads = (unsigned)chunks;
+        std::vector<std::thread> workers;
+        workers.reserve(threads - 1);
+        for (unsigned t = 1; t < threads; ++t)
+            workers.emplace_back(encode_chunks);
+        encode_chunks();
+        for (std::thread &worker : workers)
+            worker.join();
     }
-    if (threads > (unsigned)by)
-        threads = (unsigned)by;
-    std::vector<std::thread> workers;
-    workers.reserve(threads - 1);
-    for (unsigned t = 1; t < threads; ++t)
-        workers.emplace_back(encode_rows);
-    encode_rows();
-    for (std::thread &worker : workers)
-        worker.join();
+
+    for (const auto &fill : fills)
+        memcpy(out_blocks + fill.first * 16u, &encoded[fill.second * 16u], 16);
+    cache_reserve(count);
+    for (size_t i = 0; i < count; ++i) {
+        CachedBlock *slot = cache_slot(s_cache, todo_hashes[i]);
+        slot->lo = todo_hashes[i].low64;
+        slot->hi = todo_hashes[i].high64;
+        memcpy(slot->block, &encoded[i * 16u], 16);
+    }
+    s_cache_count += count;
     return need;
 }

@@ -983,6 +983,45 @@ bool SkinLayers_ImageProvider(void* context, const struct cgltf_image* image, Ae
 	return false;
 }
 
+bool SkinLayers_ImageSize(void* context, const struct cgltf_image* image, int* width, int* height) {
+	SkinLayers* s = (SkinLayers*)context;
+	const long  c = composite_index(image->uri);
+	if (c >= 0) {
+		if ((size_t)c >= s->composite_count)
+			return false;
+		/* The size composite() gives: its own image's, else its first
+		   layer's. */
+		const CompositeImage* composite_image = &s->composites[c];
+		const LoadedImage*    sized           = NULL;
+		if (composite_image->own_image >= 0)
+			sized = load_image(s, composite_image->own_image);
+		else if (composite_image->layer_count)
+			sized = load_image(s, composite_image->layers[0].image);
+		if (!sized)
+			return false;
+		*width  = sized->w;
+		*height = sized->h;
+		return true;
+	}
+	AeronGltfCookImageView view;
+	if (!SkinLayers_ImageProvider(context, image, &view))
+		return false;
+	*width  = view.width;
+	*height = view.height;
+	return true;
+}
+
+void SkinLayers_ImageRelease(void* context, const struct cgltf_image* image) {
+	SkinLayers* s = (SkinLayers*)context;
+	const long  c = composite_index(image->uri);
+	if (c < 0 || (size_t)c >= s->composite_count)
+		return;
+	CompositeImage* composite_image = &s->composites[c];
+	free(composite_image->rgba);
+	composite_image->rgba = NULL;
+	composite_image->done = false;
+}
+
 void SkinLayers_Report(const SkinLayers* s) {
 	if (s && s->verbose)
 		fprintf(stderr, TAG ": %zu skin variant(s), %zu composite material(s), %zu composite image(s), "

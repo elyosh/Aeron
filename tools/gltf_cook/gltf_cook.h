@@ -50,6 +50,11 @@ typedef struct AeronGltfCookImageView {
 
 typedef bool (*AeronGltfCookImageProvider)(void* context, const struct cgltf_image* image,
 										   AeronGltfCookImageView* out_view);
+/* Optional: an image's size without its pixels, and the end of the
+ * cooker's use of the pixels that the provider gave. */
+typedef bool (*AeronGltfCookImageSize)(void* context, const struct cgltf_image* image, int* width,
+									   int* height);
+typedef void (*AeronGltfCookImageRelease)(void* context, const struct cgltf_image* image);
 typedef bool (*AeronGltfCookConsumer)(void* context, const struct cgltf_data* cooked_data);
 
 /* Cooker tunables. Pass NULL for all-defaults; partial structs are not
@@ -101,6 +106,16 @@ bool aeron_gltf_cook_data(struct cgltf_data* data, const char* source_label,
 						  AeronGltfCookImageProvider image_provider, void* image_context,
 						  AeronGltfCookConsumer consumer, void* consumer_context,
 						  const AeronGltfCookOptions* opts);
+
+/* aeron_gltf_cook_data, asking the provider for each image's pixels only
+ * when its atlas page is built, and releasing them right after. With
+ * `image_size`, the cooker holds one page's sources at a time instead of
+ * every image of the model. `image_release` may be NULL. */
+bool aeron_gltf_cook_data_lazy(struct cgltf_data* data, const char* source_label,
+							   AeronGltfCookImageProvider image_provider, AeronGltfCookImageSize image_size,
+							   AeronGltfCookImageRelease image_release, void* image_context,
+							   AeronGltfCookConsumer consumer, void* consumer_context,
+							   const AeronGltfCookOptions* opts);
 
 #ifdef __cplusplus
 }

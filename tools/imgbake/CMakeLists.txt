@@ -104,6 +104,7 @@ target_include_directories(imgbake
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/../..    # third_party/bc7enc/...
         ${IMGBAKE_TP}/bc7enc                 # rgbcx.h, bc7enc.h
+        ${IMGBAKE_TP}/xxhash                 # block hashes (bc7_codec)
         ${IMGBAKE_TP}/stb)                   # stb_image*/truetype
 
 # zstd — KTX2 supercompressionScheme=2 (aeron already requires it).

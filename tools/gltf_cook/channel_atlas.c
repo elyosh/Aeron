@@ -133,6 +133,35 @@ int channel_atlas_add_rect(ChannelAtlas* ca, const void* key, int src_w, int src
 	return ca->rect_count++;
 }
 
+int channel_atlas_add_deferred_rect(ChannelAtlas* ca, const void* key, int src_w, int src_h,
+									int max_texture) {
+	if (!ca || src_w <= 0 || src_h <= 0)
+		return -1;
+	if (ca->rect_count == ca->rect_capacity) {
+		int          cap   = ca->rect_capacity ? ca->rect_capacity * 2 : 8;
+		ChannelRect* grown = (ChannelRect*)realloc(ca->rects, (size_t)cap * sizeof *grown);
+		if (!grown)
+			return -1;
+		ca->rects         = grown;
+		ca->rect_capacity = cap;
+	}
+	ChannelRect* r = &ca->rects[ca->rect_count];
+	memset(r, 0, sizeof *r);
+	r->key    = key;
+	r->full_w = src_w;
+	r->full_h = src_h;
+	/* The same size as channel_atlas_add_rect's downscale. */
+	if (max_texture > 0 && (src_w > max_texture || src_h > max_texture)) {
+		const double scale = (double)max_texture / (double)(src_w > src_h ? src_w : src_h);
+		const int    w = (int)(src_w * scale + 0.5), h = (int)(src_h * scale + 0.5);
+		src_w = w > 0 ? w : 1;
+		src_h = h > 0 ? h : 1;
+	}
+	r->src_w = src_w;
+	r->src_h = src_h;
+	return ca->rect_count++;
+}
+
 static bool is_pow2(int v) { return v > 0 && (v & (v - 1)) == 0; }
 
 static int floor_log2(int v) {
@@ -384,6 +413,11 @@ static void fill_footprint(uint8_t* page, int page_width, const ChannelRect* r, 
 }
 
 bool channel_atlas_materialize(ChannelAtlas* ca) {
+	return channel_atlas_materialize_lazy(ca, NULL, NULL, NULL);
+}
+
+bool channel_atlas_materialize_lazy(ChannelAtlas* ca, ChannelAtlasFetch fetch, ChannelAtlasRelease release,
+									void* context) {
 	if (!ca || ca->width <= 0 || ca->height <= 0 || ca->page_count <= 0)
 		return false;
 	const size_t page_bytes = (size_t)ca->width * (size_t)ca->height * 4u;
@@ -392,24 +426,53 @@ bool channel_atlas_materialize(ChannelAtlas* ca) {
 		return false;
 
 	for (int i = 0; i < ca->rect_count; i++) {
-		const ChannelRect* r    = &ca->rects[i];
-		uint8_t*           page = ca->rgba + (size_t)r->page * page_bytes;
-		if (!r->dedicated) {
-			fill_footprint(page, ca->width, r, ca->gutter);
-		} else if (r->src_w == ca->width && r->src_h == ca->height) {
-			memcpy(page, r->src_rgba, page_bytes);
-		} else {
-			uint8_t* scaled = resample_rgba8(r->src_rgba, r->src_w, r->src_h, ca->width, ca->height);
-			if (!scaled) {
-				free(ca->rgba);
-				ca->rgba = NULL;
-				return false;
+		/* A deferred source is fetched now, and downscaled as
+		   channel_atlas_add_rect would have done. */
+		ChannelRect r       = ca->rects[i];
+		uint8_t*    scaled  = NULL;
+		const bool  fetched = !r.src_rgba;
+		if (fetched) {
+			const uint8_t* rgba = NULL;
+			int            w = 0, h = 0;
+			if (!fetch || !fetch(context, r.key, &rgba, &w, &h) || w != r.full_w || h != r.full_h)
+				goto fail;
+			if (w != r.src_w || h != r.src_h) {
+				scaled = resample_rgba8(rgba, w, h, r.src_w, r.src_h);
+				if (!scaled) {
+					if (release)
+						release(context, r.key);
+					goto fail;
+				}
+				r.src_rgba = scaled;
+			} else {
+				r.src_rgba = rgba;
 			}
-			memcpy(page, scaled, page_bytes);
-			free(scaled);
 		}
+		uint8_t* page = ca->rgba + (size_t)r.page * page_bytes;
+		bool     ok   = true;
+		if (!r.dedicated) {
+			fill_footprint(page, ca->width, &r, ca->gutter);
+		} else if (r.src_w == ca->width && r.src_h == ca->height) {
+			memcpy(page, r.src_rgba, page_bytes);
+		} else {
+			uint8_t* resized = resample_rgba8(r.src_rgba, r.src_w, r.src_h, ca->width, ca->height);
+			ok               = resized != NULL;
+			if (ok)
+				memcpy(page, resized, page_bytes);
+			free(resized);
+		}
+		free(scaled);
+		if (fetched && release)
+			release(context, r.key);
+		if (!ok)
+			goto fail;
 	}
 	return true;
+
+fail:
+	free(ca->rgba);
+	ca->rgba = NULL;
+	return false;
 }
 
 void channel_atlas_rect_uv_transform(const ChannelAtlas* ca, const ChannelRect* r, float out_offset[2],

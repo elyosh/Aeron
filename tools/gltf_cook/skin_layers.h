@@ -35,6 +35,13 @@ SkinLayers* SkinLayers_Expand(cJSON* document, const char* gltf_path, bool verbo
 /* AeronGltfCookImageProvider: the pixels of a composite, or of a PNG of the
  * file. `context` is the SkinLayers. */
 bool SkinLayers_ImageProvider(void* context, const struct cgltf_image* image, AeronGltfCookImageView* out);
+/* AeronGltfCookImageSize: the size of a composite, without compositing it,
+ * or of a PNG of the file. */
+bool SkinLayers_ImageSize(void* context, const struct cgltf_image* image, int* width, int* height);
+/* AeronGltfCookImageRelease: frees a composite's pixels; it is composited
+ * again if it is needed again. The file's PNGs stay, since composites share
+ * them. */
+void SkinLayers_ImageRelease(void* context, const struct cgltf_image* image);
 
 /* Reports the composites and the time spent compositing (verbose). */
 void SkinLayers_Report(const SkinLayers* layers);

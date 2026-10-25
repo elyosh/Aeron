@@ -462,15 +462,24 @@ static bool image_view(const char* source_label, AeronGltfCookImageProvider imag
  * when new), else on the core atlas; an image already placed shares its
  * rect. Sets *group_out (-1: core) and *rect_out. */
 static bool place_image(cgltf_data* data, char* const* image_variants, const char* source_label,
-						AeronGltfCookImageProvider image_provider, void* image_context, ImageCache* cache,
-						const AeronGltfCookOptions* opts, ChannelAtlas* atlases, CookGroup** groups,
-						int* group_count, int c, cgltf_image* image, int* group_out, int* rect_out) {
+						AeronGltfCookImageProvider image_provider, AeronGltfCookImageSize image_size,
+						void* image_context, ImageCache* cache, const AeronGltfCookOptions* opts,
+						ChannelAtlas* atlases, CookGroup** groups, int* group_count, int c,
+						cgltf_image* image, int* group_out, int* rect_out) {
 	ChannelAtlas* atlas = target_atlas(data, image_variants, atlases, groups, group_count, c, image, group_out);
 	if (!atlas)
 		return false;
 	*rect_out = find_channel_rect(atlas, image);
 	if (*rect_out >= 0)
 		return true;
+	if (image_size) {
+		/* The pixels come when the atlas is materialized. */
+		int width = 0, height = 0;
+		if (!image_size(image_context, image, &width, &height))
+			return false;
+		*rect_out = channel_atlas_add_deferred_rect(atlas, image, width, height, opts->max_texture_size);
+		return *rect_out >= 0;
+	}
 	AeronGltfCookImageView view;
 	if (!image_view(source_label, image_provider, image_context, cache, image, &view))
 		return false;
@@ -630,10 +639,47 @@ static bool place_transmission(cgltf_data* data, char* const* image_variants, co
  * BIN chunk doesn't propagate to the runtime — we just give it room. */
 static size_t align_up(size_t v, size_t a) { return (v + a - 1) & ~(a - 1); }
 
+/* The provider's pixels of a deferred rect, for channel_atlas_materialize_lazy. */
+typedef struct DeferredImages {
+	AeronGltfCookImageProvider provider;
+	AeronGltfCookImageRelease  release;
+	void*                      context;
+} DeferredImages;
+
+static bool deferred_fetch(void* context, const void* key, const uint8_t** rgba, int* w, int* h) {
+	const DeferredImages*  images = (const DeferredImages*)context;
+	AeronGltfCookImageView view;
+	memset(&view, 0, sizeof view);
+	if (!images->provider || !images->provider(images->context, (const cgltf_image*)key, &view))
+		return false;
+	*rgba = view.rgba;
+	*w    = view.width;
+	*h    = view.height;
+	return true;
+}
+
+static void deferred_release(void* context, const void* key) {
+	const DeferredImages* images = (const DeferredImages*)context;
+	if (images->release)
+		images->release(images->context, (const cgltf_image*)key);
+}
+
 bool aeron_gltf_cook_data(cgltf_data* data, const char* source_label,
 						  AeronGltfCookImageProvider image_provider, void* image_context,
 						  AeronGltfCookConsumer consumer, void* consumer_context,
 						  const AeronGltfCookOptions* opts_in) {
+	return aeron_gltf_cook_data_lazy(data, source_label, image_provider, NULL, NULL, image_context, consumer,
+									 consumer_context, opts_in);
+}
+
+bool aeron_gltf_cook_data_lazy(cgltf_data* data, const char* source_label,
+							   AeronGltfCookImageProvider image_provider, AeronGltfCookImageSize image_size,
+							   AeronGltfCookImageRelease image_release, void* image_context,
+							   AeronGltfCookConsumer consumer, void* consumer_context,
+							   const AeronGltfCookOptions* opts_in) {
+	DeferredImages deferred = { image_provider, image_release, image_context };
+	if (!image_provider)
+		image_size = NULL;
 	if (!data || !consumer)
 		return false;
 	if (!source_label)
@@ -711,9 +757,9 @@ bool aeron_gltf_cook_data(cgltf_data* data, const char* source_label,
 			if (c == AERON_GLTF_COOK_CHANNEL_BASE_COLOR && merged_base)
 				continue;
 			/* An image some variants use goes to their group. */
-			ok = place_image(data, image_variants, source_label, image_provider, image_context, &cache, &opts,
-							 atlases, &groups, &group_count, c, tv->texture->image, &group_of[c][mi],
-							 &rect_of[c][mi]);
+			ok = place_image(data, image_variants, source_label, image_provider, image_size, image_context,
+							 &cache, &opts, atlases, &groups, &group_count, c, tv->texture->image,
+							 &group_of[c][mi], &rect_of[c][mi]);
 		}
 	}
 
@@ -790,11 +836,15 @@ bool aeron_gltf_cook_data(cgltf_data* data, const char* source_label,
 					continue;
 				ChannelAtlas* ga = &groups[g].atlas;
 				ga->mip_count    = ca->mip_count;
-				ok = channel_atlas_materialize(ga) &&
+				ok = channel_atlas_materialize_lazy(ga, deferred_fetch, deferred_release, &deferred) &&
 					 encode_channel_ktx2(&kChannels[c], ga->width, ga->height, ga->page_count, ga->rgba,
 										 opts.encoding, (Ktx2Bc7Quality)opts.bc7_quality,
 										 opts.zstd_supercompress, ga->mip_count, &groups[g].ktx2,
 										 &groups[g].ktx2_size);
+				/* The encoded pages are all that the GLB needs: free the
+				   pixels now, rather than hold every group's until the end. */
+				free(ga->rgba);
+				ga->rgba = NULL;
 				for (int r = 0; r < ga->rect_count; r++) {
 					const ChannelRect* rect = &ga->rects[r];
 					used += rect->dedicated
@@ -810,7 +860,7 @@ bool aeron_gltf_cook_data(cgltf_data* data, const char* source_label,
 					kChannels[c].name, ca->page_count, ca->width, ca->height, channel_groups, pages,
 					100.0 * used / ((double)pages * ca->width * ca->height));
 		}
-		if (!channel_atlas_materialize(ca)) {
+		if (!channel_atlas_materialize_lazy(ca, deferred_fetch, deferred_release, &deferred)) {
 			ok = false;
 			break;
 		}
@@ -820,6 +870,8 @@ bool aeron_gltf_cook_data(cgltf_data* data, const char* source_label,
 			ok = false;
 			break;
 		}
+		free(ca->rgba);
+		ca->rgba = NULL;
 		if (opts.verbose) {
 			fprintf(stderr,
 					"[aeron_gltf_cook] channel %s: %d sub-rects → %d page(s) of %d×%d, "
@@ -1250,8 +1302,9 @@ static bool cook_skinned(cJSON* doc, const char* in_path, const char* out_path, 
 		fprintf(stderr, "[aeron_gltf_cook] parse of the expanded '%s' failed: %d\n", in_path, (int)result);
 	} else {
 		FileCookConsumerContext context = { out_path };
-		succeeded = aeron_gltf_cook_data(data, in_path, SkinLayers_ImageProvider, layers, write_cooked_glb,
-										 &context, opts);
+		succeeded =
+			aeron_gltf_cook_data_lazy(data, in_path, SkinLayers_ImageProvider, SkinLayers_ImageSize,
+									  SkinLayers_ImageRelease, layers, write_cooked_glb, &context, opts);
 		SkinLayers_Report(layers);
 	}
 	cgltf_free(data);
