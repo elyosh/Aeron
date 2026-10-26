@@ -15,10 +15,10 @@ shadows:
   atlas_size: 4096
   cascade_count: 4
   fit_mode: scene_dependent
-  max_distance: 262144.0
+  max_distance: 900000.0
   split_lambda: 0.8
   explicit_splits: true
-  split_1: 0.005
+  split_1: 0.003
   split_2: 0.035
   split_3: 0.180
   light_angular_radius_degrees: 0.6
