@@ -8,6 +8,7 @@ cbuffer FragmentUniform : register(b0, space3) {
 					  w: decode gamma (0 = piecewise sRGB curve, >0 = pow(rgb, w)) */
 	float4 tint;   /* RGBA multiplier applied after decode (1,1,1,1 = untinted) */
 	float4 bias;   /* additive RGB weighted by sample alpha (fade-to-color) */
+	float4 layer;  /* xy: the layer's top-left pixel in the target; zw: 1 / its size in pixels */
 };
 
 float2 AeronSharpBilinearTexcoord(float2 texcoord) {
@@ -39,8 +40,12 @@ float2 AeronSharpBilinearTexcoord(float2 texcoord) {
 }
 
 float4 main(float4 position : SV_Position, float2 texcoord : TEXCOORD0) : SV_Target0 {
-	float  unusedValue    = position.x * 0.0;
-	float2 sampleTexcoord = params.y != 0.0 ? AeronSharpBilinearTexcoord(texcoord) : texcoord;
+	/* The viewport may cover only part of the layer, so the texture
+	 * coordinate comes from the pixel's place in the whole layer. The
+	 * vertex shader's coordinate stays an input, unused. */
+	float  unusedValue    = texcoord.x * 0.0;
+	float2 layerTexcoord  = (position.xy - layer.xy) * layer.zw;
+	float2 sampleTexcoord = params.y != 0.0 ? AeronSharpBilinearTexcoord(layerTexcoord) : layerTexcoord;
 	float4 color          = g_frameTexture.Sample(g_frameSampler, sampleTexcoord);
 
 	if (params.x == 1.0) {

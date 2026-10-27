@@ -1353,7 +1353,7 @@ static int Aeron_DrawTexture(SDL_GPUCommandBuffer* command_buffer, SDL_GPURender
 	SDL_GPUTextureSamplerBinding binding;
 	SDL_GPUGraphicsPipeline*     pipeline;
 	SDL_Rect                     scissor;
-	float                        fragment_uniform[12];
+	float                        fragment_uniform[16];
 
 	pipeline = Aeron_PipelineForTarget(target_format, blend_mode);
 	if (!command_buffer || !texture || !sampler || !pipeline || !dst_rect || dst_rect->w <= 0 ||
@@ -1385,19 +1385,23 @@ static int Aeron_DrawTexture(SDL_GPUCommandBuffer* command_buffer, SDL_GPURender
 	fragment_uniform[9]  = bias_rgba ? bias_rgba[1] : 0.0f;
 	fragment_uniform[10] = bias_rgba ? bias_rgba[2] : 0.0f;
 	fragment_uniform[11] = 0.0f;
+	/* The layer's whole rect: the shader maps it to the texture, so the
+	 * viewport can stop at the target's edges. */
+	fragment_uniform[12] = (float)dst_rect->x;
+	fragment_uniform[13] = (float)dst_rect->y;
+	fragment_uniform[14] = 1.0f / (float)dst_rect->w;
+	fragment_uniform[15] = 1.0f / (float)dst_rect->h;
 
 	scissor = *dst_rect;
 	if (scissor_rect && !SDL_GetRectIntersection(scissor_rect, dst_rect, &scissor)) {
 		return 1; /* fully clipped away */
 	}
 
-	/* The GPU scissor must lie within the render target — a dst rect
-	 * hanging past an edge (e.g. a cursor layer whose hotspot-centered
-	 * sprite crosses the window's left/top border) would otherwise
-	 * yield a negative-origin scissor and the draw gets rejected.
-	 * Clamp the scissor to the target; the viewport keeps the full
-	 * unclamped dst rect so the quad's mapping is unchanged and the
-	 * scissor merely crops it. */
+	/* The viewport and the scissor must lie within the render target, and
+	 * a dst rect can hang past an edge (a cursor layer near the window's
+	 * border). Both take the part inside the target; the shader still maps
+	 * the whole dst rect to the texture, so the layer is cropped, not
+	 * squeezed. */
 	if (target_w > 0 && target_h > 0) {
 		SDL_Rect target_rect = { 0, 0, target_w, target_h };
 		if (!SDL_GetRectIntersection(&scissor, &target_rect, &scissor)) {
@@ -1409,10 +1413,10 @@ static int Aeron_DrawTexture(SDL_GPUCommandBuffer* command_buffer, SDL_GPURender
 	SDL_BindGPUFragmentSamplers(render_pass, 0, &binding, 1);
 	SDL_PushGPUFragmentUniformData(command_buffer, 0, fragment_uniform, sizeof(fragment_uniform));
 	Aeron_RecordUniformPush(sizeof(fragment_uniform));
-	viewport.x         = (float)dst_rect->x;
-	viewport.y         = (float)dst_rect->y;
-	viewport.w         = (float)dst_rect->w;
-	viewport.h         = (float)dst_rect->h;
+	viewport.x         = (float)scissor.x;
+	viewport.y         = (float)scissor.y;
+	viewport.w         = (float)scissor.w;
+	viewport.h         = (float)scissor.h;
 	viewport.min_depth = 0.0f;
 	viewport.max_depth = 1.0f;
 	SDL_SetGPUViewport(render_pass, &viewport);
