@@ -274,9 +274,13 @@ typedef struct AeronScenePointLightGPU {
 } AeronScenePointLightGPU;
 
 /* A point light in view space, in the point light order: the sphere that
- * holds what it lights (AeronScene_LightBounds). */
+ * holds what it lights (AeronScene_LightBounds). For a spot light, also
+ * its position and range, and its unit direction with the cosine of its
+ * outer angle in w; w is -1 for other lights. */
 typedef struct AeronSceneClusterLightGPU {
 	float view_position_range[4];
+	float view_spot_position_range[4];
+	float view_spot_direction_cos[4];
 } AeronSceneClusterLightGPU;
 
 /* The cluster build's output, one uint buffer (scene_clustered_lights.hlsli):

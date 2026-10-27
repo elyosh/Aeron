@@ -18,7 +18,7 @@
 #include <string.h>
 
 typedef char AeronScenePointLightGPUSizeCheck[sizeof(AeronScenePointLightGPU) == 64 ? 1 : -1];
-typedef char AeronSceneClusterLightGPUSizeCheck[sizeof(AeronSceneClusterLightGPU) == 16 ? 1 : -1];
+typedef char AeronSceneClusterLightGPUSizeCheck[sizeof(AeronSceneClusterLightGPU) == 48 ? 1 : -1];
 typedef char AeronSceneClusterUniformGPUSizeCheck[sizeof(AeronSceneClusterUniformGPU) == 96 ? 1 : -1];
 
 /* struct AeronScene3D lives in internal.h (shared with
@@ -2213,11 +2213,26 @@ int AeronSceneStorage_Prepare(AeronScene3D* s, AeronCommandBuffer* cmd) {
 		 * offset in the sphere's unused half axis. Its loop knows it has a
 		 * direction, so its radius stays positive. */
 		float cos_inner, cos_outer;
+		memset(cluster, 0, sizeof *cluster);
+		cluster->view_spot_direction_cos[3] = -1.0f;
 		if (order[i].kind == SCENE_LIGHT_SPOT && scene_light_spot_cosines(source, &cos_inner, &cos_outer)) {
 			const float scale         = 1.0f / fmaxf(cos_inner - cos_outer, 1e-3f);
 			destination->direction[3] = scale;
 			destination->half_axis[0] = -cos_outer * scale;
 			destination->color[3]     = source_radius;
+			/* The cluster build culls the depth bins outside the cone. */
+			const float px = source->pos[0] - s->camera.pos[0];
+			const float py = source->pos[1] - s->camera.pos[1];
+			const float pz = source->pos[2] - s->camera.pos[2];
+			for (int row = 0; row < 3; ++row) {
+				const float* r = &view_rotation[row * 3];
+				cluster->view_spot_position_range[row] = r[0] * px + r[1] * py + r[2] * pz;
+				cluster->view_spot_direction_cos[row]  = r[0] * destination->direction[0] +
+													   r[1] * destination->direction[1] +
+													   r[2] * destination->direction[2];
+			}
+			cluster->view_spot_position_range[3] = source->radius;
+			cluster->view_spot_direction_cos[3]  = cos_outer;
 		}
 		const float dx = bound[0] - s->camera.pos[0];
 		const float dy = bound[1] - s->camera.pos[1];
