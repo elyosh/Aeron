@@ -654,8 +654,6 @@ int AeronScene_AddLight(AeronScene3D* s, const AeronSceneLight* light) {
 	return 1;
 }
 
-/* Model lights cut off below this illuminance when they have no range. */
-#define SCENE_MESH_LIGHT_CUTOFF 0.001f
 /* A panel at least this many times longer than wide is drawn as a one-sided
  * tube along its length; a squarer one as a one-sided sphere of its area. */
 #define SCENE_MESH_LIGHT_PANEL_TUBE_ASPECT 3.0f
@@ -684,7 +682,7 @@ static float scene_vec3_length(const float v[3]) { return sqrtf(v[0] * v[0] + v[
  * instance transform. */
 static int scene_flight_light(const AeronFlightLight* light, const float (*rows)[4],
 							  const float transform[16], float units_per_meter, float intensity_scale,
-							  AeronSceneLight* out) {
+							  float exposure, AeronSceneLight* out) {
 	float p[3] = { light->position.x, light->position.y, light->position.z };
 	if (rows) {
 		float articulated[3];
@@ -736,24 +734,26 @@ static int scene_flight_light(const AeronFlightLight* light, const float (*rows)
 	if (!(peak > 0.0f) || !isfinite(peak)) {
 		return 0;
 	}
-	const float range_m = light->range > 0.0f ? light->range : sqrtf(peak / SCENE_MESH_LIGHT_CUTOFF);
+	const float range_m =
+		light->range > 0.0f ? light->range : sqrtf(peak * exposure / AERON_SCENE_LIGHT_CUTOFF);
 	out->radius         = range_m * units_per_meter;
 	out->source_radius  = source_radius;
 	return 1;
 }
 
 int AeronScene_FlightLight(const AeronFlightLight* light, const float transform[16], float units_per_meter,
-						   float intensity_scale, AeronSceneLight* out) {
-	if (!light || !transform || !(units_per_meter > 0.0f) || !out) {
+						   float intensity_scale, float exposure, AeronSceneLight* out) {
+	if (!light || !transform || !(units_per_meter > 0.0f) || !(exposure > 0.0f) || !out) {
 		return 0;
 	}
-	return scene_flight_light(light, NULL, transform, units_per_meter, intensity_scale, out);
+	return scene_flight_light(light, NULL, transform, units_per_meter, intensity_scale, exposure, out);
 }
 
 int AeronScene_MeshLight(const AeronSceneMesh* mesh, uint32_t index, const float transform[16],
 						 float units_per_meter, const AeronSceneMeshTable* table, uint32_t variant,
-						 float intensity_scale, AeronSceneLight* out) {
-	if (!mesh || index >= mesh->light_count || !transform || !(units_per_meter > 0.0f) || !out) {
+						 float intensity_scale, float exposure, AeronSceneLight* out) {
+	if (!mesh || index >= mesh->light_count || !transform || !(units_per_meter > 0.0f) ||
+		!(exposure > 0.0f) || !out) {
 		return 0;
 	}
 	if (mesh->light_variant_masks) {
@@ -776,7 +776,7 @@ int AeronScene_MeshLight(const AeronSceneMesh* mesh, uint32_t index, const float
 		}
 		rows = table->rows[c];
 	}
-	return scene_flight_light(light, rows, transform, units_per_meter, intensity_scale, out);
+	return scene_flight_light(light, rows, transform, units_per_meter, intensity_scale, exposure, out);
 }
 
 int AeronScene_SetClusteredLights(AeronScene3D* s, const AeronSceneClusteredLightDesc* desc) {

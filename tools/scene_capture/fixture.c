@@ -619,11 +619,12 @@ static void attach_to_camera(float transform[16], const AeronSceneCamera* camera
 
 /* The model's authored lights, of every drawn instance. */
 static void add_model_lights(AeronScene3D* scene, const Fixture* f, const AeronSceneMeshInstance* instance) {
+	const float exposure = AeronScenePresent_ExposureFromEv100(f->config.exposure_ev100);
 	for (uint32_t li = 0; li < instance->mesh->light_count && f->config.game.model_light_intensity > 0;
 		 ++li) {
 		AeronSceneLight light;
 		if (AeronScene_MeshLight(instance->mesh, li, instance->transform, GAME_UNITS_PER_METER, NULL,
-								 instance->variant, f->config.game.model_light_intensity, &light))
+								 instance->variant, f->config.game.model_light_intensity, exposure, &light))
 			AeronScene_AddLight(scene, &light);
 	}
 }
@@ -723,7 +724,7 @@ static void add_game_instances(AeronScene3D* scene, const Fixture* f, double tim
 		AeronScene_AddMeshInstance(scene, &instance);
 	}
 	/* As XwaRemasterShip_ScenePointLight: 0.25 m spheres ending under
-	 * 1/250 of a unit of illuminance after the exposure. */
+	 * AERON_SCENE_LIGHT_CUTOFF after the exposure. */
 	const float exposure = AeronScenePresent_ExposureFromEv100(f->config.exposure_ev100);
 	for (int i = 0; i < f->config.game.light_count; ++i) {
 		const CaptureLight* l     = &f->config.game.lights[i];
@@ -740,7 +741,7 @@ static void add_game_instances(AeronScene3D* scene, const Fixture* f, double tim
 			light.color[k]     = l->intensity[k] * GAME_UNITS_PER_METER * GAME_UNITS_PER_METER;
 			peak               = fmaxf(peak, l->intensity[k]);
 		}
-		light.radius = sqrtf(peak * exposure / 0.004f) * GAME_UNITS_PER_METER;
+		light.radius = sqrtf(peak * exposure / AERON_SCENE_LIGHT_CUTOFF) * GAME_UNITS_PER_METER;
 		AeronScene_AddLight(scene, &light);
 	}
 }

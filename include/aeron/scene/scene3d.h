@@ -341,6 +341,15 @@ int AeronScene_AddLight(AeronScene3D* scene, const AeronSceneLight* light);
  * a tube's half length. */
 void AeronScene_LightBounds(const AeronSceneLight* light, float center[3], float* radius);
 
+/* The scene's luminous efficacy: scene values are W/m^2 at 683 lm/W, so
+ * 1 / AERON_SCENE_LUMENS_PER_WATT is the `intensity_scale` that turns candela
+ * into the scene's units. */
+#define AERON_SCENE_LUMENS_PER_WATT 683.0f
+/* Lights end where their illuminance times the exposure falls under this.
+ * There, a light adds at most a few levels to a dark pixel, and the window
+ * has already faded it to almost nothing. */
+#define AERON_SCENE_LIGHT_CUTOFF 0.004f
+
 /* World-space light for the mesh's model light `index` (AeronFlightLight),
  * as placed by an instance: `transform` is the instance's row-major
  * model->world matrix, scaled by `units_per_meter` world units per metre,
@@ -348,26 +357,22 @@ void AeronScene_LightBounds(const AeronSceneLight* light, float center[3], float
  * `intensity_scale` converts the light's candela to the scene's units (the
  * scene illuminance per lux); intensity also converts from metres, so the
  * light gives the same illuminance 1 m away. A light without a range ends
- * where it falls under 1/1000 of a unit of scene illuminance. A point is a
- * sphere and a tube a tube; a panel is a one-sided tube along its length
- * when it is at least three times longer than wide, else a one-sided sphere
- * of its area. `variant` is the instance's variant index
+ * where its illuminance times `exposure` falls under AERON_SCENE_LIGHT_CUTOFF.
+ * A point is a sphere and a tube a tube; a panel is a one-sided tube along
+ * its length when it is at least three times longer than wide, else a
+ * one-sided sphere of its area. `variant` is the instance's variant index
  * (AeronSceneMeshInstance.variant): a light that names variants shines only
- * with them. Returns zero for an invalid index, a light that emits
- * nothing, a light on a component the table hides, or a light that doesn't
- * shine with the variant. */
-/* The scene's luminous efficacy: scene values are W/m^2 at 683 lm/W, so
- * 1 / AERON_SCENE_LUMENS_PER_WATT is the `intensity_scale` that turns candela
- * into the scene's units. */
-#define AERON_SCENE_LUMENS_PER_WATT 683.0f
+ * with them. Returns zero for an invalid index or exposure, a light that
+ * emits nothing, a light on a component the table hides, or a light that
+ * doesn't shine with the variant. */
 int AeronScene_MeshLight(const AeronSceneMesh* mesh, uint32_t index, const float transform[16],
 						 float units_per_meter, const AeronSceneMeshTable* table, uint32_t variant,
-						 float intensity_scale, AeronSceneLight* out);
+						 float intensity_scale, float exposure, AeronSceneLight* out);
 /* World-space light for a light that no mesh holds, such as a craft's
  * headlight, converted as AeronScene_MeshLight converts a model light:
  * `transform` places it, in world units per metre. */
 int AeronScene_FlightLight(const AeronFlightLight* light, const float transform[16], float units_per_meter,
-						   float intensity_scale, AeronSceneLight* out);
+						   float intensity_scale, float exposure, AeronSceneLight* out);
 
 /* Persistent clustered-forward point-light configuration. The tile size is
  * selected automatically per frame. */
