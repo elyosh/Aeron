@@ -136,6 +136,9 @@ typedef struct AeronUploadCycleState {
  * can record. */
 #define AERON_COMMAND_READBACK_MAX 8
 
+/* The debug groups a command buffer keeps open across a flush. */
+#define AERON_COMMAND_DEBUG_DEPTH 16
+
 struct AeronReadbackSlot;
 
 /* Explicit command buffer wrapper. The command buffer owns its upload chunks
@@ -170,6 +173,9 @@ struct AeronCommandBuffer {
 	int                    immediate_upload;
 	int                    failed;
 	char                   failure_message[512];
+	/* The open debug groups, outermost first. */
+	char     debug_labels[AERON_COMMAND_DEBUG_DEPTH][64];
+	uint32_t debug_depth;
 };
 
 struct AeronRenderPass {
@@ -237,6 +243,27 @@ typedef struct AeronControllerDevice {
 	int            has_rumble;
 } AeronControllerDevice;
 
+typedef struct AeronSharedFence AeronSharedFence;
+
+#define AERON_PACING_HISTORY 120
+
+/* Latency pacing: the delay before the next frame reads input, and the
+ * last presents it was decided from. */
+typedef struct AeronPacingState {
+	int      enabled;
+	uint32_t delay_us;
+	uint32_t hold_frames;
+	/* The app asked to wait before the frame being drawn. */
+	int      app_delayed;
+	uint64_t last_present_us;
+	uint32_t history_count;
+	uint32_t history_next;
+	uint64_t present_us[AERON_PACING_HISTORY];
+	uint32_t acquire_wait_us[AERON_PACING_HISTORY];
+	uint8_t  late[AERON_PACING_HISTORY];
+	uint8_t  busy[AERON_PACING_HISTORY];
+} AeronPacingState;
+
 typedef struct AeronRuntime {
 	int                         initialized;
 	int                         quit_requested;
@@ -303,6 +330,13 @@ typedef struct AeronRuntime {
 	/* Frames submitted for presentation. The buffer readbacks count them to
 	 * know when the GPU has finished an older command buffer. */
 	uint64_t              presented_frames;
+	int                   frames_in_flight;
+	/* SDL_QueryGPUFence gives the right answer. */
+	int fence_query_reliable;
+	/* The fence of the newest command buffer submitted since the last
+	 * present, which the present queries when its swapchain image arrives. */
+	AeronSharedFence* pacing_fence;
+	AeronPacingState  pacing;
 } AeronRuntime;
 
 extern AeronRuntime g_aeron;
@@ -311,6 +345,11 @@ void Aeron_CopyString(char* dst, size_t dst_size, const char* src);
 void AeronVfs_DeinitInternal(AeronVfs* vfs);
 
 void Aeron_RefreshPresentationTiming(void);
+/* Latency pacing: the present reports how long it waited for its swapchain
+ * image and whether the GPU work before it was done by then. */
+void Aeron_ResetPacing(void);
+int  Aeron_PacingActive(void);
+void Aeron_NotePacingPresent(uint64_t acquire_wait_us, int gpu_done, uint64_t present_us);
 
 int  Aeron_WindowInit(const AeronConfig* config);
 void Aeron_WindowShutdown(void);

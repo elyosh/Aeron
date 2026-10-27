@@ -116,6 +116,7 @@ int Aeron_Init(const AeronConfig* config) {
 	g_aeron.last_frame_us   = Aeron_NowUs();
 	g_aeron.initialized     = 1;
 	Aeron_SetPresentationVsyncDivisor(1);
+	Aeron_SetLatencyPacing(1);
 
 	return 1;
 }

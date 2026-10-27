@@ -2520,6 +2520,8 @@ int AeronScene_Render(AeronScene3D* s, AeronCommandBuffer* cmd) {
 		AeronSceneProbeOcclusion_Update(s, cmd);
 		AeronScenePlanarReflection_Render(s, cmd);
 	}
+	/* The GPU starts on the shadows while the rest is recorded. */
+	(void)Aeron_FlushCommandBuffer(cmd);
 	s->temporal_active = temporal_requested;
 	if (temporal_requested &&
 		(!s->normal_rt || !AeronSceneTemporal_Ensure(s) ||

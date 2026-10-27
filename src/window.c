@@ -279,6 +279,10 @@ void Aeron_UpdatePresentationPixelSize(void) {
 	if (g_aeron.window && SDL_GetWindowSizeInPixels(g_aeron.window, &pixel_width, &pixel_height)) {
 		Aeron_ComputePresentationRect(pixel_width, pixel_height, &content_rect);
 	}
+	if (content_rect.w != g_aeron.presentation_pixel_width ||
+		content_rect.h != g_aeron.presentation_pixel_height) {
+		Aeron_ResetPacing();
+	}
 	g_aeron.presentation_pixel_width  = content_rect.w;
 	g_aeron.presentation_pixel_height = content_rect.h;
 }

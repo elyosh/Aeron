@@ -17,7 +17,7 @@ option(AERON_GLTF_COOK_STANDALONE "Link aeron_gltf_cook to run without the build
 option(AERON_ENABLE_COMPAT "Build the Win32/DirectX-era API compatibility target" OFF)
 option(AERON_ENABLE_DPLAY "Build DirectPlay support in aeron_compat" OFF)
 
-find_package(SDL3 3.4 REQUIRED CONFIG COMPONENTS SDL3-shared)
+find_package(SDL3 3.4.16 REQUIRED CONFIG COMPONENTS SDL3-shared)
 
 set(AERON_YAML_SOURCES
     third_party/libyaml/src/api.c

@@ -873,6 +873,11 @@ AeronCommandBuffer* Aeron_AcquireCommandBuffer(void);
  * success. The pointer is invalid afterwards either way. */
 int Aeron_SubmitCommandBuffer(AeronCommandBuffer* command_buffer);
 
+/* Submits what the command buffer holds so far, so the GPU can start on it,
+ * and carries on recording into a new one. No pass may be open. Debug
+ * groups stay open across it. Returns nonzero on success. */
+int Aeron_FlushCommandBuffer(AeronCommandBuffer* command_buffer);
+
 /* Submit and consume the command buffer, returning a completion fence or NULL
  * on failure. Wait/release the fence before device shutdown. These functions
  * expose completion only, not GPU timestamps. Submission must stay on the

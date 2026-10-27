@@ -176,8 +176,17 @@ static int Aeron_LoadBuiltinShaders(void) {
 	return g_aeron.fullscreen_vertex_shader && g_aeron.fullscreen_fragment_shader;
 }
 
+/* The fence of one submitted command buffer, shared by its readbacks and
+ * latency pacing. */
+struct AeronSharedFence {
+	SDL_GPUFence* fence;
+	uint32_t      refs;
+};
+
 static AeronTextureFormat Aeron_FromSdlTextureFormat(SDL_GPUTextureFormat format);
 static void               Aeron_ReleaseUploadChunkPool(void);
+static void               Aeron_ReleaseSharedFence(AeronSharedFence* fence);
+static int Aeron_SubmitSdlCommandBuffer(AeronCommandBuffer* command_buffer, int ok, SDL_GPUFence** fence);
 
 /* Applies the best available swapchain composition for the requested output
  * mode: HDR extended-linear when hdr is nonzero (no silent SDR fallback — the
@@ -231,6 +240,7 @@ static int Aeron_ConfigureSwapchain(int hdr) {
 	/* The debug overlay's ImGui pipeline is keyed on the swapchain
 	 * format; rebuild it on composition flips (no-op before its init). */
 	Aeron_DebugUiOnSwapchainFormatChanged(g_aeron.swapchain_format);
+	Aeron_ResetPacing();
 	return 1;
 }
 
@@ -1501,14 +1511,27 @@ int Aeron_RenderBackendInit(void) {
 		return 0;
 	}
 
-	/* Keep FIFO presentation from queueing an additional completed frame.
-	 * Aeron samples input before rendering, so a deeper queue directly adds
-	 * input-to-display latency. */
-	if (!SDL_SetGPUAllowedFramesInFlight(g_aeron.gpu_device, 1)) {
+	/* Two frames in flight let the next frame start while the GPU still
+	 * draws the last one. The swapchain image only frees at a vsync, so a
+	 * finished frame never waits in a queue; latency pacing makes up for
+	 * reading input earlier. */
+	if (!SDL_SetGPUAllowedFramesInFlight(g_aeron.gpu_device, 2)) {
 		Aeron_LogError("aeron", "SDL_SetGPUAllowedFramesInFlight failed: %s", SDL_GetError());
 		SDL_DestroyGPUDevice(g_aeron.gpu_device);
 		g_aeron.gpu_device = NULL;
 		return 0;
+	}
+	g_aeron.frames_in_flight = 2;
+
+	/* SDL_QueryGPUFence gives the opposite answer on Metal before SDL 3.4.16.
+	 * The library can be older than the headers the build used. */
+	const char* driver = SDL_GetGPUDeviceDriver(g_aeron.gpu_device);
+	g_aeron.fence_query_reliable =
+		!driver || SDL_strcmp(driver, "metal") != 0 || SDL_GetVersion() >= SDL_VERSIONNUM(3, 4, 16);
+	if (!g_aeron.fence_query_reliable) {
+		Aeron_LogWarn("aeron", "SDL %d.%d.%d can't query GPU fences on Metal; latency pacing is off",
+					  SDL_VERSIONNUM_MAJOR(SDL_GetVersion()), SDL_VERSIONNUM_MINOR(SDL_GetVersion()),
+					  SDL_VERSIONNUM_MICRO(SDL_GetVersion()));
 	}
 
 	if (!SDL_ClaimWindowForGPUDevice(g_aeron.gpu_device, g_aeron.window)) {
@@ -1546,6 +1569,8 @@ int Aeron_RenderBackendInit(void) {
 
 void Aeron_RenderBackendShutdown(void) {
 	if (g_aeron.gpu_device) {
+		Aeron_ReleaseSharedFence(g_aeron.pacing_fence);
+		g_aeron.pacing_fence = NULL;
 		Aeron_ReleasePixelLayerUploads();
 		Aeron_ReleaseUploadChunkPool();
 
@@ -1655,8 +1680,17 @@ int Aeron_Present(void) {
 	swapchain_width   = 0;
 	swapchain_height  = 0;
 	SDL_ClearError();
-	if (!SDL_WaitAndAcquireGPUSwapchainTexture(command_buffer, g_aeron.window, &swapchain_texture,
-											   &swapchain_width, &swapchain_height)) {
+	const uint64_t acquire_start_us = Aeron_NowUs();
+	const int      acquired         = SDL_WaitAndAcquireGPUSwapchainTexture(
+		command_buffer, g_aeron.window, &swapchain_texture, &swapchain_width, &swapchain_height);
+	const uint64_t acquire_wait_us = Aeron_NowUs() - acquire_start_us;
+	/* Whether the work submitted since the last present was done when the
+	 * image arrived, which is close to the vsync. */
+	const int gpu_done =
+		!g_aeron.pacing_fence || SDL_QueryGPUFence(g_aeron.gpu_device, g_aeron.pacing_fence->fence);
+	Aeron_ReleaseSharedFence(g_aeron.pacing_fence);
+	g_aeron.pacing_fence = NULL;
+	if (!acquired) {
 		const char* error = SDL_GetError();
 		Aeron_SetRenderError("SDL_WaitAndAcquireGPUSwapchainTexture failed: %s",
 							 error && error[0] ? error : "<no SDL error provided>");
@@ -1831,8 +1865,29 @@ int Aeron_Present(void) {
 		return 0;
 	}
 	g_aeron.presented_frames++;
+	if (swapchain_texture) {
+		Aeron_NotePacingPresent(acquire_wait_us, gpu_done, Aeron_NowUs());
+	}
 	return 1;
 }
+
+int Aeron_SetFramesInFlight(int count) {
+	if (!g_aeron.gpu_device || (count != 1 && count != 2)) {
+		return 0;
+	}
+	if (count == g_aeron.frames_in_flight) {
+		return 1;
+	}
+	if (!SDL_SetGPUAllowedFramesInFlight(g_aeron.gpu_device, (Uint32)count)) {
+		Aeron_SetRenderError("SDL_SetGPUAllowedFramesInFlight failed: %s", SDL_GetError());
+		return 0;
+	}
+	g_aeron.frames_in_flight = count;
+	Aeron_ResetPacing();
+	return 1;
+}
+
+int Aeron_FramesInFlight(void) { return g_aeron.frames_in_flight; }
 
 int Aeron_WaitForPresentationSlot(void) {
 	if (!g_aeron.gpu_device || !g_aeron.window) {
@@ -2112,11 +2167,25 @@ AeronGpuDeviceInfo Aeron_RenderGpuDeviceInfo(void) {
 }
 
 void Aeron_GpuDebugPush(AeronCommandBuffer* command_buffer, const char* name) {
-	AeronGpuDebug_Push(command_buffer ? command_buffer->command_buffer : NULL, name);
+	if (!command_buffer || !name) {
+		return;
+	}
+	if (command_buffer->debug_depth < AERON_COMMAND_DEBUG_DEPTH) {
+		Aeron_CopyString(command_buffer->debug_labels[command_buffer->debug_depth],
+						 sizeof command_buffer->debug_labels[0], name);
+	}
+	command_buffer->debug_depth++;
+	AeronGpuDebug_Push(command_buffer->command_buffer, name);
 }
 
 void Aeron_GpuDebugPop(AeronCommandBuffer* command_buffer) {
-	AeronGpuDebug_Pop(command_buffer ? command_buffer->command_buffer : NULL);
+	if (!command_buffer) {
+		return;
+	}
+	if (command_buffer->debug_depth) {
+		command_buffer->debug_depth--;
+	}
+	AeronGpuDebug_Pop(command_buffer->command_buffer);
 }
 
 void Aeron_GpuDebugMarker(AeronCommandBuffer* command_buffer, const char* name) {
@@ -2460,15 +2529,9 @@ static void Aeron_CommandBufferEndUploadSlice(AeronCommandBuffer* command_buffer
 
 enum { AERON_READBACK_IDLE, AERON_READBACK_RECORDED, AERON_READBACK_IN_FLIGHT };
 
-/* The fence of one submitted command buffer, shared by its readbacks. */
-typedef struct AeronReadbackFence {
-	SDL_GPUFence* fence;
-	uint32_t      refs;
-} AeronReadbackFence;
-
 typedef struct AeronReadbackSlot {
 	SDL_GPUTransferBuffer* transfer;
-	AeronReadbackFence*    fence;
+	AeronSharedFence*      fence;
 	uint64_t               serial;
 	uint64_t               submitted_frame; /* presented_frames at submission */
 	int                    state;
@@ -2483,7 +2546,23 @@ struct AeronBufferReadback {
 	void*             data;
 };
 
-static void Aeron_ReleaseReadbackFence(AeronReadbackFence* fence) {
+/* Takes `fence` into a shared fence with one reference. Without memory,
+ * the fence is released and the result is NULL. */
+static AeronSharedFence* Aeron_ShareFence(SDL_GPUFence* fence) {
+	if (!fence)
+		return NULL;
+	AeronSharedFence* shared = (AeronSharedFence*)SDL_calloc(1, sizeof *shared);
+	if (!shared) {
+		if (g_aeron.gpu_device)
+			SDL_ReleaseGPUFence(g_aeron.gpu_device, fence);
+		return NULL;
+	}
+	shared->fence = fence;
+	shared->refs  = 1;
+	return shared;
+}
+
+static void Aeron_ReleaseSharedFence(AeronSharedFence* fence) {
 	if (fence && --fence->refs == 0) {
 		if (g_aeron.gpu_device && fence->fence)
 			SDL_ReleaseGPUFence(g_aeron.gpu_device, fence->fence);
@@ -2491,35 +2570,28 @@ static void Aeron_ReleaseReadbackFence(AeronReadbackFence* fence) {
 	}
 }
 
-/* Gives the readbacks of a command buffer the fence it was submitted with,
- * which this takes. Without one (not submitted, or the caller took the
- * fence), their copies are dropped. */
-static void Aeron_SettleReadbacks(AeronCommandBuffer* command_buffer, SDL_GPUFence* fence) {
-	AeronReadbackFence* shared = NULL;
-	if (fence && command_buffer->readback_slot_count) {
-		shared = (AeronReadbackFence*)SDL_calloc(1, sizeof *shared);
-		if (shared) {
-			shared->fence = fence;
-			shared->refs  = command_buffer->readback_slot_count;
-		}
-	}
-	if (fence && !shared && g_aeron.gpu_device)
-		SDL_ReleaseGPUFence(g_aeron.gpu_device, fence);
+/* Gives the readbacks of a command buffer the fence it was submitted with.
+ * Without one (not submitted, or the caller took the fence), their copies
+ * are dropped. */
+static void Aeron_SettleReadbacks(AeronCommandBuffer* command_buffer, AeronSharedFence* fence) {
 	for (uint32_t i = 0; i < command_buffer->readback_slot_count; ++i) {
 		AeronReadbackSlot* slot = command_buffer->readback_slots[i];
-		slot->fence             = shared;
+		slot->fence             = fence;
 		slot->submitted_frame   = g_aeron.presented_frames;
-		slot->state             = shared ? AERON_READBACK_IN_FLIGHT : AERON_READBACK_IDLE;
+		slot->state             = fence ? AERON_READBACK_IN_FLIGHT : AERON_READBACK_IDLE;
+		if (fence)
+			fence->refs++;
 	}
 	command_buffer->readback_slot_count = 0;
 }
 
 /* Keeps the newest finished copy and frees the slots the GPU is done with.
  * A copy is read once two more frames have been presented since its
- * command buffer was submitted. With one frame in flight, acquiring the
- * second frame's swapchain image waited for the first, which the GPU ran
- * after the copy, so the fence wait returns at once. SDL_QueryGPUFence
- * can't be used: on Metal, SDL 3.4 returns the opposite result. */
+ * command buffer was submitted. With one or two frames in flight, the start
+ * of the second frame after it waited for the present two frames back,
+ * which the GPU ran after the copy, so the fence wait returns at once. It
+ * waits instead of using SDL_QueryGPUFence, which gives the opposite answer
+ * on Metal before SDL 3.4.16. */
 static void Aeron_CollectReadback(AeronBufferReadback* readback) {
 	for (int i = 0; i < AERON_READBACK_SLOTS; ++i) {
 		AeronReadbackSlot* slot = &readback->slots[i];
@@ -2534,7 +2606,7 @@ static void Aeron_CollectReadback(AeronBufferReadback* readback) {
 				readback->newest_serial = slot->serial;
 			}
 		}
-		Aeron_ReleaseReadbackFence(slot->fence);
+		Aeron_ReleaseSharedFence(slot->fence);
 		slot->fence = NULL;
 		slot->state = AERON_READBACK_IDLE;
 	}
@@ -2560,7 +2632,7 @@ void Aeron_DestroyBufferReadback(AeronBufferReadback* readback) {
 		return;
 	for (int i = 0; i < AERON_READBACK_SLOTS; ++i) {
 		AeronReadbackSlot* slot = &readback->slots[i];
-		Aeron_ReleaseReadbackFence(slot->fence);
+		Aeron_ReleaseSharedFence(slot->fence);
 		if (slot->transfer && g_aeron.gpu_device)
 			SDL_ReleaseGPUTransferBuffer(g_aeron.gpu_device, slot->transfer);
 	}
@@ -2630,7 +2702,6 @@ static int Aeron_SubmitCommandBufferInternal(AeronCommandBuffer* command_buffer,
 	}
 
 	ok = command_buffer->failed == 0;
-	SDL_GPUFence* readback_fence = NULL;
 	if (command_buffer->compute_pass_active) {
 		Aeron_LogError("aeron", "Cannot submit a command buffer with an active compute pass");
 		Aeron_EndComputePass(&command_buffer->active_compute_pass);
@@ -2640,6 +2711,15 @@ static int Aeron_SubmitCommandBufferInternal(AeronCommandBuffer* command_buffer,
 		Aeron_CommandBufferFail(command_buffer, "Cannot submit a command buffer with an active render pass");
 		ok = 0;
 	}
+	ok = Aeron_SubmitSdlCommandBuffer(command_buffer, ok, fence);
+	SDL_free(command_buffer);
+	return ok;
+}
+
+/* Submits or cancels the wrapper's SDL command buffer and settles what it
+ * owns: its readbacks, its upload chunks and the pacing fence. */
+static int Aeron_SubmitSdlCommandBuffer(AeronCommandBuffer* command_buffer, int ok, SDL_GPUFence** fence) {
+	SDL_GPUFence* shared_fence = NULL;
 	if (!ok) {
 		if (command_buffer->command_buffer) {
 			SDL_CancelGPUCommandBuffer(command_buffer->command_buffer);
@@ -2650,9 +2730,9 @@ static int Aeron_SubmitCommandBufferInternal(AeronCommandBuffer* command_buffer,
 		if (fence) {
 			*fence    = SDL_SubmitGPUCommandBufferAndAcquireFence(command_buffer->command_buffer);
 			submitted = *fence != NULL;
-		} else if (command_buffer->readback_slot_count) {
-			readback_fence = SDL_SubmitGPUCommandBufferAndAcquireFence(command_buffer->command_buffer);
-			submitted      = readback_fence != NULL;
+		} else if (command_buffer->readback_slot_count || g_aeron.fence_query_reliable) {
+			shared_fence = SDL_SubmitGPUCommandBufferAndAcquireFence(command_buffer->command_buffer);
+			submitted    = shared_fence != NULL;
 		} else {
 			submitted = SDL_SubmitGPUCommandBuffer(command_buffer->command_buffer);
 		}
@@ -2669,9 +2749,43 @@ static int Aeron_SubmitCommandBufferInternal(AeronCommandBuffer* command_buffer,
 			g_aeron.render_data_stats.immediate_upload_submission_count++;
 		}
 	}
-	Aeron_SettleReadbacks(command_buffer, readback_fence);
+	AeronSharedFence* shared = Aeron_ShareFence(shared_fence);
+	Aeron_SettleReadbacks(command_buffer, shared);
+	if (shared && g_aeron.fence_query_reliable) {
+		/* The present asks whether the newest work before it is done. */
+		Aeron_ReleaseSharedFence(g_aeron.pacing_fence);
+		g_aeron.pacing_fence = shared;
+		shared->refs++;
+	}
+	Aeron_ReleaseSharedFence(shared);
 	Aeron_ReturnUploadChunks(command_buffer);
-	SDL_free(command_buffer);
+	command_buffer->command_buffer = NULL;
+	return ok;
+}
+
+int Aeron_FlushCommandBuffer(AeronCommandBuffer* command_buffer) {
+	if (!command_buffer || !command_buffer->command_buffer || !command_buffer->owns_wrapper ||
+		command_buffer->failed || command_buffer->compute_pass_active || command_buffer->render_pass_active) {
+		return 0;
+	}
+	/* Debug groups can't span command buffers: close them, and open them
+	 * again on the next one. */
+	for (uint32_t i = 0; i < command_buffer->debug_depth; ++i) {
+		AeronGpuDebug_Pop(command_buffer->command_buffer);
+	}
+	const int ok = Aeron_SubmitSdlCommandBuffer(command_buffer, 1, NULL);
+	SDL_ClearError();
+	command_buffer->command_buffer = SDL_AcquireGPUCommandBuffer(g_aeron.gpu_device);
+	if (!command_buffer->command_buffer) {
+		const char* error = SDL_GetError();
+		Aeron_CommandBufferFail(command_buffer, "SDL_AcquireGPUCommandBuffer failed after a flush: %s",
+								error && error[0] ? error : "<no SDL error provided>");
+		return 0;
+	}
+	for (uint32_t i = 0; i < command_buffer->debug_depth; ++i) {
+		AeronGpuDebug_Push(command_buffer->command_buffer,
+						   i < AERON_COMMAND_DEBUG_DEPTH ? command_buffer->debug_labels[i] : "group");
+	}
 	return ok;
 }
 
