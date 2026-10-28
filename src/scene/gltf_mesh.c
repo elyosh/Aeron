@@ -1005,7 +1005,8 @@ bool Aeron_GltfMeshBuildData(const cgltf_data* data, const char* source_label, A
 
 	/* ---- Variants, then the atlas images the materials reference --- */
 	AtlasImages atlas = { 0 };
-	if (!read_variants(data, source_label, out) || !read_atlases(data, source_label, out, &atlas))
+	if (!read_variants(data, source_label, out) || !read_atlases(data, source_label, out, &atlas) ||
+		!Aeron_FlightTagGroupsBuild(data, source_label, &out->tag_groups))
 		goto cleanup;
 	uint32_t   energy_default       = 0;
 	const bool has_energy_default   = read_energy_default(data, source_label, &energy_default);
@@ -1035,6 +1036,8 @@ bool Aeron_GltfMeshBuildData(const cgltf_data* data, const char* source_label, A
 			snprintf(owner, sizeof owner, "material %u", i);
 			out->materials[i].energy_mask = energy ? energy_mask(energy, source_label, owner)
 												   : (has_energy_default ? energy_default : 0u);
+			out->materials[i].tag_groups =
+				Aeron_FlightTagGroupsMask(&out->tag_groups, cJSON_GetObjectItemCaseSensitive(object, "tags"));
 			const bool read =
 				read_screen(cJSON_GetObjectItemCaseSensitive(object, "screen"), out, &screen_rect_capacity,
 							&out->materials[i], source_label, i) &&

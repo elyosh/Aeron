@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "AERON_flight_model material extension",
-  "description": "What the game draws on a material beyond its glTF definition: frames played on game states, hull damage, energy effects and live screens. Frames and damage stages are image keys of effect libraries, which the models share (animated_materials.md). Unknown fields are ignored.",
+  "description": "What the game draws on a material beyond its glTF definition: frames played on game states, hull damage, energy effects and live screens, and the tags the game finds it by. Frames and damage stages are image keys of effect libraries, which the models share (animated_materials.md). Unknown fields are ignored.",
   "type": "object",
   "properties": {
     "flipbooks": {
@@ -25,9 +25,21 @@
       "type": "object",
       "propertyNames": { "$ref": "#/$defs/skinName" },
       "additionalProperties": { "$ref": "#/$defs/skinLayer" }
+    },
+    "tags": {
+      "title": "Tags",
+      "description": "Game-defined names the game finds the material by, such as engine_glow. A model's materials and lights have at most 32 distinct tags. Duplicates are ignored.",
+      "type": "array",
+      "items": { "$ref": "#/$defs/tag" }
     }
   },
   "$defs": {
+    "tag": {
+      "title": "Name",
+      "description": "A game-defined name: 1 to 63 characters among lower-case ASCII letters, digits, '.' and '_'.",
+      "type": "string",
+      "pattern": "^[a-z0-9._]{1,63}$"
+    },
     "skinName": {
       "title": "Skin name",
       "description": "1 to 63 lower-case letters, digits, '.', '_' and '-'.",

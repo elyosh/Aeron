@@ -91,6 +91,13 @@ class _MaterialPanel:
         return context.material is not None
 
 
+class MATERIAL_PT_aeron_tags(_MaterialPanel, Panel):
+    bl_label = "Aeron Tags"
+
+    def draw(self, context):
+        self.layout.prop(context.material.aeron_flight, "tags")
+
+
 class MATERIAL_PT_aeron_animation(_MaterialPanel, Panel):
     bl_label = "Aeron Animation"
 
@@ -237,6 +244,7 @@ classes = (
     AERON_UL_damage_alternatives,
     AERON_UL_libraries,
     AERON_UL_library_images,
+    MATERIAL_PT_aeron_tags,
     MATERIAL_PT_aeron_animation,
     MATERIAL_PT_aeron_flipbooks,
     MATERIAL_PT_aeron_preview,

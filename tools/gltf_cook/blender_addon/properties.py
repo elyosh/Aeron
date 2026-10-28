@@ -180,7 +180,7 @@ class AeronFlightProperties(PropertyGroup):
         description="Explosion type 3. Not used by XWA")
     tags: StringProperty(
         name="Tags",
-        description="Tags defined by the game, separated by commas, such as hangarcrane.arm. "
+        description="Tags defined by the game, separated by commas, such as hangarcrane.arm or engine_glow. "
                     "Use lower-case letters, digits, '.' and '_'")
     target_id: IntProperty(
         name="Target ID", default=0,
@@ -283,6 +283,10 @@ class AeronFlightProperties(PropertyGroup):
 
 class AeronMaterialProperties(animation.AeronAnimation, PropertyGroup):
     """The AERON_flight_model data of a material (animation.py), and its skins (skins.py)."""
+    tags: StringProperty(
+        name="Tags",
+        description="Tags defined by the game, separated by commas, such as engine_glow. "
+                    "Use lower-case letters, digits, '.' and '_'")
     skins: CollectionProperty(type=skins.AeronSkinLayer)
     active_skin: IntProperty()
     # A skin preview copy (skins.py): the material it shows, and the layers.

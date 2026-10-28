@@ -34,6 +34,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "aeron/asset/flight_tags.h"
 #include "aeron/scene/mesh_common.h"
 
 #ifdef __cplusplus
@@ -184,6 +185,9 @@ typedef struct AeronGltfMaterial {
 	 * root's): bit per AERON_EFFECT_ENERGY_* (shields 0, tractor 1,
 	 * jamming 2). */
 	uint32_t energy_mask;
+	/* The model's tag groups (AeronGltfModel.tag_groups) that the
+	 * material's `tags` name: bit g for group g. */
+	uint32_t tag_groups;
 } AeronGltfMaterial;
 
 /* ===== Material animation ===========================================
@@ -350,6 +354,10 @@ typedef struct AeronGltfModel {
 	/* Hull-damage alternatives of every material. */
 	uint32_t         damage_count;
 	AeronGltfDamage* damages;
+
+	/* The distinct tags of the materials and lights. Materials and lights
+	 * record theirs as masks of these groups. */
+	AeronFlightTagGroups tag_groups;
 } AeronGltfModel;
 
 /* Internal render builder used by the common flight-model construction.

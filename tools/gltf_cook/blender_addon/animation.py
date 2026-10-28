@@ -327,11 +327,14 @@ def shortest(value):
 
 
 def extension(material):
-    """The AERON_flight_model object of `material`, with its animation and
-    its kept screen. None when it has neither."""
+    """The AERON_flight_model object of `material`, with its animation, its
+    kept screen and its tags. None when it has none of them."""
     result = shortest(entry(material) or {})
     if material.aeron_flight.screen:
         result["screen"] = json.loads(material.aeron_flight.screen)
+    tags = common.parse_tags(material.aeron_flight.tags)
+    if tags:
+        result["tags"] = tags
     return result or None
 
 

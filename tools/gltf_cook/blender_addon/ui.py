@@ -264,6 +264,7 @@ def draw_light(layout, obj):
         row = layout.row()
         row.label(text="The game has no soft falloff", icon='ERROR')
         row.prop(light, "use_soft_falloff")
+    layout.prop(props, "tags")
     layout.label(text="Shines with these variants (every one when empty):")
     row = layout.row()
     row.template_list("AERON_UL_light_variants", "", props, "light_variants", props, "active_light_variant",

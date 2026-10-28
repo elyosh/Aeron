@@ -869,6 +869,7 @@ endif()
 add_library(aeron_flight_model STATIC
     src/asset/flight_model.c
     src/asset/flight_probes.c
+    src/asset/flight_tags.c
     src/asset/opt_sim_model.c
     src/asset/opt_sim_image.c
     src/scene/gltf_mesh.c

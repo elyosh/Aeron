@@ -151,6 +151,7 @@ def restore(gltf):
                         _restore_light(child, extension, lights[light_index])
                         for name in extension.get("variants", []):
                             child.aeron_flight.light_variants.add().variant = name or ""
+                        child.aeron_flight.tags = ", ".join(extension.get("tags", []))
                         _state["lights"] += 1
         _state["components"] += len(parts)
 
@@ -192,6 +193,7 @@ class glTF2ImportUserExtension:
             animation.set_entry(blender_material, extension)
             screen = extension.get("screen")
             blender_material.aeron_flight.screen = json.dumps(screen) if screen is not None else ""
+            blender_material.aeron_flight.tags = ", ".join(extension.get("tags", []))
             skins.restore_material(blender_material, extension, gltf)
         except Exception as error:  # the importer would only log it
             _state["error"] = "material {}: {}: {}".format(blender_material.name, type(error).__name__, error)

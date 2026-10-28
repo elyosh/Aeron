@@ -75,15 +75,17 @@ A component whose simulation triangles all have zero area has no collision
 faces: nothing collides with it, but its positions still give its bounds.
 Such a component has no cooked `simulationData`.
 
-## Component tags
+## Tags
 
-A component may carry `tags`, an array of game-defined names. A tag is 1 to
-63 lower-case ASCII letters, digits, `.` and `_`. A malformed tag is
-invalid, and a tag repeated in one component counts once. A tag gives a
-component a role that the game finds by name instead of by number, such as
-`hangarcrane.arm`. Aeron stores tags as they are. Each game documents the
-tags it reads, and which ones must be unique in a model. Games ignore the
-tags they don't read.
+Components, materials and lights may carry `tags`, an array of game-defined
+names. A tag is 1 to 63 lower-case ASCII letters, digits, `.` and `_`. A
+malformed tag is invalid, and a tag repeated in one part counts once. A tag
+lets the game find a part by name instead of by number, such as the component
+`hangarcrane.arm` or the engine glow surfaces and lights `engine_glow`. Aeron
+stores tags as they are. Each game documents the tags it reads, and which ones
+must be unique in a model. Games ignore the tags they don't read.
+
+A model's materials and lights have at most 32 distinct tags.
 
 ## Articulations
 
@@ -290,7 +292,8 @@ Its intensity is the light inside the inner angle. The node's
   `KHR_materials_variants` variants (see Markings), and `null` for the
   model's own materials. A model shows a variant for each object, so a light
   can shine for some looks only, such as a light of each colour of a bolt.
-  Without the list, the light shines with every variant.
+  Without the list, the light shines with every variant;
+- `tags`: optional, game-defined names (see Tags).
 
 ```json
 "AERON_flight_model": { "role": "light", "shape": "tube", "length": 3.2, "variants": ["Red"] }
@@ -315,7 +318,8 @@ beyond its glTF definition. It may hold:
   `jamming` (`[]` for none). The model root's `energy` is the default of
   every material without its own; without either, a material shows none;
 - `screen`: displays the game draws live on it (cockpit screens);
-- `skins`: its skin layers (see Skins).
+- `skins`: its skin layers (see Skins);
+- `tags`: game-defined names (see Tags).
 
 Frames and damage stages are image keys of effect libraries, files the
 models share and the game loads from `flight/effects/` in its mod folder.

@@ -292,6 +292,12 @@
           "items": { "type": ["string", "null"] },
           "minItems": 1,
           "uniqueItems": true
+        },
+        "tags": {
+          "title": "Tags",
+          "description": "Game-defined names the game finds the light by, such as engine_glow. A model's materials and lights have at most 32 distinct tags. Duplicates are ignored.",
+          "type": "array",
+          "items": { "$ref": "#/$defs/tag" }
         }
       },
       "allOf": [

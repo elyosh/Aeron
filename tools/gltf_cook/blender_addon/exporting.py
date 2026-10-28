@@ -156,6 +156,9 @@ class _ExportState:
                     names = [entry.variant or None for entry in child.aeron_flight.light_variants]
                     if names:
                         extension["variants"] = list(dict.fromkeys(names))
+                    tags = common.parse_tags(child.aeron_flight.tags)
+                    if tags:
+                        extension["tags"] = tags
                     self.extensions[child.name] = extension
                     self.lights[child.name] = common.light_punctual(child, child.matrix_world)
 

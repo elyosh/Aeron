@@ -6,6 +6,8 @@
 from . import animation, common, probes, skins, sources, variants
 
 EPSILON = 1.0e-5
+# The distinct tags of a model's materials and lights that the game reads.
+MAX_TAG_GROUPS = 32
 
 
 class Problems:
@@ -112,6 +114,8 @@ def _check_light(problems, obj):
         return
     if obj.children:
         problems.error(obj, "a model light cannot have children")
+    for tag in common.parse_tags(obj.aeron_flight.tags):
+        _check_tag(problems, obj, "tag", tag)
     if _animated(obj):
         problems.error(obj, "flight model objects cannot be animated")
     scale = _scale(obj)
@@ -132,6 +136,24 @@ def _check_light(problems, obj):
     if light.type in {'POINT', 'SPOT'} and light.use_soft_falloff:
         problems.warning(obj, "Soft Falloff is on: it dims the light near its source in Blender, "
                               "but not in the game. Turn it off in the Light tab")
+
+
+def _check_material_tags(problems, root):
+    """Checks the tags of the model's materials, and that its materials and
+    lights have at most MAX_TAG_GROUPS distinct tags, as the game loads."""
+    distinct = set()
+    for material in sorted(sources.model_materials(root), key=lambda m: m.name):
+        for tag in common.parse_tags(material.aeron_flight.tags):
+            if not common.TAG_PATTERN.match(tag):
+                problems.error(root, "material {}: tag {!r}: use 1-63 lower-case letters, digits, '.' or '_'".format(
+                    material.name, tag))
+            distinct.add(tag)
+    for obj in root.children_recursive:
+        if common.is_model_light(obj):
+            distinct.update(common.parse_tags(obj.aeron_flight.tags))
+    if len(distinct) > MAX_TAG_GROUPS:
+        problems.error(root, "the materials and lights have {} different tags; the game reads at most {}".format(
+            len(distinct), MAX_TAG_GROUPS))
 
 
 def validate(root):
@@ -195,6 +217,7 @@ def validate(root):
     variants.check(problems, root)
     probes.check(problems, root)
     animation.check(problems, root, sources.model_materials(root))
+    _check_material_tags(problems, root)
 
     for obj in root.children_recursive:
         if common.role(obj) in {'model'}:

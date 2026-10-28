@@ -5,6 +5,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "aeron/asset/flight_tags.h"
 #include "aeron/collision/face_bvh.h"
 #include "aeron/scene/gltf_mesh.h"
 
@@ -99,7 +100,10 @@ typedef enum AeronFlightLightShape {
  * A light with `has_variants` shines only while the model shows one of the
  * variants of `variant_mask`: bit v (word v / 32) for KHR_materials_variants
  * variant v, bit AERON_FLIGHT_LIGHT_OWN_MATERIALS for the model's own
- * materials. Without it, the light shines with every variant. */
+ * materials. Without it, the light shines with every variant.
+ *
+ * `tag_groups` is the mask of the model's tag groups (AeronFlightTagGroups,
+ * in the model's render data) that the light's `tags` name. */
 #define AERON_FLIGHT_LIGHT_VARIANT_WORDS 8
 #define AERON_FLIGHT_LIGHT_OWN_MATERIALS 255u
 
@@ -121,14 +125,8 @@ typedef struct AeronFlightLight {
 	bool baked;
 	bool     has_variants;
 	uint32_t variant_mask[AERON_FLIGHT_LIGHT_VARIANT_WORDS];
+	uint32_t tag_groups;
 } AeronFlightLight;
-
-/* Game-defined component tag: lower-case ASCII letters, digits, '.' and '_'. */
-#define AERON_FLIGHT_TAG_MAX 64
-
-typedef struct AeronFlightTag {
-	char name[AERON_FLIGHT_TAG_MAX];
-} AeronFlightTag;
 
 /* Game-defined articulation: component `component` turns about its
  * `rotation` hinge, in a group the game drives. `component` indexes the

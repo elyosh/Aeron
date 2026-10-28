@@ -12,6 +12,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "aeron/asset/flight_tags.h"
 #include "cJSON.h"
 #include "cgltf.h"
 #include "effect_library.h"
@@ -325,15 +326,27 @@ static bool check_screen(Check* c, const cJSON* in) {
 						 "layer 4 } }");
 }
 
+/* `tags`: game-defined names. */
+static bool check_tags(Check* c, const cJSON* in) {
+	bool         ok = cJSON_IsArray(in);
+	const cJSON* tag;
+	const cJSON* tag_list = ok ? in : NULL;
+	cJSON_ArrayForEach(tag, tag_list) {
+		ok = ok && cJSON_IsString(tag) && Aeron_FlightTagValid(tag->valuestring);
+	}
+	return ok || fail(c, "tags is a list of names of 1 to 63 lower-case letters, digits, '.' and '_'");
+}
+
 /* A material's AERON_flight_model object. */
 static bool check_material(Check* c, const char* json) {
 	/* The cook checks `skins` when it expands them (skin_layers.h). */
-	static const char* const fields[] = { "flipbooks", "damage", "energy", "screen", "skins" };
+	static const char* const fields[] = { "flipbooks", "damage", "energy", "screen", "skins", "tags" };
 	cJSON*                   object   = cJSON_Parse(json);
 	const cJSON*             books    = cJSON_GetObjectItemCaseSensitive(object, "flipbooks");
 	const cJSON*             damage   = cJSON_GetObjectItemCaseSensitive(object, "damage");
 	const cJSON*             energy   = cJSON_GetObjectItemCaseSensitive(object, "energy");
 	const cJSON*             screen   = cJSON_GetObjectItemCaseSensitive(object, "screen");
+	const cJSON*             tags     = cJSON_GetObjectItemCaseSensitive(object, "tags");
 	bool ok = cJSON_IsObject(object) ? only_members(c, "AERON_flight_model", object, fields, COUNT(fields))
 									 : fail(c, "AERON_flight_model is an object");
 	if (ok && books && !cJSON_IsArray(books))
@@ -342,7 +355,7 @@ static bool check_material(Check* c, const char* json) {
 	const cJSON* book_list = ok ? books : NULL;
 	cJSON_ArrayForEach(book, book_list) { ok = ok && check_flipbook(c, book); }
 	ok = ok && (!damage || check_damage(c, damage)) && (!energy || check_energy(c, energy)) &&
-		 (!screen || check_screen(c, screen));
+		 (!screen || check_screen(c, screen)) && (!tags || check_tags(c, tags));
 	cJSON_Delete(object);
 	return ok;
 }
