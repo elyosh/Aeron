@@ -522,6 +522,12 @@ static int scene_grown_capacity(int capacity, int limit) {
 	return grown < limit ? grown : limit;
 }
 
+/* The groups an instance hides, limited to its mesh's groups. */
+static uint32_t scene_hidden_tag_groups(const AeronSceneMeshInstance* instance) {
+	const uint32_t count = instance->mesh->tag_groups.count;
+	return count >= 32u ? instance->hidden_tag_groups : instance->hidden_tag_groups & ((1u << count) - 1u);
+}
+
 void AeronScene_AddMeshInstance(AeronScene3D* s, const AeronSceneMeshInstance* instance) {
 	if (!s || !instance || !instance->mesh) {
 		return;
@@ -537,7 +543,8 @@ void AeronScene_AddMeshInstance(AeronScene3D* s, const AeronSceneMeshInstance* i
 		s->instances_dropped++;
 		return;
 	}
-	s->instances[s->instance_count++] = *instance;
+	s->instances[s->instance_count]                     = *instance;
+	s->instances[s->instance_count++].hidden_tag_groups = scene_hidden_tag_groups(instance);
 }
 
 /* A light with a finite, non-zero half axis. */
@@ -751,9 +758,10 @@ int AeronScene_FlightLight(const AeronFlightLight* light, const float transform[
 
 int AeronScene_MeshLight(const AeronSceneMesh* mesh, uint32_t index, const float transform[16],
 						 float units_per_meter, const AeronSceneMeshTable* table, uint32_t variant,
-						 float intensity_scale, float exposure, AeronSceneLight* out) {
+						 uint32_t hidden_tag_groups, float intensity_scale, float exposure,
+						 AeronSceneLight* out) {
 	if (!mesh || index >= mesh->light_count || !transform || !(units_per_meter > 0.0f) ||
-		!(exposure > 0.0f) || !out) {
+		!(exposure > 0.0f) || !out || (mesh->lights[index].tag_groups & hidden_tag_groups) != 0) {
 		return 0;
 	}
 	if (mesh->light_variant_masks) {
@@ -838,7 +846,8 @@ void AeronScene_AddShadowCaster(AeronScene3D* s, const AeronSceneMeshInstance* i
 		s->shadow_only_dropped++;
 		return;
 	}
-	s->shadow_only[s->shadow_only_count++] = *instance;
+	s->shadow_only[s->shadow_only_count]                     = *instance;
+	s->shadow_only[s->shadow_only_count++].hidden_tag_groups = scene_hidden_tag_groups(instance);
 }
 
 void AeronScene_GetDirectionalShadowStats(const AeronScene3D* s, AeronSceneDirectionalShadowStats* out) {
@@ -1987,7 +1996,7 @@ static void scene_instance_record(const AeronSceneMeshInstance*     instance,
 	out->base_color_emissive_strength = instance->base_color_emissive_strength;
 	out->receive_shadow = (instance->shadow_flags & AERON_SCENE_INSTANCE_NO_RECEIVE_SHADOW) == 0 ? 1u : 0u;
 	out->zero_velocity  = moving ? 0u : 1u;
-	out->reserved       = 0;
+	out->hidden_tag_groups = instance->hidden_tag_groups;
 }
 
 /* Groups the batchable visible instances into batches and writes their

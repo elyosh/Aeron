@@ -110,7 +110,12 @@ typedef struct AeronSceneMesh {
 	uint32_t     variant_rows;
 	uint32_t     variant_count;
 	uint32_t     variant_groups_per_row;
-	bool         all_materials_single_sided;
+	/* The tag groups of each primitive's material, in variant_buffer's
+	 * layout, which the vertex shaders read to hide an instance's
+	 * hidden_tag_groups; and the model's tag group names. */
+	AeronBuffer*         tag_group_buffer;
+	AeronFlightTagGroups tag_groups;
+	bool                 all_materials_single_sided;
 	/* Screen rectangles (AeronPbrScreenRect), NULL without screen
 	 * materials, the OR of the screen materials' game-defined `hide`
 	 * masks (AeronGltfModel), and the sources the rectangles sample

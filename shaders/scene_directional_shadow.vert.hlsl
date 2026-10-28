@@ -6,6 +6,7 @@ struct VSIn
 {
     float3 position   : POSITION;
     float  component : COLOR0;
+    uint   prim_id    : COLOR1;
 };
 
 struct VSOut
@@ -16,7 +17,7 @@ struct VSOut
 VSOut main(VSIn input)
 {
     VSOut output;
-    directional_shadow_project_vertex(input.position, input.component,
+    directional_shadow_project_vertex(input.position, input.component, input.prim_id,
                                       output.position);
     return output;
 }

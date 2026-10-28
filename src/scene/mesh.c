@@ -45,6 +45,7 @@ void AeronScene_MeshDestroy(AeronSceneMesh* m) {
 	}
 	Aeron_DestroyBuffer(m->material_buffer);
 	Aeron_DestroyBuffer(m->variant_buffer);
+	Aeron_DestroyBuffer(m->tag_group_buffer);
 	Aeron_DestroyBuffer(m->screen_rect_buffer);
 	Aeron_DestroyBuffer(m->anim_buffer);
 	for (uint32_t i = 0; i < m->effect_library_count; i++)
@@ -536,14 +537,18 @@ static int build_anim_records(AeronSceneMesh* s, AeronCommandBuffer* cmd, const 
 	return 1;
 }
 
+/* The variant buffer, which gives each primitive's material per variant
+ * index, and the tag group buffer, which gives that material's tag groups in
+ * the same layout. Both use `*out_bytes` bytes. */
 static int build_variant_storage(AeronSceneMesh* s, const AeronGltfModel* model,
-								 const AeronSceneMeshVariants* set, const char* name, uint32_t** out_values,
-								 uint32_t* out_bytes) {
+								 const AeronSceneMeshVariants* set, const char* name, const char* tag_name,
+								 uint32_t** out_values, uint32_t** out_tag_values, uint32_t* out_bytes) {
 	const uint32_t primitive_count = model->total_prim_count;
-	if (!out_values || !out_bytes) {
+	if (!out_values || !out_tag_values || !out_bytes) {
 		return 0;
 	}
 	*out_values                = NULL;
+	*out_tag_values            = NULL;
 	*out_bytes                 = 0;
 	const uint32_t groups      = primitive_count > 0 ? (primitive_count + 3u) / 4u : 1u;
 	const uint32_t rows        = variant_index_count(model, set);
@@ -551,8 +556,11 @@ static int build_variant_storage(AeronSceneMesh* s, const AeronGltfModel* model,
 	if (value_count > UINT32_MAX / sizeof(uint32_t)) {
 		return 0;
 	}
-	uint32_t* values = (uint32_t*)malloc(value_count * sizeof *values);
-	if (!values) {
+	uint32_t* values     = (uint32_t*)malloc(value_count * sizeof *values);
+	uint32_t* tag_values = (uint32_t*)calloc(value_count, sizeof *tag_values);
+	if (!values || !tag_values) {
+		free(values);
+		free(tag_values);
 		return 0;
 	}
 	for (size_t i = 0; i < value_count; ++i) {
@@ -563,8 +571,12 @@ static int build_variant_storage(AeronSceneMesh* s, const AeronGltfModel* model,
 			/* Storage row `row` holds variant index `row`. */
 			const uint32_t column = variant_column(model, set, row);
 			for (uint32_t primitive = 0; primitive < primitive_count; ++primitive) {
-				values[((size_t)row * groups + primitive / 4u) * 4u + primitive % 4u] =
+				const size_t   slot = ((size_t)row * groups + primitive / 4u) * 4u + primitive % 4u;
+				const uint32_t material =
 					model->prim_variant_material[(size_t)primitive * model->variant_columns + column];
+				values[slot] = material;
+				if (material < model->material_count)
+					tag_values[slot] = model->materials[material].tag_groups;
 			}
 		}
 	}
@@ -574,12 +586,20 @@ static int build_variant_storage(AeronSceneMesh* s, const AeronGltfModel* model,
 		.usage      = AERON_BUFFER_USAGE_STORAGE,
 		.debug_name = name,
 	});
-	if (!s->variant_buffer) {
+	s->tag_group_buffer  = Aeron_CreateBuffer(&(AeronBufferDesc) {
+		.size       = bytes,
+		.usage      = AERON_BUFFER_USAGE_STORAGE,
+		.debug_name = tag_name,
+	});
+	if (!s->variant_buffer || !s->tag_group_buffer) {
 		free(values);
+		free(tag_values);
 		return 0;
 	}
 	s->variant_groups_per_row = groups;
+	s->tag_groups             = model->tag_groups;
 	*out_values               = values;
+	*out_tag_values           = tag_values;
 	*out_bytes                = bytes;
 	return 1;
 }
@@ -759,6 +779,7 @@ static AeronSceneMesh* mesh_create(AeronCommandBuffer* cmd, const AeronFlightMod
 	AeronSceneMesh*        s                = (AeronSceneMesh*)calloc(1, sizeof *s);
 	AeronPbrMaterialEntry* material_entries = NULL;
 	uint32_t*              variant_values   = NULL;
+	uint32_t*              tag_group_values = NULL;
 	uint32_t               material_bytes   = 0;
 	uint32_t               variant_bytes    = 0;
 	uint32_t               vbo_bytes        = 0;
@@ -920,6 +941,7 @@ static AeronSceneMesh* mesh_create(AeronCommandBuffer* cmd, const AeronFlightMod
 	}
 	char                material_name[512];
 	char                variant_name[512];
+	char                tag_group_name[512];
 	char                screen_name[512];
 	char                anim_name[512];
 	AeronPbrScreenRect* screen_rects = NULL;
@@ -928,6 +950,7 @@ static AeronSceneMesh* mesh_create(AeronCommandBuffer* cmd, const AeronFlightMod
 	uint32_t (*anim)[3]              = NULL;
 	snprintf(material_name, sizeof material_name, "%s.materials", name);
 	snprintf(variant_name, sizeof variant_name, "%s.material_variants", name);
+	snprintf(tag_group_name, sizeof tag_group_name, "%s.tag_groups", name);
 	snprintf(screen_name, sizeof screen_name, "%s.screen_rects", name);
 	snprintf(anim_name, sizeof anim_name, "%s.material_anim", name);
 	s->effect_atlas = effect_atlas;
@@ -948,10 +971,12 @@ static AeronSceneMesh* mesh_create(AeronCommandBuffer* cmd, const AeronFlightMod
 	if (!built ||
 		!build_material_storage(s, model, set, core_layers, (const uint32_t (*)[3])anim, material_name,
 								&material_entries, &material_bytes) ||
-		!build_variant_storage(s, model, set, variant_name, &variant_values, &variant_bytes) ||
+		!build_variant_storage(s, model, set, variant_name, tag_group_name, &variant_values,
+							   &tag_group_values, &variant_bytes) ||
 		!build_screen_storage(s, model, screen_name, &screen_rects, &screen_bytes)) {
 		free(material_entries);
 		free(variant_values);
+		free(tag_group_values);
 		free(screen_rects);
 		free(anim_records.items);
 		free(anim);
@@ -960,7 +985,7 @@ static AeronSceneMesh* mesh_create(AeronCommandBuffer* cmd, const AeronFlightMod
 		return NULL;
 	}
 	free(anim);
-	AeronBufferUploadDesc buffer_uploads[6];
+	AeronBufferUploadDesc buffer_uploads[7];
 	uint32_t              buffer_upload_count = 0;
 	if (s->vbo) {
 		buffer_uploads[buffer_upload_count++] =
@@ -973,6 +998,9 @@ static AeronSceneMesh* mesh_create(AeronCommandBuffer* cmd, const AeronFlightMod
 																	  .size   = material_bytes };
 	buffer_uploads[buffer_upload_count++] = (AeronBufferUploadDesc) { .buffer = s->variant_buffer,
 																	  .data   = variant_values,
+																	  .size   = variant_bytes };
+	buffer_uploads[buffer_upload_count++] = (AeronBufferUploadDesc) { .buffer = s->tag_group_buffer,
+																	  .data   = tag_group_values,
 																	  .size   = variant_bytes };
 	if (s->screen_rect_buffer) {
 		buffer_uploads[buffer_upload_count++] = (AeronBufferUploadDesc) { .buffer = s->screen_rect_buffer,
@@ -988,6 +1016,7 @@ static AeronSceneMesh* mesh_create(AeronCommandBuffer* cmd, const AeronFlightMod
 	const int buffers_uploaded = Aeron_UploadBufferBatchCmd(cmd, buffer_uploads, buffer_upload_count);
 	free(material_entries);
 	free(variant_values);
+	free(tag_group_values);
 	free(screen_rects);
 	free(anim_records.items);
 	if (!buffers_uploaded) {

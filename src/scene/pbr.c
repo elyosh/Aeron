@@ -50,7 +50,7 @@ typedef struct AeronScenePbrVsBlock {
 	uint32_t current_table_base;
 	uint32_t previous_table_base;
 	uint32_t receiver_local_shadow;
-	uint32_t _reserved;
+	uint32_t hidden_tag_groups;
 	uint32_t table_component_count;
 	float    prev_view_proj[16];
 	float    prev_model_to_world[16];
@@ -435,7 +435,7 @@ static AeronGraphicsPipeline* pbr_anim_pipeline(struct AeronScene3D* s, int kind
 	if (!s->pbr_anim_tried) {
 		s->pbr_anim_tried = 1;
 		if (!s->pbr_anim_vs)
-			s->pbr_anim_vs = pbr_shader("scene_pbr_mesh_anim.vert", AERON_SHADER_STAGE_VERTEX, 0, 1, 1);
+			s->pbr_anim_vs = pbr_shader("scene_pbr_mesh_anim.vert", AERON_SHADER_STAGE_VERTEX, 0, 1, 2);
 		for (int ibl = 0; ibl < 2; ++ibl)
 			for (int v = 0; v < 5; ++v)
 				s->pbr_anim_fs[ibl][v] = pbr_shader(names[ibl][v], AERON_SHADER_STAGE_FRAGMENT, 14, 4, 8);
@@ -471,7 +471,7 @@ static AeronGraphicsPipeline* pbr_probe_pipeline(struct AeronScene3D* s, int kin
 	if (!s->pbr_probe_tried) {
 		s->pbr_probe_tried = 1;
 		if (!s->pbr_anim_vs)
-			s->pbr_anim_vs = pbr_shader("scene_pbr_mesh_anim.vert", AERON_SHADER_STAGE_VERTEX, 0, 1, 1);
+			s->pbr_anim_vs = pbr_shader("scene_pbr_mesh_anim.vert", AERON_SHADER_STAGE_VERTEX, 0, 1, 2);
 		for (int v = 0; v < 5; ++v) {
 			s->pbr_probe_fs[0][v] = pbr_shader(names[0][v], AERON_SHADER_STAGE_FRAGMENT, 14, 3, 7);
 			s->pbr_probe_fs[1][v] = pbr_shader(names[1][v], AERON_SHADER_STAGE_FRAGMENT, 16, 4, 8);
@@ -549,9 +549,9 @@ static AeronGraphicsPipeline* pbr_instanced_create(struct AeronScene3D* s, int k
 												   int ibl) {
 	if (!s->pbr_instanced_tried) {
 		s->pbr_instanced_tried = 1;
-		s->pbr_instanced_vs = pbr_shader("scene_pbr_mesh_instanced.vert", AERON_SHADER_STAGE_VERTEX, 0, 1, 2);
+		s->pbr_instanced_vs = pbr_shader("scene_pbr_mesh_instanced.vert", AERON_SHADER_STAGE_VERTEX, 0, 1, 3);
 		s->pbr_instanced_stamp_vs =
-			pbr_shader("scene_pbr_prepass_stamp_instanced.vert", AERON_SHADER_STAGE_VERTEX, 0, 1, 2);
+			pbr_shader("scene_pbr_prepass_stamp_instanced.vert", AERON_SHADER_STAGE_VERTEX, 0, 1, 3);
 	}
 	AeronGraphicsPipeline** pipe = &s->pbr_instanced_pipes[ibl][kind][cull];
 	if (!*pipe && kind == AERON_PBR_PIPE_PREPASS_STAMP) {
@@ -593,10 +593,10 @@ int AeronScenePbr_Ensure(struct AeronScene3D* s) {
 	}
 	s->pbr_tried = 1;
 
-	s->pbr_vs               = pbr_shader("scene_pbr_mesh.vert", AERON_SHADER_STAGE_VERTEX, 0, 1, 1);
-	s->pbr_prepass_vs       = pbr_shader("scene_pbr_prepass.vert", AERON_SHADER_STAGE_VERTEX, 0, 1, 1);
-	s->pbr_prepass_mask_vs  = pbr_shader("scene_pbr_prepass_mask.vert", AERON_SHADER_STAGE_VERTEX, 0, 1, 1);
-	s->pbr_prepass_stamp_vs = pbr_shader("scene_pbr_prepass_stamp.vert", AERON_SHADER_STAGE_VERTEX, 0, 1, 1);
+	s->pbr_vs               = pbr_shader("scene_pbr_mesh.vert", AERON_SHADER_STAGE_VERTEX, 0, 1, 2);
+	s->pbr_prepass_vs       = pbr_shader("scene_pbr_prepass.vert", AERON_SHADER_STAGE_VERTEX, 0, 1, 2);
+	s->pbr_prepass_mask_vs  = pbr_shader("scene_pbr_prepass_mask.vert", AERON_SHADER_STAGE_VERTEX, 0, 1, 2);
+	s->pbr_prepass_stamp_vs = pbr_shader("scene_pbr_prepass_stamp.vert", AERON_SHADER_STAGE_VERTEX, 0, 1, 2);
 	s->pbr_fs               = pbr_shader("scene_pbr_mesh.frag", AERON_SHADER_STAGE_FRAGMENT, 12, 3, 7);
 	s->pbr_mask_fs          = pbr_shader("scene_pbr_mesh_mask.frag", AERON_SHADER_STAGE_FRAGMENT, 12, 3, 7);
 	s->pbr_blend_fs         = pbr_shader("scene_pbr_mesh_blend.frag", AERON_SHADER_STAGE_FRAGMENT, 12, 3, 7);
@@ -612,7 +612,7 @@ int AeronScenePbr_Ensure(struct AeronScene3D* s) {
 		pbr_shader("scene_pbr_mesh_mask_screen_ibl.frag", AERON_SHADER_STAGE_FRAGMENT, 12, 3, 7);
 	s->pbr_prepass_fs      = pbr_shader("scene_pbr_prepass.frag", AERON_SHADER_STAGE_FRAGMENT, 0, 0, 0);
 	s->pbr_prepass_mask_fs = pbr_shader("scene_pbr_prepass_mask.frag", AERON_SHADER_STAGE_FRAGMENT, 1, 0, 2);
-	s->pbr_backface_vs     = pbr_shader("scene_pbr_backface.vert", AERON_SHADER_STAGE_VERTEX, 0, 1, 1);
+	s->pbr_backface_vs     = pbr_shader("scene_pbr_backface.vert", AERON_SHADER_STAGE_VERTEX, 0, 1, 2);
 	s->pbr_backface_fs     = pbr_shader("scene_pbr_backface.frag", AERON_SHADER_STAGE_FRAGMENT, 0, 0, 0);
 	/* Velocity stamping reads the same mesh-owned material resources. */
 	s->pbr_prepass_stamp_fs =
@@ -821,7 +821,9 @@ static void pbr_push_instance_uniforms(struct AeronScene3D* s, AeronRenderPass* 
 	vsb.current_table_base    = prepared->current_table_base;
 	vsb.previous_table_base   = vel ? prepared->previous_table_base : prepared->current_table_base;
 	vsb.table_component_count = prepared->table_component_count;
+	vsb.hidden_tag_groups     = in->hidden_tag_groups;
 	Aeron_BindUniformData(pass, AERON_SHADER_STAGE_VERTEX, 0, &vsb, sizeof vsb);
+	Aeron_BindStorageBuffer(pass, AERON_SHADER_STAGE_VERTEX, 1, m->tag_group_buffer);
 
 	/* The `_anim` colour shaders' animation block: the instance's state.
 	 * Only a mesh with animation records draws with them. */
@@ -862,6 +864,7 @@ static void pbr_push_batch_uniforms(struct AeronScene3D* s, AeronRenderPass* pas
 	block.instance_base       = batch->first;
 	Aeron_BindUniformData(pass, AERON_SHADER_STAGE_VERTEX, 0, &block, sizeof block);
 	Aeron_BindStorageBuffer(pass, AERON_SHADER_STAGE_VERTEX, 1, s->instance_record_buffer);
+	Aeron_BindStorageBuffer(pass, AERON_SHADER_STAGE_VERTEX, 2, batch->mesh->tag_group_buffer);
 }
 
 /* Clears the batches' drawn flags before a walk that draws them. */

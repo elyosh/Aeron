@@ -97,10 +97,12 @@ typedef struct OptGltfComponentSet {
  * `direction` (OPT axes) that ends `spot_angle` radians from it, with full
  * light only on the axis, or a point light when `spot_angle` is 0. With
  * `state` -1 the light shines with every variant, with 0 with the model's
- * own materials, and with s with variant `State s`, which must exist. */
+ * own materials, and with s with variant `State s`, which must exist. `tag`,
+ * when not NULL, is the light's AERON_flight_model tag. */
 typedef struct OptGltfLight {
 	uint32_t   mesh_index;
 	int32_t    state;
+	const char* tag;
 	float      color[3];  /* linear RGB */
 	float      intensity; /* candela */
 	bool       placed;
@@ -174,6 +176,7 @@ typedef struct OptGltfMaterial {
 	bool         specular; /* KHR_materials_specular with factor 1 and color factor specular_color */
 	float        specular_color;
 	const char*  json; /* the material's AERON_flight_model object (animations), or NULL */
+	const char*  tag;  /* its AERON_flight_model tag, or NULL */
 	const OptGltfSkinLayer* skins; /* its skin layers, written as `skins` */
 	size_t                  skin_count;
 } OptGltfMaterial;

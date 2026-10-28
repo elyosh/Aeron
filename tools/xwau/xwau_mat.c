@@ -23,7 +23,13 @@ typedef struct XwauMatSection {
 	int           order; /* 0 for [Default], otherwise the 1-based order of the section */
 } XwauMatSection;
 
+/* The most surface tags a file can have; a model reads at most 32. */
+#define XWAU_MAT_SURFACES_MAX 64
+
 struct XwauMatFile {
+	/* The materials that name the file's surface tags (XwauMat_SurfaceRuleAt). */
+	const XwauMatParams* surfaces[XWAU_MAT_SURFACES_MAX];
+	size_t               surface_count;
 	XwauMatParams   slot0;
 	int             slot0_section; /* -1 without a [Default] section */
 	XwauMatEntry*   entries;
@@ -138,6 +144,16 @@ static void read_material_line(const char* line, XwauMatParams* m) {
 	} else if (ascii_casecmp(param, "light_angle") == 0) {
 		m->has_light_angle = true;
 		m->light_angle     = f;
+	} else if (ascii_casecmp(param, "SkipWhenDisabled") == 0) {
+		m->skip_when_disabled = f != 0.0f;
+	} else if (ascii_casecmp(param, "DisplayIfSpeedGE") == 0) {
+		m->display_if_speed_ge = (int)f;
+	} else if (ascii_casecmp(param, "DisplayIfThrottleGE") == 0) {
+		m->display_if_throttle_ge = f;
+	} else if (ascii_casecmp(param, "DisplayIfMissionSetSpeedGE") == 0) {
+		m->display_if_mission_set_speed_ge = (int)f;
+	} else if (ascii_casecmp(param, "IncreaseBrightnessWithMissionSetSpeed") == 0) {
+		m->increase_brightness_with_mission_set_speed = (int)f;
 	}
 }
 
@@ -692,6 +708,81 @@ static size_t parse_section_names(const char* line, char (*names)[XWAU_MAT_NAME_
 	return count;
 }
 
+bool XwauMat_HasSurfaceRules(const XwauMatParams* m) {
+	return m->skip_when_disabled || m->display_if_speed_ge > 0 || m->display_if_throttle_ge > 0.0f ||
+		   m->display_if_mission_set_speed_ge > 0;
+}
+
+static bool same_surface_rules(const XwauMatParams* a, const XwauMatParams* b) {
+	return a->skip_when_disabled == b->skip_when_disabled &&
+		   a->display_if_speed_ge == b->display_if_speed_ge &&
+		   a->display_if_throttle_ge == b->display_if_throttle_ge &&
+		   a->display_if_mission_set_speed_ge == b->display_if_mission_set_speed_ge;
+}
+
+/* The lower-case texture name, with characters outside the tag syntax made
+ * '_'. */
+static void tag_from_name(const char* name, char* out, size_t cap) {
+	size_t n = 0;
+	for (; name[n] && n + 1 < cap; ++n) {
+		const char c = (char)tolower((unsigned char)name[n]);
+		out[n]       = ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '.' || c == '_') ? c : '_';
+	}
+	out[n] = 0;
+	if (!n)
+		snprintf(out, cap, "surface");
+}
+
+static const char* role_tag(const char* name) {
+	char lower[XWAU_MAT_NAME_MAX];
+	tag_from_name(name, lower, sizeof lower);
+	if (strstr(lower, "glow") || strstr(lower, "engine"))
+		return "engine_glow";
+	if (strstr(lower, "forcefield") || strstr(lower, "shield"))
+		return "forcefield";
+	if (strstr(lower, "light"))
+		return "headlights";
+	return NULL;
+}
+
+static const XwauMatParams* surface_by_tag(const XwauMatFile* file, const char* tag) {
+	for (size_t i = 0; i < file->surface_count; ++i)
+		if (strcmp(file->surfaces[i]->surface_tag, tag) == 0)
+			return file->surfaces[i];
+	return NULL;
+}
+
+/* Names the surface tag of `m`, a texture named `name` (XwauMat_SurfaceRuleAt). */
+static void name_surface(XwauMatFile* file, const char* name, XwauMatParams* m) {
+	if (!XwauMat_HasSurfaceRules(m))
+		return;
+	char        candidate[sizeof m->surface_tag];
+	char        own[sizeof m->surface_tag];
+	const char* role = role_tag(name);
+	tag_from_name(name, own, sizeof own);
+	for (int attempt = 0;; ++attempt) {
+		if (attempt == 0)
+			snprintf(candidate, sizeof candidate, "%s", role ? role : own);
+		else if (attempt == 1)
+			snprintf(candidate, sizeof candidate, "%s", own);
+		else
+			snprintf(candidate, sizeof candidate, "%.58s_%d", own, attempt);
+		const XwauMatParams* named = surface_by_tag(file, candidate);
+		if (named && !same_surface_rules(named, m))
+			continue;
+		snprintf(m->surface_tag, sizeof m->surface_tag, "%s", candidate);
+		if (!named && file->surface_count < XWAU_MAT_SURFACES_MAX)
+			file->surfaces[file->surface_count++] = m;
+		return;
+	}
+}
+
+size_t XwauMat_SurfaceRuleCount(const XwauMatFile* file) { return file ? file->surface_count : 0; }
+
+const XwauMatParams* XwauMat_SurfaceRuleAt(const XwauMatFile* file, size_t index) {
+	return file && index < file->surface_count ? file->surfaces[index] : NULL;
+}
+
 XwauMatFile* XwauMat_Load(const char* path, const XwauMatParams* global) {
 	FILE* f = fopen(path, "rt");
 	if (!f)
@@ -742,6 +833,9 @@ XwauMatFile* XwauMat_Load(const char* path, const XwauMatParams* global) {
 		XwauMat_Free(file);
 		return NULL;
 	}
+	name_surface(file, "default", &file->slot0);
+	for (size_t i = 0; i < file->count; ++i)
+		name_surface(file, file->entries[i].name, &file->entries[i].params);
 	return file;
 }
 

@@ -81,6 +81,9 @@ typedef struct XwauGltfMaterial {
 	 * distinct map. */
 	OptGltfImageView normal_map;
 	const char*      normal_map_name;
+	/* The tag of the texture's faces when its .mat section has conditions on
+	 * the craft (XwauMatParams.surface_tag), or NULL. */
+	const char* surface_tag;
 } XwauGltfMaterial;
 
 /*

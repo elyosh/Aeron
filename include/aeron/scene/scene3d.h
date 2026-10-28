@@ -182,6 +182,10 @@ typedef struct AeronSceneMeshInstance {
 	 * index + 1; 0 lets the scene choose the first set whose extent its
 	 * bounds overlap, if any. */
 	uint8_t probe_set_owner;
+	/* The mesh's tag groups (AeronSceneMesh.tag_groups) this instance hides:
+	 * bit g hides the materials and lights tagged with group g. The
+	 * materials' surfaces are not drawn in any pass. */
+	uint32_t hidden_tag_groups;
 } AeronSceneMeshInstance;
 
 typedef void (*AeronSceneAfterMeshesFn)(AeronCommandBuffer* cmd, AeronRenderPass* pass,
@@ -362,12 +366,15 @@ void AeronScene_LightBounds(const AeronSceneLight* light, float center[3], float
  * its length when it is at least three times longer than wide, else a
  * one-sided sphere of its area. `variant` is the instance's variant index
  * (AeronSceneMeshInstance.variant): a light that names variants shines only
- * with them. Returns zero for an invalid index or exposure, a light that
- * emits nothing, a light on a component the table hides, or a light that
- * doesn't shine with the variant. */
+ * with them. `hidden_tag_groups` are the instance's hidden tag groups
+ * (AeronSceneMeshInstance.hidden_tag_groups). Returns zero for an invalid
+ * index or exposure, a light that emits nothing, a light on a component the
+ * table hides, a light that doesn't shine with the variant, or a light in a
+ * hidden tag group. */
 int AeronScene_MeshLight(const AeronSceneMesh* mesh, uint32_t index, const float transform[16],
 						 float units_per_meter, const AeronSceneMeshTable* table, uint32_t variant,
-						 float intensity_scale, float exposure, AeronSceneLight* out);
+						 uint32_t hidden_tag_groups, float intensity_scale, float exposure,
+						 AeronSceneLight* out);
 /* World-space light for a light that no mesh holds, such as a craft's
  * headlight, converted as AeronScene_MeshLight converts a model light:
  * `transform` places it, in world units per metre. */

@@ -956,6 +956,10 @@ static bool light_node(Build* b, cgltf_node* node, cgltf_node* parent, size_t in
 		ok = variants &&
 			 OptJson_Add(variants, NULL, light->state == 0 ? cJSON_CreateNull() : cJSON_CreateString(state));
 	}
+	if (ok && light->tag) {
+		cJSON* tags = OptJson_AddArray(extension, "tags");
+		ok          = tags && OptJson_Add(tags, NULL, cJSON_CreateString(light->tag));
+	}
 	if (!ok) {
 		cJSON_Delete(extension);
 		return opt_gltf_build_fail(b, "out of memory");

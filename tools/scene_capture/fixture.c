@@ -624,7 +624,8 @@ static void add_model_lights(AeronScene3D* scene, const Fixture* f, const AeronS
 		 ++li) {
 		AeronSceneLight light;
 		if (AeronScene_MeshLight(instance->mesh, li, instance->transform, GAME_UNITS_PER_METER, NULL,
-								 instance->variant, f->config.game.model_light_intensity, exposure, &light))
+								 instance->variant, instance->hidden_tag_groups,
+								 f->config.game.model_light_intensity, exposure, &light))
 			AeronScene_AddLight(scene, &light);
 	}
 }

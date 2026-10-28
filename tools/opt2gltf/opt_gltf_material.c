@@ -486,6 +486,10 @@ bool opt_gltf_material_extensions(OptGltfDocument* document, unsigned* common_en
 		const OptGltfMaterial* given = gb->material_given ? gb->material_given[m] : NULL;
 		if (ok && given && given->skin_count)
 			ok = skins_json(document, entry, given, &gb->materials[m]);
+		if (ok && given && given->tag) {
+			cJSON* tags = OptJson_AddArray(entry, "tags");
+			ok          = tags && OptJson_Add(tags, NULL, cJSON_CreateString(given->tag));
+		}
 		if (ok && entry->child) {
 			char*            printed   = cJSON_PrintUnformatted(entry);
 			cgltf_extension* extension = (cgltf_extension*)calloc(1, sizeof *extension);
@@ -819,7 +823,7 @@ static void given_material(Build* b, cgltf_material* mat, const OptGltfMaterial*
 			if (skin[k]->view.rgba)
 				given_image(b, skin[k]);
 	}
-	if (in->skin_count)
+	if (in->skin_count || in->tag)
 		b->gb->material_given[mat - b->gb->materials] = in;
 }
 

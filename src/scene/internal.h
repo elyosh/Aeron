@@ -167,7 +167,7 @@ typedef struct AeronScenePbrInstanceRecord {
 	float    base_color_emissive_strength;
 	uint32_t receive_shadow;
 	uint32_t zero_velocity;
-	uint32_t reserved;
+	uint32_t hidden_tag_groups;
 } AeronScenePbrInstanceRecord; /* 160 B */
 
 /* A probe set placed for the frame (AeronScene_AddProbeSet). */

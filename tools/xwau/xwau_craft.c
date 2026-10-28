@@ -1,6 +1,7 @@
 #include "xwau_craft.h"
 
 #include <limits.h>
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -10,6 +11,7 @@
 #include "xwau_config.h"
 #include "xwau_game_tables.h"
 #include "xwau_gunner_seats.h"
+#include "xwau_mat.h"
 #include "xwau_sound_banks.h"
 #include "xwau_stats_profiles.h"
 
@@ -1197,13 +1199,47 @@ static void write_weapons(FILE* f, const XwauCraftWeapons* weapons) {
 	}
 }
 
+/* The `surfaces` group: the rules of each surface tag of the model's
+   material file (XwauMat_SurfaceRuleAt), from its conditions on the craft
+   (EffectsRenderer::MainSceneHook). */
+static void write_surfaces(FILE* f, const XwauMatFile* mat) {
+	fprintf(f, "surfaces:\n");
+	for (size_t i = 0; i < XwauMat_SurfaceRuleCount(mat); ++i) {
+		const XwauMatParams* m = XwauMat_SurfaceRuleAt(mat, i);
+		/* XWAU hides the surface while throttle / 65535 < DisplayIfThrottleGE
+		   / 100. DisplayIfMissionSetSpeedGE also needs a throttle of 0.99. */
+		int throttle = m->display_if_throttle_ge > 0.0f ? (int)ceilf(m->display_if_throttle_ge) : 0;
+		if (m->display_if_mission_set_speed_ge > 0 && throttle < 99)
+			throttle = 99;
+		if (throttle > 100)
+			throttle = 100;
+		const char* separator = "";
+		fprintf(f, "  %s: {", m->surface_tag);
+		if (m->skip_when_disabled) {
+			fprintf(f, "%shidden_when_disabled: true", separator);
+			separator = ", ";
+		}
+		if (m->display_if_speed_ge > 0) {
+			fprintf(f, "%smin_speed_mglt: %d", separator, m->display_if_speed_ge);
+			separator = ", ";
+		}
+		if (throttle > 0) {
+			fprintf(f, "%smin_throttle_percent: %d", separator, throttle);
+			separator = ", ";
+		}
+		if (m->display_if_mission_set_speed_ge > 0)
+			fprintf(f, "%smin_ordered_speed_mglt: %d", separator, m->display_if_mission_set_speed_ge);
+		fprintf(f, "}\n");
+	}
+}
+
 static bool write_craft_file(const char* path, const char* sources, const XwauCraftHud* hud,
 							 const XwauCraftEngineGlows* glows, const XwauCraftWeapons* weapons,
 							 const XwauStatsProfiles* stats, const XwauCraftShield* shield,
 							 const XwauCraftSound* sound, const XwauCraftComponents* components,
 							 const XwauGunnerSeats* gunner, const XwauCraftWarheadLock* lock,
 							 const XwauCraftJamming* jamming, const XwauCraftDock* dock,
-							 XwauLines* cockpits) {
+							 const XwauMatFile* mat, XwauLines* cockpits) {
 	FILE* f = fopen(path, "wb");
 	if (!f) {
 		Report(path, "can't be written");
@@ -1214,6 +1250,8 @@ static bool write_craft_file(const char* path, const char* sources, const XwauCr
 		write_hud(f, hud);
 	if (has_engine_glows(glows))
 		write_engine_glows(f, glows);
+	if (XwauMat_SurfaceRuleCount(mat))
+		write_surfaces(f, mat);
 	if (has_weapons(weapons))
 		write_weapons(f, weapons);
 	XwauStatsProfiles_Write(f, stats);
@@ -1354,6 +1392,23 @@ enum {
 /* Whether `name` is the first side file of a model that has no INI file, in
  * which case `model` gets the model's name. A model with several side files
  * is then read once. */
+/* Whether `name` is the OPT of a model that has no .ini and no side file, so
+   that only its material file can give it settings. Sets `model`. */
+static bool opt_without_ini(char* const* names, size_t count, const char* name, char* model, size_t cap) {
+	const size_t length = strlen(name);
+	if (!EndsWithNoCase(name, ".opt") || length <= 4 || length - 4 >= cap)
+		return false;
+	memcpy(model, name, length - 4);
+	model[length - 4] = '\0';
+	if (has_side_file(names, count, model, ".ini"))
+		return false;
+	for (int side = 0; side < SIDE_FILES; ++side) {
+		if (has_side_file(names, count, model, g_sideFiles[side]))
+			return false;
+	}
+	return true;
+}
+
 static bool first_side_file_without_ini(char* const* names, size_t count, const char* name, char* model,
 										size_t cap) {
 	for (int side = 0; side < SIDE_FILES; ++side) {
@@ -1387,7 +1442,13 @@ bool XwauCraft_Write(const char* xwau_root, const char* output_dir, XwauLines* c
 	bool   ok      = true;
 	int    written = 0, reticles = 0, colors = 0, engine_glows = 0, weapon_colors = 0, light_colors = 0;
 	int    stats_profiles = 0, shields = 0, weapon_rates = 0, sounds = 0, engine_slowing = 0, components = 0;
-	int    weapon_profiles = 0, warhead_locks = 0, jammings = 0, docks = 0;
+	int    weapon_profiles = 0, warhead_locks = 0, jammings = 0, docks = 0, surfaces = 0;
+	/* The materials that the .mat files start from (as opt2gltf reads them). */
+	XwauMatParams global;
+	char          global_path[1024];
+	XwauMat_CodeDefaults(&global);
+	if (Xwau_FindFile(xwau_root, "Materials/DefaultGlobalMaterial.mat", global_path, sizeof global_path))
+		XwauMat_ReadGlobalDefault(global_path, &global);
 	/* hook_dock reads the [Dock] sections. */
 	char       dock_dll[1024];
 	const bool dock_hook = Xwau_FindFile(xwau_root, "hook_dock.dll", dock_dll, sizeof dock_dll);
@@ -1442,7 +1503,8 @@ bool XwauCraft_Write(const char* xwau_root, const char* output_dir, XwauLines* c
 			memcpy(model, names[i], length - 4);
 			model[length - 4] = '\0';
 			has_ini           = true;
-		} else if (!first_side_file_without_ini(names, count, names[i], model, sizeof model)) {
+		} else if (!first_side_file_without_ini(names, count, names[i], model, sizeof model) &&
+				   !opt_without_ini(names, count, names[i], model, sizeof model)) {
 			continue;
 		}
 		snprintf(ini, sizeof ini, "%s/%s.ini", models_dir, model);
@@ -1515,9 +1577,19 @@ bool XwauCraft_Write(const char* xwau_root, const char* output_dir, XwauLines* c
 			break;
 		}
 		disabled_profiles += stats.disabled;
+		char         mat_name[300], mat_path[1100];
+		XwauMatFile* mat = NULL;
+		snprintf(mat_name, sizeof mat_name, "Materials/%s.mat", model);
+		if (Xwau_FindFile(xwau_root, mat_name, mat_path, sizeof mat_path))
+			mat = XwauMat_Load(mat_path, &global);
+		for (size_t r = 0; r < XwauMat_SurfaceRuleCount(mat); ++r) {
+			if (XwauMat_SurfaceRuleAt(mat, r)->increase_brightness_with_mission_set_speed)
+				Report(mat_name, "IncreaseBrightnessWithMissionSetSpeed isn't imported");
+		}
 		if (!has_reticle(&hud) && !has_colors(&hud) && !has_engine_glows(&glows) && !has_weapons(weapons) &&
 			!stats.count && !shield.has && !XwauCraft_HasSound(&sound) && !strengths.has && !gunner.has &&
-			!lock.has && !jamming.has && !dock.has) {
+			!lock.has && !jamming.has && !dock.has && !XwauMat_SurfaceRuleCount(mat)) {
+			XwauMat_Free(mat);
 			XwauStatsProfiles_Free(&stats);
 			XwauWeaponStats_Free(&weapons->stats);
 			continue;
@@ -1533,9 +1605,13 @@ bool XwauCraft_Write(const char* xwau_root, const char* output_dir, XwauLines* c
 			snprintf(ini_name, sizeof ini_name, "FlightModels/%s.ini", model);
 			add_source(sources, sizeof sources, ini_name);
 		}
+		if (XwauMat_SurfaceRuleCount(mat))
+			add_source(sources, sizeof sources, mat_name);
+		surfaces += XwauMat_SurfaceRuleCount(mat) != 0;
 		if (!PathFormat(path, sizeof path, "%s/%s.yaml", craft_dir, key) || !MakeDirs(craft_dir) ||
 			!write_craft_file(path, sources, &hud, &glows, weapons, &stats, &shield, &sound, &strengths,
-							  &gunner, &lock, &jamming, &dock, cockpits)) {
+							  &gunner, &lock, &jamming, &dock, mat, cockpits)) {
+			XwauMat_Free(mat);
 			XwauStatsProfiles_Free(&stats);
 			XwauWeaponStats_Free(&weapons->stats);
 			ok = false;
@@ -1551,6 +1627,7 @@ bool XwauCraft_Write(const char* xwau_root, const char* output_dir, XwauLines* c
 		warhead_locks += lock.has;
 		jammings += jamming.has;
 		docks += dock.has;
+		XwauMat_Free(mat);
 		XwauStatsProfiles_Free(&stats);
 		written++;
 		reticles += has_reticle(&hud);
@@ -1568,9 +1645,9 @@ bool XwauCraft_Write(const char* xwau_root, const char* output_dir, XwauLines* c
 		"model settings: %d files, %d with a reticle, %d with HUD colours, %d with engine glows, %d with "
 		"weapon settings, %d with weapon profiles, %d with stats profiles, %d with a shield recharge rate, "
 		"%d with sounds, %d with component strengths, %d with gunner seats, %d with warhead lock settings, "
-		"%d with jamming rules, %d with a docking approach height",
+		"%d with jamming rules, %d with a docking approach height, %d with surface rules",
 		written, reticles, colors, engine_glows, weapon_colors, weapon_profiles, stats_profiles, shields,
-		sounds, components, gunner_seats, warhead_locks, jammings, docks);
+		sounds, components, gunner_seats, warhead_locks, jammings, docks, surfaces);
 	if (weapon_lock) {
 		/* The global section only sets the AI's ranges by the category of
 		   the AI's craft. */

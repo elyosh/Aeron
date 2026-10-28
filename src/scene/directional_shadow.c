@@ -16,7 +16,8 @@ typedef struct ShadowVsBlock {
 	uint32_t variant_group_count;
 	uint32_t material_count;
 	uint32_t table_component_count;
-	uint32_t _pad[3];
+	uint32_t hidden_tag_groups;
+	uint32_t _pad[2];
 } ShadowVsBlock;
 
 typedef char ShadowVsBlockSizeCheck[sizeof(ShadowVsBlock) == 160 ? 1 : -1];
@@ -306,6 +307,10 @@ static AeronGraphicsPipeline* shadow_pipeline(struct AeronScene3D* scene, AeronC
 		  .buffer_slot = 0,
 		  .format      = AERON_VERTEX_FORMAT_FLOAT,
 		  .offset      = (uint32_t)offsetof(AeronGltfVertex, component) },
+		{ .location    = 2,
+		  .buffer_slot = 0,
+		  .format      = AERON_VERTEX_FORMAT_UINT,
+		  .offset      = (uint32_t)offsetof(AeronGltfVertex, prim_id) },
 	};
 	if (masked) {
 		attributes[1] = (AeronVertexAttributeDesc) { .location    = 1,
@@ -334,7 +339,7 @@ static AeronGraphicsPipeline* shadow_pipeline(struct AeronScene3D* scene, AeronC
 		.vertex_buffers      = &vertex_buffer,
 		.vertex_buffer_count = 1,
 		.attributes          = attributes,
-		.attribute_count     = masked ? 4u : 2u,
+		.attribute_count     = masked ? 4u : 3u,
 		.depth_format        = AERON_TEXTURE_FORMAT_D32_FLOAT,
 		.depth               = { .depth_test = 1, .depth_write = 1, .compare = AERON_COMPARE_GREATER_EQUAL },
 	});
@@ -433,11 +438,11 @@ static int shadow_ensure_draw(struct AeronScene3D* scene) {
 	if (!scene->shadow_tried) {
 		scene->shadow_tried   = 1;
 		scene->shadow_vs      = AeronSceneInternal_CompileShader("scene_directional_shadow.vert",
-																 AERON_SHADER_STAGE_VERTEX, 0, 1, 1);
+																 AERON_SHADER_STAGE_VERTEX, 0, 1, 2);
 		scene->shadow_fs      = AeronSceneInternal_CompileShader("scene_directional_shadow.frag",
 																 AERON_SHADER_STAGE_FRAGMENT, 0, 0, 0);
 		scene->shadow_mask_vs = AeronSceneInternal_CompileShader("scene_directional_shadow_mask.vert",
-																 AERON_SHADER_STAGE_VERTEX, 0, 1, 1);
+																 AERON_SHADER_STAGE_VERTEX, 0, 1, 2);
 		scene->shadow_mask_fs = AeronSceneInternal_CompileShader("scene_directional_shadow_mask.frag",
 																 AERON_SHADER_STAGE_FRAGMENT, 1, 0, 2);
 	}
@@ -1197,6 +1202,7 @@ static void shadow_draw_class(struct AeronScene3D* scene, AeronRenderPass* pass,
 			bound_mesh = mesh;
 			Aeron_BindVertexBuffer(pass, 0, mesh->vbo, 0);
 			Aeron_BindIndexBuffer(pass, mesh->ibo, AERON_INDEX_FORMAT_UINT32, 0);
+			Aeron_BindStorageBuffer(pass, AERON_SHADER_STAGE_VERTEX, 1, mesh->tag_group_buffer);
 			if (masked) {
 				Aeron_BindTextureSampler(
 					pass, AERON_SHADER_STAGE_FRAGMENT, 0,
@@ -1217,6 +1223,7 @@ static void shadow_draw_class(struct AeronScene3D* scene, AeronRenderPass* pass,
 		block.variant_row_base    = variant * mesh->variant_groups_per_row;
 		block.variant_group_count = mesh->variant_groups_per_row;
 		block.material_count      = mesh->material_count;
+		block.hidden_tag_groups   = instance->hidden_tag_groups;
 		Aeron_BindUniformData(pass, AERON_SHADER_STAGE_VERTEX, 0, &block, sizeof block);
 		const uint32_t index_offset = masked ? mesh->mask_index_offset : 0u;
 		Aeron_DrawIndexed(pass, index_count, index_offset, 0);

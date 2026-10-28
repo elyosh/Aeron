@@ -227,6 +227,7 @@ static void xwau_fill(XwauGltfMaterial* out, const XwauMatParams* p) {
 	/* NoColorAlpha only has an effect together with AlphaToBloom, and
 	 * AlphaToBloom already maps to a texel that only glows. */
 	out->alpha_to_bloom = p->alpha_to_bloom;
+	out->surface_tag    = p->surface_tag[0] ? p->surface_tag : NULL;
 }
 
 static int xwau_find_file(void* context, const char* rel, char* out, size_t cap) {
@@ -518,7 +519,9 @@ static bool xwau_mat_light_repeats(const Conversion* c, const OptGltfLight* ligh
 		const OptGltfLight* other = &c->lights[i];
 		const float dx = other->position.x - light->position.x, dy = other->position.y - light->position.y,
 					dz = other->position.z - light->position.z;
-		if (other->mesh_index == light->mesh_index && other->state == light->state &&
+		const bool same_tag =
+			(!other->tag && !light->tag) || (other->tag && light->tag && strcmp(other->tag, light->tag) == 0);
+		if (other->mesh_index == light->mesh_index && other->state == light->state && same_tag &&
 			memcmp(other->color, light->color, sizeof light->color) == 0 &&
 			other->intensity == light->intensity && other->spot_angle == light->spot_angle &&
 			dx * dx + dy * dy + dz * dz < XWAU_MAT_LIGHT_MERGE * XWAU_MAT_LIGHT_MERGE &&
@@ -535,7 +538,7 @@ static bool xwau_same_mat_light(const XwauMatParams* a, const XwauMatParams* b) 
 	return a->has_light == b->has_light && memcmp(a->light, b->light, sizeof a->light) == 0 &&
 		   memcmp(a->light_uv, b->light_uv, sizeof a->light_uv) == 0 &&
 		   a->light_falloff == b->light_falloff && a->has_light_angle == b->has_light_angle &&
-		   a->light_angle == b->light_angle;
+		   a->light_angle == b->light_angle && strcmp(a->surface_tag, b->surface_tag) == 0;
 }
 
 /* XWAU's renderer puts a light on each face drawn with a texture whose
@@ -586,6 +589,7 @@ static bool xwau_mat_lights(Conversion* c, const opt_file_t* opt, const char* la
 				OptGltfLight light = {
 					.mesh_index = (uint32_t)mi,
 					.state      = per_state ? s : -1,
+					.tag        = p->surface_tag[0] ? p->surface_tag : NULL,
 					.intensity  = XWAU_MAT_LIGHT_CANDELA * p->light_falloff * peak,
 					.placed     = true,
 					.spot_angle = cosine > 0.0f ? acosf(cosine) : 0.0f,

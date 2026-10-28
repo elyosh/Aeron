@@ -20,7 +20,7 @@ struct VSOut
 VSOut main(VSIn input)
 {
     VSOut output;
-    if (!directional_shadow_project_vertex(input.position, input.component,
+    if (!directional_shadow_project_vertex(input.position, input.component, input.prim_id,
                                            output.position)) {
         output.uv = float2(0.0f, 0.0f);
         output.material_lookup = uint4(0xFFFFFFFFu, 0u, 0u, 0u);

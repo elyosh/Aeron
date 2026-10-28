@@ -12,14 +12,31 @@ cbuffer DirectionalShadowVS : register(b0, space1)
     uint variant_group_count;
     uint material_count;
     uint table_component_count;
-    uint3 _pad;
+    /* The mesh's tag groups this instance hides. */
+    uint hidden_tag_groups;
+    uint2 _pad;
 };
 
 #include "mesh_table_layout.hlsli"
 
 StructuredBuffer<float4> mesh_tables : register(t0, space0);
+/* The tag groups of each primitive's material, per variant row (as in
+ * scene_pbr_vertex_common.hlsli). */
+StructuredBuffer<uint4> prim_tag_groups : register(t1, space0);
 
-bool directional_shadow_project_vertex(float3 position, float component_value,
+bool directional_shadow_surface_hidden(uint prim_id)
+{
+    uint slot = prim_id >> 2u;
+    if (hidden_tag_groups == 0u || slot >= variant_group_count) {
+        return false;
+    }
+    uint4 packed = prim_tag_groups[variant_row_base + slot];
+    uint comp = prim_id & 3u;
+    uint groups = comp == 0u ? packed.x : comp == 1u ? packed.y : comp == 2u ? packed.z : packed.w;
+    return (groups & hidden_tag_groups) != 0u;
+}
+
+bool directional_shadow_project_vertex(float3 position, float component_value, uint prim_id,
                                        out float4 projected_position)
 {
     int component = clamp((int)round(component_value), 0,
@@ -27,7 +44,8 @@ bool directional_shadow_project_vertex(float3 position, float component_value,
     uint table_base = mesh_table_base;
     if (mesh_tables[table_base + 3u * table_component_count +
                     AERON_MESH_LANE_VISIBILITY * AERON_MESH_LANE_VEC4(table_component_count) +
-                    ((uint)component >> 2u)][(uint)component & 3u] < 0.5f) {
+                    ((uint)component >> 2u)][(uint)component & 3u] < 0.5f ||
+        directional_shadow_surface_hidden(prim_id)) {
         projected_position = float4(0.0f, 0.0f, 0.0f, -1.0f);
         return false;
     }

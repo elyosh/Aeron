@@ -40,7 +40,7 @@ struct PbrInstanceRecord {
 	float  base_color_emissive_strength;
 	uint   receive_shadow;
 	uint   zero_velocity;
-	uint   reserved;
+	uint   hidden_tag_groups;
 };
 
 StructuredBuffer<PbrInstanceRecord> instance_records : register(t1, space0);
@@ -55,6 +55,7 @@ static uint     receive_shadow;
 static uint     current_table_base;
 static uint     previous_table_base;
 static uint     table_component_count;
+static uint     hidden_tag_groups;
 /* Batches are blended, so they don't take the screen shadow pass or the
  * receiver-local map. */
 static const uint screen_shadow         = 0u;
@@ -74,6 +75,7 @@ void pbr_load_instance(uint instance_id)
 	current_table_base = record.current_table_base;
 	previous_table_base = record.previous_table_base;
 	table_component_count = record.table_component_count;
+	hidden_tag_groups = record.hidden_tag_groups;
 }
 #else
 cbuffer GltfMeshVSUniforms : register(b0, space1) {
@@ -100,7 +102,8 @@ cbuffer GltfMeshVSUniforms : register(b0, space1) {
 	uint previous_table_base;
 	/* Receives shadows from the receiver-local map (the cockpit). */
 	uint receiver_local_shadow;
-	uint reserved;
+	/* The mesh's tag groups this instance hides. */
+	uint hidden_tag_groups;
 	uint table_component_count;
 	/* Previous transforms used by the velocity-producing vertex variants. */
 	row_major float4x4 prev_view_proj;
@@ -112,6 +115,29 @@ cbuffer GltfMeshVSUniforms : register(b0, space1) {
  * its component count; layout in mesh_table_layout.hlsli. */
 #include "mesh_table_layout.hlsli"
 StructuredBuffer<float4> mesh_tables : register(t0, space0);
+
+/* The tag groups of each primitive's material, laid out as the fragment
+ * shaders' g_prim_to_material: per variant row, one uint4 per four
+ * primitives. */
+#if AERON_PBR_INSTANCED
+StructuredBuffer<uint4> prim_tag_groups : register(t2, space0);
+#else
+StructuredBuffer<uint4> prim_tag_groups : register(t1, space0);
+#endif
+
+/* Whether the instance hides the material of primitive `prim_id`. An
+ * instance that hides nothing doesn't read the buffer. */
+bool pbr_surface_hidden(uint prim_id)
+{
+	uint slot = prim_id >> 2u;
+	if (hidden_tag_groups == 0u || slot >= variant_group_count) {
+		return false;
+	}
+	uint4 packed = prim_tag_groups[variant_row_base + slot];
+	uint comp = prim_id & 3u;
+	uint groups = comp == 0u ? packed.x : comp == 1u ? packed.y : comp == 2u ? packed.z : packed.w;
+	return (groups & hidden_tag_groups) != 0u;
+}
 
 /* Row r of a component's 3x4 affine. */
 float4 mesh_table_row(uint table_base, uint component, uint r)
@@ -200,7 +226,7 @@ bool pbr_build_current_vertex(VSIn input, out PbrCurrentVertex current)
 	current.rotated_local = float3(0.0f, 0.0f, 0.0f);
 	current.world_position = float4(0.0f, 0.0f, 0.0f, 1.0f);
 	current.raster_position = float4(0.0f, 0.0f, 0.0f, -1.0f);
-	if (visibility < 0.5f) {
+	if (visibility < 0.5f || pbr_surface_hidden(input.prim_id)) {
 		return false;
 	}
 

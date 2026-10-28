@@ -57,6 +57,19 @@ typedef struct XwauMatParams {
 	float light_falloff;
 	bool  has_light_angle;
 	float light_angle;
+	/* The conditions on the craft that hide the texture's faces and lights
+	 * (EffectsRenderer::MainSceneHook), 0 when unset: SkipWhenDisabled,
+	 * DisplayIfSpeedGE (MGLT), DisplayIfThrottleGE (percent),
+	 * DisplayIfMissionSetSpeedGE (MGLT) and
+	 * IncreaseBrightnessWithMissionSetSpeed, which no data uses. */
+	bool  skip_when_disabled;
+	int   display_if_speed_ge;
+	float display_if_throttle_ge;
+	int   display_if_mission_set_speed_ge;
+	int   increase_brightness_with_mission_set_speed;
+	/* The tag of the texture's faces and lights when it has conditions, ""
+	 * otherwise. XwauMat_Load names it (XwauMat_SurfaceRuleAt). */
+	char surface_tag[64];
 } XwauMatParams;
 
 /*
@@ -159,6 +172,19 @@ const XwauMatParams* XwauMat_Find(const XwauMatFile* file, const char* texture_n
  * section. */
 bool XwauMat_FindSequences(const XwauMatFile* file, const char* texture_name, XwauMatSequences* own,
 						   XwauMatSequences* inherited);
+
+/* Whether `m` has a condition that can hide the texture. */
+bool XwauMat_HasSurfaceRules(const XwauMatParams* m);
+
+/* The file's distinct surface tags, in file order, each with the material
+ * of its first texture: the conditions that the tag's rules come from. A
+ * tag is named after its texture's role: `engine_glow` for a name with
+ * "glow" or "engine", `forcefield` for "forcefield" or "shield",
+ * `headlights` for "light", otherwise the lower-case texture name. Textures
+ * with the same role and conditions share a tag. When the conditions differ,
+ * the later texture takes its lower-case name, then a number. */
+size_t               XwauMat_SurfaceRuleCount(const XwauMatFile* file);
+const XwauMatParams* XwauMat_SurfaceRuleAt(const XwauMatFile* file, size_t index);
 
 void XwauMat_Free(XwauMatFile* file);
 

@@ -468,6 +468,7 @@ static bool texture_material(struct XwauGltfBakeState* s, const opt_file_t* opt,
 	m->specular       = true;
 	m->specular_color = baked->specular_color;
 	m->json           = anims ? anims[i].json : NULL;
+	m->tag            = materials[i].surface_tag;
 	return ok;
 }
 
@@ -540,6 +541,7 @@ bool XwauGltf_Bake(const opt_file_t* opt, const char* basename, const XwauGltfMa
 	out->untextured.metallic          = untextured->projectile ? 0.0f : xwau_metallic(untextured->metallic);
 	out->untextured.roughness = untextured->projectile ? 1.0f : xwau_roughness(untextured->glossiness);
 	out->untextured.specular          = true;
+	out->untextured.tag               = untextured->surface_tag;
 	out->untextured.specular_color =
 		untextured->projectile ? 0.0f : xwau_specular_color(untextured->intensity);
 
