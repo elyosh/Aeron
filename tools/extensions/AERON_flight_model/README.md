@@ -44,7 +44,11 @@ transforms:
 - `component`: requires `meshType`, 0 to 31. Optional fields:
   `explosionFlags`, `targetId`, `target`, the descriptor geometry,
   `rotation` and `tags`.
-- `hardpoint`: requires `type`, the game's hardpoint type, 0 to 39.
+- `hardpoint`: requires `type`, the game's hardpoint type, 0 to 39. The
+  node can have a standard glTF perspective camera, which gives the vertical
+  field of view (`yfov`, between 0 and pi) of a view from the hardpoint. The
+  game decides which hardpoints have a view. The camera's direction is
+  ignored.
 - `engineGlow`: requires `coreColor` and `outerColor`, RGBA as 8-bit sRGB
   values divided by 255. The game draws the glow with them, alpha
   included. `enabled` is optional and defaults to true.

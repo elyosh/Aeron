@@ -412,6 +412,10 @@ typedef struct OptGltfModelOptions {
 	size_t                              light_count;
 	const OptGltfControl*               controls;
 	size_t                              control_count;
+	/* The vertical field of view of the view from the pilot eye, in
+	 * radians. Each Cockpit hardpoint (type 31) gets a perspective camera
+	 * with it. 0 writes no camera. */
+	float eye_vertical_fov;
 } OptGltfModelOptions;
 
 /* Conversion options. Zero-initialized options give the defaults. */

@@ -239,13 +239,19 @@ modeled materials again. Check Model reports a row that names a variant
 that doesn't exist.
 
 The import adds a camera named "<model> Pilot Eye" for a model with a
-pilot eye hardpoint, with the game's cockpit field of view (64 degrees
-across). It follows the pilot eye hardpoint. **View From Pilot Eye** (Aeron
-tab) makes it the scene camera and looks through it, and creates it again
-if it was deleted. It is not part of the model, so the exports leave it
-out.
+pilot eye hardpoint. It follows the pilot eye hardpoint. **View From Pilot
+Eye** (Aeron tab) makes it the scene camera and looks through it, and
+creates it again if it was deleted.
 
-None of these change what the exports write.
+The camera's lens sets the cockpit's field of view. Its sensor is fitted
+vertically, so the lens gives the vertical field of view at any aspect. A
+new camera has the game's stock view, a 28.8 mm lens (50.2 degrees). With
+another lens, the exports give the pilot eye hardpoint a glTF camera with
+that field of view, and the game uses it for the craft. The import sets the
+lens from the hardpoint's camera. The camera object itself isn't part of
+the model.
+
+None of the other settings in this section change what the exports write.
 
 ## Materials
 

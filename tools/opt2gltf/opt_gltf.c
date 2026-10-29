@@ -224,6 +224,9 @@ static bool validate_options(Build* b) {
 			return opt_gltf_build_fail(b, "invalid or repeated articulation setting %s",
 									   o->model.settings[i].name);
 	}
+	if (!(o->model.eye_vertical_fov >= 0.0f && o->model.eye_vertical_fov < 3.14159265f))
+		return opt_gltf_build_fail(b, "eye field of view %g is outside 0 to pi",
+								   (double)o->model.eye_vertical_fov);
 	const OptGltfGeometryOptions* g = &o->geometry;
 	if (g->normals == OPT_GLTF_NORMALS_SMOOTHED &&
 		!(g->smooth_angle_degrees >= 0.0f && g->smooth_angle_degrees <= 180.0f))
@@ -1017,6 +1020,15 @@ static bool hardpoint_node(Build* b, cgltf_node* node, cgltf_node* parent, const
 		cJSON_Delete(extension);
 		return false;
 	}
+	const float fov = b->options->model.eye_vertical_fov;
+	if ((int)hp->type == OPT_GLTF_COCKPIT_HARDPOINT && fov > 0.0f) {
+		GltfBuild* gb                         = b->gb;
+		gb->eye_camera.type                   = cgltf_camera_type_perspective;
+		gb->eye_camera.data.perspective.yfov  = fov;
+		gb->eye_camera.data.perspective.znear = 0.01f;
+		gb->has_eye_camera                    = true;
+		node->camera                          = &gb->eye_camera;
+	}
 	return opt_gltf_set_extension(b->gb, node, extension);
 }
 
@@ -1357,6 +1369,8 @@ static bool finish_document(Build* b) {
 	data->variants_count     = gb->variants_count;
 	data->lights             = gb->lights;
 	data->lights_count       = gb->lights_count;
+	data->cameras            = gb->has_eye_camera ? &gb->eye_camera : NULL;
+	data->cameras_count      = gb->has_eye_camera ? 1 : 0;
 	/* AERON_flight_model, plus KHR_materials_variants when there are
 	 * variants. */
 	const size_t extension_count = gb->variants_count > 0 ? 2u : 1u;

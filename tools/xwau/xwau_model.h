@@ -59,6 +59,11 @@
  *
  *   - the Dynamic Cockpit file DynamicCockpit/<Model>.dc.
  *
+ *   - the field of view of the model's cockpit: xwahacker_fov and
+ *     xwahacker_large_fov in DynamicCockpit/<Model>Cockpit.dc, read like
+ *     LoadIndividualDCParams reads them. The last line of a key wins, and
+ *     the values are clamped to 15 to 170 degrees, as in SetCurrentShipFOV.
+ *
  * Problems go to stderr.
  */
 
@@ -73,9 +78,18 @@
 #define XWAU_MODEL_MAX_SETTINGS 64
 #define XWAU_MODEL_MAX_SETS 256
 
+/* The cockpit fields of view of a craft, in degrees, as XWAU reads them. */
+typedef struct XwauCockpitFov {
+	bool  has_regular;
+	float regular;
+	bool  has_large;
+	float large;
+} XwauCockpitFov;
+
 typedef struct XwauModel {
 	bool                         has_eye;
 	int                          eye[3];
+	XwauCockpitFov               fov;
 	OptGltfComponentSet          sets[XWAU_MODEL_MAX_SETS];
 	size_t                       set_count;
 	OptGltfComponentArticulation articulations[XWAU_MODEL_MAX_ARTICULATIONS];
@@ -92,6 +106,16 @@ bool XwauModel_Read(const char* game, const XwauMissions* missions, const char* 
 
 /* Gets the pilot eye of `model` from its POV lines, or else from XWAU's craft table. */
 bool XwauModel_Eye(const char* game, const char* model, int eye[3], const char* label);
+
+/* Reads the cockpit fields of view of the craft `model`. Returns false when
+ * its cockpit's .dc file has neither key. */
+bool XwauModel_CockpitFov(const char* game, const char* model, XwauCockpitFov* out);
+
+/* The vertical field of view, in degrees, that XWAU shows for a field of
+ * view of `degrees`: SetCurrentShipFOV divides the full screen height by
+ * tan(F / 2) where the half height is correct, so the view is
+ * 2 atan(tan(F / 2) / 2). */
+float XwauModel_VerticalFov(float degrees);
 
 /* Gets the articulation group of the mesh rotation section `section`, which
  * can be in any case. Returns false when `section` is not a mesh rotation

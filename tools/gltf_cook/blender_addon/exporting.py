@@ -20,8 +20,8 @@ from bpy.types import Operator
 from bpy_extras.io_utils import ExportHelper
 from mathutils import Matrix
 
-from . import (animation, common, display, flipbook_preview, libraries, probes, skins, sources, validation,
-               variants)
+from . import (animation, common, display, flipbook_preview, libraries, operators, probes, skins, sources,
+               validation, variants)
 
 # Blender (x, y, z) -> glTF (x, z, -y).
 _TO_GLTF = Matrix(((1.0, 0.0, 0.0, 0.0), (0.0, 0.0, 1.0, 0.0), (0.0, -1.0, 0.0, 0.0), (0.0, 0.0, 0.0, 1.0)))
@@ -304,6 +304,24 @@ def _material_extensions(gltf_path, keep_originals=False):
         json.dump(document, stream, separators=(",", ":"))
 
 
+def _pilot_eye_camera(gltf_path, name, yfov):
+    """Gives the pilot eye node `name` a perspective camera with the cockpit's
+    vertical field of view. Blender exports a camera as a node of its own, so
+    it is added to the exported file instead."""
+    with open(gltf_path, "r", encoding="utf-8") as stream:
+        document = json.load(stream)
+    cameras = document.setdefault("cameras", [])
+    for node in document.get("nodes", []):
+        if node.get("name") == name:
+            node["camera"] = len(cameras)
+            cameras.append({"type": "perspective", "perspective": {"yfov": yfov, "znear": 0.01}})
+            break
+    if not cameras:
+        del document["cameras"]
+    with open(gltf_path, "w", encoding="utf-8") as stream:
+        json.dump(document, stream, separators=(",", ":"))
+
+
 def export_gltf(root, filepath, apply_modifiers=True, keep_originals=False):
     """Writes the model of `root` as an uncooked .gltf, with its .bin and
     images. With `keep_originals`, images that have a file are referenced
@@ -313,6 +331,8 @@ def export_gltf(root, filepath, apply_modifiers=True, keep_originals=False):
     active = context.view_layer.objects.active
     mode = active.mode if active is not None else 'OBJECT'
     _state = _ExportState(root)
+    eye = operators.pilot_eye(root)
+    eye_fov = operators.pilot_eye_fov(root, eye) if eye is not None else None
     variants.sync(root)
     # Export the original materials, not the skin being shown. The skin is
     # shown again afterwards.
@@ -340,6 +360,8 @@ def export_gltf(root, filepath, apply_modifiers=True, keep_originals=False):
     if 'FINISHED' not in result:
         raise RuntimeError("Blender's glTF export failed ({})".format(result))
     _material_extensions(filepath, keep_originals)
+    if eye_fov is not None:
+        _pilot_eye_camera(filepath, eye.name, eye_fov)
     if not keep_originals:
         _png_images(filepath)
 

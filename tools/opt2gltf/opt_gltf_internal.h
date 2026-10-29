@@ -98,6 +98,8 @@ typedef struct {
 	size_t                  nodes_count, nodes_cap;
 	cgltf_light*            lights;
 	size_t                  lights_count;
+	cgltf_camera            eye_camera; /* shared by the Cockpit hardpoints */
+	bool                    has_eye_camera;
 	cgltf_node**            root_children;
 	size_t                  root_children_count;
 

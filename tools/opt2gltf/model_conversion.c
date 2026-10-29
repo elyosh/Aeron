@@ -359,6 +359,12 @@ static bool prepare_xwau(Conversion* c, const ModelConversion* mc, const opt_fil
 		c->options.model.settings           = c->model->settings;
 		c->options.model.setting_count      = c->model->setting_count;
 		c->cockpit_eye                      = c->model->has_eye ? c->model->eye : NULL;
+		/* The eye camera gets the regular field of view of the cockpit. */
+		if (c->model->fov.has_regular && c->cockpit_eye)
+			c->options.model.eye_vertical_fov =
+				XwauModel_VerticalFov(c->model->fov.regular) * (3.14159265f / 180.0f);
+		else if (c->model->fov.has_regular)
+			Report(label, "the cockpit has a field of view but the craft has no pilot eye; no camera");
 	}
 	const char* listed = ModelTables_LitTextures(basename);
 	if (listed)

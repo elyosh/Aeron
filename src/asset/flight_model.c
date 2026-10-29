@@ -791,13 +791,21 @@ static bool build_hardpoints(const cgltf_node* node, AeronFlightComponent* compo
 			return false;
 		}
 		cJSON_Delete(extension);
+		/* A camera gives the view from the hardpoint. Its direction is
+		   ignored. */
+		const cgltf_camera* camera = child->camera;
+		if (camera &&
+			(camera->type != cgltf_camera_type_perspective ||
+			 !(camera->data.perspective.yfov > 0.0f && camera->data.perspective.yfov < 3.14159265f)))
+			return false;
 		AeronFlightHardpoint* hardpoint = &component->hardpoints[component->hardpoint_count++];
 		float                 matrix[16];
 		float                 origin[3] = { 0.0f, 0.0f, 0.0f };
 		float                 transformed[3];
 		cgltf_node_transform_world(child, matrix);
 		transform_point(matrix, origin, transformed);
-		hardpoint->type = type;
+		hardpoint->type         = type;
+		hardpoint->vertical_fov = camera ? camera->data.perspective.yfov : 0.0f;
 		gltf_to_aeron(transformed, &hardpoint->position);
 	}
 	return true;

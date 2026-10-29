@@ -459,26 +459,33 @@ def pilot_eye(root):
     return None
 
 
-# The game's cockpit view: its projection scale is 0.8 times the screen width,
-# so the horizontal field of view is 2 atan(0.625), 64 degrees. With a 36 mm
-# sensor fitted horizontally, this is a 28.8 mm lens.
-GAME_SENSOR_WIDTH = 36.0
+# The camera's sensor is fitted vertically, so its lens gives the vertical
+# field of view at any aspect: 2 atan(27 / (2 lens)). The game's stock view
+# has a projection scale of 512 at 480 lines, a vertical field of view of
+# 2 atan(240 / 512), 50.2 degrees: a 28.8 mm lens.
+GAME_SENSOR_HEIGHT = 27.0
 GAME_LENS = 28.8
 
 
-def pilot_eye_camera(context, root, eye):
+def pilot_eye_camera(context, root, eye, yfov=None):
     """The model's pilot eye camera, created the first time. It is outside the
     model root, so it is not part of the model, and a Child Of constraint keeps
-    it at the pilot eye, looking along the model's -Y with its +Z up."""
+    it at the pilot eye, looking along the model's -Y with its +Z up. Its lens
+    is the cockpit's field of view, which the export writes into the model. A
+    new camera gets the stock view, or `yfov` (radians) when given."""
     name = root.name + " Pilot Eye"
     camera = bpy.data.objects.get(name)
-    if camera is None or camera.type != 'CAMERA':
+    created = camera is None or camera.type != 'CAMERA'
+    if created:
         camera = bpy.data.objects.new(name, bpy.data.cameras.new(name))
     if context.scene.objects.get(camera.name) is None:
         context.scene.collection.objects.link(camera)
-    camera.data.sensor_fit = 'HORIZONTAL'
-    camera.data.sensor_width = GAME_SENSOR_WIDTH
-    camera.data.lens = GAME_LENS
+    camera.data.sensor_fit = 'VERTICAL'
+    camera.data.sensor_height = GAME_SENSOR_HEIGHT
+    if yfov is not None:
+        camera.data.lens = GAME_SENSOR_HEIGHT / (2.0 * math.tan(yfov / 2.0))
+    elif created:
+        camera.data.lens = GAME_LENS
     constraint = camera.constraints.get("Pilot Eye")
     if constraint is None or constraint.type != 'CHILD_OF':
         constraint = camera.constraints.new('CHILD_OF')
@@ -490,8 +497,22 @@ def pilot_eye_camera(context, root, eye):
     return camera
 
 
+def pilot_eye_fov(root, eye):
+    """The vertical field of view in radians of the pilot eye camera of
+    `root`, or None when it has none or shows the stock view."""
+    camera = bpy.data.objects.get(root.name + " Pilot Eye")
+    if camera is None or camera.type != 'CAMERA' or camera.data.type != 'PERSP':
+        return None
+    constraint = camera.constraints.get("Pilot Eye")
+    if constraint is None or constraint.target != eye:
+        return None
+    if camera.data.sensor_height == GAME_SENSOR_HEIGHT and abs(camera.data.lens - GAME_LENS) < 1e-4:
+        return None
+    return 2.0 * math.atan(camera.data.sensor_height / (2.0 * camera.data.lens))
+
+
 class AERON_OT_view_pilot_eye(Operator):
-    """Look through a camera at the pilot eye hardpoint, with the game's cockpit field of view"""
+    """Look through a camera at the pilot eye hardpoint. Its lens sets the cockpit's field of view"""
 
     bl_idname = "aeron.view_pilot_eye"
     bl_label = "View From Pilot Eye"

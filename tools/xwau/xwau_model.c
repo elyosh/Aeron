@@ -1,5 +1,6 @@
 #include "xwau_model.h"
 
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -76,6 +77,46 @@ bool XwauModel_Eye(const char* game, const char* model, int eye[3], const char* 
 			return true;
 	}
 	return ModelTables_XwauEye(model, eye);
+}
+
+/* ---- Cockpit field of view ------------------------------------------------- */
+
+/* Reads a key of the .dc file as LoadIndividualDCParams does, and clamps it
+ * as SetCurrentShipFOV does. */
+static void read_fov(const char* param, const char* value, const char* key, bool* has, float* out) {
+	if (strcasecmp(param, key) != 0)
+		return;
+	const float degrees = (float)atof(value);
+	*has                = true;
+	*out                = degrees < 15.0f ? 15.0f : (degrees > 170.0f ? 170.0f : degrees);
+}
+
+bool XwauModel_CockpitFov(const char* game, const char* model, XwauCockpitFov* out) {
+	memset(out, 0, sizeof *out);
+	char rel[512], path[1024];
+	if (!PathFormat(rel, sizeof rel, "DynamicCockpit/%sCockpit.dc", model) ||
+		!Xwau_FindFile(game, rel, path, sizeof path))
+		return false;
+	FILE* f = fopen(path, "rt");
+	if (!f)
+		return false;
+	char buf[256], param[128], value[128];
+	while (fgets(buf, sizeof buf, f)) {
+		if (buf[0] == ';' || buf[0] == '#')
+			continue;
+		value[0] = 0;
+		if (sscanf(buf, "%127s = %127s", param, value) <= 0)
+			continue;
+		read_fov(param, value, "xwahacker_fov", &out->has_regular, &out->regular);
+		read_fov(param, value, "xwahacker_large_fov", &out->has_large, &out->large);
+	}
+	fclose(f);
+	return out->has_regular || out->has_large;
+}
+
+float XwauModel_VerticalFov(float degrees) {
+	const float half = degrees * (3.14159265f / 360.0f);
+	return atanf(tanf(half) * 0.5f) * (360.0f / 3.14159265f);
 }
 
 /* ---- Object profiles ------------------------------------------------------- */
@@ -537,6 +578,7 @@ bool XwauModel_Read(const char* game, const XwauMissions* missions, const char* 
 					const char* label) {
 	memset(out, 0, sizeof *out);
 	out->has_eye = XwauModel_Eye(game, model, out->eye, label);
+	XwauModel_CockpitFov(game, model, &out->fov);
 	char rel[512];
 	if (!PathFormat(rel, sizeof rel, "DynamicCockpit/%s.dc", model))
 		return false;

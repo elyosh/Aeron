@@ -5,7 +5,8 @@
 # settings, component sets, markings and energy default of the model root,
 # the model lights as Blender point and area lights, and the animation and
 # screen of each material. The asset extras and the names of the file's
-# extensions and extras are kept too (sources.py).
+# extensions and extras are kept too (sources.py). A hardpoint's camera
+# becomes the lens of the pilot eye camera.
 
 import json
 import math
@@ -155,6 +156,8 @@ def restore(gltf):
                 if child_role == "hardpoint":
                     _set_role(child, 'hardpoint', ordinal)
                     child.aeron_flight.hardpoint_type = str(extension.get("type", 0))
+                    if child_index in _state["camera_fovs"]:
+                        _state["eye_fovs"][child.name] = _state["camera_fovs"][child_index]
                     ordinal += 1
                 elif child_role == "engineGlow":
                     _set_role(child, 'engineGlow', ordinal)
@@ -208,6 +211,20 @@ def restore(gltf):
 
 class glTF2ImportUserExtension:
     """Hooks for Blender's glTF importer, which finds them on the add-on's module."""
+
+    def gather_import_gltf_before_hook(self, gltf):
+        # Blender would turn a hardpoint with a camera into a camera object.
+        # The camera's field of view is kept for the pilot eye camera.
+        if _state is None:
+            return
+        cameras = gltf.data.cameras or []
+        for index, node in enumerate(gltf.data.nodes or []):
+            if node.camera is None or _extension(node).get("role") != "hardpoint":
+                continue
+            camera = cameras[node.camera] if node.camera < len(cameras) else None
+            if camera is not None and camera.type == "perspective" and camera.perspective is not None:
+                _state["camera_fovs"][index] = camera.perspective.yfov
+            node.camera = None
 
     def gather_import_material_after_hook(self, gltf_material, vertex_color, blender_material, gltf):
         if _state is None:
@@ -327,7 +344,8 @@ class IMPORT_OT_aeron_flight_model(Operator, ImportHelper):
             self.report({'ERROR'}, "This .glb is cooked for the game. Blender cannot read its textures, and "
                                    "the cooker removed its source data. Import the model's .gltf instead")
             return {'CANCELLED'}
-        _state = {"roots": [], "components": 0, "lights": 0, "error": None, "animated": set()}
+        _state = {"roots": [], "components": 0, "lights": 0, "error": None, "animated": set(), "camera_fovs": {},
+                  "eye_fovs": {}}
         variants_before = [variant.name for variant in _variant_list() or ()]
         try:
             result = bpy.ops.import_scene.gltf(
@@ -360,7 +378,7 @@ class IMPORT_OT_aeron_flight_model(Operator, ImportHelper):
         # camera only when the scene has none.
         eye = operators.pilot_eye(root)
         if eye is not None:
-            camera = operators.pilot_eye_camera(context, root, eye)
+            camera = operators.pilot_eye_camera(context, root, eye, state["eye_fovs"].get(eye.name))
             if context.scene.camera is None:
                 context.scene.camera = camera
         message = "Imported {} component(s), {} light(s)".format(state["components"], state["lights"])

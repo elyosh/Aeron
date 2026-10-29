@@ -12,6 +12,7 @@
 #include "xwau_game_tables.h"
 #include "xwau_gunner_seats.h"
 #include "xwau_mat.h"
+#include "xwau_model.h"
 #include "xwau_sound_banks.h"
 #include "xwau_stats_profiles.h"
 
@@ -1239,7 +1240,7 @@ static bool write_craft_file(const char* path, const char* sources, const XwauCr
 							 const XwauCraftSound* sound, const XwauCraftComponents* components,
 							 const XwauGunnerSeats* gunner, const XwauCraftWarheadLock* lock,
 							 const XwauCraftJamming* jamming, const XwauCraftDock* dock,
-							 const XwauMatFile* mat, XwauLines* cockpits) {
+							 const XwauCockpitFov* fov, const XwauMatFile* mat, XwauLines* cockpits) {
 	FILE* f = fopen(path, "wb");
 	if (!f) {
 		Report(path, "can't be written");
@@ -1267,6 +1268,8 @@ static bool write_craft_file(const char* path, const char* sources, const XwauCr
 		XwauCraft_WriteJamming(f, jamming);
 	if (dock->has)
 		XwauCraft_WriteDock(f, dock);
+	if (fov->has_large)
+		fprintf(f, "cockpit_view: {wide_vertical_fov: %.2f}\n", (double)XwauModel_VerticalFov(fov->large));
 	bool ok = XwauGunnerSeats_Write(f, gunner, cockpits);
 	if (!ok)
 		Report(NULL, "out of memory");
@@ -1442,7 +1445,7 @@ bool XwauCraft_Write(const char* xwau_root, const char* output_dir, XwauLines* c
 	bool   ok      = true;
 	int    written = 0, reticles = 0, colors = 0, engine_glows = 0, weapon_colors = 0, light_colors = 0;
 	int    stats_profiles = 0, shields = 0, weapon_rates = 0, sounds = 0, engine_slowing = 0, components = 0;
-	int    weapon_profiles = 0, warhead_locks = 0, jammings = 0, docks = 0, surfaces = 0;
+	int    weapon_profiles = 0, warhead_locks = 0, jammings = 0, docks = 0, surfaces = 0, cockpit_views = 0;
 	/* The materials that the .mat files start from (as opt2gltf reads them). */
 	XwauMatParams global;
 	char          global_path[1024];
@@ -1563,6 +1566,8 @@ bool XwauCraft_Write(const char* xwau_root, const char* output_dir, XwauLines* c
 		const bool    model_dock = dock_hook && strcasecmp(model, "default") != 0;
 		XwauCraft_ReadDock(model_dock ? side_path[SIDE_DOCK] : NULL, model_dock && has_ini ? ini : NULL,
 						   &dock);
+		XwauCockpitFov fov;
+		XwauModel_CockpitFov(xwau_root, model, &fov);
 		XwauGunnerSeats gunner;
 		memset(&gunner, 0, sizeof gunner);
 		if (turrets)
@@ -1588,7 +1593,7 @@ bool XwauCraft_Write(const char* xwau_root, const char* output_dir, XwauLines* c
 		}
 		if (!has_reticle(&hud) && !has_colors(&hud) && !has_engine_glows(&glows) && !has_weapons(weapons) &&
 			!stats.count && !shield.has && !XwauCraft_HasSound(&sound) && !strengths.has && !gunner.has &&
-			!lock.has && !jamming.has && !dock.has && !XwauMat_SurfaceRuleCount(mat)) {
+			!lock.has && !jamming.has && !dock.has && !fov.has_large && !XwauMat_SurfaceRuleCount(mat)) {
 			XwauMat_Free(mat);
 			XwauStatsProfiles_Free(&stats);
 			XwauWeaponStats_Free(&weapons->stats);
@@ -1607,10 +1612,15 @@ bool XwauCraft_Write(const char* xwau_root, const char* output_dir, XwauLines* c
 		}
 		if (XwauMat_SurfaceRuleCount(mat))
 			add_source(sources, sizeof sources, mat_name);
+		if (fov.has_large) {
+			char dc_name[300];
+			snprintf(dc_name, sizeof dc_name, "DynamicCockpit/%sCockpit.dc", model);
+			add_source(sources, sizeof sources, dc_name);
+		}
 		surfaces += XwauMat_SurfaceRuleCount(mat) != 0;
 		if (!PathFormat(path, sizeof path, "%s/%s.yaml", craft_dir, key) || !MakeDirs(craft_dir) ||
 			!write_craft_file(path, sources, &hud, &glows, weapons, &stats, &shield, &sound, &strengths,
-							  &gunner, &lock, &jamming, &dock, mat, cockpits)) {
+							  &gunner, &lock, &jamming, &dock, &fov, mat, cockpits)) {
 			XwauMat_Free(mat);
 			XwauStatsProfiles_Free(&stats);
 			XwauWeaponStats_Free(&weapons->stats);
@@ -1627,6 +1637,7 @@ bool XwauCraft_Write(const char* xwau_root, const char* output_dir, XwauLines* c
 		warhead_locks += lock.has;
 		jammings += jamming.has;
 		docks += dock.has;
+		cockpit_views += fov.has_large;
 		XwauMat_Free(mat);
 		XwauStatsProfiles_Free(&stats);
 		written++;
@@ -1645,9 +1656,10 @@ bool XwauCraft_Write(const char* xwau_root, const char* output_dir, XwauLines* c
 		"model settings: %d files, %d with a reticle, %d with HUD colours, %d with engine glows, %d with "
 		"weapon settings, %d with weapon profiles, %d with stats profiles, %d with a shield recharge rate, "
 		"%d with sounds, %d with component strengths, %d with gunner seats, %d with warhead lock settings, "
-		"%d with jamming rules, %d with a docking approach height, %d with surface rules",
+		"%d with jamming rules, %d with a docking approach height, %d with surface rules, %d with a wide "
+		"cockpit view",
 		written, reticles, colors, engine_glows, weapon_colors, weapon_profiles, stats_profiles, shields,
-		sounds, components, gunner_seats, warhead_locks, jammings, docks, surfaces);
+		sounds, components, gunner_seats, warhead_locks, jammings, docks, surfaces, cockpit_views);
 	if (weapon_lock) {
 		/* The global section only sets the AI's ranges by the category of
 		   the AI's craft. */

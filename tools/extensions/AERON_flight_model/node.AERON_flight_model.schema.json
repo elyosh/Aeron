@@ -247,7 +247,7 @@
     },
     "hardpoint": {
       "title": "Hardpoint",
-      "description": "An empty node where the game fires or launches from; translation only.",
+      "description": "An empty node where the game fires or launches from; translation only. The node can have a perspective camera, whose yfov is the vertical field of view of a view from the hardpoint.",
       "type": "object",
       "required": ["role", "type"],
       "properties": {

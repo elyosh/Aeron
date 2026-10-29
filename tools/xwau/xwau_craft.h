@@ -210,6 +210,15 @@
  * AmbientSoundDistance of 0 counts as 1. An axis with no distance is written
  * as null, and the game then uses the craft's size.
  *
+ * The wide cockpit view comes from xwahacker_large_fov in the craft's
+ * cockpit file, DynamicCockpit/<model>Cockpit.dc (xwau_model.h). It is
+ * written as the vertical field of view that XWAU shows, in degrees:
+ *
+ *   cockpit_view: {wide_vertical_fov: 61.59}
+ *
+ * The regular view (xwahacker_fov) goes into the camera of the craft
+ * model's pilot eye, which the model converter writes.
+ *
  * hud.yaml holds `hull_icons` and `map_icons`, from HullIconList.txt and
  * MapIconList.txt, read like XWAU's hull icon hook: the value at position N
  * is the image id for object type N, counting the lines that the hook reads

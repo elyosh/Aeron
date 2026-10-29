@@ -52,6 +52,9 @@ typedef struct AeronFlightRotation {
 typedef struct AeronFlightHardpoint {
 	int32_t         type;
 	AeronFlightVec3 position;
+	/* The vertical field of view of the hardpoint's perspective camera, in
+	   radians, or 0 when it has no camera. */
+	float vertical_fov;
 } AeronFlightHardpoint;
 
 typedef struct AeronFlightEngineGlow {
