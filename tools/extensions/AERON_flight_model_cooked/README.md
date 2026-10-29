@@ -54,7 +54,9 @@ Malformed or stale data fails the load.
   frame, degenerate triangles dropped, triangle order preserved.
 - Model root `renderData`: `{ "version": 1, "bufferView": N, "meshHash":
   "<16 lower-case hex digits>" }`. It covers the merged render triangles in
-  final index order (opaque, mask, blend).
+  final index order (opaque, mask, blend). Control meshes are part of it,
+  at rest. The loader gives the controls their mesh-table rows, so cooking
+  doesn't change them.
 
 `topologyHash` is XXH64 (seed 0) of these little-endian values:
 `position_count` (u32), every position (3 x f32), `triangle_count` (u32),

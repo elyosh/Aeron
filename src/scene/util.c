@@ -228,7 +228,7 @@ int AeronSceneInternal_InstanceBox(const AeronSceneMeshInstance* instance, const
 	float shared_reach[3][3];
 	instance_box_model(instance->transform, instance_box_identity_row, shared_model);
 	instance_box_reach(shared_model, axes, shared_reach);
-	for (uint32_t component = 0; component < mesh->component_count; component++) {
+	for (uint32_t component = 0; component < mesh->row_count; component++) {
 		const uint32_t row = component < table_components ? component : table_components - 1u;
 		if (table && table->visibility_packed[row >> 2][row & 3] < 0.5f) {
 			continue;

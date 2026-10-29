@@ -126,16 +126,22 @@ typedef struct AeronSceneMesh {
 	uint64_t     screen_source_mask;
 
 	/* Per-component articulation (indexed by the per-vertex component);
-	 * component_count = the model's component count, the entries its mesh
-	 * tables must fill. */
+	 * component_count = the model's component count. */
 	AeronMeshRot component_rot[AERON_MAX_MESH_COMPONENTS];
 	uint32_t     component_count;
 	bool         has_any_rotation;
+	/* The source flight model's controls (owned), whose meshes use the
+	 * mesh-table rows after the components', and row_count, the rows its
+	 * mesh tables must fill: component_count + control_count. */
+	AeronFlightControl* controls;
+	uint32_t            control_count;
+	uint32_t            row_count;
 
 	float bound_min[3];
 	float bound_max[3];
-	/* Each component's render-geometry bounds, in the vertices' local frame
-	 * (before its mesh-table row); the model bounds are their union. */
+	/* Each row's render-geometry bounds, in the vertices' local frame
+	 * (before its mesh-table row); the model bounds are their union. A
+	 * control without a mesh has an empty box at its pivot. */
 	float component_bound_min[AERON_MAX_MESH_COMPONENTS][3];
 	float component_bound_max[AERON_MAX_MESH_COMPONENTS][3];
 	/* The same boxes as centre and half size, computed once for the

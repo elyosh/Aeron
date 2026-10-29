@@ -209,6 +209,10 @@ def _status(obj):
         return "{} of {}".format(_child_labels(obj.parent).get(obj.name, ""), obj.parent.name), 'INFO'
     if role == 'collision':
         return "Collision mesh of {} (never rendered)".format(obj.parent.name), 'INFO'
+    if role == 'control':
+        if common.role(obj.parent) not in {'component', 'control'}:
+            return "Not under a component or a control: not exported", 'ERROR'
+        return "Control of {}".format(obj.parent.name), 'INFO'
     return None, None
 
 
@@ -241,6 +245,17 @@ class OBJECT_PT_aeron(_ObjectPanel, Panel):
             column.label(text="Glows toward -Y")
             column.label(text="X and Z scale set its width")
             column.label(text="Y scale sets its length")
+        elif props.role == 'control':
+            layout.prop(props, "control_motion")
+            if props.control_motion == 'translate':
+                layout.prop(props, "control_offset")
+            else:
+                layout.prop(props, "control_axis")
+                layout.prop(props, "control_degrees")
+            layout.prop(props, "tags")
+            column = layout.column(align=True)
+            column.label(text="The game moves it by the value of its first tag it knows")
+            column.label(text="Its origin is the hinge")
 
 
 def draw_light(layout, obj):

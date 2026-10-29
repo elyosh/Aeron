@@ -32,12 +32,13 @@ enum {
 	AERON_SCENE_MAX_PROBE_SETS       = 8,
 };
 
-/* Per-component payload packed into the scene's per-frame storage
- * buffer: per-component 3x4 affine + packed visibility / highlight / markings /
- * emissive lanes. Instances without one get the identity default.
+/* Per-row payload packed into the scene's per-frame storage buffer: per-row
+ * 3x4 affine + packed visibility / highlight / markings / emissive lanes. A
+ * model's rows are its components, then its controls. Instances without one
+ * get the identity default.
  *
- * Capacity is AERON_MAX_MESH_COMPONENTS, but only components
- * 0..component_count-1 are read: writers fill those (normally the model's AeronSceneMesh.component_count)
+ * Capacity is AERON_MAX_MESH_COMPONENTS, but only rows 0..component_count-1
+ * are read: writers fill those (normally the model's AeronSceneMesh.row_count)
  * and leave the rest untouched, and the scene uploads the table packed at
  * component_count (mesh_table_layout.hlsli). Zero means the full capacity. */
 typedef struct AeronSceneMeshTable {

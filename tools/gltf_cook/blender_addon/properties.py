@@ -128,7 +128,7 @@ class AeronLightVariant(PropertyGroup):
 
 def _role_update(self, context):
     obj = self.id_data
-    if self.role in {'component', 'hardpoint', 'engineGlow'} and obj.parent is not None:
+    if self.role in {'component', 'hardpoint', 'engineGlow', 'control'} and obj.parent is not None:
         siblings = [child for child in obj.parent.children
                     if child != obj and common.role(child) == self.role]
         self.order = common.next_order(siblings)
@@ -155,6 +155,8 @@ class AeronFlightProperties(PropertyGroup):
             ('hardpoint', "Hardpoint", "A weapon or attachment point on its component"),
             ('engineGlow', "Engine Glow", "An engine glow on its component"),
             ('collision', "Collision", "The collision mesh of its component, never rendered"),
+            ('control', "Control", "A part that the game moves, such as a cockpit stick or lever. Its origin "
+                                   "is the hinge"),
         ],
         default='none',
         update=_role_update,
@@ -228,6 +230,20 @@ class AeronFlightProperties(PropertyGroup):
                                     default=(1.0, 0.8, 0.3, 1.0))
     outer_color: FloatVectorProperty(name="Outer Color", size=4, subtype='COLOR_GAMMA', min=0.0, max=1.0,
                                      default=(1.0, 0.2, 0.0, 0.0))
+
+    # Control (under a component or another control). The tags above say what
+    # moves it; the axis and offset are in the object's local axes.
+    control_motion: EnumProperty(
+        name="Motion", default='rotate',
+        items=[('rotate', "Rotate", "Turns about an axis through its origin"),
+               ('translate', "Slide", "Slides along a vector")])
+    control_axis: FloatVectorProperty(name="Axis", size=3, subtype='XYZ', default=(1.0, 0.0, 0.0),
+                                      description="The axis it turns about, in its local axes")
+    control_degrees: FloatProperty(name="Angle", default=10.0,
+                                   description="How far it turns, in degrees, when the game's value is 1")
+    control_offset: FloatVectorProperty(name="Offset", size=3, subtype='TRANSLATION', unit='LENGTH',
+                                        description="How far it slides when the game's value is 1, in its "
+                                                    "local axes")
 
     # Light (a Blender light under a component).
     light_exclude: BoolProperty(name="Exclude from Model", default=False,

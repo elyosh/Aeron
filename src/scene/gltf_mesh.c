@@ -16,7 +16,8 @@
  *     merged ship-level buffer the renderer issues a single indexed
  *     draw against
  *   - assigns each component node's model-local ordinal (its order under
- *     the model root) to its render vertices
+ *     the model root) to its render vertices, and each control node's
+ *     mesh-table row to its own
  *
  * PNG decoding, atlas packing, and mip generation happen offline in
  * aeron_gltf_cook.
@@ -123,6 +124,37 @@ static cJSON* extension_object(const cgltf_extension* extensions, cgltf_size cou
 
 static cJSON* flight_model_object(const cgltf_extension* extensions, cgltf_size count) {
 	return extension_object(extensions, count, AERON_FLIGHT_MODEL_EXTENSION);
+}
+
+static bool is_control(const cgltf_node* node) {
+	cJSON*       object = flight_model_object(node->extensions, node->extensions_count);
+	const cJSON* role   = cJSON_GetObjectItemCaseSensitive(object, "role");
+	const bool   found  = cJSON_IsString(role) && strcmp(role->valuestring, "control") == 0;
+	cJSON_Delete(object);
+	return found;
+}
+
+static void collect_controls(const cgltf_node* node, const cgltf_node** nodes, uint32_t capacity,
+							 uint32_t* count) {
+	for (cgltf_size index = 0; index < node->children_count; ++index) {
+		const cgltf_node* child = node->children[index];
+		if (!is_control(child))
+			continue;
+		if (nodes && *count < capacity)
+			nodes[*count] = child;
+		++*count;
+		collect_controls(child, nodes, capacity, count);
+	}
+}
+
+uint32_t Aeron_GltfControlNodes(const cgltf_data* data, const cgltf_node** nodes, uint32_t capacity) {
+	uint32_t count = 0;
+	if (!data || !data->scene || data->scene->nodes_count != 1)
+		return 0;
+	const cgltf_node* root = data->scene->nodes[0];
+	for (cgltf_size index = 0; index < root->children_count; ++index)
+		collect_controls(root->children[index], nodes, capacity, &count);
+	return count;
 }
 
 /* ===== Variants and the markings list ===============================
@@ -907,8 +939,8 @@ static bool primitive_is_screen(const AeronGltfModel* model, uint32_t prim_id) {
  * primitive's range relative to its global vertex_offset so the
  * renderer issues a single indexed draw across all primitives.
  *
- * Also bakes per-vertex `component` (= component ordinal) and
- * `prim_id` (= global prim slot). */
+ * Also bakes per-vertex `component` (= mesh-table row: the component
+ * ordinal, or a control's row) and `prim_id` (= global prim slot). */
 static bool append_primitive_vertices(const cgltf_primitive* p, const cgltf_node* node,
 									  uint16_t component_index, uint32_t prim_id, AeronGltfVertex* verts,
 									  uint32_t* indices, uint32_t* voff_io, uint32_t* ioff_io) {
@@ -1067,15 +1099,27 @@ bool Aeron_GltfMeshBuildData(const cgltf_data* data, const char* source_label, A
 	if (!data->scene || data->scene->nodes_count != 1)
 		goto cleanup;
 	const cgltf_node* root = data->scene->nodes[0];
-	plans = (NodePlan*)calloc(root->children_count, sizeof *plans);
+	/* Control meshes draw with the rows after the components'. */
+	const uint32_t control_count = Aeron_GltfControlNodes(data, NULL, 0);
+	if (root->children_count + control_count > AERON_MAX_MESH_COMPONENTS) {
+		SDL_Log("[flight_gltf] '%s' has more than %d components and controls", source_label,
+				AERON_MAX_MESH_COMPONENTS);
+		goto cleanup;
+	}
+	const cgltf_node* control_nodes[AERON_MAX_MESH_COMPONENTS];
+	Aeron_GltfControlNodes(data, control_nodes, control_count);
+	plans = (NodePlan*)calloc(root->children_count + control_count, sizeof *plans);
 	if (!plans)
 		goto cleanup;
 	uint32_t plan_count = 0;
 
-	for (cgltf_size i = 0; i < root->children_count; i++) {
-		const cgltf_node* n               = root->children[i];
+	for (cgltf_size i = 0; i < root->children_count + control_count; i++) {
+		const bool        control = i >= root->children_count;
+		const cgltf_node* n       = control ? control_nodes[i - root->children_count] : root->children[i];
 		const uint16_t    component_index = (uint16_t)i;
-		if (!n->mesh || i >= AERON_MAX_MESH_COMPONENTS)
+		if (control && !n->mesh)
+			continue;
+		if (!n->mesh)
 			goto cleanup;
 
 		NodePlan* plan = &plans[plan_count++];

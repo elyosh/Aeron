@@ -101,6 +101,9 @@ static void build_free(Build* b) {
 			opt_gltf_built_mesh_free(&b->built[mi]);
 		free(b->built);
 	}
+	for (size_t k = 0; k < b->control_mesh_count; ++k)
+		opt_gltf_built_mesh_free(&b->control_meshes[k].built);
+	free(b->control_meshes);
 }
 
 /* ---- Options ------------------------------------------------------------ */
@@ -195,6 +198,23 @@ static bool validate_options(Build* b) {
 		}
 		if (!valid)
 			return opt_gltf_build_fail(b, "invalid light %zu", i);
+	}
+	for (size_t i = 0; i < o->model.control_count; ++i) {
+		const OptGltfControl* control = &o->model.controls[i];
+		bool valid = control->hinge_count >= 1 && control->hinge_count <= 2 && control->texture_count > 0 &&
+					 isfinite(control->pivot.x) && isfinite(control->pivot.y) && isfinite(control->pivot.z);
+		for (uint32_t h = 0; valid && h < control->hinge_count; ++h)
+			valid = control->hinges[h].axis >= 0 && control->hinges[h].axis <= 2 &&
+					isfinite(control->hinges[h].degrees) && valid_component_tag(control->hinges[h].tag);
+		for (size_t t = 0; valid && t < control->texture_count; ++t) {
+			const int32_t texture = control->textures[t];
+			valid                 = texture >= 0 && texture < opt->texture_count;
+			for (size_t other = 0; valid && other <= i; ++other)
+				for (size_t u = 0; valid && u < o->model.controls[other].texture_count; ++u)
+					valid = (other == i && u == t) || o->model.controls[other].textures[u] != texture;
+		}
+		if (!valid)
+			return opt_gltf_build_fail(b, "invalid control %zu", i);
 	}
 	for (size_t i = 0; i < o->model.setting_count; ++i) {
 		bool duplicate = false;
@@ -389,35 +409,151 @@ static bool group_has_variants(const Build* b, const opt_face_group_t* grp) {
 	return false;
 }
 
+/* The control (OptGltfControl) whose textures include `texture`, or -1. */
+static int32_t control_of(const Build* b, int32_t texture) {
+	const OptGltfModelOptions* o = &b->options->model;
+	for (size_t c = 0; c < o->control_count; ++c)
+		for (size_t t = 0; t < o->controls[c].texture_count; ++t)
+			if (o->controls[c].textures[t] == texture)
+				return (int32_t)c;
+	return -1;
+}
+
+/* Builds the geometry of the face groups of control `control` in mesh `mi`
+ * into `out`: the vertices they use, moved by -pivot (glTF metres), and
+ * their indices. */
+static bool control_built_mesh(const Build* b, int32_t mi, size_t control, const float pivot[3],
+							   BuiltMesh* out) {
+	const BuiltMesh* source = &b->built[mi];
+	const opt_lod_t* lod    = &b->opt->meshes[mi].lods[0];
+	const size_t     groups = lod->group_count ? (size_t)lod->group_count : 1;
+	uint32_t* remap = (uint32_t*)malloc((source->vertex_count ? source->vertex_count : 1) * sizeof *remap);
+	out->vertices =
+		(GltfVertex*)malloc((source->vertex_count ? source->vertex_count : 1) * sizeof *out->vertices);
+	out->indices = (uint32_t*)malloc((source->index_count ? source->index_count : 1) * sizeof *out->indices);
+	out->fg_index_start     = (uint32_t*)calloc(groups, sizeof *out->fg_index_start);
+	out->fg_index_count_arr = (uint32_t*)calloc(groups, sizeof *out->fg_index_count_arr);
+	if (!remap || !out->vertices || !out->indices || !out->fg_index_start || !out->fg_index_count_arr) {
+		free(remap);
+		return false;
+	}
+	out->vertex_cap   = source->vertex_count;
+	out->index_cap    = source->index_count;
+	out->has_tangents = source->has_tangents;
+	for (uint32_t v = 0; v < source->vertex_count; ++v)
+		remap[v] = UINT32_MAX;
+	for (int32_t g = 0; g < lod->group_count; ++g) {
+		if (source->fg_index_count_arr[g] == 0 ||
+			control_of(b, lod->groups[g].texture_index) != (int32_t)control)
+			continue;
+		out->fg_index_start[g] = out->index_count;
+		for (uint32_t i = 0; i < source->fg_index_count_arr[g]; ++i) {
+			const uint32_t v = source->indices[source->fg_index_start[g] + i];
+			if (remap[v] == UINT32_MAX) {
+				GltfVertex* vertex = &out->vertices[out->vertex_count];
+				*vertex            = source->vertices[v];
+				for (int k = 0; k < 3; ++k)
+					vertex->pos[k] -= pivot[k];
+				remap[v] = out->vertex_count++;
+			}
+			out->indices[out->index_count++] = remap[v];
+		}
+		out->fg_index_count_arr[g] = source->fg_index_count_arr[g];
+		out->fg_count++;
+	}
+	free(remap);
+	return true;
+}
+
+/* Moves the face groups of the controls out of their meshes, into control
+ * meshes (Build.control_meshes). A mesh made only of control faces is left
+ * without face groups (write_mesh). */
+static bool split_controls(Build* b) {
+	const OptGltfModelOptions* o = &b->options->model;
+	if (!o->control_count)
+		return true;
+	for (int32_t mi = 0; mi < b->opt->mesh_count; ++mi) {
+		const opt_lod_t* lod = &b->opt->meshes[mi].lods[0];
+		BuiltMesh*       bm  = &b->built[mi];
+		for (size_t c = 0; c < o->control_count; ++c) {
+			bool used = false;
+			for (int32_t g = 0; !used && g < lod->group_count; ++g)
+				used = bm->fg_index_count_arr[g] != 0 &&
+					   control_of(b, lod->groups[g].texture_index) == (int32_t)c;
+			if (!used)
+				continue;
+			ControlMesh* grown =
+				(ControlMesh*)realloc(b->control_meshes, (b->control_mesh_count + 1) * sizeof *grown);
+			if (!grown)
+				return opt_gltf_build_fail(b, "out of memory (controls)");
+			b->control_meshes = grown;
+			ControlMesh* cm   = &grown[b->control_mesh_count++];
+			memset(cm, 0, sizeof *cm);
+			cm->mesh_index = mi;
+			cm->control    = c;
+			float pivot[3];
+			swap_axis_v3(&o->controls[c].pivot, pivot);
+			for (int k = 0; k < 3; ++k)
+				pivot[k] *= OPT_METERS_PER_UNIT;
+			if (!control_built_mesh(b, mi, c, pivot, &cm->built))
+				return opt_gltf_build_fail(b, "out of memory (controls)");
+		}
+		for (int32_t g = 0; g < lod->group_count; ++g)
+			if (control_of(b, lod->groups[g].texture_index) >= 0 && bm->fg_index_count_arr[g] != 0) {
+				bm->fg_index_count_arr[g] = 0;
+				bm->fg_count--;
+			}
+	}
+	return true;
+}
+
+/* Counts the buffer views, accessors, primitives, attributes and mappings
+ * of the face groups of `bm`, from mesh `mi`, or of its empty triangle
+ * (write_mesh). */
+static void count_geometry(const Build* b, int32_t mi, const BuiltMesh* bm, size_t* views, size_t* accessors,
+						   size_t* prims, size_t* attrs, size_t* maps) {
+	const opt_lod_t* lod     = &b->opt->meshes[mi].lods[0];
+	const size_t     streams = mesh_attribute_count(bm);
+	/* One view and accessor for each vertex attribute, plus an index view
+	 * and accessor for each face group that has indices. */
+	*views += streams;
+	*accessors += streams;
+	if (bm->fg_count == 0) {
+		++*prims;
+		*attrs += streams;
+		++*views;
+		++*accessors;
+		return;
+	}
+	for (int32_t g = 0; g < lod->group_count; ++g) {
+		if (bm->fg_index_count_arr[g] == 0)
+			continue;
+		++*prims;
+		*attrs += streams;
+		++*views;
+		++*accessors;
+		if (group_has_variants(b, &lod->groups[g]))
+			*maps += b->gb->variants_count;
+	}
+}
+
 /* Allocates the meshes, buffer views, accessors, primitives, attributes and
  * mappings that pass 2 writes. cgltf points into these arrays, so each one
  * is allocated once at its full size. */
 static bool allocate_geometry(Build* b) {
 	const opt_file_t* opt = b->opt;
 	GltfBuild*        gb  = b->gb;
-	gb->meshes            = (cgltf_mesh*)calloc((size_t)opt->mesh_count, sizeof *gb->meshes);
+	const size_t      meshes = (size_t)opt->mesh_count + b->control_mesh_count;
+	gb->meshes               = (cgltf_mesh*)calloc(meshes ? meshes : 1, sizeof *gb->meshes);
 	if (!gb->meshes)
 		return opt_gltf_build_fail(b, "out of memory");
-	gb->meshes_count = (size_t)opt->mesh_count;
+	gb->meshes_count = meshes;
 	size_t prims = 0, attrs = 0, maps = 0, views = 0, accessors = 0;
-	for (int32_t mi = 0; mi < opt->mesh_count; ++mi) {
-		const opt_lod_t* lod     = &opt->meshes[mi].lods[0];
-		const size_t     streams = mesh_attribute_count(&b->built[mi]);
-		/* One view and accessor for each vertex attribute, plus an index view
-		 * and accessor for each face group that has indices. */
-		views += streams;
-		accessors += streams;
-		for (int32_t g = 0; g < lod->group_count; ++g) {
-			if (b->built[mi].fg_index_count_arr[g] == 0)
-				continue;
-			prims++;
-			attrs += streams;
-			views++;
-			accessors++;
-			if (group_has_variants(b, &lod->groups[g]))
-				maps += gb->variants_count;
-		}
-	}
+	for (int32_t mi = 0; mi < opt->mesh_count; ++mi)
+		count_geometry(b, mi, &b->built[mi], &views, &accessors, &prims, &attrs, &maps);
+	for (size_t k = 0; k < b->control_mesh_count; ++k)
+		count_geometry(b, b->control_meshes[k].mesh_index, &b->control_meshes[k].built, &views, &accessors,
+					   &prims, &attrs, &maps);
 	gb->views          = (cgltf_buffer_view*)calloc(views ? views : 1, sizeof *gb->views);
 	gb->accessors      = (cgltf_accessor*)calloc(accessors ? accessors : 1, sizeof *gb->accessors);
 	gb->primitives     = (cgltf_primitive*)calloc(prims ? prims : 1, sizeof *gb->primitives);
@@ -526,9 +662,9 @@ static bool primitive_mappings(Build* b, cgltf_primitive* prim, const opt_face_g
 /* Writes the primitive of face group `g` of mesh `mi`. It has its indices
  * (16-bit when every vertex index fits), the vertex attributes of the mesh,
  * its material and its variant mappings. */
-static bool write_primitive(Build* b, int32_t mi, int32_t g, cgltf_accessor* const vertex_attributes[4]) {
+static bool write_primitive(Build* b, int32_t mi, const BuiltMesh* bm, int32_t g,
+							cgltf_accessor* const vertex_attributes[4]) {
 	GltfBuild*              gb            = b->gb;
-	const BuiltMesh*        bm            = &b->built[mi];
 	const opt_face_group_t* grp           = &b->opt->meshes[mi].lods[0].groups[g];
 	const uint32_t          ic            = bm->fg_index_count_arr[g];
 	const uint32_t*         group_indices = bm->indices + bm->fg_index_start[g];
@@ -584,15 +720,45 @@ static bool write_primitive(Build* b, int32_t mi, int32_t g, cgltf_accessor* con
 	return !group_has_variants(b, grp) || primitive_mappings(b, prim, grp, mi, g);
 }
 
-/* Pass 2 writes the vertex attributes of mesh `mi` into the .bin, then one
- * primitive for each face group that has indices. */
-static bool write_mesh(Build* b, int32_t mi) {
-	GltfBuild*        gb   = b->gb;
-	const BuiltMesh*  bm   = &b->built[mi];
-	const opt_mesh_t* m    = &b->opt->meshes[mi];
-	cgltf_mesh*       mesh = &gb->meshes[mi];
-	mesh->name             = opt_gltf_keep_string(
-		gb, xprintf_dup("Mesh%02d_%s", (int)mi, opt_mesh_type_name(m->descriptor.mesh_type)));
+/* Writes a primitive of one untextured empty triangle over vertex 0, for a
+ * component whose faces all moved to its controls. Like a faceless OPT mesh
+ * (FacelessPatch), it keeps its vertices as its positions and draws
+ * nothing. */
+static bool write_empty_primitive(Build* b, const BuiltMesh* bm, cgltf_accessor* const vertex_attributes[4]) {
+	GltfBuild*            gb          = b->gb;
+	static const uint16_t kIndices[3] = { 0, 0, 0 };
+	const size_t          offset      = opt_gltf_bin_append(gb, kIndices, sizeof kIndices);
+	cgltf_buffer_view* view = opt_gltf_new_view(gb, offset, sizeof kIndices, cgltf_buffer_view_type_indices);
+	cgltf_primitive*   prim = (cgltf_primitive*)opt_gltf_push_array(
+		(void**)&gb->primitives, &gb->primitives_count, &gb->primitives_cap, sizeof *prim, 1);
+	const size_t     attr_count = mesh_attribute_count(bm);
+	cgltf_attribute* attrs      = (cgltf_attribute*)opt_gltf_push_array(
+		(void**)&gb->attributes, &gb->attributes_count, &gb->attributes_cap, sizeof *attrs, attr_count);
+	static const char* const          kNames[4] = { "POSITION", "NORMAL", "TEXCOORD_0", "TANGENT" };
+	static const cgltf_attribute_type kTypes[4] = { cgltf_attribute_type_position,
+													cgltf_attribute_type_normal,
+													cgltf_attribute_type_texcoord,
+													cgltf_attribute_type_tangent };
+	for (size_t a = 0; a < attr_count; ++a) {
+		attrs[a].name = opt_gltf_keep_string(gb, xstrdup(kNames[a]));
+		attrs[a].type = kTypes[a];
+		attrs[a].data = vertex_attributes[a];
+	}
+	prim->type       = cgltf_primitive_type_triangles;
+	prim->indices    = opt_gltf_new_accessor(gb, view, 3, cgltf_type_scalar, cgltf_component_type_r_16u);
+	prim->attributes = attrs;
+	prim->attributes_count = attr_count;
+	prim->material         = texture_material_of(b, -1);
+	return true;
+}
+
+/* Pass 2 writes the vertex attributes of `bm`, the geometry of mesh `mi`
+ * or of one of its controls, into the .bin, then one primitive for each
+ * face group that has indices, into `mesh`. A mesh whose face groups all
+ * moved to its controls gets an empty triangle (write_empty_primitive). */
+static bool write_mesh(Build* b, int32_t mi, const BuiltMesh* bm, cgltf_mesh* mesh) {
+	GltfBuild*        gb = b->gb;
+	const opt_mesh_t* m  = &b->opt->meshes[mi];
 
 	float pmin[3] = { +INFINITY, +INFINITY, +INFINITY };
 	float pmax[3] = { -INFINITY, -INFINITY, -INFINITY };
@@ -618,10 +784,14 @@ static bool write_mesh(Build* b, int32_t mi) {
 			write_attribute(gb, bm, offsetof(GltfVertex, tan), sizeof bm->vertices[0].tan, cgltf_type_vec4);
 
 	mesh->primitives = gb->primitives + gb->primitives_count;
+	if (bm->fg_count == 0) {
+		mesh->primitives_count = 1;
+		return write_empty_primitive(b, bm, attributes);
+	}
 	for (int32_t g = 0; g < m->lods[0].group_count; ++g) {
 		if (bm->fg_index_count_arr[g] == 0)
 			continue;
-		if (!write_primitive(b, mi, g, attributes))
+		if (!write_primitive(b, mi, bm, g, attributes))
 			return false;
 		mesh->primitives_count++;
 	}
@@ -678,11 +848,23 @@ static bool map_every_variant(Build* b) {
 }
 
 static bool write_meshes(Build* b) {
-	if (!allocate_geometry(b))
+	if (!split_controls(b) || !allocate_geometry(b))
 		return false;
-	for (int32_t mi = 0; mi < b->opt->mesh_count; ++mi)
-		if (!write_mesh(b, mi))
+	GltfBuild* gb = b->gb;
+	for (int32_t mi = 0; mi < b->opt->mesh_count; ++mi) {
+		gb->meshes[mi].name = opt_gltf_keep_string(
+			gb,
+			xprintf_dup("Mesh%02d_%s", (int)mi, opt_mesh_type_name(b->opt->meshes[mi].descriptor.mesh_type)));
+		if (!write_mesh(b, mi, &b->built[mi], &gb->meshes[mi]))
 			return false;
+	}
+	for (size_t k = 0; k < b->control_mesh_count; ++k) {
+		ControlMesh* cm = &b->control_meshes[k];
+		cm->mesh        = &gb->meshes[(size_t)b->opt->mesh_count + k];
+		cm->mesh->name = opt_gltf_keep_string(gb, xprintf_dup("Mesh%02d_Control%zu", (int)cm->mesh_index, k));
+		if (!write_mesh(b, cm->mesh_index, &cm->built, cm->mesh))
+			return false;
+	}
 	return map_every_variant(b);
 }
 
@@ -967,6 +1149,64 @@ static bool light_node(Build* b, cgltf_node* node, cgltf_node* parent, size_t in
 	return opt_gltf_set_extension(b->gb, node, extension);
 }
 
+/* The nodes of control mesh `k`, taken from *next_child: one per hinge of
+ * its control, each the parent of the next, named control_<mesh>_<n> from
+ * `*number`. The first is at the pivot under `parent`, and the last holds
+ * the mesh. Returns the first through `first`. */
+static bool control_nodes(Build* b, size_t k, cgltf_node* parent, cgltf_node** next_child, int* number,
+						  cgltf_node** first) {
+	const ControlMesh*    cm      = &b->control_meshes[k];
+	const OptGltfControl* control = &b->options->model.controls[cm->control];
+	/* OPT axes map to glTF axes by a reflection, which turns the other way
+	 * about the mapped axis: OPT X, Y and Z turns are glTF +X, +Z and -Y
+	 * turns. */
+	static const float kAxes[3][3] = { { 1.0f, 0.0f, 0.0f }, { 0.0f, 0.0f, 1.0f }, { 0.0f, -1.0f, 0.0f } };
+	for (uint32_t h = 0; h < control->hinge_count; ++h) {
+		cgltf_node* node = (*next_child)++;
+		node->name =
+			opt_gltf_keep_string(b->gb, xprintf_dup("control_%d_%d", (int)cm->mesh_index, (*number)++));
+		if (h == 0) {
+			child_node(node, parent, &control->pivot);
+			*first = node;
+		} else {
+			node->parent     = parent;
+			parent->children = (cgltf_node**)calloc(1, sizeof *parent->children);
+			if (!parent->children)
+				return opt_gltf_build_fail(b, "out of memory");
+			parent->children[0]    = node;
+			parent->children_count = 1;
+		}
+		if (h + 1 == control->hinge_count)
+			node->mesh = cm->mesh;
+		const OptGltfHinge* hinge     = &control->hinges[h];
+		cJSON*              extension = cJSON_CreateObject();
+		cJSON*              rotate    = NULL;
+		cJSON*              tags      = NULL;
+		const bool          ok        = OptJson_Add(extension, "role", cJSON_CreateString("control")) &&
+										(rotate = OptJson_AddObject(extension, "rotate")) != NULL &&
+										OptJson_Add(rotate, "axis", OptJson_Floats(kAxes[hinge->axis], 3)) &&
+										OptJson_Add(rotate, "degrees", cJSON_CreateNumber(hinge->degrees)) &&
+										(tags = OptJson_AddArray(extension, "tags")) != NULL &&
+										OptJson_Add(tags, NULL, cJSON_CreateString(hinge->tag));
+		if (!ok) {
+			cJSON_Delete(extension);
+			return opt_gltf_build_fail(b, "out of memory");
+		}
+		if (!opt_gltf_set_extension(b->gb, node, extension))
+			return false;
+		parent = node;
+	}
+	return true;
+}
+
+/* The number of control meshes of mesh `mi`. */
+static int mesh_control_count(const Build* b, int32_t mi) {
+	int count = 0;
+	for (size_t k = 0; k < b->control_mesh_count; ++k)
+		count += b->control_meshes[k].mesh_index == mi;
+	return count;
+}
+
 /* The number of given lights of mesh `mi`. */
 static int mesh_light_count(const Build* b, int32_t mi) {
 	int count = 0;
@@ -976,8 +1216,9 @@ static int mesh_light_count(const Build* b, int32_t mi) {
 }
 
 /* Builds the node of mesh `mi` and its child nodes, taken from *next_child.
- * The children are the hardpoints, then the engine glows, then the lights.
- * They are empties, so that Blender and other tools show them. */
+ * The children are the hardpoints, then the engine glows, then the lights,
+ * then the controls. All but the controls are empties, so that Blender and
+ * other tools show them. */
 static bool mesh_node(Build* b, int32_t mi, cgltf_node* node, cgltf_node** next_child) {
 	const opt_mesh_t* m    = &b->opt->meshes[mi];
 	cgltf_node*       root = &b->gb->nodes[0];
@@ -988,7 +1229,8 @@ static bool mesh_node(Build* b, int32_t mi, cgltf_node* node, cgltf_node** next_
 	if (!opt_gltf_set_extension(b->gb, node, component_extension(b, mi)))
 		return false;
 
-	const int child_total = m->hardpoint_count + m->engine_glow_count + mesh_light_count(b, mi);
+	const int child_total =
+		m->hardpoint_count + m->engine_glow_count + mesh_light_count(b, mi) + mesh_control_count(b, mi);
 	if (child_total == 0)
 		return true;
 	cgltf_node** children = (cgltf_node**)calloc(child_total, sizeof *children);
@@ -1014,6 +1256,12 @@ static bool mesh_node(Build* b, int32_t mi, cgltf_node* node, cgltf_node** next_
 		if (!light_node(b, children[ci++], node, i))
 			return false;
 	}
+	int number = 0;
+	for (size_t k = 0; k < b->control_mesh_count; ++k) {
+		if (b->control_meshes[k].mesh_index == mi &&
+			!control_nodes(b, k, node, next_child, &number, &children[ci++]))
+			return false;
+	}
 	return true;
 }
 
@@ -1027,6 +1275,8 @@ static bool build_nodes(Build* b) {
 	for (int32_t mi = 0; mi < opt->mesh_count; ++mi)
 		children_total += (size_t)opt->meshes[mi].hardpoint_count + (size_t)opt->meshes[mi].engine_glow_count;
 	children_total += o->model.light_count;
+	for (size_t k = 0; k < b->control_mesh_count; ++k)
+		children_total += o->model.controls[b->control_meshes[k].control].hinge_count;
 	if (o->model.light_count) {
 		gb->lights = (cgltf_light*)calloc(o->model.light_count, sizeof *gb->lights);
 		if (!gb->lights)

@@ -128,6 +128,33 @@ typedef struct AeronFlightLight {
 	uint32_t tag_groups;
 } AeronFlightLight;
 
+/* A control: a hinge that the game moves, such as a cockpit stick or lever.
+ * Its mesh (it may have none) is drawn with mesh-table row
+ * `component_count + its index`, in the order of
+ * Aeron_GltfControlNodes. At value v, a rotating control turns its mesh
+ * and its child controls by v * `angle` radians about `axis` (a unit vector)
+ * through `pivot`; a sliding control moves them by v * `axis` (metres). Its
+ * row is its parent's row times that motion, so it moves with its component
+ * and its parent control. Model space, Aeron axes. `parent_row` is the
+ * component's index or the parent control's row, and `component` the
+ * component it belongs to. The game picks the value from the control's
+ * `tags`; a control whose tags it doesn't drive stays at rest (value 0). */
+#define AERON_FLIGHT_CONTROL_MAX_TAGS 4
+
+typedef struct AeronFlightControl {
+	uint32_t        parent_row;
+	uint32_t        component;
+	bool            slides;
+	AeronFlightVec3 pivot;
+	AeronFlightVec3 axis;
+	float           angle;
+	uint32_t        tag_count;
+	AeronFlightTag  tags[AERON_FLIGHT_CONTROL_MAX_TAGS];
+	/* Bounds of its mesh at rest; zero without a mesh. */
+	bool              has_bounds;
+	AeronFlightBounds bounds;
+} AeronFlightControl;
+
 /* Game-defined articulation: component `component` turns about its
  * `rotation` hinge, in a group the game drives. `component` indexes the
  * game's per-component state (0..254), so it may name a component of another
@@ -174,8 +201,9 @@ typedef struct AeronFlightComponent {
 	 * set, otherwise the component's render mesh. */
 	bool                has_collision;
 	AeronFlightTopology topology;
-	/* Render-mesh bounds; the model bounds are their union. They remain
-	 * independent from the authored descriptor and from a collision child. */
+	/* Render-mesh bounds; the model bounds are their union with the
+	 * controls' bounds. They remain independent from the authored descriptor
+	 * and from a collision child. */
 	AeronFlightBounds     bounds;
 	uint32_t              hardpoint_count;
 	AeronFlightHardpoint* hardpoints;
@@ -289,6 +317,9 @@ typedef struct AeronFlightModel {
 	AeronFlightEngineGlow* engine_glows;
 	uint32_t               light_count;
 	AeronFlightLight*      lights;
+	/* At most AERON_MAX_MESH_COMPONENTS - component_count. */
+	uint32_t                        control_count;
+	AeronFlightControl*             controls;
 	AeronFlightBounds      bounds;
 	float                  max_extent;
 	int32_t                bridge_component;
@@ -341,8 +372,8 @@ void Aeron_FlightModelReleaseRenderData(AeronFlightModel* model);
  * hardpoints, tags and cooked simulation data, the model's articulations,
  * articulation settings and component sets, and the cooked render data.
  * What AeronScene_MeshCreate reads stays: render data, render BVH,
- * component mesh types, rotations and bounds, engine glows, lights and model
- * bounds.
+ * component mesh types, rotations and bounds, engine glows, lights, controls
+ * and model bounds.
  * For a game that builds its simulation data first and then hands the
  * model to its renderer. */
 void Aeron_FlightModelReleaseSimulationData(AeronFlightModel* model);

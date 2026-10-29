@@ -14,6 +14,9 @@ LIGHTS_EXTENSION_NAME = "KHR_lights_punctual"
 TAG_PATTERN = re.compile(r"^[a-z0-9._]{1,63}$")
 MAX_COMPONENTS = 255
 MAX_COMPONENT_ORDINAL = 254
+# A mesh table has a row for each component and each control.
+MAX_ROWS = 255
+MAX_CONTROL_TAGS = 4
 
 MESH_TYPE_NAMES = (
     "Default", "Main Hull", "Wing", "Fuselage", "Gun Turret", "Small Gun",
@@ -109,6 +112,20 @@ def components(root):
 
 def ordered_children(component, roles=('hardpoint', 'engineGlow')):
     return ordered(child for child in component.children if role(child) in roles)
+
+
+def controls(parent):
+    """The controls of a component or a control, in order."""
+    return ordered(child for child in parent.children if role(child) == 'control')
+
+
+def all_controls(parent):
+    """The controls under a component or a control, each followed by its own, in the game's row order."""
+    found = []
+    for control in controls(parent):
+        found.append(control)
+        found.extend(all_controls(control))
+    return found
 
 
 def is_model_light(obj):

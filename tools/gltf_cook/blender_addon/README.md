@@ -126,10 +126,17 @@ They become the components of a new model root, or of the active one.
     scale set the width and height of the glow, and the Y scale sets its
     length (it can be negative);
   - one **collision** mesh (never rendered, its materials are ignored);
-  - **lights** (see below).
+  - **lights** (see below);
+  - **controls**: meshes or Empties that the game moves, such as a cockpit
+    stick or lever. The object's origin is the hinge. A control turns about
+    its axis by its angle, or slides by its offset, times the value of its
+    first tag that the game drives (for example `cockpit.throttle`). A
+    control can hold other controls: a stick that tilts both ways is an
+    Empty that turns forward and back, holding the stick mesh that turns
+    left and right.
   The list of a component sets the order of its hardpoints and engine
   glows. Hardpoints are numbered per component, and engine glows across the
-  whole model.
+  whole model. A model has at most 255 components and controls.
 - Objects without a role are not exported, and a warning lists them.
 
 Components and collision meshes need a positive uniform scale, and nothing

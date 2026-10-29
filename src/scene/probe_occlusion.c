@@ -251,7 +251,7 @@ static int voxelize(AeronSceneProbeOcclusion* o, const AeronSceneMeshInstance* i
 	float hi[3] = { -FLT_MAX, -FLT_MAX, -FLT_MAX };
 	for (uint32_t v = 0; v < mesh->vertex_count; ++v) {
 		const AeronSceneMeshCpuVertex* vertex    = &mesh->cpu_vertices[v];
-		const long                     last      = (long)mesh->component_count - 1;
+		const long                     last      = (long)mesh->row_count - 1;
 		long                           component = lroundf(vertex->component);
 		component                                = component < 0 ? 0 : (component > last ? last : component);
 		const uint32_t row =

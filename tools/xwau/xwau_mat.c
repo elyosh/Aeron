@@ -48,6 +48,8 @@ void XwauMat_CodeDefaults(XwauMatParams* out) {
 	out->specular_val = 0.0f; /* DEFAULT_SPEC_VALUE */
 	out->light_uv[0]  = 0.1f;
 	out->light_uv[1]  = 0.5f;
+	out->joystick_max_yaw   = 10.0f;
+	out->joystick_max_pitch = -10.0f;
 }
 
 static int ascii_casecmp(const char* a, const char* b) {
@@ -94,7 +96,60 @@ static int scan_key_line(const char* line, char* param, size_t param_cap, char* 
 	return 2;
 }
 
-/* ReadMaterialLine for the shading keys. Other keys are ignored. */
+/* LoadLightColor: the numbers after the '=' of `line`, as "x, y, z". The
+ * values it doesn't read are kept. */
+static void read_point(const char* line, float out[3]) {
+	const char* equals = strchr(line, '=');
+	float       xyz[3] = { out[0], out[1], out[2] };
+	if (equals && sscanf(equals + 1, "%f, %f, %f", &xyz[0], &xyz[1], &xyz[2]) > 0)
+		memcpy(out, xyz, sizeof xyz);
+}
+
+/* The lever keys of ReadMaterialLine. Returns false for another key. */
+static bool read_lever_line(const char* param, const char* line, float f, XwauMatParams* m) {
+	static const char* const kRotations[2][3] = {
+		{ "ThrottleRotXAxis", "ThrottleRotYAxis", "ThrottleRotZAxis" },
+		{ "HyperRotXAxis", "HyperRotYAxis", "HyperRotZAxis" },
+	};
+	static const char* const kOthers[] = { "ThrottleStart", "ThrottleEnd", "ThrottleAxis0", "ThrottleAxis1",
+										   "HyperStart",    "HyperEnd",    "HyperAxis0",    "HyperAxis1" };
+	if (ascii_casecmp(param, "JoystickRoot") == 0) {
+		m->lever = XWAU_LEVER_JOYSTICK;
+		read_point(line, m->joystick_root);
+		return true;
+	}
+	if (ascii_casecmp(param, "JoystickMaxYaw") == 0) {
+		m->joystick_max_yaw = f;
+		return true;
+	}
+	if (ascii_casecmp(param, "JoystickMaxPitch") == 0) {
+		m->joystick_max_pitch = f;
+		return true;
+	}
+	if (ascii_casecmp(param, "ThrottleMaxAngle") == 0 || ascii_casecmp(param, "HyperMaxAngle") == 0) {
+		m->lever_max_angle = f;
+		return true;
+	}
+	for (int kind = 0; kind < 2; ++kind) {
+		for (int axis = 0; axis < 3; ++axis) {
+			if (ascii_casecmp(param, kRotations[kind][axis]) == 0) {
+				m->lever      = kind == 0 ? XWAU_LEVER_THROTTLE : XWAU_LEVER_HYPERSPACE;
+				m->lever_axis = axis;
+				read_point(line, m->lever_root);
+				return true;
+			}
+		}
+	}
+	for (size_t k = 0; k < sizeof kOthers / sizeof kOthers[0]; ++k) {
+		if (ascii_casecmp(param, kOthers[k]) == 0) {
+			m->lever = XWAU_LEVER_OTHER;
+			return true;
+		}
+	}
+	return false;
+}
+
+/* ReadMaterialLine for the shading and lever keys. Other keys are ignored. */
 static void read_material_line(const char* line, XwauMatParams* m) {
 	char param[256], value[XWAU_MAT_LINE_MAX];
 	if (line[0] == ';' || line[0] == '#')
@@ -102,6 +157,8 @@ static void read_material_line(const char* line, XwauMatParams* m) {
 	if (scan_key_line(line, param, sizeof param, value, sizeof value) <= 0)
 		return;
 	const float f = (float)atof(value);
+	if (read_lever_line(param, line, f, m))
+		return;
 	if (ascii_casecmp(param, "Metallic") == 0)
 		m->metallic = f;
 	else if (ascii_casecmp(param, "Intensity") == 0)

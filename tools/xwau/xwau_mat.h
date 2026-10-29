@@ -7,7 +7,8 @@
  * The files are parsed the same way as in that renderer, xwa_ddraw_d3d11
  * (LoadIndividualMATParams, ReadMaterialLine and FindMaterial in
  * Materials.cpp). Only the keys that drive surface shading, the light of a
- * light-emitting texture and the image sequences (below) are read. The files that XWAU ships rely on quirks
+ * light-emitting texture, the cockpit levers and the image sequences
+ * (below) are read. The files that XWAU ships rely on quirks
  * of the parser, so these quirks are reproduced:
  *   - A comment starts with ';' or '#' in column 0 only. A value is the first
  *     token after " = " and ends at white space, so any text after it is
@@ -70,7 +71,37 @@ typedef struct XwauMatParams {
 	/* The tag of the texture's faces and lights when it has conditions, ""
 	 * otherwise. XwauMat_Load names it (XwauMat_SurfaceRuleAt). */
 	char surface_tag[64];
+	/* The cockpit lever that the texture's faces are (DiegeticMesh), set by
+	 * the last lever key read:
+	 *   - the joystick (JoystickRoot): it turns about `lever_root` by
+	 *     joystick_max_pitch degrees about X at full pitch, then
+	 *     joystick_max_yaw degrees about Y at full yaw (10 and -10 by
+	 *     default);
+	 *   - a throttle or hyperspace lever (ThrottleRotXAxis to Z,
+	 *     HyperRotXAxis to Z): it turns about `lever_root` by
+	 *     lever_max_angle degrees about axis `lever_axis` (0 to 2 for X to Z)
+	 *     at full value. ThrottleMaxAngle and HyperMaxAngle both set it;
+	 *   - XWAU_LEVER_OTHER for the sliding and free-axis levers
+	 *     (ThrottleStart, ThrottleEnd, ThrottleAxis0, ThrottleAxis1 and the
+	 *     Hyper keys of the same names), which no data uses.
+	 * Points are in metres in OPT axes. A point with fewer than three
+	 * numbers keeps the values it doesn't read. */
+	int   lever; /* XwauLever */
+	int   lever_axis;
+	float joystick_root[3];
+	float joystick_max_yaw;
+	float joystick_max_pitch;
+	float lever_root[3];
+	float lever_max_angle;
 } XwauMatParams;
+
+typedef enum XwauLever {
+	XWAU_LEVER_NONE = 0,
+	XWAU_LEVER_JOYSTICK,
+	XWAU_LEVER_THROTTLE,
+	XWAU_LEVER_HYPERSPACE,
+	XWAU_LEVER_OTHER,
+} XwauLever;
 
 /*
  * Image sequences are parsed like LoadTextureSequence, LoadFrameSequence and

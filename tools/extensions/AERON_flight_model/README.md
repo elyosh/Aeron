@@ -15,10 +15,12 @@ Each object has a schema that describes every field:
 The default scene has one root node with the `model` role. Its direct
 children, in order, are 1 to 255 mesh nodes with the `component` role. A
 component's children, in order, are empty nodes with the `hardpoint`,
-`engineGlow` or `light` role, plus at most one mesh node with the
-`collision` role. The order of the children gives the component numbers,
-the hardpoint numbers (per component) and the engine glow numbers (across
-the model). Collision and light nodes are not numbered.
+`engineGlow` or `light` role, nodes with the `control` role, plus at most
+one mesh node with the `collision` role. A control's children are controls.
+The order of the children gives the component numbers, the hardpoint
+numbers (per component), the engine glow numbers (across the model) and the
+order of the controls. Collision and light nodes are not numbered. A model
+has at most 255 components and controls together.
 
 Files use standard glTF coordinates (right-handed, +Y up) and metres. An
 omitted translation, rotation or scale takes the glTF default. Node
@@ -32,7 +34,7 @@ transforms:
   and +Z is the direction the glow looks. The X and Y scale are its full
   width and height, and must be positive. The Z scale is its depth and can
   be negative;
-- light: translation, rotation and a positive uniform scale.
+- light and control: translation, rotation and a positive uniform scale.
 
 ## Roles
 
@@ -54,6 +56,8 @@ transforms:
   never rendered, and its materials are ignored.
 - `light`: on an empty node with a `KHR_lights_punctual` light, a direct
   child of a component. See [Lights](#lights).
+- `control`: a part that the game moves, a child of a component or of
+  another control. See [Controls](#controls).
 
 A component's `rotation` needs `pivot`, `rotationAxis`, `directionAxis` and
 `upAxis`. The vectors are kept as written: they are not normalized or made
@@ -77,8 +81,8 @@ Such a component has no cooked `simulationData`.
 
 ## Tags
 
-Components, materials and lights may carry `tags`, an array of game-defined
-names. A tag is 1 to 63 lower-case ASCII letters, digits, `.` and `_`. A
+Components, materials, lights and controls may carry `tags`, an array of
+game-defined names. A tag is 1 to 63 lower-case ASCII letters, digits, `.` and `_`. A
 malformed tag is invalid, and a tag repeated in one part counts once. A tag
 lets the game find a part by name instead of by number, such as the component
 `hangarcrane.arm` or the engine glow surfaces and lights `engine_glow`. Aeron
@@ -86,6 +90,34 @@ stores tags as they are. Each game documents the tags it reads, and which ones
 must be unique in a model. Games ignore the tags they don't read.
 
 A model's materials and lights have at most 32 distinct tags.
+
+## Controls
+
+A control is a part that the game moves, such as a cockpit stick or a
+throttle lever. Its node is a child of a component or of another control,
+and its origin is the hinge. It may have a mesh, which can use any
+material, screens included. A node without a mesh can hold the next hinge:
+a stick that tilts both ways is an empty control that turns forward and
+back, holding a control with the mesh that turns left and right. A
+control's children are controls, and it has no skin and no morph targets.
+
+The object has exactly one of these fields:
+
+- `rotate`: `{ "axis": [x, y, z], "degrees": d }`. At value v, the control
+  turns by v × d degrees about `axis`, a direction in the node's local
+  frame through its origin, right-handed as glTF rotations are. The axis
+  is not zero;
+- `translate`: `[x, y, z]`. At value v, the control slides by v × this
+  vector, in the node's local frame, in metres.
+
+The optional `tags` (at most 4) say which value moves the control: the
+game uses its first tag that it drives. A control without such a tag stays
+at rest, as modelled. The control moves with its parent, so a stick on a
+turning turret turns with it, and it shows and hides with its component.
+
+The game reads the controls in order: for each component in order, its
+control children in order, each followed by its own controls. The
+components and controls of a model are at most 255.
 
 ## Articulations
 

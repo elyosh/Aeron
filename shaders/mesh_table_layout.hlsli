@@ -8,10 +8,11 @@
  * shaders/ because shadercross accepts a single -I directory; the C
  * side includes it by relative path.
  *
- * AERON_MAX_MESH_COMPONENTS is the per-model component capacity, 255.
+ * AERON_MAX_MESH_COMPONENTS is the per-model row capacity, 255: the
+ * model's components, then its controls.
  *
- * A table holds `n` entries (its model's component count) and is packed at
- * that count, in float4 units from the table's base:
+ * A table holds `n` entries (its model's rows) and is packed at that count,
+ * in float4 units from the table's base:
  *   - rows:  3 per component c, its 3x4 affine, at base + 3 * c;
  *   - lanes: visibility, highlight, markings, emissive, each
  *     AERON_MESH_LANE_VEC4(n) float4 holding 4 components per float4, at

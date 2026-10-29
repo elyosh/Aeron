@@ -321,6 +321,10 @@ typedef struct Conversion {
 	/* The lights of a bolt model. */
 	OptGltfLight* lights;
 	size_t        light_count;
+	/* The cockpit levers, with the textures of each in turn. */
+	OptGltfControl* controls;
+	size_t          control_count;
+	int32_t*        control_textures;
 } Conversion;
 
 /* Sets the options of stock mode, as the original game draws the model. */
@@ -639,6 +643,98 @@ static bool xwau_mat_lights(Conversion* c, const opt_file_t* opt, const char* la
 	return true;
 }
 
+/* Whether two textures' materials make the same lever. */
+static bool xwau_same_lever(const XwauMatParams* a, const XwauMatParams* b) {
+	if (a->lever != b->lever)
+		return false;
+	if (a->lever == XWAU_LEVER_JOYSTICK)
+		return memcmp(a->joystick_root, b->joystick_root, sizeof a->joystick_root) == 0 &&
+			   a->joystick_max_yaw == b->joystick_max_yaw && a->joystick_max_pitch == b->joystick_max_pitch;
+	return memcmp(a->lever_root, b->lever_root, sizeof a->lever_root) == 0 &&
+		   a->lever_axis == b->lever_axis && a->lever_max_angle == b->lever_max_angle;
+}
+
+/* The control of a lever (XwauMatParams.lever): a joystick turns about X by
+ * its pitch, then about Y by its yaw; a throttle or hyperspace lever about
+ * its axis. Its pivot is in metres, in OPT axes. Hinges of 0 degrees are left
+ * out. */
+static void xwau_lever_control(const XwauMatParams* p, OptGltfControl* out) {
+	memset(out, 0, sizeof *out);
+	const float* root  = p->lever == XWAU_LEVER_JOYSTICK ? p->joystick_root : p->lever_root;
+	const float  scale = 1.0f / (1600.0f / 65536.0f);
+	out->pivot         = (opt_vec3_t) { root[0] * scale, root[1] * scale, root[2] * scale };
+	OptGltfHinge hinges[2];
+	uint32_t     count = 0;
+	if (p->lever == XWAU_LEVER_JOYSTICK) {
+		hinges[count++] = (OptGltfHinge) { 0, p->joystick_max_pitch, "cockpit.stick.y" };
+		hinges[count++] = (OptGltfHinge) { 1, p->joystick_max_yaw, "cockpit.stick.x" };
+	} else {
+		hinges[count++] =
+			(OptGltfHinge) { p->lever_axis, p->lever_max_angle,
+							 p->lever == XWAU_LEVER_THROTTLE ? "cockpit.throttle" : "cockpit.hyperspace" };
+	}
+	for (uint32_t h = 0; h < count; ++h)
+		if (hinges[h].degrees != 0.0f)
+			out->hinges[out->hinge_count++] = hinges[h];
+}
+
+/* XWAU moves the faces of the textures whose material makes them a cockpit
+ * lever (EffectsRenderer::ApplyDiegeticCockpit). They become controls, one
+ * for the textures of each lever. XWAU turns every joystick about the pivot
+ * of the first one it draws in a frame; each control turns about its own. */
+static bool xwau_levers(Conversion* c, const opt_file_t* opt, const char* label) {
+	if (!c->mat || opt->texture_count <= 0)
+		return true;
+	const size_t textures = (size_t)opt->texture_count;
+	/* Each texture's lever, and the first texture of each lever. */
+	int32_t* owner      = (int32_t*)malloc(textures * sizeof *owner);
+	size_t*  first      = (size_t*)malloc(textures * sizeof *first);
+	c->controls         = (OptGltfControl*)calloc(textures, sizeof *c->controls);
+	c->control_textures = (int32_t*)malloc(textures * sizeof *c->control_textures);
+	if (!owner || !first || !c->controls || !c->control_textures) {
+		free(owner);
+		free(first);
+		return false;
+	}
+	size_t moved = 0;
+	for (size_t t = 0; t < textures; ++t) {
+		const XwauMatParams* p = XwauMat_Find(c->mat, opt->textures[t].name);
+		owner[t]               = -1;
+		if (p->lever == XWAU_LEVER_OTHER) {
+			Report(label, "texture %s: a sliding or free-axis lever, left still", opt->textures[t].name);
+			continue;
+		}
+		OptGltfControl control;
+		xwau_lever_control(p, &control);
+		if (p->lever == XWAU_LEVER_NONE || control.hinge_count == 0)
+			continue;
+		for (size_t k = 0; k < c->control_count && owner[t] < 0; ++k)
+			if (xwau_same_lever(p, XwauMat_Find(c->mat, opt->textures[first[k]].name)))
+				owner[t] = (int32_t)k;
+		if (owner[t] < 0) {
+			first[c->control_count]       = t;
+			c->controls[c->control_count] = control;
+			owner[t]                      = (int32_t)c->control_count++;
+		}
+		moved += owner[t] >= 0;
+	}
+	size_t next = 0;
+	for (size_t k = 0; k < c->control_count; ++k) {
+		c->controls[k].textures = &c->control_textures[next];
+		for (size_t t = 0; t < textures; ++t)
+			if (owner[t] == (int32_t)k)
+				c->control_textures[next++] = (int32_t)t;
+		c->controls[k].texture_count = (size_t)(&c->control_textures[next] - c->controls[k].textures);
+	}
+	free(owner);
+	free(first);
+	if (c->control_count)
+		Report(label, "%zu cockpit levers, from %zu textures", c->control_count, moved);
+	c->options.model.controls      = c->controls;
+	c->options.model.control_count = c->control_count;
+	return true;
+}
+
 /* How XWAU's renderer draws the model when it is a projectile (see the
  * conversion's description). */
 static XwauGltfProjectile xwau_projectile(const ModelConversion* mc, const char* basename) {
@@ -744,6 +840,10 @@ static bool bake_xwau(Conversion* c, const ModelConversion* mc, const opt_file_t
 	/* XWAU's renderer uses the stored normal of each corner, without
 	 * remapping or repairing it. */
 	c->options.geometry.normals = OPT_GLTF_NORMALS_STORED;
+	if (!xwau_levers(c, opt, label)) {
+		Report(label, "out of memory (levers)");
+		return false;
+	}
 	if (xwau_is_laser(basename)) {
 		if (!xwau_bolt_lights(c, opt)) {
 			Report(label, "out of memory (lights)");
@@ -774,6 +874,8 @@ static void conversion_free(Conversion* c, const opt_file_t* opt) {
 	free(c->materials);
 	free(c->anims);
 	free(c->lights);
+	free(c->controls);
+	free(c->control_textures);
 	XwauAnim_End(c->anim);
 	XwauMat_Free(c->mat);
 	XwauDynamicCockpit_Free(&c->dc);

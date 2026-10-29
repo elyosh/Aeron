@@ -58,6 +58,7 @@ void AeronScene_MeshDestroy(AeronSceneMesh* m) {
 	}
 	free(m->engine_glows);
 	free(m->lights);
+	free(m->controls);
 	free(m->light_variant_masks);
 	AeronProbeSet_Destroy(m->probes);
 	free(m->cpu_vertices);
@@ -890,6 +891,19 @@ static AeronSceneMesh* mesh_create(AeronCommandBuffer* cmd, const AeronFlightMod
 		}
 	}
 
+	/* ---- Controls (owned copy) ---- */
+	if (flight_model->control_count > 0 && flight_model->controls) {
+		s->controls = (AeronFlightControl*)malloc(flight_model->control_count * sizeof *s->controls);
+		if (!s->controls) {
+			Aeron_LogError("aeron.scene", "%s: control allocation failed", name);
+			close_channel_payloads(channel_payloads);
+			AeronScene_MeshDestroy(s);
+			return NULL;
+		}
+		memcpy(s->controls, flight_model->controls, flight_model->control_count * sizeof *s->controls);
+		s->control_count = flight_model->control_count;
+	}
+
 	/* ---- Probes ----
 	 * Without a probe set (for example when the device cannot sample it),
 	 * the scene's environment lights the model. */
@@ -1066,6 +1080,22 @@ static AeronSceneMesh* mesh_create(AeronCommandBuffer* cmd, const AeronFlightMod
 		if (s->component_rot[i].has_rotation) {
 			s->has_any_rotation = true;
 			break;
+		}
+	}
+	/* The loader keeps the components and controls within the table. */
+	s->row_count = s->component_count + s->control_count;
+	for (uint32_t k = 0; k < s->control_count; ++k) {
+		const AeronFlightControl* control = &s->controls[k];
+		const uint32_t            row     = s->component_count + k;
+		const AeronFlightBounds   point   = { control->pivot, control->pivot };
+		const AeronFlightBounds*  box     = control->has_bounds ? &control->bounds : &point;
+		const float               lo[3]   = { box->min.x, box->min.y, box->min.z };
+		const float               hi[3]   = { box->max.x, box->max.y, box->max.z };
+		for (int axis = 0; axis < 3; axis++) {
+			s->component_bound_min[row][axis]    = lo[axis];
+			s->component_bound_max[row][axis]    = hi[axis];
+			s->component_bound_center[row][axis] = 0.5f * (lo[axis] + hi[axis]);
+			s->component_bound_half[row][axis]   = 0.5f * (hi[axis] - lo[axis]);
 		}
 	}
 	s->bound_min[0] = flight_model->bounds.min.x;

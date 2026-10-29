@@ -97,6 +97,29 @@ def _set_role(obj, role, order=0):
     obj.aeron_flight.order = order
 
 
+def _restore_controls(nodes, index, blender_object):
+    """Restores the controls among the children of node `index`, and theirs."""
+    order = 0
+    for child_index in nodes[index].children or []:
+        extension = _extension(nodes[child_index])
+        child = blender_object(child_index)
+        if extension.get("role") != "control" or child is None:
+            continue
+        _set_role(child, 'control', order)
+        order += 1
+        props = child.aeron_flight
+        if "translate" in extension:
+            props.control_motion = 'translate'
+            props.control_offset = common.from_gltf(extension["translate"])
+        else:
+            rotate = extension.get("rotate", {})
+            props.control_motion = 'rotate'
+            props.control_axis = common.from_gltf(rotate.get("axis", (1.0, 0.0, 0.0)))
+            props.control_degrees = rotate.get("degrees", 0.0)
+        props.tags = ", ".join(extension.get("tags", []))
+        _restore_controls(nodes, child_index, blender_object)
+
+
 def restore(gltf):
     nodes = gltf.data.nodes or []
     lights = ((gltf.data.extensions or {}).get(common.LIGHTS_EXTENSION_NAME) or {}).get("lights", [])
@@ -153,6 +176,7 @@ def restore(gltf):
                             child.aeron_flight.light_variants.add().variant = name or ""
                         child.aeron_flight.tags = ", ".join(extension.get("tags", []))
                         _state["lights"] += 1
+            _restore_controls(nodes, component_index, blender_object)
         _state["components"] += len(parts)
 
         props = root.aeron_flight

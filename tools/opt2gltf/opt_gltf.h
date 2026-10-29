@@ -22,6 +22,9 @@
  *     named "light_<n>", with a KHR_lights_punctual point light and an
  *     `AERON_flight_model` light role.
  *
+ *   - Controls given by the caller (OptGltfControl) become child nodes with
+ *     the `AERON_flight_model` control role, which hold the faces that move.
+ *
  *   - Each OPT mesh becomes exactly one component, so the component numbers
  *     match the OPT mesh numbers. A mesh with vertices but no LOD 0 faces
  *     becomes one untextured degenerate triangle over its vertices. The
@@ -110,6 +113,30 @@ typedef struct OptGltfLight {
 	opt_vec3_t direction;
 	float      spot_angle; /* above 0, below pi/2; 0 for a point light */
 } OptGltfLight;
+
+/* A hinge of a control: it turns about OPT axis `axis` (0 to 2 for X to Z)
+ * by `degrees` at value 1, the value that the game gives `tag`. */
+typedef struct OptGltfHinge {
+	int         axis;
+	float       degrees;
+	const char* tag;
+} OptGltfHinge;
+
+/* A control (tools/extensions/AERON_flight_model, "Controls"): the LOD 0
+ * face groups whose texture (state 0) is one of `textures` move about
+ * `pivot` (OPT axes and units) by its hinges, the first outermost. In each
+ * mesh that has such face groups, they leave the component's mesh for a
+ * chain of control nodes under the component, one per hinge, named
+ * "control_<mesh>_<n>". The innermost holds them. A mesh with no other
+ * face group keeps them, with a warning. A texture belongs to one control
+ * at most. */
+typedef struct OptGltfControl {
+	const int32_t* textures;
+	size_t         texture_count;
+	opt_vec3_t     pivot;
+	OptGltfHinge   hinges[2];
+	uint32_t       hinge_count; /* 1 or 2 */
+} OptGltfControl;
 
 /* An AERON_flight_model articulation setting on the model root. `name`
  * matches [a-z0-9._]{1,63} and is unique. */
@@ -383,6 +410,8 @@ typedef struct OptGltfModelOptions {
 	size_t                              set_count;
 	const OptGltfLight*                 lights;
 	size_t                              light_count;
+	const OptGltfControl*               controls;
+	size_t                              control_count;
 } OptGltfModelOptions;
 
 /* Conversion options. Zero-initialized options give the defaults. */

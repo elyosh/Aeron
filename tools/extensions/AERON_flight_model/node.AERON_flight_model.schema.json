@@ -1,14 +1,15 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "AERON_flight_model node extension",
-  "description": "The role of a node in an Aeron flight model, and its data. The default scene has one model-role root; its ordered direct children are 1 to 255 component-role mesh nodes; a component's ordered children are hardpoint, engine-glow and light empty nodes, plus at most one collision mesh node. Child order gives the component, hardpoint and engine-glow ordinals. Unknown fields are ignored.",
+  "description": "The role of a node in an Aeron flight model, and its data. The default scene has one model-role root; its ordered direct children are 1 to 255 component-role mesh nodes; a component's ordered children are hardpoint, engine-glow and light empty nodes, control nodes, plus at most one collision mesh node; a control's children are control nodes. Child order gives the component, hardpoint and engine-glow ordinals, and the controls' order. Unknown fields are ignored.",
   "oneOf": [
     { "$ref": "#/$defs/model" },
     { "$ref": "#/$defs/component" },
     { "$ref": "#/$defs/hardpoint" },
     { "$ref": "#/$defs/engineGlow" },
     { "$ref": "#/$defs/collision" },
-    { "$ref": "#/$defs/light" }
+    { "$ref": "#/$defs/light" },
+    { "$ref": "#/$defs/control" }
   ],
   "$defs": {
     "vec3": {
@@ -264,6 +265,37 @@
     "positive": {
       "type": "number",
       "exclusiveMinimum": 0
+    },
+    "control": {
+      "title": "Control",
+      "description": "A node that the game moves, such as a cockpit stick or lever, a child of a component or of another control. Its mesh is optional, and its children are controls. It moves with its parent, and at the game's value v it turns or slides from its rest pose by v times its motion, with its children. Exactly one of rotate and translate is given.",
+      "type": "object",
+      "required": ["role"],
+      "properties": {
+        "role": { "title": "Role", "description": "A control of its component.", "const": "control" },
+        "rotate": {
+          "title": "Rotate",
+          "description": "It turns about axis, a direction in its local frame through its origin, by v times degrees.",
+          "type": "object",
+          "required": ["axis", "degrees"],
+          "properties": {
+            "axis": { "$ref": "#/$defs/vec3", "description": "The axis, in the node's local frame. Not zero." },
+            "degrees": { "title": "Degrees", "description": "The turn at value 1, right-handed about the axis.", "type": "number" }
+          }
+        },
+        "translate": { "$ref": "#/$defs/vec3", "title": "Translate", "description": "It slides by v times this vector, in its local frame, in metres." },
+        "tags": {
+          "title": "Tags",
+          "description": "Game-defined names that say which value moves it, such as cockpit.throttle. At most 4; duplicates are ignored. Without a tag the game drives, it stays at rest.",
+          "type": "array",
+          "items": { "$ref": "#/$defs/tag" },
+          "maxItems": 4
+        }
+      },
+      "oneOf": [
+        { "required": ["rotate"], "not": { "required": ["translate"] } },
+        { "required": ["translate"], "not": { "required": ["rotate"] } }
+      ]
     },
     "light": {
       "title": "Light",

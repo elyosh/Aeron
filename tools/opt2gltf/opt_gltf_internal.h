@@ -186,6 +186,16 @@ typedef struct FacelessPatch {
 	opt_face_t*       faces;
 } FacelessPatch;
 
+/* The face groups of a control (OptGltfControl) in one mesh: their own
+ * geometry, with only the vertices they use, positioned from the control's
+ * pivot. */
+typedef struct ControlMesh {
+	int32_t     mesh_index;
+	size_t      control;
+	BuiltMesh   built;
+	cgltf_mesh* mesh;
+} ControlMesh;
+
 /* State shared by the phases of the build. */
 typedef struct Build {
 	const opt_file_t*          opt;
@@ -221,6 +231,10 @@ typedef struct Build {
 	size_t untextured;
 
 	BuiltMesh* built;
+	/* The control meshes, in mesh order, then control order. Their face
+	 * groups have no indices left in `built`. */
+	ControlMesh* control_meshes;
+	size_t       control_mesh_count;
 	int        max_state_count; /* drives KHR_materials_variants */
 	size_t     state_variant_count;
 	size_t     given_variant_count;

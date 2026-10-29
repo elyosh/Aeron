@@ -88,6 +88,8 @@ def _check_component(problems, component):
                 problems.error(child, "a collision mesh cannot share its mesh data")
             if not _uniform_positive(child):
                 problems.error(child, "a collision mesh needs a positive uniform scale")
+        elif role == 'control':
+            _check_control(problems, child)
         elif role in {'hardpoint', 'engineGlow'}:
             if child.type != 'EMPTY' or child.children:
                 problems.error(child, "hardpoints and engine glows must be Empties without children")
@@ -102,6 +104,30 @@ def _check_component(problems, component):
                                       "Y its length")
         else:
             problems.error(child, "a {} cannot be under a component".format(role))
+
+
+def _check_control(problems, control):
+    props = control.aeron_flight
+    if control.type not in {'MESH', 'EMPTY'}:
+        problems.error(control, "a control must be a mesh or an Empty")
+    elif control.type == 'MESH' and (control.data.shape_keys or control.find_armature()):
+        problems.error(control, "a control cannot use shape keys or an armature")
+    if not _uniform_positive(control):
+        problems.error(control, "a control needs a positive uniform scale (apply the scale)")
+    if _animated(control):
+        problems.error(control, "flight model objects cannot be animated")
+    tags = common.parse_tags(props.tags)
+    for tag in tags:
+        _check_tag(problems, control, "tag", tag)
+    if len(tags) > common.MAX_CONTROL_TAGS:
+        problems.error(control, "a control has at most {} tags".format(common.MAX_CONTROL_TAGS))
+    if props.control_motion == 'rotate' and not any(abs(value) > EPSILON for value in props.control_axis):
+        problems.error(control, "the control's axis cannot be zero")
+    for child in control.children:
+        if common.role(child) == 'control':
+            _check_control(problems, child)
+        else:
+            problems.error(child, "only controls can be under a control")
 
 
 def _check_light(problems, obj):
@@ -185,6 +211,10 @@ def validate(root):
             problems.error(child, "a {} must be under a component, not the model root".format(role))
     for component in parts:
         _check_component(problems, component)
+    rows = len(parts) + sum(len(common.all_controls(component)) for component in parts)
+    if parts and rows > common.MAX_ROWS:
+        problems.error(root, "the model has {} components and controls, more than the limit of {}".format(
+            rows, common.MAX_ROWS))
     cockpits = [obj for component in parts for obj in common.ordered_children(component, ('hardpoint',))
                 if int(obj.aeron_flight.hardpoint_type) == common.COCKPIT_HARDPOINT_TYPE]
     for obj in cockpits[1:]:

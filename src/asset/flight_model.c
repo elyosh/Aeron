@@ -21,6 +21,7 @@ typedef enum FlightNodeRole {
 	FLIGHT_ROLE_ENGINE_GLOW,
 	FLIGHT_ROLE_COLLISION,
 	FLIGHT_ROLE_LIGHT,
+	FLIGHT_ROLE_CONTROL,
 	FLIGHT_ROLE_INVALID,
 } FlightNodeRole;
 
@@ -77,6 +78,8 @@ static FlightNodeRole json_role(const cJSON* object) {
 		return FLIGHT_ROLE_COLLISION;
 	if (strcmp(role->valuestring, "light") == 0)
 		return FLIGHT_ROLE_LIGHT;
+	if (strcmp(role->valuestring, "control") == 0)
+		return FLIGHT_ROLE_CONTROL;
 	return FLIGHT_ROLE_INVALID;
 }
 
@@ -1074,6 +1077,120 @@ static bool append_lights(const cgltf_data* data, const cgltf_node* node, uint32
 	return true;
 }
 
+/* The row of `node`, a control's parent: a component's index, or the row of
+ * one of the controls before `index`. UINT32_MAX when it is neither. */
+static uint32_t control_parent_row(const cgltf_node* node, const cgltf_node* root,
+								   const cgltf_node* const* controls, uint32_t index,
+								   uint32_t component_count) {
+	for (cgltf_size component = 0; component < root->children_count; ++component)
+		if (root->children[component] == node)
+			return (uint32_t)component;
+	for (uint32_t control = 0; control < index; ++control)
+		if (controls[control] == node)
+			return component_count + control;
+	return UINT32_MAX;
+}
+
+/* Reads a control's `rotate` ({ axis, degrees }) or `translate` (a vector in
+ * metres), in the node's frame, into model space. Exactly one is given, and
+ * an axis isn't zero. */
+static bool parse_control_motion(const cJSON* extension, const float matrix[16], AeronFlightControl* out) {
+	const cJSON* rotate    = cJSON_GetObjectItemCaseSensitive(extension, "rotate");
+	const cJSON* translate = cJSON_GetObjectItemCaseSensitive(extension, "translate");
+	float        vector[3], world[3];
+	if ((rotate != NULL) == (translate != NULL))
+		return false;
+	if (translate) {
+		if (!json_vector(translate, vector, 3))
+			return false;
+		transform_vector(matrix, vector, world);
+		gltf_to_aeron(world, &out->axis);
+		out->slides = true;
+		return isfinite(out->axis.x) && isfinite(out->axis.y) && isfinite(out->axis.z);
+	}
+	const cJSON* degrees = cJSON_GetObjectItemCaseSensitive(rotate, "degrees");
+	if (!cJSON_IsObject(rotate) ||
+		!json_vector(cJSON_GetObjectItemCaseSensitive(rotate, "axis"), vector, 3) ||
+		!cJSON_IsNumber(degrees) || !isfinite(degrees->valuedouble))
+		return false;
+	transform_vector(matrix, vector, world);
+	const float length = sqrtf(world[0] * world[0] + world[1] * world[1] + world[2] * world[2]);
+	if (!(length > 0.0f) || !isfinite(length))
+		return false;
+	/* glTF to Aeron axes is a reflection, which turns the other way about
+	 * the mapped axis: the same turn is about the opposite axis. */
+	for (int k = 0; k < 3; ++k)
+		world[k] /= -length;
+	gltf_to_aeron(world, &out->axis);
+	out->angle = (float)(degrees->valuedouble * (3.14159265358979323846 / 180.0));
+	return true;
+}
+
+/* Builds the model's controls, in Aeron_GltfControlNodes order. A control
+ * has a translation, rotation and positive uniform scale, no skin or morph
+ * targets, only control children, at most AERON_FLIGHT_CONTROL_MAX_TAGS tags
+ * and its motion (parse_control_motion). The components and controls fit
+ * the AERON_MAX_MESH_COMPONENTS rows of a mesh table. */
+static bool build_controls(const cgltf_data* data, const char* source_label, AeronFlightModel* model) {
+	const uint32_t count = Aeron_GltfControlNodes(data, NULL, 0);
+	if (count == 0)
+		return true;
+	if (model->component_count + count > AERON_MAX_MESH_COMPONENTS) {
+		SDL_Log("[flight_model] '%s' has more than %d components and controls", source_label,
+				AERON_MAX_MESH_COMPONENTS);
+		return false;
+	}
+	const cgltf_node* nodes[AERON_MAX_MESH_COMPONENTS];
+	Aeron_GltfControlNodes(data, nodes, count);
+	model->controls = calloc(count, sizeof *model->controls);
+	if (!model->controls)
+		return false;
+	model->control_count   = count;
+	const cgltf_node* root = data->scene->nodes[0];
+	for (uint32_t index = 0; index < count; ++index) {
+		const cgltf_node*   node    = nodes[index];
+		AeronFlightControl* control = &model->controls[index];
+		if (node->skin || !uniform_positive_transform(node) || (node->mesh && has_morph_targets(node->mesh)))
+			return false;
+		for (cgltf_size child = 0; child < node->children_count; ++child)
+			if (node_role(node->children[child]) != FLIGHT_ROLE_CONTROL)
+				return false;
+		control->parent_row = control_parent_row(node->parent, root, nodes, index, model->component_count);
+		if (control->parent_row == UINT32_MAX)
+			return false;
+		control->component = control->parent_row < model->component_count
+								 ? control->parent_row
+								 : model->controls[control->parent_row - model->component_count].component;
+		float matrix[16];
+		float origin[3] = { 0.0f, 0.0f, 0.0f };
+		float transformed[3];
+		cgltf_node_transform_world(node, matrix);
+		transform_point(matrix, origin, transformed);
+		gltf_to_aeron(transformed, &control->pivot);
+		cJSON*          extension = parse_flight_extension(node);
+		AeronFlightTag* tags      = NULL;
+		uint32_t        tag_count = 0;
+		const bool      valid =
+			extension && parse_control_motion(extension, matrix, control) &&
+			Aeron_FlightTagsParse(cJSON_GetObjectItemCaseSensitive(extension, "tags"), &tags, &tag_count) &&
+			tag_count <= AERON_FLIGHT_CONTROL_MAX_TAGS;
+		cJSON_Delete(extension);
+		if (valid && tag_count)
+			memcpy(control->tags, tags, tag_count * sizeof *tags);
+		control->tag_count = valid ? tag_count : 0;
+		free(tags);
+		if (!valid)
+			return false;
+		if (node->mesh) {
+			memset(&control->bounds, 0, sizeof control->bounds);
+			if (!mesh_world_bounds(node, &control->bounds))
+				return false;
+			control->has_bounds = true;
+		}
+	}
+	return true;
+}
+
 static bool build_semantics(const cgltf_data* data, const char* source_label, AeronFlightModel* model) {
 	if (!data->scene || data->scene->nodes_count != 1 || data->animations_count || data->skins_count)
 		return false;
@@ -1101,8 +1218,8 @@ static bool build_semantics(const cgltf_data* data, const char* source_label, Ae
 			return false;
 		for (cgltf_size child = 0; child < node->children_count; ++child) {
 			const FlightNodeRole role = node_role(node->children[child]);
-			if (role != FLIGHT_ROLE_HARDPOINT && role != FLIGHT_ROLE_ENGINE_GLOW && role != FLIGHT_ROLE_COLLISION &&
-				role != FLIGHT_ROLE_LIGHT)
+			if (role != FLIGHT_ROLE_HARDPOINT && role != FLIGHT_ROLE_ENGINE_GLOW &&
+				role != FLIGHT_ROLE_COLLISION && role != FLIGHT_ROLE_LIGHT && role != FLIGHT_ROLE_CONTROL)
 				return false;
 		}
 		if (!build_component_semantics(data, node, component) || !build_hardpoints(node, component) ||
@@ -1113,6 +1230,14 @@ static bool build_semantics(const cgltf_data* data, const char* source_label, Ae
 			model->bridge_component = (int32_t)index;
 		bounds_include(&model->bounds, &component->bounds.min, &have_model_bounds);
 		bounds_include(&model->bounds, &component->bounds.max, &have_model_bounds);
+	}
+	if (!build_controls(data, source_label, model))
+		return false;
+	for (uint32_t index = 0; index < model->control_count; ++index) {
+		if (model->controls[index].has_bounds) {
+			bounds_include(&model->bounds, &model->controls[index].bounds.min, &have_model_bounds);
+			bounds_include(&model->bounds, &model->controls[index].bounds.max, &have_model_bounds);
+		}
 	}
 	model->max_extent    = model->bounds.max.x - model->bounds.min.x;
 	const float extent_y = model->bounds.max.y - model->bounds.min.y;
@@ -1126,10 +1251,14 @@ static bool build_semantics(const cgltf_data* data, const char* source_label, Ae
 		const FlightNodeRole role = node_role(node);
 		if (role == FLIGHT_ROLE_INVALID || (role == FLIGHT_ROLE_MODEL && node != root) ||
 			(role == FLIGHT_ROLE_COMPONENT && node->parent != root) ||
-			((role == FLIGHT_ROLE_HARDPOINT || role == FLIGHT_ROLE_ENGINE_GLOW || role == FLIGHT_ROLE_COLLISION ||
-			  role == FLIGHT_ROLE_LIGHT) &&
+			((role == FLIGHT_ROLE_HARDPOINT || role == FLIGHT_ROLE_ENGINE_GLOW ||
+			  role == FLIGHT_ROLE_COLLISION || role == FLIGHT_ROLE_LIGHT) &&
 			 (!node->parent || node_role(node->parent) != FLIGHT_ROLE_COMPONENT ||
-			  node->parent->parent != root)))
+			  node->parent->parent != root)) ||
+			(role == FLIGHT_ROLE_CONTROL &&
+			 (!node->parent ||
+			  (node_role(node->parent) != FLIGHT_ROLE_CONTROL &&
+			   (node_role(node->parent) != FLIGHT_ROLE_COMPONENT || node->parent->parent != root)))))
 			return false;
 	}
 	return true;
@@ -1351,6 +1480,7 @@ void Aeron_FlightModelFreeSemantics(AeronFlightModel* model) {
 	free(model->component_sets);
 	free(model->engine_glows);
 	free(model->lights);
+	free(model->controls);
 	free(model->render_data);
 	/* Render data has its own release path; leave it untouched. */
 	const AeronGltfModel     render     = model->render;

@@ -42,6 +42,7 @@ extern "C" {
 #endif
 
 struct cgltf_data;
+struct cgltf_node;
 
 /* ===== Vertex format ================================================
  *
@@ -56,7 +57,8 @@ typedef struct AeronGltfVertex {
 	float normal[3];  /* unit, renderer-frame */
 	float tangent[4]; /* xyz unit + handedness sign in w */
 	float uv[2];      /* TEXCOORD_0 (material-local) */
-	/* Model-local component ordinal used by the scene mesh table. */
+	/* The vertex's mesh-table row: its component's ordinal, or for a
+	 * control's mesh the control's row (AeronFlightControl). */
 	float component;
 	/* Stable global identifier (0..total_prim_count-1) for the source
 	 * primitive this vertex belongs to. The shader resolves it through
@@ -367,6 +369,13 @@ typedef struct AeronGltfModel {
 bool Aeron_GltfMeshBuildData(const struct cgltf_data* data, const char* source_label, AeronGltfModel* out);
 
 void Aeron_GltfMeshFree(AeronGltfModel* m);
+
+/* The control nodes of `data` (role `control`) in mesh-table row order: for
+ * each component in order, its control children in order, each followed by
+ * its own controls, depth first. Writes at most `capacity` nodes to `nodes`
+ * (NULL to count) and returns the count. */
+uint32_t Aeron_GltfControlNodes(const struct cgltf_data* data, const struct cgltf_node** nodes,
+								uint32_t capacity);
 
 /* The variant markings value `markings` shows: the markings list's entry
  * min(markings, count - 1); AERON_GLTF_NO_VARIANT (the own materials)

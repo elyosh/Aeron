@@ -94,6 +94,19 @@ def _component_extension(obj):
     return extension
 
 
+def _control_extension(obj):
+    props = obj.aeron_flight
+    extension = {"role": "control"}
+    if props.control_motion == 'translate':
+        extension["translate"] = common.to_gltf(props.control_offset)
+    else:
+        extension["rotate"] = {"axis": common.to_gltf(props.control_axis), "degrees": props.control_degrees}
+    tags = common.parse_tags(props.tags)
+    if tags:
+        extension["tags"] = tags
+    return extension
+
+
 def _glow_trs(obj):
     """The glTF TRS of an engine glow. The X and Y scales stay positive (its
     size) and Z keeps its sign (its depth), which a plain decomposition would
@@ -161,6 +174,15 @@ class _ExportState:
                         extension["tags"] = tags
                     self.extensions[child.name] = extension
                     self.lights[child.name] = common.light_punctual(child, child.matrix_world)
+            self._add_controls(component)
+
+    def _add_controls(self, parent):
+        # The game numbers the controls in this order, after the components.
+        for index, control in enumerate(common.controls(parent)):
+            self.names.add(control.name)
+            self.rank[control.name] = (3, index)
+            self.extensions[control.name] = _control_extension(control)
+            self._add_controls(control)
 
     def filter_tree(self, vtree):
         for node in vtree.nodes.values():
@@ -196,7 +218,7 @@ class _ExportState:
             for primitive in gltf_node.mesh.primitives:
                 primitive.material = None
         if gltf_node.children:
-            gltf_node.children.sort(key=lambda child: self.rank.get(self.nodes.get(id(child), ""), (3, "")))
+            gltf_node.children.sort(key=lambda child: self.rank.get(self.nodes.get(id(child), ""), (4, 0)))
 
 
 class glTF2ExportUserExtension:
