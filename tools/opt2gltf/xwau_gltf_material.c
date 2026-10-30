@@ -427,6 +427,22 @@ static bool texture_image(struct XwauGltfBakeState* s, const char* basename, int
 	return out->name && out->file;
 }
 
+/* Makes a lava texture's bake black, opaque and non-reflective, without
+ * emission of its own: its frames are its glow. The material's base colour
+ * factor is 0 (texture_material). */
+static void xwau_lava_base(XwauBaked* baked) {
+	free(baked->emissive);
+	free(baked->metal_rough);
+	free(baked->transmission);
+	baked->emissive       = NULL;
+	baked->metal_rough    = NULL;
+	baked->transmission   = NULL;
+	baked->metallic       = 0.0f;
+	baked->roughness      = 1.0f;
+	baked->specular_color = 0.0f;
+	baked->transparent    = false;
+}
+
 /* Builds the given material of texture `i` from its bake. */
 static bool texture_material(struct XwauGltfBakeState* s, const opt_file_t* opt, const char* basename,
 							 int32_t i, const XwauGltfMaterial* materials, const int32_t* normal_owner,
@@ -467,6 +483,8 @@ static bool texture_material(struct XwauGltfBakeState* s, const opt_file_t* opt,
 	}
 	m->specular       = true;
 	m->specular_color = baked->specular_color;
+	if (anims && anims[i].lava)
+		m->base_color[0] = m->base_color[1] = m->base_color[2] = 0.0f;
 	m->json           = anims ? anims[i].json : NULL;
 	m->tangents       = anims && anims[i].normal_detail;
 	m->tag            = materials[i].surface_tag;
@@ -506,6 +524,8 @@ bool XwauGltf_Bake(const opt_file_t* opt, const char* basename, const XwauGltfMa
 		}
 		XwauGltf_AnimBase(&colour, (uint32_t)t->width, (uint32_t)t->height, a, &s->baked[i]);
 		free(colour);
+		if (a && a->lava)
+			xwau_lava_base(&s->baked[i]);
 		owner[i] = -1;
 		if (!materials[i].normal_map.rgba || !s->baked[i].base)
 			continue;

@@ -21,6 +21,7 @@
 #include "util.h"
 #include "xwau_dat.h"
 #include "xwau_effect_bake.h"
+#include "xwau_lava.h"
 #include "xwau_mat.h"
 #include "yaml_json.h"
 
@@ -109,11 +110,16 @@ static bool request(const char* dat_written, int group, int image, XwauFxKind ki
 static size_t g_models;
 static char** g_skipped; /* libraries without an XWAU DAT */
 static size_t g_skipped_count;
+static bool   g_lava; /* a model uses the generated lava library */
 
 /* Requests the image `key` from the library `library`, which is the DAT
  * Effects/<library>.dat. If the game has no such DAT, the library is marked as
- * skipped. */
+ * skipped. The lava library has no DAT: it is generated whole. */
 static bool model_key(const char* path, const char* library, const char* key) {
+	if (strcmp(library, XWAU_LAVA_LIBRARY) == 0) {
+		g_lava = true;
+		return true;
+	}
 	for (size_t i = 0; i < g_skipped_count; ++i)
 		if (strcmp(g_skipped[i], library) == 0)
 			return true;
@@ -738,6 +744,7 @@ static void reset(const char* game) {
 	g_library_count = 0;
 	g_skipped       = NULL;
 	g_skipped_count = 0;
+	g_lava          = false;
 	g_models        = 0;
 	g_game          = game;
 }
@@ -751,6 +758,8 @@ static bool write_libraries(const char* effects, bool merge) {
 	bool ok = true;
 	for (size_t i = 0; i < g_library_count; ++i)
 		ok &= write_library_sources(&g_libraries[i], effects, merge);
+	if (g_lava)
+		ok &= XwauLava_WriteLibrary(effects, merge);
 	return ok;
 }
 
@@ -790,7 +799,7 @@ bool XwauLibrary_AddModel(const char* game, const char* project, const char* glt
 	reset(game);
 	char out[1024];
 	bool ok = PathFormat(out, sizeof out, "%s/effects", project) && read_model(gltf);
-	if (ok && g_library_count && !MakeDirs(out)) {
+	if (ok && (g_library_count || g_lava) && !MakeDirs(out)) {
 		Report(NULL, "cannot create %s", out);
 		ok = false;
 	}

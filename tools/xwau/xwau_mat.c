@@ -50,6 +50,12 @@ void XwauMat_CodeDefaults(XwauMatParams* out) {
 	out->light_uv[1]  = 0.5f;
 	out->joystick_max_yaw   = 10.0f;
 	out->joystick_max_pitch = -10.0f;
+	out->lava_speed         = 1.0f;
+	out->lava_size          = 1.0f;
+	out->lava_color[0]      = 1.0f;
+	out->lava_color[1]      = 0.35f;
+	out->lava_color[2]      = 0.05f;
+	out->lava_tiling        = true;
 }
 
 static int ascii_casecmp(const char* a, const char* b) {
@@ -263,6 +269,19 @@ static void read_material_line(const char* line, XwauMatParams* m) {
 		m->display_if_mission_set_speed_ge = (int)f;
 	} else if (ascii_casecmp(param, "IncreaseBrightnessWithMissionSetSpeed") == 0) {
 		m->increase_brightness_with_mission_set_speed = (int)f;
+	} else if (ascii_casecmp(param, "Lava") == 0) {
+		m->lava = f != 0.0f;
+	} else if (ascii_casecmp(param, "LavaSpeed") == 0) {
+		m->lava_speed = f;
+	} else if (ascii_casecmp(param, "LavaSize") == 0) {
+		m->lava_size = f;
+	} else if (ascii_casecmp(param, "LavaTiling") == 0) {
+		m->lava_tiling = f != 0.0f;
+	} else if (ascii_casecmp(param, "LavaColor") == 0) {
+		const char* equals = strchr(line, '=');
+		float       rgb[3];
+		if (equals && sscanf(equals + 1, "%f, %f, %f", &rgb[0], &rgb[1], &rgb[2]) == 3)
+			memcpy(m->lava_color, rgb, sizeof rgb);
 	}
 }
 

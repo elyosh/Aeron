@@ -12,6 +12,7 @@
 #include "xwau_config.h"
 #include "xwau_dat.h"
 #include "xwau_effect_bake.h"
+#include "xwau_lava.h"
 
 /* Number of frames for an XWAU `_rand` sequence: frame 0, then random picks. */
 #define XWAU_ANIM_RANDOM_FRAMES 64
@@ -94,6 +95,7 @@ struct XwauAnim {
 	size_t skipped_no_illum, skipped_missing_dat, skipped_unsupported, unknown_events, mixed_damage;
 	size_t skipped_on_screens;
 	size_t greeble_materials, greebles_on_illum, greebles_missing, greebles_uv_disp;
+	size_t lava_materials, lava_not_default;
 };
 
 static bool own(XwauAnim* a, void* p) {
@@ -554,11 +556,58 @@ static bool greebles_json(XwauAnim* a, cJSON* object, const XwauMatParams* m, bo
 	return true;
 }
 
+/* Fills `out` for a lava texture: an `always` emissive flipbook of the lava
+ * library, with the frames for its LavaTiling, played at LavaSpeed. The lava
+ * replaces the texture, and no lava texture has sequences or greebles, so the
+ * material gets nothing else. The frames have the default size and colour. */
+static bool lava_json(XwauAnim* a, const XwauMatParams* m, XwauGltfAnim* out) {
+	if (m->lava_size != 1.0f || m->lava_color[0] != 1.0f || m->lava_color[1] != 0.35f ||
+		m->lava_color[2] != 0.05f)
+		a->lava_not_default++;
+	/* XWAU's lava time is seconds × LavaSpeed, so it stands still without a
+	   speed. */
+	const int   count   = m->lava_speed > 0.0f ? XWAU_LAVA_FRAMES : 1;
+	const float seconds = m->lava_speed > 0.0f ? XWAU_LAVA_SECONDS / XWAU_LAVA_FRAMES / m->lava_speed : 1.0f;
+	cJSON*      object  = cJSON_CreateObject();
+	cJSON*      book    = OptJson_AddObject(OptJson_AddArray(object, "flipbooks"), NULL);
+	bool        ok      = OptJson_Add(book, "state", cJSON_CreateString("always")) &&
+						  OptJson_Add(book, "layer", cJSON_CreateString("emissive")) &&
+						  OptJson_Add(book, "mode", cJSON_CreateString("loop")) &&
+						  OptJson_Add(book, "library", cJSON_CreateString(XWAU_LAVA_LIBRARY)) &&
+						  OptJson_Add(book, "emissiveStrength", shortest_float(XwauLava_Strength()));
+	cJSON*      frames  = ok ? OptJson_AddArray(book, "frames") : NULL;
+	ok                  = frames != NULL;
+	for (int i = 0; ok && i < count; ++i) {
+		char   key[16];
+		cJSON* frame = OptJson_AddArray(frames, NULL);
+		XwauLava_Key(key, sizeof key, m->lava_tiling, i);
+		ok = OptJson_Add(frame, NULL, cJSON_CreateString(key)) &&
+			 OptJson_Add(frame, NULL, OptJson_Float(seconds));
+	}
+	char* json = NULL;
+	if (ok)
+		json = OptJson_Print(object);
+	else
+		cJSON_Delete(object);
+	if (!own(a, json))
+		return false;
+	out->json = json;
+	out->lava = true;
+	a->lava_materials++;
+	a->any = true;
+	return true;
+}
+
 bool XwauAnim_Texture(XwauAnim* a, const XwauMatFile* mat, const opt_texture_t* tex, float unlit,
 					  XwauAnimScreen screen, XwauGltfAnim* out) {
 	memset(out, 0, sizeof *out);
 	if (!mat)
 		return true;
+	/* Lava only goes on textures that aren't screens. No data puts it on a
+	   screen. */
+	const XwauMatParams* params = XwauMat_Find(mat, tex->name);
+	if (params->lava && screen == XWAU_ANIM_SCREEN_NONE)
+		return lava_json(a, params, out);
 	XwauMatSequences own_list, inherited;
 	XwauMat_FindSequences(mat, tex->name, &own_list, &inherited);
 	const bool has_illum = XwauGltf_TextureHasIllum(tex);
@@ -697,7 +746,7 @@ bool XwauAnim_Texture(XwauAnim* a, const XwauMatFile* mat, const opt_texture_t* 
 		ok = damage_json(a, object, &own_list, &inherited);
 	/* XWAU's screen shader draws no greebles. */
 	if (ok && screen == XWAU_ANIM_SCREEN_NONE)
-		ok = greebles_json(a, object, XwauMat_Find(mat, tex->name), has_illum, &out->normal_detail);
+		ok = greebles_json(a, object, params, has_illum, &out->normal_detail);
 	if (ok && (energy[0] || energy[1] || energy[2])) {
 		cJSON* list = OptJson_AddArray(object, "energy");
 		ok          = list != NULL;
@@ -725,6 +774,11 @@ bool XwauAnim_Texture(XwauAnim* a, const XwauMatFile* mat, const opt_texture_t* 
 }
 
 void XwauAnim_Report(const XwauAnim* a) {
+	if (a->lava_materials)
+		Report(a->label,
+			   "lava: %zu material(s), %zu with a size or colour other than the default (drawn with the "
+			   "default ones)",
+			   a->lava_materials, a->lava_not_default);
 	if (a->greeble_materials || a->greebles_on_illum || a->greebles_missing || a->greebles_uv_disp)
 		Report(a->label,
 			   "greebles: %zu material(s) with details, %zu skipped on textures with illumination, %zu "

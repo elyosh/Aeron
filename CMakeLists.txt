@@ -1119,6 +1119,7 @@ if(AERON_BUILD_TOOLS)
         tools/opt2gltf/xwau_effect_bake.c
         tools/opt2gltf/xwau_gltf_material.c
         tools/opt2gltf/xwau_gltf_skins.c
+        tools/opt2gltf/xwau_lava.c
         tools/opt2gltf/xwau_library.c)
     target_include_directories(opt2gltf_tool
         PUBLIC

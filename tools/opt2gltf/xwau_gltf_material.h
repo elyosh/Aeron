@@ -100,12 +100,16 @@ typedef struct XwauGltfMaterial {
  *     glow.
  *   - `normal_detail`: one of its details (greebles) bends the normal, so
  *     the meshes that draw it need tangents.
+ *   - `lava`: XWAU draws the texture as lava, which its frames show. The
+ *     material is black, opaque and doesn't reflect, so that only the frames'
+ *     emission shows, as XWAU draws the lava unlit.
  */
 typedef struct XwauGltfAnim {
 	const char* json;
 	bool        anim_base;
 	bool        always_illumination;
 	bool        normal_detail;
+	bool        lava;
 } XwauGltfAnim;
 
 /* Returns whether XWAU's renderer gives texture `t` an illumination layer.

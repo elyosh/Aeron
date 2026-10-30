@@ -15,7 +15,8 @@
  * lists the images, with the size cap and crop of each one. The inputs of
  * each image are PNGs under <library>/frames/, with XWAU's rules already
  * applied: an illumination frame becomes an emissive image and a base colour
- * image with coverage, and the tint and alpha mode are baked in.
+ * image with coverage, and the tint and alpha mode are baked in. The `lava`
+ * library has no DAT: the importer generates it.
  *
  * Messages go to stderr.
  */

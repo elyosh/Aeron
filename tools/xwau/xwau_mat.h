@@ -126,6 +126,15 @@ typedef struct XwauMatParams {
 	 * [Default]. */
 	bool        has_greebles;
 	XwauGreeble greebles[2];
+	/* Lava, LavaSpeed, LavaSize, LavaColor and LavaTiling: XWAU draws the
+	 * texture as moving lava, unlit. The defaults are speed 1, size 1, colour
+	 * (1, 0.35, 0.05) and tiling on. LavaColor reads three numbers like
+	 * Light, and a line with fewer sets nothing. */
+	bool  lava;
+	float lava_speed;
+	float lava_size;
+	float lava_color[3];
+	bool  lava_tiling;
 } XwauMatParams;
 
 typedef enum XwauLever {
