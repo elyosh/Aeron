@@ -200,14 +200,16 @@ static const char* entry_library(Check* c, const cJSON* entry, const char* what)
 }
 
 static bool check_flipbook(Check* c, const cJSON* in) {
-	static const char* const fields[] = { "state",  "layer",            "mode", "library",
-										  "frames", "emissiveStrength", "unlit" };
+	static const char* const fields[] = { "state",   "layer",      "mode",
+										  "library", "frames",     "emissiveStrength",
+										  "unlit",   "blendFrames" };
 	const cJSON*             state    = cJSON_GetObjectItemCaseSensitive(in, "state");
 	const cJSON*             layer    = cJSON_GetObjectItemCaseSensitive(in, "layer");
 	const cJSON*             mode     = cJSON_GetObjectItemCaseSensitive(in, "mode");
 	const cJSON*             frames   = cJSON_GetObjectItemCaseSensitive(in, "frames");
 	const cJSON*             strength = cJSON_GetObjectItemCaseSensitive(in, "emissiveStrength");
 	const cJSON*             unlit    = cJSON_GetObjectItemCaseSensitive(in, "unlit");
+	const cJSON*             blend    = cJSON_GetObjectItemCaseSensitive(in, "blendFrames");
 	if (!cJSON_IsObject(in) || !only_members(c, "flipbook", in, fields, COUNT(fields)))
 		return false;
 	if (!one_of(state, kStates, COUNT(kStates)) || !one_of(layer, kLayers, COUNT(kLayers)) ||
@@ -240,6 +242,8 @@ static bool check_flipbook(Check* c, const cJSON* in) {
 		return fail(c, "emissiveStrength is a number >= 0");
 	if (unlit && (!cJSON_IsNumber(unlit) || !(unlit->valuedouble >= 0.0 && unlit->valuedouble <= 1.0)))
 		return fail(c, "unlit is a number in [0, 1]");
+	if (blend && !cJSON_IsBool(blend))
+		return fail(c, "blendFrames is true or false");
 	return true;
 }
 

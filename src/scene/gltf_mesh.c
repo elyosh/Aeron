@@ -699,6 +699,7 @@ static bool read_flipbook(const cJSON* json, AeronGltfModel* model, FlipbookCapa
 	const cJSON*             library  = cJSON_GetObjectItemCaseSensitive(json, "library");
 	const cJSON*             strength = cJSON_GetObjectItemCaseSensitive(json, "emissiveStrength");
 	const cJSON*             unlit    = cJSON_GetObjectItemCaseSensitive(json, "unlit");
+	const cJSON*             blend    = cJSON_GetObjectItemCaseSensitive(json, "blendFrames");
 	static const char* const layers[] = { "baseColor", "emissive" }; /* AERON_ANIM_LAYER_* */
 	static const char* const modes[]  = { "loop", "once" };
 	AeronGltfFlipbook        fb       = { 0 };
@@ -718,6 +719,11 @@ static bool read_flipbook(const cJSON* json, AeronGltfModel* model, FlipbookCapa
 		if (!cJSON_IsNumber(unlit) || !(unlit->valuedouble >= 0.0 && unlit->valuedouble <= 1.0))
 			return false;
 		fb.unlit = (float)unlit->valuedouble;
+	}
+	if (blend) {
+		if (!cJSON_IsBool(blend))
+			return false;
+		fb.blend_frames = cJSON_IsTrue(blend);
 	}
 	for (int i = 0; i < count; i++) {
 		const cJSON* frame    = cJSON_GetArrayItem(frames, i);

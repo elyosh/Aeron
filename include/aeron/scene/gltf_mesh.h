@@ -203,7 +203,7 @@ typedef struct AeronGltfMaterial {
  *   "flipbooks": [ { "state", "layer": "baseColor" | "emissive",
  *                    "mode": "loop" | "once", "library",
  *                    "frames": [ [key, seconds], ... ],
- *                    "emissiveStrength": s, "unlit": u } ]
+ *                    "emissiveStrength": s, "unlit": u, "blendFrames": b } ]
  *   "damage": { "library", "choice", "placement",
  *               "alternatives": [ { "stages": [key | null] x 3,
  *                                   "scale": [min, max],
@@ -223,6 +223,8 @@ typedef struct AeronGltfMaterial {
  * c·(1 − u) and emission c·u, replacing the material's emission (0 keeps
  * the material's emission). On illumination frames, the optional
  * `strength` (default 1) multiplies the flipbook's `emissiveStrength`.
+ * With `blendFrames` true (default false), each frame fades into the next
+ * one while it shows, instead of changing at once.
  * A detail repeats its image `uvScale` times over TEXCOORD_0 (default 1).
  * It is mixed in by `strength` (default 1) times the image's alpha, and it
  * fades out with the distance from the camera until it disappears at
@@ -265,6 +267,7 @@ typedef struct AeronGltfFlipbook {
 	uint32_t frame_count;
 	float    emissive_strength; /* illumination frames' emission scale (1) */
 	float    unlit;             /* colour frames' unlit weight (0) */
+	bool     blend_frames;      /* each frame fades into the next (false) */
 } AeronGltfFlipbook;
 
 /* ===== Screen surfaces ==============================================

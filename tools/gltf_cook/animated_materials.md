@@ -127,6 +127,7 @@ together.
 | `frames` | `[key, seconds]` pairs: images of the layer's kind. An emissive frame can also have a strength, `[key, seconds, strength]`, that multiplies `emissiveStrength` (default 1) |
 | `emissiveStrength` | Optional, default 1: brightness of emissive frames |
 | `unlit` | Optional, 0 to 1, default 0, base colour flipbooks: the part of the frames drawn unlit, as emission in place of the material's (for screens whose material is unlit) |
+| `blendFrames` | Optional, default `false`. When `true`, each frame fades into the next one while it shows, instead of changing at once. Use it for slow motion played at a few frames per second, such as flowing lava. With `once`, the last frame stays as it is |
 
 A flipbook plays from the moment its state becomes active; `always` plays
 from the start.

@@ -557,7 +557,8 @@ static bool greebles_json(XwauAnim* a, cJSON* object, const XwauMatParams* m, bo
 }
 
 /* Fills `out` for a lava texture: an `always` emissive flipbook of the lava
- * library, with the frames for its LavaTiling, played at LavaSpeed. The lava
+ * library, with the frames for its LavaTiling, played at LavaSpeed. Its
+ * frames blend, since XWAU's lava moves smoothly. The lava
  * replaces the texture, and no lava texture has sequences or greebles, so the
  * material gets nothing else. The frames have the default size and colour. */
 static bool lava_json(XwauAnim* a, const XwauMatParams* m, XwauGltfAnim* out) {
@@ -574,7 +575,8 @@ static bool lava_json(XwauAnim* a, const XwauMatParams* m, XwauGltfAnim* out) {
 						  OptJson_Add(book, "layer", cJSON_CreateString("emissive")) &&
 						  OptJson_Add(book, "mode", cJSON_CreateString("loop")) &&
 						  OptJson_Add(book, "library", cJSON_CreateString(XWAU_LAVA_LIBRARY)) &&
-						  OptJson_Add(book, "emissiveStrength", shortest_float(XwauLava_Strength()));
+						  OptJson_Add(book, "emissiveStrength", shortest_float(XwauLava_Strength())) &&
+						  (count < 2 || OptJson_Add(book, "blendFrames", cJSON_CreateTrue()));
 	cJSON*      frames  = ok ? OptJson_AddArray(book, "frames") : NULL;
 	ok                  = frames != NULL;
 	for (int i = 0; ok && i < count; ++i) {

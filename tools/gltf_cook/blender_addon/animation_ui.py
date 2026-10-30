@@ -145,6 +145,7 @@ class MATERIAL_PT_aeron_flipbooks(_MaterialPanel, Panel):
         column.prop(book, "mode")
         column.prop(book, "library")
         column.prop(book, "emissive_strength" if book.layer == "emissive" else "unlit")
+        column.prop(book, "blend_frames")
         layout.label(text="Frames")
         row = layout.row()
         row.template_list("AERON_UL_frames", "", book, "frames", book, "active_frame", rows=4)

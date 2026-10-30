@@ -158,6 +158,12 @@
           "minimum": 0,
           "maximum": 1,
           "default": 0
+        },
+        "blendFrames": {
+          "title": "Blend frames",
+          "description": "Each frame fades into the next one while it shows, instead of changing at once. With once, the last frame stays as it is.",
+          "type": "boolean",
+          "default": false
         }
       },
       "if": { "properties": { "frames": { "minItems": 1 } } },

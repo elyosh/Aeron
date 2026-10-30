@@ -139,6 +139,9 @@ class AeronFlipbook(PropertyGroup):
     unlit: FloatProperty(name="Unlit Amount", default=0.0, min=0.0, max=1.0, subtype='FACTOR', update=_preview_update,
                          description="Part of the frames drawn unlit, as emission. For screens whose material "
                                      "is unlit")
+    blend_frames: BoolProperty(name="Blend Frames", default=False,
+                               description="Fade each frame into the next one while it shows, instead of "
+                                           "changing at once. For slow motion at a few frames per second")
     frames: CollectionProperty(type=AeronFrame)
     active_frame: IntProperty()
 
@@ -258,6 +261,7 @@ def set_entry(material, entry):
             item.library = book.get("library", "")
             item.emissive_strength = book.get("emissiveStrength", 1.0)
             item.unlit = book.get("unlit", 0.0)
+            item.blend_frames = book.get("blendFrames", False)
             for key, seconds, *strength in book.get("frames", []):
                 frame = item.frames.add()
                 frame.key = key
@@ -310,6 +314,7 @@ def entry(material):
                              for frame in book.frames]
             out["emissiveStrength"] = book.emissive_strength
             out["unlit"] = book.unlit
+            out["blendFrames"] = book.blend_frames
             books.append(out)
         result["flipbooks"] = books
     if props.has_damage:
@@ -363,6 +368,8 @@ def shortest(value):
             del out["emissiveStrength"]
         if out.get("unlit") == 0:
             del out["unlit"]
+        if out.get("blendFrames") is False:
+            del out["blendFrames"]
         return out
     if isinstance(value, list):
         return [shortest(item) for item in value]
@@ -454,6 +461,8 @@ def float32(value):
             del out["emissiveStrength"]
         if out.get("unlit") == 0.0:
             del out["unlit"]
+        if out.get("blendFrames") is False:
+            del out["blendFrames"]
         return out
     if isinstance(value, list):
         return [float32(item) for item in value]

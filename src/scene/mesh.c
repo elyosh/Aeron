@@ -512,6 +512,7 @@ static int build_anim_records(AeronSceneMesh* s, AeronCommandBuffer* cmd, const 
 			if (ok) {
 				record[0] = fb->state | fb->layer << AERON_ANIM_FLIPBOOK_LAYER_SHIFT |
 							fb->mode << AERON_ANIM_FLIPBOOK_MODE_SHIFT |
+							(uint32_t)fb->blend_frames << AERON_ANIM_FLIPBOOK_BLEND_SHIFT |
 							(uint32_t)(fb->unlit * 255.0f + 0.5f) << AERON_ANIM_FLIPBOOK_UNLIT_SHIFT;
 				record[2] = fb->frame_count;
 			}

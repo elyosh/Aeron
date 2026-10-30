@@ -389,7 +389,11 @@ together. A flipbook has:
 - `emissiveStrength`: optional, default 1, the brightness of emissive
   frames;
 - `unlit`: optional, 0 to 1, default 0: the part of base colour frames drawn
-  unlit, as emission.
+  unlit, as emission;
+- `blendFrames`: optional, default `false`. When `true`, each frame fades into
+  the next one while it shows, instead of changing at once. This smooths slow
+  motion played at a few frames per second, such as flowing lava. With
+  `once`, the last frame stays as it is.
 
 A flipbook plays from the moment its state becomes active.
 

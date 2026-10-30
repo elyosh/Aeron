@@ -96,6 +96,36 @@ AERON_ANIM_FN uint material_anim_frame(uint flipbook, float t)
 	return first + material_anim_frame_index(first, count, stride, local) * stride;
 }
 
+/* For a flipbook that blends its frames, the frame record that `frame`
+ * blends into: the next one, the first one after the last for a loop, and
+ * `frame` itself at the end of `once`. `frame` for other flipbooks. */
+AERON_ANIM_FN uint material_anim_next_frame(uint flipbook, uint frame)
+{
+	uint x      = AERON_ANIM_RECORD(flipbook).x;
+	uint first  = AERON_ANIM_RECORD(flipbook).y;
+	uint stride = AERON_ANIM_FRAME_RECORDS((x >> AERON_ANIM_FLIPBOOK_LAYER_SHIFT) & 1u);
+	if (((x >> AERON_ANIM_FLIPBOOK_BLEND_SHIFT) & 1u) == 0u)
+		return frame;
+	if (frame + stride < first + AERON_ANIM_RECORD(flipbook).z * stride)
+		return frame + stride;
+	return ((x >> AERON_ANIM_FLIPBOOK_MODE_SHIFT) & 1u) == AERON_ANIM_MODE_ONCE ? frame : first;
+}
+
+/* How far frame record `frame` of `flipbook` has played at `t` seconds since
+ * the flipbook started: 0 when it starts, 1 when it ends. */
+AERON_ANIM_FN float material_anim_frame_progress(uint flipbook, uint frame, float t)
+{
+	uint  x      = AERON_ANIM_RECORD(flipbook).x;
+	uint  first  = AERON_ANIM_RECORD(flipbook).y;
+	uint  stride = AERON_ANIM_FRAME_RECORDS((x >> AERON_ANIM_FLIPBOOK_LAYER_SHIFT) & 1u);
+	float local  = material_anim_local_time((x >> AERON_ANIM_FLIPBOOK_MODE_SHIFT) & 1u,
+											material_anim_asfloat(AERON_ANIM_RECORD(flipbook).w), t);
+	float start  = frame > first ? material_anim_asfloat(AERON_ANIM_RECORD(frame - stride).w) : 0.0f;
+	float end    = material_anim_asfloat(AERON_ANIM_RECORD(frame).w);
+	float p      = end > start ? (local - start) / (end - start) : 0.0f;
+	return p < 0.0f ? 0.0f : (p > 1.0f ? 1.0f : p);
+}
+
 /* Integer hash (lowbias32) of two values. */
 AERON_ANIM_FN uint material_anim_hash(uint a, uint b)
 {

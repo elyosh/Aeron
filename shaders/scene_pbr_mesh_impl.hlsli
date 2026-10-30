@@ -266,14 +266,25 @@ float3 anim_energy(uint4 anim, float3 model_pos, float3 model_normal)
 
 /* The playing frame record of a layer's flipbook (0: none, or a frame
  * missing from its library), and the flipbook record: the first one whose
- * state is active, timed from when its state last became set. */
-uint anim_layer_frame(uint4 anim, uint layer, out uint flipbook)
+ * state is active, timed from when its state last became set. For a
+ * flipbook that blends its frames, `next` is the frame record the playing
+ * frame blends into and `blend` how much of it shows; `blend` is 0
+ * otherwise, and when the next frame is missing from its library. */
+uint anim_layer_frame(uint4 anim, uint layer, out uint flipbook, out uint next, out float blend)
 {
     flipbook = material_anim_select(anim.y & 0xFFFFu, anim.y >> 16, layer, fs_anim_state.x);
     uint state = g_anim_records[flipbook].x & 0x1Fu;
     float onset = state == AERON_ANIM_STATE_ALWAYS ? 0.0f : fs_anim_onset[state >> 2u][state & 3u];
-    uint frame = flipbook != 0u ? material_anim_frame(flipbook, fs_anim.x - onset) : 0u;
-    return frame != 0u && (g_anim_records[frame].x & 0xFFFu) != AERON_ANIM_NO_LAYER ? frame : 0u;
+    float t = fs_anim.x - onset;
+    uint frame = flipbook != 0u ? material_anim_frame(flipbook, t) : 0u;
+    next  = frame;
+    blend = 0.0f;
+    if (frame == 0u || (g_anim_records[frame].x & 0xFFFu) == AERON_ANIM_NO_LAYER)
+        return 0u;
+    next = material_anim_next_frame(flipbook, frame);
+    if (next != frame && (g_anim_records[next].x & 0xFFFu) != AERON_ANIM_NO_LAYER)
+        blend = material_anim_frame_progress(flipbook, frame, t);
+    return frame;
 }
 
 #if AERON_PBR_DETAILS
@@ -727,9 +738,12 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
 #endif
     float3 anim_energy_rgb = anim_energy(anim, i.model_pos, i.model_normal);
     if (anim.y != 0u || anim.z != 0u) {
-        uint colour_book = 0u, lit_book = 0u;
-        uint colour_frame = anim.y != 0u ? anim_layer_frame(anim, AERON_ANIM_LAYER_COLOUR, colour_book) : 0u;
-        uint lit_frame    = anim.y != 0u ? anim_layer_frame(anim, AERON_ANIM_LAYER_ILLUMINATION, lit_book) : 0u;
+        uint colour_book = 0u, lit_book = 0u, colour_next = 0u, lit_next = 0u;
+        float colour_blend = 0.0f, lit_blend = 0.0f;
+        uint colour_frame = anim.y != 0u
+            ? anim_layer_frame(anim, AERON_ANIM_LAYER_COLOUR, colour_book, colour_next, colour_blend) : 0u;
+        uint lit_frame = anim.y != 0u
+            ? anim_layer_frame(anim, AERON_ANIM_LAYER_ILLUMINATION, lit_book, lit_next, lit_blend) : 0u;
         float4 damage     = anim_damage(anim, i.uv);
         anim_gloss        = damage.a;
         /* Frames paint over the base colour, its factor included. */
@@ -737,6 +751,10 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
         if (colour_frame != 0u) {
             float4 frame = anim_frame_sample(g_effect_layer, g_effect_layer_sampler, g_anim_records[colour_frame],
                                              i.uv);
+            /* A flipbook that blends its frames fades into the next one. */
+            [branch] if (colour_blend > 0.0f)
+                frame = lerp(frame, anim_frame_sample(g_effect_layer, g_effect_layer_sampler,
+                                                      g_anim_records[colour_next], i.uv), colour_blend);
             c = lerp(c, frame.rgb, frame.a);
             anim_screen_frame = true;
             anim_screen_cover = frame.a;
@@ -755,10 +773,18 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
         if (lit_frame != 0u) {
             float4 layer = anim_frame_sample(g_effect_layer, g_effect_layer_sampler, g_anim_records[lit_frame],
                                              i.uv);
-            c = c * layer.a + layer.rgb;
             uint4 lit_emissive = g_anim_records[lit_frame + 1u];
             anim_emissive = anim_frame_sample(g_effect_emissive, g_effect_emissive_sampler, lit_emissive,
                                               i.uv).rgb * asfloat(lit_emissive.w);
+            [branch] if (lit_blend > 0.0f) {
+                uint4 next_emissive = g_anim_records[lit_next + 1u];
+                layer = lerp(layer, anim_frame_sample(g_effect_layer, g_effect_layer_sampler,
+                                                      g_anim_records[lit_next], i.uv), lit_blend);
+                anim_emissive = lerp(anim_emissive,
+                                     anim_frame_sample(g_effect_emissive, g_effect_emissive_sampler, next_emissive,
+                                                       i.uv).rgb * asfloat(next_emissive.w), lit_blend);
+            }
+            c = c * layer.a + layer.rgb;
             anim_emission = true;
         }
         albedo_tex.rgb = c;
