@@ -468,6 +468,7 @@ static bool texture_material(struct XwauGltfBakeState* s, const opt_file_t* opt,
 	m->specular       = true;
 	m->specular_color = baked->specular_color;
 	m->json           = anims ? anims[i].json : NULL;
+	m->tangents       = anims && anims[i].normal_detail;
 	m->tag            = materials[i].surface_tag;
 	return ok;
 }

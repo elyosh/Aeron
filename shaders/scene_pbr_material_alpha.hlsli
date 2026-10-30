@@ -44,8 +44,9 @@ struct GltfMaterial
     uint   screen_first; /* screen rectangles (scene_pbr_screen.hlsli) */
     uint   screen_count;
     uint   screen_flags;
-    uint4  anim;         /* x: unused, y: first flipbook record | flipbook
-                          * count << 16 (0: none) */
+    uint4  anim;         /* x: first detail record | detail count << 16,
+                          * y: first flipbook record | flipbook count << 16
+                          * (0: none; material_anim_layout.hlsli) */
 };
 
 StructuredBuffer<GltfMaterial> g_materials

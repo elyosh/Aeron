@@ -294,6 +294,43 @@ class AERON_OT_damage_alternative_remove(_MaterialOperator, Operator):
         return {'FINISHED'}
 
 
+# ---- details -------------------------------------------------------------------
+
+class AERON_OT_detail_add(_MaterialOperator, Operator):
+    """Add a detail: an effect library image repeated over the material"""
+
+    bl_idname = "aeron.detail_add"
+    bl_label = "Add Detail"
+
+    @classmethod
+    def poll(cls, context):
+        return super().poll(context) and len(_material(context).aeron_flight.details) < 2
+
+    def execute(self, context):
+        props = _material(context).aeron_flight
+        detail = props.details.add()
+        detail.library = libraries.selected_library(context)
+        props.active_detail = len(props.details) - 1
+        return {'FINISHED'}
+
+
+class AERON_OT_detail_remove(_MaterialOperator, Operator):
+    """Remove the selected detail"""
+
+    bl_idname = "aeron.detail_remove"
+    bl_label = "Remove Detail"
+
+    @classmethod
+    def poll(cls, context):
+        return super().poll(context) and len(_material(context).aeron_flight.details) > 0
+
+    def execute(self, context):
+        props = _material(context).aeron_flight
+        props.details.remove(props.active_detail)
+        props.active_detail = max(min(props.active_detail, len(props.details) - 1), 0)
+        return {'FINISHED'}
+
+
 # ---- libraries -------------------------------------------------------------------
 
 def _cooker(operator, context):
@@ -747,6 +784,8 @@ classes = (
     AERON_OT_damage_remove,
     AERON_OT_damage_alternative_add,
     AERON_OT_damage_alternative_remove,
+    AERON_OT_detail_add,
+    AERON_OT_detail_remove,
     AERON_OT_libraries_refresh,
     AERON_OT_library_add_images,
     AERON_OT_library_add_blender_image,

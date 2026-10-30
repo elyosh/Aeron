@@ -283,21 +283,25 @@ bool channel_atlas_pack(ChannelAtlas* ca, int page_size, int gutter) {
 		return false;
 	}
 
-	/* Sources over half a page get a dedicated layer each, ahead of the
-	 * shared pages. A shared source samples at most log2(gutter) levels:
-	 * its footprint is gutter-aligned, so no texel of those levels mixes
-	 * two footprints. */
-	const int lod_limit = floor_log2(gutter);
-	int       packed = 0, dedicated = 0, deepest = 0;
+	/* Sources over half a page, and those the caller marked, get a dedicated
+	 * layer each, ahead of the shared pages. A shared source samples at most
+	 * log2(gutter) levels: its footprint is gutter-aligned, so no texel of
+	 * those levels mixes two footprints. */
+	const bool fixed     = ca->fixed_width > 0 && ca->fixed_height > 0;
+	const int  lod_limit = floor_log2(gutter);
+	const int  shortest =
+		fixed ? (ca->fixed_width < ca->fixed_height ? ca->fixed_width : ca->fixed_height) : page;
+	int packed = 0, dedicated = 0, oversized = 0, deepest = 0;
 	for (int i = 0; i < ca->rect_count; i++) {
 		ChannelRect* r    = &ca->rects[i];
 		const int    side = r->src_w > r->src_h ? r->src_w : r->src_h;
-		if (side > page / 2) {
+		if (r->dedicated || side > page / 2) {
+			oversized += side > page / 2;
 			r->dedicated = true;
 			r->page      = dedicated++;
 			r->x = r->y = 0;
 			r->max_lod  = CHANNEL_ATLAS_UNCLAMPED_LOD;
-			deepest     = floor_log2(page);
+			deepest     = floor_log2(shortest);
 		} else {
 			const int short_side = r->src_w < r->src_h ? r->src_w : r->src_h;
 			r->max_lod           = floor_log2(short_side) < lod_limit ? floor_log2(short_side) : lod_limit;
@@ -308,9 +312,8 @@ bool channel_atlas_pack(ChannelAtlas* ca, int page_size, int gutter) {
 	}
 	sort_rects_largest_first(ca->rects, order, packed);
 
-	const bool fixed = ca->fixed_width > 0 && ca->fixed_height > 0;
 	if (fixed && (ca->fixed_width % gutter || ca->fixed_height % gutter ||
-				  (dedicated && (ca->fixed_width != page || ca->fixed_height != page)))) {
+				  (oversized && (ca->fixed_width != page || ca->fixed_height != page)))) {
 		fprintf(stderr, "[aeron_gltf_cook] channel %d: %d×%d pages do not fit its sources\n", ca->channel,
 				ca->fixed_width, ca->fixed_height);
 		free(order);

@@ -11,6 +11,9 @@
  *   damage     factor (RGB factor, A gloss)          layer: as given
  *   mark       baseColor (RGBA)                      layer: RGB rgb·a, A a
  *   energy     emissive (RGBA, A intensity)          emissive: RGB rgb·a
+ *   detailColor  baseColor (RGBA, A strength)        layer: as given, a page of its own
+ *   detailNormal normal (RGB tangent-space normal)   layer: each value sRGB-encoded, so that the page's
+ *                                                   sRGB decode gives it back; a page of its own
  * `maxSize` caps an image's longer side, `crop` records the part a blast
  * mark's [0, 1] maps to.
  *
@@ -132,7 +135,7 @@ static bool hash_file(XXH3_state_t* state, const char* path) {
  * file and every image input it names), as 16 hex digits; false when
  * unknown. */
 static bool library_inputs(const char* file, const char* dir, const cJSON* images, char out[17]) {
-	static const char* const fields[] = { "baseColor", "emissive", "factor" };
+	static const char* const fields[] = { "baseColor", "emissive", "factor", "normal" };
 	static const uint32_t    version  = EFFECT_LIBRARY_BAKE_VERSION;
 	char                     path[4096];
 	XXH3_state_t*            s = XXH3_createState();
@@ -224,6 +227,12 @@ static bool bake(const char* tool, const char* dir, const char* key, const cJSON
 			if (kind == EFFECT_LIBRARY_ENERGY)
 				p[3] = 255;
 		}
+		/* A normal is a plain 0..1 value, not a colour: encoded here, it
+		 * comes back unchanged from the page's sRGB decode, so the shader
+		 * reads it directly and filtering works on the normal itself. */
+		for (size_t i = 0; kind == EFFECT_LIBRARY_DETAIL_NORMAL && i < (size_t)w * h; ++i)
+			for (int k = 0; k < 3; ++k)
+				image[i * 4 + k] = to_srgb8(image[i * 4 + k] / 255.0f);
 		if (kind == EFFECT_LIBRARY_ENERGY)
 			out->emissive = image;
 		else

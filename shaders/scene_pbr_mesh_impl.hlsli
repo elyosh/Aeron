@@ -46,7 +46,10 @@
 
 /* Variants: AERON_PBR_ANIM 1 adds material animation (material_anim.hlsli):
  * the effect atlas at t12/t13 and the animation records in storage, which
- * moves every storage register up by two. AERON_PBR_SCREENS 0 drops the screen code, which the renderer
+ * moves every storage register up by two. AERON_PBR_DETAILS 1 (with
+ * AERON_PBR_ANIM) adds the detail layers, for meshes with details only: the
+ * detail code makes the compiler spill more registers, which costs every
+ * pixel even where no detail is drawn. AERON_PBR_SCREENS 0 drops the screen code, which the renderer
  * draws with its own pipeline (a mesh's screen primitives). AERON_PBR_ALPHA_BLEND
  * 1 is the variant for blended materials. AERON_PBR_ENVIRONMENT 0 drops the
  * image-based lighting, for scenes without an environment. AERON_PBR_PROBES 1
@@ -69,6 +72,9 @@
 #endif
 #ifndef AERON_PBR_ANIM
 #define AERON_PBR_ANIM 0
+#endif
+#ifndef AERON_PBR_DETAILS
+#define AERON_PBR_DETAILS 0
 #endif
 #ifndef AERON_PBR_PROBES
 #define AERON_PBR_PROBES 0
@@ -163,7 +169,8 @@ StructuredBuffer<uint4> g_anim_records : register(AERON_PBR_ANIM_RECORD_REGISTER
 /* The instance's animation state (AeronScenePbrAnimBlock). */
 cbuffer PbrAnimFS : register(b3, space3)
 {
-    float4 fs_anim;          /* x: animation time (seconds), y: effect page size (texels) */
+    float4 fs_anim;          /* x: animation time (seconds), y: effect page size (texels),
+                              * z: metres per world unit */
     uint4  fs_anim_state;    /* x: state mask, y: seed, z: damage stage, w: energy */
     float4 fs_anim_energy;   /* x: energy start (seconds), yzw: unused */
     float4 fs_anim_onset[8]; /* state onsets (seconds), 4 per float4 */
@@ -268,6 +275,106 @@ uint anim_layer_frame(uint4 anim, uint layer, out uint flipbook)
     uint frame = flipbook != 0u ? material_anim_frame(flipbook, fs_anim.x - onset) : 0u;
     return frame != 0u && (g_anim_records[frame].x & 0xFFFu) != AERON_ANIM_NO_LAYER ? frame : 0u;
 }
+
+#if AERON_PBR_DETAILS
+/* ===== Detail layers ===================================================
+ * Up to AERON_ANIM_DETAIL_MAX images per material (`details`, the material's
+ * anim.x), each repeated by its UV scale and faded out with the distance
+ * from the camera to `world_pos`. The callers call them only for a material
+ * with details, behind a branch, which keeps most of their cost away from
+ * other materials; `uv_dx` and `uv_dy` are the gradients of the unscaled
+ * UV, taken before that branch, so that they are defined on every pixel. */
+
+/* The distance from the camera to `world_pos`, in metres. */
+float anim_detail_distance(float3 world_pos)
+{
+    return length(fs_camera_pos_world - world_pos) * fs_anim.z;
+}
+
+/* A layer's fade: 1 at the camera, 0 at its fade distance (params.y:
+ * 1 / distance, 0 for no fade). */
+float anim_detail_fade(uint4 params, float distance)
+{
+    return saturate(1.0f - distance * asfloat(params.y));
+}
+
+/* The linear value of sRGB mid-grey (0.5), which an overlay image shows to
+ * leave the colour unchanged. */
+#define AERON_DETAIL_OVERLAY_MID 0.21404114f
+
+/* A layer's image at `uv` repeated by its UV scale, with the gradients of
+ * the unscaled `uv`. A detail image fills its page, so the repeating
+ * sampler wraps it and picks its mip level. */
+float4 anim_detail_sample(uint4 layer, uint4 params, float2 uv, float2 uv_dx, float2 uv_dy)
+{
+    float scale = asfloat(params.x);
+    return g_effect_layer.SampleGrad(g_effect_layer_sampler, float3(uv * scale, (float)(layer.x & 0xFFFu)),
+                                     uv_dx * scale, uv_dy * scale);
+}
+
+/* The linear colour `c` with the material's colour layers mixed in, in
+ * linear light, by strength × the image's alpha (strength alone for
+ * replace) × the fade. With the image's colour g: multiply gives c·g,
+ * overlay c·g / AERON_DETAIL_OVERLAY_MID (mid-grey keeps the colour, lighter
+ * brightens, darker darkens), screen c + g − c·g, and replace g. */
+float3 anim_detail_colour(uint details, float2 uv, float2 uv_dx, float2 uv_dy, float3 world_pos, float3 c)
+{
+    uint  count    = details >> 16;
+    float distance = anim_detail_distance(world_pos);
+    for (uint k = 0u; k < count; k++) {
+        uint  record = (details & 0xFFFFu) + k * AERON_ANIM_DETAIL_RECORDS;
+        uint4 layer  = g_anim_records[record];
+        uint4 params = g_anim_records[record + 1u];
+        uint  blend  = layer.x >> AERON_ANIM_DETAIL_BLEND_SHIFT;
+        float fade   = anim_detail_fade(params, distance);
+        if (blend == AERON_ANIM_DETAIL_NORMAL || (layer.x & 0xFFFu) == AERON_ANIM_NO_LAYER || fade <= 0.0f)
+            continue;
+        float4 g = anim_detail_sample(layer, params, uv, uv_dx, uv_dy);
+        float  w = asfloat(layer.w) * fade;
+        float3 b = g.rgb;
+        if (blend == AERON_ANIM_DETAIL_MULTIPLY)
+            b = c * g.rgb;
+        else if (blend == AERON_ANIM_DETAIL_OVERLAY)
+            b = saturate(c * g.rgb * (1.0f / AERON_DETAIL_OVERLAY_MID));
+        else if (blend == AERON_ANIM_DETAIL_SCREEN)
+            b = c + g.rgb - c * g.rgb;
+        c = lerp(c, b, blend == AERON_ANIM_DETAIL_REPLACE ? w : w * g.a);
+    }
+    return c;
+}
+
+/* The normal `N` with the slopes of the material's normal layers added: the
+ * image's X and Y, in the surface's tangent frame (the vertex tangent and
+ * `N_front`, the geometric normal of the authored front face), times
+ * strength × the image's alpha × the fade, turned to the face drawn by
+ * `side_sign`. The page gives the image's 0..1 values back as they are
+ * (the cooker stores them sRGB-encoded). A mesh without tangents keeps
+ * `N`. */
+float3 anim_detail_normal(uint details, float2 uv, float2 uv_dx, float2 uv_dy, float3 world_pos, float3 N,
+                          float3 world_tangent, float tangent_sign, float3 N_front, float side_sign)
+{
+    uint count = details >> 16;
+    if (dot(world_tangent, world_tangent) < 1.0e-12f)
+        return N;
+    float  distance = anim_detail_distance(world_pos);
+    float3 T        = normalize(world_tangent);
+    float3 B        = normalize(cross(N_front, T)) * tangent_sign;
+    float3 slope    = float3(0.0f, 0.0f, 0.0f);
+    for (uint k = 0u; k < count; k++) {
+        uint  record = (details & 0xFFFFu) + k * AERON_ANIM_DETAIL_RECORDS;
+        uint4 layer  = g_anim_records[record];
+        uint4 params = g_anim_records[record + 1u];
+        float fade   = anim_detail_fade(params, distance);
+        if ((layer.x >> AERON_ANIM_DETAIL_BLEND_SHIFT) != AERON_ANIM_DETAIL_NORMAL ||
+            (layer.x & 0xFFFu) == AERON_ANIM_NO_LAYER || fade <= 0.0f)
+            continue;
+        float4 g = anim_detail_sample(layer, params, uv, uv_dx, uv_dy);
+        float2 d = g.rg * 2.0f - 1.0f;
+        slope += (T * d.x + B * d.y) * (asfloat(layer.w) * g.a * fade);
+    }
+    return normalize(N + slope * side_sign);
+}
+#endif /* AERON_PBR_DETAILS */
 #endif
 
 
@@ -609,6 +716,14 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
     float3 anim_emissive = float3(0.0f, 0.0f, 0.0f);
     float  anim_gloss    = 1.0f;
     uint4  anim = g_materials[mat].anim;
+#if AERON_PBR_DETAILS
+    /* Colour detail layers change the texture's colour; frames paint over
+     * the result. */
+    float2 detail_uv_dx = ddx(i.uv);
+    float2 detail_uv_dy = ddy(i.uv);
+    [branch] if (anim.x != 0u)
+        albedo_tex.rgb = anim_detail_colour(anim.x, i.uv, detail_uv_dx, detail_uv_dy, i.world_pos, albedo_tex.rgb);
+#endif
     float3 anim_energy_rgb = anim_energy(anim, i.model_pos, i.model_normal);
     if (anim.y != 0u || anim.z != 0u) {
         uint colour_book = 0u, lit_book = 0u;
@@ -733,6 +848,16 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
         float3 B    = normalize(cross(N_front, T)) * i.tangent_sign;
         N = normalize(T * nt.x + B * nt.y + N_front * nt.z) * side_sign;
     }
+#if AERON_PBR_DETAILS
+    /* The material's details are read again rather than kept from the base
+     * colour, which would hold registers across the shading. */
+    uint   details      = g_materials[mat].anim.x;
+    float2 normal_uv_dx = ddx(i.uv);
+    float2 normal_uv_dy = ddy(i.uv);
+    [branch] if (details != 0u)
+        N = anim_detail_normal(details, i.uv, normal_uv_dx, normal_uv_dy, i.world_pos, N, i.world_tangent,
+                               i.tangent_sign, N_geom * side_sign, side_sign);
+#endif
 
     /* ===== View + light ========================================== */
 #if AERON_PBR_PROBES

@@ -203,6 +203,9 @@ typedef struct OptGltfMaterial {
 	bool         specular; /* KHR_materials_specular with factor 1 and color factor specular_color */
 	float        specular_color;
 	const char*  json; /* the material's AERON_flight_model object (animations), or NULL */
+	/* Meshes that draw the material get tangents even without a normal map,
+	 * for a detail layer that bends the normal (in `json`). */
+	bool                    tangents;
 	const char*  tag;  /* its AERON_flight_model tag, or NULL */
 	const OptGltfSkinLayer* skins; /* its skin layers, written as `skins` */
 	size_t                  skin_count;

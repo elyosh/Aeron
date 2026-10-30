@@ -20,16 +20,20 @@ from . import common, sources
 
 # For each kind, the input whose image is shown as the thumbnail.
 SHOWN_INPUT = {"baseColor": "baseColor", "emissive": "emissive", "damage": "factor", "mark": "baseColor",
-               "energy": "emissive"}
+               "energy": "emissive", "detailColor": "baseColor", "detailNormal": "normal"}
 # The inputs of each kind: required, then optional.
 INPUTS = {"baseColor": ("baseColor",), "emissive": ("emissive", "baseColor"), "damage": ("factor",),
-          "mark": ("baseColor",), "energy": ("emissive",)}
+          "mark": ("baseColor",), "energy": ("emissive",), "detailColor": ("baseColor",),
+          "detailNormal": ("normal",)}
 KINDS = (("baseColor", "Base Color", "Painted over the base color, using its alpha"),
          ("emissive", "Emissive",
           "Replaces the emission. An optional base color image is painted over the base color"),
          ("damage", "Damage", "Hull damage. Multiplies the base color, and its alpha dulls the surface"),
          ("mark", "Mark", "Blast mark, for the game's own effects"),
-         ("energy", "Energy", "Energy effect, for the game's own effects"))
+         ("energy", "Energy", "Energy effect, for the game's own effects"),
+         ("detailColor", "Detail Color", "Detail image repeated over a material, changing its base color. Tiles"),
+         ("detailNormal", "Detail Normal",
+          "Detail image repeated over a material, bending its normal as a tangent-space normal map. Tiles"))
 
 _projects = {}
 _previews = None
@@ -99,6 +103,8 @@ def _model_users(path):
         if damage:
             names.setdefault(damage["library"], set()).update(
                 stage for alternative in damage["alternatives"] for stage in alternative["stages"] if stage)
+        for detail in entry.get("details", []):
+            names.setdefault(detail["library"], set()).add(detail["image"])
     return names
 
 

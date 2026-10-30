@@ -2074,6 +2074,10 @@ int AeronSceneStorage_Prepare(AeronScene3D* s, AeronCommandBuffer* cmd) {
 		const AeronSceneMeshInstance* instance = &s->instances[i];
 		AeronScenePreparedInstance*   prepared = &s->prepared_instances[i];
 		memset(prepared, 0, sizeof *prepared);
+		/* A mesh with detail layers gets its shaders while out of view, so
+		 * that the frame that first shows it doesn't wait for them. */
+		if (instance->mesh && instance->mesh->has_details)
+			AeronScenePbr_PrepareDetails(s, instance->mesh, (AeronCullMode)instance->cull_mode);
 		SceneOrderKey key;
 		prepared->camera_visible = (uint32_t)scene_instance_in_frustum(s, instance, frustum, &key);
 		prepared->probe_set      = prepared->camera_visible ? scene_instance_probe_set(s, instance) : -1;

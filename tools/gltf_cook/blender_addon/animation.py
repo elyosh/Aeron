@@ -1,5 +1,5 @@
 # The animation of a material as Blender properties: the flipbooks, hull
-# damage and energy effects of its AERON_flight_model object
+# damage, details and energy effects of its AERON_flight_model object
 # (../../extensions/AERON_flight_model, ../animated_materials.md), stored
 # exactly as the format writes them. Also the energy default of the model
 # root. Import and Reload Animations fill them from the .gltf, and the exports
@@ -56,6 +56,13 @@ ENERGIES = ("shields", "tractor", "jamming")
 # The flipbook layers. A layer is also the image kind of its frames.
 LAYERS = (("baseColor", "Base Color", "Frames painted over the base color"),
           ("emissive", "Emissive", "Frames that replace the emissive"))
+# How a detail changes the material. `normal` takes images of kind
+# detailNormal, the others detailColor.
+BLENDS = (("multiply", "Multiply", "Multiply the base color texture's color"),
+          ("overlay", "Overlay", "Brighten or darken the base color texture's color: mid-grey keeps it"),
+          ("screen", "Screen", "Screen the base color texture's color"),
+          ("replace", "Replace", "Replace the base color texture's color, ignoring the image's alpha"),
+          ("normal", "Normal", "Add the slope of a tangent-space normal map to the normal"))
 
 
 def _frame_search(self, context, text):
@@ -67,6 +74,11 @@ def _frame_search(self, context, text):
 def _stage_search(self, context, text):
     damage = self.id_data.aeron_flight.damage
     return libraries.search_keys(context, damage.library, 'damage', text)
+
+
+def _detail_search(self, context, text):
+    kind = 'detailNormal' if self.blend == "normal" else 'detailColor'
+    return libraries.search_keys(context, self.library, kind, text)
 
 
 def _library_search(self, context, text):
@@ -165,6 +177,22 @@ class AeronDamage(PropertyGroup):
     active_alternative: IntProperty()
 
 
+class AeronDetail(PropertyGroup):
+    library: StringProperty(name="Library", search=_library_search, search_options={'SUGGESTION'},
+                            description="Effect library that holds the image")
+    image: StringProperty(name="Image", search=_detail_search, search_options={'SUGGESTION'},
+                          description="Detail image repeated over the material")
+    blend: EnumProperty(name="Blend", items=BLENDS, default="multiply")
+    strength: FloatProperty(name="Strength", default=1.0, min=0.0, soft_max=2.0,
+                            description="How much the image mixes in, times its alpha (except for Replace)")
+    uv_scale: FloatProperty(name="UV Scale", default=1.0, min=0.001, soft_max=100.0,
+                            description="How many times the image repeats over the UV map")
+    has_fade: BoolProperty(name="Fade", description="Fade the image out with the distance from the camera")
+    fade_distance: FloatProperty(name="Fade Distance", default=1000.0, min=0.001,
+                                 description="Distance from the camera, in metres, at which the image has "
+                                             "faded out")
+
+
 def _energy_override_update(self, context):
     """When the override is turned on, start from the default of the model."""
     root = common.model_root(context.object) if self.energy_override and context.object else None
@@ -181,6 +209,8 @@ class AeronAnimation:
     active_flipbook: IntProperty()
     has_damage: BoolProperty()
     damage: PointerProperty(type=AeronDamage)
+    details: CollectionProperty(type=AeronDetail)
+    active_detail: IntProperty()
     energy_override: BoolProperty(
         name="Own Energy Effects", update=_energy_override_update,
         description="Use energy effects for this material instead of the model's default. The default is set "
@@ -195,7 +225,7 @@ class AeronAnimation:
 
 def has_animation(material):
     props = material.aeron_flight
-    return props.flipbooks_given or props.has_damage or props.energy_override
+    return props.flipbooks_given or props.has_damage or len(props.details) > 0 or props.energy_override
 
 
 def clear(material):
@@ -208,6 +238,7 @@ def clear(material):
     props.damage.alternatives.clear()
     props.damage.library = ""
     props.damage.choice = props.damage.placement = 0
+    props.details.clear()
     props.energy.set(())
 
 
@@ -249,6 +280,16 @@ def set_entry(material, entry):
             if isinstance(offset, dict):
                 item.offset_min = offset["min"]
                 item.offset_max = offset["max"]
+    for detail in entry.get("details", []):
+        item = props.details.add()
+        item.library = detail["library"]
+        item.image = detail["image"]
+        item.blend = detail["blend"]
+        item.strength = detail.get("strength", 1.0)
+        item.uv_scale = detail.get("uvScale", 1.0)
+        item.has_fade = "fadeDistance" in detail
+        if item.has_fade:
+            item.fade_distance = detail["fadeDistance"]
     if "energy" in entry:
         props.energy_override = True
         props.energy.set(entry["energy"])
@@ -286,6 +327,15 @@ def entry(material):
             alternatives.append(out)
         result["damage"] = {"library": damage.library, "choice": damage.choice, "placement": damage.placement,
                             "alternatives": alternatives}
+    if len(props.details):
+        details = []
+        for detail in props.details:
+            out = {"library": detail.library, "image": detail.image, "blend": detail.blend,
+                   "strength": detail.strength, "uvScale": detail.uv_scale}
+            if detail.has_fade:
+                out["fadeDistance"] = detail.fade_distance
+            details.append(out)
+        result["details"] = details
     if props.energy_override:
         result["energy"] = props.energy.get()
     return result or None
@@ -412,7 +462,7 @@ def float32(value):
     return value
 
 
-classes = (AeronEnergy, AeronFrame, AeronFlipbook, AeronDamageAlternative, AeronDamage)
+classes = (AeronEnergy, AeronFrame, AeronFlipbook, AeronDamageAlternative, AeronDamage, AeronDetail)
 
 
 def register():

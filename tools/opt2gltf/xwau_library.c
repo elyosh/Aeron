@@ -143,8 +143,8 @@ static bool model_key(const char* path, const char* library, const char* key) {
 	return request(dat, group, image, kind, tint, alpha_mode, false);
 }
 
-/* Requests the library images used by the flipbooks and damage of one
- * material. */
+/* Requests the library images used by the flipbooks, damage and details of
+ * one material. */
 static bool material_keys(const char* path, const cJSON* material) {
 	bool         ok = true;
 	const cJSON* book;
@@ -166,6 +166,13 @@ static bool material_keys(const char* path, const cJSON* material) {
 			if (cJSON_IsString(library) && cJSON_IsString(stage))
 				ok &= model_key(path, library->valuestring, stage->valuestring);
 		}
+	}
+	const cJSON* detail;
+	cJSON_ArrayForEach(detail, cJSON_GetObjectItemCaseSensitive(material, "details")) {
+		const cJSON* detail_library = cJSON_GetObjectItemCaseSensitive(detail, "library");
+		const cJSON* image          = cJSON_GetObjectItemCaseSensitive(detail, "image");
+		if (cJSON_IsString(detail_library) && cJSON_IsString(image))
+			ok &= model_key(path, detail_library->valuestring, image->valuestring);
 	}
 	return ok;
 }
@@ -611,6 +618,15 @@ static bool write_library_sources(Library* l, const char* effects_dir, bool merg
 		}
 		const int    w = (int)im.width, h = (int)im.height;
 		const size_t n        = (size_t)w * h;
+		/* BC5 holds a normal's X and Y, so Z is rebuilt, as for the
+		 * NormalMap key. */
+		for (size_t t = 0; r->kind == XWAU_FX_DETAIL_NORMAL && im.encoding == XWAU_DAT_ENCODING_BC5 && t < n;
+			 ++t) {
+			uint8_t*     px = &im.rgba[t * 4];
+			const double nx = px[0] / 127.5 - 1.0, ny = px[1] / 127.5 - 1.0;
+			const double z2 = 1.0 - nx * nx - ny * ny;
+			px[2]           = (uint8_t)lround((sqrt(z2 > 0.0 ? z2 : 0.0) * 0.5 + 0.5) * 255.0);
+		}
 		uint8_t*     layer    = XwauFx_HasLayer(r->kind) ? (uint8_t*)malloc(n * 4) : NULL;
 		uint8_t*     emissive = XwauFx_HasEmissive(r->kind) ? (uint8_t*)malloc(n * 4) : NULL;
 		uint8_t*     input    = (uint8_t*)malloc(n * 4);
@@ -648,6 +664,13 @@ static bool write_library_sources(Library* l, const char* effects_dir, bool merg
 			cJSON_AddStringToObject(entry, "emissive", file);
 			if (any_base_color)
 				cJSON_AddStringToObject(entry, "baseColor", base_color);
+		} else if (ok && (r->kind == XWAU_FX_DETAIL || r->kind == XWAU_FX_DETAIL_NORMAL)) {
+			/* A greeble: the image as it is. */
+			const bool normal = r->kind == XWAU_FX_DETAIL_NORMAL;
+			ok    = PathFormat(file, sizeof file, "%s.png", base) && write_frame(dir, file, w, h, layer);
+			entry = cJSON_AddObjectToObject(entries, r->key);
+			cJSON_AddStringToObject(entry, "kind", normal ? "detailNormal" : "detailColor");
+			cJSON_AddStringToObject(entry, normal ? "normal" : "baseColor", file);
 		} else if (ok && (r->kind == XWAU_FX_COLOUR || r->kind == XWAU_FX_MULTIPLY)) {
 			ok    = PathFormat(file, sizeof file, "%s.png", base) && write_frame(dir, file, w, h, layer);
 			entry = cJSON_AddObjectToObject(entries, r->key);

@@ -1,0 +1,56 @@
+# An asteroid field lit by the sun, to compare the look and the cost of
+# asteroid materials. A large asteroid fills the left of the view 160 m away,
+# others sit between 300 m and 1400 m, on both sides of the 1000 m where
+# asteroid detail fades out, and a 2 km asteroid stays in the background. The
+# camera doesn't move.
+width: 2560
+height: 1440
+frames: 1
+fps: 60
+pan_degrees_per_second: 0
+pan_direction_degrees: 0
+shutter: 0
+quality: 0
+reference_samples: 0
+msaa_samples: 2
+cull: back
+bloom:
+  intensity: 0.2
+  kernel: 4
+tonemap: agx
+output_dir: captures/asteroids
+# Set this to the game-data directory containing mod/flight/models (converted
+# XWAU models). Relative paths are resolved from the working directory.
+asset_root: .
+# The effects folder, for asteroid materials that use effect libraries.
+effect_dir: mod/flight/effects
+models:
+  - mod/flight/models/asteroidhr1.glb
+  - mod/flight/models/asteroidhr2.glb
+  - mod/flight/models/asteroidhr3.glb
+  - mod/flight/models/asteroidhr4.glb
+  - mod/flight/models/asteroidhr5.glb
+  - mod/flight/models/asteroidhr6.glb
+  - mod/flight/models/asteroid02.glb
+game_scene:
+  defaults: aeron/config/scene3d_defaults.yaml
+  # Surface to sun, camera axes (+X right, +Y down, +Z forward).
+  sun_direction: [-0.5, -0.6, -0.4]
+  sun_color: [2.513, 2.513, 2.513]
+  ambient: 0.08
+  # Position in metres, camera axes; rotation_degrees [yaw, pitch, roll].
+  instances:
+    - { model: mod/flight/models/asteroidhr5.glb, position: [-70, 25, 140], rotation_degrees: [20, 10, 0] }
+    - { model: mod/flight/models/asteroidhr3.glb, position: [120, -30, 320], rotation_degrees: [-60, 0, 30] }
+    - { model: mod/flight/models/asteroidhr1.glb, position: [-20, -70, 500], rotation_degrees: [100, -20, 0] }
+    - { model: mod/flight/models/asteroidhr4.glb, position: [260, 60, 700], rotation_degrees: [45, 15, 10] }
+    - { model: mod/flight/models/asteroidhr2.glb, position: [490, 270, 850], rotation_degrees: [-30, 40, 0] }
+    - { model: mod/flight/models/asteroidhr6.glb, position: [60, 40, 1100], rotation_degrees: [170, 0, -20] }
+    - { model: mod/flight/models/asteroidhr1.glb, position: [-870, -580, 1400], rotation_degrees: [-120, 30, 0] }
+    - { model: mod/flight/models/asteroid02.glb, position: [3000, -1200, 5000], rotation_degrees: [180, 0, 0] }
+benchmark:
+  warmup_seconds: 2
+  sample_seconds: 1
+  samples: 7
+  min_frames: 120
+  frames_in_flight: 2

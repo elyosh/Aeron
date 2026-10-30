@@ -93,6 +93,7 @@ struct XwauAnim {
 	size_t flipbooks, damage_materials, energy_materials, anim_bases, always_illuminations, missing_frames;
 	size_t skipped_no_illum, skipped_missing_dat, skipped_unsupported, unknown_events, mixed_damage;
 	size_t skipped_on_screens;
+	size_t greeble_materials, greebles_on_illum, greebles_missing, greebles_uv_disp;
 };
 
 static bool own(XwauAnim* a, void* p) {
@@ -463,6 +464,96 @@ static bool damage_json(XwauAnim* a, cJSON* object, const XwauMatSequences* own_
 	return true;
 }
 
+/* Splits a greeble texture "<dat>-<group>-<image>" into its DAT path and
+ * image. Returns false when it isn't one. */
+static bool greeble_image(const char* tex, char* dat, size_t cap, int* group, int* image) {
+	const char* image_sep = strrchr(tex, '-');
+	const char* group_sep = NULL;
+	for (const char* p = tex; image_sep && p < image_sep; ++p)
+		if (*p == '-')
+			group_sep = p;
+	if (!group_sep || (size_t)(group_sep - tex) >= cap)
+		return false;
+	char* end;
+	*group = (int)strtol(group_sep + 1, &end, 10);
+	if (end != image_sep)
+		return false;
+	*image = (int)strtol(image_sep + 1, &end, 10);
+	if (end == image_sep + 1 || *end)
+		return false;
+	snprintf(dat, cap, "%.*s", (int)(group_sep - tex), tex);
+	return true;
+}
+
+/* Adds the `details` of the texture's greebles to `object`, as XWAU's
+ * EffectsRenderer::ApplyGreebles and PixelShaderGreeble.hlsl draw them:
+ *   - only on a texture without an illumination layer, and only when the
+ *     first layer's image loads;
+ *   - a layer is off when its image doesn't load or its mode is 0;
+ *   - normal map and UV displacement with normal map become `normal`. The
+ *     UV displacement moves the texture's UVs by less than a texel, so it
+ *     is left out, and a layer with UV displacement alone is skipped;
+ *   - each layer repeats GreebleScale times over the UVs, mixes in by
+ *     GreebleMix (times the image's alpha, except for replace) and fades out
+ *     at GreebleDistance. XWAU fades with the view depth and doesn't fade
+ *     the normal; the details fade with the distance, normal included.
+ * Sets *normal when a layer bends the normal. Returns false when out of
+ * memory. */
+static bool greebles_json(XwauAnim* a, cJSON* object, const XwauMatParams* m, bool has_illum, bool* normal) {
+	static const char* const kBlends[] = { NULL,      "multiply", "overlay", "screen",
+										   "replace", "normal",   NULL,      "normal" };
+	if (!m->has_greebles)
+		return true;
+	if (has_illum) {
+		a->greebles_on_illum++;
+		return true;
+	}
+	const OpenDat* dats[2]  = { NULL, NULL };
+	int            group[2] = { 0, 0 }, image[2] = { 0, 0 };
+	for (int n = 0; n < 2; ++n) {
+		char dat[XWAU_MAT_PATH_MAX];
+		if (!m->greebles[n].tex[0])
+			continue;
+		if (greeble_image(m->greebles[n].tex, dat, sizeof dat, &group[n], &image[n]))
+			dats[n] = open_dat(a, dat);
+		if (dats[n] && !dat_has_image(dats[n], group[n], image[n]))
+			dats[n] = NULL;
+		if (!dats[n])
+			a->greebles_missing++;
+	}
+	if (!dats[0])
+		return true;
+	cJSON* list = NULL;
+	for (int n = 0; n < 2; ++n) {
+		const XwauGreeble* g     = &m->greebles[n];
+		const char*        blend = dats[n] && g->blend > 0 && g->blend < 8 ? kBlends[g->blend] : NULL;
+		if (dats[n] && g->blend == XWAU_GREEBLE_UV_DISP)
+			a->greebles_uv_disp++;
+		if (!blend)
+			continue;
+		char library[64], rel[256], key[96];
+		if (!Xwau_DatNames(dats[n]->rel, rel, sizeof rel, library, sizeof library))
+			return false;
+		const bool bends = strcmp(blend, "normal") == 0;
+		XwauFx_Key(key, sizeof key, group[n], image[n], bends ? XWAU_FX_DETAIL_NORMAL : XWAU_FX_DETAIL, NULL,
+				   0);
+		if (!list && !(list = OptJson_AddArray(object, "details")))
+			return false;
+		cJSON* detail = OptJson_AddObject(list, NULL);
+		if (!detail || !OptJson_Add(detail, "library", cJSON_CreateString(library)) ||
+			!OptJson_Add(detail, "image", cJSON_CreateString(key)) ||
+			!OptJson_Add(detail, "blend", cJSON_CreateString(blend)) ||
+			!OptJson_Add(detail, "strength", shortest_float(g->mix)) ||
+			!OptJson_Add(detail, "uvScale", shortest_float(g->scale)) ||
+			!OptJson_Add(detail, "fadeDistance", shortest_float(g->distance)))
+			return false;
+		*normal |= bends;
+	}
+	a->greeble_materials += list != NULL;
+	a->any |= list != NULL;
+	return true;
+}
+
 bool XwauAnim_Texture(XwauAnim* a, const XwauMatFile* mat, const opt_texture_t* tex, float unlit,
 					  XwauAnimScreen screen, XwauGltfAnim* out) {
 	memset(out, 0, sizeof *out);
@@ -604,6 +695,9 @@ bool XwauAnim_Texture(XwauAnim* a, const XwauMatFile* mat, const opt_texture_t* 
 	}
 	if (ok && screen == XWAU_ANIM_SCREEN_NONE)
 		ok = damage_json(a, object, &own_list, &inherited);
+	/* XWAU's screen shader draws no greebles. */
+	if (ok && screen == XWAU_ANIM_SCREEN_NONE)
+		ok = greebles_json(a, object, XwauMat_Find(mat, tex->name), has_illum, &out->normal_detail);
 	if (ok && (energy[0] || energy[1] || energy[2])) {
 		cJSON* list = OptJson_AddArray(object, "energy");
 		ok          = list != NULL;
@@ -631,6 +725,11 @@ bool XwauAnim_Texture(XwauAnim* a, const XwauMatFile* mat, const opt_texture_t* 
 }
 
 void XwauAnim_Report(const XwauAnim* a) {
+	if (a->greeble_materials || a->greebles_on_illum || a->greebles_missing || a->greebles_uv_disp)
+		Report(a->label,
+			   "greebles: %zu material(s) with details, %zu skipped on textures with illumination, %zu "
+			   "image(s) missing, %zu UV displacement layer(s) left out",
+			   a->greeble_materials, a->greebles_on_illum, a->greebles_missing, a->greebles_uv_disp);
 	if (!a->any && !a->skipped_no_illum && !a->skipped_missing_dat && !a->skipped_unsupported &&
 		!a->unknown_events && !a->missing_frames && !a->skipped_on_screens)
 		return;

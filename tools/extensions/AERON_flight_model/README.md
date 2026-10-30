@@ -350,6 +350,7 @@ beyond its glTF definition. It may hold:
 
 - `flipbooks`: frames the material plays on game states;
 - `damage`: the hull damage it shows as the hull weakens;
+- `details`: up to two detail images repeated over its surface;
 - `energy`: the energy effects it shows, any of `shields`, `tractor` and
   `jamming` (`[]` for none). The model root's `energy` is the default of
   every material without its own; without either, a material shows none;
@@ -357,10 +358,11 @@ beyond its glTF definition. It may hold:
 - `skins`: its skin layers (see Skins);
 - `tags`: game-defined names (see Tags).
 
-Frames and damage stages are image keys of effect libraries, files the
-models share and the game loads from `flight/effects/` in its mod folder.
-[animated_materials.md](../../gltf_cook/animated_materials.md) describes the
-libraries, the game states and how a frame changes the material.
+Frames, damage stages and details are image keys of effect libraries,
+files the models share and the game loads from `flight/effects/` in its mod
+folder. [animated_materials.md](../../gltf_cook/animated_materials.md)
+describes the libraries, the game states and how a frame changes the
+material.
 
 ```json
 "AERON_flight_model": {
@@ -407,6 +409,34 @@ Each object picks one of the `alternatives`, materials with the same
 The random values are drawn once per object, shared by the materials with
 the same `placement` (0 to 4095). Outside its square, a stage shows
 nothing; the square is clipped at the texture's edges.
+
+**Details** are up to two images repeated over the material, which add
+small-scale detail to large surfaces such as rock. Each one has:
+
+- `library`, `image`: its effect library and image key, of kind
+  `detailNormal` for the `normal` blend and `detailColor` otherwise;
+- `blend`: how it changes the material. `multiply`, `overlay`, `screen` and
+  `replace` change the colour c of the base colour texture, in linear light,
+  with the image's colour g: `multiply` gives c·g, `overlay` c·g divided by
+  sRGB mid-grey (so mid-grey keeps the colour, lighter brightens and darker
+  darkens), `screen` c + g − c·g, and `replace` g. `normal` adds the slope of
+  a tangent-space normal map, its X and Y, to the material's normal;
+- `strength`: optional, default 1: how much it mixes in, times the image's
+  alpha (except for `replace`);
+- `uvScale`: optional, default 1: how many times the image repeats over
+  `TEXCOORD_0`;
+- `fadeDistance`: optional: the distance from the camera, in metres, at
+  which it has faded out. Without it, it doesn't fade.
+
+Details apply before frames and hull damage, which paint over them. A
+`normal` detail needs the mesh's tangents.
+
+```json
+"details": [
+  { "library": "rock", "image": "rock_normal", "blend": "normal", "strength": 0.4, "uvScale": 2, "fadeDistance": 1000 },
+  { "library": "rock", "image": "rock_grain", "blend": "overlay", "strength": 0.6, "uvScale": 3, "fadeDistance": 1000 }
+]
+```
 
 **Screens.** `screen` makes the material show displays the game draws live,
 through rectangles of its `TEXCOORD_0` space:

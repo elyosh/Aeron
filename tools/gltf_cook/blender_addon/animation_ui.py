@@ -61,6 +61,16 @@ class AERON_UL_damage_alternatives(UIList):
         layout.label(text=" / ".join(stages), icon='MOD_EXPLODE')
 
 
+class AERON_UL_details(UIList):
+    def draw_item(self, context, layout, data, item, icon, active_data, active_propname, index=0):
+        row = layout.row(align=True)
+        _thumbnail(row, context, item.library, item.image)
+        row.label(text=item.image or "-")
+        blend = row.row()
+        blend.alignment = 'RIGHT'
+        blend.label(text=item.blend)
+
+
 class AERON_UL_libraries(UIList):
     def draw_item(self, context, layout, data, item, icon, active_data, active_propname, index=0):
         row = layout.row()
@@ -210,6 +220,32 @@ class MATERIAL_PT_aeron_damage(_MaterialPanel, Panel):
         layout.operator("aeron.damage_remove", icon='X')
 
 
+class MATERIAL_PT_aeron_details(_MaterialPanel, Panel):
+    bl_label = "Details"
+    bl_parent_id = "MATERIAL_PT_aeron_animation"
+    bl_options = {'DEFAULT_CLOSED'}
+
+    def draw(self, context):
+        layout = self.layout
+        props = context.material.aeron_flight
+        row = layout.row()
+        row.template_list("AERON_UL_details", "", props, "details", props, "active_detail", rows=2)
+        _side_buttons(row, ("aeron.detail_add", 'ADD', {}), ("aeron.detail_remove", 'REMOVE', {}))
+        if not 0 <= props.active_detail < len(props.details):
+            return
+        detail = props.details[props.active_detail]
+        column = layout.column()
+        column.use_property_split = True
+        column.prop(detail, "library")
+        column.prop(detail, "blend")
+        column.prop(detail, "image")
+        column.prop(detail, "strength")
+        column.prop(detail, "uv_scale")
+        column.prop(detail, "has_fade")
+        if detail.has_fade:
+            column.prop(detail, "fade_distance")
+
+
 class MATERIAL_PT_aeron_libraries(_MaterialPanel, Panel):
     bl_label = "Effect Libraries"
     bl_parent_id = "MATERIAL_PT_aeron_animation"
@@ -242,6 +278,7 @@ classes = (
     AERON_UL_flipbooks,
     AERON_UL_frames,
     AERON_UL_damage_alternatives,
+    AERON_UL_details,
     AERON_UL_libraries,
     AERON_UL_library_images,
     MATERIAL_PT_aeron_tags,
@@ -249,6 +286,7 @@ classes = (
     MATERIAL_PT_aeron_flipbooks,
     MATERIAL_PT_aeron_preview,
     MATERIAL_PT_aeron_damage,
+    MATERIAL_PT_aeron_details,
     MATERIAL_PT_aeron_libraries,
 )
 

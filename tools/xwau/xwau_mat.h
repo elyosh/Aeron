@@ -32,6 +32,29 @@
 #define XWAU_MAT_NAME_MAX 64
 #define XWAU_MAT_PATH_MAX 256
 
+/* Greeble blend modes (GreebleBlendMode in Materials.h). 0 turns a greeble
+ * off. */
+typedef enum XwauGreebleBlend {
+	XWAU_GREEBLE_OFF = 0,
+	XWAU_GREEBLE_MULTIPLY,
+	XWAU_GREEBLE_OVERLAY,
+	XWAU_GREEBLE_SCREEN,
+	XWAU_GREEBLE_REPLACE,
+	XWAU_GREEBLE_NORMAL_MAP,
+	XWAU_GREEBLE_UV_DISP,
+	XWAU_GREEBLE_UV_DISP_AND_NORMAL_MAP,
+} XwauGreebleBlend;
+
+/* One greeble layer: GreebleTexN, GreebleBlendModeN, GreebleMixN,
+ * GreebleScaleN and GreebleDistanceN. */
+typedef struct XwauGreeble {
+	char  tex[XWAU_MAT_PATH_MAX]; /* "Effects\<file>.dat-<group>-<image>", "" when unset */
+	int   blend;                  /* XwauGreebleBlend; a digit, or a name in any case */
+	float mix;
+	float scale;
+	float distance; /* metres */
+} XwauGreeble;
+
 typedef struct XwauMatParams {
 	float metallic;     /* Metallic */
 	float intensity;    /* Intensity */
@@ -93,6 +116,16 @@ typedef struct XwauMatParams {
 	float joystick_max_pitch;
 	float lever_root[3];
 	float lever_max_angle;
+	/* The two greeble layers, read when `has_greebles` (any greeble key, as
+	 * GetOrAddGreebleData creates the entry). The first key sets the
+	 * defaults of GreebleDataStruct: multiply, mix 0.9, scale 1 and
+	 * distance 500 / N. The GreebleLightMap keys are not read. XWAU gives a
+	 * section that inherits [Default]'s greebles the same entry, so a
+	 * greeble key in the section also changes [Default]; here it changes the
+	 * section only. No .mat file that XWAU or TFTC ships sets greebles
+	 * outside [Default]. */
+	bool        has_greebles;
+	XwauGreeble greebles[2];
 } XwauMatParams;
 
 typedef enum XwauLever {

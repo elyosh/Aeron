@@ -98,11 +98,14 @@ typedef struct XwauGltfMaterial {
  *   - `always_illumination`: one of these flipbooks always plays. The
  *     material then has no emission of its own, because the frames are its
  *     glow.
+ *   - `normal_detail`: one of its details (greebles) bends the normal, so
+ *     the meshes that draw it need tangents.
  */
 typedef struct XwauGltfAnim {
 	const char* json;
 	bool        anim_base;
 	bool        always_illumination;
+	bool        normal_detail;
 } XwauGltfAnim;
 
 /* Returns whether XWAU's renderer gives texture `t` an illumination layer.

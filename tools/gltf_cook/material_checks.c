@@ -57,6 +57,8 @@ static const char* const kStates[]   = { "threat.laser",
 static const char* const kLayers[]   = { "baseColor", "emissive" };
 static const char* const kModes[]    = { "loop", "once" };
 static const char* const kEnergies[] = { "shields", "tractor", "jamming" };
+/* Detail blends, as the loader reads them; `normal` bends the normal. */
+static const char* const kBlends[] = { "multiply", "overlay", "screen", "replace", "normal" };
 
 #define COUNT(a) (sizeof(a) / sizeof((a)[0]))
 
@@ -186,7 +188,7 @@ static bool key_known(Check* c, const char* library, const char* key, const char
 	return image && strcmp(image_kind->valuestring, kind) == 0;
 }
 
-/* The library a flipbook or damage entry names. */
+/* The library a flipbook, damage or detail entry names. */
 static const char* entry_library(Check* c, const cJSON* entry, const char* what) {
 	const cJSON* library = cJSON_GetObjectItemCaseSensitive(entry, "library");
 	if (!cJSON_IsString(library)) {
@@ -284,6 +286,41 @@ static bool check_damage(Check* c, const cJSON* in) {
 	return true;
 }
 
+/* `details`: at most two layers, each an image of its blend's kind. */
+static bool check_details(Check* c, const cJSON* in) {
+	static const char* const fields[] = {
+		"library", "image", "blend", "strength", "uvScale", "fadeDistance"
+	};
+	if (!cJSON_IsArray(in) || cJSON_GetArraySize(in) > 2)
+		return fail(c, "details is a list of at most 2 layers");
+	const cJSON* detail;
+	cJSON_ArrayForEach(detail, in) {
+		const cJSON* image    = cJSON_GetObjectItemCaseSensitive(detail, "image");
+		const cJSON* blend    = cJSON_GetObjectItemCaseSensitive(detail, "blend");
+		const cJSON* strength = cJSON_GetObjectItemCaseSensitive(detail, "strength");
+		const cJSON* scale    = cJSON_GetObjectItemCaseSensitive(detail, "uvScale");
+		const cJSON* fade     = cJSON_GetObjectItemCaseSensitive(detail, "fadeDistance");
+		if (!cJSON_IsObject(detail) || !only_members(c, "detail", detail, fields, COUNT(fields)))
+			return false;
+		const char* library = entry_library(c, detail, "detail");
+		if (!library)
+			return false;
+		if (!cJSON_IsString(image) || !one_of(blend, kBlends, COUNT(kBlends)) ||
+			(strength && (!cJSON_IsNumber(strength) || !isfinite(strength->valuedouble) ||
+						  strength->valuedouble < 0.0)) ||
+			(scale &&
+			 (!cJSON_IsNumber(scale) || !isfinite(scale->valuedouble) || scale->valuedouble <= 0.0)) ||
+			(fade && (!cJSON_IsNumber(fade) || !isfinite(fade->valuedouble) || fade->valuedouble <= 0.0)))
+			return fail(
+				c, "a detail is { library, image, blend: multiply | overlay | screen | replace | normal, "
+				   "strength >= 0, uvScale > 0, fadeDistance > 0 }");
+		const bool normal = strcmp(blend->valuestring, "normal") == 0;
+		if (!key_known(c, library, image->valuestring, normal ? "detailNormal" : "detailColor"))
+			return false;
+	}
+	return true;
+}
+
 static bool check_energy(Check* c, const cJSON* in) {
 	const cJSON* e;
 	bool         ok     = cJSON_IsArray(in);
@@ -340,10 +377,12 @@ static bool check_tags(Check* c, const cJSON* in) {
 /* A material's AERON_flight_model object. */
 static bool check_material(Check* c, const char* json) {
 	/* The cook checks `skins` when it expands them (skin_layers.h). */
-	static const char* const fields[] = { "flipbooks", "damage", "energy", "screen", "skins", "tags" };
+	static const char* const fields[] = { "flipbooks", "damage", "details", "energy",
+										  "screen",    "skins",  "tags" };
 	cJSON*                   object   = cJSON_Parse(json);
 	const cJSON*             books    = cJSON_GetObjectItemCaseSensitive(object, "flipbooks");
 	const cJSON*             damage   = cJSON_GetObjectItemCaseSensitive(object, "damage");
+	const cJSON*             details  = cJSON_GetObjectItemCaseSensitive(object, "details");
 	const cJSON*             energy   = cJSON_GetObjectItemCaseSensitive(object, "energy");
 	const cJSON*             screen   = cJSON_GetObjectItemCaseSensitive(object, "screen");
 	const cJSON*             tags     = cJSON_GetObjectItemCaseSensitive(object, "tags");
@@ -354,8 +393,9 @@ static bool check_material(Check* c, const char* json) {
 	const cJSON* book;
 	const cJSON* book_list = ok ? books : NULL;
 	cJSON_ArrayForEach(book, book_list) { ok = ok && check_flipbook(c, book); }
-	ok = ok && (!damage || check_damage(c, damage)) && (!energy || check_energy(c, energy)) &&
-		 (!screen || check_screen(c, screen)) && (!tags || check_tags(c, tags));
+	ok = ok && (!damage || check_damage(c, damage)) && (!details || check_details(c, details)) &&
+		 (!energy || check_energy(c, energy)) && (!screen || check_screen(c, screen)) &&
+		 (!tags || check_tags(c, tags));
 	cJSON_Delete(object);
 	return ok;
 }

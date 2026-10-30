@@ -8,7 +8,8 @@
  * functions (sRGB vs linear). One ChannelAtlas struct per channel.
  *
  * A channel is a texture array of equally sized pages. Sources larger
- * than half a page get a dedicated layer, resampled to the full page.
+ * than half a page get a dedicated layer, resampled to the full page, as
+ * does a source whose `dedicated` is set before packing.
  * The others are packed onto shared pages, each inside a private
  * footprint of `gutter` texels on every side, aligned to `gutter` and
  * filled by REPEAT so mip levels up to log2(gutter) never mix two
@@ -66,7 +67,7 @@ typedef struct ChannelRect {
 	int  page;
 	int  x, y;      /* top-left of the source in its page; 0 for a dedicated layer */
 	int  max_lod;   /* deepest mip level sampled; CHANNEL_ATLAS_UNCLAMPED_LOD when dedicated */
-	bool dedicated; /* resampled to fill the whole page */
+	bool dedicated; /* resampled to fill the whole page; set by the caller or by the pack */
 } ChannelRect;
 
 typedef struct ChannelAtlas {
@@ -104,9 +105,10 @@ int channel_atlas_add_rect(ChannelAtlas* ca, const void* key, int src_w, int src
  * texels (the gutters keep power-of-two sources from tiling P).
  * `page_size` must be a power of two ≥ 128 and ≥ 8 × `gutter`, and
  * `gutter` a power of two in [4, 32]. With fixed_width/fixed_height, every
- * page has that size instead and a source needing a dedicated layer must
- * find a P×P page. Returns false on invalid arguments, OOM or a source
- * that does not fit. */
+ * page has that size instead, a source over half a page must find a P×P
+ * page, and a source the caller marked dedicated is resampled to the fixed
+ * size. Returns false on invalid arguments, OOM or a source that does not
+ * fit. */
 bool channel_atlas_pack(ChannelAtlas* ca, int page_size, int gutter);
 
 /* Allocate ca.rgba and fill every footprint and dedicated layer. Returns

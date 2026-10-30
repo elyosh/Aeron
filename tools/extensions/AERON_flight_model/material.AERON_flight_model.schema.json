@@ -11,6 +11,13 @@
       "items": { "$ref": "#/$defs/flipbook" }
     },
     "damage": { "$ref": "#/$defs/damage" },
+    "details": {
+      "title": "Details",
+      "description": "Up to two images repeated over the material, applied before frames and hull damage.",
+      "type": "array",
+      "maxItems": 2,
+      "items": { "$ref": "#/$defs/detail" }
+    },
     "energy": {
       "title": "Energy effects",
       "description": "The energy effects the material shows: any of shields (shield hits and shields going down), tractor and jamming (beams); an empty array shows none. Without it, the model root's energy applies, and without that, none.",
@@ -184,6 +191,41 @@
           "minItems": 1,
           "maxItems": 65535,
           "items": { "$ref": "#/$defs/damageAlternative" }
+        }
+      }
+    },
+    "detail": {
+      "title": "Detail",
+      "description": "An image repeated over the material's TEXCOORD_0. A colour blend changes the colour of the base color texture, in linear light; normal adds the slope of a tangent-space normal map to the material's normal.",
+      "type": "object",
+      "required": ["library", "image", "blend"],
+      "properties": {
+        "library": { "$ref": "#/$defs/library", "description": "The effect library of the image." },
+        "image": { "$ref": "#/$defs/key", "description": "The image: of kind detailNormal for the normal blend, detailColor otherwise." },
+        "blend": {
+          "title": "Blend",
+          "description": "How the image changes the material, with the texture's colour c and the image's colour g: multiply c·g, overlay c·g divided by sRGB mid-grey (mid-grey keeps the colour), screen c + g − c·g, replace g; normal adds the X and Y slope of a tangent-space normal map to the normal.",
+          "enum": ["multiply", "overlay", "screen", "replace", "normal"]
+        },
+        "strength": {
+          "title": "Strength",
+          "description": "How much the image mixes in, times its alpha (except for replace).",
+          "type": "number",
+          "minimum": 0,
+          "default": 1
+        },
+        "uvScale": {
+          "title": "UV scale",
+          "description": "How many times the image repeats over TEXCOORD_0.",
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "default": 1
+        },
+        "fadeDistance": {
+          "title": "Fade distance",
+          "description": "The distance from the camera, in metres, at which the image has faded out. Without it, the image doesn't fade.",
+          "type": "number",
+          "exclusiveMinimum": 0
         }
       }
     },

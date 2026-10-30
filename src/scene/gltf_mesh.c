@@ -675,7 +675,7 @@ static bool json_string_index(const cJSON* object, const char* key, const char* 
 }
 
 typedef struct FlipbookCapacity {
-	uint32_t flipbooks, frames, damages;
+	uint32_t flipbooks, frames, damages, details;
 } FlipbookCapacity;
 
 static bool grow(void** items, uint32_t* capacity, uint32_t needed, size_t size) {
@@ -847,6 +847,81 @@ static bool read_damage(const cJSON* damage, AeronGltfModel* model, FlipbookCapa
 	out->damage_count     = (uint32_t)count;
 	out->damage_choice    = choice;
 	out->damage_placement = placement;
+	return true;
+}
+
+static void free_detail(AeronGltfDetail* d) {
+	free(d->library);
+	free(d->image);
+	memset(d, 0, sizeof *d);
+}
+
+/* One detail layer; false when malformed (or *oom). */
+static bool read_detail(const cJSON* json, AeronGltfDetail* out, bool* oom) {
+	static const char* const blends[] = { "multiply", "overlay", "screen", "replace",
+										  "normal" }; /* AERON_ANIM_DETAIL_* */
+	const cJSON*             library  = cJSON_GetObjectItemCaseSensitive(json, "library");
+	const cJSON*             image    = cJSON_GetObjectItemCaseSensitive(json, "image");
+	const cJSON*             strength = cJSON_GetObjectItemCaseSensitive(json, "strength");
+	const cJSON*             scale    = cJSON_GetObjectItemCaseSensitive(json, "uvScale");
+	const cJSON*             fade     = cJSON_GetObjectItemCaseSensitive(json, "fadeDistance");
+	memset(out, 0, sizeof *out);
+	out->strength = 1.0f;
+	out->uv_scale = 1.0f;
+	if (!cJSON_IsString(library) || !cJSON_IsString(image) ||
+		!json_string_index(json, "blend", blends, AERON_ANIM_DETAIL_NORMAL + 1, &out->blend))
+		return false;
+	if (strength) {
+		if (!cJSON_IsNumber(strength) || !isfinite(strength->valuedouble) || strength->valuedouble < 0.0)
+			return false;
+		out->strength = (float)strength->valuedouble;
+	}
+	if (scale) {
+		if (!cJSON_IsNumber(scale) || !isfinite(scale->valuedouble) || !(scale->valuedouble > 0.0))
+			return false;
+		out->uv_scale = (float)scale->valuedouble;
+	}
+	if (fade) {
+		if (!cJSON_IsNumber(fade) || !isfinite(fade->valuedouble) || !(fade->valuedouble > 0.0))
+			return false;
+		out->fade_distance = (float)fade->valuedouble;
+	}
+	out->library = copy_string(library->valuestring);
+	out->image   = copy_string(image->valuestring);
+	*oom         = !out->library || !out->image;
+	return !*oom;
+}
+
+/* A material's `details`: appended to the model's. Malformed details are
+ * reported and dropped. Returns false only on OOM. */
+static bool read_details(const cJSON* details, AeronGltfModel* model, FlipbookCapacity* cap,
+						 AeronGltfMaterial* out, const char* source_label, uint32_t material_index) {
+	if (!details)
+		return true;
+	const int      count = cJSON_IsArray(details) ? cJSON_GetArraySize(details) : -1;
+	bool           oom   = false;
+	bool           valid = count >= 0 && count <= (int)AERON_ANIM_DETAIL_MAX;
+	const uint32_t first = model->detail_count;
+	if (valid &&
+		!grow((void**)&model->details, &cap->details, first + (uint32_t)count, sizeof *model->details))
+		return false;
+	for (int i = 0; valid && i < count; i++) {
+		valid = read_detail(cJSON_GetArrayItem(details, i), &model->details[model->detail_count], &oom);
+		if (valid)
+			model->detail_count++;
+		else
+			free_detail(&model->details[model->detail_count]);
+	}
+	if (!valid) {
+		while (model->detail_count > first)
+			free_detail(&model->details[--model->detail_count]);
+		if (oom)
+			return false;
+		SDL_Log("[flight_gltf] '%s' material %u: malformed details ignored", source_label, material_index);
+		return true;
+	}
+	out->detail_first = first;
+	out->detail_count = (uint32_t)count;
 	return true;
 }
 
@@ -1070,13 +1145,14 @@ bool Aeron_GltfMeshBuildData(const cgltf_data* data, const char* source_label, A
 												   : (has_energy_default ? energy_default : 0u);
 			out->materials[i].tag_groups =
 				Aeron_FlightTagGroupsMask(&out->tag_groups, cJSON_GetObjectItemCaseSensitive(object, "tags"));
-			const bool read =
-				read_screen(cJSON_GetObjectItemCaseSensitive(object, "screen"), out, &screen_rect_capacity,
-							&out->materials[i], source_label, i) &&
-				read_animation(cJSON_GetObjectItemCaseSensitive(object, "flipbooks"), out, &flipbook_capacity,
-							   &out->materials[i], source_label, i) &&
-				read_damage(cJSON_GetObjectItemCaseSensitive(object, "damage"), out, &flipbook_capacity,
-							&out->materials[i], source_label, i);
+			const bool read = read_screen(cJSON_GetObjectItemCaseSensitive(object, "screen"), out,
+										  &screen_rect_capacity, &out->materials[i], source_label, i) &&
+							  read_animation(cJSON_GetObjectItemCaseSensitive(object, "flipbooks"), out,
+											 &flipbook_capacity, &out->materials[i], source_label, i) &&
+							  read_damage(cJSON_GetObjectItemCaseSensitive(object, "damage"), out,
+										  &flipbook_capacity, &out->materials[i], source_label, i) &&
+							  read_details(cJSON_GetObjectItemCaseSensitive(object, "details"), out,
+										   &flipbook_capacity, &out->materials[i], source_label, i);
 			cJSON_Delete(object);
 			if (!read)
 				goto cleanup;
@@ -1321,6 +1397,9 @@ void Aeron_GltfMeshFree(AeronGltfModel* m) {
 	for (uint32_t d = 0; m->damages && d < m->damage_count; d++)
 		free_damage(&m->damages[d]);
 	free(m->damages);
+	for (uint32_t d = 0; m->details && d < m->detail_count; d++)
+		free_detail(&m->details[d]);
+	free(m->details);
 	for (int c = 0; c < AERON_GLTF_CHANNEL_COUNT; c++)
 		free(m->channels[c].data);
 	for (uint32_t v = 0; m->variant_names && v < m->variant_count; v++)

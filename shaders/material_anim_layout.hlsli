@@ -33,6 +33,12 @@
  *             w offset mode (AERON_ANIM_OFFSET_*), then
  *             asuint of the offset range min x, min y, max x, max y.
  *   A material's alternatives are consecutive.
+ *   detail layer (AERON_ANIM_DETAIL_RECORDS records): a frame record whose
+ *             x also has the blend (AERON_ANIM_DETAIL_*) <<
+ *             AERON_ANIM_DETAIL_BLEND_SHIFT and whose w is asuint(strength),
+ *             then x asuint(UV scale), y asuint(1 / fade distance in
+ *             metres, 0: no fade), 0, 0.
+ *   A material's layers are consecutive.
  */
 
 #define AERON_ANIM_STATE_THREAT_LASER 0
@@ -77,5 +83,14 @@
 #define AERON_ANIM_OFFSET_FIXED 0u  /* centred */
 #define AERON_ANIM_OFFSET_INSIDE 1u /* anywhere within the texture */
 #define AERON_ANIM_OFFSET_RANGE 2u  /* min + (max - min)·r per axis */
+
+#define AERON_ANIM_DETAIL_RECORDS 2u
+#define AERON_ANIM_DETAIL_MAX 2u /* layers per material */
+#define AERON_ANIM_DETAIL_BLEND_SHIFT 16
+#define AERON_ANIM_DETAIL_MULTIPLY 0u
+#define AERON_ANIM_DETAIL_OVERLAY 1u
+#define AERON_ANIM_DETAIL_SCREEN 2u
+#define AERON_ANIM_DETAIL_REPLACE 3u
+#define AERON_ANIM_DETAIL_NORMAL 4u /* bends the normal */
 
 #endif /* AERON_SCENE_MATERIAL_ANIM_LAYOUT_H */

@@ -149,7 +149,59 @@ static bool read_lever_line(const char* param, const char* line, float f, XwauMa
 	return false;
 }
 
-/* ReadMaterialLine for the shading and lever keys. Other keys are ignored. */
+/* The greeble keys of ReadMaterialLine. Returns false for another key. */
+static bool read_greeble_line(const char* param, const char* value, float f, XwauMatParams* m) {
+	static const char* const kKeys[5]  = { "GreebleTex", "GreebleBlendMode", "GreebleMix", "GreebleScale",
+										   "GreebleDistance" };
+	static const char* const kBlends[] = {
+		"MULTIPLY", "OVERLAY", "SCREEN", "REPLACE", "NORMAL_MAP", "UV_DISP", "UV_DISP_AND_NORMAL_MAP"
+	};
+	for (int key = 0; key < 5; ++key) {
+		for (int n = 0; n < 2; ++n) {
+			char name[32];
+			snprintf(name, sizeof name, "%s%d", kKeys[key], n + 1);
+			if (ascii_casecmp(param, name) != 0)
+				continue;
+			if (!m->has_greebles) {
+				m->has_greebles = true;
+				for (int i = 0; i < 2; ++i)
+					m->greebles[i] =
+						(XwauGreeble) { "", XWAU_GREEBLE_MULTIPLY, 0.9f, 1.0f, 500.0f / (i + 1.0f) };
+			}
+			XwauGreeble* g = &m->greebles[n];
+			switch (key) {
+				case 0:
+					snprintf(g->tex, sizeof g->tex, "%s", value);
+					break;
+				case 1:
+					/* GreebleBlendModeToEnum: a name not in the list turns the
+					 * layer off. */
+					g->blend = XWAU_GREEBLE_OFF;
+					if (isdigit((unsigned char)value[0]))
+						g->blend = (int)f;
+					for (size_t b = 0;
+						 !isdigit((unsigned char)value[0]) && b < sizeof kBlends / sizeof *kBlends; ++b)
+						if (ascii_casecmp(value, kBlends[b]) == 0)
+							g->blend = (int)b + 1;
+					break;
+				case 2:
+					g->mix = f;
+					break;
+				case 3:
+					g->scale = f;
+					break;
+				default:
+					g->distance = f;
+					break;
+			}
+			return true;
+		}
+	}
+	return false;
+}
+
+/* ReadMaterialLine for the shading, lever and greeble keys. Other keys are
+ * ignored. */
 static void read_material_line(const char* line, XwauMatParams* m) {
 	char param[256], value[XWAU_MAT_LINE_MAX];
 	if (line[0] == ';' || line[0] == '#')
@@ -157,7 +209,7 @@ static void read_material_line(const char* line, XwauMatParams* m) {
 	if (scan_key_line(line, param, sizeof param, value, sizeof value) <= 0)
 		return;
 	const float f = (float)atof(value);
-	if (read_lever_line(param, line, f, m))
+	if (read_lever_line(param, line, f, m) || read_greeble_line(param, value, f, m))
 		return;
 	if (ascii_casecmp(param, "Metallic") == 0)
 		m->metallic = f;

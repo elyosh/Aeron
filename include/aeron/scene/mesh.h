@@ -45,13 +45,14 @@ typedef struct AeronPbrMaterialEntry {
 	uint32_t screen_first;         /* screen rectangles (AeronPbrScreenRect) */
 	uint32_t screen_count;
 	uint32_t screen_flags; /* AERON_GLTF_SCREEN_* */
-	uint32_t anim[4];      /* x: unused
+	uint32_t anim[4];      /* x: first detail layer record | layer count << 16;
+							*    0 without
 							* y: first flipbook record | flipbook count << 16
-								  * (material_anim_layout.hlsli); 0 without
-								  * z: first damage alternative record |
-								  *    alternative count << 16; 0 without
-								  * w: energy mask (bits 0-2) | damage choice << 8 |
-								  *    placement << 20 */
+							*    (material_anim_layout.hlsli); 0 without
+							* z: first damage alternative record |
+							*    alternative count << 16; 0 without
+							* w: energy mask (bits 0-2) | damage choice << 8 |
+							*    placement << 20 */
 } AeronPbrMaterialEntry;         /* 176 B */
 
 /* Shader record of one screen rectangle (AeronGltfScreenRect): float4 and
@@ -170,8 +171,11 @@ typedef struct AeronSceneMesh {
 	AeronFlightReflectionPlane reflection_plane;
 
 	/* Material animation records (material_anim_layout.hlsli), NULL when
-	 * no material animates, and the effect libraries they hold. */
+	 * no material animates, and the effect libraries they hold.
+	 * `has_details`: a material has detail layers, so the mesh draws with
+	 * the `_details` shaders. */
 	AeronBuffer*      anim_buffer;
+	bool              has_details;
 	AeronEffectAtlas* effect_atlas;
 	uint32_t*         effect_libraries;
 	uint32_t          effect_library_count;

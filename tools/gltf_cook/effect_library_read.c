@@ -10,14 +10,15 @@
 #include "cJSON.h"
 #include "yaml_json.h"
 
-static const char* const kKinds[EFFECT_LIBRARY_KIND_COUNT] = { "baseColor", "emissive", "damage", "mark",
-															   "energy" };
+static const char* const kKinds[EFFECT_LIBRARY_KIND_COUNT] = { "baseColor",   "emissive", "damage",
+															   "mark",        "energy",   "detailColor",
+															   "detailNormal" };
 
 /* Per kind, its required input and its optional one, named after the
  * material channel they change. */
 static const char* const kInputs[EFFECT_LIBRARY_KIND_COUNT][2] = {
-	{ "baseColor", NULL }, { "emissive", "baseColor" }, { "factor", NULL },
-	{ "baseColor", NULL }, { "emissive", NULL },
+	{ "baseColor", NULL }, { "emissive", "baseColor" }, { "factor", NULL }, { "baseColor", NULL },
+	{ "emissive", NULL },  { "baseColor", NULL },       { "normal", NULL },
 };
 
 EffectLibraryKind EffectLibrary_ImageKind(const cJSON* image) {
@@ -32,6 +33,10 @@ const char* EffectLibrary_KindName(EffectLibraryKind kind) { return kKinds[kind]
 
 const char* EffectLibrary_ImageInput(EffectLibraryKind kind, int optional) {
 	return kInputs[kind][optional != 0];
+}
+
+bool EffectLibrary_KindHasOwnPage(EffectLibraryKind kind) {
+	return kind == EFFECT_LIBRARY_DETAIL_COLOR || kind == EFFECT_LIBRARY_DETAIL_NORMAL;
 }
 
 /* Library names are file names in the mod folder's flight/effects folder: lower-case letters,
@@ -49,8 +54,10 @@ static bool valid_name(const char* s) {
 static bool check_image(const char* tool, const char* key, const cJSON* entry) {
 	const EffectLibraryKind kind = EffectLibrary_ImageKind(entry);
 	if (kind == EFFECT_LIBRARY_KIND_COUNT) {
-		fprintf(stderr, "%s: image %s: kind must be baseColor, emissive, damage, mark or energy\n", tool,
-				key);
+		fprintf(stderr,
+				"%s: image %s: kind must be baseColor, emissive, damage, mark, energy, detailColor or "
+				"detailNormal\n",
+				tool, key);
 		return false;
 	}
 	bool ok = true;
@@ -66,9 +73,9 @@ static bool check_image(const char* tool, const char* key, const cJSON* entry) {
 		}
 	}
 	const cJSON* max_size = cJSON_GetObjectItemCaseSensitive(entry, "maxSize");
-	if (max_size && (!cJSON_IsNumber(max_size) || max_size->valueint < 1 ||
-					 max_size->valueint > EFFECT_LIBRARY_IMAGE_MAX)) {
-		fprintf(stderr, "%s: image %s: maxSize must be 1 to %d\n", tool, key, EFFECT_LIBRARY_IMAGE_MAX);
+	const int max = EffectLibrary_KindHasOwnPage(kind) ? EFFECT_LIBRARY_DETAIL_MAX : EFFECT_LIBRARY_IMAGE_MAX;
+	if (max_size && (!cJSON_IsNumber(max_size) || max_size->valueint < 1 || max_size->valueint > max)) {
+		fprintf(stderr, "%s: image %s: maxSize must be 1 to %d\n", tool, key, max);
 		ok = false;
 	}
 	const cJSON* crop = cJSON_GetObjectItemCaseSensitive(entry, "crop");

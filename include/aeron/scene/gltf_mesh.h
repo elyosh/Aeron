@@ -183,6 +183,10 @@ typedef struct AeronGltfMaterial {
 	uint32_t damage_count;
 	uint32_t damage_choice;
 	uint32_t damage_placement;
+	/* Detail layers (`details`): [detail_first, detail_first +
+	 * detail_count) of the model's details. */
+	uint32_t detail_first;
+	uint32_t detail_count;
 	/* Energy effects the material receives (its `energy`, or the model
 	 * root's): bit per AERON_EFFECT_ENERGY_* (shields 0, tractor 1,
 	 * jamming 2). */
@@ -205,17 +209,25 @@ typedef struct AeronGltfMaterial {
  *                                   "scale": [min, max],
  *                                   "offset": "inside" |
  *                                             { "min": [x, y], "max": [x, y] } } ] }
+ *   "details": [ { "library", "image",
+ *                  "blend": "multiply" | "overlay" | "screen" | "replace" | "normal",
+ *                  "strength", "uvScale", "fadeDistance" } ]   (at most 2)
  *   "energy": [ "shields" | "tractor" | "jamming" ]
  *
- * The model root's `energy` applies to materials without their own. Frames
- * and damage stages name images of an effect library
+ * The model root's `energy` applies to materials without their own. Frames,
+ * damage stages and details name images of an effect library
  * (aeron/scene/effect_atlas.h). The `baseColor` layer is the renderer's
  * colour layer, `emissive` its illumination layer. `unlit` (0..1, default
  * 0), for a colour flipbook, is the part of its frames drawn unlit: while
  * one plays without an illumination frame, its colour c becomes base
  * c·(1 − u) and emission c·u, replacing the material's emission (0 keeps
  * the material's emission). On illumination frames, the optional
- * `strength` (default 1) multiplies the flipbook's `emissiveStrength`. */
+ * `strength` (default 1) multiplies the flipbook's `emissiveStrength`.
+ * A detail repeats its image `uvScale` times over TEXCOORD_0 (default 1),
+ * mixed in by `strength` (default 1) times the image's alpha, and fades out
+ * with the distance from the camera, gone at `fadeDistance` metres (no fade
+ * without it). A colour blend changes the colour of the base colour
+ * texture, in linear light; `normal` adds the image's slope to the normal. */
 typedef struct AeronGltfFlipbookFrame {
 	char* key;
 	float seconds;
@@ -232,6 +244,16 @@ typedef struct AeronGltfDamage {
 	uint32_t offset_mode; /* AERON_ANIM_OFFSET_* */
 	float    offset[4];   /* range: min x, min y, max x, max y */
 } AeronGltfDamage;
+
+/* One detail layer. */
+typedef struct AeronGltfDetail {
+	char*    library;
+	char*    image;
+	uint32_t blend; /* AERON_ANIM_DETAIL_* */
+	float    strength;
+	float    uv_scale;
+	float    fade_distance; /* metres; 0: no fade */
+} AeronGltfDetail;
 
 typedef struct AeronGltfFlipbook {
 	uint32_t state; /* AERON_ANIM_STATE_* */
@@ -356,6 +378,9 @@ typedef struct AeronGltfModel {
 	/* Hull-damage alternatives of every material. */
 	uint32_t         damage_count;
 	AeronGltfDamage* damages;
+	/* Detail layers of every material. */
+	uint32_t         detail_count;
+	AeronGltfDetail* details;
 
 	/* The distinct tags of the materials and lights. Materials and lights
 	 * record theirs as masks of these groups. */

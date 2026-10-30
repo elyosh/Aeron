@@ -37,6 +37,10 @@ const char* XwauFx_KindName(XwauFxKind kind) {
 			return "energy";
 		case XWAU_FX_MARK:
 			return "mark";
+		case XWAU_FX_DETAIL:
+			return "detail";
+		case XWAU_FX_DETAIL_NORMAL:
+			return "detail_normal";
 	}
 	return NULL;
 }
@@ -81,7 +85,7 @@ bool XwauFx_ParseKey(const char* key, int* group, int* image, XwauFxKind* kind, 
 	p                  = end + 1;
 	const size_t len   = strcspn(p, ":");
 	bool         found = false;
-	for (int k = XWAU_FX_ILLUMINATION; k <= XWAU_FX_MARK && !found; ++k) {
+	for (int k = XWAU_FX_ILLUMINATION; k <= XWAU_FX_DETAIL_NORMAL && !found; ++k) {
 		const char* name = XwauFx_KindName((XwauFxKind)k);
 		if (strlen(name) == len && strncmp(p, name, len) == 0) {
 			*kind = (XwauFxKind)k;
@@ -170,6 +174,10 @@ void XwauFx_Bake(XwauFxKind kind, const uint8_t* src, size_t n, const float tint
 				for (int k = 0; k < 3; ++k)
 					l[k] = unorm8(XwauFx_ToSrgb(XwauFx_ToLinear(c[k]) * a));
 				l[3] = unorm8(a);
+				break;
+			case XWAU_FX_DETAIL:
+			case XWAU_FX_DETAIL_NORMAL:
+				memcpy(l, p, 4);
 				break;
 		}
 	}

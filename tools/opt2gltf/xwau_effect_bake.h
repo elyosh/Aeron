@@ -14,6 +14,9 @@
  *                           metallic and specular)
  *   energy        emissive: RGB rgb·a, A 255
  *   mark          layer:    RGB premultiplied rgb·a, A a
+ *   detail        layer:    the image as it is (a greeble's colour)
+ *   detail_normal layer:    the image as it is (a greeble's tangent-space
+ *                           normal, R, G, B as 0..1, +Y toward the first row)
  *
  * L' and s are computed as in PixelShaderAnim.hlsl, on the tinted sRGB values.
  * L' = saturate(1.25·L) is the gain on the HSV value.
@@ -31,6 +34,8 @@ typedef enum XwauFxKind {
 	XWAU_FX_MULTIPLY,
 	XWAU_FX_ENERGY,
 	XWAU_FX_MARK,
+	XWAU_FX_DETAIL,
+	XWAU_FX_DETAIL_NORMAL,
 } XwauFxKind;
 
 /* Returns the kind name used in library keys ("illumination", ...), or NULL

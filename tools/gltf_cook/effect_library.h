@@ -8,9 +8,11 @@
  *   <out>/<name>.layer.ktx2     when an image has a layer
  *   <out>/<name>.emissive.ktx2  when an image has an emissive part
  *
- * Pages are 2176² BC7 sRGB arrays with mips, alpha stored independently
- * (KTX2_ALPHA_INDEPENDENT). Images are packed in key order, so the output
- * does not depend on the order they are given in.
+ * Pages are 2176² BC7 sRGB arrays with every mip level, alpha stored
+ * independently (KTX2_ALPHA_INDEPENDENT). Images are packed in key order, so
+ * the output does not depend on the order they are given in. A detail image
+ * (detailColor, detailNormal) fills a page of its own, so that it can repeat
+ * and use every mip level.
  */
 #ifndef AERON_EFFECT_LIBRARY_H
 #define AERON_EFFECT_LIBRARY_H
@@ -30,10 +32,11 @@ struct cJSON;
  * alters the files built from the same inputs, including in the encoder
  * (imgbake): the inputs hash a library's index records includes it, so the
  * tools rebuild every library once, and only then. */
-#define EFFECT_LIBRARY_BAKE_VERSION 2
+#define EFFECT_LIBRARY_BAKE_VERSION 4
 
 #define EFFECT_LIBRARY_PAGE_SIZE 2176
 #define EFFECT_LIBRARY_IMAGE_MAX 1024 /* longest side; larger images are box-downscaled */
+#define EFFECT_LIBRARY_DETAIL_MAX 2048 /* the same for detail images */
 
 typedef enum EffectLibraryKind {
 	EFFECT_LIBRARY_BASE_COLOR,
@@ -41,6 +44,8 @@ typedef enum EffectLibraryKind {
 	EFFECT_LIBRARY_DAMAGE,
 	EFFECT_LIBRARY_MARK,
 	EFFECT_LIBRARY_ENERGY,
+	EFFECT_LIBRARY_DETAIL_COLOR,
+	EFFECT_LIBRARY_DETAIL_NORMAL,
 	EFFECT_LIBRARY_KIND_COUNT, /* not a kind */
 } EffectLibraryKind;
 
@@ -53,7 +58,8 @@ typedef struct EffectLibraryImage {
 	int            width, height;
 	const uint8_t* layer;
 	const uint8_t* emissive;
-	int            max_size; /* longest side cap; 0: EFFECT_LIBRARY_IMAGE_MAX */
+	int               max_size; /* longest side cap; 0: EFFECT_LIBRARY_IMAGE_MAX, or EFFECT_LIBRARY_DETAIL_MAX
+								 * for a detail image */
 	const float*   crop;     /* [x0, y0, x1, y1] written to the index, or NULL */
 } EffectLibraryImage;
 
@@ -78,12 +84,16 @@ struct cJSON* EffectLibrary_ReadLibrary(const char* tool, const char* file);
 EffectLibraryKind EffectLibrary_ImageKind(const struct cJSON* image);
 
 /* A kind's name in library files and indexes (baseColor, emissive, damage,
- * mark, energy). */
+ * mark, energy, detailColor, detailNormal). */
 const char* EffectLibrary_KindName(EffectLibraryKind kind);
 
 /* The field naming a kind's required input (`optional` 0), or its optional
  * one (1, NULL when it has none). */
 const char* EffectLibrary_ImageInput(EffectLibraryKind kind, int optional);
+
+/* Whether images of `kind` fill a page of their own (detailColor,
+ * detailNormal). */
+bool EffectLibrary_KindHasOwnPage(EffectLibraryKind kind);
 
 typedef enum EffectLibraryBuild {
 	EFFECT_LIBRARY_FAILED,

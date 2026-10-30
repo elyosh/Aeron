@@ -12,8 +12,10 @@
 
 /* Pages of 2048 + 2048/16 texels: with 16-texel gutters, two 1024² or four
  * 512² images fit a row (a 2048² page holds one 1024² image). Every image,
- * up to EFFECT_LIBRARY_IMAGE_MAX, is a shared rect: none needs a dedicated
- * layer. */
+ * up to EFFECT_LIBRARY_IMAGE_MAX, is a shared rect, except a detail image,
+ * which fills a page of its own (resampled to the page size). Pages keep
+ * every mip level: a shared rect samples only the levels its gutter keeps
+ * apart, and a detail image all of them. */
 #define PACK_SIZE 4096
 #define GUTTER 16
 
@@ -71,15 +73,21 @@ bool EffectLibrary_Write(const char* tool, const char* out_dir, const char* name
 	for (size_t k = 0; ok && k < count; ++k) {
 		const size_t              i   = order[k];
 		const EffectLibraryImage* im  = &images[i];
-		const int                 max = im->max_size > 0 ? im->max_size : EFFECT_LIBRARY_IMAGE_MAX;
+		const bool                own_page = EffectLibrary_KindHasOwnPage(im->kind);
+		const int                 max      = im->max_size > 0 ? im->max_size
+											 : own_page       ? EFFECT_LIBRARY_DETAIL_MAX
+															  : EFFECT_LIBRARY_IMAGE_MAX;
 		if (k > 0 && strcmp(images[order[k - 1]].key, im->key) == 0) {
 			fprintf(stderr, "%s: %s: image \"%s\" given twice\n", tool, name, im->key);
 			ok = false;
 			break;
 		}
 		layer_rect[i] = emissive_rect[i] = -1;
-		if (im->layer)
+		if (im->layer) {
 			layer_rect[i] = channel_atlas_add_rect(&layer, im, im->width, im->height, im->layer, max);
+			if (layer_rect[i] >= 0)
+				layer.rects[layer_rect[i]].dedicated = own_page;
+		}
 		if (im->emissive)
 			emissive_rect[i] =
 				channel_atlas_add_rect(&emissive, im, im->width, im->height, im->emissive, max);
@@ -93,6 +101,8 @@ bool EffectLibrary_Write(const char* tool, const char* out_dir, const char* name
 			continue;
 		atlases[a]->fixed_width = atlases[a]->fixed_height = EFFECT_LIBRARY_PAGE_SIZE;
 		ok = channel_atlas_pack(atlases[a], PACK_SIZE, GUTTER) && channel_atlas_materialize(atlases[a]);
+		/* Every library has the same levels, which the runtime requires. */
+		atlases[a]->mip_count = 0;
 		if (!ok) {
 			fprintf(stderr, "%s: %s: cannot pack the %s pages\n", tool, name, suffix[a]);
 			break;

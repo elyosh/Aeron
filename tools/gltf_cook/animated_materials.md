@@ -1,7 +1,8 @@
 # Animated materials
 
 A model's materials can play animated frames: flipbooks driven by game
-states, hull damage and energy effects. Two places describe them:
+states, hull damage and energy effects. They can also repeat detail images
+over their surface. Two places describe them:
 
 - an **effect library** (`<library>.yaml`): a set of frames, shared by any
   models. `aeron_gltf_cook --library` builds it.
@@ -68,15 +69,22 @@ layout.
 | `damage` | `factor` (RGB; alpha: gloss) | Hull damage: multiplies the base colour; alpha below 1 dulls the surface |
 | `mark` | `baseColor` (RGBA) | Blast marks, painted over the hull |
 | `energy` | `emissive` (RGBA; alpha: intensity) | Energy effects (shields, tractor, jamming), added as emission |
+| `detailColor` | `baseColor` (RGBA; alpha: strength) | A detail image that changes the base colour |
+| `detailNormal` | `normal` (RGB tangent-space normal) | A detail image whose X and Y slope bends the normal |
 
 `mark` and `energy` images are the game's own effects, which
 `flight/effects/effects.yaml` in the mod folder names; materials do not
 reference them.
 
 All inputs of one image have the same size. Images are capped at 1024
-texels on their longer side, or `maxSize`. `crop: [x0, y0, x1, y1]` (blast
-marks) records the part of the image that the classic texture's `[0, 1]`
-maps to.
+texels on their longer side, detail images at 2048, or `maxSize`.
+`crop: [x0, y0, x1, y1]` (blast marks) records the part of the image that
+the classic texture's `[0, 1]` maps to.
+
+A detail image repeats over a whole material and is seen both up close and
+far away, so it fills a page of its own, resampled to the page size, and
+uses every mip level. Paint it so that it tiles. The other images share
+pages, and only their first few mip levels are used.
 
 `--library` writes `<library>.yaml` (the index: each image's kind and
 place), and `<library>.layer.ktx2` and `<library>.emissive.ktx2` (the
@@ -150,6 +158,24 @@ player's craft and cockpit.
   axis, `r` random in [0, 1); without it, centred. Materials with the same
   `placement` share the random placement.
 
+**`details`**: up to two detail images repeated over the material.
+
+```json
+"details": [
+  { "library": "rock", "image": "rock_normal", "blend": "normal", "strength": 0.4, "uvScale": 2, "fadeDistance": 1000 },
+  { "library": "rock", "image": "rock_grain", "blend": "overlay", "strength": 0.6, "uvScale": 3, "fadeDistance": 1000 } ]
+```
+
+| Field | Meaning |
+|-|-|
+| `library`, `image` | The image: of kind `detailNormal` for the `normal` blend, `detailColor` otherwise |
+| `blend` | `multiply`, `overlay`, `screen` or `replace` change the colour of the base colour texture (below); `normal` adds the slope of the normal map, its X and Y, to the normal |
+| `strength` | Optional, default 1: how much it mixes in, times the image's alpha (except for `replace`) |
+| `uvScale` | Optional, default 1: how many times it repeats over `TEXCOORD_0` |
+| `fadeDistance` | Optional: the distance from the camera, in metres, at which it has faded out; without it, it doesn't fade |
+
+A `normal` detail needs the mesh's tangents.
+
 **`energy`**: the energy effects the material shows, any of `shields`,
 `tractor` and `jamming`; `[]` for none.
 
@@ -177,11 +203,17 @@ While frames play, the material is drawn as any PBR material, with its
 base colour and emissive changed:
 
 1. Base colour: the material's base colour texture, then:
+   - its colour details, in linear light, with the detail's colour g:
+     `multiply` c·g, `overlay` c·g divided by sRGB mid-grey (0.214 in linear
+     light, so mid-grey keeps the colour), `screen` c + g − c·g, `replace` g;
+     each mixed in by `strength × alpha` (`strength` alone for `replace`),
+     less and less up to `fadeDistance`;
    - a `baseColor` frame painted over it: `lerp(base, frame.rgb, frame.a)`;
    - hull damage: times the damage factor;
    - an `emissive` frame's `baseColor` painted over the result.
 2. The surface is lit with that base colour and the material's own normal,
-   metallic and roughness (hull damage dulls the last two).
+   bent by its `normal` details, metallic and roughness (hull damage dulls
+   the last two).
 3. Emissive: while an `emissive` frame plays, its `emissive` image
    **replaces** the material's emissive over the whole material, black
    meaning no emission. Otherwise, while a `baseColor` frame plays from a

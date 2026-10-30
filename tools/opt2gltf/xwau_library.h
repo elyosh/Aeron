@@ -7,15 +7,15 @@
  * their effect libraries (effects/<library>/, animated_materials.md).
  *
  * The images are the ones named by the materials of the models, in the
- * flipbooks and damage of their AERON_flight_model objects. A library holds
- * images of Effects/<library>.dat in the XWAU installation. A library without
- * this DAT does not come from XWAU and is left alone. An image key identifies
- * a DAT image and how it is baked (xwau_effect_bake.h), so the same key always
- * gives the same image. <library>/<library>.yaml lists the images, with the
- * size cap and crop of each one. The inputs of each image are PNGs under
- * <library>/frames/, with XWAU's rules already applied: an illumination frame
- * becomes an emissive image and a base colour image with coverage, and the
- * tint and alpha mode are baked in.
+ * flipbooks, damage and details of their AERON_flight_model objects. A
+ * library holds images of Effects/<library>.dat in the XWAU installation. A
+ * library without this DAT does not come from XWAU and is left alone. An
+ * image key identifies a DAT image and how it is baked (xwau_effect_bake.h),
+ * so the same key always gives the same image. <library>/<library>.yaml
+ * lists the images, with the size cap and crop of each one. The inputs of
+ * each image are PNGs under <library>/frames/, with XWAU's rules already
+ * applied: an illumination frame becomes an emissive image and a base colour
+ * image with coverage, and the tint and alpha mode are baked in.
  *
  * Messages go to stderr.
  */

@@ -323,8 +323,8 @@ static bool skin_variants_json(Build* b, cJSON* root, const OptGltfVariants* var
 /* ---- Geometry ----------------------------------------------------------- */
 
 /* Pass 1 builds the vertices of each OPT mesh and the indices of each face
- * group. Meshes that draw a normal-mapped material in any switch state also
- * get tangents. */
+ * group. Meshes that draw a normal-mapped material, or one that asks for
+ * tangents, in any switch state also get tangents. */
 static bool build_geometry(Build* b) {
 	const opt_file_t* opt = b->opt;
 	b->built              = (BuiltMesh*)calloc(opt->mesh_count ? opt->mesh_count : 1, sizeof *b->built);
@@ -349,7 +349,7 @@ static bool build_geometry(Build* b) {
 			for (int st = 0; st < states && !needs_tangents; ++st) {
 				const int32_t ti = st == 0 ? grp->texture_index : grp->state_textures[st];
 				needs_tangents   = ti >= 0 && ti < opt->texture_count && b->materials[ti].base.view.rgba &&
-								   b->materials[ti].normal.view.rgba;
+								   (b->materials[ti].normal.view.rgba || b->materials[ti].tangents);
 			}
 		}
 		if (needs_tangents && !opt_gltf_generate_tangents(bm))
