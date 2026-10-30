@@ -413,20 +413,24 @@ nothing; the square is clipped at the texture's edges.
 **Details** are up to two images repeated over the material, which add
 small-scale detail to large surfaces such as rock. Each one has:
 
-- `library`, `image`: its effect library and image key, of kind
-  `detailNormal` for the `normal` blend and `detailColor` otherwise;
-- `blend`: how it changes the material. `multiply`, `overlay`, `screen` and
-  `replace` change the colour c of the base colour texture, in linear light,
-  with the image's colour g: `multiply` gives c·g, `overlay` c·g divided by
-  sRGB mid-grey (so mid-grey keeps the colour, lighter brightens and darker
-  darkens), `screen` c + g − c·g, and `replace` g. `normal` adds the slope of
-  a tangent-space normal map, its X and Y, to the material's normal;
-- `strength`: optional, default 1: how much it mixes in, times the image's
-  alpha (except for `replace`);
-- `uvScale`: optional, default 1: how many times the image repeats over
-  `TEXCOORD_0`;
-- `fadeDistance`: optional: the distance from the camera, in metres, at
-  which it has faded out. Without it, it doesn't fade.
+- `library` and `image`: its effect library and image key. The image is of
+  kind `detailNormal` for the `normal` blend, and `detailColor` for the
+  others.
+- `blend`: how it changes the material.
+  - `multiply`, `overlay`, `screen` and `replace` change the colour c of the
+    base colour texture, in linear light, with the image's colour g.
+    `multiply` gives c·g, `overlay` gives c·g divided by sRGB mid-grey,
+    `screen` gives c + g − c·g, and `replace` gives g. With `overlay`,
+    mid-grey keeps the colour, lighter areas brighten it and darker areas
+    darken it.
+  - `normal` adds the slope of a tangent-space normal map, its X and Y, to
+    the material's normal.
+- `strength`: optional, 1 by default. How much the image is mixed in, times
+  its alpha, except for `replace`.
+- `uvScale`: optional, 1 by default. How many times the image repeats over
+  `TEXCOORD_0`.
+- `fadeDistance`: optional. The distance from the camera, in metres, at
+  which the image has faded out. Without it, the image doesn't fade.
 
 Details apply before frames and hull damage, which paint over them. A
 `normal` detail needs the mesh's tangents.

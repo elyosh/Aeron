@@ -14,8 +14,8 @@
  * 512² images fit a row (a 2048² page holds one 1024² image). Every image,
  * up to EFFECT_LIBRARY_IMAGE_MAX, is a shared rect, except a detail image,
  * which fills a page of its own (resampled to the page size). Pages keep
- * every mip level: a shared rect samples only the levels its gutter keeps
- * apart, and a detail image all of them. */
+ * every mip level. A shared rect samples only the levels that its gutter
+ * keeps apart from its neighbours, and a detail image samples all of them. */
 #define PACK_SIZE 4096
 #define GUTTER 16
 
@@ -101,7 +101,7 @@ bool EffectLibrary_Write(const char* tool, const char* out_dir, const char* name
 			continue;
 		atlases[a]->fixed_width = atlases[a]->fixed_height = EFFECT_LIBRARY_PAGE_SIZE;
 		ok = channel_atlas_pack(atlases[a], PACK_SIZE, GUTTER) && channel_atlas_materialize(atlases[a]);
-		/* Every library has the same levels, which the runtime requires. */
+		/* The runtime requires every library to have the same levels. */
 		atlases[a]->mip_count = 0;
 		if (!ok) {
 			fprintf(stderr, "%s: %s: cannot pack the %s pages\n", tool, name, suffix[a]);

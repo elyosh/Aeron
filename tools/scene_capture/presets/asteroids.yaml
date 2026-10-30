@@ -1,8 +1,8 @@
 # An asteroid field lit by the sun, to compare the look and the cost of
-# asteroid materials. A large asteroid fills the left of the view 160 m away,
-# others sit between 300 m and 1400 m, on both sides of the 1000 m where
-# asteroid detail fades out, and a 2 km asteroid stays in the background. The
-# camera doesn't move.
+# asteroid materials. A large asteroid fills the left of the view, about
+# 150 m away. Others sit between 300 m and 1400 m, so some are closer than
+# 1000 m, where asteroid details fade out, and some are farther. A 2 km
+# asteroid stays in the background, 5 km away. The camera doesn't move.
 width: 2560
 height: 1440
 frames: 1

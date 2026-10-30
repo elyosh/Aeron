@@ -196,20 +196,20 @@
     },
     "detail": {
       "title": "Detail",
-      "description": "An image repeated over the material's TEXCOORD_0. A colour blend changes the colour of the base color texture, in linear light; normal adds the slope of a tangent-space normal map to the material's normal.",
+      "description": "An image repeated over the material's TEXCOORD_0. A colour blend changes the colour of the base color texture, in linear light. The normal blend adds the slope of a tangent-space normal map to the material's normal.",
       "type": "object",
       "required": ["library", "image", "blend"],
       "properties": {
         "library": { "$ref": "#/$defs/library", "description": "The effect library of the image." },
-        "image": { "$ref": "#/$defs/key", "description": "The image: of kind detailNormal for the normal blend, detailColor otherwise." },
+        "image": { "$ref": "#/$defs/key", "description": "The image, of kind detailNormal for the normal blend and detailColor for the others." },
         "blend": {
           "title": "Blend",
-          "description": "How the image changes the material, with the texture's colour c and the image's colour g: multiply c·g, overlay c·g divided by sRGB mid-grey (mid-grey keeps the colour), screen c + g − c·g, replace g; normal adds the X and Y slope of a tangent-space normal map to the normal.",
+          "description": "How the image changes the material. With the texture's colour c and the image's colour g, multiply gives c·g, overlay gives c·g divided by sRGB mid-grey (so mid-grey keeps the colour), screen gives c + g − c·g, and replace gives g. normal adds the X and Y slope of a tangent-space normal map to the normal.",
           "enum": ["multiply", "overlay", "screen", "replace", "normal"]
         },
         "strength": {
           "title": "Strength",
-          "description": "How much the image mixes in, times its alpha (except for replace).",
+          "description": "How much the image is mixed in, times its alpha, except for replace.",
           "type": "number",
           "minimum": 0,
           "default": 1

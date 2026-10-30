@@ -56,10 +56,10 @@ ENERGIES = ("shields", "tractor", "jamming")
 # The flipbook layers. A layer is also the image kind of its frames.
 LAYERS = (("baseColor", "Base Color", "Frames painted over the base color"),
           ("emissive", "Emissive", "Frames that replace the emissive"))
-# How a detail changes the material. `normal` takes images of kind
-# detailNormal, the others detailColor.
+# How a detail changes the material. The `normal` blend uses images of kind
+# detailNormal, and the others use detailColor.
 BLENDS = (("multiply", "Multiply", "Multiply the base color texture's color"),
-          ("overlay", "Overlay", "Brighten or darken the base color texture's color: mid-grey keeps it"),
+          ("overlay", "Overlay", "Brighten or darken the base color texture's color. Mid-grey leaves it unchanged"),
           ("screen", "Screen", "Screen the base color texture's color"),
           ("replace", "Replace", "Replace the base color texture's color, ignoring the image's alpha"),
           ("normal", "Normal", "Add the slope of a tangent-space normal map to the normal"))
@@ -184,7 +184,7 @@ class AeronDetail(PropertyGroup):
                           description="Detail image repeated over the material")
     blend: EnumProperty(name="Blend", items=BLENDS, default="multiply")
     strength: FloatProperty(name="Strength", default=1.0, min=0.0, soft_max=2.0,
-                            description="How much the image mixes in, times its alpha (except for Replace)")
+                            description="How much the image is mixed in, times its alpha, except for Replace")
     uv_scale: FloatProperty(name="UV Scale", default=1.0, min=0.001, soft_max=100.0,
                             description="How many times the image repeats over the UV map")
     has_fade: BoolProperty(name="Fade", description="Fade the image out with the distance from the camera")

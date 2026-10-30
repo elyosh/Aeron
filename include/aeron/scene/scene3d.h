@@ -331,6 +331,16 @@ int AeronScene_Begin(AeronScene3D* scene, const AeronSceneCamera* camera);
 /* Precreate mesh/billboard pipelines and enabled post resources after Begin,
  * outside render passes. Intended for loading screens; draws no geometry. */
 int AeronScene_PrepareResources(AeronScene3D* scene, AeronCullMode mesh_cull);
+/* Creates the colour pipelines that `mesh` draws with in `scene`, for
+ * instances with cull mode `cull`, so that the first frame that shows the
+ * mesh doesn't wait for them. It creates them for each of the mesh's ranges,
+ * in both colour passes, with and without image-based lighting. They use the
+ * mesh's shaders, with material animation or detail layers when the mesh has
+ * them and the scene has an effect atlas. Pipelines belong to the scene and
+ * its meshes share them, so a new scene needs its meshes prepared again.
+ * Call it outside render passes. Returns zero when a pipeline can't be
+ * created. */
+int AeronScene_PrepareMesh(AeronScene3D* scene, const AeronSceneMesh* mesh, AeronCullMode cull);
 
 /* Per-frame submissions (reset by AeronScene_Begin). Instances and
  * lights are copied; referenced meshes/tables are borrowed until

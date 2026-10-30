@@ -47,9 +47,9 @@
 /* Variants: AERON_PBR_ANIM 1 adds material animation (material_anim.hlsli):
  * the effect atlas at t12/t13 and the animation records in storage, which
  * moves every storage register up by two. AERON_PBR_DETAILS 1 (with
- * AERON_PBR_ANIM) adds the detail layers, for meshes with details only: the
- * detail code makes the compiler spill more registers, which costs every
- * pixel even where no detail is drawn. AERON_PBR_SCREENS 0 drops the screen code, which the renderer
+ * AERON_PBR_ANIM) adds the detail layers. Only meshes with details use it,
+ * because the detail code makes the compiler spill more registers, which
+ * costs every pixel even where no detail is drawn. AERON_PBR_SCREENS 0 drops the screen code, which the renderer
  * draws with its own pipeline (a mesh's screen primitives). AERON_PBR_ALPHA_BLEND
  * 1 is the variant for blended materials. AERON_PBR_ENVIRONMENT 0 drops the
  * image-based lighting, for scenes without an environment. AERON_PBR_PROBES 1
@@ -280,10 +280,10 @@ uint anim_layer_frame(uint4 anim, uint layer, out uint flipbook)
 /* ===== Detail layers ===================================================
  * Up to AERON_ANIM_DETAIL_MAX images per material (`details`, the material's
  * anim.x), each repeated by its UV scale and faded out with the distance
- * from the camera to `world_pos`. The callers call them only for a material
- * with details, behind a branch, which keeps most of their cost away from
- * other materials; `uv_dx` and `uv_dy` are the gradients of the unscaled
- * UV, taken before that branch, so that they are defined on every pixel. */
+ * from the camera to `world_pos`. Callers only call these functions for a
+ * material with details, behind a branch, so other materials skip most of
+ * their cost. `uv_dx` and `uv_dy` are the gradients of the unscaled UV,
+ * taken before that branch so that they are defined on every pixel. */
 
 /* The distance from the camera to `world_pos`, in metres. */
 float anim_detail_distance(float3 world_pos)
@@ -298,8 +298,8 @@ float anim_detail_fade(uint4 params, float distance)
     return saturate(1.0f - distance * asfloat(params.y));
 }
 
-/* The linear value of sRGB mid-grey (0.5), which an overlay image shows to
- * leave the colour unchanged. */
+/* The linear value of sRGB mid-grey (0.5). Where an overlay image has this
+ * value, the colour stays unchanged. */
 #define AERON_DETAIL_OVERLAY_MID 0.21404114f
 
 /* A layer's image at `uv` repeated by its UV scale, with the gradients of
@@ -312,11 +312,12 @@ float4 anim_detail_sample(uint4 layer, uint4 params, float2 uv, float2 uv_dx, fl
                                      uv_dx * scale, uv_dy * scale);
 }
 
-/* The linear colour `c` with the material's colour layers mixed in, in
- * linear light, by strength × the image's alpha (strength alone for
- * replace) × the fade. With the image's colour g: multiply gives c·g,
- * overlay c·g / AERON_DETAIL_OVERLAY_MID (mid-grey keeps the colour, lighter
- * brightens, darker darkens), screen c + g − c·g, and replace g. */
+/* Mixes the material's colour layers into the linear colour `c`, in linear
+ * light. Each layer is mixed in by strength × the image's alpha × the fade,
+ * or strength × the fade for replace. With the image's colour g, multiply
+ * gives c·g, overlay gives c·g / AERON_DETAIL_OVERLAY_MID (mid-grey keeps
+ * the colour, lighter areas brighten it and darker areas darken it), screen
+ * gives c + g − c·g, and replace gives g. */
 float3 anim_detail_colour(uint details, float2 uv, float2 uv_dx, float2 uv_dy, float3 world_pos, float3 c)
 {
     uint  count    = details >> 16;
@@ -343,13 +344,13 @@ float3 anim_detail_colour(uint details, float2 uv, float2 uv_dx, float2 uv_dy, f
     return c;
 }
 
-/* The normal `N` with the slopes of the material's normal layers added: the
- * image's X and Y, in the surface's tangent frame (the vertex tangent and
- * `N_front`, the geometric normal of the authored front face), times
- * strength × the image's alpha × the fade, turned to the face drawn by
- * `side_sign`. The page gives the image's 0..1 values back as they are
- * (the cooker stores them sRGB-encoded). A mesh without tangents keeps
- * `N`. */
+/* Adds the slopes of the material's normal layers to the normal `N`. A
+ * layer's slope is the image's X and Y in the surface's tangent frame (the
+ * vertex tangent and `N_front`, the geometric normal of the authored front
+ * face), times strength × the image's alpha × the fade. `side_sign` turns it
+ * to the face being drawn. The cooker stores normal images sRGB-encoded, so
+ * the page's sRGB decode gives back their 0..1 values. A mesh without
+ * tangents keeps `N`. */
 float3 anim_detail_normal(uint details, float2 uv, float2 uv_dx, float2 uv_dy, float3 world_pos, float3 N,
                           float3 world_tangent, float tangent_sign, float3 N_front, float side_sign)
 {
@@ -849,8 +850,8 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
         N = normalize(T * nt.x + B * nt.y + N_front * nt.z) * side_sign;
     }
 #if AERON_PBR_DETAILS
-    /* The material's details are read again rather than kept from the base
-     * colour, which would hold registers across the shading. */
+    /* The material's details are read again here instead of being kept from
+     * the base colour step, which would hold registers during the shading. */
     uint   details      = g_materials[mat].anim.x;
     float2 normal_uv_dx = ddx(i.uv);
     float2 normal_uv_dy = ddy(i.uv);

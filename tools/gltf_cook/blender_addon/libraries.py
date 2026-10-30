@@ -31,9 +31,9 @@ KINDS = (("baseColor", "Base Color", "Painted over the base color, using its alp
          ("damage", "Damage", "Hull damage. Multiplies the base color, and its alpha dulls the surface"),
          ("mark", "Mark", "Blast mark, for the game's own effects"),
          ("energy", "Energy", "Energy effect, for the game's own effects"),
-         ("detailColor", "Detail Color", "Detail image repeated over a material, changing its base color. Tiles"),
+         ("detailColor", "Detail Color", "Tiling image repeated over a material, which changes its base color"),
          ("detailNormal", "Detail Normal",
-          "Detail image repeated over a material, bending its normal as a tangent-space normal map. Tiles"))
+          "Tiling image repeated over a material, which bends its normal as a tangent-space normal map"))
 
 _projects = {}
 _previews = None

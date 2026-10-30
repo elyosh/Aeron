@@ -809,7 +809,7 @@ struct AeronScene3D {
 	AeronGraphicsPipeline* pbr_anim_pipes[2][2][AERON_PBR_PIPE_KIND_COUNT][3];
 	/* Probe variants by [animation: none, animation, animation with detail
 	 * layers][plain, mask, blend, then the floor's mirrored view's plain and
-	 * mask], loaded on first use (those with detail layers on their own),
+	 * mask], loaded on first use (the ones with detail layers separately),
 	 * and their pipelines by [animation][kind][cull]. */
 	int                    pbr_probe_tried[2];
 	AeronShader*           pbr_probe_fs[3][5];
@@ -885,10 +885,8 @@ void AeronScenePlanarReflection_LightingFields(const struct AeronScene3D* s, int
 
 /* pbr.c */
 int  AeronScenePbr_Ensure(struct AeronScene3D* s);
-/* Loads, ahead of its first draw, what a mesh with detail layers draws
- * with: the `_details` shaders and the pipelines of its colour kinds with
- * cull mode `cull`. Does nothing for other meshes or when they are ready. */
-void AeronScenePbr_PrepareDetails(struct AeronScene3D* s, const AeronSceneMesh* mesh, AeronCullMode cull);
+/* Creates the colour pipelines for AeronScene_PrepareMesh. */
+int  AeronScenePbr_PrepareMesh(struct AeronScene3D* s, const AeronSceneMesh* mesh, AeronCullMode cull);
 void AeronScenePbr_Release(struct AeronScene3D* s);
 /* Pipeline for (kind, cull), lazily created; NULL on create failure.
  * Falls back to the cull-NONE variant if the requested cull mode

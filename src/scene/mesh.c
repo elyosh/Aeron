@@ -400,9 +400,9 @@ static bool anim_damage(AnimRecords* r, const AeronEffectAtlas* atlas, uint32_t 
 	return true;
 }
 
-/* A detail layer's records: its image (layer AERON_ANIM_NO_LAYER when the
- * library lacks it) with its blend and strength, then its UV scale and
- * fade. Returns false on OOM. */
+/* Writes the records of a detail layer: its image (layer
+ * AERON_ANIM_NO_LAYER when the library doesn't have it) with its blend and
+ * strength, then its UV scale and fade. Returns false when out of memory. */
 static bool anim_detail(AnimRecords* r, const AeronEffectAtlas* atlas, uint32_t library,
 						const AeronGltfDetail* detail, uint32_t* missing) {
 	uint32_t* record = anim_record(r);
@@ -475,8 +475,9 @@ static bool anim_energy(AnimRecords* r, const AeronEffectData* data, float exten
 }
 
 /* Builds the records of the model's flipbooks, damage alternatives and
- * detail layers, and each material's anim (all 0 without animation) into
- * `out_anim`; no records when nothing animates. Returns 0 on OOM. */
+ * detail layers, and writes each material's anim into `out_anim` (all 0
+ * without animation). Builds no records when nothing animates. Returns 0
+ * when out of memory. */
 static int build_anim_records(AeronSceneMesh* s, AeronCommandBuffer* cmd, const AeronGltfModel* model,
 							  const AeronEffectData* effect_data, float extent, const char* name,
 							  AnimRecords* r, uint32_t (**out_anim)[4]) {

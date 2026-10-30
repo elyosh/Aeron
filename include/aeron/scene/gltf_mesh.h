@@ -223,11 +223,12 @@ typedef struct AeronGltfMaterial {
  * c·(1 − u) and emission c·u, replacing the material's emission (0 keeps
  * the material's emission). On illumination frames, the optional
  * `strength` (default 1) multiplies the flipbook's `emissiveStrength`.
- * A detail repeats its image `uvScale` times over TEXCOORD_0 (default 1),
- * mixed in by `strength` (default 1) times the image's alpha, and fades out
- * with the distance from the camera, gone at `fadeDistance` metres (no fade
- * without it). A colour blend changes the colour of the base colour
- * texture, in linear light; `normal` adds the image's slope to the normal. */
+ * A detail repeats its image `uvScale` times over TEXCOORD_0 (default 1).
+ * It is mixed in by `strength` (default 1) times the image's alpha, and it
+ * fades out with the distance from the camera until it disappears at
+ * `fadeDistance` metres. Without `fadeDistance`, it doesn't fade. A colour
+ * blend changes the colour of the base colour texture, in linear light, and
+ * `normal` adds the image's slope to the normal. */
 typedef struct AeronGltfFlipbookFrame {
 	char* key;
 	float seconds;

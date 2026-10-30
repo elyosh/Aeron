@@ -286,7 +286,8 @@ static bool check_damage(Check* c, const cJSON* in) {
 	return true;
 }
 
-/* `details`: at most two layers, each an image of its blend's kind. */
+/* Checks `details`: at most two layers, each naming an image of the kind
+ * that its blend needs. */
 static bool check_details(Check* c, const cJSON* in) {
 	static const char* const fields[] = {
 		"library", "image", "blend", "strength", "uvScale", "fadeDistance"

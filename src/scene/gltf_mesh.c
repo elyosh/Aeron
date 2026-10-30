@@ -856,7 +856,8 @@ static void free_detail(AeronGltfDetail* d) {
 	memset(d, 0, sizeof *d);
 }
 
-/* One detail layer; false when malformed (or *oom). */
+/* Reads one detail layer. Returns false when it is malformed, or when out of
+ * memory (and then sets *oom). */
 static bool read_detail(const cJSON* json, AeronGltfDetail* out, bool* oom) {
 	static const char* const blends[] = { "multiply", "overlay", "screen", "replace",
 										  "normal" }; /* AERON_ANIM_DETAIL_* */
@@ -892,8 +893,9 @@ static bool read_detail(const cJSON* json, AeronGltfDetail* out, bool* oom) {
 	return !*oom;
 }
 
-/* A material's `details`: appended to the model's. Malformed details are
- * reported and dropped. Returns false only on OOM. */
+/* Reads a material's `details` and appends them to the model's. Malformed
+ * details are reported and dropped. Returns false only when out of
+ * memory. */
 static bool read_details(const cJSON* details, AeronGltfModel* model, FlipbookCapacity* cap,
 						 AeronGltfMaterial* out, const char* source_label, uint32_t material_index) {
 	if (!details)

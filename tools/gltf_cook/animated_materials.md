@@ -168,11 +168,11 @@ player's craft and cockpit.
 
 | Field | Meaning |
 |-|-|
-| `library`, `image` | The image: of kind `detailNormal` for the `normal` blend, `detailColor` otherwise |
+| `library`, `image` | The image, of kind `detailNormal` for the `normal` blend and `detailColor` for the others |
 | `blend` | `multiply`, `overlay`, `screen` or `replace` change the colour of the base colour texture (below); `normal` adds the slope of the normal map, its X and Y, to the normal |
-| `strength` | Optional, default 1: how much it mixes in, times the image's alpha (except for `replace`) |
-| `uvScale` | Optional, default 1: how many times it repeats over `TEXCOORD_0` |
-| `fadeDistance` | Optional: the distance from the camera, in metres, at which it has faded out; without it, it doesn't fade |
+| `strength` | Optional, 1 by default. How much the image is mixed in, times its alpha, except for `replace` |
+| `uvScale` | Optional, 1 by default. How many times the image repeats over `TEXCOORD_0` |
+| `fadeDistance` | Optional. The distance from the camera, in metres, at which the image has faded out. Without it, the image doesn't fade |
 
 A `normal` detail needs the mesh's tangents.
 
@@ -203,11 +203,12 @@ While frames play, the material is drawn as any PBR material, with its
 base colour and emissive changed:
 
 1. Base colour: the material's base colour texture, then:
-   - its colour details, in linear light, with the detail's colour g:
-     `multiply` c·g, `overlay` c·g divided by sRGB mid-grey (0.214 in linear
-     light, so mid-grey keeps the colour), `screen` c + g − c·g, `replace` g;
-     each mixed in by `strength × alpha` (`strength` alone for `replace`),
-     less and less up to `fadeDistance`;
+   - its colour details, in linear light. With the detail's colour g,
+     `multiply` gives c·g, `overlay` gives c·g divided by sRGB mid-grey
+     (0.214 in linear light, so mid-grey keeps the colour), `screen` gives
+     c + g − c·g, and `replace` gives g. Each detail is mixed in by
+     `strength × alpha` (`strength` alone for `replace`), and fades out
+     until `fadeDistance`;
    - a `baseColor` frame painted over it: `lerp(base, frame.rgb, frame.a)`;
    - hull damage: times the damage factor;
    - an `emissive` frame's `baseColor` painted over the result.

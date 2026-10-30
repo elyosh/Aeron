@@ -116,14 +116,14 @@ typedef struct XwauMatParams {
 	float joystick_max_pitch;
 	float lever_root[3];
 	float lever_max_angle;
-	/* The two greeble layers, read when `has_greebles` (any greeble key, as
-	 * GetOrAddGreebleData creates the entry). The first key sets the
-	 * defaults of GreebleDataStruct: multiply, mix 0.9, scale 1 and
-	 * distance 500 / N. The GreebleLightMap keys are not read. XWAU gives a
-	 * section that inherits [Default]'s greebles the same entry, so a
-	 * greeble key in the section also changes [Default]; here it changes the
-	 * section only. No .mat file that XWAU or TFTC ships sets greebles
-	 * outside [Default]. */
+	/* The two greeble layers. Any greeble key sets `has_greebles`, as
+	 * GetOrAddGreebleData creates the entry, and the first one sets the
+	 * defaults of GreebleDataStruct: multiply, mix 0.9, scale 1 and distance
+	 * 500 / N. The GreebleLightMap keys are not read. In XWAU, a section
+	 * that inherits [Default]'s greebles shares its entry, so a greeble key
+	 * in the section also changes [Default]. Here it changes the section
+	 * only. No .mat file that XWAU or TFTC ships sets greebles outside
+	 * [Default]. */
 	bool        has_greebles;
 	XwauGreeble greebles[2];
 } XwauMatParams;

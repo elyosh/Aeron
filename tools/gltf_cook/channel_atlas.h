@@ -8,7 +8,7 @@
  * functions (sRGB vs linear). One ChannelAtlas struct per channel.
  *
  * A channel is a texture array of equally sized pages. Sources larger
- * than half a page get a dedicated layer, resampled to the full page, as
+ * than half a page get a dedicated layer, resampled to the full page. So
  * does a source whose `dedicated` is set before packing.
  * The others are packed onto shared pages, each inside a private
  * footprint of `gutter` texels on every side, aligned to `gutter` and

@@ -434,10 +434,10 @@ static int pbr_anim_level(const struct AeronScene3D* s, const AeronSceneMesh* me
 }
 
 /* The colour kind's pipeline with material animation, and with detail
- * layers when `details`; NULL when its shaders do not load. The shaders of
- * each are loaded on first use. */
-static AeronGraphicsPipeline* pbr_anim_pipeline(struct AeronScene3D* s, int kind, AeronCullMode cull,
-												int details) {
+ * layers when `details`, for image-based lighting or not (`ibl`); NULL when
+ * its shaders do not load. The shaders of each are loaded on first use. */
+static AeronGraphicsPipeline* pbr_anim_pipeline_ibl(struct AeronScene3D* s, int kind, AeronCullMode cull,
+													int details, int ibl) {
 	static const char* const names[2][2][5] = {
 		{ { "scene_pbr_mesh_anim.frag", "scene_pbr_mesh_mask_anim.frag", "scene_pbr_mesh_blend_anim.frag",
 			"scene_pbr_mesh_screen_anim.frag", "scene_pbr_mesh_mask_screen_anim.frag" },
@@ -455,12 +455,11 @@ static AeronGraphicsPipeline* pbr_anim_pipeline(struct AeronScene3D* s, int kind
 		s->pbr_anim_tried[details] = 1;
 		if (!s->pbr_anim_vs)
 			s->pbr_anim_vs = pbr_shader("scene_pbr_mesh_anim.vert", AERON_SHADER_STAGE_VERTEX, 0, 1, 2);
-		for (int ibl = 0; ibl < 2; ++ibl)
+		for (int i = 0; i < 2; ++i)
 			for (int v = 0; v < 5; ++v)
-				s->pbr_anim_fs[details][ibl][v] =
-					pbr_shader(names[details][ibl][v], AERON_SHADER_STAGE_FRAGMENT, 14, 4, 8);
+				s->pbr_anim_fs[details][i][v] =
+					pbr_shader(names[details][i][v], AERON_SHADER_STAGE_FRAGMENT, 14, 4, 8);
 	}
-	const int    ibl    = s->pbr_environment_set;
 	AeronShader* shader = s->pbr_anim_fs[details][ibl][pbr_color_variant(kind)];
 	if (!shader || !s->pbr_anim_vs)
 		return NULL;
@@ -468,24 +467,54 @@ static AeronGraphicsPipeline* pbr_anim_pipeline(struct AeronScene3D* s, int kind
 	if (!*pipe) {
 		*pipe = pbr_pipeline_create(s, pbr_state_kind(kind), cull, s->pbr_anim_vs, shader);
 		if (!*pipe && cull != AERON_CULL_NONE)
-			return pbr_anim_pipeline(s, kind, AERON_CULL_NONE, details);
+			return pbr_anim_pipeline_ibl(s, kind, AERON_CULL_NONE, details, ibl);
 	}
 	return *pipe;
 }
 
-void AeronScenePbr_PrepareDetails(struct AeronScene3D* s, const AeronSceneMesh* mesh, AeronCullMode cull) {
-	/* The kinds of the opaque, mask and blend ranges, for both passes. */
+/* pbr_anim_pipeline_ibl with the scene's current lighting. */
+static AeronGraphicsPipeline* pbr_anim_pipeline(struct AeronScene3D* s, int kind, AeronCullMode cull,
+												int details) {
+	return pbr_anim_pipeline_ibl(s, kind, cull, details, s->pbr_environment_set);
+}
+
+/* The pipeline a colour kind draws with at animation level `anim`
+ * (pbr_anim_level), for image-based lighting or not, falling back as
+ * pbr_draw_pipeline does; NULL when none can be created. */
+static AeronGraphicsPipeline* pbr_level_pipeline(struct AeronScene3D* s, int kind, AeronCullMode cull,
+												 int anim, int ibl) {
+	AeronGraphicsPipeline* pipeline = anim == 2 ? pbr_anim_pipeline_ibl(s, kind, cull, 1, ibl) : NULL;
+	if (!pipeline && anim)
+		pipeline = pbr_anim_pipeline_ibl(s, kind, cull, 0, ibl);
+	return pipeline ? pipeline
+					: pbr_cached_pipeline(s, ibl ? s->pbr_ibl_pipes : s->pbr_pipes, kind, cull, ibl);
+}
+
+int AeronScenePbr_PrepareMesh(struct AeronScene3D* s, const AeronSceneMesh* mesh, AeronCullMode cull) {
+	/* The colour kinds of the opaque, mask and blend ranges, in both passes. */
 	static const int kinds[3][2] = {
 		{ AERON_PBR_PIPE_MESH, AERON_PBR_PIPE_FORWARD },
 		{ AERON_PBR_PIPE_MESH_MASK, AERON_PBR_PIPE_FORWARD_MASK },
 		{ AERON_PBR_PIPE_MESH_BLEND, AERON_PBR_PIPE_FORWARD_BLEND },
 	};
-	if (pbr_anim_level(s, mesh) != 2 || (unsigned)cull > AERON_CULL_BACK)
-		return;
-	const uint32_t counts[3] = { mesh->opaque_index_count, mesh->mask_index_count, mesh->blend_index_count };
-	for (int range = 0; range < 3; ++range)
-		for (int pass = 0; pass < 2 && counts[range]; ++pass)
-			pbr_anim_pipeline(s, kinds[range][pass], cull, 1);
+	const uint32_t screens[3] = { mesh->opaque_screen_index_count, mesh->mask_screen_index_count,
+								  mesh->blend_screen_index_count };
+	const uint32_t plain[3]   = { mesh->opaque_index_count - screens[0], mesh->mask_index_count - screens[1],
+								  mesh->blend_index_count - screens[2] };
+	const int      anim       = pbr_anim_level(s, mesh);
+	int            ok         = 1;
+	for (int range = 0; range < 3; ++range) {
+		for (int pass = 0; pass < 2; ++pass) {
+			for (int ibl = 0; ibl < 2; ++ibl) {
+				const int kind = kinds[range][pass];
+				if (plain[range])
+					ok &= pbr_level_pipeline(s, kind, cull, anim, ibl) != NULL;
+				if (screens[range])
+					ok &= pbr_level_pipeline(s, pbr_screen_kind(kind), cull, anim, ibl) != NULL;
+			}
+		}
+	}
+	return ok;
 }
 
 /* The probe variant pipeline of a colour kind at animation level `anim`

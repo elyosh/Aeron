@@ -227,9 +227,10 @@ static bool bake(const char* tool, const char* dir, const char* key, const cJSON
 			if (kind == EFFECT_LIBRARY_ENERGY)
 				p[3] = 255;
 		}
-		/* A normal is a plain 0..1 value, not a colour: encoded here, it
-		 * comes back unchanged from the page's sRGB decode, so the shader
-		 * reads it directly and filtering works on the normal itself. */
+		/* A normal is a plain 0..1 value, not a colour. It is sRGB-encoded
+		 * here so that the page's sRGB decode gives it back unchanged. The
+		 * shader then reads it directly, and filtering works on the normal
+		 * itself. */
 		for (size_t i = 0; kind == EFFECT_LIBRARY_DETAIL_NORMAL && i < (size_t)w * h; ++i)
 			for (int k = 0; k < 3; ++k)
 				image[i * 4 + k] = to_srgb8(image[i * 4 + k] / 255.0f);

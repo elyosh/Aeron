@@ -32,7 +32,7 @@ the `scene_capture` target.
 | `benchmark.yaml` | Repeating 30-frame scene with timing settings. |
 | `flight-benchmark.yaml` | Cockpit view of a game flight scene. |
 | `bolts-benchmark.yaml` | The same scene with 1000 laser bolts and torpedoes. |
-| `asteroids.yaml` | An asteroid field from 140 m to 5 km away, to compare asteroid materials. |
+| `asteroids.yaml` | An asteroid field from about 150 m to 5 km away, to compare asteroid materials. |
 | `hangar-lights.yaml` | Hangar lit by point lights; `hangar-tubes.yaml` and `hangar-one-sided.yaml` use tube lights. |
 | `hangar-probes.yaml`, `flight-probes.yaml` | Scenes with environment probes. Build the test probes first with `probe_bakes.py --baker <build dir>/environment_bake --out captures/probe-assets`. |
 | `anim-example.yaml`, `anim-example-target.yaml` | The animated-material example. Build its assets first with `tools/gltf_cook/example/build.sh <build dir> captures/anim-example-assets`. |
