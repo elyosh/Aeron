@@ -5,7 +5,8 @@
  * Writes the model settings of an XWAU installation (xwau_import craft):
  *   <output_dir>/models/<model key>.yaml  the settings of one model, next to
  *                                         its GLB
- *   <output_dir>/hud.yaml                 the hull and map icon lists
+ *   <output_dir>/hud.yaml                 the hull and map icon lists, and how
+ *                                         the target display shows the target
  *
  * A model's key is its INI file's name in lower case, without the extension:
  * FlightModels/Awing.ini gives models/awing.yaml. A settings file is written
@@ -223,7 +224,18 @@
  * MapIconList.txt, read like XWAU's hull icon hook: the value at position N
  * is the image id for object type N, counting the lines that the hook reads
  * (empty lines and comment lines are skipped). A missing list leaves out its
- * key. When both are missing, hud.yaml isn't written.
+ * key.
+ *
+ * It also holds `target_display` (craft_hud.h in the game), from the
+ * wireframe keys of Dynamic_Cockpit.cfg, read like the ddraw's LoadDCParams
+ * and starting from its own values. enable_wireframe_CMD gives the style:
+ * edges, or shaded when it is 0. The colours are sRGB values of XWAU's
+ * buffer, so they are written as linear values. `colors: friend_foe` comes
+ * from GreenAndRedForIFFColorsOnly, in the [hook_tourmultiplayer] section of
+ * Hooks.ini, or in hook_tourmultiplayer.cfg when there is no Hooks.ini.
+ * `other` is the ddraw's fixed colour for a target without an IFF colour,
+ * (0.1, 0.1, 0.5). When the lists and Dynamic_Cockpit.cfg are all missing,
+ * hud.yaml isn't written.
  *
  * Files that a run doesn't write are left as they are.
  */

@@ -1286,11 +1286,155 @@ static void write_list(FILE* f, const char* key, const uint16_t* values, size_t 
 	fprintf(f, "]\n");
 }
 
-static bool write_icon_lists(const char* xwau_root, const char* output_dir) {
-	char       hull_path[1024], map_path[1024], path[1024];
-	const bool has_hull = Xwau_FindFile(xwau_root, "HullIconList.txt", hull_path, sizeof hull_path);
-	const bool has_map  = Xwau_FindFile(xwau_root, "MapIconList.txt", map_path, sizeof map_path);
-	if (!has_hull && !has_map)
+/* Appends `name` to the list of source files. */
+static void add_source(char* sources, size_t cap, const char* name) {
+	const size_t length = strlen(sources);
+	snprintf(sources + length, cap - length, "%s%s", length ? " and " : "", name);
+}
+
+/* XWAU's edge filter on the target display (enable_wireframe_CMD). */
+typedef struct TargetDisplay {
+	bool  edges;
+	float iff[6][3];
+	float friend_color[3];
+	float foe_color[3];
+	float luminance[3];
+	float contrast;
+	bool  friend_foe;
+} TargetDisplay;
+
+/* Reads "x, y, z" after the '=' of `line`, as LoadGeneric3DCoords does. */
+static void read_display_color(const char* line, float out[3]) {
+	const char* value = strchr(line, '=');
+	float       x, y, z;
+	if (value && sscanf(value + 1, "%f, %f, %f", &x, &y, &z) == 3) {
+		out[0] = x;
+		out[1] = y;
+		out[2] = z;
+	}
+}
+
+/* Reads GreenAndRedForIFFColorsOnly as the ddraw reads it: from the
+ * [hook_tourmultiplayer] section of Hooks.ini when that file exists, else
+ * from hook_tourmultiplayer.cfg. The first line with the key wins. */
+static bool read_friend_foe(const char* xwau_root) {
+	char       path[1024], line[256], param[128], value[128];
+	const bool ini = Xwau_FindFile(xwau_root, "Hooks.ini", path, sizeof path);
+	if (!ini && !Xwau_FindFile(xwau_root, "hook_tourmultiplayer.cfg", path, sizeof path))
+		return false;
+	FILE* f = fopen(path, "rt");
+	if (!f)
+		return false;
+	bool section = !ini, on = false;
+	while (fgets(line, sizeof line, f)) {
+		if (line[0] == ';' || line[0] == '#')
+			continue;
+		if (ini && line[0] == '[') {
+			char lower[256];
+			LowerCopy(lower, sizeof lower, line);
+			const bool was = section;
+			section        = strstr(lower, "[hook_tourmultiplayer]") != NULL;
+			if (was && !section)
+				break;
+			continue;
+		}
+		value[0] = 0;
+		if (section && sscanf(line, "%127s = %127s", param, value) > 0 &&
+			strcasecmp(param, "GreenAndRedForIFFColorsOnly") == 0) {
+			on = atof(value) != 0.0;
+			break;
+		}
+	}
+	fclose(f);
+	return on;
+}
+
+/* Reads Dynamic_Cockpit.cfg as LoadDCParams does, starting from the ddraw's
+ * own values. Returns false when the installation has no such file. */
+static bool read_target_display(const char* xwau_root, TargetDisplay* out) {
+	static const float iff[6][3] = { { 0.1f, 0.7f, 0.1f }, { 0.5f, 0.1f, 0.1f }, { 0.1f, 0.1f, 0.5f },
+									 { 0.3f, 0.2f, 0.1f }, { 0.1f, 0.1f, 0.1f }, { 0.5f, 0.1f, 0.5f } };
+	char               path[1024], line[256], param[128], value[128];
+	if (!Xwau_FindFile(xwau_root, "Dynamic_Cockpit.cfg", path, sizeof path))
+		return false;
+	FILE* f = fopen(path, "rt");
+	if (!f)
+		return false;
+	*out = (TargetDisplay) { .edges        = true,
+							 .friend_color = { 0.1f, 0.6f, 0.1f },
+							 .foe_color    = { 0.6f, 0.1f, 0.1f },
+							 .luminance    = { 0.33f, 0.5f, 0.16f },
+							 .contrast     = 3.0f };
+	memcpy(out->iff, iff, sizeof out->iff);
+	while (fgets(line, sizeof line, f)) {
+		if (line[0] == ';' || line[0] == '#')
+			continue;
+		value[0] = 0;
+		if (sscanf(line, "%127s = %127s", param, value) <= 0)
+			continue;
+		if (strcasecmp(param, "enable_wireframe_CMD") == 0)
+			out->edges = (float)atof(value) != 0.0f;
+		else if (strcasecmp(param, "wireframe_contrast") == 0)
+			out->contrast = (float)atof(value);
+		else if (strcasecmp(param, "wireframe_luminance_vector") == 0)
+			read_display_color(line, out->luminance);
+		else if (strcasecmp(param, "wireframe_color_friend") == 0)
+			read_display_color(line, out->friend_color);
+		else if (strcasecmp(param, "wireframe_color_foe") == 0)
+			read_display_color(line, out->foe_color);
+		else if (strncasecmp(param, "wireframe_IFF_color_", 20) == 0 && param[20] >= '0' &&
+				 param[20] <= '5' && !param[21])
+			read_display_color(line, out->iff[param[20] - '0']);
+	}
+	fclose(f);
+	out->friend_foe = read_friend_foe(xwau_root);
+	return true;
+}
+
+static float srgb_to_linear(float c) {
+	return c <= 0.04045f ? c / 12.92f : powf((c + 0.055f) / 1.055f, 2.4f);
+}
+
+/* Writes an sRGB colour of XWAU's buffer as a linear one. */
+static void write_display_color(FILE* f, const float srgb[3]) {
+	fprintf(f, "[%.6g, %.6g, %.6g]", (double)srgb_to_linear(fmaxf(srgb[0], 0.0f)),
+			(double)srgb_to_linear(fmaxf(srgb[1], 0.0f)), (double)srgb_to_linear(fmaxf(srgb[2], 0.0f)));
+}
+
+static void write_target_display(FILE* f, const TargetDisplay* display) {
+	/* The ddraw's colour for a target without an IFF colour. */
+	static const float other[3] = { 0.1f, 0.1f, 0.5f };
+	fputs("target_display:\n", f);
+	if (!display->edges) {
+		fputs("  style: shaded\n", f);
+		return;
+	}
+	fprintf(
+		f,
+		"  style: edges\n  edges:\n    luminance: [%.6g, %.6g, %.6g]\n    contrast: %.6g\n    colors: %s\n"
+		"    iff: [",
+		(double)display->luminance[0], (double)display->luminance[1], (double)display->luminance[2],
+		(double)display->contrast, display->friend_foe ? "friend_foe" : "iff");
+	for (int i = 0; i < 6; ++i) {
+		fputs(i ? ", " : "", f);
+		write_display_color(f, display->iff[i]);
+	}
+	fputs("]\n    friend: ", f);
+	write_display_color(f, display->friend_color);
+	fputs("\n    foe: ", f);
+	write_display_color(f, display->foe_color);
+	fputs("\n    other: ", f);
+	write_display_color(f, other);
+	fputs("\n", f);
+}
+
+static bool write_hud_file(const char* xwau_root, const char* output_dir) {
+	char          hull_path[1024], map_path[1024], path[1024];
+	TargetDisplay display;
+	const bool    has_hull    = Xwau_FindFile(xwau_root, "HullIconList.txt", hull_path, sizeof hull_path);
+	const bool    has_map     = Xwau_FindFile(xwau_root, "MapIconList.txt", map_path, sizeof map_path);
+	const bool    has_display = read_target_display(xwau_root, &display);
+	if (!has_hull && !has_map && !has_display)
 		return true;
 	uint16_t* hull       = NULL;
 	uint16_t* map        = NULL;
@@ -1304,20 +1448,31 @@ static bool write_icon_lists(const char* xwau_root, const char* output_dir) {
 		ok = false;
 	}
 	if (f) {
-		fprintf(f,
-				"# Written by xwau_import craft from %s%s%s.\n"
-				"# Each list gives the image id for each object type.\nversion: 1\n",
-				has_hull ? "HullIconList.txt" : "", has_hull && has_map ? " and " : "",
-				has_map ? "MapIconList.txt" : "");
+		char sources[256] = "";
+		if (has_hull)
+			add_source(sources, sizeof sources, "HullIconList.txt");
+		if (has_map)
+			add_source(sources, sizeof sources, "MapIconList.txt");
+		if (has_display)
+			add_source(sources, sizeof sources, "Dynamic_Cockpit.cfg");
+		fprintf(f, "# Written by xwau_import craft from %s.\n", sources);
+		if (has_hull || has_map)
+			fputs("# Each list gives the image id for each object type.\n", f);
+		fputs("version: 1\n", f);
 		if (has_hull)
 			write_list(f, "hull_icons", hull, hull_count);
 		if (has_map)
 			write_list(f, "map_icons", map, map_count);
+		if (has_display)
+			write_target_display(f, &display);
 		ok = fclose(f) == 0;
 		if (!ok)
 			Report(path, "can't be written");
 		else
-			Report(NULL, "hud.yaml: %zu hull icons, %zu map icons", hull_count, map_count);
+			Report(NULL, "hud.yaml: %zu hull icons, %zu map icons, target display %s", hull_count, map_count,
+				   !has_display    ? "not set"
+				   : display.edges ? "with edges"
+								   : "shaded");
 	}
 	free(hull);
 	free(map);
@@ -1424,12 +1579,6 @@ static bool first_side_file_without_ini(char* const* names, size_t count, const 
 		return true;
 	}
 	return false;
-}
-
-/* Appends `name` to the list of source files. */
-static void add_source(char* sources, size_t cap, const char* name) {
-	const size_t length = strlen(sources);
-	snprintf(sources + length, cap - length, "%s%s", length ? " and " : "", name);
 }
 
 bool XwauCraft_Write(const char* xwau_root, const char* output_dir, XwauLines* cockpits) {
@@ -1710,5 +1859,5 @@ bool XwauCraft_Write(const char* xwau_root, const char* output_dir, XwauLines* c
 		Report(NULL,
 			   "%d models set WeaponLightColor, which isn't imported: a bolt's light comes from its model",
 			   light_colors);
-	return write_icon_lists(xwau_root, output_dir) && ok;
+	return write_hud_file(xwau_root, output_dir) && ok;
 }
