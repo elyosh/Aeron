@@ -2,6 +2,7 @@
 
 #include <pthread.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "cgltf_write.h"
@@ -62,8 +63,11 @@ bool OptGltf_WriteFiles(const OptGltfDocument* document, const char* out_dir, co
 		!PathFormat(bin_path, sizeof bin_path, "%s%s%s.bin", out_dir, sep, basename))
 		return false;
 
-	cgltf_options opts = { 0 };
-	if (cgltf_write_file(&opts, gltf_path, data) != cgltf_result_success)
+	size_t     json_size = 0;
+	char*      json      = OptGltf_Json(document, &json_size);
+	const bool written   = json && WriteWholeFile(gltf_path, json, json_size);
+	free(json);
+	if (!written)
 		return false;
 	const cgltf_buffer* buffer = &data->buffers[0];
 	if (!WriteWholeFile(bin_path, buffer->data, buffer->size))
@@ -86,21 +90,30 @@ static void report_warning(void* label, bool warning, const char* message) {
 		Report((const char*)label, "%s", message);
 }
 
-bool OptGltf_Convert(const opt_file_t* opt, const char* out_dir, const char* basename,
-					 const OptGltfBuildOptions* options, const char* label) {
+char* OptGltf_Json(const OptGltfDocument* document, size_t* size) {
+	const cgltf_data* data     = OptGltf_Data((OptGltfDocument*)document);
+	cgltf_options     options  = { 0 };
+	const cgltf_size  expected = cgltf_write(&options, NULL, 0, data);
+	char*             json     = expected ? (char*)malloc(expected) : NULL;
+	/* The count includes the 0 byte that ends the text. */
+	const cgltf_size written = json ? cgltf_write(&options, json, expected, data) : 0;
+	if (!written || written > expected) {
+		free(json);
+		return NULL;
+	}
+	*size = written - 1;
+	return json;
+}
+
+bool OptGltf_Build(const opt_file_t* opt, const char* basename, const OptGltfBuildOptions* options,
+				   const char* label, OptGltfDocument** document) {
 	OptGltfBuildOptions reported = *options;
 	reported.log                 = report_warning;
 	reported.log_context         = (void*)label;
-	OptGltfDocument* document    = NULL;
-	opt_error_t      error       = { { 0 } };
-	if (!OptGltf_BuildMemory(opt, basename, &reported, &document, &error)) {
-		if (error.msg[0])
-			Report(label, "%s", error.msg);
-		return false;
-	}
-	const bool succeeded = OptGltf_WriteFiles(document, out_dir, basename);
-	if (!succeeded)
-		Report(label, "could not write %s", out_dir);
-	OptGltf_Free(document);
-	return succeeded;
+	opt_error_t error            = { { 0 } };
+	if (OptGltf_BuildMemory(opt, basename, &reported, document, &error))
+		return true;
+	if (error.msg[0])
+		Report(label, "%s", error.msg);
+	return false;
 }

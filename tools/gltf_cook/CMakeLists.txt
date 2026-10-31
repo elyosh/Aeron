@@ -69,7 +69,7 @@ if(AERON_BUILD_TOOLS)
         C_STANDARD_REQUIRED ON)
 
     add_executable(aeron_gltf_cook main.c)
-    target_link_libraries(aeron_gltf_cook PRIVATE aeron_gltf_cook_tool aeron_effect_library aeron_cjson)
+    target_link_libraries(aeron_gltf_cook PRIVATE aeron_gltf_cook_tool aeron_effect_library)
     # Cooked simulation data must be bit-identical across platforms.
     if(MSVC)
         set_source_files_properties(flight_data.c PROPERTIES COMPILE_OPTIONS "/fp:precise")

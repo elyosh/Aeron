@@ -56,6 +56,22 @@ typedef bool (*AeronGltfCookImageSize)(void* context, const struct cgltf_image* 
 									   int* height);
 typedef void (*AeronGltfCookImageRelease)(void* context, const struct cgltf_image* image);
 typedef bool (*AeronGltfCookConsumer)(void* context, const struct cgltf_data* cooked_data);
+/* The pixels of the image with URI `uri`. They stay valid until the cook
+ * returns. */
+typedef bool (*AeronGltfCookUriImageSource)(void* context, const char* uri, AeronGltfCookImageView* out_view);
+
+/* A glTF to cook: its JSON or GLB bytes, and where its .bin and images come
+ * from. Without `bin`, buffer 0 is loaded as the file names it, next to
+ * `label`. Without `images`, the images are the PNG files next to `label`. */
+typedef struct AeronGltfCookInput {
+	const char*                 json;
+	size_t                      json_size;
+	const char*                 label; /* the .gltf path, also used in messages */
+	const void*                 bin;   /* the bytes of buffer 0, or NULL */
+	size_t                      bin_size;
+	AeronGltfCookUriImageSource images;
+	void*                       images_context;
+} AeronGltfCookInput;
 
 /* Cooker tunables. Pass NULL for all-defaults; partial structs are not
  * supported — caller fills every field. */
@@ -99,6 +115,16 @@ void aeron_gltf_cook_default_options(AeronGltfCookOptions* out);
 /* Cook `in_path` (.gltf) into `out_path` (.glb). Returns true on
  * success, false on any error (diagnostic on stderr). */
 bool aeron_gltf_cook(const char* in_path, const char* out_path, const AeronGltfCookOptions* opts);
+
+/* Cooks `input`, expanding its skin layers (skin_layers.h), and passes the
+ * cooked graph to `consumer`. aeron_gltf_cook is this function for a file. */
+bool aeron_gltf_cook_input(const AeronGltfCookInput* input, AeronGltfCookConsumer consumer,
+						   void* consumer_context, const AeronGltfCookOptions* opts);
+
+/* Cooks `input` into GLB bytes, as aeron_gltf_cook writes them. The caller
+ * frees `*glb`. */
+bool aeron_gltf_cook_glb(const AeronGltfCookInput* input, const AeronGltfCookOptions* opts, uint8_t** glb,
+						 size_t* glb_size);
 
 /* Apply the same cook transformation to an already-loaded graph, invoke the
  * consumer while the cooked graph is valid, then restore the source graph. */

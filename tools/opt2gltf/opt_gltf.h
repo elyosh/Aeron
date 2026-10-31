@@ -469,6 +469,8 @@ bool OptGltf_BuildMemory(const opt_file_t* opt, const char* basename, const OptG
 
 cgltf_data* OptGltf_Data(OptGltfDocument* document);
 bool OptGltf_ImageView(const OptGltfDocument* document, const cgltf_image* image, OptGltfImageView* out_view);
+/* The pixels of the document's image with URI `uri`. */
+bool OptGltf_ImageViewByUri(const OptGltfDocument* document, const char* uri, OptGltfImageView* out_view);
 void OptGltf_Free(OptGltfDocument* document);
 
 #endif /* AERON_OPT2GLTF_OPT_GLTF_H */

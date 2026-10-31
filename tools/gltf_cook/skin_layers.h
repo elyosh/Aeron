@@ -28,9 +28,11 @@ typedef struct SkinLayers SkinLayers;
 /* Whether the document has skins or skin variants to expand. */
 bool SkinLayers_Present(const cJSON* document);
 
-/* Expands the skins of `document`, the glTF read from `gltf_path`. Returns
- * NULL after reporting the problem on stderr. */
-SkinLayers* SkinLayers_Expand(cJSON* document, const char* gltf_path, bool verbose);
+/* Expands the skins of `document`, the glTF read from `gltf_path`. The
+ * file's images come from `images`, or, when it is NULL, from the PNG files
+ * next to `gltf_path`. Returns NULL after reporting the problem. */
+SkinLayers* SkinLayers_Expand(cJSON* document, const char* gltf_path, AeronGltfCookUriImageSource images,
+							  void* images_context, bool verbose);
 
 /* AeronGltfCookImageProvider: the pixels of a composite, or of a PNG of the
  * file. `context` is the SkinLayers. */

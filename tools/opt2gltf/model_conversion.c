@@ -892,16 +892,40 @@ static void conversion_free(Conversion* c, const opt_file_t* opt) {
 	free(c->model);
 }
 
-bool ModelConversion_Convert(const ModelConversion* mc, const char* opt_path, const char* basename,
-							 const char* out_dir) {
-	opt_error_t err;
-	opt_file_t* opt = opt_load_file(opt_path, &err);
-	if (!opt) {
-		Report(opt_path, "%s", err.msg);
+struct ModelConversionModel {
+	opt_file_t*      opt;
+	Conversion*      c; /* what the document's images point to */
+	OptGltfDocument* document;
+};
+
+void ModelConversion_FreeModel(ModelConversionModel* model) {
+	if (!model)
+		return;
+	OptGltf_Free(model->document);
+	if (model->c)
+		conversion_free(model->c, model->opt);
+	free(model->c);
+	opt_free(model->opt);
+	free(model);
+}
+
+bool ModelConversion_Build(const ModelConversion* mc, const char* opt_path, const char* basename,
+						   ModelConversionModel** out) {
+	*out                        = NULL;
+	ModelConversionModel* model = (ModelConversionModel*)calloc(1, sizeof *model);
+	opt_error_t           err;
+	if (!model) {
+		Report(opt_path, "out of memory");
 		return false;
 	}
-	Conversion* c  = (Conversion*)calloc(1, sizeof *c);
-	bool        ok = c != NULL;
+	if (!(model->opt = opt_load_file(opt_path, &err))) {
+		Report(opt_path, "%s", err.msg);
+		free(model);
+		return false;
+	}
+	opt_file_t* opt = model->opt;
+	Conversion* c = model->c = (Conversion*)calloc(1, sizeof *c);
+	bool        ok           = c != NULL;
 	if (ok && mc->xwau)
 		ok = prepare_xwau(c, mc, opt, basename, opt_path) && place_cockpit(c, opt, opt_path) &&
 			 load_dynamic_cockpit(c, mc, opt, basename, opt_path) &&
@@ -911,13 +935,28 @@ bool ModelConversion_Convert(const ModelConversion* mc, const char* opt_path, co
 	/* The classic emission of the model, as physical radiance. */
 	if (ok)
 		c->options.material.emission_radiance = CLASSIC_RADIANCE;
-	ok = ok && OptGltf_Convert(opt, out_dir, basename, &c->options, opt_path);
+	ok = ok && OptGltf_Build(opt, basename, &c->options, opt_path, &model->document);
 	if (ok && mc->xwau)
 		XwauGltf_ReportSkins(&c->baked, basename);
-	if (c)
-		conversion_free(c, opt);
-	free(c);
-	opt_free(opt);
+	if (!ok) {
+		ModelConversion_FreeModel(model);
+		return false;
+	}
+	*out = model;
+	return true;
+}
+
+const OptGltfDocument* ModelConversion_Document(const ModelConversionModel* model) { return model->document; }
+
+bool ModelConversion_Convert(const ModelConversion* mc, const char* opt_path, const char* basename,
+							 const char* out_dir) {
+	ModelConversionModel* model = NULL;
+	if (!ModelConversion_Build(mc, opt_path, basename, &model))
+		return false;
+	const bool ok = OptGltf_WriteFiles(model->document, out_dir, basename);
+	if (!ok)
+		Report(opt_path, "could not write %s", out_dir);
+	ModelConversion_FreeModel(model);
 	return ok;
 }
 

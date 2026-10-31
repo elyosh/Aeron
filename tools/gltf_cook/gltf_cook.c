@@ -1265,8 +1265,8 @@ static char* read_file(const char* path, size_t* size) {
 	FILE* f = fopen(path, "rb");
 	if (!f)
 		return NULL;
-	char*  text = NULL;
-	long   n    = -1;
+	char* text = NULL;
+	long  n    = -1;
 	if (fseek(f, 0, SEEK_END) == 0 && (n = ftell(f)) >= 0 && fseek(f, 0, SEEK_SET) == 0 &&
 		(text = (char*)malloc((size_t)n + 1)) != NULL && fread(text, 1, (size_t)n, f) != (size_t)n) {
 		free(text);
@@ -1280,47 +1280,82 @@ static char* read_file(const char* path, size_t* size) {
 	return text;
 }
 
-/* The JSON of the .gltf `path` when it has skin layers to expand, else NULL. */
-static cJSON* skinned_document(const char* path) {
-	size_t size = 0;
-	char*  text = read_file(path, &size);
-	cJSON* doc  = text && size >= 4 && memcmp(text, "glTF", 4) != 0 ? cJSON_ParseWithLength(text, size) : NULL;
-	free(text);
+/* AeronGltfCookImageProvider over the input's source of images by URI. */
+static bool uri_image(void* context, const cgltf_image* image, AeronGltfCookImageView* out_view) {
+	const AeronGltfCookInput* input = (const AeronGltfCookInput*)context;
+	return image->uri && input->images(input->images_context, image->uri, out_view);
+}
+
+/* Sets buffer 0 to a copy of the input's .bin. The cook grows that buffer
+ * with realloc, so it gets its own copy, which cgltf_free frees. */
+static bool set_bin(const AeronGltfCookInput* input, cgltf_data* data) {
+	if (!input->bin || !data->buffers_count)
+		return true;
+	if (input->bin_size < data->buffers[0].size)
+		return false;
+	void* copy = malloc(input->bin_size ? input->bin_size : 1);
+	if (!copy)
+		return false;
+	memcpy(copy, input->bin, input->bin_size);
+	data->buffers[0].data             = copy;
+	data->buffers[0].data_free_method = cgltf_data_free_method_memory_free;
+	return true;
+}
+
+bool aeron_gltf_cook_input(const AeronGltfCookInput* input, AeronGltfCookConsumer consumer,
+						   void* consumer_context, const AeronGltfCookOptions* opts) {
+	if (!input || !input->json || !input->label)
+		return false;
+	/* Skin layers are expanded into composite variants (skin_layers.h), and
+	 * the composites are made while cooking. */
+	cJSON* doc = input->json_size >= 4 && memcmp(input->json, "glTF", 4) != 0
+					 ? cJSON_ParseWithLength(input->json, input->json_size)
+					 : NULL;
 	if (doc && !SkinLayers_Present(doc)) {
 		cJSON_Delete(doc);
 		doc = NULL;
 	}
-	return doc;
-}
-
-/* Cooks a .gltf with skin layers: they are expanded into composite variants
- * (skin_layers.h), and the composites are made while cooking. */
-static bool cook_skinned(cJSON* doc, const char* in_path, const char* out_path, const AeronGltfCookOptions* opts) {
-	SkinLayers* layers = SkinLayers_Expand(doc, in_path, opts && opts->verbose);
-	char*       json   = layers ? cJSON_PrintUnformatted(doc) : NULL;
-	cJSON_Delete(doc);
-	if (!json) {
-		SkinLayers_Free(layers);
-		return false;
+	SkinLayers* layers   = NULL;
+	char*       expanded = NULL;
+	if (doc) {
+		layers =
+			SkinLayers_Expand(doc, input->label, input->images, input->images_context, opts && opts->verbose);
+		expanded = layers ? cJSON_PrintUnformatted(doc) : NULL;
+		cJSON_Delete(doc);
+		if (!expanded) {
+			SkinLayers_Free(layers);
+			return false;
+		}
 	}
+	const char*   json          = expanded ? expanded : input->json;
+	const size_t  json_size     = expanded ? strlen(expanded) : input->json_size;
 	cgltf_options parse_options = { 0 };
 	cgltf_data*   data          = NULL;
-	cgltf_result  result        = cgltf_parse(&parse_options, json, strlen(json), &data);
-	if (result == cgltf_result_success)
-		result = cgltf_load_buffers(&parse_options, data, in_path);
+	cgltf_result  result        = cgltf_parse(&parse_options, json, json_size, &data);
+	const bool    parsed        = result == cgltf_result_success;
+	if (parsed && !set_bin(input, data))
+		result = cgltf_result_data_too_short;
+	else if (parsed)
+		result = cgltf_load_buffers(&parse_options, data, input->label);
 	bool succeeded = false;
 	if (result != cgltf_result_success) {
-		ToolLog_Write(TOOL_LOG_ERROR, "[aeron_gltf_cook] parse of the expanded '%s' failed: %d", in_path,
-					  (int)result);
-	} else {
-		FileCookConsumerContext context = { out_path };
+		if (layers)
+			ToolLog_Write(TOOL_LOG_ERROR, "[aeron_gltf_cook] parse of the expanded '%s' failed: %d",
+						  input->label, (int)result);
+		else
+			ToolLog_Write(TOOL_LOG_ERROR, "[aeron_gltf_cook] %s '%s' failed: %d",
+						  parsed ? "load_buffers" : "parse", input->label, (int)result);
+	} else if (layers) {
 		succeeded =
-			aeron_gltf_cook_data_lazy(data, in_path, SkinLayers_ImageProvider, SkinLayers_ImageSize,
-									  SkinLayers_ImageRelease, layers, write_cooked_glb, &context, opts);
+			aeron_gltf_cook_data_lazy(data, input->label, SkinLayers_ImageProvider, SkinLayers_ImageSize,
+									  SkinLayers_ImageRelease, layers, consumer, consumer_context, opts);
 		SkinLayers_Report(layers);
+	} else {
+		succeeded = aeron_gltf_cook_data(data, input->label, input->images ? uri_image : NULL, (void*)input,
+										 consumer, consumer_context, opts);
 	}
 	cgltf_free(data);
-	free(json);
+	free(expanded);
 	SkinLayers_Free(layers);
 	return succeeded;
 }
@@ -1328,24 +1363,79 @@ static bool cook_skinned(cJSON* doc, const char* in_path, const char* out_path, 
 bool aeron_gltf_cook(const char* in_path, const char* out_path, const AeronGltfCookOptions* opts) {
 	if (!in_path || !out_path)
 		return false;
-	cJSON* skinned = skinned_document(in_path);
-	if (skinned)
-		return cook_skinned(skinned, in_path, out_path, opts);
-	cgltf_options parse_options = { 0 };
-	cgltf_data*   data          = NULL;
-	cgltf_result  result        = cgltf_parse_file(&parse_options, in_path, &data);
-	if (result != cgltf_result_success) {
-		ToolLog_Write(TOOL_LOG_ERROR, "[aeron_gltf_cook] parse '%s' failed: %d", in_path, (int)result);
+	size_t size = 0;
+	char*  text = read_file(in_path, &size);
+	if (!text) {
+		ToolLog_Write(TOOL_LOG_ERROR, "[aeron_gltf_cook] parse '%s' failed: %d", in_path,
+					  (int)cgltf_result_file_not_found);
 		return false;
 	}
-	result = cgltf_load_buffers(&parse_options, data, in_path);
-	if (result != cgltf_result_success) {
-		ToolLog_Write(TOOL_LOG_ERROR, "[aeron_gltf_cook] load_buffers '%s' failed: %d", in_path, (int)result);
-		cgltf_free(data);
-		return false;
-	}
-	FileCookConsumerContext context = { out_path };
-	const bool succeeded = aeron_gltf_cook_data(data, in_path, NULL, NULL, write_cooked_glb, &context, opts);
-	cgltf_free(data);
+	const AeronGltfCookInput input     = { .json = text, .json_size = size, .label = in_path };
+	FileCookConsumerContext  context   = { out_path };
+	const bool               succeeded = aeron_gltf_cook_input(&input, write_cooked_glb, &context, opts);
+	free(text);
 	return succeeded;
+}
+
+/* The GLB in memory, laid out as cgltf_write_file writes it: the header, the
+ * JSON chunk padded with spaces, and the BIN chunk padded with zeros. */
+typedef struct GlbBytes {
+	uint8_t* bytes;
+	size_t   size;
+} GlbBytes;
+
+static bool write_glb_bytes(void* context, const cgltf_data* data) {
+	GlbBytes*     out         = (GlbBytes*)context;
+	cgltf_options options     = { 0 };
+	options.type              = cgltf_file_type_glb;
+	const cgltf_size expected = cgltf_write(&options, NULL, 0, data);
+	char*            json     = expected ? (char*)malloc(expected) : NULL;
+	/* The count includes the 0 byte that ends the text, which isn't
+	 * written. */
+	const cgltf_size written = json ? cgltf_write(&options, json, expected, data) : 0;
+	if (!written || written > expected) {
+		free(json);
+		ToolLog_Write(TOOL_LOG_ERROR, "[aeron_gltf_cook] cannot write the GLB JSON");
+		return false;
+	}
+	const size_t   json_size = written - 1;
+	const size_t   json_pad  = (4 - json_size % 4) % 4;
+	const bool     has_bin   = data->bin && data->bin_size > 0;
+	const size_t   bin_pad   = has_bin ? (4 - data->bin_size % 4) % 4 : 0;
+	const size_t   total     = 12 + 8 + json_size + json_pad + (has_bin ? 8 + data->bin_size + bin_pad : 0);
+	uint8_t*       glb       = (uint8_t*)malloc(total);
+	const uint32_t header[3] = { 0x46546C67u /* glTF */, 2u, (uint32_t)total };
+	const uint32_t json_head[2] = { (uint32_t)(json_size + json_pad), 0x4E4F534Au /* JSON */ };
+	if (!glb) {
+		free(json);
+		return false;
+	}
+	uint8_t* at = glb;
+	memcpy(at, header, 12);
+	memcpy(at + 12, json_head, 8);
+	memcpy(at + 20, json, json_size);
+	memset(at + 20 + json_size, ' ', json_pad);
+	at += 20 + json_size + json_pad;
+	if (has_bin) {
+		const uint32_t bin_head[2] = { (uint32_t)(data->bin_size + bin_pad), 0x004E4942u /* BIN */ };
+		memcpy(at, bin_head, 8);
+		memcpy(at + 8, data->bin, data->bin_size);
+		memset(at + 8 + data->bin_size, 0, bin_pad);
+	}
+	free(json);
+	out->bytes = glb;
+	out->size  = total;
+	return true;
+}
+
+bool aeron_gltf_cook_glb(const AeronGltfCookInput* input, const AeronGltfCookOptions* opts, uint8_t** glb,
+						 size_t* glb_size) {
+	GlbBytes out = { 0 };
+	if (!aeron_gltf_cook_input(input, write_glb_bytes, &out, opts)) {
+		free(out.bytes);
+		return false;
+	}
+	*glb      = out.bytes;
+	*glb_size = out.size;
+	return true;
 }

@@ -83,6 +83,7 @@
 
 #include <stdbool.h>
 
+#include "opt_gltf.h"
 #include "xwau_config.h"
 #include "xwau_game_tables.h"
 #include "xwau_mat.h"
@@ -106,8 +107,19 @@ typedef struct ModelConversion {
 bool ModelConversion_InitXwau(ModelConversion* mc, const char* game);
 void ModelConversion_Free(ModelConversion* mc);
 
+/* A converted model in memory: its document, and the data that the
+ * document's images point to. */
+typedef struct ModelConversionModel ModelConversionModel;
+
+/* Converts the OPT at `opt_path`, named `basename`, into a document in
+ * memory. Problems are reported with `opt_path` as the label. */
+bool ModelConversion_Build(const ModelConversion* mc, const char* opt_path, const char* basename,
+						   ModelConversionModel** model);
+const OptGltfDocument* ModelConversion_Document(const ModelConversionModel* model);
+void                   ModelConversion_FreeModel(ModelConversionModel* model);
+
 /* Converts the OPT at `opt_path`, named `basename`, into <out_dir> with
- * OptGltf_Convert. Problems are reported with `opt_path` as the label. */
+ * OptGltf_WriteFiles. Problems are reported with `opt_path` as the label. */
 bool ModelConversion_Convert(const ModelConversion* mc, const char* opt_path, const char* basename,
 							 const char* out_dir);
 

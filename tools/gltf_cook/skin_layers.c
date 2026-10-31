@@ -73,6 +73,7 @@ typedef struct LoadedImage {
 	int      image;
 	uint8_t* rgba;
 	int      w, h;
+	bool     owned; /* read from a file, not borrowed from the image source */
 } LoadedImage;
 
 typedef struct CompositeMaterial {
@@ -82,8 +83,10 @@ typedef struct CompositeMaterial {
 } CompositeMaterial;
 
 struct SkinLayers {
-	char*  gltf_path;
-	bool   verbose;
+	char*                       gltf_path;
+	AeronGltfCookUriImageSource images; /* NULL: the PNG files next to gltf_path */
+	void*                       images_context;
+	bool                        verbose;
 	char** uris; /* the file's image URIs, by image index */
 	size_t uri_count;
 
@@ -806,7 +809,8 @@ static bool expand(Expansion* x) {
 	return true;
 }
 
-SkinLayers* SkinLayers_Expand(cJSON* document, const char* gltf_path, bool verbose) {
+SkinLayers* SkinLayers_Expand(cJSON* document, const char* gltf_path,
+							  AeronGltfCookUriImageSource image_source, void* images_context, bool verbose) {
 	SkinLayers* out = (SkinLayers*)calloc(1, sizeof *out);
 	Inputs      in  = { 0 };
 	if (!out || !(out->gltf_path = dup_string(gltf_path))) {
@@ -814,7 +818,9 @@ SkinLayers* SkinLayers_Expand(cJSON* document, const char* gltf_path, bool verbo
 		fail("out of memory");
 		return NULL;
 	}
-	out->verbose = verbose;
+	out->verbose        = verbose;
+	out->images         = image_source;
+	out->images_context = images_context;
 	/* The URIs of the file's images, before composites are added. */
 	const cJSON* images = get(document, "images");
 	out->uri_count      = (size_t)cJSON_GetArraySize(images);
@@ -857,13 +863,23 @@ static const LoadedImage* load_image(SkinLayers* s, int image) {
 		ToolLog_Write(TOOL_LOG_ERROR, TAG ": image %d has no file", image);
 		return NULL;
 	}
-	char path[2048];
-	resolve_relative(path, sizeof path, s->gltf_path, s->uris[image]);
-	LoadedImage img = { .image = image };
-	char        err[256];
-	if (!read_png_rgba(path, &img.rgba, &img.w, &img.h, err, sizeof err)) {
-		ToolLog_Write(TOOL_LOG_ERROR, TAG ": PNG load failed: %s (%s)", path, err);
-		return NULL;
+	LoadedImage img = { .image = image, .owned = !s->images };
+	if (s->images) {
+		AeronGltfCookImageView view;
+		if (!s->images(s->images_context, s->uris[image], &view)) {
+			ToolLog_Write(TOOL_LOG_ERROR, TAG ": no pixels for image %s", s->uris[image]);
+			return NULL;
+		}
+		img.rgba = (uint8_t*)view.rgba;
+		img.w    = view.width;
+		img.h    = view.height;
+	} else {
+		char path[2048], err[256];
+		resolve_relative(path, sizeof path, s->gltf_path, s->uris[image]);
+		if (!read_png_rgba(path, &img.rgba, &img.w, &img.h, err, sizeof err)) {
+			ToolLog_Write(TOOL_LOG_ERROR, TAG ": PNG load failed: %s (%s)", path, err);
+			return NULL;
+		}
 	}
 	LoadedImage** grown = (LoadedImage**)realloc(s->loaded, (s->loaded_count + 1) * sizeof *grown);
 	LoadedImage*  item  = (LoadedImage*)malloc(sizeof *item);
@@ -871,7 +887,8 @@ static const LoadedImage* load_image(SkinLayers* s, int image) {
 		s->loaded = grown;
 	if (!grown || !item) {
 		free(item);
-		free(img.rgba);
+		if (img.owned)
+			free(img.rgba);
 		return NULL;
 	}
 	*item                         = img;
@@ -1044,7 +1061,8 @@ void SkinLayers_Free(SkinLayers* s) {
 	}
 	free(s->composites);
 	for (size_t i = 0; i < s->loaded_count; ++i) {
-		free(s->loaded[i]->rgba);
+		if (s->loaded[i]->owned)
+			free(s->loaded[i]->rgba);
 		free(s->loaded[i]);
 	}
 	free(s->loaded);

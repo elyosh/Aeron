@@ -297,6 +297,15 @@ bool OptGltf_ImageView(const OptGltfDocument* document, const cgltf_image* image
 	return true;
 }
 
+bool OptGltf_ImageViewByUri(const OptGltfDocument* document, const char* uri, OptGltfImageView* out_view) {
+	if (!document || !uri)
+		return false;
+	for (size_t i = 0; i < document->gb.images_count; ++i)
+		if (document->gb.images[i].uri && strcmp(document->gb.images[i].uri, uri) == 0)
+			return OptGltf_ImageView(document, &document->gb.images[i], out_view);
+	return false;
+}
+
 void OptGltf_Free(OptGltfDocument* document) {
 	if (!document)
 		return;
