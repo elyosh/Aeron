@@ -172,7 +172,12 @@ bool MakeDirs(const char* path) {
 
 bool RemoveTree(const char* path) {
 	struct stat st;
+#ifdef _WIN32
 	if (stat(path, &st) != 0)
+#else
+	/* A link is removed, not what it points to. */
+	if (lstat(path, &st) != 0)
+#endif
 		return true;
 	if (!S_ISDIR(st.st_mode))
 		return remove(path) == 0;

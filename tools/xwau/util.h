@@ -69,7 +69,8 @@ void   FreeList(char** names, size_t count);
  * exists afterwards. */
 bool MakeDirs(const char* path);
 
-/* Removes `path`. If it is a folder, everything in it is removed too. */
+/* Removes `path`. If it is a folder, everything in it is removed too. A
+ * symbolic link is removed without what it points to. */
 bool RemoveTree(const char* path);
 
 /* ---- Paths -------------------------------------------------------------- */
