@@ -44,20 +44,22 @@ static bool read_numbers(const char* text, int count, double* out) {
 	return true;
 }
 
-/* Reads SSAO.cfg as ddraw's LoadSSAOParams does: a line is `key = value`,
- * lines that start with ';' or '#' are comments, keys are found in any case
- * and the last line with a key wins. Without the file, the headlights are
- * off. */
-static void read_headlights(const char* game, Headlights* out) {
-	/* ddraw's defaults. Its default angle is given by its cosine, 0.25. */
-	*out = (Headlights) { .auto_turn_on  = true,
-						  .position      = { 0.0, 0.0, 20.0 },
-						  .color         = { 0.85, 0.85, 0.9 },
-						  .angle_degrees = acos(0.25) / 0.01745 };
+/* Called for each `key = value` line of a settings file. `value` is the
+ * rest of the line after the '='. */
+typedef void (*SettingFn)(const char* key, const char* value, void* data);
+
+/* Reads the settings file `name` as ddraw and Hook_CockpitLook read theirs,
+ * with sscanf("%s = %s"): a line is `key = value`, lines that start with ';'
+ * or '#' are comments, and there must be white space between the key and
+ * the '='. Calls `fn` for each setting, in the order of the file, so the
+ * last line with a key wins. Returns false when there is no such file. */
+static bool read_settings(const char* game, const char* name, SettingFn fn, void* data) {
 	char   path[1024];
 	size_t size = 0;
-	char*  text = Xwau_FindFile(game, "SSAO.cfg", path, sizeof path) ? ReadWholeFile(path, &size) : NULL;
-	for (char* line = text; line && *line;) {
+	char*  text = Xwau_FindFile(game, name, path, sizeof path) ? ReadWholeFile(path, &size) : NULL;
+	if (!text)
+		return false;
+	for (char* line = text; *line;) {
 		char* end = strchr(line, '\n');
 		if (end)
 			*end = 0;
@@ -75,25 +77,44 @@ static void read_headlights(const char* game, Headlights* out) {
 		const char* value = start + key_length;
 		while (isspace((unsigned char)*value))
 			++value;
-		if (line[0] != ';' && line[0] != '#' && *value == '=') {
-			++value;
-			double number[3];
-			if (strcasecmp(key, "ssao_enabled") == 0 && read_numbers(value, 1, number))
-				out->ssao_enabled = number[0] != 0.0;
-			else if (strcasecmp(key, "headlights_pos") == 0 || strcasecmp(key, "headlights_col") == 0) {
-				if (read_numbers(value, 3, number))
-					memcpy(strcasecmp(key, "headlights_pos") == 0 ? out->position : out->color, number,
-						   sizeof number);
-				else
-					Report("SSAO.cfg", "%s needs three numbers; ddraw's default is used", key);
-			} else if (strcasecmp(key, "headlights_angle") == 0 && read_numbers(value, 1, number))
-				out->angle_degrees = number[0];
-			else if (strcasecmp(key, "headlights_auto_turn_on") == 0 && read_numbers(value, 1, number))
-				out->auto_turn_on = number[0] != 0.0;
-		}
-		line = end ? end + 1 : NULL;
+		if (line[0] != ';' && line[0] != '#' && *value == '=')
+			fn(key, value + 1, data);
+		if (!end)
+			break;
+		line = end + 1;
 	}
 	free(text);
+	return true;
+}
+
+/* Reads one setting of SSAO.cfg, as ddraw's LoadSSAOParams does. Keys are
+ * found in any case. */
+static void read_headlight_setting(const char* key, const char* value, void* data) {
+	Headlights* out = data;
+	double      number[3];
+	if (strcasecmp(key, "ssao_enabled") == 0 && read_numbers(value, 1, number))
+		out->ssao_enabled = number[0] != 0.0;
+	else if (strcasecmp(key, "headlights_pos") == 0 || strcasecmp(key, "headlights_col") == 0) {
+		if (read_numbers(value, 3, number))
+			memcpy(strcasecmp(key, "headlights_pos") == 0 ? out->position : out->color, number,
+				   sizeof number);
+		else
+			Report("SSAO.cfg", "%s needs three numbers; ddraw's default is used", key);
+	} else if (strcasecmp(key, "headlights_angle") == 0 && read_numbers(value, 1, number))
+		out->angle_degrees = number[0];
+	else if (strcasecmp(key, "headlights_auto_turn_on") == 0 && read_numbers(value, 1, number))
+		out->auto_turn_on = number[0] != 0.0;
+}
+
+/* Reads SSAO.cfg as ddraw's LoadSSAOParams does. Without the file, the
+ * headlights are off. */
+static void read_headlights(const char* game, Headlights* out) {
+	/* ddraw's defaults. Its default angle is given by its cosine, 0.25. */
+	*out = (Headlights) { .auto_turn_on  = true,
+						  .position      = { 0.0, 0.0, 20.0 },
+						  .color         = { 0.85, 0.85, 0.9 },
+						  .angle_degrees = acos(0.25) / 0.01745 };
+	read_settings(game, "SSAO.cfg", read_headlight_setting, out);
 }
 
 /* Writes the `headlights` section, when the mod's ddraw draws headlights.
@@ -327,6 +348,110 @@ static bool write_docking(FILE* f, const char* game) {
 	return true;
 }
 
+/* The settings of Hook_CockpitLook that the `camera` section uses. */
+typedef struct CockpitLook {
+	bool  cockpit_inertia_enabled, external_inertia_enabled, inertia_in_hangar, inertia_in_map;
+	float cockpit_inertia, cockpit_max_inertia, cockpit_speed_inertia;
+	float external_inertia, external_max_inertia, external_dist_inertia, external_tilt;
+	float units_to_meters;
+} CockpitLook;
+
+/* Reads one setting of CockpitLook.cfg, as the hook's LoadParams does: keys
+ * are found in any case, the value is read with atof, and a switch is on
+ * when its value isn't 0. */
+static void read_cockpit_look_setting(const char* key, const char* value, void* data) {
+	CockpitLook* out    = data;
+	const float  number = (float)atof(value);
+	if (strcasecmp(key, "cockpit_inertia_enabled") == 0)
+		out->cockpit_inertia_enabled = number != 0.0f;
+	else if (strcasecmp(key, "cockpit_inertia") == 0)
+		out->cockpit_inertia = number;
+	else if (strcasecmp(key, "cockpit_max_inertia") == 0)
+		out->cockpit_max_inertia = number;
+	else if (strcasecmp(key, "cockpit_speed_inertia") == 0)
+		out->cockpit_speed_inertia = number;
+	else if (strcasecmp(key, "external_inertia_enabled") == 0)
+		out->external_inertia_enabled = number != 0.0f;
+	else if (strcasecmp(key, "enable_external_inertia_in_hangar") == 0)
+		out->inertia_in_hangar = number != 0.0f;
+	else if (strcasecmp(key, "external_inertia") == 0)
+		out->external_inertia = number;
+	else if (strcasecmp(key, "enable_external_inertia_in_map") == 0)
+		out->inertia_in_map = number != 0.0f;
+	else if (strcasecmp(key, "external_max_inertia") == 0)
+		out->external_max_inertia = number;
+	else if (strcasecmp(key, "external_dist_inertia") == 0)
+		out->external_dist_inertia = number;
+	else if (strcasecmp(key, "external_tilt") == 0)
+		out->external_tilt = number;
+	else if (strcasecmp(key, "xwa_units_to_meters_scale") == 0)
+		out->units_to_meters = number;
+}
+
+/* Writes the number `key` of the `camera` section. The game ignores a value
+ * outside the key's range, so such a value isn't written, and the game's
+ * own value applies. */
+static void write_camera_number(FILE* f, const char* key, double value, double min, double max) {
+	if (!(value >= min && value <= max)) {
+		Report("CockpitLook.cfg",
+			   "camera.%s would be %g, outside the game's range of %g to %g; it isn't imported", key, value,
+			   min, max);
+		return;
+	}
+	fprintf(f, "  %s: %.6g\n", key, value);
+}
+
+/* Writes the `camera` section, when the mod installs Hook_CockpitLook.dll or
+ * hook_exterior.dll. */
+static bool write_camera(FILE* f, const char* game) {
+	char       path[1024];
+	const bool look     = Xwau_FindFile(game, "Hook_CockpitLook.dll", path, sizeof path);
+	const bool exterior = Xwau_FindFile(game, "hook_exterior.dll", path, sizeof path);
+	if (!look && !exterior)
+		return false;
+	fputs("camera:\n", f);
+	if (!look) {
+		fputs("  exterior_lag: false\n  exterior_tilt: 0\n  cockpit_sway: false\n  exterior_hud: true\n", f);
+		return true;
+	}
+	/* The hook's defaults. */
+	CockpitLook c = { .cockpit_inertia       = 0.35f,
+					  .cockpit_max_inertia   = 0.2f,
+					  .cockpit_speed_inertia = 0.005f,
+					  .external_inertia      = 1.0f,
+					  .external_max_inertia  = 0.025f,
+					  .external_tilt         = -10.0f,
+					  .units_to_meters       = 25.0f };
+	read_settings(game, "CockpitLook.cfg", read_cockpit_look_setting, &c);
+	if (c.external_dist_inertia != 0.0f)
+		Report("CockpitLook.cfg",
+			   "external_dist_inertia = %g isn't imported: the camera distance doesn't change "
+			   "with the speed",
+			   (double)c.external_dist_inertia);
+	if (c.inertia_in_hangar || c.inertia_in_map)
+		Report("CockpitLook.cfg",
+			   "enable_external_inertia_in_hangar and enable_external_inertia_in_map aren't "
+			   "imported: the camera doesn't lag in the hangar and the map");
+	/* The hook turns the camera by cockpit_inertia * external_inertia * 16384
+	 * Q16 units for each unit of lag, which is pi / 2 radians, and limits
+	 * the turn to external_max_inertia * external_inertia * 16384, which is
+	 * 90 degrees. Its eye offsets are in its own units, which
+	 * xwa_units_to_meters_scale turns into world units. */
+	const double lag = (double)c.cockpit_inertia * c.external_inertia;
+	fprintf(f, "  exterior_lag: %s\n", c.external_inertia_enabled ? "true" : "false");
+	write_camera_number(f, "exterior_lag_strength", lag * 3.14159265358979 / 2.0, 0.0, 2.0);
+	write_camera_number(f, "exterior_lag_max", (double)c.external_max_inertia * c.external_inertia * 90.0,
+						0.0, 15.0);
+	write_camera_number(f, "exterior_tilt", -(double)c.external_tilt, -30.0, 30.0);
+	fprintf(f, "  cockpit_sway: %s\n", c.cockpit_inertia_enabled ? "true" : "false");
+	write_camera_number(f, "cockpit_sway_strength", (double)c.units_to_meters * c.cockpit_inertia, 0.0, 20.0);
+	write_camera_number(f, "cockpit_speed_sway", (double)c.units_to_meters * c.cockpit_speed_inertia, 0.0,
+						1.0);
+	write_camera_number(f, "cockpit_sway_max", (double)c.units_to_meters * c.cockpit_max_inertia, 0.0, 10.0);
+	fprintf(f, "  exterior_hud: %s\n", exterior ? "true" : "false");
+	return true;
+}
+
 bool XwauFlightSettings_Write(const char* game, const char* path) {
 	char               found[1024];
 	const bool         extra_planets = Xwau_FindFile(game, "hook_backdrops.dll", found, sizeof found);
@@ -351,6 +476,7 @@ bool XwauFlightSettings_Write(const char* game, const char* path) {
 	const bool shields    = write_shield_recharge(f, game);
 	const bool docking    = write_docking(f, game);
 	const bool limits     = XwauObjectLimits_Write(f, game);
+	const bool camera     = write_camera(f, game);
 	XwauSettingsConfig_Free(&config);
 	const bool        ok        = !ferror(f) && fclose(f) == 0;
 	char              what[300] = "";
@@ -361,7 +487,8 @@ bool XwauFlightSettings_Write(const char* game, const char* path) {
 									rates ? "the laser rates" : NULL,
 									shields ? "the shield recharge rules" : NULL,
 									docking ? "the docking rules" : NULL,
-									limits ? "the object counts" : NULL };
+									limits ? "the object counts" : NULL,
+									camera ? "the camera" : NULL };
 	for (size_t i = 0; i < sizeof parts / sizeof parts[0]; ++i) {
 		if (parts[i])
 			snprintf(what + strlen(what), sizeof what - strlen(what), "%s%s", what[0] ? ", " : "", parts[i]);

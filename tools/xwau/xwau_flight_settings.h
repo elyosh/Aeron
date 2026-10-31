@@ -57,6 +57,16 @@
  *       carried_offsets_carrier_dock_point: true
  *       player_approach_height: true
  *       player_snaps_to_target_orientation: true
+ *     camera:
+ *       exterior_lag: true
+ *       exterior_lag_strength: 0.471239
+ *       exterior_lag_max: 4.05
+ *       exterior_tilt: 10
+ *       cockpit_sway: true
+ *       cockpit_sway_strength: 5
+ *       cockpit_speed_sway: 0.075
+ *       cockpit_sway_max: 2.5
+ *       exterior_hud: true
  *
  * `extra_planets` is written when the mod installs XWAU's backdrop hook,
  * hook_backdrops.dll. With it, a mission's backdrop id N from 104 to 255
@@ -181,6 +191,30 @@
  * from each model's [Dock] section, in the model settings files. The hook's
  * ForceDockElevation, which replaces that cap for every model, isn't
  * imported, and is reported when it isn't -1.
+ *
+ * `camera` is written when the mod installs Hook_CockpitLook.dll or
+ * hook_exterior.dll, and turns on the game's enhanced camera. Its values come
+ * from CockpitLook.cfg, which the hook reads like ddraw reads SSAO.cfg. The
+ * hook doesn't read these settings from Hooks.ini. A key that the file
+ * doesn't set takes the hook's default:
+ *   - exterior_lag is external_inertia_enabled (default 0);
+ *   - exterior_lag_strength is cockpit_inertia (0.35) * external_inertia (1)
+ *     * pi / 2;
+ *   - exterior_lag_max is external_max_inertia (0.025) * external_inertia *
+ *     90;
+ *   - exterior_tilt is -external_tilt (-10), and the hook tilts the camera
+ *     even when its inertia is off;
+ *   - cockpit_sway is cockpit_inertia_enabled (0);
+ *   - cockpit_sway_strength, cockpit_speed_sway and cockpit_sway_max are
+ *     cockpit_inertia, cockpit_speed_inertia (0.005) and cockpit_max_inertia
+ *     (0.2), times xwa_units_to_meters_scale (25);
+ *   - exterior_hud is whether the mod installs hook_exterior.dll, which has
+ *     no settings.
+ * A value outside the game's range isn't written, and is reported. The
+ * hook's external_dist_inertia, enable_external_inertia_in_hangar and
+ * enable_external_inertia_in_map aren't imported, and are reported when they
+ * are set. With hook_exterior.dll only, the section turns the HUD on and the
+ * lag, the tilt and the sway off.
  */
 
 #include <stdbool.h>
