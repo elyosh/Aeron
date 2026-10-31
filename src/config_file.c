@@ -1,6 +1,7 @@
 #include "internal.h"
 
 #include <errno.h>
+#include <float.h>
 #include <math.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -1083,36 +1084,43 @@ static int AeronConfig_KeyIsPlain(const char* key) {
 	return 1;
 }
 
+/* Whether `text` reads back as `value`, or as the same float when `as_float`. */
+static int AeronConfig_ReadsBackAs(const char* text, double value, int as_float) {
+	double parsed;
+	if (!Aeron_ParseAsciiDouble(text, strlen(text), &parsed))
+		return 0;
+	if (as_float)
+		return fabs(parsed) <= FLT_MAX && (float)parsed == (float)value;
+	return memcmp(&parsed, &value, sizeof(value)) == 0;
+}
+
+/* Writes the shortest text that reads back as `value`, with a decimal point
+ * or an exponent so that it reads back as a float. Callers pass their float
+ * settings as doubles, so a double that holds a float exactly only has to
+ * read back as that float: 0.08f is written as 0.08, not as
+ * 0.07999999821186066. Values from 1e-6 to 1e17 are written in plain form,
+ * such as 20.0, and the others with an exponent. */
 static int AeronConfig_FormatRoundTripFloat(char* text, size_t capacity, double value) {
-	char candidate[64];
-	int  precision;
+	const double magnitude = fabs(value);
+	const int    as_float  = magnitude <= FLT_MAX && (double)(float)value == value;
+	int          precision;
+
+	if (magnitude == 0.0 || (magnitude >= 1e-6 && magnitude < 1e17)) {
+		for (precision = 1; precision <= 24; ++precision) {
+			if (!Aeron_FormatAsciiFixed(text, capacity, value, precision))
+				return 0;
+			if (AeronConfig_ReadsBackAs(text, value, as_float))
+				return 1;
+		}
+		return 0;
+	}
 	for (precision = 1; precision <= 17; ++precision) {
-		double parsed;
-		if (Aeron_FormatAsciiDouble(candidate, sizeof(candidate), value, precision) &&
-			Aeron_ParseAsciiDouble(candidate, strlen(candidate), &parsed) &&
-			memcmp(&parsed, &value, sizeof(value)) == 0)
-			break;
-	}
-	if (precision > 17)
-		return 0;
-	if (!strchr(candidate, '.')) {
-		char*  exponent = strchr(candidate, 'e');
-		size_t length;
-		size_t offset;
-		if (!exponent)
-			exponent = strchr(candidate, 'E');
-		length = strlen(candidate);
-		offset = exponent ? (size_t)(exponent - candidate) : length;
-		if (length + 2u >= sizeof(candidate))
+		if (!Aeron_FormatAsciiDouble(text, capacity, value, precision))
 			return 0;
-		memmove(candidate + offset + 2u, candidate + offset, length - offset + 1u);
-		candidate[offset]      = '.';
-		candidate[offset + 1u] = '0';
+		if (AeronConfig_ReadsBackAs(text, value, as_float))
+			return 1;
 	}
-	if (strlen(candidate) >= capacity)
-		return 0;
-	strcpy(text, candidate);
-	return 1;
+	return 0;
 }
 
 static int AeronConfig_EmitScalar(AeronConfigBuffer* buffer, const AeronConfigNode* node) {

@@ -16,6 +16,11 @@ int Aeron_ParseAsciiDouble(const char* text, size_t length, double* out_value);
  * Thread-safe. */
 int Aeron_FormatAsciiDouble(char* text, size_t capacity, double value, int significant_digits);
 
+/* Formats a finite value in plain form with `decimals` digits after an ASCII
+ * '.' decimal separator, from 0 to 40. Returns zero on invalid arguments or
+ * truncation. Thread-safe. */
+int Aeron_FormatAsciiFixed(char* text, size_t capacity, double value, int decimals);
+
 #ifdef __cplusplus
 }
 #endif

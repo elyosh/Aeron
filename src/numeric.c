@@ -31,9 +31,12 @@ static double AeronNumeric_Parse(AeronNumericLocale locale, const char* text, ch
 	return value;
 }
 
+/* `fixed` selects %f, with `precision` decimals, instead of %g, with
+   `precision` significant digits. */
 static int AeronNumeric_Format(AeronNumericLocale locale, char* text, size_t capacity, double value,
-							   int significant_digits) {
-	return _snprintf_l(text, capacity, "%.*g", locale, significant_digits, value);
+							   int precision, int fixed) {
+	return fixed ? _snprintf_l(text, capacity, "%.*f", locale, precision, value)
+				 : _snprintf_l(text, capacity, "%.*g", locale, precision, value);
 }
 
 #else
@@ -62,14 +65,15 @@ static double AeronNumeric_Parse(AeronNumericLocale locale, const char* text, ch
 }
 
 static int AeronNumeric_Format(AeronNumericLocale locale, char* text, size_t capacity, double value,
-							   int significant_digits) {
+							   int precision, int fixed) {
 	locale_t previous = uselocale(locale);
 	int      written;
 
 	if (!previous) {
 		return -1;
 	}
-	written = snprintf(text, capacity, "%.*g", significant_digits, value);
+	written = fixed ? snprintf(text, capacity, "%.*f", precision, value)
+					: snprintf(text, capacity, "%.*g", precision, value);
 	(void)uselocale(previous);
 	return written;
 }
@@ -114,23 +118,34 @@ int Aeron_ParseAsciiDouble(const char* text, size_t length, double* out_value) {
 	return 1;
 }
 
-int Aeron_FormatAsciiDouble(char* text, size_t capacity, double value, int significant_digits) {
+static int AeronNumeric_FormatAscii(char* text, size_t capacity, double value, int precision, int fixed) {
 	AeronNumericLocale locale;
 	int                written;
 
-	if (!text || capacity == 0 || !isfinite(value) || significant_digits < 1 || significant_digits > 17) {
-		return 0;
-	}
 	locale = AeronNumeric_CreateCLocale();
 	if (!locale) {
 		text[0] = '\0';
 		return 0;
 	}
-	written = AeronNumeric_Format(locale, text, capacity, value, significant_digits);
+	written = AeronNumeric_Format(locale, text, capacity, value, precision, fixed);
 	AeronNumeric_DestroyLocale(locale);
 	if (written < 0 || (size_t)written >= capacity) {
 		text[0] = '\0';
 		return 0;
 	}
 	return 1;
+}
+
+int Aeron_FormatAsciiDouble(char* text, size_t capacity, double value, int significant_digits) {
+	if (!text || capacity == 0 || !isfinite(value) || significant_digits < 1 || significant_digits > 17) {
+		return 0;
+	}
+	return AeronNumeric_FormatAscii(text, capacity, value, significant_digits, 0);
+}
+
+int Aeron_FormatAsciiFixed(char* text, size_t capacity, double value, int decimals) {
+	if (!text || capacity == 0 || !isfinite(value) || decimals < 0 || decimals > 40) {
+		return 0;
+	}
+	return AeronNumeric_FormatAscii(text, capacity, value, decimals, 1);
 }
