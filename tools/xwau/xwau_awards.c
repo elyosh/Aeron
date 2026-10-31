@@ -1,0 +1,238 @@
+#include "xwau_awards.h"
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#include "util.h"
+#include "xwau_config.h"
+
+#define HEADER "# Made by xwau_import missions."
+
+/* The counts that the game keeps: 8 rank thresholds and 25 rating
+ * thresholds. */
+#define RANK_COUNT 8
+#define RATING_COUNT 25
+/* The runtime's limits: 20 battle medals, 100 Kalidor levels, and mementos
+ * for missions 0 to 255. */
+#define BATTLE_MAX 20
+#define KALIDOR_MAX 100
+#define MEMENTO_MAX 256
+
+/* Reads the lines of a name file as std::getline does on Windows: a line
+ * ends at '\n', a '\r' before it is dropped, and the line isn't trimmed. An
+ * empty line becomes "Unknown". `*found` tells whether the file exists. */
+static bool read_names(const char* game, const char* name, XwauLines* out, bool* found) {
+	memset(out, 0, sizeof *out);
+	char path[1024];
+	*found = Xwau_FindFile(game, name, path, sizeof path);
+	if (!*found)
+		return true;
+	size_t size = 0;
+	char*  data = ReadWholeFile(path, &size);
+	if (!data) {
+		Report(path, "cannot be read");
+		return false;
+	}
+	bool ok = true;
+	for (size_t start = 0; ok && start < size;) {
+		const char* nl  = memchr(data + start, '\n', size - start);
+		size_t      end = nl ? (size_t)(nl - data) : size;
+		size_t      len = end - start;
+		if (nl && len && data[end - 1] == '\r')
+			--len;
+		ok    = len ? XwauLines_Add(out, data + start, len) : XwauLines_Add(out, "Unknown", 7);
+		start = end + 1;
+	}
+	free(data);
+	if (!ok)
+		Report(NULL, "out of memory (%s)", name);
+	return ok;
+}
+
+/* Reads a list of numbers as the hook does (std::stoi of each line). A value
+ * that isn't a number stops the hook, and a value of 0 or less isn't a
+ * threshold, so these leave the whole list out. `*count` is 0 when the file
+ * doesn't exist or is left out. */
+static bool read_values(const char* game, const char* name, long long* values, size_t max, size_t* count) {
+	*count = 0;
+	char path[1024];
+	if (!Xwau_FindFile(game, name, path, sizeof path))
+		return true;
+	XwauLines lines;
+	if (!XwauLines_Read(path, "", XWAU_RULES_CPP, &lines)) {
+		Report(NULL, "out of memory (%s)", name);
+		return false;
+	}
+	size_t n = 0;
+	for (size_t i = 0; i < lines.count; ++i) {
+		long long value;
+		if (!Xwau_Stoi(lines.items[i], &value) || value <= 0) {
+			Report(path, "'%s' isn't a number above 0; the file is left out", lines.items[i]);
+			XwauLines_Free(&lines);
+			return true;
+		}
+		if (n < max)
+			values[n++] = value;
+	}
+	if (lines.count > max)
+		Report(path, "%zu values; the game uses the first %zu", lines.count, max);
+	XwauLines_Free(&lines);
+	*count = n;
+	return true;
+}
+
+/* Whether the installation has the image at `rel`. The game loads a .bmp
+ * path from the .cbm file of the same name. */
+static bool image_exists(const char* game, const char* rel) {
+	char        found[1024], cbm[1024];
+	const char* dot = strrchr(rel, '.');
+	return Xwau_FindFile(game, rel, found, sizeof found) ||
+		   (dot && PathFormat(cbm, sizeof cbm, "%.*s.cbm", (int)(dot - rel), rel) &&
+			Xwau_FindFile(game, cbm, found, sizeof found));
+}
+
+static bool is_null_name(const char* name) { return strcmp(name, "Null") == 0 || strcmp(name, "null") == 0; }
+
+static void write_values(FILE* f, const char* key, const long long* values, size_t count) {
+	fprintf(f, "%s: [", key);
+	for (size_t i = 0; i < count; ++i)
+		fprintf(f, "%s%lld", i ? ", " : "", values[i]);
+	fprintf(f, "]\n");
+}
+
+/* Removes `path` if an earlier import wrote it. */
+static void remove_ours(const char* path) {
+	FILE* f = fopen(path, "r");
+	if (!f)
+		return;
+	char       line[64];
+	const bool ours = fgets(line, sizeof line, f) && strncmp(line, HEADER, strlen(HEADER)) == 0;
+	fclose(f);
+	if (ours)
+		remove(path);
+}
+
+bool XwauAwards_Write(const char* game, const char* path) {
+	char dll[1024];
+	if (!Xwau_FindFile(game, "hook_concourse.dll", dll, sizeof dll)) {
+		remove_ours(path);
+		return true;
+	}
+	XwauLines  medals = { 0 }, kalidor_names = { 0 }, memento_names = { 0 }, images = { 0 };
+	bool       has_medals = false, has_kalidor_names = false, has_memento_names = false;
+	long long  kalidor_points[KALIDOR_MAX], ranks[RANK_COUNT], ratings[RATING_COUNT];
+	size_t     kalidor_count = 0, rank_count = 0, rating_count = 0;
+	char       images_path[1024];
+	const bool has_images = Xwau_FindFile(game, "MedalDetailList.txt", images_path, sizeof images_path);
+	bool ok = read_names(game, "MedalsDescriptions.txt", &medals, &has_medals) &&
+			  read_names(game, "KalidorCrescentDescriptions.txt", &kalidor_names, &has_kalidor_names) &&
+			  read_names(game, "FamilyMedalsDescriptions.txt", &memento_names, &has_memento_names) &&
+			  read_values(game, "KalidorCrescentPoints.txt", kalidor_points, KALIDOR_MAX, &kalidor_count) &&
+			  read_values(game, "RankPoints.txt", ranks, RANK_COUNT, &rank_count) &&
+			  read_values(game, "PilotRatingPoints.txt", ratings, RATING_COUNT, &rating_count);
+	if (ok && has_images && !(ok = XwauLines_Read(images_path, "", XWAU_RULES_CPP, &images)))
+		Report(NULL, "out of memory (MedalDetailList.txt)");
+	size_t medal_count = medals.count;
+	if (ok && medal_count > BATTLE_MAX) {
+		Report(NULL, "MedalsDescriptions.txt: %zu names; the game has up to %d battle medals", medal_count,
+			   BATTLE_MAX);
+		medal_count = BATTLE_MAX;
+	}
+
+	/* Without KalidorCrescentPoints.txt, the hook keeps the 6 stock levels. */
+	const size_t kalidor_levels = kalidor_count ? kalidor_count : (has_kalidor_names ? 6 : 0);
+	size_t       memento_count  = images.count > memento_names.count ? images.count : memento_names.count;
+	if (memento_count > MEMENTO_MAX) {
+		Report(NULL, "mementos: %zu missions; the game has mementos for up to %d missions", memento_count,
+			   MEMENTO_MAX);
+		memento_count = MEMENTO_MAX;
+	}
+	size_t missing = 0;
+	if (!ok ||
+		!(medal_count || kalidor_levels || rank_count || rating_count || has_images || memento_names.count)) {
+		if (ok)
+			remove_ours(path);
+	} else {
+		char  dir[1024];
+		char* slash = strrchr(path, '/');
+		ok      = !slash || (PathFormat(dir, sizeof dir, "%.*s", (int)(slash - path), path) && MakeDirs(dir));
+		FILE* f = ok ? fopen(path, "w") : NULL;
+		if (!f) {
+			Report(NULL, "cannot write %s", path);
+			ok = false;
+		} else {
+			fprintf(f, "%s\nversion: 1\n", HEADER);
+			if (medal_count) {
+				fprintf(f, "battle_medals:\n");
+				for (size_t i = 0; i < medal_count; ++i) {
+					fprintf(f, "  - { name: ");
+					Xwau_WriteString(f, medals.items[i]);
+					fprintf(f, " }\n");
+				}
+			}
+			if (kalidor_levels) {
+				fprintf(f, "kalidor:\n");
+				for (size_t i = 0; i < kalidor_levels; ++i) {
+					const bool named = i < kalidor_names.count;
+					fprintf(f, "  - {");
+					if (kalidor_count)
+						fprintf(f, " points: %lld%s", kalidor_points[i], named ? "," : "");
+					if (named) {
+						fprintf(f, " name: ");
+						Xwau_WriteString(f, kalidor_names.items[i]);
+					}
+					fprintf(f, " }\n");
+				}
+			}
+			if (rank_count)
+				write_values(f, "rank_thresholds", ranks, rank_count);
+			if (rating_count)
+				write_values(f, "rating_thresholds", ratings, rating_count);
+			if (has_images || memento_names.count) {
+				fprintf(f, "mementos:\n");
+				if (has_images) {
+					size_t written = 0;
+					for (size_t i = 0; i < images.count && i < memento_count; ++i) {
+						if (strcmp(images.items[i], "null") == 0)
+							continue;
+						if (!image_exists(game, images.items[i])) {
+							Report(NULL, "MedalDetailList.txt: mission %zu: %s isn't in the installation", i,
+								   images.items[i]);
+							++missing;
+						}
+						fprintf(f, "%s    %zu: ", written++ ? "" : "  images:\n", i);
+						Xwau_WriteString(f, images.items[i]);
+						fprintf(f, "\n");
+					}
+					/* An empty map still replaces the stock images. */
+					if (!written)
+						fprintf(f, "  images: {}\n");
+				}
+				size_t written = 0;
+				for (size_t i = 0; i < memento_names.count && i < memento_count; ++i) {
+					if (is_null_name(memento_names.items[i]))
+						continue;
+					fprintf(f, "%s    %zu: ", written++ ? "" : "  names:\n", i);
+					Xwau_WriteString(f, memento_names.items[i]);
+					fprintf(f, "\n");
+				}
+			}
+			if (fclose(f) != 0) {
+				Report(NULL, "cannot write %s", path);
+				ok = false;
+			}
+		}
+		if (ok)
+			Report(NULL,
+				   "awards: %zu battle medal names, %zu Kalidor levels, %zu rank and %zu rating thresholds, "
+				   "%s mementos; %zu memento images missing; written to %s",
+				   medal_count, kalidor_levels, rank_count, rating_count, has_images ? "replaced" : "stock",
+				   missing, path);
+	}
+	XwauLines_Free(&medals);
+	XwauLines_Free(&kalidor_names);
+	XwauLines_Free(&memento_names);
+	XwauLines_Free(&images);
+	return ok;
+}

@@ -6,8 +6,10 @@
  * (xwau_import missions --game-files DIR). The game reads these files from
  * there instead of from the game folder. The copied files are:
  *   - every .tie in Missions/, Melee/ and Combat/;
- *   - the MISSION.LST of these folders, Missions/EMAIL.TXT and
- *     Frontres/Cutscene/cutscene.txt, if they differ from the stock game's;
+ *   - the MISSION.LST of these folders, Missions/EMAIL.TXT,
+ *     Frontres/Cutscene/cutscene.txt, and the medal files MEDALS.TXT,
+ *     MEDALS.LST and FAMILYAWARDS.TXT in Frontres/MEDALS/, if they differ
+ *     from the stock game's;
  *   - the files in Wave/ that differ from the stock game's. This covers the
  *     stock files directly in Wave/, such as SFXBLASTNEW.LST, and every file
  *     in a folder that the stock game also has: mission voices

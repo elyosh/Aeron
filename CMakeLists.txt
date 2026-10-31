@@ -1078,9 +1078,10 @@ if(AERON_BUILD_TOOLS)
     endif()
 
     # The XWAU imports that are not models: the mission files, the
-    # skyboxes, the craft settings and the text overrides. xwau_import and
+    # skyboxes, the craft settings, the text overrides and the awards. xwau_import and
     # its test link this library.
     add_library(xwau_import_lib STATIC
+        tools/xwau/xwau_awards.c
         tools/xwau/xwau_craft.c
         tools/xwau/xwau_flight_settings.c
         tools/xwau/xwau_game_files.c

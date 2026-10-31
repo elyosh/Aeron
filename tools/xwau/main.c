@@ -4,7 +4,7 @@
  *
  * Usage:
  *   xwau_import missions --xwau-root DIR --stock-game DIR --game-files DIR
- *                        --flight-settings FILE
+ *                        --flight-settings FILE [--awards FILE]
  *                        [--skyboxes FILE --skybox-folders FILE] <output_dir>
  *   xwau_import craft --xwau-root DIR [--stock-game DIR [--strings FILE]]
  *                     [--game-files DIR] <output_dir>
@@ -16,7 +16,9 @@
  * (xwau_mission_files.h). A mission without its own .TIE in the installation
  * uses the one in --stock-game, the stock game's folder. It writes the
  * settings that apply to every mission into the --flight-settings file,
- * flight/flight.yaml (xwau_flight_settings.h). With --skyboxes, it also
+ * flight/flight.yaml (xwau_flight_settings.h). With --awards, it writes the
+ * medals, Kalidor Crescent levels, promotion thresholds and mementos into
+ * FILE, frontend/awards.yaml (xwau_awards.h). With --skyboxes, it also
  * writes the environments of the missions' [SkyBoxes] sections into the
  * environment manifest FILE, flight/environments/environments.yaml, keeping
  * the file's other entries, and the sky and overlay folders that
@@ -40,6 +42,7 @@
 #include <string.h>
 
 #include "util.h"
+#include "xwau_awards.h"
 #include "xwau_craft.h"
 #include "xwau_flight_settings.h"
 #include "xwau_game_files.h"
@@ -53,7 +56,7 @@
 
 static int usage(void) {
 	fprintf(stderr, "usage: xwau_import missions --xwau-root DIR --stock-game DIR --game-files DIR\n"
-					"                            --flight-settings FILE\n"
+					"                            --flight-settings FILE [--awards FILE]\n"
 					"                            [--skyboxes FILE --skybox-folders FILE] <output_dir>\n"
 					"       xwau_import craft --xwau-root DIR [--stock-game DIR [--strings FILE]]\n"
 					"                         [--game-files DIR] <output_dir>\n");
@@ -61,7 +64,8 @@ static int usage(void) {
 }
 
 /* xwau_import missions --xwau-root DIR --stock-game DIR --game-files DIR
- *                      --flight-settings FILE [--skyboxes FILE --skybox-folders FILE] <output_dir> */
+ *                      --flight-settings FILE [--awards FILE] [--skyboxes FILE --skybox-folders FILE]
+ *                      <output_dir> */
 static int run_missions(int argc, char** argv) {
 	const char* xwau_root      = NULL;
 	const char* stock_game     = NULL;
@@ -69,6 +73,7 @@ static int run_missions(int argc, char** argv) {
 	const char* skybox_folders = NULL;
 	const char* game_files     = NULL;
 	const char* flight         = NULL;
+	const char* awards         = NULL;
 	int         ai             = 0;
 	for (; ai < argc && strncmp(argv[ai], "--", 2) == 0; ai += 2) {
 		const char** value = strcmp(argv[ai], "--xwau-root") == 0         ? &xwau_root
@@ -77,6 +82,7 @@ static int run_missions(int argc, char** argv) {
 							 : strcmp(argv[ai], "--skybox-folders") == 0  ? &skybox_folders
 							 : strcmp(argv[ai], "--game-files") == 0      ? &game_files
 							 : strcmp(argv[ai], "--flight-settings") == 0 ? &flight
+							 : strcmp(argv[ai], "--awards") == 0          ? &awards
 																		  : NULL;
 		if (!value) {
 			Report(NULL, "unknown option '%s'", argv[ai]);
@@ -103,7 +109,7 @@ static int run_missions(int argc, char** argv) {
 		return 2;
 	}
 	if (!XwauGameFiles_Copy(xwau_root, stock_game, game_files) ||
-		!XwauFlightSettings_Write(xwau_root, flight))
+		!XwauFlightSettings_Write(xwau_root, flight) || (awards && !XwauAwards_Write(xwau_root, awards)))
 		return 1;
 	XwauMissions* missions = XwauMissions_Load(xwau_root, true);
 	if (!missions) {

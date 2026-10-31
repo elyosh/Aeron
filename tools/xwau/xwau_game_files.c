@@ -202,6 +202,9 @@ bool XwauGameFiles_Copy(const char* game, const char* stock_game, const char* ou
 		ok = ok && PathFormat(rel, sizeof rel, "%s/MISSION.LST", kMissionDirs[d]) && copy_list(&c, rel);
 	}
 	ok = ok && copy_list(&c, "Missions/EMAIL.TXT") && copy_list(&c, "Frontres/Cutscene/cutscene.txt");
+	/* The battle medals, the medal images and the memento texts. */
+	ok = ok && copy_list(&c, "Frontres/MEDALS/MEDALS.TXT") && copy_list(&c, "Frontres/MEDALS/MEDALS.LST") &&
+		 copy_list(&c, "Frontres/MEDALS/FAMILYAWARDS.TXT");
 	ok = ok && copy_wave(&c);
 	if (ok)
 		Report(NULL,
