@@ -45,6 +45,14 @@
  *     without a cube is `none`.
  * A region with an overlay but no cube gets no overlay, and is reported.
  *
+ * A Death Star mission without [SkyBoxes] gets the environment
+ * openxwa.death_star in its four regions. It has no sky and no directional
+ * light, so the light of the mission's backdrops, which the stock game
+ * places as a sun outside the Death Star, doesn't light its inside. Its
+ * ambient fill is the game's ambient where no environment gives one. These
+ * are the Death Star missions of the mod and of the stock game: the type of
+ * the mod's .TIE, or of the game's when the mod has none.
+ *
  * They go between two comment lines in each of the manifest's maps,
  * `environments` and `xwa.missions`:
  *   # Begin of the entries that the OpenXWA mod importer writes. ...

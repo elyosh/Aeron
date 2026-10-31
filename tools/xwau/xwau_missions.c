@@ -23,6 +23,8 @@
 #define TIE_FLIGHT_GROUP_CRAFT 0x6B
 #define TIE_FLIGHT_GROUP_CRAFT_COUNT 0x6C
 #define TIE_FLIGHT_GROUP_MARKINGS 0x73
+/* The header's mission type byte. */
+#define TIE_MISSION_TYPE 0x23AC
 
 static const char* const kMissionDirs[] = { "Missions", "Melee", "Combat" };
 
@@ -518,6 +520,15 @@ XwauTieFlightGroup* XwauTie_FlightGroups(const char* path, size_t* count) {
 	}
 	fclose(f);
 	return out;
+}
+
+int XwauTie_MissionType(const char* path) {
+	FILE* f = path ? fopen(path, "rb") : NULL;
+	if (!f)
+		return -1;
+	const int type = fseek(f, TIE_MISSION_TYPE, SEEK_SET) == 0 ? fgetc(f) : EOF;
+	fclose(f);
+	return type == EOF ? -1 : type;
 }
 
 static const ModelVariants* find_model_variants(const XwauMissions* m, const char* model) {

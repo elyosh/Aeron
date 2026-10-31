@@ -24,6 +24,14 @@
 
 static const char* const kMissionDirs[] = { "Missions", "Melee", "Combat" };
 
+/* The environment of the Death Star missions without [SkyBoxes]. It has no
+ * sky and no directional light, so the light of the mission's backdrops
+ * doesn't reach the inside of the Death Star. Its ambient fill is the one
+ * the game uses where no environment gives one, so the Death Star keeps its
+ * brightness. */
+#define SKY_DEATH_STAR_ENVIRONMENT "openxwa.death_star"
+#define SKY_DEATH_STAR_AMBIENT 5.9
+
 /* The starfield images that the ddraw wrapper hides under a cube
  * (EffectsRenderer.cpp). */
 static const uint16_t kStarfieldImages[][2] = {
@@ -117,6 +125,7 @@ typedef struct SkyList {
 
 typedef struct SkyMission {
 	char      key[256]; /* "missions/1b0m1fw.tie" */
+	bool      death_star; /* a Death Star mission without [SkyBoxes] */
 	SkyRegion regions[SKY_REGIONS];
 	SkyList   disabled, enabled;
 } SkyMission;
@@ -131,6 +140,7 @@ typedef struct SkyState {
 	size_t         definition_count;
 	SkyMission*    missions;
 	size_t         mission_count;
+	size_t         death_star_count;
 } SkyState;
 
 /* The value of `key` read as std::stof reads it, or `fallback`. */
@@ -465,6 +475,52 @@ static bool read_mission(SkyState* st, const char* dir, const char* name, SkyMis
 	return ok;
 }
 
+static bool has_mission(const SkyState* st, const char* key) {
+	for (size_t m = 0; m < st->mission_count; ++m)
+		if (strcmp(st->missions[m].key, key) == 0)
+			return true;
+	return false;
+}
+
+/* Adds the Death Star missions of folder `dir` that the mod or the game has
+ * and that have no [SkyBoxes]. The mod's .TIE is read when it has one.
+ * Returns false when out of memory. */
+static bool add_death_star_missions(SkyState* st, const char* dir) {
+	const char* const installs[] = { st->game, st->stock_game };
+	bool              ok         = true;
+	for (size_t i = 0; ok && i < sizeof installs / sizeof installs[0]; ++i) {
+		char folder[1024];
+		if (!installs[i] || !Xwau_FindDir(installs[i], dir, folder, sizeof folder))
+			continue;
+		size_t count = 0;
+		char** names = ListDir(folder, true, &count);
+		for (size_t n = 0; ok && n < count; ++n) {
+			if (!EndsWithNoCase(names[n], ".tie"))
+				continue;
+			char       rel[300], tie[1024];
+			SkyMission mission;
+			memset(&mission, 0, sizeof mission);
+			mission.death_star = true;
+			char lower_dir[64], lower_name[256];
+			LowerCopy(lower_dir, sizeof lower_dir, dir);
+			LowerCopy(lower_name, sizeof lower_name, names[n]);
+			snprintf(mission.key, sizeof mission.key, "%s/%s", lower_dir, lower_name);
+			if (has_mission(st, mission.key) || !PathFormat(rel, sizeof rel, "%s/%s", dir, names[n]) ||
+				(!Xwau_FindFile(st->game, rel, tie, sizeof tie) &&
+				 !Xwau_FindFile(st->stock_game, rel, tie, sizeof tie)) ||
+				XwauTie_MissionType(tie) != XWAU_TIE_MISSION_TYPE_DEATH_STAR)
+				continue;
+			ok = ArrayGrow((void**)&st->missions, st->mission_count, sizeof *st->missions);
+			if (ok) {
+				st->missions[st->mission_count++] = mission;
+				++st->death_star_count;
+			}
+		}
+		FreeList(names, count);
+	}
+	return ok;
+}
+
 /* ===== Writing =========================================================== */
 
 static void write_images(FILE* f, const char* key, const SkyList* const* lists, size_t list_count) {
@@ -501,6 +557,13 @@ static float clamp_value(float v, float max, const char* what, const char* name)
 /* Writes the importer's environments into `f`, as entries of the
  * manifest's `environments` map. */
 static void write_environments(const SkyState* st, FILE* f) {
+	if (st->death_star_count)
+		fprintf(f,
+				"  " SKY_DEATH_STAR_ENVIRONMENT ":\n"
+				"    intensity: 0\n"
+				"    ambient_fill: [%g, %g, %g]\n"
+				"    directional_lights: []\n",
+				SKY_DEATH_STAR_AMBIENT, SKY_DEATH_STAR_AMBIENT, SKY_DEATH_STAR_AMBIENT);
 	for (size_t i = 0; i < st->definition_count; ++i) {
 		const SkyDefinition* d       = &st->definitions[i];
 		const char*          key     = st->folders[d->folder].key;
@@ -538,9 +601,14 @@ static void write_environments(const SkyState* st, FILE* f) {
 static void write_missions(const SkyState* st, FILE* f) {
 	for (size_t m = 0; m < st->mission_count; ++m) {
 		const SkyMission* mission = &st->missions[m];
-		SkyList           hide;
-		hide_list(mission, &hide, mission->key);
 		fprintf(f, "    \"%s\":\n      regions:\n", mission->key);
+		if (mission->death_star) {
+			for (int r = 0; r < SKY_REGIONS; ++r)
+				fprintf(f, "        \"%d\": " SKY_DEATH_STAR_ENVIRONMENT "\n", r);
+			continue;
+		}
+		SkyList hide;
+		hide_list(mission, &hide, mission->key);
 		for (int r = 0; r < SKY_REGIONS; ++r) {
 			const SkyRegion* region = &mission->regions[r];
 			if (region->definition < 0) {
@@ -805,8 +873,12 @@ bool XwauSkyboxes_Write(const char* game, const char* stock_game, const char* ma
 		}
 		XwauLines_Free(&names);
 	}
+	for (size_t d = 0; ok && d < sizeof kMissionDirs / sizeof kMissionDirs[0]; ++d)
+		ok = add_death_star_missions(&st, kMissionDirs[d]);
 	size_t with_sky = 0, without = 0, overlays = 0;
 	for (size_t m = 0; m < st.mission_count; ++m) {
+		if (st.missions[m].death_star)
+			continue;
 		for (int r = 0; r < SKY_REGIONS; ++r) {
 			const SkyRegion* region = &st.missions[m].regions[r];
 			with_sky += region->definition >= 0;
@@ -845,7 +917,13 @@ bool XwauSkyboxes_Write(const char* game, const char* stock_game, const char* ma
 		Report(NULL,
 			   "updated %s: %zu missions, %zu regions with a sky and %zu without, %zu environments for %zu "
 			   "cube folders",
-			   manifest, st.mission_count, with_sky, without, st.definition_count, st.folder_count);
+			   manifest, st.mission_count - st.death_star_count, with_sky, without, st.definition_count,
+			   st.folder_count);
+		if (st.death_star_count)
+			Report(NULL,
+				   "%zu Death Star missions use " SKY_DEATH_STAR_ENVIRONMENT
+				   ", without the light of their backdrops",
+				   st.death_star_count);
 		if (overlays)
 			Report(NULL, "%zu regions have an overlay", overlays);
 		if (st.not_found)

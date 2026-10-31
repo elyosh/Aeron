@@ -386,6 +386,11 @@ static void test_skyboxes(const char* scratch) {
 	write_file(path, "");
 	snprintf(path, sizeof path, "%s/Missions/m7.ini", game);
 	write_file(path, "[SkyBoxes]\nAllRegions = Effects\\CubeMaps\\Alpha\n");
+	/* DS1 is a Death Star mission without [SkyBoxes] that only the game has. */
+	static uint8_t death_star[0x23AD];
+	death_star[0x23AC] = 5;
+	snprintf(path, sizeof path, "%s/Missions/DS1.TIE", stock);
+	WriteWholeFile(path, death_star, sizeof death_star);
 	char manifest[1200], folders[1200];
 	snprintf(manifest, sizeof manifest, "%s/sky.yaml", scratch);
 	snprintf(folders, sizeof folders, "%s/sky_folders.txt", scratch);
@@ -399,6 +404,14 @@ static void test_skyboxes(const char* scratch) {
 	const char* m4   = text ? strstr(text, "\"missions/m4.tie\"") : NULL;
 	const char* m5   = text ? strstr(text, "\"missions/m5.tie\"") : NULL;
 	check(m1 && m2 && m3 && m4 && m5, "skyboxes: one entry per mission");
+	check(text &&
+			  strstr(text, "  openxwa.death_star:\n    intensity: 0\n    ambient_fill: [5.9, 5.9, 5.9]\n"
+						   "    directional_lights: []\n") &&
+			  strstr(text, "\"missions/ds1.tie\":\n      regions:\n        \"0\": openxwa.death_star\n"
+						   "        \"1\": openxwa.death_star\n        \"2\": openxwa.death_star\n"
+						   "        \"3\": openxwa.death_star\n") &&
+			  !strstr(text, "\"missions/m1.tie\":\n      regions:\n        \"0\": openxwa"),
+		  "skyboxes: a Death Star mission without [SkyBoxes] has no directional light");
 	check(text && strstr(text, "\"missions/m6.tie\"") && !strstr(text, "\"missions/m7.tie\""),
 		  "skyboxes: a mission that only the mod has is kept, one that neither has is left out");
 	if (m4 && m5) {

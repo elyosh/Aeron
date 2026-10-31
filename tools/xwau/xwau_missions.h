@@ -93,4 +93,11 @@ typedef struct XwauTieFlightGroup {
  * cannot be read. */
 XwauTieFlightGroup* XwauTie_FlightGroups(const char* path, size_t* count);
 
+/* The mission type of an XWA .TIE: 5 for a Death Star mission. */
+#define XWAU_TIE_MISSION_TYPE_DEATH_STAR 5
+
+/* Reads the mission type of the .TIE file `path`. Returns -1 when it cannot
+ * be read. */
+int XwauTie_MissionType(const char* path);
+
 #endif /* AERON_XWAU_MISSIONS_H */
