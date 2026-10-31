@@ -61,8 +61,9 @@ void main(uint index : SV_GroupIndex)
     if (index != 0u)
         return;
 
-    ExposureState state = g_state[0];
-    const bool valid = (state.flags & 1u) != 0u && snap == 0u;
+    /* The state is read and written field by field. A copy of the whole
+     * struct, with its array, doesn't compile to DXIL through shadercross. */
+    const bool valid = (g_state[0].flags & 1u) != 0u && snap == 0u;
 
     float total = 0.0f;
     for (uint b = 0u; b < EXPOSURE_BINS; ++b)
@@ -73,7 +74,7 @@ void main(uint index : SV_GroupIndex)
     /* The mean EV of the weight between the percentiles, and the EVs at
      * the percentiles. */
     float sum = 0.0f, inside = 0.0f, below = 0.0f;
-    float low_ev = state.low_ev100, high_ev = state.high_ev100;
+    float low_ev = g_state[0].low_ev100, high_ev = g_state[0].high_ev100;
     for (uint i = 0u; i < EXPOSURE_BINS; ++i) {
         const float w = s_weight[i];
         if (w > 0.0f) {
@@ -88,16 +89,16 @@ void main(uint index : SV_GroupIndex)
         below += w;
     }
     const bool  metered    = inside > 0.0f;
-    const float metered_ev = metered ? sum / inside : state.metered_ev100;
+    const float metered_ev = metered ? sum / inside : g_state[0].metered_ev100;
 
     /* With nothing to meter, the target stays where it is. */
-    float target = valid ? state.target_ev100 : clamp(ev100 - compensation, min_ev100, max_ev100);
+    float target = valid ? g_state[0].target_ev100 : clamp(ev100 - compensation, min_ev100, max_ev100);
     if (metered)
         target = clamp(lerp(ev100, metered_ev, metering) - compensation, min_ev100, max_ev100);
 
     float ev = target;
     if (valid) {
-        ev = state.ev100;
+        ev = g_state[0].ev100;
         if (freeze == 0u) {
             /* A higher target EV means a brighter scene. */
             const float speed = target > ev ? darken_speed : brighten_speed;
@@ -105,16 +106,16 @@ void main(uint index : SV_GroupIndex)
         }
     }
 
-    state.ev100          = ev;
-    state.target_ev100   = target;
-    state.metered_ev100  = metered_ev;
-    state.exposure       = 683.0f / (1.2f * exp2(ev));
-    state.low_ev100      = low_ev;
-    state.high_ev100     = high_ev;
-    state.geometry_share = s_geometry + s_sky > 0.0f ? s_geometry / (s_geometry + s_sky) : 0.0f;
-    state.flags          = 1u | (metered ? 2u : 0u);
+    const float exposure       = 683.0f / (1.2f * exp2(ev));
+    g_state[0].ev100          = ev;
+    g_state[0].target_ev100   = target;
+    g_state[0].metered_ev100  = metered_ev;
+    g_state[0].exposure       = exposure;
+    g_state[0].low_ev100      = low_ev;
+    g_state[0].high_ev100     = high_ev;
+    g_state[0].geometry_share = s_geometry + s_sky > 0.0f ? s_geometry / (s_geometry + s_sky) : 0.0f;
+    g_state[0].flags          = 1u | (metered ? 2u : 0u);
     for (uint h = 0u; h < EXPOSURE_BINS; ++h)
-        state.histogram[h] = total > 0.0f ? s_weight[h] / total : 0.0f;
-    g_state[0]               = state;
-    g_exposure[uint2(0, 0)]  = float2(state.exposure, ev);
+        g_state[0].histogram[h] = total > 0.0f ? s_weight[h] / total : 0.0f;
+    g_exposure[uint2(0, 0)] = float2(exposure, ev);
 }

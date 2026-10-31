@@ -14,10 +14,9 @@ set(IMGBAKE_TP ${CMAKE_CURRENT_SOURCE_DIR}/../../third_party)
 
 # BC6H, and BC7 when it is there, use the ISPC Texture Compressor
 # (third_party/ispc_texcomp), whose kernel is compiled by the ISPC compiler
-# for the host CPU; it is imgbake_ispc, apart, so that the libraries without
-# it need no ISPC. It is host tooling only: package builds (tools off)
-# configure without ISPC and never build it, nor does the add-on's cooker
-# (AERON_GLTF_COOK_STANDALONE), whose BC7 uses bc7enc.
+# for the target CPU. It is a separate library, imgbake_ispc, so the
+# libraries that don't use it need no ISPC. The add-on's cooker
+# (AERON_GLTF_COOK_STANDALONE) doesn't build it: its BC7 uses bc7enc.
 if(DEFINED AERON_ISPC_EXECUTABLE AND AERON_ISPC_EXECUTABLE STREQUAL "")
     unset(AERON_ISPC_EXECUTABLE CACHE)
 endif()
@@ -38,7 +37,12 @@ elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64|amd64)$")
 else()
     set(IMGBAKE_ISPC_FLAGS)
 endif()
-if(NOT WIN32)
+if(WIN32)
+    # ISPC writes objects for the system it runs on unless told otherwise.
+    # The Linux and macOS releases can't write Windows objects, so a cross
+    # build runs the Windows release, under Wine for example.
+    list(APPEND IMGBAKE_ISPC_FLAGS --target-os=windows)
+else()
     list(APPEND IMGBAKE_ISPC_FLAGS --pic)
 endif()
 if(AERON_ISPC_EXECUTABLE AND IMGBAKE_ISPC_FLAGS)
@@ -76,6 +80,9 @@ add_library(imgbake_ispc STATIC
 target_include_directories(imgbake_ispc
     PUBLIC ${IMGBAKE_TP}/ispc_texcomp       # ispc_texcomp.h
     PRIVATE ${IMGBAKE_ISPC_DIR})            # kernel_ispc.h (generated)
+if(MINGW)
+    target_sources(imgbake_ispc PRIVATE ispc_chkstk_mingw.c)
+endif()
 
 add_library(imgbake STATIC
     # C: agnostic image/atlas/font backend.
