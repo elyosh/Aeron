@@ -307,10 +307,21 @@ typedef enum AeronUiListResult {
 	AERON_UI_LIST_ACTIVATED = 1u << 1,
 } AeronUiListResult;
 
+typedef enum AeronUiListFlags {
+	/* While the view is at the bottom, it stays there as rows are added, in
+	 * the frame that adds them. Scrolling up stops following, and scrolling
+	 * back to the bottom follows again. The view only moves to the selected
+	 * row when the selection changes. */
+	AERON_UI_LIST_FOLLOW = 1u << 0,
+} AeronUiListFlags;
+
 /* Virtualized list. `SIZE_MAX` means no selection. Up/Down moves focus out
  * when the selection cannot move past the first/last enabled item. */
 uint32_t AeronUi_ListBox(AeronUiContext* ctx, const char* label, const AeronUiListItem* items,
 						 size_t item_count, size_t* selected, float height_ref);
+/* AeronUi_ListBox with AeronUiListFlags. */
+uint32_t AeronUi_ListBoxEx(AeronUiContext* ctx, const char* label, const AeronUiListItem* items,
+						   size_t item_count, size_t* selected, float height_ref, uint32_t flags);
 
 typedef enum AeronUiControllerCaptureMode {
 	AERON_UI_CONTROLLER_CAPTURE_ANALOG_AXIS = 0,

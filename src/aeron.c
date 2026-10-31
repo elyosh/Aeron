@@ -141,6 +141,8 @@ void Aeron_RequestQuit(void) { g_aeron.quit_requested = 1; }
 
 int Aeron_QuitRequested(void) { return g_aeron.quit_requested; }
 
+void Aeron_ClearQuitRequest(void) { g_aeron.quit_requested = 0; }
+
 int Aeron_FatalErrorRequested(void) { return g_aeron.fatal_error_requested; }
 
 AeronVfs* Aeron_GetVfs(void) { return &g_aeron.vfs; }

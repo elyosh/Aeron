@@ -77,6 +77,11 @@ static AeronRectI list_clip(const UiRect* rect, const AeronRectI* parent) {
 
 uint32_t AeronUi_ListBox(AeronUiContext* ctx, const char* label, const AeronUiListItem* items,
 						 size_t item_count, size_t* selected, float height_ref) {
+	return AeronUi_ListBoxEx(ctx, label, items, item_count, selected, height_ref, 0);
+}
+
+uint32_t AeronUi_ListBoxEx(AeronUiContext* ctx, const char* label, const AeronUiListItem* items,
+						   size_t item_count, size_t* selected, float height_ref, uint32_t flags) {
 	UiRect rect;
 	if (!ctx || !ctx->frame_active || !selected || height_ref <= 0.0f || (item_count > 0 && !items) ||
 		!ui_layout_row(ctx, ui_ref(ctx, height_ref), &rect)) {
@@ -91,6 +96,12 @@ uint32_t AeronUi_ListBox(AeronUiContext* ctx, const char* label, const AeronUiLi
 	const float       max_scroll  = fmaxf(0.0f, (float)item_count * row_h - rect.h);
 	float             scroll      = state ? fminf(fmaxf(state->v0, 0.0f), max_scroll) : 0.0f;
 	const size_t      initial     = *selected;
+	/* The state's v1 is 1 when the user scrolled away from the bottom, so a
+	   new list follows. Following re-pins the view before drawing, so new
+	   rows show in this frame. */
+	const int follow = (flags & AERON_UI_LIST_FOLLOW) != 0;
+	if (follow && (!state || state->v1 == 0.0f))
+		scroll = max_scroll;
 	if (*selected >= item_count ||
 		(*selected != SIZE_MAX && (items[*selected].flags & AERON_UI_LIST_ITEM_DISABLED))) {
 		*selected = SIZE_MAX;
@@ -146,7 +157,7 @@ uint32_t AeronUi_ListBox(AeronUiContext* ctx, const char* label, const AeronUiLi
 		ui_play_sound(ctx, AERON_UI_SOUND_FOCUS);
 	}
 
-	if (*selected != SIZE_MAX) {
+	if (*selected != SIZE_MAX && (!follow || *selected != initial)) {
 		const float top    = (float)*selected * row_h;
 		const float bottom = top + row_h;
 		if (top < scroll)
@@ -211,6 +222,8 @@ uint32_t AeronUi_ListBox(AeronUiContext* ctx, const char* label, const AeronUiLi
 		ui_draw_fill(ctx, &track, ctx->theme.scrollbar, &clip);
 		ui_draw_fill(ctx, &thumb, ctx->theme.scrollbar_thumb, &clip);
 	}
+	if (follow && state)
+		state->v1 = scroll >= max_scroll - 0.5f ? 0.0f : 1.0f;
 	if (ui_is_focused(ctx, id))
 		ui_draw_focus_outline(ctx, &rect, parent_clip);
 	if (result & AERON_UI_LIST_ACTIVATED)
