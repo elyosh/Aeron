@@ -21,20 +21,9 @@
 #include "cgltf.h"
 
 #include <inttypes.h>
-#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-
-/* Host log for the Aeron flight-model libraries. */
-void SDL_Log(const char* fmt, ...) {
-	va_list args;
-	va_start(args, fmt);
-	fputs("[aeron_gltf_cook] ", stderr);
-	vfprintf(stderr, fmt, args);
-	fputc('\n', stderr);
-	va_end(args);
-}
 
 static bool cook_error(char* error, size_t error_size, const char* message) {
 	if (error && error_size)

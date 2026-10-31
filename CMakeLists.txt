@@ -1008,6 +1008,7 @@ endif()
 # E1) so that the asset pipelines of both games share one converter. The host
 # tool uses Aeron's CPU-only normal builder and has its own copy of the OPT
 # parser.
+add_subdirectory(tools/tool_log)
 add_subdirectory(tools/imgbake)
 add_subdirectory(tools/gltf_cook)
 add_subdirectory(tools/fontbake)
@@ -1072,19 +1073,22 @@ if(AERON_BUILD_TOOLS)
             ${CMAKE_CURRENT_SOURCE_DIR}/third_party/stb
             ${CMAKE_CURRENT_SOURCE_DIR}/third_party/lzma
             ${CMAKE_CURRENT_SOURCE_DIR}/third_party/bcdec)
-    target_link_libraries(xwau_files PUBLIC aeron_opt aeron_cgltf)
+    # Threads share the cache of the XWAU paths.
+    find_package(Threads REQUIRED)
+    target_link_libraries(xwau_files PUBLIC aeron_opt aeron_cgltf PRIVATE aeron_tool_log Threads::Threads)
     if(NOT MSVC)
         target_link_libraries(xwau_files PUBLIC m)
     endif()
 
     # The XWAU imports that are not models: the mission files, the
-    # skyboxes, the craft settings, the text overrides and the awards. xwau_import and
-    # its test link this library.
+    # skyboxes, the craft settings, the text overrides, the awards and the
+    # hangars. xwau_import and its test link this library.
     add_library(xwau_import_lib STATIC
         tools/xwau/xwau_awards.c
         tools/xwau/xwau_craft.c
         tools/xwau/xwau_flight_settings.c
         tools/xwau/xwau_game_files.c
+        tools/xwau/xwau_hangars.c
         tools/xwau/xwau_mission_files.c
         tools/xwau/xwau_mission_sounds.c
         tools/xwau/xwau_warhead_pools.c
@@ -1109,11 +1113,12 @@ if(AERON_BUILD_TOOLS)
     set_target_properties(xwau_rules_test PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
 
-    # The parts used only by the command-line converter: file writing, the
-    # XWAU materials, skins, animations and Dynamic Cockpit screens, and the
-    # effect library writer. They pass resolved materials to opt2gltf_lib.
-    # opt2gltf links this library.
+    # The parts that the game doesn't use: the conversion of one model, file
+    # writing, the XWAU materials, skins, animations and Dynamic Cockpit
+    # screens, and the effect library writer. They pass resolved materials to
+    # opt2gltf_lib. opt2gltf and the mod importer link this library.
     add_library(opt2gltf_tool STATIC
+        tools/opt2gltf/model_conversion.c
         tools/opt2gltf/opt_gltf_write.c
         tools/opt2gltf/xwau_anim.c
         tools/opt2gltf/xwau_dynamic_cockpit.c
@@ -1130,12 +1135,12 @@ if(AERON_BUILD_TOOLS)
             ${CMAKE_CURRENT_SOURCE_DIR}/third_party/stb)
     target_link_libraries(opt2gltf_tool
         PUBLIC opt2gltf_lib xwau_files
-        PRIVATE imgbake aeron_yaml_json aeron_effect_files aeron_cjson)
+        PRIVATE imgbake aeron_yaml_json aeron_effect_files aeron_cjson aeron_tool_log Threads::Threads)
     if(NOT MSVC)
         target_link_libraries(opt2gltf_tool PUBLIC m)
     endif()
 
-    add_executable(opt2gltf tools/opt2gltf/main.c tools/opt2gltf/model_conversion.c)
+    add_executable(opt2gltf tools/opt2gltf/main.c)
     target_link_libraries(opt2gltf PRIVATE opt2gltf_tool)
     # Linked the same way as aeron_gltf_cook (tools/gltf_cook/CMakeLists.txt),
     # which the Blender add-on packages with it. The unused SDL library is

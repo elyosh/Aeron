@@ -15,6 +15,7 @@
 
 #include "cgltf.h"
 #include "png_read.h"
+#include "tool_log.h"
 
 #define TAG "[aeron_gltf_cook] skins"
 #define COMPOSITE_SCHEME "aeron-composite:"
@@ -137,12 +138,12 @@ static cJSON* get_or_add_array(cJSON* parent, const char* key) {
 __attribute__((format(printf, 1, 2)))
 #endif
 static bool fail(const char* format, ...) {
+	char    message[1024];
 	va_list args;
 	va_start(args, format);
-	fprintf(stderr, TAG ": ");
-	vfprintf(stderr, format, args);
-	fprintf(stderr, "\n");
+	vsnprintf(message, sizeof message, format, args);
 	va_end(args);
+	ToolLog_Write(TOOL_LOG_ERROR, TAG ": %s", message);
 	return false;
 }
 
@@ -361,8 +362,9 @@ static bool read_variants(cJSON* document, Inputs* in) {
 				for (size_t l = 0; !used && l < in->variants[v].layer_count; ++l)
 					used = strcmp(in->variants[v].layers[l].skin, in->skins[m][s].name) == 0;
 			if (!used)
-				fprintf(stderr, TAG ": warning: material '%s': no skin variant uses skin '%s'\n",
-						material_name(document, m), in->skins[m][s].name);
+				ToolLog_Write(TOOL_LOG_WARNING,
+							  TAG ": warning: material '%s': no skin variant uses skin '%s'",
+							  material_name(document, m), in->skins[m][s].name);
 		}
 	return true;
 }
@@ -852,7 +854,7 @@ static const LoadedImage* load_image(SkinLayers* s, int image) {
 		if (s->loaded[i]->image == image)
 			return s->loaded[i];
 	if (image < 0 || (size_t)image >= s->uri_count || !s->uris[image]) {
-		fprintf(stderr, TAG ": image %d has no file\n", image);
+		ToolLog_Write(TOOL_LOG_ERROR, TAG ": image %d has no file", image);
 		return NULL;
 	}
 	char path[2048];
@@ -860,7 +862,7 @@ static const LoadedImage* load_image(SkinLayers* s, int image) {
 	LoadedImage img = { .image = image };
 	char        err[256];
 	if (!read_png_rgba(path, &img.rgba, &img.w, &img.h, err, sizeof err)) {
-		fprintf(stderr, TAG ": PNG load failed: %s (%s)\n", path, err);
+		ToolLog_Write(TOOL_LOG_ERROR, TAG ": PNG load failed: %s (%s)", path, err);
 		return NULL;
 	}
 	LoadedImage** grown = (LoadedImage**)realloc(s->loaded, (s->loaded_count + 1) * sizeof *grown);
@@ -905,7 +907,8 @@ static bool composite(SkinLayers* s, CompositeImage* c) {
 			h = layer->h;
 		}
 		if (layer->w != w || layer->h != h || cover->w != w || cover->h != h) {
-			fprintf(stderr, TAG ": %s: a layer is %dx%d, not %dx%d\n", c->label, layer->w, layer->h, w, h);
+			ToolLog_Write(TOOL_LOG_ERROR, TAG ": %s: a layer is %dx%d, not %dx%d", c->label, layer->w,
+						  layer->h, w, h);
 			return false;
 		}
 	}
@@ -979,7 +982,8 @@ bool SkinLayers_ImageProvider(void* context, const struct cgltf_image* image, Ae
 			out->height = img->h;
 			return true;
 		}
-	fprintf(stderr, TAG ": image '%s' is not a file of the model\n", image->uri ? image->uri : "");
+	ToolLog_Write(TOOL_LOG_ERROR, TAG ": image '%s' is not a file of the model",
+				  image->uri ? image->uri : "");
 	return false;
 }
 
@@ -1024,9 +1028,10 @@ void SkinLayers_ImageRelease(void* context, const struct cgltf_image* image) {
 
 void SkinLayers_Report(const SkinLayers* s) {
 	if (s && s->verbose)
-		fprintf(stderr, TAG ": %zu skin variant(s), %zu composite material(s), %zu composite image(s), "
-						"composited in %.2f s\n",
-				s->variant_count, s->material_count, s->composite_count, s->seconds);
+		ToolLog_Write(TOOL_LOG_INFO,
+					  TAG ": %zu skin variant(s), %zu composite material(s), %zu composite image(s), "
+						  "composited in %.2f s",
+					  s->variant_count, s->material_count, s->composite_count, s->seconds);
 }
 
 void SkinLayers_Free(SkinLayers* s) {

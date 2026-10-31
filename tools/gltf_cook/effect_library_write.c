@@ -9,6 +9,7 @@
 
 #include "channel_atlas.h"
 #include "ktx2_writer.h"
+#include "tool_log.h"
 
 /* Pages of 2048 + 2048/16 texels: with 16-texel gutters, two 1024² or four
  * 512² images fit a row (a 2048² page holds one 1024² image). Every image,
@@ -43,9 +44,9 @@ static bool encode(const char* tool, const char* name, const ChannelAtlas* ca, c
 	const bool written = encoded && write_file(path, buf, size);
 	free(buf);
 	if (!encoded)
-		fprintf(stderr, "%s: %s: cannot encode %s\n", tool, name, path);
+		ToolLog_Write(TOOL_LOG_ERROR, "%s: %s: cannot encode %s", tool, name, path);
 	else if (!written)
-		fprintf(stderr, "%s: %s: cannot write %s\n", tool, name, path);
+		ToolLog_Write(TOOL_LOG_ERROR, "%s: %s: cannot write %s", tool, name, path);
 	return written;
 }
 
@@ -78,7 +79,7 @@ bool EffectLibrary_Write(const char* tool, const char* out_dir, const char* name
 											 : own_page       ? EFFECT_LIBRARY_DETAIL_MAX
 															  : EFFECT_LIBRARY_IMAGE_MAX;
 		if (k > 0 && strcmp(images[order[k - 1]].key, im->key) == 0) {
-			fprintf(stderr, "%s: %s: image \"%s\" given twice\n", tool, name, im->key);
+			ToolLog_Write(TOOL_LOG_ERROR, "%s: %s: image \"%s\" given twice", tool, name, im->key);
 			ok = false;
 			break;
 		}
@@ -104,7 +105,7 @@ bool EffectLibrary_Write(const char* tool, const char* out_dir, const char* name
 		/* The runtime requires every library to have the same levels. */
 		atlases[a]->mip_count = 0;
 		if (!ok) {
-			fprintf(stderr, "%s: %s: cannot pack the %s pages\n", tool, name, suffix[a]);
+			ToolLog_Write(TOOL_LOG_ERROR, "%s: %s: cannot pack the %s pages", tool, name, suffix[a]);
 			break;
 		}
 		snprintf(path, sizeof path, "%s/%s.%s.ktx2", out_dir, name, suffix[a]);
@@ -146,7 +147,7 @@ bool EffectLibrary_Write(const char* tool, const char* out_dir, const char* name
 			ok = fclose(f) == 0;
 		}
 		if (!ok)
-			fprintf(stderr, "%s: %s: cannot write %s\n", tool, name, path);
+			ToolLog_Write(TOOL_LOG_ERROR, "%s: %s: cannot write %s", tool, name, path);
 	}
 	if (result) {
 		result->layer_pages    = layer_pages;

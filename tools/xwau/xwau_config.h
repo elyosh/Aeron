@@ -95,6 +95,9 @@ bool Xwau_Stoi(const char* text, long long* out);
  * 0x, an octal number with a leading 0, or a decimal number. Returns false
  * when there are no digits. */
 bool Xwau_StoiAuto(const char* text, long long* out);
+/* Xwau_StoiAuto, which also returns false when the value doesn't fit in an
+ * int, as std::stoi then throws. */
+bool Xwau_StoiAutoInt(const char* text, long long* out);
 
 /* Parses `text` as std::stoul(text, 0, 16) does with a 32-bit unsigned
  * long: leading white space, an optional sign, an optional 0x, then hex

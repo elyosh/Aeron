@@ -16,6 +16,7 @@
 #include "cJSON.h"
 #include "cgltf.h"
 #include "effect_library.h"
+#include "tool_log.h"
 #include "yaml_json.h"
 
 #define TAG "[aeron_gltf_cook] materials"
@@ -96,7 +97,7 @@ static bool int_in(const cJSON* item, double low, double high) {
 }
 
 static bool fail(Check* c, const char* what) {
-	fprintf(stderr, TAG ": %s: %s: %s\n", c->path, c->owner, what);
+	ToolLog_Write(TOOL_LOG_ERROR, TAG ": %s: %s: %s", c->path, c->owner, what);
 	return false;
 }
 
@@ -109,7 +110,8 @@ static bool only_members(Check* c, const char* what, const cJSON* object, const 
 		for (size_t i = 0; i < count && !known; ++i)
 			known = strcmp(member->string, allowed[i]) == 0;
 		if (!known) {
-			fprintf(stderr, TAG ": %s: %s: %s: unknown field \"%s\"\n", c->path, c->owner, what, member->string);
+			ToolLog_Write(TOOL_LOG_ERROR, TAG ": %s: %s: %s: unknown field \"%s\"", c->path, c->owner, what,
+						  member->string);
 			return false;
 		}
 	}
@@ -175,16 +177,17 @@ static bool key_known(Check* c, const char* library, const char* key, const char
 		c->index_names[c->index_count] = strdup(library);
 		c->index_count++;
 		if (!index && built)
-			fprintf(stderr, TAG ": %s: library %s: %s\n", c->path, library, err);
+			ToolLog_Write(TOOL_LOG_ERROR, TAG ": %s: library %s: %s", c->path, library, err);
 	}
 	const cJSON* image =
 		cJSON_GetObjectItemCaseSensitive(cJSON_GetObjectItemCaseSensitive(index, "images"), key);
 	const cJSON* image_kind = cJSON_GetObjectItemCaseSensitive(image, "kind");
 	if (index && !image)
-		fprintf(stderr, TAG ": %s: %s: \"%s\" is not in library %s\n", c->path, c->owner, key, library);
+		ToolLog_Write(TOOL_LOG_ERROR, TAG ": %s: %s: \"%s\" is not in library %s", c->path, c->owner, key,
+					  library);
 	else if (image && strcmp(image_kind->valuestring, kind) != 0)
-		fprintf(stderr, TAG ": %s: %s: \"%s\" of library %s is a %s image, not %s\n", c->path, c->owner, key,
-				library, image_kind->valuestring, kind);
+		ToolLog_Write(TOOL_LOG_ERROR, TAG ": %s: %s: \"%s\" of library %s is a %s image, not %s", c->path,
+					  c->owner, key, library, image_kind->valuestring, kind);
 	return image && strcmp(image_kind->valuestring, kind) == 0;
 }
 
@@ -192,8 +195,8 @@ static bool key_known(Check* c, const char* library, const char* key, const char
 static const char* entry_library(Check* c, const cJSON* entry, const char* what) {
 	const cJSON* library = cJSON_GetObjectItemCaseSensitive(entry, "library");
 	if (!cJSON_IsString(library)) {
-		fprintf(stderr, TAG ": %s: %s: %s: library must name the effect library of its images\n", c->path,
-				c->owner, what);
+		ToolLog_Write(TOOL_LOG_ERROR, TAG ": %s: %s: %s: library must name the effect library of its images",
+					  c->path, c->owner, what);
 		return NULL;
 	}
 	return library->valuestring;
@@ -416,7 +419,7 @@ bool aeron_gltf_cook_check_materials(const char* path, const char* effects_dir, 
 	cgltf_options options = { 0 };
 	cgltf_data*   data    = NULL;
 	if (cgltf_parse_file(&options, path, &data) != cgltf_result_success) {
-		fprintf(stderr, TAG ": cannot parse %s\n", path);
+		ToolLog_Write(TOOL_LOG_ERROR, TAG ": cannot parse %s", path);
 		return false;
 	}
 	Check c  = { .path = path, .effects_dir = effects_dir, .project = project };

@@ -11,7 +11,7 @@ target_include_directories(aeron_gltf_cook_lib
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/../../third_party/cgltf)
 
-target_link_libraries(aeron_gltf_cook_lib PUBLIC imgbake aeron_cgltf PRIVATE aeron_cjson)
+target_link_libraries(aeron_gltf_cook_lib PUBLIC imgbake aeron_cgltf PRIVATE aeron_cjson aeron_tool_log)
 if(NOT MSVC)
     target_link_libraries(aeron_gltf_cook_lib PRIVATE m)
 endif()
@@ -29,7 +29,7 @@ target_link_libraries(aeron_yaml_json PUBLIC aeron_yaml aeron_cjson)
 # the cooker and opt2gltf write them.
 add_library(aeron_effect_files STATIC effect_files.c)
 target_include_directories(aeron_effect_files PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(aeron_effect_files PUBLIC aeron_cjson)
+target_link_libraries(aeron_effect_files PUBLIC aeron_cjson PRIVATE aeron_tool_log)
 if(NOT MSVC)
     target_link_libraries(aeron_effect_files PRIVATE m)
 endif()
@@ -48,7 +48,7 @@ target_include_directories(aeron_effect_library
     PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}
     PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../../third_party/xxhash)
 target_link_libraries(aeron_effect_library PUBLIC aeron_gltf_cook_lib aeron_yaml_json aeron_effect_files
-    aeron_cjson)
+    aeron_cjson PRIVATE aeron_tool_log)
 if(NOT MSVC)
     target_link_libraries(aeron_effect_library PRIVATE m)
 endif()
@@ -57,9 +57,19 @@ set_target_properties(aeron_effect_library PROPERTIES
     C_STANDARD_REQUIRED ON)
 
 if(AERON_BUILD_TOOLS)
-    add_executable(aeron_gltf_cook main.c flight_data.c material_checks.c)
-    target_link_libraries(aeron_gltf_cook PRIVATE aeron_gltf_cook_lib aeron_effect_library aeron_flight_model
-        aeron_collision aeron_cjson aeron_yaml_json)
+    # The cook of one model with its flight data, and the material checks:
+    # aeron_gltf_cook and the mod importer link it.
+    add_library(aeron_gltf_cook_tool STATIC cook_model.c flight_data.c material_checks.c)
+    target_include_directories(aeron_gltf_cook_tool PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(aeron_gltf_cook_tool
+        PUBLIC aeron_gltf_cook_lib
+        PRIVATE aeron_effect_library aeron_flight_model aeron_collision aeron_cjson aeron_yaml_json aeron_tool_log)
+    set_target_properties(aeron_gltf_cook_tool PROPERTIES
+        C_STANDARD 11
+        C_STANDARD_REQUIRED ON)
+
+    add_executable(aeron_gltf_cook main.c)
+    target_link_libraries(aeron_gltf_cook PRIVATE aeron_gltf_cook_tool aeron_effect_library aeron_cjson)
     # Cooked simulation data must be bit-identical across platforms.
     if(MSVC)
         set_source_files_properties(flight_data.c PROPERTIES COMPILE_OPTIONS "/fp:precise")

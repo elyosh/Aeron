@@ -1,9 +1,9 @@
 #include "channel_atlas.h"
 
 #include "aeron/atlas_pack.h"
+#include "tool_log.h"
 
 #include <math.h>
-#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -314,8 +314,8 @@ bool channel_atlas_pack(ChannelAtlas* ca, int page_size, int gutter) {
 
 	if (fixed && (ca->fixed_width % gutter || ca->fixed_height % gutter ||
 				  (oversized && (ca->fixed_width != page || ca->fixed_height != page)))) {
-		fprintf(stderr, "[aeron_gltf_cook] channel %d: %d×%d pages do not fit its sources\n", ca->channel,
-				ca->fixed_width, ca->fixed_height);
+		ToolLog_Write(TOOL_LOG_ERROR, "[aeron_gltf_cook] channel %d: %d×%d pages do not fit its sources",
+					  ca->channel, ca->fixed_width, ca->fixed_height);
 		free(order);
 		free(cells);
 		return false;
@@ -387,8 +387,9 @@ bool channel_atlas_pack(ChannelAtlas* ca, int page_size, int gutter) {
 	free(order);
 	free(cells);
 	if (remaining) {
-		fprintf(stderr, "[aeron_gltf_cook] channel %d: cannot pack %d sub-rects into %d×%d pages\n",
-				ca->channel, remaining, width, height);
+		ToolLog_Write(TOOL_LOG_ERROR,
+					  "[aeron_gltf_cook] channel %d: cannot pack %d sub-rects into %d×%d pages", ca->channel,
+					  remaining, width, height);
 		return false;
 	}
 	ca->width      = width;

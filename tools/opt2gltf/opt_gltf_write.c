@@ -1,5 +1,6 @@
 #include "opt_gltf_write.h"
 
+#include <pthread.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -8,7 +9,20 @@
 #define STB_IMAGE_WRITE_STATIC
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "stb_image_write.h"
+#include "tool_log.h"
 #include "util.h"
+
+/* The textures are read once more by the cooker. Unfiltered rows at a low
+   level write them about twice as fast as stb's defaults, which try every
+   filter on each row, and the game's flat-coloured textures come out
+   smaller too. The settings are stb's globals, so they are set once for all
+   threads. */
+static pthread_once_t g_png_settings_once = PTHREAD_ONCE_INIT;
+
+static void set_png_settings(void) {
+	stbi_write_png_compression_level = 2;
+	stbi_write_force_png_filter      = 0;
+}
 
 bool OptGltf_WriteFiles(const OptGltfDocument* document, const char* out_dir, const char* basename) {
 	if (!document || !out_dir || !basename)
@@ -20,12 +34,7 @@ bool OptGltf_WriteFiles(const OptGltfDocument* document, const char* out_dir, co
 	if (!PathFormat(tex_dir, sizeof tex_dir, "%s%stextures", out_dir, sep) || !MakeDirs(tex_dir))
 		return false;
 
-	/* The textures are read once more by the cooker. Unfiltered rows at a
-	   low level write them about twice as fast as stb's defaults, which try
-	   every filter on each row, and the game's flat-coloured textures come
-	   out smaller too. */
-	stbi_write_png_compression_level = 2;
-	stbi_write_force_png_filter      = 0;
+	pthread_once(&g_png_settings_once, set_png_settings);
 	const cgltf_data* data = OptGltf_Data((OptGltfDocument*)document);
 	for (size_t i = 0; i < data->images_count; ++i) {
 		const cgltf_image* image = &data->images[i];
@@ -63,12 +72,11 @@ bool OptGltf_WriteFiles(const OptGltfDocument* document, const char* out_dir, co
 	size_t primitives = 0;
 	for (size_t m = 0; m < data->meshes_count; ++m)
 		primitives += data->meshes[m].primitives_count;
-	fprintf(stdout,
-			"%s -> %s\n"
-			"  meshes=%zu primitives=%zu vertices=(per-mesh) variants=%zu\n"
-			"  textures=%zu materials=%zu bin=%zu bytes\n",
-			basename, gltf_path, data->meshes_count, primitives, data->variants_count, data->textures_count,
-			data->materials_count, buffer->size);
+	ToolLog_Write(TOOL_LOG_INFO, "%s -> %s", basename, gltf_path);
+	ToolLog_Write(TOOL_LOG_INFO, "  meshes=%zu primitives=%zu vertices=(per-mesh) variants=%zu",
+				  data->meshes_count, primitives, data->variants_count);
+	ToolLog_Write(TOOL_LOG_INFO, "  textures=%zu materials=%zu bin=%zu bytes", data->textures_count,
+				  data->materials_count, buffer->size);
 	return true;
 }
 

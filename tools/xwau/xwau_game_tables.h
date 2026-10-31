@@ -69,6 +69,9 @@ typedef struct XwauGameType {
 /* Reads the tables of the game at `root`. Returns NULL, with a report, when
  * a file is missing or can't be read. */
 XwauGameTables* XwauGameTables_Load(const char* root);
+/* Reads the tables of the executable `exe` and the lists of the folder
+ * `flight_models`, for a game whose files aren't all in one folder. */
+XwauGameTables* XwauGameTables_LoadFiles(const char* exe, const char* flight_models);
 void            XwauGameTables_Free(XwauGameTables* tables);
 
 XwauGameType XwauGameTables_Type(const XwauGameTables* tables, int object_type);
@@ -77,6 +80,10 @@ bool XwauGameType_HasRow(const XwauGameType* type);
 
 /* The model of `object_type`, or "" when it has none. */
 const char* XwauGameTables_Model(const XwauGameTables* tables, int object_type);
+/* The model of the list row in the entry of `object_type`, or "" when the
+ * row doesn't exist. Unlike XwauGameTables_Model, the entry's recordFlags
+ * aren't checked, as XWAU's hangar hook reads the row. */
+const char* XwauGameTables_RowModel(const XwauGameTables* tables, int object_type);
 /* The model of the object type that `craft_type` maps to, or "" when it has
  * none. */
 const char* XwauGameTables_CraftModel(const XwauGameTables* tables, int craft_type);

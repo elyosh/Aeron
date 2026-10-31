@@ -8,6 +8,8 @@
  *                        [--skyboxes FILE --skybox-folders FILE] <output_dir>
  *   xwau_import craft --xwau-root DIR [--stock-game DIR [--strings FILE]]
  *                     [--game-files DIR] <output_dir>
+ *   xwau_import hangars --xwau-root DIR --reference-exe FILE [--stock-models DIR]
+ *                       [--stock-game DIR] <mod_dir>
  *
  * `missions` copies the files that come with the installation's missions into
  * the --game-files folder, the mod folder's game/ folder (xwau_game_files.h).
@@ -35,6 +37,13 @@
  * --game-files, the mod folder's game/ folder, it writes the sound banks into
  * <output_dir>/sounds.yaml and copies their files into DIR
  * (xwau_sound_banks.h).
+ *
+ * `hangars` writes XWAU's hangar settings into <mod_dir>/flight/hangars.yaml,
+ * and, with --stock-game, the `hangar` of each mission file under
+ * <mod_dir>/flight/missions. --reference-exe is the stock
+ * XWINGALLIANCE.EXE, and --stock-models the stock FlightModels folder, by
+ * default the one in --stock-game. It reads the models and the object type
+ * files of the mod folder, so it runs after their conversion and `craft`.
  */
 
 #include <stdbool.h>
@@ -47,6 +56,7 @@
 #include "xwau_flight_settings.h"
 #include "xwau_game_files.h"
 #include "xwau_gunner_seats.h"
+#include "xwau_hangars.h"
 #include "xwau_mission_files.h"
 #include "xwau_missions.h"
 #include "xwau_objects.h"
@@ -59,7 +69,9 @@ static int usage(void) {
 					"                            --flight-settings FILE [--awards FILE]\n"
 					"                            [--skyboxes FILE --skybox-folders FILE] <output_dir>\n"
 					"       xwau_import craft --xwau-root DIR [--stock-game DIR [--strings FILE]]\n"
-					"                         [--game-files DIR] <output_dir>\n");
+					"                         [--game-files DIR] <output_dir>\n"
+					"       xwau_import hangars --xwau-root DIR --reference-exe FILE [--stock-models DIR]\n"
+					"                           [--stock-game DIR] <mod_dir>\n");
 	return 2;
 }
 
@@ -176,11 +188,50 @@ static int run_craft(int argc, char** argv) {
 	return ok ? 0 : 1;
 }
 
+/* xwau_import hangars --xwau-root DIR --reference-exe FILE [--stock-models DIR] [--stock-game DIR]
+ *                     <mod_dir> */
+static int run_hangars(int argc, char** argv) {
+	const char* xwau_root     = NULL;
+	const char* reference_exe = NULL;
+	const char* stock_models  = NULL;
+	const char* stock_game    = NULL;
+	int         ai            = 0;
+	for (; ai < argc && strncmp(argv[ai], "--", 2) == 0; ai += 2) {
+		const char** value = strcmp(argv[ai], "--xwau-root") == 0       ? &xwau_root
+							 : strcmp(argv[ai], "--reference-exe") == 0 ? &reference_exe
+							 : strcmp(argv[ai], "--stock-models") == 0  ? &stock_models
+							 : strcmp(argv[ai], "--stock-game") == 0    ? &stock_game
+																		: NULL;
+		if (!value) {
+			Report(NULL, "unknown option '%s'", argv[ai]);
+			return 2;
+		}
+		if (ai + 1 == argc) {
+			Report(NULL, "%s needs a value", argv[ai]);
+			return 2;
+		}
+		if (*value) {
+			Report(NULL, "%s can only be given once", argv[ai]);
+			return 2;
+		}
+		*value = argv[ai + 1];
+	}
+	if (!xwau_root || !reference_exe || (!stock_models && !stock_game) || argc - ai != 1) {
+		Report(NULL,
+			   "hangars needs --xwau-root, --reference-exe, --stock-models or --stock-game, and the mod "
+			   "folder");
+		return 2;
+	}
+	return XwauHangars_Write(xwau_root, reference_exe, stock_models, stock_game, argv[ai]) ? 0 : 1;
+}
+
 int main(int argc, char** argv) {
 	SetReportProgram("xwau_import");
 	if (argc > 1 && strcmp(argv[1], "missions") == 0)
 		return run_missions(argc - 2, argv + 2);
 	if (argc > 1 && strcmp(argv[1], "craft") == 0)
 		return run_craft(argc - 2, argv + 2);
+	if (argc > 1 && strcmp(argv[1], "hangars") == 0)
+		return run_hangars(argc - 2, argv + 2);
 	return usage();
 }

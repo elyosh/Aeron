@@ -110,7 +110,7 @@ target_include_directories(imgbake
 # zstd — KTX2 supercompressionScheme=2 (aeron already requires it).
 # Threads — the BC7 encoder splits large images across threads.
 find_package(Threads REQUIRED)
-target_link_libraries(imgbake PUBLIC aeron ${AERON_ZSTD} PRIVATE Threads::Threads)
+target_link_libraries(imgbake PUBLIC aeron aeron_tool_log ${AERON_ZSTD} PRIVATE Threads::Threads)
 if(AERON_ISPC_EXECUTABLE AND IMGBAKE_ISPC_FLAGS)
     target_link_libraries(imgbake PUBLIC imgbake_ispc)
     set_source_files_properties(bc7_codec.cpp PROPERTIES COMPILE_DEFINITIONS IMGBAKE_HAVE_ISPC)

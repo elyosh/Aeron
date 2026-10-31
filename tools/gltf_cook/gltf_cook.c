@@ -14,10 +14,12 @@
 #include "cgltf.h"
 #include "cgltf_write.h"
 
+#include "bc7_codec.h"
 #include "cJSON.h"
 #include "ktx2_writer.h" /* write_ktx2_bc7_with_generated_mips_to_buffer */
 #include "png_read.h"    /* png_read_rgba */
 #include "skin_layers.h"
+#include "tool_log.h"
 
 /* Per-channel block format. BC5 is restricted to the normal channel
  * (RG-only, no SRGB variant, linear-only); BC7 covers the other three
@@ -145,8 +147,8 @@ static bool validate_material_textures(const cgltf_data* data) {
 		else if (m->has_specular && m->specular.specular_color_texture.texture)
 			slot = "specularColorTexture";
 		if (slot) {
-			fprintf(stderr, "[aeron_gltf_cook] material '%s' has an unsupported %s\n",
-					m->name ? m->name : "<unnamed>", slot);
+			ToolLog_Write(TOOL_LOG_ERROR, "[aeron_gltf_cook] material '%s' has an unsupported %s",
+						  m->name ? m->name : "<unnamed>", slot);
 			return false;
 		}
 	}
@@ -276,7 +278,7 @@ static const CachedImage* load_or_cache_image(ImageCache* cache, const char* glt
 	uint8_t* rgba     = NULL;
 	char     err[256] = { 0 };
 	if (!read_png_rgba(abs, &rgba, &w, &h, err, sizeof err)) {
-		fprintf(stderr, "[aeron_gltf_cook] PNG load failed: %s (%s)\n", abs, err);
+		ToolLog_Write(TOOL_LOG_ERROR, "[aeron_gltf_cook] PNG load failed: %s (%s)", abs, err);
 		return NULL;
 	}
 	if (!image_cache_add(cache, uri, w, h, rgba)) {
@@ -548,18 +550,19 @@ static bool place_transmission(cgltf_data* data, char* const* image_variants, co
 	cgltf_image* trans_image =
 		trans->texture && trans->texture->image && trans->texture->image->uri ? trans->texture->image : NULL;
 	if (m->alpha_mode != cgltf_alpha_mode_opaque)
-		fprintf(stderr, "[aeron_gltf_cook] material '%s': transmissive, its alpha mode is ignored\n", name);
+		ToolLog_Write(TOOL_LOG_WARNING,
+					  "[aeron_gltf_cook] material '%s': transmissive, its alpha mode is ignored", name);
 	if (trans_image && !base) {
-		fprintf(stderr,
-				"[aeron_gltf_cook] material '%s': transmission texture without pbrMetallicRoughness "
-				"ignored (the factor applies)\n",
-				name);
+		ToolLog_Write(TOOL_LOG_WARNING,
+					  "[aeron_gltf_cook] material '%s': transmission texture without pbrMetallicRoughness "
+					  "ignored (the factor applies)",
+					  name);
 		trans_image = NULL;
 	} else if (trans_image && base_image && !same_texture_mapping(base, trans)) {
-		fprintf(stderr,
-				"[aeron_gltf_cook] material '%s': transmission texture mapped unlike the base colour "
-				"ignored (the factor applies)\n",
-				name);
+		ToolLog_Write(TOOL_LOG_WARNING,
+					  "[aeron_gltf_cook] material '%s': transmission texture mapped unlike the base colour "
+					  "ignored (the factor applies)",
+					  name);
 		trans_image = NULL;
 	}
 	if (!base_image && !trans_image)
@@ -689,17 +692,21 @@ bool aeron_gltf_cook_data_lazy(cgltf_data* data, const char* source_label,
 		opts = *opts_in;
 	else
 		aeron_gltf_cook_default_options(&opts);
-	if (opts.zstd_supercompress &&
-		!ktx2_set_zstd_level(opts.zstd_level ? opts.zstd_level : KTX2_ZSTD_LEVEL_DEFAULT)) {
-		fprintf(stderr, "[aeron_gltf_cook] invalid zstd level %d\n", opts.zstd_level);
+	/* The level is the writers' global, so it is only written when it
+	   changes: cooks on other threads that use the same level only read it. */
+	const int zstd_level = opts.zstd_level ? opts.zstd_level : KTX2_ZSTD_LEVEL_DEFAULT;
+	if (opts.zstd_supercompress && zstd_level != ktx2_zstd_level() && !ktx2_set_zstd_level(zstd_level)) {
+		ToolLog_Write(TOOL_LOG_ERROR, "[aeron_gltf_cook] invalid zstd level %d", opts.zstd_level);
 		return false;
 	}
+	/* The BC7 blocks that this thread encoded for another model aren't reused. */
+	bc7_codec_clear_cache();
 
 	if (data->buffers_count != 1) {
-		fprintf(stderr,
-				"[aeron_gltf_cook] expected 1 source buffer, got %zu — opt2gltf "
-				"should produce single-buffer .gltf files\n",
-				data->buffers_count);
+		ToolLog_Write(TOOL_LOG_ERROR,
+					  "[aeron_gltf_cook] expected 1 source buffer, got %zu — opt2gltf "
+					  "should produce single-buffer .gltf files",
+					  data->buffers_count);
 		return false;
 	}
 
@@ -778,7 +785,8 @@ bool aeron_gltf_cook_data_lazy(cgltf_data* data, const char* source_label,
 		for (int g = 0; g < group_count; g++)
 			channel_groups += groups[g].channel == c;
 		if (ca->rect_count == 0 && channel_groups) {
-			fprintf(stderr, "[aeron_gltf_cook] %s: variant groups without a core atlas\n", kChannels[c].name);
+			ToolLog_Write(TOOL_LOG_ERROR, "[aeron_gltf_cook] %s: variant groups without a core atlas",
+						  kChannels[c].name);
 			ok = false;
 			break;
 		}
@@ -854,11 +862,12 @@ bool aeron_gltf_cook_data_lazy(cgltf_data* data, const char* source_label,
 			}
 			if (!ok)
 				break;
-			fprintf(stderr,
-					"[aeron_gltf_cook] %s: %d core page(s) of %d×%d, %d variant group(s) on %d page(s), "
-					"%.0f%% of the group pages used\n",
-					kChannels[c].name, ca->page_count, ca->width, ca->height, channel_groups, pages,
-					100.0 * used / ((double)pages * ca->width * ca->height));
+			ToolLog_Write(
+				TOOL_LOG_INFO,
+				"[aeron_gltf_cook] %s: %d core page(s) of %d×%d, %d variant group(s) on %d page(s), "
+				"%.0f%% of the group pages used",
+				kChannels[c].name, ca->page_count, ca->width, ca->height, channel_groups, pages,
+				100.0 * used / ((double)pages * ca->width * ca->height));
 		}
 		if (!channel_atlas_materialize_lazy(ca, deferred_fetch, deferred_release, &deferred)) {
 			ok = false;
@@ -873,14 +882,15 @@ bool aeron_gltf_cook_data_lazy(cgltf_data* data, const char* source_label,
 		free(ca->rgba);
 		ca->rgba = NULL;
 		if (opts.verbose) {
-			fprintf(stderr,
-					"[aeron_gltf_cook] channel %s: %d sub-rects → %d page(s) of %d×%d, "
-					"%d level(s), %s KTX2 %zu B (zstd=%d)\n",
-					kChannels[c].name, ca->rect_count, ca->page_count, ca->width, ca->height, ca->mip_count,
-					opts.encoding == AERON_GLTF_COOK_ENCODING_RGBA8
-						? "RGBA8"
-						: (kChannels[c].format == CH_FMT_BC5 ? "BC5" : "BC7"),
-					ktx2_sizes[c], (int)opts.zstd_supercompress);
+			ToolLog_Write(TOOL_LOG_INFO,
+						  "[aeron_gltf_cook] channel %s: %d sub-rects → %d page(s) of %d×%d, "
+						  "%d level(s), %s KTX2 %zu B (zstd=%d)",
+						  kChannels[c].name, ca->rect_count, ca->page_count, ca->width, ca->height,
+						  ca->mip_count,
+						  opts.encoding == AERON_GLTF_COOK_ENCODING_RGBA8
+							  ? "RGBA8"
+							  : (kChannels[c].format == CH_FMT_BC5 ? "BC5" : "BC7"),
+						  ktx2_sizes[c], (int)opts.zstd_supercompress);
 		}
 	}
 
@@ -1243,7 +1253,8 @@ static bool write_cooked_glb(void* context, const cgltf_data* data) {
 	options.type                           = cgltf_file_type_glb;
 	const cgltf_result result              = cgltf_write_file(&options, file->out_path, data);
 	if (result != cgltf_result_success) {
-		fprintf(stderr, "[aeron_gltf_cook] cgltf_write_file '%s' failed: %d\n", file->out_path, (int)result);
+		ToolLog_Write(TOOL_LOG_ERROR, "[aeron_gltf_cook] cgltf_write_file '%s' failed: %d", file->out_path,
+					  (int)result);
 		return false;
 	}
 	return true;
@@ -1299,7 +1310,8 @@ static bool cook_skinned(cJSON* doc, const char* in_path, const char* out_path, 
 		result = cgltf_load_buffers(&parse_options, data, in_path);
 	bool succeeded = false;
 	if (result != cgltf_result_success) {
-		fprintf(stderr, "[aeron_gltf_cook] parse of the expanded '%s' failed: %d\n", in_path, (int)result);
+		ToolLog_Write(TOOL_LOG_ERROR, "[aeron_gltf_cook] parse of the expanded '%s' failed: %d", in_path,
+					  (int)result);
 	} else {
 		FileCookConsumerContext context = { out_path };
 		succeeded =
@@ -1323,12 +1335,12 @@ bool aeron_gltf_cook(const char* in_path, const char* out_path, const AeronGltfC
 	cgltf_data*   data          = NULL;
 	cgltf_result  result        = cgltf_parse_file(&parse_options, in_path, &data);
 	if (result != cgltf_result_success) {
-		fprintf(stderr, "[aeron_gltf_cook] parse '%s' failed: %d\n", in_path, (int)result);
+		ToolLog_Write(TOOL_LOG_ERROR, "[aeron_gltf_cook] parse '%s' failed: %d", in_path, (int)result);
 		return false;
 	}
 	result = cgltf_load_buffers(&parse_options, data, in_path);
 	if (result != cgltf_result_success) {
-		fprintf(stderr, "[aeron_gltf_cook] load_buffers '%s' failed: %d\n", in_path, (int)result);
+		ToolLog_Write(TOOL_LOG_ERROR, "[aeron_gltf_cook] load_buffers '%s' failed: %d", in_path, (int)result);
 		cgltf_free(data);
 		return false;
 	}

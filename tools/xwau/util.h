@@ -22,8 +22,9 @@
  * once. Reports have no program name until it is set. */
 void SetReportProgram(const char* name);
 
-/* Prints a problem or a summary to stderr as "<program>: <label>: <message>",
- * or as "<program>: <message>" when `label` is NULL. */
+/* Writes a problem or a summary to the tool log at warning level, as
+ * "<program>: <label>: <message>", or as "<program>: <message>" when `label`
+ * is NULL. */
 UTIL_PRINTF(2, 3) void Report(const char* label, const char* format, ...);
 void ReportV(const char* label, const char* format, va_list args);
 

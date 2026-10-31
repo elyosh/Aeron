@@ -38,10 +38,7 @@ static int compare_profiles(const void* a, const void* b) {
 	return x < y ? -1 : x > y;
 }
 
-/* Reads the [Objects] lines of mission `base`: <mission>_Objects.txt, or
- * else the [Objects] section of <mission>.ini. Returns false when out of
- * memory. */
-static bool object_lines(const char* game, const char* base, XwauLines* lines) {
+bool XwauMissionFiles_ObjectLines(const char* game, const char* base, XwauLines* lines) {
 	char rel[1100], path[1024];
 	if (!PathFormat(rel, sizeof rel, "%s_Objects.txt", base) ||
 		!XwauLines_Read(Xwau_FindFile(game, rel, path, sizeof path) ? path : NULL, "", XWAU_RULES_CPP, lines))
@@ -59,7 +56,7 @@ static bool profiles(const char* game, const char* base, Profile** out, size_t* 
 	*out   = NULL;
 	*count = 0;
 	XwauLines         lines;
-	bool              ok        = object_lines(game, base, &lines);
+	bool              ok        = XwauMissionFiles_ObjectLines(game, base, &lines);
 	static const char kPrefix[] = "objectprofile_", kFgPrefix[] = "objectprofile_fg_";
 	for (size_t i = 0; ok && i < lines.count; ++i) {
 		char  line[4096];
@@ -155,7 +152,7 @@ static bool swaps(const char* game, const char* base, const char* models, const 
 	*out   = NULL;
 	*count = 0;
 	XwauLines lines, seen_paths = { 0 };
-	bool      ok = object_lines(game, base, &lines);
+	bool      ok = XwauMissionFiles_ObjectLines(game, base, &lines);
 	for (size_t i = 0; ok && i < lines.count; ++i) {
 		char  line[4096];
 		char* equals;

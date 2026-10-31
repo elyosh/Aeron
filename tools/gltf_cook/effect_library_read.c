@@ -4,10 +4,10 @@
  */
 #include "effect_library.h"
 
-#include <stdio.h>
 #include <string.h>
 
 #include "cJSON.h"
+#include "tool_log.h"
 #include "yaml_json.h"
 
 static const char* const kKinds[EFFECT_LIBRARY_KIND_COUNT] = { "baseColor",   "emissive", "damage",
@@ -54,10 +54,10 @@ static bool valid_name(const char* s) {
 static bool check_image(const char* tool, const char* key, const cJSON* entry) {
 	const EffectLibraryKind kind = EffectLibrary_ImageKind(entry);
 	if (kind == EFFECT_LIBRARY_KIND_COUNT) {
-		fprintf(stderr,
-				"%s: image %s: kind must be baseColor, emissive, damage, mark, energy, detailColor or "
-				"detailNormal\n",
-				tool, key);
+		ToolLog_Write(TOOL_LOG_ERROR,
+					  "%s: image %s: kind must be baseColor, emissive, damage, mark, energy, detailColor or "
+					  "detailNormal",
+					  tool, key);
 		return false;
 	}
 	bool ok = true;
@@ -65,17 +65,17 @@ static bool check_image(const char* tool, const char* key, const cJSON* entry) {
 		const char*  field = kInputs[kind][optional];
 		const cJSON* name  = field ? cJSON_GetObjectItemCaseSensitive(entry, field) : NULL;
 		if (field && !name && !optional) {
-			fprintf(stderr, "%s: image %s: no %s\n", tool, key, field);
+			ToolLog_Write(TOOL_LOG_ERROR, "%s: image %s: no %s", tool, key, field);
 			ok = false;
 		} else if (name && !cJSON_IsString(name)) {
-			fprintf(stderr, "%s: image %s: %s is not a path\n", tool, key, field);
+			ToolLog_Write(TOOL_LOG_ERROR, "%s: image %s: %s is not a path", tool, key, field);
 			ok = false;
 		}
 	}
 	const cJSON* max_size = cJSON_GetObjectItemCaseSensitive(entry, "maxSize");
 	const int max = EffectLibrary_KindHasOwnPage(kind) ? EFFECT_LIBRARY_DETAIL_MAX : EFFECT_LIBRARY_IMAGE_MAX;
 	if (max_size && (!cJSON_IsNumber(max_size) || max_size->valueint < 1 || max_size->valueint > max)) {
-		fprintf(stderr, "%s: image %s: maxSize must be 1 to %d\n", tool, key, max);
+		ToolLog_Write(TOOL_LOG_ERROR, "%s: image %s: maxSize must be 1 to %d", tool, key, max);
 		ok = false;
 	}
 	const cJSON* crop = cJSON_GetObjectItemCaseSensitive(entry, "crop");
@@ -84,7 +84,7 @@ static bool check_image(const char* tool, const char* key, const cJSON* entry) {
 		for (int i = 0; valid && i < 4; ++i)
 			valid = cJSON_IsNumber(cJSON_GetArrayItem(crop, i));
 		if (!valid) {
-			fprintf(stderr, "%s: image %s: crop must be [x0, y0, x1, y1]\n", tool, key);
+			ToolLog_Write(TOOL_LOG_ERROR, "%s: image %s: crop must be [x0, y0, x1, y1]", tool, key);
 			ok = false;
 		}
 	}
@@ -103,21 +103,22 @@ bool EffectLibrary_CheckLibrary(const char* tool, const char* file, const cJSON*
 	cJSON_ArrayForEach(member, root) {
 		if (object && strcmp(member->string, "version") && strcmp(member->string, "library") &&
 			strcmp(member->string, "images")) {
-			fprintf(stderr, "%s: %s: unknown member %s (a library has version, library and images)\n", tool,
-					file, member->string);
+			ToolLog_Write(TOOL_LOG_ERROR,
+						  "%s: %s: unknown member %s (a library has version, library and images)", tool, file,
+						  member->string);
 			ok = false;
 		}
 	}
 	if (!cJSON_IsNumber(version) || version->valueint != 1) {
-		fprintf(stderr, "%s: %s: version must be 1\n", tool, file);
+		ToolLog_Write(TOOL_LOG_ERROR, "%s: %s: version must be 1", tool, file);
 		ok = false;
 	}
 	if (!cJSON_IsString(library) || !valid_name(library->valuestring)) {
-		fprintf(stderr, "%s: %s: library must be a name of a-z, 0-9, '_' and '-'\n", tool, file);
+		ToolLog_Write(TOOL_LOG_ERROR, "%s: %s: library must be a name of a-z, 0-9, '_' and '-'", tool, file);
 		ok = false;
 	}
 	if (!cJSON_IsObject(images) || !cJSON_GetArraySize(images)) {
-		fprintf(stderr, "%s: %s: no images\n", tool, file);
+		ToolLog_Write(TOOL_LOG_ERROR, "%s: %s: no images", tool, file);
 		ok = false;
 	}
 	const cJSON* entry;
@@ -132,7 +133,7 @@ cJSON* EffectLibrary_ReadLibrary(const char* tool, const char* file) {
 	char   err[512];
 	cJSON* root = YamlJson_Load(file, err, sizeof err);
 	if (!root) {
-		fprintf(stderr, "%s: %s\n", tool, err);
+		ToolLog_Write(TOOL_LOG_ERROR, "%s: %s", tool, err);
 		return NULL;
 	}
 	if (!EffectLibrary_CheckLibrary(tool, file, root)) {

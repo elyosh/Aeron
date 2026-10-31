@@ -2,6 +2,7 @@
 
 #include <ctype.h>
 #include <dirent.h>
+#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -17,14 +18,15 @@
  * same folders, and reading a folder such as FlightModels for each lookup
  * takes most of the time. A path is used again only while it still exists,
  * and names that weren't found aren't kept, so files that come or go are
- * still found. */
+ * still found. Threads share the cache, so `g_found_mutex` guards it. */
 typedef struct FoundPath {
 	char* key;
 	char* path;
 } FoundPath;
 
-static FoundPath* g_found;
-static size_t     g_found_cap, g_found_count;
+static FoundPath*      g_found;
+static size_t          g_found_cap, g_found_count;
+static pthread_mutex_t g_found_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 static size_t found_hash(const char* key) {
 	size_t hash = 14695981039346656037u;
@@ -33,18 +35,25 @@ static size_t found_hash(const char* key) {
 	return hash;
 }
 
-static const char* found_get(const char* key) {
-	if (!g_found_cap)
-		return NULL;
-	for (size_t i = found_hash(key) & (g_found_cap - 1);; i = (i + 1) & (g_found_cap - 1)) {
-		if (!g_found[i].key)
-			return NULL;
-		if (strcmp(g_found[i].key, key) == 0)
-			return g_found[i].path;
+/* Copies the path found for `key` into `out`. Returns false when there is
+ * none, or when it doesn't fit. */
+static bool found_get(const char* key, char* out, size_t cap) {
+	bool known = false;
+	pthread_mutex_lock(&g_found_mutex);
+	if (g_found_cap) {
+		size_t i = found_hash(key) & (g_found_cap - 1);
+		while (g_found[i].key && strcmp(g_found[i].key, key) != 0)
+			i = (i + 1) & (g_found_cap - 1);
+		if (g_found[i].key && strlen(g_found[i].path) < cap) {
+			strcpy(out, g_found[i].path);
+			known = true;
+		}
 	}
+	pthread_mutex_unlock(&g_found_mutex);
+	return known;
 }
 
-static void found_put(const char* key, const char* path) {
+static void found_put_locked(const char* key, const char* path) {
 	if (g_found_count * 2 >= g_found_cap) {
 		const size_t cap   = g_found_cap ? g_found_cap * 2 : 1024;
 		FoundPath*   table = (FoundPath*)calloc(cap, sizeof *table);
@@ -82,6 +91,12 @@ static void found_put(const char* key, const char* path) {
 	g_found_count++;
 }
 
+static void found_put(const char* key, const char* path) {
+	pthread_mutex_lock(&g_found_mutex);
+	found_put_locked(key, path);
+	pthread_mutex_unlock(&g_found_mutex);
+}
+
 /* Writes `base`/`rel` into `out`, matching each component of `rel` in any
  * case. Returns false when a component is missing. */
 static bool resolve(const char* base, const char* rel, char* out, size_t cap) {
@@ -101,9 +116,9 @@ static bool resolve(const char* base, const char* rel, char* out, size_t cap) {
 		if (!PathFormat(key, sizeof key, "%s/%s", out, part))
 			return false;
 		LowerInPlace(key + strlen(out) + 1);
-		const char* known = found_get(key);
+		char        known[1024];
 		struct stat st;
-		if (known && stat(known, &st) == 0) {
+		if (found_get(key, known, sizeof known) && stat(known, &st) == 0) {
 			if (!PathFormat(out, cap, "%s", known))
 				return false;
 			continue;
@@ -385,6 +400,14 @@ bool Xwau_StoiAuto(const char* text, long long* out) {
 	if (!digits(text, base, &value))
 		return false;
 	*out = sign * value;
+	return true;
+}
+
+bool Xwau_StoiAutoInt(const char* text, long long* out) {
+	long long value;
+	if (!Xwau_StoiAuto(text, &value) || value < -2147483648LL || value > 2147483647LL)
+		return false;
+	*out = value;
 	return true;
 }
 

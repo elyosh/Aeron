@@ -12,6 +12,8 @@
 #include <unistd.h>
 #endif
 
+#include "tool_log.h"
+
 /* ---- Reporting ---------------------------------------------------------- */
 
 static const char* g_report_program;
@@ -19,12 +21,10 @@ static const char* g_report_program;
 void SetReportProgram(const char* name) { g_report_program = name; }
 
 void ReportV(const char* label, const char* format, va_list args) {
-	if (g_report_program)
-		fprintf(stderr, "%s: ", g_report_program);
-	if (label)
-		fprintf(stderr, "%s: ", label);
-	vfprintf(stderr, format, args);
-	fputc('\n', stderr);
+	char message[4096];
+	vsnprintf(message, sizeof message, format, args);
+	ToolLog_Write(TOOL_LOG_WARNING, "%s%s%s%s%s", g_report_program ? g_report_program : "",
+				  g_report_program ? ": " : "", label ? label : "", label ? ": " : "", message);
 }
 
 void Report(const char* label, const char* format, ...) {

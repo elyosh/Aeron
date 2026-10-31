@@ -6,6 +6,7 @@
 #include "aeron/image.h"
 #include "bc5_codec.h"
 #include "bc7_codec.h"
+#include "tool_log.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -42,7 +43,7 @@ static uint8_t* encode_level(const uint8_t* src, size_t src_size, bool enabled, 
 		return NULL;
 	size_t got = ZSTD_compress(buf, bound, src, src_size, g_zstd_level);
 	if (ZSTD_isError(got)) {
-		fprintf(stderr, "[ktx2-write] zstd compress failed: %s\n", ZSTD_getErrorName(got));
+		ToolLog_Write(TOOL_LOG_ERROR, "[ktx2-write] zstd compress failed: %s", ZSTD_getErrorName(got));
 		free(buf);
 		return NULL;
 	}
@@ -166,11 +167,11 @@ static uint8_t* build_ktx2_buf(uint32_t vkFormat, int face_count, int layer_coun
 	for (int i = 0; i < level_count; i++) {
 		size_t expect = level_bytes(vkFormat, levels[i].width, levels[i].height) * slices;
 		if (levels[i].size != expect || !levels[i].data) {
-			fprintf(stderr,
-					"[ktx2-write] level %d size %zu != expected %zu "
-					"(w=%d h=%d fmt=%u faces=%d layers=%d)\n",
-					i, levels[i].size, expect, levels[i].width, levels[i].height, vkFormat, face_count,
-					layer_count);
+			ToolLog_Write(TOOL_LOG_ERROR,
+						  "[ktx2-write] level %d size %zu != expected %zu "
+						  "(w=%d h=%d fmt=%u faces=%d layers=%d)",
+						  i, levels[i].size, expect, levels[i].width, levels[i].height, vkFormat, face_count,
+						  layer_count);
 			return NULL;
 		}
 	}
@@ -293,17 +294,17 @@ static bool write_ktx2_levels(const char* path, uint32_t vkFormat, int face_coun
 	FILE* f = fopen(path, "wb");
 	if (!f) {
 		free(buf);
-		fprintf(stderr, "[ktx2-write] open %s failed\n", path);
+		ToolLog_Write(TOOL_LOG_ERROR, "[ktx2-write] open %s failed", path);
 		return false;
 	}
 	size_t wrote = fwrite(buf, 1, total_size, f);
 	fclose(f);
 	free(buf);
 	if (wrote != total_size) {
-		fprintf(stderr,
-				"[ktx2-write] short write to %s "
-				"(%zu/%zu)\n",
-				path, wrote, total_size);
+		ToolLog_Write(TOOL_LOG_ERROR,
+					  "[ktx2-write] short write to %s "
+					  "(%zu/%zu)",
+					  path, wrote, total_size);
 		return false;
 	}
 	return true;

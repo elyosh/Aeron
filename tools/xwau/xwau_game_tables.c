@@ -143,11 +143,19 @@ static bool read_sound_switch(const Image* image, const char* exe, int index, Xw
 }
 
 XwauGameTables* XwauGameTables_Load(const char* root) {
-	char exe[1100];
+	char exe[1100], models[1100];
 	if (!Xwau_FindFile(root, "XWINGALLIANCE.EXE", exe, sizeof exe)) {
 		Report(root, "has no XWINGALLIANCE.EXE");
 		return NULL;
 	}
+	if (!Xwau_FindDir(root, "FlightModels", models, sizeof models)) {
+		Report(root, "has no FlightModels folder");
+		return NULL;
+	}
+	return XwauGameTables_LoadFiles(exe, models);
+}
+
+XwauGameTables* XwauGameTables_LoadFiles(const char* exe, const char* flight_models) {
 	XwauGameTables* tables = calloc(1, sizeof *tables);
 	size_t          size   = 0;
 	uint8_t*        data   = (uint8_t*)ReadWholeFile(exe, &size);
@@ -170,11 +178,10 @@ XwauGameTables* XwauGameTables_Load(const char* root) {
 		tables->craftPastEnd = read_u16(craft + 2 * XWAU_GAME_CRAFT_TYPES);
 	}
 	for (int list = 0; ok && list < 2; ++list) {
-		char rel[64], path[1100];
-		snprintf(rel, sizeof rel, "FlightModels/%s", g_listNames[list]);
-		if (!Xwau_FindFile(root, rel, path, sizeof path) ||
+		char path[1100];
+		if (!Xwau_FindFile(flight_models, g_listNames[list], path, sizeof path) ||
 			!read_list(path, &tables->rows[list], &tables->rowCount[list])) {
-			Report(root, "has no readable %s", rel);
+			Report(flight_models, "has no readable %s", g_listNames[list]);
 			ok = false;
 		}
 	}
@@ -217,6 +224,15 @@ const char* XwauGameTables_Model(const XwauGameTables* tables, int object_type) 
 		return "";
 	const XwauGameType type = XwauGameTables_Type(tables, object_type);
 	if (!XwauGameType_HasRow(&type) || type.row >= tables->rowCount[type.list])
+		return "";
+	return tables->rows[type.list][type.row];
+}
+
+const char* XwauGameTables_RowModel(const XwauGameTables* tables, int object_type) {
+	if (object_type < 0 || object_type >= XWAU_GAME_OBJECT_TYPES)
+		return "";
+	const XwauGameType type = XwauGameTables_Type(tables, object_type);
+	if (type.list >= 2 || type.row >= tables->rowCount[type.list])
 		return "";
 	return tables->rows[type.list][type.row];
 }

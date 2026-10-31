@@ -38,6 +38,12 @@ void bc7_codec_encode_block(uint8_t out_block[16], const uint8_t in_rgba_4x4[64]
  * it, so that the copies don't run more threads than the CPU has. */
 void bc7_codec_set_max_threads(unsigned threads);
 
+/* Empties the calling thread's cache of encoded blocks, and frees it.
+ * bc7_codec_encode_image reuses the blocks that the same thread has already
+ * encoded, until this is called. Call it when a job starts, such as one
+ * model's cook, so that the cache doesn't keep growing. */
+void bc7_codec_clear_cache(void);
+
 /* Encode a whole RGBA8 image (tightly-packed, R first) into a flat
  * BC7 block stream. Out buffer must be ≥ ceil(w/4)*ceil(h/4)*16
  * bytes. Pixels at the right/bottom edges that don't fill a full

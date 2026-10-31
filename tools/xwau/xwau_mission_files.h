@@ -134,6 +134,11 @@
 #include "xwau_config.h"
 #include "xwau_missions.h"
 
+/* Reads the [Objects] lines of mission `base` ("<dir>/<mission>"):
+ * <mission>_Objects.txt, or else the [Objects] section of <mission>.ini.
+ * Returns false when out of memory. */
+bool XwauMissionFiles_ObjectLines(const char* game, const char* base, XwauLines* lines);
+
 /* Writes the mission files under `out`. `stock_game` is the stock game's
  * folder, which has the .TIE of the missions that the mod doesn't bring.
  * Returns false on an error. */

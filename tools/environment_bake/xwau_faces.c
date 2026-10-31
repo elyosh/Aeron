@@ -4,6 +4,7 @@
 #include "ldr_read.h"
 
 #include <math.h>
+#include <pthread.h>
 #include <stdarg.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -51,7 +52,9 @@ static int face_of(const char* name) {
 	return dot[-1] - '0';
 }
 
-static float s_srgb_to_linear[256];
+/* Filled once, whichever thread loads faces first. */
+static float          s_srgb_to_linear[256];
+static pthread_once_t s_srgb_once = PTHREAD_ONCE_INIT;
 
 static void init_srgb_table(void) {
 	for (int i = 0; i < 256; ++i) {
@@ -147,7 +150,7 @@ static bool fail(char* err, size_t errsz, const char* format, ...) {
 bool xwau_faces_load(const char* dir, int size, bool alpha, XwauFaces* out, char* err, size_t errsz) {
 	memset(out, 0, sizeof *out);
 	out->channels = alpha ? 4 : 3;
-	init_srgb_table();
+	pthread_once(&s_srgb_once, init_srgb_table);
 	FileList   list = { .count = 0 };
 	AeronVfs*  vfs  = AeronVfs_Create(NULL);
 	const bool listed =

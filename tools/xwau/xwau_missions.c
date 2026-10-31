@@ -520,12 +520,19 @@ XwauTieFlightGroup* XwauTie_FlightGroups(const char* path, size_t* count) {
 	return out;
 }
 
-static ModelVariants* model_variants(XwauMissions* m, const char* model, bool add) {
+static const ModelVariants* find_model_variants(const XwauMissions* m, const char* model) {
 	for (size_t i = 0; i < m->model_count; ++i)
 		if (strcmp(m->models[i].model, model) == 0)
 			return &m->models[i];
-	if (!add)
-		return NULL;
+	return NULL;
+}
+
+/* The variants of `model`, added when it has none yet. Returns NULL when out
+ * of memory. */
+static ModelVariants* model_variants(XwauMissions* m, const char* model) {
+	for (size_t i = 0; i < m->model_count; ++i)
+		if (strcmp(m->models[i].model, model) == 0)
+			return &m->models[i];
 	ModelVariants* v = ARRAY_PUSH(m->models, m->model_count);
 	if (!v)
 		return NULL;
@@ -594,7 +601,7 @@ static bool load_variants(const char* game, XwauMissions* m) {
 							   "has no model",
 							   fgs[i].fg);
 					else
-						ok = (model = model_variants(m, name, true)) != NULL;
+						ok = (model = model_variants(m, name)) != NULL;
 					for (size_t v = 0; ok && model && !variant[0] && v < model->count; ++v)
 						if (same_lists(&model->variants[v].lists, &fgs[i].lists))
 							snprintf(variant, sizeof variant, "%s", model->variants[v].name);
@@ -635,12 +642,30 @@ static bool load_variants(const char* game, XwauMissions* m) {
 	return ok;
 }
 
+static int compare_meshes(const void* a, const void* b) {
+	return ((const MeshEntry*)a)->mesh - ((const MeshEntry*)b)->mesh;
+}
+
+/* Sorts each list of each variant by mesh, once, so that the loaded missions
+ * are only read afterwards, by any thread. */
+static void sort_variant_meshes(XwauMissions* m) {
+	for (size_t i = 0; i < m->model_count; ++i)
+		for (size_t v = 0; v < m->models[i].count; ++v) {
+			Lists* lists = &m->models[i].variants[v].lists;
+			for (size_t g = 0; g < lists->count; ++g)
+				qsort(lists->groups[g].meshes, lists->groups[g].count, sizeof *lists->groups[g].meshes,
+					  compare_meshes);
+		}
+}
+
 XwauMissions* XwauMissions_Load(const char* game, bool report_problems) {
 	XwauMissions* m = (XwauMissions*)calloc(1, sizeof *m);
 	if (m)
 		m->report = report_problems;
-	if (m && load_skin_contexts(game, m) && load_variants(game, m))
+	if (m && load_skin_contexts(game, m) && load_variants(game, m)) {
+		sort_variant_meshes(m);
 		return m;
+	}
 	XwauMissions_Free(m);
 	return NULL;
 }
@@ -679,16 +704,12 @@ static int compare_variants(const void* a, const void* b) {
 	return strcmp((*(const Variant* const*)a)->name, (*(const Variant* const*)b)->name);
 }
 
-static int compare_meshes(const void* a, const void* b) {
-	return ((const MeshEntry*)a)->mesh - ((const MeshEntry*)b)->mesh;
-}
-
 bool XwauMissions_Articulations(const XwauMissions* missions, const char* model,
 								OptGltfComponentArticulation* out, size_t* count, size_t cap,
 								const char* label) {
 	char key[256];
 	LowerCopy(key, sizeof key, model);
-	ModelVariants* entry = model_variants((XwauMissions*)missions, key, false);
+	const ModelVariants* entry = find_model_variants(missions, key);
 	if (!entry || !entry->count)
 		return true;
 	const Variant** sorted = (const Variant**)malloc(entry->count * sizeof *sorted);
@@ -700,7 +721,7 @@ bool XwauMissions_Articulations(const XwauMissions* missions, const char* model,
 	bool ok = true;
 	for (size_t i = 0; ok && i < entry->count; ++i) {
 		for (size_t g = 0; ok && g < sorted[i]->lists.count; ++g) {
-			GroupList* list = &sorted[i]->lists.groups[g];
+			const GroupList* list = &sorted[i]->lists.groups[g];
 			char       tag[1024];
 			snprintf(tag, sizeof tag, "variant.%s.%s", sorted[i]->name, list->group);
 			if (strlen(tag) > TAG_MAX) {
@@ -708,7 +729,6 @@ bool XwauMissions_Articulations(const XwauMissions* missions, const char* model,
 					   tag, TAG_MAX);
 				continue;
 			}
-			qsort(list->meshes, list->count, sizeof *list->meshes, compare_meshes);
 			for (size_t k = 0; ok && k < list->count; ++k) {
 				if (*count == cap) {
 					ok = false;

@@ -10,6 +10,7 @@
 #include <string.h>
 
 #include "cJSON.h"
+#include "tool_log.h"
 
 /* The members of an entry, in the format's order (animated_materials.md):
  * a file's and an image's. Other members follow, by name. */
@@ -269,7 +270,7 @@ bool EffectFiles_Write(const char* tool, const cJSON* file, const char* header, 
 	char* text = (header || kept) ? EffectFiles_Format(file, header ? header : kept) : NULL;
 	free(kept);
 	if (!text) {
-		fprintf(stderr, "%s: %s: cannot format the file\n", tool, path);
+		ToolLog_Write(TOOL_LOG_ERROR, "%s: %s: cannot format the file", tool, path);
 		return false;
 	}
 	FILE*      f       = fopen(path, "wb");
@@ -277,6 +278,6 @@ bool EffectFiles_Write(const char* tool, const cJSON* file, const char* header, 
 	const bool closed  = f && fclose(f) == 0;
 	free(text);
 	if (!written || !closed)
-		fprintf(stderr, "%s: cannot write %s\n", tool, path);
+		ToolLog_Write(TOOL_LOG_ERROR, "%s: cannot write %s", tool, path);
 	return written && closed;
 }

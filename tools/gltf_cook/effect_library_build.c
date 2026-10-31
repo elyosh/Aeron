@@ -33,9 +33,11 @@
 #define XXH_INLINE_ALL
 #include "xxhash.h"
 
+#include "bc7_codec.h"
 #include "cJSON.h"
 #include "effect_library.h"
 #include "png_read.h"
+#include "tool_log.h"
 #include "yaml_json.h"
 
 static float clamp01(float x) { return x < 0.0f ? 0.0f : (x > 1.0f ? 1.0f : x); }
@@ -66,13 +68,13 @@ static uint8_t* load_input(const char* tool, const char* dir, const char* key, c
 	const cJSON* name = cJSON_GetObjectItemCaseSensitive(entry, field);
 	if (!name) {
 		if (required) {
-			fprintf(stderr, "%s: image %s: no %s\n", tool, key, field);
+			ToolLog_Write(TOOL_LOG_ERROR, "%s: image %s: no %s", tool, key, field);
 			*ok = false;
 		}
 		return NULL;
 	}
 	if (!cJSON_IsString(name)) {
-		fprintf(stderr, "%s: image %s: %s is not a path\n", tool, key, field);
+		ToolLog_Write(TOOL_LOG_ERROR, "%s: image %s: %s is not a path", tool, key, field);
 		*ok = false;
 		return NULL;
 	}
@@ -81,13 +83,13 @@ static uint8_t* load_input(const char* tool, const char* dir, const char* key, c
 	uint8_t* rgba = NULL;
 	int      iw = 0, ih = 0;
 	if (!read_png_rgba(path, &rgba, &iw, &ih, err, sizeof err)) {
-		fprintf(stderr, "%s: image %s: %s\n", tool, key, err);
+		ToolLog_Write(TOOL_LOG_ERROR, "%s: image %s: %s", tool, key, err);
 		*ok = false;
 		return NULL;
 	}
 	if (*w && (iw != *w || ih != *h)) {
-		fprintf(stderr, "%s: image %s: %s is %dx%d, not %dx%d like its other input\n", tool, key, field, iw,
-				ih, *w, *h);
+		ToolLog_Write(TOOL_LOG_ERROR, "%s: image %s: %s is %dx%d, not %dx%d like its other input", tool, key,
+					  field, iw, ih, *w, *h);
 		free(rgba);
 		*ok = false;
 		return NULL;
@@ -246,13 +248,12 @@ static bool bake(const char* tool, const char* dir, const char* key, const cJSON
 	return true;
 }
 
-/* A key as a JSON string, for messages a tool reads. */
-static void print_key(const char* key) {
+/* A key as a JSON string, for messages a tool reads. Free it with free(). */
+static char* quoted_key(const char* key) {
 	cJSON* string  = cJSON_CreateString(key);
 	char*  printed = string ? cJSON_PrintUnformatted(string) : NULL;
-	fputs(printed ? printed : "\"\"", stderr);
-	free(printed);
 	cJSON_Delete(string);
+	return printed;
 }
 
 /* What replacing index `old` (NULL: none) with the library file's `images`
@@ -264,28 +265,33 @@ static void report_replaced(const char* tool, const char* name, const cJSON* old
 		const cJSON* image = cJSON_GetObjectItemCaseSensitive(images, entry->string);
 		const cJSON* kind  = cJSON_GetObjectItemCaseSensitive(entry, "kind");
 		if (!image) {
-			fprintf(stderr, "%s: %s: removed ", tool, name);
-			print_key(entry->string);
-			fputc('\n', stderr);
+			char* key = quoted_key(entry->string);
+			ToolLog_Write(TOOL_LOG_WARNING, "%s: %s: removed %s", tool, name, key ? key : "\"\"");
+			free(key);
 		} else if (cJSON_IsString(kind) &&
 				   strcmp(kind->valuestring, EffectLibrary_KindName(EffectLibrary_ImageKind(image))) != 0) {
-			fprintf(stderr, "%s: %s: ", tool, name);
-			print_key(entry->string);
-			fprintf(stderr, " changed kind from %s to %s\n", kind->valuestring,
-					EffectLibrary_KindName(EffectLibrary_ImageKind(image)));
+			char* key = quoted_key(entry->string);
+			ToolLog_Write(TOOL_LOG_WARNING, "%s: %s: %s changed kind from %s to %s", tool, name,
+						  key ? key : "\"\"", kind->valuestring,
+						  EffectLibrary_KindName(EffectLibrary_ImageKind(image)));
+			free(key);
 		}
 	}
 }
 
 EffectLibraryBuild EffectLibrary_BuildLibrary(const char* tool, const char* file, const char* name,
 											  const char* out_dir) {
+	/* The BC7 blocks that this thread encoded for an earlier job aren't
+	   reused. */
+	bc7_codec_clear_cache();
 	cJSON* root = EffectLibrary_ReadLibrary(tool, file);
 	if (!root)
 		return EFFECT_LIBRARY_FAILED;
 	const cJSON* library = cJSON_GetObjectItemCaseSensitive(root, "library");
 	const cJSON* images  = cJSON_GetObjectItemCaseSensitive(root, "images");
 	if (name && strcmp(library->valuestring, name) != 0) {
-		fprintf(stderr, "%s: %s: holds library %s, not %s\n", tool, file, library->valuestring, name);
+		ToolLog_Write(TOOL_LOG_ERROR, "%s: %s: holds library %s, not %s", tool, file, library->valuestring,
+					  name);
 		cJSON_Delete(root);
 		return EFFECT_LIBRARY_FAILED;
 	}
@@ -295,7 +301,7 @@ EffectLibraryBuild EffectLibrary_BuildLibrary(const char* tool, const char* file
 	char       inputs[17];
 	const bool have_inputs = library_inputs(file, dir, images, inputs);
 	if (have_inputs && library_current(out_dir, library->valuestring, inputs)) {
-		fprintf(stderr, "%s: %s: unchanged\n", tool, library->valuestring);
+		ToolLog_Write(TOOL_LOG_INFO, "%s: %s: unchanged", tool, library->valuestring);
 		cJSON_Delete(root);
 		return EFFECT_LIBRARY_UNCHANGED;
 	}
@@ -319,8 +325,8 @@ EffectLibraryBuild EffectLibrary_BuildLibrary(const char* tool, const char* file
 	EffectLibraryResult result = { 0 };
 	if (ok && EffectLibrary_Write(tool, out_dir, library->valuestring, NULL, have_inputs ? inputs : NULL,
 								  baked, (size_t)n, &result)) {
-		fprintf(stderr, "%s: %s: built, %d image(s), %d layer and %d emissive page(s)\n", tool,
-				library->valuestring, n, result.layer_pages, result.emissive_pages);
+		ToolLog_Write(TOOL_LOG_INFO, "%s: %s: built, %d image(s), %d layer and %d emissive page(s)", tool,
+					  library->valuestring, n, result.layer_pages, result.emissive_pages);
 		report_replaced(tool, library->valuestring, old, images);
 	} else {
 		ok = false;
