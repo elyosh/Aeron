@@ -7,15 +7,13 @@
 #include <string.h>
 #include <strings.h>
 
+#include "classic_radiance.h"
 #include "util.h"
 #include "xwau_config.h"
 #include "xwau_craft.h"
 #include "xwau_mission_settings.h"
 #include "xwau_object_limits.h"
 
-/* The illuminance of the game's white sun, in W/m^2: the strength of the
- * Blender sun that matches it. */
-#define HEADLIGHTS_SUN_W_PER_M2 2.5
 /* XWAU's headlight gives the same light at every distance, and OpenXWA's
  * falls with the square of the distance. They give the same light at this
  * distance: about the distance to the walls of the Death Star's tunnels,
@@ -119,9 +117,10 @@ static void read_headlights(const char* game, Headlights* out) {
 
 /* Writes the `headlights` section, when the mod's ddraw draws headlights.
  * ddraw's colour holds the light's tint and its brightness, relative to the
- * game's white sun. The section has the tint with its brightest channel at
- * 1, and the power of a one-sided light, as a Blender area light, that gives
- * that brightness at HEADLIGHTS_MATCH_DISTANCE_M: E = P / (pi d^2). ddraw's
+ * game's white sun, which gives CLASSIC_ILLUMINANCE. The section has the
+ * tint with its brightest channel at 1, and the power of a one-sided light,
+ * as a Blender area light, that gives that brightness at
+ * HEADLIGHTS_MATCH_DISTANCE_M: E = P / (pi d^2). ddraw's
  * distance (where its light ends) and ambient aren't written: they don't
  * apply to a light that falls with the distance. */
 static bool write_headlights(FILE* f, const char* game) {
@@ -133,8 +132,8 @@ static bool write_headlights(FILE* f, const char* game) {
 	double brightness = fmax(h.color[0], fmax(h.color[1], h.color[2]));
 	if (!h.ssao_enabled || !(brightness > 0.0))
 		return false;
-	const double power = brightness * HEADLIGHTS_SUN_W_PER_M2 * 3.14159265358979 *
-						 HEADLIGHTS_MATCH_DISTANCE_M * HEADLIGHTS_MATCH_DISTANCE_M;
+	const double power = brightness * CLASSIC_ILLUMINANCE * 3.14159265358979 * HEADLIGHTS_MATCH_DISTANCE_M *
+						 HEADLIGHTS_MATCH_DISTANCE_M;
 	fprintf(f,
 			"headlights:\n  position_m: [%g, %g, %g]\n  color: [%.3g, %.3g, %.3g]\n  power_w: %.0f\n"
 			"  angle_degrees: %g\n  auto_turn_on: %s\n",

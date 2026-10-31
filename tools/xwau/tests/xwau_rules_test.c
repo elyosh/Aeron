@@ -1845,7 +1845,7 @@ static void test_flight_settings(const char* scratch) {
 	check(XwauFlightSettings_Write(game, settings) &&
 			  same_file(settings,
 						"# Made by the OpenXWA mod importer.\nversion: 1\nheadlights:\n  position_m: [0, 0, "
-						"20]\n  color: [0.944, 0.944, 1]\n  power_w: 17671\n  angle_degrees: 25\n"
+						"20]\n  color: [0.944, 0.944, 1]\n  power_w: 1314756\n  angle_degrees: 25\n"
 						"  auto_turn_on: true\n"),
 		  "flight settings: the headlights of SSAO.cfg, as a tint and a power in watts that gives ddraw's "
 		  "light at 50 m");
