@@ -53,6 +53,8 @@ int Aeron_Init(const AeronConfig* config) {
 		memcpy(g_aeron.clear_color_rgba, config->clear_color_rgba, sizeof g_aeron.clear_color_rgba);
 	}
 
+	Aeron_CopyString(g_aeron.org_name, sizeof(g_aeron.org_name),
+					 config && config->org_name ? config->org_name : "aeron");
 	Aeron_CopyString(g_aeron.app_name, sizeof(g_aeron.app_name),
 					 config && config->app_name ? config->app_name : "aeron");
 	SDL_SetAppMetadata(g_aeron.app_name, NULL, NULL);

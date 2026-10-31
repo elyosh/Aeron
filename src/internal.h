@@ -323,6 +323,7 @@ typedef struct AeronRuntime {
 	AeronControllerDevice controllers[AERON_CONTROLLER_MAX];
 	uint64_t              last_frame_us;
 	AeronVfs              vfs;
+	char                  org_name[128];
 	char                  app_name[128];
 	char                  shader_root[AERON_MAX_PATH];
 	char                  render_error[512];
