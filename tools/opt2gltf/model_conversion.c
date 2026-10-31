@@ -454,12 +454,14 @@ static bool xwau_bolt_lights(Conversion* c, const opt_file_t* opt) {
 					return false;
 				c->lights           = grown;
 				OptGltfLight* light = &grown[c->light_count++];
-				light->mesh_index   = (uint32_t)mi;
-				light->state        = state;
+				*light              = (OptGltfLight) {
+					.mesh_index = (uint32_t)mi,
+					.state      = state,
+					.intensity  = peak * XWAU_BOLT_LIGHT_CANDELA,
+				};
 				/* XWAU shades with Light as a linear colour. */
 				for (int k = 0; k < 3; ++k)
 					light->color[k] = fmaxf(p->light[k], 0.0f) / peak;
-				light->intensity = peak * XWAU_BOLT_LIGHT_CANDELA;
 			}
 		}
 	}
