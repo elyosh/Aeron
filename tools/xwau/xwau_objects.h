@@ -2,8 +2,8 @@
 #define AERON_XWAU_OBJECTS_H
 
 /*
- * Writes the object type and craft type files of a mod (xwau_import craft
- * --stock-game DIR):
+ * Writes the object type and craft type files of a mod (the mod importer's
+ * craft phase):
  *   - <output_dir>/object_types/<model>.yaml, one for each object type that
  *     the mod changes or fills with a new craft;
  *   - <output_dir>/craft_types/<name>.yaml, one for each craft type that the
@@ -48,7 +48,7 @@
  * which its MC80s load) keeps the stock model for the stock object types that
  * load it.
  *
- *   # Written by xwau_import craft ...
+ *   # Written by the OpenXWA mod importer ...
  *   version: 1
  *   object_type: 138
  *   model: victorystardestroyer
@@ -64,7 +64,7 @@
  *   beam_allowed: true
  *   names: {short: 'QF/Cr', long: 'Quasar Fire Carrier', plural: '...', gender: m}
  *
- *   # Written by xwau_import craft ...
+ *   # Written by the OpenXWA mod importer ...
  *   version: 1
  *   craft_type: 124
  *   object_type: 138  # victorystardestroyer
@@ -103,7 +103,7 @@
  *
  * The names and the craft type texts aren't in text/strings.yaml (the
  * `moved` IDs of XwauObjects_Write). Files that an earlier run wrote (they
- * start with "# Written by xwau_import craft") are removed first.
+ * start with "# Written by the OpenXWA mod importer") are removed first.
  */
 
 #include <stdbool.h>

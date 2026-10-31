@@ -3,7 +3,7 @@
 
 /*
  * Writes the texts that a mod changes in STRINGS.TXT, FRONTTXT.TXT,
- * SHIPLIST.TXT and SPECDESC.TXT (xwau_import craft --strings FILE).
+ * SHIPLIST.TXT and SPECDESC.TXT (the mod importer's craft phase).
  *
  * Each line of these files is "!ID!text", and the game looks up every line by
  * its ID. In OpenXWA, text/strings.yaml can replace the text of any ID. So

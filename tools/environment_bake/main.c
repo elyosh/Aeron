@@ -20,9 +20,6 @@ static void usage(void) {
 		"                   [--lights-input lights.yaml] [--environment-out FILE] [--manifest-root DIR]\n"
 		"                   [--radiance-size 2048] [--diffuse-size 32] [--specular-size 512]\n"
 		"                   [--specular-samples 1024] [--jobs 8]\n"
-		"  environment_bake --faces DIR --name NAME --radiance-out P --diffuse-out P --specular-out P\n"
-		"                   [same options as --input]\n"
-		"  environment_bake --overlay-faces DIR --overlay-out P [--radiance-size 2048]\n"
 		"  environment_bake --input space.hdr --name NAME --diffuse-out P --specular-out P\n"
 		"                   [--lights-input lights.yaml] [--environment-out FILE] [--manifest-root DIR]\n"
 		"                   [--diffuse-size 32] [--specular-size 512] [--specular-samples 1024] [--jobs 8]\n"
@@ -35,12 +32,7 @@ static void usage(void) {
 		"                   [--specular-size 256] [--specular-samples 1024] [--jobs 8]\n"
 		"\n"
 		"The sky is an equirectangular panorama (2:1) without suns, in the authored\n"
-		"frame: +X right, +Y up, -Z forward at the image centre. --faces reads an XWA\n"
-		"Upgrade skybox folder (Effects/CubeMaps/<name>): six PNG or JPEG faces, the\n"
-		"digit before the extension giving the face (0 Right, 1 Left, 2 Top, 3 Bottom,\n"
-		"4 Front, 5 Back). They are sRGB, and are turned to OpenXWA's cube frame.\n"
-		"--overlay-faces reads an overlay folder, the same six faces with alpha.\n"
-		"The light list is a\n"
+		"frame: +X right, +Y up, -Z forward at the image centre. The light list is a\n"
 		"YAML map with a `directional_lights` sequence in the environment light schema.\n"
 		"Texture paths in the environment entry are relative to --manifest-root when given.\n"
 		"A capture is baked into <bake root>/flight/environments/captured/<mission>/region_<n>/;\n"
@@ -70,12 +62,6 @@ static bool parse_args(int argc, char** argv, EnvBakeOptions* o) {
 		int*         number = NULL;
 		if (strcmp(arg, "--input") == 0)
 			text = &o->input;
-		else if (strcmp(arg, "--faces") == 0)
-			text = &o->faces_dir;
-		else if (strcmp(arg, "--overlay-faces") == 0)
-			text = &o->overlay_faces_dir;
-		else if (strcmp(arg, "--overlay-out") == 0)
-			text = &o->overlay_out;
 		else if (strcmp(arg, "--lights-input") == 0)
 			text = &o->lights_input;
 		else if (strcmp(arg, "--name") == 0)
@@ -152,29 +138,25 @@ int main(int argc, char** argv) {
 		usage();
 		return 2;
 	}
-	const int modes = (o.input != NULL) + (o.faces_dir != NULL) + (o.overlay_faces_dir != NULL) +
-					  (o.diagnostic_out != NULL) + (o.sprite_input != NULL) + (o.capture_dir != NULL) +
-					  (o.probes_input != NULL);
+	const int modes = (o.input != NULL) + (o.diagnostic_out != NULL) + (o.sprite_input != NULL) +
+					  (o.capture_dir != NULL) + (o.probes_input != NULL);
 	if (modes != 1) {
 		fprintf(stderr,
-				"environment_bake: give exactly one of --input, --faces, --overlay-faces, --diagnostic-faces, "
-				"--sprite, --capture or --probes\n");
+				"environment_bake: give exactly one of --input, --diagnostic-faces, --sprite, --capture or "
+				"--probes\n");
 		usage();
 		return 2;
 	}
-	const bool missing = o.overlay_faces_dir ? !o.overlay_out
-						 : o.sprite_input    ? !o.sprite_out
-						 : o.capture_dir     ? !o.bake_root
-						 : o.probes_input    ? !o.cubes_out || !o.grid_out || !o.bake_out
-						 : o.diagnostic_out  ? false
-											 : !o.name || !o.diffuse_out || !o.specular_out;
+	const bool missing = o.sprite_input     ? !o.sprite_out
+						 : o.capture_dir    ? !o.bake_root
+						 : o.probes_input   ? !o.cubes_out || !o.grid_out || !o.bake_out
+						 : o.diagnostic_out ? false
+											: !o.name || !o.diffuse_out || !o.specular_out;
 	if (missing) {
 		usage();
 		return 2;
 	}
 	o.environment_stream = stdout;
-	if (o.overlay_faces_dir)
-		return EnvBake_Overlay(&o);
 	if (o.diagnostic_out)
 		return EnvBake_Diagnostic(&o);
 	if (o.sprite_input)

@@ -3,7 +3,7 @@
 
 /*
  * Writes XWAU's hangar settings, which hook_hangars reads at runtime, once
- * and already parsed (xwau_import hangars):
+ * and already parsed (the mod importer's hangars phase):
  *
  *     version: 1
  *     default:                  # FlightModels/<Section>.txt, else default.ini [<Section>]

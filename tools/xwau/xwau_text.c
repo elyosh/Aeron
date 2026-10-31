@@ -270,7 +270,7 @@ bool XwauText_Write(const char* mod_root, const char* stock_game, const char* ou
 		Report(output_file, "can't be written");
 		return false;
 	}
-	fprintf(f, "# Written by xwau_import craft: each ID whose text the mod changes in the\n"
+	fprintf(f, "# Written by the OpenXWA mod importer: each ID whose text the mod changes in the\n"
 			   "# game's text files.\nversion: 1\nstrings:\n");
 	bool ok      = true;
 	int  written = 0;

@@ -579,9 +579,8 @@ static void write_missions(const SkyState* st, FILE* f) {
 
 /* The lines around the importer's entries in each section of the manifest.
  * Each import replaces what is between them. */
-#define SKY_BEGIN                                                                                            \
-	"# Begin of the entries that xwau_import missions --skyboxes writes. Each import replaces them."
-#define SKY_END "# End of the entries that xwau_import missions --skyboxes writes."
+#define SKY_BEGIN "# Begin of the entries that the OpenXWA mod importer writes. Each import replaces them."
+#define SKY_END "# End of the entries that the OpenXWA mod importer writes."
 
 typedef struct SkyLine {
 	const char* text;

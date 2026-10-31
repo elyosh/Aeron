@@ -102,7 +102,7 @@ static bool copy_changed_tree(Copy* c, const char* dir) {
 /* Copies the files in Wave/ that differ from the stock game's. This covers
  * the stock files directly in Wave/, and every file in a folder that the
  * stock game also has. Other files and folders are skipped, because the game
- * doesn't read them. xwau_import craft copies the sound banks (Wave/Sfx_*). */
+ * doesn't read them. The craft phase copies the sound banks (Wave/Sfx_*). */
 static bool copy_wave(Copy* c) {
 	char wave[1024];
 	if (!Xwau_FindDir(c->game, "Wave", wave, sizeof wave))

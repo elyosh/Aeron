@@ -2,8 +2,8 @@
 #define AERON_XWAU_GUNNER_SEATS_H
 
 /*
- * Imports the gunner seats of XWAU's hook_mission_objects (xwau_import
- * craft). A model's seats come from FlightModels/<model>Turrets.txt, or else
+ * Imports the gunner seats of XWAU's hook_mission_objects (the mod
+ * importer's craft phase). A model's seats come from FlightModels/<model>Turrets.txt, or else
  * from the [Turrets] section of its INI. Each line with at least 9 values,
  * split at ',' and ';', is one seat:
  *

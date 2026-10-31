@@ -32,9 +32,9 @@
  *     overlay; the next ones get .2, .3 and so on. AmbientInt becomes
  *     diffuse_strength and AmbientMin the ambient_fill. Its textures are
  *     flight/environments/xwau/<folder>/{sky,diffuse,specular}.ktx2, which
- *     `environment_bake --faces` writes, and
- *     flight/environments/xwau/<overlay folder>/overlay.ktx2, which
- *     `environment_bake --overlay-faces` writes;
+ *     the importer bakes with EnvBake_Sky, and
+ *     flight/environments/xwau/<overlay folder>/overlay.ktx2, which it bakes
+ *     with EnvBake_Overlay;
  *   - an `xwa.missions` entry for each original mission with [SkyBoxes],
  *     with its four regions. A region with a cube keeps its backdrops, and
  *     gets its rotation (XwauSkyboxes_Rotation) and its hide and show lists:
@@ -47,8 +47,8 @@
  *
  * They go between two comment lines in each of the manifest's maps,
  * `environments` and `xwa.missions`:
- *   # Begin of the entries that xwau_import missions --skyboxes writes. ...
- *   # End of the entries that xwau_import missions --skyboxes writes.
+ *   # Begin of the entries that the OpenXWA mod importer writes. ...
+ *   # End of the entries that the OpenXWA mod importer writes.
  * Each import replaces what is between them, so hand edits there are lost.
  * The rest of the file is kept as it is, comments included. A file without
  * these lines gets them at the end of each map, and a missing file is

@@ -3,10 +3,10 @@
 
 /*
  * Writes flight/flight.yaml, the settings of a mod that apply to every
- * mission (xwau_import missions --flight-settings FILE). They come from the
+ * mission (the mod importer's missions phase). They come from the
  * hooks that the mod installs:
  *
- *     # Made by xwau_import missions.
+ *     # Made by the OpenXWA mod importer.
  *     version: 1
  *     backdrops:
  *       extra_planets:
@@ -138,7 +138,7 @@
  * else from the [hook_weapon_rate] section of Hooks.ini, and default to 100.
  * They are only written if the DLL contains the text "DechargeRatePercent".
  * The hook can also set rates by flight group for each mission
- * ([WeaponRates]). These aren't imported; xwau_import missions reports the
+ * ([WeaponRates]). These aren't imported; the missions phase reports the
  * missions that have them.
  * The global weapon profiles of hook_weapon_rate also go into `weapons`.
  * They come from the [WeaponStats], [WarheadStats], [EnergyStats],

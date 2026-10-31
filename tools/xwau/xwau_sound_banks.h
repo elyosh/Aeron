@@ -2,7 +2,7 @@
 #define AERON_XWAU_SOUND_BANKS_H
 
 /*
- * Imports XWAU's sound banks (xwau_import craft --game-files DIR). When an
+ * Imports XWAU's sound banks (the mod importer's craft phase). When an
  * installation has hook_sounds_count.dll, XWAU loads each
  * Wave/Sfx_<Bank>.lst as a bank of sounds, with the files in
  * Wave/Sfx_<Bank>/. Other hooks then pick a sound from a bank by object type:

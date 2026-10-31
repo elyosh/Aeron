@@ -508,7 +508,7 @@ static bool load_panorama(const EnvBakeOptions* o, int size, EnvCube* radiance) 
 	return true;
 }
 
-/* Fills level 0 of a new `size` radiance cube from the --faces folder. */
+/* Fills level 0 of a new `size` radiance cube from the skybox folder faces_dir. */
 static bool load_faces(const EnvBakeOptions* o, int size, EnvCube* radiance) {
 	XwauFaces faces;
 	char      err[512];

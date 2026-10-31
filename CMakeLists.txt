@@ -1049,8 +1049,8 @@ set_target_properties(aeron_asset PROPERTIES
 if(AERON_BUILD_TOOLS)
     # The readers of the X-Wing Alliance Upgrade files (tools/xwau), with the
     # model tables and the tools' utilities. They fill the data types of
-    # opt_gltf.h, but they call no conversion code. opt2gltf and xwau_import
-    # link this library.
+    # opt_gltf.h, but they call no conversion code. opt2gltf and the mod
+    # importer link this library.
     add_library(xwau_files STATIC
         tools/xwau/util.c
         tools/xwau/model_tables.c
@@ -1082,7 +1082,7 @@ if(AERON_BUILD_TOOLS)
 
     # The XWAU imports that are not models: the mission files, the
     # skyboxes, the craft settings, the text overrides, the awards and the
-    # hangars. xwau_import and its test link this library.
+    # hangars. The mod importer and its test link this library.
     add_library(xwau_import_lib STATIC
         tools/xwau/xwau_awards.c
         tools/xwau/xwau_craft.c
@@ -1100,11 +1100,6 @@ if(AERON_BUILD_TOOLS)
         tools/xwau/xwau_text.c
         tools/xwau/xwau_weapon_stats.c)
     target_link_libraries(xwau_import_lib PUBLIC xwau_files)
-
-    add_executable(xwau_import tools/xwau/main.c)
-    target_link_libraries(xwau_import PRIVATE xwau_import_lib)
-    set_target_properties(xwau_import PROPERTIES
-        RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
 
     # Tests the hook file rules, the skin selection and the skybox rotations
     # on fixed texts.

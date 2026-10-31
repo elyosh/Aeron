@@ -2,7 +2,7 @@
 #define AERON_XWAU_UTIL_H
 
 /*
- * Helpers shared by opt2gltf, xwau_import and the XWAU readers: reporting,
+ * Helpers shared by opt2gltf, the mod importer and the XWAU readers: reporting,
  * strings, files, folders, paths and growing arrays.
  */
 

@@ -11,6 +11,10 @@
 #include "xwau_config.h"
 #include "xwau_game_tables.h"
 
+/* The first line of the files that an import writes, so that the next one
+   finds and removes them. */
+#define OBJECTS_HEADER "# Written by the OpenXWA mod importer"
+
 enum {
 	OBJECT_TYPE_COUNT  = XWAU_GAME_OBJECT_TYPES,
 	OBJECT_TYPE_SIZE   = XWAU_GAME_OBJECT_TYPE_SIZE,
@@ -623,7 +627,7 @@ static void remove_old_files(const char* dir) {
 		if (!f)
 			continue;
 		const bool ours =
-			fgets(line, sizeof line, f) && strncmp(line, "# Written by xwau_import craft", 30) == 0;
+			fgets(line, sizeof line, f) && strncmp(line, OBJECTS_HEADER, strlen(OBJECTS_HEADER)) == 0;
 		fclose(f);
 		if (ours)
 			remove(path);
@@ -746,7 +750,7 @@ static bool write_craft_type_file(const char* path, int c, int object_type, cons
 		Report(path, "can't be written");
 		return false;
 	}
-	fprintf(f, "# Written by xwau_import craft: what the mod changes about craft type %d.\n", c);
+	fprintf(f, OBJECTS_HEADER ": what the mod changes about craft type %d.\n", c);
 	fprintf(f, "version: 1\ncraft_type: %d\nobject_type: %d  # %s\n", c, object_type, model);
 	if (change->line) {
 		const ShipLine* ship = &change->ship;
@@ -863,8 +867,7 @@ static bool write_object_file(const char* path, const Change* change, const Xwau
 		return false;
 	}
 	const XwauGameType m = XwauGameTables_Type(mod, change->objectType);
-	fprintf(f, "# Written by xwau_import craft: what the mod changes about object type %d.\n",
-			change->objectType);
+	fprintf(f, OBJECTS_HEADER ": what the mod changes about object type %d.\n", change->objectType);
 	fprintf(f, "version: 1\nobject_type: %d\n", change->objectType);
 	if (change->writeModel) {
 		fprintf(f, "model: %s\n", change->model);

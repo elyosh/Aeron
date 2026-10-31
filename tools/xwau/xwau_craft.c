@@ -1246,7 +1246,7 @@ static bool write_craft_file(const char* path, const char* sources, const XwauCr
 		Report(path, "can't be written");
 		return false;
 	}
-	fprintf(f, "# Written by xwau_import craft from %s.\nversion: 1\n", sources);
+	fprintf(f, "# Written by the OpenXWA mod importer from %s.\nversion: 1\n", sources);
 	if (has_reticle(hud) || has_colors(hud))
 		write_hud(f, hud);
 	if (has_engine_glows(glows))
@@ -1455,7 +1455,7 @@ static bool write_hud_file(const char* xwau_root, const char* output_dir) {
 			add_source(sources, sizeof sources, "MapIconList.txt");
 		if (has_display)
 			add_source(sources, sizeof sources, "Dynamic_Cockpit.cfg");
-		fprintf(f, "# Written by xwau_import craft from %s.\n", sources);
+		fprintf(f, "# Written by the OpenXWA mod importer from %s.\n", sources);
 		if (has_hull || has_map)
 			fputs("# Each list gives the image id for each object type.\n", f);
 		fputs("version: 1\n", f);

@@ -2,7 +2,8 @@
 #define AERON_XWAU_CRAFT_H
 
 /*
- * Writes the model settings of an XWAU installation (xwau_import craft):
+ * Writes the model settings of an XWAU installation (the mod importer's
+ * craft phase):
  *   <output_dir>/models/<model key>.yaml  the settings of one model, next to
  *                                         its GLB
  *   <output_dir>/hud.yaml                 the hull and map icon lists, and how

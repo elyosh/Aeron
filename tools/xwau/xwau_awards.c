@@ -7,7 +7,7 @@
 #include "util.h"
 #include "xwau_config.h"
 
-#define HEADER "# Made by xwau_import missions."
+#define HEADER "# Made by the OpenXWA mod importer."
 
 /* The counts that the game keeps: 8 rank thresholds and 25 rating
  * thresholds. */

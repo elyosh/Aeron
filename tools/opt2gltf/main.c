@@ -1,13 +1,10 @@
 /*
  * opt2gltf converts an OPT model to glTF 2.0 (a .gltf file, a .bin file and PNG
- * textures). It also writes the effect libraries of XWA Upgrade models.
- * xwau_import (tools/xwau) writes the parts of an XWAU conversion that are
- * not models.
+ * textures). The mod importer converts whole XWA Upgrade installations.
  *
  * Usage:
  *   opt2gltf (--stock | --xwau-root DIR) [--smooth-angle DEG]
  *            (--project DIR [--replace] FILE.opt | FILE.opt <output_dir>)
- *   opt2gltf effects --xwau-root DIR --project DIR <project|model.gltf>...
  *
  * The model is written into <output_dir>, or into a project with --project.
  * A project is a folder that holds models (models/<key>/) and their effect
@@ -16,11 +13,6 @@
  * In XWAU mode, the effect library images that the materials name and that the
  * project does not have yet are added (xwau_library.h). If the model folder
  * already exists, this is an error unless --replace is given.
- *
- * `effects` writes the effect libraries that the given models use into the
- * effects/ folder of --project, replacing them, together with the game's
- * effects.yaml (xwau_library.h). Each input is a model .gltf or a project, which
- * stands for all its models.
  *
  * Replacement workflow (both tools are built with AERON_BUILD_TOOLS):
  *
@@ -86,8 +78,7 @@ static bool convert_into_project(const ModelConversion* mc, const char* opt_path
 
 static int usage(void) {
 	fprintf(stderr, "usage: opt2gltf (--stock | --xwau-root DIR) [--smooth-angle DEG]\n"
-					"                (--project DIR [--replace] FILE.opt | FILE.opt <output_dir>)\n"
-					"       opt2gltf effects --xwau-root DIR --project DIR <project|model.gltf>...\n");
+					"                (--project DIR [--replace] FILE.opt | FILE.opt <output_dir>)\n");
 	return 2;
 }
 
@@ -123,9 +114,9 @@ typedef struct Args {
 	int         input_count;
 } Args;
 
-/* Parses the flags listed in `allowed`, then the inputs. Returns false, after
- * reporting it, when a flag is unknown, not allowed, or has no value. */
-static bool parse_args(int argc, char** argv, unsigned allowed, Args* out) {
+/* Parses the flags, then the inputs. Returns false, after reporting it, when a
+ * flag is unknown or has no value. */
+static bool parse_args(int argc, char** argv, Args* out) {
 	memset(out, 0, sizeof *out);
 	out->smooth_angle = -1.0f;
 	int ai            = 0;
@@ -133,7 +124,7 @@ static bool parse_args(int argc, char** argv, unsigned allowed, Args* out) {
 		size_t f = 0;
 		while (f < sizeof kFlags / sizeof kFlags[0] && strcmp(argv[ai], kFlags[f].name) != 0)
 			++f;
-		if (f == sizeof kFlags / sizeof kFlags[0] || !(allowed & kFlags[f].flag)) {
+		if (f == sizeof kFlags / sizeof kFlags[0]) {
 			Report(NULL, "unknown option '%s'", argv[ai]);
 			return false;
 		}
@@ -185,8 +176,7 @@ static int run_convert(int argc, char** argv) {
 	Args a;
 	if (!argc)
 		return usage();
-	if (!parse_args(argc, argv, FLAG_STOCK | FLAG_XWAU_ROOT | FLAG_SMOOTH_ANGLE | FLAG_PROJECT | FLAG_REPLACE,
-					&a))
+	if (!parse_args(argc, argv, &a))
 		return 2;
 	if (a.stock == (a.xwau_root != NULL)) {
 		Report(NULL, "give exactly one of --stock and --xwau-root");
@@ -232,23 +222,7 @@ static int run_convert(int argc, char** argv) {
 	return ok ? 0 : 1;
 }
 
-/* opt2gltf effects --xwau-root DIR --project DIR <project|model.gltf>... */
-static int run_effects(int argc, char** argv) {
-	Args a;
-	if (!parse_args(argc, argv, FLAG_XWAU_ROOT | FLAG_PROJECT, &a))
-		return 2;
-	if (!a.xwau_root || !a.project || !a.input_count) {
-		Report(NULL, "effects needs --xwau-root, --project and at least one input");
-		return 2;
-	}
-	return XwauLibrary_Rebuild(a.xwau_root, a.project, (const char* const*)a.inputs, (size_t)a.input_count)
-			   ? 0
-			   : 1;
-}
-
 int main(int argc, char** argv) {
 	SetReportProgram("opt2gltf");
-	if (argc > 1 && strcmp(argv[1], "effects") == 0)
-		return run_effects(argc - 2, argv + 2);
 	return run_convert(argc - 1, argv + 1);
 }

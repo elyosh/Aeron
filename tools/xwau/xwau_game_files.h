@@ -3,7 +3,7 @@
 
 /*
  * Copies a mod's game files into the mod folder's game/ folder
- * (xwau_import missions --game-files DIR). The game reads these files from
+ * (the mod importer's missions phase). The game reads these files from
  * there instead of from the game folder. The copied files are:
  *   - every .tie in Missions/, Melee/ and Combat/;
  *   - the MISSION.LST of these folders, Missions/EMAIL.TXT,
@@ -16,7 +16,7 @@
  *     (Wave/MISSIONVOICE/), briefing and concourse voices (Wave/FRONTEND/)
  *     and sound effects (Wave/FE_HIGH_RES/). Other files and folders in
  *     Wave/ are skipped, because the game doesn't read them. The sound banks
- *     (Wave/Sfx_*) are copied by xwau_import craft;
+ *     (Wave/Sfx_*) are copied by the craft phase;
  *   - the files that the missions' sound replacements load, such as
  *     Wave/Custom/Evacuate.wav, if they differ from the stock game's.
  *

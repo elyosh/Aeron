@@ -555,8 +555,8 @@ bool XwauSoundBanks_Write(const char* game, const char* output_dir, const char* 
 		ok = false;
 	}
 	if (f)
-		fprintf(f,
-				"# Written by xwau_import craft from the Wave/Sfx_*.lst sound banks.\nversion: 1\nbanks:\n");
+		fprintf(f, "# Written by the OpenXWA mod importer from the Wave/Sfx_*.lst sound banks.\nversion: "
+				   "1\nbanks:\n");
 	for (size_t i = 0; ok && i < count; ++i) {
 		const size_t length = strlen(names[i]);
 		if (length <= 8 || strncasecmp(names[i], "sfx_", 4) != 0 || !EndsWithNoCase(names[i], ".lst"))

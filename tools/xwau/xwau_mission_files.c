@@ -897,7 +897,7 @@ static bool write_mission(const char* path, const char* base, const Profile* pro
 		Report(NULL, "cannot write %s", path);
 		return false;
 	}
-	fprintf(f, "# Imported from XWAU's %s selections by xwau_import.\nversion: 1\n", base);
+	fprintf(f, "# Imported from XWAU's %s selections by the OpenXWA mod importer.\nversion: 1\n", base);
 	for (size_t i = 0; i < resdata->count; ++i) {
 		fputs(i ? ", " : "resdata: [", f);
 		Xwau_WriteString(f, resdata->items[i]);

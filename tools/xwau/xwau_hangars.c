@@ -1087,7 +1087,8 @@ static bool write_mission_layer(const char* path, const char* base, const Layer*
 	}
 	free(text);
 	if (!kept.len)
-		text_add(&kept, "# Made by xwau_import hangars from XWAU's %s hangar settings.\nversion: 1\n", base);
+		text_add(&kept, "# Made by the OpenXWA mod importer from XWAU's %s hangar settings.\nversion: 1\n",
+				 base);
 	char        dir[1100], temporary[1100];
 	const char* slash = strrchr(path, '/');
 	bool        ok    = !kept.failed && PathFormat(dir, sizeof dir, "%.*s", (int)(slash - path), path) &&
@@ -1217,7 +1218,7 @@ bool XwauHangars_Write(const char* xwau, const char* reference_exe, const char* 
 	}
 	size_t models = 0;
 	if (f) {
-		fprintf(f, "# Made by xwau_import hangars from XWAU's hangar settings.\nversion: 1\n");
+		fprintf(f, "# Made by the OpenXWA mod importer from XWAU's hangar settings.\nversion: 1\n");
 		if (!layer_empty(&def)) {
 			fprintf(f, "default:\n");
 			write_layer(f, &def, 2);

@@ -4,10 +4,10 @@
 /*
  * Writes frontend/awards.yaml, the medals, Kalidor Crescent levels,
  * promotion thresholds and family-room mementos of a mod
- * (xwau_import missions --awards FILE). They come from the text files that
+ * (the mod importer's missions phase). They come from the text files that
  * hook_concourse reads in the game folder:
  *
- *     # Made by xwau_import missions.
+ *     # Made by the OpenXWA mod importer.
  *     version: 1
  *     battle_medals:
  *       - { name: "Medal of Redemption" }
