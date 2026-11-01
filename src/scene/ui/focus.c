@@ -123,8 +123,12 @@ void ui_collect_input(AeronUiContext* ctx) {
 	ctx->nav_accept_down =
 		in->key_down[AERON_KEY_RETURN] || in->key_down[AERON_KEY_KP_ENTER] || in->key_down[AERON_KEY_SPACE];
 	ctx->nav_cancel += in->key_pressed[AERON_KEY_ESCAPE];
-	ctx->nav_tab_prev += in->key_pressed[UI_KEY_Q];
-	ctx->nav_tab_next += in->key_pressed[UI_KEY_E];
+	/* Q and E are letters in a text field being edited. The tab bar runs
+	 * before the fields of its page, so the field can't take them back. */
+	if (!ctx->text_edit_id) {
+		ctx->nav_tab_prev += in->key_pressed[UI_KEY_Q];
+		ctx->nav_tab_next += in->key_pressed[UI_KEY_E];
+	}
 
 	/* Gamepad edges. */
 	ctx->nav_accept += ui_pad_pressed(ctx, AERON_GAMEPAD_BUTTON_SOUTH);
