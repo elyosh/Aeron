@@ -76,12 +76,13 @@ AeronTexture* Aeron_ImageUploadKtx2Array(AeronCommandBuffer* cmd, const struct K
 AeronTexture* Aeron_ImageUploadKtx2Layers(AeronCommandBuffer* cmd, const struct Ktx2* const* parts,
 										  uint32_t part_count, const char* debug_name);
 
-/* Uploads every layer of a KTX2 array (one layer for a plain 2D KTX2) into
- * the existing 2D array `texture`: KTX2 layer i goes to texture layer
- * `layers[i]`. The KTX2 must match the texture's size, format and level
- * count; the caller checks. Returns 0 on failure. */
-int Aeron_ImageUploadKtx2IntoLayers(AeronCommandBuffer* cmd, const struct Ktx2* ktx, AeronTexture* texture,
-									const uint32_t* layers);
+/* Uploads the first `levels` mip levels of a KTX2 array into the existing
+ * 2D array `texture`. A plain 2D KTX2 counts as one layer. KTX2 layer i goes
+ * into texture layer `layers[i]`. The KTX2 must have the same size and
+ * format as the texture, and the texture must have `levels` levels. The
+ * caller checks this. Returns 0 on failure. */
+int Aeron_ImageUploadKtx2IntoLayers(AeronCommandBuffer* cmd, const struct Ktx2* ktx, int levels,
+									AeronTexture* texture, const uint32_t* layers);
 
 /* Upload an RGBA8 image from memory with the same alpha, color-space and mip
  * handling used by runtime atlases and fonts. The caller owns the texture. */

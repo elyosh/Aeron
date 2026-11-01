@@ -342,11 +342,14 @@ bool write_ktx2_bc7_mips(const char* path, const Ktx2WriteLevel* levels, int lev
 
 /* ---------- mip-chain generator ----------
  *
- * Iterative 2×2 box downsample producing levels until both dims hit
- * 1. The base level (level_count-1 from a smallest-first POV) is
- * indexed 0 here per the spec; we mirror the runtime reader's
- * convention. Each downsampled level is its own malloc'd buffer; we
- * free them all before returning. */
+ * Each level is a 2×2 box downsample of the one before. The chain continues
+ * until both sizes reach 1. Block formats stop earlier, when
+ * ktx2_block_chain_continues returns false. Level 0 is the base level, as in
+ * the KTX2 spec and the runtime reader. Each downsampled level has its own
+ * malloc'd buffer, and all of them are freed before returning. */
+
+/* The next level is half the size, rounded down. */
+bool ktx2_block_chain_continues(int width, int height) { return width >= 8 && height >= 8; }
 
 /* Worst case: 8K × 8K → 14 mip levels. 16-slot fixed buffer is plenty. */
 #define KTX2_MAX_LEVELS 16
@@ -399,7 +402,7 @@ static bool bc7_with_generated_mips_core(int base_w, int base_h, const uint8_t* 
 	n++;
 	int            w = base_w, h = base_h;
 	const uint8_t* src = alpha_base;
-	while (w > 1 && h > 1 && n < KTX2_MAX_LEVELS && (max_levels == 0 || n < max_levels)) {
+	while (ktx2_block_chain_continues(w, h) && n < KTX2_MAX_LEVELS && (max_levels == 0 || n < max_levels)) {
 		int      dw = 0, dh = 0;
 		uint8_t* down = downsample_alpha_encoded_rgba8(src, w, h, &dw, &dh, alpha_encoding);
 		if (!down)
@@ -462,8 +465,9 @@ typedef enum {
 /* Core of the buffer-mode writers: `layer_count` base images of
  * base_w × base_h RGBA8 back to back. Each level is generated per layer by
  * 2×2 box downsample and stores its layers consecutively, as KTX2 orders
- * array slices. The chain continues until both dimensions reach 1, or
- * stops at `max_levels` when that is non-zero. `encode_base_alpha` false
+ * array slices. The chain continues until both sizes reach 1. Block
+ * formats stop earlier, when ktx2_block_chain_continues returns false. A
+ * non-zero `max_levels` limits the number of levels. `encode_base_alpha` false
  * keeps the base bytes as given (BC5 normals) while the downsample still
  * follows `alpha_encoding`. A `layer_count` of zero writes one non-array
  * image. */
@@ -484,8 +488,9 @@ static bool buffer_with_generated_mips(Ktx2Payload payload, uint32_t vk, int bas
 	int widths[KTX2_MAX_LEVELS]  = { base_w };
 	int heights[KTX2_MAX_LEVELS] = { base_h };
 	int n                        = 1;
-	while ((widths[n - 1] > 1 || heights[n - 1] > 1) && n < KTX2_MAX_LEVELS &&
-		   (max_levels == 0 || n < max_levels)) {
+	while ((format_is_bc_4x4_16b(vk) ? ktx2_block_chain_continues(widths[n - 1], heights[n - 1])
+									 : widths[n - 1] > 1 || heights[n - 1] > 1) &&
+		   n < KTX2_MAX_LEVELS && (max_levels == 0 || n < max_levels)) {
 		widths[n]  = widths[n - 1] > 1 ? widths[n - 1] / 2 : 1;
 		heights[n] = heights[n - 1] > 1 ? heights[n - 1] / 2 : 1;
 		n++;
@@ -635,10 +640,11 @@ bool write_ktx2_bc7_cubemap_with_generated_mips(const char* path, int face_size,
 	for (int f = 0; f < 6; ++f)
 		rgba_view[0][f] = faces[f];
 
-	/* Halve until 1×1; KTX2 mandates equal dims across faces of a
-	 * level, so all 6 faces share one (w, h) per level. */
+	/* Halve the faces until ktx2_block_chain_continues returns false. KTX2
+	 * requires the faces of a level to have the same size, so the 6 faces
+	 * share one size per level. */
 	int w = face_size, h = face_size;
-	while (w > 1 && h > 1 && n < KTX2_MAX_LEVELS) {
+	while (ktx2_block_chain_continues(w, h) && n < KTX2_MAX_LEVELS) {
 		int  dw = 0, dh = 0;
 		bool ok = true;
 		for (int f = 0; f < 6; ++f) {

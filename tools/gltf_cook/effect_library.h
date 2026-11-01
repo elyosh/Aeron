@@ -32,7 +32,7 @@ struct cJSON;
  * alters the files built from the same inputs, including in the encoder
  * (imgbake): the inputs hash a library's index records includes it, so the
  * tools rebuild every library once, and only then. */
-#define EFFECT_LIBRARY_BAKE_VERSION 4
+#define EFFECT_LIBRARY_BAKE_VERSION 5
 
 #define EFFECT_LIBRARY_PAGE_SIZE 2176
 #define EFFECT_LIBRARY_IMAGE_MAX 1024 /* longest side; larger images are box-downscaled */

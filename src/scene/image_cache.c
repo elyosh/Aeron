@@ -324,13 +324,12 @@ AeronTexture* Aeron_ImageUploadKtx2Layers(AeronCommandBuffer* cmd, const Ktx2* c
 	return upload_ktx2(cmd, parts, part_count, true, debug_name);
 }
 
-int Aeron_ImageUploadKtx2IntoLayers(AeronCommandBuffer* cmd, const Ktx2* ktx, AeronTexture* texture,
-									const uint32_t* layers) {
+int Aeron_ImageUploadKtx2IntoLayers(AeronCommandBuffer* cmd, const Ktx2* ktx, int levels,
+									AeronTexture* texture, const uint32_t* layers) {
 	if (!cmd || !ktx || !texture || !layers || ktx2_face_count(ktx) != 1)
 		return 0;
-	const int levels      = ktx2_level_count(ktx);
 	const int layer_count = ktx2_layer_count(ktx) > 0 ? ktx2_layer_count(ktx) : 1;
-	if (levels <= 0)
+	if (levels <= 0 || levels > ktx2_level_count(ktx))
 		return 0;
 	const uint32_t          upload_count = (uint32_t)levels * (uint32_t)layer_count;
 	AeronTextureUploadDesc* uploads      = (AeronTextureUploadDesc*)calloc(upload_count, sizeof *uploads);

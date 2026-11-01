@@ -216,6 +216,18 @@ static int texture_grow(AeronEffectAtlas* atlas, AeronCommandBuffer* cmd, int t,
 	return 1;
 }
 
+/* Returns how many mip levels the atlas textures have. The atlas uses at
+ * most `available` levels, and stops after the last level whose size is a
+ * multiple of 4. When the atlas grows, it copies every level to a new
+ * texture, and D3D12 can't copy a block-compressed level whose size isn't a
+ * multiple of 4. */
+static int kept_levels(uint32_t page_size, int available) {
+	int levels = 1;
+	while (levels < available && (page_size >> levels) % 4u == 0 && (page_size >> levels) > 0)
+		levels++;
+	return levels;
+}
+
 /* Uploads `ktx`'s pages into free layers of texture `t`, recording them in
  * `pages`. */
 static int load_pages(AeronEffectAtlas* atlas, AeronCommandBuffer* cmd, int t, const Ktx2* ktx,
@@ -229,10 +241,11 @@ static int load_pages(AeronEffectAtlas* atlas, AeronCommandBuffer* cmd, int t, c
 	}
 	if (!et->levels) {
 		et->format = ktx2_format(ktx);
-		et->levels = ktx2_level_count(ktx);
-	} else if (ktx2_format(ktx) != et->format || ktx2_level_count(ktx) != et->levels) {
-		Aeron_LogError("aeron.scene", "%s: %s pages differ in format or mips from the loaded libraries",
-					   label, kSuffix[t]);
+		et->levels = kept_levels(atlas->page_size, ktx2_level_count(ktx));
+	} else if (ktx2_format(ktx) != et->format || ktx2_level_count(ktx) < et->levels) {
+		Aeron_LogError("aeron.scene",
+					   "%s: %s pages have a different format or fewer mips than the loaded libraries", label,
+					   kSuffix[t]);
 		return 0;
 	}
 	uint32_t free_layers = 0;
@@ -245,7 +258,7 @@ static int load_pages(AeronEffectAtlas* atlas, AeronCommandBuffer* cmd, int t, c
 	for (uint32_t p = 0, layer = 0; p < page_count; ++layer)
 		if (!et->used[layer])
 			pages[p++] = layer;
-	if (!Aeron_ImageUploadKtx2IntoLayers(cmd, ktx, et->texture, pages)) {
+	if (!Aeron_ImageUploadKtx2IntoLayers(cmd, ktx, et->levels, et->texture, pages)) {
 		Aeron_LogError("aeron.scene", "%s: %s page upload failed", label, kSuffix[t]);
 		return 0;
 	}

@@ -82,7 +82,7 @@ bool write_ktx2_bc6h_cubemap_with_generated_mips(const char* path, int face_size
 		rgb_view[0][f] = faces[f];
 
 	int w = face_size, h = face_size;
-	while (w > 1 && h > 1 && n < KTX2_MAX_LEVELS) {
+	while (ktx2_block_chain_continues(w, h) && n < KTX2_MAX_LEVELS) {
 		int  dw = 0, dh = 0;
 		bool ok = true;
 		for (int f = 0; f < 6; ++f) {

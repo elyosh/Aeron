@@ -79,6 +79,13 @@ typedef enum {
 	KTX2_ALPHA_INDEPENDENT   = 2,
 } Ktx2AlphaEncoding;
 
+/* Returns whether a generated BC5, BC6H or BC7 mip chain gets another level
+ * after a level of width × height. The chain stops before a level that is
+ * smaller than 4 texels on either side. Such a level still takes a whole
+ * 4×4 block, so it saves no memory, and it only shows when the whole texture
+ * covers a few pixels on screen. Uncompressed chains go down to 1×1. */
+bool ktx2_block_chain_continues(int width, int height);
+
 /* Write an uncompressed RGBA8 KTX2 with the given mip chain. */
 bool write_ktx2_rgba_mips(const char* path, const Ktx2WriteLevel* levels, int level_count, Ktx2TransferFn tf,
 						  bool zstd);
@@ -137,7 +144,8 @@ bool write_ktx2_bc7_with_generated_mips_to_buffer_limited(int base_w, int base_h
 /* Explicit-alpha, texture-array sibling used by glTF PBR cooking.
  * `base_rgba` holds `layer_count` images of base_w × base_h back to back;
  * a `layer_count` of zero writes one non-array image. Every buffer-mode
- * writer continues the mip chain until both dimensions reach 1. */
+ * writer continues the mip chain until both sizes reach 1. Block formats
+ * stop earlier, when ktx2_block_chain_continues returns false. */
 bool write_ktx2_bc7_with_generated_mips_to_buffer_limited_alpha(int base_w, int base_h, int layer_count,
 																const uint8_t* base_rgba,
 																Ktx2Bc7Quality quality, Ktx2TransferFn tf,

@@ -14,11 +14,24 @@
 /* Pages of 2048 + 2048/16 texels: with 16-texel gutters, two 1024² or four
  * 512² images fit a row (a 2048² page holds one 1024² image). Every image,
  * up to EFFECT_LIBRARY_IMAGE_MAX, is a shared rect, except a detail image,
- * which fills a page of its own (resampled to the page size). Pages keep
- * every mip level. A shared rect samples only the levels that its gutter
- * keeps apart from its neighbours, and a detail image samples all of them. */
+ * which fills a page of its own (resampled to the page size). Pages have
+ * the mip levels that page_levels returns. A shared rect only samples the
+ * levels where its gutter keeps it apart from its neighbours. A detail
+ * image samples all of them. */
 #define PACK_SIZE 4096
 #define GUTTER 16
+
+/* Returns how many mip levels a page has. The chain stops after the last
+ * level whose size is a multiple of 4, which is 68 for 2176 pages. When the
+ * game adds pages to its effect textures, it copies every level to a new
+ * texture. D3D12 can't copy a BC7 level whose size isn't a multiple of 4, so
+ * the game only uses these levels. */
+static int page_levels(void) {
+	int levels = 1;
+	while ((EFFECT_LIBRARY_PAGE_SIZE >> levels) % 4 == 0)
+		levels++;
+	return levels;
+}
 
 static bool write_file(const char* path, const void* data, size_t size) {
 	FILE* f = fopen(path, "wb");
@@ -102,8 +115,7 @@ bool EffectLibrary_Write(const char* tool, const char* out_dir, const char* name
 			continue;
 		atlases[a]->fixed_width = atlases[a]->fixed_height = EFFECT_LIBRARY_PAGE_SIZE;
 		ok = channel_atlas_pack(atlases[a], PACK_SIZE, GUTTER) && channel_atlas_materialize(atlases[a]);
-		/* The runtime requires every library to have the same levels. */
-		atlases[a]->mip_count = 0;
+		atlases[a]->mip_count = page_levels();
 		if (!ok) {
 			ToolLog_Write(TOOL_LOG_ERROR, "%s: %s: cannot pack the %s pages", tool, name, suffix[a]);
 			break;
