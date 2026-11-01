@@ -92,4 +92,18 @@ bool ArrayGrow(void** items, size_t count, size_t size);
 #define ARRAY_PUSH(items, count)                                                                             \
 	(ArrayGrow((void**)&(items), (size_t)(count), sizeof *(items)) ? &(items)[(count)++] : NULL)
 
+/* ---- Text --------------------------------------------------------------- */
+
+/* A string that grows as text is added. Start it zeroed. `text` is NULL
+ * until something is added. When an allocation fails, `failed` is set, the
+ * text is freed, and later additions are ignored. Free `text` with free(). */
+typedef struct TextBuffer {
+	char*  text;
+	size_t length, capacity;
+	bool   failed;
+} TextBuffer;
+
+UTIL_PRINTF(2, 3) void TextAppend(TextBuffer* buffer, const char* format, ...);
+void TextAppendBytes(TextBuffer* buffer, const void* bytes, size_t length);
+
 #endif /* AERON_XWAU_UTIL_H */

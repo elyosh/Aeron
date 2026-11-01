@@ -523,18 +523,18 @@ static bool add_death_star_missions(SkyState* st, const char* dir) {
 
 /* ===== Writing =========================================================== */
 
-static void write_images(FILE* f, const char* key, const SkyList* const* lists, size_t list_count) {
-	fprintf(f, "          %s: [", key);
+static void write_images(TextBuffer* f, const char* key, const SkyList* const* lists, size_t list_count) {
+	TextAppend(f, "          %s: [", key);
 	size_t written = 0;
 	for (size_t l = 0; l < list_count; ++l) {
 		for (size_t i = 0; i < lists[l]->count; ++i) {
 			if (written)
-				fprintf(f, written % 8 ? ", " : ",\n            ");
-			fprintf(f, "\"%u-%u\"", lists[l]->images[i] >> 16, lists[l]->images[i] & 0xFFFFu);
+				TextAppend(f, "%s", written % 8 ? ", " : ",\n            ");
+			TextAppend(f, "\"%u-%u\"", lists[l]->images[i] >> 16, lists[l]->images[i] & 0xFFFFu);
 			++written;
 		}
 	}
-	fprintf(f, "]\n");
+	TextAppend(f, "]\n");
 }
 
 /* The hide list of a mission: the starfield images, then DisabledBackdrops. */
@@ -556,55 +556,55 @@ static float clamp_value(float v, float max, const char* what, const char* name)
 
 /* Writes the importer's environments into `f`, as entries of the
  * manifest's `environments` map. */
-static void write_environments(const SkyState* st, FILE* f) {
+static void write_environments(const SkyState* st, TextBuffer* f) {
 	if (st->death_star_count)
-		fprintf(f,
-				"  " SKY_DEATH_STAR_ENVIRONMENT ":\n"
-				"    intensity: 0\n"
-				"    ambient_fill: [%g, %g, %g]\n"
-				"    directional_lights: []\n",
-				SKY_DEATH_STAR_AMBIENT, SKY_DEATH_STAR_AMBIENT, SKY_DEATH_STAR_AMBIENT);
+		TextAppend(f,
+				   "  " SKY_DEATH_STAR_ENVIRONMENT ":\n"
+				   "    intensity: 0\n"
+				   "    ambient_fill: [%g, %g, %g]\n"
+				   "    directional_lights: []\n",
+				   SKY_DEATH_STAR_AMBIENT, SKY_DEATH_STAR_AMBIENT, SKY_DEATH_STAR_AMBIENT);
 	for (size_t i = 0; i < st->definition_count; ++i) {
 		const SkyDefinition* d       = &st->definitions[i];
 		const char*          key     = st->folders[d->folder].key;
 		const float          diffuse = clamp_value(d->ambient_int, 4.0f, "AmbientInt", d->name);
 		const float          fill = clamp_value(d->ambient_min, 4.0f, "AmbientMin", d->name) * SKY_RADIANCE;
-		fprintf(f,
-				"  %s:\n"
-				"    intensity: %g\n"
-				"    radiance: \"flight/environments/xwau/%s/sky.ktx2\"\n"
-				"    diffuse: \"flight/environments/xwau/%s/diffuse.ktx2\"\n"
-				"    diffuse_strength: %g\n"
-				"    specular: \"flight/environments/xwau/%s/specular.ktx2\"\n"
-				"    specular_strength: 1\n"
-				"    ambient_fill: [%g, %g, %g]\n"
-				"    rotation_degrees: [0, 0, 0]\n"
-				"    directional_lights: []\n",
-				d->name, (double)SKY_RADIANCE, key, key, (double)diffuse, key, (double)fill, (double)fill,
-				(double)fill);
+		TextAppend(f,
+				   "  %s:\n"
+				   "    intensity: %g\n"
+				   "    radiance: \"flight/environments/xwau/%s/sky.ktx2\"\n"
+				   "    diffuse: \"flight/environments/xwau/%s/diffuse.ktx2\"\n"
+				   "    diffuse_strength: %g\n"
+				   "    specular: \"flight/environments/xwau/%s/specular.ktx2\"\n"
+				   "    specular_strength: 1\n"
+				   "    ambient_fill: [%g, %g, %g]\n"
+				   "    rotation_degrees: [0, 0, 0]\n"
+				   "    directional_lights: []\n",
+				   d->name, (double)SKY_RADIANCE, key, key, (double)diffuse, key, (double)fill, (double)fill,
+				   (double)fill);
 		if (d->overlay < 0)
 			continue;
-		fprintf(f, "    overlay:\n      cube: \"flight/environments/xwau/%s/overlay.ktx2\"\n",
-				st->folders[d->overlay].key);
+		TextAppend(f, "    overlay:\n      cube: \"flight/environments/xwau/%s/overlay.ktx2\"\n",
+				   st->folders[d->overlay].key);
 		if (d->overlay_rotation[0] != 0.0f || d->overlay_rotation[1] != 0.0f ||
 			d->overlay_rotation[2] != 0.0f) {
 			float degrees[3];
 			XwauSkyboxes_Rotation(d->overlay_rotation, true, degrees);
-			fprintf(f, "      rotation_degrees: [%g, %g, %g]\n", (double)degrees[0], (double)degrees[1],
-					(double)degrees[2]);
+			TextAppend(f, "      rotation_degrees: [%g, %g, %g]\n", (double)degrees[0], (double)degrees[1],
+					   (double)degrees[2]);
 		}
 	}
 }
 
 /* Writes the importer's mission entries into `f`, as entries of the
  * manifest's `xwa.missions` map. */
-static void write_missions(const SkyState* st, FILE* f) {
+static void write_missions(const SkyState* st, TextBuffer* f) {
 	for (size_t m = 0; m < st->mission_count; ++m) {
 		const SkyMission* mission = &st->missions[m];
-		fprintf(f, "    \"%s\":\n      regions:\n", mission->key);
+		TextAppend(f, "    \"%s\":\n      regions:\n", mission->key);
 		if (mission->death_star) {
 			for (int r = 0; r < SKY_REGIONS; ++r)
-				fprintf(f, "        \"%d\": " SKY_DEATH_STAR_ENVIRONMENT "\n", r);
+				TextAppend(f, "        \"%d\": " SKY_DEATH_STAR_ENVIRONMENT "\n", r);
 			continue;
 		}
 		SkyList hide;
@@ -612,25 +612,25 @@ static void write_missions(const SkyState* st, FILE* f) {
 		for (int r = 0; r < SKY_REGIONS; ++r) {
 			const SkyRegion* region = &mission->regions[r];
 			if (region->definition < 0) {
-				fprintf(f, "        \"%d\": none\n", r);
+				TextAppend(f, "        \"%d\": none\n", r);
 				continue;
 			}
-			fprintf(f, "        \"%d\":\n          environment: %s\n", r,
-					st->definitions[region->definition].name);
+			TextAppend(f, "        \"%d\":\n          environment: %s\n", r,
+					   st->definitions[region->definition].name);
 			if (region->rotation[0] != 0.0f || region->rotation[1] != 0.0f || region->rotation[2] != 0.0f) {
 				float degrees[3];
 				XwauSkyboxes_Rotation(region->rotation, false, degrees);
-				fprintf(f, "          rotation_degrees: [%g, %g, %g]\n", (double)degrees[0],
-						(double)degrees[1], (double)degrees[2]);
+				TextAppend(f, "          rotation_degrees: [%g, %g, %g]\n", (double)degrees[0],
+						   (double)degrees[1], (double)degrees[2]);
 			}
-			fprintf(f, "          backdrops: keep\n          backdrop_light_scale: 0.25\n");
+			TextAppend(f, "          backdrops: keep\n          backdrop_light_scale: 0.25\n");
 			/* EnabledBackdrops = ALL turns hiding off. */
 			if (mission->enabled.all) {
-				fprintf(f, "          show_backdrops: all\n");
+				TextAppend(f, "          show_backdrops: all\n");
 				continue;
 			}
 			if (mission->disabled.all) {
-				fprintf(f, "          hide_backdrops: all\n");
+				TextAppend(f, "          hide_backdrops: all\n");
 			} else {
 				const SkyList* lists[] = { &hide };
 				write_images(f, "hide_backdrops", lists, 1);
@@ -654,23 +654,6 @@ typedef struct SkyLine {
 	const char* text;
 	size_t      length;
 } SkyLine;
-
-/* Reads back what was written into a tmpfile() stream, as a string. */
-static char* read_stream(FILE* f) {
-	if (fflush(f) != 0 || fseek(f, 0, SEEK_END) != 0)
-		return NULL;
-	const long size = ftell(f);
-	char*      text = size >= 0 ? (char*)malloc((size_t)size + 1) : NULL;
-	if (!text)
-		return NULL;
-	rewind(f);
-	if (fread(text, 1, (size_t)size, f) != (size_t)size) {
-		free(text);
-		return NULL;
-	}
-	text[size] = '\0';
-	return text;
-}
 
 /* The number of spaces that start `line`, or -1 for a blank line. */
 static int line_indent(const SkyLine* line) {
@@ -709,21 +692,21 @@ static size_t entry_end(const SkyLine* lines, size_t count, size_t start, int in
 	return i;
 }
 
-static void emit_lines(FILE* out, const SkyLine* lines, size_t from, size_t to) {
+static void emit_lines(TextBuffer* out, const SkyLine* lines, size_t from, size_t to) {
 	for (size_t i = from; i < to; ++i) {
-		fwrite(lines[i].text, 1, lines[i].length, out);
-		fputc('\n', out);
+		TextAppendBytes(out, lines[i].text, lines[i].length);
+		TextAppendBytes(out, "\n", 1);
 	}
 }
 
-static void emit_block(FILE* out, int indent, const char* entries) {
-	fprintf(out, "%*s%s\n%s%*s%s\n", indent, "", SKY_BEGIN, entries, indent, "", SKY_END);
+static void emit_block(TextBuffer* out, int indent, const char* entries) {
+	TextAppend(out, "%*s%s\n%s%*s%s\n", indent, "", SKY_BEGIN, entries, indent, "", SKY_END);
 }
 
 /* Copies the entries of a section (lines `from` to `to`) at `indent`,
  * without the importer's block, then adds the importer's block after the last
  * line that isn't blank. */
-static void emit_section(FILE* out, const SkyLine* lines, size_t from, size_t to, int indent,
+static void emit_section(TextBuffer* out, const SkyLine* lines, size_t from, size_t to, int indent,
 						 const char* entries) {
 	size_t last = to;
 	while (last > from && line_indent(&lines[last - 1]) < 0)
@@ -784,15 +767,10 @@ static bool update_manifest(const char* path, const char* environments, const ch
 	}
 	const size_t mission_end = mission_map != none ? entry_end(lines, xwa_end, mission_map, 2) : none;
 
-	FILE* out = tmpfile();
-	if (!out) {
-		free(lines);
-		free(old);
-		Report(NULL, "cannot create a temporary file");
-		return false;
-	}
+	TextBuffer  text = { 0 };
+	TextBuffer* out  = &text;
 	if (!old)
-		fputs("version: 1\n", out);
+		TextAppend(out, "version: 1\n");
 	for (size_t i = 0; i < count;) {
 		if (i == env) {
 			emit_lines(out, lines, i, i + 1);
@@ -804,7 +782,7 @@ static bool update_manifest(const char* path, const char* environments, const ch
 			i = mission_end;
 		} else {
 			if (xwa != none && mission_map == none && i == xwa_end) {
-				fputs("  missions:\n", out);
+				TextAppend(out, "  missions:\n");
 				emit_block(out, 4, missions);
 			}
 			emit_lines(out, lines, i, i + 1);
@@ -812,24 +790,22 @@ static bool update_manifest(const char* path, const char* environments, const ch
 		}
 	}
 	if (env == none) {
-		fputs("\nenvironments:\n", out);
+		TextAppend(out, "\nenvironments:\n");
 		emit_block(out, 2, environments);
 	}
 	if (xwa == none) {
-		fputs("\nxwa:\n  missions:\n", out);
+		TextAppend(out, "\nxwa:\n  missions:\n");
 		emit_block(out, 4, missions);
 	} else if (mission_map == none && xwa_end == count) {
-		fputs("  missions:\n", out);
+		TextAppend(out, "  missions:\n");
 		emit_block(out, 4, missions);
 	}
-	char* text = read_stream(out);
-	fclose(out);
 	free(lines);
 	free(old);
-	const bool ok = text && WriteWholeFile(path, text, strlen(text));
+	const bool ok = !text.failed && text.text && WriteWholeFile(path, text.text, text.length);
 	if (!ok)
-		Report(path, "cannot write");
-	free(text);
+		Report(path, text.failed ? "out of memory" : "cannot write");
+	free(text.text);
 	return ok;
 }
 
@@ -893,26 +869,21 @@ bool XwauSkyboxes_Write(const char* game, const char* stock_game, const char* ma
 	}
 	if (!ok)
 		Report(NULL, "out of memory (skyboxes)");
-	FILE* environment_stream = ok ? tmpfile() : NULL;
-	FILE* mission_stream     = environment_stream ? tmpfile() : NULL;
-	char* environment_text   = NULL;
-	char* mission_text       = NULL;
-	if (mission_stream) {
-		write_environments(&st, environment_stream);
-		write_missions(&st, mission_stream);
-		environment_text = read_stream(environment_stream);
-		mission_text     = read_stream(mission_stream);
+	TextBuffer environments = { 0 }, missions = { 0 };
+	if (ok) {
+		write_environments(&st, &environments);
+		write_missions(&st, &missions);
+		if (environments.failed || missions.failed) {
+			Report(NULL, "out of memory (skyboxes)");
+			ok = false;
+		}
 	}
-	if (ok && (!environment_text || !mission_text))
-		Report(NULL, "cannot write the skyboxes into a temporary file");
-	ok = ok && environment_text && mission_text &&
-		 update_manifest(manifest, environment_text, mission_text) && write_folders(&st, folders);
-	if (environment_stream)
-		fclose(environment_stream);
-	if (mission_stream)
-		fclose(mission_stream);
-	free(environment_text);
-	free(mission_text);
+	ok = ok &&
+		 update_manifest(manifest, environments.text ? environments.text : "",
+						 missions.text ? missions.text : "") &&
+		 write_folders(&st, folders);
+	free(environments.text);
+	free(missions.text);
 	if (ok) {
 		Report(NULL,
 			   "updated %s: %zu missions, %zu regions with a sky and %zu without, %zu environments for %zu "

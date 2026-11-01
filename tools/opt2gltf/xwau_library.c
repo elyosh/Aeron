@@ -5,7 +5,6 @@
 
 #include <ctype.h>
 #include <math.h>
-#include <stdarg.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -237,38 +236,6 @@ static bool read_models(const char* path) {
 
 /* ---- effects.yaml ------------------------------------------------------- */
 
-typedef struct Text {
-	char*  s;
-	size_t len, cap;
-} Text;
-
-static void text_add(Text* t, const char* fmt, ...) {
-	va_list args;
-	va_start(args, fmt);
-	const int n = vsnprintf(NULL, 0, fmt, args);
-	va_end(args);
-	if (n < 0 || (!t->s && t->cap))
-		return;
-	if (t->len + (size_t)n + 1 > t->cap) {
-		size_t cap = t->cap ? t->cap * 2 : 4096;
-		while (cap < t->len + (size_t)n + 1)
-			cap *= 2;
-		char* grown = (char*)realloc(t->s, cap);
-		if (!grown) {
-			free(t->s);
-			t->s   = NULL;
-			t->cap = 1;
-			return;
-		}
-		t->s   = grown;
-		t->cap = cap;
-	}
-	va_start(args, fmt);
-	vsnprintf(t->s + t->len, t->cap - t->len, fmt, args);
-	va_end(args);
-	t->len += (size_t)n;
-}
-
 /* The energy effects use groups 2, 1 and 3 of GenericDamage.dat, like the
  * IEVT_SHIELDS_DOWN, IEVT_TRACTOR_BEAM and IEVT_JAMMING_BEAM lines that XWAU
  * ships. */
@@ -291,7 +258,7 @@ static const Energy kEnergy[3] = {
 
 static const float kWhite[3] = { 1.0f, 1.0f, 1.0f };
 
-static bool energy_yaml(Text* y) {
+static bool energy_yaml(TextBuffer* y) {
 	char rel[1024];
 	if (!find_file(ENERGY_DAT, rel, sizeof rel)) {
 		Report(NULL, "%s not found, so there are no energy effects", ENERGY_DAT);
@@ -306,20 +273,20 @@ static bool energy_yaml(Text* y) {
 	char lrel[256], library[64];
 	if (!Xwau_DatNames(ENERGY_DAT, lrel, sizeof lrel, library, sizeof library))
 		return false;
-	text_add(y, "energy:\n");
+	TextAppend(y, "energy:\n");
 	bool ok = true;
 	for (int e = 0; e < 3; ++e) {
 		const int* ids   = NULL;
 		size_t     count = XwauDat_ListGroup(dat, kEnergy[e].group, &ids);
-		text_add(y, "  %s: { library: %s, mode: %s, strength: %g, tile: %g, frames: [", kEnergy[e].name,
-				 library, kEnergy[e].once ? "once" : "loop", (double)ENERGY_STRENGTH, (double)ENERGY_TILE);
+		TextAppend(y, "  %s: { library: %s, mode: %s, strength: %g, tile: %g, frames: [", kEnergy[e].name,
+				   library, kEnergy[e].once ? "once" : "loop", (double)ENERGY_STRENGTH, (double)ENERGY_TILE);
 		for (size_t i = 0; i < count; ++i) {
 			char key[96];
 			XwauFx_Key(key, sizeof key, kEnergy[e].group, ids[i], XWAU_FX_ENERGY, kWhite, 0);
-			text_add(y, "%s[\"%s\", %.9g]", i ? ", " : "", key, (double)(1.0f / kEnergy[e].fps));
+			TextAppend(y, "%s[\"%s\", %.9g]", i ? ", " : "", key, (double)(1.0f / kEnergy[e].fps));
 			ok &= request(ENERGY_DAT, kEnergy[e].group, ids[i], XWAU_FX_ENERGY, kWhite, 0, false);
 		}
-		text_add(y, "] }\n");
+		TextAppend(y, "] }\n");
 	}
 	XwauDat_Close(dat);
 	return ok;
@@ -362,7 +329,7 @@ typedef struct DatImage {
 /* Writes the flipbook of a DAT image from the sequences of its [Default]
  * section. It uses the last EVT_NONE colour sequence, like XWAU's
  * TextureATCIndices[TEXTURE][EVT_NONE]. */
-static bool image_flipbook(Text* y, const char* name, const XwauMatFile* mat, int group, int image) {
+static bool image_flipbook(TextBuffer* y, const char* name, const XwauMatFile* mat, int group, int image) {
 	XwauMatSequences own, inherited;
 	XwauMat_FindSequences(mat, "", &own, &inherited);
 	const XwauSequence* q = NULL;
@@ -434,23 +401,23 @@ static bool image_flipbook(Text* y, const char* name, const XwauMatFile* mat, in
 	char             rel[256], library[64];
 	if (!Xwau_DatNames(q->dat, rel, sizeof rel, library, sizeof library))
 		return false;
-	text_add(y, "  \"%d-%d\": { library: %s, kind: %s, mode: %s, frames: [", group, image, library,
-			 XwauFx_KindName(kind), q->mode == XWAU_SEQ_ONCE ? "once" : "loop");
+	TextAppend(y, "  \"%d-%d\": { library: %s, kind: %s, mode: %s, frames: [", group, image, library,
+			   XwauFx_KindName(kind), q->mode == XWAU_SEQ_ONCE ? "once" : "loop");
 	bool ok = true;
 	for (size_t i = 0; i < count; ++i) {
 		char key[96];
 		XwauFx_Key(key, sizeof key, frames[i].group, frames[i].image, kind, q->tint, q->alpha_mode);
-		text_add(y, "%s[\"%s\", %.9g]", i ? ", " : "", key, (double)frames[i].seconds);
+		TextAppend(y, "%s[\"%s\", %.9g]", i ? ", " : "", key, (double)frames[i].seconds);
 		ok &= request(q->dat, frames[i].group, frames[i].image, kind, q->tint, q->alpha_mode, mark);
 	}
-	text_add(y, "] }\n");
+	TextAppend(y, "] }\n");
 	free(frames);
 	return ok;
 }
 
 /* Writes the flipbooks of the material files named after DAT images
  * ("dat-<G>-<I>.mat"). */
-static bool images_yaml(Text* y) {
+static bool images_yaml(TextBuffer* y) {
 	DatImage* found      = NULL;
 	size_t    count      = 0;
 	char      mdir[1024] = "";
@@ -477,7 +444,7 @@ static bool images_yaml(Text* y) {
 	qsort(found, count, sizeof *found, cmp_dat_image);
 	XwauMatParams defaults;
 	XwauMat_CodeDefaults(&defaults);
-	text_add(y, "images:\n");
+	TextAppend(y, "images:\n");
 	bool ok          = true;
 	int  marks       = 0;
 	int* mark_images = (int*)malloc((count ? count : 1) * sizeof *mark_images);
@@ -514,10 +481,10 @@ static bool images_yaml(Text* y) {
 							continue;
 						char key[96];
 						XwauFx_Key(key, sizeof key, BLAST_MARK_GROUP, all[i], XWAU_FX_MARK, kWhite, 0);
-						text_add(y,
-								 "  \"%d-%d\": { library: blastmarks, kind: mark, mode: loop, frames: "
-								 "[[\"%s\", 1]] }\n",
-								 BLAST_MARK_GROUP, all[i], key);
+						TextAppend(y,
+								   "  \"%d-%d\": { library: blastmarks, kind: mark, mode: loop, frames: "
+								   "[[\"%s\", 1]] }\n",
+								   BLAST_MARK_GROUP, all[i], key);
 						ok &= request(dat_written, BLAST_MARK_GROUP, all[i], XWAU_FX_MARK, kWhite, 0, true);
 					}
 					free(all);
@@ -812,19 +779,19 @@ static bool read_libraries(const char* const* inputs, size_t count, const char* 
 	bool ok = true;
 	for (size_t i = 0; i < count; ++i)
 		ok &= read_models(inputs[i]);
-	Text y = { 0 };
-	text_add(&y, "version: 1\n");
+	TextBuffer y = { 0 };
+	TextAppend(&y, "version: 1\n");
 	ok &= energy_yaml(&y) && images_yaml(&y);
-	if (!y.s) {
+	if (y.failed) {
 		Report(NULL, "out of memory");
 		return false;
 	}
 	char path[1024];
-	if (!PathFormat(path, sizeof path, "%s/effects.yaml", dir) || !WriteWholeFile(path, y.s, y.len)) {
+	if (!PathFormat(path, sizeof path, "%s/effects.yaml", dir) || !WriteWholeFile(path, y.text, y.length)) {
 		Report(NULL, "cannot write %s", path);
 		ok = false;
 	}
-	free(y.s);
+	free(y.text);
 	Report(NULL, "%zu model(s), %zu librar%s", g_models, g_library_count, g_library_count == 1 ? "y" : "ies");
 	return ok;
 }

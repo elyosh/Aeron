@@ -1,6 +1,7 @@
 #include "util.h"
 
 #include <dirent.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -220,4 +221,45 @@ bool ArrayGrow(void** items, size_t count, size_t size) {
 	memset((char*)grown + count * size, 0, size);
 	*items = grown;
 	return true;
+}
+
+/* Makes room for `more` bytes and the terminating zero. */
+static bool text_reserve(TextBuffer* buffer, size_t more) {
+	if (buffer->failed)
+		return false;
+	if (buffer->length + more + 1 <= buffer->capacity)
+		return true;
+	size_t capacity = buffer->capacity ? buffer->capacity * 2 : 4096;
+	while (capacity < buffer->length + more + 1)
+		capacity *= 2;
+	char* grown = (char*)realloc(buffer->text, capacity);
+	if (!grown) {
+		free(buffer->text);
+		*buffer = (TextBuffer) { .failed = true };
+		return false;
+	}
+	buffer->text     = grown;
+	buffer->capacity = capacity;
+	return true;
+}
+
+void TextAppend(TextBuffer* buffer, const char* format, ...) {
+	va_list args;
+	va_start(args, format);
+	const int n = vsnprintf(NULL, 0, format, args);
+	va_end(args);
+	if (n < 0 || !text_reserve(buffer, (size_t)n))
+		return;
+	va_start(args, format);
+	vsnprintf(buffer->text + buffer->length, buffer->capacity - buffer->length, format, args);
+	va_end(args);
+	buffer->length += (size_t)n;
+}
+
+void TextAppendBytes(TextBuffer* buffer, const void* bytes, size_t length) {
+	if (!text_reserve(buffer, length))
+		return;
+	memcpy(buffer->text + buffer->length, bytes, length);
+	buffer->length += length;
+	buffer->text[buffer->length] = '\0';
 }
