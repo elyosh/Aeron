@@ -61,21 +61,28 @@ static uint     hidden_tag_groups;
 static const uint screen_shadow         = 0u;
 static const uint receiver_local_shadow = 0u;
 
+/* The record is read field by field. Through shadercross, a copy of the whole
+ * struct loads its arrays wrongly in DXIL: each matrix element comes from the
+ * wrong row. */
 void pbr_load_instance(uint instance_id)
 {
-	PbrInstanceRecord record = instance_records[instance_base + instance_id];
-	craft_to_world = float4x4(record.model_to_world[0], record.model_to_world[1],
-							  record.model_to_world[2], record.model_to_world[3]);
-	prev_craft_to_world = float4x4(record.prev_model_to_world[0], record.prev_model_to_world[1],
-								   record.prev_model_to_world[2], record.prev_model_to_world[3]);
-	prev_view_proj = record.zero_velocity != 0u ? unjittered_view_proj : moving_prev_view_proj;
-	variant_row_base = record.variant_row_base;
-	base_color_emissive_strength = record.base_color_emissive_strength;
-	receive_shadow = record.receive_shadow;
-	current_table_base = record.current_table_base;
-	previous_table_base = record.previous_table_base;
-	table_component_count = record.table_component_count;
-	hidden_tag_groups = record.hidden_tag_groups;
+	const uint index = instance_base + instance_id;
+	craft_to_world = float4x4(instance_records[index].model_to_world[0],
+							  instance_records[index].model_to_world[1],
+							  instance_records[index].model_to_world[2],
+							  instance_records[index].model_to_world[3]);
+	prev_craft_to_world = float4x4(instance_records[index].prev_model_to_world[0],
+								   instance_records[index].prev_model_to_world[1],
+								   instance_records[index].prev_model_to_world[2],
+								   instance_records[index].prev_model_to_world[3]);
+	prev_view_proj = instance_records[index].zero_velocity != 0u ? unjittered_view_proj : moving_prev_view_proj;
+	variant_row_base = instance_records[index].variant_row_base;
+	base_color_emissive_strength = instance_records[index].base_color_emissive_strength;
+	receive_shadow = instance_records[index].receive_shadow;
+	current_table_base = instance_records[index].current_table_base;
+	previous_table_base = instance_records[index].previous_table_base;
+	table_component_count = instance_records[index].table_component_count;
+	hidden_tag_groups = instance_records[index].hidden_tag_groups;
 }
 #else
 cbuffer GltfMeshVSUniforms : register(b0, space1) {
