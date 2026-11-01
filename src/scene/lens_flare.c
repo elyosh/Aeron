@@ -66,7 +66,21 @@ static int flare_ensure(AeronScene3D* s) {
 	s->flare_vs =
 		AeronSceneInternal_CompileShader("scene_lens_flare.vert", AERON_SHADER_STAGE_VERTEX, 0, 0, 1);
 	s->flare_fs =
-		AeronSceneInternal_CompileShader("scene_lens_flare.frag", AERON_SHADER_STAGE_FRAGMENT, 0, 1, 1);
+		AeronSceneInternal_CompileShader("scene_lens_flare.frag", AERON_SHADER_STAGE_FRAGMENT, 1, 1, 1);
+	s->flare_smooth_fs      = AeronSceneInternal_CompileShader("scene_lens_flare_smooth.frag",
+															   AERON_SHADER_STAGE_FRAGMENT, 0, 1, 1);
+	s->flare_smooth_sampler = Aeron_CreateSampler(&(AeronSamplerDesc) {
+		.min_filter = AERON_FILTER_LINEAR,
+		.mag_filter = AERON_FILTER_LINEAR,
+		.mip_filter = AERON_FILTER_NEAREST,
+		.address_u  = AERON_ADDRESS_CLAMP_TO_EDGE,
+		.address_v  = AERON_ADDRESS_CLAMP_TO_EDGE,
+		.address_w  = AERON_ADDRESS_CLAMP_TO_EDGE,
+	});
+	/* The halos and discs, at half the output's resolution. */
+	s->flare_smooth_rt =
+		AeronSceneInternal_CreateColorRt(AERON_TEXTURE_FORMAT_RGBA16_FLOAT, (s->output_w + 1) / 2,
+										 (s->output_h + 1) / 2, "scene.lens_flare.smooth");
 	s->flare_visibility = Aeron_CreateBuffer(
 		&(AeronBufferDesc) { .size  = 4u * (uint32_t)sizeof(float),
 							 .usage = AERON_BUFFER_USAGE_STORAGE | AERON_BUFFER_USAGE_COMPUTE_STORAGE_WRITE,
@@ -96,8 +110,23 @@ static int flare_ensure(AeronScene3D* s) {
 			.color_targets      = cts,
 		});
 	}
+	if (s->flare_vs && s->flare_smooth_fs) {
+		AeronColorTargetStateDesc cts[1] = { 0 };
+		cts[0].format                    = AERON_TEXTURE_FORMAT_RGBA16_FLOAT;
+		cts[0].blend                     = AeronSceneInternal_BlendOpaque();
+		s->flare_smooth_pipe             = Aeron_CreateGraphicsPipeline(&(AeronGraphicsPipelineDesc) {
+			.vertex_shader      = s->flare_vs,
+			.fragment_shader    = s->flare_smooth_fs,
+			.primitive_type     = AERON_PRIMITIVE_TRIANGLES,
+			.cull_mode          = AERON_CULL_NONE,
+			.depth_format       = AERON_TEXTURE_FORMAT_UNKNOWN,
+			.color_target_count = 1,
+			.color_targets      = cts,
+		});
+	}
 	if (!s->flare_visibility_pipe || !s->flare_depth_sampler || !s->flare_visibility ||
-		!s->flare_element_buffer || !s->flare_pipe) {
+		!s->flare_element_buffer || !s->flare_pipe || !s->flare_smooth_pipe || !s->flare_smooth_sampler ||
+		!s->flare_smooth_rt) {
 		Aeron_LogError("aeron.scene",
 					   "lens flare: could not build the pipelines or buffers; no flare is drawn");
 		AeronSceneLensFlare_Release(s);
@@ -238,21 +267,71 @@ int AeronSceneLensFlare_Visibility(AeronScene3D* s, AeronCommandBuffer* cmd) {
 	return 1;
 }
 
+/* The flare's uniforms. Pixels of the pass times `pixel_scale` are output
+ * pixels from `origin`. */
+typedef struct FlareUniforms {
+	float    frame[4];
+	float    scale[4];
+	float    origin[4];
+	uint32_t ends[4];
+} FlareUniforms;
+
+static FlareUniforms flare_uniforms(const AeronScene3D* s, const float origin[2], float pixel_scale) {
+	const AeronRectI* out = &s->output_camera.viewport;
+	FlareUniforms     u;
+	memset(&u, 0, sizeof u);
+	u.frame[0]  = origin[0] + 0.5f * (float)out->width;
+	u.frame[1]  = origin[1] + 0.5f * (float)out->height;
+	u.frame[2]  = 2.0f / (float)(out->width < out->height ? out->width : out->height);
+	u.frame[3]  = AeronScene_EmissiveScale() * s->image_radiance;
+	u.scale[0]  = pixel_scale;
+	u.scale[2]  = 0.5f / (float)((s->output_w + 1) / 2);
+	u.scale[3]  = 0.5f / (float)((s->output_h + 1) / 2);
+	u.origin[0] = (float)out->x;
+	u.origin[1] = (float)out->y;
+	/* The uv of the last texel centre that the half-resolution pass draws. */
+	u.origin[2] = ((float)((out->width + 1) / 2) - 0.5f) / (float)((s->output_w + 1) / 2);
+	u.origin[3] = ((float)((out->height + 1) / 2) - 0.5f) / (float)((s->output_h + 1) / 2);
+	memcpy(u.ends, s->flare_shape_end, sizeof u.ends);
+	return u;
+}
+
+int AeronSceneLensFlare_DrawSmooth(AeronScene3D* s, AeronCommandBuffer* cmd) {
+	if (!s->flare_frame)
+		return 1;
+	const AeronRectI* out  = &s->output_camera.viewport;
+	AeronRenderPass*  pass = Aeron_BeginRenderPass(&(AeronRenderPassDesc) {
+		.color_target = s->flare_smooth_rt,
+		.viewport     = { 0, 0, (out->width + 1) / 2, (out->height + 1) / 2 },
+		/* The triangle covers the viewport, and nothing reads the image
+		 * when it collapses. */
+		.discard_color  = 1,
+		.command_buffer = cmd,
+		.debug_label    = "Lens flare halos and discs",
+	});
+	if (!pass)
+		return 0;
+	const float         origin[2] = { 0.0f, 0.0f };
+	const FlareUniforms u         = flare_uniforms(s, origin, 2.0f);
+	Aeron_BindGraphicsPipeline(pass, s->flare_smooth_pipe);
+	Aeron_BindStorageBuffer(pass, AERON_SHADER_STAGE_VERTEX, 0, s->flare_visibility);
+	Aeron_BindStorageBuffer(pass, AERON_SHADER_STAGE_FRAGMENT, 0, s->flare_element_buffer);
+	Aeron_BindUniformData(pass, AERON_SHADER_STAGE_FRAGMENT, 0, &u, sizeof u);
+	Aeron_Draw(pass, 3, 0);
+	Aeron_EndRenderPass(pass);
+	return 1;
+}
+
 void AeronSceneLensFlare_Draw(AeronScene3D* s, AeronRenderPass* pass) {
 	if (!s->flare_frame)
 		return;
-	const AeronRectI* out = &s->output_camera.viewport;
-
-	struct {
-		float    frame[4];
-		uint32_t ends[4];
-	} u = { { (float)out->x + 0.5f * (float)out->width, (float)out->y + 0.5f * (float)out->height,
-			  2.0f / (float)(out->width < out->height ? out->width : out->height),
-			  AeronScene_EmissiveScale() * s->image_radiance },
-			{ s->flare_shape_end[0], s->flare_shape_end[1], s->flare_shape_end[2], s->flare_shape_end[3] } };
-
+	const AeronRectI*   out       = &s->output_camera.viewport;
+	const float         origin[2] = { (float)out->x, (float)out->y };
+	const FlareUniforms u         = flare_uniforms(s, origin, 1.0f);
 	Aeron_BindGraphicsPipeline(pass, s->flare_pipe);
 	Aeron_BindStorageBuffer(pass, AERON_SHADER_STAGE_VERTEX, 0, s->flare_visibility);
+	Aeron_BindTextureSampler(pass, AERON_SHADER_STAGE_FRAGMENT, 0,
+							 Aeron_RenderTargetGetTexture(s->flare_smooth_rt), s->flare_smooth_sampler);
 	Aeron_BindStorageBuffer(pass, AERON_SHADER_STAGE_FRAGMENT, 0, s->flare_element_buffer);
 	Aeron_BindUniformData(pass, AERON_SHADER_STAGE_FRAGMENT, 0, &u, sizeof u);
 	Aeron_Draw(pass, 3, 0);
@@ -269,6 +348,13 @@ void AeronSceneLensFlare_Release(AeronScene3D* s) {
 		Aeron_DestroyShader(s->flare_vs);
 	if (s->flare_fs)
 		Aeron_DestroyShader(s->flare_fs);
+	if (s->flare_smooth_pipe)
+		Aeron_DestroyGraphicsPipeline(s->flare_smooth_pipe);
+	if (s->flare_smooth_fs)
+		Aeron_DestroyShader(s->flare_smooth_fs);
+	if (s->flare_smooth_rt)
+		Aeron_DestroyRenderTarget(s->flare_smooth_rt);
+	Aeron_DestroySampler(s->flare_smooth_sampler);
 	Aeron_DestroyBuffer(s->flare_visibility);
 	Aeron_DestroyBuffer(s->flare_element_buffer);
 	s->flare_visibility_pipe = NULL;
@@ -276,6 +362,10 @@ void AeronSceneLensFlare_Release(AeronScene3D* s) {
 	s->flare_pipe            = NULL;
 	s->flare_vs              = NULL;
 	s->flare_fs              = NULL;
+	s->flare_smooth_pipe     = NULL;
+	s->flare_smooth_fs       = NULL;
+	s->flare_smooth_rt       = NULL;
+	s->flare_smooth_sampler  = NULL;
 	s->flare_visibility      = NULL;
 	s->flare_element_buffer  = NULL;
 	s->flare_tried           = 0;

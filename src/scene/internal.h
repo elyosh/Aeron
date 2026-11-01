@@ -727,6 +727,10 @@ struct AeronScene3D {
 	AeronShader*               flare_vs;
 	AeronShader*               flare_fs;
 	AeronGraphicsPipeline*     flare_pipe;
+	AeronShader*               flare_smooth_fs;
+	AeronGraphicsPipeline*     flare_smooth_pipe;
+	AeronRenderTarget*         flare_smooth_rt; /* halos and discs, half the output's size */
+	AeronSampler*              flare_smooth_sampler;
 	AeronBuffer*               flare_visibility; /* one float4, x = visible part */
 	AeronBuffer*               flare_element_buffer;
 
@@ -984,6 +988,7 @@ void AeronSceneBb3d_Release(struct AeronScene3D* s);
 /* The procedural lens flare. */
 int  AeronSceneLensFlare_Prepare(struct AeronScene3D* s, AeronCommandBuffer* cmd);
 int  AeronSceneLensFlare_Visibility(struct AeronScene3D* s, AeronCommandBuffer* cmd);
+int  AeronSceneLensFlare_DrawSmooth(struct AeronScene3D* s, AeronCommandBuffer* cmd);
 void AeronSceneLensFlare_Draw(struct AeronScene3D* s, AeronRenderPass* pass);
 void AeronSceneLensFlare_Release(struct AeronScene3D* s);
 

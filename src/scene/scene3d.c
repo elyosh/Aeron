@@ -2449,8 +2449,8 @@ static int scene_finalize_output(AeronScene3D* s, AeronCommandBuffer* cmd, int m
 		Aeron_GpuDebugPop(cmd);
 	}
 
-	if (!AeronSceneLensFlare_Visibility(s, cmd)) {
-		return scene_render_failure(s, cmd, "Scene lens flare visibility failed");
+	if (!AeronSceneLensFlare_Visibility(s, cmd) || !AeronSceneLensFlare_DrawSmooth(s, cmd)) {
+		return scene_render_failure(s, cmd, "Scene lens flare passes failed");
 	}
 	if (s->bb_frame_has_lens || s->flare_frame) {
 		if (!AeronSceneTemporal_EnsureMutableOutput(s, cmd)) {

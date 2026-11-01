@@ -330,6 +330,7 @@ set(AERON_SHADER_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_lens_flare_visibility.comp.hlsl
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_lens_flare.vert.hlsl
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_lens_flare.frag.hlsl
+    ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_lens_flare_smooth.frag.hlsl
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_blit4.vert.hlsl
     # aeron_scene UI layer — analytic rounded-rect surfaces (fills,
     # gradients, borders, bevels, focus outlines, drop shadows).
