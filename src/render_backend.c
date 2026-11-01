@@ -186,6 +186,7 @@ struct AeronSharedFence {
 static AeronTextureFormat Aeron_FromSdlTextureFormat(SDL_GPUTextureFormat format);
 static void               Aeron_ReleaseUploadChunkPool(void);
 static void               Aeron_ReleaseSharedFence(AeronSharedFence* fence);
+static void               Aeron_ReleaseRetiredFences(int wait);
 static int Aeron_SubmitSdlCommandBuffer(AeronCommandBuffer* command_buffer, int ok, SDL_GPUFence** fence);
 
 /* Applies the best available swapchain composition for the requested output
@@ -1575,6 +1576,7 @@ void Aeron_RenderBackendShutdown(void) {
 	if (g_aeron.gpu_device) {
 		Aeron_ReleaseSharedFence(g_aeron.pacing_fence);
 		g_aeron.pacing_fence = NULL;
+		Aeron_ReleaseRetiredFences(1);
 		Aeron_ReleasePixelLayerUploads();
 		Aeron_ReleaseUploadChunkPool();
 
@@ -2550,15 +2552,70 @@ struct AeronBufferReadback {
 	void*             data;
 };
 
+/* Releases `fence`, or keeps it until the GPU signals it. SDL puts a released
+ * fence back in its pool, but its D3D12 backend still reads the fence to know
+ * when the fence's command buffer is done. A fence released early is reset
+ * for the next command buffer that takes it, and the signal of the first
+ * command buffer then marks the second one done while the GPU still runs it.
+ * SDL then reuses that command buffer's resources too early. */
+static void Aeron_RetireFence(SDL_GPUFence* fence) {
+	if (!g_aeron.gpu_device || !fence)
+		return;
+	if (!g_aeron.fence_query_reliable || SDL_QueryGPUFence(g_aeron.gpu_device, fence)) {
+		SDL_ReleaseGPUFence(g_aeron.gpu_device, fence);
+		return;
+	}
+	if (g_aeron.retired_fence_count == g_aeron.retired_fence_capacity) {
+		const uint32_t capacity = g_aeron.retired_fence_capacity ? g_aeron.retired_fence_capacity * 2u : 16u;
+		SDL_GPUFence** fences =
+			(SDL_GPUFence**)SDL_realloc(g_aeron.retired_fences, (size_t)capacity * sizeof(*fences));
+		if (!fences) {
+			(void)SDL_WaitForGPUFences(g_aeron.gpu_device, true, &fence, 1);
+			SDL_ReleaseGPUFence(g_aeron.gpu_device, fence);
+			return;
+		}
+		g_aeron.retired_fences         = fences;
+		g_aeron.retired_fence_capacity = capacity;
+	}
+	g_aeron.retired_fences[g_aeron.retired_fence_count++] = fence;
+}
+
+/* Releases the retired fences that the GPU has signaled. With `wait`, it
+ * waits for all of them first and frees the list. */
+static void Aeron_ReleaseRetiredFences(int wait) {
+	uint32_t kept = 0;
+
+	if (!g_aeron.gpu_device) {
+		return;
+	}
+	if (wait && g_aeron.retired_fence_count) {
+		(void)SDL_WaitForGPUFences(g_aeron.gpu_device, true, g_aeron.retired_fences,
+								   g_aeron.retired_fence_count);
+	}
+	for (uint32_t i = 0; i < g_aeron.retired_fence_count; ++i) {
+		SDL_GPUFence* fence = g_aeron.retired_fences[i];
+		if (wait || SDL_QueryGPUFence(g_aeron.gpu_device, fence)) {
+			SDL_ReleaseGPUFence(g_aeron.gpu_device, fence);
+		} else {
+			g_aeron.retired_fences[kept++] = fence;
+		}
+	}
+	g_aeron.retired_fence_count = kept;
+	if (wait) {
+		SDL_free(g_aeron.retired_fences);
+		g_aeron.retired_fences         = NULL;
+		g_aeron.retired_fence_capacity = 0;
+	}
+}
+
 /* Takes `fence` into a shared fence with one reference. Without memory,
- * the fence is released and the result is NULL. */
+ * the fence is retired and the result is NULL. */
 static AeronSharedFence* Aeron_ShareFence(SDL_GPUFence* fence) {
 	if (!fence)
 		return NULL;
 	AeronSharedFence* shared = (AeronSharedFence*)SDL_calloc(1, sizeof *shared);
 	if (!shared) {
-		if (g_aeron.gpu_device)
-			SDL_ReleaseGPUFence(g_aeron.gpu_device, fence);
+		Aeron_RetireFence(fence);
 		return NULL;
 	}
 	shared->fence = fence;
@@ -2568,8 +2625,7 @@ static AeronSharedFence* Aeron_ShareFence(SDL_GPUFence* fence) {
 
 static void Aeron_ReleaseSharedFence(AeronSharedFence* fence) {
 	if (fence && --fence->refs == 0) {
-		if (g_aeron.gpu_device && fence->fence)
-			SDL_ReleaseGPUFence(g_aeron.gpu_device, fence->fence);
+		Aeron_RetireFence(fence->fence);
 		SDL_free(fence);
 	}
 }
@@ -2762,6 +2818,7 @@ static int Aeron_SubmitSdlCommandBuffer(AeronCommandBuffer* command_buffer, int 
 		shared->refs++;
 	}
 	Aeron_ReleaseSharedFence(shared);
+	Aeron_ReleaseRetiredFences(0);
 	Aeron_ReturnUploadChunks(command_buffer);
 	command_buffer->command_buffer = NULL;
 	return ok;
@@ -2832,8 +2889,7 @@ int Aeron_WaitForGpuFence(AeronGpuFence* fence) {
 void Aeron_ReleaseGpuFence(AeronGpuFence* fence) {
 	if (!fence)
 		return;
-	if (g_aeron.gpu_device && fence->fence)
-		SDL_ReleaseGPUFence(g_aeron.gpu_device, fence->fence);
+	Aeron_RetireFence(fence->fence);
 	SDL_free(fence);
 }
 

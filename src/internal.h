@@ -337,6 +337,11 @@ typedef struct AeronRuntime {
 	/* The fence of the newest command buffer submitted since the last
 	 * present, which the present queries when its swapchain image arrives. */
 	AeronSharedFence* pacing_fence;
+	/* Fences that Aeron no longer needs and the GPU hasn't signaled yet. They
+	 * are released once signaled. */
+	SDL_GPUFence**    retired_fences;
+	uint32_t          retired_fence_count;
+	uint32_t          retired_fence_capacity;
 	AeronPacingState  pacing;
 } AeronRuntime;
 
