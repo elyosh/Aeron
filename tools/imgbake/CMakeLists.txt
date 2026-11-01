@@ -22,39 +22,38 @@ if(DEFINED AERON_ISPC_EXECUTABLE AND AERON_ISPC_EXECUTABLE STREQUAL "")
 endif()
 find_program(AERON_ISPC_EXECUTABLE NAMES ispc
     DOC "Path to the ISPC compiler (1.30 or later) used for imgbake's BC6H encoder")
-set(IMGBAKE_ISPC_DIR ${CMAKE_CURRENT_BINARY_DIR}/ispc)
+set(AERON_ISPC_KERNEL_DIR "" CACHE PATH
+    "A folder with the kernel already compiled by tools/imgbake/ispc_kernel.cmake for this system; ISPC isn't run")
+include(${CMAKE_CURRENT_SOURCE_DIR}/ispc_kernel.cmake)
+imgbake_ispc_kernel_settings(${CMAKE_SYSTEM_NAME} ${CMAKE_SYSTEM_PROCESSOR} ${CMAKE_C_OUTPUT_EXTENSION}
+    IMGBAKE_ISPC_FLAGS imgbake_ispc_files)
+if(AERON_ISPC_KERNEL_DIR)
+    set(IMGBAKE_ISPC_DIR ${AERON_ISPC_KERNEL_DIR})
+else()
+    set(IMGBAKE_ISPC_DIR ${CMAKE_CURRENT_BINARY_DIR}/ispc)
+endif()
+list(TRANSFORM imgbake_ispc_files PREPEND ${IMGBAKE_ISPC_DIR}/)
 set(IMGBAKE_ISPC_OBJ ${IMGBAKE_ISPC_DIR}/kernel${CMAKE_C_OUTPUT_EXTENSION})
 set(IMGBAKE_ISPC_HEADER ${IMGBAKE_ISPC_DIR}/kernel_ispc.h)
-set(IMGBAKE_ISPC_OUTPUTS ${IMGBAKE_ISPC_OBJ})
-if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(arm64|aarch64|ARM64)$")
-    set(IMGBAKE_ISPC_FLAGS --arch=aarch64 --target=neon-i32x8)
-elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64|amd64)$")
-    # Multi-target: ISPC adds per-target objects and a runtime dispatcher.
-    set(IMGBAKE_ISPC_FLAGS --arch=x86-64 --target=sse4-i32x4,avx2-i32x8)
-    list(APPEND IMGBAKE_ISPC_OUTPUTS
-        ${IMGBAKE_ISPC_DIR}/kernel_sse4${CMAKE_C_OUTPUT_EXTENSION}
-        ${IMGBAKE_ISPC_DIR}/kernel_avx2${CMAKE_C_OUTPUT_EXTENSION})
-else()
-    set(IMGBAKE_ISPC_FLAGS)
-endif()
-if(WIN32)
-    # ISPC writes objects for the system it runs on unless told otherwise.
-    # The Linux and macOS releases can't write Windows objects, so a cross
-    # build runs the Windows release, under Wine for example.
-    list(APPEND IMGBAKE_ISPC_FLAGS --target-os=windows)
-else()
-    list(APPEND IMGBAKE_ISPC_FLAGS --pic)
-endif()
-if(AERON_ISPC_EXECUTABLE AND IMGBAKE_ISPC_FLAGS)
+set(IMGBAKE_ISPC_OUTPUTS ${imgbake_ispc_files})
+list(REMOVE_ITEM IMGBAKE_ISPC_OUTPUTS ${IMGBAKE_ISPC_HEADER})
+if(AERON_ISPC_KERNEL_DIR)
+    foreach(file ${imgbake_ispc_files})
+        if(NOT EXISTS ${file})
+            message(FATAL_ERROR "imgbake: AERON_ISPC_KERNEL_DIR has no ${file}")
+        endif()
+    endforeach()
+    set(IMGBAKE_HAVE_ISPC ON)
+elseif(AERON_ISPC_EXECUTABLE AND IMGBAKE_ISPC_FLAGS)
     add_custom_command(
-        OUTPUT ${IMGBAKE_ISPC_OUTPUTS} ${IMGBAKE_ISPC_HEADER}
-        COMMAND ${CMAKE_COMMAND} -E make_directory ${IMGBAKE_ISPC_DIR}
-        COMMAND ${AERON_ISPC_EXECUTABLE} ${IMGBAKE_ISPC_FLAGS} -O2 --woff
-                ${IMGBAKE_TP}/ispc_texcomp/kernel.ispc
-                -o ${IMGBAKE_ISPC_OBJ} -h ${IMGBAKE_ISPC_HEADER}
-        DEPENDS ${IMGBAKE_TP}/ispc_texcomp/kernel.ispc
+        OUTPUT ${imgbake_ispc_files}
+        COMMAND ${CMAKE_COMMAND} -DISPC=${AERON_ISPC_EXECUTABLE} -DSYSTEM=${CMAKE_SYSTEM_NAME}
+                -DPROCESSOR=${CMAKE_SYSTEM_PROCESSOR} -DEXTENSION=${CMAKE_C_OUTPUT_EXTENSION}
+                -DOUT=${IMGBAKE_ISPC_DIR} -P ${CMAKE_CURRENT_SOURCE_DIR}/ispc_kernel.cmake
+        DEPENDS ${IMGBAKE_ISPC_KERNEL_SOURCE} ${CMAKE_CURRENT_SOURCE_DIR}/ispc_kernel.cmake
         COMMENT "ISPC texture compressor kernel"
         VERBATIM)
+    set(IMGBAKE_HAVE_ISPC ON)
 else()
     set(imgbake_ispc_problem "the ISPC compiler was not found (brew install ispc, the distribution's ispc package, or a release from https://github.com/ispc/ispc/releases; or set AERON_ISPC_EXECUTABLE)")
     if(AERON_ISPC_EXECUTABLE)
@@ -65,10 +64,11 @@ else()
     endif()
     message(STATUS "imgbake: ${imgbake_ispc_problem}; imgbake_bc6h cannot be built")
     add_custom_command(
-        OUTPUT ${IMGBAKE_ISPC_OUTPUTS} ${IMGBAKE_ISPC_HEADER}
+        OUTPUT ${imgbake_ispc_files}
         COMMAND ${CMAKE_COMMAND} -E echo "imgbake: ${imgbake_ispc_problem}"
         COMMAND ${CMAKE_COMMAND} -E false
         VERBATIM)
+    set(IMGBAKE_HAVE_ISPC OFF)
 endif()
 
 # The ISPC Texture Compressor: BC6H, and BC7 for imgbake when the compiler
@@ -118,7 +118,7 @@ target_include_directories(imgbake
 # Threads — the BC7 encoder splits large images across threads.
 find_package(Threads REQUIRED)
 target_link_libraries(imgbake PUBLIC aeron aeron_tool_log ${AERON_ZSTD} PRIVATE Threads::Threads)
-if(AERON_ISPC_EXECUTABLE AND IMGBAKE_ISPC_FLAGS)
+if(IMGBAKE_HAVE_ISPC)
     target_link_libraries(imgbake PUBLIC imgbake_ispc)
     set_source_files_properties(bc7_codec.cpp PROPERTIES COMPILE_DEFINITIONS IMGBAKE_HAVE_ISPC)
 endif()
