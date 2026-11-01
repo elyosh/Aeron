@@ -71,6 +71,7 @@ void Aeron_DiagnosticsInit(const AeronConfig* config) {
 	const char* org_name;
 	const char* app_name;
 	const char* app_version;
+	const char* name;
 	char*       pref_path;
 	char        directory[AERON_MAX_PATH];
 	char        pattern[128];
@@ -85,6 +86,7 @@ void Aeron_DiagnosticsInit(const AeronConfig* config) {
 	org_name    = config && config->org_name ? config->org_name : "aeron";
 	app_name    = config && config->app_name ? config->app_name : "aeron";
 	app_version = config && config->app_version ? config->app_version : "unknown";
+	name        = config && config->diagnostics_name ? config->diagnostics_name : app_name;
 	pref_path   = SDL_GetPrefPath(org_name, app_name);
 	if (!pref_path) {
 		Aeron_LogWarn("aeron", "no user directory for logs and crash reports: %s", SDL_GetError());
@@ -94,16 +96,16 @@ void Aeron_DiagnosticsInit(const AeronConfig* config) {
 		SDL_free(pref_path);
 		return;
 	}
-	Aeron_LogFileInit(directory, app_name);
+	Aeron_LogFileInit(directory, name);
 	sdl_version = SDL_GetVersion();
-	Aeron_LogInfo("aeron", "%s %s on %s, SDL %d.%d.%d", app_name, app_version, SDL_GetPlatform(),
+	Aeron_LogInfo("aeron", "%s %s on %s, SDL %d.%d.%d", name, app_version, SDL_GetPlatform(),
 				  SDL_VERSIONNUM_MAJOR(sdl_version), SDL_VERSIONNUM_MINOR(sdl_version),
 				  SDL_VERSIONNUM_MICRO(sdl_version));
-	if (SDL_snprintf(pattern, sizeof pattern, "%s-*.dmp", app_name) < (int)sizeof pattern) {
+	if (SDL_snprintf(pattern, sizeof pattern, "%s-*.dmp", name) < (int)sizeof pattern) {
 		Aeron_DiagnosticsPrune(directory, pattern, AERON_DIAGNOSTICS_DUMP_HISTORY);
 	}
 #ifdef AERON_HAS_CRASH_HANDLER
-	Aeron_CrashHandlerInit(directory, app_name, app_version);
+	Aeron_CrashHandlerInit(directory, name, app_version);
 	Aeron_CrashSelfTest();
 #endif
 	SDL_free(pref_path);

@@ -35,6 +35,11 @@ typedef struct AeronConfig {
 	const char* app_name;
 	/* Optional version string recorded in the session log and crash reports. */
 	const char* app_version;
+	/* Optional name for the session log and crash dump files, which the crash
+	 * message also shows. app_name is used when it isn't set. Programs that
+	 * share an app_name, and so a user folder, set it to keep their files
+	 * apart. */
+	const char* diagnostics_name;
 	const char* asset_root;
 	/* Optional explicit resource root. When unset, resource_path is resolved
 	 * relative to the application directory. */
