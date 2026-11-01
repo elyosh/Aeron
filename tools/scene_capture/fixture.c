@@ -1,6 +1,7 @@
 #include "aeron/asset/flight_model.h"
 #include "aeron/asset/opt_model.h"
 #include "aeron/config_file.h"
+#include "aeron/scene/billboard.h"
 #include "aeron/scene/environment.h"
 #include "aeron/scene/image_cache.h"
 #include "aeron/scene/mesh_overlay.h"
@@ -810,6 +811,54 @@ static void set_game_effects(AeronScene3D* scene, const CaptureConfig* config, i
 	AeronScene_SetDirectionalShadow(scene, &desc);
 }
 
+/* The game's corona speed, in units per second, and the offset of each
+ * sun's corona time (FL_STAR_TIME_PER_SECOND and FL_STAR_TIME_OFFSET in the
+ * game). */
+#define STAR_TIME_PER_SECOND 0.6
+#define STAR_TIME_OFFSET 37.0
+
+/* The suns, as procedural stars on the sky. The world's axes are the
+ * camera's at time 0, and the camera sits at the origin. */
+static void add_suns(AeronScene3D* scene, const CaptureConfig* c, double time) {
+	static const float uvs[4][2]   = { { 0, 0 }, { 1, 0 }, { 1, 1 }, { 0, 1 } };
+	static const float signs[4][2] = { { -1, -1 }, { 1, -1 }, { 1, 1 }, { -1, 1 } };
+	/* Any distance past the near plane: the sky stage draws at the far plane. */
+	const float distance = 1000.0f;
+	for (int i = 0; i < c->sun_count; ++i) {
+		const CaptureSun* sun    = &c->suns[i];
+		float             dir[3] = { sun->direction[0], sun->direction[1], sun->direction[2] };
+		const float       length = sqrtf(dir[0] * dir[0] + dir[1] * dir[1] + dir[2] * dir[2]);
+		for (int k = 0; k < 3; ++k)
+			dir[k] /= length;
+		/* Two axes across the direction, from the camera's down axis or, for
+		 * a sun straight up or down, its right axis. */
+		const float ref[3] = { fabsf(dir[1]) > 0.99f ? 1.0f : 0.0f, fabsf(dir[1]) > 0.99f ? 0.0f : 1.0f, 0 };
+		float       t0[3]  = { dir[1] * ref[2] - dir[2] * ref[1], dir[2] * ref[0] - dir[0] * ref[2],
+							   dir[0] * ref[1] - dir[1] * ref[0] };
+		const float t0len  = sqrtf(t0[0] * t0[0] + t0[1] * t0[1] + t0[2] * t0[2]);
+		for (int k = 0; k < 3; ++k)
+			t0[k] /= t0len;
+		const float t1[3] = { dir[1] * t0[2] - dir[2] * t0[1], dir[2] * t0[0] - dir[0] * t0[2],
+							  dir[0] * t0[1] - dir[1] * t0[0] };
+		const float half  = tanf(0.5f * sun->size_degrees * (float)(3.14159265358979 / 180.0)) * distance;
+		AeronSceneBillboardDesc desc = { 0 };
+		desc.blend                   = AERON_SCENE_BILLBOARD_BLEND_PMA;
+		desc.stage                   = AERON_SCENE_BILLBOARD_STAGE_SKY;
+		desc.shader                  = AERON_SCENE_BILLBOARD_SHADER_STAR;
+		memcpy(desc.star.tint, sun->color, sizeof desc.star.tint);
+		desc.star.time          = (float)(time * STAR_TIME_PER_SECOND + i * STAR_TIME_OFFSET);
+		desc.star.core_radiance = sun->radiance * sun->core_brightness;
+		for (int v = 0; v < 4; ++v) {
+			for (int k = 0; k < 3; ++k)
+				desc.corners[v][k] = dir[k] * distance + (t0[k] * signs[v][0] + t1[k] * signs[v][1]) * half;
+			memcpy(desc.uv[v], uvs[v], sizeof desc.uv[v]);
+			desc.colors[v][0] = desc.colors[v][1] = desc.colors[v][2] = sun->radiance;
+			desc.colors[v][3]                                         = 1.0f;
+		}
+		AeronScene_AddBillboard(scene, &desc);
+	}
+}
+
 AeronRenderTarget* Fixture_Record(Fixture* f, double time, int blur, AeronCommandBuffer* cmd) {
 	if (f->config.bloom_chart)
 		return BloomChart_Record(f, cmd);
@@ -831,6 +880,7 @@ AeronRenderTarget* Fixture_Record(Fixture* f, double time, int blur, AeronComman
 	if (!AeronScene_Begin(scene, &current))
 		return NULL;
 	AeronScene_SetAnimationTime(scene, f->config.animation_time + time);
+	add_suns(scene, &f->config, time);
 	if (f->config.game.enabled) {
 		set_game_effects(scene, &f->config, blur);
 		AeronScene_SetMotionContext(scene, previous_matrix, 1);

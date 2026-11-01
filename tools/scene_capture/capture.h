@@ -66,6 +66,18 @@ typedef struct CaptureLight {
 	float position[3], intensity[3], half_axis[3], direction[3], cone_degrees[2];
 } CaptureLight;
 
+/* suns: procedural stars on the sky (AeronSceneBillboardStar), as the game
+ * draws backdrop suns. `direction` points toward the sun in camera axes
+ * (+X right, +Y down, +Z forward), `color` is the sun's sRGB colour, and the
+ * star's quad is `size_degrees` wide. `radiance` is the radiance of a white
+ * texel; the core adds `core_brightness` times it. */
+#define CAPTURE_MAX_SUNS 4
+
+typedef struct CaptureSun {
+	float direction[3], color[3];
+	float size_degrees, radiance, core_brightness;
+} CaptureSun;
+
 /* game_scene: the game's Scene3D features (Scene3D defaults file), lighting
  * and instance roles, in game world units (OPT units). */
 typedef struct CaptureGameScene {
@@ -143,6 +155,8 @@ typedef struct CaptureConfig {
 	float                  screen_eye[3], screen_yaw, screen_pitch;
 	CaptureBenchmarkConfig benchmark;
 	int                    benchmark_mode;
+	CaptureSun             suns[CAPTURE_MAX_SUNS];
+	int                    sun_count;
 	CaptureGameScene       game;
 } CaptureConfig;
 

@@ -289,6 +289,17 @@ static int floats(const AeronConfigNode* node, float* out, size_t count) {
 
 static int vec3(const AeronConfigNode* node, float out[3]) { return floats(node, out, 3); }
 
+/* Reads a finite number. */
+static int scalar(const AeronConfigNode* node, float* out) {
+	const double v = AeronConfigNode_Float(node, NAN);
+	if ((AeronConfigNode_Type(node) != AERON_CONFIG_INT &&
+		 AeronConfigNode_Type(node) != AERON_CONFIG_FLOAT) ||
+		!isfinite(v))
+		return 0;
+	*out = (float)v;
+	return 1;
+}
+
 static int only_keys(const AeronConfigNode* map, const char* what, const char* const* keys, size_t count) {
 	if (AeronConfigNode_Type(map) != AERON_CONFIG_MAP) {
 		fprintf(stderr, "%s must be a mapping\n", what);
@@ -429,6 +440,54 @@ static int load_game_lights(const AeronConfigNode* list, CaptureGameScene* game)
 		}
 	}
 	game->light_count = (int)count;
+	return 1;
+}
+
+static int load_suns(const AeronConfigFile* yaml, CaptureConfig* config) {
+	const AeronConfigNode* list  = AeronConfigFile_GetNode(yaml, "suns");
+	const size_t           count = AeronConfigNode_SequenceCount(list);
+	if (!list)
+		return 1;
+	if (AeronConfigNode_Type(list) != AERON_CONFIG_SEQUENCE || count > CAPTURE_MAX_SUNS) {
+		fprintf(stderr, "suns must list at most %d suns\n", CAPTURE_MAX_SUNS);
+		return 0;
+	}
+	static const char* const keys[] = { "direction", "color", "size_degrees", "radiance", "core_brightness" };
+	for (size_t i = 0; i < count; ++i) {
+		const AeronConfigNode* item     = AeronConfigNode_SequenceGet(list, i);
+		CaptureSun*            out      = &config->suns[i];
+		const AeronConfigNode* size     = AeronConfigNode_MapGet(item, "size_degrees");
+		const AeronConfigNode* radiance = AeronConfigNode_MapGet(item, "radiance");
+		const AeronConfigNode* core     = AeronConfigNode_MapGet(item, "core_brightness");
+		float                  value    = 0;
+		if (!only_keys(item, "suns item", keys, sizeof keys / sizeof keys[0]) ||
+			!vec3(AeronConfigNode_MapGet(item, "direction"), out->direction) ||
+			!(out->direction[0] * out->direction[0] + out->direction[1] * out->direction[1] +
+				  out->direction[2] * out->direction[2] >
+			  0) ||
+			!vec3(AeronConfigNode_MapGet(item, "color"), out->color) ||
+			fminf(out->color[0], fminf(out->color[1], out->color[2])) < 0 ||
+			fmaxf(out->color[0], fmaxf(out->color[1], out->color[2])) > 1 || !scalar(size, &value)) {
+			fprintf(stderr, "suns[%zu] needs a direction, a colour from 0 to 1 and size_degrees\n", i);
+			return 0;
+		}
+		out->size_degrees = value;
+		if (!(value > 0 && value < 90)) {
+			fprintf(stderr, "suns[%zu].size_degrees must be above 0 and below 90\n", i);
+			return 0;
+		}
+		out->radiance = 1;
+		if (radiance && (!scalar(radiance, &out->radiance) || !(out->radiance >= 0))) {
+			fprintf(stderr, "suns[%zu].radiance must be a number of 0 or more\n", i);
+			return 0;
+		}
+		out->core_brightness = 0;
+		if (core && (!scalar(core, &out->core_brightness) || !(out->core_brightness >= 0))) {
+			fprintf(stderr, "suns[%zu].core_brightness must be a number of 0 or more\n", i);
+			return 0;
+		}
+	}
+	config->sun_count = (int)count;
 	return 1;
 }
 
@@ -700,6 +759,7 @@ int CaptureConfig_Load(const char* path, CaptureConfig* config) {
 									  "emissive_scale",
 									  "exposure_ev100",
 									  "benchmark",
+									  "suns",
 									  "game_scene" };
 	const AeronConfigNode* root   = AeronConfigFile_Root(yaml);
 	int                    ok     = AeronConfigNode_Type(root) == AERON_CONFIG_MAP;
@@ -729,7 +789,8 @@ int CaptureConfig_Load(const char* path, CaptureConfig* config) {
 	}
 	if (ok)
 		ok = load_models(yaml, config) && load_effects(yaml, config) &&
-			 load_benchmark(yaml, &config->benchmark) && load_game_scene(vfs, yaml, config);
+			 load_benchmark(yaml, &config->benchmark) && load_suns(yaml, config) &&
+			 load_game_scene(vfs, yaml, config);
 	AeronConfigFile_Destroy(yaml);
 	AeronVfs_Destroy(vfs);
 	return ok;

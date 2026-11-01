@@ -73,6 +73,10 @@ typedef struct AeronSpriteAtlas {
 	 * scale factor. NULL when the YAML carries none. */
 	int16_t* classic_w;
 	int16_t* classic_h;
+	/* Optional per-frame `light: [r, g, b]` keys: a colour that the game
+	 * gives the frame, such as a sun's. Three floats per frame; a frame
+	 * without the key has -1 in each. NULL when no frame has it. */
+	float*   light;
 	int      page_count; /* 1 when pages == NULL */
 	int      frame_count;
 	int      atlas_w; /* full-image dims (upscaled when extracted with --scale) */

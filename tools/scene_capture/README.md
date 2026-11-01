@@ -63,6 +63,7 @@ Presets that use game models need `asset_root` set to your game data.
 | `exposure_ev100` | Camera exposure in EV100, for scene values in W/m² at 683 lm/W (default 9.153, which shows a scene value of 1 as 1). |
 | `tonemap` | `agx` (default) or `aces`. |
 | `agx_highlight` | `{ saturation, ev_start, ev_end, hue }`: the AgX saturation of very bright pixels, reached at `ev_end` EV of scene luminance (0 = white), from the punchy saturation at `ev_start`; `hue` (0 to 1, default 0) is how much of them keeps its hue over the same ramp. Omit it to keep the renderer's default. |
+| `suns` | Up to 4 `{ direction, color, size_degrees, radiance, core_brightness }`: procedural suns on the sky, as the game draws backdrop suns. `direction` points toward the sun in camera axes (+X right, +Y down, +Z forward), `color` is sRGB from 0 to 1, and the sun's quad is `size_degrees` wide. `radiance` is the radiance of a white texel (default 1), and the bright core adds `core_brightness` times it (default 0). The rays move with the capture time. |
 | `output_dir` | Where images and reports go. |
 | `game_scene` | Renders like the game; see below. |
 

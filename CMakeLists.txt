@@ -326,6 +326,7 @@ set(AERON_SHADER_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_billboard3d_vel.frag.hlsl
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_billboard3d_lens.vert.hlsl
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_billboard3d_lens.frag.hlsl
+    ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_billboard3d_star.frag.hlsl
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_blit4.vert.hlsl
     # aeron_scene UI layer — analytic rounded-rect surfaces (fills,
     # gradients, borders, bevels, focus outlines, drop shadows).

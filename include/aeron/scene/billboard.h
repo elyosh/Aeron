@@ -12,7 +12,8 @@
  * No game vocabulary lives here — engine glows, backdrops, flares and
  * sparks are game-side policies that submit fans.
  *
- * Shaders: scene_billboard3d(.vert/.frag), scene_billboard3d_vel.
+ * Shaders: scene_billboard3d(.vert/.frag), scene_billboard3d_vel,
+ * scene_billboard3d_star.frag.
  */
 
 #include "aeron/render.h"
@@ -55,6 +56,29 @@ typedef enum AeronSceneBillboardStage {
 	AERON_SCENE_BILLBOARD_STAGE_LENS,
 } AeronSceneBillboardStage;
 
+/* What a billboard draws. */
+typedef enum AeronSceneBillboardShader {
+	AERON_SCENE_BILLBOARD_SHADER_TEXTURE = 0, /* the texture times the colors */
+	AERON_SCENE_BILLBOARD_SHADER_STAR,        /* a procedural star; no texture */
+} AeronSceneBillboardShader;
+
+/* The procedural star, drawn from the billboard's uv only, with (0.5, 0.5)
+ * at its centre and 0 and 1 at its edges:
+ *   - a white disc, full up to 0.1 from the centre, that falls off quickly;
+ *   - a corona of rays, made of moving noise, in the tint, that turn white
+ *     where they are brightest;
+ *   - a fade to nothing near the edges.
+ * These are worked out as values for a display image and turned into linear
+ * values. The colors scale them, as they scale a texture. `core_radiance`
+ * times the tint is added in the disc's core, so the star glows through the
+ * bloom without looking larger. Its alpha covers what is behind it. The
+ * blend must be PMA. */
+typedef struct AeronSceneBillboardStar {
+	float tint[3];       /* sRGB, 0 to 1 */
+	float time;          /* the rays move outward by 1/8 of the half width per unit */
+	float core_radiance; /* linear radiance, times the tint */
+} AeronSceneBillboardStar;
+
 /* One batched scene billboard: a fan (derived center + 4 rim corners)
  * of WORLD-space positions. Build the corners on the camera right/up
  * axes so all four share one view depth — the quad then projects as an
@@ -84,6 +108,10 @@ typedef struct AeronSceneBillboardDesc {
 	 * one flare train share the same anchor so the train fades as a
 	 * unit. Ignored by SKY/OVERLAY. */
 	float anchor_world[3];
+	/* The SKY stage takes AERON_SCENE_BILLBOARD_SHADER_STAR, with `star`;
+	 * `texture` may then be NULL. Each star is its own draw. */
+	AeronSceneBillboardShader shader;
+	AeronSceneBillboardStar   star;
 } AeronSceneBillboardDesc;
 
 /* Queue one billboard for this frame (reset by AeronScene_Begin).

@@ -103,6 +103,8 @@ typedef struct AeronSceneBb3dEntry {
 	float         colors[4][4];
 	float         center_color[4];
 	float         anchor[3]; /* LENS: flare source, world space */
+	uint8_t       shader;    /* AeronSceneBillboardShader */
+	float         star[5];   /* AeronSceneBillboardStar: tint, time, core radiance */
 } AeronSceneBb3dEntry;
 
 typedef struct AeronSceneMeshOverlayEntry {
@@ -691,6 +693,8 @@ struct AeronScene3D {
 	AeronGraphicsPipeline* bb_pipes[3]; /* [AeronSceneBillboardBlend] */
 	AeronGraphicsPipeline* bb_vel_pipe;
 	AeronGraphicsPipeline* bb_temporal_vel_pipe;
+	AeronShader*           bb_star_fs;
+	AeronGraphicsPipeline* bb_star_pipe; /* SKY stage, PMA blend */
 	AeronSampler*          bb_sampler;
 	uint32_t               bb_frame_verts; /* built this frame */
 	int                    bb_frame_has_vel;

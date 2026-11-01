@@ -5,7 +5,8 @@
  * stage), single-target color pipelines, and velocity stamping into the
  * motion-blur prepass for entries carrying previous-frame corners.
  *
- * Shaders: scene_billboard3d(.vert/.frag), scene_billboard3d_vel.
+ * Shaders: scene_billboard3d(.vert/.frag), scene_billboard3d_vel,
+ * scene_billboard3d_star.frag.
  */
 
 #include "internal.h"
@@ -25,7 +26,10 @@ typedef struct Bb3dVert {
 #define BB3D_VERTS_PER_ENTRY 12 /* 4-triangle fan, non-indexed */
 
 void AeronScene_AddBillboard(AeronScene3D* s, const AeronSceneBillboardDesc* d) {
-	if (!s || !d || !d->texture) {
+	const int star = d && d->shader == AERON_SCENE_BILLBOARD_SHADER_STAR;
+	if (!s || !d || (!star && !d->texture) ||
+		(star &&
+		 (d->stage != AERON_SCENE_BILLBOARD_STAGE_SKY || d->blend != AERON_SCENE_BILLBOARD_BLEND_PMA))) {
 		return;
 	}
 	if (s->bb_count >= s->bb_capacity) {
@@ -49,7 +53,8 @@ void AeronScene_AddBillboard(AeronScene3D* s, const AeronSceneBillboardDesc* d) 
 		return;
 	}
 	AeronSceneBb3dEntry* e = &s->bb_entries[s->bb_count++];
-	e->texture             = d->texture;
+	/* A star has no texture, so it never joins a textured run. */
+	e->texture             = star ? NULL : d->texture;
 	e->blend               = (uint8_t)d->blend;
 	e->stage               = (uint8_t)d->stage;
 	e->depth_bias          = d->depth_bias_view;
@@ -76,6 +81,10 @@ void AeronScene_AddBillboard(AeronScene3D* s, const AeronSceneBillboardDesc* d) 
 			e->center_color[c] *= scale;
 		}
 	}
+	e->shader = star ? AERON_SCENE_BILLBOARD_SHADER_STAR : AERON_SCENE_BILLBOARD_SHADER_TEXTURE;
+	memcpy(e->star, d->star.tint, sizeof d->star.tint);
+	e->star[3]  = d->star.time;
+	e->star[4]  = d->star.core_radiance;
 	e->has_prev = d->prev_corners != NULL;
 	if (e->has_prev) {
 		memcpy(e->prev_corners, d->prev_corners, sizeof e->prev_corners);
@@ -294,6 +303,8 @@ int AeronSceneBb3d_Ensure(struct AeronScene3D* s) {
 		AeronSceneInternal_CompileShader("scene_billboard3d_vel.vert", AERON_SHADER_STAGE_VERTEX, 0, 1, 0);
 	s->bb_vel_fs =
 		AeronSceneInternal_CompileShader("scene_billboard3d_vel.frag", AERON_SHADER_STAGE_FRAGMENT, 1, 0, 0);
+	s->bb_star_fs =
+		AeronSceneInternal_CompileShader("scene_billboard3d_star.frag", AERON_SHADER_STAGE_FRAGMENT, 0, 1, 0);
 	s->bb_sampler = Aeron_CreateSampler(&(AeronSamplerDesc) {
 		.min_filter = AERON_FILTER_LINEAR,
 		.mag_filter = AERON_FILTER_LINEAR,
@@ -316,6 +327,12 @@ int AeronSceneBb3d_Ensure(struct AeronScene3D* s) {
 	if (s->bb_vel_vs && s->bb_vel_fs) {
 		s->bb_vel_pipe          = bb3d_pipeline(s, s->bb_vel_vs, s->bb_vel_fs, 2, 0);
 		s->bb_temporal_vel_pipe = bb3d_pipeline(s, s->bb_vel_vs, s->bb_vel_fs, 3, 0);
+	}
+	if (s->bb_star_fs) {
+		s->bb_star_pipe = bb3d_pipeline(s, s->bb_vs, s->bb_star_fs, 0, AERON_SCENE_BILLBOARD_BLEND_PMA);
+	}
+	if (!s->bb_star_pipe) {
+		Aeron_LogError("aeron.scene", "billboard3d star pipeline creation failed; stars are not drawn");
 	}
 	if (!s->bb_pipes[0] || !s->bb_pipes[1] || !s->bb_pipes[2]) {
 		Aeron_LogError("aeron.scene", "billboard3d pipeline creation failed");
@@ -454,6 +471,22 @@ static void bb3d_draw(struct AeronScene3D* s, AeronRenderPass* pass, int stage, 
 			Aeron_Draw(pass, run_count, run_first);
 			run_count = 0;
 		}
+		if (use && e->shader == AERON_SCENE_BILLBOARD_SHADER_STAR) {
+			/* Each star is its own draw, with its own uniforms. The next
+			 * textured run binds its pipeline again. */
+			if (!velocity && s->bb_star_pipe) {
+				if (bound != s->bb_star_pipe) {
+					Aeron_BindGraphicsPipeline(pass, s->bb_star_pipe);
+					bound = s->bb_star_pipe;
+				}
+				const float fu[8] = { e->star[0], e->star[1], e->star[2], e->star[3],
+									  e->star[4], 0.0f,       0.0f,       0.0f };
+				Aeron_BindUniformData(pass, AERON_SHADER_STAGE_FRAGMENT, 0, fu, sizeof fu);
+				Aeron_Draw(pass, BB3D_VERTS_PER_ENTRY, fv);
+			}
+			run_blend = -1;
+			continue;
+		}
 		if (use) {
 			if (!velocity && (int)e->blend != run_blend) {
 				AeronGraphicsPipeline* p = e->blend < 3 ? s->bb_pipes[e->blend] : NULL;
@@ -546,6 +579,8 @@ void AeronSceneBb3d_Release(struct AeronScene3D* s) {
 		Aeron_DestroyGraphicsPipeline(s->bb_vel_pipe);
 	if (s->bb_temporal_vel_pipe)
 		Aeron_DestroyGraphicsPipeline(s->bb_temporal_vel_pipe);
+	if (s->bb_star_pipe)
+		Aeron_DestroyGraphicsPipeline(s->bb_star_pipe);
 	for (int i = 0; i < 3; i++) {
 		if (s->bb_lens_pipes[i]) {
 			Aeron_DestroyGraphicsPipeline(s->bb_lens_pipes[i]);
@@ -560,6 +595,8 @@ void AeronSceneBb3d_Release(struct AeronScene3D* s) {
 		Aeron_DestroyShader(s->bb_vel_vs);
 	if (s->bb_vel_fs)
 		Aeron_DestroyShader(s->bb_vel_fs);
+	if (s->bb_star_fs)
+		Aeron_DestroyShader(s->bb_star_fs);
 	if (s->bb_lens_vs)
 		Aeron_DestroyShader(s->bb_lens_vs);
 	if (s->bb_lens_fs)
