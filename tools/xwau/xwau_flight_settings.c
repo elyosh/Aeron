@@ -142,6 +142,104 @@ static bool write_headlights(FILE* f, const char* game) {
 	return true;
 }
 
+/* The settings of ddraw's SSAO.cfg and Bloom.cfg that the `suns` section
+ * uses. */
+typedef struct Suns {
+	bool  procedural_suns, ssao_enabled, bloom_enabled;
+	float flare_intensity;
+} Suns;
+
+/* Reads one setting of SSAO.cfg for the `suns` section, as ddraw's
+ * LoadSSAOParams does: the value is read with atof, and a switch is on when
+ * its value isn't 0. */
+static void read_suns_setting(const char* key, const char* value, void* data) {
+	Suns*       out    = data;
+	const float number = (float)atof(value);
+	if (strcasecmp(key, "procedural_suns") == 0)
+		out->procedural_suns = number != 0.0f;
+	else if (strcasecmp(key, "flare_intensity") == 0)
+		out->flare_intensity = number;
+	else if (strcasecmp(key, "ssao_enabled") == 0)
+		out->ssao_enabled = number != 0.0f;
+}
+
+/* Reads bloom_enabled from Bloom.cfg, as ddraw's LoadBloomParams does. */
+static void read_bloom_setting(const char* key, const char* value, void* data) {
+	Suns* out = data;
+	if (strcasecmp(key, "bloom_enabled") == 0)
+		out->bloom_enabled = (float)atof(value) != 0.0f;
+}
+
+/* Finds the ddraw build that the game loads. XWAU's ddraw.dll can be a small
+ * loader that loads DDraw_<type>.dll, with the type from DDrawType.cfg
+ * ("Golden" or "Effects"). The loader holds the text "Golden", which is taken
+ * as its default. */
+static bool find_ddraw(const char* game, char* out, size_t cap) {
+	if (!Xwau_FindFile(game, "ddraw.dll", out, cap))
+		return false;
+	if (!Xwau_FileHasText(out, "DDrawType.cfg"))
+		return true;
+	char      path[1024], type[64] = "", name[96];
+	XwauLines lines = { 0 };
+	if (Xwau_FindFile(game, "DDrawType.cfg", path, sizeof path) &&
+		XwauLines_Read(path, "", XWAU_RULES_CPP, &lines))
+		XwauLines_Value(&lines, "DDrawType", XWAU_RULES_CPP, type, sizeof type);
+	XwauLines_Free(&lines);
+	snprintf(name, sizeof name, "DDraw_%s.dll", type[0] ? type : "Golden");
+	return Xwau_FindFile(game, name, out, cap);
+}
+
+/* Reports the models that ddraw takes for a 3D sun or a skydome, from the
+ * words it looks for in their names. In a mission with such a model, ddraw
+ * draws neither its procedural suns nor its flare. The game draws them in
+ * every mission. */
+static void report_sun_models(const char* game) {
+	char dir[1024];
+	if (!Xwau_FindDir(game, "FlightModels", dir, sizeof dir))
+		return;
+	static const char* const words[] = { "Sole", "Star3D", "Cielo", "Skydome" };
+	size_t                   count   = 0;
+	char**                   names   = ListDir(dir, true, &count);
+	for (size_t i = 0; i < count; ++i) {
+		if (!EndsWithNoCase(names[i], ".opt"))
+			continue;
+		for (size_t w = 0; w < sizeof words / sizeof words[0]; ++w) {
+			if (strstr(names[i], words[w])) {
+				Report("FlightModels",
+					   "%s looks like a 3D sun or a skydome to ddraw, which then turns its procedural suns "
+					   "off; the game keeps them on",
+					   names[i]);
+				break;
+			}
+		}
+	}
+	FreeList(names, count);
+}
+
+/* Writes the `suns` section, when the mod's ddraw draws procedural suns: its
+ * procedural_suns isn't 0. Its flare also needs bloom or SSAO, and a
+ * flare_intensity above 0.01. */
+static bool write_suns(FILE* f, const char* game) {
+	char dll[1024];
+	if (!find_ddraw(game, dll, sizeof dll) || !Xwau_FileHasText(dll, "procedural_suns"))
+		return false;
+	/* ddraw's defaults. */
+	Suns s = { .procedural_suns = true, .flare_intensity = 2.0f };
+	read_settings(game, "SSAO.cfg", read_suns_setting, &s);
+	read_settings(game, "Bloom.cfg", read_bloom_setting, &s);
+	if (!s.procedural_suns)
+		return false;
+	report_sun_models(game);
+	const bool flare = (s.ssao_enabled || s.bloom_enabled) && s.flare_intensity > 0.01f;
+	fprintf(f, "suns:\n  procedural_sun: true\n  procedural_flare: %s\n", flare ? "true" : "false");
+	if (flare && s.flare_intensity <= 10.0f)
+		fprintf(f, "  flare_intensity: %.6g\n", (double)s.flare_intensity);
+	else if (flare)
+		Report("SSAO.cfg", "flare_intensity = %g is above the game's maximum of 10; it isn't imported",
+			   (double)s.flare_intensity);
+	return true;
+}
+
 /* Reads the settings of `hook` ("hook_shield"): its .cfg file, else its
  * section of Hooks.ini. Writes the name of the file into `source`, for the
  * reports. */
@@ -476,6 +574,7 @@ bool XwauFlightSettings_Write(const char* game, const char* path) {
 	const bool docking    = write_docking(f, game);
 	const bool limits     = XwauObjectLimits_Write(f, game);
 	const bool camera     = write_camera(f, game);
+	const bool suns       = write_suns(f, game);
 	XwauSettingsConfig_Free(&config);
 	const bool        ok        = !ferror(f) && fclose(f) == 0;
 	char              what[300] = "";
@@ -487,7 +586,8 @@ bool XwauFlightSettings_Write(const char* game, const char* path) {
 									shields ? "the shield recharge rules" : NULL,
 									docking ? "the docking rules" : NULL,
 									limits ? "the object counts" : NULL,
-									camera ? "the camera" : NULL };
+									camera ? "the camera" : NULL,
+									suns ? "the suns" : NULL };
 	for (size_t i = 0; i < sizeof parts / sizeof parts[0]; ++i) {
 		if (parts[i])
 			snprintf(what + strlen(what), sizeof what - strlen(what), "%s%s", what[0] ? ", " : "", parts[i]);

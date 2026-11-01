@@ -67,6 +67,10 @@
  *       cockpit_speed_sway: 0.075
  *       cockpit_sway_max: 2.5
  *       exterior_hud: true
+ *     suns:
+ *       procedural_sun: true
+ *       procedural_flare: true
+ *       flare_intensity: 3
  *
  * `extra_planets` is written when the mod installs XWAU's backdrop hook,
  * hook_backdrops.dll. With it, a mission's backdrop id N from 104 to 255
@@ -215,6 +219,23 @@
  * enable_external_inertia_in_map aren't imported, and are reported when they
  * are set. With hook_exterior.dll only, the section turns the HUD on and the
  * lag, the tilt and the sway off.
+ *
+ * `suns` is written when the mod's ddraw draws procedural suns, and turns on
+ * the game's procedural suns and flare. XWAU's ddraw.dll can be a loader
+ * that loads DDraw_Effects.dll or DDraw_Golden.dll, as DDrawType.cfg says;
+ * only a build that contains the text "procedural_suns" draws them. The
+ * values come from SSAO.cfg and Bloom.cfg:
+ *   - the section is written when procedural_suns isn't 0 (default 1);
+ *   - procedural_flare is true when bloom_enabled (Bloom.cfg) or
+ *     ssao_enabled isn't 0, since ddraw only draws its flare with its post
+ *     effects on, and flare_intensity is above 0.01 (default 2);
+ *   - flare_intensity is copied when the flare is on. A value above 10 isn't
+ *     written, and is reported.
+ * background_suns_strength and lens_flare_strength aren't imported: they set
+ * the strength of ddraw's bloom mask, and the game's bloom has no mask.
+ * ddraw turns both effects off in a mission with a 3D sun or skydome model,
+ * which it finds by words in the model's name. The game keeps them on, and
+ * the importer reports such models in FlightModels.
  */
 
 #include <stdbool.h>
