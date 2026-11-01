@@ -41,8 +41,11 @@
 #include "cJSON.h"
 #include "cgltf.h"
 
-/* Host-provided log (SDL3 via SDL_Log; standalone tools stub it). */
+/* Host-provided logs (SDL3's SDL_Log and SDL_LogVerbose; standalone tools
+ * stub them). SDL's application log category is 0. */
 extern void SDL_Log(const char* fmt, ...);
+extern void      SDL_LogVerbose(int category, const char* fmt, ...);
+static const int k_log_category_application = 0;
 
 /* glTF +Y up / +Z front to Aeron +X right / -Y forward / +Z up. */
 static inline void gltf_to_aeron3(const float in[3], float out[3]) {
@@ -1363,20 +1366,22 @@ bool Aeron_GltfMeshBuildData(const cgltf_data* data, const char* source_label, A
 		free(sorted);
 	}
 
-	SDL_Log("[flight_gltf] %s: %u verts, %u indices (%u opaque, %u mask, "
-			"%u blend; %u + %u + %u screen), %u prims, "
-			"%u materials, %u variants, atlases base=%zu nrm=%zu mr=%zu "
-			"emis=%zu",
-			source_label, out->vertex_count, out->index_count, out->opaque_index_count, out->mask_index_count,
-			out->blend_index_count, out->opaque_screen_index_count, out->mask_screen_index_count,
-			out->blend_screen_index_count, out->total_prim_count, out->material_count, out->variant_count,
-			out->channels[0].size, out->channels[1].size, out->channels[2].size, out->channels[3].size);
+	SDL_LogVerbose(k_log_category_application,
+				   "[flight_gltf] %s: %u verts, %u indices (%u opaque, %u mask, "
+				   "%u blend; %u + %u + %u screen), %u prims, "
+				   "%u materials, %u variants, atlases base=%zu nrm=%zu mr=%zu "
+				   "emis=%zu",
+				   source_label, out->vertex_count, out->index_count, out->opaque_index_count,
+				   out->mask_index_count, out->blend_index_count, out->opaque_screen_index_count,
+				   out->mask_screen_index_count, out->blend_screen_index_count, out->total_prim_count,
+				   out->material_count, out->variant_count, out->channels[0].size, out->channels[1].size,
+				   out->channels[2].size, out->channels[3].size);
 	if (out->markings_count > 0 || out->group_count > 0)
-		SDL_Log("[flight_gltf] %s: %u markings, %u variant groups", source_label, out->markings_count,
-				out->group_count);
+		SDL_LogVerbose(k_log_category_application, "[flight_gltf] %s: %u markings, %u variant groups",
+					   source_label, out->markings_count, out->group_count);
 	if (out->screen_rect_count > 0 || out->screen_hide_mask != 0)
-		SDL_Log("[flight_gltf] %s: %u screen rectangles, hide mask 0x%x", source_label,
-				out->screen_rect_count, out->screen_hide_mask);
+		SDL_LogVerbose(k_log_category_application, "[flight_gltf] %s: %u screen rectangles, hide mask 0x%x",
+					   source_label, out->screen_rect_count, out->screen_hide_mask);
 
 	succeeded = true;
 

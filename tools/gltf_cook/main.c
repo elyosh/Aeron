@@ -30,14 +30,26 @@
 
 #include "cJSON.h"
 
-/* Host log for the Aeron flight-model libraries. It is defined here so that
- * the cooker runs without SDL. */
-void SDL_Log(const char* fmt, ...) {
-	va_list args;
-	va_start(args, fmt);
+/* Host logs for the Aeron flight-model libraries. They are defined here so
+ * that the cooker runs without SDL. */
+static void cook_log(const char* fmt, va_list args) {
 	fputs("[aeron_gltf_cook] ", stderr);
 	vfprintf(stderr, fmt, args);
 	fputc('\n', stderr);
+}
+
+void SDL_Log(const char* fmt, ...) {
+	va_list args;
+	va_start(args, fmt);
+	cook_log(fmt, args);
+	va_end(args);
+}
+
+void SDL_LogVerbose(int category, const char* fmt, ...) {
+	va_list args;
+	(void)category;
+	va_start(args, fmt);
+	cook_log(fmt, args);
 	va_end(args);
 }
 

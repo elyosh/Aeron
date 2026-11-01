@@ -681,8 +681,8 @@ static AeronTexture* upload_channel_groups(AeronCommandBuffer* cmd, const AeronG
 		}
 	}
 	AeronTexture* texture = ok ? Aeron_ImageUploadKtx2Layers(cmd, parts, count, label) : NULL;
-	Aeron_LogInfo("aeron.scene", "%s: %u variant indices, %u of %u variant groups (%u layers, %zu bytes)",
-				  label, set->count, count - 1u, channel_groups, layers, bytes);
+	Aeron_LogVerbose("aeron.scene", "%s: %u variant indices, %u of %u variant groups (%u layers, %zu bytes)",
+					 label, set->count, count - 1u, channel_groups, layers, bytes);
 	for (uint32_t i = 1; i < count; ++i) {
 		ktx2_close((Ktx2*)parts[i]);
 	}

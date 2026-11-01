@@ -591,6 +591,8 @@ static uint32_t          g_d3dIndexScratchCap;
 static D3DRun*           g_d3dRuns;
 static uint32_t          g_d3dRunCap;
 static AeronTexture*     g_d3dWhiteTexture;
+/* The unexpected render state tokens that were logged, one bit per token. */
+static uint32_t g_d3dLoggedTokens[8];
 
 static const D3DRenderState g_d3dDefaultRenderState = {
 	.depth_compare = AERON_COMPARE_ALWAYS,
@@ -1045,7 +1047,9 @@ static void D3DCompat_ApplyRenderState(D3DRenderState* rs, uint32_t* texture_han
 			break;
 		/* SRCBLEND/DESTBLEND are always SRCALPHA/INVSRCALPHA or ONE/ZERO, fully
 		 * determined by ALPHABLENDENABLE; ALPHAFUNC is always NOTEQUAL (the alpha
-		 * test the fragment shader implements); MONOENABLE is a no-op. */
+		 * test the fragment shader implements); MONOENABLE is a no-op. GPUs always
+		 * correct the perspective of textures. */
+		case D3DRENDERSTATE_TEXTUREPERSPECTIVE:
 		case D3DRENDERSTATE_SRCBLEND:
 		case D3DRENDERSTATE_DESTBLEND:
 		case D3DRENDERSTATE_ALPHAFUNC:
@@ -1062,7 +1066,13 @@ static void D3DCompat_ApplyRenderState(D3DRenderState* rs, uint32_t* texture_han
 		case D3DRENDERSTATE_FOGTABLEEND:
 			break;
 		default:
-			Aeron_LogWarn("aeron.dx5", "Unexpected D3DRENDERSTATE token %u in execute buffer", token);
+			/* The game sends the same tokens many times, so each is logged once. */
+			if (token >= 256 || !(g_d3dLoggedTokens[token / 32] & (1u << (token % 32)))) {
+				if (token < 256) {
+					g_d3dLoggedTokens[token / 32] |= 1u << (token % 32);
+				}
+				Aeron_LogWarn("aeron.dx5", "Unexpected D3DRENDERSTATE token %u in execute buffer", token);
+			}
 			break;
 	}
 }

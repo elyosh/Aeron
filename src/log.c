@@ -1,6 +1,7 @@
 #include "internal.h"
 
 #include <stdarg.h>
+#include <stdio.h>
 
 /* Previous session logs (<app>-<date>-<time>.log) kept beside the current one. */
 #define AERON_LOG_FILE_HISTORY 4
@@ -44,8 +45,6 @@ static void SDLCALL Aeron_LogFileOutput(void* userdata, int category, SDL_LogPri
 	}
 	SDL_WriteIO(s_log_file.stream, message ? message : "", message ? SDL_strlen(message) : 0);
 	SDL_WriteIO(s_log_file.stream, "\n", 1);
-	/* Flush every record so the tail survives a crash. */
-	SDL_FlushIO(s_log_file.stream);
 }
 
 void Aeron_LogFileInit(const char* directory, const char* app_name) {
@@ -90,6 +89,13 @@ void Aeron_LogFileInit(const char* directory, const char* app_name) {
 	if (!s_log_file.stream) {
 		Aeron_LogWarn("aeron.log", "cannot open log file %s: %s", path, SDL_GetError());
 		return;
+	}
+	/* Unbuffered, so a crash keeps every line. SDL streams have no write buffer
+	 * on Windows. SDL_FlushIO is not used because it waits for the drive. */
+	FILE* file = (FILE*)SDL_GetPointerProperty(SDL_GetIOProperties(s_log_file.stream),
+											   SDL_PROP_IOSTREAM_STDIO_FILE_POINTER, NULL);
+	if (file) {
+		setvbuf(file, NULL, _IONBF, 0);
 	}
 	s_log_file.start_counter = SDL_GetPerformanceCounter();
 	SDL_GetLogOutputFunction(&s_log_file.forward, &s_log_file.forward_userdata);
