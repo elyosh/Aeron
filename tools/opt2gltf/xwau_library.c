@@ -11,6 +11,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
+#include <sys/stat.h>
 
 #include "xwau_library.h"
 
@@ -564,58 +565,54 @@ static bool write_frame(const char* dir, const char* file, int w, int h, const u
 	return false;
 }
 
-/* Writes the sources of library `l` under `effects_dir`. They are the file
- * <name>/<name>.yaml and its images under <name>/frames/. The inputs of each
- * key use the kinds of the library file, with XWAU's rules applied: an
- * illumination frame becomes an emissive image and a base colour image with
- * coverage, and the tint and alpha mode are baked in. Reports the largest
- * per-channel difference between what the library builder bakes from these
- * inputs and the XWAU bake. The difference comes from the 8-bit rounding of
- * the base colour. */
-static bool write_library_sources(Library* l, const char* effects_dir, bool merge) {
-	char path[1024], err[512], dir[1024];
-	if (!find_file(l->dat, path, sizeof path)) {
-		Report(l->name, "%s not found", l->dat);
+/* Where the input images of a library go: PNG files under `dir`, or `kept`
+ * in memory when `dir` is NULL. */
+typedef struct Sink {
+	const char*       dir;
+	XwauLibraryInput* kept;
+	size_t            kept_count;
+} Sink;
+
+/* Puts input `file` of `w` × `h` into the sink. Kept in memory, the pixels
+ * are taken, and `*rgba` becomes NULL. Returns false after reporting an
+ * error. */
+static bool put_input(Sink* sink, const char* file, int w, int h, uint8_t** rgba) {
+	if (sink->dir)
+		return write_frame(sink->dir, file, w, h, *rgba);
+	XwauLibraryInput* input = ARRAY_PUSH(sink->kept, sink->kept_count);
+	if (!input) {
+		Report(NULL, "out of memory");
 		return false;
 	}
-	qsort(l->requests, l->count, sizeof *l->requests, cmp_request);
-	char frames[1100];
-	if (!PathFormat(dir, sizeof dir, "%s/%s", effects_dir, l->name) ||
-		!PathFormat(frames, sizeof frames, "%s/frames", dir))
-		return false;
-	if (!MakeDirs(dir) || !MakeDirs(frames)) {
-		Report(NULL, "cannot create %s", frames);
-		return false;
-	}
+	snprintf(input->name, sizeof input->name, "%s", file);
+	input->rgba   = *rgba;
+	input->width  = w;
+	input->height = h;
+	*rgba         = NULL;
+	return true;
+}
+
+/* Makes the inputs of library `l` from its DAT `path` into `sink`, and adds
+ * their entries to `entries`. With `skip_existing`, the keys that `entries`
+ * already has are skipped. The inputs of each key use the kinds of the
+ * library file, with XWAU's rules applied: an illumination frame becomes an
+ * emissive image and a base colour image with coverage, and the tint and
+ * alpha mode are baked in. Counts the images made in `*images`, and keeps in
+ * `*diff` the largest per-channel difference between what the library
+ * builder bakes from these inputs and the XWAU bake. The difference comes
+ * from the 8-bit rounding of the base colour. */
+static bool make_inputs(const Library* l, const char* path, Sink* sink, cJSON* entries, bool skip_existing,
+						size_t* images, int* diff) {
+	char     err[512];
 	XwauDat* dat = XwauDat_Open(path, err, sizeof err);
 	if (!dat) {
 		Report(NULL, "%s", err);
 		return false;
 	}
-	/* The library file is written in canonical form (effect_files.h). When
-	 * merging, the existing file in the project keeps its images, and only the
-	 * missing ones are added. */
-	char file[1100];
-	if (!PathFormat(file, sizeof file, "%s/%s.yaml", dir, l->name)) {
-		XwauDat_Close(dat);
-		return false;
-	}
-	const bool existing = merge && (IsFile(file) || IsDir(file));
-	cJSON*     doc      = existing ? YamlJson_Load(file, err, sizeof err) : cJSON_CreateObject();
-	cJSON*     entries  = existing ? cJSON_GetObjectItemCaseSensitive(doc, "images") : NULL;
-	if (existing && !doc)
-		Report(NULL, "%s", err);
-	bool ok = doc && (existing ? cJSON_IsObject(entries)
-							   : cJSON_AddNumberToObject(doc, "version", 1) &&
-									 cJSON_AddStringToObject(doc, "library", l->name) &&
-									 (entries = cJSON_AddObjectToObject(doc, "images")));
-	if (existing && doc && !ok)
-		Report(file, "no images");
-	size_t images = 0;
-	int    diff   = 0;
+	bool ok = true;
 	for (size_t i = 0; ok && i < l->count; ++i) {
 		const Request* r = &l->requests[i];
-		if (existing && cJSON_GetObjectItemCaseSensitive(entries, r->key))
+		if (skip_existing && cJSON_GetObjectItemCaseSensitive(entries, r->key))
 			continue;
 		XwauDatImage im;
 		if (!XwauDat_LoadImageFrom(dat, r->group, r->image, &im, err, sizeof err)) {
@@ -658,13 +655,13 @@ static bool write_library_sources(Library* l, const char* effects_dir, bool merg
 					pt[k] = c > 0.0f ? srgb8(lin8(lt[k]) / c) : 0;
 				any_base_color |= pt[3] != 0;
 				for (int k = 0; k < 3; ++k)
-					diff = max_diff(diff, lt[k], pt[3] ? srgb8(lin8(pt[k]) * c) : 0);
-				diff = max_diff(diff, lt[3], (uint8_t)((1.0f - c) * 255.0f + 0.5f));
+					*diff = max_diff(*diff, lt[k], pt[3] ? srgb8(lin8(pt[k]) * c) : 0);
+				*diff = max_diff(*diff, lt[3], (uint8_t)((1.0f - c) * 255.0f + 0.5f));
 			}
 			ok    = PathFormat(file, sizeof file, "%s_emissive.png", base) &&
 					PathFormat(base_color, sizeof base_color, "%s_base_color.png", base) &&
-					write_frame(dir, file, w, h, emissive) &&
-					(!any_base_color || write_frame(dir, base_color, w, h, input));
+					put_input(sink, file, w, h, &emissive) &&
+					(!any_base_color || put_input(sink, base_color, w, h, &input));
 			entry = cJSON_AddObjectToObject(entries, r->key);
 			cJSON_AddStringToObject(entry, "kind", "emissive");
 			cJSON_AddStringToObject(entry, "emissive", file);
@@ -673,12 +670,12 @@ static bool write_library_sources(Library* l, const char* effects_dir, bool merg
 		} else if (ok && (r->kind == XWAU_FX_DETAIL || r->kind == XWAU_FX_DETAIL_NORMAL)) {
 			/* A greeble: the image as it is. */
 			const bool normal = r->kind == XWAU_FX_DETAIL_NORMAL;
-			ok    = PathFormat(file, sizeof file, "%s.png", base) && write_frame(dir, file, w, h, layer);
+			ok    = PathFormat(file, sizeof file, "%s.png", base) && put_input(sink, file, w, h, &layer);
 			entry = cJSON_AddObjectToObject(entries, r->key);
 			cJSON_AddStringToObject(entry, "kind", normal ? "detailNormal" : "detailColor");
 			cJSON_AddStringToObject(entry, normal ? "normal" : "baseColor", file);
 		} else if (ok && (r->kind == XWAU_FX_COLOUR || r->kind == XWAU_FX_MULTIPLY)) {
-			ok    = PathFormat(file, sizeof file, "%s.png", base) && write_frame(dir, file, w, h, layer);
+			ok    = PathFormat(file, sizeof file, "%s.png", base) && put_input(sink, file, w, h, &layer);
 			entry = cJSON_AddObjectToObject(entries, r->key);
 			cJSON_AddStringToObject(entry, "kind", r->kind == XWAU_FX_MULTIPLY ? "damage" : "baseColor");
 			cJSON_AddStringToObject(entry, r->kind == XWAU_FX_MULTIPLY ? "factor" : "baseColor", file);
@@ -691,11 +688,11 @@ static bool write_library_sources(Library* l, const char* effects_dir, bool merg
 				uint8_t*       pt  = &input[t * 4];
 				for (int k = 0; k < 3; ++k) {
 					pt[k] = unorm8f(src[k] / 255.0f * r->tint[k]);
-					diff  = max_diff(diff, baked[t * 4 + k], srgb8(lin8(pt[k]) * (src[3] / 255.0f)));
+					*diff = max_diff(*diff, baked[t * 4 + k], srgb8(lin8(pt[k]) * (src[3] / 255.0f)));
 				}
 				pt[3] = src[3];
 			}
-			ok    = PathFormat(file, sizeof file, "%s.png", base) && write_frame(dir, file, w, h, input);
+			ok    = PathFormat(file, sizeof file, "%s.png", base) && put_input(sink, file, w, h, &input);
 			entry = cJSON_AddObjectToObject(entries, r->key);
 			cJSON_AddStringToObject(entry, "kind", XwauFx_KindName(r->kind));
 			cJSON_AddStringToObject(entry, r->kind == XWAU_FX_MARK ? "baseColor" : "emissive", file);
@@ -706,7 +703,7 @@ static bool write_library_sources(Library* l, const char* effects_dir, bool merg
 			if (r->crop)
 				cJSON_AddItemToObject(entry, "crop", cJSON_CreateFloatArray(kBlastMarkCrop, 4));
 			ok = entry != NULL;
-			images++;
+			(*images)++;
 		}
 		free(layer);
 		free(emissive);
@@ -714,6 +711,47 @@ static bool write_library_sources(Library* l, const char* effects_dir, bool merg
 		XwauDat_FreeImage(&im);
 	}
 	XwauDat_Close(dat);
+	return ok;
+}
+
+/* Writes the sources of library `l` under `effects_dir`. They are the file
+ * <name>/<name>.yaml and its images under <name>/frames/ (make_inputs). */
+static bool write_library_sources(Library* l, const char* effects_dir, bool merge) {
+	char path[1024], err[512], dir[1024];
+	if (!find_file(l->dat, path, sizeof path)) {
+		Report(l->name, "%s not found", l->dat);
+		return false;
+	}
+	qsort(l->requests, l->count, sizeof *l->requests, cmp_request);
+	char frames[1100];
+	if (!PathFormat(dir, sizeof dir, "%s/%s", effects_dir, l->name) ||
+		!PathFormat(frames, sizeof frames, "%s/frames", dir))
+		return false;
+	if (!MakeDirs(dir) || !MakeDirs(frames)) {
+		Report(NULL, "cannot create %s", frames);
+		return false;
+	}
+	/* The library file is written in canonical form (effect_files.h). When
+	 * merging, the existing file in the project keeps its images, and only the
+	 * missing ones are added. */
+	char file[1100];
+	if (!PathFormat(file, sizeof file, "%s/%s.yaml", dir, l->name))
+		return false;
+	const bool existing = merge && (IsFile(file) || IsDir(file));
+	cJSON*     doc      = existing ? YamlJson_Load(file, err, sizeof err) : cJSON_CreateObject();
+	cJSON*     entries  = existing ? cJSON_GetObjectItemCaseSensitive(doc, "images") : NULL;
+	if (existing && !doc)
+		Report(NULL, "%s", err);
+	bool ok = doc && (existing ? cJSON_IsObject(entries)
+							   : cJSON_AddNumberToObject(doc, "version", 1) &&
+									 cJSON_AddStringToObject(doc, "library", l->name) &&
+									 (entries = cJSON_AddObjectToObject(doc, "images")));
+	if (existing && doc && !ok)
+		Report(file, "no images");
+	size_t images = 0;
+	int    diff   = 0;
+	Sink   sink   = { .dir = dir };
+	ok            = ok && make_inputs(l, path, &sink, entries, existing, &images, &diff);
 	char header[300];
 	snprintf(header, sizeof header, "# Effect library %s, imported from XWAU's %s.\n", l->name, l->dat);
 	if (existing && !images) {
@@ -749,17 +787,45 @@ static void reset(const char* game) {
 	g_game          = game;
 }
 
-/* Writes the libraries read into <project>/effects. */
-static bool write_libraries(const char* effects, bool merge) {
+/* Reports the libraries that aren't XWAU's, and sorts the others by name. */
+static void sort_libraries(void) {
 	for (size_t i = 0; i < g_skipped_count; ++i)
 		Report(NULL, "library %s: no Effects/%s.dat, not an XWAU library; left alone", g_skipped[i],
 			   g_skipped[i]);
 	qsort(g_libraries, g_library_count, sizeof *g_libraries, cmp_library);
+}
+
+/* Writes the libraries read into <project>/effects. */
+static bool write_libraries(const char* effects, bool merge) {
+	sort_libraries();
 	bool ok = true;
 	for (size_t i = 0; i < g_library_count; ++i)
 		ok &= write_library_sources(&g_libraries[i], effects, merge);
 	if (g_lava)
 		ok &= XwauLava_WriteLibrary(effects, merge);
+	return ok;
+}
+
+/* Reads the libraries that the models in `inputs` name, and writes
+ * <dir>/effects.yaml. */
+static bool read_libraries(const char* const* inputs, size_t count, const char* dir) {
+	bool ok = true;
+	for (size_t i = 0; i < count; ++i)
+		ok &= read_models(inputs[i]);
+	Text y = { 0 };
+	text_add(&y, "version: 1\n");
+	ok &= energy_yaml(&y) && images_yaml(&y);
+	if (!y.s) {
+		Report(NULL, "out of memory");
+		return false;
+	}
+	char path[1024];
+	if (!PathFormat(path, sizeof path, "%s/effects.yaml", dir) || !WriteWholeFile(path, y.s, y.len)) {
+		Report(NULL, "cannot write %s", path);
+		ok = false;
+	}
+	free(y.s);
+	Report(NULL, "%zu model(s), %zu librar%s", g_models, g_library_count, g_library_count == 1 ? "y" : "ies");
 	return ok;
 }
 
@@ -772,24 +838,7 @@ bool XwauLibrary_Rebuild(const char* game, const char* project, const char* cons
 		Report(NULL, "cannot create %s", out);
 		return false;
 	}
-	bool ok = true;
-	for (size_t i = 0; i < count; ++i)
-		ok &= read_models(inputs[i]);
-	Text y = { 0 };
-	text_add(&y, "version: 1\n");
-	ok &= energy_yaml(&y) && images_yaml(&y);
-	if (!y.s) {
-		Report(NULL, "out of memory");
-		reset(NULL);
-		return false;
-	}
-	char path[1024];
-	if (!PathFormat(path, sizeof path, "%s/effects.yaml", out) || !WriteWholeFile(path, y.s, y.len)) {
-		Report(NULL, "cannot write %s", path);
-		ok = false;
-	}
-	free(y.s);
-	Report(NULL, "%zu model(s), %zu librar%s", g_models, g_library_count, g_library_count == 1 ? "y" : "ies");
+	bool ok = read_libraries(inputs, count, out);
 	ok &= write_libraries(out, false);
 	reset(NULL);
 	return ok;
@@ -806,4 +855,127 @@ bool XwauLibrary_AddModel(const char* game, const char* project, const char* glt
 	ok = ok && write_libraries(out, true);
 	reset(NULL);
 	return ok;
+}
+
+/* ---- Libraries made in memory ----------------------------------------------- */
+
+struct XwauLibrarySet {
+	const char* game;
+	Library*    libraries;
+	size_t      library_count;
+	bool        lava; /* the last library is the generated lava library */
+	size_t*     bytes;
+};
+
+/* The size of DAT `path` and of the inputs that library `l` makes from it. */
+static size_t input_bytes(const Library* l, const char* path) {
+	struct stat st;
+	size_t      bytes = stat(path, &st) == 0 ? (size_t)st.st_size : 0;
+	char        err[512];
+	XwauDat*    dat = XwauDat_Open(path, err, sizeof err);
+	for (size_t i = 0; dat && i < l->count; ++i) {
+		XwauDatImageInfo info;
+		if (XwauDat_GetImageInfo(dat, l->requests[i].group, l->requests[i].image, &info))
+			bytes +=
+				(size_t)info.width * info.height * 4 * (l->requests[i].kind == XWAU_FX_ILLUMINATION ? 2 : 1);
+	}
+	XwauDat_Close(dat);
+	return bytes;
+}
+
+XwauLibrarySet* XwauLibrary_Read(const char* game, const char* const* inputs, size_t count, const char* dir) {
+	reset(game);
+	if (!MakeDirs(dir)) {
+		Report(NULL, "cannot create %s", dir);
+		return NULL;
+	}
+	const bool ok = read_libraries(inputs, count, dir);
+	sort_libraries();
+	XwauLibrarySet* set = ok ? (XwauLibrarySet*)calloc(1, sizeof *set) : NULL;
+	if (set) {
+		set->game          = game;
+		set->libraries     = g_libraries;
+		set->library_count = g_library_count;
+		set->lava          = g_lava;
+		g_libraries        = NULL;
+		g_library_count    = 0;
+	}
+	reset(NULL);
+	if (!set)
+		return NULL;
+	set->bytes = (size_t*)calloc(set->library_count + 1, sizeof *set->bytes);
+	if (!set->bytes) {
+		Report(NULL, "out of memory");
+		XwauLibrary_FreeSet(set);
+		return NULL;
+	}
+	for (size_t i = 0; i < set->library_count; ++i) {
+		Library* l = &set->libraries[i];
+		char     path[1024];
+		qsort(l->requests, l->count, sizeof *l->requests, cmp_request);
+		if (Xwau_FindFile(game, l->dat, path, sizeof path))
+			set->bytes[i] = input_bytes(l, path);
+	}
+	if (set->lava)
+		set->bytes[set->library_count] = (size_t)2 * XWAU_LAVA_FRAMES * XWAU_LAVA_SIZE * XWAU_LAVA_SIZE * 4;
+	return set;
+}
+
+size_t XwauLibrary_Count(const XwauLibrarySet* set) { return set->library_count + (set->lava ? 1 : 0); }
+
+const char* XwauLibrary_Name(const XwauLibrarySet* set, size_t index) {
+	return index < set->library_count ? set->libraries[index].name : XWAU_LAVA_LIBRARY;
+}
+
+size_t XwauLibrary_InputBytes(const XwauLibrarySet* set, size_t index) { return set->bytes[index]; }
+
+bool XwauLibrary_Make(const XwauLibrarySet* set, size_t index, int threads, cJSON** library,
+					  XwauLibraryInput** inputs, size_t* count) {
+	*library = NULL;
+	*inputs  = NULL;
+	*count   = 0;
+	if (index >= set->library_count)
+		return XwauLava_MakeLibrary(threads, library, inputs, count);
+	const Library* l = &set->libraries[index];
+	char           path[1024];
+	if (!Xwau_FindFile(set->game, l->dat, path, sizeof path)) {
+		Report(l->name, "%s not found", l->dat);
+		return false;
+	}
+	cJSON* doc = cJSON_CreateObject();
+	cJSON* entries =
+		doc && cJSON_AddNumberToObject(doc, "version", 1) && cJSON_AddStringToObject(doc, "library", l->name)
+			? cJSON_AddObjectToObject(doc, "images")
+			: NULL;
+	Sink   sink   = { 0 };
+	size_t images = 0;
+	int    diff   = 0;
+	if (!entries || !make_inputs(l, path, &sink, entries, false, &images, &diff)) {
+		if (!entries)
+			Report(NULL, "out of memory");
+		XwauLibrary_FreeInputs(sink.kept, sink.kept_count);
+		cJSON_Delete(doc);
+		return false;
+	}
+	Report(NULL, "library %s: %zu image(s) made (largest rounding error: %d/255)", l->name, images, diff);
+	*library = doc;
+	*inputs  = sink.kept;
+	*count   = sink.kept_count;
+	return true;
+}
+
+void XwauLibrary_FreeInputs(XwauLibraryInput* inputs, size_t count) {
+	for (size_t i = 0; inputs && i < count; ++i)
+		free(inputs[i].rgba);
+	free(inputs);
+}
+
+void XwauLibrary_FreeSet(XwauLibrarySet* set) {
+	if (!set)
+		return;
+	for (size_t i = 0; i < set->library_count; ++i)
+		free(set->libraries[i].requests);
+	free(set->libraries);
+	free(set->bytes);
+	free(set);
 }

@@ -61,9 +61,17 @@ static void input_path(const char* dir, const char* name, char* path, size_t cap
 		snprintf(path, cap, "%s/%s", dir, name);
 }
 
-/* An input PNG of image `key`, resolved next to the library file; NULL
- * after a message when missing or of another size than `*w` × `*h` (0: any). */
-static uint8_t* load_input(const char* tool, const char* dir, const char* key, const char* field,
+/* Where the input images of a library come from: PNG files next to the
+ * library file, in folder `dir`, or `source` when it is set. */
+typedef struct Inputs {
+	const char*              dir;
+	EffectLibraryInputSource source;
+	void*                    context;
+} Inputs;
+
+/* An input image of image `key`; NULL after a message when missing or of
+ * another size than `*w` × `*h` (0: any). */
+static uint8_t* load_input(const char* tool, const Inputs* inputs, const char* key, const char* field,
 						   const cJSON* entry, int* w, int* h, bool required, bool* ok) {
 	const cJSON* name = cJSON_GetObjectItemCaseSensitive(entry, field);
 	if (!name) {
@@ -78,11 +86,17 @@ static uint8_t* load_input(const char* tool, const char* dir, const char* key, c
 		*ok = false;
 		return NULL;
 	}
-	char path[1024], err[512];
-	input_path(dir, name->valuestring, path, sizeof path);
+	char     path[1024], err[512];
 	uint8_t* rgba = NULL;
 	int      iw = 0, ih = 0;
-	if (!read_png_rgba(path, &rgba, &iw, &ih, err, sizeof err)) {
+	bool     read;
+	if (inputs->source) {
+		read = inputs->source(inputs->context, name->valuestring, &rgba, &iw, &ih, err, sizeof err);
+	} else {
+		input_path(inputs->dir, name->valuestring, path, sizeof path);
+		read = read_png_rgba(path, &rgba, &iw, &ih, err, sizeof err);
+	}
+	if (!read) {
 		ToolLog_Write(TOOL_LOG_ERROR, "%s: image %s: %s", tool, key, err);
 		*ok = false;
 		return NULL;
@@ -187,7 +201,7 @@ static bool library_current(const char* out_dir, const char* name, const char* i
 
 /* Bakes one checked image entry into `out` (layer/emissive owned by the
  * caller). */
-static bool bake(const char* tool, const char* dir, const char* key, const cJSON* entry,
+static bool bake(const char* tool, const Inputs* inputs, const char* key, const cJSON* entry,
 				 EffectLibraryImage* out) {
 	const EffectLibraryKind kind = EffectLibrary_ImageKind(entry);
 	bool                    ok   = true;
@@ -195,8 +209,8 @@ static bool bake(const char* tool, const char* dir, const char* key, const cJSON
 	if (!image_options(entry, out))
 		return false;
 	if (kind == EFFECT_LIBRARY_EMISSIVE) {
-		uint8_t* emissive = load_input(tool, dir, key, "emissive", entry, &w, &h, true, &ok);
-		uint8_t* colour   = ok ? load_input(tool, dir, key, "baseColor", entry, &w, &h, false, &ok) : NULL;
+		uint8_t* emissive = load_input(tool, inputs, key, "emissive", entry, &w, &h, true, &ok);
+		uint8_t* colour   = ok ? load_input(tool, inputs, key, "baseColor", entry, &w, &h, false, &ok) : NULL;
 		uint8_t* layer    = ok ? (uint8_t*)malloc((size_t)w * h * 4) : NULL;
 		if (!ok || !layer) {
 			free(emissive);
@@ -217,7 +231,7 @@ static bool bake(const char* tool, const char* dir, const char* key, const cJSON
 	} else {
 		/* The input names the material channel the image changes. */
 		uint8_t* image =
-			load_input(tool, dir, key, EffectLibrary_ImageInput(kind, 0), entry, &w, &h, true, &ok);
+			load_input(tool, inputs, key, EffectLibrary_ImageInput(kind, 0), entry, &w, &h, true, &ok);
 		if (!ok)
 			return false;
 		for (size_t i = 0;
@@ -279,11 +293,53 @@ static void report_replaced(const char* tool, const char* name, const cJSON* old
 	}
 }
 
-EffectLibraryBuild EffectLibrary_BuildLibrary(const char* tool, const char* file, const char* name,
-											  const char* out_dir) {
+/* Bakes the images of checked library content `root` from `inputs` and
+ * writes the library into `out_dir`, noting `inputs_hash` when not NULL. */
+static bool build(const char* tool, const cJSON* root, const Inputs* inputs, const char* inputs_hash,
+				  const char* out_dir) {
 	/* The BC7 blocks that this thread encoded for an earlier job aren't
 	   reused. */
 	bc7_codec_clear_cache();
+	const cJSON*        library = cJSON_GetObjectItemCaseSensitive(root, "library");
+	const cJSON*        images  = cJSON_GetObjectItemCaseSensitive(root, "images");
+	const int           count   = cJSON_GetArraySize(images);
+	EffectLibraryImage* baked   = (EffectLibraryImage*)calloc((size_t)count, sizeof *baked);
+	bool                ok      = baked != NULL;
+	int                 n       = 0;
+	const cJSON*        entry;
+	if (ok) {
+		cJSON_ArrayForEach(entry, images) {
+			if (bake(tool, inputs, entry->string, entry, &baked[n]))
+				n++;
+			else
+				ok = false;
+		}
+	}
+	/* The index being replaced, to report what other models may lose. */
+	char path[1024], err[512];
+	snprintf(path, sizeof path, "%s/%s.yaml", out_dir, library->valuestring);
+	cJSON*              old    = ok ? YamlJson_Load(path, err, sizeof err) : NULL;
+	EffectLibraryResult result = { 0 };
+	if (ok && EffectLibrary_Write(tool, out_dir, library->valuestring, NULL, inputs_hash, baked, (size_t)n,
+								  &result)) {
+		ToolLog_Write(TOOL_LOG_INFO, "%s: %s: built, %d image(s), %d layer and %d emissive page(s)", tool,
+					  library->valuestring, n, result.layer_pages, result.emissive_pages);
+		report_replaced(tool, library->valuestring, old, images);
+	} else {
+		ok = false;
+	}
+	cJSON_Delete(old);
+	for (int i = 0; baked && i < count; ++i) {
+		free((void*)baked[i].layer);
+		free((void*)baked[i].emissive);
+		free((void*)baked[i].crop);
+	}
+	free(baked);
+	return ok;
+}
+
+EffectLibraryBuild EffectLibrary_BuildLibrary(const char* tool, const char* file, const char* name,
+											  const char* out_dir) {
 	cJSON* root = EffectLibrary_ReadLibrary(tool, file);
 	if (!root)
 		return EFFECT_LIBRARY_FAILED;
@@ -298,46 +354,23 @@ EffectLibraryBuild EffectLibrary_BuildLibrary(const char* tool, const char* file
 	char        dir[1024];
 	const char* slash = strrchr(file, '/');
 	snprintf(dir, sizeof dir, "%.*s", slash ? (int)(slash - file) : 1, slash ? file : ".");
-	char       inputs[17];
-	const bool have_inputs = library_inputs(file, dir, images, inputs);
-	if (have_inputs && library_current(out_dir, library->valuestring, inputs)) {
+	char       inputs_hash[17];
+	const bool have_inputs = library_inputs(file, dir, images, inputs_hash);
+	if (have_inputs && library_current(out_dir, library->valuestring, inputs_hash)) {
 		ToolLog_Write(TOOL_LOG_INFO, "%s: %s: unchanged", tool, library->valuestring);
 		cJSON_Delete(root);
 		return EFFECT_LIBRARY_UNCHANGED;
 	}
-	const int           count = cJSON_GetArraySize(images);
-	EffectLibraryImage* baked = (EffectLibraryImage*)calloc((size_t)count, sizeof *baked);
-	bool                ok    = baked != NULL;
-	int                 n     = 0;
-	const cJSON*        entry;
-	if (ok) {
-		cJSON_ArrayForEach(entry, images) {
-			if (bake(tool, dir, entry->string, entry, &baked[n]))
-				n++;
-			else
-				ok = false;
-		}
-	}
-	/* The index being replaced, to report what other models may lose. */
-	char path[1024], err[512];
-	snprintf(path, sizeof path, "%s/%s.yaml", out_dir, library->valuestring);
-	cJSON*              old    = ok ? YamlJson_Load(path, err, sizeof err) : NULL;
-	EffectLibraryResult result = { 0 };
-	if (ok && EffectLibrary_Write(tool, out_dir, library->valuestring, NULL, have_inputs ? inputs : NULL,
-								  baked, (size_t)n, &result)) {
-		ToolLog_Write(TOOL_LOG_INFO, "%s: %s: built, %d image(s), %d layer and %d emissive page(s)", tool,
-					  library->valuestring, n, result.layer_pages, result.emissive_pages);
-		report_replaced(tool, library->valuestring, old, images);
-	} else {
-		ok = false;
-	}
-	cJSON_Delete(old);
-	for (int i = 0; baked && i < count; ++i) {
-		free((void*)baked[i].layer);
-		free((void*)baked[i].emissive);
-		free((void*)baked[i].crop);
-	}
-	free(baked);
+	const Inputs inputs = { .dir = dir };
+	const bool   ok     = build(tool, root, &inputs, have_inputs ? inputs_hash : NULL, out_dir);
 	cJSON_Delete(root);
 	return ok ? EFFECT_LIBRARY_BUILT : EFFECT_LIBRARY_FAILED;
+}
+
+bool EffectLibrary_BuildFromInputs(const char* tool, const char* label, const cJSON* library,
+								   EffectLibraryInputSource source, void* context, const char* out_dir) {
+	if (!EffectLibrary_CheckLibrary(tool, label, library))
+		return false;
+	const Inputs inputs = { .source = source, .context = context };
+	return build(tool, library, &inputs, NULL, out_dir);
 }

@@ -23,8 +23,11 @@
 
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdint.h>
 
 #include "xwau_config.h"
+
+struct cJSON;
 
 /* Writes every library named by the models in `inputs` into <project>/effects,
  * replacing the files there. Each input is a model .gltf or a project. For a
@@ -38,5 +41,42 @@ bool XwauLibrary_Rebuild(const char* game, const char* project, const char* cons
  * libraries of its project do not have yet. Images already there are kept as
  * they are. */
 bool XwauLibrary_AddModel(const char* game, const char* project, const char* gltf);
+
+/* ---- Libraries made in memory ----------------------------------------------
+ *
+ * For a mod import that keeps no sources: each library is made as its library
+ * file content and its input images in memory, for the library builder
+ * (EffectLibrary_BuildFromInputs), instead of being written as files. */
+
+/* The libraries that the models of an import name. */
+typedef struct XwauLibrarySet XwauLibrarySet;
+
+/* An input image of a library: `name` is its path in the library file. */
+typedef struct XwauLibraryInput {
+	char     name[160];
+	uint8_t* rgba; /* tightly packed RGBA8; NULL once taken */
+	int      width, height;
+} XwauLibraryInput;
+
+/* Reads the libraries that the models in `inputs` name, as
+ * XwauLibrary_Rebuild does, and writes <dir>/effects.yaml. Returns NULL after
+ * reporting an error. */
+XwauLibrarySet* XwauLibrary_Read(const char* game, const char* const* inputs, size_t count, const char* dir);
+void            XwauLibrary_FreeSet(XwauLibrarySet* set);
+
+/* The number of libraries, the name of library `index`, and the memory that
+ * making its inputs takes: its DAT file and the input images. */
+size_t      XwauLibrary_Count(const XwauLibrarySet* set);
+const char* XwauLibrary_Name(const XwauLibrarySet* set, size_t index);
+size_t      XwauLibrary_InputBytes(const XwauLibrarySet* set, size_t index);
+
+/* Makes library `index`: its library file content `*library` and its input
+ * images `*inputs`, which the caller frees with cJSON_Delete and
+ * XwauLibrary_FreeInputs. Different libraries can be made at the same time.
+ * The lava library renders its frames on `threads` threads. Returns false
+ * after reporting an error. */
+bool XwauLibrary_Make(const XwauLibrarySet* set, size_t index, int threads, struct cJSON** library,
+					  XwauLibraryInput** inputs, size_t* count);
+void XwauLibrary_FreeInputs(XwauLibraryInput* inputs, size_t count);
 
 #endif /* AERON_OPT2GLTF_XWAU_LIBRARY_H */

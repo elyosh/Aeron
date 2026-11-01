@@ -3,6 +3,7 @@
  */
 
 #include <math.h>
+#include <pthread.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -150,6 +151,23 @@ static void render_frame(bool tiling, int frame, uint8_t* rgba) {
 	}
 }
 
+/* The library file content, without images. */
+static cJSON* library_doc(cJSON** images) {
+	cJSON* doc = cJSON_CreateObject();
+	*images    = doc && cJSON_AddNumberToObject(doc, "version", 1) &&
+						 cJSON_AddStringToObject(doc, "library", XWAU_LAVA_LIBRARY)
+					 ? cJSON_AddObjectToObject(doc, "images")
+					 : NULL;
+	return doc;
+}
+
+/* Adds image `key`, whose frame is `name`. */
+static bool add_image(cJSON* images, const char* key, const char* name) {
+	cJSON* entry = cJSON_AddObjectToObject(images, key);
+	return entry && cJSON_AddStringToObject(entry, "kind", "emissive") &&
+		   cJSON_AddStringToObject(entry, "emissive", name);
+}
+
 bool XwauLava_WriteLibrary(const char* effects_dir, bool merge) {
 	char dir[1024], frames[1100], file[1100];
 	if (!PathFormat(dir, sizeof dir, "%s/%s", effects_dir, XWAU_LAVA_LIBRARY) ||
@@ -162,13 +180,10 @@ bool XwauLava_WriteLibrary(const char* effects_dir, bool merge) {
 		Report(NULL, "cannot create %s", frames);
 		return false;
 	}
-	uint8_t* rgba   = (uint8_t*)malloc((size_t)XWAU_LAVA_SIZE * XWAU_LAVA_SIZE * 4);
-	cJSON*   doc    = cJSON_CreateObject();
-	cJSON*   images = doc && cJSON_AddNumberToObject(doc, "version", 1) &&
-							  cJSON_AddStringToObject(doc, "library", XWAU_LAVA_LIBRARY)
-						  ? cJSON_AddObjectToObject(doc, "images")
-						  : NULL;
-	bool     ok     = rgba && images;
+	uint8_t* rgba = (uint8_t*)malloc((size_t)XWAU_LAVA_SIZE * XWAU_LAVA_SIZE * 4);
+	cJSON*   images;
+	cJSON*   doc = library_doc(&images);
+	bool     ok  = rgba && images;
 	if (!ok)
 		Report(NULL, "out of memory (lava)");
 	make_noise();
@@ -183,9 +198,7 @@ bool XwauLava_WriteLibrary(const char* effects_dir, bool merge) {
 				Report(NULL, "cannot write %s", png);
 				ok = false;
 			}
-			cJSON* entry = ok ? cJSON_AddObjectToObject(images, key) : NULL;
-			ok           = entry && cJSON_AddStringToObject(entry, "kind", "emissive") &&
-						   cJSON_AddStringToObject(entry, "emissive", name);
+			ok = ok && add_image(images, key, name);
 		}
 	}
 	ok = ok && EffectFiles_Write("opt2gltf", doc,
@@ -195,4 +208,71 @@ bool XwauLava_WriteLibrary(const char* effects_dir, bool merge) {
 	cJSON_Delete(doc);
 	free(rgba);
 	return ok;
+}
+
+/* The frames that one thread renders: every `step`th one from `first`. */
+typedef struct Renderer {
+	XwauLibraryInput* frames;
+	int               first, step;
+} Renderer;
+
+static void* render_frames(void* user) {
+	const Renderer* r = (const Renderer*)user;
+	for (int i = r->first; i < 2 * XWAU_LAVA_FRAMES; i += r->step)
+		render_frame(i < XWAU_LAVA_FRAMES, i % XWAU_LAVA_FRAMES, r->frames[i].rgba);
+	return NULL;
+}
+
+bool XwauLava_MakeLibrary(int threads, cJSON** library, XwauLibraryInput** inputs, size_t* count) {
+	const int         n      = 2 * XWAU_LAVA_FRAMES;
+	XwauLibraryInput* frames = (XwauLibraryInput*)calloc((size_t)n, sizeof *frames);
+	cJSON*            images;
+	cJSON*            doc = library_doc(&images);
+	bool              ok  = frames && images;
+	/* The flipbook with LavaTiling on comes first, as in the written library. */
+	for (int i = 0; ok && i < n; ++i) {
+		char key[16];
+		XwauLava_Key(key, sizeof key, i < XWAU_LAVA_FRAMES, i % XWAU_LAVA_FRAMES);
+		snprintf(frames[i].name, sizeof frames[i].name, "frames/%s.png", key);
+		frames[i].width  = XWAU_LAVA_SIZE;
+		frames[i].height = XWAU_LAVA_SIZE;
+		frames[i].rgba   = (uint8_t*)malloc((size_t)XWAU_LAVA_SIZE * XWAU_LAVA_SIZE * 4);
+		ok               = frames[i].rgba && add_image(images, key, frames[i].name);
+	}
+	if (!ok) {
+		Report(NULL, "out of memory (lava)");
+		XwauLibrary_FreeInputs(frames, frames ? (size_t)n : 0);
+		cJSON_Delete(doc);
+		return false;
+	}
+	make_noise();
+	if (threads < 1)
+		threads = 1;
+	if (threads > n)
+		threads = n;
+	Renderer*  renderers = (Renderer*)calloc((size_t)threads, sizeof *renderers);
+	pthread_t* ids       = (pthread_t*)calloc((size_t)threads, sizeof *ids);
+	if (!renderers || !ids) {
+		const Renderer all = { frames, 0, 1 };
+		render_frames((void*)&all);
+	} else {
+		for (int t = 0; t < threads; ++t)
+			renderers[t] = (Renderer) { frames, t, threads };
+		/* The frames of the threads that can't start are rendered here. */
+		int started = 0;
+		for (int t = 1; t < threads && pthread_create(&ids[t], NULL, render_frames, &renderers[t]) == 0; ++t)
+			started = t;
+		render_frames(&renderers[0]);
+		for (int t = started + 1; t < threads; ++t)
+			render_frames(&renderers[t]);
+		for (int t = 1; t <= started; ++t)
+			pthread_join(ids[t], NULL);
+	}
+	free(renderers);
+	free(ids);
+	Report(NULL, "library %s: %d image(s) made", XWAU_LAVA_LIBRARY, n);
+	*library = doc;
+	*inputs  = frames;
+	*count   = (size_t)n;
+	return true;
 }

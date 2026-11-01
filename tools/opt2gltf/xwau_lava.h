@@ -28,6 +28,8 @@
 #include <stdbool.h>
 #include <stddef.h>
 
+#include "xwau_library.h"
+
 #define XWAU_LAVA_LIBRARY "lava"
 #define XWAU_LAVA_FRAMES 48
 #define XWAU_LAVA_SECONDS 4.0f
@@ -43,5 +45,10 @@ float XwauLava_Strength(void);
  * frames/. With `merge`, an existing lava.yaml is kept as it is. Returns false
  * after reporting an error. */
 bool XwauLava_WriteLibrary(const char* effects_dir, bool merge);
+
+/* Makes the library in memory, for XwauLibrary_Make: its library file content
+ * and its frames, rendered on `threads` threads. Returns false after
+ * reporting an error. */
+bool XwauLava_MakeLibrary(int threads, struct cJSON** library, XwauLibraryInput** inputs, size_t* count);
 
 #endif /* AERON_OPT2GLTF_XWAU_LAVA_H */

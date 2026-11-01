@@ -113,6 +113,19 @@ typedef enum EffectLibraryBuild {
 EffectLibraryBuild EffectLibrary_BuildLibrary(const char* tool, const char* file, const char* name,
 											  const char* out_dir);
 
+/* Gives the pixels of input `name` of a library, as named by its library
+ * file: tightly packed RGBA8 of `*width` × `*height`, which the caller frees
+ * with free(). Returns false with the reason in `error` when it can't. */
+typedef bool (*EffectLibraryInputSource)(void* context, const char* name, uint8_t** rgba, int* width,
+										 int* height, char* error, size_t error_size);
+
+/* Builds library file content `library` into `out_dir`, as
+ * EffectLibrary_BuildLibrary does, with its inputs from `source` instead of
+ * files. `label` names it in messages. The library is always built, and its
+ * index records no inputs hash. */
+bool EffectLibrary_BuildFromInputs(const char* tool, const char* label, const struct cJSON* library,
+								   EffectLibraryInputSource source, void* context, const char* out_dir);
+
 /* Writes library `name` into `out_dir`. `source` and `inputs`, when not
  * NULL, are noted in the index (`source:`, `inputs:`, which the runtime
  * ignores: a tool's own record of what it built the library from). Keys
