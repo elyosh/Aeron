@@ -10,6 +10,15 @@
 #define AERON_PBR_ANIM 0
 #endif
 
+/* The bits of PbrForwardVSOut.shadow_flags: the surface receives the key
+ * light's shadow, and it reads that shadow from the screen-space pass. The
+ * two share one value because the blended variants never read the second.
+ * On its own, the compiler would drop it from their inputs, and Direct3D 12
+ * rejects a pipeline whose fragment inputs sit in other registers than the
+ * vertex outputs. */
+#define PBR_SHADOW_RECEIVE 1u
+#define PBR_SHADOW_SCREEN 2u
+
 struct PbrForwardVSOut {
 	float4 position : SV_Position;
 	float3 world_pos : TEXCOORD1;
@@ -24,14 +33,13 @@ struct PbrForwardVSOut {
 	 * resolution. */
 	nointerpolation uint  prim_id : COLOR2;
 	nointerpolation float base_color_emissive_strength : COLOR3;
-	nointerpolation uint  receive_shadow : TEXCOORD5;
-	nointerpolation uint  screen_shadow : TEXCOORD6;
-	nointerpolation uint  variant_row_base : TEXCOORD7;
-	nointerpolation uint  variant_group_count : TEXCOORD8;
-	nointerpolation uint  material_count : TEXCOORD9;
+	nointerpolation uint  shadow_flags : TEXCOORD5;
+	nointerpolation uint  variant_row_base : TEXCOORD6;
+	nointerpolation uint  variant_group_count : TEXCOORD7;
+	nointerpolation uint  material_count : TEXCOORD8;
 #if AERON_PBR_ANIM
-	float3 model_pos : TEXCOORD10;
-	float3 model_normal : TEXCOORD11;
+	float3 model_pos : TEXCOORD9;
+	float3 model_normal : TEXCOORD10;
 #endif
 };
 

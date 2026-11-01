@@ -23,8 +23,7 @@ cbuffer LensFlareFS : register(b0, space3)
 
 struct VSOut
 {
-    float4 position              : SV_Position;
-    nointerpolation float visible : TEXCOORD0;
+    float4 position : SV_Position;
 };
 
 /* The pixel's place in flare units: 0 at the viewport's centre, 1 at half

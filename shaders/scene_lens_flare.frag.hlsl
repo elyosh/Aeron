@@ -8,6 +8,8 @@
 Texture2D<float4>        g_smooth   : register(t0, space2);
 SamplerState             g_smooth_s : register(s0, space2);
 StructuredBuffer<float4> g_elements : register(t1, space2);
+/* x = the visible part, written by the visibility pass. */
+StructuredBuffer<float4> g_visibility : register(t2, space2);
 
 #include "scene_lens_flare.hlsli"
 
@@ -17,5 +19,5 @@ float4 main(VSOut i) : SV_Target
     const float2 uv      = min((i.position.xy - origin.xy) * scale.zw, origin.zw);
     const float3 sum     = g_smooth.SampleLevel(g_smooth_s, uv, 0.0f).rgb + flare_sharp(flare_point(i.position.xy));
     const float3 display = min(sum, 1.0f);
-    return float4(AeronSrgbToLinear(display) * (frame.w * i.visible), 0.0f);
+    return float4(AeronSrgbToLinear(display) * (frame.w * g_visibility[0].x), 0.0f);
 }

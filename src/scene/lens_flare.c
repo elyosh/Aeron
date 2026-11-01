@@ -66,7 +66,7 @@ static int flare_ensure(AeronScene3D* s) {
 	s->flare_vs =
 		AeronSceneInternal_CompileShader("scene_lens_flare.vert", AERON_SHADER_STAGE_VERTEX, 0, 0, 1);
 	s->flare_fs =
-		AeronSceneInternal_CompileShader("scene_lens_flare.frag", AERON_SHADER_STAGE_FRAGMENT, 1, 1, 1);
+		AeronSceneInternal_CompileShader("scene_lens_flare.frag", AERON_SHADER_STAGE_FRAGMENT, 1, 1, 2);
 	s->flare_smooth_fs      = AeronSceneInternal_CompileShader("scene_lens_flare_smooth.frag",
 															   AERON_SHADER_STAGE_FRAGMENT, 0, 1, 1);
 	s->flare_smooth_sampler = Aeron_CreateSampler(&(AeronSamplerDesc) {
@@ -333,6 +333,7 @@ void AeronSceneLensFlare_Draw(AeronScene3D* s, AeronRenderPass* pass) {
 	Aeron_BindTextureSampler(pass, AERON_SHADER_STAGE_FRAGMENT, 0,
 							 Aeron_RenderTargetGetTexture(s->flare_smooth_rt), s->flare_smooth_sampler);
 	Aeron_BindStorageBuffer(pass, AERON_SHADER_STAGE_FRAGMENT, 0, s->flare_element_buffer);
+	Aeron_BindStorageBuffer(pass, AERON_SHADER_STAGE_FRAGMENT, 1, s->flare_visibility);
 	Aeron_BindUniformData(pass, AERON_SHADER_STAGE_FRAGMENT, 0, &u, sizeof u);
 	Aeron_Draw(pass, 3, 0);
 }

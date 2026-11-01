@@ -39,11 +39,9 @@ float2 AeronSharpBilinearTexcoord(float2 texcoord) {
 																  : texcoord;
 }
 
-float4 main(float4 position : SV_Position, float2 texcoord : TEXCOORD0) : SV_Target0 {
+float4 main(float4 position : SV_Position) : SV_Target0 {
 	/* The viewport may cover only part of the layer, so the texture
-	 * coordinate comes from the pixel's place in the whole layer. The
-	 * vertex shader's coordinate stays an input, unused. */
-	float  unusedValue    = texcoord.x * 0.0;
+	 * coordinate comes from the pixel's place in the whole layer. */
 	float2 layerTexcoord  = (position.xy - layer.xy) * layer.zw;
 	float2 sampleTexcoord = params.y != 0.0 ? AeronSharpBilinearTexcoord(layerTexcoord) : layerTexcoord;
 	float4 color          = g_frameTexture.Sample(g_frameSampler, sampleTexcoord);
@@ -68,5 +66,5 @@ float4 main(float4 position : SV_Position, float2 texcoord : TEXCOORD0) : SV_Tar
 
 	float4 outputColor = color * tint + float4(bias.rgb * color.a, 0.0);
 	outputColor.rgb *= params.z;
-	return outputColor + float4(unusedValue, 0.0, 0.0, 0.0);
+	return outputColor;
 }

@@ -848,7 +848,7 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
     float3 world_pos_dy = ddy(i.world_pos);
     float3 N_face = N_geom;
 #if AERON_PBR_DEBUG_VIEWS
-    if ((i.receive_shadow != 0u && i.screen_shadow == 0u) ||
+    if (((i.shadow_flags & PBR_SHADOW_RECEIVE) != 0u && (i.shadow_flags & PBR_SHADOW_SCREEN) == 0u) ||
         spec_geom_adapt != 0.0f) {
 #endif
         float3 face_cross = cross(world_pos_dx, world_pos_dy);
@@ -943,9 +943,9 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
     /* The mirrored view has no visibility pass of its own. */
     bool read_visibility = false;
 #elif AERON_PBR_PROBES
-    bool read_visibility = ssao_intensity > 0.0f || i.screen_shadow != 0u || probe_occlusion;
+    bool read_visibility = ssao_intensity > 0.0f || (i.shadow_flags & PBR_SHADOW_SCREEN) != 0u || probe_occlusion;
 #else
-    bool read_visibility = ssao_intensity > 0.0f || i.screen_shadow != 0u;
+    bool read_visibility = ssao_intensity > 0.0f || (i.shadow_flags & PBR_SHADOW_SCREEN) != 0u;
 #endif
     if (!AERON_PBR_ALPHA_BLEND && read_visibility) {
         float4 visibility = g_ao.Sample(g_ao_sampler, i.position.xy * fs_render_size.zw);
@@ -957,8 +957,8 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
     }
 
     float shadow_visibility = 1.0f;
-    if (i.receive_shadow != 0u) {
-        if (!AERON_PBR_ALPHA_BLEND && i.screen_shadow != 0u) {
+    if ((i.shadow_flags & PBR_SHADOW_RECEIVE) != 0u) {
+        if (!AERON_PBR_ALPHA_BLEND && (i.shadow_flags & PBR_SHADOW_SCREEN) != 0u) {
             shadow_visibility = screen_shadow_visibility;
         } else {
             /* The shadow scales only the sun's diffuse and specular terms.
@@ -1023,7 +1023,7 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
     if (key_shadow_in_probes != 0.0f && !probe_occlusion) {
         float key_visibility = shadow_visibility;
         float facing         = saturate(dot(N, L) * 2.5f - 0.75f); /* 0 below N.L 0.3, 1 above 0.7 */
-        if (key_shadow_facing == 0.0f && !AERON_PBR_ALPHA_BLEND && i.screen_shadow != 0u) {
+        if (key_shadow_facing == 0.0f && !AERON_PBR_ALPHA_BLEND && (i.shadow_flags & PBR_SHADOW_SCREEN) != 0u) {
             key_visibility = lerp(screen_key_visibility, shadow_visibility, facing);
         }
         /* Without its shadow facing, the key light's share of the grid's
@@ -1214,7 +1214,7 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
         _out.color = float4(clustered_light_debug_color(i.position.xy, i.world_pos), 1.0f);
         return _out;
     }
-    if (shadow_params.w != 0.0f && i.receive_shadow != 0u) {
+    if (shadow_params.w != 0.0f && (i.shadow_flags & PBR_SHADOW_RECEIVE) != 0u) {
         const float3 cascade_colors[4] = {
             float3(1.0f, 0.35f, 0.35f),
             float3(0.35f, 1.0f, 0.35f),
