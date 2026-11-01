@@ -23,6 +23,7 @@ typedef struct AeronSceneMeshOverlayVertex {
 	float pos[3];
 	float uv[2];
 	float component;
+	float normal[3]; /* the receiving surface's normal, read by lit overlays only */
 } AeronSceneMeshOverlayVertex;
 
 typedef struct AeronSceneMeshOverlayDesc {
@@ -47,6 +48,13 @@ typedef struct AeronSceneMeshOverlayDesc {
 	float   depth_bias_view;
 	uint8_t blend;
 	uint8_t cull_mode;
+	/* 0: the texture times `color` is the radiance drawn. 1: it is a base
+	 * colour that the scene's lights shade like the opaque surface under it:
+	 * the key light with its shadow, the other directional lights, the
+	 * ambient and environment light with the ambient occlusion, and the
+	 * point lights, with the vertices' normals and a rough dielectric
+	 * specular. The probe sets don't light it. */
+	uint8_t lit;
 } AeronSceneMeshOverlayDesc;
 
 void AeronScene_AddMeshOverlay(AeronScene3D* scene, const AeronSceneMeshOverlayDesc* overlay);

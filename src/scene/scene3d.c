@@ -2729,7 +2729,8 @@ int AeronScene_Render(AeronScene3D* s, AeronCommandBuffer* cmd) {
 		}
 		run_hook(s, AERON_SCENE_HOOK_AFTER_OPAQUE, cmd, pass);
 		Aeron_GpuDebugMarker(cmd, "Mesh overlays");
-		AeronSceneMeshOverlay_Draw(s, pass);
+		AeronSceneMeshOverlay_Draw(s, pass,
+								   visibility_active ? Aeron_RenderTargetGetTexture(s->ao_rt) : NULL);
 		Aeron_GpuDebugMarker(cmd, "PBR transparent instances");
 		if (!AeronScenePbr_DrawTransparentInstances(s, pass, AERON_PBR_PIPE_FORWARD,
 													visibility_active ? Aeron_RenderTargetGetTexture(s->ao_rt)
@@ -2826,7 +2827,7 @@ int AeronScene_Render(AeronScene3D* s, AeronCommandBuffer* cmd) {
 		}
 		run_hook(s, AERON_SCENE_HOOK_AFTER_OPAQUE, cmd, pass);
 		Aeron_GpuDebugMarker(cmd, "Mesh overlays");
-		AeronSceneMeshOverlay_Draw(s, pass);
+		AeronSceneMeshOverlay_Draw(s, pass, NULL);
 		if (pbr_ok) {
 			Aeron_GpuDebugMarker(cmd, "PBR transparent instances");
 			if (!AeronScenePbr_DrawTransparentInstances(s, pass, AERON_PBR_PIPE_MESH, NULL)) {

@@ -1369,6 +1369,16 @@ void AeronSceneDirectionalShadow_Bind(struct AeronScene3D* scene, AeronRenderPas
 	shadow_bind_map(scene, render_pass, &scene->shadow_uniform, scene->shadow_atlas, active, 5, 6, 0);
 }
 
+void AeronSceneDirectionalShadow_BindAt(struct AeronScene3D* scene, AeronRenderPass* render_pass,
+										uint32_t comparison_slot, uint32_t depth_slot) {
+	if (!scene || !render_pass || !shadow_ensure_common(scene)) {
+		return;
+	}
+	const int active = scene->shadow_stats.active && scene->shadow_atlas && !scene->shadow_atlas_empty;
+	shadow_bind_map(scene, render_pass, &scene->shadow_uniform, scene->shadow_atlas, active, comparison_slot,
+					depth_slot, 0);
+}
+
 void AeronSceneDirectionalShadow_BindForInstance(struct AeronScene3D* scene, AeronRenderPass* render_pass,
 												 uint8_t shadow_flags) {
 	if (!scene || !render_pass || !shadow_ensure_common(scene)) {

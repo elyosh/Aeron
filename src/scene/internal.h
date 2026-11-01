@@ -125,6 +125,7 @@ typedef struct AeronSceneMeshOverlayEntry {
 	float                      depth_bias;
 	uint8_t                    blend;
 	uint8_t                    cull_mode;
+	uint8_t                    lit;
 } AeronSceneMeshOverlayEntry;
 
 typedef struct AeronScenePreparedInstance {
@@ -584,6 +585,12 @@ struct AeronScene3D {
 	AeronShader*                 overlay_array_fs;
 	AeronGraphicsPipeline*       overlay_pipes[3][3];
 	AeronGraphicsPipeline*       overlay_array_pipes[3][3]; /* [blend][cull], 2D array textures */
+	/* Lit overlays (AeronSceneMeshOverlayDesc.lit), for 2D and array
+	 * textures. */
+	AeronShader*           overlay_lit_fs;
+	AeronShader*           overlay_lit_array_fs;
+	AeronGraphicsPipeline* overlay_lit_pipes[3][3];
+	AeronGraphicsPipeline* overlay_lit_array_pipes[3][3];
 
 	/* Post stack (post.c). */
 	AeronScenePostDesc     post;
@@ -947,6 +954,10 @@ int  AeronSceneDirectionalShadow_DrawDepth(struct AeronScene3D* scene, AeronRend
 										   const float view_proj[16], const uint16_t* casters,
 										   uint16_t caster_count);
 void AeronSceneDirectionalShadow_Bind(struct AeronScene3D* scene, AeronRenderPass* render_pass);
+/* As AeronSceneDirectionalShadow_Bind, with the comparison and depth
+ * textures at other fragment sampler slots. */
+void AeronSceneDirectionalShadow_BindAt(struct AeronScene3D* scene, AeronRenderPass* render_pass,
+										uint32_t comparison_slot, uint32_t depth_slot);
 void AeronSceneDirectionalShadow_BindForInstance(struct AeronScene3D* scene, AeronRenderPass* render_pass,
 												 uint8_t shadow_flags);
 void AeronSceneDirectionalShadow_BindScreen(struct AeronScene3D* scene, AeronRenderPass* render_pass);
@@ -994,7 +1005,11 @@ void AeronSceneLensFlare_Release(struct AeronScene3D* s);
 
 /* mesh_overlay.c */
 int  AeronSceneMeshOverlay_Prepare(struct AeronScene3D* scene, AeronCommandBuffer* command_buffer);
-void AeronSceneMeshOverlay_Draw(struct AeronScene3D* scene, AeronRenderPass* render_pass);
+/* Draws the overlays after the opaque instances. `visibility` is the
+ * visibility pass's output that the opaque instances read, or NULL without
+ * one; lit overlays then take the key light's shadow from the shadow map. */
+void AeronSceneMeshOverlay_Draw(struct AeronScene3D* scene, AeronRenderPass* render_pass,
+								AeronTexture* visibility);
 void AeronSceneMeshOverlay_Release(struct AeronScene3D* scene);
 
 /* post.c */

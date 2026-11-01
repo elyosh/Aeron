@@ -24,6 +24,14 @@ typedef struct OverlayFragmentUniforms {
 	float layer[4]; /* array textures: layer, max mip level, clamp outside uv_rect */
 } OverlayFragmentUniforms;
 
+/* The lit shaders' block, at fragment slot 3. */
+typedef struct OverlayLitUniforms {
+	OverlayFragmentUniforms base;
+	/* 1 when the visibility pass holds the key light's shadow, 1 when the
+	 * image is premultiplied (PMA blending). */
+	float shading[4];
+} OverlayLitUniforms;
+
 void AeronScene_AddMeshOverlay(AeronScene3D* scene, const AeronSceneMeshOverlayDesc* overlay) {
 	if (!scene || !overlay || !overlay->vertices || overlay->vertex_count == 0 ||
 		(!overlay->texture && !overlay->texture_array)) {
@@ -68,6 +76,7 @@ void AeronScene_AddMeshOverlay(AeronScene3D* scene, const AeronSceneMeshOverlayD
 	entry->blend        = overlay->blend < 3 ? overlay->blend : AERON_SCENE_MESH_OVERLAY_BLEND_ALPHA;
 	entry->cull_mode    = overlay->cull_mode <= AERON_CULL_BACK ? overlay->cull_mode : AERON_CULL_NONE;
 	entry->depth_bias   = overlay->depth_bias_view;
+	entry->lit          = overlay->lit != 0;
 	memcpy(entry->transform, overlay->transform, sizeof entry->transform);
 	memcpy(entry->uv_xform, overlay->uv_xform, sizeof entry->uv_xform);
 	memcpy(entry->uv_rect, overlay->uv_rect, sizeof entry->uv_rect);
@@ -79,7 +88,7 @@ void AeronScene_AddMeshOverlay(AeronScene3D* scene, const AeronSceneMeshOverlayD
 
 static AeronGraphicsPipeline* create_overlay_pipeline(AeronScene3D* scene, AeronShader* fragment_shader,
 													  int blend_mode, AeronCullMode cull_mode) {
-	AeronVertexAttributeDesc vertex_attributes[3] = {
+	AeronVertexAttributeDesc vertex_attributes[4] = {
 		{ .location    = 0,
 		  .buffer_slot = 0,
 		  .format      = AERON_VERTEX_FORMAT_FLOAT3,
@@ -92,6 +101,10 @@ static AeronGraphicsPipeline* create_overlay_pipeline(AeronScene3D* scene, Aeron
 		  .buffer_slot = 0,
 		  .format      = AERON_VERTEX_FORMAT_FLOAT,
 		  .offset      = (uint32_t)offsetof(AeronSceneMeshOverlayVertex, component) },
+		{ .location    = 3,
+		  .buffer_slot = 0,
+		  .format      = AERON_VERTEX_FORMAT_FLOAT3,
+		  .offset      = (uint32_t)offsetof(AeronSceneMeshOverlayVertex, normal) },
 	};
 	AeronVertexBufferLayoutDesc vertex_buffer_layout = { .slot = 0,
 														 .stride =
@@ -131,7 +144,7 @@ static AeronGraphicsPipeline* create_overlay_pipeline(AeronScene3D* scene, Aeron
 		.vertex_buffers      = &vertex_buffer_layout,
 		.vertex_buffer_count = 1,
 		.attributes          = vertex_attributes,
-		.attribute_count     = 3,
+		.attribute_count     = 4,
 		.depth_format        = AERON_TEXTURE_FORMAT_D32_FLOAT,
 		.depth               = { .depth_test = 1, .depth_write = 0, .compare = AERON_COMPARE_GREATER_EQUAL },
 		.color_target_count  = 1,
@@ -151,6 +164,13 @@ static int ensure_overlay_resources(AeronScene3D* scene) {
 		AeronSceneInternal_CompileShader("scene_mesh_overlay.frag", AERON_SHADER_STAGE_FRAGMENT, 1, 1, 0);
 	scene->overlay_array_fs = AeronSceneInternal_CompileShader("scene_mesh_overlay_array.frag",
 															   AERON_SHADER_STAGE_FRAGMENT, 1, 1, 0);
+	/* The lit shaders: the image, the visibility, the diffuse environment
+	 * and the two shadow textures; the shadow, light, scene lighting and
+	 * overlay blocks; the point lights and the cluster data. */
+	scene->overlay_lit_fs =
+		AeronSceneInternal_CompileShader("scene_mesh_overlay_lit.frag", AERON_SHADER_STAGE_FRAGMENT, 5, 4, 2);
+	scene->overlay_lit_array_fs = AeronSceneInternal_CompileShader("scene_mesh_overlay_lit_array.frag",
+																   AERON_SHADER_STAGE_FRAGMENT, 5, 4, 2);
 	if (!scene->overlay_vs || !scene->overlay_fs) {
 		return 0;
 	}
@@ -161,6 +181,12 @@ static int ensure_overlay_resources(AeronScene3D* scene) {
 			if (scene->overlay_array_fs)
 				scene->overlay_array_pipes[blend_mode][cull_mode] = create_overlay_pipeline(
 					scene, scene->overlay_array_fs, blend_mode, (AeronCullMode)cull_mode);
+			if (scene->overlay_lit_fs)
+				scene->overlay_lit_pipes[blend_mode][cull_mode] = create_overlay_pipeline(
+					scene, scene->overlay_lit_fs, blend_mode, (AeronCullMode)cull_mode);
+			if (scene->overlay_lit_array_fs)
+				scene->overlay_lit_array_pipes[blend_mode][cull_mode] = create_overlay_pipeline(
+					scene, scene->overlay_lit_array_fs, blend_mode, (AeronCullMode)cull_mode);
 		}
 	}
 	return scene->overlay_pipes[0][0] != NULL;
@@ -193,22 +219,62 @@ int AeronSceneMeshOverlay_Prepare(AeronScene3D* scene, AeronCommandBuffer* comma
 	return scene->overlay_frame_ready;
 }
 
-void AeronSceneMeshOverlay_Draw(AeronScene3D* scene, AeronRenderPass* render_pass) {
+/* Binds what the lit shaders read besides their own block and image: the
+ * key light's shadow map, the light and scene lighting blocks, the
+ * visibility pass's output, the diffuse environment, the point lights and
+ * the cluster data. */
+static void bind_lighting(AeronScene3D* scene, AeronRenderPass* render_pass, AeronTexture* visibility) {
+	AeronSceneDirectionalShadow_BindAt(scene, render_pass, 3, 4);
+	AeronSceneInternal_BindFrameUniforms(scene, render_pass);
+	Aeron_BindUniformData(render_pass, AERON_SHADER_STAGE_FRAGMENT, 2, &scene->lighting_uniform,
+						  sizeof scene->lighting_uniform);
+	Aeron_BindTextureSampler(render_pass, AERON_SHADER_STAGE_FRAGMENT, 1,
+							 visibility ? visibility : AeronSceneInternal_WhiteTexture(),
+							 visibility ? scene->post_linear_sampler : scene->pbr_sampler);
+	Aeron_BindTextureSampler(
+		render_pass, AERON_SHADER_STAGE_FRAGMENT, 2,
+		scene->pbr_environment_set ? scene->pbr_environment.diffuse : AeronSceneInternal_WhiteCubeTexture(),
+		scene->pbr_environment_set ? scene->pbr_environment.sampler : scene->pbr_sampler);
+	Aeron_BindStorageBuffer(render_pass, AERON_SHADER_STAGE_FRAGMENT, 0, scene->point_light_buffer);
+	Aeron_BindStorageBuffer(render_pass, AERON_SHADER_STAGE_FRAGMENT, 1, scene->cluster_data_buffer);
+}
+
+void AeronSceneMeshOverlay_Draw(AeronScene3D* scene, AeronRenderPass* render_pass, AeronTexture* visibility) {
 	if (!scene || !render_pass || !scene->storage_ready || !scene->overlay_frame_ready ||
 		!scene->overlay_vb || scene->overlay_count == 0) {
 		return;
 	}
+	/* Lit overlays read the lights as the opaque instances did: without
+	 * them they are left out. */
+	const int lighting_ready =
+		scene->cluster_ready && scene->point_light_buffer && scene->cluster_data_buffer;
+	/* As the opaque instances take the key light's shadow from the
+	 * visibility pass. */
+	const int screen_shadow =
+		visibility && scene->shadow_stats.active && !scene->directional_shadow.debug_cascades;
+	/* An unlit overlay's block replaces the shadow block at slot 0. */
+	int lighting_bound = 0;
 	Aeron_BindVertexBuffer(render_pass, 0, scene->overlay_vb, 0);
 	Aeron_BindStorageBuffer(render_pass, AERON_SHADER_STAGE_VERTEX, 0, scene->mesh_table_buffer);
 	for (uint32_t overlay_index = 0; overlay_index < scene->overlay_count; overlay_index++) {
-		const AeronSceneMeshOverlayEntry* overlay  = &scene->overlays[overlay_index];
-		AeronGraphicsPipeline* pipeline = overlay->array
-											  ? scene->overlay_array_pipes[overlay->blend][overlay->cull_mode]
-											  : scene->overlay_pipes[overlay->blend][overlay->cull_mode];
+		const AeronSceneMeshOverlayEntry* overlay = &scene->overlays[overlay_index];
+		AeronGraphicsPipeline*            pipeline;
+		if (overlay->lit) {
+			pipeline = !lighting_ready  ? NULL
+					   : overlay->array ? scene->overlay_lit_array_pipes[overlay->blend][overlay->cull_mode]
+										: scene->overlay_lit_pipes[overlay->blend][overlay->cull_mode];
+		} else {
+			pipeline = overlay->array ? scene->overlay_array_pipes[overlay->blend][overlay->cull_mode]
+									  : scene->overlay_pipes[overlay->blend][overlay->cull_mode];
+		}
 		if (!pipeline) {
 			continue;
 		}
 		Aeron_BindGraphicsPipeline(render_pass, pipeline);
+		if (overlay->lit && !lighting_bound) {
+			bind_lighting(scene, render_pass, visibility);
+			lighting_bound = 1;
+		}
 		OverlayVertexUniforms vertex_uniforms;
 		memset(&vertex_uniforms, 0, sizeof vertex_uniforms);
 		memcpy(vertex_uniforms.view_proj, scene->jittered_view_proj, sizeof vertex_uniforms.view_proj);
@@ -226,8 +292,19 @@ void AeronSceneMeshOverlay_Draw(AeronScene3D* scene, AeronRenderPass* render_pas
 		fragment_uniforms.layer[1] = (float)overlay->max_lod;
 		fragment_uniforms.layer[2] = overlay->clamp ? 1.0f : 0.0f;
 		fragment_uniforms.layer[3] = 0.0f;
-		Aeron_BindUniformData(render_pass, AERON_SHADER_STAGE_FRAGMENT, 0, &fragment_uniforms,
-							  sizeof fragment_uniforms);
+		if (overlay->lit) {
+			OverlayLitUniforms lit_uniforms;
+			memset(&lit_uniforms, 0, sizeof lit_uniforms);
+			lit_uniforms.base       = fragment_uniforms;
+			lit_uniforms.shading[0] = screen_shadow ? 1.0f : 0.0f;
+			lit_uniforms.shading[1] = overlay->blend == AERON_SCENE_MESH_OVERLAY_BLEND_PMA ? 1.0f : 0.0f;
+			Aeron_BindUniformData(render_pass, AERON_SHADER_STAGE_FRAGMENT, 3, &lit_uniforms,
+								  sizeof lit_uniforms);
+		} else {
+			Aeron_BindUniformData(render_pass, AERON_SHADER_STAGE_FRAGMENT, 0, &fragment_uniforms,
+								  sizeof fragment_uniforms);
+			lighting_bound = 0;
+		}
 		Aeron_BindTextureSampler(render_pass, AERON_SHADER_STAGE_FRAGMENT, 0, overlay->texture,
 								 scene->pbr_sampler);
 		Aeron_Draw(render_pass, overlay->vertex_count, overlay->first_vertex);
@@ -246,6 +323,12 @@ void AeronSceneMeshOverlay_Release(AeronScene3D* scene) {
 			if (scene->overlay_array_pipes[blend_mode][cull_mode]) {
 				Aeron_DestroyGraphicsPipeline(scene->overlay_array_pipes[blend_mode][cull_mode]);
 			}
+			if (scene->overlay_lit_pipes[blend_mode][cull_mode]) {
+				Aeron_DestroyGraphicsPipeline(scene->overlay_lit_pipes[blend_mode][cull_mode]);
+			}
+			if (scene->overlay_lit_array_pipes[blend_mode][cull_mode]) {
+				Aeron_DestroyGraphicsPipeline(scene->overlay_lit_array_pipes[blend_mode][cull_mode]);
+			}
 		}
 	}
 	if (scene->overlay_vs) {
@@ -256,6 +339,12 @@ void AeronSceneMeshOverlay_Release(AeronScene3D* scene) {
 	}
 	if (scene->overlay_array_fs) {
 		Aeron_DestroyShader(scene->overlay_array_fs);
+	}
+	if (scene->overlay_lit_fs) {
+		Aeron_DestroyShader(scene->overlay_lit_fs);
+	}
+	if (scene->overlay_lit_array_fs) {
+		Aeron_DestroyShader(scene->overlay_lit_array_fs);
 	}
 	if (scene->overlay_vb) {
 		Aeron_DestroyBuffer(scene->overlay_vb);
