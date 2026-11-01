@@ -71,8 +71,12 @@ static float xwau_roughness(float glossiness) {
 }
 
 /* F0 = 0.16 * intensity^2 = 0.04 * specularColorFactor. specularFactor 1
- * keeps F90 = 1, like the Schlick term of the renderer. */
-static float xwau_specular_color(float intensity) { return 4.0f * intensity * intensity; }
+ * keeps F90 = 1, like the Schlick term of the renderer. The renderer stores
+ * Intensity in an 8-bit channel, so a value above 1 reads as 1. */
+static float xwau_specular_color(float intensity) {
+	const float stored = clamp01f(intensity);
+	return 4.0f * stored * stored;
+}
 
 /* The linear value of a gamma-encoded value, with the sRGB curve extended
  * above 1. */
