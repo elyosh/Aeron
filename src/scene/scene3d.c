@@ -381,6 +381,7 @@ void AeronScene_Destroy(AeronScene3D* s) {
 		return;
 	}
 	AeronSceneBb3d_Release(s);
+	AeronSceneLensFlare_Release(s);
 	scene_free_instances(s);
 	AeronSceneMeshOverlay_Release(s);
 	AeronSceneDirectionalShadow_Release(s);
@@ -505,6 +506,8 @@ int AeronScene_Begin(AeronScene3D* s, const AeronSceneCamera* camera) {
 	s->bb_dropped           = 0;
 	s->bb_frame_verts       = 0;
 	s->bb_frame_has_vel     = 0;
+	s->flare_set            = 0;
+	s->flare_frame          = 0;
 	s->overlay_count        = 0;
 	s->overlays_dropped     = 0;
 	s->overlay_vertex_count = 0;
@@ -2446,7 +2449,10 @@ static int scene_finalize_output(AeronScene3D* s, AeronCommandBuffer* cmd, int m
 		Aeron_GpuDebugPop(cmd);
 	}
 
-	if (s->bb_frame_has_lens) {
+	if (!AeronSceneLensFlare_Visibility(s, cmd)) {
+		return scene_render_failure(s, cmd, "Scene lens flare visibility failed");
+	}
+	if (s->bb_frame_has_lens || s->flare_frame) {
 		if (!AeronSceneTemporal_EnsureMutableOutput(s, cmd)) {
 			return scene_render_failure(s, cmd, "Scene lens output materialization failed");
 		}
@@ -2460,6 +2466,7 @@ static int scene_finalize_output(AeronScene3D* s, AeronCommandBuffer* cmd, int m
 			return scene_render_failure(s, cmd, "Scene lens pass creation failed");
 		}
 		AeronSceneBb3d_DrawLens(s, lens);
+		AeronSceneLensFlare_Draw(s, lens);
 		Aeron_EndRenderPass(lens);
 	}
 
@@ -2509,6 +2516,9 @@ int AeronScene_Render(AeronScene3D* s, AeronCommandBuffer* cmd) {
 	}
 	if (s->bb_count > 0 && !AeronSceneBb3d_Prepare(s, cmd)) {
 		return scene_render_failure(s, cmd, "Scene billboard preparation failed");
+	}
+	if (!AeronSceneLensFlare_Prepare(s, cmd)) {
+		return scene_render_failure(s, cmd, "Scene lens flare preparation failed");
 	}
 	if (s->overlay_vertex_count > 0 && !AeronSceneMeshOverlay_Prepare(s, cmd)) {
 		return scene_render_failure(s, cmd, "Scene mesh-overlay preparation failed");

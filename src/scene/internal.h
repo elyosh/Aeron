@@ -6,6 +6,7 @@
 
 #include "aeron/log.h"
 #include "aeron/scene/billboard.h"
+#include "aeron/scene/lens_flare.h"
 #include "aeron/scene/mesh_overlay.h"
 #include "aeron/scene/probe_set.h"
 #include "aeron/scene/scene3d.h"
@@ -707,6 +708,28 @@ struct AeronScene3D {
 	AeronSampler*          bb_depth_sampler; /* NEAREST clamp */
 	int                    bb_frame_has_lens;
 
+	/* The procedural lens flare. The elements persist; the
+	 * flare is set each frame and reset by Begin. The pipelines and
+	 * buffers are built by AeronScene_PrepareLensFlares or on the first
+	 * frame with a flare. */
+	AeronSceneLensFlareElement flare_elements[AERON_SCENE_LENS_FLARE_MAX_ELEMENTS];
+	uint32_t                   flare_element_count;
+	uint32_t                   flare_shape_end[4]; /* this frame's packed elements, by shape */
+	AeronSceneLensFlareDesc    flare;
+	int                        flare_set;
+	int                        flare_frame;     /* drawn this frame */
+	float                      flare_center[2]; /* render pixels, jittered */
+	float                      flare_radius;    /* render pixels */
+	float                      flare_depth;
+	int                        flare_tried;
+	AeronComputePipeline*      flare_visibility_pipe;
+	AeronSampler*              flare_depth_sampler;
+	AeronShader*               flare_vs;
+	AeronShader*               flare_fs;
+	AeronGraphicsPipeline*     flare_pipe;
+	AeronBuffer*               flare_visibility; /* one float4, x = visible part */
+	AeronBuffer*               flare_element_buffer;
+
 	/* Sky cube (AeronScene_SetSkyEnvironment). Cube pointer + basis + exposure
 	 * are per-frame (reset by Begin); shaders/pipelines are lazily
 	 * created on the first Render with a sky and kept. Two pipeline
@@ -957,6 +980,12 @@ void AeronSceneBb3d_DrawVelocity(struct AeronScene3D* s, AeronRenderPass* pass);
  * attachment: the VS samples the scene depth texture. */
 void AeronSceneBb3d_DrawLens(struct AeronScene3D* s, AeronRenderPass* pass);
 void AeronSceneBb3d_Release(struct AeronScene3D* s);
+
+/* The procedural lens flare. */
+int  AeronSceneLensFlare_Prepare(struct AeronScene3D* s, AeronCommandBuffer* cmd);
+int  AeronSceneLensFlare_Visibility(struct AeronScene3D* s, AeronCommandBuffer* cmd);
+void AeronSceneLensFlare_Draw(struct AeronScene3D* s, AeronRenderPass* pass);
+void AeronSceneLensFlare_Release(struct AeronScene3D* s);
 
 /* mesh_overlay.c */
 int  AeronSceneMeshOverlay_Prepare(struct AeronScene3D* scene, AeronCommandBuffer* command_buffer);

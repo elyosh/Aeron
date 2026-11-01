@@ -4,6 +4,7 @@
 #include "aeron/aeron.h"
 #include "aeron/scene/bloom.h"
 #include "aeron/scene/draw_list2d.h"
+#include "aeron/scene/lens_flare.h"
 #include "aeron/scene/present.h"
 #include "aeron/scene/scene3d.h"
 #include "aeron/scene/settings.h"
@@ -70,13 +71,22 @@ typedef struct CaptureLight {
  * draws backdrop suns. `direction` points toward the sun in camera axes
  * (+X right, +Y down, +Z forward), `color` is the sun's sRGB colour, and the
  * star's quad is `size_degrees` wide. `radiance` is the radiance of a white
- * texel; the core adds `core_brightness` times it. */
+ * texel; the core adds `core_brightness` times it. At most one sun has
+ * `flare`, which draws the procedural lens flare of `lens_flare`. */
 #define CAPTURE_MAX_SUNS 4
 
 typedef struct CaptureSun {
 	float direction[3], color[3];
 	float size_degrees, radiance, core_brightness;
+	int   flare;
 } CaptureSun;
+
+/* lens_flare: the procedural flare's elements and intensity. */
+typedef struct CaptureLensFlare {
+	AeronSceneLensFlareElement elements[AERON_SCENE_LENS_FLARE_MAX_ELEMENTS];
+	uint32_t                   element_count;
+	float                      intensity;
+} CaptureLensFlare;
 
 /* game_scene: the game's Scene3D features (Scene3D defaults file), lighting
  * and instance roles, in game world units (OPT units). */
@@ -157,6 +167,7 @@ typedef struct CaptureConfig {
 	int                    benchmark_mode;
 	CaptureSun             suns[CAPTURE_MAX_SUNS];
 	int                    sun_count;
+	CaptureLensFlare       lens_flare;
 	CaptureGameScene       game;
 } CaptureConfig;
 

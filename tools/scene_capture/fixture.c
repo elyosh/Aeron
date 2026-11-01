@@ -4,6 +4,7 @@
 #include "aeron/scene/billboard.h"
 #include "aeron/scene/environment.h"
 #include "aeron/scene/image_cache.h"
+#include "aeron/scene/lens_flare.h"
 #include "aeron/scene/mesh_overlay.h"
 #include "aeron/scene/probe_set.h"
 #include "capture.h"
@@ -278,6 +279,19 @@ int Fixture_Create(Fixture* f, const CaptureConfig* config) {
 	}
 	AeronScene_SetEffectAtlas(f->scene, f->effect_atlas);
 	AeronScene_SetEffectAtlas(f->reference_scene, f->effect_atlas);
+	for (int i = 0; i < config->sun_count; ++i) {
+		if (!config->suns[i].flare)
+			continue;
+		AeronScene_SetLensFlareElements(f->scene, config->lens_flare.elements,
+										config->lens_flare.element_count);
+		AeronScene_SetLensFlareElements(f->reference_scene, config->lens_flare.elements,
+										config->lens_flare.element_count);
+		if (!AeronScene_PrepareLensFlares(f->scene) ||
+			(f->reference_scene && !AeronScene_PrepareLensFlares(f->reference_scene))) {
+			Fixture_Destroy(f);
+			return 0;
+		}
+	}
 	float       background = config->model_count ? 0 : .005f;
 	const float clear[4]   = { background, background, background, 1 };
 	AeronScene_SetClearColor(f->scene, clear);
@@ -817,13 +831,15 @@ static void set_game_effects(AeronScene3D* scene, const CaptureConfig* config, i
 #define STAR_TIME_PER_SECOND 0.6
 #define STAR_TIME_OFFSET 37.0
 
-/* The suns, as procedural stars on the sky. The world's axes are the
- * camera's at time 0, and the camera sits at the origin. */
+/* The suns, as procedural stars on the sky, and the flare of the sun that
+ * has one. The world's axes are the camera's at time 0, and the camera sits
+ * at the origin. */
 static void add_suns(AeronScene3D* scene, const CaptureConfig* c, double time) {
 	static const float uvs[4][2]   = { { 0, 0 }, { 1, 0 }, { 1, 1 }, { 0, 1 } };
 	static const float signs[4][2] = { { -1, -1 }, { 1, -1 }, { 1, 1 }, { -1, 1 } };
-	/* Any distance past the near plane: the sky stage draws at the far plane. */
-	const float distance = 1000.0f;
+	/* The sky stage draws at the far plane at any distance. The flare's
+	 * anchor is on the sun, so every model must be nearer. */
+	const float distance = 1000000.0f;
 	for (int i = 0; i < c->sun_count; ++i) {
 		const CaptureSun* sun    = &c->suns[i];
 		float             dir[3] = { sun->direction[0], sun->direction[1], sun->direction[2] };
@@ -856,6 +872,15 @@ static void add_suns(AeronScene3D* scene, const CaptureConfig* c, double time) {
 			desc.colors[v][3]                                         = 1.0f;
 		}
 		AeronScene_AddBillboard(scene, &desc);
+		if (sun->flare) {
+			/* The star's disc is full up to a tenth of its quad's width. */
+			AeronSceneLensFlareDesc flare = { .radius_world = 0.2f * half,
+											  .intensity    = c->lens_flare.intensity };
+			for (int k = 0; k < 3; ++k)
+				flare.anchor_world[k] = dir[k] * distance;
+			memcpy(flare.tint, sun->color, sizeof flare.tint);
+			AeronScene_SetLensFlare(scene, &flare);
+		}
 	}
 }
 

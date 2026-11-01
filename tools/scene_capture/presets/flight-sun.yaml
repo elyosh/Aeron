@@ -1,0 +1,88 @@
+# The flight benchmark scene with a blue procedural sun and its lens flare,
+# to compare the look and time the sun and the flare.
+width: 2560
+height: 1440
+frames: 30
+fps: 60
+pan_degrees_per_second: 0
+pan_direction_degrees: 0
+shutter: 0.5
+quality: 2
+reference_samples: 0
+msaa_samples: 2
+# The game's back-face culling: game_scene places the models (left-handed
+# OPT frames) mirrored, as the game does.
+cull: back
+bloom:
+  intensity: 0.2
+  kernel: 4
+tonemap: agx
+output_dir: captures/flight-sun
+# Set this to the game-data directory containing mod/flight/models (converted
+# XWAU models). Relative paths are resolved from the working directory.
+asset_root: .
+models:
+  - mod/flight/models/awingcockpit.glb
+  - mod/flight/models/awing.glb
+  - mod/flight/models/imperialstardestroyer.glb
+  - mod/flight/models/corelliantransport2.glb
+  - mod/flight/models/tiefighter.glb
+  - mod/flight/models/xwing.glb
+# The pilot eye in the cockpit model (metres) and the view direction.
+screen_test:
+  eye: [0, -0.049, 0.757]
+  yaw_degrees: 0
+  pitch_degrees: 5
+game_scene:
+  # The Scene3D defaults the game loads (aeron/config/scene3d_defaults.yaml);
+  # from a standalone Aeron checkout, config/scene3d_defaults.yaml.
+  defaults: aeron/config/scene3d_defaults.yaml
+  # Surface to sun, camera axes (+X right, +Y down, +Z forward).
+  sun_direction: [-0.4, -0.7, -0.6]
+  sun_color: [2.513, 2.513, 2.513]
+  ambient: 0.08
+  point_lights:
+    - { position: [-10, 3, 30], intensity: [0.767, 0.0767, 0.0575] }
+    - { position: [20, 0, 80], intensity: [0.0575, 0.575, 0.0767] }
+    - { position: [0, 1, 6], intensity: [0.575, 0.0383, 0.0383] }
+  # Ships: position in metres, camera axes; rotation_degrees [yaw, pitch, roll].
+  instances:
+    - { model: mod/flight/models/awingcockpit.glb, role: cockpit }
+    - { model: mod/flight/models/awing.glb, role: exterior }
+    - { model: mod/flight/models/imperialstardestroyer.glb, position: [-250, -120, 1500], rotation_degrees: [30, 0, 0] }
+    - { model: mod/flight/models/corelliantransport2.glb, position: [60, 15, 160], rotation_degrees: [-40, 10, 0] }
+    - { model: mod/flight/models/tiefighter.glb, position: [-12, 4, 35], rotation_degrees: [150, 0, 0] }
+    - { model: mod/flight/models/xwing.glb, position: [5, 0, -60] }
+suns:
+  - { direction: [0.25, -0.12, 1], color: [0.4, 0.5, 1.0], size_degrees: 21, radiance: 10, core_brightness: 2, flare: true }
+lens_flare:
+  intensity: 3
+  # The game's default suns.flare_elements.
+  elements:
+    - { shape: halo, position: -0.80, stretch: 1, size: 32, color: [0.25, 0, 0] }
+    - { shape: halo, position: -0.85, stretch: 1, size: 32, color: [0, 0.23, 0] }
+    - { shape: halo, position: -0.90, stretch: 1, size: 32, color: [0, 0, 0.21] }
+    - { shape: disc, position: -0.40, stretch: -0.5, size: 0.147, power: 2.4, color: [0.06, 0, 0] }
+    - { shape: disc, position: -0.45, stretch: -0.5, size: 0.147, power: 2.4, color: [0, 0.05, 0] }
+    - { shape: disc, position: -0.50, stretch: -0.5, size: 0.147, power: 2.4, color: [0, 0, 0.03] }
+    - { shape: disc, position: -0.2, stretch: -0.4, size: 0.433, power: 5.5, color: [0.02, 0, 0] }
+    - { shape: disc, position: -0.4, stretch: -0.4, size: 0.433, power: 5.5, color: [0, 0.02, 0] }
+    - { shape: disc, position: -0.6, stretch: -0.4, size: 0.433, power: 5.5, color: [0, 0, 0.02] }
+    - { shape: disc, position: 0.300, stretch: -0.5, size: 0.056, power: 1.6, color: [0.06, 0, 0] }
+    - { shape: disc, position: 0.325, stretch: -0.5, size: 0.056, power: 1.6, color: [0, 0.03, 0] }
+    - { shape: disc, position: 0.350, stretch: -0.5, size: 0.056, power: 1.6, color: [0, 0, 0.05] }
+    - { shape: disc, position: -0.70, stretch: -0.2, size: 0.1, power: 2, color: [0.04, 0, 0] }
+    - { shape: disc, position: -0.75, stretch: -0.2, size: 0.1, power: 2, color: [0, 0.05, 0] }
+    - { shape: disc, position: -0.80, stretch: -0.2, size: 0.1, power: 2, color: [0, 0, 0.045] }
+    - { shape: hexagon, position: -0.2, offset: [-0.18, -0.18], size: 0.1, rotation: 0.7236, color: [0.0004, 0.0033, 0.0049] }
+    - { shape: hexagon, position: -3.036, offset: [-0.18, -0.18], size: 0.1, rotation: 0.7236, color: [0.0066, 0.0097, 0.0089] }
+    - { shape: hexagon, position: -0.539, offset: [-0.18, -0.18], size: 0.1, rotation: 0.7236, color: [0.0075, 0.0006, 0.0001] }
+    - { shape: hexagon, position: -0.768, offset: [-0.18, -0.18], size: 0.1, rotation: 0.7236, color: [0.0001, 0.0061, 0.0076] }
+    - { shape: hexagon, position: -0.534, offset: [-0.18, -0.18], size: 0.1, rotation: 0.7236, color: [0.0089, 0.008, 0.0066] }
+    - { shape: streak, position: 1, size: 0.001, power: 16, color: [0.0375, 0.0375, 0.0375], tinted: true }
+benchmark:
+  warmup_seconds: 2
+  sample_seconds: 1
+  samples: 7
+  min_frames: 120
+  frames_in_flight: 2

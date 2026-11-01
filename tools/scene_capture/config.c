@@ -452,7 +452,9 @@ static int load_suns(const AeronConfigFile* yaml, CaptureConfig* config) {
 		fprintf(stderr, "suns must list at most %d suns\n", CAPTURE_MAX_SUNS);
 		return 0;
 	}
-	static const char* const keys[] = { "direction", "color", "size_degrees", "radiance", "core_brightness" };
+	static const char* const keys[] = { "direction", "color",           "size_degrees",
+										"radiance",  "core_brightness", "flare" };
+	int                      flares = 0;
 	for (size_t i = 0; i < count; ++i) {
 		const AeronConfigNode* item     = AeronConfigNode_SequenceGet(list, i);
 		CaptureSun*            out      = &config->suns[i];
@@ -486,8 +488,46 @@ static int load_suns(const AeronConfigFile* yaml, CaptureConfig* config) {
 			fprintf(stderr, "suns[%zu].core_brightness must be a number of 0 or more\n", i);
 			return 0;
 		}
+		const AeronConfigNode* flare = AeronConfigNode_MapGet(item, "flare");
+		if (flare && AeronConfigNode_Type(flare) != AERON_CONFIG_BOOL) {
+			fprintf(stderr, "suns[%zu].flare must be true or false\n", i);
+			return 0;
+		}
+		out->flare = flare && AeronConfigNode_Bool(flare, 0);
+		flares += out->flare;
+	}
+	if (flares > 1) {
+		fprintf(stderr, "only one sun may have a flare\n");
+		return 0;
+	}
+	if (flares && !config->lens_flare.element_count) {
+		fprintf(stderr, "a sun with a flare needs lens_flare.elements\n");
+		return 0;
 	}
 	config->sun_count = (int)count;
+	return 1;
+}
+
+static int load_lens_flare(const AeronConfigFile* yaml, CaptureLensFlare* flare) {
+	const AeronConfigNode* node = AeronConfigFile_GetNode(yaml, "lens_flare");
+	flare->intensity            = 1;
+	if (!node)
+		return 1;
+	static const char* const keys[] = { "intensity", "elements" };
+	if (!only_keys(node, "lens_flare", keys, sizeof keys / sizeof keys[0]))
+		return 0;
+	const AeronConfigNode* intensity = AeronConfigNode_MapGet(node, "intensity");
+	if (intensity && (!scalar(intensity, &flare->intensity) || !(flare->intensity >= 0))) {
+		fprintf(stderr, "lens_flare.intensity must be a number of 0 or more\n");
+		return 0;
+	}
+	AeronConfigError error;
+	if (!AeronSceneLensFlare_ParseElements(AeronConfigNode_MapGet(node, "elements"), flare->elements,
+										   AERON_SCENE_LENS_FLARE_MAX_ELEMENTS, &flare->element_count,
+										   &error)) {
+		fprintf(stderr, "lens_flare.elements, line %d: %s\n", error.line, error.message);
+		return 0;
+	}
 	return 1;
 }
 
@@ -760,6 +800,7 @@ int CaptureConfig_Load(const char* path, CaptureConfig* config) {
 									  "exposure_ev100",
 									  "benchmark",
 									  "suns",
+									  "lens_flare",
 									  "game_scene" };
 	const AeronConfigNode* root   = AeronConfigFile_Root(yaml);
 	int                    ok     = AeronConfigNode_Type(root) == AERON_CONFIG_MAP;
@@ -789,8 +830,8 @@ int CaptureConfig_Load(const char* path, CaptureConfig* config) {
 	}
 	if (ok)
 		ok = load_models(yaml, config) && load_effects(yaml, config) &&
-			 load_benchmark(yaml, &config->benchmark) && load_suns(yaml, config) &&
-			 load_game_scene(vfs, yaml, config);
+			 load_benchmark(yaml, &config->benchmark) && load_lens_flare(yaml, &config->lens_flare) &&
+			 load_suns(yaml, config) && load_game_scene(vfs, yaml, config);
 	AeronConfigFile_Destroy(yaml);
 	AeronVfs_Destroy(vfs);
 	return ok;
