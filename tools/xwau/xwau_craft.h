@@ -21,7 +21,7 @@
  *     6: {min_speed_mglt: 40}
  *
  *   weapons:
- *     switch_by_iff: true                            # fire the weapons of the craft's side
+ *     switch_by_iff: all                             # fire the weapons of the craft's side
  *     colors:                                        # any markings
  *       variant: {default: 3, 284: 1}                # the bolt's markings, by weapon type
  *       impact: {280: 0xff0000, 282: 0}              # RGB; 0 keeps the stock white mark
@@ -74,8 +74,8 @@
  * impact colour loses its alpha, as in XWAU, and one whose RGB565 value is 0
  * becomes 0, since XWAU then keeps the stock mark. WeaponLightColor keys
  * aren't imported: XWAU players see the light of the bolt's material
- * instead. WeaponSwitchBasedOnIff gives switch_by_iff: -1 isn't set, and
- * any other value is true when it isn't 0.
+ * instead. WeaponSwitchBasedOnIff gives switch_by_iff: the importer writes
+ * `none` for 0, `all` for any other value, and nothing for -1.
  *
  * The shield recharge comes from FlightModels/<model>Shield.txt, else the
  * [Shield] section of the model's INI, read like XWAU's hook_shield. With

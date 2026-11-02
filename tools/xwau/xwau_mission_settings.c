@@ -196,12 +196,12 @@ bool XwauMissionSettings_WriteDefaults(FILE* f, const XwauSettingsConfig* config
 	if (config->opt_limit_engine_glows)
 		fputs("  classic_hide_destroyed_engine_glows: true\n", f);
 	if (config->weapon_switch)
-		fprintf(f, "  weapon_iff_swap: %s\n", config->weapon_switch_by_iff ? "true" : "false");
+		fprintf(f, "  weapon_iff_swap: %s\n", config->weapon_switch_by_iff ? "all" : "none");
 	if (config->mission_tie_stats)
 		fputs("  ai_attack_uses_max_speed_cache: true\n", f);
 	if (config->weapon_rate_fire_check)
 		fputs("  fire_needs_decharge_rate: true\n  tie_fighter_energy_step_always_high: true\n"
-			  "  player_decharge_lasers_only: true\n  warhead_collision_bonus_any_target: true\n"
+			  "  player_turret_racks_keep_charge: true\n  warhead_collision_bonus_any_target: true\n"
 			  "  gun_turret_hardpoints: true\n",
 			  f);
 	if (config->weapon_rate_mesh_filter)
@@ -217,11 +217,11 @@ bool XwauMissionSettings_WriteDefaults(FILE* f, const XwauSettingsConfig* config
 	if (config->weapon_rate_slot_cap)
 		fputs("  no_player_warhead_slot_cap: true\n", f);
 	if (config->gunner_seats)
-		fputs("  gunner_weapon_select_in_seat: true\n  gunner_fires_warheads: true\n", f);
+		fputs("  gunner_weapon_select_in_seat: true\n  gunner_warheads_need_cockpit_hardpoint: true\n", f);
 	if (config->gunner_selected_group)
 		fputs("  gunner_fires_selected_group: true\n", f);
 	if (config->jamming && !config->jamming_enabled)
-		fputs("  hangar_jamming: false\n", f);
+		fputs("  player_weapon_jamming: false\n", f);
 	else if (config->jamming)
 		fputs("  super_star_destroyer_jamming: true\n", f);
 	if (config->weapon_type)
@@ -240,7 +240,7 @@ bool XwauMissionSettings_WriteDefaults(FILE* f, const XwauSettingsConfig* config
 	if (shields)
 		fputs("  damage_through_shields_on_hard: true\n", f);
 	if (interdiction) {
-		fputs("  interdiction_regions: ", f);
+		fputs("  hyperspace_abort_sound_regions: ", f);
 		write_ints(f, config->interdiction, config->interdiction_count);
 		fputc('\n', f);
 	}
@@ -544,7 +544,9 @@ void XwauMissionSettings_Write(FILE* f, const XwauMissionSettings* s) {
 	if (s->red_alert >= 0)
 		fprintf(f, "  red_alert: %s\n", yes_no(s->red_alert));
 	if (s->skip_hyperspaced_messages >= 0)
-		fprintf(f, "  skip_hyperspaced_messages: %s\n", yes_no(s->skip_hyperspaced_messages));
+		fprintf(f, "  hide_hyperspace_exit_messages: %s\n", yes_no(s->skip_hyperspaced_messages));
+	if (s->skip_hyperspaced_messages > 0)
+		fputs("  hide_friendly_arrival_messages: true\n", f);
 	if (s->skip_arrival_iff == 255)
 		fputs("  skip_arrival_messages_iff: all\n", f);
 	else if (s->skip_arrival_iff == 256)
@@ -570,7 +572,7 @@ void XwauMissionSettings_Write(FILE* f, const XwauMissionSettings* s) {
 				yes_no(s->target_only_not_inspected));
 	}
 	if (s->skip_projectiles)
-		fputs("  skip_projectiles_proximity_check: true\n", f);
+		fputs("  proximity_triggers_check_craft_only: true\n", f);
 	if (s->order_list || s->order_lines.count) {
 		fputs("  order_of_battle:\n", f);
 		if (s->order_list) {
@@ -596,7 +598,7 @@ void XwauMissionSettings_Write(FILE* f, const XwauMissionSettings* s) {
 			fprintf(f, "    top: %d\n", s->order_top);
 	}
 	if (s->interdiction) {
-		fputs("  interdiction_regions: ", f);
+		fputs("  hyperspace_abort_sound_regions: ", f);
 		write_ints(f, s->interdiction_regions, s->interdiction_count);
 		fputc('\n', f);
 	}

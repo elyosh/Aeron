@@ -48,7 +48,7 @@
  * which its MC80s load) keeps the stock model for the stock object types that
  * load it.
  *
- *   # Written by the OpenXWA mod importer ...
+ *   # Made by the OpenXWA mod importer.
  *   version: 1
  *   object_type: 138
  *   model: victorystardestroyer
@@ -64,7 +64,7 @@
  *   beam_allowed: true
  *   names: {short: 'QF/Cr', long: 'Quasar Fire Carrier', plural: '...', gender: m}
  *
- *   # Written by the OpenXWA mod importer ...
+ *   # Made by the OpenXWA mod importer.
  *   version: 1
  *   craft_type: 124
  *   object_type: 138  # victorystardestroyer
@@ -102,8 +102,7 @@
  * <name>_<craft type>.yaml, and one without a name craft_type_<n>.yaml.
  *
  * The names and the craft type texts aren't in text/strings.yaml (the
- * `moved` IDs of XwauObjects_Write). Files that an earlier run wrote (they
- * start with "# Written by the OpenXWA mod importer") are removed first.
+ * `moved` IDs of XwauObjects_Write).
  */
 
 #include <stdbool.h>

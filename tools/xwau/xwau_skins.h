@@ -20,9 +20,9 @@
  * shows no skin. Face groups without a skin show state i if the OPT has
  * more than i states, or else state 0.
  *
- * Each distinct list across the contexts is a variant, named
- * "<state>|<skin>[-<opacity>],..." (lower case). The global context gives
- * the default variant of each markings value.
+ * Each different list and state in any context makes a variant, named by
+ * XwauSkins_VariantName in lower case. The global context gives the default
+ * variant of each markings value.
  *
  * The image of a skin for an OPT texture is the skin file named after the
  * texture (in any case), with .bmp, .png or .jpg tried in this order. In a
@@ -107,13 +107,21 @@ void XwauSkins_FreeNames(XwauSkinSet* set);
 #define XWAU_SKINS_MAX_MARKINGS 256
 
 /* What a markings value shows in one skin context. When it is skinned, it
- * shows its list as the variant "<state>|<list>". Otherwise it shows no
- * skin, with state `state`. */
+ * shows its list as the variant that XwauSkins_VariantName names. Otherwise
+ * it shows no skin, with state `state`. */
 typedef struct XwauMarkings {
 	bool skinned;
 	int  state;
 	char list[1024];
 } XwauMarkings;
+
+/* Writes the name of a variant. `list` is its skins, separated by ',', each
+ * with an optional opacity after '-', such as "default_2,ace-60". `state` is
+ * the state that the variant starts from. The name lists what is painted, in
+ * order, joined with " + ": the state variant when the state isn't 0, then
+ * the skins, each with its opacity when it isn't 100. For example,
+ * "State 1 + default_2 + ace 60%". */
+void XwauSkins_VariantName(int state, const char* list, char* out, size_t cap);
 
 /* Resolves the markings values of `model`, which has `states` states, in
  * the skin context `lines`. Sets *count to their number, at most

@@ -270,8 +270,7 @@ bool XwauText_Write(const char* mod_root, const char* stock_game, const char* ou
 		Report(output_file, "can't be written");
 		return false;
 	}
-	fprintf(f, "# Written by the OpenXWA mod importer: each ID whose text the mod changes in the\n"
-			   "# game's text files.\nversion: 1\nstrings:\n");
+	fputs("# Made by the OpenXWA mod importer.\nversion: 1\nstrings:\n", f);
 	bool ok      = true;
 	int  written = 0;
 	for (size_t i = 0; ok && i < sizeof g_textFiles / sizeof g_textFiles[0]; ++i) {

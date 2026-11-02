@@ -525,7 +525,7 @@ static bool skin_choices(const SkinModels* s, const XwauLines* lines, const char
 			entry->model    = m;
 			entry->markings = i;
 			if (now->skinned) {
-				snprintf(entry->variant, sizeof entry->variant, "%d|%s", now->state, now->list);
+				XwauSkins_VariantName(now->state, now->list, entry->variant, sizeof entry->variant);
 			} else {
 				/* State 0 is the model as modelled. The other states are variants. */
 				if (now->state)
@@ -897,7 +897,7 @@ static bool write_mission(const char* path, const char* base, const Profile* pro
 		Report(NULL, "cannot write %s", path);
 		return false;
 	}
-	fprintf(f, "# Imported from XWAU's %s selections by the OpenXWA mod importer.\nversion: 1\n", base);
+	fputs("# Made by the OpenXWA mod importer.\nversion: 1\n", f);
 	for (size_t i = 0; i < resdata->count; ++i) {
 		fputs(i ? ", " : "resdata: [", f);
 		Xwau_WriteString(f, resdata->items[i]);
@@ -982,7 +982,7 @@ static bool import_mission(const char* game, const XwauMissions* missions, const
 						   bool* skins_loaded, const XwauSettingsConfig* config,
 						   const XwauMissionNumbers* numbers, const char* models, const XwauLines* keys,
 						   const XwauGameTables* tables, XwauDatGroups* dat_groups, bool* dat_groups_loaded,
-						   Totals* totals) {
+						   const int design_scale[2], Totals* totals) {
 	char base[1100];
 	if (!PathFormat(base, sizeof base, "%s/%s", dir, name))
 		return false;
@@ -1015,7 +1015,7 @@ static bool import_mission(const char* game, const XwauMissions* missions, const
 	size_t swap_count = 0;
 	ok                = ok && swaps(game, base, models, keys, &swap_list, &swap_count);
 	XwauFrontPlanet planet;
-	ok          = ok && XwauFrontPlanet_Read(game, base, &planet);
+	ok                               = ok && XwauFrontPlanet_Read(game, base, design_scale, &planet);
 	bool lights = false;
 	ok                     = ok && headlights(game, base, &lights) && report_weapon_rates(game, base);
 	XwauMissionStats stats = { 0 };
@@ -1170,7 +1170,7 @@ static bool import_mission(const char* game, const XwauMissions* missions, const
 }
 
 bool XwauMissionFiles_Write(const char* game, const XwauMissions* missions, const char* stock_game,
-							const char* out) {
+							const char* out, const int design_scale[2]) {
 	SkinModels         skin_models  = { 0 };
 	bool               skins_loaded = false;
 	Totals             totals       = { 0 };
@@ -1206,7 +1206,7 @@ bool XwauMissionFiles_Write(const char* game, const XwauMissions* missions, cons
 		for (size_t n = 0; ok && n < names.count; ++n)
 			ok = import_mission(game, missions, stock_game, kMissionDirs[d], names.items[n], out,
 								&skin_models, &skins_loaded, &config, &numbers, models, &keys, tables,
-								&dat_groups, &dat_groups_loaded, &totals);
+								&dat_groups, &dat_groups_loaded, design_scale, &totals);
 		XwauLines_Free(&names);
 	}
 	free_skin_models(&skin_models);

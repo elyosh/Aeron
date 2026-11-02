@@ -40,6 +40,9 @@
 #include "xwau_weapon_stats.h"
 
 static int g_failures;
+/* How many design pixels make one 640x480 unit in the importer's frontend
+   files. */
+static const int kDesignScale[2] = { 4, 3 };
 
 static void check(int ok, const char* what) {
 	printf("%s %s\n", ok ? "ok" : "FAILED", what);
@@ -127,48 +130,54 @@ static const Case kCases[] = {
 	  DEFAULTS,
 	  1,
 	  4,
-	  { "0|default_0", "0|default_1", "0|default_2", "0|default_3" } },
+	  { "default_0", "default_1", "default_2", "default_3" } },
 	{ "Default when Default_i is missing",
 	  "",
 	  "Opt",
 	  { "default", "default_0" },
 	  2,
 	  2,
-	  { "0|default_0", "1|default" } },
+	  { "default_0", "State 1 + default" } },
 	{ "base + fgc",
 	  "Awing = Ace\nAwing_fgc_1 = Jake\n",
 	  "Awing",
 	  DEFAULTS,
 	  1,
 	  4,
-	  { "0|ace", "0|ace,jake", "0|ace", "0|ace" } },
+	  { "ace", "ace + jake", "ace", "ace" } },
 	{ "fgc alone",
 	  "Awing_fgc_0 = Ace\n",
 	  "Awing",
 	  DEFAULTS,
 	  1,
 	  4,
-	  { "0|ace", "0|default_1", "0|default_2", "0|default_3" } },
+	  { "ace", "default_1", "default_2", "default_3" } },
 	{ "count from fgc",
 	  "Opt_fgc_5 = Ace\n",
 	  "Opt",
 	  { "ace" },
 	  1,
 	  6,
-	  { NULL, NULL, NULL, NULL, NULL, "0|ace" } },
-	{ "count from states", "Opt = Ace\n", "Opt", { "ace" }, 3, 3, { "0|ace", "1|ace", "2|ace" } },
+	  { NULL, NULL, NULL, NULL, NULL, "ace" } },
+	{ "count from states",
+	  "Opt = Ace\n",
+	  "Opt",
+	  { "ace" },
+	  3,
+	  3,
+	  { "ace", "State 1 + ace", "State 2 + ace" } },
 	{ "count from Default_N",
 	  "",
 	  "Opt",
 	  { "default_6" },
 	  1,
 	  7,
-	  { NULL, NULL, NULL, NULL, NULL, NULL, "0|default_6" } },
-	{ "only fgc lines skin", "Opt_fgc_1 = Ace\n", "Opt", { "ace" }, 1, 2, { NULL, "0|ace" } },
+	  { NULL, NULL, NULL, NULL, NULL, NULL, "default_6" } },
+	{ "only fgc lines skin", "Opt_fgc_1 = Ace\n", "Opt", { "ace" }, 1, 2, { NULL, "ace" } },
 	{ "no skin folder", "Opt = Ace\n", "Opt", { NULL }, 1, -1, { NULL } },
 	{ "no skin exists", "Opt = Ace\n", "Opt", { "readme" }, 1, -1, { NULL } },
 	{ "nothing selects a skin", "", "Opt", { "ace" }, 1, -1, { NULL } },
-	{ "missing skins dropped", "Opt = Ace, Gone\n", "Opt", { "ace" }, 1, 1, { "0|ace" } },
+	{ "missing skins dropped", "Opt = Ace, Gone\n", "Opt", { "ace" }, 1, 1, { "ace" } },
 	{ "an empty list is unskinned", "Opt = Gone\n", "Opt", { "ace" }, 1, -1, { NULL } },
 	{ "an empty token keeps the list", "Opt_fgc_0 = Gone;\n", "Opt", { "default_0" }, 1, -1, { NULL } },
 	{ "opacity",
@@ -177,17 +186,17 @@ static const Case kCases[] = {
 	  { "ace", "jake" },
 	  1,
 	  1,
-	  { "0|ace-50,jake,ace,jake,ace-7,jake-20" } },
-	{ "opacity overflow", "Opt = Ace-99999999999\n", "Opt", { "ace" }, 1, 1, { "0|ace" } },
+	  { "ace 50% + jake + ace + jake + ace 7% + jake 20%" } },
+	{ "opacity overflow", "Opt = Ace-99999999999\n", "Opt", { "ace" }, 1, 1, { "ace" } },
 	{ "case-insensitive keys",
 	  "XWING = Ace\nxwing_FGC_1 = Jake\n",
 	  "Xwing",
 	  DEFAULTS,
 	  1,
 	  4,
-	  { "0|ace", "0|ace,jake", "0|ace", "0|ace" } },
-	{ "the first key wins", "Opt = Ace\nOPT = Jake\n", "Opt", { "ace", "jake" }, 1, 1, { "0|ace" } },
-	{ "state", "Opt_fgc_3 = Ace\n", "Opt", { "ace" }, 2, 4, { NULL, NULL, NULL, "0|ace" } },
+	  { "ace", "ace + jake", "ace", "ace" } },
+	{ "the first key wins", "Opt = Ace\nOPT = Jake\n", "Opt", { "ace", "jake" }, 1, 1, { "ace" } },
+	{ "state", "Opt_fgc_3 = Ace\n", "Opt", { "ace" }, 2, 4, { NULL, NULL, NULL, "ace" } },
 };
 
 static void test_skins(const char* scratch) {
@@ -461,32 +470,6 @@ static void test_skyboxes(const char* scratch) {
 		  "skyboxes: the folder list names the sky and overlay folders that load");
 	free(text);
 	free(list);
-
-	/* An existing manifest keeps its other entries and its comments, and the
-	 * importer's block between its two lines is replaced. */
-	write_file(manifest,
-			   "# My manifest\nversion: 1\n\nenvironments:\n  deathstar.interior:\n    intensity: 1\n"
-			   "  # Begin of the entries that the OpenXWA mod importer writes. Each import replaces them.\n"
-			   "  xwau.old:\n"
-			   "    intensity: 2\n  # End of the entries that the OpenXWA mod importer writes.\n\n"
-			   "xwa:\n  default: deathstar.interior\n  missions:\n    \"skirmish/temp.tie\":\n"
-			   "      regions:\n        \"0\": deathstar.interior\n");
-	check(XwauSkyboxes_Write(game, stock, manifest, folders), "skyboxes written into an existing manifest");
-	text = ReadWholeFile(manifest, &size);
-	check(text &&
-			  strncmp(text, "# My manifest\nversion: 1\n\nenvironments:\n  deathstar.interior:\n", 62) == 0 &&
-			  strstr(text, "xwa:\n  default: deathstar.interior\n  missions:\n    \"skirmish/temp.tie\":\n"),
-		  "skyboxes: the manifest's other entries and comments are kept");
-	check(text && !strstr(text, "xwau.old") && strstr(text, "  xwau.alpha:\n") &&
-			  strstr(text, "    # Begin of the entries") && strstr(text, "    # End of the entries"),
-		  "skyboxes: the importer's block is replaced, and the mission map gets one");
-	char* first = text;
-	text        = NULL;
-	check(XwauSkyboxes_Write(game, stock, manifest, folders), "skyboxes written again");
-	text = ReadWholeFile(manifest, &size);
-	check(first && text && strcmp(first, text) == 0, "skyboxes: a second import changes nothing");
-	free(first);
-	free(text);
 }
 
 /* ---- Craft settings ----------------------------------------------------------- */
@@ -645,7 +628,7 @@ static void test_craft(const char* scratch) {
 	free(text);
 	snprintf(path, sizeof path, "%s/models/corvette.yaml", out);
 	text = ReadWholeFile(path, &size);
-	check(text && strstr(text, "weapons:\n  switch_by_iff: false\n") && !strstr(text, "colors"),
+	check(text && strstr(text, "weapons:\n  switch_by_iff: none\n") && !strstr(text, "colors"),
 		  "craft: corvette.yaml has the weapon switch alone");
 	free(text);
 	snprintf(path, sizeof path, "%s/models/noini.yaml", out);
@@ -1211,8 +1194,8 @@ static void test_game_files(const char* scratch) {
 	}
 	size_t size = 0;
 	char*  text = ReadWholeFile(path, &size);
-	check(text && strcmp(text, "sounds:\n  - [\"Wave\\\\FE_High_Res\\\\Alarm.wav\", "
-							   "\"Wave\\\\Custom\\\\Evacuate.wav\"]\n") == 0,
+	check(text && strcmp(text, "sounds:\n  - [\"Wave/FE_High_Res/Alarm.wav\", "
+							   "\"Wave/Custom/Evacuate.wav\"]\n") == 0,
 		  "mission sounds: the mission file's list");
 	free(text);
 	XwauMissionSounds_Free(&sounds);
@@ -1279,7 +1262,8 @@ static void test_mission_files(const char* scratch) {
 	snprintf(path, sizeof path, "%s/Missions/c.ini", game);
 	write_file(path, "[Objects]\nObjectProfile_fg_0 = None\n");
 	XwauMissions* missions = XwauMissions_Load(game, false);
-	check(missions && XwauMissionFiles_Write(game, missions, stock, out), "mission files: written");
+	check(missions && XwauMissionFiles_Write(game, missions, stock, out, kDesignScale),
+		  "mission files: written");
 	XwauMissions_Free(missions);
 	size_t size = 0;
 	snprintf(path, sizeof path, "%s/missions/a.yaml", out);
@@ -1363,7 +1347,7 @@ static void test_mission_tie(const char* scratch) {
 	snprintf(path, sizeof path, "%s/Missions/t.tie", game);
 	write_tie(path, 3, kNames, kCrafts);
 	XwauMissions* missions = XwauMissions_Load(game, false);
-	check(missions && XwauMissionFiles_Write(game, missions, stock, out),
+	check(missions && XwauMissionFiles_Write(game, missions, stock, out, kDesignScale),
 		  "mission_tie: mission file written");
 	XwauMissions_Free(missions);
 	size_t size = 0;
@@ -1568,7 +1552,7 @@ static void test_warhead_pools(const char* scratch) {
 	snprintf(path, sizeof path, "%s/Missions/w.tie", game);
 	write_tie(path, 3, kNames, kCrafts);
 	XwauMissions* missions = XwauMissions_Load(game, false);
-	check(missions && XwauMissionFiles_Write(game, missions, stock, out),
+	check(missions && XwauMissionFiles_Write(game, missions, stock, out, kDesignScale),
 		  "warhead pools: mission file written");
 	XwauMissions_Free(missions);
 	size_t size = 0;
@@ -1626,14 +1610,16 @@ static void test_mission_settings(const char* scratch) {
 
 	snprintf(settings, sizeof settings, "%s/flight.yaml", scratch);
 	check(XwauFlightSettings_Write(game, settings) &&
-			  same_file(settings, "# Made by the OpenXWA mod importer.\nversion: 1\nrules:\n"
-								  "  reset_combat_music_at_mission_load: true\n"
-								  "  hangar_red_alert_any_mothership: true\nmission_settings:\n"
-								  "  warhead_collision_damage: false\n  interdiction_regions: [3]\n"),
+			  same_file(settings,
+						"# Made by the OpenXWA mod importer.\nversion: 1\nrules:\n"
+						"  reset_combat_music_at_mission_load: true\n"
+						"  hangar_red_alert_any_mothership: true\nmission_settings:\n"
+						"  warhead_collision_damage: false\n  hyperspace_abort_sound_regions: [3]\n"),
 		  "mission settings: the hook's rules, and the global settings as defaults");
 
 	XwauMissions* missions = XwauMissions_Load(game, false);
-	check(missions && XwauMissionFiles_Write(game, missions, stock, out), "mission settings: files written");
+	check(missions && XwauMissionFiles_Write(game, missions, stock, out, kDesignScale),
+		  "mission settings: files written");
 	XwauMissions_Free(missions);
 	size_t size = 0;
 	snprintf(path, sizeof path, "%s/missions/m1.yaml", out);
@@ -1646,10 +1632,11 @@ static void test_mission_settings(const char* scratch) {
 						   "  force_player_in_turret: \"0:00:12\"\n"
 						   "  target_key: { flight_groups: [1], method: cycle, only_not_inspected: false }\n"
 						   "  order_of_battle:\n    lines:\n      - \"A\"\n      - \"\"\n      - \"B\"\n"
-						   "    top: 140\n  interdiction_regions: [1, 2]\n"),
+						   "    top: 140\n  hyperspace_abort_sound_regions: [1, 2]\n"),
 		  "mission settings: the first line wins, numbers are read as std::stoi reads them, a word of "
 		  "spaces is an empty line, and flight groups that the .TIE doesn't have are left out");
-	check(m49 && strstr(m49, "settings:\n  skip_hyperspaced_messages: true\n"),
+	check(m49 && strstr(m49, "settings:\n  hide_hyperspace_exit_messages: true\n"
+							 "  hide_friendly_arrival_messages: true\n"),
 		  "mission settings: mission 49 skips the \"entering area\" messages too, even when the mod doesn't "
 		  "change it");
 	check(m50 && strstr(m50, "settings:\n  damage_through_shields_on_hard: true\n"),
@@ -1695,7 +1682,7 @@ static void test_model_swaps(const char* scratch) {
 	snprintf(path, sizeof path, "%s/Missions/s.tie", game);
 	write_tie(path, 2, kNames, kCrafts);
 	XwauMissions* missions = XwauMissions_Load(game, false);
-	check(missions && XwauMissionFiles_Write(game, missions, stock, out),
+	check(missions && XwauMissionFiles_Write(game, missions, stock, out, kDesignScale),
 		  "model swaps: mission file written");
 	XwauMissions_Free(missions);
 	size_t size = 0;
@@ -1746,7 +1733,7 @@ static void test_craft_names(const char* scratch) {
 	snprintf(path, sizeof path, "%s/Missions/c.tie", game);
 	write_tie(path, 1, kNames, kCrafts);
 	XwauMissions* missions = XwauMissions_Load(game, false);
-	check(missions && XwauMissionFiles_Write(game, missions, stock, out),
+	check(missions && XwauMissionFiles_Write(game, missions, stock, out, kDesignScale),
 		  "craft names: mission file written");
 	XwauMissions_Free(missions);
 	size_t size = 0;
@@ -1804,14 +1791,15 @@ static void test_front_planet(const char* scratch) {
 		write_tie(path, 1, kNames, kCrafts);
 	}
 	XwauMissions* missions = XwauMissions_Load(game, false);
-	check(missions && XwauMissionFiles_Write(game, missions, stock, out),
+	check(missions && XwauMissionFiles_Write(game, missions, stock, out, kDesignScale),
 		  "front planet: mission files written");
 	XwauMissions_Free(missions);
 	size_t size = 0;
 	snprintf(path, sizeof path, "%s/missions/a.yaml", out);
 	char* text = ReadWholeFile(path, &size);
-	check(text && strstr(text, "concourse:\n  front_planet: { x: -150, y: 78, image: 15010 }\n"),
-		  "front planet: the keys are found in any case, the first line wins and numbers are read in base 0");
+	check(text && strstr(text, "concourse:\n  front_planet: { position: [-600, 234], image: 15010 }\n"),
+		  "front planet: the keys are found in any case, the first line wins, numbers are read in base 0, "
+		  "and the position is in design pixels");
 	free(text);
 	snprintf(path, sizeof path, "%s/missions/b.yaml", out);
 	text = ReadWholeFile(path, &size);
@@ -1837,7 +1825,7 @@ static void test_flight_settings(const char* scratch) {
 			same_file(
 				settings,
 				"# Made by the OpenXWA mod importer.\nversion: 1\nbackdrops:\n  extra_planets:\n    - { ids: "
-				"[104, 255], first_group: 6304 }\n"),
+				"[104, 255], image_groups: [6304, 6455] }\n"),
 		"flight settings: the backdrop hook makes backdrop ids 104 to 255 planets");
 	remove(path);
 	snprintf(path, sizeof path, "%s/ddraw.dll", game);
@@ -1882,12 +1870,12 @@ static void test_flight_settings(const char* scratch) {
 	free(text);
 	write_file(path, "MZ WeaponSwitchBasedOnIff");
 	text = XwauFlightSettings_Write(game, settings) ? ReadWholeFile(settings, &size) : NULL;
-	check(text && strstr(text, "rules:\n  weapon_iff_swap: false\n"),
+	check(text && strstr(text, "rules:\n  weapon_iff_swap: none\n"),
 		  "flight settings: hook_weapon_color turns the weapon switch off by default");
 	free(text);
 	write_file(hooks, "[hook_weapon_color]\nWeaponSwitchBasedOnIff = 1\n");
 	text = XwauFlightSettings_Write(game, settings) ? ReadWholeFile(settings, &size) : NULL;
-	check(text && strstr(text, "rules:\n  weapon_iff_swap: true\n"),
+	check(text && strstr(text, "rules:\n  weapon_iff_swap: all\n"),
 		  "flight settings: WeaponSwitchBasedOnIff = 1 in Hooks.ini swaps every shot");
 	free(text);
 	remove(path);
@@ -1902,7 +1890,7 @@ static void test_flight_settings(const char* scratch) {
 	write_file(hooks, "; IsJammingEnabled = 0 or 1\nIsJammingEnabled = 0\n");
 	check(XwauFlightSettings_Write(game, settings) &&
 			  same_file(settings, "# Made by the OpenXWA mod importer.\nversion: 1\nrules:\n"
-								  "  hangar_jamming: false\n"),
+								  "  player_weapon_jamming: false\n"),
 		  "flight settings: IsJammingEnabled = 0 turns jamming off");
 	remove(path);
 	remove(hooks);
@@ -1995,7 +1983,7 @@ static void test_object_limits(const char* scratch) {
 	snprintf(path, sizeof path, "%s/Missions/n.tie", game);
 	write_tie(path, 1, kNames, kCrafts);
 	XwauMissions* missions = XwauMissions_Load(game, false);
-	check(missions && XwauMissionFiles_Write(game, missions, stock, out),
+	check(missions && XwauMissionFiles_Write(game, missions, stock, out, kDesignScale),
 		  "object limits: mission files written");
 	XwauMissions_Free(missions);
 	size_t size = 0;
@@ -2040,7 +2028,7 @@ static void test_headlights(const char* scratch) {
 		write_tie(path, 1, kNames, kCrafts);
 	}
 	XwauMissions* missions = XwauMissions_Load(game, false);
-	check(missions && XwauMissionFiles_Write(game, missions, stock, out),
+	check(missions && XwauMissionFiles_Write(game, missions, stock, out, kDesignScale),
 		  "headlights: mission files written");
 	XwauMissions_Free(missions);
 	size_t size = 0;
@@ -2329,7 +2317,7 @@ static void test_stats_profiles(const char* scratch) {
 	check(text && strstr(text, "  rates: {decharge: 3}\n  decharge_percent: 50\n  recharge_percent: 100\n") &&
 			  strstr(text,
 					 "  fire_needs_decharge_rate: true\n  tie_fighter_energy_step_always_high: true\n"
-					 "  player_decharge_lasers_only: true\n  warhead_collision_bonus_any_target: true\n"
+					 "  player_turret_racks_keep_charge: true\n  warhead_collision_bonus_any_target: true\n"
 					 "  gun_turret_hardpoints: true\n  no_starship_fire_from_destroyed_racks: true\n") &&
 			  !strstr(text, "no_fire_from_destroyed_hardpoints") && !strstr(text, "fire_ratio_by_rank"),
 		  "weapon rates: the global rates, hook_weapon_rate's percents from Hooks.ini, and its rules");
@@ -2517,15 +2505,14 @@ static void test_sound_banks(const char* scratch) {
 	size_t size = 0;
 	char*  text = XwauSoundBanks_Write(game, flight, files) ? ReadWholeFile(path, &size) : NULL;
 	check(text &&
-			  strstr(text,
-					 "  interior: # Wave/Sfx_Interior.lst, by object type\n    count: 4\n    sounds:\n"
-					 "      1: {file: \"Wave\\\\Sfx_Interior\\\\Engine.wav\", volume: 76, distance: 8192}\n"
-					 "      3: {file: \"Wave\\\\Sfx_Interior\\\\Deep.WAV\", volume: 127, distance: 8192}\n"),
+			  strstr(text, "  interior: # Wave/Sfx_Interior.lst, by object type\n    count: 4\n    sounds:\n"
+						   "      1: {file: \"Wave/Sfx_Interior/Engine.wav\", volume: 76, distance: 8192}\n"
+						   "      3: {file: \"Wave/Sfx_Interior/Deep.WAV\", volume: 127, distance: 8192}\n"),
 		  "sound banks: blank lines take no slot; Unused and missing files are silent; count is XWAU's line "
 		  "count");
 	check(text &&
 			  strstr(text, "  weapon: # Wave/Sfx_Weapon.lst, 10 by object type\n    count: 12\n    sounds:\n"
-						   "      1:\n        1: {file: \"Wave\\\\Sfx_Weapon\\\\Laser.wav\", volume: 70, "
+						   "      1:\n        1: {file: \"Wave/Sfx_Weapon/Laser.wav\", volume: 70, "
 						   "distance: 10240}\n") &&
 			  !strstr(text, "other") && !strstr(text, "s_foil"),
 		  "sound banks: 10 entries by object type; a bank that no hook reads, or whose hook isn't installed, "

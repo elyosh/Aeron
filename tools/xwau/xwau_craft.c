@@ -1181,7 +1181,7 @@ static void write_weapon_colors(FILE* f, const char* indent, const XwauCraftWeap
 static void write_weapons(FILE* f, const XwauCraftWeapons* weapons) {
 	fprintf(f, "weapons:\n");
 	if (weapons->switch_by_iff >= 0)
-		fprintf(f, "  switch_by_iff: %s\n", weapons->switch_by_iff ? "true" : "false");
+		fprintf(f, "  switch_by_iff: %s\n", weapons->switch_by_iff ? "all" : "none");
 	XwauCraft_WriteWeaponRates(f, "  ", &weapons->rates);
 	XwauWeaponStats_Write(f, "  ", &weapons->stats);
 	if (has_weapon_colors(&weapons->colors)) {
@@ -1234,19 +1234,19 @@ static void write_surfaces(FILE* f, const XwauMatFile* mat) {
 	}
 }
 
-static bool write_craft_file(const char* path, const char* sources, const XwauCraftHud* hud,
-							 const XwauCraftEngineGlows* glows, const XwauCraftWeapons* weapons,
-							 const XwauStatsProfiles* stats, const XwauCraftShield* shield,
-							 const XwauCraftSound* sound, const XwauCraftComponents* components,
-							 const XwauGunnerSeats* gunner, const XwauCraftWarheadLock* lock,
-							 const XwauCraftJamming* jamming, const XwauCraftDock* dock,
-							 const XwauCockpitFov* fov, const XwauMatFile* mat, XwauLines* cockpits) {
+static bool write_craft_file(const char* path, const XwauCraftHud* hud, const XwauCraftEngineGlows* glows,
+							 const XwauCraftWeapons* weapons, const XwauStatsProfiles* stats,
+							 const XwauCraftShield* shield, const XwauCraftSound* sound,
+							 const XwauCraftComponents* components, const XwauGunnerSeats* gunner,
+							 const XwauCraftWarheadLock* lock, const XwauCraftJamming* jamming,
+							 const XwauCraftDock* dock, const XwauCockpitFov* fov, const XwauMatFile* mat,
+							 XwauLines* cockpits) {
 	FILE* f = fopen(path, "wb");
 	if (!f) {
 		Report(path, "can't be written");
 		return false;
 	}
-	fprintf(f, "# Written by the OpenXWA mod importer from %s.\nversion: 1\n", sources);
+	fprintf(f, "# Made by the OpenXWA mod importer.\nversion: 1\n");
 	if (has_reticle(hud) || has_colors(hud))
 		write_hud(f, hud);
 	if (has_engine_glows(glows))
@@ -1284,12 +1284,6 @@ static void write_list(FILE* f, const char* key, const uint16_t* values, size_t 
 	for (size_t i = 0; i < count; ++i)
 		fprintf(f, "%s%s%u", i ? "," : "", i % 16 ? " " : "\n  ", values[i]);
 	fprintf(f, "]\n");
-}
-
-/* Appends `name` to the list of source files. */
-static void add_source(char* sources, size_t cap, const char* name) {
-	const size_t length = strlen(sources);
-	snprintf(sources + length, cap - length, "%s%s", length ? " and " : "", name);
 }
 
 /* XWAU's edge filter on the target display (enable_wireframe_CMD). */
@@ -1448,14 +1442,7 @@ static bool write_hud_file(const char* xwau_root, const char* output_dir) {
 		ok = false;
 	}
 	if (f) {
-		char sources[256] = "";
-		if (has_hull)
-			add_source(sources, sizeof sources, "HullIconList.txt");
-		if (has_map)
-			add_source(sources, sizeof sources, "MapIconList.txt");
-		if (has_display)
-			add_source(sources, sizeof sources, "Dynamic_Cockpit.cfg");
-		fprintf(f, "# Written by the OpenXWA mod importer from %s.\n", sources);
+		fputs("# Made by the OpenXWA mod importer.\n", f);
 		if (has_hull || has_map)
 			fputs("# Each list gives the image id for each object type.\n", f);
 		fputs("version: 1\n", f);
@@ -1647,7 +1634,7 @@ bool XwauCraft_Write(const char* xwau_root, const char* output_dir, XwauLines* c
 	}
 	for (size_t i = 0; i < count; ++i) {
 		char model[256], ini[1100], side_names[SIDE_FILES][300], side_paths[SIDE_FILES][1100], key[256],
-			path[1100], sources[1400];
+			path[1100];
 		bool         has_side[SIDE_FILES];
 		const size_t length  = strlen(names[i]);
 		bool         has_ini = false;
@@ -1749,27 +1736,10 @@ bool XwauCraft_Write(const char* xwau_root, const char* output_dir, XwauLines* c
 			continue;
 		}
 
-		sources[0] = '\0';
-		for (int side = 0; side < SIDE_FILES; ++side) {
-			if (has_side[side])
-				add_source(sources, sizeof sources, side_names[side]);
-		}
-		if (has_ini) {
-			char ini_name[300];
-			snprintf(ini_name, sizeof ini_name, "FlightModels/%s.ini", model);
-			add_source(sources, sizeof sources, ini_name);
-		}
-		if (XwauMat_SurfaceRuleCount(mat))
-			add_source(sources, sizeof sources, mat_name);
-		if (fov.has_large) {
-			char dc_name[300];
-			snprintf(dc_name, sizeof dc_name, "DynamicCockpit/%sCockpit.dc", model);
-			add_source(sources, sizeof sources, dc_name);
-		}
 		surfaces += XwauMat_SurfaceRuleCount(mat) != 0;
 		if (!PathFormat(path, sizeof path, "%s/%s.yaml", craft_dir, key) || !MakeDirs(craft_dir) ||
-			!write_craft_file(path, sources, &hud, &glows, weapons, &stats, &shield, &sound, &strengths,
-							  &gunner, &lock, &jamming, &dock, &fov, mat, cockpits)) {
+			!write_craft_file(path, &hud, &glows, weapons, &stats, &shield, &sound, &strengths, &gunner,
+							  &lock, &jamming, &dock, &fov, mat, cockpits)) {
 			XwauMat_Free(mat);
 			XwauStatsProfiles_Free(&stats);
 			XwauWeaponStats_Free(&weapons->stats);

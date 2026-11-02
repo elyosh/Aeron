@@ -20,6 +20,7 @@
  *         7: "frontres\\medals\\LambdaModel.bmp"
  *       names:
  *         7: "Lambda Shuttle Model"
+ *       lady_blue: { mission: 30 }
  *
  * - MedalsDescriptions.txt gives `battle_medals`;
  * - KalidorCrescentPoints.txt and KalidorCrescentDescriptions.txt give
@@ -28,14 +29,18 @@
  *   has 8 rank thresholds and 25 rating thresholds, and the hook doesn't
  *   change these counts, so the values past them are left out;
  * - MedalDetailList.txt gives `mementos.images`, and
- *   FamilyMedalsDescriptions.txt gives `mementos.names`.
+ *   FamilyMedalsDescriptions.txt gives `mementos.names`;
+ * - the familyroom_ladyblue_mission and familyroom_cologne_mission keys of
+ *   ConcourseDoors.txt give `mementos.lady_blue` and `mementos.cologne`.
+ *   The importer only writes them when they aren't the stock missions, 23
+ *   and 9.
  *
  * The files are read as the hook reads them. The name files are read line
  * by line, and an empty line is "Unknown". The other files skip empty lines
  * and comments (XWAU_RULES_CPP). In MedalDetailList.txt, "null" means that
  * the mission has no memento. A memento named "Null" or "null" is left out,
  * so it keeps the game's name. Without hook_concourse.dll or these files,
- * no file is written, and a file that an earlier import wrote is removed.
+ * no file is written.
  */
 
 #include <stdbool.h>

@@ -9,13 +9,14 @@
  *     version: 1
  *     resdata: ["planet2", "planetcustom", "backdrop_special"]
  *     settings:
- *       skip_hyperspaced_messages: true
+ *       hide_hyperspace_exit_messages: true
+ *       hide_friendly_arrival_messages: true
  *     model_swaps:
  *       superstardestroyer: superstardestroyerrecentered
  *     craft_names:
  *       containerbrick: { ship_list: "Imperial II Star Destroyer 70", short_name: "ISD" }
  *     concourse:
- *       front_planet: { x: 319, y: 78, image: 15010 }
+ *       front_planet: { position: [1276, 234], image: 15010 }
  *     headlights: true
  *     stats_profiles:
  *       models:
@@ -28,7 +29,7 @@
  *         32: { profile: "Aeron", name: "Aeron", craft: 14 }
  *     skins:
  *       "awing":
- *         0: "0|default_2,ace"
+ *         0: "default_2 + ace"
  *     articulations:
  *       flight_groups:
  *         13: { name: "Red", craft: 1, variant: "1b0m7fw_fg13", start: [sfoils] }
@@ -141,8 +142,9 @@ bool XwauMissionFiles_ObjectLines(const char* game, const char* base, XwauLines*
 
 /* Writes the mission files under `out`. `stock_game` is the stock game's
  * folder, which has the .TIE of the missions that the mod doesn't bring.
- * Returns false on an error. */
+ * `design_scale` is how many design pixels of the mod's frontend files make
+ * one 640x480 unit, across and down. Returns false on an error. */
 bool XwauMissionFiles_Write(const char* game, const XwauMissions* missions, const char* stock_game,
-							const char* out);
+							const char* out, const int design_scale[2]);
 
 #endif /* AERON_XWAU_MISSION_FILES_H */

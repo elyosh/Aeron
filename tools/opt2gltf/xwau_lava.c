@@ -201,8 +201,7 @@ bool XwauLava_WriteLibrary(const char* effects_dir, bool merge) {
 			ok = ok && add_image(images, key, name);
 		}
 	}
-	ok = ok && EffectFiles_Write("opt2gltf", doc,
-								 "# Effect library lava, generated from XWAU's procedural lava.\n", file);
+	ok = ok && EffectFiles_Write("opt2gltf", doc, "# Made by the OpenXWA mod importer.\n", file);
 	if (ok)
 		Report(NULL, "library %s: %d image(s) written", XWAU_LAVA_LIBRARY, 2 * XWAU_LAVA_FRAMES);
 	cJSON_Delete(doc);

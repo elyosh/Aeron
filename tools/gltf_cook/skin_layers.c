@@ -783,7 +783,8 @@ static bool expand(Expansion* x) {
 	free(chain);
 	free(to);
 
-	/* The skins and skin variants are now variants. */
+	/* The skins are now variants. skinVariants stays in the file, as a record
+	   of the layers of each variant. */
 	cJSON* material;
 	cJSON_ArrayForEach(material, get(document, "materials")) {
 		cJSON* own = flight_model(material);
@@ -795,7 +796,6 @@ static bool expand(Expansion* x) {
 				cJSON_DeleteItemFromObjectCaseSensitive(material, "extensions");
 		}
 	}
-	cJSON_DeleteItemFromObjectCaseSensitive(flight_model(model_root(document)), "skinVariants");
 	if (x->uses_strength) {
 		found = false;
 		cJSON_ArrayForEach(name, used) {

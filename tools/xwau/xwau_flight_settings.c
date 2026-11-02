@@ -565,7 +565,7 @@ bool XwauFlightSettings_Write(const char* game, const char* path) {
 	}
 	fputs("# Made by the OpenXWA mod importer.\nversion: 1\n", f);
 	if (extra_planets)
-		fputs("backdrops:\n  extra_planets:\n    - { ids: [104, 255], first_group: 6304 }\n", f);
+		fputs("backdrops:\n  extra_planets:\n    - { ids: [104, 255], image_groups: [6304, 6455] }\n", f);
 	const bool settings   = XwauMissionSettings_WriteDefaults(f, &config);
 	const bool headlights = write_headlights(f, game);
 	bool       impact, rates;

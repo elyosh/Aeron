@@ -11,10 +11,6 @@
 #include "xwau_config.h"
 #include "xwau_game_tables.h"
 
-/* The first line of the files that an import writes, so that the next one
-   finds and removes them. */
-#define OBJECTS_HEADER "# Written by the OpenXWA mod importer"
-
 enum {
 	OBJECT_TYPE_COUNT  = XWAU_GAME_OBJECT_TYPES,
 	OBJECT_TYPE_SIZE   = XWAU_GAME_OBJECT_TYPE_SIZE,
@@ -615,26 +611,6 @@ static int beam_test_skipped(const XwauGameTables* stock, const XwauGameTables* 
 	return 0;
 }
 
-/* Removes the object files that an earlier run wrote. */
-static void remove_old_files(const char* dir) {
-	size_t count = 0;
-	char** names = ListDir(dir, true, &count);
-	for (size_t i = 0; i < count; ++i) {
-		char path[1300], line[64] = "";
-		if (!EndsWithNoCase(names[i], ".yaml") || !PathFormat(path, sizeof path, "%s/%s", dir, names[i]))
-			continue;
-		FILE* f = fopen(path, "rb");
-		if (!f)
-			continue;
-		const bool ours =
-			fgets(line, sizeof line, f) && strncmp(line, OBJECTS_HEADER, strlen(OBJECTS_HEADER)) == 0;
-		fclose(f);
-		if (ours)
-			remove(path);
-	}
-	FreeList(names, count);
-}
-
 typedef struct Counts {
 	int files, models, typeFields, records, sounds, beams, names, craftTypes, remaps;
 } Counts;
@@ -750,7 +726,7 @@ static bool write_craft_type_file(const char* path, int c, int object_type, cons
 		Report(path, "can't be written");
 		return false;
 	}
-	fprintf(f, OBJECTS_HEADER ": what the mod changes about craft type %d.\n", c);
+	fputs("# Made by the OpenXWA mod importer.\n", f);
 	fprintf(f, "version: 1\ncraft_type: %d\nobject_type: %d  # %s\n", c, object_type, model);
 	if (change->line) {
 		const ShipLine* ship = &change->ship;
@@ -867,7 +843,7 @@ static bool write_object_file(const char* path, const Change* change, const Xwau
 		return false;
 	}
 	const XwauGameType m = XwauGameTables_Type(mod, change->objectType);
-	fprintf(f, OBJECTS_HEADER ": what the mod changes about object type %d.\n", change->objectType);
+	fputs("# Made by the OpenXWA mod importer.\n", f);
 	fprintf(f, "version: 1\nobject_type: %d\n", change->objectType);
 	if (change->writeModel) {
 		fprintf(f, "model: %s\n", change->model);
@@ -1024,10 +1000,6 @@ bool XwauObjects_Write(const char* mod_root, const char* stock_game, const XwauG
 	char dir[1100], craft_dir[1100];
 	ok = ok && PathFormat(dir, sizeof dir, "%s/object_types", output_dir) && MakeDirs(dir) &&
 		 PathFormat(craft_dir, sizeof craft_dir, "%s/craft_types", output_dir) && MakeDirs(craft_dir);
-	if (ok) {
-		remove_old_files(dir);
-		remove_old_files(craft_dir);
-	}
 	Texts texts;
 	load_texts(mod_root, stock_game, &texts);
 	Counts counts       = { 0 };

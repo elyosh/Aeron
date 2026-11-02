@@ -10,19 +10,19 @@
  *     version: 1
  *     backdrops:
  *       extra_planets:
- *         - { ids: [104, 255], first_group: 6304 }
+ *         - { ids: [104, 255], image_groups: [6304, 6455] }
  *     rules:
  *       reset_combat_music_at_mission_load: true
  *       hangar_red_alert_any_mothership: true
  *       classic_hide_destroyed_engine_glows: true
- *       weapon_iff_swap: false
+ *       weapon_iff_swap: none
  *       ai_attack_uses_max_speed_cache: true
  *       fire_needs_decharge_rate: true
  *       no_starship_fire_from_destroyed_racks: true
  *       starship_ambient_sounds: true
  *       no_player_warhead_slot_cap: true
  *       gunner_weapon_select_in_seat: true
- *       gunner_fires_warheads: true
+ *       gunner_warheads_need_cockpit_hardpoint: true
  *       gunner_fires_selected_group: true
  *       super_star_destroyer_jamming: true
  *       two_launcher_fixes: true
@@ -31,7 +31,7 @@
  *     mission_settings:
  *       warhead_collision_damage: false
  *       damage_through_shields_on_hard: true
- *       interdiction_regions: [1]
+ *       hyperspace_abort_sound_regions: [1]
  *     headlights:
  *       position_m: [0, 0, 20]
  *       color: [0.944, 0.944, 1]
@@ -79,43 +79,52 @@
  * every hook_*.dll of the game folder, and this hook has no setting that
  * turns this off.
  *
- * `rules` holds the rules that hooks change in every mission:
- * hook_mission_tie.dll's two, hook_opt_limit.dll's engine glow rule
- * (xwau_mission_settings.h), and hook_weapon_color.dll's weapon_iff_swap,
- * its global WeaponSwitchBasedOnIff. With the hook, a starship fires the
- * weapons of its craft record, whatever its IFF, unless the setting or its
- * model's switch_by_iff turns the swap to its side's weapons on
- * (xwau_craft.h). hook_mission_tie.dll with stats profiles gives
- * ai_attack_uses_max_speed_cache: a craft under attack compares its own top
- * speed and its attacker's, which their stats profiles can change.
- * hook_weapon_rate.dll gives fire_needs_decharge_rate if it has weapon
- * profiles (it contains the text "_EnergyLowHighSeparation"). With this
- * rule, a craft only fires a base laser when the rack's charge is at least
- * its decharge rate. The DLL gives no_starship_fire_from_destroyed_racks if
- * it reads the craft's mesh states (it contains "Craft_Offset_292"). With
- * this rule, a freighter, starship, platform or satellite doesn't fire from
- * a rack whose mesh is destroyed. The DLL gives no_player_warhead_slot_cap
- * if it has warhead pools (it contains "WarheadTypeCount_fg_"): the hook then
- * lets a player's warhead rack hold more than 9 warheads, with or without
- * pools. hook_mission_objects.dll gives gunner_weapon_select_in_seat and
- * gunner_fires_warheads if it has gunner seats (it contains "Turrets.txt"),
- * and gunner_fires_selected_group when its UnlimitedTurretLaser setting
- * isn't 0 (hook_mission_objects.cfg, else Hooks.ini; 1 by default). With
- * these rules, the weapon key works in a seat, a seat fires warheads when
- * its cockpit has a warhead hardpoint, and a seat fires one laser group.
- * hook_engine_sound.dll gives
- * starship_ambient_sounds if it has ambient sounds (it contains
- * "AreStarshipAmbientEnabled") and that setting isn't 0. With this rule,
- * starships play their ambient sounds from the StarshipAmbient bank.
- * hook_jamming.dll gives super_star_destroyer_jamming: the hook makes the
- * Super Star Destroyer jam near its hangar, which it never does in the
- * stock game. When the hook's IsJammingEnabled setting is 0
- * (hook_jamming.cfg, else Hooks.ini; 1 by default), it gives
- * hangar_jamming: false instead, which turns jamming off.
- * hook_weapon_type.dll gives two_launcher_fixes: its fixes for craft with two
- * warhead launchers. When the DLL also contains "To call the hook that fixes
- * missile count", which only TFTC's build does, it gives
- * starship_missile_defense_any_warhead and weapon_rack_count_from_record.
+ * `rules` holds the rules that the hooks change in every mission. Each rule
+ * comes from a hook DLL in the game folder:
+ *   - hook_mission_tie.dll: reset_combat_music_at_mission_load and
+ *     hangar_red_alert_any_mothership (xwau_mission_settings.h). With stats
+ *     profiles, also ai_attack_uses_max_speed_cache: a craft under attack
+ *     compares its top speed with its attacker's, and stats profiles can
+ *     change both.
+ *   - hook_opt_limit.dll: classic_hide_destroyed_engine_glows.
+ *   - hook_weapon_color.dll: weapon_iff_swap, from the hook's global
+ *     WeaponSwitchBasedOnIff: `all` when it is 1, `none` when it is 0. With
+ *     the hook, a starship fires the weapons of its craft record whatever its
+ *     IFF, unless this setting or its model's switch_by_iff says otherwise
+ *     (xwau_craft.h).
+ *   - hook_weapon_rate.dll:
+ *       - fire_needs_decharge_rate, when the DLL has weapon profiles (it
+ *         contains the text "_EnergyLowHighSeparation"). A craft then fires
+ *         a base laser only when the rack's charge is at least its decharge
+ *         rate.
+ *       - no_starship_fire_from_destroyed_racks, when the DLL reads the
+ *         craft's mesh states (it contains "Craft_Offset_292"). A freighter,
+ *         starship, platform or satellite then doesn't fire from a rack
+ *         whose mesh is destroyed.
+ *       - no_player_warhead_slot_cap, when the DLL has warhead pools (it
+ *         contains "WarheadTypeCount_fg_"). A player's warhead rack can then
+ *         hold more than 9 warheads, with or without pools.
+ *   - hook_mission_objects.dll, when it has gunner seats (it contains
+ *     "Turrets.txt"): gunner_weapon_select_in_seat and
+ *     gunner_warheads_need_cockpit_hardpoint. Also gunner_fires_selected_group
+ *     when its UnlimitedTurretLaser setting isn't 0 (hook_mission_objects.cfg,
+ *     else Hooks.ini; 1 by default). With these rules, the weapon key works
+ *     in a seat, a seat fires warheads only when its cockpit has a warhead
+ *     hardpoint, and a seat fires one laser group.
+ *   - hook_engine_sound.dll: starship_ambient_sounds, when it has ambient
+ *     sounds (it contains "AreStarshipAmbientEnabled") and that setting
+ *     isn't 0. Starships then play their ambient sounds from the
+ *     StarshipAmbient bank.
+ *   - hook_jamming.dll: super_star_destroyer_jamming, because the hook makes
+ *     the Super Star Destroyer jam near its hangar, which the stock game
+ *     never does. When the hook's IsJammingEnabled setting is 0
+ *     (hook_jamming.cfg, else Hooks.ini; 1 by default), the importer writes
+ *     player_weapon_jamming: false instead, which turns jamming off.
+ *   - hook_weapon_type.dll: two_launcher_fixes, the hook's fixes for craft
+ *     with two warhead launchers. When the DLL also contains "To call the
+ *     hook that fixes missile count", which only TFTC's build does, also
+ *     starship_missile_defense_any_warhead and weapon_rack_count_from_record.
+ *
  * `mission_settings` holds the defaults that the global settings of
  * hook_mission_tie and hook_engine_sound give every mission
  * (xwau_mission_settings.h).
@@ -174,7 +183,7 @@
  * imported. They are reported when they would change something.
  * When hook_weapon_rate.dll has weapon profiles, it also changes some rules
  * with no data. The importer writes tie_fighter_energy_step_always_high,
- * player_decharge_lasers_only, warhead_collision_bonus_any_target and
+ * player_turret_racks_keep_charge, warhead_collision_bonus_any_target and
  * gun_turret_hardpoints. It writes no_fire_from_destroyed_hardpoints when
  * the hook's EnableFireMeshFilter isn't 0 (1 by default),
  * turbolaser_hardpoint_types when the DLL contains "WeaponHardpointTypes",

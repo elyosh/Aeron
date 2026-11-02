@@ -441,6 +441,39 @@ int XwauSkins_StateCount(const opt_file_t* opt) {
 	return (int)states;
 }
 
+void XwauSkins_VariantName(int state, const char* list, char* out, size_t cap) {
+	char   copy[1024];
+	size_t length = 0;
+	snprintf(copy, sizeof copy, "%s", list);
+	out[0] = '\0';
+	if (state) {
+		const int written = snprintf(out, cap, "State %d", state);
+		if (written < 0 || (size_t)written >= cap)
+			return;
+		length = (size_t)written;
+	}
+	for (char *token = copy, *next; token; token = next) {
+		next = strchr(token, ',');
+		if (next)
+			*next++ = 0;
+		char* dash    = strchr(token, '-');
+		int   opacity = 100;
+		if (dash) {
+			*dash   = 0;
+			opacity = atoi(dash + 1);
+		}
+		if (!token[0])
+			continue;
+		const int written =
+			opacity == 100
+				? snprintf(out + length, cap - length, "%s%s", length ? " + " : "", token)
+				: snprintf(out + length, cap - length, "%s%s %d%%", length ? " + " : "", token, opacity);
+		if (written < 0 || (size_t)written >= cap - length)
+			return;
+		length += (size_t)written;
+	}
+}
+
 bool XwauSkins_Resolve(const char* game, const XwauMissions* missions, const char* model,
 					   const opt_file_t* opt, const char* label, XwauSkins* out) {
 	memset(out, 0, sizeof *out);
@@ -455,7 +488,7 @@ bool XwauSkins_Resolve(const char* game, const XwauMissions* missions, const cha
 		ok = XwauSkins_Markings(XwauMissions_SkinContext(missions, c), model, states, &skins, lists, &count);
 		for (size_t i = 0; ok && i < count; ++i) {
 			char name[1100];
-			snprintf(name, sizeof name, "%d|%s", lists[i].state, lists[i].list);
+			XwauSkins_VariantName(lists[i].state, lists[i].list, name, sizeof name);
 			if (lists[i].skinned)
 				ok = add_variant(out, name, lists[i].state, lists[i].list, label);
 		}
@@ -464,7 +497,7 @@ bool XwauSkins_Resolve(const char* game, const XwauMissions* missions, const cha
 			ok            = out->markings != NULL;
 			for (size_t i = 0; ok && i < count; ++i) {
 				char name[1100];
-				snprintf(name, sizeof name, "%d|%s", lists[i].state, lists[i].list);
+				XwauSkins_VariantName(lists[i].state, lists[i].list, name, sizeof name);
 				ok = !lists[i].skinned || (out->markings[i] = StrDup(name)) != NULL;
 			}
 			out->skins.markings_count = ok ? count : 0;

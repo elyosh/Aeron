@@ -255,7 +255,7 @@ bool XwauGunnerSeats_WriteCockpits(const char* game, const XwauGameTables* stock
 			break;
 		}
 		fprintf(f,
-				"# Written by the OpenXWA mod importer: the cockpit of a gunner seat.\nversion: "
+				"# Made by the OpenXWA mod importer.\nversion: "
 				"1\nobject_type: %d\n"
 				"model: %s\nlist: equipment\ngenus: 2\nfamily: 6\nflags: 0x0\ngunner_cockpit: true\n",
 				t, key);

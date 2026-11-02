@@ -569,7 +569,7 @@ static bool read_rotations(const char* game, const XwauMissions* missions, const
 		XwauLines_Free(&lines);
 	}
 	if (ok && has_crew)
-		ok = add_setting(out, "crew.update_all", 1);
+		ok = add_setting(out, "crew.always_animate", 1);
 	return ok && XwauMissions_Articulations(missions, model, out->articulations, &out->articulation_count,
 											XWAU_MODEL_MAX_ARTICULATIONS, label);
 }

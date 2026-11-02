@@ -125,12 +125,22 @@ void XwauMissionSounds_Free(XwauMissionSounds* sounds) {
 	memset(sounds, 0, sizeof *sounds);
 }
 
+/* Writes `path` as a yaml string, with '/' between folders. */
+static void write_path(FILE* f, const char* path) {
+	char text[512];
+	snprintf(text, sizeof text, "%s", path);
+	for (char* c = text; *c; ++c)
+		if (*c == '\\')
+			*c = '/';
+	Xwau_WriteString(f, text);
+}
+
 void XwauMissionSounds_Write(FILE* f, const XwauMissionSounds* sounds) {
 	for (size_t i = 0; i < sounds->count; ++i) {
 		fputs(i ? "  - [" : "sounds:\n  - [", f);
-		Xwau_WriteString(f, sounds->items[i].from);
+		write_path(f, sounds->items[i].from);
 		fputs(", ", f);
-		Xwau_WriteString(f, sounds->items[i].to);
+		write_path(f, sounds->items[i].to);
 		fputs("]\n", f);
 	}
 }

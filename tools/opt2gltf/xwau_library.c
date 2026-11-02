@@ -719,8 +719,7 @@ static bool write_library_sources(Library* l, const char* effects_dir, bool merg
 	int    diff   = 0;
 	Sink   sink   = { .dir = dir };
 	ok            = ok && make_inputs(l, path, &sink, entries, existing, &images, &diff);
-	char header[300];
-	snprintf(header, sizeof header, "# Effect library %s, imported from XWAU's %s.\n", l->name, l->dat);
+	const char* header = "# Made by the OpenXWA mod importer.\n";
 	if (existing && !images) {
 		cJSON_Delete(doc);
 		return ok;

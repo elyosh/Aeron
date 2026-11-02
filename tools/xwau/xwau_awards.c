@@ -19,6 +19,10 @@
 #define KALIDOR_MAX 100
 #define MEMENTO_MAX 256
 
+/* The Tour of Duty missions that unlock the Lady Blue and the cologne in the
+ * stock game. */
+enum { STOCK_LADY_BLUE_MISSION = 23, STOCK_COLOGNE_MISSION = 9 };
+
 /* Reads the lines of a name file as std::getline does on Windows: a line
  * ends at '\n', a '\r' before it is dropped, and the line isn't trimmed. An
  * empty line becomes "Unknown". `*found` tells whether the file exists. */
@@ -101,25 +105,20 @@ static void write_values(FILE* f, const char* key, const long long* values, size
 	fprintf(f, "]\n");
 }
 
-/* Removes `path` if an earlier import wrote it. */
-static void remove_ours(const char* path) {
-	FILE* f = fopen(path, "r");
-	if (!f)
-		return;
-	char       line[64];
-	const bool ours = fgets(line, sizeof line, f) && strncmp(line, HEADER, strlen(HEADER)) == 0;
-	fclose(f);
-	if (ours)
-		remove(path);
+/* Returns the Tour of Duty mission that unlocks a family-room item: the
+   value of `key` in ConcourseDoors.txt, or `stock` if the key is missing. */
+static long long unlock_mission(const XwauLines* doors, const char* key, long long stock) {
+	char      value[64];
+	long long mission;
+	XwauLines_Value(doors, key, XWAU_RULES_CPP, value, sizeof value);
+	return value[0] && Xwau_Stoi(value, &mission) ? mission : stock;
 }
 
 bool XwauAwards_Write(const char* game, const char* path) {
 	char dll[1024];
-	if (!Xwau_FindFile(game, "hook_concourse.dll", dll, sizeof dll)) {
-		remove_ours(path);
+	if (!Xwau_FindFile(game, "hook_concourse.dll", dll, sizeof dll))
 		return true;
-	}
-	XwauLines  medals = { 0 }, kalidor_names = { 0 }, memento_names = { 0 }, images = { 0 };
+	XwauLines  medals = { 0 }, kalidor_names = { 0 }, memento_names = { 0 }, images = { 0 }, doors = { 0 };
 	bool       has_medals = false, has_kalidor_names = false, has_memento_names = false;
 	long long  kalidor_points[KALIDOR_MAX], ranks[RANK_COUNT], ratings[RATING_COUNT];
 	size_t     kalidor_count = 0, rank_count = 0, rating_count = 0;
@@ -133,6 +132,14 @@ bool XwauAwards_Write(const char* game, const char* path) {
 			  read_values(game, "PilotRatingPoints.txt", ratings, RATING_COUNT, &rating_count);
 	if (ok && has_images && !(ok = XwauLines_Read(images_path, "", XWAU_RULES_CPP, &images)))
 		Report(NULL, "out of memory (MedalDetailList.txt)");
+	char doors_path[1024];
+	if (ok && Xwau_FindFile(game, "ConcourseDoors.txt", doors_path, sizeof doors_path) &&
+		!(ok = XwauLines_Read(doors_path, "", XWAU_RULES_CPP, &doors)))
+		Report(NULL, "out of memory (ConcourseDoors.txt)");
+	const long long lady_blue =
+		unlock_mission(&doors, "familyroom_ladyblue_mission", STOCK_LADY_BLUE_MISSION);
+	const long long cologne     = unlock_mission(&doors, "familyroom_cologne_mission", STOCK_COLOGNE_MISSION);
+	const bool      unlocks     = lady_blue != STOCK_LADY_BLUE_MISSION || cologne != STOCK_COLOGNE_MISSION;
 	size_t medal_count = medals.count;
 	if (ok && medal_count > BATTLE_MAX) {
 		Report(NULL, "MedalsDescriptions.txt: %zu names; the game has up to %d battle medals", medal_count,
@@ -149,11 +156,8 @@ bool XwauAwards_Write(const char* game, const char* path) {
 		memento_count = MEMENTO_MAX;
 	}
 	size_t missing = 0;
-	if (!ok ||
-		!(medal_count || kalidor_levels || rank_count || rating_count || has_images || memento_names.count)) {
-		if (ok)
-			remove_ours(path);
-	} else {
+	if (ok && (medal_count || kalidor_levels || rank_count || rating_count || has_images ||
+			   memento_names.count || unlocks)) {
 		char  dir[1024];
 		char* slash = strrchr(path, '/');
 		ok      = !slash || (PathFormat(dir, sizeof dir, "%.*s", (int)(slash - path), path) && MakeDirs(dir));
@@ -189,7 +193,7 @@ bool XwauAwards_Write(const char* game, const char* path) {
 				write_values(f, "rank_thresholds", ranks, rank_count);
 			if (rating_count)
 				write_values(f, "rating_thresholds", ratings, rating_count);
-			if (has_images || memento_names.count) {
+			if (has_images || memento_names.count || unlocks) {
 				fprintf(f, "mementos:\n");
 				if (has_images) {
 					size_t written = 0;
@@ -217,6 +221,10 @@ bool XwauAwards_Write(const char* game, const char* path) {
 					Xwau_WriteString(f, memento_names.items[i]);
 					fprintf(f, "\n");
 				}
+				if (lady_blue != STOCK_LADY_BLUE_MISSION)
+					fprintf(f, "  lady_blue: { mission: %lld }\n", lady_blue);
+				if (cologne != STOCK_COLOGNE_MISSION)
+					fprintf(f, "  cologne: { mission: %lld }\n", cologne);
 			}
 			if (fclose(f) != 0) {
 				Report(NULL, "cannot write %s", path);
@@ -234,5 +242,6 @@ bool XwauAwards_Write(const char* game, const char* path) {
 	XwauLines_Free(&kalidor_names);
 	XwauLines_Free(&memento_names);
 	XwauLines_Free(&images);
+	XwauLines_Free(&doors);
 	return ok;
 }

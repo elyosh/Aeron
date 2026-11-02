@@ -645,163 +645,13 @@ static void write_missions(const SkyState* st, TextBuffer* f) {
 
 /* ===== Updating the manifest ============================================ */
 
-/* The lines around the importer's entries in each section of the manifest.
- * Each import replaces what is between them. */
-#define SKY_BEGIN "# Begin of the entries that the OpenXWA mod importer writes. Each import replaces them."
-#define SKY_END "# End of the entries that the OpenXWA mod importer writes."
-
-typedef struct SkyLine {
-	const char* text;
-	size_t      length;
-} SkyLine;
-
-/* The number of spaces that start `line`, or -1 for a blank line. */
-static int line_indent(const SkyLine* line) {
-	size_t i = 0;
-	while (i < line->length && line->text[i] == ' ')
-		++i;
-	return i == line->length || line->text[i] == '\r' ? -1 : (int)i;
-}
-
-/* Whether `line` is `text` at `indent`, followed by nothing but white space
- * or a comment. */
-static bool line_is(const SkyLine* line, int indent, const char* text) {
-	const size_t n = strlen(text);
-	if (line_indent(line) != indent || line->length < (size_t)indent + n ||
-		memcmp(line->text + indent, text, n) != 0)
-		return false;
-	for (size_t i = (size_t)indent + n; i < line->length; ++i) {
-		if (line->text[i] == '#')
-			return true;
-		if (line->text[i] != ' ' && line->text[i] != '\t' && line->text[i] != '\r')
-			return false;
-	}
-	return true;
-}
-
-/* The line after the entry that starts at `start` with `indent`: the next
- * line that isn't blank and has `indent` or less. */
-static size_t entry_end(const SkyLine* lines, size_t count, size_t start, int indent) {
-	size_t i = start + 1;
-	while (i < count) {
-		const int other = line_indent(&lines[i]);
-		if (other >= 0 && other <= indent)
-			break;
-		++i;
-	}
-	return i;
-}
-
-static void emit_lines(TextBuffer* out, const SkyLine* lines, size_t from, size_t to) {
-	for (size_t i = from; i < to; ++i) {
-		TextAppendBytes(out, lines[i].text, lines[i].length);
-		TextAppendBytes(out, "\n", 1);
-	}
-}
-
-static void emit_block(TextBuffer* out, int indent, const char* entries) {
-	TextAppend(out, "%*s%s\n%s%*s%s\n", indent, "", SKY_BEGIN, entries, indent, "", SKY_END);
-}
-
-/* Copies the entries of a section (lines `from` to `to`) at `indent`,
- * without the importer's block, then adds the importer's block after the last
- * line that isn't blank. */
-static void emit_section(TextBuffer* out, const SkyLine* lines, size_t from, size_t to, int indent,
-						 const char* entries) {
-	size_t last = to;
-	while (last > from && line_indent(&lines[last - 1]) < 0)
-		--last;
-	for (size_t i = from; i < last;) {
-		if (line_is(&lines[i], indent, SKY_BEGIN)) {
-			size_t end = i + 1;
-			while (end < last && !line_is(&lines[end], indent, SKY_END))
-				++end;
-			i = end < last ? end + 1 : last;
-			continue;
-		}
-		emit_lines(out, lines, i, i + 1);
-		++i;
-	}
-	emit_block(out, indent, entries);
-	emit_lines(out, lines, last, to);
-}
-
-/* Writes the importer's environments and mission entries into the manifest
- * `path`, between the SKY_BEGIN and SKY_END lines of its `environments` and
- * `xwa.missions` maps. The rest of the file is kept as it is. A file without
- * these lines gets them at the end of each map. */
-static bool update_manifest(const char* path, const char* environments, const char* missions) {
-	size_t   size  = 0;
-	char*    old   = IsFile(path) ? ReadWholeFile(path, &size) : NULL;
-	SkyLine* lines = NULL;
-	size_t   count = 0;
-	if (IsFile(path) && !old) {
-		Report(path, "cannot read");
-		return false;
-	}
-	for (size_t start = 0; old && start < size;) {
-		const char*  newline = memchr(old + start, '\n', size - start);
-		const size_t length  = newline ? (size_t)(newline - (old + start)) : size - start;
-		if (!ArrayGrow((void**)&lines, count, sizeof *lines)) {
-			free(lines);
-			free(old);
-			Report(NULL, "out of memory");
-			return false;
-		}
-		lines[count++] = (SkyLine) { old + start, length };
-		start += length + 1;
-	}
-	const size_t none = (size_t)-1;
-	size_t       env = none, xwa = none, mission_map = none;
-	for (size_t i = 0; i < count; ++i) {
-		if (env == none && line_is(&lines[i], 0, "environments:"))
-			env = i;
-		if (xwa == none && line_is(&lines[i], 0, "xwa:"))
-			xwa = i;
-	}
-	const size_t env_end = env != none ? entry_end(lines, count, env, 0) : none;
-	const size_t xwa_end = xwa != none ? entry_end(lines, count, xwa, 0) : none;
-	for (size_t i = xwa + 1; xwa != none && i < xwa_end && mission_map == none; ++i) {
-		if (line_is(&lines[i], 2, "missions:"))
-			mission_map = i;
-	}
-	const size_t mission_end = mission_map != none ? entry_end(lines, xwa_end, mission_map, 2) : none;
-
-	TextBuffer  text = { 0 };
-	TextBuffer* out  = &text;
-	if (!old)
-		TextAppend(out, "version: 1\n");
-	for (size_t i = 0; i < count;) {
-		if (i == env) {
-			emit_lines(out, lines, i, i + 1);
-			emit_section(out, lines, i + 1, env_end, 2, environments);
-			i = env_end;
-		} else if (i == mission_map) {
-			emit_lines(out, lines, i, i + 1);
-			emit_section(out, lines, i + 1, mission_end, 4, missions);
-			i = mission_end;
-		} else {
-			if (xwa != none && mission_map == none && i == xwa_end) {
-				TextAppend(out, "  missions:\n");
-				emit_block(out, 4, missions);
-			}
-			emit_lines(out, lines, i, i + 1);
-			++i;
-		}
-	}
-	if (env == none) {
-		TextAppend(out, "\nenvironments:\n");
-		emit_block(out, 2, environments);
-	}
-	if (xwa == none) {
-		TextAppend(out, "\nxwa:\n  missions:\n");
-		emit_block(out, 4, missions);
-	} else if (mission_map == none && xwa_end == count) {
-		TextAppend(out, "  missions:\n");
-		emit_block(out, 4, missions);
-	}
-	free(lines);
-	free(old);
+/* Writes the manifest `path` with the importer's `environments` and
+ * `xwa.missions` entries. */
+static bool write_manifest(const char* path, const char* environments, const char* missions) {
+	TextBuffer text = { 0 };
+	TextAppend(&text, "# Made by the OpenXWA mod importer.\nversion: 1\n");
+	TextAppend(&text, environments[0] ? "environments:\n%s" : "environments: {}\n%s", environments);
+	TextAppend(&text, missions[0] ? "xwa:\n  missions:\n%s" : "xwa:\n  missions: {}\n%s", missions);
 	const bool ok = !text.failed && text.text && WriteWholeFile(path, text.text, text.length);
 	if (!ok)
 		Report(path, text.failed ? "out of memory" : "cannot write");
@@ -879,14 +729,14 @@ bool XwauSkyboxes_Write(const char* game, const char* stock_game, const char* ma
 		}
 	}
 	ok = ok &&
-		 update_manifest(manifest, environments.text ? environments.text : "",
-						 missions.text ? missions.text : "") &&
+		 write_manifest(manifest, environments.text ? environments.text : "",
+						missions.text ? missions.text : "") &&
 		 write_folders(&st, folders);
 	free(environments.text);
 	free(missions.text);
 	if (ok) {
 		Report(NULL,
-			   "updated %s: %zu missions, %zu regions with a sky and %zu without, %zu environments for %zu "
+			   "wrote %s: %zu missions, %zu regions with a sky and %zu without, %zu environments for %zu "
 			   "cube folders",
 			   manifest, st.mission_count - st.death_star_count, with_sky, without, st.definition_count,
 			   st.folder_count);

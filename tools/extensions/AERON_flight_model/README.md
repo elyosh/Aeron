@@ -296,7 +296,9 @@ primitive's own material, not a variant's.
 The cooker turns skins into `KHR_materials_variants`, with one material per
 distinct composite of a material and its layers. A skin variant with the
 same name as a file variant changes that variant. The others are added
-after the file's variants. A cooked file has no `skins` or `skinVariants`.
+after the file's variants. A cooked file has no `skins`, but it keeps
+`skinVariants` as a record of the layers of each variant. The game doesn't
+read it.
 A viewer without this extension shows the materials without skins.
 
 ## Lights
@@ -472,8 +474,8 @@ The flags are booleans, false when absent. A rectangle has:
 ## Cooked files
 
 `aeron_gltf_cook` turns a source file into a cooked file for the game. The
-source-only fields (`skins`, `skinVariants`, `reflectionProbes`,
-`lightGrid`) are not copied to the cooked file. The
+source-only fields (`skins`, `reflectionProbes`, `lightGrid`) are not
+copied to the cooked file. The
 cooker adds the data it computes: texture atlas pages, simulation data,
 render data and probe data. That data is described in
 [AERON_flight_model_cooked](../AERON_flight_model_cooked/README.md).

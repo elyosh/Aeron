@@ -498,7 +498,7 @@ static bool import_bank(Import* im, FILE* f, const BankInfo* bank, const char* l
 		if (!copy_sound(im, path, found, list, &error))
 			continue;
 		Entry* entry = &entries[this_slot];
-		snprintf(entry->path, sizeof entry->path, "Wave\\%s\\%s", stem, parsed.name);
+		snprintf(entry->path, sizeof entry->path, "Wave/%s/%s", stem, parsed.name);
 		entry->volume   = parsed.volume;
 		entry->distance = parsed.distance;
 		used[this_slot] = entry;
@@ -555,7 +555,7 @@ bool XwauSoundBanks_Write(const char* game, const char* output_dir, const char* 
 		ok = false;
 	}
 	if (f)
-		fprintf(f, "# Written by the OpenXWA mod importer from the Wave/Sfx_*.lst sound banks.\nversion: "
+		fprintf(f, "# Made by the OpenXWA mod importer.\nversion: "
 				   "1\nbanks:\n");
 	for (size_t i = 0; ok && i < count; ++i) {
 		const size_t length = strlen(names[i]);

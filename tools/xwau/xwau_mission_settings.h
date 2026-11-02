@@ -14,11 +14,14 @@
  * that applies in each mission, and writes it when it differs from what the
  * game does without it:
  *   - the stock rules that the game ties to mission numbers, for
- *     red_alert, skip_hyperspaced_messages, skip_arrival_messages_iff and
- *     force_player_in_turret;
+ *     red_alert, hide_hyperspace_exit_messages, skip_arrival_messages_iff
+ *     and force_player_in_turret. When the hook hides the hyperspace
+ *     messages, it also hides the "entering area" messages, so
+ *     hide_friendly_arrival_messages is written too;
  *   - the defaults of flight/flight.yaml for warhead_collision_damage,
- *     damage_through_shields_on_hard and interdiction_regions, which come
- *     from the global settings (XwauMissionSettings_WriteDefaults).
+ *     damage_through_shields_on_hard and hyperspace_abort_sound_regions,
+ *     which come from the global settings
+ *     (XwauMissionSettings_WriteDefaults).
  *
  * As in the hook, a key is found in any case, the first line with it wins,
  * and numbers are read as std::stoi reads them. A value that isn't a number
@@ -106,8 +109,8 @@ void XwauSettingsConfig_Free(XwauSettingsConfig* config);
  * no_starship_fire_from_destroyed_racks, no_player_warhead_slot_cap and
  * weapon rules,
  * hook_engine_sound's starship_ambient_sounds, and hook_mission_objects'
- * gunner_weapon_select_in_seat, gunner_fires_warheads and, with
- * UnlimitedTurretLaser = 1, gunner_fires_selected_group, and
+ * gunner_weapon_select_in_seat, gunner_warheads_need_cockpit_hardpoint
+ * and, with UnlimitedTurretLaser = 1, gunner_fires_selected_group, and
  * hook_crafts_count's overlapping_fly_by_sounds. Returns whether it wrote
  * anything.
  */

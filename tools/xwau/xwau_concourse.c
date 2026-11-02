@@ -29,8 +29,10 @@ static int planet_value(const XwauLines* lines, const char* key, long long min, 
 	return (int)value;
 }
 
-bool XwauFrontPlanet_Read(const char* game, const char* base, XwauFrontPlanet* out) {
-	out->image = out->x = out->y = -1;
+bool XwauFrontPlanet_Read(const char* game, const char* base, const int design_scale[2],
+						  XwauFrontPlanet* out) {
+	out->image        = -1;
+	out->has_position = false;
 	char path[1024];
 	if (!Xwau_FindFile(game, "hook_concourse.dll", path, sizeof path))
 		return true;
@@ -46,14 +48,22 @@ bool XwauFrontPlanet_Read(const char* game, const char* base, XwauFrontPlanet* o
 		return false;
 	/* The game reads image groups as 16-bit numbers. */
 	out->image = planet_value(&lines, "FrontPlanetIndex", 1, 32767, base);
-	out->x     = planet_value(&lines, "FrontPlanetPositionX", -32768, 32767, base);
-	out->y     = planet_value(&lines, "FrontPlanetPositionY", -32768, 32767, base);
+	const int x = planet_value(&lines, "FrontPlanetPositionX", -32768, 32767, base);
+	const int y = planet_value(&lines, "FrontPlanetPositionY", -32768, 32767, base);
+	if ((x == -1) != (y == -1))
+		Report(base, "[concourse]: only one of FrontPlanetPositionX and FrontPlanetPositionY is set; the "
+					 "position is left out");
+	else if (x != -1) {
+		out->has_position = true;
+		out->position[0]  = x * design_scale[0];
+		out->position[1]  = y * design_scale[1];
+	}
 	XwauLines_Free(&lines);
 	return true;
 }
 
 bool XwauFrontPlanet_Any(const XwauFrontPlanet* planet) {
-	return planet->image != -1 || planet->x != -1 || planet->y != -1;
+	return planet->image != -1 || planet->has_position;
 }
 
 void XwauFrontPlanet_Write(FILE* f, const XwauFrontPlanet* planet) {
@@ -61,12 +71,8 @@ void XwauFrontPlanet_Write(FILE* f, const XwauFrontPlanet* planet) {
 		return;
 	fputs("concourse:\n  front_planet: {", f);
 	const char* separator = " ";
-	if (planet->x != -1) {
-		fprintf(f, "%sx: %d", separator, planet->x);
-		separator = ", ";
-	}
-	if (planet->y != -1) {
-		fprintf(f, "%sy: %d", separator, planet->y);
+	if (planet->has_position) {
+		fprintf(f, "%sposition: [%d, %d]", separator, planet->position[0], planet->position[1]);
 		separator = ", ";
 	}
 	if (planet->image != -1)

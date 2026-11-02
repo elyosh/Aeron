@@ -54,7 +54,7 @@
  *     sfoils.close_in_hyperspace, step_ticks (15 × speed),
  *     sfoils.allow_fire_closed, sfoils.park_closed and hangar_doors.distance,
  *     when they differ from the defaults. A model with crew gets
- *     crew.update_all = 1. The variants from the missions are added last
+ *     crew.always_animate = 1. The variants from the missions are added last
  *     (xwau_missions.h).
  *
  *   - the Dynamic Cockpit file DynamicCockpit/<Model>.dc.

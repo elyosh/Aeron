@@ -4,7 +4,7 @@
 /*
  * Converts the [SkyBoxes] sections of XWAU's missions (the cube maps of the
  * ddraw wrapper, from XWAU UPD 1.1.0) into entries of OpenXWA's environment
- * manifest, flight/environments/environments.yaml, and writes them into it.
+ * manifest, flight/environments/environments.yaml, and writes the manifest.
  *
  * The section is read from <mission>.ini with the C++ hook rules
  * (xwau_config.h), as the ddraw wrapper reads it:
@@ -53,15 +53,7 @@
  * are the Death Star missions of the mod and of the stock game: the type of
  * the mod's .TIE, or of the game's when the mod has none.
  *
- * They go between two comment lines in each of the manifest's maps,
- * `environments` and `xwa.missions`:
- *   # Begin of the entries that the OpenXWA mod importer writes. ...
- *   # End of the entries that the OpenXWA mod importer writes.
- * Each import replaces what is between them, so hand edits there are lost.
- * The rest of the file is kept as it is, comments included. A file without
- * these lines gets them at the end of each map, and a missing file is
- * created. Entries for the same environments or missions outside these lines
- * must be removed by hand, or the game reports them as duplicates.
+ * The manifest has only these entries.
  *
  * The folder list has one line per sky folder and one per overlay folder:
  * "sky\t<folder path>\t<environment name>\t<texture folder in the mod folder>"
@@ -79,9 +71,9 @@
  * M = diag(1, 1, -1), so Q = M Rot^T M (xwau_skyboxes_plan.md, 4.2). */
 void XwauSkyboxes_Rotation(const float xyz_degrees[3], bool overlay, float out_degrees[3]);
 
-/* Writes the importer's entries into the manifest `manifest` and writes the
- * folder list `folders`, for the missions of `game` that the mod or the
- * stock game `stock_game` has. Returns false on an error. */
+/* Writes the manifest `manifest` and the folder list `folders`, for the
+ * missions of `game` that the mod or the stock game `stock_game` has.
+ * Returns false on an error. */
 bool XwauSkyboxes_Write(const char* game, const char* stock_game, const char* manifest, const char* folders);
 
 #endif /* AERON_XWAU_SKYBOXES_H */

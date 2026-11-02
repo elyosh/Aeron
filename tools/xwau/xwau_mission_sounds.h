@@ -17,10 +17,10 @@
  * Lines for hangar voices (Wave/HANGARVOICESFX.LST) never match, because the
  * game builds those paths with a '/'. They are also reported and left out.
  *
- * The lines that work go into the mission file:
+ * The lines that work go into the mission file, with '/' between folders:
  *
  *   sounds:
- *     - ["Wave\\Sfx_HangarAmbient\\FamilyHangar0.wav", "Wave\\Custom\\Evacuate.wav"]
+ *     - ["Wave/Sfx_HangarAmbient/FamilyHangar0.wav", "Wave/Custom/Evacuate.wav"]
  */
 
 #include <stdbool.h>
