@@ -438,6 +438,7 @@ set(AERON_SOURCES
     src/render_backend.c
     src/surface.c
     src/sync.c
+    src/system_info.c
     src/time.c
     src/vfs.c
     src/vfs_iso9660.c
@@ -499,7 +500,7 @@ endif()
 
 if(WIN32)
     target_sources(aeron PRIVATE src/crash_handler_win32.c)
-    target_link_libraries(aeron PRIVATE bcrypt shell32)
+    target_link_libraries(aeron PRIVATE advapi32 bcrypt shell32)
 endif()
 
 if(AERON_ENABLE_DPLAY AND NOT AERON_ENABLE_COMPAT)

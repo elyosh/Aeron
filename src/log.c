@@ -5,6 +5,8 @@
 
 /* Previous session logs (<app>-<date>-<time>.log) kept beside the current one. */
 #define AERON_LOG_FILE_HISTORY 4
+/* Distinct SDL warnings logged per session. Later ones are dropped. */
+#define AERON_LOG_SDL_WARNING_LIMIT 128
 
 static struct {
 	SDL_IOStream*         stream;
@@ -12,11 +14,39 @@ static struct {
 	void*                 forward_userdata;
 	/* Performance counter, unlike SDL ticks, keeps running across SDL_Quit. */
 	Uint64 start_counter;
+	/* Hashes of the SDL warnings already logged. */
+	Uint32 sdl_warnings[AERON_LOG_SDL_WARNING_LIMIT];
+	int    sdl_warning_count;
 } s_log_file;
 
 static const char* const k_log_priority_names[SDL_LOG_PRIORITY_COUNT] = {
 	"", "TRACE", "VERBOSE", "DEBUG", "INFO", "WARN", "ERROR", "CRITICAL",
 };
+
+/* Aeron's messages use the application category and name their own. SDL's
+ * other categories get these names. */
+static const char* const k_log_sdl_category_names[] = {
+	NULL,        "sdl.error",  "sdl.assert", "sdl.system", "sdl.audio",
+	"sdl.video", "sdl.render", "sdl.input",  "sdl.test",   "sdl.gpu",
+};
+
+/* Returns whether an SDL warning was logged before, and remembers it. Some
+ * are sent on every call, such as one for each texture upload in GPU debug
+ * mode on Direct3D 12. */
+static int Aeron_LogSdlWarningSeen(const char* message) {
+	const Uint32 hash = SDL_murmur3_32(message, SDL_strlen(message), 0);
+
+	for (int index = 0; index < s_log_file.sdl_warning_count; ++index) {
+		if (s_log_file.sdl_warnings[index] == hash) {
+			return 1;
+		}
+	}
+	if (s_log_file.sdl_warning_count == AERON_LOG_SDL_WARNING_LIMIT) {
+		return 1;
+	}
+	s_log_file.sdl_warnings[s_log_file.sdl_warning_count++] = hash;
+	return 0;
+}
 
 /* Runs under SDL's log output lock, so writes from different threads do not interleave. */
 static void SDLCALL Aeron_LogFileOutput(void* userdata, int category, SDL_LogPriority priority,
@@ -26,6 +56,11 @@ static void SDLCALL Aeron_LogFileOutput(void* userdata, int category, SDL_LogPri
 	int    length;
 
 	(void)userdata;
+	/* SDL's warnings are logged once each. Its errors are all logged. */
+	if (category != SDL_LOG_CATEGORY_APPLICATION && priority <= SDL_LOG_PRIORITY_WARN && message &&
+		Aeron_LogSdlWarningSeen(message)) {
+		return;
+	}
 	if (s_log_file.forward) {
 		s_log_file.forward(s_log_file.forward_userdata, category, priority, message);
 	}
@@ -42,6 +77,11 @@ static void SDLCALL Aeron_LogFileOutput(void* userdata, int category, SDL_LogPri
 							  : "?");
 	if (length > 0) {
 		SDL_WriteIO(s_log_file.stream, prefix, (size_t)SDL_min(length, (int)sizeof prefix - 1));
+	}
+	if (category > SDL_LOG_CATEGORY_APPLICATION && category < (int)SDL_arraysize(k_log_sdl_category_names)) {
+		SDL_WriteIO(s_log_file.stream, k_log_sdl_category_names[category],
+					SDL_strlen(k_log_sdl_category_names[category]));
+		SDL_WriteIO(s_log_file.stream, ": ", 2);
 	}
 	SDL_WriteIO(s_log_file.stream, message ? message : "", message ? SDL_strlen(message) : 0);
 	SDL_WriteIO(s_log_file.stream, "\n", 1);

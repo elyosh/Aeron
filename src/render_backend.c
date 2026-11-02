@@ -1497,6 +1497,39 @@ static SDL_GPUDevice* Aeron_CreateGPUDeviceWithOptionalFp16(SDL_GPUShaderFormat 
 	return Aeron_CreateGPUDeviceWithOptions(shader_formats, NULL);
 }
 
+/* Logs the GPU and its driver. Vulkan also names the driver and gives
+ * details, and Metal gives no driver version. */
+static void Aeron_LogGpuDevice(const char* backend) {
+	SDL_PropertiesID props       = SDL_GetGPUDeviceProperties(g_aeron.gpu_device);
+	const char*      name        = SDL_GetStringProperty(props, SDL_PROP_GPU_DEVICE_NAME_STRING, NULL);
+	const char*      driver_name = SDL_GetStringProperty(props, SDL_PROP_GPU_DEVICE_DRIVER_NAME_STRING, NULL);
+	const char*      driver_version =
+		SDL_GetStringProperty(props, SDL_PROP_GPU_DEVICE_DRIVER_VERSION_STRING, NULL);
+	const char* driver_info = SDL_GetStringProperty(props, SDL_PROP_GPU_DEVICE_DRIVER_INFO_STRING, NULL);
+	char        driver[256] = "";
+	size_t      length      = 0;
+	const char* parts[]     = { driver_name, driver_version, driver_info };
+
+	for (size_t index = 0; index < SDL_arraysize(parts) && length < sizeof driver; ++index) {
+		if (parts[index] && parts[index][0]) {
+			int written = SDL_snprintf(driver + length, sizeof driver - length, "%s%s", length ? " " : "",
+									   parts[index]);
+			if (written < 0) {
+				break;
+			}
+			length += (size_t)written;
+		}
+	}
+	/* Some drivers give details on several lines. */
+	for (char* end = driver; *end; ++end) {
+		if (*end == '\n' || *end == '\r') {
+			*end = ' ';
+		}
+	}
+	Aeron_LogInfo("aeron", "GPU %s, driver %s (%s)", name ? name : "unknown", driver[0] ? driver : "unknown",
+				  backend ? backend : "unknown");
+}
+
 int Aeron_RenderBackendInit(void) {
 	const SDL_GPUShaderFormat shader_formats = Aeron_CompiledShaderFormats();
 
@@ -1543,6 +1576,7 @@ int Aeron_RenderBackendInit(void) {
 	 * (https://github.com/libsdl-org/SDL/issues/15348). Vulkan rejects a
 	 * rounded region. */
 	g_aeron.upload_whole_blocks = driver && SDL_strcmp(driver, "direct3d12") == 0;
+	Aeron_LogGpuDevice(driver);
 
 	if (!SDL_ClaimWindowForGPUDevice(g_aeron.gpu_device, g_aeron.window)) {
 		Aeron_LogError("aeron", "SDL_ClaimWindowForGPUDevice failed: %s", SDL_GetError());

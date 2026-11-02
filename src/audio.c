@@ -571,8 +571,11 @@ int Aeron_AudioInit(void) {
 	}
 
 	g_audio.initialized = 1;
-	Aeron_LogInfo("aeron.audio", "audio device opened: %d Hz, %d ch, S16 buffer=%d frames",
-				  AERON_AUDIO_DEVICE_RATE, AERON_AUDIO_DEVICE_CHANNELS, g_audio.device_buffer_input_frames);
+	const char* device_name = g_audio.device_id ? SDL_GetAudioDeviceName(g_audio.device_id) : NULL;
+	const char* driver      = SDL_GetCurrentAudioDriver();
+	Aeron_LogInfo("aeron.audio", "audio device '%s' opened with %s: %d Hz, %d ch, S16 buffer=%d frames",
+				  device_name ? device_name : "unknown", driver ? driver : "unknown", AERON_AUDIO_DEVICE_RATE,
+				  AERON_AUDIO_DEVICE_CHANNELS, g_audio.device_buffer_input_frames);
 	return 1;
 }
 

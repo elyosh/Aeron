@@ -96,8 +96,10 @@ int Aeron_WindowInit(const AeronConfig* config) {
 		int pixel_h = 0;
 		SDL_GetWindowSizeInPixels(g_aeron.window, &pixel_w, &pixel_h);
 		Aeron_UpdatePresentationPixelSize();
-		Aeron_LogInfo("aeron", "window %dx%d pt, %dx%d px (logical %dx%d)", width, height, pixel_w, pixel_h,
-					  g_aeron.logical_width, g_aeron.logical_height);
+		const char* video_driver = SDL_GetCurrentVideoDriver();
+		Aeron_LogInfo("aeron", "window %dx%d pt, %dx%d px (logical %dx%d), video driver %s", width, height,
+					  pixel_w, pixel_h, g_aeron.logical_width, g_aeron.logical_height,
+					  video_driver ? video_driver : "unknown");
 	}
 
 	return 1;

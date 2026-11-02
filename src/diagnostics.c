@@ -75,12 +75,25 @@ void Aeron_DiagnosticsInit(const AeronConfig* config) {
 	char*       pref_path;
 	char        directory[AERON_MAX_PATH];
 	char        pattern[128];
+	char        os[256];
 	int         sdl_version;
 
 	if (initialized) {
 		return;
 	}
 	initialized = 1;
+	/* Release builds of SDL only log errors outside the application
+	 * category. Its warnings help with reports from players. The SDL_LOGGING
+	 * environment variable can still ask for more. */
+	static const int k_sdl_warning_categories[] = {
+		SDL_LOG_CATEGORY_SYSTEM, SDL_LOG_CATEGORY_AUDIO, SDL_LOG_CATEGORY_VIDEO,
+		SDL_LOG_CATEGORY_RENDER, SDL_LOG_CATEGORY_GPU,
+	};
+	for (size_t index = 0; index < SDL_arraysize(k_sdl_warning_categories); ++index) {
+		if (SDL_GetLogPriority(k_sdl_warning_categories[index]) > SDL_LOG_PRIORITY_WARN) {
+			SDL_SetLogPriority(k_sdl_warning_categories[index], SDL_LOG_PRIORITY_WARN);
+		}
+	}
 	/* Matches the VFS user root. Logs and crash dumps share one directory so a
 	 * player can send everything by zipping a single folder. */
 	org_name    = config && config->org_name ? config->org_name : "aeron";
@@ -98,9 +111,11 @@ void Aeron_DiagnosticsInit(const AeronConfig* config) {
 	}
 	Aeron_LogFileInit(directory, name);
 	sdl_version = SDL_GetVersion();
-	Aeron_LogInfo("aeron", "%s %s on %s, SDL %d.%d.%d", name, app_version, SDL_GetPlatform(),
+	Aeron_SystemDescribeOs(os, sizeof os);
+	Aeron_LogInfo("aeron", "%s %s on %s, SDL %d.%d.%d", name, app_version, os[0] ? os : SDL_GetPlatform(),
 				  SDL_VERSIONNUM_MAJOR(sdl_version), SDL_VERSIONNUM_MINOR(sdl_version),
 				  SDL_VERSIONNUM_MICRO(sdl_version));
+	Aeron_LogSystemInfo();
 	if (SDL_snprintf(pattern, sizeof pattern, "%s-*.dmp", name) < (int)sizeof pattern) {
 		Aeron_DiagnosticsPrune(directory, pattern, AERON_DIAGNOSTICS_DUMP_HISTORY);
 	}

@@ -401,6 +401,10 @@ void Aeron_DiagnosticsInit(const AeronConfig* config);
 void Aeron_DiagnosticsPrune(const char* directory, const char* pattern, int keep);
 /* Mirrors SDL log output into directory/<app_name>-<date>-<time>.log, pruning old sessions. */
 void Aeron_LogFileInit(const char* directory, const char* app_name);
+/* Writes the name and version of the operating system to `out`. */
+void Aeron_SystemDescribeOs(char* out, size_t out_size);
+/* Logs the processor, memory and preferred locales. */
+void Aeron_LogSystemInfo(void);
 /* Native HANDLE of the open log file on Windows, else NULL. Used by the crash handler. */
 void* Aeron_LogFileNativeHandle(void);
 /* File descriptor of the open log file on POSIX, else -1. Used by the crash handler. */
