@@ -160,6 +160,10 @@ static bool ValidateDispatch(AeronTemporalUpscaler* upscaler, const AeronTempora
 		SetError(upscaler, "FSR depth input must be an R32_FLOAT color texture");
 		return false;
 	}
+	if (desc->exposure && !TextureHasUsage(desc->exposure, AERON_TEXTURE_USAGE_COMPUTE_STORAGE_READ)) {
+		SetError(upscaler, "FSR exposure texture needs compute storage read usage");
+		return false;
+	}
 	if (desc->reactive && (!TextureMatches(desc->reactive, desc->render_width, desc->render_height) ||
 						   !TextureHasUsage(desc->reactive, AERON_TEXTURE_USAGE_SAMPLED))) {
 		SetError(upscaler, "invalid FSR reactive mask");

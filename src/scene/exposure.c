@@ -64,7 +64,8 @@ typedef struct ExposureState {
 static float clampf(float v, float lo, float hi) { return v < lo ? lo : (v > hi ? hi : v); }
 
 /* The texture, with compute writes for the meter. Without them, the
- * exposure stays fixed. */
+ * exposure stays fixed. FSR reads this texture as a read-only storage
+ * texture, so both versions need that usage. */
 static int exposure_ensure_texture(AeronScene3D* s) {
 	if (s->exposure_tex)
 		return 1;
@@ -73,7 +74,7 @@ static int exposure_ensure_texture(AeronScene3D* s) {
 		.height     = 1,
 		.format     = AERON_TEXTURE_FORMAT_R32G32_FLOAT,
 		.usage      = AERON_TEXTURE_USAGE_SAMPLED | AERON_TEXTURE_USAGE_TRANSFER_DST |
-					  AERON_TEXTURE_USAGE_COMPUTE_STORAGE_WRITE,
+					  AERON_TEXTURE_USAGE_COMPUTE_STORAGE_READ | AERON_TEXTURE_USAGE_COMPUTE_STORAGE_WRITE,
 		.debug_name = "Aeron exposure",
 	};
 	s->exposure_tex = Aeron_CreateTexture(&desc);
@@ -81,7 +82,8 @@ static int exposure_ensure_texture(AeronScene3D* s) {
 		Aeron_LogWarn("aeron.scene",
 					  "exposure: no compute writes to R32G32_FLOAT, so the exposure stays fixed");
 		s->exposure_meter_failed = 1;
-		desc.usage               = AERON_TEXTURE_USAGE_SAMPLED | AERON_TEXTURE_USAGE_TRANSFER_DST;
+		desc.usage               = AERON_TEXTURE_USAGE_SAMPLED | AERON_TEXTURE_USAGE_TRANSFER_DST |
+								   AERON_TEXTURE_USAGE_COMPUTE_STORAGE_READ;
 		s->exposure_tex          = Aeron_CreateTexture(&desc);
 	}
 	s->exposure_uploaded = 0.0f;
