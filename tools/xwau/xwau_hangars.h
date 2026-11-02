@@ -71,14 +71,14 @@
 
 #include <stdbool.h>
 
+#include "xwau_game_tables.h"
+
 /* Writes <mod>/flight/hangars.yaml for the installation `xwau`, and the
- * missions' layers when `stock_game` is set. `reference_exe` is the stock
- * XWINGALLIANCE.EXE, and `stock_models` the stock FlightModels folder; when
- * it is NULL, the one in `stock_game` is used. The models that were
- * converted are the ones in <mod>/flight/models, and the object type files
- * are the ones in <mod>/flight/object_types. Returns false when a file
- * can't be read or written. */
-bool XwauHangars_Write(const char* xwau, const char* reference_exe, const char* stock_models,
-					   const char* stock_game, const char* mod);
+ * missions' layers when `stock_game` is set. `stock` holds the stock game's
+ * tables. It uses the converted models in <mod>/flight/models and the object
+ * type files in <mod>/flight/object_types. Returns false when a file can't
+ * be read or written. */
+bool XwauHangars_Write(const char* xwau, const XwauGameTables* stock, const char* stock_game,
+					   const char* mod);
 
 #endif /* AERON_XWAU_HANGARS_H */

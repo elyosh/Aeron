@@ -1006,8 +1006,11 @@ static void test_objects(const char* scratch) {
 	XwauTextIds moved = { 0 };
 	char        strings[1200];
 	snprintf(strings, sizeof strings, "%s/strings.yaml", out);
-	check(XwauObjects_Write(mod, stock, out, &moved) && XwauText_Write(mod, stock, strings, &moved),
+	XwauGameTables* stock_tables = XwauGameTables_Load(stock);
+	check(stock_tables && XwauObjects_Write(mod, stock, stock_tables, out, &moved) &&
+			  XwauText_Write(mod, stock, strings, &moved),
 		  "objects: the object type files, the craft type files and strings.yaml are written");
+	XwauGameTables_Free(stock_tables);
 
 	size_t size = 0;
 	snprintf(path, sizeof path, "%s/object_types/tieadvancedx1.yaml", out);

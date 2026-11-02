@@ -24,6 +24,40 @@ static const struct {
 	{ 0x459678u, 0x458E81u }, /* the hangar launch, hangar.c:2534 */
 };
 
+/* The sound switches of the stock 2.02 executable. Each switch has a case
+   number for each object type and a table of jump addresses. The importer
+   compares a mod's switches with these. */
+static const uint8_t g_stockSoundCases[XWAU_GAME_SOUND_SWITCHES][XWAU_GAME_SOUND_CASES] = {
+	{ 0,  1,  2,  3,  4,  4,  4,  4,  4,  5,  6,  7,  8,  9,  9,  10, 11, 22, 22, 22, 22, 22,
+	  12, 13, 13, 14, 15, 22, 16, 22, 17, 18, 22, 22, 22, 22, 22, 22, 22, 22, 22, 22, 22, 22,
+	  22, 22, 22, 22, 22, 22, 22, 22, 22, 22, 22, 22, 22, 19, 20, 22, 22, 22, 22, 22, 21 },
+	{ 0,  1,  2,  3,  4,  4,  4,  4,  4,  5,  6,  7,  8,  9,  9,  10, 11, 22, 22, 22, 22, 22,
+	  12, 13, 13, 14, 15, 22, 16, 22, 17, 18, 22, 22, 22, 22, 22, 22, 22, 22, 22, 22, 22, 22,
+	  22, 22, 22, 22, 22, 22, 22, 22, 22, 22, 22, 22, 22, 19, 20, 22, 22, 22, 22, 22, 21 },
+	{ 0,  1,  2,  3,  4,  4,  4,  4,  4,  5,  6,  7,  8,  9,  9,  10, 11, 23, 23, 23, 23, 23,
+	  12, 13, 13, 14, 15, 23, 16, 23, 17, 18, 23, 23, 23, 23, 23, 23, 23, 23, 23, 23, 19, 19,
+	  19, 23, 23, 23, 23, 20, 20, 20, 20, 20, 20, 20, 23, 21, 21, 23, 23, 23, 23, 23, 22 },
+	{ 0,  1,  2,  3,  4,  4,  4,  4,  4,  5,  6,  7,  8,  9,  9,  10, 11, 23, 23, 23, 23, 23,
+	  12, 13, 13, 14, 15, 23, 16, 23, 17, 18, 23, 23, 23, 23, 23, 23, 23, 23, 23, 23, 19, 19,
+	  19, 23, 23, 23, 23, 20, 20, 20, 20, 20, 20, 20, 23, 21, 21, 23, 23, 23, 23, 23, 22 },
+};
+static const uint32_t g_stockSoundJumps[XWAU_GAME_SOUND_SWITCHES][24] = {
+	{ 0x43D12C, 0x43D133, 0x43D13A, 0x43D12C, 0x43D11E, 0x43D13A, 0x43D133, 0x43D125,
+	  0x43D13A, 0x43D12C, 0x43D125, 0x43D14D, 0x43D133, 0x43D125, 0x43D146, 0x43D13A,
+	  0x43D125, 0x43D12C, 0x43D146, 0x43D14D, 0x43D146, 0x43D14D, 0x43D165 },
+	{ 0x43D36E, 0x43D375, 0x43D37C, 0x43D36E, 0x43D360, 0x43D37C, 0x43D375, 0x43D367,
+	  0x43D37C, 0x43D36E, 0x43D367, 0x43D38A, 0x43D375, 0x43D367, 0x43D383, 0x43D37C,
+	  0x43D367, 0x43D36E, 0x43D383, 0x43D38A, 0x43D383, 0x43D38A, 0x43D38F },
+	{ 0x43DA5C, 0x43DA7C, 0x43DA9C, 0x43DA5C, 0x43DA13, 0x43DA9C, 0x43DA7C, 0x43DA39,
+	  0x43DA9C, 0x43DA5C, 0x43DA39, 0x43DABC, 0x43DA7C, 0x43DA39, 0x43DABC, 0x43DA9C,
+	  0x43DA39, 0x43DA5C, 0x43DABC, 0x43DA39, 0x43DA39, 0x43DABC, 0x43DABC, 0x43DAD9 },
+	{ 0x458ECF, 0x458EEE, 0x458F0D, 0x458ECF, 0x458E88, 0x458F0D, 0x458EEE, 0x458EAD,
+	  0x458F0D, 0x458ECF, 0x458EAD, 0x458F2C, 0x458EEE, 0x458EAD, 0x458F2C, 0x458F0D,
+	  0x458EAD, 0x458ECF, 0x458F2C, 0x458EAD, 0x458EAD, 0x458F2C, 0x458F2C, 0x458F48 },
+};
+/* The stock bytes at XWAU_GAME_BEAM_TEST, a `jz` instruction. */
+static const uint8_t g_stockBeamTest[2] = { 0x74, 0x1E };
+
 static const char* const g_listNames[2] = { "Spacecraft0.LST", "Equipment0.LST" };
 
 /* ---- Executable --------------------------------------------------------- */
@@ -111,6 +145,19 @@ static bool read_list(const char* path, char*** rows, size_t* count) {
 	return ok;
 }
 
+/* Reads Spacecraft0.LST and Equipment0.LST in the folder `flight_models`. */
+static bool read_lists(const char* flight_models, XwauGameTables* tables) {
+	for (int list = 0; list < 2; ++list) {
+		char path[1100];
+		if (!Xwau_FindFile(flight_models, g_listNames[list], path, sizeof path) ||
+			!read_list(path, &tables->rows[list], &tables->rowCount[list])) {
+			Report(flight_models, "has no readable %s", g_listNames[list]);
+			return false;
+		}
+	}
+	return true;
+}
+
 /* ---- Tables -------------------------------------------------------------- */
 
 static bool read_table(const Image* image, const char* exe, uint32_t address, void* out, size_t size) {
@@ -142,6 +189,8 @@ static bool read_sound_switch(const Image* image, const char* exe, int index, Xw
 												   tables->soundJumpSize[index]);
 }
 
+static XwauGameTables* load_files(const char* exe, const char* flight_models);
+
 XwauGameTables* XwauGameTables_Load(const char* root) {
 	char exe[1100], models[1100];
 	if (!Xwau_FindFile(root, "XWINGALLIANCE.EXE", exe, sizeof exe)) {
@@ -152,10 +201,38 @@ XwauGameTables* XwauGameTables_Load(const char* root) {
 		Report(root, "has no FlightModels folder");
 		return NULL;
 	}
-	return XwauGameTables_LoadFiles(exe, models);
+	return load_files(exe, models);
 }
 
-XwauGameTables* XwauGameTables_LoadFiles(const char* exe, const char* flight_models) {
+XwauGameTables* XwauGameTables_CreateStock(const char* flight_models) {
+	XwauGameTables* tables = calloc(1, sizeof *tables);
+	bool            ok     = tables != NULL;
+	for (int s = 0; ok && s < XWAU_GAME_SOUND_SWITCHES; ++s) {
+		memcpy(tables->soundCases[s], g_stockSoundCases[s], XWAU_GAME_SOUND_CASES);
+		/* A switch's jump table has an entry for each of its cases. */
+		unsigned cases = 0;
+		for (int i = 0; i < XWAU_GAME_SOUND_CASES; ++i)
+			if (g_stockSoundCases[s][i] + 1u > cases)
+				cases = g_stockSoundCases[s][i] + 1u;
+		tables->soundJumpSize[s] = 4 * (size_t)cases;
+		tables->soundJumps[s]    = malloc(tables->soundJumpSize[s]);
+		ok                       = tables->soundJumps[s] != NULL;
+		for (unsigned i = 0; ok && i < cases; ++i)
+			for (int b = 0; b < 4; ++b)
+				tables->soundJumps[s][4 * i + b] = (uint8_t)(g_stockSoundJumps[s][i] >> (8 * b));
+	}
+	if (ok) {
+		memcpy(tables->beam, g_stockBeamTest, sizeof tables->beam);
+		ok = read_lists(flight_models, tables);
+	}
+	if (!ok) {
+		XwauGameTables_Free(tables);
+		return NULL;
+	}
+	return tables;
+}
+
+static XwauGameTables* load_files(const char* exe, const char* flight_models) {
 	XwauGameTables* tables = calloc(1, sizeof *tables);
 	size_t          size   = 0;
 	uint8_t*        data   = (uint8_t*)ReadWholeFile(exe, &size);
@@ -177,14 +254,7 @@ XwauGameTables* XwauGameTables_LoadFiles(const char* exe, const char* flight_mod
 			tables->craft[i] = read_u16(craft + 2 * i);
 		tables->craftPastEnd = read_u16(craft + 2 * XWAU_GAME_CRAFT_TYPES);
 	}
-	for (int list = 0; ok && list < 2; ++list) {
-		char path[1100];
-		if (!Xwau_FindFile(flight_models, g_listNames[list], path, sizeof path) ||
-			!read_list(path, &tables->rows[list], &tables->rowCount[list])) {
-			Report(flight_models, "has no readable %s", g_listNames[list]);
-			ok = false;
-		}
-	}
+	ok = ok && read_lists(flight_models, tables);
 	free(data);
 	if (!ok) {
 		XwauGameTables_Free(tables);

@@ -10,7 +10,7 @@
  *     mod links to another object type or whose ship list line or tech room
  *     texts it changes.
  * The importer compares the mod's XWINGALLIANCE.EXE and lists with the stock
- * game's:
+ * game's tables:
  *   - the object type table (0x5FB240, 557 entries of 24 bytes), the craft
  *     type table (0x5B0F70, 232 entries) and the craft records (0x5BB480,
  *     265 records of 987 bytes, packed, with 4-byte pointers);
@@ -110,17 +110,19 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "xwau_game_tables.h"
 #include "xwau_text.h"
 
-/* Writes the object type and craft type files of the mod at `mod_root` into
- * `output_dir`/object_types and `output_dir`/craft_types, and adds to `moved`
- * the text IDs that they carry. Returns false when a file can't be read or
- * written. */
 /* Whether model `model` (a model key) of the installation `game` has an
  * [ExeCraftValues] section. */
 bool XwauObjects_HasExeCraftValues(const char* game, const char* model);
 
-bool XwauObjects_Write(const char* mod_root, const char* stock_game, const char* output_dir,
-					   XwauTextIds* moved);
+/* Writes the object type and craft type files of the mod at `mod_root` into
+ * `output_dir`/object_types and `output_dir`/craft_types, and adds to `moved`
+ * the IDs of the texts they contain. `stock` holds the stock game's tables,
+ * and `stock_game` is the stock game's folder, which provides its texts.
+ * Returns false when a file can't be read or written. */
+bool XwauObjects_Write(const char* mod_root, const char* stock_game, const XwauGameTables* stock,
+					   const char* output_dir, XwauTextIds* moved);
 
 #endif /* AERON_XWAU_OBJECTS_H */

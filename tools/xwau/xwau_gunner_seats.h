@@ -76,11 +76,11 @@ void XwauGunnerSeats_Read(const char* game, const XwauGameTables* tables, const 
 bool XwauGunnerSeats_Write(FILE* f, const XwauGunnerSeats* seats, XwauLines* cockpits);
 
 /* Writes an object type file for each cockpit in `cockpits` but the stock
- * one into <output_dir>/object_types. `game` is the installation and
- * `stock_game` the stock game, to find the free reserved slots. Run it after
- * XwauObjects_Write, which removes the files of the last run. Returns false
- * on an error. */
-bool XwauGunnerSeats_WriteCockpits(const char* game, const char* stock_game, const char* output_dir,
+ * one into <output_dir>/object_types. `game` is the installation, and
+ * `stock` holds the stock game's tables, which are used to find the free
+ * reserved slots. Run it after XwauObjects_Write, which removes the files of
+ * the last run. Returns false on an error. */
+bool XwauGunnerSeats_WriteCockpits(const char* game, const XwauGameTables* stock, const char* output_dir,
 								   const XwauLines* cockpits);
 
 #endif /* AERON_XWAU_GUNNER_SEATS_H */

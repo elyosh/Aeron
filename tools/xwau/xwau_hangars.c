@@ -155,8 +155,8 @@ typedef struct Models {
 	const char*     game;
 	char**          glbs; /* the files in <mod>/flight/models */
 	size_t          glb_count;
-	XwauGameTables* stock;
-	XwauGameTables* xwau;
+	const XwauGameTables* stock;
+	XwauGameTables*       xwau;
 	/* The model that OpenXWA loads for each object type: the `model` of its
 	   object type file, or "" for the stock row's. */
 	char object_models[XWAU_GAME_OBJECT_TYPES][128];
@@ -268,8 +268,7 @@ static void read_object_models(const char* dir, Models* m) {
 	FreeList(names, count);
 }
 
-static bool models_load(Models* m, const char* game, const char* reference_exe, const char* stock_models,
-						const char* mod) {
+static bool models_load(Models* m, const char* game, const XwauGameTables* stock, const char* mod) {
 	memset(m, 0, sizeof *m);
 	m->game = game;
 	char dir[1100];
@@ -277,14 +276,13 @@ static bool models_load(Models* m, const char* game, const char* reference_exe, 
 		m->glbs = ListDir(dir, false, &m->glb_count);
 	if (PathFormat(dir, sizeof dir, "%s/flight/object_types", mod))
 		read_object_models(dir, m);
-	m->stock = XwauGameTables_LoadFiles(reference_exe, stock_models);
-	m->xwau  = m->stock ? XwauGameTables_Load(game) : NULL;
+	m->stock = stock;
+	m->xwau  = stock ? XwauGameTables_Load(game) : NULL;
 	return m->xwau != NULL;
 }
 
 static void models_free(Models* m) {
 	FreeList(m->glbs, m->glb_count);
-	XwauGameTables_Free(m->stock);
 	XwauGameTables_Free(m->xwau);
 }
 
@@ -1149,18 +1147,10 @@ static bool write_mission_layers(const Models* m, const char* game, const char* 
 	return ok;
 }
 
-bool XwauHangars_Write(const char* xwau, const char* reference_exe, const char* stock_models,
-					   const char* stock_game, const char* mod) {
-	char stock_dir[1100];
-	if (!stock_models) {
-		if (!stock_game || !Xwau_FindDir(stock_game, "FlightModels", stock_dir, sizeof stock_dir)) {
-			Report(LABEL, "the stock FlightModels folder isn't known");
-			return false;
-		}
-		stock_models = stock_dir;
-	}
+bool XwauHangars_Write(const char* xwau, const XwauGameTables* stock, const char* stock_game,
+					   const char* mod) {
 	Models* m = (Models*)malloc(sizeof *m);
-	if (!m || !models_load(m, xwau, reference_exe, stock_models, mod)) {
+	if (!m || !models_load(m, xwau, stock, mod)) {
 		if (m)
 			models_free(m);
 		free(m);

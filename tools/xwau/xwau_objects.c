@@ -905,13 +905,11 @@ static bool write_object_file(const char* path, const Change* change, const Xwau
 	return true;
 }
 
-bool XwauObjects_Write(const char* mod_root, const char* stock_game, const char* output_dir,
-					   XwauTextIds* moved) {
-	XwauGameTables* stock = XwauGameTables_Load(stock_game);
-	XwauGameTables* mod   = stock ? XwauGameTables_Load(mod_root) : NULL;
+bool XwauObjects_Write(const char* mod_root, const char* stock_game, const XwauGameTables* stock,
+					   const char* output_dir, XwauTextIds* moved) {
+	XwauGameTables* mod        = stock ? XwauGameTables_Load(mod_root) : NULL;
 	int             exe_values = 0;
-	if (!stock || !mod || !apply_exe_values(mod_root, mod, &exe_values)) {
-		XwauGameTables_Free(stock);
+	if (!mod || !apply_exe_values(mod_root, mod, &exe_values)) {
 		XwauGameTables_Free(mod);
 		return false;
 	}
@@ -1093,7 +1091,6 @@ bool XwauObjects_Write(const char* mod_root, const char* stock_game, const char*
 	free(changes);
 	free(record_users);
 	free(models);
-	XwauGameTables_Free(stock);
 	XwauGameTables_Free(mod);
 	return ok;
 }

@@ -208,17 +208,13 @@ static void check_cockpit(const char* game, const char* name) {
 			   lasers);
 }
 
-bool XwauGunnerSeats_WriteCockpits(const char* game, const char* stock_game, const char* output_dir,
+bool XwauGunnerSeats_WriteCockpits(const char* game, const XwauGameTables* stock, const char* output_dir,
 								   const XwauLines* cockpits) {
 	if (!cockpits->count)
 		return true;
-	XwauGameTables* stock = XwauGameTables_Load(stock_game);
-	XwauGameTables* mod   = stock ? XwauGameTables_Load(game) : NULL;
-	if (!stock || !mod) {
-		XwauGameTables_Free(stock);
-		XwauGameTables_Free(mod);
+	XwauGameTables* mod = stock ? XwauGameTables_Load(game) : NULL;
+	if (!mod)
 		return false;
-	}
 	char   dir[1100];
 	bool   ok   = PathFormat(dir, sizeof dir, "%s/object_types", output_dir) && MakeDirs(dir);
 	size_t slot = 0, written = 0, dropped = 0;
@@ -268,7 +264,6 @@ bool XwauGunnerSeats_WriteCockpits(const char* game, const char* stock_game, con
 		if (ok && PathFormat(glb, sizeof glb, "%s/models/%s.glb", output_dir, key) && !IsFile(glb))
 			Report(glb, "doesn't exist, so the game can't load this gunner cockpit until it is converted");
 	}
-	XwauGameTables_Free(stock);
 	XwauGameTables_Free(mod);
 	if (ok)
 		Report(NULL, "gunner seats: %zu cockpits get an object type of their own", written);

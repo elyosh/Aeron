@@ -2,9 +2,9 @@
 #define AERON_XWAU_GAME_TABLES_H
 
 /*
- * Reads the craft tables of a game folder: its XWINGALLIANCE.EXE (XWA 2.02,
- * stock or patched by a mod) and its FlightModels/Spacecraft0.LST and
- * Equipment0.LST. The tables are read with the original layouts:
+ * The craft tables of a game. They come from its XWINGALLIANCE.EXE (XWA
+ * 2.02, patched by a mod) and its FlightModels/Spacecraft0.LST and
+ * Equipment0.LST files, and keep the original layouts:
  *   - the object type table (0x5FB240), 557 entries of 24 bytes;
  *   - the craft type table (0x5B0F70), 232 words: the object type of each
  *     craft type;
@@ -69,9 +69,11 @@ typedef struct XwauGameType {
 /* Reads the tables of the game at `root`. Returns NULL, with a report, when
  * a file is missing or can't be read. */
 XwauGameTables* XwauGameTables_Load(const char* root);
-/* Reads the tables of the executable `exe` and the lists of the folder
- * `flight_models`, for a game whose files aren't all in one folder. */
-XwauGameTables* XwauGameTables_LoadFiles(const char* exe, const char* flight_models);
+/* Creates the tables of the stock game. The sound switches and the beam test
+ * are those of XWA 2.02, and the lists come from the folder `flight_models`.
+ * The caller fills in the object types, craft types and craft records.
+ * Returns NULL and reports the problem when a list can't be read. */
+XwauGameTables* XwauGameTables_CreateStock(const char* flight_models);
 void            XwauGameTables_Free(XwauGameTables* tables);
 
 XwauGameType XwauGameTables_Type(const XwauGameTables* tables, int object_type);
