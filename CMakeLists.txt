@@ -19,6 +19,18 @@ option(AERON_ENABLE_DPLAY "Build DirectPlay support in aeron_compat" OFF)
 
 find_package(SDL3 3.4.16 REQUIRED CONFIG COMPONENTS SDL3-shared)
 
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    # glibc only declares POSIX functions such as strdup when asked to, and
+    # the targets build without GNU extensions. C then takes them as functions
+    # that return int, and cuts the pointers they return to 32 bits.
+    add_compile_definitions(_DEFAULT_SOURCE)
+endif()
+if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+    # GCC before 14 only warns about these.
+    add_compile_options($<$<COMPILE_LANGUAGE:C>:-Werror=implicit-function-declaration>
+                        $<$<COMPILE_LANGUAGE:C>:-Werror=int-conversion>)
+endif()
+
 set(AERON_YAML_SOURCES
     third_party/libyaml/src/api.c
     third_party/libyaml/src/dumper.c

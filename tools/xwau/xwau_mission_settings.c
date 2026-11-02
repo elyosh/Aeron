@@ -2,6 +2,7 @@
 
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 
 #include "util.h"
 #include "xwau_craft.h"
