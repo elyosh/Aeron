@@ -48,7 +48,7 @@ void Aeron_RequestFatalRendererError(const char* operation) {
 				 "An unexpected rendering error occurred during %s.\n\n"
 				 "GPU backend: %s\n"
 				 "Error: %s\n\n"
-				 "The application cannot continue safely. See the log for additional context.",
+				 "The application cannot continue safely.",
 				 operation && operation[0] ? operation : "GPU work", Aeron_RenderDriverName(),
 				 Aeron_RenderLastError());
 	Aeron_RequestFatalError("Renderer Error", message);

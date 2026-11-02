@@ -39,7 +39,10 @@ void Aeron_LogError(const char* category, const char* fmt, ...);
 /* Critical records severity only; it does not request shutdown or show a dialog. */
 void Aeron_LogCritical(const char* category, const char* fmt, ...);
 
-/* Shows a modal fatal-error message box attached to the Aeron window when available. */
+/* Shows a modal fatal-error message box attached to the Aeron window when
+ * available. It tells the player where the log files are, asks them to send
+ * them, and can open their folder. Errors that the player can fix themselves
+ * should use Aeron_ShowMessageBox. */
 void Aeron_FatalError(const char* title, const char* message);
 
 #ifdef __cplusplus

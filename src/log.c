@@ -14,6 +14,8 @@ static struct {
 	void*                 forward_userdata;
 	/* Performance counter, unlike SDL ticks, keeps running across SDL_Quit. */
 	Uint64 start_counter;
+	/* The folder of the log file, which also holds the crash reports. */
+	char directory[AERON_MAX_PATH];
 	/* Hashes of the SDL warnings already logged. */
 	Uint32 sdl_warnings[AERON_LOG_SDL_WARNING_LIMIT];
 	int    sdl_warning_count;
@@ -137,6 +139,7 @@ void Aeron_LogFileInit(const char* directory, const char* app_name) {
 	if (file) {
 		setvbuf(file, NULL, _IONBF, 0);
 	}
+	SDL_strlcpy(s_log_file.directory, directory, sizeof s_log_file.directory);
 	s_log_file.start_counter = SDL_GetPerformanceCounter();
 	SDL_GetLogOutputFunction(&s_log_file.forward, &s_log_file.forward_userdata);
 	SDL_SetLogOutputFunction(Aeron_LogFileOutput, NULL);
@@ -262,9 +265,67 @@ void Aeron_LogCritical(const char* category, const char* fmt, ...) {
 	va_end(args);
 }
 
+/* Opens `directory` in the file manager. Windows opens the path. macOS needs
+ * a file URL, with spaces and other characters escaped, and Linux takes one. */
+static void Aeron_OpenFolder(const char* directory) {
+#ifdef _WIN32
+	SDL_OpenURL(directory);
+#else
+	static const char k_hex[]                     = "0123456789ABCDEF";
+	char              url[3 * AERON_MAX_PATH + 8] = "file://";
+	size_t            length                      = SDL_strlen(url);
+
+	for (const unsigned char* c = (const unsigned char*)directory; *c && length + 4 < sizeof url; ++c) {
+		if (SDL_isalnum(*c) || SDL_strchr("/-_.~", *c)) {
+			url[length++] = (char)*c;
+		} else {
+			url[length++] = '%';
+			url[length++] = k_hex[*c >> 4];
+			url[length++] = k_hex[*c & 15];
+		}
+	}
+	url[length] = '\0';
+	if (!SDL_OpenURL(url)) {
+		Aeron_LogError("aeron", "cannot open %s: %s", directory, SDL_GetError());
+	}
+#endif
+}
+
 void Aeron_FatalError(const char* title, const char* message) {
-	SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, title ? title : "Aeron", message ? message : "Fatal error",
-							 g_aeron.window);
+	enum { k_open_folder = 1, k_close = 2 };
+
+	static const AeronMessageBoxButton buttons[] = {
+		{ k_open_folder, "Open Folder", 1, 0 },
+		{ k_close, "Close", 0, 1 },
+	};
+	char text[4096];
+	int  selected = k_close;
+
+	title   = title ? title : "Aeron";
+	message = message ? message : "Fatal error";
+	/* Without a log file there is nothing to send. */
+	if (!s_log_file.stream) {
+		SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, title, message, g_aeron.window);
+		return;
+	}
+	SDL_snprintf(text, sizeof text,
+				 "%s\n\nThe log files are in:\n%s\n\n"
+				 "Please zip and send the whole \"diagnostics\" folder when reporting the problem.",
+				 message, s_log_file.directory);
+	const AeronMessageBoxOptions options = {
+		.kind         = AERON_MESSAGE_BOX_ERROR,
+		.title        = title,
+		.message      = text,
+		.buttons      = buttons,
+		.button_count = SDL_arraysize(buttons),
+	};
+	if (!Aeron_ShowMessageBox(&options, &selected)) {
+		SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, title, text, g_aeron.window);
+		return;
+	}
+	if (selected == k_open_folder) {
+		Aeron_OpenFolder(s_log_file.directory);
+	}
 }
 
 void Aeron_RequestFatalError(const char* title, const char* message) {
