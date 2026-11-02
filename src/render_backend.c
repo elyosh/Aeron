@@ -1538,6 +1538,11 @@ int Aeron_RenderBackendInit(void) {
 					  SDL_VERSIONNUM_MAJOR(SDL_GetVersion()), SDL_VERSIONNUM_MINOR(SDL_GetVersion()),
 					  SDL_VERSIONNUM_MICRO(SDL_GetVersion()));
 	}
+	/* D3D12 rejects a block-compressed upload whose region isn't a whole
+	 * number of blocks, and SDL doesn't round it up
+	 * (https://github.com/libsdl-org/SDL/issues/15348). Vulkan rejects a
+	 * rounded region. */
+	g_aeron.upload_whole_blocks = driver && SDL_strcmp(driver, "direct3d12") == 0;
 
 	if (!SDL_ClaimWindowForGPUDevice(g_aeron.gpu_device, g_aeron.window)) {
 		Aeron_LogError("aeron", "SDL_ClaimWindowForGPUDevice failed: %s", SDL_GetError());
@@ -3399,6 +3404,13 @@ int Aeron_UploadTextureBatchCmd(AeronCommandBuffer* command_buffer, const AeronT
 		destination.w         = (uint32_t)upload->width;
 		destination.h         = (uint32_t)upload->height;
 		destination.d         = upload->depth > 0 ? (uint32_t)upload->depth : 1u;
+		if (g_aeron.upload_whole_blocks && Aeron_IsCompressedTextureFormat(upload->texture->format)) {
+			/* A region that ends at the edge of a level ends in partial blocks
+			 * when the level's size isn't a multiple of 4. The data has the
+			 * whole blocks. */
+			destination.w = (destination.w + 3u) & ~3u;
+			destination.h = (destination.h + 3u) & ~3u;
+		}
 		int cycle;
 		if (!Aeron_CommandBufferResolveCycle(command_buffer, upload->texture, 1, upload->cycle != 0,
 											 &cycle)) {

@@ -339,6 +339,8 @@ typedef struct AeronRuntime {
 	int                   frames_in_flight;
 	/* SDL_QueryGPUFence gives the right answer. */
 	int fence_query_reliable;
+	/* Block-compressed uploads need regions in whole 4x4 blocks. */
+	int upload_whole_blocks;
 	/* The fence of the newest command buffer submitted since the last
 	 * present, which the present queries when its swapchain image arrives. */
 	AeronSharedFence* pacing_fence;
