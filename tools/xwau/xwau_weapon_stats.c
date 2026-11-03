@@ -33,8 +33,8 @@ static const char* const kStats[STATS] = {
 	"RechargeRate",
 	"EnergyLowHighSeparation",
 };
-/* DurationIntegerPart and DurationDecimalPart go into one key,
-   `duration_ms`, so the second name is empty. */
+/* XWAU's DurationIntegerPart and DurationDecimalPart are written together
+   as `duration_ms`, so the name of the second one is empty. */
 static const char* const kStatNames[STATS] = {
 	"duration_ms",
 	"",
@@ -445,8 +445,9 @@ bool XwauWeaponStats_Read(const char* game, const char* model, XwauWeaponStats* 
 		XwauLines_Free(&lines);
 	}
 	XwauWeaponStats_Free(&unset);
-	/* The game looks up each part of a shot's duration in the model, then in
-	   the global section, so a model's duration may need a global part. */
+	/* The game looks for each part of a duration in the model first, then in
+	   the global section. Keep the global parts, so that a model's duration
+	   can use them. */
 	if (ok && model && enabled) {
 		XwauWeaponStats global = { 0 };
 		ok                     = read_global_section(game, XWAU_WEAPON_STATS_STATS, &global);
@@ -515,16 +516,17 @@ static void write_number(FILE* f, int stat, long long value) {
 		fprintf(f, "%lld", value);
 }
 
-/* The forms that the game tries for a value of each form, in order, as the
-   game builds them for a player or not and for a difficulty. -1 ends a
-   list. */
+/* The order in which the game looks at the forms. Each row starts with a
+   form and lists the forms that the game tries after it. -1 ends the row.
+   For example, for a player on easy difficulty, the game tries
+   player_easy, then player, then easy, then the plain value. */
 static const int kFormChains[FORMS][5] = {
 	{ 0, -1 },    { 1, 0, -1 },       { 2, 0, -1 },       { 3, 0, -1 },
 	{ 4, 0, -1 }, { 5, 1, 2, 0, -1 }, { 6, 1, 3, 0, -1 }, { 7, 1, 4, 0, -1 },
 };
 
-/* Returns the value of `stat` for `weapon` at `form` of `profile` in
-   `items`, or NULL. */
+/* Finds the value of `stat` for `weapon` in `profile` at `form`. Returns
+   NULL if there isn't one. */
 static const XwauWeaponStatsValue* find_stat(const XwauWeaponStatsValue* items, size_t count,
 											 const char* profile, int weapon, int form, int stat) {
 	for (size_t i = 0; i < count; ++i)
@@ -534,9 +536,10 @@ static const XwauWeaponStatsValue* find_stat(const XwauWeaponStatsValue* items, 
 	return NULL;
 }
 
-/* Returns the part `stat` of a duration written at `form`, the way the game
-   finds it: at each form of the form's list, in the model's values and
-   then in the global ones, and then the stock value. */
+/* Returns one part of a duration at `form`. It looks in the same order as
+   the game: for each form in the row of `form`, first the model's values,
+   then the global values. If no value is set, it returns the stock
+   value. */
 static long long duration_part(const XwauWeaponStats* stats, const XwauStockValues* stock,
 							   const char* profile, int weapon, int form, int stat) {
 	for (const int* f = kFormChains[form]; *f >= 0; ++f) {
@@ -552,17 +555,18 @@ static long long duration_part(const XwauWeaponStats* stats, const XwauStockValu
 	return stat == STAT_DURATION_SECONDS ? stock->lifetime_seconds[at] : stock->lifetime_fractions[at];
 }
 
-/* Writes the duration of `weapon` at `form` in milliseconds. The game adds
-   236 ticks of 4 ms for each second and the fraction of a second, rounded
-   to a tick, and keeps the sum in 16 bits. */
+/* Writes the duration of `weapon` at `form`, in milliseconds. The game
+   counts 236 ticks for each second, adds the fraction rounded to a whole
+   tick, and keeps the result in 16 bits. A tick is 4 ms. */
 static void write_duration(FILE* f, const XwauWeaponStats* stats, const XwauStockValues* stock,
 						   const char* profile, int weapon, int form) {
 	const bool has_seconds =
 		find_stat(stats->items, stats->count, profile, weapon, form, STAT_DURATION_SECONDS);
 	const bool has_fraction =
 		find_stat(stats->items, stats->count, profile, weapon, form, STAT_DURATION_FRACTION);
-	/* Merged, a player form's part hides a difficulty form's other part,
-	   which the game would use for a player at that difficulty. */
+	/* For a player, the game tries the player form before the difficulty
+	   forms. When the player form has one part and a difficulty form has
+	   the other, the game mixes them. One merged value can't do that. */
 	if (form == 1 && has_seconds != has_fraction) {
 		const int missing = has_seconds ? STAT_DURATION_FRACTION : STAT_DURATION_SECONDS;
 		for (int difficulty = 2; difficulty <= 4; ++difficulty)
@@ -591,7 +595,7 @@ static void write_weapon(FILE* f, const XwauNames* names, const XwauStockValues*
 		for (int stat = 0; stat < STATS; ++stat) {
 			const XwauWeaponStatsValue* v =
 				find_stat(stats->items, stats->count, profile, weapon, form, stat);
-			/* The two parts of the duration make one key. */
+			/* The fraction is written with the seconds, as one key. */
 			if (stat == STAT_DURATION_FRACTION)
 				continue;
 			if (stat == STAT_DURATION_SECONDS && !v)

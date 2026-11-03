@@ -76,8 +76,8 @@ typedef struct XwauStockValues {
 	/* The kind of each hardpoint type: 0 none, 1 laser, 2 warhead. */
 	const uint8_t* hardpoint_kinds;
 	size_t         hardpoint_kind_count;
-	/* The life of each weapon type, from type 280: whole game seconds, and
-	   the part of a game second in Q16. */
+	/* The stock life of each weapon type, starting at type 280. It has two
+	   parts: whole game seconds, and a fraction of a game second in Q16. */
 	const uint16_t* lifetime_seconds;
 	const uint16_t* lifetime_fractions;
 	size_t          lifetime_count;

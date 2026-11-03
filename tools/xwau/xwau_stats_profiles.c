@@ -11,8 +11,9 @@
 
 static const char* const kMissionDirs[] = { "Missions", "Melee", "Combat" };
 
-/* The game's keys of a profile, the units that they use, the keys of the
-   percents, then XWAU's keys, in the order of stats_profiles.h's fields. */
+/* The keys that the importer writes in a profile and their units, the keys
+   of the percents, and XWAU's keys. All four tables follow the order of the
+   game's stats fields. */
 static const char* const kProfileKeys[XWAU_STATS_FIELDS] = {
 	"speed_mglt",
 	"acceleration_mglt",

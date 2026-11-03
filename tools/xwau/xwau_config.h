@@ -75,8 +75,8 @@ void Xwau_WriteString(FILE* f, const char* text);
  * any XwauUnit. */
 void Xwau_WriteDecimal(FILE* f, double value);
 
-/* The units of the mod files, and the game's unit that each one stands
- * for. */
+/* The units of the mod files. The comment of each unit gives the game's
+ * unit that it converts to. */
 typedef enum XwauUnit {
 	XWAU_UNIT_NONE,         /* the game's own value */
 	XWAU_UNIT_METRES,       /* game units, 40.96 to the metre */
