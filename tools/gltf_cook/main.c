@@ -2,6 +2,7 @@
  * aeron_gltf_cook — CLI entry point.
  *
  * Usage: aeron_gltf_cook <in.gltf> --out <out.glb> [options]
+ *        aeron_gltf_cook --build-project <project> --out <mod folder> [options]
  *        aeron_gltf_cook --library <library>.yaml --out <effects dir> [--verbose]
  *        aeron_gltf_cook --library-json <library>.yaml
  *        aeron_gltf_cook --library-from-json <in.json> <library>.yaml
@@ -12,6 +13,7 @@
  * AERON_flight_model asset also gets cooked simulation and render data, and
  * probe data with --probes. Before the result is written, it is loaded back
  * the way a game loads it.
+ * --build-project builds a project folder of the Blender add-on into a mod.
  * --library builds an effect library (animated_materials.md).
  */
 
@@ -20,7 +22,9 @@
 #include "effect_files.h"
 #include "effect_library.h"
 #include "gltf_cook.h"
+#include "ktx2_writer.h"
 #include "material_checks.h"
+#include "project_build.h"
 #include "tool_log.h"
 
 #include <stdarg.h>
@@ -56,6 +60,8 @@ void SDL_LogVerbose(int category, const char* fmt, ...) {
 
 static void usage(void) {
 	fprintf(stderr, "Usage: aeron_gltf_cook <in.gltf> --out <out.glb> [options]\n"
+					"       aeron_gltf_cook --build-project <project> --out <mod folder> [--jobs N]\n"
+					"                       [--only KEY] [--zstd-level N] [--verbose]\n"
 					"       aeron_gltf_cook --library <library>.yaml --out <effects dir> [--verbose]\n"
 					"       aeron_gltf_cook --library-from-json <in.json> <library>.yaml\n"
 					"       aeron_gltf_cook --library-json <library>.yaml\n"
@@ -105,6 +111,15 @@ static void usage(void) {
 					"  --verbose             Print per-channel cook progress and the detail\n"
 					"                        lines, such as the use of each atlas.\n"
 					"  -h, --help            Show this help.\n"
+					"\n"
+					"--build-project builds a project folder of the Blender add-on into a\n"
+					"mod folder. It builds each effects/<library>/<library>.yaml into\n"
+					"flight/effects, as --library does, and copies effects/effects.yaml\n"
+					"there. Then it cooks each models/<key>/<key>.gltf into\n"
+					"flight/models/<key>.glb, with its probes bake when the add-on has\n"
+					"made one (models/<key>/bake/probes). --jobs cooks N models at once\n"
+					"(default 1), and --only cooks only the model KEY. The libraries are\n"
+					"always built, since the models are checked against them.\n"
 					"\n"
 					"--library builds an effect library file: its images, baked by kind,\n"
 					"into page arrays and an index in <effects dir>. A library whose\n"
@@ -168,6 +183,46 @@ static bool write_library(const char* in, const char* out) {
 	return ok;
 }
 
+/* Reads the options of --build-project and runs it. */
+static int build_project(int argc, char** argv) {
+	ProjectBuildOptions options = { .project = argc > 2 ? argv[2] : NULL, .jobs = 1 };
+	aeron_gltf_cook_default_options(&options.cook);
+	for (int i = 3; i < argc; i++) {
+		const char* a = argv[i];
+		if (strcmp(a, "--out") == 0 && i + 1 < argc) {
+			options.mod = argv[++i];
+		} else if (strcmp(a, "--jobs") == 0 && i + 1 < argc) {
+			options.jobs = atoi(argv[++i]);
+			if (options.jobs < 1) {
+				fprintf(stderr, "[aeron_gltf_cook] --jobs must be 1 or more\n");
+				return 2;
+			}
+		} else if (strcmp(a, "--only") == 0 && i + 1 < argc) {
+			options.only = argv[++i];
+		} else if (strcmp(a, "--zstd-level") == 0 && i + 1 < argc) {
+			options.cook.zstd_level = atoi(argv[++i]);
+			if (options.cook.zstd_level < 1 || options.cook.zstd_level > 22) {
+				fprintf(stderr, "[aeron_gltf_cook] --zstd-level must be 1 to 22\n");
+				return 2;
+			}
+		} else if (strcmp(a, "--verbose") == 0) {
+			options.cook.verbose = true;
+			ToolLog_SetDetails(1);
+		} else {
+			fprintf(stderr, "[aeron_gltf_cook] unknown arg '%s'\n", a);
+			usage();
+		}
+	}
+	if (!options.project || !options.mod)
+		usage();
+	/* Set once, before the cooks run at once. */
+	if (!ktx2_set_zstd_level(options.cook.zstd_level)) {
+		fprintf(stderr, "[aeron_gltf_cook] invalid zstd level %d\n", options.cook.zstd_level);
+		return 2;
+	}
+	return ProjectBuild_Run(&options) ? 0 : 1;
+}
+
 int main(int argc, char** argv) {
 	if (argc < 2)
 		usage();
@@ -180,6 +235,8 @@ int main(int argc, char** argv) {
 		ToolLog_SetDetails(argc == 6);
 		return EffectLibrary_BuildLibrary(LIBRARY_TAG, argv[2], NULL, argv[4]) != EFFECT_LIBRARY_FAILED ? 0 : 1;
 	}
+	if (strcmp(argv[1], "--build-project") == 0)
+		return build_project(argc, argv);
 	if (strcmp(argv[1], "--library-json") == 0) {
 		if (argc != 3)
 			usage();

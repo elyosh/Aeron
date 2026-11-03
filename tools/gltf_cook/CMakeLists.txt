@@ -68,7 +68,7 @@ if(AERON_BUILD_TOOLS)
         C_STANDARD 11
         C_STANDARD_REQUIRED ON)
 
-    add_executable(aeron_gltf_cook main.c)
+    add_executable(aeron_gltf_cook main.c project_build.c project_files.cpp)
     target_link_libraries(aeron_gltf_cook PRIVATE aeron_gltf_cook_tool aeron_effect_library)
     # Cooked simulation data must be bit-identical across platforms.
     if(MSVC)
@@ -93,5 +93,7 @@ if(AERON_BUILD_TOOLS)
     set_target_properties(aeron_gltf_cook PROPERTIES
         C_STANDARD 11
         C_STANDARD_REQUIRED ON
+        CXX_STANDARD 17
+        CXX_STANDARD_REQUIRED ON
         RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
 endif()
