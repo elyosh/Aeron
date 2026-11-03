@@ -39,8 +39,10 @@
  *     same model: the same index when OpenXWA's model there is XWAU's, else
  *     the one type that loads it. OpenXWA's model of a type is the `model`
  *     of its object type file, else the model of its row in the stock game.
- *     Indices of XWAU's added rows are reported. A map line becomes null, so
- *     that the lines keep their places, and a key is left out;
+ *     An index whose model has no OpenXWA type, such as one of XWAU's added
+ *     rows, makes the import fail. An index that loads no model in XWAU
+ *     either is reported: a map line becomes null, so that the lines keep
+ *     their places, and a key is left out;
  *   - a swap "FlightModels\<A>.opt = FlightModels\<B>.opt" becomes "a: b"
  *     when B is in the installation and was converted. The hook ignores
  *     swaps to <A>Exterior.opt;
@@ -54,8 +56,12 @@
  *     Fam, Inverted, then X/Y/Z;
  *   - [Size] gives ClosedSFoilsElevation (0 when missing) and
  *     ClosedSFoilsElevationInverted (ClosedSFoilsElevation when 0).
- * LightColorIntensity, LightColorRgb and unknown HangarObjects keys are
- * reported and left out.
+ * Unknown HangarObjects keys, lines without '=' and repeated keys are
+ * reported and left out. LightColorIntensity and LightColorRgb make the
+ * import fail, because the remaster lights the hangar itself. So do a swap
+ * to a model that wasn't converted, a hangar model that wasn't converted,
+ * the per-ship mission sections [<Section>_<ship>] and a mission's own
+ * hangar model, <mission>_Hangar.opt.
  *
  * With the stock game, each mission's own layer, from [<Section>] of
  * <mission>.ini or <mission>_<Section>.txt, becomes the `hangar` of its
@@ -72,13 +78,15 @@
 #include <stdbool.h>
 
 #include "xwau_game_tables.h"
+#include "xwau_names.h"
 
 /* Writes <mod>/flight/hangars.yaml for the installation `xwau`, and the
  * missions' layers when `stock_game` is set. `stock` holds the stock game's
- * tables. It uses the converted models in <mod>/flight/models and the object
- * type files in <mod>/flight/object_types. Returns false when a file can't
- * be read or written. */
-bool XwauHangars_Write(const char* xwau, const XwauGameTables* stock, const char* stock_game,
-					   const char* mod);
+ * tables. Uses the converted models in <mod>/flight/models and the object
+ * type files in <mod>/flight/object_types. `game_names` converts the object
+ * type names in those files. Returns false when a file can't be read or
+ * written. */
+bool XwauHangars_Write(const char* xwau, const XwauGameTables* stock, const XwauNames* game_names,
+					   const char* stock_game, const char* mod);
 
 #endif /* AERON_XWAU_HANGARS_H */

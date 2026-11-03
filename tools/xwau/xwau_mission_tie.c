@@ -50,8 +50,13 @@ static bool read_fg_line(XwauMissionTie* tie, const XwauLines* words, size_t lin
 		return true;
 	if (Xwau_SameName(key, "index")) {
 		long long craft = 0, markings = 0;
-		if (words->count < 6 || !Xwau_SameName(words->items[4], "markings"))
-			return true; /* an index line for another hook */
+		if (words->count < 6 || !Xwau_SameName(words->items[4], "markings")) {
+			/* hook_mission_tie only reads the markings of an index line. */
+			if (report)
+				Report(base, "mission_tie: line '%s' isn't an index line with markings, so XWAU ignores it",
+					   line);
+			return true;
+		}
 		if (!number(words, 3, line, base, report, &craft) || !number(words, 5, line, base, report, &markings))
 			return true;
 		for (size_t i = 0; i < tie->craft_marking_count; ++i) {
@@ -71,12 +76,15 @@ static bool read_fg_line(XwauMissionTie* tie, const XwauLines* words, size_t lin
 	const bool voice  = Xwau_SameName(key, "pilotvoice");
 	const bool sfoils = Xwau_SameName(key, "close_SFoils"), gear = Xwau_SameName(key, "open_LandingGears");
 	if (!markings && !iff && !voice && !sfoils && !gear) {
-		/* Other keys are for other hooks, but a number is no key at all: a
-		   comma is missing. */
+		/* No hook reads other keys. A number is no key at all: a comma is
+		   missing. */
 		if (report && ((key[0] >= '0' && key[0] <= '9') || key[0] == '-'))
 			Report(base,
 				   "mission_tie: line '%s' has the number '%s' where its key should be, so XWAU ignores it",
 				   line, key);
+		else if (report)
+			Report(base, "mission_tie: no hook reads the key '%s' of line '%s', so XWAU ignores it", key,
+				   line);
 		return true;
 	}
 	long long value = 0;
@@ -127,6 +135,9 @@ bool XwauMissionTie_Read(const char* game, const char* base, bool report, XwauMi
 			ok = XwauLines_Add(&out->craft_lines, line, strlen(line));
 		else if (strchr(line, '='))
 			ok = XwauLines_Add(&out->settings, line, strlen(line));
+		else if (report)
+			Report(base, "mission_tie: line '%s' isn't an fg, craft or key = value line, so XWAU ignores it",
+				   line);
 		XwauLines_Free(&words);
 	}
 	XwauLines_Free(&lines);

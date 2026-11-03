@@ -168,6 +168,8 @@ typedef struct {
 	 * They are left out, or kept when the repeat has another texture. */
 	uint32_t skipped_repeats;
 	uint32_t kept_repeats;
+	/* Triangles left out because a corner's vertex index is out of range. */
+	uint32_t bad_triangles;
 	bool     has_tangents;  /* vertices carry TANGENT (opt_gltf_generate_tangents) */
 	bool     out_of_memory; /* growing the vertices or indices failed */
 } BuiltMesh;

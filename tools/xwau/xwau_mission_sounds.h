@@ -11,8 +11,11 @@
  *
  * The hook compares `from` with the path that the game builds. Upper and
  * lower case count as the same, but '/' and '\' don't. If two lines have the
- * same `from`, the first one is used. If the `to` file isn't in the
- * installation, the line does nothing; it is reported and left out.
+ * same `from`, the first one is used, and the others are reported. If the
+ * `to` file isn't in the installation, the line does nothing; it is
+ * reported and left out. A `to` file that only the stock game has makes the
+ * import fail, because the importer doesn't copy it. Without
+ * hook_engine_sound.dll, XWAU reads no line, and the lines are reported.
  *
  * Lines for hangar voices (Wave/HANGARVOICESFX.LST) never match, because the
  * game builds those paths with a '/'. They are also reported and left out.

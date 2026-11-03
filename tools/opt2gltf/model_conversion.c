@@ -8,6 +8,7 @@
 #include <string.h>
 #include <strings.h>
 
+#include "aeron/asset/flight_names.h"
 #include "classic_radiance.h"
 #include "model_tables.h"
 #include "opt.h"
@@ -153,6 +154,18 @@ static const XwauNormalMap* xwau_normal_map(const ModelConversion* mc, const cha
 	char spec[XWAU_MAT_PATH_MAX];
 	if (!PathFormat(spec, sizeof spec, "%s", value))
 		return NULL;
+	/* A value that names no DAT file can be a ZIP file or another image,
+	 * which XWAU can load. */
+	bool names_dat = false;
+	for (const char* at = spec; *at && !names_dat; ++at)
+		names_dat = strncasecmp(at, ".dat", 4) == 0;
+	if (!names_dat) {
+		Report(
+			label,
+			"NormalMap '%s' isn't an image in a DAT file, and the import only reads those, so it is left out",
+			value);
+		return NULL;
+	}
 	char* image_sep = strrchr(spec, '-');
 	char* group_sep = NULL;
 	if (image_sep) {
@@ -270,7 +283,7 @@ static int apply_cockpit_eye(opt_file_t* opt, const int eye[3]) {
 	if (!eye_point)
 		return 0;
 	*eye_point = (opt_hardpoint_t) {
-		.type = (opt_hardpoint_type_t)OPT_GLTF_COCKPIT_HARDPOINT,
+		.type = OPT_GLTF_COCKPIT_HARDPOINT,
 		.pos  = { (float)eye[0], (float)-eye[1], (float)eye[2] },
 	};
 	return 1;
@@ -286,6 +299,47 @@ static int32_t weapon_hardpoints(const opt_file_t* opt) {
 		for (int32_t hi = 0; hi < opt->meshes[mi].hardpoint_count; ++hi)
 			count += opt->meshes[mi].hardpoints[hi].type >= 1 && opt->meshes[mi].hardpoints[hi].type <= 18;
 	return count;
+}
+
+/* Reports what the glTF model can't keep from the OPT:
+ *   - The model has LOD 0 only, and the game draws it at every distance.
+ *   - A mesh type has a name only from 0 to 31. XWA reads the mesh type of a
+ *     component as an index in tables of 32 entries, such as
+ *     g_meshTypeComponentMaxHp, without a range check. So a larger type
+ *     changes the component in XWAU, and it can't become `default`.
+ *   - Only the explosion type flags 1 and 2 have names, because the game
+ *     reads only those (ModelMesh_HasExplosionType1 and 2).
+ *   - A face group keeps at most 16 NodeSwitch states.
+ * In XWAU mode, a mesh type above 31 and the states past the 16th make the
+ * import fail. Stock mode only reports them, because some stock OPTs, such
+ * as Z-95.OPT, keep texture data in NodeSwitch states past the 16th. */
+static void report_opt_drops(const opt_file_t* opt, bool xwau, const char* label) {
+	int32_t lods = 0, explosion_flags = 0;
+	for (int32_t mi = 0; mi < opt->mesh_count; ++mi) {
+		const opt_mesh_t* m = &opt->meshes[mi];
+		lods += m->lod_count > 1;
+		if ((uint32_t)m->descriptor.mesh_type >= AERON_FLIGHT_MESH_TYPE_COUNT && xwau)
+			ReportFatal(label, "mesh %d has mesh type %u, which has no name", (int)mi,
+						(unsigned)m->descriptor.mesh_type);
+		else if ((uint32_t)m->descriptor.mesh_type >= AERON_FLIGHT_MESH_TYPE_COUNT)
+			Report(label, "mesh %d has mesh type %u, which has no name, so it becomes default", (int)mi,
+				   (unsigned)m->descriptor.mesh_type);
+		explosion_flags +=
+			((uint32_t)m->descriptor.explosion_type & ~((1u << AERON_FLIGHT_EXPLOSION_FLAG_COUNT) - 1u)) != 0;
+	}
+	if (lods)
+		Report(label, "%d mesh(es) have more than one LOD. Only LOD 0 is converted", (int)lods);
+	if (explosion_flags)
+		Report(label, "%d mesh(es) have explosion type flags other than 1 and 2, which the game never reads",
+			   (int)explosion_flags);
+	if (opt->dropped_switch_states && xwau)
+		ReportFatal(label, "%d NodeSwitch state(s) are past the 16 states that a face group can keep",
+					(int)opt->dropped_switch_states);
+	else if (opt->dropped_switch_states)
+		Report(label,
+			   "%d NodeSwitch state(s) are past the 16 states that a face group can keep, so they are left "
+			   "out",
+			   (int)opt->dropped_switch_states);
 }
 
 /* ===== One conversion =================================================== */
@@ -364,7 +418,8 @@ static bool prepare_xwau(Conversion* c, const ModelConversion* mc, const opt_fil
 			c->options.model.eye_vertical_fov =
 				XwauModel_VerticalFov(c->model->fov.regular) * (3.14159265f / 180.0f);
 		else if (c->model->fov.has_regular)
-			Report(label, "the cockpit has a field of view but the craft has no pilot eye; no camera");
+			ReportFatal(label,
+						"the cockpit has a field of view, but the craft has no pilot eye to put it on");
 	}
 	const char* listed = ModelTables_LitTextures(basename);
 	if (listed)
@@ -379,7 +434,8 @@ static bool prepare_xwau(Conversion* c, const ModelConversion* mc, const opt_fil
 	}
 	const int32_t weapons = weapon_hardpoints(opt);
 	if (weapons > WEAPON_SLOTS)
-		Report(label, "%d weapon hardpoints; the game keeps %d weapon slots", (int)weapons, WEAPON_SLOTS);
+		Report(label, "%d weapon hardpoints, but the game keeps only %d weapon slots, like XWAU",
+			   (int)weapons, WEAPON_SLOTS);
 	return read && XwauSkins_Resolve(mc->game, mc->missions, basename, opt, label, &c->skins);
 }
 
@@ -396,9 +452,16 @@ static bool place_cockpit(Conversion* c, opt_file_t* opt, const char* label) {
 static bool load_dynamic_cockpit(Conversion* c, const ModelConversion* mc, opt_file_t* opt,
 								 const char* basename, const char* label) {
 	const char* dynamic = c->model && c->model->dynamic_cockpit[0] ? c->model->dynamic_cockpit : NULL;
-	if (dynamic &&
-		(!XwauDynamicCockpit_Load(dynamic, opt, basename, xwau_find_file, (void*)mc, &c->dc, label) ||
-		 !XwauDynamicCockpit_ApplyHologramOffset(opt, &c->dc))) {
+	if (dynamic && !mc->names) {
+		Report(label,
+			   "%s: converting cockpit screens needs the game's names, which only the mod importer has. "
+			   "The screens are left out",
+			   dynamic);
+		return true;
+	}
+	if (dynamic && (!XwauDynamicCockpit_Load(dynamic, opt, basename, xwau_find_file, (void*)mc, mc->names,
+											 &c->dc, label) ||
+					!XwauDynamicCockpit_ApplyHologramOffset(opt, &c->dc))) {
 		Report(label, "cannot apply %s", dynamic);
 		return false;
 	}
@@ -563,14 +626,16 @@ static bool xwau_same_mat_light(const XwauMatParams* a, const XwauMatParams* b) 
  * triangles that XWAU splits a quad into. A light_angle of 90° or more
  * gives a point light, since glTF spot lights end at 90°, and so does none.
  * Without light_falloff, XWAU gives the light the bolts' falloff, which only
- * bolt models use, so such a texture is reported and left out. Returns the
- * number of faces that gave a light through *found. */
+ * bolt models use, so such a texture makes the import fail. A face without a
+ * normal gives no light, and it is reported. Returns the number of faces
+ * that gave a light through *found. */
 static bool xwau_mat_lights(Conversion* c, const opt_file_t* opt, const char* label, size_t* found) {
-	*found = 0;
+	*found           = 0;
+	size_t no_normal = 0;
 	for (int32_t ti = 0; c->mat && ti < opt->texture_count; ++ti) {
 		const XwauMatParams* p = XwauMat_Find(c->mat, opt->textures[ti].name);
 		if (p->has_light && !(p->light_falloff > 0.0f))
-			Report(label, "texture %s: .mat Light without light_falloff, left out", opt->textures[ti].name);
+			ReportFatal(label, "texture %s has a .mat Light without light_falloff", opt->textures[ti].name);
 		else if (p->has_light && p->has_light_angle && !(cosf(p->light_angle * 0.0174532925f) < 1.0f))
 			Report(label, "texture %s: .mat light_angle %g gives no cone, left out", opt->textures[ti].name,
 				   (double)p->light_angle);
@@ -630,8 +695,10 @@ static bool xwau_mat_lights(Conversion* c, const opt_file_t* opt, const char* la
 						light.position      = (opt_vec3_t) { a->x + u * (d->x - a->x) + v * (b->x - a->x),
 															 a->y + u * (d->y - a->y) + v * (b->y - a->y),
 															 a->z + u * (d->z - a->z) + v * (b->z - a->z) };
-						if (!xwau_face_normal(m, f, corners, &light.direction))
+						if (!xwau_face_normal(m, f, corners, &light.direction)) {
+							no_normal++;
 							continue;
+						}
 						++*found;
 						if (xwau_mat_light_repeats(c, &light))
 							continue;
@@ -646,6 +713,8 @@ static bool xwau_mat_lights(Conversion* c, const opt_file_t* opt, const char* la
 			}
 		}
 	}
+	if (no_normal)
+		Report(label, "%zu face(s) with a .mat Light have no normal, so they give no light", no_normal);
 	c->options.model.lights      = c->lights;
 	c->options.model.light_count = c->light_count;
 	return true;
@@ -709,7 +778,9 @@ static bool xwau_levers(Conversion* c, const opt_file_t* opt, const char* label)
 		const XwauMatParams* p = XwauMat_Find(c->mat, opt->textures[t].name);
 		owner[t]               = -1;
 		if (p->lever == XWAU_LEVER_OTHER) {
-			Report(label, "texture %s: a sliding or free-axis lever, left still", opt->textures[t].name);
+			Report(label,
+				   "texture %s is a sliding or free-axis cockpit lever, which the import doesn't convert",
+				   opt->textures[t].name);
 			continue;
 		}
 		OptGltfControl control;
@@ -924,6 +995,7 @@ bool ModelConversion_Build(const ModelConversion* mc, const char* opt_path, cons
 		return false;
 	}
 	opt_file_t* opt = model->opt;
+	report_opt_drops(opt, mc->xwau, opt_path);
 	Conversion* c = model->c = (Conversion*)calloc(1, sizeof *c);
 	bool        ok           = c != NULL;
 	if (ok && mc->xwau)

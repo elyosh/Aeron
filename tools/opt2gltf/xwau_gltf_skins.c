@@ -271,6 +271,37 @@ static bool layers_build(XwauGltfSkins* s, const opt_file_t* opt, const char* ba
 				skinnable[t] = true;
 		}
 	}
+	/* XWAU puts a skin on every texture of its name. A skin image of a
+	 * texture that LOD 0 shows only in a later switch state, or on a cockpit
+	 * screen, can't be converted. One that LOD 0 doesn't show has no effect. */
+	size_t unshown = 0;
+	for (size_t t = 0; ok && t < tc; ++t) {
+		bool imaged = false;
+		for (size_t k = 0; !skinnable[t] && k < skins->skin_count; ++k)
+			imaged |= skins->images[k * tc + t].rgba != NULL;
+		if (!imaged)
+			continue;
+		bool in_state = false;
+		for (int32_t mi = 0; !in_state && mi < opt->mesh_count; ++mi) {
+			const opt_lod_t* lod = &opt->meshes[mi].lods[0];
+			for (int32_t g = 0; !in_state && g < lod->group_count; ++g)
+				for (int32_t st = 1; lod->groups[g].face_count > 0 && lod->groups[g].state_textures &&
+									 st < lod->groups[g].state_count;
+					 ++st)
+					in_state |= lod->groups[g].state_textures[st] == (int32_t)t;
+		}
+		if (screens && screens[t].present)
+			ReportFatal(basename, "texture %s has a skin image, but it is a cockpit screen",
+						opt->textures[t].name);
+		else if (in_state)
+			ReportFatal(basename,
+						"texture %s has a skin image, but LOD 0 shows it only in a later switch state",
+						opt->textures[t].name);
+		else
+			unshown++;
+	}
+	if (unshown)
+		Report(basename, "%zu texture(s) have skin images, but LOD 0 doesn't show them", unshown);
 	LayerCandidate* candidates =
 		ok ? (LayerCandidate*)calloc(skins->skin_count + 1, sizeof *candidates) : NULL;
 	ok = ok && candidates;

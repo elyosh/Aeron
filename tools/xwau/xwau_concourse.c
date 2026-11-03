@@ -22,8 +22,8 @@ static int planet_value(const XwauLines* lines, const char* key, long long min, 
 		return -1;
 	}
 	if (value != -1 && (value < min || value > max)) {
-		Report(base, "[concourse]: %s = %lld must be from %lld to %lld; it is left out", key, value, min,
-			   max);
+		ReportFatal(base, "[concourse]: %s = %lld, and the importer only takes %lld to %lld", key, value, min,
+					max);
 		return -1;
 	}
 	return (int)value;
@@ -33,10 +33,9 @@ bool XwauFrontPlanet_Read(const char* game, const char* base, const int design_s
 						  XwauFrontPlanet* out) {
 	out->image        = -1;
 	out->has_position = false;
-	char path[1024];
-	if (!Xwau_FindFile(game, "hook_concourse.dll", path, sizeof path))
-		return true;
-	char      rel[1100];
+	char       path[1024];
+	const bool hook = Xwau_FindFile(game, "hook_concourse.dll", path, sizeof path);
+	char       rel[1100];
 	XwauLines lines;
 	if (!PathFormat(rel, sizeof rel, "%s_concourse.txt", base) ||
 		!XwauLines_Read(Xwau_FindFile(game, rel, path, sizeof path) ? path : NULL, "", XWAU_RULES_CPP,
@@ -46,13 +45,27 @@ bool XwauFrontPlanet_Read(const char* game, const char* base, const int design_s
 						 !XwauLines_Read(Xwau_FindFile(game, rel, path, sizeof path) ? path : NULL,
 										 "concourse", XWAU_RULES_CPP, &lines)))
 		return false;
+	if (!hook) {
+		static const char* const kKeys[] = { "FrontPlanetIndex", "FrontPlanetPositionX",
+											 "FrontPlanetPositionY" };
+		for (size_t k = 0; k < sizeof kKeys / sizeof kKeys[0]; ++k) {
+			char text[256];
+			XwauLines_Value(&lines, kKeys[k], XWAU_RULES_CPP, text, sizeof text);
+			if (text[0])
+				Report(base, "[concourse]: the mod has no hook_concourse.dll, so XWAU never reads %s",
+					   kKeys[k]);
+		}
+		XwauLines_Free(&lines);
+		return true;
+	}
 	/* The game reads image groups as 16-bit numbers. */
 	out->image = planet_value(&lines, "FrontPlanetIndex", 1, 32767, base);
 	const int x = planet_value(&lines, "FrontPlanetPositionX", -32768, 32767, base);
 	const int y = planet_value(&lines, "FrontPlanetPositionY", -32768, 32767, base);
 	if ((x == -1) != (y == -1))
-		Report(base, "[concourse]: only one of FrontPlanetPositionX and FrontPlanetPositionY is set; the "
-					 "position is left out");
+		ReportFatal(base,
+					"[concourse]: only one of FrontPlanetPositionX and FrontPlanetPositionY is set, and "
+					"the importer can only write both");
 	else if (x != -1) {
 		out->has_position = true;
 		out->position[0]  = x * design_scale[0];

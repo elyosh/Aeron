@@ -32,6 +32,7 @@
 
 #include "opt.h"
 #include "opt_gltf.h"
+#include "xwau_names.h"
 
 /* Finds a game-relative path in the XWAU installation. Returns 0 when the file does not exist. */
 typedef int (*XwauDynamicCockpitFindFile)(void* context, const char* relative, char* out, size_t capacity);
@@ -48,11 +49,15 @@ typedef struct XwauDynamicCockpit {
 } XwauDynamicCockpit;
 
 /* Reads `dc_path` for the OPT `basename` (its file name without the
- * extension). A bad line or section is reported and skipped. Returns false
- * only when the file cannot be read or memory runs out. */
+ * extension). Reports and skips the lines and sections that XWAU skips too.
+ * The screens use the game's `names` for their sources and HUD areas. A
+ * source or HUD area without a name, a key that XWAU reads but the import
+ * can't convert, and a cover that isn't in a DAT file make the import fail
+ * (ReportFatal). Returns false only when the file can't be read or memory
+ * runs out. */
 bool XwauDynamicCockpit_Load(const char* dc_path, const opt_file_t* opt, const char* basename,
-							 XwauDynamicCockpitFindFile find, void* find_context, XwauDynamicCockpit* out,
-							 const char* label);
+							 XwauDynamicCockpitFindFile find, void* find_context, const XwauNames* names,
+							 XwauDynamicCockpit* out, const char* label);
 
 /* Moves the LOD 0 faces that draw a hologram texture, in any switch state,
  * by the hologram offset. Their corners get new vertices, so faces with other

@@ -1,4 +1,5 @@
 #include "aeron/asset/flight_model.h"
+#include "aeron/asset/flight_names.h"
 
 #include "flight_probes.h"
 
@@ -96,6 +97,56 @@ static bool json_uint(const cJSON* value, uint32_t* out) {
 		value->valuedouble > UINT32_MAX || trunc(value->valuedouble) != value->valuedouble)
 		return false;
 	*out = (uint32_t)value->valuedouble;
+	return true;
+}
+
+/* Reads a name from `list` and stores its value. */
+static bool json_flight_name(const cJSON* value, const char* key, AeronFlightNameList list, int32_t* out) {
+	const int found = cJSON_IsString(value) ? Aeron_FlightNameFind(list, value->valuestring) : -1;
+	if (found < 0) {
+		if (cJSON_IsString(value))
+			SDL_Log("[flight_model] %s: '%s' isn't a known name", key, value->valuestring);
+		else
+			SDL_Log("[flight_model] %s must be a name", key);
+		return false;
+	}
+	*out = found;
+	return true;
+}
+
+/* Reads an array of names from `list` as a bit mask: name n sets bit n. A
+   missing array gives 0. */
+static bool json_flight_name_mask(const cJSON* value, const char* key, AeronFlightNameList list,
+								  uint32_t* out) {
+	*out = 0;
+	if (!value)
+		return true;
+	if (!Aeron_FlightNameMask(list, value, out)) {
+		SDL_Log("[flight_model] %s must be a list of known names", key);
+		return false;
+	}
+	return true;
+}
+
+/* Reads an angle in degrees and rounds it to steps of 1/256 turn. Fails when
+   the result is outside [min, max]. Gives `fallback` when the field is
+   missing. */
+static bool json_degrees_to_turn_steps(const cJSON* object, const char* field, int32_t min, int32_t max,
+									   int32_t fallback, int32_t* out) {
+	const cJSON* value = cJSON_GetObjectItemCaseSensitive(object, field);
+	if (!value) {
+		*out = fallback;
+		return true;
+	}
+	const double steps = cJSON_IsNumber(value) && isfinite(value->valuedouble)
+							 ? round(value->valuedouble * 256.0 / 360.0)
+							 : (double)max + 1.0;
+	if (steps < min || steps > max) {
+		SDL_Log("[flight_model] %s must be a number of degrees from %.3f to %.3f", field, min * 360.0 / 256.0,
+				max * 360.0 / 256.0);
+		return false;
+	}
+	*out = (int32_t)steps;
 	return true;
 }
 
@@ -440,12 +491,16 @@ static bool build_model_articulations(const cJSON* extension, AeronFlightModel* 
 		if (!cJSON_IsObject(item) || !cJSON_IsString(group) || !group->valuestring ||
 			!Aeron_FlightTagValid(group->valuestring) ||
 			!cJSON_GetObjectItemCaseSensitive(item, "component") ||
-			!cJSON_GetObjectItemCaseSensitive(item, "angle") ||
-			!cJSON_GetObjectItemCaseSensitive(item, "speed") ||
-			!json_int_range(item, "component", 0, 254, 0, &component) ||
-			!json_int_range(item, "angle", -128, 255, 0, &angle) ||
-			!json_int_range(item, "speed", 0, 255, 0, &speed) ||
-			!json_int_range(item, "speedBack", 0, 255, speed, &speed_back))
+			!json_int_range(item, "component", 0, 254, 0, &component))
+			return false;
+		if (!cJSON_GetObjectItemCaseSensitive(item, "angleDegrees") ||
+			!cJSON_GetObjectItemCaseSensitive(item, "speedDegrees")) {
+			SDL_Log("[flight_model] articulation %d needs angleDegrees and speedDegrees", index);
+			return false;
+		}
+		if (!json_degrees_to_turn_steps(item, "angleDegrees", -128, 255, 0, &angle) ||
+			!json_degrees_to_turn_steps(item, "speedDegrees", 0, 255, 0, &speed) ||
+			!json_degrees_to_turn_steps(item, "speedBackDegrees", 0, 255, speed, &speed_back))
 			return false;
 		if (behavior && (!cJSON_IsString(behavior) || !behavior->valuestring ||
 						 !Aeron_FlightTagValid(behavior->valuestring)))
@@ -664,18 +719,15 @@ static bool build_component_semantics(const cgltf_data* data, const cgltf_node* 
 		cJSON_Delete(extension);
 		return false;
 	}
-	int32_t      mesh_type       = 0;
-	const cJSON* mesh_type_value = cJSON_GetObjectItemCaseSensitive(extension, "meshType");
-	if (!json_int(mesh_type_value, &mesh_type) || mesh_type < 0 || mesh_type > 31) {
+	int32_t mesh_type = 0;
+	if (!json_flight_name(cJSON_GetObjectItemCaseSensitive(extension, "meshType"), "meshType",
+						  AERON_FLIGHT_MESH_TYPES, &mesh_type) ||
+		!json_flight_name_mask(cJSON_GetObjectItemCaseSensitive(extension, "explosion"), "explosion",
+							   AERON_FLIGHT_EXPLOSION_FLAGS, &component->explosion_flags)) {
 		cJSON_Delete(extension);
 		return false;
 	}
-	component->mesh_type         = mesh_type;
-	const cJSON* explosion_flags = cJSON_GetObjectItemCaseSensitive(extension, "explosionFlags");
-	if (explosion_flags && !json_uint(explosion_flags, &component->explosion_flags)) {
-		cJSON_Delete(extension);
-		return false;
-	}
+	component->mesh_type   = mesh_type;
 	const cJSON* target_id = cJSON_GetObjectItemCaseSensitive(extension, "targetId");
 	if (target_id && !json_int(target_id, &component->target_id)) {
 		cJSON_Delete(extension);
@@ -786,7 +838,8 @@ static bool build_hardpoints(const cgltf_node* node, AeronFlightComponent* compo
 		int32_t type      = 0;
 		if (child->mesh || child->children_count || child->has_matrix || !finite_node_transform(child) ||
 			!identity_rotation_scale(child) || !extension || json_role(extension) != FLIGHT_ROLE_HARDPOINT ||
-			!json_int(cJSON_GetObjectItemCaseSensitive(extension, "type"), &type) || type < 0 || type > 39) {
+			!json_flight_name(cJSON_GetObjectItemCaseSensitive(extension, "type"), "hardpoint type",
+							  AERON_FLIGHT_HARDPOINT_TYPES, &type)) {
 			cJSON_Delete(extension);
 			return false;
 		}

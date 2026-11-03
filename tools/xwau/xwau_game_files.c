@@ -59,9 +59,15 @@ static bool copy_file(Copy* c, const char* path, bool if_changed, bool* copied) 
 	/* A sound that the game can't play is converted to 16-bit PCM. */
 	uint8_t* converted      = NULL;
 	size_t   converted_size = 0;
-	if (EndsWithNoCase(rel, ".wav") && XwauSoundBanks_ConvertWav((const uint8_t*)data, size, &converted,
-																 &converted_size) == XWAU_WAV_CONVERTED)
+	const XwauWavResult wav =
+		EndsWithNoCase(rel, ".wav")
+			? XwauSoundBanks_ConvertWav((const uint8_t*)data, size, &converted, &converted_size)
+			: XWAU_WAV_PLAYABLE;
+	if (wav == XWAU_WAV_CONVERTED)
 		++c->converted;
+	else if (wav == XWAU_WAV_BAD)
+		ReportFatal(path,
+					"isn't a WAV file that the import can read or convert to a sound the game can play");
 	char        target[2048], dir[2048];
 	bool        ok    = PathFormat(target, sizeof target, "%s/%s", c->out, rel);
 	const char* slash = ok ? strrchr(target, '/') : NULL;
@@ -110,6 +116,7 @@ static bool copy_wave(Copy* c) {
 	size_t count   = 0;
 	char** entries = ListDir(wave, true, &count);
 	bool   ok      = true;
+	size_t skipped = 0;
 	for (size_t i = 0; ok && i < count; ++i) {
 		char path[2048], rel[600], stock[1024];
 		if (entries[i][0] == '.')
@@ -120,13 +127,23 @@ static bool copy_wave(Copy* c) {
 		if (IsDir(path)) {
 			if (Xwau_FindDir(c->stock_game, rel, stock, sizeof stock))
 				ok = copy_changed_tree(c, path);
+			else
+				skipped++;
 		} else if (IsFile(path) && Xwau_FindFile(c->stock_game, rel, stock, sizeof stock)) {
 			bool copied = false;
 			ok          = copy_file(c, path, true, &copied);
 			c->sounds += copied;
+		} else {
+			skipped++;
 		}
 	}
 	FreeList(entries, count);
+	if (ok && skipped)
+		Report(wave,
+			   "has %zu files and folders that the stock game doesn't have. The game doesn't read them, so "
+			   "they aren't copied here. The sound banks and the missions' sound replacements copy the "
+			   "ones they use",
+			   skipped);
 	return ok;
 }
 

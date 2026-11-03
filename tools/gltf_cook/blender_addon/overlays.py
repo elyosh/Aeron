@@ -20,7 +20,7 @@ from mathutils import Matrix, Vector
 
 from . import common, projectiles
 
-# Families of hardpoint types (indices into common.HARDPOINT_TYPE_NAMES): label,
+# Families of hardpoint types (indices into common.HARDPOINT_TYPE_IDS): label,
 # theme collection colour (None: grey) and types. The last family gets every type
 # that no other family lists.
 HARDPOINT_FAMILIES = (
@@ -405,7 +405,7 @@ def build(root, active, settings):
                 ordinal_in_component, hardpoint = hardpoint, hardpoint + 1
                 if not settings.overlay_hardpoints or not child.visible_get():
                     continue
-                hardpoint_type = int(child.aeron_flight.hardpoint_type)
+                hardpoint_type = common.hardpoint_type(child.aeron_flight)
                 color = family_colors[hardpoint_family(hardpoint_type)]
                 position = child.matrix_world.translation.copy()
                 geometry.points.append((position, color, child.select_get()))
@@ -424,7 +424,7 @@ def build(root, active, settings):
                     _pilot_eye(geometry, root, position, color)
                 if settings.overlay_hardpoint_labels:
                     geometry.labels.append((position, "{}: {}".format(
-                        ordinal_in_component, common.HARDPOINT_TYPE_NAMES[hardpoint_type]), color))
+                        ordinal_in_component, common.type_label(common.HARDPOINT_TYPE_IDS[hardpoint_type])), color))
             elif settings.overlay_glows and child.visible_get():
                 frame = glow_frame(child.matrix_world)
                 if frame is None:  # a zero scale, which Check Model reports

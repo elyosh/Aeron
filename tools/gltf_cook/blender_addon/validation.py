@@ -216,10 +216,9 @@ def validate(root):
         problems.error(root, "the model has {} components and controls, more than the limit of {}".format(
             rows, common.MAX_ROWS))
     cockpits = [obj for component in parts for obj in common.ordered_children(component, ('hardpoint',))
-                if int(obj.aeron_flight.hardpoint_type) == common.COCKPIT_HARDPOINT_TYPE]
+                if common.hardpoint_type(obj.aeron_flight) == common.COCKPIT_HARDPOINT_TYPE]
     for obj in cockpits[1:]:
-        problems.error(obj, "a model can have only one pilot eye hardpoint (type {})".format(
-            common.COCKPIT_HARDPOINT_TYPE))
+        problems.error(obj, "a model can have only one pilot_eye hardpoint")
 
     props = root.aeron_flight
     for index, articulation in enumerate(props.articulations):

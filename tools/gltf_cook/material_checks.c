@@ -12,6 +12,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "aeron/asset/flight_names.h"
 #include "aeron/asset/flight_tags.h"
 #include "cJSON.h"
 #include "cgltf.h"
@@ -89,11 +90,6 @@ static bool numbers(const cJSON* item, int count) {
 			return false;
 	}
 	return true;
-}
-
-static bool int_in(const cJSON* item, double low, double high) {
-	return cJSON_IsNumber(item) && item->valuedouble >= low && item->valuedouble <= high &&
-		   item->valuedouble == floor(item->valuedouble);
 }
 
 static bool fail(Check* c, const char* what) {
@@ -260,10 +256,13 @@ static bool check_damage(Check* c, const cJSON* in) {
 	const char* library = entry_library(c, in, "damage");
 	if (!library)
 		return false;
-	if (!int_in(cJSON_GetObjectItemCaseSensitive(in, "choice"), 0, 4095) ||
-		!int_in(cJSON_GetObjectItemCaseSensitive(in, "placement"), 0, 4095) || !cJSON_IsArray(alternatives) ||
-		!cJSON_GetArraySize(alternatives) || cJSON_GetArraySize(alternatives) > 0xFFFF)
-		return fail(c, "damage needs choice and placement (integers 0 to 4095) and alternatives");
+	const cJSON* choice    = cJSON_GetObjectItemCaseSensitive(in, "choice");
+	const cJSON* placement = cJSON_GetObjectItemCaseSensitive(in, "placement");
+	if (!cJSON_IsString(choice) || !choice->valuestring[0] ||
+		(placement && (!cJSON_IsString(placement) || !placement->valuestring[0])) ||
+		!cJSON_IsArray(alternatives) || !cJSON_GetArraySize(alternatives) ||
+		cJSON_GetArraySize(alternatives) > 0xFFFF)
+		return fail(c, "damage needs a choice name, an optional placement name and alternatives");
 	const cJSON* alt;
 	cJSON_ArrayForEach(alt, alternatives) {
 		const cJSON* stages = cJSON_GetObjectItemCaseSensitive(alt, "stages");
@@ -337,6 +336,19 @@ static bool check_energy(Check* c, const cJSON* in) {
 	return ok || fail(c, "energy lists shields, tractor and/or jamming");
 }
 
+/* Returns whether `in` is a list of names with the tag syntax. The cooker
+   doesn't know the HUD area names; the game checks them. */
+static bool is_tag_list(const cJSON* in) {
+	const cJSON* name;
+	if (!cJSON_IsArray(in))
+		return false;
+	cJSON_ArrayForEach(name, in) {
+		if (!cJSON_IsString(name) || !Aeron_FlightTagValid(name->valuestring))
+			return false;
+	}
+	return true;
+}
+
 static bool check_screen(Check* c, const cJSON* in) {
 	static const char* const fields[]      = { "cover",  "transparent", "alwaysVisible", "hologram",
 											   "noisy",  "hide",        "rects" };
@@ -346,8 +358,8 @@ static bool check_screen(Check* c, const cJSON* in) {
 	const cJSON*             rects         = cJSON_GetObjectItemCaseSensitive(in, "rects");
 	if (!cJSON_IsObject(in) || !only_members(c, "screen", in, fields, COUNT(fields)))
 		return false;
-	bool ok = int_in(cJSON_GetObjectItemCaseSensitive(in, "hide"), 0, 4294967295.0) && cJSON_IsArray(rects) &&
-			  cJSON_GetArraySize(rects) <= 16;
+	const cJSON* hide = cJSON_GetObjectItemCaseSensitive(in, "hide");
+	bool         ok = (!hide || is_tag_list(hide)) && cJSON_IsArray(rects) && cJSON_GetArraySize(rects) <= 16;
 	for (size_t f = 0; ok && f < COUNT(flags); f++) {
 		const cJSON* flag = cJSON_GetObjectItemCaseSensitive(in, flags[f]);
 		ok                = !flag || cJSON_IsBool(flag);
@@ -357,18 +369,23 @@ static bool check_screen(Check* c, const cJSON* in) {
 	cJSON_ArrayForEach(rect, rect_list) {
 		const cJSON* gain   = cJSON_GetObjectItemCaseSensitive(rect, "gain");
 		const cJSON* layers = cJSON_GetObjectItemCaseSensitive(rect, "layers");
-		ok = ok && cJSON_IsObject(rect) && only_members(c, "screen rectangle", rect, rect_fields, COUNT(rect_fields)) &&
-			 int_in(cJSON_GetObjectItemCaseSensitive(rect, "source"), 0, 63) &&
+		const cJSON* source = cJSON_GetObjectItemCaseSensitive(rect, "source");
+		uint32_t     bits   = 0;
+		ok = ok && cJSON_IsObject(rect) &&
+			 only_members(c, "screen rectangle", rect, rect_fields, COUNT(rect_fields)) &&
+			 cJSON_IsString(source) && Aeron_FlightTagValid(source->valuestring) &&
 			 numbers(cJSON_GetObjectItemCaseSensitive(rect, "dst"), 4) &&
 			 numbers(cJSON_GetObjectItemCaseSensitive(rect, "bg"), 3) &&
 			 numbers(cJSON_GetObjectItemCaseSensitive(rect, "highlight"), 3) &&
 			 numbers(cJSON_GetObjectItemCaseSensitive(rect, "lock"), 3) && cJSON_IsNumber(gain) &&
-			 isfinite(gain->valuedouble) && gain->valuedouble >= 0.0 && int_in(layers, 0, 7) &&
-			 (!((int)layers->valuedouble & 4) || numbers(cJSON_GetObjectItemCaseSensitive(rect, "bar"), 3));
+			 isfinite(gain->valuedouble) && gain->valuedouble >= 0.0 &&
+			 Aeron_FlightNameMask(AERON_FLIGHT_SCREEN_LAYERS, layers, &bits) &&
+			 (!(bits & 4u) || numbers(cJSON_GetObjectItemCaseSensitive(rect, "bar"), 3));
 	}
-	return ok || fail(c, "a screen is { flags, hide: bitmask, rects: up to 16 { source: 0-63, dst: [u0, v0, u1, "
-						 "v1], bg, highlight, lock: [r, g, b], gain >= 0, layers: 0-7, bar: [r, g, b] with "
-						 "layer 4 } }");
+	return ok ||
+		   fail(c, "a screen is { flags, hide: [area names], rects: up to 16 { source: a name, dst: [u0, v0, "
+				   "u1, v1], bg, highlight, lock: [r, g, b], gain >= 0, layers: [graphics, text, bar], bar: "
+				   "[r, g, b] with the bar layer } }");
 }
 
 /* `tags`: game-defined names. */

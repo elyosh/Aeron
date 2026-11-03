@@ -14,7 +14,7 @@
  * only for a model that has a setting:
  *
  *   hud:
- *     reticle: {5: 135, 6: 136, ...}                 # image position for each slot
+ *     reticle: {laser: 135, laser_in_range: 136, ...} # the image for each slot
  *     colors: {inner: 0xff5b5b5b, border: 0xffe5e5e5} # ARGB
  *   engine_glows:
  *     0: {min_speed_percent: 1}                      # by glow, in the model's order
@@ -23,8 +23,8 @@
  *   weapons:
  *     switch_by_iff: all                             # fire the weapons of the craft's side
  *     colors:                                        # any markings
- *       variant: {default: 3, 284: 1}                # the bolt's markings, by weapon type
- *       impact: {280: 0xff0000, 282: 0}              # RGB; 0 keeps the stock white mark
+ *       variant: {default: 3, ion_cannon: 1}         # the bolt's markings, by weapon type
+ *       impact: {rebel_laser: 0xff0000}              # RGB; 0 keeps the stock white mark
  *       energy_bars: {laser_high: 0xffff0000}        # ARGB
  *     by_markings:                                   # the changes for one markings value
  *       1:
@@ -41,16 +41,18 @@
  * The reticle comes from FlightModels/<model>Reticle.txt, else the [Reticle]
  * section of FlightModels/<model>.ini, read like XWAU's reticle hook: the
  * slots are 5 to 10 and 15 to 22, a key is Reticle_<slot>, and a slot set
- * to -1 is left out. The colours come from the [HUDColor] section of the
- * model's INI, read like XWAU's ddraw wrapper (LoadHUDColorFromIniFile in
- * Effects.cpp): a section counts when its header line contains "[HUDColor]"
- * in this case, the last value of a key wins, and each colour needs three
- * numbers from 0 to 1.
+ * to -1 is left out. Lines with other keys are reported. The colours come
+ * from the [HUDColor] section of the model's INI, read like XWAU's ddraw
+ * wrapper (LoadHUDColorFromIniFile in Effects.cpp): a section counts when
+ * its header line contains "[HUDColor]" in this case, the last value of a
+ * key wins, and each colour needs three numbers from 0 to 1. A negative
+ * number makes the import fail, and other keys are reported.
  *
  * The engine glows come from FlightModels/<model>EngineGlows.txt, else the
  * [EngineGlows] section of the model's INI, read like XWAU's hook_opt_limit:
  * each line is "glow, percent, mglt", a line with fewer than 3 values is
- * skipped, and the first line of a glow wins. A glow is hidden while the
+ * skipped, and the first line of a glow wins. The lines that the hook skips
+ * are reported. A glow is hidden while the
  * craft's speed is below `min_speed_percent` of its top speed, or below
  * `min_speed_mglt`. The hook's -1 means no limit, and so does any value of 0
  * or less, since a speed is never below it; such a limit isn't written.
@@ -75,7 +77,8 @@
  * becomes 0, since XWAU then keeps the stock mark. WeaponLightColor keys
  * aren't imported: XWAU players see the light of the bolt's material
  * instead. WeaponSwitchBasedOnIff gives switch_by_iff: the importer writes
- * `none` for 0, `all` for any other value, and nothing for -1.
+ * `none` for 0, `all` for any other value, and nothing for -1. Lines with
+ * keys that the hook doesn't read are reported.
  *
  * The shield recharge comes from FlightModels/<model>Shield.txt, else the
  * [Shield] section of the model's INI, read like XWAU's hook_shield. With
@@ -102,12 +105,12 @@
  *   impact_spin: {enabled: false, speed_percent: 25, angle_percent: 25}
  *       IsImpactSpinningEnabled, ImpactSpinningSpeedFactorPercent,
  *       ImpactSpinningAngleFactorPercent
- *   system_damage: {max: 1000, 284: 1, 285: 2, 290: 4, 296: 30}
+ *   system_damage: {max: 1000, ion_cannon: 1, ion_cannon_turbo: 2, turbolaser_ion: 4, ion_pulse: 30}
  *       MaxSystemDamages, Weapon284_LaserIon_Damages,
  *       Weapon285_LaserIonTurbo_Damages, Weapon290_LaserIonTurbo_Damages,
  *       Weapon296_MagPulse_Damages
  *
- * -1 means not set; other values below 0 are reported and left out. Any
+ * -1 means not set. Other values below 0 make the import fail. Any
  * IsImpactSpinningEnabled but 0 turns the spin on.
  *
  * The hook only reads a model's section when the global section has no
@@ -131,8 +134,9 @@
  *
  * The hook reads each line as a number, and a line that isn't one would
  * crash XWAU: such a section is reported and left out. Lines past the 32nd
- * aren't used. A strength above 255 doesn't fit in the game's component
- * health, so it is reported and left out.
+ * aren't used, and are reported. A strength above 255 doesn't fit in the
+ * game's component health, so it makes the import fail. So does a negative
+ * strength other than -1.
  *
  * The gunner seats come from FlightModels/<model>Turrets.txt, or else from
  * the [Turrets] section of the model's INI, if the installation has
@@ -152,7 +156,8 @@
  * lock_range comes from LockDistance0 to 2, and ai_lock_range from
  * AILockDistance0 to 2. The global [WarheadLock] section of default.ini, or
  * FlightModels/WarheadLock.txt, sets the AI's ranges by the category of the
- * AI's craft. No mod has it, so it isn't imported, and it is reported.
+ * AI's craft. The game can't do that, so the import fails when that section
+ * has lines.
  *
  * The jamming rule comes from FlightModels/<model>Jamming.txt, or else from
  * the [Jamming] section of the model's INI, if the installation has
@@ -191,7 +196,7 @@
  *     engine_wash: starship      # EngineSoundWash: 2 starship, else normal
  *     take_off: falcon           # EngineSoundTakeOff: 2 falcon, else gear
  *     weapons: empire            # WeaponSoundBehavior
- *     weapon_ranges: {283: {first: 2, count: 3}}  # WeaponSoundRange*_283
+ *     weapon_ranges: {imperial_laser_turbo: [range_2, range_3, range_4]}  # WeaponSoundRange*_283
  *     hyper: rebel               # HyperSoundBehavior 0 to 2
  *     ambient: {offset_m: [0, 300, 0], distance_m: 1000}
  *
@@ -201,8 +206,9 @@
  * `plain`: the hook then plays each weapon type's own sound. A weapon range
  * needs both keys. A range with a count of 0 would crash XWAU, and the hook
  * drops a range that goes past the WeaponRange bank; both are reported and
- * left out. Other values that make XWAU play nothing are also reported and
- * left out. No hook reads EngineSlowing.
+ * left out. The game reads at most 16 sounds per range, so a longer range
+ * makes the import fail. So do other values that make XWAU play nothing. A range that sets only one of its
+ * two keys is reported. No hook reads EngineSlowing.
  *
  * `ambient` places the starship ambient sound. AmbientSoundOffsetX, Y and Z
  * become `offset_m` (right, up, forward). AmbientSoundDistance, or
@@ -210,7 +216,9 @@
  * this is how the hook reads the distances for a craft that flies level. If
  * an axis distance is 0, it uses AmbientSoundDistance instead, and an
  * AmbientSoundDistance of 0 counts as 1. An axis with no distance is written
- * as null, and the game then uses the craft's size.
+ * as null, and the game then uses the craft's size. The game has no global
+ * AmbientSoundDistance, so one in FlightModels/Sound.txt or in the [Sound]
+ * section of default.ini makes the import fail.
  *
  * The wide cockpit view comes from xwahacker_large_fov in the craft's
  * cockpit file, DynamicCockpit/<model>Cockpit.dc (xwau_model.h). It is
@@ -224,8 +232,12 @@
  * hud.yaml holds `hull_icons` and `map_icons`, from HullIconList.txt and
  * MapIconList.txt, read like XWAU's hull icon hook: the value at position N
  * is the image id for object type N, counting the lines that the hook reads
- * (empty lines and comment lines are skipped). A missing list leaves out its
- * key.
+ * (empty lines and comment lines are skipped). Each map gives the image
+ * number of each object type whose icon differs from stock. For example,
+ * XWAU's id 3100 is image 31, and id 0 is `none`, for no icon. An id that
+ * isn't an image number times 100 makes the import fail. Icons of object
+ * types that the game has no name for are reported. When a list file is
+ * missing, its key is left out.
  *
  * It also holds `target_display` (craft_hud.h in the game), from the
  * wireframe keys of Dynamic_Cockpit.cfg, read like the ddraw's LoadDCParams
@@ -238,6 +250,10 @@
  * (0.1, 0.1, 0.5). When the lists and Dynamic_Cockpit.cfg are all missing,
  * hud.yaml isn't written.
  *
+ * A model's section that no hook of the installation reads, such as a
+ * [Sound] section without hook_engine_sound.dll, has no effect in XWAU. Such
+ * sections are counted in a report.
+ *
  * Files that a run doesn't write are left as they are.
  */
 
@@ -247,6 +263,8 @@
 #include <stdio.h>
 
 #include "xwau_config.h"
+#include "xwau_game_tables.h"
+#include "xwau_names.h"
 #include "xwau_weapon_stats.h"
 
 /* The reticle slots of XWAU's reticle hook. */
@@ -387,8 +405,9 @@ typedef struct XwauCraftWarheadLock {
  * Either path can be NULL. When the section has lines, hook_weapon_lock
  * uses 708 for a LockTime that the section doesn't set, even for the
  * Missile Boat, whose stock value is 354. So LockTime is then always set.
- * The keys with a profile name, such as LockTime_<profile>, aren't
- * imported, and are reported. So are values that would crash XWAU. */
+ * The keys with a profile name, such as LockTime_<profile>, make the import
+ * fail. So does a value out of range, except a value that would crash XWAU,
+ * which is reported. Other keys that the hook doesn't read are reported. */
 void XwauCraft_ReadWarheadLock(const char* lock_txt, const char* ini, XwauCraftWarheadLock* lock);
 /* Writes the `warhead_lock` group of `lock`. */
 void XwauCraft_WriteWarheadLock(FILE* f, const XwauCraftWarheadLock* lock);
@@ -446,8 +465,10 @@ bool XwauCraft_HasWeaponRates(const XwauCraftWeaponRates* rates);
 bool XwauCraft_HasDefaultFirstRates(const XwauCraftWeaponRates* rates);
 
 /* Writes `rates` as the groups of a `weapons` map, one line each, at
- * `indent`: "  rates: {decharge: 2, recharge: 3}". */
-void XwauCraft_WriteWeaponRates(FILE* f, const char* indent, const XwauCraftWeaponRates* rates);
+ * `indent`: "  rates: {decharge: 2, recharge: 3}". The system damage keys of
+ * weapons use the weapon names in `names`. */
+void XwauCraft_WriteWeaponRates(FILE* f, const XwauNames* names, const char* indent,
+								const XwauCraftWeaponRates* rates);
 
 /* The [Sound] section of a model. */
 typedef struct XwauCraftSound {
@@ -501,9 +522,11 @@ bool XwauCraft_ReadGlobalSwitchByIff(const char* game, bool* on);
 bool XwauCraft_ReadIconList(const char* path, uint16_t** values, size_t* count);
 
 /* Writes the craft files and hud.yaml of the installation `xwau_root` into
- * `output_dir`, and adds to `cockpits`, when it isn't NULL, the gunner
- * cockpits that the files name (XwauGunnerSeats_WriteCockpits). Returns false when a file can't be
- * written or a list can't be read. */
-bool XwauCraft_Write(const char* xwau_root, const char* output_dir, XwauLines* cockpits);
+ * `output_dir`. When `cockpits` isn't NULL, adds the gunner cockpits that
+ * the files use to it. The files use the names in `game_names`. hud.yaml
+ * only lists the icons that differ from `stock_values`. Returns false when a
+ * file can't be written or a list can't be read. */
+bool XwauCraft_Write(const char* xwau_root, const char* output_dir, const XwauNames* game_names,
+					 const XwauStockValues* stock_values, XwauLines* cockpits);
 
 #endif /* AERON_XWAU_CRAFT_H */

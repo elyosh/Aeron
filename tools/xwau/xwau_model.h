@@ -18,22 +18,25 @@
  *     except TargetableMeshes, is a profile that hides the meshes listed in
  *     its value. Tokens are read with std::stoi. A token that does not parse,
  *     or -1, is the name of another profile, which is resolved recursively.
- *     If the references form a cycle, the profile is skipped. Other negative
- *     numbers are ignored. A profile becomes the component set
- *     hidden_by_profile.<name>, with the name encoded by Xwau_EncodeName.
- *     Meshes above 254 are dropped. A profile that hides nothing creates no
+ *     If the references form a cycle, the profile is skipped and reported.
+ *     Other negative numbers are ignored and reported. A profile becomes the
+ *     component set hidden_by_profile.<name>, with the name encoded by
+ *     Xwau_EncodeName. A mesh above 254, or a set name that is too long,
+ *     makes the import fail. A profile that hides nothing creates no
  *     set, and the game then uses the Default profile, as XWAU does.
  *
  *   - mesh collisions (hook_opt_limit): in MeshesCollisions, MeshCollision
  *     is the default of every mesh and MeshCollision_<N> sets mesh N, read
  *     with std::stoi(value, 0, 0). The meshes whose value is 0 have no
- *     collision and become the component set collision.off.
+ *     collision and become the component set collision.off. A
+ *     MeshCollision_<N> above 254 makes the import fail.
  *
  *   - targetable meshes (hook_mission_objects): the first TargetableMeshes
  *     key of ObjectProfiles lists the meshes that the player can target.
  *     Tokens are split on ',' and ';' and read with std::stoi. The meshes
- *     become the component set targetable. Tokens that aren't numbers, and
- *     meshes outside 0..254, are reported and dropped.
+ *     become the component set targetable. Tokens that aren't numbers and
+ *     negative meshes are reported and dropped. A mesh above 254 makes the
+ *     import fail.
  *
  *   - mesh rotations (hook_sfoils, hook_pilot) become articulations. The
  *     sections SFoils, SFoilsLandingGears, SFoilsHangarDoors, SFoilsHatches
@@ -44,11 +47,13 @@
  *     group is cargo_clamps.open, cargo_clamps.close or
  *     cargo_clamps.<encoded key>. Pilot has lines "mesh, angle, speed,
  *     behavior" for the group crew, with behaviors 0 to 2 (swing, random,
- *     random_pause). A line with fewer than four tokens is not a mesh line.
- *     Numbers are read with std::stoi(text, 0, 0). A line is skipped and
- *     reported when its mesh is outside 0..254, its angle is outside
- *     -128..255, or a speed is outside 0..255. PilotCockpit is reported and
- *     skipped. The [SFoils] keys CloseSFoilsInHyperspace,
+ *     random_pause). A line with fewer than four tokens is not a mesh line,
+ *     and it is reported unless it is a "key = value" line. Numbers are read
+ *     with std::stoi(text, 0, 0). A line is skipped and reported when its
+ *     mesh is negative, its angle is outside -128..255, or a speed is
+ *     outside 0..255. A mesh above 254, a group name that is too long, a
+ *     Pilot behavior other than 0 to 2 and a PilotCockpit section make the
+ *     import fail. The [SFoils] keys CloseSFoilsInHyperspace,
  *     SFoilsAnimationSpeed, AllowFireWhenSFoilsAreClosed,
  *     ParkOrderSFoilsClosed and HangarDoorsDistance become the settings
  *     sfoils.close_in_hyperspace, step_ticks (15 × speed),

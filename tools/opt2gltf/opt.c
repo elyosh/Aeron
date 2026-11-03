@@ -148,6 +148,10 @@ typedef struct {
 	 * mesh (VSD). */
 	opt_texture_binding_t active_texture;
 
+	/* The NodeSwitch states past OPT_MAX_NODE_SWITCH_STATES, which are not
+	 * kept (opt_file_t.dropped_switch_states). */
+	int32_t dropped_switch_states;
+
 	opt_error_t* err;
 	int          failed;
 } opt_ctx_t;
@@ -317,7 +321,7 @@ static void parse_hardpoint(opt_ctx_t* c, const opt_node_t* n, opt_mesh_t* m) {
 	}
 	m->hardpoints       = grown;
 	opt_hardpoint_t* hp = &m->hardpoints[m->hardpoint_count++];
-	hp->type            = (opt_hardpoint_type_t)ru32(c->buf, off);
+	hp->type            = ru32(c->buf, off);
 	rvec3(c->buf, off + sizeof(int32_t), &hp->pos);
 }
 
@@ -705,6 +709,8 @@ static void bind_texture(opt_ctx_t* c, const opt_node_t* n, opt_lod_builder_t* l
 				continue;
 			if (count < OPT_MAX_NODE_SWITCH_STATES)
 				lb->current_states[count++] = idx;
+			else
+				c->dropped_switch_states++;
 		}
 		if (count > 0) {
 			lb->current_state_count = count;
@@ -995,11 +1001,12 @@ static opt_file_t* parse_from_buffer(const uint8_t* data, size_t size, opt_error
 			snprintf(err->msg, sizeof err->msg, "out of memory (file)");
 		goto fail;
 	}
-	f->version       = version;
-	f->mesh_count    = mesh_count;
-	f->meshes        = meshes;
-	f->texture_count = c.texture_count;
-	f->textures      = c.textures;
+	f->version               = version;
+	f->mesh_count            = mesh_count;
+	f->meshes                = meshes;
+	f->texture_count         = c.texture_count;
+	f->textures              = c.textures;
+	f->dropped_switch_states = c.dropped_switch_states;
 	return f;
 
 fail: {
@@ -1131,114 +1138,6 @@ const char* opt_node_type_name(opt_node_type_t t) {
 			return "TextureAlpha";
 		case OPT_NODE_ENGINE_GLOW:
 			return "EngineGlow";
-	}
-	return "?";
-}
-
-const char* opt_mesh_type_name(opt_mesh_type_t t) {
-	switch (t) {
-		case OPT_MT_DEFAULT:
-			return "Default";
-		case OPT_MT_MAIN_HULL:
-			return "MainHull";
-		case OPT_MT_WING:
-			return "Wing";
-		case OPT_MT_FUSELAGE:
-			return "Fuselage";
-		case OPT_MT_GUN_TURRET:
-			return "GunTurret";
-		case OPT_MT_SMALL_GUN:
-			return "SmallGun";
-		case OPT_MT_ENGINE:
-			return "Engine";
-		case OPT_MT_BRIDGE:
-			return "Bridge";
-		case OPT_MT_SHIELD_GEN:
-			return "ShieldGen";
-		case OPT_MT_ENERGY_GEN:
-			return "EnergyGen";
-		case OPT_MT_LAUNCHER:
-			return "Launcher";
-		case OPT_MT_COMM_SYS:
-			return "CommSys";
-		case OPT_MT_BEAM_SYS:
-			return "BeamSys";
-		case OPT_MT_COMMAND_BEAM:
-			return "CommandBeam";
-		case OPT_MT_DOCKING_PLAT:
-			return "DockingPlat";
-		case OPT_MT_LANDING_PLAT:
-			return "LandingPlat";
-		case OPT_MT_HANGAR:
-			return "Hangar";
-		case OPT_MT_CARGO_POD:
-			return "CargoPod";
-		case OPT_MT_MISC_HULL:
-			return "MiscHull";
-		case OPT_MT_ANTENNA:
-			return "Antenna";
-		case OPT_MT_ROTARY_WING:
-			return "RotaryWing";
-		case OPT_MT_ROTARY_GUN_TURRET:
-			return "RotaryGunTurret";
-		case OPT_MT_ROTARY_LAUNCHER:
-			return "RotaryLauncher";
-		case OPT_MT_ROTARY_COMM_SYS:
-			return "RotaryCommSys";
-		case OPT_MT_ROTARY_BEAM_SYS:
-			return "RotaryBeamSys";
-		case OPT_MT_ROTARY_COMMAND_BEAM:
-			return "RotaryCommandBeam";
-		case OPT_MT_HATCH:
-			return "Hatch";
-		case OPT_MT_CUSTOM:
-			return "Custom";
-		case OPT_MT_WEAPON_SYS_1:
-			return "WeaponSys1";
-		case OPT_MT_WEAPON_SYS_2:
-			return "WeaponSys2";
-		case OPT_MT_POWER_REGENERATOR:
-			return "PowerRegenerator";
-		case OPT_MT_REACTOR:
-			return "Reactor";
-	}
-	return "?";
-}
-
-const char* opt_hardpoint_type_name(opt_hardpoint_type_t t) {
-	switch (t) {
-		case OPT_HP_NONE:
-			return "None";
-		case OPT_HP_LASER_CANNON:
-			return "LaserCannon";
-		case OPT_HP_ION_CANNON:
-			return "IonCannon";
-		case OPT_HP_TURBO_LASER:
-			return "TurboLaser";
-		case OPT_HP_ION_TURBO_LASER:
-			return "IonTurboLaser";
-		case OPT_HP_CLUSTER_MISSILE:
-			return "ClusterMissile";
-		case OPT_HP_TORPEDO_MAG_PULSE:
-			return "TorpedoMagPulse";
-		case OPT_HP_CONCUSSION_MISSILE:
-			return "ConcussionMissile";
-		case OPT_HP_PROTON_TORPEDO:
-			return "ProtonTorpedo";
-		case OPT_HP_ADV_CONCUSSION:
-			return "AdvConcussion";
-		case OPT_HP_ADV_PROTON_TORPEDO:
-			return "AdvProtonTorpedo";
-		case OPT_HP_ADV_TORPEDO_MAG_PULSE:
-			return "AdvTorpedoMagPulse";
-		case OPT_HP_BOMB:
-			return "Bomb";
-		case OPT_HP_BEAM_WEAPON:
-			return "BeamWeapon";
-		case OPT_HP_DUMB_BOMB:
-			return "DumbBomb";
-		case OPT_HP_FIRE_ROCKET:
-			return "FireRocket";
 	}
 	return "?";
 }

@@ -14,20 +14,24 @@
  * The types are SpaceBombs, HeavyRockets, Missiles, ProtonTorpedos,
  * AdvancedMissiles, AdvancedTorpedos, MagPulse, IonPulse, AdvancedMagPulse
  * and ClusterBombs. Keys can be written in any case, and the first line of a
- * key wins. -1 means no limit, so it isn't written. Other values below 0
- * would give a craft a wrong number of warheads; they are reported and left
- * out. Lines with other keys, such as TFTC's ..._MagPulseCount, are
- * reported.
+ * key wins. Later lines with the same key are reported. -1 means no limit,
+ * so it isn't written. Other values below 0 give a craft a wrong number of
+ * warheads in XWAU, and values above 1000000000 don't fit, so both make the
+ * import fail. A value that isn't a number would crash XWAU, so it is
+ * reported and left out. Lines with other keys, such as TFTC's
+ * ..._MagPulseCount, are reported.
  *
  * The values go into the flight group's entry of the mission file:
  *
  *   flight_groups:
- *     0: { name: "Alpha", craft: 5, warheads: { missiles: 80 } }
+ *     0: { name: "Alpha", craft: tie_fighter, warheads: { missile: 80 } }
  */
 
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdio.h>
+
+#include "xwau_names.h"
 
 enum { XWAU_WARHEAD_TYPES = 10 };
 
@@ -52,9 +56,10 @@ void XwauWarheadPools_Free(XwauWarheadPools* pools);
 /* The pools of flight group `fg`, or NULL. */
 const XwauWarheadPool* XwauWarheadPools_Find(const XwauWarheadPools* pools, int fg);
 
-/* Writes ", warheads: {missiles: 80}", the entry's key, when `pool` sets a
- * value. */
-void XwauWarheadPools_Write(FILE* f, const XwauWarheadPool* pool);
+/* Writes the `warheads` key of a flight group entry, such as
+ * ", warheads: { missile: 80 }", when `pool` sets a value. Uses the warhead
+ * names in `names`. */
+void XwauWarheadPools_Write(FILE* f, const XwauNames* names, const XwauWarheadPool* pool);
 
 /* Whether `pool` sets a value. */
 bool XwauWarheadPools_Any(const XwauWarheadPool* pool);

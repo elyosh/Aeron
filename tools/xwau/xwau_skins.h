@@ -28,8 +28,8 @@
  * texture (in any case), with .bmp, .png or .jpg tried in this order. In a
  * zip, it is the first entry with that file name, in any folder. The image
  * is decoded at 8 bits per channel and flipped vertically into OPT row
- * order, as the hook does. An image whose size is not the texture's size is
- * skipped and reported.
+ * order, as the hook does. The hook skips an image whose size is not the
+ * texture's size, and so does the import, with a report.
  */
 
 #include <stdbool.h>

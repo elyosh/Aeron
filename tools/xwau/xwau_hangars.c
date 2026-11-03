@@ -185,6 +185,12 @@ static int object_type(const Models* m, long long index) {
 	return count == 1 ? found : -1;
 }
 
+/* Whether XWAU's model index `index` loads a model in XWAU. An index
+ * without one loads nothing in XWAU either. */
+static bool xwau_has_model(const Models* m, long long index) {
+	return index >= 0 && index < XWAU_GAME_OBJECT_TYPES && XwauGameTables_RowModel(m->xwau, (int)index)[0];
+}
+
 /* "model index <n> (<XWAU's model>)", for the reports. */
 static const char* describe(const Models* m, long long index, char* out, size_t cap) {
 	snprintf(out, cap, "model index %lld (%s)", index,
@@ -232,9 +238,9 @@ static bool object_type_line(const char* line, const char* key, char* value, siz
 	return true;
 }
 
-/* Reads the `object_type` and `model` of each object type file in
- * `dir`. A later file wins for the same object type. */
-static void read_object_models(const char* dir, Models* m) {
+/* Reads `object_type` (a stock name) and `model` from each object type file
+ * in `dir`. If two files have the same object type, the later file wins. */
+static void read_object_models(const char* dir, const XwauNames* game_names, Models* m) {
 	size_t count = 0;
 	char** names = ListDir(dir, true, &count);
 	for (size_t i = 0; i < count; ++i) {
@@ -253,10 +259,7 @@ static void read_object_models(const char* dir, Models* m) {
 				*next++ = 0;
 			char value[128];
 			if (object_type_line(line, "object_type", value, sizeof value)) {
-				char* end = NULL;
-				long  n   = strtol(value, &end, 0);
-				if (!*end)
-					type = n;
+				type = XwauNames_Find(&game_names->object_types, value);
 			} else if (object_type_line(line, "model", value, sizeof value)) {
 				LowerCopy(model, sizeof model, value);
 			}
@@ -268,14 +271,15 @@ static void read_object_models(const char* dir, Models* m) {
 	FreeList(names, count);
 }
 
-static bool models_load(Models* m, const char* game, const XwauGameTables* stock, const char* mod) {
+static bool models_load(Models* m, const char* game, const XwauGameTables* stock, const XwauNames* game_names,
+						const char* mod) {
 	memset(m, 0, sizeof *m);
 	m->game = game;
 	char dir[1100];
 	if (PathFormat(dir, sizeof dir, "%s/flight/models", mod))
 		m->glbs = ListDir(dir, false, &m->glb_count);
 	if (PathFormat(dir, sizeof dir, "%s/flight/object_types", mod))
-		read_object_models(dir, m);
+		read_object_models(dir, game_names, m);
 	m->stock = stock;
 	m->xwau  = stock ? XwauGameTables_Load(game) : NULL;
 	return m->xwau != NULL;
@@ -521,20 +525,28 @@ static bool add_swap(const Models* m, const char* key, const char* value, const 
 		return true;
 	}
 	if (!opt_target(value, target, sizeof target)) {
-		Report(LABEL, "%s: swap '%s = %s' skipped: not an OPT path", where, key, value);
+		if (!has_file(m->game, value))
+			Report(LABEL, "%s: swap '%s = %s' skipped: '%s' does not exist (XWAU shows an error)", where, key,
+				   value, value);
+		else
+			Report(LABEL, "%s: swap '%s = %s' isn't imported, because the importer only swaps to an OPT",
+				   where, key, value);
 		return true;
 	}
 	char exterior[300];
 	snprintf(exterior, sizeof exterior, "%sexterior", source);
-	if (strcmp(target, exterior) == 0)
+	if (strcmp(target, exterior) == 0) {
+		Report(LABEL, "%s: swap '%s = %s' skipped: the hook ignores swaps to the model's exterior", where,
+			   key, value);
 		return true;
+	}
 	if (!has_file(m->game, value)) {
 		Report(LABEL, "%s: swap '%s = %s' skipped: '%s' does not exist (XWAU shows an error)", where, key,
 			   value, value);
 		return true;
 	}
 	if (!converted(m, target)) {
-		Report(LABEL, "%s: swap '%s = %s' skipped: %s.glb was not converted", where, key, value, target);
+		ReportFatal(LABEL, "%s: swap '%s = %s': %s.glb was not converted", where, key, value, target);
 		return true;
 	}
 	Text t = { 0 };
@@ -571,9 +583,11 @@ static bool list_value(const Models* m, const char* name, KeyKind kind, const ch
 				text_add(&missing, "%s%s", missing.len ? ", " : "",
 						 describe(m, numbers[i], text, sizeof text));
 		}
+		/* The offsets lists follow PlayerModelIndices, so the key can't lose
+		   one index. */
 		if (missing.len && strcmp(name, "PlayerModelIndices") == 0) {
-			Report(LABEL, "%s: %s dropped: %s has no OpenXWA type", where, name,
-				   missing.failed ? "" : missing.s);
+			ReportFatal(LABEL, "%s: %s: %s has no OpenXWA type", where, name,
+						missing.failed ? "" : missing.s);
 			*dropped = true;
 			ok       = false;
 		}
@@ -582,8 +596,11 @@ static bool list_value(const Models* m, const char* name, KeyKind kind, const ch
 		for (size_t i = 0; ok && i < tokens.count; ++i) {
 			char      text[300];
 			const int type = object_type(m, numbers[i] & 0xFFFF);
-			if (type < 0)
-				Report(LABEL, "%s: %s: %s has no OpenXWA type; dropped", where, name,
+			if (type < 0 && xwau_has_model(m, numbers[i] & 0xFFFF))
+				ReportFatal(LABEL, "%s: %s: %s has no OpenXWA type", where, name,
+							describe(m, numbers[i], text, sizeof text));
+			else if (type < 0)
+				Report(LABEL, "%s: %s: %s loads no model in XWAU either, so it is dropped", where, name,
 					   describe(m, numbers[i], text, sizeof text));
 			else
 				numbers[count++] = type;
@@ -607,13 +624,19 @@ static bool objects_section(const Models* m, const XwauLines* lines, const char*
 	bool      ok   = true;
 	for (size_t i = 0; ok && i < lines->count; ++i) {
 		char key[512], value[1024];
-		if (!key_value(lines->items[i], key, sizeof key, value, sizeof value))
+		if (!key_value(lines->items[i], key, sizeof key, value, sizeof value)) {
+			Report(LABEL, "%s: line '%s' isn't a key = value line, so XWAU ignores it", where,
+				   lines->items[i]);
 			continue;
+		}
 		bool known = false;
 		for (size_t j = 0; !known && j < seen.count; ++j)
 			known = Xwau_SameName(seen.items[j], key);
-		if (known)
+		if (known) {
+			Report(LABEL, "%s: %s is set again. XWAU uses the first line, and so does the importer", where,
+				   key);
 			continue;
+		}
 		if (!(ok = XwauLines_Add(&seen, key, strlen(key))))
 			break;
 		if (EndsWithNoCase(key, ".opt")) {
@@ -631,7 +654,8 @@ static bool objects_section(const Models* m, const XwauLines* lines, const char*
 		const char*   name = kKeys[k].name;
 		const KeyKind kind = kKeys[k].kind;
 		if (kind == KEY_NOT_IMPORTED) {
-			Report(LABEL, "%s: %s not imported (the remaster lights the hangar)", where, name);
+			Report(LABEL, "%s: %s isn't imported, because the remaster lights the hangar itself", where,
+				   name);
 			continue;
 		}
 		Text t    = { 0 };
@@ -655,8 +679,12 @@ static bool objects_section(const Models* m, const XwauLines* lines, const char*
 			} else if (kind == KEY_TYPE) {
 				char      text[300];
 				const int type = object_type(m, number & 0xFFFF);
-				if (type < 0) {
-					Report(LABEL, "%s: %s: %s has no OpenXWA type; dropped", where, name,
+				if (type < 0 && xwau_has_model(m, number & 0xFFFF)) {
+					ReportFatal(LABEL, "%s: %s: %s has no OpenXWA type", where, name,
+								describe(m, number & 0xFFFF, text, sizeof text));
+					keep = false;
+				} else if (type < 0) {
+					Report(LABEL, "%s: %s: %s loads no model in XWAU either, so it is dropped", where, name,
 						   describe(m, number & 0xFFFF, text, sizeof text));
 					keep = false;
 				}
@@ -718,9 +746,12 @@ static bool map_section(const Models* m, const XwauLines* lines, const char* whe
 					pitch    = numbers[6];
 				}
 				const int type = object_type(m, index & 0xFFFF);
-				if (type < 0) {
-					char text[300];
-					Report(LABEL, "%s: line '%s' skipped: %s has no OpenXWA type", where, line,
+				char      text[300];
+				if (type < 0 && xwau_has_model(m, index & 0xFFFF)) {
+					ReportFatal(LABEL, "%s: line '%s': %s has no OpenXWA type", where, line,
+								describe(m, index & 0xFFFF, text, sizeof text));
+				} else if (type < 0) {
+					Report(LABEL, "%s: line '%s' skipped: %s loads no model in XWAU either", where, line,
 						   describe(m, index & 0xFFFF, text, sizeof text));
 				} else {
 					text_add(&entry, "[%d, %lld, %lld, %lld, %lld, %d, %d, ", type, markings, x, y, z,
@@ -889,8 +920,11 @@ static bool ship_layer(const Models* m, const char* game, const char* name, Laye
 	char lower[256], hangar[300];
 	LowerCopy(lower, sizeof lower, name);
 	snprintf(hangar, sizeof hangar, "%s%s", lower, strcmp(lower, "familybase") == 0 ? "" : "hangar");
+	char opt[400];
 	if (converted(m, hangar))
 		snprintf(out->model, sizeof out->model, "%s", hangar);
+	else if (PathFormat(opt, sizeof opt, "FlightModels/%s.opt", hangar) && has_file(game, opt))
+		ReportFatal(LABEL, "%s: the hangar model %s.opt was not converted", name, hangar);
 	return true;
 }
 
@@ -971,13 +1005,13 @@ static bool mission_layer(const Models* m, const char* game, const char* base, L
 			const size_t section_len = strlen(kSections[section]);
 			if (len >= section_len + 4 && line[0] == '[' && line[len - 1] == ']' &&
 				strncasecmp(line + 1, kSections[section], section_len) == 0 && line[1 + section_len] == '_')
-				Report(LABEL, "%s: %s (per-ship mission section) not imported", base, line);
+				Report(LABEL, "%s: the importer doesn't import the per-ship mission section %s", base, line);
 		}
 	}
 	free(text);
 	char rel[1100];
 	if (PathFormat(rel, sizeof rel, "%s_Hangar.opt", base) && has_file(game, rel))
-		Report(LABEL, "%s: %s_Hangar.opt (a mission hangar model) not imported", base, base);
+		Report(LABEL, "%s: the importer doesn't import the mission hangar model %s_Hangar.opt", base, base);
 	return true;
 }
 
@@ -1146,10 +1180,10 @@ static bool write_mission_layers(const Models* m, const char* game, const char* 
 	return ok;
 }
 
-bool XwauHangars_Write(const char* xwau, const XwauGameTables* stock, const char* stock_game,
-					   const char* mod) {
+bool XwauHangars_Write(const char* xwau, const XwauGameTables* stock, const XwauNames* game_names,
+					   const char* stock_game, const char* mod) {
 	Models* m = (Models*)malloc(sizeof *m);
-	if (!m || !models_load(m, xwau, stock, mod)) {
+	if (!m || !models_load(m, xwau, stock, game_names, mod)) {
 		if (m)
 			models_free(m);
 		free(m);

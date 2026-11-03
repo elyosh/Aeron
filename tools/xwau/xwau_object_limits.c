@@ -148,10 +148,14 @@ bool XwauObjectLimits_ReadMission(const char* game, const char* base, XwauMissio
 	out->ai_projectiles = hook_value(&lines, source, "ProjectilesCount", 0);
 	out->explosions     = hook_value(&lines, source, "ExplosionsCount", 0);
 	XwauLines_Free(&lines);
-	long long* counts[] = { &out->craft, &out->ai_projectiles, &out->explosions };
+	long long*        counts[] = { &out->craft, &out->ai_projectiles, &out->explosions };
+	const char* const keys[]   = { "CraftsCount", "ProjectilesCount", "ExplosionsCount" };
 	for (size_t i = 0; i < sizeof counts / sizeof counts[0]; ++i) {
-		if (*counts[i] < 0 || *counts[i] > INT32_MAX)
+		if (*counts[i] < 0 || *counts[i] > INT32_MAX) {
+			Report(source, "%s = %lld isn't imported, because XWAU can't use a count below 0 or above %d",
+				   keys[i], *counts[i], INT32_MAX);
 			*counts[i] = 0;
+		}
 	}
 	return true;
 }

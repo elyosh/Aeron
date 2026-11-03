@@ -28,7 +28,8 @@
  * stops XWAU (std::stoi throws); it is reported, and the default is used.
  *
  * Without hook_mission_tie.dll, there are no settings, and without
- * hook_engine_sound.dll, no interdiction regions.
+ * hook_engine_sound.dll, there are no interdiction regions. The lines that
+ * these hooks would read are then reported.
  */
 
 #include <stdbool.h>

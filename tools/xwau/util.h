@@ -28,6 +28,18 @@ void SetReportProgram(const char* name);
 UTIL_PRINTF(2, 3) void Report(const char* label, const char* format, ...);
 void ReportV(const char* label, const char* format, va_list args);
 
+/* Writes a problem that makes the import fail, at error level, in the same
+ * form as Report. Use it when the import can't keep something from the mod,
+ * and the imported mod would then work differently from the mod in XWAU.
+ * The import stops at the first one, and ReportFatalMessage returns its
+ * text. Threads can call it. */
+UTIL_PRINTF(2, 3) void ReportFatal(const char* label, const char* format, ...);
+/* Returns the text of the first ReportFatal since ClearReportFatal, or NULL
+ * when there was none. */
+const char* ReportFatalMessage(void);
+/* Forgets the fatal problem, before a new import. */
+void ClearReportFatal(void);
+
 /* ---- Strings ------------------------------------------------------------ */
 
 /* Returns a copy of `text`, or of its first `len` bytes. Returns NULL when out

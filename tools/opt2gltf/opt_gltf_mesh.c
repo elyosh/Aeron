@@ -340,8 +340,10 @@ bool opt_gltf_built_mesh_from_opt(BuiltMesh* bm, const opt_mesh_t* m, float mete
 						opt_vec3_t n = { normal[0], normal[1], normal[2] };
 						v[q]         = built_mesh_emit_corner(bm, m, vi, f->uvs[k], &n, meters_per_opt_unit);
 					}
-					if (!ok)
+					if (!ok) {
+						bm->bad_triangles++;
 						continue;
+					}
 					built_mesh_emit_triangle(bm, &seen, lod, g, v[0], v[1], v[2]);
 				}
 				continue;
@@ -384,8 +386,10 @@ bool opt_gltf_built_mesh_from_opt(BuiltMesh* bm, const opt_mesh_t* m, float mete
 				}
 				v[k] = built_mesh_emit_corner(bm, m, vi, f->uvs[k], n, meters_per_opt_unit);
 			}
-			if (!ok)
+			if (!ok) {
+				bm->bad_triangles += corners == 4 ? 2u : 1u;
 				continue;
+			}
 			built_mesh_emit_triangle(bm, &seen, lod, g, v[0], v[1], v[2]);
 			if (corners == 4)
 				built_mesh_emit_triangle(bm, &seen, lod, g, v[0], v[2], v[3]);

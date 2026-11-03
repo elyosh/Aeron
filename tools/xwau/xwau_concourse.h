@@ -16,15 +16,16 @@
  *     centre of the planet. The hook gives it in 640x480 units, and the
  *     importer converts it to design pixels.
  * A value of -1 means that the key isn't set, and the importer doesn't
- * write it. When only one of the two position keys is set, the importer
- * reports it and doesn't write the position.
+ * write it. When only one of the two position keys is set, or a value is
+ * out of range, the import fails.
  *
  * The importer reads the keys like the hook does: key names can be in any
  * case, the first line with a key wins, and values are read like
  * std::stoi(value, 0, 0). A value that isn't a number makes XWAU stop; the
  * importer reports it and leaves the key out.
  *
- * Without hook_concourse.dll, there is no front planet.
+ * Without hook_concourse.dll, there is no front planet, and the keys that
+ * are set are reported.
  */
 
 #include <stdbool.h>

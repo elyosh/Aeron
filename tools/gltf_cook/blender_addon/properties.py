@@ -165,21 +165,18 @@ class AeronFlightProperties(PropertyGroup):
     order: IntProperty(name="Order", default=0, min=0)
 
     # Component.
-    mesh_type: EnumProperty(name="Mesh Type", items=common.enum_items(common.MESH_TYPE_NAMES), default='0')
+    mesh_type: EnumProperty(name="Mesh Type", items=common.enum_items(common.MESH_TYPE_IDS), default='default')
     explosion_flags_bits: IntProperty()
-    # The explosion flags of the OPT format, which OPT editors call Type 1 to 3.
-    # The tooltips give their meaning in X-Wing Alliance.
+    # The OPT explosion flags, which OPT editors call Type 1 and Type 2. The
+    # export writes them as `explosion` names.
     explosion_type1: BoolProperty(
-        name="Hit Through Shields", get=_explosion_flag(1)[0], set=_explosion_flag(1)[1],
-        description="Explosion type 1. In XWA, the component takes damage even while the shields are up, "
-                    "except on the hardest difficulty")
+        name="Hit Points", get=_explosion_flag(1)[0], set=_explosion_flag(1)[1],
+        description="The component has its own hit points, and takes damage even while the shields are "
+                    "up, except on the hardest difficulty. Written as hit_points")
     explosion_type2: BoolProperty(
-        name="Destructible", get=_explosion_flag(2)[0], set=_explosion_flag(2)[1],
-        description="Explosion type 2. In XWA, the component has hit points, shows its health when "
-                    "targeted, and breaks off when destroyed")
-    explosion_type3: BoolProperty(
-        name="Type 3", get=_explosion_flag(4)[0], set=_explosion_flag(4)[1],
-        description="Explosion type 3. Not used by XWA")
+        name="Detachable", get=_explosion_flag(2)[0], set=_explosion_flag(2)[1],
+        description="The component can be damaged, shows its health when targeted, and breaks off when "
+                    "destroyed. Written as detachable")
     tags: StringProperty(
         name="Tags",
         description="Tags defined by the game, separated by commas, such as hangarcrane.arm or engine_glow. "
@@ -221,7 +218,7 @@ class AeronFlightProperties(PropertyGroup):
 
     # Hardpoint.
     hardpoint_type: EnumProperty(
-        name="Type", items=common.enum_items(common.HARDPOINT_TYPE_NAMES), default='0')
+        name="Type", items=common.enum_items(common.HARDPOINT_TYPE_IDS), default='none')
 
     # Engine glow.
     glow_enabled: BoolProperty(name="Enabled", default=True)

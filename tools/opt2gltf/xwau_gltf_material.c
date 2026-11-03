@@ -528,6 +528,8 @@ bool XwauGltf_Bake(const opt_file_t* opt, const char* basename, const XwauGltfMa
 		}
 		XwauGltf_AnimBase(&colour, (uint32_t)t->width, (uint32_t)t->height, a, &s->baked[i]);
 		free(colour);
+		if (!s->baked[i].base)
+			Report(basename, "texture %s has no pixels, so it gets the material of a missing image", t->name);
 		if (a && a->lava)
 			xwau_lava_base(&s->baked[i]);
 		owner[i] = -1;

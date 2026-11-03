@@ -88,6 +88,19 @@ static void report(const XwauMissions* m, const char* base, const char* format, 
 	va_end(args);
 }
 
+/* Reports a problem that makes the import fail, if reporting is on. A model
+ * conversion turns reporting off, and the importer's own load reports it. */
+UTIL_PRINTF(3, 4) static void fatal(const XwauMissions* m, const char* base, const char* format, ...) {
+	if (!m->report)
+		return;
+	char    text[2048];
+	va_list args;
+	va_start(args, format);
+	vsnprintf(text, sizeof text, format, args);
+	va_end(args);
+	ReportFatal(base, "%s", text);
+}
+
 /* ---- Skin contexts ------------------------------------------------------------ */
 
 static bool global_skin_lines(const char* game, XwauLines* out) {
@@ -346,9 +359,14 @@ static bool start_lines(const char* game, const XwauMissions* m, const char* bas
 	bool ok = true;
 	for (size_t i = 0; ok && i < tie.fg_count; ++i) {
 		const XwauMissionTieFlightGroup* values = &tie.fgs[i];
-		if (values->fg < 0 || values->fg > FLIGHT_GROUP_MAX ||
-			(!values->close_sfoils && !values->open_landing_gear))
+		if (!values->close_sfoils && !values->open_landing_gear)
 			continue;
+		if (values->fg < 0 || values->fg > FLIGHT_GROUP_MAX) {
+			report(m, base,
+				   "mission_tie: flight group %d doesn't exist in any mission, so its start lines do nothing",
+				   values->fg);
+			continue;
+		}
 		FlightGroupLists* entry = flight_group_lists(fgs, count, values->fg);
 		if (!(ok = entry != NULL))
 			break;
@@ -398,17 +416,38 @@ static bool mission_lists(const char* game, const XwauMissions* m, const char* b
 	for (size_t s = 0; ok && s < sections.count; ++s) {
 		char section_base[512], group[512];
 		int  fg;
-		if (!split_fg_section(sections.items[s], section_base, sizeof section_base, &fg) ||
-			!XwauModel_SectionGroup(section_base, group, sizeof group))
+		if (!split_fg_section(sections.items[s], section_base, sizeof section_base, &fg)) {
+			/* The hook writes N with std::to_string, so a model section with
+			   another N never matches. */
+			const char* at = NULL;
+			for (const char* p = sections.items[s]; *p; ++p)
+				if (strncasecmp(p, "_fg_", 4) == 0)
+					at = p;
+			if (at && at != sections.items[s]) {
+				snprintf(section_base, sizeof section_base, "%.*s", (int)(at - sections.items[s]),
+						 sections.items[s]);
+				if (XwauModel_SectionGroup(section_base, group, sizeof group))
+					report(m, base,
+						   "[%s]: XWAU never reads this section, because %s isn't a flight group number",
+						   sections.items[s], at + 4);
+			}
+			continue;
+		}
+		if (!XwauModel_SectionGroup(section_base, group, sizeof group))
 			continue;
 		bool seen = false;
 		for (size_t j = 0; !seen && j < s; ++j)
 			seen = Xwau_SameName(sections.items[j], sections.items[s]);
-		if (seen || fg > FLIGHT_GROUP_MAX)
+		if (seen)
 			continue;
+		if (fg > FLIGHT_GROUP_MAX) {
+			report(m, base, "[%s]: flight group %d doesn't exist in any mission, so the section does nothing",
+				   sections.items[s], fg);
+			continue;
+		}
 		if (strlen(group) > TAG_MAX) {
-			report(m, base, "%s: skipped: group '%s' is longer than %d characters", sections.items[s], group,
-				   TAG_MAX);
+			fatal(m, base, "[%s]: the group name '%s' is longer than %d characters", sections.items[s], group,
+				  TAG_MAX);
 			continue;
 		}
 		XwauLines lines;
@@ -440,24 +479,31 @@ static bool mission_lists(const char* game, const XwauMissions* m, const char* b
 			const long long* v       = mesh_lines[i].values;
 			const char*      section = sections.items[s];
 			if (v[0] < 0 || v[0] > COMPONENT_MAX) {
-				report(m, base, "%s: mesh %lld skipped: outside 0..%d", section, v[0], COMPONENT_MAX);
+				report(m, base, "[%s]: mesh %lld is outside 0 to %d, so the hook skips it", section, v[0],
+					   COMPONENT_MAX);
 				continue;
 			}
 			if (v[1] < -128 || v[1] > 255) {
-				report(m, base, "%s: mesh %lld skipped: angle %lld outside -128..255", section, v[0], v[1]);
+				report(
+					m, base,
+					"[%s]: mesh %lld has the angle %lld, which is outside -128 to 255, so the hook skips it",
+					section, v[0], v[1]);
 				continue;
 			}
 			if (v[2] < 0 || v[2] > 255 || v[3] < 0 || v[3] > 255) {
-				report(m, base, "%s: mesh %lld skipped: speeds %lld, %lld outside 0..255", section, v[0],
-					   v[2], v[3]);
+				report(m, base,
+					   "[%s]: mesh %lld has the speeds %lld and %lld, which must be 0 to 255, so the hook "
+					   "skips it",
+					   section, v[0], v[2], v[3]);
 				continue;
 			}
 			bool listed = false;
 			for (size_t k = 0; !listed && k < list->count; ++k)
 				listed = list->meshes[k].mesh == (int)v[0];
 			if (listed) {
-				report(m, base, "%s: mesh %lld is listed again, and only the first line is kept", section,
-					   v[0]);
+				report(m, base,
+					   "[%s]: mesh %lld is listed again. XWAU uses the first line, and so does the importer",
+					   section, v[0]);
 				continue;
 			}
 			MeshEntry* mesh = ARRAY_PUSH(list->meshes, list->count);
@@ -509,8 +555,11 @@ XwauTieFlightGroup* XwauTie_FlightGroups(const char* path, size_t* count) {
 	for (int16_t i = 0; out && i < groups; ++i) {
 		uint8_t record[TIE_FLIGHT_GROUP_MARKINGS + 1];
 		if (fseek(f, TIE_HEADER_SIZE + (long)i * TIE_FLIGHT_GROUP_SIZE, SEEK_SET) != 0 ||
-			fread(record, 1, sizeof record, f) != sizeof record)
+			fread(record, 1, sizeof record, f) != sizeof record) {
+			Report(path, "the file ends before flight group %d of %d, so the importer reads %d flight groups",
+				   i, groups, i);
 			break;
+		}
 		XwauTieFlightGroup* g = &out[(*count)++];
 		memcpy(g->name, record, TIE_FLIGHT_GROUP_NAME);
 		g->name[TIE_FLIGHT_GROUP_NAME] = 0;
@@ -606,10 +655,26 @@ static bool load_variants(const char* game, XwauMissions* m) {
 					if ((size_t)fgs[i].fg < group_count && tables)
 						name = XwauGameTables_CraftModel(tables, groups[fgs[i].fg].craft);
 					ModelVariants* model = NULL;
-					if (!name[0])
+					if (!groups)
+						/* The stock game may have the .TIE, but this reader only
+						   looks in the mod. */
+						fatal(m, base,
+							  "flight group %d has articulation lists, and the importer can't find its craft "
+							  "because the mod has no .TIE for the mission",
+							  fgs[i].fg);
+					else if ((size_t)fgs[i].fg >= group_count)
 						report(m, base,
-							   "flight group %d: the articulation lists are dropped because its craft type "
-							   "has no model",
+							   "the mission has no flight group %d, so its articulation lists are dropped",
+							   fgs[i].fg);
+					else if (!tables)
+						fatal(m, base,
+							  "flight group %d has articulation lists, and the importer can't find its model "
+							  "because XWAU's object tables couldn't be read",
+							  fgs[i].fg);
+					else if (!name[0])
+						report(m, base,
+							   "flight group %d: its craft type has no model, so its articulation lists do "
+							   "nothing",
 							   fgs[i].fg);
 					else
 						ok = (model = model_variants(m, name)) != NULL;
@@ -736,8 +801,8 @@ bool XwauMissions_Articulations(const XwauMissions* missions, const char* model,
 			char       tag[1024];
 			snprintf(tag, sizeof tag, "variant.%s.%s", sorted[i]->name, list->group);
 			if (strlen(tag) > TAG_MAX) {
-				Report(label, "variant %s: skipped: group '%s' is longer than %d characters", sorted[i]->name,
-					   tag, TAG_MAX);
+				ReportFatal(label, "variant %s: the group name '%s' is longer than %d characters",
+							sorted[i]->name, tag, TAG_MAX);
 				continue;
 			}
 			for (size_t k = 0; ok && k < list->count; ++k) {

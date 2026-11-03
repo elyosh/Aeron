@@ -39,7 +39,7 @@
  *       angle_degrees: 25
  *       auto_turn_on: true
  *     weapons:
- *       impact: {280: 0xff0000, 281: 0xff0000, ...}
+ *       impact: {rebel_laser: 0xff0000, rebel_laser_turbo: 0xff0000, ...}
  *       rates: {decharge: 4, cooldown: 47}
  *       energy_transfer: {rate: 8}
  *       ai_torpedoes: {per_pass: 2, per_target: 6}
@@ -136,7 +136,9 @@
  * area light has them (xwau_flight_settings.c says how ddraw's values are
  * converted). `position_m` is from the craft's eye, with Z forward.
  * `angle_degrees` is the width of ddraw's cone, for when the game has cone
- * lights. `auto_turn_on` turns them on in the missions without a global
+ * lights. ddraw's headlights_distance and headlights_ambient aren't imported,
+ * because the game's light gets dimmer with the distance. They are reported
+ * when SSAO.cfg sets them. `auto_turn_on` turns them on in the missions without a global
  * light. A mission turns them on with `headlights: true` in its mission file
  * (xwau_mission_files.h).
  *
@@ -170,17 +172,22 @@
  * hook_weapon_rate.cfg, or else from Hooks.ini:
  *   - fire_ratio_by_rank, from NoviceRankFireratioMultiplicator to
  *     SuperAceRankFireratioMultiplicator (4, 3, 2, 2, 1, 1 by default),
- *     when the DLL reads them;
+ *     when the DLL reads them, as a map by rank name;
  *   - damage_by_difficulty, from DamagesMultiplicatorForDifficulty0 to 2
- *     (0.5, 0.25, 1), when the DLL reads them;
+ *     (0.5, 0.25, 1), when the DLL reads them, as a map by difficulty
+ *     name;
  *   - limit_linked_warhead_fire_rate, when LimitLinkedWarheadFireRate isn't
  *     0;
  *   - linking_rules, for each of PreventAILasersIonWhenDisabling,
  *     PreventAIIonWhenNotDisabling and PreventPlayerLinkedLasersIon that
  *     isn't 0.
  * The factors are float32 values. They are written with enough digits to
- * get the exact value back. WeaponsCount and IsLaserLinksFixEnabled aren't
- * imported. They are reported when they would change something.
+ * get the exact value back. WeaponsCount goes into the object counts
+ * (xwau_object_limits.h). The game doesn't have IsLaserLinksFixEnabled, so
+ * the import fails when it is on. A value that isn't a number would make
+ * XWAU fail, so it is reported, and the default is used. A negative
+ * DechargeRatePercent or RechargeRatePercent, or a torpedo limit below -1,
+ * makes the import fail.
  * When hook_weapon_rate.dll has weapon profiles, it also changes some rules
  * with no data. The importer writes tie_fighter_energy_step_always_high,
  * player_turret_racks_keep_charge, warhead_collision_bonus_any_target and
@@ -195,15 +202,16 @@
  * Hooks.ini: IsShieldRechargeForStarshipsEnabled (default 1),
  * IsShieldRechargeForStarshipsOnEasyDifficultyEnabled (0),
  * IsShieldStrengthForStarfighterDoubled (0) and RechargeRatePercent (100).
+ * A negative RechargeRatePercent makes the import fail.
  * The rules are in shield_recharge.h in the game. The hook's per-mission
  * [Shield] lines (<mission>_Shield.txt), which no mod uses, aren't
  * imported.
  *
  * `docking` is written when the mod installs hook_dock.dll, which changes
  * how craft dock with no data. The cap of the player's approach height comes
- * from each model's [Dock] section, in the model settings files. The hook's
- * ForceDockElevation, which replaces that cap for every model, isn't
- * imported, and is reported when it isn't -1.
+ * from each model's [Dock] section, in the model settings files. The game
+ * doesn't have the hook's ForceDockElevation, which replaces that cap for
+ * every model, so the import fails when it isn't -1.
  *
  * `camera` is written when the mod installs Hook_CockpitLook.dll or
  * hook_exterior.dll, and turns on the game's enhanced camera. Its values come
@@ -223,11 +231,12 @@
  *     (0.2), times xwa_units_to_meters_scale (25);
  *   - exterior_hud is whether the mod installs hook_exterior.dll, which has
  *     no settings.
- * A value outside the game's range isn't written, and is reported. The
- * hook's external_dist_inertia, enable_external_inertia_in_hangar and
- * enable_external_inertia_in_map aren't imported, and are reported when they
- * are set. With hook_exterior.dll only, the section turns the HUD on and the
- * lag, the tilt and the sway off.
+ * A value outside the game's range makes the import fail. The game doesn't
+ * have the hook's external_dist_inertia, enable_external_inertia_in_hangar
+ * and enable_external_inertia_in_map, so they make the import fail when they
+ * are set. When the hook doesn't use a value, because its lag or its sway is
+ * off, the value is only reported. With hook_exterior.dll only, the section
+ * turns the HUD on and the lag, the tilt and the sway off.
  *
  * `suns` is written when the mod's ddraw draws procedural suns, and turns on
  * the game's procedural suns and flare. XWAU's ddraw.dll can be a loader
@@ -238,19 +247,25 @@
  *   - procedural_flare is true when bloom_enabled (Bloom.cfg) or
  *     ssao_enabled isn't 0, since ddraw only draws its flare with its post
  *     effects on, and flare_intensity is above 0.01 (default 2);
- *   - flare_intensity is copied when the flare is on. A value above 10 isn't
- *     written, and is reported.
- * background_suns_strength and lens_flare_strength aren't imported: they set
- * the strength of ddraw's bloom mask, and the game's bloom has no mask.
- * ddraw turns both effects off in a mission with a 3D sun or skydome model,
- * which it finds by words in the model's name. The game keeps them on, and
- * the importer reports such models in FlightModels.
+ *   - flare_intensity is copied when the flare is on. A value above 10
+ *     makes the import fail.
+ * background_suns_strength and lens_flare_strength aren't imported. They set
+ * the strength of ddraw's bloom mask, and the game's bloom has no mask. They
+ * are reported when they are set. ddraw turns both effects off in a mission
+ * with a 3D sun or skydome model, which it finds by words in the model's
+ * name. The game can't do that, so such a model in FlightModels makes the
+ * import fail.
  */
 
 #include <stdbool.h>
 
-/* Writes the settings of the installation `game` into the file `path`.
- * Returns false on an error. */
-bool XwauFlightSettings_Write(const char* game, const char* path);
+#include "xwau_game_tables.h"
+#include "xwau_names.h"
+
+/* Writes the settings of the installation `game` to the file `path`, with
+ * the names in `names`. The weapon profiles only write the hardpoint kinds
+ * that differ from `stock`. Returns false on an error. */
+bool XwauFlightSettings_Write(const char* game, const XwauNames* names, const XwauStockValues* stock,
+							  const char* path);
 
 #endif /* AERON_XWAU_FLIGHT_SETTINGS_H */

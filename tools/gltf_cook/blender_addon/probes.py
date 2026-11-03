@@ -739,7 +739,7 @@ def hangar_floor(root):
     """The world position of the model's InsideHangar hardpoint, on the hangar's floor, or None."""
     for component in common.components(root):
         for child in common.ordered_children(component, ('hardpoint',)):
-            if int(child.aeron_flight.hardpoint_type) == INSIDE_HANGAR_HARDPOINT:
+            if common.hardpoint_type(child.aeron_flight) == INSIDE_HANGAR_HARDPOINT:
                 return child.matrix_world.translation.copy()
     return None
 

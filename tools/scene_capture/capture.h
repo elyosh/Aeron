@@ -144,9 +144,10 @@ typedef struct CaptureConfig {
 	 * which advances with the capture time. */
 	char   effect_dir[1024];
 	double animation_time;
-	/* blast_mark: an effects.yaml image ("G-I", "" for none) drawn as a
-	 * PMA overlay square on the first model's first instance, centred at
-	 * `center` (model metres) in the model's XY plane, `size` metres wide. */
+	/* The fixture's blast_mark. `blast_image` is an effects.yaml image, such
+	 * as "blast_mark.1", or "" for none. It is drawn as a PMA overlay square
+	 * on the first model's first instance, centred at `center` (model
+	 * metres) in the model's XY plane, `size` metres wide. */
 	char  blast_image[32];
 	float blast_center[3], blast_size;
 	/* anim: the material animation state of every instance, each with

@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 
 #include "classic_radiance.h"
 #include "util.h"
@@ -182,8 +183,8 @@ static void list_add(SkyList* list, uint32_t image, const char* what, const char
 	if (list_has(list, image))
 		return;
 	if (list->count == SKY_LIST_MAX) {
-		Report(base, "[SkyBoxes]: %s has more than %d images; image %u-%u is left out", what, SKY_LIST_MAX,
-			   image >> 16, image & 0xFFFFu);
+		ReportFatal(base, "[SkyBoxes]: %s has more than %d images, the most that the game takes", what,
+					SKY_LIST_MAX);
 		return;
 	}
 	list->images[list->count++] = image;
@@ -218,7 +219,8 @@ static void read_list(const XwauLines* lines, const char* key, const char* base,
 	}
 }
 
-/* Reports the keys that the ddraw wrapper does not read. */
+/* Reports the keys that the ddraw wrapper does not read, and the mission
+ * keys that it reads but the importer can't import. */
 static void report_unknown_keys(const XwauLines* lines, const char* base) {
 	static const char* const kPrefixes[] = { "AllRegions", "Region0", "Region1", "Region2", "Region3" };
 	static const char* const kSuffixes[] = { "",
@@ -262,6 +264,13 @@ static void report_unknown_keys(const XwauLines* lines, const char* base) {
 		}
 		if (!known && name[0])
 			Report(base, "[SkyBoxes]: unknown key '%s' is ignored, as XWAU ignores it", name);
+		/* The importer bakes its own reflection maps, at its own size. */
+		if (known && EndsWithNoCase(name, "ReflectionRes"))
+			Report(base,
+				   "[SkyBoxes]: %s is ignored, because OpenXWA bakes its reflection maps at a fixed size",
+				   name);
+		if (known && (Xwau_SameName(name, "RenderMode") || strncasecmp(name, "Hangar", 6) == 0))
+			Report(base, "[SkyBoxes]: the importer doesn't import %s", name);
 	}
 }
 
@@ -284,12 +293,13 @@ static long folder_index(SkyState* st, const char* found, bool overlay, const ch
 	const char* name  = slash ? slash + 1 : found;
 	char        key[128];
 	if (!Xwau_EncodeName(name, key, sizeof key)) {
-		Report(base, "[SkyBoxes]: the cube folder name %s is too long; it is left out", name);
+		ReportFatal(base, "[SkyBoxes]: the cube folder name %s is too long", name);
 		return SKY_LEFT_OUT;
 	}
 	for (size_t i = 0; i < st->folder_count; ++i) {
 		if (strcmp(st->folders[i].key, key) == 0) {
-			Report(base, "[SkyBoxes]: %s has the name of %s; it is left out", found, st->folders[i].path);
+			ReportFatal(base, "[SkyBoxes]: the cube folders %s and %s get the same name", found,
+						st->folders[i].path);
 			return SKY_LEFT_OUT;
 		}
 	}
@@ -326,8 +336,7 @@ static long definition_index(SkyState* st, size_t folder, float ambient_int, flo
 	const int length = same_name ? snprintf(name, sizeof name, "%s.%zu", base_name, same_name + 1)
 								 : snprintf(name, sizeof name, "%s", base_name);
 	if (length >= (int)sizeof name) {
-		Report(base, "[SkyBoxes]: the environment name for %s is too long; it is left out",
-			   st->folders[folder].path);
+		ReportFatal(base, "[SkyBoxes]: the environment name for %s is too long", st->folders[folder].path);
 		return SKY_LEFT_OUT;
 	}
 	if (!ArrayGrow((void**)&st->definitions, st->definition_count, sizeof *st->definitions))
@@ -376,6 +385,12 @@ static bool read_region(SkyState* st, const XwauLines* lines, int r, const SkyAl
 		snprintf(overlay, sizeof overlay, "%s_overlay", written);
 	const bool  own_overlay   = (written[0] || illum[0]) &&
 								folder_loads(st->game, overlay, own_overlay_found, sizeof own_overlay_found);
+	snprintf(name, sizeof name, "%sOverlay", key);
+	char named_overlay[600];
+	XwauLines_Value(lines, name, XWAU_RULES_CPP, named_overlay, sizeof named_overlay);
+	if (named_overlay[0] && (written[0] || illum[0]) && !own_overlay)
+		Report(base, "[SkyBoxes]: %s folder %s does not load (it needs exactly six files)", name,
+			   named_overlay);
 	const char* overlay_found = own_overlay ? own_overlay_found : all->overlay_found;
 
 	if (!own && !all->found) {
@@ -383,6 +398,16 @@ static bool read_region(SkyState* st, const XwauLines* lines, int r, const SkyAl
 		return true;
 	}
 	const char* prefix = own ? key : "AllRegions";
+	/* The region's environment has no place for these. */
+	static const char* const kNotImported[] = { "Specular", "Illum" };
+	for (size_t k = 0; k < sizeof kNotImported / sizeof kNotImported[0]; ++k) {
+		char value[600];
+		snprintf(name, sizeof name, "%s%s", prefix, kNotImported[k]);
+		XwauLines_Value(lines, name, XWAU_RULES_CPP, value, sizeof value);
+		if (value[0])
+			Report(base, "[SkyBoxes]: region %d uses %s = %s, which the importer doesn't import", r, name,
+				   value);
+	}
 	snprintf(name, sizeof name, "%sAmbientInt", prefix);
 	const float ambient_int = sky_float(lines, name, own ? 0.15f : 0.50f);
 	snprintf(name, sizeof name, "%sAmbientMin", prefix);
@@ -454,6 +479,7 @@ static bool read_mission(SkyState* st, const char* dir, const char* name, SkyMis
 		Report(base, "[SkyBoxes]: AllRegions folder %s does not load (it needs exactly six files)",
 			   all_written);
 	XwauLines_Value(&lines, "AllRegionsOverlay", XWAU_RULES_CPP, overlay, sizeof overlay);
+	const bool named_overlay = overlay[0] != 0;
 	if (!overlay[0] && all_written[0])
 		snprintf(overlay, sizeof overlay, "%s_overlay", all_written);
 	SkyAllRegions all = {
@@ -461,6 +487,9 @@ static bool read_mission(SkyState* st, const char* dir, const char* name, SkyMis
 		.overlay_found =
 			folder_loads(st->game, overlay, overlay_found, sizeof overlay_found) ? overlay_found : NULL,
 	};
+	if (named_overlay && !all.overlay_found)
+		Report(base, "[SkyBoxes]: AllRegionsOverlay folder %s does not load (it needs exactly six files)",
+			   overlay);
 	for (int axis = 0; axis < 3; ++axis) {
 		char name[64];
 		snprintf(name, sizeof name, "AllRegionsRotation%c", 'X' + axis);
@@ -550,7 +579,8 @@ static float clamp_value(float v, float max, const char* what, const char* name)
 	if (v >= 0.0f && v <= max)
 		return v;
 	const float clamped = v < 0.0f || v != v ? 0.0f : max;
-	Report(name, "[SkyBoxes]: %s %g is out of range; %g is used", what, (double)v, (double)clamped);
+	ReportFatal(name, "[SkyBoxes]: %s is %g, and the importer only takes 0 to %g", what, (double)v,
+				(double)max);
 	return clamped;
 }
 
@@ -712,8 +742,9 @@ bool XwauSkyboxes_Write(const char* game, const char* stock_game, const char* ma
 			overlays += region->definition >= 0 && st.definitions[region->definition].overlay >= 0;
 			if (region->overlay_without_sky)
 				Report(st.missions[m].key,
-					   "[SkyBoxes]: region %d has an overlay but no cube; an overlay needs a sky, so it is "
-					   "left out",
+					   "[SkyBoxes]: region %d has an overlay but no cube. An OpenXWA overlay needs a sky, so "
+					   "the "
+					   "overlay is left out",
 					   r);
 		}
 	}

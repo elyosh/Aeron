@@ -454,7 +454,7 @@ def pilot_eye(root):
     """The model's first pilot eye hardpoint in component order, or None."""
     for component in common.components(root):
         for child in common.ordered_children(component, roles=('hardpoint',)):
-            if int(child.aeron_flight.hardpoint_type) == common.COCKPIT_HARDPOINT_TYPE:
+            if common.hardpoint_type(child.aeron_flight) == common.COCKPIT_HARDPOINT_TYPE:
                 return child
     return None
 

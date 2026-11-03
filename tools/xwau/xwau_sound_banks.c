@@ -20,33 +20,47 @@ typedef struct BankInfo {
 	const char* key;  /* the key in sounds.yaml */
 	int         layout;
 	const char* hook; /* the hook DLL that reads the bank */
+	/* True when XWAU plays nothing for the object types past the end of the
+	   list. The bank then gets `unlisted: silent`. When false, the stock
+	   sound plays for them. */
+	bool past_count_silent;
+	/* True when each object type has a list of `layout` sounds that the game
+	   picks from at random. When false, the `layout` entries are weapon sound
+	   groups. */
+	bool random;
 } BankInfo;
 
-/* The banks that XWAU's hooks read. */
+/* The banks that XWAU's hooks read and that the game supports. */
 static const BankInfo g_banks[] = {
-	{ "CanopyOpening", "canopy_opening", BANK_BY_TYPE, "hook_engine_sound.dll" },
-	{ "EngineSlowing", "engine_slowing", BANK_BY_TYPE, "hook_engine_sound.dll" },
-	{ "EngineWash", "engine_wash", BANK_BY_TYPE, "hook_engine_sound.dll" },
-	{ "EnterHyperspace", "enter_hyperspace", BANK_BY_TYPE, "hook_hyperspace.dll" },
-	{ "ExitHyperspace", "exit_hyperspace", BANK_BY_TYPE, "hook_hyperspace.dll" },
-	{ "FlyBy", "fly_by", BANK_BY_TYPE, "hook_engine_sound.dll" },
-	{ "HangarAmbient", "hangar_ambient", 10, "hook_hangars.dll" },
-	{ "HyperAbort", "hyper_abort", BANK_BY_TYPE, "hook_engine_sound.dll" },
-	{ "HyperEnd", "hyper_end", BANK_BY_TYPE, "hook_engine_sound.dll" },
-	{ "HyperStart", "hyper_start", BANK_BY_TYPE, "hook_engine_sound.dll" },
-	{ "HyperZoom", "hyper_zoom", BANK_BY_TYPE, "hook_engine_sound.dll" },
-	{ "Interior", "interior", BANK_BY_TYPE, "hook_engine_sound.dll" },
-	{ "SFoil", "s_foil", BANK_BY_TYPE, "hook_sfoils.dll" },
-	{ "ShuttleBlastOff", "shuttle_blast_off", BANK_BY_TYPE, "hook_engine_sound.dll" },
-	{ "ShuttleShutDown", "shuttle_shut_down", BANK_BY_TYPE, "hook_engine_sound.dll" },
-	{ "ShuttleTakeOff", "shuttle_take_off", BANK_BY_TYPE, "hook_engine_sound.dll" },
-	{ "Sounds", "sounds", BANK_BY_NAME, "hook_engine_sound.dll" },
-	{ "StarshipAmbient", "starship_ambient", BANK_BY_TYPE, "hook_engine_sound.dll" },
-	{ "TakeOff", "take_off", BANK_BY_TYPE, "hook_engine_sound.dll" },
-	{ "Weapon", "weapon", 10, "hook_engine_sound.dll" },
-	{ "WeaponExplosion", "weapon_explosion", 8, "hook_engine_sound.dll" },
-	{ "WeaponRange", "weapon_range", BANK_BY_POSITION, "hook_engine_sound.dll" },
+	{ "CanopyOpening", "canopy_opening", BANK_BY_TYPE, "hook_engine_sound.dll", false, false },
+	{ "EngineSlowing", "engine_slowing", BANK_BY_TYPE, "hook_engine_sound.dll", false, false },
+	{ "EngineWash", "engine_wash", BANK_BY_TYPE, "hook_engine_sound.dll", false, false },
+	{ "FlyBy", "fly_by", BANK_BY_TYPE, "hook_engine_sound.dll", true, false },
+	{ "HangarAmbient", "hangar_ambient", 10, "hook_hangars.dll", false, true },
+	{ "HyperAbort", "hyper_abort", BANK_BY_TYPE, "hook_engine_sound.dll", true, false },
+	{ "HyperEnd", "hyper_end", BANK_BY_TYPE, "hook_engine_sound.dll", true, false },
+	{ "HyperStart", "hyper_start", BANK_BY_TYPE, "hook_engine_sound.dll", true, false },
+	{ "HyperZoom", "hyper_zoom", BANK_BY_TYPE, "hook_engine_sound.dll", true, false },
+	{ "Interior", "interior", BANK_BY_TYPE, "hook_engine_sound.dll", true, false },
+	{ "SFoil", "s_foil", BANK_BY_TYPE, "hook_sfoils.dll", false, false },
+	{ "ShuttleBlastOff", "shuttle_blast_off", BANK_BY_TYPE, "hook_engine_sound.dll", false, false },
+	{ "ShuttleShutDown", "shuttle_shut_down", BANK_BY_TYPE, "hook_engine_sound.dll", false, false },
+	{ "ShuttleTakeOff", "shuttle_take_off", BANK_BY_TYPE, "hook_engine_sound.dll", false, false },
+	{ "Sounds", "sounds", BANK_BY_NAME, "hook_engine_sound.dll", false, false },
+	{ "StarshipAmbient", "starship_ambient", BANK_BY_TYPE, "hook_engine_sound.dll", false, false },
+	{ "TakeOff", "take_off", BANK_BY_TYPE, "hook_engine_sound.dll", false, false },
+	{ "Weapon", "weapon", 10, "hook_engine_sound.dll", true, false },
+	{ "WeaponExplosion", "weapon_explosion", 8, "hook_engine_sound.dll", false, true },
+	{ "WeaponRange", "weapon_range", BANK_BY_POSITION, "hook_engine_sound.dll", false, false },
 };
+
+/* The hook_hyperspace banks. They play when other craft jump, and the game
+   plays no sound then. */
+static const char* const g_otherCraftHyperspaceBanks[] = { "EnterHyperspace", "ExitHyperspace" };
+
+void XwauSoundBanks_RangeName(int position, char* out, size_t cap) {
+	snprintf(out, cap, "range_%d", position);
+}
 
 /* The entries of the Sounds bank, in hook_engine_sound's order. */
 static const char* const g_soundNames[] = { "player_targeted", "map_enter", "map_exit", "turret_switch",
@@ -369,7 +383,14 @@ static bool copy_sound(Import* im, const char* path, const char* rel, const char
 	}
 	const XwauWavResult result = XwauSoundBanks_ConvertWav(data, size, &out, &out_size);
 	if (result == XWAU_WAV_BAD) {
-		Report(list, "%s isn't a WAV file that the game can play, so its entries are silent", rel);
+		/* XWAU may play a WAV format that the importer can't convert. A file
+		   that isn't a WAV file at all is silent in XWAU too. */
+		if (size >= 12 && memcmp(data, "RIFF", 4) == 0 && memcmp(data + 8, "WAVE", 4) == 0)
+			ReportFatal(
+				list, "%s is a WAV file in a format that the game can't play and the importer can't convert",
+				rel);
+		else
+			Report(list, "%s isn't a WAV file, so XWAU can't play it either. Its entries are silent.", rel);
 		add_known(im, rel, false);
 		free(data);
 		return false;
@@ -396,48 +417,118 @@ static bool copy_sound(Import* im, const char* path, const char* rel, const char
 }
 
 static void write_entry(FILE* f, const Entry* entry) {
+	if (!entry) {
+		fputs("{silent: true}", f);
+		return;
+	}
 	fprintf(f, "{file: ");
 	Xwau_WriteString(f, entry->path);
-	fprintf(f, ", volume: %d, distance: %d}\n", entry->volume, entry->distance);
+	fprintf(f, ", volume: %d, distance: %d}", entry->volume, entry->distance);
 }
 
-/* Writes the entries of one bank. `entries[i]` is NULL for a silent slot. */
-static void write_bank(FILE* f, const BankInfo* bank, const char* list, int count, Entry* const* entries,
-					   int slots) {
-	static const char* const layouts[] = { "by name", "by position", "by object type" };
-	if (bank->layout > 1)
-		fprintf(f, "  %s: # %s, %d by object type\n", bank->key, list, bank->layout);
-	else
-		fprintf(f, "  %s: # %s, %s\n", bank->key, list, layouts[bank->layout + 1]);
-	fprintf(f, "    count: %d\n    sounds:", count);
-	bool any   = false;
-	int  group = -1;
-	for (int slot = 0; slot < slots; ++slot) {
+/* Writes the entries of object type `type` in a bank with several entries
+   per object type: a map of weapon sound groups, or a list that the game
+   picks from. Returns false when the object type has nothing to write. */
+static bool write_type_entries(FILE* f, const XwauNames* names, const BankInfo* bank, int type,
+							   Entry* const* entries, int slots, bool* opened) {
+	const int first = type * bank->layout;
+	bool      any   = false;
+	for (int i = 0; i < bank->layout && first + i < slots; ++i)
+		any |= entries[first + i] != NULL;
+	if ((!any && !(bank->random && !bank->past_count_silent)) || !XwauNames_ObjectType(names, type))
+		return false;
+	if (!*opened)
+		fputc('\n', f);
+	*opened = true;
+	fprintf(f, "      %s:", XwauNames_ObjectType(names, type));
+	if (!any) {
+		/* None of the entries has a sound. Below the end of the list, XWAU
+		   plays nothing. */
+		fputs(" [{silent: true}]\n", f);
+		return true;
+	}
+	fputc('\n', f);
+	for (int i = 0; i < bank->layout && first + i < slots; ++i) {
+		const char* group = XwauNames_Name(&names->sound_weapon_groups, i);
+		if (bank->random) {
+			/* Keep the silent entries, because they count in the random
+			   pick. */
+			fputs("        - ", f);
+		} else if (!entries[first + i] || !group) {
+			continue;
+		} else {
+			fprintf(f, "        %s: ", group);
+		}
+		write_entry(f, entries[first + i]);
+		fputc('\n', f);
+	}
+	return true;
+}
+
+/* Writes the entries of one bank. `entries[i]` is NULL for a silent slot.
+   `slots` is the length of XWAU's list. */
+static void write_bank(FILE* f, const XwauNames* names, const BankInfo* bank, const char* list,
+					   Entry* const* entries, int slots) {
+	/* The entries that can't be written: those of object types that the game
+	   has no name for, and those of weapon sound groups without a name. */
+	int unnamed_types = 0, unnamed_groups = 0;
+	for (int slot = 0; bank->layout != BANK_BY_NAME && bank->layout != BANK_BY_POSITION && slot < slots;
+		 ++slot) {
+		const int type = bank->layout > 1 ? slot / bank->layout : slot;
 		if (!entries[slot])
 			continue;
-		if (!any)
-			fprintf(f, "\n");
-		any = true;
-		if (bank->layout == BANK_BY_NAME) {
-			fprintf(f, "      %s: ", g_soundNames[slot]);
-		} else if (bank->layout > 1) {
-			if (slot / bank->layout != group) {
-				group = slot / bank->layout;
-				fprintf(f, "      %d:\n", group);
+		if (type >= names->object_types.count || !XwauNames_ObjectType(names, type))
+			++unnamed_types;
+		else if (bank->layout > 1 && !bank->random &&
+				 !XwauNames_Name(&names->sound_weapon_groups, slot % bank->layout))
+			++unnamed_groups;
+	}
+	if (unnamed_types)
+		Report(list,
+			   "%d entries are for object types that the game has no name for, so no craft can use them. "
+			   "They are left out.",
+			   unnamed_types);
+	if (unnamed_groups)
+		ReportFatal(list, "%d entries are for weapon sound groups that the game has no name for",
+					unnamed_groups);
+	fprintf(f, "  %s: # %s\n", bank->key, list);
+	if (bank->past_count_silent)
+		fputs("    unlisted: silent\n", f);
+	fputs("    sounds:", f);
+	bool any = false;
+	if (bank->layout > 1) {
+		for (int type = 0; type * bank->layout < slots && type < names->object_types.count; ++type)
+			write_type_entries(f, names, bank, type, entries, slots, &any);
+	} else {
+		for (int slot = 0; slot < slots; ++slot) {
+			/* Below the end of the list, an entry without a file is silent. */
+			if (!entries[slot] && bank->past_count_silent)
+				continue;
+			if (bank->layout == BANK_BY_TYPE && !XwauNames_ObjectType(names, slot))
+				continue;
+			if (!any)
+				fputc('\n', f);
+			any = true;
+			if (bank->layout == BANK_BY_NAME) {
+				fprintf(f, "      %s: ", g_soundNames[slot]);
+			} else if (bank->layout == BANK_BY_POSITION) {
+				char name[32];
+				XwauSoundBanks_RangeName(slot, name, sizeof name);
+				fprintf(f, "      %s: ", name);
+			} else {
+				fprintf(f, "      %s: ", XwauNames_ObjectType(names, slot));
 			}
-			fprintf(f, "        %d: ", slot % bank->layout);
-		} else {
-			fprintf(f, "      %d: ", slot);
+			write_entry(f, entries[slot]);
+			fputc('\n', f);
 		}
-		write_entry(f, entries[slot]);
 	}
 	if (!any)
-		fprintf(f, " {}\n");
+		fputs(" {}\n", f);
 }
 
 /* Reads one bank list, copies its files and writes the bank. */
-static bool import_bank(Import* im, FILE* f, const BankInfo* bank, const char* list_path, const char* stem,
-						int* entry_count) {
+static bool import_bank(Import* im, FILE* f, const XwauNames* names, const BankInfo* bank,
+						const char* list_path, const char* stem, int* entry_count) {
 	char   list[300];
 	size_t size = 0;
 	snprintf(list, sizeof list, "Wave/%s.lst", stem);
@@ -474,7 +565,7 @@ static bool import_bank(Import* im, FILE* f, const BankInfo* bank, const char* l
 			continue;
 		const int this_slot = slot++;
 		if (this_slot >= slots) {
-			past += bank->layout != BANK_BY_NAME;
+			++past;
 			continue;
 		}
 		char rel[600], path[1024];
@@ -514,11 +605,14 @@ static bool import_bank(Import* im, FILE* f, const BankInfo* bank, const char* l
 	}
 	XwauLines_Free(&missing_names);
 	im->missing += missing;
-	if (past)
+	if (past && bank->layout == BANK_BY_NAME && slots < count)
+		Report(list, "%d entries come after the %d sounds that hook_engine_sound reads. They are left out.",
+			   past, slots);
+	else if (past)
 		Report(list, "%d entries are past the %d lines that XWAU counts, and no hook reads them", past,
 			   count);
 	if (!error)
-		write_bank(f, bank, list, count, used, slots);
+		write_bank(f, names, bank, list, used, slots);
 	free(entries);
 	free(used);
 	free(text);
@@ -538,7 +632,8 @@ int XwauSoundBanks_LineCount(const char* game, const char* name) {
 	return count;
 }
 
-bool XwauSoundBanks_Write(const char* game, const char* output_dir, const char* game_files) {
+bool XwauSoundBanks_Write(const char* game, const XwauNames* game_names, const char* output_dir,
+						  const char* game_files) {
 	char hook[1024], wave[1024];
 	if (!Xwau_FindFile(game, "hook_sounds_count.dll", hook, sizeof hook) ||
 		!Xwau_FindDir(game, "Wave", wave, sizeof wave))
@@ -569,7 +664,19 @@ bool XwauSoundBanks_Write(const char* game, const char* output_dir, const char* 
 		for (size_t b = 0; !bank && b < sizeof g_banks / sizeof g_banks[0]; ++b)
 			if (strcasecmp(stem + 4, g_banks[b].name) == 0)
 				bank = &g_banks[b];
+		bool other_craft_hyperspace = false;
+		for (size_t b = 0; b < sizeof g_otherCraftHyperspaceBanks / sizeof g_otherCraftHyperspaceBanks[0];
+			 ++b)
+			other_craft_hyperspace |= strcasecmp(stem + 4, g_otherCraftHyperspaceBanks[b]) == 0;
 		char dll[1024];
+		if (other_craft_hyperspace) {
+			Report(
+				NULL,
+				"Wave/%s isn't imported. It holds the sounds that XWAU plays when other craft jump, and the "
+				"game plays no sound then",
+				names[i]);
+			continue;
+		}
 		if (!bank) {
 			Report(NULL, "Wave/%s: no hook reads this sound bank, so it isn't imported", names[i]);
 			continue;
@@ -581,7 +688,7 @@ bool XwauSoundBanks_Write(const char* game, const char* output_dir, const char* 
 				   names[i], bank->hook);
 			continue;
 		}
-		ok = import_bank(&im, f, bank, list_path, stem, &entries);
+		ok = import_bank(&im, f, game_names, bank, list_path, stem, &entries);
 		++banks;
 	}
 	if (f && fclose(f) != 0 && ok) {

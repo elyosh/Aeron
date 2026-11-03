@@ -78,11 +78,16 @@ static uint8_t* zip_entry(const uint8_t* zip, size_t size, const char* name, siz
 		at = next;
 		if (name_len - start != strlen(name) || strncasecmp(entry + start, name, name_len - start) != 0)
 			continue;
-		if (local + 30 > size || le32(zip + local) != 0x04034b50)
+		if (local + 30 > size || le32(zip + local) != 0x04034b50) {
+			Report(label, "%s is damaged: the entry of %s has no local header, so XWAU can't read it either",
+				   path, name);
 			break;
+		}
 		const size_t data = local + 30 + le16(zip + local + 26) + le16(zip + local + 28);
-		if (data + packed > size)
+		if (data + packed > size) {
+			Report(label, "%s is damaged: the entry of %s goes past the end of the file", path, name);
 			break;
+		}
 		uint8_t* out = (uint8_t*)malloc(unpacked ? unpacked : 1);
 		if (!out)
 			return NULL;
@@ -91,7 +96,8 @@ static uint8_t* zip_entry(const uint8_t* zip, size_t size, const char* name, siz
 		} else if (method != 8 ||
 				   stbi_zlib_decode_noheader_buffer((char*)out, (int)unpacked, (const char*)zip + data,
 													(int)packed) != (int)unpacked) {
-			Report(label, "%s: cannot read %s", path, name);
+			ReportFatal(label, "the import can't unpack %s from %s (zip method %u)", name, path,
+						(unsigned)method);
 			free(out);
 			return NULL;
 		}
@@ -317,7 +323,8 @@ static bool add_variant(XwauSkins* s, const char* name, int state, const char* k
 			opacity = atoi(dash + 1);
 		}
 		if (!token[0]) {
-			Report(label, "variant %s has a layer with an empty skin name, which is left out", name);
+			ReportFatal(label, "variant %s has a layer with an empty skin name, which can't be converted",
+						name);
 			continue;
 		}
 		const int index = skin_index(s, token);
@@ -410,8 +417,11 @@ static bool load_image(const char* game, const char* model, const char* skin, co
 			return false;
 		}
 		if (w != t->width || h != t->height) {
-			Report(label, "skin %s image %s is %dx%d but the texture is %dx%d, so it is skipped", skin, file,
-				   w, h, (int)t->width, (int)t->height);
+			Report(
+				label,
+				"skin %s image %s is %dx%d, but the texture is %dx%d. XWAU skips an image of another size, "
+				"and so does the import",
+				skin, file, w, h, (int)t->width, (int)t->height);
 			stbi_image_free(rgba);
 			++*skipped;
 			return true;

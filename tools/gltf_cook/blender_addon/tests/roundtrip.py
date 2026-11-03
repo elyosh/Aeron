@@ -45,7 +45,7 @@ TOLERANCE = 1.0e-4
 # of AERON_flight_model).
 DEFAULTS = {
     "model": {"articulations": [], "articulationSettings": {}, "componentSets": {}},
-    "component": {"explosionFlags": 0, "targetId": 0, "target": [0.0, 0.0, 0.0], "tags": []},
+    "component": {"explosion": [], "targetId": 0, "target": [0.0, 0.0, 0.0], "tags": []},
     "engineGlow": {"enabled": True},
     "light": {"shape": "point", "radius": 0.1, "oneSided": False},
 }

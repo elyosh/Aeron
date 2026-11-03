@@ -6,6 +6,7 @@
 
 #include <math.h>
 
+#include "aeron/asset/flight_names.h"
 #include "opt_gltf_internal.h"
 #include "opt_json.h"
 
@@ -315,20 +316,27 @@ static char* screen_json(const OptGltfScreen* s) {
 					OptJson_Add(object, "transparent", cJSON_CreateBool(s->transparent)) &&
 					OptJson_Add(object, "alwaysVisible", cJSON_CreateBool(s->always_visible)) &&
 					OptJson_Add(object, "hologram", cJSON_CreateBool(s->hologram)) &&
-					OptJson_Add(object, "noisy", cJSON_CreateBool(s->noisy)) &&
-					OptJson_Add(object, "hide", cJSON_CreateNumber(s->hide));
+					OptJson_Add(object, "noisy", cJSON_CreateBool(s->noisy));
+	cJSON* hide   = ok && s->hide_count ? OptJson_AddArray(object, "hide") : NULL;
+	ok            = ok && (hide || !s->hide_count);
+	for (uint32_t i = 0; ok && i < s->hide_count; ++i)
+		ok = OptJson_Add(hide, NULL, cJSON_CreateString(s->hide[i]));
 	cJSON* rects  = ok ? OptJson_AddArray(object, "rects") : NULL;
 	ok            = rects != NULL;
 	for (uint32_t i = 0; ok && i < s->rect_count; ++i) {
 		const OptGltfScreenRect* r    = &s->rects[i];
 		cJSON*                   rect = OptJson_AddObject(rects, NULL);
-		ok                            = OptJson_Add(rect, "source", cJSON_CreateNumber(r->source)) &&
-										OptJson_Add(rect, "dst", OptJson_Floats(r->dst, 4)) &&
-										OptJson_Add(rect, "bg", OptJson_Floats(r->bg, 3)) &&
-										OptJson_Add(rect, "highlight", OptJson_Floats(r->highlight, 3)) &&
-										OptJson_Add(rect, "lock", OptJson_Floats(r->lock, 3)) &&
-										OptJson_Add(rect, "gain", OptJson_Float(r->gain)) &&
-										OptJson_Add(rect, "layers", cJSON_CreateNumber(r->layers));
+		cJSON*                   layers = cJSON_CreateArray();
+		for (uint32_t bit = 0; layers && bit < AERON_FLIGHT_SCREEN_LAYER_COUNT; ++bit)
+			if (r->layers & (1u << bit))
+				cJSON_AddItemToArray(layers,
+									 cJSON_CreateString(Aeron_FlightName(AERON_FLIGHT_SCREEN_LAYERS, bit)));
+		ok = OptJson_Add(rect, "source", cJSON_CreateString(r->source)) &&
+			 OptJson_Add(rect, "dst", OptJson_Floats(r->dst, 4)) &&
+			 OptJson_Add(rect, "bg", OptJson_Floats(r->bg, 3)) &&
+			 OptJson_Add(rect, "highlight", OptJson_Floats(r->highlight, 3)) &&
+			 OptJson_Add(rect, "lock", OptJson_Floats(r->lock, 3)) &&
+			 OptJson_Add(rect, "gain", OptJson_Float(r->gain)) && OptJson_Add(rect, "layers", layers);
 		if (ok && (r->layers & OPT_GLTF_SCREEN_LAYER_BAR))
 			ok = OptJson_Add(rect, "bar", OptJson_Floats(r->bar, 3));
 	}

@@ -40,9 +40,10 @@ def _model_extension(root, ordinals):
     articulations = []
     for articulation in props.articulations:
         item = {"component": _ordinal(ordinals, articulation), "group": articulation.group,
-                "angle": articulation.angle, "speed": articulation.speed}
+                "angleDegrees": common.turn_steps_degrees(articulation.angle),
+                "speedDegrees": common.turn_steps_degrees(articulation.speed)}
         if articulation.has_speed_back:
-            item["speedBack"] = articulation.speed_back
+            item["speedBackDegrees"] = common.turn_steps_degrees(articulation.speed_back)
         if articulation.behavior:
             item["behavior"] = articulation.behavior
         articulations.append(item)
@@ -67,10 +68,10 @@ def _model_extension(root, ordinals):
 
 def _component_extension(obj):
     props = obj.aeron_flight
-    extension = {"role": "component", "meshType": int(props.mesh_type)}
-    flags = props.explosion_flags_bits & 0xFFFFFFFF
-    if flags:
-        extension["explosionFlags"] = flags
+    extension = {"role": "component", "meshType": props.mesh_type}
+    explosion = [name for bit, name in enumerate(common.EXPLOSION_IDS) if props.explosion_flags_bits & (1 << bit)]
+    if explosion:
+        extension["explosion"] = explosion
     tags = common.parse_tags(props.tags)
     if tags:
         extension["tags"] = tags
@@ -146,8 +147,9 @@ class _ExportState:
                 self.names.add(child.name)
                 self.rank[child.name] = (0, index)
                 if common.role(child) == 'hardpoint':
-                    self.extensions[child.name] = {"role": "hardpoint",
-                                                   "type": int(child.aeron_flight.hardpoint_type)}
+                    self.extensions[child.name] = {
+                        "role": "hardpoint",
+                        "type": child.aeron_flight.hardpoint_type}
                 else:
                     props = child.aeron_flight
                     self.extensions[child.name] = {"role": "engineGlow", "enabled": props.glow_enabled,

@@ -92,10 +92,10 @@ struct XwauAnim {
 	bool             any;
 	/* Report counters. */
 	size_t flipbooks, damage_materials, energy_materials, anim_bases, always_illuminations, missing_frames;
-	size_t skipped_no_illum, skipped_missing_dat, skipped_unsupported, unknown_events, mixed_damage;
-	size_t skipped_on_screens;
-	size_t greeble_materials, greebles_on_illum, greebles_missing, greebles_uv_disp;
-	size_t lava_materials, lava_not_default;
+	size_t skipped_no_illum, skipped_missing_dat, skipped_unsupported, unknown_events;
+	size_t skipped_on_screens, damage_placements, damage_unused_lines, damage_random_stages;
+	size_t greeble_materials, greebles_on_illum, greebles_missing, greebles_uv_disp, greebles_unknown_blend;
+	size_t lava_materials, lava_not_default, lava_on_screens;
 };
 
 static bool own(XwauAnim* a, void* p) {
@@ -273,12 +273,15 @@ static bool randomize(XwauAnim* a, const char* texture, const XwauSequence* q, F
 
 /* Whether the image of a damage stage shows nothing. This is the case when the
  * image is white, which is a neutral multiply, or when it is missing from its
- * DAT. A missing image is a content error and is left out of the library. */
-static bool image_is_white(const OpenDat* d, int group, int image) {
+ * DAT. A missing image is a content error and is left out of the library. It
+ * is counted in missing_frames. */
+static bool image_is_white(XwauAnim* a, const OpenDat* d, int group, int image) {
 	XwauDatImage im;
 	char         err[256];
-	if (!XwauDat_LoadImageFrom(d->dat, group, image, &im, err, sizeof err))
+	if (!XwauDat_LoadImageFrom(d->dat, group, image, &im, err, sizeof err)) {
+		a->missing_frames++;
 		return true;
+	}
 	bool         white = true;
 	const size_t n     = (size_t)im.width * im.height;
 	for (size_t i = 0; i < n && white; ++i)
@@ -371,18 +374,41 @@ static const XwauMatSequences* instance_source(const XwauMatSequences* own_list,
 
 /* Adds the `damage` of the material to `object`. Returns false when out of
  * memory. */
-static bool damage_json(XwauAnim* a, cJSON* object, const XwauMatSequences* own_list,
+static bool damage_json(XwauAnim* a, const XwauMatFile* mat, cJSON* object, const XwauMatSequences* own_list,
 						const XwauMatSequences* inherited) {
 	const XwauMatSequences* src[3];
-	size_t                  sizes[3], alternatives = 0;
+	size_t                  sizes[3];
+	bool                    any_line = false;
 	for (int k = 0; k < 3; ++k) {
 		src[k]   = instance_source(own_list, inherited, kDamageEvents[k]);
 		sizes[k] = src[k] ? count_instance(src[k], kDamageEvents[k]) : 0;
-		if (sizes[k] > alternatives)
-			alternatives = sizes[k];
+		any_line |= sizes[k] != 0;
 	}
-	if (!alternatives)
+	if (!any_line)
 		return true;
+	/* XWAU picks the damage lines by index (GetCurrentInstATCIndex). It picks
+	 * a random index in the IEVT_DAMAGE_75 list, or index 0 when that list is
+	 * empty, and the other two stages use the line at the same index. The
+	 * texture's own lines and the lines it gets from [Default] each get their
+	 * own index. So there is one alternative for each index, or for each pair
+	 * of indexes when the stages come from both lists. */
+	const XwauMatSequences* lists[2]  = { NULL, NULL };
+	size_t                  counts[2] = { 1, 1 };
+	for (int k = 0; k < 3; ++k) {
+		if (!src[k] || src[k] == lists[0] || src[k] == lists[1])
+			continue;
+		const int    slot = lists[0] ? 1 : 0;
+		const size_t n75  = count_instance(src[k], kDamageEvents[0]);
+		lists[slot]       = src[k];
+		counts[slot]      = n75 ? n75 : 1;
+	}
+	const size_t alternatives = counts[0] * counts[1];
+	/* A line past the number of indexes is never shown in XWAU. */
+	for (int k = 0; k < 3; ++k) {
+		const size_t count = src[k] == lists[0] ? counts[0] : counts[1];
+		if (sizes[k] > count)
+			a->damage_unused_lines += sizes[k] - count;
+	}
 	const XwauSequence* first = NULL;
 	for (int k = 0; k < 3 && !first; ++k)
 		if (src[k])
@@ -396,31 +422,54 @@ static bool damage_json(XwauAnim* a, cJSON* object, const XwauMatSequences* own_
 		a->skipped_missing_dat++;
 		return true;
 	}
-	if ((sizes[0] && sizes[0] != alternatives) || (sizes[1] && sizes[1] != alternatives) ||
-		(sizes[2] && sizes[2] != alternatives) || !sizes[0] || !sizes[1] || !sizes[2])
-		a->mixed_damage++;
 	char library[64], rel[256];
 	if (!Xwau_DatNames(d->rel, rel, sizeof rel, library, sizeof library))
 		return false;
 	bool has_own_instance = false;
 	for (size_t i = 0; i < own_list->count; ++i)
 		has_own_instance |= own_list->items[i].instance;
-	const int choice    = src[0] ? src[0]->section : (src[1] ? src[1]->section : src[2]->section);
-	const int placement = has_own_instance ? own_list->section : 0;
-	cJSON*    damage    = OptJson_AddObject(object, "damage");
-	bool      ok        = OptJson_Add(damage, "library", cJSON_CreateString(library)) &&
-						  OptJson_Add(damage, "choice", cJSON_CreateNumber(choice)) &&
-						  OptJson_Add(damage, "placement", cJSON_CreateNumber(placement));
+	/* Use the .mat section names as the damage group names. */
+	const char* choice =
+		XwauMat_SectionName(mat, src[0] ? src[0]->section : (src[1] ? src[1]->section : src[2]->section));
+	const char* placement = XwauMat_SectionName(mat, has_own_instance ? own_list->section : 0);
+	cJSON*      damage    = OptJson_AddObject(object, "damage");
+	bool        ok =
+		OptJson_Add(damage, "library", cJSON_CreateString(library)) &&
+		OptJson_Add(damage, "choice", cJSON_CreateString(choice)) &&
+		(strcmp(placement, choice) == 0 || OptJson_Add(damage, "placement", cJSON_CreateString(placement)));
 	cJSON*    list      = ok ? OptJson_AddArray(damage, "alternatives") : NULL;
 	ok                  = list != NULL;
 	for (size_t n = 0; ok && n < alternatives; ++n) {
 		const XwauSequence* line[3];
 		bool                any = false;
 		for (int k = 0; k < 3; ++k) {
-			line[k] = sizes[k] ? find_instance(src[k], kDamageEvents[k], n % sizes[k]) : NULL;
-			if (line[k] &&
-				(line[k]->overlay != XWAU_SEQ_MULT || line[k]->group_frames || !line[k]->frame_count ||
-				 !open_dat(a, line[k]->dat) || open_dat(a, line[k]->dat) != d))
+			const bool   in_first = src[k] == lists[0];
+			const size_t index    = in_first ? n % counts[0] : n / counts[0];
+			line[k]               = NULL;
+			if (!sizes[k])
+				continue;
+			/* When the stage's list is shorter than the index, XWAU picks a
+			 * random line of the list, which an alternative can't hold. */
+			if (index >= sizes[k]) {
+				a->damage_random_stages += (in_first ? n / counts[0] : n % counts[0]) == 0;
+				continue;
+			}
+			line[k] = find_instance(src[k], kDamageEvents[k], index);
+			/* A line is counted once, on the first alternative that uses it.
+			 * A line in a missing DAT or without frames is a content error.
+			 * A line that isn't a multiply of one image of the first line's
+			 * DAT can't be converted. A line with more frames keeps only its
+			 * first one. */
+			const bool first_use = (in_first ? n / counts[0] : n % counts[0]) == 0;
+			const bool missing =
+				!line[k]->group_frames && (!line[k]->frame_count || !open_dat(a, line[k]->dat));
+			if (first_use && missing)
+				a->skipped_missing_dat++;
+			else if (first_use && (line[k]->overlay != XWAU_SEQ_MULT || line[k]->group_frames ||
+								   line[k]->frame_count > 1 || open_dat(a, line[k]->dat) != d))
+				a->skipped_unsupported++;
+			if (line[k]->overlay != XWAU_SEQ_MULT || line[k]->group_frames || !line[k]->frame_count ||
+				!open_dat(a, line[k]->dat) || open_dat(a, line[k]->dat) != d)
 				line[k] = NULL;
 		}
 		cJSON* alternative = OptJson_AddObject(list, NULL);
@@ -428,7 +477,7 @@ static bool damage_json(XwauAnim* a, cJSON* object, const XwauMatSequences* own_
 		ok                 = stages != NULL;
 		for (int k = 0; ok && k < 3; ++k) {
 			const XwauSequence* q = line[k];
-			if (q && !image_is_white(d, q->frames[0].group, q->frames[0].image)) {
+			if (q && !image_is_white(a, d, q->frames[0].group, q->frames[0].image)) {
 				char key[96];
 				XwauFx_Key(key, sizeof key, q->frames[0].group, q->frames[0].image, XWAU_FX_MULTIPLY, q->tint,
 						   q->alpha_mode);
@@ -442,6 +491,15 @@ static bool damage_json(XwauAnim* a, cJSON* object, const XwauMatSequences* own_
 		 * XWAU keeps a placement for each line, but the alternatives that XWAU
 		 * ships repeat the same placement in all stages. */
 		const XwauSequence* m = line[0] ? line[0] : (line[1] ? line[1] : line[2]);
+		for (int k = 0; m && k < 3; ++k)
+			if (line[k] && (line[k]->rand_scale != m->rand_scale ||
+							(m->rand_scale && memcmp(line[k]->scale, m->scale, sizeof m->scale) != 0) ||
+							line[k]->loc != m->loc ||
+							(m->loc == XWAU_SEQ_LOC_RANGE &&
+							 memcmp(line[k]->loc_range, m->loc_range, sizeof m->loc_range) != 0))) {
+				a->damage_placements++;
+				break;
+			}
 		if (ok && any && m) {
 			if (m->rand_scale)
 				ok = OptJson_Add(alternative, "scale", OptJson_Floats(m->scale, 2));
@@ -529,8 +587,10 @@ static bool greebles_json(XwauAnim* a, cJSON* object, const XwauMatParams* m, bo
 	for (int n = 0; n < 2; ++n) {
 		const XwauGreeble* g     = &m->greebles[n];
 		const char*        blend = dats[n] && g->blend > 0 && g->blend < 8 ? kBlends[g->blend] : NULL;
-		if (dats[n] && g->blend == XWAU_GREEBLE_UV_DISP)
+		if (dats[n] && (g->blend == XWAU_GREEBLE_UV_DISP || g->blend == XWAU_GREEBLE_UV_DISP_AND_NORMAL_MAP))
 			a->greebles_uv_disp++;
+		else if (dats[n] && (g->blend < 0 || g->blend >= 8))
+			a->greebles_unknown_blend++;
 		if (!blend)
 			continue;
 		char library[64], rel[256], key[96];
@@ -610,6 +670,7 @@ bool XwauAnim_Texture(XwauAnim* a, const XwauMatFile* mat, const opt_texture_t* 
 	const XwauMatParams* params = XwauMat_Find(mat, tex->name);
 	if (params->lava && screen == XWAU_ANIM_SCREEN_NONE)
 		return lava_json(a, params, out);
+	a->lava_on_screens += params->lava;
 	XwauMatSequences own_list, inherited;
 	XwauMat_FindSequences(mat, tex->name, &own_list, &inherited);
 	const bool has_illum = XwauGltf_TextureHasIllum(tex);
@@ -745,7 +806,7 @@ bool XwauAnim_Texture(XwauAnim* a, const XwauMatFile* mat, const opt_texture_t* 
 		}
 	}
 	if (ok && screen == XWAU_ANIM_SCREEN_NONE)
-		ok = damage_json(a, object, &own_list, &inherited);
+		ok = damage_json(a, mat, object, &own_list, &inherited);
 	/* XWAU's screen shader draws no greebles. */
 	if (ok && screen == XWAU_ANIM_SCREEN_NONE)
 		ok = greebles_json(a, object, params, has_illum, &out->normal_detail);
@@ -777,17 +838,42 @@ bool XwauAnim_Texture(XwauAnim* a, const XwauMatFile* mat, const opt_texture_t* 
 
 void XwauAnim_Report(const XwauAnim* a) {
 	if (a->lava_materials)
-		Report(a->label,
-			   "lava: %zu material(s), %zu with a size or colour other than the default (drawn with the "
-			   "default ones)",
-			   a->lava_materials, a->lava_not_default);
-	if (a->greeble_materials || a->greebles_on_illum || a->greebles_missing || a->greebles_uv_disp)
+		Report(a->label, "lava: %zu material(s)", a->lava_materials);
+	if (a->lava_not_default)
+		ReportFatal(a->label, "%zu lava material(s) have a LavaSize or LavaColor other than the default",
+					a->lava_not_default);
+	if (a->lava_on_screens)
+		Report(
+			a->label,
+			"%zu Dynamic Cockpit screen(s) have Lava. XWAU draws screens with its screen shader, which shows "
+			"no lava",
+			a->lava_on_screens);
+	if (a->greeble_materials || a->greebles_on_illum || a->greebles_missing || a->greebles_unknown_blend)
 		Report(a->label,
 			   "greebles: %zu material(s) with details, %zu skipped on textures with illumination, %zu "
-			   "image(s) missing, %zu UV displacement layer(s) left out",
-			   a->greeble_materials, a->greebles_on_illum, a->greebles_missing, a->greebles_uv_disp);
-	if (!a->any && !a->skipped_no_illum && !a->skipped_missing_dat && !a->skipped_unsupported &&
-		!a->unknown_events && !a->missing_frames && !a->skipped_on_screens)
+			   "image(s) missing, %zu layer(s) with an unknown blend mode",
+			   a->greeble_materials, a->greebles_on_illum, a->greebles_missing, a->greebles_unknown_blend);
+	if (a->greebles_uv_disp)
+		Report(a->label, "%zu greeble layer(s) use UV displacement, which the import doesn't convert",
+			   a->greebles_uv_disp);
+	if (a->skipped_unsupported)
+		Report(
+			a->label,
+			"%zu sequence(s) have an event, overlay, frame list, DAT or UV mapping that the import doesn't "
+			"convert, so they are left out",
+			a->skipped_unsupported);
+	if (a->damage_placements)
+		ReportFatal(a->label,
+					"%zu damage alternative(s) have stages with different RAND_SCALE or RAND_LOC placements",
+					a->damage_placements);
+	if (a->damage_random_stages)
+		ReportFatal(
+			a->label,
+			"%zu damage stage(s) have fewer lines than IEVT_DAMAGE_75. XWAU then picks a random line for "
+			"them, and a damage alternative can't do that",
+			a->damage_random_stages);
+	if (!a->any && !a->skipped_no_illum && !a->skipped_missing_dat && !a->unknown_events &&
+		!a->missing_frames && !a->skipped_on_screens)
 		return;
 	Report(a->label,
 		   "animations: %zu flipbook(s), %zu damage and %zu energy material(s), %zu with "
@@ -806,12 +892,12 @@ void XwauAnim_Report(const XwauAnim* a) {
 			   "%zu sequence(s) and energy effect(s) left out on Dynamic Cockpit screens "
 			   "(XWAU's screen shader does not show them)",
 			   a->skipped_on_screens);
-	if (a->skipped_unsupported)
-		Report(a->label, "%zu sequence(s) skipped because of an unsupported event, layer or UV mapping",
-			   a->skipped_unsupported);
 	if (a->unknown_events)
 		Report(a->label, "%zu sequence(s) with an unknown event (played as EVT_NONE)", a->unknown_events);
-	if (a->mixed_damage)
-		Report(a->label, "%zu material(s) whose damage stages have different numbers of lines",
-			   a->mixed_damage);
+	if (a->damage_unused_lines)
+		Report(
+			a->label,
+			"%zu damage line(s) are left out, because XWAU never shows them. A stage only uses as many lines "
+			"as IEVT_DAMAGE_75 has",
+			a->damage_unused_lines);
 }

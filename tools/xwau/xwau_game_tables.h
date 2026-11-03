@@ -66,6 +66,21 @@ typedef struct XwauGameType {
 	uint16_t list, row;
 } XwauGameType;
 
+/* More stock game values, stored like the game stores them. The writers
+ * only write values that differ from them. The program that calls the
+ * writers fills them from the game's own tables. */
+typedef struct XwauStockValues {
+	/* The hull and map icon of each object type: the image number times 100,
+	   or 0 for no icon. */
+	const uint16_t* hull_icons;
+	size_t          hull_icon_count;
+	const uint16_t* map_icons;
+	size_t          map_icon_count;
+	/* The kind of each hardpoint type: 0 none, 1 laser, 2 warhead. */
+	const uint8_t* hardpoint_kinds;
+	size_t         hardpoint_kind_count;
+} XwauStockValues;
+
 /* Reads the tables of the game at `root`. Returns NULL, with a report, when
  * a file is missing or can't be read. */
 XwauGameTables* XwauGameTables_Load(const char* root);

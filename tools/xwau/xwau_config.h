@@ -58,7 +58,8 @@ void XwauLines_Free(XwauLines* lines);
 bool XwauLines_Add(XwauLines* lines, const char* text, size_t len);
 
 /* Writes the trimmed value of the first line with `key`, or "" when there
- * is none. The value is truncated to `cap`. */
+ * is none. A value that doesn't fit in `cap` is cut, and this makes the
+ * import fail. */
 void XwauLines_Value(const XwauLines* lines, const char* key, XwauRules rules, char* out, size_t cap);
 
 /* Writes the model key of `path` ("FlightModels\\XWing.opt" gives
@@ -68,6 +69,17 @@ bool Xwau_ModelKey(const char* path, char* out, size_t cap);
 
 /* Writes ISO-8859-1 `text` as a quoted YAML string, in UTF-8. */
 void Xwau_WriteString(FILE* f, const char* text);
+
+/* Writes `value` with at most three decimals and no trailing zeros. Three
+ * decimals are enough to get the exact game value back from a length in
+ * metres or an angle in degrees. */
+void Xwau_WriteDecimal(FILE* f, double value);
+/* Writes a length in game units (40.96 per metre) as metres. */
+void Xwau_WriteMetres(FILE* f, int units);
+/* Writes [x, y, z] in game units as a list of metres. */
+void Xwau_WriteMetres3(FILE* f, int x, int y, int z);
+/* Writes a 16-bit angle (65536 steps per turn) as degrees. */
+void Xwau_WriteDegrees(FILE* f, int steps);
 
 /* Splits `value` into tokens at ',' and ';', and trims each one. With
  * XWAU_RULES_CPP, the empty text between two separators is skipped, but a

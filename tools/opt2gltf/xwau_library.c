@@ -68,8 +68,8 @@ static Library* library_for(const char* dat_written) {
 	for (size_t i = 0; i < g_library_count; ++i)
 		if (strcmp(g_libraries[i].name, name) == 0) {
 			if (strcmp(g_libraries[i].dat, rel) != 0)
-				Report(NULL, "library %s comes from both %s and %s, using the first one", name,
-					   g_libraries[i].dat, rel);
+				ReportFatal(NULL, "library %s comes from both %s and %s, which the import can't tell apart",
+							name, g_libraries[i].dat, rel);
 			return &g_libraries[i];
 		}
 	Library* l = ARRAY_PUSH(g_libraries, g_library_count);
@@ -377,6 +377,7 @@ static bool image_flipbook(TextBuffer* y, const char* name, const XwauMatFile* m
 	}
 	XwauDat_Close(dat);
 	if (!count) {
+		Report(name, "the sequence of %s has no frames", q->dat);
 		free(frames);
 		return false;
 	}
@@ -401,7 +402,9 @@ static bool image_flipbook(TextBuffer* y, const char* name, const XwauMatFile* m
 	char             rel[256], library[64];
 	if (!Xwau_DatNames(q->dat, rel, sizeof rel, library, sizeof library))
 		return false;
-	TextAppend(y, "  \"%d-%d\": { library: %s, kind: %s, mode: %s, frames: [", group, image, library,
+	/* The game calls image n of the blast mark group blast_mark.<n>,
+	   counting from 1. */
+	TextAppend(y, "  blast_mark.%d: { library: %s, kind: %s, mode: %s, frames: [", image + 1, library,
 			   XwauFx_KindName(kind), q->mode == XWAU_SEQ_ONCE ? "once" : "loop");
 	bool ok = true;
 	for (size_t i = 0; i < count; ++i) {
@@ -448,10 +451,18 @@ static bool images_yaml(TextBuffer* y) {
 	bool ok          = true;
 	int  marks       = 0;
 	int* mark_images = (int*)malloc((count ? count : 1) * sizeof *mark_images);
+	size_t other_groups = 0;
 	for (size_t k = 0; k < count; ++k) {
-		XwauMatFile* mat = XwauMat_Load(found[k].mat, &defaults);
-		if (!mat)
+		/* The game only reads the blast mark group from effects.yaml. */
+		if (found[k].group != BLAST_MARK_GROUP) {
+			other_groups++;
 			continue;
+		}
+		XwauMatFile* mat = XwauMat_Load(found[k].mat, &defaults);
+		if (!mat) {
+			Report(found[k].mat, "cannot read the file");
+			continue;
+		}
 		char name[64];
 		snprintf(name, sizeof name, "dat-%d-%d", found[k].group, found[k].image);
 		const bool has = image_flipbook(y, name, mat, found[k].group, found[k].image);
@@ -459,6 +470,13 @@ static bool images_yaml(TextBuffer* y) {
 		if (has && found[k].group == BLAST_MARK_GROUP && mark_images)
 			mark_images[marks++] = found[k].image;
 	}
+	/* The flight art import (bake_xwau_flight.c in the mod importer) reads
+	 * the DAT material files of the other groups. */
+	if (other_groups)
+		Report(NULL,
+			   "Materials: %zu dat-<group>-<image>.mat files are for image groups other than the blast marks "
+			   "(%d), so the effect libraries leave them to the flight art import",
+			   other_groups, BLAST_MARK_GROUP);
 	/* A blast-mark image without a sequence gets a static flipbook of its own
 	 * image. */
 	if (marks) {
@@ -482,9 +500,9 @@ static bool images_yaml(TextBuffer* y) {
 						char key[96];
 						XwauFx_Key(key, sizeof key, BLAST_MARK_GROUP, all[i], XWAU_FX_MARK, kWhite, 0);
 						TextAppend(y,
-								   "  \"%d-%d\": { library: blastmarks, kind: mark, mode: loop, frames: "
+								   "  blast_mark.%d: { library: blastmarks, kind: mark, mode: loop, frames: "
 								   "[[\"%s\", 1]] }\n",
-								   BLAST_MARK_GROUP, all[i], key);
+								   all[i] + 1, key);
 						ok &= request(dat_written, BLAST_MARK_GROUP, all[i], XWAU_FX_MARK, kWhite, 0, true);
 					}
 					free(all);
@@ -753,17 +771,27 @@ static void reset(const char* game) {
 	g_game          = game;
 }
 
-/* Reports the libraries that aren't XWAU's, and sorts the others by name. */
-static void sort_libraries(void) {
-	for (size_t i = 0; i < g_skipped_count; ++i)
-		Report(NULL, "library %s: no Effects/%s.dat, not an XWAU library; left alone", g_skipped[i],
-			   g_skipped[i]);
+/* Reports the libraries that aren't XWAU's, and sorts the others by name. A
+ * model of a project can use a library of the project that isn't made from
+ * a DAT. In an import (`imported`), every model comes from the mod, so a
+ * library without Effects/<name>.dat is one whose DAT is somewhere else,
+ * and its images can't be made. */
+static void sort_libraries(bool imported) {
+	for (size_t i = 0; i < g_skipped_count; ++i) {
+		if (imported)
+			Report(NULL,
+				   "the models use images of library %s, but there is no Effects/%s.dat to make them from",
+				   g_skipped[i], g_skipped[i]);
+		else
+			Report(NULL, "library %s: no Effects/%s.dat, not an XWAU library; left alone", g_skipped[i],
+				   g_skipped[i]);
+	}
 	qsort(g_libraries, g_library_count, sizeof *g_libraries, cmp_library);
 }
 
 /* Writes the libraries read into <project>/effects. */
 static bool write_libraries(const char* effects, bool merge) {
-	sort_libraries();
+	sort_libraries(false);
 	bool ok = true;
 	for (size_t i = 0; i < g_library_count; ++i)
 		ok &= write_library_sources(&g_libraries[i], effects, merge);
@@ -856,7 +884,7 @@ XwauLibrarySet* XwauLibrary_Read(const char* game, const char* const* inputs, si
 		return NULL;
 	}
 	const bool ok = read_libraries(inputs, count, dir);
-	sort_libraries();
+	sort_libraries(true);
 	XwauLibrarySet* set = ok ? (XwauLibrarySet*)calloc(1, sizeof *set) : NULL;
 	if (set) {
 		set->game          = game;

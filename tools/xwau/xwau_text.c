@@ -178,19 +178,38 @@ static bool write_file_texts(FILE* f, const char* name, const char* mod_path, co
 	size_t last_line                         = 0;
 	bool   in_order                          = true;
 	bool   free_types[XWAU_TEXT_CRAFT_TYPES] = { false };
+	/* The game reads the lines by position. A line that the stock file
+	   doesn't have is never read only when it comes after the stock lines. */
+	size_t stock_end = 0;
+	for (size_t i = 0; i < mod.count; ++i) {
+		const StockEntry key = { mod.records[i].id, 0 };
+		if (bsearch(&key, entries, stock.count, sizeof *entries, compare_entries))
+			stock_end = i + 1;
+	}
 	fprintf(f, "  # %s\n", name);
 	for (size_t i = 0; i < mod.count; ++i) {
 		const XwauTextRecord* record = &mod.records[i];
 		const StockEntry      key    = { record->id, 0 };
 		const StockEntry*     found  = bsearch(&key, entries, stock.count, sizeof *entries, compare_entries);
+		if (!found && i < stock_end) {
+			Report(mod_path,
+				   "%s isn't in the stock file and comes before other lines. The game reads the lines by "
+				   "position, so in XWAU it moves the texts after it. The import keeps each text with its ID",
+				   record->id);
+			skipped++;
+			continue;
+		}
 		if (!found) {
-			Report(mod_path, "%s isn't in the stock file, so the game never reads it; it is skipped",
+			Report(mod_path, "%s isn't in the stock file, so the game never reads it. It is skipped",
 				   record->id);
 			skipped++;
 			continue;
 		}
 		if (seen[found->line]) {
-			Report(mod_path, "%s is in the file more than once; only the first text is used", record->id);
+			Report(mod_path,
+				   "%s is in the file more than once. The game reads the lines by position, so in XWAU the "
+				   "second one moves the texts after it. The import keeps each text with its ID",
+				   record->id);
 			skipped++;
 			continue;
 		}
@@ -211,7 +230,9 @@ static bool write_file_texts(FILE* f, const char* name, const char* mod_path, co
 			continue;
 		}
 		if (has_control_character(record->id) || has_control_character(record->text)) {
-			Report(mod_path, "the line of %s has a control character; it keeps the stock text", record->id);
+			ReportFatal(mod_path,
+						"the text of %s has a control character, which YAML can't hold in single quotes",
+						record->id);
 			skipped++;
 			continue;
 		}
@@ -225,8 +246,23 @@ static bool write_file_texts(FILE* f, const char* name, const char* mod_path, co
 		fputc('\n', f);
 		changed++;
 	}
+	/* A missing line before the last line that the mod has moves the texts
+	   after it in XWAU. */
+	size_t seen_end = 0;
 	for (size_t i = 0; i < stock.count; ++i)
+		if (seen[i])
+			seen_end = i + 1;
+	for (size_t i = 0; i < stock.count; ++i) {
 		missing += !seen[i];
+		if (!seen[i] && i < seen_end) {
+			Report(mod_path,
+				   "doesn't have %s, which comes before other lines. The game reads the lines by position, "
+				   "so in "
+				   "XWAU this moves the texts after it. The import keeps each text with its ID",
+				   stock.records[i].id);
+			break;
+		}
+	}
 	if (free_count) {
 		char   list[XWAU_TEXT_CRAFT_TYPES * 5] = "";
 		size_t used                            = 0;
@@ -239,10 +275,11 @@ static bool write_file_texts(FILE* f, const char* name, const char* mod_path, co
 			   list);
 	}
 	if (missing)
-		Report(mod_path, "%d IDs of the stock file are missing; they keep the stock text", missing);
+		Report(mod_path, "%d IDs of the stock file are missing, so they keep the stock text", missing);
 	if (!in_order)
-		Report(mod_path, "has its lines in a different order from the stock file. The game still reads "
-						 "the lines in the stock order, and each line gets the mod's text for its ID");
+		Report(mod_path, "has its lines in a different order from the stock file. XWAU reads the lines by "
+						 "position, so its "
+						 "texts don't match their IDs. The import keeps each text with its ID");
 	if (in_objects)
 		Report(NULL, "%s: %d texts are in the object type and craft type files instead", name, in_objects);
 	if (skipped)

@@ -1,6 +1,7 @@
 #include "util.h"
 
 #include <dirent.h>
+#include <pthread.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -33,6 +34,40 @@ void Report(const char* label, const char* format, ...) {
 	va_start(args, format);
 	ReportV(label, format, args);
 	va_end(args);
+}
+
+static pthread_mutex_t g_fatal_mutex = PTHREAD_MUTEX_INITIALIZER;
+static bool            g_fatal;
+static char            g_fatal_message[4096];
+
+void ReportFatal(const char* label, const char* format, ...) {
+	char    message[4096];
+	va_list args;
+	va_start(args, format);
+	vsnprintf(message, sizeof message, format, args);
+	va_end(args);
+	ToolLog_Write(TOOL_LOG_ERROR, "%s%s%s%s%s", g_report_program ? g_report_program : "",
+				  g_report_program ? ": " : "", label ? label : "", label ? ": " : "", message);
+	pthread_mutex_lock(&g_fatal_mutex);
+	if (!g_fatal) {
+		snprintf(g_fatal_message, sizeof g_fatal_message, "%s%s%s", label ? label : "", label ? ": " : "",
+				 message);
+		g_fatal = true;
+	}
+	pthread_mutex_unlock(&g_fatal_mutex);
+}
+
+const char* ReportFatalMessage(void) {
+	pthread_mutex_lock(&g_fatal_mutex);
+	const bool fatal = g_fatal;
+	pthread_mutex_unlock(&g_fatal_mutex);
+	return fatal ? g_fatal_message : NULL;
+}
+
+void ClearReportFatal(void) {
+	pthread_mutex_lock(&g_fatal_mutex);
+	g_fatal = false;
+	pthread_mutex_unlock(&g_fatal_mutex);
 }
 
 /* ---- Strings ------------------------------------------------------------ */

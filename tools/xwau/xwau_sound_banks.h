@@ -2,31 +2,45 @@
 #define AERON_XWAU_SOUND_BANKS_H
 
 /*
- * Imports XWAU's sound banks (the mod importer's craft phase). When an
+ * Imports XWAU's sound banks, in the mod importer's craft phase. When an
  * installation has hook_sounds_count.dll, XWAU loads each
  * Wave/Sfx_<Bank>.lst as a bank of sounds, with the files in
- * Wave/Sfx_<Bank>/. Other hooks then pick a sound from a bank by object type:
- * hook_engine_sound, hook_hyperspace, hook_sfoils and hook_hangars.
+ * Wave/Sfx_<Bank>/. Other hooks then pick sounds from the banks by object
+ * type: hook_engine_sound, hook_hyperspace, hook_sfoils and hook_hangars.
  *
  * A bank is imported only if the installation has the hook that reads it.
- * The importer writes the banks into <output_dir>/sounds.yaml:
+ * The importer writes the banks to <output_dir>/sounds.yaml, with the game's
+ * object type names:
  *
  *   version: 1
  *   banks:
- *     interior:                       # Wave/Sfx_Interior.lst, by object type
- *       count: 225
+ *     interior:                       # Wave/Sfx_Interior.lst
+ *       unlisted: silent
  *       sounds:
- *         1: {file: 'Wave\Sfx_Interior\EngineIntXW.wav', volume: 76, distance: 8192}
- *     weapon:                         # 10 by object type
- *       count: 2230
+ *         xwing: {file: 'Wave/Sfx_Interior/EngineIntXW.wav', volume: 76, distance: 8192}
+ *     weapon:
+ *       unlisted: silent
  *       sounds:
- *         1:
- *           0: {file: ...}
+ *         xwing:
+ *           rebel_laser: {file: ...}
+ *     weapon_range:
+ *       sounds:
+ *         range_0: {file: ...}
  *
- * `count` is the number of lines that XWAU counts in the list. The hooks only
- * use the entries below it. Some entries have no sound and stay silent: lines
- * such as "Unused", and files that the installation doesn't have.
- * xwau_sound_banks.c lists the banks and how their entries are numbered.
+ * XWAU's hooks only use the entries within the list's line count. Within the
+ * list, an entry without a sound is silent: lines such as "Unused", and
+ * files that the installation doesn't have. Past the end of the list, each
+ * hook either plays nothing or plays the stock sound. A bank where XWAU
+ * plays nothing gets `unlisted: silent`. For the other banks, the stock
+ * sound plays, so a silent entry within the list gets `{silent: true}`. The
+ * hangar_ambient and weapon_explosion lists keep their silent entries,
+ * because the game picks one entry of the list at random. The weapon_range
+ * entries are named after their position in the list, such as range_3.
+ *
+ * The EnterHyperspace and ExitHyperspace banks of hook_hyperspace play when
+ * other craft jump. The game plays no sound then, so these banks make the
+ * import fail. Entries for object types that the game has no name for are
+ * reported and left out.
  *
  * Each list line is read the way the game reads it, after XWAU cuts it at
  * ';'. The file name ends at the first space or tab. Then come the volume in
@@ -38,12 +52,16 @@
  * (Wave/Sfx_Interior/EngineIntXW.wav). The game finds them whatever the
  * case of the path. Files that the game can't play are converted to 16-bit
  * PCM: 24-bit, float, WAVE_FORMAT_EXTENSIBLE and MS ADPCM files, and files
- * with more than 2 channels.
+ * with more than 2 channels. A WAV file in another format makes the import
+ * fail. A file that isn't a WAV file is silent in XWAU too, so it is only
+ * reported.
  */
 
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+
+#include "xwau_names.h"
 
 /* One line of a bank list. */
 typedef struct XwauSoundLine {
@@ -70,9 +88,14 @@ XwauWavResult XwauSoundBanks_ConvertWav(const uint8_t* data, size_t size, uint8_
  * Wave/Sfx_<name>.lst, or 0 when the installation doesn't load that bank. */
 int XwauSoundBanks_LineCount(const char* game, const char* name);
 
-/* Writes <output_dir>/sounds.yaml and copies the files into `game_files`,
- * when the installation `game` has hook_sounds_count.dll. Returns false on
- * an error. */
-bool XwauSoundBanks_Write(const char* game, const char* output_dir, const char* game_files);
+/* Writes the name of the weapon_range entry at `position` in XWAU's list,
+ * such as "range_3". */
+void XwauSoundBanks_RangeName(int position, char* out, size_t cap);
+
+/* When the installation `game` has hook_sounds_count.dll, writes
+ * <output_dir>/sounds.yaml and copies the sound files into `game_files`.
+ * The banks use the names in `game_names`. Returns false on an error. */
+bool XwauSoundBanks_Write(const char* game, const XwauNames* game_names, const char* output_dir,
+						  const char* game_files);
 
 #endif /* AERON_XWAU_SOUND_BANKS_H */

@@ -23,9 +23,11 @@
  * they are, for the readers of their own.
  *
  * Reported, when `report` is set:
- *   - a line that XWAU ignores: one with fewer than four words, or one with
+ *   - a line that XWAU ignores: one with fewer than four words, one with
  *     a number where its key should be, such as "fg, 3 markings, 6 ;Grey 5",
- *     where the ';' of the comment makes a fourth word;
+ *     where the ';' of the comment makes a fourth word, an fg line with a key
+ *     that no hook reads, an index line without markings, and a line that
+ *     isn't an fg, craft or "key = value" line;
  *   - a value that isn't a number, which stops XWAU (std::stoi throws).
  */
 

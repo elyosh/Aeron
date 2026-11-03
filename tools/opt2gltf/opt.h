@@ -91,25 +91,6 @@ typedef enum {
 	OPT_MT_REACTOR             = 31,
 } opt_mesh_type_t;
 
-typedef enum {
-	OPT_HP_NONE                  = 0,
-	OPT_HP_LASER_CANNON          = 1,
-	OPT_HP_ION_CANNON            = 2,
-	OPT_HP_TURBO_LASER           = 3,
-	OPT_HP_ION_TURBO_LASER       = 4,
-	OPT_HP_CLUSTER_MISSILE       = 5,
-	OPT_HP_TORPEDO_MAG_PULSE     = 6,
-	OPT_HP_CONCUSSION_MISSILE    = 7,
-	OPT_HP_PROTON_TORPEDO        = 8,
-	OPT_HP_ADV_CONCUSSION        = 9,
-	OPT_HP_ADV_PROTON_TORPEDO    = 10,
-	OPT_HP_ADV_TORPEDO_MAG_PULSE = 11,
-	OPT_HP_BOMB                  = 12,
-	OPT_HP_BEAM_WEAPON           = 13,
-	OPT_HP_DUMB_BOMB             = 14,
-	OPT_HP_FIRE_ROCKET           = 15,
-} opt_hardpoint_type_t;
-
 /* --- Vector types --------------------------------------------------------- */
 typedef struct {
 	float x, y, z;
@@ -163,8 +144,8 @@ typedef struct {
 } opt_lod_t;
 
 typedef struct {
-	opt_hardpoint_type_t type;
-	opt_vec3_t           pos;
+	uint32_t   type; /* an index in AERON_FLIGHT_HARDPOINT_TYPES */
+	opt_vec3_t pos;
 } opt_hardpoint_t;
 
 /*
@@ -346,6 +327,11 @@ typedef struct {
 
 	int32_t        texture_count;
 	opt_texture_t* textures;
+
+	/* The number of NodeSwitch states that the face groups don't keep,
+	 * because a face group keeps at most 16 states. XWA keeps them all, and
+	 * shows state n for markings n. */
+	int32_t dropped_switch_states;
 } opt_file_t;
 
 /* --- API ------------------------------------------------------------------ */
@@ -363,8 +349,6 @@ int opt_upgrade_v1_memory(const void* source, size_t source_size, uint8_t** outp
 
 /* These return a string literal, never NULL. An unknown value gives "?". */
 const char* opt_node_type_name(opt_node_type_t t);
-const char* opt_mesh_type_name(opt_mesh_type_t t);
-const char* opt_hardpoint_type_name(opt_hardpoint_type_t t);
 
 int opt_mesh_type_is_rotary(opt_mesh_type_t t);
 int opt_rotation_scale_is_identity(const opt_rotation_scale_t* rs);
