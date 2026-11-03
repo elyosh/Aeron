@@ -271,6 +271,20 @@ static bool layers_build(XwauGltfSkins* s, const opt_file_t* opt, const char* ba
 				skinnable[t] = true;
 		}
 	}
+	/* XWAU applies a skin image only to the state-0 texture of a face group.
+	 * So a skin image of a texture that LOD 0 doesn't show at state 0 has no
+	 * effect, in XWAU as here. A skin image of a cockpit screen can't be
+	 * converted. */
+	for (size_t t = 0; ok && screens && t < tc; ++t) {
+		if (!screens[t].present)
+			continue;
+		bool imaged = false;
+		for (size_t k = 0; k < skins->skin_count; ++k)
+			imaged |= skins->images[k * tc + t].rgba != NULL;
+		if (imaged)
+			ReportFatal(basename, "texture %s has a skin image, but it is a cockpit screen",
+						opt->textures[t].name);
+	}
 	LayerCandidate* candidates =
 		ok ? (LayerCandidate*)calloc(skins->skin_count + 1, sizeof *candidates) : NULL;
 	ok = ok && candidates;
@@ -362,11 +376,11 @@ XwauGltfSkins* XwauGltfSkins_Build(const opt_file_t* opt, const char* basename, 
 const OptGltfVariants* XwauGltfSkins_Variants(const XwauGltfSkins* s) { return &s->out; }
 
 void XwauGltfSkins_Report(const XwauGltfSkins* s, const char* basename) {
-	Report(basename,
-		   "%zu skin variants (%zu plain), %zu skin layers (%zu emissive, %zu metallic-roughness), "
-		   "%zu shared images, %zu markings",
-		   s->out.skin_variant_count + s->out.count, s->out.count, s->layer_count, s->emissive_layers,
-		   s->metal_rough_layers, s->shared_images, s->out.markings_count);
+	ReportDetail(basename,
+				 "%zu skin variants (%zu plain), %zu skin layers (%zu emissive, %zu metallic-roughness), "
+				 "%zu shared images, %zu markings",
+				 s->out.skin_variant_count + s->out.count, s->out.count, s->layer_count, s->emissive_layers,
+				 s->metal_rough_layers, s->shared_images, s->out.markings_count);
 }
 
 void XwauGltfSkins_Free(XwauGltfSkins* s) {

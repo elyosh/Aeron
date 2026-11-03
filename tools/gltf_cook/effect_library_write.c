@@ -130,7 +130,6 @@ bool EffectLibrary_Write(const char* tool, const char* out_dir, const char* name
 		FILE* f = fopen(path, "wb");
 		ok      = f != NULL;
 		if (f) {
-			fprintf(f, "version: 1\n");
 			if (source)
 				fprintf(f, "source: %s\n", source);
 			if (inputs)

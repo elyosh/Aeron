@@ -21,6 +21,7 @@ typedef struct XwauMatSection {
 	XwauSequence* items;
 	size_t        count;
 	int           order; /* 0 for [Default], otherwise the 1-based order of the section */
+	char          name[256]; /* the names in the header, joined with ", " */
 } XwauMatSection;
 
 /* The most surface tags a file can have; a model reads at most 32. */
@@ -206,17 +207,17 @@ static bool read_greeble_line(const char* param, const char* value, float f, Xwa
 	return false;
 }
 
-/* ReadMaterialLine for the shading, lever and greeble keys. Other keys are
- * ignored. */
-static void read_material_line(const char* line, XwauMatParams* m) {
+/* ReadMaterialLine for the shading, lever and greeble keys. Returns false
+ * for a line with another key, which it ignores. */
+static bool read_material_line(const char* line, XwauMatParams* m) {
 	char param[256], value[XWAU_MAT_LINE_MAX];
 	if (line[0] == ';' || line[0] == '#')
-		return;
+		return true;
 	if (scan_key_line(line, param, sizeof param, value, sizeof value) <= 0)
-		return;
+		return true;
 	const float f = (float)atof(value);
 	if (read_lever_line(param, line, f, m) || read_greeble_line(param, value, f, m))
-		return;
+		return true;
 	if (ascii_casecmp(param, "Metallic") == 0)
 		m->metallic = f;
 	else if (ascii_casecmp(param, "Intensity") == 0)
@@ -282,7 +283,124 @@ static void read_material_line(const char* line, XwauMatParams* m) {
 		float       rgb[3];
 		if (equals && sscanf(equals + 1, "%f, %f, %f", &rgb[0], &rgb[1], &rgb[2]) == 3)
 			memcpy(m->lava_color, rgb, sizeof rgb);
+	} else {
+		return false;
 	}
+	return true;
+}
+
+/* The keys that XWAU's material reader reads (ReadMaterialLine in
+ * Materials.cpp). Another key has no effect in XWAU either. */
+static const char* const g_xwauKeys[] = {
+	"AlphaIsntGlass",
+	"AlphaToBloom",
+	"alt_frames_1",
+	"alt_frames_2",
+	"alt_frames_3",
+	"alt_frames_4",
+	"Ambient",
+	"anim_once",
+	"anim_rand",
+	"anim_seq",
+	"DisplayIfMissionSetSpeedGE",
+	"DisplayIfSpeedGE",
+	"DisplayIfThrottleGE",
+	"ds2_frames",
+	"EffectBloom",
+	"ExplosionBlendMode",
+	"ExplosionScale",
+	"ExplosionSpeed",
+	"frame_once",
+	"frame_rand",
+	"frame_seq",
+	"Glossiness",
+	"GreebleBlendMode1",
+	"GreebleBlendMode2",
+	"GreebleDistance1",
+	"GreebleDistance2",
+	"GreebleLightMap1",
+	"GreebleLightMap2",
+	"GreebleLightMapBlendMode1",
+	"GreebleLightMapBlendMode2",
+	"GreebleLightMapDistance1",
+	"GreebleLightMapDistance2",
+	"GreebleLightMapMix1",
+	"GreebleLightMapMix2",
+	"GreebleLightMapScale1",
+	"GreebleLightMapScale2",
+	"GreebleMix1",
+	"GreebleMix2",
+	"GreebleScale1",
+	"GreebleScale2",
+	"GreebleTex1",
+	"GreebleTex2",
+	"HyperAxis0",
+	"HyperAxis1",
+	"HyperEnd",
+	"HyperMaxAngle",
+	"HyperRotXAxis",
+	"HyperRotYAxis",
+	"HyperRotZAxis",
+	"HyperStart",
+	"IncreaseBrightnessWithMissionSetSpeed",
+	"Intensity",
+	"JoystickMaxPitch",
+	"JoystickMaxYaw",
+	"JoystickRoot",
+	"Lava",
+	"LavaColor",
+	"LavaNormalMult",
+	"LavaPosMult",
+	"LavaSize",
+	"LavaSpeed",
+	"LavaTiling",
+	"LavaTranspose",
+	"Light",
+	"light_angle",
+	"light_falloff",
+	"light_uv_coord_pos",
+	"lightmap_once",
+	"lightmap_rand",
+	"lightmap_seq",
+	"LinearBloom",
+	"LYR_MULT",
+	"LYR_SCREEN",
+	"Metallic",
+	"NMIntensity",
+	"NoBloom",
+	"NoColorAlpha",
+	"NormalMap",
+	"Raytrace",
+	"Shadeless",
+	"shadow_map_mult_x",
+	"shadow_map_mult_y",
+	"shadow_map_mult_z",
+	"SkipWhenDisabled",
+	"SpecularMap",
+	"SpecularMapIntensity",
+	"SpecularVal",
+	"ThrottleAxis0",
+	"ThrottleAxis1",
+	"ThrottleEnd",
+	"ThrottleMaxAngle",
+	"ThrottleRotXAxis",
+	"ThrottleRotYAxis",
+	"ThrottleRotZAxis",
+	"ThrottleStart",
+	"TotalFrames",
+	"TransformCenter",
+	"TransformRotX",
+	"TransformRotY",
+	"TransformRotZ",
+};
+
+/* Counts a key that the importer doesn't read, when XWAU reads it. */
+static void report_unknown_key(const char* param) {
+	for (size_t i = 0; i < sizeof g_xwauKeys / sizeof g_xwauKeys[0]; ++i)
+		if (ascii_casecmp(param, g_xwauKeys[i]) == 0) {
+			ReportUnsupported("the .mat key %s", g_xwauKeys[i]);
+			return;
+		}
 }
 
 bool XwauMat_ReadGlobalDefault(const char* path, XwauMatParams* io) {
@@ -290,8 +408,14 @@ bool XwauMat_ReadGlobalDefault(const char* path, XwauMatParams* io) {
 	if (!f)
 		return false;
 	char line[XWAU_MAT_LINE_MAX];
-	while (fgets(line, sizeof line, f))
-		read_material_line(line, io);
+	while (fgets(line, sizeof line, f)) {
+		/* The global default has no sections, so it has no sequences either. */
+		if (!read_material_line(line, io)) {
+			char param[256], value[XWAU_MAT_LINE_MAX];
+			scan_key_line(line, param, sizeof param, value, sizeof value);
+			report_unknown_key(param);
+		}
+	}
 	fclose(f);
 	return true;
 }
@@ -720,15 +844,23 @@ static void sequence_free(XwauSequence* q) {
 	q->frame_count = 0;
 }
 
+static bool listed_key(const char* param) {
+	return ascii_casecmp(param, "lightmap_seq") == 0 || ascii_casecmp(param, "lightmap_rand") == 0 ||
+		   ascii_casecmp(param, "lightmap_once") == 0 || ascii_casecmp(param, "anim_seq") == 0 ||
+		   ascii_casecmp(param, "anim_rand") == 0 || ascii_casecmp(param, "anim_once") == 0;
+}
+
+static bool frames_key(const char* param) {
+	return ascii_casecmp(param, "frame_seq") == 0 || ascii_casecmp(param, "frame_rand") == 0 ||
+		   ascii_casecmp(param, "frame_once") == 0;
+}
+
 /* Parses a sequence key line into a new sequence of `section`. Other keys are
- * ignored. */
+ * ignored. A sequence line without animation data is dropped, as the renderer
+ * drops it. */
 static bool read_sequence_line(const char* param, const char* line, XwauMatSection* section) {
-	const bool listed = ascii_casecmp(param, "lightmap_seq") == 0 ||
-						ascii_casecmp(param, "lightmap_rand") == 0 ||
-						ascii_casecmp(param, "lightmap_once") == 0 || ascii_casecmp(param, "anim_seq") == 0 ||
-						ascii_casecmp(param, "anim_rand") == 0 || ascii_casecmp(param, "anim_once") == 0;
-	const bool frames = ascii_casecmp(param, "frame_seq") == 0 || ascii_casecmp(param, "frame_rand") == 0 ||
-						ascii_casecmp(param, "frame_once") == 0;
+	const bool listed = listed_key(param);
+	const bool frames = frames_key(param);
 	if (!listed && !frames)
 		return true;
 	XwauSequence q;
@@ -754,7 +886,7 @@ static bool read_sequence_line(const char* param, const char* line, XwauMatSecti
 	else
 		parse_frames(line, &q);
 	if (!q.group_frames && q.frame_count == 0) {
-		/* The renderer drops a line without animation data. */
+		/* XWAU drops a line without animation data that it can read. */
 		sequence_free(&q);
 		return true;
 	}
@@ -786,6 +918,14 @@ static bool push_entry(XwauMatFile* file, const char* name, const XwauMatParams*
  * "Default", which replaces slot 0 instead. */
 static bool save_section(XwauMatFile* file, char (*names)[XWAU_MAT_NAME_MAX], size_t name_count,
 						 const XwauMatParams* cur, int section) {
+	bool is_default = false;
+	for (size_t i = 0; i < name_count; ++i)
+		is_default |= ascii_casecmp(names[i], "default") == 0;
+	/* In XWAU, the section shares the greebles of slot 0, so its greeble keys
+	   change slot 0 too. */
+	if (!is_default && file->slot0.has_greebles &&
+		memcmp(cur->greebles, file->slot0.greebles, sizeof cur->greebles) != 0)
+		ReportUnsupported("a .mat section that changes the greebles it gets from [Default]");
 	for (size_t i = 0; i < name_count; ++i) {
 		if (ascii_casecmp(names[i], "default") == 0) {
 			file->slot0         = *cur;
@@ -809,12 +949,19 @@ static int open_section(XwauMatFile* file, char (*names)[XWAU_MAT_NAME_MAX], siz
 	for (size_t i = 0; i < name_count; ++i)
 		is_default |= ascii_casecmp(names[i], "default") == 0;
 	section->order = is_default ? 0 : (*next_order)++;
+	section->name[0] = 0;
+	for (size_t i = 0; i < name_count; ++i) {
+		const size_t length = strlen(section->name);
+		snprintf(section->name + length, sizeof section->name - length, "%s%s", i ? ", " : "", names[i]);
+	}
 	return (int)file->section_count - 1;
 }
 
 /* Splits "[A,B,...]" into names. A name counts only when ',' or ']' ends it.
- * Like in the renderer, names are not trimmed. */
-static size_t parse_section_names(const char* line, char (*names)[XWAU_MAT_NAME_MAX], size_t cap) {
+ * Like in the renderer, names are not trimmed. The names past `cap`, and a
+ * name longer than XWAU_MAT_NAME_MAX - 1, make the import fail. */
+static size_t parse_section_names(const char* line, char (*names)[XWAU_MAT_NAME_MAX], size_t cap,
+								  const char* path) {
 	size_t      count = 0;
 	const char* start = line + 1;
 	while (*start && *start != ']') {
@@ -823,10 +970,15 @@ static size_t parse_section_names(const char* line, char (*names)[XWAU_MAT_NAME_
 			end++;
 		if (!*end)
 			break;
+		if (count == cap)
+			ReportFatal(path, "a section has more than %zu names, the most that the importer reads", cap);
 		if (count < cap) {
 			size_t len = (size_t)(end - start);
-			if (len >= XWAU_MAT_NAME_MAX)
+			if (len >= XWAU_MAT_NAME_MAX) {
+				ReportFatal(path, "the section name %.*s is longer than %d characters", (int)len, start,
+							XWAU_MAT_NAME_MAX - 1);
 				len = XWAU_MAT_NAME_MAX - 1;
+			}
 			memcpy(names[count], start, len);
 			names[count][len] = 0;
 			count++;
@@ -881,7 +1033,7 @@ static const XwauMatParams* surface_by_tag(const XwauMatFile* file, const char* 
 }
 
 /* Names the surface tag of `m`, a texture named `name` (XwauMat_SurfaceRuleAt). */
-static void name_surface(XwauMatFile* file, const char* name, XwauMatParams* m) {
+static void name_surface(XwauMatFile* file, const char* name, XwauMatParams* m, const char* path) {
 	if (!XwauMat_HasSurfaceRules(m))
 		return;
 	char        candidate[sizeof m->surface_tag];
@@ -901,6 +1053,9 @@ static void name_surface(XwauMatFile* file, const char* name, XwauMatParams* m) 
 		snprintf(m->surface_tag, sizeof m->surface_tag, "%s", candidate);
 		if (!named && file->surface_count < XWAU_MAT_SURFACES_MAX)
 			file->surfaces[file->surface_count++] = m;
+		else if (!named)
+			ReportFatal(path, "more than %d sets of surface rules, the most that the importer keeps",
+						XWAU_MAT_SURFACES_MAX);
 		return;
 	}
 }
@@ -943,13 +1098,15 @@ XwauMatFile* XwauMat_Load(const char* path, const XwauMatParams* global) {
 		if (line[0] == '[') {
 			if (!saved)
 				ok = save_section(file, names, name_count, &cur, section);
-			name_count = parse_section_names(line, names, MAX_SECTION_NAMES);
+			name_count = parse_section_names(line, names, MAX_SECTION_NAMES, path);
 			cur        = file->slot0;
 			saved      = false;
 			section    = ok ? open_section(file, names, name_count, &next_order) : -1;
 			ok         = ok && section >= 0;
 		} else {
-			read_material_line(line, &cur);
+			const bool known = read_material_line(line, &cur) || listed_key(param) || frames_key(param);
+			if (!saved && !known)
+				report_unknown_key(param);
 			if (!saved && section >= 0)
 				ok = read_sequence_line(param, line, &file->sections[section]);
 		}
@@ -961,9 +1118,9 @@ XwauMatFile* XwauMat_Load(const char* path, const XwauMatParams* global) {
 		XwauMat_Free(file);
 		return NULL;
 	}
-	name_surface(file, "default", &file->slot0);
+	name_surface(file, "default", &file->slot0, path);
 	for (size_t i = 0; i < file->count; ++i)
-		name_surface(file, file->entries[i].name, &file->entries[i].params);
+		name_surface(file, file->entries[i].name, &file->entries[i].params, path);
 	return file;
 }
 
@@ -1019,6 +1176,15 @@ bool XwauMat_FindSequences(const XwauMatFile* file, const char* texture_name, Xw
 	}
 	section_sequences(file, entry->section, own);
 	return true;
+}
+
+const char* XwauMat_SectionName(const XwauMatFile* file, int order) {
+	if (order == 0)
+		return "default";
+	for (size_t s = 0; file && s < file->section_count; ++s)
+		if (file->sections[s].order == order)
+			return file->sections[s].name;
+	return "";
 }
 
 void XwauMat_Free(XwauMatFile* file) {

@@ -23,36 +23,28 @@ static XwauMissionTieFlightGroup* flight_group(XwauMissionTie* tie, int fg) {
 	return added;
 }
 
-/* Reads word `index` of `words` as std::stoi does into `out`. When it isn't
- * a number, reports it, since XWAU would fail on it. */
-static bool number(const XwauLines* words, size_t index, const char* line, const char* base, bool report,
-				   long long* out) {
-	if (Xwau_Stoi(words->items[index], out))
-		return true;
-	if (report)
-		Report(base,
-			   "mission_tie: '%s' isn't a number in line '%s', which XWAU would fail on; the line is skipped",
-			   words->items[index], line);
-	return false;
+/* Reads word `index` of `words` as std::stoi does into `out`. Returns false
+ * when it isn't a number, which XWAU would fail on. */
+static bool number(const XwauLines* words, size_t index, long long* out) {
+	return Xwau_Stoi(words->items[index], out);
 }
 
-/* Reads an "fg, N, …" line. Returns false when out of memory. */
-static bool read_fg_line(XwauMissionTie* tie, const XwauLines* words, size_t line_number, const char* line,
-						 const char* base, bool report) {
-	if (words->count < 4) {
-		if (report)
-			Report(base, "mission_tie: line '%s' has fewer than 4 words, so XWAU ignores it", line);
+/* Reads an "fg, N, …" line. XWAU ignores a line with fewer than 4 words.
+ * Returns false when out of memory. */
+static bool read_fg_line(XwauMissionTie* tie, const XwauLines* words, size_t line_number) {
+	if (words->count < 4)
 		return true;
-	}
 	long long   fg  = 0;
 	const char* key = words->items[2];
-	if (!number(words, 1, line, base, report, &fg))
+	if (!number(words, 1, &fg))
 		return true;
 	if (Xwau_SameName(key, "index")) {
 		long long craft = 0, markings = 0;
-		if (words->count < 6 || !Xwau_SameName(words->items[4], "markings"))
-			return true; /* an index line for another hook */
-		if (!number(words, 3, line, base, report, &craft) || !number(words, 5, line, base, report, &markings))
+		if (words->count < 6 || !Xwau_SameName(words->items[4], "markings")) {
+			/* hook_mission_tie only reads the markings of an index line. */
+			return true;
+		}
+		if (!number(words, 3, &craft) || !number(words, 5, &markings))
 			return true;
 		for (size_t i = 0; i < tie->craft_marking_count; ++i) {
 			XwauMissionTieCraftMarkings* entry = &tie->craft_markings[i];
@@ -71,16 +63,11 @@ static bool read_fg_line(XwauMissionTie* tie, const XwauLines* words, size_t lin
 	const bool voice  = Xwau_SameName(key, "pilotvoice");
 	const bool sfoils = Xwau_SameName(key, "close_SFoils"), gear = Xwau_SameName(key, "open_LandingGears");
 	if (!markings && !iff && !voice && !sfoils && !gear) {
-		/* Other keys are for other hooks, but a number is no key at all: a
-		   comma is missing. */
-		if (report && ((key[0] >= '0' && key[0] <= '9') || key[0] == '-'))
-			Report(base,
-				   "mission_tie: line '%s' has the number '%s' where its key should be, so XWAU ignores it",
-				   line, key);
+		/* No hook reads other keys. */
 		return true;
 	}
 	long long value = 0;
-	if (!voice && !number(words, 3, line, base, report, &value))
+	if (!voice && !number(words, 3, &value))
 		return true;
 	XwauMissionTieFlightGroup* entry = flight_group(tie, (int)fg);
 	if (!entry)
@@ -102,7 +89,7 @@ static bool read_fg_line(XwauMissionTie* tie, const XwauLines* words, size_t lin
 	return true;
 }
 
-bool XwauMissionTie_Read(const char* game, const char* base, bool report, XwauMissionTie* out) {
+bool XwauMissionTie_Read(const char* game, const char* base, XwauMissionTie* out) {
 	memset(out, 0, sizeof *out);
 	char      rel[1100], path[1024];
 	XwauLines lines;
@@ -122,11 +109,12 @@ bool XwauMissionTie_Read(const char* game, const char* base, bool report, XwauMi
 		if (!(ok = Xwau_Tokenize(line, XWAU_RULES_CPP, &words)))
 			break;
 		if (words.count && Xwau_SameName(words.items[0], "fg"))
-			ok = read_fg_line(out, &words, i, line, base, report);
+			ok = read_fg_line(out, &words, i);
 		else if (words.count && Xwau_SameName(words.items[0], "craft"))
 			ok = XwauLines_Add(&out->craft_lines, line, strlen(line));
 		else if (strchr(line, '='))
 			ok = XwauLines_Add(&out->settings, line, strlen(line));
+		/* XWAU ignores any other line. */
 		XwauLines_Free(&words);
 	}
 	XwauLines_Free(&lines);

@@ -365,8 +365,7 @@ static bool read_variants(cJSON* document, Inputs* in) {
 				for (size_t l = 0; !used && l < in->variants[v].layer_count; ++l)
 					used = strcmp(in->variants[v].layers[l].skin, in->skins[m][s].name) == 0;
 			if (!used)
-				ToolLog_Write(TOOL_LOG_WARNING,
-							  TAG ": warning: material '%s': no skin variant uses skin '%s'",
+				ToolLog_Write(TOOL_LOG_DETAIL, TAG ": warning: material '%s': no skin variant uses skin '%s'",
 							  material_name(document, m), in->skins[m][s].name);
 		}
 	return true;
@@ -783,7 +782,8 @@ static bool expand(Expansion* x) {
 	free(chain);
 	free(to);
 
-	/* The skins and skin variants are now variants. */
+	/* The skins are now variants. skinVariants stays in the file, as a record
+	   of the layers of each variant. */
 	cJSON* material;
 	cJSON_ArrayForEach(material, get(document, "materials")) {
 		cJSON* own = flight_model(material);
@@ -795,7 +795,6 @@ static bool expand(Expansion* x) {
 				cJSON_DeleteItemFromObjectCaseSensitive(material, "extensions");
 		}
 	}
-	cJSON_DeleteItemFromObjectCaseSensitive(flight_model(model_root(document)), "skinVariants");
 	if (x->uses_strength) {
 		found = false;
 		cJSON_ArrayForEach(name, used) {

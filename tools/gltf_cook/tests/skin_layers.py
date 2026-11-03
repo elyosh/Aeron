@@ -149,9 +149,10 @@ def check_cook(cooker, scratch, failures):
         failures.append("variants: %s" % names)
     root = next(node["extensions"]["AERON_flight_model"] for node in doc["nodes"]
                 if node.get("extensions", {}).get("AERON_flight_model", {}).get("role") == "model")
-    if root.get("markings") != [None, "Red", "Glow"] or "skinVariants" in root:
-        failures.append("model root: markings %s, skin variants left: %s" % (root.get("markings"),
-                                                                              "skinVariants" in root))
+    if root.get("markings") != [None, "Red", "Glow"] or [v["name"] for v in root.get("skinVariants", [])] != [
+            "Red", "Glow", "Red glow"]:
+        failures.append("model root: markings %s, skin variants %s" % (root.get("markings"),
+                                                                       root.get("skinVariants")))
     if any("skins" in m.get("extensions", {}).get("AERON_flight_model", {}) for m in doc["materials"]):
         failures.append("skins left in the cooked file")
     if len(doc["materials"]) != 3 + 4:

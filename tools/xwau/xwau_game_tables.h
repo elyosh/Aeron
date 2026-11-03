@@ -44,9 +44,6 @@ typedef struct XwauGameTables {
 	uint8_t  types[XWAU_GAME_OBJECT_TYPES][XWAU_GAME_OBJECT_TYPE_SIZE];
 	uint8_t  records[XWAU_GAME_RECORDS][XWAU_GAME_RECORD_SIZE];
 	uint16_t craft[XWAU_GAME_CRAFT_TYPES];
-	/* The word after the craft type table, which XWAU writes as craft type
-	   232 (craft_definitions_plan.md 4.4). */
-	uint16_t craftPastEnd;
 	/* The case of each object type in each sound switch, and the switch's
 	   table of jump addresses. */
 	uint8_t  soundCases[XWAU_GAME_SOUND_SWITCHES][XWAU_GAME_SOUND_CASES];
@@ -65,6 +62,21 @@ typedef struct XwauGameType {
 	int16_t  record;
 	uint16_t list, row;
 } XwauGameType;
+
+/* More stock game values, stored like the game stores them. The writers
+ * only write values that differ from them. The program that calls the
+ * writers fills them from the game's own tables. */
+typedef struct XwauStockValues {
+	/* The hull and map icon of each object type: the image number times 100,
+	   or 0 for no icon. */
+	const uint16_t* hull_icons;
+	size_t          hull_icon_count;
+	const uint16_t* map_icons;
+	size_t          map_icon_count;
+	/* The kind of each hardpoint type: 0 none, 1 laser, 2 warhead. */
+	const uint8_t* hardpoint_kinds;
+	size_t         hardpoint_kind_count;
+} XwauStockValues;
 
 /* Reads the tables of the game at `root`. Returns NULL, with a report, when
  * a file is missing or can't be read. */

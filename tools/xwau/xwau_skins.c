@@ -78,11 +78,14 @@ static uint8_t* zip_entry(const uint8_t* zip, size_t size, const char* name, siz
 		at = next;
 		if (name_len - start != strlen(name) || strncasecmp(entry + start, name, name_len - start) != 0)
 			continue;
+		/* XWAU can't read an entry without a local header either. */
 		if (local + 30 > size || le32(zip + local) != 0x04034b50)
 			break;
 		const size_t data = local + 30 + le16(zip + local + 26) + le16(zip + local + 28);
-		if (data + packed > size)
+		if (data + packed > size) {
+			Report(label, "%s is damaged: the entry of %s goes past the end of the file", path, name);
 			break;
+		}
 		uint8_t* out = (uint8_t*)malloc(unpacked ? unpacked : 1);
 		if (!out)
 			return NULL;
@@ -91,7 +94,8 @@ static uint8_t* zip_entry(const uint8_t* zip, size_t size, const char* name, siz
 		} else if (method != 8 ||
 				   stbi_zlib_decode_noheader_buffer((char*)out, (int)unpacked, (const char*)zip + data,
 													(int)packed) != (int)unpacked) {
-			Report(label, "%s: cannot read %s", path, name);
+			ReportFatal(label, "the import can't unpack %s from %s (zip method %u)", name, path,
+						(unsigned)method);
 			free(out);
 			return NULL;
 		}
@@ -317,7 +321,8 @@ static bool add_variant(XwauSkins* s, const char* name, int state, const char* k
 			opacity = atoi(dash + 1);
 		}
 		if (!token[0]) {
-			Report(label, "variant %s has a layer with an empty skin name, which is left out", name);
+			ReportFatal(label, "variant %s has a layer with an empty skin name, which can't be converted",
+						name);
 			continue;
 		}
 		const int index = skin_index(s, token);
@@ -386,7 +391,8 @@ static uint8_t* skin_file(const char* game, const char* model, const char* skin,
 }
 
 /* Loads the skin's image for texture `t`. rgba is NULL when the skin has no
- * image for it, or when the image size differs (which is reported). */
+ * image for it, or when the image size differs, and `*skipped` counts that
+ * case. */
 static bool load_image(const char* game, const char* model, const char* skin, const opt_texture_t* t,
 					   const char* label, size_t* skipped, OptGltfImageView* out) {
 	char name[256];
@@ -409,9 +415,8 @@ static bool load_image(const char* game, const char* model, const char* skin, co
 			Report(label, "skin %s image %s: %s", skin, file, stbi_failure_reason());
 			return false;
 		}
+		/* XWAU skips an image of another size, and so does the import. */
 		if (w != t->width || h != t->height) {
-			Report(label, "skin %s image %s is %dx%d but the texture is %dx%d, so it is skipped", skin, file,
-				   w, h, (int)t->width, (int)t->height);
 			stbi_image_free(rgba);
 			++*skipped;
 			return true;
@@ -441,6 +446,39 @@ int XwauSkins_StateCount(const opt_file_t* opt) {
 	return (int)states;
 }
 
+void XwauSkins_VariantName(int state, const char* list, char* out, size_t cap) {
+	char   copy[1024];
+	size_t length = 0;
+	snprintf(copy, sizeof copy, "%s", list);
+	out[0] = '\0';
+	if (state) {
+		const int written = snprintf(out, cap, "State %d", state);
+		if (written < 0 || (size_t)written >= cap)
+			return;
+		length = (size_t)written;
+	}
+	for (char *token = copy, *next; token; token = next) {
+		next = strchr(token, ',');
+		if (next)
+			*next++ = 0;
+		char* dash    = strchr(token, '-');
+		int   opacity = 100;
+		if (dash) {
+			*dash   = 0;
+			opacity = atoi(dash + 1);
+		}
+		if (!token[0])
+			continue;
+		const int written =
+			opacity == 100
+				? snprintf(out + length, cap - length, "%s%s", length ? " + " : "", token)
+				: snprintf(out + length, cap - length, "%s%s %d%%", length ? " + " : "", token, opacity);
+		if (written < 0 || (size_t)written >= cap - length)
+			return;
+		length += (size_t)written;
+	}
+}
+
 bool XwauSkins_Resolve(const char* game, const XwauMissions* missions, const char* model,
 					   const opt_file_t* opt, const char* label, XwauSkins* out) {
 	memset(out, 0, sizeof *out);
@@ -455,7 +493,7 @@ bool XwauSkins_Resolve(const char* game, const XwauMissions* missions, const cha
 		ok = XwauSkins_Markings(XwauMissions_SkinContext(missions, c), model, states, &skins, lists, &count);
 		for (size_t i = 0; ok && i < count; ++i) {
 			char name[1100];
-			snprintf(name, sizeof name, "%d|%s", lists[i].state, lists[i].list);
+			XwauSkins_VariantName(lists[i].state, lists[i].list, name, sizeof name);
 			if (lists[i].skinned)
 				ok = add_variant(out, name, lists[i].state, lists[i].list, label);
 		}
@@ -464,7 +502,7 @@ bool XwauSkins_Resolve(const char* game, const XwauMissions* missions, const cha
 			ok            = out->markings != NULL;
 			for (size_t i = 0; ok && i < count; ++i) {
 				char name[1100];
-				snprintf(name, sizeof name, "%d|%s", lists[i].state, lists[i].list);
+				XwauSkins_VariantName(lists[i].state, lists[i].list, name, sizeof name);
 				ok = !lists[i].skinned || (out->markings[i] = StrDup(name)) != NULL;
 			}
 			out->skins.markings_count = ok ? count : 0;
@@ -506,8 +544,8 @@ bool XwauSkins_Resolve(const char* game, const XwauMissions* missions, const cha
 		return false;
 	}
 	out->skins.images = out->images;
-	Report(label, "%zu skin variants, %zu skins, %zu skin images, %zu skipped", out->skins.variant_count,
-		   out->skins.skin_count, found, skipped);
+	ReportDetail(label, "%zu skin variants, %zu skins, %zu skin images, %zu skipped",
+				 out->skins.variant_count, out->skins.skin_count, found, skipped);
 	return true;
 }
 

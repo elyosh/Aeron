@@ -227,7 +227,7 @@ def blender_main(baker, scratch):
     mark.parent = hangar
     mark.location = (1.0, 2.0, -4.0)
     mark.aeron_flight.role = 'hardpoint'
-    mark.aeron_flight.hardpoint_type = '25'
+    mark.aeron_flight.hardpoint_type = 'inside_hangar'
     # The hangar: a 40 x 20 x 8 m box.
     bm = bmesh.new()
     bmesh.ops.create_cube(bm, size=1.0)

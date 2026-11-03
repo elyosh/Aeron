@@ -3,35 +3,19 @@
 
 /*
  * Writes flight/flight.yaml, the settings of a mod that apply to every
- * mission (the mod importer's missions phase). They come from the
- * hooks that the mod installs:
+ * mission (the mod importer's missions phase). They come from the hooks and
+ * the ddraw that the mod installs, and from their settings files (the
+ * hook's .cfg file, else its section of Hooks.ini). Without any of them, the
+ * file only has its header comment, and the game plays as stock.
  *
- *     # Made by the OpenXWA mod importer.
- *     version: 1
  *     backdrops:
  *       extra_planets:
- *         - { ids: [104, 255], first_group: 6304 }
+ *         - { ids: [104, 255], image_groups: [6304, 6455] }
  *     rules:
  *       reset_combat_music_at_mission_load: true
- *       hangar_red_alert_any_mothership: true
- *       classic_hide_destroyed_engine_glows: true
- *       weapon_iff_swap: false
- *       ai_attack_uses_max_speed_cache: true
- *       fire_needs_decharge_rate: true
- *       no_starship_fire_from_destroyed_racks: true
- *       starship_ambient_sounds: true
- *       no_player_warhead_slot_cap: true
- *       gunner_weapon_select_in_seat: true
- *       gunner_fires_warheads: true
  *       gunner_fires_selected_group: true
- *       super_star_destroyer_jamming: true
- *       two_launcher_fixes: true
- *       starship_missile_defense_any_warhead: true
- *       weapon_rack_count_from_record: true
  *     mission_settings:
  *       warhead_collision_damage: false
- *       damage_through_shields_on_hard: true
- *       interdiction_regions: [1]
  *     headlights:
  *       position_m: [0, 0, 20]
  *       color: [0.944, 0.944, 1]
@@ -39,209 +23,60 @@
  *       angle_degrees: 25
  *       auto_turn_on: true
  *     weapons:
- *       impact: {280: 0xff0000, 281: 0xff0000, ...}
+ *       impact: {rebel_laser: 0xff0000}
  *       rates: {decharge: 4, cooldown: 47}
- *       energy_transfer: {rate: 8}
- *       ai_torpedoes: {per_pass: 2, per_target: 6}
- *       impact_spin: {enabled: false}
  *       decharge_percent: 100
- *       recharge_percent: 100
- *     shield_recharge:
- *       starships: true
- *       starships_on_easy: false
- *       double_starfighter_shields: false
- *       rate_percent: 100
- *     docking:
- *       dock_to_small_sets_big: true
- *       ai_offsets_own_dock_point: true
- *       carried_offsets_carrier_dock_point: true
- *       player_approach_height: true
- *       player_snaps_to_target_orientation: true
- *     camera:
- *       exterior_lag: true
- *       exterior_lag_strength: 0.471239
- *       exterior_lag_max: 4.05
- *       exterior_tilt: 10
- *       cockpit_sway: true
- *       cockpit_sway_strength: 5
- *       cockpit_speed_sway: 0.075
- *       cockpit_sway_max: 2.5
- *       exterior_hud: true
- *     suns:
- *       procedural_sun: true
- *       procedural_flare: true
- *       flare_intensity: 3
+ *     shield_recharge: {starships: true, starships_on_easy: false, rate_percent: 100}
+ *     docking: {dock_to_small_sets_big: true, player_approach_height: true}
+ *     camera: {exterior_lag: true, exterior_tilt: 10, cockpit_sway: true}
+ *     suns: {procedural_sun: true, procedural_flare: true, flare_intensity: 3}
  *
- * `extra_planets` is written when the mod installs XWAU's backdrop hook,
- * hook_backdrops.dll. With it, a mission's backdrop id N from 104 to 255
- * draws the planet of image group 6304 + (N - 104), and the mod's missions
- * use these ids (mission_backdrops.h in the game). XWAU's hook loader loads
- * every hook_*.dll of the game folder, and this hook has no setting that
- * turns this off.
- *
- * `rules` holds the rules that hooks change in every mission:
- * hook_mission_tie.dll's two, hook_opt_limit.dll's engine glow rule
- * (xwau_mission_settings.h), and hook_weapon_color.dll's weapon_iff_swap,
- * its global WeaponSwitchBasedOnIff. With the hook, a starship fires the
- * weapons of its craft record, whatever its IFF, unless the setting or its
- * model's switch_by_iff turns the swap to its side's weapons on
- * (xwau_craft.h). hook_mission_tie.dll with stats profiles gives
- * ai_attack_uses_max_speed_cache: a craft under attack compares its own top
- * speed and its attacker's, which their stats profiles can change.
- * hook_weapon_rate.dll gives fire_needs_decharge_rate if it has weapon
- * profiles (it contains the text "_EnergyLowHighSeparation"). With this
- * rule, a craft only fires a base laser when the rack's charge is at least
- * its decharge rate. The DLL gives no_starship_fire_from_destroyed_racks if
- * it reads the craft's mesh states (it contains "Craft_Offset_292"). With
- * this rule, a freighter, starship, platform or satellite doesn't fire from
- * a rack whose mesh is destroyed. The DLL gives no_player_warhead_slot_cap
- * if it has warhead pools (it contains "WarheadTypeCount_fg_"): the hook then
- * lets a player's warhead rack hold more than 9 warheads, with or without
- * pools. hook_mission_objects.dll gives gunner_weapon_select_in_seat and
- * gunner_fires_warheads if it has gunner seats (it contains "Turrets.txt"),
- * and gunner_fires_selected_group when its UnlimitedTurretLaser setting
- * isn't 0 (hook_mission_objects.cfg, else Hooks.ini; 1 by default). With
- * these rules, the weapon key works in a seat, a seat fires warheads when
- * its cockpit has a warhead hardpoint, and a seat fires one laser group.
- * hook_engine_sound.dll gives
- * starship_ambient_sounds if it has ambient sounds (it contains
- * "AreStarshipAmbientEnabled") and that setting isn't 0. With this rule,
- * starships play their ambient sounds from the StarshipAmbient bank.
- * hook_jamming.dll gives super_star_destroyer_jamming: the hook makes the
- * Super Star Destroyer jam near its hangar, which it never does in the
- * stock game. When the hook's IsJammingEnabled setting is 0
- * (hook_jamming.cfg, else Hooks.ini; 1 by default), it gives
- * hangar_jamming: false instead, which turns jamming off.
- * hook_weapon_type.dll gives two_launcher_fixes: its fixes for craft with two
- * warhead launchers. When the DLL also contains "To call the hook that fixes
- * missile count", which only TFTC's build does, it gives
- * starship_missile_defense_any_warhead and weapon_rack_count_from_record.
- * `mission_settings` holds the defaults that the global settings of
- * hook_mission_tie and hook_engine_sound give every mission
- * (xwau_mission_settings.h).
- *
- * `headlights` is written when the mod has XWAU's ddraw.dll and its SSAO.cfg
- * sets `ssao_enabled = 1`: ddraw draws the headlights only then. It comes
- * from the `headlights_*` keys of SSAO.cfg. The light is a one-sided light
- * along the craft's nose, with a colour and a power in watts as a Blender
- * area light has them (xwau_flight_settings.c says how ddraw's values are
- * converted). `position_m` is from the craft's eye, with Z forward.
- * `angle_degrees` is the width of ddraw's cone, for when the game has cone
- * lights. `auto_turn_on` turns them on in the missions without a global
- * light. A mission turns them on with `headlights: true` in its mission file
- * (xwau_mission_files.h).
- *
- * Without any of these hooks, the file only has its version, and the game
- * plays as stock.
- *
- * `weapons.impact` is written when the mod installs hook_weapon_color.dll,
- * which tints every impact mark: the colour of each weapon type 280 to 307,
- * from the hook's five group colours (XwauCraft_ReadGlobalImpactColors).
- *
- * The laser rates are written when the mod installs hook_weapon_rate.dll.
- * `weapons.rates` holds the rates for every craft. They come from
- * FlightModels/WeaponRate.txt, or else from the [WeaponRate] section of
- * FlightModels/default.ini (XwauCraft_ReadGlobalWeaponRates). If they set
- * no rate, `rates` is left out. The other keys of that section go into
- * `energy_transfer`, `ai_torpedoes`, `impact_spin` and `system_damage`
- * (xwau_craft.h). When the section doesn't set MaxTorpedoCountPerPass or
- * MaxTorpedoCountPerTarget, the hook uses its own settings, from
- * hook_weapon_rate.cfg, or else from the [hook_weapon_rate] section of
- * Hooks.ini; the importer writes those. `decharge_percent` and `recharge_percent`
- * scale the rates of every craft. They come from hook_weapon_rate.cfg, or
- * else from the [hook_weapon_rate] section of Hooks.ini, and default to 100.
- * They are only written if the DLL contains the text "DechargeRatePercent".
- * The hook can also set rates by flight group for each mission
- * ([WeaponRates]). These aren't imported; the missions phase reports the
- * missions that have them.
- * The global weapon profiles of hook_weapon_rate also go into `weapons`.
- * They come from the [WeaponStats], [WarheadStats], [EnergyStats],
- * [LinkingStats] and [WeaponHardpointTypes] sections of
- * FlightModels/default.ini. The hook's settings for them come from
- * hook_weapon_rate.cfg, or else from Hooks.ini:
- *   - fire_ratio_by_rank, from NoviceRankFireratioMultiplicator to
- *     SuperAceRankFireratioMultiplicator (4, 3, 2, 2, 1, 1 by default),
- *     when the DLL reads them;
- *   - damage_by_difficulty, from DamagesMultiplicatorForDifficulty0 to 2
- *     (0.5, 0.25, 1), when the DLL reads them;
- *   - limit_linked_warhead_fire_rate, when LimitLinkedWarheadFireRate isn't
- *     0;
- *   - linking_rules, for each of PreventAILasersIonWhenDisabling,
- *     PreventAIIonWhenNotDisabling and PreventPlayerLinkedLasersIon that
- *     isn't 0.
- * The factors are float32 values. They are written with enough digits to
- * get the exact value back. WeaponsCount and IsLaserLinksFixEnabled aren't
- * imported. They are reported when they would change something.
- * When hook_weapon_rate.dll has weapon profiles, it also changes some rules
- * with no data. The importer writes tie_fighter_energy_step_always_high,
- * player_decharge_lasers_only, warhead_collision_bonus_any_target and
- * gun_turret_hardpoints. It writes no_fire_from_destroyed_hardpoints when
- * the hook's EnableFireMeshFilter isn't 0 (1 by default),
- * turbolaser_hardpoint_types when the DLL contains "WeaponHardpointTypes",
- * and rearm_follows_both_statuses when it contains
- * "WarheadCapacity_00460904_Hook", which only TFTC's build does.
- *
- * `shield_recharge` is written when the mod installs hook_shield.dll. Its
- * values come from hook_shield.cfg, else the [hook_shield] section of
- * Hooks.ini: IsShieldRechargeForStarshipsEnabled (default 1),
- * IsShieldRechargeForStarshipsOnEasyDifficultyEnabled (0),
- * IsShieldStrengthForStarfighterDoubled (0) and RechargeRatePercent (100).
- * The rules are in shield_recharge.h in the game. The hook's per-mission
- * [Shield] lines (<mission>_Shield.txt), which no mod uses, aren't
- * imported.
- *
- * `docking` is written when the mod installs hook_dock.dll, which changes
- * how craft dock with no data. The cap of the player's approach height comes
- * from each model's [Dock] section, in the model settings files. The hook's
- * ForceDockElevation, which replaces that cap for every model, isn't
- * imported, and is reported when it isn't -1.
- *
- * `camera` is written when the mod installs Hook_CockpitLook.dll or
- * hook_exterior.dll, and turns on the game's enhanced camera. Its values come
- * from CockpitLook.cfg, which the hook reads like ddraw reads SSAO.cfg. The
- * hook doesn't read these settings from Hooks.ini. A key that the file
- * doesn't set takes the hook's default:
- *   - exterior_lag is external_inertia_enabled (default 0);
- *   - exterior_lag_strength is cockpit_inertia (0.35) * external_inertia (1)
- *     * pi / 2;
- *   - exterior_lag_max is external_max_inertia (0.025) * external_inertia *
- *     90;
- *   - exterior_tilt is -external_tilt (-10), and the hook tilts the camera
- *     even when its inertia is off;
- *   - cockpit_sway is cockpit_inertia_enabled (0);
- *   - cockpit_sway_strength, cockpit_speed_sway and cockpit_sway_max are
- *     cockpit_inertia, cockpit_speed_inertia (0.005) and cockpit_max_inertia
- *     (0.2), times xwa_units_to_meters_scale (25);
- *   - exterior_hud is whether the mod installs hook_exterior.dll, which has
- *     no settings.
- * A value outside the game's range isn't written, and is reported. The
- * hook's external_dist_inertia, enable_external_inertia_in_hangar and
- * enable_external_inertia_in_map aren't imported, and are reported when they
- * are set. With hook_exterior.dll only, the section turns the HUD on and the
- * lag, the tilt and the sway off.
- *
- * `suns` is written when the mod's ddraw draws procedural suns, and turns on
- * the game's procedural suns and flare. XWAU's ddraw.dll can be a loader
- * that loads DDraw_Effects.dll or DDraw_Golden.dll, as DDrawType.cfg says;
- * only a build that contains the text "procedural_suns" draws them. The
- * values come from SSAO.cfg and Bloom.cfg:
- *   - the section is written when procedural_suns isn't 0 (default 1);
- *   - procedural_flare is true when bloom_enabled (Bloom.cfg) or
- *     ssao_enabled isn't 0, since ddraw only draws its flare with its post
- *     effects on, and flare_intensity is above 0.01 (default 2);
- *   - flare_intensity is copied when the flare is on. A value above 10 isn't
- *     written, and is reported.
- * background_suns_strength and lens_flare_strength aren't imported: they set
- * the strength of ddraw's bloom mask, and the game's bloom has no mask.
- * ddraw turns both effects off in a mission with a 3D sun or skydome model,
- * which it finds by words in the model's name. The game keeps them on, and
- * the importer reports such models in FlightModels.
+ * The groups:
+ *   - `extra_planets` comes with hook_backdrops.dll. A backdrop id N from 104
+ *     to 255 then draws the planet of image group 6304 + (N - 104)
+ *     (mission_backdrops.h in the game).
+ *   - `rules` holds the rules that the hooks change in every mission. Most
+ *     rules come from a hook DLL alone. Some depend on a setting of the hook,
+ *     or on a text in the DLL that shows which build it is
+ *     (xwau_mission_settings.c).
+ *   - `mission_settings` holds the defaults that the global settings of
+ *     hook_mission_tie and hook_engine_sound give every mission
+ *     (xwau_mission_settings.h).
+ *   - `headlights` comes from the headlights_* keys of SSAO.cfg, when ddraw
+ *     has SSAO on, since it only draws them then. The light is one-sided,
+ *     along the craft's nose, with a colour and a power in watts as a Blender
+ *     area light has them. `position_m` is from the craft's eye, with Z
+ *     forward. A mission turns the lights on with `headlights: true`
+ *     (xwau_mission_files.h).
+ *   - `weapons` holds the impact colours of hook_weapon_color, the global
+ *     laser rates and weapon profiles of hook_weapon_rate (xwau_craft.h and
+ *     xwau_weapon_stats.h), and the hook's factors by rank and difficulty.
+ *     The factors are float32 values, written with enough digits to get the
+ *     exact value back. WeaponsCount goes into the object counts
+ *     (xwau_object_limits.h).
+ *   - `shield_recharge` comes with hook_shield.dll (shield_recharge.h in the
+ *     game). `docking` comes with hook_dock.dll, which changes how craft
+ *     dock without any data.
+ *   - `camera` comes with Hook_CockpitLook.dll or hook_exterior.dll, and
+ *     turns on the game's enhanced camera. Its values are converted from
+ *     CockpitLook.cfg, with the hook's defaults for the keys it doesn't set.
+ *     With hook_exterior.dll alone, it turns the HUD on and the lag, the tilt
+ *     and the sway off.
+ *   - `suns` comes with a ddraw build that draws procedural suns. ddraw.dll
+ *     can be a loader of DDraw_Effects.dll or DDraw_Golden.dll, as
+ *     DDrawType.cfg says. The flare is on when ddraw has its post effects on
+ *     and a flare intensity above 0.01.
  */
 
 #include <stdbool.h>
 
-/* Writes the settings of the installation `game` into the file `path`.
- * Returns false on an error. */
-bool XwauFlightSettings_Write(const char* game, const char* path);
+#include "xwau_game_tables.h"
+#include "xwau_names.h"
+
+/* Writes the settings of the installation `game` to the file `path`, with
+ * the names in `names`. The weapon profiles only write the hardpoint kinds
+ * that differ from `stock`. Returns false on an error. */
+bool XwauFlightSettings_Write(const char* game, const XwauNames* names, const XwauStockValues* stock,
+							  const char* path);
 
 #endif /* AERON_XWAU_FLIGHT_SETTINGS_H */

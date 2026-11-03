@@ -8,14 +8,10 @@
 #include "util.h"
 #include "xwau_config.h"
 
-/* The hook's names of the warhead types, and the mission file's. */
+/* The hook's names for the warhead types. */
 static const char* const g_hookNames[XWAU_WARHEAD_TYPES] = {
 	"SpaceBombs",       "HeavyRockets", "Missiles", "ProtonTorpedos",   "AdvancedMissiles",
 	"AdvancedTorpedos", "MagPulse",     "IonPulse", "AdvancedMagPulse", "ClusterBombs",
-};
-static const char* const g_names[XWAU_WARHEAD_TYPES] = {
-	"space_bombs",        "heavy_rockets", "missiles",   "torpedoes",           "advanced_missiles",
-	"advanced_torpedoes", "mag_pulses",    "ion_pulses", "advanced_mag_pulses", "cluster_bombs",
 };
 
 #define POOL_PREFIX "WarheadTypeCount_fg_"
@@ -95,16 +91,13 @@ bool XwauWarheadPools_Read(const char* game, const char* base, bool report, Xwau
 		Report(NULL, "out of memory");
 		return false;
 	}
-	bool   ok    = true;
-	size_t other = 0;
+	bool ok = true;
+	/* hook_weapon_rate doesn't read lines with other keys, and reads the
+	   first line of a key only. */
 	for (size_t i = 0; ok && i < lines.count; ++i) {
 		int fg, type;
-		if (!strchr(lines.items[i], '='))
+		if (!strchr(lines.items[i], '=') || !parse_key(lines.items[i], &fg, &type))
 			continue;
-		if (!parse_key(lines.items[i], &fg, &type)) {
-			++other;
-			continue;
-		}
 		XwauWarheadPool* pool = NULL;
 		for (size_t k = 0; !pool && k < out->count; ++k)
 			pool = out->items[k].fg == fg ? &out->items[k] : NULL;
@@ -124,9 +117,13 @@ bool XwauWarheadPools_Read(const char* game, const char* base, bool report, Xwau
 			pool->count[t] = -1;
 			if (!value[0])
 				continue;
-			if (!Xwau_StoiAuto(value, &number) || number < -1 || number > 1000000000) {
+			/* A value that isn't a number would crash XWAU. */
+			if (!Xwau_StoiAutoInt(value, &number))
+				continue;
+			if (number < -1 || number > 1000000000) {
 				if (report)
-					Report(source, "%s = %s isn't a number of warheads; it is left out", key, value);
+					ReportFatal(source, "%s = %s isn't a number of warheads that OpenXWA can use", key,
+								value);
 				continue;
 			}
 			pool->count[t] = (int)number;
@@ -138,11 +135,6 @@ bool XwauWarheadPools_Read(const char* game, const char* base, bool report, Xwau
 		XwauWarheadPools_Free(out);
 		return false;
 	}
-	if (other && report)
-		Report(
-			source,
-			"[WarheadTypeCount]: %zu lines have keys that hook_weapon_rate doesn't read; they are left out",
-			other);
 	if (out->count > 1)
 		qsort(out->items, out->count, sizeof *out->items, compare_pools);
 	return true;
@@ -169,12 +161,14 @@ bool XwauWarheadPools_Any(const XwauWarheadPool* pool) {
 	return false;
 }
 
-void XwauWarheadPools_Write(FILE* f, const XwauWarheadPool* pool) {
+void XwauWarheadPools_Write(FILE* f, const XwauNames* names, const XwauWarheadPool* pool) {
 	bool first = true;
 	for (int t = 0; pool && t < XWAU_WARHEAD_TYPES; ++t) {
 		if (pool->count[t] < 0)
 			continue;
-		fprintf(f, "%s%s: %d", first ? ", warheads: { " : ", ", g_names[t], pool->count[t]);
+		/* Pool 0 is the first warhead after `none`. */
+		fprintf(f, "%s%s: %d", first ? ", warheads: { " : ", ", XwauNames_Name(&names->warheads, t + 1),
+				pool->count[t]);
 		first = false;
 	}
 	if (!first)

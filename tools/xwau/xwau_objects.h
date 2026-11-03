@@ -33,12 +33,11 @@
  * A missing key keeps the value of the table. Values are read with
  * std::stoi(value, 0, 0) and cut to the field's size, as the hook does. The
  * comparison below then writes what changes. XWAU changes the tables only
- * during missions, so the tech room now sees the new weapons too. The
- * importer reports two object types that share a record and both have the
- * section (the last one wins, as in XWAU), a weapon type that the model has
- * no hardpoint for, and a model with the section that no object type
- * loads. A mission that swaps to or from such a model would change the
- * values for that mission only; the mission import reports it
+ * during missions, so the tech room now sees the new weapons too. When two
+ * object types share a record and both models have the section, the last
+ * one wins, as in XWAU. A model with the section that no object type loads
+ * is skipped. A mission that swaps to or from such a model would change the
+ * values for that mission only. The mission import reports that
  * (xwau_mission_files.h).
  *
  * An object type's model, in each game, is the name of its list row, in
@@ -48,62 +47,78 @@
  * which its MC80s load) keeps the stock model for the stock object types that
  * load it.
  *
- *   # Written by the OpenXWA mod importer ...
- *   version: 1
- *   object_type: 138
+ *   # Made by the OpenXWA mod importer.
+ *   object_type: victory_star_destroyer2
  *   model: victorystardestroyer
- *   genus: 4
- *   family: 0
- *   flags: 0x843
- *   craft_record_index: 140
+ *   genus: starship
+ *   family: craft
+ *   flags: [player_targetable, ai_targetable, float_hardpoints]
  *   craft_record:
  *     hull: 16590
  *     lasers:
- *       - {type: 281, count: 2, kind: 4, range: 65536, cooldown: 236}
- *   sounds_like: 5
+ *       - {type: rebel_laser_turbo, count: 2, kind: turret, range: 65536, cooldown: 236}
+ *   sounds_like: tie_fighter
  *   beam_allowed: true
  *   names: {short: 'QF/Cr', long: 'Quasar Fire Carrier', plural: '...', gender: m}
  *
- *   # Written by the OpenXWA mod importer ...
- *   version: 1
+ *   # Made by the OpenXWA mod importer.
  *   craft_type: 124
- *   object_type: 138  # victorystardestroyer
- *   ship_list: {name: '...', category: 'Fighter', flyable: true, known: true,
+ *   object_type: victory_star_destroyer2  # victorystardestroyer
+ *   ship_list: {name: '...', category: fighter, flyable: true, known: true,
  *               skirmish: true, hidden: false, icon: [82, 10, 89, 18]}
  *   tech_room: {name: '...', description: '...'}
  *
- * The file holds only the keys that change, and `craft_record` only the
- * fields that change. The
- * craft record is compared with the stock record that the object type uses
- * after its `craft_record_index`. `lasers` lists the three laser groups when
- * one of them changes, `warheads` the two launchers and `turrets` the two
- * turret seats; a group that isn't listed is empty. Fields that the game
- * rebuilds from the model when it loads it (bounds, hardpoints, the first and
- * last weapon slots, engine glows, dock, aux and jamming points, child
- * mounts) and the point value aren't written. Other changed fields that have
- * no key are reported.
+ * The files use the game's names. `object_type` is the slot's stock name,
+ * and `name` is the new name from XwauObjects_Rename. Other object types are
+ * written with their names in the mod.
  *
- * `names` holds the species names of the object type's craft record, when
- * the mod changes them and the object type has a file.
+ * A file only has the keys that change, and `craft_record` only has the
+ * fields that change. The importer compares the object type's record in the
+ * mod with the type's own stock record, and the game writes the changes into
+ * the type's own record. So when the mod moves an object type to another
+ * record, or when several object types share a record, each of them gets its
+ * own changes. When one laser group changes, `lasers` lists all three
+ * groups. `warheads` works the same way for the two launchers, and `turrets`
+ * for the two turret seats, with the gunner seat keys. A group that isn't
+ * listed is empty. Fields that the game rebuilds from the model when it
+ * loads it (bounds, hardpoints, the first and last weapon slots,
+ * engine glows, dock, aux and jamming points, child mounts) and the point
+ * value aren't written. Other changed fields that have no key are left out,
+ * because the game never reads them.
+ *
+ * A file can set seven flags: player_targetable, ai_targetable, nav_buoy,
+ * static_object, float_hardpoints, spins and collision_face_groups. If the
+ * mod turns one of them on or off, the file gets a `flags` list with each of
+ * these flags that is on, because the game turns off the ones that aren't
+ * listed. The other flags come from the original image files. If the mod
+ * changes them, the import fails. Bits 0x10 and 0x40 are left out, because
+ * the game never reads them.
+ *
+ * `names` holds the species names of the object type's record in the mod,
+ * when they differ from the names of its stock record and the object type
+ * has a file.
  *
  * The object type files are for the stock object types of both lists, the
- * reserved slots that the mod fills with a new craft, and the placeholders
+ * free slots that the mod fills with a new craft, and the placeholders
  * 103 to 114 that it gives another model. When the type's row is in
  * Equipment0.LST, `model` comes with `list: equipment`. A slot or a
  * placeholder that the mod gives an empty row loads nothing, so it gets no
  * file, and neither do its craft types.
  *
- * A craft type file has the craft type's object type in the mod, with the
- * object type's model as a comment, and the ship list line and tech room
- * texts that the mod changes. It is only written when the object type loads
- * a model in the mod; otherwise the text import keeps skipping the texts. A
- * file is named after the craft type's ship list name in the mod, in lower
- * case with '_' between words. Two craft types with the same name get
- * <name>_<craft type>.yaml, and one without a name craft_type_<n>.yaml.
+ * A craft type file has the craft type's object type in the mod, with that
+ * object type's model in a comment. It also has the ship list line and the
+ * tech room texts that the mod changes. The ship list category is written as
+ * a name. The game leaves a line with an unknown category out of the ship
+ * list, such as XWAU's "Planet/Asteroid", so that craft is written as hidden
+ * and without a category. The file is only written when the
+ * object type loads a model in the mod. Otherwise the text import keeps
+ * skipping these texts. The file is named after the craft type's ship list
+ * name in the mod, in lower case with '_' between words. When two craft
+ * types have the same name, they get <name>_<craft type>.yaml. A craft type
+ * without a name gets craft_type_<n>.yaml.
  *
  * The names and the craft type texts aren't in text/strings.yaml (the
- * `moved` IDs of XwauObjects_Write). Files that an earlier run wrote (they
- * start with "# Written by the OpenXWA mod importer") are removed first.
+ * `moved` IDs of XwauObjects_Write).
  */
 
 #include <stdbool.h>
@@ -111,18 +126,36 @@
 #include <stdint.h>
 
 #include "xwau_game_tables.h"
+#include "xwau_names.h"
 #include "xwau_text.h"
 
 /* Whether model `model` (a model key) of the installation `game` has an
  * [ExeCraftValues] section. */
 bool XwauObjects_HasExeCraftValues(const char* game, const char* model);
 
+/* Finds the object types that the mod at `mod_root` renames, and stores the
+ * new names in `names`. A slot is renamed when the mod's ship list shows it
+ * with a different name than the stock game, or when the stock game doesn't
+ * list it. The new name is the ship list name in lower case with '_' between
+ * words, such as tie_advanced_x1. If another object type already has that
+ * name, the slot number is added. A slot that only changes its model, stats
+ * or flags keeps its stock name. So do the weapon and effect slots, which
+ * aren't in the ship list. `mod` holds the mod's tables, or is NULL when they
+ * can't be read; nothing is renamed then. Writes each rename as a detail. Returns false
+ * only when out of memory. XwauObjects_FreeRenames frees the names. */
+bool XwauObjects_Rename(const char* mod_root, const char* stock_game, const XwauGameTables* stock,
+						const XwauGameTables* mod, XwauNames* names);
+void XwauObjects_FreeRenames(XwauNames* names);
+
 /* Writes the object type and craft type files of the mod at `mod_root` into
- * `output_dir`/object_types and `output_dir`/craft_types, and adds to `moved`
- * the IDs of the texts they contain. `stock` holds the stock game's tables,
- * and `stock_game` is the stock game's folder, which provides its texts.
- * Returns false when a file can't be read or written. */
+ * `output_dir`/object_types and `output_dir`/craft_types. Adds the IDs of the
+ * texts that these files contain to `moved`. `stock` holds the stock game's
+ * tables, and `stock_game` is the stock game's folder, which has its texts.
+ * `mod` holds the mod's tables, and the [ExeCraftValues] sections are
+ * applied to it. The files use the names in `names`. Returns false when
+ * `mod` is NULL, or when a file can't be read or written. */
 bool XwauObjects_Write(const char* mod_root, const char* stock_game, const XwauGameTables* stock,
-					   const char* output_dir, XwauTextIds* moved);
+					   XwauGameTables* mod, const XwauNames* names, const char* output_dir,
+					   XwauTextIds* moved);
 
 #endif /* AERON_XWAU_OBJECTS_H */

@@ -5,12 +5,10 @@
 #include <string.h>
 #include <strings.h>
 
-#include "opt.h"
 #include "util.h"
 
 /* The stock gunner cockpit, which object type 317 loads. */
 #define STOCK_COCKPIT "CorellianTransportGunner"
-#define STOCK_COCKPIT_TYPE 317
 
 /* The offsets of the seat fields in a craft record, for the first seat. The
    second seat's field follows each one. */
@@ -25,11 +23,6 @@ enum {
 	RECORD_SEAT_AIM_B       = 602,
 };
 
-/* The reserved object types that have an empty craft record of their own. */
-static const int g_reservedSlots[] = { 33,  34,  35,  36,  37,  38,  39,  40,  41,  42,  49,  66,  67,  68,
-									   69,  70,  86,  87,  88,  89,  90,  116, 117, 118, 119, 120, 121, 122,
-									   123, 124, 125, 151, 152, 184, 185, 186, 187, 188, 189, 190, 191 };
-
 static int16_t record_i16(const uint8_t* record, int offset, int seat) {
 	return (int16_t)(record[offset + 2 * seat] | record[offset + 2 * seat + 1] << 8);
 }
@@ -42,30 +35,22 @@ static bool has_opt(const char* game, const char* name) {
 }
 
 /* Sets the cockpit of `seat` to `name`, or to the stock cockpit when the
-   installation doesn't have its OPT. */
-static void set_cockpit(const char* game, const char* source, XwauGunnerSeat* seat, const char* name) {
-	if (!has_opt(game, name)) {
-		Report(source, "[Turrets]: FlightModels/%s.opt doesn't exist; XWAU loads " STOCK_COCKPIT " instead",
-			   name);
+   installation doesn't have its OPT, as XWAU does. */
+static void set_cockpit(const char* game, XwauGunnerSeat* seat, const char* name) {
+	if (!has_opt(game, name))
 		name = STOCK_COCKPIT;
-	}
 	snprintf(seat->cockpit, sizeof seat->cockpit, "%s", name);
 }
 
 /* Reads the seat of `line` into `seat`. Returns false when the line isn't a
-   seat, or when its numbers can't be read, which is reported. */
-static bool read_seat(const char* game, const char* source, const char* line, XwauGunnerSeat* seat) {
+   seat, or when its numbers can't be read, which would crash XWAU. */
+static bool read_seat(const char* game, const char* line, XwauGunnerSeat* seat) {
 	XwauLines tokens = { 0 };
 	long long value[9];
 	bool      ok = Xwau_Tokenize(line, XWAU_RULES_CPP, &tokens) && tokens.count >= 9;
 	for (int i = 0; ok && i < 9; ++i) {
-		if (i != 7 && !Xwau_StoiAuto(tokens.items[i], &value[i])) {
-			Report(source,
-				   "[Turrets]: \"%s\" has values that aren't numbers, which would crash XWAU; the line "
-				   "is left out",
-				   line);
+		if (i != 7 && !Xwau_StoiAutoInt(tokens.items[i], &value[i]))
 			ok = false;
-		}
 	}
 	if (ok) {
 		memset(seat, 0, sizeof *seat);
@@ -77,7 +62,7 @@ static bool read_seat(const char* game, const char* source, const char* line, Xw
 		seat->aim_limit_a   = (int16_t)value[5];
 		seat->aim_limit_b   = (int16_t)value[6];
 		seat->inverted      = value[8] != 0;
-		set_cockpit(game, source, seat, tokens.items[7]);
+		set_cockpit(game, seat, tokens.items[7]);
 	}
 	XwauLines_Free(&tokens);
 	return ok;
@@ -141,7 +126,13 @@ void XwauGunnerSeats_Read(const char* game, const XwauGameTables* tables, const 
 	size_t extra = 0;
 	for (size_t i = 0; i < lines.count; ++i) {
 		XwauGunnerSeat seat;
-		if (!read_seat(game, source, lines.items[i], &seat))
+		XwauLines      tokens = { 0 };
+		const bool short_line = Xwau_Tokenize(lines.items[i], XWAU_RULES_CPP, &tokens) && tokens.count < 9;
+		XwauLines_Free(&tokens);
+		/* The hook reads only the TurretForwardFire key from such a line. */
+		if (short_line)
+			continue;
+		if (!read_seat(game, lines.items[i], &seat))
 			continue;
 		if (out->count == XWAU_GUNNER_SEAT_MAX)
 			++extra;
@@ -149,14 +140,25 @@ void XwauGunnerSeats_Read(const char* game, const XwauGameTables* tables, const 
 			out->seats[out->count++] = seat;
 	}
 	if (extra)
-		Report(source, "[Turrets]: the game has room for %d seats; %zu more are left out",
-			   XWAU_GUNNER_SEAT_MAX, extra);
+		ReportFatal(source, "[Turrets]: the section has %zu seats, but the game has room for only %d",
+					out->count + extra, XWAU_GUNNER_SEAT_MAX);
 	char      value[64];
 	long long number;
+	/* A value that isn't a number would crash XWAU. */
 	XwauLines_Value(&lines, "TurretForwardFire", XWAU_RULES_CPP, value, sizeof value);
-	if (value[0] && Xwau_StoiAuto(value, &number))
+	if (value[0] && Xwau_StoiAutoInt(value, &number))
 		out->forward_fire = number != 0;
 	XwauLines_Free(&lines);
+}
+
+void XwauGunnerSeats_WriteAimLimit(FILE* f, const char* label, int steps) {
+	if ((int16_t)steps < 0) {
+		ReportFatal(label, "a seat's aim limit is %d, which the game reads as a negative angle",
+					(uint16_t)steps);
+		fputs("180", f);
+		return;
+	}
+	Xwau_WriteDegrees(f, (int16_t)steps);
 }
 
 bool XwauGunnerSeats_Write(FILE* f, const XwauGunnerSeats* seats, XwauLines* cockpits) {
@@ -170,11 +172,17 @@ bool XwauGunnerSeats_Write(FILE* f, const XwauGunnerSeats* seats, XwauLines* coc
 		const XwauGunnerSeat* seat = &seats->seats[i];
 		char                  key[256];
 		LowerCopy(key, sizeof key, seat->cockpit);
-		fprintf(f,
-				"    - {x: %d, y: %d, z: %d, mount_angle_a: %d, mount_angle_b: %d, aim_limit_a: %d, "
-				"aim_limit_b: %d, cockpit: %s, inverted: %s}\n",
-				seat->x, seat->y, seat->z, seat->mount_angle_a, seat->mount_angle_b, seat->aim_limit_a,
-				seat->aim_limit_b, key, seat->inverted ? "true" : "false");
+		fputs("    - {position_m: ", f);
+		Xwau_WriteMetres3(f, seat->x, seat->y, seat->z);
+		fputs(", mount_pitch_degrees: ", f);
+		Xwau_WriteDegrees(f, seat->mount_angle_a);
+		fputs(", mount_yaw_degrees: ", f);
+		Xwau_WriteDegrees(f, seat->mount_angle_b);
+		fputs(", aim_limit_pitch_degrees: ", f);
+		XwauGunnerSeats_WriteAimLimit(f, key, seat->aim_limit_a);
+		fputs(", aim_limit_yaw_degrees: ", f);
+		XwauGunnerSeats_WriteAimLimit(f, key, seat->aim_limit_b);
+		fprintf(f, ", cockpit: %s, inverted: %s}\n", key, seat->inverted ? "true" : "false");
 		bool seen = !cockpits;
 		for (size_t k = 0; !seen && k < cockpits->count; ++k)
 			seen = strcmp(cockpits->items[k], key) == 0;
@@ -184,90 +192,16 @@ bool XwauGunnerSeats_Write(FILE* f, const XwauGunnerSeats* seats, XwauLines* coc
 	return true;
 }
 
-/* Reports the cockpit `name` when its OPT doesn't have exactly 2 laser
-   hardpoints: the game takes the seat's shots from the first two. */
-static void check_cockpit(const char* game, const char* name) {
-	char rel[400], path[1024];
-	snprintf(rel, sizeof rel, "FlightModels/%s.opt", name);
-	if (!Xwau_FindFile(game, rel, path, sizeof path))
-		return;
-	opt_error_t err;
-	opt_file_t* opt = opt_load_file(path, &err);
-	if (!opt)
-		return;
-	int lasers = 0;
-	for (int32_t m = 0; m < opt->mesh_count; ++m)
-		for (int32_t h = 0; h < opt->meshes[m].hardpoint_count; ++h) {
-			const int type = (int)opt->meshes[m].hardpoints[h].type;
-			lasers += (type >= 1 && type <= 4) || type == 9 || type == 10;
-		}
-	opt_free(opt);
-	if (lasers != 2)
-		Report(rel,
-			   "has %d laser hardpoints; a gunner cockpit needs 2, and the game fires from the first two",
-			   lasers);
-}
-
-bool XwauGunnerSeats_WriteCockpits(const char* game, const XwauGameTables* stock, const char* output_dir,
-								   const XwauLines* cockpits) {
-	if (!cockpits->count)
-		return true;
-	XwauGameTables* mod = stock ? XwauGameTables_Load(game) : NULL;
-	if (!mod)
-		return false;
-	char   dir[1100];
-	bool   ok   = PathFormat(dir, sizeof dir, "%s/object_types", output_dir) && MakeDirs(dir);
-	size_t slot = 0, written = 0, dropped = 0;
-	for (size_t i = 0; ok && i < cockpits->count; ++i) {
+void XwauGunnerSeats_CheckCockpits(const char* game, const char* output_dir, const XwauLines* cockpits) {
+	size_t checked = 0;
+	for (size_t i = 0; i < cockpits->count; ++i) {
 		const char* key = cockpits->items[i];
+		char        glb[1300];
 		if (strcasecmp(key, STOCK_COCKPIT) == 0)
 			continue;
-		check_cockpit(game, key);
-		/* The next reserved slot that loads no model in the mod, and whose
-		   record no type that loads a model uses. A mod can give a slot an
-		   empty row. */
-		int t = -1;
-		for (; t < 0 && slot < sizeof g_reservedSlots / sizeof g_reservedSlots[0]; ++slot) {
-			const int          c = g_reservedSlots[slot];
-			const XwauGameType s = XwauGameTables_Type(stock, c);
-			bool used = XwauGameTables_Model(mod, c)[0] || s.record < 0 || s.record >= XWAU_GAME_RECORDS;
-			for (int o = 0; !used && o < XWAU_GAME_OBJECT_TYPES; ++o) {
-				const XwauGameType other = XwauGameTables_Type(mod, o);
-				used = o != c && XwauGameTables_Model(mod, o)[0] && other.record == s.record;
-			}
-			if (!used)
-				t = c;
-		}
-		if (t < 0) {
-			Report(key,
-				   "no reserved object type is left for this gunner cockpit; its seats show " STOCK_COCKPIT);
-			++dropped;
-			continue;
-		}
-		char path[1300], glb[1300];
-		ok = PathFormat(path, sizeof path, "%s/%s.yaml", dir, key);
-		if (ok && IsFile(path))
-			ok = PathFormat(path, sizeof path, "%s/%s_%d.yaml", dir, key, t);
-		FILE* f = ok ? fopen(path, "wb") : NULL;
-		if (!f) {
-			Report(path, "can't be written");
-			ok = false;
-			break;
-		}
-		fprintf(f,
-				"# Written by the OpenXWA mod importer: the cockpit of a gunner seat.\nversion: "
-				"1\nobject_type: %d\n"
-				"model: %s\nlist: equipment\ngenus: 2\nfamily: 6\nflags: 0x0\ngunner_cockpit: true\n",
-				t, key);
-		ok = fclose(f) == 0;
-		written += ok;
-		if (ok && PathFormat(glb, sizeof glb, "%s/models/%s.glb", output_dir, key) && !IsFile(glb))
+		if (PathFormat(glb, sizeof glb, "%s/models/%s.glb", output_dir, key) && !IsFile(glb))
 			Report(glb, "doesn't exist, so the game can't load this gunner cockpit until it is converted");
+		checked++;
 	}
-	XwauGameTables_Free(mod);
-	if (ok)
-		Report(NULL, "gunner seats: %zu cockpits get an object type of their own", written);
-	if (ok && dropped)
-		Report(NULL, "gunner seats: %zu cockpits have no free object type", dropped);
-	return ok;
+	ReportDetail(NULL, "gunner seats use %zu cockpits besides the stock one", checked);
 }

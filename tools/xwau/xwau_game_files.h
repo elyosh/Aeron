@@ -15,8 +15,9 @@
  *     in a folder that the stock game also has: mission voices
  *     (Wave/MISSIONVOICE/), briefing and concourse voices (Wave/FRONTEND/)
  *     and sound effects (Wave/FE_HIGH_RES/). Other files and folders in
- *     Wave/ are skipped, because the game doesn't read them. The sound banks
- *     (Wave/Sfx_*) are copied by the craft phase;
+ *     Wave/ are skipped, because the game doesn't read them. A WAV file
+ *     that the import can't read or convert makes the import fail. The
+ *     sound banks (Wave/Sfx_*) are copied by the craft phase;
  *   - the files that the missions' sound replacements load, such as
  *     Wave/Custom/Evacuate.wav, if they differ from the stock game's.
  *

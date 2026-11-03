@@ -60,13 +60,13 @@
       "title": "Articulation",
       "description": "A component the game turns about its rotation hinge. Aeron stores articulations without interpreting them; each game documents the groups and behaviors it reads.",
       "type": "object",
-      "required": ["component", "group", "angle", "speed"],
+      "required": ["component", "group", "angleDegrees", "speedDegrees"],
       "properties": {
         "component": { "$ref": "#/$defs/ordinal", "description": "The component it turns." },
         "group": { "$ref": "#/$defs/tag", "description": "The game-defined group it belongs to, such as the S-foils." },
-        "angle": { "title": "Angle", "description": "The angle it turns to, in the game's units of 1/256 turn.", "type": "integer", "minimum": -128, "maximum": 255 },
-        "speed": { "title": "Speed", "description": "How fast it turns there, in 1/256 turn per game step.", "type": "integer", "minimum": 0, "maximum": 255 },
-        "speedBack": { "title": "Speed back", "description": "How fast it turns back, in 1/256 turn per game step; default speed.", "type": "integer", "minimum": 0, "maximum": 255 },
+        "angleDegrees": { "title": "Angle", "description": "The angle that the component turns to, in degrees. The game turns in steps of 1/256 turn.", "type": "number", "minimum": -180, "maximum": 358.594 },
+        "speedDegrees": { "title": "Speed", "description": "How fast the component turns to the angle, in degrees per game step.", "type": "number", "minimum": 0, "maximum": 358.594 },
+        "speedBackDegrees": { "title": "Speed back", "description": "How fast the component turns back, in degrees per game step. The default is speedDegrees.", "type": "number", "minimum": 0, "maximum": 358.594 },
         "behavior": { "$ref": "#/$defs/tag", "description": "An optional game-defined behavior." }
       }
     },
@@ -207,8 +207,8 @@
       "required": ["role", "meshType"],
       "properties": {
         "role": { "title": "Role", "description": "A component of the model.", "const": "component" },
-        "meshType": { "title": "Mesh type", "description": "The game's type of the part (OPT mesh type: main hull, wing, engine, gun turret...).", "type": "integer", "minimum": 0, "maximum": 31 },
-        "explosionFlags": { "title": "Explosion flags", "description": "The game's flags of the part (OPT explosion type), as a bitmask: 1 gives it its own hit points, 2 makes it damageable.", "type": "integer", "minimum": 0, "maximum": 4294967295 },
+        "meshType": { "title": "Mesh type", "description": "The part's mesh type, from the OPT format.", "enum": ["default", "main_hull", "wing", "fuselage", "gun_turret", "small_gun", "engine", "bridge", "shield_generator", "energy_generator", "launcher", "communication_system", "beam_system", "command_system", "docking_platform", "landing_platform", "hangar", "cargo_pod", "misc_hull", "antenna", "rotary_wing", "rotary_gun_turret", "rotary_launcher", "rotary_communication_system", "rotary_beam_system", "rotary_command_system", "hatch", "custom", "weapon_system_1", "weapon_system_2", "power_regenerator", "reactor"] },
+        "explosion": { "title": "Explosion", "description": "hit_points gives the part its own hit points. detachable lets the part be damaged and break off.", "type": "array", "items": { "enum": ["hit_points", "detachable"] }, "uniqueItems": true },
         "targetId": { "title": "Target group", "description": "Components with the same nonzero id and mesh type form one target; 0 for none.", "type": "integer", "minimum": -2147483648, "maximum": 2147483647 },
         "target": { "$ref": "#/$defs/vec3", "description": "The point the game aims at on this target, required with a nonzero targetId." },
         "span": { "$ref": "#/$defs/extent3", "description": "Descriptor: the part's authored size. Stock OPT descriptors include negative components, which the games read as stored." },
@@ -252,7 +252,7 @@
       "required": ["role", "type"],
       "properties": {
         "role": { "title": "Role", "description": "A hardpoint of its component.", "const": "hardpoint" },
-        "type": { "title": "Type", "description": "The game's hardpoint type (OPT weapon type: laser, ion cannon, torpedo...).", "type": "integer", "minimum": 0, "maximum": 39 }
+        "type": { "title": "Type", "description": "The hardpoint type, from the OPT format.", "enum": ["none", "rebel_laser", "turbo_rebel_laser", "empire_laser", "turbo_empire_laser", "ion_cannon", "turbo_ion_cannon", "torpedo", "missile", "super_rebel_laser", "super_empire_laser", "super_ion_cannon", "super_torpedo", "super_missile", "dumb_bomb", "fired_bomb", "mag_pulse", "turbo_mag_pulse", "super_mag_pulse", "gunner", "cockpit_sparks", "docking_point", "towing", "acceleration_start", "acceleration_end", "inside_hangar", "outside_hangar", "dock_from_big", "dock_from_small", "dock_to_big", "dock_to_small", "pilot_eye", "engine_glow", "custom_1", "custom_2", "custom_3", "custom_4", "custom_5", "custom_6", "jamming_point"] }
       }
     },
     "collision": {

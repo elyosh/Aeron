@@ -866,7 +866,7 @@ target_include_directories(opt2gltf_lib
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/third_party/mikktspace
 )
-target_link_libraries(opt2gltf_lib PUBLIC aeron_opt aeron_cgltf aeron PRIVATE aeron_cjson)
+target_link_libraries(opt2gltf_lib PUBLIC aeron_opt aeron_cgltf aeron PRIVATE aeron_cjson aeron_flight_model)
 if(NOT MSVC)
     target_link_libraries(opt2gltf_lib PUBLIC m)
 endif()
@@ -910,6 +910,7 @@ endif()
 add_library(aeron_flight_model STATIC
     src/asset/flight_model.c
     src/asset/flight_probes.c
+    src/asset/flight_names.c
     src/asset/flight_tags.c
     src/asset/opt_sim_model.c
     src/asset/opt_sim_image.c
@@ -1089,9 +1090,11 @@ if(AERON_BUILD_TOOLS)
         tools/xwau/xwau_mission_tie.c
         tools/xwau/xwau_mission_settings.c
         tools/xwau/xwau_missions.c
+        tools/xwau/xwau_names.c
         tools/xwau/xwau_model.c
         tools/xwau/xwau_object_limits.c
         tools/xwau/xwau_skins.c
+        tools/xwau/xwau_used_models.c
         third_party/lzma/LzmaDec.c)
     target_include_directories(xwau_files
         PUBLIC
@@ -1113,6 +1116,7 @@ if(AERON_BUILD_TOOLS)
     add_library(xwau_import_lib STATIC
         tools/xwau/xwau_awards.c
         tools/xwau/xwau_craft.c
+        tools/xwau/xwau_cube_faces.c
         tools/xwau/xwau_flight_settings.c
         tools/xwau/xwau_game_files.c
         tools/xwau/xwau_hangars.c
@@ -1126,12 +1130,12 @@ if(AERON_BUILD_TOOLS)
         tools/xwau/xwau_stats_profiles.c
         tools/xwau/xwau_text.c
         tools/xwau/xwau_weapon_stats.c)
-    target_link_libraries(xwau_import_lib PUBLIC xwau_files)
+    target_link_libraries(xwau_import_lib PUBLIC xwau_files PRIVATE aeron_flight_model imgbake)
 
-    # Tests the hook file rules, the skin selection and the skybox rotations
-    # on fixed texts.
+    # Tests the hook file rules, the skin selection, the skybox rotations and
+    # the cube faces on fixed texts and images.
     add_executable(xwau_rules_test tools/xwau/tests/xwau_rules_test.c)
-    target_link_libraries(xwau_rules_test PRIVATE xwau_import_lib)
+    target_link_libraries(xwau_rules_test PRIVATE xwau_import_lib imgbake)
     set_target_properties(xwau_rules_test PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
 

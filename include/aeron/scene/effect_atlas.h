@@ -67,10 +67,10 @@ AeronTexture* AeronEffectAtlas_Texture(const AeronEffectAtlas* atlas, int which)
 uint32_t AeronEffectAtlas_PageSize(const AeronEffectAtlas* atlas);
 
 /*
- * AeronEffectData — the game's effect data, `effects.yaml` in the atlas
- * directory: flipbooks for images the game draws directly, keyed by the
- * game's image name ("G-I"), and the energy effects, with their frames
- * resolved in the atlas.
+ * AeronEffectData — the game's effect data, from `effects.yaml` in the atlas
+ * directory. It has flipbooks for images that the game draws directly, keyed
+ * by names that the game chooses (such as "blast_mark.1"), and the energy
+ * effects. Their frames point into the atlas.
  */
 typedef struct AeronEffectData AeronEffectData;
 

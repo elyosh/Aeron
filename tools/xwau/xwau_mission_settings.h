@@ -14,18 +14,24 @@
  * that applies in each mission, and writes it when it differs from what the
  * game does without it:
  *   - the stock rules that the game ties to mission numbers, for
- *     red_alert, skip_hyperspaced_messages, skip_arrival_messages_iff and
- *     force_player_in_turret;
+ *     red_alert, hide_hyperspace_exit_messages, skip_arrival_messages_iff
+ *     and force_player_in_turret. When the hook hides the hyperspace
+ *     messages, it also hides the "entering area" messages, so
+ *     hide_friendly_arrival_messages is written too;
  *   - the defaults of flight/flight.yaml for warhead_collision_damage,
- *     damage_through_shields_on_hard and interdiction_regions, which come
- *     from the global settings (XwauMissionSettings_WriteDefaults).
+ *     damage_through_shields_on_hard and hyperspace_abort_sound_regions,
+ *     which come from the global settings
+ *     (XwauMissionSettings_WriteDefaults).
  *
  * As in the hook, a key is found in any case, the first line with it wins,
  * and numbers are read as std::stoi reads them. A value that isn't a number
- * stops XWAU (std::stoi throws); it is reported, and the default is used.
+ * stops XWAU (std::stoi throws), so the default is used.
  *
  * Without hook_mission_tie.dll, there are no settings, and without
- * hook_engine_sound.dll, no interdiction regions.
+ * hook_engine_sound.dll, there are no interdiction regions. The import
+ * doesn't convert IsMissionRanksModifierEnabled, and counts it as
+ * unsupported. It does the same for order of battle texts that aren't ASCII,
+ * since the game may show them differently.
  */
 
 #include <stdbool.h>
@@ -106,8 +112,8 @@ void XwauSettingsConfig_Free(XwauSettingsConfig* config);
  * no_starship_fire_from_destroyed_racks, no_player_warhead_slot_cap and
  * weapon rules,
  * hook_engine_sound's starship_ambient_sounds, and hook_mission_objects'
- * gunner_weapon_select_in_seat, gunner_fires_warheads and, with
- * UnlimitedTurretLaser = 1, gunner_fires_selected_group, and
+ * gunner_weapon_select_in_seat, gunner_warheads_need_cockpit_hardpoint
+ * and, with UnlimitedTurretLaser = 1, gunner_fires_selected_group, and
  * hook_crafts_count's overlapping_fly_by_sounds. Returns whether it wrote
  * anything.
  */
@@ -162,8 +168,9 @@ typedef struct XwauMissionSettings {
 
 /* Reads the settings of mission `base` (such as "Missions/1b7m2w") of the
  * installation `game`, with number `number` (-1 when it has none), whose
- * [mission_tie] `key = value` lines are `lines`. Problems are reported with
- * `base` as their label. Returns false when out of memory. */
+ * [mission_tie] `key = value` lines are `lines`. Problems that make the
+ * import fail are reported with `base` as their label. Returns false when
+ * out of memory. */
 bool XwauMissionSettings_Read(const char* game, const char* base, int number, const XwauLines* lines,
 							  const XwauSettingsConfig* config, XwauMissionSettings* out);
 void XwauMissionSettings_Free(XwauMissionSettings* settings);
@@ -171,9 +178,9 @@ void XwauMissionSettings_Free(XwauMissionSettings* settings);
 /* Whether the settings write anything. */
 bool XwauMissionSettings_Any(const XwauMissionSettings* settings);
 
-/* Drops, with a report, the flight groups past the end of the .TIE that
- * plays, which has `fg_count` of them. */
-void XwauMissionSettings_CheckFlightGroups(XwauMissionSettings* settings, size_t fg_count, const char* base);
+/* Drops the flight groups past the end of the .TIE that plays, which has
+ * `fg_count` of them. */
+void XwauMissionSettings_CheckFlightGroups(XwauMissionSettings* settings, size_t fg_count);
 
 /* Writes the `settings` section, when there is anything to write. */
 void XwauMissionSettings_Write(FILE* f, const XwauMissionSettings* settings);

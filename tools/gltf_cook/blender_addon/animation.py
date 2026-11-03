@@ -171,11 +171,12 @@ class AeronDamageAlternative(PropertyGroup):
 class AeronDamage(PropertyGroup):
     library: StringProperty(name="Library", search=_library_search, search_options={'SUGGESTION'},
                             description="Effect library that holds the damage images")
-    choice: IntProperty(name="Pick Group", min=0,
-                        description="Each object picks one alternative. Materials with the same pick group pick "
-                                    "the same one")
-    placement: IntProperty(name="Square Group", min=0,
-                           description="Materials with the same square group share the same random square")
+    choice: StringProperty(name="Pick Group", default="default",
+                           description="Each object picks one alternative. Materials with the same pick group "
+                                       "pick the same alternative")
+    placement: StringProperty(name="Square Group",
+                              description="Materials with the same square group share the same random square. "
+                                          "When empty, the pick group is used")
     alternatives: CollectionProperty(type=AeronDamageAlternative)
     active_alternative: IntProperty()
 
@@ -240,7 +241,8 @@ def clear(material):
     props.flipbooks_given = props.has_damage = props.energy_override = False
     props.damage.alternatives.clear()
     props.damage.library = ""
-    props.damage.choice = props.damage.placement = 0
+    props.damage.choice = "default"
+    props.damage.placement = ""
     props.details.clear()
     props.energy.set(())
 
@@ -271,8 +273,8 @@ def set_entry(material, entry):
         damage = entry["damage"]
         props.has_damage = True
         props.damage.library = damage["library"]
-        props.damage.choice = int(damage["choice"])
-        props.damage.placement = int(damage["placement"])
+        props.damage.choice = damage["choice"]
+        props.damage.placement = damage.get("placement", "")
         for alternative in damage["alternatives"]:
             item = props.damage.alternatives.add()
             item.stage_75, item.stage_50, item.stage_25 = (stage or "" for stage in alternative["stages"])
@@ -330,8 +332,10 @@ def entry(material):
             elif alternative.offset_mode == 'RANGE':
                 out["offset"] = {"min": list(alternative.offset_min), "max": list(alternative.offset_max)}
             alternatives.append(out)
-        result["damage"] = {"library": damage.library, "choice": damage.choice, "placement": damage.placement,
-                            "alternatives": alternatives}
+        result["damage"] = {"library": damage.library, "choice": damage.choice or "default"}
+        if damage.placement and damage.placement != result["damage"]["choice"]:
+            result["damage"]["placement"] = damage.placement
+        result["damage"]["alternatives"] = alternatives
     if len(props.details):
         details = []
         for detail in props.details:

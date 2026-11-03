@@ -362,7 +362,7 @@ def _loaded(operator, context):
 
 
 def _document(loaded, name):
-    return {"version": 1, "library": name, "images": dict(loaded.libraries.get(name, {}).get("images", {}))}
+    return {"library": name, "images": dict(loaded.libraries.get(name, {}).get("images", {}))}
 
 
 def _write(operator, context, loaded, cooker, name, document, message):

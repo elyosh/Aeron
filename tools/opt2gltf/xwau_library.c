@@ -68,8 +68,8 @@ static Library* library_for(const char* dat_written) {
 	for (size_t i = 0; i < g_library_count; ++i)
 		if (strcmp(g_libraries[i].name, name) == 0) {
 			if (strcmp(g_libraries[i].dat, rel) != 0)
-				Report(NULL, "library %s comes from both %s and %s, using the first one", name,
-					   g_libraries[i].dat, rel);
+				ReportFatal(NULL, "library %s comes from both %s and %s, which the import can't tell apart",
+							name, g_libraries[i].dat, rel);
 			return &g_libraries[i];
 		}
 	Library* l = ARRAY_PUSH(g_libraries, g_library_count);
@@ -260,10 +260,9 @@ static const float kWhite[3] = { 1.0f, 1.0f, 1.0f };
 
 static bool energy_yaml(TextBuffer* y) {
 	char rel[1024];
-	if (!find_file(ENERGY_DAT, rel, sizeof rel)) {
-		Report(NULL, "%s not found, so there are no energy effects", ENERGY_DAT);
+	/* Without the DAT, XWAU has no energy effects either. */
+	if (!find_file(ENERGY_DAT, rel, sizeof rel))
 		return true;
-	}
 	char     err[512];
 	XwauDat* dat = XwauDat_Open(rel, err, sizeof err);
 	if (!dat) {
@@ -339,10 +338,8 @@ static bool image_flipbook(TextBuffer* y, const char* name, const XwauMatFile* m
 	if (!q)
 		return false;
 	char path[1024], err[512];
-	if (!find_file(q->dat, path, sizeof path)) {
-		Report(name, "%s not found", q->dat);
+	if (!find_file(q->dat, path, sizeof path))
 		return false;
-	}
 	XwauDat* dat = XwauDat_Open(path, err, sizeof err);
 	if (!dat) {
 		Report(NULL, "%s", err);
@@ -401,7 +398,9 @@ static bool image_flipbook(TextBuffer* y, const char* name, const XwauMatFile* m
 	char             rel[256], library[64];
 	if (!Xwau_DatNames(q->dat, rel, sizeof rel, library, sizeof library))
 		return false;
-	TextAppend(y, "  \"%d-%d\": { library: %s, kind: %s, mode: %s, frames: [", group, image, library,
+	/* The game calls image n of the blast mark group blast_mark.<n>,
+	   counting from 1. */
+	TextAppend(y, "  blast_mark.%d: { library: %s, kind: %s, mode: %s, frames: [", image + 1, library,
 			   XwauFx_KindName(kind), q->mode == XWAU_SEQ_ONCE ? "once" : "loop");
 	bool ok = true;
 	for (size_t i = 0; i < count; ++i) {
@@ -449,9 +448,16 @@ static bool images_yaml(TextBuffer* y) {
 	int  marks       = 0;
 	int* mark_images = (int*)malloc((count ? count : 1) * sizeof *mark_images);
 	for (size_t k = 0; k < count; ++k) {
-		XwauMatFile* mat = XwauMat_Load(found[k].mat, &defaults);
-		if (!mat)
+		/* The game only reads the blast mark group from effects.yaml. The
+		 * flight art import (bake_xwau_flight.c in the mod importer) reads
+		 * the DAT material files of the other groups. */
+		if (found[k].group != BLAST_MARK_GROUP)
 			continue;
+		XwauMatFile* mat = XwauMat_Load(found[k].mat, &defaults);
+		if (!mat) {
+			Report(found[k].mat, "cannot read the file");
+			continue;
+		}
 		char name[64];
 		snprintf(name, sizeof name, "dat-%d-%d", found[k].group, found[k].image);
 		const bool has = image_flipbook(y, name, mat, found[k].group, found[k].image);
@@ -482,9 +488,9 @@ static bool images_yaml(TextBuffer* y) {
 						char key[96];
 						XwauFx_Key(key, sizeof key, BLAST_MARK_GROUP, all[i], XWAU_FX_MARK, kWhite, 0);
 						TextAppend(y,
-								   "  \"%d-%d\": { library: blastmarks, kind: mark, mode: loop, frames: "
+								   "  blast_mark.%d: { library: blastmarks, kind: mark, mode: loop, frames: "
 								   "[[\"%s\", 1]] }\n",
-								   BLAST_MARK_GROUP, all[i], key);
+								   all[i] + 1, key);
 						ok &= request(dat_written, BLAST_MARK_GROUP, all[i], XWAU_FX_MARK, kWhite, 0, true);
 					}
 					free(all);
@@ -710,8 +716,7 @@ static bool write_library_sources(Library* l, const char* effects_dir, bool merg
 	if (existing && !doc)
 		Report(NULL, "%s", err);
 	bool ok = doc && (existing ? cJSON_IsObject(entries)
-							   : cJSON_AddNumberToObject(doc, "version", 1) &&
-									 cJSON_AddStringToObject(doc, "library", l->name) &&
+							   : cJSON_AddStringToObject(doc, "library", l->name) &&
 									 (entries = cJSON_AddObjectToObject(doc, "images")));
 	if (existing && doc && !ok)
 		Report(file, "no images");
@@ -719,8 +724,7 @@ static bool write_library_sources(Library* l, const char* effects_dir, bool merg
 	int    diff   = 0;
 	Sink   sink   = { .dir = dir };
 	ok            = ok && make_inputs(l, path, &sink, entries, existing, &images, &diff);
-	char header[300];
-	snprintf(header, sizeof header, "# Effect library %s, imported from XWAU's %s.\n", l->name, l->dat);
+	const char* header = "# Made by the OpenXWA mod importer.\n";
 	if (existing && !images) {
 		cJSON_Delete(doc);
 		return ok;
@@ -728,8 +732,8 @@ static bool write_library_sources(Library* l, const char* effects_dir, bool merg
 	ok = ok && EffectFiles_Write("opt2gltf", doc, existing ? NULL : header, file);
 	cJSON_Delete(doc);
 	if (ok)
-		Report(NULL, "library %s: %zu image(s) %s (largest rounding error: %d/255)", l->name, images,
-			   existing ? "added" : "written", diff);
+		ReportDetail(NULL, "library %s: %zu image(s) %s (largest rounding error: %d/255)", l->name, images,
+					 existing ? "added" : "written", diff);
 	return ok;
 }
 
@@ -754,17 +758,26 @@ static void reset(const char* game) {
 	g_game          = game;
 }
 
-/* Reports the libraries that aren't XWAU's, and sorts the others by name. */
-static void sort_libraries(void) {
-	for (size_t i = 0; i < g_skipped_count; ++i)
-		Report(NULL, "library %s: no Effects/%s.dat, not an XWAU library; left alone", g_skipped[i],
-			   g_skipped[i]);
+/* Reports the libraries that aren't XWAU's, and sorts the others by name. A
+ * model of a project can use a library of the project that isn't made from
+ * a DAT, which is a detail line. In an import (`imported`), every model comes
+ * from the mod, so a library without Effects/<name>.dat is one whose DAT is
+ * somewhere else, and its images can't be made. That is counted with
+ * ReportUnsupported. */
+static void sort_libraries(bool imported) {
+	for (size_t i = 0; i < g_skipped_count; ++i) {
+		if (imported)
+			ReportUnsupported("effect images from DAT files outside the Effects folder");
+		else
+			ReportDetail(NULL, "library %s: no Effects/%s.dat, not an XWAU library; left alone", g_skipped[i],
+						 g_skipped[i]);
+	}
 	qsort(g_libraries, g_library_count, sizeof *g_libraries, cmp_library);
 }
 
 /* Writes the libraries read into <project>/effects. */
 static bool write_libraries(const char* effects, bool merge) {
-	sort_libraries();
+	sort_libraries(false);
 	bool ok = true;
 	for (size_t i = 0; i < g_library_count; ++i)
 		ok &= write_library_sources(&g_libraries[i], effects, merge);
@@ -780,7 +793,6 @@ static bool read_libraries(const char* const* inputs, size_t count, const char* 
 	for (size_t i = 0; i < count; ++i)
 		ok &= read_models(inputs[i]);
 	TextBuffer y = { 0 };
-	TextAppend(&y, "version: 1\n");
 	ok &= energy_yaml(&y) && images_yaml(&y);
 	if (y.failed) {
 		Report(NULL, "out of memory");
@@ -857,7 +869,7 @@ XwauLibrarySet* XwauLibrary_Read(const char* game, const char* const* inputs, si
 		return NULL;
 	}
 	const bool ok = read_libraries(inputs, count, dir);
-	sort_libraries();
+	sort_libraries(true);
 	XwauLibrarySet* set = ok ? (XwauLibrarySet*)calloc(1, sizeof *set) : NULL;
 	if (set) {
 		set->game          = game;
@@ -910,10 +922,9 @@ bool XwauLibrary_Make(const XwauLibrarySet* set, size_t index, int threads, cJSO
 		return false;
 	}
 	cJSON* doc = cJSON_CreateObject();
-	cJSON* entries =
-		doc && cJSON_AddNumberToObject(doc, "version", 1) && cJSON_AddStringToObject(doc, "library", l->name)
-			? cJSON_AddObjectToObject(doc, "images")
-			: NULL;
+	cJSON* entries = doc && cJSON_AddStringToObject(doc, "library", l->name)
+						 ? cJSON_AddObjectToObject(doc, "images")
+						 : NULL;
 	Sink   sink   = { 0 };
 	size_t images = 0;
 	int    diff   = 0;
@@ -924,7 +935,8 @@ bool XwauLibrary_Make(const XwauLibrarySet* set, size_t index, int threads, cJSO
 		cJSON_Delete(doc);
 		return false;
 	}
-	Report(NULL, "library %s: %zu image(s) made (largest rounding error: %d/255)", l->name, images, diff);
+	ReportDetail(NULL, "library %s: %zu image(s) made (largest rounding error: %d/255)", l->name, images,
+				 diff);
 	*library = doc;
 	*inputs  = sink.kept;
 	*count   = sink.kept_count;

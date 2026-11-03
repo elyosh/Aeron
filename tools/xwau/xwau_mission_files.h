@@ -6,32 +6,35 @@
  * selection gets a file <out>/<dir>/<mission>.yaml (lower case). The game
  * reads it when it loads the mission:
  *
- *     version: 1
  *     resdata: ["planet2", "planetcustom", "backdrop_special"]
  *     settings:
- *       skip_hyperspaced_messages: true
+ *       hide_hyperspace_exit_messages: true
+ *       hide_friendly_arrival_messages: true
  *     model_swaps:
  *       superstardestroyer: superstardestroyerrecentered
  *     craft_names:
  *       containerbrick: { ship_list: "Imperial II Star Destroyer 70", short_name: "ISD" }
  *     concourse:
- *       front_planet: { x: 319, y: 78, image: 15010 }
+ *       front_planet: { position: [1276, 234], image: 15010 }
  *     headlights: true
  *     stats_profiles:
  *       models:
  *         escorttransport: { markings: { 0: "etrmod" } }
  *     flight_groups:
- *       1: { name: "Red 1", craft: 1, markings: 4, warheads: { missiles: 80 } }
- *       26: { name: "Red", craft: 1, craft_markings: { 0: 0, 1: 1 } }
+ *       1: { name: "Red 1", craft: xwing, markings: 4, warheads: { missile: 80 } }
+ *       26: { name: "Red", craft: xwing, craft_markings: { 0: 0, 1: 1 } }
  *     object_profiles:
  *       flight_groups:
- *         32: { profile: "Aeron", name: "Aeron", craft: 14 }
+ *         32: { profile: "Aeron", name: "Aeron", craft: z95 }
  *     skins:
  *       "awing":
- *         0: "0|default_2,ace"
+ *         0: "default_2 + ace"
  *     articulations:
  *       flight_groups:
- *         13: { name: "Red", craft: 1, variant: "1b0m7fw_fg13", start: [sfoils] }
+ *         13: { name: "Red", craft: xwing, variant: "1b0m7fw_fg13", start: [sfoils] }
+ *
+ * A `craft` check is the mod's object type name for the flight group's
+ * craft type.
  *
  * The missions come from XwauMissions_Names, in Missions/, Melee/ and
  * Combat/, and from their MISSION.LST files, since some settings have
@@ -42,8 +45,8 @@
  * The lines are read from <mission>_Objects.txt, or else from the [Objects]
  * section of <mission>.ini, with the hook's C++ rules: when a flight group
  * has several lines, the first one is used. Other ObjectProfile_* keys
- * select a profile by model. They are reported but not imported, and
- * XWAU's data has none.
+ * select a profile by model. The importer doesn't import them, and counts
+ * them as unsupported. XWAU's own data has none.
  *
  * Skins (hook_32bpp): only missions that have their own skin lines
  * (XwauMissions_OwnSkinLines) get skins. For each model that has skins (the
@@ -62,14 +65,14 @@
  * `craft_markings` holds the markings of single craft, keyed by the craft's
  * number in its wave, from 0. A value that doesn't fit in a byte is cut to
  * one, as XWAU does. A craft number past the flight group's craft count is
- * reported but kept, since a skirmish can add craft. A flight group whose
+ * kept, since a skirmish can add craft. A flight group whose
  * name isn't ASCII gets no `name` check, since the game compares the .TIE's
  * bytes and the file is UTF-8.
  *
  * Warhead pools (hook_weapon_rate): `warheads` in a flight group's entry
  * holds the warheads that the flight group has in its hangar
  * (xwau_warhead_pools.h). The pools of a flight group that the .TIE doesn't
- * have are reported and dropped.
+ * have are dropped.
  * Weapon profiles (hook_weapon_rate): `weapon_profile`, `warhead_profile`,
  * `energy_profile` and `linking_profile` in a flight group's entry pick the
  * flight group's profiles. When the model of the flight group's craft
@@ -79,7 +82,9 @@
  * Art (hook_backdrops): `resdata` lists the DATs that the mission adds, in
  * its order: the lines of <mission>_Resdata.txt, or else of the [Resdata]
  * section of <mission>.ini. A DAT that doesn't exist is left out, as XWAU
- * skips it. Each one is written as the game names its mission art: its file
+ * skips it. A DAT whose name is too long for the game, and two
+ * DATs that get the same art name, make the import fail. Each one is
+ * written as the game names its mission art: its file
  * name without the extension, in lower case, with any character other than a
  * letter, a digit, '_' or '-' made '_'. The bake decides which of them get
  * their own mission art (resdata/mission_art/<name>); the game uses those
@@ -90,10 +95,11 @@
  * loads model B wherever the game loads A, in flight and in the briefing. As
  * in the hook, the first line for a path wins, in any case, and a swap whose
  * B doesn't exist is dropped. OpenXWA also needs B's GLB in the mod folder,
- * next to the output folder (<out>/../models/<b>.glb): a swap without it is
- * reported and dropped. Both are written as model keys. A swap to or from a
- * model with [ExeCraftValues] is reported: XWAU then gives the craft other
- * values in that mission, and the object type files can't (xwau_objects.h).
+ * next to the output folder (<out>/../models/<b>.glb). A swap without it
+ * makes the import fail. Both are written as model keys. A swap to or from a
+ * model with [ExeCraftValues] is kept, and counted as unsupported, because
+ * XWAU then gives the craft other values in that mission, and the object
+ * type files can't (xwau_objects.h).
  *
  * Craft names (hook_mission_tie): the lines `craft, N, <key>, <value>` of
  * the [mission_tie] lines rename the craft of record N for the mission:
@@ -101,7 +107,10 @@
  * `mapicon`, written as `ship_list`, `name`, `short_name`, `plural` and
  * `map_icon`. The last line for a value wins, as in the hook's flight. They
  * are written by model: the list row of the first object type that uses
- * record N in XWAU's tables. A model that no flight group uses is reported.
+ * record N in XWAU's tables. Names that aren't ASCII are counted as
+ * unsupported, since the game may show them differently. Two used records with the same model, and a model
+ * whose first and last name lines differ (XWAU shows the first in the briefing), make the import fail,
+ * because the mission file holds one set of names for each model.
  *
  * Settings (hook_mission_tie, and hook_engine_sound's [Interdiction]):
  * `settings` holds the values that apply in the mission and that differ from
@@ -109,8 +118,8 @@
  *
  * Concourse planet (hook_concourse): `concourse` holds the planet image and
  * position that the mission sets (xwau_concourse.h). An image group that no
- * DAT of RESDATA.TXT has is reported but kept: the concourse then shows no
- * planet, as in XWAU.
+ * DAT of RESDATA.TXT has is kept: the concourse then shows no planet, as in
+ * XWAU.
  *
  * Headlights (ddraw): `headlights: true` when `Enabled` of the mission's
  * [Headlights] section isn't 0. The light itself is in the `headlights`
@@ -124,15 +133,17 @@
  * plays: the mod's own when it has one (xwau_game_files.h copies it into the
  * mod folder), else the game's. `name` and `craft` are that flight group's
  * values, and the game checks them again. A selection for a flight group that
- * the .TIE doesn't have is reported and dropped, as XWAU ignores it.
+ * the .TIE doesn't have is dropped, as XWAU ignores it.
  *
- * Text is written as UTF-8. Problems go to stderr.
+ * Text is written as UTF-8. Problems go to stderr. Laser rates by flight
+ * group (hook_weapon_rate) aren't imported, and are counted as unsupported.
  */
 
 #include <stdbool.h>
 
 #include "xwau_config.h"
 #include "xwau_missions.h"
+#include "xwau_names.h"
 
 /* Reads the [Objects] lines of mission `base` ("<dir>/<mission>"):
  * <mission>_Objects.txt, or else the [Objects] section of <mission>.ini.
@@ -140,9 +151,11 @@
 bool XwauMissionFiles_ObjectLines(const char* game, const char* base, XwauLines* lines);
 
 /* Writes the mission files under `out`. `stock_game` is the stock game's
- * folder, which has the .TIE of the missions that the mod doesn't bring.
- * Returns false on an error. */
+ * folder, which has the .TIE files of the missions that the mod doesn't
+ * change. The files use the names in `game_names`. `design_scale` is the
+ * number of design pixels of the mod's frontend files in one 640x480 unit,
+ * across and down. Returns false on an error. */
 bool XwauMissionFiles_Write(const char* game, const XwauMissions* missions, const char* stock_game,
-							const char* out);
+							const char* out, const XwauNames* game_names, const int design_scale[2]);
 
 #endif /* AERON_XWAU_MISSION_FILES_H */

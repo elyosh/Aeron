@@ -13,16 +13,18 @@
  * the global lines, and the first line with a key wins. So a model's key
  * only hides the global key with the same name. Keys can be written in any
  * case. A value is read the way std::stoi(value, 0, 0) reads it, and -1
- * means "not set".
+ * means "not set". A model's -1 still hides the global line with the same
+ * key. The game can't do that, so the import then fails.
  *
  * [WeaponStats] keys look like
  * [<Profile>_]Weapon<NNN>[_Player][_Easy|_Medium|_Hard]_<Stat>, for weapon
  * types 280 to 307. The stats are DurationIntegerPart, DurationDecimalPart,
  * Score, Speed, Power, PowerSpeedPercent, FireRate, DurationOffset,
  * FireRatio, Range, IsPrecise, DegreeOfSpreadMask, DechargeRate,
- * RechargeRate and EnergyLowHighSeparation. Side and SideModel aren't
- * imported, since no mod sets them. When the hook's EnableWeaponStatsProfiles
- * is 0, the hook ignores the section, and so does the importer.
+ * RechargeRate and EnergyLowHighSeparation. The game can't hold Side and
+ * SideModel, so a value other than -1 makes the import fail. When the hook's
+ * EnableWeaponStatsProfiles is 0, the hook ignores the section, and so does
+ * the importer.
  *
  * [WarheadStats] keys look like [<Profile>_]Warhead<T>_CapacityPercent. A
  * value below -1 counts as 0, as in the hook.
@@ -48,19 +50,27 @@
  *   weapons:
  *     stats:
  *       default:
- *         280: {range: 65536, fire_rate: 78}
- *         282: {power: 250, player_easy: {power: 350}}
+ *         rebel_laser: {range: 65536, fire_rate: 78}
+ *         imperial_laser: {power: 250, player_easy: {power: 350}}
  *       "victory2b7m2r":
- *         303: {power: 900}
- *     warhead_capacity_percent: {default: {1: 50}}
+ *         turbolaser_green_light: {power: 900}
+ *     warhead_capacity_percent: {default: {space_bomb: 50}}
  *     energy_speed_q16: {default: {player: 7864}}
  *     linking: {default: {laser_link: 2}}
- *     hardpoint_kinds: [0, 1, 1, ...]
+ *     hardpoint_kinds: {custom_1: laser}
+ *
+ * The weapon types and warheads are written as names. `hardpoint_kinds` maps
+ * hardpoint type names to none, laser or warhead. It only has the hardpoint
+ * types whose kind differs from stock. A kind that the game has no name for
+ * makes the import fail. A warhead type that the game has no name for
+ * doesn't exist, so its value is left out.
  *
  * Profile names are written in lower case. The hook never reads a profile
  * named Default, because Default in a mission means "no profile". Keys of
- * such a profile are reported and left out. So are keys that are set twice
- * and keys that the hook doesn't read.
+ * such a profile are left out. So are keys that are set twice, keys that
+ * the hook doesn't read and lines without a key. The Side and SideModel
+ * keys of [WeaponStats] aren't imported. A profile name longer than 47
+ * characters makes the import fail.
  *
  * A mission picks a profile for a flight group with WeaponProfile_fg_<N> in
  * <mission>_WeaponProfiles.txt, or else in the [WeaponProfiles] section of
@@ -71,12 +81,15 @@
  * entry in the mission file:
  *
  *   flight_groups:
- *     13: { name: "Devastator", craft: 26, weapon_profile: "devastatorb7m2r" }
+ *     13: { name: "Devastator", craft: imperial_star_destroyer2, weapon_profile: "devastatorb7m2r" }
  */
 
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdio.h>
+
+#include "xwau_game_tables.h"
+#include "xwau_names.h"
 
 enum {
 	XWAU_WEAPON_STATS_STATS,
@@ -105,6 +118,11 @@ typedef struct XwauWeaponStats {
 	int  hardpoint_kinds[XWAU_WEAPON_STATS_HARDPOINT_TYPES];
 	int  hardpoint_kind_count;
 	bool has_hardpoint_kinds;
+	/* For a model with hardpoint kinds, the global kinds. The game uses them
+	   for the hardpoint types that the model's map leaves out. */
+	int  global_hardpoint_kinds[XWAU_WEAPON_STATS_HARDPOINT_TYPES];
+	int  global_hardpoint_kind_count;
+	bool has_global_hardpoint_kinds;
 } XwauWeaponStats;
 
 /* Reads the sections of model `model` ("TieFighter") in the installation
@@ -116,8 +134,12 @@ bool XwauWeaponStats_Read(const char* game, const char* model, XwauWeaponStats* 
 void XwauWeaponStats_Free(XwauWeaponStats* stats);
 bool XwauWeaponStats_Any(const XwauWeaponStats* stats);
 
-/* Writes the groups of `stats` into a `weapons` map, at `indent`. */
-void XwauWeaponStats_Write(FILE* f, const char* indent, const XwauWeaponStats* stats);
+/* Writes the groups of `stats` in a `weapons` map, at `indent`, with the
+ * names in `names`. Only writes the hardpoint kinds that differ from the
+ * kinds that the game would use without them: the global kinds for a model
+ * when the mod has them, else the kinds in `stock`. */
+void XwauWeaponStats_Write(FILE* f, const XwauNames* names, const XwauStockValues* stock, const char* indent,
+						   const XwauWeaponStats* stats);
 
 /* Returns whether model `model` or the global sections have profile
  * `profile` in `group`. */
@@ -139,9 +161,10 @@ typedef struct XwauWeaponProfileChoices {
 bool XwauWeaponStats_ReadChoices(const char* game, const char* base, XwauWeaponProfileChoices* out);
 void XwauWeaponStats_FreeChoices(XwauWeaponProfileChoices* choices);
 const XwauWeaponProfileChoice* XwauWeaponStats_FindChoice(const XwauWeaponProfileChoices* choices, int fg);
-/* Reports the profiles in `choice` that model `model` doesn't have. `model`
- * is a model key, after the mission's swaps. XWAU gives such a flight group
- * the stock values, and OpenXWA gives it the `default` values. */
+/* Reports the profiles in `choice` that model `model` doesn't have, and
+ * makes the import fail. `model` is a model key, after the mission's swaps.
+ * XWAU gives such a flight group the stock values, and OpenXWA gives it the
+ * `default` values. */
 void XwauWeaponStats_ReportChoice(const char* game, const char* base, const char* model,
 								  const XwauWeaponProfileChoice* choice);
 bool XwauWeaponStats_AnyChoice(const XwauWeaponProfileChoice* choice);

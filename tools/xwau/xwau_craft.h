@@ -4,241 +4,69 @@
 /*
  * Writes the model settings of an XWAU installation (the mod importer's
  * craft phase):
- *   <output_dir>/models/<model key>.yaml  the settings of one model, next to
- *                                         its GLB
- *   <output_dir>/hud.yaml                 the hull and map icon lists, and how
- *                                         the target display shows the target
- *
- * A model's key is its INI file's name in lower case, without the extension:
- * FlightModels/Awing.ini gives models/awing.yaml. A settings file is written
- * only for a model that has a setting:
+ *   - <output_dir>/models/<model key>.yaml holds the settings of one model,
+ *     next to its GLB. The key is the name of the model's INI file in lower
+ *     case, such as awing for FlightModels/Awing.ini. A model without any
+ *     setting gets no file.
+ *   - <output_dir>/hud.yaml holds the hull and map icons, and how the target
+ *     display shows the target.
  *
  *   hud:
- *     reticle: {5: 135, 6: 136, ...}                 # image position for each slot
- *     colors: {inner: 0xff5b5b5b, border: 0xffe5e5e5} # ARGB
+ *     reticle: {laser: 135, laser_in_range: 136}
+ *     colors: {inner: 0xff5b5b5b, border: 0xffe5e5e5}
  *   engine_glows:
- *     0: {min_speed_percent: 1}                      # by glow, in the model's order
  *     6: {min_speed_mglt: 40}
- *
  *   weapons:
- *     switch_by_iff: true                            # fire the weapons of the craft's side
- *     colors:                                        # any markings
- *       variant: {default: 3, 284: 1}                # the bolt's markings, by weapon type
- *       impact: {280: 0xff0000, 282: 0}              # RGB; 0 keeps the stock white mark
- *       energy_bars: {laser_high: 0xffff0000}        # ARGB
- *     by_markings:                                   # the changes for one markings value
- *       1:
- *         variant: {default: 2}
- *   stats_profiles:                                  # xwau_stats_profiles.h
- *     default: {speed: 86, hull: 3045}
- *   shield: {per_generator_rate: 5, player_rate: 40, delay_seconds: 30}
- *
- * A model's laser rates go in its `weapons` group:
- *
- *   weapons:
+ *     switch_by_iff: all
  *     rates: {decharge: 2, recharge: 3, cooldown: 47}
- *
- * The reticle comes from FlightModels/<model>Reticle.txt, else the [Reticle]
- * section of FlightModels/<model>.ini, read like XWAU's reticle hook: the
- * slots are 5 to 10 and 15 to 22, a key is Reticle_<slot>, and a slot set
- * to -1 is left out. The colours come from the [HUDColor] section of the
- * model's INI, read like XWAU's ddraw wrapper (LoadHUDColorFromIniFile in
- * Effects.cpp): a section counts when its header line contains "[HUDColor]"
- * in this case, the last value of a key wins, and each colour needs three
- * numbers from 0 to 1.
- *
- * The engine glows come from FlightModels/<model>EngineGlows.txt, else the
- * [EngineGlows] section of the model's INI, read like XWAU's hook_opt_limit:
- * each line is "glow, percent, mglt", a line with fewer than 3 values is
- * skipped, and the first line of a glow wins. A glow is hidden while the
- * craft's speed is below `min_speed_percent` of its top speed, or below
- * `min_speed_mglt`. The hook's -1 means no limit, and so does any value of 0
- * or less, since a speed is never below it; such a limit isn't written.
- *
- * The weapon colours come from FlightModels/<model>WeaponColor.txt, else the
- * [WeaponColor] section of the model's INI, read like XWAU's
- * hook_weapon_color:
- *   - WeaponColor and WeaponColor<NNN> give the markings of the bolts of
- *     weapon type NNN (280 to 307). -1 means not set, and 0 is a value.
- *   - WeaponImpactColor_3100 to _3500 give the impact colour of a group of
- *     weapon types, and WeaponImpactColor<NNN> of one type. The importer
- *     expands the groups to weapon types with the hook's table.
- *   - EnergyBarColorLaserHigh, ...LaserLow, ...IonHigh and ...IonLow give
- *     the player's charge bar colours.
- *   - Each key can end with _fg<m>_ (WeaponColor_fg1_, WeaponColor_fg1_280),
- *     which applies to markings m on top of the keys without it.
- * The first line of a key wins. Markings are read with std::stoi(value, 0,
- * 0) and kept as the byte the hook writes; colours are read with
- * std::stoul(value, 0, 16). A colour of 0 means not set, except for a group
- * key without _fg, where it sets the group back to the stock white mark. An
- * impact colour loses its alpha, as in XWAU, and one whose RGB565 value is 0
- * becomes 0, since XWAU then keeps the stock mark. WeaponLightColor keys
- * aren't imported: XWAU players see the light of the bolt's material
- * instead. WeaponSwitchBasedOnIff gives switch_by_iff: -1 isn't set, and
- * any other value is true when it isn't 0.
- *
- * The shield recharge comes from FlightModels/<model>Shield.txt, else the
- * [Shield] section of the model's INI, read like XWAU's hook_shield. With
- * `UseGenerator = 1`, `PerGeneratorRechargeRate` gives `per_generator_rate`;
- * otherwise `RechargeRate` gives `rate`. Both default to 0 when the section
- * exists. `PlayerRechargeRate` gives `player_rate` and `RechargeRateDelay`
- * gives `delay_seconds`; they are written when they aren't 0, since the
- * hook treats 0 as not set. A model without the section gets no `shield`
- * group, and the game uses its default rate (shield_recharge.h).
- *
- * The laser rates come from FlightModels/<model>WeaponRate.txt, or else from
- * the [WeaponRate] section of the model's INI. They are read the way XWAU's
- * hook_weapon_rate reads them, and go into groups of `weapons`:
- *
- *   rates: {decharge: 2, recharge: 3, cooldown: 47}
- *       DechargeRate, RechargeRate, CooldownTimeFactor, DechargeRatePercent
- *       and RechargeRatePercent (decharge_percent, recharge_percent)
- *   energy_transfer: {rate: 32}
- *       EnergyTransferRate, EnergyTransferRatePenalty (penalty),
- *       EnergyTransferWeaponLimit (laser_limit), EnergyTransferShieldLimit
- *       (shield_limit)
- *   ai_torpedoes: {per_pass: 2, per_target: 6}
- *       MaxTorpedoCountPerPass, MaxTorpedoCountPerTarget
- *   impact_spin: {enabled: false, speed_percent: 25, angle_percent: 25}
- *       IsImpactSpinningEnabled, ImpactSpinningSpeedFactorPercent,
- *       ImpactSpinningAngleFactorPercent
- *   system_damage: {max: 1000, 284: 1, 285: 2, 290: 4, 296: 30}
- *       MaxSystemDamages, Weapon284_LaserIon_Damages,
- *       Weapon285_LaserIonTurbo_Damages, Weapon290_LaserIonTurbo_Damages,
- *       Weapon296_MagPulse_Damages
- *
- * -1 means not set; other values below 0 are reported and left out. Any
- * IsImpactSpinningEnabled but 0 turns the spin on.
- *
- * The hook only reads a model's section when the global section has no
- * lines, except for the energy transfer keys, which it reads from the model
- * first. The global section is FlightModels/WeaponRate.txt, or else the
- * [WeaponRate] section of FlightModels/default.ini. The importer writes the
- * model's values anyway, and the game uses them instead of the global ones.
- * The report counts the models whose values XWAU ignores. The global values
- * go in flight/flight.yaml (xwau_flight_settings.h).
- * The weapon profiles in the model's [WeaponStats], [WarheadStats],
- * [EnergyStats], [LinkingStats] and [WeaponHardpointTypes] go into the same
- * `weapons` group.
- *
- * The component strength comes from FlightModels/<model>
- * SubcomponentsStrength.txt, or else from the [SubcomponentsStrength]
- * section of the model's INI, if the installation has hook_opt_limit.dll
- * with that feature. Each line is the strength of one mesh type, in the
- * order of the game's mesh types, and -1 keeps the game's strength:
- *
- *   component_strength: {gun_turret: 18, small_gun: 18, shield_generator: 36}
- *
- * The hook reads each line as a number, and a line that isn't one would
- * crash XWAU: such a section is reported and left out. Lines past the 32nd
- * aren't used. A strength above 255 doesn't fit in the game's component
- * health, so it is reported and left out.
- *
- * The gunner seats come from FlightModels/<model>Turrets.txt, or else from
- * the [Turrets] section of the model's INI, if the installation has
- * hook_mission_objects.dll (xwau_gunner_seats.h).
- *
- * The warhead lock settings come from FlightModels/<model>WarheadLock.txt,
- * or else from the [WarheadLock] section of the model's INI, if the
- * installation has hook_weapon_lock.dll:
- *
- *   warhead_lock:
- *     lock_range: {small: 102400, big: 244332, transport: 101805}
- *     lock_ticks: 354                  # LockTime
- *     ticks_per_homing_level: 118      # LockStrengthDivisor
- *     ai_lock_ticks_per_tier: 472      # AILockTimeFactor
- *     ai_lock_range: {small: 102400, big: 244332, big_top_tier: 101805}
- *
- * lock_range comes from LockDistance0 to 2, and ai_lock_range from
- * AILockDistance0 to 2. The global [WarheadLock] section of default.ini, or
- * FlightModels/WarheadLock.txt, sets the AI's ranges by the category of the
- * AI's craft. No mod has it, so it isn't imported, and it is reported.
- *
- * The jamming rule comes from FlightModels/<model>Jamming.txt, or else from
- * the [Jamming] section of the model's INI, if the installation has
- * hook_jamming.dll:
- *
+ *     colors:
+ *       variant: {default: 3, ion_cannon: 1}
+ *       impact: {rebel_laser: 0xff0000}
+ *     by_markings:
+ *       1: {variant: {default: 2}}
+ *   shield: {per_generator_rate: 5, player_rate: 40, delay_seconds: 30}
+ *   component_strength: {gun_turret: 18, shield_generator: 36}
+ *   warhead_lock: {lock_ticks: 354, lock_range: {small: 102400}}
  *   jamming: {enabled: true, direction: down, range: none, rule: hangar_point}
- *
- * HasJamming = 0 gives `jamming: {enabled: false}`. Otherwise all four keys
- * are written: the hook's default for a key that the section leaves out
- * isn't the game's stock rule for the object type. JammingDirection is All,
- * Up or Down, and JammingBehavior is None, HangarMeshCenter,
- * InsideHangarHardpoint or InsideHangarHardpointAndJammingPoints, in this
- * case. The hook uses All and InsideHangarHardpointAndJammingPoints for
- * other values, and the importer reports them. JammingDistance -1 is
- * `range: none`. A distance below -1 never jams, so it gives
- * `enabled: false`, and is reported.
- *
- * The cap of the player's docking approach height comes from the
- * DockElevation key of FlightModels/<model>Dock.txt, or else of the [Dock]
- * section of the model's INI, if the installation has hook_dock.dll:
- *
  *   docking: {approach_height: 0}
- *
- * A section without the key gives 932. Without a section, the game uses the
- * hook's defaults: 0 for SpaceColony2, 932 for the others.
- *
- * The sounds come from FlightModels/<model>Sound.txt, or else from the
- * [Sound] section of the model's INI. They are read the way XWAU's
- * hook_engine_sound reads them, and only if the installation has
- * hook_engine_sound.dll:
- *
- *   sound:
- *     interior: awing            # EngineSoundInterior 1 to 7
- *     fly_by: slave              # EngineSoundFlyBy 1 to 8, 11 to 18, 21 to 28
- *     fly_by_mode: 3d            # 2d for 11 to 18, 3d for 21 to 28
- *     engine_wash: starship      # EngineSoundWash: 2 starship, else normal
- *     take_off: falcon           # EngineSoundTakeOff: 2 falcon, else gear
- *     weapons: empire            # WeaponSoundBehavior
- *     weapon_ranges: {283: {first: 2, count: 3}}  # WeaponSoundRange*_283
- *     hyper: rebel               # HyperSoundBehavior 0 to 2
- *     ambient: {offset_m: [0, 300, 0], distance_m: 1000}
- *
- * An engine sound of 0, a HyperSoundBehavior of -1 and an empty
- * WeaponSoundBehavior all mean "use the sound bank", so they aren't written.
- * A WeaponSoundBehavior that isn't a known behaviour, such as 0, becomes
- * `plain`: the hook then plays each weapon type's own sound. A weapon range
- * needs both keys. A range with a count of 0 would crash XWAU, and the hook
- * drops a range that goes past the WeaponRange bank; both are reported and
- * left out. Other values that make XWAU play nothing are also reported and
- * left out. No hook reads EngineSlowing.
- *
- * `ambient` places the starship ambient sound. AmbientSoundOffsetX, Y and Z
- * become `offset_m` (right, up, forward). AmbientSoundDistance, or
- * AmbientSoundDistanceX, Z and Y, become `distance_m` (right, up, forward):
- * this is how the hook reads the distances for a craft that flies level. If
- * an axis distance is 0, it uses AmbientSoundDistance instead, and an
- * AmbientSoundDistance of 0 counts as 1. An axis with no distance is written
- * as null, and the game then uses the craft's size.
- *
- * The wide cockpit view comes from xwahacker_large_fov in the craft's
- * cockpit file, DynamicCockpit/<model>Cockpit.dc (xwau_model.h). It is
- * written as the vertical field of view that XWAU shows, in degrees:
- *
+ *   sound: {interior: awing, fly_by: slave, ambient: {offset_m: [0, 300, 0]}}
  *   cockpit_view: {wide_vertical_fov: 61.59}
  *
- * The regular view (xwahacker_fov) goes into the camera of the craft
- * model's pilot eye, which the model converter writes.
+ * Each group comes from FlightModels/<model><Name>.txt, or else from the
+ * [<Name>] section of the model's INI, and is read the way the XWAU hook or
+ * ddraw reads it. The names are Reticle, HUDColor, EngineGlows, WeaponColor,
+ * WeaponRate, Shield, SubcomponentsStrength, Turrets (xwau_gunner_seats.h),
+ * WarheadLock, Jamming, Dock and Sound. A section that needs a hook is only
+ * read when the installation has that hook. The weapon profiles of
+ * [WeaponStats], [WarheadStats], [EnergyStats], [LinkingStats] and
+ * [WeaponHardpointTypes] go into `weapons` too (xwau_weapon_stats.h). The
+ * stats profiles are described in xwau_stats_profiles.h.
  *
- * hud.yaml holds `hull_icons` and `map_icons`, from HullIconList.txt and
- * MapIconList.txt, read like XWAU's hull icon hook: the value at position N
- * is the image id for object type N, counting the lines that the hook reads
- * (empty lines and comment lines are skipped). A missing list leaves out its
- * key.
+ * Some values need more than a copy:
+ *   - The weapon colour keys with _fg<m>_ go into `by_markings`. The group
+ *     keys WeaponImpactColor_3100 to _3500 are expanded to weapon types.
+ *   - hook_weapon_rate only reads a model's [WeaponRate] when the global one
+ *     is empty, except for the energy transfer keys. So when the global one
+ *     has lines, only the model's energy transfer keys are written. The
+ *     global values go into flight/flight.yaml (xwau_flight_settings.h).
+ *   - `jamming` always has all four keys, because the hook's default for a
+ *     missing key isn't the game's stock rule. A jamming distance below -1
+ *     never jams, so it gives `enabled: false`.
+ *   - `docking` gets 932 when the [Dock] section has no DockElevation, as in
+ *     the hook.
+ *   - The ambient sound distances are written as right, up and forward in
+ *     metres. An axis without a distance is null, and the game then uses the
+ *     craft's size.
+ *   - `cockpit_view` comes from xwahacker_large_fov in the model's .dc file,
+ *     as the vertical field of view that XWAU shows. The regular field of
+ *     view goes into the camera of the model's pilot eye instead.
  *
- * It also holds `target_display` (craft_hud.h in the game), from the
- * wireframe keys of Dynamic_Cockpit.cfg, read like the ddraw's LoadDCParams
- * and starting from its own values. enable_wireframe_CMD gives the style:
- * edges, or shaded when it is 0. The colours are sRGB values of XWAU's
- * buffer, so they are written as linear values. `colors: friend_foe` comes
- * from GreenAndRedForIFFColorsOnly, in the [hook_tourmultiplayer] section of
- * Hooks.ini, or in hook_tourmultiplayer.cfg when there is no Hooks.ini.
- * `other` is the ddraw's fixed colour for a target without an IFF colour,
- * (0.1, 0.1, 0.5). When the lists and Dynamic_Cockpit.cfg are all missing,
- * hud.yaml isn't written.
- *
- * Files that a run doesn't write are left as they are.
+ * hud.yaml gets `hull_icons` and `map_icons` from HullIconList.txt and
+ * MapIconList.txt. They only list the icons that differ from stock, as image
+ * numbers: XWAU's id 3100 is image 31, and id 0 is `none`. `target_display`
+ * comes from the wireframe keys of Dynamic_Cockpit.cfg and from
+ * GreenAndRedForIFFColorsOnly of hook_tourmultiplayer. Its colours are
+ * written as linear values.
  */
 
 #include <stdbool.h>
@@ -247,6 +75,8 @@
 #include <stdio.h>
 
 #include "xwau_config.h"
+#include "xwau_game_tables.h"
+#include "xwau_names.h"
 #include "xwau_weapon_stats.h"
 
 /* The reticle slots of XWAU's reticle hook. */
@@ -323,7 +153,6 @@ typedef struct XwauCraftWeapons {
 	XwauCraftWeaponRates  rates;
 	bool                  has_markings[256];
 	XwauCraftWeaponColors by_markings[256];
-	bool                  light_colors;  /* the model has WeaponLightColor keys */
 	int                   switch_by_iff; /* WeaponSwitchBasedOnIff: 1 or 0, -1 when not set */
 	XwauWeaponStats       stats;         /* the weapon profiles */
 } XwauCraftWeapons;
@@ -334,8 +163,7 @@ typedef struct XwauCraftWeapons {
 uint32_t XwauCraft_HudColor(float r, float g, float b);
 
 /* Reads the reticle of a model: `reticle_txt` (<model>Reticle.txt) when it
- * has lines, else the [Reticle] section of `ini`. Either path can be NULL.
- * Problems are reported with the file's name. */
+ * has lines, else the [Reticle] section of `ini`. Either path can be NULL. */
 void XwauCraft_ReadReticle(const char* reticle_txt, const char* ini, XwauCraftHud* hud);
 
 /* Reads the [HUDColor] section of `ini`. */
@@ -344,13 +172,13 @@ void XwauCraft_ReadHudColors(const char* ini, XwauCraftHud* hud);
 /* Reads the engine glows of a model: `glows_txt` (<model>EngineGlows.txt)
  * when it has lines, else the [EngineGlows] section of `ini`. Either path
  * can be NULL. A line with a value that isn't a number, or with a glow
- * outside 0 to 255, is reported and skipped. */
+ * outside 0 to 255, is skipped. */
 void XwauCraft_ReadEngineGlows(const char* glows_txt, const char* ini, XwauCraftEngineGlows* glows);
 
 /* Reads the weapon colours of a model: `weapons_txt`
  * (<model>WeaponColor.txt) when it has lines, else the [WeaponColor]
  * section of `ini`. Either path can be NULL. A value that isn't a number is
- * reported and ignored. */
+ * ignored. */
 void XwauCraft_ReadWeapons(const char* weapons_txt, const char* ini, XwauCraftWeapons* weapons);
 
 /* Reads the [Shield] section of a model: `shield_txt` (<model>Shield.txt)
@@ -388,7 +216,8 @@ typedef struct XwauCraftWarheadLock {
  * uses 708 for a LockTime that the section doesn't set, even for the
  * Missile Boat, whose stock value is 354. So LockTime is then always set.
  * The keys with a profile name, such as LockTime_<profile>, aren't
- * imported, and are reported. So are values that would crash XWAU. */
+ * imported. A value out of range makes the import fail, except a value that
+ * would crash XWAU, which is left out. */
 void XwauCraft_ReadWarheadLock(const char* lock_txt, const char* ini, XwauCraftWarheadLock* lock);
 /* Writes the `warhead_lock` group of `lock`. */
 void XwauCraft_WriteWarheadLock(FILE* f, const XwauCraftWarheadLock* lock);
@@ -406,7 +235,7 @@ typedef struct XwauCraftJamming {
 /* Reads the [Jamming] section of a model: `jamming_txt`
  * (<model>Jamming.txt) when it has lines, else the section of `ini`.
  * Either path can be NULL. A HasJamming or JammingDistance that isn't a
- * number would crash XWAU: the section is then reported and left out. */
+ * number would crash XWAU, so the section is then left out. */
 void XwauCraft_ReadJamming(const char* jamming_txt, const char* ini, XwauCraftJamming* jamming);
 /* Writes the `jamming` group of `jamming`. */
 void XwauCraft_WriteJamming(FILE* f, const XwauCraftJamming* jamming);
@@ -421,8 +250,8 @@ typedef struct XwauCraftDock {
 /* Reads the [Dock] section of a model: `dock_txt` (<model>Dock.txt) when it
  * has lines, else the section of `ini`. Either path can be NULL. When the
  * section has lines, a missing DockElevation is 932, as in the hook. A
- * DockElevation that isn't a number would crash XWAU: the section is then
- * reported and left out. */
+ * DockElevation that isn't a number would crash XWAU, so the section is
+ * then left out. */
 void XwauCraft_ReadDock(const char* dock_txt, const char* ini, XwauCraftDock* dock);
 /* Writes the `docking` group of `dock`. */
 void XwauCraft_WriteDock(FILE* f, const XwauCraftDock* dock);
@@ -446,8 +275,10 @@ bool XwauCraft_HasWeaponRates(const XwauCraftWeaponRates* rates);
 bool XwauCraft_HasDefaultFirstRates(const XwauCraftWeaponRates* rates);
 
 /* Writes `rates` as the groups of a `weapons` map, one line each, at
- * `indent`: "  rates: {decharge: 2, recharge: 3}". */
-void XwauCraft_WriteWeaponRates(FILE* f, const char* indent, const XwauCraftWeaponRates* rates);
+ * `indent`: "  rates: {decharge: 2, recharge: 3}". The system damage keys of
+ * weapons use the weapon names in `names`. */
+void XwauCraft_WriteWeaponRates(FILE* f, const XwauNames* names, const char* indent,
+								const XwauCraftWeaponRates* rates);
 
 /* The [Sound] section of a model. */
 typedef struct XwauCraftSound {
@@ -501,9 +332,11 @@ bool XwauCraft_ReadGlobalSwitchByIff(const char* game, bool* on);
 bool XwauCraft_ReadIconList(const char* path, uint16_t** values, size_t* count);
 
 /* Writes the craft files and hud.yaml of the installation `xwau_root` into
- * `output_dir`, and adds to `cockpits`, when it isn't NULL, the gunner
- * cockpits that the files name (XwauGunnerSeats_WriteCockpits). Returns false when a file can't be
- * written or a list can't be read. */
-bool XwauCraft_Write(const char* xwau_root, const char* output_dir, XwauLines* cockpits);
+ * `output_dir`. When `cockpits` isn't NULL, adds the gunner cockpits that
+ * the files use to it. The files use the names in `game_names`. hud.yaml
+ * only lists the icons that differ from `stock_values`. Returns false when a
+ * file can't be written or a list can't be read. */
+bool XwauCraft_Write(const char* xwau_root, const char* output_dir, const XwauNames* game_names,
+					 const XwauStockValues* stock_values, XwauLines* cockpits);
 
 #endif /* AERON_XWAU_CRAFT_H */

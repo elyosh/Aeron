@@ -59,9 +59,15 @@ static bool copy_file(Copy* c, const char* path, bool if_changed, bool* copied) 
 	/* A sound that the game can't play is converted to 16-bit PCM. */
 	uint8_t* converted      = NULL;
 	size_t   converted_size = 0;
-	if (EndsWithNoCase(rel, ".wav") && XwauSoundBanks_ConvertWav((const uint8_t*)data, size, &converted,
-																 &converted_size) == XWAU_WAV_CONVERTED)
+	const XwauWavResult wav =
+		EndsWithNoCase(rel, ".wav")
+			? XwauSoundBanks_ConvertWav((const uint8_t*)data, size, &converted, &converted_size)
+			: XWAU_WAV_PLAYABLE;
+	if (wav == XWAU_WAV_CONVERTED)
 		++c->converted;
+	else if (wav == XWAU_WAV_BAD)
+		ReportFatal(path,
+					"isn't a WAV file that the import can read or convert to a sound the game can play");
 	char        target[2048], dir[2048];
 	bool        ok    = PathFormat(target, sizeof target, "%s/%s", c->out, rel);
 	const char* slash = ok ? strrchr(target, '/') : NULL;

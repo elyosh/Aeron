@@ -1,5 +1,6 @@
 #include "xwau_model.h"
 
+#include <limits.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -45,8 +46,9 @@ static bool section_lines(const char* game, const char* model, const char* secti
 
 /* ---- Pilot eye ------------------------------------------------------------- */
 
-/* Reads the eye from POV lines that define CockpitPovX, Y and Z. */
-static bool eye_from_lines(const XwauLines* lines, int eye[3], const char* label, const char* where) {
+/* Reads the eye from POV lines that define CockpitPovX, Y and Z. A value
+ * that isn't a number stops XWAU, and the eye isn't read then. */
+static bool eye_from_lines(const XwauLines* lines, int eye[3]) {
 	static const char* const keys[] = { "CockpitPovX", "CockpitPovY", "CockpitPovZ" };
 	char                     values[3][256];
 	for (int k = 0; k < 3; ++k) {
@@ -56,22 +58,20 @@ static bool eye_from_lines(const XwauLines* lines, int eye[3], const char* label
 	}
 	for (int k = 0; k < 3; ++k) {
 		long long value;
-		if (!Xwau_StoiAuto(values[k], &value)) {
-			Report(label, "%s: %s = %s is not a number; no eye", where, keys[k], values[k]);
+		if (!Xwau_StoiAuto(values[k], &value))
 			return false;
-		}
 		eye[k] = (int)(short)(unsigned short)(value & 0xFFFF);
 	}
 	return true;
 }
 
-bool XwauModel_Eye(const char* game, const char* model, int eye[3], const char* label) {
+bool XwauModel_Eye(const char* game, const char* model, int eye[3]) {
 	static const char* const sections[] = { "CockpitPov_Default", "CockpitPov" };
 	for (size_t s = 0; s < 2; ++s) {
 		XwauLines lines;
 		if (!section_lines(game, model, sections[s], &lines))
 			return false;
-		const bool found = eye_from_lines(&lines, eye, label, sections[s]);
+		const bool found = eye_from_lines(&lines, eye);
 		XwauLines_Free(&lines);
 		if (found)
 			return true;
@@ -149,14 +149,16 @@ static bool resolve_profile(const XwauLines* lines, const char* profile, const c
 		long long index;
 		if (!Xwau_Stoi(tokens.items[t], &index) || index == -1) {
 			ok = resolve_profile(lines, tokens.items[t], stack, depth + 1, out, oom);
-		} else if (index >= 0) {
+		} else {
+			/* Negative indices and indices past the meshes are kept, so that
+			   read_profiles can skip them or report them. */
 			int* item = ARRAY_PUSH(out->items, out->count);
 			if (!item) {
 				*oom = true;
 				ok   = false;
 				break;
 			}
-			*item = (int)index;
+			*item = index < INT_MIN ? INT_MIN : index > INT_MAX ? INT_MAX : (int)index;
 		}
 	}
 	XwauLines_Free(&tokens);
@@ -195,24 +197,33 @@ static bool read_profiles(const char* game, const char* model, XwauModel* out, c
 			ok = false;
 			break;
 		}
-		char set[64] = "hidden_by_profile.";
+		/* XWAU can't resolve a profile that refers back to itself, so it is
+		   skipped. */
 		if (!found) {
-			Report(label, "profile '%s' skipped: reference cycle", name);
-		} else if (!Xwau_EncodeName(name, set + strlen(set), sizeof set - strlen(set))) {
-			Report(label, "profile '%s' skipped: its set name is longer than %d characters", name, TAG_MAX);
+			free(indices.items);
+			continue;
+		}
+		char set[64] = "hidden_by_profile.";
+		if (!Xwau_EncodeName(name, set + strlen(set), sizeof set - strlen(set))) {
+			ReportFatal(label, "the set name of profile '%s' would be longer than %d characters", name,
+						TAG_MAX);
 		} else {
 			uint32_t members[8] = { 0 };
-			bool     any = false, dropped = false;
+			bool     any = false, too_high = false;
 			for (size_t k = 0; k < indices.count; ++k) {
+				/* A negative index names no mesh. */
+				if (indices.items[k] < 0)
+					continue;
 				if (indices.items[k] > COMPONENT_MAX) {
-					dropped = true;
+					too_high = true;
 				} else {
 					members[indices.items[k] / 32] |= 1u << (indices.items[k] % 32);
 					any = true;
 				}
 			}
-			if (dropped)
-				Report(label, "profile '%s': mesh indices above %d dropped", name, COMPONENT_MAX);
+			if (too_high)
+				ReportFatal(label, "profile '%s' has mesh indices above %d, which a model file can't hold",
+							name, COMPONENT_MAX);
 			if (any) {
 				if (out->set_count == XWAU_MODEL_MAX_SETS) {
 					ok = false;
@@ -242,18 +253,15 @@ static bool add_set(XwauModel* out, const char* name, const uint32_t members[8])
 
 /* Reads an integer key as hook GetFileKeyValueInt does: `fallback` when the
  * key is missing or empty, else std::stoi(value, 0, 0). A value that isn't a
- * number would stop XWAU; it is reported and gives `fallback`. */
-static long long int_key(const XwauLines* lines, const char* key, long long fallback, const char* label,
-						 const char* where) {
+ * number would stop XWAU, and it gives `fallback`. */
+static long long int_key(const XwauLines* lines, const char* key, long long fallback) {
 	char      value[256];
 	long long number;
 	XwauLines_Value(lines, key, XWAU_RULES_CPP, value, sizeof value);
 	if (!value[0])
 		return fallback;
-	if (!Xwau_StoiAuto(value, &number)) {
-		Report(label, "%s: %s = %s isn't a number; it is ignored", where, key, value);
+	if (!Xwau_StoiAuto(value, &number))
 		return fallback;
-	}
 	return number;
 }
 
@@ -265,15 +273,29 @@ static bool read_collisions(const char* game, const char* model, XwauModel* out,
 	XwauLines lines;
 	if (!section_lines(game, model, "MeshesCollisions", &lines))
 		return false;
-	const long long fallback   = int_key(&lines, "MeshCollision", 1, label, "MeshesCollisions");
+	const long long fallback   = int_key(&lines, "MeshCollision", 1);
 	uint32_t        members[8] = { 0 };
 	bool            any        = false;
 	for (int mesh = 0; lines.count && mesh <= COMPONENT_MAX; ++mesh) {
 		char key[32];
 		snprintf(key, sizeof key, "MeshCollision_%d", mesh);
-		if (int_key(&lines, key, fallback, label, "MeshesCollisions") == 0) {
+		if (int_key(&lines, key, fallback) == 0) {
 			members[mesh / 32] |= 1u << (mesh % 32);
 			any = true;
+		}
+	}
+	/* A model file holds meshes 0 to 254 only. */
+	for (size_t i = 0; i < lines.count; ++i) {
+		const char*  item   = lines.items[i];
+		const size_t prefix = strlen("MeshCollision_");
+		if (strncasecmp(item, "MeshCollision_", prefix) != 0 || item[prefix] < '0' || item[prefix] > '9')
+			continue;
+		const long mesh = strtol(item + prefix, NULL, 10);
+		if (mesh > COMPONENT_MAX) {
+			ReportFatal(label,
+						"MeshesCollisions sets mesh %ld, but a model file can only hold meshes 0 to %d", mesh,
+						COMPONENT_MAX);
+			break;
 		}
 	}
 	XwauLines_Free(&lines);
@@ -301,11 +323,14 @@ static bool read_targetable(const char* game, const char* model, XwauModel* out,
 	bool     any        = false;
 	for (size_t t = 0; t < tokens.count; ++t) {
 		long long mesh;
-		if (!Xwau_Stoi(tokens.items[t], &mesh)) {
-			Report(label, "TargetableMeshes: '%s' isn't a mesh number; it is ignored", tokens.items[t]);
-		} else if (mesh < 0 || mesh > COMPONENT_MAX) {
-			Report(label, "TargetableMeshes: mesh %lld is outside 0 to %d; it is ignored", mesh,
-				   COMPONENT_MAX);
+		/* XWAU fails on a token that isn't a number, and a negative mesh
+		   names no mesh. */
+		if (!Xwau_Stoi(tokens.items[t], &mesh) || mesh < 0)
+			continue;
+		if (mesh > COMPONENT_MAX) {
+			ReportFatal(label,
+						"TargetableMeshes has mesh %lld, but a model file can only hold meshes 0 to %d", mesh,
+						COMPONENT_MAX);
 		} else {
 			members[mesh / 32] |= 1u << (mesh % 32);
 			any = true;
@@ -313,7 +338,7 @@ static bool read_targetable(const char* game, const char* model, XwauModel* out,
 	}
 	XwauLines_Free(&tokens);
 	if (!any) {
-		Report(label, "TargetableMeshes lists no usable mesh; every mesh can be targeted");
+		ReportUnsupported("the ObjectProfiles key TargetableMeshes without a usable mesh");
 		return true;
 	}
 	return add_set(out, "targetable", members);
@@ -344,6 +369,9 @@ bool XwauModel_SectionGroup(const char* section, char* group, size_t cap) {
 
 bool XwauModel_MeshLines(const XwauLines* lines, XwauMeshLine** out, size_t* count, const char* label,
 						 const char* where) {
+	/* The callers pass a label and a section name, which aren't used. */
+	(void)label;
+	(void)where;
 	*out   = NULL;
 	*count = 0;
 	for (size_t i = 0; i < lines->count; ++i) {
@@ -357,8 +385,8 @@ bool XwauModel_MeshLines(const XwauLines* lines, XwauMeshLine** out, size_t* cou
 		bool         numbers = tokens.count >= 4;
 		for (int k = 0; numbers && k < 4; ++k)
 			numbers = Xwau_StoiAuto(tokens.items[k], &line.values[k]);
-		if (tokens.count >= 4 && !numbers && label)
-			Report(label, "%s: line '%s' skipped: not a number (XWAU would fail)", where, lines->items[i]);
+		/* XWAU fails on a value that isn't a number, and it skips a line
+		   with fewer than 4 values. */
 		XwauLines_Free(&tokens);
 		if (!numbers)
 			continue;
@@ -373,21 +401,24 @@ bool XwauModel_MeshLines(const XwauLines* lines, XwauMeshLine** out, size_t* cou
 	return true;
 }
 
-/* Adds an articulation if it passes the hook's range checks. Failed checks
- * are reported. */
+/* Adds an articulation if it passes the hook's range checks. A line that
+ * fails them is skipped, as in XWAU. */
 static bool add_articulation(XwauModel* out, const char* where, const char* group, long long mesh,
 							 long long angle, long long speed, long long speed_back, const char* behavior,
 							 bool* added, const char* label) {
 	*added = false;
-	if (mesh < 0 || mesh > COMPONENT_MAX) {
-		Report(label, "%s: mesh %lld skipped: outside 0..%d", where, mesh, COMPONENT_MAX);
-	} else if (angle < -128 || angle > 255) {
-		Report(label, "%s: mesh %lld skipped: angle %lld outside -128..255", where, mesh, angle);
-	} else if (speed < 0 || speed > 255 || speed_back < 0 || speed_back > 255) {
-		Report(label, "%s: mesh %lld skipped: speeds %lld, %lld outside 0..255", where, mesh, speed,
-			   speed_back);
+	const bool in_range =
+		angle >= -128 && angle <= 255 && speed >= 0 && speed <= 255 && speed_back >= 0 && speed_back <= 255;
+	if (mesh < 0 || (mesh <= COMPONENT_MAX && !in_range))
+		return true;
+	if (mesh > COMPONENT_MAX) {
+		ReportFatal(label, "[%s] moves mesh %lld, but a model file can only hold meshes 0 to %d", where, mesh,
+					COMPONENT_MAX);
 	} else if (strlen(group) > TAG_MAX) {
-		Report(label, "%s: skipped: group '%s' is longer than %d characters", where, group, TAG_MAX);
+		ReportFatal(label,
+					"[%s] gives group '%s', which is longer than the %d characters that a model file can "
+					"hold",
+					where, group, TAG_MAX);
 	} else if (out->articulation_count == XWAU_MODEL_MAX_ARTICULATIONS) {
 		return false;
 	} else {
@@ -529,8 +560,7 @@ static bool read_rotations(const char* game, const XwauMissions* missions, const
 	for (size_t i = 0; ok && i < count; ++i) {
 		const long long behavior = mesh_lines[i].values[3];
 		if (behavior < 0 || behavior > 2) {
-			Report(label, "Pilot: mesh %lld skipped: behavior %lld is not converted", mesh_lines[i].values[0],
-				   behavior);
+			ReportUnsupported("[Pilot] behaviors other than 0 to 2");
 			continue;
 		}
 		bool added;
@@ -542,7 +572,7 @@ static bool read_rotations(const char* game, const XwauMissions* missions, const
 	free(mesh_lines);
 	if (ok && (ok = section_lines(game, model, "PilotCockpit", &lines))) {
 		if (lines.count)
-			Report(label, "PilotCockpit: not converted (OpenXWA has no cockpit list)");
+			ReportUnsupported("the [PilotCockpit] section");
 		XwauLines_Free(&lines);
 	}
 
@@ -554,11 +584,9 @@ static bool read_rotations(const char* game, const XwauMissions* missions, const
 			XwauLines_Value(&lines, kSettings[i].key, XWAU_RULES_CPP, text, sizeof text);
 			if (!text[0])
 				continue;
-			if (!Xwau_StoiAuto(text, &value)) {
-				Report(label, "SFoils: %s = %s skipped: not a number (XWAU would fail)", kSettings[i].key,
-					   text);
+			/* XWAU fails on a value that isn't a number. */
+			if (!Xwau_StoiAuto(text, &value))
 				continue;
-			}
 			if (kSettings[i].kind == 0)
 				value = value != 0;
 			else if (kSettings[i].kind == 1)
@@ -569,7 +597,7 @@ static bool read_rotations(const char* game, const XwauMissions* missions, const
 		XwauLines_Free(&lines);
 	}
 	if (ok && has_crew)
-		ok = add_setting(out, "crew.update_all", 1);
+		ok = add_setting(out, "crew.always_animate", 1);
 	return ok && XwauMissions_Articulations(missions, model, out->articulations, &out->articulation_count,
 											XWAU_MODEL_MAX_ARTICULATIONS, label);
 }
@@ -577,7 +605,7 @@ static bool read_rotations(const char* game, const XwauMissions* missions, const
 bool XwauModel_Read(const char* game, const XwauMissions* missions, const char* model, XwauModel* out,
 					const char* label) {
 	memset(out, 0, sizeof *out);
-	out->has_eye = XwauModel_Eye(game, model, out->eye, label);
+	out->has_eye = XwauModel_Eye(game, model, out->eye);
 	XwauModel_CockpitFov(game, model, &out->fov);
 	char rel[512];
 	if (!PathFormat(rel, sizeof rel, "DynamicCockpit/%s.dc", model))

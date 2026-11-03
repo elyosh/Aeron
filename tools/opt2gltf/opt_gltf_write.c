@@ -76,18 +76,20 @@ bool OptGltf_WriteFiles(const OptGltfDocument* document, const char* out_dir, co
 	size_t primitives = 0;
 	for (size_t m = 0; m < data->meshes_count; ++m)
 		primitives += data->meshes[m].primitives_count;
-	ToolLog_Write(TOOL_LOG_INFO, "%s -> %s", basename, gltf_path);
-	ToolLog_Write(TOOL_LOG_INFO, "  meshes=%zu primitives=%zu vertices=(per-mesh) variants=%zu",
+	ToolLog_Write(TOOL_LOG_DETAIL, "%s -> %s", basename, gltf_path);
+	ToolLog_Write(TOOL_LOG_DETAIL, "  meshes=%zu primitives=%zu vertices=(per-mesh) variants=%zu",
 				  data->meshes_count, primitives, data->variants_count);
-	ToolLog_Write(TOOL_LOG_INFO, "  textures=%zu materials=%zu bin=%zu bytes", data->textures_count,
+	ToolLog_Write(TOOL_LOG_DETAIL, "  textures=%zu materials=%zu bin=%zu bytes", data->textures_count,
 				  data->materials_count, buffer->size);
 	return true;
 }
 
-/* Reports the warnings of the conversion under the label (log_context). */
-static void report_warning(void* label, bool warning, const char* message) {
+/* Writes the warnings of the conversion under the label (log_context), as
+ * details. They are notes on the geometry, such as repeated triangles or
+ * repaired normals, and nothing from the model is lost. */
+static void report_detail(void* label, bool warning, const char* message) {
 	if (warning)
-		Report((const char*)label, "%s", message);
+		ReportDetail((const char*)label, "%s", message);
 }
 
 char* OptGltf_Json(const OptGltfDocument* document, size_t* size) {
@@ -108,7 +110,7 @@ char* OptGltf_Json(const OptGltfDocument* document, size_t* size) {
 bool OptGltf_Build(const opt_file_t* opt, const char* basename, const OptGltfBuildOptions* options,
 				   const char* label, OptGltfDocument** document) {
 	OptGltfBuildOptions reported = *options;
-	reported.log                 = report_warning;
+	reported.log                 = report_detail;
 	reported.log_context         = (void*)label;
 	opt_error_t error            = { { 0 } };
 	if (OptGltf_BuildMemory(opt, basename, &reported, document, &error))

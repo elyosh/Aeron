@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 
 #include "classic_radiance.h"
 #include "util.h"
@@ -133,7 +134,6 @@ typedef struct SkyMission {
 typedef struct SkyState {
 	const char*    game;
 	const char*    stock_game;
-	size_t         not_found; /* missions with [SkyBoxes] that neither has */
 	SkyFolder*     folders;
 	size_t         folder_count;
 	SkyDefinition* definitions;
@@ -182,8 +182,8 @@ static void list_add(SkyList* list, uint32_t image, const char* what, const char
 	if (list_has(list, image))
 		return;
 	if (list->count == SKY_LIST_MAX) {
-		Report(base, "[SkyBoxes]: %s has more than %d images; image %u-%u is left out", what, SKY_LIST_MAX,
-			   image >> 16, image & 0xFFFFu);
+		ReportFatal(base, "[SkyBoxes]: %s has more than %d images, the most that the game takes", what,
+					SKY_LIST_MAX);
 		return;
 	}
 	list->images[list->count++] = image;
@@ -204,36 +204,22 @@ static void read_list(const XwauLines* lines, const char* key, const char* base,
 			*dash           = '\0';
 			const int group = atoi(token);
 			const int image = atoi(dash + 1);
-			if (group < 0 || group > 0xFFFF || image < 0 || image > 0xFFFF)
-				Report(base, "[SkyBoxes]: %s: %d-%d is not a DAT image; it is left out", key, group, image);
-			else
+			/* A number outside 0 to 65535 names no DAT image. */
+			if (group >= 0 && group <= 0xFFFF && image >= 0 && image <= 0xFFFF)
 				list_add(out, (uint32_t)group << 16 | (uint32_t)image, key, base);
 		} else if (strcmp(token, "ALL") == 0 || strcmp(token, "all") == 0) {
 			out->all = true;
 			return;
-		} else if (Xwau_Trim(token, XWAU_RULES_CPP)[0]) {
-			Report(base, "[SkyBoxes]: %s: '%s' is ignored, as XWAU ignores it", key, token);
 		}
+		/* XWAU ignores any other token. */
 		token = next;
 	}
 }
 
-/* Reports the keys that the ddraw wrapper does not read. */
-static void report_unknown_keys(const XwauLines* lines, const char* base) {
+/* Counts the mission keys that the ddraw wrapper reads but the importer
+ * doesn't import. Keys that the wrapper doesn't read are ignored. */
+static void report_unknown_keys(const XwauLines* lines) {
 	static const char* const kPrefixes[] = { "AllRegions", "Region0", "Region1", "Region2", "Region3" };
-	static const char* const kSuffixes[] = { "",
-											 "Illum",
-											 "Overlay",
-											 "Specular",
-											 "AmbientInt",
-											 "AmbientMin",
-											 "RotationX",
-											 "RotationY",
-											 "RotationZ",
-											 "OverlayRotationX",
-											 "OverlayRotationY",
-											 "OverlayRotationZ",
-											 "ReflectionRes" };
 	static const char* const kOthers[]   = {
 		"DisabledBackdrops",      "EnabledBackdrops",       "RenderMode",
 		"HangarRotationX",        "HangarRotationY",        "HangarRotationZ",
@@ -246,22 +232,24 @@ static void report_unknown_keys(const XwauLines* lines, const char* base) {
 		char name[128];
 		snprintf(name, sizeof name, "%.*s", (int)(equals - lines->items[i]), lines->items[i]);
 		Xwau_Trim(name, XWAU_RULES_CPP);
-		bool known = false;
-		for (size_t k = 0; !known && k < sizeof kOthers / sizeof kOthers[0]; ++k)
-			known = Xwau_SameName(name, kOthers[k]);
-		for (size_t p = 0; !known && p < sizeof kPrefixes / sizeof kPrefixes[0]; ++p) {
+		const char* other = NULL;
+		for (size_t k = 0; !other && k < sizeof kOthers / sizeof kOthers[0]; ++k)
+			if (Xwau_SameName(name, kOthers[k]))
+				other = kOthers[k];
+		/* The importer bakes its own reflection maps, at a fixed size. */
+		for (size_t p = 0; !other && p < sizeof kPrefixes / sizeof kPrefixes[0]; ++p) {
 			const size_t length = strlen(kPrefixes[p]);
 			char         prefix[16];
 			if (strlen(name) < length)
 				continue;
 			snprintf(prefix, sizeof prefix, "%.*s", (int)length, name);
-			for (size_t f = 0;
-				 !known && Xwau_SameName(prefix, kPrefixes[p]) && f < sizeof kSuffixes / sizeof kSuffixes[0];
-				 ++f)
-				known = Xwau_SameName(name + length, kSuffixes[f]);
+			if (Xwau_SameName(prefix, kPrefixes[p]) && Xwau_SameName(name + length, "ReflectionRes")) {
+				ReportUnsupported("the [SkyBoxes] key %sReflectionRes", p == 0 ? "AllRegions" : "Region<N>");
+				break;
+			}
 		}
-		if (!known && name[0])
-			Report(base, "[SkyBoxes]: unknown key '%s' is ignored, as XWAU ignores it", name);
+		if (other && (strcmp(other, "RenderMode") == 0 || strncmp(other, "Hangar", 6) == 0))
+			ReportUnsupported("the [SkyBoxes] key %s", other);
 	}
 }
 
@@ -270,8 +258,7 @@ enum { SKY_LEFT_OUT = -1, SKY_NO_MEMORY = -2 };
 
 /* Returns the index of the cube folder `found`, adds it when it is new, and
  * marks it as used for a sky or an overlay. A folder whose name cannot be
- * encoded, or has the same name as another folder, is reported and left
- * out. */
+ * encoded, or has the same name as another folder, makes the import fail. */
 static long folder_index(SkyState* st, const char* found, bool overlay, const char* base) {
 	for (size_t i = 0; i < st->folder_count; ++i) {
 		if (strcmp(st->folders[i].path, found) == 0) {
@@ -284,12 +271,13 @@ static long folder_index(SkyState* st, const char* found, bool overlay, const ch
 	const char* name  = slash ? slash + 1 : found;
 	char        key[128];
 	if (!Xwau_EncodeName(name, key, sizeof key)) {
-		Report(base, "[SkyBoxes]: the cube folder name %s is too long; it is left out", name);
+		ReportFatal(base, "[SkyBoxes]: the cube folder name %s is too long", name);
 		return SKY_LEFT_OUT;
 	}
 	for (size_t i = 0; i < st->folder_count; ++i) {
 		if (strcmp(st->folders[i].key, key) == 0) {
-			Report(base, "[SkyBoxes]: %s has the name of %s; it is left out", found, st->folders[i].path);
+			ReportFatal(base, "[SkyBoxes]: the cube folders %s and %s get the same name", found,
+						st->folders[i].path);
 			return SKY_LEFT_OUT;
 		}
 	}
@@ -326,8 +314,7 @@ static long definition_index(SkyState* st, size_t folder, float ambient_int, flo
 	const int length = same_name ? snprintf(name, sizeof name, "%s.%zu", base_name, same_name + 1)
 								 : snprintf(name, sizeof name, "%s", base_name);
 	if (length >= (int)sizeof name) {
-		Report(base, "[SkyBoxes]: the environment name for %s is too long; it is left out",
-			   st->folders[folder].path);
+		ReportFatal(base, "[SkyBoxes]: the environment name for %s is too long", st->folders[folder].path);
 		return SKY_LEFT_OUT;
 	}
 	if (!ArrayGrow((void**)&st->definitions, st->definition_count, sizeof *st->definitions))
@@ -361,9 +348,8 @@ static bool read_region(SkyState* st, const XwauLines* lines, int r, const SkyAl
 	char key[16], written[512], found[1024], name[64];
 	snprintf(key, sizeof key, "Region%d", r);
 	XwauLines_Value(lines, key, XWAU_RULES_CPP, written, sizeof written);
+	/* The wrapper ignores a folder that doesn't load. */
 	const bool own = folder_loads(st->game, written, found, sizeof found);
-	if (written[0] && !own)
-		Report(base, "[SkyBoxes]: %s folder %s does not load (it needs exactly six files)", key, written);
 
 	/* The wrapper tries the region's overlay only when Region<N> or
 	 * Region<N>Illum is set. */
@@ -383,6 +369,15 @@ static bool read_region(SkyState* st, const XwauLines* lines, int r, const SkyAl
 		return true;
 	}
 	const char* prefix = own ? key : "AllRegions";
+	/* The region's environment has no place for these. */
+	static const char* const kNotImported[] = { "Specular", "Illum" };
+	for (size_t k = 0; k < sizeof kNotImported / sizeof kNotImported[0]; ++k) {
+		char value[600];
+		snprintf(name, sizeof name, "%s%s", prefix, kNotImported[k]);
+		XwauLines_Value(lines, name, XWAU_RULES_CPP, value, sizeof value);
+		if (value[0])
+			ReportUnsupported("the [SkyBoxes] key %s%s", own ? "Region<N>" : "AllRegions", kNotImported[k]);
+	}
 	snprintf(name, sizeof name, "%sAmbientInt", prefix);
 	const float ambient_int = sky_float(lines, name, own ? 0.15f : 0.50f);
 	snprintf(name, sizeof name, "%sAmbientMin", prefix);
@@ -433,8 +428,6 @@ static bool read_mission(SkyState* st, const char* dir, const char* name, SkyMis
 	if (!PathFormat(tie_rel, sizeof tie_rel, "%s.tie", base) ||
 		(!Xwau_FindFile(st->game, tie_rel, tie, sizeof tie) &&
 		 !Xwau_FindFile(st->stock_game, tie_rel, tie, sizeof tie))) {
-		Report(tie_rel, "[SkyBoxes]: neither the mod nor the game has this mission; it is left out");
-		++st->not_found;
 		XwauLines_Free(&lines);
 		return true;
 	}
@@ -443,16 +436,13 @@ static bool read_mission(SkyState* st, const char* dir, const char* name, SkyMis
 	char lower_dir[64];
 	LowerCopy(lower_dir, sizeof lower_dir, dir);
 	snprintf(out->key, sizeof out->key, "%s/%s.tie", lower_dir, name);
-	report_unknown_keys(&lines, base);
+	report_unknown_keys(&lines);
 	read_list(&lines, "DisabledBackdrops", base, &out->disabled);
 	read_list(&lines, "EnabledBackdrops", base, &out->enabled);
 
 	char all_written[512], all_found[1024], overlay[600], overlay_found[1024];
 	XwauLines_Value(&lines, "AllRegions", XWAU_RULES_CPP, all_written, sizeof all_written);
 	const bool all_loads = folder_loads(st->game, all_written, all_found, sizeof all_found);
-	if (all_written[0] && !all_loads)
-		Report(base, "[SkyBoxes]: AllRegions folder %s does not load (it needs exactly six files)",
-			   all_written);
 	XwauLines_Value(&lines, "AllRegionsOverlay", XWAU_RULES_CPP, overlay, sizeof overlay);
 	if (!overlay[0] && all_written[0])
 		snprintf(overlay, sizeof overlay, "%s_overlay", all_written);
@@ -550,7 +540,8 @@ static float clamp_value(float v, float max, const char* what, const char* name)
 	if (v >= 0.0f && v <= max)
 		return v;
 	const float clamped = v < 0.0f || v != v ? 0.0f : max;
-	Report(name, "[SkyBoxes]: %s %g is out of range; %g is used", what, (double)v, (double)clamped);
+	ReportFatal(name, "[SkyBoxes]: %s is %g, and the importer only takes 0 to %g", what, (double)v,
+				(double)max);
 	return clamped;
 }
 
@@ -645,163 +636,13 @@ static void write_missions(const SkyState* st, TextBuffer* f) {
 
 /* ===== Updating the manifest ============================================ */
 
-/* The lines around the importer's entries in each section of the manifest.
- * Each import replaces what is between them. */
-#define SKY_BEGIN "# Begin of the entries that the OpenXWA mod importer writes. Each import replaces them."
-#define SKY_END "# End of the entries that the OpenXWA mod importer writes."
-
-typedef struct SkyLine {
-	const char* text;
-	size_t      length;
-} SkyLine;
-
-/* The number of spaces that start `line`, or -1 for a blank line. */
-static int line_indent(const SkyLine* line) {
-	size_t i = 0;
-	while (i < line->length && line->text[i] == ' ')
-		++i;
-	return i == line->length || line->text[i] == '\r' ? -1 : (int)i;
-}
-
-/* Whether `line` is `text` at `indent`, followed by nothing but white space
- * or a comment. */
-static bool line_is(const SkyLine* line, int indent, const char* text) {
-	const size_t n = strlen(text);
-	if (line_indent(line) != indent || line->length < (size_t)indent + n ||
-		memcmp(line->text + indent, text, n) != 0)
-		return false;
-	for (size_t i = (size_t)indent + n; i < line->length; ++i) {
-		if (line->text[i] == '#')
-			return true;
-		if (line->text[i] != ' ' && line->text[i] != '\t' && line->text[i] != '\r')
-			return false;
-	}
-	return true;
-}
-
-/* The line after the entry that starts at `start` with `indent`: the next
- * line that isn't blank and has `indent` or less. */
-static size_t entry_end(const SkyLine* lines, size_t count, size_t start, int indent) {
-	size_t i = start + 1;
-	while (i < count) {
-		const int other = line_indent(&lines[i]);
-		if (other >= 0 && other <= indent)
-			break;
-		++i;
-	}
-	return i;
-}
-
-static void emit_lines(TextBuffer* out, const SkyLine* lines, size_t from, size_t to) {
-	for (size_t i = from; i < to; ++i) {
-		TextAppendBytes(out, lines[i].text, lines[i].length);
-		TextAppendBytes(out, "\n", 1);
-	}
-}
-
-static void emit_block(TextBuffer* out, int indent, const char* entries) {
-	TextAppend(out, "%*s%s\n%s%*s%s\n", indent, "", SKY_BEGIN, entries, indent, "", SKY_END);
-}
-
-/* Copies the entries of a section (lines `from` to `to`) at `indent`,
- * without the importer's block, then adds the importer's block after the last
- * line that isn't blank. */
-static void emit_section(TextBuffer* out, const SkyLine* lines, size_t from, size_t to, int indent,
-						 const char* entries) {
-	size_t last = to;
-	while (last > from && line_indent(&lines[last - 1]) < 0)
-		--last;
-	for (size_t i = from; i < last;) {
-		if (line_is(&lines[i], indent, SKY_BEGIN)) {
-			size_t end = i + 1;
-			while (end < last && !line_is(&lines[end], indent, SKY_END))
-				++end;
-			i = end < last ? end + 1 : last;
-			continue;
-		}
-		emit_lines(out, lines, i, i + 1);
-		++i;
-	}
-	emit_block(out, indent, entries);
-	emit_lines(out, lines, last, to);
-}
-
-/* Writes the importer's environments and mission entries into the manifest
- * `path`, between the SKY_BEGIN and SKY_END lines of its `environments` and
- * `xwa.missions` maps. The rest of the file is kept as it is. A file without
- * these lines gets them at the end of each map. */
-static bool update_manifest(const char* path, const char* environments, const char* missions) {
-	size_t   size  = 0;
-	char*    old   = IsFile(path) ? ReadWholeFile(path, &size) : NULL;
-	SkyLine* lines = NULL;
-	size_t   count = 0;
-	if (IsFile(path) && !old) {
-		Report(path, "cannot read");
-		return false;
-	}
-	for (size_t start = 0; old && start < size;) {
-		const char*  newline = memchr(old + start, '\n', size - start);
-		const size_t length  = newline ? (size_t)(newline - (old + start)) : size - start;
-		if (!ArrayGrow((void**)&lines, count, sizeof *lines)) {
-			free(lines);
-			free(old);
-			Report(NULL, "out of memory");
-			return false;
-		}
-		lines[count++] = (SkyLine) { old + start, length };
-		start += length + 1;
-	}
-	const size_t none = (size_t)-1;
-	size_t       env = none, xwa = none, mission_map = none;
-	for (size_t i = 0; i < count; ++i) {
-		if (env == none && line_is(&lines[i], 0, "environments:"))
-			env = i;
-		if (xwa == none && line_is(&lines[i], 0, "xwa:"))
-			xwa = i;
-	}
-	const size_t env_end = env != none ? entry_end(lines, count, env, 0) : none;
-	const size_t xwa_end = xwa != none ? entry_end(lines, count, xwa, 0) : none;
-	for (size_t i = xwa + 1; xwa != none && i < xwa_end && mission_map == none; ++i) {
-		if (line_is(&lines[i], 2, "missions:"))
-			mission_map = i;
-	}
-	const size_t mission_end = mission_map != none ? entry_end(lines, xwa_end, mission_map, 2) : none;
-
-	TextBuffer  text = { 0 };
-	TextBuffer* out  = &text;
-	if (!old)
-		TextAppend(out, "version: 1\n");
-	for (size_t i = 0; i < count;) {
-		if (i == env) {
-			emit_lines(out, lines, i, i + 1);
-			emit_section(out, lines, i + 1, env_end, 2, environments);
-			i = env_end;
-		} else if (i == mission_map) {
-			emit_lines(out, lines, i, i + 1);
-			emit_section(out, lines, i + 1, mission_end, 4, missions);
-			i = mission_end;
-		} else {
-			if (xwa != none && mission_map == none && i == xwa_end) {
-				TextAppend(out, "  missions:\n");
-				emit_block(out, 4, missions);
-			}
-			emit_lines(out, lines, i, i + 1);
-			++i;
-		}
-	}
-	if (env == none) {
-		TextAppend(out, "\nenvironments:\n");
-		emit_block(out, 2, environments);
-	}
-	if (xwa == none) {
-		TextAppend(out, "\nxwa:\n  missions:\n");
-		emit_block(out, 4, missions);
-	} else if (mission_map == none && xwa_end == count) {
-		TextAppend(out, "  missions:\n");
-		emit_block(out, 4, missions);
-	}
-	free(lines);
-	free(old);
+/* Writes the manifest `path` with the importer's `environments` and
+ * `xwa.missions` entries. */
+static bool write_manifest(const char* path, const char* environments, const char* missions) {
+	TextBuffer text = { 0 };
+	TextAppend(&text, "# Made by the OpenXWA mod importer.\n");
+	TextAppend(&text, environments[0] ? "environments:\n%s" : "environments: {}\n%s", environments);
+	TextAppend(&text, missions[0] ? "xwa:\n  missions:\n%s" : "xwa:\n  missions: {}\n%s", missions);
 	const bool ok = !text.failed && text.text && WriteWholeFile(path, text.text, text.length);
 	if (!ok)
 		Report(path, text.failed ? "out of memory" : "cannot write");
@@ -861,10 +702,7 @@ bool XwauSkyboxes_Write(const char* game, const char* stock_game, const char* ma
 			without += region->definition < 0;
 			overlays += region->definition >= 0 && st.definitions[region->definition].overlay >= 0;
 			if (region->overlay_without_sky)
-				Report(st.missions[m].key,
-					   "[SkyBoxes]: region %d has an overlay but no cube; an overlay needs a sky, so it is "
-					   "left out",
-					   r);
+				ReportUnsupported("a [SkyBoxes] overlay in a region without a cube");
 		}
 	}
 	if (!ok)
@@ -879,14 +717,14 @@ bool XwauSkyboxes_Write(const char* game, const char* stock_game, const char* ma
 		}
 	}
 	ok = ok &&
-		 update_manifest(manifest, environments.text ? environments.text : "",
-						 missions.text ? missions.text : "") &&
+		 write_manifest(manifest, environments.text ? environments.text : "",
+						missions.text ? missions.text : "") &&
 		 write_folders(&st, folders);
 	free(environments.text);
 	free(missions.text);
 	if (ok) {
 		Report(NULL,
-			   "updated %s: %zu missions, %zu regions with a sky and %zu without, %zu environments for %zu "
+			   "wrote %s: %zu missions, %zu regions with a sky and %zu without, %zu environments for %zu "
 			   "cube folders",
 			   manifest, st.mission_count - st.death_star_count, with_sky, without, st.definition_count,
 			   st.folder_count);
@@ -897,8 +735,6 @@ bool XwauSkyboxes_Write(const char* game, const char* stock_game, const char* ma
 				   st.death_star_count);
 		if (overlays)
 			Report(NULL, "%zu regions have an overlay", overlays);
-		if (st.not_found)
-			Report(NULL, "%zu missions with [SkyBoxes] are neither in the mod nor in the game", st.not_found);
 	}
 	free(st.folders);
 	free(st.definitions);

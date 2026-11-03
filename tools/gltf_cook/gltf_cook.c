@@ -550,7 +550,7 @@ static bool place_transmission(cgltf_data* data, char* const* image_variants, co
 	cgltf_image* trans_image =
 		trans->texture && trans->texture->image && trans->texture->image->uri ? trans->texture->image : NULL;
 	if (m->alpha_mode != cgltf_alpha_mode_opaque)
-		ToolLog_Write(TOOL_LOG_WARNING,
+		ToolLog_Write(TOOL_LOG_DETAIL,
 					  "[aeron_gltf_cook] material '%s': transmissive, its alpha mode is ignored", name);
 	if (trans_image && !base) {
 		ToolLog_Write(TOOL_LOG_WARNING,
@@ -863,7 +863,7 @@ bool aeron_gltf_cook_data_lazy(cgltf_data* data, const char* source_label,
 			if (!ok)
 				break;
 			ToolLog_Write(
-				TOOL_LOG_INFO,
+				TOOL_LOG_DETAIL,
 				"[aeron_gltf_cook] %s: %d core page(s) of %d×%d, %d variant group(s) on %d page(s), "
 				"%.0f%% of the group pages used",
 				kChannels[c].name, ca->page_count, ca->width, ca->height, channel_groups, pages,

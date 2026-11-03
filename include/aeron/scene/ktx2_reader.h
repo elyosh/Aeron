@@ -28,8 +28,9 @@
  *                  BC7_RGBA_UNORM, BC7_RGBA_SRGB }
  *   - levelCount >= 1 (zero-mip "generate at runtime" is rejected)
  *
- * Layout / DFD / KVD / SGD blocks are skipped — the reader only
- * walks the header + level index + raw mip data. Format mapping is the reader's
+ * Of the data format descriptor, the reader only reads the flags, to tell
+ * whether the colour is premultiplied by alpha. The KVD and SGD blocks
+ * are skipped. Format mapping is the reader's
  * responsibility; consumers see only an AeronTextureFormat enum value.
  *
  * The reader copies the file into a heap blob at open time; mip
@@ -83,6 +84,12 @@ void ktx2_close(Ktx2* k);
 /* Mapped Aeron texture format. Already the value the consumer
  * passes to Aeron_CreateTexture. */
 AeronTextureFormat ktx2_format(const Ktx2* k);
+
+/* Whether the data format descriptor says that the colour is premultiplied
+ * by alpha. False for a file without a descriptor. */
+bool ktx2_premultiplied(const Ktx2* k);
+/* Whether the format has an alpha channel. */
+bool ktx2_has_alpha(const Ktx2* k);
 
 int ktx2_width(const Ktx2* k);
 int ktx2_height(const Ktx2* k);

@@ -19,7 +19,8 @@
  * same variance correction that noisetile uses, so the contrast doesn't drop
  * halfway.
  *
- * The frames are made for the default size and colour. XWAU draws the lava
+ * The frames are made for the default size and colour, and a material with
+ * another LavaSize or LavaColor makes the import fail. XWAU draws the lava
  * unlit, as LavaColor × rz, with rz above 1 in the brightest parts. A frame
  * holds that colour in linear light, divided by XwauLava_Strength(), which is
  * the linear value of the brightest colour kept.

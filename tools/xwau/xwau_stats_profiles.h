@@ -29,13 +29,14 @@
  *   - HasShieldGenerator, HasHyperdrive: true when not 0;
  *   - IsWarheadCollisionDamagesEnabled: written only when 0.
  * The genus is that of the object types that load the model, through their
- * list rows or the missions' [Objects] swaps. A profile that needs the
- * division is left out, and reported, when no object type loads the model
- * or object types of different genus classes load it. Sections that look
- * like profiles but that the hook never reads ([StatsProfile_Default;],
- * [;StatsProfile_Default]) are counted, and keys that the hook doesn't read
- * and [StatsModifiers*] sections, which the game doesn't have, are
- * reported.
+ * list rows or the missions' [Objects] swaps. When no object type loads
+ * the model, a profile that needs the division has no effect in XWAU, so it
+ * is left out. When object types of different genus classes load the model,
+ * such a profile makes the import fail. So does a profile name longer than
+ * 63 characters. Sections that look like profiles but that the hook never
+ * reads ([StatsProfile_Default;], [;StatsProfile_Default]) are counted and
+ * left out. So are keys that the hook doesn't read. The game has no stats
+ * modifiers, so a [StatsModifiers*] section or file isn't imported.
  *
  * A mission's choices are the lines of <mission>_StatsProfiles.txt, else of
  * the [StatsProfiles] section of <mission>.ini:
@@ -45,13 +46,16 @@
  *   <Key>Percent = p            a percent for every craft, and
  *   Player<Key>Percent = p      for players' craft
  * <Model> is the model that the craft loads, after the swaps. Keys count
- * whatever their case, and the first line of a key wins. A value keeps any
+ * whatever their case, and the first line of a key wins. Later lines with
+ * the same key, and lines without a key, are left out. A value keeps any
  * comment, as in the hook, so such a name finds no profile. A name that the
- * model has no profile for is kept, and reported: it still keeps the model's
- * default profile from applying. A name longer than 63 characters is cut.
- * <Model>_fg_<N> keys, which the hook doesn't
- * read, and markings written another way than the hook writes them
- * (_fgc_02) are reported and left out. They are written as:
+ * model has no profile for is kept, since it still keeps the model's
+ * default profile from applying. Such a name is cut to 63 characters. The
+ * name of a profile that exists can't be cut, so it makes the import fail.
+ * A negative percent other than -1 makes the import fail too.
+ * <Model>_fg_<N> keys, which the hook doesn't read, and markings written
+ * another way than the hook writes them (_fgc_02) are left out.
+ * A model name with a space makes the import fail. They are written as:
  *
  *   stats_profiles:
  *     models:

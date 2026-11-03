@@ -170,7 +170,7 @@ DEFAULT_STEP_TICKS = 15
 HOLD_SECONDS = 1.0
 TURRET_SPEED = 4.0 * TICKS_PER_SECOND / 15.0  # 1/256 turn per second
 TURRET_REVERSE_SECONDS = 43 * 15 / TICKS_PER_SECOND
-ROTARY_GUN_TURRET = 21  # index into common.MESH_TYPE_NAMES
+ROTARY_GUN_TURRET = 21  # index into common.MESH_TYPE_IDS
 _FRAME_SECONDS = 1.0 / 30.0
 
 # Per playing or paused model root name: "time" (seconds of playback), "last"
@@ -243,7 +243,7 @@ def played_turns(root, seconds):
             turns[articulation.component.name] = value
     for component in common.components(root):
         props = component.aeron_flight
-        if props.has_rotation and int(props.mesh_type) == ROTARY_GUN_TURRET:
+        if props.has_rotation and common.mesh_type(props) == ROTARY_GUN_TURRET:
             turns[component.name] = _turret_turns(seconds)
     return turns
 

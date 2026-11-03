@@ -51,7 +51,8 @@ void atlas_pack_free(AtlasPack* p);
  * `scale=false` returns the source dimensions unchanged. */
 void atlas_pack_post_dims(const AtlasPack* pack, bool scale, bool svga_mode, int* out_w, int* out_h);
 
-/* Atomically write the pack as a compact inline-flow YAML layout.
+/* Atomically writes the pack as a sprite atlas file, in game units: each
+ * frame's `size` is its classic size and its `offset` its classic anchor.
  *
  * `post_atlas_w/h` come from atlas_pack_post_dims. `scale` and
  * `svga_mode` select the per-frame coordinate scaling. `err` is

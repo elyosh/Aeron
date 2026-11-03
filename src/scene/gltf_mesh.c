@@ -30,6 +30,7 @@
 #include "aeron/scene/gltf_mesh.h"
 
 #include "aeron/asset/flight_model.h"
+#include "aeron/asset/flight_names.h"
 
 #include <math.h>
 #include <stdbool.h>
@@ -551,20 +552,23 @@ static bool json_bool(const cJSON* object, const char* key) {
 	return cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(object, key));
 }
 
-static bool json_uint(const cJSON* object, const char* key, uint32_t limit, uint32_t* out) {
-	const cJSON* item = cJSON_GetObjectItemCaseSensitive(object, key);
-	if (!cJSON_IsNumber(item) || !(item->valuedouble >= 0.0) || item->valuedouble > (double)limit ||
-		item->valuedouble != floor(item->valuedouble))
+/* Copies the name in `value` to `out`. Returns false when `value` isn't a
+   valid name or is too long. */
+static bool json_copy_screen_name(const cJSON* value, char out[AERON_GLTF_SCREEN_NAME_MAX]) {
+	if (!cJSON_IsString(value) || !Aeron_FlightTagValid(value->valuestring) ||
+		strlen(value->valuestring) >= AERON_GLTF_SCREEN_NAME_MAX)
 		return false;
-	*out = (uint32_t)item->valuedouble;
+	strcpy(out, value->valuestring);
 	return true;
 }
 
 static bool read_screen_rect(const cJSON* json, AeronGltfScreenRect* r) {
 	memset(r, 0, sizeof *r);
 	const cJSON* gain = cJSON_GetObjectItemCaseSensitive(json, "gain");
-	if (!json_uint(json, "source", AERON_GLTF_SCREEN_MAX_SOURCES - 1u, &r->source) ||
-		!json_uint(json, "layers", 0x7u, &r->layers) ||
+	r->source         = AERON_GLTF_SCREEN_MAX_SOURCES;
+	if (!json_copy_screen_name(cJSON_GetObjectItemCaseSensitive(json, "source"), r->source_name) ||
+		!Aeron_FlightNameMask(AERON_FLIGHT_SCREEN_LAYERS, cJSON_GetObjectItemCaseSensitive(json, "layers"),
+							  &r->layers) ||
 		!json_floats(cJSON_GetObjectItemCaseSensitive(json, "dst"), r->dst, 4) ||
 		!json_floats(cJSON_GetObjectItemCaseSensitive(json, "bg"), r->bg, 3) ||
 		!json_floats(cJSON_GetObjectItemCaseSensitive(json, "highlight"), r->highlight, 3) ||
@@ -579,20 +583,34 @@ static bool read_screen_rect(const cJSON* json, AeronGltfScreenRect* r) {
 }
 
 /* Reads a material's `screen` into `out` and the model's rectangle array. A
- * malformed screen is reported and dropped: the material stays an ordinary
- * one. Returns false only when memory runs out. */
+ * malformed screen is reported and dropped, and the material stays an
+ * ordinary one. Returns false only when memory runs out. */
 static bool read_screen(const cJSON* screen, AeronGltfModel* model, uint32_t* rect_capacity,
 						AeronGltfMaterial* out, const char* source_label, uint32_t material_index) {
 	out->screen_first = out->screen_count = out->screen_flags = 0;
 	if (!screen)
 		return true;
 	const cJSON* rects = cJSON_GetObjectItemCaseSensitive(screen, "rects");
-	uint32_t     hide   = 0;
-	const int    count  = cJSON_IsArray(rects) ? cJSON_GetArraySize(rects) : -1;
-	if (!cJSON_IsObject(screen) || !json_uint(screen, "hide", UINT32_MAX, &hide) || count < 0 ||
+	const cJSON* hide  = cJSON_GetObjectItemCaseSensitive(screen, "hide");
+	const int    count = cJSON_IsArray(rects) ? cJSON_GetArraySize(rects) : -1;
+	if (!cJSON_IsObject(screen) || (hide && !cJSON_IsArray(hide)) || count < 0 ||
 		count > (int)AERON_GLTF_SCREEN_MAX_RECTS_PER_MATERIAL) {
 		SDL_Log("[flight_gltf] '%s' material %u: malformed screen ignored", source_label, material_index);
 		return true;
+	}
+	char         hide_names[AERON_GLTF_SCREEN_MAX_HIDE_NAMES][AERON_GLTF_SCREEN_NAME_MAX];
+	uint32_t     hide_count = 0;
+	const cJSON* area;
+	cJSON_ArrayForEach(area, hide) {
+		if (hide_count == (uint32_t)AERON_GLTF_SCREEN_MAX_HIDE_NAMES ||
+			!json_copy_screen_name(area, hide_names[hide_count])) {
+			SDL_Log(
+				"[flight_gltf] '%s' material %u: the screen's hide list must be a list of at most %u names. "
+				"The screen is ignored",
+				source_label, material_index, AERON_GLTF_SCREEN_MAX_HIDE_NAMES);
+			return true;
+		}
+		++hide_count;
 	}
 	if (model->screen_rect_count + (uint32_t)count > *rect_capacity) {
 		uint32_t capacity = *rect_capacity ? *rect_capacity * 2u : 32u;
@@ -613,7 +631,23 @@ static bool read_screen(const cJSON* screen, AeronGltfModel* model, uint32_t* re
 			return true;
 		}
 	}
-	model->screen_hide_mask |= hide;
+	for (int i = 0; i < count; i++)
+		model->screen_rects[first + (uint32_t)i].material = material_index;
+	for (uint32_t i = 0; i < hide_count; i++) {
+		uint32_t known = 0;
+		while (known < model->screen_hide_name_count &&
+			   strcmp(model->screen_hide_names[known], hide_names[i]) != 0)
+			++known;
+		if (known < model->screen_hide_name_count)
+			continue;
+		if (known == (uint32_t)AERON_GLTF_SCREEN_MAX_HIDE_NAMES) {
+			SDL_Log(
+				"[flight_gltf] '%s' material %u: a model can hide at most %u HUD areas, so '%s' is ignored",
+				source_label, material_index, AERON_GLTF_SCREEN_MAX_HIDE_NAMES, hide_names[i]);
+			continue;
+		}
+		strcpy(model->screen_hide_names[model->screen_hide_name_count++], hide_names[i]);
+	}
 	if (count > 0) {
 		model->screen_rect_count += (uint32_t)count;
 		out->screen_first = first;
@@ -664,6 +698,10 @@ static const char* const kAnimStates[AERON_ANIM_STATE_ALWAYS + 1] = {
 	"target",
 	"always",
 };
+
+const char* Aeron_GltfAnimStateName(uint32_t state) {
+	return state <= AERON_ANIM_STATE_ALWAYS ? kAnimStates[state] : NULL;
+}
 
 static bool json_string_index(const cJSON* object, const char* key, const char* const* names, uint32_t count,
 							  uint32_t* out) {
@@ -818,20 +856,52 @@ static bool read_damage_alternative(const cJSON* json, const char* library, Aero
 	return true;
 }
 
+/* Returns the model's number for the damage group named `value`. Each name
+ * gets one number. Returns false when `value` isn't a name, when the model
+ * has too many groups, or when out of memory. In the last case, also sets
+ * *oom. */
+static bool damage_group_number(const cJSON* value, AeronGltfModel* model, uint32_t* out, bool* oom) {
+	if (!cJSON_IsString(value) || !value->valuestring[0])
+		return false;
+	for (uint32_t i = 0; i < model->damage_group_count; i++)
+		if (strcmp(model->damage_groups[i], value->valuestring) == 0) {
+			*out = i;
+			return true;
+		}
+	if (model->damage_group_count > 0xFFFu)
+		return false;
+	char** grown = (char**)realloc(model->damage_groups, (model->damage_group_count + 1) * sizeof *grown);
+	char*  copy  = grown ? (char*)malloc(strlen(value->valuestring) + 1) : NULL;
+	if (grown)
+		model->damage_groups = grown;
+	if (!copy) {
+		*oom = true;
+		return false;
+	}
+	strcpy(copy, value->valuestring);
+	*out                                              = model->damage_group_count;
+	model->damage_groups[model->damage_group_count++] = copy;
+	return true;
+}
+
 /* A material's `damage`: appended to the model's alternatives. A malformed
  * one is reported and dropped. Returns false only on OOM. */
 static bool read_damage(const cJSON* damage, AeronGltfModel* model, FlipbookCapacity* cap,
 						AeronGltfMaterial* out, const char* source_label, uint32_t material_index) {
 	if (!damage)
 		return true;
-	const cJSON*   library = cJSON_GetObjectItemCaseSensitive(damage, "library");
-	const cJSON*   alts    = cJSON_GetObjectItemCaseSensitive(damage, "alternatives");
-	const int      count   = cJSON_IsArray(alts) ? cJSON_GetArraySize(alts) : -1;
-	uint32_t       choice = 0, placement = 0;
-	bool           oom   = false;
-	bool           valid = cJSON_IsString(library) && count > 0 && count <= 0xFFFF &&
-						   json_uint(damage, "choice", 0xFFFu, &choice) &&
-						   json_uint(damage, "placement", 0xFFFu, &placement);
+	const cJSON* library = cJSON_GetObjectItemCaseSensitive(damage, "library");
+	const cJSON* alts    = cJSON_GetObjectItemCaseSensitive(damage, "alternatives");
+	const int    count   = cJSON_IsArray(alts) ? cJSON_GetArraySize(alts) : -1;
+	const cJSON* placed  = cJSON_GetObjectItemCaseSensitive(damage, "placement");
+	uint32_t     choice = 0, placement = 0;
+	bool         oom = false;
+	bool         valid =
+		cJSON_IsString(library) && count > 0 && count <= 0xFFFF &&
+		damage_group_number(cJSON_GetObjectItemCaseSensitive(damage, "choice"), model, &choice, &oom) &&
+		(!placed ? (placement = choice, true) : damage_group_number(placed, model, &placement, &oom));
+	if (oom)
+		return false;
 	const uint32_t first = model->damage_count;
 	if (valid &&
 		!grow((void**)&model->damages, &cap->damages, first + (uint32_t)count, sizeof *model->damages))
@@ -1379,9 +1449,9 @@ bool Aeron_GltfMeshBuildData(const cgltf_data* data, const char* source_label, A
 	if (out->markings_count > 0 || out->group_count > 0)
 		SDL_LogVerbose(k_log_category_application, "[flight_gltf] %s: %u markings, %u variant groups",
 					   source_label, out->markings_count, out->group_count);
-	if (out->screen_rect_count > 0 || out->screen_hide_mask != 0)
-		SDL_LogVerbose(k_log_category_application, "[flight_gltf] %s: %u screen rectangles, hide mask 0x%x",
-					   source_label, out->screen_rect_count, out->screen_hide_mask);
+	if (out->screen_rect_count > 0 || out->screen_hide_name_count != 0)
+		SDL_LogVerbose(k_log_category_application, "[flight_gltf] %s: %u screen rectangles, %u hidden areas",
+					   source_label, out->screen_rect_count, out->screen_hide_name_count);
 
 	succeeded = true;
 
@@ -1401,6 +1471,9 @@ void Aeron_GltfMeshFree(AeronGltfModel* m) {
 	free(m->materials);
 	free(m->prim_variant_material);
 	free(m->screen_rects);
+	for (uint32_t g = 0; g < m->damage_group_count; g++)
+		free(m->damage_groups[g]);
+	free(m->damage_groups);
 	for (uint32_t b = 0; m->flipbooks && b < m->flipbook_count; b++)
 		free(m->flipbooks[b].library);
 	free(m->flipbooks);

@@ -15,8 +15,9 @@
  *   - Rotation pivots and axes are kept in the component role.
  *
  *   - Hardpoints: the hardpoints of each OPT mesh become empty child nodes
- *     (a translation and no mesh) named "hardpoint_<type>". Each one carries
- *     an `AERON_flight_model` hardpoint role and the raw OPT type.
+ *     (a translation and no mesh) named "hardpoint_<type>". Each one has an
+ *     `AERON_flight_model` hardpoint role and the name of its OPT hardpoint
+ *     type.
  *
  *   - Lights given by the caller (OptGltfLight) become empty child nodes
  *     named "light_<n>", with a KHR_lights_punctual point light and an
@@ -287,6 +288,7 @@ typedef struct OptGltfVariants {
  *   - Transparent and hologram surfaces are BLEND, the others are OPAQUE.
  */
 #define OPT_GLTF_SCREEN_MAX_RECTS 12
+#define OPT_GLTF_SCREEN_MAX_HIDE 32
 
 /* `layers` bits. */
 #define OPT_GLTF_SCREEN_LAYER_GRAPHICS 1u
@@ -294,7 +296,7 @@ typedef struct OptGltfVariants {
 #define OPT_GLTF_SCREEN_LAYER_BAR 4u /* filled from the bottom, without a texture */
 
 typedef struct OptGltfScreenRect {
-	uint32_t source; /* source index (XWAU table order) */
+	const char* source; /* the name of the game display that it shows */
 	float    dst[4]; /* u0, v0, u1, v1 in TEXCOORD_0. Swapped corners mirror the content. */
 	float    bg[3];  /* linear background colours */
 	float    highlight[3];
@@ -310,7 +312,10 @@ typedef struct OptGltfScreen {
 	bool              always_visible;
 	bool              hologram;
 	bool              noisy;
-	uint32_t          hide; /* one bit per HUD region that the 2D overlay drops */
+	/* The names of the 2D HUD areas that the game hides while the screen is
+	   visible. */
+	const char*       hide[OPT_GLTF_SCREEN_MAX_HIDE];
+	uint32_t          hide_count;
 	uint32_t          rect_count;
 	OptGltfScreenRect rects[OPT_GLTF_SCREEN_MAX_RECTS];
 	/* Cover images, with rows in UV order. rgba is NULL when there is no

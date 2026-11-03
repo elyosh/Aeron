@@ -154,8 +154,7 @@ static void render_frame(bool tiling, int frame, uint8_t* rgba) {
 /* The library file content, without images. */
 static cJSON* library_doc(cJSON** images) {
 	cJSON* doc = cJSON_CreateObject();
-	*images    = doc && cJSON_AddNumberToObject(doc, "version", 1) &&
-						 cJSON_AddStringToObject(doc, "library", XWAU_LAVA_LIBRARY)
+	*images    = doc && cJSON_AddStringToObject(doc, "library", XWAU_LAVA_LIBRARY)
 					 ? cJSON_AddObjectToObject(doc, "images")
 					 : NULL;
 	return doc;
@@ -201,10 +200,9 @@ bool XwauLava_WriteLibrary(const char* effects_dir, bool merge) {
 			ok = ok && add_image(images, key, name);
 		}
 	}
-	ok = ok && EffectFiles_Write("opt2gltf", doc,
-								 "# Effect library lava, generated from XWAU's procedural lava.\n", file);
+	ok = ok && EffectFiles_Write("opt2gltf", doc, "# Made by the OpenXWA mod importer.\n", file);
 	if (ok)
-		Report(NULL, "library %s: %d image(s) written", XWAU_LAVA_LIBRARY, 2 * XWAU_LAVA_FRAMES);
+		ReportDetail(NULL, "library %s: %d image(s) written", XWAU_LAVA_LIBRARY, 2 * XWAU_LAVA_FRAMES);
 	cJSON_Delete(doc);
 	free(rgba);
 	return ok;
@@ -270,7 +268,7 @@ bool XwauLava_MakeLibrary(int threads, cJSON** library, XwauLibraryInput** input
 	}
 	free(renderers);
 	free(ids);
-	Report(NULL, "library %s: %d image(s) made", XWAU_LAVA_LIBRARY, n);
+	ReportDetail(NULL, "library %s: %d image(s) made", XWAU_LAVA_LIBRARY, n);
 	*library = doc;
 	*inputs  = frames;
 	*count   = (size_t)n;

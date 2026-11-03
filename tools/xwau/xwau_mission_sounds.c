@@ -42,10 +42,9 @@ static bool hangar_voice(const char* game, const char* stock_game, const char* f
 bool XwauMissionSounds_Read(const char* game, const char* stock_game, const char* base, bool report,
 							XwauMissionSounds* out) {
 	memset(out, 0, sizeof *out);
-	char rel[1200], path[1024];
-	if (!Xwau_FindFile(game, "hook_engine_sound.dll", path, sizeof path))
-		return true;
-	XwauLines lines = { 0 };
+	char       rel[1200], path[1024];
+	const bool hook  = Xwau_FindFile(game, "hook_engine_sound.dll", path, sizeof path);
+	XwauLines  lines = { 0 };
 	bool      ok =
 		PathFormat(rel, sizeof rel, "%s_Sounds.txt", base) &&
 		XwauLines_Read(Xwau_FindFile(game, rel, path, sizeof path) ? path : NULL, "", XWAU_RULES_CPP, &lines);
@@ -55,8 +54,13 @@ bool XwauMissionSounds_Read(const char* game, const char* stock_game, const char
 			 XwauLines_Read(Xwau_FindFile(game, rel, path, sizeof path) ? path : NULL, "Sounds",
 							XWAU_RULES_CPP, &lines);
 	}
-	size_t missing = 0, voices = 0;
+	/* Without the hook, XWAU reads no line. */
+	if (ok && !hook) {
+		XwauLines_Free(&lines);
+		return true;
+	}
 	for (size_t i = 0; ok && i < lines.count; ++i) {
+		/* XWAU ignores a line that isn't a "from = to" line. */
 		const char* eq = strchr(lines.items[i], '=');
 		if (!eq)
 			continue;
@@ -80,15 +84,20 @@ bool XwauMissionSounds_Read(const char* game, const char* stock_game, const char
 		}
 		if (seen)
 			continue;
+		/* A line whose file isn't in the installation does nothing, and a
+		   hangar voice never matches, in XWAU too. */
 		char found[1024];
 		if (!to[0] || !Xwau_FindFile(game, to, found, sizeof found)) {
-			++missing;
+			if (to[0] && stock_game && Xwau_FindFile(stock_game, to, found, sizeof found) &&
+				!hangar_voice(game, stock_game, from) && report)
+				ReportFatal(base,
+							"[Sounds]: '%s' replaces %s with a file of the stock game, which the "
+							"importer doesn't copy",
+							lines.items[i], from);
 			continue;
 		}
-		if (hangar_voice(game, stock_game, from)) {
-			++voices;
+		if (hangar_voice(game, stock_game, from))
 			continue;
-		}
 		XwauMissionSound* item = (XwauMissionSound*)ARRAY_PUSH(out->items, out->count);
 		if (!item) {
 			ok = false;
@@ -100,17 +109,6 @@ bool XwauMissionSounds_Read(const char* game, const char* stock_game, const char
 		ok = item->from && item->to;
 	}
 	XwauLines_Free(&lines);
-	if (missing && report)
-		Report(base,
-			   "[Sounds]: %zu lines name a file that isn't in the installation, so they do nothing; they are "
-			   "left out",
-			   missing);
-	if (voices && report)
-		Report(base,
-			   "[Sounds]: %zu lines name hangar voices, which the game loads from paths with a '/', so they "
-			   "never "
-			   "match, in XWAU too; they are left out",
-			   voices);
 	if (!ok)
 		Report(NULL, "out of memory");
 	return ok;
@@ -125,12 +123,22 @@ void XwauMissionSounds_Free(XwauMissionSounds* sounds) {
 	memset(sounds, 0, sizeof *sounds);
 }
 
+/* Writes `path` as a yaml string, with '/' between folders. */
+static void write_path(FILE* f, const char* path) {
+	char text[512];
+	snprintf(text, sizeof text, "%s", path);
+	for (char* c = text; *c; ++c)
+		if (*c == '\\')
+			*c = '/';
+	Xwau_WriteString(f, text);
+}
+
 void XwauMissionSounds_Write(FILE* f, const XwauMissionSounds* sounds) {
 	for (size_t i = 0; i < sounds->count; ++i) {
 		fputs(i ? "  - [" : "sounds:\n  - [", f);
-		Xwau_WriteString(f, sounds->items[i].from);
+		write_path(f, sounds->items[i].from);
 		fputs(", ", f);
-		Xwau_WriteString(f, sounds->items[i].to);
+		write_path(f, sounds->items[i].to);
 		fputs("]\n", f);
 	}
 }

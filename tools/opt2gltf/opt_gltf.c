@@ -4,6 +4,7 @@
 
 #include <math.h>
 
+#include "aeron/asset/flight_names.h"
 #include "opt_gltf_internal.h"
 #include "opt_json.h"
 
@@ -331,7 +332,7 @@ static bool build_geometry(Build* b) {
 	if (!b->built)
 		return opt_gltf_build_fail(b, "out of memory (meshes)");
 	b->max_state_count  = 1;
-	uint32_t fixed_zero = 0, fixed_flip = 0, skipped_repeats = 0, kept_repeats = 0;
+	uint32_t fixed_zero = 0, fixed_flip = 0, skipped_repeats = 0, kept_repeats = 0, bad_triangles = 0;
 	for (int32_t mi = 0; mi < opt->mesh_count; ++mi) {
 		const opt_mesh_t* m  = &opt->meshes[mi];
 		BuiltMesh*        bm = &b->built[mi];
@@ -358,6 +359,7 @@ static bool build_geometry(Build* b) {
 		fixed_flip += bm->fixed_flipped_normals;
 		skipped_repeats += bm->skipped_repeats;
 		kept_repeats += bm->kept_repeats;
+		bad_triangles += bm->bad_triangles;
 		for (int32_t g = 0; g < m->lods[0].group_count; ++g)
 			if (m->lods[0].groups[g].state_count > b->max_state_count)
 				b->max_state_count = m->lods[0].groups[g].state_count;
@@ -370,6 +372,10 @@ static bool build_geometry(Build* b) {
 	if (kept_repeats)
 		opt_gltf_log(b->options, true, "kept %u repeated triangle(s) that have another texture",
 					 kept_repeats);
+	/* XWA would read past the vertices of such a triangle. */
+	if (bad_triangles)
+		opt_gltf_log(b->options, true, "left out %u triangle(s) with a vertex index out of range",
+					 bad_triangles);
 	return true;
 }
 
@@ -855,9 +861,10 @@ static bool write_meshes(Build* b) {
 		return false;
 	GltfBuild* gb = b->gb;
 	for (int32_t mi = 0; mi < b->opt->mesh_count; ++mi) {
-		gb->meshes[mi].name = opt_gltf_keep_string(
-			gb,
-			xprintf_dup("Mesh%02d_%s", (int)mi, opt_mesh_type_name(b->opt->meshes[mi].descriptor.mesh_type)));
+		const char* type =
+			Aeron_FlightName(AERON_FLIGHT_MESH_TYPES, (uint32_t)b->opt->meshes[mi].descriptor.mesh_type);
+		gb->meshes[mi].name =
+			opt_gltf_keep_string(gb, xprintf_dup("Mesh%02d_%s", (int)mi, type ? type : "unknown"));
 		if (!write_mesh(b, mi, &b->built[mi], &gb->meshes[mi]))
 			return false;
 	}
@@ -873,11 +880,17 @@ static bool write_meshes(Build* b) {
 
 /* ---- Nodes -------------------------------------------------------------- */
 
+/* Converts steps of 1/256 turn to degrees, rounded to three decimals. Three
+ * decimals are enough to get the exact step back. */
+static cJSON* turn_steps_degrees(int steps) {
+	return cJSON_CreateNumber(round(steps * 360000.0 / 256.0) / 1000.0);
+}
+
 /* Builds the AERON_flight_model object of the model root. It holds the
  * articulations in option order, the articulation settings, the component
  * sets, the markings, and the energy shared by the materials (bits of
- * kAnimEnergies). speedBack is written only when it differs from speed.
- * Returns NULL when out of memory. */
+ * kAnimEnergies). speedBackDegrees is written only when it differs from
+ * speedDegrees. Returns NULL when out of memory. */
 static cJSON* root_extension(const Build* b, unsigned energy) {
 	const OptGltfBuildOptions* o    = b->options;
 	cJSON*                     root = cJSON_CreateObject();
@@ -889,10 +902,10 @@ static cJSON* root_extension(const Build* b, unsigned energy) {
 		cJSON*                              object = OptJson_AddObject(list, NULL);
 		ok = OptJson_Add(object, "component", cJSON_CreateNumber(art->component)) &&
 			 OptJson_Add(object, "group", cJSON_CreateString(art->group)) &&
-			 OptJson_Add(object, "angle", cJSON_CreateNumber(art->angle)) &&
-			 OptJson_Add(object, "speed", cJSON_CreateNumber(art->speed));
+			 OptJson_Add(object, "angleDegrees", turn_steps_degrees(art->angle)) &&
+			 OptJson_Add(object, "speedDegrees", turn_steps_degrees(art->speed));
 		if (ok && art->speed_back != art->speed)
-			ok = OptJson_Add(object, "speedBack", cJSON_CreateNumber(art->speed_back));
+			ok = OptJson_Add(object, "speedBackDegrees", turn_steps_degrees(art->speed_back));
 		if (ok && art->behavior[0])
 			ok = OptJson_Add(object, "behavior", cJSON_CreateString(art->behavior));
 	}
@@ -929,6 +942,31 @@ static bool add_position(cJSON* object, const char* key, const opt_vec3_t* value
 	return OptJson_Add(object, key, OptJson_Floats(v, 3));
 }
 
+/* Adds `meshType` with the name of mesh type `type`. An OPT mesh type without
+ * a name (32 or more) becomes `default`. XWA uses such a type as an index
+ * past the end of its tables, so the import fails on it
+ * (report_opt_drops in model_conversion.c). */
+static bool mesh_type_json(cJSON* ext, opt_mesh_type_t type) {
+	const char* name = Aeron_FlightName(AERON_FLIGHT_MESH_TYPES, (uint32_t)type);
+	return OptJson_Add(ext, "meshType", cJSON_CreateString(name ? name : "default"));
+}
+
+/* Adds `explosion` with the names of the bits set in the OPT explosion type
+ * `flags`. The other bits, such as 4, have no name because the game never
+ * reads them, so they are left out. The import reports them
+ * (report_opt_drops in model_conversion.c). */
+static bool explosion_json(cJSON* ext, unsigned flags) {
+	if (!(flags & ((1u << AERON_FLIGHT_EXPLOSION_FLAG_COUNT) - 1u)))
+		return true;
+	cJSON* list = OptJson_AddArray(ext, "explosion");
+	bool   ok   = list != NULL;
+	for (uint32_t bit = 0; ok && bit < AERON_FLIGHT_EXPLOSION_FLAG_COUNT; ++bit)
+		if (flags & (1u << bit))
+			ok = OptJson_Add(list, NULL,
+							 cJSON_CreateString(Aeron_FlightName(AERON_FLIGHT_EXPLOSION_FLAGS, bit)));
+	return ok;
+}
+
 /* Builds the component AERON_flight_model object of mesh `mi`. Returns NULL
  * when out of memory. */
 static cJSON* component_extension(const Build* b, int32_t mi) {
@@ -936,11 +974,10 @@ static cJSON* component_extension(const Build* b, int32_t mi) {
 	const opt_mesh_t*          m     = &b->opt->meshes[mi];
 	const float                scale = OPT_METERS_PER_UNIT;
 	cJSON*                     ext   = cJSON_CreateObject();
-	bool                       ok =
-		OptJson_Add(ext, "role", cJSON_CreateString("component")) &&
-		OptJson_Add(ext, "meshType", cJSON_CreateNumber((int)m->descriptor.mesh_type)) &&
-		OptJson_Add(ext, "explosionFlags", cJSON_CreateNumber((unsigned)m->descriptor.explosion_type)) &&
-		OptJson_Add(ext, "targetId", cJSON_CreateNumber((int)m->descriptor.target_id));
+	bool ok = OptJson_Add(ext, "role", cJSON_CreateString("component")) &&
+			  mesh_type_json(ext, m->descriptor.mesh_type) &&
+			  explosion_json(ext, (unsigned)m->descriptor.explosion_type) &&
+			  OptJson_Add(ext, "targetId", cJSON_CreateNumber((int)m->descriptor.target_id));
 	if (ok && m->has_descriptor) {
 		const float span[3]       = { m->descriptor.span.x * scale, m->descriptor.span.z * scale,
 									  m->descriptor.span.y * scale };
@@ -1012,11 +1049,14 @@ static void child_node(cgltf_node* node, cgltf_node* parent, const opt_vec3_t* p
 }
 
 static bool hardpoint_node(Build* b, cgltf_node* node, cgltf_node* parent, const opt_hardpoint_t* hp) {
-	node->name = opt_gltf_keep_string(b->gb, xprintf_dup("hardpoint_%d", (int)hp->type));
+	const char* type = Aeron_FlightName(AERON_FLIGHT_HARDPOINT_TYPES, hp->type);
+	if (!type)
+		return opt_gltf_build_fail(b, "hardpoint type %u has no name", hp->type);
+	node->name = opt_gltf_keep_string(b->gb, xprintf_dup("hardpoint_%s", type));
 	child_node(node, parent, &hp->pos);
 	cJSON* extension = cJSON_CreateObject();
 	if (!OptJson_Add(extension, "role", cJSON_CreateString("hardpoint")) ||
-		!OptJson_Add(extension, "type", cJSON_CreateNumber((int)hp->type))) {
+		!OptJson_Add(extension, "type", cJSON_CreateString(type))) {
 		cJSON_Delete(extension);
 		return false;
 	}

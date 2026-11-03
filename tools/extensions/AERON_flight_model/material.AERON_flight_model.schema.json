@@ -173,22 +173,20 @@
       "title": "Hull damage",
       "description": "Images the material shows as the hull weakens, multiplying its base colour (their alpha dulls the surface). Each object picks one alternative and places it at random.",
       "type": "object",
-      "required": ["library", "choice", "placement", "alternatives"],
+      "required": ["library", "choice", "alternatives"],
       "properties": {
         "library": { "$ref": "#/$defs/library", "description": "The effect library of the damage images." },
         "choice": {
           "title": "Choice group",
-          "description": "Materials of an object with the same choice pick the same alternative.",
-          "type": "integer",
-          "minimum": 0,
-          "maximum": 4095
+          "description": "Materials of an object with the same choice name pick the same alternative. A model can have up to 4096 choice and placement names.",
+          "type": "string",
+          "minLength": 1
         },
         "placement": {
           "title": "Placement group",
-          "description": "Materials of an object with the same placement share the random size and offset.",
-          "type": "integer",
-          "minimum": 0,
-          "maximum": 4095
+          "description": "Materials of an object with the same placement name share the random size and offset. The default is the choice name.",
+          "type": "string",
+          "minLength": 1
         },
         "alternatives": {
           "title": "Alternatives",
@@ -280,30 +278,30 @@
       "type": "object",
       "required": ["source", "dst", "bg", "highlight", "lock", "gain", "layers"],
       "properties": {
-        "source": { "title": "Source", "description": "The game's display it shows (game-defined).", "type": "integer", "minimum": 0, "maximum": 63 },
+        "source": { "title": "Source", "description": "The name of the game display that the rectangle shows. The game defines the display names.", "type": "string" },
         "dst": { "title": "Rectangle", "description": "[u0, v0, u1, v1] in TEXCOORD_0; swapped corners mirror it.", "type": "array", "items": { "type": "number" }, "minItems": 4, "maxItems": 4 },
         "bg": { "$ref": "#/$defs/rgb", "description": "The background in the display's normal state." },
         "highlight": { "$ref": "#/$defs/rgb", "description": "The background while the display is highlighted." },
         "lock": { "$ref": "#/$defs/rgb", "description": "The background while the display shows a lock." },
         "gain": { "title": "Gain", "description": "The content's brightness.", "type": "number", "minimum": 0 },
-        "layers": { "title": "Layers", "description": "What it shows, a bitmask: 1 the display's graphics, 2 its text, 4 a fill bar (no texture).", "type": "integer", "minimum": 0, "maximum": 7 },
-        "bar": { "$ref": "#/$defs/rgb", "description": "The fill bar's colour; required with layer 4." }
+        "layers": { "title": "Layers", "description": "What the rectangle shows: the display's graphics, its text, and a fill bar without a texture.", "type": "array", "items": { "enum": ["graphics", "text", "bar"] }, "uniqueItems": true },
+        "bar": { "$ref": "#/$defs/rgb", "description": "The fill bar's colour; required with the bar layer." }
       },
-      "if": { "properties": { "layers": { "enum": [4, 5, 6, 7] } } },
+      "if": { "properties": { "layers": { "contains": { "const": "bar" } } } },
       "then": { "required": ["bar"] }
     },
     "screen": {
       "title": "Screen",
       "description": "Displays the game draws live on the material (cockpit screens).",
       "type": "object",
-      "required": ["hide", "rects"],
+      "required": ["rects"],
       "properties": {
         "cover": { "title": "Cover", "description": "The base colour's alpha below 1 shows the screen through the material.", "type": "boolean", "default": false },
         "transparent": { "title": "Transparent", "description": "Drawn unlit, its alpha from the screen's luminance.", "type": "boolean", "default": false },
         "alwaysVisible": { "title": "Always visible", "description": "A transparent screen kept while the game draws its 2D HUD.", "type": "boolean", "default": false },
         "hologram": { "title": "Hologram", "description": "Drawn as a hologram.", "type": "boolean", "default": false },
         "noisy": { "title": "Noisy", "description": "A hologram with scanlines.", "type": "boolean", "default": false },
-        "hide": { "title": "Hidden HUD regions", "description": "A bitmask of the 2D HUD regions the game stops drawing while the screen shows (game-defined).", "type": "integer", "minimum": 0, "maximum": 4294967295 },
+        "hide": { "title": "Hidden HUD areas", "description": "The 2D HUD areas that the game stops drawing while the screen is visible. The game defines the area names.", "type": "array", "items": { "type": "string" }, "uniqueItems": true },
         "rects": { "title": "Rectangles", "description": "The displays shown, up to 16.", "type": "array", "maxItems": 16, "items": { "$ref": "#/$defs/screenRect" } }
       }
     }

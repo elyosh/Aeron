@@ -29,12 +29,14 @@
 
 struct cJSON;
 
-/* Writes every library named by the models in `inputs` into <project>/effects,
- * replacing the files there. Each input is a model .gltf or a project. For a
- * project, all its models are read. Also writes <project>/effects/effects.yaml,
- * which lists the energy effects and the flipbooks of the DAT images that the
- * game draws directly. These flipbooks come from the material files named after
- * DAT images (Materials/dat-<G>-<I>.mat), such as the blast marks of group 3050. */
+/* Writes every library that the models in `inputs` use into
+ * <project>/effects, and replaces the files there. Each input is a model
+ * .gltf or a project. For a project, all its models are read. Also writes
+ * <project>/effects/effects.yaml, which lists the energy effects and the
+ * blast mark flipbooks. Blast marks are the DAT images of group 3050, which
+ * the game draws directly. Their flipbooks come from the material files
+ * named after the images (Materials/dat-3050-<I>.mat). Image n is named
+ * blast_mark.<n>, counting from 1. */
 bool XwauLibrary_Rebuild(const char* game, const char* project, const char* const* inputs, size_t count);
 
 /* Adds to <project>/effects the images that the model `gltf` names and that the

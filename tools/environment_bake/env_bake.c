@@ -8,11 +8,11 @@
 #include "bc6h_codec.h"
 #include "bc7_codec.h"
 #include "cJSON.h"
+#include "cube_faces.h"
 #include "envmap.h"
 #include "hdr_read.h"
 #include "ktx2_writer.h"
 #include "tool_log.h"
-#include "xwau_faces.h"
 
 #include <math.h>
 #include <stdint.h>
@@ -428,11 +428,11 @@ static bool bake_cubes(const EnvBakeOptions* o, EnvCube* radiance, int specular_
 	envmap_ggx_prefilter(&specular, radiance, o->specular_samples, o->jobs);
 
 	const CubeStats stats = cube_stats(radiance);
-	ToolLog_Write(TOOL_LOG_INFO, "sky luminance: peak %.6g, mean %.6g", stats.peak, stats.mean);
+	ToolLog_Write(TOOL_LOG_DETAIL, "sky luminance: peak %.6g, mean %.6g", stats.peak, stats.mean);
 	for (uint32_t i = 0; i < light_count; ++i) {
 		const double radius   = fmax(2.0 * lights[i].angular_radius_degrees, 1.0);
 		const double fraction = light_energy_fraction(radiance, &lights[i], radius);
-		ToolLog_Write(TOOL_LOG_INFO, "light %s: sky within %.2g deg holds %.3g%% of its irradiance",
+		ToolLog_Write(TOOL_LOG_DETAIL, "light %s: sky within %.2g deg holds %.3g%% of its irradiance",
 					  lights[i].name, radius, fraction * 100.0);
 		if (fraction > 0.1)
 			ToolLog_Write(TOOL_LOG_WARNING,
@@ -446,13 +446,13 @@ static bool bake_cubes(const EnvBakeOptions* o, EnvCube* radiance, int specular_
 					write_cube(specular_out, &specular, o->jobs);
 	if (ok) {
 		if (radiance_out)
-			ToolLog_Write(TOOL_LOG_INFO, "radiance %s: %d px, %d levels, %.2f MiB", radiance_out,
+			ToolLog_Write(TOOL_LOG_DETAIL, "radiance %s: %d px, %d levels, %.2f MiB", radiance_out,
 						  radiance->size, radiance->level_count, file_size_mib(radiance_out));
-		ToolLog_Write(TOOL_LOG_INFO,
+		ToolLog_Write(TOOL_LOG_DETAIL,
 					  "diffuse  %s: %d px, %d levels, exact irradiance over %d px faces, %.2f MiB",
 					  diffuse_out, diffuse.size, diffuse.level_count,
 					  envmap_level_size(radiance, stats_level(radiance, 64)), file_size_mib(diffuse_out));
-		ToolLog_Write(TOOL_LOG_INFO, "specular %s: %d px, %d roughness levels, %d samples, %.2f MiB",
+		ToolLog_Write(TOOL_LOG_DETAIL, "specular %s: %d px, %d roughness levels, %d samples, %.2f MiB",
 					  specular_out, specular.size, specular.level_count, o->specular_samples,
 					  file_size_mib(specular_out));
 	}
@@ -502,28 +502,43 @@ static bool load_panorama(const EnvBakeOptions* o, int size, EnvCube* radiance) 
 		free(pano);
 		return false;
 	}
-	ToolLog_Write(TOOL_LOG_INFO, "input %s: %dx%d", o->input, w, h);
+	ToolLog_Write(TOOL_LOG_DETAIL, "input %s: %dx%d", o->input, w, h);
 	envmap_from_equirect(radiance, pano, w, h, o->jobs);
 	free(pano);
 	return true;
 }
 
-/* Fills level 0 of a new `size` radiance cube from the skybox folder faces_dir. */
-static bool load_faces(const EnvBakeOptions* o, int size, EnvCube* radiance) {
-	XwauFaces faces;
-	char      err[512];
-	if (!xwau_faces_load(o->faces_dir, size, false, &faces, err, sizeof err)) {
+/* Reads the faces of `faces`, or the faces in memory `face_pixels`, at `size`
+ * pixels. */
+static bool read_cube_faces(const EnvBakeOptions* o, const char* faces, int size, bool alpha,
+							CubeFaces* out) {
+	char       err[512];
+	const bool ok =
+		o->face_pixels
+			? cube_faces_from_pixels(o->face_pixels, size, alpha, o->ldr_intensity, out, err, sizeof err)
+			: cube_faces_load(faces, size, alpha, o->ldr_intensity, out, err, sizeof err);
+	if (!ok) {
 		ToolLog_Write(TOOL_LOG_ERROR, "environment_bake: %s", err);
 		return false;
 	}
+	ToolLog_Write(TOOL_LOG_DETAIL, "input %s: six %d px faces%s",
+				  o->face_pixels ? o->face_pixels->name : faces, out->source_size,
+				  alpha ? " with alpha" : "");
+	return true;
+}
+
+/* Fills level 0 of a new `size` radiance cube from the --faces faces. */
+static bool load_sky_faces_into_cube(const EnvBakeOptions* o, int size, EnvCube* radiance) {
+	CubeFaces faces;
+	if (!read_cube_faces(o, o->faces, size, false, &faces))
+		return false;
 	if (!envmap_cube_alloc(radiance, size, envmap_mip_count(size))) {
 		ToolLog_Write(TOOL_LOG_ERROR, "environment_bake: out of memory");
-		xwau_faces_free(&faces);
+		cube_faces_free(&faces);
 		return false;
 	}
-	ToolLog_Write(TOOL_LOG_INFO, "input %s: six %d px faces", o->faces_dir, faces.source_size);
-	xwau_faces_to_cube(&faces, radiance, true);
-	xwau_faces_free(&faces);
+	cube_faces_to_cube(&faces, radiance);
+	cube_faces_free(&faces);
 	return true;
 }
 
@@ -568,8 +583,8 @@ static int run_bake(const EnvBakeOptions* o) {
 		return 1;
 
 	EnvCube radiance;
-	if (o->faces_dir) {
-		if (!load_faces(o, radiance_size, &radiance))
+	if (o->faces || o->face_pixels) {
+		if (!load_sky_faces_into_cube(o, radiance_size, &radiance))
 			return 1;
 	} else if (!load_panorama(o, radiance_size, &radiance)) {
 		return 1;
@@ -637,14 +652,9 @@ static int run_overlay(const EnvBakeOptions* o) {
 	/* The BC7 blocks that this thread encoded for an earlier job aren't
 	   reused. */
 	bc7_codec_clear_cache();
-	XwauFaces faces;
-	char      err[512];
-	if (!xwau_faces_load(o->overlay_faces_dir, o->radiance_size, true, &faces, err, sizeof err)) {
-		ToolLog_Write(TOOL_LOG_ERROR, "environment_bake: %s", err);
+	CubeFaces faces;
+	if (!read_cube_faces(o, o->overlay_faces, o->radiance_size, true, &faces))
 		return 1;
-	}
-	ToolLog_Write(TOOL_LOG_INFO, "input %s: six %d px faces with alpha", o->overlay_faces_dir,
-				  faces.source_size);
 
 	const int      size        = faces.size;
 	const int      level_count = envmap_mip_count(size);
@@ -659,9 +669,9 @@ static int run_overlay(const EnvBakeOptions* o) {
 		level[face] = (float*)malloc(face_floats * sizeof(float));
 		ok          = level[face] != NULL;
 		if (ok)
-			xwau_faces_face(&faces, face, true, level[face]);
+			memcpy(level[face], faces.faces[face], face_floats * sizeof(float));
 	}
-	xwau_faces_free(&faces);
+	cube_faces_free(&faces);
 
 	bc7_codec_init();
 	for (int l = 0, n = size; l < level_count && ok; ++l, n /= 2) {
@@ -686,10 +696,11 @@ static int run_overlay(const EnvBakeOptions* o) {
 	}
 	if (!ok)
 		ToolLog_Write(TOOL_LOG_ERROR, "environment_bake: out of memory");
-	else if (!(ok = write_ktx2_bc7_levels(o->overlay_out, 6, 0, levels, level_count, KTX2_TF_SRGB, true)))
+	else if (!(ok = write_ktx2_bc7_levels(o->overlay_out, 6, 0, levels, level_count, KTX2_TF_SRGB, true,
+										  KTX2_ALPHA_PREMULTIPLIED)))
 		ToolLog_Write(TOOL_LOG_ERROR, "environment_bake: cannot write %s", o->overlay_out);
 	else
-		ToolLog_Write(TOOL_LOG_INFO, "overlay %s: %d px BC7 sRGB cube, %d levels", o->overlay_out, size,
+		ToolLog_Write(TOOL_LOG_DETAIL, "overlay %s: %d px BC7 sRGB cube, %d levels", o->overlay_out, size,
 					  level_count);
 
 	for (int face = 0; face < 6; ++face)
@@ -1706,6 +1717,7 @@ void EnvBake_DefaultOptions(EnvBakeOptions* o) {
 	o->specular_samples = 1024;
 	o->sprite_size      = 256;
 	o->sprite_format    = "bc6h";
+	o->ldr_intensity    = 1.0f;
 	o->jobs             = 8;
 }
 

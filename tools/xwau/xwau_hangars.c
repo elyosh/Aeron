@@ -17,7 +17,7 @@
 
 static const char* const kMissionDirs[] = { "Missions", "Melee", "Combat" };
 
-/* The sections of a layer: the hook's section, and its key in the file. */
+/* The sections of a layer, as the hook names them. */
 enum { OBJECTS, MAP, CAMERA, FAM_MAP, FAM_CAMERA, SECTION_COUNT };
 
 static const char* const kSections[SECTION_COUNT] = { "HangarObjects", "HangarMap", "HangarCamera",
@@ -26,20 +26,95 @@ static const char* const kSections[SECTION_COUNT] = { "HangarObjects", "HangarMa
 static const int kCameraKeys[]    = { 1, 2, 3, 6, 9 };
 static const int kFamCameraKeys[] = { 1, 2, 3, 6, 7, 8, 9 };
 
-typedef enum KeyKind { KEY_INT, KEY_TYPE, KEY_STRING, KEY_INT_LIST, KEY_TYPE_LIST, KEY_NOT_IMPORTED } KeyKind;
+/* The line of each map section that holds the crane arm. */
+static const int kCraneLine[2] = { 1, 2 };
 
-/* The HangarObjects keys, and how each value is read. */
+typedef enum KeyKind {
+	KEY_INT,
+	KEY_TYPE,
+	KEY_SHUTTLE_TYPE, /* a model index, or 0 for the stock shuttle */
+	KEY_STRING,
+	KEY_INT_LIST,
+	KEY_TYPE_LIST,
+	KEY_NOT_IMPORTED
+} KeyKind;
+
+/* The HangarObjects keys. The keys of the two droids follow K_LOAD_DROID1
+   in the same order. */
+typedef enum Key {
+	K_LOAD_SHUTTLE,
+	K_SHUTTLE_MODEL_INDEX,
+	K_SHUTTLE_MARKINGS,
+	K_SHUTTLE_OBJECT_PROFILE,
+	K_SHUTTLE_POSITION_X,
+	K_SHUTTLE_POSITION_Y,
+	K_SHUTTLE_POSITION_Z,
+	K_SHUTTLE_ORIENTATION,
+	K_IS_SHUTTLE_FLOOR_INVERTED,
+	K_SHUTTLE_ANIMATION,
+	K_SHUTTLE_ANIMATION_STRAIGHT_LINE,
+	K_SHUTTLE_ANIMATION_ELEVATION,
+	K_LOAD_DROIDS,
+	K_DROIDS_POSITION_Z,
+	K_IS_DROIDS_FLOOR_INVERTED,
+	K_LOAD_DROID1,
+	K_ROOF_CRANE_POSITION_X = K_LOAD_DROID1 + 14,
+	K_ROOF_CRANE_POSITION_Y,
+	K_ROOF_CRANE_POSITION_Z,
+	K_ROOF_CRANE_AXIS,
+	K_ROOF_CRANE_LOW_OFFSET,
+	K_ROOF_CRANE_HIGH_OFFSET,
+	K_IS_HANGAR_FLOOR_INVERTED,
+	K_HANGAR_FLOOR_INVERTED_HEIGHT,
+	K_HANGAR_IFF,
+	K_PLAYER_ANIMATION_ELEVATION,
+	K_PLAYER_ANIMATION_INVERTED_ELEVATION,
+	K_PLAYER_ANIMATION_STRAIGHT_LINE,
+	K_PLAYER_OFFSET_X,
+	K_PLAYER_OFFSET_Y,
+	K_PLAYER_OFFSET_Z,
+	K_PLAYER_INVERTED_OFFSET_X,
+	K_PLAYER_INVERTED_OFFSET_Y,
+	K_PLAYER_INVERTED_OFFSET_Z,
+	K_IS_PLAYER_FLOOR_INVERTED,
+	K_PLAYER_MODEL_INDICES,
+	K_PLAYER_OFFSETS_X,
+	K_PLAYER_OFFSETS_Y,
+	K_PLAYER_OFFSETS_Z,
+	K_PLAYER_FLOOR_INVERTED_MODEL_INDICES,
+	K_DRAW_SHADOWS,
+	K_LIGHT_COLOR_INTENSITY,
+	K_LIGHT_COLOR_RGB,
+	KEY_COUNT
+} Key;
+
+/* The keys of a droid. The first droid's keys start at K_LOAD_DROID1, and
+   the second droid's keys start 7 keys later. */
+enum {
+	DK_LOAD,
+	DK_POSITION_Z,
+	DK_IS_FLOOR_INVERTED,
+	DK_UPDATE,
+	DK_MODEL_INDEX,
+	DK_MARKINGS,
+	DK_OBJECT_PROFILE,
+	DROID_KEYS
+};
+
 static const struct {
 	const char* name;
 	KeyKind     kind;
 } kKeys[] = {
 	{ "LoadShuttle", KEY_INT },
+	{ "ShuttleModelIndex", KEY_SHUTTLE_TYPE },
 	{ "ShuttleMarkings", KEY_INT },
+	{ "ShuttleObjectProfile", KEY_STRING },
 	{ "ShuttlePositionX", KEY_INT },
 	{ "ShuttlePositionY", KEY_INT },
 	{ "ShuttlePositionZ", KEY_INT },
 	{ "ShuttleOrientation", KEY_INT },
 	{ "IsShuttleFloorInverted", KEY_INT },
+	{ "ShuttleAnimation", KEY_STRING },
 	{ "ShuttleAnimationStraightLine", KEY_INT },
 	{ "ShuttleAnimationElevation", KEY_INT },
 	{ "LoadDroids", KEY_INT },
@@ -49,12 +124,16 @@ static const struct {
 	{ "Droid1PositionZ", KEY_INT },
 	{ "IsDroid1FloorInverted", KEY_INT },
 	{ "Droid1Update", KEY_INT },
+	{ "Droid1ModelIndex", KEY_TYPE },
 	{ "Droid1Markings", KEY_INT },
+	{ "Droid1ObjectProfile", KEY_STRING },
 	{ "LoadDroid2", KEY_INT },
 	{ "Droid2PositionZ", KEY_INT },
 	{ "IsDroid2FloorInverted", KEY_INT },
 	{ "Droid2Update", KEY_INT },
+	{ "Droid2ModelIndex", KEY_TYPE },
 	{ "Droid2Markings", KEY_INT },
+	{ "Droid2ObjectProfile", KEY_STRING },
 	{ "HangarRoofCranePositionX", KEY_INT },
 	{ "HangarRoofCranePositionY", KEY_INT },
 	{ "HangarRoofCranePositionZ", KEY_INT },
@@ -64,7 +143,6 @@ static const struct {
 	{ "IsHangarFloorInverted", KEY_INT },
 	{ "HangarFloorInvertedHeight", KEY_INT },
 	{ "HangarIff", KEY_INT },
-	{ "DrawShadows", KEY_INT },
 	{ "PlayerAnimationElevation", KEY_INT },
 	{ "PlayerAnimationInvertedElevation", KEY_INT },
 	{ "PlayerAnimationStraightLine", KEY_INT },
@@ -75,21 +153,18 @@ static const struct {
 	{ "PlayerInvertedOffsetY", KEY_INT },
 	{ "PlayerInvertedOffsetZ", KEY_INT },
 	{ "IsPlayerFloorInverted", KEY_INT },
-	{ "ShuttleModelIndex", KEY_TYPE },
-	{ "Droid1ModelIndex", KEY_TYPE },
-	{ "Droid2ModelIndex", KEY_TYPE },
-	{ "ShuttleObjectProfile", KEY_STRING },
-	{ "Droid1ObjectProfile", KEY_STRING },
-	{ "Droid2ObjectProfile", KEY_STRING },
-	{ "ShuttleAnimation", KEY_STRING },
+	{ "PlayerModelIndices", KEY_TYPE_LIST },
 	{ "PlayerOffsetsX", KEY_INT_LIST },
 	{ "PlayerOffsetsY", KEY_INT_LIST },
 	{ "PlayerOffsetsZ", KEY_INT_LIST },
-	{ "PlayerModelIndices", KEY_TYPE_LIST },
 	{ "PlayerFloorInvertedModelIndices", KEY_TYPE_LIST },
+	{ "DrawShadows", KEY_NOT_IMPORTED },
 	{ "LightColorIntensity", KEY_NOT_IMPORTED },
 	{ "LightColorRgb", KEY_NOT_IMPORTED },
 };
+
+typedef char kKeysMatchTheEnum[sizeof kKeys / sizeof kKeys[0] == KEY_COUNT ? 1 : -1];
+typedef char kDroidKeysFit[K_LOAD_DROID1 + 2 * DROID_KEYS == K_ROOF_CRANE_POSITION_X ? 1 : -1];
 
 /* ---- Text ------------------------------------------------------------------ */
 
@@ -126,7 +201,7 @@ UTIL_PRINTF(2, 3) static void text_add(Text* t, const char* format, ...) {
 }
 
 /* Adds ISO-8859-1 `value` as a quoted YAML string, in UTF-8. */
-static void text_quoted(Text* t, const char* value) {
+static void append_quoted_string(Text* t, const char* value) {
 	text_add(t, "\"");
 	for (const unsigned char* c = (const unsigned char*)value; *c; ++c) {
 		if (*c == '"' || *c == '\\')
@@ -140,7 +215,7 @@ static void text_quoted(Text* t, const char* value) {
 }
 
 /* Moves the text of `t` into `lines`. Returns false when out of memory. */
-static bool text_take(Text* t, XwauLines* lines) {
+static bool move_text_into_lines(Text* t, XwauLines* lines) {
 	const bool ok = !t->failed && XwauLines_Add(lines, t->s ? t->s : "", t->len);
 	free(t->s);
 	memset(t, 0, sizeof *t);
@@ -152,32 +227,34 @@ static bool text_take(Text* t, XwauLines* lines) {
 /* XWAU's model indices and OpenXWA's object types, and the converted
  * models. */
 typedef struct Models {
-	const char*     game;
-	char**          glbs; /* the files in <mod>/flight/models */
-	size_t          glb_count;
+	const char*           game;
+	const XwauNames*      names;
+	char**                glbs; /* the files in <mod>/flight/models */
+	size_t                glb_count;
 	const XwauGameTables* stock;
 	XwauGameTables*       xwau;
-	/* The model that OpenXWA loads for each object type: the `model` of its
-	   object type file, or "" for the stock row's. */
+	/* The model that OpenXWA loads for each object type. This is the `model`
+	   of its object type file, or "" when it loads the model of its stock
+	   row. */
 	char object_models[XWAU_GAME_OBJECT_TYPES][128];
 } Models;
 
-static const char* openxwa_model(const Models* m, int type) {
+static const char* openxwa_model_of_type(const Models* m, int type) {
 	return m->object_models[type][0] ? m->object_models[type] : XwauGameTables_RowModel(m->stock, type);
 }
 
 /* The OpenXWA object type that loads XWAU's model index `index`, or -1. */
-static int object_type(const Models* m, long long index) {
+static int openxwa_type_of_model_index(const Models* m, long long index) {
 	if (index < 0 || index >= XWAU_GAME_OBJECT_TYPES)
 		return -1;
 	const char* name = XwauGameTables_RowModel(m->xwau, (int)index);
 	if (!name[0])
 		return -1;
-	if (strcmp(openxwa_model(m, (int)index), name) == 0)
+	if (strcmp(openxwa_model_of_type(m, (int)index), name) == 0)
 		return (int)index;
 	int found = -1, count = 0;
 	for (int type = 0; type < XWAU_GAME_OBJECT_TYPES; ++type) {
-		if (strcmp(openxwa_model(m, type), name) == 0) {
+		if (strcmp(openxwa_model_of_type(m, type), name) == 0) {
 			found = type;
 			++count;
 		}
@@ -185,15 +262,32 @@ static int object_type(const Models* m, long long index) {
 	return count == 1 ? found : -1;
 }
 
-/* "model index <n> (<XWAU's model>)", for the reports. */
-static const char* describe(const Models* m, long long index, char* out, size_t cap) {
+/* Whether row `index` of XWAU's object list gives a model file. */
+static bool model_index_has_model(const Models* m, long long index) {
+	return index >= 0 && index < XWAU_GAME_OBJECT_TYPES && XwauGameTables_RowModel(m->xwau, (int)index)[0];
+}
+
+/* Formats "model index <n> (<XWAU's model>)" for the reports. */
+static const char* describe_model_index(const Models* m, long long index, char* out, size_t cap) {
 	snprintf(out, cap, "model index %lld (%s)", index,
 			 index >= 0 && index < XWAU_GAME_OBJECT_TYPES ? XwauGameTables_RowModel(m->xwau, (int)index)
 														  : "");
 	return out;
 }
 
-static bool converted(const Models* m, const char* name) {
+/* Returns the OpenXWA object type for XWAU's model index `index`, or -1 when
+ * that row of XWAU's object list gives no model file. When the row gives a
+ * model that no OpenXWA type loads, the import fails. */
+static int import_model_index(const Models* m, long long index, const char* where, const char* what) {
+	char      text[300];
+	const int type = openxwa_type_of_model_index(m, index & 0xFFFF);
+	if (type < 0 && model_index_has_model(m, index & 0xFFFF))
+		ReportFatal(LABEL, "%s: %s: %s has no OpenXWA type", where, what,
+					describe_model_index(m, index & 0xFFFF, text, sizeof text));
+	return type;
+}
+
+static bool model_was_converted(const Models* m, const char* name) {
 	char glb[300];
 	snprintf(glb, sizeof glb, "%s.glb", name);
 	for (size_t i = 0; i < m->glb_count; ++i)
@@ -205,7 +299,7 @@ static bool converted(const Models* m, const char* name) {
 /* Reads `<key>: <value>` at the start of `line`, as an object type file
  * writes it: the value may be in single quotes and may be followed by a
  * comment. Returns false when the line has another form. */
-static bool object_type_line(const char* line, const char* key, char* value, size_t cap) {
+static bool read_object_type_file_line(const char* line, const char* key, char* value, size_t cap) {
 	const size_t key_len = strlen(key);
 	if (strncmp(line, key, key_len) != 0 || line[key_len] != ':')
 		return false;
@@ -232,9 +326,9 @@ static bool object_type_line(const char* line, const char* key, char* value, siz
 	return true;
 }
 
-/* Reads the `object_type` and `model` of each object type file in
- * `dir`. A later file wins for the same object type. */
-static void read_object_models(const char* dir, Models* m) {
+/* Reads `object_type` (a stock name) and `model` from each object type file
+ * in `dir`. If two files have the same object type, the later file wins. */
+static void read_object_type_models(const char* dir, const XwauNames* game_names, Models* m) {
 	size_t count = 0;
 	char** names = ListDir(dir, true, &count);
 	for (size_t i = 0; i < count; ++i) {
@@ -252,12 +346,9 @@ static void read_object_models(const char* dir, Models* m) {
 			if (next)
 				*next++ = 0;
 			char value[128];
-			if (object_type_line(line, "object_type", value, sizeof value)) {
-				char* end = NULL;
-				long  n   = strtol(value, &end, 0);
-				if (!*end)
-					type = n;
-			} else if (object_type_line(line, "model", value, sizeof value)) {
+			if (read_object_type_file_line(line, "object_type", value, sizeof value)) {
+				type = XwauNames_Find(&game_names->object_types, value);
+			} else if (read_object_type_file_line(line, "model", value, sizeof value)) {
 				LowerCopy(model, sizeof model, value);
 			}
 		}
@@ -268,28 +359,31 @@ static void read_object_models(const char* dir, Models* m) {
 	FreeList(names, count);
 }
 
-static bool models_load(Models* m, const char* game, const XwauGameTables* stock, const char* mod) {
+static bool load_models(Models* m, const char* game, const XwauGameTables* stock, const XwauNames* game_names,
+						const char* mod) {
 	memset(m, 0, sizeof *m);
-	m->game = game;
+	m->game  = game;
+	m->names = game_names;
 	char dir[1100];
 	if (PathFormat(dir, sizeof dir, "%s/flight/models", mod))
 		m->glbs = ListDir(dir, false, &m->glb_count);
 	if (PathFormat(dir, sizeof dir, "%s/flight/object_types", mod))
-		read_object_models(dir, m);
+		read_object_type_models(dir, game_names, m);
 	m->stock = stock;
 	m->xwau  = stock ? XwauGameTables_Load(game) : NULL;
 	return m->xwau != NULL;
 }
 
-static void models_free(Models* m) {
+static void free_models(Models* m) {
 	FreeList(m->glbs, m->glb_count);
 	XwauGameTables_Free(m->xwau);
 }
 
 /* ---- Settings sources ------------------------------------------------------- */
 
-/* Where a layer's settings are: the files <txt_base><separator><Section>.txt
- * and the sections [<Section>] of the .ini `ini`. */
+/* A layer reads its settings from the files
+ * <txt_base><separator><Section>.txt and from the sections [<Section>] of
+ * the .ini `ini`. */
 typedef struct Source {
 	const char* game;
 	char        txt_base[1024]; /* "" when the layer has no .txt files */
@@ -297,7 +391,7 @@ typedef struct Source {
 	const char* separator;
 } Source;
 
-static void source_init(Source* s, const char* game, const char* txt_base, const char* ini,
+static void init_source(Source* s, const char* game, const char* txt_base, const char* ini,
 						const char* separator) {
 	memset(s, 0, sizeof *s);
 	s->game      = game;
@@ -307,23 +401,25 @@ static void source_init(Source* s, const char* game, const char* txt_base, const
 		s->ini[0] = 0;
 }
 
-static bool read_found(const char* game, const char* rel, const char* section, XwauLines* out) {
+static bool read_section_of_found_file(const char* game, const char* rel, const char* section,
+									   XwauLines* out) {
 	char path[1100];
 	return XwauLines_Read(Xwau_FindFile(game, rel, path, sizeof path) ? path : NULL, section, XWAU_RULES_CPP,
 						  out);
 }
 
-/* The lines of `section`: the .txt file's and the .ini section's when
- * `append` is set, else the .txt file's, or the .ini section's when the .txt
- * file has none. Returns false when out of memory. */
-static bool source_lines(const Source* s, const char* section, bool append, XwauLines* out) {
+/* Gets the lines of `section`. With `append`, these are the lines of the
+ * .txt file followed by the lines of the .ini section. Otherwise they are the
+ * lines of the .txt file, or of the .ini section when the .txt file has
+ * none. Returns false when out of memory. */
+static bool read_source_section(const Source* s, const char* section, bool append, XwauLines* out) {
 	memset(out, 0, sizeof *out);
 	XwauLines txt = { 0 }, ini = { 0 };
 	char      rel[1200];
 	bool      ok = true;
 	if (s->txt_base[0])
 		ok = PathFormat(rel, sizeof rel, "%s%s%s.txt", s->txt_base, s->separator, section) &&
-			 read_found(s->game, rel, "", &txt);
+			 read_section_of_found_file(s->game, rel, "", &txt);
 	ok = ok && XwauLines_Read(s->ini[0] ? s->ini : NULL, section, XWAU_RULES_CPP, &ini);
 	if (ok && append) {
 		*out = txt;
@@ -342,7 +438,7 @@ static bool source_lines(const Source* s, const char* section, bool append, Xwau
 /* Reads the digits of `text` up to `end` as a number up to 255. Returns -1
  * when there are none, when another character comes first, or when the
  * number is larger. */
-static int small_number(const char* text, const char* end) {
+static int parse_iff_digits(const char* text, const char* end) {
 	if (text >= end)
 		return -1;
 	int value = 0;
@@ -354,9 +450,10 @@ static int small_number(const char* text, const char* end) {
 	return value <= 255 ? value : -1;
 }
 
-/* Marks in `found` the IFF numbers that `s` has for `section`: the .ini
- * headers [<Section><N>] and the files <base><Section><N>.txt. */
-static void source_iffs(const Source* s, const char* section, bool found[256]) {
+/* Marks in `found` the IFF numbers that `s` has for `section`. They come
+ * from the .ini headers [<Section><N>] and from the files
+ * <base><Section><N>.txt. */
+static void find_source_iffs(const Source* s, const char* section, bool found[256]) {
 	const size_t section_len = strlen(section);
 	size_t       size        = 0;
 	char*        text        = s->ini[0] ? ReadWholeFile(s->ini, &size) : NULL;
@@ -368,7 +465,7 @@ static void source_iffs(const Source* s, const char* section, bool found[256]) {
 		const size_t len = strlen(line);
 		if (len > section_len + 2 && line[0] == '[' && line[len - 1] == ']' &&
 			strncasecmp(line + 1, section, section_len) == 0) {
-			const int n = small_number(line + 1 + section_len, line + len - 1);
+			const int n = parse_iff_digits(line + 1 + section_len, line + len - 1);
 			if (n >= 0)
 				found[n] = true;
 		}
@@ -395,7 +492,7 @@ static void source_iffs(const Source* s, const char* section, bool found[256]) {
 		const size_t len = strlen(e);
 		if (len > base_len + section_len + 4 && strncasecmp(e, base, base_len) == 0 &&
 			strncasecmp(e + base_len, section, section_len) == 0 && EndsWithNoCase(e, ".txt")) {
-			const int n = small_number(e + base_len + section_len, e + len - 4);
+			const int n = parse_iff_digits(e + base_len + section_len, e + len - 4);
 			if (n >= 0)
 				found[n] = true;
 		}
@@ -405,6 +502,33 @@ static void source_iffs(const Source* s, const char* section, bool found[256]) {
 
 /* ---- Layers ---------------------------------------------------------------- */
 
+/* The value of a HangarObjects key in one layer. */
+typedef struct RawValue {
+	bool set;
+	/* The line has no value. The key hides the lower layers' value, and its
+	   default applies. */
+	bool       empty;
+	long long  number;    /* the object type for KEY_TYPE and KEY_SHUTTLE_TYPE, 0 for the stock shuttle */
+	char       text[256]; /* KEY_STRING */
+	long long* list;      /* the object types for KEY_TYPE_LIST, -1 for a row without a model file */
+	size_t     count;
+} RawValue;
+
+/* A map line. A line that the hook skips places nothing. */
+typedef struct MapLine {
+	bool      placed;
+	int       type;
+	long long markings, x, y, z, heading, pitch;
+	char      profile[256];
+	int       inverted; /* -1 to use the hangar floor's side */
+} MapLine;
+
+typedef struct Layout {
+	bool     present;
+	MapLine* lines;
+	size_t   count;
+} Layout;
+
 typedef struct Layer Layer;
 
 typedef struct IffLayer {
@@ -412,39 +536,47 @@ typedef struct IffLayer {
 	Layer* layer;
 } IffLayer;
 
-/* What one source gives: each section's entries, without their indent. */
+/* The settings of one source. */
 struct Layer {
+	char      where[300];
 	char      model[300];
-	XwauLines sections[SECTION_COUNT]; /* objects: "<key>: <value>", map: "<entry>", camera: "<n>: <xyz>" */
-	XwauLines swaps;                   /* "<model>: \"<model>\"" */
-	XwauLines ships;                   /* a mission's, "<ship>: <ship>", sorted */
+	RawValue  values[KEY_COUNT];
+	Layout    layouts[2];
+	bool      camera_present[2];
+	long long cameras[2][10][3];
+	XwauLines swaps; /* "<model>: \"<model>\"" */
+	XwauLines ships; /* for a mission, sorted "<ship>: <ship>" lines */
 	IffLayer* iffs;
 	size_t    iff_count;
 };
 
-static bool layer_empty(const Layer* l) {
-	bool empty = !l->model[0] && !l->swaps.count && !l->ships.count && !l->iff_count;
-	for (int s = 0; empty && s < SECTION_COUNT; ++s)
-		empty = !l->sections[s].count;
+static bool layer_is_empty(const Layer* l) {
+	bool empty = !l->model[0] && !l->swaps.count && !l->ships.count && !l->iff_count &&
+				 !l->layouts[0].present && !l->layouts[1].present && !l->camera_present[0] &&
+				 !l->camera_present[1];
+	for (int k = 0; empty && k < KEY_COUNT; ++k)
+		empty = !l->values[k].set;
 	return empty;
 }
 
-static void layer_free(Layer* l) {
-	for (int s = 0; s < SECTION_COUNT; ++s)
-		XwauLines_Free(&l->sections[s]);
+static void free_layer(Layer* l) {
+	for (int k = 0; k < KEY_COUNT; ++k)
+		free(l->values[k].list);
+	free(l->layouts[0].lines);
+	free(l->layouts[1].lines);
 	XwauLines_Free(&l->swaps);
 	XwauLines_Free(&l->ships);
 	for (size_t i = 0; i < l->iff_count; ++i) {
-		layer_free(l->iffs[i].layer);
+		free_layer(l->iffs[i].layer);
 		free(l->iffs[i].layer);
 	}
 	free(l->iffs);
 	memset(l, 0, sizeof *l);
 }
 
-/* A line "<key> = <value>": the trimmed key and value. Returns false when
- * the line has no '=' or the key is empty. */
-static bool key_value(const char* line, char* key, size_t key_cap, char* value, size_t value_cap) {
+/* Splits a line "<key> = <value>" into its trimmed key and value. Returns
+ * false when the line has no '=' or the key is empty. */
+static bool split_key_value_line(const char* line, char* key, size_t key_cap, char* value, size_t value_cap) {
 	const char* eq = strchr(line, '=');
 	if (!eq)
 		return false;
@@ -455,22 +587,21 @@ static bool key_value(const char* line, char* key, size_t key_cap, char* value, 
 	return key[0] != 0;
 }
 
-/* The number of `key` in `lines` (GetFileKeyValueInt with 0): 0 when the key
- * is missing, and 0 with a report when its value isn't a number. */
-static long long int_value(const XwauLines* lines, const char* key, const char* where) {
+/* Returns the number of `key` in `lines`, like GetFileKeyValueInt with a
+ * default of 0. Returns 0 when the key is missing or its value isn't a
+ * number. */
+static long long read_int_key(const XwauLines* lines, const char* key) {
 	char value[512];
 	XwauLines_Value(lines, key, XWAU_RULES_CPP, value, sizeof value);
 	long long number = 0;
-	if (value[0] && !Xwau_StoiAutoInt(value, &number)) {
-		Report(LABEL, "%s: %s = '%s' is not a number (XWAU would fail); 0 is used", where, key, value);
+	if (value[0] && !Xwau_StoiAutoInt(value, &number))
 		number = 0;
-	}
 	return number;
 }
 
 /* Matches "FlightModels\<model>.opt" in any case, and writes the model in
  * lower case. */
-static bool swap_source(const char* key, char* out, size_t cap) {
+static bool parse_swap_source_model(const char* key, char* out, size_t cap) {
 	static const char prefix[] = "flightmodels\\";
 	const size_t      len      = strlen(key);
 	const size_t      start    = sizeof prefix - 1;
@@ -484,7 +615,7 @@ static bool swap_source(const char* key, char* out, size_t cap) {
 
 /* Matches a path to an .opt, and writes its model, the file name without
  * the folder and the extension, in lower case. */
-static bool opt_target(const char* value, char* out, size_t cap) {
+static bool parse_opt_model_name(const char* value, char* out, size_t cap) {
 	const size_t len = strlen(value);
 	if (!EndsWithNoCase(value, ".opt"))
 		return false;
@@ -501,7 +632,7 @@ static bool opt_target(const char* value, char* out, size_t cap) {
 }
 
 /* Whether the installation has the file at `value`, a path with '\' or '/'. */
-static bool has_file(const char* game, const char* value) {
+static bool installation_has_file(const char* game, const char* value) {
 	char rel[1024], path[1100];
 	snprintf(rel, sizeof rel, "%s", value);
 	for (char* c = rel; *c; ++c)
@@ -510,104 +641,77 @@ static bool has_file(const char* game, const char* value) {
 	return Xwau_FindFile(game, rel, path, sizeof path);
 }
 
-/* A HangarObjects swap line. Adds "<source>: \"<target>\"" to `swaps`.
- * Returns false when out of memory. */
-static bool add_swap(const Models* m, const char* key, const char* value, const char* where,
-					 XwauLines* swaps) {
+/* A HangarObjects swap line. Adds "<source>: \"<target>\"" to `swaps`. Returns
+ * false when out of memory. */
+static bool add_swap_line(const Models* m, const char* key, const char* value, const char* where,
+						  XwauLines* swaps) {
 	char source[256], target[256];
-	if (!swap_source(key, source, sizeof source)) {
-		Report(LABEL, "%s: swap '%s = %s' skipped: the hook matches FlightModels\\<model>.opt keys", where,
-			   key, value);
+	/* The hook only matches FlightModels\<model>.opt keys. XWAU shows an
+	   error for a file that doesn't exist, and the hook ignores swaps to the
+	   model's exterior. */
+	if (!parse_swap_source_model(key, source, sizeof source))
 		return true;
-	}
-	if (!opt_target(value, target, sizeof target)) {
-		Report(LABEL, "%s: swap '%s = %s' skipped: not an OPT path", where, key, value);
+	if (!parse_opt_model_name(value, target, sizeof target)) {
+		if (installation_has_file(m->game, value))
+			ReportUnsupported("hangar object swaps to a file that isn't an OPT");
 		return true;
 	}
 	char exterior[300];
 	snprintf(exterior, sizeof exterior, "%sexterior", source);
-	if (strcmp(target, exterior) == 0)
+	if (strcmp(target, exterior) == 0 || !installation_has_file(m->game, value))
 		return true;
-	if (!has_file(m->game, value)) {
-		Report(LABEL, "%s: swap '%s = %s' skipped: '%s' does not exist (XWAU shows an error)", where, key,
-			   value, value);
-		return true;
-	}
-	if (!converted(m, target)) {
-		Report(LABEL, "%s: swap '%s = %s' skipped: %s.glb was not converted", where, key, value, target);
+	if (!model_was_converted(m, target)) {
+		ReportFatal(LABEL, "%s: swap '%s = %s': %s.glb was not converted", where, key, value, target);
 		return true;
 	}
 	Text t = { 0 };
 	text_add(&t, "%s: ", source);
-	text_quoted(&t, target);
-	return text_take(&t, swaps);
+	append_quoted_string(&t, target);
+	return move_text_into_lines(&t, swaps);
 }
 
-/* A list key's numbers. For model indices, they become object types, and
- * the ones without one are reported. Returns false with *dropped set when
- * the key is left out, and false without it when out of memory. */
-static bool list_value(const Models* m, const char* name, KeyKind kind, const char* value, const char* where,
-					   Text* t, bool* dropped) {
-	*dropped         = false;
+/* Reads a list key's numbers into `out`. Model indices become object types,
+ * or -1 for the ones that load no model in XWAU either. Returns false when
+ * out of memory, and leaves `out` unset when a field isn't a number, since
+ * XWAU fails on it. */
+static bool read_model_index_list(const Models* m, int key, const char* value, const char* where,
+								  RawValue* out) {
 	XwauLines tokens = { 0 };
 	if (!Xwau_Tokenize(value, XWAU_RULES_CPP, &tokens))
 		return false;
 	long long* numbers = (long long*)calloc(tokens.count + 1, sizeof *numbers);
-	bool       ok      = numbers != NULL;
-	for (size_t i = 0; ok && i < tokens.count; ++i) {
-		if (!Xwau_StoiAutoInt(tokens.items[i], &numbers[i])) {
-			Report(LABEL, "%s: %s = '%s' has a field that is not a number (XWAU would fail); dropped", where,
-				   name, value);
-			*dropped = true;
-			ok       = false;
-		}
+	if (!numbers) {
+		XwauLines_Free(&tokens);
+		return false;
 	}
-	size_t count = tokens.count;
-	if (ok && kind == KEY_TYPE_LIST) {
-		Text missing = { 0 };
-		for (size_t i = 0; i < tokens.count; ++i) {
-			char text[300];
-			if (object_type(m, numbers[i] & 0xFFFF) < 0)
-				text_add(&missing, "%s%s", missing.len ? ", " : "",
-						 describe(m, numbers[i], text, sizeof text));
-		}
-		if (missing.len && strcmp(name, "PlayerModelIndices") == 0) {
-			Report(LABEL, "%s: %s dropped: %s has no OpenXWA type", where, name,
-				   missing.failed ? "" : missing.s);
-			*dropped = true;
-			ok       = false;
-		}
-		free(missing.s);
-		count = 0;
-		for (size_t i = 0; ok && i < tokens.count; ++i) {
-			char      text[300];
-			const int type = object_type(m, numbers[i] & 0xFFFF);
-			if (type < 0)
-				Report(LABEL, "%s: %s: %s has no OpenXWA type; dropped", where, name,
-					   describe(m, numbers[i], text, sizeof text));
-			else
-				numbers[count++] = type;
-		}
+	bool numeric = true;
+	for (size_t i = 0; numeric && i < tokens.count; ++i)
+		numeric = Xwau_StoiAutoInt(tokens.items[i], &numbers[i]);
+	if (numeric) {
+		if (kKeys[key].kind == KEY_TYPE_LIST)
+			for (size_t i = 0; i < tokens.count; ++i)
+				numbers[i] = import_model_index(m, numbers[i], where, kKeys[key].name);
+		out->set   = true;
+		out->list  = numbers;
+		out->count = tokens.count;
+	} else {
+		free(numbers);
 	}
-	if (ok) {
-		text_add(t, "%s: [", name);
-		for (size_t i = 0; i < count; ++i)
-			text_add(t, "%s%lld", i ? ", " : "", numbers[i]);
-		text_add(t, "]");
-	}
-	free(numbers);
 	XwauLines_Free(&tokens);
-	return ok || *dropped;
+	return true;
 }
 
-/* The HangarObjects lines: the first line of each key wins. Returns false
- * when out of memory. */
-static bool objects_section(const Models* m, const XwauLines* lines, const char* where, Layer* out) {
+/* Reads the HangarObjects lines. The first line of each key wins. Returns
+ * false when out of memory. */
+static bool read_hangar_objects_section(const Models* m, const XwauLines* lines, const char* where,
+										Layer* out) {
 	XwauLines seen = { 0 };
 	bool      ok   = true;
 	for (size_t i = 0; ok && i < lines->count; ++i) {
 		char key[512], value[1024];
-		if (!key_value(lines->items[i], key, sizeof key, value, sizeof value))
+		/* XWAU ignores a line that isn't a key = value line, and uses the
+		   first line of a key. */
+		if (!split_key_value_line(lines->items[i], key, sizeof key, value, sizeof value))
 			continue;
 		bool known = false;
 		for (size_t j = 0; !known && j < seen.count; ++j)
@@ -617,77 +721,66 @@ static bool objects_section(const Models* m, const XwauLines* lines, const char*
 		if (!(ok = XwauLines_Add(&seen, key, strlen(key))))
 			break;
 		if (EndsWithNoCase(key, ".opt")) {
-			ok = add_swap(m, key, value, where, &out->swaps);
+			ok = add_swap_line(m, key, value, where, &out->swaps);
 			continue;
 		}
 		int k = -1;
-		for (size_t j = 0; k < 0 && j < sizeof kKeys / sizeof kKeys[0]; ++j)
+		for (int j = 0; k < 0 && j < KEY_COUNT; ++j)
 			if (strcasecmp(kKeys[j].name, key) == 0)
-				k = (int)j;
-		if (k < 0) {
-			Report(LABEL, "%s: unknown key '%s' not imported", where, key);
+				k = j;
+		/* The hook reads no other key. */
+		if (k < 0)
 			continue;
-		}
-		const char*   name = kKeys[k].name;
+		RawValue*     raw  = &out->values[k];
 		const KeyKind kind = kKeys[k].kind;
+		/* The remaster lights the hangar and draws its shadows itself. */
 		if (kind == KEY_NOT_IMPORTED) {
-			Report(LABEL, "%s: %s not imported (the remaster lights the hangar)", where, name);
-			continue;
-		}
-		Text t    = { 0 };
-		bool keep = true;
-		if (kind == KEY_STRING) {
-			text_add(&t, "%s: ", name);
-			text_quoted(&t, value);
+			ReportUnsupported("the HangarObjects key %s", kKeys[k].name);
+		} else if (kind == KEY_STRING) {
+			raw->set   = true;
+			raw->empty = !value[0];
+			snprintf(raw->text, sizeof raw->text, "%s", value);
 		} else if (!value[0]) {
-			/* The key still hides the lower layers' value, and its default
-			   applies. */
-			text_add(&t, "%s: %s", name, kind == KEY_INT_LIST || kind == KEY_TYPE_LIST ? "[]" : "null");
+			raw->set   = true;
+			raw->empty = true;
 		} else if (kind == KEY_INT_LIST || kind == KEY_TYPE_LIST) {
-			bool dropped = false;
-			ok           = list_value(m, name, kind, value, where, &t, &dropped);
-			keep         = ok && !dropped;
-		} else {
-			long long number = 0;
-			if (!Xwau_StoiAutoInt(value, &number)) {
-				Report(LABEL, "%s: %s = '%s' is not a number (XWAU would fail); dropped", where, name, value);
-				keep = false;
-			} else if (kind == KEY_TYPE) {
-				char      text[300];
-				const int type = object_type(m, number & 0xFFFF);
-				if (type < 0) {
-					Report(LABEL, "%s: %s: %s has no OpenXWA type; dropped", where, name,
-						   describe(m, number & 0xFFFF, text, sizeof text));
-					keep = false;
-				}
-				number = type;
+			ok = read_model_index_list(m, k, value, where, raw);
+		} else if (Xwau_StoiAutoInt(value, &raw->number)) {
+			/* XWAU fails on a value that isn't a number, so such a key is
+			   left out. */
+			raw->set = true;
+			if (kind == KEY_SHUTTLE_TYPE && raw->number == 0)
+				continue;
+			if (kind == KEY_TYPE || kind == KEY_SHUTTLE_TYPE) {
+				raw->number = import_model_index(m, raw->number, where, kKeys[k].name);
+				/* A row without a model file is left out. */
+				raw->set = raw->number >= 0;
 			}
-			if (keep)
-				text_add(&t, "%s: %lld", name, number);
 		}
-		if (ok && keep)
-			ok = text_take(&t, &out->sections[OBJECTS]);
-		free(t.s);
 	}
 	XwauLines_Free(&seen);
 	return ok;
 }
 
-/* The HangarMap lines: one entry per line, null where the hook skips it.
- * Returns false when out of memory. */
-static bool map_section(const Models* m, const XwauLines* lines, const char* where, XwauLines* out) {
-	bool ok = true;
+/* The HangarMap lines. Returns false when out of memory. */
+static bool read_hangar_map_section(const Models* m, const XwauLines* lines, const char* where, Layout* out) {
+	out->present = true;
+	out->lines   = (MapLine*)calloc(lines->count + 1, sizeof *out->lines);
+	if (!out->lines)
+		return false;
+	out->count = lines->count;
+	bool ok    = true;
 	for (size_t i = 0; ok && i < lines->count; ++i) {
 		const char* line   = lines->items[i];
+		MapLine*    entry  = &out->lines[i];
 		XwauLines   fields = { 0 };
 		if (!(ok = Xwau_Tokenize(line, XWAU_RULES_CPP, &fields)))
 			break;
-		const size_t n     = fields.count;
-		Text         entry = { 0 };
-		if (n < 6 || n > 9) {
-			Report(LABEL, "%s: line '%s' skipped by XWAU: %zu fields", where, line, n);
-		} else {
-			/* The numbers: the first 6 fields, or the first 7, and the 9th. */
+		const size_t n = fields.count;
+		/* XWAU skips a line with another number of fields, and fails on a
+		   field that isn't a number. */
+		if (n >= 6 && n <= 9) {
+			/* The numbers are the first 6 or 7 fields, and the 9th field. */
 			long long numbers[8];
 			size_t    count   = n >= 7 ? 7 : 6;
 			bool      numeric = true;
@@ -695,75 +788,51 @@ static bool map_section(const Models* m, const XwauLines* lines, const char* whe
 				numeric = Xwau_StoiAutoInt(fields.items[f], &numbers[f]);
 			if (numeric && n == 9)
 				numeric = Xwau_StoiAutoInt(fields.items[8], &numbers[count++]);
-			if (!numeric) {
-				Report(LABEL, "%s: line '%s' skipped: a field is not a number (XWAU would fail)", where,
-					   line);
-			} else {
-				long long index, markings, x, y, z, yaw, pitch;
-				if (n == 6) {
-					index    = numbers[0];
-					markings = 0;
-					x        = numbers[1];
-					y        = numbers[2];
-					z        = numbers[3];
-					yaw      = numbers[4];
-					pitch    = numbers[5];
-				} else {
-					index    = numbers[0];
-					markings = numbers[1];
-					x        = numbers[2];
-					y        = numbers[3];
-					z        = numbers[4];
-					yaw      = numbers[5];
-					pitch    = numbers[6];
-				}
-				const int type = object_type(m, index & 0xFFFF);
-				if (type < 0) {
-					char text[300];
-					Report(LABEL, "%s: line '%s' skipped: %s has no OpenXWA type", where, line,
-						   describe(m, index & 0xFFFF, text, sizeof text));
-				} else {
-					text_add(&entry, "[%d, %lld, %lld, %lld, %lld, %d, %d, ", type, markings, x, y, z,
-							 (int)(int16_t)(uint16_t)(yaw & 0xFFFF),
-							 (int)(int16_t)(uint16_t)(pitch & 0xFFFF));
-					text_quoted(&entry, n >= 8 ? fields.items[7] : "Default");
-					text_add(&entry, ", %d]", n == 9 ? numbers[7] != 0 : -1);
-				}
+			if (numeric) {
+				/* A line of 6 fields has no markings. */
+				const size_t first = n == 6 ? 1 : 2;
+				char         what[1100];
+				snprintf(what, sizeof what, "line '%s'", line);
+				entry->type     = import_model_index(m, numbers[0], where, what);
+				entry->placed   = entry->type >= 0;
+				entry->markings = n == 6 ? 0 : numbers[1];
+				entry->x        = numbers[first];
+				entry->y        = numbers[first + 1];
+				entry->z        = numbers[first + 2];
+				entry->heading  = numbers[first + 3];
+				entry->pitch    = numbers[first + 4];
+				snprintf(entry->profile, sizeof entry->profile, "%s", n >= 8 ? fields.items[7] : "Default");
+				entry->inverted = n == 9 ? numbers[7] != 0 : -1;
 			}
 		}
-		if (!entry.len)
-			text_add(&entry, "null");
-		ok = text_take(&entry, out);
 		XwauLines_Free(&fields);
 	}
 	return ok;
 }
 
-/* A camera section: every key that the hook reads. Returns false when out
- * of memory. */
-static bool camera_section(const XwauLines* lines, bool family, const char* where, XwauLines* out) {
+/* Reads a camera section, with every key that the hook reads. */
+static void read_hangar_camera_section(const XwauLines* lines, bool family, Layer* out) {
 	const int*   keys  = family ? kFamCameraKeys : kCameraKeys;
 	const size_t count = family ? sizeof kFamCameraKeys / sizeof kFamCameraKeys[0]
 								: sizeof kCameraKeys / sizeof kCameraKeys[0];
-	bool         ok    = true;
-	for (size_t i = 0; ok && i < count; ++i) {
-		long long xyz[3];
+	out->camera_present[family] = true;
+	for (size_t i = 0; i < count; ++i) {
 		for (int a = 0; a < 3; ++a) {
 			char key[64];
 			snprintf(key, sizeof key, "%sKey%d_%c", family ? "Fam" : "", keys[i], "XYZ"[a]);
-			xyz[a] = int_value(lines, key, where);
+			out->cameras[family][keys[i]][a] = read_int_key(lines, key);
 		}
-		Text t = { 0 };
-		text_add(&t, "%d: [%lld, %lld, %lld]", keys[i], xyz[0], xyz[1], xyz[2]);
-		ok = text_take(&t, out);
 	}
-	return ok;
 }
 
-/* The sections that `s` gives, or the ones of its IFF `iff` when it isn't
- * -1. Returns false when out of memory. */
-static bool read_layer(const Models* m, const Source* s, const char* where, int iff, Layer* out) {
+/* Reads the sections of `s`, or the sections of its IFF `iff` when `iff`
+ * isn't -1. Returns false when out of memory. */
+static bool read_layer_sections(const Models* m, const Source* s, const char* where, int iff, Layer* out) {
 	memset(out, 0, sizeof *out);
+	if (iff < 0)
+		snprintf(out->where, sizeof out->where, "%s", where);
+	else
+		snprintf(out->where, sizeof out->where, "%s IFF %d", where, iff);
 	bool ok = true;
 	for (int section = 0; ok && section < SECTION_COUNT; ++section) {
 		char name[64], label[1200];
@@ -772,16 +841,16 @@ static bool read_layer(const Models* m, const Source* s, const char* where, int 
 		else
 			snprintf(name, sizeof name, "%s%d", kSections[section], iff);
 		XwauLines lines = { 0 };
-		if (!(ok = source_lines(s, name, section == OBJECTS, &lines)))
+		if (!(ok = read_source_section(s, name, section == OBJECTS, &lines)))
 			break;
 		snprintf(label, sizeof label, "%s [%s]", where, name);
 		if (lines.count) {
 			if (section == OBJECTS)
-				ok = objects_section(m, &lines, label, out);
+				ok = read_hangar_objects_section(m, &lines, label, out);
 			else if (section == MAP || section == FAM_MAP)
-				ok = map_section(m, &lines, label, &out->sections[section]);
+				ok = read_hangar_map_section(m, &lines, label, &out->layouts[section == FAM_MAP]);
 			else
-				ok = camera_section(&lines, section == FAM_CAMERA, label, &out->sections[section]);
+				read_hangar_camera_section(&lines, section == FAM_CAMERA, out);
 		}
 		XwauLines_Free(&lines);
 	}
@@ -790,11 +859,12 @@ static bool read_layer(const Models* m, const Source* s, const char* where, int 
 
 /* ---- Ships, crafts and missions ---------------------------------------------- */
 
-/* The model names, as the first file has them on disk, of every
- * FlightModels .ini but default.ini, of every model with a <Model>Hangar.opt,
- * and of the .txt files of the hangar sections, [Camera] and [Size]. Each
- * entry is "<lower-case name>\t<name>", sorted. */
-static bool model_names(const char* game, XwauLines* out) {
+/* Lists the model names. They come from every FlightModels .ini except
+ * default.ini, from every model with a <Model>Hangar.opt, and from the .txt
+ * files of the hangar sections, [Camera] and [Size]. A name is spelled as in
+ * the first file that gives it. The entries are "<lower-case name>\t<name>",
+ * sorted. */
+static bool list_model_names(const char* game, XwauLines* out) {
 	static const char* const suffixes[] = { "hangarobjects",   "hangarmap", "hangarcamera", "famhangarmap",
 											"famhangarcamera", "camera",    "size" };
 	memset(out, 0, sizeof *out);
@@ -817,12 +887,12 @@ static bool model_names(const char* game, XwauLines* out) {
 		} else if (EndsWithNoCase(lower, "hangar.opt") && len > 10) {
 			char rel[1100];
 			if (PathFormat(rel, sizeof rel, "FlightModels/%.*s.opt", (int)(len - 10), entry) &&
-				has_file(game, rel))
+				installation_has_file(game, rel))
 				names[n++] = len - 10;
 		} else if (EndsWithNoCase(lower, ".txt")) {
 			for (size_t s = 0; s < sizeof suffixes / sizeof suffixes[0]; ++s) {
-				/* The shortest name that the suffix, digits and ".txt"
-				   follow. */
+				/* Find the shortest name that is followed by the suffix,
+				   digits and ".txt". */
 				const size_t suffix_len = strlen(suffixes[s]);
 				for (size_t p = 1; p + suffix_len + 4 <= len; ++p) {
 					if (strncmp(lower + p, suffixes[s], suffix_len) != 0)
@@ -845,7 +915,7 @@ static bool model_names(const char* game, XwauLines* out) {
 				continue;
 			Text t = { 0 };
 			text_add(&t, "%.*s\t%.*s", (int)names[k], lower, (int)names[k], entry);
-			ok = text_take(&t, out);
+			ok = move_text_into_lines(&t, out);
 		}
 	}
 	FreeList(entries, count);
@@ -854,34 +924,34 @@ static bool model_names(const char* game, XwauLines* out) {
 	return ok;
 }
 
-/* A ship's layer, with its IFF layers and its hangar model. Returns false
- * when out of memory. */
-static bool ship_layer(const Models* m, const char* game, const char* name, Layer* out) {
+/* Reads a ship's layer, with its IFF layers and its hangar model. Returns
+ * false when out of memory. */
+static bool read_ship_layer(const Models* m, const char* game, const char* name, Layer* out) {
 	char txt[1100], ini[1100];
 	snprintf(txt, sizeof txt, "FlightModels/%s", name);
 	snprintf(ini, sizeof ini, "FlightModels/%s.ini", name);
 	Source s;
-	source_init(&s, game, txt, ini, "");
-	if (!read_layer(m, &s, name, -1, out))
+	init_source(&s, game, txt, ini, "");
+	if (!read_layer_sections(m, &s, name, -1, out))
 		return false;
 	bool iffs[256] = { false };
 	for (int section = 0; section < SECTION_COUNT; ++section)
-		source_iffs(&s, kSections[section], iffs);
+		find_source_iffs(&s, kSections[section], iffs);
 	for (int iff = 0; iff < 256; ++iff) {
 		if (!iffs[iff])
 			continue;
 		Layer* variant = (Layer*)calloc(1, sizeof *variant);
 		if (!variant)
 			return false;
-		const bool read  = read_layer(m, &s, name, iff, variant);
-		IffLayer*  entry = read && !layer_empty(variant) ? ARRAY_PUSH(out->iffs, out->iff_count) : NULL;
+		const bool read  = read_layer_sections(m, &s, name, iff, variant);
+		IffLayer*  entry = read && !layer_is_empty(variant) ? ARRAY_PUSH(out->iffs, out->iff_count) : NULL;
 		if (entry) {
 			entry->iff   = iff;
 			entry->layer = variant;
 			continue;
 		}
-		const bool empty = read && layer_empty(variant);
-		layer_free(variant);
+		const bool empty = read && layer_is_empty(variant);
+		free_layer(variant);
 		free(variant);
 		if (!empty)
 			return false;
@@ -889,75 +959,100 @@ static bool ship_layer(const Models* m, const char* game, const char* name, Laye
 	char lower[256], hangar[300];
 	LowerCopy(lower, sizeof lower, name);
 	snprintf(hangar, sizeof hangar, "%s%s", lower, strcmp(lower, "familybase") == 0 ? "" : "hangar");
-	if (converted(m, hangar))
+	char opt[400];
+	if (model_was_converted(m, hangar))
 		snprintf(out->model, sizeof out->model, "%s", hangar);
+	else if (PathFormat(opt, sizeof opt, "FlightModels/%s.opt", hangar) && installation_has_file(game, opt))
+		ReportFatal(LABEL, "%s: the hangar model %s.opt was not converted", name, hangar);
 	return true;
 }
 
-/* A player craft's [Camera] and [Size], as "{ camera: ..., elevation: ... }",
- * or "" when it has neither. Returns false when out of memory. */
-static bool craft_record(const char* game, const char* name, Text* out) {
+/* A player craft's [Camera] and [Size]. */
+typedef struct Craft {
+	char      key[256];
+	bool      has_size;
+	long long rest[2]; /* on the normal and the inverted floor */
+	bool      has_camera;
+	long long camera[4][3];
+} Craft;
+
+/* Reads a player craft's [Camera] and [Size] into `out`. Returns false when
+ * out of memory. */
+static bool read_craft_camera_and_size(const char* game, const char* name, Craft* out) {
 	char      rel[1100];
 	XwauLines camera = { 0 }, size = { 0 };
-	bool      ok =
-		PathFormat(rel, sizeof rel, "FlightModels/%sCamera.txt", name) && read_found(game, rel, "", &camera);
+	bool      ok = PathFormat(rel, sizeof rel, "FlightModels/%sCamera.txt", name) &&
+				   read_section_of_found_file(game, rel, "", &camera);
 	if (ok && !camera.count)
 		ok = PathFormat(rel, sizeof rel, "FlightModels/%s.ini", name) &&
-			 read_found(game, rel, "Camera", &camera);
+			 read_section_of_found_file(game, rel, "Camera", &camera);
 	ok = ok && PathFormat(rel, sizeof rel, "FlightModels/%sSize.txt", name) &&
-		 read_found(game, rel, "", &size);
+		 read_section_of_found_file(game, rel, "", &size);
 	if (ok && !size.count)
-		ok = PathFormat(rel, sizeof rel, "FlightModels/%s.ini", name) && read_found(game, rel, "Size", &size);
-	if (ok && (camera.count || size.count)) {
-		text_add(out, "{ ");
-		if (camera.count) {
-			char where[1100];
-			snprintf(where, sizeof where, "%s [Camera]", name);
-			/* Each triple is the first of its prefixes that isn't all zero,
-			   or the last one. */
-			static const char* const prefixes[4][4] = {
-				{ "" }, { "Inverted", "" }, { "Fam", "" }, { "FamInverted", "Fam", "Inverted", "" }
-			};
-			text_add(out, "camera: [");
-			for (int t = 0; t < 4; ++t) {
-				long long xyz[3] = { 0, 0, 0 };
-				for (int p = 0; p < 4 && (p == 0 || prefixes[t][p]); ++p) {
-					for (int a = 0; a < 3; ++a) {
-						char key[64];
-						snprintf(key, sizeof key, "%s%c", prefixes[t][p], "XYZ"[a]);
-						xyz[a] = int_value(&camera, key, where);
-					}
-					if (xyz[0] || xyz[1] || xyz[2])
-						break;
+		ok = PathFormat(rel, sizeof rel, "FlightModels/%s.ini", name) &&
+			 read_section_of_found_file(game, rel, "Size", &size);
+	out->has_size   = ok && size.count;
+	out->has_camera = ok && camera.count;
+	if (out->has_size) {
+		out->rest[0] = read_int_key(&size, "ClosedSFoilsElevation");
+		out->rest[1] = read_int_key(&size, "ClosedSFoilsElevationInverted");
+		if (!out->rest[1])
+			out->rest[1] = out->rest[0];
+	}
+	if (out->has_camera) {
+		/* Each X/Y/Z triple comes from the first prefix in its row of
+		   `prefixes` whose three values aren't all zero, else from the last prefix. */
+		static const char* const prefixes[4][4] = {
+			{ "" }, { "Inverted", "" }, { "Fam", "" }, { "FamInverted", "Fam", "Inverted", "" }
+		};
+		for (int t = 0; t < 4; ++t) {
+			long long* xyz = out->camera[t];
+			for (int p = 0; p < 4 && (p == 0 || prefixes[t][p]); ++p) {
+				for (int a = 0; a < 3; ++a) {
+					char key[64];
+					snprintf(key, sizeof key, "%s%c", prefixes[t][p], "XYZ"[a]);
+					xyz[a] = read_int_key(&camera, key);
 				}
-				text_add(out, "%s[%lld, %lld, %lld]", t ? ", " : "", xyz[0], xyz[1], xyz[2]);
+				if (xyz[0] || xyz[1] || xyz[2])
+					break;
 			}
-			text_add(out, "]");
 		}
-		if (size.count) {
-			char where[1100];
-			snprintf(where, sizeof where, "%s [Size]", name);
-			const long long elevation = int_value(&size, "ClosedSFoilsElevation", where);
-			long long       inverted  = int_value(&size, "ClosedSFoilsElevationInverted", where);
-			if (!inverted)
-				inverted = elevation;
-			text_add(out, "%selevation: [%lld, %lld]", camera.count ? ", " : "", elevation, inverted);
-		}
-		text_add(out, " }");
 	}
 	XwauLines_Free(&camera);
 	XwauLines_Free(&size);
-	return ok && !out->failed;
+	return ok;
 }
 
-/* A mission's own layer, from <mission>_<Section>.txt and [<Section>] of
- * <mission>.ini. Returns false when out of memory. */
-static bool mission_layer(const Models* m, const char* game, const char* base, Layer* out) {
+static void write_craft(FILE* f, const Craft* craft) {
+	static const char* const cameras[4] = { "hangar", "hangar_inverted", "family_base",
+											"family_base_inverted" };
+	fprintf(f, "  %s:\n", craft->key);
+	if (craft->has_size) {
+		fputs("    rest_height_m: {normal: ", f);
+		Xwau_WriteMetres(f, (int)craft->rest[0]);
+		fputs(", inverted: ", f);
+		Xwau_WriteMetres(f, (int)craft->rest[1]);
+		fputs("}\n", f);
+	}
+	if (craft->has_camera) {
+		fputs("    player_camera_m:\n", f);
+		for (int t = 0; t < 4; ++t) {
+			fprintf(f, "      %s: ", cameras[t]);
+			Xwau_WriteMetres3(f, (int)craft->camera[t][0], (int)craft->camera[t][1],
+							  (int)craft->camera[t][2]);
+			fputc('\n', f);
+		}
+	}
+}
+
+/* Reads a mission's own layer from <mission>_<Section>.txt and from
+ * [<Section>] of <mission>.ini. Returns false when out of memory. */
+static bool read_mission_layer(const Models* m, const char* game, const char* base, Layer* out) {
 	char ini[1100];
 	snprintf(ini, sizeof ini, "%s.ini", base);
 	Source s;
-	source_init(&s, game, base, ini, "_");
-	if (!read_layer(m, &s, base, -1, out))
+	init_source(&s, game, base, ini, "_");
+	if (!read_layer_sections(m, &s, base, -1, out))
 		return false;
 	size_t size = 0;
 	char*  text = s.ini[0] ? ReadWholeFile(s.ini, &size) : NULL;
@@ -971,40 +1066,41 @@ static bool mission_layer(const Models* m, const char* game, const char* base, L
 			const size_t section_len = strlen(kSections[section]);
 			if (len >= section_len + 4 && line[0] == '[' && line[len - 1] == ']' &&
 				strncasecmp(line + 1, kSections[section], section_len) == 0 && line[1 + section_len] == '_')
-				Report(LABEL, "%s: %s (per-ship mission section) not imported", base, line);
+				ReportUnsupported("the per-ship mission hangar section [%s_<ship>]", kSections[section]);
 		}
 	}
 	free(text);
 	char rel[1100];
-	if (PathFormat(rel, sizeof rel, "%s_Hangar.opt", base) && has_file(game, rel))
-		Report(LABEL, "%s: %s_Hangar.opt (a mission hangar model) not imported", base, base);
+	if (PathFormat(rel, sizeof rel, "%s_Hangar.opt", base) && installation_has_file(game, rel))
+		ReportUnsupported("a mission's own hangar model, <mission>_Hangar.opt");
 	return true;
 }
 
-/* The ships of `ships` that a mission's [Objects] swaps replace: the
- * mission's own lines, else FlightModels/Objects.txt, else [Objects] of
- * FlightModels/default.ini, as the hook reads them. Returns false when out
- * of memory. */
-static bool mission_ships(const char* game, const char* base, const XwauLines* ships, XwauLines* out) {
+/* Finds the ships of `ships` that a mission's [Objects] swaps replace. Like
+ * the hook, it reads the swaps from the mission's own lines, else from
+ * FlightModels/Objects.txt, else from [Objects] of FlightModels/default.ini.
+ * Returns false when out of memory. */
+static bool find_ships_swapped_by_mission(const char* game, const char* base, const XwauLines* ships,
+										  XwauLines* out) {
 	XwauLines lines = { 0 };
 	bool      ok    = XwauMissionFiles_ObjectLines(game, base, &lines);
 	if (ok && !lines.count)
-		ok = read_found(game, "FlightModels/Objects.txt", "", &lines);
+		ok = read_section_of_found_file(game, "FlightModels/Objects.txt", "", &lines);
 	if (ok && !lines.count)
-		ok = read_found(game, "FlightModels/default.ini", "Objects", &lines);
+		ok = read_section_of_found_file(game, "FlightModels/default.ini", "Objects", &lines);
 	XwauLines seen = { 0 };
 	for (size_t i = 0; ok && i < lines.count; ++i) {
 		char key[512], value[1024], name[256], substitute[256];
-		if (!key_value(lines.items[i], key, sizeof key, value, sizeof value) ||
-			!swap_source(key, name, sizeof name))
+		if (!split_key_value_line(lines.items[i], key, sizeof key, value, sizeof value) ||
+			!parse_swap_source_model(key, name, sizeof name))
 			continue;
 		bool known = false;
 		for (size_t j = 0; !known && j < seen.count; ++j)
 			known = Xwau_SameName(seen.items[j], key);
 		if (known || !(ok = XwauLines_Add(&seen, key, strlen(key))))
 			continue;
-		if (!opt_target(value, substitute, sizeof substitute) || !has_file(game, value) ||
-			strcmp(name, substitute) == 0)
+		if (!parse_opt_model_name(value, substitute, sizeof substitute) ||
+			!installation_has_file(game, value) || strcmp(name, substitute) == 0)
 			continue;
 		bool listed = false;
 		for (size_t j = 0; !listed && j < ships->count; ++j)
@@ -1012,7 +1108,7 @@ static bool mission_ships(const char* game, const char* base, const XwauLines* s
 		if (listed) {
 			Text t = { 0 };
 			text_add(&t, "%s: %s", name, substitute);
-			ok = text_take(&t, out);
+			ok = move_text_into_lines(&t, out);
 		}
 	}
 	if (ok && out->count)
@@ -1024,28 +1120,500 @@ static bool mission_ships(const char* game, const char* base, const XwauLines* s
 
 /* ---- Writing --------------------------------------------------------------- */
 
-static void write_lines(FILE* f, int indent, const char* key, const XwauLines* lines, const char* item) {
-	if (!lines->count)
-		return;
-	fprintf(f, "%*s%s:\n", indent, "", key);
-	for (size_t i = 0; i < lines->count; ++i)
-		fprintf(f, "%*s  %s%s\n", indent, "", item, lines->items[i]);
+/* The layers below a layer, in the order the game looks them up. */
+typedef struct Chain {
+	const Layer* layers[3];
+	size_t       count;
+} Chain;
+
+/* The layers that can be below a layer: one chain for the default, ship and
+ * IFF layers, and one for each possible command ship for a mission's
+ * layer. */
+typedef struct Below {
+	const Chain* chains;
+	size_t       count;
+} Below;
+
+/* The value of `key` in `l`, else in the first layer of `chain` that sets
+ * it, or NULL. */
+static const RawValue* find_value_in_chain(const Layer* l, const Chain* chain, int key) {
+	if (l->values[key].set)
+		return &l->values[key];
+	for (size_t i = 0; i < chain->count; ++i)
+		if (chain->layers[i]->values[key].set)
+			return &chain->layers[i]->values[key];
+	return NULL;
 }
 
-static void write_layer(FILE* f, const Layer* l, int indent) {
+/* The number of `key` from `l` and `chain`, or `fallback` when no layer
+ * sets it or its line has no value. */
+static long long read_int_in_chain(const Layer* l, const Chain* chain, int key, long long fallback) {
+	const RawValue* v = find_value_in_chain(l, chain, key);
+	return v && !v->empty ? v->number : fallback;
+}
+
+typedef enum DroidValue { DROID_ENABLED, DROID_HEIGHT, DROID_FLOOR } DroidValue;
+
+/* Returns a droid setting that the hook combines from a key for both droids
+ * and a key for each droid. The result is the value that the game would
+ * find with `l` and `chain`. */
+static long long combined_droid_value(const Layer* l, const Chain* chain, int droid, DroidValue what) {
+	const int first = K_LOAD_DROID1 + droid * DROID_KEYS;
+	switch (what) {
+		case DROID_ENABLED:
+			return read_int_in_chain(l, chain, K_LOAD_DROIDS, 1) == 1 &&
+				   read_int_in_chain(l, chain, first + DK_LOAD, 1) == 1;
+		case DROID_HEIGHT: {
+			const RawValue* v = find_value_in_chain(l, chain, first + DK_POSITION_Z);
+			return v && !v->empty ? v->number : read_int_in_chain(l, chain, K_DROIDS_POSITION_Z, 0);
+		}
+		case DROID_FLOOR:
+			return read_int_in_chain(l, chain, K_IS_DROIDS_FLOOR_INVERTED, 0) != 0 ||
+				   read_int_in_chain(l, chain, first + DK_IS_FLOOR_INVERTED, 0) != 0;
+	}
+	return 0;
+}
+
+/* Gets the droid setting with each chain of layers that can be below `l`.
+ * When the result differs between chains, the import fails, since the file
+ * can only hold one value. */
+static long long combined_droid_value_below(const Layer* l, const Below* below, int droid, DroidValue what,
+											const char* name) {
+	const long long value = combined_droid_value(l, &below->chains[0], droid, what);
+	for (size_t i = 1; i < below->count; ++i) {
+		if (combined_droid_value(l, &below->chains[i], droid, what) != value) {
+			ReportFatal(LABEL,
+						"%s: droid %d: %s depends on the command ship's settings, and the import can only "
+						"write one value",
+						l->where, droid + 1, name);
+			break;
+		}
+	}
+	return value;
+}
+
+/* A section of the output. Its header is written before its first key. */
+typedef struct Section {
+	FILE*           f;
+	int             indent;
+	const char*     name;
+	struct Section* parent;
+	bool            open;
+} Section;
+
+static void write_section_header(Section* s) {
+	if (s->open)
+		return;
+	if (s->parent)
+		write_section_header(s->parent);
+	fprintf(s->f, "%*s%s:\n", s->indent, "", s->name);
+	s->open = true;
+}
+
+/* Starts the line of `key` in `s`. The caller writes the value and the line
+ * end. */
+static void start_section_key(Section* s, const char* key) {
+	write_section_header(s);
+	fprintf(s->f, "%*s  %s: ", s->indent, "", key);
+}
+
+/* The number of `key` in `l`, or `fallback` when its line has no value. */
+static long long read_layer_int(const Layer* l, int key, long long fallback) {
+	return l->values[key].empty ? fallback : l->values[key].number;
+}
+
+static void write_floor(FILE* f, long long inverted) { fputs(inverted ? "inverted" : "normal", f); }
+
+static void write_profile(FILE* f, const RawValue* v) { Xwau_WriteString(f, v->empty ? "Default" : v->text); }
+
+static void write_object_type(FILE* f, const Models* m, long long type) {
+	fputs(XwauNames_ObjectType(m->names, (int)type), f);
+}
+
+/* Writes the lengths of `keys` as metres, `[a, b]` or `[a, b, c]`, when `l`
+ * sets them. A line without a value gives the key's default. A layer that
+ * sets only some of them makes the import fail, since the file holds them
+ * together. */
+static void write_metres_group(Section* s, const Layer* l, const char* name, const int* keys,
+							   const long long* defaults, int count) {
+	int set = 0;
+	for (int i = 0; i < count; ++i)
+		set += l->values[keys[i]].set;
+	if (!set)
+		return;
+	if (set != count) {
+		ReportFatal(LABEL,
+					"%s: [HangarObjects] sets only some of %s%s%s and %s, and the import can only write them "
+					"together",
+					l->where, kKeys[keys[0]].name, count > 2 ? ", " : "",
+					count > 2 ? kKeys[keys[1]].name : "", kKeys[keys[count - 1]].name);
+		return;
+	}
+	start_section_key(s, name);
+	fputc('[', s->f);
+	for (int i = 0; i < count; ++i) {
+		if (i)
+			fputs(", ", s->f);
+		Xwau_WriteMetres(s->f, (int)read_layer_int(l, keys[i], defaults[i]));
+	}
+	fputs("]\n", s->f);
+}
+
+/* Writes a length when `l` sets `key`. */
+static void write_metres(Section* s, const Layer* l, const char* name, int key, long long fallback) {
+	if (!l->values[key].set)
+		return;
+	start_section_key(s, name);
+	Xwau_WriteMetres(s->f, (int)read_layer_int(l, key, fallback));
+	fputc('\n', s->f);
+}
+
+/* Fails the import on a line without a value whose default comes from
+ * another setting, which the file can't express. */
+static bool check_derived_default_has_value(const Layer* l, int key) {
+	if (l->values[key].set && l->values[key].empty) {
+		ReportFatal(
+			LABEL,
+			"%s: [HangarObjects] %s has no value, and the import can't write the default it then takes",
+			l->where, kKeys[key].name);
+		return false;
+	}
+	return true;
+}
+
+static void write_hangar(FILE* f, const Layer* l, int indent) {
+	Section s = { f, indent, "hangar", NULL, false };
+	if (l->values[K_IS_HANGAR_FLOOR_INVERTED].set) {
+		start_section_key(&s, "floor");
+		write_floor(f, read_layer_int(l, K_IS_HANGAR_FLOOR_INVERTED, 0) != 0);
+		fputc('\n', f);
+	}
+	write_metres(&s, l, "inverted_floor_height_m", K_HANGAR_FLOOR_INVERTED_HEIGHT, 0);
+	if (l->values[K_HANGAR_IFF].set) {
+		const long long markings = read_layer_int(l, K_HANGAR_IFF, -1) & 0xFF;
+		start_section_key(&s, "markings");
+		if (markings == 0xFF)
+			fputs("command_ship\n", f);
+		else
+			fprintf(f, "%lld\n", markings);
+	}
+}
+
+static void write_shuttle(FILE* f, const Models* m, const Layer* l, int indent) {
+	static const int       position[]  = { K_SHUTTLE_POSITION_X, K_SHUTTLE_POSITION_Y };
+	static const long long positions[] = { 0x467, 0x3BF };
+	Section                s           = { f, indent, "shuttle", NULL, false };
+	if (l->values[K_LOAD_SHUTTLE].set) {
+		start_section_key(&s, "enabled");
+		fputs(read_layer_int(l, K_LOAD_SHUTTLE, 1) == 1 ? "true\n" : "false\n", f);
+	}
+	if (l->values[K_SHUTTLE_MODEL_INDEX].set) {
+		start_section_key(&s, "type");
+		if (read_layer_int(l, K_SHUTTLE_MODEL_INDEX, 0) == 0)
+			fputs("default", f);
+		else
+			write_object_type(f, m, l->values[K_SHUTTLE_MODEL_INDEX].number);
+		fputc('\n', f);
+	}
+	if (l->values[K_SHUTTLE_MARKINGS].set) {
+		start_section_key(&s, "markings");
+		fprintf(f, "%lld\n", read_layer_int(l, K_SHUTTLE_MARKINGS, 0) & 0xFF);
+	}
+	if (l->values[K_SHUTTLE_OBJECT_PROFILE].set) {
+		start_section_key(&s, "profile");
+		write_profile(f, &l->values[K_SHUTTLE_OBJECT_PROFILE]);
+		fputc('\n', f);
+	}
+	write_metres_group(&s, l, "position_m", position, positions, 2);
+	write_metres(&s, l, "height_m", K_SHUTTLE_POSITION_Z, 0);
+	if (l->values[K_SHUTTLE_ORIENTATION].set) {
+		start_section_key(&s, "heading_degrees");
+		Xwau_WriteDegrees(f, (int)(read_layer_int(l, K_SHUTTLE_ORIENTATION, 0xA880) & 0xFFFF));
+		fputc('\n', f);
+	}
+	if (l->values[K_IS_SHUTTLE_FLOOR_INVERTED].set) {
+		start_section_key(&s, "floor");
+		write_floor(f, read_layer_int(l, K_IS_SHUTTLE_FLOOR_INVERTED, 0) != 0);
+		fputc('\n', f);
+	}
+	Section path = { f, indent + 2, "path", &s, false };
+	if (l->values[K_SHUTTLE_ANIMATION].set) {
+		const char* side = l->values[K_SHUTTLE_ANIMATION].text;
+		start_section_key(&path, "exit_side");
+		fputs(strcasecmp(side, "Top") == 0      ? "top\n"
+			  : strcasecmp(side, "Bottom") == 0 ? "bottom\n"
+												: "right\n",
+			  f);
+	}
+	write_metres(&path, l, "straight_m", K_SHUTTLE_ANIMATION_STRAIGHT_LINE, 0);
+	write_metres(&path, l, "rise_m", K_SHUTTLE_ANIMATION_ELEVATION, 0);
+}
+
+/* Writes ", " before every value of a flow map but the first. */
+static void start_flow_map_key(FILE* f, bool* first, const char* key) {
+	fprintf(f, "%s%s: ", *first ? "" : ", ", key);
+	*first = false;
+}
+
+/* Writes the droids. The hook combines `enabled`, `height_m` and `floor`
+ * from a key for both droids and a key for each droid. When a layer sets
+ * either key, the import writes the combined value, using the layers below
+ * it. */
+static void write_droids(FILE* f, const Models* m, const Layer* l, const Below* below, int indent) {
+	bool has[2] = { false, false };
+	for (int d = 0; d < 2; ++d) {
+		const int first = K_LOAD_DROID1 + d * DROID_KEYS;
+		has[d]          = l->values[K_LOAD_DROIDS].set || l->values[K_DROIDS_POSITION_Z].set ||
+						  l->values[K_IS_DROIDS_FLOOR_INVERTED].set;
+		for (int k = 0; k < DROID_KEYS; ++k)
+			has[d] = has[d] || l->values[first + k].set;
+	}
+	if (!has[0] && !has[1])
+		return;
+	fprintf(f, "%*sdroids:\n", indent, "");
+	for (int d = 0; d < (has[1] ? 2 : 1); ++d) {
+		const int first = K_LOAD_DROID1 + d * DROID_KEYS;
+		bool      start = true;
+		fprintf(f, "%*s  - {", indent, "");
+		if (l->values[K_LOAD_DROIDS].set || l->values[first + DK_LOAD].set) {
+			start_flow_map_key(f, &start, "enabled");
+			fputs(combined_droid_value_below(l, below, d, DROID_ENABLED, "enabled") ? "true" : "false", f);
+		}
+		if (l->values[first + DK_MODEL_INDEX].set) {
+			start_flow_map_key(f, &start, "type");
+			write_object_type(
+				f, m,
+				l->values[first + DK_MODEL_INDEX].empty ? 311 + d : l->values[first + DK_MODEL_INDEX].number);
+		}
+		if (l->values[first + DK_MARKINGS].set) {
+			start_flow_map_key(f, &start, "markings");
+			fprintf(f, "%lld", read_layer_int(l, first + DK_MARKINGS, 0) & 0xFF);
+		}
+		if (l->values[first + DK_OBJECT_PROFILE].set) {
+			start_flow_map_key(f, &start, "profile");
+			write_profile(f, &l->values[first + DK_OBJECT_PROFILE]);
+		}
+		if (l->values[K_DROIDS_POSITION_Z].set || l->values[first + DK_POSITION_Z].set) {
+			start_flow_map_key(f, &start, "height_m");
+			Xwau_WriteMetres(f, (int)combined_droid_value_below(l, below, d, DROID_HEIGHT, "height_m"));
+		}
+		if (l->values[first + DK_UPDATE].set) {
+			start_flow_map_key(f, &start, "moves");
+			fputs(read_layer_int(l, first + DK_UPDATE, 1) != 0 ? "true" : "false", f);
+		}
+		if (l->values[K_IS_DROIDS_FLOOR_INVERTED].set || l->values[first + DK_IS_FLOOR_INVERTED].set) {
+			start_flow_map_key(f, &start, "floor");
+			write_floor(f, combined_droid_value_below(l, below, d, DROID_FLOOR, "floor"));
+		}
+		fputs("}\n", f);
+	}
+}
+
+static void write_roof_crane(FILE* f, const Layer* l, int indent) {
+	static const int       position[]  = { K_ROOF_CRANE_POSITION_X, K_ROOF_CRANE_POSITION_Y,
+										   K_ROOF_CRANE_POSITION_Z };
+	static const long long positions[] = { -1400, 786, -282 };
+	static const int       travel[]    = { K_ROOF_CRANE_LOW_OFFSET, K_ROOF_CRANE_HIGH_OFFSET };
+	static const long long travels[]   = { 0, 2800 };
+	Section                s           = { f, indent, "roof_crane", NULL, false };
+	write_metres_group(&s, l, "position_m", position, positions, 3);
+	if (l->values[K_ROOF_CRANE_AXIS].set) {
+		const long long axis = read_layer_int(l, K_ROOF_CRANE_AXIS, 0);
+		start_section_key(&s, "axis");
+		fputs(axis == 1 ? "y\n" : axis == 2 ? "z\n" : "x\n", f);
+	}
+	write_metres_group(&s, l, "travel_m", travel, travels, 2);
+}
+
+/* Writes the object types of a list key, without the ones that load no
+ * model. */
+static void write_type_list(FILE* f, const Models* m, const RawValue* v) {
+	bool first = true;
+	fputc('[', f);
+	for (size_t i = 0; i < v->count; ++i) {
+		if (v->list[i] < 0)
+			continue;
+		fputs(first ? "" : ", ", f);
+		write_object_type(f, m, v->list[i]);
+		first = false;
+	}
+	fputs("]\n", f);
+}
+
+/* The per-craft offsets of PlayerModelIndices and PlayerOffsetsX/Y/Z. The
+ * hook uses them only when the four lists have the same length, and keeps
+ * the first entry of a craft. */
+static void write_craft_offsets(Section* s, const Models* m, const Layer* l) {
+	static const int keys[] = { K_PLAYER_MODEL_INDICES, K_PLAYER_OFFSETS_X, K_PLAYER_OFFSETS_Y,
+								K_PLAYER_OFFSETS_Z };
+	int              set    = 0;
+	for (int i = 0; i < 4; ++i)
+		set += l->values[keys[i]].set;
+	if (!set)
+		return;
+	if (set != 4) {
+		ReportFatal(
+			LABEL,
+			"%s: [HangarObjects] sets only some of PlayerModelIndices and PlayerOffsetsX/Y/Z, and the "
+			"import can only write them together",
+			l->where);
+		return;
+	}
+	const RawValue* types = &l->values[K_PLAYER_MODEL_INDICES];
+	bool            same  = true;
+	for (int i = 1; i < 4; ++i)
+		same = same && l->values[keys[i]].count == types->count;
+	start_section_key(s, "craft_offsets_m");
+	fputc('{', s->f);
+	bool first = true;
+	for (size_t i = 0; same && i < types->count; ++i) {
+		bool repeated = false;
+		for (size_t j = 0; j < i; ++j)
+			repeated = repeated || types->list[j] == types->list[i];
+		if (types->list[i] < 0 || repeated)
+			continue;
+		fputs(first ? "" : ", ", s->f);
+		write_object_type(s->f, m, types->list[i]);
+		fputs(": ", s->f);
+		Xwau_WriteMetres3(s->f, (int)l->values[K_PLAYER_OFFSETS_X].list[i],
+						  (int)l->values[K_PLAYER_OFFSETS_Y].list[i],
+						  (int)l->values[K_PLAYER_OFFSETS_Z].list[i]);
+		first = false;
+	}
+	fputs("}\n", s->f);
+}
+
+static void write_player(FILE* f, const Models* m, const Layer* l, int indent) {
+	static const int       offset[]   = { K_PLAYER_OFFSET_X, K_PLAYER_OFFSET_Y, K_PLAYER_OFFSET_Z };
+	static const int       inverted[] = { K_PLAYER_INVERTED_OFFSET_X, K_PLAYER_INVERTED_OFFSET_Y,
+										  K_PLAYER_INVERTED_OFFSET_Z };
+	static const long long zeros[]    = { 0, 0, 0 };
+	Section                s          = { f, indent, "player", NULL, false };
+	write_metres_group(&s, l, "offset_m", offset, zeros, 3);
+	if (check_derived_default_has_value(l, inverted[0]) && check_derived_default_has_value(l, inverted[1]) &&
+		check_derived_default_has_value(l, inverted[2]))
+		write_metres_group(&s, l, "inverted_offset_m", inverted, zeros, 3);
+	write_metres(&s, l, "rise_m", K_PLAYER_ANIMATION_ELEVATION, 0);
+	if (check_derived_default_has_value(l, K_PLAYER_ANIMATION_INVERTED_ELEVATION))
+		write_metres(&s, l, "inverted_rise_m", K_PLAYER_ANIMATION_INVERTED_ELEVATION, 0);
+	write_metres(&s, l, "straight_m", K_PLAYER_ANIMATION_STRAIGHT_LINE, 0);
+	if (l->values[K_IS_PLAYER_FLOOR_INVERTED].set) {
+		start_section_key(&s, "floor");
+		write_floor(f, read_layer_int(l, K_IS_PLAYER_FLOOR_INVERTED, 0) != 0);
+		fputc('\n', f);
+	}
+	if (l->values[K_PLAYER_FLOOR_INVERTED_MODEL_INDICES].set) {
+		start_section_key(&s, "inverted_floor_crafts");
+		write_type_list(f, m, &l->values[K_PLAYER_FLOOR_INVERTED_MODEL_INDICES]);
+	}
+	write_craft_offsets(&s, m, l);
+}
+
+/* Writes a layout object as a flow map. */
+static void write_map_line(FILE* f, const Models* m, const MapLine* line) {
+	fputs("{type: ", f);
+	write_object_type(f, m, line->type);
+	if (line->markings & 0xFF)
+		fprintf(f, ", markings: %lld", line->markings & 0xFF);
+	fputs(", position_m: ", f);
+	/* A z of 0x7FFFFFFF puts the object on the floor. */
+	if (line->z == 0x7FFFFFFF) {
+		fputc('[', f);
+		Xwau_WriteMetres(f, (int)line->x);
+		fputs(", ", f);
+		Xwau_WriteMetres(f, (int)line->y);
+		fputc(']', f);
+	} else {
+		Xwau_WriteMetres3(f, (int)line->x, (int)line->y, (int)line->z);
+	}
+	fputs(", heading_degrees: ", f);
+	Xwau_WriteDegrees(f, (int)(line->heading & 0xFFFF));
+	if (line->pitch & 0xFFFF) {
+		fputs(", pitch_degrees: ", f);
+		Xwau_WriteDegrees(f, (int)(line->pitch & 0xFFFF));
+	}
+	if (strcmp(line->profile, "Default") != 0) {
+		fputs(", profile: ", f);
+		Xwau_WriteString(f, line->profile);
+	}
+	if (line->inverted >= 0) {
+		fputs(", floor: ", f);
+		write_floor(f, line->inverted);
+	}
+	fputc('}', f);
+}
+
+/* Writes the crane arm and the parked objects of a map section. The hook
+ * uses a fixed line as the crane arm. When that line places nothing, the
+ * hangar has no crane arm. */
+static void write_layout(FILE* f, const Models* m, const Layout* layout, int family, int indent) {
+	if (!layout->present)
+		return;
+	const int crane = kCraneLine[family];
+	if ((size_t)crane < layout->count && layout->lines[crane].placed) {
+		fprintf(f, "%*scrane_arm: ", indent, "");
+		write_map_line(f, m, &layout->lines[crane]);
+		fputc('\n', f);
+	}
+	size_t parked = 0;
+	for (size_t i = 0; i < layout->count; ++i)
+		parked += (int)i != crane && layout->lines[i].placed;
+	/* An empty list still hides the lower layers' layout. */
+	fprintf(f, "%*sparked:%s\n", indent, "", parked ? "" : " []");
+	for (size_t i = 0; i < layout->count; ++i) {
+		if ((int)i == crane || !layout->lines[i].placed)
+			continue;
+		fprintf(f, "%*s  - ", indent, "");
+		write_map_line(f, m, &layout->lines[i]);
+		fputc('\n', f);
+	}
+}
+
+static void write_cameras(FILE* f, const Layer* l, int family, int indent) {
+	if (!l->camera_present[family])
+		return;
+	const int*   keys  = family ? kFamCameraKeys : kCameraKeys;
+	const size_t count = family ? sizeof kFamCameraKeys / sizeof kFamCameraKeys[0]
+								: sizeof kCameraKeys / sizeof kCameraKeys[0];
+	fprintf(f, "%*scameras:\n", indent, "");
+	for (size_t i = 0; i < count; ++i) {
+		const long long* xyz = l->cameras[family][keys[i]];
+		fprintf(f, "%*s  key_%d: ", indent, "", keys[i]);
+		Xwau_WriteMetres3(f, (int)xyz[0], (int)xyz[1], (int)xyz[2]);
+		fputc('\n', f);
+	}
+}
+
+static void write_layer(FILE* f, const Models* m, const Layer* l, const Below* below, int indent) {
 	if (l->model[0])
-		fprintf(f, "%*smodel: %s\n", indent, "", l->model);
-	write_lines(f, indent, "objects", &l->sections[OBJECTS], "");
-	write_lines(f, indent, "swaps", &l->swaps, "");
-	write_lines(f, indent, "map", &l->sections[MAP], "- ");
-	write_lines(f, indent, "fam_map", &l->sections[FAM_MAP], "- ");
-	write_lines(f, indent, "camera", &l->sections[CAMERA], "");
-	write_lines(f, indent, "fam_camera", &l->sections[FAM_CAMERA], "");
+		fprintf(f, "%*shangar_model: %s\n", indent, "", l->model);
+	write_hangar(f, l, indent);
+	write_shuttle(f, m, l, indent);
+	write_droids(f, m, l, below, indent);
+	write_roof_crane(f, l, indent);
+	write_player(f, m, l, indent);
+	if (l->swaps.count) {
+		fprintf(f, "%*sswaps:\n", indent, "");
+		for (size_t i = 0; i < l->swaps.count; ++i)
+			fprintf(f, "%*s  %s\n", indent, "", l->swaps.items[i]);
+	}
+	write_layout(f, m, &l->layouts[0], 0, indent);
+	write_cameras(f, l, 0, indent);
+	if (l->layouts[1].present || l->camera_present[1]) {
+		fprintf(f, "%*sfamily_base:\n", indent, "");
+		write_layout(f, m, &l->layouts[1], 1, indent + 2);
+		write_cameras(f, l, 1, indent + 2);
+	}
 	for (size_t i = 0; i < l->iff_count; ++i) {
 		if (i == 0)
-			fprintf(f, "%*siff:\n", indent, "");
+			fprintf(f, "%*sby_iff:\n", indent, "");
 		fprintf(f, "%*s  %d:\n", indent, "", l->iffs[i].iff);
-		write_layer(f, l->iffs[i].layer, indent + 4);
+		/* An IFF layer has its ship's layer below it. */
+		Chain chain = { { l }, 1 };
+		for (size_t c = 0; c < below->chains[0].count; ++c)
+			chain.layers[chain.count++] = below->chains[0].layers[c];
+		const Below iff_below = { &chain, 1 };
+		write_layer(f, m, l->iffs[i].layer, &iff_below, indent + 4);
 	}
 }
 
@@ -1062,13 +1630,14 @@ static bool replace_file(const char* temporary, const char* path) {
 	return false;
 }
 
-/* Makes `hangar` the `hangar` of the mission file `path`, in place of the
- * one it has, and creates the file when it doesn't exist and the layer isn't
- * empty. Sets *written when the file has a layer. Returns false when the
- * file can't be written. */
-static bool write_mission_layer(const char* path, const char* base, const Layer* hangar, bool* written) {
+/* Replaces the `hangar` of the mission file `path` with `hangar`. Creates
+ * the file when it doesn't exist and the layer isn't empty. Sets *written
+ * when the file has a layer. Returns false when the file can't be
+ * written. */
+static bool write_mission_layer(const Models* m, const char* path, const Layer* hangar, const Below* below,
+								bool* written) {
 	*written         = false;
-	const bool empty = layer_empty(hangar);
+	const bool empty = layer_is_empty(hangar);
 	size_t     size  = 0;
 	char*      text  = ReadWholeFile(path, &size);
 	if (!text && empty)
@@ -1085,8 +1654,7 @@ static bool write_mission_layer(const char* path, const char* base, const Layer*
 	}
 	free(text);
 	if (!kept.len)
-		text_add(&kept, "# Made by the OpenXWA mod importer from XWAU's %s hangar settings.\nversion: 1\n",
-				 base);
+		text_add(&kept, "# Made by the OpenXWA mod importer.\n");
 	char        dir[1100], temporary[1100];
 	const char* slash = strrchr(path, '/');
 	bool        ok    = !kept.failed && PathFormat(dir, sizeof dir, "%.*s", (int)(slash - path), path) &&
@@ -1096,9 +1664,9 @@ static bool write_mission_layer(const char* path, const char* base, const Layer*
 		fwrite(kept.s, 1, kept.len, f);
 		if (!empty) {
 			fprintf(f, "hangar:\n");
-			write_layer(f, hangar, 2);
+			write_layer(f, m, hangar, below, 2);
 			if (hangar->ships.count) {
-				fprintf(f, "  ships:\n");
+				fprintf(f, "  use_ship_settings:\n");
 				for (size_t i = 0; i < hangar->ships.count; ++i)
 					fprintf(f, "    %s\n", hangar->ships.items[i]);
 			}
@@ -1114,9 +1682,10 @@ static bool write_mission_layer(const char* path, const char* base, const Layer*
 }
 
 /* Writes the missions' own layers into their mission files, and sets *count
- * to the number of files with a layer. */
+ * to the number of files with a layer. `below` holds the layers that can be
+ * below a mission's layer. */
 static bool write_mission_layers(const Models* m, const char* game, const char* stock_game,
-								 const XwauLines* ships, const char* mod, size_t* count) {
+								 const XwauLines* ships, const Below* below, const char* mod, size_t* count) {
 	*count  = 0;
 	bool ok = true;
 	for (size_t d = 0; ok && d < sizeof kMissionDirs / sizeof kMissionDirs[0]; ++d) {
@@ -1126,33 +1695,56 @@ static bool write_mission_layers(const Models* m, const char* game, const char* 
 			char  base[1100], tie[1200], path[1200], lower_dir[64], found[1200];
 			Layer hangar = { 0 };
 			snprintf(base, sizeof base, "%s/%s", kMissionDirs[d], names.items[n]);
-			ok = mission_layer(m, game, base, &hangar) && mission_ships(game, base, ships, &hangar.ships);
+			ok = read_mission_layer(m, game, base, &hangar) &&
+				 find_ships_swapped_by_mission(game, base, ships, &hangar.ships);
 			snprintf(tie, sizeof tie, "%s.tie", base);
-			if (ok && !layer_empty(&hangar) && !Xwau_FindFile(game, tie, found, sizeof found) &&
+			if (ok && !layer_is_empty(&hangar) && !Xwau_FindFile(game, tie, found, sizeof found) &&
 				!Xwau_FindFile(stock_game, tie, found, sizeof found)) {
-				Report(LABEL, "%s: hangar settings dropped: neither the mod nor the game has its .TIE", base);
-				layer_free(&hangar);
+				/* Neither the mod nor the game has the mission. */
+				free_layer(&hangar);
 			}
 			LowerCopy(lower_dir, sizeof lower_dir, kMissionDirs[d]);
 			bool written = false;
 			ok           = ok &&
 						   PathFormat(path, sizeof path, "%s/flight/missions/%s/%s.yaml", mod, lower_dir,
 									  names.items[n]) &&
-						   write_mission_layer(path, base, &hangar, &written);
+						   write_mission_layer(m, path, &hangar, below, &written);
 			*count += written;
-			layer_free(&hangar);
+			free_layer(&hangar);
 		}
 		XwauLines_Free(&names);
 	}
 	return ok;
 }
 
-bool XwauHangars_Write(const char* xwau, const XwauGameTables* stock, const char* stock_game,
-					   const char* mod) {
+/* Builds the chains of layers that can be below a mission's layer: the
+ * default layer alone, each ship's layer above the default layer, and each
+ * IFF layer above its ship's layer. Returns NULL when out of memory. */
+
+static Chain* build_mission_chains(const Layer* def, const Layer* ships, size_t ship_count, size_t* count) {
+	size_t total = 1 + ship_count;
+	for (size_t i = 0; i < ship_count; ++i)
+		total += ships[i].iff_count;
+	Chain* chains = (Chain*)calloc(total, sizeof *chains);
+	if (!chains)
+		return NULL;
+	size_t n    = 0;
+	chains[n++] = (Chain) { { def }, 1 };
+	for (size_t i = 0; i < ship_count; ++i) {
+		chains[n++] = (Chain) { { &ships[i], def }, 2 };
+		for (size_t j = 0; j < ships[i].iff_count; ++j)
+			chains[n++] = (Chain) { { ships[i].iffs[j].layer, &ships[i], def }, 3 };
+	}
+	*count = n;
+	return chains;
+}
+
+bool XwauHangars_Write(const char* xwau, const XwauGameTables* stock, const XwauNames* game_names,
+					   const char* stock_game, const char* mod) {
 	Models* m = (Models*)malloc(sizeof *m);
-	if (!m || !models_load(m, xwau, stock, mod)) {
+	if (!m || !load_models(m, xwau, stock, game_names, mod)) {
 		if (m)
-			models_free(m);
+			free_models(m);
 		free(m);
 		return false;
 	}
@@ -1160,14 +1752,16 @@ bool XwauHangars_Write(const char* xwau, const XwauGameTables* stock, const char
 	Layer  def = { 0 };
 	Source s;
 	bool   ok = true;
-	source_init(&s, xwau, "FlightModels/", "FlightModels/default.ini", "");
-	ok = read_layer(m, &s, "default", -1, &def);
+	init_source(&s, xwau, "FlightModels/", "FlightModels/default.ini", "");
+	ok = read_layer_sections(m, &s, "default", -1, &def);
 
 	/* The ships and crafts, by lower-case name. */
-	XwauLines names = { 0 }, ship_keys = { 0 }, crafts = { 0 };
+	XwauLines names = { 0 }, ship_keys = { 0 };
+	Craft*    crafts      = NULL;
+	size_t    craft_count = 0;
 	Layer*    ships      = NULL;
 	size_t    ship_count = 0;
-	ok                   = ok && model_names(xwau, &names);
+	ok                    = ok && list_model_names(xwau, &names);
 	for (size_t i = 0; ok && i < names.count; ++i) {
 		char*       tab  = strchr(names.items[i], '\t');
 		const char* name = tab + 1;
@@ -1175,8 +1769,8 @@ bool XwauHangars_Write(const char* xwau, const XwauGameTables* stock, const char
 		const char* key  = names.items[i];
 		Layer       ship = { 0 };
 		bool        kept = false;
-		ok               = ship_layer(m, xwau, name, &ship);
-		if (ok && !layer_empty(&ship)) {
+		ok               = read_ship_layer(m, xwau, name, &ship);
+		if (ok && !layer_is_empty(&ship)) {
 			/* The ship's layer moves into the array. */
 			Layer* entry = ARRAY_PUSH(ships, ship_count);
 			ok           = entry && XwauLines_Add(&ship_keys, key, strlen(key));
@@ -1186,15 +1780,16 @@ bool XwauHangars_Write(const char* xwau, const XwauGameTables* stock, const char
 			}
 		}
 		if (!kept)
-			layer_free(&ship);
-		Text craft = { 0 };
-		ok         = ok && craft_record(xwau, name, &craft);
-		if (ok && craft.len) {
-			Text line = { 0 };
-			text_add(&line, "%s: %s", key, craft.s);
-			ok = text_take(&line, &crafts);
+			free_layer(&ship);
+		Craft craft = { 0 };
+		snprintf(craft.key, sizeof craft.key, "%s", key);
+		ok = ok && read_craft_camera_and_size(xwau, name, &craft);
+		if (ok && (craft.has_size || craft.has_camera)) {
+			Craft* entry = ARRAY_PUSH(crafts, craft_count);
+			ok           = entry != NULL;
+			if (ok)
+				*entry = craft;
 		}
-		free(craft.s);
 	}
 
 	char path[1100], temporary[1100], dir[1100];
@@ -1206,45 +1801,52 @@ bool XwauHangars_Write(const char* xwau, const XwauGameTables* stock, const char
 		Report(path, "cannot be written");
 		ok = false;
 	}
-	size_t models = 0;
+	size_t      models        = 0;
+	const Chain nothing       = { { NULL }, 0 };
+	const Chain default_only  = { { &def }, 1 };
+	const Below below_default = { &nothing, 1 };
+	const Below below_ship    = { &default_only, 1 };
 	if (f) {
-		fprintf(f, "# Made by the OpenXWA mod importer from XWAU's hangar settings.\nversion: 1\n");
-		if (!layer_empty(&def)) {
+		fputs("# Made by the OpenXWA mod importer.\n", f);
+		if (!layer_is_empty(&def)) {
 			fprintf(f, "default:\n");
-			write_layer(f, &def, 2);
+			write_layer(f, m, &def, &below_default, 2);
 		}
 		if (ship_count)
 			fprintf(f, "ships:\n");
 		for (size_t i = 0; i < ship_count; ++i) {
 			fprintf(f, "  %s:\n", ship_keys.items[i]);
-			write_layer(f, &ships[i], 4);
+			write_layer(f, m, &ships[i], &below_ship, 4);
 			models += ships[i].model[0] != 0;
 		}
-		if (crafts.count)
+		if (craft_count)
 			fprintf(f, "crafts:\n");
-		for (size_t i = 0; i < crafts.count; ++i)
-			fprintf(f, "  %s\n", crafts.items[i]);
+		for (size_t i = 0; i < craft_count; ++i)
+			write_craft(f, &crafts[i]);
 		ok = fclose(f) == 0 && replace_file(temporary, path);
 	}
 	if (ok)
 		Report(NULL, "wrote %s: %zu ships (%zu hangar models), %zu crafts", path, ship_count, models,
-			   crafts.count);
+			   craft_count);
 
 	if (ok && stock_game) {
-		size_t count = 0;
-		ok           = write_mission_layers(m, xwau, stock_game, &ship_keys, mod, &count);
+		size_t      chain_count = 0, count = 0;
+		Chain*      chains = build_mission_chains(&def, ships, ship_count, &chain_count);
+		const Below below  = { chains, chain_count };
+		ok = chains && write_mission_layers(m, xwau, stock_game, &ship_keys, &below, mod, &count);
+		free(chains);
 		if (ok)
 			Report(NULL, "wrote %zu mission hangar layers", count);
 	}
 
-	layer_free(&def);
+	free_layer(&def);
 	for (size_t i = 0; i < ship_count; ++i)
-		layer_free(&ships[i]);
+		free_layer(&ships[i]);
 	free(ships);
 	XwauLines_Free(&names);
 	XwauLines_Free(&ship_keys);
-	XwauLines_Free(&crafts);
-	models_free(m);
+	free(crafts);
+	free_models(m);
 	free(m);
 	return ok;
 }

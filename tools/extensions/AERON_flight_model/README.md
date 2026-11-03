@@ -41,10 +41,12 @@ transforms:
 - `model`: `{ "role": "model" }`. Optional fields: `articulations`,
   `articulationSettings`, `componentSets`, `markings`, `energy`,
   `skinVariants`, `reflectionProbes`, `lightGrid` and `reflectionPlane`.
-- `component`: requires `meshType`, 0 to 31. Optional fields:
-  `explosionFlags`, `targetId`, `target`, the descriptor geometry,
-  `rotation` and `tags`.
-- `hardpoint`: requires `type`, the game's hardpoint type, 0 to 39. The
+- `component`: requires `meshType`, the name of the part's mesh type.
+  Optional fields: `explosion`, `targetId`, `target`, the descriptor
+  geometry, `rotation` and `tags`. `explosion` is a list that can have
+  `hit_points` (the part has its own hit points) and `detachable` (the part
+  can be damaged and break off).
+- `hardpoint`: requires `type`, the name of the hardpoint type. The
   node can have a standard glTF perspective camera, which gives the vertical
   field of view (`yfov`, between 0 and pi) of a view from the hardpoint. The
   game decides which hardpoints have a view. The camera's direction is
@@ -123,6 +125,25 @@ The game reads the controls in order: for each component in order, its
 control children in order, each followed by its own controls. The
 components and controls of a model are at most 255.
 
+The mesh types are `default`, `main_hull`, `wing`, `fuselage`, `gun_turret`,
+`small_gun`, `engine`, `bridge`, `shield_generator`, `energy_generator`,
+`launcher`, `communication_system`, `beam_system`, `command_system`,
+`docking_platform`, `landing_platform`, `hangar`, `cargo_pod`, `misc_hull`,
+`antenna`, `rotary_wing`, `rotary_gun_turret`, `rotary_launcher`,
+`rotary_communication_system`, `rotary_beam_system`,
+`rotary_command_system`, `hatch`, `custom`, `weapon_system_1`,
+`weapon_system_2`, `power_regenerator` and `reactor`.
+
+The hardpoint types are `none`, `rebel_laser`, `turbo_rebel_laser`,
+`empire_laser`, `turbo_empire_laser`, `ion_cannon`, `turbo_ion_cannon`,
+`torpedo`, `missile`, `super_rebel_laser`, `super_empire_laser`,
+`super_ion_cannon`, `super_torpedo`, `super_missile`, `dumb_bomb`,
+`fired_bomb`, `mag_pulse`, `turbo_mag_pulse`, `super_mag_pulse`, `gunner`,
+`cockpit_sparks`, `docking_point`, `towing`, `acceleration_start`,
+`acceleration_end`, `inside_hangar`, `outside_hangar`, `dock_from_big`,
+`dock_from_small`, `dock_to_big`, `dock_to_small`, `pilot_eye`,
+`engine_glow`, `custom_1` to `custom_6` and `jamming_point`.
+
 ## Articulations
 
 The model root may carry `articulations`, an array of objects that let a
@@ -133,9 +154,9 @@ game turn components about their `rotation` hinge:
   components when the game draws another model, such as a cockpit, with the
   same state;
 - `group`: required, a game-defined name with the tag syntax;
-- `angle`: required integer in `-128..255`, in 1/256 turn;
-- `speed`: required integer in `0..255`, in 1/256 turn per game step;
-- `speedBack`: optional integer in `0..255`, defaults to `speed`;
+- `angleDegrees`: required, from -180 to 358.594;
+- `speedDegrees`: required, in degrees per game step, from 0 to 358.594;
+- `speedBackDegrees`: optional, defaults to `speedDegrees`;
 - `behavior`: optional game-defined name with the tag syntax.
 
 The model root may also carry `articulationSettings`, an object whose keys are
@@ -143,6 +164,10 @@ game-defined names with the tag syntax and whose values are integers. Aeron
 stores articulations and settings without interpreting them; each game
 documents the groups, behaviors and settings it reads, and ignores the
 others.
+
+The game turns in steps of 1/256 turn, which is 1.40625 degrees. The loader
+rounds the angles to the nearest step, so three decimals are enough to get
+the exact step.
 
 ## Component sets
 
@@ -296,7 +321,9 @@ primitive's own material, not a variant's.
 The cooker turns skins into `KHR_materials_variants`, with one material per
 distinct composite of a material and its layers. A skin variant with the
 same name as a file variant changes that variant. The others are added
-after the file's variants. A cooked file has no `skins` or `skinVariants`.
+after the file's variants. A cooked file has no `skins`, but it keeps
+`skinVariants` as a record of the layers of each variant. The game doesn't
+read it.
 A viewer without this extension shows the materials without skins.
 
 ## Lights
@@ -398,8 +425,9 @@ together. A flipbook has:
 A flipbook plays from the moment its state becomes active.
 
 **Hull damage** is `{ "library", "choice", "placement", "alternatives" }`.
-Each object picks one of the `alternatives`, materials with the same
-`choice` (0 to 4095) picking the same. An alternative has:
+Each object picks one of the `alternatives`. Materials with the same
+`choice` name pick the same alternative. A model can use up to 4096
+different `choice` and `placement` names. An alternative has:
 
 - `stages`: three image keys of kind `damage`, or `null`, shown at 75, 50
   and 25% hull;
@@ -410,9 +438,10 @@ Each object picks one of the `alternatives`, materials with the same
   texture, or `{ "min": [x, y], "max": [x, y] }` by `min + (max − min)·r`
   per axis, `r` random in [0, 1). Without it, the square stays centred.
 
-The random values are drawn once per object, shared by the materials with
-the same `placement` (0 to 4095). Outside its square, a stage shows
-nothing; the square is clipped at the texture's edges.
+The random values are drawn once per object. Materials with the same
+`placement` name share them. `placement` is optional and defaults to
+`choice`. Outside its square, a stage shows nothing. The square is clipped
+at the texture's edges.
 
 **Details** are up to two images repeated over the material, which add
 small-scale detail to large surfaces such as rock. Each one has:
@@ -455,25 +484,27 @@ through rectangles of its `TEXCOORD_0` space:
 - `alwaysVisible`: a transparent screen kept while the game draws its 2D
   HUD;
 - `hologram`: drawn as a hologram; `noisy` adds scanlines;
-- `hide`: required, a bitmask of the 2D HUD regions the game stops drawing
-  while the screen shows (game-defined);
+- `hide`: optional, a list of 2D HUD areas that the game stops drawing
+  while the screen is visible. The game defines the area names;
 - `rects`: required, up to 16 rectangles.
 
 The flags are booleans, false when absent. A rectangle has:
 
-- `source`: the game's display it shows, 0 to 63 (game-defined);
+- `source`: the name of the game display that the rectangle shows. The game
+  defines the display names, and checks them when it loads the model;
 - `dst`: `[u0, v0, u1, v1]` in `TEXCOORD_0`; swapped corners mirror it;
 - `bg`, `highlight`, `lock`: linear RGB backgrounds in the display's normal,
   highlighted and locked states;
 - `gain`: >= 0, the content's brightness;
-- `layers`: a bitmask, 1 graphics, 2 text, 4 a fill bar (no texture);
-- `bar`: the linear RGB of the fill bar, required with layer 4.
+- `layers`: what the rectangle shows, a list of `graphics`, `text` and
+  `bar`. `bar` is a fill bar without a texture;
+- `bar`: the linear RGB of the fill bar, required with the `bar` layer.
 
 ## Cooked files
 
 `aeron_gltf_cook` turns a source file into a cooked file for the game. The
-source-only fields (`skins`, `skinVariants`, `reflectionProbes`,
-`lightGrid`) are not copied to the cooked file. The
+source-only fields (`skins`, `reflectionProbes`, `lightGrid`) are not
+copied to the cooked file. The
 cooker adds the data it computes: texture atlas pages, simulation data,
 render data and probe data. That data is described in
 [AERON_flight_model_cooked](../AERON_flight_model_cooked/README.md).

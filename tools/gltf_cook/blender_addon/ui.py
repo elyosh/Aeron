@@ -34,7 +34,7 @@ def _child_labels(component):
     for child in common.ordered_children(component):
         if common.role(child) == 'hardpoint':
             labels[child.name] = "Hardpoint {}: {}".format(
-                hardpoint, common.HARDPOINT_TYPE_NAMES[int(child.aeron_flight.hardpoint_type)])
+                hardpoint, common.type_label(child.aeron_flight.hardpoint_type))
             hardpoint += 1
         else:
             labels[child.name] = "Engine Glow {}".format(glow)
@@ -80,7 +80,7 @@ class AERON_UL_components(_ObjectList):
     def draw_item(self, context, layout, data, item, icon, active_data, active_propname, index):
         row = layout.row(align=True)
         row.label(text=_labels.get(self.kind, {}).get(item.name, item.name), icon='MESH_DATA')
-        row.label(text=common.MESH_TYPE_NAMES[int(item.aeron_flight.mesh_type)])
+        row.label(text=common.type_label(item.aeron_flight.mesh_type))
         _select_button(row, item)
 
 
@@ -467,10 +467,9 @@ class OBJECT_PT_aeron_component(_RolePanel, Panel):
         column = layout.column(heading="Explosion", align=True)
         column.prop(props, "explosion_type1")
         column.prop(props, "explosion_type2")
-        column.prop(props, "explosion_type3")
-        other = props.explosion_flags_bits & 0xFFFFFFF8
+        other = props.explosion_flags_bits & 0xFFFFFFFC
         if other:
-            column.label(text="Other flags: 0x{:X}".format(other))
+            column.label(text="Other flags, not exported: 0x{:X}".format(other))
         layout.prop(props, "tags")
         layout.prop(props, "target_id")
         row = layout.row(align=True)
@@ -669,7 +668,7 @@ class VIEW3D_PT_aeron_overlays(Panel):
             for component in common.components(root):
                 for child in component.children:
                     if common.role(child) == 'hardpoint':
-                        counts[overlays.hardpoint_family(int(child.aeron_flight.hardpoint_type))] += 1
+                        counts[overlays.hardpoint_family(common.hardpoint_type(child.aeron_flight))] += 1
             legend = column.column(align=True)
             if not any(counts):
                 legend.label(text="No hardpoints in " + root.name, icon='INFO')

@@ -35,11 +35,28 @@ def _set_reference(ref, ordinal, parts):
         ref.component_index = ordinal
 
 
+def _name_index(names, value, where, key):
+    """Returns the position of `value` in `names`. Raises an error that names
+    the object and the key when `value` isn't one of the names."""
+    if value not in names:
+        raise ValueError("{}: {} {!r} isn't a known name".format(where, key, value))
+    return names.index(value)
+
+
+def _degrees(item, key, where):
+    """Reads the angle at `key` of `item` as steps of 1/256 turn."""
+    if key not in item:
+        raise ValueError("{}: {} is missing".format(where, key))
+    return common.degrees_turn_steps(item[key])
+
+
 def _restore_component(obj, extension):
     props = obj.aeron_flight
-    props.mesh_type = str(extension.get("meshType", 0))
-    flags = extension.get("explosionFlags", 0)
-    props.explosion_flags_bits = flags - (1 << 32) if flags >= (1 << 31) else flags
+    mesh_type = extension.get("meshType", "default")
+    _name_index(common.MESH_TYPE_IDS, mesh_type, obj.name, "meshType")
+    props.mesh_type = mesh_type
+    props.explosion_flags_bits = sum(1 << _name_index(common.EXPLOSION_IDS, name, obj.name, "explosion")
+                                     for name in extension.get("explosion", []))
     props.tags = ", ".join(extension.get("tags", []))
     props.target_id = extension.get("targetId", 0)
     if "target" in extension:
@@ -155,7 +172,9 @@ def restore(gltf):
                     continue
                 if child_role == "hardpoint":
                     _set_role(child, 'hardpoint', ordinal)
-                    child.aeron_flight.hardpoint_type = str(extension.get("type", 0))
+                    hardpoint_type = extension.get("type", "none")
+                    _name_index(common.HARDPOINT_TYPE_IDS, hardpoint_type, child.name, "type")
+                    child.aeron_flight.hardpoint_type = hardpoint_type
                     if child_index in _state["camera_fovs"]:
                         _state["eye_fovs"][child.name] = _state["camera_fovs"][child_index]
                     ordinal += 1
@@ -188,10 +207,12 @@ def restore(gltf):
             articulation = props.articulations.add()
             _set_reference(articulation, item["component"], parts)
             articulation.group = item["group"]
-            articulation.angle = item["angle"]
-            articulation.speed = item["speed"]
-            articulation.has_speed_back = "speedBack" in item
-            articulation.speed_back = item.get("speedBack", item["speed"])
+            where = "articulation {}".format(item["group"])
+            articulation.angle = _degrees(item, "angleDegrees", where)
+            articulation.speed = _degrees(item, "speedDegrees", where)
+            articulation.has_speed_back = "speedBackDegrees" in item
+            articulation.speed_back = (_degrees(item, "speedBackDegrees", where) if articulation.has_speed_back
+                                       else articulation.speed)
             articulation.behavior = item.get("behavior", "")
         for name, value in extension.get("articulationSettings", {}).items():
             setting = props.articulation_settings.add()

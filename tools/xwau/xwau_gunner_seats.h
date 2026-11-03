@@ -2,10 +2,11 @@
 #define AERON_XWAU_GUNNER_SEATS_H
 
 /*
- * Imports the gunner seats of XWAU's hook_mission_objects (the mod
- * importer's craft phase). A model's seats come from FlightModels/<model>Turrets.txt, or else
- * from the [Turrets] section of its INI. Each line with at least 9 values,
- * split at ',' and ';', is one seat:
+ * Imports the gunner seats of XWAU's hook_mission_objects, in the mod
+ * importer's craft phase. A model's seats come from
+ * FlightModels/<model>Turrets.txt, or else from the [Turrets] section of its
+ * INI. Each line with at least 9 values, separated by ',' or ';', is one
+ * seat:
  *
  *   PositionX, PositionY, PositionZ, OrientationX, OrientationY, ArcX, ArcY, OptModel, IsInverted
  *   0, 19, 250, -16384, 16384, 12040, 17308, MillenniumFalcon2Gunner, 0
@@ -15,30 +16,34 @@
  *   gunner_seats:
  *     forward_fire: false
  *     seats:
- *       - {x: 19, y: 0, z: 250, mount_angle_a: 16384, mount_angle_b: -16384, aim_limit_a: 12040,
- *          aim_limit_b: 17308, cockpit: millenniumfalcon2gunner, inverted: false}
+ *       - {position_m: [0.464, 0, 6.104], mount_pitch_degrees: 90, mount_yaw_degrees: -90,
+ *          aim_limit_pitch_degrees: 66.138, aim_limit_yaw_degrees: 95.076,
+ *          cockpit: millenniumfalcon2gunner, inverted: false}
  *
- * The hook's names follow the order of the craft record's fields, so
- * PositionX is the record's y, PositionY its x, OrientationX its
- * mount_angle_b and OrientationY its mount_angle_a. ArcX and ArcY are
- * aim_limit_a and aim_limit_b. The numbers are read with std::stoi(value, 0,
- * 0) and cut to 16 bits, as the hook does. A line whose numbers can't be
- * read would crash XWAU; it is reported and left out. A section can also set
- * `TurretForwardFire = 0`, which gives `forward_fire: false`.
- *
- * A model with the section gets the group, also when it has no seat line:
- * the hook then gives it no seat. A model without the section gets the seats
- * of its craft record, if it has some, as the hook builds them: the first
- * seat's cockpit is <model>Gunner, the second one's <model>Gunner2, else
- * <model>Gunner, and the second seat is upside down. A cockpit whose OPT
- * isn't in FlightModels is the stock CorellianTransportGunner, as in the
- * hook; it is reported. The game has room for 2 seats; more are reported and
+ * The hook's value names don't match their meaning. They follow the order of
+ * the craft record fields: PositionX is the record's y, PositionY its x,
+ * OrientationX its yaw (mount angle b) and OrientationY its pitch (mount
+ * angle a). ArcX and ArcY are the pitch and yaw aim limits. The importer
+ * writes the position in metres and the angles in degrees, with three
+ * decimals. Like the hook, it reads the numbers with std::stoi(value, 0, 0)
+ * and cuts them to 16 bits. A line with numbers that can't be read would
+ * crash XWAU, so it is left out. Lines with fewer than 9 values aren't
+ * seats. The hook only reads the TurretForwardFire key from them. A section
+ * can set `TurretForwardFire = 0`, which gives `forward_fire: false`. A
+ * TurretForwardFire value that isn't a number would crash XWAU, so it is
  * left out.
  *
- * Every cockpit other than the stock one gets an object type file of its
- * own, in a reserved slot with its own empty craft record, with
- * `gunner_cockpit: true` (craft_definitions.h in the game). XWAU loads every
- * seat's cockpit into object type 317; OpenXWA keeps them apart.
+ * A model with the section gets the group even without seat lines. The hook
+ * then gives it no seats. A model without the section gets the seats of its
+ * craft record, if it has some, the same way the hook builds them: the first
+ * seat's cockpit is <model>Gunner, the second seat's is <model>Gunner2, else
+ * <model>Gunner, and the second seat is upside down. If a cockpit's OPT isn't
+ * in FlightModels, the seat uses the stock CorellianTransportGunner, like
+ * the hook. The game has room for 2 seats. More seats make the import
+ * fail.
+ *
+ * XWAU loads all seat cockpits into object type 317. The game gives each
+ * cockpit model its own object type instead.
  */
 
 #include <stdbool.h>
@@ -75,12 +80,14 @@ void XwauGunnerSeats_Read(const char* game, const XwauGameTables* tables, const 
  * out of memory. */
 bool XwauGunnerSeats_Write(FILE* f, const XwauGunnerSeats* seats, XwauLines* cockpits);
 
-/* Writes an object type file for each cockpit in `cockpits` but the stock
- * one into <output_dir>/object_types. `game` is the installation, and
- * `stock` holds the stock game's tables, which are used to find the free
- * reserved slots. Run it after XwauObjects_Write, which removes the files of
- * the last run. Returns false on an error. */
-bool XwauGunnerSeats_WriteCockpits(const char* game, const XwauGameTables* stock, const char* output_dir,
-								   const XwauLines* cockpits);
+/* Writes aim limit `steps` as degrees. The game reads the limit as a signed
+ * 16-bit angle, so a limit of 32768 or more locks the aim instead of
+ * limiting it. Such a limit makes the import fail, with `label` in the
+ * report, and is written as 180. */
+void XwauGunnerSeats_WriteAimLimit(FILE* f, const char* label, int steps);
+
+/* Checks each cockpit in `cockpits`, except the stock one. Reports a cockpit
+ * whose GLB isn't in <output_dir>/models. `game` isn't used. */
+void XwauGunnerSeats_CheckCockpits(const char* game, const char* output_dir, const XwauLines* cockpits);
 
 #endif /* AERON_XWAU_GUNNER_SEATS_H */

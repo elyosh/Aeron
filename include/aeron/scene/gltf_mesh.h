@@ -176,9 +176,12 @@ typedef struct AeronGltfMaterial {
 	 * flipbook_count) of the model's. */
 	uint32_t flipbook_first;
 	uint32_t flipbook_count;
-	/* Hull damage (`damage`): alternatives [damage_first, damage_first
-	 * + damage_count) of the model's, and the sections whose random choice
-	 * and placement apply. */
+	/* Hull damage (`damage`): the model's alternatives [damage_first,
+	 * damage_first + damage_count), and the groups for the random choices.
+	 * Materials with the same `choice` name pick the same alternative.
+	 * Materials with the same `placement` name share the random size and
+	 * offset. `placement` defaults to `choice`. damage_choice and
+	 * damage_placement are indexes in the model's damage_groups. */
 	uint32_t damage_first;
 	uint32_t damage_count;
 	uint32_t damage_choice;
@@ -204,7 +207,7 @@ typedef struct AeronGltfMaterial {
  *                    "mode": "loop" | "once", "library",
  *                    "frames": [ [key, seconds], ... ],
  *                    "emissiveStrength": s, "unlit": u, "blendFrames": b } ]
- *   "damage": { "library", "choice", "placement",
+ *   "damage": { "library", "choice": text, "placement": text,
  *               "alternatives": [ { "stages": [key | null] x 3,
  *                                   "scale": [min, max],
  *                                   "offset": "inside" |
@@ -278,16 +281,24 @@ typedef struct AeronGltfFlipbook {
  * `screen`:
  *
  *   "screen": { "cover", "transparent", "alwaysVisible", "hologram",
- *                    "noisy": bool, "hide": uint,
- *                    "rects": [ { "source": uint, "dst": [u0, v0, u1, v1],
+ *                    "noisy": bool, "hide": [area names],
+ *                    "rects": [ { "source": name, "dst": [u0, v0, u1, v1],
  *                                 "bg", "highlight", "lock": linear RGB,
- *                                 "gain": float, "layers": uint,
+ *                                 "gain": float, "layers": [graphics, text, bar],
  *                                 "bar": linear RGB (fill bars) } ] }
  *
- * `hide` is a game-defined bitmask (HUD regions the game stops drawing in
- * 2D while the material is on screen); the model ORs it over its materials. */
-#define AERON_GLTF_SCREEN_MAX_SOURCES 64u
-#define AERON_GLTF_SCREEN_MAX_RECTS_PER_MATERIAL 16u
+ * The game defines the source names and the `hide` names. `hide` lists the
+ * 2D HUD areas that the game stops drawing while the material is on screen.
+ * The loader keeps these names as text, in each rectangle's `source_name`
+ * and in the model's `screen_hide_names`. Before it builds a mesh from the
+ * model, the game converts them to each rectangle's `source` and the model's
+ * `screen_hide_mask`. */
+enum {
+	AERON_GLTF_SCREEN_MAX_SOURCES            = 64,
+	AERON_GLTF_SCREEN_MAX_RECTS_PER_MATERIAL = 16,
+	AERON_GLTF_SCREEN_NAME_MAX               = 48,
+	AERON_GLTF_SCREEN_MAX_HIDE_NAMES         = 32,
+};
 
 #define AERON_GLTF_SCREEN_COVER 0x1u          /* base alpha < 1 shows the screen */
 #define AERON_GLTF_SCREEN_TRANSPARENT 0x2u    /* unlit, alpha from luminance */
@@ -307,7 +318,9 @@ typedef struct AeronGltfScreenRect {
 	float    bar[3];
 	float    gain;
 	uint32_t layers;
-	uint32_t source; /* < AERON_GLTF_SCREEN_MAX_SOURCES */
+	uint32_t source; /* below AERON_GLTF_SCREEN_MAX_SOURCES; the game sets it */
+	uint32_t material;
+	char     source_name[AERON_GLTF_SCREEN_NAME_MAX];
 } AeronGltfScreenRect;
 
 /* ===== Ship asset ===================================================
@@ -368,11 +381,20 @@ typedef struct AeronGltfModel {
 	uint32_t               group_count;
 	AeronGltfVariantGroup* groups;
 
-	/* Screen rectangles of every screen material, and the OR of their
-	 * `hide` masks. */
+	/* The rectangles of all screen materials. Then the `hide` names of all
+	 * screen materials, without duplicates, and the mask that the game makes
+	 * from them. */
 	uint32_t             screen_rect_count;
 	AeronGltfScreenRect* screen_rects;
+	uint32_t             screen_hide_name_count;
+	char                 screen_hide_names[AERON_GLTF_SCREEN_MAX_HIDE_NAMES][AERON_GLTF_SCREEN_NAME_MAX];
 	uint32_t             screen_hide_mask;
+
+	/* The damage `choice` and `placement` names, without duplicates, at most
+	 * 4096. A material's damage_choice and damage_placement are indexes in
+	 * this list. */
+	uint32_t damage_group_count;
+	char**   damage_groups;
 
 	/* Flipbooks of every material and their frames. */
 	uint32_t                flipbook_count;
@@ -410,6 +432,10 @@ uint32_t Aeron_GltfControlNodes(const struct cgltf_data* data, const struct cglt
  * min(markings, count - 1); AERON_GLTF_NO_VARIANT (the own materials)
  * without a list. */
 uint32_t Aeron_GltfMarkingsVariant(const AeronGltfModel* m, uint32_t markings);
+
+/* Returns the name of flipbook state `state` (an AERON_ANIM_STATE_* value),
+ * or NULL when `state` is out of range. */
+const char* Aeron_GltfAnimStateName(uint32_t state);
 
 #ifdef __cplusplus
 }

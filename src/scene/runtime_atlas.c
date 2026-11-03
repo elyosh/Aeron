@@ -23,16 +23,15 @@ void Aeron_RuntimeAtlasRelease(AeronRuntimeAtlas* atlas) {
 }
 
 static bool runtime_atlas_allocate(AeronRuntimeAtlas* atlas, int frame_count, int page_count) {
-	atlas->layout.frames    = calloc((size_t)frame_count, sizeof *atlas->layout.frames);
-	atlas->layout.origin_x  = calloc((size_t)frame_count, sizeof *atlas->layout.origin_x);
-	atlas->layout.origin_y  = calloc((size_t)frame_count, sizeof *atlas->layout.origin_y);
-	atlas->layout.ids       = calloc((size_t)frame_count, sizeof *atlas->layout.ids);
-	atlas->layout.pages     = calloc((size_t)frame_count, sizeof *atlas->layout.pages);
-	atlas->layout.classic_w = calloc((size_t)frame_count, sizeof *atlas->layout.classic_w);
-	atlas->layout.classic_h = calloc((size_t)frame_count, sizeof *atlas->layout.classic_h);
-	atlas->pages            = calloc((size_t)page_count, sizeof *atlas->pages);
-	return atlas->layout.frames && atlas->layout.origin_x && atlas->layout.origin_y && atlas->layout.ids &&
-		   atlas->layout.pages && atlas->layout.classic_w && atlas->layout.classic_h && atlas->pages;
+	atlas->layout.frames     = calloc((size_t)frame_count, sizeof *atlas->layout.frames);
+	atlas->layout.ids        = calloc((size_t)frame_count, sizeof *atlas->layout.ids);
+	atlas->layout.pages      = calloc((size_t)frame_count, sizeof *atlas->layout.pages);
+	atlas->layout.size       = calloc((size_t)frame_count * 2, sizeof *atlas->layout.size);
+	atlas->layout.offset     = calloc((size_t)frame_count * 2, sizeof *atlas->layout.offset);
+	atlas->layout.game_units = true;
+	atlas->pages             = calloc((size_t)page_count, sizeof *atlas->pages);
+	return atlas->layout.frames && atlas->layout.ids && atlas->layout.pages && atlas->layout.size &&
+		   atlas->layout.offset && atlas->pages;
 }
 
 bool Aeron_RuntimeAtlasBuild(AeronRuntimeAtlas* out, AeronCommandBuffer* cmd,
@@ -81,10 +80,10 @@ bool Aeron_RuntimeAtlasBuild(AeronRuntimeAtlas* out, AeronCommandBuffer* cmd,
 		};
 		out->layout.ids[index]       = frames[index].id;
 		out->layout.pages[index]     = (int16_t)images[index].page;
-		out->layout.origin_x[index]  = (int16_t)frames[index].anchor_x;
-		out->layout.origin_y[index]  = (int16_t)frames[index].anchor_y;
-		out->layout.classic_w[index] = (int16_t)frames[index].width;
-		out->layout.classic_h[index] = (int16_t)frames[index].height;
+		out->layout.size[index * 2]       = (float)frames[index].width;
+		out->layout.size[index * 2 + 1]   = (float)frames[index].height;
+		out->layout.offset[index * 2]     = (float)frames[index].anchor_x;
+		out->layout.offset[index * 2 + 1] = (float)frames[index].anchor_y;
 	}
 	for (int page = 0; page < cpu.page_count; ++page) {
 		out->pages[page].texture =

@@ -45,7 +45,6 @@ viewer: make them the animation's rest look.
 ## Effect libraries
 
 ```yaml
-version: 1
 library: mycockpit
 images:
   lights_0: { kind: emissive, emissive: frames/lights_0.png }
@@ -144,20 +143,21 @@ player's craft and cockpit.
 **`damage`**: hull damage, as images of kind `damage`.
 
 ```json
-"damage": { "library": "mycockpit", "choice": 0, "placement": 0, "alternatives": [
+"damage": { "library": "mycockpit", "choice": "panels", "alternatives": [
   { "stages": ["dmg_75", "dmg_50", "dmg_25"], "scale": [0.2, 0.5], "offset": "inside" },
   { "stages": [null, null, null] } ] }
 ```
 
-- Each object picks one alternative; materials with the same `choice`
-  pick the same one.
+- Each object picks one alternative. Materials with the same `choice`
+  name pick the same alternative.
 - `stages` are the images at 75, 50 and 25% hull; `null` shows none.
 - `scale` (optional) is the `[min, max]` side of a square placed at
   random, as a fraction of the texture; without it, the whole texture.
 - `offset` (optional) moves that square: `inside` anywhere within the
   texture; `{ "min": [x, y], "max": [x, y] }` by `min + (max − min)·r` per
   axis, `r` random in [0, 1); without it, centred. Materials with the same
-  `placement` share the random placement.
+  `placement` name share the random size and position. `placement` is
+  optional and defaults to the `choice` name.
 
 **`details`**: up to two detail images repeated over the material.
 

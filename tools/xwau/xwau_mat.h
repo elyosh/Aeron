@@ -8,8 +8,10 @@
  * (LoadIndividualMATParams, ReadMaterialLine and FindMaterial in
  * Materials.cpp). Only the keys that drive surface shading, the light of a
  * light-emitting texture, the cockpit levers and the image sequences
- * (below) are read. The files that XWAU ships rely on quirks
- * of the parser, so these quirks are reproduced:
+ * (below) are read. Another key that XWAU reads is counted as a key that the
+ * import doesn't convert, and a key that XWAU doesn't read is skipped, since
+ * it has no effect. The files that XWAU ships rely on quirks of the
+ * parser, so these quirks are reproduced:
  *   - A comment starts with ';' or '#' in column 0 only. A value is the first
  *     token after " = " and ends at white space, so any text after it is
  *     ignored.
@@ -119,10 +121,11 @@ typedef struct XwauMatParams {
 	/* The two greeble layers. Any greeble key sets `has_greebles`, as
 	 * GetOrAddGreebleData creates the entry, and the first one sets the
 	 * defaults of GreebleDataStruct: multiply, mix 0.9, scale 1 and distance
-	 * 500 / N. The GreebleLightMap keys are not read. In XWAU, a section
-	 * that inherits [Default]'s greebles shares its entry, so a greeble key
-	 * in the section also changes [Default]. Here it changes the section
-	 * only. No .mat file that XWAU or TFTC ships sets greebles outside
+	 * 500 / N. The GreebleLightMap keys are not read, so they make the import
+	 * fail. In XWAU, a section that inherits [Default]'s greebles shares its
+	 * entry, so a greeble key in the section also changes [Default]. Here it
+	 * would change the section only, so such a section makes the import
+	 * fail. No .mat file that XWAU or TFTC ships sets greebles outside
 	 * [Default]. */
 	bool        has_greebles;
 	XwauGreeble greebles[2];
@@ -245,6 +248,10 @@ const XwauMatParams* XwauMat_Find(const XwauMatFile* file, const char* texture_n
  * section. */
 bool XwauMat_FindSequences(const XwauMatFile* file, const char* texture_name, XwauMatSequences* own,
 						   XwauMatSequences* inherited);
+
+/* Returns the names in the header of section `order` (an XwauSequence
+ * `section`), joined with ", ". Returns "default" for [Default]. */
+const char* XwauMat_SectionName(const XwauMatFile* file, int order);
 
 /* Whether `m` has a condition that can hide the texture. */
 bool XwauMat_HasSurfaceRules(const XwauMatParams* m);

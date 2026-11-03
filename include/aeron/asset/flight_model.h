@@ -162,8 +162,10 @@ typedef struct AeronFlightControl {
  * `rotation` hinge, in a group the game drives. `component` indexes the
  * game's per-component state (0..254), so it may name a component of another
  * model the game draws with the same state, such as a cockpit. `group` and
- * `behavior` follow the tag syntax; `behavior` is empty when absent. `angle`
- * is in 1/256 turn, `speed` and `speed_back` in 1/256 turn per game step. */
+ * `behavior` follow the tag syntax; `behavior` is empty when absent. The file
+ * has `angleDegrees`, `speedDegrees` and `speedBackDegrees` in degrees, and
+ * the loader rounds them to the game's steps. `angle` is in 1/256 turn, and
+ * `speed` and `speed_back` are in 1/256 turn per game step. */
 typedef struct AeronFlightArticulation {
 	char    group[AERON_FLIGHT_TAG_MAX];
 	char    behavior[AERON_FLIGHT_TAG_MAX];
@@ -190,8 +192,8 @@ typedef struct AeronFlightComponentSet {
 } AeronFlightComponentSet;
 
 typedef struct AeronFlightComponent {
-	int32_t             mesh_type;
-	uint32_t            explosion_flags;
+	int32_t             mesh_type;       /* an index in AERON_FLIGHT_MESH_TYPES */
+	uint32_t            explosion_flags; /* bits of AERON_FLIGHT_EXPLOSION_FLAGS */
 	int32_t             target_id;
 	AeronFlightVec3     target;
 	bool                has_descriptor;

@@ -76,9 +76,14 @@
  *     the tables, the stock projectile models are used. A projectile is a
  *     warhead when its name has Missile, Torpedo, SpaceBomb, Pulse, Rocket or
  *     Flare, but not Boat, in any case, as XWAU's renderer tags them. The
- *     others are lasers;
- *   - more than 120 weapon hardpoints are reported, because the game keeps
- *     only the first 120 weapon slots, as XWAU does.
+ *     others are lasers.
+ *
+ * In both modes, the glTF model keeps only LOD 0, and the LODs after it are
+ * counted with ReportUnsupported. The explosion type flags that the game
+ * never reads are left out without a report. In XWAU mode, a mesh type above
+ * 31 and NodeSwitch states past the 16 that a face group keeps make the
+ * import fail (ReportFatal), because XWAU uses them. Stock mode only reports
+ * them.
  */
 
 #include <stdbool.h>
@@ -88,6 +93,7 @@
 #include "xwau_game_tables.h"
 #include "xwau_mat.h"
 #include "xwau_missions.h"
+#include "xwau_names.h"
 
 /* The conversion mode. It is stock mode unless ModelConversion_InitXwau
  * initialized it. */
@@ -99,6 +105,9 @@ typedef struct ModelConversion {
 	XwauMatParams   global; /* Materials/DefaultGlobalMaterial.mat, or the built-in defaults */
 	XwauMissions*   missions;
 	XwauGameTables* tables; /* the game's object types and model lists, or NULL when they can't be read */
+	/* The game's names. Without them, the cockpit screens are left out. Set
+	   them after ModelConversion_InitXwau. */
+	const XwauNames* names;
 } ModelConversion;
 
 /* Sets XWAU mode for the installation `game`, and reads the global material,

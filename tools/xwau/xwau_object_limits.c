@@ -27,17 +27,16 @@ static bool hook_lines(const char* game, const char* hook, XwauLines* lines, cha
 }
 
 /* Reads `key` as GetFileKeyValueInt does, or `fallback` when the key isn't
- * set. A value that isn't a number stops XWAU; it is reported. */
-static long long hook_value(const XwauLines* lines, const char* source, const char* key, long long fallback) {
+ * set. A value that isn't a number stops XWAU, and `fallback` is then
+ * used. */
+static long long hook_value(const XwauLines* lines, const char* key, long long fallback) {
 	char      text[256];
 	long long value = 0;
 	XwauLines_Value(lines, key, XWAU_RULES_CPP, text, sizeof text);
 	if (!text[0])
 		return fallback;
-	if (!Xwau_StoiAuto(text, &value)) {
-		Report(source, "%s = %s isn't a number, which XWAU would fail on; the default is used", key, text);
+	if (!Xwau_StoiAuto(text, &value))
 		return fallback;
-	}
 	return value;
 }
 
@@ -49,7 +48,7 @@ static bool enabled_dll(const char* game, char* dll, size_t cap) {
 	char      source[64];
 	if (!hook_lines(game, "hook_crafts_count", &lines, source, sizeof source))
 		return false;
-	const bool enabled = hook_value(&lines, source, "IsHookEnabled", 0) != 0;
+	const bool enabled = hook_value(&lines, "IsHookEnabled", 0) != 0;
 	XwauLines_Free(&lines);
 	return enabled;
 }
@@ -59,12 +58,11 @@ bool XwauObjectLimits_HookEnabled(const char* game) {
 	return enabled_dll(game, dll, sizeof dll);
 }
 
-/* Writes `key: value`, or reports a value that would leave no slots. */
-static void write_count(FILE* f, const char* source, const char* hook_key, const char* key, long long value) {
-	if (value <= 0 || value > INT32_MAX) {
-		Report(source, "%s = %lld isn't imported: the game keeps its own count", hook_key, value);
+/* Writes `key: value`. A value that would leave no slots, or that doesn't
+ * fit, isn't written, and the game keeps its own count. */
+static void write_count(FILE* f, const char* key, long long value) {
+	if (value <= 0 || value > INT32_MAX)
 		return;
-	}
 	fprintf(f, "  %s: %lld\n", key, value);
 }
 
@@ -77,31 +75,27 @@ bool XwauObjectLimits_Write(FILE* f, const char* game) {
 		Xwau_FileHasText(dll, "WeaponsCount")) {
 		XwauLines lines = { 0 };
 		if (hook_lines(game, "hook_weapon_rate", &lines, rate_source, sizeof rate_source))
-			weapons = hook_value(&lines, rate_source, "WeaponsCount", STOCK_PLAYER_PROJECTILES);
+			weapons = hook_value(&lines, "WeaponsCount", STOCK_PLAYER_PROJECTILES);
 		XwauLines_Free(&lines);
 	}
 	if (!crafts && weapons == STOCK_PLAYER_PROJECTILES)
 		return false;
 	fputs("object_limits:\n", f);
 	if (weapons != STOCK_PLAYER_PROJECTILES)
-		write_count(f, rate_source, "WeaponsCount", "player_projectiles", weapons);
+		write_count(f, "player_projectiles", weapons);
 	if (!crafts)
 		return true;
 	XwauLines lines = { 0 };
 	char      source[64];
 	if (!hook_lines(game, "hook_crafts_count", &lines, source, sizeof source))
 		return true;
-	write_count(f, source, "CraftsCount", "craft_per_region",
-				hook_value(&lines, source, "CraftsCount", 3072));
-	write_count(f, source, "ProjectilesCount", "ai_projectiles_per_region",
-				hook_value(&lines, source, "ProjectilesCount", 1024));
-	write_count(f, source, "ExplosionsCount", "explosions_per_region",
-				hook_value(&lines, source, "ExplosionsCount", 256));
-	write_count(f, source, "Radar2DItemsCount", "radar_blips",
-				hook_value(&lines, source, "Radar2DItemsCount", 48));
+	write_count(f, "craft_per_region", hook_value(&lines, "CraftsCount", 3072));
+	write_count(f, "ai_projectiles_per_region", hook_value(&lines, "ProjectilesCount", 1024));
+	write_count(f, "explosions_per_region", hook_value(&lines, "ExplosionsCount", 256));
+	write_count(f, "radar_blips", hook_value(&lines, "Radar2DItemsCount", 48));
 	XwauLines_Free(&lines);
 	if (weapons != STOCK_PLAYER_PROJECTILES)
-		Report(
+		ReportDetail(
 			rate_source,
 			"WeaponsCount = %lld with hook_crafts_count: XWAU keeps each player's block at 12 slots but "
 			"searches %lld, so a player's shots spill into the AI's slots. Each player gets a block of %lld "
@@ -112,11 +106,10 @@ bool XwauObjectLimits_Write(FILE* f, const char* game) {
 
 bool XwauObjectLimits_ReadMission(const char* game, const char* base, XwauMissionLimits* out) {
 	memset(out, 0, sizeof *out);
-	char      rel[1200], path[1024], source[1200];
+	char      rel[1200], path[1024];
 	XwauLines lines = { 0 };
 	if (!PathFormat(rel, sizeof rel, "%s_CraftsCount.txt", base))
 		return false;
-	snprintf(source, sizeof source, "%s", rel);
 	if (!XwauLines_Read(Xwau_FindFile(game, rel, path, sizeof path) ? path : NULL, "", XWAU_RULES_CPP,
 						&lines))
 		return false;
@@ -124,7 +117,6 @@ bool XwauObjectLimits_ReadMission(const char* game, const char* base, XwauMissio
 		XwauLines_Free(&lines);
 		if (!PathFormat(rel, sizeof rel, "%s.ini", base))
 			return false;
-		snprintf(source, sizeof source, "%s [CraftsCount]", rel);
 		if (!XwauLines_Read(Xwau_FindFile(game, rel, path, sizeof path) ? path : NULL, "CraftsCount",
 							XWAU_RULES_CPP, &lines))
 			return false;
@@ -133,21 +125,18 @@ bool XwauObjectLimits_ReadMission(const char* game, const char* base, XwauMissio
 		XwauLines_Free(&lines);
 		return true;
 	}
+	/* XWAU doesn't read the counts when hook_crafts_count is off, or when
+	   the mod's build of the hook doesn't read them. */
 	char dll[1024];
-	if (!enabled_dll(game, dll, sizeof dll)) {
-		Report(source, "the counts aren't imported: hook_crafts_count is off");
+	if (!enabled_dll(game, dll, sizeof dll) || !Xwau_FileHasText(dll, "_CraftsCount.txt")) {
 		XwauLines_Free(&lines);
 		return true;
 	}
-	if (!Xwau_FileHasText(dll, "_CraftsCount.txt")) {
-		Report(source, "the counts aren't imported: the mod's build of hook_crafts_count doesn't read them");
-		XwauLines_Free(&lines);
-		return true;
-	}
-	out->craft          = hook_value(&lines, source, "CraftsCount", 0);
-	out->ai_projectiles = hook_value(&lines, source, "ProjectilesCount", 0);
-	out->explosions     = hook_value(&lines, source, "ExplosionsCount", 0);
+	out->craft          = hook_value(&lines, "CraftsCount", 0);
+	out->ai_projectiles = hook_value(&lines, "ProjectilesCount", 0);
+	out->explosions     = hook_value(&lines, "ExplosionsCount", 0);
 	XwauLines_Free(&lines);
+	/* XWAU can't use a count below 0 or above INT32_MAX. */
 	long long* counts[] = { &out->craft, &out->ai_projectiles, &out->explosions };
 	for (size_t i = 0; i < sizeof counts / sizeof counts[0]; ++i) {
 		if (*counts[i] < 0 || *counts[i] > INT32_MAX)

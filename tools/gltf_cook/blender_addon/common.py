@@ -18,36 +18,69 @@ MAX_COMPONENT_ORDINAL = 254
 MAX_ROWS = 255
 MAX_CONTROL_TAGS = 4
 
-MESH_TYPE_NAMES = (
-    "Default", "Main Hull", "Wing", "Fuselage", "Gun Turret", "Small Gun",
-    "Engine", "Bridge", "Shield Generator", "Energy Generator", "Launcher",
-    "Communication System", "Beam System", "Command Beam", "Docking Platform",
-    "Landing Platform", "Hangar", "Cargo Pod", "Miscellaneous Hull", "Antenna",
-    "Rotary Wing", "Rotary Gun Turret", "Rotary Launcher",
-    "Rotary Communication System", "Rotary Beam System", "Rotary Command Beam",
-    "Hatch", "Custom", "Weapon System 1", "Weapon System 2", "Power Regenerator",
-    "Reactor",
-)
-
-# The hardpoint type that XWA uses as the pilot eye (an index into HARDPOINT_TYPE_NAMES).
+# The hardpoint type that XWA uses as the pilot eye (an index into HARDPOINT_TYPE_IDS).
 COCKPIT_HARDPOINT_TYPE = 31
 
-# XWA's hardpoint types, named after JeremyAnsel.Xwa.Opt.
-HARDPOINT_TYPE_NAMES = (
-    "None", "Rebel Laser", "Turbo Rebel Laser", "Empire Laser", "Turbo Empire Laser",
-    "Ion Cannon", "Turbo Ion Cannon", "Torpedo", "Missile", "Super Rebel Laser",
-    "Super Empire Laser", "Super Ion Cannon", "Super Torpedo", "Super Missile",
-    "Dumb Bomb", "Fired Bomb", "Mag Pulse", "Turbo Mag Pulse", "Super Mag Pulse",
-    "Gunner", "Cockpit Sparks", "Docking Point", "Towing", "Acceleration Start",
-    "Acceleration End", "Inside Hangar", "Outside Hangar", "Dock from Big",
-    "Dock from Small", "Dock to Big", "Dock to Small", "Cockpit (Pilot Eye)",
-    "Engine Glow", "Custom 1", "Custom 2", "Custom 3", "Custom 4", "Custom 5",
-    "Custom 6", "Jamming Point",
+
+# The names that the AERON_flight_model extension uses for these values, in
+# index order. `xwa_mod_tables --addon` prints them from the game's tables.
+# Replace this copy when they change.
+MESH_TYPE_IDS = (
+    "default", "main_hull", "wing", "fuselage", "gun_turret", "small_gun", "engine", "bridge",
+    "shield_generator", "energy_generator", "launcher", "communication_system", "beam_system",
+    "command_system", "docking_platform", "landing_platform", "hangar", "cargo_pod", "misc_hull",
+    "antenna", "rotary_wing", "rotary_gun_turret", "rotary_launcher",
+    "rotary_communication_system", "rotary_beam_system", "rotary_command_system", "hatch",
+    "custom", "weapon_system_1", "weapon_system_2", "power_regenerator", "reactor",
 )
+
+HARDPOINT_TYPE_IDS = (
+    "none", "rebel_laser", "turbo_rebel_laser", "empire_laser", "turbo_empire_laser", "ion_cannon",
+    "turbo_ion_cannon", "torpedo", "missile", "super_rebel_laser", "super_empire_laser",
+    "super_ion_cannon", "super_torpedo", "super_missile", "dumb_bomb", "fired_bomb", "mag_pulse",
+    "turbo_mag_pulse", "super_mag_pulse", "gunner", "cockpit_sparks", "docking_point", "towing",
+    "acceleration_start", "acceleration_end", "inside_hangar", "outside_hangar", "dock_from_big",
+    "dock_from_small", "dock_to_big", "dock_to_small", "pilot_eye", "engine_glow", "custom_1",
+    "custom_2", "custom_3", "custom_4", "custom_5", "custom_6", "jamming_point",
+)
+
+EXPLOSION_IDS = (
+    "hit_points", "detachable",
+)
+
+
+def turn_steps_degrees(steps):
+    """Converts steps of 1/256 turn to degrees, with three decimals, which are enough to get the
+    exact step back. Rounds halves away from zero."""
+    return math.copysign(math.floor(abs(steps) * 360000.0 / 256.0 + 0.5) / 1000.0, steps)
+
+
+def degrees_turn_steps(degrees):
+    """Converts degrees to the game's steps of 1/256 turn, rounded like the loader does."""
+    steps = degrees * 256.0 / 360.0
+    return int(math.copysign(math.floor(abs(steps) + 0.5), steps))
+
+
+def type_label(name):
+    """Returns the label that the UI shows for a type name: "main_hull" gives "Main Hull"."""
+    return name.replace("_", " ").title()
 
 
 def enum_items(names):
-    return [(str(index), name, "Type {} in the game".format(index)) for index, name in enumerate(names)]
+    """Returns enum items whose identifiers are the names. Blender stores an enum value by its number,
+    which is the position in the list, so the identifiers can change without breaking .blend files."""
+    return [(name, type_label(name), "Type {} in the game".format(index), index)
+            for index, name in enumerate(names)]
+
+
+def hardpoint_type(props):
+    """Returns the value of the hardpoint type in `props`."""
+    return HARDPOINT_TYPE_IDS.index(props.hardpoint_type)
+
+
+def mesh_type(props):
+    """Returns the value of the mesh type in `props`."""
+    return MESH_TYPE_IDS.index(props.mesh_type)
 
 
 def parse_tags(text):

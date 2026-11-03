@@ -52,17 +52,15 @@ enum { FIELD_THRESHOLD = 6, FIELD_HULL = 7, FIELD_SHIELDS = 9, FIELD_HAS_SHIELDS
 
 /* Reads `key` as GetFileKeyValueInt reads it, or returns `fallback` when
  * the key is missing. A value that isn't a number stops XWAU (std::stoi
- * throws); it is reported, and `fallback` is used. */
-static long long int_key(const XwauLines* lines, const char* source, const char* key, long long fallback) {
+ * throws), so `fallback` is used. */
+static long long int_key(const XwauLines* lines, const char* key, long long fallback) {
 	char      text[256];
 	long long value = 0;
 	XwauLines_Value(lines, key, XWAU_RULES_CPP, text, sizeof text);
 	if (!text[0])
 		return fallback;
-	if (!Xwau_StoiAuto(text, &value) || value < INT_MIN || value > INT_MAX) {
-		Report(source, "%s = %s isn't a number, which XWAU would fail on; it is ignored", key, text);
+	if (!Xwau_StoiAuto(text, &value) || value < INT_MIN || value > INT_MAX)
 		return fallback;
-	}
 	return value;
 }
 
@@ -241,33 +239,17 @@ static bool profile_lines(const char* game, const char* model, const char* name,
 						  lines);
 }
 
-/* Reports the keys of `lines` that the hook doesn't read. */
-static void report_stray_keys(const XwauLines* lines, const char* source) {
-	for (size_t i = 0; i < lines->count; ++i) {
-		char        key[256];
-		const char* equals = strchr(lines->items[i], '=');
-		snprintf(key, sizeof key, "%.*s",
-				 equals ? (int)(equals - lines->items[i]) : (int)strlen(lines->items[i]), lines->items[i]);
-		Xwau_Trim(key, XWAU_RULES_CPP);
-		bool known = Xwau_SameName(key, "ExplosionStrength");
-		for (int f = 0; !known && f < XWAU_STATS_FIELDS; ++f)
-			known = Xwau_SameName(key, kXwauKeys[f]);
-		if (!known)
-			Report(source, "'%s' isn't a stats profile key; it is ignored", lines->items[i]);
-	}
-}
-
 /* Reads one profile. Returns false when it needs the genus division and
- * `genus_class` doesn't give one. */
-static bool read_profile(const XwauLines* lines, const char* source, int genus_class, XwauStatsProfile* p) {
+ * `genus_class` doesn't give one. The hook doesn't read other keys. */
+static bool read_profile(const XwauLines* lines, int genus_class, XwauStatsProfile* p) {
 	for (int f = 0; f < XWAU_STATS_FIELDS; ++f) {
 		long long value;
 		if (f == FIELD_THRESHOLD)
-			value = int_key(lines, source, kXwauKeys[f], int_key(lines, source, "ExplosionStrength", -1));
+			value = int_key(lines, kXwauKeys[f], int_key(lines, "ExplosionStrength", -1));
 		else if (f == FIELD_COLLISION)
-			value = int_key(lines, source, kXwauKeys[f], 1) != 0 ? -1 : 0;
+			value = int_key(lines, kXwauKeys[f], 1) != 0 ? -1 : 0;
 		else
-			value = int_key(lines, source, kXwauKeys[f], -1);
+			value = int_key(lines, kXwauKeys[f], -1);
 		if (value == -1)
 			continue;
 		if (f <= 2) {
@@ -293,7 +275,7 @@ bool XwauStatsProfiles_Read(const char* game, const char* model, char* const* na
 	memset(out, 0, sizeof *out);
 	char      rel[1024], ini[1024], prefix[300];
 	XwauLines sections = { 0 }, profile_names = { 0 };
-	size_t    unknown_units = 0;
+	size_t    mixed_units = 0;
 	snprintf(rel, sizeof rel, "FlightModels/%s.ini", model);
 	bool ok = section_names(Xwau_FindFile(game, rel, ini, sizeof ini) ? ini : NULL, &sections);
 	for (size_t i = 0; ok && i < sections.count; ++i) {
@@ -301,7 +283,9 @@ bool XwauStatsProfiles_Read(const char* game, const char* model, char* const* na
 		if (starts_with_name(section, "StatsProfile_") && section[13] && !strpbrk(section, ";[]"))
 			ok = add_name(&profile_names, section + 13);
 		else if (starts_with_name(section, "StatsModifiers"))
-			Report(rel, "[%s] isn't imported: OpenXWA has no stats modifiers", section);
+			ReportUnsupported("stats modifiers");
+		/* XWAU never reads a section such as [StatsProfile_Default;] or
+		   [;StatsProfile_Default]. */
 		else if (contains_name(section, "StatsProfile"))
 			out->disabled++;
 	}
@@ -315,7 +299,7 @@ bool XwauStatsProfiles_Read(const char* game, const char* model, char* const* na
 			ok = add_name(&profile_names, name);
 		} else if (starts_with_name(names[i], model) &&
 				   starts_with_name(names[i] + strlen(model), "StatsModifiers")) {
-			Report(names[i], "isn't imported: OpenXWA has no stats modifiers");
+			ReportUnsupported("stats modifiers");
 		}
 	}
 	for (size_t i = 0; ok && i < profile_names.count; ++i) {
@@ -329,12 +313,14 @@ bool XwauStatsProfiles_Read(const char* game, const char* model, char* const* na
 		XwauStatsProfile profile;
 		memset(&profile, 0, sizeof profile);
 		lower_name(profile.name, sizeof profile.name, profile_names.items[i]);
-		report_stray_keys(&lines, source);
 		if (strlen(profile_names.items[i]) >= XWAU_STATS_NAME_MAX) {
-			Report(source, "the profile name is longer than %d characters; it is left out",
-				   XWAU_STATS_NAME_MAX - 1);
-		} else if (!read_profile(&lines, source, genus_class, &profile)) {
-			++unknown_units;
+			ReportFatal(source, "the profile name is longer than %d characters, which OpenXWA can't hold",
+						XWAU_STATS_NAME_MAX - 1);
+		} else if (!read_profile(&lines, genus_class, &profile)) {
+			/* When no object type loads the model, its profiles have no
+			   effect in XWAU. */
+			if (genus_class == -2)
+				++mixed_units;
 		} else {
 			XwauStatsProfile* added = ARRAY_PUSH(out->items, out->count);
 			if ((ok = added != NULL))
@@ -342,15 +328,14 @@ bool XwauStatsProfiles_Read(const char* game, const char* model, char* const* na
 		}
 		XwauLines_Free(&lines);
 	}
-	if (unknown_units)
-		Report(
-			rel,
-			genus_class == -2
-				? "object types of different genus classes load the model, so the hull and shield units of "
-				  "%zu profiles are unknown; they are left out"
-				: "no object type loads the model, so the hull and shield units of %zu profiles are unknown; "
-				  "they are left out",
-			unknown_units);
+	/* The hook divides the hull and the shields by the genus of each object
+	   type that loads the model. A model file has one value for all of
+	   them. */
+	if (mixed_units)
+		ReportFatal(rel,
+					"object types of different genus classes load the model, so %zu profiles would need "
+					"different hull and shield values for each object type",
+					mixed_units);
 	XwauLines_Free(&sections);
 	XwauLines_Free(&profile_names);
 	return ok;
@@ -434,9 +419,9 @@ static void read_percents(const XwauLines* lines, const char* base, const char* 
 		char key[300], alias[300];
 		snprintf(key, sizeof key, "%s%sPercent", prefix, kXwauKeys[f]);
 		snprintf(alias, sizeof alias, "%sExplosionStrengthPercent", prefix);
-		percent[f] = int_key(lines, base, key, f == FIELD_THRESHOLD ? int_key(lines, base, alias, -1) : -1);
+		percent[f] = int_key(lines, key, f == FIELD_THRESHOLD ? int_key(lines, alias, -1) : -1);
 		if (percent[f] < -1) {
-			Report(base, "%s = %lld: a negative percent isn't imported", key, percent[f]);
+			ReportFatal(base, "%s = %lld is a negative percent, which the game can't use", key, percent[f]);
 			percent[f] = -1;
 		}
 	}
@@ -474,19 +459,24 @@ bool XwauMissionStats_Read(const char* game, const char* base, XwauMissionStats*
 		char  line[2048], key[300], value[300];
 		char* equals;
 		snprintf(line, sizeof line, "%s", lines.items[i]);
+		/* XWAU doesn't read lines without '=' or without a key, and the
+		   first line of a key wins. */
 		if (!(equals = strchr(line, '=')))
 			continue;
 		*equals = 0;
 		snprintf(key, sizeof key, "%s", Xwau_Trim(line, XWAU_RULES_CPP));
 		snprintf(value, sizeof value, "%s", Xwau_Trim(equals + 1, XWAU_RULES_CPP));
+		if (!key[0])
+			continue;
 		bool already = false;
 		for (size_t s = 0; !already && s < seen.count; ++s)
 			already = Xwau_SameName(seen.items[s], key);
-		if (already || !key[0] || percent_key(key))
+		if (already)
 			continue;
 		if (!(ok = XwauLines_Add(&seen, key, strlen(key))))
 			break;
-		if (!value[0])
+		/* An empty value means no choice, as in the hook. */
+		if (percent_key(key) || !value[0])
 			continue;
 		char         lower[300], model[300];
 		const size_t len      = strlen(key);
@@ -503,35 +493,35 @@ bool XwauMissionStats_Read(const char* game, const char* base, XwauMissionStats*
 			player = true;
 			snprintf(model, sizeof model, "%.*s", (int)(len - 10), lower);
 		} else if (fgc) {
-			if ((markings = canonical_markings(fgc + 5)) < 0) {
-				Report(base, "[StatsProfiles]: '%s' isn't a key that XWAU reads; it is left out", key);
+			/* XWAU only reads markings written as std::to_string writes
+			   them. */
+			if ((markings = canonical_markings(fgc + 5)) < 0)
 				continue;
-			}
 			snprintf(model, sizeof model, "%.*s", (int)(fgc - lower), lower);
 		} else if (fg && fg[4] && strspn(fg + 4, "0123456789") == strlen(fg + 4)) {
-			Report(base,
-				   "[StatsProfiles]: '%s' isn't a key that XWAU reads (it reads _fgc_<markings>); it is "
-				   "left out",
-				   key);
+			/* XWAU reads _fgc_<markings>, not _fg_<number>. */
 			continue;
 		} else {
 			snprintf(model, sizeof model, "%s", lower);
 		}
-		if (!model[0] || strpbrk(model, "\\/ ")) {
-			Report(base, "[StatsProfiles]: '%s' doesn't name a model; it is left out", key);
+		if (model[0] && !strpbrk(model, "\\/") && strchr(model, ' ')) {
+			/* A model's file name can have a space, and the hook would then
+			   read the key. */
+			ReportFatal(base,
+						"[StatsProfiles]: '%s' names a model with a space, which the importer can't write",
+						key);
 			continue;
 		}
+		if (!model[0] || strpbrk(model, "\\/"))
+			continue;
+		/* A name that names no profile gives the craft no profile, not even
+		   the default one. The value keeps any comment, as in XWAU. Such a
+		   name still keeps the default from applying, so a long one is cut
+		   rather than left out. */
 		const bool found = has_profile(game, model, value);
-		if (!found)
-			Report(base,
-				   "[StatsProfiles]: %s = %s: the model has no such profile%s; the craft get no profile, not "
-				   "even the default one",
-				   key, value, strchr(value, ';') ? " (the value keeps its comment, as in XWAU)" : "");
-		/* A name that names no profile still keeps the default from
-		   applying, so a long one is cut rather than left out. */
-		if (strlen(value) >= XWAU_STATS_NAME_MAX)
-			Report(base, "[StatsProfiles]: %s: the name is longer than %d characters, so it is cut%s", key,
-				   XWAU_STATS_NAME_MAX - 1, found ? " and the craft get no profile" : "");
+		if (strlen(value) >= XWAU_STATS_NAME_MAX && found)
+			ReportFatal(base, "[StatsProfiles]: %s = %s has a profile name longer than %d characters", key,
+						value, XWAU_STATS_NAME_MAX - 1);
 		struct XwauMissionStatsModel* entry = mission_model(out, model);
 		if (!(ok = entry != NULL))
 			break;

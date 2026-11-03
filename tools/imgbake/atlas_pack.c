@@ -200,20 +200,7 @@ bool atlas_emit_yaml(const char* yaml_path, const AnimImage* anim, const AtlasPa
 		return false;
 	}
 
-	if (fprintf(yf,
-				"atlas:\n"
-				"  w: %d\n"
-				"  h: %d\n",
-				post_atlas_w, post_atlas_h) < 0)
-		goto io_err;
-	if (scale) {
-		if (fprintf(yf,
-					"  classic_w: %d\n"
-					"  classic_h: %d\n",
-					pack->classic_atlas_w, pack->classic_atlas_h) < 0)
-			goto io_err;
-	}
-	if (fprintf(yf, "frames:\n") < 0)
+	if (fprintf(yf, "units: game\natlas: {w: %d, h: %d}\nframes:\n", post_atlas_w, post_atlas_h) < 0)
 		goto io_err;
 
 	for (int i = 0; i < anim->count; i++) {
@@ -247,10 +234,8 @@ bool atlas_emit_yaml(const char* yaml_path, const AnimImage* anim, const AtlasPa
 			yaml_y = oy;
 			yaml_h = fh;
 		}
-		if (fprintf(yf,
-					"  - { x: %d, y: %d, w: %d, h: %d, "
-					"origin_x: %d, origin_y: %d }\n",
-					yaml_x, yaml_y, yaml_w, yaml_h, img->pixels ? img->left : 0,
+		if (fprintf(yf, "  - {x: %d, y: %d, w: %d, h: %d, size: [%d, %d], offset: [%d, %d]}\n", yaml_x,
+					yaml_y, yaml_w, yaml_h, fw, fh, img->pixels ? img->left : 0,
 					img->pixels ? img->top : 0) < 0)
 			goto io_err;
 	}

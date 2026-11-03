@@ -6,14 +6,10 @@
 #include <string.h>
 #include <strings.h>
 
-#include "opt.h"
 #include "util.h"
 #include "xwau_config.h"
 #include "xwau_game_tables.h"
-
-/* The first line of the files that an import writes, so that the next one
-   finds and removes them. */
-#define OBJECTS_HEADER "# Written by the OpenXWA mod importer"
+#include "xwau_gunner_seats.h"
 
 enum {
 	OBJECT_TYPE_COUNT  = XWAU_GAME_OBJECT_TYPES,
@@ -45,7 +41,13 @@ static bool valid_record(int record) { return record >= 0 && record < RECORD_COU
 
 /* ---- Craft record fields -------------------------------------------------- */
 
-typedef enum FieldKind { FIELD_UNSIGNED, FIELD_SIGNED, FIELD_BOOL } FieldKind;
+typedef enum FieldKind {
+	FIELD_UNSIGNED,
+	FIELD_SIGNED,
+	FIELD_BOOL,
+	FIELD_WEAPON,     /* written as a weapon type name; 0 is none */
+	FIELD_LASER_KIND, /* written as a laser group kind name */
+} FieldKind;
 
 typedef struct Field {
 	const char* key;
@@ -82,32 +84,42 @@ static const Field g_fields[] = {
 /* The keys of a `lasers` entry: laserGroupWeaponType, laserGroupSlotCount,
    laserGroupWeaponKind, laserGroupFireRange, laserGroupFireCooldownTicks. */
 static const Field g_laserFields[] = {
-	{ "type", 306, 2, FIELD_UNSIGNED },     { "count", 318, 1, FIELD_UNSIGNED },
-	{ "kind", 321, 1, FIELD_UNSIGNED },     { "range", 324, 4, FIELD_SIGNED },
+	{ "type", 306, 2, FIELD_WEAPON },       { "count", 318, 1, FIELD_UNSIGNED },
+	{ "kind", 321, 1, FIELD_LASER_KIND },   { "range", 324, 4, FIELD_SIGNED },
 	{ "cooldown", 336, 2, FIELD_UNSIGNED },
 };
 
 /* The keys of a `warheads` entry: warheadLauncherType, warheadLauncherSlotCount,
    warheadLauncherCapacity. */
 static const Field g_warheadFields[] = {
-	{ "type", 342, 2, FIELD_UNSIGNED },
+	{ "type", 342, 2, FIELD_WEAPON },
 	{ "count", 350, 1, FIELD_UNSIGNED },
 	{ "capacity", 352, 1, FIELD_UNSIGNED },
 };
 
-/* The keys of a `turrets` entry, one for each of the two turret seats:
-   turretSeatPosX, turretSeatPosY, turretSeatPosZ, turretMountAngleA,
-   turretMountAngleB, turretObjectType (the object type of the seat's model),
-   turretAimLimitA, turretAimLimitB. */
+enum {
+	TURRET_X,
+	TURRET_Y,
+	TURRET_Z,
+	TURRET_PITCH,
+	TURRET_YAW,
+	TURRET_OBJECT_TYPE,
+	TURRET_AIM_PITCH,
+	TURRET_AIM_YAW
+};
+
+/* The fields of a turret seat, for each of the two seats. The object type is
+   the type of the seat's cockpit model. A `turrets` entry writes them with
+   the gunner seat keys, so the names here are the record's field names. */
 static const Field g_turretFields[] = {
-	{ "x", 582, 2, FIELD_SIGNED },
-	{ "y", 574, 2, FIELD_SIGNED },
-	{ "z", 578, 2, FIELD_SIGNED },
-	{ "mount_angle_a", 590, 2, FIELD_SIGNED },
-	{ "mount_angle_b", 586, 2, FIELD_SIGNED },
-	{ "object_type", 594, 2, FIELD_UNSIGNED },
-	{ "aim_limit_a", 598, 2, FIELD_SIGNED },
-	{ "aim_limit_b", 602, 2, FIELD_SIGNED },
+	[TURRET_X]           = { "turretSeatPosX", 582, 2, FIELD_SIGNED },
+	[TURRET_Y]           = { "turretSeatPosY", 574, 2, FIELD_SIGNED },
+	[TURRET_Z]           = { "turretSeatPosZ", 578, 2, FIELD_SIGNED },
+	[TURRET_PITCH]       = { "turretMountAngleA", 590, 2, FIELD_SIGNED },
+	[TURRET_YAW]         = { "turretMountAngleB", 586, 2, FIELD_SIGNED },
+	[TURRET_OBJECT_TYPE] = { "turretObjectType", 594, 2, FIELD_UNSIGNED },
+	[TURRET_AIM_PITCH]   = { "turretAimLimitA", 598, 2, FIELD_SIGNED },
+	[TURRET_AIM_YAW]     = { "turretAimLimitB", 602, 2, FIELD_SIGNED },
 };
 
 #define NAME_OFFSET 50
@@ -117,17 +129,6 @@ static const Field g_turretFields[] = {
 #define EYE_Z 570
 #define MESH_ATTACH 606
 #define MESH_ATTACH_COUNT 11
-
-/* The record's fields that no key sets and that the game doesn't rebuild
-   from the model: the importer reports their changes. */
-static const struct {
-	const char* name;
-	unsigned    offset, size;
-} g_unkeyedFields[] = {
-	{ "gap_14 (+0x14)", 20, 1 },
-};
-
-#define UNKEYED_COUNT (sizeof g_unkeyedFields / sizeof g_unkeyedFields[0])
 
 static long long field_value(const uint8_t* record, const Field* field, unsigned element) {
 	const uint8_t* p     = record + field->offset + element * field->size;
@@ -143,11 +144,25 @@ static bool field_differs(const uint8_t* a, const uint8_t* b, const Field* field
 	return field_value(a, field, element) != field_value(b, field, element);
 }
 
-static void write_field(FILE* f, const uint8_t* record, const Field* field, unsigned element) {
+static void write_field(FILE* f, const XwauNames* names, const uint8_t* record, const Field* field,
+						unsigned element) {
 	const long long value = field_value(record, field, element);
+	const char*     name = field->kind == FIELD_WEAPON       ? XwauNames_WeaponType(names, (int)value)
+						   : field->kind == FIELD_LASER_KIND ? XwauNames_Name(&names->laser_kinds, (int)value)
+															 : NULL;
 	if (field->kind == FIELD_BOOL && (value == 0 || value == 1))
 		fputs(value ? "true" : "false", f);
-	else
+	else if (field->kind == FIELD_BOOL) {
+		ReportFatal(NULL, "%s is %lld, but the game only accepts true or false", field->key, value);
+		fprintf(f, "%lld", value);
+	} else if (field->kind == FIELD_WEAPON && value == 0)
+		fputs("none", f);
+	else if (name)
+		fputs(name, f);
+	else if (field->kind == FIELD_WEAPON || field->kind == FIELD_LASER_KIND) {
+		ReportFatal(NULL, "the game has no name for %s %lld", field->key, value);
+		fputs("none", f);
+	} else
 		fprintf(f, "%lld", value);
 }
 
@@ -160,13 +175,19 @@ static bool group_differs(const uint8_t* a, const uint8_t* b, const Field* field
 	return false;
 }
 
-static void write_groups(FILE* f, const char* key, const uint8_t* record, const Field* fields, size_t count,
-						 unsigned groups) {
+/* Returns the index of the last non-empty group in `groups`, plus 1. */
+static unsigned used_groups(const uint8_t* record, const Field* fields, size_t count, unsigned groups) {
 	unsigned last = 0;
 	for (unsigned g = 0; g < groups; ++g)
 		for (size_t i = 0; i < count; ++i)
 			if (field_value(record, &fields[i], g) != 0)
 				last = g + 1;
+	return last;
+}
+
+static void write_groups(FILE* f, const XwauNames* names, const char* key, const uint8_t* record,
+						 const Field* fields, size_t count, unsigned groups) {
+	const unsigned last = used_groups(record, fields, count, groups);
 	if (last == 0) {
 		fprintf(f, "  %s: []\n", key);
 		return;
@@ -176,8 +197,44 @@ static void write_groups(FILE* f, const char* key, const uint8_t* record, const 
 		fputs("    - {", f);
 		for (size_t i = 0; i < count; ++i) {
 			fprintf(f, "%s%s: ", i ? ", " : "", fields[i].key);
-			write_field(f, record, &fields[i], g);
+			write_field(f, names, record, &fields[i], g);
 		}
+		fputs("}\n", f);
+	}
+}
+
+/* Writes the turret seats with the gunner seat keys: the position in metres
+   and the angles in degrees. */
+static void write_turrets(FILE* f, const XwauNames* names, int object_type, const uint8_t* record) {
+	const unsigned last = used_groups(record, g_turretFields, 8, 2);
+	if (last == 0) {
+		fputs("  turrets: []\n", f);
+		return;
+	}
+	fputs("  turrets:\n", f);
+	for (unsigned g = 0; g < last; ++g) {
+		long long v[8];
+		for (int i = 0; i < 8; ++i)
+			v[i] = field_value(record, &g_turretFields[i], g);
+		const char* cockpit = XwauNames_ObjectType(names, (int)v[TURRET_OBJECT_TYPE]);
+		char        label[128];
+		snprintf(label, sizeof label, "object type %s, turret %u", XwauNames_ObjectType(names, object_type),
+				 g + 1);
+		fputs("    - {position_m: ", f);
+		Xwau_WriteMetres3(f, (int)v[TURRET_X], (int)v[TURRET_Y], (int)v[TURRET_Z]);
+		fputs(", mount_pitch_degrees: ", f);
+		Xwau_WriteDegrees(f, (int)v[TURRET_PITCH]);
+		fputs(", mount_yaw_degrees: ", f);
+		Xwau_WriteDegrees(f, (int)v[TURRET_YAW]);
+		fputs(", aim_limit_pitch_degrees: ", f);
+		XwauGunnerSeats_WriteAimLimit(f, label, (int)v[TURRET_AIM_PITCH]);
+		fputs(", aim_limit_yaw_degrees: ", f);
+		XwauGunnerSeats_WriteAimLimit(f, label, (int)v[TURRET_AIM_YAW]);
+		if (cockpit)
+			fprintf(f, ", object_type: %s", cockpit);
+		else if (v[TURRET_OBJECT_TYPE] != 0)
+			ReportFatal(NULL, "%s has cockpit object type %lld, which the game has no name for", label,
+						v[TURRET_OBJECT_TYPE]);
 		fputs("}\n", f);
 	}
 }
@@ -247,18 +304,15 @@ bool XwauObjects_HasExeCraftValues(const char* game, const char* model) {
 
 /* The value of `key` as GetFileKeyValueInt reads it, or `fallback` when
    the key is missing. A value that isn't a number stops XWAU (std::stoi
-   throws); it is reported, and `fallback` is used. */
-static long long exe_value(const XwauLines* lines, const char* source, const char* key, long long fallback) {
+   throws), and `fallback` is used. */
+static long long exe_value(const XwauLines* lines, const char* key, long long fallback) {
 	char      text[256];
 	long long value = 0;
 	XwauLines_Value(lines, key, XWAU_RULES_CPP, text, sizeof text);
 	if (!text[0])
 		return fallback;
-	if (!Xwau_StoiAuto(text, &value) || value < INT_MIN || value > INT_MAX) {
-		Report(source, "%s = %s isn't a number, which XWAU would fail on; the record's value is kept", key,
-			   text);
+	if (!Xwau_StoiAuto(text, &value) || value < INT_MIN || value > INT_MAX)
 		return fallback;
-	}
 	return value;
 }
 
@@ -269,51 +323,6 @@ static void set_field(uint8_t* record, const Field* field, unsigned element, lon
 		p[i] = (uint8_t)((unsigned long long)value >> (8 * i));
 }
 
-/* The OPT hardpoint type of weapon type `weapon`: weapon - 279 in the game.
-   hook_weapon_rate, with its WeaponHardpointTypes feature, gives weapons
-   301 to 305 types 33 to 37 and weapon 307 type 38
-   (ConvertWeaponModelIndexToHardpointType). */
-static long long hardpoint_type(long long weapon, bool weapon_rate) {
-	if (weapon_rate && weapon >= 301 && weapon <= 305)
-		return 33 + weapon - 301;
-	if (weapon_rate && weapon == 307)
-		return 38;
-	return weapon - 279;
-}
-
-/* Reports the weapon types of `record` that model `model` has no hardpoint
-   for: the game finds a group's slots from the hardpoints of its type, so
-   such a group keeps the record's slots. */
-static void check_hardpoints(const char* game, const char* model, const uint8_t* record, bool weapon_rate) {
-	char rel[400], path[1024];
-	snprintf(rel, sizeof rel, "FlightModels/%s.opt", model);
-	if (!Xwau_FindFile(game, rel, path, sizeof path)) {
-		Report(rel, "doesn't exist, so the hardpoints of its [ExeCraftValues] weapons aren't checked");
-		return;
-	}
-	opt_error_t err;
-	opt_file_t* opt = opt_load_file(path, &err);
-	if (!opt) {
-		Report(rel, "can't be read, so the hardpoints of its [ExeCraftValues] weapons aren't checked");
-		return;
-	}
-	for (int g = 0; g < 5; ++g) {
-		const bool      laser = g < 3;
-		const long long type  = laser ? field_value(record, &g_laserFields[0], (unsigned)g)
-									  : field_value(record, &g_warheadFields[0], (unsigned)(g - 3));
-		bool            found = type == 0;
-		for (int32_t m = 0; !found && m < opt->mesh_count; ++m)
-			for (int32_t h = 0; !found && h < opt->meshes[m].hardpoint_count; ++h)
-				found = (long long)opt->meshes[m].hardpoints[h].type == hardpoint_type(type, weapon_rate);
-		if (!found)
-			Report(rel,
-				   "has no hardpoint for the weapon type %lld of its %s %d, so that group keeps the slots "
-				   "of the craft record",
-				   type, laser ? "laser group" : "warhead launcher", laser ? g : g - 3);
-	}
-	opt_free(opt);
-}
-
 /* The model of object type `t` as hook_mission_tie finds it: its list row,
    without the test of recordFlags. */
 static const char* exe_values_model(const XwauGameTables* tables, int t) {
@@ -322,9 +331,10 @@ static const char* exe_values_model(const XwauGameTables* tables, int t) {
 }
 
 /* Applies the [ExeCraftValues] sections of the models to `tables`, as
-   hook_mission_tie does at each mission load, and reports the cases that
-   the object type files can't express. Writes the number of object types
-   changed to `count`. Returns false when out of memory. */
+   hook_mission_tie does at each mission load. When two object types share a
+   craft record, the values of the later one win, as in XWAU. Writes the
+   number of object types changed to `count`. Returns false when out of
+   memory. */
 static bool apply_exe_values(const char* game, XwauGameTables* tables, int* count) {
 	*count = 0;
 	/* The lasers and warheads keep the start-up record's values; the other
@@ -333,13 +343,7 @@ static bool apply_exe_values(const char* game, XwauGameTables* tables, int* coun
 	if (!start)
 		return false;
 	memcpy(start, tables->records, sizeof tables->records[0] * EXE_VALUES_RECORDS);
-	int        owner[EXE_VALUES_RECORDS];
-	bool       loaded_ok = true;
-	char       dll[1024];
-	const bool weapon_rate = Xwau_FindFile(game, "hook_weapon_rate.dll", dll, sizeof dll) &&
-							 Xwau_FileHasText(dll, "WeaponHardpointTypes");
-	for (int r = 0; r < EXE_VALUES_RECORDS; ++r)
-		owner[r] = -1;
+	bool loaded_ok = true;
 	for (int t = 0; loaded_ok && t < EXE_VALUES_TYPES; ++t) {
 		const XwauGameType type   = XwauGameTables_Type(tables, t);
 		const uint16_t     record = (uint16_t)type.record;
@@ -354,20 +358,13 @@ static bool apply_exe_values(const char* game, XwauGameTables* tables, int* coun
 			XwauLines_Free(&lines);
 			continue;
 		}
-		if (owner[record] >= 0)
-			Report(
-				source,
-				"object types %d and %d share craft record %d, and both models have [ExeCraftValues]; as in "
-				"XWAU, the values of object type %d win",
-				owner[record], t, record, t);
-		owner[record]  = t;
 		uint16_t flags = type.flags;
-		if (exe_value(&lines, source, "GameOptions_IsHardpointsMirroring",
+		if (exe_value(&lines, "GameOptions_IsHardpointsMirroring",
 					  (flags & FLAG_HARDPOINTS_MIRRORING) != 0) != 0)
 			flags |= FLAG_HARDPOINTS_MIRRORING;
 		else
 			flags &= (uint16_t)~FLAG_HARDPOINTS_MIRRORING;
-		if (exe_value(&lines, source, "GameOptions_IsAxisAligned", (flags & FLAG_AXIS_ALIGNED) != 0) != 0)
+		if (exe_value(&lines, "GameOptions_IsAxisAligned", (flags & FLAG_AXIS_ALIGNED) != 0) != 0)
 			flags |= FLAG_AXIS_ALIGNED;
 		else
 			flags &= (uint16_t)~FLAG_AXIS_ALIGNED;
@@ -384,7 +381,7 @@ static bool apply_exe_values(const char* game, XwauGameTables* tables, int* coun
 				char key[64];
 				snprintf(key, sizeof key, "%s%u", kLaserKeys[k], g);
 				const Field* field = &g_laserFields[kLaserFields[k]];
-				set_field(r, field, g, exe_value(&lines, source, key, field_value(start[record], field, g)));
+				set_field(r, field, g, exe_value(&lines, key, field_value(start[record], field, g)));
 			}
 		/* WarheadTypeId and WarheadCapacity: the `type` and `capacity` of a
 		   `warheads` entry. */
@@ -395,52 +392,20 @@ static bool apply_exe_values(const char* game, XwauGameTables* tables, int* coun
 				char key[64];
 				snprintf(key, sizeof key, "%s%u", kWarheadKeys[k], g);
 				const Field* field = &g_warheadFields[kWarheadFields[k]];
-				set_field(r, field, g, exe_value(&lines, source, key, field_value(start[record], field, g)));
+				set_field(r, field, g, exe_value(&lines, key, field_value(start[record], field, g)));
 			}
 		for (size_t i = 0; i < sizeof g_fields / sizeof g_fields[0]; ++i) {
 			const char* key = strcmp(g_fields[i].key, "countermeasures") == 0    ? "CounterMeasuresCount"
 							  : strcmp(g_fields[i].key, "ai_hits_to_evade") == 0 ? "AIHitsTakenToEvade"
 																				 : NULL;
 			if (key)
-				set_field(r, &g_fields[i], 0,
-						  exe_value(&lines, source, key, field_value(r, &g_fields[i], 0)));
+				set_field(r, &g_fields[i], 0, exe_value(&lines, key, field_value(r, &g_fields[i], 0)));
 		}
 		XwauLines_Free(&lines);
-		check_hardpoints(game, model, r, weapon_rate);
 		(*count)++;
 	}
 	free(start);
-	if (!loaded_ok)
-		return false;
-
-	/* The models with the section that no object type loads. */
-	char   dir[1024];
-	size_t names_count = 0;
-	char** names =
-		Xwau_FindDir(game, "FlightModels", dir, sizeof dir) ? ListDir(dir, true, &names_count) : NULL;
-	for (size_t i = 0; i < names_count; ++i) {
-		char         model[300];
-		const size_t length = strlen(names[i]);
-		if (EndsWithNoCase(names[i], kExeValuesSuffix) &&
-			length - (sizeof kExeValuesSuffix - 1) < sizeof model)
-			snprintf(model, sizeof model, "%.*s", (int)(length - (sizeof kExeValuesSuffix - 1)), names[i]);
-		else if (EndsWithNoCase(names[i], ".ini") && length - 4 < sizeof model)
-			snprintf(model, sizeof model, "%.*s", (int)(length - 4), names[i]);
-		else
-			continue;
-		bool used = false;
-		for (int t = 0; !used && t < EXE_VALUES_TYPES; ++t)
-			used = (uint16_t)XwauGameTables_Type(tables, t).record < EXE_VALUES_RECORDS &&
-				   Xwau_SameName(exe_values_model(tables, t), model);
-		if (used || !XwauObjects_HasExeCraftValues(game, model))
-			continue;
-		Report(NULL,
-			   "FlightModels/%s: [ExeCraftValues] is skipped: no object type below 219 with a craft "
-			   "record below 218 loads the model",
-			   names[i]);
-	}
-	FreeList(names, names_count);
-	return true;
+	return loaded_ok;
 }
 
 /* ---- Text ------------------------------------------------------------------ */
@@ -550,15 +515,16 @@ static const struct {
 
 /* ---- Object files ------------------------------------------------------- */
 
+/* Returns whether the mod renames object type `t`. */
 /* What the mod changes about one stock object type. */
 typedef struct Change {
 	int         objectType;
 	const char* model; /* the mod's model, for the file name */
 	int         list;  /* the list of the mod's row: 0 Spacecraft0.LST, 1 Equipment0.LST */
 	bool        writeModel;
-	bool        genus, family, flags, recordIndexChanged;
+	bool        genus, family, flags;
 	int         recordIndex; /* the craft record that the type uses in the mod */
-	bool        ownsRecord;  /* this file carries the record's fields and names */
+	int         stockRecord; /* the craft record that the type uses in the stock game */
 	bool        recordChanged;
 	int         soundsLike; /* 0: no change */
 	bool        beamAllowed;
@@ -603,36 +569,13 @@ static bool sound_jumps_match(const XwauGameTables* stock, const XwauGameTables*
 
 /* Whether the mod's code jumps past the beam test, as XWAU's does: `jmp` from
    XWAU_GAME_BEAM_TEST to XWAU_GAME_BEAM_TEST_END instead of the stock `jz`. */
-static int beam_test_skipped(const XwauGameTables* stock, const XwauGameTables* mod, const char* mod_root) {
+static int beam_test_skipped(const XwauGameTables* stock, const XwauGameTables* mod) {
 	if (memcmp(stock->beam, mod->beam, 2) == 0)
 		return 0;
 	if (mod->beam[0] == 0xEB && XWAU_GAME_BEAM_TEST + 2 + mod->beam[1] == XWAU_GAME_BEAM_TEST_END)
 		return 1;
-	Report(mod_root,
-		   "changes the beam test at 0x%X in a way the import doesn't know (%02X %02X); no beam_allowed "
-		   "is written",
-		   (unsigned)XWAU_GAME_BEAM_TEST, mod->beam[0], mod->beam[1]);
+	ReportUnsupported("unknown changes to the beam test of XWINGALLIANCE.EXE");
 	return 0;
-}
-
-/* Removes the object files that an earlier run wrote. */
-static void remove_old_files(const char* dir) {
-	size_t count = 0;
-	char** names = ListDir(dir, true, &count);
-	for (size_t i = 0; i < count; ++i) {
-		char path[1300], line[64] = "";
-		if (!EndsWithNoCase(names[i], ".yaml") || !PathFormat(path, sizeof path, "%s/%s", dir, names[i]))
-			continue;
-		FILE* f = fopen(path, "rb");
-		if (!f)
-			continue;
-		const bool ours =
-			fgets(line, sizeof line, f) && strncmp(line, OBJECTS_HEADER, strlen(OBJECTS_HEADER)) == 0;
-		fclose(f);
-		if (ours)
-			remove(path);
-	}
-	FreeList(names, count);
 }
 
 typedef struct Counts {
@@ -644,22 +587,35 @@ static void write_quoted_or_empty(FILE* f, const char* text) {
 		fputs("''", f);
 }
 
+/* Writes `names` when the species names of the object type's record in the
+   mod differ from the names of its stock record. The game writes them into
+   the object type's own record. */
 static bool write_names(FILE* f, const Change* change, const Texts* texts, XwauTextIds* moved) {
-	if (!change->ownsRecord || change->recordIndex >= SPECIES_WITH_OWN_RECORD)
+	if (!texts->loaded[TEXT_STRINGS] || change->recordIndex >= SPECIES_WITH_OWN_RECORD ||
+		change->stockRecord >= SPECIES_WITH_OWN_RECORD)
 		return false;
 	const char* ids[3];
 	const char* changed[3];
 	bool        any = false;
 	for (int t = 0; t < 3; ++t) {
-		ids[t]     = species_id(texts, t, change->recordIndex);
-		changed[t] = ids[t] ? text_changed(texts, TEXT_STRINGS, ids[t]) : NULL;
+		const char* stock_id = species_id(texts, t, change->stockRecord);
+		const char* stock    = stock_id ? text_find(&texts->stock[TEXT_STRINGS], stock_id) : NULL;
+		ids[t]               = species_id(texts, t, change->recordIndex);
+		changed[t]           = ids[t] ? text_find(&texts->mod[TEXT_STRINGS], ids[t]) : NULL;
+		if (!stock || !changed[t] || strcmp(stock, changed[t]) == 0)
+			changed[t] = NULL;
 		any |= changed[t] != NULL;
 	}
 	if (!any)
 		return false;
 	if (changed[0] && !(changed[0][0] && strchr("mfn", changed[0][0]) && changed[0][1] == ':')) {
-		Report(NULL, "object type %d: the long name %s has no gender; the names stay in strings.yaml",
-			   change->objectType, ids[0]);
+		/* The names stay in strings.yaml. That only keeps them when the
+		   object type uses its stock record in the mod too. */
+		if (change->recordIndex != change->stockRecord)
+			ReportFatal(NULL,
+						"the long name %s of object type %d has no gender, so it can't go in the object type "
+						"file, and its craft record in the mod isn't its stock record",
+						ids[0], change->objectType);
 		return false;
 	}
 	fputs("names: {", f);
@@ -681,7 +637,7 @@ static bool write_names(FILE* f, const Change* change, const Texts* texts, XwauT
 	}
 	fputs("}\n", f);
 	for (int t = 0; t < 3; ++t)
-		if (changed[t])
+		if (changed[t] && text_changed(texts, TEXT_STRINGS, ids[t]))
 			XwauTextIds_Add(moved, ids[t]);
 	return true;
 }
@@ -706,10 +662,9 @@ static bool craft_type_change(int c, const XwauGameTables* stock, const XwauGame
 	char id[64];
 	snprintf(id, sizeof id, "SPECIES_%d", c);
 	out->line = text_changed(texts, TEXT_SHIPLIST, id);
-	if (out->line && !parse_ship_line(out->line, &out->ship)) {
-		Report(NULL, "craft type %d: its ship list line has too few fields; it stays in strings.yaml", c);
+	/* A line with too few fields stays in strings.yaml. */
+	if (out->line && !parse_ship_line(out->line, &out->ship))
 		out->line = NULL;
-	}
 	bool any_tech = false;
 	for (int i = 0; i < 5; ++i) {
 		char tech_id[64];
@@ -720,12 +675,13 @@ static bool craft_type_change(int c, const XwauGameTables* stock, const XwauGame
 	return out->remap || out->line || any_tech;
 }
 
-/* The file name of a craft type: its ship list name in the mod, in lower case
-   with '_' between words, or "" when it has none. */
-static void craft_type_name(int c, const Texts* texts, char* name, size_t size) {
+/* Writes the ship list name of craft type `c` from SHIPLIST.TXT `file` to
+   `name`, in lower case with '_' between words. Writes "" when the craft
+   type has no ship list name. */
+static void craft_type_ship_name(int c, const XwauTextFile* file, bool loaded, char* name, size_t size) {
 	char id[64];
 	snprintf(id, sizeof id, "SPECIES_%d", c);
-	const char* line = texts->loaded[TEXT_SHIPLIST] ? text_find(&texts->mod[TEXT_SHIPLIST], id) : NULL;
+	const char* line = loaded ? text_find(file, id) : NULL;
 	ShipLine    ship;
 	size_t      length = 0;
 	name[0]            = '\0';
@@ -743,24 +699,36 @@ static void craft_type_name(int c, const Texts* texts, char* name, size_t size) 
 	name[length] = '\0';
 }
 
-static bool write_craft_type_file(const char* path, int c, int object_type, const char* model,
-								  const CraftTypeChange* change, XwauTextIds* moved) {
+/* Returns the category name for `text`, a category as SHIPLIST.TXT writes
+   it, or NULL when `text` isn't a category. */
+static const char* category_name(const XwauNames* names, const char* text) {
+	return XwauNames_Name(&names->ship_list_categories,
+						  XwauNames_Find(&names->ship_list_category_texts, text));
+}
+
+static bool write_craft_type_file(const char* path, const XwauNames* names, int c, int object_type,
+								  const char* model, const CraftTypeChange* change, XwauTextIds* moved) {
 	FILE* f = fopen(path, "wb");
 	if (!f) {
 		Report(path, "can't be written");
 		return false;
 	}
-	fprintf(f, OBJECTS_HEADER ": what the mod changes about craft type %d.\n", c);
-	fprintf(f, "version: 1\ncraft_type: %d\nobject_type: %d  # %s\n", c, object_type, model);
+	fputs("# Made by the OpenXWA mod importer.\n", f);
+	fprintf(f, "craft_type: %d\nobject_type: %s  # %s\n", c, XwauNames_ObjectType(names, object_type), model);
 	if (change->line) {
-		const ShipLine* ship = &change->ship;
+		const ShipLine* ship     = &change->ship;
+		const char*     category = category_name(names, ship->category);
+		/* The game leaves a line with an unknown category out of the ship
+		   list, as it does with a hidden line. So such a craft is written as
+		   hidden, without a category. */
 		fputs("ship_list: {name: ", f);
 		write_quoted_or_empty(f, ship->name);
-		fputs(", category: ", f);
-		write_quoted_or_empty(f, ship->category);
+		if (category)
+			fprintf(f, ", category: %s", category);
 		fprintf(f, ", flyable: %s, known: %s, skirmish: %s, hidden: %s, icon: [%d, %d, %d, %d]}\n",
 				ship->flyable, ship->known ? "true" : "false", ship->skirmish ? "true" : "false",
-				ship->hidden ? "true" : "false", ship->icon[0], ship->icon[1], ship->icon[2], ship->icon[3]);
+				ship->hidden || !category ? "true" : "false", ship->icon[0], ship->icon[1], ship->icon[2],
+				ship->icon[3]);
 		char id[64];
 		snprintf(id, sizeof id, "SPECIES_%d", c);
 		XwauTextIds_Add(moved, id);
@@ -788,18 +756,20 @@ static bool write_craft_type_file(const char* path, int c, int object_type, cons
 /* Writes a file for each craft type that the mod links to another object
    type or whose texts it changes, when its object type loads a model in the
    mod (`models[object type]`, NULL when it loads nothing). */
-static bool write_craft_types(const char* dir, const XwauGameTables* stock, const XwauGameTables* mod,
-							  const char* const* models, const Texts* texts, XwauTextIds* moved,
-							  Counts* counts) {
+static bool write_craft_types(const char* dir, const XwauNames* names, const XwauGameTables* stock,
+							  const XwauGameTables* mod, const char* const* models, const Texts* texts,
+							  XwauTextIds* moved, Counts* counts) {
 	CraftTypeChange* changes = calloc(CRAFT_TYPE_COUNT, sizeof *changes);
 	bool*            writes  = calloc(CRAFT_TYPE_COUNT, sizeof *writes);
 	bool             ok      = changes && writes;
 	for (int c = 1; ok && c < CRAFT_TYPE_COUNT; ++c) {
 		const int t = mod->craft[c];
-		writes[c] =
-			t < OBJECT_TYPE_COUNT && models[t] && craft_type_change(c, stock, mod, texts, &changes[c]);
+		const bool changed = craft_type_change(c, stock, mod, texts, &changes[c]);
+		/* XWAU can't show a craft type whose object type loads nothing. */
+		writes[c] = t < OBJECT_TYPE_COUNT && models[t] && changed;
 		if (writes[c])
-			craft_type_name(c, texts, changes[c].name, sizeof changes[c].name);
+			craft_type_ship_name(c, &texts->mod[TEXT_SHIPLIST], texts->loaded[TEXT_SHIPLIST], changes[c].name,
+								 sizeof changes[c].name);
 	}
 	for (int c = 1; ok && c < CRAFT_TYPE_COUNT; ++c) {
 		if (!writes[c])
@@ -815,7 +785,7 @@ static bool write_craft_types(const char* dir, const XwauGameTables* stock, cons
 		else
 			snprintf(file_name, sizeof file_name, "%s.yaml", changes[c].name);
 		ok = PathFormat(path, sizeof path, "%s/%s", dir, file_name) &&
-			 write_craft_type_file(path, c, mod->craft[c], models[mod->craft[c]], &changes[c], moved);
+			 write_craft_type_file(path, names, c, mod->craft[c], models[mod->craft[c]], &changes[c], moved);
 		counts->craftTypes++;
 		counts->remaps += changes[c].remap;
 	}
@@ -824,24 +794,27 @@ static bool write_craft_types(const char* dir, const XwauGameTables* stock, cons
 	return ok;
 }
 
-static void write_craft_record(FILE* f, const uint8_t* stock, const uint8_t* mod) {
+static void write_craft_record(FILE* f, const XwauNames* names, int object_type, const uint8_t* stock,
+							   const uint8_t* mod) {
 	fputs("craft_record:\n", f);
 	for (size_t i = 0; i < sizeof g_fields / sizeof g_fields[0]; ++i) {
 		if (!field_differs(stock, mod, &g_fields[i], 0))
 			continue;
 		fprintf(f, "  %s: ", g_fields[i].key);
-		write_field(f, mod, &g_fields[i], 0);
+		write_field(f, names, mod, &g_fields[i], 0);
 		fputc('\n', f);
 	}
 	if (group_differs(stock, mod, g_laserFields, 5, 3))
-		write_groups(f, "lasers", mod, g_laserFields, 5, 3);
+		write_groups(f, names, "lasers", mod, g_laserFields, 5, 3);
 	if (group_differs(stock, mod, g_warheadFields, 3, 2))
-		write_groups(f, "warheads", mod, g_warheadFields, 3, 2);
+		write_groups(f, names, "warheads", mod, g_warheadFields, 3, 2);
 	if (group_differs(stock, mod, g_turretFields, 8, 2))
-		write_groups(f, "turrets", mod, g_turretFields, 8, 2);
-	if (eye_differs(stock, mod))
-		fprintf(f, "  cockpit_eye: [%d, %d, %d]\n", record_i16(mod, EYE_X), record_i16(mod, EYE_Y),
-				record_i16(mod, EYE_Z));
+		write_turrets(f, names, object_type, mod);
+	if (eye_differs(stock, mod)) {
+		fputs("  cockpit_eye_m: ", f);
+		Xwau_WriteMetres3(f, record_i16(mod, EYE_X), record_i16(mod, EYE_Y), record_i16(mod, EYE_Z));
+		fputc('\n', f);
+	}
 	if (name_differs(stock, mod)) {
 		char name[NAME_SIZE + 1];
 		memcpy(name, mod + NAME_OFFSET, NAME_SIZE);
@@ -858,38 +831,78 @@ static void write_craft_record(FILE* f, const uint8_t* stock, const uint8_t* mod
 	}
 }
 
-static bool write_object_file(const char* path, const Change* change, const XwauGameTables* stock,
-							  const XwauGameTables* mod, const Texts* texts, XwauTextIds* moved,
-							  Counts* counts) {
+/* If the mod turns a settable flag on or off, writes `flags` with all the
+   settable flags that are on. A change to a named flag that a file can't set
+   makes the import fail. Bits without a name are left out, because the game
+   never reads them. */
+static void write_flags(FILE* f, const XwauNames* names, int object_type, uint16_t stock, uint16_t mod) {
+	const uint16_t settable = (uint16_t)names->settable_object_type_flags;
+	for (int bit = 0; bit < 16; ++bit) {
+		const uint16_t mask = (uint16_t)(1u << bit);
+		const char*    name = XwauNames_Name(&names->object_type_flags, bit);
+		if (((stock ^ mod) & mask) && name && !(settable & mask))
+			ReportFatal(NULL,
+						"the mod changes flag %s of object type %s, and an object type file can't set it",
+						name, XwauNames_ObjectType(names, object_type));
+	}
+	if (!((stock ^ mod) & settable))
+		return;
+	bool first = true;
+	fputs("flags: [", f);
+	for (int bit = 0; bit < 16; ++bit) {
+		const uint16_t mask = (uint16_t)(1u << bit);
+		if ((mod & settable & mask) && XwauNames_Name(&names->object_type_flags, bit)) {
+			fprintf(f, "%s%s", first ? "" : ", ", XwauNames_Name(&names->object_type_flags, bit));
+			first = false;
+		}
+	}
+	fputs("]\n", f);
+}
+
+static bool write_object_file(const char* path, const XwauNames* names, const Change* change,
+							  const XwauGameTables* stock, const XwauGameTables* mod, const Texts* texts,
+							  XwauTextIds* moved, Counts* counts) {
 	FILE* f = fopen(path, "wb");
 	if (!f) {
 		Report(path, "can't be written");
 		return false;
 	}
 	const XwauGameType m = XwauGameTables_Type(mod, change->objectType);
-	fprintf(f, OBJECTS_HEADER ": what the mod changes about object type %d.\n", change->objectType);
-	fprintf(f, "version: 1\nobject_type: %d\n", change->objectType);
+	const XwauGameType s          = XwauGameTables_Type(stock, change->objectType);
+	const char*        stock_name = XwauNames_Name(&names->object_types, change->objectType);
+	const char*        name       = XwauNames_ObjectType(names, change->objectType);
+	fputs("# Made by the OpenXWA mod importer.\n", f);
+	fprintf(f, "object_type: %s\n", stock_name);
+	if (strcmp(name, stock_name) != 0)
+		fprintf(f, "name: %s\n", name);
 	if (change->writeModel) {
 		fprintf(f, "model: %s\n", change->model);
 		if (change->list == 1)
 			fputs("list: equipment\n", f);
 		counts->models++;
 	}
-	if (change->genus)
-		fprintf(f, "genus: %u\n", m.genus);
-	if (change->family)
-		fprintf(f, "family: %u\n", m.family);
+	const char* genus  = XwauNames_Name(&names->genus, m.genus);
+	const char* family = XwauNames_Name(&names->family, m.family);
+	if (change->genus && genus)
+		fprintf(f, "genus: %s\n", genus);
+	else if (change->genus)
+		ReportFatal(path, "the game has no name for genus %u", m.genus);
+	if (change->family && family)
+		fprintf(f, "family: %s\n", family);
+	else if (change->family)
+		ReportFatal(path, "the game has no name for family %u", m.family);
 	if (change->flags)
-		fprintf(f, "flags: 0x%X\n", m.flags);
-	if (change->recordIndexChanged)
-		fprintf(f, "craft_record_index: %d\n", m.record);
-	counts->typeFields += change->genus || change->family || change->flags || change->recordIndexChanged;
-	if (change->ownsRecord && change->recordChanged) {
-		write_craft_record(f, stock->records[change->recordIndex], mod->records[change->recordIndex]);
+		write_flags(f, names, change->objectType, s.flags, m.flags);
+	counts->typeFields += change->genus || change->family || change->flags;
+	/* Compare with the object type's own stock record. If other object types
+	   share this record, the game gives the object type its own copy. */
+	if (change->recordChanged) {
+		write_craft_record(f, names, change->objectType, stock->records[change->stockRecord],
+						   mod->records[change->recordIndex]);
 		counts->records++;
 	}
 	if (change->soundsLike > 0) {
-		fprintf(f, "sounds_like: %d\n", change->soundsLike);
+		fprintf(f, "sounds_like: %s\n", XwauNames_ObjectType(names, change->soundsLike));
 		counts->sounds++;
 	}
 	if (change->beamAllowed) {
@@ -905,41 +918,101 @@ static bool write_object_file(const char* path, const Change* change, const Xwau
 	return true;
 }
 
-bool XwauObjects_Write(const char* mod_root, const char* stock_game, const XwauGameTables* stock,
-					   const char* output_dir, XwauTextIds* moved) {
-	XwauGameTables* mod        = stock ? XwauGameTables_Load(mod_root) : NULL;
-	int             exe_values = 0;
-	if (!mod || !apply_exe_values(mod_root, mod, &exe_values)) {
-		XwauGameTables_Free(mod);
+bool XwauObjects_Rename(const char* mod_root, const char* stock_game, const XwauGameTables* stock,
+						const XwauGameTables* mod, XwauNames* names) {
+	if (!stock || !mod)
+		return true;
+	const char** renames = calloc((size_t)names->object_types.count, sizeof *renames);
+	if (!renames)
+		return false;
+	Texts texts;
+	load_texts(mod_root, stock_game, &texts);
+	int  count = 0;
+	bool ok    = true;
+	for (int t = 1; ok && t < OBJECT_TYPE_COUNT && t < names->object_types.count; ++t) {
+		/* The slot's ship list name in each game, from the first craft type
+		   that uses the slot. */
+		char mod_name[128] = "", stock_name[128] = "";
+		for (int c = 1; c < CRAFT_TYPE_COUNT && !mod_name[0]; ++c)
+			if (mod->craft[c] == t)
+				craft_type_ship_name(c, &texts.mod[TEXT_SHIPLIST], texts.loaded[TEXT_SHIPLIST], mod_name,
+									 sizeof mod_name);
+		for (int c = 1; c < CRAFT_TYPE_COUNT && !stock_name[0]; ++c)
+			if (stock->craft[c] == t)
+				craft_type_ship_name(c, &texts.stock[TEXT_SHIPLIST], texts.loaded[TEXT_SHIPLIST], stock_name,
+									 sizeof stock_name);
+		/* Names must be shorter than 64 characters, and the slot number may
+		   be added later. */
+		mod_name[56] = '\0';
+		/* A slot that loads nothing in the mod gets no file, so it can't be
+		   renamed. */
+		if (!XwauGameTables_Model(mod, t)[0] || !mod_name[0] || strcmp(mod_name, stock_name) == 0 ||
+			strcmp(mod_name, XwauNames_Name(&names->object_types, t) ? XwauNames_Name(&names->object_types, t)
+																	 : "") == 0)
+			continue;
+		char name[160];
+		snprintf(name, sizeof name, "%s", mod_name);
+		for (int other = 0; other < names->object_types.count; ++other) {
+			const char* taken = renames[other] ? renames[other] : XwauNames_Name(&names->object_types, other);
+			if (other != t && taken && strcmp(taken, name) == 0) {
+				snprintf(name, sizeof name, "%s_%d", mod_name, t);
+				break;
+			}
+		}
+		if (!(renames[t] = StrDup(name))) {
+			ok = false;
+			break;
+		}
+		ReportDetail(NULL, "object type %s is renamed to %s, after the mod's ship list name",
+					 XwauNames_Name(&names->object_types, t), renames[t]);
+		count++;
+	}
+	free_texts(&texts);
+	if (!ok) {
+		for (int t = 0; t < names->object_types.count; ++t)
+			free((char*)renames[t]);
+		free(renames);
 		return false;
 	}
+	names->object_type_renames = renames;
+	ReportDetail(NULL, "object types: %d renamed after the mod's ship list names", count);
+	return true;
+}
+
+void XwauObjects_FreeRenames(XwauNames* names) {
+	for (int t = 0; names->object_type_renames && t < names->object_types.count; ++t)
+		free((char*)names->object_type_renames[t]);
+	free(names->object_type_renames);
+	names->object_type_renames = NULL;
+}
+
+bool XwauObjects_Write(const char* mod_root, const char* stock_game, const XwauGameTables* stock,
+					   XwauGameTables* mod, const XwauNames* names, const char* output_dir,
+					   XwauTextIds* moved) {
+	int exe_values = 0;
+	if (!stock || !mod || !apply_exe_values(mod_root, mod, &exe_values))
+		return false;
 	const bool sounds_comparable = sound_jumps_match(stock, mod);
 	if (!sounds_comparable)
-		Report(mod_root, "changes the sound cases themselves, not only which object types use them; no "
-						 "sounds_like is written");
-	const int beam = beam_test_skipped(stock, mod, mod_root);
+		ReportUnsupported("changes to the object type sound cases of XWINGALLIANCE.EXE");
+	const int beam = beam_test_skipped(stock, mod);
 
 	/* The rows that object types without a stock row load in the mod: the
 	   rows of the mod's new craft. */
 	bool*   new_craft_rows[2] = { calloc(mod->rowCount[0] + 1, 1), calloc(mod->rowCount[1] + 1, 1) };
 	Change* changes           = calloc(OBJECT_TYPE_COUNT, sizeof *changes);
-	int*    record_users      = calloc(RECORD_COUNT, sizeof *record_users);
 	/* The model that each object type loads in the mod, or NULL. */
 	const char** models = calloc(OBJECT_TYPE_COUNT, sizeof *models);
-	bool         ok     = new_craft_rows[0] && new_craft_rows[1] && changes && record_users && models;
+	bool         ok     = new_craft_rows[0] && new_craft_rows[1] && changes && models;
 	for (int t = 0; ok && t < OBJECT_TYPE_COUNT; ++t) {
 		const XwauGameType s = XwauGameTables_Type(stock, t), m = XwauGameTables_Type(mod, t);
 		if (!XwauGameType_HasRow(&s) && XwauGameType_HasRow(&m) && m.row < mod->rowCount[m.list])
 			new_craft_rows[m.list][m.row] = true;
-		if ((m.recordFlags & 0x02) && valid_record(m.record))
-			record_users[m.record]++;
 	}
 
-	int  new_slots = 0, new_placeholders = 0, empty_slots = 0, empty_placeholders = 0;
-	int  equipment = 0, kept_models = 0, empty = 0;
-	int  unkeyed[UNKEYED_COUNT]     = { 0 };
-	bool record_owned[RECORD_COUNT] = { false };
-	int  change_count               = 0;
+	int new_slots = 0, new_placeholders = 0;
+	int equipment = 0, kept_models = 0, empty = 0;
+	int change_count = 0;
 	for (int t = 0; ok && t < OBJECT_TYPE_COUNT; ++t) {
 		const XwauGameType s = XwauGameTables_Type(stock, t), m = XwauGameTables_Type(mod, t);
 		const char*        stock_model = XwauGameTables_Model(stock, t);
@@ -949,34 +1022,41 @@ bool XwauObjects_Write(const char* mod_root, const char* stock_game, const XwauG
 			strcmp(stock_model, mod_model) != 0 ||
 			(valid_record(m.record) && record_differs(stock->records[m.record], mod->records[m.record]));
 		if (!XwauGameType_HasRow(&s)) {
-			/* A reserved slot: the mod fills it with a new craft when it gives
-			   it a row with a model. */
-			if (!XwauGameType_HasRow(&m) || !mod_model[0]) {
-				empty_slots += type_changed;
+			/* This is a free slot. The mod fills it with a new craft when it
+			   gives it a row with a model. */
+			if (!XwauGameType_HasRow(&m) || !mod_model[0])
 				continue;
-			}
 			new_slots++;
 		} else if (is_placeholder(t)) {
 			/* A placeholder loads the X-wing's row in stock. The mod fills it
 			   when it gives it another model. */
-			if (!mod_model[0]) {
-				empty_placeholders += type_changed;
+			if (!mod_model[0])
 				continue;
-			}
 			new_placeholders += strcasecmp(stock_model, mod_model) != 0;
 		}
+		/* XWAU can't show an object type that loads no model. */
 		if (!mod_model[0]) {
-			if (type_changed) {
-				Report(mod_root, "object type %d loads no model in the mod; it is left out", t);
-				empty++;
-			}
+			empty += type_changed;
 			continue;
 		}
-		Change change     = { .objectType = t, .model = mod_model, .list = m.list, .recordIndex = m.record };
+		/* No key sets recordFlags and assetFlags. Bit 0x02 of recordFlags
+		   comes from the model, and nothing reads bit 0x01. */
+		if (((s.recordFlags ^ m.recordFlags) & ~0x03) || s.assetFlags != m.assetFlags)
+			ReportFatal(
+				mod_root,
+				"changes the record flags of object type %d from 0x%02X to 0x%02X, or its asset flags "
+				"from 0x%02X to 0x%02X, and no key sets them",
+				t, s.recordFlags, m.recordFlags, s.assetFlags, m.assetFlags);
+		Change change     = { .objectType  = t,
+							  .model       = mod_model,
+							  .list        = m.list,
+							  .recordIndex = m.record,
+							  .stockRecord = valid_record(s.record) ? s.record : m.record };
 		change.writeModel = strcasecmp(stock_model, mod_model) != 0 || m.list != s.list;
 		if (change.writeModel && m.list == s.list && m.row == s.row && new_craft_rows[m.list][m.row]) {
-			Report(mod_root, "object type %d keeps its model '%s': the mod renames its row for a new craft",
-				   t, stock_model);
+			ReportDetail(mod_root,
+						 "object type %d keeps its model '%s': the mod renames its row for a new craft", t,
+						 stock_model);
 			change.writeModel = false;
 			change.model      = stock_model;
 			kept_models++;
@@ -985,49 +1065,25 @@ bool XwauObjects_Write(const char* mod_root, const char* stock_game, const XwauG
 		change.genus              = s.genus != m.genus;
 		change.family             = s.family != m.family;
 		change.flags              = s.flags != m.flags;
-		change.recordIndexChanged = s.record != m.record;
-		change.recordChanged =
-			valid_record(m.record) && record_differs(stock->records[m.record], mod->records[m.record]);
+		change.recordChanged = valid_record(m.record) &&
+							   record_differs(stock->records[change.stockRecord], mod->records[m.record]);
 		change.soundsLike = sounds_comparable ? sounds_like(stock, mod, t) : 0;
 		if (change.soundsLike < 0) {
-			Report(mod_root,
-				   "object type %d: no stock object type has its sound cases; no sounds_like is written", t);
+			ReportUnsupported("object type sound cases that no stock object type has");
 			change.soundsLike = 0;
 		}
 		for (size_t i = 0; beam && i < sizeof g_beamTestTypes / sizeof g_beamTestTypes[0]; ++i)
 			change.beamAllowed |= g_beamTestTypes[i] == t;
-		if (!(change.writeModel || change.genus || change.family || change.flags ||
-			  change.recordIndexChanged || change.recordChanged || change.soundsLike || change.beamAllowed))
+		if (!(change.writeModel || change.genus || change.family || change.flags || change.recordChanged ||
+			  change.soundsLike || change.beamAllowed || XwauNames_IsRenamed(names, t)))
 			continue;
-		if (valid_record(m.record) && !record_owned[m.record]) {
-			change.ownsRecord      = true;
-			record_owned[m.record] = true;
-			if (record_users[m.record] > 1 && (change.recordChanged || m.record < SPECIES_WITH_OWN_RECORD))
-				Report(mod_root,
-					   "craft record %d is used by %d object types; its fields and names go into the file of "
-					   "object type %d",
-					   m.record, record_users[m.record], t);
-		}
-		if (change.ownsRecord && change.recordChanged)
-			for (size_t i = 0; i < UNKEYED_COUNT; ++i)
-				unkeyed[i] +=
-					memcmp(stock->records[m.record] + g_unkeyedFields[i].offset,
-						   mod->records[m.record] + g_unkeyedFields[i].offset, g_unkeyedFields[i].size) != 0;
 		equipment += change.list == 1;
 		changes[change_count++] = change;
 	}
-	for (size_t i = 0; i < UNKEYED_COUNT; ++i)
-		if (unkeyed[i])
-			Report(mod_root, "%s changes in %d craft records, and no key sets it; it isn't written",
-				   g_unkeyedFields[i].name, unkeyed[i]);
 
 	char dir[1100], craft_dir[1100];
 	ok = ok && PathFormat(dir, sizeof dir, "%s/object_types", output_dir) && MakeDirs(dir) &&
 		 PathFormat(craft_dir, sizeof craft_dir, "%s/craft_types", output_dir) && MakeDirs(craft_dir);
-	if (ok) {
-		remove_old_files(dir);
-		remove_old_files(craft_dir);
-	}
 	Texts texts;
 	load_texts(mod_root, stock_game, &texts);
 	Counts counts       = { 0 };
@@ -1044,7 +1100,7 @@ bool XwauObjects_Write(const char* mod_root, const char* stock_game, const XwauG
 		else
 			snprintf(change->fileName, sizeof change->fileName, "%s.yaml", change->model);
 		ok = PathFormat(path, sizeof path, "%s/%s", dir, change->fileName) &&
-			 write_object_file(path, change, stock, mod, &texts, moved, &counts);
+			 write_object_file(path, names, change, stock, mod, &texts, moved, &counts);
 		char glb[1300];
 		if (ok && change->writeModel &&
 			PathFormat(glb, sizeof glb, "%s/models/%s.glb", output_dir, change->model) && !IsFile(glb)) {
@@ -1052,45 +1108,31 @@ bool XwauObjects_Write(const char* mod_root, const char* stock_game, const XwauG
 			missing_glbs++;
 		}
 	}
-	ok = ok && write_craft_types(craft_dir, stock, mod, models, &texts, moved, &counts);
+	ok = ok && write_craft_types(craft_dir, names, stock, mod, models, &texts, moved, &counts);
 	free_texts(&texts);
 	if (ok) {
-		Report(
-			NULL,
-			"object types: %d files: %d with a model, %d with a new genus, family, flags or craft record "
-			"index, %d with craft record changes, %d with sounds_like, %d with beam_allowed, %d with names",
-			counts.files, counts.models, counts.typeFields, counts.records, counts.sounds, counts.beams,
-			counts.names);
+		Report(NULL,
+			   "object types: %d files: %d with a model, %d with a new genus, family or flags, %d with craft "
+			   "record changes, %d with sounds_like, %d with beam_allowed, %d with names",
+			   counts.files, counts.models, counts.typeFields, counts.records, counts.sounds, counts.beams,
+			   counts.names);
 		Report(NULL, "craft types: %d files, %d of them linked to another object type", counts.craftTypes,
 			   counts.remaps);
-		Report(NULL, "object types: %d new craft in reserved slots and %d in placeholders", new_slots,
-			   new_placeholders);
+		ReportDetail(NULL, "object types: %d new craft in free slots and %d in placeholders", new_slots,
+					 new_placeholders);
 		if (exe_values)
-			Report(NULL, "object types: %d take the [ExeCraftValues] of their model", exe_values);
-		if (empty_slots || empty_placeholders)
-			Report(NULL,
-				   "object types: %d reserved slots and %d placeholders that the mod gives an empty row are "
-				   "left out, with their craft types: they load nothing in the mod",
-				   empty_slots, empty_placeholders);
-		Report(NULL,
-			   "object types: %d files for object types of Equipment0.LST; %d stock models kept, %d types "
-			   "that load nothing in the mod",
-			   equipment, kept_models, empty);
+			ReportDetail(NULL, "object types: %d take the [ExeCraftValues] of their model", exe_values);
+		ReportDetail(NULL,
+					 "object types: %d files for object types of Equipment0.LST; %d stock models kept, %d "
+					 "types that load nothing in the mod",
+					 equipment, kept_models, empty);
 		if (missing_glbs)
 			Report(NULL, "object types: %d files name a model that has no GLB in %s/models", missing_glbs,
 				   output_dir);
-		if (mod->craftPastEnd != stock->craftPastEnd)
-			Report(
-				mod_root,
-				"also maps craft type %d to object type %u, past the end of the craft type table; the game's "
-				"table has %d entries, so it is skipped",
-				CRAFT_TYPE_COUNT, mod->craftPastEnd, CRAFT_TYPE_COUNT);
 	}
 	free(new_craft_rows[0]);
 	free(new_craft_rows[1]);
 	free(changes);
-	free(record_users);
 	free(models);
-	XwauGameTables_Free(mod);
 	return ok;
 }

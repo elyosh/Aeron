@@ -149,7 +149,7 @@ bool XwauGltf_Bake(const opt_file_t* opt, const char* basename, const XwauGltfMa
 				   const XwauGltfMaterial* untextured, const XwauGltfAnim* anims,
 				   const OptGltfScreen* screens, const struct XwauSkins* skins, XwauGltfMaterials* out);
 
-/* Reports the skin variants and layers to stderr. */
+/* Writes the counts of skin variants and layers as a detail line. */
 void XwauGltf_ReportSkins(const XwauGltfMaterials* materials, const char* basename);
 
 void XwauGltf_Free(XwauGltfMaterials* materials, int32_t texture_count);

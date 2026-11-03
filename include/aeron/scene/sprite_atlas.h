@@ -1,33 +1,23 @@
 #ifndef AERON_SCENE_SPRITE_ATLAS_H
 #define AERON_SCENE_SPRITE_ATLAS_H
 
-/* Sprite-atlas layout consumer.
+/* Sprite atlases.
  *
- * A packed sprite atlas pairs one image (PNG/KTX2) with a YAML layout
- * file giving each frame's pixel rect within the atlas. Game tooling
- * (TIE's `filmextract --atlas`) produces matched (.png, .yaml) pairs.
+ * A packed sprite atlas pairs one or more KTX2 pages with a YAML file that
+ * gives each frame's pixel rect in its page:
  *
- * Schema (mirrors the writer):
- *
- *     atlas:
- *       w: <atlas pixel width>
- *       h: <atlas pixel height>
+ *     units: game                # or design, the default
+ *     atlas: {w: 512, h: 256}    # the size of page 0
  *     frames:
- *       - { x: 2, y: 2, w: 25, h: 64 }
- *       - { x: 29, y: 2, w: 32, h: 64 }
+ *       - {id: 4002, page: 1, x: 2, y: 2, w: 25, h: 64, size: [6, 14], offset: [-3, -7]}
  *       - ...
  *
- * Frame index semantics belong to the game (TIE: ANIM state index).
- *
- * The YAML may also carry `origin_x` / `origin_y` per frame (the
- * source frame's bbox top-left in the game's classic coords). Runtime
- * draw paths don't read them — the convention is that the emit side
- * bakes any origin offset into the draw position. The parser keeps
- * them in parallel arrays purely so round-tripping (load → mutate →
- * save) preserves the values.
- *
- * Both inline-flow `{ ... }` and block style for frame entries are
- * accepted — libyaml handles the variants transparently.
+ * `size` is the frame's draw size and `offset` the position of its anchor,
+ * in the atlas's units: the game's own units with `units: game`, else design
+ * units, which the game converts. `id`, `page`, `size`, `offset` and
+ * `light: [r, g, b]` are optional. The game gives the frame indices and the
+ * ids their meaning. Other keys of the file belong to the game, and this
+ * reader ignores them.
  */
 
 #include <stdbool.h>
@@ -47,46 +37,29 @@ typedef struct AeronSpriteRect {
 
 typedef struct AeronSpriteAtlas {
 	AeronSpriteRect* frames; /* owned; one entry per frame index */
-	/* Parallel arrays carrying the per-frame `origin_x`/`origin_y`
-	 * keys from the YAML. Allocated alongside `frames` and the same
-	 * length (`frame_count`). Defaulted to 0 when the YAML omits the
-	 * keys. Not consumed by draw paths; preserved purely so
-	 * Aeron_SpriteAtlasSave round-trips the on-disk file. */
-	int16_t* origin_x;
-	int16_t* origin_y;
-	/* Optional per-frame `id` keys: sparse game-side identities (XWA
-	 * DAT sprite ids are structured offsets like 4002, not dense
-	 * indices). NULL when the YAML carries no `id` keys — frames are
-	 * then addressed positionally, and Save emits no ids (round-trip
-	 * parity for id-less corpora). Look up with
-	 * Aeron_SpriteAtlasFindById. */
+	/* Optional per-frame `id` keys: identities that the game gives the
+	 * frames, such as XWA's sprite ids (4002). NULL when no frame has one.
+	 * Aeron_SpriteAtlasFindById looks them up. */
 	int32_t* ids;
-	/* Optional per-frame `page` keys: multi-image atlases for content
-	 * that exceeds one texture (page 0 is the base image; the naming
-	 * convention for further pages belongs to the asset producer,
-	 * e.g. "<base>_p<N>.ktx2"). NULL when single-page (all frames on
-	 * page 0); Save then emits no `page` keys. */
+	/* Optional per-frame `page` keys. Page 0 is the base image, and the
+	 * game names the other pages, such as "<base>_p<N>.ktx2". NULL when
+	 * every frame is on page 0. */
 	int16_t* pages;
-	/* Optional per-frame `classic_w`/`classic_h` keys: the frame's
-	 * original classic-resolution pixel dims, emitted by the producer
-	 * so consumers reproducing classic-geometry draws never derive a
-	 * scale factor. NULL when the YAML carries none. */
-	int16_t* classic_w;
-	int16_t* classic_h;
+	/* Optional per-frame `size: [w, h]` and `offset: [x, y]`, two values
+	 * per frame. A frame without the key has 0, 0. NULL when no frame has
+	 * the key. */
+	float* size;
+	float* offset;
 	/* Optional per-frame `light: [r, g, b]` keys: a colour that the game
 	 * gives the frame, such as a sun's. Three floats per frame; a frame
 	 * without the key has -1 in each. NULL when no frame has it. */
-	float*   light;
+	float* light;
+	/* `units: game`: the sizes and offsets are in the game's own units. */
+	bool     game_units;
 	int      page_count; /* 1 when pages == NULL */
 	int      frame_count;
-	int      atlas_w; /* full-image dims (upscaled when extracted with --scale) */
+	int      atlas_w; /* the size of page 0 */
 	int      atlas_h;
-	/* Original classic-resolution atlas dims, emitted by the extractor
-	 * when scaling was used. Lets consumers recover the scale factor
-	 * (atlas_w / classic_atlas_w) without hard-coding mode constants.
-	 * Both 0 when the atlas wasn't upscaled (atlas_w/h IS classic). */
-	int classic_atlas_w;
-	int classic_atlas_h;
 } AeronSpriteAtlas;
 
 /* Parse `yaml_path`. On success populates *out and returns true; on
@@ -95,18 +68,10 @@ typedef struct AeronSpriteAtlas {
 bool Aeron_SpriteAtlasLoad(AeronSpriteAtlas* out, const char* yaml_path);
 bool Aeron_SpriteAtlasLoadVfs(AeronSpriteAtlas* out, AeronVfs* vfs, AeronVfsRoot root, const char* yaml_path);
 
-/* Write `a` back to `yaml_path` in the same `atlas: { w, h, classic_w?,
- * classic_h? } / frames: [ {...} ]` shape the extractor emits. Atomic:
- * writes to `<yaml_path>.tmp` then renames over the target so a crash
- * mid-write can't truncate the source-of-truth.
- *
- * Per-frame x/y/w/h come from `frames[i]` rounded to nearest int (the
- * runtime stores them as floats; the on-disk format is integer pixel
- * coords). origin_x/origin_y are emitted from the parallel arrays.
- * `classic_w`/`classic_h` are emitted only when non-zero.
- *
- * On failure returns false and writes a NUL-terminated reason into
- * `err` (untouched on success). `err` may be NULL. */
+/* Writes `a` to `yaml_path` in the form that the loaders read. The write
+ * is atomic: it writes `<yaml_path>.tmp` and renames it over the target.
+ * The rects are rounded to whole pixels. On failure returns false and
+ * writes a reason into `err`, which may be NULL. */
 bool Aeron_SpriteAtlasSave(const AeronSpriteAtlas* a, const char* yaml_path, char* err, size_t errsz);
 
 void Aeron_SpriteAtlasFree(AeronSpriteAtlas* a);

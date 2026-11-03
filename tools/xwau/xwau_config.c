@@ -270,8 +270,17 @@ void XwauLines_Value(const XwauLines* lines, const char* key, XwauRules rules, c
 		snprintf(name, sizeof name, "%.*s", (int)(eq - lines->items[i]), lines->items[i]);
 		Xwau_Trim(name, rules);
 		if (name[0] && Xwau_SameName(name, key)) {
-			snprintf(out, cap, "%s", eq + 1);
-			Xwau_Trim(out, rules);
+			/* The value without the white space around it must fit. */
+			const char* start = eq + 1;
+			while (*start && is_space(*start, rules))
+				++start;
+			size_t len = strlen(start);
+			while (len && is_space(start[len - 1], rules))
+				--len;
+			if (len >= cap)
+				ReportFatal(NULL, "the value of %s is %zu characters long, but the import reads only %zu",
+							name, len, cap - 1);
+			snprintf(out, cap, "%.*s", (int)len, start);
 			return;
 		}
 	}
@@ -307,6 +316,31 @@ void Xwau_WriteString(FILE* f, const char* text) {
 	}
 	fputc('"', f);
 }
+
+void Xwau_WriteDecimal(FILE* f, double value) {
+	char text[64];
+	snprintf(text, sizeof text, "%.3f", value);
+	size_t length = strlen(text);
+	while (length > 0 && text[length - 1] == '0')
+		text[--length] = 0;
+	if (length > 0 && text[length - 1] == '.')
+		text[--length] = 0;
+	fputs(strcmp(text, "-0") == 0 ? "0" : text, f);
+}
+
+void Xwau_WriteMetres(FILE* f, int units) { Xwau_WriteDecimal(f, units / 40.96); }
+
+void Xwau_WriteMetres3(FILE* f, int x, int y, int z) {
+	fputc('[', f);
+	Xwau_WriteMetres(f, x);
+	fputs(", ", f);
+	Xwau_WriteMetres(f, y);
+	fputs(", ", f);
+	Xwau_WriteMetres(f, z);
+	fputc(']', f);
+}
+
+void Xwau_WriteDegrees(FILE* f, int steps) { Xwau_WriteDecimal(f, steps * 360.0 / 65536.0); }
 
 bool Xwau_Tokenize(const char* value, XwauRules rules, XwauLines* out) {
 	memset(out, 0, sizeof *out);
