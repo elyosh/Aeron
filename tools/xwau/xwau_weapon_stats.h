@@ -113,6 +113,10 @@ typedef struct XwauWeaponStats {
 	int  global_hardpoint_kinds[XWAU_WEAPON_STATS_HARDPOINT_TYPES];
 	int  global_hardpoint_kind_count;
 	bool has_global_hardpoint_kinds;
+	/* For a model, the global values of the two parts of a shot's
+	   duration. The game uses them for a part that the model leaves out. */
+	XwauWeaponStatsValue* global_durations;
+	size_t                global_duration_count;
 } XwauWeaponStats;
 
 /* Reads the sections of model `model` ("TieFighter") in the installation

@@ -33,9 +33,11 @@ static const char* const kStats[STATS] = {
 	"RechargeRate",
 	"EnergyLowHighSeparation",
 };
+/* DurationIntegerPart and DurationDecimalPart go into one key,
+   `duration_ms`, so the second name is empty. */
 static const char* const kStatNames[STATS] = {
-	"duration_seconds",
-	"duration_fraction",
+	"duration_ms",
+	"",
 	"score",
 	"speed_mglt",
 	"power",
@@ -51,7 +53,7 @@ static const char* const kStatNames[STATS] = {
 	"high_power_charge",
 };
 
-enum { STAT_PRECISE = 10 };
+enum { STAT_DURATION_SECONDS = 0, STAT_DURATION_FRACTION = 1, STAT_PRECISE = 10 };
 
 /* The unit of each stat in the model file. */
 static const XwauUnit kStatUnits[STATS] = {
@@ -443,6 +445,24 @@ bool XwauWeaponStats_Read(const char* game, const char* model, XwauWeaponStats* 
 		XwauLines_Free(&lines);
 	}
 	XwauWeaponStats_Free(&unset);
+	/* The game looks up each part of a shot's duration in the model, then in
+	   the global section, so a model's duration may need a global part. */
+	if (ok && model && enabled) {
+		XwauWeaponStats global = { 0 };
+		ok                     = read_global_section(game, XWAU_WEAPON_STATS_STATS, &global);
+		for (size_t i = 0; ok && i < global.count; ++i) {
+			const XwauWeaponStatsValue* v = &global.items[i];
+			if (v->group != XWAU_WEAPON_STATS_STATS ||
+				(v->stat != STAT_DURATION_SECONDS && v->stat != STAT_DURATION_FRACTION))
+				continue;
+			XwauWeaponStatsValue* added = ARRAY_PUSH(out->global_durations, out->global_duration_count);
+			if (!added)
+				ok = false;
+			else
+				*added = *v;
+		}
+		XwauWeaponStats_Free(&global);
+	}
 	/* The hook reads the model's hardpoint kinds, then the global ones. */
 	if (ok && model && out->has_hardpoint_kinds) {
 		XwauLines lines;
@@ -468,6 +488,7 @@ bool XwauWeaponStats_Read(const char* game, const char* model, XwauWeaponStats* 
 
 void XwauWeaponStats_Free(XwauWeaponStats* stats) {
 	free(stats->items);
+	free(stats->global_durations);
 	memset(stats, 0, sizeof *stats);
 }
 
@@ -494,28 +515,100 @@ static void write_number(FILE* f, int stat, long long value) {
 		fprintf(f, "%lld", value);
 }
 
+/* The forms that the game tries for a value of each form, in order, as the
+   game builds them for a player or not and for a difficulty. -1 ends a
+   list. */
+static const int kFormChains[FORMS][5] = {
+	{ 0, -1 },    { 1, 0, -1 },       { 2, 0, -1 },       { 3, 0, -1 },
+	{ 4, 0, -1 }, { 5, 1, 2, 0, -1 }, { 6, 1, 3, 0, -1 }, { 7, 1, 4, 0, -1 },
+};
+
+/* Returns the value of `stat` for `weapon` at `form` of `profile` in
+   `items`, or NULL. */
+static const XwauWeaponStatsValue* find_stat(const XwauWeaponStatsValue* items, size_t count,
+											 const char* profile, int weapon, int form, int stat) {
+	for (size_t i = 0; i < count; ++i)
+		if (items[i].group == XWAU_WEAPON_STATS_STATS && items[i].index == weapon && items[i].form == form &&
+			items[i].stat == stat && strcmp(items[i].profile, profile) == 0)
+			return &items[i];
+	return NULL;
+}
+
+/* Returns the part `stat` of a duration written at `form`, the way the game
+   finds it: at each form of the form's list, in the model's values and
+   then in the global ones, and then the stock value. */
+static long long duration_part(const XwauWeaponStats* stats, const XwauStockValues* stock,
+							   const char* profile, int weapon, int form, int stat) {
+	for (const int* f = kFormChains[form]; *f >= 0; ++f) {
+		const XwauWeaponStatsValue* v = find_stat(stats->items, stats->count, profile, weapon, *f, stat);
+		if (!v)
+			v = find_stat(stats->global_durations, stats->global_duration_count, profile, weapon, *f, stat);
+		if (v)
+			return v->value;
+	}
+	const size_t at = (size_t)(weapon - FIRST_WEAPON);
+	if (at >= stock->lifetime_count)
+		return 0;
+	return stat == STAT_DURATION_SECONDS ? stock->lifetime_seconds[at] : stock->lifetime_fractions[at];
+}
+
+/* Writes the duration of `weapon` at `form` in milliseconds. The game adds
+   236 ticks of 4 ms for each second and the fraction of a second, rounded
+   to a tick, and keeps the sum in 16 bits. */
+static void write_duration(FILE* f, const XwauWeaponStats* stats, const XwauStockValues* stock,
+						   const char* profile, int weapon, int form) {
+	const bool has_seconds =
+		find_stat(stats->items, stats->count, profile, weapon, form, STAT_DURATION_SECONDS);
+	const bool has_fraction =
+		find_stat(stats->items, stats->count, profile, weapon, form, STAT_DURATION_FRACTION);
+	/* Merged, a player form's part hides a difficulty form's other part,
+	   which the game would use for a player at that difficulty. */
+	if (form == 1 && has_seconds != has_fraction) {
+		const int missing = has_seconds ? STAT_DURATION_FRACTION : STAT_DURATION_SECONDS;
+		for (int difficulty = 2; difficulty <= 4; ++difficulty)
+			if (find_stat(stats->items, stats->count, profile, weapon, difficulty, missing) ||
+				find_stat(stats->global_durations, stats->global_duration_count, profile, weapon, difficulty,
+						  missing)) {
+				ReportUnsupported("shot durations split between the player form and a difficulty form");
+				break;
+			}
+	}
+	const uint16_t seconds =
+		(uint16_t)duration_part(stats, stock, profile, weapon, form, STAT_DURATION_SECONDS);
+	const uint16_t fraction =
+		(uint16_t)duration_part(stats, stock, profile, weapon, form, STAT_DURATION_FRACTION);
+	const uint16_t ticks = (uint16_t)((uint16_t)(236u * seconds) + ((236u * fraction + 0x8000u) >> 16));
+	Xwau_WriteUnit(f, XWAU_UNIT_MILLISECONDS, ticks);
+}
+
 /* Writes the stats of one weapon type in a profile as a flow map. */
-static void write_weapon(FILE* f, const XwauNames* names, const XwauWeaponStats* stats, const char* profile,
-						 int weapon) {
+static void write_weapon(FILE* f, const XwauNames* names, const XwauStockValues* stock,
+						 const XwauWeaponStats* stats, const char* profile, int weapon) {
 	fprintf(f, "%s: {", XwauNames_WeaponType(names, weapon));
 	bool first = true;
 	for (int form = 0; form < FORMS; ++form) {
 		bool form_open = false;
 		for (int stat = 0; stat < STATS; ++stat) {
-			for (size_t i = 0; i < stats->count; ++i) {
-				const XwauWeaponStatsValue* v = &stats->items[i];
-				if (v->group != XWAU_WEAPON_STATS_STATS || v->index != weapon || v->form != form ||
-					v->stat != stat || strcmp(v->profile, profile) != 0)
-					continue;
-				if (form && !form_open) {
-					fprintf(f, "%s%s: {", first ? "" : ", ", kFormNames[form]);
-					form_open = true;
-					first     = true;
-				}
-				fprintf(f, "%s%s: ", first ? "" : ", ", kStatNames[stat]);
-				write_number(f, stat, v->value);
-				first = false;
+			const XwauWeaponStatsValue* v =
+				find_stat(stats->items, stats->count, profile, weapon, form, stat);
+			/* The two parts of the duration make one key. */
+			if (stat == STAT_DURATION_FRACTION)
+				continue;
+			if (stat == STAT_DURATION_SECONDS && !v)
+				v = find_stat(stats->items, stats->count, profile, weapon, form, STAT_DURATION_FRACTION);
+			if (!v)
+				continue;
+			if (form && !form_open) {
+				fprintf(f, "%s%s: {", first ? "" : ", ", kFormNames[form]);
+				form_open = true;
+				first     = true;
 			}
+			fprintf(f, "%s%s: ", first ? "" : ", ", kStatNames[stat]);
+			if (stat == STAT_DURATION_SECONDS)
+				write_duration(f, stats, stock, profile, weapon, form);
+			else
+				write_number(f, stat, v->value);
+			first = false;
 		}
 		if (form_open) {
 			fputc('}', f);
@@ -565,7 +658,7 @@ void XwauWeaponStats_Write(FILE* f, const XwauNames* names, const XwauStockValue
 					if (!has)
 						continue;
 					fprintf(f, "%s    ", indent);
-					write_weapon(f, names, stats, head->profile, weapon);
+					write_weapon(f, names, stock, stats, head->profile, weapon);
 				}
 				continue;
 			}

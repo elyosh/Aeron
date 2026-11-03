@@ -137,7 +137,12 @@ static const char*     kScreenSources[57];
 static XwauNames       g_names;
 static const uint16_t  kStockHullIcons[]        = { 0, 100, 200, 300 };
 static const uint8_t   kStockHardpointKinds[40] = { 0, 1, 1, 1 };
-static XwauStockValues g_stock = { kStockHullIcons, 4, kStockHullIcons, 4, kStockHardpointKinds, 40 };
+static const uint16_t  kStockLifetimeSeconds[27]   = { 1, 1, 1, 1, 1, 2, 40, 25, 3, 3 };
+static const uint16_t  kStockLifetimeFractions[27] = { 0, 0x8000, 0, 0x8000, 0x8000 };
+static XwauStockValues g_stock                     = {
+	kStockHullIcons,         4, kStockHullIcons, 4, kStockHardpointKinds, 40, kStockLifetimeSeconds,
+	kStockLifetimeFractions, 27
+};
 
 static XwauNameList list_of(const char* const* names, size_t count) {
 	return (XwauNameList) { names, 0, (int)count };
@@ -1729,12 +1734,15 @@ static void test_weapon_stats(const char* scratch) {
 	snprintf(path, sizeof path, "%s/hook_weapon_rate.dll", game);
 	write_file(path, "");
 	snprintf(path, sizeof path, "%s/FlightModels/default.ini", game);
-	write_file(path, "[WeaponHardpointTypes]\n1\n1\n[WeaponStats]\nWeapon280_Range = 65536\n");
+	write_file(path, "[WeaponHardpointTypes]\n1\n1\n[WeaponStats]\nWeapon280_Range = 65536\n"
+					 "Weapon282_DurationDecimalPart = 32768\n");
 	snprintf(path, sizeof path, "%s/FlightModels/Model.ini", game);
 	write_file(path, "[WeaponStats]\n"
 					 "My_Profile_Weapon282_Power = 900\n"
 					 "Weapon282_FireRate = 47\n"
 					 "Weapon282_Range = 65536\n"
+					 "Weapon282_DurationIntegerPart = 2\n"
+					 "Weapon289_DurationIntegerPart = 4\n"
 					 "Weapon282_Player_Easy_FireRate = 39\n"
 					 "weapon282_player_easy_power = 350\n"
 					 "Weapon282_FireRate = 50\n"
@@ -1764,9 +1772,9 @@ static void test_weapon_stats(const char* scratch) {
 						 "    \"my_profile\":\n"
 						 "      type_282: {power: 900}\n"
 						 "    default:\n"
-						 "      type_282: {fire_rate_ms: 188, range_m: 1600, player_easy: {power: 350, "
-						 "fire_rate_ms: 156}}\n"
-						 "      type_289: {precise: false, spread_mask: 63}\n"
+						 "      type_282: {duration_ms: 2360, fire_rate_ms: 188, range_m: 1600, "
+						 "player_easy: {power: 350, fire_rate_ms: 156}}\n"
+						 "      type_289: {duration_ms: 3776, precise: false, spread_mask: 63}\n"
 						 "  warhead_capacity_percent:\n"
 						 "    default: {space_bomb: 50, heavy_rocket: 0}\n"
 						 "  energy_speed_percent:\n"
@@ -1776,12 +1784,13 @@ static void test_weapon_stats(const char* scratch) {
 						 "  hardpoint_kinds: {none: none, turbo_rebel_laser: warhead, empire_laser: laser, "
 						 "turbo_empire_laser: laser}\n"),
 		  "weapon profiles: profile names with '_', the player and difficulty forms, the first of two keys, "
-		  "-1, Default and other keys left out, the times in milliseconds, the range in metres, the energy "
+		  "-1, Default and other keys left out, the two parts of a duration as one key, with the global "
+		  "or stock value for a missing part, the times in milliseconds, the range in metres, the energy "
 		  "in percent. The model's hardpoint "
 		  "kinds come before "
 		  "the global ones, and only the kinds that differ from the global kinds are written");
 	XwauWeaponStats_Free(&stats);
-	check(XwauWeaponStats_Read(game, NULL, &stats) && stats.count == 1 && stats.items[0].index == 280 &&
+	check(XwauWeaponStats_Read(game, NULL, &stats) && stats.count == 2 && stats.items[0].index == 280 &&
 			  stats.hardpoint_kind_count == 2,
 		  "weapon profiles: the global sections");
 	XwauWeaponStats_Free(&stats);
