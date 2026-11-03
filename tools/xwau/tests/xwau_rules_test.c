@@ -25,6 +25,7 @@
 #include "xwau_flight_settings.h"
 #include "xwau_game_files.h"
 #include "xwau_gunner_seats.h"
+#include "xwau_hangars.h"
 #include "xwau_mission_files.h"
 #include "xwau_mission_sounds.h"
 #include "xwau_mission_tie.h"
@@ -1225,6 +1226,70 @@ static void test_objects(const char* scratch) {
 }
 
 /* ---- Game files and mission files ----------------------------------------------- */
+
+/* ---- Hangars ----------------------------------------------------------------- */
+
+static void test_hangars(const char* scratch) {
+	char game[1024], mod[1024], path[1100];
+	snprintf(game, sizeof game, "%s/hangars_game", scratch);
+	snprintf(mod, sizeof mod, "%s/hangars_mod", scratch);
+	snprintf(path, sizeof path, "%s/FlightModels", game);
+	MakeDirs(path);
+	snprintf(path, sizeof path, "%s/flight", mod);
+	MakeDirs(path);
+	snprintf(path, sizeof path, "%s/FlightModels/Spacecraft0.LST", game);
+	write_file(path, "FlightModels\\Xwing.opt\r\n");
+	snprintf(path, sizeof path, "%s/FlightModels/Equipment0.LST", game);
+	write_file(path, "FlightModels\\HangarMonitor.opt\r\nFlightModels\\HangarCrane.opt\r\n");
+	FakeExe exe;
+	fake_exe_init(&exe);
+	fake_type(&exe, 1, 0, 0);
+	fake_equipment(&exe, 314, 0);
+	fake_equipment(&exe, 309, 1);
+	fake_exe_write(&exe, game);
+
+	snprintf(path, sizeof path, "%s/FlightModels/default.ini", game);
+	write_file(path, "[HangarObjects]\nLoadDroids = 0\nShuttleModelIndex = 0\nShuttlePositionX = 2048\n"
+					 "ShuttlePositionY = -4096\nHangarIff = -1\nPlayerFloorInvertedModelIndices = 1, 2\n"
+					 "[HangarMap]\n314, 0, 100, 200, 2147483647, 16384, 0\n"
+					 "309, 3, 4096, 0, -409, 32768, 0, NoPilot, 1\n"
+					 "[HangarCamera]\nKey1_X = 4096\n");
+	snprintf(path, sizeof path, "%s/FlightModels/Frigate.ini", game);
+	write_file(path, "[HangarObjects]\nLoadDroid1 = 1\nShuttlePositionX = 0\n"
+					 "[HangarObjects1]\nDroid2PositionZ = 409\n");
+
+	ClearReportFatal();
+	XwauGameTables* stock = XwauGameTables_Load(game);
+	check(stock && XwauHangars_Write(game, stock, &g_names, NULL, mod), "hangars: hangars.yaml is written");
+	XwauGameTables_Free(stock);
+	check(ReportFatalMessage() && strstr(ReportFatalMessage(), "ShuttlePositionX and ShuttlePositionY"),
+		  "hangars: a layer that sets only part of a position makes the import fail");
+	ClearReportFatal();
+
+	size_t size = 0;
+	snprintf(path, sizeof path, "%s/flight/hangars.yaml", mod);
+	char* text = ReadWholeFile(path, &size);
+	check(text &&
+			  strstr(text, "default:\n  hangar:\n    markings: command_ship\n  shuttle:\n    type: default\n"
+						   "    position_m: [50, -100]\n"),
+		  "hangars: the keys become settings in metres, and model index 0 is the stock shuttle");
+	check(text && strstr(text, "  droids:\n    - {enabled: false}\n    - {enabled: false}\n"),
+		  "hangars: LoadDroids turns both droids off");
+	check(text && strstr(text, "    inverted_floor_crafts: [type_1]\n"),
+		  "hangars: model indices become object types, and an index without a model is dropped");
+	check(text &&
+			  strstr(text,
+					 "  crane_arm: {type: type_309, markings: 3, position_m: [100, 0, -9.985], "
+					 "heading_degrees: 180, profile: \"NoPilot\", floor: inverted}\n"
+					 "  parked:\n    - {type: type_314, position_m: [2.441, 4.883], heading_degrees: 90}\n"),
+		  "hangars: the second map line is the crane arm, and a z of 2147483647 puts an object on the floor");
+	check(text && strstr(text, "  cameras:\n    key_1: [100, 0, 0]\n    key_2: [0, 0, 0]\n"),
+		  "hangars: a camera section gives every key that the hook reads");
+	check(text && strstr(text, "  frigate:\n    droids:\n      - {enabled: false}\n    by_iff:\n      1:\n"
+							   "        droids:\n          - {}\n          - {height_m: 9.985}\n"),
+		  "hangars: a droid's own key is combined with the key for both droids of the layers below");
+	free(text);
+}
 
 static bool same_file(const char* path, const char* text) {
 	size_t     size = 0;
@@ -2815,6 +2880,7 @@ int main(void) {
 	test_model(scratch);
 	test_text(scratch);
 	test_objects(scratch);
+	test_hangars(scratch);
 	test_game_files(scratch);
 	test_mission_files(scratch);
 	test_flight_settings(scratch);
