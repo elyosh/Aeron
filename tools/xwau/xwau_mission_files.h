@@ -4,34 +4,10 @@
 /*
  * Writes the selections of a mod's missions. Each mission with at least one
  * selection gets a file <out>/<dir>/<mission>.yaml (lower case). The game
- * reads it when it loads the mission:
- *
- *     resdata: ["planet2", "planetcustom", "backdrop_special"]
- *     settings:
- *       hide_hyperspace_exit_messages: true
- *       hide_friendly_arrival_messages: true
- *     model_swaps:
- *       superstardestroyer: superstardestroyerrecentered
- *     craft_names:
- *       containerbrick: { ship_list: "Imperial II Star Destroyer 70", short_name: "ISD" }
- *     concourse:
- *       front_planet: { position: [1276, 234], image: 15010 }
- *     headlights: true
- *     stats_profiles:
- *       models:
- *         escorttransport: { markings: { 0: "etrmod" } }
- *     flight_groups:
- *       1: { name: "Red 1", craft: xwing, markings: 4, warheads: { missile: 80 } }
- *       26: { name: "Red", craft: xwing, craft_markings: { 0: 0, 1: 1 } }
- *     object_profiles:
- *       flight_groups:
- *         32: { profile: "Aeron", name: "Aeron", craft: z95 }
- *     skins:
- *       "awing":
- *         0: "default_2 + ace"
- *     articulations:
- *       flight_groups:
- *         13: { name: "Red", craft: xwing, variant: "1b0m7fw_fg13", start: [sfoils] }
+ * reads it when it loads the mission. The file holds the mission's art,
+ * settings, model swaps, craft names, concourse planet, headlights, stats
+ * profiles, flight-group values, object profiles, skins and
+ * articulations.
  *
  * A `craft` check is the mod's object type name for the flight group's
  * craft type.

@@ -11,26 +11,9 @@
  *   - <output_dir>/hud.yaml holds the hull and map icons, and how the target
  *     display shows the target.
  *
- *   hud:
- *     reticle: {laser: 135, laser_in_range: 136}
- *     colors: {inner: 0xff5b5b5b, border: 0xffe5e5e5}
- *   engine_glows:
- *     6: {min_speed_mglt: 40}
- *   weapons:
- *     switch_by_iff: all
- *     rates: {decharge: 2, recharge: 3, cooldown: 47}
- *     colors:
- *       variant: {default: 3, ion_cannon: 1}
- *       impact: {rebel_laser: 0xff0000}
- *     by_markings:
- *       1: {variant: {default: 2}}
- *   shield: {per_generator_rate: 5, player_rate: 40, delay_seconds: 30}
- *   component_strength: {gun_turret: 18, shield_generator: 36}
- *   warhead_lock: {lock_ticks: 354, lock_range_m: {small: 2500}}
- *   jamming: {enabled: true, direction: down, range_m: none, rule: hangar_point}
- *   docking: {approach_height_m: 0}
- *   sound: {interior: awing, fly_by: slave, ambient: {offset_m: [0, 300, 0]}}
- *   cockpit_view: {wide_vertical_fov: 61.59}
+ * A model settings file has one group for each kind of setting: `hud`,
+ * `engine_glows`, `weapons`, `shield`, `component_strength`,
+ * `warhead_lock`, `jamming`, `docking`, `sound` and `cockpit_view`.
  *
  * Each group comes from FlightModels/<model><Name>.txt, or else from the
  * [<Name>] section of the model's INI, and is read the way the XWAU hook or

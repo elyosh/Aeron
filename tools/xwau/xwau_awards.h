@@ -7,20 +7,6 @@
  * (the mod importer's missions phase). They come from the text files that
  * hook_concourse reads in the game folder:
  *
- *     # Made by the OpenXWA mod importer.
- *     battle_medals:
- *       - { name: "Medal of Redemption" }
- *     kalidor:
- *       - { points: 7500, name: "First Initiate" }
- *     rank_thresholds: [7500, 15000, 25000]
- *     rating_thresholds: [100, 200, 350]
- *     mementos:
- *       images:
- *         7: "frontres\\medals\\LambdaModel.bmp"
- *       names:
- *         7: "Lambda Shuttle Model"
- *       lady_blue: { mission: 30 }
- *
  * - MedalsDescriptions.txt gives `battle_medals`;
  * - KalidorCrescentPoints.txt and KalidorCrescentDescriptions.txt give
  *   `kalidor`. The points are whole bonus points, as in the file;

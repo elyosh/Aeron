@@ -45,19 +45,11 @@
  * kind 0.
  *
  * A model's values go into the `weapons` group of its model file, and the
- * global values into the `weapons` section of flight/flight.yaml:
- *
- *   weapons:
- *     stats:
- *       default:
- *         rebel_laser: {range_m: 1600, fire_rate: 78}
- *         imperial_laser: {power: 250, player_easy: {power: 350}}
- *       "victory2b7m2r":
- *         turbolaser_green_light: {power: 900}
- *     warhead_capacity_percent: {default: {space_bomb: 50}}
- *     energy_speed_q16: {default: {player: 7864}}
- *     linking: {default: {laser_link: 2}}
- *     hardpoint_kinds: {custom_1: laser}
+ * global values into the `weapons` section of flight/flight.yaml. The
+ * [WeaponStats] lines go into `stats`, [WarheadStats] into
+ * `warhead_capacity_percent`, [EnergyStats] into `energy_speed_q16` and
+ * [LinkingStats] into `linking`, each by profile. [WeaponHardpointTypes]
+ * goes into `hardpoint_kinds`.
  *
  * The weapon types and warheads are written as names. `hardpoint_kinds` maps
  * hardpoint type names to none, laser or warhead. It only has the hardpoint
@@ -78,10 +70,8 @@
  * FlightModels/WeaponProfiles.txt or the section of
  * FlightModels/default.ini. WarheadProfiles, EnergyProfiles and
  * LinkingProfiles work the same way. The names go into the flight group's
- * entry in the mission file:
- *
- *   flight_groups:
- *     13: { name: "Devastator", craft: imperial_star_destroyer2, weapon_profile: "devastatorb7m2r" }
+ * entry in the mission file, as `weapon_profile`, `warhead_profile`,
+ * `energy_profile` and `linking_profile`.
  */
 
 #include <stdbool.h>

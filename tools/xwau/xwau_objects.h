@@ -47,26 +47,10 @@
  * which its MC80s load) keeps the stock model for the stock object types that
  * load it.
  *
- *   # Made by the OpenXWA mod importer.
- *   object_type: victory_star_destroyer2
- *   model: victorystardestroyer
- *   genus: starship
- *   family: craft
- *   flags: [player_targetable, ai_targetable, float_hardpoints]
- *   craft_record:
- *     hull: 16590
- *     lasers:
- *       - {type: rebel_laser_turbo, count: 2, kind: turret, range_m: 1600, cooldown: 236}
- *   sounds_like: tie_fighter
- *   beam_allowed: true
- *   names: {short: 'QF/Cr', long: 'Quasar Fire Carrier', plural: '...', gender: m}
- *
- *   # Made by the OpenXWA mod importer.
- *   craft_type: 124
- *   object_type: victory_star_destroyer2  # victorystardestroyer
- *   ship_list: {name: '...', category: fighter, flyable: true, known: true,
- *               skirmish: true, hidden: false, icon: [82, 10, 89, 18]}
- *   tech_room: {name: '...', description: '...'}
+ * An object type file holds the object type's model, genus, family, flags,
+ * craft record values, sound and beam settings, and names. A craft type
+ * file holds the craft type's object type, ship list line and tech room
+ * texts.
  *
  * The files use the game's names. `object_type` is the slot's stock name,
  * and `name` is the new name from XwauObjects_Rename. Other object types are

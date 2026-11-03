@@ -2,11 +2,8 @@
 #define AERON_XWAU_CONCOURSE_H
 
 /*
- * Imports the front planet of XWAU's hook_concourse into the `concourse`
- * section of the game's mission files (concourse_planet.h in the game):
- *
- *     concourse:
- *       front_planet: { position: [1276, 234], image: 15010 }
+ * Imports the front planet of XWAU's hook_concourse into
+ * `concourse.front_planet` in the game's mission files.
  *
  * hook_concourse reads three keys from <mission>_concourse.txt, or else
  * from the [concourse] section of <mission>.ini:

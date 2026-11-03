@@ -3,8 +3,7 @@
 
 /*
  * Writes XWAU's hangar settings, which hook_hangars reads at runtime, to
- * flight/hangars.yaml. This is the hangars phase of the mod importer. The
- * game reads the file in hangars.h, which describes its form.
+ * flight/hangars.yaml. This is the hangars phase of the mod importer.
  *
  * The layers come from these sources:
  *   - `default`: FlightModels/<Section>.txt, else [<Section>] of
@@ -87,12 +86,7 @@
  * [<Section>] of <mission>.ini or from <mission>_<Section>.txt. The mission
  * file is created when needed. When the mission's [Objects] lines swap the
  * mothership, `use_ship_settings` names the ship whose settings and hangar
- * model apply instead:
- *
- *     hangar:
- *       droids:
- *         - {markings: 2}
- *       use_ship_settings: { frigate2standard: frigate2carrier }
+ * model apply instead.
  */
 
 #include <stdbool.h>

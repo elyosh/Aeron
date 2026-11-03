@@ -11,14 +11,8 @@
  *   PositionX, PositionY, PositionZ, OrientationX, OrientationY, ArcX, ArcY, OptModel, IsInverted
  *   0, 19, 250, -16384, 16384, 12040, 17308, MillenniumFalcon2Gunner, 0
  *
- * The values go into the `gunner_seats` group of the model file:
- *
- *   gunner_seats:
- *     forward_fire: false
- *     seats:
- *       - {position_m: [0.464, 0, 6.104], mount_pitch_degrees: 90, mount_yaw_degrees: -90,
- *          aim_limit_pitch_degrees: 66.138, aim_limit_yaw_degrees: 95.076,
- *          cockpit: millenniumfalcon2gunner, inverted: false}
+ * The values go into the `seats` list of the `gunner_seats` group of the
+ * model file.
  *
  * The hook's value names don't match their meaning. They follow the order of
  * the craft record fields: PositionX is the record's y, PositionY its x,

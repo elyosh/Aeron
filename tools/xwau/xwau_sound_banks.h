@@ -9,22 +9,9 @@
  * type: hook_engine_sound, hook_hyperspace, hook_sfoils and hook_hangars.
  *
  * A bank is imported only if the installation has the hook that reads it.
- * The importer writes the banks to <output_dir>/sounds.yaml, with the game's
- * object type names:
- *
- *   banks:
- *     interior:                       # Wave/Sfx_Interior.lst
- *       unlisted: silent
- *       sounds:
- *         xwing: {file: 'Wave/Sfx_Interior/EngineIntXW.wav', volume: 76, distance_m: 200}
- *     weapon:
- *       unlisted: silent
- *       sounds:
- *         xwing:
- *           rebel_laser: {file: ...}
- *     weapon_range:
- *       sounds:
- *         range_0: {file: ...}
+ * The importer writes the banks to <output_dir>/sounds.yaml. Each bank
+ * lists its sounds by the game's object type names, with each sound's file,
+ * volume and distance.
  *
  * XWAU's hooks only use the entries within the list's line count. Within the
  * list, an entry without a sound is silent: lines such as "Unused", and

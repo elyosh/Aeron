@@ -4,14 +4,7 @@
 /*
  * Reads the object counts of hook_crafts_count and the WeaponsCount of
  * hook_weapon_rate, as the `object_limits` section of the game's
- * flight/flight.yaml and of a mission's file:
- *
- *   object_limits:
- *     craft_per_region: 3072
- *     player_projectiles: 128
- *     ai_projectiles_per_region: 1024
- *     explosions_per_region: 256
- *     radar_blips: 512
+ * flight/flight.yaml and of a mission's file.
  *
  * hook_crafts_count only changes the game when its settings say
  * IsHookEnabled = 1. They are in hook_crafts_count.cfg, or else in the

@@ -8,33 +8,10 @@
  * hook's .cfg file, else its section of Hooks.ini). Without any of them, the
  * file only has its header comment, and the game plays as stock.
  *
- *     backdrops:
- *       extra_planets:
- *         - { ids: [104, 255], image_groups: [6304, 6455] }
- *     rules:
- *       reset_combat_music_at_mission_load: true
- *       gunner_fires_selected_group: true
- *     mission_settings:
- *       warhead_collision_damage: false
- *     headlights:
- *       position_m: [0, 0, 20]
- *       color: [0.944, 0.944, 1]
- *       power_w: 1314756
- *       angle_degrees: 25
- *       auto_turn_on: true
- *     weapons:
- *       impact: {rebel_laser: 0xff0000}
- *       rates: {decharge: 4, cooldown: 47}
- *       decharge_percent: 100
- *     shield_recharge: {starships: true, starships_on_easy: false, rate_percent: 100}
- *     docking: {dock_to_small_sets_big: true, player_approach_height: true}
- *     camera: {exterior_lag: true, exterior_tilt: 10, cockpit_sway: true}
- *     suns: {procedural_sun: true, procedural_flare: true, flare_intensity: 3}
- *
  * The groups:
- *   - `extra_planets` comes with hook_backdrops.dll. A backdrop id N from 104
- *     to 255 then draws the planet of image group 6304 + (N - 104)
- *     (mission_backdrops.h in the game).
+ *   - `backdrops.extra_planets` comes with hook_backdrops.dll. A backdrop id
+ *     N from 104 to 255 then draws the planet of image group
+ *     6304 + (N - 104).
  *   - `rules` holds the rules that the hooks change in every mission. Most
  *     rules come from a hook DLL alone. Some depend on a setting of the hook,
  *     or on a text in the DLL that shows which build it is
@@ -54,9 +31,8 @@
  *     The factors are float32 values, written with enough digits to get the
  *     exact value back. WeaponsCount goes into the object counts
  *     (xwau_object_limits.h).
- *   - `shield_recharge` comes with hook_shield.dll (shield_recharge.h in the
- *     game). `docking` comes with hook_dock.dll, which changes how craft
- *     dock without any data.
+ *   - `shield_recharge` comes with hook_shield.dll. `docking` comes with
+ *     hook_dock.dll, which changes how craft dock without any data.
  *   - `camera` comes with Hook_CockpitLook.dll or hook_exterior.dll, and
  *     turns on the game's enhanced camera. Its values are converted from
  *     CockpitLook.cfg, with the hook's defaults for the keys it doesn't set.

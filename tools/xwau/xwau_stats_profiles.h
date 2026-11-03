@@ -2,19 +2,14 @@
 #define AERON_XWAU_STATS_PROFILES_H
 
 /*
- * XWAU's stats profiles (hook_mission_tie), as OpenXWA's `stats_profiles`
- * (stats_profiles.h in the game).
+ * XWAU's stats profiles (hook_mission_tie), as OpenXWA's `stats_profiles`.
  *
  * A model's profiles are the sections [StatsProfile_<name>] of
  * FlightModels/<Model>.ini, or the files
  * FlightModels/<Model>StatsProfile_<name>.txt, which win over a section of
  * the same name. A section counts whatever its case, and a missing or empty
- * one counts as missing. Each becomes one profile of the model file, named
- * <name> in lower case:
- *
- *   stats_profiles:
- *     default: {speed: 86, hull: 3045, has_shields: true}
- *     default_player_easy: {...}
+ * one counts as missing. Each becomes one profile of the model file's
+ * `stats_profiles` group, named <name> in lower case.
  *
  * The keys are read as hook_mission_tie reads them (std::stoi(value, 0, 0),
  * -1 means not set, the first line of a key wins) and converted to the
@@ -55,13 +50,10 @@
  * A negative percent other than -1 makes the import fail too.
  * <Model>_fg_<N> keys, which the hook doesn't read, and markings written
  * another way than the hook writes them (_fgc_02) are left out.
- * A model name with a space makes the import fail. They are written as:
- *
- *   stats_profiles:
- *     models:
- *       escorttransport: {player: x1, markings: {2: etrmod}, all: rebel}
- *     percent: {hull: 120}
- *     player_percent: {hull: 400}
+ * A model name with a space makes the import fail. The choices go into the
+ * `stats_profiles` group of the mission file: the profiles by model as
+ * `player`, `markings` and `all`, and the percents as `percent` and
+ * `player_percent`.
  */
 
 #include <stdbool.h>
