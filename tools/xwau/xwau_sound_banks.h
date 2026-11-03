@@ -16,7 +16,7 @@
  *     interior:                       # Wave/Sfx_Interior.lst
  *       unlisted: silent
  *       sounds:
- *         xwing: {file: 'Wave/Sfx_Interior/EngineIntXW.wav', volume: 76, distance: 8192}
+ *         xwing: {file: 'Wave/Sfx_Interior/EngineIntXW.wav', volume: 76, distance_m: 200}
  *     weapon:
  *       unlisted: silent
  *       sounds:
@@ -43,9 +43,10 @@
  *
  * Each list line is read the way the game reads it, after XWAU cuts it at
  * ';'. The file name ends at the first space or tab. Then come the volume in
- * decimal (127 if missing) and the distance in hex (8192 if missing). Like
- * the game, the hex reader only accepts the digits 0-9, a-f and F. A line
- * without a file name doesn't use a slot.
+ * decimal (127 if missing) and the distance in hex, in game units (8192 if
+ * missing). Like the game, the hex reader only accepts the digits 0-9, a-f
+ * and F. A line without a file name doesn't use a slot. sounds.yaml has the
+ * distance in metres.
  *
  * The WAV files go into DIR, with the same path as in the installation
  * (Wave/Sfx_Interior/EngineIntXW.wav). The game finds them whatever the

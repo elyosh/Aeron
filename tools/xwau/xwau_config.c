@@ -328,7 +328,9 @@ void Xwau_WriteDecimal(FILE* f, double value) {
 	fputs(strcmp(text, "-0") == 0 ? "0" : text, f);
 }
 
-void Xwau_WriteMetres(FILE* f, int units) { Xwau_WriteDecimal(f, units / 40.96); }
+double Xwau_Metres(double units) { return units / 40.96; }
+
+void Xwau_WriteMetres(FILE* f, int units) { Xwau_WriteDecimal(f, Xwau_Metres(units)); }
 
 void Xwau_WriteMetres3(FILE* f, int x, int y, int z) {
 	fputc('[', f);

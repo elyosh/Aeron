@@ -56,7 +56,7 @@
  *   craft_record:
  *     hull: 16590
  *     lasers:
- *       - {type: rebel_laser_turbo, count: 2, kind: turret, range: 65536, cooldown: 236}
+ *       - {type: rebel_laser_turbo, count: 2, kind: turret, range_m: 1600, cooldown: 236}
  *   sounds_like: tie_fighter
  *   beam_allowed: true
  *   names: {short: 'QF/Cr', long: 'Quasar Fire Carrier', plural: '...', gender: m}

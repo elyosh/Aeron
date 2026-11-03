@@ -26,9 +26,9 @@
  *       1: {variant: {default: 2}}
  *   shield: {per_generator_rate: 5, player_rate: 40, delay_seconds: 30}
  *   component_strength: {gun_turret: 18, shield_generator: 36}
- *   warhead_lock: {lock_ticks: 354, lock_range: {small: 102400}}
- *   jamming: {enabled: true, direction: down, range: none, rule: hangar_point}
- *   docking: {approach_height: 0}
+ *   warhead_lock: {lock_ticks: 354, lock_range_m: {small: 2500}}
+ *   jamming: {enabled: true, direction: down, range_m: none, rule: hangar_point}
+ *   docking: {approach_height_m: 0}
  *   sound: {interior: awing, fly_by: slave, ambient: {offset_m: [0, 300, 0]}}
  *   cockpit_view: {wide_vertical_fov: 61.59}
  *
@@ -52,8 +52,10 @@
  *   - `jamming` always has all four keys, because the hook's default for a
  *     missing key isn't the game's stock rule. A jamming distance below -1
  *     never jams, so it gives `enabled: false`.
- *   - `docking` gets 932 when the [Dock] section has no DockElevation, as in
- *     the hook.
+ *   - The lock ranges, the jamming distance and the docking approach height
+ *     are written in metres.
+ *   - `docking` gets 22.75 metres (932 game units) when the [Dock] section
+ *     has no DockElevation, as in the hook.
  *   - The ambient sound distances are written as right, up and forward in
  *     metres. An axis without a distance is null, and the game then uses the
  *     craft's size.

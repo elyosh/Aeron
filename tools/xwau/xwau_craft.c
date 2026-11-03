@@ -407,23 +407,24 @@ static void write_components(FILE* f, const XwauCraftComponents* components) {
 }
 
 /* The keys of [WarheadLock], their limits, and where each one goes in the
- * model file. */
+ * model file. The keys of a map are distances, which the model file has in
+ * metres. */
 static const struct {
 	const char* key;
 	long long   min, max;
 	const char* group; /* NULL for a key outside a map */
 	const char* name;
 } g_warheadLockKeys[XWAU_CRAFT_WARHEAD_LOCK_KEYS] = {
-	{ "LockDistance0", 0, INT_MAX, "lock_range", "small" },
-	{ "LockDistance1", 0, INT_MAX, "lock_range", "big" },
-	{ "LockDistance2", 0, INT_MAX, "lock_range", "transport" },
+	{ "LockDistance0", 0, INT_MAX, "lock_range_m", "small" },
+	{ "LockDistance1", 0, INT_MAX, "lock_range_m", "big" },
+	{ "LockDistance2", 0, INT_MAX, "lock_range_m", "transport" },
 	/* The HUD divides by LockTime / 200, and the lock ticks are 16-bit. */
 	{ "LockTime", 200, 32767, NULL, "lock_ticks" },
 	/* The game divides by it. */
 	{ "LockStrengthDivisor", 1, 32767, NULL, "ticks_per_homing_level" },
-	{ "AILockDistance0", 0, INT_MAX, "ai_lock_range", "small" },
-	{ "AILockDistance1", 0, INT_MAX, "ai_lock_range", "big" },
-	{ "AILockDistance2", 0, INT_MAX, "ai_lock_range", "big_top_tier" },
+	{ "AILockDistance0", 0, INT_MAX, "ai_lock_range_m", "small" },
+	{ "AILockDistance1", 0, INT_MAX, "ai_lock_range_m", "big" },
+	{ "AILockDistance2", 0, INT_MAX, "ai_lock_range_m", "big_top_tier" },
 	{ "AILockTimeFactor", 0, 65535, NULL, "ai_lock_ticks_per_tier" },
 };
 
@@ -503,7 +504,8 @@ static void write_warhead_lock_map(FILE* f, const XwauCraftWarheadLock* lock, co
 			continue;
 		if (first)
 			fprintf(f, "  %s: {", group);
-		fprintf(f, "%s%s: %d", first ? "" : ", ", g_warheadLockKeys[i].name, lock->value[i]);
+		fprintf(f, "%s%s: ", first ? "" : ", ", g_warheadLockKeys[i].name);
+		Xwau_WriteMetres(f, lock->value[i]);
 		first = false;
 	}
 	if (!first)
@@ -512,12 +514,12 @@ static void write_warhead_lock_map(FILE* f, const XwauCraftWarheadLock* lock, co
 
 void XwauCraft_WriteWarheadLock(FILE* f, const XwauCraftWarheadLock* lock) {
 	fputs("warhead_lock:\n", f);
-	write_warhead_lock_map(f, lock, "lock_range");
+	write_warhead_lock_map(f, lock, "lock_range_m");
 	for (int i = WARHEAD_LOCK_TIME; i < XWAU_CRAFT_WARHEAD_LOCK_KEYS; ++i) {
 		if (!g_warheadLockKeys[i].group && lock->value[i] >= 0)
 			fprintf(f, "  %s: %d\n", g_warheadLockKeys[i].name, lock->value[i]);
 	}
-	write_warhead_lock_map(f, lock, "ai_lock_range");
+	write_warhead_lock_map(f, lock, "ai_lock_range_m");
 }
 
 /* The values of JammingDirection and JammingBehavior, and their names in
@@ -588,11 +590,11 @@ void XwauCraft_WriteJamming(FILE* f, const XwauCraftJamming* jamming) {
 		return;
 	}
 	fprintf(f,
-			"jamming: {enabled: true, direction: %s, range: ", g_jammingDirectionNames[jamming->direction]);
+			"jamming: {enabled: true, direction: %s, range_m: ", g_jammingDirectionNames[jamming->direction]);
 	if (jamming->range < 0)
 		fputs("none", f);
 	else
-		fprintf(f, "%d", jamming->range);
+		Xwau_WriteMetres(f, jamming->range);
 	fprintf(f, ", rule: %s}\n", g_jammingRuleNames[jamming->rule]);
 }
 
@@ -626,7 +628,9 @@ void XwauCraft_ReadDock(const char* dock_txt, const char* ini, XwauCraftDock* do
 }
 
 void XwauCraft_WriteDock(FILE* f, const XwauCraftDock* dock) {
-	fprintf(f, "docking: {approach_height: %d}\n", dock->approach_height);
+	fputs("docking: {approach_height_m: ", f);
+	Xwau_WriteMetres(f, dock->approach_height);
+	fputs("}\n", f);
 }
 
 static const char* const g_engineSoundNames[] = { "xwing",   "ywing",     "awing",  "tie",

@@ -50,7 +50,7 @@
  *   weapons:
  *     stats:
  *       default:
- *         rebel_laser: {range: 65536, fire_rate: 78}
+ *         rebel_laser: {range_m: 1600, fire_rate: 78}
  *         imperial_laser: {power: 250, player_easy: {power: 350}}
  *       "victory2b7m2r":
  *         turbolaser_green_light: {power: 900}

@@ -74,7 +74,9 @@ void Xwau_WriteString(FILE* f, const char* text);
  * decimals are enough to get the exact game value back from a length in
  * metres or an angle in degrees. */
 void Xwau_WriteDecimal(FILE* f, double value);
-/* Writes a length in game units (40.96 per metre) as metres. */
+/* Converts a length in game units (40.96 per metre) to metres. */
+double Xwau_Metres(double units);
+/* Writes a length in game units as metres. */
 void Xwau_WriteMetres(FILE* f, int units);
 /* Writes [x, y, z] in game units as a list of metres. */
 void Xwau_WriteMetres3(FILE* f, int x, int y, int z);

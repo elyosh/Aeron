@@ -421,7 +421,9 @@ static void write_entry(FILE* f, const Entry* entry) {
 	}
 	fprintf(f, "{file: ");
 	Xwau_WriteString(f, entry->path);
-	fprintf(f, ", volume: %d, distance: %d}", entry->volume, entry->distance);
+	fprintf(f, ", volume: %d, distance_m: ", entry->volume);
+	Xwau_WriteMetres(f, entry->distance);
+	fputc('}', f);
 }
 
 /* Writes the entries of object type `type` in a bank with several entries

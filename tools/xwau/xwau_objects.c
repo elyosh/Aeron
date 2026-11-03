@@ -47,6 +47,7 @@ typedef enum FieldKind {
 	FIELD_BOOL,
 	FIELD_WEAPON,     /* written as a weapon type name; 0 is none */
 	FIELD_LASER_KIND, /* written as a laser group kind name */
+	FIELD_METRES,     /* a signed distance in game units, written in metres */
 } FieldKind;
 
 typedef struct Field {
@@ -85,7 +86,7 @@ static const Field g_fields[] = {
    laserGroupWeaponKind, laserGroupFireRange, laserGroupFireCooldownTicks. */
 static const Field g_laserFields[] = {
 	{ "type", 306, 2, FIELD_WEAPON },       { "count", 318, 1, FIELD_UNSIGNED },
-	{ "kind", 321, 1, FIELD_LASER_KIND },   { "range", 324, 4, FIELD_SIGNED },
+	{ "kind", 321, 1, FIELD_LASER_KIND },   { "range_m", 324, 4, FIELD_METRES },
 	{ "cooldown", 336, 2, FIELD_UNSIGNED },
 };
 
@@ -135,9 +136,10 @@ static long long field_value(const uint8_t* record, const Field* field, unsigned
 	uint32_t       value = 0;
 	for (unsigned i = 0; i < field->size; ++i)
 		value |= (uint32_t)p[i] << (8 * i);
-	if (field->kind == FIELD_SIGNED && field->size < 4 && (value & (1u << (8 * field->size - 1))))
+	const bool signed_kind = field->kind == FIELD_SIGNED || field->kind == FIELD_METRES;
+	if (signed_kind && field->size < 4 && (value & (1u << (8 * field->size - 1))))
 		value |= ~0u << (8 * field->size);
-	return field->kind == FIELD_SIGNED ? (long long)(int32_t)value : (long long)value;
+	return signed_kind ? (long long)(int32_t)value : (long long)value;
 }
 
 static bool field_differs(const uint8_t* a, const uint8_t* b, const Field* field, unsigned element) {
@@ -162,7 +164,9 @@ static void write_field(FILE* f, const XwauNames* names, const uint8_t* record, 
 	else if (field->kind == FIELD_WEAPON || field->kind == FIELD_LASER_KIND) {
 		ReportFatal(NULL, "the game has no name for %s %lld", field->key, value);
 		fputs("none", f);
-	} else
+	} else if (field->kind == FIELD_METRES)
+		Xwau_WriteMetres(f, (int)value);
+	else
 		fprintf(f, "%lld", value);
 }
 
@@ -372,7 +376,7 @@ static bool apply_exe_values(const char* game, XwauGameTables* tables, int* coun
 		tables->types[t][17] = (uint8_t)(flags >> 8);
 		uint8_t* r           = tables->records[record];
 		/* LaserTypeId, LaserSequence, LaserRange, LaserFireRatio: the `type`,
-		   `kind`, `range` and `cooldown` of a `lasers` entry. */
+		   `kind`, `range_m` and `cooldown` of a `lasers` entry. */
 		static const char* const kLaserKeys[]   = { "LaserTypeId", "LaserSequence", "LaserRange",
 													"LaserFireRatio" };
 		static const int         kLaserFields[] = { 0, 2, 3, 4 };

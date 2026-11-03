@@ -544,7 +544,8 @@ static bool write_camera(FILE* f, const char* game) {
 	 * Q16 units for each unit of lag, which is pi / 2 radians, and limits
 	 * the turn to external_max_inertia * external_inertia * 16384, which is
 	 * 90 degrees. Its eye offsets are in its own units, which
-	 * xwa_units_to_meters_scale turns into world units. */
+	 * xwa_units_to_meters_scale turns into game units, written here in
+	 * metres. */
 	const double lag = (double)c.cockpit_inertia * c.external_inertia;
 	fprintf(f, "  exterior_lag: %s\n", c.external_inertia_enabled ? "true" : "false");
 	const bool ext  = c.external_inertia_enabled;
@@ -554,12 +555,12 @@ static bool write_camera(FILE* f, const char* game) {
 						0.0, 15.0, ext);
 	write_camera_number(f, "exterior_tilt", -(double)c.external_tilt, -30.0, 30.0, true);
 	fprintf(f, "  cockpit_sway: %s\n", sway ? "true" : "false");
-	write_camera_number(f, "cockpit_sway_strength", (double)c.units_to_meters * c.cockpit_inertia, 0.0, 20.0,
-						sway);
-	write_camera_number(f, "cockpit_speed_sway", (double)c.units_to_meters * c.cockpit_speed_inertia, 0.0,
-						1.0, sway);
-	write_camera_number(f, "cockpit_sway_max", (double)c.units_to_meters * c.cockpit_max_inertia, 0.0, 10.0,
-						sway);
+	write_camera_number(f, "cockpit_sway_strength_m",
+						Xwau_Metres((double)c.units_to_meters * c.cockpit_inertia), 0.0, 0.5, sway);
+	write_camera_number(f, "cockpit_speed_sway_m",
+						Xwau_Metres((double)c.units_to_meters * c.cockpit_speed_inertia), 0.0, 0.025, sway);
+	write_camera_number(f, "cockpit_sway_max_m",
+						Xwau_Metres((double)c.units_to_meters * c.cockpit_max_inertia), 0.0, 0.25, sway);
 	fprintf(f, "  exterior_hud: %s\n", exterior ? "true" : "false");
 	return true;
 }

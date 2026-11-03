@@ -1213,7 +1213,7 @@ static void test_objects(const char* scratch) {
 	check(text && strstr(text, "object_type: type_2\nname: tie_advanced_x1\nmodel: tieadvancedx1\n"),
 		  "objects: a row that the mod renames gives `model`, and the slot is renamed after the mod's ship "
 		  "list");
-	check(text && strstr(text, "    - {type: type_282, count: 2, kind: none, range: 0, cooldown: 0}\n") &&
+	check(text && strstr(text, "    - {type: type_282, count: 2, kind: none, range_m: 0, cooldown: 0}\n") &&
 			  strstr(text, "  cockpit_name: 'TieAdvancedX1'\n") && strstr(text, "sounds_like: type_5\n"),
 		  "objects: the laser groups, the cockpit name and the engine sound case");
 	check(text && strstr(text, "names: {long: 'TIE Advanced x1', gender: m}\n") && !strstr(text, "ship_list"),
@@ -1247,13 +1247,14 @@ static void test_objects(const char* scratch) {
 	text = ReadWholeFile(path, &size);
 	check(text && strstr(text, "object_type: type_71\nflags: [player_targetable, ai_targetable]\n"),
 		  "objects: [ExeCraftValues] sets the object type's flags, and the file lists the flags that are on");
-	check(text && strstr(text, "  ai_hits_to_evade: 3\n") && !strstr(text, "countermeasures") &&
-			  strstr(text,
-					 "  lasers:\n    - {type: type_280, count: 0, kind: none, range: 1000, cooldown: 0}\n"
-					 "    - {type: type_283, count: 0, kind: long_range_turret, range: 0, cooldown: 0}\n") &&
-			  strstr(text, "  warheads:\n    - {type: type_286, count: 0, capacity: 0}\n"),
-		  "objects: [ExeCraftValues] sets the craft record; missing keys and values that aren't numbers keep "
-		  "the record's values");
+	check(
+		text && strstr(text, "  ai_hits_to_evade: 3\n") && !strstr(text, "countermeasures") &&
+			strstr(text,
+				   "  lasers:\n    - {type: type_280, count: 0, kind: none, range_m: 24.414, cooldown: 0}\n"
+				   "    - {type: type_283, count: 0, kind: long_range_turret, range_m: 0, cooldown: 0}\n") &&
+			strstr(text, "  warheads:\n    - {type: type_286, count: 0, capacity: 0}\n"),
+		"objects: [ExeCraftValues] sets the craft record; missing keys and values that aren't numbers keep "
+		"the record's values");
 	free(text);
 	snprintf(path, sizeof path, "%s/object_types/corvetteexplode.yaml", out);
 	text = ReadWholeFile(path, &size);
@@ -1731,6 +1732,7 @@ static void test_weapon_stats(const char* scratch) {
 	write_file(path, "[WeaponStats]\n"
 					 "My_Profile_Weapon282_Power = 900\n"
 					 "Weapon282_FireRate = 47\n"
+					 "Weapon282_Range = 65536\n"
 					 "Weapon282_Player_Easy_FireRate = 39\n"
 					 "weapon282_player_easy_power = 350\n"
 					 "Weapon282_FireRate = 50\n"
@@ -1756,23 +1758,26 @@ static void test_weapon_stats(const char* scratch) {
 	FILE* f = fopen(out, "wb");
 	XwauWeaponStats_Write(f, &g_names, &g_stock, "  ", &stats);
 	fclose(f);
-	check(same_file(out, "  stats:\n"
-						 "    \"my_profile\":\n"
-						 "      type_282: {power: 900}\n"
-						 "    default:\n"
-						 "      type_282: {fire_rate: 47, player_easy: {power: 350, fire_rate: 39}}\n"
-						 "      type_289: {precise: false, spread_mask: 63}\n"
-						 "  warhead_capacity_percent:\n"
-						 "    default: {space_bomb: 50, heavy_rocket: 0}\n"
-						 "  energy_speed_q16:\n"
-						 "    default: {player: 7864}\n"
-						 "  linking:\n"
-						 "    default: {laser_link: 2, prevent_player_linked_lasers_ion: true}\n"
-						 "  hardpoint_kinds: {none: none, turbo_rebel_laser: warhead, empire_laser: laser, "
-						 "turbo_empire_laser: laser}\n"),
-		  "weapon profiles: profile names with '_', the player and difficulty forms, the first of two keys, "
-		  "-1, Default and other keys left out, the energy in Q16. The model's hardpoint kinds come before "
-		  "the global ones, and only the kinds that differ from the global kinds are written");
+	check(
+		same_file(out,
+				  "  stats:\n"
+				  "    \"my_profile\":\n"
+				  "      type_282: {power: 900}\n"
+				  "    default:\n"
+				  "      type_282: {fire_rate: 47, range_m: 1600, player_easy: {power: 350, fire_rate: 39}}\n"
+				  "      type_289: {precise: false, spread_mask: 63}\n"
+				  "  warhead_capacity_percent:\n"
+				  "    default: {space_bomb: 50, heavy_rocket: 0}\n"
+				  "  energy_speed_q16:\n"
+				  "    default: {player: 7864}\n"
+				  "  linking:\n"
+				  "    default: {laser_link: 2, prevent_player_linked_lasers_ion: true}\n"
+				  "  hardpoint_kinds: {none: none, turbo_rebel_laser: warhead, empire_laser: laser, "
+				  "turbo_empire_laser: laser}\n"),
+		"weapon profiles: profile names with '_', the player and difficulty forms, the first of two keys, "
+		"-1, Default and other keys left out, the range in metres, the energy in Q16. The model's hardpoint "
+		"kinds come before "
+		"the global ones, and only the kinds that differ from the global kinds are written");
 	XwauWeaponStats_Free(&stats);
 	check(XwauWeaponStats_Read(game, NULL, &stats) && stats.count == 1 && stats.items[0].index == 280 &&
 			  stats.hardpoint_kind_count == 2,
@@ -2535,9 +2540,9 @@ static void test_stats_profiles(const char* scratch) {
 	XwauCraft_WriteWarheadLock(f, &lock);
 	fclose(f);
 	check(same_file(out,
-					"warhead_lock:\n  lock_range: {small: 102400, transport: 101805}\n  lock_ticks: 354\n"
+					"warhead_lock:\n  lock_range_m: {small: 2500, transport: 2485.474}\n  lock_ticks: 354\n"
 					"  ticks_per_homing_level: 118\n  ai_lock_ticks_per_tier: 400\n"
-					"  ai_lock_range: {big_top_tier: 101805}\n"),
+					"  ai_lock_range_m: {big_top_tier: 2485.474}\n"),
 		  "warhead lock: the keys go into the warhead_lock group");
 	write_file(path, "[WarheadLock]\nLockDistance0 = 90000\nLockStrengthDivisor = 0\nLockTime = 150\n"
 					 "LockTime_Fast = 300\n");
@@ -2567,7 +2572,7 @@ static void test_stats_profiles(const char* scratch) {
 	f = fopen(out, "wb");
 	XwauCraft_WriteJamming(f, &jamming);
 	fclose(f);
-	check(same_file(out, "jamming: {enabled: true, direction: down, range: none, rule: hangar_point}\n"),
+	check(same_file(out, "jamming: {enabled: true, direction: down, range_m: none, rule: hangar_point}\n"),
 		  "jamming: all four keys are written, with the hook's defaults for the missing ones");
 	write_file(path,
 			   "[Jamming]\nJammingDirection = down\nJammingDistance = 0x1000\nJammingBehavior = None ;off\n");
@@ -2599,7 +2604,7 @@ static void test_stats_profiles(const char* scratch) {
 	f = fopen(out, "wb");
 	XwauCraft_WriteDock(f, &dock);
 	fclose(f);
-	check(dock.has && same_file(out, "docking: {approach_height: 256}\n"),
+	check(dock.has && same_file(out, "docking: {approach_height_m: 6.25}\n"),
 		  "dock: DockElevation is the approach height, read in base 0");
 	write_file(path, "[Dock]\nOtherKey = 1\n");
 	XwauCraft_ReadDock(NULL, path, &dock);
@@ -2817,14 +2822,14 @@ static void test_sound_banks(const char* scratch) {
 	check(text &&
 			  strstr(text,
 					 "  interior: # Wave/Sfx_Interior.lst\n    unlisted: silent\n    sounds:\n"
-					 "      type_1: {file: \"Wave/Sfx_Interior/Engine.wav\", volume: 76, distance: 8192}\n"
-					 "      type_3: {file: \"Wave/Sfx_Interior/Deep.WAV\", volume: 127, distance: 8192}\n"),
+					 "      type_1: {file: \"Wave/Sfx_Interior/Engine.wav\", volume: 76, distance_m: 200}\n"
+					 "      type_3: {file: \"Wave/Sfx_Interior/Deep.WAV\", volume: 127, distance_m: 200}\n"),
 		  "sound banks: blank lines take no slot; Unused and missing files are silent, and so are the object "
 		  "types that the bank doesn't list");
 	check(text &&
 			  strstr(text, "  weapon: # Wave/Sfx_Weapon.lst\n    unlisted: silent\n    sounds:\n"
 						   "      type_1:\n        rebel_laser_turbo: {file: \"Wave/Sfx_Weapon/Laser.wav\", "
-						   "volume: 70, distance: 10240}\n") &&
+						   "volume: 70, distance_m: 250}\n") &&
 			  !strstr(text, "other") && !strstr(text, "s_foil"),
 		  "sound banks: the weapon bank has 10 weapon sound groups for each object type; a bank that no "
 		  "hook reads, or whose hook isn't installed, is left out");

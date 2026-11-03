@@ -43,7 +43,7 @@ static const char* const kStatNames[STATS] = {
 	"fire_rate",
 	"duration_offset",
 	"fire_ratio",
-	"range",
+	"range_m",
 	"precise",
 	"spread_mask",
 	"decharge_rate",
@@ -51,7 +51,7 @@ static const char* const kStatNames[STATS] = {
 	"high_power_charge",
 };
 
-enum { STAT_PRECISE = 10 };
+enum { STAT_RANGE = 9, STAT_PRECISE = 10 };
 
 /* The forms of a stat, in the order that the game numbers them. */
 static const char* const kForms[FORMS]     = { "",      "_Player",      "_Easy",          "_Medium",
@@ -481,6 +481,8 @@ static bool profile_seen(const XwauWeaponStats* stats, int group, const char* pr
 static void write_number(FILE* f, int stat, long long value) {
 	if (stat == STAT_PRECISE)
 		fputs(value ? "true" : "false", f);
+	else if (stat == STAT_RANGE)
+		Xwau_WriteMetres(f, (int)value);
 	else
 		fprintf(f, "%lld", value);
 }
