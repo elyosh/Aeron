@@ -5,17 +5,15 @@
  * The offline HDR environment baker: the bake modes of environment_bake,
  * which the mod importer also runs.
  *
- * Bake mode converts an equirectangular Radiance .hdr panorama, or, for the
- * mod importer, the six faces of an XWA Upgrade skybox folder (xwau_faces.h),
- * and an optional light list into BC6H KTX2 cubes and an `environments:`
- * entry. With --radiance-out, the input is a sky without suns and is also
+ * Bake mode converts an equirectangular Radiance .hdr panorama, or six cube
+ * faces, and an optional light list into BC6H KTX2 cubes and an
+ * `environments:` entry. With --radiance-out, the input is a sky without suns and is also
  * written as a radiance cube with box mips. Without it, the panorama is only
  * used for lighting (an enclosed space, such as a hangar). In both cases the
  * baker writes the Lambert irradiance / pi cube and the GGX cube with
  * roughness mips.
- * Overlay mode, which only the mod importer runs, converts an XWA Upgrade
- * overlay folder (six faces with alpha) into a BC7 sRGB cube whose colour is
- * premultiplied by alpha, for an environment's `overlay`.
+ * Overlay mode converts six cube faces with alpha into a BC7 sRGB cube
+ * whose colour is premultiplied by alpha, for an environment's `overlay`.
  * Diagnostic mode writes a labelled cube for checking orientation.
  * Sprite mode converts an HDR image to a KTX2 sun sprite. Capture mode
  * bakes a capture directory written by the game (six cube faces, sun
@@ -33,11 +31,17 @@
 #include <stdbool.h>
 #include <stdio.h>
 
+#include "cube_faces.h"
+
 /* The options of every mode. Each mode reads the ones that it uses. */
 typedef struct EnvBakeOptions {
 	const char* input;
-	const char* faces_dir;
-	const char* overlay_faces_dir;
+	const char* faces;         /* the prefix of the sky faces */
+	const char* overlay_faces; /* the prefix of the overlay faces */
+	/* Faces in memory, used instead of the files of `faces` or
+	   `overlay_faces`. */
+	const CubeFacePixels* face_pixels;
+	float                 ldr_intensity; /* multiplies PNG and JPEG sky faces */
 	const char* overlay_out;
 	const char* lights_input;
 	const char* name;
@@ -73,15 +77,15 @@ typedef enum EnvBakeResult {
 	ENV_BAKE_INVALID_OPTIONS = 2,
 } EnvBakeResult;
 
-/* Sets the default sizes, samples, sprite format and jobs, and clears the
- * rest. */
+/* Sets the default sizes, samples, sprite format, LDR intensity and jobs,
+ * and clears the rest. */
 void EnvBake_DefaultOptions(EnvBakeOptions* options);
 
-/* Bakes the sky panorama `input`, or the skybox folder `faces_dir`, into
- * the radiance, diffuse and specular cubes, and writes the environment
- * entry to `environment_out`, or to `environment_stream`. */
+/* Bakes the sky panorama `input`, or the sky faces `faces`, into the
+ * radiance, diffuse and specular cubes, and writes the environment entry to
+ * `environment_out`, or to `environment_stream`. */
 EnvBakeResult EnvBake_Sky(const EnvBakeOptions* options);
-/* Bakes the overlay folder `overlay_faces_dir` into `overlay_out`. */
+/* Bakes the overlay faces `overlay_faces` into `overlay_out`. */
 EnvBakeResult EnvBake_Overlay(const EnvBakeOptions* options);
 /* Bakes the probes job `probes_input`. */
 EnvBakeResult EnvBake_Probes(const EnvBakeOptions* options);

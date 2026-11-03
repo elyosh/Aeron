@@ -23,6 +23,9 @@ static void usage(void) {
 		"  environment_bake --input space.hdr --name NAME --diffuse-out P --specular-out P\n"
 		"                   [--lights-input lights.yaml] [--environment-out FILE] [--manifest-root DIR]\n"
 		"                   [--diffuse-size 32] [--specular-size 512] [--specular-samples 1024] [--jobs 8]\n"
+		"  environment_bake --faces PREFIX --name NAME --radiance-out P --diffuse-out P --specular-out P\n"
+		"                   [--ldr-intensity 1] and the other options of --input\n"
+		"  environment_bake --overlay-faces PREFIX --overlay-out P [--radiance-size 2048]\n"
 		"  environment_bake --diagnostic-faces out.ktx2 [--radiance-size 2048] [--jobs 8]\n"
 		"  environment_bake --sprite in.hdr --sprite-out out.ktx2 [--sprite-size 256]\n"
 		"                   [--sprite-format bc6h|rgba16f] [--jobs 8]\n"
@@ -35,6 +38,12 @@ static void usage(void) {
 		"frame: +X right, +Y up, -Z forward at the image centre. The light list is a\n"
 		"YAML map with a `directional_lights` sequence in the environment light schema.\n"
 		"Texture paths in the environment entry are relative to --manifest-root when given.\n"
+		"Cube faces are the files <prefix>_px, _nx, _py, _ny, _pz and _nz, each .hdr, .png\n"
+		"or .jpg. They are in the KTX2 order and in the authored frame, like the faces of a\n"
+		"capture, and are square and the same size. HDR faces are linear. PNG and JPEG faces\n"
+		"are sRGB, and --ldr-intensity multiplies them. Overlay faces are PNG or JPEG with\n"
+		"alpha. --diagnostic-faces writes a cube with a label on each face, which shows how\n"
+		"the faces are oriented.\n"
 		"A capture is baked into <bake root>/flight/environments/captured/<mission>/region_<n>/;\n"
 		"its environment.yaml and mapping.yaml are merged into the manifest by hand.\n"
 		"A probes job is a JSON object with the probe layout fields (the AERON_flight_model\n"
@@ -53,6 +62,15 @@ static bool parse_int(const char* text, int* out) {
 	return true;
 }
 
+static bool parse_positive_number(const char* text, float* out) {
+	char*        end   = NULL;
+	const double value = strtod(text, &end);
+	if (!text[0] || *end || !(value > 0.0) || value > 1e6)
+		return false;
+	*out = (float)value;
+	return true;
+}
+
 static bool parse_args(int argc, char** argv, EnvBakeOptions* o) {
 	EnvBake_DefaultOptions(o);
 	for (int i = 1; i < argc; i += 2) {
@@ -60,8 +78,17 @@ static bool parse_args(int argc, char** argv, EnvBakeOptions* o) {
 		const char*  value  = i + 1 < argc ? argv[i + 1] : NULL;
 		const char** text   = NULL;
 		int*         number = NULL;
+		float*       real   = NULL;
 		if (strcmp(arg, "--input") == 0)
 			text = &o->input;
+		else if (strcmp(arg, "--faces") == 0)
+			text = &o->faces;
+		else if (strcmp(arg, "--overlay-faces") == 0)
+			text = &o->overlay_faces;
+		else if (strcmp(arg, "--overlay-out") == 0)
+			text = &o->overlay_out;
+		else if (strcmp(arg, "--ldr-intensity") == 0)
+			real = &o->ldr_intensity;
 		else if (strcmp(arg, "--lights-input") == 0)
 			text = &o->lights_input;
 		else if (strcmp(arg, "--name") == 0)
@@ -120,6 +147,11 @@ static bool parse_args(int argc, char** argv, EnvBakeOptions* o) {
 			o->specular_size_given = true;
 		if (text) {
 			*text = value;
+		} else if (real) {
+			if (!parse_positive_number(value, real)) {
+				fprintf(stderr, "environment_bake: '%s' needs a positive number\n", arg);
+				return false;
+			}
 		} else if (!parse_int(value, number)) {
 			fprintf(stderr, "environment_bake: '%s' needs a non-negative integer\n", arg);
 			return false;
@@ -138,16 +170,19 @@ int main(int argc, char** argv) {
 		usage();
 		return 2;
 	}
-	const int modes = (o.input != NULL) + (o.diagnostic_out != NULL) + (o.sprite_input != NULL) +
-					  (o.capture_dir != NULL) + (o.probes_input != NULL);
+	const int modes = (o.input != NULL) + (o.faces != NULL) + (o.overlay_faces != NULL) +
+					  (o.diagnostic_out != NULL) + (o.sprite_input != NULL) + (o.capture_dir != NULL) +
+					  (o.probes_input != NULL);
 	if (modes != 1) {
-		fprintf(stderr,
-				"environment_bake: give exactly one of --input, --diagnostic-faces, --sprite, --capture or "
-				"--probes\n");
+		fprintf(
+			stderr,
+			"environment_bake: give exactly one of --input, --faces, --overlay-faces, --diagnostic-faces, "
+			"--sprite, --capture or --probes\n");
 		usage();
 		return 2;
 	}
-	const bool missing = o.sprite_input     ? !o.sprite_out
+	const bool missing = o.overlay_faces    ? !o.overlay_out
+						 : o.sprite_input   ? !o.sprite_out
 						 : o.capture_dir    ? !o.bake_root
 						 : o.probes_input   ? !o.cubes_out || !o.grid_out || !o.bake_out
 						 : o.diagnostic_out ? false
@@ -165,5 +200,7 @@ int main(int argc, char** argv) {
 		return EnvBake_Capture(&o);
 	if (o.probes_input)
 		return EnvBake_Probes(&o);
+	if (o.overlay_faces)
+		return EnvBake_Overlay(&o);
 	return EnvBake_Sky(&o);
 }

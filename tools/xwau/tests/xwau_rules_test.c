@@ -18,10 +18,13 @@
 #include <string.h>
 
 #include "classic_radiance.h"
+#include "envmap.h"
 #include "opt.h"
+#include "png_write.h"
 #include "util.h"
 #include "xwau_config.h"
 #include "xwau_craft.h"
+#include "xwau_cube_faces.h"
 #include "xwau_flight_settings.h"
 #include "xwau_game_files.h"
 #include "xwau_gunner_seats.h"
@@ -451,6 +454,78 @@ static void make_cube_folder(const char* root, const char* name, int files) {
 		snprintf(path, sizeof path, "%s/%s.%d.jpg", dir, name, f);
 		write_file(path, "");
 	}
+}
+
+/* Reads a cube folder of random faces, and checks that OpenXWA's cube read
+ * at a direction d gives XWAU's cube read at M d, with M = diag(1, 1, -1). */
+static void test_cube_faces(const char* scratch) {
+	enum { SIZE = 16, DIRECTIONS = 4096 };
+
+	char dir[1200], path[1400];
+	snprintf(dir, sizeof dir, "%s/cube_faces", scratch);
+	MakeDirs(dir);
+	uint32_t seed = 1;
+	uint8_t* xwau[6];
+	EnvCube  expected, converted;
+	bool     ok = envmap_cube_alloc(&expected, SIZE, 1) && envmap_cube_alloc(&converted, SIZE, 1);
+	for (int face = 0; face < 6; ++face) {
+		xwau[face] = (uint8_t*)malloc(SIZE * SIZE * 4);
+		for (int i = 0; i < SIZE * SIZE * 4; ++i) {
+			seed          = seed * 1664525u + 1013904223u;
+			xwau[face][i] = i % 4 == 3 ? 255 : (uint8_t)(seed >> 24);
+		}
+		for (int i = 0; ok && i < SIZE * SIZE; ++i)
+			for (int c = 0; c < 3; ++c)
+				expected.faces[0][face][i * 3 + c] = xwau[face][i * 4 + c] / 255.0f;
+		snprintf(path, sizeof path, "%s/sky_%d.png", dir, face);
+		write_png_rgba(path, SIZE, SIZE, xwau[face]);
+	}
+	XwauCubeFaces faces;
+	char          err[512] = "";
+	ok                     = ok && XwauCubeFaces_Read(dir, &faces, err, sizeof err) && faces.size == SIZE;
+	for (int face = 0; ok && face < 6; ++face)
+		for (int i = 0; i < SIZE * SIZE; ++i)
+			for (int c = 0; c < 3; ++c)
+				converted.faces[0][face][i * 3 + c] = faces.rgba[face][i * 4 + c] / 255.0f;
+	double worst     = 0.0;
+	int    different = 0;
+	for (int i = 0; ok && i < DIRECTIONS; ++i) {
+		float d[3];
+		for (int k = 0; k < 3; ++k) {
+			seed = seed * 1664525u + 1013904223u;
+			d[k] = (float)(seed >> 8) / (float)(1u << 23) - 1.0f;
+		}
+		const float m[3] = { d[0], d[1], -d[2] };
+		float       a[3], b[3], c[3];
+		envmap_sample(&converted, d, 0.0f, a);
+		envmap_sample(&expected, m, 0.0f, b);
+		envmap_sample(&expected, d, 0.0f, c);
+		for (int k = 0; k < 3; ++k) {
+			worst = fmax(worst, fabs((double)a[k] - b[k]));
+			different += fabsf(a[k] - c[k]) > 1e-3f;
+		}
+	}
+	/* The cube must not look the same from d and from M d, or the check
+	   would prove nothing. */
+	check(ok && worst <= 1e-5 && different > 0, "cube faces: XWAU's faces are renamed and mirrored");
+	if (ok)
+		XwauCubeFaces_Free(&faces);
+
+	snprintf(path, sizeof path, "%s/sky_5.png", dir);
+	remove(path);
+	check(!XwauCubeFaces_Read(dir, &faces, err, sizeof err) && strstr(err, "exactly six files"),
+		  "cube faces: a folder without six files is rejected");
+	write_png_rgba(path, SIZE, SIZE, xwau[5]);
+	snprintf(path, sizeof path, "%s/sky_4.png", dir);
+	char other[1400];
+	snprintf(other, sizeof other, "%s/sky.png", dir);
+	rename(path, other);
+	check(!XwauCubeFaces_Read(dir, &faces, err, sizeof err) && strstr(err, "no face digit"),
+		  "cube faces: a file without a face digit is rejected");
+	for (int face = 0; face < 6; ++face)
+		free(xwau[face]);
+	envmap_cube_free(&expected);
+	envmap_cube_free(&converted);
 }
 
 /* Whether the environment `name` of `manifest` holds `text`. */
@@ -2876,6 +2951,7 @@ int main(void) {
 	test_skins(scratch);
 	test_skybox_rotation();
 	test_skyboxes(scratch);
+	test_cube_faces(scratch);
 	test_craft(scratch);
 	test_model(scratch);
 	test_text(scratch);

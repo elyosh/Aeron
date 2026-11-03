@@ -1116,6 +1116,7 @@ if(AERON_BUILD_TOOLS)
     add_library(xwau_import_lib STATIC
         tools/xwau/xwau_awards.c
         tools/xwau/xwau_craft.c
+        tools/xwau/xwau_cube_faces.c
         tools/xwau/xwau_flight_settings.c
         tools/xwau/xwau_game_files.c
         tools/xwau/xwau_hangars.c
@@ -1129,12 +1130,12 @@ if(AERON_BUILD_TOOLS)
         tools/xwau/xwau_stats_profiles.c
         tools/xwau/xwau_text.c
         tools/xwau/xwau_weapon_stats.c)
-    target_link_libraries(xwau_import_lib PUBLIC xwau_files PRIVATE aeron_flight_model)
+    target_link_libraries(xwau_import_lib PUBLIC xwau_files PRIVATE aeron_flight_model imgbake)
 
-    # Tests the hook file rules, the skin selection and the skybox rotations
-    # on fixed texts.
+    # Tests the hook file rules, the skin selection, the skybox rotations and
+    # the cube faces on fixed texts and images.
     add_executable(xwau_rules_test tools/xwau/tests/xwau_rules_test.c)
-    target_link_libraries(xwau_rules_test PRIVATE xwau_import_lib)
+    target_link_libraries(xwau_rules_test PRIVATE xwau_import_lib imgbake)
     set_target_properties(xwau_rules_test PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
 
