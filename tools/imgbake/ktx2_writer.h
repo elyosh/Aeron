@@ -14,8 +14,10 @@
  *                  143 BC6H_UFLOAT_BLOCK, 145 BC7_UNORM_BLOCK,
  *                  146 BC7_SRGB_BLOCK }. The SRGB variants are used
  *     when requested so the GPU can decode sRGB at sample time.
- *   - DFD/KVD/SGD blocks: empty (offset=0, length=0). Some external
- *     validators warn about these omitted optional metadata blocks.
+ *   - A basic data format descriptor for the format. Its flags say
+ *     whether the colour is premultiplied by alpha, which the runtime
+ *     checks on 2D images.
+ *   - KVD/SGD blocks: empty (offset=0, length=0).
  */
 #ifndef IMGBAKE_KTX2_WRITER_H
 #define IMGBAKE_KTX2_WRITER_H
@@ -86,9 +88,10 @@ typedef enum {
  * covers a few pixels on screen. Uncompressed chains go down to 1×1. */
 bool ktx2_block_chain_continues(int width, int height);
 
-/* Write an uncompressed RGBA8 KTX2 with the given mip chain. */
+/* Write an uncompressed RGBA8 KTX2 with the given mip chain. `alpha` says
+ * how the levels store alpha, which the descriptor records. */
 bool write_ktx2_rgba_mips(const char* path, const Ktx2WriteLevel* levels, int level_count, Ktx2TransferFn tf,
-						  bool zstd);
+						  bool zstd, Ktx2AlphaEncoding alpha);
 
 /* Write explicit levels, for content whose mips are not a box chain
  * (prefiltered environment cubes). `face_count` is 1 or 6; `layer_count`
@@ -104,13 +107,13 @@ bool write_ktx2_rgba16f_levels(const char* path, int face_count, int layer_count
 							   const Ktx2WriteLevel* levels, int level_count, bool zstd);
 /*   - bc7: BC7 blocks (16 bytes per 4×4), from bc7_codec_encode_image. */
 bool write_ktx2_bc7_levels(const char* path, int face_count, int layer_count, const Ktx2WriteLevel* levels,
-						   int level_count, Ktx2TransferFn tf, bool zstd);
+						   int level_count, Ktx2TransferFn tf, bool zstd, Ktx2AlphaEncoding alpha);
 
 /* Write a BC7-compressed KTX2. Each level's `data` must already be
  * a packed BC7 block stream (16 bytes per 4×4 block, ceil(w/4) ×
  * ceil(h/4) blocks). Use bc7_codec_encode_image to produce them. */
 bool write_ktx2_bc7_mips(const char* path, const Ktx2WriteLevel* levels, int level_count, Ktx2TransferFn tf,
-						 bool zstd);
+						 bool zstd, Ktx2AlphaEncoding alpha);
 
 /* Convenience: encode an RGBA8 base image with bc7_codec, generate a
  * mip chain via 2× box downsample, write the result as BC7 KTX2.

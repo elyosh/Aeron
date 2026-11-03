@@ -54,6 +54,7 @@ struct Ktx2 {
 	int                layer_count; /* header layerCount: 0 = not an array */
 	bool               block_compressed;
 	int                bytes_per_block;
+	bool               premultiplied; /* the descriptor's flags say so */
 	/* Per-level views. For supercompressionScheme=0 these point into
 	 * `blob`. For scheme=2 (zstd) each level owns a freshly-allocated
 	 * decompressed buffer (`level_owned[i]`) and `levels[i].data`
@@ -221,7 +222,9 @@ static Ktx2* ktx2_parse_bytes(const uint8_t* bytes, size_t blob_size, const char
 	uint32_t faceCount              = rd_u32_le(p + 24);
 	uint32_t levelCount             = rd_u32_le(p + 28);
 	uint32_t supercompressionScheme = rd_u32_le(p + 32);
-	/* dfd, kvd, sgd indices follow; ignored. */
+	uint32_t dfdByteOffset          = rd_u32_le(p + 36);
+	uint32_t dfdByteLength          = rd_u32_le(p + 40);
+	/* kvd and sgd indices follow; ignored. */
 
 	AeronTextureFormat fmt;
 	bool               block_compressed;
@@ -396,6 +399,10 @@ static Ktx2* ktx2_parse_bytes(const uint8_t* bytes, size_t blob_size, const char
 	k->layer_count      = (int)layerCount;
 	k->block_compressed = block_compressed;
 	k->bytes_per_block  = bytes_per_block;
+	/* The flags are in the first descriptor block, after the total size
+	   and two header words. */
+	k->premultiplied    = dfdByteLength >= 16 && (uint64_t)dfdByteOffset + dfdByteLength <= blob_size &&
+						  (blob[dfdByteOffset + 15] & 1u) != 0;
 	k->levels           = levels;
 	k->level_owned      = level_owned;
 	if (status)
@@ -437,6 +444,25 @@ void ktx2_close(Ktx2* k) {
 }
 
 AeronTextureFormat ktx2_format(const Ktx2* k) { return k ? k->format : AERON_TEXTURE_FORMAT_UNKNOWN; }
+
+bool ktx2_premultiplied(const Ktx2* k) { return k && k->premultiplied; }
+
+bool ktx2_has_alpha(const Ktx2* k) {
+	switch (k ? k->format : AERON_TEXTURE_FORMAT_UNKNOWN) {
+		case AERON_TEXTURE_FORMAT_RGBA8_UNORM:
+		case AERON_TEXTURE_FORMAT_RGBA8_SRGB:
+		case AERON_TEXTURE_FORMAT_RGBA16_FLOAT:
+		case AERON_TEXTURE_FORMAT_BC1_RGBA_UNORM:
+		case AERON_TEXTURE_FORMAT_BC1_RGBA_SRGB:
+		case AERON_TEXTURE_FORMAT_BC3_RGBA_UNORM:
+		case AERON_TEXTURE_FORMAT_BC3_RGBA_SRGB:
+		case AERON_TEXTURE_FORMAT_BC7_RGBA_UNORM:
+		case AERON_TEXTURE_FORMAT_BC7_RGBA_SRGB:
+			return true;
+		default:
+			return false;
+	}
+}
 
 int ktx2_width(const Ktx2* k) { return k ? k->width : 0; }
 

@@ -696,7 +696,8 @@ static int run_overlay(const EnvBakeOptions* o) {
 	}
 	if (!ok)
 		ToolLog_Write(TOOL_LOG_ERROR, "environment_bake: out of memory");
-	else if (!(ok = write_ktx2_bc7_levels(o->overlay_out, 6, 0, levels, level_count, KTX2_TF_SRGB, true)))
+	else if (!(ok = write_ktx2_bc7_levels(o->overlay_out, 6, 0, levels, level_count, KTX2_TF_SRGB, true,
+										  KTX2_ALPHA_PREMULTIPLIED)))
 		ToolLog_Write(TOOL_LOG_ERROR, "environment_bake: cannot write %s", o->overlay_out);
 	else
 		ToolLog_Write(TOOL_LOG_DETAIL, "overlay %s: %d px BC7 sRGB cube, %d levels", o->overlay_out, size,

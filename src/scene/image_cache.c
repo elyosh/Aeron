@@ -103,6 +103,20 @@ static const AeronImageCacheEntry* cache_insert(AeronImageCache* a, const char* 
 	return &ne->pub;
 }
 
+/* The 2D images are drawn with premultiplied alpha. An image with alpha
+ * whose file doesn't say that its colour is premultiplied would draw with
+ * dark edges, so it isn't loaded. */
+static bool check_alpha_is_premultiplied(const Ktx2* ktx, const char* path) {
+	if (!ktx2_has_alpha(ktx) || ktx2_premultiplied(ktx))
+		return true;
+	Aeron_LogError(
+		"aeron.scene",
+		"%s: the image has alpha, but its file doesn't say that its colour is premultiplied by alpha. "
+		"It isn't loaded",
+		path);
+	return false;
+}
+
 /* ---------- KTX2 → AeronTexture upload ----------
  *
  * The create-texture + per-mip upload lives in Aeron_ImageUploadKtx2();
@@ -113,6 +127,10 @@ static const AeronImageCacheEntry* load_via_ktx2(AeronImageCache* a, AeronComman
 	Ktx2* k = ktx2_open(path);
 	if (!k)
 		return NULL;
+	if (!check_alpha_is_premultiplied(k, path)) {
+		ktx2_close(k);
+		return NULL;
+	}
 
 	int           w   = ktx2_width(k);
 	int           h   = ktx2_height(k);
@@ -161,7 +179,8 @@ const AeronImageCacheEntry* Aeron_ImageCacheLoadVfs(AeronImageCache* cache, Aero
 	if (!AeronVfs_ReadAll(vfs, root, path, max_size, &bytes, &size))
 		return NULL;
 	Ktx2* ktx = ktx2_open_mem(bytes, size, path);
-	if (!ktx) {
+	if (!ktx || !check_alpha_is_premultiplied(ktx, path)) {
+		ktx2_close(ktx);
 		free(bytes);
 		return NULL;
 	}

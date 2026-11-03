@@ -98,6 +98,113 @@ static int format_block_bytes(uint32_t vk) {
 	return vk == VK_FORMAT_R16G16B16A16_SFLOAT ? 8 : 4;
 }
 
+/* ---------- data format descriptor ----------
+ *
+ * Each file gets a Khronos basic data format descriptor for its format, as
+ * the KTX2 specification asks. Its flags say whether the colour is
+ * premultiplied by alpha. */
+
+enum {
+	KHR_DF_MODEL_RGBSDA       = 1,
+	KHR_DF_MODEL_BC5          = 132,
+	KHR_DF_MODEL_BC6H         = 133,
+	KHR_DF_MODEL_BC7          = 134,
+	KHR_DF_PRIMARIES_BT709    = 1,
+	KHR_DF_TRANSFER_LINEAR    = 1,
+	KHR_DF_TRANSFER_SRGB      = 2,
+	KHR_DF_FLAG_PREMULTIPLIED = 1,
+	KHR_DF_CHANNEL_ALPHA      = 15,
+	KHR_DF_SAMPLE_LINEAR      = 0x10,
+	KHR_DF_SAMPLE_SIGNED      = 0x40,
+	KHR_DF_SAMPLE_FLOAT       = 0x80,
+	KHR_DF_VERSION_1_3        = 2,
+	KHR_DF_BASIC_HEADER_BYTES = 24,
+	KHR_DF_SAMPLE_BYTES       = 16,
+	KHR_DF_MAX_SAMPLES        = 4,
+};
+
+typedef struct DfdSample {
+	uint16_t bit_offset;
+	uint8_t  bit_length; /* bits - 1 */
+	uint8_t  channel;    /* channel type and qualifiers */
+	uint32_t lower, upper;
+} DfdSample;
+
+/* Writes the descriptor of `vk` into `out` when it isn't NULL, and returns
+ * its size in bytes, with the total size that starts it. Returns 0 for a
+ * format that the writer doesn't know. */
+static size_t write_data_format_descriptor(uint8_t* out, uint32_t vk, bool premultiplied) {
+	const bool srgb       = vk == VK_FORMAT_R8G8B8A8_SRGB || vk == VK_FORMAT_BC7_SRGB_BLOCK;
+	const bool compressed = format_is_bc_4x4_16b(vk);
+	DfdSample  samples[KHR_DF_MAX_SAMPLES];
+	int        count = 0;
+	uint8_t    model = KHR_DF_MODEL_RGBSDA;
+	switch (vk) {
+		case VK_FORMAT_R8G8B8A8_UNORM:
+		case VK_FORMAT_R8G8B8A8_SRGB:
+			for (int c = 0; c < 4; ++c) {
+				const uint8_t channel = c < 3 ? (uint8_t)c : KHR_DF_CHANNEL_ALPHA;
+				samples[count++] =
+					(DfdSample) { (uint16_t)(c * 8), 7,
+								  (uint8_t)(channel | (c == 3 && srgb ? KHR_DF_SAMPLE_LINEAR : 0)), 0, 255 };
+			}
+			break;
+		case VK_FORMAT_R16G16B16A16_SFLOAT:
+			for (int c = 0; c < 4; ++c) {
+				const uint8_t channel = c < 3 ? (uint8_t)c : KHR_DF_CHANNEL_ALPHA;
+				samples[count++] =
+					(DfdSample) { (uint16_t)(c * 16), 15,
+								  (uint8_t)(channel | KHR_DF_SAMPLE_FLOAT | KHR_DF_SAMPLE_SIGNED),
+								  0xBF800000u, 0x3F800000u };
+			}
+			break;
+		case VK_FORMAT_BC5_UNORM_BLOCK:
+			model            = KHR_DF_MODEL_BC5;
+			samples[count++] = (DfdSample) { 0, 63, 0, 0, 0xFFFFFFFFu };
+			samples[count++] = (DfdSample) { 64, 63, 1, 0, 0xFFFFFFFFu };
+			break;
+		case VK_FORMAT_BC6H_UFLOAT_BLOCK:
+			model            = KHR_DF_MODEL_BC6H;
+			samples[count++] = (DfdSample) { 0, 127, KHR_DF_SAMPLE_FLOAT, 0, 0x3F800000u };
+			break;
+		case VK_FORMAT_BC6H_SFLOAT_BLOCK:
+			model = KHR_DF_MODEL_BC6H;
+			samples[count++] =
+				(DfdSample) { 0, 127, KHR_DF_SAMPLE_FLOAT | KHR_DF_SAMPLE_SIGNED, 0xBF800000u, 0x3F800000u };
+			break;
+		case VK_FORMAT_BC7_UNORM_BLOCK:
+		case VK_FORMAT_BC7_SRGB_BLOCK:
+			model            = KHR_DF_MODEL_BC7;
+			samples[count++] = (DfdSample) { 0, 127, 0, 0, 0xFFFFFFFFu };
+			break;
+		default:
+			return 0;
+	}
+	const size_t block = KHR_DF_BASIC_HEADER_BYTES + (size_t)count * KHR_DF_SAMPLE_BYTES;
+	if (!out)
+		return 4 + block;
+	memset(out, 0, 4 + block);
+	wr_u32(out, (uint32_t)(4 + block));
+	uint8_t* b = out + 4;
+	wr_u32(b + 0, 0); /* vendor Khronos, basic descriptor type */
+	wr_u32(b + 4, KHR_DF_VERSION_1_3 | (uint32_t)block << 16);
+	b[8]  = model;
+	b[9]  = KHR_DF_PRIMARIES_BT709;
+	b[10] = srgb ? KHR_DF_TRANSFER_SRGB : KHR_DF_TRANSFER_LINEAR;
+	b[11] = premultiplied ? KHR_DF_FLAG_PREMULTIPLIED : 0;
+	b[12] = compressed ? 3 : 0; /* texel block size - 1 */
+	b[13] = compressed ? 3 : 0;
+	b[16] = (uint8_t)format_block_bytes(vk);
+	for (int s = 0; s < count; ++s) {
+		uint8_t* q = b + KHR_DF_BASIC_HEADER_BYTES + (size_t)s * KHR_DF_SAMPLE_BYTES;
+		wr_u32(q, samples[s].bit_offset | (uint32_t)samples[s].bit_length << 16 |
+					  (uint32_t)samples[s].channel << 24);
+		wr_u32(q + 8, samples[s].lower);
+		wr_u32(q + 12, samples[s].upper);
+	}
+	return 4 + block;
+}
+
 /* Compute the bytes for a level at (w, h) for a given format. Block
  * formats round up to block dim. */
 static size_t level_bytes(uint32_t vk, int w, int h) {
@@ -153,7 +260,8 @@ static uint8_t* downsample_alpha_encoded_rgba8(const uint8_t* source, int width,
  * pre-concatenates the 6 face slabs into each level's `.data`; we just
  * see one bigger blob per level and tag faceCount=6 in the header. */
 static uint8_t* build_ktx2_buf(uint32_t vkFormat, int face_count, int layer_count,
-							   const Ktx2WriteLevel* levels, int level_count, bool zstd, size_t* out_size) {
+							   const Ktx2WriteLevel* levels, int level_count, bool zstd, bool premultiplied,
+							   size_t* out_size) {
 	if (!levels || level_count <= 0 || !out_size)
 		return NULL;
 	if (face_count != 1 && face_count != 6)
@@ -200,19 +308,25 @@ static uint8_t* build_ktx2_buf(uint32_t vkFormat, int face_count, int layer_coun
 	 *   [0,     12)   magic
 	 *   [12,    80)   header (17×4 = 68 bytes)
 	 *   [80,    80 + N*24)   level index (N = level_count)
+	 *   [aligned to 4)  data format descriptor
 	 *   [aligned)     mip data (smallest-first). For raw payloads each
 	 *                 level is aligned to the format's texel-block
-	 *                 size (KTX2 §3.9.6). For zstd payloads alignment
-	 *                 doesn't matter — the compressed bytes are
-	 *                 opaque — but we keep the format-block alignment
-	 *                 anyway for consistency.
+	 *                 size (KTX2 §3.9.6). zstd payloads are not
+	 *                 aligned, as the specification asks.
 	 *
-	 * DFD/KVD/SGD: omitted (offset=0, length=0). The runtime reader
-	 * skips them; external validators may warn. */
+	 * KVD/SGD: omitted (offset=0, length=0). */
 
-	size_t  header_end   = 80 + (size_t)level_count * 24u;
-	size_t  cursor       = header_end;
-	size_t  align        = (size_t)format_block_bytes(vkFormat);
+	const size_t dfd_size = write_data_format_descriptor(NULL, vkFormat, premultiplied);
+	if (dfd_size == 0) {
+		for (int i = 0; i < level_count; i++)
+			free(encoded[i]);
+		free(encoded);
+		free(encoded_sz);
+		return NULL;
+	}
+	size_t  dfd_offset   = align_up(80 + (size_t)level_count * 24u, 4);
+	size_t  cursor       = dfd_offset + dfd_size;
+	size_t  align        = zstd ? 1u : (size_t)format_block_bytes(vkFormat);
 	size_t* level_offset = (size_t*)calloc(level_count, sizeof *level_offset);
 	if (!level_offset) {
 		for (int i = 0; i < level_count; i++)
@@ -252,8 +366,8 @@ static uint8_t* build_ktx2_buf(uint32_t vkFormat, int face_count, int layer_coun
 	wr_u32(h + 24, (uint32_t)face_count);       /* faceCount (1 or 6) */
 	wr_u32(h + 28, (uint32_t)level_count);      /* levelCount */
 	wr_u32(h + 32, zstd ? 2u : 0u);             /* supercompressionScheme */
-	wr_u32(h + 36, 0);                          /* dfdByteOffset */
-	wr_u32(h + 40, 0);                          /* dfdByteLength */
+	wr_u32(h + 36, (uint32_t)dfd_offset);       /* dfdByteOffset */
+	wr_u32(h + 40, (uint32_t)dfd_size);         /* dfdByteLength */
 	wr_u32(h + 44, 0);                          /* kvdByteOffset */
 	wr_u32(h + 48, 0);                          /* kvdByteLength */
 	wr_u64(h + 52, 0);                          /* sgdByteOffset */
@@ -269,6 +383,7 @@ static uint8_t* build_ktx2_buf(uint32_t vkFormat, int face_count, int layer_coun
 		wr_u64(li + 16, (uint64_t)levels[i].size);
 	}
 
+	write_data_format_descriptor(buf + dfd_offset, vkFormat, premultiplied);
 	for (int i = 0; i < level_count; i++)
 		memcpy(buf + level_offset[i], encoded[i], encoded_sz[i]);
 
@@ -284,11 +399,12 @@ static uint8_t* build_ktx2_buf(uint32_t vkFormat, int face_count, int layer_coun
 
 /* Thin wrapper: build the KTX2 image in memory, fwrite it to disk. */
 static bool write_ktx2_levels(const char* path, uint32_t vkFormat, int face_count, int layer_count,
-							  const Ktx2WriteLevel* levels, int level_count, bool zstd) {
+							  const Ktx2WriteLevel* levels, int level_count, bool zstd, bool premultiplied) {
 	if (!path)
 		return false;
 	size_t   total_size = 0;
-	uint8_t* buf = build_ktx2_buf(vkFormat, face_count, layer_count, levels, level_count, zstd, &total_size);
+	uint8_t* buf = build_ktx2_buf(vkFormat, face_count, layer_count, levels, level_count, zstd, premultiplied,
+								  &total_size);
 	if (!buf)
 		return false;
 	FILE* f = fopen(path, "wb");
@@ -311,33 +427,34 @@ static bool write_ktx2_levels(const char* path, uint32_t vkFormat, int face_coun
 }
 
 bool write_ktx2_rgba_mips(const char* path, const Ktx2WriteLevel* levels, int level_count, Ktx2TransferFn tf,
-						  bool zstd) {
+						  bool zstd, Ktx2AlphaEncoding alpha) {
 	uint32_t vk = (tf == KTX2_TF_SRGB) ? VK_FORMAT_R8G8B8A8_SRGB : VK_FORMAT_R8G8B8A8_UNORM;
-	return write_ktx2_levels(path, vk, 1, 0, levels, level_count, zstd);
+	return write_ktx2_levels(path, vk, 1, 0, levels, level_count, zstd, alpha == KTX2_ALPHA_PREMULTIPLIED);
 }
 
 bool write_ktx2_bc6h_levels(const char* path, int face_count, int layer_count, const Ktx2WriteLevel* levels,
 							int level_count, bool zstd) {
 	return write_ktx2_levels(path, VK_FORMAT_BC6H_UFLOAT_BLOCK, face_count, layer_count, levels, level_count,
-							 zstd);
+							 zstd, false);
 }
 
 bool write_ktx2_rgba16f_levels(const char* path, int face_count, int layer_count,
 							   const Ktx2WriteLevel* levels, int level_count, bool zstd) {
 	return write_ktx2_levels(path, VK_FORMAT_R16G16B16A16_SFLOAT, face_count, layer_count, levels,
-							 level_count, zstd);
+							 level_count, zstd, false);
 }
 
 bool write_ktx2_bc7_levels(const char* path, int face_count, int layer_count, const Ktx2WriteLevel* levels,
-						   int level_count, Ktx2TransferFn tf, bool zstd) {
+						   int level_count, Ktx2TransferFn tf, bool zstd, Ktx2AlphaEncoding alpha) {
 	const uint32_t vk = (tf == KTX2_TF_SRGB) ? VK_FORMAT_BC7_SRGB_BLOCK : VK_FORMAT_BC7_UNORM_BLOCK;
-	return write_ktx2_levels(path, vk, face_count, layer_count, levels, level_count, zstd);
+	return write_ktx2_levels(path, vk, face_count, layer_count, levels, level_count, zstd,
+							 alpha == KTX2_ALPHA_PREMULTIPLIED);
 }
 
 bool write_ktx2_bc7_mips(const char* path, const Ktx2WriteLevel* levels, int level_count, Ktx2TransferFn tf,
-						 bool zstd) {
+						 bool zstd, Ktx2AlphaEncoding alpha) {
 	uint32_t vk = (tf == KTX2_TF_SRGB) ? VK_FORMAT_BC7_SRGB_BLOCK : VK_FORMAT_BC7_UNORM_BLOCK;
-	return write_ktx2_levels(path, vk, 1, 0, levels, level_count, zstd);
+	return write_ktx2_levels(path, vk, 1, 0, levels, level_count, zstd, alpha == KTX2_ALPHA_PREMULTIPLIED);
 }
 
 /* ---------- mip-chain generator ----------
@@ -439,7 +556,7 @@ static bool bc7_with_generated_mips_core(int base_w, int base_h, const uint8_t* 
 	}
 
 	if (ok)
-		ok = write_ktx2_bc7_mips(path, levels, n, tf, zstd);
+		ok = write_ktx2_bc7_mips(path, levels, n, tf, zstd, alpha_encoding);
 
 	for (int i = 0; i < n; ++i) {
 		free(rgba_owned[i]);
@@ -546,7 +663,8 @@ static bool buffer_with_generated_mips(Ktx2Payload payload, uint32_t vk, int bas
 	}
 
 	if (ok) {
-		*out_buf = build_ktx2_buf(vk, 1, layer_count, levels, n, zstd, out_size);
+		*out_buf = build_ktx2_buf(vk, 1, layer_count, levels, n, zstd,
+								  encode_base_alpha && alpha_encoding == KTX2_ALPHA_PREMULTIPLIED, out_size);
 		ok       = *out_buf != NULL;
 	}
 	for (int i = 0; i < n; ++i)
@@ -691,7 +809,7 @@ bool write_ktx2_bc7_cubemap_with_generated_mips(const char* path, int face_size,
 
 	if (ok) {
 		uint32_t vk = (tf == KTX2_TF_SRGB) ? VK_FORMAT_BC7_SRGB_BLOCK : VK_FORMAT_BC7_UNORM_BLOCK;
-		ok          = write_ktx2_levels(path, vk, 6, 0, levels, n, zstd);
+		ok          = write_ktx2_levels(path, vk, 6, 0, levels, n, zstd, false);
 	}
 
 	/* rgba_owned[0][*] is NULL (level 0 aliases the caller's buffers),
@@ -746,7 +864,7 @@ static bool rgba_with_generated_mips_core(const char* path, int base_w, int base
 		n++;
 	}
 
-	const bool ok = write_ktx2_rgba_mips(path, levels, n, tf, zstd);
+	const bool ok = write_ktx2_rgba_mips(path, levels, n, tf, zstd, alpha_encoding);
 
 	for (int i = 0; i < n; i++)
 		free(owned[i]);

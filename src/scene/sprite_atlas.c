@@ -1,9 +1,8 @@
 /*
- * Sprite-atlas YAML parser (consumer side of `filmextract --atlas`).
+ * Sprite atlas files: the loaders and the writer.
  *
- * Uses the vendored libyaml's document API (DOM-style) — for the few
- * KB of layout files we ship, allocating a tree is fine and the
- * traversal code stays compact compared to event-driven parsing.
+ * Aeron_SpriteAtlasLoad uses libyaml's document API. The files are a few KB,
+ * so building the tree is cheap.
  */
 
 #include "aeron/scene/sprite_atlas.h"
@@ -49,6 +48,82 @@ static bool config_light(const AeronConfigNode* frame, float* out) {
 	return true;
 }
 
+/* Allocates the per-frame arrays of `count` frames. */
+static bool allocate_frame_arrays(AeronSpriteAtlas* out, size_t count) {
+	out->frames = calloc(count, sizeof *out->frames);
+	out->ids    = calloc(count, sizeof *out->ids);
+	out->pages  = calloc(count, sizeof *out->pages);
+	out->size   = calloc(count * 2, sizeof *out->size);
+	out->offset = calloc(count * 2, sizeof *out->offset);
+	out->light  = calloc(count * 3, sizeof *out->light);
+	if (!out->frames || !out->ids || !out->pages || !out->size || !out->offset || !out->light)
+		return false;
+	for (size_t i = 0; i < count; ++i) {
+		out->ids[i]       = -1;
+		out->light[i * 3] = out->light[i * 3 + 1] = out->light[i * 3 + 2] = -1.0f;
+	}
+	return true;
+}
+
+/* Frees the optional arrays that no frame uses, and sets the counts. */
+static void free_unused_frame_arrays(AeronSpriteAtlas* out, int frame_count) {
+	bool have_ids = false, have_size = false, have_offset = false, have_light = false;
+	int  max_page = 0;
+	for (int i = 0; i < frame_count; ++i) {
+		have_ids |= out->ids[i] >= 0;
+		have_size |= out->size[i * 2] != 0.0f || out->size[i * 2 + 1] != 0.0f;
+		have_offset |= out->offset[i * 2] != 0.0f || out->offset[i * 2 + 1] != 0.0f;
+		have_light |= out->light[i * 3] >= 0.0f;
+		if (out->pages[i] > max_page)
+			max_page = out->pages[i];
+	}
+	if (!have_ids) {
+		free(out->ids);
+		out->ids = NULL;
+	}
+	if (max_page == 0) {
+		free(out->pages);
+		out->pages = NULL;
+	}
+	if (!have_size) {
+		free(out->size);
+		out->size = NULL;
+	}
+	if (!have_offset) {
+		free(out->offset);
+		out->offset = NULL;
+	}
+	if (!have_light) {
+		free(out->light);
+		out->light = NULL;
+	}
+	out->frame_count = frame_count;
+	out->page_count  = max_page + 1;
+}
+
+/* Reads `units`: design (the default) or game. */
+static bool parse_units_value(const char* value, bool* game_units) {
+	*game_units = value && strcmp(value, "game") == 0;
+	return !value || *game_units || strcmp(value, "design") == 0;
+}
+
+/* Reads a `[a, b]` sequence of numbers into `out`. */
+static bool read_number_pair(const AeronConfigNode* frame, const char* key, float* out) {
+	const AeronConfigNode* pair = AeronConfigNode_MapGet(frame, key);
+	if (!pair)
+		return true;
+	if (AeronConfigNode_Type(pair) != AERON_CONFIG_SEQUENCE || AeronConfigNode_SequenceCount(pair) != 2)
+		return false;
+	for (size_t i = 0; i < 2; ++i) {
+		const AeronConfigNode*    value = AeronConfigNode_SequenceGet(pair, i);
+		const AeronConfigNodeType type  = AeronConfigNode_Type(value);
+		if (type != AERON_CONFIG_INT && type != AERON_CONFIG_FLOAT)
+			return false;
+		out[i] = (float)AeronConfigNode_Float(value, 0.0);
+	}
+	return true;
+}
+
 bool Aeron_SpriteAtlasLoadVfs(AeronSpriteAtlas* out, AeronVfs* vfs, AeronVfsRoot root,
 							  const char* yaml_path) {
 	if (!out || !vfs || !yaml_path || !yaml_path[0])
@@ -66,78 +141,41 @@ bool Aeron_SpriteAtlasLoadVfs(AeronSpriteAtlas* out, AeronVfs* vfs, AeronVfsRoot
 	const size_t           frame_count   = AeronConfigNode_SequenceCount(frames);
 	out->atlas_w                         = config_int(atlas, "w", 0);
 	out->atlas_h                         = config_int(atlas, "h", 0);
-	out->classic_atlas_w                 = config_int(atlas, "classic_w", 0);
-	out->classic_atlas_h                 = config_int(atlas, "classic_h", 0);
 	if (AeronConfigNode_Type(document_root) != AERON_CONFIG_MAP ||
 		AeronConfigNode_Type(atlas) != AERON_CONFIG_MAP ||
 		AeronConfigNode_Type(frames) != AERON_CONFIG_SEQUENCE || frame_count == 0 || frame_count > INT_MAX ||
-		out->atlas_w <= 0 || out->atlas_h <= 0) {
+		out->atlas_w <= 0 || out->atlas_h <= 0 ||
+		!parse_units_value(AeronConfigNode_String(AeronConfigNode_MapGet(document_root, "units"), NULL),
+						   &out->game_units)) {
 		Aeron_LogError("aeron.scene", "[atlas] %s: invalid atlas document", yaml_path);
 		AeronConfigFile_Destroy(document);
 		return false;
 	}
-	out->frames    = calloc(frame_count, sizeof *out->frames);
-	out->origin_x  = calloc(frame_count, sizeof *out->origin_x);
-	out->origin_y  = calloc(frame_count, sizeof *out->origin_y);
-	out->ids       = calloc(frame_count, sizeof *out->ids);
-	out->pages     = calloc(frame_count, sizeof *out->pages);
-	out->classic_w = calloc(frame_count, sizeof *out->classic_w);
-	out->classic_h = calloc(frame_count, sizeof *out->classic_h);
-	out->light     = calloc(frame_count * 3, sizeof *out->light);
-	if (!out->frames || !out->origin_x || !out->origin_y || !out->ids || !out->pages || !out->classic_w ||
-		!out->classic_h || !out->light) {
+	if (!allocate_frame_arrays(out, frame_count)) {
 		AeronConfigFile_Destroy(document);
 		Aeron_SpriteAtlasFree(out);
 		return false;
 	}
-	bool have_ids = false, have_pages = false, have_classic = false, have_light = false;
-	int  max_page = 0;
 	for (size_t index = 0; index < frame_count; ++index) {
 		const AeronConfigNode* frame = AeronConfigNode_SequenceGet(frames, index);
 		int                    x = config_int(frame, "x", -1), y = config_int(frame, "y", -1);
 		int                    w = config_int(frame, "w", -1), h = config_int(frame, "h", -1);
 		int                    page = config_int(frame, "page", 0);
 		if (AeronConfigNode_Type(frame) != AERON_CONFIG_MAP || x < 0 || y < 0 || w <= 0 || h <= 0 ||
-			page < 0 || page > INT16_MAX || x > out->atlas_w - w || y > out->atlas_h - h) {
+			page < 0 || page > INT16_MAX || x > out->atlas_w - w || y > out->atlas_h - h ||
+			!read_number_pair(frame, "size", &out->size[index * 2]) ||
+			!read_number_pair(frame, "offset", &out->offset[index * 2])) {
 			Aeron_LogError("aeron.scene", "[atlas] %s: invalid frame %zu", yaml_path, index);
 			AeronConfigFile_Destroy(document);
 			Aeron_SpriteAtlasFree(out);
 			return false;
 		}
-		out->frames[index]    = (AeronSpriteRect) { x, y, w, h };
-		out->origin_x[index]  = (int16_t)config_int(frame, "origin_x", 0);
-		out->origin_y[index]  = (int16_t)config_int(frame, "origin_y", 0);
-		out->ids[index]       = config_int(frame, "id", -1);
-		out->pages[index]     = (int16_t)page;
-		out->classic_w[index] = (int16_t)config_int(frame, "classic_w", 0);
-		out->classic_h[index] = (int16_t)config_int(frame, "classic_h", 0);
-		have_light |= config_light(frame, &out->light[index * 3]);
-		have_ids |= out->ids[index] >= 0;
-		have_pages |= page > 0;
-		have_classic |= out->classic_w[index] > 0;
-		if (page > max_page)
-			max_page = page;
+		out->frames[index] = (AeronSpriteRect) { x, y, w, h };
+		out->ids[index]    = config_int(frame, "id", -1);
+		out->pages[index]  = (int16_t)page;
+		config_light(frame, &out->light[index * 3]);
 	}
-	out->frame_count = (int)frame_count;
-	out->page_count  = max_page + 1;
-	if (!have_ids) {
-		free(out->ids);
-		out->ids = NULL;
-	}
-	if (!have_pages) {
-		free(out->pages);
-		out->pages = NULL;
-	}
-	if (!have_classic) {
-		free(out->classic_w);
-		out->classic_w = NULL;
-		free(out->classic_h);
-		out->classic_h = NULL;
-	}
-	if (!have_light) {
-		free(out->light);
-		out->light = NULL;
-	}
+	free_unused_frame_arrays(out, (int)frame_count);
 	AeronConfigFile_Destroy(document);
 	return true;
 }
@@ -161,10 +199,7 @@ static float node_float(const yaml_document_t* doc, int node_id) {
 	return s && Aeron_ParseAsciiDouble(s, strlen(s), &value) ? (float)value : 0.0f;
 }
 
-/* Walk an `atlas:` mapping, populating out->atlas_w / out->atlas_h.
- * Other writer-side fields (cols/rows/max_w/max_h/pad) are ignored —
- * the consumer only needs the rect array, which the writer derives
- * once and bakes into `frames`. */
+/* Reads `w` and `h` of the `atlas:` map. The other keys are ignored. */
 static void parse_atlas_mapping(const yaml_document_t* doc, const yaml_node_t* m, AeronSpriteAtlas* out) {
 	for (yaml_node_pair_t* kv = m->data.mapping.pairs.start; kv < m->data.mapping.pairs.top; kv++) {
 		const char* k = node_scalar(doc, kv->key);
@@ -174,55 +209,45 @@ static void parse_atlas_mapping(const yaml_document_t* doc, const yaml_node_t* m
 			out->atlas_w = node_int(doc, kv->value);
 		else if (strcmp(k, "h") == 0)
 			out->atlas_h = node_int(doc, kv->value);
-		else if (strcmp(k, "classic_w") == 0)
-			out->classic_atlas_w = node_int(doc, kv->value);
-		else if (strcmp(k, "classic_h") == 0)
-			out->classic_atlas_h = node_int(doc, kv->value);
 	}
 }
 
-/* Walk a single frame mapping (`{ x: .., y: .., w: .., h: .. }` or
- * the block-style equivalent) into one AeronSpriteRect slot plus a pair
- * of int16 origin slots. The origin slots are kept purely so save can
- * round-trip them; the compose path doesn't consult them. */
-static void parse_frame_mapping(const yaml_document_t* doc, const yaml_node_t* m, AeronSpriteRect* out,
-								int16_t* out_origin_x, int16_t* out_origin_y, int32_t* out_id,
-								int16_t* out_page, int16_t* out_classic_w, int16_t* out_classic_h,
-								float* out_light) {
+/* Reads a sequence of `count` numbers into `out`, when the node is one. */
+static void read_number_sequence(const yaml_document_t* doc, int node_id, int count, float* out) {
+	const yaml_node_t* list = yaml_document_get_node((yaml_document_t*)doc, node_id);
+	if (list && list->type == YAML_SEQUENCE_NODE &&
+		list->data.sequence.items.top - list->data.sequence.items.start == count) {
+		for (int i = 0; i < count; i++)
+			out[i] = node_float(doc, list->data.sequence.items.start[i]);
+	}
+}
+
+/* Reads one frame map into frame `index` of `out`. */
+static void parse_frame_mapping(const yaml_document_t* doc, const yaml_node_t* m, AeronSpriteAtlas* out,
+								int index) {
+	AeronSpriteRect* rect = &out->frames[index];
 	for (yaml_node_pair_t* kv = m->data.mapping.pairs.start; kv < m->data.mapping.pairs.top; kv++) {
 		const char* k = node_scalar(doc, kv->key);
 		if (!k)
 			continue;
-		if (strcmp(k, "light") == 0) {
-			const yaml_node_t* list = yaml_document_get_node((yaml_document_t*)doc, kv->value);
-			if (list && list->type == YAML_SEQUENCE_NODE &&
-				list->data.sequence.items.top - list->data.sequence.items.start == 3) {
-				for (int i = 0; i < 3; i++)
-					out_light[i] = node_float(doc, list->data.sequence.items.start[i]);
-			}
-			continue;
-		}
-		float v = node_float(doc, kv->value);
-		if (strcmp(k, "x") == 0)
-			out->x = v;
+		if (strcmp(k, "light") == 0)
+			read_number_sequence(doc, kv->value, 3, &out->light[index * 3]);
+		else if (strcmp(k, "size") == 0)
+			read_number_sequence(doc, kv->value, 2, &out->size[index * 2]);
+		else if (strcmp(k, "offset") == 0)
+			read_number_sequence(doc, kv->value, 2, &out->offset[index * 2]);
+		else if (strcmp(k, "x") == 0)
+			rect->x = node_float(doc, kv->value);
 		else if (strcmp(k, "y") == 0)
-			out->y = v;
+			rect->y = node_float(doc, kv->value);
 		else if (strcmp(k, "w") == 0)
-			out->w = v;
+			rect->w = node_float(doc, kv->value);
 		else if (strcmp(k, "h") == 0)
-			out->h = v;
-		else if (strcmp(k, "origin_x") == 0)
-			*out_origin_x = (int16_t)node_int(doc, kv->value);
-		else if (strcmp(k, "origin_y") == 0)
-			*out_origin_y = (int16_t)node_int(doc, kv->value);
+			rect->h = node_float(doc, kv->value);
 		else if (strcmp(k, "id") == 0)
-			*out_id = (int32_t)node_int(doc, kv->value);
+			out->ids[index] = (int32_t)node_int(doc, kv->value);
 		else if (strcmp(k, "page") == 0)
-			*out_page = (int16_t)node_int(doc, kv->value);
-		else if (strcmp(k, "classic_w") == 0)
-			*out_classic_w = (int16_t)node_int(doc, kv->value);
-		else if (strcmp(k, "classic_h") == 0)
-			*out_classic_h = (int16_t)node_int(doc, kv->value);
+			out->pages[index] = (int16_t)node_int(doc, kv->value);
 	}
 }
 
@@ -261,82 +286,36 @@ bool Aeron_SpriteAtlasLoad(AeronSpriteAtlas* out, const char* yaml_path) {
 		goto fail;
 	}
 
-	/* First pass over the root mapping pulls the `atlas:` block (for
-	 * dims) and the `frames:` sequence. Order in the file is
-	 * unimportant — libyaml resolves cross-refs through the document. */
+	/* The order of the keys in the file doesn't matter. */
 	for (yaml_node_pair_t* kv = root->data.mapping.pairs.start; kv < root->data.mapping.pairs.top; kv++) {
 		const char*  k = node_scalar(&doc, kv->key);
 		yaml_node_t* v = yaml_document_get_node(&doc, kv->value);
 		if (!k || !v)
 			continue;
-		if (strcmp(k, "atlas") == 0 && v->type == YAML_MAPPING_NODE) {
+		if (strcmp(k, "units") == 0) {
+			if (!parse_units_value(node_scalar(&doc, kv->value), &out->game_units) ||
+				v->type != YAML_SCALAR_NODE) {
+				Aeron_LogError("aeron.scene", "[atlas] %s: units must be design or game", yaml_path);
+				goto fail;
+			}
+		} else if (strcmp(k, "atlas") == 0 && v->type == YAML_MAPPING_NODE) {
 			parse_atlas_mapping(&doc, v, out);
 		} else if (strcmp(k, "frames") == 0 && v->type == YAML_SEQUENCE_NODE) {
 			int n = (int)(v->data.sequence.items.top - v->data.sequence.items.start);
 			if (n <= 0)
 				continue;
-			out->frames    = (AeronSpriteRect*)calloc((size_t)n, sizeof(AeronSpriteRect));
-			out->origin_x  = (int16_t*)calloc((size_t)n, sizeof(int16_t));
-			out->origin_y  = (int16_t*)calloc((size_t)n, sizeof(int16_t));
-			out->ids       = (int32_t*)calloc((size_t)n, sizeof(int32_t));
-			out->pages     = (int16_t*)calloc((size_t)n, sizeof(int16_t));
-			out->classic_w = (int16_t*)calloc((size_t)n, sizeof(int16_t));
-			out->classic_h = (int16_t*)calloc((size_t)n, sizeof(int16_t));
-			out->light     = (float*)malloc((size_t)n * 3 * sizeof(float));
-			if (!out->frames || !out->origin_x || !out->origin_y || !out->ids || !out->pages ||
-				!out->classic_w || !out->classic_h || !out->light) {
+			if (!allocate_frame_arrays(out, (size_t)n)) {
 				Aeron_LogError("aeron.scene", "[atlas] %s: out of memory (%d frames)", yaml_path, n);
 				goto fail;
 			}
-			int idx          = 0;
-			int have_ids     = 0;
-			int max_page     = 0;
-			int have_classic = 0;
-			int have_light   = 0;
+			int idx = 0;
 			for (yaml_node_item_t* it = v->data.sequence.items.start;
 				 it < v->data.sequence.items.top && idx < n; it++, idx++) {
-				yaml_node_t* fr    = yaml_document_get_node(&doc, *it);
-				float*       light = &out->light[idx * 3];
-				out->ids[idx]      = -1;
-				light[0] = light[1] = light[2] = -1.0f;
+				yaml_node_t* fr = yaml_document_get_node(&doc, *it);
 				if (fr && fr->type == YAML_MAPPING_NODE)
-					parse_frame_mapping(&doc, fr, &out->frames[idx], &out->origin_x[idx], &out->origin_y[idx],
-										&out->ids[idx], &out->pages[idx], &out->classic_w[idx],
-										&out->classic_h[idx], light);
-				if (light[0] >= 0.0f)
-					have_light = 1;
-				if (out->ids[idx] >= 0)
-					have_ids = 1;
-				if (out->pages[idx] > max_page)
-					max_page = out->pages[idx];
-				if (out->classic_w[idx] > 0)
-					have_classic = 1;
+					parse_frame_mapping(&doc, fr, out, idx);
 			}
-			/* Key-less corpora keep NULL classic arrays (Save
-			 * round-trip parity; consumers fall back to the
-			 * atlas-level ratio). */
-			if (!have_classic) {
-				free(out->classic_w);
-				free(out->classic_h);
-				out->classic_w = NULL;
-				out->classic_h = NULL;
-			}
-			if (!have_light) {
-				free(out->light);
-				out->light = NULL;
-			}
-			/* Id-less / single-page atlases keep NULL arrays so Save
-			 * round-trips the file without introducing keys. */
-			if (!have_ids) {
-				free(out->ids);
-				out->ids = NULL;
-			}
-			if (max_page == 0) {
-				free(out->pages);
-				out->pages = NULL;
-			}
-			out->page_count  = max_page + 1;
-			out->frame_count = n;
+			free_unused_frame_arrays(out, n);
 		}
 	}
 
@@ -363,12 +342,10 @@ void Aeron_SpriteAtlasFree(AeronSpriteAtlas* a) {
 	if (!a)
 		return;
 	free(a->frames);
-	free(a->origin_x);
-	free(a->origin_y);
 	free(a->ids);
 	free(a->pages);
-	free(a->classic_w);
-	free(a->classic_h);
+	free(a->size);
+	free(a->offset);
 	free(a->light);
 	memset(a, 0, sizeof *a);
 }
@@ -383,12 +360,8 @@ int Aeron_SpriteAtlasFindById(const AeronSpriteAtlas* a, int32_t id) {
 	return -1;
 }
 
-/* Round-to-nearest float→int with negatives clamped to 0. The runtime
- * stores rect coords as float for sub-pixel-precise dst rects, but the
- * on-disk YAML uses integer pixel coords (filmextract writes them as
- * %d). The editor only mutates frames via sprite_atlas writers that
- * land integer values, so this rounder is a no-op in practice; it
- * exists to keep the save path defensive. */
+/* Rounds a rect value to a whole pixel, with negative values clamped to
+ * 0. The files hold whole pixels. */
 static int round_pos(float f) {
 	if (f <= 0.0f)
 		return 0;
@@ -419,52 +392,29 @@ bool Aeron_SpriteAtlasSave(const AeronSpriteAtlas* a, const char* yaml_path, cha
 		return false;
 	}
 
-	/* Mirror filmextract's writer (src/tools/film/filmextract.c). The
-	 * inline-flow shape per frame is what the on-disk corpus uses;
-	 * keeping byte-for-byte parity makes diffs minimal. */
-	if (fprintf(f,
-				"atlas:\n"
-				"  w: %d\n"
-				"  h: %d\n",
-				a->atlas_w, a->atlas_h) < 0)
-		goto io_err;
-	if (a->classic_atlas_w > 0 && a->classic_atlas_h > 0) {
-		if (fprintf(f,
-					"  classic_w: %d\n"
-					"  classic_h: %d\n",
-					a->classic_atlas_w, a->classic_atlas_h) < 0)
-			goto io_err;
-	}
-	if (fprintf(f, "frames:\n") < 0)
+	if ((a->game_units && fprintf(f, "units: game\n") < 0) ||
+		fprintf(f, "atlas: {w: %d, h: %d}\nframes:\n", a->atlas_w, a->atlas_h) < 0)
 		goto io_err;
 	for (int i = 0; i < a->frame_count; i++) {
-		const AeronSpriteRect* r  = &a->frames[i];
-		int                    ox = a->origin_x ? a->origin_x[i] : 0;
-		int                    oy = a->origin_y ? a->origin_y[i] : 0;
-		/* Optional keys mirror what Load kept: ids for sparse
-		 * identities, pages for multi-image atlases, classic dims for
-		 * frame-geometry consumers. */
-		char extra[48];
-		char tail[128];
-		int  en  = 0;
-		extra[0] = '\0';
-		tail[0]  = '\0';
+		const AeronSpriteRect* r = &a->frames[i];
+		char                   head[48], tail[160];
+		int                    hn = 0, tn = 0;
+		head[0] = tail[0] = '\0';
 		if (a->ids)
-			en += snprintf(extra + en, sizeof extra - (size_t)en, "id: %d, ", (int)a->ids[i]);
+			hn += snprintf(head + hn, sizeof head - (size_t)hn, "id: %d, ", (int)a->ids[i]);
 		if (a->pages)
-			en += snprintf(extra + en, sizeof extra - (size_t)en, "page: %d, ", (int)a->pages[i]);
-		int tn = 0;
-		if (a->classic_w && a->classic_h)
-			tn += snprintf(tail, sizeof tail, ", classic_w: %d, classic_h: %d", (int)a->classic_w[i],
-						   (int)a->classic_h[i]);
+			snprintf(head + hn, sizeof head - (size_t)hn, "page: %d, ", (int)a->pages[i]);
+		if (a->size)
+			tn += snprintf(tail + tn, sizeof tail - (size_t)tn, ", size: [%.9g, %.9g]",
+						   (double)a->size[i * 2], (double)a->size[i * 2 + 1]);
+		if (a->offset)
+			tn += snprintf(tail + tn, sizeof tail - (size_t)tn, ", offset: [%.9g, %.9g]",
+						   (double)a->offset[i * 2], (double)a->offset[i * 2 + 1]);
 		if (a->light && a->light[i * 3] >= 0.0f)
 			snprintf(tail + tn, sizeof tail - (size_t)tn, ", light: [%.9g, %.9g, %.9g]",
 					 (double)a->light[i * 3], (double)a->light[i * 3 + 1], (double)a->light[i * 3 + 2]);
-		if (fprintf(f,
-					"  - { %sx: %d, y: %d, w: %d, h: %d, "
-					"origin_x: %d, origin_y: %d%s }\n",
-					extra, round_pos(r->x), round_pos(r->y), round_pos(r->w), round_pos(r->h), ox, oy,
-					tail) < 0)
+		if (fprintf(f, "  - {%sx: %d, y: %d, w: %d, h: %d%s}\n", head, round_pos(r->x), round_pos(r->y),
+					round_pos(r->w), round_pos(r->h), tail) < 0)
 			goto io_err;
 	}
 
