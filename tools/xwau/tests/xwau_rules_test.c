@@ -17,6 +17,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "classic_radiance.h"
 #include "opt.h"
 #include "util.h"
 #include "xwau_config.h"
@@ -569,8 +570,13 @@ static void test_skyboxes(const char* scratch) {
 		check(strstr(m5, "\"0\": none\n") != NULL, "skyboxes: an overlay without a cube is left out");
 	}
 	if (m1 && m2 && m3 && m4) {
+		/* AmbientMin is written on the sky's radiance scale. */
+		const float fill = 0.05f * CLASSIC_RADIANCE;
+		char        fill_line[100];
+		snprintf(fill_line, sizeof fill_line, "ambient_fill: [%g, %g, %g]", (double)fill, (double)fill,
+				 (double)fill);
 		check(strstr(text, "  xwau.beta:\n") && strstr(text, "diffuse_strength: 0.15\n") &&
-				  strstr(text, "ambient_fill: [0.05, 0.05, 0.05]"),
+				  strstr(text, fill_line),
 			  "skyboxes: a region with its own folder takes the region defaults");
 		check(strstr(text, "  xwau.alpha:\n") && strstr(text, "diffuse_strength: 0.3\n") &&
 				  !strstr(text, "xwau.alpha.2"),
