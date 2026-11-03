@@ -1,6 +1,6 @@
 /*
  * Building an effect library from its file, <library>.yaml (animated_materials.md):
- * `version`, `library` and `images` (aeron_gltf_cook --library).
+ * `library` and `images` (aeron_gltf_cook --library).
  *
  * Image paths are relative to the file. Per kind, the inputs, named after
  * the material channel they change, and what is stored (colour sRGB, alpha

@@ -285,15 +285,14 @@ static int library_load(AeronEffectAtlas* atlas, AeronCommandBuffer* cmd, Effect
 		Aeron_LogError("aeron.scene", "effect library %s: %s", path, error.message);
 		return 0;
 	}
-	const int64_t version       = AeronConfigFile_GetInt(index, "version", 0);
 	const int64_t page_size     = AeronConfigFile_GetInt(index, "page_size", 0);
 	const int64_t page_count[2] = { AeronConfigFile_GetInt(index, "layer_pages", 0),
 									AeronConfigFile_GetInt(index, "emissive_pages", 0) };
-	int           ok            = version == 1 && page_size > 0 && page_size <= 16384 && page_count[0] >= 0 &&
-								  page_count[1] >= 0 && page_count[0] < 4096 && page_count[1] < 4096 &&
-								  (!atlas->page_size || (uint32_t)page_size == atlas->page_size);
+	int           ok = page_size > 0 && page_size <= 16384 && page_count[0] >= 0 && page_count[1] >= 0 &&
+					   page_count[0] < 4096 && page_count[1] < 4096 &&
+					   (!atlas->page_size || (uint32_t)page_size == atlas->page_size);
 	if (!ok)
-		Aeron_LogError("aeron.scene", "%s: unsupported version, page size or page count", label);
+		Aeron_LogError("aeron.scene", "%s: unsupported page size or page count", label);
 	if (ok && !atlas->page_size)
 		atlas->page_size = (uint32_t)page_size;
 	for (int t = 0; ok && t < 2; ++t) {
@@ -504,7 +503,7 @@ AeronEffectData* AeronEffectData_Load(AeronEffectAtlas* atlas, AeronCommandBuffe
 	const uint32_t         count  = (uint32_t)AeronConfigNode_MapCount(images);
 	const uint32_t         libraries = count + AERON_EFFECT_ENERGY_COUNT;
 	AeronEffectData*       data   = (AeronEffectData*)calloc(1, sizeof *data);
-	int                    ok     = data && AeronConfigFile_GetInt(yaml, "version", 0) == 1;
+	int                    ok        = data != NULL;
 	if (ok) {
 		data->atlas     = atlas;
 		data->images    = (EffectDataImage*)calloc(count ? count : 1, sizeof *data->images);

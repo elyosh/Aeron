@@ -12,7 +12,6 @@
  * The importer writes the banks to <output_dir>/sounds.yaml, with the game's
  * object type names:
  *
- *   version: 1
  *   banks:
  *     interior:                       # Wave/Sfx_Interior.lst
  *       unlisted: silent

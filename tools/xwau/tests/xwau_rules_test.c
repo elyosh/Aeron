@@ -1766,7 +1766,7 @@ static void test_mission_settings(const char* scratch) {
 	snprintf(settings, sizeof settings, "%s/flight.yaml", scratch);
 	check(XwauFlightSettings_Write(game, &g_names, &g_stock, settings) &&
 			  same_file(settings,
-						"# Made by the OpenXWA mod importer.\nversion: 1\nrules:\n"
+						"# Made by the OpenXWA mod importer.\nrules:\n"
 						"  reset_combat_music_at_mission_load: true\n"
 						"  hangar_red_alert_any_mothership: true\nmission_settings:\n"
 						"  warhead_collision_damage: false\n  hyperspace_abort_sound_regions: [3]\n"),
@@ -1971,17 +1971,15 @@ static void test_flight_settings(const char* scratch) {
 	MakeDirs(game);
 	snprintf(settings, sizeof settings, "%s/flight.yaml", scratch);
 	check(XwauFlightSettings_Write(game, &g_names, &g_stock, settings) &&
-			  same_file(settings, "# Made by the OpenXWA mod importer.\nversion: 1\n"),
-		  "flight settings: without the backdrop hook, only the version");
+			  same_file(settings, "# Made by the OpenXWA mod importer.\n"),
+		  "flight settings: without the backdrop hook, only the header");
 	snprintf(path, sizeof path, "%s/Hook_Backdrops.dll", game);
 	write_file(path, "");
-	check(
-		XwauFlightSettings_Write(game, &g_names, &g_stock, settings) &&
-			same_file(
-				settings,
-				"# Made by the OpenXWA mod importer.\nversion: 1\nbackdrops:\n  extra_planets:\n    - { ids: "
-				"[104, 255], image_groups: [6304, 6455] }\n"),
-		"flight settings: the backdrop hook makes backdrop ids 104 to 255 planets");
+	check(XwauFlightSettings_Write(game, &g_names, &g_stock, settings) &&
+			  same_file(settings,
+						"# Made by the OpenXWA mod importer.\nbackdrops:\n  extra_planets:\n    - { ids: "
+						"[104, 255], image_groups: [6304, 6455] }\n"),
+		  "flight settings: the backdrop hook makes backdrop ids 104 to 255 planets");
 	remove(path);
 	snprintf(path, sizeof path, "%s/ddraw.dll", game);
 	write_file(path, "");
@@ -1989,24 +1987,23 @@ static void test_flight_settings(const char* scratch) {
 	write_file(path, "ssao_enabled = 1\n;headlights_angle = 40\n headlights_col = 0.85, 0.85, 0.9\n"
 					 "HEADLIGHTS_ANGLE = 25\nheadlights_pos = 1, 2\n");
 	check(XwauFlightSettings_Write(game, &g_names, &g_stock, settings) &&
-			  same_file(settings,
-						"# Made by the OpenXWA mod importer.\nversion: 1\nheadlights:\n  position_m: [0, 0, "
-						"20]\n  color: [0.944, 0.944, 1]\n  power_w: 1314756\n  angle_degrees: 25\n"
-						"  auto_turn_on: true\n"),
+			  same_file(settings, "# Made by the OpenXWA mod importer.\nheadlights:\n  position_m: [0, 0, "
+								  "20]\n  color: [0.944, 0.944, 1]\n  power_w: 1314756\n  angle_degrees: 25\n"
+								  "  auto_turn_on: true\n"),
 		  "flight settings: the headlights of SSAO.cfg, as a tint and a power in watts that gives ddraw's "
 		  "light at 50 m");
 	write_file(path, "headlights_col = 0.85, 0.85, 0.9\n");
 	check(XwauFlightSettings_Write(game, &g_names, &g_stock, settings) &&
-			  same_file(settings, "# Made by the OpenXWA mod importer.\nversion: 1\n"),
+			  same_file(settings, "# Made by the OpenXWA mod importer.\n"),
 		  "flight settings: no headlights without ssao_enabled");
 	snprintf(path, sizeof path, "%s/hook_opt_limit.dll", game);
 	write_file(path, "MZ");
 	check(XwauFlightSettings_Write(game, &g_names, &g_stock, settings) &&
-			  same_file(settings, "# Made by the OpenXWA mod importer.\nversion: 1\n"),
+			  same_file(settings, "# Made by the OpenXWA mod importer.\n"),
 		  "flight settings: no engine glow rule from a hook_opt_limit.dll without the feature");
 	write_file(path, "MZ EngineGlows.txt");
 	check(XwauFlightSettings_Write(game, &g_names, &g_stock, settings) &&
-			  same_file(settings, "# Made by the OpenXWA mod importer.\nversion: 1\nrules:\n"
+			  same_file(settings, "# Made by the OpenXWA mod importer.\nrules:\n"
 								  "  classic_hide_destroyed_engine_glows: true\n"),
 		  "flight settings: hook_opt_limit.dll with [EngineGlows] hides the glows of destroyed meshes");
 	remove(path);
@@ -2043,13 +2040,13 @@ static void test_flight_settings(const char* scratch) {
 	snprintf(path, sizeof path, "%s/hook_jamming.dll", game);
 	write_file(path, "MZ IsJammingEnabled");
 	check(XwauFlightSettings_Write(game, &g_names, &g_stock, settings) &&
-			  same_file(settings, "# Made by the OpenXWA mod importer.\nversion: 1\nrules:\n"
+			  same_file(settings, "# Made by the OpenXWA mod importer.\nrules:\n"
 								  "  super_star_destroyer_jamming: true\n"),
 		  "flight settings: hook_jamming makes the Super Star Destroyer jam");
 	snprintf(hooks, sizeof hooks, "%s/hook_jamming.cfg", game);
 	write_file(hooks, "; IsJammingEnabled = 0 or 1\nIsJammingEnabled = 0\n");
 	check(XwauFlightSettings_Write(game, &g_names, &g_stock, settings) &&
-			  same_file(settings, "# Made by the OpenXWA mod importer.\nversion: 1\nrules:\n"
+			  same_file(settings, "# Made by the OpenXWA mod importer.\nrules:\n"
 								  "  player_weapon_jamming: false\n"),
 		  "flight settings: IsJammingEnabled = 0 turns jamming off");
 	remove(path);
@@ -2057,13 +2054,13 @@ static void test_flight_settings(const char* scratch) {
 	snprintf(path, sizeof path, "%s/hook_weapon_type.dll", game);
 	write_file(path, "MZ To call the hook that sets the warhead menu");
 	check(XwauFlightSettings_Write(game, &g_names, &g_stock, settings) &&
-			  same_file(settings, "# Made by the OpenXWA mod importer.\nversion: 1\nrules:\n"
+			  same_file(settings, "# Made by the OpenXWA mod importer.\nrules:\n"
 								  "  two_launcher_fixes: true\n"),
 		  "flight settings: hook_weapon_type fixes craft with two warhead launchers");
 	write_file(path,
 			   "MZ To call the hook that sets the warhead menu To call the hook that fixes missile count");
 	check(XwauFlightSettings_Write(game, &g_names, &g_stock, settings) &&
-			  same_file(settings, "# Made by the OpenXWA mod importer.\nversion: 1\nrules:\n"
+			  same_file(settings, "# Made by the OpenXWA mod importer.\nrules:\n"
 								  "  two_launcher_fixes: true\n  starship_missile_defense_any_warhead: true\n"
 								  "  weapon_rack_count_from_record: true\n"),
 		  "flight settings: TFTC's hook_weapon_type also changes the missile defense and the rack count");
@@ -2072,7 +2069,7 @@ static void test_flight_settings(const char* scratch) {
 	write_file(path, "MZ");
 	check(XwauFlightSettings_Write(game, &g_names, &g_stock, settings) &&
 			  same_file(settings,
-						"# Made by the OpenXWA mod importer.\nversion: 1\ndocking:\n"
+						"# Made by the OpenXWA mod importer.\ndocking:\n"
 						"  dock_to_small_sets_big: true\n  ai_offsets_own_dock_point: true\n"
 						"  carried_offsets_carrier_dock_point: true\n  player_approach_height: true\n"
 						"  player_snaps_to_target_orientation: true\n"),

@@ -1237,7 +1237,7 @@ static bool write_craft_file(const char* path, const XwauNames* names, const Xwa
 		Report(path, "can't be written");
 		return false;
 	}
-	fprintf(f, "# Made by the OpenXWA mod importer.\nversion: 1\n");
+	fprintf(f, "# Made by the OpenXWA mod importer.\n");
 	if (has_reticle(hud) || has_colors(hud))
 		write_hud(f, names, hud);
 	if (has_engine_glows(glows))
@@ -1459,7 +1459,7 @@ static bool write_hud_file(const char* xwau_root, const char* output_dir, const 
 		ok = false;
 	}
 	if (f) {
-		fputs("# Made by the OpenXWA mod importer.\nversion: 1\n", f);
+		fputs("# Made by the OpenXWA mod importer.\n", f);
 		if (has_hull) {
 			fputs("hull_icons:", f);
 			hull_count = write_icons(f, names, "hull_icons", hull, hull_count, stock_values->hull_icons,

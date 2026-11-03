@@ -716,8 +716,7 @@ static bool write_library_sources(Library* l, const char* effects_dir, bool merg
 	if (existing && !doc)
 		Report(NULL, "%s", err);
 	bool ok = doc && (existing ? cJSON_IsObject(entries)
-							   : cJSON_AddNumberToObject(doc, "version", 1) &&
-									 cJSON_AddStringToObject(doc, "library", l->name) &&
+							   : cJSON_AddStringToObject(doc, "library", l->name) &&
 									 (entries = cJSON_AddObjectToObject(doc, "images")));
 	if (existing && doc && !ok)
 		Report(file, "no images");
@@ -794,7 +793,6 @@ static bool read_libraries(const char* const* inputs, size_t count, const char* 
 	for (size_t i = 0; i < count; ++i)
 		ok &= read_models(inputs[i]);
 	TextBuffer y = { 0 };
-	TextAppend(&y, "version: 1\n");
 	ok &= energy_yaml(&y) && images_yaml(&y);
 	if (y.failed) {
 		Report(NULL, "out of memory");
@@ -924,10 +922,9 @@ bool XwauLibrary_Make(const XwauLibrarySet* set, size_t index, int threads, cJSO
 		return false;
 	}
 	cJSON* doc = cJSON_CreateObject();
-	cJSON* entries =
-		doc && cJSON_AddNumberToObject(doc, "version", 1) && cJSON_AddStringToObject(doc, "library", l->name)
-			? cJSON_AddObjectToObject(doc, "images")
-			: NULL;
+	cJSON* entries = doc && cJSON_AddStringToObject(doc, "library", l->name)
+						 ? cJSON_AddObjectToObject(doc, "images")
+						 : NULL;
 	Sink   sink   = { 0 };
 	size_t images = 0;
 	int    diff   = 0;

@@ -6,9 +6,8 @@
  * mission (the mod importer's missions phase). They come from the hooks and
  * the ddraw that the mod installs, and from their settings files (the
  * hook's .cfg file, else its section of Hooks.ini). Without any of them, the
- * file only has its version, and the game plays as stock.
+ * file only has its header comment, and the game plays as stock.
  *
- *     version: 1
  *     backdrops:
  *       extra_planets:
  *         - { ids: [104, 255], image_groups: [6304, 6455] }

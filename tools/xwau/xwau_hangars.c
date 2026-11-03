@@ -1088,7 +1088,7 @@ static bool write_mission_layer(const char* path, const char* base, const Layer*
 	}
 	free(text);
 	if (!kept.len)
-		text_add(&kept, "# Made by the OpenXWA mod importer.\nversion: 1\n");
+		text_add(&kept, "# Made by the OpenXWA mod importer.\n");
 	char        dir[1100], temporary[1100];
 	const char* slash = strrchr(path, '/');
 	bool        ok    = !kept.failed && PathFormat(dir, sizeof dir, "%.*s", (int)(slash - path), path) &&
@@ -1210,7 +1210,7 @@ bool XwauHangars_Write(const char* xwau, const XwauGameTables* stock, const Xwau
 	}
 	size_t models = 0;
 	if (f) {
-		fputs("# Made by the OpenXWA mod importer.\nversion: 1\n", f);
+		fputs("# Made by the OpenXWA mod importer.\n", f);
 		if (!layer_empty(&def)) {
 			fprintf(f, "default:\n");
 			write_layer(f, &def, 2);

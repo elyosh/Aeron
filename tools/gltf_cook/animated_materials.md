@@ -45,7 +45,6 @@ viewer: make them the animation's rest look.
 ## Effect libraries
 
 ```yaml
-version: 1
 library: mycockpit
 images:
   lights_0: { kind: emissive, emissive: frames/lights_0.png }

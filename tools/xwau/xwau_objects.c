@@ -714,8 +714,7 @@ static bool write_craft_type_file(const char* path, const XwauNames* names, int 
 		return false;
 	}
 	fputs("# Made by the OpenXWA mod importer.\n", f);
-	fprintf(f, "version: 1\ncraft_type: %d\nobject_type: %s  # %s\n", c,
-			XwauNames_ObjectType(names, object_type), model);
+	fprintf(f, "craft_type: %d\nobject_type: %s  # %s\n", c, XwauNames_ObjectType(names, object_type), model);
 	if (change->line) {
 		const ShipLine* ship     = &change->ship;
 		const char*     category = category_name(names, ship->category);
@@ -873,7 +872,7 @@ static bool write_object_file(const char* path, const XwauNames* names, const Ch
 	const char*        stock_name = XwauNames_Name(&names->object_types, change->objectType);
 	const char*        name       = XwauNames_ObjectType(names, change->objectType);
 	fputs("# Made by the OpenXWA mod importer.\n", f);
-	fprintf(f, "version: 1\nobject_type: %s\n", stock_name);
+	fprintf(f, "object_type: %s\n", stock_name);
 	if (strcmp(name, stock_name) != 0)
 		fprintf(f, "name: %s\n", name);
 	if (change->writeModel) {

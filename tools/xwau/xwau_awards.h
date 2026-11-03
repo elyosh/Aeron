@@ -8,7 +8,6 @@
  * hook_concourse reads in the game folder:
  *
  *     # Made by the OpenXWA mod importer.
- *     version: 1
  *     battle_medals:
  *       - { name: "Medal of Redemption" }
  *     kalidor:

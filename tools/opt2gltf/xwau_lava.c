@@ -154,8 +154,7 @@ static void render_frame(bool tiling, int frame, uint8_t* rgba) {
 /* The library file content, without images. */
 static cJSON* library_doc(cJSON** images) {
 	cJSON* doc = cJSON_CreateObject();
-	*images    = doc && cJSON_AddNumberToObject(doc, "version", 1) &&
-						 cJSON_AddStringToObject(doc, "library", XWAU_LAVA_LIBRARY)
+	*images    = doc && cJSON_AddStringToObject(doc, "library", XWAU_LAVA_LIBRARY)
 					 ? cJSON_AddObjectToObject(doc, "images")
 					 : NULL;
 	return doc;

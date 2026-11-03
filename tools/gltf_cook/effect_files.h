@@ -24,8 +24,8 @@ extern "C" {
 
 struct cJSON;
 
-/* The canonical text of `file`, an effect library file (version, library
- * and images), starting with `header` (comment lines, each ending in '\n',
+/* The canonical text of `file`, an effect library file (library and
+ * images), starting with `header` (comment lines, each ending in '\n',
  * or NULL), as a malloc'd string; NULL when out of memory or `file` is not
  * one. */
 char* EffectFiles_Format(const struct cJSON* file, const char* header);

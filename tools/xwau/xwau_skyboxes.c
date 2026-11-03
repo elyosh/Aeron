@@ -640,7 +640,7 @@ static void write_missions(const SkyState* st, TextBuffer* f) {
  * `xwa.missions` entries. */
 static bool write_manifest(const char* path, const char* environments, const char* missions) {
 	TextBuffer text = { 0 };
-	TextAppend(&text, "# Made by the OpenXWA mod importer.\nversion: 1\n");
+	TextAppend(&text, "# Made by the OpenXWA mod importer.\n");
 	TextAppend(&text, environments[0] ? "environments:\n%s" : "environments: {}\n%s", environments);
 	TextAppend(&text, missions[0] ? "xwa:\n  missions:\n%s" : "xwa:\n  missions: {}\n%s", missions);
 	const bool ok = !text.failed && text.text && WriteWholeFile(path, text.text, text.length);

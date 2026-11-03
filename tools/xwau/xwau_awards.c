@@ -182,7 +182,7 @@ bool XwauAwards_Write(const char* game, const char* path) {
 			Report(NULL, "cannot write %s", path);
 			ok = false;
 		} else {
-			fprintf(f, "%s\nversion: 1\n", HEADER);
+			fprintf(f, "%s\n", HEADER);
 			if (medal_count) {
 				fprintf(f, "battle_medals:\n");
 				for (size_t i = 0; i < medal_count; ++i) {

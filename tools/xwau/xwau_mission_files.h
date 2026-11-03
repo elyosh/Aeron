@@ -6,7 +6,6 @@
  * selection gets a file <out>/<dir>/<mission>.yaml (lower case). The game
  * reads it when it loads the mission:
  *
- *     version: 1
  *     resdata: ["planet2", "planetcustom", "backdrop_special"]
  *     settings:
  *       hide_hyperspace_exit_messages: true

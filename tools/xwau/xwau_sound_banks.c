@@ -623,8 +623,7 @@ bool XwauSoundBanks_Write(const char* game, const XwauNames* game_names, const c
 		ok = false;
 	}
 	if (f)
-		fprintf(f, "# Made by the OpenXWA mod importer.\nversion: "
-				   "1\nbanks:\n");
+		fprintf(f, "# Made by the OpenXWA mod importer.\nbanks:\n");
 	for (size_t i = 0; ok && i < count; ++i) {
 		const size_t length = strlen(names[i]);
 		if (length <= 8 || strncasecmp(names[i], "sfx_", 4) != 0 || !EndsWithNoCase(names[i], ".lst"))

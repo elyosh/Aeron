@@ -48,7 +48,6 @@
  * load it.
  *
  *   # Made by the OpenXWA mod importer.
- *   version: 1
  *   object_type: victory_star_destroyer2
  *   model: victorystardestroyer
  *   genus: starship
@@ -63,7 +62,6 @@
  *   names: {short: 'QF/Cr', long: 'Quasar Fire Carrier', plural: '...', gender: m}
  *
  *   # Made by the OpenXWA mod importer.
- *   version: 1
  *   craft_type: 124
  *   object_type: victory_star_destroyer2  # victorystardestroyer
  *   ship_list: {name: '...', category: fighter, flyable: true, known: true,

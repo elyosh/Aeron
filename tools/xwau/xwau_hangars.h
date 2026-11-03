@@ -5,7 +5,6 @@
  * Writes XWAU's hangar settings, which hook_hangars reads at runtime, once
  * and already parsed (the mod importer's hangars phase):
  *
- *     version: 1
  *     default:                  # FlightModels/<Section>.txt, else default.ini [<Section>]
  *       objects: { LoadShuttle: 1, ShuttleModelIndex: 50, ... }
  *       swaps: { hangardroid: "hangardroidr2q5" }

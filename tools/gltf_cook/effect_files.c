@@ -14,8 +14,8 @@
 
 /* The members of an entry, in the format's order (animated_materials.md):
  * a file's and an image's. Other members follow, by name. */
-static const char* const kOrder[] = { "version",  "library", "kind",    "baseColor", "emissive",
-									  "factor",   "maxSize", "crop",    "images" };
+static const char* const kOrder[] = { "library", "kind",    "baseColor", "emissive",
+									  "factor",  "maxSize", "crop",      "images" };
 
 #define COUNT(a) (sizeof(a) / sizeof((a)[0]))
 
@@ -225,16 +225,13 @@ static void put_map(Text* t, const char* name, const cJSON* map) {
 }
 
 char* EffectFiles_Format(const cJSON* file, const char* header) {
-	const cJSON* version = cJSON_GetObjectItemCaseSensitive(file, "version");
 	const cJSON* library = cJSON_GetObjectItemCaseSensitive(file, "library");
 	const cJSON* images  = cJSON_GetObjectItemCaseSensitive(file, "images");
-	if (!cJSON_IsObject(file) || !cJSON_IsNumber(version) || !cJSON_IsString(library) || !cJSON_IsObject(images))
+	if (!cJSON_IsObject(file) || !cJSON_IsString(library) || !cJSON_IsObject(images))
 		return NULL;
 	Text t = { 0 };
 	put_text(&t, header ? header : "");
-	put_text(&t, "version: ");
-	put_number(&t, version->valuedouble);
-	put_text(&t, "\nlibrary: ");
+	put_text(&t, "library: ");
 	put_string(&t, library->valuestring);
 	put_text(&t, "\n");
 	put_map(&t, "images", images);

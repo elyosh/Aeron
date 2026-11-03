@@ -9,7 +9,6 @@
  * its ID. In OpenXWA, text/strings.yaml can replace the text of any ID. So
  * the file lists each ID whose text is different in the mod:
  *
- *   version: 1
  *   strings:
  *     # STRINGS.TXT
  *     MSG_LASERS_ARMED: '\03Primary cannons armed'

@@ -92,7 +92,6 @@ static bool check_image(const char* tool, const char* key, const cJSON* entry) {
 }
 
 bool EffectLibrary_CheckLibrary(const char* tool, const char* file, const cJSON* root) {
-	const cJSON* version = cJSON_GetObjectItemCaseSensitive(root, "version");
 	const cJSON* library = cJSON_GetObjectItemCaseSensitive(root, "library");
 	const cJSON* images  = cJSON_GetObjectItemCaseSensitive(root, "images");
 	const bool   object  = cJSON_IsObject(root);
@@ -101,17 +100,11 @@ bool EffectLibrary_CheckLibrary(const char* tool, const char* file, const cJSON*
 	   own file, which aeron_gltf_cook reads. */
 	const cJSON* member;
 	cJSON_ArrayForEach(member, root) {
-		if (object && strcmp(member->string, "version") && strcmp(member->string, "library") &&
-			strcmp(member->string, "images")) {
-			ToolLog_Write(TOOL_LOG_ERROR,
-						  "%s: %s: unknown member %s (a library has version, library and images)", tool, file,
-						  member->string);
+		if (object && strcmp(member->string, "library") && strcmp(member->string, "images")) {
+			ToolLog_Write(TOOL_LOG_ERROR, "%s: %s: unknown member %s (a library has library and images)",
+						  tool, file, member->string);
 			ok = false;
 		}
-	}
-	if (!cJSON_IsNumber(version) || version->valueint != 1) {
-		ToolLog_Write(TOOL_LOG_ERROR, "%s: %s: version must be 1", tool, file);
-		ok = false;
 	}
 	if (!cJSON_IsString(library) || !valid_name(library->valuestring)) {
 		ToolLog_Write(TOOL_LOG_ERROR, "%s: %s: library must be a name of a-z, 0-9, '_' and '-'", tool, file);
