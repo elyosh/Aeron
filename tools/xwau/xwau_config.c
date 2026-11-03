@@ -328,7 +328,19 @@ void Xwau_WriteDecimal(FILE* f, double value) {
 	fputs(strcmp(text, "-0") == 0 ? "0" : text, f);
 }
 
-double Xwau_Metres(double units) { return units / 40.96; }
+double Xwau_FromGame(XwauUnit unit, double game) {
+	static const double kGamePerUnit[] = { 1.0, 40.96, 0.25, 2.25, 65536.0 / 360.0, 65536.0 / 100.0 };
+	return game / kGamePerUnit[unit];
+}
+
+void Xwau_WriteUnit(FILE* f, XwauUnit unit, long long game) {
+	if (unit == XWAU_UNIT_NONE)
+		fprintf(f, "%lld", game);
+	else
+		Xwau_WriteDecimal(f, Xwau_FromGame(unit, (double)game));
+}
+
+double Xwau_Metres(double units) { return Xwau_FromGame(XWAU_UNIT_METRES, units); }
 
 void Xwau_WriteMetres(FILE* f, int units) { Xwau_WriteDecimal(f, Xwau_Metres(units)); }
 

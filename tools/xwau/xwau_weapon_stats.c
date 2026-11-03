@@ -13,7 +13,7 @@ enum { FIRST_WEAPON = 280, WEAPONS = 28, WARHEAD_TYPES = 12, FORMS = 8, STATS = 
 static const char* const kSections[XWAU_WEAPON_STATS_GROUPS] = { "WeaponStats", "WarheadStats", "EnergyStats",
 																 "LinkingStats" };
 static const char* const kGroupNames[XWAU_WEAPON_STATS_GROUPS] = { "stats", "warhead_capacity_percent",
-																   "energy_speed_q16", "linking" };
+																   "energy_speed_percent", "linking" };
 
 /* The hook's stats, and the names that the game's files use for them. */
 static const char* const kStats[STATS] = {
@@ -37,12 +37,12 @@ static const char* const kStatNames[STATS] = {
 	"duration_seconds",
 	"duration_fraction",
 	"score",
-	"speed",
+	"speed_mglt",
 	"power",
 	"power_speed_percent",
-	"fire_rate",
-	"duration_offset",
-	"fire_ratio",
+	"fire_rate_ms",
+	"duration_offset_ms",
+	"fire_ratio_ms",
 	"range_m",
 	"precise",
 	"spread_mask",
@@ -51,7 +51,14 @@ static const char* const kStatNames[STATS] = {
 	"high_power_charge",
 };
 
-enum { STAT_RANGE = 9, STAT_PRECISE = 10 };
+enum { STAT_PRECISE = 10 };
+
+/* The unit of each stat in the model file. */
+static const XwauUnit kStatUnits[STATS] = {
+	XWAU_UNIT_NONE, XWAU_UNIT_NONE,         XWAU_UNIT_NONE,         XWAU_UNIT_MGLT,         XWAU_UNIT_NONE,
+	XWAU_UNIT_NONE, XWAU_UNIT_MILLISECONDS, XWAU_UNIT_MILLISECONDS, XWAU_UNIT_MILLISECONDS, XWAU_UNIT_METRES,
+	XWAU_UNIT_NONE, XWAU_UNIT_NONE,         XWAU_UNIT_NONE,         XWAU_UNIT_NONE,         XWAU_UNIT_NONE,
+};
 
 /* The forms of a stat, in the order that the game numbers them. */
 static const char* const kForms[FORMS]     = { "",      "_Player",      "_Easy",          "_Medium",
@@ -481,8 +488,8 @@ static bool profile_seen(const XwauWeaponStats* stats, int group, const char* pr
 static void write_number(FILE* f, int stat, long long value) {
 	if (stat == STAT_PRECISE)
 		fputs(value ? "true" : "false", f);
-	else if (stat == STAT_RANGE)
-		Xwau_WriteMetres(f, (int)value);
+	else if (kStatUnits[stat] != XWAU_UNIT_NONE)
+		Xwau_WriteUnit(f, kStatUnits[stat], value);
 	else
 		fprintf(f, "%lld", value);
 }
@@ -580,9 +587,10 @@ void XwauWeaponStats_Write(FILE* f, const XwauNames* names, const XwauStockValue
 					first = false;
 					if (group == XWAU_WEAPON_STATS_WARHEADS)
 						fprintf(f, "%s: %lld", XwauNames_Name(&names->warheads, index), v->value);
-					else if (group == XWAU_WEAPON_STATS_ENERGY)
-						fprintf(f, "%s: %lld", kEnergyNames[index], v->value);
-					else if (index == 0)
+					else if (group == XWAU_WEAPON_STATS_ENERGY) {
+						fprintf(f, "%s: ", kEnergyNames[index]);
+						Xwau_WriteUnit(f, XWAU_UNIT_PERCENT_Q16, v->value);
+					} else if (index == 0)
 						fprintf(f, "%s: %lld", kLinkingNames[index], v->value);
 					else
 						fprintf(f, "%s: %s", kLinkingNames[index], v->value ? "true" : "false");

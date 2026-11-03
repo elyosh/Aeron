@@ -11,9 +11,31 @@
 
 static const char* const kMissionDirs[] = { "Missions", "Melee", "Combat" };
 
-/* The game's keys, then XWAU's keys, in the order of stats_profiles.h's
-   fields. */
-static const char* const kFieldKeys[XWAU_STATS_FIELDS] = {
+/* The game's keys of a profile, the units that they use, the keys of the
+   percents, then XWAU's keys, in the order of stats_profiles.h's fields. */
+static const char* const kProfileKeys[XWAU_STATS_FIELDS] = {
+	"speed_mglt",
+	"acceleration_mglt",
+	"deceleration_mglt",
+	"pitch_rate_degrees",
+	"roll_rate_degrees",
+	"yaw_rate_degrees",
+	"system_damage_hull_threshold",
+	"hull",
+	"system_strength",
+	"shields",
+	"speed_increment_mglt",
+	"speed_decrement_mglt",
+	"has_shields",
+	"has_hyperdrive",
+	"warhead_collision_damage",
+};
+static const XwauUnit kProfileUnits[XWAU_STATS_FIELDS] = {
+	XWAU_UNIT_MGLT,    XWAU_UNIT_MGLT, XWAU_UNIT_MGLT, XWAU_UNIT_DEGREES, XWAU_UNIT_DEGREES,
+	XWAU_UNIT_DEGREES, XWAU_UNIT_NONE, XWAU_UNIT_NONE, XWAU_UNIT_NONE,    XWAU_UNIT_NONE,
+	XWAU_UNIT_MGLT,    XWAU_UNIT_MGLT, XWAU_UNIT_NONE, XWAU_UNIT_NONE,    XWAU_UNIT_NONE,
+};
+static const char* const kPercentKeys[XWAU_STATS_FIELDS] = {
 	"speed",
 	"acceleration",
 	"deceleration",
@@ -359,11 +381,11 @@ void XwauStatsProfiles_Write(FILE* f, const XwauStatsProfiles* profiles) {
 		for (int field = 0; field < XWAU_STATS_FIELDS; ++field) {
 			if (!p->set[field])
 				continue;
-			fprintf(f, "%s%s: ", first ? "" : ", ", kFieldKeys[field]);
+			fprintf(f, "%s%s: ", first ? "" : ", ", kProfileKeys[field]);
 			if (field >= FIELD_HAS_SHIELDS)
 				fputs(p->value[field] ? "true" : "false", f);
 			else
-				fprintf(f, "%lld", p->value[field]);
+				Xwau_WriteUnit(f, kProfileUnits[field], p->value[field]);
 			first = false;
 		}
 		fputs("}\n", f);
@@ -586,7 +608,7 @@ void XwauMissionStats_Write(FILE* f, const XwauMissionStats* stats) {
 			if (percent[field] == -1)
 				continue;
 			fprintf(f, "%s%s: %lld", first ? (g ? "  player_percent: {" : "  percent: {") : ", ",
-					kFieldKeys[field], percent[field]);
+					kPercentKeys[field], percent[field]);
 			first = false;
 		}
 		if (!first)

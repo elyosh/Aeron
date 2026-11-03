@@ -71,9 +71,25 @@ bool Xwau_ModelKey(const char* path, char* out, size_t cap);
 void Xwau_WriteString(FILE* f, const char* text);
 
 /* Writes `value` with at most three decimals and no trailing zeros. Three
- * decimals are enough to get the exact game value back from a length in
- * metres or an angle in degrees. */
+ * decimals are enough to get the exact game value back from a value in
+ * any XwauUnit. */
 void Xwau_WriteDecimal(FILE* f, double value);
+
+/* The units of the mod files, and the game's unit that each one stands
+ * for. */
+typedef enum XwauUnit {
+	XWAU_UNIT_NONE,         /* the game's own value */
+	XWAU_UNIT_METRES,       /* game units, 40.96 to the metre */
+	XWAU_UNIT_MILLISECONDS, /* ticks of 4 ms */
+	XWAU_UNIT_MGLT,         /* speed units, 2.25 to the MGLT */
+	XWAU_UNIT_DEGREES,      /* angle units, 65536 to the turn */
+	XWAU_UNIT_PERCENT_Q16,  /* a Q16 value, where 65536 is 100% */
+} XwauUnit;
+
+/* Converts `game`, a value in the game's unit, to `unit`. */
+double Xwau_FromGame(XwauUnit unit, double game);
+/* Writes `game`, a value in the game's unit, in `unit`. */
+void Xwau_WriteUnit(FILE* f, XwauUnit unit, long long game);
 /* Converts a length in game units (40.96 per metre) to metres. */
 double Xwau_Metres(double units);
 /* Writes a length in game units as metres. */

@@ -1213,7 +1213,8 @@ static void test_objects(const char* scratch) {
 	check(text && strstr(text, "object_type: type_2\nname: tie_advanced_x1\nmodel: tieadvancedx1\n"),
 		  "objects: a row that the mod renames gives `model`, and the slot is renamed after the mod's ship "
 		  "list");
-	check(text && strstr(text, "    - {type: type_282, count: 2, kind: none, range_m: 0, cooldown: 0}\n") &&
+	check(text &&
+			  strstr(text, "    - {type: type_282, count: 2, kind: none, range_m: 0, cooldown_ms: 0}\n") &&
 			  strstr(text, "  cockpit_name: 'TieAdvancedX1'\n") && strstr(text, "sounds_like: type_5\n"),
 		  "objects: the laser groups, the cockpit name and the engine sound case");
 	check(text && strstr(text, "names: {long: 'TIE Advanced x1', gender: m}\n") && !strstr(text, "ship_list"),
@@ -1249,9 +1250,10 @@ static void test_objects(const char* scratch) {
 		  "objects: [ExeCraftValues] sets the object type's flags, and the file lists the flags that are on");
 	check(
 		text && strstr(text, "  ai_hits_to_evade: 3\n") && !strstr(text, "countermeasures") &&
-			strstr(text,
-				   "  lasers:\n    - {type: type_280, count: 0, kind: none, range_m: 24.414, cooldown: 0}\n"
-				   "    - {type: type_283, count: 0, kind: long_range_turret, range_m: 0, cooldown: 0}\n") &&
+			strstr(
+				text,
+				"  lasers:\n    - {type: type_280, count: 0, kind: none, range_m: 24.414, cooldown_ms: 0}\n"
+				"    - {type: type_283, count: 0, kind: long_range_turret, range_m: 0, cooldown_ms: 0}\n") &&
 			strstr(text, "  warheads:\n    - {type: type_286, count: 0, capacity: 0}\n"),
 		"objects: [ExeCraftValues] sets the craft record; missing keys and values that aren't numbers keep "
 		"the record's values");
@@ -1758,26 +1760,26 @@ static void test_weapon_stats(const char* scratch) {
 	FILE* f = fopen(out, "wb");
 	XwauWeaponStats_Write(f, &g_names, &g_stock, "  ", &stats);
 	fclose(f);
-	check(
-		same_file(out,
-				  "  stats:\n"
-				  "    \"my_profile\":\n"
-				  "      type_282: {power: 900}\n"
-				  "    default:\n"
-				  "      type_282: {fire_rate: 47, range_m: 1600, player_easy: {power: 350, fire_rate: 39}}\n"
-				  "      type_289: {precise: false, spread_mask: 63}\n"
-				  "  warhead_capacity_percent:\n"
-				  "    default: {space_bomb: 50, heavy_rocket: 0}\n"
-				  "  energy_speed_q16:\n"
-				  "    default: {player: 7864}\n"
-				  "  linking:\n"
-				  "    default: {laser_link: 2, prevent_player_linked_lasers_ion: true}\n"
-				  "  hardpoint_kinds: {none: none, turbo_rebel_laser: warhead, empire_laser: laser, "
-				  "turbo_empire_laser: laser}\n"),
-		"weapon profiles: profile names with '_', the player and difficulty forms, the first of two keys, "
-		"-1, Default and other keys left out, the range in metres, the energy in Q16. The model's hardpoint "
-		"kinds come before "
-		"the global ones, and only the kinds that differ from the global kinds are written");
+	check(same_file(out, "  stats:\n"
+						 "    \"my_profile\":\n"
+						 "      type_282: {power: 900}\n"
+						 "    default:\n"
+						 "      type_282: {fire_rate_ms: 188, range_m: 1600, player_easy: {power: 350, "
+						 "fire_rate_ms: 156}}\n"
+						 "      type_289: {precise: false, spread_mask: 63}\n"
+						 "  warhead_capacity_percent:\n"
+						 "    default: {space_bomb: 50, heavy_rocket: 0}\n"
+						 "  energy_speed_percent:\n"
+						 "    default: {player: 12}\n"
+						 "  linking:\n"
+						 "    default: {laser_link: 2, prevent_player_linked_lasers_ion: true}\n"
+						 "  hardpoint_kinds: {none: none, turbo_rebel_laser: warhead, empire_laser: laser, "
+						 "turbo_empire_laser: laser}\n"),
+		  "weapon profiles: profile names with '_', the player and difficulty forms, the first of two keys, "
+		  "-1, Default and other keys left out, the times in milliseconds, the range in metres, the energy "
+		  "in percent. The model's hardpoint "
+		  "kinds come before "
+		  "the global ones, and only the kinds that differ from the global kinds are written");
 	XwauWeaponStats_Free(&stats);
 	check(XwauWeaponStats_Read(game, NULL, &stats) && stats.count == 1 && stats.items[0].index == 280 &&
 			  stats.hardpoint_kind_count == 2,
@@ -2405,7 +2407,8 @@ static void test_stats_profiles(const char* scratch) {
 	FILE* f = fopen(out, "wb");
 	XwauStatsProfiles_Write(f, &profiles);
 	fclose(f);
-	check(same_file(out, "stats_profiles:\n  \"fast\": {speed: 124}\n"), "stats profiles: the model group");
+	check(same_file(out, "stats_profiles:\n  \"fast\": {speed_mglt: 55.111}\n"),
+		  "stats profiles: the model group");
 	XwauStatsProfiles_Free(&profiles);
 	FreeList(names, count);
 
@@ -2489,7 +2492,7 @@ static void test_stats_profiles(const char* scratch) {
 	XwauCraft_WriteWeaponRates(f, &g_names, "", &rates);
 	fclose(f);
 	check(
-		same_file(out, "rates: {decharge: 2, recharge: 3, cooldown: 94}\n"),
+		same_file(out, "rates: {decharge: 2, recharge: 3, cooldown_ms: 376}\n"),
 		"weapon rates: the model's keys; the first line wins, and -1 and other negative values are left out");
 	snprintf(txt, sizeof txt, "%s/FlightModels/FrigateWeaponRate.txt", game);
 	write_file(txt, "RechargeRatePercent = 50\n");
@@ -2539,10 +2542,10 @@ static void test_stats_profiles(const char* scratch) {
 	f = fopen(out, "wb");
 	XwauCraft_WriteWarheadLock(f, &lock);
 	fclose(f);
-	check(same_file(out,
-					"warhead_lock:\n  lock_range_m: {small: 2500, transport: 2485.474}\n  lock_ticks: 354\n"
-					"  ticks_per_homing_level: 118\n  ai_lock_ticks_per_tier: 400\n"
-					"  ai_lock_range_m: {big_top_tier: 2485.474}\n"),
+	check(same_file(
+			  out, "warhead_lock:\n  lock_range_m: {small: 2500, transport: 2485.474}\n  lock_time_ms: 1416\n"
+				   "  homing_level_time_ms: 472\n  ai_lock_time_per_tier_ms: 1600\n"
+				   "  ai_lock_range_m: {big_top_tier: 2485.474}\n"),
 		  "warhead lock: the keys go into the warhead_lock group");
 	write_file(path, "[WarheadLock]\nLockDistance0 = 90000\nLockStrengthDivisor = 0\nLockTime = 150\n"
 					 "LockTime_Fast = 300\n");

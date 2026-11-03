@@ -47,7 +47,7 @@
  * A model's values go into the `weapons` group of its model file, and the
  * global values into the `weapons` section of flight/flight.yaml. The
  * [WeaponStats] lines go into `stats`, [WarheadStats] into
- * `warhead_capacity_percent`, [EnergyStats] into `energy_speed_q16` and
+ * `warhead_capacity_percent`, [EnergyStats] into `energy_speed_percent` and
  * [LinkingStats] into `linking`, each by profile. [WeaponHardpointTypes]
  * goes into `hardpoint_kinds`.
  *

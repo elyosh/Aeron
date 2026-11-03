@@ -26,7 +26,7 @@
  *   - GameOptions_IsHardpointsMirroring and GameOptions_IsAxisAligned: the
  *     type's flags 0x800 and 0x1000;
  *   - LaserTypeId0-2, LaserSequence0-2, LaserRange0-2 and LaserFireRatio0-2:
- *     the type, kind, range and cooldown of the laser groups;
+ *     the type, kind, range and cooldown time of the laser groups;
  *   - WarheadTypeId0-1 and WarheadCapacity0-1: the type and capacity of the
  *     warhead launchers;
  *   - CounterMeasuresCount and AIHitsTakenToEvade.

@@ -557,8 +557,12 @@ static bool write_camera(FILE* f, const char* game) {
 	fprintf(f, "  cockpit_sway: %s\n", sway ? "true" : "false");
 	write_camera_number(f, "cockpit_sway_strength_m",
 						Xwau_Metres((double)c.units_to_meters * c.cockpit_inertia), 0.0, 0.5, sway);
+	/* The hook's speed sway is for each speed unit, and the key's for each
+	   MGLT. */
 	write_camera_number(f, "cockpit_speed_sway_m",
-						Xwau_Metres((double)c.units_to_meters * c.cockpit_speed_inertia), 0.0, 0.025, sway);
+						Xwau_Metres((double)c.units_to_meters * c.cockpit_speed_inertia) /
+							Xwau_FromGame(XWAU_UNIT_MGLT, 1.0),
+						0.0, 0.05, sway);
 	write_camera_number(f, "cockpit_sway_max_m",
 						Xwau_Metres((double)c.units_to_meters * c.cockpit_max_inertia), 0.0, 0.25, sway);
 	fprintf(f, "  exterior_hud: %s\n", exterior ? "true" : "false");

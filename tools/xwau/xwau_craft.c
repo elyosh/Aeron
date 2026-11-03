@@ -419,13 +419,13 @@ static const struct {
 	{ "LockDistance1", 0, INT_MAX, "lock_range_m", "big" },
 	{ "LockDistance2", 0, INT_MAX, "lock_range_m", "transport" },
 	/* The HUD divides by LockTime / 200, and the lock ticks are 16-bit. */
-	{ "LockTime", 200, 32767, NULL, "lock_ticks" },
+	{ "LockTime", 200, 32767, NULL, "lock_time_ms" },
 	/* The game divides by it. */
-	{ "LockStrengthDivisor", 1, 32767, NULL, "ticks_per_homing_level" },
+	{ "LockStrengthDivisor", 1, 32767, NULL, "homing_level_time_ms" },
 	{ "AILockDistance0", 0, INT_MAX, "ai_lock_range_m", "small" },
 	{ "AILockDistance1", 0, INT_MAX, "ai_lock_range_m", "big" },
 	{ "AILockDistance2", 0, INT_MAX, "ai_lock_range_m", "big_top_tier" },
-	{ "AILockTimeFactor", 0, 65535, NULL, "ai_lock_ticks_per_tier" },
+	{ "AILockTimeFactor", 0, 65535, NULL, "ai_lock_time_per_tier_ms" },
 };
 
 enum { WARHEAD_LOCK_TIME = 3 };
@@ -516,8 +516,11 @@ void XwauCraft_WriteWarheadLock(FILE* f, const XwauCraftWarheadLock* lock) {
 	fputs("warhead_lock:\n", f);
 	write_warhead_lock_map(f, lock, "lock_range_m");
 	for (int i = WARHEAD_LOCK_TIME; i < XWAU_CRAFT_WARHEAD_LOCK_KEYS; ++i) {
-		if (!g_warheadLockKeys[i].group && lock->value[i] >= 0)
-			fprintf(f, "  %s: %d\n", g_warheadLockKeys[i].name, lock->value[i]);
+		if (!g_warheadLockKeys[i].group && lock->value[i] >= 0) {
+			fprintf(f, "  %s: ", g_warheadLockKeys[i].name);
+			Xwau_WriteUnit(f, XWAU_UNIT_MILLISECONDS, lock->value[i]);
+			fputc('\n', f);
+		}
 	}
 	write_warhead_lock_map(f, lock, "ai_lock_range_m");
 }
@@ -834,7 +837,7 @@ static const struct {
 } g_rateKeys[XWAU_CRAFT_WEAPON_RATES] = {
 	{ "DechargeRate", "rates", "decharge", false, 0 },
 	{ "RechargeRate", "rates", "recharge", false, 0 },
-	{ "CooldownTimeFactor", "rates", "cooldown", false, 0 },
+	{ "CooldownTimeFactor", "rates", "cooldown_ms", false, 0 },
 	{ "DechargeRatePercent", "rates", "decharge_percent", false, 0 },
 	{ "RechargeRatePercent", "rates", "recharge_percent", false, 0 },
 	{ "EnergyTransferRate", "energy_transfer", "rate", true, 0 },
@@ -939,8 +942,11 @@ void XwauCraft_WriteWeaponRates(FILE* f, const XwauNames* names, const char* ind
 												: XwauNames_WeaponType(names, g_rateKeys[key].weapon_type);
 		if (key == XWAU_CRAFT_IMPACT_SPIN)
 			fprintf(f, "%s: %s", name, rates->value[key] ? "true" : "false");
-		else
-			fprintf(f, "%s: %d", name, rates->value[key]);
+		else {
+			fprintf(f, "%s: ", name);
+			Xwau_WriteUnit(f, key == XWAU_CRAFT_COOLDOWN ? XWAU_UNIT_MILLISECONDS : XWAU_UNIT_NONE,
+						   rates->value[key]);
+		}
 	}
 	if (open)
 		fputs("}\n", f);

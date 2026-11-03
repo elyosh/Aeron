@@ -123,6 +123,7 @@ typedef struct XwauCraftShield {
  * above. -1 means not set. */
 /* The [WeaponRate] keys, in the order of xwau_craft.c's table. */
 enum {
+	XWAU_CRAFT_COOLDOWN             = 2,
 	XWAU_CRAFT_TORPEDOES_PER_PASS   = 9,
 	XWAU_CRAFT_TORPEDOES_PER_TARGET = 10,
 	XWAU_CRAFT_IMPACT_SPIN          = 11,

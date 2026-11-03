@@ -47,55 +47,58 @@ typedef enum FieldKind {
 	FIELD_BOOL,
 	FIELD_WEAPON,     /* written as a weapon type name; 0 is none */
 	FIELD_LASER_KIND, /* written as a laser group kind name */
-	FIELD_METRES,     /* a signed distance in game units, written in metres */
 } FieldKind;
 
+/* A field of the record. A number with a unit is written in that unit. */
 typedef struct Field {
 	const char* key;
 	unsigned    offset, size;
 	FieldKind   kind;
+	XwauUnit    unit;
 } Field;
 
 /* The single-value keys of `craft_record`, at their offsets in the packed
    987-byte record (model_def.h). */
 static const Field g_fields[] = {
-	{ "speed", 32, 2, FIELD_UNSIGNED },
-	{ "acceleration", 34, 2, FIELD_UNSIGNED },
-	{ "deceleration", 36, 2, FIELD_UNSIGNED },
-	{ "yaw_rate", 38, 2, FIELD_SIGNED },
-	{ "roll_rate", 42, 2, FIELD_SIGNED },
-	{ "pitch_rate", 44, 2, FIELD_SIGNED },
-	{ "auto_bank", 40, 2, FIELD_UNSIGNED },
-	{ "max_tumble_angle", 46, 2, FIELD_UNSIGNED },
-	{ "max_push_rate", 48, 2, FIELD_UNSIGNED },
-	{ "hull", 21, 4, FIELD_SIGNED },
-	{ "shields", 15, 4, FIELD_SIGNED },
-	{ "has_shields", 14, 1, FIELD_BOOL },
-	{ "has_hyperdrive", 12, 1, FIELD_BOOL },
-	{ "system_strength", 29, 2, FIELD_UNSIGNED },
-	{ "system_damage_hull_threshold", 25, 4, FIELD_SIGNED },
-	{ "component_max_hp", 31, 1, FIELD_UNSIGNED },
-	{ "rating_weight", 10, 2, FIELD_UNSIGNED },
-	{ "laser_converge_mode", 13, 1, FIELD_UNSIGNED },
-	{ "countermeasures", 563, 1, FIELD_UNSIGNED },
-	{ "gunsight_offset_y", 564, 4, FIELD_SIGNED },
-	{ "ai_hits_to_evade", 19, 1, FIELD_UNSIGNED },
+	{ "speed_mglt", 32, 2, FIELD_UNSIGNED, XWAU_UNIT_MGLT },
+	{ "acceleration_mglt", 34, 2, FIELD_UNSIGNED, XWAU_UNIT_MGLT },
+	{ "deceleration_mglt", 36, 2, FIELD_UNSIGNED, XWAU_UNIT_MGLT },
+	{ "yaw_rate_degrees", 38, 2, FIELD_SIGNED, XWAU_UNIT_DEGREES },
+	{ "roll_rate_degrees", 42, 2, FIELD_SIGNED, XWAU_UNIT_DEGREES },
+	{ "pitch_rate_degrees", 44, 2, FIELD_SIGNED, XWAU_UNIT_DEGREES },
+	{ "auto_bank_percent", 40, 2, FIELD_UNSIGNED, XWAU_UNIT_PERCENT_Q16 },
+	{ "max_tumble_angle_degrees", 46, 2, FIELD_UNSIGNED, XWAU_UNIT_DEGREES },
+	{ "max_push_rate", 48, 2, FIELD_UNSIGNED, XWAU_UNIT_NONE },
+	{ "hull", 21, 4, FIELD_SIGNED, XWAU_UNIT_NONE },
+	{ "shields", 15, 4, FIELD_SIGNED, XWAU_UNIT_NONE },
+	{ "has_shields", 14, 1, FIELD_BOOL, XWAU_UNIT_NONE },
+	{ "has_hyperdrive", 12, 1, FIELD_BOOL, XWAU_UNIT_NONE },
+	{ "system_strength", 29, 2, FIELD_UNSIGNED, XWAU_UNIT_NONE },
+	{ "system_damage_hull_threshold", 25, 4, FIELD_SIGNED, XWAU_UNIT_NONE },
+	{ "component_max_hp", 31, 1, FIELD_UNSIGNED, XWAU_UNIT_NONE },
+	{ "rating_weight", 10, 2, FIELD_UNSIGNED, XWAU_UNIT_NONE },
+	{ "laser_converge_mode", 13, 1, FIELD_UNSIGNED, XWAU_UNIT_NONE },
+	{ "countermeasures", 563, 1, FIELD_UNSIGNED, XWAU_UNIT_NONE },
+	{ "gunsight_offset_y", 564, 4, FIELD_SIGNED, XWAU_UNIT_NONE },
+	{ "ai_hits_to_evade", 19, 1, FIELD_UNSIGNED, XWAU_UNIT_NONE },
 };
 
 /* The keys of a `lasers` entry: laserGroupWeaponType, laserGroupSlotCount,
    laserGroupWeaponKind, laserGroupFireRange, laserGroupFireCooldownTicks. */
 static const Field g_laserFields[] = {
-	{ "type", 306, 2, FIELD_WEAPON },       { "count", 318, 1, FIELD_UNSIGNED },
-	{ "kind", 321, 1, FIELD_LASER_KIND },   { "range_m", 324, 4, FIELD_METRES },
-	{ "cooldown", 336, 2, FIELD_UNSIGNED },
+	{ "type", 306, 2, FIELD_WEAPON, XWAU_UNIT_NONE },
+	{ "count", 318, 1, FIELD_UNSIGNED, XWAU_UNIT_NONE },
+	{ "kind", 321, 1, FIELD_LASER_KIND, XWAU_UNIT_NONE },
+	{ "range_m", 324, 4, FIELD_SIGNED, XWAU_UNIT_METRES },
+	{ "cooldown_ms", 336, 2, FIELD_UNSIGNED, XWAU_UNIT_MILLISECONDS },
 };
 
 /* The keys of a `warheads` entry: warheadLauncherType, warheadLauncherSlotCount,
    warheadLauncherCapacity. */
 static const Field g_warheadFields[] = {
-	{ "type", 342, 2, FIELD_WEAPON },
-	{ "count", 350, 1, FIELD_UNSIGNED },
-	{ "capacity", 352, 1, FIELD_UNSIGNED },
+	{ "type", 342, 2, FIELD_WEAPON, XWAU_UNIT_NONE },
+	{ "count", 350, 1, FIELD_UNSIGNED, XWAU_UNIT_NONE },
+	{ "capacity", 352, 1, FIELD_UNSIGNED, XWAU_UNIT_NONE },
 };
 
 enum {
@@ -113,14 +116,14 @@ enum {
    the type of the seat's cockpit model. A `turrets` entry writes them with
    the gunner seat keys, so the names here are the record's field names. */
 static const Field g_turretFields[] = {
-	[TURRET_X]           = { "turretSeatPosX", 582, 2, FIELD_SIGNED },
-	[TURRET_Y]           = { "turretSeatPosY", 574, 2, FIELD_SIGNED },
-	[TURRET_Z]           = { "turretSeatPosZ", 578, 2, FIELD_SIGNED },
-	[TURRET_PITCH]       = { "turretMountAngleA", 590, 2, FIELD_SIGNED },
-	[TURRET_YAW]         = { "turretMountAngleB", 586, 2, FIELD_SIGNED },
-	[TURRET_OBJECT_TYPE] = { "turretObjectType", 594, 2, FIELD_UNSIGNED },
-	[TURRET_AIM_PITCH]   = { "turretAimLimitA", 598, 2, FIELD_SIGNED },
-	[TURRET_AIM_YAW]     = { "turretAimLimitB", 602, 2, FIELD_SIGNED },
+	[TURRET_X]           = { "turretSeatPosX", 582, 2, FIELD_SIGNED, XWAU_UNIT_NONE },
+	[TURRET_Y]           = { "turretSeatPosY", 574, 2, FIELD_SIGNED, XWAU_UNIT_NONE },
+	[TURRET_Z]           = { "turretSeatPosZ", 578, 2, FIELD_SIGNED, XWAU_UNIT_NONE },
+	[TURRET_PITCH]       = { "turretMountAngleA", 590, 2, FIELD_SIGNED, XWAU_UNIT_NONE },
+	[TURRET_YAW]         = { "turretMountAngleB", 586, 2, FIELD_SIGNED, XWAU_UNIT_NONE },
+	[TURRET_OBJECT_TYPE] = { "turretObjectType", 594, 2, FIELD_UNSIGNED, XWAU_UNIT_NONE },
+	[TURRET_AIM_PITCH]   = { "turretAimLimitA", 598, 2, FIELD_SIGNED, XWAU_UNIT_NONE },
+	[TURRET_AIM_YAW]     = { "turretAimLimitB", 602, 2, FIELD_SIGNED, XWAU_UNIT_NONE },
 };
 
 #define NAME_OFFSET 50
@@ -136,10 +139,9 @@ static long long field_value(const uint8_t* record, const Field* field, unsigned
 	uint32_t       value = 0;
 	for (unsigned i = 0; i < field->size; ++i)
 		value |= (uint32_t)p[i] << (8 * i);
-	const bool signed_kind = field->kind == FIELD_SIGNED || field->kind == FIELD_METRES;
-	if (signed_kind && field->size < 4 && (value & (1u << (8 * field->size - 1))))
+	if (field->kind == FIELD_SIGNED && field->size < 4 && (value & (1u << (8 * field->size - 1))))
 		value |= ~0u << (8 * field->size);
-	return signed_kind ? (long long)(int32_t)value : (long long)value;
+	return field->kind == FIELD_SIGNED ? (long long)(int32_t)value : (long long)value;
 }
 
 static bool field_differs(const uint8_t* a, const uint8_t* b, const Field* field, unsigned element) {
@@ -164,10 +166,8 @@ static void write_field(FILE* f, const XwauNames* names, const uint8_t* record, 
 	else if (field->kind == FIELD_WEAPON || field->kind == FIELD_LASER_KIND) {
 		ReportFatal(NULL, "the game has no name for %s %lld", field->key, value);
 		fputs("none", f);
-	} else if (field->kind == FIELD_METRES)
-		Xwau_WriteMetres(f, (int)value);
-	else
-		fprintf(f, "%lld", value);
+	} else
+		Xwau_WriteUnit(f, field->unit, value);
 }
 
 static bool group_differs(const uint8_t* a, const uint8_t* b, const Field* fields, size_t count,
@@ -376,7 +376,7 @@ static bool apply_exe_values(const char* game, XwauGameTables* tables, int* coun
 		tables->types[t][17] = (uint8_t)(flags >> 8);
 		uint8_t* r           = tables->records[record];
 		/* LaserTypeId, LaserSequence, LaserRange, LaserFireRatio: the `type`,
-		   `kind`, `range_m` and `cooldown` of a `lasers` entry. */
+		   `kind`, `range_m` and `cooldown_ms` of a `lasers` entry. */
 		static const char* const kLaserKeys[]   = { "LaserTypeId", "LaserSequence", "LaserRange",
 													"LaserFireRatio" };
 		static const int         kLaserFields[] = { 0, 2, 3, 4 };
