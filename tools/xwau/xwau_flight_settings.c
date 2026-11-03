@@ -93,11 +93,10 @@ static void read_headlight_setting(const char* key, const char* value, void* dat
 	if (strcasecmp(key, "ssao_enabled") == 0 && read_numbers(value, 1, number))
 		out->ssao_enabled = number[0] != 0.0;
 	else if (strcasecmp(key, "headlights_pos") == 0 || strcasecmp(key, "headlights_col") == 0) {
+		/* Without three numbers, ddraw keeps its default. */
 		if (read_numbers(value, 3, number))
 			memcpy(strcasecmp(key, "headlights_pos") == 0 ? out->position : out->color, number,
 				   sizeof number);
-		else
-			Report("SSAO.cfg", "%s needs three numbers; ddraw's default is used", key);
 	} else if (strcasecmp(key, "headlights_angle") == 0 && read_numbers(value, 1, number))
 		out->angle_degrees = number[0];
 	else if (strcasecmp(key, "headlights_auto_turn_on") == 0 && read_numbers(value, 1, number))
@@ -138,10 +137,10 @@ static bool write_headlights(FILE* f, const char* game) {
 		return false;
 	const double power = brightness * CLASSIC_ILLUMINANCE * 3.14159265358979 * HEADLIGHTS_MATCH_DISTANCE_M *
 						 HEADLIGHTS_MATCH_DISTANCE_M;
-	if (h.has_distance || h.has_ambient)
-		Report("SSAO.cfg",
-			   "headlights_distance and headlights_ambient aren't imported. The game's headlight gets dimmer "
-			   "with the distance instead.");
+	if (h.has_distance)
+		ReportUnsupported("the SSAO.cfg key headlights_distance");
+	if (h.has_ambient)
+		ReportUnsupported("the SSAO.cfg key headlights_ambient");
 	fprintf(f,
 			"headlights:\n  position_m: [%g, %g, %g]\n  color: [%.3g, %.3g, %.3g]\n  power_w: %.0f\n"
 			"  angle_degrees: %g\n  auto_turn_on: %s\n",
@@ -217,11 +216,7 @@ static void report_sun_models(const char* game) {
 			continue;
 		for (size_t w = 0; w < sizeof words / sizeof words[0]; ++w) {
 			if (strstr(names[i], words[w])) {
-				Report("FlightModels",
-					   "%s looks like a 3D sun or a skydome to ddraw, which then turns its procedural suns "
-					   "off. The "
-					   "game can't turn them off",
-					   names[i]);
+				ReportUnsupported("ddraw turning off its procedural suns for 3D sun and skydome models");
 				break;
 			}
 		}
@@ -251,9 +246,7 @@ static bool write_suns(FILE* f, const char* game) {
 		ReportFatal("SSAO.cfg", "flare_intensity = %g is above the game's maximum of 10",
 					(double)s.flare_intensity);
 	if (s.has_mask)
-		Report("Bloom.cfg",
-			   "background_suns_strength and lens_flare_strength aren't imported. They set the strength of "
-			   "ddraw's bloom mask, and the game's bloom has no mask.");
+		ReportUnsupported("the Bloom.cfg keys background_suns_strength and lens_flare_strength");
 	return true;
 }
 
@@ -274,24 +267,23 @@ static void hook_lines(const char* game, const char* hook, XwauLines* lines, cha
 		XwauLines_Read(path, hook, XWAU_RULES_CPP, lines);
 }
 
-/* Reads `key` of a hook's settings as GetFileKeyValueInt does. */
-static long long hook_value(const XwauLines* lines, const char* source, const char* key, long long fallback) {
+/* Reads `key` of a hook's settings as GetFileKeyValueInt does. XWAU fails
+ * on a value that isn't a number, and `fallback` is then used. */
+static long long hook_value(const XwauLines* lines, const char* key, long long fallback) {
 	char      text[256];
 	long long value = 0;
 	XwauLines_Value(lines, key, XWAU_RULES_CPP, text, sizeof text);
 	if (!text[0])
 		return fallback;
-	if (!Xwau_StoiAutoInt(text, &value)) {
-		Report(source, "%s = %s isn't a number, which XWAU would fail on; the default is used", key, text);
+	if (!Xwau_StoiAutoInt(text, &value))
 		return fallback;
-	}
 	return value;
 }
 
 /* Reads `key`, a percent of hook_weapon_rate's settings, for the
  * `weapons` section. */
 static long long rate_percent(const XwauLines* lines, const char* source, const char* key) {
-	const long long percent = hook_value(lines, source, key, 100);
+	const long long percent = hook_value(lines, key, 100);
 	if (percent < 0 || percent > INT32_MAX) {
 		ReportFatal(source, "%s = %lld is a negative percent, which the game can't use", key, percent);
 		return 100;
@@ -300,37 +292,35 @@ static long long rate_percent(const XwauLines* lines, const char* source, const 
 }
 
 /* Reads the float `key` of hook_weapon_rate's settings, like the hook's
- * GetFileKeyValueFloat. Returns `fallback` when the key isn't set. */
-static float hook_float(const XwauLines* lines, const char* source, const char* key, float fallback) {
+ * GetFileKeyValueFloat. Returns `fallback` when the key isn't set, or when
+ * its value isn't a number, which XWAU fails on. */
+static float hook_float(const XwauLines* lines, const char* key, float fallback) {
 	char  text[256];
 	float value = fallback;
 	XwauLines_Value(lines, key, XWAU_RULES_CPP, text, sizeof text);
-	if (text[0] && !XwauWeaponStats_Stof(text, &value)) {
-		Report(source, "%s = %s isn't a number, which XWAU would fail on; the default is used", key, text);
+	if (text[0] && !XwauWeaponStats_Stof(text, &value))
 		value = fallback;
-	}
 	return value;
 }
 
 /* When the DLL `dll` reads the hook's factors `keys`, writes them as the map
  * `name`, with the names in `list` as keys. */
-static void write_factors(FILE* f, const char* dll, const XwauLines* lines, const char* source,
-						  const char* name, const XwauNameList* list, const char* const* keys,
-						  const float* defaults, int count) {
+static void write_factors(FILE* f, const char* dll, const XwauLines* lines, const char* name,
+						  const XwauNameList* list, const char* const* keys, const float* defaults,
+						  int count) {
 	if (!Xwau_FileHasText(dll, keys[0]))
 		return;
 	fprintf(f, "  %s: {", name);
 	for (int i = 0; i < count; ++i)
 		fprintf(f, "%s%s: %.9g", i ? ", " : "", XwauNames_Name(list, i),
-				(double)hook_float(lines, source, keys[i], defaults[i]));
+				(double)hook_float(lines, keys[i], defaults[i]));
 	fputs("}\n", f);
 }
 
 /* Writes the global weapon profiles of hook_weapon_rate and the hook's settings
    for them. */
 static void write_weapon_profile_settings(FILE* f, const XwauNames* names, const XwauStockValues* stock,
-										  const char* game, const char* dll, const XwauLines* lines,
-										  const char* source) {
+										  const char* game, const char* dll, const XwauLines* lines) {
 	XwauWeaponStats global;
 	if (XwauWeaponStats_Read(game, NULL, &global)) {
 		XwauWeaponStats_Write(f, names, stock, "  ", &global);
@@ -342,15 +332,15 @@ static void write_weapon_profile_settings(FILE* f, const XwauNames* names, const
 		"TopAceRankFireratioMultiplicator",  "SuperAceRankFireratioMultiplicator"
 	};
 	static const float rank_defaults[] = { 4.0f, 3.0f, 2.0f, 2.0f, 1.0f, 1.0f };
-	write_factors(f, dll, lines, source, "fire_ratio_by_rank", &names->ranks, rank_keys, rank_defaults, 6);
+	write_factors(f, dll, lines, "fire_ratio_by_rank", &names->ranks, rank_keys, rank_defaults, 6);
 	static const char* const difficulty_keys[]     = { "DamagesMultiplicatorForDifficulty0",
 													   "DamagesMultiplicatorForDifficulty1",
 													   "DamagesMultiplicatorForDifficulty2" };
 	static const float       difficulty_defaults[] = { 0.5f, 0.25f, 1.0f };
-	write_factors(f, dll, lines, source, "damage_by_difficulty", &names->difficulties, difficulty_keys,
+	write_factors(f, dll, lines, "damage_by_difficulty", &names->difficulties, difficulty_keys,
 				  difficulty_defaults, 3);
 	if (Xwau_FileHasText(dll, "LimitLinkedWarheadFireRate") &&
-		hook_value(lines, source, "LimitLinkedWarheadFireRate", 0) != 0)
+		hook_value(lines, "LimitLinkedWarheadFireRate", 0) != 0)
 		fputs("  limit_linked_warhead_fire_rate: true\n", f);
 	static const char* const linking_keys[]  = { "PreventAILasersIonWhenDisabling",
 												 "PreventAIIonWhenNotDisabling",
@@ -360,16 +350,15 @@ static void write_weapon_profile_settings(FILE* f, const XwauNames* names, const
 												 "prevent_player_linked_lasers_ion" };
 	bool                     open            = false;
 	for (int i = 0; i < 3 && Xwau_FileHasText(dll, linking_keys[i]); ++i) {
-		if (hook_value(lines, source, linking_keys[i], 0) == 0)
+		if (hook_value(lines, linking_keys[i], 0) == 0)
 			continue;
 		fprintf(f, "%s%s: true", open ? ", " : "  linking_rules: {", linking_names[i]);
 		open = true;
 	}
 	if (open)
 		fputs("}\n", f);
-	if (Xwau_FileHasText(dll, "IsLaserLinksFixEnabled") &&
-		hook_value(lines, source, "IsLaserLinksFixEnabled", 0))
-		Report(source, "IsLaserLinksFixEnabled isn't imported, because the game doesn't have this fix");
+	if (Xwau_FileHasText(dll, "IsLaserLinksFixEnabled") && hook_value(lines, "IsLaserLinksFixEnabled", 0))
+		ReportUnsupported("the hook_weapon_rate key IsLaserLinksFixEnabled");
 }
 
 /* Writes the `weapons` section: the impact colours, when the mod installs
@@ -405,7 +394,7 @@ static void write_weapons(FILE* f, const XwauNames* names, const XwauStockValues
 		const int key = i ? XWAU_CRAFT_TORPEDOES_PER_TARGET : XWAU_CRAFT_TORPEDOES_PER_PASS;
 		if (defaults.value[key] >= 0 || !Xwau_FileHasText(path, torpedo_keys[i]))
 			continue;
-		const long long value = hook_value(&lines, source, torpedo_keys[i], -1);
+		const long long value = hook_value(&lines, torpedo_keys[i], -1);
 		if (value < -1 || value > INT32_MAX)
 			ReportFatal(source, "%s = %lld is below -1, which the game can't use", torpedo_keys[i], value);
 		else
@@ -416,7 +405,7 @@ static void write_weapons(FILE* f, const XwauNames* names, const XwauStockValues
 		fprintf(f, "  decharge_percent: %lld\n  recharge_percent: %lld\n",
 				rate_percent(&lines, source, "DechargeRatePercent"),
 				rate_percent(&lines, source, "RechargeRatePercent"));
-	write_weapon_profile_settings(f, names, stock, game, path, &lines, source);
+	write_weapon_profile_settings(f, names, stock, game, path, &lines);
 	XwauLines_Free(&lines);
 }
 
@@ -430,7 +419,7 @@ static bool write_shield_recharge(FILE* f, const char* game) {
 	XwauLines lines;
 	char      source[64];
 	hook_lines(game, "hook_shield", &lines, source, sizeof source);
-	long long percent = hook_value(&lines, source, "RechargeRatePercent", 100);
+	long long percent = hook_value(&lines, "RechargeRatePercent", 100);
 	if (percent < 0) {
 		ReportFatal(source, "RechargeRatePercent = %lld is a negative percent, which the game can't use",
 					percent);
@@ -439,18 +428,15 @@ static bool write_shield_recharge(FILE* f, const char* game) {
 	fprintf(f,
 			"shield_recharge:\n  starships: %s\n  starships_on_easy: %s\n  double_starfighter_shields: %s\n"
 			"  rate_percent: %lld\n",
-			hook_value(&lines, source, "IsShieldRechargeForStarshipsEnabled", 1) ? "true" : "false",
-			hook_value(&lines, source, "IsShieldRechargeForStarshipsOnEasyDifficultyEnabled", 0) ? "true"
-																								 : "false",
-			hook_value(&lines, source, "IsShieldStrengthForStarfighterDoubled", 0) ? "true" : "false",
-			percent);
+			hook_value(&lines, "IsShieldRechargeForStarshipsEnabled", 1) ? "true" : "false",
+			hook_value(&lines, "IsShieldRechargeForStarshipsOnEasyDifficultyEnabled", 0) ? "true" : "false",
+			hook_value(&lines, "IsShieldStrengthForStarfighterDoubled", 0) ? "true" : "false", percent);
 	XwauLines_Free(&lines);
 	return true;
 }
 
 /* Writes the `docking` section, when the mod installs hook_dock. The hook's
- * ForceDockElevation (hook_dock.cfg, else Hooks.ini) isn't imported; it is
- * reported when it is set. */
+ * ForceDockElevation (hook_dock.cfg, else Hooks.ini) isn't imported. */
 static bool write_docking(FILE* f, const char* game) {
 	char path[1024];
 	if (!Xwau_FindFile(game, "hook_dock.dll", path, sizeof path))
@@ -458,13 +444,9 @@ static bool write_docking(FILE* f, const char* game) {
 	XwauLines lines;
 	char      source[64];
 	hook_lines(game, "hook_dock", &lines, source, sizeof source);
-	const long long force = hook_value(&lines, source, "ForceDockElevation", -1);
+	const long long force = hook_value(&lines, "ForceDockElevation", -1);
 	if (force >= 0)
-		Report(
-			source,
-			"ForceDockElevation = %lld isn't imported. It sets the approach height of every model, which the "
-			"game can't do",
-			force);
+		ReportUnsupported("the hook_dock key ForceDockElevation");
 	XwauLines_Free(&lines);
 	fputs("docking:\n  dock_to_small_sets_big: true\n  ai_offsets_own_dock_point: true\n"
 		  "  carried_offsets_carrier_dock_point: true\n  player_approach_height: true\n"
@@ -522,11 +504,6 @@ static void write_camera_number(FILE* f, const char* key, double value, double m
 		if (used)
 			ReportFatal("CockpitLook.cfg", "camera.%s would be %g, outside the game's range of %g to %g", key,
 						value, min, max);
-		else
-			Report("CockpitLook.cfg",
-				   "camera.%s would be %g, outside the game's range of %g to %g. The hook doesn't use it, so "
-				   "it isn't imported.",
-				   key, value, min, max);
 		return;
 	}
 	fprintf(f, "  %s: %.6g\n", key, value);
@@ -555,27 +532,14 @@ static bool write_camera(FILE* f, const char* game) {
 					  .units_to_meters       = 25.0f };
 	read_settings(game, "CockpitLook.cfg", read_cockpit_look_setting, &c);
 	/* These only change the camera when its lag is on. */
-	if (c.external_dist_inertia != 0.0f && c.external_inertia_enabled)
-		Report(
-			"CockpitLook.cfg",
-			"external_dist_inertia = %g isn't imported. It changes the camera distance with the speed, which "
-			"the game can't do",
-			(double)c.external_dist_inertia);
-	else if (c.external_dist_inertia != 0.0f)
-		Report("CockpitLook.cfg",
-			   "external_dist_inertia = %g isn't imported. The hook doesn't use it, because "
-			   "external_inertia_enabled is off.",
-			   (double)c.external_dist_inertia);
-	if ((c.inertia_in_hangar || c.inertia_in_map) && c.external_inertia_enabled)
-		Report(
-			"CockpitLook.cfg",
-			"enable_external_inertia_in_hangar or enable_external_inertia_in_map isn't imported, because the "
-			"game's camera doesn't lag in the hangar or the map");
-	else if (c.inertia_in_hangar || c.inertia_in_map)
-		Report(
-			"CockpitLook.cfg",
-			"enable_external_inertia_in_hangar and enable_external_inertia_in_map aren't imported. The hook "
-			"doesn't use them, because external_inertia_enabled is off.");
+	if (c.external_inertia_enabled) {
+		if (c.external_dist_inertia != 0.0f)
+			ReportUnsupported("the CockpitLook.cfg key external_dist_inertia");
+		if (c.inertia_in_hangar)
+			ReportUnsupported("the CockpitLook.cfg key enable_external_inertia_in_hangar");
+		if (c.inertia_in_map)
+			ReportUnsupported("the CockpitLook.cfg key enable_external_inertia_in_map");
+	}
 	/* The hook turns the camera by cockpit_inertia * external_inertia * 16384
 	 * Q16 units for each unit of lag, which is pi / 2 radians, and limits
 	 * the turn to external_max_inertia * external_inertia * 16384, which is

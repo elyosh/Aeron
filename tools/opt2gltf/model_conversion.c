@@ -160,10 +160,7 @@ static const XwauNormalMap* xwau_normal_map(const ModelConversion* mc, const cha
 	for (const char* at = spec; *at && !names_dat; ++at)
 		names_dat = strncasecmp(at, ".dat", 4) == 0;
 	if (!names_dat) {
-		Report(
-			label,
-			"NormalMap '%s' isn't an image in a DAT file, and the import only reads those, so it is left out",
-			value);
+		ReportUnsupported("NormalMap images that aren't in a DAT file");
 		return NULL;
 	}
 	char* image_sep = strrchr(spec, '-');
@@ -172,21 +169,17 @@ static const XwauNormalMap* xwau_normal_map(const ModelConversion* mc, const cha
 		*image_sep = 0;
 		group_sep  = strrchr(spec, '-');
 	}
-	if (!group_sep) {
-		Report(label, "unreadable NormalMap '%s'", value);
+	if (!group_sep)
 		return NULL;
-	}
 	*group_sep      = 0;
 	const int group = atoi(group_sep + 1), image = atoi(image_sep + 1);
 	if (!EndsWithNoCase(spec, ".dat")) {
-		Report(label, "NormalMap '%s' is not a DAT image; skipped", value);
+		ReportUnsupported("NormalMap images that aren't in a DAT file");
 		return NULL;
 	}
 	char path[1024];
-	if (!xwau_find(mc, spec, path, sizeof path)) {
-		Report(label, "NormalMap file '%s' not found; skipped", spec);
+	if (!xwau_find(mc, spec, path, sizeof path))
 		return NULL;
-	}
 	char key[1100];
 	snprintf(key, sizeof key, "%s|%d|%d", path, group, image);
 	for (size_t i = 0; i < *count; ++i)
@@ -289,53 +282,63 @@ static int apply_cockpit_eye(opt_file_t* opt, const int eye[3]) {
 	return 1;
 }
 
-/* Weapon hardpoints are the laser and warhead types, 1 to 18
- * (g_optHardpointWeaponGroupKindByType). The game keeps 120 weapon slots. */
-#define WEAPON_SLOTS 120
-
-static int32_t weapon_hardpoints(const opt_file_t* opt) {
-	int32_t count = 0;
-	for (int32_t mi = 0; mi < opt->mesh_count; ++mi)
-		for (int32_t hi = 0; hi < opt->meshes[mi].hardpoint_count; ++hi)
-			count += opt->meshes[mi].hardpoints[hi].type >= 1 && opt->meshes[mi].hardpoints[hi].type <= 18;
-	return count;
+/* Whether a flight group can use the model `basename`, so that markings
+ * select its NodeSwitch states. The model can't be used by a flight group
+ * when every object type that loads it has no craft type. Without the
+ * tables, or for a model that no list row loads, such as a cockpit, this
+ * can't be told, so the answer is yes. */
+static bool flight_group_model(const ModelConversion* mc, const char* basename) {
+	if (!mc->tables)
+		return true;
+	bool listed = false;
+	for (int t = 0; t < XWAU_GAME_OBJECT_TYPES; ++t) {
+		if (strcasecmp(XwauGameTables_Model(mc->tables, t), basename) != 0)
+			continue;
+		listed = true;
+		for (int craft = 0; craft < XWAU_GAME_CRAFT_TYPES; ++craft)
+			if (mc->tables->craft[craft] == t)
+				return true;
+	}
+	return !listed;
 }
 
 /* Reports what the glTF model can't keep from the OPT:
  *   - The model has LOD 0 only, and the game draws it at every distance.
+ *     The LODs after it are counted with ReportUnsupported.
  *   - A mesh type has a name only from 0 to 31. XWA reads the mesh type of a
  *     component as an index in tables of 32 entries, such as
  *     g_meshTypeComponentMaxHp, without a range check. So a larger type
  *     changes the component in XWAU, and it can't become `default`.
  *   - Only the explosion type flags 1 and 2 have names, because the game
- *     reads only those (ModelMesh_HasExplosionType1 and 2).
- *   - A face group keeps at most 16 NodeSwitch states.
- * In XWAU mode, a mesh type above 31 and the states past the 16th make the
- * import fail. Stock mode only reports them, because some stock OPTs, such
- * as Z-95.OPT, keep texture data in NodeSwitch states past the 16th. */
-static void report_opt_drops(const opt_file_t* opt, bool xwau, const char* label) {
-	int32_t lods = 0, explosion_flags = 0;
+ *     reads only those (ModelMesh_HasExplosionType1 and 2). The other flags
+ *     have no effect, so they are left out without a report.
+ *   - A face group keeps at most 16 NodeSwitch states. XWA shows state n for
+ *     markings n, and only flight groups have markings. The other objects,
+ *     such as the Death Star reactor, get their state from code that only
+ *     uses the first states.
+ * In XWAU mode, a mesh type above 31 makes the import fail, and so do the
+ * states past the 16th on a model that a flight group can use. On another
+ * model, they have no effect. Stock mode only reports them, because some
+ * stock OPTs, such as Z-95.OPT, keep texture data in NodeSwitch states past
+ * the 16th. */
+static void report_opt_drops(const ModelConversion* mc, const opt_file_t* opt, const char* basename,
+							 const char* label) {
+	const bool xwau = mc->xwau;
 	for (int32_t mi = 0; mi < opt->mesh_count; ++mi) {
 		const opt_mesh_t* m = &opt->meshes[mi];
-		lods += m->lod_count > 1;
+		if (m->lod_count > 1)
+			ReportUnsupported("OPT LODs after LOD 0");
 		if ((uint32_t)m->descriptor.mesh_type >= AERON_FLIGHT_MESH_TYPE_COUNT && xwau)
 			ReportFatal(label, "mesh %d has mesh type %u, which has no name", (int)mi,
 						(unsigned)m->descriptor.mesh_type);
 		else if ((uint32_t)m->descriptor.mesh_type >= AERON_FLIGHT_MESH_TYPE_COUNT)
 			Report(label, "mesh %d has mesh type %u, which has no name, so it becomes default", (int)mi,
 				   (unsigned)m->descriptor.mesh_type);
-		explosion_flags +=
-			((uint32_t)m->descriptor.explosion_type & ~((1u << AERON_FLIGHT_EXPLOSION_FLAG_COUNT) - 1u)) != 0;
 	}
-	if (lods)
-		Report(label, "%d mesh(es) have more than one LOD. Only LOD 0 is converted", (int)lods);
-	if (explosion_flags)
-		Report(label, "%d mesh(es) have explosion type flags other than 1 and 2, which the game never reads",
-			   (int)explosion_flags);
-	if (opt->dropped_switch_states && xwau)
+	if (opt->dropped_switch_states && xwau && flight_group_model(mc, basename))
 		ReportFatal(label, "%d NodeSwitch state(s) are past the 16 states that a face group can keep",
 					(int)opt->dropped_switch_states);
-	else if (opt->dropped_switch_states)
+	else if (opt->dropped_switch_states && !xwau)
 		Report(label,
 			   "%d NodeSwitch state(s) are past the 16 states that a face group can keep, so they are left "
 			   "out",
@@ -432,10 +435,6 @@ static bool prepare_xwau(Conversion* c, const ModelConversion* mc, const opt_fil
 		c->lit[c->lit_count++] = token;
 		token                  = next;
 	}
-	const int32_t weapons = weapon_hardpoints(opt);
-	if (weapons > WEAPON_SLOTS)
-		Report(label, "%d weapon hardpoints, but the game keeps only %d weapon slots, like XWAU",
-			   (int)weapons, WEAPON_SLOTS);
 	return read && XwauSkins_Resolve(mc->game, mc->missions, basename, opt, label, &c->skins);
 }
 
@@ -626,19 +625,16 @@ static bool xwau_same_mat_light(const XwauMatParams* a, const XwauMatParams* b) 
  * triangles that XWAU splits a quad into. A light_angle of 90° or more
  * gives a point light, since glTF spot lights end at 90°, and so does none.
  * Without light_falloff, XWAU gives the light the bolts' falloff, which only
- * bolt models use, so such a texture makes the import fail. A face without a
- * normal gives no light, and it is reported. Returns the number of faces
- * that gave a light through *found. */
+ * bolt models use, so such a texture makes the import fail. A light_angle
+ * that gives no cone gives no light, in XWAU too. A face without a normal
+ * gives no light, and it is counted with ReportUnsupported. Returns the
+ * number of faces that gave a light through *found. */
 static bool xwau_mat_lights(Conversion* c, const opt_file_t* opt, const char* label, size_t* found) {
-	*found           = 0;
-	size_t no_normal = 0;
+	*found = 0;
 	for (int32_t ti = 0; c->mat && ti < opt->texture_count; ++ti) {
 		const XwauMatParams* p = XwauMat_Find(c->mat, opt->textures[ti].name);
 		if (p->has_light && !(p->light_falloff > 0.0f))
 			ReportFatal(label, "texture %s has a .mat Light without light_falloff", opt->textures[ti].name);
-		else if (p->has_light && p->has_light_angle && !(cosf(p->light_angle * 0.0174532925f) < 1.0f))
-			Report(label, "texture %s: .mat light_angle %g gives no cone, left out", opt->textures[ti].name,
-				   (double)p->light_angle);
 	}
 	for (int32_t mi = 0; c->mat && mi < opt->mesh_count; ++mi) {
 		const opt_mesh_t* m = &opt->meshes[mi];
@@ -696,7 +692,7 @@ static bool xwau_mat_lights(Conversion* c, const opt_file_t* opt, const char* la
 															 a->y + u * (d->y - a->y) + v * (b->y - a->y),
 															 a->z + u * (d->z - a->z) + v * (b->z - a->z) };
 						if (!xwau_face_normal(m, f, corners, &light.direction)) {
-							no_normal++;
+							ReportUnsupported(".mat lights on faces without a normal");
 							continue;
 						}
 						++*found;
@@ -713,8 +709,6 @@ static bool xwau_mat_lights(Conversion* c, const opt_file_t* opt, const char* la
 			}
 		}
 	}
-	if (no_normal)
-		Report(label, "%zu face(s) with a .mat Light have no normal, so they give no light", no_normal);
 	c->options.model.lights      = c->lights;
 	c->options.model.light_count = c->light_count;
 	return true;
@@ -778,9 +772,7 @@ static bool xwau_levers(Conversion* c, const opt_file_t* opt, const char* label)
 		const XwauMatParams* p = XwauMat_Find(c->mat, opt->textures[t].name);
 		owner[t]               = -1;
 		if (p->lever == XWAU_LEVER_OTHER) {
-			Report(label,
-				   "texture %s is a sliding or free-axis cockpit lever, which the import doesn't convert",
-				   opt->textures[t].name);
+			ReportUnsupported("sliding or free-axis cockpit levers");
 			continue;
 		}
 		OptGltfControl control;
@@ -808,7 +800,7 @@ static bool xwau_levers(Conversion* c, const opt_file_t* opt, const char* label)
 	free(owner);
 	free(first);
 	if (c->control_count)
-		Report(label, "%zu cockpit levers, from %zu textures", c->control_count, moved);
+		ReportDetail(label, "%zu cockpit levers, from %zu textures", c->control_count, moved);
 	c->options.model.controls      = c->controls;
 	c->options.model.control_count = c->control_count;
 	return true;
@@ -854,12 +846,11 @@ static bool bake_xwau(Conversion* c, const ModelConversion* mc, const opt_file_t
 	c->anim                      = XwauAnim_Begin(basename, xwau_find_file, (void*)mc, label);
 	if (!c->materials || !c->anims || !c->anim)
 		return false;
-	size_t                   normal_textures           = 0;
-	bool                     ignored[MAX_LIT_TEXTURES] = { false };
-	const XwauGltfProjectile projectile                = xwau_projectile(mc, basename);
+	size_t                   normal_textures = 0;
+	const XwauGltfProjectile projectile      = xwau_projectile(mc, basename);
 	if (projectile)
-		Report(label, "%s: unlit at strength %g", projectile == XWAU_GLTF_LASER ? "laser" : "warhead",
-			   (double)XwauGltf_EmissiveStrength(&(XwauGltfMaterial) { .projectile = projectile }));
+		ReportDetail(label, "%s: unlit at strength %g", projectile == XWAU_GLTF_LASER ? "laser" : "warhead",
+					 (double)XwauGltf_EmissiveStrength(&(XwauGltfMaterial) { .projectile = projectile }));
 	for (int32_t i = 0; i < opt->texture_count; ++i) {
 		XwauGltfMaterial*    material = &c->materials[i];
 		const XwauMatParams* p        = c->mat ? XwauMat_Find(c->mat, opt->textures[i].name) : &mc->global;
@@ -869,7 +860,6 @@ static bool bake_xwau(Conversion* c, const ModelConversion* mc, const opt_file_t
 			if (xwau_texture_named(opt->textures[i].name, c->lit[k])) {
 				material->shadeless = false;
 				material->lit       = true;
-				ignored[k]          = true;
 			}
 		}
 		XwauAnimScreen screen = XWAU_ANIM_SCREEN_NONE;
@@ -893,17 +883,13 @@ static bool bake_xwau(Conversion* c, const ModelConversion* mc, const opt_file_t
 			}
 		}
 	}
-	for (int k = 0; k < c->lit_count; ++k) {
-		if (!ignored[k])
-			Report(label, "lit texture %s: no such texture", c->lit[k]);
-	}
 	/* Untextured faces use the material found for an empty name, which is slot 0. */
 	XwauGltfMaterial untextured;
 	xwau_fill(&untextured, c->mat ? XwauMat_Find(c->mat, "") : &mc->global);
 	untextured.projectile = projectile;
 
-	Report(label, "xwau materials %s, %zu of %d textures normal-mapped (%zu maps)",
-		   c->mat ? c->mat_path : "(default)", normal_textures, (int)opt->texture_count, c->map_count);
+	ReportDetail(label, "xwau materials %s, %zu of %d textures normal-mapped (%zu maps)",
+				 c->mat ? c->mat_path : "(default)", normal_textures, (int)opt->texture_count, c->map_count);
 	XwauAnim_Report(c->anim);
 	c->has_baked =
 		XwauGltf_Bake(opt, basename, c->materials, &untextured, XwauAnim_Any(c->anim) ? c->anims : NULL,
@@ -929,7 +915,7 @@ static bool bake_xwau(Conversion* c, const ModelConversion* mc, const opt_file_t
 			return false;
 		}
 		if (c->light_count)
-			Report(label, "%zu bolt lights", c->light_count);
+			ReportDetail(label, "%zu bolt lights", c->light_count);
 		return true;
 	}
 	size_t faces = 0;
@@ -938,7 +924,7 @@ static bool bake_xwau(Conversion* c, const ModelConversion* mc, const opt_file_t
 		return false;
 	}
 	if (c->light_count)
-		Report(label, "%zu .mat lights, from %zu faces", c->light_count, faces);
+		ReportDetail(label, "%zu .mat lights, from %zu faces", c->light_count, faces);
 	return true;
 }
 
@@ -995,7 +981,7 @@ bool ModelConversion_Build(const ModelConversion* mc, const char* opt_path, cons
 		return false;
 	}
 	opt_file_t* opt = model->opt;
-	report_opt_drops(opt, mc->xwau, opt_path);
+	report_opt_drops(mc, opt, basename, opt_path);
 	Conversion* c = model->c = (Conversion*)calloc(1, sizeof *c);
 	bool        ok           = c != NULL;
 	if (ok && mc->xwau)
@@ -1042,8 +1028,6 @@ bool ModelConversion_InitXwau(ModelConversion* mc, const char* game) {
 	char global_path[1024];
 	if (xwau_find(mc, "Materials/DefaultGlobalMaterial.mat", global_path, sizeof global_path))
 		XwauMat_ReadGlobalDefault(global_path, &mc->global);
-	else
-		Report(NULL, "no Materials/DefaultGlobalMaterial.mat; using built-in defaults");
 	if (!(mc->missions = XwauMissions_Load(mc->game, false))) {
 		Report(NULL, "out of memory (missions)");
 		return false;

@@ -41,8 +41,8 @@
  *
  * [WeaponHardpointTypes] has one number per line: the kind of each OPT
  * hardpoint type, from type 0. The hook reads the model's lines, then the
- * global lines, and keeps the first 40. The lines past the 40th of a
- * section are reported. The types after the last line get kind 0.
+ * global lines, and keeps the first 40. The types after the last line get
+ * kind 0.
  *
  * A model's values go into the `weapons` group of its model file, and the
  * global values into the `weapons` section of flight/flight.yaml:
@@ -61,14 +61,16 @@
  *
  * The weapon types and warheads are written as names. `hardpoint_kinds` maps
  * hardpoint type names to none, laser or warhead. It only has the hardpoint
- * types whose kind differs from stock. A warhead or a kind that the game has
- * no name for makes the import fail.
+ * types whose kind differs from stock. A kind that the game has no name for
+ * makes the import fail. A warhead type that the game has no name for
+ * doesn't exist, so its value is left out.
  *
  * Profile names are written in lower case. The hook never reads a profile
  * named Default, because Default in a mission means "no profile". Keys of
- * such a profile are reported and left out. So are keys that are set twice,
- * keys that the hook doesn't read and lines without a key. A profile name
- * longer than 47 characters makes the import fail.
+ * such a profile are left out. So are keys that are set twice, keys that
+ * the hook doesn't read and lines without a key. The Side and SideModel
+ * keys of [WeaponStats] aren't imported. A profile name longer than 47
+ * characters makes the import fail.
  *
  * A mission picks a profile for a flight group with WeaponProfile_fg_<N> in
  * <mission>_WeaponProfiles.txt, or else in the [WeaponProfiles] section of

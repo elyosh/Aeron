@@ -22,19 +22,21 @@
  * Upper and lower case don't matter in IDs, as in the game. XWAU reads the
  * lines of its files by position, and OpenXWA reads the stock file by
  * position and takes the mod's text by ID. Both give the same texts when the
- * mod's file has the stock IDs in the stock order. These cases are reported:
+ * mod's file has the stock IDs in the stock order. In these cases, both give
+ * the same texts:
  *   - an ID that only the mod's file has, after all the stock IDs, is skipped.
  *     The game never reads that line (XWAU's SPECIES_232 and SPEC_232_*);
  *   - an ID that the mod's file doesn't have, after its last stock ID, keeps
  *     the stock text.
- * These cases make the import fail, because in XWAU they move the texts that
- * come after them:
+ * In these cases, XWAU moves the texts that come after the line, and the
+ * import keeps each text with its ID. They are counted as lines that the
+ * import doesn't convert:
  *   - an ID that only the mod's file has, before a stock ID;
  *   - a stock ID that the mod's file doesn't have, before another stock ID;
  *   - an ID that is in the mod's file more than once;
  *   - lines in a different order from the stock file.
- * A text with a control character other than a tab also makes the import
- * fail, because YAML can't hold it in single quotes.
+ * A text with a control character other than a tab makes the import fail,
+ * because YAML can't hold it in single quotes.
  * The ship list and tech room texts (SPECIES_<n> and SPEC_<n>_*) of craft
  * types 184 to 227 and 231 are also skipped, unless a craft type file carries
  * them. The stock game has no craft for these craft types, and mods put their

@@ -78,11 +78,9 @@ static uint8_t* zip_entry(const uint8_t* zip, size_t size, const char* name, siz
 		at = next;
 		if (name_len - start != strlen(name) || strncasecmp(entry + start, name, name_len - start) != 0)
 			continue;
-		if (local + 30 > size || le32(zip + local) != 0x04034b50) {
-			Report(label, "%s is damaged: the entry of %s has no local header, so XWAU can't read it either",
-				   path, name);
+		/* XWAU can't read an entry without a local header either. */
+		if (local + 30 > size || le32(zip + local) != 0x04034b50)
 			break;
-		}
 		const size_t data = local + 30 + le16(zip + local + 26) + le16(zip + local + 28);
 		if (data + packed > size) {
 			Report(label, "%s is damaged: the entry of %s goes past the end of the file", path, name);
@@ -393,7 +391,8 @@ static uint8_t* skin_file(const char* game, const char* model, const char* skin,
 }
 
 /* Loads the skin's image for texture `t`. rgba is NULL when the skin has no
- * image for it, or when the image size differs (which is reported). */
+ * image for it, or when the image size differs, and `*skipped` counts that
+ * case. */
 static bool load_image(const char* game, const char* model, const char* skin, const opt_texture_t* t,
 					   const char* label, size_t* skipped, OptGltfImageView* out) {
 	char name[256];
@@ -416,12 +415,8 @@ static bool load_image(const char* game, const char* model, const char* skin, co
 			Report(label, "skin %s image %s: %s", skin, file, stbi_failure_reason());
 			return false;
 		}
+		/* XWAU skips an image of another size, and so does the import. */
 		if (w != t->width || h != t->height) {
-			Report(
-				label,
-				"skin %s image %s is %dx%d, but the texture is %dx%d. XWAU skips an image of another size, "
-				"and so does the import",
-				skin, file, w, h, (int)t->width, (int)t->height);
 			stbi_image_free(rgba);
 			++*skipped;
 			return true;
@@ -549,8 +544,8 @@ bool XwauSkins_Resolve(const char* game, const XwauMissions* missions, const cha
 		return false;
 	}
 	out->skins.images = out->images;
-	Report(label, "%zu skin variants, %zu skins, %zu skin images, %zu skipped", out->skins.variant_count,
-		   out->skins.skin_count, found, skipped);
+	ReportDetail(label, "%zu skin variants, %zu skins, %zu skin images, %zu skipped",
+				 out->skins.variant_count, out->skins.skin_count, found, skipped);
 	return true;
 }
 

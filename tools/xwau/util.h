@@ -28,6 +28,19 @@ void SetReportProgram(const char* name);
 UTIL_PRINTF(2, 3) void Report(const char* label, const char* format, ...);
 void ReportV(const char* label, const char* format, va_list args);
 
+/* Writes a detail of the work, such as the result of one model, in the same
+ * form as Report. Details are only written when the program turns them on
+ * (ToolLog_SetDetails). */
+UTIL_PRINTF(2, 3) void ReportDetail(const char* label, const char* format, ...);
+
+/* Counts one use of a feature of the mod that the import doesn't convert,
+ * such as "the .mat key NoBloom". ReportUnsupportedSummary writes one line
+ * for each feature, with its count, so that a feature used a thousand times
+ * gives one line. Threads can call it. */
+UTIL_PRINTF(1, 2) void ReportUnsupported(const char* format, ...);
+/* Writes the features that ReportUnsupported counted, and forgets them. */
+void ReportUnsupportedSummary(void);
+
 /* Writes a problem that makes the import fail, at error level, in the same
  * form as Report. Use it when the import can't keep something from the mod,
  * and the imported mod would then work differently from the mod in XWAU.

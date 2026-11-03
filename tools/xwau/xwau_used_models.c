@@ -51,17 +51,17 @@ static bool add_craft(XwauLines* keys, const char* name) {
 }
 
 /* Adds the model at `path`, a swap target or a turret model. A path in
- * another folder than FlightModels is reported, because the import only
- * converts the models of FlightModels. */
-static bool add_target(XwauLines* keys, const char* file, const char* path, bool craft) {
+ * another folder than FlightModels is counted as a feature that the import
+ * doesn't convert, because the import only converts the models of
+ * FlightModels. */
+static bool add_target(XwauLines* keys, const char* path, bool craft) {
 	const char* slash = NULL;
 	for (const char* c = path; *c; ++c)
 		if (*c == '\\' || *c == '/')
 			slash = c;
 	if (slash && !((size_t)(slash - path) == strlen("FlightModels") &&
 				   strncasecmp(path, "FlightModels", strlen("FlightModels")) == 0)) {
-		Report(file, "%s is outside FlightModels, and the import only converts the models of FlightModels",
-			   path);
+		ReportUnsupported("swap and turret models outside FlightModels");
 		return true;
 	}
 	return craft ? add_craft(keys, path) : add_name(keys, path, "");
@@ -102,7 +102,7 @@ static void trim(char* text) {
 }
 
 /* Reads one line of a section or a file of kind `kind`. */
-static bool read_line(XwauLines* keys, const char* file, char* line, Kind kind) {
+static bool read_line(XwauLines* keys, char* line, Kind kind) {
 	if (kind == KIND_TURRETS) {
 		if (strchr(line, '='))
 			return true;
@@ -113,7 +113,7 @@ static bool read_line(XwauLines* keys, const char* file, char* line, Kind kind) 
 			token = strtok(NULL, ", \t");
 			++column;
 		}
-		return !token || add_target(keys, file, token, false);
+		return !token || add_target(keys, token, false);
 	}
 	char* equals = strchr(line, '=');
 	if (!equals)
@@ -123,7 +123,7 @@ static bool read_line(XwauLines* keys, const char* file, char* line, Kind kind) 
 	if (comment)
 		*comment = 0;
 	trim(value);
-	return !EndsWithNoCase(value, ".opt") || add_target(keys, file, value, kind == KIND_CRAFT_SWAPS);
+	return !EndsWithNoCase(value, ".opt") || add_target(keys, value, kind == KIND_CRAFT_SWAPS);
 }
 
 /* Reads the swap, OptReplace and turret lines of the .ini or .txt file
@@ -146,7 +146,7 @@ static bool read_file(XwauLines* keys, const char* path, Kind kind, bool ini) {
 			kind             = section_kind(line + 1);
 		} else if (kind != KIND_NONE && line[0] && line[0] != ';' && line[0] != '#' &&
 				   strncmp(line, "//", 2) != 0) {
-			ok = read_line(keys, path, line, kind);
+			ok = read_line(keys, line, kind);
 		}
 		line = next;
 	}

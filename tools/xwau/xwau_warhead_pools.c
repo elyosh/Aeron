@@ -91,25 +91,13 @@ bool XwauWarheadPools_Read(const char* game, const char* base, bool report, Xwau
 		Report(NULL, "out of memory");
 		return false;
 	}
-	bool   ok    = true;
-	size_t other = 0, repeats = 0;
-	/* Which keys a line has set, by flight group (0 to 999) and type. The
-	 * hook reads the first line of a key only. */
-	bool* seen = (bool*)calloc(1000 * XWAU_WARHEAD_TYPES, sizeof *seen);
-	if (!seen) {
-		XwauLines_Free(&lines);
-		Report(NULL, "out of memory");
-		return false;
-	}
+	bool ok = true;
+	/* hook_weapon_rate doesn't read lines with other keys, and reads the
+	   first line of a key only. */
 	for (size_t i = 0; ok && i < lines.count; ++i) {
 		int fg, type;
-		if (!strchr(lines.items[i], '=') || !parse_key(lines.items[i], &fg, &type)) {
-			++other;
+		if (!strchr(lines.items[i], '=') || !parse_key(lines.items[i], &fg, &type))
 			continue;
-		}
-		if (seen[fg * XWAU_WARHEAD_TYPES + type])
-			++repeats;
-		seen[fg * XWAU_WARHEAD_TYPES + type] = true;
 		XwauWarheadPool* pool = NULL;
 		for (size_t k = 0; !pool && k < out->count; ++k)
 			pool = out->items[k].fg == fg ? &out->items[k] : NULL;
@@ -129,12 +117,9 @@ bool XwauWarheadPools_Read(const char* game, const char* base, bool report, Xwau
 			pool->count[t] = -1;
 			if (!value[0])
 				continue;
-			if (!Xwau_StoiAutoInt(value, &number)) {
-				if (report)
-					Report(source, "%s = %s isn't a number, which would crash XWAU. It is left out.", key,
-						   value);
+			/* A value that isn't a number would crash XWAU. */
+			if (!Xwau_StoiAutoInt(value, &number))
 				continue;
-			}
 			if (number < -1 || number > 1000000000) {
 				if (report)
 					ReportFatal(source, "%s = %s isn't a number of warheads that OpenXWA can use", key,
@@ -145,23 +130,11 @@ bool XwauWarheadPools_Read(const char* game, const char* base, bool report, Xwau
 		}
 	}
 	XwauLines_Free(&lines);
-	free(seen);
 	if (!ok) {
 		Report(NULL, "out of memory");
 		XwauWarheadPools_Free(out);
 		return false;
 	}
-	if (other && report)
-		Report(
-			source,
-			"[WarheadTypeCount]: %zu lines have keys that hook_weapon_rate doesn't read; they are left out",
-			other);
-	if (repeats && report)
-		Report(
-			source,
-			"[WarheadTypeCount]: %zu lines repeat a key of an earlier line. hook_weapon_rate reads only the "
-			"first line of a key, so they are left out",
-			repeats);
 	if (out->count > 1)
 		qsort(out->items, out->count, sizeof *out->items, compare_pools);
 	return true;

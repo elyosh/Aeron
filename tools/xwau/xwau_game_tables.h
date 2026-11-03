@@ -44,9 +44,6 @@ typedef struct XwauGameTables {
 	uint8_t  types[XWAU_GAME_OBJECT_TYPES][XWAU_GAME_OBJECT_TYPE_SIZE];
 	uint8_t  records[XWAU_GAME_RECORDS][XWAU_GAME_RECORD_SIZE];
 	uint16_t craft[XWAU_GAME_CRAFT_TYPES];
-	/* The word after the craft type table, which XWAU writes as craft type
-	   232 (craft_definitions_plan.md 4.4). */
-	uint16_t craftPastEnd;
 	/* The case of each object type in each sound switch, and the switch's
 	   table of jump addresses. */
 	uint8_t  soundCases[XWAU_GAME_SOUND_SWITCHES][XWAU_GAME_SOUND_CASES];

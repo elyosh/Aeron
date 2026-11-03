@@ -7,16 +7,21 @@
 
 static ToolLogSink g_sink;
 static void*       g_sink_user;
+static int         g_details;
 
 void ToolLog_SetSink(ToolLogSink sink, void* user) {
 	g_sink      = sink;
 	g_sink_user = user;
 }
 
+void ToolLog_SetDetails(int on) { g_details = on; }
+
 void ToolLog_WriteV(ToolLogLevel level, const char* format, va_list args) {
 	/* One more byte for the newline that stderr gets. */
 	char line[LINE_CAPACITY + 1];
-	int  length = vsnprintf(line, LINE_CAPACITY, format, args);
+	if (level == TOOL_LOG_DETAIL && !g_details)
+		return;
+	int length = vsnprintf(line, LINE_CAPACITY, format, args);
 	if (length < 0)
 		return;
 	if (length >= LINE_CAPACITY)

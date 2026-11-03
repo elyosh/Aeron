@@ -32,8 +32,8 @@
  *
  * The files are read as the hook reads them: sections and keys in any case,
  * the first key wins, numbers as std::stoi(value, 0, 0), and lists split on
- * ',' and ';'. A value that isn't a number would stop XWAU, so it is
- * reported and left out. These are resolved here:
+ * ',' and ';'. A value that isn't a number would stop XWAU, so it is left
+ * out. These are resolved here:
  *   - XWAU's model indices, which the installation's XWINGALLIANCE.EXE binds
  *     to list rows. Each one becomes the OpenXWA object type that loads the
  *     same model: the same index when OpenXWA's model there is XWAU's, else
@@ -41,7 +41,7 @@
  *     of its object type file, else the model of its row in the stock game.
  *     An index whose model has no OpenXWA type, such as one of XWAU's added
  *     rows, makes the import fail. An index that loads no model in XWAU
- *     either is reported: a map line becomes null, so that the lines keep
+ *     either is dropped: a map line becomes null, so that the lines keep
  *     their places, and a key is left out;
  *   - a swap "FlightModels\<A>.opt = FlightModels\<B>.opt" becomes "a: b"
  *     when B is in the installation and was converted. The hook ignores
@@ -56,12 +56,13 @@
  *     Fam, Inverted, then X/Y/Z;
  *   - [Size] gives ClosedSFoilsElevation (0 when missing) and
  *     ClosedSFoilsElevationInverted (ClosedSFoilsElevation when 0).
- * Unknown HangarObjects keys, lines without '=' and repeated keys are
- * reported and left out. LightColorIntensity and LightColorRgb make the
- * import fail, because the remaster lights the hangar itself. So do a swap
- * to a model that wasn't converted, a hangar model that wasn't converted,
- * the per-ship mission sections [<Section>_<ship>] and a mission's own
- * hangar model, <mission>_Hangar.opt.
+ * Unknown HangarObjects keys, lines without '=' and repeated keys are left
+ * out, as the hook ignores them. A swap to a model that wasn't converted and
+ * a hangar model that wasn't converted make the import fail. The import
+ * doesn't convert these, and counts them as unsupported: LightColorIntensity
+ * and LightColorRgb, because the remaster lights the hangar itself, swaps to
+ * a file that isn't an OPT, the per-ship mission sections
+ * [<Section>_<ship>] and a mission's own hangar model, <mission>_Hangar.opt.
  *
  * With the stock game, each mission's own layer, from [<Section>] of
  * <mission>.ini or <mission>_<Section>.txt, becomes the `hangar` of its

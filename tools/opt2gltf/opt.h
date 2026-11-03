@@ -330,7 +330,9 @@ typedef struct {
 
 	/* The number of NodeSwitch states that the face groups don't keep,
 	 * because a face group keeps at most 16 states. XWA keeps them all, and
-	 * shows state n for markings n. */
+	 * shows state n for markings n, clamped to the last state. The trailing
+	 * states that repeat the texture before them aren't counted, since they
+	 * look the same. */
 	int32_t dropped_switch_states;
 } opt_file_t;
 
@@ -395,7 +397,8 @@ int opt_palette_index_emissive(const opt_file_t* opt, const uint8_t palette[OPT_
 size_t opt_texture_mip_offset(const opt_texture_t* t, int level, int32_t* w, int32_t* h);
 
 /* Returns the texture index to bind for a mesh state. State 0 always gives
- * group->texture_index. Higher states use the NodeSwitch variant. */
+ * group->texture_index. Higher states use the NodeSwitch variant, and a state
+ * past the last one shows the last one, as in XWA. */
 int32_t opt_face_group_texture(const opt_face_group_t* g, int state);
 
 #ifdef __cplusplus

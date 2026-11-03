@@ -18,8 +18,8 @@
  *     except TargetableMeshes, is a profile that hides the meshes listed in
  *     its value. Tokens are read with std::stoi. A token that does not parse,
  *     or -1, is the name of another profile, which is resolved recursively.
- *     If the references form a cycle, the profile is skipped and reported.
- *     Other negative numbers are ignored and reported. A profile becomes the
+ *     If the references form a cycle, the profile is skipped. Other negative
+ *     numbers are ignored, as in XWAU. A profile becomes the
  *     component set hidden_by_profile.<name>, with the name encoded by
  *     Xwau_EncodeName. A mesh above 254, or a set name that is too long,
  *     makes the import fail. A profile that hides nothing creates no
@@ -35,8 +35,9 @@
  *     key of ObjectProfiles lists the meshes that the player can target.
  *     Tokens are split on ',' and ';' and read with std::stoi. The meshes
  *     become the component set targetable. Tokens that aren't numbers and
- *     negative meshes are reported and dropped. A mesh above 254 makes the
- *     import fail.
+ *     negative meshes are dropped. A key without a usable mesh is counted
+ *     as a feature that the import doesn't convert. A mesh above 254 makes
+ *     the import fail.
  *
  *   - mesh rotations (hook_sfoils, hook_pilot) become articulations. The
  *     sections SFoils, SFoilsLandingGears, SFoilsHangarDoors, SFoilsHatches
@@ -47,13 +48,13 @@
  *     group is cargo_clamps.open, cargo_clamps.close or
  *     cargo_clamps.<encoded key>. Pilot has lines "mesh, angle, speed,
  *     behavior" for the group crew, with behaviors 0 to 2 (swing, random,
- *     random_pause). A line with fewer than four tokens is not a mesh line,
- *     and it is reported unless it is a "key = value" line. Numbers are read
- *     with std::stoi(text, 0, 0). A line is skipped and reported when its
- *     mesh is negative, its angle is outside -128..255, or a speed is
- *     outside 0..255. A mesh above 254, a group name that is too long, a
- *     Pilot behavior other than 0 to 2 and a PilotCockpit section make the
- *     import fail. The [SFoils] keys CloseSFoilsInHyperspace,
+ *     random_pause). A line with fewer than four tokens is not a mesh line.
+ *     Numbers are read with std::stoi(text, 0, 0). A line is skipped, as in
+ *     XWAU, when its mesh is negative, its angle is outside -128..255, or a
+ *     speed is outside 0..255. A mesh above 254 or a group name that is too
+ *     long makes the import fail. A Pilot behavior other than 0 to 2 and a
+ *     PilotCockpit section are counted as features that the import doesn't
+ *     convert. The [SFoils] keys CloseSFoilsInHyperspace,
  *     SFoilsAnimationSpeed, AllowFireWhenSFoilsAreClosed,
  *     ParkOrderSFoilsClosed and HangarDoorsDistance become the settings
  *     sfoils.close_in_hyperspace, step_ticks (15 × speed),
@@ -110,7 +111,7 @@ bool XwauModel_Read(const char* game, const XwauMissions* missions, const char* 
 					const char* label);
 
 /* Gets the pilot eye of `model` from its POV lines, or else from XWAU's craft table. */
-bool XwauModel_Eye(const char* game, const char* model, int eye[3], const char* label);
+bool XwauModel_Eye(const char* game, const char* model, int eye[3]);
 
 /* Reads the cockpit fields of view of the craft `model`. Returns false when
  * its cockpit's .dc file has neither key. */
@@ -134,8 +135,8 @@ typedef struct XwauMeshLine {
 } XwauMeshLine;
 
 /* Collects the mesh lines of `lines`. Lines whose numbers do not parse are
- * skipped, and reported unless `label` is NULL. Returns false when out of
- * memory. */
+ * skipped, as in XWAU. `label` and `where` aren't used. Returns false when
+ * out of memory. */
 bool XwauModel_MeshLines(const XwauLines* lines, XwauMeshLine** out, size_t* count, const char* label,
 						 const char* where);
 

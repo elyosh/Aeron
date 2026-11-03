@@ -30,8 +30,9 @@
  * Every list row counts, because skirmish missions can use any craft. The
  * section and file names are matched loosely, and a name that has no OPT
  * does no harm, so the set can only hold too many models, not too few. A
- * swap target outside FlightModels is reported, because the import only
- * converts the OPTs of FlightModels.
+ * swap target outside FlightModels is counted as a feature that the import
+ * doesn't convert, because the import only converts the OPTs of
+ * FlightModels.
  */
 
 #include <stdbool.h>

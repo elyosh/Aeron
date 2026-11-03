@@ -55,11 +55,12 @@ static bool read_names(const char* game, const char* name, XwauLines* out, bool*
 }
 
 /* Reads a list of numbers as the hook does (std::stoi of each line). A value
- * that isn't a number stops the hook, so it leaves the whole list out. A
- * value of 0 or less isn't a threshold that the game takes, and makes the
- * import fail. `*count` is 0 when the file doesn't exist or is left out.
+ * that isn't a number stops XWAU, so it leaves the whole list out. A value
+ * of 0 or less isn't a threshold that the game takes, and makes the import
+ * fail. `*count` is 0 when the file doesn't exist or is left out.
  * `game_limit` tells whether the stock game also keeps only `max` values,
- * so that the values after them do nothing in XWAU either. */
+ * so that the values after them do nothing in XWAU either. Otherwise more
+ * values make the import fail. */
 static bool read_values(const char* game, const char* name, long long* values, size_t max, bool game_limit,
 						size_t* count) {
 	*count = 0;
@@ -75,8 +76,6 @@ static bool read_values(const char* game, const char* name, long long* values, s
 	for (size_t i = 0; i < lines.count; ++i) {
 		long long value;
 		if (!Xwau_Stoi(lines.items[i], &value)) {
-			Report(path, "'%s' isn't a number, which XWAU would fail on. The file is left out",
-				   lines.items[i]);
 			XwauLines_Free(&lines);
 			return true;
 		}
@@ -89,9 +88,7 @@ static bool read_values(const char* game, const char* name, long long* values, s
 		if (n < max)
 			values[n++] = value;
 	}
-	if (lines.count > max && game_limit)
-		Report(path, "%zu values. The game uses the first %zu, in XWAU too", lines.count, max);
-	else if (lines.count > max)
+	if (lines.count > max && !game_limit)
 		ReportFatal(path, "%zu values, and OpenXWA takes at most %zu", lines.count, max);
 	XwauLines_Free(&lines);
 	*count = n;
@@ -118,8 +115,8 @@ static void write_values(FILE* f, const char* key, const long long* values, size
 }
 
 /* Returns the Tour of Duty mission that unlocks a family-room item: the
-   value of `key` in ConcourseDoors.txt, or `stock` if the key is missing. A
-   value that isn't a number makes the import fail. */
+   value of `key` in ConcourseDoors.txt, or `stock` if the key is missing or
+   if its value isn't a number, which XWAU fails on. */
 static long long unlock_mission(const XwauLines* doors, const char* key, long long stock) {
 	char      value[64];
 	long long mission;
@@ -128,28 +125,14 @@ static long long unlock_mission(const XwauLines* doors, const char* key, long lo
 		return stock;
 	if (Xwau_Stoi(value, &mission))
 		return mission;
-	Report("ConcourseDoors.txt", "%s = '%s' isn't a number, so it is left out", key, value);
 	return stock;
 }
 
 bool XwauAwards_Write(const char* game, const char* path) {
+	/* Without hook_concourse.dll, XWAU never reads the award files. */
 	char dll[1024];
-	if (!Xwau_FindFile(game, "hook_concourse.dll", dll, sizeof dll)) {
-		static const char* const kFiles[] = { "MedalsDescriptions.txt",
-											  "KalidorCrescentDescriptions.txt",
-											  "FamilyMedalsDescriptions.txt",
-											  "KalidorCrescentPoints.txt",
-											  "RankPoints.txt",
-											  "PilotRatingPoints.txt",
-											  "MedalDetailList.txt",
-											  "ConcourseDoors.txt" };
-		for (size_t i = 0; i < sizeof kFiles / sizeof kFiles[0]; ++i) {
-			char found[1024];
-			if (Xwau_FindFile(game, kFiles[i], found, sizeof found))
-				Report(kFiles[i], "the mod has no hook_concourse.dll, so XWAU never reads this file");
-		}
+	if (!Xwau_FindFile(game, "hook_concourse.dll", dll, sizeof dll))
 		return true;
-	}
 	XwauLines  medals = { 0 }, kalidor_names = { 0 }, memento_names = { 0 }, images = { 0 }, doors = { 0 };
 	bool       has_medals = false, has_kalidor_names = false, has_memento_names = false;
 	long long  kalidor_points[KALIDOR_MAX], ranks[RANK_COUNT], ratings[RATING_COUNT];
@@ -233,11 +216,9 @@ bool XwauAwards_Write(const char* game, const char* path) {
 					for (size_t i = 0; i < images.count && i < memento_count; ++i) {
 						if (strcmp(images.items[i], "null") == 0)
 							continue;
-						if (!image_exists(game, images.items[i])) {
-							Report(NULL, "MedalDetailList.txt: mission %zu: %s isn't in the installation", i,
-								   images.items[i]);
+						/* XWAU can't show such an image either. */
+						if (!image_exists(game, images.items[i]))
 							++missing;
-						}
 						fprintf(f, "%s    %zu: ", written++ ? "" : "  images:\n", i);
 						Xwau_WriteString(f, images.items[i]);
 						fprintf(f, "\n");

@@ -76,14 +76,14 @@
  *     the tables, the stock projectile models are used. A projectile is a
  *     warhead when its name has Missile, Torpedo, SpaceBomb, Pulse, Rocket or
  *     Flare, but not Boat, in any case, as XWAU's renderer tags them. The
- *     others are lasers;
- *   - more than 120 weapon hardpoints are reported, because the game keeps
- *     only the first 120 weapon slots, as XWAU does.
+ *     others are lasers.
  *
- * In both modes, what the glTF model can't keep from the OPT is reported:
- * the LODs after LOD 0, and the explosion type flags that the game never
- * reads. A mesh type above 31 and NodeSwitch states past the 16 that a face
- * group keeps make the import fail (ReportFatal), because XWAU uses them.
+ * In both modes, the glTF model keeps only LOD 0, and the LODs after it are
+ * counted with ReportUnsupported. The explosion type flags that the game
+ * never reads are left out without a report. In XWAU mode, a mesh type above
+ * 31 and NodeSwitch states past the 16 that a face group keeps make the
+ * import fail (ReportFatal), because XWAU uses them. Stock mode only reports
+ * them.
  */
 
 #include <stdbool.h>

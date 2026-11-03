@@ -242,28 +242,27 @@ static XwauWeaponStatsValue* find_value(const XwauWeaponStats* stats, const Xwau
 static const char* const kEnergyKeys[2] = { "SpeedFactor", "SpeedFactorForPlayer" };
 
 /* Reads the lines of section `group` into `out`, and adds the keys set to
- * -1, which means "not set", to `unset`. Reports the lines left out when
- * `report` is true. */
+ * -1, which means "not set", to `unset`. Reports what the import can't keep
+ * when `report` is true. The hook doesn't read lines without a key, keys
+ * that it doesn't know, keys of a profile named Default, or values that
+ * aren't numbers, and the first line of a key wins. The importer leaves the
+ * other lines out. */
 static bool read_section(const XwauLines* lines, const char* source, int group, XwauWeaponStats* out,
 						 XwauWeaponStats* unset, bool report) {
-	size_t ignored = 0;
 	for (size_t i = 0; i < lines->count; ++i) {
 		char                 key[256], text[256];
 		XwauWeaponStatsValue value;
 		bool                 too_long = false;
 		memset(&value, 0, sizeof value);
-		if (!split_line(lines->items[i], key, sizeof key, text, sizeof text)) {
-			++ignored;
+		if (!split_line(lines->items[i], key, sizeof key, text, sizeof text))
 			continue;
-		}
 		bool known = false;
 		if (group == XWAU_WEAPON_STATS_STATS) {
 			const int parsed = parse_weapon_key(key, &value, &too_long);
 			if (parsed < 0) {
 				long long side = 0;
 				if (report && !(Xwau_StoiAutoInt(text, &side) && side == -1))
-					Report(source, "%s = %s sets the side of a weapon, which the importer doesn't import",
-						   key, text);
+					ReportUnsupported("the [WeaponStats] keys Side and SideModel");
 				continue;
 			}
 			known = parsed > 0;
@@ -274,11 +273,8 @@ static bool read_section(const XwauLines* lines, const char* source, int group, 
 		} else {
 			known = parse_suffix_key(key, group, kLinkingKeys, LINKING_KEYS, &value, &too_long);
 		}
-		if (!known) {
-			if (report)
-				Report(source, "%s isn't a key that the hook reads; it is left out", key);
+		if (!known)
 			continue;
-		}
 		if (too_long) {
 			if (report)
 				ReportFatal(source,
@@ -286,28 +282,17 @@ static bool read_section(const XwauLines* lines, const char* source, int group, 
 							XWAU_WEAPON_STATS_NAME_MAX - 1);
 			continue;
 		}
-		if (strcmp(value.profile, "default") == 0) {
-			if (report)
-				Report(source,
-					   "%s: the hook never reads a profile named Default, because Default in a mission means "
-					   "no profile; it is left out",
-					   key);
+		/* Default in a mission means "no profile". */
+		if (strcmp(value.profile, "default") == 0)
 			continue;
-		}
 		long long number = 0;
-		if (!Xwau_StoiAutoInt(text, &number)) {
-			if (report)
-				Report(source, "%s = %s isn't a number, which XWAU would fail on; it is left out", key, text);
+		if (!Xwau_StoiAutoInt(text, &number))
 			continue;
-		}
 		if (number == -1) {
 			/* The hook takes the first line with the key, so a -1 still hides a
 			   later line with the same key. */
-			if (find_value(out, &value) || find_value(unset, &value)) {
-				if (report)
-					Report(source, "%s is set twice; the first line wins", key);
+			if (find_value(out, &value) || find_value(unset, &value))
 				continue;
-			}
 			XwauWeaponStatsValue* added = ARRAY_PUSH(unset->items, unset->count);
 			if (!added)
 				return false;
@@ -316,12 +301,8 @@ static bool read_section(const XwauLines* lines, const char* source, int group, 
 		}
 		if (group == XWAU_WEAPON_STATS_ENERGY) {
 			float percent = 0.0f;
-			if (!XwauWeaponStats_Stof(text, &percent)) {
-				if (report)
-					Report(source, "%s = %s isn't a number, which XWAU would fail on; it is left out", key,
-						   text);
+			if (!XwauWeaponStats_Stof(text, &percent))
 				continue;
-			}
 			/* As in the hook: a fraction of the top speed, from 0 to 1, in
 			   Q16. */
 			float factor = percent * 0.01f;
@@ -334,46 +315,34 @@ static bool read_section(const XwauLines* lines, const char* source, int group, 
 		} else if (group == XWAU_WEAPON_STATS_WARHEADS && number < -1) {
 			number = 0;
 		}
-		if (find_value(out, &value) || find_value(unset, &value)) {
-			if (report)
-				Report(source, "%s is set twice; the first line wins", key);
+		if (find_value(out, &value) || find_value(unset, &value))
 			continue;
-		}
 		value.value                 = number;
 		XwauWeaponStatsValue* added = ARRAY_PUSH(out->items, out->count);
 		if (!added)
 			return false;
 		*added = value;
 	}
-	if (ignored && report)
-		Report(source, "%zu lines have no key and value. The hook doesn't read them, so they are left out.",
-			   ignored);
 	return true;
 }
 
 /* Adds the hardpoint kinds of `lines` to `out`. Each line is read the way
-   std::stoi reads it. */
-static void read_kinds(const XwauLines* lines, const char* source, XwauWeaponStats* out) {
-	size_t extra = 0;
+   std::stoi reads it. A line that isn't a number would crash XWAU, and the
+   hook only reads the first lines, so both are left out. */
+static void read_kinds(const XwauLines* lines, XwauWeaponStats* out) {
 	for (size_t i = 0; i < lines->count; ++i) {
 		long long kind = 0;
-		if (!Xwau_Stoi(lines->items[i], &kind)) {
-			Report(source, "\"%s\" isn't a number, which would crash XWAU; it is left out", lines->items[i]);
+		if (!Xwau_Stoi(lines->items[i], &kind))
 			continue;
-		}
 		out->has_hardpoint_kinds = true;
 		if (out->hardpoint_kind_count < XWAU_WEAPON_STATS_HARDPOINT_TYPES)
 			out->hardpoint_kinds[out->hardpoint_kind_count++] = (int)kind;
-		else
-			++extra;
 	}
-	if (extra)
-		Report(source, "%zu lines come after the first %d. The hook only reads %d, so they are left out.",
-			   extra, XWAU_WEAPON_STATS_HARDPOINT_TYPES, XWAU_WEAPON_STATS_HARDPOINT_TYPES);
 }
 
 /* Returns whether the hook reads [WeaponStats], which it does when its
- * EnableWeaponStatsProfiles isn't 0. */
+ * EnableWeaponStatsProfiles isn't 0. XWAU fails on a value that isn't a
+ * number, and the importer then reads [WeaponStats] as if it were 1. */
 static bool stats_enabled(const char* game) {
 	XwauLines lines;
 	char      text[256];
@@ -382,13 +351,8 @@ static bool stats_enabled(const char* game) {
 		return true;
 	XwauLines_Value(&lines, "EnableWeaponStatsProfiles", XWAU_RULES_CPP, text, sizeof text);
 	XwauLines_Free(&lines);
-	if (text[0] && !Xwau_StoiAutoInt(text, &value)) {
-		Report("hook_weapon_rate",
-			   "EnableWeaponStatsProfiles = %s isn't a number, which XWAU would fail on. The importer reads "
-			   "[WeaponStats] as if it were 1.",
-			   text);
+	if (text[0] && !Xwau_StoiAutoInt(text, &value))
 		return true;
-	}
 	return value != 0;
 }
 
@@ -443,10 +407,13 @@ bool XwauWeaponStats_Read(const char* game, const char* model, XwauWeaponStats* 
 		}
 		if (!(ok = section_lines(game, txt, ini, section, &lines, source, sizeof source)))
 			break;
+		/* With EnableWeaponStatsProfiles = 0, the hook doesn't read
+		   [WeaponStats]. */
 		if (group == XWAU_WEAPON_STATS_STATS && !enabled) {
-			if (lines.count)
-				Report(source, "is left out: the hook's EnableWeaponStatsProfiles is 0");
-		} else if (group < XWAU_WEAPON_STATS_GROUPS) {
+			XwauLines_Free(&lines);
+			continue;
+		}
+		if (group < XWAU_WEAPON_STATS_GROUPS) {
 			const size_t before = unset.count;
 			ok                  = read_section(&lines, source, group, out, &unset, true);
 			/* A model's -1 hides the global line with the same key. The game
@@ -464,7 +431,7 @@ bool XwauWeaponStats_Read(const char* game, const char* model, XwauWeaponStats* 
 			}
 			XwauWeaponStats_Free(&global);
 		} else {
-			read_kinds(&lines, source, out);
+			read_kinds(&lines, out);
 		}
 		XwauLines_Free(&lines);
 	}
@@ -477,7 +444,7 @@ bool XwauWeaponStats_Read(const char* game, const char* model, XwauWeaponStats* 
 								 "WeaponHardpointTypes", &lines, source, sizeof source)))
 			return false;
 		XwauWeaponStats global = { 0 };
-		read_kinds(&lines, source, &global);
+		read_kinds(&lines, &global);
 		XwauLines_Free(&lines);
 		out->has_global_hardpoint_kinds  = global.has_hardpoint_kinds;
 		out->global_hardpoint_kind_count = global.hardpoint_kind_count;
@@ -603,14 +570,10 @@ void XwauWeaponStats_Write(FILE* f, const XwauNames* names, const XwauStockValue
 					const XwauWeaponStatsValue* v = &stats->items[i];
 					if (v->group != group || v->index != index || strcmp(v->profile, head->profile) != 0)
 						continue;
-					if (group == XWAU_WEAPON_STATS_WARHEADS && !XwauNames_Name(&names->warheads, index)) {
-						Report(NULL,
-							   "weapon profile %s sets Warhead%d_CapacityPercent, which isn't a warhead, so "
-							   "it is "
-							   "left out",
-							   head->profile[0] ? head->profile : "default", index);
+					/* A warhead type that the game has no name for doesn't
+					   exist. */
+					if (group == XWAU_WEAPON_STATS_WARHEADS && !XwauNames_Name(&names->warheads, index))
 						continue;
-					}
 					fputs(first ? "" : ", ", f);
 					first = false;
 					if (group == XWAU_WEAPON_STATS_WARHEADS)
@@ -705,27 +668,22 @@ bool XwauWeaponStats_ReadChoices(const char* game, const char* base, XwauWeaponP
 		const size_t prefix = strlen(kChoiceKeys[group]);
 		bool         seen[192];
 		memset(seen, 0, sizeof seen);
+		/* The hook doesn't read lines without a key or with other keys, and
+		   the first line of a key wins. */
 		for (size_t i = 0; i < lines.count; ++i) {
 			char key[256], value[256];
-			if (!split_line(lines.items[i], key, sizeof key, value, sizeof value)) {
-				Report(source, "\"%s\" has no key and value. The hook doesn't read it, so it is left out.",
-					   lines.items[i]);
+			if (!split_line(lines.items[i], key, sizeof key, value, sizeof value))
 				continue;
-			}
 			const char* digits = key + prefix;
 			char*       end    = NULL;
 			const long  fg     = strncasecmp(key, kChoiceKeys[group], prefix) == 0 && digits[0] >= '0' &&
 										 digits[0] <= '9' && (digits[0] != '0' || digits[1] == '\0')
 									 ? strtol(digits, &end, 10)
 									 : -1;
-			if (fg < 0 || *end || fg >= 192) {
-				Report(source, "%s isn't a key that the hook reads; it is left out", key);
+			if (fg < 0 || *end || fg >= 192)
 				continue;
-			}
-			if (seen[fg]) {
-				Report(source, "%s is set twice; the first line wins", key);
+			if (seen[fg])
 				continue;
-			}
 			seen[fg] = true;
 			/* Default in a mission means "no profile". */
 			if (Xwau_SameName(value, "Default") || !value[0])

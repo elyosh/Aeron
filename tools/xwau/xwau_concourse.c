@@ -1,14 +1,13 @@
 #include "xwau_concourse.h"
 
-#include <stdlib.h>
 #include <string.h>
 
 #include "util.h"
 #include "xwau_config.h"
-#include "xwau_dat.h"
 
 /* The value of `key` from `min` to `max`, read as std::stoi(value, 0, 0)
- * reads it, or -1 when the key is missing or its value is reported. */
+ * reads it, or -1 when the key is missing, when its value isn't a number,
+ * which XWAU fails on, or when the import fails on it. */
 static int planet_value(const XwauLines* lines, const char* key, long long min, long long max,
 						const char* base) {
 	char      text[256];
@@ -16,11 +15,8 @@ static int planet_value(const XwauLines* lines, const char* key, long long min, 
 	XwauLines_Value(lines, key, XWAU_RULES_CPP, text, sizeof text);
 	if (!text[0])
 		return -1;
-	if (!Xwau_StoiAuto(text, &value)) {
-		Report(base, "[concourse]: %s: '%s' isn't a number, which XWAU would fail on; it is left out", key,
-			   text);
+	if (!Xwau_StoiAuto(text, &value))
 		return -1;
-	}
 	if (value != -1 && (value < min || value > max)) {
 		ReportFatal(base, "[concourse]: %s = %lld, and the importer only takes %lld to %lld", key, value, min,
 					max);
@@ -45,16 +41,8 @@ bool XwauFrontPlanet_Read(const char* game, const char* base, const int design_s
 						 !XwauLines_Read(Xwau_FindFile(game, rel, path, sizeof path) ? path : NULL,
 										 "concourse", XWAU_RULES_CPP, &lines)))
 		return false;
+	/* Without hook_concourse.dll, XWAU never reads these keys. */
 	if (!hook) {
-		static const char* const kKeys[] = { "FrontPlanetIndex", "FrontPlanetPositionX",
-											 "FrontPlanetPositionY" };
-		for (size_t k = 0; k < sizeof kKeys / sizeof kKeys[0]; ++k) {
-			char text[256];
-			XwauLines_Value(&lines, kKeys[k], XWAU_RULES_CPP, text, sizeof text);
-			if (text[0])
-				Report(base, "[concourse]: the mod has no hook_concourse.dll, so XWAU never reads %s",
-					   kKeys[k]);
-		}
 		XwauLines_Free(&lines);
 		return true;
 	}
@@ -91,60 +79,4 @@ void XwauFrontPlanet_Write(FILE* f, const XwauFrontPlanet* planet) {
 	if (planet->image != -1)
 		fprintf(f, "%simage: %d", separator, planet->image);
 	fputs(" }\n", f);
-}
-
-bool XwauDatGroups_Read(const char* game, const char* stock_game, XwauDatGroups* out) {
-	memset(out, 0, sizeof *out);
-	char path[1024];
-	if (!Xwau_FindFile(game, "RESDATA.TXT", path, sizeof path) &&
-		!Xwau_FindFile(stock_game, "RESDATA.TXT", path, sizeof path)) {
-		Report(NULL,
-			   "neither the mod nor the game has a RESDATA.TXT, so the concourse planets can't be checked");
-		return true;
-	}
-	XwauLines lines;
-	if (!XwauLines_Read(path, "", XWAU_RULES_CPP, &lines))
-		return false;
-	bool ok = true;
-	for (size_t i = 0; ok && i < lines.count; ++i) {
-		char rel[1024];
-		snprintf(rel, sizeof rel, "%s", lines.items[i]);
-		for (char* c = rel; *c; ++c)
-			if (*c == '\\')
-				*c = '/';
-		if (!Xwau_FindFile(game, rel, path, sizeof path) &&
-			!Xwau_FindFile(stock_game, rel, path, sizeof path))
-			continue;
-		int*   ids;
-		size_t count;
-		char   error[256];
-		if (!XwauDat_ReadGroupIds(path, &ids, &count, error, sizeof error)) {
-			Report(NULL, "RESDATA.TXT: %s", error);
-			continue;
-		}
-		for (size_t k = 0; ok && k < count; ++k) {
-			if (XwauDatGroups_Has(out, ids[k]))
-				continue;
-			int* added = ARRAY_PUSH(out->ids, out->count);
-			if ((ok = added != NULL))
-				*added = ids[k];
-		}
-		free(ids);
-	}
-	XwauLines_Free(&lines);
-	if (!ok)
-		XwauDatGroups_Free(out);
-	return ok;
-}
-
-bool XwauDatGroups_Has(const XwauDatGroups* groups, int group) {
-	for (size_t i = 0; i < groups->count; ++i)
-		if (groups->ids[i] == group)
-			return true;
-	return false;
-}
-
-void XwauDatGroups_Free(XwauDatGroups* groups) {
-	free(groups->ids);
-	memset(groups, 0, sizeof *groups);
 }

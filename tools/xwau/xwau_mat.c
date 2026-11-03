@@ -289,9 +289,118 @@ static bool read_material_line(const char* line, XwauMatParams* m) {
 	return true;
 }
 
-/* Reports a key that the importer doesn't read. */
-static void report_unknown_key(const char* path, const char* param) {
-	Report(path, "the importer doesn't import the key %s", param);
+/* The keys that XWAU's material reader reads (ReadMaterialLine in
+ * Materials.cpp). Another key has no effect in XWAU either. */
+static const char* const g_xwauKeys[] = {
+	"AlphaIsntGlass",
+	"AlphaToBloom",
+	"alt_frames_1",
+	"alt_frames_2",
+	"alt_frames_3",
+	"alt_frames_4",
+	"Ambient",
+	"anim_once",
+	"anim_rand",
+	"anim_seq",
+	"DisplayIfMissionSetSpeedGE",
+	"DisplayIfSpeedGE",
+	"DisplayIfThrottleGE",
+	"ds2_frames",
+	"EffectBloom",
+	"ExplosionBlendMode",
+	"ExplosionScale",
+	"ExplosionSpeed",
+	"frame_once",
+	"frame_rand",
+	"frame_seq",
+	"Glossiness",
+	"GreebleBlendMode1",
+	"GreebleBlendMode2",
+	"GreebleDistance1",
+	"GreebleDistance2",
+	"GreebleLightMap1",
+	"GreebleLightMap2",
+	"GreebleLightMapBlendMode1",
+	"GreebleLightMapBlendMode2",
+	"GreebleLightMapDistance1",
+	"GreebleLightMapDistance2",
+	"GreebleLightMapMix1",
+	"GreebleLightMapMix2",
+	"GreebleLightMapScale1",
+	"GreebleLightMapScale2",
+	"GreebleMix1",
+	"GreebleMix2",
+	"GreebleScale1",
+	"GreebleScale2",
+	"GreebleTex1",
+	"GreebleTex2",
+	"HyperAxis0",
+	"HyperAxis1",
+	"HyperEnd",
+	"HyperMaxAngle",
+	"HyperRotXAxis",
+	"HyperRotYAxis",
+	"HyperRotZAxis",
+	"HyperStart",
+	"IncreaseBrightnessWithMissionSetSpeed",
+	"Intensity",
+	"JoystickMaxPitch",
+	"JoystickMaxYaw",
+	"JoystickRoot",
+	"Lava",
+	"LavaColor",
+	"LavaNormalMult",
+	"LavaPosMult",
+	"LavaSize",
+	"LavaSpeed",
+	"LavaTiling",
+	"LavaTranspose",
+	"Light",
+	"light_angle",
+	"light_falloff",
+	"light_uv_coord_pos",
+	"lightmap_once",
+	"lightmap_rand",
+	"lightmap_seq",
+	"LinearBloom",
+	"LYR_MULT",
+	"LYR_SCREEN",
+	"Metallic",
+	"NMIntensity",
+	"NoBloom",
+	"NoColorAlpha",
+	"NormalMap",
+	"Raytrace",
+	"Shadeless",
+	"shadow_map_mult_x",
+	"shadow_map_mult_y",
+	"shadow_map_mult_z",
+	"SkipWhenDisabled",
+	"SpecularMap",
+	"SpecularMapIntensity",
+	"SpecularVal",
+	"ThrottleAxis0",
+	"ThrottleAxis1",
+	"ThrottleEnd",
+	"ThrottleMaxAngle",
+	"ThrottleRotXAxis",
+	"ThrottleRotYAxis",
+	"ThrottleRotZAxis",
+	"ThrottleStart",
+	"TotalFrames",
+	"TransformCenter",
+	"TransformRotX",
+	"TransformRotY",
+	"TransformRotZ",
+};
+
+/* Counts a key that the importer doesn't read, when XWAU reads it. */
+static void report_unknown_key(const char* param) {
+	for (size_t i = 0; i < sizeof g_xwauKeys / sizeof g_xwauKeys[0]; ++i)
+		if (ascii_casecmp(param, g_xwauKeys[i]) == 0) {
+			ReportUnsupported("the .mat key %s", g_xwauKeys[i]);
+			return;
+		}
 }
 
 bool XwauMat_ReadGlobalDefault(const char* path, XwauMatParams* io) {
@@ -304,7 +413,7 @@ bool XwauMat_ReadGlobalDefault(const char* path, XwauMatParams* io) {
 		if (!read_material_line(line, io)) {
 			char param[256], value[XWAU_MAT_LINE_MAX];
 			scan_key_line(line, param, sizeof param, value, sizeof value);
-			report_unknown_key(path, param);
+			report_unknown_key(param);
 		}
 	}
 	fclose(f);
@@ -747,10 +856,9 @@ static bool frames_key(const char* param) {
 }
 
 /* Parses a sequence key line into a new sequence of `section`. Other keys are
- * ignored. A sequence line without animation data is reported, because the
- * renderer drops it. */
-static bool read_sequence_line(const char* param, const char* line, XwauMatSection* section,
-							   const char* path) {
+ * ignored. A sequence line without animation data is dropped, as the renderer
+ * drops it. */
+static bool read_sequence_line(const char* param, const char* line, XwauMatSection* section) {
 	const bool listed = listed_key(param);
 	const bool frames = frames_key(param);
 	if (!listed && !frames)
@@ -778,8 +886,7 @@ static bool read_sequence_line(const char* param, const char* line, XwauMatSecti
 	else
 		parse_frames(line, &q);
 	if (!q.group_frames && q.frame_count == 0) {
-		Report(path, "[%s]: a %s line has no animation data that XWAU can read, so XWAU drops it",
-			   section->name, param);
+		/* XWAU drops a line without animation data that it can read. */
 		sequence_free(&q);
 		return true;
 	}
@@ -810,7 +917,7 @@ static bool push_entry(XwauMatFile* file, const char* name, const XwauMatParams*
 /* Closes a section. Each listed name gets the material of the section, except
  * "Default", which replaces slot 0 instead. */
 static bool save_section(XwauMatFile* file, char (*names)[XWAU_MAT_NAME_MAX], size_t name_count,
-						 const XwauMatParams* cur, int section, const char* path) {
+						 const XwauMatParams* cur, int section) {
 	bool is_default = false;
 	for (size_t i = 0; i < name_count; ++i)
 		is_default |= ascii_casecmp(names[i], "default") == 0;
@@ -818,11 +925,7 @@ static bool save_section(XwauMatFile* file, char (*names)[XWAU_MAT_NAME_MAX], si
 	   change slot 0 too. */
 	if (!is_default && file->slot0.has_greebles &&
 		memcmp(cur->greebles, file->slot0.greebles, sizeof cur->greebles) != 0)
-		Report(
-			path,
-			"[%s] changes the greebles that it gets from [Default]. XWAU then changes them in [Default] too, "
-			"and the import doesn't",
-			section >= 0 ? file->sections[section].name : "");
+		ReportUnsupported("a .mat section that changes the greebles it gets from [Default]");
 	for (size_t i = 0; i < name_count; ++i) {
 		if (ascii_casecmp(names[i], "default") == 0) {
 			file->slot0         = *cur;
@@ -985,8 +1088,7 @@ XwauMatFile* XwauMat_Load(const char* path, const XwauMatParams* global) {
 	bool          saved      = true; /* lines before the first section are dropped */
 	XwauMatParams cur        = file->slot0;
 	char          line[XWAU_MAT_LINE_MAX];
-	bool          ok     = true;
-	size_t        before = 0; /* key lines before the first section */
+	bool          ok = true;
 	while (ok && fgets(line, sizeof line, f)) {
 		if (line[0] == ';' || line[0] == '#')
 			continue;
@@ -995,7 +1097,7 @@ XwauMatFile* XwauMat_Load(const char* path, const XwauMatParams* global) {
 			continue;
 		if (line[0] == '[') {
 			if (!saved)
-				ok = save_section(file, names, name_count, &cur, section, path);
+				ok = save_section(file, names, name_count, &cur, section);
 			name_count = parse_section_names(line, names, MAX_SECTION_NAMES, path);
 			cur        = file->slot0;
 			saved      = false;
@@ -1003,23 +1105,19 @@ XwauMatFile* XwauMat_Load(const char* path, const XwauMatParams* global) {
 			ok         = ok && section >= 0;
 		} else {
 			const bool known = read_material_line(line, &cur) || listed_key(param) || frames_key(param);
-			if (saved)
-				++before;
-			else if (!known)
-				report_unknown_key(path, param);
+			if (!saved && !known)
+				report_unknown_key(param);
 			if (!saved && section >= 0)
-				ok = read_sequence_line(param, line, &file->sections[section], path);
+				ok = read_sequence_line(param, line, &file->sections[section]);
 		}
 	}
 	if (ok && !saved)
-		ok = save_section(file, names, name_count, &cur, section, path);
+		ok = save_section(file, names, name_count, &cur, section);
 	fclose(f);
 	if (!ok) {
 		XwauMat_Free(file);
 		return NULL;
 	}
-	if (before)
-		Report(path, "%zu key lines come before the first section, so XWAU ignores them", before);
 	name_surface(file, "default", &file->slot0, path);
 	for (size_t i = 0; i < file->count; ++i)
 		name_surface(file, file->entries[i].name, &file->entries[i].params, path);

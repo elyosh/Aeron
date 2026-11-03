@@ -23,6 +23,9 @@ extern "C" {
 #endif
 
 typedef enum ToolLogLevel {
+	/* Details of the work, such as a line for each converted model. They are
+	   only written when ToolLog_SetDetails turns them on. */
+	TOOL_LOG_DETAIL,
 	TOOL_LOG_INFO,
 	TOOL_LOG_WARNING,
 	TOOL_LOG_ERROR,
@@ -34,6 +37,9 @@ typedef void (*ToolLogSink)(void* user, ToolLogLevel level, const char* line);
 
 /* Sets the sink, or NULL to write to stderr. Set it before any thread logs. */
 void ToolLog_SetSink(ToolLogSink sink, void* user);
+/* Turns the TOOL_LOG_DETAIL lines on or off. They are off at first. Set it
+   before any thread logs. */
+void ToolLog_SetDetails(int on);
 
 /* Writes one line. `format` has no newline at its end. The line is cut at
  * 4 KB. */

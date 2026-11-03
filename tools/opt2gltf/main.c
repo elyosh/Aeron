@@ -219,6 +219,7 @@ static int run_convert(int argc, char** argv) {
 	const bool ok = a.project ? convert_into_project(&mc, in, base, a.project, a.replace)
 							  : ModelConversion_Convert(&mc, in, base, a.inputs[1]);
 	ModelConversion_Free(&mc);
+	ReportUnsupportedSummary();
 	return ok && !ReportFatalMessage() ? 0 : 1;
 }
 

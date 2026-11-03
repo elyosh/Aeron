@@ -8,10 +8,10 @@
  * (LoadIndividualMATParams, ReadMaterialLine and FindMaterial in
  * Materials.cpp). Only the keys that drive surface shading, the light of a
  * light-emitting texture, the cockpit levers and the image sequences
- * (below) are read. Any other key in a section makes the import fail,
- * unless it has a character that no key name has, so that XWAU can't match
- * it either. Such a key is only reported. The files that XWAU ships rely on
- * quirks of the parser, so these quirks are reproduced:
+ * (below) are read. Another key that XWAU reads is counted as a key that the
+ * import doesn't convert, and a key that XWAU doesn't read is skipped, since
+ * it has no effect. The files that XWAU ships rely on quirks of the
+ * parser, so these quirks are reproduced:
  *   - A comment starts with ';' or '#' in column 0 only. A value is the first
  *     token after " = " and ends at white space, so any text after it is
  *     ignored.
@@ -19,7 +19,7 @@
  *     matches.
  *   - A section header is a line that starts with '[' in column 0. Its names
  *     are split on ',' without trimming, so "[A, B]" never matches "B".
- *   - Lines before the first section are ignored, and reported.
+ *   - Lines before the first section are ignored.
  *   - Slot 0 starts as the global default material. Each section starts as a
  *     copy of slot 0 as it is at that point. A section named "Default"
  *     replaces slot 0 when it closes.

@@ -148,8 +148,9 @@ typedef struct {
 	 * mesh (VSD). */
 	opt_texture_binding_t active_texture;
 
-	/* The NodeSwitch states past OPT_MAX_NODE_SWITCH_STATES, which are not
-	 * kept (opt_file_t.dropped_switch_states). */
+	/* The NodeSwitch states past OPT_MAX_NODE_SWITCH_STATES, without the
+	 * trailing children that repeat the texture before them
+	 * (opt_file_t.dropped_switch_states). */
 	int32_t dropped_switch_states;
 
 	opt_error_t* err;
@@ -692,9 +693,15 @@ static void bind_texture(opt_ctx_t* c, const opt_node_t* n, opt_lod_builder_t* l
 		 * resolve_texture_node would skip them and their pixel data would
 		 * not be parsed. Z-95.OPT does this for Tex00026, child 22 of a
 		 * NodeSwitch with 23 children. The limit still applies to the
-		 * recorded states, because current_states[] has a fixed size. */
-		size_t  table = ptr_to_off(c, n->child_table_ptr);
-		int32_t count = 0;
+		 * recorded states, because current_states[] has a fixed size.
+		 *
+		 * XWA clamps the state to the last child. So the trailing children
+		 * that repeat the texture before them change nothing, and only the
+		 * states past the limit before them are counted as dropped. */
+		size_t  table    = ptr_to_off(c, n->child_table_ptr);
+		int32_t count    = 0;
+		int32_t length   = 0; /* the count without the trailing repeats */
+		int32_t previous = -1;
 		for (int32_t i = 0; i < n->child_count; i++) {
 			if (!range_ok(c, table + (size_t)i * 4, 4))
 				break;
@@ -708,12 +715,16 @@ static void bind_texture(opt_ctx_t* c, const opt_node_t* n, opt_lod_builder_t* l
 			if (idx < 0)
 				continue;
 			if (count < OPT_MAX_NODE_SWITCH_STATES)
-				lb->current_states[count++] = idx;
-			else
-				c->dropped_switch_states++;
+				lb->current_states[count] = idx;
+			if (idx != previous)
+				length = count + 1;
+			previous = idx;
+			count++;
 		}
+		if (length > OPT_MAX_NODE_SWITCH_STATES)
+			c->dropped_switch_states += length - OPT_MAX_NODE_SWITCH_STATES;
 		if (count > 0) {
-			lb->current_state_count = count;
+			lb->current_state_count = count < OPT_MAX_NODE_SWITCH_STATES ? count : OPT_MAX_NODE_SWITCH_STATES;
 			lb->current_texture     = lb->current_states[0];
 		}
 	}
@@ -1199,9 +1210,10 @@ int32_t opt_face_group_texture(const opt_face_group_t* g, int state) {
 	if (g->state_count <= 1 || state == 0 || g->state_textures == NULL) {
 		return g->texture_index;
 	}
-	if (state < 0 || state >= g->state_count)
+	if (state < 0)
 		return -1;
-	return g->state_textures[state];
+	/* XWA clamps the state to the last child of the switch. */
+	return g->state_textures[state < g->state_count ? state : g->state_count - 1];
 }
 
 int opt_palette_base_shade(const opt_file_t* opt) {

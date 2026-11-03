@@ -688,8 +688,8 @@ static void test_craft(const char* scratch) {
 			  fg1->impact[0] == 0xffe700 && !fg1->has_impact[2] &&
 			  fg1->bar[XWAU_CRAFT_LASER_HIGH] == 0xffffff00u,
 		  "weapon colours: the _fg1_ keys, where a group set to 0 isn't set");
-	check(!weapons->has_markings[2] && !weapons->has_markings[7] && weapons->light_colors,
-		  "weapon colours: markings with only light colours, _fg07_, and the WeaponLightColor keys");
+	check(!weapons->has_markings[2] && !weapons->has_markings[7],
+		  "weapon colours: markings with only light colours, and _fg07_");
 	check(weapons->switch_by_iff == -1, "weapon switch: not set without WeaponSwitchBasedOnIff");
 	write_file(path, "[WeaponColor]\nWeaponSwitchBasedOnIff = 2\t;1 = Based on IFF color\n");
 	memset(weapons, 0, sizeof *weapons);
@@ -1458,7 +1458,7 @@ static void test_mission_tie(const char* scratch) {
 					 "craft, 5, name, Debris\n"
 					 "SkipHyperspacedMessages = 1\n");
 	XwauMissionTie tie;
-	check(XwauMissionTie_Read(game, "Missions/t", true, &tie), "mission_tie: read");
+	check(XwauMissionTie_Read(game, "Missions/t", &tie), "mission_tie: read");
 	const XwauMissionTieFlightGroup* fg0 = XwauMissionTie_FlightGroup(&tie, 0);
 	const XwauMissionTieFlightGroup* fg1 = XwauMissionTie_FlightGroup(&tie, 1);
 	const XwauMissionTieFlightGroup* fg2 = XwauMissionTie_FlightGroup(&tie, 2);

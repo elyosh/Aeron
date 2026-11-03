@@ -116,7 +116,6 @@ static bool copy_wave(Copy* c) {
 	size_t count   = 0;
 	char** entries = ListDir(wave, true, &count);
 	bool   ok      = true;
-	size_t skipped = 0;
 	for (size_t i = 0; ok && i < count; ++i) {
 		char path[2048], rel[600], stock[1024];
 		if (entries[i][0] == '.')
@@ -127,23 +126,13 @@ static bool copy_wave(Copy* c) {
 		if (IsDir(path)) {
 			if (Xwau_FindDir(c->stock_game, rel, stock, sizeof stock))
 				ok = copy_changed_tree(c, path);
-			else
-				skipped++;
 		} else if (IsFile(path) && Xwau_FindFile(c->stock_game, rel, stock, sizeof stock)) {
 			bool copied = false;
 			ok          = copy_file(c, path, true, &copied);
 			c->sounds += copied;
-		} else {
-			skipped++;
 		}
 	}
 	FreeList(entries, count);
-	if (ok && skipped)
-		Report(wave,
-			   "has %zu files and folders that the stock game doesn't have. The game doesn't read them, so "
-			   "they aren't copied here. The sound banks and the missions' sound replacements copy the "
-			   "ones they use",
-			   skipped);
 	return ok;
 }
 

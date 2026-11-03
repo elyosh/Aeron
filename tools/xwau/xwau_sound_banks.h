@@ -38,9 +38,9 @@
  * entries are named after their position in the list, such as range_3.
  *
  * The EnterHyperspace and ExitHyperspace banks of hook_hyperspace play when
- * other craft jump. The game plays no sound then, so these banks make the
- * import fail. Entries for object types that the game has no name for are
- * reported and left out.
+ * other craft jump. The game plays no sound then, so these banks aren't
+ * imported. Entries for object types that the game has no name for are left
+ * out, since no craft can use them.
  *
  * Each list line is read the way the game reads it, after XWAU cuts it at
  * ';'. The file name ends at the first space or tab. Then come the volume in
@@ -53,8 +53,8 @@
  * case of the path. Files that the game can't play are converted to 16-bit
  * PCM: 24-bit, float, WAVE_FORMAT_EXTENSIBLE and MS ADPCM files, and files
  * with more than 2 channels. A WAV file in another format makes the import
- * fail. A file that isn't a WAV file is silent in XWAU too, so it is only
- * reported.
+ * fail. A file that isn't a WAV file is silent in XWAU too, so its entries
+ * are silent.
  */
 
 #include <stdbool.h>

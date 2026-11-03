@@ -460,15 +460,13 @@ static bool key_value(const char* line, char* key, size_t key_cap, char* value, 
 }
 
 /* The number of `key` in `lines` (GetFileKeyValueInt with 0): 0 when the key
- * is missing, and 0 with a report when its value isn't a number. */
-static long long int_value(const XwauLines* lines, const char* key, const char* where) {
+ * is missing or its value isn't a number. */
+static long long int_value(const XwauLines* lines, const char* key) {
 	char value[512];
 	XwauLines_Value(lines, key, XWAU_RULES_CPP, value, sizeof value);
 	long long number = 0;
-	if (value[0] && !Xwau_StoiAutoInt(value, &number)) {
-		Report(LABEL, "%s: %s = '%s' is not a number (XWAU would fail); 0 is used", where, key, value);
+	if (value[0] && !Xwau_StoiAutoInt(value, &number))
 		number = 0;
-	}
 	return number;
 }
 
@@ -519,32 +517,20 @@ static bool has_file(const char* game, const char* value) {
 static bool add_swap(const Models* m, const char* key, const char* value, const char* where,
 					 XwauLines* swaps) {
 	char source[256], target[256];
-	if (!swap_source(key, source, sizeof source)) {
-		Report(LABEL, "%s: swap '%s = %s' skipped: the hook matches FlightModels\\<model>.opt keys", where,
-			   key, value);
+	/* The hook only matches FlightModels\<model>.opt keys. XWAU shows an
+	   error for a file that doesn't exist, and the hook ignores swaps to the
+	   model's exterior. */
+	if (!swap_source(key, source, sizeof source))
 		return true;
-	}
 	if (!opt_target(value, target, sizeof target)) {
-		if (!has_file(m->game, value))
-			Report(LABEL, "%s: swap '%s = %s' skipped: '%s' does not exist (XWAU shows an error)", where, key,
-				   value, value);
-		else
-			Report(LABEL, "%s: swap '%s = %s' isn't imported, because the importer only swaps to an OPT",
-				   where, key, value);
+		if (has_file(m->game, value))
+			ReportUnsupported("hangar object swaps to a file that isn't an OPT");
 		return true;
 	}
 	char exterior[300];
 	snprintf(exterior, sizeof exterior, "%sexterior", source);
-	if (strcmp(target, exterior) == 0) {
-		Report(LABEL, "%s: swap '%s = %s' skipped: the hook ignores swaps to the model's exterior", where,
-			   key, value);
+	if (strcmp(target, exterior) == 0 || !has_file(m->game, value))
 		return true;
-	}
-	if (!has_file(m->game, value)) {
-		Report(LABEL, "%s: swap '%s = %s' skipped: '%s' does not exist (XWAU shows an error)", where, key,
-			   value, value);
-		return true;
-	}
 	if (!converted(m, target)) {
 		ReportFatal(LABEL, "%s: swap '%s = %s': %s.glb was not converted", where, key, value, target);
 		return true;
@@ -556,8 +542,9 @@ static bool add_swap(const Models* m, const char* key, const char* value, const 
 }
 
 /* A list key's numbers. For model indices, they become object types, and
- * the ones without one are reported. Returns false with *dropped set when
- * the key is left out, and false without it when out of memory. */
+ * the ones that load no model in XWAU either are dropped. Returns false
+ * with *dropped set when the key is left out, and false without it when out
+ * of memory. */
 static bool list_value(const Models* m, const char* name, KeyKind kind, const char* value, const char* where,
 					   Text* t, bool* dropped) {
 	*dropped         = false;
@@ -567,9 +554,8 @@ static bool list_value(const Models* m, const char* name, KeyKind kind, const ch
 	long long* numbers = (long long*)calloc(tokens.count + 1, sizeof *numbers);
 	bool       ok      = numbers != NULL;
 	for (size_t i = 0; ok && i < tokens.count; ++i) {
+		/* XWAU fails on a field that isn't a number. */
 		if (!Xwau_StoiAutoInt(tokens.items[i], &numbers[i])) {
-			Report(LABEL, "%s: %s = '%s' has a field that is not a number (XWAU would fail); dropped", where,
-				   name, value);
 			*dropped = true;
 			ok       = false;
 		}
@@ -596,13 +582,11 @@ static bool list_value(const Models* m, const char* name, KeyKind kind, const ch
 		for (size_t i = 0; ok && i < tokens.count; ++i) {
 			char      text[300];
 			const int type = object_type(m, numbers[i] & 0xFFFF);
+			/* An index that loads no model in XWAU either is dropped. */
 			if (type < 0 && xwau_has_model(m, numbers[i] & 0xFFFF))
 				ReportFatal(LABEL, "%s: %s: %s has no OpenXWA type", where, name,
 							describe(m, numbers[i], text, sizeof text));
-			else if (type < 0)
-				Report(LABEL, "%s: %s: %s loads no model in XWAU either, so it is dropped", where, name,
-					   describe(m, numbers[i], text, sizeof text));
-			else
+			else if (type >= 0)
 				numbers[count++] = type;
 		}
 	}
@@ -624,19 +608,15 @@ static bool objects_section(const Models* m, const XwauLines* lines, const char*
 	bool      ok   = true;
 	for (size_t i = 0; ok && i < lines->count; ++i) {
 		char key[512], value[1024];
-		if (!key_value(lines->items[i], key, sizeof key, value, sizeof value)) {
-			Report(LABEL, "%s: line '%s' isn't a key = value line, so XWAU ignores it", where,
-				   lines->items[i]);
+		/* XWAU ignores a line that isn't a key = value line, and uses the
+		   first line of a key. */
+		if (!key_value(lines->items[i], key, sizeof key, value, sizeof value))
 			continue;
-		}
 		bool known = false;
 		for (size_t j = 0; !known && j < seen.count; ++j)
 			known = Xwau_SameName(seen.items[j], key);
-		if (known) {
-			Report(LABEL, "%s: %s is set again. XWAU uses the first line, and so does the importer", where,
-				   key);
+		if (known)
 			continue;
-		}
 		if (!(ok = XwauLines_Add(&seen, key, strlen(key))))
 			break;
 		if (EndsWithNoCase(key, ".opt")) {
@@ -647,15 +627,14 @@ static bool objects_section(const Models* m, const XwauLines* lines, const char*
 		for (size_t j = 0; k < 0 && j < sizeof kKeys / sizeof kKeys[0]; ++j)
 			if (strcasecmp(kKeys[j].name, key) == 0)
 				k = (int)j;
-		if (k < 0) {
-			Report(LABEL, "%s: unknown key '%s' not imported", where, key);
+		/* The hook reads no other key. */
+		if (k < 0)
 			continue;
-		}
 		const char*   name = kKeys[k].name;
 		const KeyKind kind = kKeys[k].kind;
+		/* The remaster lights the hangar itself. */
 		if (kind == KEY_NOT_IMPORTED) {
-			Report(LABEL, "%s: %s isn't imported, because the remaster lights the hangar itself", where,
-				   name);
+			ReportUnsupported("the HangarObjects key %s", name);
 			continue;
 		}
 		Text t    = { 0 };
@@ -673,8 +652,8 @@ static bool objects_section(const Models* m, const XwauLines* lines, const char*
 			keep         = ok && !dropped;
 		} else {
 			long long number = 0;
+			/* XWAU fails on a value that isn't a number. */
 			if (!Xwau_StoiAutoInt(value, &number)) {
-				Report(LABEL, "%s: %s = '%s' is not a number (XWAU would fail); dropped", where, name, value);
 				keep = false;
 			} else if (kind == KEY_TYPE) {
 				char      text[300];
@@ -684,8 +663,7 @@ static bool objects_section(const Models* m, const XwauLines* lines, const char*
 								describe(m, number & 0xFFFF, text, sizeof text));
 					keep = false;
 				} else if (type < 0) {
-					Report(LABEL, "%s: %s: %s loads no model in XWAU either, so it is dropped", where, name,
-						   describe(m, number & 0xFFFF, text, sizeof text));
+					/* The index loads no model in XWAU either. */
 					keep = false;
 				}
 				number = type;
@@ -712,9 +690,9 @@ static bool map_section(const Models* m, const XwauLines* lines, const char* whe
 			break;
 		const size_t n     = fields.count;
 		Text         entry = { 0 };
-		if (n < 6 || n > 9) {
-			Report(LABEL, "%s: line '%s' skipped by XWAU: %zu fields", where, line, n);
-		} else {
+		/* XWAU skips a line with another number of fields, and fails on a
+		   field that isn't a number. */
+		if (n >= 6 && n <= 9) {
 			/* The numbers: the first 6 fields, or the first 7, and the 9th. */
 			long long numbers[8];
 			size_t    count   = n >= 7 ? 7 : 6;
@@ -723,10 +701,7 @@ static bool map_section(const Models* m, const XwauLines* lines, const char* whe
 				numeric = Xwau_StoiAutoInt(fields.items[f], &numbers[f]);
 			if (numeric && n == 9)
 				numeric = Xwau_StoiAutoInt(fields.items[8], &numbers[count++]);
-			if (!numeric) {
-				Report(LABEL, "%s: line '%s' skipped: a field is not a number (XWAU would fail)", where,
-					   line);
-			} else {
+			if (numeric) {
 				long long index, markings, x, y, z, yaw, pitch;
 				if (n == 6) {
 					index    = numbers[0];
@@ -747,13 +722,11 @@ static bool map_section(const Models* m, const XwauLines* lines, const char* whe
 				}
 				const int type = object_type(m, index & 0xFFFF);
 				char      text[300];
+				/* An index that loads no model in XWAU either gives null. */
 				if (type < 0 && xwau_has_model(m, index & 0xFFFF)) {
 					ReportFatal(LABEL, "%s: line '%s': %s has no OpenXWA type", where, line,
 								describe(m, index & 0xFFFF, text, sizeof text));
-				} else if (type < 0) {
-					Report(LABEL, "%s: line '%s' skipped: %s loads no model in XWAU either", where, line,
-						   describe(m, index & 0xFFFF, text, sizeof text));
-				} else {
+				} else if (type >= 0) {
 					text_add(&entry, "[%d, %lld, %lld, %lld, %lld, %d, %d, ", type, markings, x, y, z,
 							 (int)(int16_t)(uint16_t)(yaw & 0xFFFF),
 							 (int)(int16_t)(uint16_t)(pitch & 0xFFFF));
@@ -772,7 +745,7 @@ static bool map_section(const Models* m, const XwauLines* lines, const char* whe
 
 /* A camera section: every key that the hook reads. Returns false when out
  * of memory. */
-static bool camera_section(const XwauLines* lines, bool family, const char* where, XwauLines* out) {
+static bool camera_section(const XwauLines* lines, bool family, XwauLines* out) {
 	const int*   keys  = family ? kFamCameraKeys : kCameraKeys;
 	const size_t count = family ? sizeof kFamCameraKeys / sizeof kFamCameraKeys[0]
 								: sizeof kCameraKeys / sizeof kCameraKeys[0];
@@ -782,7 +755,7 @@ static bool camera_section(const XwauLines* lines, bool family, const char* wher
 		for (int a = 0; a < 3; ++a) {
 			char key[64];
 			snprintf(key, sizeof key, "%sKey%d_%c", family ? "Fam" : "", keys[i], "XYZ"[a]);
-			xyz[a] = int_value(lines, key, where);
+			xyz[a] = int_value(lines, key);
 		}
 		Text t = { 0 };
 		text_add(&t, "%d: [%lld, %lld, %lld]", keys[i], xyz[0], xyz[1], xyz[2]);
@@ -812,7 +785,7 @@ static bool read_layer(const Models* m, const Source* s, const char* where, int 
 			else if (section == MAP || section == FAM_MAP)
 				ok = map_section(m, &lines, label, &out->sections[section]);
 			else
-				ok = camera_section(&lines, section == FAM_CAMERA, label, &out->sections[section]);
+				ok = camera_section(&lines, section == FAM_CAMERA, &out->sections[section]);
 		}
 		XwauLines_Free(&lines);
 	}
@@ -945,8 +918,6 @@ static bool craft_record(const char* game, const char* name, Text* out) {
 	if (ok && (camera.count || size.count)) {
 		text_add(out, "{ ");
 		if (camera.count) {
-			char where[1100];
-			snprintf(where, sizeof where, "%s [Camera]", name);
 			/* Each triple is the first of its prefixes that isn't all zero,
 			   or the last one. */
 			static const char* const prefixes[4][4] = {
@@ -959,7 +930,7 @@ static bool craft_record(const char* game, const char* name, Text* out) {
 					for (int a = 0; a < 3; ++a) {
 						char key[64];
 						snprintf(key, sizeof key, "%s%c", prefixes[t][p], "XYZ"[a]);
-						xyz[a] = int_value(&camera, key, where);
+						xyz[a] = int_value(&camera, key);
 					}
 					if (xyz[0] || xyz[1] || xyz[2])
 						break;
@@ -969,10 +940,8 @@ static bool craft_record(const char* game, const char* name, Text* out) {
 			text_add(out, "]");
 		}
 		if (size.count) {
-			char where[1100];
-			snprintf(where, sizeof where, "%s [Size]", name);
-			const long long elevation = int_value(&size, "ClosedSFoilsElevation", where);
-			long long       inverted  = int_value(&size, "ClosedSFoilsElevationInverted", where);
+			const long long elevation = int_value(&size, "ClosedSFoilsElevation");
+			long long       inverted  = int_value(&size, "ClosedSFoilsElevationInverted");
 			if (!inverted)
 				inverted = elevation;
 			text_add(out, "%selevation: [%lld, %lld]", camera.count ? ", " : "", elevation, inverted);
@@ -1005,13 +974,13 @@ static bool mission_layer(const Models* m, const char* game, const char* base, L
 			const size_t section_len = strlen(kSections[section]);
 			if (len >= section_len + 4 && line[0] == '[' && line[len - 1] == ']' &&
 				strncasecmp(line + 1, kSections[section], section_len) == 0 && line[1 + section_len] == '_')
-				Report(LABEL, "%s: the importer doesn't import the per-ship mission section %s", base, line);
+				ReportUnsupported("the per-ship mission hangar section [%s_<ship>]", kSections[section]);
 		}
 	}
 	free(text);
 	char rel[1100];
 	if (PathFormat(rel, sizeof rel, "%s_Hangar.opt", base) && has_file(game, rel))
-		Report(LABEL, "%s: the importer doesn't import the mission hangar model %s_Hangar.opt", base, base);
+		ReportUnsupported("a mission's own hangar model, <mission>_Hangar.opt");
 	return true;
 }
 
@@ -1163,7 +1132,7 @@ static bool write_mission_layers(const Models* m, const char* game, const char* 
 			snprintf(tie, sizeof tie, "%s.tie", base);
 			if (ok && !layer_empty(&hangar) && !Xwau_FindFile(game, tie, found, sizeof found) &&
 				!Xwau_FindFile(stock_game, tie, found, sizeof found)) {
-				Report(LABEL, "%s: hangar settings dropped: neither the mod nor the game has its .TIE", base);
+				/* Neither the mod nor the game has the mission. */
 				layer_free(&hangar);
 			}
 			LowerCopy(lower_dir, sizeof lower_dir, kMissionDirs[d]);

@@ -40,8 +40,7 @@
  * and comments (XWAU_RULES_CPP). In MedalDetailList.txt, "null" means that
  * the mission has no memento. A memento named "Null" or "null" is left out,
  * so it keeps the game's name. Without hook_concourse.dll or these files,
- * no file is written, and the files that XWAU then never reads are
- * reported.
+ * no file is written, since XWAU then never reads them.
  */
 
 #include <stdbool.h>

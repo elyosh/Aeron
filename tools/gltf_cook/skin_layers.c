@@ -365,8 +365,7 @@ static bool read_variants(cJSON* document, Inputs* in) {
 				for (size_t l = 0; !used && l < in->variants[v].layer_count; ++l)
 					used = strcmp(in->variants[v].layers[l].skin, in->skins[m][s].name) == 0;
 			if (!used)
-				ToolLog_Write(TOOL_LOG_WARNING,
-							  TAG ": warning: material '%s': no skin variant uses skin '%s'",
+				ToolLog_Write(TOOL_LOG_DETAIL, TAG ": warning: material '%s': no skin variant uses skin '%s'",
 							  material_name(document, m), in->skins[m][s].name);
 		}
 	return true;

@@ -51,8 +51,10 @@ bool XwauAnim_Texture(XwauAnim* anim, const XwauMatFile* mat, const opt_texture_
 /* Whether any texture has animation data. */
 bool XwauAnim_Any(const XwauAnim* anim);
 
-/* Prints the conversion summary and what was skipped. Some data that XWAU
- * shows can't be written as it is, and makes the import fail (ReportFatal):
+/* Writes the conversion summary as detail lines. The features that the import
+ * doesn't convert are counted with ReportUnsupported while the textures are
+ * read. Some data that XWAU shows can't be written as it is, and makes the
+ * import fail (ReportFatal):
  * damage stages with different placements, damage stages that XWAU fills
  * with a random line, and lava with another size or colour. */
 void XwauAnim_Report(const XwauAnim* anim);

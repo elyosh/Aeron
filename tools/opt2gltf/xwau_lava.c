@@ -203,7 +203,7 @@ bool XwauLava_WriteLibrary(const char* effects_dir, bool merge) {
 	}
 	ok = ok && EffectFiles_Write("opt2gltf", doc, "# Made by the OpenXWA mod importer.\n", file);
 	if (ok)
-		Report(NULL, "library %s: %d image(s) written", XWAU_LAVA_LIBRARY, 2 * XWAU_LAVA_FRAMES);
+		ReportDetail(NULL, "library %s: %d image(s) written", XWAU_LAVA_LIBRARY, 2 * XWAU_LAVA_FRAMES);
 	cJSON_Delete(doc);
 	free(rgba);
 	return ok;
@@ -269,7 +269,7 @@ bool XwauLava_MakeLibrary(int threads, cJSON** library, XwauLibraryInput** input
 	}
 	free(renderers);
 	free(ids);
-	Report(NULL, "library %s: %d image(s) made", XWAU_LAVA_LIBRARY, n);
+	ReportDetail(NULL, "library %s: %d image(s) made", XWAU_LAVA_LIBRARY, n);
 	*library = doc;
 	*inputs  = frames;
 	*count   = (size_t)n;

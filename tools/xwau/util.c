@@ -36,6 +36,60 @@ void Report(const char* label, const char* format, ...) {
 	va_end(args);
 }
 
+void ReportDetail(const char* label, const char* format, ...) {
+	char    message[4096];
+	va_list args;
+	va_start(args, format);
+	vsnprintf(message, sizeof message, format, args);
+	va_end(args);
+	ToolLog_Write(TOOL_LOG_DETAIL, "%s%s%s%s%s", g_report_program ? g_report_program : "",
+				  g_report_program ? ": " : "", label ? label : "", label ? ": " : "", message);
+}
+
+typedef struct UnsupportedFeature {
+	char*  name;
+	size_t count;
+} UnsupportedFeature;
+
+static pthread_mutex_t     g_unsupported_mutex = PTHREAD_MUTEX_INITIALIZER;
+static UnsupportedFeature* g_unsupported;
+static size_t              g_unsupported_count;
+
+void ReportUnsupported(const char* format, ...) {
+	char    name[512];
+	va_list args;
+	va_start(args, format);
+	vsnprintf(name, sizeof name, format, args);
+	va_end(args);
+	pthread_mutex_lock(&g_unsupported_mutex);
+	size_t i = 0;
+	while (i < g_unsupported_count && strcmp(g_unsupported[i].name, name) != 0)
+		++i;
+	if (i < g_unsupported_count) {
+		g_unsupported[i].count++;
+	} else {
+		UnsupportedFeature* item = ARRAY_PUSH(g_unsupported, g_unsupported_count);
+		if (item && !(item->name = StrDup(name)))
+			g_unsupported_count--;
+		else if (item)
+			item->count = 1;
+	}
+	pthread_mutex_unlock(&g_unsupported_mutex);
+}
+
+void ReportUnsupportedSummary(void) {
+	pthread_mutex_lock(&g_unsupported_mutex);
+	for (size_t i = 0; i < g_unsupported_count; ++i) {
+		Report(NULL, "the import doesn't convert %s (%zu %s)", g_unsupported[i].name, g_unsupported[i].count,
+			   g_unsupported[i].count == 1 ? "time" : "times");
+		free(g_unsupported[i].name);
+	}
+	free(g_unsupported);
+	g_unsupported       = NULL;
+	g_unsupported_count = 0;
+	pthread_mutex_unlock(&g_unsupported_mutex);
+}
+
 static pthread_mutex_t g_fatal_mutex = PTHREAD_MUTEX_INITIALIZER;
 static bool            g_fatal;
 static char            g_fatal_message[4096];

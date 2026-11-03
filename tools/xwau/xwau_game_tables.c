@@ -242,18 +242,16 @@ static XwauGameTables* load_files(const char* exe, const char* flight_models) {
 		Report(exe, "isn't a Windows executable");
 		ok = false;
 	}
-	uint8_t craft[2 * XWAU_GAME_CRAFT_TYPES + 2];
+	uint8_t craft[2 * XWAU_GAME_CRAFT_TYPES];
 	ok = ok && read_table(&image, exe, OBJECT_TYPE_TABLE, tables->types, sizeof tables->types) &&
 		 read_table(&image, exe, RECORD_TABLE, tables->records, sizeof tables->records) &&
 		 read_table(&image, exe, CRAFT_TYPE_TABLE, craft, sizeof craft) &&
 		 read_table(&image, exe, XWAU_GAME_BEAM_TEST, tables->beam, sizeof tables->beam);
 	for (int i = 0; ok && i < XWAU_GAME_SOUND_SWITCHES; ++i)
 		ok = read_sound_switch(&image, exe, i, tables);
-	if (ok) {
+	if (ok)
 		for (int i = 0; i < XWAU_GAME_CRAFT_TYPES; ++i)
 			tables->craft[i] = read_u16(craft + 2 * i);
-		tables->craftPastEnd = read_u16(craft + 2 * XWAU_GAME_CRAFT_TYPES);
-	}
 	ok = ok && read_lists(flight_models, tables);
 	free(data);
 	if (!ok) {

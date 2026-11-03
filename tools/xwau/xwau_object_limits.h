@@ -27,10 +27,10 @@
  * With both hooks, XWAU keeps each player's block at 12 slots but searches
  * WeaponsCount slots, so a player's shots spill into the AI's slots. The game
  * gives each player a block of WeaponsCount slots instead, and the importer
- * reports it.
+ * notes it in the details.
  *
- * Counts of 0 or less would leave the game without slots; they are reported
- * and left out.
+ * Counts of 0 or less would leave the game without slots, so they are left
+ * out.
  */
 
 #include <stdbool.h>

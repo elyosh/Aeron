@@ -27,11 +27,11 @@
  * writes the position in metres and the angles in degrees, with three
  * decimals. Like the hook, it reads the numbers with std::stoi(value, 0, 0)
  * and cuts them to 16 bits. A line with numbers that can't be read would
- * crash XWAU, so it is reported and left out. Lines with fewer than 9 values
- * aren't seats. The hook doesn't read them, so they are reported, except for
- * the TurretForwardFire key. A section can set `TurretForwardFire = 0`,
- * which gives `forward_fire: false`. A TurretForwardFire value that isn't a
- * number would crash XWAU, so it is reported and left out.
+ * crash XWAU, so it is left out. Lines with fewer than 9 values aren't
+ * seats. The hook only reads the TurretForwardFire key from them. A section
+ * can set `TurretForwardFire = 0`, which gives `forward_fire: false`. A
+ * TurretForwardFire value that isn't a number would crash XWAU, so it is
+ * left out.
  *
  * A model with the section gets the group even without seat lines. The hook
  * then gives it no seats. A model without the section gets the seats of its
@@ -39,8 +39,8 @@
  * seat's cockpit is <model>Gunner, the second seat's is <model>Gunner2, else
  * <model>Gunner, and the second seat is upside down. If a cockpit's OPT isn't
  * in FlightModels, the seat uses the stock CorellianTransportGunner, like
- * the hook, and this is reported. The game has room for 2 seats. More seats
- * make the import fail.
+ * the hook. The game has room for 2 seats. More seats make the import
+ * fail.
  *
  * XWAU loads all seat cockpits into object type 317. The game gives each
  * cockpit model its own object type instead.
@@ -87,8 +87,7 @@ bool XwauGunnerSeats_Write(FILE* f, const XwauGunnerSeats* seats, XwauLines* coc
 void XwauGunnerSeats_WriteAimLimit(FILE* f, const char* label, int steps);
 
 /* Checks each cockpit in `cockpits`, except the stock one. Reports a cockpit
- * whose OPT in the installation `game` doesn't have exactly 2 laser
- * hardpoints, or whose GLB isn't in <output_dir>/models. */
+ * whose GLB isn't in <output_dir>/models. `game` isn't used. */
 void XwauGunnerSeats_CheckCockpits(const char* game, const char* output_dir, const XwauLines* cockpits);
 
 #endif /* AERON_XWAU_GUNNER_SEATS_H */

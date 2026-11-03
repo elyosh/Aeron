@@ -2,7 +2,7 @@
  * aeron_gltf_cook — CLI entry point.
  *
  * Usage: aeron_gltf_cook <in.gltf> --out <out.glb> [options]
- *        aeron_gltf_cook --library <library>.yaml --out <effects dir>
+ *        aeron_gltf_cook --library <library>.yaml --out <effects dir> [--verbose]
  *        aeron_gltf_cook --library-json <library>.yaml
  *        aeron_gltf_cook --library-from-json <in.json> <library>.yaml
  *
@@ -21,6 +21,7 @@
 #include "effect_library.h"
 #include "gltf_cook.h"
 #include "material_checks.h"
+#include "tool_log.h"
 
 #include <stdarg.h>
 #include <stdio.h>
@@ -55,7 +56,7 @@ void SDL_LogVerbose(int category, const char* fmt, ...) {
 
 static void usage(void) {
 	fprintf(stderr, "Usage: aeron_gltf_cook <in.gltf> --out <out.glb> [options]\n"
-					"       aeron_gltf_cook --library <library>.yaml --out <effects dir>\n"
+					"       aeron_gltf_cook --library <library>.yaml --out <effects dir> [--verbose]\n"
 					"       aeron_gltf_cook --library-from-json <in.json> <library>.yaml\n"
 					"       aeron_gltf_cook --library-json <library>.yaml\n"
 
@@ -101,7 +102,8 @@ static void usage(void) {
 					"                        into the effects directory (as --library does).\n"
 					"  --probes <dir>        Embed the probes bake in <dir> (bake.json,\n"
 					"                        probes.ktx2, grid.ktx2) as the model's probeData.\n"
-					"  --verbose             Print per-channel cook progress.\n"
+					"  --verbose             Print per-channel cook progress and the detail\n"
+					"                        lines, such as the use of each atlas.\n"
 					"  -h, --help            Show this help.\n"
 					"\n"
 					"--library builds an effect library file: its images, baked by kind,\n"
@@ -172,8 +174,10 @@ int main(int argc, char** argv) {
 	if (strcmp(argv[1], "-h") == 0 || strcmp(argv[1], "--help") == 0)
 		usage();
 	if (strcmp(argv[1], "--library") == 0) {
-		if (argc != 5 || strcmp(argv[3], "--out") != 0)
+		if ((argc != 5 && argc != 6) || strcmp(argv[3], "--out") != 0 ||
+			(argc == 6 && strcmp(argv[5], "--verbose") != 0))
 			usage();
+		ToolLog_SetDetails(argc == 6);
 		return EffectLibrary_BuildLibrary(LIBRARY_TAG, argv[2], NULL, argv[4]) != EFFECT_LIBRARY_FAILED ? 0 : 1;
 	}
 	if (strcmp(argv[1], "--library-json") == 0) {
@@ -237,6 +241,7 @@ int main(int argc, char** argv) {
 			probes_dir = argv[++i];
 		} else if (strcmp(a, "--verbose") == 0) {
 			opts.verbose = true;
+			ToolLog_SetDetails(1);
 		} else if (strcmp(a, "-h") == 0 || strcmp(a, "--help") == 0) {
 			usage();
 		} else {

@@ -43,13 +43,14 @@
  *     0.25`: XWAU's renderer cuts the lights of backdrops that are not suns
  *     to 25% (PBRAddCommon.h), and its missions are tuned for that. A region
  *     without a cube is `none`.
- * These make the import fail, because the importer can't keep them: a
- * region with an overlay but no cube, the Specular and Illum keys of a
- * region with a cube, RenderMode, the Hangar*Rotation* keys, a hide or show
- * list with more than 64 images, an AmbientInt or AmbientMin outside 0 to 4,
- * and cube folders whose names are too long or encode to the same name. The
- * ReflectionRes keys are reported and ignored, because the importer bakes
- * its reflection maps at a fixed size.
+ * These make the import fail, because the importer can't keep them: a hide
+ * or show list with more than 64 images, an AmbientInt or AmbientMin outside
+ * 0 to 4, and cube folders whose names are too long or encode to the same
+ * name. The import doesn't convert these, and counts them as unsupported: a
+ * region with an overlay but no cube, the Specular and Illum keys of a region
+ * with a cube, RenderMode, the Hangar*Rotation* keys, and the ReflectionRes
+ * keys, because the importer bakes its reflection maps at a fixed size.
+ * Keys, tokens and folders that the ddraw wrapper ignores are ignored too.
  *
  * A Death Star mission without [SkyBoxes] gets the environment
  * openxwa.death_star in its four regions. It has no sky and no directional

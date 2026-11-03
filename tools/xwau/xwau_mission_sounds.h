@@ -11,14 +11,14 @@
  *
  * The hook compares `from` with the path that the game builds. Upper and
  * lower case count as the same, but '/' and '\' don't. If two lines have the
- * same `from`, the first one is used, and the others are reported. If the
- * `to` file isn't in the installation, the line does nothing; it is
- * reported and left out. A `to` file that only the stock game has makes the
- * import fail, because the importer doesn't copy it. Without
- * hook_engine_sound.dll, XWAU reads no line, and the lines are reported.
+ * same `from`, the first one is used, and the others are left out. If the
+ * `to` file isn't in the installation, the line does nothing, and it is left
+ * out. A `to` file that only the stock game has makes the import fail,
+ * because the importer doesn't copy it. Without hook_engine_sound.dll, XWAU
+ * reads no line, and the lines are left out.
  *
  * Lines for hangar voices (Wave/HANGARVOICESFX.LST) never match, because the
- * game builds those paths with a '/'. They are also reported and left out.
+ * game builds those paths with a '/'. They are also left out.
  *
  * The lines that work go into the mission file, with '/' between folders:
  *
@@ -43,8 +43,9 @@ typedef struct XwauMissionSounds {
 
 /* Reads the sound replacements of mission `base` ("Missions/1b0m7fw") of the
  * installation `game`, when it has hook_engine_sound.dll. `stock_game` is
- * the stock game's folder, for the hangar voices. With `report`, the lines
- * left out are reported. Returns false when out of memory. */
+ * the stock game's folder, for the hangar voices. With `report`, a line
+ * that the import can't keep makes the import fail. Returns false when out
+ * of memory. */
 bool XwauMissionSounds_Read(const char* game, const char* stock_game, const char* base, bool report,
 							XwauMissionSounds* out);
 void XwauMissionSounds_Free(XwauMissionSounds* sounds);

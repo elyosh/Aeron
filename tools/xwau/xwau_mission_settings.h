@@ -25,11 +25,13 @@
  *
  * As in the hook, a key is found in any case, the first line with it wins,
  * and numbers are read as std::stoi reads them. A value that isn't a number
- * stops XWAU (std::stoi throws); it is reported, and the default is used.
+ * stops XWAU (std::stoi throws), so the default is used.
  *
  * Without hook_mission_tie.dll, there are no settings, and without
- * hook_engine_sound.dll, there are no interdiction regions. The lines that
- * these hooks would read are then reported.
+ * hook_engine_sound.dll, there are no interdiction regions. The import
+ * doesn't convert IsMissionRanksModifierEnabled, and counts it as
+ * unsupported. It does the same for order of battle texts that aren't ASCII,
+ * since the game may show them differently.
  */
 
 #include <stdbool.h>
@@ -166,8 +168,9 @@ typedef struct XwauMissionSettings {
 
 /* Reads the settings of mission `base` (such as "Missions/1b7m2w") of the
  * installation `game`, with number `number` (-1 when it has none), whose
- * [mission_tie] `key = value` lines are `lines`. Problems are reported with
- * `base` as their label. Returns false when out of memory. */
+ * [mission_tie] `key = value` lines are `lines`. Problems that make the
+ * import fail are reported with `base` as their label. Returns false when
+ * out of memory. */
 bool XwauMissionSettings_Read(const char* game, const char* base, int number, const XwauLines* lines,
 							  const XwauSettingsConfig* config, XwauMissionSettings* out);
 void XwauMissionSettings_Free(XwauMissionSettings* settings);
@@ -175,9 +178,9 @@ void XwauMissionSettings_Free(XwauMissionSettings* settings);
 /* Whether the settings write anything. */
 bool XwauMissionSettings_Any(const XwauMissionSettings* settings);
 
-/* Drops, with a report, the flight groups past the end of the .TIE that
- * plays, which has `fg_count` of them. */
-void XwauMissionSettings_CheckFlightGroups(XwauMissionSettings* settings, size_t fg_count, const char* base);
+/* Drops the flight groups past the end of the .TIE that plays, which has
+ * `fg_count` of them. */
+void XwauMissionSettings_CheckFlightGroups(XwauMissionSettings* settings, size_t fg_count);
 
 /* Writes the `settings` section, when there is anything to write. */
 void XwauMissionSettings_Write(FILE* f, const XwauMissionSettings* settings);

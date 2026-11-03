@@ -389,8 +389,6 @@ static bool copy_sound(Import* im, const char* path, const char* rel, const char
 			ReportFatal(
 				list, "%s is a WAV file in a format that the game can't play and the importer can't convert",
 				rel);
-		else
-			Report(list, "%s isn't a WAV file, so XWAU can't play it either. Its entries are silent.", rel);
 		add_known(im, rel, false);
 		free(data);
 		return false;
@@ -469,25 +467,21 @@ static bool write_type_entries(FILE* f, const XwauNames* names, const BankInfo* 
    `slots` is the length of XWAU's list. */
 static void write_bank(FILE* f, const XwauNames* names, const BankInfo* bank, const char* list,
 					   Entry* const* entries, int slots) {
-	/* The entries that can't be written: those of object types that the game
-	   has no name for, and those of weapon sound groups without a name. */
-	int unnamed_types = 0, unnamed_groups = 0;
+	/* The entries of weapon sound groups without a name can't be written.
+	   The entries of object types that the game has no name for are left
+	   out, since no craft can use them. */
+	int unnamed_groups = 0;
 	for (int slot = 0; bank->layout != BANK_BY_NAME && bank->layout != BANK_BY_POSITION && slot < slots;
 		 ++slot) {
 		const int type = bank->layout > 1 ? slot / bank->layout : slot;
 		if (!entries[slot])
 			continue;
 		if (type >= names->object_types.count || !XwauNames_ObjectType(names, type))
-			++unnamed_types;
-		else if (bank->layout > 1 && !bank->random &&
-				 !XwauNames_Name(&names->sound_weapon_groups, slot % bank->layout))
+			continue;
+		if (bank->layout > 1 && !bank->random &&
+			!XwauNames_Name(&names->sound_weapon_groups, slot % bank->layout))
 			++unnamed_groups;
 	}
-	if (unnamed_types)
-		Report(list,
-			   "%d entries are for object types that the game has no name for, so no craft can use them. "
-			   "They are left out.",
-			   unnamed_types);
 	if (unnamed_groups)
 		ReportFatal(list, "%d entries are for weapon sound groups that the game has no name for",
 					unnamed_groups);
@@ -544,9 +538,9 @@ static bool import_bank(Import* im, FILE* f, const XwauNames* names, const BankI
 	Entry*  entries = (Entry*)calloc(slots ? (size_t)slots : 1, sizeof *entries);
 	Entry** used    = (Entry**)calloc(slots ? (size_t)slots : 1, sizeof *used);
 	bool    error   = !entries || !used;
-	int     slot = 0, missing = 0, past = 0;
-	/* The files that the entries name and the installation doesn't have. */
-	XwauLines missing_names = { 0 };
+	/* `missing` counts the entries that name files that the installation
+	   doesn't have. They are silent in XWAU too. */
+	int slot = 0, missing = 0;
 
 	/* The game reads the list with fgets and a 256-byte buffer, so a longer
 	   line is read in parts. */
@@ -563,25 +557,19 @@ static bool import_bank(Import* im, FILE* f, const XwauNames* names, const BankI
 		XwauSoundLine parsed;
 		if (!XwauSoundBanks_ParseLine(part, &parsed))
 			continue;
+		/* No hook reads the entries past the lines that XWAU counts, or past
+		   the fixed names that hook_engine_sound reads. */
 		const int this_slot = slot++;
-		if (this_slot >= slots) {
-			++past;
+		if (this_slot >= slots)
 			continue;
-		}
 		char rel[600], path[1024];
 		snprintf(rel, sizeof rel, "Wave/%s/%s", stem, parsed.name);
 		for (char* c = rel; *c; ++c)
 			if (*c == '\\')
 				*c = '/';
 		if (!Xwau_FindFile(im->game, rel, path, sizeof path)) {
-			if (strcasecmp(parsed.name, "unused") != 0) {
-				bool known = false;
-				for (size_t i = 0; !known && i < missing_names.count; ++i)
-					known = strcasecmp(missing_names.items[i], parsed.name) == 0;
-				if (!known)
-					error = !XwauLines_Add(&missing_names, parsed.name, strlen(parsed.name));
+			if (strcasecmp(parsed.name, "unused") != 0)
 				++missing;
-			}
 			continue;
 		}
 		/* The file's own name, in the installation's case. */
@@ -595,22 +583,7 @@ static bool import_bank(Import* im, FILE* f, const XwauNames* names, const BankI
 		used[this_slot] = entry;
 		*entry_count += 1;
 	}
-	if (missing) {
-		char names[600] = "";
-		for (size_t i = 0; i < missing_names.count && i < 5; ++i)
-			snprintf(names + strlen(names), sizeof names - strlen(names), "%s%s", i ? ", " : "",
-					 missing_names.items[i]);
-		Report(list, "%d entries name %zu files that aren't in the installation, so they're silent: %s%s",
-			   missing, missing_names.count, names, missing_names.count > 5 ? " and more" : "");
-	}
-	XwauLines_Free(&missing_names);
 	im->missing += missing;
-	if (past && bank->layout == BANK_BY_NAME && slots < count)
-		Report(list, "%d entries come after the %d sounds that hook_engine_sound reads. They are left out.",
-			   past, slots);
-	else if (past)
-		Report(list, "%d entries are past the %d lines that XWAU counts, and no hook reads them", past,
-			   count);
 	if (!error)
 		write_bank(f, names, bank, list, used, slots);
 	free(entries);
@@ -670,24 +643,12 @@ bool XwauSoundBanks_Write(const char* game, const XwauNames* game_names, const c
 			other_craft_hyperspace |= strcasecmp(stem + 4, g_otherCraftHyperspaceBanks[b]) == 0;
 		char dll[1024];
 		if (other_craft_hyperspace) {
-			Report(
-				NULL,
-				"Wave/%s isn't imported. It holds the sounds that XWAU plays when other craft jump, and the "
-				"game plays no sound then",
-				names[i]);
+			ReportUnsupported("the EnterHyperspace and ExitHyperspace sound banks");
 			continue;
 		}
-		if (!bank) {
-			Report(NULL, "Wave/%s: no hook reads this sound bank, so it isn't imported", names[i]);
+		/* XWAU doesn't read a bank that no hook of the installation reads. */
+		if (!bank || !Xwau_FindFile(game, bank->hook, dll, sizeof dll))
 			continue;
-		}
-		if (!Xwau_FindFile(game, bank->hook, dll, sizeof dll)) {
-			Report(NULL,
-				   "Wave/%s: %s reads this sound bank, and the installation doesn't have it, so it "
-				   "isn't imported",
-				   names[i], bank->hook);
-			continue;
-		}
 		ok = import_bank(&im, f, game_names, bank, list_path, stem, &entries);
 		++banks;
 	}

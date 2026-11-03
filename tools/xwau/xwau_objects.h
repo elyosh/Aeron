@@ -33,12 +33,11 @@
  * A missing key keeps the value of the table. Values are read with
  * std::stoi(value, 0, 0) and cut to the field's size, as the hook does. The
  * comparison below then writes what changes. XWAU changes the tables only
- * during missions, so the tech room now sees the new weapons too. The
- * importer reports two object types that share a record and both have the
- * section (the last one wins, as in XWAU), a weapon type that the model has
- * no hardpoint for, and a model with the section that no object type
- * loads. A mission that swaps to or from such a model would change the
- * values for that mission only; the mission import reports it
+ * during missions, so the tech room now sees the new weapons too. When two
+ * object types share a record and both models have the section, the last
+ * one wins, as in XWAU. A model with the section that no object type loads
+ * is skipped. A mission that swaps to or from such a model would change the
+ * values for that mission only. The mission import reports that
  * (xwau_mission_files.h).
  *
  * An object type's model, in each game, is the name of its list row, in
@@ -86,7 +85,7 @@
  * listed is empty. Fields that the game rebuilds from the model when it
  * loads it (bounds, hardpoints, the first and last weapon slots,
  * engine glows, dock, aux and jamming points, child mounts) and the point
- * value aren't written. Other changed fields that have no key are reported,
+ * value aren't written. Other changed fields that have no key are left out,
  * because the game never reads them.
  *
  * A file can set seven flags: player_targetable, ai_targetable, nav_buoy,
@@ -94,8 +93,8 @@
  * mod turns one of them on or off, the file gets a `flags` list with each of
  * these flags that is on, because the game turns off the ones that aren't
  * listed. The other flags come from the original image files. If the mod
- * changes them, the import fails. Bits 0x10 and 0x40 are left out and
- * reported, because the game never reads them.
+ * changes them, the import fails. Bits 0x10 and 0x40 are left out, because
+ * the game never reads them.
  *
  * `names` holds the species names of the object type's record in the mod,
  * when they differ from the names of its stock record and the object type
@@ -111,9 +110,9 @@
  * A craft type file has the craft type's object type in the mod, with that
  * object type's model in a comment. It also has the ship list line and the
  * tech room texts that the mod changes. The ship list category is written as
- * a name. XWAU's "Planet/Asteroid" isn't a game category, and XWAU leaves
- * such a craft out of the ship list. The file would list it as
- * satellite_buoy, so the import fails. The file is only written when the
+ * a name. The game leaves a line with an unknown category out of the ship
+ * list, such as XWAU's "Planet/Asteroid", so that craft is written as hidden
+ * and without a category. The file is only written when the
  * object type loads a model in the mod. Otherwise the text import keeps
  * skipping these texts. The file is named after the craft type's ship list
  * name in the mod, in lower case with '_' between words. When two craft
@@ -144,7 +143,7 @@ bool XwauObjects_HasExeCraftValues(const char* game, const char* model);
  * name, the slot number is added. A slot that only changes its model, stats
  * or flags keeps its stock name. So do the weapon and effect slots, which
  * aren't in the ship list. `mod` holds the mod's tables, or is NULL when they
- * can't be read; nothing is renamed then. Reports each rename. Returns false
+ * can't be read; nothing is renamed then. Writes each rename as a detail. Returns false
  * only when out of memory. XwauObjects_FreeRenames frees the names. */
 bool XwauObjects_Rename(const char* mod_root, const char* stock_game, const XwauGameTables* stock,
 						const XwauGameTables* mod, XwauNames* names);

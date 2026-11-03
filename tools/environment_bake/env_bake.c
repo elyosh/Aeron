@@ -428,11 +428,11 @@ static bool bake_cubes(const EnvBakeOptions* o, EnvCube* radiance, int specular_
 	envmap_ggx_prefilter(&specular, radiance, o->specular_samples, o->jobs);
 
 	const CubeStats stats = cube_stats(radiance);
-	ToolLog_Write(TOOL_LOG_INFO, "sky luminance: peak %.6g, mean %.6g", stats.peak, stats.mean);
+	ToolLog_Write(TOOL_LOG_DETAIL, "sky luminance: peak %.6g, mean %.6g", stats.peak, stats.mean);
 	for (uint32_t i = 0; i < light_count; ++i) {
 		const double radius   = fmax(2.0 * lights[i].angular_radius_degrees, 1.0);
 		const double fraction = light_energy_fraction(radiance, &lights[i], radius);
-		ToolLog_Write(TOOL_LOG_INFO, "light %s: sky within %.2g deg holds %.3g%% of its irradiance",
+		ToolLog_Write(TOOL_LOG_DETAIL, "light %s: sky within %.2g deg holds %.3g%% of its irradiance",
 					  lights[i].name, radius, fraction * 100.0);
 		if (fraction > 0.1)
 			ToolLog_Write(TOOL_LOG_WARNING,
@@ -446,13 +446,13 @@ static bool bake_cubes(const EnvBakeOptions* o, EnvCube* radiance, int specular_
 					write_cube(specular_out, &specular, o->jobs);
 	if (ok) {
 		if (radiance_out)
-			ToolLog_Write(TOOL_LOG_INFO, "radiance %s: %d px, %d levels, %.2f MiB", radiance_out,
+			ToolLog_Write(TOOL_LOG_DETAIL, "radiance %s: %d px, %d levels, %.2f MiB", radiance_out,
 						  radiance->size, radiance->level_count, file_size_mib(radiance_out));
-		ToolLog_Write(TOOL_LOG_INFO,
+		ToolLog_Write(TOOL_LOG_DETAIL,
 					  "diffuse  %s: %d px, %d levels, exact irradiance over %d px faces, %.2f MiB",
 					  diffuse_out, diffuse.size, diffuse.level_count,
 					  envmap_level_size(radiance, stats_level(radiance, 64)), file_size_mib(diffuse_out));
-		ToolLog_Write(TOOL_LOG_INFO, "specular %s: %d px, %d roughness levels, %d samples, %.2f MiB",
+		ToolLog_Write(TOOL_LOG_DETAIL, "specular %s: %d px, %d roughness levels, %d samples, %.2f MiB",
 					  specular_out, specular.size, specular.level_count, o->specular_samples,
 					  file_size_mib(specular_out));
 	}
@@ -502,7 +502,7 @@ static bool load_panorama(const EnvBakeOptions* o, int size, EnvCube* radiance) 
 		free(pano);
 		return false;
 	}
-	ToolLog_Write(TOOL_LOG_INFO, "input %s: %dx%d", o->input, w, h);
+	ToolLog_Write(TOOL_LOG_DETAIL, "input %s: %dx%d", o->input, w, h);
 	envmap_from_equirect(radiance, pano, w, h, o->jobs);
 	free(pano);
 	return true;
@@ -521,7 +521,7 @@ static bool load_faces(const EnvBakeOptions* o, int size, EnvCube* radiance) {
 		xwau_faces_free(&faces);
 		return false;
 	}
-	ToolLog_Write(TOOL_LOG_INFO, "input %s: six %d px faces", o->faces_dir, faces.source_size);
+	ToolLog_Write(TOOL_LOG_DETAIL, "input %s: six %d px faces", o->faces_dir, faces.source_size);
 	xwau_faces_to_cube(&faces, radiance, true);
 	xwau_faces_free(&faces);
 	return true;
@@ -643,7 +643,7 @@ static int run_overlay(const EnvBakeOptions* o) {
 		ToolLog_Write(TOOL_LOG_ERROR, "environment_bake: %s", err);
 		return 1;
 	}
-	ToolLog_Write(TOOL_LOG_INFO, "input %s: six %d px faces with alpha", o->overlay_faces_dir,
+	ToolLog_Write(TOOL_LOG_DETAIL, "input %s: six %d px faces with alpha", o->overlay_faces_dir,
 				  faces.source_size);
 
 	const int      size        = faces.size;
@@ -689,7 +689,7 @@ static int run_overlay(const EnvBakeOptions* o) {
 	else if (!(ok = write_ktx2_bc7_levels(o->overlay_out, 6, 0, levels, level_count, KTX2_TF_SRGB, true)))
 		ToolLog_Write(TOOL_LOG_ERROR, "environment_bake: cannot write %s", o->overlay_out);
 	else
-		ToolLog_Write(TOOL_LOG_INFO, "overlay %s: %d px BC7 sRGB cube, %d levels", o->overlay_out, size,
+		ToolLog_Write(TOOL_LOG_DETAIL, "overlay %s: %d px BC7 sRGB cube, %d levels", o->overlay_out, size,
 					  level_count);
 
 	for (int face = 0; face < 6; ++face)

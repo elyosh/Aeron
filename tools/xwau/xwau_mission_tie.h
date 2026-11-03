@@ -22,13 +22,14 @@
  * Lines whose first word is "craft" and lines "key = value" are kept as
  * they are, for the readers of their own.
  *
- * Reported, when `report` is set:
+ * Left out, as XWAU ignores them or fails on them:
  *   - a line that XWAU ignores: one with fewer than four words, one with
  *     a number where its key should be, such as "fg, 3 markings, 6 ;Grey 5",
  *     where the ';' of the comment makes a fourth word, an fg line with a key
  *     that no hook reads, an index line without markings, and a line that
  *     isn't an fg, craft or "key = value" line;
- *   - a value that isn't a number, which stops XWAU (std::stoi throws).
+ *   - a line with a value that isn't a number, which stops XWAU (std::stoi
+ *     throws).
  */
 
 #include <stdbool.h>
@@ -62,10 +63,9 @@ typedef struct XwauMissionTie {
 } XwauMissionTie;
 
 /* Reads the [mission_tie] lines of mission `base` (such as
- * "Missions/1b7m2w") of the installation `game`. Problems are reported with
- * `base` as their label when `report` is set. Returns false when out of
+ * "Missions/1b7m2w") of the installation `game`. Returns false when out of
  * memory. */
-bool XwauMissionTie_Read(const char* game, const char* base, bool report, XwauMissionTie* out);
+bool XwauMissionTie_Read(const char* game, const char* base, XwauMissionTie* out);
 void XwauMissionTie_Free(XwauMissionTie* tie);
 
 /* The values of flight group `fg`, or NULL. */

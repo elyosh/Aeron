@@ -14,12 +14,11 @@
  * The types are SpaceBombs, HeavyRockets, Missiles, ProtonTorpedos,
  * AdvancedMissiles, AdvancedTorpedos, MagPulse, IonPulse, AdvancedMagPulse
  * and ClusterBombs. Keys can be written in any case, and the first line of a
- * key wins. Later lines with the same key are reported. -1 means no limit,
+ * key wins. Later lines with the same key are left out. -1 means no limit,
  * so it isn't written. Other values below 0 give a craft a wrong number of
  * warheads in XWAU, and values above 1000000000 don't fit, so both make the
- * import fail. A value that isn't a number would crash XWAU, so it is
- * reported and left out. Lines with other keys, such as TFTC's
- * ..._MagPulseCount, are reported.
+ * import fail. A value that isn't a number would crash XWAU, so it is left
+ * out. So are lines with other keys, such as TFTC's ..._MagPulseCount.
  *
  * The values go into the flight group's entry of the mission file:
  *
@@ -48,8 +47,8 @@ typedef struct XwauWarheadPools {
 
 /* Reads the warhead pools of mission `base` ("Missions/1b13m2tftc") of the
  * installation `game`, when its hook_weapon_rate.dll has them. With
- * `report`, the lines left out are reported. Returns false when out of
- * memory. */
+ * `report`, values that the import can't keep make it fail. Returns false
+ * when out of memory. */
 bool XwauWarheadPools_Read(const char* game, const char* base, bool report, XwauWarheadPools* out);
 void XwauWarheadPools_Free(XwauWarheadPools* pools);
 

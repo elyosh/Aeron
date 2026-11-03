@@ -46,7 +46,7 @@ const OptGltfSkinLayer* XwauGltfSkins_Layers(const XwauGltfSkins* skins, int32_t
 /* Returns the variants. They stay valid as long as `skins` does. */
 const OptGltfVariants* XwauGltfSkins_Variants(const XwauGltfSkins* skins);
 
-/* Reports the variants and layers to stderr. */
+/* Writes the counts of variants and layers as a detail line. */
 void XwauGltfSkins_Report(const XwauGltfSkins* skins, const char* basename);
 
 void XwauGltfSkins_Free(XwauGltfSkins* skins);

@@ -260,10 +260,9 @@ static const float kWhite[3] = { 1.0f, 1.0f, 1.0f };
 
 static bool energy_yaml(TextBuffer* y) {
 	char rel[1024];
-	if (!find_file(ENERGY_DAT, rel, sizeof rel)) {
-		Report(NULL, "%s not found, so there are no energy effects", ENERGY_DAT);
+	/* Without the DAT, XWAU has no energy effects either. */
+	if (!find_file(ENERGY_DAT, rel, sizeof rel))
 		return true;
-	}
 	char     err[512];
 	XwauDat* dat = XwauDat_Open(rel, err, sizeof err);
 	if (!dat) {
@@ -339,10 +338,8 @@ static bool image_flipbook(TextBuffer* y, const char* name, const XwauMatFile* m
 	if (!q)
 		return false;
 	char path[1024], err[512];
-	if (!find_file(q->dat, path, sizeof path)) {
-		Report(name, "%s not found", q->dat);
+	if (!find_file(q->dat, path, sizeof path))
 		return false;
-	}
 	XwauDat* dat = XwauDat_Open(path, err, sizeof err);
 	if (!dat) {
 		Report(NULL, "%s", err);
@@ -377,7 +374,6 @@ static bool image_flipbook(TextBuffer* y, const char* name, const XwauMatFile* m
 	}
 	XwauDat_Close(dat);
 	if (!count) {
-		Report(name, "the sequence of %s has no frames", q->dat);
 		free(frames);
 		return false;
 	}
@@ -451,13 +447,12 @@ static bool images_yaml(TextBuffer* y) {
 	bool ok          = true;
 	int  marks       = 0;
 	int* mark_images = (int*)malloc((count ? count : 1) * sizeof *mark_images);
-	size_t other_groups = 0;
 	for (size_t k = 0; k < count; ++k) {
-		/* The game only reads the blast mark group from effects.yaml. */
-		if (found[k].group != BLAST_MARK_GROUP) {
-			other_groups++;
+		/* The game only reads the blast mark group from effects.yaml. The
+		 * flight art import (bake_xwau_flight.c in the mod importer) reads
+		 * the DAT material files of the other groups. */
+		if (found[k].group != BLAST_MARK_GROUP)
 			continue;
-		}
 		XwauMatFile* mat = XwauMat_Load(found[k].mat, &defaults);
 		if (!mat) {
 			Report(found[k].mat, "cannot read the file");
@@ -470,13 +465,6 @@ static bool images_yaml(TextBuffer* y) {
 		if (has && found[k].group == BLAST_MARK_GROUP && mark_images)
 			mark_images[marks++] = found[k].image;
 	}
-	/* The flight art import (bake_xwau_flight.c in the mod importer) reads
-	 * the DAT material files of the other groups. */
-	if (other_groups)
-		Report(NULL,
-			   "Materials: %zu dat-<group>-<image>.mat files are for image groups other than the blast marks "
-			   "(%d), so the effect libraries leave them to the flight art import",
-			   other_groups, BLAST_MARK_GROUP);
 	/* A blast-mark image without a sequence gets a static flipbook of its own
 	 * image. */
 	if (marks) {
@@ -745,8 +733,8 @@ static bool write_library_sources(Library* l, const char* effects_dir, bool merg
 	ok = ok && EffectFiles_Write("opt2gltf", doc, existing ? NULL : header, file);
 	cJSON_Delete(doc);
 	if (ok)
-		Report(NULL, "library %s: %zu image(s) %s (largest rounding error: %d/255)", l->name, images,
-			   existing ? "added" : "written", diff);
+		ReportDetail(NULL, "library %s: %zu image(s) %s (largest rounding error: %d/255)", l->name, images,
+					 existing ? "added" : "written", diff);
 	return ok;
 }
 
@@ -773,18 +761,17 @@ static void reset(const char* game) {
 
 /* Reports the libraries that aren't XWAU's, and sorts the others by name. A
  * model of a project can use a library of the project that isn't made from
- * a DAT. In an import (`imported`), every model comes from the mod, so a
- * library without Effects/<name>.dat is one whose DAT is somewhere else,
- * and its images can't be made. */
+ * a DAT, which is a detail line. In an import (`imported`), every model comes
+ * from the mod, so a library without Effects/<name>.dat is one whose DAT is
+ * somewhere else, and its images can't be made. That is counted with
+ * ReportUnsupported. */
 static void sort_libraries(bool imported) {
 	for (size_t i = 0; i < g_skipped_count; ++i) {
 		if (imported)
-			Report(NULL,
-				   "the models use images of library %s, but there is no Effects/%s.dat to make them from",
-				   g_skipped[i], g_skipped[i]);
+			ReportUnsupported("effect images from DAT files outside the Effects folder");
 		else
-			Report(NULL, "library %s: no Effects/%s.dat, not an XWAU library; left alone", g_skipped[i],
-				   g_skipped[i]);
+			ReportDetail(NULL, "library %s: no Effects/%s.dat, not an XWAU library; left alone", g_skipped[i],
+						 g_skipped[i]);
 	}
 	qsort(g_libraries, g_library_count, sizeof *g_libraries, cmp_library);
 }
@@ -951,7 +938,8 @@ bool XwauLibrary_Make(const XwauLibrarySet* set, size_t index, int threads, cJSO
 		cJSON_Delete(doc);
 		return false;
 	}
-	Report(NULL, "library %s: %zu image(s) made (largest rounding error: %d/255)", l->name, images, diff);
+	ReportDetail(NULL, "library %s: %zu image(s) made (largest rounding error: %d/255)", l->name, images,
+				 diff);
 	*library = doc;
 	*inputs  = sink.kept;
 	*count   = sink.kept_count;

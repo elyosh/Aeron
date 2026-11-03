@@ -5,7 +5,7 @@
  * Writes a converted document (opt_gltf.h) as <out_dir>/<basename>.gltf and
  * <out_dir>/<basename>.bin. Its images are written as PNG files under
  * <out_dir>/textures/, at the path given by the URI of each image. A summary
- * goes to the tool log.
+ * goes to the tool log as detail lines.
  */
 
 #include <stdbool.h>

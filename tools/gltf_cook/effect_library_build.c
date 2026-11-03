@@ -322,7 +322,7 @@ static bool build(const char* tool, const cJSON* root, const Inputs* inputs, con
 	EffectLibraryResult result = { 0 };
 	if (ok && EffectLibrary_Write(tool, out_dir, library->valuestring, NULL, inputs_hash, baked, (size_t)n,
 								  &result)) {
-		ToolLog_Write(TOOL_LOG_INFO, "%s: %s: built, %d image(s), %d layer and %d emissive page(s)", tool,
+		ToolLog_Write(TOOL_LOG_DETAIL, "%s: %s: built, %d image(s), %d layer and %d emissive page(s)", tool,
 					  library->valuestring, n, result.layer_pages, result.emissive_pages);
 		report_replaced(tool, library->valuestring, old, images);
 	} else {
@@ -357,7 +357,7 @@ EffectLibraryBuild EffectLibrary_BuildLibrary(const char* tool, const char* file
 	char       inputs_hash[17];
 	const bool have_inputs = library_inputs(file, dir, images, inputs_hash);
 	if (have_inputs && library_current(out_dir, library->valuestring, inputs_hash)) {
-		ToolLog_Write(TOOL_LOG_INFO, "%s: %s: unchanged", tool, library->valuestring);
+		ToolLog_Write(TOOL_LOG_DETAIL, "%s: %s: unchanged", tool, library->valuestring);
 		cJSON_Delete(root);
 		return EFFECT_LIBRARY_UNCHANGED;
 	}
