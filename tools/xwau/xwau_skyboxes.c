@@ -18,10 +18,16 @@
 #define SKY_LIST_MAX 64
 #define SKY_PI 3.14159265358979323846
 /* Radiance in W/m^2/sr of a sky texel of 1, the environment's `intensity`.
- * XWA Upgrade's skyboxes are sRGB images with no unit. The sky lights the
- * models with its full diffuse and specular strength, so this sets both
- * how bright the sky looks and how much it lights the models. */
-#define SKY_RADIANCE 20.0f
+ * XWA Upgrade's skyboxes are sRGB images with no unit. It sets how bright
+ * the sky looks. */
+#define SKY_RADIANCE 40.0f
+/* The environment's diffuse_strength and specular_strength: how much the
+ * sky lights the models, compared with how bright it is drawn. */
+#define SKY_LIGHT_STRENGTH 0.3f
+/* The region's backdrop_light_scale. XWAU's renderer dims the lights of
+ * backdrops that are not suns (PBRAddCommon.h), and its missions are tuned
+ * for that. */
+#define SKY_BACKDROP_LIGHT_SCALE 0.25f
 /* Radiance in W/m^2/sr of an ambient fill of 1. XWAU compares AmbientMin
  * with a light of brightness 1, so a fill of 1 is as bright as a white
  * surface that faces a classic light of brightness 1. */
@@ -566,13 +572,14 @@ static void write_environments(const SkyState* st, TextBuffer* f) {
 				   "    intensity: %g\n"
 				   "    radiance: \"flight/environments/xwau/%s/sky.ktx2\"\n"
 				   "    diffuse: \"flight/environments/xwau/%s/diffuse.ktx2\"\n"
-				   "    diffuse_strength: 1\n"
+				   "    diffuse_strength: %g\n"
 				   "    specular: \"flight/environments/xwau/%s/specular.ktx2\"\n"
-				   "    specular_strength: 1\n"
+				   "    specular_strength: %g\n"
 				   "    ambient_fill: [%g, %g, %g]\n"
 				   "    rotation_degrees: [0, 0, 0]\n"
 				   "    directional_lights: []\n",
-				   d->name, (double)SKY_RADIANCE, key, key, key, (double)fill, (double)fill, (double)fill);
+				   d->name, (double)SKY_RADIANCE, key, key, (double)SKY_LIGHT_STRENGTH, key,
+				   (double)SKY_LIGHT_STRENGTH, (double)fill, (double)fill, (double)fill);
 		if (d->overlay < 0)
 			continue;
 		TextAppend(f, "    overlay:\n      cube: \"flight/environments/xwau/%s/overlay.ktx2\"\n",
@@ -614,7 +621,8 @@ static void write_missions(const SkyState* st, TextBuffer* f) {
 				TextAppend(f, "          rotation_degrees: [%g, %g, %g]\n", (double)degrees[0],
 						   (double)degrees[1], (double)degrees[2]);
 			}
-			TextAppend(f, "          backdrops: keep\n          backdrop_light_scale: 0.25\n");
+			TextAppend(f, "          backdrops: keep\n          backdrop_light_scale: %g\n",
+					   (double)SKY_BACKDROP_LIGHT_SCALE);
 			/* EnabledBackdrops = ALL turns hiding off. */
 			if (mission->enabled.all) {
 				TextAppend(f, "          show_backdrops: all\n");
@@ -630,6 +638,7 @@ static void write_missions(const SkyState* st, TextBuffer* f) {
 				const SkyList* lists[] = { &mission->enabled };
 				write_images(f, "show_backdrops", lists, 1);
 			}
+			TextAppend(f, "          hidden_backdrop_lights: remove\n");
 		}
 	}
 }

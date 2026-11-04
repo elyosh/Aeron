@@ -29,9 +29,8 @@
  * The importer's entries are:
  *   - one environment per cube folder, set of values and overlay. The first
  *     one is named xwau.<folder>, or xwau.<folder>.<overlay folder> with an
- *     overlay; the next ones get .2, .3 and so on. Its intensity is 20
- *     W/m^2/sr, and its diffuse and specular strengths are 1, so the sky
- *     lights the models as brightly as it is drawn. AmbientMin becomes the
+ *     overlay; the next ones get .2, .3 and so on. It has a fixed intensity
+ *     and fixed diffuse and specular strengths. AmbientMin becomes the
  *     ambient_fill, compared with a classic light of brightness 1. Its
  *     textures are flight/environments/xwau/<folder>/{sky,diffuse,
  *     specular}.ktx2, which
@@ -42,12 +41,14 @@
  *     with its four regions. A region with a cube keeps its backdrops, and
  *     gets its rotation (XwauSkyboxes_Rotation) and its hide and show lists:
  *     the ddraw wrapper's starfield images and DisabledBackdrops are hidden,
- *     and EnabledBackdrops are shown. It also gets `backdrop_light_scale:
- *     0.25`: XWAU's renderer cuts the lights of backdrops that are not suns
- *     to 25% (PBRAddCommon.h), and its missions are tuned for that. A region
+ *     and EnabledBackdrops are shown. It also gets a `backdrop_light_scale`
+ *     that matches how XWAU's renderer dims the lights of backdrops that are
+ *     not suns. When it
+ *     hides backdrops, it also gets `hidden_backdrop_lights: remove`, so the
+ *     hidden backdrops that aren't suns don't light the ships. A region
  *     without a cube is `none`.
  * These make the import fail, because the importer can't keep them: a hide
- * or show list with more than 64 images, an AmbientMin outside 0 to 4, and
+ * or show list longer than the game allows, an AmbientMin out of range, and
  * cube folders whose names are too long or encode to the same name. The
  * import doesn't convert these, and counts them as unsupported: a region
  * with an overlay but no cube, the Specular, AmbientInt and Illum keys of a

@@ -658,10 +658,6 @@ static void test_skyboxes(const char* scratch) {
 				 (double)fill);
 		check(definition_has(text, "xwau.beta", fill_line),
 			  "skyboxes: a region with its own folder takes its own AmbientMin");
-		check(definition_has(text, "xwau.beta", "    intensity: 20\n") &&
-				  definition_has(text, "xwau.beta", "    diffuse_strength: 1\n") &&
-				  definition_has(text, "xwau.beta", "    specular_strength: 1\n"),
-			  "skyboxes: the sky lights the models at full strength");
 		const float all_fill = 0.03f * CLASSIC_ILLUMINANCE / 3.14159265f;
 		snprintf(fill_line, sizeof fill_line, "ambient_fill: [%g, %g, %g]", (double)all_fill,
 				 (double)all_fill, (double)all_fill);
@@ -678,6 +674,9 @@ static void test_skyboxes(const char* scratch) {
 		check(strstr(m2, "\"0\": none\n        \"1\": none") != NULL, "skyboxes: no folder loads, no sky");
 		check(in_entry(m3, m4, "show_backdrops: all") && !in_entry(m3, m4, "hide_backdrops"),
 			  "skyboxes: EnabledBackdrops = all turns hiding off");
+		check(in_entry(m1, m2, "hidden_backdrop_lights: remove") &&
+				  !in_entry(m3, m4, "hidden_backdrop_lights"),
+			  "skyboxes: hidden backdrops lose their lights, and nothing is removed when all are shown");
 	}
 	check(list && strstr(list, "/Effects/CubeMaps/Alpha\txwau.alpha\tflight/environments/xwau/alpha\n") &&
 			  strncmp(list, "sky\t", 4) == 0 && strstr(list, "\nsky\t") && strstr(list, "\txwau.beta\t") &&
