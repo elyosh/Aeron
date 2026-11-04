@@ -17,11 +17,15 @@
 /* The game's limit on a hide or show list (XWA_ENV_BACKDROP_LIST_MAX). */
 #define SKY_LIST_MAX 64
 #define SKY_PI 3.14159265358979323846
-/* Radiance in W/m^2/sr of a sky texel of 1. XWA Upgrade's skyboxes are sRGB
- * images with no unit, like the classic backdrops they replace, so a texel
- * gets the radiance of a classic backdrop texel. It is the environment's
- * `intensity`, and AmbientMin is a fill on the same scale. */
-#define SKY_RADIANCE CLASSIC_RADIANCE
+/* Radiance in W/m^2/sr of a sky texel of 1, the environment's `intensity`.
+ * XWA Upgrade's skyboxes are sRGB images with no unit. The sky lights the
+ * models with its full diffuse and specular strength, so this sets both
+ * how bright the sky looks and how much it lights the models. */
+#define SKY_RADIANCE 20.0f
+/* Radiance in W/m^2/sr of an ambient fill of 1. XWAU compares AmbientMin
+ * with a light of brightness 1, so a fill of 1 is as bright as a white
+ * surface that faces a classic light of brightness 1. */
+#define SKY_FILL_RADIANCE (CLASSIC_ILLUMINANCE / SKY_PI)
 
 static const char* const kMissionDirs[] = { "Missions", "Melee", "Combat" };
 
@@ -106,7 +110,7 @@ typedef struct SkyFolder {
 
 typedef struct SkyDefinition {
 	size_t folder;
-	float  ambient_int, ambient_min;
+	float  ambient_min;
 	long   overlay;             /* overlay folder, or -1 */
 	float  overlay_rotation[3]; /* XWAU angles */
 	char   name[64];
@@ -296,14 +300,14 @@ static long folder_index(SkyState* st, const char* found, bool overlay, const ch
  * its overlay, and adds it when it is new. The first one is named
  * xwau.<folder>, or xwau.<folder>.<overlay> with an overlay. The next ones
  * with the same name get .2, .3 and so on. */
-static long definition_index(SkyState* st, size_t folder, float ambient_int, float ambient_min, long overlay,
+static long definition_index(SkyState* st, size_t folder, float ambient_min, long overlay,
 							 const float overlay_rotation[3], const char* base) {
 	size_t same_name = 0;
 	for (size_t i = 0; i < st->definition_count; ++i) {
 		const SkyDefinition* d = &st->definitions[i];
 		if (d->folder != folder || d->overlay != overlay)
 			continue;
-		if (d->ambient_int == ambient_int && d->ambient_min == ambient_min &&
+		if (d->ambient_min == ambient_min &&
 			(overlay < 0 || memcmp(d->overlay_rotation, overlay_rotation, sizeof d->overlay_rotation) == 0))
 			return (long)i;
 		++same_name;
@@ -321,7 +325,6 @@ static long definition_index(SkyState* st, size_t folder, float ambient_int, flo
 		return SKY_NO_MEMORY;
 	SkyDefinition* d = &st->definitions[st->definition_count];
 	d->folder        = folder;
-	d->ambient_int   = ambient_int;
 	d->ambient_min   = ambient_min;
 	d->overlay       = overlay;
 	memcpy(d->overlay_rotation, overlay_rotation, sizeof d->overlay_rotation);
@@ -369,8 +372,9 @@ static bool read_region(SkyState* st, const XwauLines* lines, int r, const SkyAl
 		return true;
 	}
 	const char* prefix = own ? key : "AllRegions";
-	/* The region's environment has no place for these. */
-	static const char* const kNotImported[] = { "Specular", "Illum" };
+	/* The importer doesn't convert these. The sky lights the models at full
+	 * strength, and the environment has no place for the others. */
+	static const char* const kNotImported[] = { "Specular", "AmbientInt", "Illum" };
 	for (size_t k = 0; k < sizeof kNotImported / sizeof kNotImported[0]; ++k) {
 		char value[600];
 		snprintf(name, sizeof name, "%s%s", prefix, kNotImported[k]);
@@ -378,8 +382,6 @@ static bool read_region(SkyState* st, const XwauLines* lines, int r, const SkyAl
 		if (value[0])
 			ReportUnsupported("the [SkyBoxes] key %s%s", own ? "Region<N>" : "AllRegions", kNotImported[k]);
 	}
-	snprintf(name, sizeof name, "%sAmbientInt", prefix);
-	const float ambient_int = sky_float(lines, name, own ? 0.15f : 0.50f);
 	snprintf(name, sizeof name, "%sAmbientMin", prefix);
 	const float ambient_min = sky_float(lines, name, 0.01f);
 	for (int axis = 0; axis < 3; ++axis) {
@@ -398,8 +400,8 @@ static bool read_region(SkyState* st, const XwauLines* lines, int r, const SkyAl
 	if (folder == SKY_NO_MEMORY || overlay_folder == SKY_NO_MEMORY)
 		return false;
 	const long definition = folder < 0 ? folder
-									   : definition_index(st, (size_t)folder, ambient_int, ambient_min,
-														  overlay_folder, overlay_rotation, base);
+									   : definition_index(st, (size_t)folder, ambient_min, overlay_folder,
+														  overlay_rotation, base);
 	if (definition == SKY_NO_MEMORY)
 		return false;
 	if (definition >= 0)
@@ -558,21 +560,19 @@ static void write_environments(const SkyState* st, TextBuffer* f) {
 	for (size_t i = 0; i < st->definition_count; ++i) {
 		const SkyDefinition* d       = &st->definitions[i];
 		const char*          key     = st->folders[d->folder].key;
-		const float          diffuse = clamp_value(d->ambient_int, 4.0f, "AmbientInt", d->name);
-		const float          fill = clamp_value(d->ambient_min, 4.0f, "AmbientMin", d->name) * SKY_RADIANCE;
+		const float fill = clamp_value(d->ambient_min, 4.0f, "AmbientMin", d->name) * SKY_FILL_RADIANCE;
 		TextAppend(f,
 				   "  %s:\n"
 				   "    intensity: %g\n"
 				   "    radiance: \"flight/environments/xwau/%s/sky.ktx2\"\n"
 				   "    diffuse: \"flight/environments/xwau/%s/diffuse.ktx2\"\n"
-				   "    diffuse_strength: %g\n"
+				   "    diffuse_strength: 1\n"
 				   "    specular: \"flight/environments/xwau/%s/specular.ktx2\"\n"
 				   "    specular_strength: 1\n"
 				   "    ambient_fill: [%g, %g, %g]\n"
 				   "    rotation_degrees: [0, 0, 0]\n"
 				   "    directional_lights: []\n",
-				   d->name, (double)SKY_RADIANCE, key, key, (double)diffuse, key, (double)fill, (double)fill,
-				   (double)fill);
+				   d->name, (double)SKY_RADIANCE, key, key, key, (double)fill, (double)fill, (double)fill);
 		if (d->overlay < 0)
 			continue;
 		TextAppend(f, "    overlay:\n      cube: \"flight/environments/xwau/%s/overlay.ktx2\"\n",

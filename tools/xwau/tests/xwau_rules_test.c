@@ -574,11 +574,11 @@ static void test_skyboxes(const char* scratch) {
 	static const char* const kMissions[][2] = {
 		{ "m1",
 		  "[SkyBoxes]\nDisabledBackdrops = 9001-1100;All;6025-1\nAllRegions = Effects\\CubeMaps\\Alpha\n"
-		  "AllRegionsAmbientInt = 0.3abc\nAllRegionsRotationY = 5\nRegion0 = Effects\\CubeMaps\\Beta\n"
+		  "AllRegionsAmbientMin = 0.03abc\nAllRegionsRotationY = 5\nRegion0 = Effects\\CubeMaps\\Beta\n"
 		  "Region0AmbientMin = 0.05\nRegion1 = Effects\\CubeMaps\\Gamma\nAllRegionsTypo = 1\n" },
 		{ "m2", "[SkyBoxes]\nAllRegions = Effects\\CubeMaps\\Gamma\n" },
 		{ "m3", "[SkyBoxes]\nEnabledBackdrops = all\nAllRegions = Effects\\CubeMaps\\Alpha\n"
-				"AllRegionsAmbientInt = 0.3\n" },
+				"AllRegionsAmbientMin = 0.03\nAllRegionsAmbientInt = 0.3\n" },
 		/* Regions 0 and 3 use AllRegions and its default overlay Delta_overlay;
 		 * region 3's own overlay is not tried without Region3. Region 1 has
 		 * its own overlay, region 2 the AllRegions one with its own angles. */
@@ -597,7 +597,7 @@ static void test_skyboxes(const char* scratch) {
 	}
 	/* m6 is only in the mod, and m7 is in neither. */
 	snprintf(path, sizeof path, "%s/Missions/m6.ini", game);
-	write_file(path, "[SkyBoxes]\nAllRegions = Effects\\CubeMaps\\Alpha\nAllRegionsAmbientInt = 0.3\n");
+	write_file(path, "[SkyBoxes]\nAllRegions = Effects\\CubeMaps\\Alpha\nAllRegionsAmbientMin = 0.03\n");
 	snprintf(path, sizeof path, "%s/Missions/m6.tie", game);
 	write_file(path, "");
 	snprintf(path, sizeof path, "%s/Missions/m7.ini", game);
@@ -651,17 +651,22 @@ static void test_skyboxes(const char* scratch) {
 		check(strstr(m5, "\"0\": none\n") != NULL, "skyboxes: an overlay without a cube is left out");
 	}
 	if (m1 && m2 && m3 && m4) {
-		/* AmbientMin is written on the sky's radiance scale. */
-		const float fill = 0.05f * CLASSIC_RADIANCE;
+		/* AmbientMin is compared with a classic light of brightness 1. */
+		const float fill = 0.05f * CLASSIC_ILLUMINANCE / 3.14159265f;
 		char        fill_line[100];
 		snprintf(fill_line, sizeof fill_line, "ambient_fill: [%g, %g, %g]", (double)fill, (double)fill,
 				 (double)fill);
-		check(strstr(text, "  xwau.beta:\n") && strstr(text, "diffuse_strength: 0.15\n") &&
-				  strstr(text, fill_line),
-			  "skyboxes: a region with its own folder takes the region defaults");
-		check(strstr(text, "  xwau.alpha:\n") && strstr(text, "diffuse_strength: 0.3\n") &&
-				  !strstr(text, "xwau.alpha.2"),
-			  "skyboxes: AllRegions values read as stof reads them, one environment for equal values");
+		check(definition_has(text, "xwau.beta", fill_line),
+			  "skyboxes: a region with its own folder takes its own AmbientMin");
+		check(definition_has(text, "xwau.beta", "    intensity: 20\n") &&
+				  definition_has(text, "xwau.beta", "    diffuse_strength: 1\n") &&
+				  definition_has(text, "xwau.beta", "    specular_strength: 1\n"),
+			  "skyboxes: the sky lights the models at full strength");
+		const float all_fill = 0.03f * CLASSIC_ILLUMINANCE / 3.14159265f;
+		snprintf(fill_line, sizeof fill_line, "ambient_fill: [%g, %g, %g]", (double)all_fill,
+				 (double)all_fill, (double)all_fill);
+		check(definition_has(text, "xwau.alpha", fill_line) && !strstr(text, "xwau.alpha.2"),
+			  "skyboxes: AllRegions values read as stof reads them, and AmbientInt is left out");
 		check(
 			strstr(m1, "\"1\":\n          environment: xwau.alpha\n          rotation_degrees: [5, 0, 0]") &&
 				strstr(m1, "\"0\":\n          environment: xwau.beta\n          backdrops: keep\n"

@@ -12,9 +12,9 @@
  *     folder. A folder loads when it holds exactly six files (files whose
  *     names start with '.' are not counted). A region uses its own folder
  *     when it loads, with the Region<N>* values and their defaults
- *     (AmbientInt 0.15, AmbientMin 0.01). Otherwise it uses the AllRegions
- *     folder when it loads, with the AllRegions* values (AmbientInt 0.50,
- *     AmbientMin 0.01). Otherwise it has no cube.
+ *     (AmbientMin 0.01). Otherwise it uses the AllRegions folder when it
+ *     loads, with the AllRegions* values (AmbientMin 0.01). Otherwise it
+ *     has no cube.
  *   - A region uses its Region<N>Overlay folder (default <folder>_overlay)
  *     when it loads, otherwise the AllRegions overlay. With its own cube,
  *     the region's overlay angles are Region<N>OverlayRotation*, which
@@ -29,9 +29,12 @@
  * The importer's entries are:
  *   - one environment per cube folder, set of values and overlay. The first
  *     one is named xwau.<folder>, or xwau.<folder>.<overlay folder> with an
- *     overlay; the next ones get .2, .3 and so on. AmbientInt becomes
- *     diffuse_strength and AmbientMin the ambient_fill. Its textures are
- *     flight/environments/xwau/<folder>/{sky,diffuse,specular}.ktx2, which
+ *     overlay; the next ones get .2, .3 and so on. Its intensity is 20
+ *     W/m^2/sr, and its diffuse and specular strengths are 1, so the sky
+ *     lights the models as brightly as it is drawn. AmbientMin becomes the
+ *     ambient_fill, compared with a classic light of brightness 1. Its
+ *     textures are flight/environments/xwau/<folder>/{sky,diffuse,
+ *     specular}.ktx2, which
  *     the importer bakes with EnvBake_Sky, and
  *     flight/environments/xwau/<overlay folder>/overlay.ktx2, which it bakes
  *     with EnvBake_Overlay;
@@ -44,11 +47,11 @@
  *     to 25% (PBRAddCommon.h), and its missions are tuned for that. A region
  *     without a cube is `none`.
  * These make the import fail, because the importer can't keep them: a hide
- * or show list with more than 64 images, an AmbientInt or AmbientMin outside
- * 0 to 4, and cube folders whose names are too long or encode to the same
- * name. The import doesn't convert these, and counts them as unsupported: a
- * region with an overlay but no cube, the Specular and Illum keys of a region
- * with a cube, RenderMode, the Hangar*Rotation* keys, and the ReflectionRes
+ * or show list with more than 64 images, an AmbientMin outside 0 to 4, and
+ * cube folders whose names are too long or encode to the same name. The
+ * import doesn't convert these, and counts them as unsupported: a region
+ * with an overlay but no cube, the Specular, AmbientInt and Illum keys of a
+ * region with a cube, RenderMode, the Hangar*Rotation* keys, and the ReflectionRes
  * keys, because the importer bakes its reflection maps at a fixed size.
  * Keys, tokens and folders that the ddraw wrapper ignores are ignored too.
  *
