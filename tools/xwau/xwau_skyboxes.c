@@ -23,7 +23,7 @@
 #define SKY_RADIANCE 40.0f
 /* The environment's diffuse_strength and specular_strength: how much the
  * sky lights the models, compared with how bright it is drawn. */
-#define SKY_LIGHT_STRENGTH 0.3f
+#define SKY_LIGHT_STRENGTH 0.4f
 /* The region's backdrop_light_scale. XWAU's renderer dims the lights of
  * backdrops that are not suns (PBRAddCommon.h), and its missions are tuned
  * for that. */
@@ -34,6 +34,8 @@
 #define SKY_FILL_RADIANCE (CLASSIC_ILLUMINANCE / SKY_PI)
 
 static const char* const kMissionDirs[] = { "Missions", "Melee", "Combat" };
+
+#define SKY_AMBIENT 0.6
 
 /* The environment of the Death Star missions without [SkyBoxes]. It has no
  * sky and no directional light, so the light of the mission's backdrops
@@ -566,7 +568,8 @@ static void write_environments(const SkyState* st, TextBuffer* f) {
 	for (size_t i = 0; i < st->definition_count; ++i) {
 		const SkyDefinition* d       = &st->definitions[i];
 		const char*          key     = st->folders[d->folder].key;
-		const float fill = clamp_value(d->ambient_min, 4.0f, "AmbientMin", d->name) * SKY_FILL_RADIANCE;
+		//const float fill = clamp_value(d->ambient_min, 4.0f, "AmbientMin", d->name) * SKY_FILL_RADIANCE;
+		const float fill = SKY_AMBIENT;
 		TextAppend(f,
 				   "  %s:\n"
 				   "    intensity: %g\n"
