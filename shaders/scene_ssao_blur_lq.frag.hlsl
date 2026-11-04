@@ -8,13 +8,14 @@
  * consistently with view distance.
  *
  * Inputs:
- *   t0 — visibility RT to read (RGBA8: AO, directional shadow, key shadow)
+ *   t0 — visibility RT to read (RGBA16F: AO, directional shadow, key
+ *        shadow, depth)
  *   t1 — depth RT (reverse-Z; nearest-sampled at the half-res AO uv)
  *   s0 — NEAREST + CLAMP_TO_EDGE (shared)
  *   b0 — SSAOBlurUniforms: direction_uv selects the blur axis; near_z and
  *        projected AO-texel scale match the high-quality separable blur.
  *
- * Output: RGBA8 visibility. Shadow uses only the centre and immediate
+ * Output: RGBA16F visibility, with the centre's depth in A. Shadow uses only the centre and immediate
  * neighbours, matching the high tier's contact-preserving footprint; the
  * key light's shadow 1 m out takes AO's footprint.
  */
@@ -119,5 +120,5 @@ float4 main(VSOut i) : SV_Target0
         : visibility[2].y;
     /* The key light's shadow 1 m out (B) takes AO's whole footprint. */
     float key = weight_sum > 0.0f ? key_sum / weight_sum : visibility[2].z;
-    return float4(ao, shadow, key, 1.0f);
+    return float4(ao, shadow, key, center_depth);
 }

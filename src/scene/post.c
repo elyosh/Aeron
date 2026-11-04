@@ -251,12 +251,12 @@ int AeronScenePost_EnsureSsao(struct AeronScene3D* s) {
 		AeronSceneInternal_CompileShader("scene_ssao_blur.frag", AERON_SHADER_STAGE_FRAGMENT, 2, 1, 0);
 	s->ssao_blur_lq_ps =
 		AeronSceneInternal_CompileShader("scene_ssao_blur_lq.frag", AERON_SHADER_STAGE_FRAGMENT, 2, 1, 0);
-	const PostTarget ao = { AERON_TEXTURE_FORMAT_RGBA8_UNORM, 0xF };
+	const PostTarget ao = { AERON_TEXTURE_FORMAT_RGBA16_FLOAT, 0xF };
 	if (s->ssao_ps) {
 		s->ssao_pipeline = post_pipeline(s->fullscreen_vs, s->ssao_ps, &ao, 1, 0);
 	}
 	if (s->ssao_receiver_local_ps) {
-		const PostTarget shadow_only = { AERON_TEXTURE_FORMAT_RGBA8_UNORM, 0x2 };
+		const PostTarget shadow_only = { AERON_TEXTURE_FORMAT_RGBA16_FLOAT, 0x2 };
 		s->ssao_receiver_local_pipeline =
 			post_pipeline(s->fullscreen_vs, s->ssao_receiver_local_ps, &shadow_only, 1, 0);
 	}
@@ -270,10 +270,10 @@ int AeronScenePost_EnsureSsao(struct AeronScene3D* s) {
 	/* Half-resolution AO/directional-shadow visibility + ping-pong blur target. */
 	s->ao_rt_w    = (s->render_w + 1) / 2;
 	s->ao_rt_h    = (s->render_h + 1) / 2;
-	s->ao_rt      = AeronSceneInternal_CreateColorRt(AERON_TEXTURE_FORMAT_RGBA8_UNORM, s->ao_rt_w, s->ao_rt_h,
-													 "scene.visibility");
-	s->ao_blur_rt = AeronSceneInternal_CreateColorRt(AERON_TEXTURE_FORMAT_RGBA8_UNORM, s->ao_rt_w, s->ao_rt_h,
-													 "scene.visibility_blur");
+	s->ao_rt = AeronSceneInternal_CreateColorRt(AERON_TEXTURE_FORMAT_RGBA16_FLOAT, s->ao_rt_w, s->ao_rt_h,
+												"scene.visibility");
+	s->ao_blur_rt = AeronSceneInternal_CreateColorRt(AERON_TEXTURE_FORMAT_RGBA16_FLOAT, s->ao_rt_w,
+													 s->ao_rt_h, "scene.visibility_blur");
 
 	if (!s->ssao_pipeline || !s->ssao_receiver_local_pipeline || !s->ao_rt || !s->ao_blur_rt) {
 		Aeron_LogError("aeron.scene", "SSAO initialization failed");

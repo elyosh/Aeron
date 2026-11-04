@@ -445,6 +445,50 @@ float directional_shadow_visibility(float3 world_pos, float3 geometric_normal,
 }
 
 #ifndef AERON_DIRECTIONAL_SHADOW_ONLY
+/* How far, as a fraction of the view distance, the depth of a visibility
+ * texel can be from the pixel's before it stops counting. A texel this far
+ * keeps 37% of its weight. */
+static const float kScreenVisibilityDepthTolerance = 0.02f;
+
+/* Reads the half-resolution visibility pass (scene_ssao.hlsli) for the
+ * full-resolution pixel at `pixel` (SV_Position.xy) and reverse-Z `depth`.
+ * Texel j holds full-resolution pixel 2j + 1, with its depth in A. Plain
+ * bilinear filtering mixes in the texels of other surfaces at edges: a
+ * surface in a cast shadow then took the sun's light from the sky or from
+ * a lit surface behind it. Each of the four nearest texels is weighed by
+ * how close its depth is to the pixel's, and when none is close, the
+ * closest one is used. */
+float4 read_screen_visibility(Texture2D<float4> visibility, float2 pixel, float depth)
+{
+    uint width, height;
+    visibility.GetDimensions(width, height);
+    int2 last = int2(width, height) - 1;
+    float2 position = (pixel - 1.5f) * 0.5f;
+    float2 base = floor(position);
+    float2 fraction = position - base;
+    float4 sum = float4(0.0f, 0.0f, 0.0f, 0.0f);
+    float weight_sum = 0.0f;
+    float4 closest = float4(1.0f, 1.0f, 1.0f, 0.0f);
+    float closest_difference = 1.0e30f;
+    [unroll] for (int k = 0; k < 4; k++) {
+        int2 offset = int2(k & 1, k >> 1);
+        float4 texel = visibility.Load(int3(clamp(int2(base) + offset, int2(0, 0), last), 0));
+        float2 bilinear = lerp(1.0f - fraction, fraction, float2(offset));
+        /* Reverse-Z depth is near / z, so this is also the relative
+         * difference of the view distances. */
+        float difference = abs(texel.a - depth) / max(depth, 1.0e-12f);
+        float x = difference / kScreenVisibilityDepthTolerance;
+        float weight = bilinear.x * bilinear.y * exp(-x * x);
+        sum += texel * weight;
+        weight_sum += weight;
+        if (difference < closest_difference) {
+            closest_difference = difference;
+            closest = texel;
+        }
+    }
+    return weight_sum > 1.0e-4f ? sum / weight_sum : closest;
+}
+
 /* World-axis ambient irradiance for a unit-length surface normal.
  * Squared components naturally sum to 1, so the blend stays energy-
  * preserving regardless of N's orientation. Valve / HL2 ambient

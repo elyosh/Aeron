@@ -146,10 +146,10 @@ Texture2DArray g_mr         : register(t2, space2);
 SamplerState g_mr_sampler   : register(s2, space2);
 Texture2DArray g_emissive   : register(t3, space2);
 SamplerState g_em_sampler   : register(s3, space2);
-/* Half-res RGBA8 visibility: R = SSAO, G = denoised main directional
- * shadow, B = the key light's shadow 1 m out (scene_ssao.hlsli). A 1×1
- * white placeholder keeps all unoccluded when the joint visibility pass is
- * unavailable. */
+/* Half-res RGBA16F visibility: R = SSAO, G = denoised main directional
+ * shadow, B = the key light's shadow 1 m out, A = the depth of the pixel it
+ * was computed for (scene_ssao.hlsli). A 1×1 white placeholder keeps all
+ * unoccluded when the joint visibility pass is unavailable. */
 Texture2D<float4> g_ao      : register(t4, space2);
 SamplerState g_ao_sampler   : register(s4, space2);
 TextureCube<float4> g_environment : register(t7, space2);
@@ -948,7 +948,7 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
     bool read_visibility = ssao_intensity > 0.0f || (i.shadow_flags & PBR_SHADOW_SCREEN) != 0u;
 #endif
     if (!AERON_PBR_ALPHA_BLEND && read_visibility) {
-        float4 visibility = g_ao.Sample(g_ao_sampler, i.position.xy * fs_render_size.zw);
+        float4 visibility = read_screen_visibility(g_ao, i.position.xy, i.position.z);
         screen_shadow_visibility = visibility.y;
         screen_key_visibility = visibility.z;
         if (ssao_intensity > 0.0f) {

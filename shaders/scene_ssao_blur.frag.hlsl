@@ -12,11 +12,12 @@
  *     variance-reduction strength without biasing either direction.
  *
  * Inputs:
- *   t0 — visibility RT to read (RGBA8: AO, directional shadow, key shadow)
+ *   t0 — visibility RT to read (RGBA16F: AO, directional shadow, key
+ *        shadow, depth)
  *   t1 — depth RT (full-res; nearest-sampled at the half-res AO uv)
  *   s0 — NEAREST + CLAMP_TO_EDGE (shared)
  *
- * Output: RGBA8 visibility. AO and the key light's shadow 1 m out use the
+ * Output: RGBA16F visibility, with the centre's depth in A. AO and the key light's shadow 1 m out use the
  * complete nine-tap footprint; shadow visibility uses the already-fetched
  * centre and immediate neighbours so contact shadows are denoised without
  * inheriting AO's broad blur.
@@ -133,5 +134,5 @@ float4 main(VSOut i) : SV_Target0
         : visibility[4].y;
     /* The key light's shadow 1 m out (B) takes AO's whole footprint. */
     float key = weight_sum > 0.0f ? key_sum / weight_sum : visibility[4].z;
-    return float4(ao, shadow, key, 1.0f);
+    return float4(ao, shadow, key, center_depth);
 }

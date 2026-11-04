@@ -20,13 +20,14 @@
  *        receiver-local map in the second
  *
  * Output:
- *   RGBA8 visibility in [0, 1]. R is ambient occlusion; G is main
+ *   RGBA16F visibility. R is ambient occlusion; G is main
  *   directional-shadow visibility for opaque forward shading; B, with probe
  *   occlusion (occupancy_dims.w), what a cone along the mirror direction
  *   meets in the occupancy; else, while the key light is in the probes
  *   (visibility_params.z, the distance of 1 m), its shadow 1 m out along
  *   the normal, for surfaces in shadow turning away from it; else G
- *   (scene_pbr_mesh_impl.hlsli's probe light).
+ *   (scene_pbr_mesh_impl.hlsli's probe light). R, G and B are in [0, 1]. A
+ *   is the reverse-Z depth of the source pixel, 0 for the sky.
  *
  * Coordinate space: works in view space ("eye space") using
  * mat4_perspective_reverse_z_xy's projection. The G-buffer normal is
@@ -320,7 +321,9 @@ float4 main(VSOut i) : SV_Target0
     float2 receiver_uv = (float2(source_pixel) + 0.5f) / float2(depth_size);
 
     float depth = g_depth.SampleLevel(g_depth_sampler, receiver_uv, 0.0f).r;
-    if (depth <= 0.0f) return float4(1.0f, 1.0f, 1.0f, 1.0f); /* sky never occludes */
+    /* A holds the depth of the source pixel, so the material shaders only
+     * take the visibility of their own surface (read_screen_visibility). */
+    if (depth <= 0.0f) return float4(1.0f, 1.0f, 1.0f, 0.0f); /* sky never occludes */
 
     float3 view_pos = view_pos_from(receiver_uv, depth);
 
@@ -347,7 +350,7 @@ float4 main(VSOut i) : SV_Target0
     }
     float key = occupancy_dims.w != 0.0f ? occlusion_cone(world_pos, world_normal)
                                          : key_shadow(world_pos, world_normal, shadow, source_pixel);
-    if (visibility_params.x == 0.0f) return float4(1.0f, shadow, key, 1.0f);
+    if (visibility_params.x == 0.0f) return float4(1.0f, shadow, key, depth);
     float3 view_normal;
     view_normal.x = dot(view_rot[0].xyz, world_normal);
     view_normal.y = dot(view_rot[1].xyz, world_normal);
@@ -440,6 +443,6 @@ float4 main(VSOut i) : SV_Target0
     }
 
     float ao = 1.0f - (occlusion / (float)taps) * intensity;
-    return saturate(float4(ao, shadow, key, 1.0f));
+    return float4(saturate(float3(ao, shadow, key)), depth);
 #endif
 }
