@@ -35,7 +35,7 @@
 
 static const char* const kMissionDirs[] = { "Missions", "Melee", "Combat" };
 
-#define SKY_AMBIENT 0.6
+#define SKY_AMBIENT 1.0
 
 /* The environment of the Death Star missions without [SkyBoxes]. It has no
  * sky and no directional light, so the light of the mission's backdrops
