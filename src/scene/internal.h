@@ -727,10 +727,12 @@ struct AeronScene3D {
 	int                        flare_frame;     /* drawn this frame */
 	float                      flare_center[2]; /* render pixels, jittered */
 	float                      flare_radius;    /* render pixels */
+	float flare_disc[3]; /* centre and radius, flare units of the output, without jitter */
 	float                      flare_depth;
 	int                        flare_tried;
 	AeronComputePipeline*      flare_visibility_pipe;
 	AeronSampler*              flare_depth_sampler;
+	AeronSampler*              flare_depth_compare_sampler;
 	AeronShader*               flare_vs;
 	AeronShader*               flare_fs;
 	AeronGraphicsPipeline*     flare_pipe;

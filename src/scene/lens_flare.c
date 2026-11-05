@@ -63,10 +63,22 @@ static int flare_ensure(AeronScene3D* s) {
 		.address_v  = AERON_ADDRESS_CLAMP_TO_EDGE,
 		.address_w  = AERON_ADDRESS_CLAMP_TO_EDGE,
 	});
+	/* The flare's depth test: 1 where nothing is in front of the source,
+	 * blended between the four texels around the point. */
+	s->flare_depth_compare_sampler = Aeron_CreateSampler(&(AeronSamplerDesc) {
+		.min_filter     = AERON_FILTER_LINEAR,
+		.mag_filter     = AERON_FILTER_LINEAR,
+		.mip_filter     = AERON_FILTER_NEAREST,
+		.address_u      = AERON_ADDRESS_CLAMP_TO_EDGE,
+		.address_v      = AERON_ADDRESS_CLAMP_TO_EDGE,
+		.address_w      = AERON_ADDRESS_CLAMP_TO_EDGE,
+		.enable_compare = 1,
+		.compare        = AERON_COMPARE_GREATER_EQUAL,
+	});
 	s->flare_vs =
 		AeronSceneInternal_CompileShader("scene_lens_flare.vert", AERON_SHADER_STAGE_VERTEX, 0, 0, 1);
 	s->flare_fs =
-		AeronSceneInternal_CompileShader("scene_lens_flare.frag", AERON_SHADER_STAGE_FRAGMENT, 1, 1, 2);
+		AeronSceneInternal_CompileShader("scene_lens_flare.frag", AERON_SHADER_STAGE_FRAGMENT, 2, 1, 2);
 	s->flare_smooth_fs      = AeronSceneInternal_CompileShader("scene_lens_flare_smooth.frag",
 															   AERON_SHADER_STAGE_FRAGMENT, 0, 1, 1);
 	s->flare_smooth_sampler = Aeron_CreateSampler(&(AeronSamplerDesc) {
@@ -124,9 +136,9 @@ static int flare_ensure(AeronScene3D* s) {
 			.color_targets      = cts,
 		});
 	}
-	if (!s->flare_visibility_pipe || !s->flare_depth_sampler || !s->flare_visibility ||
-		!s->flare_element_buffer || !s->flare_pipe || !s->flare_smooth_pipe || !s->flare_smooth_sampler ||
-		!s->flare_smooth_rt) {
+	if (!s->flare_visibility_pipe || !s->flare_depth_sampler || !s->flare_depth_compare_sampler ||
+		!s->flare_visibility || !s->flare_element_buffer || !s->flare_pipe || !s->flare_smooth_pipe ||
+		!s->flare_smooth_sampler || !s->flare_smooth_rt) {
 		Aeron_LogError("aeron.scene",
 					   "lens flare: could not build the pipelines or buffers; no flare is drawn");
 		AeronSceneLensFlare_Release(s);
@@ -200,6 +212,12 @@ int AeronSceneLensFlare_Prepare(AeronScene3D* s, AeronCommandBuffer* cmd) {
 	const float       unit   = 0.5f * (float)(out->width < out->height ? out->width : out->height);
 	const float       sun[2] = { clip[0] / clip[3] * 0.5f * (float)out->width / unit,
 								 -clip[1] / clip[3] * 0.5f * (float)out->height / unit };
+	/* The disc hides the flare. Its radius is in render pixels, so it is
+	 * converted with the render viewport, which has the same shape as the
+	 * output. */
+	s->flare_disc[0] = sun[0];
+	s->flare_disc[1] = sun[1];
+	s->flare_disc[2] = radius / (0.5f * (float)(vp->width < vp->height ? vp->width : vp->height));
 
 	/* The elements, sorted by shape, with what doesn't change across the
 	 * screen worked out here: the centre, and the colour with the tint and
@@ -274,10 +292,13 @@ typedef struct FlareUniforms {
 	float    scale[4];
 	float    origin[4];
 	uint32_t ends[4];
+	float    disc[4];
+	float    render[4];
 } FlareUniforms;
 
 static FlareUniforms flare_uniforms(const AeronScene3D* s, const float origin[2], float pixel_scale) {
 	const AeronRectI* out = &s->output_camera.viewport;
+	const AeronRectI* vp  = &s->camera.viewport;
 	FlareUniforms     u;
 	memset(&u, 0, sizeof u);
 	u.frame[0]  = origin[0] + 0.5f * (float)out->width;
@@ -293,6 +314,14 @@ static FlareUniforms flare_uniforms(const AeronScene3D* s, const float origin[2]
 	u.origin[2] = ((float)((out->width + 1) / 2) - 0.5f) / (float)((s->output_w + 1) / 2);
 	u.origin[3] = ((float)((out->height + 1) / 2) - 0.5f) / (float)((s->output_h + 1) / 2);
 	memcpy(u.ends, s->flare_shape_end, sizeof u.ends);
+	u.disc[0]   = s->flare_disc[0];
+	u.disc[1]   = s->flare_disc[1];
+	u.disc[2]   = s->flare_disc[2] * s->flare_disc[2];
+	u.disc[3]   = s->flare_depth;
+	u.render[0] = (float)vp->width / (float)out->width / (float)s->render_w;
+	u.render[1] = (float)vp->height / (float)out->height / (float)s->render_h;
+	u.render[2] = (float)vp->x / (float)s->render_w;
+	u.render[3] = (float)vp->y / (float)s->render_h;
 	return u;
 }
 
@@ -332,6 +361,8 @@ void AeronSceneLensFlare_Draw(AeronScene3D* s, AeronRenderPass* pass) {
 	Aeron_BindStorageBuffer(pass, AERON_SHADER_STAGE_VERTEX, 0, s->flare_visibility);
 	Aeron_BindTextureSampler(pass, AERON_SHADER_STAGE_FRAGMENT, 0,
 							 Aeron_RenderTargetGetTexture(s->flare_smooth_rt), s->flare_smooth_sampler);
+	Aeron_BindTextureSampler(pass, AERON_SHADER_STAGE_FRAGMENT, 1, Aeron_DepthTargetGetTexture(s->depth_rt),
+							 s->flare_depth_compare_sampler);
 	Aeron_BindStorageBuffer(pass, AERON_SHADER_STAGE_FRAGMENT, 0, s->flare_element_buffer);
 	Aeron_BindStorageBuffer(pass, AERON_SHADER_STAGE_FRAGMENT, 1, s->flare_visibility);
 	Aeron_BindUniformData(pass, AERON_SHADER_STAGE_FRAGMENT, 0, &u, sizeof u);
@@ -343,6 +374,7 @@ void AeronSceneLensFlare_Release(AeronScene3D* s) {
 		return;
 	Aeron_DestroyComputePipeline(s->flare_visibility_pipe);
 	Aeron_DestroySampler(s->flare_depth_sampler);
+	Aeron_DestroySampler(s->flare_depth_compare_sampler);
 	if (s->flare_pipe)
 		Aeron_DestroyGraphicsPipeline(s->flare_pipe);
 	if (s->flare_vs)
@@ -360,6 +392,7 @@ void AeronSceneLensFlare_Release(AeronScene3D* s) {
 	Aeron_DestroyBuffer(s->flare_element_buffer);
 	s->flare_visibility_pipe = NULL;
 	s->flare_depth_sampler   = NULL;
+	s->flare_depth_compare_sampler = NULL;
 	s->flare_pipe            = NULL;
 	s->flare_vs              = NULL;
 	s->flare_fs              = NULL;

@@ -72,7 +72,9 @@ typedef struct AeronSceneLensFlareDesc {
  * AeronScene_Begin resets it, so a frame without a call draws none. An
  * anchor behind the camera draws no flare. Depth samples outside the
  * viewport count as hidden, so the flare fades as the disc leaves the
- * screen. */
+ * screen. The flare is drawn behind the disc. The disc hides it the same
+ * way a procedural star's disc hides the sky, but only where nothing is in
+ * front of the disc. */
 void AeronScene_SetLensFlare(AeronScene3D* scene, const AeronSceneLensFlareDesc* desc);
 
 /* Builds the flare's pipelines and buffers now, so the first frame with a

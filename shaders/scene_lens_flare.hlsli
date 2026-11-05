@@ -19,6 +19,10 @@ cbuffer LensFlareFS : register(b0, space3)
     float4 origin; /* xy = the output viewport's origin, output pixels; zw = the largest uv
                       that the half-resolution pass draws */
     uint4  ends;   /* where the halos, discs, hexagons and streaks end */
+    float4 disc;   /* xy = the source's disc centre, flare units; z = its radius squared;
+                      w = the source's depth */
+    float4 render; /* xy = the depth image's uv per output pixel; zw = its uv at the output
+                      viewport's origin */
 };
 
 struct VSOut
