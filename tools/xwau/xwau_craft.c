@@ -1453,7 +1453,7 @@ static void write_target_display(FILE* f, const TargetDisplay* display) {
 typedef struct EnhancedHud {
 	bool   enabled, enhance_name_color, display_bars, vertical_bars, bg_text_box, depth_occlusion;
 	int    font_size; /* 0 small, 1 medium, 2 large */
-	double min_bracket, max_bracket, min_bar, max_bar, bar_thickness, bar_gap, bar_frame;
+	double min_bracket, max_bracket, min_bar, max_bar, bar_frame;
 	double shields[3], overshields[3], hull_full[3], hull_mid[3], hull_low[3], systems[3];
 } EnhancedHud;
 
@@ -1485,10 +1485,6 @@ static void read_enhanced_hud_setting(const char* key, const char* value, void* 
 		h->min_bar = (float)v;
 	else if (strcasecmp(key, "enhanced_hud_max_bar_length") == 0)
 		h->max_bar = (float)v;
-	else if (strcasecmp(key, "enhanced_hud_bar_thickness") == 0)
-		h->bar_thickness = (float)v;
-	else if (strcasecmp(key, "enhanced_hud_bar_gap") == 0)
-		h->bar_gap = (float)v;
 	else if (strcasecmp(key, "enhanced_hud_bar_frame_width") == 0)
 		h->bar_frame = (float)v;
 	else if (strcasecmp(key, "enhanced_hud_font_size") == 0) {
@@ -1518,8 +1514,6 @@ static bool read_enhanced_hud(const char* xwau_root, EnhancedHud* out) {
 		.font_size          = 1,
 		.min_bar            = 16.0,
 		.max_bar            = 140.0,
-		.bar_thickness      = 9.0,
-		.bar_gap            = 7.0,
 		.bar_frame          = 3.0,
 		.shields            = { 0.125, 0.5, 1.0 },
 		.overshields        = { 0.49, 0.976, 1.0 },
@@ -1558,8 +1552,10 @@ static void write_target_readout(FILE* f, const EnhancedHud* h) {
 			h->vertical_bars ? "vertical" : "horizontal");
 	write_readout_number(f, "bar_length_min", h->min_bar);
 	write_readout_number(f, "bar_length_max", h->max_bar);
-	write_readout_number(f, "bar_thickness", h->bar_thickness);
-	write_readout_number(f, "bar_gap", h->bar_gap);
+	/* The bars' thickness and gap are tuned for OpenXWA, and don't come from
+	   enhanced_hud_bar_thickness and enhanced_hud_bar_gap. */
+	write_readout_number(f, "bar_thickness", 7.0);
+	write_readout_number(f, "bar_gap", 4.0);
 	write_readout_number(f, "bar_frame", h->bar_frame);
 	write_readout_color(f, "shield_color", h->shields);
 	write_readout_color(f, "overshield_color", h->overshields);
@@ -1646,10 +1642,9 @@ static bool write_hud_file(const char* xwau_root, const char* output_dir, const 
 		if (has_display)
 			write_target_display(f, &display);
 		/* XWAU's box lines are 2 pixels of the game's resolution, which the
-		   importer doesn't know. 4 points is what XWAU shows with the game at
-		   half the screen's height. */
+		   importer doesn't know. The width is tuned for OpenXWA. */
 		if (has_boxes)
-			fputs("target_boxes:\n  line_width: 4\n", f);
+			fputs("target_boxes:\n  line_width: 3\n", f);
 		if (has_readout)
 			write_target_readout(f, &readout);
 		ok = fclose(f) == 0;
