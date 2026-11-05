@@ -36,6 +36,12 @@ static struct {
 	AeronShader*        vs4; /* 4-corner free-quad vertex shader */
 	Blit2DPipelineEntry pipelines[AERON_BLIT2D_PIPELINE_CACHE_CAP];
 	int                 pipeline_count;
+	/* Sprites with a depth mask — the shader is loaded on first use. */
+	int                 mask_initialized;
+	int                 mask_failed;
+	AeronShader*        fs_mask;
+	Blit2DPipelineEntry pipelines_mask[AERON_BLIT2D_PIPELINE_CACHE_CAP];
+	int                 pipeline_mask_count;
 	Blit2DPipelineEntry pipelines4[AERON_BLIT2D_PIPELINE_CACHE_CAP];
 	int                 pipeline4_count;
 	/* Rounded-rect (UI) shader pair — loaded lazily on first use so
@@ -108,6 +114,25 @@ static int blit2d_ensure(void) {
 	return 1;
 }
 
+static int blit2d_mask_ensure(void) {
+	if (G.mask_initialized) {
+		return !G.mask_failed;
+	}
+	G.mask_initialized = 1;
+	G.fs_mask          = Aeron_CreateShader(&(AeronShaderDesc) {
+		.name                 = "scene_blit_depth_mask.frag",
+		.stage                = AERON_SHADER_STAGE_FRAGMENT,
+		.sampler_count        = 2,
+		.uniform_buffer_count = 1,
+	});
+	if (!G.fs_mask) {
+		Aeron_LogError("aeron.scene", "depth mask blit shader load failed");
+		G.mask_failed = 1;
+		return 0;
+	}
+	return 1;
+}
+
 static int blit2d_rr_ensure(void) {
 	if (G.rr_initialized) {
 		return !G.rr_failed;
@@ -146,6 +171,11 @@ static void blit2d_shutdown(void) {
 			Aeron_DestroyGraphicsPipeline(G.pipelines4[i].pipe);
 		}
 	}
+	for (int i = 0; i < G.pipeline_mask_count; i++) {
+		if (G.pipelines_mask[i].pipe) {
+			Aeron_DestroyGraphicsPipeline(G.pipelines_mask[i].pipe);
+		}
+	}
 	for (int i = 0; i < G.pipeline_rr_count; i++) {
 		if (G.pipelines_rr[i].pipe) {
 			Aeron_DestroyGraphicsPipeline(G.pipelines_rr[i].pipe);
@@ -161,6 +191,8 @@ static void blit2d_shutdown(void) {
 		Aeron_DestroyShader(G.fs);
 	if (G.vs4)
 		Aeron_DestroyShader(G.vs4);
+	if (G.fs_mask)
+		Aeron_DestroyShader(G.fs_mask);
 	if (G.vs_rr)
 		Aeron_DestroyShader(G.vs_rr);
 	if (G.fs_rr)
@@ -247,6 +279,16 @@ static AeronGraphicsPipeline* blit2d_pipeline(AeronTextureFormat color_format, A
 	}
 	return cache_lookup(G.pipelines, &G.pipeline_count, G.vs, G.fs, color_format, blend, depth_format,
 						sample_count, 0, "blit pipeline");
+}
+
+static AeronGraphicsPipeline* blit2d_pipeline_mask(AeronTextureFormat color_format, AeronBlit2DBlend blend,
+												   AeronTextureFormat depth_format,
+												   AeronSampleCount   sample_count) {
+	if (!blit2d_ensure() || !blit2d_mask_ensure()) {
+		return NULL;
+	}
+	return cache_lookup(G.pipelines_mask, &G.pipeline_mask_count, G.vs, G.fs_mask, color_format, blend,
+						depth_format, sample_count, 0, "depth mask blit pipeline");
 }
 
 static AeronGraphicsPipeline* blit2d_pipeline4(AeronTextureFormat color_format, AeronBlit2DBlend blend,
@@ -374,6 +416,8 @@ struct AeronDrawList2D {
 	int                      target_w, target_h;
 	AeronDrawList2DClearMode clear_mode;
 	float                    clear_rgba[4];
+	int                      has_depth_mask;
+	AeronDrawList2DDepthMask depth_mask;
 };
 
 AeronDrawList2D* AeronDrawList_Create(int record_cap) {
@@ -423,10 +467,11 @@ void AeronDrawList_Begin(AeronDrawList2D* l, AeronRenderTarget* target, int targ
 	} else {
 		memset(l->clear_rgba, 0, sizeof l->clear_rgba);
 	}
-	l->count    = 0;
-	l->dropped  = 0;
-	l->active   = 1;
-	l->prepared = 0;
+	l->count          = 0;
+	l->dropped        = 0;
+	l->active         = 1;
+	l->prepared       = 0;
+	l->has_depth_mask = 0;
 }
 
 /* Doubles the record capacity, and the instance arrays with it. Returns 0
@@ -801,6 +846,16 @@ static void dl2d_set_scissor(AeronDrawList2D* l, AeronRenderPass* pass, const Ae
 	}
 }
 
+void AeronDrawList_SetDepthMask(AeronDrawList2D* l, const AeronDrawList2DDepthMask* mask) {
+	if (!l) {
+		return;
+	}
+	l->has_depth_mask = mask && mask->depth && mask->size_px[0] > 0.0f && mask->size_px[1] > 0.0f;
+	if (l->has_depth_mask) {
+		l->depth_mask = *mask;
+	}
+}
+
 static int draw_list_encode(AeronDrawList2D* l, AeronRenderPass* pass, AeronRenderTarget* target) {
 	const AeronTextureFormat fmt              = Aeron_TextureGetFormat(Aeron_RenderTargetGetTexture(target));
 	const AeronTextureFormat depth_format     = Aeron_RenderPassGetDepthFormat(pass);
@@ -823,8 +878,10 @@ static int draw_list_encode(AeronDrawList2D* l, AeronRenderPass* pass, AeronRend
 			while (end < l->count && dl2d_same_sprite_state(r, &l->records[end])) {
 				++end;
 			}
-			AeronGraphicsPipeline* pipe    = blit2d_pipeline(fmt, r->blend, depth_format, sample_count);
-			AeronSampler*          sampler = blit2d_sampler(r->filter);
+			AeronGraphicsPipeline* pipe =
+				l->has_depth_mask ? blit2d_pipeline_mask(fmt, r->blend, depth_format, sample_count)
+								  : blit2d_pipeline(fmt, r->blend, depth_format, sample_count);
+			AeronSampler* sampler = blit2d_sampler(r->filter);
 			if (!pipe || !sampler || !l->instance_buffer) {
 				return 0;
 			}
@@ -832,6 +889,22 @@ static int draw_list_encode(AeronDrawList2D* l, AeronRenderPass* pass, AeronRend
 			run.base_instance    = r->instance_index;
 			Aeron_BindGraphicsPipeline(pass, pipe);
 			Aeron_BindTextureSampler(pass, AERON_SHADER_STAGE_FRAGMENT, 0, r->texture, sampler);
+			if (l->has_depth_mask) {
+				const AeronDrawList2DDepthMask* m               = &l->depth_mask;
+				const float                     mask_uniform[8] = {
+					m->offset_px[0],
+					m->offset_px[1],
+					1.0f / m->size_px[0],
+					1.0f / m->size_px[1],
+					m->hide_above,
+					0.0f,
+					0.0f,
+					0.0f,
+				};
+				Aeron_BindTextureSampler(pass, AERON_SHADER_STAGE_FRAGMENT, 1, m->depth, G.sampler_nearest);
+				Aeron_BindUniformData(pass, AERON_SHADER_STAGE_FRAGMENT, 0, mask_uniform,
+									  sizeof mask_uniform);
+			}
 			Aeron_BindStorageBuffer(pass, AERON_SHADER_STAGE_VERTEX, 0, l->instance_buffer);
 			Aeron_BindUniformData(pass, AERON_SHADER_STAGE_VERTEX, 0, &run, sizeof run);
 			Aeron_DrawInstanced(pass, 4, (uint32_t)(end - i), 0);

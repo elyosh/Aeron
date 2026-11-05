@@ -158,6 +158,21 @@ void AeronDrawList_AddFill(AeronDrawList2D* list, float x, float y, float w, flo
 void AeronDrawList_AddFrame(AeronDrawList2D* list, float x, float y, float w, float h, float thickness_px,
 							const float rgba[4], AeronBlit2DBlend blend, const AeronRectI* scissor);
 
+/* Hides the sprites of a list where a reversed-Z depth texture is nearer
+ * than a value. The list's target pixel (x, y) reads the depth at
+ * uv = ((x, y) - offset_px) / size_px, with a nearest sampler. Round rects
+ * and free quads aren't masked. */
+typedef struct AeronDrawList2DDepthMask {
+	AeronTexture* depth;
+	float         offset_px[2];
+	float         size_px[2];
+	float         hide_above; /* hide where the depth is larger than this */
+} AeronDrawList2DDepthMask;
+
+/* Sets the list's mask, or clears it with NULL. Begin clears it. It can be
+ * set after Prepare: it applies when the list is rendered. */
+void AeronDrawList_SetDepthMask(AeronDrawList2D* list, const AeronDrawList2DDepthMask* mask);
+
 /* Compacts and uploads rect/sprite instances. `cmd` must have no active
  * render or compute pass. Adding records after this call invalidates the
  * prepared generation. Empty and quad4-only lists prepare successfully. */

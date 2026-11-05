@@ -756,6 +756,9 @@ int AeronScene_Render(AeronScene3D* scene, AeronCommandBuffer* cmd);
 AeronTexture*      AeronScene_ColorTexture(AeronScene3D* scene);
 AeronRenderTarget* AeronScene_ColorRt(AeronScene3D* scene);
 AeronDepthTarget*  AeronScene_DepthRt(AeronScene3D* scene);
+/* The value that AeronScene_DepthRt holds at view distance `distance`, in
+ * scene units, for the last rendered frame. A larger value is nearer. */
+float              AeronScene_DepthAtDistance(const AeronScene3D* scene, float distance);
 AeronRenderTarget* AeronScene_NormalRt(AeronScene3D* scene); /* prepass output; NULL when not allocated */
 /* RtDims is the stable output size. RenderDims is the mode-derived internal
  * size used by color/depth/normal/velocity passes. */

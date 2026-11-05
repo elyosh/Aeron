@@ -2860,6 +2860,16 @@ AeronRenderTarget* AeronScene_ColorRt(AeronScene3D* s) { return s ? s->color_rt 
 
 AeronDepthTarget* AeronScene_DepthRt(AeronScene3D* s) { return s ? s->depth_rt : NULL; }
 
+float AeronScene_DepthAtDistance(const AeronScene3D* s, float distance) {
+	if (!s || !(distance > 0.0f)) {
+		return 0.0f;
+	}
+	/* Reversed-Z with an infinite far plane: the projection's z is the near
+	 * distance and its w the view distance (scene_mat4_perspective_reverse_z_xy). */
+	const float near_z = s->camera.near_z > 0.0f ? s->camera.near_z : 0.001f;
+	return near_z / distance;
+}
+
 AeronSampleCount AeronScene_SampleCount(const AeronScene3D* s) {
 	return s ? s->sample_count : AERON_SAMPLE_COUNT_1;
 }

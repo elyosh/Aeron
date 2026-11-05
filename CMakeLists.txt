@@ -334,6 +334,7 @@ set(AERON_SHADER_SOURCES
     # (gpu_blit.vert/.frag, gpu_blit4.vert).
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_blit.vert.hlsl
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_blit.frag.hlsl
+    ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_blit_depth_mask.frag.hlsl
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_billboard3d.vert.hlsl
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_billboard3d.frag.hlsl
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_billboard3d_vel.vert.hlsl
