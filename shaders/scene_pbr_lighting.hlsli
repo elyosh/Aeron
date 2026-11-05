@@ -449,6 +449,9 @@ float directional_shadow_visibility(float3 world_pos, float3 geometric_normal,
  * texel can be from the pixel's before it stops counting. A texel this far
  * keeps 37% of its weight. */
 static const float kScreenVisibilityDepthTolerance = 0.02f;
+/* Past this many tolerances, a texel's weight is below 0.01%, and the texel
+ * belongs to another surface. */
+static const float kScreenVisibilityMatchLimit = 3.0f;
 
 /* Reads the half-resolution visibility pass (scene_ssao.hlsli) for the
  * full-resolution pixel at `pixel` (SV_Position.xy) and reverse-Z `depth`.
@@ -457,8 +460,15 @@ static const float kScreenVisibilityDepthTolerance = 0.02f;
  * surface in a cast shadow then took the sun's light from the sky or from
  * a lit surface behind it. Each of the four nearest texels is weighed by
  * how close its depth is to the pixel's, and when none is close, the
- * closest one is used. */
-float4 read_screen_visibility(Texture2D<float4> visibility, float2 pixel, float depth)
+ * closest one is used.
+ *
+ * `matched` is false when none of the four texels is on the pixel's
+ * surface. With MSAA, this happens at silhouettes: the visibility pass
+ * works from the single-sample prepass, but the MSAA pass also shades
+ * pixels whose centre the surface doesn't cover. The texels there can all
+ * be sky, which is fully lit, so the caller must read the shadow map
+ * itself. */
+float4 read_screen_visibility(Texture2D<float4> visibility, float2 pixel, float depth, out bool matched)
 {
     uint width, height;
     visibility.GetDimensions(width, height);
@@ -486,6 +496,7 @@ float4 read_screen_visibility(Texture2D<float4> visibility, float2 pixel, float 
             closest = texel;
         }
     }
+    matched = closest_difference < kScreenVisibilityMatchLimit * kScreenVisibilityDepthTolerance;
     return weight_sum > 1.0e-4f ? sum / weight_sum : closest;
 }
 

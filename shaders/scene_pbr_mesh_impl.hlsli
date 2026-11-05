@@ -939,6 +939,9 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
     /* B: the key light's shadow 1 m out, or with probe occlusion what the
      * mirror direction's cone meets (scene_ssao.hlsli). */
     float screen_key_visibility = 1.0f;
+    /* False when the visibility pass has no texel of this surface nearby
+     * (read_screen_visibility). */
+    bool screen_visibility_matched = false;
 #if AERON_PBR_MIRROR
     /* The mirrored view has no visibility pass of its own. */
     bool read_visibility = false;
@@ -948,7 +951,7 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
     bool read_visibility = ssao_intensity > 0.0f || (i.shadow_flags & PBR_SHADOW_SCREEN) != 0u;
 #endif
     if (!AERON_PBR_ALPHA_BLEND && read_visibility) {
-        float4 visibility = read_screen_visibility(g_ao, i.position.xy, i.position.z);
+        float4 visibility = read_screen_visibility(g_ao, i.position.xy, i.position.z, screen_visibility_matched);
         screen_shadow_visibility = visibility.y;
         screen_key_visibility = visibility.z;
         if (ssao_intensity > 0.0f) {
@@ -958,7 +961,7 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
 
     float shadow_visibility = 1.0f;
     if ((i.shadow_flags & PBR_SHADOW_RECEIVE) != 0u) {
-        if (!AERON_PBR_ALPHA_BLEND && (i.shadow_flags & PBR_SHADOW_SCREEN) != 0u) {
+        if (!AERON_PBR_ALPHA_BLEND && (i.shadow_flags & PBR_SHADOW_SCREEN) != 0u && screen_visibility_matched) {
             shadow_visibility = screen_shadow_visibility;
         } else {
             /* The shadow scales only the sun's diffuse and specular terms.
@@ -967,9 +970,11 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
             float shadow_ndotl = max(dot(N, L), dot(N_face, L));
             /* Opaque receivers read the screen pass, so outside the debug
              * variant (whose cascade view needs this path) only blended
-             * materials come here: one comparison, as a soft penumbra is not
-             * discernible through canopy glass. Compiling the filter out
-             * keeps it from costing the whole shader. */
+             * materials and the opaque pixels that the screen pass has no
+             * texel for come here: one comparison, as a soft penumbra is not
+             * discernible through canopy glass or along a silhouette.
+             * Compiling the filter out keeps it from costing the whole
+             * shader. */
             bool shadow_single_tap = !AERON_PBR_DEBUG_VIEWS || AERON_PBR_ALPHA_BLEND ||
                                      (g_materials[mat].flags & GLTF_MATERIAL_ALPHA_BLEND) != 0u;
             shadow_visibility = directional_shadow_visibility(
@@ -1023,7 +1028,8 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
     if (key_shadow_in_probes != 0.0f && !probe_occlusion) {
         float key_visibility = shadow_visibility;
         float facing         = saturate(dot(N, L) * 2.5f - 0.75f); /* 0 below N.L 0.3, 1 above 0.7 */
-        if (key_shadow_facing == 0.0f && !AERON_PBR_ALPHA_BLEND && (i.shadow_flags & PBR_SHADOW_SCREEN) != 0u) {
+        if (key_shadow_facing == 0.0f && !AERON_PBR_ALPHA_BLEND && (i.shadow_flags & PBR_SHADOW_SCREEN) != 0u &&
+            screen_visibility_matched) {
             key_visibility = lerp(screen_key_visibility, shadow_visibility, facing);
         }
         /* Without its shadow facing, the key light's share of the grid's

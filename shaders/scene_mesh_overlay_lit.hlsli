@@ -123,10 +123,11 @@ float4 main(VSOut input, bool is_front : SV_IsFrontFace) : SV_Target {
 
 	/* The opaque surface under the overlay has the same pixel in the
 	 * visibility pass. */
-	float4 visibility = read_screen_visibility(g_visibility, input.pos.xy, input.pos.z);
+	bool   matched;
+	float4 visibility = read_screen_visibility(g_visibility, input.pos.xy, input.pos.z, matched);
 	float  ao         = ssao_intensity > 0.0f ? lerp(1.0f, pow(visibility.x, ssao_power), ssao_intensity) : 1.0f;
 	float  shadow     = visibility.y;
-	if (shading.x == 0.0f) {
+	if (shading.x == 0.0f || !matched) {
 		uint  cascade;
 		float cascade_blend, coverage;
 		shadow = directional_shadow_visibility(input.world_pos, N_face, max(dot(N, L), dot(N_face, L)),
