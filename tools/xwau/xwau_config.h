@@ -149,4 +149,21 @@ bool Xwau_DatNames(const char* written, char* rel, size_t rel_cap, char* library
  * in `cap`. */
 bool Xwau_EncodeName(const char* name, char* out, size_t cap);
 
+/* Called for each `key = value` line of a settings file. `value` is the
+ * rest of the line after the '='. */
+typedef void (*XwauSettingFn)(const char* key, const char* value, void* data);
+
+/* Reads the settings file `name` of the installation `game` as ddraw and
+ * Hook_CockpitLook read theirs, with sscanf("%s = %s"): a line is
+ * `key = value`, lines that start with ';' or '#' are comments, and there
+ * must be white space between the key and the '='. Calls `fn` for each
+ * setting, in the order of the file, so the last line with a key wins.
+ * Returns false when there is no such file. */
+bool Xwau_ReadSettings(const char* game, const char* name, XwauSettingFn fn, void* data);
+
+/* Reads `count` numbers, 1 or 3, from the value of a setting into `out`, as
+ * ddraw reads them: one with atof, three with sscanf("%f, %f, %f"). Returns
+ * false when there are fewer. */
+bool Xwau_ReadSettingNumbers(const char* text, int count, double* out);
+
 #endif /* AERON_XWAU_CONFIG_H */

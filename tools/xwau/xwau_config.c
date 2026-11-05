@@ -499,3 +499,50 @@ bool Xwau_EncodeName(const char* name, char* out, size_t cap) {
 	out[n] = 0;
 	return true;
 }
+
+bool Xwau_ReadSettingNumbers(const char* text, int count, double* out) {
+	float v[3] = { 0 };
+	if (count == 1) {
+		out[0] = atof(text);
+		return true;
+	}
+	if (sscanf(text, "%f, %f, %f", &v[0], &v[1], &v[2]) < 3)
+		return false;
+	for (int i = 0; i < 3; ++i)
+		out[i] = v[i];
+	return true;
+}
+
+bool Xwau_ReadSettings(const char* game, const char* name, XwauSettingFn fn, void* data) {
+	char   path[1024];
+	size_t size = 0;
+	char*  text = Xwau_FindFile(game, name, path, sizeof path) ? ReadWholeFile(path, &size) : NULL;
+	if (!text)
+		return false;
+	for (char* line = text; *line;) {
+		char* end = strchr(line, '\n');
+		if (end)
+			*end = 0;
+		/* Like sscanf("%s = %s"), which skips the white space before the key. */
+		const char* start = line;
+		while (isspace((unsigned char)*start))
+			++start;
+		char key[128];
+		int  key_length = 0;
+		while (start[key_length] && !isspace((unsigned char)start[key_length]) &&
+			   key_length + 1 < (int)sizeof key)
+			++key_length;
+		memcpy(key, start, (size_t)key_length);
+		key[key_length]   = 0;
+		const char* value = start + key_length;
+		while (isspace((unsigned char)*value))
+			++value;
+		if (line[0] != ';' && line[0] != '#' && *value == '=')
+			fn(key, value + 1, data);
+		if (!end)
+			break;
+		line = end + 1;
+	}
+	free(text);
+	return true;
+}

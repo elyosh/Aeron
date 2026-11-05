@@ -1,5 +1,6 @@
 #include "xwau_craft.h"
 
+#include <ctype.h>
 #include <limits.h>
 #include <math.h>
 #include <stdio.h>
@@ -1448,6 +1449,165 @@ static void write_target_display(FILE* f, const TargetDisplay* display) {
 	fputs("\n", f);
 }
 
+/* The enhanced HUD settings of ddraw's SSAO.cfg, with ddraw's defaults. */
+typedef struct EnhancedHud {
+	bool   enabled, enhance_name_color, display_bars, vertical_bars, bg_text_box, depth_occlusion;
+	int    font_size; /* 0 small, 1 medium, 2 large */
+	double min_bracket, max_bracket, min_bar, max_bar, bar_thickness, bar_gap, bar_frame;
+	double shields[3], overshields[3], hull_full[3], hull_mid[3], hull_low[3], systems[3];
+} EnhancedHud;
+
+/* Reads one setting of SSAO.cfg, as ddraw's LoadSSAOParams does: the value
+ * is read with atof, and a switch is on when it isn't 0. */
+static void read_enhanced_hud_setting(const char* key, const char* value, void* data) {
+	EnhancedHud* h = (EnhancedHud*)data;
+	double       v = 0.0;
+	Xwau_ReadSettingNumbers(value, 1, &v);
+	const bool on = (float)v != 0.0f;
+	if (strcasecmp(key, "enable_enhanced_hud") == 0) {
+		h->enabled   = on;
+		h->font_size = 1;
+	} else if (strcasecmp(key, "enhanced_hud_enhance_name_col") == 0)
+		h->enhance_name_color = on;
+	else if (strcasecmp(key, "enhanced_hud_display_bars") == 0)
+		h->display_bars = on;
+	else if (strcasecmp(key, "enhanced_hud_vertical_bars") == 0)
+		h->vertical_bars = on;
+	else if (strcasecmp(key, "enhanced_hud_enable_bg_text_box") == 0)
+		h->bg_text_box = on;
+	else if (strcasecmp(key, "enhanced_hud_apply_depth_occlusion") == 0)
+		h->depth_occlusion = on;
+	else if (strcasecmp(key, "enhanced_hud_min_bracket_size") == 0)
+		h->min_bracket = (int)(float)v;
+	else if (strcasecmp(key, "enhanced_hud_max_bracket_size") == 0)
+		h->max_bracket = (int)(float)v;
+	else if (strcasecmp(key, "enhanced_hud_min_bar_length") == 0)
+		h->min_bar = (float)v;
+	else if (strcasecmp(key, "enhanced_hud_max_bar_length") == 0)
+		h->max_bar = (float)v;
+	else if (strcasecmp(key, "enhanced_hud_bar_thickness") == 0)
+		h->bar_thickness = (float)v;
+	else if (strcasecmp(key, "enhanced_hud_bar_gap") == 0)
+		h->bar_gap = (float)v;
+	else if (strcasecmp(key, "enhanced_hud_bar_frame_width") == 0)
+		h->bar_frame = (float)v;
+	else if (strcasecmp(key, "enhanced_hud_font_size") == 0) {
+		const int size = (int)(float)v;
+		h->font_size   = size == 0 || size == 1 ? 0 : (size == 3 ? 2 : 1);
+	} else if (strcasecmp(key, "enhanced_hud_shields_col") == 0)
+		Xwau_ReadSettingNumbers(value, 3, h->shields);
+	else if (strcasecmp(key, "enhanced_hud_overshds_col") == 0)
+		Xwau_ReadSettingNumbers(value, 3, h->overshields);
+	else if (strcasecmp(key, "enhanced_hud_hull_col_full") == 0)
+		Xwau_ReadSettingNumbers(value, 3, h->hull_full);
+	else if (strcasecmp(key, "enhanced_hud_hull_col_mid") == 0)
+		Xwau_ReadSettingNumbers(value, 3, h->hull_mid);
+	else if (strcasecmp(key, "enhanced_hud_hull_col_low") == 0)
+		Xwau_ReadSettingNumbers(value, 3, h->hull_low);
+	else if (strcasecmp(key, "enhanced_hud_sys_col") == 0)
+		Xwau_ReadSettingNumbers(value, 3, h->systems);
+}
+
+/* Reads the enhanced HUD settings of SSAO.cfg. Returns whether the enhanced
+ * HUD is on. */
+static bool read_enhanced_hud(const char* xwau_root, EnhancedHud* out) {
+	*out = (EnhancedHud) {
+		.enhance_name_color = true,
+		.display_bars       = true,
+		.depth_occlusion    = true,
+		.font_size          = 1,
+		.min_bar            = 16.0,
+		.max_bar            = 140.0,
+		.bar_thickness      = 9.0,
+		.bar_gap            = 7.0,
+		.bar_frame          = 3.0,
+		.shields            = { 0.125, 0.5, 1.0 },
+		.overshields        = { 0.49, 0.976, 1.0 },
+		.hull_full          = { 0.0, 1.0, 0.0 },
+		.hull_mid           = { 1.0, 1.0, 0.0 },
+		.hull_low           = { 1.0, 0.0, 0.0 },
+		.systems            = { 0.8, 0.753, 1.0 },
+	};
+	Xwau_ReadSettings(xwau_root, "SSAO.cfg", read_enhanced_hud_setting, out);
+	return out->enabled;
+}
+
+static void write_readout_color(FILE* f, const char* key, const double srgb[3]) {
+	const float color[3] = { (float)srgb[0], (float)srgb[1], (float)srgb[2] };
+	fprintf(f, "  %s: ", key);
+	write_display_color(f, color);
+	fputs("\n", f);
+}
+
+static void write_readout_number(FILE* f, const char* key, double value) {
+	fprintf(f, "  %s: ", key);
+	Xwau_WriteDecimal(f, value);
+	fputs("\n", f);
+}
+
+/* Writes the target_readout section, with every key, from the enhanced HUD
+ * settings. */
+static void write_target_readout(FILE* f, const EnhancedHud* h) {
+	static const char* const sizes[] = { "small", "medium", "large" };
+	fprintf(f, "target_readout:\n  enabled: true\n  text_size: %s\n", sizes[h->font_size]);
+	/* The space that XWAU leaves under three lines of text: an identified
+	   craft's name, cargo and distance. */
+	write_readout_number(f, "text_gap", h->font_size == 2 ? 3.0 : 9.0);
+	fprintf(f, "  brighten_text: %s\n  name_colors: single\n  bars: %s\n  layout: %s\n",
+			h->enhance_name_color ? "true" : "false", h->display_bars ? "true" : "false",
+			h->vertical_bars ? "vertical" : "horizontal");
+	write_readout_number(f, "bar_length_min", h->min_bar);
+	write_readout_number(f, "bar_length_max", h->max_bar);
+	write_readout_number(f, "bar_thickness", h->bar_thickness);
+	write_readout_number(f, "bar_gap", h->bar_gap);
+	write_readout_number(f, "bar_frame", h->bar_frame);
+	write_readout_color(f, "shield_color", h->shields);
+	write_readout_color(f, "overshield_color", h->overshields);
+	write_readout_color(f, "hull_color_full", h->hull_full);
+	write_readout_color(f, "hull_color_half", h->hull_mid);
+	write_readout_color(f, "hull_color_low", h->hull_low);
+	write_readout_color(f, "system_color", h->systems);
+	write_readout_number(f, "component_box_min", h->min_bracket);
+	write_readout_number(f, "component_box_max", h->max_bracket);
+	fputs("  component_pulse: true\n", f);
+	/* XWAU hides the readout where the scene is nearer than 25 m. */
+	write_readout_number(f, "hidden_within_m", h->depth_occlusion ? 25.0 : 0.0);
+	if (h->bg_text_box)
+		ReportUnsupported("the SSAO.cfg key enhanced_hud_enable_bg_text_box");
+}
+
+/* Whether XWAU's ddraw draws the target boxes itself: ddraw.cfg has
+ * Radar2DRendererEnabled, which is on by default. It reads the file as
+ * ddraw's Config does: the name is the text before '=' without its white
+ * space, the value is read with stoi, and the last line wins. */
+static bool read_xwau_target_boxes(const char* xwau_root) {
+	char path[1024], line[512];
+	if (!Xwau_FindFile(xwau_root, "ddraw.cfg", path, sizeof path))
+		return false;
+	FILE* f = fopen(path, "rt");
+	if (!f)
+		return false;
+	bool enabled = true;
+	while (fgets(line, sizeof line, f)) {
+		if (line[0] == '#' || line[0] == ';' || (line[0] == '/' && line[1] == '/'))
+			continue;
+		char* equals = strchr(line, '=');
+		if (!equals)
+			continue;
+		char   name[128];
+		size_t n = 0;
+		for (const char* c = line; c < equals && n + 1 < sizeof name; ++c)
+			if (!isspace((unsigned char)*c))
+				name[n++] = *c;
+		name[n] = 0;
+		long long value;
+		if (strcmp(name, "Radar2DRendererEnabled") == 0 && Xwau_Stoi(equals + 1, &value))
+			enabled = value != 0;
+	}
+	fclose(f);
+	return enabled;
+}
+
 static bool write_hud_file(const char* xwau_root, const char* output_dir, const XwauNames* names,
 						   const XwauStockValues* stock_values) {
 	char          hull_path[1024], map_path[1024], path[1024];
@@ -1455,7 +1615,10 @@ static bool write_hud_file(const char* xwau_root, const char* output_dir, const 
 	const bool    has_hull    = Xwau_FindFile(xwau_root, "HullIconList.txt", hull_path, sizeof hull_path);
 	const bool    has_map     = Xwau_FindFile(xwau_root, "MapIconList.txt", map_path, sizeof map_path);
 	const bool    has_display = read_target_display(xwau_root, &display);
-	if (!has_hull && !has_map && !has_display)
+	EnhancedHud   readout;
+	const bool    has_readout = read_enhanced_hud(xwau_root, &readout);
+	const bool    has_boxes   = read_xwau_target_boxes(xwau_root);
+	if (!has_hull && !has_map && !has_display && !has_readout && !has_boxes)
 		return true;
 	uint16_t* hull       = NULL;
 	uint16_t* map        = NULL;
@@ -1482,15 +1645,28 @@ static bool write_hud_file(const char* xwau_root, const char* output_dir, const 
 		}
 		if (has_display)
 			write_target_display(f, &display);
+		/* XWAU's box lines are 2 pixels of the game's resolution, which the
+		   importer doesn't know. 4 points is what XWAU shows with the game at
+		   half the screen's height. */
+		if (has_boxes)
+			fputs("target_boxes:\n  line_width: 4\n", f);
+		if (has_readout)
+			write_target_readout(f, &readout);
 		ok = fclose(f) == 0;
 		if (!ok)
 			Report(path, "can't be written");
 		else
-			Report(NULL, "hud.yaml: %zu new hull icons, %zu new map icons, target display %s", hull_count,
-				   map_count,
+			Report(NULL,
+				   "hud.yaml: %zu new hull icons, %zu new map icons, target display %s, target boxes %s, "
+				   "target readout %s",
+				   hull_count, map_count,
 				   !has_display    ? "not set"
 				   : display.edges ? "with edges"
-								   : "shaded");
+								   : "shaded",
+				   has_boxes ? "wide" : "original",
+				   !has_readout            ? "not set"
+				   : readout.vertical_bars ? "on, vertical"
+										   : "on, horizontal");
 	}
 	free(hull);
 	free(map);

@@ -26,80 +26,21 @@ typedef struct Headlights {
 	double position[3], color[3], angle_degrees;
 } Headlights;
 
-/* Reads `count` numbers from `text` into `out`, as ddraw reads them: one
- * with atof, three with sscanf("%f, %f, %f"). Returns false when there are
- * fewer. */
-static bool read_numbers(const char* text, int count, double* out) {
-	float v[3] = { 0 };
-	if (count == 1) {
-		out[0] = atof(text);
-		return true;
-	}
-	if (sscanf(text, "%f, %f, %f", &v[0], &v[1], &v[2]) < 3)
-		return false;
-	for (int i = 0; i < 3; ++i)
-		out[i] = v[i];
-	return true;
-}
-
-/* Called for each `key = value` line of a settings file. `value` is the
- * rest of the line after the '='. */
-typedef void (*SettingFn)(const char* key, const char* value, void* data);
-
-/* Reads the settings file `name` as ddraw and Hook_CockpitLook read theirs,
- * with sscanf("%s = %s"): a line is `key = value`, lines that start with ';'
- * or '#' are comments, and there must be white space between the key and
- * the '='. Calls `fn` for each setting, in the order of the file, so the
- * last line with a key wins. Returns false when there is no such file. */
-static bool read_settings(const char* game, const char* name, SettingFn fn, void* data) {
-	char   path[1024];
-	size_t size = 0;
-	char*  text = Xwau_FindFile(game, name, path, sizeof path) ? ReadWholeFile(path, &size) : NULL;
-	if (!text)
-		return false;
-	for (char* line = text; *line;) {
-		char* end = strchr(line, '\n');
-		if (end)
-			*end = 0;
-		/* Like sscanf("%s = %s"), which skips the white space before the key. */
-		const char* start = line;
-		while (isspace((unsigned char)*start))
-			++start;
-		char key[128];
-		int  key_length = 0;
-		while (start[key_length] && !isspace((unsigned char)start[key_length]) &&
-			   key_length + 1 < (int)sizeof key)
-			++key_length;
-		memcpy(key, start, (size_t)key_length);
-		key[key_length]   = 0;
-		const char* value = start + key_length;
-		while (isspace((unsigned char)*value))
-			++value;
-		if (line[0] != ';' && line[0] != '#' && *value == '=')
-			fn(key, value + 1, data);
-		if (!end)
-			break;
-		line = end + 1;
-	}
-	free(text);
-	return true;
-}
-
 /* Reads one setting of SSAO.cfg, as ddraw's LoadSSAOParams does. Keys are
  * found in any case. */
 static void read_headlight_setting(const char* key, const char* value, void* data) {
 	Headlights* out = data;
 	double      number[3];
-	if (strcasecmp(key, "ssao_enabled") == 0 && read_numbers(value, 1, number))
+	if (strcasecmp(key, "ssao_enabled") == 0 && Xwau_ReadSettingNumbers(value, 1, number))
 		out->ssao_enabled = number[0] != 0.0;
 	else if (strcasecmp(key, "headlights_pos") == 0 || strcasecmp(key, "headlights_col") == 0) {
 		/* Without three numbers, ddraw keeps its default. */
-		if (read_numbers(value, 3, number))
+		if (Xwau_ReadSettingNumbers(value, 3, number))
 			memcpy(strcasecmp(key, "headlights_pos") == 0 ? out->position : out->color, number,
 				   sizeof number);
-	} else if (strcasecmp(key, "headlights_angle") == 0 && read_numbers(value, 1, number))
+	} else if (strcasecmp(key, "headlights_angle") == 0 && Xwau_ReadSettingNumbers(value, 1, number))
 		out->angle_degrees = number[0];
-	else if (strcasecmp(key, "headlights_auto_turn_on") == 0 && read_numbers(value, 1, number))
+	else if (strcasecmp(key, "headlights_auto_turn_on") == 0 && Xwau_ReadSettingNumbers(value, 1, number))
 		out->auto_turn_on = number[0] != 0.0;
 	else if (strcasecmp(key, "headlights_distance") == 0)
 		out->has_distance = true;
@@ -115,7 +56,7 @@ static void read_headlights(const char* game, Headlights* out) {
 						  .position      = { 0.0, 0.0, 20.0 },
 						  .color         = { 0.85, 0.85, 0.9 },
 						  .angle_degrees = acos(0.25) / 0.01745 };
-	read_settings(game, "SSAO.cfg", read_headlight_setting, out);
+	Xwau_ReadSettings(game, "SSAO.cfg", read_headlight_setting, out);
 }
 
 /* Writes the `headlights` section, when the mod's ddraw draws headlights.
@@ -233,8 +174,8 @@ static bool write_suns(FILE* f, const char* game) {
 		return false;
 	/* ddraw's defaults. */
 	Suns s = { .procedural_suns = true, .flare_intensity = 2.0f };
-	read_settings(game, "SSAO.cfg", read_suns_setting, &s);
-	read_settings(game, "Bloom.cfg", read_bloom_setting, &s);
+	Xwau_ReadSettings(game, "SSAO.cfg", read_suns_setting, &s);
+	Xwau_ReadSettings(game, "Bloom.cfg", read_bloom_setting, &s);
 	if (!s.procedural_suns)
 		return false;
 	report_sun_models(game);
@@ -530,7 +471,7 @@ static bool write_camera(FILE* f, const char* game) {
 					  .external_max_inertia  = 0.025f,
 					  .external_tilt         = -10.0f,
 					  .units_to_meters       = 25.0f };
-	read_settings(game, "CockpitLook.cfg", read_cockpit_look_setting, &c);
+	Xwau_ReadSettings(game, "CockpitLook.cfg", read_cockpit_look_setting, &c);
 	/* These only change the camera when its lag is on. */
 	if (c.external_inertia_enabled) {
 		if (c.external_dist_inertia != 0.0f)
