@@ -1,8 +1,9 @@
 /*
  * The procedural lens flare (AeronScene_SetLensFlare). Prepare places the
- * source on screen and uploads the elements before the frame's passes,
+ * source on screen and uploads the elements before the frame's passes.
  * Visibility measures the visible part of the source's disc after the scene
- * passes, and Draw adds the flare in the LENS pass.
+ * passes, and dims the streaks by the visible part of the band of the disc
+ * along them. Draw adds the flare in the LENS pass.
  */
 
 #include "internal.h"
@@ -12,8 +13,10 @@
 #include <stdio.h>
 #include <string.h>
 
-/* The visibility shader's sample count. */
+/* The visibility shader's sample count. Each of its threads changes at most
+ * one element, so there can't be more elements than samples. */
 #define FLARE_SAMPLES 64u
+typedef char FlareElementsFitSamples[AERON_SCENE_LENS_FLARE_MAX_ELEMENTS <= FLARE_SAMPLES ? 1 : -1];
 /* The smallest disc the samples cover, in render pixels, so a small source
  * doesn't flicker under the temporal upscaler's jitter. */
 #define FLARE_MIN_RADIUS 2.0f
@@ -49,7 +52,7 @@ static int flare_ensure(AeronScene3D* s) {
 	s->flare_visibility_pipe = Aeron_CreateComputePipeline(&(AeronComputePipelineDesc) {
 		.name                           = "scene_lens_flare_visibility.comp",
 		.sampler_count                  = 1,
-		.readwrite_storage_buffer_count = 1,
+		.readwrite_storage_buffer_count = 2,
 		.uniform_buffer_count           = 1,
 		.thread_count_x                 = FLARE_SAMPLES,
 		.thread_count_y                 = 1,
@@ -99,7 +102,7 @@ static int flare_ensure(AeronScene3D* s) {
 							 .debug_name = "scene.lens_flare.visibility" });
 	s->flare_element_buffer = Aeron_CreateBuffer(&(AeronBufferDesc) {
 		.size         = AERON_SCENE_LENS_FLARE_MAX_ELEMENTS * FLARE_ELEMENT_FLOATS * (uint32_t)sizeof(float),
-		.usage        = AERON_BUFFER_USAGE_STORAGE,
+		.usage        = AERON_BUFFER_USAGE_STORAGE | AERON_BUFFER_USAGE_COMPUTE_STORAGE_WRITE,
 		.memory_usage = AERON_MEMORY_USAGE_DYNAMIC,
 		.debug_name   = "scene.lens_flare.elements" });
 	if (s->flare_vs && s->flare_fs) {
@@ -265,21 +268,31 @@ int AeronSceneLensFlare_Visibility(AeronScene3D* s, AeronCommandBuffer* cmd) {
 		s->flare_frame = 0;
 		return 1;
 	}
-	const AeronComputeBufferBinding visibility = { .buffer = s->flare_visibility, .cycle = 1 };
+	/* The elements keep this frame's upload, so their buffer isn't cycled. */
+	const AeronComputeBufferBinding buffers[2] = { { .buffer = s->flare_visibility, .cycle = 1 },
+												   { .buffer = s->flare_element_buffer, .cycle = 0 } };
 	AeronComputePass*               pass       = Aeron_BeginComputePass(&(AeronComputePassDesc) {
 		.command_buffer     = cmd,
-		.write_buffers      = &visibility,
-		.write_buffer_count = 1,
+		.write_buffers      = buffers,
+		.write_buffer_count = 2,
 		.debug_label        = "Lens flare visibility",
 	});
 	if (!pass)
 		return 0;
-	const AeronRectI* vp   = &s->camera.viewport;
-	const float       u[8] = { s->flare_center[0], s->flare_center[1], s->flare_radius,  s->flare_depth,
-							   (float)vp->x,       (float)vp->y,       (float)vp->width, (float)vp->height };
+	const AeronRectI* vp = &s->camera.viewport;
+	struct {
+		float    disc[4];
+		float    viewport[4];
+		uint32_t ends[4];
+	} u = {
+		.disc     = { s->flare_center[0], s->flare_center[1], s->flare_radius, s->flare_depth },
+		.viewport = { (float)vp->x, (float)vp->y, (float)vp->width, (float)vp->height },
+		.ends     = { s->flare_shape_end[AERON_SCENE_LENS_FLARE_STREAK],
+					  s->flare_shape_end[AERON_SCENE_LENS_FLARE_HEXAGON], 0, 0 },
+	};
 	Aeron_BindComputePipeline(pass, s->flare_visibility_pipe);
 	Aeron_BindComputeTextureSampler(pass, 0, depth, s->flare_depth_sampler);
-	Aeron_BindComputeUniformData(pass, 0, u, sizeof u);
+	Aeron_BindComputeUniformData(pass, 0, &u, sizeof u);
 	Aeron_DispatchCompute(pass, 1, 1, 1);
 	Aeron_EndComputePass(pass);
 	return 1;

@@ -9,7 +9,9 @@
  *
  * A compute pass measures how much of the source's disc is visible once per
  * frame, from 64 depth samples spread over the disc. The flare is scaled by
- * that fraction, and draws no pixels when the source is hidden.
+ * that fraction, and draws no pixels when the source is hidden. Each streak
+ * is also scaled by how visible the band of the disc along it is, so it goes
+ * out when something hides the middle of the disc.
  *
  * Flare units: the output viewport's centre is 0, half its shorter side is
  * 1, and y points down. S is the source's position in these units. Each
