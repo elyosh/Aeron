@@ -1574,9 +1574,10 @@ static void write_target_readout(FILE* f, const EnhancedHud* h) {
 }
 
 /* Whether XWAU's ddraw draws the target boxes and the radar blips itself:
- * ddraw.cfg has Radar2DRendererEnabled, which is on by default. It reads the file as
- * ddraw's Config does: the name is the text before '=' without its white
- * space, the value is read with stoi, and the last line wins. */
+ * ddraw.cfg has Radar2DRendererEnabled, which is on by default. This function
+ * reads the file as ddraw's Config does: the name is the text before '='
+ * without its white space, the value is read with stoi, and the last line
+ * wins. */
 static bool read_radar_2d_renderer(const char* xwau_root) {
 	char path[1024], line[512];
 	if (!Xwau_FindFile(xwau_root, "ddraw.cfg", path, sizeof path))
@@ -1837,8 +1838,8 @@ bool XwauCraft_Write(const char* xwau_root, const char* output_dir, const XwauNa
 	   rates. */
 	XwauCraftWeaponRates global_rates;
 	const bool           global_rate_lines = XwauCraft_ReadGlobalWeaponRates(xwau_root, &global_rates);
-	/* The genus of the object types that load each model in the import, for
-	   the units of the stats profiles. */
+	/* The genus of the object types that load each model in the import. The
+	   units of the stats profiles depend on it. */
 	XwauGameTables* tables = XwauGameTables_Load(xwau_root);
 	const char*     models[XWAU_GAME_OBJECT_TYPES];
 	XwauStatsGenus  genus = { 0 };

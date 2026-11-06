@@ -1006,8 +1006,8 @@ void XwauObjects_FreeRenames(XwauNames* names) {
 	names->object_type_renames = NULL;
 }
 
-/* The rows that object types without a stock row load in the mod: the rows
-   of the mod's new craft. */
+/* The list rows of the mod's new craft: the rows that the mod gives to object
+   types that have no row in the stock game. */
 typedef struct NewCraftRows {
 	bool* rows[2];
 } NewCraftRows;

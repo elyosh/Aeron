@@ -321,9 +321,9 @@ bool XwauCraft_ReadIconList(const char* path, uint16_t** values, size_t* count);
  * `output_dir`. When `cockpits` isn't NULL, adds the gunner cockpits that
  * the files use to it. The files use the names in `game_names`. hud.yaml
  * only lists the icons that differ from `stock_values`. `stock_tables` holds
- * the stock game's tables, which tell the model that each object type loads
- * in the import, or is NULL. Returns false when a file can't be written or a
- * list can't be read. */
+ * the stock game's tables, or is NULL. They tell which model each object type
+ * loads in the import. Returns false when a file can't be written or a list
+ * can't be read. */
 bool XwauCraft_Write(const char* xwau_root, const char* output_dir, const XwauNames* game_names,
 					 const XwauStockValues* stock_values, const XwauGameTables* stock_tables,
 					 XwauLines* cockpits);
