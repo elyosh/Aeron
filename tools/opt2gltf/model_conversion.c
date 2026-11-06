@@ -282,26 +282,6 @@ static int apply_cockpit_eye(opt_file_t* opt, const int eye[3]) {
 	return 1;
 }
 
-/* Whether a flight group can use the model `basename`, so that markings
- * select its NodeSwitch states. The model can't be used by a flight group
- * when every object type that loads it has no craft type. Without the
- * tables, or for a model that no list row loads, such as a cockpit, this
- * can't be told, so the answer is yes. */
-static bool flight_group_model(const ModelConversion* mc, const char* basename) {
-	if (!mc->tables)
-		return true;
-	bool listed = false;
-	for (int t = 0; t < XWAU_GAME_OBJECT_TYPES; ++t) {
-		if (strcasecmp(XwauGameTables_Model(mc->tables, t), basename) != 0)
-			continue;
-		listed = true;
-		for (int craft = 0; craft < XWAU_GAME_CRAFT_TYPES; ++craft)
-			if (mc->tables->craft[craft] == t)
-				return true;
-	}
-	return !listed;
-}
-
 /* Reports what the glTF model can't keep from the OPT:
  *   - The model has LOD 0 only, and the game draws it at every distance.
  *     The LODs after it are counted with ReportUnsupported.
@@ -312,17 +292,10 @@ static bool flight_group_model(const ModelConversion* mc, const char* basename) 
  *   - Only the explosion type flags 1 and 2 have names, because the game
  *     reads only those (ModelMesh_HasExplosionType1 and 2). The other flags
  *     have no effect, so they are left out without a report.
- *   - A face group keeps at most 16 NodeSwitch states. XWA shows state n for
- *     markings n, and only flight groups have markings. The other objects,
- *     such as the Death Star reactor, get their state from code that only
- *     uses the first states.
- * In XWAU mode, a mesh type above 31 makes the import fail, and so do the
- * states past the 16th on a model that a flight group can use. On another
- * model, they have no effect. Stock mode only reports them, because some
- * stock OPTs, such as Z-95.OPT, keep texture data in NodeSwitch states past
- * the 16th. */
-static void report_opt_drops(const ModelConversion* mc, const opt_file_t* opt, const char* basename,
-							 const char* label) {
+ *   - The NodeSwitch states past OPT_MAX_NODE_SWITCH_STATES are left out.
+ *     XWA never shows them.
+ * In XWAU mode, a mesh type above 31 makes the import fail. */
+static void report_opt_drops(const ModelConversion* mc, const opt_file_t* opt, const char* label) {
 	const bool xwau = mc->xwau;
 	for (int32_t mi = 0; mi < opt->mesh_count; ++mi) {
 		const opt_mesh_t* m = &opt->meshes[mi];
@@ -335,14 +308,10 @@ static void report_opt_drops(const ModelConversion* mc, const opt_file_t* opt, c
 			Report(label, "mesh %d has mesh type %u, which has no name, so it becomes default", (int)mi,
 				   (unsigned)m->descriptor.mesh_type);
 	}
-	if (opt->dropped_switch_states && xwau && flight_group_model(mc, basename))
-		ReportFatal(label, "%d NodeSwitch state(s) are past the 16 states that a face group can keep",
-					(int)opt->dropped_switch_states);
-	else if (opt->dropped_switch_states && !xwau)
+	if (opt->dropped_switch_states)
 		Report(label,
-			   "%d NodeSwitch state(s) are past the 16 states that a face group can keep, so they are left "
-			   "out",
-			   (int)opt->dropped_switch_states);
+			   "%d NodeSwitch state(s) are past the %d states that the game can show, so they are left out",
+			   (int)opt->dropped_switch_states, OPT_MAX_NODE_SWITCH_STATES);
 }
 
 /* ===== One conversion =================================================== */
@@ -981,7 +950,7 @@ bool ModelConversion_Build(const ModelConversion* mc, const char* opt_path, cons
 		return false;
 	}
 	opt_file_t* opt = model->opt;
-	report_opt_drops(mc, opt, basename, opt_path);
+	report_opt_drops(mc, opt, opt_path);
 	Conversion* c = model->c = (Conversion*)calloc(1, sizeof *c);
 	bool        ok           = c != NULL;
 	if (ok && mc->xwau)

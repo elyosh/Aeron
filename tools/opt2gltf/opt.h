@@ -118,6 +118,11 @@ typedef struct {
 	opt_vec3_t tex_magnitude;
 } opt_face_t;
 
+/* The most NodeSwitch states that a face group keeps. XWA shows state n for
+ * an object's nodeSwitchIndex n, a byte, and the last state when n is past
+ * the end. So it never shows the states past the 256th. */
+#define OPT_MAX_NODE_SWITCH_STATES 256
+
 /*
  * All faces of one LOD that use the same texture, so one draw call.
  *
@@ -328,11 +333,9 @@ typedef struct {
 	int32_t        texture_count;
 	opt_texture_t* textures;
 
-	/* The number of NodeSwitch states that the face groups don't keep,
-	 * because a face group keeps at most 16 states. XWA keeps them all, and
-	 * shows state n for markings n, clamped to the last state. The trailing
-	 * states that repeat the texture before them aren't counted, since they
-	 * look the same. */
+	/* The number of NodeSwitch states past OPT_MAX_NODE_SWITCH_STATES. XWA
+	 * never shows them. The trailing states that repeat the texture before
+	 * them aren't counted, since they look the same. */
 	int32_t dropped_switch_states;
 } opt_file_t;
 

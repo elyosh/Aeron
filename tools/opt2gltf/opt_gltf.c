@@ -4,6 +4,7 @@
 
 #include <math.h>
 
+#include "aeron/asset/flight_model.h"
 #include "aeron/asset/flight_names.h"
 #include "opt_gltf_internal.h"
 #include "opt_json.h"
@@ -1110,6 +1111,11 @@ static float cross_component(const float a[3], const float b[3], int axis) {
 	const int next = (axis + 1) % 3, last = (axis + 2) % 3;
 	return a[next] * b[last] - a[last] * b[next];
 }
+
+/* A light names the variant State s, which is variant s - 1. The game loads
+   only models whose lights name variants below
+   AERON_FLIGHT_LIGHT_OWN_MATERIALS. */
+typedef char LightStatesFit[OPT_MAX_NODE_SWITCH_STATES - 1 <= AERON_FLIGHT_LIGHT_OWN_MATERIALS ? 1 : -1];
 
 /* Light `index` of the model options (OptGltfLight), as a child of the
  * node of its mesh. */

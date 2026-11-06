@@ -88,8 +88,6 @@
 #define OPT_TEX_OFF_HEIGHT 20
 #define OPT_TEX_DATA_HEADER_BYTES 24
 
-#define OPT_MAX_NODE_SWITCH_STATES 16 /* the largest seen in IVFILES is 4 */
-
 typedef struct {
 	int32_t texture; /* state 0 binding, -1 if none */
 	int32_t state_count;
