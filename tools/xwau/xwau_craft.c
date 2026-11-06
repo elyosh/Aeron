@@ -1606,6 +1606,21 @@ static bool read_radar_2d_renderer(const char* xwau_root) {
 	return enabled;
 }
 
+/* XWAU's HUD scale in its 1600x900 and 1920x1080 resolution modes. The
+ * game draws the ammo icons 48 and 30 pixels from the centre of the screen
+ * and 16 pixels from the top, whatever the HUD scale, and only their size
+ * grows. XWAU's icons are drawn to sit next to their numbers at this
+ * scale. */
+#define XWAU_AMMO_ICON_HUD_SCALE 1.44
+
+/* Writes the place where XWAU shows the ammo icons at
+ * XWAU_AMMO_ICON_HUD_SCALE, in pixels of the original game's 640x480 HUD. */
+static void write_ammo_icons(FILE* f) {
+	const double s = XWAU_AMMO_ICON_HUD_SCALE;
+	fprintf(f, "ammo_icons:\n  warheads: [%.1f, %.1f]\n  countermeasures: [%.1f, %.1f]\n", 320.0 - 48.0 / s,
+			16.0 / s, 320.0 + 30.0 / s, 16.0 / s);
+}
+
 static bool write_hud_file(const char* xwau_root, const char* output_dir, const XwauNames* names,
 						   const XwauStockValues* stock_values) {
 	char          hull_path[1024], map_path[1024], path[1024];
@@ -1616,8 +1631,6 @@ static bool write_hud_file(const char* xwau_root, const char* output_dir, const 
 	EnhancedHud   readout;
 	const bool    has_readout = read_enhanced_hud(xwau_root, &readout);
 	const bool    has_boxes   = read_radar_2d_renderer(xwau_root);
-	if (!has_hull && !has_map && !has_display && !has_readout && !has_boxes)
-		return true;
 	uint16_t* hull       = NULL;
 	uint16_t* map        = NULL;
 	size_t    hull_count = 0, map_count = 0;
@@ -1653,6 +1666,7 @@ static bool write_hud_file(const char* xwau_root, const char* output_dir, const 
 			fputs("radar:\n  blip_size: 4\n  target_size: 8\n", f);
 		if (has_readout)
 			write_target_readout(f, &readout);
+		write_ammo_icons(f);
 		ok = fclose(f) == 0;
 		if (!ok)
 			Report(path, "can't be written");
