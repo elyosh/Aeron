@@ -7,6 +7,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 
 /* Each OpenXWA face is XWAU face `source`, mirrored left-right or flipped
  * top-bottom. */
@@ -33,12 +34,49 @@ static bool set_error_message(char* err, size_t errsz, const char* format, ...) 
 	return false;
 }
 
-/* The XWAU face of a file name: the digit just before its last '.', or -1. */
-static int face_from_file_name(const char* name) {
+/* The key that ddraw gives a file: the character just before the last '.'
+ * of its name, read with atoi. So a digit gives its value, and any other
+ * character gives 0. */
+static int file_key(const char* name) {
 	const char* dot = strrchr(name, '.');
-	if (!dot || dot == name || dot[-1] < '0' || dot[-1] > '5')
-		return -1;
+	if (!dot || dot == name || dot[-1] < '0' || dot[-1] > '9')
+		return 0;
 	return dot[-1] - '0';
+}
+
+static int compare_names_no_case(const void* a, const void* b) {
+	return strcasecmp(*(const char* const*)a, *(const char* const*)b);
+}
+
+bool XwauCubeFaces_Find(const char* dir, char paths[6][XWAU_CUBE_FACE_PATH_MAX]) {
+	size_t count = 0, files = 0;
+	char** names = ListDir(dir, false, &count);
+	if (!names)
+		return false;
+	/* Windows lists the files of an NTFS folder in name order, without
+	   case. */
+	for (size_t i = 0; i < count; ++i) {
+		char path[XWAU_CUBE_FACE_PATH_MAX];
+		if (names[i][0] != '.' && PathFormat(path, sizeof path, "%s/%s", dir, names[i]) && IsFile(path))
+			names[files++] = names[i];
+		else
+			free(names[i]);
+	}
+	qsort(names, files, sizeof *names, compare_names_no_case);
+	/* For each number from 0 to the file count minus 1, ddraw takes the
+	   first file whose key is that number. The folder loads when this gives
+	   six files, which are faces 0 to 5 in that order. */
+	size_t faces = 0;
+	for (size_t i = 0; i < files; ++i)
+		for (size_t k = 0; k < files; ++k)
+			if ((size_t)file_key(names[k]) == i) {
+				if (faces < 6)
+					PathFormat(paths[faces], XWAU_CUBE_FACE_PATH_MAX, "%s/%s", dir, names[k]);
+				++faces;
+				break;
+			}
+	FreeList(names, files);
+	return faces == 6;
 }
 
 /* Mirrors an `n`-pixel RGBA8 face in place, left-right or top-bottom. */
@@ -59,31 +97,10 @@ static void mirror_face_in_place(uint8_t* rgba, int n, bool mirror_x, bool flip_
 
 bool XwauCubeFaces_Read(const char* dir, XwauCubeFaces* out, char* err, size_t errsz) {
 	memset(out, 0, sizeof *out);
-	size_t count = 0, files = 0;
-	char** names = ListDir(dir, true, &count);
-	char   paths[6][1300];
-	bool   found[6] = { false };
-	bool   ok       = names != NULL || set_error_message(err, errsz, "%s: the folder can't be read", dir);
-	for (size_t i = 0; i < count && ok; ++i) {
-		char path[1300];
-		if (names[i][0] == '.' || !PathFormat(path, sizeof path, "%s/%s", dir, names[i]) || !IsFile(path))
-			continue;
-		const int face = face_from_file_name(names[i]);
-		++files;
-		if (face < 0)
-			ok = set_error_message(err, errsz, "%s: %s has no face digit (0 to 5) before its extension", dir,
-								   names[i]);
-		else if (found[face])
-			ok = set_error_message(err, errsz, "%s: two files are face %d", dir, face);
-		else {
-			found[face] = true;
-			snprintf(paths[face], sizeof paths[face], "%s", path);
-		}
-	}
-	FreeList(names, count);
-	if (ok && files != 6)
-		ok = set_error_message(err, errsz, "%s: a cube folder holds exactly six files, and it has %zu", dir,
-							   files);
+	char paths[6][XWAU_CUBE_FACE_PATH_MAX];
+	bool ok =
+		XwauCubeFaces_Find(dir, paths) ||
+		set_error_message(err, errsz, "%s: ddraw doesn't find the six faces of a cube in this folder", dir);
 
 	uint8_t* source[6] = { NULL };
 	for (int face = 0; face < 6 && ok; ++face) {

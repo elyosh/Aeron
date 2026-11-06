@@ -516,17 +516,28 @@ static void test_cube_faces(const char* scratch) {
 	if (ok)
 		XwauCubeFaces_Free(&faces);
 
+	/* A seventh file whose name has no digit before its last '.', such as
+	   TFTC's Coruscant-Twilight.2.sun.jpg, has key 0. Face 0 comes first in
+	   name order, so ddraw ignores it. */
+	snprintf(path, sizeof path, "%s/sky_2.sun.png", dir);
+	write_png_rgba(path, SIZE, SIZE, xwau[2]);
+	ok = XwauCubeFaces_Read(dir, &faces, err, sizeof err);
+	check(ok, "cube faces: an extra file with key 0 after face 0 is ignored, as ddraw does");
+	if (ok)
+		XwauCubeFaces_Free(&faces);
+	remove(path);
+
 	snprintf(path, sizeof path, "%s/sky_5.png", dir);
 	remove(path);
-	check(!XwauCubeFaces_Read(dir, &faces, err, sizeof err) && strstr(err, "exactly six files"),
-		  "cube faces: a folder without six files is rejected");
+	check(!XwauCubeFaces_Read(dir, &faces, err, sizeof err) && strstr(err, "six faces"),
+		  "cube faces: a folder without six faces is rejected");
 	write_png_rgba(path, SIZE, SIZE, xwau[5]);
 	snprintf(path, sizeof path, "%s/sky_4.png", dir);
 	char other[1400];
 	snprintf(other, sizeof other, "%s/sky.png", dir);
 	rename(path, other);
-	check(!XwauCubeFaces_Read(dir, &faces, err, sizeof err) && strstr(err, "no face digit"),
-		  "cube faces: a file without a face digit is rejected");
+	check(!XwauCubeFaces_Read(dir, &faces, err, sizeof err) && strstr(err, "six faces"),
+		  "cube faces: a file without a face digit in place of face 4 is rejected");
 	for (int face = 0; face < 6; ++face)
 		free(xwau[face]);
 	envmap_cube_free(&expected);

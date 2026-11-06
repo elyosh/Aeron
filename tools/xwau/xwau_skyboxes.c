@@ -11,6 +11,7 @@
 #include "classic_radiance.h"
 #include "util.h"
 #include "xwau_config.h"
+#include "xwau_cube_faces.h"
 #include "xwau_missions.h"
 
 #define SKY_REGIONS 4
@@ -167,20 +168,10 @@ static float sky_float(const XwauLines* lines, const char* key, float fallback) 
 	return end == value || errno == ERANGE ? fallback : f;
 }
 
-/* Whether the ddraw wrapper loads the cube folder `written`. It does when
- * the folder holds exactly six files. */
+/* Whether the ddraw wrapper loads the cube folder `written`. */
 static bool folder_loads(const char* game, const char* written, char* found, size_t cap) {
-	if (!written[0] || !Xwau_FindDir(game, written, found, cap))
-		return false;
-	size_t count = 0, files = 0;
-	char** names = ListDir(found, false, &count);
-	for (size_t i = 0; i < count; ++i) {
-		char path[1300];
-		files +=
-			names[i][0] != '.' && PathFormat(path, sizeof path, "%s/%s", found, names[i]) && IsFile(path);
-	}
-	FreeList(names, count);
-	return files == 6;
+	char paths[6][XWAU_CUBE_FACE_PATH_MAX];
+	return written[0] && Xwau_FindDir(game, written, found, cap) && XwauCubeFaces_Find(found, paths);
 }
 
 static bool list_has(const SkyList* list, uint32_t image) {
