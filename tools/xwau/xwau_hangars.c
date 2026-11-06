@@ -1769,8 +1769,11 @@ bool XwauHangars_Write(const char* xwau, const XwauGameTables* stock, const Xwau
 		const char* key  = names.items[i];
 		Layer       ship = { 0 };
 		bool        kept = false;
-		ok               = read_ship_layer(m, xwau, name, &ship);
-		if (ok && !layer_is_empty(&ship)) {
+		/* The mod never loads a ship whose model wasn't converted, so no
+		   player enters its hangar. */
+		const bool used = model_was_converted(m, key);
+		ok              = !used || read_ship_layer(m, xwau, name, &ship);
+		if (ok && used && !layer_is_empty(&ship)) {
 			/* The ship's layer moves into the array. */
 			Layer* entry = ARRAY_PUSH(ships, ship_count);
 			ok           = entry && XwauLines_Add(&ship_keys, key, strlen(key));

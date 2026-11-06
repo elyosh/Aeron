@@ -1343,8 +1343,10 @@ static void test_hangars(const char* scratch) {
 	snprintf(mod, sizeof mod, "%s/hangars_mod", scratch);
 	snprintf(path, sizeof path, "%s/FlightModels", game);
 	MakeDirs(path);
-	snprintf(path, sizeof path, "%s/flight", mod);
+	snprintf(path, sizeof path, "%s/flight/models", mod);
 	MakeDirs(path);
+	snprintf(path, sizeof path, "%s/flight/models/frigate.glb", mod);
+	write_file(path, "");
 	snprintf(path, sizeof path, "%s/FlightModels/Spacecraft0.LST", game);
 	write_file(path, "FlightModels\\Xwing.opt\r\n");
 	snprintf(path, sizeof path, "%s/FlightModels/Equipment0.LST", game);
@@ -1365,6 +1367,14 @@ static void test_hangars(const char* scratch) {
 	snprintf(path, sizeof path, "%s/FlightModels/Frigate.ini", game);
 	write_file(path, "[HangarObjects]\nLoadDroid1 = 1\nShuttlePositionX = 0\n"
 					 "[HangarObjects1]\nDroid2PositionZ = 409\n");
+	/* A ship that the mod doesn't load, with a hangar model that isn't
+	   converted. */
+	snprintf(path, sizeof path, "%s/FlightModels/Cruiser.ini", game);
+	write_file(path, "[HangarObjects]\nLoadDroids = 0\n");
+	snprintf(path, sizeof path, "%s/FlightModels/Cruiser.opt", game);
+	write_file(path, "");
+	snprintf(path, sizeof path, "%s/FlightModels/CruiserHangar.opt", game);
+	write_file(path, "");
 
 	ClearReportFatal();
 	XwauGameTables* stock = XwauGameTables_Load(game);
@@ -1396,6 +1406,8 @@ static void test_hangars(const char* scratch) {
 	check(text && strstr(text, "  frigate:\n    droids:\n      - {enabled: false}\n    by_iff:\n      1:\n"
 							   "        droids:\n          - {}\n          - {height_m: 9.985}\n"),
 		  "hangars: a droid's own key is combined with the key for both droids of the layers below");
+	check(text && !strstr(text, "  cruiser:\n"),
+		  "hangars: a ship whose model isn't converted is left out, and its hangar model isn't needed");
 	free(text);
 }
 
