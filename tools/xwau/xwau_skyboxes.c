@@ -24,7 +24,7 @@
 #define SKY_RADIANCE 40.0f
 /* The environment's diffuse_strength and specular_strength: how much the
  * sky lights the models, compared with how bright it is drawn. */
-#define SKY_LIGHT_STRENGTH 0.4f
+#define SKY_LIGHT_STRENGTH 0.5f
 /* The region's backdrop_light_scale. XWAU's renderer dims the lights of
  * backdrops that are not suns (PBRAddCommon.h), and its missions are tuned
  * for that. */
