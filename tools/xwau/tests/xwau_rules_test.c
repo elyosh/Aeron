@@ -1154,6 +1154,7 @@ static void test_objects(const char* scratch) {
 		fake_type(&exes[i], 2, 1, 1);  /* Booster, then TIE Advanced x1 */
 		fake_type(&exes[i], 70, 2, 2); /* CorvetteExplode */
 		fake_type(&exes[i], 71, 3, 3); /* B-wing */
+		fake_at(&exes[i], 0x5FB240 + 24 * 71 + 1)[0] = 0x81; /* not in Death Star missions */
 		put16(fake_at(&exes[i], 0x5B0F70 + 2 * 7), 2);
 		put16(fake_at(&exes[i], 0x5B0F70 + 2 * 9), 70);
 		fake_equipment(&exes[i], 288, 1); /* two turbolasers on the same row */
@@ -1161,6 +1162,8 @@ static void test_objects(const char* scratch) {
 		fake_equipment(&exes[i], 280, 0); /* a laser that the mod doesn't change */
 	}
 	FakeExe* m = &exes[1];
+	fake_at(m, 0x5FB240 + 24 * 71 + 1)[0] = 0x01; /* the B-wing loads in every mission */
+	fake_at(m, 0x5FB240 + 24 * 2 + 1)[0]  = 0x20; /* type 2 only loads in Death Star missions */
 	fake_equipment(m, 288, 2); /* both move to a new row */
 	fake_equipment(m, 297, 2);
 	fake_type(m, 33, 2, 32); /* a new craft in a free slot, on the renamed row */
@@ -1232,6 +1235,8 @@ static void test_objects(const char* scratch) {
 	check(text && strstr(text, "object_type: type_2\nname: tie_advanced_x1\nmodel: tieadvancedx1\n"),
 		  "objects: a row that the mod renames gives `model`, and the slot is renamed after the mod's ship "
 		  "list");
+	check(text && strstr(text, "\nmissions: death_star\n"),
+		  "objects: an object type that the mod only loads in Death Star missions gets missions: death_star");
 	check(text &&
 			  strstr(text, "    - {type: type_282, count: 2, kind: none, range_m: 0, cooldown_ms: 0}\n") &&
 			  strstr(text, "  cockpit_name: 'TieAdvancedX1'\n") && strstr(text, "sounds_like: type_5\n"),
@@ -1267,6 +1272,8 @@ static void test_objects(const char* scratch) {
 	text = ReadWholeFile(path, &size);
 	check(text && strstr(text, "object_type: type_71\nflags: [player_targetable, ai_targetable]\n"),
 		  "objects: [ExeCraftValues] sets the object type's flags, and the file lists the flags that are on");
+	check(text && strstr(text, "\nmissions: all\n"),
+		  "objects: an object type that the mod lets load in Death Star missions gets missions: all");
 	check(
 		text && strstr(text, "  ai_hits_to_evade: 3\n") && !strstr(text, "countermeasures") &&
 			strstr(
