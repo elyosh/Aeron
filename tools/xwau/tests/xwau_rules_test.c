@@ -822,7 +822,7 @@ static void test_craft(const char* scratch) {
 	write_file(path, "0\n100\n500\n");
 	snprintf(path, sizeof path, "%s/ddraw.cfg", root);
 	write_file(path, "; Radar2DRendererEnabled = 0\nRadar2DRendererEnabled = 1\n");
-	check(XwauCraft_Write(root, out, &g_names, &g_stock, NULL), "craft: the files are written");
+	check(XwauCraft_Write(root, out, &g_names, &g_stock, NULL, NULL), "craft: the files are written");
 	size_t size = 0;
 	snprintf(path, sizeof path, "%s/models/awing.yaml", out);
 	char* text = ReadWholeFile(path, &size);
@@ -1217,6 +1217,11 @@ static void test_objects(const char* scratch) {
 			  XwauObjects_Write(mod, stock, stock_tables, mod_tables, &g_names, out, &moved) &&
 			  XwauText_Write(mod, stock, strings, &moved),
 		  "objects: the object type files, the craft type files and strings.yaml are written");
+	const char* imported[XWAU_GAME_OBJECT_TYPES];
+	check(stock_tables && mod_tables && XwauObjects_ImportedModels(stock_tables, mod_tables, imported) &&
+			  strcmp(imported[70], "corvetteexplode") == 0 && strcmp(imported[33], "calamarihomeone") == 0 &&
+			  strcmp(imported[2], "tieadvancedx1") == 0 && strcmp(imported[34], "") == 0,
+		  "objects: the imported models keep the stock model of a row that the mod renames for a new craft");
 	XwauGameTables_Free(mod_tables);
 	XwauGameTables_Free(stock_tables);
 	XwauObjects_FreeRenames(&g_names);
@@ -2909,12 +2914,12 @@ static void test_sound_banks(const char* scratch) {
 	snprintf(path, sizeof path, "%s/hook_engine_sound.dll", game);
 	remove(path);
 	snprintf(path, sizeof path, "%s/models/tug.yaml", flight);
-	check(XwauCraft_Write(game, flight, &g_names, &g_stock, NULL) && !IsFile(path),
+	check(XwauCraft_Write(game, flight, &g_names, &g_stock, NULL, NULL) && !IsFile(path),
 		  "craft sounds: nothing without hook_engine_sound.dll");
 	snprintf(path, sizeof path, "%s/hook_engine_sound.dll", game);
 	write_file(path, "");
 	snprintf(path, sizeof path, "%s/models/tug.yaml", flight);
-	text = XwauCraft_Write(game, flight, &g_names, &g_stock, NULL) ? ReadWholeFile(path, &size) : NULL;
+	text = XwauCraft_Write(game, flight, &g_names, &g_stock, NULL, NULL) ? ReadWholeFile(path, &size) : NULL;
 	check(text &&
 			  strstr(text, "sound:\n  weapons: empire\n  weapon_ranges: {type_283: [range_1, range_2]}\n") &&
 			  !strstr(text, "interior"),
@@ -2926,7 +2931,7 @@ static void test_sound_banks(const char* scratch) {
 	write_file(path,
 			   "[Sound]\nAmbientSoundOffsetX = 0\nAmbientSoundOffsetY = 300\nAmbientSoundDistance = 1000\n");
 	snprintf(path, sizeof path, "%s/models/tug.yaml", flight);
-	text = XwauCraft_Write(game, flight, &g_names, &g_stock, NULL) ? ReadWholeFile(path, &size) : NULL;
+	text = XwauCraft_Write(game, flight, &g_names, &g_stock, NULL, NULL) ? ReadWholeFile(path, &size) : NULL;
 	check(text && strstr(text, "  ambient: {offset_m: [0, 300, 0], distance_m: 1000}\n"),
 		  "ambient sounds: the offset (right, up, forward) and one distance");
 	free(text);
@@ -2934,7 +2939,7 @@ static void test_sound_banks(const char* scratch) {
 	write_file(path, "[Sound]\nAmbientSoundDistanceX = 4000\nAmbientSoundDistanceY = 11000\n"
 					 "AmbientSoundDistanceZ = 0\n");
 	snprintf(path, sizeof path, "%s/models/tug.yaml", flight);
-	text = XwauCraft_Write(game, flight, &g_names, &g_stock, NULL) ? ReadWholeFile(path, &size) : NULL;
+	text = XwauCraft_Write(game, flight, &g_names, &g_stock, NULL, NULL) ? ReadWholeFile(path, &size) : NULL;
 	check(text && strstr(text, "  ambient: {distance_m: [4000, null, 11000]}\n") && !strstr(text, "offset_m"),
 		  "ambient sounds: DistanceX, Z and Y are right, up and forward; a distance of 0 without "
 		  "AmbientSoundDistance is the craft's size");
@@ -2942,7 +2947,7 @@ static void test_sound_banks(const char* scratch) {
 	snprintf(path, sizeof path, "%s/FlightModels/Tug.ini", game);
 	write_file(path, "[Sound]\nAmbientSoundDistance = 0\nAmbientSoundDistanceY = 500\n");
 	snprintf(path, sizeof path, "%s/models/tug.yaml", flight);
-	text = XwauCraft_Write(game, flight, &g_names, &g_stock, NULL) ? ReadWholeFile(path, &size) : NULL;
+	text = XwauCraft_Write(game, flight, &g_names, &g_stock, NULL, NULL) ? ReadWholeFile(path, &size) : NULL;
 	check(text && strstr(text, "  ambient: {distance_m: [1, 1, 500]}\n"),
 		  "ambient sounds: an AmbientSoundDistance of 0 is 1, and the other axes take it");
 	free(text);

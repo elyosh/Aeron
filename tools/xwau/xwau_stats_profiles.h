@@ -91,8 +91,10 @@ typedef struct XwauStatsGenus {
 
 /* Finds the genus class of the models of the installation `game` from
  * `tables` (NULL when they can't be read) and the [Objects] swaps of the
- * missions. Returns false when out of memory. */
-bool XwauStatsGenus_Read(const char* game, const XwauGameTables* tables, XwauStatsGenus* out);
+ * missions. models[t] is the model that object type t loads in the import
+ * (XwauObjects_ImportedModels). Returns false when out of memory. */
+bool XwauStatsGenus_Read(const char* game, const XwauGameTables* tables, const char* const* models,
+						 XwauStatsGenus* out);
 void XwauStatsGenus_Free(XwauStatsGenus* genus);
 /* The genus class of model `key`, -1 when no object type loads it, -2 when
  * the classes differ. */

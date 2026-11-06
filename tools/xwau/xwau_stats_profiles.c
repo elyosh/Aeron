@@ -149,7 +149,7 @@ static bool object_lines(const char* game, const char* base, XwauLines* lines) {
 /* Gives the targets of the swaps of mission `base` the classes of the
  * object types that load their sources. */
 static bool genus_swaps(const char* game, const char* base, const XwauGameTables* tables,
-						XwauStatsGenus* genus) {
+						const char* const* models, XwauStatsGenus* genus) {
 	XwauLines lines;
 	bool      ok = object_lines(game, base, &lines);
 	for (size_t i = 0; ok && i < lines.count; ++i) {
@@ -172,7 +172,7 @@ static bool genus_swaps(const char* game, const char* base, const XwauGameTables
 			continue;
 		for (int t = 0; ok && t < XWAU_GAME_OBJECT_TYPES; ++t) {
 			const XwauGameType type = XwauGameTables_Type(tables, t);
-			if (strcmp(XwauGameTables_Model(tables, t), source) == 0)
+			if (strcmp(models[t], source) == 0)
 				ok = genus_add(genus, target, genus_class(type.genus));
 		}
 	}
@@ -180,13 +180,14 @@ static bool genus_swaps(const char* game, const char* base, const XwauGameTables
 	return ok;
 }
 
-bool XwauStatsGenus_Read(const char* game, const XwauGameTables* tables, XwauStatsGenus* out) {
+bool XwauStatsGenus_Read(const char* game, const XwauGameTables* tables, const char* const* models,
+						 XwauStatsGenus* out) {
 	memset(out, 0, sizeof *out);
 	if (!tables)
 		return true;
 	bool ok = true;
 	for (int t = 0; ok && t < XWAU_GAME_OBJECT_TYPES; ++t) {
-		const char* model = XwauGameTables_Model(tables, t);
+		const char* model = models[t];
 		if (model[0])
 			ok = genus_add(out, model, genus_class(XwauGameTables_Type(tables, t).genus));
 	}
@@ -196,7 +197,7 @@ bool XwauStatsGenus_Read(const char* game, const XwauGameTables* tables, XwauSta
 		for (size_t n = 0; ok && n < names.count; ++n) {
 			char base[300];
 			snprintf(base, sizeof base, "%s/%s", kMissionDirs[d], names.items[n]);
-			ok = genus_swaps(game, base, tables, out);
+			ok = genus_swaps(game, base, tables, models, out);
 		}
 		XwauLines_Free(&names);
 	}

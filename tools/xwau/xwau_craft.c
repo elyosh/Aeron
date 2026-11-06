@@ -15,6 +15,7 @@
 #include "xwau_gunner_seats.h"
 #include "xwau_mat.h"
 #include "xwau_model.h"
+#include "xwau_objects.h"
 #include "xwau_sound_banks.h"
 #include "xwau_stats_profiles.h"
 
@@ -1791,7 +1792,8 @@ static bool first_side_file_without_ini(char* const* names, size_t count, const 
 }
 
 bool XwauCraft_Write(const char* xwau_root, const char* output_dir, const XwauNames* game_names,
-					 const XwauStockValues* stock_values, XwauLines* cockpits) {
+					 const XwauStockValues* stock_values, const XwauGameTables* stock_tables,
+					 XwauLines* cockpits) {
 	char models_dir[1024], craft_dir[1024];
 	if (!Xwau_FindDir(xwau_root, "FlightModels", models_dir, sizeof models_dir)) {
 		Report(xwau_root, "has no FlightModels folder");
@@ -1835,11 +1837,14 @@ bool XwauCraft_Write(const char* xwau_root, const char* output_dir, const XwauNa
 	   rates. */
 	XwauCraftWeaponRates global_rates;
 	const bool           global_rate_lines = XwauCraft_ReadGlobalWeaponRates(xwau_root, &global_rates);
-	/* The genus of the object types that load each model, for the units of
-	   the stats profiles. */
+	/* The genus of the object types that load each model in the import, for
+	   the units of the stats profiles. */
 	XwauGameTables* tables = XwauGameTables_Load(xwau_root);
-	XwauStatsGenus  genus;
-	ok = XwauStatsGenus_Read(xwau_root, tables, &genus);
+	const char*     models[XWAU_GAME_OBJECT_TYPES];
+	XwauStatsGenus  genus = { 0 };
+
+	ok = (!tables || XwauObjects_ImportedModels(stock_tables, tables, models)) &&
+		 XwauStatsGenus_Read(xwau_root, tables, models, &genus);
 	/* hook_mission_objects reads the [Turrets] sections. */
 	char              mission_objects_dll[1024];
 	const bool        turrets      = Xwau_FindFile(xwau_root, "hook_mission_objects.dll", mission_objects_dll,

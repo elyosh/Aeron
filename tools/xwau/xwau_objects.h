@@ -131,6 +131,13 @@ bool XwauObjects_Rename(const char* mod_root, const char* stock_game, const Xwau
 						const XwauGameTables* mod, XwauNames* names);
 void XwauObjects_FreeRenames(XwauNames* names);
 
+/* Writes to `models` the model that each of the XWAU_GAME_OBJECT_TYPES
+ * object types loads in the import: its model in `mod`, or its model in
+ * `stock` when the mod renames the row that it loads for a new craft. "" is
+ * no model. Without `stock`, the models of `mod`. Returns false when out of
+ * memory. */
+bool XwauObjects_ImportedModels(const XwauGameTables* stock, const XwauGameTables* mod, const char** models);
+
 /* Writes the object type and craft type files of the mod at `mod_root` into
  * `output_dir`/object_types and `output_dir`/craft_types. Adds the IDs of the
  * texts that these files contain to `moved`. `stock` holds the stock game's

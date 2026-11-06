@@ -990,6 +990,52 @@ void XwauObjects_FreeRenames(XwauNames* names) {
 	names->object_type_renames = NULL;
 }
 
+/* The rows that object types without a stock row load in the mod: the rows
+   of the mod's new craft. */
+typedef struct NewCraftRows {
+	bool* rows[2];
+} NewCraftRows;
+
+static bool new_craft_rows_find(const XwauGameTables* stock, const XwauGameTables* mod, NewCraftRows* out) {
+	out->rows[0] = calloc(mod->rowCount[0] + 1, 1);
+	out->rows[1] = calloc(mod->rowCount[1] + 1, 1);
+	if (!out->rows[0] || !out->rows[1])
+		return false;
+	for (int t = 0; t < OBJECT_TYPE_COUNT; ++t) {
+		const XwauGameType s = XwauGameTables_Type(stock, t), m = XwauGameTables_Type(mod, t);
+		if (!XwauGameType_HasRow(&s) && XwauGameType_HasRow(&m) && m.row < mod->rowCount[m.list])
+			out->rows[m.list][m.row] = true;
+	}
+	return true;
+}
+
+static void new_craft_rows_free(NewCraftRows* rows) {
+	free(rows->rows[0]);
+	free(rows->rows[1]);
+}
+
+/* Whether object type `t`, which loads `mod_model` in the mod, keeps its
+   stock model in the import, because the mod renames the row that it loads
+   for a new craft. */
+static bool keeps_stock_model(const XwauGameTables* stock, const XwauGameTables* mod,
+							  const NewCraftRows* rows, int t, const char* mod_model) {
+	const XwauGameType s = XwauGameTables_Type(stock, t), m = XwauGameTables_Type(mod, t);
+	return mod_model[0] && strcasecmp(XwauGameTables_Model(stock, t), mod_model) != 0 && m.list == s.list &&
+		   m.row == s.row && rows->rows[m.list][m.row];
+}
+
+bool XwauObjects_ImportedModels(const XwauGameTables* stock, const XwauGameTables* mod, const char** models) {
+	NewCraftRows rows = { { NULL, NULL } };
+	const bool   ok   = !stock || new_craft_rows_find(stock, mod, &rows);
+	for (int t = 0; ok && t < OBJECT_TYPE_COUNT; ++t) {
+		models[t] = XwauGameTables_Model(mod, t);
+		if (stock && keeps_stock_model(stock, mod, &rows, t, models[t]))
+			models[t] = XwauGameTables_Model(stock, t);
+	}
+	new_craft_rows_free(&rows);
+	return ok;
+}
+
 bool XwauObjects_Write(const char* mod_root, const char* stock_game, const XwauGameTables* stock,
 					   XwauGameTables* mod, const XwauNames* names, const char* output_dir,
 					   XwauTextIds* moved) {
@@ -1001,18 +1047,11 @@ bool XwauObjects_Write(const char* mod_root, const char* stock_game, const XwauG
 		ReportUnsupported("changes to the object type sound cases of XWINGALLIANCE.EXE");
 	const int beam = beam_test_skipped(stock, mod);
 
-	/* The rows that object types without a stock row load in the mod: the
-	   rows of the mod's new craft. */
-	bool*   new_craft_rows[2] = { calloc(mod->rowCount[0] + 1, 1), calloc(mod->rowCount[1] + 1, 1) };
-	Change* changes           = calloc(OBJECT_TYPE_COUNT, sizeof *changes);
+	NewCraftRows new_craft_rows = { { NULL, NULL } };
+	Change*      changes        = calloc(OBJECT_TYPE_COUNT, sizeof *changes);
 	/* The model that each object type loads in the mod, or NULL. */
 	const char** models = calloc(OBJECT_TYPE_COUNT, sizeof *models);
-	bool         ok     = new_craft_rows[0] && new_craft_rows[1] && changes && models;
-	for (int t = 0; ok && t < OBJECT_TYPE_COUNT; ++t) {
-		const XwauGameType s = XwauGameTables_Type(stock, t), m = XwauGameTables_Type(mod, t);
-		if (!XwauGameType_HasRow(&s) && XwauGameType_HasRow(&m) && m.row < mod->rowCount[m.list])
-			new_craft_rows[m.list][m.row] = true;
-	}
+	bool         ok     = changes && models && new_craft_rows_find(stock, mod, &new_craft_rows);
 
 	int new_slots = 0, new_placeholders = 0;
 	int equipment = 0, kept_models = 0, empty = 0;
@@ -1057,7 +1096,7 @@ bool XwauObjects_Write(const char* mod_root, const char* stock_game, const XwauG
 							  .recordIndex = m.record,
 							  .stockRecord = valid_record(s.record) ? s.record : m.record };
 		change.writeModel = strcasecmp(stock_model, mod_model) != 0 || m.list != s.list;
-		if (change.writeModel && m.list == s.list && m.row == s.row && new_craft_rows[m.list][m.row]) {
+		if (keeps_stock_model(stock, mod, &new_craft_rows, t, mod_model)) {
 			ReportDetail(mod_root,
 						 "object type %d keeps its model '%s': the mod renames its row for a new craft", t,
 						 stock_model);
@@ -1134,8 +1173,7 @@ bool XwauObjects_Write(const char* mod_root, const char* stock_game, const XwauG
 			Report(NULL, "object types: %d files name a model that has no GLB in %s/models", missing_glbs,
 				   output_dir);
 	}
-	free(new_craft_rows[0]);
-	free(new_craft_rows[1]);
+	new_craft_rows_free(&new_craft_rows);
 	free(changes);
 	free(models);
 	return ok;
