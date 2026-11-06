@@ -233,7 +233,7 @@ static bool write_speed_effect(FILE* f, const char* game) {
 	   match OpenXWA's. The mod keeps OpenXWA's default. */
 	if (e.intensity != 0.6f)
 		ReportUnsupported("the SSAO.cfg key speed_shader_max_intensity");
-	fprintf(f, "speed_effect:\n  enabled: true\n  particles: %.0f\n", (double)e.particles);
+	fprintf(f, "speed_effect:\n  particles: %.0f\n", (double)e.particles);
 	return true;
 }
 
