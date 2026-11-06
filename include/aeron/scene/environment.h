@@ -13,7 +13,8 @@
  *     strength. `specular` requires `diffuse`.
  *   - `directional_lights`: up to four analytical lights that replace the
  *     game's lights. Without this field, the game keeps its own lights.
- *   - `ambient_fill`: radiance added from every direction (default 0).
+ *   - `ambient_fill`: the least radiance from every direction (default 0).
+ *     Where the diffuse cube is dimmer, part of the fill is added.
  *   - `overlay`: a cube with alpha drawn over the sky and the game's sky
  *     billboards, and under everything else. It is a map with `cube`, a BC7
  *     sRGB cube whose colour is premultiplied by alpha, and an optional

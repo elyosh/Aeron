@@ -36,8 +36,6 @@
 
 static const char* const kMissionDirs[] = { "Missions", "Melee", "Combat" };
 
-#define SKY_AMBIENT 1.0
-
 /* The environment of the Death Star missions without [SkyBoxes]. It has no
  * sky and no directional light, so the light of the mission's backdrops
  * doesn't reach the inside of the Death Star. Its ambient fill is the one
@@ -559,8 +557,7 @@ static void write_environments(const SkyState* st, TextBuffer* f) {
 	for (size_t i = 0; i < st->definition_count; ++i) {
 		const SkyDefinition* d       = &st->definitions[i];
 		const char*          key     = st->folders[d->folder].key;
-		//const float fill = clamp_value(d->ambient_min, 4.0f, "AmbientMin", d->name) * SKY_FILL_RADIANCE;
-		const float fill = SKY_AMBIENT;
+		const float fill = clamp_value(d->ambient_min, 4.0f, "AmbientMin", d->name) * SKY_FILL_RADIANCE;
 		TextAppend(f,
 				   "  %s:\n"
 				   "    intensity: %g\n"

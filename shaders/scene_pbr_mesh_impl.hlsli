@@ -910,10 +910,11 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
 #else
     float3 environment_diffuse_rgb = float3(0.0f, 0.0f, 0.0f);
 #endif
+    environment_diffuse_rgb = apply_ambient_minimum(environment_diffuse_rgb);
 #if AERON_PBR_PROBES
-    /* Inside the grid, its baked light replaces the environment and the
-     * world ambient, which it already holds; they fade back in at its
-     * border. */
+    /* Inside the grid, its baked light replaces the environment, the
+     * ambient minimum and the world ambient, which it already holds; they
+     * fade back in at its border. */
     float3 probe_point = probe_model_point(i.world_pos);
     float  grid_weight, grid_luminance, grid_light;
     float3 grid_rgb = probe_grid_diffuse(probe_point, probe_model_direction(N), grid_weight, grid_luminance,

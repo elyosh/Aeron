@@ -146,7 +146,7 @@ float4 main(VSOut input, bool is_front : SV_IsFrontFace) : SV_Target {
 	float3 ao_c       = 2.7552f * albedo + 0.6903f;
 	float3 ao_ambient = max(ao, ((ao * ao_a + ao_b) * ao + ao_c) * ao);
 	float3 diffuse    = (sun_color * saturate(dot(N, L)) * inv_pi * shadow + extra_rgb) * ao_direct +
-					 (world_ambient(N) + overlay_environment(N)) * ao_ambient;
+					 (world_ambient(N) + apply_ambient_minimum(overlay_environment(N))) * ao_ambient;
 
 	PbrMaterialParams mp;
 	mp.spec_intensity = 1.0f;

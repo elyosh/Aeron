@@ -72,9 +72,9 @@ cbuffer PbrLightFS : register(AERON_PBR_LIGHT_UNIFORM_REGISTER, space3)
      * illuminance. dir = surface -> light. */
     float4 fs_extra_dir[3];
     float4 fs_extra_col[3];
-    /* Reserved: formerly the point-light knobs (the classic law's, then
-     * the specular weight). */
-	float4 fs_reserved_point;
+    /* The least diffuse light from the environment: rgb, and the inverse
+     * of its luminance in w (0 when there is no minimum). */
+	float4 fs_ambient_minimum;
 	/* Reserved: formerly the diffuse environment, now in the scene
 	 * lighting block (b2). Keeps the 368-byte layout games mirror. */
 	float4 fs_reserved_environment[4];
@@ -511,6 +511,16 @@ float3 world_ambient(float3 N)
     float3 amb_y = (N.y >= 0.0f) ? amb_pos_y : amb_neg_y;
     float3 amb_z = (N.z >= 0.0f) ? amb_pos_z : amb_neg_z;
     return n2.x * amb_x + n2.y * amb_y + n2.z * amb_z;
+}
+
+/* Raises the environment's diffuse light to the ambient minimum. Where the
+ * light is dimmer than the minimum, adds the part of the minimum that is
+ * missing, so the light reaches the minimum's luminance but keeps its own
+ * colour as much as it can. Brighter light is left as it is. */
+float3 apply_ambient_minimum(float3 light)
+{
+    float lit = dot(light, float3(0.2126f, 0.7152f, 0.0722f));
+    return light + fs_ambient_minimum.rgb * saturate(1.0f - lit * fs_ambient_minimum.w);
 }
 
 /* Cook-Torrance specular BRDF D·G·F / (4·N·L·N·V), with the N·L from
