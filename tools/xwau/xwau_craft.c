@@ -1572,11 +1572,11 @@ static void write_target_readout(FILE* f, const EnhancedHud* h) {
 		ReportUnsupported("the SSAO.cfg key enhanced_hud_enable_bg_text_box");
 }
 
-/* Whether XWAU's ddraw draws the target boxes itself: ddraw.cfg has
- * Radar2DRendererEnabled, which is on by default. It reads the file as
+/* Whether XWAU's ddraw draws the target boxes and the radar blips itself:
+ * ddraw.cfg has Radar2DRendererEnabled, which is on by default. It reads the file as
  * ddraw's Config does: the name is the text before '=' without its white
  * space, the value is read with stoi, and the last line wins. */
-static bool read_xwau_target_boxes(const char* xwau_root) {
+static bool read_radar_2d_renderer(const char* xwau_root) {
 	char path[1024], line[512];
 	if (!Xwau_FindFile(xwau_root, "ddraw.cfg", path, sizeof path))
 		return false;
@@ -1613,7 +1613,7 @@ static bool write_hud_file(const char* xwau_root, const char* output_dir, const 
 	const bool    has_display = read_target_display(xwau_root, &display);
 	EnhancedHud   readout;
 	const bool    has_readout = read_enhanced_hud(xwau_root, &readout);
-	const bool    has_boxes   = read_xwau_target_boxes(xwau_root);
+	const bool    has_boxes   = read_radar_2d_renderer(xwau_root);
 	if (!has_hull && !has_map && !has_display && !has_readout && !has_boxes)
 		return true;
 	uint16_t* hull       = NULL;
@@ -1645,6 +1645,10 @@ static bool write_hud_file(const char* xwau_root, const char* output_dir, const 
 		   importer doesn't know. The width is tuned for OpenXWA. */
 		if (has_boxes)
 			fputs("target_boxes:\n  line_width: 3\n", f);
+		/* XWAU draws the blips as circles 4 pixels wide, and the current
+		   target as a yellow circle 8 pixels wide. */
+		if (has_boxes)
+			fputs("radar:\n  blip_size: 4\n  target_size: 8\n", f);
 		if (has_readout)
 			write_target_readout(f, &readout);
 		ok = fclose(f) == 0;
@@ -1653,12 +1657,12 @@ static bool write_hud_file(const char* xwau_root, const char* output_dir, const 
 		else
 			Report(NULL,
 				   "hud.yaml: %zu new hull icons, %zu new map icons, target display %s, target boxes %s, "
-				   "target readout %s",
+				   "radar blips %s, target readout %s",
 				   hull_count, map_count,
 				   !has_display    ? "not set"
 				   : display.edges ? "with edges"
 								   : "shaded",
-				   has_boxes ? "wide" : "original",
+				   has_boxes ? "wide" : "original", has_boxes ? "round" : "original",
 				   !has_readout            ? "not set"
 				   : readout.vertical_bars ? "on, vertical"
 										   : "on, horizontal");

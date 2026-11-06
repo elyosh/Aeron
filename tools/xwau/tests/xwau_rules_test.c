@@ -820,6 +820,8 @@ static void test_craft(const char* scratch) {
 	write_file(path, "1, -1, 20\n");
 	snprintf(path, sizeof path, "%s/HullIconList.txt", root);
 	write_file(path, "0\n100\n500\n");
+	snprintf(path, sizeof path, "%s/ddraw.cfg", root);
+	write_file(path, "; Radar2DRendererEnabled = 0\nRadar2DRendererEnabled = 1\n");
 	check(XwauCraft_Write(root, out, &g_names, &g_stock, NULL), "craft: the files are written");
 	size_t size = 0;
 	snprintf(path, sizeof path, "%s/models/awing.yaml", out);
@@ -859,6 +861,9 @@ static void test_craft(const char* scratch) {
 	check(text && strstr(text, "hull_icons:\n  type_2: 5\n") && !strstr(text, "map_icons"),
 		  "craft: hud.yaml has the hull icons that differ from stock as image numbers, and no map icons "
 		  "when their file is missing");
+	check(text && strstr(text, "target_boxes:\n  line_width: 3\n") &&
+			  strstr(text, "radar:\n  blip_size: 4\n  target_size: 8\n"),
+		  "craft: hud.yaml has the target boxes and the radar of Radar2DRendererEnabled");
 	free(text);
 }
 
