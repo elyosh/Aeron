@@ -33,7 +33,9 @@ float4 main(VSOut i) : SV_Target
     if (i.anchor.z >= 0.0f)
     {
         float2 texel = params.x / float2(params.y, params.z);
-        float  ref   = i.anchor.z + 1e-5f;
+        /* 1% of the anchor's depth, so geometry at any distance hides a
+         * far anchor. */
+        float  ref   = i.anchor.z * 1.01f;
         float  open  = 0.0f;
         [unroll] for (int y = -2; y <= 2; ++y)
         {

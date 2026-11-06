@@ -42,9 +42,11 @@ float4 main(VSOut i) : SV_Target
          * is in front of the source, the flare shows over it. The sampler
          * tests the four depth texels around the pixel and blends the
          * results, so the edge of what is in front stays smooth. With
-         * reversed Z, geometry in front of the source has a greater depth. */
+         * reversed Z, geometry in front of the source has a greater depth.
+         * The margin is 1% of the source's depth, as in the visibility
+         * shader. */
         const float2 depth_uv = render.zw + (i.position.xy - origin.xy) * render.xy;
-        const float  open     = g_depth.SampleCmpLevelZero(g_depth_s, depth_uv, disc.w + 1e-5f);
+        const float  open     = g_depth.SampleCmpLevelZero(g_depth_s, depth_uv, disc.w * 1.01f);
         cover = saturate((falloff - FLARE_MIN_COVER) / (1.0f - FLARE_MIN_COVER)) * open;
     }
     return float4(AeronSrgbToLinear(display) * (frame.w * g_visibility[0].x * (1.0f - cover)), 0.0f);

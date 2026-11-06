@@ -25,8 +25,10 @@ float flare_open(int2 texel)
 {
     if (any(texel < (int2)viewport.xy) || any(texel >= (int2)(viewport.xy + viewport.zw)))
         return 0.0f;
-    /* Reversed-Z: geometry in front of the source has a greater depth. */
-    return g_depth.Load(int3(texel, 0)) <= disc.w + 1e-5f ? 1.0f : 0.0f;
+    /* Reversed-Z: geometry in front of the source has a greater depth. The
+     * margin is 1% of the source's depth, so geometry at any distance
+     * hides a far source. */
+    return g_depth.Load(int3(texel, 0)) <= disc.w * 1.01f ? 1.0f : 0.0f;
 }
 
 [numthreads(FLARE_SAMPLES, 1, 1)]
