@@ -191,6 +191,52 @@ static bool write_suns(FILE* f, const char* game) {
 	return true;
 }
 
+/* The speed effect settings of ddraw's SSAO.cfg. */
+typedef struct SpeedEffect {
+	bool  enabled, has_look;
+	float intensity, particles;
+} SpeedEffect;
+
+/* Reads one setting of SSAO.cfg for the `speed_effect` section, as ddraw's
+ * LoadSSAOParams does. */
+static void read_speed_effect_setting(const char* key, const char* value, void* data) {
+	SpeedEffect* out    = data;
+	const float  number = (float)atof(value);
+	if (strcasecmp(key, "enable_speed_shader") == 0)
+		out->enabled = number != 0.0f;
+	else if (strcasecmp(key, "speed_shader_max_intensity") == 0)
+		out->intensity = number;
+	else if (strcasecmp(key, "speed_shader_max_particles") == 0)
+		out->particles = fminf(fmaxf((float)(int)number, 0.0f), 256.0f);
+	else if (strcasecmp(key, "speed_shader_scale_factor") == 0 ||
+			 strcasecmp(key, "speed_shader_particle_size") == 0 ||
+			 strcasecmp(key, "speed_shader_trail_length") == 0 ||
+			 strcasecmp(key, "speed_shader_particle_range") == 0)
+		out->has_look = true;
+}
+
+/* Writes the `speed_effect` section, when the mod's ddraw draws its speed
+ * effect. */
+static bool write_speed_effect(FILE* f, const char* game) {
+	char dll[1024];
+	if (!find_ddraw(game, dll, sizeof dll) || !Xwau_FileHasText(dll, "enable_speed_shader"))
+		return false;
+	/* ddraw's defaults. */
+	SpeedEffect e = { .enabled = true, .intensity = 0.6f, .particles = 256.0f };
+	Xwau_ReadSettings(game, "SSAO.cfg", read_speed_effect_setting, &e);
+	if (!e.enabled)
+		return false;
+	if (e.has_look)
+		ReportUnsupported("the SSAO.cfg keys speed_shader_scale_factor, speed_shader_particle_size, "
+						  "speed_shader_trail_length and speed_shader_particle_range");
+	/* ddraw adds its streaks to the final image, so its brightness doesn't
+	   match OpenXWA's. The mod keeps OpenXWA's default. */
+	if (e.intensity != 0.6f)
+		ReportUnsupported("the SSAO.cfg key speed_shader_max_intensity");
+	fprintf(f, "speed_effect:\n  enabled: true\n  particles: %.0f\n", (double)e.particles);
+	return true;
+}
+
 /* Reads the settings of `hook` ("hook_shield"): its .cfg file, else its
  * section of Hooks.ini. Writes the name of the file into `source`, for the
  * reports. */
@@ -537,6 +583,7 @@ bool XwauFlightSettings_Write(const char* game, const XwauNames* names, const Xw
 	const bool limits     = XwauObjectLimits_Write(f, game);
 	const bool camera     = write_camera(f, game);
 	const bool suns       = write_suns(f, game);
+	const bool speed      = write_speed_effect(f, game);
 	XwauSettingsConfig_Free(&config);
 	const bool        ok        = !ferror(f) && fclose(f) == 0;
 	char              what[300] = "";
@@ -549,7 +596,8 @@ bool XwauFlightSettings_Write(const char* game, const XwauNames* names, const Xw
 									docking ? "the docking rules" : NULL,
 									limits ? "the object counts" : NULL,
 									camera ? "the camera" : NULL,
-									suns ? "the suns" : NULL };
+									suns ? "the suns" : NULL,
+									speed ? "the speed effect" : NULL };
 	for (size_t i = 0; i < sizeof parts / sizeof parts[0]; ++i) {
 		if (parts[i])
 			snprintf(what + strlen(what), sizeof what - strlen(what), "%s%s", what[0] ? ", " : "", parts[i]);
