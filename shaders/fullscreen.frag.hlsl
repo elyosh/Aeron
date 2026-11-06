@@ -7,7 +7,8 @@ cbuffer FragmentUniform : register(b0, space3) {
 	float4 params; /* x: decode sRGB source to linear; y: sharp sampling; z: output RGB scale;
 					  w: decode gamma (0 = piecewise sRGB curve, >0 = pow(rgb, w)) */
 	float4 tint;   /* RGBA multiplier applied after decode (1,1,1,1 = untinted) */
-	float4 bias;   /* additive RGB weighted by sample alpha (fade-to-color) */
+	float4 bias;   /* rgb: additive RGB weighted by sample alpha (fade-to-color);
+					  w: 1 when the colours are premultiplied by alpha */
 	float4 layer;  /* xy: the layer's top-left pixel in the target; zw: 1 / its size in pixels */
 };
 
@@ -54,8 +55,11 @@ float4 main(float4 position : SV_Position) : SV_Target0 {
 		 * HDR extended-linear composition: the compositor displays linear light
 		 * faithfully there, and display-referred art authored for ~2.2-power SDR
 		 * monitors renders with lifted darks if decoded with the piecewise toe. */
-		color.rgb =
-			params.w > 0.0 ? pow(saturate(color.rgb), params.w) : AeronSrgbToLinear(saturate(color.rgb));
+		/* A premultiplied layer stores sRGB values multiplied by alpha. They
+		 * are divided by alpha before the decode and multiplied again after. */
+		float  divisor = bias.w > 0.5 && color.a > 0.0 ? color.a : 1.0;
+		float3 encoded = saturate(color.rgb / divisor);
+		color.rgb      = (params.w > 0.0 ? pow(encoded, params.w) : AeronSrgbToLinear(encoded)) * divisor;
 	} else if (params.x == 2.0 && params.w > 0.0) {
 		/* Display-referred source that arrives linear (hardware _SRGB decode).
 		 * Undo the piecewise decode and reapply the display gamma so the net

@@ -38,9 +38,15 @@ typedef struct CacheEntryGpu {
 
 struct AeronImageCache {
 	CacheEntryGpu* entries;
+	bool           without_srgb; /* see Aeron_ImageCacheSetWithoutSrgb */
 };
 
 AeronImageCache* Aeron_ImageCacheCreate(void) { return (AeronImageCache*)calloc(1, sizeof(AeronImageCache)); }
+
+void Aeron_ImageCacheSetWithoutSrgb(AeronImageCache* cache, bool without_srgb) {
+	if (cache)
+		cache->without_srgb = without_srgb;
+}
 
 void Aeron_ImageCacheDestroy(AeronImageCache* a) {
 	if (!a)
@@ -117,11 +123,14 @@ static bool check_alpha_is_premultiplied(const Ktx2* ktx, const char* path) {
 	return false;
 }
 
+static AeronTexture* upload_ktx2(AeronCommandBuffer* cmd, const Ktx2* const* parts, uint32_t part_count,
+								 bool as_array, bool without_srgb, const char* debug_name);
+
 /* ---------- KTX2 → AeronTexture upload ----------
  *
- * The create-texture + per-mip upload lives in Aeron_ImageUploadKtx2();
- * this wrapper opens the file, delegates the upload, and records the
- * result in the resident store. */
+ * The create-texture + per-mip upload lives in upload_ktx2(); this
+ * wrapper opens the file, delegates the upload, and records the result in
+ * the resident store. */
 static const AeronImageCacheEntry* load_via_ktx2(AeronImageCache* a, AeronCommandBuffer* cmd,
 												 const char* path) {
 	Ktx2* k = ktx2_open(path);
@@ -134,7 +143,7 @@ static const AeronImageCacheEntry* load_via_ktx2(AeronImageCache* a, AeronComman
 
 	int           w   = ktx2_width(k);
 	int           h   = ktx2_height(k);
-	AeronTexture* tex = Aeron_ImageUploadKtx2(cmd, k, path);
+	AeronTexture* tex = upload_ktx2(cmd, (const Ktx2* const*)&k, 1, false, a->without_srgb, path);
 	if (!tex) {
 		ktx2_close(k);
 		return NULL;
@@ -185,7 +194,7 @@ const AeronImageCacheEntry* Aeron_ImageCacheLoadVfs(AeronImageCache* cache, Aero
 		return NULL;
 	}
 	const int     width = ktx2_width(ktx), height = ktx2_height(ktx);
-	AeronTexture* texture = Aeron_ImageUploadKtx2(cmd, ktx, path);
+	AeronTexture* texture = upload_ktx2(cmd, (const Ktx2* const*)&ktx, 1, false, cache->without_srgb, path);
 	ktx2_close(ktx);
 	free(bytes);
 	return texture ? cache_insert(cache, key, texture, width, height, 1) : NULL;
@@ -232,9 +241,11 @@ void Aeron_ImageCacheClearOverrides(AeronImageCache* cache) {
 /* `as_array` creates a 2D array texture of the layers of every part, in
  * order (one layer for a part that is not a KTX2 array); the parts must
  * agree in size, format and level count. Otherwise the single part's
- * texture: 2D, cube or cube array; a KTX2 2D array is rejected. */
+ * texture: 2D, cube or cube array; a KTX2 2D array is rejected.
+ * `without_srgb` creates an sRGB file's texture with the matching UNORM
+ * format. */
 static AeronTexture* upload_ktx2(AeronCommandBuffer* cmd, const Ktx2* const* parts, uint32_t part_count,
-								 bool as_array, const char* debug_name) {
+								 bool as_array, bool without_srgb, const char* debug_name) {
 	if (!cmd || !parts || !part_count || !parts[0] || (!as_array && part_count != 1))
 		return NULL;
 	const Ktx2* ktx    = parts[0];
@@ -262,7 +273,7 @@ static AeronTexture* upload_ktx2(AeronCommandBuffer* cmd, const Ktx2* const* par
 		.width       = w,
 		.height      = h,
 		.mip_count   = nl,
-		.format      = ktx2_format(ktx),
+		.format      = without_srgb ? Aeron_TextureFormatWithoutSrgb(ktx2_format(ktx)) : ktx2_format(ktx),
 		.usage       = AERON_TEXTURE_USAGE_SAMPLED | AERON_TEXTURE_USAGE_TRANSFER_DST,
 		.cube        = !as_array && faces == 6,
 		.layer_count = layers,
@@ -331,16 +342,16 @@ static AeronTexture* upload_ktx2(AeronCommandBuffer* cmd, const Ktx2* const* par
 }
 
 AeronTexture* Aeron_ImageUploadKtx2(AeronCommandBuffer* cmd, const Ktx2* ktx, const char* debug_name) {
-	return upload_ktx2(cmd, &ktx, 1, false, debug_name);
+	return upload_ktx2(cmd, &ktx, 1, false, false, debug_name);
 }
 
 AeronTexture* Aeron_ImageUploadKtx2Array(AeronCommandBuffer* cmd, const Ktx2* ktx, const char* debug_name) {
-	return upload_ktx2(cmd, &ktx, 1, true, debug_name);
+	return upload_ktx2(cmd, &ktx, 1, true, false, debug_name);
 }
 
 AeronTexture* Aeron_ImageUploadKtx2Layers(AeronCommandBuffer* cmd, const Ktx2* const* parts,
 										  uint32_t part_count, const char* debug_name) {
-	return upload_ktx2(cmd, parts, part_count, true, debug_name);
+	return upload_ktx2(cmd, parts, part_count, true, false, debug_name);
 }
 
 int Aeron_ImageUploadKtx2IntoLayers(AeronCommandBuffer* cmd, const Ktx2* ktx, int levels,

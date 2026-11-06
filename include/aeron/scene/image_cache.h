@@ -35,6 +35,12 @@ typedef struct AeronImageCacheEntry {
 AeronImageCache* Aeron_ImageCacheCreate(void);
 void             Aeron_ImageCacheDestroy(AeronImageCache* cache);
 
+/* With `without_srgb` set, the cache creates the textures of sRGB files
+ * with the matching UNORM format (Aeron_TextureFormatWithoutSrgb). Shaders
+ * then read the stored sRGB values, for drawing that blends sRGB values.
+ * It applies to the textures that the cache loads after the call. */
+void Aeron_ImageCacheSetWithoutSrgb(AeronImageCache* cache, bool without_srgb);
+
 /* First call reads the KTX2 and uploads a mip-chain texture through `cmd`
  * (which must have no open pass). Subsequent calls return the resident
  * entry. Passing NULL `cmd` performs lookup only. The returned pointer is

@@ -1323,12 +1323,6 @@ static SDL_GPUGraphicsPipeline* Aeron_PipelineForTarget(SDL_GPUTextureFormat tar
 	return g_aeron.fullscreen_pipelines[i].pipeline;
 }
 
-static int Aeron_IsSrgbTextureFormat(AeronTextureFormat format) {
-	return format == AERON_TEXTURE_FORMAT_RGBA8_SRGB || format == AERON_TEXTURE_FORMAT_BGRA8_SRGB ||
-		   format == AERON_TEXTURE_FORMAT_BC1_RGBA_SRGB || format == AERON_TEXTURE_FORMAT_BC3_RGBA_SRGB ||
-		   format == AERON_TEXTURE_FORMAT_BC7_RGBA_SRGB;
-}
-
 static int Aeron_IsSrgbSdlTextureFormat(SDL_GPUTextureFormat format) {
 	return format == SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM_SRGB ||
 		   format == SDL_GPU_TEXTUREFORMAT_B8G8R8A8_UNORM_SRGB;
@@ -1385,7 +1379,8 @@ static int Aeron_DrawTexture(SDL_GPUCommandBuffer* command_buffer, SDL_GPURender
 	fragment_uniform[8]  = bias_rgba ? bias_rgba[0] : 0.0f;
 	fragment_uniform[9]  = bias_rgba ? bias_rgba[1] : 0.0f;
 	fragment_uniform[10] = bias_rgba ? bias_rgba[2] : 0.0f;
-	fragment_uniform[11] = 0.0f;
+	/* Tells the decode that the colours are premultiplied by alpha. */
+	fragment_uniform[11] = blend_mode == AERON_LAYER_BLEND_PREMULTIPLIED ? 1.0f : 0.0f;
 	/* The layer's whole rect: the shader maps it to the texture, so the
 	 * viewport can stop at the target's edges. */
 	fragment_uniform[12] = (float)dst_rect->x;
@@ -1835,7 +1830,7 @@ int Aeron_Present(void) {
 				if (!Aeron_DrawTexture(
 						command_buffer, render_pass, layer->u.texture.texture->texture,
 						g_aeron.pixel_frame_sampler, g_aeron.swapchain_format, (int)swapchain_width,
-						(int)swapchain_height, Aeron_IsSrgbTextureFormat(layer->u.texture.texture->format),
+						(int)swapchain_height, Aeron_TextureFormatIsSrgb(layer->u.texture.texture->format),
 						layer->u.texture.color_space, 1, output_rgb_scale, sdr_decode_gamma, &dst_rect,
 						layer->u.texture.blend_mode,
 						layer->u.texture.tint_enabled ? layer->u.texture.tint_rgba : NULL,
@@ -5088,6 +5083,29 @@ AeronTextureFormat Aeron_TextureGetFormat(const AeronTexture* texture) {
 	}
 
 	return texture->format;
+}
+
+int Aeron_TextureFormatIsSrgb(AeronTextureFormat format) {
+	return format == AERON_TEXTURE_FORMAT_RGBA8_SRGB || format == AERON_TEXTURE_FORMAT_BGRA8_SRGB ||
+		   format == AERON_TEXTURE_FORMAT_BC1_RGBA_SRGB || format == AERON_TEXTURE_FORMAT_BC3_RGBA_SRGB ||
+		   format == AERON_TEXTURE_FORMAT_BC7_RGBA_SRGB;
+}
+
+AeronTextureFormat Aeron_TextureFormatWithoutSrgb(AeronTextureFormat format) {
+	switch (format) {
+		case AERON_TEXTURE_FORMAT_RGBA8_SRGB:
+			return AERON_TEXTURE_FORMAT_RGBA8_UNORM;
+		case AERON_TEXTURE_FORMAT_BGRA8_SRGB:
+			return AERON_TEXTURE_FORMAT_BGRA8_UNORM;
+		case AERON_TEXTURE_FORMAT_BC1_RGBA_SRGB:
+			return AERON_TEXTURE_FORMAT_BC1_RGBA_UNORM;
+		case AERON_TEXTURE_FORMAT_BC3_RGBA_SRGB:
+			return AERON_TEXTURE_FORMAT_BC3_RGBA_UNORM;
+		case AERON_TEXTURE_FORMAT_BC7_RGBA_SRGB:
+			return AERON_TEXTURE_FORMAT_BC7_RGBA_UNORM;
+		default:
+			return format;
+	}
 }
 
 int Aeron_TextureGetMipCount(const AeronTexture* texture) { return texture ? texture->mip_count : 0; }

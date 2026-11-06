@@ -14,6 +14,9 @@
  *                                  inset + per-corner projective w
  *                                  for hyperbolic UV interpolation,
  *                                  and the monochrome weight
+ *   mode     : (source, unused, unused, unused)
+ *                                  how the fragment shader reads the
+ *                                  texture (Dl2dSource)
  */
 
 struct BlitUniforms
@@ -23,6 +26,7 @@ struct BlitUniforms
     float4 tint;
     float4 bias;
     float4 trap;
+    float4 mode;
 };
 
 StructuredBuffer<BlitUniforms> quads : register(t0, space0);
@@ -41,6 +45,7 @@ struct VSOut
     float4 tint       : TEXCOORD1;
     float4 bias       : TEXCOORD2;
     float  monochrome : TEXCOORD3;
+    float  source     : TEXCOORD4;
 };
 
 VSOut main(uint vid : SV_VertexID, uint iid : SV_InstanceID)
@@ -83,5 +88,6 @@ VSOut main(uint vid : SV_VertexID, uint iid : SV_InstanceID)
     o.tint     = float4(u.tint.rgb * output_rgb_scale, u.tint.a);
     o.bias     = float4(u.bias.rgb * output_rgb_scale, u.bias.a);
     o.monochrome = u.trap.w;
+    o.source     = u.mode.x;
     return o;
 }

@@ -1095,6 +1095,16 @@ int Aeron_TextureGetHeight(const AeronTexture* texture);
 /* Returns the format used to create an Aeron texture. */
 AeronTextureFormat Aeron_TextureGetFormat(const AeronTexture* texture);
 
+/* Returns nonzero for the sRGB formats. When a shader samples a texture in
+ * one of them, the GPU converts its sRGB values to linear. */
+int Aeron_TextureFormatIsSrgb(AeronTextureFormat format);
+
+/* Returns the UNORM format that stores the same data as sRGB format
+ * `format`, such as AERON_TEXTURE_FORMAT_BC7_RGBA_UNORM for
+ * AERON_TEXTURE_FORMAT_BC7_RGBA_SRGB. A shader that samples it reads the
+ * stored sRGB values. Other formats are returned unchanged. */
+AeronTextureFormat Aeron_TextureFormatWithoutSrgb(AeronTextureFormat format);
+
 /* Returns the number of mip levels and the creation usage flags. */
 int      Aeron_TextureGetMipCount(const AeronTexture* texture);
 uint32_t Aeron_TextureGetUsage(const AeronTexture* texture);

@@ -125,6 +125,18 @@ typedef struct AeronDrawList2D AeronDrawList2D;
 AeronDrawList2D* AeronDrawList_Create(int record_cap);
 void             AeronDrawList_Destroy(AeronDrawList2D* list);
 
+/* With `srgb_values` set, the list works on sRGB values, the way old games
+ * draw: its targets are UNORM and store sRGB values, tints and fill
+ * colours are sRGB, and blending mixes sRGB values. Each texture is read
+ * as sRGB values: a UNORM texture as it is, an sRGB texture with the GPU's
+ * conversion to linear undone, and a float texture, which holds linear
+ * premultiplied colours, converted to sRGB. Off by default, for lists that
+ * work on linear values. */
+void AeronDrawList_SetSrgbValues(AeronDrawList2D* list, int srgb_values);
+
+/* Returns nonzero if the list works on sRGB values. */
+int AeronDrawList_UsesSrgbValues(const AeronDrawList2D* list);
+
 /* Frame start: latch the optional target + clear mode, reset records.
  * `target_w/h` are the target's pixel dims (used for the px→NDC
  * conversion); `clear_rgba` NULL = transparent black. `target` may be

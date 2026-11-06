@@ -318,6 +318,7 @@ typedef struct Blit2DInstance {
 	float tint_r, tint_g, tint_b, tint_a;
 	float bias_r, bias_g, bias_b, bias_a;
 	float trap_top_dx_left, trap_top_dx_right, trap_top_w, monochrome;
+	float source, _source_pad[3]; /* Dl2dSource */
 } Blit2DInstance;
 
 typedef struct Blit2DQuad4Uniform {
@@ -326,7 +327,7 @@ typedef struct Blit2DQuad4Uniform {
 	float ndc_depth[4];
 	float tint_r, tint_g, tint_b, tint_a;
 	float bias_r, bias_g, bias_b, bias_a;
-	float monochrome, _mode_pad[3];
+	float monochrome, source, _mode_pad[2]; /* source: Dl2dSource */
 } Blit2DQuad4Uniform;
 
 typedef struct Blit2DRunUniform {
@@ -346,7 +347,7 @@ typedef struct Blit2DRRectInstance {
 	float bevel_lo[4];
 } Blit2DRRectInstance;
 
-typedef char Blit2DInstanceSizeCheck[sizeof(Blit2DInstance) == 80 ? 1 : -1];
+typedef char Blit2DInstanceSizeCheck[sizeof(Blit2DInstance) == 96 ? 1 : -1];
 typedef char Blit2DQuad4UniformSizeCheck[sizeof(Blit2DQuad4Uniform) == 144 ? 1 : -1];
 typedef char Blit2DRunUniformSizeCheck[sizeof(Blit2DRunUniform) == 16 ? 1 : -1];
 typedef char Blit2DRRectInstanceSizeCheck[sizeof(Blit2DRRectInstance) == 112 ? 1 : -1];
@@ -377,6 +378,14 @@ typedef enum {
 	DL2D_QUAD4  = 1,
 	DL2D_RRECT  = 2,
 } Dl2dKind;
+
+/* How scene_blit.frag reads a texture. A list that blends sRGB values
+ * needs sRGB values from every texture. Must match scene_blit.frag. */
+typedef enum {
+	DL2D_SOURCE_AS_IS = 0, /* the sampled values, unchanged */
+	DL2D_SOURCE_SRGB  = 1, /* an sRGB texture: the GPU's decode is undone */
+	DL2D_SOURCE_FLOAT = 2, /* a float texture, linear and premultiplied: converted to sRGB */
+} Dl2dSource;
 
 typedef struct Dl2dRecord {
 	uint8_t           kind;
@@ -418,6 +427,7 @@ struct AeronDrawList2D {
 	float                    clear_rgba[4];
 	int                      has_depth_mask;
 	AeronDrawList2DDepthMask depth_mask;
+	int                      srgb_values; /* see AeronDrawList_SetSrgbValues */
 };
 
 AeronDrawList2D* AeronDrawList_Create(int record_cap) {
@@ -451,6 +461,42 @@ void AeronDrawList_Destroy(AeronDrawList2D* l) {
 	if (G.draw_list_count > 0 && --G.draw_list_count == 0) {
 		blit2d_shutdown();
 	}
+}
+
+void AeronDrawList_SetSrgbValues(AeronDrawList2D* l, int srgb_values) {
+	if (l) {
+		l->srgb_values = srgb_values != 0;
+	}
+}
+
+int AeronDrawList_UsesSrgbValues(const AeronDrawList2D* l) { return l && l->srgb_values; }
+
+static int dl2d_is_float_format(AeronTextureFormat format) {
+	switch (format) {
+		case AERON_TEXTURE_FORMAT_R16_FLOAT:
+		case AERON_TEXTURE_FORMAT_R32_FLOAT:
+		case AERON_TEXTURE_FORMAT_R16G16_FLOAT:
+		case AERON_TEXTURE_FORMAT_R32G32_FLOAT:
+		case AERON_TEXTURE_FORMAT_R11G11B10_UFLOAT:
+		case AERON_TEXTURE_FORMAT_RGBA16_FLOAT:
+		case AERON_TEXTURE_FORMAT_RGBA32_FLOAT:
+		case AERON_TEXTURE_FORMAT_BC6H_RGB_FLOAT:
+		case AERON_TEXTURE_FORMAT_BC6H_RGB_UFLOAT:
+			return 1;
+		default:
+			return 0;
+	}
+}
+
+static float dl2d_source(const AeronDrawList2D* l, const AeronTexture* texture) {
+	if (!l->srgb_values) {
+		return (float)DL2D_SOURCE_AS_IS;
+	}
+	const AeronTextureFormat format = Aeron_TextureGetFormat(texture);
+	if (Aeron_TextureFormatIsSrgb(format)) {
+		return (float)DL2D_SOURCE_SRGB;
+	}
+	return (float)(dl2d_is_float_format(format) ? DL2D_SOURCE_FLOAT : DL2D_SOURCE_AS_IS);
 }
 
 void AeronDrawList_Begin(AeronDrawList2D* l, AeronRenderTarget* target, int target_w, int target_h,
@@ -556,6 +602,7 @@ void AeronDrawList_AddSprite(AeronDrawList2D* l, const AeronDrawList2DSprite* s)
 	q->trap_top_dx_right = s->trap_top_dx_right_px;
 	q->trap_top_w        = s->trap_top_w;
 	q->monochrome        = s->monochrome;
+	q->source            = dl2d_source(l, s->texture);
 }
 
 void AeronDrawList_AddQuad4(AeronDrawList2D* l, const AeronDrawList2DQuad4* in) {
@@ -590,6 +637,7 @@ void AeronDrawList_AddQuad4(AeronDrawList2D* l, const AeronDrawList2DQuad4* in) 
 	q->bias_b = in->bias[2];
 	q->bias_a     = in->bias[3];
 	q->monochrome = in->monochrome;
+	q->source     = dl2d_source(l, in->texture);
 }
 
 void AeronDrawList_AddRRect(AeronDrawList2D* l, const AeronDrawList2DRRect* in) {

@@ -25,6 +25,7 @@ struct VSOut {
 	float4 tint : TEXCOORD1;
 	float4 bias : TEXCOORD2;
 	float  monochrome : TEXCOORD3;
+	float  source : TEXCOORD4;
 };
 
 float4 main(VSOut input) : SV_Target {

@@ -18,6 +18,8 @@
  * Paired with either gpu_blit.vert (instanced rect) or
  * gpu_blit4.vert (4-corner free quad) — both emit the same VSOut. */
 
+#include "srgb.hlsli"
+
 Texture2D<float4> g_tex : register(t0, space2);
 SamplerState      g_smp : register(s0, space2);
 
@@ -28,11 +30,21 @@ struct VSOut
     float4 tint       : TEXCOORD1;
     float4 bias       : TEXCOORD2;
     float  monochrome : TEXCOORD3;
+    float  source     : TEXCOORD4;
 };
 
 float4 main(VSOut input) : SV_Target
 {
     float4 s = g_tex.Sample(g_smp, input.uv);
+    /* A list that blends sRGB values reads sRGB values from every texture
+     * (Dl2dSource in draw_list2d.c). 1: an sRGB texture, which the GPU has
+     * converted to linear. Its stored values, sRGB values premultiplied by
+     * alpha, come back exactly. 2: a float texture with linear premultiplied
+     * colours, converted to premultiplied sRGB colours. */
+    if (input.source > 1.5f)
+        s.rgb = s.a > 0.0f ? AeronLinearToSrgb(saturate(s.rgb / s.a)) * s.a : float3(0.0f, 0.0f, 0.0f);
+    else if (input.source > 0.5f)
+        s.rgb = AeronLinearToSrgb(saturate(s.rgb));
     if (s.a > 0.97f) s.a = 1.0f;
 
     /* Monochrome replaces RGB with the largest channel, so the tint sets
