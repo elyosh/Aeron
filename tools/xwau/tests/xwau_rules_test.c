@@ -96,8 +96,8 @@ static const char* const kCategoryTexts[]  = { "Fighter",
 											   "Mine",
 											   "Satellite/Buoy",
 											   "Droid" };
-static const char* const kLaserKinds[]     = { "none", "laser_cannon", "ion_cannon",
-											   NULL,   "turret",       "long_range_turret" };
+static const char* const kLaserKinds[]     = { "none",   "laser_cannon",      "ion_cannon", NULL,
+											   "turret", "long_range_turret", "slow_turret" };
 static const char* const kHardpointKinds[] = { "none", "laser", "warhead" };
 static const char* const kRanks[]        = { "novice", "officer", "veteran", "ace", "top_ace", "super_ace" };
 static const char* const kDifficulties[] = { "easy", "medium", "hard" };
@@ -1187,7 +1187,8 @@ static void test_objects(const char* scratch) {
 
 	snprintf(path, sizeof path, "%s/FlightModels/BWING.ini", mod);
 	write_file(path, "[Size]\nX = 1\n[ExeCraftValues]\nGameOptions_IsHardpointsMirroring = 0\n"
-					 "LaserTypeId1 = 283\nLaserSequence1 = 0x5\t; hexadecimal\nWarheadTypeId0 = 286\n"
+					 "LaserTypeId1 = 283\nLaserSequence1 = 0x5\t; hexadecimal\nLaserSequence2 = 9\n"
+					 "WarheadTypeId0 = 286\n"
 					 "CounterMeasuresCount = x\nAIHitsTakenToEvade = 3\n");
 	write_strings(stock, "m:Craft 1");
 	write_strings(mod, "m:TIE Advanced x1");
@@ -1283,6 +1284,9 @@ static void test_objects(const char* scratch) {
 			strstr(text, "  warheads:\n    - {type: type_286, count: 0, capacity: 0}\n"),
 		"objects: [ExeCraftValues] sets the craft record; missing keys and values that aren't numbers keep "
 		"the record's values");
+	check(text &&
+			  strstr(text, "    - {type: none, count: 0, kind: slow_turret, range_m: 0, cooldown_ms: 0}\n"),
+		  "objects: a turret kind above 6 is slow_turret");
 	free(text);
 	snprintf(path, sizeof path, "%s/object_types/corvetteexplode.yaml", out);
 	text = ReadWholeFile(path, &size);

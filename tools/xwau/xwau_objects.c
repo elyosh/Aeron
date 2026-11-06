@@ -148,23 +148,28 @@ static bool field_differs(const uint8_t* a, const uint8_t* b, const Field* field
 	return field_value(a, field, element) != field_value(b, field, element);
 }
 
-static void write_field(FILE* f, const XwauNames* names, const uint8_t* record, const Field* field,
-						unsigned element) {
-	const long long value = field_value(record, field, element);
-	const char*     name = field->kind == FIELD_WEAPON       ? XwauNames_WeaponType(names, (int)value)
-						   : field->kind == FIELD_LASER_KIND ? XwauNames_Name(&names->laser_kinds, (int)value)
-															 : NULL;
+/* Writes field `field` of `record`. Problems are reported with `path`, the
+   object type file. */
+static void write_field(FILE* f, const char* path, const XwauNames* names, const uint8_t* record,
+						const Field* field, unsigned element) {
+	long long value = field_value(record, field, element);
+	/* The game treats the turret kinds above 6 like 6, slow_turret. */
+	if (field->kind == FIELD_LASER_KIND && value > 6)
+		value = 6;
+	const char* name = field->kind == FIELD_WEAPON       ? XwauNames_WeaponType(names, (int)value)
+					   : field->kind == FIELD_LASER_KIND ? XwauNames_Name(&names->laser_kinds, (int)value)
+														 : NULL;
 	if (field->kind == FIELD_BOOL && (value == 0 || value == 1))
 		fputs(value ? "true" : "false", f);
 	else if (field->kind == FIELD_BOOL) {
-		ReportFatal(NULL, "%s is %lld, but the game only accepts true or false", field->key, value);
+		ReportFatal(path, "%s is %lld, but the game only accepts true or false", field->key, value);
 		fprintf(f, "%lld", value);
 	} else if (field->kind == FIELD_WEAPON && value == 0)
 		fputs("none", f);
 	else if (name)
 		fputs(name, f);
 	else if (field->kind == FIELD_WEAPON || field->kind == FIELD_LASER_KIND) {
-		ReportFatal(NULL, "the game has no name for %s %lld", field->key, value);
+		ReportFatal(path, "the game has no name for %s %lld", field->key, value);
 		fputs("none", f);
 	} else
 		Xwau_WriteUnit(f, field->unit, value);
@@ -189,8 +194,8 @@ static unsigned used_groups(const uint8_t* record, const Field* fields, size_t c
 	return last;
 }
 
-static void write_groups(FILE* f, const XwauNames* names, const char* key, const uint8_t* record,
-						 const Field* fields, size_t count, unsigned groups) {
+static void write_groups(FILE* f, const char* path, const XwauNames* names, const char* key,
+						 const uint8_t* record, const Field* fields, size_t count, unsigned groups) {
 	const unsigned last = used_groups(record, fields, count, groups);
 	if (last == 0) {
 		fprintf(f, "  %s: []\n", key);
@@ -201,7 +206,7 @@ static void write_groups(FILE* f, const XwauNames* names, const char* key, const
 		fputs("    - {", f);
 		for (size_t i = 0; i < count; ++i) {
 			fprintf(f, "%s%s: ", i ? ", " : "", fields[i].key);
-			write_field(f, names, record, &fields[i], g);
+			write_field(f, path, names, record, &fields[i], g);
 		}
 		fputs("}\n", f);
 	}
@@ -804,20 +809,20 @@ static bool write_craft_types(const char* dir, const XwauNames* names, const Xwa
 	return ok;
 }
 
-static void write_craft_record(FILE* f, const XwauNames* names, int object_type, const uint8_t* stock,
-							   const uint8_t* mod) {
+static void write_craft_record(FILE* f, const char* path, const XwauNames* names, int object_type,
+							   const uint8_t* stock, const uint8_t* mod) {
 	fputs("craft_record:\n", f);
 	for (size_t i = 0; i < sizeof g_fields / sizeof g_fields[0]; ++i) {
 		if (!field_differs(stock, mod, &g_fields[i], 0))
 			continue;
 		fprintf(f, "  %s: ", g_fields[i].key);
-		write_field(f, names, mod, &g_fields[i], 0);
+		write_field(f, path, names, mod, &g_fields[i], 0);
 		fputc('\n', f);
 	}
 	if (group_differs(stock, mod, g_laserFields, 5, 3))
-		write_groups(f, names, "lasers", mod, g_laserFields, 5, 3);
+		write_groups(f, path, names, "lasers", mod, g_laserFields, 5, 3);
 	if (group_differs(stock, mod, g_warheadFields, 3, 2))
-		write_groups(f, names, "warheads", mod, g_warheadFields, 3, 2);
+		write_groups(f, path, names, "warheads", mod, g_warheadFields, 3, 2);
 	if (group_differs(stock, mod, g_turretFields, 8, 2))
 		write_turrets(f, names, object_type, mod);
 	if (eye_differs(stock, mod)) {
@@ -912,7 +917,7 @@ static bool write_object_file(const char* path, const XwauNames* names, const Ch
 	/* Compare with the object type's own stock record. If other object types
 	   share this record, the game gives the object type its own copy. */
 	if (change->recordChanged) {
-		write_craft_record(f, names, change->objectType, stock->records[change->stockRecord],
+		write_craft_record(f, path, names, change->objectType, stock->records[change->stockRecord],
 						   mod->records[change->recordIndex]);
 		counts->records++;
 	}
