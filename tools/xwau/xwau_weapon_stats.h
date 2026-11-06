@@ -155,10 +155,9 @@ typedef struct XwauWeaponProfileChoices {
 bool XwauWeaponStats_ReadChoices(const char* game, const char* base, XwauWeaponProfileChoices* out);
 void XwauWeaponStats_FreeChoices(XwauWeaponProfileChoices* choices);
 const XwauWeaponProfileChoice* XwauWeaponStats_FindChoice(const XwauWeaponProfileChoices* choices, int fg);
-/* Reports the profiles in `choice` that model `model` doesn't have, and
- * makes the import fail. `model` is a model key, after the mission's swaps.
- * XWAU gives such a flight group the stock values, and OpenXWA gives it the
- * `default` values. */
+/* Logs the profiles in `choice` that model `model` doesn't have. `model` is
+ * a model key, after the mission's swaps. Such a flight group gets the
+ * original game's values, in XWAU and in OpenXWA. */
 void XwauWeaponStats_ReportChoice(const char* game, const char* base, const char* model,
 								  const XwauWeaponProfileChoice* choice);
 bool XwauWeaponStats_AnyChoice(const XwauWeaponProfileChoice* choice);

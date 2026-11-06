@@ -1844,6 +1844,11 @@ static void test_weapon_stats(const char* scratch) {
 	XwauWeaponStats_WriteChoice(f, XwauWeaponStats_FindChoice(&choices, 2));
 	fclose(f);
 	check(same_file(out, ", energy_profile: \"fast\""), "weapon profiles: a flight group's choices");
+	ClearReportFatal();
+	XwauWeaponStats_ReportChoice(game, path, "Model", XwauWeaponStats_FindChoice(&choices, 2));
+	check(!ReportFatalMessage(),
+		  "weapon profiles: a profile that the model doesn't have is logged, and the import goes on");
+	ClearReportFatal();
 	XwauWeaponStats_FreeChoices(&choices);
 }
 

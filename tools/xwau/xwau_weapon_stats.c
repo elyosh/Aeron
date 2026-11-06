@@ -846,11 +846,10 @@ void XwauWeaponStats_ReportChoice(const char* game, const char* base, const char
 	for (int group = 0; group < XWAU_WEAPON_STATS_GROUPS; ++group) {
 		if (!choice->name[group][0] || XwauWeaponStats_HasProfile(game, model, group, choice->name[group]))
 			continue;
-		ReportFatal(
-			base,
-			"flight group %d picks %s %s, which isn't a profile of %s. XWAU then gives the flight group "
-			"the stock values, and OpenXWA gives it the default values.",
-			choice->fg, kChoiceNames[group], choice->name[group], model);
+		Report(base,
+			   "flight group %d picks %s %s, which isn't a profile of %s, so it gets the original game's "
+			   "values",
+			   choice->fg, kChoiceNames[group], choice->name[group], model);
 	}
 }
 
