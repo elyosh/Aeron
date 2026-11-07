@@ -393,7 +393,18 @@ static bool prepare_xwau(Conversion* c, const ModelConversion* mc, const opt_fil
 			ReportFatal(label,
 						"the cockpit has a field of view, but the craft has no pilot eye to put it on");
 	}
-	const char* listed = ModelTables_LitTextures(basename);
+	/* The game and XWAU find some components by their stock number, so the
+	   model gets the stock tags of the components it has. Its articulations
+	   come from XWAU's files. */
+	const bool tags_read = stock_tags_read(&c->stock, basename, label);
+	size_t     kept      = 0;
+	for (size_t i = 0; tags_read && i < c->stock.tag_count; ++i)
+		if (c->stock.tags[i].mesh_index < (uint32_t)opt->mesh_count)
+			c->stock.tags[kept++] = c->stock.tags[i];
+	c->stock.tag_count         = kept;
+	c->options.model.tags      = c->stock.tags;
+	c->options.model.tag_count = c->stock.tag_count;
+	const char* listed         = ModelTables_LitTextures(basename);
 	if (listed)
 		snprintf(c->lit_text, sizeof c->lit_text, "%s", listed);
 	char* token = c->lit_text[0] ? c->lit_text : NULL;
@@ -404,7 +415,7 @@ static bool prepare_xwau(Conversion* c, const ModelConversion* mc, const opt_fil
 		c->lit[c->lit_count++] = token;
 		token                  = next;
 	}
-	return read && XwauSkins_Resolve(mc->game, mc->missions, basename, opt, label, &c->skins);
+	return read && tags_read && XwauSkins_Resolve(mc->game, mc->missions, basename, opt, label, &c->skins);
 }
 
 /* Adds the pilot eye hardpoint. */

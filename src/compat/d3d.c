@@ -545,6 +545,10 @@ enum {
 /* DX5 D3DTEXTUREADDRESS values used by std3D. */
 enum { D3D_TADDRESS_WRAP = 1, D3D_TADDRESS_CLAMP = 3 };
 
+/* The DX5 D3DSHADEMODE, D3DFILLMODE and D3DCULL values that the shim draws
+   with. */
+enum { D3D_SHADE_GOURAUD = 2, D3D_FILL_SOLID = 3, D3D_CULL_NONE = 1 };
+
 typedef struct D3DPipelineKey {
 	AeronTextureFormat color_format;
 	AeronTextureFormat depth_format;
@@ -1010,6 +1014,16 @@ static void D3DCompat_ConvertVertex(D3DGpuVertex* out, const D3DTLVERTEX* in) {
 	out->texcoord[1] = in->tv;
 }
 
+/* Warns once per token about a render state that the shim doesn't support. */
+static void D3DCompat_WarnRenderState(uint32_t token, uint32_t value) {
+	if (token < 256 && (g_d3dLoggedTokens[token / 32] & (1u << (token % 32))) != 0)
+		return;
+	if (token < 256)
+		g_d3dLoggedTokens[token / 32] |= 1u << (token % 32);
+	Aeron_LogWarn("aeron.dx5", "Unexpected D3DRENDERSTATE token %u (value %u) in execute buffer", token,
+				  value);
+}
+
 /* Fold one D3DOP_STATERENDER {token, value} pair into the running render state
  * and current texture handle (Appendix B; std3D_SetRenderState @0x5955F0). */
 static void D3DCompat_ApplyRenderState(D3DRenderState* rs, uint32_t* texture_handle, uint32_t token,
@@ -1065,14 +1079,41 @@ static void D3DCompat_ApplyRenderState(D3DRenderState* rs, uint32_t* texture_han
 		case D3DRENDERSTATE_FOGTABLESTART:
 		case D3DRENDERSTATE_FOGTABLEEND:
 			break;
+		/* Sent once by std3D_SetInitialRenderState. The shim ignores them:
+		 * GPUs don't need the subpixel, stipple and dither settings, and the
+		 * shim has no edge antialiasing or specular colour. */
+		case D3DRENDERSTATE_SUBPIXEL:
+		case D3DRENDERSTATE_SUBPIXELX:
+		case D3DRENDERSTATE_STIPPLEDALPHA:
+		case D3DRENDERSTATE_DITHERENABLE:
+		case D3DRENDERSTATE_ANTIALIAS:
+		case D3DRENDERSTATE_SPECULARENABLE:
+			break;
+		/* The shim always draws with the values that std3D sends: no texture
+		 * wrap, Gouraud shading, solid fill, the Z buffer on and no culling. */
+		case D3DRENDERSTATE_WRAPU:
+		case D3DRENDERSTATE_WRAPV:
+			if (value != 0)
+				D3DCompat_WarnRenderState(token, value);
+			break;
+		case D3DRENDERSTATE_SHADEMODE:
+			if (value != D3D_SHADE_GOURAUD)
+				D3DCompat_WarnRenderState(token, value);
+			break;
+		case D3DRENDERSTATE_FILLMODE:
+			if (value != D3D_FILL_SOLID)
+				D3DCompat_WarnRenderState(token, value);
+			break;
+		case D3DRENDERSTATE_ZENABLE:
+			if (value != 1)
+				D3DCompat_WarnRenderState(token, value);
+			break;
+		case D3DRENDERSTATE_CULLMODE:
+			if (value != D3D_CULL_NONE)
+				D3DCompat_WarnRenderState(token, value);
+			break;
 		default:
-			/* The game sends the same tokens many times, so each is logged once. */
-			if (token >= 256 || !(g_d3dLoggedTokens[token / 32] & (1u << (token % 32)))) {
-				if (token < 256) {
-					g_d3dLoggedTokens[token / 32] |= 1u << (token % 32);
-				}
-				Aeron_LogWarn("aeron.dx5", "Unexpected D3DRENDERSTATE token %u in execute buffer", token);
-			}
+			D3DCompat_WarnRenderState(token, value);
 			break;
 	}
 }

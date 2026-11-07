@@ -105,10 +105,54 @@ static bool copy_changed_tree(Copy* c, const char* dir) {
 	return ok;
 }
 
-/* Copies the files in Wave/ that differ from the stock game's. This covers
- * the stock files directly in Wave/, and every file in a folder that the
- * stock game also has. Other files and folders are skipped, because the game
- * doesn't read them. The craft phase copies the sound banks (Wave/Sfx_*). */
+/* Copies the files that the list Wave/<name> names and that the stock game
+ * doesn't have. Each line starts with a path relative to Wave/. */
+static bool copy_listed_sounds(Copy* c, const char* wave, const char* name, XwauLines* named) {
+	char   path[2048];
+	size_t size = 0;
+	char*  data = PathFormat(path, sizeof path, "%s/%s", wave, name) ? ReadWholeFile(path, &size) : NULL;
+	bool   ok   = true;
+	if (!data) {
+		Report(path, "cannot be read");
+		return false;
+	}
+	for (size_t start = 0; ok && start < size;) {
+		size_t end = start;
+		while (end < size && data[end] != '\n' && data[end] != '\r')
+			++end;
+		/* The path ends at the first space, tab or ';'. */
+		size_t length = 0;
+		while (start + length < end && data[start + length] != ' ' && data[start + length] != '\t' &&
+			   data[start + length] != ';')
+			++length;
+		char rel[600], stock[1024], file[1024];
+		if (length > 0 && PathFormat(rel, sizeof rel, "Wave/%.*s", (int)length, data + start)) {
+			for (char* p = rel; *p; ++p)
+				if (*p == '\\')
+					*p = '/';
+			bool seen = false;
+			for (size_t k = 0; !seen && k < named->count; ++k)
+				seen = strcasecmp(named->items[k], rel) == 0;
+			/* A path with ".." could name a file outside Wave/. */
+			if (!seen && !strstr(rel, "..") && !Xwau_FindFile(c->stock_game, rel, stock, sizeof stock) &&
+				Xwau_FindFile(c->game, rel, file, sizeof file)) {
+				bool copied = false;
+				ok          = copy_file(c, file, true, &copied) && XwauLines_Add(named, rel, strlen(rel));
+				c->sounds += copied;
+			}
+		}
+		start = end;
+		while (start < size && (data[start] == '\n' || data[start] == '\r'))
+			++start;
+	}
+	free(data);
+	return ok;
+}
+
+/* Copies the files in Wave/ that differ from the stock game's: the stock
+ * files directly in Wave/, every file in a folder that the stock game also
+ * has, and the files that the lists in Wave/ name. The game doesn't read the
+ * other files. The craft phase copies the sound banks (Wave/Sfx_*). */
 static bool copy_wave(Copy* c) {
 	char wave[1024];
 	if (!Xwau_FindDir(c->game, "Wave", wave, sizeof wave))
@@ -132,6 +176,11 @@ static bool copy_wave(Copy* c) {
 			c->sounds += copied;
 		}
 	}
+	XwauLines named = { 0 };
+	for (size_t i = 0; ok && i < count; ++i)
+		if (EndsWithNoCase(entries[i], ".lst") && strncasecmp(entries[i], "Sfx_", 4) != 0)
+			ok = copy_listed_sounds(c, wave, entries[i], &named);
+	XwauLines_Free(&named);
 	FreeList(entries, count);
 	return ok;
 }
