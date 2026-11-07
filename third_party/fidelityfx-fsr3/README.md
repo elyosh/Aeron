@@ -33,6 +33,11 @@ Portability modifications are limited to the backend boundary:
   SRVs. SDL_GPU requires one sampler per sampled texture, and SDL_shadercross
   classifies HLSL separate images by declaration order.
 
+The host code has two fixes for GCC builds. `lanczos2()` uses `std::fabs`,
+because the unqualified `abs()` resolves to `abs(int)` with libstdc++.
+`ffx_message.cpp` includes `<wchar.h>`, because MinGW-w64's UCRT headers
+don't declare `swprintf_s` through `<windows.h>`.
+
 The FSR filtering, reprojection, accumulation, and sharpening math is unchanged.
 The shipping accumulate shader selects AMD's LUT reprojection permutation.
 

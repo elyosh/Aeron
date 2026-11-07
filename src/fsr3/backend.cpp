@@ -13,6 +13,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <cwchar>
+#include <new>
 
 namespace {
 
