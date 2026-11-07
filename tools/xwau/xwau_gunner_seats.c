@@ -105,34 +105,27 @@ static void record_seats(const char* game, const XwauGameTables* tables, const c
 
 void XwauGunnerSeats_Read(const char* game, const XwauGameTables* tables, const char* model,
 						  const char* turrets_txt, const char* ini, XwauGunnerSeats* out) {
-	XwauLines   lines  = { 0 };
-	const char* source = turrets_txt;
+	XwauSection section;
 	memset(out, 0, sizeof *out);
 	out->forward_fire = true;
-	if (turrets_txt)
-		XwauLines_Read(turrets_txt, "", XWAU_RULES_CPP, &lines);
-	if (lines.count == 0) {
-		XwauLines_Free(&lines);
-		source = ini;
-		if (ini)
-			XwauLines_Read(ini, "Turrets", XWAU_RULES_CPP, &lines);
-	}
-	if (lines.count == 0) {
-		XwauLines_Free(&lines);
+	XwauSection_ReadPaths(turrets_txt, ini, "Turrets", XWAU_RULES_CPP, &section);
+	const XwauLines* lines = &section.lines;
+	if (lines->count == 0) {
+		XwauSection_Free(&section);
 		record_seats(game, tables, model, out);
 		return;
 	}
 	out->has     = true;
 	size_t extra = 0;
-	for (size_t i = 0; i < lines.count; ++i) {
+	for (size_t i = 0; i < lines->count; ++i) {
 		XwauGunnerSeat seat;
 		XwauLines      tokens = { 0 };
-		const bool short_line = Xwau_Tokenize(lines.items[i], XWAU_RULES_CPP, &tokens) && tokens.count < 9;
+		const bool short_line = Xwau_Tokenize(lines->items[i], XWAU_RULES_CPP, &tokens) && tokens.count < 9;
 		XwauLines_Free(&tokens);
 		/* The hook reads only the TurretForwardFire key from such a line. */
 		if (short_line)
 			continue;
-		if (!read_seat(game, lines.items[i], &seat))
+		if (!read_seat(game, lines->items[i], &seat))
 			continue;
 		if (out->count == XWAU_GUNNER_SEAT_MAX)
 			++extra;
@@ -140,15 +133,12 @@ void XwauGunnerSeats_Read(const char* game, const XwauGameTables* tables, const 
 			out->seats[out->count++] = seat;
 	}
 	if (extra)
-		ReportFatal(source, "[Turrets]: the section has %zu seats, but the game has room for only %d",
+		ReportFatal(section.source, "the section has %zu seats, but the game has room for only %d",
 					out->count + extra, XWAU_GUNNER_SEAT_MAX);
-	char      value[64];
 	long long number;
-	/* A value that isn't a number would crash XWAU. */
-	XwauLines_Value(&lines, "TurretForwardFire", XWAU_RULES_CPP, value, sizeof value);
-	if (value[0] && Xwau_StoiAutoInt(value, &number))
+	if (XwauSection_Int(&section, "TurretForwardFire", &number) == XWAU_VALUE_SET)
 		out->forward_fire = number != 0;
-	XwauLines_Free(&lines);
+	XwauSection_Free(&section);
 }
 
 void XwauGunnerSeats_WriteAimLimit(FILE* f, const char* label, int steps) {

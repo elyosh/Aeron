@@ -91,20 +91,16 @@ static bool read_fg_line(XwauMissionTie* tie, const XwauLines* words, size_t lin
 
 bool XwauMissionTie_Read(const char* game, const char* base, XwauMissionTie* out) {
 	memset(out, 0, sizeof *out);
-	char      rel[1100], path[1024];
-	XwauLines lines;
-	if (!PathFormat(rel, sizeof rel, "%s.txt", base) ||
-		!XwauLines_Read(Xwau_FindFile(game, rel, path, sizeof path) ? path : NULL, "", XWAU_RULES_CPP,
-						&lines))
+	char        txt[1100], ini[1100];
+	XwauSection section;
+	if (!PathFormat(txt, sizeof txt, "%s.txt", base) || !PathFormat(ini, sizeof ini, "%s.ini", base) ||
+		!XwauSection_Read(game, txt, ini, "mission_tie", XWAU_RULES_CPP, &section))
 		return false;
-	bool ok = true;
-	if (!lines.count) {
-		ok = PathFormat(rel, sizeof rel, "%s.ini", base) &&
-			 XwauLines_Read(Xwau_FindFile(game, rel, path, sizeof path) ? path : NULL, "mission_tie",
-							XWAU_RULES_CPP, &lines);
-	}
-	for (size_t i = 0; ok && i < lines.count; ++i) {
-		const char* line = lines.items[i];
+	bool ok             = true;
+	out->settings.rules = XWAU_RULES_CPP;
+	snprintf(out->settings.source, sizeof out->settings.source, "%s", section.source);
+	for (size_t i = 0; ok && i < section.lines.count; ++i) {
+		const char* line = section.lines.items[i];
 		XwauLines   words;
 		if (!(ok = Xwau_Tokenize(line, XWAU_RULES_CPP, &words)))
 			break;
@@ -113,11 +109,11 @@ bool XwauMissionTie_Read(const char* game, const char* base, XwauMissionTie* out
 		else if (words.count && Xwau_SameName(words.items[0], "craft"))
 			ok = XwauLines_Add(&out->craft_lines, line, strlen(line));
 		else if (strchr(line, '='))
-			ok = XwauLines_Add(&out->settings, line, strlen(line));
+			ok = XwauLines_Add(&out->settings.lines, line, strlen(line));
 		/* XWAU ignores any other line. */
 		XwauLines_Free(&words);
 	}
-	XwauLines_Free(&lines);
+	XwauSection_Free(&section);
 	if (ok && out->fg_count > 1)
 		qsort(out->fgs, out->fg_count, sizeof *out->fgs, compare_flight_groups);
 	if (!ok)
@@ -129,7 +125,7 @@ void XwauMissionTie_Free(XwauMissionTie* tie) {
 	free(tie->fgs);
 	free(tie->craft_markings);
 	XwauLines_Free(&tie->craft_lines);
-	XwauLines_Free(&tie->settings);
+	XwauSection_Free(&tie->settings);
 	memset(tie, 0, sizeof *tie);
 }
 

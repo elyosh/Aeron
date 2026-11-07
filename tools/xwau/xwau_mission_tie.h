@@ -59,7 +59,7 @@ typedef struct XwauMissionTie {
 	XwauMissionTieCraftMarkings* craft_markings; /* in the order of the lines, one per (fg, craft) */
 	size_t                       craft_marking_count;
 	XwauLines                    craft_lines; /* the "craft, …" lines */
-	XwauLines                    settings;    /* the "key = value" lines */
+	XwauSection                  settings;    /* the "key = value" lines */
 } XwauMissionTie;
 
 /* Reads the [mission_tie] lines of mission `base` (such as

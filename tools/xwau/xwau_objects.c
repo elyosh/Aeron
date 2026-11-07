@@ -282,47 +282,12 @@ enum { EXE_VALUES_TYPES = 219, EXE_VALUES_RECORDS = 218 };
 #define FLAG_HARDPOINTS_MIRRORING 0x800
 #define FLAG_AXIS_ALIGNED 0x1000
 
-static const char kExeValuesSuffix[] = "ExeCraftValues.txt";
-
-/* Reads the [ExeCraftValues] lines of model `model`:
-   FlightModels/<model>ExeCraftValues.txt, else the section of
-   FlightModels/<model>.ini. Writes the file's path to `source`. Returns
-   false when out of memory. */
-static bool exe_values_lines(const char* game, const char* model, XwauLines* lines, char* source,
-							 size_t cap) {
-	char rel[400], path[1024];
-	snprintf(rel, sizeof rel, "FlightModels/%s%s", model, kExeValuesSuffix);
-	snprintf(source, cap, "%s", rel);
-	if (!XwauLines_Read(Xwau_FindFile(game, rel, path, sizeof path) ? path : NULL, "", XWAU_RULES_CPP, lines))
-		return false;
-	if (lines->count)
-		return true;
-	snprintf(rel, sizeof rel, "FlightModels/%s.ini", model);
-	snprintf(source, cap, "%s", rel);
-	return XwauLines_Read(Xwau_FindFile(game, rel, path, sizeof path) ? path : NULL, "ExeCraftValues",
-						  XWAU_RULES_CPP, lines);
-}
-
 bool XwauObjects_HasExeCraftValues(const char* game, const char* model) {
-	XwauLines  lines;
-	char       source[400];
-	const bool has = exe_values_lines(game, model, &lines, source, sizeof source) && lines.count;
-	XwauLines_Free(&lines);
+	XwauSection section;
+	const bool  has =
+		XwauSection_ReadModel(game, model, "ExeCraftValues", XWAU_RULES_CPP, &section) && section.lines.count;
+	XwauSection_Free(&section);
 	return has;
-}
-
-/* The value of `key` as GetFileKeyValueInt reads it, or `fallback` when
-   the key is missing. A value that isn't a number stops XWAU (std::stoi
-   throws), and `fallback` is used. */
-static long long exe_value(const XwauLines* lines, const char* key, long long fallback) {
-	char      text[256];
-	long long value = 0;
-	XwauLines_Value(lines, key, XWAU_RULES_CPP, text, sizeof text);
-	if (!text[0])
-		return fallback;
-	if (!Xwau_StoiAuto(text, &value) || value < INT_MIN || value > INT_MAX)
-		return fallback;
-	return value;
 }
 
 /* Writes `value` into a field, cut to its size as the hook's casts do. */
@@ -359,21 +324,20 @@ static bool apply_exe_values(const char* game, XwauGameTables* tables, int* coun
 		const char*        model  = exe_values_model(tables, t);
 		if (record >= EXE_VALUES_RECORDS || !model[0])
 			continue;
-		XwauLines lines;
-		char      source[400];
-		if (!(loaded_ok = exe_values_lines(game, model, &lines, source, sizeof source)))
+		XwauSection values;
+		if (!(loaded_ok = XwauSection_ReadModel(game, model, "ExeCraftValues", XWAU_RULES_CPP, &values)))
 			break;
-		if (!lines.count) {
-			XwauLines_Free(&lines);
+		if (!values.lines.count) {
+			XwauSection_Free(&values);
 			continue;
 		}
 		uint16_t flags = type.flags;
-		if (exe_value(&lines, "GameOptions_IsHardpointsMirroring",
-					  (flags & FLAG_HARDPOINTS_MIRRORING) != 0) != 0)
+		if (XwauSection_IntOr(&values, "GameOptions_IsHardpointsMirroring",
+							  (flags & FLAG_HARDPOINTS_MIRRORING) != 0) != 0)
 			flags |= FLAG_HARDPOINTS_MIRRORING;
 		else
 			flags &= (uint16_t)~FLAG_HARDPOINTS_MIRRORING;
-		if (exe_value(&lines, "GameOptions_IsAxisAligned", (flags & FLAG_AXIS_ALIGNED) != 0) != 0)
+		if (XwauSection_IntOr(&values, "GameOptions_IsAxisAligned", (flags & FLAG_AXIS_ALIGNED) != 0) != 0)
 			flags |= FLAG_AXIS_ALIGNED;
 		else
 			flags &= (uint16_t)~FLAG_AXIS_ALIGNED;
@@ -390,7 +354,7 @@ static bool apply_exe_values(const char* game, XwauGameTables* tables, int* coun
 				char key[64];
 				snprintf(key, sizeof key, "%s%u", kLaserKeys[k], g);
 				const Field* field = &g_laserFields[kLaserFields[k]];
-				set_field(r, field, g, exe_value(&lines, key, field_value(start[record], field, g)));
+				set_field(r, field, g, XwauSection_IntOr(&values, key, field_value(start[record], field, g)));
 			}
 		/* WarheadTypeId and WarheadCapacity: the `type` and `capacity` of a
 		   `warheads` entry. */
@@ -401,16 +365,17 @@ static bool apply_exe_values(const char* game, XwauGameTables* tables, int* coun
 				char key[64];
 				snprintf(key, sizeof key, "%s%u", kWarheadKeys[k], g);
 				const Field* field = &g_warheadFields[kWarheadFields[k]];
-				set_field(r, field, g, exe_value(&lines, key, field_value(start[record], field, g)));
+				set_field(r, field, g, XwauSection_IntOr(&values, key, field_value(start[record], field, g)));
 			}
 		for (size_t i = 0; i < sizeof g_fields / sizeof g_fields[0]; ++i) {
 			const char* key = strcmp(g_fields[i].key, "countermeasures") == 0    ? "CounterMeasuresCount"
 							  : strcmp(g_fields[i].key, "ai_hits_to_evade") == 0 ? "AIHitsTakenToEvade"
 																				 : NULL;
 			if (key)
-				set_field(r, &g_fields[i], 0, exe_value(&lines, key, field_value(r, &g_fields[i], 0)));
+				set_field(r, &g_fields[i], 0,
+						  XwauSection_IntOr(&values, key, field_value(r, &g_fields[i], 0)));
 		}
-		XwauLines_Free(&lines);
+		XwauSection_Free(&values);
 		(*count)++;
 	}
 	free(start);

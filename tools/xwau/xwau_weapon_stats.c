@@ -88,47 +88,6 @@ static const char* const kChoiceNames[XWAU_WEAPON_STATS_GROUPS] = { "weapon_prof
 /* ---- Lines
    ---------------------------------------------------------------- */
 
-/* Reads the lines of `txt`, or the lines of section `name` in `ini` when
- * `txt` has none. Returns false when out of memory. */
-static bool section_lines(const char* game, const char* txt, const char* ini, const char* name,
-						  XwauLines* out, char* source, size_t source_cap) {
-	char path[1024];
-	if (!XwauLines_Read(Xwau_FindFile(game, txt, path, sizeof path) ? path : NULL, "", XWAU_RULES_CPP, out))
-		return false;
-	snprintf(source, source_cap, "%s", txt);
-	if (out->count)
-		return true;
-	snprintf(source, source_cap, "%s [%s]", ini, name);
-	return XwauLines_Read(Xwau_FindFile(game, ini, path, sizeof path) ? path : NULL, name, XWAU_RULES_CPP,
-						  out);
-}
-
-/* Reads hook_weapon_rate's settings: hook_weapon_rate.cfg, or else the
- * [hook_weapon_rate] section of Hooks.ini. */
-static bool hook_lines(const char* game, XwauLines* out) {
-	char path[1024];
-	if (!XwauLines_Read(Xwau_FindFile(game, "hook_weapon_rate.cfg", path, sizeof path) ? path : NULL, "",
-						XWAU_RULES_CPP, out))
-		return false;
-	if (out->count)
-		return true;
-	return XwauLines_Read(Xwau_FindFile(game, "Hooks.ini", path, sizeof path) ? path : NULL,
-						  "hook_weapon_rate", XWAU_RULES_CPP, out);
-}
-
-/* Splits `line` into a trimmed key and value, like the hook's
- * GetFileKeyValue. Returns false when the line has no '=' or no key. */
-static bool split_line(const char* line, char* key, size_t key_cap, char* value, size_t value_cap) {
-	const char* equals = strchr(line, '=');
-	if (!equals)
-		return false;
-	snprintf(key, key_cap, "%.*s", (int)(equals - line), line);
-	snprintf(value, value_cap, "%s", equals + 1);
-	Xwau_Trim(key, XWAU_RULES_CPP);
-	Xwau_Trim(value, XWAU_RULES_CPP);
-	return key[0] != '\0';
-}
-
 /* Writes the profile of a key in lower case. The profile is the text before
  * `at`, without the '_' at its end. Returns false when that text isn't a
  * profile. A profile that doesn't fit is cut, and sets `*too_long`. */
@@ -148,12 +107,6 @@ static bool key_profile(const char* key, size_t at, char* out, bool* too_long) {
 		out[i] = Xwau_Lower(key[i]);
 	out[length] = '\0';
 	return true;
-}
-
-bool XwauWeaponStats_Stof(const char* text, float* out) {
-	char* end = NULL;
-	*out      = strtof(text, &end);
-	return end != text;
 }
 
 /* ---- Keys
@@ -256,14 +209,15 @@ static const char* const kEnergyKeys[2] = { "SpeedFactor", "SpeedFactorForPlayer
  * that it doesn't know, keys of a profile named Default, or values that
  * aren't numbers, and the first line of a key wins. The importer leaves the
  * other lines out. */
-static bool read_section(const XwauLines* lines, const char* source, int group, XwauWeaponStats* out,
-						 XwauWeaponStats* unset, bool report) {
-	for (size_t i = 0; i < lines->count; ++i) {
+static bool read_section(const XwauSection* section, int group, XwauWeaponStats* out, XwauWeaponStats* unset,
+						 bool report) {
+	const char* source = section->source;
+	for (size_t i = 0; i < section->lines.count; ++i) {
 		char                 key[256], text[256];
 		XwauWeaponStatsValue value;
 		bool                 too_long = false;
 		memset(&value, 0, sizeof value);
-		if (!split_line(lines->items[i], key, sizeof key, text, sizeof text))
+		if (!Xwau_SplitLine(section->lines.items[i], XWAU_RULES_CPP, key, sizeof key, text, sizeof text))
 			continue;
 		bool known = false;
 		if (group == XWAU_WEAPON_STATS_STATS) {
@@ -310,7 +264,7 @@ static bool read_section(const XwauLines* lines, const char* source, int group, 
 		}
 		if (group == XWAU_WEAPON_STATS_ENERGY) {
 			float percent = 0.0f;
-			if (!XwauWeaponStats_Stof(text, &percent))
+			if (!Xwau_Stof(text, &percent))
 				continue;
 			/* As in the hook: a fraction of the top speed, from 0 to 1, in
 			   Q16. */
@@ -338,10 +292,10 @@ static bool read_section(const XwauLines* lines, const char* source, int group, 
 /* Adds the hardpoint kinds of `lines` to `out`. Each line is read the way
    std::stoi reads it. A line that isn't a number would crash XWAU, and the
    hook only reads the first lines, so both are left out. */
-static void read_kinds(const XwauLines* lines, XwauWeaponStats* out) {
-	for (size_t i = 0; i < lines->count; ++i) {
+static void read_kinds(const XwauSection* section, XwauWeaponStats* out) {
+	for (size_t i = 0; i < section->lines.count; ++i) {
 		long long kind = 0;
-		if (!Xwau_Stoi(lines->items[i], &kind))
+		if (!Xwau_Stoi(section->lines.items[i], &kind))
 			continue;
 		out->has_hardpoint_kinds = true;
 		if (out->hardpoint_kind_count < XWAU_WEAPON_STATS_HARDPOINT_TYPES)
@@ -353,16 +307,12 @@ static void read_kinds(const XwauLines* lines, XwauWeaponStats* out) {
  * EnableWeaponStatsProfiles isn't 0. XWAU fails on a value that isn't a
  * number, and the importer then reads [WeaponStats] as if it were 1. */
 static bool stats_enabled(const char* game) {
-	XwauLines lines;
-	char      text[256];
-	long long value = 1;
-	if (!hook_lines(game, &lines))
+	XwauSection settings;
+	if (!XwauSection_ReadHook(game, "hook_weapon_rate", &settings))
 		return true;
-	XwauLines_Value(&lines, "EnableWeaponStatsProfiles", XWAU_RULES_CPP, text, sizeof text);
-	XwauLines_Free(&lines);
-	if (text[0] && !Xwau_StoiAutoInt(text, &value))
-		return true;
-	return value != 0;
+	const bool enabled = XwauSection_IntOr(&settings, "EnableWeaponStatsProfiles", 1) != 0;
+	XwauSection_Free(&settings);
+	return enabled;
 }
 
 /* Writes the hook's key of `value`, such as "Weapon280_Player_Power". */
@@ -382,15 +332,12 @@ static void value_key(const XwauWeaponStatsValue* value, char* out, size_t cap) 
 
 /* Reads the global sections of `group` without reports, into `out`. */
 static bool read_global_section(const char* game, int group, XwauWeaponStats* out) {
-	char            txt[512], source[600];
-	XwauLines       lines;
+	XwauSection     section;
 	XwauWeaponStats unset = { 0 };
-	snprintf(txt, sizeof txt, "FlightModels/%s.txt", kSections[group]);
-	if (!section_lines(game, txt, "FlightModels/default.ini", kSections[group], &lines, source,
-					   sizeof source))
+	if (!XwauSection_ReadGlobal(game, kSections[group], XWAU_RULES_CPP, &section))
 		return false;
-	const bool ok = read_section(&lines, source, group, out, &unset, false);
-	XwauLines_Free(&lines);
+	const bool ok = read_section(&section, group, out, &unset, false);
+	XwauSection_Free(&section);
 	XwauWeaponStats_Free(&unset);
 	return ok;
 }
@@ -404,27 +351,22 @@ bool XwauWeaponStats_Read(const char* game, const char* model, XwauWeaponStats* 
 	bool            ok      = true;
 	XwauWeaponStats unset   = { 0 };
 	for (int group = 0; ok && group < XWAU_WEAPON_STATS_GROUPS + 1; ++group) {
-		const char* section = group < XWAU_WEAPON_STATS_GROUPS ? kSections[group] : "WeaponHardpointTypes";
-		char        txt[512], ini[512], source[600];
-		XwauLines   lines;
-		if (model) {
-			snprintf(txt, sizeof txt, "FlightModels/%s%s.txt", model, section);
-			snprintf(ini, sizeof ini, "FlightModels/%s.ini", model);
-		} else {
-			snprintf(txt, sizeof txt, "FlightModels/%s.txt", section);
-			snprintf(ini, sizeof ini, "FlightModels/default.ini");
-		}
-		if (!(ok = section_lines(game, txt, ini, section, &lines, source, sizeof source)))
+		const char* name = group < XWAU_WEAPON_STATS_GROUPS ? kSections[group] : "WeaponHardpointTypes";
+		XwauSection section;
+		ok = model ? XwauSection_ReadModel(game, model, name, XWAU_RULES_CPP, &section)
+				   : XwauSection_ReadGlobal(game, name, XWAU_RULES_CPP, &section);
+		if (!ok)
 			break;
+		const char* source = section.source;
 		/* With EnableWeaponStatsProfiles = 0, the hook doesn't read
 		   [WeaponStats]. */
 		if (group == XWAU_WEAPON_STATS_STATS && !enabled) {
-			XwauLines_Free(&lines);
+			XwauSection_Free(&section);
 			continue;
 		}
 		if (group < XWAU_WEAPON_STATS_GROUPS) {
 			const size_t before = unset.count;
-			ok                  = read_section(&lines, source, group, out, &unset, true);
+			ok                  = read_section(&section, group, out, &unset, true);
 			/* A model's -1 hides the global line with the same key. The game
 			   has no way to do that, so it would use the global value. */
 			XwauWeaponStats global = { 0 };
@@ -440,9 +382,9 @@ bool XwauWeaponStats_Read(const char* game, const char* model, XwauWeaponStats* 
 			}
 			XwauWeaponStats_Free(&global);
 		} else {
-			read_kinds(&lines, out);
+			read_kinds(&section, out);
 		}
-		XwauLines_Free(&lines);
+		XwauSection_Free(&section);
 	}
 	XwauWeaponStats_Free(&unset);
 	/* The game looks for each part of a duration in the model first, then in
@@ -466,14 +408,12 @@ bool XwauWeaponStats_Read(const char* game, const char* model, XwauWeaponStats* 
 	}
 	/* The hook reads the model's hardpoint kinds, then the global ones. */
 	if (ok && model && out->has_hardpoint_kinds) {
-		XwauLines lines;
-		char      source[600];
-		if (!(ok = section_lines(game, "FlightModels/WeaponHardpointTypes.txt", "FlightModels/default.ini",
-								 "WeaponHardpointTypes", &lines, source, sizeof source)))
+		XwauSection section;
+		if (!XwauSection_ReadGlobal(game, "WeaponHardpointTypes", XWAU_RULES_CPP, &section))
 			return false;
 		XwauWeaponStats global = { 0 };
-		read_kinds(&lines, &global);
-		XwauLines_Free(&lines);
+		read_kinds(&section, &global);
+		XwauSection_Free(&section);
 		out->has_global_hardpoint_kinds  = global.has_hardpoint_kinds;
 		out->global_hardpoint_kind_count = global.hardpoint_kind_count;
 		memcpy(out->global_hardpoint_kinds, global.hardpoint_kinds, sizeof global.hardpoint_kinds);
@@ -744,20 +684,15 @@ static int compare_choices(const void* a, const void* b) {
 	return (x > y) - (x < y);
 }
 
-/* Reads the lines of a mission's section `name`, from the files that the
- * hook's GetMissionLines reads. */
-static bool choice_lines(const char* game, const char* base, const char* name, XwauLines* out, char* source,
-						 size_t cap) {
-	char txt[600], ini[600];
-	snprintf(txt, sizeof txt, "%s_%s.txt", base, name);
-	snprintf(ini, sizeof ini, "%s.ini", base);
-	if (!section_lines(game, txt, ini, name, out, source, cap))
+/* Reads a mission's section `name`, else the global one, as the hook's
+ * GetMissionLines reads it. */
+static bool choice_lines(const char* game, const char* base, const char* name, XwauSection* out) {
+	if (!XwauSection_ReadMission(game, base, name, XWAU_RULES_CPP, out))
 		return false;
-	if (out->count)
+	if (out->lines.count)
 		return true;
-	XwauLines_Free(out);
-	snprintf(txt, sizeof txt, "FlightModels/%s.txt", name);
-	return section_lines(game, txt, "FlightModels/default.ini", name, out, source, cap);
+	XwauSection_Free(out);
+	return XwauSection_ReadGlobal(game, name, XWAU_RULES_CPP, out);
 }
 
 bool XwauWeaponStats_ReadChoices(const char* game, const char* base, XwauWeaponProfileChoices* out) {
@@ -766,9 +701,8 @@ bool XwauWeaponStats_ReadChoices(const char* game, const char* base, XwauWeaponP
 	if (!Xwau_FindFile(game, "hook_weapon_rate.dll", path, sizeof path))
 		return true;
 	for (int group = 0; group < XWAU_WEAPON_STATS_GROUPS; ++group) {
-		XwauLines lines;
-		char      source[700];
-		if (!choice_lines(game, base, kChoiceSections[group], &lines, source, sizeof source)) {
+		XwauSection section;
+		if (!choice_lines(game, base, kChoiceSections[group], &section)) {
 			XwauWeaponStats_FreeChoices(out);
 			return false;
 		}
@@ -777,9 +711,9 @@ bool XwauWeaponStats_ReadChoices(const char* game, const char* base, XwauWeaponP
 		memset(seen, 0, sizeof seen);
 		/* The hook doesn't read lines without a key or with other keys, and
 		   the first line of a key wins. */
-		for (size_t i = 0; i < lines.count; ++i) {
+		for (size_t i = 0; i < section.lines.count; ++i) {
 			char key[256], value[256];
-			if (!split_line(lines.items[i], key, sizeof key, value, sizeof value))
+			if (!Xwau_SplitLine(section.lines.items[i], XWAU_RULES_CPP, key, sizeof key, value, sizeof value))
 				continue;
 			const char* digits = key + prefix;
 			char*       end    = NULL;
@@ -796,7 +730,7 @@ bool XwauWeaponStats_ReadChoices(const char* game, const char* base, XwauWeaponP
 			if (Xwau_SameName(value, "Default") || !value[0])
 				continue;
 			if (strlen(value) >= XWAU_WEAPON_STATS_NAME_MAX) {
-				ReportFatal(source,
+				ReportFatal(section.source,
 							"%s = %s has a profile name longer than %d characters, which OpenXWA can't hold",
 							key, value, XWAU_WEAPON_STATS_NAME_MAX - 1);
 				continue;
@@ -805,7 +739,7 @@ bool XwauWeaponStats_ReadChoices(const char* game, const char* base, XwauWeaponP
 				(XwauWeaponProfileChoice*)XwauWeaponStats_FindChoice(out, (int)fg);
 			if (!choice) {
 				if (!(choice = ARRAY_PUSH(out->items, out->count))) {
-					XwauLines_Free(&lines);
+					XwauSection_Free(&section);
 					XwauWeaponStats_FreeChoices(out);
 					return false;
 				}
@@ -817,7 +751,7 @@ bool XwauWeaponStats_ReadChoices(const char* game, const char* base, XwauWeaponP
 			for (size_t c = 0; value[c]; ++c)
 				choice->name[group][c] = Xwau_Lower(value[c]);
 		}
-		XwauLines_Free(&lines);
+		XwauSection_Free(&section);
 	}
 	return true;
 }

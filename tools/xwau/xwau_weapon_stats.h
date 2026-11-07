@@ -165,8 +165,4 @@ bool XwauWeaponStats_AnyChoice(const XwauWeaponProfileChoice* choice);
  * ", weapon_profile: \"x\"". */
 void XwauWeaponStats_WriteChoice(FILE* f, const XwauWeaponProfileChoice* choice);
 
-/* Reads a float of hook_weapon_rate's settings the way std::stof reads it.
- * Returns false when the text has no number. */
-bool XwauWeaponStats_Stof(const char* text, float* out);
-
 #endif /* AERON_XWAU_WEAPON_STATS_H */

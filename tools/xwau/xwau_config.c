@@ -2,6 +2,7 @@
 
 #include <ctype.h>
 #include <dirent.h>
+#include <errno.h>
 #include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -118,6 +119,17 @@ static CachedFolder*   g_folders;
 static size_t          g_folder_cap, g_folder_count;
 static pthread_mutex_t g_folder_mutex = PTHREAD_MUTEX_INITIALIZER;
 
+/* A file that Xwau_FileHasText read while the folder cache is on, such as a
+ * hook DLL. The import looks for many texts in the same DLLs. */
+typedef struct CachedFile {
+	char*  path;
+	char*  data;
+	size_t size;
+} CachedFile;
+
+static CachedFile* g_files;
+static size_t      g_file_count;
+
 static int compare_folder_entries(const void* a, const void* b) {
 	const FolderEntry* ea    = (const FolderEntry*)a;
 	const FolderEntry* eb    = (const FolderEntry*)b;
@@ -228,6 +240,13 @@ void Xwau_SetFolderCache(bool on) {
 		free(g_folders);
 		g_folders    = NULL;
 		g_folder_cap = g_folder_count = 0;
+		for (size_t i = 0; i < g_file_count; ++i) {
+			free(g_files[i].path);
+			free(g_files[i].data);
+		}
+		free(g_files);
+		g_files      = NULL;
+		g_file_count = 0;
 	}
 	pthread_mutex_unlock(&g_folder_mutex);
 }
@@ -299,15 +318,44 @@ bool Xwau_FindDir(const char* game, const char* rel, char* out, size_t cap) {
 	return resolve(game, rel, out, cap) && IsDir(out);
 }
 
-bool Xwau_FileHasText(const char* path, const char* text) {
-	size_t       size   = 0;
-	char*        data   = ReadWholeFile(path, &size);
+/* Whether the `size` bytes of `data` hold `text`. */
+static bool has_text(const char* data, size_t size, const char* text) {
 	const size_t length = strlen(text);
-	bool         found  = false;
-	for (size_t i = 0; data && length && !found && i + length <= size; ++i)
-		found = memcmp(data + i, text, length) == 0;
+	for (size_t i = 0; data && length && i + length <= size; ++i)
+		if (memcmp(data + i, text, length) == 0)
+			return true;
+	return false;
+}
+
+bool Xwau_FileHasText(const char* path, const char* text) {
+	pthread_mutex_lock(&g_folder_mutex);
+	if (g_folder_cache) {
+		for (size_t i = 0; i < g_file_count; ++i) {
+			if (strcmp(g_files[i].path, path) == 0) {
+				const bool found = has_text(g_files[i].data, g_files[i].size, text);
+				pthread_mutex_unlock(&g_folder_mutex);
+				return found;
+			}
+		}
+	}
+	size_t     size  = 0;
+	char*      data  = ReadWholeFile(path, &size);
+	const bool found = has_text(data, size, text);
+	char*      copy  = g_folder_cache ? StrDup(path) : NULL;
+	if (copy && ArrayGrow((void**)&g_files, g_file_count, sizeof *g_files)) {
+		g_files[g_file_count++] = (CachedFile) { copy, data, size };
+		data                    = NULL;
+	} else {
+		free(copy);
+	}
+	pthread_mutex_unlock(&g_folder_mutex);
 	free(data);
 	return found;
+}
+
+bool Xwau_DllHasText(const char* game, const char* dll, const char* text) {
+	char path[1024];
+	return Xwau_FindFile(game, dll, path, sizeof path) && Xwau_FileHasText(path, text);
 }
 
 /* ---- Text ------------------------------------------------------------------ */
@@ -430,6 +478,170 @@ void XwauLines_Value(const XwauLines* lines, const char* key, XwauRules rules, c
 			snprintf(out, cap, "%.*s", (int)len, start);
 			return;
 		}
+	}
+}
+
+bool Xwau_LineKey(const char* line, XwauRules rules, char* key, size_t cap) {
+	const char* eq = strchr(line, '=');
+	if (!eq)
+		return false;
+	snprintf(key, cap, "%.*s", (int)(eq - line), line);
+	Xwau_Trim(key, rules);
+	return key[0] != 0;
+}
+
+bool Xwau_SplitLine(const char* line, XwauRules rules, char* key, size_t key_cap, char* value,
+					size_t value_cap) {
+	if (!Xwau_LineKey(line, rules, key, key_cap))
+		return false;
+	snprintf(value, value_cap, "%s", strchr(line, '=') + 1);
+	Xwau_Trim(value, rules);
+	return true;
+}
+
+bool XwauSection_ReadPaths(const char* txt, const char* ini, const char* section, XwauRules rules,
+						   XwauSection* out) {
+	memset(out, 0, sizeof *out);
+	out->rules = rules;
+	if (!XwauLines_Read(txt, "", rules, &out->lines))
+		return false;
+	if (out->lines.count) {
+		snprintf(out->source, sizeof out->source, "%s", txt);
+		return true;
+	}
+	if (!XwauLines_Read(ini, section, rules, &out->lines))
+		return false;
+	if (out->lines.count)
+		snprintf(out->source, sizeof out->source, "%s [%s]", ini, section);
+	return true;
+}
+
+bool XwauSection_Read(const char* game, const char* txt, const char* ini, const char* section,
+					  XwauRules rules, XwauSection* out) {
+	char txt_path[1024], ini_path[1024];
+	return XwauSection_ReadPaths(txt && Xwau_FindFile(game, txt, txt_path, sizeof txt_path) ? txt_path : NULL,
+								 ini && Xwau_FindFile(game, ini, ini_path, sizeof ini_path) ? ini_path : NULL,
+								 section, rules, out);
+}
+
+bool XwauSection_ReadModel(const char* game, const char* model, const char* section, XwauRules rules,
+						   XwauSection* out) {
+	char txt[600], ini[600];
+	snprintf(txt, sizeof txt, "FlightModels/%s%s.txt", model, section);
+	snprintf(ini, sizeof ini, "FlightModels/%s.ini", model);
+	return XwauSection_Read(game, txt, ini, section, rules, out);
+}
+
+bool XwauSection_ReadGlobal(const char* game, const char* section, XwauRules rules, XwauSection* out) {
+	char txt[300];
+	snprintf(txt, sizeof txt, "FlightModels/%s.txt", section);
+	return XwauSection_Read(game, txt, "FlightModels/default.ini", section, rules, out);
+}
+
+bool XwauSection_ReadMission(const char* game, const char* base, const char* section, XwauRules rules,
+							 XwauSection* out) {
+	char txt[1200], ini[1200];
+	snprintf(txt, sizeof txt, "%s_%s.txt", base, section);
+	snprintf(ini, sizeof ini, "%s.ini", base);
+	return XwauSection_Read(game, txt, ini, section, rules, out);
+}
+
+bool XwauSection_ReadHook(const char* game, const char* hook, XwauSection* out) {
+	char cfg[300];
+	snprintf(cfg, sizeof cfg, "%s.cfg", hook);
+	return XwauSection_Read(game, cfg, "Hooks.ini", hook, XWAU_RULES_CPP, out);
+}
+
+void XwauSection_Free(XwauSection* section) {
+	XwauLines_Free(&section->lines);
+	section->source[0] = 0;
+}
+
+void XwauSection_Text(const XwauSection* section, const char* key, char* out, size_t cap) {
+	XwauLines_Value(&section->lines, key, section->rules, out, cap);
+}
+
+/* Reports a value that isn't a number. */
+static void report_bad_value(const XwauSection* section, const char* key, const char* text) {
+	Report(section->source[0] ? section->source : NULL,
+		   "%s = %s isn't a number, which would crash XWAU. It is left out", key, text);
+}
+
+XwauValue XwauLines_Int(const XwauLines* lines, XwauRules rules, const char* key, long long* out) {
+	char      text[256];
+	long long value;
+	XwauLines_Value(lines, key, rules, text, sizeof text);
+	if (!text[0])
+		return XWAU_VALUE_MISSING;
+	if (!Xwau_StoiAutoInt(text, &value))
+		return XWAU_VALUE_BAD;
+	*out = value;
+	return XWAU_VALUE_SET;
+}
+
+XwauValue XwauSection_Int(const XwauSection* section, const char* key, long long* out) {
+	const XwauValue result = XwauLines_Int(&section->lines, section->rules, key, out);
+	if (result == XWAU_VALUE_BAD) {
+		char text[256];
+		XwauSection_Text(section, key, text, sizeof text);
+		report_bad_value(section, key, text);
+	}
+	return result;
+}
+
+long long XwauSection_IntOr(const XwauSection* section, const char* key, long long fallback) {
+	long long value = fallback;
+	XwauSection_Int(section, key, &value);
+	return value;
+}
+
+XwauValue XwauSection_Float(const XwauSection* section, const char* key, float* out) {
+	char  text[256];
+	float value;
+	XwauSection_Text(section, key, text, sizeof text);
+	if (!text[0])
+		return XWAU_VALUE_MISSING;
+	if (!Xwau_Stof(text, &value)) {
+		report_bad_value(section, key, text);
+		return XWAU_VALUE_BAD;
+	}
+	*out = value;
+	return XWAU_VALUE_SET;
+}
+
+float XwauSection_FloatOr(const XwauSection* section, const char* key, float fallback) {
+	float value = fallback;
+	XwauSection_Float(section, key, &value);
+	return value;
+}
+
+bool XwauSection_KeyAt(const XwauSection* section, size_t index, char* key, size_t cap) {
+	if (!Xwau_LineKey(section->lines.items[index], section->rules, key, cap))
+		return false;
+	for (size_t i = 0; i < index; ++i) {
+		char other[512];
+		if (Xwau_LineKey(section->lines.items[i], section->rules, other, sizeof other) &&
+			Xwau_SameName(key, other))
+			return false;
+	}
+	return true;
+}
+
+void XwauSection_ReportUnknownKeys(const XwauSection* section, const char* const* keys,
+								   const char* const* prefixes) {
+	for (size_t i = 0; i < section->lines.count; ++i) {
+		char key[512];
+		bool known = false;
+		if (!XwauSection_KeyAt(section, i, key, sizeof key))
+			continue;
+		for (size_t k = 0; keys && keys[k] && !known; ++k)
+			known = Xwau_SameName(key, keys[k]);
+		for (size_t k = 0; prefixes && prefixes[k] && !known; ++k) {
+			const size_t length = strlen(prefixes[k]);
+			known               = strncasecmp(key, prefixes[k], length) == 0 && key[length];
+		}
+		if (!known)
+			Report(section->source, "%s isn't a key that the hook reads, so it is ignored", key);
 	}
 }
 
@@ -604,6 +816,13 @@ bool Xwau_StoiAutoInt(const char* text, long long* out) {
 		return false;
 	*out = value;
 	return true;
+}
+
+bool Xwau_Stof(const char* text, float* out) {
+	char* end = NULL;
+	errno     = 0;
+	*out      = strtof(text, &end);
+	return end != text && errno != ERANGE;
 }
 
 bool Xwau_StoulHex(const char* text, uint32_t* out) {

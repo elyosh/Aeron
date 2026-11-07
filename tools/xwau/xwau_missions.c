@@ -93,14 +93,13 @@ UTIL_PRINTF(3, 4) static void fatal(const XwauMissions* m, const char* base, con
 
 /* ---- Skin contexts ------------------------------------------------------------ */
 
+/* The global skin lines. The skins hook is a C# hook. */
 static bool global_skin_lines(const char* game, XwauLines* out) {
-	char path[1024];
-	if (!XwauLines_Read(Xwau_FindFile(game, "FlightModels/Skins.txt", path, sizeof path) ? path : NULL, "",
-						XWAU_RULES_CS, out))
+	XwauSection section;
+	if (!XwauSection_ReadGlobal(game, "Skins", XWAU_RULES_CS, &section))
 		return false;
-	return out->count ||
-		   XwauLines_Read(Xwau_FindFile(game, "FlightModels/default.ini", path, sizeof path) ? path : NULL,
-						  "Skins", XWAU_RULES_CS, out);
+	*out = section.lines;
+	return true;
 }
 
 static bool copy_lines(const XwauLines* from, XwauLines* to) {
@@ -197,16 +196,11 @@ static bool load_skin_contexts(const char* game, XwauMissions* m) {
 }
 
 bool XwauMissions_OwnSkinLines(const char* game, const char* base, XwauLines* out) {
-	char rel[1100], path[1024];
-	if (!PathFormat(rel, sizeof rel, "%s_Skins.txt", base) ||
-		!XwauLines_Read(Xwau_FindFile(game, rel, path, sizeof path) ? path : NULL, "", XWAU_RULES_CS, out))
+	XwauSection section;
+	if (!XwauSection_ReadMission(game, base, "Skins", XWAU_RULES_CS, &section))
 		return false;
-	if (out->count)
-		return true;
-	if (!PathFormat(rel, sizeof rel, "%s.ini", base))
-		return false;
-	return XwauLines_Read(Xwau_FindFile(game, rel, path, sizeof path) ? path : NULL, "Skins", XWAU_RULES_CS,
-						  out);
+	*out = section.lines;
+	return true;
 }
 
 size_t XwauMissions_SkinContextCount(const XwauMissions* missions) { return missions->context_count; }
@@ -421,19 +415,13 @@ static bool mission_lists(const char* game, const XwauMissions* m, const char* b
 				  TAG_MAX);
 			continue;
 		}
-		XwauLines lines;
-		char      path[1024];
-		if (!(ok = PathFormat(rel, sizeof rel, "%s_%s.txt", base, sections.items[s])))
-			break;
-		ok = XwauLines_Read(Xwau_FindFile(game, rel, path, sizeof path) ? path : NULL, "", XWAU_RULES_CPP,
-							&lines);
-		if (ok && !lines.count)
-			ok = XwauLines_Read(has_ini ? ini : NULL, sections.items[s], XWAU_RULES_CPP, &lines);
+		XwauSection   section;
 		XwauMeshLine* mesh_lines = NULL;
 		size_t        mesh_count = 0;
-		ok = ok && XwauModel_MeshLines(&lines, &mesh_lines, &mesh_count, m->report ? base : NULL,
-									   sections.items[s]);
-		XwauLines_Free(&lines);
+		ok = XwauSection_ReadMission(game, base, sections.items[s], XWAU_RULES_CPP, &section) &&
+			 XwauModel_MeshLines(&section.lines, &mesh_lines, &mesh_count, m->report ? base : NULL,
+								 sections.items[s]);
+		XwauSection_Free(&section);
 		/* Add the meshes to the flight group's list for this group. */
 		FlightGroupLists* entry = ok ? flight_group_lists(out, count, fg) : NULL;
 		GroupList*        list  = entry ? group_list(&entry->lists, group) : NULL;

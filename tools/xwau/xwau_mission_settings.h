@@ -171,7 +171,7 @@ typedef struct XwauMissionSettings {
  * [mission_tie] `key = value` lines are `lines`. Problems that make the
  * import fail are reported with `base` as their label. Returns false when
  * out of memory. */
-bool XwauMissionSettings_Read(const char* game, const char* base, int number, const XwauLines* lines,
+bool XwauMissionSettings_Read(const char* game, const char* base, int number, const XwauSection* lines,
 							  const XwauSettingsConfig* config, XwauMissionSettings* out);
 void XwauMissionSettings_Free(XwauMissionSettings* settings);
 

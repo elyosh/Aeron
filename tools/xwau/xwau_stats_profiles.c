@@ -73,20 +73,6 @@ static const char* const kXwauKeys[XWAU_STATS_FIELDS] = {
 
 enum { FIELD_THRESHOLD = 6, FIELD_HULL = 7, FIELD_SHIELDS = 9, FIELD_HAS_SHIELDS = 12, FIELD_COLLISION = 14 };
 
-/* Reads `key` as GetFileKeyValueInt reads it, or returns `fallback` when
- * the key is missing. A value that isn't a number stops XWAU (std::stoi
- * throws), so `fallback` is used. */
-static long long int_key(const XwauLines* lines, const char* key, long long fallback) {
-	char      text[256];
-	long long value = 0;
-	XwauLines_Value(lines, key, XWAU_RULES_CPP, text, sizeof text);
-	if (!text[0])
-		return fallback;
-	if (!Xwau_StoiAuto(text, &value) || value < INT_MIN || value > INT_MAX)
-		return fallback;
-	return value;
-}
-
 static void lower_name(char* out, size_t cap, const char* text) {
 	size_t i = 0;
 	for (; text[i] && i + 1 < cap; ++i)
@@ -132,37 +118,19 @@ static bool genus_add(XwauStatsGenus* genus, const char* key, int cls) {
 	return true;
 }
 
-/* The [Objects] lines of mission `base`: <mission>_Objects.txt, else the
- * section of <mission>.ini. */
-static bool object_lines(const char* game, const char* base, XwauLines* lines) {
-	char rel[1100], path[1024];
-	snprintf(rel, sizeof rel, "%s_Objects.txt", base);
-	if (!XwauLines_Read(Xwau_FindFile(game, rel, path, sizeof path) ? path : NULL, "", XWAU_RULES_CPP, lines))
-		return false;
-	if (lines->count)
-		return true;
-	snprintf(rel, sizeof rel, "%s.ini", base);
-	return XwauLines_Read(Xwau_FindFile(game, rel, path, sizeof path) ? path : NULL, "Objects",
-						  XWAU_RULES_CPP, lines);
-}
-
 /* Gives the targets of the swaps of mission `base` the classes of the
  * object types that load their sources. */
 static bool genus_swaps(const char* game, const char* base, const XwauGameTables* tables,
 						const char* const* models, XwauStatsGenus* genus) {
-	XwauLines lines;
-	bool      ok = object_lines(game, base, &lines);
-	for (size_t i = 0; ok && i < lines.count; ++i) {
-		char        line[2048], source[256], target[256], rel[1024], path[1024];
-		char*       equals;
-		const char* key;
-		const char* value;
-		snprintf(line, sizeof line, "%s", lines.items[i]);
-		if (!(equals = strchr(line, '=')))
+	XwauSection objects;
+	bool        ok = XwauSection_ReadMission(game, base, "Objects", XWAU_RULES_CPP, &objects);
+	for (size_t i = 0; ok && i < objects.lines.count; ++i) {
+		char key[1024], value[1024], source[256], target[256], rel[1024], path[1024];
+		/* The hook looks up each model's line, so the first line of a key
+		   wins. */
+		if (!XwauSection_KeyAt(&objects, i, key, sizeof key))
 			continue;
-		*equals = 0;
-		key     = Xwau_Trim(line, XWAU_RULES_CPP);
-		value   = Xwau_Trim(equals + 1, XWAU_RULES_CPP);
+		XwauSection_Text(&objects, key, value, sizeof value);
 		snprintf(rel, sizeof rel, "%s", value);
 		for (char* c = rel; *c; ++c)
 			if (*c == '\\')
@@ -176,7 +144,7 @@ static bool genus_swaps(const char* game, const char* base, const XwauGameTables
 				ok = genus_add(genus, target, genus_class(type.genus));
 		}
 	}
-	XwauLines_Free(&lines);
+	XwauSection_Free(&objects);
 	return ok;
 }
 
@@ -244,36 +212,25 @@ static bool add_name(XwauLines* names, const char* name) {
 	return XwauLines_Add(names, name, strlen(name));
 }
 
-/* The lines of profile `name` of model `model`: its .txt file, else its
- * section. */
-static bool profile_lines(const char* game, const char* model, const char* name, XwauLines* lines,
-						  char* source, size_t cap) {
-	char rel[1024], path[1024];
-	snprintf(rel, sizeof rel, "FlightModels/%sStatsProfile_%s.txt", model, name);
-	snprintf(source, cap, "%s", rel);
-	if (!XwauLines_Read(Xwau_FindFile(game, rel, path, sizeof path) ? path : NULL, "", XWAU_RULES_CPP, lines))
-		return false;
-	if (lines->count)
-		return true;
+/* The section of profile `name` of model `model`. */
+static bool profile_lines(const char* game, const char* model, const char* name, XwauSection* out) {
 	char section[300];
-	snprintf(rel, sizeof rel, "FlightModels/%s.ini", model);
 	snprintf(section, sizeof section, "StatsProfile_%s", name);
-	snprintf(source, cap, "%s [%s]", rel, section);
-	return XwauLines_Read(Xwau_FindFile(game, rel, path, sizeof path) ? path : NULL, section, XWAU_RULES_CPP,
-						  lines);
+	return XwauSection_ReadModel(game, model, section, XWAU_RULES_CPP, out);
 }
 
 /* Reads one profile. Returns false when it needs the genus division and
  * `genus_class` doesn't give one. The hook doesn't read other keys. */
-static bool read_profile(const XwauLines* lines, int genus_class, XwauStatsProfile* p) {
+static bool read_profile(const XwauSection* profile, int genus_class, XwauStatsProfile* p) {
 	for (int f = 0; f < XWAU_STATS_FIELDS; ++f) {
 		long long value;
 		if (f == FIELD_THRESHOLD)
-			value = int_key(lines, kXwauKeys[f], int_key(lines, "ExplosionStrength", -1));
+			value =
+				XwauSection_IntOr(profile, kXwauKeys[f], XwauSection_IntOr(profile, "ExplosionStrength", -1));
 		else if (f == FIELD_COLLISION)
-			value = int_key(lines, kXwauKeys[f], 1) != 0 ? -1 : 0;
+			value = XwauSection_IntOr(profile, kXwauKeys[f], 1) != 0 ? -1 : 0;
 		else
-			value = int_key(lines, kXwauKeys[f], -1);
+			value = XwauSection_IntOr(profile, kXwauKeys[f], -1);
 		if (value == -1)
 			continue;
 		if (f <= 2) {
@@ -327,20 +284,20 @@ bool XwauStatsProfiles_Read(const char* game, const char* model, char* const* na
 		}
 	}
 	for (size_t i = 0; ok && i < profile_names.count; ++i) {
-		XwauLines lines;
-		char      source[1300];
-		ok = profile_lines(game, model, profile_names.items[i], &lines, source, sizeof source);
-		if (!ok || !lines.count) {
-			XwauLines_Free(&lines);
+		XwauSection section;
+		ok = profile_lines(game, model, profile_names.items[i], &section);
+		if (!ok || !section.lines.count) {
+			XwauSection_Free(&section);
 			continue;
 		}
 		XwauStatsProfile profile;
 		memset(&profile, 0, sizeof profile);
 		lower_name(profile.name, sizeof profile.name, profile_names.items[i]);
 		if (strlen(profile_names.items[i]) >= XWAU_STATS_NAME_MAX) {
-			ReportFatal(source, "the profile name is longer than %d characters, which OpenXWA can't hold",
+			ReportFatal(section.source,
+						"the profile name is longer than %d characters, which OpenXWA can't hold",
 						XWAU_STATS_NAME_MAX - 1);
-		} else if (!read_profile(&lines, genus_class, &profile)) {
+		} else if (!read_profile(&section, genus_class, &profile)) {
 			/* When no object type loads the model, its profiles have no
 			   effect in XWAU. */
 			if (genus_class == -2)
@@ -350,7 +307,7 @@ bool XwauStatsProfiles_Read(const char* game, const char* model, char* const* na
 			if ((ok = added != NULL))
 				*added = profile;
 		}
-		XwauLines_Free(&lines);
+		XwauSection_Free(&section);
 	}
 	/* The hook divides the hull and the shields by the genus of each object
 	   type that loads the model. A model file has one value for all of
@@ -402,11 +359,11 @@ static bool has_profile(const char* game, const char* model, const char* name) {
 											"_Player", "_Player_Easy", "_Player_Medium", "_Player_Hard" };
 	bool                     found      = false;
 	for (size_t v = 0; !found && v < sizeof variants / sizeof variants[0]; ++v) {
-		char      full[300], source[1300];
-		XwauLines lines;
+		char        full[300];
+		XwauSection section;
 		snprintf(full, sizeof full, "%s%s", name, variants[v]);
-		found = profile_lines(game, model, full, &lines, source, sizeof source) && lines.count;
-		XwauLines_Free(&lines);
+		found = profile_lines(game, model, full, &section) && section.lines.count;
+		XwauSection_Free(&section);
 	}
 	return found;
 }
@@ -437,13 +394,14 @@ static bool percent_key(const char* key) {
 	return false;
 }
 
-static void read_percents(const XwauLines* lines, const char* base, const char* prefix,
+static void read_percents(const XwauSection* profile, const char* base, const char* prefix,
 						  long long percent[XWAU_STATS_PERCENT_FIELDS]) {
 	for (int f = 0; f < XWAU_STATS_PERCENT_FIELDS; ++f) {
 		char key[300], alias[300];
 		snprintf(key, sizeof key, "%s%sPercent", prefix, kXwauKeys[f]);
 		snprintf(alias, sizeof alias, "%sExplosionStrengthPercent", prefix);
-		percent[f] = int_key(lines, key, f == FIELD_THRESHOLD ? int_key(lines, alias, -1) : -1);
+		percent[f] = XwauSection_IntOr(profile, key,
+									   f == FIELD_THRESHOLD ? XwauSection_IntOr(profile, alias, -1) : -1);
 		if (percent[f] < -1) {
 			ReportFatal(base, "%s = %lld is a negative percent, which the game can't use", key, percent[f]);
 			percent[f] = -1;
@@ -463,42 +421,19 @@ static int canonical_markings(const char* text) {
 
 bool XwauMissionStats_Read(const char* game, const char* base, XwauMissionStats* out) {
 	memset(out, 0, sizeof *out);
-	char      rel[1100], path[1024];
-	XwauLines lines;
-	snprintf(rel, sizeof rel, "%s_StatsProfiles.txt", base);
-	if (!XwauLines_Read(Xwau_FindFile(game, rel, path, sizeof path) ? path : NULL, "", XWAU_RULES_CPP,
-						&lines))
+	XwauSection section;
+	if (!XwauSection_ReadMission(game, base, "StatsProfiles", XWAU_RULES_CPP, &section))
 		return false;
-	if (!lines.count) {
-		snprintf(rel, sizeof rel, "%s.ini", base);
-		if (!XwauLines_Read(Xwau_FindFile(game, rel, path, sizeof path) ? path : NULL, "StatsProfiles",
-							XWAU_RULES_CPP, &lines))
-			return false;
-	}
-	read_percents(&lines, base, "", out->percent);
-	read_percents(&lines, base, "Player", out->player_percent);
-	XwauLines seen = { 0 };
-	bool      ok   = true;
-	for (size_t i = 0; ok && i < lines.count; ++i) {
-		char  line[2048], key[300], value[300];
-		char* equals;
-		snprintf(line, sizeof line, "%s", lines.items[i]);
+	read_percents(&section, base, "", out->percent);
+	read_percents(&section, base, "Player", out->player_percent);
+	bool ok = true;
+	for (size_t i = 0; ok && i < section.lines.count; ++i) {
+		char key[300], value[300];
 		/* XWAU doesn't read lines without '=' or without a key, and the
 		   first line of a key wins. */
-		if (!(equals = strchr(line, '=')))
+		if (!XwauSection_KeyAt(&section, i, key, sizeof key))
 			continue;
-		*equals = 0;
-		snprintf(key, sizeof key, "%s", Xwau_Trim(line, XWAU_RULES_CPP));
-		snprintf(value, sizeof value, "%s", Xwau_Trim(equals + 1, XWAU_RULES_CPP));
-		if (!key[0])
-			continue;
-		bool already = false;
-		for (size_t s = 0; !already && s < seen.count; ++s)
-			already = Xwau_SameName(seen.items[s], key);
-		if (already)
-			continue;
-		if (!(ok = XwauLines_Add(&seen, key, strlen(key))))
-			break;
+		XwauSection_Text(&section, key, value, sizeof value);
 		/* An empty value means no choice, as in the hook. */
 		if (percent_key(key) || !value[0])
 			continue;
@@ -559,8 +494,7 @@ bool XwauMissionStats_Read(const char* game, const char* base, XwauMissionStats*
 		if (markings >= 0)
 			entry->has_markings[markings] = true;
 	}
-	XwauLines_Free(&seen);
-	XwauLines_Free(&lines);
+	XwauSection_Free(&section);
 	return ok;
 }
 

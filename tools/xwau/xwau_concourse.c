@@ -8,14 +8,10 @@
 /* The value of `key` from `min` to `max`, read as std::stoi(value, 0, 0)
  * reads it, or -1 when the key is missing, when its value isn't a number,
  * which XWAU fails on, or when the import fails on it. */
-static int planet_value(const XwauLines* lines, const char* key, long long min, long long max,
+static int planet_value(const XwauSection* section, const char* key, long long min, long long max,
 						const char* base) {
-	char      text[256];
-	long long value = 0;
-	XwauLines_Value(lines, key, XWAU_RULES_CPP, text, sizeof text);
-	if (!text[0])
-		return -1;
-	if (!Xwau_StoiAuto(text, &value))
+	long long value;
+	if (XwauSection_Int(section, key, &value) != XWAU_VALUE_SET)
 		return -1;
 	if (value != -1 && (value < min || value > max)) {
 		ReportFatal(base, "[concourse]: %s = %lld, and the importer only takes %lld to %lld", key, value, min,
@@ -31,25 +27,16 @@ bool XwauFrontPlanet_Read(const char* game, const char* base, const int design_s
 	out->has_position = false;
 	char       path[1024];
 	const bool hook = Xwau_FindFile(game, "hook_concourse.dll", path, sizeof path);
-	char       rel[1100];
-	XwauLines lines;
-	if (!PathFormat(rel, sizeof rel, "%s_concourse.txt", base) ||
-		!XwauLines_Read(Xwau_FindFile(game, rel, path, sizeof path) ? path : NULL, "", XWAU_RULES_CPP,
-						&lines))
-		return false;
-	if (!lines.count && (!PathFormat(rel, sizeof rel, "%s.ini", base) ||
-						 !XwauLines_Read(Xwau_FindFile(game, rel, path, sizeof path) ? path : NULL,
-										 "concourse", XWAU_RULES_CPP, &lines)))
-		return false;
 	/* Without hook_concourse.dll, XWAU never reads these keys. */
-	if (!hook) {
-		XwauLines_Free(&lines);
+	if (!hook)
 		return true;
-	}
+	XwauSection settings;
+	if (!XwauSection_ReadMission(game, base, "concourse", XWAU_RULES_CPP, &settings))
+		return false;
 	/* The game reads image groups as 16-bit numbers. */
-	out->image = planet_value(&lines, "FrontPlanetIndex", 1, 32767, base);
-	const int x = planet_value(&lines, "FrontPlanetPositionX", -32768, 32767, base);
-	const int y = planet_value(&lines, "FrontPlanetPositionY", -32768, 32767, base);
+	out->image  = planet_value(&settings, "FrontPlanetIndex", 1, 32767, base);
+	const int x = planet_value(&settings, "FrontPlanetPositionX", -32768, 32767, base);
+	const int y = planet_value(&settings, "FrontPlanetPositionY", -32768, 32767, base);
 	if ((x == -1) != (y == -1))
 		ReportFatal(base,
 					"[concourse]: only one of FrontPlanetPositionX and FrontPlanetPositionY is set, and "
@@ -59,7 +46,7 @@ bool XwauFrontPlanet_Read(const char* game, const char* base, const int design_s
 		out->position[0]  = x * design_scale[0];
 		out->position[1]  = y * design_scale[1];
 	}
-	XwauLines_Free(&lines);
+	XwauSection_Free(&settings);
 	return true;
 }
 

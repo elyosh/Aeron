@@ -42,48 +42,19 @@ static bool hangar_voice(const char* game, const char* stock_game, const char* f
 bool XwauMissionSounds_Read(const char* game, const char* stock_game, const char* base, bool report,
 							XwauMissionSounds* out) {
 	memset(out, 0, sizeof *out);
-	char       rel[1200], path[1024];
-	const bool hook  = Xwau_FindFile(game, "hook_engine_sound.dll", path, sizeof path);
-	XwauLines  lines = { 0 };
-	bool      ok =
-		PathFormat(rel, sizeof rel, "%s_Sounds.txt", base) &&
-		XwauLines_Read(Xwau_FindFile(game, rel, path, sizeof path) ? path : NULL, "", XWAU_RULES_CPP, &lines);
-	if (ok && !lines.count) {
-		XwauLines_Free(&lines);
-		ok = PathFormat(rel, sizeof rel, "%s.ini", base) &&
-			 XwauLines_Read(Xwau_FindFile(game, rel, path, sizeof path) ? path : NULL, "Sounds",
-							XWAU_RULES_CPP, &lines);
-	}
+	char path[1024];
 	/* Without the hook, XWAU reads no line. */
-	if (ok && !hook) {
-		XwauLines_Free(&lines);
+	if (!Xwau_FindFile(game, "hook_engine_sound.dll", path, sizeof path))
 		return true;
-	}
-	for (size_t i = 0; ok && i < lines.count; ++i) {
-		/* XWAU ignores a line that isn't a "from = to" line. */
-		const char* eq = strchr(lines.items[i], '=');
-		if (!eq)
-			continue;
+	XwauSection section;
+	bool        ok = XwauSection_ReadMission(game, base, "Sounds", XWAU_RULES_CPP, &section);
+	for (size_t i = 0; ok && i < section.lines.count; ++i) {
+		/* XWAU ignores a line that isn't a "from = to" line, and the first
+		   line for a path wins, even when that line is left out. */
 		char from[512], to[512];
-		snprintf(from, sizeof from, "%.*s", (int)(eq - lines.items[i]), lines.items[i]);
-		snprintf(to, sizeof to, "%s", eq + 1);
-		Xwau_Trim(from, XWAU_RULES_CPP);
-		Xwau_Trim(to, XWAU_RULES_CPP);
-		if (!from[0])
+		if (!XwauSection_KeyAt(&section, i, from, sizeof from))
 			continue;
-		/* The first line for a path wins, even when that line is left out. */
-		bool seen = false;
-		for (size_t k = 0; !seen && k < i; ++k) {
-			const char* other = strchr(lines.items[k], '=');
-			char        name[512];
-			if (!other)
-				continue;
-			snprintf(name, sizeof name, "%.*s", (int)(other - lines.items[k]), lines.items[k]);
-			Xwau_Trim(name, XWAU_RULES_CPP);
-			seen = Xwau_SameName(name, from);
-		}
-		if (seen)
-			continue;
+		XwauSection_Text(&section, from, to, sizeof to);
 		/* A line whose file isn't in the installation does nothing, and a
 		   hangar voice never matches, in XWAU too. */
 		char found[1024];
@@ -93,7 +64,7 @@ bool XwauMissionSounds_Read(const char* game, const char* stock_game, const char
 				ReportFatal(base,
 							"[Sounds]: '%s' replaces %s with a file of the stock game, which the "
 							"importer doesn't copy",
-							lines.items[i], from);
+							section.lines.items[i], from);
 			continue;
 		}
 		if (hangar_voice(game, stock_game, from))
@@ -108,7 +79,7 @@ bool XwauMissionSounds_Read(const char* game, const char* stock_game, const char
 		snprintf(item->to_path, sizeof item->to_path, "%s", found);
 		ok = item->from && item->to;
 	}
-	XwauLines_Free(&lines);
+	XwauSection_Free(&section);
 	if (!ok)
 		Report(NULL, "out of memory");
 	return ok;

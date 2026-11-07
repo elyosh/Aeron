@@ -28,34 +28,21 @@ uint32_t XwauCraft_HudColor(float r, float g, float b) {
 }
 
 void XwauCraft_ReadReticle(const char* reticle_txt, const char* ini, XwauCraftHud* hud) {
-	XwauLines lines = { 0 };
-	if (reticle_txt)
-		XwauLines_Read(reticle_txt, "", XWAU_RULES_CPP, &lines);
-	if (lines.count == 0) {
-		XwauLines_Free(&lines);
-		if (ini)
-			XwauLines_Read(ini, "Reticle", XWAU_RULES_CPP, &lines);
-	}
+	XwauSection section;
+	XwauSection_ReadPaths(reticle_txt, ini, "Reticle", XWAU_RULES_CPP, &section);
 	for (size_t i = 0; i < sizeof g_reticleSlots / sizeof g_reticleSlots[0]; ++i) {
 		const int slot = g_reticleSlots[i];
-		char      key[32], value[64];
+		char      key[32];
 		long long number;
 		snprintf(key, sizeof key, "Reticle_%d", slot);
-		XwauLines_Value(&lines, key, XWAU_RULES_CPP, value, sizeof value);
-		if (!value[0])
-			continue;
-		/* The hook reads the value with std::stoi(value, 0, 0), which throws
-		   when there is no number. */
-		if (!Xwau_StoiAuto(value, &number))
-			continue;
-		if (number == -1)
+		if (XwauSection_Int(&section, key, &number) != XWAU_VALUE_SET || number == -1)
 			continue;
 		hud->has_reticle[slot] = true;
 		hud->reticle[slot]     = (int)number;
 	}
 	/* The hook only looks up the keys of its slots, so other lines have no
 	   effect. */
-	XwauLines_Free(&lines);
+	XwauSection_Free(&section);
 }
 
 /* Reads "<key> = r, g, b" as LoadGeneric3DCoords does: three numbers after
@@ -124,7 +111,7 @@ static bool read_engine_glow(const char* source, const char* line, XwauCraftEngi
 		return true;
 	}
 	for (int i = 0; ok && i < 3; ++i)
-		ok = Xwau_StoiAuto(tokens.items[i], &values[i]) && values[i] >= INT_MIN && values[i] <= INT_MAX;
+		ok = Xwau_StoiAutoInt(tokens.items[i], &values[i]);
 	XwauLines_Free(&tokens);
 	/* The hook reads the values with std::stoi(value, 0, 0), which throws. */
 	if (!ok)
@@ -144,19 +131,11 @@ static bool read_engine_glow(const char* source, const char* line, XwauCraftEngi
 }
 
 void XwauCraft_ReadEngineGlows(const char* glows_txt, const char* ini, XwauCraftEngineGlows* glows) {
-	XwauLines   lines  = { 0 };
-	const char* source = glows_txt;
-	if (glows_txt)
-		XwauLines_Read(glows_txt, "", XWAU_RULES_CPP, &lines);
-	if (lines.count == 0) {
-		XwauLines_Free(&lines);
-		source = ini;
-		if (ini)
-			XwauLines_Read(ini, "EngineGlows", XWAU_RULES_CPP, &lines);
-	}
-	for (size_t i = 0; i < lines.count; ++i)
-		read_engine_glow(source, lines.items[i], glows);
-	XwauLines_Free(&lines);
+	XwauSection section;
+	XwauSection_ReadPaths(glows_txt, ini, "EngineGlows", XWAU_RULES_CPP, &section);
+	for (size_t i = 0; i < section.lines.count; ++i)
+		read_engine_glow(section.source, section.lines.items[i], glows);
+	XwauSection_Free(&section);
 }
 
 /* The impact colour group of each weapon type 280 to 307 (hook_weapon_color,
@@ -192,29 +171,17 @@ static void markings_key(char* out, size_t cap, const char* key, int markings) {
 		snprintf(out, cap, "%s_fg%d_", key, markings);
 }
 
-/* Reads a number key as GetFileKeyValueInt does. Returns `fallback` when
- * the key is missing, or when its value isn't a number, which XWAU fails
- * on. */
-static int int_key(const XwauLines* lines, const char* key, int fallback) {
-	char      value[256];
-	long long number;
-	XwauLines_Value(lines, key, XWAU_RULES_CPP, value, sizeof value);
-	if (!value[0])
-		return fallback;
-	if (!Xwau_StoiAuto(value, &number) || number < INT_MIN || number > INT_MAX)
-		return fallback;
-	return (int)number;
+/* Reads a number key as GetFileKeyValueInt does, or `fallback`. */
+static int int_key(const XwauSection* section, const char* key, int fallback) {
+	return (int)XwauSection_IntOr(section, key, fallback);
 }
-
-/* Reads a markings key. Returns -1 when it isn't set. */
-static int markings_value(const XwauLines* lines, const char* key) { return int_key(lines, key, -1); }
 
 /* Reads a colour key as GetFileKeyValueUnsignedInt does. Returns false when
  * the key is missing, or when its value isn't a hexadecimal number, which
  * XWAU fails on. */
-static bool color_value(const XwauLines* lines, const char* key, uint32_t* out) {
+static bool color_value(const XwauSection* section, const char* key, uint32_t* out) {
 	char value[256];
-	XwauLines_Value(lines, key, XWAU_RULES_CPP, value, sizeof value);
+	XwauSection_Text(section, key, value, sizeof value);
 	if (!value[0])
 		return false;
 	return Xwau_StoulHex(value, out);
@@ -231,12 +198,12 @@ static void set_impact_group(XwauCraftWeaponColors* colors, int group, uint32_t 
 
 /* Reads the keys of markings `markings`, or the keys without _fg when it is
  * -1. Returns whether a key sets something. */
-static bool read_weapon_colors(const XwauLines* lines, int markings, XwauCraftWeaponColors* colors) {
+static bool read_weapon_colors(const XwauSection* section, int markings, XwauCraftWeaponColors* colors) {
 	char     prefix[64], key[96];
 	bool     any = false;
 	uint32_t color;
 	markings_key(prefix, sizeof prefix, "WeaponColor", markings);
-	int variant = markings_value(lines, prefix);
+	int variant = int_key(section, prefix, -1);
 	if (variant != -1) {
 		colors->has_default     = true;
 		colors->default_variant = (uint8_t)variant;
@@ -244,7 +211,7 @@ static bool read_weapon_colors(const XwauLines* lines, int markings, XwauCraftWe
 	}
 	for (int weapon = 0; weapon < XWAU_CRAFT_WEAPONS; ++weapon) {
 		snprintf(key, sizeof key, "%s%d", prefix, XWAU_CRAFT_FIRST_WEAPON + weapon);
-		variant = markings_value(lines, key);
+		variant = int_key(section, key, -1);
 		if (variant != -1) {
 			colors->has_variant[weapon] = true;
 			colors->variant[weapon]     = (uint8_t)variant;
@@ -254,7 +221,7 @@ static bool read_weapon_colors(const XwauLines* lines, int markings, XwauCraftWe
 	for (int group = 0; group < 5; ++group) {
 		markings_key(key, sizeof key, g_impactGroupKeys[group], markings);
 		/* Without _fg, a group key replaces the global colour, even with 0. */
-		if (color_value(lines, key, &color) && (markings < 0 || color != 0)) {
+		if (color_value(section, key, &color) && (markings < 0 || color != 0)) {
 			set_impact_group(colors, group, color);
 			any = true;
 		}
@@ -262,7 +229,7 @@ static bool read_weapon_colors(const XwauLines* lines, int markings, XwauCraftWe
 	markings_key(prefix, sizeof prefix, "WeaponImpactColor", markings);
 	for (int weapon = 0; weapon < XWAU_CRAFT_WEAPONS; ++weapon) {
 		snprintf(key, sizeof key, "%s%d", prefix, XWAU_CRAFT_FIRST_WEAPON + weapon);
-		if (color_value(lines, key, &color) && color != 0) {
+		if (color_value(section, key, &color) && color != 0) {
 			colors->has_impact[weapon] = true;
 			colors->impact[weapon]     = XwauCraft_ImpactColor(color);
 			any                        = true;
@@ -270,7 +237,7 @@ static bool read_weapon_colors(const XwauLines* lines, int markings, XwauCraftWe
 	}
 	for (int bar = 0; bar < XWAU_CRAFT_BARS; ++bar) {
 		markings_key(key, sizeof key, g_barKeys[bar], markings);
-		if (color_value(lines, key, &color) && color != 0) {
+		if (color_value(section, key, &color) && color != 0) {
 			colors->has_bar[bar] = true;
 			colors->bar[bar]     = color;
 			any                  = true;
@@ -295,80 +262,47 @@ static int line_markings(const char* line) {
 }
 
 void XwauCraft_ReadWeapons(const char* weapons_txt, const char* ini, XwauCraftWeapons* weapons) {
-	XwauLines lines = { 0 };
-	if (weapons_txt)
-		XwauLines_Read(weapons_txt, "", XWAU_RULES_CPP, &lines);
-	if (lines.count == 0) {
-		XwauLines_Free(&lines);
-		if (ini)
-			XwauLines_Read(ini, "WeaponColor", XWAU_RULES_CPP, &lines);
-	}
-	read_weapon_colors(&lines, -1, &weapons->colors);
-	const int switch_by_iff = int_key(&lines, "WeaponSwitchBasedOnIff", -1);
+	XwauSection section;
+	XwauSection_ReadPaths(weapons_txt, ini, "WeaponColor", XWAU_RULES_CPP, &section);
+	read_weapon_colors(&section, -1, &weapons->colors);
+	const int switch_by_iff = int_key(&section, "WeaponSwitchBasedOnIff", -1);
 	weapons->switch_by_iff  = switch_by_iff == -1 ? -1 : switch_by_iff != 0;
 	/* The hook doesn't read lines with other keys. */
-	for (size_t i = 0; i < lines.count; ++i) {
-		const int markings = line_markings(lines.items[i]);
+	for (size_t i = 0; i < section.lines.count; ++i) {
+		const int markings = line_markings(section.lines.items[i]);
 		if (markings >= 0 && !weapons->has_markings[markings])
 			weapons->has_markings[markings] =
-				read_weapon_colors(&lines, markings, &weapons->by_markings[markings]);
+				read_weapon_colors(&section, markings, &weapons->by_markings[markings]);
 	}
-	XwauLines_Free(&lines);
-}
-
-/* Reads the global settings of hook_weapon_color: its hook_weapon_color.cfg,
- * else the [hook_weapon_color] section of Hooks.ini. */
-static void global_weapon_lines(const char* game, XwauLines* lines) {
-	char path[1024];
-	memset(lines, 0, sizeof *lines);
-	if (Xwau_FindFile(game, "hook_weapon_color.cfg", path, sizeof path))
-		XwauLines_Read(path, "", XWAU_RULES_CPP, lines);
-	if (lines->count == 0) {
-		XwauLines_Free(lines);
-		if (Xwau_FindFile(game, "Hooks.ini", path, sizeof path))
-			XwauLines_Read(path, "hook_weapon_color", XWAU_RULES_CPP, lines);
-	}
+	XwauSection_Free(&section);
 }
 
 void XwauCraft_ReadShield(const char* shield_txt, const char* ini, XwauCraftShield* shield) {
-	XwauLines lines = { 0 };
+	XwauSection section;
 	memset(shield, 0, sizeof *shield);
-	if (shield_txt)
-		XwauLines_Read(shield_txt, "", XWAU_RULES_CPP, &lines);
-	if (lines.count == 0) {
-		XwauLines_Free(&lines);
-		if (ini)
-			XwauLines_Read(ini, "Shield", XWAU_RULES_CPP, &lines);
-	}
-	if (lines.count) {
+	XwauSection_ReadPaths(shield_txt, ini, "Shield", XWAU_RULES_CPP, &section);
+	if (section.lines.count) {
 		shield->has           = true;
-		shield->per_generator = int_key(&lines, "UseGenerator", 0) == 1;
+		shield->per_generator = int_key(&section, "UseGenerator", 0) == 1;
 		shield->rate =
-			int_key(&lines, shield->per_generator ? "PerGeneratorRechargeRate" : "RechargeRate", 0);
-		shield->player_rate   = int_key(&lines, "PlayerRechargeRate", 0);
-		shield->delay_seconds = int_key(&lines, "RechargeRateDelay", 0);
+			int_key(&section, shield->per_generator ? "PerGeneratorRechargeRate" : "RechargeRate", 0);
+		shield->player_rate   = int_key(&section, "PlayerRechargeRate", 0);
+		shield->delay_seconds = int_key(&section, "RechargeRateDelay", 0);
 	}
-	XwauLines_Free(&lines);
+	XwauSection_Free(&section);
 }
 
 void XwauCraft_ReadComponents(const char* strength_txt, const char* ini, XwauCraftComponents* components) {
-	XwauLines   lines  = { 0 };
-	const char* source = strength_txt;
+	XwauSection section;
 	memset(components, 0, sizeof *components);
 	memset(components->strength, 0xff, sizeof components->strength);
-	if (strength_txt)
-		XwauLines_Read(strength_txt, "", XWAU_RULES_CPP, &lines);
-	if (lines.count == 0) {
-		XwauLines_Free(&lines);
-		source = ini;
-		if (ini)
-			XwauLines_Read(ini, "SubcomponentsStrength", XWAU_RULES_CPP, &lines);
-	}
-	for (size_t i = 0; i < lines.count; ++i) {
+	XwauSection_ReadPaths(strength_txt, ini, "SubcomponentsStrength", XWAU_RULES_CPP, &section);
+	const char* source = section.source;
+	for (size_t i = 0; i < section.lines.count; ++i) {
 		long long value;
 		/* A line that isn't a number would crash XWAU, so the section is
 		   left out. */
-		if (!Xwau_Stoi(lines.items[i], &value)) {
+		if (!Xwau_Stoi(section.lines.items[i], &value)) {
 			memset(components->strength, 0xff, sizeof components->strength);
 			break;
 		}
@@ -393,7 +327,7 @@ void XwauCraft_ReadComponents(const char* strength_txt, const char* ini, XwauCra
 	}
 	for (int type = 0; type < XWAU_CRAFT_MESH_TYPES; ++type)
 		components->has = components->has || components->strength[type] >= 0;
-	XwauLines_Free(&lines);
+	XwauSection_Free(&section);
 }
 
 static void write_components(FILE* f, const XwauCraftComponents* components) {
@@ -437,30 +371,16 @@ enum { WARHEAD_LOCK_TIME = 3 };
 enum { WEAPON_RANGE_SOUND_MAX = 16 };
 
 void XwauCraft_ReadWarheadLock(const char* lock_txt, const char* ini, XwauCraftWarheadLock* lock) {
-	XwauLines   lines  = { 0 };
-	const char* source = lock_txt;
+	XwauSection section;
 	memset(lock, 0, sizeof *lock);
 	memset(lock->value, 0xff, sizeof lock->value);
-	if (lock_txt)
-		XwauLines_Read(lock_txt, "", XWAU_RULES_CPP, &lines);
-	if (lines.count == 0) {
-		XwauLines_Free(&lines);
-		source = ini;
-		if (ini)
-			XwauLines_Read(ini, "WarheadLock", XWAU_RULES_CPP, &lines);
-	}
-	lock->has = lines.count != 0;
+	XwauSection_ReadPaths(lock_txt, ini, "WarheadLock", XWAU_RULES_CPP, &section);
+	const char* source = section.source;
+	lock->has          = section.lines.count != 0;
 	for (int i = 0; i < XWAU_CRAFT_WARHEAD_LOCK_KEYS; ++i) {
-		char      value[256];
 		long long number;
-		XwauLines_Value(&lines, g_warheadLockKeys[i].key, XWAU_RULES_CPP, value, sizeof value);
-		if (!value[0])
-			continue;
-		/* A value that isn't a number would crash XWAU. */
-		if (!Xwau_StoiAuto(value, &number))
-			continue;
 		/* -1 keeps the game's value. */
-		if (number == -1)
+		if (XwauSection_Int(&section, g_warheadLockKeys[i].key, &number) != XWAU_VALUE_SET || number == -1)
 			continue;
 		/* The HUD divides by LockTime / 200, and the game by
 		   LockStrengthDivisor, so XWAU crashes when they are 0. */
@@ -478,14 +398,11 @@ void XwauCraft_ReadWarheadLock(const char* lock_txt, const char* ini, XwauCraftW
 	if (lock->has && lock->value[WARHEAD_LOCK_TIME] < 0)
 		lock->value[WARHEAD_LOCK_TIME] = 708;
 	/* The hook doesn't read lines without '=' or with other keys. */
-	for (size_t i = 0; i < lines.count; ++i) {
-		const char* equals = strchr(lines.items[i], '=');
-		char        key[256];
-		int         known = 0, profile = 0;
-		if (!equals)
+	for (size_t i = 0; i < section.lines.count; ++i) {
+		char key[256];
+		int  known = 0, profile = 0;
+		if (!XwauSection_KeyAt(&section, i, key, sizeof key))
 			continue;
-		snprintf(key, sizeof key, "%.*s", (int)(equals - lines.items[i]), lines.items[i]);
-		Xwau_Trim(key, XWAU_RULES_CPP);
 		for (int k = 0; k < XWAU_CRAFT_WARHEAD_LOCK_KEYS && !known; ++k) {
 			const size_t length = strlen(g_warheadLockKeys[k].key);
 			known               = Xwau_SameName(key, g_warheadLockKeys[k].key);
@@ -496,7 +413,7 @@ void XwauCraft_ReadWarheadLock(const char* lock_txt, const char* ini, XwauCraftW
 		if (!known && profile)
 			ReportUnsupported("[WarheadLock] keys for object profiles");
 	}
-	XwauLines_Free(&lines);
+	XwauSection_Free(&section);
 }
 
 /* Writes the keys of `group` that are set, as one map. */
@@ -548,19 +465,13 @@ static int jamming_name(const char* value, const char* const* values, int count,
 }
 
 void XwauCraft_ReadJamming(const char* jamming_txt, const char* ini, XwauCraftJamming* jamming) {
-	XwauLines lines = { 0 };
-	char      value[256];
-	long long number;
+	XwauSection section;
+	char        value[256];
+	long long   number;
 	memset(jamming, 0, sizeof *jamming);
-	if (jamming_txt)
-		XwauLines_Read(jamming_txt, "", XWAU_RULES_CPP, &lines);
-	if (lines.count == 0) {
-		XwauLines_Free(&lines);
-		if (ini)
-			XwauLines_Read(ini, "Jamming", XWAU_RULES_CPP, &lines);
-	}
-	if (lines.count == 0) {
-		XwauLines_Free(&lines);
+	XwauSection_ReadPaths(jamming_txt, ini, "Jamming", XWAU_RULES_CPP, &section);
+	if (section.lines.count == 0) {
+		XwauSection_Free(&section);
 		return;
 	}
 	jamming->has     = true;
@@ -568,26 +479,24 @@ void XwauCraft_ReadJamming(const char* jamming_txt, const char* ini, XwauCraftJa
 	jamming->range   = -1;
 	/* A HasJamming or JammingDistance that isn't a number would crash XWAU,
 	   so the section is then left out. */
-	XwauLines_Value(&lines, "HasJamming", XWAU_RULES_CPP, value, sizeof value);
-	if (value[0] && !Xwau_StoiAuto(value, &number)) {
+	XwauValue result = XwauSection_Int(&section, "HasJamming", &number);
+	if (result == XWAU_VALUE_BAD)
 		jamming->has = false;
-	} else if (value[0]) {
+	else if (result == XWAU_VALUE_SET)
 		jamming->enabled = number != 0;
-	}
-	XwauLines_Value(&lines, "JammingDirection", XWAU_RULES_CPP, value, sizeof value);
+	XwauSection_Text(&section, "JammingDirection", value, sizeof value);
 	jamming->direction = jamming_name(value, g_jammingDirections, 3, 0);
-	XwauLines_Value(&lines, "JammingDistance", XWAU_RULES_CPP, value, sizeof value);
-	if (value[0] && !Xwau_StoiAuto(value, &number)) {
+	result             = XwauSection_Int(&section, "JammingDistance", &number);
+	if (result == XWAU_VALUE_BAD)
 		jamming->has = false;
-	} else if (value[0]) {
+	else if (result == XWAU_VALUE_SET)
 		jamming->range = (int)number;
-	}
-	XwauLines_Value(&lines, "JammingBehavior", XWAU_RULES_CPP, value, sizeof value);
+	XwauSection_Text(&section, "JammingBehavior", value, sizeof value);
 	jamming->rule = jamming_name(value, g_jammingRules, 4, 3);
 	/* A distance below -1 never jams. */
 	if (jamming->has && jamming->enabled && jamming->range < -1)
 		jamming->enabled = false;
-	XwauLines_Free(&lines);
+	XwauSection_Free(&section);
 }
 
 void XwauCraft_WriteJamming(FILE* f, const XwauCraftJamming* jamming) {
@@ -605,32 +514,24 @@ void XwauCraft_WriteJamming(FILE* f, const XwauCraftJamming* jamming) {
 }
 
 void XwauCraft_ReadDock(const char* dock_txt, const char* ini, XwauCraftDock* dock) {
-	XwauLines lines = { 0 };
-	char      value[256];
-	long long number;
+	XwauSection section;
+	long long   number;
 	memset(dock, 0, sizeof *dock);
-	if (dock_txt)
-		XwauLines_Read(dock_txt, "", XWAU_RULES_CPP, &lines);
-	if (lines.count == 0) {
-		XwauLines_Free(&lines);
-		if (ini)
-			XwauLines_Read(ini, "Dock", XWAU_RULES_CPP, &lines);
-	}
-	if (lines.count == 0) {
-		XwauLines_Free(&lines);
+	XwauSection_ReadPaths(dock_txt, ini, "Dock", XWAU_RULES_CPP, &section);
+	if (section.lines.count == 0) {
+		XwauSection_Free(&section);
 		return;
 	}
 	dock->has             = true;
 	dock->approach_height = 932;
 	/* A DockElevation that isn't a number would crash XWAU, so the section
 	   is then left out. */
-	XwauLines_Value(&lines, "DockElevation", XWAU_RULES_CPP, value, sizeof value);
-	if (value[0] && !Xwau_StoiAuto(value, &number)) {
+	const XwauValue result = XwauSection_Int(&section, "DockElevation", &number);
+	if (result == XWAU_VALUE_BAD)
 		dock->has = false;
-	} else if (value[0]) {
+	else if (result == XWAU_VALUE_SET)
 		dock->approach_height = (int)number;
-	}
-	XwauLines_Free(&lines);
+	XwauSection_Free(&section);
 }
 
 void XwauCraft_WriteDock(FILE* f, const XwauCraftDock* dock) {
@@ -656,43 +557,36 @@ static const char* const g_behaviorNames[] = {
 };
 
 void XwauCraft_ReadSound(const char* sound_txt, const char* ini, int range_bank, XwauCraftSound* sound) {
-	XwauLines   lines  = { 0 };
-	const char* source = sound_txt;
+	XwauSection section;
 	memset(sound, 0, sizeof *sound);
 	sound->hyper   = -1;
 	sound->weapons = -1;
-	if (sound_txt)
-		XwauLines_Read(sound_txt, "", XWAU_RULES_CPP, &lines);
-	if (lines.count == 0) {
-		XwauLines_Free(&lines);
-		source = ini;
-		if (ini)
-			XwauLines_Read(ini, "Sound", XWAU_RULES_CPP, &lines);
-	}
-	if (lines.count == 0) {
-		XwauLines_Free(&lines);
+	XwauSection_ReadPaths(sound_txt, ini, "Sound", XWAU_RULES_CPP, &section);
+	if (section.lines.count == 0) {
+		XwauSection_Free(&section);
 		return;
 	}
-	int value = int_key(&lines, "EngineSoundInterior", 0);
+	const char* source = section.source;
+	int         value  = int_key(&section, "EngineSoundInterior", 0);
 	if (value >= 1 && value <= 7)
 		sound->interior = value;
 	else if (value)
 		ReportFatal(source, "EngineSoundInterior = %d plays nothing in XWAU, and the game can't do that",
 					value);
-	value = int_key(&lines, "EngineSoundFlyBy", 0);
+	value = int_key(&section, "EngineSoundFlyBy", 0);
 	if (value % 10 >= 1 && value % 10 <= 8 && value / 10 <= 2 && value > 0) {
 		sound->fly_by      = value % 10;
 		sound->fly_by_mode = value / 10;
 	} else if (value) {
 		ReportFatal(source, "EngineSoundFlyBy = %d plays nothing in XWAU, and the game can't do that", value);
 	}
-	value = int_key(&lines, "EngineSoundWash", 0);
+	value = int_key(&section, "EngineSoundWash", 0);
 	if (value)
 		sound->wash = value == 2 ? 2 : 1;
-	value = int_key(&lines, "EngineSoundTakeOff", 0);
+	value = int_key(&section, "EngineSoundTakeOff", 0);
 	if (value)
 		sound->take_off = value == 2 ? 2 : 1;
-	value = int_key(&lines, "HyperSoundBehavior", -1);
+	value = int_key(&section, "HyperSoundBehavior", -1);
 	if (value >= 0 && value <= 2)
 		sound->hyper = value;
 	else if (value != -1)
@@ -700,7 +594,7 @@ void XwauCraft_ReadSound(const char* sound_txt, const char* ini, int range_bank,
 					"HyperSoundBehavior = %d plays no start sound in XWAU, and the game can't do that",
 					value);
 	char text[256];
-	XwauLines_Value(&lines, "WeaponSoundBehavior", XWAU_RULES_CPP, text, sizeof text);
+	XwauSection_Text(&section, "WeaponSoundBehavior", text, sizeof text);
 	/* With a behaviour that the hook doesn't know, each weapon plays its own
 	   sound. */
 	if (text[0]) {
@@ -713,8 +607,8 @@ void XwauCraft_ReadSound(const char* sound_txt, const char* ini, int range_bank,
 		char start_key[64], count_key[64];
 		snprintf(start_key, sizeof start_key, "WeaponSoundRangeStart_%d", XWAU_CRAFT_FIRST_WEAPON + weapon);
 		snprintf(count_key, sizeof count_key, "WeaponSoundRangeCount_%d", XWAU_CRAFT_FIRST_WEAPON + weapon);
-		const int first = int_key(&lines, start_key, -1);
-		const int count = int_key(&lines, count_key, -1);
+		const int first = int_key(&section, start_key, -1);
+		const int count = int_key(&section, count_key, -1);
 		/* XWAU ignores a range without both keys at 0 or more, crashes on a
 		   count of 0, and drops a range that goes past the WeaponRange
 		   bank. */
@@ -726,18 +620,18 @@ void XwauCraft_ReadSound(const char* sound_txt, const char* ini, int range_bank,
 		sound->range_first[weapon] = first;
 		sound->range_count[weapon] = count > WEAPON_RANGE_SOUND_MAX ? WEAPON_RANGE_SOUND_MAX : count;
 	}
-	XwauLines_Value(&lines, "EngineSlowing", XWAU_RULES_CPP, text, sizeof text);
+	XwauSection_Text(&section, "EngineSlowing", text, sizeof text);
 	sound->engine_slowing = text[0] != 0;
 	static const char* const offset_keys[3]   = { "AmbientSoundOffsetX", "AmbientSoundOffsetY",
 												  "AmbientSoundOffsetZ" };
 	static const char* const distance_keys[3] = { "AmbientSoundDistanceX", "AmbientSoundDistanceZ",
 												  "AmbientSoundDistanceY" };
 	for (int axis = 0; axis < 3; ++axis)
-		sound->ambient_offset[axis] = int_key(&lines, offset_keys[axis], 0);
-	const int  distance     = int_key(&lines, "AmbientSoundDistance", INT_MIN);
+		sound->ambient_offset[axis] = int_key(&section, offset_keys[axis], 0);
+	const int  distance     = int_key(&section, "AmbientSoundDistance", INT_MIN);
 	const bool has_distance = distance != INT_MIN;
 	for (int axis = 0; axis < 3; ++axis) {
-		const int value = int_key(&lines, distance_keys[axis], 0);
+		const int value = int_key(&section, distance_keys[axis], 0);
 		if (value != 0) {
 			sound->has_ambient_distance[axis] = true;
 			sound->ambient_distance[axis]     = value;
@@ -746,7 +640,7 @@ void XwauCraft_ReadSound(const char* sound_txt, const char* ini, int range_bank,
 			sound->ambient_distance[axis]     = distance != 0 ? distance : 1;
 		}
 	}
-	XwauLines_Free(&lines);
+	XwauSection_Free(&section);
 }
 
 bool XwauCraft_HasSound(const XwauCraftSound* sound) {
@@ -859,15 +753,15 @@ static const struct {
 	{ "Weapon296_MagPulse_Damages", "system_damage", NULL, false, 296 },
 };
 
-/* Reads the rates of `lines`. */
-static void read_weapon_rates(const XwauLines* lines, const char* source, XwauCraftWeaponRates* rates) {
+/* Reads the rates of `section`. */
+static void read_weapon_rates(const XwauSection* section, XwauCraftWeaponRates* rates) {
 	for (int key = 0; key < XWAU_CRAFT_WEAPON_RATES; ++key) {
-		rates->value[key] = int_key(lines, g_rateKeys[key].key, -1);
+		rates->value[key] = int_key(section, g_rateKeys[key].key, -1);
 		/* The hook turns the spin on for any value but 0. */
 		if (key == XWAU_CRAFT_IMPACT_SPIN && rates->value[key] != -1)
 			rates->value[key] = rates->value[key] != 0;
 		if (rates->value[key] < -1) {
-			ReportFatal(source, "%s = %d is below 0, which the game can't use", g_rateKeys[key].key,
+			ReportFatal(section->source, "%s = %d is below 0, which the game can't use", g_rateKeys[key].key,
 						rates->value[key]);
 			rates->value[key] = -1;
 		}
@@ -875,37 +769,20 @@ static void read_weapon_rates(const XwauLines* lines, const char* source, XwauCr
 }
 
 void XwauCraft_ReadWeaponRates(const char* rate_txt, const char* ini, XwauCraftWeaponRates* rates) {
-	XwauLines   lines  = { 0 };
-	const char* source = rate_txt;
+	XwauSection section;
 	memset(rates->value, 0xff, sizeof rates->value);
-	if (rate_txt)
-		XwauLines_Read(rate_txt, "", XWAU_RULES_CPP, &lines);
-	if (lines.count == 0) {
-		XwauLines_Free(&lines);
-		source = ini;
-		if (ini)
-			XwauLines_Read(ini, "WeaponRate", XWAU_RULES_CPP, &lines);
-	}
-	read_weapon_rates(&lines, source, rates);
-	XwauLines_Free(&lines);
+	XwauSection_ReadPaths(rate_txt, ini, "WeaponRate", XWAU_RULES_CPP, &section);
+	read_weapon_rates(&section, rates);
+	XwauSection_Free(&section);
 }
 
 bool XwauCraft_ReadGlobalWeaponRates(const char* game, XwauCraftWeaponRates* rates) {
-	XwauLines   lines = { 0 };
-	char        path[1024];
-	const char* source = "FlightModels/WeaponRate.txt";
+	XwauSection section;
 	memset(rates->value, 0xff, sizeof rates->value);
-	if (Xwau_FindFile(game, source, path, sizeof path))
-		XwauLines_Read(path, "", XWAU_RULES_CPP, &lines);
-	if (lines.count == 0) {
-		XwauLines_Free(&lines);
-		source = "FlightModels/default.ini";
-		if (Xwau_FindFile(game, source, path, sizeof path))
-			XwauLines_Read(path, "WeaponRate", XWAU_RULES_CPP, &lines);
-	}
-	read_weapon_rates(&lines, source, rates);
-	const bool has_lines = lines.count != 0;
-	XwauLines_Free(&lines);
+	XwauSection_ReadGlobal(game, "WeaponRate", XWAU_RULES_CPP, &section);
+	read_weapon_rates(&section, rates);
+	const bool has_lines = section.lines.count != 0;
+	XwauSection_Free(&section);
 	return has_lines;
 }
 
@@ -959,28 +836,26 @@ bool XwauCraft_ReadGlobalImpactColors(const char* game, uint32_t colors[XWAU_CRA
 	char path[1024];
 	if (!Xwau_FindFile(game, "hook_weapon_color.dll", path, sizeof path))
 		return false;
-	XwauLines lines;
-	uint32_t  groups[5];
-	global_weapon_lines(game, &lines);
+	XwauSection section;
+	uint32_t    groups[5];
+	XwauSection_ReadHook(game, "hook_weapon_color", &section);
 	for (int group = 0; group < 5; ++group) {
-		if (!color_value(&lines, g_impactGroupKeys[group], &groups[group]))
+		if (!color_value(&section, g_impactGroupKeys[group], &groups[group]))
 			groups[group] = g_impactGroupDefaults[group];
 	}
 	for (int weapon = 0; weapon < XWAU_CRAFT_WEAPONS; ++weapon)
 		colors[weapon] = XwauCraft_ImpactColor(groups[g_impactGroups[weapon]]);
-	XwauLines_Free(&lines);
+	XwauSection_Free(&section);
 	return true;
 }
 
 bool XwauCraft_ReadGlobalSwitchByIff(const char* game, bool* on) {
-	char path[1024];
-	if (!Xwau_FindFile(game, "hook_weapon_color.dll", path, sizeof path) ||
-		!Xwau_FileHasText(path, "WeaponSwitchBasedOnIff"))
+	if (!Xwau_DllHasText(game, "hook_weapon_color.dll", "WeaponSwitchBasedOnIff"))
 		return false;
-	XwauLines lines;
-	global_weapon_lines(game, &lines);
-	*on = int_key(&lines, "WeaponSwitchBasedOnIff", 0) != 0;
-	XwauLines_Free(&lines);
+	XwauSection section;
+	XwauSection_ReadHook(game, "hook_weapon_color", &section);
+	*on = int_key(&section, "WeaponSwitchBasedOnIff", 0) != 0;
+	XwauSection_Free(&section);
 	return true;
 }
 
@@ -1785,19 +1660,13 @@ static bool opt_without_ini(char* const* names, size_t count, const char* name, 
 	return true;
 }
 
-/* Whether `txt` or else the section `section` of `ini` has lines. Either
+/* Whether `txt` or else the section `name` of `ini` has lines. Either
  * path can be NULL. */
-static bool has_section_lines(const char* txt, const char* ini, const char* section) {
-	XwauLines lines = { 0 };
-	if (txt)
-		XwauLines_Read(txt, "", XWAU_RULES_CPP, &lines);
-	bool any = lines.count != 0;
-	XwauLines_Free(&lines);
-	if (!any && ini) {
-		XwauLines_Read(ini, section, XWAU_RULES_CPP, &lines);
-		any = lines.count != 0;
-		XwauLines_Free(&lines);
-	}
+static bool has_section_lines(const char* txt, const char* ini, const char* name) {
+	XwauSection section;
+	XwauSection_ReadPaths(txt, ini, name, XWAU_RULES_CPP, &section);
+	const bool any = section.lines.count != 0;
+	XwauSection_Free(&section);
 	return any;
 }
 
@@ -1853,10 +1722,7 @@ bool XwauCraft_Write(const char* xwau_root, const char* output_dir, const XwauNa
 	XwauWeaponLockFeatures weapon_lock_features;
 	XwauWeaponLock_Features(xwau_root, &weapon_lock_features);
 	/* hook_opt_limit reads the [SubcomponentsStrength] sections. */
-	char       opt_limit_dll[1024];
-	const bool strength =
-		Xwau_FindFile(xwau_root, "hook_opt_limit.dll", opt_limit_dll, sizeof opt_limit_dll) &&
-		Xwau_FileHasText(opt_limit_dll, "SubcomponentsStrength");
+	const bool strength = Xwau_DllHasText(xwau_root, "hook_opt_limit.dll", "SubcomponentsStrength");
 	/* hook_engine_sound reads the [Sound] sections. */
 	char       engine_sound_dll[1024];
 	const bool engine_sound =
@@ -1875,10 +1741,7 @@ bool XwauCraft_Write(const char* xwau_root, const char* output_dir, const XwauNa
 	ok = (!tables || XwauObjects_ImportedModels(stock_tables, tables, models)) &&
 		 XwauStatsGenus_Read(xwau_root, tables, models, &genus);
 	/* hook_mission_objects reads the [Turrets] sections. */
-	char              mission_objects_dll[1024];
-	const bool        turrets      = Xwau_FindFile(xwau_root, "hook_mission_objects.dll", mission_objects_dll,
-												   sizeof mission_objects_dll) &&
-									 Xwau_FileHasText(mission_objects_dll, "Turrets.txt");
+	const bool        turrets      = Xwau_DllHasText(xwau_root, "hook_mission_objects.dll", "Turrets.txt");
 	int               gunner_seats = 0;
 	XwauCraftWeapons* weapons = (XwauCraftWeapons*)malloc(sizeof *weapons);
 	if (!weapons) {
@@ -2072,17 +1935,13 @@ bool XwauCraft_Write(const char* xwau_root, const char* output_dir, const XwauNa
 		cockpit_views);
 	if (engine_sound) {
 		/* The default ambient distance of hook_engine_sound. */
-		XwauLines global = { 0 };
-		char      global_path[1024], value[256];
-		if (Xwau_FindFile(xwau_root, "FlightModels/Sound.txt", global_path, sizeof global_path))
-			XwauLines_Read(global_path, "", XWAU_RULES_CPP, &global);
-		if (!global.count &&
-			Xwau_FindFile(xwau_root, "FlightModels/default.ini", global_path, sizeof global_path))
-			XwauLines_Read(global_path, "Sound", XWAU_RULES_CPP, &global);
-		XwauLines_Value(&global, "AmbientSoundDistance", XWAU_RULES_CPP, value, sizeof value);
+		XwauSection global;
+		char        value[256];
+		XwauSection_ReadGlobal(xwau_root, "Sound", XWAU_RULES_CPP, &global);
+		XwauSection_Text(&global, "AmbientSoundDistance", value, sizeof value);
 		if (value[0])
 			ReportUnsupported("the global AmbientSoundDistance");
-		XwauLines_Free(&global);
+		XwauSection_Free(&global);
 	}
 	return write_hud_file(xwau_root, output_dir, game_names, stock_values) && ok;
 }

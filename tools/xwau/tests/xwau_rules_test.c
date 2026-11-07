@@ -242,6 +242,79 @@ static void test_rules(const char* scratch) {
 	XwauLines_Free(&lines);
 }
 
+/* ---- Sections ----------------------------------------------------------------- */
+
+static void test_sections(const char* scratch) {
+	char game[1024], path[1300];
+	snprintf(game, sizeof game, "%s/sec_game", scratch);
+	snprintf(path, sizeof path, "%s/FlightModels/Missions", game);
+	MakeDirs(path);
+	snprintf(path, sizeof path, "%s/FlightModels/Awing.ini", game);
+	write_file(path, "[WarheadLock]\nLockTime = 300\nlocktime = 400\nBad = x1\nBig = 99999999999\n"
+					 "Ratio = 1.5f\nOther = 2\n[Shield]\nRate = 3\n");
+	XwauSection s;
+	check(XwauSection_ReadModel(game, "Awing", "WarheadLock", XWAU_RULES_CPP, &s) && s.lines.count == 6 &&
+			  strstr(s.source, "Awing.ini [WarheadLock]"),
+		  "sections: a model's section comes from its .ini without a .txt file");
+	long long v = 0;
+	float     f = 0.0f;
+	check(XwauSection_Int(&s, "LOCKTIME", &v) == XWAU_VALUE_SET && v == 300,
+		  "sections: the first line of a key wins, in any case");
+	check(XwauSection_Int(&s, "Bad", &v) == XWAU_VALUE_BAD &&
+			  XwauSection_Int(&s, "Big", &v) == XWAU_VALUE_BAD &&
+			  XwauSection_Int(&s, "None", &v) == XWAU_VALUE_MISSING && XwauSection_IntOr(&s, "Bad", 7) == 7,
+		  "sections: a value that isn't an int is bad, and a missing key is missing");
+	check(XwauSection_Float(&s, "Ratio", &f) == XWAU_VALUE_SET && f == 1.5f, "sections: floats as std::stof");
+	char key[64];
+	check(XwauSection_KeyAt(&s, 0, key, sizeof key) && strcmp(key, "LockTime") == 0 &&
+			  !XwauSection_KeyAt(&s, 1, key, sizeof key),
+		  "sections: a key that an earlier line has isn't listed again");
+	XwauSection_Free(&s);
+	snprintf(path, sizeof path, "%s/FlightModels/AwingWarheadLock.txt", game);
+	write_file(path, "; comment\nLockTime = 500\n");
+	check(XwauSection_ReadModel(game, "awing", "WarheadLock", XWAU_RULES_CPP, &s) &&
+			  XwauSection_IntOr(&s, "LockTime", 0) == 500 && strstr(s.source, "AwingWarheadLock.txt"),
+		  "sections: the model's .txt file wins over its .ini");
+	XwauSection_Free(&s);
+	snprintf(path, sizeof path, "%s/FlightModels/default.ini", game);
+	write_file(path, "[Jamming]\nA = 1\n");
+	check(XwauSection_ReadGlobal(game, "Jamming", XWAU_RULES_CPP, &s) && XwauSection_IntOr(&s, "a", 0) == 1,
+		  "sections: a global section comes from default.ini");
+	XwauSection_Free(&s);
+	snprintf(path, sizeof path, "%s/FlightModels/Missions/m1.ini", game);
+	write_file(path, "[Objects]\nB = 2\n");
+	check(XwauSection_ReadMission(game, "FlightModels/Missions/m1", "Objects", XWAU_RULES_CPP, &s) &&
+			  XwauSection_IntOr(&s, "B", 0) == 2,
+		  "sections: a mission's section comes from its .ini");
+	XwauSection_Free(&s);
+	snprintf(path, sizeof path, "%s/Hooks.ini", game);
+	write_file(path, "[hook_x]\nC = 3\n");
+	check(XwauSection_ReadHook(game, "hook_x", &s) && XwauSection_IntOr(&s, "C", 0) == 3 &&
+			  strstr(s.source, "Hooks.ini [hook_x]"),
+		  "sections: a hook's settings come from Hooks.ini without its .cfg file");
+	XwauSection_Free(&s);
+	snprintf(path, sizeof path, "%s/hook_x.cfg", game);
+	write_file(path, "C = 4\n");
+	check(XwauSection_ReadHook(game, "hook_x", &s) && XwauSection_IntOr(&s, "C", 0) == 4,
+		  "sections: a hook's .cfg file wins over Hooks.ini");
+	XwauSection_Free(&s);
+	check(XwauSection_ReadModel(game, "Missing", "X", XWAU_RULES_CPP, &s) && !s.lines.count && !s.source[0],
+		  "sections: no files give no lines");
+	XwauSection_Free(&s);
+
+	snprintf(path, sizeof path, "%s/hook_x.dll", game);
+	write_file(path, "MZ FeatureA");
+	check(Xwau_DllHasText(game, "HOOK_X.dll", "FeatureA") &&
+			  !Xwau_DllHasText(game, "hook_x.dll", "FeatureB") &&
+			  !Xwau_DllHasText(game, "hook_y.dll", "FeatureA"),
+		  "hooks: a DLL's feature is found from its strings, and a missing DLL has none");
+	Xwau_SetFolderCache(true);
+	check(Xwau_DllHasText(game, "hook_x.dll", "FeatureA") && Xwau_DllHasText(game, "hook_x.dll", "Feature") &&
+			  !Xwau_DllHasText(game, "hook_x.dll", "FeatureB"),
+		  "hooks: the folder cache keeps the DLL for the next checks");
+	Xwau_SetFolderCache(false);
+}
+
 /* ---- Skins ------------------------------------------------------------------ */
 
 /* A test case: the global skin lines, the OPT's skins, its state count and
@@ -1678,7 +1751,7 @@ static void test_mission_tie(const char* scratch) {
 		  "mission_tie: the markings of one craft, the last line winning");
 	check(fg0 && fg0->open_landing_gear && fg0->close_sfoils && fg0->open_landing_gear < fg0->close_sfoils,
 		  "mission_tie: the start lines keep their order");
-	check(tie.craft_lines.count == 1 && tie.settings.count == 1,
+	check(tie.craft_lines.count == 1 && tie.settings.lines.count == 1,
 		  "mission_tie: craft lines and settings are kept for their readers");
 	XwauMissionTie_Free(&tie);
 
@@ -3158,6 +3231,7 @@ int main(void) {
 	MakeDirs(scratch);
 	init_names();
 	test_rules(scratch);
+	test_sections(scratch);
 	test_skins(scratch);
 	test_skybox_rotation();
 	test_skyboxes(scratch);

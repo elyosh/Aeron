@@ -29,19 +29,14 @@ static const struct {
 
 static const char* const kBehaviors[] = { "swing", "random", "random_pause" };
 
-/* Reads the lines of `section` from <Model><Section>.txt, or else from the
- * [<Section>] section of <Model>.ini (hook GetFileLines). */
+/* Reads the lines of a model's section `section`, as the hook's
+ * GetFileLines does. */
 static bool section_lines(const char* game, const char* model, const char* section, XwauLines* out) {
-	char rel[512], path[1024];
-	if (!PathFormat(rel, sizeof rel, "FlightModels/%s%s.txt", model, section) ||
-		!XwauLines_Read(Xwau_FindFile(game, rel, path, sizeof path) ? path : NULL, "", XWAU_RULES_CPP, out))
+	XwauSection read;
+	if (!XwauSection_ReadModel(game, model, section, XWAU_RULES_CPP, &read))
 		return false;
-	if (out->count)
-		return true;
-	if (!PathFormat(rel, sizeof rel, "FlightModels/%s.ini", model))
-		return false;
-	return XwauLines_Read(Xwau_FindFile(game, rel, path, sizeof path) ? path : NULL, section, XWAU_RULES_CPP,
-						  out);
+	*out = read.lines;
+	return true;
 }
 
 /* ---- Pilot eye ------------------------------------------------------------- */
@@ -58,7 +53,7 @@ static bool eye_from_lines(const XwauLines* lines, int eye[3]) {
 	}
 	for (int k = 0; k < 3; ++k) {
 		long long value;
-		if (!Xwau_StoiAuto(values[k], &value))
+		if (!Xwau_StoiAutoInt(values[k], &value))
 			return false;
 		eye[k] = (int)(short)(unsigned short)(value & 0xFFFF);
 	}
@@ -173,18 +168,13 @@ static bool read_profiles(const char* game, const char* model, XwauModel* out, c
 	for (size_t i = 0; ok && i < lines.count; ++i) {
 		/* The profile names are the keys of the section. Only the first
 		 * occurrence of each key counts. */
-		const char* eq = strchr(lines.items[i], '=');
-		char        name[256];
-		snprintf(name, sizeof name, "%.*s", eq ? (int)(eq - lines.items[i]) : 0, lines.items[i]);
-		Xwau_Trim(name, XWAU_RULES_CPP);
-		bool seen = !name[0] || Xwau_SameName(name, "TargetableMeshes");
+		char name[256];
+		bool seen = !Xwau_LineKey(lines.items[i], XWAU_RULES_CPP, name, sizeof name) ||
+					Xwau_SameName(name, "TargetableMeshes");
 		for (size_t j = 0; !seen && j < i; ++j) {
-			const char* prior_eq = strchr(lines.items[j], '=');
-			char        prior[256];
-			snprintf(prior, sizeof prior, "%.*s", prior_eq ? (int)(prior_eq - lines.items[j]) : 0,
-					 lines.items[j]);
-			Xwau_Trim(prior, XWAU_RULES_CPP);
-			seen = prior[0] && Xwau_SameName(prior, name);
+			char prior[256];
+			seen = Xwau_LineKey(lines.items[j], XWAU_RULES_CPP, prior, sizeof prior) &&
+				   Xwau_SameName(prior, name);
 		}
 		if (seen)
 			continue;
@@ -251,42 +241,29 @@ static bool add_set(XwauModel* out, const char* name, const uint32_t members[8])
 	return true;
 }
 
-/* Reads an integer key as hook GetFileKeyValueInt does: `fallback` when the
- * key is missing or empty, else std::stoi(value, 0, 0). A value that isn't a
- * number would stop XWAU, and it gives `fallback`. */
-static long long int_key(const XwauLines* lines, const char* key, long long fallback) {
-	char      value[256];
-	long long number;
-	XwauLines_Value(lines, key, XWAU_RULES_CPP, value, sizeof value);
-	if (!value[0])
-		return fallback;
-	if (!Xwau_StoiAuto(value, &number))
-		return fallback;
-	return number;
-}
-
 /* MeshesCollisions (hook_opt_limit): MeshCollision sets the default of every
  * mesh, MeshCollision_<N> sets mesh N, and 0 turns its collision off. The
  * meshes whose collision is off become the set collision.off. A model has at
  * most 255 meshes, so meshes 0 to 254 are read. */
 static bool read_collisions(const char* game, const char* model, XwauModel* out, const char* label) {
-	XwauLines lines;
-	if (!section_lines(game, model, "MeshesCollisions", &lines))
+	XwauSection section;
+	if (!XwauSection_ReadModel(game, model, "MeshesCollisions", XWAU_RULES_CPP, &section))
 		return false;
-	const long long fallback   = int_key(&lines, "MeshCollision", 1);
-	uint32_t        members[8] = { 0 };
-	bool            any        = false;
-	for (int mesh = 0; lines.count && mesh <= COMPONENT_MAX; ++mesh) {
+	const XwauLines* lines      = &section.lines;
+	const long long  fallback   = XwauSection_IntOr(&section, "MeshCollision", 1);
+	uint32_t         members[8] = { 0 };
+	bool             any        = false;
+	for (int mesh = 0; lines->count && mesh <= COMPONENT_MAX; ++mesh) {
 		char key[32];
 		snprintf(key, sizeof key, "MeshCollision_%d", mesh);
-		if (int_key(&lines, key, fallback) == 0) {
+		if (XwauSection_IntOr(&section, key, fallback) == 0) {
 			members[mesh / 32] |= 1u << (mesh % 32);
 			any = true;
 		}
 	}
 	/* A model file holds meshes 0 to 254 only. */
-	for (size_t i = 0; i < lines.count; ++i) {
-		const char*  item   = lines.items[i];
+	for (size_t i = 0; i < lines->count; ++i) {
+		const char*  item   = lines->items[i];
 		const size_t prefix = strlen("MeshCollision_");
 		if (strncasecmp(item, "MeshCollision_", prefix) != 0 || item[prefix] < '0' || item[prefix] > '9')
 			continue;
@@ -298,7 +275,7 @@ static bool read_collisions(const char* game, const char* model, XwauModel* out,
 			break;
 		}
 	}
-	XwauLines_Free(&lines);
+	XwauSection_Free(&section);
 	return !any || add_set(out, "collision.off", members);
 }
 
@@ -384,7 +361,7 @@ bool XwauModel_MeshLines(const XwauLines* lines, XwauMeshLine** out, size_t* cou
 		XwauMeshLine line;
 		bool         numbers = tokens.count >= 4;
 		for (int k = 0; numbers && k < 4; ++k)
-			numbers = Xwau_StoiAuto(tokens.items[k], &line.values[k]);
+			numbers = Xwau_StoiAutoInt(tokens.items[k], &line.values[k]);
 		/* XWAU fails on a value that isn't a number, and it skips a line
 		   with fewer than 4 values. */
 		XwauLines_Free(&tokens);
@@ -579,13 +556,9 @@ static bool read_rotations(const char* game, const XwauMissions* missions, const
 	/* The settings, read from [SFoils] only, as the hook does. */
 	if (ok && (ok = section_lines(game, model, "SFoils", &lines))) {
 		for (size_t i = 0; ok && i < sizeof kSettings / sizeof kSettings[0]; ++i) {
-			char      text[256];
 			long long value;
-			XwauLines_Value(&lines, kSettings[i].key, XWAU_RULES_CPP, text, sizeof text);
-			if (!text[0])
-				continue;
 			/* XWAU fails on a value that isn't a number. */
-			if (!Xwau_StoiAuto(text, &value))
+			if (XwauLines_Int(&lines, XWAU_RULES_CPP, kSettings[i].key, &value) != XWAU_VALUE_SET)
 				continue;
 			if (kSettings[i].kind == 0)
 				value = value != 0;

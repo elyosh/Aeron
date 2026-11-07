@@ -12,20 +12,6 @@ static const char* const kListDirs[] = { "Missions", "Melee", "Combat" };
 
 /* ---- Values ----------------------------------------------------------------- */
 
-/* The value of `key`, read as std::stoi(value, 0, 0) reads it, or
- * `fallback` when the key is missing. A value that isn't a number stops
- * XWAU, and gives `fallback` too. */
-static long long int_value(const XwauLines* lines, const char* key, long long fallback) {
-	char      text[256];
-	long long value = 0;
-	XwauLines_Value(lines, key, XWAU_RULES_CPP, text, sizeof text);
-	if (!text[0])
-		return fallback;
-	if (Xwau_StoiAuto(text, &value))
-		return value;
-	return fallback;
-}
-
 /* Appends the numbers of the list `text` (split as XWAU's Tokennize splits
  * it) to `out`, read in base 0 when `auto_base` is set, else in base 10.
  * Words that aren't numbers, which XWAU would fail on, are left out. Returns
@@ -48,20 +34,6 @@ static bool int_list(const char* text, bool auto_base, int** out, size_t* count)
 	return ok;
 }
 
-/* The [Interdiction] lines of `prefix` ("Missions/1b4m4b" or "FlightModels/"):
- * <prefix>_Interdiction.txt, else the section of <prefix>.ini, or, for the
- * global ones, FlightModels/Interdiction.txt, else the section of
- * FlightModels/default.ini. */
-static bool interdiction_lines(const char* game, const char* txt, const char* ini, XwauLines* out) {
-	char path[1024];
-	if (!XwauLines_Read(Xwau_FindFile(game, txt, path, sizeof path) ? path : NULL, "", XWAU_RULES_CPP, out))
-		return false;
-	if (!out->count)
-		return XwauLines_Read(Xwau_FindFile(game, ini, path, sizeof path) ? path : NULL, "Interdiction",
-							  XWAU_RULES_CPP, out);
-	return true;
-}
-
 /* ---- Global settings --------------------------------------------------------- */
 
 bool XwauSettingsConfig_Read(const char* game, XwauSettingsConfig* out) {
@@ -69,11 +41,9 @@ bool XwauSettingsConfig_Read(const char* game, XwauSettingsConfig* out) {
 	char path[1024];
 	out->mission_tie  = Xwau_FindFile(game, "hook_mission_tie.dll", path, sizeof path);
 	out->engine_sound = Xwau_FindFile(game, "hook_engine_sound.dll", path, sizeof path);
-	out->opt_limit_engine_glows =
-		Xwau_FindFile(game, "hook_opt_limit.dll", path, sizeof path) && Xwau_FileHasText(path, "EngineGlows");
+	out->opt_limit_engine_glows = Xwau_DllHasText(game, "hook_opt_limit.dll", "EngineGlows");
 	out->weapon_switch = XwauCraft_ReadGlobalSwitchByIff(game, &out->weapon_switch_by_iff);
-	out->mission_tie_stats = Xwau_FindFile(game, "hook_mission_tie.dll", path, sizeof path) &&
-							 Xwau_FileHasText(path, "StatsProfile");
+	out->mission_tie_stats      = Xwau_DllHasText(game, "hook_mission_tie.dll", "StatsProfile");
 	if (Xwau_FindFile(game, "hook_weapon_rate.dll", path, sizeof path)) {
 		out->weapon_rate_fire_check = Xwau_FileHasText(path, "_EnergyLowHighSeparation");
 		out->weapon_rate_rack_check = Xwau_FileHasText(path, "Craft_Offset_292");
@@ -81,91 +51,65 @@ bool XwauSettingsConfig_Read(const char* game, XwauSettingsConfig* out) {
 		out->weapon_rate_hardpoint_types = Xwau_FileHasText(path, "WeaponHardpointTypes");
 		out->weapon_rate_rearm_statuses  = Xwau_FileHasText(path, "WarheadCapacity_00460904_Hook");
 		if (Xwau_FileHasText(path, "EnableFireMeshFilter")) {
-			XwauLines rate_lines;
-			if (!XwauLines_Read(Xwau_FindFile(game, "hook_weapon_rate.cfg", path, sizeof path) ? path : NULL,
-								"", XWAU_RULES_CPP, &rate_lines))
+			XwauSection rate;
+			if (!XwauSection_ReadHook(game, "hook_weapon_rate", &rate))
 				return false;
-			if (!rate_lines.count &&
-				!XwauLines_Read(Xwau_FindFile(game, "Hooks.ini", path, sizeof path) ? path : NULL,
-								"hook_weapon_rate", XWAU_RULES_CPP, &rate_lines))
-				return false;
-			out->weapon_rate_mesh_filter = int_value(&rate_lines, "EnableFireMeshFilter", 1) != 0;
-			XwauLines_Free(&rate_lines);
+			out->weapon_rate_mesh_filter = XwauSection_IntOr(&rate, "EnableFireMeshFilter", 1) != 0;
+			XwauSection_Free(&rate);
 		}
 	}
-	if (Xwau_FindFile(game, "hook_mission_objects.dll", path, sizeof path) &&
-		Xwau_FileHasText(path, "Turrets.txt")) {
-		const bool unlimited = Xwau_FileHasText(path, "UnlimitedTurretLaser");
-		XwauLines  turret_lines;
+	if (Xwau_DllHasText(game, "hook_mission_objects.dll", "Turrets.txt")) {
+		const bool  unlimited = Xwau_DllHasText(game, "hook_mission_objects.dll", "UnlimitedTurretLaser");
+		XwauSection turrets;
 		out->gunner_seats = true;
-		if (!XwauLines_Read(Xwau_FindFile(game, "hook_mission_objects.cfg", path, sizeof path) ? path : NULL,
-							"", XWAU_RULES_CPP, &turret_lines))
+		if (!XwauSection_ReadHook(game, "hook_mission_objects", &turrets))
 			return false;
-		if (!turret_lines.count &&
-			!XwauLines_Read(Xwau_FindFile(game, "Hooks.ini", path, sizeof path) ? path : NULL,
-							"hook_mission_objects", XWAU_RULES_CPP, &turret_lines))
-			return false;
-		out->gunner_selected_group = unlimited && int_value(&turret_lines, "UnlimitedTurretLaser", 1) != 0;
-		XwauLines_Free(&turret_lines);
+		out->gunner_selected_group = unlimited && XwauSection_IntOr(&turrets, "UnlimitedTurretLaser", 1) != 0;
+		XwauSection_Free(&turrets);
 	}
 	out->crafts_count_sounds = XwauObjectLimits_HookEnabled(game) &&
-							   Xwau_FindFile(game, "hook_crafts_count.dll", path, sizeof path) &&
-							   Xwau_FileHasText(path, "RS's crafts count");
-	XwauLines lines;
+							   Xwau_DllHasText(game, "hook_crafts_count.dll", "RS's crafts count");
+	XwauSection settings;
 	if (Xwau_FindFile(game, "hook_weapon_type.dll", path, sizeof path)) {
 		out->weapon_type          = true;
 		out->weapon_type_missiles = Xwau_FileHasText(path, "To call the hook that fixes missile count");
 	}
 	if (Xwau_FindFile(game, "hook_jamming.dll", path, sizeof path)) {
 		out->jamming = true;
-		if (!XwauLines_Read(Xwau_FindFile(game, "hook_jamming.cfg", path, sizeof path) ? path : NULL, "",
-							XWAU_RULES_CPP, &lines))
+		if (!XwauSection_ReadHook(game, "hook_jamming", &settings))
 			return false;
-		if (!lines.count && !XwauLines_Read(Xwau_FindFile(game, "Hooks.ini", path, sizeof path) ? path : NULL,
-											"hook_jamming", XWAU_RULES_CPP, &lines))
-			return false;
-		out->jamming_enabled = int_value(&lines, "IsJammingEnabled", 1) != 0;
-		XwauLines_Free(&lines);
+		out->jamming_enabled = XwauSection_IntOr(&settings, "IsJammingEnabled", 1) != 0;
+		XwauSection_Free(&settings);
 	}
-	if (out->engine_sound && Xwau_FindFile(game, "hook_engine_sound.dll", path, sizeof path) &&
-		Xwau_FileHasText(path, "AreStarshipAmbientEnabled")) {
-		if (!XwauLines_Read(Xwau_FindFile(game, "hook_engine_sound.cfg", path, sizeof path) ? path : NULL, "",
-							XWAU_RULES_CPP, &lines))
+	if (out->engine_sound && Xwau_DllHasText(game, "hook_engine_sound.dll", "AreStarshipAmbientEnabled")) {
+		if (!XwauSection_ReadHook(game, "hook_engine_sound", &settings))
 			return false;
-		if (!lines.count && !XwauLines_Read(Xwau_FindFile(game, "Hooks.ini", path, sizeof path) ? path : NULL,
-											"hook_engine_sound", XWAU_RULES_CPP, &lines))
-			return false;
-		out->starship_ambient = int_value(&lines, "AreStarshipAmbientEnabled", 1) != 0;
-		XwauLines_Free(&lines);
+		out->starship_ambient = XwauSection_IntOr(&settings, "AreStarshipAmbientEnabled", 1) != 0;
+		XwauSection_Free(&settings);
 	}
-	if (!XwauLines_Read(Xwau_FindFile(game, "hook_mission_tie.cfg", path, sizeof path) ? path : NULL, "",
-						XWAU_RULES_CPP, &lines))
-		return false;
-	if (!lines.count && !XwauLines_Read(Xwau_FindFile(game, "Hooks.ini", path, sizeof path) ? path : NULL,
-										"hook_mission_tie", XWAU_RULES_CPP, &lines))
+	if (!XwauSection_ReadHook(game, "hook_mission_tie", &settings))
 		return false;
 	/* Without the hook, its settings do nothing. */
-	out->warhead_collision_damage  = int_value(&lines, "IsWarheadCollisionDamagesEnabled", 1) != 0;
-	out->target_method             = int_value(&lines, "TargetCraftKeyMethod", 0);
-	out->target_only_not_inspected = int_value(&lines, "TargetCraftKeySelectOnlyNotInspected", 0) != 0;
-	out->damage_through_shields    = int_value(&lines, "CanShootThroughtShieldOnHardDifficulty", 0) != 0;
+	out->warhead_collision_damage = XwauSection_IntOr(&settings, "IsWarheadCollisionDamagesEnabled", 1) != 0;
+	out->target_method            = XwauSection_IntOr(&settings, "TargetCraftKeyMethod", 0);
+	out->target_only_not_inspected =
+		XwauSection_IntOr(&settings, "TargetCraftKeySelectOnlyNotInspected", 0) != 0;
+	out->damage_through_shields =
+		XwauSection_IntOr(&settings, "CanShootThroughtShieldOnHardDifficulty", 0) != 0;
 	/* The importer doesn't know what the ranks modifier does in XWAU. */
-	if (out->mission_tie && int_value(&lines, "IsMissionRanksModifierEnabled", 0) != 0)
+	if (out->mission_tie && XwauSection_IntOr(&settings, "IsMissionRanksModifierEnabled", 0) != 0)
 		ReportUnsupported("the hook_mission_tie key IsMissionRanksModifierEnabled");
-	XwauLines_Free(&lines);
-	XwauLines interdiction;
-	if (!interdiction_lines(game, "FlightModels/Interdiction.txt", "FlightModels/default.ini", &interdiction))
+	XwauSection_Free(&settings);
+	XwauSection interdiction;
+	if (!XwauSection_ReadGlobal(game, "Interdiction", XWAU_RULES_CPP, &interdiction))
 		return false;
 	char text[1024];
-	XwauLines_Value(&interdiction, "Region", XWAU_RULES_CPP, text, sizeof text);
+	XwauSection_Text(&interdiction, "Region", text, sizeof text);
+	XwauSection_Free(&interdiction);
 	/* Without hook_engine_sound.dll, XWAU never reads Region. */
-	if (!out->engine_sound) {
-		XwauLines_Free(&interdiction);
+	if (!out->engine_sound)
 		return true;
-	}
-	const bool ok = int_list(text, false, &out->interdiction, &out->interdiction_count);
-	XwauLines_Free(&interdiction);
-	return ok;
+	return int_list(text, false, &out->interdiction, &out->interdiction_count);
 }
 
 void XwauSettingsConfig_Free(XwauSettingsConfig* config) {
@@ -372,7 +316,7 @@ static bool check_text(const char* text, const char* what, const char* base) {
 	return true;
 }
 
-bool XwauMissionSettings_Read(const char* game, const char* base, int number, const XwauLines* lines,
+bool XwauMissionSettings_Read(const char* game, const char* base, int number, const XwauSection* lines,
 							  const XwauSettingsConfig* config, XwauMissionSettings* out) {
 	memset(out, 0, sizeof *out);
 	out->red_alert = out->skip_hyperspaced_messages = out->skip_arrival_iff = out->force_turret = -1;
@@ -381,29 +325,29 @@ bool XwauMissionSettings_Read(const char* game, const char* base, int number, co
 	/* Without hook_mission_tie.dll, XWAU never reads the key = value lines. */
 	if (config->mission_tie) {
 		/* The hangar's red alert: stock in mission 20. */
-		const bool red_alert = int_value(lines, "IsRedAlertEnabled", number == 20) != 0;
+		const bool red_alert = XwauSection_IntOr(lines, "IsRedAlertEnabled", number == 20) != 0;
 		if (red_alert != (number == 20))
 			out->red_alert = red_alert;
 
 		/* Message 143, stock in mission 49, and the "entering area"
 		   messages, which the stock game never skips. */
-		const bool hyperspaced = int_value(lines, "SkipHyperspacedMessages", number == 49) != 0;
+		const bool hyperspaced = XwauSection_IntOr(lines, "SkipHyperspacedMessages", number == 49) != 0;
 		if (hyperspaced || number == 49)
 			out->skip_hyperspaced_messages = hyperspaced;
 
 		/* The arrival messages of an IFF: stock for IFF 1 in missions 49 to
 		   52. XWAU compares the value with a byte, and 255 means every IFF. */
 		const bool      stock_iff = number >= 49 && number <= 52;
-		const long long iff       = int_value(lines, "SkipObjectsMessagesIff", stock_iff ? 1 : -1);
+		const long long iff       = XwauSection_IntOr(lines, "SkipObjectsMessagesIff", stock_iff ? 1 : -1);
 		const int       skip_iff  = iff >= 0 && iff <= 255 ? (int)iff : 256;
 		if (skip_iff != (stock_iff ? 1 : 256))
 			out->skip_arrival_iff = skip_iff;
 
 		/* The forced turret: stock at 0:00:08 in mission 1. */
-		const bool      turret  = int_value(lines, "ForcePlayerInTurret", number == 1) != 0;
-		const long long hours   = int_value(lines, "ForcePlayerInTurretHours", 0);
-		const long long minutes = int_value(lines, "ForcePlayerInTurretMinutes", 0);
-		const long long seconds = int_value(lines, "ForcePlayerInTurretSeconds", 8);
+		const bool      turret  = XwauSection_IntOr(lines, "ForcePlayerInTurret", number == 1) != 0;
+		const long long hours   = XwauSection_IntOr(lines, "ForcePlayerInTurretHours", 0);
+		const long long minutes = XwauSection_IntOr(lines, "ForcePlayerInTurretMinutes", 0);
+		const long long seconds = XwauSection_IntOr(lines, "ForcePlayerInTurretSeconds", 8);
 		const bool      valid =
 			hours >= 0 && hours <= 255 && minutes >= 0 && minutes <= 59 && seconds >= 0 && seconds <= 59;
 		/* The mission clock never reads an invalid time, so the turret is
@@ -416,37 +360,38 @@ bool XwauMissionSettings_Read(const char* game, const char* base, int number, co
 			out->force_turret = 0;
 		}
 
-		out->disable_lasers   = int_value(lines, "DisablePlayerLaserShoot", 0) != 0;
-		out->disable_warheads = int_value(lines, "DisablePlayerWarheadShoot", 0) != 0;
+		out->disable_lasers   = XwauSection_IntOr(lines, "DisablePlayerLaserShoot", 0) != 0;
+		out->disable_warheads = XwauSection_IntOr(lines, "DisablePlayerWarheadShoot", 0) != 0;
 		/* The global setting is the default of flight/flight.yaml. */
 		out->no_warhead_collision_damage =
-			config->warhead_collision_damage && int_value(lines, "IsWarheadCollisionDamagesEnabled", 1) == 0;
-		const bool shields = int_value(lines, "CanShootThroughtShieldOnHardDifficulty",
-									   number == 50 ? 1 : config->damage_through_shields) != 0;
+			config->warhead_collision_damage &&
+			XwauSection_IntOr(lines, "IsWarheadCollisionDamagesEnabled", 1) == 0;
+		const bool shields = XwauSection_IntOr(lines, "CanShootThroughtShieldOnHardDifficulty",
+											   number == 50 ? 1 : config->damage_through_shields) != 0;
 		if (shields != config->damage_through_shields)
 			out->damage_through_shields = shields;
-		out->skip_projectiles = int_value(lines, "SkipProjectilesProximityCheck", 0) != 0;
+		out->skip_projectiles = XwauSection_IntOr(lines, "SkipProjectilesProximityCheck", 0) != 0;
 
 		/* The O key. Without flight groups, the stock key. */
 		char text[1024];
-		XwauLines_Value(lines, "KEY_O_TargetCraftFGs", XWAU_RULES_CPP, text, sizeof text);
+		XwauSection_Text(lines, "KEY_O_TargetCraftFGs", text, sizeof text);
 		ok = int_list(text, true, &out->target_fgs, &out->target_fg_count);
 		if (ok && out->target_fg_count) {
-			const long long method         = int_value(lines, "TargetCraftKeyMethod", -1);
-			const long long only           = int_value(lines, "TargetCraftKeySelectOnlyNotInspected", -1);
+			const long long method = XwauSection_IntOr(lines, "TargetCraftKeyMethod", -1);
+			const long long only   = XwauSection_IntOr(lines, "TargetCraftKeySelectOnlyNotInspected", -1);
 			out->target_key        = true;
 			out->target_cycle      = (method == -1 ? config->target_method : method) == 1;
 			out->target_only_not_inspected = only == -1 ? config->target_only_not_inspected : only != 0;
 		}
 
 		/* The order of battle. */
-		XwauLines_Value(lines, "CampaignCraftsList", XWAU_RULES_CPP, text, sizeof text);
+		XwauSection_Text(lines, "CampaignCraftsList", text, sizeof text);
 		ok              = ok && int_list(text, false, &out->order_fgs, &out->order_fg_count);
 		out->order_list = out->order_fg_count != 0;
 		for (size_t i = 0; ok && i < out->order_fg_count; ++i) {
 			char key[64], name[256];
 			snprintf(key, sizeof key, "CampaignCraftName_%d", out->order_fgs[i]);
-			XwauLines_Value(lines, key, XWAU_RULES_CPP, name, sizeof name);
+			XwauSection_Text(lines, key, name, sizeof name);
 			bool seen = false;
 			for (size_t k = 0; k < out->order_name_count; ++k)
 				seen = seen || out->order_names[k].fg == out->order_fgs[i];
@@ -457,7 +402,7 @@ bool XwauMissionSettings_Read(const char* game, const char* base, int number, co
 			if (ok)
 				added->fg = out->order_fgs[i];
 		}
-		XwauLines_Value(lines, "CampaignCraftsListLines", XWAU_RULES_CPP, text, sizeof text);
+		XwauSection_Text(lines, "CampaignCraftsListLines", text, sizeof text);
 		XwauLines words = { 0 };
 		ok              = ok && Xwau_Tokenize(text, XWAU_RULES_CPP, &words);
 		for (size_t i = 0; ok && i < words.count; ++i) {
@@ -472,7 +417,7 @@ bool XwauMissionSettings_Read(const char* game, const char* base, int number, co
 		}
 		XwauLines_Free(&words);
 		if (out->order_lines.count) {
-			const long long top = int_value(lines, "CampaignCraftsListLinesTop", -1);
+			const long long top = XwauSection_IntOr(lines, "CampaignCraftsListLinesTop", -1);
 			if (top >= 0 && top <= 479)
 				out->order_top = (int)top;
 			else if (top != -1)
@@ -481,19 +426,16 @@ bool XwauMissionSettings_Read(const char* game, const char* base, int number, co
 		}
 	}
 	if (ok) {
-		char      txt[1200], ini[1200];
-		XwauLines interdiction;
-		ok = PathFormat(txt, sizeof txt, "%s_Interdiction.txt", base) &&
-			 PathFormat(ini, sizeof ini, "%s.ini", base) && interdiction_lines(game, txt, ini, &interdiction);
+		XwauSection interdiction;
+		ok = XwauSection_ReadMission(game, base, "Interdiction", XWAU_RULES_CPP, &interdiction);
 		/* Without hook_engine_sound.dll, XWAU never reads these lines. */
-		if (ok && interdiction.count && config->engine_sound) {
+		if (ok && interdiction.lines.count && config->engine_sound) {
 			char text[1024];
-			XwauLines_Value(&interdiction, "Region", XWAU_RULES_CPP, text, sizeof text);
+			XwauSection_Text(&interdiction, "Region", text, sizeof text);
 			ok                = int_list(text, false, &out->interdiction_regions, &out->interdiction_count);
 			out->interdiction = true;
 		}
-		if (ok)
-			XwauLines_Free(&interdiction);
+		XwauSection_Free(&interdiction);
 	}
 	if (!ok)
 		XwauMissionSettings_Free(out);

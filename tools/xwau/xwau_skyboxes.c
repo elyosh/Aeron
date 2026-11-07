@@ -1,6 +1,5 @@
 #include "xwau_skyboxes.h"
 
-#include <errno.h>
 #include <math.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -156,14 +155,10 @@ typedef struct SkyState {
 
 /* The value of `key` read as std::stof reads it, or `fallback`. */
 static float sky_float(const XwauLines* lines, const char* key, float fallback) {
-	char value[128];
+	char  value[128];
+	float f;
 	XwauLines_Value(lines, key, XWAU_RULES_CPP, value, sizeof value);
-	if (!value[0])
-		return fallback;
-	errno           = 0;
-	char*       end = NULL;
-	const float f   = strtof(value, &end);
-	return end == value || errno == ERANGE ? fallback : f;
+	return value[0] && Xwau_Stof(value, &f) ? f : fallback;
 }
 
 /* Whether the ddraw wrapper loads the cube folder `written`. */
@@ -227,12 +222,9 @@ static void report_unknown_keys(const XwauLines* lines) {
 		"HangarOverlayRotationX", "HangarOverlayRotationY", "HangarOverlayRotationZ"
 	};
 	for (size_t i = 0; i < lines->count; ++i) {
-		const char* equals = strchr(lines->items[i], '=');
-		if (!equals)
-			continue;
 		char name[128];
-		snprintf(name, sizeof name, "%.*s", (int)(equals - lines->items[i]), lines->items[i]);
-		Xwau_Trim(name, XWAU_RULES_CPP);
+		if (!Xwau_LineKey(lines->items[i], XWAU_RULES_CPP, name, sizeof name))
+			continue;
 		const char* other = NULL;
 		for (size_t k = 0; !other && k < sizeof kOthers / sizeof kOthers[0]; ++k)
 			if (Xwau_SameName(name, kOthers[k]))

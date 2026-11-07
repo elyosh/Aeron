@@ -574,28 +574,12 @@ static void free_layer(Layer* l) {
 	memset(l, 0, sizeof *l);
 }
 
-/* Splits a line "<key> = <value>" into its trimmed key and value. Returns
- * false when the line has no '=' or the key is empty. */
-static bool split_key_value_line(const char* line, char* key, size_t key_cap, char* value, size_t value_cap) {
-	const char* eq = strchr(line, '=');
-	if (!eq)
-		return false;
-	snprintf(key, key_cap, "%.*s", (int)(eq - line), line);
-	Xwau_Trim(key, XWAU_RULES_CPP);
-	snprintf(value, value_cap, "%s", eq + 1);
-	Xwau_Trim(value, XWAU_RULES_CPP);
-	return key[0] != 0;
-}
-
 /* Returns the number of `key` in `lines`, like GetFileKeyValueInt with a
  * default of 0. Returns 0 when the key is missing or its value isn't a
  * number. */
 static long long read_int_key(const XwauLines* lines, const char* key) {
-	char value[512];
-	XwauLines_Value(lines, key, XWAU_RULES_CPP, value, sizeof value);
 	long long number = 0;
-	if (value[0] && !Xwau_StoiAutoInt(value, &number))
-		number = 0;
+	XwauLines_Int(lines, XWAU_RULES_CPP, key, &number);
 	return number;
 }
 
@@ -711,7 +695,7 @@ static bool read_hangar_objects_section(const Models* m, const XwauLines* lines,
 		char key[512], value[1024];
 		/* XWAU ignores a line that isn't a key = value line, and uses the
 		   first line of a key. */
-		if (!split_key_value_line(lines->items[i], key, sizeof key, value, sizeof value))
+		if (!Xwau_SplitLine(lines->items[i], XWAU_RULES_CPP, key, sizeof key, value, sizeof value))
 			continue;
 		bool known = false;
 		for (size_t j = 0; !known && j < seen.count; ++j)
@@ -1091,7 +1075,7 @@ static bool find_ships_swapped_by_mission(const char* game, const char* base, co
 	XwauLines seen = { 0 };
 	for (size_t i = 0; ok && i < lines.count; ++i) {
 		char key[512], value[1024], name[256], substitute[256];
-		if (!split_key_value_line(lines.items[i], key, sizeof key, value, sizeof value) ||
+		if (!Xwau_SplitLine(lines.items[i], XWAU_RULES_CPP, key, sizeof key, value, sizeof value) ||
 			!parse_swap_source_model(key, name, sizeof name))
 			continue;
 		bool known = false;

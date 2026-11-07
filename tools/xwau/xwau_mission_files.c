@@ -39,15 +39,11 @@ static int compare_profiles(const void* a, const void* b) {
 }
 
 bool XwauMissionFiles_ObjectLines(const char* game, const char* base, XwauLines* lines) {
-	char rel[1100], path[1024];
-	if (!PathFormat(rel, sizeof rel, "%s_Objects.txt", base) ||
-		!XwauLines_Read(Xwau_FindFile(game, rel, path, sizeof path) ? path : NULL, "", XWAU_RULES_CPP, lines))
+	XwauSection section;
+	if (!XwauSection_ReadMission(game, base, "Objects", XWAU_RULES_CPP, &section))
 		return false;
-	if (lines->count)
-		return true;
-	return PathFormat(rel, sizeof rel, "%s.ini", base) &&
-		   XwauLines_Read(Xwau_FindFile(game, rel, path, sizeof path) ? path : NULL, "Objects",
-						  XWAU_RULES_CPP, lines);
+	*lines = section.lines;
+	return true;
 }
 
 /* Reads the `ObjectProfile_fg_<N> = <profile>` lines of mission `base`,
@@ -59,15 +55,9 @@ static bool profiles(const char* game, const char* base, Profile** out, size_t* 
 	bool              ok        = XwauMissionFiles_ObjectLines(game, base, &lines);
 	static const char kPrefix[] = "objectprofile_", kFgPrefix[] = "objectprofile_fg_";
 	for (size_t i = 0; ok && i < lines.count; ++i) {
-		char  line[4096];
-		char* equals;
-		snprintf(line, sizeof line, "%s", lines.items[i]);
-		if (!(equals = strchr(line, '=')))
-			continue;
-		*equals           = 0;
-		const char* key   = Xwau_Trim(line, XWAU_RULES_CPP);
-		const char* value = Xwau_Trim(equals + 1, XWAU_RULES_CPP);
-		if (strncasecmp(key, kPrefix, sizeof kPrefix - 1) != 0)
+		char key[2048], value[2048];
+		if (!Xwau_SplitLine(lines.items[i], XWAU_RULES_CPP, key, sizeof key, value, sizeof value) ||
+			strncasecmp(key, kPrefix, sizeof kPrefix - 1) != 0)
 			continue;
 		const char* digits = key + sizeof kFgPrefix - 1;
 		bool        by_fg  = strncasecmp(key, kFgPrefix, sizeof kFgPrefix - 1) == 0 && *digits &&
@@ -125,15 +115,9 @@ static bool swaps(const char* game, const char* base, const char* models, Swap**
 	XwauLines lines, seen_paths = { 0 };
 	bool      ok = XwauMissionFiles_ObjectLines(game, base, &lines);
 	for (size_t i = 0; ok && i < lines.count; ++i) {
-		char  line[4096];
-		char* equals;
-		snprintf(line, sizeof line, "%s", lines.items[i]);
-		if (!(equals = strchr(line, '=')))
-			continue;
-		*equals           = 0;
-		const char* key   = Xwau_Trim(line, XWAU_RULES_CPP);
-		const char* value = Xwau_Trim(equals + 1, XWAU_RULES_CPP);
-		if (!EndsWithNoCase(key, ".opt"))
+		char key[2048], value[2048];
+		if (!Xwau_SplitLine(lines.items[i], XWAU_RULES_CPP, key, sizeof key, value, sizeof value) ||
+			!EndsWithNoCase(key, ".opt"))
 			continue;
 		/* The first line with this path wins, even when it is dropped. */
 		bool seen = false;
@@ -526,20 +510,12 @@ static bool skin_choices(const SkinModels* s, const XwauLines* lines, SkinChoice
  * atlases. */
 static bool resdata_names(const char* game, const char* stock_game, const char* base, XwauLines* out) {
 	memset(out, 0, sizeof *out);
-	char      rel[1200], path[1024];
-	XwauLines lines = { 0 }, found_paths = { 0 };
-	bool      ok =
-		PathFormat(rel, sizeof rel, "%s_Resdata.txt", base) &&
-		XwauLines_Read(Xwau_FindFile(game, rel, path, sizeof path) ? path : NULL, "", XWAU_RULES_CPP, &lines);
-	if (ok && !lines.count) {
-		XwauLines_Free(&lines);
-		ok = PathFormat(rel, sizeof rel, "%s.ini", base) &&
-			 XwauLines_Read(Xwau_FindFile(game, rel, path, sizeof path) ? path : NULL, "Resdata",
-							XWAU_RULES_CPP, &lines);
-	}
-	for (size_t i = 0; ok && i < lines.count; ++i) {
+	XwauSection section;
+	XwauLines   found_paths = { 0 };
+	bool        ok          = XwauSection_ReadMission(game, base, "Resdata", XWAU_RULES_CPP, &section);
+	for (size_t i = 0; ok && i < section.lines.count; ++i) {
 		char line[512], found[1024], name[64];
-		snprintf(line, sizeof line, "%s", lines.items[i]);
+		snprintf(line, sizeof line, "%s", section.lines.items[i]);
 		const char* dat = Xwau_Trim(line, XWAU_RULES_CPP);
 		if (!dat[0])
 			continue;
@@ -575,7 +551,7 @@ static bool resdata_names(const char* game, const char* stock_game, const char* 
 		}
 		ok = XwauLines_Add(out, name, n) && XwauLines_Add(&found_paths, found, strlen(found));
 	}
-	XwauLines_Free(&lines);
+	XwauSection_Free(&section);
 	XwauLines_Free(&found_paths);
 	return ok;
 }
@@ -589,22 +565,15 @@ static bool resdata_names(const char* game, const char* stock_game, const char* 
  * the section does nothing. */
 static bool headlights(const char* game, const char* base, bool* out) {
 	*out = false;
-	char       rel[1100], path[1024];
-	const bool ddraw = Xwau_FindFile(game, "ddraw.dll", path, sizeof path);
-	XwauLines lines;
-	if (!PathFormat(rel, sizeof rel, "%s.ini", base) ||
-		!XwauLines_Read(Xwau_FindFile(game, rel, path, sizeof path) ? path : NULL, "Headlights",
-						XWAU_RULES_CPP, &lines))
-		return false;
-	char      text[256];
-	long long value = 0;
-	XwauLines_Value(&lines, "Enabled", XWAU_RULES_CPP, text, sizeof text);
-	XwauLines_Free(&lines);
-	if (text[0] && !ddraw)
+	char        ini[1100], path[1024];
+	XwauSection section;
+	if (!Xwau_FindFile(game, "ddraw.dll", path, sizeof path))
 		return true;
-	if (text[0] && !Xwau_StoiAuto(text, &value))
-		value = 0;
-	*out = value != 0;
+	if (!PathFormat(ini, sizeof ini, "%s.ini", base) ||
+		!XwauSection_Read(game, NULL, ini, "Headlights", XWAU_RULES_CPP, &section))
+		return false;
+	*out = XwauSection_IntOr(&section, "Enabled", 0) != 0;
+	XwauSection_Free(&section);
 	return true;
 }
 
@@ -614,23 +583,15 @@ static bool headlights(const char* game, const char* base, bool* out) {
  * hook_weapon_rate.dll, XWAU never reads them. Returns false when out of
  * memory. */
 static bool report_weapon_rates(const char* game, const char* base) {
-	char       rel[1100], path[1024];
-	const bool hook = Xwau_FindFile(game, "hook_weapon_rate.dll", path, sizeof path);
-	XwauLines  lines;
-	if (!PathFormat(rel, sizeof rel, "%s_WeaponRates.txt", base) ||
-		!XwauLines_Read(Xwau_FindFile(game, rel, path, sizeof path) ? path : NULL, "", XWAU_RULES_CPP,
-						&lines))
+	char        path[1024];
+	XwauSection section;
+	if (!Xwau_FindFile(game, "hook_weapon_rate.dll", path, sizeof path))
+		return true;
+	if (!XwauSection_ReadMission(game, base, "WeaponRates", XWAU_RULES_CPP, &section))
 		return false;
-	if (!lines.count) {
-		XwauLines_Free(&lines);
-		if (!PathFormat(rel, sizeof rel, "%s.ini", base) ||
-			!XwauLines_Read(Xwau_FindFile(game, rel, path, sizeof path) ? path : NULL, "WeaponRates",
-							XWAU_RULES_CPP, &lines))
-			return false;
-	}
-	if (lines.count && hook)
+	if (section.lines.count)
 		ReportUnsupported("laser rates by flight group");
-	XwauLines_Free(&lines);
+	XwauSection_Free(&section);
 	return true;
 }
 
