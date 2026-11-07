@@ -190,6 +190,34 @@ static int atlas_plan_page(const AeronAtlasImage* images, const int* order, int 
 	return 0;
 }
 
+/* Plans a page of its own for `index` if the frame is too large for a page
+ * of max_dimension and fits in one of oversize_dimension. The frames are
+ * sorted largest first, so these frames come before the others. */
+static int atlas_plan_oversize_page(const AeronAtlasImage* images, int index,
+									const AeronAtlasBuildOptions* options, AeronAtlasRect** out_rects,
+									int* out_width, int* out_height) {
+	const AeronAtlasImage* image = &images[index];
+	if (!options->oversize_dimension || !image->rgba || image->width <= 0 || image->height <= 0)
+		return 0;
+	const int64_t width  = (int64_t)image->width + 2 * (int64_t)options->gutter;
+	const int64_t height = (int64_t)image->height + 2 * (int64_t)options->gutter;
+	if ((width <= options->max_dimension && height <= options->max_dimension) ||
+		width > options->oversize_dimension || height > options->oversize_dimension)
+		return 0;
+	AeronAtlasRect* rect = (AeronAtlasRect*)calloc(1, sizeof *rect);
+	if (!rect)
+		return 0;
+	*rect       = (AeronAtlasRect) { .w   = image->width,
+									 .h   = image->height,
+									 .x   = options->gutter,
+									 .y   = options->gutter,
+									 .key = (uint32_t)index };
+	*out_rects  = rect;
+	*out_width  = (int)((width + 3) & ~3);
+	*out_height = (int)((height + 3) & ~3);
+	return 1;
+}
+
 static uint8_t* atlas_compose_page(const AeronAtlasImage* images, const AeronAtlasRect* rects, int count,
 								   int width, int height, int gutter) {
 	if ((size_t)width > SIZE_MAX / (size_t)height / 4u)
@@ -215,7 +243,10 @@ int Aeron_AtlasBuildRgba8(AeronAtlasImage* images, int count, const AeronAtlasBu
 	memset(out, 0, sizeof *out);
 	if (!images || count <= 0 || !options || options->gutter < 0 ||
 		options->max_dimension < AERON_ATLAS_MIN_WIDTH || options->max_dimension > INT_MAX - 3 ||
-		(options->max_dimension & 3) != 0 || options->max_pages < 0)
+		(options->max_dimension & 3) != 0 || options->max_pages < 0 ||
+		(options->oversize_dimension != 0 &&
+		 (options->oversize_dimension < options->max_dimension || options->oversize_dimension > INT_MAX - 3 ||
+		  (options->oversize_dimension & 3) != 0)))
 		return 0;
 	out->pages = (AeronAtlasPage*)calloc((size_t)count, sizeof *out->pages);
 	int* order = (int*)malloc((size_t)count * sizeof *order);
@@ -230,7 +261,11 @@ int Aeron_AtlasBuildRgba8(AeronAtlasImage* images, int count, const AeronAtlasBu
 		AeronAtlasRect* rects       = NULL;
 		int             width       = 0;
 		int             height      = 0;
-		if (atlas_plan_page(images, order, first, remaining, options, &rects, &width, &height)) {
+		if (options->max_pages && out->page_count >= options->max_pages)
+			goto failed;
+		if (atlas_plan_oversize_page(images, order[first], options, &rects, &width, &height)) {
+			page_images = 1;
+		} else if (atlas_plan_page(images, order, first, remaining, options, &rects, &width, &height)) {
 			page_images = remaining;
 		} else {
 			if (options->max_pages && out->page_count + 1 >= options->max_pages)

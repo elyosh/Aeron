@@ -30,6 +30,11 @@ typedef struct AeronAtlasBuildOptions {
 	int max_dimension;
 	/* Zero allows as many pages as necessary. */
 	int max_pages;
+	/* A frame that is too large for a page of max_dimension, but not for
+	   one of this size, gets a page of its own. The page is the frame with
+	   its gutter, rounded up to four texels. Zero turns this off. A multiple
+	   of four, and at least max_dimension. */
+	int oversize_dimension;
 } AeronAtlasBuildOptions;
 
 typedef struct AeronAtlasPage {
