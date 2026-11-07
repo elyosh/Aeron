@@ -354,8 +354,8 @@ typedef struct StatsTask {
 	double*        row_sum;  /* luminance times solid angle */
 } StatsTask;
 
-/* Row y of the six faces. A texel's solid angle is the same on every face,
- * so it is computed once for the six. */
+/* Computes the stats of row y on all six faces. A texel has the same solid
+ * angle on every face, so it is computed once for all six. */
 static void stats_row(void* context, int y) {
 	const StatsTask* t       = (const StatsTask*)context;
 	const int        n       = t->cube->size;
@@ -376,9 +376,9 @@ static void stats_row(void* context, int y) {
 	}
 }
 
-/* The peak and mean luminance of level 0, on up to `jobs` threads. The rows
- * are added up in the same order whatever the thread count, so the result
- * doesn't depend on it. Returns false if it runs out of memory. */
+/* Computes the peak and mean luminance of level 0 on up to `jobs` threads. The
+ * row sums are added in the same order for any thread count, so the result is
+ * always the same. Returns false if it runs out of memory. */
 static bool cube_stats(const EnvCube* cube, int jobs, CubeStats* stats) {
 	const int  n    = cube->size;
 	StatsTask  task = { cube, (double*)malloc((size_t)6 * n * sizeof(double)),
@@ -459,7 +459,8 @@ static bool bake_cubes(const EnvBakeOptions* o, EnvCube* radiance, int specular_
 	envmap_build_box_mips(&diffuse);
 	envmap_ggx_prefilter(&specular, radiance, o->specular_samples, o->jobs);
 
-	/* The stats only go to a detail line, and take long on a large sky. */
+	/* The stats are only used in a detail line, and they take a long time on a
+	   large sky. */
 	CubeStats stats;
 	if (ToolLog_Details() && cube_stats(radiance, o->jobs, &stats))
 		ToolLog_Write(TOOL_LOG_DETAIL, "sky luminance: peak %.6g, mean %.6g", stats.peak, stats.mean);

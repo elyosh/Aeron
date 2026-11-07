@@ -98,8 +98,9 @@ static float* resample_face_by_area(const FaceSource* source, int m, int channel
 	const size_t k   = (size_t)channels;
 	float*       out = (float*)malloc((size_t)m * m * k * sizeof(float));
 	if (out && m == n) {
-		/* Each texel is its own average. Adding 0 turns -0 into +0, as the
-		   two passes below do. */
+		/* When the size doesn't change, each output texel is the input texel,
+		   so the rows are only converted. Adding 0 turns -0 into +0, as the two
+		   passes below do. */
 		for (int y = 0; y < n; ++y) {
 			float* dst = out + (size_t)y * n * k;
 			read_face_row_as_linear(source, y, channels, intensity, dst);
@@ -147,7 +148,7 @@ static float* resample_face_by_area(const FaceSource* source, int m, int channel
 	return out;
 }
 
-/* One face, read and resampled on its own thread. */
+/* One face. Each face is read and resampled on its own thread. */
 typedef struct FaceJob {
 	const char* path; /* NULL when the pixels are in memory */
 	FaceSource  source;
@@ -191,8 +192,8 @@ static void face_task(void* context, int face) {
 	free(rgb);
 }
 
-/* Reads and resamples the six faces at the same time. Then checks them in
- * order, and reports the first error. */
+/* Reads and resamples the six faces at the same time, then checks them in order
+ * and reports the first error. */
 static bool run_faces(FacesTask* task, const char* what, CubeFaces* out, char* err, size_t errsz) {
 	pthread_once(&s_srgb_once, fill_srgb_to_linear_table);
 	envmap_parallel_for(6, 6, face_task, task);

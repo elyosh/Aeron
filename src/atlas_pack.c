@@ -11,8 +11,9 @@ int Aeron_AtlasPackRects(AeronAtlasRect* rects, int count, int atlas_width, int 
 	if (!rects || count < 0 || atlas_width <= 0 || gutter < 0)
 		return -1;
 	int* heights = (int*)calloc((size_t)atlas_width, sizeof *heights);
-	/* The columns whose height can still be the highest under the frame as
-	   it slides right, from left to right, with heights that go down. */
+	/* As the frame moves right one column at a time, `window` holds the columns
+	   that can still be the highest one under it. Their heights go down from
+	   the first one to the last. */
 	int* window = (int*)malloc((size_t)atlas_width * sizeof *window);
 	if (!heights || !window) {
 		free(heights);
@@ -36,8 +37,8 @@ int Aeron_AtlasPackRects(AeronAtlasRect* rects, int count, int atlas_width, int 
 			free(window);
 			return -1;
 		}
-		/* The frame goes at the leftmost x where the highest column under it
-		   is the lowest. */
+		/* The frame goes where the highest column under it is the lowest. When
+		   several positions are equal, the leftmost one wins. */
 		int best_x = 0;
 		int best_y = INT_MAX;
 		int first  = 0; /* the window is window[first] to window[first + size - 1] */
@@ -208,9 +209,9 @@ static int atlas_plan_page(const AeronAtlasImage* images, const int* order, int 
 	return 0;
 }
 
-/* Plans a page of its own for `index` if the frame is too large for a page
- * of max_dimension and fits in one of oversize_dimension. The frames are
- * sorted largest first, so these frames come before the others. */
+/* Gives frame `index` a page of its own if it doesn't fit in a max_dimension
+ * page but fits in an oversize_dimension page, and returns 0 otherwise. The
+ * frames are sorted largest first, so these frames are always placed first. */
 static int atlas_plan_oversize_page(const AeronAtlasImage* images, int index,
 									const AeronAtlasBuildOptions* options, AeronAtlasRect** out_rects,
 									int* out_width, int* out_height) {
