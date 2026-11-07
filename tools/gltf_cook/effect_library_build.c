@@ -37,21 +37,9 @@
 #include "cJSON.h"
 #include "effect_library.h"
 #include "png_read.h"
+#include "srgb8.h"
 #include "tool_log.h"
 #include "yaml_json.h"
-
-static float clamp01(float x) { return x < 0.0f ? 0.0f : (x > 1.0f ? 1.0f : x); }
-
-static float to_linear(uint8_t v) {
-	const float c = v / 255.0f;
-	return c <= 0.04045f ? c / 12.92f : powf((c + 0.055f) / 1.055f, 2.4f);
-}
-
-static uint8_t to_srgb8(float c) {
-	c             = clamp01(c);
-	const float s = c <= 0.0031308f ? c * 12.92f : 1.055f * powf(c, 1.0f / 2.4f) - 0.055f;
-	return (uint8_t)(s * 255.0f + 0.5f);
-}
 
 /* The path of input `name`, resolved next to the library file. */
 static void input_path(const char* dir, const char* name, char* path, size_t cap) {
@@ -221,7 +209,7 @@ static bool bake(const char* tool, const Inputs* inputs, const char* key, const 
 		for (size_t i = 0; i < (size_t)w * h; ++i) {
 			const float c = colour ? colour[i * 4 + 3] / 255.0f : 0.0f;
 			for (int k = 0; k < 3; ++k)
-				layer[i * 4 + k] = colour ? to_srgb8(to_linear(colour[i * 4 + k]) * c) : 0;
+				layer[i * 4 + k] = colour ? linear_to_srgb8(srgb8_to_linear(colour[i * 4 + k]) * c) : 0;
 			layer[i * 4 + 3]    = (uint8_t)((1.0f - c) * 255.0f + 0.5f);
 			emissive[i * 4 + 3] = 255;
 		}
@@ -239,7 +227,7 @@ static bool bake(const char* tool, const Inputs* inputs, const char* key, const 
 			uint8_t*    p = &image[i * 4];
 			const float a = p[3] / 255.0f;
 			for (int k = 0; k < 3; ++k)
-				p[k] = to_srgb8(to_linear(p[k]) * a);
+				p[k] = linear_to_srgb8(srgb8_to_linear(p[k]) * a);
 			if (kind == EFFECT_LIBRARY_ENERGY)
 				p[3] = 255;
 		}
@@ -249,7 +237,7 @@ static bool bake(const char* tool, const Inputs* inputs, const char* key, const 
 		 * itself. */
 		for (size_t i = 0; kind == EFFECT_LIBRARY_DETAIL_NORMAL && i < (size_t)w * h; ++i)
 			for (int k = 0; k < 3; ++k)
-				image[i * 4 + k] = to_srgb8(image[i * 4 + k] / 255.0f);
+				image[i * 4 + k] = linear_to_srgb8(image[i * 4 + k] / 255.0f);
 		if (kind == EFFECT_LIBRARY_ENERGY)
 			out->emissive = image;
 		else

@@ -63,8 +63,7 @@ void XwauFx_Key(char* out, size_t cap, int group, int image, XwauFxKind kind, co
 bool XwauFx_ParseKey(const char* key, int* group, int* image, XwauFxKind* kind, float tint[3],
 					 int* alpha_mode);
 
-/* sRGB transfer functions, on 0..1 values. */
+/* Converts an sRGB value in [0, 1] to linear. */
 float XwauFx_ToLinear(float srgb);
-float XwauFx_ToSrgb(float linear);
 
 #endif /* AERON_XWAU_EFFECT_BAKE_H */

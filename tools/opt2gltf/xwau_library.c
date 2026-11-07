@@ -18,6 +18,7 @@
 #include "classic_radiance.h"
 #include "effect_files.h"
 #include "png_write.h"
+#include "srgb8.h"
 #include "util.h"
 #include "xwau_dat.h"
 #include "xwau_effect_bake.h"
@@ -508,19 +509,6 @@ static bool images_yaml(TextBuffer* y) {
 
 /* ---- Sources ------------------------------------------------------------ */
 
-/* The sRGB transfer functions of the library builder, on 8-bit values. They
- * check that the written inputs bake back into the same library images. */
-static float lin8(uint8_t v) {
-	const float c = v / 255.0f;
-	return c <= 0.04045f ? c / 12.92f : powf((c + 0.055f) / 1.055f, 2.4f);
-}
-
-static uint8_t srgb8(float c) {
-	c             = c < 0.0f ? 0.0f : (c > 1.0f ? 1.0f : c);
-	const float s = c <= 0.0031308f ? c * 12.92f : 1.055f * powf(c, 1.0f / 2.4f) - 0.055f;
-	return (uint8_t)(s * 255.0f + 0.5f);
-}
-
 static uint8_t unorm8f(float c) {
 	return (uint8_t)((c < 0.0f ? 0.0f : (c > 1.0f ? 1.0f : c)) * 255.0f + 0.5f);
 }
@@ -625,10 +613,10 @@ static bool make_inputs(const Library* l, const char* path, Sink* sink, cJSON* e
 				const float    c  = (255 - lt[3]) / 255.0f;
 				pt[3]             = (uint8_t)(255 - lt[3]);
 				for (int k = 0; k < 3; ++k)
-					pt[k] = c > 0.0f ? srgb8(lin8(lt[k]) / c) : 0;
+					pt[k] = c > 0.0f ? linear_to_srgb8(srgb8_to_linear(lt[k]) / c) : 0;
 				any_base_color |= pt[3] != 0;
 				for (int k = 0; k < 3; ++k)
-					*diff = max_diff(*diff, lt[k], pt[3] ? srgb8(lin8(pt[k]) * c) : 0);
+					*diff = max_diff(*diff, lt[k], pt[3] ? linear_to_srgb8(srgb8_to_linear(pt[k]) * c) : 0);
 				*diff = max_diff(*diff, lt[3], (uint8_t)((1.0f - c) * 255.0f + 0.5f));
 			}
 			ok    = PathFormat(file, sizeof file, "%s_emissive.png", base) &&
@@ -661,7 +649,8 @@ static bool make_inputs(const Library* l, const char* path, Sink* sink, cJSON* e
 				uint8_t*       pt  = &input[t * 4];
 				for (int k = 0; k < 3; ++k) {
 					pt[k] = unorm8f(src[k] / 255.0f * r->tint[k]);
-					*diff = max_diff(*diff, baked[t * 4 + k], srgb8(lin8(pt[k]) * (src[3] / 255.0f)));
+					*diff = max_diff(*diff, baked[t * 4 + k],
+									 linear_to_srgb8(srgb8_to_linear(pt[k]) * (src[3] / 255.0f)));
 				}
 				pt[3] = src[3];
 			}

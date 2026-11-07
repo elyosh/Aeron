@@ -1,5 +1,7 @@
 #include "xwau_effect_bake.h"
 
+#include "srgb8.h"
+
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -18,11 +20,6 @@ static uint8_t unorm8(float x) { return (uint8_t)(clamp01(x) * 255.0f + 0.5f); }
 float XwauFx_ToLinear(float c) {
 	c = clamp01(c);
 	return c <= 0.04045f ? c / 12.92f : powf((c + 0.055f) / 1.055f, 2.4f);
-}
-
-float XwauFx_ToSrgb(float c) {
-	c = clamp01(c);
-	return c <= 0.0031308f ? c * 12.92f : 1.055f * powf(c, 1.0f / 2.4f) - 0.055f;
 }
 
 const char* XwauFx_KindName(XwauFxKind kind) {
@@ -143,8 +140,8 @@ void XwauFx_Bake(XwauFxKind kind, const uint8_t* src, size_t n, const float tint
 				const float s = smoothstep(0.75f, 0.85f, v) * smoothstep(0.45f, 0.55f, a);
 				for (int k = 0; k < 3; ++k) {
 					const float lin = XwauFx_ToLinear(clamp01(1.25f * c[k]));
-					l[k]            = unorm8(XwauFx_ToSrgb(lin * a * (1.0f - s)));
-					e[k]            = unorm8(XwauFx_ToSrgb(lin * a * s));
+					l[k]            = linear_to_srgb8(lin * a * (1.0f - s));
+					e[k]            = linear_to_srgb8(lin * a * s);
 				}
 				l[3] = unorm8((1.0f - a) * (1.0f - s));
 				e[3] = 255;
@@ -167,12 +164,12 @@ void XwauFx_Bake(XwauFxKind kind, const uint8_t* src, size_t n, const float tint
 				break;
 			case XWAU_FX_ENERGY:
 				for (int k = 0; k < 3; ++k)
-					e[k] = unorm8(XwauFx_ToSrgb(XwauFx_ToLinear(c[k]) * a));
+					e[k] = linear_to_srgb8(XwauFx_ToLinear(c[k]) * a);
 				e[3] = 255;
 				break;
 			case XWAU_FX_MARK:
 				for (int k = 0; k < 3; ++k)
-					l[k] = unorm8(XwauFx_ToSrgb(XwauFx_ToLinear(c[k]) * a));
+					l[k] = linear_to_srgb8(XwauFx_ToLinear(c[k]) * a);
 				l[3] = unorm8(a);
 				break;
 			case XWAU_FX_DETAIL:

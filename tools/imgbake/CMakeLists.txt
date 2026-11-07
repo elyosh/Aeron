@@ -96,6 +96,7 @@ add_library(imgbake STATIC
     hdr_read.c
     envmap.c
     palette.c
+    srgb8.c
     font_atlas.c
     font_atlas_load.c
     # C++: BC codec facades over vendored encoders.

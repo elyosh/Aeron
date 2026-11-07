@@ -13,6 +13,7 @@
 #include "cJSON.h"
 #include "effect_files.h"
 #include "png_write.h"
+#include "srgb8.h"
 #include "util.h"
 
 #define NOISE_SIZE 256
@@ -116,12 +117,6 @@ static float linear(float c) {
 	return c <= 0.04045f ? c / 12.92f : powf((c + 0.055f) / 1.055f, 2.4f);
 }
 
-static uint8_t srgb8(float c) {
-	c             = c < 0.0f ? 0.0f : (c > 1.0f ? 1.0f : c);
-	const float s = c <= 0.0031308f ? c * 12.92f : 1.055f * powf(c, 1.0f / 2.4f) - 0.055f;
-	return (uint8_t)(s * 255.0f + 0.5f);
-}
-
 void XwauLava_Key(char* out, size_t cap, bool tiling, int frame) {
 	snprintf(out, cap, "t%d-%02d", tiling ? 2 : 3, frame);
 }
@@ -145,7 +140,7 @@ static void render_frame(bool tiling, int frame, uint8_t* rgba) {
 			const float rz = v > 0.2f / LAVA_RZ_MAX ? 0.2f / v : LAVA_RZ_MAX;
 			uint8_t*    p  = &rgba[((size_t)y * XWAU_LAVA_SIZE + x) * 4];
 			for (int k = 0; k < 3; ++k)
-				p[k] = srgb8(linear(kLavaColor[k] * rz) * scale);
+				p[k] = linear_to_srgb8(linear(kLavaColor[k] * rz) * scale);
 			p[3] = 255;
 		}
 	}
