@@ -40,6 +40,9 @@ void ToolLog_SetSink(ToolLogSink sink, void* user);
 /* Turns the TOOL_LOG_DETAIL lines on or off. They are off at first. Set it
    before any thread logs. */
 void ToolLog_SetDetails(int on);
+/* Returns nonzero if the TOOL_LOG_DETAIL lines are on. Use it to skip work
+   that only a detail line needs. */
+int ToolLog_Details(void);
 
 /* Writes one line. `format` has no newline at its end. The line is cut at
  * 4 KB. */

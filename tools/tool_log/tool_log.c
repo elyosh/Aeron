@@ -16,6 +16,8 @@ void ToolLog_SetSink(ToolLogSink sink, void* user) {
 
 void ToolLog_SetDetails(int on) { g_details = on; }
 
+int ToolLog_Details(void) { return g_details; }
+
 void ToolLog_WriteV(ToolLogLevel level, const char* format, va_list args) {
 	/* One more byte for the newline that stderr gets. */
 	char line[LINE_CAPACITY + 1];

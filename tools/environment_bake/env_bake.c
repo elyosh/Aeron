@@ -348,24 +348,56 @@ static int stats_level(const EnvCube* cube, int max_size) {
 	return level;
 }
 
-static CubeStats cube_stats(const EnvCube* cube) {
-	CubeStats stats = { 0.0, 0.0 };
-	const int n     = cube->size;
-	double    total = 0.0;
-	for (int face = 0; face < 6; ++face) {
-		for (int y = 0; y < n; ++y) {
-			double row = 0.0;
-			for (int x = 0; x < n; ++x) {
-				const double l = luminance(cube->faces[0][face] + ((size_t)y * n + x) * 3u);
-				if (l > stats.peak)
-					stats.peak = l;
-				row += l * envmap_texel_solid_angle(x, y, n);
-			}
-			total += row;
+typedef struct StatsTask {
+	const EnvCube* cube;
+	double*        row_peak; /* [face * size + y] */
+	double*        row_sum;  /* luminance times solid angle */
+} StatsTask;
+
+/* Row y of the six faces. A texel's solid angle is the same on every face,
+ * so it is computed once for the six. */
+static void stats_row(void* context, int y) {
+	const StatsTask* t       = (const StatsTask*)context;
+	const int        n       = t->cube->size;
+	double           peak[6] = { 0.0 };
+	double           sum[6]  = { 0.0 };
+	for (int x = 0; x < n; ++x) {
+		const double omega = envmap_texel_solid_angle(x, y, n);
+		for (int face = 0; face < 6; ++face) {
+			const double l = luminance(t->cube->faces[0][face] + ((size_t)y * n + x) * 3u);
+			if (l > peak[face])
+				peak[face] = l;
+			sum[face] += l * omega;
 		}
 	}
-	stats.mean = total / (4.0 * BAKE_PI);
-	return stats;
+	for (int face = 0; face < 6; ++face) {
+		t->row_peak[(size_t)face * n + y] = peak[face];
+		t->row_sum[(size_t)face * n + y]  = sum[face];
+	}
+}
+
+/* The peak and mean luminance of level 0, on up to `jobs` threads. The rows
+ * are added up in the same order whatever the thread count, so the result
+ * doesn't depend on it. Returns false if it runs out of memory. */
+static bool cube_stats(const EnvCube* cube, int jobs, CubeStats* stats) {
+	const int  n    = cube->size;
+	StatsTask  task = { cube, (double*)malloc((size_t)6 * n * sizeof(double)),
+						(double*)malloc((size_t)6 * n * sizeof(double)) };
+	const bool ok   = task.row_peak && task.row_sum;
+	if (ok) {
+		envmap_parallel_for(n, jobs, stats_row, &task);
+		double total = 0.0;
+		stats->peak  = 0.0;
+		for (size_t row = 0; row < (size_t)6 * n; ++row) {
+			if (task.row_peak[row] > stats->peak)
+				stats->peak = task.row_peak[row];
+			total += task.row_sum[row];
+		}
+		stats->mean = total / (4.0 * BAKE_PI);
+	}
+	free(task.row_peak);
+	free(task.row_sum);
+	return ok;
 }
 
 /* Radiant flux of the sky within `radius_degrees` of a direction, as a
@@ -427,8 +459,10 @@ static bool bake_cubes(const EnvBakeOptions* o, EnvCube* radiance, int specular_
 	envmap_build_box_mips(&diffuse);
 	envmap_ggx_prefilter(&specular, radiance, o->specular_samples, o->jobs);
 
-	const CubeStats stats = cube_stats(radiance);
-	ToolLog_Write(TOOL_LOG_DETAIL, "sky luminance: peak %.6g, mean %.6g", stats.peak, stats.mean);
+	/* The stats only go to a detail line, and take long on a large sky. */
+	CubeStats stats;
+	if (ToolLog_Details() && cube_stats(radiance, o->jobs, &stats))
+		ToolLog_Write(TOOL_LOG_DETAIL, "sky luminance: peak %.6g, mean %.6g", stats.peak, stats.mean);
 	for (uint32_t i = 0; i < light_count; ++i) {
 		const double radius   = fmax(2.0 * lights[i].angular_radius_degrees, 1.0);
 		const double fraction = light_energy_fraction(radiance, &lights[i], radius);
