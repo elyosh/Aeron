@@ -97,6 +97,141 @@ static void found_put(const char* key, const char* path) {
 	pthread_mutex_unlock(&g_found_mutex);
 }
 
+/* A folder read while the folder cache is on. Its names are sorted without
+ * case. Names that differ only in case keep their order in the folder, so a
+ * lookup finds the same name as a scan of the folder. A folder that can't be
+ * opened has no names. */
+typedef struct CachedFolder {
+	char*  path;
+	char** names;
+	size_t count;
+	bool   opened;
+} CachedFolder;
+
+typedef struct FolderEntry {
+	char*  name;
+	size_t order;
+} FolderEntry;
+
+static bool            g_folder_cache;
+static CachedFolder*   g_folders;
+static size_t          g_folder_cap, g_folder_count;
+static pthread_mutex_t g_folder_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+static int compare_folder_entries(const void* a, const void* b) {
+	const FolderEntry* ea    = (const FolderEntry*)a;
+	const FolderEntry* eb    = (const FolderEntry*)b;
+	const int          order = strcasecmp(ea->name, eb->name);
+	return order ? order : (ea->order > eb->order) - (ea->order < eb->order);
+}
+
+/* Reads the names of `folder->path`. */
+static void read_folder(CachedFolder* folder) {
+	DIR* d = opendir(folder->path);
+	if (!d)
+		return;
+	folder->opened      = true;
+	FolderEntry*   list = NULL;
+	size_t         cap = 0, count = 0;
+	struct dirent* de;
+	while ((de = readdir(d))) {
+		if (count == cap) {
+			FolderEntry* grown = (FolderEntry*)realloc(list, (cap ? cap * 2 : 64) * sizeof *grown);
+			if (!grown)
+				break;
+			list = grown;
+			cap  = cap ? cap * 2 : 64;
+		}
+		if (!(list[count].name = strdup(de->d_name)))
+			break;
+		list[count].order = count;
+		++count;
+	}
+	closedir(d);
+	qsort(list, count, sizeof *list, compare_folder_entries);
+	folder->names = (char**)malloc((count ? count : 1) * sizeof *folder->names);
+	for (size_t i = 0; i < count; ++i) {
+		if (folder->names)
+			folder->names[i] = list[i].name;
+		else
+			free(list[i].name);
+	}
+	folder->count = folder->names ? count : 0;
+	free(list);
+}
+
+/* Returns the cached folder `path`, and reads the folder the first time.
+ * Returns NULL when out of memory. The caller must hold `g_folder_mutex`. */
+static CachedFolder* cached_folder_locked(const char* path) {
+	if (g_folder_count * 2 >= g_folder_cap) {
+		const size_t  cap   = g_folder_cap ? g_folder_cap * 2 : 256;
+		CachedFolder* table = (CachedFolder*)calloc(cap, sizeof *table);
+		if (!table)
+			return NULL;
+		for (size_t i = 0; i < g_folder_cap; ++i) {
+			if (!g_folders[i].path)
+				continue;
+			size_t j = found_hash(g_folders[i].path) & (cap - 1);
+			while (table[j].path)
+				j = (j + 1) & (cap - 1);
+			table[j] = g_folders[i];
+		}
+		free(g_folders);
+		g_folders    = table;
+		g_folder_cap = cap;
+	}
+	size_t i = found_hash(path) & (g_folder_cap - 1);
+	while (g_folders[i].path && strcmp(g_folders[i].path, path) != 0)
+		i = (i + 1) & (g_folder_cap - 1);
+	if (!g_folders[i].path) {
+		if (!(g_folders[i].path = strdup(path)))
+			return NULL;
+		read_folder(&g_folders[i]);
+		g_folder_count++;
+	}
+	return &g_folders[i];
+}
+
+/* Looks for `name` in the folder `path`, in any case, and copies the name as it
+ * is written in the folder into `out`. Returns 1 if it is found, 0 if it isn't,
+ * and -1 if the cache can't be used. */
+static int find_in_cached_folder(const char* path, const char* name, char* out, size_t cap) {
+	pthread_mutex_lock(&g_folder_mutex);
+	const CachedFolder* folder = cached_folder_locked(path);
+	int                 found  = folder ? 0 : -1;
+	if (folder && folder->opened) {
+		size_t low = 0, high = folder->count;
+		while (low < high) {
+			const size_t middle = low + (high - low) / 2;
+			if (strcasecmp(folder->names[middle], name) < 0)
+				low = middle + 1;
+			else
+				high = middle;
+		}
+		if (low < folder->count && strcasecmp(folder->names[low], name) == 0)
+			found = PathFormat(out, cap, "%s", folder->names[low]) ? 1 : 0;
+	}
+	pthread_mutex_unlock(&g_folder_mutex);
+	return found;
+}
+
+void Xwau_SetFolderCache(bool on) {
+	pthread_mutex_lock(&g_folder_mutex);
+	g_folder_cache = on;
+	if (!on) {
+		for (size_t i = 0; i < g_folder_cap; ++i) {
+			for (size_t k = 0; k < g_folders[i].count; ++k)
+				free(g_folders[i].names[k]);
+			free(g_folders[i].names);
+			free(g_folders[i].path);
+		}
+		free(g_folders);
+		g_folders    = NULL;
+		g_folder_cap = g_folder_count = 0;
+	}
+	pthread_mutex_unlock(&g_folder_mutex);
+}
+
 /* Writes `base`/`rel` into `out`, matching each component of `rel` in any
  * case. Returns false when a component is missing. */
 static bool resolve(const char* base, const char* rel, char* out, size_t cap) {
@@ -112,6 +247,18 @@ static bool resolve(const char* base, const char* rel, char* out, size_t cap) {
 			*next++ = 0;
 		if (!*part)
 			continue;
+		if (g_folder_cache) {
+			char      name[1024];
+			const int found = find_in_cached_folder(out, part, name, sizeof name);
+			if (found == 0)
+				return false;
+			if (found == 1) {
+				const size_t len = strlen(out);
+				if (!PathFormat(out + len, cap - len, "/%s", name))
+					return false;
+				continue;
+			}
+		}
 		char key[2048];
 		if (!PathFormat(key, sizeof key, "%s/%s", out, part))
 			return false;

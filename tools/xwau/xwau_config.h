@@ -27,6 +27,13 @@
 #include <stdint.h>
 #include <stdio.h>
 
+/* Turns the folder cache of Xwau_FindFile and Xwau_FindDir on or off. While it
+ * is on, each folder is read only once, so files that are added or removed
+ * later aren't seen. Turn it on only while the folders don't change, as during
+ * an import. Turning it off frees the cache. Don't call it while another thread
+ * is looking up files. */
+void Xwau_SetFolderCache(bool on);
+
 /* Finds the file at `rel` in the installation `game`. Returns false when
  * there is none. */
 bool Xwau_FindFile(const char* game, const char* rel, char* out, size_t cap);
