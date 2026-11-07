@@ -33,6 +33,8 @@
  *     (xwau_object_limits.h).
  *   - `shield_recharge` comes with hook_shield.dll. `docking` comes with
  *     hook_dock.dll, which changes how craft dock without any data.
+ *   - `ai_attack`, `mag_pulse` and `warhead_lock` come with the global
+ *     sections of hook_weapon_lock.dll.
  *   - `camera` comes with Hook_CockpitLook.dll or hook_exterior.dll, and
  *     turns on the game's enhanced camera. Its values are converted from
  *     CockpitLook.cfg, with the hook's defaults for the keys it doesn't set.

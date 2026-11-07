@@ -13,6 +13,7 @@
 #include "xwau_craft.h"
 #include "xwau_mission_settings.h"
 #include "xwau_object_limits.h"
+#include "xwau_weapon_lock.h"
 
 /* XWAU's headlight gives the same light at every distance, and OpenXWA's
  * falls with the square of the distance. They give the same light at this
@@ -584,8 +585,11 @@ bool XwauFlightSettings_Write(const char* game, const XwauNames* names, const Xw
 	const bool camera     = write_camera(f, game);
 	const bool suns       = write_suns(f, game);
 	const bool speed      = write_speed_effect(f, game);
+	bool       ai_attack, mag_pulse, warhead_lock;
+	const bool weapon_lock_ok =
+		XwauWeaponLock_WriteFlightSettings(f, game, names, &ai_attack, &mag_pulse, &warhead_lock);
 	XwauSettingsConfig_Free(&config);
-	const bool        ok        = !ferror(f) && fclose(f) == 0;
+	const bool        ok        = !ferror(f) && fclose(f) == 0 && weapon_lock_ok;
 	char              what[300] = "";
 	const char* const parts[]   = { extra_planets ? "backdrop ids 104 to 255 are planets" : NULL,
 									settings ? "the mission rules and defaults" : NULL,
@@ -595,6 +599,9 @@ bool XwauFlightSettings_Write(const char* game, const XwauNames* names, const Xw
 									shields ? "the shield recharge rules" : NULL,
 									docking ? "the docking rules" : NULL,
 									limits ? "the object counts" : NULL,
+									ai_attack ? "the AI attack ranges" : NULL,
+									mag_pulse ? "the mag pulse hits" : NULL,
+									warhead_lock ? "the AI warhead lock ranges" : NULL,
 									camera ? "the camera" : NULL,
 									suns ? "the suns" : NULL,
 									speed ? "the speed effect" : NULL };

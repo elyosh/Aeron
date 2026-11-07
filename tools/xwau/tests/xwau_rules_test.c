@@ -5,10 +5,11 @@
  * object type and craft type files (xwau_objects.h), the files copied into
  * the mod folder's game/ folder (xwau_game_files.h), the mission files
  * (xwau_mission_files.h), the flight settings (xwau_flight_settings.h), the
- * [mission_tie] lines (xwau_mission_tie.h) and the model files
- * (xwau_model.h). The inputs are fixed texts and folders written to a
- * scratch folder. The test is built with the tools as xwau_rules_test. It
- * prints each check and exits with a non-zero status when a check fails.
+ * [mission_tie] lines (xwau_mission_tie.h), the model files (xwau_model.h)
+ * and the sections of hook_weapon_lock. The inputs are fixed texts and
+ * folders written to a scratch folder. The test is built with the tools as
+ * xwau_rules_test. It prints each check and exits with a non-zero status
+ * when a check fails.
  */
 
 #include <math.h>
@@ -42,6 +43,7 @@
 #include "xwau_stats_profiles.h"
 #include "xwau_text.h"
 #include "xwau_warhead_pools.h"
+#include "xwau_weapon_lock.h"
 #include "xwau_weapon_stats.h"
 
 static int g_failures;
@@ -2300,6 +2302,144 @@ static char* flight_settings_text(const char* game, const char* settings) {
 																		: NULL;
 }
 
+/* ---- hook_weapon_lock --------------------------------------------------------- */
+
+/* Writes `text` into `path` and returns the craft's `ai_attack` group, or
+   NULL. The caller frees it. */
+static char* ai_attack_text(const char* game, const char* path, const char* out, const char* text,
+							const XwauWeaponLockFeatures* features) {
+	XwauAiAttack attack;
+	size_t       size = 0;
+	write_file(path, text);
+	if (!XwauAiAttack_Read(game, NULL, path, features, &attack))
+		return NULL;
+	FILE* f = fopen(out, "wb");
+	if (attack.has)
+		XwauAiAttack_Write(f, &g_names, &attack);
+	fclose(f);
+	XwauAiAttack_Free(&attack);
+	return ReadWholeFile(out, &size);
+}
+
+static void test_weapon_lock(const char* scratch) {
+	char game[1024], path[1300], out[1300], dll[1300], settings[1300];
+	snprintf(game, sizeof game, "%s/wl_game", scratch);
+	snprintf(path, sizeof path, "%s/FlightModels", game);
+	MakeDirs(path);
+	snprintf(path, sizeof path, "%s/FlightModels/ShipYard.opt", game);
+	write_file(path, "");
+	snprintf(path, sizeof path, "%s/FlightModels/TieFighter.ini", game);
+	snprintf(out, sizeof out, "%s/wl_out.yaml", scratch);
+	snprintf(dll, sizeof dll, "%s/hook_weapon_lock.dll", game);
+	snprintf(settings, sizeof settings, "%s/wl_flight.yaml", scratch);
+
+	XwauWeaponLockFeatures features;
+	check(!XwauWeaponLock_Features(game, &features) && !features.attack_break && !features.global_lock,
+		  "weapon lock: no features without hook_weapon_lock.dll");
+	write_file(dll, "MZ AILockDistance1_Starship");
+	check(XwauWeaponLock_Features(game, &features) && features.global_lock && !features.attack_break &&
+			  !features.avoid_hits && !features.mag_pulse,
+		  "weapon lock: TFTC's DLL only has the global [WarheadLock] keys");
+	write_file(dll, "MZ AILockDistance1_Starship AttackBreakDistance AIAvoidHitOrder WeaponLockBehaviors");
+	check(XwauWeaponLock_Features(game, &features) && features.global_lock && features.attack_break &&
+			  features.avoid_hits && features.mag_pulse,
+		  "weapon lock: the newest DLL has every feature");
+
+	char* text =
+		ai_attack_text(game, path, out,
+					   "[AttackBreakDistance]\nwarhead = 2048 ;50 m\nSmallObject_NoviceRank = -5\n"
+					   "SmallObject_AceRank = 0x1000\nLargeObject_MaxDistance = -100\n"
+					   "Model_ShipYard = 0\nmodel_shipyard = 999\nModel_Unknown = 5\n"
+					   "MaxRange_Officer = 8192\nMaxRange_Ace = far\nAIAvoidHitOrder = 0\nSpeed = 3\n",
+					   &features);
+	check(text && strcmp(text, "ai_attack:\n  break_range_m: {warhead: 50, small: {novice: 0, ace: 100}, "
+							   "big_max: -2.441, target_offset: {shipyard: 0}}\n  laser_range_m: {officer: "
+							   "200}\n  avoid_hits: false\n") == 0,
+		  "ai attack: each key in any case; a negative small range is 0; the first Model_ line wins, and an "
+		  "unknown model or a value that isn't a number is left out");
+	free(text);
+	features.avoid_hits = false;
+	text = ai_attack_text(game, path, out, "[AttackBreakDistance]\nAIAvoidHitOrder = 0\n", &features);
+	check(text && !text[0], "ai attack: a DLL without AIAvoidHitOrder doesn't read it");
+	free(text);
+	features.avoid_hits = true;
+	ClearReportFatal();
+	text = ai_attack_text(game, path, out, "[AttackBreakDistance]\nMaxRange_Novice = -1\n", &features);
+	check(text && !text[0] && ReportFatalMessage() && strstr(ReportFatalMessage(), "MaxRange_Novice"),
+		  "ai attack: a negative laser range makes the import fail");
+	free(text);
+	ClearReportFatal();
+
+	XwauMagPulse pulse;
+	write_file(path,
+			   "[WeaponLockBehaviors]\nMagPulse_DrainWeaponEnergy = 1\nMagPulse_CraftDisableTimer = 10\n");
+	XwauMagPulse_Read(NULL, path, &pulse);
+	FILE* f = fopen(out, "wb");
+	XwauMagPulse_Write(f, &pulse, false);
+	fclose(f);
+	check(pulse.has && same_file(out, "mag_pulse: {drain_only: true, disable_time_ms: 9440}\n"),
+		  "mag pulse: the model's keys; a hook second is 236 ticks");
+	write_file(path,
+			   "[WeaponLockBehaviors]\nMagPulse_DrainWeaponEnergy = -1\nMagPulse_CraftDisableTimer = -1\n");
+	XwauMagPulse_Read(NULL, path, &pulse);
+	check(!pulse.has, "mag pulse: -1 uses the default");
+	write_file(path, "[WeaponLockBehaviors]\nMagPulse_DrainWeaponEnergy = 2\n");
+	XwauMagPulse_Read(NULL, path, &pulse);
+	check(pulse.has && pulse.drain_only == 0, "mag pulse: only 1 drains the lasers only");
+	write_file(path, "[WeaponLockBehaviors]\nMagPulse_CraftDisableTimer = 300\n");
+	XwauMagPulse_Read(NULL, path, &pulse);
+	check(!pulse.has && ReportFatalMessage() && strstr(ReportFatalMessage(), "MagPulse_CraftDisableTimer"),
+		  "mag pulse: a time that doesn't fit in the game's timer makes the import fail");
+	ClearReportFatal();
+	remove(path);
+
+	/* The global sections. */
+	snprintf(path, sizeof path, "%s/FlightModels/AttackBreakDistance.txt", game);
+	write_file(path, "MaxRange_Novice = 20480\nModel_ShipYard = 0\n");
+	snprintf(path, sizeof path, "%s/FlightModels/default.ini", game);
+	write_file(path, "[WeaponLockBehaviors]\nMagPulse_SmallCraftDisableTimer = 5\n");
+	snprintf(path, sizeof path, "%s/FlightModels/WarheadLock.txt", game);
+	write_file(path, "AILockDistance1_Starship = 204800\nLockTime = 300\n");
+	text = flight_settings_text(game, settings);
+	check(text && strstr(text, "ai_attack:\n  break_range_m: {target_offset: {shipyard: 0}}\n"
+							   "  laser_range_m: {novice: 500, officer: 800, veteran: 1000, ace: 1000, "
+							   "top_ace: 1000, super_ace: 1000}\n"),
+		  "flight settings: the global [AttackBreakDistance], with the hook's laser ranges for the ranks it "
+		  "doesn't set");
+	check(text && strstr(text, "mag_pulse: {disable_time_ms: {small: 4720}}\n"),
+		  "flight settings: the global [WeaponLockBehaviors] in default.ini");
+	check(text && strstr(text, "warhead_lock:\n  ai_lock_range_m:\n    starship: {big: 5000}\n"),
+		  "flight settings: the global [WarheadLock] keys, by genus");
+	free(text);
+	write_file(dll, "MZ AILockDistance1_Starship");
+	text = flight_settings_text(game, settings);
+	check(text && !strstr(text, "ai_attack") && !strstr(text, "mag_pulse") && strstr(text, "warhead_lock:"),
+		  "flight settings: TFTC's DLL only gives the global [WarheadLock] keys");
+	free(text);
+	remove(dll);
+	text = flight_settings_text(game, settings);
+	check(text && !strstr(text, "ai_attack") && !strstr(text, "warhead_lock"),
+		  "flight settings: nothing without hook_weapon_lock.dll");
+	free(text);
+
+	/* The craft phase. */
+	char   flight[1300];
+	size_t size = 0;
+	snprintf(flight, sizeof flight, "%s/wl_flight", scratch);
+	write_file(dll, "MZ AttackBreakDistance AIAvoidHitOrder WeaponLockBehaviors");
+	snprintf(path, sizeof path, "%s/FlightModels/TieFighter.ini", game);
+	write_file(path, "[AttackBreakDistance]\nAIAvoidHitOrder = 0\n");
+	snprintf(path, sizeof path, "%s/FlightModels/TieFighterWeaponLockBehaviors.txt", game);
+	write_file(path, "MagPulse_CraftDisableTimer = 0\n");
+	snprintf(path, sizeof path, "%s/models/tiefighter.yaml", flight);
+	text = XwauCraft_Write(game, flight, &g_names, &g_stock, NULL, NULL) ? ReadWholeFile(path, &size) : NULL;
+	check(text && strstr(text, "ai_attack:\n  avoid_hits: false\nmag_pulse: {disable_time_ms: 0}\n"),
+		  "craft: the model file gets ai_attack and mag_pulse");
+	free(text);
+	snprintf(path, sizeof path, "%s/models/default.yaml", flight);
+	check(!IsFile(path), "craft: the sections of default.ini aren't a model");
+}
+
 static void test_object_limits(const char* scratch) {
 	char game[1024], stock[1024], out[1024], path[1300], settings[1300], dll[1300];
 	snprintf(game, sizeof game, "%s/limits_game", scratch);
@@ -3031,6 +3171,7 @@ int main(void) {
 	test_mission_files(scratch);
 	test_flight_settings(scratch);
 	test_object_limits(scratch);
+	test_weapon_lock(scratch);
 	test_mission_settings(scratch);
 	test_model_swaps(scratch);
 	test_craft_names(scratch);
