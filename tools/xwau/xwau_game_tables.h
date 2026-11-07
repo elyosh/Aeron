@@ -6,8 +6,12 @@
  * 2.02, patched by a mod) and its FlightModels/Spacecraft0.LST and
  * Equipment0.LST files, and keep the original layouts:
  *   - the object type table (0x5FB240), 557 entries of 24 bytes;
- *   - the craft type table (0x5B0F70), 232 words: the object type of each
- *     craft type;
+ *   - the craft type table (0x5B0F70): the object type of each craft type.
+ *     The stock table has 232 words, for craft types 0 to 231. XWAU adds
+ *     craft type 232 by writing a 233rd word. The game doesn't check the
+ *     craft type of a flight group, so it reads that word. The word is the
+ *     object type of backdrop 0 in missionBackdropDescriptors, which is 0 in
+ *     the stock game and isn't used;
  *   - the craft records (0x5BB480), 265 records of 987 bytes, packed, with
  *     4-byte pointers;
  *   - the four sound switches that pick an engine or launch sound case by
@@ -24,12 +28,13 @@
 #include <stdint.h>
 
 enum {
-	XWAU_GAME_OBJECT_TYPES     = 557,
-	XWAU_GAME_OBJECT_TYPE_SIZE = 24,
-	XWAU_GAME_CRAFT_TYPES      = 232,
-	XWAU_GAME_RECORDS          = 265,
-	XWAU_GAME_RECORD_SIZE      = 987,
-	XWAU_GAME_SOUND_SWITCHES   = 4,
+	XWAU_GAME_OBJECT_TYPES      = 557,
+	XWAU_GAME_OBJECT_TYPE_SIZE  = 24,
+	XWAU_GAME_STOCK_CRAFT_TYPES = 232,
+	XWAU_GAME_CRAFT_TYPES       = 233,
+	XWAU_GAME_RECORDS           = 265,
+	XWAU_GAME_RECORD_SIZE       = 987,
+	XWAU_GAME_SOUND_SWITCHES    = 4,
 	/* Object types 1 to 65 have a sound case; the others take the default
 	   case. */
 	XWAU_GAME_SOUND_CASES = 65,

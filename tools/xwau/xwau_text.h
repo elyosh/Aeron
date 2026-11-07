@@ -24,7 +24,9 @@
  * mod's file has the stock IDs in the stock order. In these cases, both give
  * the same texts:
  *   - an ID that only the mod's file has, after all the stock IDs, is skipped.
- *     The game never reads that line (XWAU's SPECIES_232 and SPEC_232_*);
+ *     The game reads that line only in SHIPLIST.TXT and SPECDESC.TXT, where
+ *     it is a text of craft type 232 or higher. The craft type file of craft
+ *     type 232 carries those texts (XWAU's SPECIES_232 and SPEC_232_*);
  *   - an ID that the mod's file doesn't have, after its last stock ID, keeps
  *     the stock text.
  * In these cases, XWAU moves the texts that come after the line, and the

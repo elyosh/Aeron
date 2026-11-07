@@ -198,9 +198,15 @@ static bool write_file_texts(FILE* f, const char* name, const char* mod_path, co
 			skipped++;
 			continue;
 		}
-		/* The game never reads a line after the stock lines. */
+		/* A line that the stock file doesn't have comes after the stock
+		   lines here. The game reads such a line only in SHIPLIST.TXT and
+		   SPECDESC.TXT, as a text of craft type 232 or higher. The craft
+		   type file of craft type 232 carries its texts. */
 		if (!found) {
-			skipped++;
+			if (XwauTextIds_Has(moved, record->id))
+				in_objects++;
+			else
+				skipped++;
 			continue;
 		}
 		/* In XWAU, the second copy of a line moves the texts after it. */

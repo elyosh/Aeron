@@ -436,13 +436,16 @@ static const char* text_find(const XwauTextFile* file, const char* id) {
 	return NULL;
 }
 
-/* The mod's text of `id` when it differs from the stock text, else NULL. */
+/* The mod's text of `id` when it differs from the stock text, else NULL. A
+   text that only the mod has counts as changed. In SHIPLIST.TXT and
+   SPECDESC.TXT, this can only be a text of craft type 232, because the stock
+   files have texts for every stock craft type. */
 static const char* text_changed(const Texts* texts, int file, const char* id) {
 	if (!texts->loaded[file])
 		return NULL;
 	const char* stock = text_find(&texts->stock[file], id);
 	const char* mod   = text_find(&texts->mod[file], id);
-	return stock && mod && strcmp(stock, mod) != 0 ? mod : NULL;
+	return mod && (!stock || strcmp(stock, mod) != 0) ? mod : NULL;
 }
 
 static void load_texts(const char* mod_root, const char* stock_game, Texts* texts) {
