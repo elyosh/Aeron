@@ -94,11 +94,22 @@ static float source_texel_weight(const Span* s, int i, int n, int m) {
 /* Resamples an `n`-pixel face to `m` pixels (m <= n) by area averaging: rows
  * first, then columns. */
 static float* resample_face_by_area(const FaceSource* source, int m, int channels, float intensity) {
-	const int    n    = source->n;
-	const size_t k    = (size_t)channels;
-	float*       line = (float*)malloc((size_t)n * k * sizeof(float));
-	float*       rows = (float*)malloc((size_t)n * m * k * sizeof(float));
-	float*       out  = (float*)malloc((size_t)m * m * k * sizeof(float));
+	const int    n   = source->n;
+	const size_t k   = (size_t)channels;
+	float*       out = (float*)malloc((size_t)m * m * k * sizeof(float));
+	if (out && m == n) {
+		/* Each texel is its own average. Adding 0 turns -0 into +0, as the
+		   two passes below do. */
+		for (int y = 0; y < n; ++y) {
+			float* dst = out + (size_t)y * n * k;
+			read_face_row_as_linear(source, y, channels, intensity, dst);
+			for (size_t j = 0; j < (size_t)n * k; ++j)
+				dst[j] += 0.0f;
+		}
+		return out;
+	}
+	float* line = (float*)malloc((size_t)n * k * sizeof(float));
+	float* rows = (float*)malloc((size_t)n * m * k * sizeof(float));
 	if (!line || !rows || !out) {
 		free(line);
 		free(rows);
@@ -136,27 +147,82 @@ static float* resample_face_by_area(const FaceSource* source, int m, int channel
 	return out;
 }
 
-/* Checks the size of face `face`, and resamples it into `out`. */
-static bool check_size_and_resample_face(const FaceSource* source, int width, int height, int face,
-										 const char* what, int size, float intensity, CubeFaces* out,
-										 char* err, size_t errsz) {
-	if (width != height)
-		return set_error_message(err, errsz, "%s: face %s is %dx%d, and a face must be square", what,
-								 k_face_names[face], width, height);
-	if (face == 0) {
-		out->source_size = width;
-		out->size        = size > 0 ? size : width;
-		if (out->size > width)
-			return set_error_message(err, errsz, "%s: the faces are %d px, smaller than the %d px cube", what,
-									 width, out->size);
-	} else if (width != out->source_size) {
-		return set_error_message(err, errsz, "%s: face %s is %d px, and face px is %d px", what,
-								 k_face_names[face], width, out->source_size);
+/* One face, read and resampled on its own thread. */
+typedef struct FaceJob {
+	const char* path; /* NULL when the pixels are in memory */
+	FaceSource  source;
+	int         width, height;
+	bool        read; /* false: `reason` says why */
+	char        reason[512];
+	float*      resampled; /* NULL if the face can't be resampled */
+} FaceJob;
+
+typedef struct FacesTask {
+	FaceJob jobs[6];
+	bool    hdr;
+	int     size; /* 0: the size of the faces */
+	int     channels;
+	float   intensity;
+} FacesTask;
+
+static void face_task(void* context, int face) {
+	FacesTask* task = (FacesTask*)context;
+	FaceJob*   job  = &task->jobs[face];
+	uint8_t*   rgba = NULL;
+	float*     rgb  = NULL;
+	if (job->path) {
+		job->read =
+			task->hdr
+				? read_hdr_rgb(job->path, &rgb, &job->width, &job->height, job->reason, sizeof job->reason)
+				: read_ldr_rgba(job->path, &rgba, &job->width, &job->height, job->reason, sizeof job->reason);
+		for (size_t i = 0; job->read && rgb && i < (size_t)job->width * job->height * 3u; ++i)
+			if (!isfinite(rgb[i]) || rgb[i] < 0.0f)
+				job->read =
+					set_error_message(job->reason, sizeof job->reason,
+									  "%s has a non-finite or negative pixel at %zu", job->path, i / 3u);
+		job->source = (FaceSource) { rgba, rgb, job->width };
 	}
-	out->faces[face] = resample_face_by_area(source, out->size, out->channels, intensity);
-	if (!out->faces[face])
-		return set_error_message(err, errsz, "%s: out of memory", what);
-	return true;
+	/* A face that fails the size checks isn't resampled. run_faces then
+	   reports the error. */
+	const int m = task->size > 0 ? task->size : job->width;
+	if (job->read && job->width == job->height && m <= job->width)
+		job->resampled = resample_face_by_area(&job->source, m, task->channels, task->intensity);
+	free(rgba);
+	free(rgb);
+}
+
+/* Reads and resamples the six faces at the same time. Then checks them in
+ * order, and reports the first error. */
+static bool run_faces(FacesTask* task, const char* what, CubeFaces* out, char* err, size_t errsz) {
+	pthread_once(&s_srgb_once, fill_srgb_to_linear_table);
+	envmap_parallel_for(6, 6, face_task, task);
+	bool ok = true;
+	for (int face = 0; face < 6 && ok; ++face) {
+		const FaceJob* job = &task->jobs[face];
+		if (!job->read)
+			ok = set_error_message(err, errsz, "%s", job->reason);
+		else if (job->width != job->height)
+			ok = set_error_message(err, errsz, "%s: face %s is %dx%d, and a face must be square", what,
+								   k_face_names[face], job->width, job->height);
+		else if (face == 0) {
+			out->source_size = job->width;
+			out->size        = task->size > 0 ? task->size : job->width;
+			if (out->size > job->width)
+				ok = set_error_message(err, errsz, "%s: the faces are %d px, smaller than the %d px cube",
+									   what, job->width, out->size);
+		} else if (job->width != out->source_size)
+			ok = set_error_message(err, errsz, "%s: face %s is %d px, and face px is %d px", what,
+								   k_face_names[face], job->width, out->source_size);
+		if (ok && !job->resampled)
+			ok = set_error_message(err, errsz, "%s: out of memory", what);
+	}
+	for (int face = 0; face < 6; ++face) {
+		if (ok)
+			out->faces[face] = task->jobs[face].resampled;
+		else
+			free(task->jobs[face].resampled);
+	}
+	return ok;
 }
 
 /* Finds the file of face `face`. Returns its extension's index, or -1 after
@@ -189,7 +255,6 @@ bool cube_faces_load(const char* prefix, int size, bool alpha, float ldr_intensi
 					 size_t errsz) {
 	memset(out, 0, sizeof *out);
 	out->channels = alpha ? 4 : 3;
-	pthread_once(&s_srgb_once, fill_srgb_to_linear_table);
 	char paths[6][1024];
 	bool hdr = false;
 	for (int face = 0; face < 6; ++face) {
@@ -205,51 +270,25 @@ bool cube_faces_load(const char* prefix, int size, bool alpha, float ldr_intensi
 		return set_error_message(err, errsz, "%s: an overlay needs alpha, so its faces must be PNG or JPEG",
 								 prefix);
 
-	for (int face = 0; face < 6; ++face) {
-		FaceSource source = { NULL, NULL, 0 };
-		uint8_t*   rgba   = NULL;
-		float*     rgb    = NULL;
-		int        w = 0, h = 0;
-		char       reason[512];
-		bool       ok = hdr ? read_hdr_rgb(paths[face], &rgb, &w, &h, reason, sizeof reason)
-							: read_ldr_rgba(paths[face], &rgba, &w, &h, reason, sizeof reason);
-		if (!ok) {
-			set_error_message(err, errsz, "%s", reason);
-		} else if (hdr) {
-			for (size_t i = 0; i < (size_t)w * h * 3u && ok; ++i)
-				if (!isfinite(rgb[i]) || rgb[i] < 0.0f)
-					ok = set_error_message(err, errsz, "%s has a non-finite or negative pixel at %zu",
-										   paths[face], i / 3u);
-		}
-		source.rgba = rgba;
-		source.rgb  = rgb;
-		source.n    = w;
-		ok = ok && check_size_and_resample_face(&source, w, h, face, prefix, size,
-												hdr || alpha ? 1.0f : ldr_intensity, out, err, errsz);
-		free(rgba);
-		free(rgb);
-		if (!ok) {
-			cube_faces_free(out);
-			return false;
-		}
-	}
-	return true;
+	FacesTask task = {
+		.hdr = hdr, .size = size, .channels = out->channels, .intensity = hdr || alpha ? 1.0f : ldr_intensity
+	};
+	for (int face = 0; face < 6; ++face)
+		task.jobs[face].path = paths[face];
+	return run_faces(&task, prefix, out, err, errsz);
 }
 
 bool cube_faces_from_pixels(const CubeFacePixels* pixels, int size, bool alpha, float ldr_intensity,
 							CubeFaces* out, char* err, size_t errsz) {
 	memset(out, 0, sizeof *out);
-	out->channels = alpha ? 4 : 3;
-	pthread_once(&s_srgb_once, fill_srgb_to_linear_table);
-	for (int face = 0; face < 6; ++face) {
-		const FaceSource source = { pixels->rgba[face], NULL, pixels->size };
-		if (!check_size_and_resample_face(&source, pixels->size, pixels->size, face, pixels->name, size,
-										  alpha ? 1.0f : ldr_intensity, out, err, errsz)) {
-			cube_faces_free(out);
-			return false;
-		}
-	}
-	return true;
+	out->channels  = alpha ? 4 : 3;
+	FacesTask task = { .size = size, .channels = out->channels, .intensity = alpha ? 1.0f : ldr_intensity };
+	for (int face = 0; face < 6; ++face)
+		task.jobs[face] = (FaceJob) { .source = { pixels->rgba[face], NULL, pixels->size },
+									  .width  = pixels->size,
+									  .height = pixels->size,
+									  .read   = true };
+	return run_faces(&task, pixels->name, out, err, errsz);
 }
 
 void cube_faces_free(CubeFaces* faces) {

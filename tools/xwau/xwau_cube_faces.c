@@ -1,5 +1,6 @@
 #include "xwau_cube_faces.h"
 
+#include "envmap.h"
 #include "ldr_read.h"
 #include "util.h"
 
@@ -95,6 +96,20 @@ static void mirror_face_in_place(uint8_t* rgba, int n, bool mirror_x, bool flip_
 	}
 }
 
+typedef struct FaceRead {
+	const char* path;
+	uint8_t*    rgba;
+	int         width, height;
+	bool        ok; /* false: `reason` says why */
+	char        reason[512];
+} FaceRead;
+
+static void read_face_task(void* context, int face) {
+	FaceRead* read = (FaceRead*)context + face;
+	read->ok       = read_ldr_rgba(read->path, &read->rgba, &read->width, &read->height, read->reason,
+								   sizeof read->reason);
+}
+
 bool XwauCubeFaces_Read(const char* dir, XwauCubeFaces* out, char* err, size_t errsz) {
 	memset(out, 0, sizeof *out);
 	char paths[6][XWAU_CUBE_FACE_PATH_MAX];
@@ -102,26 +117,30 @@ bool XwauCubeFaces_Read(const char* dir, XwauCubeFaces* out, char* err, size_t e
 		XwauCubeFaces_Find(dir, paths) ||
 		set_error_message(err, errsz, "%s: ddraw doesn't find the six faces of a cube in this folder", dir);
 
-	uint8_t* source[6] = { NULL };
+	/* The six files are decoded at the same time, then checked in order. */
+	FaceRead reads[6] = { { 0 } };
+	for (int face = 0; face < 6; ++face)
+		reads[face].path = paths[face];
+	if (ok)
+		envmap_parallel_for(6, 6, read_face_task, reads);
 	for (int face = 0; face < 6 && ok; ++face) {
-		int  w = 0, h = 0;
-		char reason[512];
-		if (!read_ldr_rgba(paths[face], &source[face], &w, &h, reason, sizeof reason))
-			ok = set_error_message(err, errsz, "%s", reason);
-		else if (w != h)
-			ok = set_error_message(err, errsz, "%s is not square", paths[face]);
-		else if (face > 0 && w != out->size)
-			ok = set_error_message(err, errsz, "%s is not the size of the other faces", paths[face]);
-		out->size = w;
+		const FaceRead* read = &reads[face];
+		if (!read->ok)
+			ok = set_error_message(err, errsz, "%s", read->reason);
+		else if (read->width != read->height)
+			ok = set_error_message(err, errsz, "%s is not square", read->path);
+		else if (face > 0 && read->width != out->size)
+			ok = set_error_message(err, errsz, "%s is not the size of the other faces", read->path);
+		out->size = read->width;
 	}
 	for (int face = 0; face < 6 && ok; ++face) {
 		const int from = kFaces[face].source;
-		mirror_face_in_place(source[from], out->size, kFaces[face].mirror_x, kFaces[face].flip_y);
-		out->rgba[face] = source[from];
-		source[from]    = NULL;
+		mirror_face_in_place(reads[from].rgba, out->size, kFaces[face].mirror_x, kFaces[face].flip_y);
+		out->rgba[face]  = reads[from].rgba;
+		reads[from].rgba = NULL;
 	}
 	for (int face = 0; face < 6; ++face)
-		free(source[face]);
+		free(reads[face].rgba);
 	if (!ok)
 		XwauCubeFaces_Free(out);
 	return ok;

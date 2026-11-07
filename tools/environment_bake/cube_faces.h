@@ -40,7 +40,8 @@ typedef struct CubeFacePixels {
  * than the files' is an error. Without `alpha`, the faces are linear RGB.
  * With it, they are linear RGB premultiplied by alpha, then alpha. Faces
  * with alpha must be PNG or JPEG. `ldr_intensity` multiplies the colour of
- * PNG and JPEG faces without alpha. */
+ * PNG and JPEG faces without alpha. The six faces are read and resampled on
+ * six threads. */
 bool cube_faces_load(const char* prefix, int size, bool alpha, float ldr_intensity, CubeFaces* out, char* err,
 					 size_t errsz);
 
