@@ -11,14 +11,21 @@ int Aeron_AtlasPackRects(AeronAtlasRect* rects, int count, int atlas_width, int 
 	if (!rects || count < 0 || atlas_width <= 0 || gutter < 0)
 		return -1;
 	int* heights = (int*)calloc((size_t)atlas_width, sizeof *heights);
-	if (!heights)
+	/* The columns whose height can still be the highest under the frame as
+	   it slides right, from left to right, with heights that go down. */
+	int* window = (int*)malloc((size_t)atlas_width * sizeof *window);
+	if (!heights || !window) {
+		free(heights);
+		free(window);
 		return -1;
+	}
 	int atlas_height = 0;
 	for (int i = 0; i < count; i++) {
 		AeronAtlasRect* rect = &rects[i];
 		if (rect->w <= 0 || rect->h <= 0 || gutter > (INT_MAX - rect->w) / 2 ||
 			gutter > (INT_MAX - rect->h) / 2) {
 			free(heights);
+			free(window);
 			return -1;
 		}
 		const int footprint_width  = rect->w + 2 * gutter;
@@ -26,19 +33,29 @@ int Aeron_AtlasPackRects(AeronAtlasRect* rects, int count, int atlas_width, int 
 		const int last_x           = atlas_width - footprint_width;
 		if (last_x < 0) {
 			free(heights);
+			free(window);
 			return -1;
 		}
+		/* The frame goes at the leftmost x where the highest column under it
+		   is the lowest. */
 		int best_x = 0;
 		int best_y = INT_MAX;
-		for (int x = 0; x <= last_x; x++) {
-			int y = 0;
-			for (int column = 0; column < footprint_width; column++) {
-				if (heights[x + column] > y)
-					y = heights[x + column];
+		int first  = 0; /* the window is window[first] to window[first + size - 1] */
+		int size   = 0;
+		for (int column = 0; column < atlas_width && best_y > 0; column++) {
+			while (size > 0 && heights[window[first + size - 1]] <= heights[column])
+				size--;
+			window[first + size++] = column;
+			const int x            = column - footprint_width + 1;
+			if (x < 0)
+				continue;
+			if (window[first] < x) {
+				first++;
+				size--;
 			}
-			if (y < best_y) {
+			if (heights[window[first]] < best_y) {
 				best_x = x;
-				best_y = y;
+				best_y = heights[window[first]];
 			}
 		}
 		rect->x       = best_x + gutter;
@@ -50,6 +67,7 @@ int Aeron_AtlasPackRects(AeronAtlasRect* rects, int count, int atlas_width, int 
 			atlas_height = top;
 	}
 	free(heights);
+	free(window);
 	return atlas_height;
 }
 
