@@ -30,6 +30,7 @@
 #include "xwau_game_files.h"
 #include "xwau_gunner_seats.h"
 #include "xwau_hangars.h"
+#include "xwau_hyperspace.h"
 #include "xwau_mission_files.h"
 #include "xwau_mission_sounds.h"
 #include "xwau_mission_tie.h"
@@ -2130,11 +2131,11 @@ static void test_mission_settings(const char* scratch) {
 
 	snprintf(settings, sizeof settings, "%s/flight.yaml", scratch);
 	check(XwauFlightSettings_Write(game, &g_names, &g_stock, settings) &&
-			  same_file(settings,
-						"# Made by the OpenXWA mod importer.\nrules:\n"
-						"  reset_combat_music_at_mission_load: true\n"
-						"  hangar_red_alert_any_mothership: true\nmission_settings:\n"
-						"  warhead_collision_damage: false\n  hyperspace_abort_sound_regions: [3]\n"),
+			  same_file(settings, "# Made by the OpenXWA mod importer.\nrules:\n"
+								  "  reset_combat_music_at_mission_load: true\n"
+								  "  hangar_red_alert_any_mothership: true\nmission_settings:\n"
+								  "  warhead_collision_damage: false\n"
+								  "  hyperspace_regions: {3: {arrival_sound: abort}}\n"),
 		  "mission settings: the hook's rules, and the global settings as defaults");
 
 	XwauMissions* missions = XwauMissions_Load(game, false);
@@ -2152,7 +2153,8 @@ static void test_mission_settings(const char* scratch) {
 						   "  force_player_in_turret: \"0:00:12\"\n"
 						   "  target_key: { flight_groups: [1], method: cycle, only_not_inspected: false }\n"
 						   "  order_of_battle:\n    lines:\n      - \"A\"\n      - \"\"\n      - \"B\"\n"
-						   "    top: 140\n  hyperspace_abort_sound_regions: [1, 2]\n"),
+						   "    top: 140\n"
+						   "  hyperspace_regions: {1: {arrival_sound: abort}, 2: {arrival_sound: abort}}\n"),
 		  "mission settings: the first line wins, numbers are read as std::stoi reads them, a word of "
 		  "spaces is an empty line, and flight groups that the .TIE doesn't have are left out");
 	check(m49 && strstr(m49, "settings:\n  hide_hyperspace_exit_messages: true\n"
@@ -3313,6 +3315,128 @@ static void test_sound_banks(const char* scratch) {
 	free(text);
 }
 
+static void test_hyperspace(const char* scratch) {
+	char game[1024], stock[1024], out[1024], flight[1024], path[1300], settings[1300];
+	snprintf(game, sizeof game, "%s/hs_game", scratch);
+	snprintf(stock, sizeof stock, "%s/hs_stock", scratch);
+	snprintf(out, sizeof out, "%s/hs_out", scratch);
+	snprintf(flight, sizeof flight, "%s/hs_flight", scratch);
+	const char* const dirs[] = { "Missions", "FlightModels", "Wave/Sfx_EnterHyperspace" };
+	for (size_t i = 0; i < sizeof dirs / sizeof dirs[0]; ++i) {
+		snprintf(path, sizeof path, "%s/%s", game, dirs[i]);
+		MakeDirs(path);
+	}
+	snprintf(path, sizeof path, "%s/MISSIONS", stock);
+	MakeDirs(path);
+	const char* const files[][2] = {
+		{ "hook_interdictor.dll", "" },
+		{ "hook_hyperspace.dll", "" },
+		{ "hook_engine_sound.dll", "" },
+		{ "hook_sounds_count.dll", "" },
+		{ "ddraw_effects.dll", "MZ [Interdiction]" },
+		{ "Hooks.ini", "[hook_hyperspace]\nShortHyperspaceEffect = 0\n" },
+		{ "FlightModels/Isd.ini",
+		  "[Interdictor]\nIsInterdictor = 1\n"
+		  "[Hyperspace]\nOutOfHyperspaceSpeed = 10800\nIntoHyperspaceSpeed = 40000\n" },
+		{ "FlightModels/Interdictor2Interdictor.txt", "IsInterdictor = 0\n" },
+		{ "FlightModels/Empty.ini", "[Interdictor]\nOther = 1\n" },
+		/* ddraw skips Region=2, and the sound hook reads it. */
+		{ "Missions/m1.ini", "[Hyperspace]\nShortHyperspaceEffect = 1\n"
+							 "[Interdiction]\nRegion=2\nRegion = 1, 9, 5 ;regions\n[Other]\nRegion = 3\n" },
+		{ "Missions/m2_Hyperspace.txt", "ShortHyperspaceEffect = 9\n" },
+		{ "Wave/Sfx_EnterHyperspace.lst", "Unused\nJump.wav 90 2000\n" },
+	};
+	for (size_t i = 0; i < sizeof files / sizeof files[0]; ++i) {
+		snprintf(path, sizeof path, "%s/%s", game, files[i][0]);
+		write_file(path, files[i][1]);
+	}
+	static const char* const kNames[]  = { "Red", "Blue" };
+	static const int         kCrafts[] = { 1, 2 };
+	snprintf(path, sizeof path, "%s/Missions/m1.tie", game);
+	write_tie(path, 2, kNames, kCrafts);
+	snprintf(path, sizeof path, "%s/Missions/m2.tie", game);
+	write_tie(path, 2, kNames, kCrafts);
+
+	XwauHyperspaceModes modes;
+	check(XwauHyperspace_ReadModes(game, &modes) && modes.interdictor && modes.hyperspace &&
+			  modes.global_mode == 0 && modes.any_short && modes.interdiction_look,
+		  "hyperspace: the hooks, the global mode, and a mission that turns short mode on");
+	check(
+		XwauHyperspace_MissionUseSpeeds(game, "Missions/m1", &modes) == 1 &&
+			XwauHyperspace_MissionUseSpeeds(game, "Missions/m2", &modes) == -1,
+		"hyperspace: with short mode off globally, only the missions that turn it on use the speeds; a value "
+		"out of range is the global one");
+	unsigned regions = 0;
+	check(XwauHyperspace_DdrawRegions(game, "Missions/m1", &regions) && regions == ((1u << 1) | (1u << 5)),
+		  "hyperspace: ddraw skips Region=2, splits at commas, reads pieces with atoi, drops regions past 7, "
+		  "and "
+		  "stops at the next section");
+
+	snprintf(settings, sizeof settings, "%s/hs_flight.yaml", scratch);
+	size_t size = 0;
+	char*  text =
+		XwauFlightSettings_Write(game, &g_names, &g_stock, settings) ? ReadWholeFile(settings, &size) : NULL;
+	check(text && strstr(text, "mission_settings:\n  use_hyperspace_speeds: false\n") &&
+			  strstr(text, "hyperspace:\n  arrival_speed_mglt: 12743.111\n  departure_speed_mglt: 12743.111\n"
+						   "  departure_acceleration_mglt: 127431.111\n  arrival_braking_seconds: 0.5\n"),
+		  "hyperspace: the hook's default speeds, and the speeds off by default when the global mode is 0");
+	free(text);
+
+	XwauMissions* missions = XwauMissions_Load(game, false);
+	check(missions && XwauMissionFiles_Write(game, missions, stock, out, &g_names, kDesignScale),
+		  "hyperspace: mission files written");
+	XwauMissions_Free(missions);
+	snprintf(path, sizeof path, "%s/missions/m1.yaml", out);
+	text = ReadWholeFile(path, &size);
+	check(text &&
+			  strstr(text, "  use_hyperspace_speeds: true\n"
+						   "  hyperspace_regions: {1: {look: interdiction}, 2: {arrival_sound: abort}}\n"),
+		  "hyperspace: the mission's speeds, ddraw's look regions and the sound hook's regions, without "
+		  "regions "
+		  "past 3");
+	free(text);
+
+	snprintf(path, sizeof path, "%s/models/isd.yaml", flight);
+	text = XwauCraft_Write(game, flight, &g_names, &g_stock, NULL, NULL) ? ReadWholeFile(path, &size) : NULL;
+	check(text && strstr(text, "hyperspace: {gravity_well: true, arrival_speed_mglt: 4800.000}\n"),
+		  "hyperspace: the model's gravity well and arrival speed; a speed past 32767 is left out");
+	free(text);
+	snprintf(path, sizeof path, "%s/models/interdictor2.yaml", flight);
+	text = ReadWholeFile(path, &size);
+	check(text && strstr(text, "hyperspace: {gravity_well: false}\n"),
+		  "hyperspace: <model>Interdictor.txt without an INI");
+	free(text);
+	snprintf(path, sizeof path, "%s/models/empty.yaml", flight);
+	text = ReadWholeFile(path, &size);
+	check(text && strstr(text, "hyperspace: {gravity_well: false}\n"),
+		  "hyperspace: a section without IsInterdictor turns the gravity well off, as in the hook");
+	free(text);
+
+	uint8_t       fmt[64], wav[256];
+	const uint8_t pcm[4] = { 0 };
+	make_fmt(fmt, 1, 1, 2, 16);
+	snprintf(path, sizeof path, "%s/Wave/Sfx_EnterHyperspace/Jump.wav", game);
+	WriteWholeFile(path, wav, make_wav(wav, fmt, 16, pcm, 4));
+	char bank_files[1024];
+	snprintf(bank_files, sizeof bank_files, "%s/hs_files", scratch);
+	snprintf(path, sizeof path, "%s/sounds.yaml", flight);
+	text = XwauSoundBanks_Write(game, &g_names, flight, bank_files) ? ReadWholeFile(path, &size) : NULL;
+	check(text && strstr(text, "  enter_hyperspace: # Wave/Sfx_EnterHyperspace.lst\n    unlisted: silent\n"),
+		  "hyperspace: the EnterHyperspace bank, silent past its list");
+	free(text);
+
+	/* Short mode off in every mission: no speeds. */
+	snprintf(path, sizeof path, "%s/Missions/m1.ini", game);
+	write_file(path, "[Interdiction]\nRegion = 1\n");
+	check(XwauHyperspace_ReadModes(game, &modes) && !modes.any_short,
+		  "hyperspace: no mission uses short mode");
+	snprintf(path, sizeof path, "%s/models/isd.yaml", flight);
+	text = XwauCraft_Write(game, flight, &g_names, &g_stock, NULL, NULL) ? ReadWholeFile(path, &size) : NULL;
+	check(text && strstr(text, "hyperspace: {gravity_well: true}\n"),
+		  "hyperspace: the model's speeds are left out when no mission uses short mode");
+	free(text);
+}
+
 int main(void) {
 	char        scratch[1024];
 	const char* tmp = getenv("TMPDIR");
@@ -3347,6 +3471,7 @@ int main(void) {
 	test_weapon_stats(scratch);
 	test_stats_profiles(scratch);
 	test_sound_banks(scratch);
+	test_hyperspace(scratch);
 	RemoveTree(scratch);
 	printf("%s\n", g_failures ? "FAILED" : "passed");
 	return g_failures ? 1 : 0;

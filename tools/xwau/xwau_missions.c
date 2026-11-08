@@ -224,8 +224,9 @@ bool XwauMissions_Names(const char* game, const char* dir_name, XwauLines* out) 
 			const size_t             len = strlen(lower);
 			char                     names[4][1024];
 			int                      n          = 0;
-			static const char* const suffixes[] = { ".ini", "_objects.txt", "_skins.txt" };
-			for (size_t s = 0; s < 3; ++s)
+			static const char* const suffixes[] = { ".ini", "_objects.txt", "_skins.txt", "_hyperspace.txt",
+													"_interdiction.txt" };
+			for (size_t s = 0; s < sizeof suffixes / sizeof suffixes[0]; ++s)
 				if (EndsWithNoCase(lower, suffixes[s]))
 					snprintf(names[n++], sizeof names[0], "%.*s", (int)(len - strlen(suffixes[s])), lower);
 			if (EndsWithNoCase(lower, ".txt")) {

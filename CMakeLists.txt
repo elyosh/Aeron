@@ -1089,6 +1089,7 @@ if(AERON_BUILD_TOOLS)
         tools/xwau/xwau_game_tables.c
         tools/xwau/xwau_mat.c
         tools/xwau/xwau_mission_tie.c
+        tools/xwau/xwau_hyperspace.c
         tools/xwau/xwau_mission_settings.c
         tools/xwau/xwau_missions.c
         tools/xwau/xwau_names.c

@@ -110,6 +110,8 @@ bool XwauSettingsConfig_Read(const char* game, XwauSettingsConfig* out) {
 	char text[1024];
 	XwauSection_Text(&interdiction, "Region", text, sizeof text);
 	XwauSection_Free(&interdiction);
+	if (!XwauHyperspace_ReadModes(game, &out->hyperspace))
+		return false;
 	/* Without hook_engine_sound.dll, XWAU never reads Region. */
 	if (!out->engine_sound)
 		return true;
@@ -119,6 +121,39 @@ bool XwauSettingsConfig_Read(const char* game, XwauSettingsConfig* out) {
 void XwauSettingsConfig_Free(XwauSettingsConfig* config) {
 	free(config->interdiction);
 	memset(config, 0, sizeof *config);
+}
+
+/* Returns the regions of `values` as bits. A region that the game doesn't
+ * have is left out, and reported with `label` unless `label` is NULL. */
+static unsigned region_bits(const int* values, size_t count, const char* label) {
+	unsigned bits = 0;
+	for (size_t i = 0; i < count; ++i) {
+		if (values[i] >= 0 && values[i] <= XWAU_HYPERSPACE_MAX_REGION)
+			bits |= 1u << values[i];
+		else if (label)
+			Report(label,
+				   "[Interdiction] lists region %d, and the game only has regions 0 to %d; it is left out",
+				   values[i], XWAU_HYPERSPACE_MAX_REGION);
+	}
+	return bits;
+}
+
+/* Writes `hyperspace_regions` for the bits of `abort` and `look`. */
+static void write_regions(FILE* f, unsigned abort, unsigned look) {
+	fputs("  hyperspace_regions: {", f);
+	const char* separator = "";
+	for (int r = 0; r <= XWAU_HYPERSPACE_MAX_REGION; ++r) {
+		if (!((abort | look) & (1u << r)))
+			continue;
+		fprintf(f, "%s%d: {", separator, r);
+		if (look & (1u << r))
+			fputs((abort & (1u << r)) ? "look: interdiction, " : "look: interdiction", f);
+		if (abort & (1u << r))
+			fputs("arrival_sound: abort", f);
+		fputc('}', f);
+		separator = ", ";
+	}
+	fputs("}\n", f);
 }
 
 static void write_ints(FILE* f, const int* values, size_t count) {
@@ -181,19 +216,22 @@ bool XwauMissionSettings_WriteDefaults(FILE* f, const XwauSettingsConfig* config
 		fputs("  hangar_droid_parts_from_model: true\n", f);
 	const bool warheads     = config->mission_tie && !config->warhead_collision_damage;
 	const bool shields      = config->mission_tie && config->damage_through_shields;
-	const bool interdiction = config->engine_sound && config->interdiction_count;
-	if (warheads || shields || interdiction)
+	const unsigned abort =
+		config->engine_sound
+			? region_bits(config->interdiction, config->interdiction_count, "FlightModels [Interdiction]")
+			: 0;
+	const bool speeds_off = XwauHyperspace_DefaultUseSpeedsOff(&config->hyperspace);
+	if (warheads || shields || abort || speeds_off)
 		fputs("mission_settings:\n", f);
 	if (warheads)
 		fputs("  warhead_collision_damage: false\n", f);
 	if (shields)
 		fputs("  damage_through_shields_on_hard: true\n", f);
-	if (interdiction) {
-		fputs("  hyperspace_abort_sound_regions: ", f);
-		write_ints(f, config->interdiction, config->interdiction_count);
-		fputc('\n', f);
-	}
-	return rules || interdiction;
+	if (speeds_off)
+		fputs("  use_hyperspace_speeds: false\n", f);
+	if (abort)
+		write_regions(f, abort, 0);
+	return rules || abort || speeds_off;
 }
 
 /* ---- Mission numbers --------------------------------------------------------- */
@@ -431,18 +469,43 @@ bool XwauMissionSettings_Read(const char* game, const char* base, int number, co
 							top);
 		}
 	}
+	out->use_speeds = -1;
 	if (ok) {
+		/* hook_engine_sound plays the abort sound in the mission's regions,
+		   else in the global ones. */
 		XwauSection interdiction;
 		ok = XwauSection_ReadMission(game, base, "Interdiction", XWAU_RULES_CPP, &interdiction);
 		/* Without hook_engine_sound.dll, XWAU never reads these lines. */
-		if (ok && interdiction.lines.count && config->engine_sound) {
-			char text[1024];
-			XwauSection_Text(&interdiction, "Region", text, sizeof text);
-			ok                = int_list(text, false, &out->interdiction_regions, &out->interdiction_count);
-			out->interdiction = true;
+		if (ok && config->engine_sound) {
+			int*   regions = NULL;
+			size_t count   = 0;
+			if (interdiction.lines.count) {
+				char text[1024];
+				XwauSection_Text(&interdiction, "Region", text, sizeof text);
+				ok               = int_list(text, false, &regions, &count);
+				out->own_regions = true;
+			}
+			out->abort_regions = interdiction.lines.count
+									 ? region_bits(regions, count, base)
+									 : region_bits(config->interdiction, config->interdiction_count, NULL);
+			free(regions);
 		}
 		XwauSection_Free(&interdiction);
 	}
+	/* ddraw draws its interdiction in the regions of the mission's .ini. */
+	unsigned look = 0;
+	if (ok && config->hyperspace.interdiction_look && XwauHyperspace_DdrawRegions(game, base, &look)) {
+		for (int r = XWAU_HYPERSPACE_MAX_REGION + 1; r < 8; ++r)
+			if (look & (1u << r))
+				Report(
+					base,
+					"[Interdiction] lists region %d, and the game only has regions 0 to %d; it is left out",
+					r, XWAU_HYPERSPACE_MAX_REGION);
+		out->look_regions = look & ((1u << (XWAU_HYPERSPACE_MAX_REGION + 1)) - 1);
+		out->own_regions |= out->look_regions != 0;
+	}
+	if (ok)
+		out->use_speeds = XwauHyperspace_MissionUseSpeeds(game, base, &config->hyperspace);
 	if (!ok)
 		XwauMissionSettings_Free(out);
 	return ok;
@@ -455,7 +518,6 @@ void XwauMissionSettings_Free(XwauMissionSettings* settings) {
 		free(settings->order_names[i].text);
 	free(settings->order_names);
 	XwauLines_Free(&settings->order_lines);
-	free(settings->interdiction_regions);
 	memset(settings, 0, sizeof *settings);
 }
 
@@ -478,7 +540,8 @@ bool XwauMissionSettings_Any(const XwauMissionSettings* s) {
 	return s->red_alert >= 0 || s->skip_hyperspaced_messages >= 0 || s->skip_arrival_iff >= 0 ||
 		   s->force_turret >= 0 || s->disable_lasers || s->disable_warheads ||
 		   s->no_warhead_collision_damage || s->damage_through_shields >= 0 || s->target_key ||
-		   s->skip_projectiles || s->order_list || s->order_lines.count || s->interdiction;
+		   s->skip_projectiles || s->order_list || s->order_lines.count || s->own_regions ||
+		   s->use_speeds >= 0;
 }
 
 static const char* yes_no(int value) { return value ? "true" : "false"; }
@@ -543,9 +606,8 @@ void XwauMissionSettings_Write(FILE* f, const XwauMissionSettings* s) {
 		if (s->order_top >= 0)
 			fprintf(f, "    top: %d\n", s->order_top);
 	}
-	if (s->interdiction) {
-		fputs("  hyperspace_abort_sound_regions: ", f);
-		write_ints(f, s->interdiction_regions, s->interdiction_count);
-		fputc('\n', f);
-	}
+	if (s->use_speeds >= 0)
+		fprintf(f, "  use_hyperspace_speeds: %s\n", yes_no(s->use_speeds));
+	if (s->own_regions)
+		write_regions(f, s->abort_regions, s->look_regions);
 }

@@ -47,9 +47,9 @@ XwauMissions* XwauMissions_Load(const char* game, bool report_problems);
 void          XwauMissions_Free(XwauMissions* missions);
 
 /* Lists the missions in folder `dir` (Missions, Melee or Combat) that have a
- * .ini, _Objects.txt, _Skins.txt or _SFoils*.txt file, or a .txt file next
- * to their .TIE. The names are in lower case and sorted. Returns false when
- * out of memory. */
+ * .ini, _Objects.txt, _Skins.txt, _Hyperspace.txt, _Interdiction.txt or
+ * _SFoils*.txt file, or a .txt file next to their .TIE. The names are in
+ * lower case and sorted. Returns false when out of memory. */
 bool XwauMissions_Names(const char* game, const char* dir, XwauLines* out);
 
 /* Reads the skin lines of mission `base` ("<dir>/<name>") from

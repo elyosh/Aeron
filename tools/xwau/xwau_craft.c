@@ -13,6 +13,7 @@
 #include "xwau_config.h"
 #include "xwau_game_tables.h"
 #include "xwau_gunner_seats.h"
+#include "xwau_hyperspace.h"
 #include "xwau_mat.h"
 #include "xwau_model.h"
 #include "xwau_objects.h"
@@ -1118,8 +1119,9 @@ static bool write_craft_file(const char* path, const XwauNames* names, const Xwa
 							 const XwauCraftShield* shield, const XwauCraftSound* sound,
 							 const XwauCraftComponents* components, const XwauGunnerSeats* gunner,
 							 const XwauCraftWarheadLock* lock, const XwauCraftJamming* jamming,
-							 const XwauCraftDock* dock, const XwauAiAttack* attack, const XwauMagPulse* pulse,
-							 const XwauCockpitFov* fov, const XwauMatFile* mat, XwauLines* cockpits) {
+							 const XwauCraftDock* dock, const XwauCraftHyperspace* hyperspace,
+							 const XwauAiAttack* attack, const XwauMagPulse* pulse, const XwauCockpitFov* fov,
+							 const XwauMatFile* mat, XwauLines* cockpits) {
 	FILE* f = fopen(path, "wb");
 	if (!f) {
 		Report(path, "can't be written");
@@ -1147,6 +1149,8 @@ static bool write_craft_file(const char* path, const XwauNames* names, const Xwa
 		XwauCraft_WriteJamming(f, jamming);
 	if (dock->has)
 		XwauCraft_WriteDock(f, dock);
+	if (XwauHyperspace_HasModel(hyperspace))
+		XwauHyperspace_WriteModel(f, hyperspace);
 	if (attack->has)
 		XwauAiAttack_Write(f, names, attack);
 	if (pulse->has)
@@ -1617,7 +1621,9 @@ static const char* const g_sideFiles[] = { "Reticle.txt",
 										   "Jamming.txt",
 										   "Dock.txt",
 										   "AttackBreakDistance.txt",
-										   "WeaponLockBehaviors.txt" };
+										   "WeaponLockBehaviors.txt",
+										   "Interdictor.txt",
+										   "Hyperspace.txt" };
 
 enum {
 	SIDE_RETICLE,
@@ -1638,6 +1644,8 @@ enum {
 	SIDE_DOCK,
 	SIDE_ATTACK_BREAK,
 	SIDE_WEAPON_LOCK_BEHAVIORS,
+	SIDE_INTERDICTOR,
+	SIDE_HYPERSPACE,
 	SIDE_FILES
 };
 
@@ -1701,13 +1709,21 @@ bool XwauCraft_Write(const char* xwau_root, const char* output_dir, const XwauNa
 	int    written = 0, reticles = 0, colors = 0, engine_glows = 0, weapon_colors = 0;
 	int    stats_profiles = 0, shields = 0, sounds = 0, components = 0;
 	int    weapon_profiles = 0, warhead_locks = 0, jammings = 0, docks = 0, surfaces = 0, cockpit_views = 0;
-	int    ai_attacks = 0, mag_pulses = 0;
+	int    ai_attacks = 0, mag_pulses = 0, hyperspaces = 0;
 	/* The materials that the .mat files start from (as opt2gltf reads them). */
 	XwauMatParams global;
 	char          global_path[1024];
 	XwauMat_CodeDefaults(&global);
 	if (Xwau_FindFile(xwau_root, "Materials/DefaultGlobalMaterial.mat", global_path, sizeof global_path))
 		XwauMat_ReadGlobalDefault(global_path, &global);
+	/* hook_interdictor reads the [Interdictor] sections, and hook_hyperspace
+	   reads the [Hyperspace] sections. */
+	XwauHyperspaceModes hyperspace_modes;
+	if (!XwauHyperspace_ReadModes(xwau_root, &hyperspace_modes)) {
+		FreeList(names, count);
+		Report(NULL, "out of memory");
+		return false;
+	}
 	/* hook_dock reads the [Dock] sections. */
 	char       dock_dll[1024];
 	const bool dock_hook = Xwau_FindFile(xwau_root, "hook_dock.dll", dock_dll, sizeof dock_dll);
@@ -1836,6 +1852,9 @@ bool XwauCraft_Write(const char* xwau_root, const char* output_dir, const XwauNa
 		const bool    model_dock = dock_hook && strcasecmp(model, "default") != 0;
 		XwauCraft_ReadDock(model_dock ? side_path[SIDE_DOCK] : NULL, model_dock && has_ini ? ini : NULL,
 						   &dock);
+		XwauCraftHyperspace hyperspace;
+		XwauHyperspace_ReadModel(&hyperspace_modes, model, side_path[SIDE_INTERDICTOR],
+								 side_path[SIDE_HYPERSPACE], has_ini ? ini : NULL, &hyperspace);
 		/* The sections of default.ini hold the global values
 		   (xwau_flight_settings.c). */
 		XwauAiAttack attack;
@@ -1877,8 +1896,8 @@ bool XwauCraft_Write(const char* xwau_root, const char* output_dir, const XwauNa
 		}
 		if (!has_reticle(&hud) && !has_colors(&hud) && !has_engine_glows(&glows) && !has_weapons(weapons) &&
 			!stats.count && !shield.has && !XwauCraft_HasSound(&sound) && !strengths.has && !gunner.has &&
-			!lock.has && !jamming.has && !dock.has && !attack.has && !pulse.has && !fov.has_large &&
-			!XwauMat_SurfaceRuleCount(mat)) {
+			!lock.has && !jamming.has && !dock.has && !XwauHyperspace_HasModel(&hyperspace) && !attack.has &&
+			!pulse.has && !fov.has_large && !XwauMat_SurfaceRuleCount(mat)) {
 			XwauAiAttack_Free(&attack);
 			XwauMat_Free(mat);
 			XwauStatsProfiles_Free(&stats);
@@ -1889,8 +1908,8 @@ bool XwauCraft_Write(const char* xwau_root, const char* output_dir, const XwauNa
 		surfaces += XwauMat_SurfaceRuleCount(mat) != 0;
 		if (!PathFormat(path, sizeof path, "%s/%s.yaml", craft_dir, key) || !MakeDirs(craft_dir) ||
 			!write_craft_file(path, game_names, stock_values, &hud, &glows, weapons, &stats, &shield, &sound,
-							  &strengths, &gunner, &lock, &jamming, &dock, &attack, &pulse, &fov, mat,
-							  cockpits)) {
+							  &strengths, &gunner, &lock, &jamming, &dock, &hyperspace, &attack, &pulse, &fov,
+							  mat, cockpits)) {
 			XwauAiAttack_Free(&attack);
 			XwauMat_Free(mat);
 			XwauStatsProfiles_Free(&stats);
@@ -1908,6 +1927,7 @@ bool XwauCraft_Write(const char* xwau_root, const char* output_dir, const XwauNa
 		warhead_locks += lock.has;
 		jammings += jamming.has;
 		docks += dock.has;
+		hyperspaces += XwauHyperspace_HasModel(&hyperspace);
 		ai_attacks += attack.has;
 		mag_pulses += pulse.has;
 		XwauAiAttack_Free(&attack);
@@ -1929,11 +1949,11 @@ bool XwauCraft_Write(const char* xwau_root, const char* output_dir, const XwauNa
 		"model settings: %d files, %d with a reticle, %d with HUD colours, %d with engine glows, %d with "
 		"weapon settings, %d with weapon profiles, %d with stats profiles, %d with a shield recharge rate, "
 		"%d with sounds, %d with component strengths, %d with gunner seats, %d with warhead lock settings, "
-		"%d with jamming rules, %d with a docking approach height, %d with AI attack settings, %d with mag "
-		"pulse settings, %d with surface rules, %d with a wide cockpit view",
+		"%d with jamming rules, %d with a docking approach height, %d with hyperspace settings, %d with AI "
+		"attack settings, %d with mag pulse settings, %d with surface rules, %d with a wide cockpit view",
 		written, reticles, colors, engine_glows, weapon_colors, weapon_profiles, stats_profiles, shields,
-		sounds, components, gunner_seats, warhead_locks, jammings, docks, ai_attacks, mag_pulses, surfaces,
-		cockpit_views);
+		sounds, components, gunner_seats, warhead_locks, jammings, docks, hyperspaces, ai_attacks, mag_pulses,
+		surfaces, cockpit_views);
 	if (engine_sound) {
 		/* The default ambient distance of hook_engine_sound. */
 		XwauSection global;

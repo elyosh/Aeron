@@ -24,9 +24,12 @@
  * entries are named after their position in the list, such as range_3.
  *
  * The EnterHyperspace and ExitHyperspace banks of hook_hyperspace play when
- * other craft jump. The game plays no sound then, so these banks aren't
- * imported. Entries for object types that the game has no name for are left
- * out, since no craft can use them.
+ * other craft jump away or end their arrival in the player's region. The
+ * stock game plays nothing then, and neither does XWAU past the end of the
+ * lists.
+ *
+ * Entries for object types that the game has no name for are left out,
+ * since no craft can use them.
  *
  * Each list line is read the way the game reads it, after XWAU cuts it at
  * ';'. The file name ends at the first space or tab. Then come the volume in

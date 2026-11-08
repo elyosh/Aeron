@@ -543,6 +543,7 @@ bool XwauFlightSettings_Write(const char* game, const XwauNames* names, const Xw
 	const bool camera     = write_camera(f, game);
 	const bool suns       = write_suns(f, game);
 	const bool speed      = write_speed_effect(f, game);
+	const bool hyperspace = XwauHyperspace_WriteFlightSettings(f, &config.hyperspace);
 	bool       ai_attack, mag_pulse, warhead_lock;
 	const bool weapon_lock_ok =
 		XwauWeaponLock_WriteFlightSettings(f, game, names, &ai_attack, &mag_pulse, &warhead_lock);
@@ -562,7 +563,8 @@ bool XwauFlightSettings_Write(const char* game, const XwauNames* names, const Xw
 									warhead_lock ? "the AI warhead lock ranges" : NULL,
 									camera ? "the camera" : NULL,
 									suns ? "the suns" : NULL,
-									speed ? "the speed effect" : NULL };
+									speed ? "the speed effect" : NULL,
+									hyperspace ? "the hyperspace speeds" : NULL };
 	for (size_t i = 0; i < sizeof parts / sizeof parts[0]; ++i) {
 		if (parts[i])
 			snprintf(what + strlen(what), sizeof what - strlen(what), "%s%s", what[0] ? ", " : "", parts[i]);

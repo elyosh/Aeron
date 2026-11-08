@@ -35,6 +35,8 @@ static const BankInfo g_banks[] = {
 	{ "CanopyOpening", "canopy_opening", BANK_BY_TYPE, "hook_engine_sound.dll", false, false },
 	{ "EngineSlowing", "engine_slowing", BANK_BY_TYPE, "hook_engine_sound.dll", false, false },
 	{ "EngineWash", "engine_wash", BANK_BY_TYPE, "hook_engine_sound.dll", false, false },
+	{ "EnterHyperspace", "enter_hyperspace", BANK_BY_TYPE, "hook_hyperspace.dll", true, false },
+	{ "ExitHyperspace", "exit_hyperspace", BANK_BY_TYPE, "hook_hyperspace.dll", true, false },
 	{ "FlyBy", "fly_by", BANK_BY_TYPE, "hook_engine_sound.dll", true, false },
 	{ "HangarAmbient", "hangar_ambient", 10, "hook_hangars.dll", false, true },
 	{ "HyperAbort", "hyper_abort", BANK_BY_TYPE, "hook_engine_sound.dll", true, false },
@@ -53,10 +55,6 @@ static const BankInfo g_banks[] = {
 	{ "WeaponExplosion", "weapon_explosion", 8, "hook_engine_sound.dll", false, true },
 	{ "WeaponRange", "weapon_range", BANK_BY_POSITION, "hook_engine_sound.dll", false, false },
 };
-
-/* The hook_hyperspace banks. They play when other craft jump, and the game
-   plays no sound then. */
-static const char* const g_otherCraftHyperspaceBanks[] = { "EnterHyperspace", "ExitHyperspace" };
 
 void XwauSoundBanks_RangeName(int position, char* out, size_t cap) {
 	snprintf(out, cap, "range_%d", position);
@@ -638,15 +636,7 @@ bool XwauSoundBanks_Write(const char* game, const XwauNames* game_names, const c
 		for (size_t b = 0; !bank && b < sizeof g_banks / sizeof g_banks[0]; ++b)
 			if (strcasecmp(stem + 4, g_banks[b].name) == 0)
 				bank = &g_banks[b];
-		bool other_craft_hyperspace = false;
-		for (size_t b = 0; b < sizeof g_otherCraftHyperspaceBanks / sizeof g_otherCraftHyperspaceBanks[0];
-			 ++b)
-			other_craft_hyperspace |= strcasecmp(stem + 4, g_otherCraftHyperspaceBanks[b]) == 0;
 		char dll[1024];
-		if (other_craft_hyperspace) {
-			ReportUnsupported("the EnterHyperspace and ExitHyperspace sound banks");
-			continue;
-		}
 		/* XWAU doesn't read a bank that no hook of the installation reads. */
 		if (!bank || !Xwau_FindFile(game, bank->hook, dll, sizeof dll))
 			continue;

@@ -13,15 +13,16 @@
  *
  * A model settings file has one group for each kind of setting: `hud`,
  * `engine_glows`, `weapons`, `shield`, `component_strength`,
- * `warhead_lock`, `jamming`, `docking`, `ai_attack`, `mag_pulse`, `sound`
- * and `cockpit_view`.
+ * `warhead_lock`, `jamming`, `docking`, `hyperspace`, `ai_attack`,
+ * `mag_pulse`, `sound` and `cockpit_view`.
  *
  * Each group comes from FlightModels/<model><Name>.txt, or else from the
  * [<Name>] section of the model's INI, and is read the way the XWAU hook or
  * ddraw reads it. The names are Reticle, HUDColor, EngineGlows, WeaponColor,
  * WeaponRate, Shield, SubcomponentsStrength, Turrets (xwau_gunner_seats.h),
- * WarheadLock, Jamming, Dock, Sound, AttackBreakDistance and
- * WeaponLockBehaviors. A section that needs a hook is only
+ * WarheadLock, Jamming, Dock, Interdictor, Hyperspace, Sound,
+ * AttackBreakDistance and WeaponLockBehaviors. `hyperspace` is described in
+ * xwau_hyperspace.h. A section that needs a hook is only
  * read when the installation has that hook. The weapon profiles of
  * [WeaponStats], [WarheadStats], [EnergyStats], [LinkingStats] and
  * [WeaponHardpointTypes] go into `weapons` too (xwau_weapon_stats.h). The

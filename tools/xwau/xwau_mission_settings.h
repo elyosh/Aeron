@@ -2,8 +2,9 @@
 #define AERON_XWAU_MISSION_SETTINGS_H
 
 /*
- * The mission settings of XWAU's hook_mission_tie and the [Interdiction]
- * regions of hook_engine_sound, as the game's mission settings
+ * Converts the mission settings of XWAU's hook_mission_tie, the
+ * [Interdiction] regions of hook_engine_sound and ddraw, and the hyperspace
+ * mode of hook_hyperspace into the game's mission settings
  * (mission_settings.h in the game).
  *
  * hook_mission_tie reads `key = value` lines from a mission's [mission_tie]
@@ -19,16 +20,24 @@
  *     messages, it also hides the "entering area" messages, so
  *     hide_friendly_arrival_messages is written too;
  *   - the defaults of flight/flight.yaml for warhead_collision_damage,
- *     damage_through_shields_on_hard and hyperspace_abort_sound_regions,
- *     which come from the global settings
+ *     damage_through_shields_on_hard, hyperspace_regions and
+ *     use_hyperspace_speeds, which come from the global settings
  *     (XwauMissionSettings_WriteDefaults).
+ *
+ * hyperspace_regions combines two sources. hook_engine_sound plays the abort
+ * sound in the regions of the mission's [Interdiction] section, else in the
+ * global ones. ddraw draws its interdiction in the regions of the [Interdiction]
+ * section of the mission's .ini (xwau_hyperspace.h), which become `look:
+ * interdiction`. A mission with regions of its own gets the whole list, since
+ * its list replaces the default. Regions past 3 are reported and left out.
+ * use_hyperspace_speeds comes from xwau_hyperspace.h.
  *
  * As in the hook, a key is found in any case, the first line with it wins,
  * and numbers are read as std::stoi reads them. A value that isn't a number
  * stops XWAU (std::stoi throws), so the default is used.
  *
  * Without hook_mission_tie.dll, there are no settings, and without
- * hook_engine_sound.dll, there are no interdiction regions. The import
+ * hook_engine_sound.dll, there are no abort sound regions. The import
  * doesn't convert IsMissionRanksModifierEnabled, and counts it as
  * unsupported. It does the same for order of battle texts that aren't ASCII,
  * since the game may show them differently.
@@ -39,6 +48,7 @@
 #include <stdio.h>
 
 #include "xwau_config.h"
+#include "xwau_hyperspace.h"
 
 /* The global settings of the mod's hooks. */
 typedef struct XwauSettingsConfig {
@@ -97,9 +107,12 @@ typedef struct XwauSettingsConfig {
 	long long target_method;
 	bool      target_only_not_inspected;
 	/* The regions of FlightModels/Interdiction.txt, else of the
-	 * [Interdiction] section of FlightModels/default.ini. */
+	 * [Interdiction] section of FlightModels/default.ini, for the abort
+	 * sound of hook_engine_sound. */
 	int*   interdiction;
 	size_t interdiction_count;
+	/* hook_interdictor, hook_hyperspace and ddraw's interdiction. */
+	XwauHyperspaceModes hyperspace;
 } XwauSettingsConfig;
 
 /* Reads the global settings of the installation `game`. Returns false when
@@ -164,9 +177,12 @@ typedef struct XwauMissionSettings {
 	size_t    order_name_count;
 	XwauLines order_lines;
 	int       order_top;
-	bool      interdiction; /* the mission has its own regions */
-	int*      interdiction_regions;
-	size_t    interdiction_count;
+	/* hyperspace_regions: written when the mission has its own [Interdiction]
+	 * regions, for the sound or for ddraw. Bit r is region r. */
+	bool     own_regions;
+	unsigned abort_regions;
+	unsigned look_regions;
+	int      use_speeds; /* use_hyperspace_speeds: -1, 0 or 1 */
 } XwauMissionSettings;
 
 /* Reads the settings of mission `base` (such as "Missions/1b7m2w") of the
