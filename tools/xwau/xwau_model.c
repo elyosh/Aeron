@@ -28,6 +28,8 @@ static const struct {
 #define CARGO_CLAMPS "SFoilsCargoClamps_"
 
 static const char* const kBehaviors[] = { "swing", "random", "random_pause" };
+/* hook_pilot's droid behaviors 3 to 5. */
+static const char* const kDroidBehaviors[] = { "nod", "swing", "spin" };
 
 /* Reads the lines of a model's section `section`, as the hook's
  * GetFileLines does. */
@@ -525,22 +527,32 @@ static bool read_rotations(const char* game, const XwauMissions* missions, const
 	}
 	XwauLines_Free(&keys);
 
-	/* The crew: the lines of Pilot, with behaviors 0 to 2. */
+	/* The lines of Pilot: behaviors 0 to 2 move the crew, and 3 to 5 the
+	   parts of a hangar droid. */
 	XwauLines     lines;
 	XwauMeshLine* mesh_lines = NULL;
 	size_t        count      = 0;
 	bool          has_crew   = false;
 	if (ok && (ok = section_lines(game, model, "Pilot", &lines))) {
-		ok = XwauModel_MeshLines(&lines, &mesh_lines, &count, label, "Pilot");
+		/* The droid hooks give a model the stock droid parts only when it
+		   has no Pilot lines at all. */
+		out->has_pilot_lines = lines.count != 0;
+		ok                   = XwauModel_MeshLines(&lines, &mesh_lines, &count, label, "Pilot");
 		XwauLines_Free(&lines);
 	}
 	for (size_t i = 0; ok && i < count; ++i) {
 		const long long behavior = mesh_lines[i].values[3];
-		if (behavior < 0 || behavior > 2) {
-			ReportUnsupported("[Pilot] behaviors other than 0 to 2");
+		bool            added;
+		if (behavior >= 3 && behavior <= 5) {
+			/* The droid hooks don't use the angle and the speed. */
+			ok = add_articulation(out, "Pilot", "hangar_droid", mesh_lines[i].values[0], 0, 0, 0,
+								  kDroidBehaviors[behavior - 3], &added, label);
 			continue;
 		}
-		bool added;
+		if (behavior < 0 || behavior > 5) {
+			ReportUnsupported("[Pilot] behaviors other than 0 to 5");
+			continue;
+		}
 		ok = add_articulation(out, "Pilot", "crew", mesh_lines[i].values[0], mesh_lines[i].values[1],
 							  mesh_lines[i].values[2], mesh_lines[i].values[2], kBehaviors[behavior], &added,
 							  label);
@@ -573,6 +585,23 @@ static bool read_rotations(const char* game, const XwauMissions* missions, const
 		ok = add_setting(out, "crew.always_animate", 1);
 	return ok && XwauMissions_Articulations(missions, model, out->articulations, &out->articulation_count,
 											XWAU_MODEL_MAX_ARTICULATIONS, label);
+}
+
+bool XwauModel_AddStockDroidParts(XwauModel* out, int object_type, const char* label) {
+	/* The droid parts of GetDefaultPilotMeshes in hook_pilot. */
+	static const struct {
+		int         object_type, component;
+		const char* behavior;
+	} kParts[] = { { 311, 3, "nod" }, { 312, 1, "swing" }, { 312, 2, "spin" } };
+
+	bool ok = true;
+	for (size_t i = 0; ok && i < sizeof kParts / sizeof kParts[0]; ++i) {
+		bool added;
+		if (kParts[i].object_type == object_type)
+			ok = add_articulation(out, "Pilot", "hangar_droid", kParts[i].component, 0, 0, 0,
+								  kParts[i].behavior, &added, label);
+	}
+	return ok;
 }
 
 bool XwauModel_Read(const char* game, const XwauMissions* missions, const char* model, XwauModel* out,

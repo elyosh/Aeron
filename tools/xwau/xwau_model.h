@@ -47,12 +47,16 @@
  *     .ini or a <Model>SFoilsCargoClamps_<key>.txt file next to it, and its
  *     group is cargo_clamps.open, cargo_clamps.close or
  *     cargo_clamps.<encoded key>. Pilot has lines "mesh, angle, speed,
- *     behavior" for the group crew, with behaviors 0 to 2 (swing, random,
- *     random_pause). A line with fewer than four tokens is not a mesh line.
- *     Numbers are read with std::stoi(text, 0, 0). A line is skipped, as in
- *     XWAU, when its mesh is negative, its angle is outside -128..255, or a
- *     speed is outside 0..255. A mesh above 254 or a group name that is too
- *     long makes the import fail. A Pilot behavior other than 0 to 2 and a
+ *     behavior". Behaviors 0 to 2 (swing, random, random_pause) are for the
+ *     group crew. Behaviors 3 to 5 are hook_pilot's hangar droid motions
+ *     (nod, swing, spin), for the group hangar_droid, with angle and speed
+ *     0, since the droid hooks don't use them. A line with fewer than four
+ *     tokens is not a mesh line.
+ *     Numbers are read with std::stoi(text, 0, 0). A line is skipped when
+ *     its mesh is negative. Except for hangar droid lines, it is also
+ *     skipped, as in XWAU, when its angle is outside -128..255, or a speed
+ *     is outside 0..255. A mesh above 254 or a group name that is too
+ *     long makes the import fail. A Pilot behavior other than 0 to 5 and a
  *     PilotCockpit section are counted as features that the import doesn't
  *     convert. The [SFoils] keys CloseSFoilsInHyperspace,
  *     SFoilsAnimationSpeed, AllowFireWhenSFoilsAreClosed,
@@ -103,12 +107,20 @@ typedef struct XwauModel {
 	OptGltfArticulationSetting   settings[XWAU_MODEL_MAX_SETTINGS];
 	size_t                       setting_count;
 	char                         dynamic_cockpit[1024]; /* "" without one */
+	bool                         has_pilot_lines;       /* the Pilot section has lines */
 } XwauModel;
 
 /* Reads the files of `model` (the OPT name without the extension). Returns
  * false when out of memory or when a table is full. */
 bool XwauModel_Read(const char* game, const XwauMissions* missions, const char* model, XwauModel* out,
 					const char* label);
+
+/* Adds the hangar_droid parts that hook_pilot gives object type 311
+ * (HangarDroid: 3 nods) or 312 (HangarDroid2: 1 swings, 2 spins). The hook
+ * gives them to the model of the type's list row when the model has no
+ * Pilot lines. Other types get nothing. Returns false when the table is
+ * full. */
+bool XwauModel_AddStockDroidParts(XwauModel* out, int object_type, const char* label);
 
 /* Gets the pilot eye of `model` from its POV lines, or else from XWAU's craft table. */
 bool XwauModel_Eye(const char* game, const char* model, int eye[3]);

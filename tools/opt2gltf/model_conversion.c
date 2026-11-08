@@ -376,7 +376,12 @@ static bool prepare_stock(Conversion* c, const ModelConversion* mc, const char* 
 static bool prepare_xwau(Conversion* c, const ModelConversion* mc, const opt_file_t* opt,
 						 const char* basename, const char* label) {
 	c->model        = (XwauModel*)malloc(sizeof *c->model);
-	const bool read = c->model && XwauModel_Read(mc->game, mc->missions, basename, c->model, label);
+	bool read       = c->model && XwauModel_Read(mc->game, mc->missions, basename, c->model, label);
+	/* hook_pilot gives the stock hangar droids their parts when the model of
+	   the type's list row has no Pilot lines. */
+	for (int type = 311; read && mc->tables && !c->model->has_pilot_lines && type <= 312; ++type)
+		if (strcasecmp(XwauGameTables_RowModel(mc->tables, type), basename) == 0)
+			read = XwauModel_AddStockDroidParts(c->model, type, label);
 	if (read) {
 		c->options.model.articulations      = c->model->articulations;
 		c->options.model.articulation_count = c->model->articulation_count;

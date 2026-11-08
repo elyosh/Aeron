@@ -89,6 +89,9 @@ typedef struct XwauSettingsConfig {
 	/* hook_crafts_count.dll, turned on, with the patch that lets the fly-by
 	 * sounds of several craft play at once. */
 	bool      crafts_count_sounds;
+	/* hook_pilot.dll with the hangar droid hooks: the droids move the parts
+	 * that their model lists, and no others. */
+	bool      pilot_hangar_droids;
 	bool      warhead_collision_damage;
 	bool      damage_through_shields;
 	long long target_method;
@@ -113,9 +116,9 @@ void XwauSettingsConfig_Free(XwauSettingsConfig* config);
  * weapon rules,
  * hook_engine_sound's starship_ambient_sounds, and hook_mission_objects'
  * gunner_weapon_select_in_seat, gunner_warheads_need_cockpit_hardpoint
- * and, with UnlimitedTurretLaser = 1, gunner_fires_selected_group, and
- * hook_crafts_count's overlapping_fly_by_sounds. Returns whether it wrote
- * anything.
+ * and, with UnlimitedTurretLaser = 1, gunner_fires_selected_group,
+ * hook_crafts_count's overlapping_fly_by_sounds, and hook_pilot's
+ * hangar_droid_parts_from_model. Returns whether it wrote anything.
  */
 bool XwauMissionSettings_WriteDefaults(FILE* f, const XwauSettingsConfig* config);
 

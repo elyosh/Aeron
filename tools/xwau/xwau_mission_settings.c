@@ -69,6 +69,10 @@ bool XwauSettingsConfig_Read(const char* game, XwauSettingsConfig* out) {
 	}
 	out->crafts_count_sounds = XwauObjectLimits_HookEnabled(game) &&
 							   Xwau_DllHasText(game, "hook_crafts_count.dll", "RS's crafts count");
+	/* This text is the original bytes of the patch for the first droid's
+	   motion. Older builds of the hook, without the droid hooks, don't have
+	   it. */
+	out->pilot_hangar_droids = Xwau_DllHasText(game, "hook_pilot.dll", "890DFC0D9100");
 	XwauSection settings;
 	if (Xwau_FindFile(game, "hook_weapon_type.dll", path, sizeof path)) {
 		out->weapon_type          = true;
@@ -131,7 +135,7 @@ bool XwauMissionSettings_WriteDefaults(FILE* f, const XwauSettingsConfig* config
 					   config->weapon_rate_slot_cap || config->gunner_seats ||
 					   config->weapon_rate_mesh_filter || config->weapon_rate_hardpoint_types ||
 					   config->weapon_rate_rearm_statuses || config->jamming || config->weapon_type ||
-					   config->crafts_count_sounds;
+					   config->crafts_count_sounds || config->pilot_hangar_droids;
 	if (rules)
 		fputs("rules:\n", f);
 	if (config->mission_tie)
@@ -173,6 +177,8 @@ bool XwauMissionSettings_WriteDefaults(FILE* f, const XwauSettingsConfig* config
 		fputs("  starship_missile_defense_any_warhead: true\n  weapon_rack_count_from_record: true\n", f);
 	if (config->crafts_count_sounds)
 		fputs("  overlapping_fly_by_sounds: true\n", f);
+	if (config->pilot_hangar_droids)
+		fputs("  hangar_droid_parts_from_model: true\n", f);
 	const bool warheads     = config->mission_tie && !config->warhead_collision_damage;
 	const bool shields      = config->mission_tie && config->damage_through_shields;
 	const bool interdiction = config->engine_sound && config->interdiction_count;

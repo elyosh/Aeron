@@ -963,6 +963,27 @@ static const uint32_t* model_set(const XwauModel* model, const char* name) {
 	return NULL;
 }
 
+/* Returns whether the model has an articulation of `component` in `group`
+   (any group when NULL) with `behavior` (any when NULL). */
+static bool model_articulation(const XwauModel* model, uint32_t component, const char* group,
+							   const char* behavior) {
+	for (size_t i = 0; i < model->articulation_count; ++i) {
+		const OptGltfComponentArticulation* a = &model->articulations[i];
+		if (a->component == component && (!group || strcmp(a->group, group) == 0) &&
+			(!behavior || strcmp(a->behavior, behavior) == 0))
+			return true;
+	}
+	return false;
+}
+
+/* Returns whether the model has the setting `name` with a value of 1. */
+static bool model_setting(const XwauModel* model, const char* name) {
+	for (size_t i = 0; i < model->setting_count; ++i)
+		if (strcmp(model->settings[i].name, name) == 0)
+			return model->settings[i].value == 1;
+	return false;
+}
+
 /* Returns whether `members` holds exactly the meshes of `meshes`. */
 static bool set_is(const uint32_t* members, const int* meshes, size_t count) {
 	uint32_t expected[8] = { 0 };
@@ -1030,6 +1051,43 @@ static void test_model(const char* scratch) {
 	check(XwauModel_Read(game, missions, "Plain", model, NULL), "models: Plain is read");
 	check(!model_set(model, "collision.off") && !model_set(model, "targetable"),
 		  "models: no sets without the sections, or with an empty TargetableMeshes");
+	check(!model->has_pilot_lines && model->articulation_count == 0, "pilot: no lines without the section");
+
+	/* hook_pilot: behaviors 0 to 2 are crew, 3 to 5 hangar droid parts. */
+	snprintf(path, sizeof path, "%s/Droid.ini", models);
+	write_file(path, "[Pilot]\n3, 32, 2, 2\n1, 0, 0, 4\n2, 99, 300, 5\n4, 0, 0, 3\n7, 0, 0, 6\n");
+	check(XwauModel_Read(game, missions, "Droid", model, NULL), "models: Droid is read");
+	check(model->has_pilot_lines, "pilot: the section has lines");
+	check(model_articulation(model, 3, "crew", "random_pause") && model_setting(model, "crew.always_animate"),
+		  "pilot: behavior 2 moves the crew");
+	check(model_articulation(model, 1, "hangar_droid", "swing") &&
+			  model_articulation(model, 2, "hangar_droid", "spin") &&
+			  model_articulation(model, 4, "hangar_droid", "nod"),
+		  "pilot: behaviors 3 to 5 are hangar droid parts, whatever their angle and speed");
+	check(!model_articulation(model, 7, NULL, NULL), "pilot: behavior 6 isn't converted");
+	check(model->articulation_count == 4, "pilot: one articulation for each converted line");
+	check(model->articulations[1].component == 1 && model->articulations[2].component == 2 &&
+			  model->articulations[3].component == 4,
+		  "pilot: the droid parts keep the list's order");
+
+	snprintf(path, sizeof path, "%s/Empty.ini", models);
+	write_file(path, "[Pilot]\nEmpty\n");
+	check(XwauModel_Read(game, missions, "Empty", model, NULL), "models: Empty is read");
+	check(model->has_pilot_lines && model->articulation_count == 0,
+		  "pilot: a line that isn't a mesh line still counts as a line");
+
+	check(XwauModel_Read(game, missions, "Plain", model, NULL) &&
+			  XwauModel_AddStockDroidParts(model, 311, NULL) && model->articulation_count == 1 &&
+			  model_articulation(model, 3, "hangar_droid", "nod"),
+		  "pilot: the stock HangarDroid nods 3");
+	check(XwauModel_Read(game, missions, "Plain", model, NULL) &&
+			  XwauModel_AddStockDroidParts(model, 312, NULL) && model->articulation_count == 2 &&
+			  model_articulation(model, 1, "hangar_droid", "swing") &&
+			  model_articulation(model, 2, "hangar_droid", "spin"),
+		  "pilot: the stock HangarDroid2 swings 1 and spins 2");
+	check(XwauModel_Read(game, missions, "Plain", model, NULL) &&
+			  XwauModel_AddStockDroidParts(model, 489, NULL) && model->articulation_count == 0,
+		  "pilot: the hook has no parts for the other types");
 
 	XwauMissions_Free(missions);
 	free(model);
@@ -2568,6 +2626,21 @@ static void test_object_limits(const char* scratch) {
 		  "object limits: the hook's .cfg wins over Hooks.ini, a count of 0 is left out, and the fly-by "
 		  "sounds of several craft can play at once");
 	free(text);
+	/* hook_pilot: only a build of the hook with the droid hooks gives the
+	   rule. */
+	char pilot[1100];
+	snprintf(pilot, sizeof pilot, "%s/hook_pilot.dll", game);
+	write_file(pilot, "MZ To call the hook that defines pilot meshes animation");
+	text = flight_settings_text(game, settings);
+	check(text && !strstr(text, "hangar_droid_parts_from_model"),
+		  "pilot: no droid rule from a hook_pilot without the droid hooks");
+	free(text);
+	write_file(pilot, "MZ To call the hook that defines pilot meshes animation 890DFC0D9100 A3FC0D9100");
+	text = flight_settings_text(game, settings);
+	check(text && strstr(text, "  hangar_droid_parts_from_model: true\n"),
+		  "pilot: the droid hooks give the droid rule");
+	free(text);
+	remove(pilot);
 	snprintf(path, sizeof path, "%s/Missions/m.ini", game);
 	write_file(path, "[CraftsCount]\nProjectilesCount = 4096\nCraftsCount = 0\n");
 	snprintf(path, sizeof path, "%s/Missions/n_CraftsCount.txt", game);
