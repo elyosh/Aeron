@@ -42,7 +42,7 @@ UTIL_PRINTF(1, 2) void ReportUnsupported(const char* format, ...);
  * can share. ReportUnsupportedSummary writes it once, with its count. Threads
  * can call it. */
 UTIL_PRINTF(1, 2) void ReportRepeated(const char* format, ...);
-/* Writes what ReportUnsupported and ReportRepeated counted, and forgets it. */
+/* Writes the counts of ReportUnsupported and ReportRepeated, then clears them. */
 void ReportUnsupportedSummary(void);
 
 /* Writes a problem that makes the import fail, at error level, in the same

@@ -258,10 +258,11 @@ static bool folder_key_taken(const SkyState* st, const char* key) {
 }
 
 /* Returns the index of the cube folder `found`, adds it when it is new, and
- * marks it as used for a sky or an overlay. The folder is named after the
- * last part of its path. When another folder has that name, it gets _2, _3
- * and so on ('.' is the suffix of the environments). A name that is too
- * long makes the import fail. */
+ * marks it as used for a sky or an overlay. The folder's name is the last
+ * part of its path. If another folder already has that name, it gets _2,
+ * _3 and so on. Environment names already use '.' for their own suffixes,
+ * so the folder suffix uses '_'. A name that is too long makes the import
+ * fail. */
 static long folder_index(SkyState* st, const char* found, bool overlay, const char* base) {
 	for (size_t i = 0; i < st->folder_count; ++i) {
 		if (strcmp(st->folders[i].path, found) == 0) {

@@ -49,8 +49,8 @@
  *     without a cube is `none`.
  * These make the import fail, because the importer can't keep them: a hide
  * or show list longer than the game allows, an AmbientMin out of range, and
- * cube folders whose names are too long. A cube folder whose name is taken
- * gets _2, _3 and so on in <folder>. The
+ * cube folders whose names are too long. If two cube folders have the same
+ * name, the second one gets _2 in <folder>, the third one _3, and so on. The
  * import doesn't convert these, and counts them as unsupported: a region
  * with an overlay but no cube, the Specular, AmbientInt and Illum keys of a
  * region with a cube, RenderMode, the Hangar*Rotation* keys, and the ReflectionRes

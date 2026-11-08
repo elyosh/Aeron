@@ -609,11 +609,12 @@ static bool xwau_same_mat_light(const XwauMatParams* a, const XwauMatParams* b) 
  * once for every variant when all its states give the same light), on the
  * triangles that XWAU splits a quad into. A light_angle of 90° or more
  * gives a point light, since glTF spot lights end at 90°, and so does none.
- * Without light_falloff, XWAU gives the light a bolt's falloff (warhead
- * models do this), so it gets a bolt light's brightness. A negative
- * light_falloff or a light_angle that gives no cone gives no light. A face without a normal
- * gives no light, and it is counted with ReportUnsupported. Returns the
- * number of faces that gave a light through *found. */
+ * Without light_falloff, XWAU fades the light the same way as a bolt's
+ * light. Warhead models do this, so the light gets the brightness of a bolt
+ * light. A negative light_falloff, or a light_angle that gives no cone,
+ * gives no light. A face without a normal gives no light, and it is counted
+ * with ReportUnsupported. Returns the number of faces that gave a light
+ * through *found. */
 static bool xwau_mat_lights(Conversion* c, const opt_file_t* opt, size_t* found) {
 	*found = 0;
 	for (int32_t mi = 0; c->mat && mi < opt->mesh_count; ++mi) {

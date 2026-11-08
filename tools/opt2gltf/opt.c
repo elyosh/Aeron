@@ -372,7 +372,7 @@ static int32_t texture_lookup_or_add(opt_ctx_t* c, const char* name) {
 			return i;
 		}
 	}
-	/* A cut name would never match the references to it. */
+	/* A shortened name would never match the references to it. */
 	if (strlen(name) >= OPT_TEXTURE_NAME_MAX) {
 		set_err(c, "texture name %.40s... is longer than %d characters", name, OPT_TEXTURE_NAME_MAX - 1);
 		return -1;

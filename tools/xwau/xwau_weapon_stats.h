@@ -21,10 +21,21 @@
  * types 280 to 307. The stats are DurationIntegerPart, DurationDecimalPart,
  * Score, Speed, Power, PowerSpeedPercent, FireRate, DurationOffset,
  * FireRatio, Range, IsPrecise, DegreeOfSpreadMask, DechargeRate,
- * RechargeRate and EnergyLowHighSeparation. The game can't hold Side and
- * SideModel, so a value other than -1 makes the import fail. When the hook's
+ * RechargeRate, EnergyLowHighSeparation, Side and SideModel. When the hook's
  * EnableWeaponStatsProfiles is 0, the hook ignores the section, and so does
  * the importer.
+ *
+ * Side and SideModel change the IFF weapon swap for one craft. Side sets which
+ * side a weapon type belongs to: 0 Rebel, 1 Imperial, 255 neither. When the
+ * craft's IFF is on the other side, it fires the SideModel weapon instead.
+ * hook_weapon_color uses them to pick the projectile, and hook_weapon_rate
+ * to pick the fire ratio. They are written as `side` (rebel, imperial or
+ * none) and `side_model` (a weapon type). Any other Side value, or a
+ * SideModel that isn't a weapon type, makes the import fail.
+ * hook_weapon_color reads them from the model's lines, or from the global
+ * lines when the model has none, so the global keys aren't imported. With
+ * EnableWeaponStatsProfiles = 0, hook_weapon_color still reads them, but
+ * they aren't imported either.
  *
  * [WarheadStats] keys look like [<Profile>_]Warhead<T>_CapacityPercent. A
  * value below -1 counts as 0, as in the hook.
@@ -60,9 +71,8 @@
  * Profile names are written in lower case. The hook never reads a profile
  * named Default, because Default in a mission means "no profile". Keys of
  * such a profile are left out. So are keys that are set twice, keys that
- * the hook doesn't read and lines without a key. The Side and SideModel
- * keys of [WeaponStats] aren't imported. A profile name longer than 47
- * characters makes the import fail.
+ * the hook doesn't read and lines without a key. A profile name longer than
+ * 47 characters makes the import fail.
  *
  * A mission picks a profile for a flight group with WeaponProfile_fg_<N> in
  * <mission>_WeaponProfiles.txt, or else in the [WeaponProfiles] section of

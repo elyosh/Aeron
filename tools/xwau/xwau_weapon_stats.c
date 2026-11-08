@@ -8,7 +8,7 @@
 #include "util.h"
 #include "xwau_config.h"
 
-enum { FIRST_WEAPON = 280, WEAPONS = 28, WARHEAD_TYPES = 12, FORMS = 8, STATS = 15, LINKING_KEYS = 4 };
+enum { FIRST_WEAPON = 280, WEAPONS = 28, WARHEAD_TYPES = 12, FORMS = 8, STATS = 17, LINKING_KEYS = 4 };
 
 static const char* const kSections[XWAU_WEAPON_STATS_GROUPS] = { "WeaponStats", "WarheadStats", "EnergyStats",
 																 "LinkingStats" };
@@ -32,6 +32,8 @@ static const char* const kStats[STATS] = {
 	"DechargeRate",
 	"RechargeRate",
 	"EnergyLowHighSeparation",
+	"Side",
+	"SideModel",
 };
 /* XWAU's DurationIntegerPart and DurationDecimalPart are written together
    as `duration_ms`, so the name of the second one is empty. */
@@ -51,15 +53,29 @@ static const char* const kStatNames[STATS] = {
 	"decharge_rate",
 	"recharge_rate",
 	"high_power_charge",
+	"side",
+	"side_model",
 };
 
-enum { STAT_DURATION_SECONDS = 0, STAT_DURATION_FRACTION = 1, STAT_PRECISE = 10 };
+enum {
+	STAT_DURATION_SECONDS  = 0,
+	STAT_DURATION_FRACTION = 1,
+	STAT_PRECISE           = 10,
+	STAT_SIDE              = 15,
+	STAT_SIDE_MODEL        = 16
+};
+
+/* The names of Side values 0 and 1. */
+static const char* const kSideNames[2] = { "rebel", "imperial" };
+
+enum { SIDE_NONE = 0xff };
 
 /* The unit of each stat in the model file. */
 static const XwauUnit kStatUnits[STATS] = {
 	XWAU_UNIT_NONE, XWAU_UNIT_NONE,         XWAU_UNIT_NONE,         XWAU_UNIT_MGLT,         XWAU_UNIT_NONE,
 	XWAU_UNIT_NONE, XWAU_UNIT_MILLISECONDS, XWAU_UNIT_MILLISECONDS, XWAU_UNIT_MILLISECONDS, XWAU_UNIT_METRES,
 	XWAU_UNIT_NONE, XWAU_UNIT_NONE,         XWAU_UNIT_NONE,         XWAU_UNIT_NONE,         XWAU_UNIT_NONE,
+	XWAU_UNIT_NONE, XWAU_UNIT_NONE,
 };
 
 /* The forms of a stat, in the order that the game numbers them. */
@@ -112,9 +128,8 @@ static bool key_profile(const char* key, size_t at, char* out, bool* too_long) {
 /* ---- Keys
    ----------------------------------------------------------------- */
 
-/* Parses a [WeaponStats] key. Returns 1 for a stat, -1 for Side and
- * SideModel, and 0 for other keys. */
-static int parse_weapon_key(const char* key, XwauWeaponStatsValue* out, bool* too_long) {
+/* Parses a [WeaponStats] key. */
+static bool parse_weapon_key(const char* key, XwauWeaponStatsValue* out, bool* too_long) {
 	const size_t length = strlen(key);
 	for (size_t at = 0; at + 9 <= length; ++at) {
 		if (strncasecmp(key + at, "Weapon", 6) != 0 || (at && key[at - 1] != '_'))
@@ -133,8 +148,6 @@ static int parse_weapon_key(const char* key, XwauWeaponStatsValue* out, bool* to
 			if (strncasecmp(rest, kForms[form], form_length) != 0 || rest[form_length] != '_')
 				continue;
 			const char* stat_name = rest + form_length + 1;
-			if (!strcasecmp(stat_name, "Side") || !strcasecmp(stat_name, "SideModel"))
-				return -1;
 			for (int stat = 0; stat < STATS; ++stat) {
 				if (strcasecmp(stat_name, kStats[stat]) != 0)
 					continue;
@@ -142,11 +155,11 @@ static int parse_weapon_key(const char* key, XwauWeaponStatsValue* out, bool* to
 				out->index = weapon;
 				out->form  = form;
 				out->stat  = stat;
-				return 1;
+				return true;
 			}
 		}
 	}
-	return 0;
+	return false;
 }
 
 /* Parses a [WarheadStats] key. */
@@ -208,9 +221,14 @@ static const char* const kEnergyKeys[2] = { "SpeedFactor", "SpeedFactorForPlayer
  * when `report` is true. The hook doesn't read lines without a key, keys
  * that it doesn't know, keys of a profile named Default, or values that
  * aren't numbers, and the first line of a key wins. The importer leaves the
- * other lines out. */
-static bool read_section(const XwauSection* section, int group, XwauWeaponStats* out, XwauWeaponStats* unset,
-						 bool report) {
+ * other lines out.
+ *
+ * hook_weapon_color reads Side and SideModel from the model's lines, or from
+ * the global lines when the model has none. hook_weapon_rate reads both. A
+ * profile can't do both, so Side and SideModel in the global sections
+ * (`global` true) aren't imported. */
+static bool read_section(const XwauSection* section, int group, bool global, XwauWeaponStats* out,
+						 XwauWeaponStats* unset, bool report) {
 	const char* source = section->source;
 	for (size_t i = 0; i < section->lines.count; ++i) {
 		char                 key[256], text[256];
@@ -221,14 +239,13 @@ static bool read_section(const XwauSection* section, int group, XwauWeaponStats*
 			continue;
 		bool known = false;
 		if (group == XWAU_WEAPON_STATS_STATS) {
-			const int parsed = parse_weapon_key(key, &value, &too_long);
-			if (parsed < 0) {
+			known = parse_weapon_key(key, &value, &too_long);
+			if (known && global && (value.stat == STAT_SIDE || value.stat == STAT_SIDE_MODEL)) {
 				long long side = 0;
 				if (report && !(Xwau_StoiAutoInt(text, &side) && side == -1))
-					ReportUnsupported("the [WeaponStats] keys Side and SideModel");
+					ReportUnsupported("the global [WeaponStats] keys Side and SideModel");
 				continue;
 			}
-			known = parsed > 0;
 		} else if (group == XWAU_WEAPON_STATS_WARHEADS) {
 			known = parse_warhead_key(key, &value, &too_long);
 		} else if (group == XWAU_WEAPON_STATS_ENERGY) {
@@ -277,6 +294,24 @@ static bool read_section(const XwauSection* section, int group, XwauWeaponStats*
 			number = (long long)factor;
 		} else if (group == XWAU_WEAPON_STATS_WARHEADS && number < -1) {
 			number = 0;
+		} else if (group == XWAU_WEAPON_STATS_STATS && value.stat == STAT_SIDE) {
+			/* The hooks store Side in a byte and compare it with the side of
+			   the craft's IFF, which is 0 or 1. 0xFF turns off the swap. */
+			number = (unsigned char)number;
+			if (number > 1 && number != SIDE_NONE) {
+				if (report)
+					ReportFatal(source, "%s = %s: OpenXWA only supports the sides 0, 1 and 255", key, text);
+				continue;
+			}
+		} else if (group == XWAU_WEAPON_STATS_STATS && value.stat == STAT_SIDE_MODEL) {
+			/* The hooks store SideModel in 16 bits, and the game fires that type. */
+			number = (unsigned short)number;
+			if (number < FIRST_WEAPON || number >= FIRST_WEAPON + WEAPONS) {
+				if (report)
+					ReportFatal(source, "%s = %s isn't a weapon type from %d to %d", key, text, FIRST_WEAPON,
+								FIRST_WEAPON + WEAPONS - 1);
+				continue;
+			}
 		}
 		if (find_value(out, &value) || find_value(unset, &value))
 			continue;
@@ -336,7 +371,7 @@ static bool read_global_section(const char* game, int group, XwauWeaponStats* ou
 	XwauWeaponStats unset = { 0 };
 	if (!XwauSection_ReadGlobal(game, kSections[group], XWAU_RULES_CPP, &section))
 		return false;
-	const bool ok = read_section(&section, group, out, &unset, false);
+	const bool ok = read_section(&section, group, true, out, &unset, false);
 	XwauSection_Free(&section);
 	XwauWeaponStats_Free(&unset);
 	return ok;
@@ -358,15 +393,31 @@ bool XwauWeaponStats_Read(const char* game, const char* model, XwauWeaponStats* 
 		if (!ok)
 			break;
 		const char* source = section.source;
-		/* With EnableWeaponStatsProfiles = 0, the hook doesn't read
-		   [WeaponStats]. */
+		/* With EnableWeaponStatsProfiles = 0, hook_weapon_rate doesn't read
+		   [WeaponStats], but hook_weapon_color still reads Side and
+		   SideModel. */
 		if (group == XWAU_WEAPON_STATS_STATS && !enabled) {
+			for (size_t i = 0; i < section.lines.count; ++i) {
+				char                 key[256], text[256];
+				XwauWeaponStatsValue value;
+				bool                 too_long = false;
+				long long            number   = 0;
+				if (Xwau_SplitLine(section.lines.items[i], XWAU_RULES_CPP, key, sizeof key, text,
+								   sizeof text) &&
+					parse_weapon_key(key, &value, &too_long) &&
+					(value.stat == STAT_SIDE || value.stat == STAT_SIDE_MODEL) &&
+					!(Xwau_StoiAutoInt(text, &number) && number == -1)) {
+					ReportUnsupported(
+						"the [WeaponStats] keys Side and SideModel with EnableWeaponStatsProfiles = 0");
+					break;
+				}
+			}
 			XwauSection_Free(&section);
 			continue;
 		}
 		if (group < XWAU_WEAPON_STATS_GROUPS) {
 			const size_t before = unset.count;
-			ok                  = read_section(&section, group, out, &unset, true);
+			ok                  = read_section(&section, group, model == NULL, out, &unset, true);
 			/* A model's -1 hides the global line with the same key. The game
 			   has no way to do that, so it would use the global value. */
 			XwauWeaponStats global = { 0 };
@@ -447,9 +498,13 @@ static bool profile_seen(const XwauWeaponStats* stats, int group, const char* pr
 	return false;
 }
 
-static void write_number(FILE* f, int stat, long long value) {
+static void write_number(FILE* f, const XwauNames* names, int stat, long long value) {
 	if (stat == STAT_PRECISE)
 		fputs(value ? "true" : "false", f);
+	else if (stat == STAT_SIDE)
+		fputs(value == SIDE_NONE ? "none" : kSideNames[value], f);
+	else if (stat == STAT_SIDE_MODEL)
+		fputs(XwauNames_WeaponType(names, (int)value), f);
 	else if (kStatUnits[stat] != XWAU_UNIT_NONE)
 		Xwau_WriteUnit(f, kStatUnits[stat], value);
 	else
@@ -551,7 +606,7 @@ static void write_weapon(FILE* f, const XwauNames* names, const XwauStockValues*
 			if (stat == STAT_DURATION_SECONDS)
 				write_duration(f, stats, stock, profile, weapon, form);
 			else
-				write_number(f, stat, v->value);
+				write_number(f, names, stat, v->value);
 			first = false;
 		}
 		if (form_open) {

@@ -1928,7 +1928,7 @@ static void test_weapon_stats(const char* scratch) {
 	write_file(path, "");
 	snprintf(path, sizeof path, "%s/FlightModels/default.ini", game);
 	write_file(path, "[WeaponHardpointTypes]\n1\n1\n[WeaponStats]\nWeapon280_Range = 65536\n"
-					 "Weapon282_DurationDecimalPart = 32768\n");
+					 "Weapon282_DurationDecimalPart = 32768\nWeapon283_SideModel = 281\n");
 	snprintf(path, sizeof path, "%s/FlightModels/Model.ini", game);
 	write_file(path, "[WeaponStats]\n"
 					 "My_Profile_Weapon282_Power = 900\n"
@@ -1944,6 +1944,8 @@ static void test_weapon_stats(const char* scratch) {
 					 "Weapon289_DegreeOfSpreadMask = 63\n"
 					 "Default_Weapon280_Power = 5\n"
 					 "Weapon280_Side = 1\n"
+					 "Weapon280_SideModel = 289\n"
+					 "Weapon281_Side = 255\n"
 					 "Weapon280_Foo = 1\n"
 					 "[WarheadStats]\n"
 					 "Warhead1_CapacityPercent = 50\n"
@@ -1965,6 +1967,8 @@ static void test_weapon_stats(const char* scratch) {
 						 "    \"my_profile\":\n"
 						 "      type_282: {power: 900}\n"
 						 "    default:\n"
+						 "      type_280: {side: imperial, side_model: type_289}\n"
+						 "      type_281: {side: none}\n"
 						 "      type_282: {duration_ms: 2360, fire_rate_ms: 188, range_m: 1600, "
 						 "player_easy: {power: 350, fire_rate_ms: 156}}\n"
 						 "      type_289: {duration_ms: 3776, precise: false, spread_mask: 63}\n"
@@ -1977,7 +1981,8 @@ static void test_weapon_stats(const char* scratch) {
 						 "  hardpoint_kinds: {none: none, turbo_rebel_laser: warhead, empire_laser: laser, "
 						 "turbo_empire_laser: laser}\n"),
 		  "weapon profiles: profile names with '_', the player and difficulty forms, the first of two keys, "
-		  "-1, Default and other keys left out, the two parts of a duration as one key, with the global "
+		  "-1, Default and other keys left out, Side and SideModel as names, the two parts of a duration as "
+		  "one key, with the global "
 		  "or stock value for a missing part, the times in milliseconds, the range in metres, the energy "
 		  "in percent. The model's hardpoint "
 		  "kinds come before "
@@ -1985,7 +1990,7 @@ static void test_weapon_stats(const char* scratch) {
 	XwauWeaponStats_Free(&stats);
 	check(XwauWeaponStats_Read(game, NULL, &stats) && stats.count == 2 && stats.items[0].index == 280 &&
 			  stats.hardpoint_kind_count == 2,
-		  "weapon profiles: the global sections");
+		  "weapon profiles: the global sections, without their Side and SideModel keys");
 	XwauWeaponStats_Free(&stats);
 	snprintf(path, sizeof path, "%s/Missions/m1.ini", game);
 	write_file(path, "[WeaponProfiles]\n"
