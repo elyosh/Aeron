@@ -609,18 +609,13 @@ static bool xwau_same_mat_light(const XwauMatParams* a, const XwauMatParams* b) 
  * once for every variant when all its states give the same light), on the
  * triangles that XWAU splits a quad into. A light_angle of 90° or more
  * gives a point light, since glTF spot lights end at 90°, and so does none.
- * Without light_falloff, XWAU gives the light the bolts' falloff, which only
- * bolt models use, so such a texture makes the import fail. A light_angle
- * that gives no cone gives no light, in XWAU too. A face without a normal
+ * Without light_falloff, XWAU gives the light a bolt's falloff (warhead
+ * models do this), so it gets a bolt light's brightness. A negative
+ * light_falloff or a light_angle that gives no cone gives no light. A face without a normal
  * gives no light, and it is counted with ReportUnsupported. Returns the
  * number of faces that gave a light through *found. */
-static bool xwau_mat_lights(Conversion* c, const opt_file_t* opt, const char* label, size_t* found) {
+static bool xwau_mat_lights(Conversion* c, const opt_file_t* opt, size_t* found) {
 	*found = 0;
-	for (int32_t ti = 0; c->mat && ti < opt->texture_count; ++ti) {
-		const XwauMatParams* p = XwauMat_Find(c->mat, opt->textures[ti].name);
-		if (p->has_light && !(p->light_falloff > 0.0f))
-			ReportFatal(label, "texture %s has a .mat Light without light_falloff", opt->textures[ti].name);
-	}
 	for (int32_t mi = 0; c->mat && mi < opt->mesh_count; ++mi) {
 		const opt_mesh_t* m = &opt->meshes[mi];
 		for (int32_t g = 0; m->lod_count > 0 && g < m->lods[0].group_count; ++g) {
@@ -641,14 +636,17 @@ static bool xwau_mat_lights(Conversion* c, const opt_file_t* opt, const char* la
 				const float          peak = fmaxf(p->light[0], fmaxf(p->light[1], p->light[2]));
 				/* XWAU keeps the cosine of light_angle, and a cosine of 1 or
 				 * more gives no cone. */
-				const float cosine = p->has_light_angle ? cosf(p->light_angle * 0.0174532925f) : 0.0f;
-				if (!p->has_light || !(peak > 0.0f) || !(p->light_falloff > 0.0f) || !(cosine < 1.0f))
+				const float cosine       = p->has_light_angle ? cosf(p->light_angle * 0.0174532925f) : 0.0f;
+				const bool  bolt_falloff = p->light_falloff == 0.0f;
+				if (!p->has_light || !(peak > 0.0f) || !(bolt_falloff || p->light_falloff > 0.0f) ||
+					!(cosine < 1.0f))
 					continue;
 				OptGltfLight light = {
 					.mesh_index = (uint32_t)mi,
 					.state      = per_state ? s : -1,
 					.tag        = p->surface_tag[0] ? p->surface_tag : NULL,
-					.intensity  = XWAU_MAT_LIGHT_CANDELA * p->light_falloff * peak,
+					.intensity  = bolt_falloff ? XWAU_BOLT_LIGHT_CANDELA * peak
+											   : XWAU_MAT_LIGHT_CANDELA * p->light_falloff * peak,
 					.placed     = true,
 					.spot_angle = cosine > 0.0f ? acosf(cosine) : 0.0f,
 				};
@@ -904,7 +902,7 @@ static bool bake_xwau(Conversion* c, const ModelConversion* mc, const opt_file_t
 		return true;
 	}
 	size_t faces = 0;
-	if (!xwau_mat_lights(c, opt, label, &faces)) {
+	if (!xwau_mat_lights(c, opt, &faces)) {
 		Report(label, "out of memory (lights)");
 		return false;
 	}
