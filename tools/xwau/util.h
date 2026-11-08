@@ -22,7 +22,7 @@
  * once. Reports have no program name until it is set. */
 void SetReportProgram(const char* name);
 
-/* Writes a problem or a summary to the tool log at warning level, as
+/* Writes a problem to the tool log at warning level, as
  * "<program>: <label>: <message>", or as "<program>: <message>" when `label`
  * is NULL. */
 UTIL_PRINTF(2, 3) void Report(const char* label, const char* format, ...);
@@ -38,7 +38,11 @@ UTIL_PRINTF(2, 3) void ReportDetail(const char* label, const char* format, ...);
  * for each feature, with its count, so that a feature used a thousand times
  * gives one line. Threads can call it. */
 UTIL_PRINTF(1, 2) void ReportUnsupported(const char* format, ...);
-/* Writes the features that ReportUnsupported counted, and forgets them. */
+/* Counts one occurrence of the problem `format`, which many files of a mod
+ * can share. ReportUnsupportedSummary writes it once, with its count. Threads
+ * can call it. */
+UTIL_PRINTF(1, 2) void ReportRepeated(const char* format, ...);
+/* Writes what ReportUnsupported and ReportRepeated counted, and forgets it. */
 void ReportUnsupportedSummary(void);
 
 /* Writes a problem that makes the import fail, at error level, in the same

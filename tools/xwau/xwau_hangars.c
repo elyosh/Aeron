@@ -1813,8 +1813,8 @@ bool XwauHangars_Write(const char* xwau, const XwauGameTables* stock, const Xwau
 		ok = fclose(f) == 0 && replace_file(temporary, path);
 	}
 	if (ok)
-		Report(NULL, "wrote %s: %zu ships (%zu hangar models), %zu crafts", path, ship_count, models,
-			   craft_count);
+		ReportDetail(NULL, "wrote %s: %zu ships (%zu hangar models), %zu crafts", path, ship_count, models,
+					 craft_count);
 
 	if (ok && stock_game) {
 		size_t      chain_count = 0, count = 0;
@@ -1823,7 +1823,7 @@ bool XwauHangars_Write(const char* xwau, const XwauGameTables* stock, const Xwau
 		ok = chains && write_mission_layers(m, xwau, stock_game, &ship_keys, &below, mod, &count);
 		free(chains);
 		if (ok)
-			Report(NULL, "wrote %zu mission hangar layers", count);
+			ReportDetail(NULL, "wrote %zu mission hangar layers", count);
 	}
 
 	free_layer(&def);

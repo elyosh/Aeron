@@ -314,6 +314,6 @@ bool XwauText_Write(const char* mod_root, const char* stock_game, const char* ou
 		remove(output_file);
 		return false;
 	}
-	Report(NULL, "%s: %d texts", output_file, written);
+	ReportDetail(NULL, "%s: %d texts", output_file, written);
 	return true;
 }

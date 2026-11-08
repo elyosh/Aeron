@@ -570,7 +570,7 @@ bool XwauFlightSettings_Write(const char* game, const XwauNames* names, const Xw
 	if (!ok)
 		Report(NULL, "cannot write %s", path);
 	else if (what[0])
-		Report(NULL, "wrote %s: %s", path, what);
+		ReportDetail(NULL, "wrote %s: %s", path, what);
 	else
 		Report(NULL, "%s has no flight settings", path);
 	return ok;

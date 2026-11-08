@@ -322,11 +322,12 @@ bool XwauGameFiles_Copy(const char* game, const char* stock_game, const char* ou
 	ok = ok && copy_wave(&c) &&
 		 (!Xwau_FindDir(game, "Wave", wave, sizeof wave) || find_missing_stock_files(&c, "Wave")) && write_removed_files(&c);
 	if (ok)
-		Report(NULL,
-			   "copied %zu mission files, %zu changed lists, %zu changed sound files and %zu files of the "
-			   "missions' sound replacements into %s; %zu sounds converted to 16-bit PCM; %zu stock sound "
-			   "files removed",
-			   c.missions, c.lists, c.sounds, c.replacements, out, c.converted, c.missing_stock_files.count);
+		ReportDetail(
+			NULL,
+			"copied %zu mission files, %zu changed lists, %zu changed sound files and %zu files of the "
+			"missions' sound replacements into %s; %zu sounds converted to 16-bit PCM; %zu stock sound "
+			"files removed",
+			c.missions, c.lists, c.sounds, c.replacements, out, c.converted, c.missing_stock_files.count);
 	XwauLines_Free(&c.targets);
 	XwauLines_Free(&c.missing_stock_files);
 	return ok;

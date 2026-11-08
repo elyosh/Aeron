@@ -217,8 +217,10 @@ bool XwauAwards_Write(const char* game, const char* path) {
 						if (strcmp(images.items[i], "null") == 0)
 							continue;
 						/* XWAU can't show such an image either. */
-						if (!image_exists(game, images.items[i]))
+						if (!image_exists(game, images.items[i])) {
+							Report(NULL, "awards: the memento image %s doesn't exist", images.items[i]);
 							++missing;
+						}
 						fprintf(f, "%s    %zu: ", written++ ? "" : "  images:\n", i);
 						Xwau_WriteString(f, images.items[i]);
 						fprintf(f, "\n");
@@ -246,11 +248,12 @@ bool XwauAwards_Write(const char* game, const char* path) {
 			}
 		}
 		if (ok)
-			Report(NULL,
-				   "awards: %zu battle medal names, %zu Kalidor levels, %zu rank and %zu rating thresholds, "
-				   "%s mementos; %zu memento images missing; written to %s",
-				   medal_count, kalidor_levels, rank_count, rating_count, has_images ? "replaced" : "stock",
-				   missing, path);
+			ReportDetail(
+				NULL,
+				"awards: %zu battle medal names, %zu Kalidor levels, %zu rank and %zu rating thresholds, "
+				"%s mementos; %zu memento images missing; written to %s",
+				medal_count, kalidor_levels, rank_count, rating_count, has_images ? "replaced" : "stock",
+				missing, path);
 	}
 	XwauLines_Free(&medals);
 	XwauLines_Free(&kalidor_names);

@@ -1127,7 +1127,7 @@ bool XwauMissionFiles_Write(const char* game, const XwauMissions* missions, cons
 	XwauGameTables_Free(tables);
 	if (!ok)
 		return false;
-	Report(
+	ReportDetail(
 		NULL,
 		"wrote %zu mission files with %zu object profile selections (%zu dropped), %zu skin "
 		"selections, %zu flight groups with articulations (%zu dropped), %zu flight groups with "

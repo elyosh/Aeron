@@ -721,18 +721,19 @@ bool XwauSkyboxes_Write(const char* game, const char* stock_game, const char* ma
 	free(environments.text);
 	free(missions.text);
 	if (ok) {
-		Report(NULL,
-			   "wrote %s: %zu missions, %zu regions with a sky and %zu without, %zu environments for %zu "
-			   "cube folders",
-			   manifest, st.mission_count - st.death_star_count, with_sky, without, st.definition_count,
-			   st.folder_count);
+		ReportDetail(
+			NULL,
+			"wrote %s: %zu missions, %zu regions with a sky and %zu without, %zu environments for %zu "
+			"cube folders",
+			manifest, st.mission_count - st.death_star_count, with_sky, without, st.definition_count,
+			st.folder_count);
 		if (st.death_star_count)
-			Report(NULL,
-				   "%zu Death Star missions use " SKY_DEATH_STAR_ENVIRONMENT
-				   ", without the light of their backdrops",
-				   st.death_star_count);
+			ReportDetail(NULL,
+						 "%zu Death Star missions use " SKY_DEATH_STAR_ENVIRONMENT
+						 ", without the light of their backdrops",
+						 st.death_star_count);
 		if (overlays)
-			Report(NULL, "%zu regions have an overlay", overlays);
+			ReportDetail(NULL, "%zu regions have an overlay", overlays);
 	}
 	free(st.folders);
 	free(st.definitions);

@@ -661,10 +661,13 @@ bool XwauSoundBanks_Write(const char* game, const XwauNames* game_names, const c
 	for (size_t i = 0; i < im.known_count; ++i)
 		free(im.known[i].rel);
 	free(im.known);
+	if (ok && im.missing)
+		Report(NULL, "sounds.yaml: %d entries name files that aren't in the installation", im.missing);
 	if (ok)
-		Report(NULL,
-			   "sounds.yaml: %d banks, %d entries; %d files copied into %s, %d of them converted to 16-bit "
-			   "PCM; %d entries name files that aren't in the installation",
-			   banks, entries, im.files, game_files, im.converted, im.missing);
+		ReportDetail(
+			NULL,
+			"sounds.yaml: %d banks, %d entries; %d files copied into %s, %d of them converted to 16-bit "
+			"PCM; %d entries name files that aren't in the installation",
+			banks, entries, im.files, game_files, im.converted, im.missing);
 	return ok;
 }

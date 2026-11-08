@@ -1551,17 +1551,18 @@ static bool write_hud_file(const char* xwau_root, const char* output_dir, const 
 		if (!ok)
 			Report(path, "can't be written");
 		else
-			Report(NULL,
-				   "hud.yaml: %zu new hull icons, %zu new map icons, target display %s, target boxes %s, "
-				   "radar blips %s, target readout %s",
-				   hull_count, map_count,
-				   !has_display    ? "not set"
-				   : display.edges ? "with edges"
-								   : "shaded",
-				   has_boxes ? "wide" : "original", has_boxes ? "round" : "original",
-				   !has_readout            ? "not set"
-				   : readout.vertical_bars ? "on, vertical"
-										   : "on, horizontal");
+			ReportDetail(
+				NULL,
+				"hud.yaml: %zu new hull icons, %zu new map icons, target display %s, target boxes %s, "
+				"radar blips %s, target readout %s",
+				hull_count, map_count,
+				!has_display    ? "not set"
+				: display.edges ? "with edges"
+								: "shaded",
+				has_boxes ? "wide" : "original", has_boxes ? "round" : "original",
+				!has_readout            ? "not set"
+				: readout.vertical_bars ? "on, vertical"
+										: "on, horizontal");
 	}
 	free(hull);
 	free(map);
@@ -1923,7 +1924,7 @@ bool XwauCraft_Write(const char* xwau_root, const char* output_dir, const XwauNa
 	XwauStatsGenus_Free(&genus);
 	XwauGameTables_Free(tables);
 	FreeList(names, count);
-	Report(
+	ReportDetail(
 		NULL,
 		"model settings: %d files, %d with a reticle, %d with HUD colours, %d with engine glows, %d with "
 		"weapon settings, %d with weapon profiles, %d with stats profiles, %d with a shield recharge rate, "

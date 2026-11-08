@@ -1143,13 +1143,14 @@ bool XwauObjects_Write(const char* mod_root, const char* stock_game, const XwauG
 	ok = ok && write_craft_types(craft_dir, names, stock, mod, models, &texts, moved, &counts);
 	free_texts(&texts);
 	if (ok) {
-		Report(NULL,
-			   "object types: %d files: %d with a model, %d with a new genus, family, flags or missions, %d "
-			   "with craft record changes, %d with sounds_like, %d with beam_allowed, %d with names",
-			   counts.files, counts.models, counts.typeFields, counts.records, counts.sounds, counts.beams,
-			   counts.names);
-		Report(NULL, "craft types: %d files, %d of them linked to another object type", counts.craftTypes,
-			   counts.remaps);
+		ReportDetail(
+			NULL,
+			"object types: %d files: %d with a model, %d with a new genus, family, flags or missions, %d "
+			"with craft record changes, %d with sounds_like, %d with beam_allowed, %d with names",
+			counts.files, counts.models, counts.typeFields, counts.records, counts.sounds, counts.beams,
+			counts.names);
+		ReportDetail(NULL, "craft types: %d files, %d of them linked to another object type",
+					 counts.craftTypes, counts.remaps);
 		ReportDetail(NULL, "object types: %d new craft in free slots and %d in placeholders", new_slots,
 					 new_placeholders);
 		if (exe_values)
@@ -1159,8 +1160,8 @@ bool XwauObjects_Write(const char* mod_root, const char* stock_game, const XwauG
 					 "types that load nothing in the mod",
 					 equipment, kept_models, empty);
 		if (missing_glbs)
-			Report(NULL, "object types: %d files name a model that has no GLB in %s/models", missing_glbs,
-				   output_dir);
+			ReportDetail(NULL, "object types: %d files name a model that has no GLB in %s/models",
+						 missing_glbs, output_dir);
 	}
 	new_craft_rows_free(&new_craft_rows);
 	free(changes);

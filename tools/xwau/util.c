@@ -49,39 +49,58 @@ void ReportDetail(const char* label, const char* format, ...) {
 typedef struct UnsupportedFeature {
 	char*  name;
 	size_t count;
+	bool   repeated; /* from ReportRepeated */
 } UnsupportedFeature;
 
 static pthread_mutex_t     g_unsupported_mutex = PTHREAD_MUTEX_INITIALIZER;
 static UnsupportedFeature* g_unsupported;
 static size_t              g_unsupported_count;
 
-void ReportUnsupported(const char* format, ...) {
-	char    name[512];
-	va_list args;
-	va_start(args, format);
+static void count_feature(bool repeated, const char* format, va_list args) {
+	char name[512];
 	vsnprintf(name, sizeof name, format, args);
-	va_end(args);
 	pthread_mutex_lock(&g_unsupported_mutex);
 	size_t i = 0;
-	while (i < g_unsupported_count && strcmp(g_unsupported[i].name, name) != 0)
+	while (i < g_unsupported_count &&
+		   (g_unsupported[i].repeated != repeated || strcmp(g_unsupported[i].name, name) != 0))
 		++i;
 	if (i < g_unsupported_count) {
 		g_unsupported[i].count++;
 	} else {
 		UnsupportedFeature* item = ARRAY_PUSH(g_unsupported, g_unsupported_count);
-		if (item && !(item->name = StrDup(name)))
+		if (item && !(item->name = StrDup(name))) {
 			g_unsupported_count--;
-		else if (item)
-			item->count = 1;
+		} else if (item) {
+			item->count    = 1;
+			item->repeated = repeated;
+		}
 	}
 	pthread_mutex_unlock(&g_unsupported_mutex);
+}
+
+void ReportUnsupported(const char* format, ...) {
+	va_list args;
+	va_start(args, format);
+	count_feature(false, format, args);
+	va_end(args);
+}
+
+void ReportRepeated(const char* format, ...) {
+	va_list args;
+	va_start(args, format);
+	count_feature(true, format, args);
+	va_end(args);
 }
 
 void ReportUnsupportedSummary(void) {
 	pthread_mutex_lock(&g_unsupported_mutex);
 	for (size_t i = 0; i < g_unsupported_count; ++i) {
-		Report(NULL, "the import doesn't convert %s (%zu %s)", g_unsupported[i].name, g_unsupported[i].count,
-			   g_unsupported[i].count == 1 ? "time" : "times");
+		const char* times = g_unsupported[i].count == 1 ? "time" : "times";
+		if (g_unsupported[i].repeated)
+			Report(NULL, "%s (%zu %s)", g_unsupported[i].name, g_unsupported[i].count, times);
+		else
+			Report(NULL, "the import doesn't convert %s (%zu %s)", g_unsupported[i].name,
+				   g_unsupported[i].count, times);
 		free(g_unsupported[i].name);
 	}
 	free(g_unsupported);

@@ -69,8 +69,9 @@ static const char* const g_attackKeys[XWAU_AI_ATTACK_VALUES + 1] = {
 static const char* const g_attackSection = "AttackBreakDistance";
 
 /* Reads the Model_<name> keys of `lines` into `out`. The hook reads the
- * first line of each key, for each model of the game. Returns false when
- * out of memory. */
+ * first line of each key, for each model of the game. A key without a model
+ * is reported once for the whole mod, since mods copy one list into many
+ * files. Returns false when out of memory. */
 static bool read_offsets(const char* game, const XwauSection* section, XwauAiAttack* out) {
 	for (size_t i = 0; i < section->lines.count; ++i) {
 		char      key[256], opt[300], path[1024];
@@ -80,7 +81,8 @@ static bool read_offsets(const char* game, const XwauSection* section, XwauAiAtt
 			continue;
 		snprintf(opt, sizeof opt, "FlightModels/%s.opt", key + 6);
 		if (!Xwau_FindFile(game, opt, path, sizeof path)) {
-			Report(section->source, "%s names no model of FlightModels, so it is ignored", key);
+			ReportDetail(section->source, "%s names no model of FlightModels, so it is ignored", key);
+			ReportRepeated("[AttackBreakDistance]: %s names no model of FlightModels, so it is ignored", key);
 			continue;
 		}
 		if (strlen(key + 6) >= sizeof out->offsets[0].model) {
