@@ -60,3 +60,49 @@ int Aeron_ApplicationPath(const char* relative_path, char* out, size_t capacity)
 	}
 	return 1;
 }
+
+/* Windows opens the path itself, with backslashes. macOS needs a file URL,
+ * with spaces and other characters escaped, and Linux takes one. */
+int Aeron_OpenFolder(const char* path) {
+	char url[3 * AERON_MAX_PATH + 8];
+	int  opened;
+
+	if (!path || !path[0]) {
+		SDL_SetError("no folder to open");
+		return 0;
+	}
+#ifdef _WIN32
+	if (SDL_strlcpy(url, path, sizeof url) >= sizeof url) {
+		SDL_SetError("folder path is too long");
+		return 0;
+	}
+	for (char* c = url; *c; ++c) {
+		if (*c == '/') {
+			*c = '\\';
+		}
+	}
+#else
+	static const char k_hex[] = "0123456789ABCDEF";
+	size_t            length  = SDL_strlcpy(url, "file://", sizeof url);
+
+	for (const unsigned char* c = (const unsigned char*)path; *c; ++c) {
+		if (length + 4 >= sizeof url) {
+			SDL_SetError("folder path is too long");
+			return 0;
+		}
+		if (SDL_isalnum(*c) || SDL_strchr("/-_.~", *c)) {
+			url[length++] = (char)*c;
+		} else {
+			url[length++] = '%';
+			url[length++] = k_hex[*c >> 4];
+			url[length++] = k_hex[*c & 15];
+		}
+	}
+	url[length] = '\0';
+#endif
+	opened = SDL_OpenURL(url);
+	if (!opened) {
+		Aeron_LogError("aeron", "cannot open %s: %s", path, SDL_GetError());
+	}
+	return opened ? 1 : 0;
+}

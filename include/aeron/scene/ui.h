@@ -292,6 +292,8 @@ typedef enum AeronUiListItemFlags {
 	AERON_UI_LIST_ITEM_NONE      = 0,
 	AERON_UI_LIST_ITEM_DISABLED  = 1u << 0,
 	AERON_UI_LIST_ITEM_DIRECTORY = 1u << 1,
+	/* Drawn dim like a disabled item, but it can still be selected. */
+	AERON_UI_LIST_ITEM_DIMMED = 1u << 2,
 } AeronUiListItemFlags;
 
 typedef struct AeronUiListItem {
@@ -316,7 +318,9 @@ typedef enum AeronUiListFlags {
 } AeronUiListFlags;
 
 /* Virtualized list. `SIZE_MAX` means no selection. Up/Down moves focus out
- * when the selection cannot move past the first/last enabled item. */
+ * when the selection cannot move past the first/last enabled item. Each row
+ * shows `detail` on the right, whole, and cuts the label with "..." when the
+ * two don't fit. */
 uint32_t AeronUi_ListBox(AeronUiContext* ctx, const char* label, const AeronUiListItem* items,
 						 size_t item_count, size_t* selected, float height_ref);
 /* AeronUi_ListBox with AeronUiListFlags. */

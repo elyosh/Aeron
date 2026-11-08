@@ -265,32 +265,6 @@ void Aeron_LogCritical(const char* category, const char* fmt, ...) {
 	va_end(args);
 }
 
-/* Opens `directory` in the file manager. Windows opens the path. macOS needs
- * a file URL, with spaces and other characters escaped, and Linux takes one. */
-static void Aeron_OpenFolder(const char* directory) {
-#ifdef _WIN32
-	SDL_OpenURL(directory);
-#else
-	static const char k_hex[]                     = "0123456789ABCDEF";
-	char              url[3 * AERON_MAX_PATH + 8] = "file://";
-	size_t            length                      = SDL_strlen(url);
-
-	for (const unsigned char* c = (const unsigned char*)directory; *c && length + 4 < sizeof url; ++c) {
-		if (SDL_isalnum(*c) || SDL_strchr("/-_.~", *c)) {
-			url[length++] = (char)*c;
-		} else {
-			url[length++] = '%';
-			url[length++] = k_hex[*c >> 4];
-			url[length++] = k_hex[*c & 15];
-		}
-	}
-	url[length] = '\0';
-	if (!SDL_OpenURL(url)) {
-		Aeron_LogError("aeron", "cannot open %s: %s", directory, SDL_GetError());
-	}
-#endif
-}
-
 void Aeron_FatalError(const char* title, const char* message) {
 	enum { k_open_folder = 1, k_close = 2 };
 

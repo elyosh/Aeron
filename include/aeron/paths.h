@@ -23,6 +23,9 @@ const char* Aeron_ModRoot(void);
 int Aeron_LocalDataPath(char* out, size_t capacity);
 /* Builds a path relative to the application executable or bundle resources. */
 int Aeron_ApplicationPath(const char* relative_path, char* out, size_t capacity);
+/* Opens folder `path` in the file manager (Explorer, Finder, or the desktop's
+ * file manager). Returns 0 and logs an error when it can't. */
+int Aeron_OpenFolder(const char* path);
 
 #ifdef __cplusplus
 }

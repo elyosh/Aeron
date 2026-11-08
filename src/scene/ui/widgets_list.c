@@ -75,6 +75,25 @@ static AeronRectI list_clip(const UiRect* rect, const AeronRectI* parent) {
 	return clip;
 }
 
+/* How many bytes of `text` fit in `width` once "..." is added after them.
+ * Returns -1 when the whole text fits, so it needs no "...". */
+static int list_fit_length(const AeronUiContext* ctx, const AeronFontAtlas* font, float size_px,
+						   const char* text, float width) {
+	if (ui_text_width(ctx, font, size_px, text, -1) <= width)
+		return -1;
+	const float room = width - ui_text_width(ctx, font, size_px, "...", 3);
+	int         fit  = 0;
+	for (int length = 1; text[length - 1]; ++length) {
+		/* Only cut between UTF-8 characters. */
+		if (((unsigned char)text[length] & 0xC0u) == 0x80u)
+			continue;
+		if (ui_text_width(ctx, font, size_px, text, length) > room)
+			break;
+		fit = length;
+	}
+	return fit;
+}
+
 uint32_t AeronUi_ListBox(AeronUiContext* ctx, const char* label, const AeronUiListItem* items,
 						 size_t item_count, size_t* selected, float height_ref) {
 	return AeronUi_ListBoxEx(ctx, label, items, item_count, selected, height_ref, 0);
@@ -183,19 +202,27 @@ uint32_t AeronUi_ListBoxEx(AeronUiContext* ctx, const char* label, const AeronUi
 			if (ui_is_focused(ctx, id))
 				ui_draw_fill(ctx, &row, ctx->theme.row_highlight, &clip);
 		}
-		const int   disabled = (items[i].flags & AERON_UI_LIST_ITEM_DISABLED) != 0;
-		const char* prefix   = (items[i].flags & AERON_UI_LIST_ITEM_DIRECTORY) ? "> " : "  ";
-		const float x        = row.x + ui_ref(ctx, 8.0f);
-		ui_draw_text(ctx, ui_font_regular(ctx), x, row.y + (row.h - text_px) * 0.5f, AERON_TEXT_LEFT, text_px,
-					 disabled ? ctx->theme.text_dim : ctx->theme.text, prefix, -1, &clip);
-		const float prefix_w = ui_text_width(ctx, ui_font_regular(ctx), text_px, prefix, -1);
-		ui_draw_text(ctx, ui_font_regular(ctx), x + prefix_w, row.y + (row.h - text_px) * 0.5f,
-					 AERON_TEXT_LEFT, text_px, disabled ? ctx->theme.text_dim : ctx->theme.text,
-					 items[i].label ? items[i].label : "", -1, &clip);
+		const AeronFontAtlas* font   = ui_font_regular(ctx);
+		const uint32_t        dimmed = AERON_UI_LIST_ITEM_DISABLED | AERON_UI_LIST_ITEM_DIMMED;
+		const float*          color  = (items[i].flags & dimmed) ? ctx->theme.text_dim : ctx->theme.text;
+		const char*           prefix = (items[i].flags & AERON_UI_LIST_ITEM_DIRECTORY) ? "> " : "  ";
+		const char*           label  = items[i].label ? items[i].label : "";
+		const float           pad    = ui_ref(ctx, 8.0f);
+		const float           text_y = row.y + (row.h - text_px) * 0.5f;
+		const float           x      = row.x + pad;
+		float                 right  = row.x + row.w - pad;
+		ui_draw_text(ctx, font, x, text_y, AERON_TEXT_LEFT, text_px, color, prefix, -1, &clip);
 		if (items[i].detail && items[i].detail[0]) {
-			ui_draw_text(ctx, ui_font_regular(ctx), row.x + row.w - ui_ref(ctx, 8.0f),
-						 row.y + (row.h - text_px) * 0.5f, AERON_TEXT_RIGHT, text_px, ctx->theme.text_dim,
+			ui_draw_text(ctx, font, right, text_y, AERON_TEXT_RIGHT, text_px, ctx->theme.text_dim,
 						 items[i].detail, -1, &clip);
+			right -= ui_text_width(ctx, font, text_px, items[i].detail, -1) + ui_ref(ctx, 16.0f);
+		}
+		const float prefix_w = ui_text_width(ctx, font, text_px, prefix, -1);
+		const int   fit      = list_fit_length(ctx, font, text_px, label, right - x - prefix_w);
+		ui_draw_text(ctx, font, x + prefix_w, text_y, AERON_TEXT_LEFT, text_px, color, label, fit, &clip);
+		if (fit >= 0) {
+			ui_draw_text(ctx, font, x + prefix_w + ui_text_width(ctx, font, text_px, label, fit), text_y,
+						 AERON_TEXT_LEFT, text_px, color, "...", 3, &clip);
 		}
 	}
 

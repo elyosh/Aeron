@@ -10,6 +10,8 @@
 #include <sys/stat.h>
 #ifdef _WIN32
 #include <direct.h>
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
 #else
 #include <unistd.h>
 #endif
@@ -282,6 +284,11 @@ bool MakeDirs(const char* path) {
 bool RemoveTree(const char* path) {
 	struct stat st;
 #ifdef _WIN32
+	/* stat follows a junction or a link, so the attributes tell them apart.
+	   Removing one removes the link, not what it points to. */
+	const DWORD attributes = GetFileAttributesA(path);
+	if (attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_REPARSE_POINT))
+		return (attributes & FILE_ATTRIBUTE_DIRECTORY) ? _rmdir(path) == 0 : remove(path) == 0;
 	if (stat(path, &st) != 0)
 #else
 	/* A link is removed, not what it points to. */
