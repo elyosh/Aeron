@@ -1515,7 +1515,7 @@ static void test_game_files(const char* scratch) {
 										 "files_game/FRONTRES/Cutscene",  "files_stock/MISSIONS",
 										 "files_stock/WAVE/FRONTEND",     "files_stock/FrontRes/CUTSCENE",
 										 "files_game/Wave/FE_HIGH_RES",   "files_stock/WAVE/FE_HIGH_RES",
-										 "files_game/Wave/Custom" };
+										 "files_game/Wave/Custom",        "files_stock/WAVE/MISSIONVOICE" };
 	for (size_t i = 0; i < sizeof kDirs / sizeof kDirs[0]; ++i) {
 		snprintf(path, sizeof path, "%s/%s", scratch, kDirs[i]);
 		MakeDirs(path);
@@ -1547,6 +1547,9 @@ static void test_game_files(const char* scratch) {
 		  "[Sounds]\nWave\\FE_High_Res\\Alarm.wav = Wave\\Custom\\Evacuate.wav\n" },
 		{ "files_game/Wave/Custom/Evacuate.wav", "evacuate" },
 		{ "files_game/Wave/Custom/Unused.wav", "not loaded" },
+		{ "files_stock/WAVE/FRONTEND/GONE.WAV", "removed voice" },
+		{ "files_stock/WAVE/FRONTEND/.hidden", "not a game file" },
+		{ "files_stock/WAVE/MISSIONVOICE/V.WAV", "voice of a folder the mod lacks" },
 	};
 	for (size_t i = 0; i < sizeof kFiles / sizeof kFiles[0]; ++i) {
 		snprintf(path, sizeof path, "%s/%s", scratch, kFiles[i][0]);
@@ -1586,6 +1589,15 @@ static void test_game_files(const char* scratch) {
 	const bool target = same_file(path, "evacuate");
 	snprintf(path, sizeof path, "%s/Wave/Custom/Unused.wav", out);
 	check(target && !IsFile(path), "game files: the files of the missions' sound replacements are copied");
+	snprintf(path, sizeof path, "%s/files.yaml", out);
+	size_t removed_size = 0;
+	char*  removed      = ReadWholeFile(path, &removed_size);
+	check(removed && strcmp(removed, "# Made by the OpenXWA mod importer.\n"
+									 "# The original game files that the installation doesn't have.\n"
+									 "removed:\n  - \"Wave/FRONTEND/GONE.WAV\"\n"
+									 "  - \"Wave/MISSIONVOICE/V.WAV\"\n") == 0,
+		  "game files: the stock sounds that the mod doesn't have are removed, also in folders it doesn't have");
+	free(removed);
 
 	/* A mission's sound replacements. */
 	snprintf(path, sizeof path, "%s/WAVE/HANGARVOICESFX.LST", stock);

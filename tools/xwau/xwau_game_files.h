@@ -21,6 +21,10 @@
  *   - the files that the missions' sound replacements load, such as
  *     Wave/Custom/Evacuate.wav, if they differ from the stock game's.
  *
+ * If the installation has a Wave/ folder, the stock files in Wave/ that it
+ * doesn't have are listed under `removed` in <out>/files.yaml. The game then
+ * works as if these files didn't exist.
+ *
  * WAV files that the game can't play are converted to 16-bit PCM
  * (XwauSoundBanks_ConvertWav).
  *

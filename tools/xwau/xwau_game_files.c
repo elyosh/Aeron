@@ -18,6 +18,7 @@ typedef struct Copy {
 	const char* out;
 	size_t      missions, lists, sounds, replacements, converted;
 	XwauLines   targets; /* the sound replacement files seen */
+	XwauLines   missing_stock_files; /* the stock files that the installation doesn't have */
 } Copy;
 
 /* The path of `path` relative to the installation `game`. `path` comes from
@@ -185,6 +186,61 @@ static bool copy_wave(Copy* c) {
 	return ok;
 }
 
+/* Adds every file in the stock game's folder `rel`, and in its subfolders,
+ * that the installation doesn't have to `missing_stock_files`. TFTC moves the
+ * stock Wave/Frontend folder aside and puts its own in its place, so the
+ * stock voices that it leaves out are missing from the game it plays. */
+static bool find_missing_stock_files(Copy* c, const char* rel) {
+	char stock[1024];
+	if (!Xwau_FindDir(c->stock_game, rel, stock, sizeof stock))
+		return true;
+	size_t count   = 0;
+	char** entries = ListDir(stock, true, &count);
+	bool   ok      = true;
+	for (size_t i = 0; ok && i < count; ++i) {
+		char path[2048], entry[1200], found[1024];
+		if (entries[i][0] == '.')
+			continue;
+		if (!(ok = PathFormat(path, sizeof path, "%s/%s", stock, entries[i]) &&
+				   PathFormat(entry, sizeof entry, "%s/%s", rel, entries[i])))
+			break;
+		if (IsDir(path))
+			ok = find_missing_stock_files(c, entry);
+		else if (IsFile(path) && !Xwau_FindFile(c->game, entry, found, sizeof found))
+			ok = XwauLines_Add(&c->missing_stock_files, entry, strlen(entry));
+	}
+	FreeList(entries, count);
+	return ok;
+}
+
+/* Writes the missing stock files to <out>/files.yaml under `removed`, so
+ * that the game doesn't use them. Writes nothing when there are none. */
+static bool write_removed_files(const Copy* c) {
+	if (c->missing_stock_files.count == 0)
+		return true;
+	char path[2048];
+	if (!PathFormat(path, sizeof path, "%s/files.yaml", c->out) || !MakeDirs(c->out))
+		return false;
+	FILE* f = fopen(path, "wb");
+	if (!f) {
+		Report(path, "can't be written");
+		return false;
+	}
+	fprintf(f, "# Made by the OpenXWA mod importer.\n"
+			   "# The original game files that the installation doesn't have.\n"
+			   "removed:\n");
+	for (size_t i = 0; i < c->missing_stock_files.count; ++i) {
+		fputs("  - ", f);
+		Xwau_WriteString(f, c->missing_stock_files.items[i]);
+		fputc('\n', f);
+	}
+	if (fclose(f) != 0) {
+		Report(path, "can't be written");
+		return false;
+	}
+	return true;
+}
+
 /* Copies the files that the sound replacements of mission `base` load, if
  * they differ from the stock game's. */
 static bool copy_mission_sounds(Copy* c, const char* base) {
@@ -260,12 +316,18 @@ bool XwauGameFiles_Copy(const char* game, const char* stock_game, const char* ou
 	/* The battle medals, the medal images and the memento texts. */
 	ok = ok && copy_list(&c, "Frontres/MEDALS/MEDALS.TXT") && copy_list(&c, "Frontres/MEDALS/MEDALS.LST") &&
 		 copy_list(&c, "Frontres/MEDALS/FAMILYAWARDS.TXT");
-	ok = ok && copy_wave(&c);
+	/* An installation with no Wave folder is incomplete. It doesn't mean
+	   that every sound is removed. */
+	char wave[1024];
+	ok = ok && copy_wave(&c) &&
+		 (!Xwau_FindDir(game, "Wave", wave, sizeof wave) || find_missing_stock_files(&c, "Wave")) && write_removed_files(&c);
 	if (ok)
 		Report(NULL,
 			   "copied %zu mission files, %zu changed lists, %zu changed sound files and %zu files of the "
-			   "missions' sound replacements into %s; %zu sounds converted to 16-bit PCM",
-			   c.missions, c.lists, c.sounds, c.replacements, out, c.converted);
+			   "missions' sound replacements into %s; %zu sounds converted to 16-bit PCM; %zu stock sound "
+			   "files removed",
+			   c.missions, c.lists, c.sounds, c.replacements, out, c.converted, c.missing_stock_files.count);
 	XwauLines_Free(&c.targets);
+	XwauLines_Free(&c.missing_stock_files);
 	return ok;
 }
