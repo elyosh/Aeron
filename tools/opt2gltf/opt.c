@@ -368,9 +368,14 @@ static void parse_rotation_scale(opt_ctx_t* c, const opt_node_t* n, opt_mesh_t* 
 
 static int32_t texture_lookup_or_add(opt_ctx_t* c, const char* name) {
 	for (int32_t i = 0; i < c->texture_count; i++) {
-		if (strncmp(c->textures[i].name, name, OPT_TEXTURE_NAME_MAX) == 0) {
+		if (strcmp(c->textures[i].name, name) == 0) {
 			return i;
 		}
+	}
+	/* A cut name would never match the references to it. */
+	if (strlen(name) >= OPT_TEXTURE_NAME_MAX) {
+		set_err(c, "texture name %.40s... is longer than %d characters", name, OPT_TEXTURE_NAME_MAX - 1);
+		return -1;
 	}
 	if (c->texture_count == c->texture_capacity) {
 		int32_t        new_cap = c->texture_capacity == 0 ? 8 : c->texture_capacity * 2;
@@ -384,8 +389,7 @@ static int32_t texture_lookup_or_add(opt_ctx_t* c, const char* name) {
 		c->texture_capacity = new_cap;
 	}
 	opt_texture_t* t = &c->textures[c->texture_count];
-	strncpy(t->name, name, OPT_TEXTURE_NAME_MAX - 1);
-	t->name[OPT_TEXTURE_NAME_MAX - 1] = 0;
+	memcpy(t->name, name, strlen(name) + 1);
 	return c->texture_count++;
 }
 

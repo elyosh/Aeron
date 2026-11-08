@@ -243,7 +243,8 @@ typedef struct {
  * That color becomes the lightmap texel color. */
 #define OPT_XWA_GLOW_SHADE 10
 
-#define OPT_TEXTURE_NAME_MAX 64 /* real names have at most 8 characters */
+/* Mod tools write texture names longer than the game's 8 characters. */
+#define OPT_TEXTURE_NAME_MAX 256
 
 /*
  * Texture pixels are stored as a mip chain in which each level halves the
