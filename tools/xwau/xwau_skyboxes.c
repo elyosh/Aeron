@@ -249,9 +249,19 @@ static void report_unknown_keys(const XwauLines* lines) {
 /* Return values of folder_index and definition_index that are not an index. */
 enum { SKY_LEFT_OUT = -1, SKY_NO_MEMORY = -2 };
 
+/* Whether a cube folder already has the name `key`. */
+static bool folder_key_taken(const SkyState* st, const char* key) {
+	for (size_t i = 0; i < st->folder_count; ++i)
+		if (strcmp(st->folders[i].key, key) == 0)
+			return true;
+	return false;
+}
+
 /* Returns the index of the cube folder `found`, adds it when it is new, and
- * marks it as used for a sky or an overlay. A folder whose name cannot be
- * encoded, or has the same name as another folder, makes the import fail. */
+ * marks it as used for a sky or an overlay. The folder is named after the
+ * last part of its path. When another folder has that name, it gets _2, _3
+ * and so on ('.' is the suffix of the environments). A name that is too
+ * long makes the import fail. */
 static long folder_index(SkyState* st, const char* found, bool overlay, const char* base) {
 	for (size_t i = 0; i < st->folder_count; ++i) {
 		if (strcmp(st->folders[i].path, found) == 0) {
@@ -262,18 +272,14 @@ static long folder_index(SkyState* st, const char* found, bool overlay, const ch
 	}
 	const char* slash = strrchr(found, '/');
 	const char* name  = slash ? slash + 1 : found;
-	char        key[128];
-	if (!Xwau_EncodeName(name, key, sizeof key)) {
+	char        encoded[120], key[128];
+	if (!Xwau_EncodeName(name, encoded, sizeof encoded)) {
 		ReportFatal(base, "[SkyBoxes]: the cube folder name %s is too long", name);
 		return SKY_LEFT_OUT;
 	}
-	for (size_t i = 0; i < st->folder_count; ++i) {
-		if (strcmp(st->folders[i].key, key) == 0) {
-			ReportFatal(base, "[SkyBoxes]: the cube folders %s and %s get the same name", found,
-						st->folders[i].path);
-			return SKY_LEFT_OUT;
-		}
-	}
+	snprintf(key, sizeof key, "%s", encoded);
+	for (size_t n = 2; folder_key_taken(st, key); ++n)
+		snprintf(key, sizeof key, "%s_%zu", encoded, n);
 	if (!ArrayGrow((void**)&st->folders, st->folder_count, sizeof *st->folders))
 		return SKY_NO_MEMORY;
 	SkyFolder* f = &st->folders[st->folder_count];
