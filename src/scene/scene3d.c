@@ -180,6 +180,11 @@ static void scene_select_world_samplers(AeronScene3D* s) {
 }
 
 static void scene_release_targets(AeronScene3D* s) {
+	Aeron_DestroyRenderTarget(s->screen_layer_msaa_rt);
+	Aeron_DestroyRenderTarget(s->screen_layer_rt);
+	s->screen_layer_msaa_rt = NULL;
+	s->screen_layer_rt      = NULL;
+	s->screen_layer_active  = 0;
 	Aeron_DestroyDepthTarget(s->msaa_depth_rt);
 	Aeron_DestroyRenderTarget(s->msaa_color_rt);
 	Aeron_DestroyRenderTarget(s->normal_rt);
@@ -261,6 +266,71 @@ static AeronSampleCount scene_supported_sample_count(AeronTextureFormat color_fo
 		}
 	}
 	return AERON_SAMPLE_COUNT_1;
+}
+
+/* Whether an instance draws its screens into the screen layer this frame.
+ * The layer's targets are made the first time; without them, the screens
+ * stay in the scene. */
+static int scene_screen_layer_wanted(AeronScene3D* s) {
+	int wanted = 0;
+	for (int i = 0; i < s->instance_count && !wanted; ++i) {
+		const AeronSceneMesh* m = s->instances[i].mesh;
+		wanted                  = s->instances[i].screens_to_layer && m && m->blend_screen_index_count != 0;
+	}
+	if (!wanted) {
+		return 0;
+	}
+	if (!s->screen_layer_rt) {
+		s->screen_layer_rt = Aeron_CreateRenderTarget(&(AeronRenderTargetDesc) {
+			.width      = s->render_w,
+			.height     = s->render_h,
+			.format     = s->color_format,
+			.debug_name = "scene.screen_layer",
+		});
+	}
+	if (s->sample_count != AERON_SAMPLE_COUNT_1 && !s->screen_layer_msaa_rt) {
+		s->screen_layer_msaa_rt = Aeron_CreateRenderTarget(&(AeronRenderTargetDesc) {
+			.width        = s->render_w,
+			.height       = s->render_h,
+			.format       = s->color_format,
+			.sample_count = s->sample_count,
+			.debug_name   = "scene.screen_layer_msaa",
+		});
+	}
+	if (!s->screen_layer_rt || (s->sample_count != AERON_SAMPLE_COUNT_1 && !s->screen_layer_msaa_rt)) {
+		if (!s->screen_layer_warned) {
+			Aeron_LogWarn("aeron.scene", "the screen layer can't be created; the screens stay in the scene");
+			s->screen_layer_warned = 1;
+		}
+		return 0;
+	}
+	return 1;
+}
+
+/* Draws the screens of the `screens_to_layer` instances into the screen
+ * layer, against the depth of the colour pass. `pipe_kind` is the kind the
+ * colour pass drew its transparent ranges with. */
+static int scene_draw_screen_layer(AeronScene3D* s, AeronCommandBuffer* cmd, int pipe_kind) {
+	const int        msaa = s->sample_count != AERON_SAMPLE_COUNT_1;
+	AeronRenderPass* pass = Aeron_BeginRenderPass(&(AeronRenderPassDesc) {
+		.color_target         = msaa ? s->screen_layer_msaa_rt : s->screen_layer_rt,
+		.color_resolve_target = msaa ? s->screen_layer_rt : NULL,
+		.depth_target         = msaa ? s->msaa_depth_rt : s->depth_rt,
+		.viewport             = s->camera.viewport,
+		.clear_color          = 1,
+		.clear_color_rgba     = { 0.0f, 0.0f, 0.0f, 0.0f },
+		/* The depth is loaded, so it is stored too: a discarded depth target
+		 * is cycled, which SDL doesn't allow with a load. */
+		.command_buffer = cmd,
+		.debug_label    = "Scene screen layer",
+	});
+	if (!pass) {
+		return 0;
+	}
+	AeronSceneInternal_BindFrameUniforms(s, pass);
+	const int ok = AeronScenePbr_DrawTransparentInstances(s, pass, pipe_kind, NULL, /*layer=*/1);
+	Aeron_EndRenderPass(pass);
+	return ok;
 }
 
 static int scene_reconfigure(AeronScene3D* s, AeronTemporalMode mode) {
@@ -942,6 +1012,10 @@ void AeronScene_SetMotionContext(AeronScene3D* s, const float prev_view_proj[16]
 
 AeronRenderTarget* AeronScene_SceneRt(AeronScene3D* s) {
 	return s ? (s->scene_rt_out ? s->scene_rt_out : s->color_rt) : NULL;
+}
+
+AeronTexture* AeronScene_ScreenLayer(AeronScene3D* s) {
+	return s && s->screen_layer_active ? Aeron_RenderTargetGetTexture(s->screen_layer_rt) : NULL;
 }
 
 void AeronScene_SetClearColor(AeronScene3D* s, const float rgba[4]) {
@@ -2508,6 +2582,7 @@ int AeronScene_Render(AeronScene3D* s, AeronCommandBuffer* cmd) {
 	}
 	s->scene_rt_out          = s->color_rt;
 	s->scene_rt_out_borrowed = 0;
+	s->screen_layer_active   = 0;
 
 	/* Batched billboards: build + upload this frame's VB (copy pass —
 	 * must precede the render passes below). */
@@ -2586,6 +2661,7 @@ int AeronScene_Render(AeronScene3D* s, AeronCommandBuffer* cmd) {
 	}
 	const int msaa_active    = s->sample_count != AERON_SAMPLE_COUNT_1;
 	const int prepass_active = visibility_active || mb_active || s->temporal_active || msaa_active;
+	s->screen_layer_active   = pbr_ok && scene_screen_layer_wanted(s);
 	const int mb_regen       = mb_active && s->mb_velocity_regen;
 	const int velocity_write = mb_regen || s->temporal_active;
 	if (mb_regen) {
@@ -2693,9 +2769,10 @@ int AeronScene_Render(AeronScene3D* s, AeronCommandBuffer* cmd) {
 			.clear_color_rgba  = { s->clear_rgba[0], s->clear_rgba[1], s->clear_rgba[2], s->clear_rgba[3] },
 			.clear_depth       = msaa_active,
 			.clear_depth_value = 0.0f,
-			.discard_depth     = msaa_active,
-			.command_buffer    = cmd,
-			.debug_label       = "Scene forward color",
+			/* The screen layer draws against this depth after the pass. */
+			.discard_depth  = msaa_active && !s->screen_layer_active,
+			.command_buffer = cmd,
+			.debug_label    = "Scene forward color",
 		});
 		if (!pass) {
 			return scene_render_failure(s, cmd, "Scene forward pass creation failed");
@@ -2734,7 +2811,8 @@ int AeronScene_Render(AeronScene3D* s, AeronCommandBuffer* cmd) {
 		Aeron_GpuDebugMarker(cmd, "PBR transparent instances");
 		if (!AeronScenePbr_DrawTransparentInstances(s, pass, AERON_PBR_PIPE_FORWARD,
 													visibility_active ? Aeron_RenderTargetGetTexture(s->ao_rt)
-																	  : NULL)) {
+																	  : NULL,
+													/*layer=*/0)) {
 			Aeron_EndRenderPass(pass);
 			return scene_render_failure(s, cmd, "Scene PBR transparent recording failed");
 		}
@@ -2830,7 +2908,7 @@ int AeronScene_Render(AeronScene3D* s, AeronCommandBuffer* cmd) {
 		AeronSceneMeshOverlay_Draw(s, pass, NULL);
 		if (pbr_ok) {
 			Aeron_GpuDebugMarker(cmd, "PBR transparent instances");
-			if (!AeronScenePbr_DrawTransparentInstances(s, pass, AERON_PBR_PIPE_MESH, NULL)) {
+			if (!AeronScenePbr_DrawTransparentInstances(s, pass, AERON_PBR_PIPE_MESH, NULL, /*layer=*/0)) {
 				Aeron_EndRenderPass(pass);
 				return scene_render_failure(s, cmd, "Scene PBR transparent recording failed");
 			}
@@ -2845,6 +2923,16 @@ int AeronScene_Render(AeronScene3D* s, AeronCommandBuffer* cmd) {
 	if (pass) {
 		run_hook(s, AERON_SCENE_HOOK_AFTER_TRANSPARENT, cmd, pass);
 		Aeron_EndRenderPass(pass);
+	}
+
+	if (s->screen_layer_active) {
+		Aeron_GpuDebugPush(cmd, "Screen layer");
+		const int layer_ok =
+			scene_draw_screen_layer(s, cmd, prepass_active ? AERON_PBR_PIPE_FORWARD : AERON_PBR_PIPE_MESH);
+		Aeron_GpuDebugPop(cmd);
+		if (!layer_ok) {
+			return scene_render_failure(s, cmd, "Scene screen layer recording failed");
+		}
 	}
 
 	return scene_finalize_output(s, cmd, mb_active, mb_regen, ssao_active);

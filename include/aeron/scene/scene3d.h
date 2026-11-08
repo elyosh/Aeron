@@ -172,6 +172,11 @@ typedef struct AeronSceneMeshInstance {
 	 * visible, so motion blur treats them as part of this instance (a
 	 * cockpit) instead of blurring them with what lies behind. */
 	uint8_t velocity_stamp_screens;
+	/* Draw the screen primitives of the alpha-BLEND range into the screen
+	 * layer (AeronScene_ScreenLayer) instead of the scene. The game puts
+	 * the layer over the scene after its own post effects, so they don't
+	 * move or blur the screens. */
+	uint8_t screens_to_layer;
 	/* Ordinary mesh instances cast and receive directional shadows by
 	 * default. A receiver-local shadow map can preserve environment
 	 * shadows while excluding selected casters from selected receivers. */
@@ -745,6 +750,12 @@ void AeronScene_SetMotionContext(AeronScene3D* scene, const float prev_view_proj
 
 /* After Render(): the output-resolution RT holding the finished scene. */
 AeronRenderTarget* AeronScene_SceneRt(AeronScene3D* scene);
+/* After Render(): the screens of the `screens_to_layer` instances, at render
+ * resolution, with premultiplied colour and their coverage in alpha, or
+ * NULL when no instance drew into it this frame. Draw it over the scene with
+ * `layer.rgb + scene * (1 - layer.a)`. The layer is made the first time an
+ * instance uses it and kept until the scene's targets are released. */
+AeronTexture* AeronScene_ScreenLayer(AeronScene3D* scene);
 
 /* Record the frame's passes into `cmd` (no pass may be open on it). Returns
  * zero after recording a sticky command-buffer failure.

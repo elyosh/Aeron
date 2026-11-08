@@ -1399,7 +1399,7 @@ int AeronScenePbr_DrawInstances(struct AeronScene3D* s, AeronCommandBuffer* cmd,
 }
 
 int AeronScenePbr_DrawTransparentInstances(struct AeronScene3D* s, AeronRenderPass* pass, int pipe_kind,
-										   AeronTexture* ao_tex) {
+										   AeronTexture* ao_tex, int layer) {
 	const int blend_kind = pbr_blend_kind(pipe_kind);
 	if (!s || !pass || blend_kind < 0 || !s->storage_ready) {
 		return 0;
@@ -1427,6 +1427,12 @@ int AeronScenePbr_DrawTransparentInstances(struct AeronScene3D* s, AeronRenderPa
 		const AeronSceneMeshInstance* in = &s->instances[i];
 		const AeronSceneMesh*         m  = in->mesh;
 		if (!m || !m->vbo || !m->ibo || m->blend_index_count == 0) {
+			continue;
+		}
+		/* The instance's screens go to the screen layer. */
+		const int layered =
+			s->screen_layer_active && in->screens_to_layer && m->blend_screen_index_count != 0;
+		if (layer && !layered) {
 			continue;
 		}
 		const int receiver_local_shadow =
@@ -1475,10 +1481,10 @@ int AeronScenePbr_DrawTransparentInstances(struct AeronScene3D* s, AeronRenderPa
 								   /*screen_shadow=*/0);
 		/* Screens last, as they lie inside a cockpit's canopy. */
 		const uint32_t plain_count = m->blend_index_count - m->blend_screen_index_count;
-		if (plain_count != 0) {
+		if (plain_count != 0 && !layer) {
 			Aeron_DrawIndexed(pass, plain_count, m->blend_index_offset, 0);
 		}
-		if (m->blend_screen_index_count != 0) {
+		if (m->blend_screen_index_count != 0 && layer == layered) {
 			if (!pbr_bind_draw(s, pass, pbr_screen_kind(blend_kind), cull, m, -1, &bound, &bound_set)) {
 				return 0;
 			}

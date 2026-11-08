@@ -787,6 +787,14 @@ struct AeronScene3D {
 	AeronSceneScreenFrame screen_frame;
 	AeronBuffer*          screen_frame_buffer;
 	uint32_t              screen_frame_buffer_cap;
+	/* The screen layer (AeronScene_ScreenLayer) at render size, and its
+	 * multisampled target with MSAA; made on first use, released with the
+	 * scene's targets. `screen_layer_active` is set by Render when the
+	 * frame draws into it. */
+	AeronRenderTarget* screen_layer_rt;
+	AeronRenderTarget* screen_layer_msaa_rt;
+	int                screen_layer_active;
+	int                screen_layer_warned;
 	/* Debug material override (AeronScene_SetPbrDebugMaterial): enabled,
 	 * metallic, roughness, 0. Reset by Begin. */
 	float pbr_debug_material[4];
@@ -938,8 +946,11 @@ AeronGraphicsPipeline* AeronScenePbr_Pipeline(struct AeronScene3D* s, int kind, 
  * the prepass FS doesn't consume. */
 int AeronScenePbr_DrawInstances(struct AeronScene3D* s, AeronCommandBuffer* cmd, AeronRenderPass* pass,
 								int pipe_kind, int depth_only, int velocity, AeronTexture* ao_tex);
+/* `layer` 0 draws the alpha-BLEND ranges into the scene, without the
+ * screens of the instances that go to the screen layer this frame; 1 draws
+ * only those screens, into the layer. */
 int AeronScenePbr_DrawTransparentInstances(struct AeronScene3D* s, AeronRenderPass* pass, int pipe_kind,
-										   AeronTexture* ao_tex);
+										   AeronTexture* ao_tex, int layer);
 /* Draws the culled faces of every single-sided instance's opaque range in
  * a dark color where no front face covers them (AeronScene_SetBackfaceFill).
  * Call after the opaque draws, in the same pass. */
