@@ -58,9 +58,15 @@ typedef struct AeronVideoDecodeContext {
 	int                rotation_degrees;
 	int                source_width;
 	int                source_height;
+	int                source_pitch; /* bytes per row of rgba_temp */
 	int                output_width;
 	int                output_height;
 } AeronVideoDecodeContext;
+
+/* Bytes per row of an RGBA frame buffer; see AERON_VIDEO_ROW_ALIGN. */
+static int AeronVideo_RowPitch(int width) {
+	return FFALIGN(width * 4, AERON_VIDEO_ROW_ALIGN);
+}
 
 static void AeronVideo_FfmpegError(char* dst, size_t dst_size, int error) {
 	av_make_error_string(dst, dst_size, error);
@@ -134,12 +140,13 @@ static int AeronVideo_NormalizeRotation(const AVStream* stream) {
 	return 270;
 }
 
-static void AeronVideo_RotateRgba(uint8_t* dst, const uint8_t* src, int width, int height, int rotation) {
+static void AeronVideo_RotateRgba(uint8_t* dst, int dst_pitch, const uint8_t* src, int src_pitch, int width,
+								  int height, int rotation) {
 	for (int y = 0; y < height; ++y) {
 		for (int x = 0; x < width; ++x) {
 			int            dx;
 			int            dy;
-			const uint8_t* source = src + ((size_t)y * (size_t)width + (size_t)x) * 4u;
+			const uint8_t* source = src + (size_t)y * (size_t)src_pitch + (size_t)x * 4u;
 			if (rotation == 90) {
 				dx = height - 1 - y;
 				dy = x;
@@ -150,8 +157,7 @@ static void AeronVideo_RotateRgba(uint8_t* dst, const uint8_t* src, int width, i
 				dx = y;
 				dy = width - 1 - x;
 			}
-			memcpy(dst + ((size_t)dy * (size_t)(rotation == 180 ? width : height) + (size_t)dx) * 4u, source,
-				   4u);
+			memcpy(dst + (size_t)dy * (size_t)dst_pitch + (size_t)dx * 4u, source, 4u);
 		}
 	}
 }
@@ -410,18 +416,20 @@ static int AeronVideo_QueueVideoFrame(AeronVideoDecodeContext* decode, AVFrame* 
 		return result;
 	}
 	planes[0]  = conversion_target;
-	strides[0] = decode->source_width * 4;
+	strides[0] = decode->rotation_degrees ? decode->source_pitch : player->frame_pitch;
 	if (sws_scale(decode->scaler, source_planes, source_strides, 0, source->height, planes, strides) !=
 		decode->source_height) {
 		return AVERROR(EIO);
 	}
 	if (decode->rotation_degrees) {
-		AeronVideo_RotateRgba(queued->pixels, decode->rgba_temp, decode->source_width, decode->source_height,
-							  decode->rotation_degrees);
+		AeronVideo_RotateRgba(queued->pixels, player->frame_pitch, decode->rgba_temp, decode->source_pitch,
+							  decode->source_width, decode->source_height, decode->rotation_degrees);
 	}
 	if (alpha && player->alpha == AERON_VIDEO_ALPHA_PREMULTIPLIED) {
-		Aeron_ImagePremultiplyRgba8(queued->pixels,
-									(size_t)decode->output_width * (size_t)decode->output_height);
+		for (int y = 0; y < decode->output_height; ++y) {
+			Aeron_ImagePremultiplyRgba8(queued->pixels + (size_t)y * (size_t)player->frame_pitch,
+										(size_t)decode->output_width);
+		}
 	}
 
 	pts_us = AeronVideo_FrameTimestampUs(decode, source, decode->video_stream);
@@ -698,7 +706,7 @@ static int AeronVideo_SendPacket(AeronVideoDecodeContext* decode, AVCodecContext
 
 static int AeronVideo_AllocateFrames(AeronVideoDecodeContext* decode) {
 	AeronVideoPlayer* player      = decode->player;
-	const size_t      frame_bytes = (size_t)decode->output_width * (size_t)decode->output_height * 4u;
+	const size_t      frame_bytes = (size_t)player->frame_pitch * (size_t)decode->output_height;
 
 	player->frames = (AeronDecodedVideoFrame*)av_calloc(player->queue_capacity, sizeof(*player->frames));
 	if (!player->frames) {
@@ -715,7 +723,7 @@ static int AeronVideo_AllocateFrames(AeronVideoDecodeContext* decode) {
 		return 0;
 	}
 	if (decode->rotation_degrees) {
-		decode->rgba_temp_size = (size_t)decode->source_width * (size_t)decode->source_height * 4u;
+		decode->rgba_temp_size = (size_t)decode->source_pitch * (size_t)decode->source_height;
 		decode->rgba_temp      = (uint8_t*)av_malloc(decode->rgba_temp_size);
 		if (!decode->rgba_temp) {
 			return 0;
@@ -754,7 +762,9 @@ static int AeronVideo_InitStreams(AeronVideoDecodeContext* decode) {
 		decode->output_height    = decode->rotation_degrees == 90 || decode->rotation_degrees == 270
 									   ? decode->source_width
 									   : decode->source_height;
-		frame_bytes              = (int64_t)decode->output_width * decode->output_height * 4;
+		decode->source_pitch     = AeronVideo_RowPitch(decode->source_width);
+		player->frame_pitch      = AeronVideo_RowPitch(decode->output_width);
+		frame_bytes              = (int64_t)player->frame_pitch * decode->output_height;
 		if (frame_bytes <= 0 || (uint64_t)frame_bytes > player->max_frame_bytes ||
 			(uint64_t)frame_bytes * (player->queue_capacity + 1u) > player->max_frame_bytes * 2u) {
 			return 0;

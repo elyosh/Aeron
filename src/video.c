@@ -554,7 +554,7 @@ int Aeron_VideoSubmit(AeronVideoPlayer* player, const AeronVideoPresentDesc* des
 	layer.frame.pixels      = player->current_pixels;
 	layer.frame.width       = width;
 	layer.frame.height      = height;
-	layer.frame.pitch       = width * 4;
+	layer.frame.pitch       = player->frame_pitch;
 	layer.frame.format      = AERON_PIXEL_FORMAT_RGBA8888;
 	layer.frame.color_space = AERON_COLOR_SPACE_SRGB;
 	layer.frame.generation  = player->current_generation;
@@ -588,6 +588,7 @@ AeronTexture* Aeron_VideoTexture(AeronVideoPlayer* player, AeronCommandBuffer* c
 	uint32_t       generation;
 	int            width;
 	int            height;
+	int            pitch;
 
 	if (!player || !command_buffer) {
 		return NULL;
@@ -597,6 +598,7 @@ AeronTexture* Aeron_VideoTexture(AeronVideoPlayer* player, AeronCommandBuffer* c
 	generation = player->current_generation;
 	width      = player->info.width;
 	height     = player->info.height;
+	pitch      = player->frame_pitch;
 	SDL_UnlockMutex(player->lock);
 	if (!pixels) {
 		return NULL;
@@ -623,7 +625,7 @@ AeronTexture* Aeron_VideoTexture(AeronVideoPlayer* player, AeronCommandBuffer* c
 			.width        = width,
 			.height       = height,
 			.pixels       = pixels,
-			.pitch        = width * 4,
+			.pitch        = pitch,
 			.pixel_format = AERON_PIXEL_FORMAT_RGBA8888,
 			.color_space  = AERON_COLOR_SPACE_SRGB,
 			.cycle        = 1,

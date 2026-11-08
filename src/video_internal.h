@@ -26,6 +26,12 @@ enum {
 	 * decoders get the same packets and thread count, so they stay in step
 	 * and only a few frames wait. */
 	AERON_VIDEO_ALPHA_PENDING = 16,
+	/* Frame rows are padded to this many bytes (16 RGBA pixels). The x86
+	 * SSSE3 YUV to RGBA code in swscale converts 16 pixels at a time and
+	 * writes up to 15 pixels past the end of a row. Its stride check only
+	 * accounts for 8 pixels, so with tightly packed rows it writes past the
+	 * end of the last row, or leaves the last pixels of each row unwritten. */
+	AERON_VIDEO_ROW_ALIGN = 64,
 };
 
 #define AERON_VIDEO_DEFAULT_MAX_FRAME_BYTES ((size_t)256 * 1024u * 1024u)
@@ -77,6 +83,7 @@ struct AeronVideoPlayer {
 	AeronDecodedVideoFrame* frames;
 	uint32_t                frame_head;
 	uint32_t                frame_count;
+	int                     frame_pitch; /* bytes per row of every frame buffer */
 	uint8_t*                current_pixels;
 	int64_t                 current_pts_us;
 	int64_t                 current_duration_us;
