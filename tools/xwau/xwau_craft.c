@@ -833,6 +833,189 @@ void XwauCraft_WriteWeaponRates(FILE* f, const XwauNames* names, const char* ind
 		fputs("}\n", f);
 }
 
+/* ---- Turret target blocks (Weapon<N>_TargetBlock) ----------------------- */
+
+/* The names that hook_weapon_rate reads in a Weapon<N>_TargetBlock value,
+ * by genus (GetShipCategoryName), and "Warhead". */
+static const char* const g_targetBlockGenus[22] = {
+	"Starfighter",  "Transport",        "UtilityVehicle",  "Freighter", "Starship",
+	"Platform",     "PlayerProjectile", "OtherProjectile", "Mine",      "Satellite",
+	"NormalDebris", "SmallDebris",      "Backdrop",        "Explosion", "Obstacle",
+	"DeathStarII",  "People",           "Container",       "Droid",     "Armament",
+	"LargeDebris",  "SalvageYard",
+};
+
+/* The genus values that OpenXWA has no name for. */
+#define TARGET_BLOCK_NO_NAME ((1u << 6) | (1u << 16))
+
+bool XwauCraft_HookReadsTurretIgnore(const char* game) {
+	return Xwau_DllHasText(game, "hook_weapon_rate.dll", "_TargetBlock");
+}
+
+/* Returns N when `key` is Weapon<N>_TargetBlock, or -1. The hook builds the
+ * key as "Weapon" + std::to_string(N) + "_TargetBlock" and compares it in any
+ * case, so N has no sign and no leading zero. */
+static int target_block_weapon(const char* key) {
+	if (strncasecmp(key, "Weapon", 6) != 0)
+		return -1;
+	const char* digits = key + 6;
+	const char* end    = digits;
+	while (*end >= '0' && *end <= '9')
+		++end;
+	if (end == digits || end - digits > 5 || (digits[0] == '0' && end - digits > 1) ||
+		strcasecmp(end, "_TargetBlock") != 0)
+		return -1;
+	return atoi(digits);
+}
+
+/* Reads the names of `value` into `*mask`, as the hook does: the value is
+ * split at ',' and ';', so the words of a comment count too, and the names
+ * are compared with case. Returns false when out of memory. */
+static bool target_block_mask(const char* value, uint32_t* mask) {
+	XwauLines tokens = { 0 };
+	if (!Xwau_Tokenize(value, XWAU_RULES_CPP, &tokens))
+		return false;
+	*mask = 0;
+	for (size_t i = 0; i < tokens.count; ++i) {
+		if (strcmp(tokens.items[i], "Warhead") == 0) {
+			*mask |= XWAU_CRAFT_TURRET_IGNORE_WARHEAD;
+			continue;
+		}
+		for (int genus = 0; genus < 22; ++genus) {
+			if (strcmp(tokens.items[i], g_targetBlockGenus[genus]) == 0) {
+				*mask |= 1u << genus;
+				break;
+			}
+		}
+	}
+	XwauLines_Free(&tokens);
+	return true;
+}
+
+/* Reports the words of `value` before its first ';' that aren't names. */
+static void report_target_block_words(const char* source, const char* key, const char* value) {
+	char text[1024];
+	snprintf(text, sizeof text, "%s", value);
+	char* comment = strchr(text, ';');
+	if (comment)
+		*comment = '\0';
+	XwauLines tokens = { 0 };
+	if (!Xwau_Tokenize(text, XWAU_RULES_CPP, &tokens))
+		return;
+	for (size_t i = 0; i < tokens.count; ++i) {
+		const char* word      = tokens.items[i];
+		bool        known     = !word[0] || strcmp(word, "Warhead") == 0;
+		bool        case_only = strcasecmp(word, "Warhead") == 0;
+		for (int genus = 0; genus < 22 && !known; ++genus) {
+			known     = strcmp(word, g_targetBlockGenus[genus]) == 0;
+			case_only = case_only || strcasecmp(word, g_targetBlockGenus[genus]) == 0;
+		}
+		if (!known)
+			Report(source, "%s: %s isn't a name that the hook knows, so it is ignored%s", key, word,
+				   case_only ? ". The hook compares names with case" : "");
+	}
+	XwauLines_Free(&tokens);
+}
+
+/* Reads the Weapon<N>_TargetBlock keys of `section` into `out`. With
+ * `report` false, it doesn't report the problems of the values. */
+static void read_target_blocks(const XwauSection* section, bool report, XwauCraftTurretIgnore* out) {
+	memset(out, 0, sizeof *out);
+	for (size_t i = 0; i < section->lines.count; ++i) {
+		char key[256], value[1024];
+		/* The hook only reads the first line of a key. */
+		if (!XwauSection_KeyAt(section, i, key, sizeof key))
+			continue;
+		const int weapon = target_block_weapon(key);
+		if (weapon < 0)
+			continue;
+		if (weapon < XWAU_CRAFT_FIRST_WEAPON || weapon >= XWAU_CRAFT_FIRST_WEAPON + XWAU_CRAFT_WEAPONS) {
+			if (report)
+				Report(section->source, "%s names no weapon type, so it is ignored", key);
+			continue;
+		}
+		Xwau_SplitLine(section->lines.items[i], section->rules, key, sizeof key, value, sizeof value);
+		uint32_t mask;
+		if (!target_block_mask(value, &mask)) {
+			Report(NULL, "out of memory");
+			continue;
+		}
+		if (report) {
+			report_target_block_words(section->source, key, value);
+			char before[1024];
+			snprintf(before, sizeof before, "%s", value);
+			char* comment = strchr(before, ';');
+			if (comment)
+				*comment = '\0';
+			uint32_t before_mask;
+			if (target_block_mask(before, &before_mask) && before_mask != mask)
+				Report(section->source,
+					   "%s: the comment after ';' has a name that the hook reads too, so it is kept", key);
+			if (mask & TARGET_BLOCK_NO_NAME)
+				ReportUnsupported("the Weapon<N>_TargetBlock names PlayerProjectile and People");
+		}
+		mask &= ~TARGET_BLOCK_NO_NAME;
+		const int index = weapon - XWAU_CRAFT_FIRST_WEAPON;
+		out->has_list |= 1u << index;
+		out->mask[index] = mask;
+	}
+}
+
+void XwauCraft_ReadTurretIgnore(const char* rate_txt, const char* ini, bool hook_reads,
+								XwauCraftTurretIgnore* out) {
+	XwauSection section;
+	memset(out, 0, sizeof *out);
+	if (!XwauSection_ReadPaths(rate_txt, ini, "WeaponRate", XWAU_RULES_CPP, &section)) {
+		Report(NULL, "out of memory");
+		return;
+	}
+	read_target_blocks(&section, hook_reads, out);
+	if (!hook_reads) {
+		if (out->has_list)
+			ReportRepeated("this installation has no hook_weapon_rate.dll that reads Weapon<N>_TargetBlock "
+						   "keys, so they are ignored");
+		memset(out, 0, sizeof *out);
+	}
+	XwauSection_Free(&section);
+}
+
+void XwauCraft_ReadGlobalTurretIgnore(const char* game, XwauCraftTurretIgnore* out) {
+	XwauSection section;
+	memset(out, 0, sizeof *out);
+	if (!XwauCraft_HookReadsTurretIgnore(game))
+		return;
+	if (!XwauSection_ReadGlobal(game, "WeaponRate", XWAU_RULES_CPP, &section)) {
+		Report(NULL, "out of memory");
+		return;
+	}
+	read_target_blocks(&section, true, out);
+	XwauSection_Free(&section);
+}
+
+void XwauCraft_WriteTurretIgnore(FILE* f, const XwauNames* names, const char* indent,
+								 const XwauCraftTurretIgnore* turret_ignore) {
+	if (!turret_ignore->has_list)
+		return;
+	fprintf(f, "%sturret_ignore:\n", indent);
+	for (int weapon = 0; weapon < XWAU_CRAFT_WEAPONS; ++weapon) {
+		if (!(turret_ignore->has_list & (1u << weapon)))
+			continue;
+		const uint32_t mask  = turret_ignore->mask[weapon];
+		bool           first = true;
+		fprintf(f, "%s  %s: [", indent, XwauNames_WeaponType(names, XWAU_CRAFT_FIRST_WEAPON + weapon));
+		for (int genus = 0; genus < 22; ++genus) {
+			const char* name = XwauNames_Name(&names->genus, genus);
+			if (!(mask & (1u << genus)) || !name)
+				continue;
+			fprintf(f, "%s%s", first ? "" : ", ", name);
+			first = false;
+		}
+		if (mask & XWAU_CRAFT_TURRET_IGNORE_WARHEAD)
+			fprintf(f, "%swarhead", first ? "" : ", ");
+		fputs("]\n", f);
+	}
+}
+
 bool XwauCraft_ReadGlobalImpactColors(const char* game, uint32_t colors[XWAU_CRAFT_WEAPONS]) {
 	char path[1024];
 	if (!Xwau_FindFile(game, "hook_weapon_color.dll", path, sizeof path))
@@ -995,7 +1178,8 @@ static bool has_weapon_colors(const XwauCraftWeaponColors* colors) {
 
 static bool has_weapons(const XwauCraftWeapons* weapons) {
 	if (weapons->switch_by_iff >= 0 || has_weapon_colors(&weapons->colors) ||
-		XwauCraft_HasWeaponRates(&weapons->rates) || XwauWeaponStats_Any(&weapons->stats))
+		XwauCraft_HasWeaponRates(&weapons->rates) || XwauWeaponStats_Any(&weapons->stats) ||
+		weapons->turret_ignore.has_list)
 		return true;
 	for (int markings = 0; markings < 256; ++markings) {
 		if (weapons->has_markings[markings])
@@ -1062,6 +1246,7 @@ static void write_weapons(FILE* f, const XwauNames* names, const XwauStockValues
 	if (weapons->switch_by_iff >= 0)
 		fprintf(f, "  switch_by_iff: %s\n", weapons->switch_by_iff ? "all" : "none");
 	XwauCraft_WriteWeaponRates(f, names, "  ", &weapons->rates);
+	XwauCraft_WriteTurretIgnore(f, names, "  ", &weapons->turret_ignore);
 	XwauWeaponStats_Write(f, names, stock, "  ", &weapons->stats);
 	if (has_weapon_colors(&weapons->colors)) {
 		fprintf(f, "  colors:\n");
@@ -1709,7 +1894,7 @@ bool XwauCraft_Write(const char* xwau_root, const char* output_dir, const XwauNa
 	int    written = 0, reticles = 0, colors = 0, engine_glows = 0, weapon_colors = 0;
 	int    stats_profiles = 0, shields = 0, sounds = 0, components = 0;
 	int    weapon_profiles = 0, warhead_locks = 0, jammings = 0, docks = 0, surfaces = 0, cockpit_views = 0;
-	int    ai_attacks = 0, mag_pulses = 0, hyperspaces = 0;
+	int    ai_attacks = 0, mag_pulses = 0, hyperspaces = 0, turret_ignores = 0;
 	/* The materials that the .mat files start from (as opt2gltf reads them). */
 	XwauMatParams global;
 	char          global_path[1024];
@@ -1749,6 +1934,8 @@ bool XwauCraft_Write(const char* xwau_root, const char* output_dir, const XwauNa
 	   rates. */
 	XwauCraftWeaponRates global_rates;
 	const bool           global_rate_lines = XwauCraft_ReadGlobalWeaponRates(xwau_root, &global_rates);
+	/* Newer builds of hook_weapon_rate also read Weapon<N>_TargetBlock. */
+	const bool turret_ignore = XwauCraft_HookReadsTurretIgnore(xwau_root);
 	/* The genus of the object types that load each model in the import. The
 	   units of the stats profiles depend on it. */
 	XwauGameTables* tables = XwauGameTables_Load(xwau_root);
@@ -1823,6 +2010,8 @@ bool XwauCraft_Write(const char* xwau_root, const char* output_dir, const XwauNa
 				for (int key = 0; key < XWAU_CRAFT_WEAPON_RATES; ++key)
 					if (!g_rateKeys[key].ship_first)
 						weapons->rates.value[key] = -1;
+			XwauCraft_ReadTurretIgnore(side_path[SIDE_WEAPON_RATE], has_ini ? ini : NULL, turret_ignore,
+									   &weapons->turret_ignore);
 			if (!XwauWeaponStats_Read(xwau_root, model, &weapons->stats)) {
 				Report(NULL, "out of memory");
 				ok = false;
@@ -1918,6 +2107,7 @@ bool XwauCraft_Write(const char* xwau_root, const char* output_dir, const XwauNa
 			continue;
 		}
 		weapon_profiles += XwauWeaponStats_Any(&weapons->stats);
+		turret_ignores += weapons->turret_ignore.has_list != 0;
 		XwauWeaponStats_Free(&weapons->stats);
 		stats_profiles += stats.count != 0;
 		shields += shield.has;
@@ -1950,10 +2140,11 @@ bool XwauCraft_Write(const char* xwau_root, const char* output_dir, const XwauNa
 		"weapon settings, %d with weapon profiles, %d with stats profiles, %d with a shield recharge rate, "
 		"%d with sounds, %d with component strengths, %d with gunner seats, %d with warhead lock settings, "
 		"%d with jamming rules, %d with a docking approach height, %d with hyperspace settings, %d with AI "
-		"attack settings, %d with mag pulse settings, %d with surface rules, %d with a wide cockpit view",
+		"attack settings, %d with mag pulse settings, %d with surface rules, %d with a wide cockpit view, "
+		"%d with turret target blocks",
 		written, reticles, colors, engine_glows, weapon_colors, weapon_profiles, stats_profiles, shields,
 		sounds, components, gunner_seats, warhead_locks, jammings, docks, hyperspaces, ai_attacks, mag_pulses,
-		surfaces, cockpit_views);
+		surfaces, cockpit_views, turret_ignores);
 	if (engine_sound) {
 		/* The default ambient distance of hook_engine_sound. */
 		XwauSection global;

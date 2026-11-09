@@ -349,6 +349,9 @@ static void write_weapons(FILE* f, const XwauNames* names, const XwauStockValues
 			defaults.value[key] = (int)value;
 	}
 	XwauCraft_WriteWeaponRates(f, names, "  ", &defaults);
+	XwauCraftTurretIgnore turret_ignore;
+	XwauCraft_ReadGlobalTurretIgnore(game, &turret_ignore);
+	XwauCraft_WriteTurretIgnore(f, names, "  ", &turret_ignore);
 	if (Xwau_FileHasText(path, "DechargeRatePercent"))
 		fprintf(f, "  decharge_percent: %lld\n  recharge_percent: %lld\n",
 				rate_percent(&settings, "DechargeRatePercent"),

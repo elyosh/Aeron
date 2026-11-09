@@ -137,9 +137,21 @@ typedef struct XwauCraftWeaponRates {
 	int value[XWAU_CRAFT_WEAPON_RATES];
 } XwauCraftWeaponRates;
 
+/* Bit 22 of a mask of XwauCraftTurretIgnore: the object is a warhead. Bits
+ * 0 to 21 are the genus values. */
+#define XWAU_CRAFT_TURRET_IGNORE_WARHEAD (1u << 22)
+
+/* The Weapon<N>_TargetBlock keys of a [WeaponRate] section: the objects that
+ * the AI turrets of a weapon type ignore. */
+typedef struct XwauCraftTurretIgnore {
+	uint32_t has_list;                 /* a bit for each weapon type with a key */
+	uint32_t mask[XWAU_CRAFT_WEAPONS]; /* a bit for each genus, and the warhead bit */
+} XwauCraftTurretIgnore;
+
 typedef struct XwauCraftWeapons {
 	XwauCraftWeaponColors colors;
 	XwauCraftWeaponRates  rates;
+	XwauCraftTurretIgnore turret_ignore;
 	bool                  has_markings[256];
 	XwauCraftWeaponColors by_markings[256];
 	int                   switch_by_iff; /* WeaponSwitchBasedOnIff: 1 or 0, -1 when not set */
@@ -268,6 +280,29 @@ bool XwauCraft_HasDefaultFirstRates(const XwauCraftWeaponRates* rates);
  * weapons use the weapon names in `names`. */
 void XwauCraft_WriteWeaponRates(FILE* f, const XwauNames* names, const char* indent,
 								const XwauCraftWeaponRates* rates);
+
+/* Whether the hook_weapon_rate.dll of the installation `game` reads the
+ * Weapon<N>_TargetBlock keys. Older builds don't. */
+bool XwauCraft_HookReadsTurretIgnore(const char* game);
+
+/* Reads the Weapon<N>_TargetBlock keys of a model: `rate_txt`
+ * (<model>WeaponRate.txt) when it has lines, else the [WeaponRate] section
+ * of `ini`. Either path can be NULL. The keys are read as hook_weapon_rate
+ * reads them, and the problems are reported. When `hook_reads` is false, the
+ * installed hook doesn't read the keys, so they are reported and left out. */
+void XwauCraft_ReadTurretIgnore(const char* rate_txt, const char* ini, bool hook_reads,
+								XwauCraftTurretIgnore* out);
+
+/* Reads the global Weapon<N>_TargetBlock keys of the installation `game`:
+ * FlightModels/WeaponRate.txt when it has lines, else the [WeaponRate]
+ * section of FlightModels/default.ini. For each weapon type, the hook uses
+ * the model's key first, then the global key. */
+void XwauCraft_ReadGlobalTurretIgnore(const char* game, XwauCraftTurretIgnore* out);
+
+/* Writes `turret_ignore` as a group of a `weapons` map at `indent`, or
+ * nothing when it has no list. The weapon types use the names in `names`. */
+void XwauCraft_WriteTurretIgnore(FILE* f, const XwauNames* names, const char* indent,
+								 const XwauCraftTurretIgnore* turret_ignore);
 
 /* The [Sound] section of a model. */
 typedef struct XwauCraftSound {

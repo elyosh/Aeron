@@ -1866,6 +1866,61 @@ static void test_mission_tie(const char* scratch) {
 	free(text);
 }
 
+static void test_turret_ignore(const char* scratch) {
+	char                  game[1024], path[1300], txt[1300], out[1300];
+	XwauCraftTurretIgnore ignore;
+	snprintf(game, sizeof game, "%s/ti_game", scratch);
+	snprintf(path, sizeof path, "%s/FlightModels", game);
+	MakeDirs(path);
+	snprintf(path, sizeof path, "%s/FlightModels/Cruiser.ini", game);
+	write_file(path, "[WeaponRate]\n"
+					 "Weapon281_TargetBlock = Freighter,Starship,Platform\t;Block Freighters, Starships\n"
+					 "weapon283_targetblock = starfighter, Transport\n"
+					 "Weapon284_TargetBlock =\n"
+					 "Weapon281_TargetBlock = Starfighter\n"
+					 "Weapon285_TargetBlock = Starfighter ;Warhead\n"
+					 "Weapon0286_TargetBlock = Starfighter\n"
+					 "Weapon400_TargetBlock = Starfighter\n"
+					 "Weapon287_TargetBlock = Warhead, PlayerProjectile, OtherProjectile\n"
+					 "[Hyperspace]\nWeapon288_TargetBlock = Starfighter\n");
+	XwauCraft_ReadTurretIgnore(NULL, path, true, &ignore);
+	check(ignore.has_list == ((1u << 1) | (1u << 3) | (1u << 4) | (1u << 5) | (1u << 7)),
+		  "turret target blocks: keys in any case and an empty value count, but not a leading zero, a number "
+		  "that isn't a weapon type or another section");
+	check(ignore.mask[1] == ((1u << 3) | (1u << 4) | (1u << 5)) && ignore.mask[3] == (1u << 1) &&
+			  ignore.mask[4] == 0,
+		  "turret target blocks: the first key wins, and names are compared with case");
+	check(ignore.mask[5] == (1u | XWAU_CRAFT_TURRET_IGNORE_WARHEAD) &&
+			  ignore.mask[7] == ((1u << 7) | XWAU_CRAFT_TURRET_IGNORE_WARHEAD),
+		  "turret target blocks: a name in the comment counts, as in the hook, and PlayerProjectile is left "
+		  "out");
+	snprintf(out, sizeof out, "%s/ti_model.yaml", scratch);
+	FILE* f = fopen(out, "wb");
+	XwauCraft_WriteTurretIgnore(f, &g_names, "", &ignore);
+	fclose(f);
+	check(same_file(out,
+					"turret_ignore:\n  type_281: [freighter, starship, platform]\n  type_283: [transport]\n"
+					"  type_284: []\n  type_285: [fighter, warhead]\n  type_287: [projectile, warhead]\n"),
+		  "turret target blocks: one list for each weapon type, with genus names and warhead");
+	XwauCraft_ReadTurretIgnore(NULL, path, false, &ignore);
+	check(!ignore.has_list, "turret target blocks: left out when the installed hook doesn't read them");
+	snprintf(txt, sizeof txt, "%s/FlightModels/CruiserWeaponRate.txt", game);
+	write_file(txt, "Weapon289_TargetBlock = Platform\n");
+	XwauCraft_ReadTurretIgnore(txt, path, true, &ignore);
+	check(ignore.has_list == (1u << 9) && ignore.mask[9] == (1u << 5),
+		  "turret target blocks: <model>WeaponRate.txt wins over the section");
+
+	XwauCraft_ReadGlobalTurretIgnore(game, &ignore);
+	check(!ignore.has_list, "turret target blocks: no global keys without the hook");
+	snprintf(path, sizeof path, "%s/hook_weapon_rate.dll", game);
+	write_file(path, "MZ Weapon_TargetBlock");
+	snprintf(path, sizeof path, "%s/FlightModels/default.ini", game);
+	write_file(path, "[WeaponRate]\nWeapon290_TargetBlock = Starship\n");
+	XwauCraft_ReadGlobalTurretIgnore(game, &ignore);
+	check(ignore.has_list == (1u << 10) && ignore.mask[10] == (1u << 4),
+		  "turret target blocks: the global keys of default.ini");
+}
+
 static void test_gunner_seats(const char* scratch) {
 	char game[1024], path[1300], txt[1300], out[1300];
 	snprintf(game, sizeof game, "%s/gunner_game", scratch);
@@ -3468,6 +3523,7 @@ int main(void) {
 	test_mission_tie(scratch);
 	test_warhead_pools(scratch);
 	test_gunner_seats(scratch);
+	test_turret_ignore(scratch);
 	test_weapon_stats(scratch);
 	test_stats_profiles(scratch);
 	test_sound_banks(scratch);
