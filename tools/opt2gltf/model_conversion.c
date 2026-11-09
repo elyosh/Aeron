@@ -790,6 +790,59 @@ static bool xwau_levers(Conversion* c, const opt_file_t* opt, const char* label)
 	return true;
 }
 
+/* Keeps a single light for each variant of a projectile. XWAU adds a light
+ * for each face that shows a texture with Light, and a model can have several
+ * of them. A battle can have hundreds of projectiles, so that doesn't scale,
+ * and on a small object that moves fast, one light looks the same. For each
+ * variant, the light is the brightest of the lights that shine with it. It
+ * becomes a tube along its mesh, like a laser's light and the game's stock
+ * light. A position from the faces would not work: some warheads are a
+ * long mesh with lights at both ends. When all the lights shine with every
+ * variant, one light is kept for all of them. Returns false when out of
+ * memory. */
+static bool xwau_projectile_light(Conversion* c, const opt_file_t* opt) {
+	bool per_state = false;
+	for (size_t i = 0; i < c->light_count; ++i)
+		per_state |= c->lights[i].state >= 0;
+	int32_t states = 1;
+	for (int32_t mi = 0; per_state && mi < opt->mesh_count; ++mi) {
+		const opt_mesh_t* m = &opt->meshes[mi];
+		for (int32_t g = 0; m->lod_count > 0 && g < m->lods[0].group_count; ++g)
+			if (m->lods[0].groups[g].state_count > states)
+				states = m->lods[0].groups[g].state_count;
+	}
+	OptGltfLight* kept  = (OptGltfLight*)malloc((size_t)states * sizeof *kept);
+	size_t        count = 0;
+	if (!kept)
+		return false;
+	for (int32_t s = 0; c->light_count && s < states; ++s) {
+		const int32_t       state = per_state ? s : -1;
+		const OptGltfLight* best  = NULL;
+		for (size_t i = 0; i < c->light_count; ++i) {
+			const OptGltfLight* light = &c->lights[i];
+			if ((light->state == state || light->state == -1) &&
+				(!best || light->intensity > best->intensity))
+				best = light;
+		}
+		if (!best)
+			continue;
+		kept[count] = (OptGltfLight) {
+			.mesh_index = best->mesh_index,
+			.state      = state,
+			.tag        = best->tag,
+			.color      = { best->color[0], best->color[1], best->color[2] },
+			.intensity  = best->intensity,
+		};
+		++count;
+	}
+	free(c->lights);
+	c->lights                    = kept;
+	c->light_count               = count;
+	c->options.model.lights      = c->lights;
+	c->options.model.light_count = c->light_count;
+	return true;
+}
+
 /* How XWAU's renderer draws the model when it is a projectile (see the
  * conversion's description). */
 static XwauGltfProjectile xwau_projectile(const ModelConversion* mc, const char* basename) {
@@ -893,22 +946,23 @@ static bool bake_xwau(Conversion* c, const ModelConversion* mc, const opt_file_t
 		Report(label, "out of memory (levers)");
 		return false;
 	}
-	if (xwau_is_laser(basename)) {
-		if (!xwau_bolt_lights(c, opt)) {
-			Report(label, "out of memory (lights)");
-			return false;
-		}
-		if (c->light_count)
-			ReportDetail(label, "%zu bolt lights", c->light_count);
-		return true;
-	}
-	size_t faces = 0;
-	if (!xwau_mat_lights(c, opt, &faces)) {
+	const bool bolt  = xwau_is_laser(basename);
+	size_t     faces = 0;
+	if (!(bolt ? xwau_bolt_lights(c, opt) : xwau_mat_lights(c, opt, &faces))) {
 		Report(label, "out of memory (lights)");
 		return false;
 	}
-	if (c->light_count)
-		ReportDetail(label, "%zu .mat lights, from %zu faces", c->light_count, faces);
+	const size_t found = c->light_count;
+	if (projectile && found && !xwau_projectile_light(c, opt)) {
+		Report(label, "out of memory (lights)");
+		return false;
+	}
+	if (projectile && found)
+		ReportDetail(label, "%zu projectile lights, one for each variant, from %zu", c->light_count, found);
+	else if (bolt && found)
+		ReportDetail(label, "%zu bolt lights", found);
+	else if (found)
+		ReportDetail(label, "%zu .mat lights, from %zu faces", found, faces);
 	return true;
 }
 

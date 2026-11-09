@@ -76,7 +76,8 @@
  *     the tables, the stock projectile models are used. A projectile is a
  *     warhead when its name has Missile, Torpedo, SpaceBomb, Pulse, Rocket or
  *     Flare, but not Boat, in any case, as XWAU's renderer tags them. The
- *     others are lasers.
+ *     others are lasers. Unlike in XWAU, a projectile gets only one light
+ *     for each variant, a tube along its mesh.
  *
  * In both modes, the glTF model keeps only LOD 0, and the LODs after it are
  * counted with ReportUnsupported. The explosion type flags that the game
