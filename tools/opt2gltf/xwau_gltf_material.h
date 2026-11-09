@@ -43,10 +43,11 @@ struct XwauSkins;
  *     brighter, as a Shadeless texture.
  * The emissive image holds the linear colour divided by its largest value,
  * so that the colour above 1 isn't clipped and keeps its hue. The brightest
- * possible texel is 2 times OPT_GLTF_PROJECTILE_STRENGTH: a laser's boost
- * doubles its value, and a warhead's illumination makes it 1.25 times
- * brighter. In linear values, a laser's boost makes it 4.95 times brighter,
- * which would whiten the bolt.
+ * possible texel gets OPT_GLTF_PROJECTILE_STRENGTH, the strength of a stock
+ * projectile. XWAU drew the boosted colour into an 8-bit target, so on
+ * screen a projectile was never brighter than white, and its glow came from
+ * bloom. Our renderer adds its own bloom to the emission. If the boost also
+ * made the emission stronger, the bolt would be too bright.
  *
  * XWAU blends an 8-bit colour, so its faint edges stay faint. At these
  * strengths they would stay bright, so the emission of a transparent texture

@@ -94,11 +94,9 @@ static float xwau_projectile_range(XwauGltfProjectile projectile) {
 }
 
 float XwauGltf_EmissiveStrength(const XwauGltfMaterial* xm) {
-	/* A projectile's brightest possible texel is 2 times
-	   OPT_GLTF_PROJECTILE_STRENGTH. Multiplied back to its linear value, a
-	   laser's boosted colour would make the bolt about 5 times brighter, and
-	   the tone mapping would whiten it. */
-	return xm->projectile ? 2.0f * OPT_GLTF_PROJECTILE_STRENGTH : XWAU_GLTF_ILLUM_GAIN;
+	/* A projectile's brightest possible texel gets the strength of a
+	   converted stock projectile (see XwauGltfProjectile). */
+	return xm->projectile ? OPT_GLTF_PROJECTILE_STRENGTH : XWAU_GLTF_ILLUM_GAIN;
 }
 
 /* The colour that XWAU's renderer gives a laser texel: its HSV saturation
