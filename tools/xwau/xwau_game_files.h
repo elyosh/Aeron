@@ -18,6 +18,8 @@
  *     Wave/ are skipped, because the game doesn't read them. A WAV file
  *     that the import can't read or convert makes the import fail. The
  *     sound banks (Wave/Sfx_*) are copied by the craft phase;
+ *   - the music files in Music/ that differ from the stock game's. Only the
+ *     stock file names are copied, because the game doesn't read others;
  *   - the files that the missions' sound replacements load, such as
  *     Wave/Custom/Evacuate.wav, if they differ from the stock game's.
  *

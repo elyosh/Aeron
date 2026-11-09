@@ -16,7 +16,7 @@ typedef struct Copy {
 	const char* game;
 	const char* stock_game;
 	const char* out;
-	size_t      missions, lists, sounds, replacements, converted;
+	size_t      missions, lists, sounds, music, replacements, converted;
 	XwauLines   targets; /* the sound replacement files seen */
 	XwauLines   missing_stock_files; /* the stock files that the installation doesn't have */
 } Copy;
@@ -186,6 +186,32 @@ static bool copy_wave(Copy* c) {
 	return ok;
 }
 
+/* Copies the music files in Music/ that differ from the stock game's. The
+ * game only reads the stock files, so the other files are skipped. */
+static bool copy_music(Copy* c) {
+	char music[1024];
+	if (!Xwau_FindDir(c->game, "Music", music, sizeof music))
+		return true;
+	size_t count   = 0;
+	char** entries = ListDir(music, true, &count);
+	bool   ok      = true;
+	for (size_t i = 0; ok && i < count; ++i) {
+		char path[2048], rel[600], stock[1024];
+		if (entries[i][0] == '.' || !EndsWithNoCase(entries[i], ".imc"))
+			continue;
+		if (!(ok = PathFormat(path, sizeof path, "%s/%s", music, entries[i]) &&
+				   PathFormat(rel, sizeof rel, "Music/%s", entries[i])))
+			break;
+		if (IsFile(path) && Xwau_FindFile(c->stock_game, rel, stock, sizeof stock)) {
+			bool copied = false;
+			ok          = copy_file(c, path, true, &copied);
+			c->music += copied;
+		}
+	}
+	FreeList(entries, count);
+	return ok;
+}
+
 /* Adds every file in the stock game's folder `rel`, and in its subfolders,
  * that the installation doesn't have to `missing_stock_files`. TFTC moves the
  * stock Wave/Frontend folder aside and puts its own in its place, so the
@@ -319,15 +345,16 @@ bool XwauGameFiles_Copy(const char* game, const char* stock_game, const char* ou
 	/* An installation with no Wave folder is incomplete. It doesn't mean
 	   that every sound is removed. */
 	char wave[1024];
-	ok = ok && copy_wave(&c) &&
+	ok = ok && copy_music(&c) && copy_wave(&c) &&
 		 (!Xwau_FindDir(game, "Wave", wave, sizeof wave) || find_missing_stock_files(&c, "Wave")) && write_removed_files(&c);
 	if (ok)
 		ReportDetail(
 			NULL,
-			"copied %zu mission files, %zu changed lists, %zu changed sound files and %zu files of the "
-			"missions' sound replacements into %s; %zu sounds converted to 16-bit PCM; %zu stock sound "
-			"files removed",
-			c.missions, c.lists, c.sounds, c.replacements, out, c.converted, c.missing_stock_files.count);
+			"copied %zu mission files, %zu changed lists, %zu changed sound files, %zu changed music files "
+			"and %zu files of the missions' sound replacements into %s; %zu sounds converted to 16-bit "
+			"PCM; %zu stock sound files removed",
+			c.missions, c.lists, c.sounds, c.music, c.replacements, out, c.converted,
+			c.missing_stock_files.count);
 	XwauLines_Free(&c.targets);
 	XwauLines_Free(&c.missing_stock_files);
 	return ok;

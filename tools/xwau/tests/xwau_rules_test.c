@@ -1574,7 +1574,8 @@ static void test_game_files(const char* scratch) {
 										 "files_game/FRONTRES/Cutscene",  "files_stock/MISSIONS",
 										 "files_stock/WAVE/FRONTEND",     "files_stock/FrontRes/CUTSCENE",
 										 "files_game/Wave/FE_HIGH_RES",   "files_stock/WAVE/FE_HIGH_RES",
-										 "files_game/Wave/Custom",        "files_stock/WAVE/MISSIONVOICE" };
+										 "files_game/Wave/Custom",        "files_stock/WAVE/MISSIONVOICE",
+										 "files_game/Music",              "files_stock/MUSIC" };
 	for (size_t i = 0; i < sizeof kDirs / sizeof kDirs[0]; ++i) {
 		snprintf(path, sizeof path, "%s/%s", scratch, kDirs[i]);
 		MakeDirs(path);
@@ -1609,6 +1610,11 @@ static void test_game_files(const char* scratch) {
 		{ "files_stock/WAVE/FRONTEND/GONE.WAV", "removed voice" },
 		{ "files_stock/WAVE/FRONTEND/.hidden", "not a game file" },
 		{ "files_stock/WAVE/MISSIONVOICE/V.WAV", "voice of a folder the mod lacks" },
+		{ "files_game/Music/FrWin.IMC", "mod music" },
+		{ "files_stock/MUSIC/FRWIN.IMC", "stock music" },
+		{ "files_game/Music/StRival.IMC", "same music" },
+		{ "files_stock/MUSIC/STRIVAL.IMC", "same music" },
+		{ "files_game/Music/Extra.IMC", "music the game doesn't play" },
 	};
 	for (size_t i = 0; i < sizeof kFiles / sizeof kFiles[0]; ++i) {
 		snprintf(path, sizeof path, "%s/%s", scratch, kFiles[i][0]);
@@ -1644,6 +1650,13 @@ static void test_game_files(const char* scratch) {
 	snprintf(path, sizeof path, "%s/Wave/OverDrive.lst", out);
 	check(blast && alarm && !IsFile(path),
 		  "game files: the changed stock sounds and lists are copied, and no file the game lacks");
+	snprintf(path, sizeof path, "%s/Music/FrWin.IMC", out);
+	const bool music = same_file(path, "mod music");
+	snprintf(path, sizeof path, "%s/Music/StRival.IMC", out);
+	const bool same_music = IsFile(path);
+	snprintf(path, sizeof path, "%s/Music/Extra.IMC", out);
+	check(music && !same_music && !IsFile(path),
+		  "game files: only the changed stock music files are copied");
 	snprintf(path, sizeof path, "%s/Wave/Custom/Evacuate.wav", out);
 	const bool target = same_file(path, "evacuate");
 	snprintf(path, sizeof path, "%s/Wave/Custom/Unused.wav", out);
