@@ -421,6 +421,14 @@ size_t XwauDat_ListGroups(const XwauDat* dat, const int** groups) {
 	return n;
 }
 
+uint64_t XwauDat_GroupPixels(const XwauDat* dat, int group) {
+	uint64_t pixels = 0;
+	for (size_t i = 0; i < dat->count; ++i)
+		if (dat->entries[i].group == group)
+			pixels += (uint64_t)dat->entries[i].width * dat->entries[i].height;
+	return pixels;
+}
+
 bool XwauDat_GetImageInfo(const XwauDat* dat, int group, int image, XwauDatImageInfo* out) {
 	for (size_t i = 0; i < dat->count; ++i) {
 		const XwauDatEntry* e = &dat->entries[i];

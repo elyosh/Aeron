@@ -78,6 +78,10 @@ size_t XwauDat_ListGroups(const XwauDat* dat, const int** groups);
  * file order. Returns false and sets `error` on failure. */
 bool XwauDat_ReadGroupIds(const char* path, int** ids, size_t* count, char* error, size_t error_size);
 
+/* Returns the total pixel count (width times height) of the images of
+ * `group`, read from the image directory without decoding them. */
+uint64_t XwauDat_GroupPixels(const XwauDat* dat, int group);
+
 /* Reads the header of the image (group, image). Returns false when the file
  * has no such image. */
 bool XwauDat_GetImageInfo(const XwauDat* dat, int group, int image, XwauDatImageInfo* out);
