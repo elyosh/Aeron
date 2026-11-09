@@ -95,6 +95,10 @@ typedef struct AeronUiTheme {
 	float title_px;
 	float help_px;
 	float bevel_px; /* 0 disables bevel bands */
+	/* Added to the mip level of text from a font atlas with mipmaps. A
+	   negative value, such as -0.5, makes text sharper when it is drawn
+	   much smaller than the atlas. */
+	float text_mip_bias;
 
 	/* Effects. */
 	int   widget_gradient; /* nonzero: widget_bg -> widget_bg_low */

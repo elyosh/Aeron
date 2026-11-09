@@ -318,7 +318,7 @@ typedef struct Blit2DInstance {
 	float tint_r, tint_g, tint_b, tint_a;
 	float bias_r, bias_g, bias_b, bias_a;
 	float trap_top_dx_left, trap_top_dx_right, trap_top_w, monochrome;
-	float source, _source_pad[3]; /* Dl2dSource */
+	float source, mip_bias, _source_pad[2]; /* source: Dl2dSource */
 } Blit2DInstance;
 
 typedef struct Blit2DQuad4Uniform {
@@ -327,7 +327,7 @@ typedef struct Blit2DQuad4Uniform {
 	float ndc_depth[4];
 	float tint_r, tint_g, tint_b, tint_a;
 	float bias_r, bias_g, bias_b, bias_a;
-	float monochrome, source, _mode_pad[2]; /* source: Dl2dSource */
+	float monochrome, source, mip_bias, _mode_pad; /* source: Dl2dSource */
 } Blit2DQuad4Uniform;
 
 typedef struct Blit2DRunUniform {
@@ -603,6 +603,7 @@ void AeronDrawList_AddSprite(AeronDrawList2D* l, const AeronDrawList2DSprite* s)
 	q->trap_top_w        = s->trap_top_w;
 	q->monochrome        = s->monochrome;
 	q->source            = dl2d_source(l, s->texture);
+	q->mip_bias          = s->mip_bias;
 }
 
 void AeronDrawList_AddQuad4(AeronDrawList2D* l, const AeronDrawList2DQuad4* in) {
@@ -638,6 +639,7 @@ void AeronDrawList_AddQuad4(AeronDrawList2D* l, const AeronDrawList2DQuad4* in) 
 	q->bias_a     = in->bias[3];
 	q->monochrome = in->monochrome;
 	q->source     = dl2d_source(l, in->texture);
+	q->mip_bias   = in->mip_bias;
 }
 
 void AeronDrawList_AddRRect(AeronDrawList2D* l, const AeronDrawList2DRRect* in) {

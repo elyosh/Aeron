@@ -52,6 +52,7 @@ static const AeronUiTheme k_default_theme = {
 	.title_px         = 22.0f,
 	.help_px          = 20.0f,
 	.bevel_px         = 2.0f,
+	.text_mip_bias    = 0.0f,
 
 	.widget_gradient = 1,
 	.title_gradient  = 1,
@@ -90,7 +91,7 @@ static const UiThemeKey k_metric_keys[] = {
 	UI_THEME_FIELD(widget_border_px), UI_THEME_FIELD(corner_radius),    UI_THEME_FIELD(focus_px),
 	UI_THEME_FIELD(slider_track_px),  UI_THEME_FIELD(scrollbar_px),     UI_THEME_FIELD(label_fraction),
 	UI_THEME_FIELD(text_px),          UI_THEME_FIELD(title_px),         UI_THEME_FIELD(help_px),
-	UI_THEME_FIELD(bevel_px),         UI_THEME_FIELD(shadow_soft_px),
+	UI_THEME_FIELD(bevel_px),         UI_THEME_FIELD(shadow_soft_px),   UI_THEME_FIELD(text_mip_bias),
 };
 
 static const UiThemeKey k_int_keys[] = {

@@ -122,7 +122,8 @@ static void text2d_emit(AeronDrawList2D* list, const AeronTextStyle* style, floa
 			s.dst_h = (float)g->atlas_h * style->scale;
 			memcpy(s.tint, tint_pma, sizeof s.tint);
 			s.blend  = AERON_BLIT2D_BLEND_PMA;
-			s.filter = style->filter;
+			s.filter   = style->filter;
+			s.mip_bias = style->mip_bias;
 			if (scissor) {
 				s.scissor = *scissor;
 			}

@@ -40,6 +40,7 @@ typedef struct AeronTextStyle {
 	float                 shadow[4];
 	float                 tracking_px;
 	AeronBlit2DFilter     filter;
+	float                 mip_bias; /* as in AeronDrawList2DSprite */
 } AeronTextStyle;
 
 /* Width of one line in target pixels (no wrapping; '\n' measures as a

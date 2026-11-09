@@ -76,6 +76,10 @@ typedef struct AeronDrawList2DSprite {
 	float             trap_top_w;
 	AeronRectI        scissor;
 	float             monochrome;
+	/* Added to the mip level that the GPU picks for the texture. A
+	   negative value reads a larger level, and a positive value a smaller
+	   one. 0 keeps the GPU's choice. */
+	float             mip_bias;
 } AeronDrawList2DSprite;
 
 /* Free-corner projective quad. corners[0..3] = TL, TR, BL, BR in
@@ -94,6 +98,7 @@ typedef struct AeronDrawList2DQuad4 {
 	int               depth_test;
 	AeronRectI        scissor;
 	float             monochrome; /* same as in AeronDrawList2DSprite */
+	float             mip_bias;   /* same as in AeronDrawList2DSprite */
 } AeronDrawList2DQuad4;
 
 /* Analytic rounded-rect (scene_ui_rect shader pair) — the themed-surface

@@ -31,11 +31,14 @@ struct VSOut
     float4 bias       : TEXCOORD2;
     float  monochrome : TEXCOORD3;
     float  source     : TEXCOORD4;
+    float  mip_bias   : TEXCOORD5;
 };
 
 float4 main(VSOut input) : SV_Target
 {
-    float4 s = g_tex.Sample(g_smp, input.uv);
+    /* The bias is applied here because Metal samplers ignore the
+     * sampler's mip_lod_bias. */
+    float4 s = g_tex.SampleBias(g_smp, input.uv, input.mip_bias);
     /* A list that blends sRGB values reads sRGB values from every texture
      * (Dl2dSource in draw_list2d.c). 1: an sRGB texture, which the GPU has
      * converted to linear. Its stored values, sRGB values premultiplied by

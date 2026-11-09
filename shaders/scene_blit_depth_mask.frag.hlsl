@@ -26,6 +26,7 @@ struct VSOut {
 	float4 bias : TEXCOORD2;
 	float  monochrome : TEXCOORD3;
 	float  source : TEXCOORD4;
+	float  mip_bias : TEXCOORD5;
 };
 
 float4 main(VSOut input) : SV_Target {
@@ -34,7 +35,7 @@ float4 main(VSOut input) : SV_Target {
 		discard;
 
 	/* The rest is scene_blit.frag. */
-	float4 s = g_tex.Sample(g_smp, input.uv);
+	float4 s = g_tex.SampleBias(g_smp, input.uv, input.mip_bias);
 	if (s.a > 0.97f)
 		s.a = 1.0f;
 	float3 src = lerp(s.rgb, max(s.r, max(s.g, s.b)).xxx, input.monochrome);
