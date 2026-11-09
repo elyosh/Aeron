@@ -69,15 +69,17 @@
  *     selections (xwau_missions.h);
  *   - the crew and glass textures listed in model_tables.h are shaded as lit
  *     surfaces, even though their material makes them Shadeless;
- *   - projectiles are baked unlit, as XWAU's renderer draws them, whatever
- *     their materials say (XwauGltfProjectile). A model is a projectile when
- *     an object type of the player's or the AI's projectiles (genus 6 or 7)
- *     uses it in the game's tables, as XWAU's renderer picks them. Without
- *     the tables, the stock projectile models are used. A projectile is a
- *     warhead when its name has Missile, Torpedo, SpaceBomb, Pulse, Rocket or
- *     Flare, but not Boat, in any case, as XWAU's renderer tags them. The
- *     others are lasers. Unlike in XWAU, a projectile gets only one light
- *     for each variant, a tube along its mesh.
+ *   - projectiles are baked unlit, the way XWAU's renderer draws them, even
+ *     when their materials say otherwise (XwauGltfProjectile). A model is a
+ *     projectile when the game's tables use it for an object type of genus
+ *     6 or 7 (the player's or the AI's projectiles). This is how XWAU's
+ *     renderer finds them. Without the tables, the stock projectile models
+ *     are used. A model that a craft uses for its shots
+ *     (xwau_weapon_models.h) is a projectile too. A projectile is a warhead
+ *     when its name contains Missile, Torpedo, SpaceBomb, Pulse, Rocket or
+ *     Flare, but not Boat, in upper or lower case, as in XWAU's renderer.
+ *     The others are lasers. Unlike in XWAU, a projectile gets only one
+ *     light for each variant: a tube along its mesh.
  *
  * In both modes, the glTF model keeps only LOD 0, and the LODs after it are
  * counted with ReportUnsupported. The explosion type flags that the game
@@ -95,6 +97,7 @@
 #include "xwau_mat.h"
 #include "xwau_missions.h"
 #include "xwau_names.h"
+#include "xwau_weapon_models.h"
 
 /* The conversion mode. It is stock mode unless ModelConversion_InitXwau
  * initialized it. */
@@ -106,6 +109,7 @@ typedef struct ModelConversion {
 	XwauMatParams   global; /* Materials/DefaultGlobalMaterial.mat, or the built-in defaults */
 	XwauMissions*   missions;
 	XwauGameTables* tables; /* the game's object types and model lists, or NULL when they can't be read */
+	XwauLines       weapon_models; /* the keys of the models that craft use for their shots ([OptReplace]) */
 	/* The game's names. Without them, the cockpit screens are left out. Set
 	   them after ModelConversion_InitXwau. */
 	const XwauNames* names;

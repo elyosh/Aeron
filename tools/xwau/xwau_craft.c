@@ -1179,7 +1179,7 @@ static bool has_weapon_colors(const XwauCraftWeaponColors* colors) {
 static bool has_weapons(const XwauCraftWeapons* weapons) {
 	if (weapons->switch_by_iff >= 0 || has_weapon_colors(&weapons->colors) ||
 		XwauCraft_HasWeaponRates(&weapons->rates) || XwauWeaponStats_Any(&weapons->stats) ||
-		weapons->turret_ignore.has_list)
+		weapons->turret_ignore.has_list || weapons->models.has)
 		return true;
 	for (int markings = 0; markings < 256; ++markings) {
 		if (weapons->has_markings[markings])
@@ -1247,6 +1247,15 @@ static void write_weapons(FILE* f, const XwauNames* names, const XwauStockValues
 		fprintf(f, "  switch_by_iff: %s\n", weapons->switch_by_iff ? "all" : "none");
 	XwauCraft_WriteWeaponRates(f, names, "  ", &weapons->rates);
 	XwauCraft_WriteTurretIgnore(f, names, "  ", &weapons->turret_ignore);
+	bool open = false;
+	for (int weapon = 0; weapon < XWAU_WEAPON_MODELS_COUNT; ++weapon) {
+		if (weapons->models.key[weapon][0]) {
+			map_entry(f, "  ", "models", &open);
+			fprintf(f, "%s: %s", XwauNames_WeaponType(names, XWAU_WEAPON_MODELS_FIRST + weapon),
+					weapons->models.key[weapon]);
+		}
+	}
+	map_end(f, open);
 	XwauWeaponStats_Write(f, names, stock, "  ", &weapons->stats);
 	if (has_weapon_colors(&weapons->colors)) {
 		fprintf(f, "  colors:\n");
@@ -1894,7 +1903,7 @@ bool XwauCraft_Write(const char* xwau_root, const char* output_dir, const XwauNa
 	int    written = 0, reticles = 0, colors = 0, engine_glows = 0, weapon_colors = 0;
 	int    stats_profiles = 0, shields = 0, sounds = 0, components = 0;
 	int    weapon_profiles = 0, warhead_locks = 0, jammings = 0, docks = 0, surfaces = 0, cockpit_views = 0;
-	int    ai_attacks = 0, mag_pulses = 0, hyperspaces = 0, turret_ignores = 0;
+	int    ai_attacks = 0, mag_pulses = 0, hyperspaces = 0, turret_ignores = 0, weapon_model_files = 0;
 	/* The materials that the .mat files start from (as opt2gltf reads them). */
 	XwauMatParams global;
 	char          global_path[1024];
@@ -1936,6 +1945,8 @@ bool XwauCraft_Write(const char* xwau_root, const char* output_dir, const XwauNa
 	const bool           global_rate_lines = XwauCraft_ReadGlobalWeaponRates(xwau_root, &global_rates);
 	/* Newer builds of hook_weapon_rate also read Weapon<N>_TargetBlock. */
 	const bool turret_ignore = XwauCraft_HookReadsTurretIgnore(xwau_root);
+	/* Newer builds of hook_mission_tie read [OptReplace]. */
+	const bool weapon_models = XwauWeaponModels_HookReads(xwau_root);
 	/* The genus of the object types that load each model in the import. The
 	   units of the stats profiles depend on it. */
 	XwauGameTables* tables = XwauGameTables_Load(xwau_root);
@@ -2012,6 +2023,16 @@ bool XwauCraft_Write(const char* xwau_root, const char* output_dir, const XwauNa
 						weapons->rates.value[key] = -1;
 			XwauCraft_ReadTurretIgnore(side_path[SIDE_WEAPON_RATE], has_ini ? ini : NULL, turret_ignore,
 									   &weapons->turret_ignore);
+			if (!XwauWeaponModels_Read(xwau_root, model, weapon_models, &weapons->models)) {
+				Report(NULL, "out of memory");
+				ok = false;
+				break;
+			}
+			if (!weapon_models && weapons->models.has) {
+				ReportRepeated("this installation has no hook_mission_tie.dll that reads [OptReplace], so "
+							   "the weapon models are ignored");
+				memset(&weapons->models, 0, sizeof weapons->models);
+			}
 			if (!XwauWeaponStats_Read(xwau_root, model, &weapons->stats)) {
 				Report(NULL, "out of memory");
 				ok = false;
@@ -2108,6 +2129,7 @@ bool XwauCraft_Write(const char* xwau_root, const char* output_dir, const XwauNa
 		}
 		weapon_profiles += XwauWeaponStats_Any(&weapons->stats);
 		turret_ignores += weapons->turret_ignore.has_list != 0;
+		weapon_model_files += weapons->models.has;
 		XwauWeaponStats_Free(&weapons->stats);
 		stats_profiles += stats.count != 0;
 		shields += shield.has;
@@ -2141,10 +2163,10 @@ bool XwauCraft_Write(const char* xwau_root, const char* output_dir, const XwauNa
 		"%d with sounds, %d with component strengths, %d with gunner seats, %d with warhead lock settings, "
 		"%d with jamming rules, %d with a docking approach height, %d with hyperspace settings, %d with AI "
 		"attack settings, %d with mag pulse settings, %d with surface rules, %d with a wide cockpit view, "
-		"%d with turret target blocks",
+		"%d with turret target blocks, %d with weapon models",
 		written, reticles, colors, engine_glows, weapon_colors, weapon_profiles, stats_profiles, shields,
 		sounds, components, gunner_seats, warhead_locks, jammings, docks, hyperspaces, ai_attacks, mag_pulses,
-		surfaces, cockpit_views, turret_ignores);
+		surfaces, cockpit_views, turret_ignores, weapon_model_files);
 	if (engine_sound) {
 		/* The default ambient distance of hook_engine_sound. */
 		XwauSection global;

@@ -854,11 +854,13 @@ static XwauGltfProjectile xwau_projectile(const ModelConversion* mc, const char*
 	}
 	if (!mc->tables)
 		projectile = ModelTables_IsProjectile(basename);
+	char name[256];
+	LowerCopy(name, sizeof name, basename);
+	for (size_t i = 0; !projectile && i < mc->weapon_models.count; ++i)
+		projectile = strcmp(mc->weapon_models.items[i], name) == 0;
 	if (!projectile)
 		return XWAU_GLTF_NOT_PROJECTILE;
 	static const char* const kWarheads[] = { "missile", "torpedo", "spacebomb", "pulse", "rocket", "flare" };
-	char                     name[256];
-	LowerCopy(name, sizeof name, basename);
 	for (size_t i = 0; i < sizeof kWarheads / sizeof kWarheads[0]; ++i) {
 		if (strstr(name, kWarheads[i]) && !strstr(name, "boat"))
 			return XWAU_GLTF_WARHEAD;
@@ -1072,6 +1074,10 @@ bool ModelConversion_InitXwau(ModelConversion* mc, const char* game) {
 	}
 	if (!(mc->tables = XwauGameTables_Load(mc->game)))
 		Report(NULL, "the stock projectile models are converted as projectiles");
+	if (!XwauWeaponModels_FindAll(mc->game, &mc->weapon_models)) {
+		Report(NULL, "out of memory (weapon models)");
+		return false;
+	}
 	return true;
 }
 
@@ -1080,4 +1086,5 @@ void ModelConversion_Free(ModelConversion* mc) {
 	mc->missions = NULL;
 	XwauGameTables_Free(mc->tables);
 	mc->tables = NULL;
+	XwauLines_Free(&mc->weapon_models);
 }

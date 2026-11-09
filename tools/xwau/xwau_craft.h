@@ -25,8 +25,9 @@
  * xwau_hyperspace.h. A section that needs a hook is only
  * read when the installation has that hook. The weapon profiles of
  * [WeaponStats], [WarheadStats], [EnergyStats], [LinkingStats] and
- * [WeaponHardpointTypes] go into `weapons` too (xwau_weapon_stats.h). The
- * stats profiles are described in xwau_stats_profiles.h.
+ * [WeaponHardpointTypes] go into `weapons` too (xwau_weapon_stats.h), and
+ * so do the weapon models of [OptReplace] (xwau_weapon_models.h). The stats
+ * profiles are described in xwau_stats_profiles.h.
  *
  * Some values need more than a copy:
  *   - The weapon colour keys with _fg<m>_ go into `by_markings`. The group
@@ -65,6 +66,7 @@
 #include "xwau_config.h"
 #include "xwau_game_tables.h"
 #include "xwau_names.h"
+#include "xwau_weapon_models.h"
 #include "xwau_weapon_stats.h"
 
 /* The reticle slots of XWAU's reticle hook. */
@@ -156,6 +158,7 @@ typedef struct XwauCraftWeapons {
 	XwauCraftWeaponColors by_markings[256];
 	int                   switch_by_iff; /* WeaponSwitchBasedOnIff: 1 or 0, -1 when not set */
 	XwauWeaponStats       stats;         /* the weapon profiles */
+	XwauWeaponModels      models;        /* [OptReplace] */
 } XwauCraftWeapons;
 
 /* The ARGB colour that XWAU's wrapper makes from red, green and blue values

@@ -1097,6 +1097,7 @@ if(AERON_BUILD_TOOLS)
         tools/xwau/xwau_object_limits.c
         tools/xwau/xwau_skins.c
         tools/xwau/xwau_used_models.c
+        tools/xwau/xwau_weapon_models.c
         third_party/lzma/LzmaDec.c)
     target_include_directories(xwau_files
         PUBLIC
