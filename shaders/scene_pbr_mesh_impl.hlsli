@@ -841,6 +841,21 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
     }
 #endif
 
+#if AERON_PBR_ALPHA_BLEND
+    /* ===== Clear texels ==========================================
+     * A blended material writes its texture's alpha (below), and with the
+     * SRC_ALPHA blend state, alpha 0 leaves the target unchanged. So clear
+     * texels skip the shading: most of a cockpit canopy is clear. Thin glass
+     * (transmission) reflects even where it is clear, so it shades them all.
+     * It returns instead of discarding, as hidden holograms do. */
+    if ((g_materials[mat].flags & (GLTF_MATERIAL_ALPHA_BLEND | GLTF_MATERIAL_TRANSMISSION)) ==
+            GLTF_MATERIAL_ALPHA_BLEND &&
+        albedo_tex.a * g_materials[mat].base_color_factor.a <= 0.0f) {
+        _out.color = float4(0.0f, 0.0f, 0.0f, 0.0f);
+        return _out;
+    }
+#endif
+
     /* ===== Normal vector ========================================= */
     float  side_sign = is_front ? 1.0f : -1.0f;
     float3 N_geom = normalize(i.world_normal) * side_sign;
