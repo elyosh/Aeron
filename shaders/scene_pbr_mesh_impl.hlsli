@@ -712,6 +712,22 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
     pbr_apply_alpha_mask(albedo_tex.a * g_materials[mat].base_color_factor.a,
                          g_materials[mat].metal_rough.z);
 #endif
+#if AERON_PBR_ALPHA_BLEND
+    /* ===== Clear texels ==========================================
+     * A blended material writes its texture's alpha (below), and with the
+     * SRC_ALPHA blend state, alpha 0 leaves the target unchanged. So clear
+     * texels skip the rest: most of a cockpit canopy is clear. Animation and
+     * detail layers change only the colour, so this alpha is already final.
+     * Thin glass (transmission) reflects light even where it is clear, so all
+     * its texels are shaded. It returns instead of discarding, as hidden
+     * holograms do. */
+    if ((g_materials[mat].flags & (GLTF_MATERIAL_ALPHA_BLEND | GLTF_MATERIAL_TRANSMISSION)) ==
+            GLTF_MATERIAL_ALPHA_BLEND &&
+        albedo_tex.a * g_materials[mat].base_color_factor.a <= 0.0f) {
+        _out.color = float4(0.0f, 0.0f, 0.0f, 0.0f);
+        return _out;
+    }
+#endif
 #if AERON_PBR_ANIM
     /* ===== Flipbooks and hull damage ==============================
      * colour: the frame over the colour; damage: its factor multiplies
@@ -837,21 +853,6 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
         float3 display = image + glow_shown / max(fs_emission.y, 1e-6f);
         float  luma    = dot(AeronLinearToSrgb(saturate(display)), float3(0.333f, 0.333f, 0.333f));
         _out.color = float4((image * fs_emission.y + glow_shown) * fs_emission.x, saturate(4.0f * luma));
-        return _out;
-    }
-#endif
-
-#if AERON_PBR_ALPHA_BLEND
-    /* ===== Clear texels ==========================================
-     * A blended material writes its texture's alpha (below), and with the
-     * SRC_ALPHA blend state, alpha 0 leaves the target unchanged. So clear
-     * texels skip the shading: most of a cockpit canopy is clear. Thin glass
-     * (transmission) reflects even where it is clear, so it shades them all.
-     * It returns instead of discarding, as hidden holograms do. */
-    if ((g_materials[mat].flags & (GLTF_MATERIAL_ALPHA_BLEND | GLTF_MATERIAL_TRANSMISSION)) ==
-            GLTF_MATERIAL_ALPHA_BLEND &&
-        albedo_tex.a * g_materials[mat].base_color_factor.a <= 0.0f) {
-        _out.color = float4(0.0f, 0.0f, 0.0f, 0.0f);
         return _out;
     }
 #endif
