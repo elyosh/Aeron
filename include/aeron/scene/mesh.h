@@ -176,6 +176,16 @@ typedef struct AeronSceneMesh {
 	 * the `_details` shaders. */
 	AeronBuffer*      anim_buffer;
 	bool              has_details;
+	/* What the animation records can show on an instance
+	 * (AeronSceneMaterialAnim):
+	 * - `anim_states`: the states that the flipbooks play in, one bit per
+	 *   AERON_ANIM_STATE_*;
+	 * - `anim_damage`: whether a material has damage frames;
+	 * - `anim_energy`: the energy effects that the materials show, bit e - 1
+	 *   for energy e. */
+	uint32_t          anim_states;
+	bool              anim_damage;
+	uint32_t          anim_energy;
 	AeronEffectAtlas* effect_atlas;
 	uint32_t*         effect_libraries;
 	uint32_t          effect_library_count;

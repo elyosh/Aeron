@@ -425,12 +425,38 @@ AeronGraphicsPipeline* AeronScenePbr_Pipeline(struct AeronScene3D* s, int kind, 
 	return pbr_cached_pipeline(s, ibl ? s->pbr_ibl_pipes : s->pbr_pipes, kind, cull, ibl);
 }
 
-/* The animation level a mesh draws with: 0 without animation records or
- * without an effect atlas, 1 with them, 2 when it also has detail layers. */
+/* The highest animation level a mesh draws with: 0 without animation
+ * records or without an effect atlas, 1 with them, 2 when it also has
+ * detail layers. */
 static int pbr_anim_level(const struct AeronScene3D* s, const AeronSceneMesh* mesh) {
 	if (!mesh || !mesh->anim_buffer || !s->effect_atlas)
 		return 0;
 	return mesh->has_details ? 2 : 1;
+}
+
+/* The animation level an instance draws with this frame. It is 1 only when
+ * the records can show something on the instance: a flipbook that always
+ * plays or whose state is set, damage frames while the instance is damaged,
+ * or its energy effect. Otherwise the `_anim` shaders would draw the plain
+ * material, so the plain shaders draw the same image for less. Meshes with
+ * detail layers always use their shaders. */
+static int pbr_instance_anim_level(const struct AeronScene3D* s, const AeronSceneMeshInstance* in) {
+	const AeronSceneMesh* mesh  = in ? in->mesh : NULL;
+	const int             level = pbr_anim_level(s, mesh);
+	if (level != 1)
+		return level;
+	if ((mesh->anim_states & (1u << AERON_ANIM_STATE_ALWAYS)) != 0u)
+		return 1;
+	const AeronSceneMaterialAnim* anim = in->anim;
+	if (!anim)
+		return 0;
+	if ((anim->state_mask & mesh->anim_states) != 0u)
+		return 1;
+	if (anim->damage_stage > 0u && mesh->anim_damage)
+		return 1;
+	if (anim->energy >= 1u && anim->energy <= 3u && (mesh->anim_energy & (1u << (anim->energy - 1u))) != 0u)
+		return 1;
+	return 0;
 }
 
 /* The colour kind's pipeline with material animation, and with detail
@@ -478,9 +504,9 @@ static AeronGraphicsPipeline* pbr_anim_pipeline(struct AeronScene3D* s, int kind
 	return pbr_anim_pipeline_ibl(s, kind, cull, details, s->pbr_environment_set);
 }
 
-/* The pipeline a colour kind draws with at animation level `anim`
- * (pbr_anim_level), for image-based lighting or not, falling back as
- * pbr_draw_pipeline does; NULL when none can be created. */
+/* The pipeline a colour kind draws with at animation level `anim` (0 to 2),
+ * for image-based lighting or not, falling back as pbr_draw_pipeline does;
+ * NULL when none can be created. */
 static AeronGraphicsPipeline* pbr_level_pipeline(struct AeronScene3D* s, int kind, AeronCullMode cull,
 												 int anim, int ibl) {
 	AeronGraphicsPipeline* pipeline = anim == 2 ? pbr_anim_pipeline_ibl(s, kind, cull, 1, ibl) : NULL;
@@ -503,14 +529,19 @@ int AeronScenePbr_PrepareMesh(struct AeronScene3D* s, const AeronSceneMesh* mesh
 								  mesh->blend_index_count - screens[2] };
 	const int      anim       = pbr_anim_level(s, mesh);
 	int            ok         = 1;
-	for (int range = 0; range < 3; ++range) {
-		for (int pass = 0; pass < 2; ++pass) {
-			for (int ibl = 0; ibl < 2; ++ibl) {
-				const int kind = kinds[range][pass];
-				if (plain[range])
-					ok &= pbr_level_pipeline(s, kind, cull, anim, ibl) != NULL;
-				if (screens[range])
-					ok &= pbr_level_pipeline(s, pbr_screen_kind(kind), cull, anim, ibl) != NULL;
+	/* Instances of an animated mesh draw without animation while nothing on
+	 * them animates (pbr_instance_anim_level). Both levels are created here,
+	 * so that a switch during flight doesn't compile a pipeline. */
+	for (int level = anim == 1 ? 0 : anim; level <= anim; ++level) {
+		for (int range = 0; range < 3; ++range) {
+			for (int pass = 0; pass < 2; ++pass) {
+				for (int ibl = 0; ibl < 2; ++ibl) {
+					const int kind = kinds[range][pass];
+					if (plain[range])
+						ok &= pbr_level_pipeline(s, kind, cull, level, ibl) != NULL;
+					if (screens[range])
+						ok &= pbr_level_pipeline(s, pbr_screen_kind(kind), cull, level, ibl) != NULL;
+				}
 			}
 		}
 	}
@@ -518,8 +549,8 @@ int AeronScenePbr_PrepareMesh(struct AeronScene3D* s, const AeronSceneMesh* mesh
 }
 
 /* The probe variant pipeline of a colour kind at animation level `anim`
- * (pbr_anim_level); NULL for kinds without one (screens) or when its
- * shaders do not load. */
+ * (pbr_instance_anim_level); NULL for kinds without one (screens) or when
+ * its shaders don't load. */
 static AeronGraphicsPipeline* pbr_probe_pipeline(struct AeronScene3D* s, int kind, AeronCullMode cull,
 												 int anim) {
 	static const char* const names[3][5] = {
@@ -596,10 +627,10 @@ static AeronGraphicsPipeline* pbr_debug_pipeline(struct AeronScene3D* s, int kin
 }
 #endif
 
-/* `anim`: the drawn mesh's animation level (pbr_anim_level). Debug views
- * draw without animation; so does a scene whose animation shaders fail to
- * load, and a mesh whose detail shaders fail to load draws without its
- * details. */
+/* `anim`: the animation level of the drawn instance
+ * (pbr_instance_anim_level). Debug views draw without animation, and so does
+ * a scene whose animation shaders don't load. A mesh whose detail shaders
+ * don't load draws without its details. */
 static AeronGraphicsPipeline* pbr_draw_pipeline(struct AeronScene3D* s, int kind, AeronCullMode cull,
 												int anim) {
 #ifdef AERON_DEBUG_UI
@@ -905,9 +936,10 @@ static void pbr_push_instance_uniforms(struct AeronScene3D* s, AeronRenderPass* 
 	Aeron_BindUniformData(pass, AERON_SHADER_STAGE_VERTEX, 0, &vsb, sizeof vsb);
 	Aeron_BindStorageBuffer(pass, AERON_SHADER_STAGE_VERTEX, 1, m->tag_group_buffer);
 
-	/* The `_anim` colour shaders' animation block: the instance's state.
-	 * Only a mesh with animation records draws with them. */
-	if (!depth_only && s->effect_atlas && m->anim_buffer) {
+	/* The animation block of the `_anim` colour shaders: the instance's
+	 * state. Only instances that draw with these shaders need it
+	 * (pbr_instance_anim_level). */
+	if (!depth_only && pbr_instance_anim_level(s, in) != 0) {
 		AeronScenePbrAnimBlock anim;
 		memset(&anim, 0, sizeof anim);
 		anim.time      = s->animation_time;
@@ -1068,8 +1100,8 @@ static void pbr_bind_material_resources(const struct AeronScene3D* s, AeronRende
  * pass's current pipeline. Resource bindings and uniforms persist across
  * pipeline binds within the pass. */
 static int pbr_bind_pipeline(struct AeronScene3D* s, AeronRenderPass* pass, int kind, AeronCullMode cull,
-							 const AeronSceneMesh* mesh, AeronGraphicsPipeline** bound) {
-	AeronGraphicsPipeline* pipeline = pbr_draw_pipeline(s, kind, cull, pbr_anim_level(s, mesh));
+							 int anim, AeronGraphicsPipeline** bound) {
+	AeronGraphicsPipeline* pipeline = pbr_draw_pipeline(s, kind, cull, anim);
 	if (!pipeline) {
 		return 0;
 	}
@@ -1100,10 +1132,10 @@ static int pbr_set_key(const struct AeronScene3D* s, int i) {
  * the screen textures, which screen draws get back. Debug views draw
  * without probes. */
 static int pbr_bind_draw(struct AeronScene3D* s, AeronRenderPass* pass, int kind, AeronCullMode cull,
-						 const AeronSceneMesh* mesh, int set_key, AeronGraphicsPipeline** bound,
+						 const AeronSceneMeshInstance* in, int set_key, AeronGraphicsPipeline** bound,
 						 int* bound_set) {
 	AeronGraphicsPipeline* probe = NULL;
-	const int              anim  = pbr_anim_level(s, mesh);
+	const int              anim  = pbr_instance_anim_level(s, in);
 	const int              set   = set_key >= 0 ? set_key >> 1 : -1;
 	if (set >= 0) {
 #ifdef AERON_DEBUG_UI
@@ -1119,7 +1151,7 @@ static int pbr_bind_draw(struct AeronScene3D* s, AeronRenderPass* pass, int kind
 		if (anim && s->pbr_occlusion_in_effect_slot) {
 			pbr_bind_effect_textures(s, pass);
 		}
-		return pbr_bind_pipeline(s, pass, kind, cull, mesh, bound);
+		return pbr_bind_pipeline(s, pass, kind, cull, anim, bound);
 	}
 	if (probe != *bound) {
 		Aeron_BindGraphicsPipeline(pass, probe);
@@ -1169,7 +1201,7 @@ int AeronScenePbr_DrawInstances(struct AeronScene3D* s, AeronCommandBuffer* cmd,
 		return 1;
 	}
 	AeronGraphicsPipeline* bound = NULL;
-	if (!pbr_bind_pipeline(s, pass, pipe_kind, AERON_CULL_NONE, NULL, &bound)) {
+	if (!pbr_bind_pipeline(s, pass, pipe_kind, AERON_CULL_NONE, 0, &bound)) {
 		return 0;
 	}
 	Aeron_BindStorageBuffer(pass, AERON_SHADER_STAGE_VERTEX, 0, s->mesh_table_buffer);
@@ -1219,7 +1251,7 @@ int AeronScenePbr_DrawInstances(struct AeronScene3D* s, AeronCommandBuffer* cmd,
 		/* Per-instance cull variant. */
 		const AeronCullMode cull = (AeronCullMode)in->cull_mode;
 		const int           set  = depth_only ? -1 : pbr_set_key(s, i);
-		if (!pbr_bind_draw(s, pass, pipe_kind, cull, m, set, &bound, &bound_set)) {
+		if (!pbr_bind_draw(s, pass, pipe_kind, cull, in, set, &bound, &bound_set)) {
 			return 0;
 		}
 
@@ -1246,7 +1278,7 @@ int AeronScenePbr_DrawInstances(struct AeronScene3D* s, AeronCommandBuffer* cmd,
 			Aeron_DrawIndexed(pass, plain_count, 0, 0);
 		}
 		if (screen_count != 0) {
-			if (!pbr_bind_draw(s, pass, screen_kind, cull, m, -1, &bound, &bound_set)) {
+			if (!pbr_bind_draw(s, pass, screen_kind, cull, in, -1, &bound, &bound_set)) {
 				return 0;
 			}
 			Aeron_DrawIndexed(pass, screen_count, plain_count, 0);
@@ -1279,7 +1311,7 @@ int AeronScenePbr_DrawInstances(struct AeronScene3D* s, AeronCommandBuffer* cmd,
 			const uint32_t      screen_count = mask_screen_kind >= 0 ? m->mask_screen_index_count : 0u;
 			const uint32_t      plain_count  = m->mask_index_count - screen_count;
 			const int           set          = depth_only ? -1 : pbr_set_key(s, i);
-			if (!pbr_bind_draw(s, pass, plain_count != 0 ? mask_kind : mask_screen_kind, cull, m, set, &bound,
+			if (!pbr_bind_draw(s, pass, plain_count != 0 ? mask_kind : mask_screen_kind, cull, in, set, &bound,
 							   &bound_set)) {
 				return 0;
 			}
@@ -1295,7 +1327,7 @@ int AeronScenePbr_DrawInstances(struct AeronScene3D* s, AeronCommandBuffer* cmd,
 				Aeron_DrawIndexed(pass, plain_count, m->mask_index_offset, 0);
 			}
 			if (screen_count != 0) {
-				if (!pbr_bind_draw(s, pass, mask_screen_kind, cull, m, -1, &bound, &bound_set)) {
+				if (!pbr_bind_draw(s, pass, mask_screen_kind, cull, in, -1, &bound, &bound_set)) {
 					return 0;
 				}
 				Aeron_DrawIndexed(pass, screen_count, m->mask_index_offset + plain_count, 0);
@@ -1322,7 +1354,7 @@ int AeronScenePbr_DrawInstances(struct AeronScene3D* s, AeronCommandBuffer* cmd,
 				/* The screens only: visibility from their content, which
 				 * needs the screen textures and storage. */
 				if (!pbr_bind_pipeline(s, pass, AERON_PBR_PIPE_PREPASS_STAMP_SCREEN,
-									   (AeronCullMode)in->cull_mode, NULL, &bound)) {
+									   (AeronCullMode)in->cull_mode, 0, &bound)) {
 					return 0;
 				}
 				bound_mesh = NULL;
@@ -1374,7 +1406,7 @@ int AeronScenePbr_DrawInstances(struct AeronScene3D* s, AeronCommandBuffer* cmd,
 					bound = instanced;
 				}
 			} else if (!pbr_bind_pipeline(s, pass, AERON_PBR_PIPE_PREPASS_STAMP, (AeronCullMode)in->cull_mode,
-										  NULL, &bound)) {
+										  0, &bound)) {
 				return 0;
 			}
 			if (m != bound_mesh) {
@@ -1472,7 +1504,7 @@ int AeronScenePbr_DrawTransparentInstances(struct AeronScene3D* s, AeronRenderPa
 				continue;
 			}
 		}
-		if (!pbr_bind_draw(s, pass, blend_kind, cull, m, pbr_set_key(s, i), &bound, &bound_set)) {
+		if (!pbr_bind_draw(s, pass, blend_kind, cull, in, pbr_set_key(s, i), &bound, &bound_set)) {
 			return 0;
 		}
 		if (m != bound_mesh) {
@@ -1490,7 +1522,7 @@ int AeronScenePbr_DrawTransparentInstances(struct AeronScene3D* s, AeronRenderPa
 			Aeron_DrawIndexed(pass, plain_count, m->blend_index_offset, 0);
 		}
 		if (m->blend_screen_index_count != 0 && layer == layered) {
-			if (!pbr_bind_draw(s, pass, pbr_screen_kind(blend_kind), cull, m, -1, &bound, &bound_set)) {
+			if (!pbr_bind_draw(s, pass, pbr_screen_kind(blend_kind), cull, in, -1, &bound, &bound_set)) {
 				return 0;
 			}
 			Aeron_DrawIndexed(pass, m->blend_screen_index_count, m->blend_index_offset + plain_count, 0);

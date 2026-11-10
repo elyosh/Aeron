@@ -510,6 +510,7 @@ static int build_anim_records(AeronSceneMesh* s, AeronCommandBuffer* cmd, const 
 			uint32_t*                record = anim_record(r);
 			ok                              = record != NULL;
 			if (ok) {
+				s->anim_states |= 1u << (fb->state & 0x1Fu);
 				record[0] = fb->state | fb->layer << AERON_ANIM_FLIPBOOK_LAYER_SHIFT |
 							fb->mode << AERON_ANIM_FLIPBOOK_MODE_SHIFT |
 							(uint32_t)fb->blend_frames << AERON_ANIM_FLIPBOOK_BLEND_SHIFT |
@@ -560,11 +561,13 @@ static int build_anim_records(AeronSceneMesh* s, AeronCommandBuffer* cmd, const 
 		if (material->flipbook_count)
 			anim[m][1] = first | material->flipbook_count << 16;
 		if (material->damage_count) {
+			s->anim_damage = true;
 			anim[m][2] = damage_first | material->damage_count << 16;
 			anim[m][3] = (material->damage_choice & 0xFFFu) << 8 | (material->damage_placement & 0xFFFu)
 																	   << 20;
 		}
 		anim[m][3] |= energy;
+		s->anim_energy |= energy;
 	}
 	free((void*)names);
 	free((void*)failed);
