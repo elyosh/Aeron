@@ -24,15 +24,15 @@
 #include <stdlib.h>
 #include <string.h>
 
-typedef struct HdrBuffer {
+typedef struct ImageBuffer {
 	uint8_t* data;
 	size_t   size;
 	size_t   capacity;
 	bool     ok;
-} HdrBuffer;
+} ImageBuffer;
 
-static void hdr_append(void* context, void* data, int size) {
-	HdrBuffer* b = (HdrBuffer*)context;
+static void image_append(void* context, void* data, int size) {
+	ImageBuffer* b = (ImageBuffer*)context;
 	if (!b->ok || size <= 0)
 		return;
 	if (b->size + (size_t)size > b->capacity) {
@@ -56,13 +56,24 @@ bool Aeron_ImageWriteHdr(AeronVfs* vfs, AeronVfsRoot root, const char* path, int
 	if (!vfs || !path || !rgb || width <= 0 || height <= 0)
 		return false;
 	/* RGBE rows hold about 4 bytes per pixel; reserve that up front. */
-	HdrBuffer buffer = { NULL, 0, 0, true };
+	ImageBuffer buffer = { NULL, 0, 0, true };
 	buffer.capacity  = (size_t)width * (size_t)height * 4u + 256u;
 	buffer.data      = (uint8_t*)malloc(buffer.capacity);
 	if (!buffer.data)
 		return false;
-	const bool ok = stbi_write_hdr_to_func(hdr_append, &buffer, width, height, 3, rgb) && buffer.ok &&
+	const bool ok = stbi_write_hdr_to_func(image_append, &buffer, width, height, 3, rgb) && buffer.ok &&
 					AeronVfs_WriteAllAtomic(vfs, root, path, buffer.data, buffer.size);
+	free(buffer.data);
+	return ok;
+}
+
+bool Aeron_ImageWritePngRgb8(AeronVfs* vfs, AeronVfsRoot root, const char* path, int width, int height,
+							 const uint8_t* rgb) {
+	if (!vfs || !path || !rgb || width <= 0 || height <= 0)
+		return false;
+	ImageBuffer buffer = { NULL, 0, 0, true };
+	const bool ok = stbi_write_png_to_func(image_append, &buffer, width, height, 3, rgb, width * 3) &&
+					buffer.ok && AeronVfs_WriteAllAtomic(vfs, root, path, buffer.data, buffer.size);
 	free(buffer.data);
 	return ok;
 }

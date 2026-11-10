@@ -265,12 +265,16 @@ float4 main(VSOut input) : SV_Target
      * fit, so scene 1.0×exposure rides above diffuse white.
      *   < 0.5 → ACES (op 0)
      *   else  → AGX  (op 1) */
-    if (debug_view.x > 0.5f)
+    if (debug_view.x > 0.5f) {
+        /* View 3 returns the image before the tonemap, unchanged, so that a
+         * capture can read it from a float target. */
+        if (debug_view.x > 2.5f)
+            return float4(rgb, 1.0f);
         rgb = debug_view.x < 1.5f
                   ? AeronTonemapFalseColor(rgb)
                   : AeronTonemapMeterWeight(scene, input.uv, AeronTonemapDepthAt(g_depth, input.uv),
                                             debug_weights, debug_view.y > 0.5f);
-    else if (tonemap_params.y < 0.5f)
+    } else if (tonemap_params.y < 0.5f)
         rgb = tonemap_aces_hdr(rgb * present_misc.z, peak);
     else
         rgb = tonemap_agx_hdr (rgb, peak);

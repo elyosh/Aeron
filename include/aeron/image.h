@@ -57,6 +57,11 @@ uint8_t* Aeron_ImageResizeSrgbRgba8(const uint8_t* source, int width, int height
 bool Aeron_ImageWriteHdr(AeronVfs* vfs, AeronVfsRoot root, const char* path, int width, int height,
 						 const float* rgb);
 
+/* Writes 8-bit RGB (`width * height * 3`, top row first) as a PNG through
+ * AeronVfs_WriteAllAtomic. The root must be writable. */
+bool Aeron_ImageWritePngRgb8(AeronVfs* vfs, AeronVfsRoot root, const char* path, int width, int height,
+							 const uint8_t* rgb);
+
 /* Reads a PNG from the VFS as RGBA8, top row first, with straight alpha.
  * Returns NULL when the file is missing or isn't a PNG. The caller releases
  * the pixels with free(). */

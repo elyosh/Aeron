@@ -118,6 +118,10 @@ typedef enum AeronScenePresentDebugView {
 	 * blue for the sky, orange for near geometry, green for other geometry,
 	 * as bright as the weight. */
 	AERON_SCENE_PRESENT_METER_WEIGHT = 2,
+	/* The image the tonemap receives: the scene with its bloom, multiplied
+	 * by the exposure. There is no tonemap and no clamp, and alpha is 1.
+	 * Draw it into a float target to read the values back. */
+	AERON_SCENE_PRESENT_BEFORE_TONEMAP = 3,
 } AeronScenePresentDebugView;
 
 typedef struct AeronScenePresentDebug {

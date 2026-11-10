@@ -193,12 +193,16 @@ float4 main(VSOut input) : SV_Target
     /* Match the host enum: 0 = ACES Fitted, 1 = AGX parametric.
      * Branch is uniform across the quad. ACES gets a pre-exposure
      * boost (present_misc.z) to lift its dark toe up to AgX's. */
-    if (debug_view.x > 0.5f)
+    if (debug_view.x > 0.5f) {
+        /* View 3 returns the image before the tonemap, unchanged, so that a
+         * capture can read it from a float target. */
+        if (debug_view.x > 2.5f)
+            return float4(rgb, 1.0f);
         rgb = debug_view.x < 1.5f
                   ? AeronTonemapFalseColor(rgb)
                   : AeronTonemapMeterWeight(scene, input.uv, AeronTonemapDepthAt(g_depth, input.uv),
                                             debug_weights, debug_view.y > 0.5f);
-    else if (tonemap_params.y < 0.5f)
+    } else if (tonemap_params.y < 0.5f)
         rgb = tonemap_aces_fitted(rgb * present_misc.z);
     else
         rgb = AeronAgxToneMap(rgb, AERON_AGX_MAX_EV, present_misc.y, agx_params.x,
