@@ -1464,6 +1464,13 @@ void AeronScene_SetBackfaceFill(AeronScene3D* s, int enabled) {
 	}
 }
 
+void AeronScene_SetSmallInstanceCull(AeronScene3D* s, float prepass_min_px, float draw_min_px) {
+	if (s) {
+		s->small_cull_prepass_px = prepass_min_px > 0.0f ? prepass_min_px : 0.0f;
+		s->small_cull_draw_px    = draw_min_px > 0.0f ? draw_min_px : 0.0f;
+	}
+}
+
 typedef char AeronSceneScreenFrameSizeCheck[sizeof(AeronSceneScreenFrame) == 1072 ? 1 : -1];
 
 void AeronScene_SetScreenSources(AeronScene3D* s, AeronTexture* graphics, AeronTexture* text,
@@ -1995,6 +2002,45 @@ static int scene_order_key_compare(const void* a, const void* b) {
 	return (int)x->index - (int)y->index;
 }
 
+/* The larger side of the bound's projection, clipped to the viewport, in
+ * render pixels: 0 outside the viewport, FLT_MAX across the near plane or
+ * without a usable bound. */
+static float scene_instance_screen_size(const AeronScene3D* s, const AeronSceneMeshInstance* instance) {
+	static const float    world_axes[3][3] = { { 1.0f, 0.0f, 0.0f },
+											   { 0.0f, 1.0f, 0.0f },
+											   { 0.0f, 0.0f, 1.0f } };
+	const float*          m                = s->unjittered_view_proj;
+	const float           width            = (float)s->camera.viewport.width;
+	const float           height           = (float)s->camera.viewport.height;
+	AeronSceneInstanceBox box;
+	if (!AeronSceneInternal_InstanceBox(instance, world_axes[0], world_axes[1], world_axes[2], &box)) {
+		return FLT_MAX;
+	}
+	float lo[2] = { FLT_MAX, FLT_MAX };
+	float hi[2] = { -FLT_MAX, -FLT_MAX };
+	for (int c = 0; c < 8; ++c) {
+		const float p[3] = { box.center[0] + ((c & 1) ? box.half[0] : -box.half[0]),
+							 box.center[1] + ((c & 2) ? box.half[1] : -box.half[1]),
+							 box.center[2] + ((c & 4) ? box.half[2] : -box.half[2]) };
+		float       clip[4];
+		for (int r = 0; r < 4; ++r) {
+			clip[r] = m[r * 4 + 0] * p[0] + m[r * 4 + 1] * p[1] + m[r * 4 + 2] * p[2] + m[r * 4 + 3];
+		}
+		if (clip[3] <= 1.0e-4f) {
+			return FLT_MAX;
+		}
+		const float x = (clip[0] / clip[3] * 0.5f + 0.5f) * width;
+		const float y = (clip[1] / clip[3] * 0.5f + 0.5f) * height;
+		lo[0]         = fminf(lo[0], x);
+		lo[1]         = fminf(lo[1], y);
+		hi[0]         = fmaxf(hi[0], x);
+		hi[1]         = fmaxf(hi[1], y);
+	}
+	const float w = fminf(hi[0], width) - fmaxf(lo[0], 0.0f);
+	const float h = fminf(hi[1], height) - fmaxf(lo[1], 0.0f);
+	return w > 0.0f && h > 0.0f ? fmaxf(w, h) : 0.0f;
+}
+
 /* An instance without a usable bound stays visible, and sorts last. */
 static int scene_instance_in_frustum(const AeronScene3D* s, const AeronSceneMeshInstance* instance,
 									 const float planes[5][4], SceneOrderKey* key) {
@@ -2163,7 +2209,17 @@ int AeronSceneStorage_Prepare(AeronScene3D* s, AeronCommandBuffer* cmd) {
 		memset(prepared, 0, sizeof *prepared);
 		SceneOrderKey key;
 		prepared->camera_visible = (uint32_t)scene_instance_in_frustum(s, instance, frustum, &key);
-		prepared->probe_set      = prepared->camera_visible ? scene_instance_probe_set(s, instance) : -1;
+		prepared->screen_size_px = FLT_MAX;
+		if (prepared->camera_visible) {
+			prepared->screen_size_px = scene_instance_screen_size(s, instance);
+			/* A mesh with only blended faces, such as a laser bolt, is thin
+			 * but bright: it stays. */
+			if (s->small_cull_active && prepared->screen_size_px < s->small_cull_draw_px && instance->mesh &&
+				(instance->mesh->opaque_index_count + instance->mesh->mask_index_count) != 0) {
+				prepared->camera_visible = 0;
+			}
+		}
+		prepared->probe_set = prepared->camera_visible ? scene_instance_probe_set(s, instance) : -1;
 		prepared->batch          = -1;
 		if (prepared->camera_visible) {
 			key.index                           = (uint16_t)i;
@@ -2587,6 +2643,11 @@ int AeronScene_Render(AeronScene3D* s, AeronCommandBuffer* cmd) {
 	s->scene_rt_out          = s->color_rt;
 	s->scene_rt_out_borrowed = 0;
 	s->screen_layer_active   = 0;
+
+	/* With MSAA, the colour pass has its own depth, so the prepass can leave
+	 * instances out; FSR needs every instance's depth and motion. */
+	s->small_cull_active = s->sample_count != AERON_SAMPLE_COUNT_1 && s->temporal_active_mode == AERON_TEMPORAL_OFF &&
+						   (s->small_cull_prepass_px > 0.0f || s->small_cull_draw_px > 0.0f);
 
 	/* Batched billboards: build + upload this frame's VB (copy pass —
 	 * must precede the render passes below). */

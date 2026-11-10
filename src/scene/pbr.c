@@ -1202,6 +1202,11 @@ int AeronScenePbr_DrawInstances(struct AeronScene3D* s, AeronCommandBuffer* cmd,
 		if (!m || !m->vbo || !m->ibo || m->opaque_index_count == 0) {
 			continue;
 		}
+		/* Small instances leave the prepass (AeronScene_SetSmallInstanceCull). */
+		if (depth_only && s->small_cull_active && !s->planar_reflection.drawing &&
+			s->prepared_instances[i].screen_size_px < s->small_cull_prepass_px) {
+			continue;
+		}
 		if (!depth_only) {
 			const int receiver_local_shadow =
 				(in->shadow_flags & AERON_SCENE_INSTANCE_USE_RECEIVER_LOCAL_SHADOW) != 0;

@@ -142,6 +142,10 @@ typedef struct AeronScenePreparedInstance {
 	/* The batch that draws the instance (AeronScenePbrBatch); -1 when it
 	 * draws alone. */
 	int32_t batch;
+	/* The larger side of the bound's projection, clipped to the viewport, in
+	 * render pixels: 0 outside the viewport, FLT_MAX across the near plane
+	 * and for an instance outside the frustum. */
+	float screen_size_px;
 } AeronScenePreparedInstance;
 
 /* Visible instances of one mesh that has only blended faces, such as a laser
@@ -414,6 +418,11 @@ struct AeronScene3D {
 	int                with_normal_rt;
 	AeronTextureFormat color_format;
 	AeronSampleCount   sample_count;
+	/* AeronScene_SetSmallInstanceCull, in render pixels; 0 is off. Applied
+	 * in a frame only when small_cull_active (MSAA on, FSR off). */
+	float small_cull_prepass_px;
+	float small_cull_draw_px;
+	int   small_cull_active;
 
 	AeronSceneCamera camera;        /* render-resolution viewport */
 	AeronSceneCamera output_camera; /* caller's output-resolution viewport */

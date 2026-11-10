@@ -491,6 +491,15 @@ void  AeronScene_SetEmissiveScale(float scale);
  * depth test. */
 void AeronScene_SetBackfaceFill(AeronScene3D* scene, int enabled);
 
+/* Leaves out the instances that are small on screen, by the larger side of
+ * their bound's projection, in render pixels; 0 turns a threshold off.
+ * Instances under `prepass_min_px` aren't drawn in the depth prepass and
+ * don't cast the cascades' shadows. Instances under `draw_min_px` aren't
+ * drawn at all, except meshes with only blended faces, such as laser bolts.
+ * It applies only with MSAA on and FSR off: otherwise the colour pass needs
+ * the prepass's depth of every instance. */
+void AeronScene_SetSmallInstanceCull(AeronScene3D* scene, float prepass_min_px, float draw_min_px);
+
 /* Screen surfaces (gltf_mesh.h, "Screen surfaces"): the per-frame inputs of
  * every screen material. 16-byte rows only, so the C layout matches the
  * shader's structured buffer on every backend. */
