@@ -908,7 +908,7 @@ AeronRenderTarget* Fixture_Record(Fixture* f, double time, int blur, AeronComman
 	add_suns(scene, &f->config, time);
 	if (f->config.game.enabled) {
 		set_game_effects(scene, &f->config, blur);
-		AeronScene_SetMotionContext(scene, previous_matrix, 1);
+		AeronScene_SetMotionContext(scene, previous_matrix, NULL, 1);
 		AeronScene_SetBackfaceFill(scene, f->config.backface_fill);
 		set_game_lighting(scene, &f->config);
 		if (f->environment_reference >= 0)
@@ -925,7 +925,7 @@ AeronRenderTarget* Fixture_Record(Fixture* f, double time, int blur, AeronComman
 		scene, &(AeronScenePostDesc) { .mb_quality     = blur ? f->config.quality : 0,
 									   .mb_shutter     = (float)(f->config.shutter * .032 * f->config.fps),
 									   .mb_camera_blur = 1 });
-	AeronScene_SetMotionContext(scene, previous_matrix, 1);
+	AeronScene_SetMotionContext(scene, previous_matrix, NULL, 1);
 	AeronScene_SetBackfaceFill(scene, f->config.backface_fill);
 	/* Emissive shapes also read the PBR lighting/mode uniforms. */
 	set_lighting(scene, &f->config);

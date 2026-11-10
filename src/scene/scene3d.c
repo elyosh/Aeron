@@ -990,9 +990,13 @@ int AeronScene_GetTemporalProfileInfo(const AeronScene3D* s, AeronTemporalProfil
 	return s && s->temporal_upscaler ? AeronTemporalUpscaler_GetProfileInfo(s->temporal_upscaler, info) : 0;
 }
 
-void AeronScene_SetMotionContext(AeronScene3D* s, const float prev_view_proj[16], int velocity_regen) {
+void AeronScene_SetMotionContext(AeronScene3D* s, const float prev_view_proj[16], const float prev_ori[4],
+								 int velocity_regen) {
 	if (!s) {
 		return;
+	}
+	if (prev_ori) {
+		memcpy(s->mb_prev_ori, prev_ori, sizeof s->mb_prev_ori);
 	}
 	if (prev_view_proj) {
 		memcpy(s->mb_prev_view_proj, prev_view_proj, sizeof s->mb_prev_view_proj);

@@ -744,9 +744,13 @@ int AeronScene_GetTemporalProfileInfo(const AeronScene3D* scene, AeronTemporalPr
 
 /* Per-frame motion context for velocity generation (call after Begin).
  * `prev_view_proj` NULL => prev = current (zero camera velocity).
+ * `prev_ori` is the previous camera orientation. The camera velocity fill
+ * runs when the camera turned since it. NULL uses the orientation of the
+ * scene's last render.
  * `velocity_regen` 0 holds the previous velocity buffer (the sim did
  * not advance this host frame); 1 regenerates it. */
-void AeronScene_SetMotionContext(AeronScene3D* scene, const float prev_view_proj[16], int velocity_regen);
+void AeronScene_SetMotionContext(AeronScene3D* scene, const float prev_view_proj[16], const float prev_ori[4],
+								 int velocity_regen);
 
 /* After Render(): the output-resolution RT holding the finished scene. */
 AeronRenderTarget* AeronScene_SceneRt(AeronScene3D* scene);
