@@ -52,6 +52,8 @@ void aeron_gltf_cook_default_options(AeronGltfCookOptions* out) {
 	out->atlas_page_size    = 2048;
 	out->max_texture_size   = 4096;
 	out->mip_min_subrect    = 16;
+	out->separate_pages_budget     = 1 << 20;
+	out->separate_pages_max_layers = 256;
 	out->encoding           = AERON_GLTF_COOK_ENCODING_BC;
 	out->bc7_quality        = 1; /* KTX2_BC7_QUALITY_MED */
 	out->zstd_supercompress = true;
@@ -305,6 +307,66 @@ typedef struct CookGroup {
 	uint8_t*     ktx2;
 	size_t       ktx2_size;
 } CookGroup;
+
+/* Packs channel `c`: its core atlas `ca`, then its variant groups on pages
+ * of the core's size. A grouped image that doesn't fit the core's pages, such
+ * as a large emissive image next to a small core, grows the core's pages to
+ * its footprint, or to square power-of-two pages when it needs a dedicated
+ * layer. With one page per image, the core's pages already fit every image. */
+static bool pack_channel(ChannelAtlas* ca, CookGroup* groups, int group_count, int c,
+						 const AeronGltfCookOptions* opts) {
+	if (!channel_atlas_pack(ca, opts->atlas_page_size, opts->mip_min_subrect))
+		return false;
+	if (ca->rect_count == 0)
+		return true;
+	if (!ca->one_per_page) {
+		int largest = 0, widest = 0, tallest = 0;
+		for (int g = 0; g < group_count; g++) {
+			for (int r = 0; groups[g].channel == c && r < groups[g].atlas.rect_count; r++) {
+				const ChannelRect* rect = &groups[g].atlas.rects[r];
+				const int          gut  = opts->mip_min_subrect;
+				const int          fw   = (rect->src_w + 3 * gut - 1) / gut * gut;
+				const int          fh   = (rect->src_h + 3 * gut - 1) / gut * gut;
+				largest                 = rect->src_w > largest ? rect->src_w : largest;
+				largest                 = rect->src_h > largest ? rect->src_h : largest;
+				widest                  = fw > widest ? fw : widest;
+				tallest                 = fh > tallest ? fh : tallest;
+			}
+		}
+		if (largest > ca->page / 2) {
+			int page = ca->page;
+			while (page < largest)
+				page *= 2;
+			ca->fixed_width = ca->fixed_height = page;
+			if (!channel_atlas_pack(ca, page, opts->mip_min_subrect))
+				return false;
+		} else if (widest > ca->width || tallest > ca->height) {
+			ca->fixed_width  = widest > ca->width ? widest : ca->width;
+			ca->fixed_height = tallest > ca->height ? tallest : ca->height;
+			if (!channel_atlas_pack(ca, ca->page, opts->mip_min_subrect))
+				return false;
+		}
+	}
+	for (int g = 0; g < group_count; g++) {
+		if (groups[g].channel != c)
+			continue;
+		groups[g].atlas.fixed_width  = ca->width;
+		groups[g].atlas.fixed_height = ca->height;
+		groups[g].atlas.one_per_page = ca->one_per_page;
+		if (!channel_atlas_pack(&groups[g].atlas, ca->page, opts->mip_min_subrect))
+			return false;
+	}
+	return true;
+}
+
+/* The texels of channel `c`'s pages at level 0: its core's and its groups'. */
+static int64_t channel_texels(const ChannelAtlas* ca, const CookGroup* groups, int group_count, int c) {
+	int64_t texels = (int64_t)ca->page_count * ca->width * ca->height;
+	for (int g = 0; g < group_count; g++)
+		if (groups[g].channel == c)
+			texels += (int64_t)groups[g].atlas.page_count * groups[g].atlas.width * groups[g].atlas.height;
+	return texels;
+}
 
 /* The rect of material `mi`'s channel `c` binding, its page one of its
  * image's (the core's or its group's), and that image's index; false when
@@ -776,12 +838,8 @@ bool aeron_gltf_cook_data_lazy(cgltf_data* data, const char* source_label,
 	/* ---- Stage B: per-channel pack + materialize + KTX2 encode ---- */
 
 	for (int c = 0; c < AERON_GLTF_COOK_CHANNEL_COUNT && ok; c++) {
-		ChannelAtlas* ca = &atlases[c];
-		if (!channel_atlas_pack(ca, opts.atlas_page_size, opts.mip_min_subrect)) {
-			ok = false;
-			break;
-		}
-		int channel_groups = 0;
+		ChannelAtlas* ca             = &atlases[c];
+		int           channel_groups = 0;
 		for (int g = 0; g < group_count; g++)
 			channel_groups += groups[g].channel == c;
 		if (ca->rect_count == 0 && channel_groups) {
@@ -790,52 +848,85 @@ bool aeron_gltf_cook_data_lazy(cgltf_data* data, const char* source_label,
 			ok = false;
 			break;
 		}
+
+		/* One page per image (AeronGltfCookOptions.separate_pages_budget). A
+		 * channel with one image per atlas always uses it. Otherwise it is
+		 * compared with the packed layout: first with the fewest texels
+		 * packing could take, which needs no packing, then with the packed
+		 * layout itself. */
+		int     page_w = 0, page_h = 0, layers = ca->rect_count;
+		bool    one_each = ca->rect_count == 1;
+		int64_t bound    = channel_atlas_texel_lower_bound(ca, opts.atlas_page_size, opts.mip_min_subrect);
+		channel_atlas_one_per_page_extent(ca, &page_w, &page_h);
+		for (int g = 0; g < group_count; g++) {
+			if (groups[g].channel != c)
+				continue;
+			one_each = one_each && groups[g].atlas.rect_count == 1;
+			layers += groups[g].atlas.rect_count;
+			bound += channel_atlas_texel_lower_bound(&groups[g].atlas, opts.atlas_page_size, opts.mip_min_subrect);
+			channel_atlas_one_per_page_extent(&groups[g].atlas, &page_w, &page_h);
+		}
+		const int64_t separate       = (int64_t)layers * page_w * page_h;
+		int64_t       packed         = -1; /* packed texels, or their lower bound; -1 when unknown */
+		bool          separate_pages = false;
+		const char*   reason         = "one page per image is turned off";
+		if (ca->rect_count == 0) {
+			reason = NULL;
+		} else if (one_each) {
+			separate_pages = true;
+			reason         = "one image per atlas";
+		} else if (opts.separate_pages_budget >= 0 && layers > opts.separate_pages_max_layers) {
+			reason = "too many layers for one page per image";
+		} else if (opts.separate_pages_budget >= 0 && separate <= bound + opts.separate_pages_budget) {
+			separate_pages = true;
+			reason         = "packing would take at least";
+			packed         = bound;
+		} else if (opts.separate_pages_budget >= 0) {
+			if (!pack_channel(ca, groups, group_count, c, &opts)) {
+				ok = false;
+				break;
+			}
+			packed         = channel_texels(ca, groups, group_count, c);
+			separate_pages = separate <= packed + opts.separate_pages_budget;
+			reason         = separate_pages ? "packing takes" : "one page per image would take";
+		}
+		if (separate_pages) {
+			ca->one_per_page = true;
+			ca->fixed_width  = page_w;
+			ca->fixed_height = page_h;
+		}
+		/* A packed layout that was kept is already packed. */
+		if ((separate_pages || packed < 0) && !pack_channel(ca, groups, group_count, c, &opts)) {
+			ok = false;
+			break;
+		}
 		if (ca->rect_count == 0) {
 			/* No material binds this channel: it has no image. */
 			continue;
 		}
+		if (separate_pages && packed >= 0)
+			ToolLog_Write(TOOL_LOG_DETAIL,
+						  "[aeron_gltf_cook] %s: one page per image, %d layer(s) of %d×%d (%lld texels; %s %lld)",
+						  kChannels[c].name, layers, page_w, page_h, (long long)separate, reason, (long long)packed);
+		else if (separate_pages)
+			ToolLog_Write(TOOL_LOG_DETAIL, "[aeron_gltf_cook] %s: one page per image, %d layer(s) of %d×%d (%s)",
+						  kChannels[c].name, layers, page_w, page_h, reason);
+		else if (packed >= 0)
+			ToolLog_Write(TOOL_LOG_DETAIL, "[aeron_gltf_cook] %s: packed (%lld texels; %s %lld)", kChannels[c].name,
+						  (long long)packed, reason, (long long)separate);
+		else
+			ToolLog_Write(TOOL_LOG_DETAIL, "[aeron_gltf_cook] %s: packed (%s)", kChannels[c].name, reason);
+
 		/* Groups: pages of the core's size, and one mip count for all. */
 		if (channel_groups) {
-			/* Group pages take the core's page size. A grouped image the
-			 * core's pages can't hold (an emissive or metallic-roughness
-			 * image of a texture whose own is a constant, beside a small
-			 * core) grows the core's pages to its footprint, or to square
-			 * power-of-two pages when it needs a dedicated layer. */
-			int largest = 0, widest = 0, tallest = 0;
-			for (int g = 0; g < group_count; g++) {
-				for (int r = 0; groups[g].channel == c && r < groups[g].atlas.rect_count; r++) {
-					const ChannelRect* rect = &groups[g].atlas.rects[r];
-					const int          gut  = opts.mip_min_subrect;
-					const int          fw   = (rect->src_w + 3 * gut - 1) / gut * gut;
-					const int          fh   = (rect->src_h + 3 * gut - 1) / gut * gut;
-					largest                 = rect->src_w > largest ? rect->src_w : largest;
-					largest                 = rect->src_h > largest ? rect->src_h : largest;
-					widest                  = fw > widest ? fw : widest;
-					tallest                 = fh > tallest ? fh : tallest;
-				}
-			}
-			if (largest > ca->page / 2) {
-				int page = ca->page;
-				while (page < largest)
-					page *= 2;
-				ca->fixed_width = ca->fixed_height = page;
-				ok                                 = channel_atlas_pack(ca, page, opts.mip_min_subrect);
-			} else if (widest > ca->width || tallest > ca->height) {
-				ca->fixed_width  = widest > ca->width ? widest : ca->width;
-				ca->fixed_height = tallest > ca->height ? tallest : ca->height;
-				ok               = channel_atlas_pack(ca, ca->page, opts.mip_min_subrect);
-			}
-			if (!ok)
-				break;
 			int pages = 0;
-			for (int g = 0; g < group_count && ok; g++) {
+			for (int g = 0; g < group_count; g++) {
 				if (groups[g].channel != c)
 					continue;
-				groups[g].atlas.fixed_width  = ca->width;
-				groups[g].atlas.fixed_height = ca->height;
-				ok = channel_atlas_pack(&groups[g].atlas, ca->page, opts.mip_min_subrect);
 				pages += groups[g].atlas.page_count;
-				if (ok && groups[g].atlas.mip_count > ca->mip_count)
+				/* 0 is the complete chain, so it wins over any count. */
+				if (ca->mip_count != 0 &&
+					(groups[g].atlas.mip_count == 0 || groups[g].atlas.mip_count > ca->mip_count))
 					ca->mip_count = groups[g].atlas.mip_count;
 			}
 			double used = 0.0;
@@ -882,11 +973,15 @@ bool aeron_gltf_cook_data_lazy(cgltf_data* data, const char* source_label,
 		free(ca->rgba);
 		ca->rgba = NULL;
 		if (opts.verbose) {
+			char levels[24];
+			if (ca->mip_count)
+				snprintf(levels, sizeof levels, "%d level(s)", ca->mip_count);
+			else
+				snprintf(levels, sizeof levels, "all levels");
 			ToolLog_Write(TOOL_LOG_INFO,
 						  "[aeron_gltf_cook] channel %s: %d sub-rects → %d page(s) of %d×%d, "
-						  "%d level(s), %s KTX2 %zu B (zstd=%d)",
-						  kChannels[c].name, ca->rect_count, ca->page_count, ca->width, ca->height,
-						  ca->mip_count,
+						  "%s, %s KTX2 %zu B (zstd=%d)",
+						  kChannels[c].name, ca->rect_count, ca->page_count, ca->width, ca->height, levels,
 						  opts.encoding == AERON_GLTF_COOK_ENCODING_RGBA8
 							  ? "RGBA8"
 							  : (kChannels[c].format == CH_FMT_BC5 ? "BC5" : "BC7"),

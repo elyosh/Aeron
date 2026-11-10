@@ -248,6 +248,58 @@ static int first_fit_pages(ChannelAtlas* ca, int* order, int count, AeronAtlasRe
 	return pages;
 }
 
+void channel_atlas_one_per_page_extent(const ChannelAtlas* ca, int* width, int* height) {
+	for (int i = 0; ca && i < ca->rect_count; i++) {
+		const int w = (ca->rects[i].src_w + 3) / 4 * 4, h = (ca->rects[i].src_h + 3) / 4 * 4;
+		*width      = w > *width ? w : *width;
+		*height     = h > *height ? h : *height;
+	}
+}
+
+int64_t channel_atlas_texel_lower_bound(const ChannelAtlas* ca, int page_size, int gutter) {
+	int64_t texels = 0;
+	for (int i = 0; ca && i < ca->rect_count; i++) {
+		const ChannelRect* r         = &ca->rects[i];
+		const int64_t      footprint = (int64_t)footprint_cells(r->src_w, gutter) * gutter *
+								  footprint_cells(r->src_h, gutter) * gutter;
+		int64_t page = page_size;
+		while (page < r->src_w || page < r->src_h)
+			page *= 2;
+		texels += footprint < page * page ? footprint : page * page;
+	}
+	return texels;
+}
+
+/* Gives each rect its own page, resampled to fill it: see `one_per_page`. */
+static bool pack_one_per_page(ChannelAtlas* ca, int page_size) {
+	int width = ca->fixed_width, height = ca->fixed_height;
+	if (width <= 0 || height <= 0) {
+		width = height = 0;
+		channel_atlas_one_per_page_extent(ca, &width, &height);
+	}
+	if (width % 4 || height % 4) {
+		ToolLog_Write(TOOL_LOG_ERROR, "[aeron_gltf_cook] channel %d: %d×%d pages are not whole BC blocks",
+					  ca->channel, width, height);
+		return false;
+	}
+	int page = page_size;
+	while (page < width || page < height)
+		page *= 2;
+	for (int i = 0; i < ca->rect_count; i++) {
+		ChannelRect* r = &ca->rects[i];
+		r->dedicated   = true;
+		r->page        = i;
+		r->x = r->y = 0;
+		r->max_lod  = CHANNEL_ATLAS_UNCLAMPED_LOD;
+	}
+	ca->width      = width;
+	ca->height     = height;
+	ca->page       = page;
+	ca->page_count = ca->rect_count;
+	ca->mip_count  = 0;
+	return true;
+}
+
 bool channel_atlas_pack(ChannelAtlas* ca, int page_size, int gutter) {
 	if (!ca || !is_pow2(page_size) || page_size < 128 || !is_pow2(gutter) || gutter < 4 || gutter > 32 ||
 		page_size < 8 * gutter)
@@ -262,6 +314,8 @@ bool channel_atlas_pack(ChannelAtlas* ca, int page_size, int gutter) {
 		ca->mip_count  = 0;
 		return true;
 	}
+	if (ca->one_per_page)
+		return pack_one_per_page(ca, page_size);
 
 	int largest = 0;
 	for (int i = 0; i < ca->rect_count; i++) {

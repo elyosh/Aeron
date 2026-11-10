@@ -82,10 +82,12 @@ typedef enum {
 } Ktx2AlphaEncoding;
 
 /* Returns whether a generated BC5, BC6H or BC7 mip chain gets another level
- * after a level of width × height. The chain stops before a level that is
- * smaller than 4 texels on either side. Such a level still takes a whole
- * 4×4 block, so it saves no memory, and it only shows when the whole texture
- * covers a few pixels on screen. Uncompressed chains go down to 1×1. */
+ * after a level of width × height. The chain continues while the longer side
+ * is 8 texels or more, so its last level has a longer side of 4 to 7. A
+ * level under 4 texels on one side still takes whole 4×4 blocks, but a long
+ * texture needs it: a 1024×128 texture is 4 texels tall at level 5, and
+ * needs deeper levels when it is small on screen. Square chains stop at
+ * 4×4. Uncompressed chains go down to 1×1. */
 bool ktx2_block_chain_continues(int width, int height);
 
 /* Write an uncompressed RGBA8 KTX2 with the given mip chain. `alpha` says

@@ -29,7 +29,8 @@ its image and page:
 - `layer`: the page in that image, 0 to 4095;
 - `maxLod`: optional, the deepest mip level the texture may sample (0 to
   14). A texture packed on a shared page stops at this level, so its
-  neighbours do not bleed into it. Without it, there is no limit.
+  neighbours do not bleed into it. A texture alone on its page has none.
+  Without it, there is no limit.
 
 `KHR_texture_transform` on the material's texture info places the texture
 within its page.

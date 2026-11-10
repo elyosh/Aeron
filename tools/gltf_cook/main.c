@@ -61,7 +61,8 @@ void SDL_LogVerbose(int category, const char* fmt, ...) {
 static void usage(void) {
 	fprintf(stderr, "Usage: aeron_gltf_cook <in.gltf> --out <out.glb> [options]\n"
 					"       aeron_gltf_cook --build-project <project> --out <mod folder> [--jobs N]\n"
-					"                       [--only KEY] [--zstd-level N] [--verbose]\n"
+					"                       [--only KEY] [--zstd-level N] [--separate-pages-budget N]\n"
+					"                       [--separate-pages-max-layers N] [--verbose]\n"
 					"       aeron_gltf_cook --library <library>.yaml --out <effects dir> [--verbose]\n"
 					"       aeron_gltf_cook --library-from-json <in.json> <library>.yaml\n"
 					"       aeron_gltf_cook --library-json <library>.yaml\n"
@@ -92,6 +93,15 @@ static void usage(void) {
 					"  --mip-min-subrect <N> Gutter texels around each sub-rect, a power\n"
 					"                        of 2 in [4, 32]; also caps mip depth\n"
 					"                        (default 16).\n"
+					"  --separate-pages-budget <N>\n"
+					"                        Give each image of a channel a page of its own,\n"
+					"                        with every mip level, when that takes at most N\n"
+					"                        more texels than packing them (default 1048576).\n"
+					"                        A negative N turns it off, except for a channel\n"
+					"                        with one image per atlas.\n"
+					"  --separate-pages-max-layers <N>\n"
+					"                        At most N pages for a channel with one page per\n"
+					"                        image, 1 to 4096 (default 256).\n"
 					"  --quality {fast|med|uber}\n"
 					"                        BC7 encoder preset (default med).\n"
 					"  --threads <N>         Encode textures on at most N threads (default:\n"
@@ -183,13 +193,46 @@ static bool write_library(const char* in, const char* out) {
 	return ok;
 }
 
+/* Reads option `argv[*i]` when it is one of the one-page-per-image options,
+ * with its value, into `cook`. Returns 1 when it read one, 0 when it isn't
+ * one, and -1 when its value is invalid. */
+static int read_separate_pages_option(int argc, char** argv, int* i, AeronGltfCookOptions* cook) {
+	const char* a = argv[*i];
+	char*       end;
+	if (strcmp(a, "--separate-pages-budget") == 0 && *i + 1 < argc) {
+		const char* value          = argv[++*i];
+		cook->separate_pages_budget = strtoll(value, &end, 10);
+		if (!value[0] || *end) {
+			fprintf(stderr, "[aeron_gltf_cook] --separate-pages-budget must be a number of texels\n");
+			return -1;
+		}
+		return 1;
+	}
+	if (strcmp(a, "--separate-pages-max-layers") == 0 && *i + 1 < argc) {
+		const char* value              = argv[++*i];
+		const long  layers             = strtol(value, &end, 10);
+		cook->separate_pages_max_layers = (int)layers;
+		if (!value[0] || *end || layers < 1 || layers > 4096) {
+			fprintf(stderr, "[aeron_gltf_cook] --separate-pages-max-layers must be 1 to 4096\n");
+			return -1;
+		}
+		return 1;
+	}
+	return 0;
+}
+
 /* Reads the options of --build-project and runs it. */
 static int build_project(int argc, char** argv) {
 	ProjectBuildOptions options = { .project = argc > 2 ? argv[2] : NULL, .jobs = 1 };
 	aeron_gltf_cook_default_options(&options.cook);
 	for (int i = 3; i < argc; i++) {
-		const char* a = argv[i];
-		if (strcmp(a, "--out") == 0 && i + 1 < argc) {
+		const char* a    = argv[i];
+		const int   read = read_separate_pages_option(argc, argv, &i, &options.cook);
+		if (read < 0)
+			return 2;
+		if (read > 0) {
+			continue;
+		} else if (strcmp(a, "--out") == 0 && i + 1 < argc) {
 			options.mod = argv[++i];
 		} else if (strcmp(a, "--jobs") == 0 && i + 1 < argc) {
 			options.jobs = atoi(argv[++i]);
@@ -258,8 +301,13 @@ int main(int argc, char** argv) {
 	aeron_gltf_cook_default_options(&opts);
 
 	for (int i = 2; i < argc; i++) {
-		const char* a = argv[i];
-		if (strcmp(a, "--out") == 0 && i + 1 < argc) {
+		const char* a    = argv[i];
+		const int   read = read_separate_pages_option(argc, argv, &i, &opts);
+		if (read < 0)
+			return 2;
+		if (read > 0) {
+			continue;
+		} else if (strcmp(a, "--out") == 0 && i + 1 < argc) {
 			out_path = argv[++i];
 		} else if (strcmp(a, "--atlas-page") == 0 && i + 1 < argc) {
 			opts.atlas_page_size = atoi(argv[++i]);

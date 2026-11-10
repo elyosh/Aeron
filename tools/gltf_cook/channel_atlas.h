@@ -15,6 +15,11 @@
  * filled by REPEAT so mip levels up to log2(gutter) never mix two
  * sources.
  *
+ * With `one_per_page` set before packing, every source is dedicated
+ * instead: one page each, resampled to fill it, with no gutter. Each page
+ * then holds only its source, so the texture wraps at the page's edge and
+ * every mip level is exact. The atlas has the complete mip chain.
+ *
  * Lifecycle:
  *   channel_atlas_init(&ca, channel_index)
  *   for each distinct source → channel_atlas_add_rect(&ca, key, src_w,
@@ -88,6 +93,12 @@ typedef struct ChannelAtlas {
 	 * size (multiples of the gutter), as another atlas whose array this
 	 * one joins; 0 packs as described there. */
 	int fixed_width, fixed_height;
+
+	/* Set before channel_atlas_pack to give each source its own page,
+	 * resampled to fill it. The pages are fixed_width × fixed_height when
+	 * set, or the largest source's size rounded up to a multiple of 4 (a
+	 * BC block). */
+	bool one_per_page;
 } ChannelAtlas;
 
 void channel_atlas_init(ChannelAtlas* ca, int channel);
@@ -110,6 +121,18 @@ int channel_atlas_add_rect(ChannelAtlas* ca, const void* key, int src_w, int src
  * size. Returns false on invalid arguments, OOM or a source that does not
  * fit. */
 bool channel_atlas_pack(ChannelAtlas* ca, int page_size, int gutter);
+
+/* Widens `*width` × `*height` to the page size that `one_per_page` gives
+ * `ca`'s sources without a fixed size: the largest source, rounded up to a
+ * multiple of 4. Start from 0 × 0; call it for each atlas that shares the
+ * pages. */
+void channel_atlas_one_per_page_extent(const ChannelAtlas* ca, int* width, int* height);
+
+/* The fewest texels that channel_atlas_pack, without `one_per_page`, can
+ * give `ca`'s sources, however well it packs them. Each source counts its
+ * footprint, or the square power-of-two page of at least `page_size` that
+ * holds it when that is smaller (a source over half a page is dedicated). */
+int64_t channel_atlas_texel_lower_bound(const ChannelAtlas* ca, int page_size, int gutter);
 
 /* Allocate ca.rgba and fill every footprint and dedicated layer. Returns
  * false on OOM. */

@@ -466,7 +466,7 @@ bool write_ktx2_bc7_mips(const char* path, const Ktx2WriteLevel* levels, int lev
  * malloc'd buffer, and all of them are freed before returning. */
 
 /* The next level is half the size, rounded down. */
-bool ktx2_block_chain_continues(int width, int height) { return width >= 8 && height >= 8; }
+bool ktx2_block_chain_continues(int width, int height) { return width >= 8 || height >= 8; }
 
 /* Worst case: 8K × 8K → 14 mip levels. 16-slot fixed buffer is plenty. */
 #define KTX2_MAX_LEVELS 16

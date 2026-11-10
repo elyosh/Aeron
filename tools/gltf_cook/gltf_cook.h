@@ -18,7 +18,10 @@
  * names its image, page and deepest mip level to sample, and carry a
  * KHR_texture_transform that remaps material-local UVs into the material's
  * sub-rect of that page. Materials binding the same image share one
- * sub-rect. The output lists AERON_flight_model in extensionsRequired.
+ * sub-rect. A channel can instead give each of its images a page of its
+ * own, with every mip level, when that takes little more memory
+ * (AeronGltfCookOptions.separate_pages_budget). The output lists
+ * AERON_flight_model in extensionsRequired.
  *
  * Games then load the cooked .glb with Aeron_FlightModelBuildMemory — no PNG
  * decode, software atlas packing, or runtime mip generation.
@@ -90,6 +93,16 @@ typedef struct AeronGltfCookOptions {
 	 * [4, 32]. Footprints align to it, so a sub-rect samples mip levels up
 	 * to log2 of it without bleeding. Default: 16. */
 	int mip_min_subrect;
+	/* One page per image. A channel (its core atlas and variant groups) gives
+	 * each image its own page, resampled to fill it, with no gutter, when
+	 * that takes at most `separate_pages_budget` more texels at level 0 than
+	 * packing, and at most `separate_pages_max_layers` layers. Its images
+	 * then sample every mip level, so they don't alias when small on screen.
+	 * A negative budget turns this off, except for a channel with one image
+	 * per atlas. Defaults: 1048576 texels and 256 layers (the number Vulkan
+	 * guarantees). */
+	int64_t separate_pages_budget;
+	int     separate_pages_max_layers;
 	/* BC5/BC7 for shipped GLBs, or uncompressed RGBA8 for latency-sensitive
 	 * in-memory conversion. Both modes generate mip chains. */
 	AeronGltfCookEncoding encoding;

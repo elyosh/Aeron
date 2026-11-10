@@ -20,7 +20,7 @@
     },
     "maxLod": {
       "title": "Mip limit",
-      "description": "The deepest mip level that the texture may sample. A texture packed on a shared page stops at this level, so its neighbours do not bleed into it. Without it, there is no limit.",
+      "description": "The deepest mip level that the texture may sample. A texture packed on a shared page stops at this level, so its neighbours do not bleed into it. A texture alone on its page has none. Without it, there is no limit.",
       "type": "integer",
       "minimum": 0,
       "maximum": 14
