@@ -1606,31 +1606,43 @@ int AeronScene_AddProbeSet(AeronScene3D* s, const AeronProbeSet* probes, const f
 	return s->probe_set_count++;
 }
 
+static const float scene_world_axes[3][3] = { { 1.0f, 0.0f, 0.0f },
+											  { 0.0f, 1.0f, 0.0f },
+											  { 0.0f, 0.0f, 1.0f } };
+
+/* The instance's bound along the world axes, or NULL when it has no usable
+ * bound. */
+static const AeronSceneInstanceBox* scene_instance_world_box(const AeronSceneMeshInstance* instance,
+															 AeronSceneInstanceBox*        box) {
+	return AeronSceneInternal_InstanceBox(instance, scene_world_axes[0], scene_world_axes[1],
+										  scene_world_axes[2], box)
+			   ? box
+			   : NULL;
+}
+
 /* The probe set an instance uses: the one it owns, else the first whose
- * extent its bounding sphere overlaps; -1 for none. */
-static int32_t scene_instance_probe_set(const AeronScene3D* s, const AeronSceneMeshInstance* instance) {
+ * extent its bounding sphere overlaps; -1 for none. `box` is the instance's
+ * world bound (scene_instance_world_box). */
+static int32_t scene_instance_probe_set_for_box(const AeronScene3D* s, const AeronSceneMeshInstance* instance,
+												const AeronSceneInstanceBox* box) {
 	if (s->probe_set_count == 0) {
 		return -1;
 	}
 	if (instance->probe_set_owner) {
 		return instance->probe_set_owner <= s->probe_set_count ? (int32_t)instance->probe_set_owner - 1 : -1;
 	}
-	static const float    world_axes[3][3] = { { 1.0f, 0.0f, 0.0f },
-											   { 0.0f, 1.0f, 0.0f },
-											   { 0.0f, 0.0f, 1.0f } };
-	AeronSceneInstanceBox box;
-	if (!AeronSceneInternal_InstanceBox(instance, world_axes[0], world_axes[1], world_axes[2], &box)) {
+	if (!box) {
 		return -1;
 	}
 	const float radius =
-		sqrtf(box.half[0] * box.half[0] + box.half[1] * box.half[1] + box.half[2] * box.half[2]);
+		sqrtf(box->half[0] * box->half[0] + box->half[1] * box->half[1] + box->half[2] * box->half[2]);
 	for (int k = 0; k < s->probe_set_count; ++k) {
 		const AeronSceneProbeSet* set         = &s->probe_sets[k];
 		const AeronProbeSet*      probes      = set->probes;
 		float                     distance_sq = 0.0f;
 		for (int row = 0; row < 3; ++row) {
 			const float* w = &set->world_to_model[row * 4];
-			const float  p = w[0] * box.center[0] + w[1] * box.center[1] + w[2] * box.center[2] + w[3];
+			const float  p = w[0] * box->center[0] + w[1] * box->center[1] + w[2] * box->center[2] + w[3];
 			const float  outside =
 				fmaxf(fmaxf(probes->bounds_min[row] - p, p - probes->bounds_max[row]), 0.0f);
 			distance_sq += outside * outside;
@@ -1644,7 +1656,8 @@ static int32_t scene_instance_probe_set(const AeronScene3D* s, const AeronSceneM
 }
 
 int32_t AeronSceneInternal_InstanceProbeSet(const AeronScene3D* s, const AeronSceneMeshInstance* instance) {
-	return scene_instance_probe_set(s, instance);
+	AeronSceneInstanceBox box;
+	return scene_instance_probe_set_for_box(s, instance, scene_instance_world_box(instance, &box));
 }
 
 void AeronScene_SetFrameUniformData(AeronScene3D* s, AeronShaderStage stage, uint32_t slot, const void* data,
@@ -1916,6 +1929,7 @@ static int scene_reserve_instances(AeronScene3D* s, int instance_capacity, int s
 		SCENE_GROW(s->prepared_instances, instance_capacity);
 		SCENE_GROW(s->camera_order, instance_capacity);
 		SCENE_GROW(s->order_keys, instance_capacity);
+		SCENE_GROW(s->order_keys_scratch, instance_capacity);
 		SCENE_GROW(s->planar_reflection.order, instance_capacity);
 	}
 	if (shadow_only_capacity > s->shadow_only_capacity) {
@@ -1948,6 +1962,7 @@ static void scene_free_instances(AeronScene3D* s) {
 	free(s->prepared_instances);
 	free(s->camera_order);
 	free(s->order_keys);
+	free(s->order_keys_scratch);
 	free(s->planar_reflection.order);
 	free(s->shadow_only);
 	free(s->prepared_shadow_only);
@@ -1992,36 +2007,78 @@ static int scene_reserve_mesh_table_hash(AeronScene3D* s, uint32_t tables) {
 	return 1;
 }
 
-static int scene_order_key_compare(const void* a, const void* b) {
-	const SceneOrderKey* x = a;
-	const SceneOrderKey* y = b;
+static int scene_order_key_less(const SceneOrderKey* x, const SceneOrderKey* y) {
 	if (x->surface != y->surface)
-		return x->surface < y->surface ? -1 : 1;
+		return x->surface < y->surface;
 	if (x->center != y->center)
-		return x->center < y->center ? -1 : 1;
-	return (int)x->index - (int)y->index;
+		return x->center < y->center;
+	return x->index < y->index;
+}
+
+/* Sorts `count` keys with scene_order_key_less, using `scratch`, which holds
+ * as many keys. No two keys are equal because their indexes differ, so any
+ * correct sort gives the same order. This is a merge sort with an inline
+ * comparison because qsort, which calls its comparison through a pointer,
+ * was slow here. */
+static void scene_sort_order_keys(SceneOrderKey* keys, SceneOrderKey* scratch, int count) {
+	enum { RUN = 16 };
+
+	for (int start = 0; start < count; start += RUN) {
+		const int end = start + RUN < count ? start + RUN : count;
+		for (int i = start + 1; i < end; i++) {
+			const SceneOrderKey key = keys[i];
+			int                 j   = i;
+			while (j > start && scene_order_key_less(&key, &keys[j - 1])) {
+				keys[j] = keys[j - 1];
+				j--;
+			}
+			keys[j] = key;
+		}
+	}
+	SceneOrderKey* from = keys;
+	SceneOrderKey* to   = scratch;
+	for (int width = RUN; width < count; width *= 2) {
+		for (int start = 0; start < count; start += 2 * width) {
+			const int middle = start + width < count ? start + width : count;
+			const int end    = start + 2 * width < count ? start + 2 * width : count;
+			int       a      = start;
+			int       b      = middle;
+			int       out    = start;
+			while (a < middle && b < end) {
+				to[out++] = scene_order_key_less(&from[b], &from[a]) ? from[b++] : from[a++];
+			}
+			while (a < middle) {
+				to[out++] = from[a++];
+			}
+			while (b < end) {
+				to[out++] = from[b++];
+			}
+		}
+		SceneOrderKey* swap = from;
+		from                = to;
+		to                  = swap;
+	}
+	if (from != keys) {
+		memcpy(keys, from, (size_t)count * sizeof *keys);
+	}
 }
 
 /* The larger side of the bound's projection, clipped to the viewport, in
  * render pixels: 0 outside the viewport, FLT_MAX across the near plane or
  * without a usable bound. */
-static float scene_instance_screen_size(const AeronScene3D* s, const AeronSceneMeshInstance* instance) {
-	static const float    world_axes[3][3] = { { 1.0f, 0.0f, 0.0f },
-											   { 0.0f, 1.0f, 0.0f },
-											   { 0.0f, 0.0f, 1.0f } };
-	const float*          m                = s->unjittered_view_proj;
-	const float           width            = (float)s->camera.viewport.width;
-	const float           height           = (float)s->camera.viewport.height;
-	AeronSceneInstanceBox box;
-	if (!AeronSceneInternal_InstanceBox(instance, world_axes[0], world_axes[1], world_axes[2], &box)) {
+static float scene_instance_screen_size(const AeronScene3D* s, const AeronSceneInstanceBox* box) {
+	const float* m      = s->unjittered_view_proj;
+	const float  width  = (float)s->camera.viewport.width;
+	const float  height = (float)s->camera.viewport.height;
+	if (!box) {
 		return FLT_MAX;
 	}
 	float lo[2] = { FLT_MAX, FLT_MAX };
 	float hi[2] = { -FLT_MAX, -FLT_MAX };
 	for (int c = 0; c < 8; ++c) {
-		const float p[3] = { box.center[0] + ((c & 1) ? box.half[0] : -box.half[0]),
-							 box.center[1] + ((c & 2) ? box.half[1] : -box.half[1]),
-							 box.center[2] + ((c & 4) ? box.half[2] : -box.half[2]) };
+		const float p[3] = { box->center[0] + ((c & 1) ? box->half[0] : -box->half[0]),
+							 box->center[1] + ((c & 2) ? box->half[1] : -box->half[1]),
+							 box->center[2] + ((c & 4) ? box->half[2] : -box->half[2]) };
 		float       clip[4];
 		for (int r = 0; r < 4; ++r) {
 			clip[r] = m[r * 4 + 0] * p[0] + m[r * 4 + 1] * p[1] + m[r * 4 + 2] * p[2] + m[r * 4 + 3];
@@ -2042,22 +2099,18 @@ static float scene_instance_screen_size(const AeronScene3D* s, const AeronSceneM
 }
 
 /* An instance without a usable bound stays visible, and sorts last. */
-static int scene_instance_in_frustum(const AeronScene3D* s, const AeronSceneMeshInstance* instance,
+static int scene_instance_in_frustum(const AeronScene3D* s, const AeronSceneInstanceBox* box,
 									 const float planes[5][4], SceneOrderKey* key) {
-	static const float    world_axes[3][3] = { { 1.0f, 0.0f, 0.0f },
-											   { 0.0f, 1.0f, 0.0f },
-											   { 0.0f, 0.0f, 1.0f } };
-	AeronSceneInstanceBox box;
 	key->surface = FLT_MAX;
 	key->center  = FLT_MAX;
-	if (!AeronSceneInternal_InstanceBox(instance, world_axes[0], world_axes[1], world_axes[2], &box)) {
+	if (!box) {
 		return 1;
 	}
 	for (int p = 0; p < 5; p++) {
-		const float distance = planes[p][0] * box.center[0] + planes[p][1] * box.center[1] +
-							   planes[p][2] * box.center[2] + planes[p][3];
-		const float reach    = fabsf(planes[p][0]) * box.half[0] + fabsf(planes[p][1]) * box.half[1] +
-							   fabsf(planes[p][2]) * box.half[2];
+		const float distance = planes[p][0] * box->center[0] + planes[p][1] * box->center[1] +
+							   planes[p][2] * box->center[2] + planes[p][3];
+		const float reach    = fabsf(planes[p][0]) * box->half[0] + fabsf(planes[p][1]) * box->half[1] +
+							   fabsf(planes[p][2]) * box->half[2];
 		if (distance < -reach) {
 			return 0;
 		}
@@ -2065,8 +2118,8 @@ static int scene_instance_in_frustum(const AeronScene3D* s, const AeronSceneMesh
 	float center_sq  = 0.0f;
 	float surface_sq = 0.0f;
 	for (int axis = 0; axis < 3; axis++) {
-		const float delta  = box.center[axis] - s->camera.pos[axis];
-		const float beyond = fmaxf(fabsf(delta) - box.half[axis], 0.0f);
+		const float delta  = box->center[axis] - s->camera.pos[axis];
+		const float beyond = fmaxf(fabsf(delta) - box->half[axis], 0.0f);
 		center_sq += delta * delta;
 		surface_sq += beyond * beyond;
 	}
@@ -2207,11 +2260,13 @@ int AeronSceneStorage_Prepare(AeronScene3D* s, AeronCommandBuffer* cmd) {
 		const AeronSceneMeshInstance* instance = &s->instances[i];
 		AeronScenePreparedInstance*   prepared = &s->prepared_instances[i];
 		memset(prepared, 0, sizeof *prepared);
-		SceneOrderKey key;
-		prepared->camera_visible = (uint32_t)scene_instance_in_frustum(s, instance, frustum, &key);
-		prepared->screen_size_px = FLT_MAX;
+		SceneOrderKey                key;
+		AeronSceneInstanceBox        box_storage;
+		const AeronSceneInstanceBox* box = scene_instance_world_box(instance, &box_storage);
+		prepared->camera_visible         = (uint32_t)scene_instance_in_frustum(s, box, frustum, &key);
+		prepared->screen_size_px         = FLT_MAX;
 		if (prepared->camera_visible) {
-			prepared->screen_size_px = scene_instance_screen_size(s, instance);
+			prepared->screen_size_px = scene_instance_screen_size(s, box);
 			/* A mesh with only blended faces, such as a laser bolt, is thin
 			 * but bright: it stays. */
 			if (s->small_cull_active && prepared->screen_size_px < s->small_cull_draw_px && instance->mesh &&
@@ -2219,7 +2274,8 @@ int AeronSceneStorage_Prepare(AeronScene3D* s, AeronCommandBuffer* cmd) {
 				prepared->camera_visible = 0;
 			}
 		}
-		prepared->probe_set = prepared->camera_visible ? scene_instance_probe_set(s, instance) : -1;
+		prepared->probe_set =
+			prepared->camera_visible ? scene_instance_probe_set_for_box(s, instance, box) : -1;
 		prepared->batch          = -1;
 		if (prepared->camera_visible) {
 			key.index                           = (uint16_t)i;
@@ -2248,7 +2304,7 @@ int AeronSceneStorage_Prepare(AeronScene3D* s, AeronCommandBuffer* cmd) {
 			prepared->previous_table_base = prepared->current_table_base;
 		}
 	}
-	qsort(order_keys, (size_t)s->camera_order_count, sizeof *order_keys, scene_order_key_compare);
+	scene_sort_order_keys(order_keys, s->order_keys_scratch, s->camera_order_count);
 	for (int k = 0; k < s->camera_order_count; ++k) {
 		s->camera_order[k] = order_keys[k].index;
 	}

@@ -446,6 +446,7 @@ struct AeronScene3D {
 	 * nearer instances hide, and blending walks it backwards. */
 	uint16_t*                  camera_order;
 	struct AeronSceneOrderKey* order_keys; /* AeronSceneStorage_Prepare's sort */
+	struct AeronSceneOrderKey* order_keys_scratch; /* scratch space for that sort */
 	int                        camera_order_count;
 	int                        instances_dropped;
 	AeronSceneLight            lights[AERON_SCENE_MAX_LIGHTS];
