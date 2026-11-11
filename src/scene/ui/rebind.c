@@ -8,6 +8,8 @@
 #define UI_CONTROLLER_CAPTURE_TIMEOUT_S 5.0f
 #define UI_CONTROLLER_CAPTURE_AXIS_DELTA 16384
 #define UI_CONTROLLER_CAPTURE_AXIS_HALF 16384
+/* 90% of the way from the center to an end. */
+#define UI_CONTROLLER_CAPTURE_AXIS_END 29491
 
 static const AeronControllerSnapshot* capture_find_controller(const AeronUiContext* ctx,
 															  uint32_t              instance_id) {
@@ -85,8 +87,8 @@ static int capture_button(const AeronControllerSnapshot* controller, AeronUiCont
 			if (!(pressed & (1u << button)))
 				continue;
 			out->controller_kind = controller->kind;
-			out->value.digital =
-				(AeronControllerDigitalSource) { AERON_CONTROLLER_DIGITAL_BUTTON, (uint8_t)button, 0, 0.5f };
+			out->value.digital   = (AeronControllerDigitalSource) { AERON_CONTROLLER_DIGITAL_BUTTON,
+																	(uint8_t)button, 0, 0.5f, 0 };
 			return 1;
 		}
 	} else {
@@ -97,38 +99,48 @@ static int capture_button(const AeronControllerSnapshot* controller, AeronUiCont
 			if (!(controller->raw_pressed_buttons & (UINT64_C(1) << button)))
 				continue;
 			out->controller_kind = controller->kind;
-			out->value.digital =
-				(AeronControllerDigitalSource) { AERON_CONTROLLER_DIGITAL_BUTTON, (uint8_t)button, 0, 0.5f };
+			out->value.digital   = (AeronControllerDigitalSource) { AERON_CONTROLLER_DIGITAL_BUTTON,
+																	(uint8_t)button, 0, 0.5f, 0 };
 			return 1;
 		}
 	}
 	return 0;
 }
 
+/* A joystick axis that starts near an end, such as a lever, a brake or a
+ * trigger read as a joystick axis, is measured over its whole travel, from
+ * that end. Other axes are measured from the center, in the direction they
+ * moved. Gamepad axes are never full range: SDL centers the sticks and
+ * starts the triggers at 0. */
 static int capture_digital_axis(const AeronControllerSnapshot*  controller,
 								const UiControllerCaptureState* state, AeronUiControllerInput* out) {
-	int       best_axis  = -1;
-	int       best_delta = 0;
-	int       best_value = 0;
-	const int axis_count = capture_axis_count(controller);
+	int       best_axis       = -1;
+	int       best_delta      = 0;
+	int       best_positive   = 0;
+	int       best_full_range = 0;
+	const int axis_count      = capture_axis_count(controller);
 	for (int axis = 0; axis < axis_count; ++axis) {
 		if (!capture_axis_available(controller, axis))
 			continue;
-		const int value = capture_axis_value(controller, axis);
-		const int delta = abs(value - (int)state->axis_baseline[axis]);
-		if (abs(value) >= UI_CONTROLLER_CAPTURE_AXIS_HALF && delta > best_delta) {
-			best_axis  = axis;
-			best_delta = delta;
-			best_value = value;
+		const int value      = capture_axis_value(controller, axis);
+		const int baseline   = state->axis_baseline[axis];
+		const int delta      = abs(value - baseline);
+		const int full_range = controller->kind == AERON_CONTROLLER_KIND_JOYSTICK &&
+							   abs(baseline) >= UI_CONTROLLER_CAPTURE_AXIS_END;
+		if ((full_range || abs(value) >= UI_CONTROLLER_CAPTURE_AXIS_HALF) && delta > best_delta) {
+			best_axis       = axis;
+			best_delta      = delta;
+			best_positive   = full_range ? baseline < 0 : value >= 0;
+			best_full_range = full_range;
 		}
 	}
 	if (best_axis < 0 || best_delta < UI_CONTROLLER_CAPTURE_AXIS_DELTA)
 		return 0;
 	out->controller_kind = controller->kind;
 	out->value.digital =
-		(AeronControllerDigitalSource) { best_value < 0 ? AERON_CONTROLLER_DIGITAL_AXIS_NEGATIVE
-														: AERON_CONTROLLER_DIGITAL_AXIS_POSITIVE,
-										 (uint8_t)best_axis, 0, 0.5f };
+		(AeronControllerDigitalSource) { best_positive ? AERON_CONTROLLER_DIGITAL_AXIS_POSITIVE
+													   : AERON_CONTROLLER_DIGITAL_AXIS_NEGATIVE,
+										 (uint8_t)best_axis, 0, 0.5f, (uint8_t)best_full_range };
 	return 1;
 }
 
@@ -153,7 +165,7 @@ static int capture_hat(const AeronControllerSnapshot* controller, UiControllerCa
 				continue;
 			out->controller_kind = controller->kind;
 			out->value.digital = (AeronControllerDigitalSource) { AERON_CONTROLLER_DIGITAL_HAT, (uint8_t)hat,
-																  directions[direction], 0.5f };
+																  directions[direction], 0.5f, 0 };
 			return 1;
 		}
 	}

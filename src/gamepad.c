@@ -120,24 +120,32 @@ const AeronControllerSnapshot* Aeron_SelectController(const AeronInputSnapshot* 
 	return NULL;
 }
 
+static float Aeron_ControllerAxisDigitalAmount(int16_t value, const AeronControllerDigitalSource* source) {
+	if (source->full_range) {
+		return source->kind == AERON_CONTROLLER_DIGITAL_AXIS_POSITIVE
+				   ? (float)((int32_t)value + 32768) / 65535.0f
+				   : (float)(32767 - (int32_t)value) / 65535.0f;
+	}
+	if (source->kind == AERON_CONTROLLER_DIGITAL_AXIS_POSITIVE) {
+		return value > 0 ? (float)value / 32767.0f : 0.0f;
+	}
+	return value < 0 ? (float)(-(int32_t)value) / 32768.0f : 0.0f;
+}
+
+/* Releases 0.1 below the threshold so an axis held near it does not flicker.
+ * Low thresholds release at half their value, so the release point stays
+ * above 0 and an axis at rest always releases. */
 static int Aeron_ControllerAxisDigitalDown(int16_t value, const AeronControllerDigitalSource* source,
 										   int was_down) {
 	float threshold;
-	float normalized;
+	float gap;
 
 	if (!(source->threshold > 0.0f && source->threshold <= 1.0f)) {
 		return 0;
 	}
-	threshold = was_down ? source->threshold - 0.1f : source->threshold;
-	if (threshold < 0.0f) {
-		threshold = 0.0f;
-	}
-	if (source->kind == AERON_CONTROLLER_DIGITAL_AXIS_POSITIVE) {
-		normalized = value > 0 ? (float)value / 32767.0f : 0.0f;
-	} else {
-		normalized = value < 0 ? (float)(-(int32_t)value) / 32768.0f : 0.0f;
-	}
-	return normalized >= threshold;
+	gap       = source->threshold * 0.5f < 0.1f ? source->threshold * 0.5f : 0.1f;
+	threshold = was_down ? source->threshold - gap : source->threshold;
+	return Aeron_ControllerAxisDigitalAmount(value, source) >= threshold;
 }
 
 int Aeron_ControllerAxisAvailable(const AeronControllerSnapshot* controller, int axis) {
@@ -206,6 +214,17 @@ int Aeron_ControllerDigitalSourceDown(const AeronControllerSnapshot*      contro
 		default:
 			return 0;
 	}
+}
+
+float Aeron_ControllerDigitalSourceAxisAmount(const AeronControllerSnapshot*      controller,
+											  const AeronControllerDigitalSource* source) {
+	if (!source ||
+		(source->kind != AERON_CONTROLLER_DIGITAL_AXIS_POSITIVE &&
+		 source->kind != AERON_CONTROLLER_DIGITAL_AXIS_NEGATIVE) ||
+		!Aeron_ControllerAxisAvailable(controller, source->index)) {
+		return 0.0f;
+	}
+	return Aeron_ControllerAxisDigitalAmount(Aeron_ControllerAxisValue(controller, source->index), source);
 }
 
 static int Aeron_FindControllerSlot(SDL_JoystickID instance_id) {

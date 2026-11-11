@@ -277,13 +277,23 @@ typedef struct AeronControllerDigitalSource {
 	AeronControllerDigitalSourceKind kind;
 	uint8_t                          index;
 	uint8_t                          hat_direction;
-	float                            threshold;
+	/* Axis sources: the press point, as a fraction of the measured range. */
+	float threshold;
+	/* Axis sources: 0 measures from the center to the end in the source's
+	 * direction, for sticks. 1 measures the whole travel, from the opposite
+	 * end, for axes that rest at an end such as levers, brakes and
+	 * triggers read as joystick axes. */
+	uint8_t full_range;
 } AeronControllerDigitalSource;
 
 const AeronControllerSnapshot* Aeron_SelectController(const AeronInputSnapshot*      input,
 													  const AeronControllerSelector* selector);
 int Aeron_ControllerDigitalSourceDown(const AeronControllerSnapshot*      controller,
 									  const AeronControllerDigitalSource* source, int was_down);
+/* How far an axis source is pushed, from 0 to 1, on the scale its threshold
+ * uses. Returns 0 for other sources and for unavailable axes. */
+float Aeron_ControllerDigitalSourceAxisAmount(const AeronControllerSnapshot*      controller,
+											  const AeronControllerDigitalSource* source);
 
 /* Read axes using the snapshot's standardized gamepad or raw joystick classification. */
 int     Aeron_ControllerAxisAvailable(const AeronControllerSnapshot* controller, int axis);
