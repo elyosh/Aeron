@@ -96,7 +96,7 @@ static int capture_button(const AeronControllerSnapshot* controller, AeronUiCont
 							  ? controller->button_count
 							  : AERON_CONTROLLER_BUTTON_MAX;
 		for (int button = 0; button < count; ++button) {
-			if (!(controller->raw_pressed_buttons & (UINT64_C(1) << button)))
+			if (!Aeron_ControllerButtonBit(controller->raw_pressed_buttons, button))
 				continue;
 			out->controller_kind = controller->kind;
 			out->value.digital   = (AeronControllerDigitalSource) { AERON_CONTROLLER_DIGITAL_BUTTON,

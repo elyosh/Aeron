@@ -182,7 +182,7 @@ int Aeron_ControllerDigitalSourceDown(const AeronControllerSnapshot*      contro
 			}
 			if (controller->kind == AERON_CONTROLLER_KIND_JOYSTICK &&
 				source->index < controller->button_count && source->index < AERON_CONTROLLER_BUTTON_MAX) {
-				return (controller->raw_buttons & (UINT64_C(1) << source->index)) != 0;
+				return Aeron_ControllerButtonBit(controller->raw_buttons, source->index);
 			}
 			return 0;
 		case AERON_CONTROLLER_DIGITAL_AXIS_POSITIVE:
@@ -459,8 +459,7 @@ void Aeron_HandleControllerEvent(const SDL_Event* event) {
 
 static void Aeron_UpdateControllerSnapshot(int slot, AeronControllerSnapshot* snapshot) {
 	AeronControllerDevice* device;
-	uint64_t               previous_raw_buttons;
-	uint64_t               raw_buttons;
+	uint64_t               raw_buttons[AERON_CONTROLLER_BUTTON_WORDS] = { 0 };
 	uint32_t               previous_gamepad_buttons;
 	uint32_t               gamepad_buttons;
 	int                    i;
@@ -471,22 +470,23 @@ static void Aeron_UpdateControllerSnapshot(int slot, AeronControllerSnapshot* sn
 		return;
 	}
 
-	previous_raw_buttons = snapshot->raw_buttons;
-	raw_buttons          = 0;
 	for (i = 0; i < snapshot->axis_count; ++i) {
 		snapshot->raw_axes[i] = SDL_GetJoystickAxis(device->joystick, i);
 	}
 	for (i = 0; i < snapshot->button_count; ++i) {
 		if (SDL_GetJoystickButton(device->joystick, i)) {
-			raw_buttons |= (uint64_t)1u << i;
+			raw_buttons[i / 64] |= UINT64_C(1) << (i % 64);
 		}
 	}
 	for (i = 0; i < snapshot->hat_count; ++i) {
 		snapshot->raw_hats[i] = SDL_GetJoystickHat(device->joystick, i);
 	}
-	snapshot->raw_buttons          = raw_buttons;
-	snapshot->raw_pressed_buttons  = raw_buttons & ~previous_raw_buttons;
-	snapshot->raw_released_buttons = previous_raw_buttons & ~raw_buttons;
+	for (i = 0; i < AERON_CONTROLLER_BUTTON_WORDS; ++i) {
+		const uint64_t previous           = snapshot->raw_buttons[i];
+		snapshot->raw_buttons[i]          = raw_buttons[i];
+		snapshot->raw_pressed_buttons[i]  = raw_buttons[i] & ~previous;
+		snapshot->raw_released_buttons[i] = previous & ~raw_buttons[i];
+	}
 
 	previous_gamepad_buttons = snapshot->gamepad_buttons;
 	gamepad_buttons          = 0;

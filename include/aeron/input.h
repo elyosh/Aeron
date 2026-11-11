@@ -9,9 +9,13 @@ extern "C" {
 
 #define AERON_KEY_COUNT 512
 #define AERON_TEXT_INPUT_CAPACITY 1024
-#define AERON_CONTROLLER_MAX 4
+/* Connected devices at once. SDL also lists virtual devices, such as
+ * Steam Input or vJoy, so this leaves room for them. */
+#define AERON_CONTROLLER_MAX 16
 #define AERON_CONTROLLER_AXIS_MAX 16
-#define AERON_CONTROLLER_BUTTON_MAX 64
+/* VKB, Virpil and vJoy devices can report up to 128 buttons. */
+#define AERON_CONTROLLER_BUTTON_MAX 128
+#define AERON_CONTROLLER_BUTTON_WORDS (AERON_CONTROLLER_BUTTON_MAX / 64)
 #define AERON_CONTROLLER_HAT_MAX 4
 #define AERON_CONTROLLER_NAME_CAPACITY 128
 #define AERON_CONTROLLER_PATH_CAPACITY 256
@@ -220,11 +224,13 @@ typedef struct AeronControllerSnapshot {
 	uint8_t             hat_count;
 	uint8_t             controls_truncated;
 	int16_t             raw_axes[AERON_CONTROLLER_AXIS_MAX];
-	uint64_t            raw_buttons;
-	uint64_t            raw_pressed_buttons;
-	uint64_t            raw_released_buttons;
-	uint8_t             raw_hats[AERON_CONTROLLER_HAT_MAX];
-	int16_t             gamepad_axes[AERON_GAMEPAD_AXIS_COUNT];
+	/* Raw button bitsets: button i is bit (i % 64) of word i / 64. Read
+	 * them with Aeron_ControllerButtonBit(). */
+	uint64_t raw_buttons[AERON_CONTROLLER_BUTTON_WORDS];
+	uint64_t raw_pressed_buttons[AERON_CONTROLLER_BUTTON_WORDS];
+	uint64_t raw_released_buttons[AERON_CONTROLLER_BUTTON_WORDS];
+	uint8_t  raw_hats[AERON_CONTROLLER_HAT_MAX];
+	int16_t  gamepad_axes[AERON_GAMEPAD_AXIS_COUNT];
 	/* Standardized axes physically exposed by this gamepad. */
 	uint32_t gamepad_available_axes;
 	/* Standardized buttons physically exposed by this gamepad. */
@@ -233,6 +239,12 @@ typedef struct AeronControllerSnapshot {
 	uint32_t gamepad_pressed_buttons;
 	uint32_t gamepad_released_buttons;
 } AeronControllerSnapshot;
+
+/* Tests button `button` in one of the raw button bitsets. */
+static inline int Aeron_ControllerButtonBit(const uint64_t bits[AERON_CONTROLLER_BUTTON_WORDS], int button) {
+	return button >= 0 && button < AERON_CONTROLLER_BUTTON_MAX &&
+		   (bits[button / 64] & (UINT64_C(1) << (button % 64))) != 0;
+}
 
 /* Complete keyboard, text, mouse, controller, focus, and window-size state captured by Aeron_BeginFrame. */
 typedef struct AeronInputSnapshot {
