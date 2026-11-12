@@ -139,14 +139,6 @@ typedef struct AeronSceneMeshInstance {
 	float                 transform[16];
 	float                 prev_transform[16];
 	uint32_t              variant;
-	/* When positive, render the sampled base color, plus the emissive
-	 * texture times its factor (where the OPT conversion moved self-lit
-	 * texels), as unlit HDR emission at this strength instead of applying
-	 * PBR/material emission. On an alpha-blended material, the emission is
-	 * also multiplied by the alpha.
-	 * Intended for game-side semantic overrides such as original projectile
-	 * meshes. */
-	float                      base_color_emissive_strength;
 	const AeronSceneMeshTable* mesh_table;
 	/* Optional previous-frame articulation used only for velocity. NULL
 	 * reuses mesh_table, which is correct for rigid or unchanged meshes. */

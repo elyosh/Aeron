@@ -2179,7 +2179,6 @@ static void scene_instance_record(const AeronSceneMeshInstance*     instance,
 	out->current_table_base           = prepared->current_table_base;
 	out->previous_table_base          = moving ? prepared->previous_table_base : prepared->current_table_base;
 	out->table_component_count        = prepared->table_component_count;
-	out->base_color_emissive_strength = instance->base_color_emissive_strength;
 	out->receive_shadow = (instance->shadow_flags & AERON_SCENE_INSTANCE_NO_RECEIVE_SHADOW) == 0 ? 1u : 0u;
 	out->zero_velocity  = moving ? 0u : 1u;
 	out->hidden_tag_groups = instance->hidden_tag_groups;

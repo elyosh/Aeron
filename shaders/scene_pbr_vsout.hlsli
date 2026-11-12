@@ -32,7 +32,6 @@ struct PbrForwardVSOut {
 	/* Flat-interpolated material identity for the FS atlas-sample
 	 * resolution. */
 	nointerpolation uint  prim_id : COLOR2;
-	nointerpolation float base_color_emissive_strength : COLOR3;
 	nointerpolation uint  shadow_flags : TEXCOORD5;
 	nointerpolation uint  variant_row_base : TEXCOORD6;
 	nointerpolation uint  variant_group_count : TEXCOORD7;

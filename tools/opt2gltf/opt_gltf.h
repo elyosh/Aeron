@@ -360,9 +360,9 @@ typedef struct OptGltfGeometryOptions {
 } OptGltfGeometryOptions;
 
 /* Where the materials come from. */
-/* The emissive strength of a converted projectile. With it, a converted
- * projectile is as bright as the game draws a projectile OPT
- * (models.opt_projectile_emissive_strength in the remaster's settings). */
+/* The emissive strength of a converted projectile. It matches
+ * models.opt_projectile_emissive_strength, which the remaster uses when it
+ * converts the game's projectile OPTs, so both are equally bright. */
 #define OPT_GLTF_PROJECTILE_STRENGTH 20.0f
 
 typedef enum OptGltfMaterialSource {

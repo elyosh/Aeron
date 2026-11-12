@@ -18,6 +18,13 @@ typedef struct AeronOptModelBuildOptions {
 	float                               smooth_angle_degrees;
 	float                               emissive_strength;
 	bool                                emissive;
+	/* When above 0, the model is converted as a projectile, the same way
+	 * opt2gltf does it (OPT_GLTF_MATERIALS_FULLBRIGHT). Every material glows
+	 * at this strength and lighting adds nothing: the base colour is black
+	 * and keeps the texture's alpha, the specular factor is 0, and the
+	 * texture becomes the emissive texture. `emissive` and
+	 * `emissive_strength` are ignored in that case. */
+	float                               projectile_strength;
 	const struct AeronOptAlphaOverride* alpha_overrides;
 	size_t                              alpha_override_count;
 } AeronOptModelBuildOptions;

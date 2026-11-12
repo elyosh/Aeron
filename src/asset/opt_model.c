@@ -63,6 +63,7 @@ static bool opt_model_arguments_valid(const char* label, const AeronOptModelBuil
 	if (!label || !label[0] || !options || !out || !isfinite(options->smooth_angle_degrees) ||
 		options->smooth_angle_degrees < 0.0f || options->smooth_angle_degrees > 180.0f ||
 		!isfinite(options->emissive_strength) || options->emissive_strength < 0.0f ||
+		!isfinite(options->projectile_strength) || options->projectile_strength < 0.0f ||
 		(options->alpha_override_count && !options->alpha_overrides))
 		return false;
 	for (size_t index = 0; index < options->alpha_override_count; ++index) {
@@ -320,13 +321,23 @@ bool Aeron_OptModelBuildMemory(const void* bytes, size_t size, const char* label
 			alpha_overrides[index].alpha_cutoff = options->alpha_overrides[index].alpha_cutoff;
 		}
 	}
+	/* Projectiles are converted the way opt2gltf converts them. The caller
+	 * has already multiplied the strength by the radiance, so
+	 * emission_radiance stays unset. */
+	const bool                   projectile = options->projectile_strength > 0.0f;
+	const OptGltfMaterialOptions material =
+		projectile ? (OptGltfMaterialOptions) { .source               = OPT_GLTF_MATERIALS_FULLBRIGHT,
+												.fullbright_strength  = options->projectile_strength,
+												.alpha_overrides      = alpha_overrides,
+												.alpha_override_count = options->alpha_override_count }
+				   : (OptGltfMaterialOptions) { .source               = OPT_GLTF_MATERIALS_STOCK,
+												.emissive             = options->emissive,
+												.alpha_overrides      = alpha_overrides,
+												.alpha_override_count = options->alpha_override_count };
 	const OptGltfBuildOptions build_options = {
 		.geometry    = { .normals              = OPT_GLTF_NORMALS_SMOOTHED,
 						 .smooth_angle_degrees = options->smooth_angle_degrees },
-		.material    = { .source               = OPT_GLTF_MATERIALS_STOCK,
-						 .emissive             = options->emissive,
-						 .alpha_overrides      = alpha_overrides,
-						 .alpha_override_count = options->alpha_override_count },
+		.material    = material,
 		.log         = opt_model_log,
 		.log_context = (void*)label,
 	};
@@ -361,7 +372,7 @@ bool Aeron_OptModelBuildMemory(const void* bytes, size_t size, const char* label
 								   : "in-memory OPT texture cooking failed");
 	}
 	opt_free(source);
-	if (options->emissive) {
+	if (options->emissive && !projectile) {
 		for (uint32_t index = 0; index < out->render.material_count; ++index) {
 			AeronGltfMaterial* material = &out->render.materials[index];
 			const float*       rect     = material->uv_xform[AERON_GLTF_CHANNEL_EMISSIVE];

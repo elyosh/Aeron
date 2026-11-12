@@ -34,10 +34,15 @@ static AeronSceneMesh* create_cube(AeronCommandBuffer* cmd) {
 		for (int i = 0; i < 6; ++i)
 			indices[f * 6 + i] = (uint32_t)(f * 4 + triangle[i]);
 	}
-	AeronGltfMaterial material = { .base_color_factor     = { .8f, .8f, .8f, 1 },
+	/* Black base colour and specular factor 0: the cube shows only its
+	 * emission, without lighting. add_objects sets each shape's strength in
+	 * its mesh table. */
+	AeronGltfMaterial material = { .base_color_factor     = { 0, 0, 0, 1 },
+								   .emissive_factor       = { .8f, .8f, .8f },
+								   .emissive_strength     = 1,
 								   .roughness_factor      = 1,
 								   .double_sided          = 1,
-								   .specular_factor       = 1,
+								   .specular_factor       = 0,
 								   .specular_color_factor = { 1, 1, 1 } };
 	uint32_t          variant  = 0;
 	AeronFlightModel  model    = { .render     = { .vertices              = vertices,
@@ -527,14 +532,27 @@ static void add_objects(AeronScene3D* scene, const Fixture* f, double time) {
 		{ .035f, .035f, .035f, -2.6f, 4.0f, 11, .2f, 1.2f },
 		{ .09f, .06f, .07f, 1.7f, 5.0f, 15, -.7f, 1.0f }
 	};
+	/* Each shape's emission strength goes in the emissive lane of its mesh
+	 * table. The tables are static because the scene keeps pointers to them
+	 * until it renders. */
+	static AeronSceneMeshTable tables[sizeof objects / sizeof objects[0]];
 	for (size_t i = 0; i < sizeof objects / sizeof objects[0]; ++i) {
 		const CaptureMesh*     mesh = &f->meshes[f->config.model_count ? i % f->config.model_count : 0];
 		const float*           o    = objects[i];
 		float                  cs = cosf(o[6]), sn = sinf(o[6]);
+		AeronSceneMeshTable*   table = NULL;
+		if (!f->config.model_count) {
+			table = &tables[i];
+			memset(table, 0, sizeof *table);
+			table->component_count = 1;
+			table->rows[0][0][0] = table->rows[0][1][1] = table->rows[0][2][2] = 1;
+			table->visibility_packed[0][0] = 1;
+			table->emissive_packed[0][0]   = o[7] * f->config.emissive_scale;
+		}
 		AeronSceneMeshInstance instance = {
-			.mesh                         = mesh->mesh,
-			.base_color_emissive_strength = f->config.model_count ? 0 : o[7] * f->config.emissive_scale,
-			.cull_mode                    = (AeronCullMode)f->config.cull_mode,
+			.mesh       = mesh->mesh,
+			.mesh_table = table,
+			.cull_mode  = (AeronCullMode)f->config.cull_mode,
 			.shadow_flags = AERON_SCENE_INSTANCE_NO_CAST_SHADOW | AERON_SCENE_INSTANCE_NO_RECEIVE_SHADOW,
 			.transform = { cs * o[0], -sn * o[1], 0, o[3], sn * o[0], cs * o[1], 0, o[4], 0, 0, o[2], o[5], 0,
 						   0, 0, 1 }

@@ -37,7 +37,7 @@ struct PbrInstanceRecord {
 	uint   current_table_base;
 	uint   previous_table_base;
 	uint   table_component_count;
-	float  base_color_emissive_strength;
+	uint   _pad;
 	uint   receive_shadow;
 	uint   zero_velocity;
 	uint   hidden_tag_groups;
@@ -50,7 +50,6 @@ static float4x4 craft_to_world;
 static float4x4 prev_craft_to_world;
 static float4x4 prev_view_proj;
 static uint     variant_row_base;
-static float    base_color_emissive_strength;
 static uint     receive_shadow;
 static uint     current_table_base;
 static uint     previous_table_base;
@@ -77,7 +76,6 @@ void pbr_load_instance(uint instance_id)
 								   instance_records[index].prev_model_to_world[3]);
 	prev_view_proj = instance_records[index].zero_velocity != 0u ? unjittered_view_proj : moving_prev_view_proj;
 	variant_row_base = instance_records[index].variant_row_base;
-	base_color_emissive_strength = instance_records[index].base_color_emissive_strength;
 	receive_shadow = instance_records[index].receive_shadow;
 	current_table_base = instance_records[index].current_table_base;
 	previous_table_base = instance_records[index].previous_table_base;
@@ -99,8 +97,8 @@ cbuffer GltfMeshVSUniforms : register(b0, space1) {
 	uint material_count;
 	/* Selects camera + object velocity or object-only velocity. */
 	uint camera_mb;
-	/* Forward-only material and shadow controls. */
-	float base_color_emissive_strength;
+	uint  _pad;
+	/* Shadow settings, used only by the forward shaders. */
 	uint  receive_shadow;
 	uint  screen_shadow;
 	/* Current/previous articulation tables (float4 bases into mesh_tables,

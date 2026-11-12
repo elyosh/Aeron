@@ -46,7 +46,7 @@ typedef struct AeronScenePbrVsBlock {
 	uint32_t variant_group_count;
 	uint32_t material_count;
 	uint32_t camera_mb;
-	float    base_color_emissive_strength;
+	uint32_t _pad;
 	uint32_t receive_shadow;
 	uint32_t screen_shadow;
 	uint32_t current_table_base;
@@ -922,7 +922,6 @@ static void pbr_push_instance_uniforms(struct AeronScene3D* s, AeronRenderPass* 
 	vsb.variant_group_count          = m->variant_groups_per_row;
 	vsb.material_count               = m->material_count;
 	vsb.camera_mb                    = (velocity && (s->temporal_active || s->post.mb_camera_blur)) ? 1u : 0u;
-	vsb.base_color_emissive_strength = in->base_color_emissive_strength;
 	vsb.receive_shadow       = (in->shadow_flags & AERON_SCENE_INSTANCE_NO_RECEIVE_SHADOW) == 0 ? 1u : 0u;
 	const int receiver_local = (in->shadow_flags & AERON_SCENE_INSTANCE_USE_RECEIVER_LOCAL_SHADOW) != 0;
 	/* Opaque receivers read the half-resolution screen pass, which takes
