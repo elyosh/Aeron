@@ -142,23 +142,31 @@ typedef struct AeronScenePreparedInstance {
 	/* The batch that draws the instance (AeronScenePbrBatch); -1 when it
 	 * draws alone. */
 	int32_t batch;
+	/* Set when the emission shader draws the instance (see
+	 * AeronSceneMeshInstance.emission_only). scene_instance_emission
+	 * decides it when the frame is prepared. These instances are always
+	 * batched; if their batch can't be stored, the flag is cleared and the
+	 * instance draws as usual. */
+	uint8_t emission;
 	/* The larger side of the bound's projection, clipped to the viewport, in
 	 * render pixels: 0 outside the viewport, FLT_MAX across the near plane
 	 * and for an instance outside the frustum. */
 	float screen_size_px;
 } AeronScenePreparedInstance;
 
-/* Visible instances of one mesh that has only blended faces, such as a laser
- * bolt, drawn with one instanced draw in the transparent pass and one in the
- * velocity stamp. Their records are `count` records from `first`, from far to
- * near, and the batch draws where its farthest instance would. */
+/* A group of visible instances of one mesh, drawn with one instanced draw in
+ * the transparent pass and one in the velocity stamp. Either the mesh has
+ * only blended faces, or the emission shader draws the instances, and then
+ * `emission` is set. Their records are `count` records from `first`, in far
+ * to near order, and the batch is drawn where its farthest instance would
+ * be. */
 typedef struct AeronScenePbrBatch {
 	const AeronSceneMesh* mesh;
 	uint32_t              first;
 	uint32_t              count;
 	uint8_t               cull_mode;
 	uint8_t               velocity_stamp;
-	uint8_t               emission_only;
+	uint8_t               emission;
 	/* The batch was drawn in the pass being recorded. */
 	uint8_t drawn;
 } AeronScenePbrBatch;
@@ -878,16 +886,17 @@ struct AeronScene3D {
 	int                    pbr_probe_tried[2];
 	AeronShader*           pbr_probe_fs[3][5];
 	AeronGraphicsPipeline* pbr_probe_pipes[3][AERON_PBR_PIPE_KIND_COUNT][3];
-	/* The vertex shaders that draw batches, loaded on first use, and the
-	 * pipelines of the blend kinds and the velocity stamp with them, by
+	/* The vertex shaders for batches, loaded when the first batch pipeline
+	 * is created (AeronScenePbr_Ensure creates some), and the batch
+	 * pipelines for the blend kinds and the velocity stamp, indexed by
 	 * [image-based lighting][kind][cull]. */
 	int                    pbr_instanced_tried;
 	AeronShader*           pbr_instanced_vs;
 	AeronShader*           pbr_instanced_stamp_vs;
 	AeronGraphicsPipeline* pbr_instanced_pipes[2][AERON_PBR_PIPE_KIND_COUNT][3];
-	/* Shaders for emission_only batches, loaded together with the batch
-	 * shaders, and their pipelines for the two blend kinds, indexed by
-	 * [kind][cull]. */
+	/* Shaders for emission batches, loaded by AeronScenePbr_Ensure with
+	 * the other PBR shaders, and their pipelines for the two blend kinds,
+	 * indexed by [kind][cull]. */
 	AeronShader*           pbr_emission_vs;
 	AeronShader*           pbr_emission_fs;
 	AeronGraphicsPipeline* pbr_emission_pipes[AERON_PBR_PIPE_KIND_COUNT][3];
@@ -959,6 +968,9 @@ void AeronScenePlanarReflection_LightingFields(const struct AeronScene3D* s, int
 
 /* pbr.c */
 int  AeronScenePbr_Ensure(struct AeronScene3D* s);
+/* Returns whether the emission shader can be used this frame: its shaders
+ * loaded and no debug view is on. */
+int  AeronScenePbr_EmissionAvailable(const struct AeronScene3D* s);
 /* Creates the colour pipelines for AeronScene_PrepareMesh. */
 int  AeronScenePbr_PrepareMesh(struct AeronScene3D* s, const AeronSceneMesh* mesh, AeronCullMode cull);
 void AeronScenePbr_Release(struct AeronScene3D* s);

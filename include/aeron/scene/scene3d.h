@@ -163,10 +163,13 @@ typedef struct AeronSceneMeshInstance {
 	uint8_t velocity_stamp;
 	/* Draw only the material's emission and alpha, with no lighting.
 	 * OpenXWA sets this for projectiles, because the original game draws
-	 * them at full brightness whatever their materials. It only applies to
-	 * instances drawn in a batch (a mesh with only blended faces and no
-	 * material animation), which then use a shader without lighting. Other
-	 * instances draw as usual. */
+	 * them at full brightness whatever their materials. The instance is
+	 * drawn whole, opaque faces included, in the transparent pass, with a
+	 * shader that skips lighting; it keeps its depth prepass.
+	 * AeronScene_SetEmissionMinWidth and AeronScene_SetEmissionFade apply
+	 * to it. It has no effect on a mesh with alpha-mask faces, screens or
+	 * material animation, on an instance with a probe set or a
+	 * receiver-local shadow, and in debug views: those draw as usual. */
 	uint8_t emission_only;
 	/* Stamp the screen primitives of the alpha-BLEND range (holograms,
 	 * transparent screens) into the velocity buffer where their content is
@@ -502,17 +505,17 @@ void AeronScene_SetBackfaceFill(AeronScene3D* scene, int enabled);
 void AeronScene_SetSmallInstanceCull(AeronScene3D* scene, float prepass_min_px, float draw_min_px);
 
 /* The minimum width on screen, in render pixels, of emission_only
- * instances drawn in batches, such as laser bolts; 0 turns it off. A
- * thinner instance is drawn this wide across its bounds' second-longest
- * axis, and its emission is multiplied by its real width / drawn width, so
- * it keeps the same light. It then shows as a steady strip instead of
- * broken pixels that flicker as it moves. Wider instances don't change. It
- * suits flat ribbons that face the camera. */
+ * instances, such as laser bolts; 0 turns it off. The width is measured
+ * across the bounds' two shorter axes, keeping the one that looks wider. A
+ * thinner instance is drawn this wide across that axis, and its emission
+ * is multiplied by its real width / drawn width, so it keeps the same
+ * light. It then shows as a steady strip instead of broken pixels that
+ * flicker as it moves. Wider instances don't change. */
 void AeronScene_SetEmissionMinWidth(AeronScene3D* scene, float min_width_px);
 
-/* Dims emission_only instances drawn in batches as they get thinner on
- * screen: their emission is multiplied by (width / full_width_px)^power,
- * capped at 1, with the width in render pixels measured as for
+/* Dims emission_only instances as they get thinner on screen: their
+ * emission is multiplied by (width / full_width_px)^power, capped at 1,
+ * with the width in render pixels measured as for
  * AeronScene_SetEmissionMinWidth. Instances at least full_width_px wide
  * don't change. Unlike the minimum width, this doesn't keep their light:
  * it's a way to make far laser bolts dimmer. A full_width_px or power of

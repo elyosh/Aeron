@@ -91,22 +91,25 @@ typedef struct AeronScenePbrBatchVsBlock {
 
 typedef char AeronScenePbrBatchVsBlockSizeCheck[sizeof(AeronScenePbrBatchVsBlock) == 208 ? 1 : -1];
 
-/* Second VS cbuffer (b1 space1) for emission_only batches. Mirrors
+/* Second VS cbuffer (b1 space1) for emission batches. Mirrors
  * `cbuffer PbrEmissionVSUniforms` in scene_pbr_emission_widen.hlsli. */
 typedef struct AeronScenePbrEmissionVsBlock {
 	float center[3]; /* the mesh's bounds centre */
-	float half_width;
-	float width_axis[3];
+	float half_width_a;
+	float width_axis_a[3];
 	float min_width_px; /* AeronScene_SetEmissionMinWidth */
 	float render_size[2];
 	float max_widen;
 	float emissive_scale; /* AeronScene_EmissiveScale */
 	float fade_width_px;  /* AeronScene_SetEmissionFade */
 	float fade_power;
-	float _pad[2];
-} AeronScenePbrEmissionVsBlock; /* 64 B */
+	float half_width_b;
+	float _pad0;
+	float width_axis_b[3];
+	float _pad1;
+} AeronScenePbrEmissionVsBlock; /* 80 B */
 
-typedef char AeronScenePbrEmissionVsBlockSizeCheck[sizeof(AeronScenePbrEmissionVsBlock) == 64 ? 1 : -1];
+typedef char AeronScenePbrEmissionVsBlockSizeCheck[sizeof(AeronScenePbrEmissionVsBlock) == 80 ? 1 : -1];
 
 /* The widest an emission_only instance gets, as a multiple of its real
  * width. A ribbon seen almost edge-on is about invisible anyway, and
@@ -681,11 +684,6 @@ static AeronGraphicsPipeline* pbr_instanced_create(struct AeronScene3D* s, int k
 		s->pbr_instanced_vs = pbr_shader("scene_pbr_mesh_instanced.vert", AERON_SHADER_STAGE_VERTEX, 0, 1, 3);
 		s->pbr_instanced_stamp_vs =
 			pbr_shader("scene_pbr_prepass_stamp_instanced.vert", AERON_SHADER_STAGE_VERTEX, 0, 1, 3);
-		s->pbr_emission_vs =
-			pbr_shader("scene_pbr_emission_instanced.vert", AERON_SHADER_STAGE_VERTEX, 0, 2, 3);
-		s->pbr_emission_fs = pbr_shader("scene_pbr_emission.frag", AERON_SHADER_STAGE_FRAGMENT, 2, 0, 2);
-		s->pbr_emission_stamp_vs =
-			pbr_shader("scene_pbr_emission_stamp_instanced.vert", AERON_SHADER_STAGE_VERTEX, 0, 2, 3);
 	}
 	AeronGraphicsPipeline** pipe = &s->pbr_instanced_pipes[ibl][kind][cull];
 	if (!*pipe && kind == AERON_PBR_PIPE_PREPASS_STAMP) {
@@ -709,50 +707,43 @@ static AeronGraphicsPipeline* pbr_instanced_pipeline(struct AeronScene3D* s, int
 	return pbr_instanced_create(s, kind, cull, ibl);
 }
 
-/* Returns the pipeline for emission_only batches in a blend kind, and
- * creates it on first use. Returns NULL when its shaders don't load. */
-static AeronGraphicsPipeline* pbr_emission_create(struct AeronScene3D* s, int kind, AeronCullMode cull) {
-	if (!s->pbr_instanced_tried)
-		pbr_instanced_create(s, kind, cull, 0);
+/* Returns the pipeline for emission batches in a blend kind, and creates it
+ * on first use. Returns NULL when its shaders don't load. */
+static AeronGraphicsPipeline* pbr_emission_pipeline(struct AeronScene3D* s, int kind, AeronCullMode cull) {
 	AeronGraphicsPipeline** pipe = &s->pbr_emission_pipes[kind][cull];
 	if (!*pipe && s->pbr_emission_vs && s->pbr_emission_fs)
 		*pipe = pbr_pipeline_create(s, kind, cull, s->pbr_emission_vs, s->pbr_emission_fs);
 	return *pipe;
 }
 
-/* Same as pbr_emission_create, but returns NULL in debug views, like
- * pbr_instanced_pipeline, so that the instances draw one by one with the
- * debug shader. */
-static AeronGraphicsPipeline* pbr_emission_pipeline(struct AeronScene3D* s, int kind, AeronCullMode cull) {
+int AeronScenePbr_EmissionAvailable(const struct AeronScene3D* s) {
+	if (!s->pbr_emission_vs || !s->pbr_emission_fs) {
+		return 0;
+	}
 #ifdef AERON_DEBUG_UI
-	if (pbr_debug_pipeline(s, kind, cull)) {
-		return NULL;
+	/* The debug views show every instance with the debug shader. */
+	if (pbr_debug_active(s)) {
+		return 0;
 	}
 #endif
-	return pbr_emission_create(s, kind, cull);
+	return 1;
 }
 
-/* Returns the velocity-stamp pipeline for emission_only batches, and
- * creates it on first use. Returns NULL when its shaders don't load, and
- * in debug views, where the colour pass doesn't widen these instances
- * either. */
+/* Returns the velocity-stamp pipeline for emission batches, and creates it
+ * on first use. Returns NULL when its shaders don't load. */
 static AeronGraphicsPipeline* pbr_emission_stamp_pipeline(struct AeronScene3D* s, AeronCullMode cull) {
-#ifdef AERON_DEBUG_UI
-	if (pbr_debug_active(s)) {
-		return NULL;
-	}
-#endif
-	if (!s->pbr_instanced_tried)
-		pbr_instanced_create(s, AERON_PBR_PIPE_PREPASS_STAMP, cull, 0);
 	AeronGraphicsPipeline** pipe = &s->pbr_emission_stamp_pipes[cull];
 	if (!*pipe && s->pbr_emission_stamp_vs)
 		*pipe = pbr_stamp_pipeline(s->pbr_emission_stamp_vs, s->pbr_prepass_stamp_fs, cull);
 	return *pipe;
 }
 
-/* Pushes the second VS cbuffer for an emission_only batch of mesh `m`. The
- * mesh's width is measured along the second-longest axis of its bounds: a
- * laser bolt is a flat ribbon whose longest axis is its length. */
+/* Pushes the second VS cbuffer for an emission batch of mesh `m`. Its
+ * width is measured along the two shorter axes of its bounds, and the
+ * shader keeps the one that is wider on screen. A laser bolt is a flat
+ * ribbon: its longest axis is its length and one short axis has no extent.
+ * A warhead is round, and the short axis that points at the camera looks
+ * thin on screen, so the other one must be measured. */
 static void pbr_push_emission_uniforms(const struct AeronScene3D* s, AeronRenderPass* pass,
 									   const AeronSceneMesh* m) {
 	AeronScenePbrEmissionVsBlock block;
@@ -760,21 +751,21 @@ static void pbr_push_emission_uniforms(const struct AeronScene3D* s, AeronRender
 	float extent[3];
 	int   longest = 0;
 	for (int axis = 0; axis < 3; ++axis) {
-		extent[axis]      = m->bound_max[axis] - m->bound_min[axis];
+		extent[axis]       = m->bound_max[axis] - m->bound_min[axis];
 		block.center[axis] = 0.5f * (m->bound_min[axis] + m->bound_max[axis]);
 		if (extent[axis] > extent[longest])
 			longest = axis;
 	}
-	int width = longest == 0 ? 1 : 0;
-	for (int axis = 0; axis < 3; ++axis) {
-		if (axis != longest && extent[axis] > extent[width])
-			width = axis;
-	}
-	block.half_width         = 0.5f * extent[width];
-	block.width_axis[width]  = 1.0f;
+	const int a                = (longest + 1) % 3;
+	const int b                = (longest + 2) % 3;
+	block.half_width_a         = 0.5f * extent[a];
+	block.width_axis_a[a]      = 1.0f;
+	block.half_width_b         = 0.5f * extent[b];
+	block.width_axis_b[b]      = 1.0f;
+	const int has_width        = block.half_width_a > 0.0f || block.half_width_b > 0.0f;
 	/* A mesh without a width has nothing to widen or fade. */
-	block.min_width_px   = block.half_width > 0.0f ? s->emission_min_width_px : 0.0f;
-	block.fade_width_px  = block.half_width > 0.0f ? s->emission_fade_width_px : 0.0f;
+	block.min_width_px   = has_width ? s->emission_min_width_px : 0.0f;
+	block.fade_width_px  = has_width ? s->emission_fade_width_px : 0.0f;
 	block.fade_power     = s->emission_fade_power;
 	block.render_size[0] = (float)s->render_w;
 	block.render_size[1] = (float)s->render_h;
@@ -782,6 +773,7 @@ static void pbr_push_emission_uniforms(const struct AeronScene3D* s, AeronRender
 	block.emissive_scale = AeronScene_EmissiveScale();
 	Aeron_BindUniformData(pass, AERON_SHADER_STAGE_VERTEX, 1, &block, sizeof block);
 }
+
 
 static int pbr_required_pipelines_ready(const struct AeronScene3D* s) {
 	static const int required[] = {
@@ -850,8 +842,14 @@ int AeronScenePbr_Ensure(struct AeronScene3D* s) {
 		pbr_instanced_create(s, AERON_PBR_PIPE_MESH_BLEND, AERON_CULL_NONE, ibl);
 		pbr_instanced_create(s, AERON_PBR_PIPE_FORWARD_BLEND, AERON_CULL_NONE, ibl);
 	}
-	pbr_emission_create(s, AERON_PBR_PIPE_MESH_BLEND, AERON_CULL_NONE);
-	pbr_emission_create(s, AERON_PBR_PIPE_FORWARD_BLEND, AERON_CULL_NONE);
+	/* Load the emission shaders. They're optional: without them,
+	 * emission_only instances draw with the other shaders. */
+	s->pbr_emission_vs = pbr_shader("scene_pbr_emission_instanced.vert", AERON_SHADER_STAGE_VERTEX, 0, 2, 3);
+	s->pbr_emission_fs = pbr_shader("scene_pbr_emission.frag", AERON_SHADER_STAGE_FRAGMENT, 2, 0, 2);
+	s->pbr_emission_stamp_vs =
+		pbr_shader("scene_pbr_emission_stamp_instanced.vert", AERON_SHADER_STAGE_VERTEX, 0, 2, 3);
+	pbr_emission_pipeline(s, AERON_PBR_PIPE_MESH_BLEND, AERON_CULL_NONE);
+	pbr_emission_pipeline(s, AERON_PBR_PIPE_FORWARD_BLEND, AERON_CULL_NONE);
 	pbr_emission_stamp_pipeline(s, AERON_CULL_NONE);
 	if (!pbr_required_pipelines_ready(s)) {
 		Aeron_LogError("aeron.scene", "PBR pipeline creation failed");
@@ -1358,6 +1356,11 @@ int AeronScenePbr_DrawInstances(struct AeronScene3D* s, AeronCommandBuffer* cmd,
 		if (!m || !m->vbo || !m->ibo || m->opaque_index_count == 0) {
 			continue;
 		}
+		/* The emission pipeline draws these in the transparent pass. They
+		 * keep their depth prepass, which hides their own back faces. */
+		if (!depth_only && !s->planar_reflection.drawing && s->prepared_instances[i].emission) {
+			continue;
+		}
 		/* Small instances leave the prepass (AeronScene_SetSmallInstanceCull). */
 		if (depth_only && s->small_cull_active && !s->planar_reflection.drawing &&
 			s->prepared_instances[i].screen_size_px < s->small_cull_prepass_px) {
@@ -1471,7 +1474,7 @@ int AeronScenePbr_DrawInstances(struct AeronScene3D* s, AeronCommandBuffer* cmd,
 			const int                     i  = order[k];
 			const AeronSceneMeshInstance* in = &s->instances[i];
 			const AeronSceneMesh*         m  = in->mesh;
-			if (!m || !m->vbo || !m->ibo || m->blend_index_count == 0) {
+			if (!m || !m->vbo || !m->ibo || (m->blend_index_count == 0 && !s->prepared_instances[i].emission)) {
 				continue;
 			}
 			if (in->velocity_stamp_screens && !in->velocity_stamp && m->blend_screen_index_count != 0) {
@@ -1524,7 +1527,7 @@ int AeronScenePbr_DrawInstances(struct AeronScene3D* s, AeronCommandBuffer* cmd,
 				}
 				/* Widen these batches as their colour draw does
 				 * (AeronScene_SetEmissionMinWidth). */
-				if (batch->emission_only) {
+				if (batch->emission) {
 					instanced = pbr_emission_stamp_pipeline(s, (AeronCullMode)in->cull_mode);
 					emission  = instanced != NULL;
 				}
@@ -1555,10 +1558,14 @@ int AeronScenePbr_DrawInstances(struct AeronScene3D* s, AeronCommandBuffer* cmd,
 			if (instanced) {
 				batch->drawn = 1;
 				pbr_push_batch_uniforms(s, pass, batch, /*velocity=*/1);
-				if (emission)
+				if (emission) {
 					pbr_push_emission_uniforms(s, pass, m);
-				Aeron_DrawIndexedInstanced(pass, m->blend_index_count, batch->count, m->blend_index_offset,
-										   0);
+					if (m->opaque_index_count != 0)
+						Aeron_DrawIndexedInstanced(pass, m->opaque_index_count, batch->count, 0, 0);
+				}
+				if (m->blend_index_count != 0)
+					Aeron_DrawIndexedInstanced(pass, m->blend_index_count, batch->count, m->blend_index_offset,
+											   0);
 				continue;
 			}
 			pbr_push_instance_uniforms(s, pass, in, m, &s->prepared_instances[i],
@@ -1567,6 +1574,40 @@ int AeronScenePbr_DrawInstances(struct AeronScene3D* s, AeronCommandBuffer* cmd,
 			Aeron_DrawIndexed(pass, m->blend_index_count, m->blend_index_offset, 0);
 		}
 	}
+	return 1;
+}
+
+/* Draws the opaque or the blended faces of an emission batch with the
+ * emission pipeline. Returns 0 when the pipeline isn't there. It binds the
+ * emissive atlas at sampler slot 1, where the other shaders read the normal
+ * atlas, so the next draw has to bind its mesh's resources again. */
+static int pbr_draw_emission_batch(struct AeronScene3D* s, AeronRenderPass* pass, const AeronScenePbrBatch* batch,
+								   int blend_kind, int opaque, AeronSampler* atlas_sampler,
+								   AeronGraphicsPipeline** bound) {
+	const AeronSceneMesh*  m        = batch->mesh;
+	AeronGraphicsPipeline* pipeline = pbr_emission_pipeline(s, blend_kind, (AeronCullMode)batch->cull_mode);
+	if (!pipeline) {
+		return 0;
+	}
+	const uint32_t count  = opaque ? m->opaque_index_count : m->blend_index_count;
+	const uint32_t offset = opaque ? 0u : m->blend_index_offset;
+	if (count == 0) {
+		return 1;
+	}
+	if (pipeline != *bound) {
+		Aeron_BindGraphicsPipeline(pass, pipeline);
+		*bound = pipeline;
+	}
+	Aeron_BindVertexBuffer(pass, 0, m->vbo, 0);
+	Aeron_BindIndexBuffer(pass, m->ibo, AERON_INDEX_FORMAT_UINT32, 0);
+	pbr_bind_material_resources(s, pass, m, atlas_sampler, 0);
+	Aeron_BindTextureSampler(pass, AERON_SHADER_STAGE_FRAGMENT, 1,
+							 m->atlas[AERON_GLTF_CHANNEL_EMISSIVE] ? m->atlas[AERON_GLTF_CHANNEL_EMISSIVE]
+																   : AeronSceneInternal_WhiteArrayTexture(),
+							 atlas_sampler);
+	pbr_push_batch_uniforms(s, pass, batch, /*velocity=*/0);
+	pbr_push_emission_uniforms(s, pass, m);
+	Aeron_DrawIndexedInstanced(pass, count, batch->count, offset, 0);
 	return 1;
 }
 
@@ -1591,6 +1632,19 @@ int AeronScenePbr_DrawTransparentInstances(struct AeronScene3D* s, AeronRenderPa
 	int                    bound_receiver_local_shadow = 0;
 	int                    bound_set                   = -1;
 	pbr_reset_batches(s);
+	/* Draw the opaque faces of emission batches, such as warheads,
+	 * first. Blended faces in front of them, such as a nearer laser bolt,
+	 * must be drawn after them, as they are after the opaque pass. What is
+	 * behind them is hidden by their depth from the prepass. */
+	if (!layer) {
+		for (uint32_t b = 0; b < s->pbr_batch_count; ++b) {
+			const AeronScenePbrBatch* batch = &s->pbr_batches[b];
+			if (batch->emission && batch->mesh->opaque_index_count != 0) {
+				pbr_draw_emission_batch(s, pass, batch, blend_kind, /*opaque=*/1, atlas_sampler, &bound);
+				bound_mesh = NULL;
+			}
+		}
+	}
 	/* Far to near, so overlapping transparent instances blend in order. A
 	 * batch draws all its instances, far to near, where its farthest one
 	 * comes. */
@@ -1620,30 +1674,10 @@ int AeronScenePbr_DrawTransparentInstances(struct AeronScene3D* s, AeronRenderPa
 			if (batch->drawn) {
 				continue;
 			}
-			AeronGraphicsPipeline* emission =
-				batch->emission_only ? pbr_emission_pipeline(s, blend_kind, cull) : NULL;
-			if (emission) {
-				if (emission != bound) {
-					Aeron_BindGraphicsPipeline(pass, emission);
-					bound = emission;
-				}
-				/* Bind the emissive atlas at sampler slot 1. The other shaders
-				 * read the normal atlas there, so the next draw has to bind
-				 * its mesh's resources again. */
-				Aeron_BindVertexBuffer(pass, 0, m->vbo, 0);
-				Aeron_BindIndexBuffer(pass, m->ibo, AERON_INDEX_FORMAT_UINT32, 0);
-				pbr_bind_material_resources(s, pass, m, atlas_sampler, 0);
-				Aeron_BindTextureSampler(pass, AERON_SHADER_STAGE_FRAGMENT, 1,
-										 m->atlas[AERON_GLTF_CHANNEL_EMISSIVE]
-											 ? m->atlas[AERON_GLTF_CHANNEL_EMISSIVE]
-											 : AeronSceneInternal_WhiteArrayTexture(),
-										 atlas_sampler);
+			if (batch->emission &&
+				pbr_draw_emission_batch(s, pass, batch, blend_kind, /*opaque=*/0, atlas_sampler, &bound)) {
 				bound_mesh   = NULL;
 				batch->drawn = 1;
-				pbr_push_batch_uniforms(s, pass, batch, /*velocity=*/0);
-				pbr_push_emission_uniforms(s, pass, m);
-				Aeron_DrawIndexedInstanced(pass, m->blend_index_count, batch->count, m->blend_index_offset,
-										   0);
 				continue;
 			}
 			AeronGraphicsPipeline* instanced = pbr_instanced_pipeline(s, blend_kind, cull);

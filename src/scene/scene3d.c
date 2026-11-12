@@ -2142,11 +2142,30 @@ static int scene_instance_in_frustum(const AeronScene3D* s, const AeronSceneInst
 	return 1;
 }
 
-/* Whether a batch can draw a visible instance: its mesh has only plain
- * blended faces and no animation, and the instance has no probe set and no
- * receiver-local shadow, which batches don't bind. */
+/* Returns whether the emission shader draws a visible emission_only
+ * instance, opaque faces included, with its widening and fade. It can't
+ * draw alpha-mask faces, screens or material animation, and its batch
+ * doesn't bind a probe set or a receiver-local shadow. */
+static int scene_instance_emission(const AeronScene3D* s, const AeronSceneMeshInstance* instance,
+								   const AeronScenePreparedInstance* prepared) {
+	const AeronSceneMesh* m = instance->mesh;
+	return instance->emission_only && m && m->vbo && m->ibo && m->mask_index_count == 0 &&
+		   m->opaque_screen_index_count == 0 && m->blend_screen_index_count == 0 && !m->anim_buffer &&
+		   m->opaque_index_count + m->blend_index_count != 0 && prepared->probe_set < 0 &&
+		   !instance->velocity_stamp_screens &&
+		   (instance->shadow_flags & AERON_SCENE_INSTANCE_USE_RECEIVER_LOCAL_SHADOW) == 0 &&
+		   AeronScenePbr_EmissionAvailable(s);
+}
+
+/* Returns whether a batch can draw a visible instance. That's always true
+ * for an instance the emission shader draws. Otherwise the mesh must have
+ * only plain blended faces and no animation, and the instance no probe set
+ * or receiver-local shadow, which batches don't bind. */
 static int scene_instance_batchable(const AeronSceneMeshInstance*     instance,
 									const AeronScenePreparedInstance* prepared) {
+	if (prepared->emission) {
+		return 1;
+	}
 	const AeronSceneMesh* m = instance->mesh;
 	return m && m->vbo && m->ibo && m->opaque_index_count == 0 && m->mask_index_count == 0 &&
 		   m->blend_index_count != 0 && m->blend_screen_index_count == 0 && !m->anim_buffer &&
@@ -2154,15 +2173,16 @@ static int scene_instance_batchable(const AeronSceneMeshInstance*     instance,
 		   (instance->shadow_flags & AERON_SCENE_INSTANCE_USE_RECEIVER_LOCAL_SHADOW) == 0;
 }
 
-/* Returns the batch for the instance's mesh, cull mode, velocity stamp and
- * emission_only flag, and adds it if needed. Returns -1 when it can't be
- * stored. There are few batches: one per projectile model in view. */
-static int32_t scene_instance_batch(AeronScene3D* s, const AeronSceneMeshInstance* instance) {
+/* Returns the batch that matches the instance's mesh, cull mode, velocity
+ * stamp and emission flag, and adds it if there's none yet. Returns -1 when
+ * it can't be stored. There are few batches: one per projectile model in
+ * view. */
+static int32_t scene_instance_batch(AeronScene3D* s, const AeronSceneMeshInstance* instance,
+									const AeronScenePreparedInstance* prepared) {
 	for (uint32_t b = s->pbr_batch_count; b-- > 0;) {
 		const AeronScenePbrBatch* batch = &s->pbr_batches[b];
 		if (batch->mesh == instance->mesh && batch->cull_mode == instance->cull_mode &&
-			batch->velocity_stamp == instance->velocity_stamp &&
-			batch->emission_only == (instance->emission_only != 0)) {
+			batch->velocity_stamp == instance->velocity_stamp && batch->emission == prepared->emission) {
 			return (int32_t)b;
 		}
 	}
@@ -2173,7 +2193,7 @@ static int32_t scene_instance_batch(AeronScene3D* s, const AeronSceneMeshInstanc
 	s->pbr_batches[s->pbr_batch_count] = (AeronScenePbrBatch) { .mesh           = instance->mesh,
 																.cull_mode      = instance->cull_mode,
 																.velocity_stamp = instance->velocity_stamp,
-																.emission_only  = instance->emission_only != 0 };
+																.emission       = prepared->emission };
 	return (int32_t)s->pbr_batch_count++;
 }
 
@@ -2210,10 +2230,14 @@ static uint32_t scene_prepare_batches(AeronScene3D* s) {
 		const int                   i        = s->camera_order[k];
 		AeronScenePreparedInstance* prepared = &s->prepared_instances[i];
 		if (scene_instance_batchable(&s->instances[i], prepared)) {
-			prepared->batch = scene_instance_batch(s, &s->instances[i]);
+			prepared->batch = scene_instance_batch(s, &s->instances[i], prepared);
 			if (prepared->batch >= 0) {
 				s->pbr_batches[prepared->batch].count++;
 				records++;
+			} else {
+				/* The emission shader only draws batched instances, so this
+				 * one draws as usual. */
+				prepared->emission = 0;
 			}
 		}
 	}
@@ -2221,7 +2245,8 @@ static uint32_t scene_prepare_batches(AeronScene3D* s) {
 		!scene_storage_reserve((void**)&s->instance_record_staging, &s->instance_record_staging_cap, records,
 							   sizeof *s->instance_record_staging)) {
 		for (int k = 0; k < s->camera_order_count; ++k) {
-			s->prepared_instances[s->camera_order[k]].batch = -1;
+			s->prepared_instances[s->camera_order[k]].batch    = -1;
+			s->prepared_instances[s->camera_order[k]].emission = 0;
 		}
 		s->pbr_batch_count = 0;
 		return 0;
@@ -2283,8 +2308,10 @@ int AeronSceneStorage_Prepare(AeronScene3D* s, AeronCommandBuffer* cmd) {
 		if (prepared->camera_visible) {
 			prepared->screen_size_px = scene_instance_screen_size(s, box);
 			/* A mesh with only blended faces, such as a laser bolt, is thin
-			 * but bright: it stays. */
+			 * but bright: it stays. So does an emission_only instance, such
+			 * as a warhead, which AeronScene_SetEmissionMinWidth widens. */
 			if (s->small_cull_active && prepared->screen_size_px < s->small_cull_draw_px && instance->mesh &&
+				!instance->emission_only &&
 				(instance->mesh->opaque_index_count + instance->mesh->mask_index_count) != 0) {
 				prepared->camera_visible = 0;
 			}
@@ -2292,6 +2319,7 @@ int AeronSceneStorage_Prepare(AeronScene3D* s, AeronCommandBuffer* cmd) {
 		prepared->probe_set =
 			prepared->camera_visible ? scene_instance_probe_set_for_box(s, instance, box) : -1;
 		prepared->batch          = -1;
+		prepared->emission = prepared->camera_visible && scene_instance_emission(s, instance, prepared);
 		if (prepared->camera_visible) {
 			key.index                           = (uint16_t)i;
 			order_keys[s->camera_order_count++] = key;
@@ -2720,6 +2748,19 @@ int AeronScene_Render(AeronScene3D* s, AeronCommandBuffer* cmd) {
 	s->small_cull_active = s->sample_count != AERON_SAMPLE_COUNT_1 && s->temporal_active_mode == AERON_TEMPORAL_OFF &&
 						   (s->small_cull_prepass_px > 0.0f || s->small_cull_draw_px > 0.0f);
 
+	/* Load the PBR shaders before preparing the storage. Preparing the
+	 * storage decides which instances the emission shader draws, and that
+	 * needs the shader to be loaded (AeronScenePbr_EmissionAvailable). */
+	const int temporal_requested = s->temporal_active_mode != AERON_TEMPORAL_OFF;
+	const int ssao_requested     = s->post.ssao_quality > 0 && s->post.ssao_intensity > 0.0f;
+	const int mb_requested       = s->post.mb_quality > 0;
+	const int pbr_required       = s->instance_count > 0 || s->shadow_only_count > 0 || temporal_requested ||
+								   ssao_requested || mb_requested;
+	const int pbr_ok             = !pbr_required || AeronScenePbr_Ensure(s);
+	if (!pbr_ok) {
+		return scene_render_failure(s, cmd, "Scene PBR resource preparation failed");
+	}
+
 	/* Batched billboards: build + upload this frame's VB (copy pass —
 	 * must precede the render passes below). */
 	if (!AeronSceneStorage_Prepare(s, cmd)) {
@@ -2738,15 +2779,6 @@ int AeronScene_Render(AeronScene3D* s, AeronCommandBuffer* cmd) {
 		return scene_render_failure(s, cmd, "Scene directional-shadow preparation failed");
 	}
 
-	const int temporal_requested = s->temporal_active_mode != AERON_TEMPORAL_OFF;
-	const int ssao_requested     = s->post.ssao_quality > 0 && s->post.ssao_intensity > 0.0f;
-	const int mb_requested       = s->post.mb_quality > 0;
-	const int pbr_required       = s->instance_count > 0 || s->shadow_only_count > 0 || temporal_requested ||
-								   ssao_requested || mb_requested;
-	const int pbr_ok             = !pbr_required || AeronScenePbr_Ensure(s);
-	if (!pbr_ok) {
-		return scene_render_failure(s, cmd, "Scene PBR resource preparation failed");
-	}
 	if (pbr_required && !AeronSceneClusteredLights_Build(s, cmd)) {
 		return scene_render_failure(s, cmd, "Scene clustered-light preparation failed");
 	}
