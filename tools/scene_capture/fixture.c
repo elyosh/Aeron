@@ -671,8 +671,8 @@ static float bolt_random(uint32_t* state) {
 	return (float)(*state >> 8) / 16777216.0f;
 }
 
-/* As flight.c submits laser bolts: two-sided, without shadows, with their
- * motion stamped into the velocity buffer. They stay still. */
+/* As flight.c submits laser bolts: two-sided, without shadows, unlit, with
+ * their motion stamped into the velocity buffer. They stay still. */
 static void add_game_bolts(AeronScene3D* scene, const Fixture* f) {
 	const CaptureBolts* bolts = &f->config.game.bolts;
 	uint32_t            state = bolts->seed;
@@ -689,6 +689,7 @@ static void add_game_bolts(AeronScene3D* scene, const Fixture* f) {
 			.cull_mode      = AERON_CULL_NONE,
 			.shadow_flags   = AERON_SCENE_INSTANCE_NO_CAST_SHADOW | AERON_SCENE_INSTANCE_NO_RECEIVE_SHADOW,
 			.velocity_stamp = 1,
+			.emission_only  = 1,
 		};
 		place_ship(instance.transform, &at);
 		scale_transform(instance.transform, GAME_UNITS_PER_METER);

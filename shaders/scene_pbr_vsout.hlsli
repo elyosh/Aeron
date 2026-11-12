@@ -75,4 +75,17 @@ struct PbrStampVSOut {
 	float4 clip_prev : TEXCOORD3;
 };
 
+/* Vertex outputs for the emission_only batches
+ * (scene_pbr_emission_instanced.vert and scene_pbr_emission.frag). They
+ * hold only what the emission needs. */
+struct PbrEmissionVSOut {
+	float4 position : SV_Position;
+	float2 uv : TEXCOORD0;
+	/* The emissive lane times the scene's emissive scale. */
+	float  emissive_mul : COLOR0;
+	/* x=prim_id, y=variant_row_base, z=variant_group_count,
+	 * w=material_count. */
+	nointerpolation uint4 material_lookup : TEXCOORD1;
+};
+
 #endif /* SCENE_PBR_VSOUT_HLSLI */

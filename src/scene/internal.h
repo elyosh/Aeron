@@ -158,6 +158,7 @@ typedef struct AeronScenePbrBatch {
 	uint32_t              count;
 	uint8_t               cull_mode;
 	uint8_t               velocity_stamp;
+	uint8_t               emission_only;
 	/* The batch was drawn in the pass being recorded. */
 	uint8_t drawn;
 } AeronScenePbrBatch;
@@ -879,6 +880,12 @@ struct AeronScene3D {
 	AeronShader*           pbr_instanced_vs;
 	AeronShader*           pbr_instanced_stamp_vs;
 	AeronGraphicsPipeline* pbr_instanced_pipes[2][AERON_PBR_PIPE_KIND_COUNT][3];
+	/* Shaders for emission_only batches, loaded together with the batch
+	 * shaders, and their pipelines for the two blend kinds, indexed by
+	 * [kind][cull]. */
+	AeronShader*           pbr_emission_vs;
+	AeronShader*           pbr_emission_fs;
+	AeronGraphicsPipeline* pbr_emission_pipes[AERON_PBR_PIPE_KIND_COUNT][3];
 };
 
 /* Shared small helpers (util.c). */

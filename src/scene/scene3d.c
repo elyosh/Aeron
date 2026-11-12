@@ -2140,14 +2140,15 @@ static int scene_instance_batchable(const AeronSceneMeshInstance*     instance,
 		   (instance->shadow_flags & AERON_SCENE_INSTANCE_USE_RECEIVER_LOCAL_SHADOW) == 0;
 }
 
-/* The batch of the instance's mesh, cull mode and velocity stamp, added when
- * new; -1 when it can't be stored. Batches are few, one per projectile
- * model in view. */
+/* Returns the batch for the instance's mesh, cull mode, velocity stamp and
+ * emission_only flag, and adds it if needed. Returns -1 when it can't be
+ * stored. There are few batches: one per projectile model in view. */
 static int32_t scene_instance_batch(AeronScene3D* s, const AeronSceneMeshInstance* instance) {
 	for (uint32_t b = s->pbr_batch_count; b-- > 0;) {
 		const AeronScenePbrBatch* batch = &s->pbr_batches[b];
 		if (batch->mesh == instance->mesh && batch->cull_mode == instance->cull_mode &&
-			batch->velocity_stamp == instance->velocity_stamp) {
+			batch->velocity_stamp == instance->velocity_stamp &&
+			batch->emission_only == (instance->emission_only != 0)) {
 			return (int32_t)b;
 		}
 	}
@@ -2157,7 +2158,8 @@ static int32_t scene_instance_batch(AeronScene3D* s, const AeronSceneMeshInstanc
 	}
 	s->pbr_batches[s->pbr_batch_count] = (AeronScenePbrBatch) { .mesh           = instance->mesh,
 																.cull_mode      = instance->cull_mode,
-																.velocity_stamp = instance->velocity_stamp };
+																.velocity_stamp = instance->velocity_stamp,
+																.emission_only  = instance->emission_only != 0 };
 	return (int32_t)s->pbr_batch_count++;
 }
 

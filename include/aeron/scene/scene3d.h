@@ -161,6 +161,13 @@ typedef struct AeronSceneMeshInstance {
 	 * geometry that never enters the depth prepass (XWA: soft-alpha
 	 * projectile ribbons) and would otherwise stay blur-sharp. */
 	uint8_t velocity_stamp;
+	/* Draw only the material's emission and alpha, with no lighting.
+	 * OpenXWA sets this for projectiles, because the original game draws
+	 * them at full brightness whatever their materials. It only applies to
+	 * instances drawn in a batch (a mesh with only blended faces and no
+	 * material animation), which then use a shader without lighting. Other
+	 * instances draw as usual. */
+	uint8_t emission_only;
 	/* Stamp the screen primitives of the alpha-BLEND range (holograms,
 	 * transparent screens) into the velocity buffer where their content is
 	 * visible, so motion blur treats them as part of this instance (a

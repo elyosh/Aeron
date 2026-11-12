@@ -90,6 +90,15 @@ typedef struct AeronScenePbrBatchVsBlock {
 } AeronScenePbrBatchVsBlock; /* 208 B */
 
 typedef char AeronScenePbrBatchVsBlockSizeCheck[sizeof(AeronScenePbrBatchVsBlock) == 208 ? 1 : -1];
+
+/* Second VS cbuffer (b1 space1) for emission_only batches. Mirrors
+ * `cbuffer PbrEmissionVSUniforms` in scene_pbr_emission_instanced.vert.hlsl. */
+typedef struct AeronScenePbrEmissionVsBlock {
+	float emissive_scale; /* AeronScene_EmissiveScale */
+	float _pad[3];
+} AeronScenePbrEmissionVsBlock; /* 16 B */
+
+typedef char AeronScenePbrEmissionVsBlockSizeCheck[sizeof(AeronScenePbrEmissionVsBlock) == 16 ? 1 : -1];
 typedef char AeronScenePbrInstanceRecordSizeCheck[sizeof(AeronScenePbrInstanceRecord) == 160 ? 1 : -1];
 
 static AeronShader* pbr_shader(const char* name, AeronShaderStage stage, uint32_t samplers, uint32_t ubs,
@@ -659,6 +668,9 @@ static AeronGraphicsPipeline* pbr_instanced_create(struct AeronScene3D* s, int k
 		s->pbr_instanced_vs = pbr_shader("scene_pbr_mesh_instanced.vert", AERON_SHADER_STAGE_VERTEX, 0, 1, 3);
 		s->pbr_instanced_stamp_vs =
 			pbr_shader("scene_pbr_prepass_stamp_instanced.vert", AERON_SHADER_STAGE_VERTEX, 0, 1, 3);
+		s->pbr_emission_vs =
+			pbr_shader("scene_pbr_emission_instanced.vert", AERON_SHADER_STAGE_VERTEX, 0, 2, 3);
+		s->pbr_emission_fs = pbr_shader("scene_pbr_emission.frag", AERON_SHADER_STAGE_FRAGMENT, 2, 0, 2);
 	}
 	AeronGraphicsPipeline** pipe = &s->pbr_instanced_pipes[ibl][kind][cull];
 	if (!*pipe && kind == AERON_PBR_PIPE_PREPASS_STAMP) {
@@ -680,6 +692,29 @@ static AeronGraphicsPipeline* pbr_instanced_pipeline(struct AeronScene3D* s, int
 #endif
 	const int ibl = kind != AERON_PBR_PIPE_PREPASS_STAMP && s->pbr_environment_set;
 	return pbr_instanced_create(s, kind, cull, ibl);
+}
+
+/* Returns the pipeline for emission_only batches in a blend kind, and
+ * creates it on first use. Returns NULL when its shaders don't load. */
+static AeronGraphicsPipeline* pbr_emission_create(struct AeronScene3D* s, int kind, AeronCullMode cull) {
+	if (!s->pbr_instanced_tried)
+		pbr_instanced_create(s, kind, cull, 0);
+	AeronGraphicsPipeline** pipe = &s->pbr_emission_pipes[kind][cull];
+	if (!*pipe && s->pbr_emission_vs && s->pbr_emission_fs)
+		*pipe = pbr_pipeline_create(s, kind, cull, s->pbr_emission_vs, s->pbr_emission_fs);
+	return *pipe;
+}
+
+/* Same as pbr_emission_create, but returns NULL in debug views, like
+ * pbr_instanced_pipeline, so that the instances draw one by one with the
+ * debug shader. */
+static AeronGraphicsPipeline* pbr_emission_pipeline(struct AeronScene3D* s, int kind, AeronCullMode cull) {
+#ifdef AERON_DEBUG_UI
+	if (pbr_debug_pipeline(s, kind, cull)) {
+		return NULL;
+	}
+#endif
+	return pbr_emission_create(s, kind, cull);
 }
 
 static int pbr_required_pipelines_ready(const struct AeronScene3D* s) {
@@ -749,6 +784,8 @@ int AeronScenePbr_Ensure(struct AeronScene3D* s) {
 		pbr_instanced_create(s, AERON_PBR_PIPE_MESH_BLEND, AERON_CULL_NONE, ibl);
 		pbr_instanced_create(s, AERON_PBR_PIPE_FORWARD_BLEND, AERON_CULL_NONE, ibl);
 	}
+	pbr_emission_create(s, AERON_PBR_PIPE_MESH_BLEND, AERON_CULL_NONE);
+	pbr_emission_create(s, AERON_PBR_PIPE_FORWARD_BLEND, AERON_CULL_NONE);
 	if (!pbr_required_pipelines_ready(s)) {
 		Aeron_LogError("aeron.scene", "PBR pipeline creation failed");
 	}
@@ -855,12 +892,25 @@ void AeronScenePbr_Release(struct AeronScene3D* s) {
 			}
 		}
 	}
+	for (int kind = 0; kind < AERON_PBR_PIPE_KIND_COUNT; kind++) {
+		for (int cull = 0; cull < 3; cull++) {
+			if (s->pbr_emission_pipes[kind][cull])
+				Aeron_DestroyGraphicsPipeline(s->pbr_emission_pipes[kind][cull]);
+			s->pbr_emission_pipes[kind][cull] = NULL;
+		}
+	}
 	if (s->pbr_instanced_vs)
 		Aeron_DestroyShader(s->pbr_instanced_vs);
 	if (s->pbr_instanced_stamp_vs)
 		Aeron_DestroyShader(s->pbr_instanced_stamp_vs);
+	if (s->pbr_emission_vs)
+		Aeron_DestroyShader(s->pbr_emission_vs);
+	if (s->pbr_emission_fs)
+		Aeron_DestroyShader(s->pbr_emission_fs);
 	s->pbr_instanced_vs       = NULL;
 	s->pbr_instanced_stamp_vs = NULL;
+	s->pbr_emission_vs        = NULL;
+	s->pbr_emission_fs        = NULL;
 	s->pbr_instanced_tried    = 0;
 	if (s->pbr_anim_vs)
 		Aeron_DestroyShader(s->pbr_anim_vs);
@@ -1482,6 +1532,33 @@ int AeronScenePbr_DrawTransparentInstances(struct AeronScene3D* s, AeronRenderPa
 		if (batch_index >= 0) {
 			AeronScenePbrBatch* batch = &s->pbr_batches[batch_index];
 			if (batch->drawn) {
+				continue;
+			}
+			AeronGraphicsPipeline* emission =
+				batch->emission_only ? pbr_emission_pipeline(s, blend_kind, cull) : NULL;
+			if (emission) {
+				if (emission != bound) {
+					Aeron_BindGraphicsPipeline(pass, emission);
+					bound = emission;
+				}
+				/* Bind the emissive atlas at sampler slot 1. The other shaders
+				 * read the normal atlas there, so the next draw has to bind
+				 * its mesh's resources again. */
+				Aeron_BindVertexBuffer(pass, 0, m->vbo, 0);
+				Aeron_BindIndexBuffer(pass, m->ibo, AERON_INDEX_FORMAT_UINT32, 0);
+				pbr_bind_material_resources(s, pass, m, atlas_sampler, 0);
+				Aeron_BindTextureSampler(pass, AERON_SHADER_STAGE_FRAGMENT, 1,
+										 m->atlas[AERON_GLTF_CHANNEL_EMISSIVE]
+											 ? m->atlas[AERON_GLTF_CHANNEL_EMISSIVE]
+											 : AeronSceneInternal_WhiteArrayTexture(),
+										 atlas_sampler);
+				bound_mesh   = NULL;
+				batch->drawn = 1;
+				pbr_push_batch_uniforms(s, pass, batch, /*velocity=*/0);
+				const AeronScenePbrEmissionVsBlock emission_block = { .emissive_scale = AeronScene_EmissiveScale() };
+				Aeron_BindUniformData(pass, AERON_SHADER_STAGE_VERTEX, 1, &emission_block, sizeof emission_block);
+				Aeron_DrawIndexedInstanced(pass, m->blend_index_count, batch->count, m->blend_index_offset,
+										   0);
 				continue;
 			}
 			AeronGraphicsPipeline* instanced = pbr_instanced_pipeline(s, blend_kind, cull);
