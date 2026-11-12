@@ -1282,17 +1282,27 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
 
     /* ===== Emissive ==============================================
      * A positive per-instance base-color override represents semantic
-     * emission that is not authored in the material (XWA runtime-OPT
-     * projectiles). It replaces lighting and material emission. On an
-     * alpha-blended material, the emission is also weighted by the alpha,
-     * so the blend applies it twice: a strong emission then fades out with
-     * the texture's soft edge instead of keeping the faint texels bright.
-     * Otherwise the material's emission adds to the lit surface. */
+     * emission that is not authored in the material (runtime-OPT
+     * projectiles). It replaces lighting and material emission. The OPT
+     * conversion moves self-lit texels into the emissive texture and leaves
+     * the base colour black under them, so the emissive texture, with its
+     * factor but not its strength, is added back to give the texture's own
+     * colour. On an alpha-blended material, the emission is also weighted
+     * by the alpha, so the blend applies it twice: a strong emission then
+     * fades out with the texture's soft edge instead of keeping the faint
+     * texels bright. Otherwise the material's emission adds to the lit
+     * surface. */
     if (isolate == 0 && i.base_color_emissive_strength > 0.0f) {
         const float coverage = ((g_materials[mat].flags & GLTF_MATERIAL_ALPHA_BLEND) != 0u)
                                    ? saturate(albedo_tex.a * g_materials[mat].base_color_factor.a)
                                    : 1.0f;
-        lit = albedo * (i.base_color_emissive_strength * fs_emission.x * coverage);
+        float3 color = albedo;
+        if ((g_materials[mat].flags & GLTF_MATERIAL_HAS_EMISSIVE) != 0u) {
+            color += g_materials[mat].emissive_packed.rgb *
+                     pbr_sample_channel(g_emissive, g_em_sampler, g_materials[mat], GLTF_ATLAS_EMISSIVE,
+                                        g_materials[mat].emissive_rect, i.uv).rgb;
+        }
+        lit = color * (i.base_color_emissive_strength * fs_emission.x * coverage);
 #if AERON_PBR_ANIM
     } else if (anim_emission) {
         lit += anim_emissive * (i.emissive_mul * fs_emission.x);
