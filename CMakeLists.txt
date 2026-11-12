@@ -1095,6 +1095,7 @@ if(AERON_BUILD_TOOLS)
         tools/xwau/xwau_names.c
         tools/xwau/xwau_model.c
         tools/xwau/xwau_object_limits.c
+        tools/xwau/xwau_original_films.c
         tools/xwau/xwau_skins.c
         tools/xwau/xwau_used_models.c
         tools/xwau/xwau_weapon_models.c

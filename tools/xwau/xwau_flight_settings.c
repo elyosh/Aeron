@@ -13,6 +13,7 @@
 #include "xwau_craft.h"
 #include "xwau_mission_settings.h"
 #include "xwau_object_limits.h"
+#include "xwau_original_films.h"
 #include "xwau_weapon_lock.h"
 
 /* XWAU's headlight gives the same light at every distance, and OpenXWA's
@@ -543,6 +544,7 @@ bool XwauFlightSettings_Write(const char* game, const XwauNames* names, const Xw
 	const bool shields    = write_shield_recharge(f, game);
 	const bool docking    = write_docking(f, game);
 	const bool limits     = XwauObjectLimits_Write(f, game);
+	const bool films      = XwauOriginalFilms_Write(f, game);
 	const bool camera     = write_camera(f, game);
 	const bool suns       = write_suns(f, game);
 	const bool speed      = write_speed_effect(f, game);
@@ -561,6 +563,7 @@ bool XwauFlightSettings_Write(const char* game, const XwauNames* names, const Xw
 									shields ? "the shield recharge rules" : NULL,
 									docking ? "the docking rules" : NULL,
 									limits ? "the object counts" : NULL,
+									films ? "the craft records of its films" : NULL,
 									ai_attack ? "the AI attack ranges" : NULL,
 									mag_pulse ? "the mag pulse hits" : NULL,
 									warhead_lock ? "the AI warhead lock ranges" : NULL,
