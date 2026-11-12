@@ -533,7 +533,8 @@ static int load_lens_flare(const AeronConfigFile* yaml, CaptureLensFlare* flare)
 
 static int load_game_bolts(const AeronConfigNode* node, CaptureConfig* config) {
 	CaptureBolts*            bolts  = &config->game.bolts;
-	static const char* const keys[] = { "models", "count", "center", "extent", "seed" };
+	static const char* const keys[] = { "models",       "count",         "center",    "extent",
+										"seed",         "min_width_px",  "fade_width_px", "fade_power" };
 	if (!only_keys(node, "game_scene.bolts", keys, sizeof keys / sizeof keys[0]))
 		return 0;
 	const AeronConfigNode* models      = AeronConfigNode_MapGet(node, "models");
@@ -572,6 +573,16 @@ static int load_game_bolts(const AeronConfigNode* node, CaptureConfig* config) {
 	}
 	bolts->count = (int)count_value;
 	bolts->seed  = (uint32_t)seed_value;
+	static const char* const sizes[] = { "min_width_px", "fade_width_px", "fade_power" };
+	float* const             values[] = { &bolts->min_width_px, &bolts->fade_width_px, &bolts->fade_power };
+	for (int k = 0; k < 3; ++k) {
+		const AeronConfigNode* value = AeronConfigNode_MapGet(node, sizes[k]);
+		*values[k]                   = 0.0f;
+		if (value && (!scalar(value, values[k]) || !(*values[k] >= 0.0f))) {
+			fprintf(stderr, "game_scene.bolts.%s must be a number of 0 or more\n", sizes[k]);
+			return 0;
+		}
+	}
 	return 1;
 }
 

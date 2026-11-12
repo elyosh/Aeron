@@ -51,7 +51,10 @@ typedef struct CaptureInstance {
 /* game_scene.bolts: `count` bolts of the `models` given (indices into
  * models), drawn as the game draws laser bolts, at random places in the box
  * `center` +- `extent` (metres, camera axes) with random headings. `seed`
- * picks the places; every frame shows the same bolts. */
+ * picks the places; every frame shows the same bolts. `min_width_px` is
+ * the scene's AeronScene_SetEmissionMinWidth, and `fade_width_px` and
+ * `fade_power` its AeronScene_SetEmissionFade, in render pixels (0, off,
+ * by default). */
 #define CAPTURE_MAX_BOLTS 8192
 #define CAPTURE_MAX_BOLT_MODELS 8
 
@@ -61,6 +64,8 @@ typedef struct CaptureBolts {
 	int      count;
 	float    center[3], extent[3];
 	uint32_t seed;
+	float    min_width_px;
+	float    fade_width_px, fade_power;
 } CaptureBolts;
 
 typedef struct CaptureLight {

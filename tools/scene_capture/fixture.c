@@ -938,6 +938,8 @@ AeronRenderTarget* Fixture_Record(Fixture* f, double time, int blur, AeronComman
 			set_screen_sources(scene, f, time);
 		add_game_instances(scene, f, time, &current, &previous);
 		add_game_bolts(scene, f);
+		AeronScene_SetEmissionMinWidth(scene, f->config.game.bolts.min_width_px);
+		AeronScene_SetEmissionFade(scene, f->config.game.bolts.fade_width_px, f->config.game.bolts.fade_power);
 		return AeronScene_Render(scene, cmd) ? AeronScene_SceneRt(scene) : NULL;
 	}
 	AeronScene_SetPost(

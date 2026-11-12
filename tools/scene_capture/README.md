@@ -92,7 +92,7 @@ forward).
 | `cockpit_follows_camera` | `true` turns the cockpit with the camera; `false` (default) keeps it in place. |
 | `cluster_debug` | `true` shows the number of lights per cluster instead of the lit scene. |
 | `key_probe_shadow`, `key_shadow_all_sides`, `probe_occlusion`, `planar_reflection` | Hangar lighting options, as in the game's Hangar Lighting tool. |
-| `bolts` | `{ models, count, center, extent, seed }`: up to 8192 bolts of the `models` listed (taken in turn), drawn as the game draws laser bolts, at random places in the box `center` ± `extent` (metres, camera axes) with random headings. They don't move. `seed` (default 1) picks the places. |
+| `bolts` | `{ models, count, center, extent, seed }`: up to 8192 bolts of the `models` listed (taken in turn), drawn as the game draws laser bolts, at random places in the box `center` ± `extent` (metres, camera axes) with random headings. They don't move. `seed` (default 1) picks the places. `min_width_px` (default 0, off) widens the bolts thinner than this many pixels and spreads their light over the wider strip, as the game's `projectiles.min_width_px` does. `fade_width_px` and `fade_power` (default 0, off) fade them as the game's `projectiles` settings do, in render pixels. |
 
 Each instance is `{ model, role, position, rotation_degrees, velocity, markings, probes }`:
 

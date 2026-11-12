@@ -1471,6 +1471,20 @@ void AeronScene_SetSmallInstanceCull(AeronScene3D* s, float prepass_min_px, floa
 	}
 }
 
+void AeronScene_SetEmissionMinWidth(AeronScene3D* s, float min_width_px) {
+	if (s) {
+		s->emission_min_width_px = min_width_px > 0.0f ? min_width_px : 0.0f;
+	}
+}
+
+void AeronScene_SetEmissionFade(AeronScene3D* s, float full_width_px, float power) {
+	if (s) {
+		const int on              = full_width_px > 0.0f && power > 0.0f;
+		s->emission_fade_width_px = on ? full_width_px : 0.0f;
+		s->emission_fade_power    = on ? power : 0.0f;
+	}
+}
+
 typedef char AeronSceneScreenFrameSizeCheck[sizeof(AeronSceneScreenFrame) == 1072 ? 1 : -1];
 
 void AeronScene_SetScreenSources(AeronScene3D* s, AeronTexture* graphics, AeronTexture* text,

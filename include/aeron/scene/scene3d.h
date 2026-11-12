@@ -501,6 +501,24 @@ void AeronScene_SetBackfaceFill(AeronScene3D* scene, int enabled);
  * the prepass's depth of every instance. */
 void AeronScene_SetSmallInstanceCull(AeronScene3D* scene, float prepass_min_px, float draw_min_px);
 
+/* The minimum width on screen, in render pixels, of emission_only
+ * instances drawn in batches, such as laser bolts; 0 turns it off. A
+ * thinner instance is drawn this wide across its bounds' second-longest
+ * axis, and its emission is multiplied by its real width / drawn width, so
+ * it keeps the same light. It then shows as a steady strip instead of
+ * broken pixels that flicker as it moves. Wider instances don't change. It
+ * suits flat ribbons that face the camera. */
+void AeronScene_SetEmissionMinWidth(AeronScene3D* scene, float min_width_px);
+
+/* Dims emission_only instances drawn in batches as they get thinner on
+ * screen: their emission is multiplied by (width / full_width_px)^power,
+ * capped at 1, with the width in render pixels measured as for
+ * AeronScene_SetEmissionMinWidth. Instances at least full_width_px wide
+ * don't change. Unlike the minimum width, this doesn't keep their light:
+ * it's a way to make far laser bolts dimmer. A full_width_px or power of
+ * 0 turns it off. */
+void AeronScene_SetEmissionFade(AeronScene3D* scene, float full_width_px, float power);
+
 /* Screen surfaces (gltf_mesh.h, "Screen surfaces"): the per-frame inputs of
  * every screen material. 16-byte rows only, so the C layout matches the
  * shader's structured buffer on every backend. */

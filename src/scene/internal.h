@@ -424,6 +424,11 @@ struct AeronScene3D {
 	float small_cull_prepass_px;
 	float small_cull_draw_px;
 	int   small_cull_active;
+	/* AeronScene_SetEmissionMinWidth, in render pixels; 0 is off. */
+	float emission_min_width_px;
+	/* AeronScene_SetEmissionFade; 0 is off. */
+	float emission_fade_width_px;
+	float emission_fade_power;
 
 	AeronSceneCamera camera;        /* render-resolution viewport */
 	AeronSceneCamera output_camera; /* caller's output-resolution viewport */
@@ -886,6 +891,10 @@ struct AeronScene3D {
 	AeronShader*           pbr_emission_vs;
 	AeronShader*           pbr_emission_fs;
 	AeronGraphicsPipeline* pbr_emission_pipes[AERON_PBR_PIPE_KIND_COUNT][3];
+	/* The velocity-stamp vertex shader for these batches, and its pipelines
+	 * indexed by cull mode. */
+	AeronShader*           pbr_emission_stamp_vs;
+	AeronGraphicsPipeline* pbr_emission_stamp_pipes[3];
 };
 
 /* Shared small helpers (util.c). */

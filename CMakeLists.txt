@@ -227,6 +227,7 @@ set(AERON_SHADER_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_pbr_mesh_anim.vert.hlsl
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_pbr_mesh_instanced.vert.hlsl
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_pbr_emission_instanced.vert.hlsl
+    ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_pbr_emission_stamp_instanced.vert.hlsl
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_pbr_mesh.frag.hlsl
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_pbr_mesh_mask.frag.hlsl
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_pbr_mesh_mask_screen.frag.hlsl
